@@ -1,0 +1,132 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: sets.yaml
+# Brief: Machine-readable single source of truth for the non-error closed sets
+#
+# Description:
+# Generated from docs/11-接口契约.md. Every XBRAIN runtime process imports these
+# from xbrain/common/enums; CLAUDE.md 3.5 forbids the literals anywhere else,
+# for the same reason as the error codes -- a value spelled differently in two
+# processes only surfaces during integration.
+#
+# ★★★ Each set is bound to the contract by a symmetric-difference metatest in
+# tests/common/test_closed_sets.py. One-directional containment would pass while
+# the library is missing a value the contract added, which is how Event.category
+# sat at 21 while the contract had moved to 23.
+#
+# 🚫 No counts here or in comments (CLAUDE.md 3.7). The contract's own tallies
+# have already rotted once: S13.3 still says the error set holds 40.
+#
+# ★ order matters for gate_limiter and stop_reason -- both are documented as
+#   decision orders, not just membership. The metatest checks order for those two.
+
+sets:
+  plane:
+    source: "11 S2.1"
+    anchor: "| `plane` |"        # the table header / row the parser keys off
+    note: "key 空间第二段。xbrain/{robot_id}/{plane}/{domain}/{name}"
+    ordered: false
+    values:
+      - rt
+      - state
+      - event
+      - cmd
+      - audio
+      - data
+      - health
+      - probe
+  domain:
+    source: "11 S7A.0"
+    anchor: "| 域 | `domain` |"        # the table header / row the parser keys off
+    note: "七域仲裁。domain 5 ptz / 4 payload_light 由 p2_core 裁"
+    ordered: false
+    values:
+      - motion
+      - speaker
+      - asr
+      - payload_light
+      - ptz
+      - gpu
+      - dock
+  event_category:
+    source: "11 S6.2"
+    anchor: "| category | ... | channel |"        # the table header / row the parser keys off
+    note: "事件类别。2026-08-05 由 21 扩为 23（补 ptz / voice）"
+    ordered: false
+    values:
+      - intrusion
+      - fence
+      - speed_limit
+      - mode_change
+      - arbitration
+      - task
+      - charging
+      - health
+      - bit
+      - chassis
+      - estop
+      - comm
+      - rtk
+      - geo
+      - teach
+      - teleop
+      - perception
+      - motion
+      - payload
+      - data
+      - system
+      - ptz
+      - voice
+  gate_limiter:
+    source: "11 S9.6.5"
+    anchor: "| 优先级 | `limiter` |"        # the table header / row the parser keys off
+    note: "速度门归因。★ 表序即优先级，estop 最高"
+    ordered: true
+    values:
+      - estop
+      - mode
+      - health
+      - rtk
+      - heading
+      - clock
+      - fence
+      - free_space
+      - target
+      - brake
+      - gait
+      - profile
+      - spec
+      - none
+  stop_reason:
+    source: "11 S4.1"
+    anchor: "| `stop_reason` |"        # the table header / row the parser keys off
+    note: "本拍零速的唯一归因。★ 取值顺序即 S9.12.2 的判定顺序"
+    ordered: true
+    values:
+      - none
+      - hes
+      - timeout
+      - soft_estop
+      - mode_switching
+      - mode_mismatch
+      - nan
+      - no_source
+  task_state:
+    source: "11 S4.4"
+    anchor: "| 分组 | `state` |"        # the table header / row the parser keys off
+    note: "任务状态。12 值 全小写 冻结"
+    ordered: false
+    values:
+      - pending
+      - scheduled
+      - blocked
+      - ready
+      - running
+      - suspended
+      - done
+      - failed
+      - cancelled
+      - interrupted
+      - wait_for_power_off
+      - needs_review
