@@ -7,7 +7,7 @@ File: progress.py
 Brief: Derive XBRAIN_V6 development progress from XBRAIN_V6_TODO.md, never from ticks
 
 Description:
-XBRAIN_V6_TODO.md deliberately carries no checkboxes and no percentages. Hand-kept
+docs/XBRAIN_V6_TODO.md deliberately carries no checkboxes and no percentages. Hand-kept
 progress rots: this project already has live proof of that ("14 has zero hits",
 true the day it was written and false a week later; "QC-1 through QC-17", which a
 rerun of its own command now contradicts). CLAUDE.md 3.7 forbids writing measured
@@ -28,11 +28,11 @@ import subprocess
 import sys
 
 ROOT = "/opt/xbrain_v6"
-TODO = os.path.join(ROOT, "XBRAIN_V6_TODO.md")
+TODO = os.path.join(ROOT, "docs", "XBRAIN_V6_TODO.md")
 
 # Table rows look like: | `CFG-CM-1` | title | `common/errors/` | Python | criterion | dep | block |
 # IDs carry a lot prefix (CFG/MOT/BIZ/GWY/CPP/INF) because six parallel miners
-# reused 20 bare numbers across 46 items -- see XBRAIN_V6_TODO.md S0.3.
+# reused 20 bare numbers across 46 items -- see docs/XBRAIN_V6_TODO.md S0.3.
 ROW = re.compile(r"^\|\s*`([A-Z]{3}-[A-Za-z0-9-]+)`\s*\|(.+)$")
 # Note: one miner produced a two-segment number (CM-P4-1), so the tail must
 # accept hyphens. The earlier stricter pattern silently dropped that one row --
@@ -154,7 +154,7 @@ def main():
     print("  · DONE 必须【判据文件存在 ＋ 实跑通过】—— 存在但没跑只算 IN_PROGRESS。")
     print("  · ⚠️ UNEVALUABLE【永远不计入 DONE】—— 判据没点名可执行件，机器没法判。")
     print("    把它算成完成，就是一条在空目录上也能报 100% 的恒绿判据（CLAUDE.md 3.2 形态①）。")
-    print("  · 🚫 本脚本不写任何数字回 XBRAIN_V6_TODO.md（CLAUDE.md 3.7）。")
+    print("  · 🚫 本脚本不写任何数字回 docs/XBRAIN_V6_TODO.md（CLAUDE.md 3.7）。")
     return 0
 
 
