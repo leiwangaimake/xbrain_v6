@@ -56,8 +56,9 @@
 
 ```
 /opt/xbrain_v6/
-├── common/           # ★★★ 公共资产 —— 全局【任何模块】依赖的库与头文件
-│                     #    错误码 · 闭集常量 · 配置加载器。跨语言（Python + C++）
+├── common/           # ★★★ 【部署产物】二进制库与头文件 —— 🚫 不放源码
+│                     #    ★ 用户 2026-08-05 明确：common 是【部署】二进制库和头文件的
+│                     #    ★ 例：common/errors/errors.h 由 xbrain/common/errors/codes.yaml 生成
 │                     #    ★ 消费者含 chassis_relay(急停链路) ⇒ 🚫 绝不引 rclcpp 或任何 ROS 类型
 ├── configs/          # ★★★ 唯一配置根（绝对路径 · 复数 · 不接受符号链接）
 │                     #    V6 系统【所有模块】的配置文件都在这里
@@ -74,7 +75,11 @@
 │                     #    ★ 系统开发完毕后的【全栈启动脚本】也部署在这里
 ├── services/         # ★ AI 服务相关资产（asr · llm · payload · perception）
 ├── tests/            # ★ 所有测试资产 —— 单元测试 ＋ 集成测试
-└── xbrain/           # ★★★ XBRAIN runtime 资产（P1~P5 Python 实现）
+└── xbrain/           # ★★★ XBRAIN runtime 资产
+                      #    ★★★ 用户 2026-08-05 明确：除 perception / ROS2 节点相关代码
+                      #        与 AI 服务代码外，【其余全部 Python 实现都放这里】
+                      #    ⇒ 含 P1~P5，也含跨进程共享层 xbrain/common/（错误码 · 闭集常量 · 配置加载器）
+                      #    🚫 共享层的 Python 源码不放 common/ —— 那里只放部署产物
 ```
 
 ★★★ **代码必须严格按本表部署，🚫 不得乱放。** 放错目录 = PR 拒绝合入。
