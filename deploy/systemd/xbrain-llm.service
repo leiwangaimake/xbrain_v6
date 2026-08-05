@@ -1,0 +1,59 @@
+# ★ 草稿，不安装 —— see README.md. DEC-15 (unit naming / repo layout / install root) is open.
+#
+# Reproduces 11 §11A.6.3's snippet, with four deviations documented in README.md. The two
+# that change behaviour rather than paths: StartLimitBurst/StartLimitIntervalSec live in
+# [Unit] (they are ignored in [Service] since systemd v229, which would silently void
+# AIR-F1), and OOMPolicy=stop implements AIR-F2's 「OOM 后不自动重启」, which Restart=
+# on-failure alone contradicts because an OOM kill is a SIGKILL.
+
+[Unit]
+Description=XBRAIN AI Runtime - llama-server (Qwen2.5-3B-Instruct Q4_K_M)
+# ★ After, deliberately NOT Requires (11 §11A.6.3 verbatim): 「故意不写
+# Requires=perception.service —— AI 失效不得连带 perception」. Ordering only, so a
+# perception failure never cascades into the LLM and, more importantly, the reverse:
+# AIR-H1 requires AI failure to leave motion untouched.
+After=network-online.target xbrain-config-freeze.service perception.service
+
+# ★ AIR-F1: 不得无限重启. Five starts per 300 s, then the unit enters failed and stays
+# there. Each start costs 2.45 GB of unified memory; a restart loop under memory pressure
+# is how a single failure turns into a system-wide one.
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=exec
+ExecStart=/opt/xbrain_v6/services/llm/llm_server.sh
+Restart=on-failure
+RestartSec=5
+
+# ★ AIR-P3: core 7 is what 10 §3.2 leaves to P4+P5+HMI+AI. The script also exports
+# OMP_NUM_THREADS=1; both halves are needed, because BLAS would otherwise start its own
+# pool underneath --threads and multiply into more runnable threads than core 7 can hold.
+CPUAffinity=7
+
+# ★★ AIR-F3, and the reason this file is a safety item. The kernel picks its OOM victim by
+# oom_score, which knows nothing about what the robot needs to keep running. +500 makes
+# llama-server the FIRST thing killed under memory pressure -- and G-1 requires the robot
+# to still patrol after it dies. Without this line the kernel is as likely to take
+# perception, which costs obstacle avoidance.
+OOMScoreAdjust=500
+
+# ⚠️待 T-AI-1 / T-AI-3 校准 (11 §11A.6.3 says so verbatim). And per the same section, a
+# MemoryMax here does NOT mean GPU OOM is covered: whether Tegra nvmap/CUDA allocations
+# count against cgroup v2 memory.current is untested (T-AI-3). If they do not, this bounds
+# host-side allocation only and a GPU overrun still appears as cudaMalloc failure.
+MemoryMax=3G
+
+# ★ AIR-M4's other half: --mlock is banned in the script, and swapping out is banned here.
+# Pinning and swapping are opposite mistakes with the same cause -- neither the model nor
+# the OS should be deciding unilaterally how this process's pages are placed.
+MemorySwapMax=0
+
+# ★ AIR-F2: OOM 后不自动重启. Without this, Restart=on-failure would restart a process the
+# kernel just killed for using too much memory, into a system that is still out of memory
+# -- the 「杀-启」 loop AIR-F2 names. OOMPolicy=stop puts the unit in a stopped state so a
+# human sees it. Requires systemd >= 243; this host runs 249.
+OOMPolicy=stop
+
+[Install]
+WantedBy=multi-user.target

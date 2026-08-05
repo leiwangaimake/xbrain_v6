@@ -1,0 +1,47 @@
+# ★ 草稿，不安装 —— see README.md.
+#
+# ⚠️ Named ai-asr, not ai-audio. 99 U52 §1 struck 「`ai_audio` = ASR + TTS 合一进程」 down
+# verbatim: TTS lives in the GZH-2 device (「机上零显存、零进程」), reached through
+# payload-service POST /tts. 11 §11A.6.3's OOM table still says xbrain-ai-audio with
+# MemoryMax=1.5G -- a budget for a TTS engine that does not exist on this machine.
+
+[Unit]
+Description=XBRAIN AI Runtime - ASR (sherpa-onnx paraformer-zh-2023-09 int8, CPU)
+After=network-online.target xbrain-config-freeze.service
+
+# ★ AIR-F1, same rule as the LLM unit. Cheaper to start (1.9 s, 374 MiB) but the constraint
+# is written for both services, and an ASR that cannot load is not fixed by retrying.
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=exec
+ExecStart=/opt/xbrain_v6/services/asr/asr_server.sh
+Restart=on-failure
+RestartSec=5
+
+# ★ AIR-P3. Doubly load-bearing here: this service is pinned to the CPU provider
+# (services/asr/core/families.py) precisely so it never takes a CUDA context away from
+# perception, so all of its work lands on this one core.
+CPUAffinity=7
+
+# ★ AIR-F3. +400 -- killed before p4/p5 (+200) is wrong and after llama-server (+500) is
+# right: losing ASR costs voice input (F-AI-5) while losing the LLM costs only generated
+# replies, and the LLM is the far larger allocation.
+OOMScoreAdjust=400
+
+# ⚠️ 契约未规定 for ai_asr specifically. Measured 374 MiB resident with the model loaded
+# (2026-08-03, Orin), so 1G is roughly 2.7x headroom -- enough to absorb a larger export
+# without hiding a leak. NOT the contract's 1.5G, which budgeted for a bundled TTS.
+#
+# ⚠️ 11 §11A.2.3 line 5 still records ai_asr at 0.20 GB against 「zipformer ONNX int8」.
+# The deployed model is paraformer int8 at 0.36 GB. AIR-M1: 改模型必须回填该表，否则视同
+# 未评审. That backfill is a `11` edit and has not been made.
+MemoryMax=1G
+MemorySwapMax=0
+
+# ★ AIR-F2, same reasoning as the LLM unit.
+OOMPolicy=stop
+
+[Install]
+WantedBy=multi-user.target

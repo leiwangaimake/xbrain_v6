@@ -1,0 +1,43 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# /opt/xbrain_v6/configs/safety/brake.yaml
+#   层：L3（安全层）—— 本层【整目录】自动 locked（10 §5.4.3 L3 行 / CFG-31）
+#   本层允许写入的命名空间：common.safety.*  （10 §5.4.3 · 出现其他顶层键即拒绝）
+#   本文件的键归属：10 §5.4.0 ① 目录树逐字「brake.yaml  common.safety.brake.* · t_lat_s」
+#
+#   ★★ 本文件三个键是【唯一真源】。11 §9.6.1 的 latency.total_s / brake.decel_mps2 /
+#      brake.safety_factor 与 12 §12 的 speed_gate.{t_latency_s,a_brake_mps2,safety_factor}
+#      都只是【可读别名】，已进 10 §5.4.5 别名黑名单 —— 按别名写会被断言 B 判「疑似复制」
+#      而拒绝启动（11 §9.6.1「键名真源表」逐字）。
+#
+#   ★★★ 本文件不支持 ConfigCommand 热更新（CFG-31），改动只能改文件 + 重启。
+#   ★★★ 本文件【不跟随】XBRAIN_CONFIG_DIR —— L3 永远从编译期固化的
+#        /opt/xbrain_v6/configs/safety/ 读取（10 §5.4.0 ENV-2）。
+#
+#   PROVENANCE 取值域（SET-01 护栏 3）：
+#        assumed | measured:<T-xxx-日期> | vendor:<V-xx> | decided:<U-xx>
+#   ★★★ 未标定的安全参数一律留 null，🚫 绝不写 0.0 冒充「已赋值」
+#        （10 §5.4.5 逐字：「不得写 0.0 冒充『已赋值』」；0.0 会被判为已赋值而放行，
+#         运行期 v_max = min(…,0) = 0 ⇒ 机器人不动且无任何报错，是 fail-silent）。
+# ═══════════════════════════════════════════════════════════════════════════
+
+common:
+  safety:
+
+    # 我方检测 0.2 s ＋ 底盘软急停链路上界 0.2 s = 0.4 s
+    # 断言：11 §9.6 SP-5 与 12 §12.1 S-4 均为 `t_lat_s >= 0.4`（两处必须同时成立）
+    # ⚠️ 仍待 T7 实测复核；实测落地后本行 PROVENANCE 改 measured:<T7-日期>，取值不得 < 0.4
+    t_lat_s: 0.4                 # PROVENANCE: decided:U54
+
+    brake:
+      # 制动减速度 a。★★★ 这是一个【工作假设】，不是硬件事实。
+      # 断言：SP-5 / S-4 要求 0 < a_mps2 <= common.spec.max_decel_mps2，
+      #       而 common.spec.max_decel_mps2 现为 null（未标定，11 §9.6）
+      #       ⇒ 本键当前被断言 A（键未赋值）先行阻塞，整栈按设计【拒绝启动】。
+      # ⚠️ 待 M-22 / T-DECEL 实测；实测后改 measured:<T-DECEL-日期>
+      a_mps2: 2.5                # PROVENANCE: assumed
+
+      # 安全系数 k。U54 后已【不再进速度门 f()】（f() 改为显式减 1.0 m 安全距离），
+      # 现行用途 = 11 §9A.6 软围栏带宽 d_stop = k·( v·t_lat + v²/(2a) )。
+      # 断言：SP-5 / S-4 要求 k >= 1.0 ⇒ 本键不可省略，省略即拒绝启动。
+      # ⚠️ TODO：10 §5.4.5 该行逐字登记「k 是否保留待评审」—— 评审结论未出前本键保留。
+      k: 1.5                     # PROVENANCE: assumed

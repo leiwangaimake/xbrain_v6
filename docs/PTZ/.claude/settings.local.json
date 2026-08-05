@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no jack@192.168.1.7 'echo \"=== 连接成功 ===\"; uname -a; echo; cat /etc/nv_tegra_release 2>/dev/null; echo; lsb_release -a 2>/dev/null')"
+    ]
+  }
+}

@@ -1,0 +1,54 @@
+# ★ 草稿，不安装 —— see README.md.
+#
+# ⚠️ This unit has NO contract row. 11 §11A.6.3's OOM table does not list payload-service,
+# and 10 §3.1's 15-process table does not either (_plan/KICKOFF-MODULES.md:161 already
+# flags the gap). Every value below that is not traceable to a PAY-* or T-PAY-* constraint
+# is marked 契约未规定·建议 and is a proposal for DEC-15, not a contract value.
+
+[Unit]
+Description=XBRAIN payload-service - GZH-2 audio/lights bridge (8519/8529)
+After=network-online.target xbrain-config-freeze.service
+
+# ⚠️ 契约未规定·建议. Same shape as the two AI units so the three fail alike, but the
+# reasoning differs: restarting this service drops the 8519 and 8529 sockets, and PAY-L2
+# makes it the single holder of both -- a restart loop would leave the device link
+# flapping rather than merely unavailable.
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=exec
+ExecStart=/opt/xbrain_v6/services/payload/payload_server.sh
+Restart=on-failure
+RestartSec=5
+
+# ★ AIR-P3 names 三个服务 and this is the third. Its work is socket I/O and small frame
+# assembly, so one core is ample.
+CPUAffinity=7
+
+# ⚠️ 契约未规定·建议 (+300). Between ai_asr (+400) and p4/p5 (+200): losing payload costs
+# the voice output path and the deterrent, which is worse than losing generated replies
+# but not as bad as losing the gateway. ★ Setting SOMETHING is the point -- an unset value
+# is 0, which under 11 §11A.6.3's own argument makes it a more likely victim than
+# llama-server (+500) despite being 8x smaller and far more load-bearing.
+OOMScoreAdjust=300
+
+# ⚠️ 契约未规定·建议. Measured 59 MiB resident (2026-08-03, Orin) -- it holds no model,
+# only sockets and a 6 s siren PCM buffer. 512M is deep headroom that would still catch a
+# runaway.
+MemoryMax=512M
+MemorySwapMax=0
+
+# ★★ T-PAY-4: the shutdown path must be allowed to finish. config.close_flush_ms is 200 ms
+# and app.py's lifespan does session.aclose() before link.stop(), so the device receives
+# its reset frames BEFORE the sockets close. A TimeoutStopSec below that flush would
+# SIGKILL mid-reset, and the contract states the observed consequence: 探照灯卡在开着 --
+# a searchlight stuck on, at night, with no process left to turn it off. 10 s is far above
+# the 200 ms floor because being generous here costs nothing and being tight costs that.
+TimeoutStopSec=10
+
+# ⚠️ 契约未规定·建议, same reasoning as the other two.
+OOMPolicy=stop
+
+[Install]
+WantedBy=multi-user.target

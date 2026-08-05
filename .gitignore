@@ -1,0 +1,92 @@
+# XBRAIN_V6 · git ignore
+#
+# 口径：仓库只放【源码 · 配置 · 文档 · 测试】。
+# 模型权重 / 厂商 SDK / CAD / 编译产物 / 日志 一律不入库 —— 它们靠部署脚本从各自来源取。
+# ★ 实测：不排除的话仓库 3.0 GB，其中 services/ 占 2.8 GB、docs/ 占 269 MB。
+
+# ── 模型权重（★ 2.8 GB 的主体）
+*.onnx
+*.gguf
+*.engine
+*.plan
+*.pt
+*.pth
+*.safetensors
+services/asr/model-zipformer-multi-zh-hans/
+services/asr/models/
+services/llm/model/
+
+# ── 厂商 SDK 与授权材料（★ 有授权限制，🚫 不得随仓库分发）
+*.rar
+*.7z
+docs/PTZ/SDK_*
+docs/PTZ/*.pdf
+docs/QUADRUPED/*.pdf
+
+# ── CAD / 硬件图纸
+*.stp
+*.step
+*.stl
+*.dwg
+
+# ── 归档包（★ docs/temp_docs_bak.tar.gz 是剪枝前备份，用户已明令其内容不得引用）
+*.tar.gz
+*.tar.bz2
+*.zip
+
+# ── 编译产物与依赖数据（CLAUDE.md §0.2：data/ 放编译数据 · 依赖数据 · 日志）
+data/
+build/
+install/
+log/
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+*.o
+*.a
+*.so
+*.so.*
+
+# ── Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# ── 运行期产物（★ /run/xbrain/resolved 是 tmpfs，本不在仓库内；这里防误拷）
+run/
+*.pid
+*.sock
+
+# ── 日志
+*.log
+logs/
+
+# ── ★★★ 密钥与证书：🚫 绝不入库
+# CHS-A 走 DTLS/TLS，云端对接有鉴权 —— 任何一个泄漏都是现场事故
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+.env
+.env.*
+secrets/
+**/credentials*
+
+# ── 编辑器与系统
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# ── Office 临时锁文件
+.~*
+~$*

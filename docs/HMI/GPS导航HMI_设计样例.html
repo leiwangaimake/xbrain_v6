@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GPS 网格地图 HMI v3.0</title>
+<link rel="stylesheet" href="GPS导航HMI_设计样例.css">
+</head>
+<body>
+<main class="hmi">
+  <section class="map-shell" aria-label="GPS 网格地图">
+    <header class="map-toolbar">
+      <div class="map-title">GPS 网格地图</div>
+      <div class="zoom-group">
+        <button id="zoomIn" class="zoom-btn" title="放大">＋</button>
+        <button id="zoomOut" class="zoom-btn" title="缩小">－</button>
+        <button id="zoomReset" class="zoom-btn" title="复位">⟳</button>
+      </div>
+    </header>
+
+    <div id="viewport" class="map-viewport" title="拖动平移，滚轮缩放">
+      <svg id="mapSvg" viewBox="-100 -65 240 145" preserveAspectRatio="none">
+        <defs>
+          <pattern id="minorGrid" width="5" height="5" patternUnits="userSpaceOnUse">
+            <path d="M 5 0 L 0 0 0 5" fill="none" class="map-grid-minor"/>
+          </pattern>
+          <pattern id="majorGrid" width="25" height="25" patternUnits="userSpaceOnUse">
+            <rect width="25" height="25" fill="url(#minorGrid)"/>
+            <path d="M 25 0 L 0 0 0 25" fill="none" class="map-grid-major"/>
+          </pattern>
+        </defs>
+        <rect x="-100" y="-65" width="240" height="145" fill="url(#majorGrid)"/>
+
+        <g id="keepInLayer">
+          <polygon class="keep-in" points="-82,-48 -45,-59 33,-57 108,-42 125,42 45,64 -48,57 -86,22"/>
+          <text x="-74" y="-50" class="keep-in-label">营区边界</text>
+        </g>
+        <g id="alarmLayer">
+          <polygon class="alarm-region" points="38,-35 74,-42 93,-20 80,2 42,-3"/>
+          <text x="43" y="-37" class="alarm-label">报警区域</text>
+        </g>
+
+        <g id="keypointLayer">
+          <g class="keypoint recorded"><circle cx="-35" cy="15" r="3"/><text x="-30" y="14">中央集合点</text></g>
+          <g class="keypoint unrecorded"><circle cx="74" cy="21" r="3"/><text x="79" y="20">东门入口</text></g>
+          <g class="keypoint recorded"><circle cx="-5" cy="-31" r="3"/><text x="0" y="-32">充电站</text></g>
+        </g>
+
+        <g id="recordedRouteLayer">
+          <polyline class="recorded-route" points="-48,46 -39,43 -30,41 -20,38 -10,35 1,32 12,31 25,29 38,26 49,23"/>
+        </g>
+        <g id="trajectoryLayer">
+          <polyline class="realtime-trajectory" points="-48,46 -39,43 -30,42 -20,39 -10,36 1,34 12,35 25,32 38,28 49,23"/>
+          <polygon class="robot-arrow" points="49,18.5 46.8,25.5 49,24 51.2,25.5"/>
+          <circle class="alarm-dot" cx="63" cy="-10" r="2.4"/>
+          <text x="67" y="-11" class="alarm-event-label">报警事件 10:32</text>
+        </g>
+      </svg>
+
+      <!-- 左上角：图例；指北针紧接在图例下方 -->
+      <div class="map-overlay legend">
+        <div class="legend-row"><i class="legend-mark recorded-route-mark"></i><span>已录制轨迹</span></div>
+        <div class="legend-row"><i class="legend-mark realtime-route-mark"></i><span>实时行走轨迹</span></div>
+        <div class="legend-row"><i class="legend-mark fence"></i><span>营区边界</span></div>
+        <div class="legend-row"><i class="legend-mark alarm"></i><span>报警区域</span></div>
+      </div>
+
+      <div class="map-overlay compass" title="地图指北针">
+        <span class="compass-n">N</span>
+        <span class="compass-arrow">▲</span>
+      </div>
+
+      <!-- 最右上角：当前计划 -->
+      <section class="map-overlay current-plan" aria-label="当前计划显示">
+        <div class="plan-window-title">当前计划</div>
+        <article class="robot-plan running-plan">
+          <div class="robot-plan-header"><strong>GJ-001</strong><span class="plan-state running">执行中</span></div>
+          <div class="robot-plan-name">营区日常巡检</div>
+          <div class="dispatch-time"><span>下发时间</span><time>2026-08-02 10:00:12</time></div>
+          <div class="target-title">巡检目标点</div>
+          <ol class="target-list">
+            <li class="finished"><i>✓</i><span>中央集合点</span></li>
+            <li class="finished"><i>✓</i><span>充电站</span></li>
+            <li class="current"><i>3</i><span>西门入口</span></li>
+          </ol>
+          <div class="robot-plan-result"><span>已巡检 <strong>2 / 3</strong></span><span class="result-ok">无异常</span></div>
+        </article>
+        <article class="robot-plan completed-plan">
+          <div class="robot-plan-header"><strong>GJ-002</strong><span class="plan-state completed">已完成</span></div>
+          <div class="robot-plan-name">东区专项巡检</div>
+          <div class="dispatch-time"><span>下发时间</span><time>2026-08-02 10:05:30</time></div>
+          <div class="target-title">巡检目标点</div>
+          <ol class="target-list">
+            <li class="finished"><i>✓</i><span>东门入口</span></li>
+            <li class="finished"><i>✓</i><span>瞭望塔</span></li>
+          </ol>
+          <div class="robot-plan-result"><span>已巡检 <strong>2 / 2</strong></span><span class="result-warning">1 项告警</span></div>
+        </article>
+      </section>
+
+      <div class="map-overlay coord">
+        <strong>GPS</strong> 31.230400°N · 121.473700°E<br>
+        <strong>ENU</strong> E 49.0m · N -23.0m　航向 92.5°　速度 0.6m/s
+      </div>
+    </div>
+
+    <footer class="map-footer">
+      <span class="mode-text">GPS 导航模式</span>
+      <span class="gps-state"><i class="dot ok"></i>RTK Float</span>
+      <span>精度 <strong>0.3m</strong></span>
+      <span>地图基准 <strong>WGS84 / ENU</strong></span>
+      <span>缩放 <strong id="zoomText">1.0x</strong></span>
+      <span class="scale">网格 5m / 25m</span>
+    </footer>
+  </section>
+</main>
+
+<script>
+const viewport = document.getElementById('viewport');
+const svg = document.getElementById('mapSvg');
+let zoom = 1;
+let pan = {x: 0, y: 0};
+let dragging = false;
+let dragStart = null;
+function applyView() {
+  svg.style.transform = `translate(${pan.x}px,${pan.y}px) scale(${zoom})`;
+  document.getElementById('zoomText').textContent = `${zoom.toFixed(1)}x`;
+}
+document.getElementById('zoomIn').onclick = () => { zoom = Math.min(2.8, zoom + .2); applyView(); };
+document.getElementById('zoomOut').onclick = () => { zoom = Math.max(.65, zoom - .2); applyView(); };
+document.getElementById('zoomReset').onclick = () => { zoom = 1; pan = {x:0, y:0}; applyView(); };
+viewport.addEventListener('wheel', event => {
+  event.preventDefault();
+  zoom = Math.max(.65, Math.min(2.8, zoom + (event.deltaY < 0 ? .12 : -.12)));
+  applyView();
+}, {passive:false});
+viewport.addEventListener('mousedown', event => {
+  dragging = true;
+  dragStart = {x:event.clientX-pan.x, y:event.clientY-pan.y};
+  viewport.classList.add('dragging');
+});
+window.addEventListener('mousemove', event => {
+  if (!dragging) return;
+  pan = {x:event.clientX-dragStart.x, y:event.clientY-dragStart.y};
+  applyView();
+});
+window.addEventListener('mouseup', () => { dragging = false; viewport.classList.remove('dragging'); });
+applyView();
+</script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: hotwords.txt
+# Brief: Hotword vocabulary biasing the ASR decoder toward this system's spoken commands.
+#
+# Format: one phrase per line, written naturally (no spaces needed). Blank lines and
+# lines starting with "#" are ignored. core/hotwords.py normalizes each phrase into the
+# per-character form sherpa-onnx expects, so this file stays readable and reviewable.
+#
+# What belongs here: short phrases a person actually says to the robot in 功能1 near-field
+# dialogue, plus proper nouns the model has no reason to know. What does NOT belong here:
+# ordinary conversational words -- every listed phrase raises the chance of a false hit on
+# audio that never contained it, so the vocabulary is kept deliberately small and specific.
+
+# --- 运动控制 ---
+前进
+后退
+左转
+右转
+停止
+站起
+趴下
+原地待命
+跟随我
+慢一点
+快一点
+
+# --- 巡逻与任务 ---
+开始巡逻
+结束巡逻
+继续巡逻
+返回充电
+返航
+回到原点
+录制路径
+沿路径巡逻
+一号路径
+二号路径
+拍照
+录像
+
+# --- 三合一载荷 ---
+打开探照灯
+关闭探照灯
+调高亮度
+调低亮度
+打开警灯
+关闭警灯
+红蓝爆闪
+开始驱离
+停止驱离
+开始喊话
+停止喊话
+音量调大
+音量调小
+打开麦克风
+关闭麦克风
+开始对讲
+结束对讲
+
+# --- 场景与专有名词 ---
+哈船智能
+警戒区域
+立即离开
+有人闯入
+一切正常
