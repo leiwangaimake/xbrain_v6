@@ -75,12 +75,20 @@ CLEAN_LINTS = [
      "no create_task, put_nowait, await or direct publish inside a resolved "
      "Zenoh subscriber callback under xbrain/, ros2_ws/ or services/, the "
      "static half of CLAUDE.md 4.2 (CFG-CM-17)"),
+    # Added with CHK-2-26. Its zero means the enforce_ordering safety-bypass
+    # switch 15 S12 removed has not reappeared in configs/ or xbrain/; the lint
+    # carries its own --self-test with the injection mutation.
+    ("no_disabled_switch.py",
+     "no enforce_ordering (a removed safety-ordering-bypass switch, 15 S12) in "
+     "any configs/**/*.yaml or xbrain/**/*.py, the static half of CLAUDE.md 3.6 "
+     "(CHK-2-26)"),
 ]
 
 #: Lints that also ship a --self-test. Running it here keeps the probes honest;
 #: a self-test nobody invokes rots exactly as fast as a lint nobody invokes.
 SELF_TESTED = ["comment_ratio.py", "no_config_source_read.py", "clock_scan.py",
-               "no_literal_ecode.py", "zenoh_callback_scan.py"]
+               "no_literal_ecode.py", "zenoh_callback_scan.py",
+               "no_disabled_switch.py"]
 
 
 def run_lint(script, *args):
