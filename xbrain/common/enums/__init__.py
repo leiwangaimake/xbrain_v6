@@ -21,85 +21,261 @@ motion the operator did not ask for.
 attribution priority (estop wins over everything) and stop_reason's order is the
 decision order of 11 S9.12.2. Losing the order silently changes which cause gets
 reported, so the metatest checks sequence for those two, not just membership.
+
+
+Why the values are not typed into this file
+-------------------------------------------
+They live in sets.yaml, generated from 11 and compared back against 11 by
+tests/common/test_closed_sets.py. Were the values literals in this module, the
+metatest would be comparing the contract against one person's transcription of
+the contract, and a shared typo would read as agreement. Keeping the data in a
+separate file also keeps a contract change reviewable: one yaml block moves, no
+Python is touched, and the diff shows the set changing rather than logic
+changing around it.
+
+Why the sets are built at import time
+-------------------------------------
+_load() runs on import, so a malformed sets.yaml kills the process during
+startup instead of at the first boundary decode. That placement is deliberate.
+The consumer it matters most for is p1_motion, where CLAUDE.md 4.4 requires a
+raise inside the 20 Hz loop to be absorbed as a zero-speed tick plus a fault --
+so a broken enum file first touched from there would present as a robot that
+will not move, with a per-tick fault, rather than as a process that refused to
+start. Failing at import puts the failure where a human is still watching it.
+
+What this module deliberately does NOT do
+-----------------------------------------
+  * It does not hold the E_* error codes. Those are xbrain/common/errors/, kept
+    apart because an error code carries four elements (name, meaning,
+    retryability, required detail keys) that none of these sets have. Do not
+    merge the two loaders to save code: the shapes are not the same.
+  * It does not know who owns a value. That the ptz and payload_light domains
+    are arbitrated by p2_core is arbitration policy and lives in p2_core; this
+    table only says which domain names exist.
+  * It does not validate combinations. A key is assembled as
+    xbrain/{robot_id}/{plane}/{domain}/{name}; parse() accepts "rt", accepts
+    "ptz", and has no opinion on whether that pair names a legal key. Whole-key
+    legality belongs to the transport layer, and a caller expecting this module
+    to reject a nonsensical pair gets no signal that it did not.
+  * It does not alias, normalise or case-fold. There is no legacy-to-current
+    mapping table here and none may be added: an alias table is "degrade the
+    unknown value to something close" written with extra steps, which is what
+    11 S13.6 forbids by name.
+  * It does not decide anything about a value it validated. Which limiter wins,
+    which stop_reason is reported this tick -- those are p1_motion's, and they
+    only borrow the ORDER defined here.
+
+A note on the docstrings below
+------------------------------
+They are one-liners, and the reasoning sits in comment blocks above each
+definition instead. That is not a style preference: the reasoning is about why
+the code is shaped this way, which is maintainer material rather than something
+a caller reading help() needs.
 """
 
 import os
 from typing import Dict, FrozenSet, List, Tuple
 
+# ClosedSetViolation is defined with the error hierarchy rather than here, so a
+# caller catches one exception type for the whole common/ family. It is
+# re-exported in __all__ for the same reason: a module that validates values
+# should not force its callers to import a second package to catch the failure.
 from ..errors.exceptions import ClosedSetViolation
 
+# Path derived from __file__, not from the configuration root. These values are
+# the contract itself, not tunable configuration: they must not be reachable
+# under /opt/xbrain_v6/configs/ where an operator could edit them, and they must
+# not travel through the resolved-artifact path in /run/xbrain/resolved/ that
+# CLAUDE.md 3.6 defines for configuration. A closed set an operator can widen is
+# not a closed set.
+#
+# abspath wraps __file__ before dirname is taken, not the joined result. Python
+# has made __file__ absolute since 3.9, so on the supported interpreters this is
+# belt and braces; it stays because the failure it covers -- a relative __file__
+# resolving against whatever cwd the unit was started in -- is a file-not-found
+# at import in every process at once, and the guard costs one call.
 _YAML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sets.yaml")
 
 
+# ClosedSet -- one set plus the contract location it came from.
+#
+# source, anchor and note travel with the values on purpose. When a value fails
+# validation at run time the first question is what the contract actually says,
+# and 11 runs to tens of thousands of lines; carrying the section and a grep-able
+# anchor turns that question into a single search.
+#
+# * anchor is a literal string to grep for, never a line number. CLAUDE.md 1.1
+# NUM-4 forbids line-number citations because documents shift underneath them: in
+# one review round all three line references had drifted onto a blank line or an
+# unrelated table, while the citing side believed it had checked them.
+#
+# * The instances built at the bottom of this module are process-wide singletons
+# living for the life of the process. __slots__ is what makes a mistyped
+# attribute assignment raise AttributeError instead of quietly creating a new
+# attribute on a shared object that no reader ever consults.
 class ClosedSet:
     """One closed set, with the contract location it was generated from."""
 
     __slots__ = ("name", "source", "anchor", "note", "ordered", "_values", "_frozen")
 
+    # Every field is injected; nothing is defaulted in the signature. That is
+    # CLAUDE.md 3.1 applied beyond the safety parameters it names: a default here
+    # would let a set construct itself with an empty value list and an ordered
+    # flag nobody set, and the resulting object looks valid from the outside.
     def __init__(self, name: str, source: str, anchor: str, note: str,
                  ordered: bool, values: List[str]):
         self.name = name
         self.source = source
         self.anchor = anchor
         self.note = note
+        # Whether an order exists is a property of the SET, decided by the shape
+        # of the contract table, so it is recorded once here and consulted by
+        # index(). The alternative -- each call site deciding for itself whether
+        # the order it is reading means anything -- is how an unordered set
+        # acquires an accidental priority.
         self.ordered = ordered
+        # Two representations, both immutable, both needed. The tuple preserves
+        # contract order, which IS the priority for the ordered sets; the
+        # frozenset gives parse() an O(1) membership test, and parse() sits on
+        # every boundary decode including the 20 Hz path. Deriving one from the
+        # other at call time would trade that constant-time check away for
+        # nothing.
         self._values = tuple(values)
         self._frozen = frozenset(values)
 
+    # A tuple, and a property with no setter: every importer inside the process
+    # shares this one object, so returning something mutable would let any single
+    # module reorder the attribution priority for all the others.
+    #
+    # For an unordered set the sequence is merely the order the contract table
+    # happened to print in, and reading meaning into it is a mistake. That is
+    # precisely what index() refuses to assist with.
     @property
     def values(self) -> Tuple[str, ...]:
         """In contract order. Meaningful when .ordered is True."""
         return self._values
 
     def __contains__(self, v: object) -> bool:
+        # Membership as a question, for code entitled to ask it: metatests, diffs
+        # against the contract, tooling. NOT for boundary decoding. The shape to
+        # avoid is "if v in SET: use(v)" with no else branch, which is silent
+        # pass-through of the out-of-set case under a different spelling. At a
+        # boundary use parse(), so the violation raises instead of vanishing.
         return v in self._frozen
 
     def __iter__(self):
+        # Contract order, never sorted(). Sorting gate_limiter would place brake
+        # ahead of estop, and a priority table built from the sorted sequence
+        # holds exactly the same strings as the correct one -- so the defect is
+        # invisible to any comparison that checks membership alone. That is why
+        # the metatest asserts sequence for the two ordered sets and not just
+        # set equality.
         return iter(self._values)
 
     def __len__(self) -> int:
+        # Provided so a caller can size a table at run time. The result must
+        # never be copied into a comment or a document (CLAUDE.md 3.7): counts of
+        # exactly this kind have already gone stale inside the contract itself.
         return len(self._values)
 
+    # parse -- the boundary validator. Use it wherever a value arrives from
+    # outside this process.
+    #
+    # !! Never add a fallback here. 11 S13.6 forbids both silent pass-through and
+    # degrading to a nearby value; either one hides a contract violation behind
+    # something that looks like normal operation.
+    #
+    # This is a validator, not a normaliser. It does not strip whitespace, fold
+    # case or repair separators, and it must not learn to: the wire spellings in
+    # 11 are exact, and a tolerant parser lets two spellings of one value coexist
+    # across processes right up until the day they have to match each other.
+    #
+    # It returns the input unchanged so it can be used inline at the decode site
+    # -- plane = PLANE.parse(msg["plane"]) -- which welds the check to the
+    # assignment instead of leaving a separate check that a later edit can drop
+    # without the assignment noticing.
     def parse(self, v: str) -> str:
-        """Return v if it is in the set, else raise.
-
-        !! Never add a fallback here. 11 S13.6 forbids both silent pass-through
-        and degrading to a nearby value; either one hides a contract violation
-        behind something that looks like normal operation.
-        """
+        """Return v if it is in the set, else raise ClosedSetViolation."""
         if v not in self._frozen:
             raise ClosedSetViolation(self.name, v)
         return v
 
+    # index -- position in contract order, which for gate_limiter IS the
+    # attribution priority.
+    #
+    # It raises on an unordered set rather than returning a meaningless number:
+    # a caller asking for the priority of a plane has misunderstood something,
+    # and a silent answer would let that misunderstanding propagate into whatever
+    # comparison the caller was about to make.
+    #
+    # Lower is stronger. gate_limiter holds estop at position zero and the none
+    # sentinel last, so "nothing limited this tick" can never outrank a real
+    # limiter in attribution. stop_reason is the mirror image: none leads because
+    # it means not stopped, and the rest follow the decision order of 11 S9.12.2.
+    #
+    # Indices compare only within one set. A gate_limiter index measured against
+    # a stop_reason index is meaningless, and nothing here can catch it, because
+    # both are plain ints.
+    #
+    # parse() runs first so an unknown value raises ClosedSetViolation instead of
+    # the bare ValueError tuple.index would produce. An off-contract value has to
+    # report as the same type here as it does at every other boundary; a
+    # ValueError would slip past the handler written for the closed-set case.
+    #
+    # ValueError, not ClosedSetViolation, for the unordered case: the value is
+    # fine, the question is wrong. Reporting it as a closed-set violation would
+    # send whoever reads the log looking for a bad value that does not exist.
     def index(self, v: str) -> int:
-        """Position in contract order -- the priority for gate_limiter.
-
-        Raises on an unordered set rather than returning a meaningless number:
-        a caller asking for the priority of a plane has misunderstood something,
-        and a silent answer would let that misunderstanding propagate.
-        """
+        """Position in contract order. Raises unless the set is ordered."""
         if not self.ordered:
             raise ValueError(f"closed set {self.name!r} carries no meaningful order")
         return self._values.index(self.parse(v))
 
 
+# _load -- parse sets.yaml without a yaml dependency.
+#
+# This package is imported by every runtime process, including ones that start
+# before any virtualenv is guaranteed, so it deliberately has no third-party
+# imports. It raises on any line it does not recognise rather than skipping it: a
+# loader that skips silently shrinks the closed set, which is the exact failure
+# this module exists to prevent. That is not hypothetical -- the generator for
+# this file first dropped nine of task_state's twelve values because its row
+# filter treated an empty leading cell as a separator row.
+#
+# Strictness is the second reason for hand-parsing, and it outlives the first: a
+# real yaml loader accepts input this file must not tolerate. A duplicated set
+# name is the clearest case -- YAML resolves it by keeping the last one, so one
+# whole set would be replaced without a word.
+#
+# The grammar accepted is exactly the shape sets.yaml is written in and no more:
+# two-space indent for a set name, four for that set's scalar fields, six for a
+# list item under values:. Indentation carries the entire parser state, which is
+# why anything at an unexpected indent is an error rather than something to guess
+# about. Widening the grammar to be helpful re-opens the skip-silently hole from
+# the other side.
 def _load() -> Dict[str, ClosedSet]:
-    """Parse sets.yaml without a yaml dependency.
-
-    This package is imported by every runtime process, including ones that start
-    before any virtualenv is guaranteed, so it deliberately has no third-party
-    imports. It raises on any line it does not recognise rather than skipping it:
-    a loader that skips silently shrinks the closed set, which is the exact
-    failure this module exists to prevent. That is not hypothetical -- the
-    generator for this file first dropped nine of task_state's twelve values
-    because its row filter treated an empty leading cell as a separator row.
-    """
+    """Parse sets.yaml into ClosedSet objects. Raises on anything unrecognised."""
     out: Dict[str, ClosedSet] = {}
+    # cur accumulates the set currently being read. It is flushed when the NEXT
+    # set name appears, and once more after the loop ends. A streaming parser has
+    # to be told twice, and omitting the second call is how the last set in a
+    # file goes missing -- silently, because every other set still parses.
     cur: Dict[str, object] = {}
+    # Everything above the top-level sets: key is file header and metadata.
     in_sets = False
+    # Raised by a values: line and cleared by the next scalar field, so a list
+    # item can never be attached to whichever set was read last if the file is
+    # rearranged.
     reading_values = False
 
     def flush():
+        # Guarded on cur so the first set name in the file does not flush an
+        # empty accumulator. Absent scalars fall back to empty strings instead of
+        # raising, and that is safe here only because source/anchor/note are
+        # documentation: a set that loses its citation should still load. The
+        # VALUES are the part that must never be defaulted, and structurally they
+        # cannot be -- an empty list makes every parse() of that set raise, which
+        # is loud rather than fail-silent.
         if cur:
             out[cur["name"]] = ClosedSet(
                 str(cur["name"]), str(cur.get("source", "")), str(cur.get("anchor", "")),
@@ -109,6 +285,9 @@ def _load() -> Dict[str, ClosedSet]:
 
     with open(_YAML, encoding="utf-8") as fh:
         for lineno, raw in enumerate(fh, 1):
+            # A whole-line comment is replaced by an empty string rather than
+            # stripped in place, because a comment may contain anything at all --
+            # including text that would read as a set name at two-space indent.
             line = "" if raw.lstrip().startswith("#") else raw.rstrip()
             if not line.strip():
                 continue
@@ -116,10 +295,13 @@ def _load() -> Dict[str, ClosedSet]:
                 in_sets = True
                 continue
             if not in_sets:
+                # Header lines ahead of sets: are skipped, not validated. They are
+                # the five-field file header required by CLAUDE.md 2.5, i.e. prose.
                 continue
             indent = len(line) - len(line.lstrip())
             body = line.strip()
             if indent == 2 and body.endswith(":"):
+                # A new set name terminates the previous one.
                 flush()
                 cur = {"name": body[:-1], "values": []}
                 reading_values = False
@@ -132,36 +314,110 @@ def _load() -> Dict[str, ClosedSet]:
                 if ":" not in body:
                     raise ValueError(f"{_YAML}:{lineno}: unparsable line {body!r}")
                 k, v = body.split(":", 1)
+                # split(":", 1), not split(":"): anchor and note carry contract
+                # prose, where a colon is legal content and only the first one is
+                # the separator. The trailing-comment strip happens here rather
+                # than at the top of the loop because only a scalar line can carry
+                # one, and doing it globally would corrupt any value containing a
+                # hash.
                 v = v.split("#", 1)[0].strip().strip('"')
+                # ordered is compared against the literal "true" and NOT passed to
+                # bool(). bool("false") is True, so a bool() conversion would mark
+                # every set ordered -- including the ones whose sequence is only a
+                # table's typography -- and index() would then hand out priorities
+                # that mean nothing while looking perfectly plausible. flush()
+                # does call bool() on this, which is safe only because the string
+                # was already turned into a real bool right here; do not drop this
+                # ternary on the grounds that flush() converts anyway.
                 cur[k.strip()] = (v == "true") if k.strip() == "ordered" else v
                 continue
             if indent == 6 and reading_values and body.startswith("- "):
+                # A list item. reading_values is part of the condition so that an
+                # item appearing outside a values: block falls through to the
+                # raise below instead of being appended to the wrong field.
                 cur["values"].append(body[2:].strip())  # type: ignore[union-attr]
                 continue
+            # Everything else is an error, deliberately. This is the branch the
+            # first generator lacked: it fell through and continued, which is how
+            # nine task_state values disappeared while the file still loaded and
+            # every test still passed.
             raise ValueError(f"{_YAML}:{lineno}: unexpected line {line!r}")
+    # The second flush, for the last set in the file. See the note on cur above.
     flush()
+    # An empty parse is a failure, not an empty library. Without this the module
+    # would import cleanly and every lookup below would raise KeyError at first
+    # use, a long way from the cause. It also blocks the degenerate case an empty
+    # sets.yaml would create: a package that exports nothing and therefore never
+    # rejects anything, because nothing ever calls it.
     if not out:
         raise ValueError(f"{_YAML}: no sets parsed")
     return out
 
 
+# Built at import. See "Why the sets are built at import time" in the module
+# docstring: a broken sets.yaml has to stop the process at startup rather than
+# surface later as a fault inside a control tick.
 _SETS: Dict[str, ClosedSet] = _load()
 
 #: Names of every closed set defined here. !! Never write the count (3.7).
+# The metatest asserts this equals its own extractor table, so a set added to
+# sets.yaml without an extractor cannot slip in uncompared against 11 -- an
+# assertion that covers less than it appears to is CLAUDE.md 3.2 form 1.
 SET_NAMES: FrozenSet[str] = frozenset(_SETS)
 
+# Subscript, not .get(): a renamed or missing set must break the import of every
+# process immediately, with the offending key in the traceback. .get() would hand
+# back None and defer the failure to the first decode, by which time the stack no
+# longer mentions this file.
+#
+# plane -- membership only. NOTE that plane is not transport: the two physically
+#   separate Zenoh routers are a different axis, and nothing in this set says
+#   which router a given plane travels on.
 PLANE = _SETS["plane"]
+# domain -- the arbitration domains. Membership only; which process
+#   arbitrates which domain is p2_core's concern, not this table's.
 DOMAIN = _SETS["domain"]
+# event_category -- grew on 2026-08-05 when ptz and voice were added. That growth
+#   is the change a containment-only check stayed green through, which is why the
+#   metatest now compares both directions of the difference.
 EVENT_CATEGORY = _SETS["event_category"]
+# gate_limiter -- ORDERED. The sequence is the speed-gate attribution priority:
+#   estop first, the none sentinel last. Read it with .index(); never rebuild it
+#   by iterating anything that has been sorted.
 GATE_LIMITER = _SETS["gate_limiter"]
+# stop_reason -- ORDERED. The sequence is the decision order of 11 S9.12.2, with
+#   none leading as the not-stopped sentinel. Exactly one reason is reported per
+#   tick, so this order is what decides which one that is.
 STOP_REASON = _SETS["stop_reason"]
+# task_state -- membership only, and deliberately so. Task state is a graph, not
+#   a line, and the contract's grouping is presentation. index() refuses it,
+#   which is the correct answer to "which state is further along".
 TASK_STATE = _SETS["task_state"]
 
+# ClosedSetViolation is re-exported so a caller catches the failure without also
+# importing common.errors. get and parse_enum are exported for the by-name path
+# used by generic decoders that read the set name out of a schema instead of
+# knowing it when they are written. _SETS and _load stay unexported: the sets are
+# reached through the constants or through get(), so there is one place that
+# turns an unknown name into a raise.
 __all__ = ["ClosedSet", "ClosedSetViolation", "SET_NAMES", "get", "parse_enum",
            "PLANE", "DOMAIN", "EVENT_CATEGORY", "GATE_LIMITER", "STOP_REASON",
            "TASK_STATE"]
 
 
+# get -- look a set up by name, raising on an unknown NAME and not only on an
+# unknown value.
+#
+# The sentinel set name "__set_name__" in the raised violation is how a reader
+# tells the two failures apart in a log. A mistyped SET name and an off-contract
+# VALUE would otherwise read identically, and their fixes differ: one is a bug in
+# our decoder, the other is a peer sending something the contract does not define.
+#
+# KeyError is converted rather than propagated so a bad set NAME leaves this
+# package as the same type a bad VALUE does; index()'s ValueError is the one
+# deliberate exception, and it means something else. `from None` suppresses the
+# KeyError context because the chained traceback adds nothing here and pushes the
+# message that does explain the problem off the top of the report.
 def get(name: str) -> ClosedSet:
     """The set by name. Raises on an unknown set name, not just an unknown value."""
     try:
@@ -170,6 +426,13 @@ def get(name: str) -> ClosedSet:
         raise ClosedSetViolation("__set_name__", name) from None
 
 
+# parse_enum -- the by-name entry point, for decoders that learn which set applies
+# from a schema rather than from the call site.
+#
+# Prefer the module-level constants wherever the set is known at write time:
+# PLANE.parse(v) is checked by the reader and by mypy, parse_enum("plane", v) only
+# at run time, so a typo in the set name surfaces from whichever code path happens
+# to run -- possibly a rare one, possibly on the robot.
 def parse_enum(set_name: str, value: str) -> str:
     """Validate value against the named set. Raises ClosedSetViolation otherwise."""
     return get(set_name).parse(value)
