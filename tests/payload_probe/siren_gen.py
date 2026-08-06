@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a police-style Wail+Yelp siren WAV for the GZH-2 deterrent mode.
 
-Output is 8000 Hz mono 16-bit PCM — the same format the 8519 [42] hail path wants,
+Output is 8000 Hz mono 16-bit PCM -- the same format the 8519 [42] hail path wants,
 so the file streams straight to the robot loudspeaker (it also plays on any speaker).
 
   python3 siren_gen.py --out /tmp/siren.wav --seconds 8 --pattern combo --accent-hz 1.4

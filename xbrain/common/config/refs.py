@@ -19,23 +19,23 @@ The seven rules, each with the contract's own reason:
        schema check downstream then sees the wrong type.
   R-2  paths start with common. only. Cross-process references would turn YAML
        into an implicit IPC channel that breaks when startup order changes.
-  R-3  ★★ NO default syntax -- no ${a:-b}, no ?. Unresolvable is
+  R-3  ** NO default syntax -- no ${a:-b}, no ?. Unresolvable is
        E_CONFIG_INVALID and the stack refuses to start. "Fall back to a default
        when the reference misses" is precisely the silent drift CFG-40 exists to
        kill; making it a syntax feature would institutionalise it.
-  R-4  aliases may nest inside common.*, chain length <= 3, and ★ NO expressions
+  R-4  aliases may nest inside common.*, chain length <= 3, and * NO expressions
        or arithmetic of any kind. A calculator in the loader hides safety logic
        inside a configuration file.
   R-5  list overrides replace the whole table (implemented in merge.py; this
        module asserts the two stay consistent).
-  R-6  ★★ L6 must not carry a `common` top-level key, nor a private key listed in
+  R-6  ** L6 must not carry a `common` top-level key, nor a private key listed in
        the S5.4.5 alias table. The contract calls this the only rule of the seven
        with any teeth -- without it the first five are advice.
-  R-7  ★ YAML anchors & / * may not be used to express sharing. Anchors do not
+  R-7  * YAML anchors & / * may not be used to express sharing. Anchors do not
        cross files while looking like they do, and having two sharing mechanisms
        makes expansion order undefinable.
 
-★★★ R-7 is checked against RAW FILE TEXT, not the parsed tree. Anchors are a YAML
+*** R-7 is checked against RAW FILE TEXT, not the parsed tree. Anchors are a YAML
 syntax feature: by the time a parser hands back a dict they have already been
 resolved and are invisible. A check written against the tree would pass on every
 file that uses them.
@@ -74,7 +74,7 @@ def _rule(n: str, msg: str) -> ReferenceError_:
 def validate_shape(value: str) -> None:
     """The single shape validator for R-1 ~ R-4. Raises naming the rule broken.
 
-    ★★★ One validator, not two. An earlier draft checked R-3 in two places; a
+    *** One validator, not two. An earlier draft checked R-3 in two places; a
     mutation test showed the second copy was unreachable -- the suite stayed
     green with it disabled. A guard that cannot fire is worse than no guard: it
     reads as protection and the next person maintaining it assumes it is
@@ -136,13 +136,13 @@ def resolve(tree: Dict[str, Any]) -> Dict[str, Any]:
     def lookup(path: str, seen: List[str]) -> Any:
         if path in seen:
             # Cycles are CFG-CM-9's job to report in full; here we only refuse to
-            # loop forever. 🚫 Do not return a partial value instead.
+            # loop forever. !! Do not return a partial value instead.
             raise _rule("R-4", f"reference cycle through {path!r} (chain {' -> '.join(seen)})")
         if len(seen) >= MAX_CHAIN:
             raise _rule("R-4", f"alias chain longer than {MAX_CHAIN}: {' -> '.join(seen + [path])}")
         if path not in flat:
             raise _rule("R-3", f"unresolvable reference {path!r} -- E_CONFIG_INVALID. "
-                               "🚫 There is no fallback: refusing to start is the point")
+                               "There is no fallback: refusing to start is the point")
         val = flat[path]
         nxt = classify(val) if isinstance(val, str) else None
         return lookup(nxt, seen + [path]) if nxt else val
@@ -180,7 +180,7 @@ def check_l6(tree: Dict[str, Any], alias_blacklist: Iterable[str]) -> None:
 def check_no_anchors(raw_text: str, where: str = "<config>") -> None:
     """R-7 -- must run on RAW TEXT.
 
-    ★★★ Anchors are resolved by the YAML parser; by the time you hold a dict they
+    *** Anchors are resolved by the YAML parser; by the time you hold a dict they
     are gone. A check written against the parsed tree passes on every file that
     uses them, which makes it worse than no check at all.
     """

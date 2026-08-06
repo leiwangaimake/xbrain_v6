@@ -8,9 +8,9 @@ Brief: Check whether "已合入" patch blocks really have a copy outside themsel
 
 Description:
 Volume 11 was used as a patch queue. Blocks left over from that period carry
-headings like "已合入（合入记录，非现行规范）", which reads as "safe to delete".
+headings like "已合入(合入记录,非现行规范)", which reads as "safe to delete".
 Measured on 2026-08-04: that label is not reliable. The block titled
-"【块 E】插入 —— 11 新增 §9A.13 ... 已合入" spans 4655 lines and contains the ONLY
+"[块 E]插入 ---- 11 新增 §9A.13 ... 已合入" spans 4655 lines and contains the ONLY
 copy of §9A.13 (可疑判定的输入契约, PER-36) -- the text was accepted in place and
 never moved into the numbered body, so deleting the block deletes live contract.
 

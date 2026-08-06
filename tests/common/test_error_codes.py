@@ -10,7 +10,7 @@ This is the whole point of CFG-CM-1. The shared library and the contract are two
 documents maintained by different people at different times; nothing but this
 test keeps them equal.
 
-★★★ The assertion is a SYMMETRIC difference, not containment. One-directional
+*** The assertion is a SYMMETRIC difference, not containment. One-directional
 containment is the shape this project keeps catching: "every code in the library
 appears in the contract" passes happily while the library is missing a code the
 contract added -- which is exactly the E_STORAGE_CORRUPT case from 2026-08-04.
@@ -18,7 +18,7 @@ contract added -- which is exactly the E_STORAGE_CORRUPT case from 2026-08-04.
 Both mutation cases below have been run and both go red (CLAUDE.md 3.3: an
 assertion that has never been red has not been written).
 
-★ Scan surface is asserted, not assumed: the parser reports which S13.x sections
+* Scan surface is asserted, not assumed: the parser reports which S13.x sections
 it found, and a test fails if that set shrinks. A parser that silently stops
 finding a group would make the closed set look smaller and the diff look empty.
 """
@@ -116,7 +116,7 @@ def test_scan_surface_intact():
 
 
 def test_closed_set_symmetric_difference_is_empty():
-    """★★★ The core assertion of CFG-CM-1."""
+    """*** The core assertion of CFG-CM-1."""
     contract, _groups = parse_contract()
     lib = set(errors.ALL_CODES)
     only_contract = sorted(set(contract) - lib)

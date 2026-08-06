@@ -12,7 +12,7 @@ E_* error codes, section headings, constraint IDs -- plus the positive guard
 criteria the docs define for themselves. Run before and after any bulk edit and
 diff the two snapshots: anything that disappears from a closed set is a real
 loss, whereas a change in a raw hit count is not (the docs' own GC-1d rule:
-"数字不等不构成失败，归类出现活体命中才构成失败").
+"数字不等不构成失败,归类出现活体命中才构成失败").
 
 Deliberately extracts from LIVE prose only -- struck spans are excluded, so a
 snapshot taken before pruning is directly comparable to one taken after.
@@ -140,7 +140,7 @@ def diff(a_path, b_path):
     for name in a["headings"]:
         ha, hb = a["headings"][name], b["headings"].get(name, [])
         # Compare on a normalised key. Removing a struck span from inside a heading
-        # changes its literal text ("### ~~编辑 C5-1~~ · X" -> "### · X"), which is a
+        # changes its literal text ("### ~~编辑 C5-1~~ . X" -> "### . X"), which is a
         # rewrite, not a loss -- collapse whitespace and punctuation so the two match.
         def key(h):
             # Strip the level markers too, so a heading that moved between levels

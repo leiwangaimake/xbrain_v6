@@ -37,7 +37,7 @@ def test_defaults_match_documented_values() -> None:
     config = AsrConfig()
     assert config.port_asr == 18081
     assert config.use_int8 is True
-    # ★ 1, and asserted rather than left loose because raising it is actively harmful under
+    # * 1, and asserted rather than left loose because raising it is actively harmful under
     # AIR-P3's CPUAffinity=7: four onnxruntime threads on one shared core measured rtf 0.452
     # against 0.119 at one thread. Someone tuning for throughput would reasonably raise this
     # and make the deployed system 3.7x slower, so the value is pinned by a test.
@@ -62,7 +62,7 @@ def test_default_paths_are_absolute_and_inside_the_service_tree() -> None:
     # measured, and the version directory it resolves to changes on every model bump.
     # What must hold is that it stays inside the service tree (relocatable) and ends at
     # 11 §11A.4.1's `current` symlink rather than at a version -- because §11A.4.1 defines
-    # rollback as 「改软链 + 重启单元」, and a config naming a version directly would turn
+    # rollback as "改软链 + 重启单元", and a config naming a version directly would turn
     # that flip into a code change. Asserting the layout is the point; asserting the name
     # is what made this test fail the first time the layout was built correctly.
     config = AsrConfig()

@@ -21,7 +21,7 @@ from typing import Optional, Sequence
 class XbrainError(Exception):
     """Base for every error this system raises deliberately.
 
-    ★ 11 S8.13.5 is titled "错误映射（网关唯一实现点）" -- mapping a failure onto a
+    * 11 S8.13.5 is titled "错误映射(网关唯一实现点)" -- mapping a failure onto a
     closed-set code is the gateway's job, so AI services returning free-form
     detail are not in violation. Do not push E_* down into services/ to satisfy
     this type; construct it at the gateway instead.
@@ -36,7 +36,7 @@ class XbrainError(Exception):
 class UnknownErrorCode(XbrainError):
     """Raised when a value outside the closed set is used as a code.
 
-    ★★★ 11 S13.6 requires this to raise rather than degrade. Two tempting
+    *** 11 S13.6 requires this to raise rather than degrade. Two tempting
     implementations are both forbidden: passing the unknown value through, and
     mapping it to E_INTERNAL. Either one converts a contract violation into
     something that looks like an ordinary failure, and the cloud client -- which

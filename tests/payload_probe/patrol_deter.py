@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GZH-2 "驱离模式" — intruder deterrent for the robot-dog payload.
+"""GZH-2 "驱离模式" -- intruder deterrent for the robot-dog payload.
 
 Lights (TCP 8529), running continuously:
   * 补光灯/探照灯 : steady ON at max brightness (nighttime illumination).
@@ -7,7 +7,7 @@ Lights (TCP 8529), running continuously:
 
 Audio (TCP 8519), an infinite loop of two phases:
   * Phase A siren : one Wail+Yelp 快慢 cycle streamed to the loudspeaker via [42] Opus 8k.
-  * Phase B voice : male TTS [31] "你已进入管制区域，请立即离开" x3, 1s between, then back to siren.
+  * Phase B voice : male TTS [31] "你已进入管制区域,请立即离开" x3, 1s between, then back to siren.
 
 Light and audio run in separate threads; everything stops together (Ctrl-C or --seconds).
 

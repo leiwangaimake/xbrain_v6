@@ -130,7 +130,7 @@ def test_start_sets_deter_lights_once() -> None:
         # The loop only drives audio, so lights_batches stays at exactly the one arm batch.
         assert link.lights_batches == [
             [
-                # ★ Strobe explicitly OFF and first: 14 GL-2 forbids MSG_STROBE[1] on the
+                # * Strobe explicitly OFF and first: 14 GL-2 forbids MSG_STROBE[1] on the
                 # searchlight, and 14 §4.3.0 requires deter to send [0] rather than merely
                 # not send [1], so a lamp left flashing by something else is cleared.
                 build_strobe(False),

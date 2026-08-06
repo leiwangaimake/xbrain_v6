@@ -12,7 +12,7 @@ Description:
   dev-box number would mean nothing. This script is that measurement, and it must be run
   ON the Orin.
 
-  ★ SCOPE: this script measures the TRANSDUCER family specifically, and pins that family
+  * SCOPE: this script measures the TRANSDUCER family specifically, and pins that family
   explicitly rather than taking the service default. Its second half -- the hotwords ON vs
   OFF comparison -- only means anything on a transducer, because sherpa-onnx offers
   contextual biasing on no other architecture (core/families.py). Run against the current

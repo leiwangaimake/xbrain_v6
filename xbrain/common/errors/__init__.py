@@ -15,7 +15,7 @@ generated from 11 S13.4~S13.15. Nothing is typed twice. The deployed C++ header
 common/errors/errors.h comes from the same file (CFG-CM-3), so the two languages
 cannot drift apart either.
 
-★★★ Out-of-set values raise. 11 S13.6 requires it in so many words: no silent
+*** Out-of-set values raise. 11 S13.6 requires it in so many words: no silent
 pass-through, no "interpret the unknown value as something close". A parser that
 falls back to E_INTERNAL on an unrecognised code turns a contract violation into
 a plausible-looking log line, and the cloud can no longer tell them apart.
@@ -103,7 +103,7 @@ def _load() -> Dict[str, ErrorCode]:
 
 _CODES: Dict[str, ErrorCode] = _load()
 
-#: The closed set itself. 🚫 Never write its size into code or comments (3.7).
+#: The closed set itself. !! Never write its size into code or comments (3.7).
 ALL_CODES: FrozenSet[str] = frozenset(_CODES)
 
 # Bind every code as a module attribute so callers write E_TIMEOUT, not "E_TIMEOUT".

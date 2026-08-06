@@ -8,7 +8,7 @@ Brief: The ${common.*} reference axis, one case per rule R-1 ~ R-7
 Description:
 CFG-CM-8. Each case names its rule and the mutation that turns it red.
 
-★★★ Two cases carry more weight than the rest:
+*** Two cases carry more weight than the rest:
 
   test_r3_has_no_default_syntax
       "fall back to a default when the reference misses" is the silent drift
@@ -59,7 +59,7 @@ def test_r1_whole_node_reference_is_accepted():
     "prefix ${common.a} suffix",
 ])
 def test_r1_string_interpolation_is_rejected(bad):
-    """Mutation: accept a reference anywhere in the string ⇒ red.
+    """Mutation: accept a reference anywhere in the string => red.
 
     Interpolation silently degrades an object or int into a string; the schema
     check downstream then sees the wrong type and the cause is three steps away.
@@ -81,21 +81,21 @@ def test_r2_cross_process_reference_is_rejected():
 
 @pytest.mark.parametrize("bad", ["${common.missing:-2.5}", "${common.missing?}"])
 def test_r3_has_no_default_syntax(bad):
-    """★★★ Mutation the TODO names: implement ${a:-b} as "fall back to b" ⇒ red."""
+    """*** Mutation the TODO names: implement ${a:-b} as "fall back to b" => red."""
     with pytest.raises(ConfigLayerError) as e:
         refs.resolve(unflatten({"common.x": bad}))
     assert "R-3" in str(e.value)
 
 
 def test_r3_unresolvable_reference_refuses_to_start():
-    """Unresolvable is E_CONFIG_INVALID -- 🚫 never a default, never a None."""
+    """Unresolvable is E_CONFIG_INVALID -- !! never a default, never a None."""
     with pytest.raises(ConfigLayerError) as e:
         refs.resolve(unflatten({"common.x": "${common.nowhere}"}))
     assert e.value.code == "E_CONFIG_INVALID"
     assert "R-3" in str(e.value)
 
 
-# ── R-4 链长 ≤ 3，且无表达式与算术 ───────────────────────────────────────
+# ── R-4 链长 ≤ 3,且无表达式与算术 ───────────────────────────────────────
 
 def test_r4_alias_chain_within_limit_resolves():
     tree = unflatten({"common.a": 5, "common.b": "${common.a}", "common.c": "${common.b}"})
@@ -114,7 +114,7 @@ def test_r4_chain_too_long_is_rejected():
 @pytest.mark.parametrize("bad", ["${common.a + common.b}", "${2 * common.a}",
                                  "${common.a/2}"])
 def test_r4_no_arithmetic(bad):
-    """★ The contract's reason: a calculator in the loader hides safety logic
+    """* The contract's reason: a calculator in the loader hides safety logic
     inside a configuration file.
 
     So fence_close_tol_m = 2 x min_dist_m is NOT expressed here -- assertion C
@@ -141,7 +141,7 @@ def test_r5_lists_pass_through_reference_axis_untouched():
     assert refs.resolve(tree)["common"]["qos"]["bindings"] == ["a", "b"]
 
 
-# ── R-6 L6 的两条禁止（契约称其为七条中唯一有执行力的一条）───────────────
+# ── R-6 L6 的两条禁止(契约称其为七条中唯一有执行力的一条)───────────────
 
 def test_r6_l6_may_not_carry_a_common_top_level_key():
     with pytest.raises(ConfigLayerError) as e:
@@ -167,7 +167,7 @@ def test_r6_ordinary_private_keys_are_allowed():
 # ── R-7 锚点必须扫原始文本 ───────────────────────────────────────────────
 
 def test_r7_anchors_are_caught_in_raw_text():
-    """★★★ Mutation: check the parsed tree instead of the text ⇒ red.
+    """*** Mutation: check the parsed tree instead of the text => red.
 
     The parser resolves anchors, so by the time you hold a dict they are gone
     and every file using them looks clean.
@@ -194,7 +194,7 @@ def test_r7_matches_the_real_defect_this_project_had():
         refs.check_no_anchors(real, "12 S12")
 
 
-# ── 顺序：引用轴必须在覆盖轴【之后】 ─────────────────────────────────────
+# ── 顺序:引用轴必须在覆盖轴[之后] ─────────────────────────────────────
 
 def test_reference_axis_sees_the_merged_value_not_the_lower_layer():
     """10 S5.4.3: expand only after L0~L5 finish.

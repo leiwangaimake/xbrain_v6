@@ -11,13 +11,13 @@ task_state. CLAUDE.md 3.5 forbids their literals outside this package for the
 same reason as the error codes -- a value spelled differently in two processes
 compiles, runs, and only surfaces during integration.
 
-★★★ Out-of-set values raise ClosedSetViolation. 11 S13.6 requires it in so many
+*** Out-of-set values raise ClosedSetViolation. 11 S13.6 requires it in so many
 words: no silent pass-through, and no "interpret the unknown value as something
 close". The contract even names the tempting version it forbids -- degrading an
 unrecognised PTZ action to jog -- because that turns a contract violation into
 motion the operator did not ask for.
 
-★ Two of the sets are ORDERED, not just membership: gate_limiter's order is the
+* Two of the sets are ORDERED, not just membership: gate_limiter's order is the
 attribution priority (estop wins over everything) and stop_reason's order is the
 decision order of 11 S9.12.2. Losing the order silently changes which cause gets
 reported, so the metatest checks sequence for those two, not just membership.
@@ -63,7 +63,7 @@ class ClosedSet:
     def parse(self, v: str) -> str:
         """Return v if it is in the set, else raise.
 
-        🚫 Never add a fallback here. 11 S13.6 forbids both silent pass-through
+        !! Never add a fallback here. 11 S13.6 forbids both silent pass-through
         and degrading to a nearby value; either one hides a contract violation
         behind something that looks like normal operation.
         """
@@ -147,7 +147,7 @@ def _load() -> Dict[str, ClosedSet]:
 
 _SETS: Dict[str, ClosedSet] = _load()
 
-#: Names of every closed set defined here. 🚫 Never write the count (3.7).
+#: Names of every closed set defined here. !! Never write the count (3.7).
 SET_NAMES: FrozenSet[str] = frozenset(_SETS)
 
 PLANE = _SETS["plane"]

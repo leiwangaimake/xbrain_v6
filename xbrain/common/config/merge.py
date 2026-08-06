@@ -10,19 +10,19 @@ Description:
 
   map / object   recursive deep merge, later leaf wins; keys an upper layer does
                  not mention keep the lower layer's value
-  list / array   ★ WHOLE-TABLE REPLACEMENT (R-5), never element-wise merge
-  null           ★ "key position declared, value not assigned" -- does NOT
+  list / array   * WHOLE-TABLE REPLACEMENT (R-5), never element-wise merge
+  null           * "key position declared, value not assigned" -- does NOT
                  override the lower layer
   missing        does not participate at all -- semantically different from null,
                  because startup assertion A reports null as "unassigned" and has
                  nothing to report for a key nobody mentioned
 
-★★★ The null/missing distinction is the whole reason this file is separate from
+*** The null/missing distinction is the whole reason this file is separate from
 a three-line dict.update(). 10 S5.4.3 uses it deliberately: common.yaml declares
 enu_origin as null so the site layer can fill it, and assertion A can tell "left
 for the site to fill" apart from "nobody ever thought about this key".
 
-🚫 There is no default-value syntax anywhere in the overlay axis (R-3 forbids
+!! There is no default-value syntax anywhere in the overlay axis (R-3 forbids
 ${a:-b}). A merge that invents a value when none of the layers supplied one is
 the fail-silent path CLAUDE.md 3.1 exists to prevent.
 """

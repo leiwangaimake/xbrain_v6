@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-probe_8529.py — GZH-2 payload · TCP 8529 lights / 红蓝警示 / 抛投钩 probe.
+probe_8529.py -- GZH-2 payload . TCP 8529 lights / 红蓝警示 / 抛投钩 probe.
 
 Frame:   8D | len | MSG_ID | payload[len] | CRC8
          CRC8 = CRC-8/MAXIM (poly 0x31 reflected 0x8C, init 0x00) over len+MSG_ID+payload.
 Controls are NO-REPLY. The device pushes a 0x25 status report ~every 500ms
 (len 0x18 = 24 payload bytes) carrying 探照灯 (B7 on / B6 strobe / B0-B5 brightness)
 and 红蓝警示灯 (0/1). The exact byte offsets inside that 24-byte payload are not
-documented — `status` prints the raw payload and auto-locates the 探照灯 byte by
+documented -- `status` prints the raw payload and auto-locates the 探照灯 byte by
 matching the value we just commanded, so we can pin the offset empirically.
 
-MSG_IDs:  01 light on/off(0/1) · 02 brightness(0-30) · 03 strobe(0/1)
-          04 throw-hook(0/1/2 then 0/1) · 07 red-blue mode(0x00-0x10, 0=off,1-16 patterns)
+MSG_IDs:  01 light on/off(0/1) . 02 brightness(0-30) . 03 strobe(0/1)
+          04 throw-hook(0/1/2 then 0/1) . 07 red-blue mode(0x00-0x10, 0=off,1-16 patterns)
 
 Target: NVIDIA Jetson Orin. Pure stdlib, no external deps.
 Offline dev: `python3 probe_8529.py mock` then point commands at 127.0.0.1.
@@ -44,13 +44,13 @@ MSG_HOOK = 0x04       # payload sel(0/1/2) + on(0/1)
 MSG_REDBLUE = 0x07    # payload 0x00-0x10  (0 off, 1-16 modes)
 STATUS_ID = 0x25
 STATUS_PLEN = 0x18    # 24 payload bytes
-# 0x25 status payload offsets — verified on GZH-2 三合一 real HW:
+# 0x25 status payload offsets -- verified on GZH-2 三合一 real HW:
 LIGHT_OFF = 3        # payload[3] = 探照灯 byte (see light_byte: b7 on / b6 strobe / b0-5 bright)
 REDBLUE_OFF = 4      # payload[4] = 红蓝 mode (0=off, 1-16)
 
 BRIGHT_MAX = 30
 
-# frames verified in the spec (docs/GZH-2_控制协议开发文档.md §7) — CRC ground truth
+# frames verified in the spec (docs/GZH-2_控制协议开发文档.md §7) -- CRC ground truth
 KNOWN_FRAMES = {
     "light on":     "8D 01 01 01 31",
     "light off":    "8D 01 01 00 6F",

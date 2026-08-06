@@ -96,7 +96,7 @@ def test_from_env_overrides_tts_knobs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_estimate_covers_measured_playback() -> None:
-    # ★ The property the whole half-duplex gate rests on: the estimate must EXCEED the
+    # * The property the whole half-duplex gate rests on: the estimate must EXCEED the
     # time the device is actually audible, counted from the moment the request is sent.
     # These four cases are real measurements from 2026-08-03 -- (text, first-audio ms,
     # playback ms) -- and the previous 180/500 defaults failed every multi-word one,
@@ -147,7 +147,7 @@ def test_the_warning_line_splits_into_speakable_segments() -> None:
 
 
 def test_the_mid_sentence_gap_is_shorter_than_the_mic_gate_estimate() -> None:
-    # ★ The regression this exists to catch. Reusing estimate_tts_ms for the mid-sentence
+    # * The regression this exists to catch. Reusing estimate_tts_ms for the mid-sentence
     # gap is the obvious-looking thing to do and it is wrong: that formula floors at
     # tts_est_base_ms and adds tts_est_tail_ms because it must never reopen the microphone
     # early, and on a two-character segment those fixed terms swamp the ~500 ms of speech.

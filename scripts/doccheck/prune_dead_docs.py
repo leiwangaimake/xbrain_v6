@@ -21,8 +21,8 @@ Removes two classes of dead weight from docs/*.md:
             if it were current. The user lifted the rule on 2026-08-04.
 
 Tier 2 needs care because deleting a span can leave dangling connectives:
-  `A ~~old~~ ⇒ B`        -> would become `A  ⇒ B`   (⇒ with no antecedent)
-  `★ ~~原写「X」~~ 作废`  -> would become `★  作废`  (作废 with no subject)
+  `A ~~old~~ => B`        -> would become `A  => B`   (=> with no antecedent)
+  `* ~~原写"X"~~ 作废`  -> would become `*  作废`  (作废 with no subject)
 so the connective is consumed together with the span. Prose that points AT the
 struck text ("见删除线") is rewritten, not silently orphaned.
 
@@ -64,11 +64,11 @@ POINTER_REWRITES = [
 # deletion actually touched -- applying them corpus-wide flattens indentation
 # inside the yaml/json5 blocks (measured: 87597 chars of damage in volume 11).
 CLEANUPS = [
-    (re.compile(r"（★?\s*）"), ""),           # （） / （★ ）
+    (re.compile(r"(*?\s*)"), ""),           # () / (* )
     (re.compile(r"「\s*」"), ""),
     (re.compile(r"\(\s*\)"), ""),
     (re.compile(r"[ \t]{2,}"), " "),           # collapsed runs of spaces
-    (re.compile(r"★\s+(?=[·、，。])"), ""),     # ★ left in front of punctuation
+    (re.compile(r"*\s+(?=[.,,.])"), ""),     # * left in front of punctuation
     (re.compile(r"[ \t]+$"), ""),              # trailing whitespace
 ]
 
@@ -104,7 +104,7 @@ def has_copy_outside(text, start, end, head):
     """True if every section this heading claims to have merged exists outside the span.
 
     The "已合入" label is not trustworthy on its own. Measured 2026-08-04: the block
-    "【块 E】... 新增 §9A.13 ... 已合入（合入记录，非现行规范）" spans 629 lines and holds
+    "[块 E]... 新增 §9A.13 ... 已合入(合入记录,非现行规范)" spans 629 lines and holds
     the ONLY copy of §9A.13 / §9A.14 -- the text was accepted where it was written and
     never moved into the numbered body. Checking "does §9A.13 exist?" over the whole
     file passes on the copy inside the block itself, which is the criterion being

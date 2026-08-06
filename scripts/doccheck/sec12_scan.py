@@ -56,8 +56,8 @@ _SP8_CACHE = {}
 def sp8_values(docs_dir):
     """Legal {profile: speeds} read from the contract, never hardcoded.
 
-    SP-8 defines its own value set verbatim: "合法值集（从 §9.6.1 档位表与 json5
-    读入，不得硬编码）… 即区间下界（= up_enter_mps）与 max_mps 两值". Until
+    SP-8 defines its own value set verbatim: "合法值集(从 §9.6.1 档位表与 json5
+    读入,不得硬编码)... 即区间下界(= up_enter_mps)与 max_mps 两值". Until
     2026-08-05 this function was a hardcoded dict whose comment claimed it was
     "cross-checked against the document at run time" -- the cross-check did not
     exist. Both the comment and scan_manifest's "禁硬编码" were describing a
@@ -119,7 +119,7 @@ def closed_error_codes(docs_dir):
 
     The code sits in the first cell of each row of the §13.4-§13.15 tables, but the
     cell is not bare: it carries backticks and sometimes a trailing note, e.g.
-    "| `E_PROTO_VERSION`<br>（历史命名） | ...". Matching a whole-cell pattern finds
+    "| `E_PROTO_VERSION`<br>(历史命名) | ...". Matching a whole-cell pattern finds
     nothing, which silently turns EC-2 into "every code is out of set".
     """
     if docs_dir in _CODE_CACHE:

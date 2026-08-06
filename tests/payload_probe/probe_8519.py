@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-probe_8519.py — GZH-2 payload · TCP 8519 audio-protocol probe (Step-1 bring-up).
+probe_8519.py -- GZH-2 payload . TCP 8519 audio-protocol probe (Step-1 bring-up).
 
 Resolves the three blocking unknowns before wiring up the xbrain_v6 voice loop
 (ref: docs/GZH-2_控制协议开发文档.md):
@@ -135,7 +135,7 @@ def decode_opus_packets(packets, fs):
 
 
 def tone_pcm(fs, seconds, f0=440.0, f1=None, amp=0.30):
-    """Mono int16 sine (or f0->f1 sweep) — an unmistakable audible test signal."""
+    """Mono int16 sine (or f0->f1 sweep) -- an unmistakable audible test signal."""
     n = int(fs * seconds)
     f1 = f0 if f1 is None else f1
     buf = array("h", bytes(2 * n))
@@ -492,7 +492,7 @@ def cmd_duplex(args):
         rt.start()
         time.sleep(win)
 
-        # phase B — stream hail while still reading uplink
+        # phase B -- stream hail while still reading uplink
         hstart = time.monotonic()
         i = 0
         while time.monotonic() - hstart < win and not dropped.is_set():

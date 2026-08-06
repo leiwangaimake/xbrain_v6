@@ -193,7 +193,7 @@ class AiRuntimeConfig:
     # exactly 0.0 makes repeated identical questions produce identical wording, which reads
     # as a recording rather than a reply.
     llm_temperature: float = 0.3
-    # ★ Constrains FORM ONLY -- how long the reply may be and what characters may appear in
+    # * Constrains FORM ONLY -- how long the reply may be and what characters may appear in
     # it -- and says nothing about who the robot is or how it should behave.
     #
     # That split is deliberate. The original value here was empty, on the reasoning that
@@ -212,11 +212,11 @@ class AiRuntimeConfig:
     #   reply_max_chars back into the backstop it was written to be.
     #
     #   Spoken form. This text is not displayed, it is handed to the device's TTS and read
-    #   aloud verbatim. The model's default markdown -- "1. **信息查询**：" -- is spoken as
+    #   aloud verbatim. The model's default markdown -- "1. **信息查询**:" -- is spoken as
     #   punctuation and asterisks. That is a plumbing fact about the output path, not a
     #   style preference.
     #
-    # ⚠️ This is the CONVERSATIONAL path, which is a different call from 16 §6.3.1's system
+    # ! This is the CONVERSATIONAL path, which is a different call from 16 §6.3.1's system
     # layer: that one drives the intent parser and asks for a JSON envelope, so the two
     # prompts do not compete. Note also that 00 CMD-40 and CMD-50 say V6 should not ship
     # free-form LLM chat at all -- answers come from templates over real state, and small
@@ -317,12 +317,12 @@ class AiRuntimeConfig:
     vad_start_ms: int = 120
     # Trailing silence that ends an utterance.
     #
-    # ★★ This is the single largest term in the voice loop AND the only one that does no
+    # ** This is the single largest term in the voice loop AND the only one that does no
     # work -- it is time spent proving the speaker stopped. At 500 ms it was ~31% of a
     # measured 1620 ms audio-in-to-audio-out loop, larger than ASR (360) or the whole LLM
     # reply (312). Lowering it is worth more than any other tuning available.
     #
-    # ★ 300, measured. The floor under this value is the longest silence a speaker leaves
+    # * 300, measured. The floor under this value is the longest silence a speaker leaves
     # IN THE MIDDLE of a command -- go below that and the endpointer fires early, splitting
     # one utterance into two. Run over the 59 real human recordings with THIS detector
     # (silero, reset per file), the longest intra-utterance pause was:
@@ -333,14 +333,14 @@ class AiRuntimeConfig:
     # So 500 had no evidence under it and 300 costs nothing on this corpus, while returning
     # 200 ms of pure latency.
     #
-    # ⚠️★★ What that corpus does NOT establish, stated plainly because the number looks
+    # !** What that corpus does NOT establish, stated plainly because the number looks
     # safer than it is:
     #   - It is ONE speaker reading prompts. Field speech has hesitations (前进...呃...三米)
     #     that read-aloud speech does not.
     #   - 99 Q-U53-3 has this parameter open and marked 阻塞验收, with V5's measured 750 ms
-    #     on record and the instruction 「现场若误切句则调回 750 ms」.
-    #   - ★★★ Truncation is NOT uniformly safe. 「停止前进」 clipped to 「停止」 is harmless;
-    #     「前进三米」 clipped to 「前进」 is an UNBOUNDED forward command. Mid-command
+    #     on record and the instruction "现场若误切句则调回 750 ms".
+    #   - *** Truncation is NOT uniformly safe. "停止前进" clipped to "停止" is harmless;
+    #     "前进三米" clipped to "前进" is an UNBOUNDED forward command. Mid-command
     #     truncation must therefore be an explicit check item in the field acoustic test,
     #     not something inferred from an aggregate split rate.
     #
@@ -350,7 +350,7 @@ class AiRuntimeConfig:
     # exactly the consonant that distinguishes 前进 from 前近 -- would be missing from what
     # ASR receives, because those frames were consumed proving that speech had begun.
     #
-    # ★ CALIBRATED 2026-08-03. The planned 300 ms was far too short, and the symptom was
+    # * CALIBRATED 2026-08-03. The planned 300 ms was far too short, and the symptom was
     # unmistakable once looked for: a live 功能1 session heard 你好 as 好 and 你能做什么 as
     # 能做什么, and replaying the 59 human recordings through this very segmenter reproduced
     # it on 43 of them -- 退出广播 -> 出广播, 重启系统 -> 启系统, 不对 -> 对 -- while the
@@ -361,7 +361,7 @@ class AiRuntimeConfig:
     #     300 ms  27%      500 ms  95%      800 ms  98%
     #     400 ms  88%      600 ms  95%     1000 ms  97%
     #
-    # ★★ Why 800 and not the smallest value that works: the failure is asymmetric in the
+    # ** Why 800 and not the smallest value that works: the failure is asymmetric in the
     # same way 16 §4.1 describes for the estop path. An over-long preroll makes the
     # recognizer occasionally append a syllable (急停 -> 急停嗯), which costs nothing --
     # the bypass matcher does a SUBSTRING search, so 急停 is still found. A short preroll
@@ -373,7 +373,7 @@ class AiRuntimeConfig:
     # measured RTF of 0.043. It adds NO response latency -- the preroll is audio already
     # captured, so the trigger fires at the same instant either way.
     #
-    # ⚠️ The knob is not monotone: 1000 ms scored slightly worse than 800, because leading
+    # ! The knob is not monotone: 1000 ms scored slightly worse than 800, because leading
     # silence is itself something these models will invent text from. Do not raise it
     # further without re-running the sweep.
     vad_preroll_ms: int = 800

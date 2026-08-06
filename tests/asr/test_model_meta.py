@@ -3,7 +3,7 @@
 core/model_meta.py sits on two hot paths with opposite failure preferences, and both are
 easy to get wrong in the same edit:
 
-  * 11 §11A.7 calls model.version 「换模型后金标集回归失败时唯一能对上的线索」. A
+  * 11 §11A.7 calls model.version "换模型后金标集回归失败时唯一能对上的线索". A
     fabricated version -- "unknown", "0.0.0", the directory name -- would satisfy every
     schema check and send the next person chasing a build that was never made. So every
     test below that supplies a broken sidecar asserts None, not a placeholder.
@@ -50,7 +50,7 @@ def test_missing_sidecar_yields_none(tmp_path) -> None:
 
 
 def test_malformed_sidecar_yields_none_rather_than_raising(tmp_path) -> None:
-    # ★ The health-probe half of the contract. Truncated JSON is what a half-finished
+    # * The health-probe half of the contract. Truncated JSON is what a half-finished
     # deploy leaves behind, and it must degrade to "unknown version", never to a 500 that
     # 11 §11A.5.1 reads as `fail`.
     _write(tmp_path, '{"version": "1.0.0"')
@@ -58,7 +58,7 @@ def test_malformed_sidecar_yields_none_rather_than_raising(tmp_path) -> None:
 
 
 def test_a_sidecar_without_a_usable_version_yields_none(tmp_path) -> None:
-    # ★ The anti-fabrication half. Each of these is a plausible sidecar that carries no
+    # * The anti-fabrication half. Each of these is a plausible sidecar that carries no
     # version, and each must produce None rather than a stand-in derived from what IS
     # present -- name, kind and quant are all tempting and all wrong.
     for payload in ('{"name": "paraformer-zh-2023-09", "kind": "asr"}',  # absent
@@ -85,7 +85,7 @@ def test_hash_is_stable_and_tracks_content(tmp_path) -> None:
 
 
 def test_a_byte_moved_between_files_changes_the_hash(tmp_path) -> None:
-    # ★ This is why hash_files frames each file with its name and length instead of just
+    # * This is why hash_files frames each file with its name and length instead of just
     # concatenating bytes. A multi-file export (encoder/decoder/joiner) whose parts came
     # from different builds is exactly the mismatch this check exists to catch, and a
     # plain concatenation would hash both arrangements identically.
@@ -109,7 +109,7 @@ def test_order_is_significant(tmp_path) -> None:
 
 
 def test_an_unreadable_file_yields_none_rather_than_a_partial_hash(tmp_path) -> None:
-    # ★ Returning a digest computed over the files that COULD be read would be a digest of
+    # * Returning a digest computed over the files that COULD be read would be a digest of
     # something that is not the model, and it would compare unequal to the manifest for a
     # reason ("a file is missing") the value itself cannot express. None says "cannot
     # answer", which is the truth.

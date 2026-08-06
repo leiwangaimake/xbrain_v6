@@ -135,9 +135,9 @@ def self_test():
         ("J → A → B → C → D → E", True),
         ("`J` → `A` → `M` → `B` → `C`", True),
         ("**J** -> **A** -> **B** -> **C** -> **D**", True),
-        ("J → A → B → C", False),    # four letters: below threshold on purpose
-        ("J → A", False),            # one link is not an enumeration
-        ("J → A → … → I → K", False),  # ellipsis breaks the chain
+        ("J -> A -> B -> C", False),    # four letters: below threshold on purpose
+        ("J -> A", False),            # one link is not an enumeration
+        ("J -> A -> ... -> I -> K", False),  # ellipsis breaks the chain
         ("see section A and section B", False),
     ]
     caught = 0

@@ -9,7 +9,7 @@ Brief: Add visible line-level SEC-12 exemption markers, one justified line at a 
 Description:
 After the invented implicit exemption was removed from sec12_scan.py on 2026-08-04,
 44 real violations surfaced. Most are prose that quotes a superseded value in order
-to say it is superseded ("原文：patrol 5 m/s ... U54 已改判") -- those are history,
+to say it is superseded ("原文:patrol 5 m/s ... U54 已改判") -- those are history,
 not live transcription, and the package's own mechanism for them is a marker written
 ON the line so any reader can see the line was excused.
 

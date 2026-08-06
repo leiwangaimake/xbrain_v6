@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-布控球方向键控制 —— 键盘直接操控 X/Y 轴云台。
+布控球方向键控制 ---- 键盘直接操控 X/Y 轴云台.
 
-  ← →     X 轴 左转 / 右转 (pan)
+  ← ->     X 轴 左转 / 右转 (pan)
   ↑ ↓     Y 轴 上仰 / 下俯 (tilt)
   按住即持续转, 松开自动停
 
@@ -14,12 +14,12 @@
   q       退出 (退出前必定发 Stop)
 
 为什么走 ONVIF: 该机 LAPI 944 个端点里没有连续点动接口, 绝对定位在 PELCO-D
-外置云台下是空操作(返回成功但不动), 位置回读恒为假值 (180,0)。ONVIF
-ContinuousMove 是唯一可用的点动原语。认证必须是 WS-Security PasswordDigest
-且不能叠加 HTTP 认证 —— 详见 onvif.py 注释。
+外置云台下是空操作(返回成功但不动), 位置回读恒为假值 (180,0).ONVIF
+ContinuousMove 是唯一可用的点动原语.认证必须是 WS-Security PasswordDigest
+且不能叠加 HTTP 认证 ---- 详见 onvif.py 注释.
 
 终端收不到"按键释放"事件, 所以用: 收到方向键就开始转并刷新截止时间,
-超过 STOP_AFTER 没有新按键就发 Stop。键盘自动重复会不断刷新, 于是"按住"手感自然。
+超过 STOP_AFTER 没有新按键就发 Stop.键盘自动重复会不断刷新, 于是"按住"手感自然.
 """
 import os
 import select
@@ -28,7 +28,7 @@ import termios
 import time
 import tty
 
-# onvif.py 与本文件同目录 (/usr/local/lib/ptz/), 不要依赖 /tmp —— 它会被清空
+# onvif.py 与本文件同目录 (/usr/local/lib/ptz/), 不要依赖 /tmp ---- 它会被清空
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import onvif as O  # noqa: E402
 
@@ -57,7 +57,7 @@ def stop():
 
 
 def move(name, pan, tilt, zoom=0.0):
-    """方向未变则只刷新截止时间, 避免重复下发把云台打顿。"""
+    """方向未变则只刷新截止时间, 避免重复下发把云台打顿."""
     global cur, deadline
     deadline = time.monotonic() + STOP_AFTER
     if cur != name:
@@ -84,7 +84,7 @@ def autofocus():
 
 
 def read_key(timeout):
-    """返回按键标识; 方向键是 ESC [ A/B/C/D 三字节序列。"""
+    """返回按键标识; 方向键是 ESC [ A/B/C/D 三字节序列."""
     if not select.select([sys.stdin], [], [], timeout)[0]:
         return None
     ch = sys.stdin.read(1)
@@ -172,7 +172,7 @@ def main():
 
 
 def selftest():
-    """非交互自检: 走与按键完全相同的 move()/stop() 代码路径, 用帧差客观验证。"""
+    """非交互自检: 走与按键完全相同的 move()/stop() 代码路径, 用帧差客观验证."""
     import subprocess
 
     import numpy as np

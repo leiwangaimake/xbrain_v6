@@ -10,7 +10,7 @@ CFG-CM-7. Every case below names the rule it guards, and the mutation that turns
 it red is written next to it -- CLAUDE.md 3.3: an assertion that has never been
 red has not been written.
 
-★★★ The two cases that matter most are not about merging:
+*** The two cases that matter most are not about merging:
 
   test_l0_may_not_supply_safety_parameters
       L0 used to be allowed to default ANY key. That meant a completely unfilled
@@ -37,10 +37,10 @@ from xbrain.common import config  # noqa: E402
 from xbrain.common.config import ConfigLayerError  # noqa: E402
 
 
-# ── 合并规则（10 S5.4.3「深合并的粒度」表）────────────────────────────────
+# ── 合并规则(10 S5.4.3"深合并的粒度"表)────────────────────────────────
 
 def test_map_deep_merges_and_later_leaf_wins():
-    """map: 递归深合并，叶子标量后者胜；上层不写的键保留下层值。"""
+    """map: 递归深合并,叶子标量后者胜;上层不写的键保留下层值."""
     base = {"common": {"a": {"x": 1, "y": 2}, "b": 3}}
     over = {"common": {"a": {"y": 99}}}
     out = config.deep_merge(base, over)
@@ -49,9 +49,9 @@ def test_map_deep_merges_and_later_leaf_wins():
 
 
 def test_list_is_replaced_wholesale_not_merged():
-    """list: ★ 整表替换（R-5）。
+    """list: * 整表替换(R-5).
 
-    Mutation: make deep_merge extend or zip lists instead ⇒ this goes red.
+    Mutation: make deep_merge extend or zip lists instead => this goes red.
     qos.bindings is order-sensitive, so an element-wise merge would silently
     reorder it and the binding that ends up first is the one that takes effect.
     """
@@ -62,9 +62,9 @@ def test_list_is_replaced_wholesale_not_merged():
 
 
 def test_null_does_not_override_but_missing_is_different():
-    """null 视为「声明键位但未赋值」，不覆盖下层；缺失不参与合并。
+    """null 视为"声明键位但未赋值",不覆盖下层;缺失不参与合并.
 
-    Mutation: treat None like any other value ⇒ the first assertion goes red and
+    Mutation: treat None like any other value => the first assertion goes red and
     common.yaml's enu_origin placeholder would wipe the site layer's real value.
     """
     base = {"common": {"geo": {"enu_origin": {"lat": 31.0}}, "keep": 7}}
@@ -90,7 +90,7 @@ def test_unassigned_lists_only_declared_but_unfilled_keys():
     )
 
 
-# ── L0 排除（终审 F7 收窄）────────────────────────────────────────────────
+# ── L0 排除(终审 F7 收窄)────────────────────────────────────────────────
 
 @pytest.mark.parametrize("key", [
     "common.safety.brake.a_mps2",
@@ -99,10 +99,10 @@ def test_unassigned_lists_only_declared_but_unfilled_keys():
     "common.fence.soft_margin_min_m",
 ])
 def test_l0_may_not_supply_safety_parameters(key):
-    """★★★ L0 排除四组命名空间。
+    """*** L0 排除四组命名空间.
 
     Mutation (the one the TODO names): put common.safety.* back into L0's
-    allowance ⇒ this goes red. With it allowed, an entirely unfilled configs/
+    allowance => this goes red. With it allowed, an entirely unfilled configs/
     starts the stack on dataclass defaults and assertion A has nothing to report.
     """
     with pytest.raises(ConfigLayerError) as e:
@@ -156,9 +156,9 @@ def test_l5_whitelist_is_exactly_three_and_applies():
 
 
 def test_l5_whitelist_may_not_be_extended():
-    """★ 白名单三项，不得扩展。
+    """* 白名单三项,不得扩展.
 
-    Mutation: ignore unknown XBRAIN_* instead of raising ⇒ red. Ignoring makes a
+    Mutation: ignore unknown XBRAIN_* instead of raising => red. Ignoring makes a
     typo like XBRAIN_ROBOTID look like it worked.
     """
     with pytest.raises(ConfigLayerError) as e:
@@ -167,7 +167,7 @@ def test_l5_whitelist_may_not_be_extended():
 
 
 def test_config_dir_is_not_the_fourth_whitelist_entry():
-    """ENV-4: XBRAIN_CONFIG_DIR 不属于 L5，它在 L0~L5 全部之前求值。"""
+    """ENV-4: XBRAIN_CONFIG_DIR 不属于 L5,它在 L0~L5 全部之前求值."""
     assert "XBRAIN_CONFIG_DIR" not in config.ENV_WHITELIST
     assert config.env_overlay({"XBRAIN_CONFIG_DIR": "/tmp"}) == {}, (
         "它决定文件从哪来，🚫 不覆盖任何键值"
@@ -176,9 +176,9 @@ def test_config_dir_is_not_the_fourth_whitelist_entry():
 
 @pytest.mark.parametrize("bad", ["relative/path", "", "./configs"])
 def test_env1_refuses_non_absolute_config_dir_without_falling_back(bad):
-    """★★★ ENV-1: 非绝对路径即拒，🚫 不回退到默认根。
+    """*** ENV-1: 非绝对路径即拒,!! 不回退到默认根.
 
-    Mutation: return DEFAULT_CONFIG_ROOT on a bad value ⇒ red. Silent fallback is
+    Mutation: return DEFAULT_CONFIG_ROOT on a bad value => red. Silent fallback is
     the worst outcome here: a fixture path with a typo would run against
     production configuration and pass.
     """
@@ -196,9 +196,9 @@ def test_env1_refuses_absolute_but_nonexistent(tmp_path):
 
 
 def test_env2_safety_root_never_follows_config_dir(tmp_path):
-    """★★★ ENV-2: safety/ 层永远从编译期固化路径读，不跟随 XBRAIN_CONFIG_DIR。
+    """*** ENV-2: safety/ 层永远从编译期固化路径读,不跟随 XBRAIN_CONFIG_DIR.
 
-    Mutation (the second one the TODO names): make safety_root honour the env ⇒
+    Mutation (the second one the TODO names): make safety_root honour the env =>
     red. If it followed, pointing the config root at a fixture would swap the
     safety parameters underneath the running system.
     """
@@ -208,6 +208,6 @@ def test_env2_safety_root_never_follows_config_dir(tmp_path):
 
 
 def test_default_root_is_the_plural_absolute_configs():
-    """00 CFG-03: 绝对路径 · 复数 · 不接受符号链接。"""
+    """00 CFG-03: 绝对路径 . 复数 . 不接受符号链接."""
     assert config.layers.DEFAULT_CONFIG_ROOT == "/opt/xbrain_v6/configs"
     assert config.resolve_config_root({}) == config.layers.DEFAULT_CONFIG_ROOT

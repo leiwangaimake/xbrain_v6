@@ -9,17 +9,17 @@ Description:
 CFG-CM-4. Same shape as the error-code metatest: the library and the contract are
 maintained separately and only this test keeps them equal.
 
-★★★ Symmetric difference, per set. One-directional containment is the shape this
+*** Symmetric difference, per set. One-directional containment is the shape this
 project keeps catching -- "every value the library exports is in the contract"
 stays green while the library is missing a value the contract added, which is
 exactly how Event.category sat at 21 after the contract moved to 23.
 
-★ Two sets are ordered, not just membership: gate_limiter's order is the
+* Two sets are ordered, not just membership: gate_limiter's order is the
 attribution priority and stop_reason's is the decision order of S9.12.2. They get
 a sequence assertion too -- a set-only check would stay green while the reported
 cause silently changed.
 
-★ Every extractor below names the exact table header it keys off, and the parser
+* Every extractor below names the exact table header it keys off, and the parser
 raises rather than skipping rows it does not understand. Both matter: an
 extractor that silently finds fewer rows makes the diff look empty. That is not
 hypothetical -- the first version of this parser treated an empty leading cell
@@ -141,7 +141,7 @@ def test_every_exported_set_has_an_extractor():
 
 @pytest.mark.parametrize("name", sorted(EXTRACTORS))
 def test_symmetric_difference_is_empty(name):
-    """★★★ The core assertion of CFG-CM-4, one case per set."""
+    """*** The core assertion of CFG-CM-4, one case per set."""
     contract = set(EXTRACTORS[name]())
     lib = set(enums.get(name))
     only_contract = sorted(contract - lib)

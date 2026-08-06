@@ -69,7 +69,7 @@ _SPEECH_WAV = os.path.join(
     "test_wavs", "0.wav",
 )
 
-# ★ Missing FIXTURES skip; missing DEPLOYED ASSETS fail.
+# * Missing FIXTURES skip; missing DEPLOYED ASSETS fail.
 #
 # These two conditions used to be one skipif, and that hid a real regression: renaming the
 # ASR model directory moved silero_vad.onnx out from under the configured default, the
@@ -391,7 +391,7 @@ def test_silero_still_segments_real_speech():
     # the assertion, and the upper bound is only the arithmetic limit -- a segment cannot
     # be longer than the recording it came from.
     #
-    # ★ The upper bound used to be 5.6 exclusive, to say "the detector did not simply pass
+    # * The upper bound used to be 5.6 exclusive, to say "the detector did not simply pass
     # the whole file through". That stopped being a meaningful statement once vad_preroll_ms
     # was calibrated to 800 ms: this recording opens with less lead-in than that, so the
     # preroll ring legitimately holds the file from its first frame and the segment IS the

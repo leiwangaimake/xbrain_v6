@@ -12,13 +12,13 @@ does NOT do:
   * expand ${common.*} references -- that is the reference axis (CFG-CM-8)
   * detect reference cycles -- CFG-CM-9
 
-★★★ The order is not negotiable. 10 S5.4.3 requires the whole L0~L5 overlay to
+*** The order is not negotiable. 10 S5.4.3 requires the whole L0~L5 overlay to
 finish BEFORE any reference is expanded. Expanding while merging reads a value
 the site layer has not overridden yet, and the failure is invisible whenever the
 lab site and the field site happen to agree -- so it passes every test written
 in the lab and goes wrong on exactly one robot.
 
-★ Layer L6 (process-private) sits after the freeze line and is not part of this
+* Layer L6 (process-private) sits after the freeze line and is not part of this
 module either: the freeze line computes common_digest over the finished common.*
 tree, and L6 may only reference it, never contribute to it.
 """
@@ -52,7 +52,7 @@ class OverlayResult:
     def get(self, dotted: str, default: Any = MISSING) -> Any:
         """Leaf by dotted path.
 
-        ★ Returns MISSING, not None, for a key no layer mentioned. None is a real
+        * Returns MISSING, not None, for a key no layer mentioned. None is a real
         value here -- it means "declared but unassigned" -- so collapsing the two
         would hide exactly the distinction 10 S5.4.3 draws.
         """
@@ -83,8 +83,8 @@ def build_overlay(layer_trees: Dict[str, Dict[str, Any]],
     whitelist in layers.py, so a caller cannot smuggle a fourth variable in by
     building the dict themselves.
 
-    ★ Namespace checking is on by default and the flag exists only so a test can
-    exercise the merge rules in isolation. 🚫 Do not turn it off in production
+    * Namespace checking is on by default and the flag exists only so a test can
+    exercise the merge rules in isolation. !! Do not turn it off in production
     code: the allowances are what stop L2 from redefining a safety parameter.
     """
     merged: Dict[str, Any] = {}

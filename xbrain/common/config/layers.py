@@ -10,8 +10,8 @@ Description:
 only thing stopping a layer from quietly redefining something it has no business
 touching. They are enforced here, not documented and hoped for.
 
-★★★ L0 (code defaults) EXCLUDES four namespaces: common.safety.* ·
-common.spec.* · common.motion.profiles · common.fence.*
+*** L0 (code defaults) EXCLUDES four namespaces: common.safety.* .
+common.spec.* . common.motion.profiles . common.fence.*
 
 That exclusion was narrowed on 2026-08-05 and the reason is written into the
 contract: it used to say "all", which meant a dataclass default could stand in
@@ -20,7 +20,7 @@ would still start, running hardcoded values, and assertion A could not see it.
 A robot that starts on defaults nobody chose is worse than one that refuses to
 start, because nothing reports it.
 
-★★★ XBRAIN_CONFIG_DIR is NOT part of L5 (ENV-4). L5 overrides key VALUES; this
+*** XBRAIN_CONFIG_DIR is NOT part of L5 (ENV-4). L5 overrides key VALUES; this
 one decides where files come from and is resolved before L0~L5 run at all. And
 ENV-2: the safety layer never follows it -- L3 always reads the compiled-in
 /opt/xbrain_v6/configs/safety/, so pointing the config root at a test fixture
@@ -39,7 +39,7 @@ DEFAULT_CONFIG_ROOT = "/opt/xbrain_v6/configs"
 #: ENV-2: L3 reads from here regardless of XBRAIN_CONFIG_DIR.
 SAFETY_ROOT = os.path.join(DEFAULT_CONFIG_ROOT, "safety")
 
-#: L5 whitelist. 10 S5.4.3: three items, ★ 不得扩展.
+#: L5 whitelist. 10 S5.4.3: three items, * 不得扩展.
 ENV_WHITELIST: FrozenSet[str] = frozenset({
     "XBRAIN_ROBOT_ID", "XBRAIN_SITE_ID", "XBRAIN_LOG_LEVEL",
 })
@@ -51,7 +51,7 @@ ENV_KEY_MAP: Dict[str, str] = {
     "XBRAIN_LOG_LEVEL": "common.log_level",
 }
 
-#: ★★★ L0 may not supply these. See the module docstring for why.
+#: *** L0 may not supply these. See the module docstring for why.
 L0_EXCLUDED_PREFIXES = (
     "common.safety.",
     "common.spec.",
@@ -71,19 +71,20 @@ class Layer(NamedTuple):
     """One layer of the overlay axis."""
 
     name: str          # L0 / L1 / ...
-    what: str          # human label, for error messages
+    what: str          # human label, English -- CLAUDE.md 2.1 requires
+                       # exception messages to be entirely English
     allowed: tuple     # dotted prefixes this layer may write; () means unrestricted
     excluded: tuple    # dotted prefixes this layer may NOT write
 
 
 LAYERS: List[Layer] = [
-    Layer("L0", "代码默认", (), L0_EXCLUDED_PREFIXES),
-    Layer("L1", "共享 common.yaml", ("common.",), ()),
-    Layer("L2", "机型 models/", ("common.spec.", "common.motion."), ()),
-    Layer("L3", "安全 safety/", ("common.safety.",), ()),
-    Layer("L4", "现场 sites/", ("common.geo.", "common.site.", "common.retention."), ()),
-    Layer("L4b", "标定 calib/", ("common.calib.",), ()),
-    Layer("L5", "环境变量", tuple(ENV_KEY_MAP.values()), ()),
+    Layer("L0", "code defaults", (), L0_EXCLUDED_PREFIXES),
+    Layer("L1", "shared common.yaml", ("common.",), ()),
+    Layer("L2", "model models/", ("common.spec.", "common.motion."), ()),
+    Layer("L3", "safety safety/", ("common.safety.",), ()),
+    Layer("L4", "site sites/", ("common.geo.", "common.site.", "common.retention."), ()),
+    Layer("L4b", "calibration calib/", ("common.calib.",), ()),
+    Layer("L5", "environment variables", tuple(ENV_KEY_MAP.values()), ()),
 ]
 
 
@@ -99,7 +100,7 @@ def check_namespace(layer: Layer, flat_keys) -> None:
         for bad in layer.excluded:
             if key == bad or key.startswith(bad):
                 raise ConfigLayerError(
-                    f"{layer.name}（{layer.what}）must not supply {key!r}: "
+                    f"{layer.name} ({layer.what}) must not supply {key!r}: "
                     f"prefix {bad!r} is excluded from this layer. "
                     "A code default standing in for a safety parameter starts the "
                     "robot on a value nobody chose, and assertion A cannot see it."
@@ -107,7 +108,7 @@ def check_namespace(layer: Layer, flat_keys) -> None:
         if layer.allowed and not any(key == a.rstrip(".") or key.startswith(a)
                                      for a in layer.allowed):
             raise ConfigLayerError(
-                f"{layer.name}（{layer.what}）may only write "
+                f"{layer.name} ({layer.what}) may only write "
                 f"{', '.join(layer.allowed)} but writes {key!r}"
             )
 
@@ -120,7 +121,7 @@ def resolve_config_root(env: Optional[Dict[str, str]] = None) -> str:
     are read at all.
 
     ENV-1: the variable must be an absolute path that exists and is readable.
-    ★★★ On any failure this raises rather than falling back to the default root.
+    *** On any failure this raises rather than falling back to the default root.
     The contract calls silent fallback the worst outcome, and it is: a test
     pointing at a fixture that has a typo would quietly run against production
     configuration and pass.
@@ -132,12 +133,12 @@ def resolve_config_root(env: Optional[Dict[str, str]] = None) -> str:
     if not os.path.isabs(raw):
         raise ConfigLayerError(
             f"ENV-1: XBRAIN_CONFIG_DIR={raw!r} is not an absolute path; "
-            "refusing to start (🚫 no fallback to the default root)"
+            "refusing to start (no fallback to the default root)"
         )
     if not os.path.isdir(raw):
         raise ConfigLayerError(
             f"ENV-1: XBRAIN_CONFIG_DIR={raw!r} does not exist or is not a "
-            "directory; refusing to start (🚫 no fallback)"
+            "directory; refusing to start (no fallback)"
         )
     if not os.access(raw, os.R_OK):
         raise ConfigLayerError(
@@ -160,7 +161,7 @@ def safety_root(env: Optional[Dict[str, str]] = None) -> str:
 def env_overlay(env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """L5 as a flat {dotted_key: value} map, whitelist enforced.
 
-    ★ An XBRAIN_* variable outside the whitelist raises. Ignoring it would let a
+    * An XBRAIN_* variable outside the whitelist raises. Ignoring it would let a
     typo (XBRAIN_ROBOTID) look like it worked, and letting an arbitrary one
     through would make the whitelist decorative.
     """
