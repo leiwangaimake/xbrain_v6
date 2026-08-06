@@ -3,12 +3,316 @@
 #   层：L6（进程私有）    归属进程：`xbrain_agent`（P4）
 #   ★ 权威定义处：`16` §14
 #
-#   ★★★ 本文件当前是【空骨架】—— 一个键都没有，🚫 本轮未凭空填任何配置值。
-#   ★ 落值时逐键去权威节抄，🚫 不得从本文件或任何别处推断默认值：
-#     10 §5.4.2 R-3 逐字「不提供默认值语法……解析不到即 E_CONFIG_INVALID 拒绝启动」。
-#   ★★ 未标定的参数留 null（＝「声明键位但未赋值」），🚫 绝不写 0.0 冒充已赋值。
+#   ★★★ 本文件现在是【键位齐全的骨架 ＋ 只抄已裁决的值】——
+#     键位按 `16` §14 的目标形态逐键落齐，🚫 一个未裁决的值都没有编。
+#   ★★ 未裁决 / 文档自陈为「占位」的键一律写 null。null 的语义是
+#     「声明键位但未赋值」（`10` §5.4.3），冻结线的 §5.4.4 断言 A
+#     会逐键打印键路径并【拒绝整栈启动】。★★★ 这是预期行为，🚫 不是待修的缺陷。
+#   ★★★ 🚫 绝不写 0.0 或 "" 冒充已赋值 —— 两者都能通过「是否已赋值」那一判，
+#     `10` §5.4.5 逐字：「`0.0` 会被断言 A 判为已赋值而放行，随后在运行期静默限死」。
+#     ⚠️ `16` §14 里 `gateway.asr.model` / `.tts.model` / `.tts.voice` 写的是 `""`，
+#        ★ 本文件改写为 null —— 空串与 0.0 同型（能过「已赋值」判），
+#        ★★ 改的是【冒充方式】，🚫 没有改任何值：两种写法下该键都仍然是未选型。
 #   ★★ L6 只【取值】不【定义】：🚫 不得出现 common 顶层键，共享值一律写 ${common.xxx}
-#     （10 §5.4.2 R-6 / R-1；违反即被 §5.4.4 断言 B 判「疑似复制」而拒绝启动）。
+#     （`10` §5.4.2 R-6 / R-1；违反即被 §5.4.4 断言 B 判「疑似复制」而拒绝启动）。
+#     ★ 本文件当前【不需要任何 ${common.*} 引用】—— `11` §9.6 `SP-11` 拿
+#       `common.spec.max_vx_mps` 与本文件的一个键比大小，那是【冻结线】的求值，
+#       🚫 不是本文件要写的引用。
+#   ★ 运行期读【解析产物】/run/xbrain/resolved/p4_agent.yaml，🚫 不读本文件
+#     （`10` §5.4.1「引用不由各进程各自展开」）。★ 读取侧 = xbrain/p4_agent/config/。
+#
+#   ★★★ 【本轮未落值的键 —— 逐条写清卡在谁身上，🚫 不得为了让它跑起来而填数】
+#     · grammar.max_enum_items                待 `Q-P4-2` ＋ T1 采样性能实测
+#       ★★★ `16` §14 就近注释逐字：本键「连上界本身都还不存在」，并逐字禁止本轮
+#          编一条「≤1000」之类的断言 —— 编一个就是「能力不足时假装有保证」。
+#     · gateway.llm.endpoint                  待 `Q-P4-3`
+#       ★ `16` §16 `Q-P4-3` 逐字把 §14 那一行称作「已给占位」，且是部署期值。
+#       ⚠️ 就近张力（如实登记，🚫 本文件不代裁）：同段 `asr` 行的注释把 `U52`
+#          端口分配逐字写作「HMI 8080 · payload 18080 · asr 18081 · llama 18082」，
+#          ⇒ 端口那一半看起来已由 U52 定；而 endpoint 行本身仍标「待 Q-P4-3」。
+#          ★ 两句话都在 `16` §14 内，谁覆盖谁没有写 ⇒ 本文件留 null 让人来判。
+#     · gateway.asr.model                     待 `D-AI-1` / `D-AI-2` 选型
+#     · gateway.tts.*（整段）                 待 `D-AI-3` ＋ TTS 口径裁决（`Q-P4-32`）
+#     · gateway.gpu_token.throttle_speed_mps  待 `Q-P4-13` ＋ T1 定标
 # ═══════════════════════════════════════════════════════════════════════════
 
-# TODO(`16` §14)：按该节逐键落值。本文件在落值前会让整栈按设计拒绝启动，这是预期行为。
+
+# ── ASR 三层后处理（`16` §3.1 三层管线）──────────────────────────────────
+asr_post:
+  # ★ 热更新文件（`16` §12.3 可热更新列 `asr_dict.yaml` 行）。
+  #   ★★ 写绝对路径而不是相对路径：相对路径按各单元的 WorkingDirectory 解析，
+  #      同一份代码会因启动方式不同读到不同文件（`10` §5.4.0 CFG-ROOT-2 同理由）。
+  dict_file: /opt/xbrain_v6/configs/asr_dict.yaml
+  # ★ L2 音近纠错的拼音编辑距离阈值（`16` §3.3）。
+  pinyin_distance_threshold: 1
+  # ★ 忽略声调 —— `16` §3.3 的音近判据不含调，写 false 会让「趴下/怕下」这类
+  #   同音异调的纠错整体失效。
+  ignore_tone: true
+  # ★ L3 闭集吸附的相似度门限（`16` §3.4）。
+  closed_set_threshold: 0.75
+  # ★ 纠错留痕，供 `16` §3.5 错误语料回灌。
+  log_corrections: true
+
+
+# ── 语音旁路（`16` §4，急停匹配的非对称代价）─────────────────────────────
+bypass:
+  # ★★★ 后处理【之前】先匹配一次（`16` §4 逐字「后处理前先匹配一次」）。
+  #   ★ 为什么不能省：三层后处理有可能把「急停」改写成别的词，
+  #     旁路放在后处理之后就等于让纠错器有机会吃掉一条急停。
+  match_before_postprocess: true
+  # ★★ 旁路词表 —— `16` §4 的三组。★ 这些是【数据】不是注释，
+  #   故保留原字形（CLAUDE.md §2.2 管的是源码注释与打印，不管配置数据）。
+  estop: ["急停", "停止", "紧急停止", "立刻停下", "stop"]
+  prone: ["趴下", "卧倒"]
+  stand: ["站立", "站起来", "起立"]
+
+
+# ── 两级路由（`16` §5）──────────────────────────────────────────────────
+intent:
+  keyword_rules: /opt/xbrain_v6/configs/intents.yaml
+  # ★ `16` §14 就近标注为【建议】：二级分类器暂不启用。
+  #   ★★ 落 false 的失效方向是「少一级分类器，落 LLM 兜底」；落 true 会去加载
+  #      一个本轮根本没有的模型 ⇒ 启动即失败。★ 两个方向不对称，故取 false。
+  use_small_model: false
+  fallback_to_llm: true
+
+
+# ── Prompt 分层（`16` §6）────────────────────────────────────────────────
+prompt:
+  # ★ 四层预算，逐值取自 `16` §6.3.x 各层标题（system ≤150 / mission ≤400 /
+  #   context ≤150 / history ≤32），总预算 900 见 §6.0。
+  budget_tokens:
+    system: 150
+    mission: 400
+    context: 150
+    # ★★ v0.3：150 → 32（固定 1 行；`16` §6.3.5）。
+    history: 32
+    # ★ 超预算的裁剪顺序 context → mission few-shot；
+    #   ★★ history 是 pinned，退出裁剪序列（`16` §6.3.5 H-3）。
+    total: 900
+  system_file: /opt/xbrain_v6/configs/prompts/system.txt
+  mission_dir: /opt/xbrain_v6/configs/prompts/missions/
+  history:
+    # ★★★ 闭集三值（`16` §6.3.5 标题逐字「三场景」）。
+    #   ★ 空列表 = 全关；★★ 未知值 → 启动即拒（`16` §14 该行就近注释逐字）。
+    enable_on: [clarify, recording, pending_confirm]
+    # ★ 固定 1 行的模板，三场景各一条（`16` §6.3.5）。
+    line_templates:
+      clarify:         "系统问：{{ASK}}"
+      recording:       "系统状态：正在录制{{KIND_ZH}}，已采{{N}}点。"
+      pending_confirm: "系统问：{{IMPACT}}，确认吗？"
+    # ★★ H-3：永不参与裁剪。
+    pinned: true
+  # ★ llama.cpp prompt cache。
+  cache_prompt: true
+
+
+# ── GBNF 约束解码（`16` §7）──────────────────────────────────────────────
+grammar:
+  enable: true
+  regenerate_on_data_change: true
+  # ★★★ 未落值 —— `Q-P4-2`。
+  #   ⚠️ `16` §14 就近注释逐字：「500 是待实测的占位值」，且本键与下一行
+  #      「当前全库无任何断言」，🚫 不在 `10` §5.4.4 断言 G 的求值清单内
+  #      ⇒ 填成 5000 开机不红、CI 不红，失效方向朝松且无声。
+  #   ★★★ 同注释逐字禁止本轮凭空写一条阈值断言（「≤1000」之类）——
+  #      一个编出来的上界会让下一轮读者以为这里已经有保证。
+  #   ⇒ 本文件留 null：断言 A 会指名这一个键，让人去把 T1 的数补上。
+  max_enum_items: null
+  # ★ 超限时按地理邻近取子集。★★ 失效方向安全：取子集 ≠ 放弃约束
+  #   （放弃约束 = 允许模型编造，`16` §7.0）。
+  # ⚠️ 如实登记：本键的【合法值闭集】全库无处登记（`Q-P4-2` 逐字），
+  #    ⇒ 写错一个不存在的策略名不会被任何断言抓住。
+  #    🚫 读取侧【不得】自造一个闭集来校验它 —— 那是替 `11` 立闭集。
+  fallback_on_overflow: geo_proximity
+
+
+# ── AI 服务网关（`16` §9）────────────────────────────────────────────────
+gateway:
+  llm:
+    # ★★★ 未落值 —— `Q-P4-3`（见文件头「本轮未落值的键」条目的张力登记）。
+    endpoint: null
+    # ★ 8 s，与 `16` §9.3 超时与熔断表 LLM 行同值。
+    #   ★★ 与 asr/tts 的 5 s 不是同一条约束：`AS-7` 的 5 s 上界只管 ASR / TTS。
+    timeout_s: 8.0
+    n_predict_max: 256
+    # ★ 连续 3 次超时 → 熔断 60 s（`16` §9.3）。
+    circuit_breaker: { fail_threshold: 3, open_s: 60 }
+  asr:
+    # ★★★ 18081 —— 甲-12 选 A 已拍板（`16` §14 该行就近注释 ＋ §16 `Q-P4-32` ④）。
+    #   ★ `U52` 端口唯一分配：HMI 8080 · payload 18080 · asr 18081 · llama 18082。
+    #   ★★★ 8081 的来历是 `11` 附录 E-4.4 那份【已落后于正文】的待合入 payload，
+    #      照它写会连不上真在跑的 ASR 服务。🚫 不要「顺手改回」8081。
+    base_url: "http://127.0.0.1:18081"
+    path: "/v1/audio/transcriptions"
+    # ★★★ 未落值 —— `D-AI-1` / `D-AI-2` 选型后填。
+    #   ⚠️ `16` §14 原写 `""`。空串能过「是否已赋值」那一判，与 0.0 同型
+    #      ⇒ 本文件写 null，让断言 A 指名这个键。
+    model: null
+    language: "zh"
+    # ★ 固定 —— `json` 满足不了 `11` §8.13.1 `AS-4`（要词级时间戳）。
+    response_format: "verbose_json"
+    # ★ V-A3 载体；服务不支持时无害。
+    hotwords_via_prompt: true
+    # ★★ 上界由 `11` §8.13.1 约束族 `AS-7` 逐字定死为「超时上限：ASR 5 s / TTS 5 s」
+    #    ⇒ 本值【已在上界上】，🚫 不得调大。
+    #    ⚠️ `AS-7` 的执行体登记在 `10` §5.4.4 断言 G 的求值清单，
+    #       但调大不会开机就红的历史教训见 `11` §8.13.1 `AS-7` 入册行（已登记 `Q-P4-31`）。
+    timeout_s: 5.0
+  # ★★★ 【整段未落值】—— `D-AI-3` 选型 ＋ TTS 口径两件事都未裁决。
+  #   ⚠️★★★ `16` §14 该段就近注释逐字：「『有没有机上 TTS 服务』定不下来，
+  #      本段（含 base_url / path / stream）是否存在都定不下来」；
+  #      `16` §16 `Q-P4-32` ④ 并逐字写明正确闭合形态【可能是整段删除】。
+  #   ★★ 因此本文件的处置是：落键位、值全 null、🚫 不代裁「本段是否存在」。
+  #      · 落 null ⇒ 断言 A 逐键报键路径，人被迫来裁；
+  #      · 若最终裁定 TTS 全走 GZH-2 设备，本段整段删除即可，届时断言 M
+  #        （必填键完备性）负责报「键不由任何层提供」。
+  #   ★★★ 读取侧【禁止】消费本段任何键（CLAUDE.md §9.3：schema 可留预留字段，
+  #      业务逻辑不得写消费它的代码）—— 消费一个「是否该存在都没定」的段，
+  #      等于替 `D-AI-3` 与 `U52` 两个裁决面拍板。
+  #   ⚠️ `11` §8.13.1 `AS-7` 对 `gateway.tts.timeout_s` 有 5 s 上界，
+  #      但本键为 null ⇒ 与 `SP-11` 同型，由断言 A 先行阻塞，🚫 不进数值比较。
+  tts:
+    base_url: null
+    path: null
+    model: null
+    voice: null
+    speed: null
+    response_format: null
+    stream: null
+    timeout_s: null
+  gpu_token:
+    # ★ 令牌本身启用；⚠️ 强度（并发与档位）待 T1 / T2 实测。
+    enable: true
+    count: 1
+    acquire_timeout_s: 5.0
+    # ★★★ 未落值 —— `Q-P4-13` ＋ T1 定标。
+    #   ★ 启动断言 `SP-11`（`11` §9.6）逐字：
+    #     0 < gateway.gpu_token.throttle_speed_mps < common.spec.max_vx_mps
+    #     失效方向写死 = 拒绝启动（`E_CONFIG_INVALID` ＋ 键路径），
+    #     🚫 不降级、🚫 不告警放行、🚫 不取默认值兜底。执行体 = 冻结线，不在 P4 进程内。
+    #   ⚠️★★★ 为什么这里不能照 `16` §14 抄 1.0：该行就近注释逐字把 1.0 称作
+    #      「占位」，并写明「具体取值是调优决策，不编造」。★ 从 U54 只推得出上界
+    #      「必须 < 2.0」，推不出具体值。
+    #   ⚠️ `SP-11` 今天求不了值：它的另一半 `common.spec.max_vx_mps` 尚未标定
+    #      ⇒ 由 `SP-1` 先行阻塞（`11` §9.6 `SP-11` 行逐字）。
+    throttle_speed_mps: null
+
+
+# ── 级别登记与 L1a / L1b 选路（`16` §8.3A）───────────────────────────────
+auth:
+  # ★ 级别是【行级】属性，随意图表走。
+  table_file: /opt/xbrain_v6/configs/intents.yaml
+  # ★★★ 启动断言：130 行 = 128 意图 + H01 拆行 + H03 拆行（`16` §0.5 CS-A3）。
+  #   ★ 对不上拒绝启动；★★ 原值 110 已作废。
+  assert_row_count: 130
+  # ★★★ 意图数（≠ 行数），`16` §0.5 CS-A2。
+  assert_intent_count: 128
+  # ★★★ 级别直方图。★ 补它的理由：此前 CS-A3 落到配置里只剩 assert_row_count
+  #   ⇒ 任何一张 130 行的表都通过，级别写错（L2 写成 L0）一条也抓不到
+  #      —— 一条永远绿的断言（CLAUDE.md §3.2 形态①）。
+  #   ⚠️ 它仍抓不到等量互换（L2 一条 ↔ L0 一条同时对调），那要等
+  #      cmdset_18_export 落地后的逐行比对（`Q-P4-28`）。
+  assert_level_hist: { L0: 76, L1a: 18, L1b: 22, L2: 11, L3: 3 }
+  # ★★★ `18` §13.1 的机器抽取产物。⚠️ 尚未落地 —— 缺失时 CS-A1 退化为
+  #   「_triage.json ↔ §8.3A.2 互查」并【必须】落 warn 显式打印「未与 18 对账」，
+  #   🚫 不得静默跳过（`16` §14 该行逐字）。
+  cmdset_18_export: /opt/xbrain_v6/configs/cmdset_18.json
+  # ★★★ H01 的 scope 缺省必须落 quick —— 落 deep = 把最宽的那一支给了默认值。
+  scope_default_h01: quick
+  # ★★★ H03 的 force_step 缺省必须落 false，同一条理由（最宽也最危险的一支）。
+  #   ★★ 未出现在解析结果里时【必须显式填 false 再下发】，不得留空让下游猜。
+  force_step_default_h03: false
+  # ★★★ force_step=true 时【仅云端】；A/T/E/H 一律 rejected + E_CHANNEL_DENIED
+  #   （`18` §10.2A）。
+  h03f_channels: [C]
+  # ★★★ 🚫 生成器不得为 which 发射共享产生式 —— D01/D02 的 which∈{front,back,all}
+  #   与 G26 的 which∈{payload,chassis,all} 值域不同，取并集会让 G26 收到 front。
+  which_shared_production: false
+  # ── CL-1 / CL-2 的非语音急停健康判据（`16` §8.3A.1）──────────────────
+  nonvoice_estop:
+    # ★ 判据② estop_path != "down"（`11` §4.6，P4 已订阅 state/link）。
+    use_state_link: true
+    # ⚠️ 判据① P4 未订阅 state/teleop ⇒ 见 `Q-P4-23`。
+    use_state_teleop: false
+    # ★ 0 = 关闭。★★★ 这个 0 是【真值】不是占位 —— `16` §14 该行逐字
+    #   「0 = 关闭；>0 时经 P5 GET /api/teleop/state 低频轮询」。
+    #   ⇒ 🚫 不要把它当成 CLAUDE.md §3.1 说的那种「0 冒充已赋值」而改成 null。
+    teleop_rest_poll_s: 0
+    # ★★ 超此未刷新即回落「不健康」（fail-safe）。
+    teleop_stale_s: 3.0
+    # ★★★ 不可得 → 按不健康算（D-CL-1，失效方向安全）。
+    unknown_is_unhealthy: true
+  # ── CL-3 方向盲区升级（`16` §8.3A.1）────────────────────────────────
+  # ★★★ 默认 true：A06 静态按 L1b（D-CL-3）。
+  #   ★ 待 V-33/T7 定 dir_free[bwd].covered 且 P4 拿得到该字段后改 false。
+  a06_backward_static_l1b: true
+  # ── L1b 前置播报的等待判据（`16` §8.3A.3）───────────────────────────
+  l1b_wait:
+    # ★★ 主判据：rt/audio/gate.mic_open false→true。
+    on_gate_reopen: true
+    # ★ 兜底 = SpeakRequest.max_duration_ms + 本值（T_tail）。
+    fallback_ms_extra: 300
+    # ★★★ LB-1：预告没发生 → 升 L2，不静默执行。
+    on_speak_rejected: escalate_l2
+  tts_est:
+    # ★ `16` §3.0.4.1 缺省。⚠️ 待 T-MIC-3 定标，★ 只许往长了调
+    #   ⇒ 失效方向安全（估长了只是多等，估短了会在播报中开麦自问自答）。
+    default_s_per_sentence: 4.0
+    # ★ max_duration_ms = est x 本值。
+    max_duration_factor: 2.0
+    # ★ 下限。
+    max_duration_floor_ms: 3000
+
+
+# ── 会话（`16` §11.1 三个独立会话槽）─────────────────────────────────────
+session:
+  idle_clear_s: 120
+  slots: [local, cloud, wecom]
+
+
+# ── 录制的「对话层」（`16` §11.3）────────────────────────────────────────
+recording:
+  # ★★ v0.3 裁定 D-B4：会话时长、采点抽稀、几何校验阈值全部属 P3，
+  #    P4 侧不得再有第二份 —— 两份阈值必然分叉，两个计时器必然先后到期。
+  # 🚫 故本段【只有一个键】。原 max_duration_s / point_min_dist_m /
+  #    point_min_angle_deg / fence_min_vertices 四键已在 `16` §14 显式删除，
+  #    🚫 不得「为了完整」把它们补回来。
+  # ★ 下面这条是 P4 的【路由决策】（CMD-16），故保留在 P4 侧。
+  reject_navigation_while_recording: true
+
+
+# ── L2 确认（`16` §11.4）─────────────────────────────────────────────────
+confirm:
+  timeout_s: 15.0
+  max_reask: 1
+  # ★ CMD-31：确认问句必须带影响面摘要。
+  require_impact_summary: true
+
+
+# ── 闲聊白名单（`16` §11.5）──────────────────────────────────────────────
+chitchat:
+  file: /opt/xbrain_v6/configs/chitchat.yaml
+  # ★ CMD-55 默认不允许自由闲聊（`18` §17 `Q-18-2` 仍开）。
+  allow_llm_freeform: false
+  out_of_scope_consecutive_threshold: 3
+
+
+# ── 指令集版本（`16` §12.4）──────────────────────────────────────────────
+cmdset:
+  # ★ 逐字取自 `16` §14 / §12.4。
+  # ⚠️★★★ 如实登记，🚫 本文件不代裁：`18` §16.5 标题逐字是「本轮 cmdset.version 的
+  #    单点结论（全文唯一出处，其余各节一律引用本节）」，其结论行逐字为
+  #    「一次 major 递增」——【但没有写出递增后的数值】。
+  #    ⇒ 「1.0.0 是不是那一次 major 之后的值」两册都没写。发布前必须由人对齐，
+  #      🚫 不得由实现者按 major+1 自行推一个 2.0.0 出来。
+  version: "1.0.0"
+  # ★ 所需的 P4 实现版本。★★★ 启动校验：不满足则拒绝启动并明确报错
+  #   （`16` §12.4 版本管理表「启动校验」行逐字）。执行体 = xbrain/p4_agent/config/。
+  min_agent_version: "1.0"
+  intents_file: /opt/xbrain_v6/configs/intents.yaml
+  missions_dir: /opt/xbrain_v6/configs/prompts/missions/
+  query_templates: /opt/xbrain_v6/configs/query_templates.yaml
+  restate_templates: /opt/xbrain_v6/configs/restate_templates.yaml
+  # ★ 启动时检测关键词冲突（`16` §12.5 ②，执行体归 GWY-P4-07 的注册表加载器）。
+  conflict_check_on_load: true
