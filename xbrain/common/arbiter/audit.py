@@ -77,12 +77,18 @@ SEVERITY_BY_ACTION: Dict[ArbAction, str] = {
     ArbAction.LEASE_TIMEOUT: SEVERITY.parse("warn"),
     ArbAction.FORCED_PREEMPT: SEVERITY.parse("warn"),
     ArbAction.SOURCE_DEATH: SEVERITY.parse("fault"),
+    # BIZ-CM-3 disarm actions (11 S7A.7 / 14 S3.6: suspend/rearm -> info).
+    ArbAction.SUSPEND: SEVERITY.parse("info"),
+    ArbAction.REARM: SEVERITY.parse("info"),
 }
 
-# 11 S7A.7 / 14 S3.6: the actions that are NEVER merged. forced_preempt and
-# source_death are the two ArbAction defines today; source_disabled / suspend /
-# rearm join this set when BIZ-CM-3 adds them. See trap (1).
-DEDUP_EXEMPT = frozenset({ArbAction.FORCED_PREEMPT, ArbAction.SOURCE_DEATH})
+# 11 S7A.7 / 14 S3.6: the actions that are NEVER merged. The urgent, rare ones.
+# suspend / rearm join forced_preempt / source_death here (a soft-estop must not
+# be collapsed into a count). source_disabled joins when T-3 adds it. See trap 1.
+DEDUP_EXEMPT = frozenset({
+    ArbAction.FORCED_PREEMPT, ArbAction.SOURCE_DEATH,
+    ArbAction.SUSPEND, ArbAction.REARM,
+})
 
 # 11 S7A.7: the merge window for the dedupable actions, seconds.
 DEDUP_WINDOW_S = 10

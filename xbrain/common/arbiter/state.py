@@ -20,13 +20,11 @@ since_mono_ms, so they can only be correct at publish time. The caller passes th
 same now_mono_ms it drove tick() with. Storing them in the snapshot would make
 them stale the instant they were written (see Holder / WaiterSnapshot docstrings).
 
-Why suspended is a PARAMETER, not read from the arbiter. The disarm surface
-(suspended = soft_estop | hes | cmd_timeout) is BIZ-CM-3; BIZ-CM-1's core has no
-such field yet. ArbDomainState REQUIRES the field, so it is emitted here as null
-until BIZ-CM-3 wires the real value in. When it does, it passes the arbiter's
-suspend state as this argument -- the wire shape does not change. A non-null value
-is validated against the ARB_SUSPENDED closed set so an off-contract reason is
-E_SCHEMA here, not a value the HMI shows verbatim.
+Where suspended comes from. The disarm reason (soft_estop | hes | cmd_timeout)
+is read from the arbiter via suspended() -- BIZ-CM-3 added that state and
+validated the reason against ARB_SUSPENDED at the arb_suspend() boundary, so what
+this reads is already a closed-set value or None. ArbDomainState REQUIRES the
+field; a normal (armed) domain emits null.
 
 What this deliberately omits. holder.note (11 S7A.5.1, 必填 "-", the HMI one-liner)
 is NOT set: the arbiter model carries no note, and inventing one would be display
@@ -36,8 +34,6 @@ not a forgotten field.
 """
 
 from typing import List, Optional
-
-from xbrain.common.enums import ARB_SUSPENDED
 
 from .core import Arbiter
 from .model import Holder, LastChange, SourceSnapshot, WaiterSnapshot
@@ -111,22 +107,18 @@ def _render_sources(sources: List[SourceSnapshot]) -> List[dict]:
     ]
 
 
-def render_domain_state(arb: Arbiter, now_mono_ms: int,
-                        suspended: Optional[str] = None) -> dict:
+def render_domain_state(arb: Arbiter, now_mono_ms: int) -> dict:
     """Assemble the 11 S7A.5.1 ArbDomainState for state/arb/{domain}.
 
     now_mono_ms must be the same monotonic reading the caller drove tick() with,
-    so held_ms / waited_ms line up with the state they describe. suspended is the
-    BIZ-CM-3 disarm reason (soft_estop | hes | cmd_timeout) or None for normal; a
-    non-null value is validated against the ARB_SUSPENDED closed set.
+    so held_ms / waited_ms line up with the state they describe. The disarm reason
+    is read from arb.suspended() (already a closed-set value or None; BIZ-CM-3
+    validated it at the arb_suspend boundary).
     """
-    # Validate the disarm reason at the boundary: off-contract -> ClosedSetViolation
-    # here, never emitted as a value the HMI would show. None stays null (normal).
-    suspended_out = None if suspended is None else ARB_SUSPENDED.parse(suspended)
     return {
         "domain": arb.domain(),                         # already a closed-set value
         "gen": arb.gen(),                               # 11 S7A.2 G-1
-        "suspended": suspended_out,                     # null | soft_estop | hes | cmd_timeout
+        "suspended": arb.suspended(),                   # null | soft_estop | hes | cmd_timeout
         "holder": _render_holder(arb.holder(), now_mono_ms),
         "waiting": _render_waiting(arb.waiters(), now_mono_ms),
         "last_change": _render_last_change(arb.last_change()),

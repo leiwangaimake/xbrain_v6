@@ -20,11 +20,8 @@ Each behaviour is paired with a mutant per CLAUDE.md 3.3:
   * state: the off-contract suspended reason must raise, not be shown verbatim.
 """
 
-import importlib
-
 import pytest
 
-from xbrain.common.enums import ClosedSetViolation
 from xbrain.common.arbiter import (
     Arbiter, ArbAction, PreemptPolicy, Request, SourceSpec,
     DEDUP_EXEMPT, DEDUP_WINDOW_S, SEVERITY_BY_ACTION,
@@ -226,18 +223,17 @@ def test_dead_source_is_still_listed_with_alive_false():
     assert tts["alive"] is False
 
 
-def test_off_contract_suspended_reason_raises():
-    """*** suspended is a closed set (ARB_SUSPENDED). An unknown reason must raise.
+def test_state_reflects_the_arbiter_suspended_reason():
+    """suspended in the state is read from the arbiter (BIZ-CM-3 sets it).
 
-    Mutation: pass 'paused' -- not one of soft_estop/hes/cmd_timeout -- and it
-    must be a ClosedSetViolation at the boundary, never emitted for the HMI to
-    show. A legal reason passes through unchanged.
+    A normal domain renders null; after arb_suspend it renders the reason. The
+    off-contract-reason rejection is tested at the arb_suspend boundary in
+    test_arbiter_disarm.py, which is where the validation now lives.
     """
     a = _arb_with_holder_and_waiter()
-    with pytest.raises(ClosedSetViolation):
-        render_domain_state(a, now_mono_ms=3000, suspended="paused")
-    ok = render_domain_state(a, now_mono_ms=3000, suspended="soft_estop")
-    assert ok["suspended"] == "soft_estop"
+    assert render_domain_state(a, now_mono_ms=3000)["suspended"] is None
+    a.arb_suspend("soft_estop", cmd_id="c-1", now_mono_ms=3000)
+    assert render_domain_state(a, now_mono_ms=3100)["suspended"] == "soft_estop"
 
 
 def test_waiting_carries_waited_ms():

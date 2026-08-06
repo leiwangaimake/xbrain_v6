@@ -148,6 +148,11 @@ class ArbAction(str, Enum):
     LEASE_TIMEOUT = "lease_timeout"    # holder failed to renew in time
     SOURCE_DEATH = "source_death"      # holder's process was reported dead
     FORCED_PREEMPT = "forced_preempt"  # T-1: holder missed the ack deadline
+    # BIZ-CM-3 disarm (缴械) actions. suspend disarms the whole domain (soft-estop,
+    # 11 S7A.6); rearm restores it on a new command. NOT source_disabled -- that
+    # is T-3 (E_ARB_DISABLED), a separate mechanism that adds its own action.
+    SUSPEND = "suspend"                # domain disarmed (soft_estop / hes / cmd_timeout)
+    REARM = "rearm"                    # domain re-armed on a new command
 
 
 @dataclass(frozen=True)

@@ -72,7 +72,9 @@ from typing import Dict, List, Optional
 # literals (CLAUDE.md 3.5): errors.E_BUSY is a name, "E_BUSY" would be a second
 # spelling that only disagrees during integration.
 from xbrain.common import errors                    # E_BUSY / E_ARB_NO_SOURCE / OK
-from xbrain.common.enums import DOMAIN, RELEASE_REASON   # closed-set validators
+from xbrain.common.enums import (                   # closed-set validators
+    ARB_SUSPENDED, DOMAIN, RELEASE_REASON,
+)
 
 from .model import (                                # the frozen value layer
     ArbAction, ArbEvent, Grant, GrantResult, Holder, IMMEDIATE_GRACE_MS,
@@ -184,6 +186,13 @@ class Arbiter:
         # here, so a consumer merging `tick() + drain_events()` never double
         # counts. drain_events() empties this.
         self._events: List[ArbEvent] = []               # buffered audit records
+        # BIZ-CM-3 disarm (缴械) state. None == armed (normal). A non-null reason
+        # (soft_estop | hes | cmd_timeout) means every request() is denied
+        # E_ARB_DISARMED until arb_rearm(). _suspend_cmd_id is the idempotency key:
+        # the same soft-estop arrives on cmd/estop AND state/robot (two paths, one
+        # cmd_id, 11 S7A.6), and must produce exactly ONE suspend event.
+        self._suspended: Optional[str] = None           # ARB_SUSPENDED value or None
+        self._suspend_cmd_id: Optional[str] = None      # dedupes the two arrival paths
 
     # -- registration --------------------------------------------------------
 
@@ -210,6 +219,14 @@ class Arbiter:
         resolves to nothing (ARB-3): a queued requester is either promoted on the
         holder's ack or force-granted on the deadline in tick().
         """
+        # BIZ-CM-3: while disarmed, EVERY request is denied E_ARB_DISARMED -- this
+        # is checked before the registry lookup, so even a registered source gets
+        # the disarmed code, not E_ARB_NO_SOURCE (11 S7A.6.2: "此后任何 request()
+        # 一律 denied(E_ARB_DISARMED)"). re-arming is an explicit arb_rearm() the
+        # consumer calls on a genuinely new command (S7A.6.3), never implicit here.
+        if self._suspended is not None:
+            return self._denied(req, source_id, errors.E_ARB_DISARMED)
+
         entry = self._registry.get(source_id)           # None if never registered
         if entry is None:
             # Unregistered: denied, no holder change, no audit event (denials are
@@ -393,6 +410,69 @@ class Arbiter:
                 forced=False, detail={}, sink=out)
         return out                                      # source_death event, if any
 
+    # -- disarm (BIZ-CM-3, 缴械, 11 S7A.6) -----------------------------------
+
+    def arb_suspend(self, reason: str, cmd_id: str,
+                    now_mono_ms: int) -> Optional[ArbEvent]:
+        """Disarm the whole domain: a soft-estop / lock takes every source's
+        holding eligibility (11 S7A.6.1 "锁的是源的持有资格, 不是机器人状态").
+
+        reason is validated against ARB_SUSPENDED (soft_estop | hes | cmd_timeout).
+        The current holder is revoked (on_lost fires so it stops producing), the
+        queue is cleared, and gen bumps once. After this every request() is denied
+        E_ARB_DISARMED until arb_rearm().
+
+        Idempotent on cmd_id: the same soft-estop reaches P1 on cmd/estop AND on
+        state/robot (11 S7A.6, two paths, one cmd_id). The SECOND arrival, already
+        suspended under the same cmd_id, is a no-op returning None -- so exactly
+        ONE suspend audit event is produced (the BIZ-CM-3 idempotency criterion).
+        A DIFFERENT cmd_id while already suspended re-stamps and re-events (a fresh
+        estop epoch).
+
+        Returns the suspend ArbEvent to publish, or None on the idempotent hit.
+        There is deliberately NO "hold" holder installed here: the framework leaves
+        the domain holder-less (armed sources all revoked), and the consumer's
+        zero-speed 'hold' behaviour (11 S7A.6.2, p1_motion) is layered on top by
+        reading suspended(), keeping this class free of motion-domain specifics.
+        """
+        # Boundary: an off-contract reason raises here, never reaches the wire.
+        reason = ARB_SUSPENDED.parse(reason)
+        # Idempotent second path: already disarmed under this cmd_id -> no event.
+        if self._suspended is not None and self._suspend_cmd_id == cmd_id:
+            return None
+        # Revoke the current holder (involuntary: on_lost tells it to stop) and
+        # clear the queue; no source may hold across a disarm.
+        gone = self._end_holder(now_mono_ms, notify_lost=True)   # from_source, or None
+        self._waiting = []                              # every queued request is dropped
+        self._suspended = reason                        # the domain is now disarmed
+        self._suspend_cmd_id = cmd_id                   # remember, to dedupe the 2nd path
+        self._gen += 1                                  # G-1: a holder change (-> none)
+        self._last_change = LastChange(ArbAction.SUSPEND.value, gone, None,
+                                       reason, False, now_mono_ms)   # mirror the event
+        # detail carries cmd_id so a consumer can correlate the two arrival paths.
+        return self._make_event(ArbAction.SUSPEND, gone, None, reason, False,
+                                {"cmd_id": cmd_id}, now_mono_ms)
+
+    def arb_rearm(self, now_mono_ms: int) -> Optional[ArbEvent]:
+        """Re-arm the domain on a new command (11 S7A.6.2 / S7A.6.3).
+
+        The consumer calls this when it sees a genuinely NEW motion command (a new
+        cmd_id/req_id after the suspend, RE-1), never for a source continuing on
+        its own. Clears the disarm and bumps gen; the domain comes back idle, so
+        the new command's own request() (issued next by the consumer) grants
+        normally. Idempotent: re-arming an already-armed domain is a no-op (None),
+        so a second new command does not emit a spurious rearm.
+        """
+        if self._suspended is None:
+            return None                                 # already armed: nothing to do
+        self._suspended = None                          # armed again
+        self._suspend_cmd_id = None                     # clear the idempotency key
+        self._gen += 1                                  # G-1: the disarm state changed
+        self._last_change = LastChange(ArbAction.REARM.value, None, None,
+                                       "rearm", False, now_mono_ms)
+        return self._make_event(ArbAction.REARM, None, None, "rearm", False,
+                                {}, now_mono_ms)
+
     # -- read-only views -----------------------------------------------------
 
     def holder(self) -> Optional[Holder]:
@@ -406,6 +486,14 @@ class Arbiter:
     def domain(self) -> str:
         """This arbiter's domain (a validated closed-set value, 11 S7A.0)."""
         return self._domain                             # parsed once at construction
+
+    def suspended(self) -> Optional[str]:
+        """The disarm reason (soft_estop | hes | cmd_timeout), or None if armed.
+
+        This is ArbDomainState.suspended (11 S7A.5.1). None means normal; a
+        non-null value means every request() is denied E_ARB_DISARMED (BIZ-CM-3).
+        """
+        return self._suspended
 
     def last_change(self) -> Optional[LastChange]:
         """The most recent holder change (11 S7A.5.1 last_change)."""
