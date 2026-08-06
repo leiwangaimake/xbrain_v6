@@ -67,6 +67,7 @@ from typing import Callable, Dict, List, Optional
 __all__ = [
     "PreemptPolicy", "GrantResult", "ArbAction",
     "SourceSpec", "Request", "Preempt", "Grant", "Holder", "LastChange",
+    "WaiterSnapshot", "SourceSnapshot",
     "ArbEvent",
     "DEFAULT_LEASE_MS", "IMMEDIATE_GRACE_MS", "DEFAULT_WAIT_ATOMIC_TIMEOUT_MS",
 ]
@@ -258,6 +259,37 @@ class Holder:
     # override; tick() reads this, never the spec, so a resident holder (None)
     # is skipped by the lease check.
     lease_ms: Optional[int]
+
+
+@dataclass(frozen=True)
+class WaiterSnapshot:
+    """One queued requester, as ArbDomainState.waiting[] needs it (11 S7A.5.1).
+
+    waited_ms is intentionally absent for the same reason held_ms is absent from
+    Holder: it is now - since_mono_ms, and the arbiter does not read now. The
+    state serialiser (BIZ-CM-2) computes it at publish time from the tick's
+    now_mono_ms, so the number is never stale-when-stored.
+    """
+
+    source_id: str
+    req_id: str
+    priority: int
+    since_mono_ms: int
+
+
+@dataclass(frozen=True)
+class SourceSnapshot:
+    """One registered source, as ArbDomainState.sources[] needs it (11 S7A.5.1).
+
+    The full registry is published, alive=false included, so the HMI can show a
+    source that could have preempted but whose process is gone (11 S7A.5.1
+    "谁本可以抢但进程没了"). policy is the PreemptPolicy wire value.
+    """
+
+    source_id: str
+    priority: int
+    policy: str
+    alive: bool
 
 
 @dataclass(frozen=True)

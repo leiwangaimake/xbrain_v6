@@ -59,8 +59,22 @@ from .model import (
     Preempt,                      # the preempt sub-object of a queued grant
     PreemptPolicy,                # immediate | wait_atomic | reject enum
     Request,                      # one acquire attempt (11 S7A.1)
+    SourceSnapshot,               # a registry entry for ArbDomainState.sources[]
     SourceSpec,                   # a competing source registered at startup
+    WaiterSnapshot,               # a queued request for ArbDomainState.waiting[]
 )
+# BIZ-CM-2 serialisers: the audit stream (event/{severity}/arbitration) and the
+# domain state (state/arb/{domain}). Kept in their own modules because they fail
+# and are tested differently from the state machine.
+from .audit import (
+    DEDUP_EXEMPT,                 # actions never merged (forced_preempt, ...)
+    DEDUP_WINDOW_S,               # 11 S7A.7 merge window, seconds (10)
+    SEVERITY_BY_ACTION,           # 11 S7A.7 action -> severity map
+    merge_audit_window,           # collapse a burst into one, count in detail
+    render_audit_event,           # one ArbEvent -> Event payload
+    severity_of,                  # action string -> severity string
+)
+from .state import render_domain_state   # Arbiter snapshot -> ArbDomainState
 
 # Explicit, so `import *` carries exactly these names and a linter does not prune
 # the re-exports above as unused: they are the public half of this package. The
@@ -76,10 +90,20 @@ __all__ = [
     "Preempt",                    # Grant.preempt is this
     "LastChange",                 # last_change() returns this
     "ArbEvent",                   # tick()/drain_events() return these
+    "WaiterSnapshot",             # waiters() returns these
+    "SourceSnapshot",             # sources() returns these
     "PreemptPolicy",              # a SourceSpec field
     "GrantResult",                # a Grant field
     "ArbAction",                  # an ArbEvent field
     "DEFAULT_LEASE_MS",           # contract constants, for bring-up callers
     "IMMEDIATE_GRACE_MS",         # with no domain config to hand
     "DEFAULT_WAIT_ATOMIC_TIMEOUT_MS",
+    # BIZ-CM-2 serialisers
+    "render_audit_event",         # ArbEvent -> event/{severity}/arbitration
+    "merge_audit_window",         # 10 s dedup-window collapse
+    "severity_of",                # action -> severity
+    "SEVERITY_BY_ACTION",         # the map itself (for a completeness check)
+    "DEDUP_EXEMPT",               # actions never merged
+    "DEDUP_WINDOW_S",             # the window, seconds
+    "render_domain_state",        # Arbiter -> state/arb/{domain}
 ]

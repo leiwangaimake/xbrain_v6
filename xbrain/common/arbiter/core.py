@@ -76,7 +76,8 @@ from xbrain.common.enums import DOMAIN, RELEASE_REASON   # closed-set validators
 
 from .model import (                                # the frozen value layer
     ArbAction, ArbEvent, Grant, GrantResult, Holder, IMMEDIATE_GRACE_MS,
-    LastChange, Preempt, PreemptPolicy, Request, SourceSpec,
+    LastChange, Preempt, PreemptPolicy, Request, SourceSnapshot, SourceSpec,
+    WaiterSnapshot,
 )
 
 __all__ = ["Arbiter"]                              # the class is the whole surface
@@ -402,9 +403,39 @@ class Arbiter:
         """The current arbitration generation (G-1..G-4)."""
         return self._gen                                # monotonic within this process
 
+    def domain(self) -> str:
+        """This arbiter's domain (a validated closed-set value, 11 S7A.0)."""
+        return self._domain                             # parsed once at construction
+
     def last_change(self) -> Optional[LastChange]:
         """The most recent holder change (11 S7A.5.1 last_change)."""
         return self._last_change                        # same source as the audit event
+
+    def waiters(self) -> List[WaiterSnapshot]:
+        """The queued requests as frozen snapshots, highest priority first.
+
+        For ArbDomainState.waiting[] (11 S7A.5.1). Frozen copies, never the live
+        _Waiter objects, so a consumer serialising the state cannot mutate the
+        queue the state machine is still selecting the next holder from. Sorted so
+        the HMI shows the next-in-line at the top; the arbiter's own promotion
+        uses the same (priority, urgency, since) key, but this view exposes only
+        what the wire shape carries.
+        """
+        ordered = sorted(self._waiting,
+                         key=lambda w: (-w.priority, -w.urgency, w.since_mono_ms))
+        return [WaiterSnapshot(w.source_id, w.req_id, w.priority, w.since_mono_ms)
+                for w in ordered]
+
+    def sources(self) -> List[SourceSnapshot]:
+        """The whole registry as frozen snapshots, alive=false included.
+
+        For ArbDomainState.sources[] (11 S7A.5.1): the HMI shows every registered
+        source, including one whose process died, so "谁本可以抢但进程没了" is
+        answerable. Order is registration order (dict insertion), which is stable.
+        """
+        return [SourceSnapshot(e.spec.source_id, e.spec.priority,
+                               e.spec.preempt_policy.value, e.alive)
+                for e in self._registry.values()]
 
     def drain_events(self) -> List[ArbEvent]:
         """Return and clear the buffered source-initiated audit events.
