@@ -119,6 +119,14 @@ from ..errors.exceptions import XbrainError
 #: form is not written out anywhere in this file, not even to say "do not use
 #: it" -- a criterion whose own text matches the pattern it scans for can never
 #: reach zero, and the usual repair is to loosen the criterion until it passes.
+#:
+#: CONFIG-SOURCE-OK(freeze): this constant IS the source root, and the freeze
+#: service is the one component that reads it. Every other consumer must go
+#: through xbrain/common/config/resolved.py and read /run/xbrain/resolved/
+#: instead; scripts/lint/no_config_source_read.py enforces that, and this marker
+#: is the declared exemption it requires. See 10 S5.4.1 for why the split exists:
+#: if each process expanded ${common.*} itself they would resolve to different
+#: results, which the section calls the most critical structural decision here.
 DEFAULT_CONFIG_ROOT = "/opt/xbrain_v6/configs"
 
 #: ENV-2: L3 reads from here regardless of XBRAIN_CONFIG_DIR.
