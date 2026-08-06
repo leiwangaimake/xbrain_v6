@@ -1,0 +1,52 @@
+# ==========================================================================
+# /opt/xbrain_v6/configs/calib/_skeleton.yaml
+#   TEMPLATE ONLY -- this is NOT a calibration instance and is never loaded.
+#   A leading underscore marks it as a template; a real calib file is
+#   calib/<robot_id>.yaml (see below).
+#
+#   Layer: L4b (calibration layer). 10 S5.4.0 directory tree (grep anchor:
+#     calib/) and 10 S5.4.3 L4b row: one file PER VEHICLE, and the FILE NAME
+#     is the robot_id. The loader (xbrain/common/config/layers.py, Layer
+#     "L4b") selects calib/{robot_id}.yaml by the RESOLVED robot_id; it does
+#     NOT glob this directory, so this template file is inert.
+#
+#   Namespace this layer may write (10 S5.4.3 L4b / layers.py L4b allowed):
+#     common.calib.*   ONLY. L4 (site) and L4b (calib) namespaces are disjoint
+#     by design, which is why their relative order need not be defined.
+#
+#   Keys that live here, and where each is defined (10 S5.4.5 / 11 S10.1.1 /
+#   11 S10.4, evaluated by 10 S5.4.4 assertion H):
+#     common.calib.frames.*.{xyz, rpy, accuracy}
+#         Per-frame extrinsics with a complete accuracy block (CS-2). Assertion
+#         H requires every frames.* key to be in the S0.3 device ID table and
+#         every frame to carry a full accuracy.
+#     common.calib.gate.{warn_m, reject_m}
+#         Acceptance thresholds. Placeholder values await M-24, so they stay
+#         null until measured (CLAUDE.md 3.1); assertion H compares the
+#         recomputed lat_err_ref_m against gate.reject_m / gate.warn_m.
+#     common.calib.lat_err_ref_m, common.calib.calib_rev
+#         Recomputed reference error and the calibration revision.
+#     common.calib.robot_id
+#         Must equal common.robot_id (assertion H item 1: it stops one
+#         vehicle's extrinsics being loaded onto another).
+#
+#   Why this skeleton carries NO keys and NO values:
+#     - robot_id is a per-vehicle instance name, not yet assigned
+#       (docs/README grep anchor: 文件名是实例名). Extrinsics and gate
+#       thresholds are measured per vehicle; inventing any of them here would
+#       break CLAUDE.md 3.1. Uncalibrated stays null so the boot refuses and
+#       assertion A names the key path -- expected behaviour, not a defect.
+#     - A real calib file is written at deploy/calibration time as
+#       calib/<robot_id>.yaml with a top-level `common:` mapping.
+#
+#   Permission boundary (10 S5.4.4 assertion J item 3, grep anchor:
+#   不得对非 root 可写): calib/ and safety/ must NOT be writable by non-root,
+#   or limits and extrinsics could be tampered with untraceably. The deployed
+#   calib/<robot_id>.yaml and this directory are held to that rule. The
+#   credential tree secrets/** has its own baseline in
+#   scripts/lint/secrets_perm_baseline.sh; this file is not a credential.
+# ==========================================================================
+
+# TEMPLATE -- intentionally no keys. A real calib file is calib/<robot_id>.yaml
+# with a top-level `common:` mapping. See the header for what belongs and why
+# this stays empty until a vehicle is calibrated.

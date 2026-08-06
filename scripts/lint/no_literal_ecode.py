@@ -143,10 +143,15 @@ STRING_PREFIX_CHARS = "fFrRbBuU"
 #: marker naming anything else is itself a violation, because an open tag set
 #: degrades the mechanism into "write any word and the check goes quiet".
 #:
-#: There is deliberately no tag for the generated C++ header. CFG-CM-3 has not
-#: been written yet, and CLAUDE.md 9.3 forbids leaving a hole open for future
-#: work: whoever writes the generator decides then whether it emits markers or
-#: earns a new tag, with the actual file in front of them.
+#: The "export" tag was earned by CFG-CM-3, exactly as the earlier note here said
+#: it would be: the file now exists, so the decision was made with it in front of
+#: us rather than reserved in advance (CLAUDE.md 9.3). scripts/gen/gen_errors.py
+#: generates common/include/xbrain/errors/errors.h, and a C++ header cannot parse
+#: the yaml at compile time -- so the codes MUST be spelled there. That header is
+#: the C++ definition point, the analogue of the Python package (which avoids
+#: literals only because codes.yaml is a data file this scan does not read). The
+#: generator emits the marker on every E_* line; OK carries no E_ prefix and is
+#: left unmarked, because an unnecessary marker is itself a violation.
 EXEMPT_TAGS = {
     "cycle": "xbrain/common/errors/exceptions.py defines the exception types "
              "that the package __init__ imports while it is still executing, so "
@@ -157,6 +162,15 @@ EXEMPT_TAGS = {
             "package because mapping onto the closed set is the gateway's job "
             "(11 S8.13.5, 错误映射(网关唯一实现点)) and services/ does not depend "
             "on xbrain/",
+    "export": "common/include/xbrain/errors/errors.h is the generated C++ "
+              "deployment export of the E_* closed set (CFG-CM-3), rendered from "
+              "xbrain/common/errors/codes.yaml by scripts/gen/gen_errors.py. It "
+              "is the C++ definition point, the analogue of the Python package, "
+              "not a second copy: a header cannot parse the yaml at compile time, "
+              "so the codes must be spelled here. tests/common/"
+              "test_cross_lang_codes.py keeps it byte-equal to a fresh render, "
+              "and the codes are held correct against 11 S13.4~S13.15 by "
+              "tests/common/test_error_codes.py",
 }
 
 #: The marker itself. Shouty and greppable on purpose: an exemption a reviewer
@@ -487,6 +501,19 @@ SELF_TEST_CASES = [
      "the C++ half of the surface is really scanned"),
     ("cpp_comment.h", '// E_BUSY is returned by the gateway\n', 0,
      "a C++ comment is prose too"),
+    # The generated errors.h shape: an E_* named constant carrying the export
+    # marker on the same line. This is the line gen_errors.py emits, and it must
+    # be exempt -- the header is the C++ definition point, not a second copy.
+    ("errors_export.h",
+     'inline constexpr std::string_view kEBusy = "E_BUSY";  '
+     '// ECODE-OK(export): generated closed-set export\n', 0,
+     "the generated C++ error header export is exempt via the export tag"),
+    # And the guard on it: the same line WITHOUT the marker is a violation, so the
+    # exemption is doing the work rather than the code being invisible for some
+    # unrelated reason.
+    ("errors_unmarked.h",
+     'inline constexpr std::string_view kEBusy = "E_BUSY";\n', 1,
+     "an unmarked E_* literal in a common/ header is still a violation"),
 ]
 
 

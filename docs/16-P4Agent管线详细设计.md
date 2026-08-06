@@ -1201,9 +1201,145 @@ E01 / E06 判为 `fastpath`，**不属于任何 mission 组**，与 M1 / M2 从�
 
 ---
 
-> 完整的 ★★★ **128 行**判定表见 `_prompt_work/_triage.json`（每条含 route + 理由 + 槽位 + ★ `latency_class`）。
-> ★ **v0.9**：原写「109 行」，已按 `18` §2.1 同步；★★ 该文件按**意图**逐条登记，故是 **128 行**而非 130
-> （`H01` / `H03` 各仍占**一行**，`18` §10.4 逐字）。
+> ★★★ **128 条意图的 route/slots 逐条真源（U76(1)：就地自证，迁自 `_triage.json`）** ——
+> 本表把原先「见 `_prompt_work/_triage.json`」的外部指针**就地展开**：route 与 slots 的逐条真源现在**在本册内**，
+> 🚫 运行期与配置**一律不读** `docs/temp/_*`（CLAUDE.md §0.2，2026-08-06 改）。
+> `configs/intents.yaml` 由本表落值，加载期断言见 §5.3 **ID-1/ID-2/ID-3** 与 §0.5 **CS-A1**。
+> ★ 每条含 `id`（# 列） · `intent` · `route`（四值闭集） · `slots`（仅槽位名，空槽记 `--`）。
+> ★★ 各分诊格条数一律由脚本从本表**现场重算**，🚫 本表不另写计数（§0.5 **CS-1b** · CLAUDE.md §3.7）。
+> ★ `latency_class` 逐条明细仍见 §6.6.6；确认级别 `auth` 的行级真源在 §8.3A.2 / `18` §13.1（本表不含 `auth` 列 —— 级别按**行**、本表按**意图**，两个量不混，§0.5 **CS-1c**）。
+
+<!-- 6.6-registry: 128-row route/slots truth source, migrated from _triage.json per U76(1). Machine-parseable; do not hand-edit a single cell. -->
+| # | intent | route | slots |
+|---|---|---|---|
+| A01 | estop | bypass | -- |
+| A02 | prone | bypass | -- |
+| A03 | stand | bypass | -- |
+| A04 | hold | fastpath | -- |
+| A05 | move_forward | fastpath_then_llm | distance_m |
+| A06 | move_backward | fastpath_then_llm | distance_m |
+| A07 | move_left | fastpath_then_llm | distance_m |
+| A08 | move_right | fastpath_then_llm | distance_m |
+| A09 | turn_left | fastpath_then_llm | angle_deg |
+| A10 | turn_right | fastpath_then_llm | angle_deg |
+| A11 | turn_around | fastpath | -- |
+| A12 | face_heading | fastpath_then_llm | heading |
+| A13 | set_speed_profile | fastpath | profile |
+| A14 | set_gait | fastpath | gait |
+| B01 | goto_waypoint | fastpath_then_llm | waypoint |
+| B02 | patrol_route | fastpath_then_llm | route, loops |
+| B03 | patrol_schedule | llm | route, loops, delay_s, at_local, day_offset |
+| B04 | patrol_repeat | fastpath_then_llm | loops |
+| B05 | pause_task | fastpath | -- |
+| B06 | resume_task | fastpath | -- |
+| B07 | cancel_task | fastpath | -- |
+| B08 | return_home | fastpath | -- |
+| B09 | goto_dock | fastpath | dock |
+| B10 | skip_waypoint | fastpath | -- |
+| B11 | follow_target | fastpath_then_llm | target_id |
+| B12 | stop_follow | fastpath_then_llm | -- |
+| C01 | enter_alarm | fastpath | -- |
+| C02 | exit_alarm | fastpath | -- |
+| C03 | enter_broadcast | fastpath | -- |
+| C04 | exit_broadcast | fastpath | -- |
+| C05 | enter_patrol_mode | fastpath | -- |
+| C06 | standby | fastpath | -- |
+| C07 | set_motion_behavior | llm | behavior |
+| C08 | query_mode_switch_ok | fastpath | target_mode |
+| D01 | light_on | fastpath | which |
+| D02 | light_off | fastpath | which |
+| D03 | light_auto | fastpath | -- |
+| D04 | siren_on | fastpath | -- |
+| D05 | siren_off | fastpath | -- |
+| D06 | strobe_on | fastpath | -- |
+| D07 | strobe_off | fastpath | -- |
+| D08 | speak_preset | fastpath_then_llm | preset_id |
+| D09 | speak_custom | llm | text |
+| D10 | set_volume | fastpath | level |
+| D11 | chassis_light | fastpath | pattern, color |
+| D12 | speak_stop | fastpath | -- |
+| D13 | payload_all_off | fastpath | -- |
+| E01 | ptz_move | fastpath | direction, amount |
+| E02 | ptz_home | fastpath | -- |
+| E03 | ptz_preset | fastpath | preset |
+| E04 | ptz_track | fastpath_then_llm | -- |
+| E05 | ptz_stop_track | fastpath_then_llm | -- |
+| E06 | ptz_zoom | fastpath | direction, amount |
+| E07 | ptz_scan | fastpath | -- |
+| E08 | ptz_stop_scan | fastpath | -- |
+| F01 | record_route_start | fastpath | -- |
+| F02 | record_route_stop | fastpath | -- |
+| F03 | record_route_save | llm | name |
+| F04 | record_route_cancel | fastpath | -- |
+| F05 | record_route_mark | fastpath | -- |
+| F06 | record_waypoint | llm | name |
+| F07 | record_fence_start | fastpath | -- |
+| F08 | record_fence_stop | fastpath | -- |
+| F09 | record_fence_save | llm | name |
+| F10 | record_dock | llm | name |
+| F11 | delete_route | fastpath_then_llm | route |
+| F12 | delete_waypoint | fastpath_then_llm | waypoint |
+| F13 | delete_fence | fastpath_then_llm | fence |
+| F14 | rename_object | llm | type, old, new |
+| F15 | set_active_fence | fastpath_then_llm | fence |
+| G01 | query_position | fastpath | -- |
+| G02 | query_battery | fastpath | -- |
+| G03 | query_range | fastpath | -- |
+| G04 | query_speed | fastpath | -- |
+| G05 | query_mode | fastpath | -- |
+| G06 | query_task | fastpath | -- |
+| G07 | query_progress | fastpath | -- |
+| G08 | query_heading | fastpath | -- |
+| G09 | query_uptime | fastpath | -- |
+| G10 | query_events_recent | fastpath_then_llm | count, time_range |
+| G11 | query_events_period | llm | date_range |
+| G12 | query_events_by_type | llm | category |
+| G13 | query_last_alarm | fastpath | -- |
+| G14 | query_event_detail | llm | event_ref |
+| G15 | query_faults | fastpath | -- |
+| G16 | query_health | fastpath | -- |
+| G17 | query_sensor | fastpath | sensor |
+| G18 | query_bit_result | fastpath | -- |
+| G19 | query_detection | fastpath | -- |
+| G20 | query_target_count | fastpath | -- |
+| G21 | query_routes | fastpath | -- |
+| G22 | query_waypoints | fastpath | -- |
+| G23 | query_docks | fastpath | -- |
+| G24 | query_time | fastpath | -- |
+| G25 | query_payload_all | fastpath | -- |
+| G26 | query_light_state | fastpath | which |
+| G27 | query_siren_state | fastpath | -- |
+| G28 | query_strobe_state | fastpath | -- |
+| G29 | query_volume | fastpath | -- |
+| G30 | query_speaking | fastpath | -- |
+| G31 | query_speak_presets | fastpath | -- |
+| G32 | query_ptz_pose | fastpath | -- |
+| G33 | query_ptz_zoom | fastpath | -- |
+| G34 | query_ptz_track | fastpath | -- |
+| G35 | query_ptz_preset | fastpath | -- |
+| G36 | query_ptz_presets | fastpath | -- |
+| G37 | query_ptz_owner | fastpath | -- |
+| G38 | query_fences | fastpath | -- |
+| G39 | query_active_fence | fastpath | -- |
+| G40 | query_fence_health | fastpath | -- |
+| G41 | query_fence_relation | fastpath | -- |
+| G42 | query_fence_detail | fastpath | fence |
+| H01 | run_bit | fastpath | scope |
+| H02 | generate_report | llm | scope, date_range |
+| H03 | set_time_sync | fastpath | force_step |
+| H04 | reload_config | fastpath | scope |
+| H05 | sleep | fastpath | -- |
+| H06 | wake | fastpath | -- |
+| H07 | reboot | fastpath | -- |
+| H08 | shutdown | fastpath | -- |
+| I01 | confirm | fastpath | -- |
+| I02 | deny | fastpath | -- |
+| I03 | repeat | fastpath | -- |
+| I04 | cancel_session | fastpath | -- |
+| I05 | help | fastpath | -- |
+| I06 | clarify_answer | llm | pending_slot_value |
+| J01 | greeting | fastpath | -- |
+| J02 | identity | fastpath | -- |
 
 ---
 

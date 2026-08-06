@@ -1,18 +1,67 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # /opt/xbrain_v6/configs/safety/clock.yaml
-#   层：L3（安全层，整目录自动 locked）    归属进程：P1 速度门 · P2 健康度 · rtk_driver
-#   ★ 权威定义处：`11` §1.5.5（配置项 `/opt/xbrain_v6/configs/safety/clock.yaml`）
+#   层：L3（安全层，整目录自动 locked，永不跟随 XBRAIN_CONFIG_DIR —— 10 §5.4.0 ENV-2）
+#   归属进程：P1 速度门 · P2 健康度 · rtk_driver（10 §5.4.5 行「common.safety.clock.*」）
+#   ★ 权威定义处：11 §1.5.5「ts_sync = false 时的系统行为（U34 落地）」的配置块
+#      逐字锚点「配置项（/opt/xbrain_v6/configs/safety/clock.yaml）」（NUM-4：只写章节锚点不写行号）
 #
-#   ★★★ 本文件当前是【空骨架】—— 一个键都没有，🚫 本轮未凭空填任何配置值。
-#   ★ 落值时逐键去权威节抄，🚫 不得从本文件或任何别处推断默认值：
-#     10 §5.4.2 R-3 逐字「不提供默认值语法……解析不到即 E_CONFIG_INVALID 拒绝启动」。
-#   ★★ 未标定的参数留 null（＝「声明键位但未赋值」），🚫 绝不写 0.0 冒充已赋值。
-#   ★★ 本层只许写 common.safety.*（10 §5.4.3 L3 行 · 10 §5.4.5 逐字 `common.safety.clock.*`）。
-#   命名空间分歧已裁（99 U73, 2026-08-06 用户拍板）：键路径 = common.safety.clock.*
-#      （10 §5.4.5 已登记, 11 §1.5.5 yaml 样例已对齐嵌套到 common.safety.clock）。
-#      本文件仍留空 —— 原因改为【值待标定】：sync_timeout_s / offset_threshold_ms 等按
-#      11 §1.5.5 逐键抄, rtc_trusted 待确认板载 RTC 电池, 未标定留 null（§3.1）。
-#   ★★ 本文件不跟随 XBRAIN_CONFIG_DIR（10 §5.4.0 ENV-2）。
+#   ★★★ 键路径 = common.safety.clock.*（99 U73，2026-08-06 用户拍板确认 7b）：
+#        10 §5.4.5 对照表已登记该命名空间，11 §1.5.5 的 yaml 样例已嵌套到 common.safety.clock。
+#        🚫 不得写顶层 clock:（L3 层只许 common.safety.*，顶层裸键即拒 —— 10 §5.4.3 L3 行）。
+#        （前一轮头注登记的「命名空间分歧待裁」已由 U73 解除，本轮据此落值。）
+#
+#   ★★★ 七个键的取值【逐字转抄自 11 §1.5.5 配置块】，🚫 未凭空造任何值（CLAUDE.md 3.1）。
+#
+#   ★★ 本文件【不写】# PROVENANCE 标记 —— 与 configs/models/m20s.yaml 同款处理，理由相同：
+#        brake.yaml 头注称 PROVENANCE 取值域出自「SET-01 护栏 3」，而 SET-01 在 docs 正式册内
+#        grep 全库零命中（悬空引用），其取值域的唯一定义处待 CFG-DC-5 由用户裁定。
+#        🚫 在裁决落定前不把这条未批准的约定扩散到新文件；每个值的出处改用「册号 ＋ 章节锚点」
+#        写在行尾注里（源都是 11 §1.5.5，均为 U34 落地的设计取值）。
+#
+#   ★★ rtc_trusted：11 §1.5.5 逐字给的取值就是 false，行注「待确认板载 RTC 是否装配电池」。
+#        此处按【文档给定的 fail-safe】写 false（硬件未确认即不信任 RTC 墙钟）——
+#        ★ 这不是「凭空造值」：false 是 §1.5.5 的字面取值，也恰是安全侧的兜底方向。
+#        🚫 未经硬件确认 RTC 电池到位前不得改 true（改 true 是朝「信任未验证时钟」放松，方向相反）。
+#
+#   ★★★ 本层不支持 ConfigCommand 热更新（全部 clock.* 属安全参数）——
+#        收到即回 E_CONFIG_LOCKED（11 §1.5.5 护栏 1 / §7.6）。尤其 allow_unsynced_motion
+#        一旦可热更新即一条「远程解除时钟安全约束」的通道。改动只能改文件 + 整栈重启。
 # ═══════════════════════════════════════════════════════════════════════════
 
-# TODO(`11` §1.5.5（配置项 `/opt/xbrain_v6/configs/safety/clock.yaml`）)：按该节逐键落值。本文件在落值前会让整栈按设计拒绝启动，这是预期行为。
+common:                        # L3 层只许 common.safety.*（10 §5.4.3 L3 行）
+  safety:
+    clock:
+
+      # ClockStatus 超时（单调钟计，CLK-C1）；超时即信封 ts_sync=false ⇒ §1.5.5 降级链。
+      # 见 11 §1.5.5 配置块；与 §1.6.1 T-11「rt/clock/status 5 s」同值。
+      sync_timeout_s:          5.0
+
+      # sync 判定门槛：授时源（rtk / ntp）偏移的毫秒上界，超过即判未同步。
+      # 见 11 §1.5.5 配置块。
+      offset_threshold_ms:     20.0
+
+      # 授时源参考更新的最大年龄（秒）；参考比此更旧即视为失效。
+      # 见 11 §1.5.5 配置块。
+      ref_max_age_s:           5.0
+
+      # U34：ts_sync=false 时手柄/键盘遥控的硬速度上限（m/s），与 RTK 未固定的低速上限取 min。
+      # ★ 由 P1 速度门直接实现为 gate.limiter="clock"，不经 HealthFactor（§1.5.5 要点 1）。
+      # 见 11 §1.5.5 配置块 / §3.3.1 第 7 列「0.5 m/s」。
+      unsynced_max_speed_mps:  0.5
+
+      # 板载 RTC 是否可信。11 §1.5.5 逐字 false，行注「待确认板载 RTC 是否装配电池」。
+      # ★ 按文档给定的 fail-safe 写 false：硬件未确认即不信任 RTC 墙钟。
+      # ⚠️ 待硬件确认 RTC 装配电池后方可评估放开；🚫 未确认前不得改 true。
+      rtc_trusted:             false
+
+      # 墙钟跳变超过此值（毫秒）即由 rtk_driver 发 clock_step 事件并递增 step_count（CLK-C6）。
+      # 见 11 §1.5.5 配置块 / §1.5.6「阶跃通知」行。
+      step_notify_ms:          100.0
+
+      # ★★ 实验室联调开关 —— 现场部署【强制 false】（§1.5.5 护栏 3 / 配置项表）。
+      #   false（现场强制）：ts_sync=false 时只允许 ≤ unsynced_max_speed_mps 的手柄/键盘遥控，
+      #                      全部自主模式（patrol / goto / 相对位移 / 自主充电）拒绝。
+      #   true（仅室内无 RTK 台架）：允许未同步下进 patrol / goto / 相对位移，
+      #                      但速度上限仍为 unsynced_max_speed_mps，不放宽。
+      # ★★★ 属安全参数，不接受 ConfigCommand 热更新（§1.5.5 护栏 1 → E_CONFIG_LOCKED）。
+      allow_unsynced_motion:   false

@@ -136,6 +136,11 @@ common:
     #   必须让整栈拒绝启动, 并报出键路径与"缺在哪一层".
     t_lat_s: null
 
+    # d_safe_m: 全系统统一安全距离. 10 S5.4.5 对照表 (99 U67, 2026-08-06 用户拍板) 已把它
+    #   登记为 common.safety.d_safe_m 的独立叶子, 真源值 1.00 m 落在 L3 safety/brake.yaml.
+    #   本层 (L1) 只声明键位并留 null; 断言 N (10 S5.4.4) 的右操作数是它的引用轴展开值.
+    d_safe_m: null
+
     brake:
       # a_mps2: 制动减速度. TODO(M-22 / T-DECEL): 现行取值是工作假设, 未实测.
       a_mps2: null
@@ -147,10 +152,11 @@ common:
     clock:
       # 时钟未同步时的硬速度上限, 与"未同步是否放行自主运动"的开关.
       # 读者: P1 速度门 / P2 健康度 / rtk_driver. 权威 11 S1.5.5.
-      # 只声明 10 S5.4.5 左列逐字点名的这两个键位: clock 段的完整键集在
-      # 11 S1.5.5 与 configs/safety/clock.yaml 之间尚有一处未裁的命名空间分歧
-      # (11 的样例是顶层 clock:, 而 10 要求 common.safety.clock.*), 归 11 册主裁,
-      # 本文件不代它选边, 也不据此扩键.
+      # 命名空间分歧已裁 (99 U73, 2026-08-06 用户确认 7b): 键路径 = common.safety.clock.*
+      #   (10 S5.4.5 已登记, 11 S1.5.5 yaml 样例已对齐嵌套到 common.safety.clock).
+      # 本层 (L1) 只声明 10 S5.4.5 左列命名空间下逐字点名的这两个键位; clock 段的完整七键
+      #   (加 sync_timeout_s / offset_threshold_ms / ref_max_age_s / rtc_trusted / step_notify_ms)
+      #   落在 L3 configs/safety/clock.yaml, 本文件不据此扩键.
       unsynced_max_speed_mps: null
       # allow_unsynced_motion: 实验室联调开关. 它是安全参数, 一旦可热更新就等于
       #   给了一条"远程解除时钟安全约束"的通道 -- 10 S5.4.4 断言 E 要求五组安全

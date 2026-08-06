@@ -18,6 +18,15 @@ SET_NAMES at run time for the authoritative membership; a number written here
 would have gone stale the day cls and device were added, and again the day the
 arbitration and task-lifecycle sets arrived.
 
+One thing here is NOT a closed set: LIMITER_CN, the gate.limiter -> Chinese
+broadcast wording (CFG-CM-6). It lives with GATE_LIMITER on purpose -- 16 S8.3B.2
+requires the map to sit beside the closed set it mirrors -- and it is guarded by
+its own startup assertion, assert_limiter_cn_matches_gate_limiter (RS-LIM), which
+refuses to start unless the map's keys and the gate.limiter set are equal both
+ways. It is a mapping, not a membership set, so it is reached by key rather than
+through get()/SET_NAMES; the long comment beside its definition explains why the
+values are authored here rather than generated like sets.yaml.
+
 Most of these come from 11, but not all of them: charge_stage is defined in 15
 S8.5, because 11 states that its own charging section 定接口 while 15 S8.5 定判据
 与阈值 and that 两处不得各写一份阈值 (CFG-40). Each set records the volume it came
@@ -88,13 +97,25 @@ a caller reading help() needs.
 """
 
 import os
-from typing import Dict, FrozenSet, List, Tuple
+from types import MappingProxyType
+from typing import Dict, FrozenSet, Iterable, List, Mapping, Tuple
 
 # ClosedSetViolation is defined with the error hierarchy rather than here, so a
 # caller catches one exception type for the whole common/ family. It is
 # re-exported in __all__ for the same reason: a module that validates values
 # should not force its callers to import a second package to catch the failure.
 from ..errors.exceptions import ClosedSetViolation
+
+# E_CONFIG_INVALID and XbrainError come from the errors PACKAGE, not from
+# .exceptions, because the code constants are bound in errors/__init__ (from
+# codes.yaml) and not in the exceptions module. Importing them adds no cost the
+# line above did not already pay: "from ..errors.exceptions import ..." already
+# runs errors/__init__ to reach the submodule, so the code table is loaded by
+# the time this line executes. The constant is imported rather than the literal
+# "E_CONFIG_INVALID" typed here because CLAUDE.md 3.5 forbids E_* literals
+# outside common/errors/ and scripts/lint/no_literal_ecode.py enforces it -- the
+# same rule every module in common/config/ follows for this exact code.
+from ..errors import E_CONFIG_INVALID, XbrainError
 
 # Path derived from __file__, not from the configuration root. These values are
 # the contract itself, not tunable configuration: they must not be reachable
@@ -399,6 +420,138 @@ EVENT_CATEGORY = _SETS["event_category"]
 #   estop first, the none sentinel last. Read it with .index(); never rebuild it
 #   by iterating anything that has been sorted.
 GATE_LIMITER = _SETS["gate_limiter"]
+
+# ---------------------------------------------------------------------------
+# limiter_cn -- the gate.limiter -> Chinese broadcast wording, plus its startup
+# assertion RS-LIM. CFG-CM-6. It sits HERE, hard against GATE_LIMITER, by
+# instruction: 16 S8.3B.2 (grep anchor "加值时中文就在旁边") requires the map to
+# live in the shared library right next to the closed set, so a maintainer
+# adding a limiter value sees the empty Chinese slot in the same glance. RS-LIM
+# below is what turns "should not leave it empty" into "will not start if empty".
+#
+# Why this map is hand-written here and NOT generated from a doc table the way
+# sets.yaml is. The closed set (the LEFT operand of RS-LIM) is contract-defined
+# in 11 S3.4; the Chinese (the RIGHT operand) is authored broadcast wording that
+# 11 refuses to define at all -- 11 S3.4 states in so many words that it fixes
+# the value domain of gate.limiter and not how each value reads aloud, leaving
+# that to 16 (the P4 broadcast pipeline). The two are therefore written by
+# different people at different times, which is exactly what makes a
+# symmetric-difference check between them worth running: 16 S8.3B.3 (grep anchor
+# "为什么这条判据非自证") calls it non-self-certifying for that reason -- neither
+# side can drift without the other going out of step.
+#
+# Sources, one authority per value, greppable and with no line numbers (NUM-4):
+#   * the twelve non-heading/clock values: 16 S8.3, the inline map on the row
+#     whose cell reads "现有 12 条" (free_space through none).
+#   * heading and clock: 99 U76(6) (grep anchor "heading = 航向未就绪"), the
+#     ruling that resolved the gap 16 S8.3B.3 flagged as still red (grep anchor
+#     "本断言今天就是红的"). Before U76(6) these two values had no authored
+#     wording and RS-LIM was designed to stay red on purpose until they did.
+# tests/common/test_limiter_cn.py binds every value back to those anchors, the
+# same way test_closed_sets.py binds sets.yaml back to 11: a hand transcription
+# that nothing checks against its source is the one defect this package exists
+# to stop, and the RS-LIM key check alone does not cover the VALUES.
+#
+# NOT hot-updatable (16 S8.3B.2, grep anchor "改它要发版"): it ships inside the
+# shared library and never travels through configs/ or /run/xbrain/resolved/.
+# The restate templates keep their {limiter_cn} placeholder and fill it FROM
+# here; a second copy of this map anywhere else is forbidden by the same section.
+#
+# What this map deliberately does NOT do: it does not carry the out-of-set
+# fail-safe. 16 S13 LIMITER-1 requires an off-contract raw limiter to broadcast a
+# generic "current speed cap" line and log event/warn/motion carrying the raw
+# value, WITHOUT reading a reason and WITHOUT blocking -- and that branch is the
+# consumer's (P4), taken BEFORE any lookup here, exactly as arb_suspended's null
+# is branched before parse(). After RS-LIM passes, every GATE_LIMITER member is a
+# key, so LIMITER_CN[v] on an already-validated limiter cannot miss; a miss means
+# the caller skipped the LIMITER-1 branch -- a caller bug, never a value to
+# invent on this side.
+#
+# The dict is ordered to mirror the GATE_LIMITER attribution priority. The order
+# carries no meaning for a by-key lookup, but keeping it in lockstep with the
+# closed set is what makes "the Chinese is right beside it" literally true for a
+# human reading the two together. Inline comments cite only the section, never
+# the Chinese word: repeating the value in an English comment would both mix
+# languages (CLAUDE.md 2.1) and create a second copy for the value-binding test
+# to disagree with.
+_LIMITER_CN_RAW = {
+    "estop": "急停",           # 11 S3.4 priority 1 ; 16 S8.3
+    "mode": "模式限制",         # 11 NAV-111 B/D-mode cap ; 16 S8.3
+    "health": "传感器降级",      # 16 S8.3
+    "rtk": "定位质量",          # 16 S8.3
+    "heading": "航向未就绪",     # 99 U76(6) ; heading-quality degrade, 0.5 m/s cap
+    "clock": "时钟未同步",       # 99 U76(6) ; clock-unsync, 0.5 m/s cap
+    "fence": "电子围栏",         # 16 S8.3
+    "free_space": "前方障碍",    # 16 S8.3
+    "target": "附近有人",        # 16 S8.3
+    "brake": "加减速限制",       # 16 S8.3
+    "gait": "当前步态",          # 16 S8.3
+    "profile": "档位上限",       # 16 S8.3
+    "spec": "底盘上限",          # 16 S8.3
+    "none": "无限制",           # 16 S8.3 ; the not-limited sentinel
+}
+
+# MappingProxyType, not the bare dict: every importer in the process shares this
+# one object, so a writable map would let one module rewrite a broadcast reason
+# for all the others -- the same guarantee ClosedSet.values gives with a tuple.
+LIMITER_CN: Mapping[str, str] = MappingProxyType(_LIMITER_CN_RAW)
+
+
+# assert_limiter_cn_matches_gate_limiter -- the RS-LIM startup assertion.
+#
+# 16 S8.3B.3, verbatim: the limiter_cn key set and the 11 S3.4 gate.limiter
+# closed set must have an EMPTY symmetric difference; unequal means refuse to
+# start, with E_CONFIG_INVALID.
+#
+# !! Both directions, never one-way containment. 16 S8.3B.3 (grep anchor "绝不可
+# 改成") forbids "the map's keys are all in the closed set", because that stays
+# green while a closed-set value has no Chinese -- which was the live state for
+# heading and clock before U76(6). The two operands below are subtracted each
+# way and either non-empty difference raises.
+#
+# Operands are passed in, not read from the module globals, and nothing is
+# defaulted -- CLAUDE.md 3.1 applied past the safety params it names, the same
+# stance ClosedSet.__init__ takes. Injected operands are also what lets the
+# mutation tests feed a doctored closed set or a doctored map without reloading
+# the module or touching sets.yaml; the import-time call below passes the real
+# pair.
+#
+# E_CONFIG_INVALID is the code the whole config-refusal family carries (group L,
+# retryable no); RS-LIM is one more member of it, so it raises with the same code
+# a bad reference or a failed schema check does, and a caller branching on the
+# code treats them alike.
+def assert_limiter_cn_matches_gate_limiter(cn_keys: Iterable[str],
+                                           limiter_values: Iterable[str]) -> None:
+    """RS-LIM: raise E_CONFIG_INVALID unless the two sets are equal both ways."""
+    cn = frozenset(cn_keys)
+    limiter = frozenset(limiter_values)
+    # missing_cn: a gate.limiter value the map has no Chinese for. This is the
+    # direction a one-way "keys subset of closed set" check cannot see, and the
+    # one 16 S8.3B.3 was written to catch.
+    missing_cn = sorted(limiter - cn)
+    # extra_cn: a Chinese key for something that is not a gate.limiter value --
+    # a typo, or wording left behind after a value was removed from the set.
+    extra_cn = sorted(cn - limiter)
+    if missing_cn or extra_cn:
+        # Both differences are named so the failure says which side is short and
+        # by what -- a bare "RS-LIM failed" would send the reader to diff two
+        # lists by hand. No count is printed (CLAUDE.md 3.7); the elements are.
+        raise XbrainError(
+            E_CONFIG_INVALID,
+            "RS-LIM: limiter_cn keys and the gate.limiter closed set differ. "
+            f"closed-set values with no Chinese: {missing_cn}; "
+            f"Chinese keys not in the closed set: {extra_cn}. "
+            "See 16 S8.3B.3; add the wording or amend 11 S3.4, do not relax this",
+        )
+
+
+# Enforced at IMPORT, so a mismatch stops the process at Stage 0 while a human is
+# watching, exactly like a malformed sets.yaml does above (see the module
+# docstring on why the sets are built at import). The alternative -- a lazy check
+# on first broadcast -- would surface the failure the first time the robot tries
+# to say why it slowed down, which is both later and further from the cause.
+assert_limiter_cn_matches_gate_limiter(LIMITER_CN.keys(), GATE_LIMITER.values)
+
 # stop_reason -- ORDERED. The sequence is the decision order of 11 S9.12.2, with
 #   none leading as the not-stopped sentinel. Exactly one reason is reported per
 #   tick, so this order is what decides which one that is.
@@ -493,8 +646,15 @@ CHARGE_STAGE = _SETS["charge_stage"]
 # knowing it when they are written. _SETS and _load stay unexported: the sets are
 # reached through the constants or through get(), so there is one place that
 # turns an unknown name into a raise.
+#
+# LIMITER_CN and assert_limiter_cn_matches_gate_limiter are exported alongside
+# GATE_LIMITER: the map is the P4 broadcast source (CFG-CM-6) and the assertion
+# is the RS-LIM startup check, callable by the boot sequence and the tests as
+# well as running once at import here. _LIMITER_CN_RAW stays unexported so the
+# only reachable handle is the read-only MappingProxyType.
 __all__ = ["ClosedSet", "ClosedSetViolation", "SET_NAMES", "get", "parse_enum",
            "PLANE", "DOMAIN", "EVENT_CATEGORY", "GATE_LIMITER", "STOP_REASON",
+           "LIMITER_CN", "assert_limiter_cn_matches_gate_limiter",
            "TASK_STATE", "CLS", "DEVICE",
            "RELEASE_REASON", "ARB_SUSPENDED", "GATE_REASON", "SUSPEND_KIND",
            "SUSPEND_REASON", "CHARGE_STAGE"]

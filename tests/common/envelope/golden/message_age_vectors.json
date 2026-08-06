@@ -1,0 +1,90 @@
+{
+  "section": "11 S3.0.1",
+  "note": "Inputs are chosen dyadic (integer plus a multiple of 1/4) so the double subtraction is EXACT and the expected age is hand-verifiable, except message_age_needs_17_digits, whose whole purpose is a non-representable difference (0.1) that must render identically on both sides. Only that one string was computed; the rest are read off by hand. Do NOT regenerate any of them to make a failing test pass -- a disagreement means the arithmetic or the rendering diverged, which is the bug this file exists to catch.",
+  "vectors": [
+    {
+      "name": "produced_age_mono_and_boot_match",
+      "why": "Branch 1: mono present and boot == local -> now_mono - mono. The real produced age. now=4821.75, mono=4821.25 -> exactly 0.5.",
+      "envelope": {"v": 1, "rid": "dog-01", "ts": 1753660800.5, "mono": 4821.25, "boot": "9f2c1a44", "seq": 5, "src": "perception", "ts_sync": true, "data": {}},
+      "rx_mono": 4821.5,
+      "now_mono": 4821.75,
+      "local_boot_id": "9f2c1a44",
+      "expected_branch": "produced",
+      "expected_negative": false,
+      "expected_raw": "0.5",
+      "expected_age": "0.5"
+    },
+    {
+      "name": "produced_age_needs_17_digits",
+      "why": "Branch 1 with a NON-representable difference: now=0.1, mono=0.0 -> the double nearest 0.1, which %.17g renders as 0.10000000000000001. This is the only computed string; it pins that both languages print the same 17 digits, not a nicer rounding.",
+      "envelope": {"v": 1, "rid": "dog-01", "ts": 1753660800.5, "mono": 0.0, "boot": "aa11bb22", "seq": 7, "src": "perception", "ts_sync": true, "data": {}},
+      "rx_mono": 0.05,
+      "now_mono": 0.1,
+      "local_boot_id": "aa11bb22",
+      "expected_branch": "produced",
+      "expected_negative": false,
+      "expected_raw": "0.10000000000000001",
+      "expected_age": "0.10000000000000001"
+    },
+    {
+      "name": "boot_mismatch_falls_back_to_rx",
+      "why": "Branch 2: mono present but boot != local -> now_mono - rx_mono, NOT now_mono - mono. now=4821.75, rx=4821.5 -> 0.25; using mono would have given 0.5, so the two branches are distinguishable.",
+      "envelope": {"v": 1, "rid": "dog-01", "ts": 1753660800.5, "mono": 4821.25, "boot": "9f2c1a44", "seq": 6, "src": "perception", "ts_sync": true, "data": {}},
+      "rx_mono": 4821.5,
+      "now_mono": 4821.75,
+      "local_boot_id": "deadbeef",
+      "expected_branch": "rx_fallback",
+      "expected_negative": false,
+      "expected_raw": "0.25",
+      "expected_age": "0.25"
+    },
+    {
+      "name": "cloud_no_mono_falls_back_to_rx",
+      "why": "Branch 3: mono absent (a cloud publisher omits it, CLK-C4) -> now_mono - rx_mono. now=101.0, rx=100.5 -> 0.5. The envelope carries no mono and no boot.",
+      "envelope": {"v": 1, "rid": "dog-01", "ts": 1753660800.5, "seq": 2, "src": "p5_gateway", "ts_sync": false, "data": {}},
+      "rx_mono": 100.5,
+      "now_mono": 101.0,
+      "local_boot_id": "deadbeef",
+      "expected_branch": "rx_fallback",
+      "expected_negative": false,
+      "expected_raw": "0.5",
+      "expected_age": "0.5"
+    },
+    {
+      "name": "negative_age_on_produced_branch_clamps_to_zero",
+      "why": "Branch 4 via branch 1: boot matches but now_mono < mono (a backward wall step misjudged, or an out-of-order arrival). raw = 4821.25 - 4821.75 = -0.5, clamped to 0, was_negative true. The raw carries the -0.5 the event would report.",
+      "envelope": {"v": 1, "rid": "dog-01", "ts": 1753660800.5, "mono": 4821.75, "boot": "9f2c1a44", "seq": 9, "src": "perception", "ts_sync": true, "data": {}},
+      "rx_mono": 4821.5,
+      "now_mono": 4821.25,
+      "local_boot_id": "9f2c1a44",
+      "expected_branch": "produced",
+      "expected_negative": true,
+      "expected_raw": "-0.5",
+      "expected_age": "0"
+    },
+    {
+      "name": "negative_age_on_fallback_branch_clamps_to_zero",
+      "why": "Branch 4 via branch 3: cloud packet (no mono), now_mono < rx_mono. raw = 200.0 - 200.5 = -0.5, clamped to 0, was_negative true. Proves the clamp applies on the fallback branch too, not only the produced one.",
+      "envelope": {"v": 1, "rid": "dog-01", "ts": 1753660800.5, "seq": 3, "src": "cloud", "ts_sync": false, "data": {}},
+      "rx_mono": 200.5,
+      "now_mono": 200.0,
+      "local_boot_id": "deadbeef",
+      "expected_branch": "rx_fallback",
+      "expected_negative": true,
+      "expected_raw": "-0.5",
+      "expected_age": "0"
+    },
+    {
+      "name": "zero_age_from_equality_is_not_negative",
+      "why": "now_mono == mono exactly -> age 0 and was_negative FALSE. This distinguishes 'zero because equal' (branch 1, not negative) from 'zero because clamped' (branch 4). A clamp that fired on age <= 0 instead of age < 0 would flip was_negative here.",
+      "envelope": {"v": 1, "rid": "dog-01", "ts": 1753660800.5, "mono": 50.0, "boot": "abcdef01", "seq": 1, "src": "perception", "ts_sync": true, "data": {}},
+      "rx_mono": 49.0,
+      "now_mono": 50.0,
+      "local_boot_id": "abcdef01",
+      "expected_branch": "produced",
+      "expected_negative": false,
+      "expected_raw": "0",
+      "expected_age": "0"
+    }
+  ]
+}

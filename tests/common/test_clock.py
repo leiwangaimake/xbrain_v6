@@ -224,9 +224,18 @@ def test_no_wall_clock_reader_is_exported_from_the_clock_package():
 
     If that decision is ever reversed, reverse it in the documents first: a
     passing test is not where a contract change belongs.
+
+    Restricted to CALLABLES on purpose. The forbidden thing is a wall-clock
+    READER -- a function or clock class anyone may call; a WallClock class or a
+    utc_now() would still be caught here. A non-callable constant is data, not a
+    reader: TIMEBASE_WALL = "wall" is the S1.6 registry's name for T-46's
+    timebase (11 S1.6, the single wall-clock entry, added with INF-CM-3's second
+    half), and the registry MUST be able to name it. Flagging that string would
+    forbid DESCRIBING the wall clock when the point is only to forbid READING it.
     """
     suspicious = [name for name in dir(clock)
                   if not name.startswith("_")
+                  and callable(getattr(clock, name))
                   and any(word in name.lower()
                           for word in ("wall", "utc", "realtime", "epoch"))]
     assert not suspicious, (

@@ -59,9 +59,15 @@ be a second thing to keep in step:
     rtk_driver alone and CLK-A2 forbids every other process from judging for
     itself -- no reading chronyc, no comparing local clocks. A helper here named
     anything like is_time_good() would be exactly the forbidden thing.
-  * It does not hold the S1.6 timeout table. Those thresholds are a separate
-    deliverable and must be generated from the contract table rather than typed
-    in a second time.
+  * The mono_now_s() reading here does not itself hold the S1.6 timeout table:
+    that registry is its own file, timeouts.py, re-exported from this package
+    (TIMEOUTS / timeout()). They are kept in separate files on purpose. A
+    threshold is data driven from the contract's S1.6 table and carries its own
+    symmetric-difference metatest; mono_now_s() is a three-line primitive every
+    20 Hz loop calls. Fusing them would drag a doc-bound table into the hot path.
+    The reading (here) and the deadline it is compared against (there) are
+    different concerns, and neither computes age from the other -- that is still
+    the envelope layer's, per the first bullet.
   * It does not read the wall clock, and no wall_now_s() belongs here. The three
     permitted wall-clock uses stay at their call sites carrying the visible
     line-level marker clock_scan.py requires, because the marker is what makes
@@ -102,11 +108,36 @@ Traps -- things that look right and are not
 import time
 from typing import List
 
-# The public surface is two names, and it is written out so that "what does this
-# package export" is answerable without reading the body. CFG-CM-12 names both
-# of them; do not add a third export without the item that asks for it, and in
-# particular see the wall-clock boundary note above before adding one.
-__all__: List[str] = ["mono_now_s", "MonoClock"]
+# The timeout registry is re-exported from timeouts.py so a caller writes
+# `from xbrain.common.clock import TIMEOUTS`, one import for reading AND deadline.
+# Listed in __all__ below; the noqa keeps the linter from deleting names that are
+# re-exports rather than local uses.
+from .timeouts import (  # noqa: F401
+    GROUP_LINK,
+    GROUP_NONSAFETY,
+    GROUP_SAFETY,
+    TIMEBASE_MONOTONIC,
+    TIMEBASE_WALL,
+    TIMEOUT_IDS,
+    TIMEOUTS,
+    Timeout,
+    timeout,
+)
+
+# The public surface, written out so that "what does this package export" is
+# answerable without chasing the submodule, and so a linter does not delete the
+# re-exports as unused. mono_now_s / MonoClock are the clock reading (CFG-CM-12);
+# the Timeout names are the S1.6 deadline table (INF-CM-3, second half). Do not
+# add a name without the item that asks for it, and see the wall-clock boundary
+# note above before adding a reading one.
+__all__: List[str] = [
+    # the reading -- CFG-CM-12
+    "mono_now_s", "MonoClock",
+    # the deadline table -- INF-CM-3 (defined in timeouts.py)
+    "Timeout", "TIMEOUTS", "TIMEOUT_IDS", "timeout",
+    "GROUP_SAFETY", "GROUP_LINK", "GROUP_NONSAFETY",
+    "TIMEBASE_MONOTONIC", "TIMEBASE_WALL",
+]
 
 
 # The name carries its unit. 11 spells the contract fields the same way --

@@ -289,7 +289,17 @@ globals().update({c: c for c in _CODES})
 __all__ = ["ALL_CODES", "ErrorCode", "XbrainError", "UnknownErrorCode",
            "ClosedSetViolation", "info", "retryable",
            "detail_requirement", "is_failure", "RETRY_YES", "RETRY_CONDITIONAL",
-           "RETRY_NO", "RETRY_NA", *sorted(_CODES)]
+           "RETRY_NO", "RETRY_NA",
+           # The capability-unavailable guard (INF-DB-4, from 21 S2/S3) and the
+           # chassis fault-code discipline (CF-1 format gate plus the open set).
+           # Both live in submodules that import the E_* names bound just above,
+           # so they are pulled in at the very end of this file; see that block.
+           "capability_guard", "CapabilityRejection", "CAPABILITY_DEBTS",
+           "is_wellformed_fault_code", "require_wellformed_fault_code",
+           "classify_fault_code", "read_fault_report", "FaultOutcome",
+           "FaultReport", "FAULT_REGISTERED", "FAULT_UNKNOWN", "FAULT_MALFORMED",
+           "FAULT_STATUSES",
+           *sorted(_CODES)]
 
 
 # The single lookup point. retryable(), detail_requirement() and is_failure()
@@ -342,3 +352,22 @@ def is_failure(code: str) -> bool:
     # Comparing against "OK" would also reintroduce a hardcoded code literal,
     # which CLAUDE.md 3.5 forbids even inside this package.
     return info(code).retryable != RETRY_NA
+
+
+# ---------------------------------------------------------------------------
+# Submodule re-exports. These two imports sit at the END of the file ON PURPOSE,
+# and moving them up would break the package. capability.py does
+# "from . import E_CAPABILITY, E_NOT_IMPLEMENTED" and chassis_faults.py does
+# "from . import E_SCHEMA" -- names that only exist AFTER globals().update above
+# has run over codes.yaml. Importing the submodules here, once the names are bound,
+# lets a caller write "from xbrain.common.errors import capability_guard" while the
+# code constants those submodules need are already in place.
+#
+# noqa E402: these are module-level imports below code by necessity, not by
+# oversight -- the necessity is the binding order just described.
+from .capability import (  # noqa: E402
+    CAPABILITY_DEBTS, CapabilityRejection, capability_guard)
+from .chassis_faults import (  # noqa: E402
+    FAULT_MALFORMED, FAULT_REGISTERED, FAULT_STATUSES, FAULT_UNKNOWN,
+    FaultOutcome, FaultReport, classify_fault_code, is_wellformed_fault_code,
+    read_fault_report, require_wellformed_fault_code)

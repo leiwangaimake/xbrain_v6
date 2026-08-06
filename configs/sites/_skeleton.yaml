@@ -1,0 +1,52 @@
+# ==========================================================================
+# /opt/xbrain_v6/configs/sites/_skeleton.yaml
+#   TEMPLATE ONLY -- this is NOT a site instance and is never loaded.
+#   A leading underscore marks it as a template; a real site file is
+#   sites/<site_id>.yaml (see below).
+#
+#   Layer: L4 (site layer). 10 S5.4.0 directory tree (grep anchor: sites/)
+#     and 10 S5.4.3 L4 row: this directory holds one file per site, and the
+#     FILE NAME is the site_id. The loader (xbrain/common/config/layers.py,
+#     Layer "L4") selects sites/{site_id}.yaml by the RESOLVED site_id; it
+#     does NOT glob this directory, so this template file is inert. Assertion
+#     D also requires site_id to equal the L4 file name (10 S5.4.4 assertion D).
+#
+#   Namespace this layer may write (10 S5.4.3 L4 / layers.py L4 allowed):
+#     common.geo.*   common.site.*   common.retention.*
+#   Any other top-level namespace in a real site file is rejected by the
+#   freeze namespace check.
+#
+#   Keys that live here, and where each is defined (10 S5.4.5 对照表):
+#     common.geo.enu_origin
+#         Field-surveyed ENU origin. common.yaml declares the position = null;
+#         the VALUE is filled HERE, per site (11 U-01). Still uncalibrated, so
+#         by design the stack refuses to boot and assertion A names the key
+#         path -- that refusal is expected behaviour, not a defect.
+#     common.retention.{task_days, event_days, command_log_days}
+#         Key positions declared in common.yaml; values filled here. Assertion
+#         C checks task_days <= event_days <= command_log_days (10 S5.4.4 C).
+#     common.site.*
+#         Site-scoped settings (10 S5.4.3 L4 row).
+#
+#   Why this skeleton carries NO keys and NO values:
+#     - The site_id is a per-deployment instance name, not yet assigned
+#       (docs/README grep anchor: 文件名是实例名). Inventing one here, or
+#       inventing an enu_origin, would break CLAUDE.md 3.1: an uncalibrated
+#       geo/safety value stays null so the boot refuses and names the key;
+#       writing a number to make things "work" is the fail-silent trap.
+#     - A real site file is created at deploy time as sites/<site_id>.yaml
+#       with a top-level `common:` mapping and the geo/retention values
+#       measured on site. This template only records the shape and stops.
+#
+#   Boundary (what does NOT belong here):
+#     - Per-vehicle extrinsics are L4b, in calib/<robot_id>.yaml, not here
+#       (10 S5.4.3: L4 is per-SITE, L4b is per-VEHICLE; mixing them makes the
+#       calibration follow a site change).
+#     - Machine-model limits (spec.*) are L2, in models/m20s.yaml.
+#     - The credential tree is configs/secrets/**, checked by
+#       scripts/lint/secrets_perm_baseline.sh, not from here.
+# ==========================================================================
+
+# TEMPLATE -- intentionally no keys. A real site file is sites/<site_id>.yaml
+# with a top-level `common:` mapping. See the header for what belongs and why
+# this stays empty until a site is surveyed.

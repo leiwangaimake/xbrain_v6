@@ -65,12 +65,22 @@ CLEAN_LINTS = [
      "no E_* code spelled as a string literal under xbrain/, ros2_ws/, "
      "services/ or common/, apart from the exemptions declared with a marker "
      "(CFG-CM-2)"),
+    # Added with CFG-CM-17. Its zero means no resolved Zenoh subscriber callback
+    # under xbrain/, ros2_ws/ or services/ performs one of the four operations
+    # CLAUDE.md 4.2 forbids on the Rust callback thread (create_task, an asyncio
+    # queue put_nowait, an await, a direct event_bus.publish);
+    # tests/common/test_zenoh_callback_scan.py holds the metatests, including the
+    # mutation the item names verbatim.
+    ("zenoh_callback_scan.py",
+     "no create_task, put_nowait, await or direct publish inside a resolved "
+     "Zenoh subscriber callback under xbrain/, ros2_ws/ or services/, the "
+     "static half of CLAUDE.md 4.2 (CFG-CM-17)"),
 ]
 
 #: Lints that also ship a --self-test. Running it here keeps the probes honest;
 #: a self-test nobody invokes rots exactly as fast as a lint nobody invokes.
 SELF_TESTED = ["comment_ratio.py", "no_config_source_read.py", "clock_scan.py",
-               "no_literal_ecode.py"]
+               "no_literal_ecode.py", "zenoh_callback_scan.py"]
 
 
 def run_lint(script, *args):

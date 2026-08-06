@@ -81,6 +81,7 @@ audits, so the corruption would be recorded as if it were the truth.
 
 from typing import Any, Dict, List, Optional, Tuple
 
+from .duplicates import check_l2_not_copy_of_l1
 from .layers import (ENV_KEY_MAP, ENV_WHITELIST, LAYERS, ConfigLayerError, Layer,
                      check_namespace, env_overlay, resolve_config_root, safety_root)
 from .merge import MISSING, deep_merge, flatten, unflatten
@@ -90,10 +91,13 @@ from .merge import MISSING, deep_merge, flatten, unflatten
 # them directly rather than through build_overlay. MISSING is exported because a
 # caller that reaches for None instead has already thrown away the
 # declared-but-unassigned distinction this whole module is built around.
+# check_l2_not_copy_of_l1 is assertion B's U76(9) sub-clause (CFG-FZ-16): it runs
+# on the per-layer trees AFTER build_overlay, not inside it, because it has to see
+# L1 and L2 apart and build_overlay has already merged them.
 __all__ = ["ConfigLayerError", "Layer", "LAYERS", "ENV_WHITELIST", "ENV_KEY_MAP",
            "MISSING", "deep_merge", "flatten", "unflatten", "resolve_config_root",
            "safety_root", "env_overlay", "check_namespace", "build_overlay",
-           "OverlayResult"]
+           "OverlayResult", "check_l2_not_copy_of_l1"]
 
 
 class OverlayResult:

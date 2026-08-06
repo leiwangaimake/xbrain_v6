@@ -28,6 +28,16 @@ common:
     # ⚠️ 仍待 T7 实测复核；实测落地后本行 PROVENANCE 改 measured:<T7-日期>，取值不得 < 0.4
     t_lat_s: 0.4                 # PROVENANCE: decided:U54
 
+    # d_safe_m：全系统统一安全距离，值 1.00 m。
+    # ★★★ 99 U67（2026-08-06 用户拍板）：原 12 P1 私有 safety_distance.d_safe_m 上提为
+    #      common.safety.d_safe_m（L3 安全层）。读者五方：P1 f() 停车门限 · P1 rns.margin_base_m ·
+    #      P1 rotation_clearance.margin_rot_m · 14 档位准入 · 17 HMI 安全圈 · 11 §10.3.2 MR-1 旋转许可。
+    #      见 10 §5.4.5 对照表「common.safety.d_safe_m」行（NUM-4：只写章节锚点不写行号）。
+    # ★★★ 断言 N（10 §5.4.4）：p1_motion.corridor.margin_base_m 必须【恒等于】展开后的
+    #      ${common.safety.d_safe_m}。去 YAML 锚点（R-7 禁 &/*）后，本键是替代锚点的那道单点机制。
+    # ★ 值 1.00 m 的来源是 U54 规则③（已定）；U67 只上提【键路径】未改值 ⇒ PROVENANCE 记值源 U54。
+    d_safe_m: 1.00               # PROVENANCE: decided:U54
+
     brake:
       # 制动减速度 a。★★★ 这是一个【工作假设】，不是硬件事实。
       # 断言：SP-5 / S-4 要求 0 < a_mps2 <= common.spec.max_decel_mps2，

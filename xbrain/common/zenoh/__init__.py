@@ -12,7 +12,7 @@ entirely in what each participant configures for itself -- see 11 S1.1.2 (grep
 belongs here, so that getting it right is an import rather than a paragraph five
 processes each re-implement.
 
-Today that is four things, and each is here because getting it wrong fails
+Today that is five things, and each is here because getting it wrong fails
 silently rather than loudly:
   * the session-config factory, so the two routers stay isolated;
   * SubscriberRegistry, because a subscriber handle nobody holds is undeclared
@@ -22,12 +22,18 @@ silently rather than loudly:
   * the QoS table and its resolver, because a process that does not set QoS
     explicitly inherits the Zenoh defaults -- block, data, reliable, FIFO(256) --
     and 11 S2.4.0 traces each of those to a specific failure here, none of which
-    announces itself.
+    announces itself;
+  * the A-1 in-process self-check (PublisherThreadRegistry), because which thread
+    publishes which key is knowledge only the process holds (10 S3.3.6 line 9),
+    so a Q3 block sharing a thread with a Q1 cmd_vel is invisible to any
+    config-static check and stalls a control tick in silence.
 Nothing else is re-exported, and nothing should be added here as a placeholder
 for work that has not landed -- CLAUDE.md 9.3 forbids reserving interfaces for
 the future, and an empty name exported from a package is the cheapest form of
-that. The startup self-check against the S2.4.8 anti-pattern table is NOT here:
-it is INF-ZN-5 and INF-ZN-6, and it consumes qos.py rather than living in it.
+that. Only the A-1 half of the S2.4.8 anti-pattern self-check lives here, and
+only because A-1 needs runtime thread<->publisher facts: it is INF-ZN-6, and it
+consumes qos.py. The config-static half -- A-2..A-7, assertion F / INF-ZN-5 --
+is NOT here; it runs in xbrain-config-freeze.service and reads qos.bindings.
 
 *** The trap this package's NAME creates. It is called zenoh and the third-party
 client library is also called zenoh. Python 3 resolves "import zenoh" from
@@ -73,6 +79,15 @@ from .session_factory import (PLANE_GEN, PLANE_RT, TRANSPORT_PLANES,
 # it in dependency order is what stops someone from "tidying" the two modules
 # into a cycle later.
 from .subscriber_registry import RegistryClosedError, SubscriberRegistry
+# Imported after qos because publisher_thread_check consumes QosResolution and the
+# BLOCK / PRIORITIES constants from it. The A-1 self-check (INF-ZN-6) is the one
+# anti-pattern check that lives in this package, because it needs the runtime
+# thread<->publisher binding a config-static check cannot see (10 S3.3.6 line 9).
+from .publisher_thread_check import (ASSERTION_F_ANTI_PATTERNS,
+                                     IN_PROCESS_ANTI_PATTERNS,
+                                     MixedQosThreadError,
+                                     PublisherThreadRegistry, ThreadMix,
+                                     current_thread_name)
 
 # Listed explicitly rather than left to the star-export default. Every name here
 # is imported-and-unused from this file's point of view, which is precisely what
@@ -91,4 +106,7 @@ __all__ = ["PLANE_RT", "PLANE_GEN", "TRANSPORT_PLANES", "ZenohPlaneConfigError",
            "RegistryClosedError", "SubscriberRegistry",
            "FROZEN_PROFILES", "RT_OVERRIDE", "HandlerSpec", "QosProfile",
            "QosResolution", "QosTable", "QosConfigError", "QosViolation",
-           "load_qos_table", "parse_full_key"]
+           "load_qos_table", "parse_full_key",
+           "PublisherThreadRegistry", "MixedQosThreadError", "ThreadMix",
+           "current_thread_name", "ASSERTION_F_ANTI_PATTERNS",
+           "IN_PROCESS_ANTI_PATTERNS"]

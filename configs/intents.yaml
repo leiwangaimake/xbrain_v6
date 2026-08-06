@@ -1,15 +1,206 @@
-# ═══════════════════════════════════════════════════════════════════════════
+# ===========================================================================
 # /opt/xbrain_v6/configs/intents.yaml
-#   层：L6 内容表    归属进程：P4（意图关键词）
-#   ★ 权威定义处：`16` §14 · `18` §16
+#   layer: L6 content table    owning process: P4 (p4_agent)
+#   authority: 16 S6.6 (route + slots) . 16 S8.3A.2 (auth) . 18 S13.1 (auth)
 #
-#   ★★★ 本文件当前是【空骨架】—— 一个键都没有，🚫 本轮未凭空填任何配置值。
-#   ★ 落值时逐键去权威节抄，🚫 不得从本文件或任何别处推断默认值：
-#     10 §5.4.2 R-3 逐字「不提供默认值语法……解析不到即 E_CONFIG_INVALID 拒绝启动」。
-#   ★★ 未标定的参数留 null（＝「声明键位但未赋值」），🚫 绝不写 0.0 冒充已赋值。
-#   ★★ L6 只【取值】不【定义】：🚫 不得出现 common 顶层键，共享值一律写 ${common.xxx}
-#     （10 §5.4.2 R-6 / R-1；违反即被 §5.4.4 断言 B 判「疑似复制」而拒绝启动）。
-#   ⚠️ `16` §14 同一文件写了两遍，落值前先看 10 §5.4.5 的登记。
-# ═══════════════════════════════════════════════════════════════════════════
+#   This is the intent registry: one entry per intent in the 18 command
+#   closed set. Each entry carries the four fields the loader asserts present
+#   (GWY-P4-07 criterion 1 / 16 S5.3 ID-1):
+#     id     <- 18 # column (A05, B02, ...). The intent id, one letter + two
+#              digits. Confirmation level is registered per id row (16 S8.3A).
+#     route  <- 16 S6.6 triage table: bypass | fastpath | fastpath_then_llm | llm.
+#     auth   <- 18 S13.1 per-row registration, folded to per-id here: the base
+#              (default-slot) confirmation level L0 | L1a | L1b | L2 | L3.
+#     slots  <- 16 S6.6 triage table. Slot NAMES only, no example values.
+#
+#   Provenance, and why nothing here was hand-typed. The four columns were
+#   generated from the two on-disk sources (docs/temp/_prompt_work/_triage.json
+#   for id/route/slots, the 16 S8.3A.2 registration table for auth) and their
+#   fold was checked against the S8.3A.2 histogram before being written. The
+#   formal home of the route/slots data is now 16 S6.6 itself (self-certifying,
+#   U76(1)); the _triage.json under docs/temp/ was a MIGRATION source only and
+#   nothing at run time reads it (CLAUDE.md 0.2, amended 2026-08-06).
+#
+#   ID-2 (16 S5.3): geographic-object ids are <prefix>-<slug> form
+#     (r- route . w- waypoint . f- fence . d- dock . p- preset . e- event).
+#     route_1 / route_east_gate and the like are invalid. No such id VALUE
+#     appears in this file -- slots hold names, not values -- so ID-2 is a
+#     validator the registry package exports and the few-shot / mission tables
+#     are checked against, not a property of a cell here.
+#   ID-3 (16 S5.3 / 11 S9.3.2A.3 MI-1): direction / unit do NOT enter the slots
+#     of a chassis relative-move intent -- the direction is carried by the
+#     intent NAME (move_forward vs move_backward vs turn_left ...). So none of
+#     the eight MI-1 motion intents below has a `direction` slot. The PTZ pair
+#     E01 ptz_move / E06 ptz_zoom DO carry `direction`, and that is correct:
+#     PTZ pan/tilt/zoom is a real degree of freedom, not a name-encoded one, and
+#     E01/E06 are outside the MI-1 chassis-motion set (11 S9.3.2A.4).
+#
+#   Two intents are level-split by a slot value (16 S8.3A.2). They carry the
+#   base auth (the default-slot level) PLUS an auth_by_slot sub-table so the
+#   130-row registration can be reconstructed from this file alone:
+#     run_bit       H01: scope default quick -> L1a; deep -> L2.
+#     set_time_sync H03: force_step default false -> L1b; true -> L2.
+#   The default-slot rule (scope->quick, force_step->false) is 16 S8.3A.2
+#   verbatim: defaulting to the wider (more dangerous) branch is forbidden.
+#
+#   NOT registered here: the three routing sentinels unknown / out_of_scope /
+#   overheard. 18 S2 states overheard and out_of_scope are top-level intents
+#   NOT counted in the command set, and unknown is the LLM fallback; none has an
+#   id/route/auth/slots row, so putting them here would fail ID-1. They live in
+#   the router (16 S5.2.1), not in this registry.
+#
+#   Counts (intent total, per-route, per-level) are deliberately NOT written in
+#   this file (CLAUDE.md 3.7): they are recomputed from these rows by the
+#   registry loader and the cmdset asserters. A number copied into a comment
+#   goes stale the next time 18 adds or removes an intent.
+# ===========================================================================
 
-# TODO(`16` §14 · `18` §16)：按该节逐键落值。本文件在落值前会让整栈按设计拒绝启动，这是预期行为。
+intents:
+
+  # -- A 运动 --
+  estop: { id: A01, slots: [], route: bypass, auth: L0 }
+  prone: { id: A02, slots: [], route: bypass, auth: L0 }
+  stand: { id: A03, slots: [], route: bypass, auth: L0 }
+  hold: { id: A04, slots: [], route: fastpath, auth: L0 }
+  move_forward: { id: A05, slots: [distance_m], route: fastpath_then_llm, auth: L1a }
+  move_backward: { id: A06, slots: [distance_m], route: fastpath_then_llm, auth: L1a }
+  move_left: { id: A07, slots: [distance_m], route: fastpath_then_llm, auth: L1b }
+  move_right: { id: A08, slots: [distance_m], route: fastpath_then_llm, auth: L1b }
+  turn_left: { id: A09, slots: [angle_deg], route: fastpath_then_llm, auth: L1b }
+  turn_right: { id: A10, slots: [angle_deg], route: fastpath_then_llm, auth: L1b }
+  turn_around: { id: A11, slots: [], route: fastpath, auth: L1b }
+  face_heading: { id: A12, slots: [heading], route: fastpath_then_llm, auth: L1b }
+  set_speed_profile: { id: A13, slots: [profile], route: fastpath, auth: L1b }
+  set_gait: { id: A14, slots: [gait], route: fastpath, auth: L1b }
+
+  # -- B 导航与任务 --
+  goto_waypoint: { id: B01, slots: [waypoint], route: fastpath_then_llm, auth: L1a }
+  patrol_route: { id: B02, slots: [route, loops], route: fastpath_then_llm, auth: L1a }
+  patrol_schedule: { id: B03, slots: [route, loops, delay_s, at_local, day_offset], route: llm, auth: L1a }
+  patrol_repeat: { id: B04, slots: [loops], route: fastpath_then_llm, auth: L1a }
+  pause_task: { id: B05, slots: [], route: fastpath, auth: L0 }
+  resume_task: { id: B06, slots: [], route: fastpath, auth: L0 }
+  cancel_task: { id: B07, slots: [], route: fastpath, auth: L2 }
+  return_home: { id: B08, slots: [], route: fastpath, auth: L1a }
+  goto_dock: { id: B09, slots: [dock], route: fastpath, auth: L1a }
+  skip_waypoint: { id: B10, slots: [], route: fastpath, auth: L1b }
+  follow_target: { id: B11, slots: [target_id], route: fastpath_then_llm, auth: L3 }
+  stop_follow: { id: B12, slots: [], route: fastpath_then_llm, auth: L0 }
+
+  # -- C 模式 --
+  enter_alarm: { id: C01, slots: [], route: fastpath, auth: L1b }
+  exit_alarm: { id: C02, slots: [], route: fastpath, auth: L1a }
+  enter_broadcast: { id: C03, slots: [], route: fastpath, auth: L1b }
+  exit_broadcast: { id: C04, slots: [], route: fastpath, auth: L0 }
+  enter_patrol_mode: { id: C05, slots: [], route: fastpath, auth: L1b }
+  standby: { id: C06, slots: [], route: fastpath, auth: L1a }
+  set_motion_behavior: { id: C07, slots: [behavior], route: llm, auth: L1b }
+  query_mode_switch_ok: { id: C08, slots: [target_mode], route: fastpath, auth: L0 }
+
+  # -- D 载荷 --
+  light_on: { id: D01, slots: [which], route: fastpath, auth: L0 }
+  light_off: { id: D02, slots: [which], route: fastpath, auth: L0 }
+  light_auto: { id: D03, slots: [], route: fastpath, auth: L0 }
+  siren_on: { id: D04, slots: [], route: fastpath, auth: L1b }
+  siren_off: { id: D05, slots: [], route: fastpath, auth: L0 }
+  strobe_on: { id: D06, slots: [], route: fastpath, auth: L1b }
+  strobe_off: { id: D07, slots: [], route: fastpath, auth: L0 }
+  speak_preset: { id: D08, slots: [preset_id], route: fastpath_then_llm, auth: L1b }
+  speak_custom: { id: D09, slots: [text], route: llm, auth: L3 }
+  set_volume: { id: D10, slots: [level], route: fastpath, auth: L0 }
+  chassis_light: { id: D11, slots: [pattern, color], route: fastpath, auth: L0 }
+  speak_stop: { id: D12, slots: [], route: fastpath, auth: L0 }
+  payload_all_off: { id: D13, slots: [], route: fastpath, auth: L0 }
+
+  # -- E 云台 (E01/E06 direction slots are legitimate; see ID-3 note in header) --
+  ptz_move: { id: E01, slots: [direction, amount], route: fastpath, auth: L0 }
+  ptz_home: { id: E02, slots: [], route: fastpath, auth: L0 }
+  ptz_preset: { id: E03, slots: [preset], route: fastpath, auth: L0 }
+  ptz_track: { id: E04, slots: [], route: fastpath_then_llm, auth: L1b }
+  ptz_stop_track: { id: E05, slots: [], route: fastpath_then_llm, auth: L0 }
+  ptz_zoom: { id: E06, slots: [direction, amount], route: fastpath, auth: L0 }
+  ptz_scan: { id: E07, slots: [], route: fastpath, auth: L1b }
+  ptz_stop_scan: { id: E08, slots: [], route: fastpath, auth: L0 }
+
+  # -- F 录制 --
+  record_route_start: { id: F01, slots: [], route: fastpath, auth: L1b }
+  record_route_stop: { id: F02, slots: [], route: fastpath, auth: L1a }
+  record_route_save: { id: F03, slots: [name], route: llm, auth: L1a }
+  record_route_cancel: { id: F04, slots: [], route: fastpath, auth: L2 }
+  record_route_mark: { id: F05, slots: [], route: fastpath, auth: L0 }
+  record_waypoint: { id: F06, slots: [name], route: llm, auth: L1a }
+  record_fence_start: { id: F07, slots: [], route: fastpath, auth: L1b }
+  record_fence_stop: { id: F08, slots: [], route: fastpath, auth: L1a }
+  record_fence_save: { id: F09, slots: [name], route: llm, auth: L2 }
+  record_dock: { id: F10, slots: [name], route: llm, auth: L1a }
+  delete_route: { id: F11, slots: [route], route: fastpath_then_llm, auth: L2 }
+  delete_waypoint: { id: F12, slots: [waypoint], route: fastpath_then_llm, auth: L2 }
+  delete_fence: { id: F13, slots: [fence], route: fastpath_then_llm, auth: L2 }
+  rename_object: { id: F14, slots: [type, old, new], route: llm, auth: L1a }
+  set_active_fence: { id: F15, slots: [fence], route: fastpath_then_llm, auth: L2 }
+
+  # -- G 查询 --
+  query_position: { id: G01, slots: [], route: fastpath, auth: L0 }
+  query_battery: { id: G02, slots: [], route: fastpath, auth: L0 }
+  query_range: { id: G03, slots: [], route: fastpath, auth: L0 }
+  query_speed: { id: G04, slots: [], route: fastpath, auth: L0 }
+  query_mode: { id: G05, slots: [], route: fastpath, auth: L0 }
+  query_task: { id: G06, slots: [], route: fastpath, auth: L0 }
+  query_progress: { id: G07, slots: [], route: fastpath, auth: L0 }
+  query_heading: { id: G08, slots: [], route: fastpath, auth: L0 }
+  query_uptime: { id: G09, slots: [], route: fastpath, auth: L0 }
+  query_events_recent: { id: G10, slots: [count, time_range], route: fastpath_then_llm, auth: L0 }
+  query_events_period: { id: G11, slots: [date_range], route: llm, auth: L0 }
+  query_events_by_type: { id: G12, slots: [category], route: llm, auth: L0 }
+  query_last_alarm: { id: G13, slots: [], route: fastpath, auth: L0 }
+  query_event_detail: { id: G14, slots: [event_ref], route: llm, auth: L0 }
+  query_faults: { id: G15, slots: [], route: fastpath, auth: L0 }
+  query_health: { id: G16, slots: [], route: fastpath, auth: L0 }
+  query_sensor: { id: G17, slots: [sensor], route: fastpath, auth: L0 }
+  query_bit_result: { id: G18, slots: [], route: fastpath, auth: L0 }
+  query_detection: { id: G19, slots: [], route: fastpath, auth: L0 }
+  query_target_count: { id: G20, slots: [], route: fastpath, auth: L0 }
+  query_routes: { id: G21, slots: [], route: fastpath, auth: L0 }
+  query_waypoints: { id: G22, slots: [], route: fastpath, auth: L0 }
+  query_docks: { id: G23, slots: [], route: fastpath, auth: L0 }
+  query_time: { id: G24, slots: [], route: fastpath, auth: L0 }
+  query_payload_all: { id: G25, slots: [], route: fastpath, auth: L0 }
+  query_light_state: { id: G26, slots: [which], route: fastpath, auth: L0 }
+  query_siren_state: { id: G27, slots: [], route: fastpath, auth: L0 }
+  query_strobe_state: { id: G28, slots: [], route: fastpath, auth: L0 }
+  query_volume: { id: G29, slots: [], route: fastpath, auth: L0 }
+  query_speaking: { id: G30, slots: [], route: fastpath, auth: L0 }
+  query_speak_presets: { id: G31, slots: [], route: fastpath, auth: L0 }
+  query_ptz_pose: { id: G32, slots: [], route: fastpath, auth: L0 }
+  query_ptz_zoom: { id: G33, slots: [], route: fastpath, auth: L0 }
+  query_ptz_track: { id: G34, slots: [], route: fastpath, auth: L0 }
+  query_ptz_preset: { id: G35, slots: [], route: fastpath, auth: L0 }
+  query_ptz_presets: { id: G36, slots: [], route: fastpath, auth: L0 }
+  query_ptz_owner: { id: G37, slots: [], route: fastpath, auth: L0 }
+  query_fences: { id: G38, slots: [], route: fastpath, auth: L0 }
+  query_active_fence: { id: G39, slots: [], route: fastpath, auth: L0 }
+  query_fence_health: { id: G40, slots: [], route: fastpath, auth: L0 }
+  query_fence_relation: { id: G41, slots: [], route: fastpath, auth: L0 }
+  query_fence_detail: { id: G42, slots: [fence], route: fastpath, auth: L0 }
+
+  # -- H 系统 (H01/H03 carry auth_by_slot; see header) --
+  run_bit: { id: H01, slots: [scope], route: fastpath, auth: L1a, auth_by_slot: { scope: { quick: L1a, deep: L2 } } }
+  generate_report: { id: H02, slots: [scope, date_range], route: llm, auth: L1a }
+  set_time_sync: { id: H03, slots: [force_step], route: fastpath, auth: L1b, auth_by_slot: { force_step: { false: L1b, true: L2 } } }
+  reload_config: { id: H04, slots: [scope], route: fastpath, auth: L2 }
+  sleep: { id: H05, slots: [], route: fastpath, auth: L1b }
+  wake: { id: H06, slots: [], route: fastpath, auth: L0 }
+  reboot: { id: H07, slots: [], route: fastpath, auth: L2 }
+  shutdown: { id: H08, slots: [], route: fastpath, auth: L3 }
+
+  # -- I 会话 --
+  confirm: { id: I01, slots: [], route: fastpath, auth: L0 }
+  deny: { id: I02, slots: [], route: fastpath, auth: L0 }
+  repeat: { id: I03, slots: [], route: fastpath, auth: L0 }
+  cancel_session: { id: I04, slots: [], route: fastpath, auth: L0 }
+  help: { id: I05, slots: [], route: fastpath, auth: L0 }
+  clarify_answer: { id: I06, slots: [pending_slot_value], route: llm, auth: L0 }
+
+  # -- J 闲聊 --
+  greeting: { id: J01, slots: [], route: fastpath, auth: L0 }
+  identity: { id: J02, slots: [], route: fastpath, auth: L0 }

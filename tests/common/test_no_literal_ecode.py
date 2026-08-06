@@ -280,12 +280,16 @@ def test_an_empty_or_absent_tree_is_reported_and_does_not_pass_for_clean():
 # -- the CI rule: exemption mechanism ------------------------------------------
 
 def test_the_exempt_tag_set_is_closed_and_each_tag_says_what_it_licenses():
-    """Two tags, and neither may be handed out for convenience.
+    """Three tags, and none may be handed out for convenience.
 
     An open tag set degrades the mechanism into "write any word and the check
-    goes quiet". Mutation: add a third tag without a reason => red.
+    goes quiet". Mutation: add a fourth tag without a reason => red. The third,
+    "export", was earned by CFG-CM-3 for the generated C++ header
+    common/include/xbrain/errors/errors.h, which must spell the codes because a
+    header cannot parse the yaml at compile time; the lint's own EXEMPT_TAGS note
+    records that reasoning.
     """
-    assert set(L.EXEMPT_TAGS) == {"cycle", "as12"}
+    assert set(L.EXEMPT_TAGS) == {"cycle", "as12", "export"}
     for tag, why in L.EXEMPT_TAGS.items():
         assert len(why) > 40, "tag %r must say what it licenses" % tag
 

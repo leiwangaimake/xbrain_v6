@@ -1,0 +1,165 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: timeouts.yaml
+# Brief: Committed copy of the 11 S1.6 global timeout / age master table
+#
+# Description:
+# 11 S1.6 is the one place the whole system's timeouts are registered ("全系统
+# 所有超时集中于此表"). This file mirrors that table so every process can import
+# the same registry and the deployed C++ header is generated from one source.
+# The metatest tests/common/clock/test_timeout_table.py is the only thing keeping
+# this file and S1.6 equal: it extracts S1.6 fresh and asserts an empty symmetric
+# difference in BOTH directions (an id, group, timebase or threshold that drifts
+# fails it). See that file for the three mutation cases.
+#
+# *** threshold is CONTRACT TEXT, not a runtime value. It is the in-force token
+# from the S1.6 阈值 cell (decoration stripped, cut at the first <br>; the exact
+# rule lives in normalize_threshold in the metatest, and this file is authored to
+# match it). It exists for audit and cross-checking, NOT for a control loop to
+# divide by. The number a process actually enforces comes from that process's
+# own config (e.g. p4_agent.yaml timeout_s for T-40/T-41/T-42, p5_gateway
+# event.ack_timeout_s for T-45), where it can be calibrated and, where the
+# contract has not fixed a value, left null to refuse startup. Uncalibrated
+# entries here are recorded verbatim as the contract wrote them -- "待实测",
+# "100–200 ms 待定", "timeout_s" -- and NEVER as a fabricated number (CLAUDE.md
+# 3.1): this registry does not invent a value the contract does not state.
+#
+# timebase is derived from the document's own rule, not a per-row column (S1.6
+# has none): group A is 全部单调时钟 with no exception, and T-46 is singled out
+# as the one wall-clock entry. The metatest asserts both anchor phrases still
+# exist before trusting that derivation.
+#
+# 🚫 Do NOT write a count of rows here or in any comment. S1.6 does not carry one
+# and a human-copied tally rots (CLAUDE.md 3.7). The scan-surface metatest is
+# what proves nothing was dropped.
+#
+# 🚫 This is NOT configuration. It ships inside the package like codes.yaml, is
+# read from the package directory, and must be byte-identical for every process
+# -- the resolved config tree deliberately expands per process and cannot offer
+# that (10 S5.4.1).
+
+timeouts:
+  # --- A group: 11 S1.6.1 · safety loop · all monotonic, no wall clock ---
+  - id: T-01
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "200 ms"
+  - id: T-02
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "200 ms"
+  - id: T-03
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "300 ms"
+  - id: T-04
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "1 s"
+  - id: T-05
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "500 ms"
+  - id: T-06
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "2 s"
+  - id: T-07
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "3 s 建议收紧 1.5 s"
+  - id: T-08
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "10 s 建议收紧 5 s"
+  - id: T-09
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "500 ms（本次新增）"
+  - id: T-10
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "1 s（本次新增）"
+  - id: T-11
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "5 s"
+  - id: T-12
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "timeout_s（默认 20 s）"
+  # --- B group: 11 S1.6.2 · link, session, health · monotonic ---
+  - id: T-20
+    group: B          # 11 S1.6.2
+    timebase: monotonic
+    threshold: "1 s"
+  - id: T-21
+    group: B          # 11 S1.6.2
+    timebase: monotonic
+    threshold: "3 s"
+  - id: T-22
+    group: B          # 11 S1.6.2
+    timebase: monotonic
+    threshold: "≥ 1 Hz（建议 2 Hz）"
+  - id: T-23
+    group: B          # 11 S1.6.2
+    timebase: monotonic
+    threshold: "200 ms"
+  - id: T-24
+    group: B          # 11 S1.6.2
+    timebase: monotonic
+    threshold: "3 次 / 3 s"
+  - id: T-25
+    group: B          # 11 S1.6.2
+    timebase: monotonic
+    threshold: "2 s"
+  - id: T-26
+    group: B          # 11 S1.6.2
+    timebase: monotonic
+    threshold: "2 s"
+  - id: T-27
+    group: B          # 11 S1.6.2
+    timebase: monotonic
+    threshold: "1 s"
+  # --- C group: 11 S1.6.3 · non-safety loop · monotonic except T-46 ---
+  - id: T-40
+    group: C          # 11 S1.6.3
+    timebase: monotonic
+    threshold: "8 s"
+  - id: T-41
+    group: C          # 11 S1.6.3
+    timebase: monotonic
+    threshold: "5 s"
+  - id: T-42
+    group: C          # 11 S1.6.3
+    timebase: monotonic
+    threshold: "5 s"
+  - id: T-43
+    group: C          # 11 S1.6.3
+    timebase: monotonic
+    threshold: "timeout_s"
+  - id: T-44
+    group: C          # 11 S1.6.3
+    timebase: monotonic
+    threshold: "100–200 ms 待定"
+  - id: T-45
+    group: C          # 11 S1.6.3
+    timebase: monotonic
+    threshold: "5.0 s 后转补发（v0.7 定案，）"
+  - id: T-46
+    group: C          # 11 S1.6.3
+    timebase: wall
+    threshold: "≥ 5 s"
+  - id: T-ESTOP-CLOUD
+    group: C          # 11 S1.6.3
+    timebase: monotonic
+    threshold: "待实测（M-23／00 COM-56）"
+  - id: T-TELEOP-CMD
+    group: C          # 11 S1.6.3
+    timebase: monotonic
+    threshold: "取甲方下发值，缺省 / 越界时用 400 ms（与本地 cmd/teleop 计龄口径同源）"
+  - id: T-BCAST-MAX
+    group: C          # 11 S1.6.3
+    timebase: monotonic
+    threshold: "现行值见 14 §11 mode.b_cast_max_duration_s（ 现场可调 —— 涉扰民与电量； 不是「未标定」，不得回填 null，见本行 2026-08-05 对抗验收订正 ②）"
