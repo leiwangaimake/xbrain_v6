@@ -32,7 +32,7 @@
  * scan surface while the suite still reported green -- the "扫描面不声明" shape
  * from CLAUDE.md S3.2, and not a hypothetical one: a second header appeared
  * under common/include while this file was being written. So
- * xbrain/common/CMakeLists.txt globs the directory and emits
+ * common/CMakeLists.txt globs the directory and emits
  * xbrain/common/all_deployed_headers.h with one include per header, and that is
  * what is included below. Adding a header now needs no edit here.
  * test_the_aggregate_covers_every_deployed_header walks the directory in Python
@@ -63,7 +63,7 @@
 #include <vector>
 
 /* Every header under common/include, one include each. Emitted at configure time
- * by xbrain/common/CMakeLists.txt; see the Description for why it is generated.
+ * by common/CMakeLists.txt; see the Description for why it is generated.
  * The digest names used below arrive through it, which is deliberate: naming
  * canonical_digest.h separately here would let this file keep building if the
  * aggregate silently went empty. */

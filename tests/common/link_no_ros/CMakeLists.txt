@@ -12,7 +12,7 @@
 # warning flags. The first three are CMake target properties -- they do not all
 # show up on a compiler command line, and CXX_STANDARD_REQUIRED in particular is
 # invisible on a toolchain that happens to support C++17 anyway. Asserting them
-# by grepping xbrain/common/CMakeLists.txt would be a test of the text rather
+# by grepping common/CMakeLists.txt would be a test of the text rather
 # than of the build, which is the "定义式冒充实测结论" shape in CLAUDE.md S3.2.
 # So this project asks CMake for the values it actually resolved and writes them
 # to build_facts.txt at generate time; the driver reads that file.
@@ -35,7 +35,7 @@
 #     the baseline function has to show up here.
 #
 # The trap this layout exists to catch. add_subdirectory() runs
-# xbrain/common/CMakeLists.txt in its own directory scope, so the CMAKE_CXX_*
+# common/CMakeLists.txt in its own directory scope, so the CMAKE_CXX_*
 # variables it sets do NOT reach this directory. A target defined here without
 # the baseline call would be built with the compiler default -- gnu++17 on GCC
 # 11, meaning extensions back ON -- and the build would stay green. The driver's
@@ -58,7 +58,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # they copy three directories into a sandbox and mutate the copy.
 get_filename_component(XBRAIN_V6_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." REALPATH)
 
-add_subdirectory("${XBRAIN_V6_ROOT}/xbrain/common"
+add_subdirectory("${XBRAIN_V6_ROOT}/common"
                  "${CMAKE_CURRENT_BINARY_DIR}/xbrain_common")
 
 add_executable(link_no_ros main.cc)

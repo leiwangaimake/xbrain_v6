@@ -43,7 +43,7 @@
  * quietly turn a short smoke run into the evidence for a long soak.
  */
 
-#include "xbrain/common/rtcomm/lockfree_slot.h"
+#include "xbrain/rtcomm/lockfree_slot.h"
 
 #include <atomic>
 #include <cstdint>

@@ -253,7 +253,7 @@ def test_extensions_cover_the_three_the_item_names():
     """.py, .cc and .h verbatim, plus the two spellings of the same languages.
 
     A rule that stopped at the extension is a rule someone evades by naming a
-    file .cpp, and common/ already ships .h while xbrain/common/rtcomm/ ships
+    file .cpp, and common/ already ships .h while common/include/xbrain/rtcomm/ ships
     more -- so the C++ half is not hypothetical.
     """
     for ext in (".py", ".cc", ".h"):

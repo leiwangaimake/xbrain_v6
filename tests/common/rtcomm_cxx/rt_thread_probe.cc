@@ -44,7 +44,7 @@
  * on the Python side, so the comparison is against this machine's values.
  */
 
-#include "xbrain/common/rtcomm/rt_thread.h"
+#include "xbrain/rtcomm/rt_thread.h"
 
 #include <pthread.h>
 #include <sched.h>

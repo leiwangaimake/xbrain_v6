@@ -81,7 +81,7 @@ sys.path.insert(0, ROOT)   # so the import below finds xbrain/ without installat
 from xbrain.common import enums  # noqa: E402
 
 #: Where the deployed header lands. common/include/ and NOT common/errors/:
-#: xbrain/common/CMakeLists.txt globs common/include for the aggregate that
+#: common/CMakeLists.txt globs common/include for the aggregate that
 #: tests/common/link_no_ros/ compiles, so a header placed anywhere else under
 #: common/ would sit outside the no-ROS gate while looking covered by it. That is
 #: CLAUDE.md 3.2 form 6 -- a claim made over a scan surface that excludes the

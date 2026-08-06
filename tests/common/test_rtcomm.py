@@ -6,7 +6,7 @@ File: test_rtcomm.py
 Brief: Runner and assertions for the CPP-CXX-3 realtime primitives
 
 Description:
-What this file is. The three headers under xbrain/common/rtcomm/ are C++ and
+What this file is. The three headers under common/include/xbrain/rtcomm/ are C++ and
 every property that matters about them is a property of time, memory or thread
 behaviour, so none of it can be established by reading the source. This module
 compiles the probe programs in tests/common/rtcomm_cxx/ with the flags
@@ -79,7 +79,7 @@ self-harming criterion this project has caught more than once: a criterion that
 can never reach zero gets loosened until it passes, and then it catches nothing.
 
 Scan surface, stated because a negative claim without one is worth nothing: the
-static checks read the three headers in xbrain/common/rtcomm/, plus the probe
+static checks read the three headers in common/include/xbrain/rtcomm/, plus the probe
 sources in tests/common/rtcomm_cxx/ for the clock rule. Nothing else. This file
 is deliberately outside its own scan surface, since it contains every banned
 token in its expectation lists.
@@ -110,7 +110,8 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 #: The three artifacts CPP-CXX-3 delivers.
-HEADER_DIR = os.path.join(ROOT, "xbrain", "common", "rtcomm")
+INCLUDE_ROOT = os.path.join(ROOT, "common", "include")
+HEADER_DIR = os.path.join(INCLUDE_ROOT, "xbrain", "rtcomm")
 HEADERS = ("lockfree_slot.h", "tx_guard.h", "rt_thread.h")
 
 #: The probe programs. Their sources live beside this file so that the thing
@@ -130,7 +131,7 @@ CXX = shutil.which("g++") or shutil.which("clang++")
 requires_cxx = pytest.mark.skipif(
     CXX is None,
     reason="no C++ compiler on PATH; the realtime behaviour of "
-           "xbrain/common/rtcomm was NOT verified in this run -- the static "
+           "common/include/xbrain/rtcomm was NOT verified in this run -- the static "
            "scans alone establish nothing about the slot, the guard or mlockall",
 )
 
@@ -186,14 +187,14 @@ def _build(name, work_dir):
     warning there is a defect and not a note.
 
     The include path is the repository root and the probes include their header
-    as "xbrain/common/rtcomm/...", which is the path the artifact actually has.
+    as "common/include/xbrain/rtcomm/...", which is the path the artifact actually has.
     Pointing -I at the header directory instead would let a probe compile
     against a header that had been moved, and the move is exactly the mistake
     worth catching.
     """
     src = os.path.join(CXX_DIR, name + ".cc")
     exe = os.path.join(str(work_dir), name)
-    cmd = [CXX] + CXX_FLAGS + ["-I", ROOT, src, "-o", exe, "-lpthread"]
+    cmd = [CXX] + CXX_FLAGS + ["-I", INCLUDE_ROOT, src, "-o", exe, "-lpthread"]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         pytest.fail("compiling %s failed:\n%s" % (src, proc.stderr))

@@ -32,7 +32,7 @@
  * numbers, and so the thresholds sit in one reviewable place.
  */
 
-#include "xbrain/common/rtcomm/lockfree_slot.h"
+#include "xbrain/rtcomm/lockfree_slot.h"
 
 #include <cstdint>
 #include <cstdio>

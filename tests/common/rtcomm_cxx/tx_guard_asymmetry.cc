@@ -43,7 +43,7 @@
  * The hold duration comes from argv[1] in milliseconds; there is no default.
  */
 
-#include "xbrain/common/rtcomm/tx_guard.h"
+#include "xbrain/rtcomm/tx_guard.h"
 
 #include <atomic>
 #include <chrono>

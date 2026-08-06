@@ -45,8 +45,8 @@
  * chooses, so that a short smoke run can never be mistaken for the long soak.
  */
 
-#include "xbrain/common/rtcomm/rt_thread.h"
-#include "xbrain/common/rtcomm/tx_guard.h"
+#include "xbrain/rtcomm/rt_thread.h"
+#include "xbrain/rtcomm/tx_guard.h"
 
 #include <pthread.h>
 #include <sched.h>

@@ -18,7 +18,7 @@ CXX_STANDARD_REQUIRED ON and CXX_EXTENSIONS OFF, and 19 S1.1 adds
 the tree, so every one of those was a sentence with no build behind it.
 
 How the claims are evaluated, and why not by reading the CMake text. Grepping
-xbrain/common/CMakeLists.txt for "CXX_EXTENSIONS OFF" would test the text and
+common/CMakeLists.txt for "CXX_EXTENSIONS OFF" would test the text and
 not the build -- the "定义式冒充实测结论" shape in CLAUDE.md S3.2, where the
 conclusion is defined into the premise. Instead the build is run and three
 independent artefacts of it are read back:
@@ -92,11 +92,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 #: The test project, the build baseline it consumes, and the deployed headers.
 #: Held as three separate paths because the mutation sandbox has to reproduce
-#: their RELATIVE layout: xbrain/common/CMakeLists.txt finds the headers through
-#: ../../common/include, so a sandbox that flattened the tree would silently
+#: their RELATIVE layout: common/CMakeLists.txt finds the headers through
+#: include, so a sandbox that flattened the tree would silently
 #: resolve back to the real headers and every mutation would come out green.
 LINK_NO_ROS_DIR = os.path.join(ROOT, "tests", "common", "link_no_ros")   # the TU
-BASELINE_CMAKE = os.path.join(ROOT, "xbrain", "common", "CMakeLists.txt")  # source
+BASELINE_CMAKE = os.path.join(ROOT, "common", "CMakeLists.txt")  # source
 DEPLOY_INCLUDE = os.path.join(ROOT, "common", "include")   # deployment artefacts
 
 CMAKE = shutil.which("cmake")                    # absent on a bare CI container
@@ -527,8 +527,8 @@ def test_the_aggregate_covers_every_deployed_header(release_build):
 def _stage_sandbox(tmp_path):
     """A copy of the three pieces the build needs, in their relative layout.
 
-    The layout is reproduced exactly, not flattened. xbrain/common/CMakeLists.txt
-    finds its headers through ../../common/include, so a sandbox that put them
+    The layout is reproduced exactly, not flattened. common/CMakeLists.txt
+    finds its headers through include, so a sandbox that put them
     anywhere else would resolve back to the REAL headers -- and every mutation
     that edits a header would then be applied to a file nothing reads, come out
     green, and be reported as run. That is the worst outcome available here: a
@@ -537,13 +537,13 @@ def _stage_sandbox(tmp_path):
     sandbox = str(tmp_path / "tree")                 # stands in for the repo root
     # Parents created explicitly; copytree below refuses to create intermediate
     # directories for its destination on older Python.
-    os.makedirs(os.path.join(sandbox, "xbrain", "common"))    # build script side
+    os.makedirs(os.path.join(sandbox, "common"))              # build script + headers side
     os.makedirs(os.path.join(sandbox, "tests", "common"))     # gate side
     # The headers: copied whole, so a mutation edits the copy and the real
     # deployment artefacts are never touched even transiently.
     shutil.copytree(DEPLOY_INCLUDE, os.path.join(sandbox, "common", "include"))
     shutil.copy(BASELINE_CMAKE,     # the baseline under test
-                os.path.join(sandbox, "xbrain", "common", "CMakeLists.txt"))
+                os.path.join(sandbox, "common", "CMakeLists.txt"))
     shutil.copytree(LINK_NO_ROS_DIR,    # main.cc plus its project file
                     os.path.join(sandbox, "tests", "common", "link_no_ros"))
     return sandbox
@@ -721,7 +721,7 @@ def test_mutation_gnu_extension_breaks_the_build(tmp_path):
     assert not _direct_compile(probe, "-std=c++17")
 
 
-#: The two glob patterns in xbrain/common/CMakeLists.txt, verbatim. Held as a
+#: The two glob patterns in common/CMakeLists.txt, verbatim. Held as a
 #: literal so a rewrite of that block makes the mutations below fail loudly
 #: rather than silently stop mutating anything.
 GLOB_PATTERNS = ('"${XBRAIN_COMMON_DEPLOY_INCLUDE}/*.h"\n'
@@ -737,7 +737,7 @@ def _rewrite_glob_patterns(sandbox, replacement):
     that silently stopped mutating is indistinguishable from one that was never
     written, which is the state CLAUDE.md S3.3 exists to prevent.
     """
-    path = os.path.join(sandbox, "xbrain", "common", "CMakeLists.txt")
+    path = os.path.join(sandbox, "common", "CMakeLists.txt")
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
     mutated = text.replace(GLOB_PATTERNS, replacement)
@@ -828,7 +828,7 @@ def test_mutation_removing_the_baseline_call_loses_the_standard_and_the_flags(
     """Proves the standard and warning assertions are not vacuous.
 
     It also demonstrates the trap xbrain_common_apply_cxx_baseline() exists for.
-    The CMAKE_CXX_* variables set inside xbrain/common/CMakeLists.txt are
+    The CMAKE_CXX_* variables set inside common/CMakeLists.txt are
     directory scoped and do NOT cross the add_subdirectory boundary, so a
     consumer that omits the call gets the compiler default -- gnu++17 on GCC 11,
     which is extensions back ON. The point is that the build still SUCCEEDS:
