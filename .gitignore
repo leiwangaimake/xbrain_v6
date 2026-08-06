@@ -93,3 +93,7 @@ secrets/
 
 # _ 素材库：仅供迁移，永不进 git（CLAUDE.md §0.2）
 docs/temp/
+
+# C++ 编译产物不入 git（保留 common/lib/.gitkeep）
+common/lib/*.so
+common/lib/*.a

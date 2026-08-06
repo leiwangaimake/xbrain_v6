@@ -56,10 +56,17 @@
 
 ```
 /opt/xbrain_v6/
-├── common/           # ★★★ 【部署产物】二进制库与头文件 —— 🚫 不放源码
-│                     #    ★ 用户 2026-08-05 明确：common 是【部署】二进制库和头文件的
-│                     #    ★ 例：common/errors/errors.h 由 xbrain/common/errors/codes.yaml 生成
-│                     #    ★ 消费者含 chassis_relay(急停链路) ⇒ 🚫 绝不引 rclcpp 或任何 ROS 类型
+├── common/           # ★★★ 【C++ 世界】V6 全局依赖的 C++ 地基库（源码 + 头 + 编译产物）
+│                     #    ★ 用户 2026-08-06 细化目录结构（取代「不放源码」的旧表述 ——
+│                     #      旧表述本意是「不放 Python 源码」；C++ 源码正是放这里）：
+│                     #        common/include/xbrain/<库名>/  公开头文件（xbrain 是命名空间层，防撞名）
+│                     #        common/lib/                    编译产物 .so / .a
+│                     #        common/<库名>/                 该库的 C++ 源码 (.cc)，库名即功能名
+│                     #    ★ C++ 一律【最高 C++17】(CPP-1)。header-only 库允许（只有头、无源码/无 lib 产物，如 digest）。
+│                     #    ★ 例：C++ 错误码头 common/include/xbrain/errors/errors.h 由
+│                     #      xbrain/common/errors/codes.yaml 生成（U66，单一真源在 xbrain/）
+│                     #    ★★★ 消费者含 chassis_relay(急停链路) ⇒ 🚫 绝不引 rclcpp 或任何 ROS 类型 (§5.3)
+│                     #    🚫 Python 源码不放 common/（放 xbrain/）；🚫 C++ 源码不放 xbrain/（放 common/）
 ├── configs/          # ★★★ 唯一配置根（绝对路径 · 复数 · 不接受符号链接）
 │                     #    V6 系统【所有模块】的配置文件都在这里
 │                     #    ★ 运行期读【解析产物】/run/xbrain/resolved/，🚫 不读源
