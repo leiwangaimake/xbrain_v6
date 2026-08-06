@@ -90,3 +90,6 @@ secrets/
 # ── Office 临时锁文件
 .~*
 ~$*
+
+# _ 素材库：仅供迁移，永不进 git（CLAUDE.md §0.2）
+docs/temp/
