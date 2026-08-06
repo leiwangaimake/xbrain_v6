@@ -391,8 +391,15 @@ def foo(): sub = declare_subscriber(...)     # X 局部变量出作用域
 - DTO 用 `pydantic.BaseModel` 或 `dataclass(frozen=True)`
 - 异常类自定义放 `common/errors/exceptions.py`，🚫 严禁滥用 `Exception` 基类
 - 🚫 **严禁裸 `except:`**（必须指定异常类型）
-- ★ 建议给量纲开不同类型：`Mps`（速度）与 `Factor`（无量纲系数）**必须是两个类型** ——
-  把 `Factor` 传进 `min()` 应当是**类型错误**，不能靠代码评审拦。
+- ★ 量纲开不同类型（`CFG-CM-18`，已落 `xbrain/common/types/` + `common/include/xbrain/units/units.h`）：
+  `Mps`（速度）· `Factor`（无量纲系数）· `Mps2`（加速度）· `Seconds`（时长）是**四个不继承 `float` 的类**
+  （🚫 不用 `NewType`，🚫 不用 `functools.total_ordering` -- 后者合成的方法按 `object` 接收，会把下面的静态拦截全部漏掉）。
+  ★★★ **一个实测出来的边界，必须知道**：`min(Mps, Factor)` **无法**被 mypy 判成类型错误 --
+  typeshed 用 `SupportsDunderLT[Any]` 约束 `min`，那个 `Any` 使任何带 `__lt__` 的类型都满足约束，
+  只要 `min(Mps, Mps)` 合法 `min(Mps, Factor)` 就被放过（`NewType` 同样漏）。⇒ 真正的护栏分两处：
+  (1) **运行期**：跨量纲比较（含 `min` 内部）`isinstance` 卫**必抛** `TypeError`（`NewType` 会静默比较底层 float）;
+  (2) **mypy**：跨量纲**算术** `Mps * Factor`（无该 operator）、直接 `Mps < Factor`、把 `Factor` 传进 `Mps` 形参 -- 三者都是静态错误。
+  见 `tests/common/test_units.py`（`min` 的 mypy 盲区本身是一条显式断言，不许当作已覆盖）。
 
 ---
 
