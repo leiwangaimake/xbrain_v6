@@ -275,7 +275,7 @@ SET_DOC = {
     "plane": "11", "domain": "11", "event_category": "11", "gate_limiter": "11",
     "stop_reason": "11", "task_state": "11", "cls": "11", "device": "11",
     "release_reason": "11", "arb_suspended": "11", "gate_reason": "11",
-    "suspend_kind": "11", "suspend_reason": "11",
+    "suspend_kind": "11", "suspend_reason": "11", "severity": "11",
     # The one set defined outside the contract. See the module docstring.
     "charge_stage": "15",
 }
@@ -374,6 +374,13 @@ EXTRACTORS.update({
     # of just the field name would match that row first.
     "release_reason": lambda: _inline_enum(
         _DOCS["11"], "| `release_reason` | string |", 4, "release_reason"),
+    # severity is the {severity} key segment of event/{severity}/{category}
+    # (S2.2.11 W-5), stated inline in one cell as info / warn / alarm / fault.
+    # The anchor carries the value column too (`{severity}` | `info`):
+    # the field name `{severity}` alone appears in several prose rows (S1.1.6,
+    # V-2), and an anchor of just that would match one of them first.
+    "severity": lambda: _inline_enum(
+        _DOCS["11"], "`{severity}` | `info`", 2, "severity"),
 })
 
 

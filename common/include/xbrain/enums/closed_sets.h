@@ -191,6 +191,14 @@ inline constexpr std::string_view kReleaseReason[] = {
     "error",
 };
 
+// severity -- 11 S6.1 / S2.2.11   anchor: `{severity}` | `info`
+inline constexpr std::string_view kSeverity[] = {
+    "info",
+    "warn",
+    "alarm",
+    "fault",
+};
+
 // stop_reason -- 11 S4.1   anchor: | `stop_reason` |
 inline constexpr std::string_view kStopReason[] = {
     "none",

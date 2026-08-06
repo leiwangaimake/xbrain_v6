@@ -87,6 +87,16 @@ sets:
       - system
       - ptz
       - voice
+  severity:
+    source: "11 S6.1 / S2.2.11"
+    anchor: "`{severity}` | `info`"        # the S2.2.11 W-5 row for the event/{severity}/{category} key segment
+    note: "事件严重度。event/{severity}/{category} key 段闭集(S2.2.11 W-5) = Event.sev(S6.1). 4 值 全小写. arbiter 只发 info/warn/fault(S7A.7), alarm 归其他类别(如 intrusion)"
+    ordered: false
+    values:
+      - info
+      - warn
+      - alarm
+      - fault
   gate_limiter:
     source: "11 S9.6.5"
     anchor: "| 优先级 | `limiter` |"        # the table header / row the parser keys off

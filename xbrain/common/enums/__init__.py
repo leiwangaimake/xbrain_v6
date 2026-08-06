@@ -416,6 +416,12 @@ DOMAIN = _SETS["domain"]
 #   is the change a containment-only check stayed green through, which is why the
 #   metatest now compares both directions of the difference.
 EVENT_CATEGORY = _SETS["event_category"]
+# severity -- the {severity} segment of event/{severity}/{category} (11 S2.2.11
+#   W-5) and Event.sev (S6.1). The arbiter audit stream stamps info/warn/fault
+#   from it (S7A.7); alarm is used by other categories. Kept a closed set so an
+#   off-contract sev is E_SCHEMA, not a key the cloud alarm subscription silently
+#   never matches (V-2).
+SEVERITY = _SETS["severity"]
 # gate_limiter -- ORDERED. The sequence is the speed-gate attribution priority:
 #   estop first, the none sentinel last. Read it with .index(); never rebuild it
 #   by iterating anything that has been sorted.
@@ -653,7 +659,8 @@ CHARGE_STAGE = _SETS["charge_stage"]
 # well as running once at import here. _LIMITER_CN_RAW stays unexported so the
 # only reachable handle is the read-only MappingProxyType.
 __all__ = ["ClosedSet", "ClosedSetViolation", "SET_NAMES", "get", "parse_enum",
-           "PLANE", "DOMAIN", "EVENT_CATEGORY", "GATE_LIMITER", "STOP_REASON",
+           "PLANE", "DOMAIN", "EVENT_CATEGORY", "SEVERITY", "GATE_LIMITER",
+           "STOP_REASON",
            "LIMITER_CN", "assert_limiter_cn_matches_gate_limiter",
            "TASK_STATE", "CLS", "DEVICE",
            "RELEASE_REASON", "ARB_SUSPENDED", "GATE_REASON", "SUSPEND_KIND",
