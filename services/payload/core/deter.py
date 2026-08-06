@@ -52,7 +52,7 @@ Description:
   off, searchlight off, red/blue off (mode 0), and a hail-stop [11] so no siren tail is
   left playing.
 
-  ★ Brightness is deliberately NOT reset, and it is the one register deter leaves changed:
+  * Brightness is deliberately NOT reset, and it is the one register deter leaves changed:
   after a deter run the lamp is off but its stored level is still 30. Zeroing it would be
   worse, not better -- brightness 0 means the lamp draws no current, so a later caller that
   sends only searchlight-on would get a lamp that lights up dark, which is a stranger
@@ -316,7 +316,7 @@ class DeterController:
         that must never run on the event loop.
         """
         frames = [
-            # ★ Strobe OFF, explicitly and FIRST. 14 GL-2 forbids ever sending
+            # * Strobe OFF, explicitly and FIRST. 14 GL-2 forbids ever sending
             # MSG_STROBE[1] to the searchlight, and 14 §4.3.0 requires deter mode in
             # particular to send MSG_STROBE[0] at start rather than merely refrain --
             # the lamp may have been left flashing by something else, and deter is the
@@ -370,7 +370,7 @@ class DeterController:
     async def _play_siren(self) -> None:
         """Stream the cached siren clip once at playback rate, then send the [11] stop.
 
-        ★ ONE frame per frame-period, each sent when it is due. Both of the obvious
+        * ONE frame per frame-period, each sent when it is due. Both of the obvious
         alternatives were tried on the real device and both are audibly wrong.
 
         BURSTING the whole clip (the original implementation) rests on the premise that
@@ -419,7 +419,7 @@ class DeterController:
         is paced by the SAME estimate POST /tts returns -- estimate_tts_ms plus a margin for
         the device's real start/stop latency -- since there is nothing to wait on but a clock.
 
-        ★ The line is split on "|" into SEGMENTS, each sent as its own [31]. That is how the
+        * The line is split on "|" into SEGMENTS, each sent as its own [31]. That is how the
         pause after 警告 is produced: we wait out the segment's estimate plus a deliberate
         deter_tts_pause_ms before sending the next one. The alternative -- one [31] with
         punctuation and hoping the device's TTS pauses on it -- was not chosen because

@@ -77,12 +77,12 @@ _SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
 # that names its export makes /status say which weights are loaded, and a flat `model/`
 # could only report the family. Symmetry also removes the question of which family "owns"
 # the unqualified name.
-# ★ Paths resolve through 11 §11A.4.1's layout: <root>/<name>/<ver>/ with a `current`
+# * Paths resolve through 11 §11A.4.1's layout: <root>/<name>/<ver>/ with a `current`
 # symlink beside the version directories. Pointing at `current` rather than at `1.0.0` is
-# the whole mechanism -- §11A.4.1 defines rollback as 「改软链 + 重启单元」, and a config
+# the whole mechanism -- §11A.4.1 defines rollback as "改软链 + 重启单元", and a config
 # that named the version directly would make that flip a code change.
 #
-# ⚠️ The ROOT here is services/asr/models/, not the contract's /opt/xbrain/models/.
+# ! The ROOT here is services/asr/models/, not the contract's /opt/xbrain/models/.
 # Reconciling those two roots is DEC-15 (仓库布局), whose decider is the main session; the
 # structure below is the contract's, and moving it to a decided root is a mv plus this line.
 _MODEL_ROOT = os.path.join(_SERVICE_DIR, "models")
@@ -274,7 +274,7 @@ class AsrConfig:
 
     # ONNX Runtime intra-op threads per decode.
     #
-    # ★★★ 1, not 4, and the reason is counter-intuitive enough to be worth the paragraph:
+    # *** 1, not 4, and the reason is counter-intuitive enough to be worth the paragraph:
     # 11 AIR-P3 pins this service to CPUAffinity=7, a SINGLE core shared with P4/P5/HMI.
     # Four threads timesharing one core do not merely serialize -- they contend. Measured
     # on the Orin, decode of the same audio pinned to core 7:
@@ -285,19 +285,19 @@ class AsrConfig:
     # 8.5x slower than unpinned is worse than the 4x pure serialization would predict, and
     # the gap closes entirely at one thread, which is what identifies it as contention.
     #
-    # ★ Why it matters beyond tidiness: at threads=4 the decode of a 3 s utterance costs
+    # * Why it matters beyond tidiness: at threads=4 the decode of a 3 s utterance costs
     # 1356 ms against the 350 ms that 00 §4.10.6 ⑧ budgets for this stage -- 3.9x over, and
-    # enough on its own to miss CMD-60 (「说完最后一个字到底盘产生位移 P95 <= 2.0 s」) before
+    # enough on its own to miss CMD-60 ("说完最后一个字到底盘产生位移 P95 <= 2.0 s") before
     # the chassis has moved at all. At threads=1 it costs 357 ms, essentially the budget.
     # rtf 0.452 also sits against the AS requirement of rtf < 0.5 with nothing to spare,
     # on a core that 10 §3.2 gives to four other consumers.
     #
-    # ⚠️ The old comment here said 4 「leaves headroom」 for the neighbours and that raising
-    # it is 「the first knob to try if RTF is at risk」. Both are backwards under AIR-P3:
+    # ! The old comment here said 4 "leaves headroom" for the neighbours and that raising
+    # it is "the first knob to try if RTF is at risk". Both are backwards under AIR-P3:
     # more threads take MORE of the shared core and make RTF worse. Raising this is only
     # ever correct if the affinity pin is removed, which would itself violate AIR-P3.
     #
-    # ★ 11 §14.2 F-23 lists 线程数 in the NOT-frozen column, so this value is a tuning
+    # * 11 §14.2 F-23 lists 线程数 in the NOT-frozen column, so this value is a tuning
     # decision (PR + notification), not a freeze-gate item. Changed on authorization
     # 2026-08-03 with the measurement above.
     num_threads: int = 1
@@ -315,7 +315,7 @@ class AsrConfig:
     # fault code for what is really an unusable input, telling the caller to retry bytes
     # that can never succeed. Rejecting it at the boundary makes it a 400 instead.
     #
-    # ★ Deliberately NOT raised to a "minimum utterance" value. 100 ms is well under any
+    # * Deliberately NOT raised to a "minimum utterance" value. 100 ms is well under any
     # real command -- "停" measures about 190 ms -- so this gate cannot swallow a genuine
     # one-syllable estop. Where the VAD should cut is a separate decision that belongs to
     # P2's audio_io and to field calibration, not to a floor that exists because a
@@ -356,7 +356,7 @@ class AsrConfig:
         family = _env_choice(_ENV_MODEL_FAMILY, cls.model_family, families.FAMILY_NAMES)
         model_dir = os.environ.get(_ENV_MODEL_DIR)
         if model_dir is None:
-            # ★ No silent fallback. core/families.py can LOAD more architectures than this
+            # * No silent fallback. core/families.py can LOAD more architectures than this
             # tree ships weights for, and the failure that matters is specific: the file
             # stems overlap between families -- both paraformer and sense_voice look for
             # "model*.int8.onnx" plus tokens.txt -- so falling back to another family's

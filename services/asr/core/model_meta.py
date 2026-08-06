@@ -5,7 +5,7 @@
 answers come from the same place -- the model directory on disk -- so they are derived
 here once rather than in the route handlers.
 
-★ version and sha256 come from MODEL.json, the sidecar 11 §11A.4.1 puts in every version
+* version and sha256 come from MODEL.json, the sidecar 11 §11A.4.1 puts in every version
 directory. When it is absent this module returns None for version rather than inventing
 one. That is the whole point of the module: 11 §11A.7 calls model.version "换模型后金标集
 回归失败时唯一能对上的线索", and a fabricated version would be worse than a null one --
@@ -44,7 +44,7 @@ class ModelMeta:
     # Directory-derived identifier, e.g. "paraformer-zh-2023-09-int8". Always available:
     # it is built from the path and precision, so it needs no sidecar.
     name: str
-    # ★ Semantic version from MODEL.json, or None when no sidecar exists. None is a truthful
+    # * Semantic version from MODEL.json, or None when no sidecar exists. None is a truthful
     # "unidentified deploy", never a placeholder -- see this module's docstring.
     version: Optional[str]
     # Hex sha256 over the network files, in the order given. None only if they are

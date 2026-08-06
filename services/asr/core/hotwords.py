@@ -41,13 +41,13 @@ Description:
   with nothing in the service log to say so. select_encodable() performs the same test up
   front, turning the loss into a named, counted startup warning instead.
 
-  ★ How much this matters was measured on 2026-08-03: the icefall multi-zh-hans export
+  * How much this matters was measured on 2026-08-03: the icefall multi-zh-hans export
   carries only 2000 entries (about 1400 single Chinese characters plus 256 byte symbols),
   and 15 of the 45 phrases in hotwords.txt were unencodable against it -- including 巡逻,
   路径, 趴下, 返航 and 驱离, i.e. most of the words the vocabulary exists to protect. The
   same file against a 5539-character export encodes all 45.
 
-  ⚠️ WHEN THIS MODULE RUNS AT ALL: only under the transducer family. sherpa-onnx exposes
+  ! WHEN THIS MODULE RUNS AT ALL: only under the transducer family. sherpa-onnx exposes
   contextual biasing on no other architecture, so recognizer.py does not read the
   vocabulary when the loaded family cannot bias -- and the current default family
   (paraformer) cannot. This module is therefore dormant in the default deployment and

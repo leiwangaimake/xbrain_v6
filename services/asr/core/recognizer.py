@@ -35,7 +35,7 @@ Description:
   longer; the surrounding costs are per-request constants and are visible separately in
   the request log.
 
-  ★ Concurrency is admission control, not queueing. One decode runs at a time -- the ONNX
+  * Concurrency is admission control, not queueing. One decode runs at a time -- the ONNX
   session's intra-op thread budget is sized on the assumption that it is the only one
   running, so overlapping two would oversubscribe the Orin and make BOTH slower. The
   earlier implementation expressed that by blocking on a lock, which made a second caller
@@ -61,7 +61,7 @@ Description:
   but position-independent biasing of most of the vocabulary beats first-token-only biasing
   of all of it -- a command is as often spoken mid-sentence as at the start.
 
-  ★ Confidence is reported when the engine produces it and omitted when it does not. The
+  * Confidence is reported when the engine produces it and omitted when it does not. The
   contract (11 AS-4) asks for a conf field, and a transducer supplies per-token log
   probabilities from which one can be derived; Paraformer's result carries none, and
   neither do the CTC families. Returning a fabricated number there would be worse than
@@ -363,7 +363,7 @@ class Recognizer:
 
         # Vocabulary next: it selects the decoding method (see module docstring), and an
         # empty vocabulary is a legitimate "bias nothing" deployment rather than an error.
-        # ★ On a family that cannot be biased the file is not read at all -- loading it
+        # * On a family that cannot be biased the file is not read at all -- loading it
         # would produce a hotword count that /status reports and the engine ignores, which
         # is precisely the silent-inert-capability failure core/hotwords.py exists to
         # prevent. The reason is logged once, so "hotwords: 0" is never a mystery.
@@ -405,11 +405,11 @@ class Recognizer:
         # fragment, and the family is prepended only when the directory does not already
         # imply it, so a well-named export does not report "paraformer-paraformer-zh-...".
         #
-        # ⚠️ The VERSION half of 11 AS-11 is not derived here. It comes from MODEL.json via
+        # ! The VERSION half of 11 AS-11 is not derived here. It comes from MODEL.json via
         # core/model_meta.py, because a version invented from a path string would be a
         # fabricated identity -- the one thing 11 §11A.7 says this field must never be.
         #
-        # ★ "current" is skipped. Under 11 §11A.4.1's layout the configured path ends in the
+        # * "current" is skipped. Under 11 §11A.4.1's layout the configured path ends in the
         # rollback symlink (.../paraformer-zh-2023-09/current), whose basename identifies
         # nothing -- taking it produced "paraformer-current-int8", a name that is identical
         # across every model in the tree and therefore useless as the AS-11 identity it

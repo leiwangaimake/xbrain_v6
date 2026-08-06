@@ -22,7 +22,7 @@ Description:
        a single cached LightsStatus, which GET /status serves without ever touching
        a socket itself.
 
-  ★ On the status cadence: the GZH-2 protocol document states 500 ms, and every comment
+  * On the status cadence: the GZH-2 protocol document states 500 ms, and every comment
   in this file used to repeat it. Measured against the real unit on 2026-08-03 it is
   1 Hz -- six reports in six seconds, taken straight off the socket. The consequence is
   not cosmetic: a command's effect can only be confirmed by the NEXT report, so the

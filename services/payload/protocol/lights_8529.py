@@ -66,10 +66,10 @@ STATUS_PAYLOAD_LEN = 0x18
 # interface for hardware we are not driving.
 MSG_SEARCHLIGHT = 0x01  # searchlight on/off      payload [0|1]
 MSG_BRIGHTNESS = 0x02   # searchlight brightness  payload [0..30]
-MSG_STROBE = 0x03       # searchlight strobe on/off payload [0|1]  ★ UNUSED, see below
-MSG_REDBLUE = 0x07      # red/blue warning mode   payload [0..16]  ★ this is 爆闪
+MSG_STROBE = 0x03       # searchlight strobe on/off payload [0|1]  * UNUSED, see below
+MSG_REDBLUE = 0x07      # red/blue warning mode   payload [0..16]  * this is 爆闪
 
-# ★★ Which of these two is 爆闪, once and for all: MSG_REDBLUE. 00 PAY-02c settles the
+# ** Which of these two is 爆闪, once and for all: MSG_REDBLUE. 00 PAY-02c settles the
 # term for the whole requirement set, and MSG_STROBE -- the searchlight's own strobe -- is
 # explicitly not used by this project. Both are implemented here because this module is the
 # protocol's complete surface; only one of them is something a caller should reach for.
@@ -79,7 +79,7 @@ MSG_REDBLUE = 0x07      # red/blue warning mode   payload [0..16]  ★ this is �
 # flashes, so wiring 爆闪 to MSG_STROBE flashes the wrong lamp and leaves the scene dark
 # half the time, which is precisely what night perception needs it not to do (PER-42).
 #
-# ★ Note also what MSG_REDBLUE's payload is: a PATTERN SELECTOR (0 off, 1..16 firmware
+# * Note also what MSG_REDBLUE's payload is: a PATTERN SELECTOR (0 off, 1..16 firmware
 # patterns), not a brightness and not a rate. The device offers no red/blue brightness and
 # no flash-frequency parameter -- 14 GL-4d traces this to the protocol itself -- and 14
 # GL-4a rules out synthesising a rate by toggling from the host, because the only path to

@@ -208,7 +208,7 @@ def decode_upload(data: bytes, raw_sample_rate: int, min_duration_ms: int = 0) -
     A four-byte sniff cannot be fooled by a wrong file extension, which a filename check
     very much can.
 
-    ★ The minimum-duration check belongs HERE, at the boundary, and not deeper: a clip too
+    * The minimum-duration check belongs HERE, at the boundary, and not deeper: a clip too
     short for the model's frontend convolution makes the engine raise, which the REST layer
     can only report as a 503 -- an operational code telling the caller to retry bytes that
     can never succeed, and which 11 §8.13.5 additionally reads as evidence that the

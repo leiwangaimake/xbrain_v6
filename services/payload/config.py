@@ -186,7 +186,7 @@ class PayloadConfig:
     # for very short utterances, per_char is the per-character speaking cost, and tail is
     # fixed slack for the device's start/stop latency.
     #
-    # ★ CALIBRATED 2026-08-03 against the real device, replacing the planned 800/180/500.
+    # * CALIBRATED 2026-08-03 against the real device, replacing the planned 800/180/500.
     # Method: record continuously on the Orin's USB microphone while firing POST /tts, then
     # locate the playback in the capture by energy. Four utterances, 2 to 26 characters:
     #
@@ -194,7 +194,7 @@ class PayloadConfig:
     #   first audio           357 - 447 ms after the request returns  (M-PAY-2, was unknown)
     #   old estimate covered  80 - 83% of what the gate actually needs, on every sentence
     #
-    # ★★ Why the first-audio delay belongs in `tail`: the mic gate starts when the REQUEST
+    # ** Why the first-audio delay belongs in `tail`: the mic gate starts when the REQUEST
     # is sent, but the device is silent for roughly 400 ms after that while it synthesizes.
     # The old tail (500 ms) was sized for "start/stop latency" alone, so the estimate ran
     # out about 1.2 s before the longest utterance finished -- the gate would reopen the
@@ -202,7 +202,7 @@ class PayloadConfig:
     # tail. 16 §3.0.4.1 calls that the failure to avoid, and notes AEC cannot back it up
     # here because the upstack never holds the played waveform.
     #
-    # ★ Direction of error is deliberate: 250 ms/char is above the measured 240, and the
+    # * Direction of error is deliberate: 250 ms/char is above the measured 240, and the
     # tail covers the worst observed first-audio delay plus margin, so every measured case
     # is covered with 15-25% to spare. Over-estimating costs response latency; under-
     # estimating costs the half-duplex property itself, which is why 16 §3.0.4.1 permits
@@ -218,7 +218,7 @@ class PayloadConfig:
     # below is the operator's (甲方) own, which is what Q-C29-1 was waiting on; note it says
     # 管控 rather than the 管制 of the earlier probe tool and 警戒 of the first draft.
     #
-    # ★ "|" separates SPOKEN SEGMENTS, not words. Each segment is sent as its own [31] and
+    # * "|" separates SPOKEN SEGMENTS, not words. Each segment is sent as its own [31] and
     # the device speaks them one after another, so the gap between segments is a real pause
     # under our control (deter_tts_pause_ms) rather than something we hope the device's TTS
     # infers from punctuation -- we have no evidence it treats punctuation as timing at all.
@@ -226,7 +226,7 @@ class PayloadConfig:
     # punctuation in source). A line with no "|" is simply one segment, as before.
     deter_tts_text: str = "警告|你已进入管控区域 请立即离开"
 
-    # ★ The audible beat after each mid-sentence segment -- the pause after 警告. Because
+    # * The audible beat after each mid-sentence segment -- the pause after 警告. Because
     # the device's start latency cancels between two consecutive segments (see
     # estimate_segment_gap_ms), this value IS very nearly the silence the operator hears,
     # not a margin on top of one. Tuned by ear on the real unit.
@@ -303,7 +303,7 @@ class PayloadConfig:
             Milliseconds to wait after sending this segment before sending the next:
                 char_count * per_char + tail + deter_tts_pause_ms
 
-        ★ Why this is NOT estimate_tts_ms. That method exists to gate the MICROPHONE: it
+        * Why this is NOT estimate_tts_ms. That method exists to gate the MICROPHONE: it
         must never reopen early, so it floors the estimate at tts_est_base_ms and a caller
         that waits too long merely loses a moment of listening. Here the same slack is
         audible -- it becomes dead air in the middle of a sentence. On a two-character

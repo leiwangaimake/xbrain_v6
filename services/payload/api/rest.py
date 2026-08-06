@@ -274,7 +274,7 @@ class LightsCommand(BaseModel):
     bright: Optional[int] = Field(default=None, ge=BRIGHT_MIN, le=BRIGHT_MAX)
     # None => do not change the strobe on/off state.
     #
-    # ★★ THIS IS THE SEARCHLIGHT'S OWN STROBE (8529 0x03), AND THE PROJECT DOES NOT USE IT.
+    # ** THIS IS THE SEARCHLIGHT'S OWN STROBE (8529 0x03), AND THE PROJECT DOES NOT USE IT.
     # 00 PAY-02c settles the word 爆闪 for the whole requirement set: it means the red/blue
     # warning lamp, MSG_REDBLUE below, and NOT this. The field exists because the device
     # has the command and this service is the protocol's complete surface, not because
@@ -288,12 +288,12 @@ class LightsCommand(BaseModel):
     strobe: Optional[bool] = None
     # None => do not change the red/blue mode; otherwise REDBLUE_MIN..REDBLUE_MAX.
     #
-    # ★ This is what 爆闪 means everywhere in the requirements (00 PAY-02c). The value is a
+    # * This is what 爆闪 means everywhere in the requirements (00 PAY-02c). The value is a
     # PATTERN SELECTOR, not a brightness and not a rate: 0 is off and 1..16 choose among
     # the firmware's sixteen built-in patterns. The device exposes no red/blue brightness
     # and no flash-rate parameter at all -- 14 GL-4d records that the payload is a single
     # mode byte -- so a caller wanting "faster flashing" must pick a different pattern.
-    # ⚠️ And it must NOT be synthesised by toggling from the host: 14 GL-4a rules that out
+    # ! And it must NOT be synthesised by toggling from the host: 14 GL-4a rules that out
     # because P2 reaches this lamp only through POST /lights, whose 300 ms timeout is an
     # order of magnitude longer than the 70-90 ms pulses a double-flash needs.
     redblue: Optional[int] = Field(default=None, ge=REDBLUE_MIN, le=REDBLUE_MAX)

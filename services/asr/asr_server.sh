@@ -23,7 +23,7 @@
 # the natural place to read it and turn it into the same exports; nothing downstream
 # changes.
 #
-# ★ Resource shape (relevant to 10 §7.3 and the 11 §11A.2 memory ledger): this
+# * Resource shape (relevant to 10 §7.3 and the 11 §11A.2 memory ledger): this
 # service is CPU-only ONNX and never touches the GPU. core/families.py pins the
 # execution provider rather than letting the engine default choose, because the
 # whole AI Runtime plan is built on asr-service holding no CUDA context (AIR-M3),
@@ -55,7 +55,7 @@ PYTHON="${ASR_PYTHON:-python3}"
 # the deploy's declared configuration, so `cat asr_server.sh` answers "what is this
 # box running" without reading Python.
 
-# ★ Model family and weights. paraformer-zh-2023-09 was selected on 2026-08-03 over
+# * Model family and weights. paraformer-zh-2023-09 was selected on 2026-08-03 over
 # eight alternatives: on 59 human recordings it reached 93.2% exact and 92.6% recall
 # on the estop keywords, against 74.6% / 66.7% for the previously deployed zipformer.
 # The transducer export is still on disk and reachable by setting ASR_MODEL_FAMILY.
@@ -67,7 +67,7 @@ export ASR_MODEL_FAMILY="${ASR_MODEL_FAMILY:-paraformer}"
 export PORT_ASR="${PORT_ASR:-18081}"
 
 # ONNX intra-op threads. Below the core count so the co-hosted services keep theirs.
-# ★ 1, matching config.py's default -- see the long note there. Short version: AIR-P3 pins
+# * 1, matching config.py's default -- see the long note there. Short version: AIR-P3 pins
 # this service to one core, and on one core four threads contend rather than parallelise
 # (measured rtf 0.452 at 4 threads vs 0.119 at 1). More threads here is strictly slower.
 export ASR_NUM_THREADS="${ASR_NUM_THREADS:-1}"
@@ -85,7 +85,7 @@ export ASR_MIN_AUDIO_MS="${ASR_MIN_AUDIO_MS:-100}"
 # archived audio at its original rate.
 export ASR_REQUIRE_SAMPLE_RATE="${ASR_REQUIRE_SAMPLE_RATE:-16000}"
 
-# Hotword vocabulary. ⚠️ Has effect ONLY under the transducer family: sherpa-onnx
+# Hotword vocabulary. ! Has effect ONLY under the transducer family: sherpa-onnx
 # offers contextual biasing on no other architecture, so under the default paraformer
 # the file is not even read and GET /status reports hotwords_supported=false.
 export ASR_HOTWORDS_FILE="${ASR_HOTWORDS_FILE:-${SCRIPT_DIR}/hotwords.txt}"
@@ -112,8 +112,8 @@ if [[ -n "${ASR_MODEL_DIR:-}" ]]; then
   MODEL_DIR="${ASR_MODEL_DIR}"
 else
   case "${ASR_MODEL_FAMILY}" in
-    # ★ Through `current`, not through a version directory. 11 §11A.4.1 defines rollback as
-    # 「改软链 + 重启单元」, so every path that names a model must go via the symlink or the
+    # * Through `current`, not through a version directory. 11 §11A.4.1 defines rollback as
+    # "改软链 + 重启单元", so every path that names a model must go via the symlink or the
     # flip would need this script edited too. Must agree with config.py's _FAMILY_MODEL_DIRS
     # -- the pre-flight below is worthless if it checks a different tree than the service.
     paraformer) MODEL_DIR="${SCRIPT_DIR}/models/paraformer-zh-2023-09/current" ;;
@@ -148,16 +148,16 @@ echo "[asr_server] starting asr-service: family=${ASR_MODEL_FAMILY} model=${MODE
 # that happens to have spawned it, and signals reach the right process.
 cd "${REPO_ROOT}"
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
-# ★ AIR-P3 (11 §11A.1.4): 三个服务 CPUAffinity=7，OMP_NUM_THREADS=1. The affinity half is a
+# * AIR-P3 (11 §11A.1.4): 三个服务 CPUAffinity=7,OMP_NUM_THREADS=1. The affinity half is a
 # systemd directive (see deploy/systemd/), but the thread half belongs here, and it is the
 # half that bites without it: onnxruntime already runs ASR_NUM_THREADS workers, and the
 # BLAS layer underneath starts its OWN pool per worker. The two multiply. 10 §3.2 puts it
-# directly -- 「numpy/scipy 的 OpenMP 多线程在绑核场景下会抢核，反而恶化周期 P99」 -- so once
+# directly -- "numpy/scipy 的 OpenMP 多线程在绑核场景下会抢核,反而恶化周期 P99" -- so once
 # core 7 is shared with P4/P5/HMI, an unpinned BLAS pool degrades the processes beside it
 # rather than speeding this one up. Measured RTF is 0.043 against a 0.5 requirement, so
 # there is over 10x of headroom to spend on being a good neighbour.
 #
-# ★ ASR_NUM_THREADS is now 1 as well (see its export above and config.py's note): under the
+# * ASR_NUM_THREADS is now 1 as well (see its export above and config.py's note): under the
 # same pin, four onnxruntime threads contend on one core and measured 3.7x SLOWER than one.
 # The two settings are separate constraints that happen to point the same way -- OMP=1 is
 # written into AIR-P3 itself (frozen with AIR-P1~P4), while the thread count sits in F-23's

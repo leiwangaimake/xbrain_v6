@@ -125,16 +125,16 @@ class SirenSpec:
 
     seconds: float = 6.0
     level: float = 0.45
-    # ★ Amplitude accent rate, 1.39 Hz = 1 / the 0.72 s red/blue flash group. This is the
+    # * Amplitude accent rate, 1.39 Hz = 1 / the 0.72 s red/blue flash group. This is the
     # value the deterrent prototype has always generated its siren with, and it is part of
     # what gives the clip its electronic-siren character rather than a plain tone sweep;
     # rendering with the accent off produces a noticeably flatter sound.
     #
-    # ⚠️ The number is NOT a promise that the accent lands on the flashes. 14 DT-6:
-    # "声光同拍在本架构下只能近似 ... accent 1.39 Hz 是警笛 WAV 的生成参数，红蓝节拍是固件
-    # 动画 —— 两者没有共同时基、无法对齐相位". The prototype could align them because it
+    # ! The number is NOT a promise that the accent lands on the flashes. 14 DT-6:
+    # "声光同拍在本架构下只能近似 ... accent 1.39 Hz 是警笛 WAV 的生成参数,红蓝节拍是固件
+    # 动画 ---- 两者没有共同时基,无法对齐相位". The prototype could align them because it
     # drove both from one process; here the firmware animates the lights on its own clock.
-    # 14 §7.3 accepts that explicitly: 声光不同拍只影响观感，不影响威慑功能与安全.
+    # 14 §7.3 accepts that explicitly: 声光不同拍只影响观感,不影响威慑功能与安全.
     accent_hz: float = 1.39
     accent_depth: float = 0.22
     fs: int = _FS_HAIL_HZ

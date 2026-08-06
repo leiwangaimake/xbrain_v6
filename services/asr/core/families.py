@@ -22,7 +22,7 @@ Description:
   hierarchy would add indirection without adding expressiveness, and a reviewer comparing
   two families would have to read two files instead of two rows.
 
-  ★ supports_hotwords is the field that carries real weight. In sherpa-onnx, contextual
+  * supports_hotwords is the field that carries real weight. In sherpa-onnx, contextual
   biasing exists ONLY on the transducer factory: from_paraformer, from_sense_voice and the
   various *_ctc entry points take no hotwords argument at all. That is not a gap in this
   service, it is a property of the architectures -- biasing steers a beam, and a CTC or
@@ -32,7 +32,7 @@ Description:
   is consulted BEFORE the vocabulary is read, and a family that cannot bias never reports a
   hotword count that would imply it can.
 
-  ★ provider is pinned to CPU for every family, deliberately and not as a default. The
+  * provider is pinned to CPU for every family, deliberately and not as a default. The
   whole AI Runtime memory plan (11 §11A.2, AIR-M3) is built on asr-service being pure CPU
   ONNX with zero device memory and no CUDA context of its own; V5's engine defaulted the
   other way, so an inherited default is the realistic way this invariant would get broken.
@@ -93,10 +93,10 @@ class Family:
     # file has one entry and the transducer families have three.
     files: Tuple[Tuple[str, str], ...]
 
-    # ★ Whether sherpa-onnx can bias this family toward a hotword vocabulary at all.
+    # * Whether sherpa-onnx can bias this family toward a hotword vocabulary at all.
     supports_hotwords: bool
 
-    # ★ Whether decode results carry per-token log probabilities, from which the conf
+    # * Whether decode results carry per-token log probabilities, from which the conf
     # field of 11 AS-4 can be derived. Recorded separately from supports_hotwords even
     # though the two currently agree on every row: they agree by coincidence, not by
     # construction -- one is about steering a beam, the other about what the result object

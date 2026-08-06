@@ -73,7 +73,7 @@ router = APIRouter()
 # both 16 kHz mono s16le -- so it is the only defensible default for the 功能1 path.
 _DEFAULT_RAW_SAMPLE_RATE = 16000
 
-# ★ The rate 11 AS-2 fixes for this interface, and the service REJECTS anything else.
+# * The rate 11 AS-2 fixes for this interface, and the service REJECTS anything else.
 #
 # The whole audio plane is 16 kHz by construction -- the capture path decimates 48 k to
 # 16 k inside p2_core before publishing rt/audio/mic (16 §3.0.2), and 11 §8.13.3 specifies
@@ -105,7 +105,7 @@ _STATUS_ERROR = "error"
 _SELFTEST_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                              "selftest")
 _SELFTEST_MANIFEST = "gold.json"
-# ★ Only "asr" is accepted. 11 §11A.8.1 writes scope as "asr"|"tts"|"both", but that table
+# * Only "asr" is accepted. 11 §11A.8.1 writes scope as "asr"|"tts"|"both", but that table
 # describes the ai_audio process that merged ASR and TTS -- and 99 U52 §1 struck that shape
 # down verbatim: TTS is in the GZH-2 device, 机上零显存零进程, and the process was renamed
 # ai_asr. There is no TTS here to test, so accepting "tts" could only ever return a
@@ -127,14 +127,14 @@ class ModelRef(BaseModel):
 
     It rides on every transcription rather than being fetched once from GET /status,
     because 11 §11A.7 has the gateway file this into state/voice_turn per turn and calls it
-    「换模型后金标集回归失败时唯一能对上的线索」. A turn that crosses a service restart --
+    "换模型后金标集回归失败时唯一能对上的线索". A turn that crosses a service restart --
     exactly when the model may have changed -- is the case an out-of-band lookup cannot
     attribute, and it is the only case this field exists for.
     """
 
     # Directory-and-precision identifier, always present.
     name: str
-    # ★ Null until 11 §11A.4.1's MODEL.json exists beside the model. Deliberately not
+    # * Null until 11 §11A.4.1's MODEL.json exists beside the model. Deliberately not
     # faked; see core/model_meta.py for why a placeholder version is worse than none.
     version: Optional[str] = None
 
@@ -154,7 +154,7 @@ class AsrSelftestResult(BaseModel):
     """The asr half of POST /v1/selftest (11 §11A.8.1: {ok, wer})."""
 
     ok: bool
-    # ★ Character error rate. The contract's field is named wer, and the name is kept, but
+    # * Character error rate. The contract's field is named wer, and the name is kept, but
     # the unit is characters: the gold corpus is Chinese, which has no word boundaries to
     # tokenise on, so a word-level rate would either need a segmenter (whose disagreements
     # would show up as model regressions) or would degenerate to whole-utterance accuracy.
@@ -173,8 +173,8 @@ class SelftestResponse(BaseModel):
 class HealthResponse(BaseModel):
     """Body of GET /healthz -- the shape 11 §11A.8.1 registers, minus the tts half.
 
-    ⚠️ This is the route 11 §11A.5.1 probe ① polls at 1 Hz with a 2 s timeout (T-48), and
-    its rule is `200 + status=="ok"` → ok, anything else → fail, three fails → 熔断. So the
+    ! This is the route 11 §11A.5.1 probe ① polls at 1 Hz with a 2 s timeout (T-48), and
+    its rule is `200 + status=="ok"` -> ok, anything else -> fail, three fails -> 熔断. So the
     handler must not do anything that can block: no disk reads, no hashing, no lock the
     decode path also takes. Everything below is either an in-memory attribute or a single
     read of /proc/self/statm.
@@ -221,7 +221,7 @@ class TranscriptionResponse(BaseModel):
     # acceptance requirement, and this is the number that requirement is about.
     rtf: float
 
-    # ★ Normalized [0, 1] confidence (AS-4), or null when the loaded model family does not
+    # * Normalized [0, 1] confidence (AS-4), or null when the loaded model family does not
     # report the per-token log probabilities it is derived from -- Paraformer and the CTC
     # families do not. Null means "not measured" and MUST NOT be read as low confidence;
     # GET /status answers whether this deployment can produce it at all, so a caller can
@@ -231,14 +231,14 @@ class TranscriptionResponse(BaseModel):
     # trustworthy, which is worse than having no field.
     conf: Optional[float] = None
 
-    # ★ 11 §11A.8.1 registers this beside model: how many hotword phrases actually biased
+    # * 11 §11A.8.1 registers this beside model: how many hotword phrases actually biased
     # THIS decode. Not the authored count -- phrases the symbol table cannot represent are
     # already excluded, and on a family with no beam to steer it is structurally 0. It is
     # per-response rather than only on /status because a caller comparing two transcriptions
     # needs to know whether biasing differed between them.
     hotwords_applied: int
 
-    # ★ 11 AS-11. Present on every call, with version null until MODEL.json exists.
+    # * 11 AS-11. Present on every call, with version null until MODEL.json exists.
     model: ModelRef
 
 
@@ -266,11 +266,11 @@ class StatusResponse(BaseModel):
     # Non-zero is not a fault -- it is a vocabulary/model mismatch worth rewording -- but
     # it has to be visible here, because the active count alone cannot reveal it.
     hotwords_rejected: int
-    # ★ Whether this family can be biased at all. Distinguishes "the vocabulary is empty"
+    # * Whether this family can be biased at all. Distinguishes "the vocabulary is empty"
     # from "this architecture has no beam to steer, so hotwords.txt is inert here" -- two
     # situations that both show hotwords: 0 and have completely different remedies.
     hotwords_supported: bool
-    # ★ Whether transcriptions from this deployment carry a conf value (11 AS-4). Answered
+    # * Whether transcriptions from this deployment carry a conf value (11 AS-4). Answered
     # here, once, so a caller meeting conf: null in a response can tell a family-wide
     # absence from a single utterance that produced none.
     conf_supported: bool
@@ -371,14 +371,14 @@ async def get_healthz(request: Request) -> HealthResponse:
     Returns:
         A HealthResponse whose status is "ok" whenever this process can serve.
 
-    ★ Why this exists next to GET /status rather than instead of it. The probe's rule is
+    * Why this exists next to GET /status rather than instead of it. The probe's rule is
     `200 + status=="ok"`, and StatusResponse has no status field -- so pointing the probe at
     /status would fail it just as surely as the 404 did. The two routes also answer
     different questions: /status is a human diagnostic ("which precision, is beam search on,
     did the hotwords load"), while this one is a machine's yes/no. Merging them would drag
     diagnostic fields into a hot path polled every second, forever.
 
-    ⚠️ The handler is deliberately trivial. It does not touch the decode lock, does not
+    ! The handler is deliberately trivial. It does not touch the decode lock, does not
     read the model files, and does not call the engine. A probe that blocked behind an
     in-flight decode would report `fail` precisely while the service was doing its job --
     three of those and 16 §9.3 opens the breaker on a healthy service for 60 s.
@@ -404,7 +404,7 @@ async def get_models(request: Request) -> List[ModelEntry]:
         object because the contract calls it 模型清单 and because a second entry must be
         addable without changing the response type.
 
-    ⚠️ Unlike /healthz this route hashes the model files, which for the int8 paraformer
+    ! Unlike /healthz this route hashes the model files, which for the int8 paraformer
     export is tens of megabytes of reading on the first call. That is why the two are
     separate routes and why 11 §11A.5.1 polls the other one: this is a deploy-time and
     audit-time question, asked rarely.
@@ -435,12 +435,12 @@ async def post_selftest(request: Request, body: Optional[dict] = None) -> Selfte
         HTTPException: 422 if scope is outside the closed set; 503 if the gold corpus is
             missing or unreadable; 429 if a transcription is already in flight.
 
-    ★ A missing corpus is a 503, never a pass. This route exists to answer "is the model
+    * A missing corpus is a 503, never a pass. This route exists to answer "is the model
     that got deployed the model that was tested", and the way that answer goes wrong is by
     returning ok:true because there was nothing to disagree with. If the corpus cannot be
     read, the honest report is that the self-test could not run.
 
-    ⚠️ It goes through the ordinary decode path, so it takes the AS-3 concurrency slot and
+    ! It goes through the ordinary decode path, so it takes the AS-3 concurrency slot and
     will 429 against a live transcription -- correct, because a self-test that ran beside
     real traffic would measure contention rather than the model, and because AS-12 forbids
     queueing behind the slot.
@@ -571,7 +571,7 @@ async def post_transcriptions(
         # Refused, not broken: a decode is already running and AS-12 forbids queueing this
         # one behind it. Returned as a JSONResponse rather than raised as an HTTPException
         # because the contract fixes the BODY shape as {"code": "E_BUSY"}, and
-        # HTTPException would wrap whatever it is given inside FastAPI's own {"detail":…}
+        # HTTPException would wrap whatever it is given inside FastAPI's own {"detail":...}
         # envelope, which the gateway does not match on.
         logger.info("refused (busy): %s", exc)
         return JSONResponse(status_code=_HTTP_TOO_MANY_REQUESTS,
