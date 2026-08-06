@@ -50,11 +50,27 @@ CLEAN_LINTS = [
     ("no_config_source_read.py",
      "no unmarked reach for the configuration source under xbrain/, ros2_ws/ or "
      "services/ (CFG-CM-11)"),
+    # Added with CFG-CM-12. Its zero is narrower than it looks and the script
+    # prints the boundary itself; tests/common/test_clock.py holds the
+    # metatests, including the three mutations the item names.
+    ("clock_scan.py",
+     "no unmarked wall-clock read under common/, xbrain/, ros2_ws/ or "
+     "services/, which is the automatable half of 11 S0.2.1 CLK-C1 "
+     "(CFG-CM-12)"),
+    # Added with CFG-CM-2. Its zero means no E_* is spelled in quotes anywhere a
+    # process could send it, which is what makes 11 S13.8 checkable rather than
+    # hoped for; tests/common/test_no_literal_ecode.py holds the metatests,
+    # including the mutation the item names verbatim.
+    ("no_literal_ecode.py",
+     "no E_* code spelled as a string literal under xbrain/, ros2_ws/, "
+     "services/ or common/, apart from the exemptions declared with a marker "
+     "(CFG-CM-2)"),
 ]
 
 #: Lints that also ship a --self-test. Running it here keeps the probes honest;
 #: a self-test nobody invokes rots exactly as fast as a lint nobody invokes.
-SELF_TESTED = ["comment_ratio.py", "no_config_source_read.py"]
+SELF_TESTED = ["comment_ratio.py", "no_config_source_read.py", "clock_scan.py",
+               "no_literal_ecode.py"]
 
 
 def run_lint(script, *args):

@@ -42,12 +42,36 @@ What this module deliberately does NOT do, so nothing gets bolted onto it:
     gate.limiter, stop_reason, TaskState). Those live in xbrain/common/enums/
     and raise ClosedSetViolation, which shares the XbrainError base so a single
     except clause still covers the whole family.
+
+The exception family is re-exported here, not only the codes. CFG-CM-2 words its
+criterion as "from common.errors import E_TIMEOUT, XbrainError" -- one import
+line carrying both halves -- and until 2026-08-06 only UnknownErrorCode came out
+of this package. The gap was not cosmetic: a caller wanting the family base had
+to reach into .exceptions, which reads like a private module, and the shape
+people reach for instead is "except Exception". CLAUDE.md 4.5 forbids exactly
+that, and the reason is in exceptions.py: a handler wide enough to swallow an
+AttributeError leaves the P1 loop running on assumptions that have already
+failed. Making the correct import the short one is what keeps the rule cheap to
+follow.
+
+Naming note, so nobody goes looking for a package that does not exist. The
+documents and CLAUDE.md 3.5 write this library as common/errors/. On disk the
+Python source is xbrain/common/errors/ -- CLAUDE.md 0.2 reserves the top-level
+common/ for DEPLOYED artifacts (the generated C++ header) and states that the
+shared layer's Python source does not go there. The TODO row for CFG-CM-2 gives
+xbrain/common/errors/ in its target-directory column, which is the same reading.
 """
 
 import os
 from typing import Dict, FrozenSet, NamedTuple
 
-from .exceptions import UnknownErrorCode
+# The whole family, not just the one this module raises. See the paragraph above
+# for why partial re-export was the defect rather than a tidy minimal surface.
+# ClosedSetViolation is raised by xbrain/common/enums/ and is re-exported here
+# because "which package do I import the base from" must have one answer; two
+# answers is how a caller ends up with two except clauses that were meant to be
+# one.
+from .exceptions import ClosedSetViolation, UnknownErrorCode, XbrainError
 
 # The table is resolved against THIS module's own directory -- not against the
 # configs root, and above all not against /run/xbrain/resolved/. codes.yaml is a
@@ -258,7 +282,12 @@ globals().update({c: c for c in _CODES})
 
 # The dynamic names must be listed explicitly or "import *" would not carry
 # them: injecting into globals() is invisible to the default star-export rule.
-__all__ = ["ALL_CODES", "ErrorCode", "UnknownErrorCode", "info", "retryable",
+# The three exception types are listed for a second reason as well: a name that
+# is imported and never used locally is what a linter deletes as dead. They are
+# not dead -- they are the public half of this package -- and __all__ is the
+# declaration that says so.
+__all__ = ["ALL_CODES", "ErrorCode", "XbrainError", "UnknownErrorCode",
+           "ClosedSetViolation", "info", "retryable",
            "detail_requirement", "is_failure", "RETRY_YES", "RETRY_CONDITIONAL",
            "RETRY_NO", "RETRY_NA", *sorted(_CODES)]
 

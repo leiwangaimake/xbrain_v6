@@ -89,6 +89,7 @@ is recorded here instead of being discovered during commissioning:
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from ..errors import E_CONFIG_INVALID
 from . import cycles
 from .layers import ConfigLayerError
 from .merge import flatten
@@ -204,8 +205,12 @@ def validate_shape(value: str) -> None:
         # rejected as SYNTAX rather than at lookup time, because a default that
         # is never taken in the lab is a default nobody notices is wrong.
         if ":-" in inner or inner.endswith("?") or "|" in inner:
+            # The code is interpolated from the imported constant, not typed
+            # into the sentence: a hand-written copy of the spelling here would
+            # survive a rename in codes.yaml and mislead whoever reads the
+            # message, with nothing failing to say so.
             raise _rule("R-3", f"default-value syntax is not provided: {value!r}. "
-                               "Unresolvable references are E_CONFIG_INVALID; falling "
+                               f"Unresolvable references are {E_CONFIG_INVALID}; falling "
                                "back to a default is the silent drift CFG-40 exists to kill")
         # R-4, expression half. Because _WHOLE_NODE's path charset admits none
         # of these characters, this branch can only fire on text that was never
@@ -315,7 +320,9 @@ def resolve(tree: Dict[str, Any]) -> Dict[str, Any]:
             # exact spot where "just fall back to something sensible" would be
             # written, and CFG-40 exists because that edit is invisible in
             # review and invisible at runtime.
-            raise _rule("R-3", f"unresolvable reference {path!r} -- E_CONFIG_INVALID. "
+            # Same reason as the other R-3 message above: the code is the
+            # imported constant, so a rename cannot leave a stale spelling here.
+            raise _rule("R-3", f"unresolvable reference {path!r} -- {E_CONFIG_INVALID}. "
                                "There is no fallback: refusing to start is the point")
         val = flat[path]
         # An alias may point at another alias (R-4 permits nesting inside
@@ -468,5 +475,9 @@ def find_violations(tree: Dict[str, Any]) -> List[Tuple[str, str]]:
             # Whoever fixes it: assert the rule id itself. A test that checks
             # only the arity of the tuple passes on the broken version too, which
             # is the permanently-green shape of CLAUDE.md 3.2.
-            out.append((key, str(exc).split(":")[0].replace("E_CONFIG_INVALID", "").strip()))
+            # The constant replaces what was a literal here. It does NOT repair
+            # the defect described above -- the line still blanks out the very
+            # token it just isolated -- and it must not be read as having done
+            # so; it only removes the second copy of the spelling.
+            out.append((key, str(exc).split(":")[0].replace(E_CONFIG_INVALID, "").strip()))
     return out

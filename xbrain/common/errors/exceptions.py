@@ -40,10 +40,18 @@ What this module does NOT do, and must not grow into:
 Why bare E_* literals are tolerated in this one file. CLAUDE.md 3.5 forbids E_*
 string literals outside common/errors/, and this file is inside it. The
 mechanical reason it could not follow the rule even if asked: the package
-__init__ does "from .exceptions import UnknownErrorCode" while it is still
-executing, so importing the generated names back out of the package would be an
-import cycle. Keep the count of literals here small, because each one is a name
-the CI static rule cannot check on our behalf.
+__init__ does "from .exceptions import ClosedSetViolation, UnknownErrorCode,
+XbrainError" while it is still executing, so importing the generated names back
+out of the package would be an import cycle. Keep the count of literals here
+small, because each one is a name the CI static rule cannot check on our behalf.
+
+Since 2026-08-06 that tolerance is DECLARED rather than assumed. The CI rule is
+scripts/lint/no_literal_ecode.py and it fails on every E_* literal in the scanned
+trees; the two here carry a line-level ECODE-OK(cycle) marker giving the reason
+above, on the same declarative mechanism no_config_source_read.py uses for the
+one place that is allowed to name the configuration source. An exemption written
+down can be argued with in review; one expressed as a path check inside a scanner
+cannot be found at all.
 
 Cross-language note. These types are Python only. What crosses a process or a
 language boundary is the code string itself, which is why code is typed str and
@@ -137,8 +145,20 @@ class UnknownErrorCode(XbrainError):
         # requires an out-of-set value to raise with no pass-through and no
         # nearest-neighbour interpretation, and a printed candidate is the first
         # step towards a later patch that quietly applies it.
+        #
+        # On the exemption marker below: the package __init__ does "from
+        # .exceptions import ..." while it is still executing, so importing the
+        # generated code name back into this module would be an import cycle.
+        # This is one of only two literals the CI rule
+        # scripts/lint/no_literal_ecode.py tolerates in the whole tree, and it is
+        # tolerated by declaration, not by silence. The marker sits on the
+        # literal's own line rather than in this block because the block is not
+        # contiguous with it -- super().__init__( intervenes -- and the lint only
+        # searches an unbroken run of comment lines, so that a justification
+        # written for one occurrence cannot drift onto a later one.
         super().__init__(
-            "E_INTERNAL",
+            "E_INTERNAL",  # ECODE-OK(cycle): import cycle, see the block above
+
             f"value {bad!r} is not in the E_* closed set defined by "
             f"11 S13.4~S13.15; see xbrain/common/errors/codes.yaml",
         )
@@ -172,4 +192,8 @@ class ClosedSetViolation(XbrainError):
         # E_SCHEMA is the correct row rather than a generic internal error: its
         # meaning in codes.yaml lists 枚举值越界 alongside missing required fields
         # and checksum mismatch, which is exactly this condition.
+        #
+        # ECODE-OK(cycle): same import cycle as UnknownErrorCode above -- this
+        # module is imported BY the package that exports the code names, so it
+        # cannot import them. Keep the count of literals in this file at two.
         super().__init__("E_SCHEMA", f"value {bad!r} is outside closed set {set_name!r}")

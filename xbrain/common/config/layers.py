@@ -106,7 +106,13 @@ job at least once, and each belongs somewhere else:
 import os
 from typing import Dict, FrozenSet, List, NamedTuple, Optional
 
-from ..errors.exceptions import XbrainError
+# Imported from the package, not from .exceptions, and the code name comes with
+# it. Going through the package means the codes.yaml table is parsed and
+# validated before this module can raise anything -- so a malformed table stops
+# the process at import, on the bench, instead of at the first configuration
+# failure it was written to describe. resolved.py in this same package already
+# imports its code this way.
+from ..errors import E_CONFIG_INVALID, XbrainError
 
 #: The one and only configuration root. 00 CFG-03: absolute path, plural, and
 #: symlinks are not accepted.
@@ -204,13 +210,20 @@ class ConfigLayerError(XbrainError):
     # startup self-check refuses to let the stack run. Splitting the type would
     # invite somebody to catch the family they judged milder.
     #
-    # The code string appears once, here, instead of at each raise site. That is
-    # what keeps CLAUDE.md 3.5 satisfiable in practice -- a spelling repeated at
-    # every raise site diverges in case or prefix, and the divergence only shows
-    # up during integration, when the consumer branches on the code.
+    # The code appears once, here, instead of at each raise site. That is what
+    # keeps CLAUDE.md 3.5 satisfiable in practice -- a spelling repeated at every
+    # raise site diverges in case or prefix, and the divergence only shows up
+    # during integration, when the consumer branches on the code.
+    #
+    # And it is the imported constant, not the string. Written as a literal it
+    # was a second source of truth for the spelling: renaming the code in
+    # codes.yaml would leave this line intact and still importable, and the
+    # mismatch would surface only when a consumer failed to match. Now the rename
+    # breaks the import instead. scripts/lint/no_literal_ecode.py enforces this
+    # tree-wide.
 
     def __init__(self, message: str):
-        super().__init__("E_CONFIG_INVALID", message)
+        super().__init__(E_CONFIG_INVALID, message)
 
 
 class Layer(NamedTuple):

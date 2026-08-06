@@ -119,6 +119,13 @@ _HTTP_SERVICE_UNAVAILABLE = 503
 
 # Error code the gateway matches on when it is turned away. 11 §13 fixes the spelling, and
 # 11 §11A.8.2 AS-12 fixes when it is emitted, so it is a constant rather than a literal.
+#
+# ECODE-OK(as12): AS-12 fixes this service's refusal body as 429 plus {"code": "E_BUSY"},
+# so the spelling has to exist here; it cannot be imported from xbrain/common/errors
+# because services/ does not depend on the runtime package -- 11 §8.13.5 is titled
+# 错误映射(网关唯一实现点) and makes mapping onto the closed set the gateway's job, which
+# is also why CLAUDE.md 3.5 says not to push E_* down into services/. One declared literal
+# is the cost of that separation; scripts/lint/no_literal_ecode.py refuses every other one.
 _CODE_BUSY = "E_BUSY"
 
 

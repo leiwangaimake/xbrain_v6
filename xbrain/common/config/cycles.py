@@ -43,6 +43,7 @@ is stable and is what the contract asks for.
 
 from typing import Any, Dict, List, Optional, Sequence
 
+from ..errors import E_CONFIG_INVALID
 from .layers import ConfigLayerError
 from .merge import flatten
 
@@ -127,9 +128,14 @@ def format_cycle(path: Sequence[str]) -> str:
     # formatter that indexes into an empty list would raise IndexError from
     # inside error reporting. An error path that itself errors is how a real
     # fault ends up displayed as a traceback nobody can read.
+    # The code is concatenated from the imported constant rather than typed into
+    # the string. The rendered text is byte-identical either way, so this buys
+    # exactly one thing: if the code is ever renamed in codes.yaml, this line
+    # fails at import instead of quietly rendering the old spelling into an
+    # operator-facing message that nothing compares against.
     if not path:
-        return "E_CONFIG_INVALID: reference cycle (empty path)"
-    lines = ["E_CONFIG_INVALID: reference cycle", "  " + path[0]]
+        return E_CONFIG_INVALID + ": reference cycle (empty path)"
+    lines = [E_CONFIG_INVALID + ": reference cycle", "  " + path[0]]
     lines.extend("    -> " + node for node in path[1:])
     return "\n".join(lines)
 
@@ -331,7 +337,11 @@ def detect(tree: Dict[str, Any]) -> None:
         path = long_chains[0]
         # Same layout as a cycle so the two read alike, with the rule named
         # because the reader's next question is "how long is allowed".
+        # Same constant-not-literal treatment as format_cycle above; the
+        # parentheses are load-bearing only for the reader, since % already binds
+        # tighter than +.
         rendered = "\n".join(
-            ["E_CONFIG_INVALID: alias chain longer than %d hops (R-4)" % MAX_CHAIN,
+            [E_CONFIG_INVALID
+             + (": alias chain longer than %d hops (R-4)" % MAX_CHAIN),
              "  " + path[0]] + ["    -> " + node for node in path[1:]])
         raise CycleError(rendered, path)
