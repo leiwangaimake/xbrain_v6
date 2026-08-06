@@ -1,0 +1,212 @@
+{
+  "section": "10 S5.4.4",
+  "generated_by": "scripts/gen_digest_golden.py",
+  "note": "canonical strings are hand-written from the section; only the hash is computed. Do not regenerate to make a failing test pass.",
+  "vectors": [
+    {
+      "name": "empty",
+      "why": "A tree with no common section still has a defined digest. take_common_subtree returns {} rather than raising, so this is the value that pins down what {} hashes to.",
+      "tree": {},
+      "canonical": "{}",
+      "expected": "44136fa355b3678a"
+    },
+    {
+      "name": "key_order_is_not_insertion_order",
+      "why": "Keys are inserted z, a, m and must come out a, m, z. A serialiser that forgot to sort would pass every single-key vector and fail only here.",
+      "tree": {
+        "common": {
+          "z": 1,
+          "a": 2,
+          "m": 3
+        }
+      },
+      "canonical": "{\"a\":2,\"m\":3,\"z\":1}",
+      "expected": "ebba85cfdc0a724b"
+    },
+    {
+      "name": "key_order_above_the_bmp",
+      "why": "*** Read this before trusting the TODO's mutation 1. UTF-8 is order-preserving: sorting by UTF-8 BYTES and sorting by Unicode CODE POINT give the same answer for every pair of strings, always. So 'change the sort to code point order' cannot turn anything red in Python, and claiming it was run would be a measurement nobody could have made. The ordering that really differs is UTF-16 CODE UNIT order, which is what a Java, JavaScript or Windows-wstring reimplementation produces: U+10400 encodes to the surrogate pair D801 DC00, and 0xD801 < 0xFF21, so under UTF-16 the Deseret key sorts BEFORE the fullwidth A, while under bytes and code points it sorts after. These three keys are chosen so that the two orderings disagree, and test_digest.py runs that substituted mutation.",
+      "tree": {
+        "common": {
+          "é": 1,
+          "Ａ": 2,
+          "𐐀": 3
+        }
+      },
+      "canonical": "{\"é\":1,\"Ａ\":2,\"𐐀\":3}",
+      "expected": "1daccdb29c709b9b"
+    },
+    {
+      "name": "no_whitespace_anywhere",
+      "why": "json.dumps defaults to ', ' and ': ' separators. This vector is nested two deep so a stray space would appear more than once.",
+      "tree": {
+        "common": {
+          "a": {
+            "b": [
+              1,
+              2
+            ]
+          },
+          "c": "d"
+        }
+      },
+      "canonical": "{\"a\":{\"b\":[1,2]},\"c\":\"d\"}",
+      "expected": "7ad6f705d2980780"
+    },
+    {
+      "name": "non_ascii_is_not_escaped",
+      "why": "json.dumps defaults to ensure_ascii=True and would write \\u573a\\u533a here. The rule says UTF-8 direct.",
+      "tree": {
+        "common": {
+          "site": "场区"
+        }
+      },
+      "canonical": "{\"site\":\"场区\"}",
+      "expected": "caa20621685d3c63"
+    },
+    {
+      "name": "integers_carry_no_decimal_point",
+      "why": "3 must be '3'. A serialiser routing everything through the float path would write '3.0' and no golden vector using only fractional values would catch it.",
+      "tree": {
+        "common": {
+          "n": 3
+        }
+      },
+      "canonical": "{\"n\":3}",
+      "expected": "215ddd5567ca2590"
+    },
+    {
+      "name": "integral_float_matches_the_integer",
+      "why": "2.0 and 2 must serialise the same. A YAML loader returning one where another returns the other must not move the digest -- and on the C++ side these are genuinely different types.",
+      "tree": {
+        "common": {
+          "n": 2.0
+        }
+      },
+      "canonical": "{\"n\":2}",
+      "expected": "363379742f80b51b"
+    },
+    {
+      "name": "float_trailing_zeros_stripped",
+      "why": "2.50 must be '2.5'. Pins the 'strip trailing zeros' half of the float rule, which %.17g alone does not always do.",
+      "tree": {
+        "common": {
+          "a_mps2": 2.5,
+          "half": 0.5
+        }
+      },
+      "canonical": "{\"a_mps2\":2.5,\"half\":0.5}",
+      "expected": "1d3e2cfb2e6d22b5"
+    },
+    {
+      "name": "float_needing_all_17_digits",
+      "why": "0.1 has no exact double. %.17g gives 0.10000000000000001 and a shorter format would give 0.1 -- both are the same double, and the two languages must pick the SAME one of them.",
+      "tree": {
+        "common": {
+          "eps": 0.1
+        }
+      },
+      "canonical": "{\"eps\":0.10000000000000001}",
+      "expected": "e0788c30bc8a2959"
+    },
+    {
+      "name": "list_order_is_preserved",
+      "why": "R-5: a list is replaced whole and its order is semantic. A serialiser sorting list elements alongside map keys would pass every scalar vector.",
+      "tree": {
+        "common": {
+          "bands": [
+            "c",
+            "a",
+            "b"
+          ]
+        }
+      },
+      "canonical": "{\"bands\":[\"c\",\"a\",\"b\"]}",
+      "expected": "b8b17c190d344f92"
+    },
+    {
+      "name": "null_stays_null",
+      "why": "An unassigned safety parameter is written null per CLAUDE.md 3.1. It must reach the digest as null and not vanish, otherwise assigning a value later would not move the digest.",
+      "tree": {
+        "common": {
+          "safety": {
+            "brake_a_mps2": null
+          }
+        }
+      },
+      "canonical": "{\"safety\":{\"brake_a_mps2\":null}}",
+      "expected": "a3913f5aecc152dc"
+    },
+    {
+      "name": "bool_is_not_an_integer",
+      "why": "In Python bool subclasses int, so an unguarded int check writes true as 1. In C++ the two are unrelated types and it writes true. Nothing but a vector catches this.",
+      "tree": {
+        "common": {
+          "on": true,
+          "off": false,
+          "one": 1
+        }
+      },
+      "canonical": "{\"off\":false,\"on\":true,\"one\":1}",
+      "expected": "ae6b3e72afc40a2b"
+    },
+    {
+      "name": "private_sections_are_excluded",
+      "why": "*** The 'only common.*' rule. Same common subtree as the key-order vector, plus two process-private sections; the digest must be identical to that vector's. A private edit must not block release.",
+      "tree": {
+        "common": {
+          "z": 1,
+          "a": 2,
+          "m": 3
+        },
+        "p1_motion": {
+          "loop_hz": 20
+        },
+        "p5_gateway": {
+          "port": 8080
+        }
+      },
+      "canonical": "{\"a\":2,\"m\":3,\"z\":1}",
+      "expected": "ebba85cfdc0a724b"
+    },
+    {
+      "name": "realistic_common_fragment",
+      "why": "A fragment shaped like the real common.* -- nested maps, a list of maps, mixed number types, a null. Present so the vector set is not made only of one-feature cases, which is how an interaction between two rules gets missed. *** Note the lat and lon: 35.011 the double is 35.011000000000003 at seventeen significant digits, and that is what %.17g must print. The hand-written string here originally read 35.011 and this script rejected it, which is the check working as intended -- an implementation shortening it to 35.011 would round-trip fine in Python and disagree with C++ on the very first real configuration, since enu_origin is always a WGS84 degree.",
+      "tree": {
+        "common": {
+          "spec": {
+            "v_max_mps": 2.0,
+            "a_brake_mps2": null
+          },
+          "geo": {
+            "enu_origin": {
+              "lat": 35.011,
+              "lon": 135.091,
+              "alt_m": 12
+            }
+          },
+          "motion": {
+            "profiles": [
+              {
+                "name": "patrol",
+                "v": 2.0
+              },
+              {
+                "name": "approach",
+                "v": 0.5
+              }
+            ]
+          },
+          "qos": {
+            "bindings": [
+              "rt/**",
+              "gen/**"
+            ]
+          }
+        }
+      },
+      "canonical": "{\"geo\":{\"enu_origin\":{\"alt_m\":12,\"lat\":35.011000000000003,\"lon\":135.09100000000001}},\"motion\":{\"profiles\":[{\"name\":\"patrol\",\"v\":2},{\"name\":\"approach\",\"v\":0.5}]},\"qos\":{\"bindings\":[\"rt/**\",\"gen/**\"]},\"spec\":{\"a_brake_mps2\":null,\"v_max_mps\":2}}",
+      "expected": "bf25e53bdbaf447d"
+    }
+  ]
+}

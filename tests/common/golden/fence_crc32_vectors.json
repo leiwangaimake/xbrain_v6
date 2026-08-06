@@ -1,0 +1,420 @@
+{
+  "section": "11 S9A.2",
+  "generated_by": "scripts/gen_digest_golden.py",
+  "note": "canonical strings are hand-written from the section; only the hash is computed. Do not regenerate to make a failing test pass.",
+  "vectors": [
+    {
+      "name": "single_allow_polygon",
+      "why": "The base case: one allow polygon, three vertices. Everything below is a one-field change away from this, so its canonical string is the one to read first.",
+      "fence": {
+        "fence_set_id": "yard_main",
+        "rev": 7,
+        "polygons": [
+          {
+            "poly_id": "f-yard",
+            "role": "allow",
+            "name": "yard outline",
+            "priority": 0,
+            "winding": "ccw",
+            "hard_enforce": true,
+            "vertices": [
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              },
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": "yard_main|7|f-yard|allow|ccw|1|0||35.01100000,135.09100000;35.01120000,135.09350000;35.00950000,135.09380000;",
+      "expected": "a4268971"
+    },
+    {
+      "name": "name_is_not_in_the_recipe",
+      "why": "Same fence, different human name. The crc32 must be UNCHANGED: S9A.2 keeps name out so a pure HMI rename does not trigger a stage/commit across the whole stack.",
+      "fence": {
+        "fence_set_id": "yard_main",
+        "rev": 7,
+        "polygons": [
+          {
+            "poly_id": "f-yard",
+            "role": "allow",
+            "name": "RENAMED",
+            "priority": 0,
+            "winding": "ccw",
+            "hard_enforce": true,
+            "vertices": [
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              },
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": "yard_main|7|f-yard|allow|ccw|1|0||35.01100000,135.09100000;35.01120000,135.09350000;35.00950000,135.09380000;",
+      "expected": "a4268971"
+    },
+    {
+      "name": "speed_limit_polygon_carries_its_limit",
+      "why": "*** role=speed_limit is the one role whose limit enters the string, as %.3f. The v0.2 recipe omitted it, so lowering a slow zone produced an identical crc32 -- the change did not take effect and nothing reported an error.",
+      "fence": {
+        "fence_set_id": "yard_main",
+        "rev": 8,
+        "polygons": [
+          {
+            "poly_id": "f-yard_slow",
+            "role": "speed_limit",
+            "name": "slow zone",
+            "priority": 0,
+            "winding": "ccw",
+            "hard_enforce": false,
+            "speed_limit_mps": 1.0,
+            "vertices": [
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              },
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": "yard_main|8|f-yard_slow|speed_limit|ccw|0|0|1.000|35.01100000,135.09100000;35.01120000,135.09350000;35.00950000,135.09380000;",
+      "expected": "9701ffa6"
+    },
+    {
+      "name": "lowered_speed_limit_changes_the_crc",
+      "why": "*** The pair to the vector above: identical geometry, limit 1.0 -> 0.5. Two vectors that must differ, which is the only shape that can catch a recipe silently dropping the field.",
+      "fence": {
+        "fence_set_id": "yard_main",
+        "rev": 8,
+        "polygons": [
+          {
+            "poly_id": "f-yard_slow",
+            "role": "speed_limit",
+            "name": "slow zone",
+            "priority": 0,
+            "winding": "ccw",
+            "hard_enforce": false,
+            "speed_limit_mps": 0.5,
+            "vertices": [
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              },
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": "yard_main|8|f-yard_slow|speed_limit|ccw|0|0|0.500|35.01100000,135.09100000;35.01120000,135.09350000;35.00950000,135.09380000;",
+      "expected": "45ad9081"
+    },
+    {
+      "name": "non_speed_limit_role_writes_an_empty_field",
+      "why": "A zone polygon that happens to carry speed_limit_mps. S9A.2 makes the field required only for speed_limit, so the stray value is legal input and must NOT enter the string. The field is empty, not zero -- zero would collide with a real 0.000.",
+      "fence": {
+        "fence_set_id": "yard_main",
+        "rev": 9,
+        "polygons": [
+          {
+            "poly_id": "f-gate_post",
+            "role": "zone",
+            "name": "gate post",
+            "priority": 0,
+            "winding": "ccw",
+            "hard_enforce": false,
+            "speed_limit_mps": 9.9,
+            "vertices": [
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              },
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": "yard_main|9|f-gate_post|zone|ccw|0|0||35.01100000,135.09100000;35.01120000,135.09350000;35.00950000,135.09380000;",
+      "expected": "6fb40f2f"
+    },
+    {
+      "name": "two_polygons_stacking_order_a",
+      "why": "*** Mutation 2 in the TODO. Two forbid polygons, priorities 10 and 20. Paired with the vector below, which swaps only the two priority values.",
+      "fence": {
+        "fence_set_id": "yard_main",
+        "rev": 11,
+        "polygons": [
+          {
+            "poly_id": "f-fuel",
+            "role": "forbid",
+            "priority": 10,
+            "winding": "cw",
+            "hard_enforce": true,
+            "vertices": [
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              },
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              }
+            ]
+          },
+          {
+            "poly_id": "f-tower",
+            "role": "forbid",
+            "priority": 20,
+            "winding": "cw",
+            "hard_enforce": true,
+            "vertices": [
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              },
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": "yard_main|11|f-fuel|forbid|cw|1|10||35.01100000,135.09100000;35.01120000,135.09350000;35.00950000,135.09380000;f-tower|forbid|cw|1|20||35.01100000,135.09100000;35.01120000,135.09350000;35.00950000,135.09380000;",
+      "expected": "51ecf65d"
+    },
+    {
+      "name": "two_polygons_stacking_order_b",
+      "why": "*** The pair: same two polygons, priorities swapped to 20 and 10. Painter-algorithm order decides which of two overlapping constraints wins, so the crc32 must differ. Drop priority from the recipe and these two collide.",
+      "fence": {
+        "fence_set_id": "yard_main",
+        "rev": 11,
+        "polygons": [
+          {
+            "poly_id": "f-fuel",
+            "role": "forbid",
+            "priority": 20,
+            "winding": "cw",
+            "hard_enforce": true,
+            "vertices": [
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              },
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              }
+            ]
+          },
+          {
+            "poly_id": "f-tower",
+            "role": "forbid",
+            "priority": 10,
+            "winding": "cw",
+            "hard_enforce": true,
+            "vertices": [
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              },
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": "yard_main|11|f-fuel|forbid|cw|1|20||35.01100000,135.09100000;35.01120000,135.09350000;35.00950000,135.09380000;f-tower|forbid|cw|1|10||35.01100000,135.09100000;35.01120000,135.09350000;35.00950000,135.09380000;",
+      "expected": "1a0b367d"
+    },
+    {
+      "name": "negative_priority_keeps_its_sign",
+      "why": "The recipe says 'sign kept'. int32 admits negatives and a formatter using an unsigned conversion would turn -5 into a very large positive number without complaining.",
+      "fence": {
+        "fence_set_id": "yard_main",
+        "rev": 12,
+        "polygons": [
+          {
+            "poly_id": "f-base",
+            "role": "allow",
+            "priority": -5,
+            "winding": "ccw",
+            "hard_enforce": true,
+            "vertices": [
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              },
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": "yard_main|12|f-base|allow|ccw|1|-5||35.01100000,135.09100000;35.01120000,135.09350000;35.00950000,135.09380000;",
+      "expected": "d99daefa"
+    },
+    {
+      "name": "hard_enforce_false_writes_zero",
+      "why": "'0', not 'false'. A C++ stream renders a bool as 1/0 and a text formatter renders it as true/false; the section settles it and this vector is what holds both languages to the choice.",
+      "fence": {
+        "fence_set_id": "yard_main",
+        "rev": 13,
+        "polygons": [
+          {
+            "poly_id": "f-soft",
+            "role": "forbid",
+            "priority": 0,
+            "winding": "cw",
+            "hard_enforce": false,
+            "vertices": [
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              },
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": "yard_main|13|f-soft|forbid|cw|0|0||35.01100000,135.09100000;35.01120000,135.09350000;35.00950000,135.09380000;",
+      "expected": "64cb5010"
+    },
+    {
+      "name": "vertex_order_is_not_sorted",
+      "why": "Same three vertices as the base case, rotated. Winding is what tells inside from outside, so a recipe that sorted vertices would make these two collide -- and would make one fence the inverse of the other while reporting them identical.",
+      "fence": {
+        "fence_set_id": "yard_main",
+        "rev": 7,
+        "polygons": [
+          {
+            "poly_id": "f-yard",
+            "role": "allow",
+            "priority": 0,
+            "winding": "ccw",
+            "hard_enforce": true,
+            "vertices": [
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              },
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": "yard_main|7|f-yard|allow|ccw|1|0||35.00950000,135.09380000;35.01100000,135.09100000;35.01120000,135.09350000;",
+      "expected": "9ffede81"
+    },
+    {
+      "name": "rev_bump_changes_the_crc",
+      "why": "The base case with rev 7 -> 8 and nothing else touched. S-5 keys idempotency on fence_set_id + rev + crc32, so a recipe leaving rev out would let a bumped revision look like a duplicate commit.",
+      "fence": {
+        "fence_set_id": "yard_main",
+        "rev": 8,
+        "polygons": [
+          {
+            "poly_id": "f-yard",
+            "role": "allow",
+            "priority": 0,
+            "winding": "ccw",
+            "hard_enforce": true,
+            "vertices": [
+              {
+                "lat": 35.011,
+                "lon": 135.091
+              },
+              {
+                "lat": 35.0112,
+                "lon": 135.0935
+              },
+              {
+                "lat": 35.0095,
+                "lon": 135.0938
+              }
+            ]
+          }
+        ]
+      },
+      "canonical": "yard_main|8|f-yard|allow|ccw|1|0||35.01100000,135.09100000;35.01120000,135.09350000;35.00950000,135.09380000;",
+      "expected": "c56291e8"
+    }
+  ]
+}
