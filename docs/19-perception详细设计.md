@@ -230,7 +230,7 @@
   ★ 段下界【就是】11 §9.6.1 的 require_sense_m ⇒ C-3 与 SP-6 自动同源。
 ```
 
-★ 现行取值（`configs/models/m20s.yaml` 的 `free_space_corridor` 块，`11` §3.1.4 ⑩ 是唯一真源）：
+★ 现行取值（`configs/models/m20s.yaml`，键路径 **`common.motion.free_space_corridor.*`**（`11` §3.1.4 ⑩ · S22 唯一真源，`99` U72；🚫 不写顶层裸键）：
 
 | 键 | 现值 | 状态 |
 |---|---|---|
@@ -930,23 +930,25 @@
 
 ```yaml
 # /opt/xbrain_v6/configs/models/m20s.yaml  ── 与 p1_motion 共读（CFG-40 单一来源）
-free_space_corridor:
-  rev:          3
-  frame:        "base_link"
-  x0_m:         null        # ⚠️ 待云深处（V-03 剩余项 · PD-4）；🚫 不得写 0.0
-                            # ★★★ 也 🚫 不得写 11 §3.1.4 ⑩ 的占位值 0.35 —— 占位数同样会被判为"已赋值"（PCC-8）
-  z_lo_m:       0.05        # ⚠️ 待整定
-  z_hi_m:       null        # ⚠️ 待云深处（PD-4）；★★★ 🚫 不得写占位值 1.20（同上）
-  r_body_m:     0.482       # ✅ 2026-08-05 已闭合（V-03 / V-30）
-  margin_lat_m: 0.30        # ⚠️ 待评审（PD-3）——★★★ 现值使 C-6 不通过，perception 拒绝启动
-  k_w_s:        0.10        # ⚠️ 待整定
-  l_factor:     1.20
-  l_min_m:      1.00
-  bands:
-    - { id: "creep",  v_ref_mps: 0.5 }
-    - { id: "avoid",  v_ref_mps: 0.5 }
-    - { id: "patrol", v_ref_mps: 2.0 }
-  sectors: { span_deg: 180, step_deg: 15, count: 13 }
+common:                       # ★ 99 U72 / 11 §3.1.4⑩ · S22(2026-08-05): 键路径 = common.motion.free_space_corridor.*
+  motion:                     #   🚫 不得写顶层 free_space_corridor: (L2 层只许 common.*, 顶层裸键即拒)
+    free_space_corridor:
+      rev:          3
+      frame:        "base_link"
+      x0_m:         null        # ⚠️ 待云深处（V-03 剩余项 · PD-4）；🚫 不得写 0.0
+                                # ★★★ 也 🚫 不得写 11 §3.1.4 ⑩ 的占位值 0.35 —— 占位数同样会被判为"已赋值"（PCC-8）
+      z_lo_m:       0.05        # ⚠️ 待整定
+      z_hi_m:       null        # ⚠️ 待云深处（PD-4）；★★★ 🚫 不得写占位值 1.20（同上）
+      r_body_m:     0.482       # ✅ 2026-08-05 已闭合（V-03 / V-30）
+      margin_lat_m: 0.30        # ⚠️ 待评审（PD-3）——★★★ 现值使 C-6 不通过，perception 拒绝启动
+      k_w_s:        0.10        # ⚠️ 待整定
+      l_factor:     1.20
+      l_min_m:      1.00
+      bands:
+        - { id: "creep",  v_ref_mps: 0.5 }
+        - { id: "avoid",  v_ref_mps: 0.5 }
+        - { id: "patrol", v_ref_mps: 2.0 }
+      sectors: { span_deg: 180, step_deg: 15, count: 13 }
 
 # /opt/xbrain_v6/configs/perception.yaml  ── 本进程私有
 perception:
