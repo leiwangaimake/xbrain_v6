@@ -89,6 +89,7 @@ is recorded here instead of being discovered during commissioning:
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from . import cycles
 from .layers import ConfigLayerError
 from .merge import flatten
 
@@ -285,6 +286,13 @@ def resolve(tree: Dict[str, Any]) -> Dict[str, Any]:
     for key, value in flat.items():
         if isinstance(value, str) and "${" in value:
             classify(value)
+
+    # Then cycles, before any expansion. Detecting them here means the message
+    # names the whole loop, which 10 S5.4.3 requires in so many words. Detecting
+    # them during expansion can only report the walk that happened to hit the
+    # loop, so the same defect would print a different path depending on which
+    # key the loader visited first.
+    cycles.detect(tree)
 
     def lookup(path: str, seen: List[str]) -> Any:
         if path in seen:

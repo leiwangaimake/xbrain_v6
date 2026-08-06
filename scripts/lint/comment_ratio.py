@@ -81,13 +81,26 @@ def measure(path):
             # A string is a docstring when it is the first significant token of
             # a module, class or function body.
             if prev_significant in (None, tokenize.INDENT, tokenize.NEWLINE,
-                                    tokenize.NL, tokenize.DEDENT):
+                                    tokenize.DEDENT):
                 comment_lines.update(range(srow, erow + 1))
             else:
                 code_lines.update(range(srow, erow + 1))
             prev_significant = ttype
         elif ttype in (tokenize.NL, tokenize.NEWLINE, tokenize.INDENT,
                        tokenize.DEDENT, tokenize.ENDMARKER, tokenize.ENCODING):
+            # prev MUST advance for NEWLINE, INDENT and DEDENT. Without it, prev
+            # stays on the ":" of "def f():" and every function docstring is
+            # classified as code -- the tool then under-reports comments on
+            # exactly the files that document themselves best, which is the
+            # opposite of what it exists to measure.
+            #
+            # NL is excluded on purpose: it is the non-logical newline that
+            # appears inside brackets, so treating it as a boundary would make
+            # the second line of a multi-line call look like a docstring
+            # position. The same distinction bit the charset fixer, where it
+            # rewrote quote characters inside a string literal.
+            if ttype != tokenize.NL:
+                prev_significant = ttype
             continue
         else:
             code_lines.update(range(srow, erow + 1))
@@ -100,7 +113,44 @@ def measure(path):
     return len(comment_lines), len(code_lines)
 
 
+def self_test():
+    """Prove measure() actually distinguishes a docstring from code.
+
+    This exists because the fix that made it do so was first written against the
+    wrong variable name and became a silent no-op: the file changed, the tool
+    reported the same numbers, and nothing said otherwise. A measuring tool that
+    can be broken without any output changing is a tool whose output cannot be
+    trusted -- so its own behaviour gets a probe.
+    """
+    import tempfile
+    cases = [
+        ("def f():\n    \"\"\"doc\"\"\"\n    return 1\n", 1, 2,
+         "function docstring must count as comment"),
+        ("x = 1\ny = 2\n", 0, 2, "plain code has no comments"),
+        ("# top\nx = 1\n", 1, 1, "hash comment counts"),
+        ("f(\n    \"not a docstring\",\n)\n", 0, 3,
+         "a string on a continuation line is data, not a docstring"),
+    ]
+    ok = True
+    for src, want_c, want_code, why in cases:
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
+            fh.write(src)
+            path = fh.name
+        got_c, got_code = measure(path)
+        os.unlink(path)
+        mark = "ok " if (got_c, got_code) == (want_c, want_code) else "FAIL"
+        if mark == "FAIL":
+            ok = False
+        print("  %s %-56s want (%d,%d) got (%s,%s)"
+              % (mark, why, want_c, want_code, got_c, got_code))
+    print("")
+    print("self-test: %s" % ("PASS" if ok else "FAIL"))
+    return 0 if ok else 1
+
+
 def main():
+    if "--self-test" in sys.argv:
+        return self_test()
     failures = []
     print("scan surface: " + ", ".join(SOURCE_DIRS))
     print("  threshold: comment / (comment + code) >= %.0f%%  (CLAUDE.md 2.4)" % (THRESHOLD * 100))
