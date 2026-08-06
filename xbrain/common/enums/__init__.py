@@ -6,10 +6,24 @@ File: __init__.py
 Brief: The non-error closed sets, exported for every XBRAIN runtime process
 
 Description:
-Six sets live here: plane, domain, event_category, gate_limiter, stop_reason,
-task_state. CLAUDE.md 3.5 forbids their literals outside this package for the
+The non-error closed sets of the contract live here: plane, domain,
+event_category, gate_limiter, stop_reason, task_state, cls, device,
+release_reason, arb_suspended, gate_reason, suspend_kind, suspend_reason,
+charge_stage. CLAUDE.md 3.5 forbids their literals outside this package for the
 same reason as the error codes -- a value spelled differently in two processes
 compiles, runs, and only surfaces during integration.
+
+The list above is a roll call and not a tally, deliberately (CLAUDE.md 3.7). Ask
+SET_NAMES at run time for the authoritative membership; a number written here
+would have gone stale the day cls and device were added, and again the day the
+arbitration and task-lifecycle sets arrived.
+
+Most of these come from 11, but not all of them: charge_stage is defined in 15
+S8.5, because 11 states that its own charging section 定接口 while 15 S8.5 定判据
+与阈值 and that 两处不得各写一份阈值 (CFG-40). Each set records the volume it came
+from in .source, and the metatest reads that volume rather than assuming 11 --
+which matters, because 11's charging table lists only the stages an event can
+announce and does not carry to_handover at all.
 
 *** Out-of-set values raise ClosedSetViolation. 11 S13.6 requires it in so many
 words: no silent pass-through, and no "interpret the unknown value as something
@@ -393,6 +407,85 @@ STOP_REASON = _SETS["stop_reason"]
 #   a line, and the contract's grouping is presentation. index() refuses it,
 #   which is the correct answer to "which state is further along".
 TASK_STATE = _SETS["task_state"]
+# cls -- the target class names carried by targets[].cls on state/targets.
+#   Membership only. The contract prints the values in one line separated by
+#   middle dots and says nothing about order, so there is nothing here to rank.
+#
+#   NOTE that unknown is a member, and it means "detected but not classifiable".
+#   It is a value perception is entitled to send, not a hole to fill in on the
+#   consumer side: a decoder that maps an unrecognised class onto unknown has
+#   written the degrade-to-something-close path 11 S13.6 forbids, and it would
+#   make a contract violation indistinguishable from an honest low-confidence
+#   detection. Off-contract classes must raise.
+#
+#   It is also NOT the customer-facing rule vocabulary. Whether an intrusion
+#   rule written as "vehicle" covers bicycle and motorcycle too is an open
+#   question the contract logs against S3.1.1 rather than answers, so no
+#   grouping of these values may be built here.
+CLS = _SETS["cls"]
+# device -- the self-test items whose kind column reads device, i.e. the health
+#   items backed by a physical box rather than by a capability.
+#
+#   !! Two neighbouring sets this one is easy to confuse with, and neither may
+#   be served from here:
+#     * the S0.3 global device ID table, which is what CS-1 constrains the
+#       frames.* keys to. It registers IDs that are not self-test rows at all
+#       (cam_ptz, imu_chassis, gnss_chassis, payload_svc among them), so using
+#       this set for CS-1 would reject valid extrinsics.
+#     * the full S5.1A item set, device plus cap. Membership here says how an
+#       item fails, not whether it exists: heading and clock are items, they are
+#       kind cap, and they are correctly absent below.
+#
+#   Membership only, and it carries no level. Which items are fatal is the level
+#   column of the same table and it is deliberately not mirrored here -- the BIT
+#   exemption guard reads level from the contract table, and a second copy in
+#   this file would be the thing that silently disagrees with it.
+DEVICE = _SETS["device"]
+
+# ---------------------------------------------------------------------------
+# The arbitration and task-lifecycle sets. All membership only: none of the six
+# contract sites states an order, so index() refuses every one of them.
+# ---------------------------------------------------------------------------
+
+# release_reason -- why a holder gave a domain back voluntarily.
+#
+#   !! mode_switch is NOT a member today, and that is the contract's current
+#   state rather than an omission here. 14 S13 CR-1 asks 11 to add it (11's own
+#   rt/audio/lease.reason already lists it, which is the inconsistency CR-1
+#   names), and 14 S3.2.1 gives the transitional instruction to follow until it
+#   lands: emit mode_exit and mark detail.note self_held_handover. Do that
+#   rather than adding the value here -- a value present in the library and
+#   absent from the contract is the direction the metatest calls "closed sets
+#   are not extended in code".
+RELEASE_REASON = _SETS["release_reason"]
+# arb_suspended -- why an arbitration domain is disarmed. ArbDomainState's field
+#   is spelled suspended; it is qualified here because task_state exports a
+#   VALUE spelled suspended and the two are unrelated.
+#
+#   !! null is not a member. The field is string|null and null carries the
+#   normal case, so a decoder must branch on the null BEFORE reaching parse().
+#   Feeding it here raises, which is correct: absence is not a value. The
+#   distinction is load-bearing at 11 G-10, where a motion domain disarmed with
+#   soft_estop still forwards commands rather than answering E_ARB_DISARMED.
+ARB_SUSPENDED = _SETS["arb_suspended"]
+# gate_reason -- why the microphone is in its current state, on rt/audio/gate.
+#   P2 is the sole authority: the contract forbids p4_agent from deriving it, on
+#   the grounds that P4 cannot know how much audio the speaker still holds.
+#   NOTE that open is a member, so this is not a shut-only reason code.
+GATE_REASON = _SETS["gate_reason"]
+# suspend_kind -- passive or yielding, required exactly when a task is
+#   suspended. The two may not be collapsed: yielding resumes by itself when the
+#   preemptor finishes, passive waits for a condition that may still not hold.
+SUSPEND_KIND = _SETS["suspend_kind"]
+# suspend_reason -- required alongside suspend_kind. The contract table has
+#   fewer rows than this set has values, because two rows carry a pair of
+#   reasons sharing one kind; the mapping from reason to kind is the task
+#   machine's, not this table's, so it is deliberately not mirrored here.
+SUSPEND_REASON = _SETS["suspend_reason"]
+# charge_stage -- from 15 S8.5, not from 11. Membership only despite reading
+#   like a sequence: an unplug confirmation sends charging BACK to waiting_plug,
+#   so a rank derived from position would run backwards.
+CHARGE_STAGE = _SETS["charge_stage"]
 
 # ClosedSetViolation is re-exported so a caller catches the failure without also
 # importing common.errors. get and parse_enum are exported for the by-name path
@@ -402,7 +495,9 @@ TASK_STATE = _SETS["task_state"]
 # turns an unknown name into a raise.
 __all__ = ["ClosedSet", "ClosedSetViolation", "SET_NAMES", "get", "parse_enum",
            "PLANE", "DOMAIN", "EVENT_CATEGORY", "GATE_LIMITER", "STOP_REASON",
-           "TASK_STATE"]
+           "TASK_STATE", "CLS", "DEVICE",
+           "RELEASE_REASON", "ARB_SUSPENDED", "GATE_REASON", "SUSPEND_KIND",
+           "SUSPEND_REASON", "CHARGE_STAGE"]
 
 
 # get -- look a set up by name, raising on an unknown NAME and not only on an

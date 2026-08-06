@@ -10,6 +10,15 @@
 # for the same reason as the error codes -- a value spelled differently in two
 # processes only surfaces during integration.
 #
+# *** Not every set comes from 11. charge_stage is defined in 15 S8.5, and that
+# is not an oversight to tidy up: 11 says in so many words that its own charging
+# section 定接口, that 15 S8.5 定判据与阈值, and that 两处不得各写一份阈值
+# (CFG-40). The synchronisation column in 11 lists only the stages an event can
+# announce and does not carry to_handover at all, so keying charge_stage off 11
+# would export a set that is short one member. The source: field of each set
+# below records which volume it was taken from, and the metatest reads that
+# volume rather than assuming 11.
+#
 # ★★★ Each set is bound to the contract by a symmetric-difference metatest in
 # tests/common/test_closed_sets.py. One-directional containment would pass while
 # the library is missing a value the contract added, which is how Event.category
@@ -130,3 +139,184 @@ sets:
       - interrupted
       - wait_for_power_off
       - needs_review
+  cls:
+    source: "11 S3.1.1"
+    # No '#' in this anchor even though the heading it points at carries four of
+    # them. The scalar reader in __init__._load strips a value from its first
+    # '#' onwards as a trailing comment, so an anchor written with the heading
+    # markers would load as an empty string and the citation would vanish
+    # without a word -- the same fail-silent shape this whole package exists to
+    # stop. The text below is still literally greppable, which is all NUM-4 asks
+    # for.
+    anchor: "3.1.1 目标类别取值"
+    note: "targets[].cls on state/targets. The S3.1 field table defers here"
+    # Membership only. The contract prints these separated by a middle dot with
+    # no statement that the sequence carries meaning, so marking this ordered
+    # would invent a priority the contract never granted -- and index() would
+    # then hand that invented priority out to callers as fact.
+    ordered: false
+    values:
+      - person
+      - vehicle
+      - bicycle
+      - motorcycle
+      - animal
+      - unknown
+  device:
+    source: "11 S5.1A"
+    anchor: "| 项 | `kind` |"
+    # The left operand is the kind column of the self-test spec table, NOT the
+    # S0.3 global device ID table. The two overlap enough to be mistaken for one
+    # another and are not the same set: S0.3 also registers cam_ptz,
+    # cam_chassis_front, imu_chassis, gnss_chassis and payload_svc, none of
+    # which are rows here. CS-1 ("frames key must come from the S0.3 table") is
+    # about that other table, so wiring CS-1 to this set would reject valid
+    # extrinsics and accept nothing in exchange.
+    note: "S5.1A rows whose kind column reads device. Not the S0.3 device ID table"
+    # Membership only. The table is a specification, not a decision order; the
+    # BIT release verdict is driven by the level column, never by row position.
+    ordered: false
+    values:
+      - rtk
+      - chassis
+      - cam_rgbd
+      - lidar
+      - ptz
+      - mic
+      - payload_speaker
+      - payload_siren
+      - payload_strobe
+      - payload_light
+  # -------------------------------------------------------------------------
+  # The arbitration and task-lifecycle sets. Added together because they are
+  # consumed together: the arbitration framework raises three of them and the
+  # task machine raises the other three, and every one of them was being
+  # spelled as a literal at the call sites that needed it.
+  # -------------------------------------------------------------------------
+  release_reason:
+    source: "11 S7A.1"
+    anchor: "| `release_reason` | string |"
+    # *** Four values, and mode_switch is NOT one of them today. 14 S13 CR-1
+    # asks 11 to add it and 14 S3.2.1 already describes the value as merged,
+    # but grep 11 for release_reason and the enumeration that comes back is
+    # these four. Exporting the fifth here would make the symmetric-difference
+    # metatest go red against the contract as it currently stands, and 14 does
+    # not need it to: it gives a transitional instruction in so many words --
+    # emit mode_exit and mark detail.note self_held_handover until the change
+    # lands. So the self-held handover is expressible, and this set stays equal
+    # to the contract. When 11 gains the value, add it here and the metatest
+    # will already be pointing at the right table.
+    note: "op=release 时必填. 自持换手在 11 合入前走 mode_exit + detail.note"
+    ordered: false
+    values:
+      - done
+      - mode_exit
+      - user_cancel
+      - error
+  arb_suspended:
+    source: "11 S7A.6.5"
+    anchor: "| 类型 | 生效路径 |"
+    # Named arb_suspended, not suspended. The contract field is
+    # ArbDomainState.suspended, but task_state already exports a VALUE spelled
+    # suspended, and a set whose name collides with another set's member is the
+    # kind of thing that reads correctly right up to the moment somebody writes
+    # parse_enum("suspended", task.state) and gets a plausible-looking raise
+    # about the wrong contract. Same convention as gate_limiter for gate.limiter
+    # and event_category for Event.category: qualify by the message.
+    #
+    # !! null is deliberately absent. The field is string|null and null means
+    # "not disarmed at all", which is the absence of a value rather than a
+    # member of the set. Adding a "null" or "none" string here would let a
+    # decoder validate the disarmed case and the normal case through one call
+    # and stop distinguishing them -- and 11 G-10 turns on exactly that
+    # distinction, because a domain disarmed with soft_estop still forwards.
+    note: "ArbDomainState.suspended. null (not a member) means not disarmed"
+    ordered: false
+    values:
+      - soft_estop
+      - hes
+      - cmd_timeout
+  gate_reason:
+    source: "11 S8.9.2"
+    anchor: "| `reason` 取值 | 含义 |"
+    # Membership only. The table is a legend, not a precedence list: P2 is the
+    # sole authority for the value and publishes one, so there is nothing here
+    # for a consumer to rank. p4_agent in particular must not derive it -- the
+    # contract says so directly, on the grounds that P4 cannot know how much
+    # audio is still in the speaker buffer.
+    #
+    # NOTE that open is a member. The set describes why the mic is in its
+    # current state, not only why it is shut, so a decoder that treats open as
+    # "no reason present" and omits the field breaks the fail-safe on the other
+    # side: 11 requires P4 to treat gate silence beyond one second as closed.
+    note: "AsrGate.reason on rt/audio/gate. P2 is the only authority"
+    ordered: false
+    values:
+      - open
+      - speaker_active
+      - tail_hold
+      - not_listening
+      - asr_not_granted
+      - device_fault
+      - manual_mute
+  suspend_kind:
+    source: "11 S4.4"
+    anchor: "| `suspend_kind` | 触发 |"
+    # Two values, and the contract spends a paragraph on why they may not be
+    # collapsed into one: a task suspended for low battery would otherwise be
+    # judged resumable the moment the charging task ends, while the battery
+    # condition it was waiting for may still not hold. yielding resumes by
+    # itself, passive does not.
+    note: "必填当且仅当 state == suspended. yielding 自动恢复, passive 不会"
+    ordered: false
+    values:
+      - passive
+      - yielding
+  suspend_reason:
+    source: "11 S4.4"
+    anchor: "| `suspend_reason` 闭集 |"
+    # *** The contract table has fewer ROWS than the set has VALUES: two of its
+    # rows carry a pair of reasons that share one suspend_kind. An extractor
+    # that took the first backticked name per row would produce a set that
+    # parses, looks sane, and silently rejects energy_unreachable and
+    # estop_hes -- both of which are raised by real code paths. The metatest
+    # therefore reads every backticked name in the cell for this set, and the
+    # count is nowhere written down (CLAUDE.md 3.7).
+    #
+    # The pairing with suspend_kind is NOT mirrored here. Which reasons are
+    # passive and which are yielding is the second column of the same table, and
+    # a copy of it in this file is the copy that would drift; a consumer that
+    # needs the mapping reads it from the task machine, which owns the
+    # transition.
+    note: "必填当且仅当 state == suspended. 与 suspend_kind 成对消费"
+    ordered: false
+    values:
+      - low_battery
+      - energy_unreachable
+      - estop_soft
+      - estop_hes
+      - clock_unsync
+      - rtk_degraded
+      - operator_pause
+      - unclean_shutdown
+      - shutdown_pending
+      - preempted
+      - mode_takeover
+  charge_stage:
+    # *** 15, not 11. See the note at the top of this file: 11 defers the
+    # criteria to 15 S8.5 and its own synchronisation column omits to_handover,
+    # so keying this set off 11 would export a set missing its first member and
+    # the robot would reject its own stage while driving to the handover point.
+    source: "15 S8.5"
+    anchor: "| 取值 | 含义 | 退出条件 |"
+    # Membership only, even though the values read like a sequence. The exit
+    # conditions in the same table are not a line: an unplug confirmation sends
+    # charging BACK to waiting_plug. Marking this ordered would let index()
+    # hand out a progress rank that goes backwards without anything noticing.
+    note: "tasks.step_status_json.charge_stage. 拔线确认时 charging 退回 waiting_plug"
+    ordered: false
+    values:
+      - to_handover
+      - waiting_plug
+      - charging
+      - complete
