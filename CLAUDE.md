@@ -81,7 +81,13 @@
 │                     #        —— _ 文档不是真源，只是待迁移素材库，迁完即弃。
 │                     #    (3) ★★★ 正式编号册是【唯一】权威真源，任何结论必须能在正式册内部自证。
 │                     #    ★ 差别一句话：读取【仅为迁移】允许；【依赖】永远禁止。
-├── ros2_ws/          # ★ 机器人底盘 · 传感器相关的 ROS2 节点资产（quadruped 等）
+├── ros2_ws/          # ★ 机器人侧【全部 C++ 进程】资产（用户 2026-08-06 · 99 U80）
+│                     #    ★ 含标准 ROS2 节点(用 rclcpp)：quadruped · perception · behavior_proxy
+│                     #    ★ 也含【非 ROS2 的 C++ 进程】(纯 CMake 包, 🚫 不链 rclcpp)：
+│                     #      chassis_relay(急停链路 CRL 绝不引 rclcpp) · rtk_driver · teleop_input
+│                     #    ★★ colcon 能编纯 CMake 包；「不链 rclcpp」由各包 CMakeLists ＋ 无 ROS 链接
+│                     #        测试(同 CFG-CM-14 范式)保证，🚫 不靠「在哪个目录」保证
+│                     #    ⇒ 三家分工：common/=C++【库】· ros2_ws/=C++【进程】· xbrain/=Python 全部
 ├── scripts/          # ★ 除 AI 服务外的其他启动脚本与测试脚本
 │                     #    ★ 系统开发完毕后的【全栈启动脚本】也部署在这里
 ├── services/         # ★ AI 服务相关资产（asr · llm · payload · perception）
