@@ -1,7 +1,7 @@
 """
 Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
-Shanghai Hachist Intelligent Ship Technology Co., Ltd.
+上海哈船智能船舶技术有限公司
 File: cycles.py
 Brief: Three-colour DFS over the ${common.*} alias graph, reporting the full cycle
 

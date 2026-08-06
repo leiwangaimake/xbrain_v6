@@ -2,7 +2,7 @@
 """
 Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
-Shanghai Hachist Intelligent Ship Technology Co., Ltd.
+上海哈船智能船舶技术有限公司
 File: enum_once_scan.py
 Brief: ENUM-1 -- assertion-letter execution order must be enumerated exactly once
 

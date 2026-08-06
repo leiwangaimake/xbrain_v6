@@ -1,7 +1,7 @@
 """
 Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
-Shanghai Hachist Intelligent Ship Technology Co., Ltd.
+上海哈船智能船舶技术有限公司
 File: test_config_cycles.py
 Brief: Three-colour DFS cycle detection, and the exact report shape 10 S5.4.3 wants
 

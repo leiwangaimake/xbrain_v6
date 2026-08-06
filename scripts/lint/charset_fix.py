@@ -2,7 +2,7 @@
 """
 Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
-Shanghai Hachist Intelligent Ship Technology Co., Ltd.
+上海哈船智能船舶技术有限公司
 File: charset_fix.py
 Brief: Rewrite CJK punctuation and decorative symbols to ASCII, comments only
 

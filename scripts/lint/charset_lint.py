@@ -2,7 +2,7 @@
 """
 Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
-Shanghai Hachist Intelligent Ship Technology Co., Ltd.
+上海哈船智能船舶技术有限公司
 File: charset_lint.py
 Brief: Enforce CLAUDE.md 2.2 -- ASCII punctuation and no special symbols in source
 
