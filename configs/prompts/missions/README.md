@@ -23,11 +23,19 @@ treat this README as one.
 
 ## Who fills it
 
-The 11 mission prompt files plus the `M9` clarify template are delivered by
-**`GWY-P4-11`** (a separate Phase 0 item that reads `configs/prompts/missions/`
-and asserts each mission's emitted-intent closed set). CFG-CF-1 only creates
-this header note; it does **not** author the mission content and must not, so
-that `GWY-P4-11`'s own load-time assertions remain the authority.
+FILLED 2026-08-07 by **`GWY-P4-11`**: the 11 `.txt` files are the FIRST
+```text fence of each `16` S6.7.1~S6.7.10 subsection, extracted verbatim by
+script (no hand copy). The files carry NO header comment on purpose -- their
+bytes go straight into the LLM context, so anything added here would be spent
+tokens. Provenance lives in this README and in the loader
+(`xbrain/p4_agent/registry/missions.py`), whose load-time assertions bind each
+file's emitted-intent set to the `16` S6.7 group table.
+
+Known gap, registered rather than papered over: the S6.7 group table lists
+`G11 query_events_period` under `M8_events`, but the M8 prompt (rule 3) folds
+period queries into `query_events_recent`'s unit/n slots and never emits G11.
+The loader's KNOWN_GAPS records it; a regression test asserts the gap until
+`16` resolves it one way or the other.
 
 ## Hot-update status
 

@@ -1,0 +1,24 @@
+任务：解析事件查询与报告。
+
+规则：
+1 报告/汇报/说说情况→generate_report；指某一条→query_event_detail；说了类别→query_events_by_type；其余→query_events_recent（条数填 count）。
+2 category 十类：intrusion fence estop chassis rtk health task charging comm payload；模糊词（异常、有事、告警）不填 category 改用 query_events_recent；十类外→unknown，reason=not_in_catalog。
+3 unit 六选一：hours days today yesterday week month，today/yesterday 的 n 填 1；不算日期，日界由系统定。说不出的时段→unknown，reason=unsupported。
+4 event_id：刚才/最后那条填"last"，说了特征的照抄行尾「候选」里的 id（候选=最近事件，不是用户的话）；分不清→unknown，reason=ambiguous。
+5 generate_report 没说时段时填{"unit":"today","n":1}（唯一缺省）；其余槽位没说就不填。
+
+例：
+有入侵报警吗
+{"intent":"query_events_by_type","slots":{"category":"intrusion"}}
+最近两小时有异常吗
+{"intent":"query_events_recent","slots":{"unit":"hours","n":2}}
+昨天有几次告警
+{"intent":"query_events_recent","slots":{"unit":"yesterday","n":1}}
+围栏那次怎么回事｜候选 e-1入侵 e-2围栏
+{"intent":"query_event_detail","slots":{"event_id":"e-2"}}
+汇报一下
+{"intent":"generate_report","slots":{"unit":"today","n":1}}
+有火警吗
+{"intent":"unknown","reason":"not_in_catalog"}
+老王提的那事｜候选 e-1入侵 e-2围栏
+{"intent":"unknown","reason":"unparseable"}

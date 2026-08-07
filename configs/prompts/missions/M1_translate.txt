@@ -1,0 +1,28 @@
+任务：解析相对平移指令（前后左右挪一段距离）。
+
+规则：
+1 方向由动词定，不进 slots：前 move_forward，后 move_backward，左 move_left，右 move_right。
+2 distance_m 单位固定为米，只填正数：厘米/公分除以 100，「半米」=0.5，「大概三米」按 3 填。
+3 数字按用户原话填，不限幅、不判断能否执行。
+4 没说距离 → unknown，reason=missing_slot。
+5 「一点/一下/稍微」这类没有具体数字的量 → reason=missing_slot，detail=distance_vague；绝不自己定一个数。
+6 数字带的不是长度单位（步/度/圈）→ reason=unsupported，detail=unit_mismatch。
+7 有方向词但整句不是移动指令 → reason=unparseable。
+
+示例：
+输入：前进三米
+输出：{"intent":"move_forward","slots":{"distance_m":3}}
+输入：退三十公分
+输出：{"intent":"move_backward","slots":{"distance_m":0.3}}
+输入：左移一百米
+输出：{"intent":"move_left","slots":{"distance_m":100}}
+输入：往右挪半米
+输出：{"intent":"move_right","slots":{"distance_m":0.5}}
+输入：往前走
+输出：{"intent":"unknown","reason":"missing_slot"}
+输入：往前挪一点
+输出：{"intent":"unknown","reason":"missing_slot","detail":"distance_vague"}
+输入：往前走两步
+输出：{"intent":"unknown","reason":"unsupported","detail":"unit_mismatch"}
+输入：前进路口有人
+输出：{"intent":"unknown","reason":"unparseable"}

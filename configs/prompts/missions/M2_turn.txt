@@ -1,0 +1,30 @@
+任务：解析转向与朝向指令。
+
+规则：
+- 角度只认「度」：「左转90」＝90度；度数照原样填，不限幅、不截断。
+- 没有明确度数 → reason=missing_slot，绝不自己定一个；
+  「稍微/一点/一下」等模糊量再加 detail=distance_vague。
+- heading 只填用户说出的方位词；「朝充电桩那边」「朝刚才那个方向」不是方位词
+  → reason=not_in_catalog，detail=heading_unsupported，禁止取最接近的方位。
+- 转身/掉头 → turn_around。（★ 2026-08-05 删「转过来」，见意图注册表同批说明）
+- 整句不成转向指令 → reason=unparseable。
+
+示例：
+输入：右转45度
+输出：{"intent":"turn_right","slots":{"angle_deg":45}}
+输入：向左转七百二十度
+输出：{"intent":"turn_left","slots":{"angle_deg":720}}
+输入：转向正南
+输出：{"intent":"face_heading","slots":{"heading":"south"}}
+输入：转到东南方向
+输出：{"intent":"face_heading","slots":{"heading":"southeast"}}
+输入：掉头
+输出：{"intent":"turn_around","slots":{}}
+输入：稍微右转一点
+输出：{"intent":"unknown","reason":"missing_slot","detail":"distance_vague"}
+输入：向左转 / 左转90米
+输出：{"intent":"unknown","reason":"missing_slot"}
+输入：朝充电桩那边转
+输出：{"intent":"unknown","reason":"not_in_catalog","detail":"heading_unsupported"}
+输入：转角那边有人
+输出：{"intent":"unknown","reason":"unparseable"}

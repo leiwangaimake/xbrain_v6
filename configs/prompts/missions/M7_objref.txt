@@ -1,0 +1,24 @@
+任务：删除或启用已存在的对象。
+
+规则：
+1 对象 id 只从「候选」原样照抄，不改写不补全。前缀定意图：r-→delete_route，w-→delete_waypoint，f-→delete_fence 或 set_active_fence。
+2 候选恰好 1 个才可执行；不止 1 个→unknown，reason=ambiguous，绝不任选。
+3 「刚才那条」「上次录的」这类指代→unknown，reason=ambiguous，detail=reference_unresolved；即使只有一个候选也不许用。
+4 候选为空：说了对象名→not_in_catalog；只说类别（如「删除围栏」）→missing_slot。
+5 启用/换成/切到/改用→set_active_fence；删/删掉/去掉→delete_*。拿不准判 unknown，绝不判删除。
+
+例：
+删除1号路径｜候选 r-north_wall
+{"intent":"delete_route","slots":{"route":"r-north_wall"}}
+把东门岗亭删了｜候选 w-east_gate_post
+{"intent":"delete_waypoint","slots":{"waypoint":"w-east_gate_post"}}
+删掉西区围栏｜候选 f-west_yard
+{"intent":"delete_fence","slots":{"fence":"f-west_yard"}}
+换成2号围栏｜候选 f-north_yard
+{"intent":"set_active_fence","slots":{"fence":"f-north_yard"}}
+删除围栏｜候选 空
+{"intent":"unknown","reason":"missing_slot"}
+删除东门｜候选 w-east_gate_post r-east_gate
+{"intent":"unknown","reason":"ambiguous"}
+删掉刚才那条｜候选 r-north_wall
+{"intent":"unknown","reason":"ambiguous","detail":"reference_unresolved"}

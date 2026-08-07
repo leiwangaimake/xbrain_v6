@@ -1,0 +1,20 @@
+任务：解析喊话指令。user 行 ｜ 后是本轮可播的预设清单。
+规则按序，先命中先出：
+1 用序号或名称指代预设（第二条/警告那条）→ speak_preset，preset_id 照抄清单里对应项 = 右边那串。
+2 有指代但清单里没有 → unknown，reason=not_in_catalog；不得改播别的或转 speak_custom。
+3 转述（让他们/告诉他/叫他）或原话边界不清 → unknown，reason=ambiguous，detail=text_ambiguous。
+4 给出可直接播出的原话 → speak_custom，text 逐字照抄，一个字不增删。
+5 无指代也无原话（喊话/播个音）→ unknown，reason=missing_slot；不得默认第一条或自己编话。
+例：
+喊第二条｜1撤离=p-x1 2警告=p-x2 3禁入=p-x3
+{"intent":"speak_preset","slots":{"preset_id":"p-x2"}}
+警告他一下｜1撤离=p-x1 2警告=p-x2
+{"intent":"speak_preset","slots":{"preset_id":"p-x2"}}
+喊一句前方危险禁止靠近｜1撤离=p-x1
+{"intent":"speak_custom","slots":{"text":"前方危险禁止靠近"}}
+喊那条火警的｜1撤离=p-x1 2警告=p-x2
+{"intent":"unknown","reason":"not_in_catalog"}
+喊话｜1撤离=p-x1 2警告=p-x2
+{"intent":"unknown","reason":"missing_slot"}
+你喊一句让他们退到黄线外｜1撤离=p-x1
+{"intent":"unknown","reason":"ambiguous","detail":"text_ambiguous"}

@@ -1,0 +1,22 @@
+任务：解析录制保存与对象改名指令。
+
+规则：
+1 name 和 new 是用户新起的名字，逐字照抄：不加后缀去重、不换成 id。
+2 保存/存成/记下 路径/路线→record_route_save；围栏/禁区→record_fence_save；改名/重命名/改叫→rename_object。
+3 整句只是一个名字：「待命名 route」→record_route_save，「待命名 fence」→record_fence_save，无标记→unknown。
+4 old 只能原样抄「候选」里的 id；对不上或分不清就填 null；type 按用户说的类别（路径 route／位置点 waypoint／围栏 fence／充电桩 dock）。
+5 没说新名字→unknown，reason=missing_slot；不是命名指令→unknown，reason=unsupported，detail=not_naming。
+
+例：
+保存为3号路径｜待命名 route｜候选 空
+{"intent":"record_route_save","slots":{"name":"3号路径"}}
+西区一号｜待命名 fence｜候选 空
+{"intent":"record_fence_save","slots":{"name":"西区一号"}}
+把三号路径改名为东门路线｜候选 r-patrol_3
+{"intent":"rename_object","slots":{"old":"r-patrol_3","type":"route","new":"东门路线"}}
+就叫南门线，改的是东门那条｜候选 r-east_gate r-east_lot
+{"intent":"rename_object","slots":{"old":null,"type":"route","new":"南门线"}}
+存一下｜待命名 route｜候选 空
+{"intent":"unknown","reason":"missing_slot"}
+把三号路径删了｜候选 r-patrol_3
+{"intent":"unknown","reason":"unsupported","detail":"not_naming"}

@@ -1,0 +1,103 @@
+═══════════════════════════════════════════════════════════
+【模板】/opt/xbrain_v6/configs/prompts/missions/_clarify.tpl
+★ 不是成品 prompt —— 每次进入澄清态由装配层按 PendingClarify 实例化一份，用完即弃
+★ {{...}} 为注入点，全部来自 M1–M8 各自声明的 clarify_slots 条目 + 本轮 L3 候选
+═══════════════════════════════════════════════════════════
+
+任务：用户在回答系统的追问。本轮输入只用来填一个槽位：{{SLOT_ZH}}。
+
+规则：
+1 本轮只说了{{SLOT_ZH}}、没说别的动作 → 取出来写进 value，输出 clarify_answer；上一轮的内容不重复、不改动。
+2 {{VALUE_RULE}}
+3 一句话里改口，取最后一个。
+4 本轮是另一条指令、或与追问无关 → unknown，reason=missing_slot。系统会把这句话当新指令重新处理，你不要硬填。
+5 答了但定不下来 → unknown，reason=ambiguous。
+
+例：
+{{EX_POS_1}}
+{{EX_POS_2}}
+{{EX_VAGUE}}
+算了，去充电
+{"intent":"unknown","reason":"missing_slot"}
+今天天气不错
+{"intent":"unknown","reason":"missing_slot"}
+
+───────────────────────────────────────────────────────────
+【history 层 · 与 mission 同轮注入 · 固定 1 行 · 实测 18 tok】
+系统问：{{ASK}}
+★ 只放系统追问那一句。刻意不放上一轮用户原话：回填所需的旧信息全在确定性层的
+  PendingClarify 对象里，模型不需要看见；放进去只会诱导它把上一轮意图重新发射一遍
+  （__system__ 规则 5 明列的风险）。
+★ 本段 pinned，永不参与裁剪 —— 它是规则 4「是不是在回答我」的唯一判据来源。
+
+═══════════════════════════════════════════════════════════
+【渲染实例 ① · kind=choice · 源=M3 ambiguous_target · 实测 234 tok（2 候选）/ 254 tok（4 候选，最坏）】
+═══════════════════════════════════════════════════════════
+任务：用户在回答系统的追问。本轮输入只用来填一个槽位：位置点。
+
+规则：
+1 本轮只说了位置点、没说别的动作 → 取出来写进 value，输出 clarify_answer；上一轮的内容不重复、不改动。
+2 value 只能取候选里的 id：w-east_gate_post=东门岗亭，w-east_gate_park=东门停车场。
+3 一句话里改口，取最后一个。
+4 本轮是另一条指令、或与追问无关 → unknown，reason=missing_slot。系统会把这句话当新指令重新处理，你不要硬填。
+5 答了但定不下来 → unknown，reason=ambiguous。
+
+例：
+岗亭
+{"intent":"clarify_answer","slots":{"value":"w-east_gate_post"}}
+东门岗亭…不对，停车场
+{"intent":"clarify_answer","slots":{"value":"w-east_gate_park"}}
+是的
+{"intent":"unknown","reason":"ambiguous"}
+算了，去充电
+{"intent":"unknown","reason":"missing_slot"}
+今天天气不错
+{"intent":"unknown","reason":"missing_slot"}
+
+═══════════════════════════════════════════════════════════
+【渲染实例 ② · kind=number · 源=M1 distance_unspecified/distance_vague · 实测 226 tok】
+═══════════════════════════════════════════════════════════
+任务：用户在回答系统的追问。本轮输入只用来填一个槽位：距离（米）。
+
+规则：
+1 本轮只说了距离（米）、没说别的动作 → 取出来写进 value，输出 clarify_answer；上一轮的内容不重复、不改动。
+2 value 是数字，单位米；厘米/公分除以 100；不限幅，照原样填。
+3 一句话里改口，取最后一个。
+4 本轮是另一条指令、或与追问无关 → unknown，reason=missing_slot。系统会把这句话当新指令重新处理，你不要硬填。
+5 答了但定不下来 → unknown，reason=ambiguous。
+
+例：
+三米
+{"intent":"clarify_answer","slots":{"value":3}}
+三十公分吧
+{"intent":"clarify_answer","slots":{"value":0.3}}
+挪一点就行
+{"intent":"unknown","reason":"ambiguous"}
+算了，去充电
+{"intent":"unknown","reason":"missing_slot"}
+今天天气不错
+{"intent":"unknown","reason":"missing_slot"}
+
+═══════════════════════════════════════════════════════════
+【渲染实例 ③ · kind=name · 源=M6 name_unspecified / PENDING_NAME · 实测 226 tok】
+═══════════════════════════════════════════════════════════
+任务：用户在回答系统的追问。本轮输入只用来填一个槽位：名称。
+
+规则：
+1 本轮只说了名称、没说别的动作 → 取出来写进 value，输出 clarify_answer；上一轮的内容不重复、不改动。
+2 value 是用户新起的名字，逐字照抄，不改写、不加后缀，2–12 字。
+3 一句话里改口，取最后一个。
+4 本轮是另一条指令、或与追问无关 → unknown，reason=missing_slot。系统会把这句话当新指令重新处理，你不要硬填。
+5 答了但定不下来 → unknown，reason=ambiguous。
+
+例：
+东门路线
+{"intent":"clarify_answer","slots":{"value":"东门路线"}}
+就叫三号路径
+{"intent":"clarify_answer","slots":{"value":"三号路径"}}
+随便起一个
+{"intent":"unknown","reason":"ambiguous"}
+算了，去充电
+{"intent":"unknown","reason":"missing_slot"}
+今天天气不错
+{"intent":"unknown","reason":"missing_slot"}

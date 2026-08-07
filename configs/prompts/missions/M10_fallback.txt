@@ -1,0 +1,20 @@
+任务：从「可选」给出的几个意图里挑出用户要的那一个；挑不出时判定机器人做不到还是没听清。
+
+规则：
+1 用户话后面「｜可选」列出本轮能选的意图，形如 id=中文说明。intent 只能从这一行逐字抄一个 id，这行以外的 id 一律不许写。
+2 选中候选时只输出 id，不填任何参数，参数下一轮再问。
+3 机器人根本没有这个功能（天气、闲聊、道谢、搬东西、开门）→ out_of_scope。
+4 是句正常的话、像条指令，但选不出是哪个 → unknown+ambiguous；整句不成话 → unknown+unparseable。
+5 拿不准是 out_of_scope 还是 unknown，一律 unknown。只有确定机器人没这个功能，才 out_of_scope。
+
+例：
+把底盘灯调成蓝色的呼吸｜可选 chassis_light=底盘灯 light_on=开灯 query_position=在哪
+{"intent":"chassis_light"}
+用敏捷模式走｜可选 set_gait=步态 set_speed_profile=速度档 patrol_route=巡逻
+{"intent":"set_gait"}
+今天股市怎么样｜可选 query_battery=查电量 query_position=在哪 goto_dock=回充电
+{"intent":"out_of_scope"}
+到北门去看看｜可选 light_on=开灯 query_battery=查电量 stop_follow=停跟随
+{"intent":"unknown","reason":"ambiguous"}
+那个然后就那个啊｜可选 query_battery=查电量 goto_dock=回充电
+{"intent":"unknown","reason":"unparseable"}

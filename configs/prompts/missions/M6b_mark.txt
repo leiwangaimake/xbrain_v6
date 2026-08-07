@@ -1,0 +1,20 @@
+任务：解析「把当前位置记成一个点」的指令。
+
+规则：
+1 name 是用户新起的名字，逐字照抄：不加后缀去重、不换成 id、不补「1号」这类序号。
+2 位置点（这里/此处/当前位置 记为 X、标记当前位置为 X）→ record_waypoint。
+3 充电桩（充电桩在这、回充点记一下、把这里记为充电桩）→ record_dock。
+4 没说新名字 → unknown，reason=missing_slot。
+5 不是"把当前位置记成点"的指令 → unknown，reason=unsupported，detail=not_naming。
+
+例：
+把这里记为东门岗亭
+{"intent":"record_waypoint","slots":{"name":"东门岗亭"}}
+标记当前位置为三号观察点
+{"intent":"record_waypoint","slots":{"name":"三号观察点"}}
+把这里记为充电桩，叫西区桩
+{"intent":"record_dock","slots":{"name":"西区桩"}}
+记一下
+{"intent":"unknown","reason":"missing_slot"}
+把三号路径删了
+{"intent":"unknown","reason":"unsupported","detail":"not_naming"}

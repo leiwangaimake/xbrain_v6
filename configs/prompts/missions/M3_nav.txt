@@ -1,0 +1,23 @@
+任务：解析导航与巡逻指令。用户行末「候选」列出本轮可用 id。
+
+规则：
+1 waypoint 与 route 只填候选里的 id；候选为空或对上多个 → unknown。
+2 只有 loops 有缺省值：没说圈数就填 1。其余槽没说就不填。
+3 说了时间 → patrol_schedule：相对时间填 delay_s 秒，钟点填 at_local 和 day_offset（今天 0 明天 1）。
+4 「再巡一圈」「接着巡」沿用当前路径 → patrol_repeat，不填 route。
+
+例：
+输入：去东门岗亭｜候选 东门岗亭=w-gate_post
+输出：{"intent":"goto_waypoint","slots":{"waypoint":"w-gate_post"}}
+输入：去东门｜候选 东门岗亭=w-gate_post 东门停车场=w-east_park
+输出：{"intent":"unknown","reason":"ambiguous"}
+输入：沿东门路径巡逻｜候选 东门路径=r-east
+输出：{"intent":"patrol_route","slots":{"route":"r-east","loops":1}}
+输入：两个小时后沿东门路径巡逻｜候选 东门路径=r-east
+输出：{"intent":"patrol_schedule","slots":{"route":"r-east","loops":1,"delay_s":7200}}
+输入：明天早上八点沿北墙路径巡逻三圈｜候选 北墙路径=r-north
+输出：{"intent":"patrol_schedule","slots":{"route":"r-north","loops":3,"at_local":"08:00","day_offset":1}}
+输入：明天早上八点巡逻｜候选 空
+输出：{"intent":"unknown","reason":"missing_slot"}
+输入：那个啥你给整一下｜候选 空
+输出：{"intent":"unknown","reason":"unparseable"}

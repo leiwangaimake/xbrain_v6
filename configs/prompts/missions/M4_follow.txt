@@ -1,0 +1,27 @@
+任务：区分车体跟随、云台跟踪与朝向行为。
+
+规则：
+1 含移动动词（走/跟上/追/过去/跟紧/别让他跑）→ follow_target；只有视觉词（盯/看/镜头/画面/跟踪）或无移动动词 → ptz_track；拿不准选 ptz_track。
+2 面对/对着/朝着 → set_motion_behavior：停下面对 = face_target_stop，原地别动 = hold。车体跟随不选它。
+3 别跟了/别追了/停止跟随 → stop_follow，车体与云台一起停；只说镜头/云台/别盯了 → ptz_stop_track。
+4 target_id 一律填 null，说「二号」「穿红衣服的」也填 null，不要编号码。
+5 说话/开灯/导航等不属上面五条的 → unknown，reason=unsupported，detail=not_in_group；整句听不懂 → unknown，reason=unparseable。
+
+示例：
+输入：跟着他走
+输出：{"intent":"follow_target","slots":{"target_id":null}}
+
+输入：盯住那个穿红衣服的
+输出：{"intent":"ptz_track","slots":{"target_id":null}}
+
+输入：停下面对他
+输出：{"intent":"set_motion_behavior","slots":{"behavior":"face_target_stop"}}
+
+输入：别跟了
+输出：{"intent":"stop_follow","slots":{}}
+
+输入：跟他说别过来
+输出：{"intent":"unknown","reason":"unsupported","detail":"not_in_group"}
+
+输入：那个 跟一下 那个啥
+输出：{"intent":"unknown","reason":"unparseable"}
