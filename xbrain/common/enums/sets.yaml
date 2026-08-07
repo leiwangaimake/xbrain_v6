@@ -24,7 +24,7 @@
 # the library is missing a value the contract added, which is how Event.category
 # sat at 21 while the contract had moved to 23.
 #
-# 🚫 No counts here or in comments (CLAUDE.md 3.7). The contract's own tallies
+# No counts here or in comments (CLAUDE.md 3.7). The contract's own tallies
 # have already rotted once: S13.3 still says the error set holds 40.
 #
 # ★ order matters for gate_limiter and stop_reason -- both are documented as
