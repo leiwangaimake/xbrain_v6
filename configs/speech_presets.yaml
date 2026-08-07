@@ -1,15 +1,29 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # /opt/xbrain_v6/configs/speech_presets.yaml
 #   层：L6 内容表    归属进程：P2（授权 L2 预设语句）· P4 只读
-#   ★ 权威定义处：`14` · `16`
+#   ★ 权威定义处：`14` §7.3.3（语句文本，VOI-47 / PAY-04）· `16` §5.3 ID-2（id 形态）
 #
-#   ★★★ 本文件当前是【空骨架】—— 一个键都没有，🚫 本轮未凭空填任何配置值。
-#   ★ 落值时逐键去权威节抄，🚫 不得从本文件或任何别处推断默认值：
-#     10 §5.4.2 R-3 逐字「不提供默认值语法……解析不到即 E_CONFIG_INVALID 拒绝启动」。
-#   ★★ 未标定的参数留 null（＝「声明键位但未赋值」），🚫 绝不写 0.0 冒充已赋值。
-#   ★★ L6 只【取值】不【定义】：🚫 不得出现 common 顶层键，共享值一律写 ${common.xxx}
-#     （10 §5.4.2 R-6 / R-1；违反即被 §5.4.4 断言 B 判「疑似复制」而拒绝启动）。
-#   ★ 本文件在热更新白名单内（CFG-30）。
+#   ★★ 2026-08-07 落值（GWY-P4-29）。逐键来历：
+#     text  <- `14` §7.3.3「系统层期望的语句库」三条【逐字】（warn_01/02/03）。
+#     voice <- `14` §7.3.3 d_mode 块 voice: male（设备只有男/女两档，[31] 性别字节，
+#              male -> voice=0）。★★★ GWY-P4-29：voice 性别【落预设】，
+#              🚫 不落 D08 槽位 —— D08 的 slots 只有 preset_id（加 voice 槽 = 付
+#              GBNF 闭集 + mission few-shot 的 token，还给 LLM 一个可填错的洞）。
+#     preset_id <- ★★ `16` §5.3 ID-2：预设语句 id 一律 `p-<slug>` 形态（few-shot
+#              与枚举发射器已按此形态教，`p-x1` 等是占位例）。⚠️ `14` §7.3.3 草图
+#              键 warn_01/02/03 与 ID-2 形态不合 —— 按 `16` 硬规则落 `p-` 形态，
+#              对应关系已在 `14` §7.3.3 加注（warn_01 -> p-warn_leave 等）。
+#
+#   ★★ L6 只【取值】不【定义】：🚫 不得出现 common 顶层键。
+#   ★ 本文件在热更新白名单内（CFG-30 scope=speech_presets）。
+#   ★ P2 侧离线预合成 WAV（data/speech_presets/{preset_id}.wav + manifest.json，
+#     `11` §8.8.2）属 Phase 2；本表是其唯一输入。
 # ═══════════════════════════════════════════════════════════════════════════
 
-# TODO(`14` · `16`)：按该节逐键落值。本文件在落值前会让整栈按设计拒绝启动，这是预期行为。
+presets:
+  # 14 S7.3.3 warn_01. D-mode sequence first entry.
+  - { preset_id: p-warn_leave, text: "您已进入管制区域，请立即离开", voice: male }
+  # 14 S7.3.3 warn_02. Wording corrected there for the non-military site.
+  - { preset_id: p-warn_no_photo, text: "此处为管制区域，禁止拍摄", voice: male }
+  # 14 S7.3.3 warn_03.
+  - { preset_id: p-warn_wait, text: "请出示证件并原地等待", voice: male }
