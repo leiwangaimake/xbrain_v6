@@ -422,6 +422,14 @@ EVENT_CATEGORY = _SETS["event_category"]
 #   off-contract sev is E_SCHEMA, not a key the cloud alarm subscription silently
 #   never matches (V-2).
 SEVERITY = _SETS["severity"]
+# reason / control_mode -- CFG-CM-16 (11 S R2.6-e / R2.6-f). reason is the
+#   task/progress motion/teleop block reason (rotation_blocked,
+#   lateral_clearance_unavailable, teleop_stale, deadman_released) -- our set, not
+#   the chassis's and not suspend_reason. control_mode is the direct-control mode,
+#   currently the single value jog (point-control); an off-set value must raise,
+#   never be degraded to jog.
+REASON = _SETS["reason"]
+CONTROL_MODE = _SETS["control_mode"]
 # gate_limiter -- ORDERED. The sequence is the speed-gate attribution priority:
 #   estop first, the none sentinel last. Read it with .index(); never rebuild it
 #   by iterating anything that has been sorted.
@@ -660,6 +668,7 @@ CHARGE_STAGE = _SETS["charge_stage"]
 # only reachable handle is the read-only MappingProxyType.
 __all__ = ["ClosedSet", "ClosedSetViolation", "SET_NAMES", "get", "parse_enum",
            "PLANE", "DOMAIN", "EVENT_CATEGORY", "SEVERITY", "GATE_LIMITER",
+           "REASON", "CONTROL_MODE",
            "STOP_REASON",
            "LIMITER_CN", "assert_limiter_cn_matches_gate_limiter",
            "TASK_STATE", "CLS", "DEVICE",

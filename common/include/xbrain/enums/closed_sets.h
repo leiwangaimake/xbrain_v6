@@ -90,6 +90,11 @@ inline constexpr std::string_view kCls[] = {
     "unknown",
 };
 
+// control_mode -- 11 S R2.6-f   anchor: 闭集章补 `control_mode` 一项
+inline constexpr std::string_view kControlMode[] = {
+    "jog",
+};
+
 // device -- 11 S5.1A   anchor: | 项 | `kind` |
 inline constexpr std::string_view kDevice[] = {
     "rtk",
@@ -181,6 +186,14 @@ inline constexpr std::string_view kPlane[] = {
     "data",
     "health",
     "probe",
+};
+
+// reason -- 11 S R2.6-e   anchor: task/progress 的 reason 闭集
+inline constexpr std::string_view kReason[] = {
+    "rotation_blocked",
+    "lateral_clearance_unavailable",
+    "teleop_stale",
+    "deadman_released",
 };
 
 // release_reason -- 11 S7A.1   anchor: | `release_reason` | string |

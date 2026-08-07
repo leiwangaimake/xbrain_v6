@@ -97,6 +97,23 @@ sets:
       - warn
       - alarm
       - fault
+  reason:
+    source: "11 S R2.6-e"
+    anchor: "task/progress 的 reason 闭集"        # 11 S R2.6-e 补丁行(§13 正表落地后迁锚)
+    note: "task/progress 运动/遥控阻塞原因(CFG-CM-16, 11 R2.6-e). rotation_blocked/lateral_clearance = RNS 几何门; teleop_stale/deadman_released = 遥控 deadman(M20S 遥控时基). 我方闭集非底盘上报, 非 suspend_reason. §13 正表未落 ⇒ 提取器暂锚 R2.6-e 补丁行"
+    ordered: false
+    values:
+      - rotation_blocked
+      - lateral_clearance_unavailable
+      - teleop_stale
+      - deadman_released
+  control_mode:
+    source: "11 S R2.6-f"
+    anchor: "闭集章补 `control_mode` 一项"        # 11 S R2.6-f: 现仅 jog
+    note: "直控模式(CFG-CM-16, 11 R2.6-f). 现仅 jog(点动, 17 S12 直控原语 jog 按住/nudge 单击, 对应 M20S 手动控制). 单值闭集: 传非 jog 必抛, 不做未知值降级解释为 jog"
+    ordered: false
+    values:
+      - jog
   gate_limiter:
     source: "11 S9.6.5"
     anchor: "| 优先级 | `limiter` |"        # the table header / row the parser keys off

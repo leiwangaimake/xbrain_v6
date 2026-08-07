@@ -267,6 +267,31 @@ def _section_enum(lines, heading, what):
                          "the section was renamed, moved or emptied")
 
 
+def _row_backticked(lines, anchor, what, exclude=()):
+    """Backticked values from the WHOLE row containing `anchor`, minus `exclude`.
+
+    reason and control_mode (CFG-CM-16) live in the 11 S R2.6-e / R2.6-f patch
+    rows, not in a S13 table (that table is not written yet -- the CFG-CM-16
+    criterion calls the doc-diff a 空位/placeholder for exactly this reason). Two
+    shapes _inline_enum cannot handle:
+      * reason's four values sit INSIDE parentheses, and _inline_enum strips
+        parenthesised prose (it is built to drop an explanatory aside);
+      * control_mode's row backticks the SET NAME (`control_mode`) as well as the
+        value (`jog`), so the name must be excluded.
+    So this reads every backticked lower_snake token on the row and drops the
+    excluded ones. `common/errors/` and friends carry slashes and VALUE_RE (which
+    requires the whole backtick content to be [a-z_]+) does not match them.
+    """
+    for line in lines:
+        if not line.startswith("|") or anchor not in line:
+            continue
+        vals = [v for v in re.findall(VALUE_RE, line) if v not in exclude]
+        vals = list(dict.fromkeys(vals))
+        assert vals, "%s: anchor matched but no values parsed" % what
+        return vals
+    raise AssertionError("%s: anchor %r not found in the contract" % (what, anchor))
+
+
 #: Which volume each set is read from, kept as data so it can be compared with
 #: the source: field the library exports. An extractor aimed at the wrong volume
 #: still produces a plausible set -- 11 has a charge_stage column of its own --
@@ -276,6 +301,7 @@ SET_DOC = {
     "stop_reason": "11", "task_state": "11", "cls": "11", "device": "11",
     "release_reason": "11", "arb_suspended": "11", "gate_reason": "11",
     "suspend_kind": "11", "suspend_reason": "11", "severity": "11",
+    "reason": "11", "control_mode": "11",
     # The one set defined outside the contract. See the module docstring.
     "charge_stage": "15",
 }
@@ -374,6 +400,15 @@ EXTRACTORS.update({
     # of just the field name would match that row first.
     "release_reason": lambda: _inline_enum(
         _DOCS["11"], "| `release_reason` | string |", 4, "release_reason"),
+    # reason / control_mode are the CFG-CM-16 sets, read from the 11 S R2.6-e /
+    # R2.6-f patch rows (the S13 table is not written yet -- see _row_backticked).
+    # The anchors are the phrase unique to each row; control_mode excludes its own
+    # backticked set name so only the value `jog` survives.
+    "reason": lambda: _row_backticked(
+        _DOCS["11"], "task/progress 的 reason 闭集", "reason"),
+    "control_mode": lambda: _row_backticked(
+        _DOCS["11"], "闭集章补 `control_mode` 一项",
+        "control_mode", exclude=("control_mode",)),
     # severity is the {severity} key segment of event/{severity}/{category}
     # (S2.2.11 W-5), stated inline in one cell as info / warn / alarm / fault.
     # The anchor carries the value column too (`{severity}` | `info`):
