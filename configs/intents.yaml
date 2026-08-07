@@ -111,6 +111,13 @@ intents:
   chassis_light: { id: D11, slots: [pattern, color], route: fastpath, auth: L0 }
   speak_stop: { id: D12, slots: [], route: fastpath, auth: L0 }
   payload_all_off: { id: D13, slots: [], route: fastpath, auth: L0 }
+  # D14-D16 reserved for payload_tilt_* (18 S13.1 collision note); D17/D18 from
+  # 18-A S1 (GWY-P4-23, 2026-08-07). D17 level is a CLOSED SET
+  # (max/high/mid/low/min/up/down), deliberately type-incompatible with D10's
+  # numeric level so a misclassified volume utterance fails E_SCHEMA instead of
+  # silently changing the light (18-A S1.1). D18 mode is 1-16, no 0 (off is D07).
+  set_light_bright: { id: D17, slots: [level], route: fastpath, auth: L0 }
+  set_strobe_mode: { id: D18, slots: [mode], route: fastpath, auth: L0 }
 
   # -- E 云台 (E01/E06 direction slots are legitimate; see ID-3 note in header) --
   ptz_move: { id: E01, slots: [direction, amount], route: fastpath, auth: L0 }
@@ -121,6 +128,12 @@ intents:
   ptz_zoom: { id: E06, slots: [direction, amount], route: fastpath, auth: L0 }
   ptz_scan: { id: E07, slots: [], route: fastpath, auth: L1b }
   ptz_stop_scan: { id: E08, slots: [], route: fastpath, auth: L0 }
+  # E09/E10 from 18-B S1 (GWY-P4-23, 2026-08-07). E09 three speed levels await
+  # T-PTZ-3 measurement. E10 conflicts with the contract's PTZ-C1 (PELCO-D has
+  # no absolute-position readback): until T-PTZ-3 closes, the executor answers
+  # rejected and steers to E01 -- never runs on a guessed omega (18-B S3).
+  set_ptz_speed: { id: E09, slots: [level], route: fastpath, auth: L1b }
+  ptz_move_deg: { id: E10, slots: [direction, angle_deg], route: llm, auth: L1b }
 
   # -- F 录制 --
   record_route_start: { id: F01, slots: [], route: fastpath, auth: L1b }

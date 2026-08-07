@@ -226,10 +226,12 @@ def test_auth_matches_16_s8_3a_2():
     the folded 16 S8.3A.2 table, and that table's 130-row form is
     self-consistent. A fabricated level cannot survive this."""
     reg = load_intent_registry(real_mapping(), cmdset_names=cmdset_names())   # load
-    row_auth, base = parse_s8_3a_2_per_id_auth(doc16_text())   # 130 rows + fold
+    row_auth, base = parse_s8_3a_2_per_id_auth(doc16_text())   # 134 rows + fold
     doc_ids = {v["id"] for v in parse_doc16_registry_table(doc16_text()).values()}  # S6.6 ids
     assert set(base) == doc_ids                          # fold covers exactly those ids
-    assert len(row_auth) == 130                          # 128 + H01 split + H03 split
+    # 134 = 132 intents + H01 split + H03 split. Was 130/128 until GWY-P4-23
+    # landed D17/D18/E09/E10 (2026-08-07); CS-A3's declared histogram moved with it.
+    assert len(row_auth) == 134
     for e in reg.entries:                                # every registry entry
         assert e.auth == base[e.id], (e.name, e.id)      # base auth == folded doc level
 
@@ -247,13 +249,29 @@ def test_split_intents_carry_auth_by_slot():
 @pytest.mark.skipif(not os.path.exists(TRIAGE),
                     reason="docs/temp/_triage.json is gitignored; bonus cross-check only")
 def test_bonus_cross_check_against_triage_when_present():
-    """When the migration source is on disk, confirm the doc table reproduced it
-    faithfully. Skipped (not failed) when absent, so CI without docs/temp stays
-    green -- nothing at run time depends on this file (U76(1))."""
-    tr = json.load(open(TRIAGE))["triage"]               # the migration source
-    doc = parse_doc16_registry_table(doc16_text())       # the migrated table
-    assert {e["intent"] for e in tr} == set(doc)         # same 128 names
-    for e in tr:                                         # and per record
+    """When the migration source is on disk, confirm the doc table STILL carries
+    the migrated rows faithfully. Skipped (not failed) when absent, so CI without
+    docs/temp stays green -- nothing at run time depends on this file (U76(1)).
+
+    Subset, not equality, since 2026-08-07: _triage.json is FROZEN at the 128
+    rows that were migrated, and the doc table has legitimately grown past it
+    (GWY-P4-23 added D17/D18/E09/E10 directly to the self-certifying source;
+    back-filling the _ file would recreate a dependency on it, which CLAUDE.md
+    0.2 forbids). The claim this test still holds is migration faithfulness --
+    every migrated row is present and unchanged -- plus the growth being exactly
+    the intents that arrived after the migration, so an accidental deletion of a
+    migrated row and an unexplained extra both still fail.
+    """
+    tr = json.load(open(TRIAGE))["triage"]               # the frozen migration source
+    doc = parse_doc16_registry_table(doc16_text())       # the (growing) doc table
+    migrated = {e["intent"] for e in tr}                 # the 128 migrated names
+    assert migrated <= set(doc)                          # none of them vanished
+    # Growth is enumerated, not open-ended: exactly the post-migration intents.
+    assert set(doc) - migrated == {
+        "set_light_bright", "set_strobe_mode",           # 18-A D17/D18
+        "set_ptz_speed", "ptz_move_deg",                 # 18-B E09/E10
+    }
+    for e in tr:                                         # and per migrated record
         row = doc[e["intent"]]                            # the doc row
         assert row["id"] == e["id"]                       # id reproduced
         assert row["route"] == e["route"]                 # route reproduced

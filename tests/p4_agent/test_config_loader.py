@@ -609,10 +609,11 @@ def test_a_complete_configuration_loads(tmp_path):
     assert cfg.proc == "p4_agent"
     # Two values from opposite ends of the file, so a loader that returned an
     # empty tree would not pass by accident. assert_intent_count in particular
-    # is the 128-intent closed set count from 16 S0.5 CS-A2, which is the kind
-    # of value a truncated read would silently lose.
+    # is the 132-intent closed set count from 16 S0.5 CS-A2 (128 until
+    # GWY-P4-23 landed D17/D18/E09/E10, 2026-08-07), which is the kind of value
+    # a truncated read would silently lose.
     assert cfg.require("cmdset.min_agent_version") == "1.0"
-    assert cfg.require("auth.assert_intent_count") == 128
+    assert cfg.require("auth.assert_intent_count") == 132
 
 
 def test_zero_and_empty_string_are_assigned_values_not_holes(tmp_path):
