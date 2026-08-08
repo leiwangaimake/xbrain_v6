@@ -90,13 +90,20 @@ CLEAN_LINTS = [
      "no code-side default on safety parameters via dataclass, dict.get "
      "or `or fallback` under xbrain/, the static half of CLAUDE.md 3.1 "
      "(CFG-CM-13)"),
+    # Added with CFG-DC-3. Its zero means no business module imports rclpy,
+    # sqlite3, or requests (the three CLAUDE.md 4.1 hard-nos). Marker
+    # BUSINESS-IMPORT-OK provides the ai_client escape hatch.
+    ("no_business_imports.py",
+     "no import of rclpy, sqlite3, or requests under xbrain/ apart from the "
+     "BUSINESS-IMPORT-OK exemption (CFG-DC-3 / CLAUDE.md 4.1)"),
 ]
 
 #: Lints that also ship a --self-test. Running it here keeps the probes honest;
 #: a self-test nobody invokes rots exactly as fast as a lint nobody invokes.
 SELF_TESTED = ["comment_ratio.py", "no_config_source_read.py", "clock_scan.py",
                "no_literal_ecode.py", "zenoh_callback_scan.py",
-               "no_disabled_switch.py", "no_safety_default.py"]
+               "no_disabled_switch.py", "no_safety_default.py",
+               "no_business_imports.py"]
 
 
 def run_lint(script, *args):
