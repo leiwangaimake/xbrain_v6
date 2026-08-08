@@ -41,6 +41,8 @@ from xbrain.boot.freeze.registry import (
 _GREEN_COMMON_TREE = {
     "common": {
         "robot_id": "gj-001",
+        # site_id extended for FV-ORG (CFG-FZ-14) -- names the L4 file.
+        "site_id": "site_scaffold",
         "spec": {
             "max_vx_mps": 2.0, "max_vy_mps": 0.3, "max_wz_radps": 0.4,
             "max_accel_mps2": 1.0, "max_decel_mps2": 2.5,
@@ -51,6 +53,17 @@ _GREEN_COMMON_TREE = {
             "patrol": {"max_mps": 2.0},
         }},
         "fence": {"soft_margin_min_m": 0.30, "predict_dt_s": 0.45},
+        # geo.enu_origin as null placeholders (L1 shape per FV-ORG-3).
+        "geo": {"enu_origin": {"lat": None, "lon": None, "alt": None}},
+    },
+}
+
+# L4 (sites/site_scaffold.yaml) with real enu_origin -- required by
+# FV-ORG-2/-3 (CFG-FZ-14).
+_GREEN_L4_TREE = {
+    "common": {
+        "geo": {"enu_origin": {
+            "lat": 31.2301971, "lon": 121.4732683, "alt": 8.4}},
     },
 }
 
@@ -74,6 +87,14 @@ def _scaffold_config_ctx(tmp_path):
     # _read_dir doesn't complain about missing paths.
     (root / "models").mkdir()
     (root / "safety").mkdir()
+    # FV-ORG (CFG-FZ-14) needs sites/{site_id}.yaml with real enu_origin.
+    sites = root / "sites"
+    sites.mkdir()
+    (sites / "site_scaffold.yaml").write_text(
+        yaml.safe_dump(_GREEN_L4_TREE, allow_unicode=True)
+    )
+    # calib/ empty (L4b) -- present so J's directory list is complete.
+    (root / "calib").mkdir()
     # secrets/ is optional -- skipping it lets J skip its perm check.
     return {"config_root": str(root)}
 

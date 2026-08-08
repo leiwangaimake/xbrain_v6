@@ -118,7 +118,18 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # OverlayResult.unassigned() returns dotted paths whose leaf is None.
     # Sorted alphabetically, so the first one reported is stable across
     # runs (an operator diffing two failure logs sees only real changes).
-    nulls = overlay.unassigned()
+    # Filter out keys whose null-in-L1 is DELIBERATE by design:
+    # enu_origin's three components are null placeholders in L1 and
+    # get filled by L4 (which build_overlay does NOT merge, because L4
+    # picking needs site_id). FV-ORG (CFG-FZ-14) enforces that L4
+    # actually provides them; A defers those three keys to FV-ORG.
+    _A_NULL_EXCEPTIONS = frozenset({
+        "common.geo.enu_origin.lat",
+        "common.geo.enu_origin.lon",
+        "common.geo.enu_origin.alt",
+    })
+    nulls = [k for k in overlay.unassigned()
+             if k not in _A_NULL_EXCEPTIONS]
     if nulls:
         first = nulls[0]
         # Provenance tells us which layer DECLARED the null; that's

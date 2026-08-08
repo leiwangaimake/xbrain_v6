@@ -61,6 +61,7 @@ from xbrain.boot.freeze.assertions.c_cross_file import run as _c_run
 from xbrain.boot.freeze.assertions.d_identity import run as _d_run
 from xbrain.boot.freeze.assertions.e_hot_update_disjoint import run as _e_run
 from xbrain.boot.freeze.assertions.f_qos_and_port import run as _f_run
+from xbrain.boot.freeze.assertions.fv_org_enu import run as _fv_org_run
 from xbrain.boot.freeze.assertions.g_safety_range import run as _g_run
 from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
 from xbrain.boot.freeze.assertions.m_required import run as _m_run
@@ -221,7 +222,7 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     # FV-ORG -- enu_origin startup validation (CFG-FZ-14 補).
     # ---------------------------------------------------------------------
     AssertSpec("FV-ORG", "enu_origin startup validation",
-               depends_on=("M",), runner=_runner_stub("FV-ORG"),
+               depends_on=("M",), runner=_fv_org_run,
                impl_item="CFG-FZ-14"),
     # ---------------------------------------------------------------------
     # C-6 + MR-1 -- corridor lateral margin + rotation margin.
