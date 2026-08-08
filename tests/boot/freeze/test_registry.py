@@ -23,6 +23,7 @@ import os
 
 import pytest
 
+from xbrain.boot.freeze.assertions.j_config_root import _REQUIRED_FILES
 from xbrain.boot.freeze.pipeline import (
     MANIFEST_SCHEMA, build_manifest, run_assertions, run_freeze,
 )
@@ -30,6 +31,20 @@ from xbrain.boot.freeze.registry import (
     ASSERT_REGISTRY, AssertSpec, ordered_assertion_names, registry_names,
     validate_topology,
 )
+
+
+# CFG-FZ-2 landed the real body for J -- run_assertions now needs a
+# scaffolded config_root in ctx, or J raises. This helper builds the
+# minimum tree J accepts so tests focused on framework properties
+# (order / diff / manifest) don't have to know J's schema.
+def _scaffold_config_ctx(tmp_path):
+    """Build a minimal green config tree and return ctx pointing at it."""
+    root = tmp_path / "configs_for_registry_tests"
+    root.mkdir()
+    for name in _REQUIRED_FILES:
+        (root / name).write_text("# scaffold for framework tests\n")
+    # secrets/ is optional -- skipping it lets J skip its perm check.
+    return {"config_root": str(root)}
 
 
 # --------------------------------------------------------------------------
@@ -42,10 +57,11 @@ def test_committed_registry_is_topologically_valid():
     validate_topology()                          # must not raise
 
 
-def test_run_assertions_yields_one_result_per_row_in_order():
+def test_run_assertions_yields_one_result_per_row_in_order(tmp_path):
     """Framework property: iteration order == declaration order, and every
-    row's runner produced exactly one entry."""
-    results = run_assertions()
+    row's runner produced exactly one entry. Requires a scaffolded ctx
+    because J's real body (CFG-FZ-2) now checks config_root."""
+    results = run_assertions(_scaffold_config_ctx(tmp_path))
     assert list(results) == list(ordered_assertion_names())
     for spec in ASSERT_REGISTRY:
         assert spec.name in results
@@ -91,31 +107,32 @@ def _diff(reg_names, manifest_assertions):
     return sorted(reg_set - man_set), sorted(man_set - reg_set)
 
 
-def test_bidirectional_diff_of_committed_state_is_empty():
+def test_bidirectional_diff_of_committed_state_is_empty(tmp_path):
     """*** Baseline: run_assertions today produces MANIFEST.assertions whose
     keys equal registry_names(); diff both ways is empty. Every mutation
     below breaks one direction while leaving the other."""
-    results = run_assertions()
+    results = run_assertions(_scaffold_config_ctx(tmp_path))
     only_reg, only_man = _diff(registry_names(), results)
     assert only_reg == [] and only_man == []
 
 
-def test_ord1_mutation_registry_row_missing_from_manifest_forward_diff(monkeypatch):
+def test_ord1_mutation_registry_row_missing_from_manifest_forward_diff(
+        monkeypatch, tmp_path):
     """*** Mutation ①: a runner that omits itself (returns nothing usable)
     would leave MANIFEST.assertions short one row. Simulate by returning
     an artefact that DOES NOT include one row's result, and prove the
     diff detects it."""
-    real = run_assertions()
+    real = run_assertions(_scaffold_config_ctx(tmp_path))
     tampered = {k: v for k, v in real.items() if k != "J"}   # drop J
     only_reg, only_man = _diff(registry_names(), tampered)
     assert only_reg == ["J"]
     assert only_man == []
 
 
-def test_ord1_mutation_manifest_carries_key_no_row_backs_reverse_diff():
+def test_ord1_mutation_manifest_carries_key_no_row_backs_reverse_diff(tmp_path):
     """*** Mutation ②: a MANIFEST that grew a key without a registry row
     behind it. Detected by the reverse diff (manifest \\ registry)."""
-    real = run_assertions()
+    real = run_assertions(_scaffold_config_ctx(tmp_path))
     tampered = dict(real)
     tampered["INVENTED-Z"] = {"status": "pass"}   # not in registry
     only_reg, only_man = _diff(registry_names(), tampered)
@@ -152,16 +169,22 @@ def test_build_manifest_populates_every_required_field():
 def test_run_freeze_writes_manifest_json_and_returns_it(tmp_path):
     """End-to-end: run_freeze writes MANIFEST.json under resolved_root and
     returns the same dict. The json on disk parses back to what we
-    returned."""
+    returned. Uses a scaffolded config_root because CFG-FZ-2 landed
+    the real J body which needs the tree to exist."""
+    # Scaffold config_root separately from resolved_root so we can
+    # pass them to run_freeze without collision.
+    ctx_seed = _scaffold_config_ctx(tmp_path)
+    resolved = tmp_path / "resolved"
+    resolved.mkdir()
     m = run_freeze(
         boot_id="be",
-        config_root="/tmp/x",
+        config_root=ctx_seed["config_root"],
         config_root_overridden=False,
         common_digest="cd",
         config_rev="cr",
-        resolved_root=str(tmp_path),
+        resolved_root=str(resolved),
     )
-    manifest_path = tmp_path / "MANIFEST.json"
+    manifest_path = resolved / "MANIFEST.json"
     assert manifest_path.exists()
     disk = json.loads(manifest_path.read_text())
     assert disk == m

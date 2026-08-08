@@ -52,6 +52,11 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Tuple
 
 
+# Real bodies live under xbrain/boot/freeze/assertions/. Import them here
+# so the registry rows can point at the callable directly. Stubs (below)
+# stand in for rows whose CFG-FZ-N item has not yet landed a real body.
+from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
+
 # Every assertion body lives in a CFG-FZ-N item's own file eventually. Until
 # that item lands, the stub below stands in -- visible, not silent. The stub
 # vs real distinction is DELIBERATELY carried in the result dict's status
@@ -115,7 +120,7 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     # assertion opens files under the config root.
     # ---------------------------------------------------------------------
     AssertSpec("J", "config root + file reachability",
-               depends_on=(), runner=_runner_stub("J"),
+               depends_on=(), runner=_j_run,
                impl_item="CFG-FZ-2"),
     # ---------------------------------------------------------------------
     # A -- reference completeness. Runs SECOND, so M sees a fully-resolved

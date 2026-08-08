@@ -189,7 +189,14 @@ def run_freeze(*, boot_id: str, config_root: str,
     # Assertions FIRST -- if any raises, we never touch the filesystem, so
     # a partial MANIFEST cannot be observed. A crashed assertion leaves the
     # PREVIOUS MANIFEST.json intact for post-mortem.
-    assertions = run_assertions(context)
+    # Populate ctx with fields every assertion may need. config_root is
+    # required by assertion J (real body lands with CFG-FZ-2); putting
+    # it in ctx here rather than as a positional arg keeps runner
+    # signatures uniform across all 13 rows.
+    ctx = dict(context) if context is not None else {}
+    ctx.setdefault("config_root", config_root)
+    ctx.setdefault("config_root_overridden", config_root_overridden)
+    assertions = run_assertions(ctx)
     manifest = build_manifest(
         boot_id=boot_id,
         config_root=config_root,
