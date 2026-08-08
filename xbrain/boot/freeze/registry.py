@@ -118,6 +118,7 @@ from xbrain.boot.freeze.assertions.m_required import run as _m_run
 from xbrain.boot.freeze.assertions.n_o_identities import (
     run_n as _n_run, run_o as _o_run,
 )
+from xbrain.boot.freeze.assertions.s22_layer_namespace import run as _s22_run
 
 # Every assertion body lives in a CFG-FZ-N item's own file eventually. Until
 # that item lands, the stub below stands in -- visible, not silent. The stub
@@ -286,6 +287,12 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     AssertSpec("C-6+MR-1", "lateral clearance + rotation margin identities",
                depends_on=("M",), runner=_c6mr1_run,
                impl_item="CFG-FZ-15"),
+    # ---------------------------------------------------------------------
+    # S22 -- per-layer namespace validation (CFG-FZ-16).
+    # ---------------------------------------------------------------------
+    AssertSpec("S22", "per-layer namespace validation",
+               depends_on=("J",), runner=_s22_run,
+               impl_item="CFG-FZ-16"),
 )
 
 
