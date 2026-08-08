@@ -65,6 +65,7 @@ from xbrain.boot.freeze.assertions.f_qos_and_port import run as _f_run
 from xbrain.boot.freeze.assertions.fv_org_enu import run as _fv_org_run
 from xbrain.boot.freeze.assertions.g_safety_range import run as _g_run
 from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
+from xbrain.boot.freeze.assertions.l_bit_exemption import run as _l_run
 from xbrain.boot.freeze.assertions.m_required import run as _m_run
 from xbrain.boot.freeze.assertions.n_o_identities import (
     run_n as _n_run, run_o as _o_run,
@@ -217,7 +218,7 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     # L -- BIT exemption surface guard.
     # ---------------------------------------------------------------------
     AssertSpec("L", "BIT exemption surface guard",
-               depends_on=("K",), runner=_runner_stub("L"),
+               depends_on=("K",), runner=_l_run,
                impl_item="CFG-FZ-11"),
     # ---------------------------------------------------------------------
     # FV-ORG -- enu_origin startup validation (CFG-FZ-14 補).
