@@ -64,6 +64,9 @@ from xbrain.boot.freeze.assertions.f_qos_and_port import run as _f_run
 from xbrain.boot.freeze.assertions.g_safety_range import run as _g_run
 from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
 from xbrain.boot.freeze.assertions.m_required import run as _m_run
+from xbrain.boot.freeze.assertions.n_o_identities import (
+    run_n as _n_run, run_o as _o_run,
+)
 
 # Every assertion body lives in a CFG-FZ-N item's own file eventually. Until
 # that item lands, the stub below stands in -- visible, not silent. The stub
@@ -181,6 +184,21 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     AssertSpec("G", "brake -> speed-gate consistency (t_lat_s / decel)",
                depends_on=("M",), runner=_g_run,
                impl_item="CFG-FZ-7"),
+    # ---------------------------------------------------------------------
+    # N -- safety constant identity (margin_base_m == d_safe_m). Depends
+    # on G because G's range checks establish that both operands are
+    # sane numbers; N then checks their equality.
+    # ---------------------------------------------------------------------
+    AssertSpec("N", "safety constant identity (margin_base_m == d_safe_m)",
+               depends_on=("G",), runner=_n_run,
+               impl_item="CFG-FZ-8"),
+    # ---------------------------------------------------------------------
+    # O -- cloud teleop priority identity. Depends on N as a sibling in
+    # the "identity family"; ordering is arbitrary between N and O.
+    # ---------------------------------------------------------------------
+    AssertSpec("O", "cloud teleop priority identity",
+               depends_on=("N",), runner=_o_run,
+               impl_item="CFG-FZ-8"),
     # ---------------------------------------------------------------------
     # I -- TRT engine / model sha256 + build_env agreement.
     # ---------------------------------------------------------------------
