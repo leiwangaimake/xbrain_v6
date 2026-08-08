@@ -59,6 +59,7 @@ from xbrain.boot.freeze.assertions.a_references import run as _a_run
 from xbrain.boot.freeze.assertions.b_no_duplicates import run as _b_run
 from xbrain.boot.freeze.assertions.c_cross_file import run as _c_run
 from xbrain.boot.freeze.assertions.d_identity import run as _d_run
+from xbrain.boot.freeze.assertions.e_hot_update_disjoint import run as _e_run
 from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
 from xbrain.boot.freeze.assertions.m_required import run as _m_run
 
@@ -161,7 +162,7 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     # No structural dep on B/C/D; kept after D for report legibility.
     # ---------------------------------------------------------------------
     AssertSpec("E", "safety namespace vs hot-update whitelist disjoint",
-               depends_on=("D",), runner=_runner_stub("E"),
+               depends_on=("D",), runner=_e_run,
                impl_item="CFG-FZ-5"),
     # ---------------------------------------------------------------------
     # G -- brake-derived speed-gate consistency (t_lat_s / decel / factor).
