@@ -39,7 +39,7 @@ per module, so a bug in one is localised.
 # missing PyYAML surfaces at import time (early in bring-up) rather
 # than inside load_layers where an unrelated read error would mask it.
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import yaml
 
@@ -170,6 +170,33 @@ def load_layers(config_root: str) -> Dict[str, Dict[str, Any]]:
 # Public helper: expose the layer-name list without exposing the full
 # _LAYER_SOURCES tuple (which carries private kind + path info that
 # callers should not couple to).
+# L6 (per-process configs) are read on demand by assertion B, not by
+# load_layers -- they are not part of the overlay axis (each L6 file
+# is a separate consumer's own tree, not merged into common). Kept
+# here so tests + B share the same list without duplicating filenames.
+_L6_FILES: Tuple[str, ...] = (
+    "p1_motion.yaml",
+    "p2_core.yaml",
+    "p3_task.yaml",
+    "p4_agent.yaml",
+    "p5_gateway.yaml",
+    "quadruped.yaml",
+)
+
+
+def load_l6_files(config_root: str) -> Dict[str, Dict[str, Any]]:
+    """Read each L6 process config; return {basename: tree}. Missing
+    files are silently skipped (assertion J already checked stat-able
+    reachability, so a missing file here would mean J passed a partial
+    tree -- caller decides how to handle that)."""
+    trees: Dict[str, Dict[str, Any]] = {}
+    for name in _L6_FILES:
+        full = os.path.join(config_root, name)
+        if os.path.isfile(full):
+            trees[name] = _read_yaml(full)
+    return trees
+
+
 def loaded_layer_names() -> List[str]:
     """The layer names load_layers actually returns. Callers who need
     to distinguish 'layer name we tried' vs 'layer name that exists in

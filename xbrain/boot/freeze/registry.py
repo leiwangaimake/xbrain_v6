@@ -56,6 +56,9 @@ from typing import Any, Callable, Mapping, Optional, Tuple
 # so the registry rows can point at the callable directly. Stubs (below)
 # stand in for rows whose CFG-FZ-N item has not yet landed a real body.
 from xbrain.boot.freeze.assertions.a_references import run as _a_run
+from xbrain.boot.freeze.assertions.b_no_duplicates import run as _b_run
+from xbrain.boot.freeze.assertions.c_cross_file import run as _c_run
+from xbrain.boot.freeze.assertions.d_identity import run as _d_run
 from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
 from xbrain.boot.freeze.assertions.m_required import run as _m_run
 
@@ -145,13 +148,13 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     # values C already established are unique.
     # ---------------------------------------------------------------------
     AssertSpec("B", "no duplicates + alias-blacklist",
-               depends_on=("M",), runner=_runner_stub("B"),
+               depends_on=("M",), runner=_b_run,
                impl_item="CFG-FZ-4"),
     AssertSpec("C", "cross-file relations",
-               depends_on=("B",), runner=_runner_stub("C"),
+               depends_on=("B",), runner=_c_run,
                impl_item="CFG-FZ-4"),
     AssertSpec("D", "identity consistency",
-               depends_on=("C",), runner=_runner_stub("D"),
+               depends_on=("C",), runner=_d_run,
                impl_item="CFG-FZ-4"),
     # ---------------------------------------------------------------------
     # E -- safety namespaces vs hot-update whitelist must be disjoint.
