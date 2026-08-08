@@ -59,6 +59,7 @@ from xbrain.boot.freeze.assertions.a_references import run as _a_run
 from xbrain.boot.freeze.assertions.b_no_duplicates import run as _b_run
 from xbrain.boot.freeze.assertions.c_cross_file import run as _c_run
 from xbrain.boot.freeze.assertions.d_identity import run as _d_run
+from xbrain.boot.freeze.assertions.c6_mr1_margins import run as _c6mr1_run
 from xbrain.boot.freeze.assertions.e_hot_update_disjoint import run as _e_run
 from xbrain.boot.freeze.assertions.f_qos_and_port import run as _f_run
 from xbrain.boot.freeze.assertions.fv_org_enu import run as _fv_org_run
@@ -228,7 +229,7 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     # C-6 + MR-1 -- corridor lateral margin + rotation margin.
     # ---------------------------------------------------------------------
     AssertSpec("C-6+MR-1", "lateral clearance + rotation margin identities",
-               depends_on=("M",), runner=_runner_stub("C-6+MR-1"),
+               depends_on=("M",), runner=_c6mr1_run,
                impl_item="CFG-FZ-15"),
 )
 
