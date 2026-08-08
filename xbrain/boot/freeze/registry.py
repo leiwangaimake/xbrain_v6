@@ -60,6 +60,7 @@ from xbrain.boot.freeze.assertions.b_no_duplicates import run as _b_run
 from xbrain.boot.freeze.assertions.c_cross_file import run as _c_run
 from xbrain.boot.freeze.assertions.d_identity import run as _d_run
 from xbrain.boot.freeze.assertions.e_hot_update_disjoint import run as _e_run
+from xbrain.boot.freeze.assertions.f_qos_and_port import run as _f_run
 from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
 from xbrain.boot.freeze.assertions.m_required import run as _m_run
 
@@ -165,12 +166,20 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
                depends_on=("D",), runner=_e_run,
                impl_item="CFG-FZ-5"),
     # ---------------------------------------------------------------------
+    # F + F' -- QoS static (A-2~A-7 + depth=0) and port identity (GATE-5).
+    # Depends on E because the QoS check reads common.qos which E's
+    # namespace guard also touches. F' is folded into the same runner.
+    # ---------------------------------------------------------------------
+    AssertSpec("F", "QoS static (A-2~A-7 + depth=0) + port identity",
+               depends_on=("E",), runner=_f_run,
+               impl_item="CFG-FZ-6"),
+    # ---------------------------------------------------------------------
     # G -- brake-derived speed-gate consistency (t_lat_s / decel / factor).
     # Depends on M: needs every key present.
     # ---------------------------------------------------------------------
     AssertSpec("G", "brake -> speed-gate consistency (t_lat_s / decel)",
                depends_on=("M",), runner=_runner_stub("G"),
-               impl_item="CFG-FZ-6"),
+               impl_item="CFG-FZ-7"),
     # ---------------------------------------------------------------------
     # I -- TRT engine / model sha256 + build_env agreement.
     # ---------------------------------------------------------------------
