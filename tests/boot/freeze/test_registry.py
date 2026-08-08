@@ -96,7 +96,13 @@ def _scaffold_config_ctx(tmp_path):
     # calib/ empty (L4b) -- present so J's directory list is complete.
     (root / "calib").mkdir()
     # secrets/ is optional -- skipping it lets J skip its perm check.
-    return {"config_root": str(root)}
+    # S10 (CFG-FZ-17) walks every registered config file's schema; the
+    # scaffold's common.yaml is minimal (M's required-key check tolerates
+    # placeholders, S10's is stricter), so skip S10's whole file list
+    # for framework tests that only exercise the pipeline shape.
+    from xbrain.common.config.schemas.registry import CONFIG_FILES
+    return {"config_root": str(root),
+            "skip_files": list(CONFIG_FILES)}
 
 
 # --------------------------------------------------------------------------
@@ -228,6 +234,9 @@ def test_run_freeze_writes_manifest_json_and_returns_it(tmp_path):
     ctx_seed = _scaffold_config_ctx(tmp_path)
     resolved = tmp_path / "resolved"
     resolved.mkdir()
+    # Propagate skip_files so S10 doesn't validate the minimal
+    # scaffold's incomplete common.yaml. Framework tests exercise
+    # pipeline shape, not schema completeness.
     m = run_freeze(
         boot_id="be",
         config_root=ctx_seed["config_root"],
@@ -235,6 +244,7 @@ def test_run_freeze_writes_manifest_json_and_returns_it(tmp_path):
         common_digest="cd",
         config_rev="cr",
         resolved_root=str(resolved),
+        context={"skip_files": ctx_seed.get("skip_files", [])},
     )
     manifest_path = resolved / "MANIFEST.json"
     assert manifest_path.exists()
