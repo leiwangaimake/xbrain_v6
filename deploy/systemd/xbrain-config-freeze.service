@@ -1,0 +1,38 @@
+# CFG-FZ-1: freeze-line service. Runs BEFORE every runtime unit.
+#
+# Placement in the boot order: Stage 0c, per 10 S3.3 -- after Stage 0z
+# (zenoh routers) and before Stage 1 (runtime processes). Every runtime
+# unit that isn't p5_gateway minimal-mode `Requires=` this unit (CFG-BT-3),
+# so a freeze failure holds the whole runtime off cleanly.
+#
+# CFG-BT-22 owns /run/xbrain/{,resolved} creation (tmpfiles.d); this unit
+# refuses to run when the mount is missing, rather than mkdir over it.
+
+[Unit]
+Description=XBRAIN v6 configuration freeze (Stage 0c)
+Documentation=file:///opt/xbrain_v6/docs/10-顶层设计.md
+# tmpfs must be mounted before us (CFG-BT-22).
+Requires=run-xbrain.mount
+After=run-xbrain.mount
+# Sequencer discipline: Stage 0z (routers) has completed by the time we
+# run; Stage 1 (runtime) waits on us.
+Before=xbrain-p1-motion.service xbrain-p2-core.service xbrain-p3-task.service
+Before=xbrain-p4-agent.service xbrain-p5-gateway.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# XBRAIN_CONFIG_DIR is one of three env vars 10 S5.4.3 L5 permits; kept
+# unset by default so the freeze reads /opt/xbrain_v6/configs. Deployment
+# scripts may set it for a per-site rig, and MANIFEST.config_root_overridden
+# records that fact.
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/usr/bin/env python3 -m xbrain.boot.freeze
+# Failure of a oneshot exits 1 -- systemd marks it failed and every unit
+# with Requires= it stays blocked. That is the whole point of running us
+# as Stage 0c.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
