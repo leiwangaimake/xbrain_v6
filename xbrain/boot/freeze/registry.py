@@ -109,6 +109,7 @@ from xbrain.boot.freeze.assertions.e_hot_update_disjoint import run as _e_run
 from xbrain.boot.freeze.assertions.f_qos_and_port import run as _f_run
 from xbrain.boot.freeze.assertions.fv_org_enu import run as _fv_org_run
 from xbrain.boot.freeze.assertions.g_safety_range import run as _g_run
+from xbrain.boot.freeze.assertions.h_calib import run as _h_run
 from xbrain.boot.freeze.assertions.i_model_and_engine import run as _i_run
 from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
 from xbrain.boot.freeze.assertions.k_quadruped_qc import run as _k_run
@@ -249,6 +250,12 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     AssertSpec("O", "cloud teleop priority identity",
                depends_on=("N",), runner=_o_run,
                impl_item="CFG-FZ-8"),
+    # ---------------------------------------------------------------------
+    # H -- extrinsics + calibration accuracy (CFG-FZ-9).
+    # ---------------------------------------------------------------------
+    AssertSpec("H", "extrinsics + calibration accuracy",
+               depends_on=("M",), runner=_h_run,
+               impl_item="CFG-FZ-9"),
     # ---------------------------------------------------------------------
     # I -- TRT engine / model sha256 + build_env agreement.
     # ---------------------------------------------------------------------
