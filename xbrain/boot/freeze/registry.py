@@ -61,6 +61,7 @@ from xbrain.boot.freeze.assertions.c_cross_file import run as _c_run
 from xbrain.boot.freeze.assertions.d_identity import run as _d_run
 from xbrain.boot.freeze.assertions.e_hot_update_disjoint import run as _e_run
 from xbrain.boot.freeze.assertions.f_qos_and_port import run as _f_run
+from xbrain.boot.freeze.assertions.g_safety_range import run as _g_run
 from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
 from xbrain.boot.freeze.assertions.m_required import run as _m_run
 
@@ -178,7 +179,7 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     # Depends on M: needs every key present.
     # ---------------------------------------------------------------------
     AssertSpec("G", "brake -> speed-gate consistency (t_lat_s / decel)",
-               depends_on=("M",), runner=_runner_stub("G"),
+               depends_on=("M",), runner=_g_run,
                impl_item="CFG-FZ-7"),
     # ---------------------------------------------------------------------
     # I -- TRT engine / model sha256 + build_env agreement.
