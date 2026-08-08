@@ -35,7 +35,11 @@ docs/QUADRUPED/*.pdf
 *.zip
 
 # ── 编译产物与依赖数据（CLAUDE.md §0.2：data/ 放编译数据 · 依赖数据 · 日志）
-data/
+# ★ 不用 `data/` 通配 —— 那会连 data/.gitkeep 与 data/README.md 一起忽略,
+#   INF-DP-11 依赖这两个占位文件让 data/ 目录本身入库(CHK-0-53 判据 ③)。
+data/*
+!data/.gitkeep
+!data/README.md
 build/
 install/
 log/
