@@ -1,0 +1,22 @@
+# XBRAIN_V6 runtime Python dependency lock (CHK-0-55).
+#
+# Contract:
+#   * every line is exactly `name==x.y.z` (no `>=`, no bare package name).
+#     tests/deps/test_dependency_lock.py assertion ① enforces this at load.
+#   * every third-party top-level import under xbrain/ and common/ MUST
+#     appear here (bidirectional diff empty). ★ 2026-08-08 audit: xbrain/
+#     imports exactly two -- `yaml` (PyYAML) and `zenoh` (eclipse-zenoh).
+#   * MAJOR of `eclipse-zenoh` must match the deployed `zenohd` binary
+#     (assertion ③): zenoh-python 1.x speaks a different wire protocol from
+#     0.x, so a mixed pair silently fails on the first pub/sub.
+#
+# Test / service deps (pytest, fastapi, httpx, aiosqlite, opuslib, sherpa-onnx)
+# live in separate files (requirements-test.txt / requirements-service.txt);
+# this file is the RUNTIME floor only, so a bare-bones bring-up install works.
+#
+# Versions: exact matches of what the paraformer-ASR + freeze pipeline were
+# validated against 2026-08. Update PROCESS: edit here, re-run
+# `python scripts/deps/check_deps.py --strict`, commit both together.
+
+eclipse-zenoh==1.9.0
+PyYAML==6.0.2
