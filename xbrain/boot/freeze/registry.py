@@ -66,6 +66,7 @@ from xbrain.boot.freeze.assertions.fv_org_enu import run as _fv_org_run
 from xbrain.boot.freeze.assertions.g_safety_range import run as _g_run
 from xbrain.boot.freeze.assertions.i_model_and_engine import run as _i_run
 from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
+from xbrain.boot.freeze.assertions.k_quadruped_qc import run as _k_run
 from xbrain.boot.freeze.assertions.l_bit_exemption import run as _l_run
 from xbrain.boot.freeze.assertions.m_required import run as _m_run
 from xbrain.boot.freeze.assertions.n_o_identities import (
@@ -213,7 +214,7 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     # K -- quadruped private config QC-1..QC-17.
     # ---------------------------------------------------------------------
     AssertSpec("K", "quadruped private QC-1..QC-17",
-               depends_on=("J",), runner=_runner_stub("K"),
+               depends_on=("J",), runner=_k_run,
                impl_item="CFG-FZ-12"),
     # ---------------------------------------------------------------------
     # L -- BIT exemption surface guard.
