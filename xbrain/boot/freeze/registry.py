@@ -64,6 +64,7 @@ from xbrain.boot.freeze.assertions.e_hot_update_disjoint import run as _e_run
 from xbrain.boot.freeze.assertions.f_qos_and_port import run as _f_run
 from xbrain.boot.freeze.assertions.fv_org_enu import run as _fv_org_run
 from xbrain.boot.freeze.assertions.g_safety_range import run as _g_run
+from xbrain.boot.freeze.assertions.i_model_and_engine import run as _i_run
 from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
 from xbrain.boot.freeze.assertions.l_bit_exemption import run as _l_run
 from xbrain.boot.freeze.assertions.m_required import run as _m_run
@@ -206,7 +207,7 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     # I -- TRT engine / model sha256 + build_env agreement.
     # ---------------------------------------------------------------------
     AssertSpec("I", "TRT engine sha256 + build_env",
-               depends_on=("J",), runner=_runner_stub("I"),
+               depends_on=("J",), runner=_i_run,
                impl_item="CFG-FZ-10"),
     # ---------------------------------------------------------------------
     # K -- quadruped private config QC-1..QC-17.
