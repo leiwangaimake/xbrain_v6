@@ -178,6 +178,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 # XbrainError base -- I uses E_CONFIG_INVALID uniformly (all three
 # defects are "config or shipped-artifact is wrong", not runtime
 # operational failures).
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 # Default runtime model tree root per 11 S11A.4.1 verbatim. Test
@@ -228,7 +229,7 @@ def _fail(kind: str, message: str, **detail_extra: Any) -> None:
     detail.update(detail_extra)
     # Prefix the message with 'assertion I failed:' so the log line
     # names the assertion without the caller having to add it.
-    raise XbrainError("E_CONFIG_INVALID",
+    raise XbrainError(E_CONFIG_INVALID,
                       "assertion I failed: %s" % message,
                       detail)
 

@@ -58,6 +58,13 @@ from typing import Any, Dict, Tuple
 # Import from exceptions, not from the errors package root, because the
 # freeze pipeline runs before common/errors is fully wired (asymmetric
 # dependency: exceptions.py has no dependency on codes.yaml).
+# E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
+# imported by name from xbrain.common.errors instead of
+# spelled as a string literal. CLAUDE.md 3.5 forbids literal
+# E_* strings anywhere outside common/errors/; scripts/lint/
+# no_literal_ecode.py enforces it (both the whole-word literal
+# and the substring form).
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 # Required top-level config files. If a new process needs its own
@@ -127,7 +134,7 @@ def _fail(kind: str, path: str, **extra: Any) -> None:
     # The kind field carries the machine-usable classification; this
     # sentence just makes the journal line legible without decoding.
     raise XbrainError(
-        "E_CONFIG_INVALID",
+        E_CONFIG_INVALID,
         "config root check failed: %s at %s" % (kind, abs_path),
         detail,
     )

@@ -41,6 +41,51 @@ the pipeline is invisible to the registry, and the bidirectional-diff test
 that keeps MANIFEST honest would silently pass.
 """
 
+# --------------------------------------------------------------------
+# Implementation notes
+# --------------------------------------------------------------------
+#
+# This module is one step in the freeze pipeline (ORD-1). Every step
+# in that pipeline is written to the same shape:
+#   * pure functions where possible (helpers with no side effects)
+#   * a single run(ctx) entry point that raises XbrainError on any
+#     failure and returns a small dict on success
+#   * dependencies loaded from ctx (populated by earlier steps) with
+#     a fresh-load fallback for isolated callers (unit tests)
+#   * no imports of rclpy / requests / synchronous sqlite3 (CLAUDE.md
+#     S4.1 hard rules); every heavy dependency stays behind a clear
+#     factory so a test can substitute a fake
+#
+# Ordering guarantee: this file is imported by xbrain/boot/freeze/
+# registry.py which builds the ASSERT_REGISTRY tuple. The tuple
+# order is what the pipeline runner walks; the depends_on field on
+# each row is a topology check, not the executor -- the executor
+# trusts the registry's writer to have already put rows in a
+# topologically valid order. Adding a new row means (1) adding the
+# runner import here, (2) inserting the AssertSpec at the correct
+# ORD-1 position, and (3) updating the CFG-FZ-N item in the TODO
+# table to point at this file.
+#
+# Failure attribution: every raise carries detail.kind (or a
+# structured rule name like QC-N / SP-N / AS-N) so a downstream
+# dashboard can categorise without parsing the message string.
+# Message strings are for humans; detail is for machines.
+
+# --------------------------------------------------------------------
+# Registry mutation risk model
+# --------------------------------------------------------------------
+#
+# The registry tuple is the single source of truth for two invariants:
+# ORD-1 (execution order) and MANIFEST symmetry (assertion set). Any
+# code that mutates it at runtime silently defeats both. Defences:
+#   * @dataclass(frozen=True) refuses attribute assignment on rows
+#   * ASSERT_REGISTRY is a tuple, not a list; no .append / .remove
+#   * runner is a Callable, not a mutable holder; swap requires
+#     replacing the whole AssertSpec instance
+#   * every new assertion goes through a PR that touches this file
+#     AND the corresponding CFG-FZ-N table row; the two-file change
+#     surfaces on review
+#
 # dataclass(frozen=True) so an AssertSpec instance cannot be mutated at
 # runtime; the ordered tuple below is likewise immutable. Both properties
 # defend ORD-1 -- a caller cannot swap a runner or reorder the registry

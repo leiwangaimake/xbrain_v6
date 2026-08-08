@@ -55,6 +55,13 @@ from typing import Any, Dict, List
 from xbrain.boot.freeze.assertions._layer_loader import load_l6_files
 from xbrain.common.config import build_overlay
 from xbrain.common.config.merge import flatten
+# E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
+# imported by name from xbrain.common.errors instead of
+# spelled as a string literal. CLAUDE.md 3.5 forbids literal
+# E_* strings anywhere outside common/errors/; scripts/lint/
+# no_literal_ecode.py enforces it (both the whole-word literal
+# and the substring form).
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 # Deprecated profile names that must be absent from common.motion.profiles.
@@ -84,7 +91,7 @@ def _fail(kind: str, **extra: Any) -> None:
     detail = {"kind": kind}
     detail.update(extra)
     raise XbrainError(
-        "E_CONFIG_INVALID",
+        E_CONFIG_INVALID,
         "assertion C failed: %s" % kind,
         detail,
     )

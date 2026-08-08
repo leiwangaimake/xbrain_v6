@@ -56,6 +56,13 @@ from xbrain.boot.freeze.assertions._layer_loader import (
 from xbrain.common.config import build_overlay
 # XbrainError base -- both C-6 and MR-1 raise E_CONFIG_INVALID
 # uniformly.
+# E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
+# imported by name from xbrain.common.errors instead of
+# spelled as a string literal. CLAUDE.md 3.5 forbids literal
+# E_* strings anywhere outside common/errors/; scripts/lint/
+# no_literal_ecode.py enforces it (both the whole-word literal
+# and the substring form).
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 
@@ -106,7 +113,7 @@ def _fail(rule: str, lhs_key: str, lhs: Any,
     # Format string interpolates all five parts so the failure line
     # is self-explanatory without any decoder.
     raise XbrainError(
-        "E_CONFIG_INVALID",
+        E_CONFIG_INVALID,
         "assertion %s failed: %s = %r not %s %s = %r"
         % (rule, lhs_key, lhs, relation, rhs_key, rhs),
         detail,

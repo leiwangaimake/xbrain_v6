@@ -39,6 +39,13 @@ import re
 from typing import Any, Dict
 
 from xbrain.common.config import build_overlay
+# E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
+# imported by name from xbrain.common.errors instead of
+# spelled as a string literal. CLAUDE.md 3.5 forbids literal
+# E_* strings anywhere outside common/errors/; scripts/lint/
+# no_literal_ecode.py enforces it (both the whole-word literal
+# and the substring form).
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 # robot_id shape -- mirrors 11 S2.2.11 verbatim.
@@ -79,7 +86,7 @@ def _fail(kind: str, **extra: Any) -> None:
     detail = {"kind": kind}
     detail.update(extra)
     raise XbrainError(
-        "E_CONFIG_INVALID",
+        E_CONFIG_INVALID,
         "assertion D failed: %s" % kind,
         detail,
     )

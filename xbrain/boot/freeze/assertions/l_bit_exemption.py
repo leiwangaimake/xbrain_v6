@@ -111,6 +111,7 @@ from xbrain.boot.freeze.assertions._layer_loader import (
     load_l6_files, load_layers,
 )
 from xbrain.common.config import build_overlay
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 # Path to the doc that carries 11 S5.1A verbatim. Relative to repo
@@ -224,7 +225,7 @@ def _fail(kind: str, entries: list, **extra: Any) -> None:
     detail.update(extra)
     # Message enumerates offenders inline for at-a-glance triage.
     raise XbrainError(
-        "E_CONFIG_INVALID",
+        E_CONFIG_INVALID,
         "assertion L failed: fatal BIT items exempted: %s"
         % ", ".join("%s(%s in %s)" % (e["item"], e["level"], e["list"])
                     for e in entries),

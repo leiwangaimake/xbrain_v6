@@ -212,7 +212,7 @@ def rule_3_deps_valid(rows):
     bad = []
     for r in rows:
         cell = _dep_cell(r["cells"])
-        if not cell or cell == "—":     # em-dash sentinel for "no dep"
+        if not cell or cell == "\u2014":     # em dash sentinel (u2014) for "no dep"
             continue
         for dep in _DEP_ID_RE.findall(cell):
             if dep not in id_to_phase:
@@ -290,7 +290,7 @@ def rule_5_has_mutation_marker(rows):
     # readability.
     markers = (
         # Round-1 vocabulary
-        r"变异体", r"必须变红", r"⇒ 红", r"-> red",
+        r"变异体", r"必须变红", r"\u21d2 \u7ea2", r"-> red",
         r"必须报", r"必抛", r"必须拒绝", r"必须失败", r"必须不通过",
         r"必须失活", r"必然违反", r"注入.*红",
         r"mutation", r"must turn red", r"must fail",

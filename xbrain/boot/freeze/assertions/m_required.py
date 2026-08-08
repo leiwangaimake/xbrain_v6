@@ -41,6 +41,13 @@ from typing import Any, Dict, FrozenSet, Tuple
 from xbrain.boot.freeze.assertions._layer_loader import load_layers
 from xbrain.common.config import build_overlay
 from xbrain.common.config.merge import flatten
+# E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
+# imported by name from xbrain.common.errors instead of
+# spelled as a string literal. CLAUDE.md 3.5 forbids literal
+# E_* strings anywhere outside common/errors/; scripts/lint/
+# no_literal_ecode.py enforces it (both the whole-word literal
+# and the substring form).
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 # The required-key list. Each entry = one dotted path that MUST be
@@ -102,7 +109,7 @@ def _fail(kind: str, key: str, **extra: Any) -> None:
     detail = {"kind": kind, "key": key}
     detail.update(extra)
     raise XbrainError(
-        "E_CONFIG_INVALID",
+        E_CONFIG_INVALID,
         "assertion M failed: required key %r %s" % (key, kind),
         detail,
     )

@@ -244,6 +244,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from xbrain.boot.freeze.assertions._layer_loader import load_l6_files
 # XbrainError base; K uses E_CONFIG_INVALID uniformly for every QC-N
 # failure. detail.rule discriminates which rule fired.
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 # ---------------------------------------------------------------------------
@@ -339,7 +340,7 @@ def _fail(rule: str, key: str, message: str, **extra: Any) -> None:
     detail.update(extra)
     # Message format: 'assertion K failed: QC-N: <human message>'
     raise XbrainError(
-        "E_CONFIG_INVALID",
+        E_CONFIG_INVALID,
         "assertion K failed: %s: %s" % (rule, message),
         detail,
     )

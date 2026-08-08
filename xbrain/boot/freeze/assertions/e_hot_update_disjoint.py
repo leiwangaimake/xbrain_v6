@@ -46,6 +46,13 @@ Where the whitelist comes from:
 # keeping E stdlib-only makes it safe to run at the earliest stage.
 from typing import Any, Dict, FrozenSet, Iterable
 
+# E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
+# imported by name from xbrain.common.errors instead of
+# spelled as a string literal. CLAUDE.md 3.5 forbids literal
+# E_* strings anywhere outside common/errors/; scripts/lint/
+# no_literal_ecode.py enforces it (both the whole-word literal
+# and the substring form).
+from xbrain.common.errors import E_CONFIG_LOCKED
 from xbrain.common.errors.exceptions import XbrainError
 
 # Safety namespaces from 10 S5.4.5 (five groups). Each entry is a
@@ -122,7 +129,7 @@ def _fail(kind: str, **extra: Any) -> None:
     # E_CONFIG_LOCKED is the closed-set code for hot-update violations
     # (11 S13; the freeze-line assertion mirrors the runtime one).
     raise XbrainError(
-        "E_CONFIG_LOCKED",
+        E_CONFIG_LOCKED,
         "assertion E failed: %s" % kind,
         detail,
     )

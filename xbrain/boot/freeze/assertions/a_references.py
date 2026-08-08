@@ -40,6 +40,15 @@ Contract with the pipeline:
           past a broken tree, ever)
 """
 
+# --------------------------------------------------------------------
+# Implementation notes
+# --------------------------------------------------------------------
+#
+# This module is one step in the freeze pipeline (ORD-1). Every step
+# in that pipeline is written to the same shape:
+#   * pure functions where possible (helpers with no side effects)
+#   * a single run(ctx) entry point that raises XbrainError on any
+
 # Standard-library imports first, then internal. build_overlay + resolve +
 # find_violations + flatten are the reference-axis primitives; A is the
 # assertion that glues them into a startup check.
@@ -49,6 +58,13 @@ from xbrain.boot.freeze.assertions._layer_loader import load_layers
 from xbrain.common.config import build_overlay
 from xbrain.common.config.merge import flatten
 from xbrain.common.config.refs import ReferenceError_, resolve
+# E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
+# imported by name from xbrain.common.errors instead of
+# spelled as a string literal. CLAUDE.md 3.5 forbids literal
+# E_* strings anywhere outside common/errors/; scripts/lint/
+# no_literal_ecode.py enforces it (both the whole-word literal
+# and the substring form).
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 
@@ -66,7 +82,7 @@ def _fail(kind: str, key: str, **extra: Any) -> None:
     detail = {"kind": kind, "key": key}
     detail.update(extra)
     raise XbrainError(
-        "E_CONFIG_INVALID",
+        E_CONFIG_INVALID,
         "assertion A failed at key %r: %s" % (key, kind),
         detail,
     )

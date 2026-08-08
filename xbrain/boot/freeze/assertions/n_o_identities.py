@@ -61,6 +61,13 @@ from xbrain.boot.freeze.assertions._layer_loader import (
 # that skip A). Production ORD-1 has A -> ... -> G -> N/O, so overlay
 # is normally present.
 from xbrain.common.config import build_overlay
+# E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
+# imported by name from xbrain.common.errors instead of
+# spelled as a string literal. CLAUDE.md 3.5 forbids literal
+# E_* strings anywhere outside common/errors/; scripts/lint/
+# no_literal_ecode.py enforces it (both the whole-word literal
+# and the substring form).
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 
@@ -115,7 +122,7 @@ def _fail(rule: str, lhs_key: str, lhs: Any,
     # Format: 'assertion N failed: <lhs_key> = <lhs_val> != <rhs_key>
     # = <rhs_val>' -- reads cleanly at glance.
     raise XbrainError(
-        "E_CONFIG_INVALID",
+        E_CONFIG_INVALID,
         "assertion %s failed: %s = %r != %s = %r"
         % (rule, lhs_key, lhs, rhs_key, rhs),
         detail,

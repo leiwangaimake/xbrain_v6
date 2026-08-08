@@ -53,6 +53,13 @@ from xbrain.boot.freeze.assertions._layer_loader import load_layers
 from xbrain.common.config import build_overlay
 # XbrainError = base for every deliberate raise; G uses E_CONFIG_INVALID
 # uniformly (all failures are "the tree has a bad value").
+# E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
+# imported by name from xbrain.common.errors instead of
+# spelled as a string literal. CLAUDE.md 3.5 forbids literal
+# E_* strings anywhere outside common/errors/; scripts/lint/
+# no_literal_ecode.py enforces it (both the whole-word literal
+# and the substring form).
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 # AS-7 upper bound for ASR/LLM/TTS timeouts. 11 S8.13.1 verbatim: 5 s.
@@ -139,7 +146,7 @@ def _fail(rule: str, key: str, value: Any, limit: str, **extra: Any) -> None:
     # Format: 'assertion G failed: <RULE> on <key> = <value> (<limit>)'
     # for at-a-glance triage.
     raise XbrainError(
-        "E_CONFIG_INVALID",
+        E_CONFIG_INVALID,
         "assertion G failed: %s on %s = %r (%s)"
         % (rule, key, value, limit),
         detail,

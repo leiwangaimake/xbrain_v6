@@ -47,6 +47,7 @@ from typing import Any, Callable, Dict
 
 from xbrain.boot.freeze.assertions._layer_loader import load_layers
 from xbrain.common.config import build_overlay
+from xbrain.common.errors import E_CONFIG_INVALID, E_QOS_VIOLATION
 from xbrain.common.errors.exceptions import XbrainError
 # BLOCK constant + loader/exception types from the QoS module. Importing
 # both exception types so F can catch either without over-catching
@@ -90,7 +91,7 @@ def _fail_qos(kind: str, **extra: Any) -> None:
     detail = {"kind": kind}
     detail.update(extra)
     raise XbrainError(
-        "E_QOS_VIOLATION",
+        E_QOS_VIOLATION,
         "assertion F failed: %s" % kind,
         detail,
     )
@@ -108,7 +109,7 @@ def _fail_port(kind: str, **extra: Any) -> None:
     detail = {"kind": kind}
     detail.update(extra)
     raise XbrainError(
-        "E_CONFIG_INVALID",
+        E_CONFIG_INVALID,
         "assertion F' failed: %s" % kind,
         detail,
     )

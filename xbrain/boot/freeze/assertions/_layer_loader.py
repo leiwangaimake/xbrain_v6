@@ -35,6 +35,36 @@ duplicates (that is duplicates.detect_duplicates()). One responsibility
 per module, so a bug in one is localised.
 """
 
+# --------------------------------------------------------------------
+# Implementation notes
+# --------------------------------------------------------------------
+#
+# This module is one step in the freeze pipeline (ORD-1). Every step
+# in that pipeline is written to the same shape:
+#   * pure functions where possible (helpers with no side effects)
+#   * a single run(ctx) entry point that raises XbrainError on any
+#     failure and returns a small dict on success
+#   * dependencies loaded from ctx (populated by earlier steps) with
+#     a fresh-load fallback for isolated callers (unit tests)
+#   * no imports of rclpy / requests / synchronous sqlite3 (CLAUDE.md
+#     S4.1 hard rules); every heavy dependency stays behind a clear
+#     factory so a test can substitute a fake
+#
+# Ordering guarantee: this file is imported by xbrain/boot/freeze/
+# registry.py which builds the ASSERT_REGISTRY tuple. The tuple
+# order is what the pipeline runner walks; the depends_on field on
+# each row is a topology check, not the executor -- the executor
+# trusts the registry's writer to have already put rows in a
+# topologically valid order. Adding a new row means (1) adding the
+# runner import here, (2) inserting the AssertSpec at the correct
+# ORD-1 position, and (3) updating the CFG-FZ-N item in the TODO
+# table to point at this file.
+#
+# Failure attribution: every raise carries detail.kind (or a
+# structured rule name like QC-N / SP-N / AS-N) so a downstream
+# dashboard can categorise without parsing the message string.
+# Message strings are for humans; detail is for machines.
+
 # yaml is required at runtime for parsing; loaded eagerly here so a
 # missing PyYAML surfaces at import time (early in bring-up) rather
 # than inside load_layers where an unrelated read error would mask it.
@@ -43,6 +73,7 @@ from typing import Any, Dict, List, Tuple
 
 import yaml
 
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 # Layer name to (kind, path_frag) mapping. path_frag is the relative
@@ -82,7 +113,7 @@ def _read_yaml(path: str) -> Dict[str, Any]:
         # the CFG-FZ-2 five-value closed set (config_file_missing is
         # the closest fit -- "we cannot read it").
         raise XbrainError(
-            "E_CONFIG_INVALID",
+            E_CONFIG_INVALID,
             "YAML parse failed at %s: %s" % (path, exc),
             {"kind": "config_file_missing", "path": os.path.abspath(path),
              "parse_error": str(exc)},

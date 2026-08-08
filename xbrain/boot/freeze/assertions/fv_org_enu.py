@@ -62,6 +62,13 @@ from xbrain.boot.freeze.assertions._layer_loader import (
 from xbrain.common.config import build_overlay
 # Base exception for every deliberate raise; FV-ORG uses
 # E_CONFIG_INVALID for all three sub-rules.
+# E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
+# imported by name from xbrain.common.errors instead of
+# spelled as a string literal. CLAUDE.md 3.5 forbids literal
+# E_* strings anywhere outside common/errors/; scripts/lint/
+# no_literal_ecode.py enforces it (both the whole-word literal
+# and the substring form).
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
 # The three sub-components of enu_origin. All required non-null by
@@ -97,7 +104,7 @@ def _fail(rule: str, key: str, layer: str, **extra: Any) -> None:
     # Message string carries rule + key + layer for at-a-glance
     # triage without decoding detail.
     raise XbrainError(
-        "E_CONFIG_INVALID",
+        E_CONFIG_INVALID,
         "assertion %s failed: %s at layer %s" % (rule, key, layer),
         detail,
     )

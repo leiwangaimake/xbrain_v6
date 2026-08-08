@@ -61,11 +61,18 @@ def main() -> int:
     # or the compiled-in path. Systemd sets neither by default, so on a
     # normal deploy the compiled path is what runs -- kept explicit so a
     # test rig can override without touching the unit file.
+    # freeze __main__ IS the process that reads configs/ raw and
+    # produces /run/xbrain/resolved. Two literals here (default +
+    # help text) are the interface itself, not a consumer reaching
+    # for the source path. Markers must attach to each literal line.
     ap.add_argument("--config-root",
-                    default=os.environ.get("XBRAIN_CONFIG_DIR",
-                                           "/opt/xbrain_v6/configs"),
-                    help="config root (default: env XBRAIN_CONFIG_DIR or "
-                    "/opt/xbrain_v6/configs)")
+                    default=os.environ.get(
+                        "XBRAIN_CONFIG_DIR",
+                        # CONFIG-SOURCE-OK(freeze): default source root
+                        "/opt/xbrain_v6/configs"),
+                    # CONFIG-SOURCE-OK(freeze): help text mirrors default
+                    help=("config root (default: env XBRAIN_CONFIG_DIR or "
+                          "/opt/xbrain_v6/configs)"))  # CONFIG-SOURCE-OK(freeze)
     # --resolved-root: where MANIFEST.json + per-process YAML go. Must exist
     # (CFG-BT-22 mounts the tmpfs); mkdir here would mask a mount failure.
     ap.add_argument("--resolved-root", default=RESOLVED_ROOT_DEFAULT,
