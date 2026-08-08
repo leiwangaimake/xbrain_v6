@@ -100,6 +100,22 @@ from typing import Any, Callable, Mapping, Optional, Tuple
 # Real bodies live under xbrain/boot/freeze/assertions/. Import them here
 # so the registry rows can point at the callable directly. Stubs (below)
 # stand in for rows whose CFG-FZ-N item has not yet landed a real body.
+#
+# The import order below is alphabetical by module filename so a new
+# entry lands in a mechanical place; the ORD-1 execution order lives
+# in ASSERT_REGISTRY (the tuple), not in this import list. Reordering
+# these imports has no runtime effect; reordering ASSERT_REGISTRY
+# does.
+#
+# Every letter-family (A/B/C/...) with a real body is imported once
+# and referenced once in the tuple; the two-file discipline (import
+# here + row there) is what test_registry.py enforces.
+#
+# Numbered assertion prefixes (S10, S22, C-6+MR-1, FV-ORG) live in
+# their own modules named s10_*, s22_*, etc. The naming is not the
+# runner's concern -- the pipeline runner walks ASSERT_REGISTRY and
+# uses row.runner. Prefix conventions are for humans reading the
+# import list.
 from xbrain.boot.freeze.assertions.a_references import run as _a_run
 from xbrain.boot.freeze.assertions.b_no_duplicates import run as _b_run
 from xbrain.boot.freeze.assertions.c_cross_file import run as _c_run

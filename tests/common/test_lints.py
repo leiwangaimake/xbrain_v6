@@ -82,13 +82,21 @@ CLEAN_LINTS = [
      "no enforce_ordering (a removed safety-ordering-bypass switch, 15 S12) in "
      "any configs/**/*.yaml or xbrain/**/*.py, the static half of CLAUDE.md 3.6 "
      "(CHK-2-26)"),
+    # Added with CFG-CM-13. Its zero means no safety parameter carries a
+    # code-side default via any of the three known patterns (dataclass default,
+    # dict.get(key, fallback), value or fallback); the lint carries its own
+    # --self-test that proves each of the three patterns can fire.
+    ("no_safety_default.py",
+     "no code-side default on safety parameters via dataclass, dict.get "
+     "or `or fallback` under xbrain/, the static half of CLAUDE.md 3.1 "
+     "(CFG-CM-13)"),
 ]
 
 #: Lints that also ship a --self-test. Running it here keeps the probes honest;
 #: a self-test nobody invokes rots exactly as fast as a lint nobody invokes.
 SELF_TESTED = ["comment_ratio.py", "no_config_source_read.py", "clock_scan.py",
                "no_literal_ecode.py", "zenoh_callback_scan.py",
-               "no_disabled_switch.py"]
+               "no_disabled_switch.py", "no_safety_default.py"]
 
 
 def run_lint(script, *args):
