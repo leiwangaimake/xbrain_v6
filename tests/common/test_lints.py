@@ -96,6 +96,12 @@ CLEAN_LINTS = [
     ("no_business_imports.py",
      "no import of rclpy, sqlite3, or requests under xbrain/ apart from the "
      "BUSINESS-IMPORT-OK exemption (CFG-DC-3 / CLAUDE.md 4.1)"),
+    # Added with CFG-DC-3 (config-singular). Its zero means no source file
+    # references the singular 'config/foo.yaml' path -- the config root is
+    # PLURAL 'configs/' (10 S5.4.0 / CLAUDE.md 3.6).
+    ("no_config_singular.py",  # NO-CONFIG-SINGULAR-LINT
+     "no singular 'config/*.yaml' path in any source file; the config root "  # NO-CONFIG-SINGULAR-LINT
+     "is plural 'configs/' (CFG-DC-3 / CLAUDE.md 3.6)"),
 ]
 
 #: Lints that also ship a --self-test. Running it here keeps the probes honest;
@@ -103,7 +109,7 @@ CLEAN_LINTS = [
 SELF_TESTED = ["comment_ratio.py", "no_config_source_read.py", "clock_scan.py",
                "no_literal_ecode.py", "zenoh_callback_scan.py",
                "no_disabled_switch.py", "no_safety_default.py",
-               "no_business_imports.py"]
+               "no_business_imports.py", "no_config_singular.py"]
 
 
 def run_lint(script, *args):
