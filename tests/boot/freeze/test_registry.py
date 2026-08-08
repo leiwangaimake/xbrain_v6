@@ -22,6 +22,7 @@ import json
 import os
 
 import pytest
+import yaml
 
 from xbrain.boot.freeze.assertions.j_config_root import _REQUIRED_FILES
 from xbrain.boot.freeze.pipeline import (
@@ -33,16 +34,46 @@ from xbrain.boot.freeze.registry import (
 )
 
 
-# CFG-FZ-2 landed the real body for J -- run_assertions now needs a
-# scaffolded config_root in ctx, or J raises. This helper builds the
-# minimum tree J accepts so tests focused on framework properties
-# (order / diff / manifest) don't have to know J's schema.
+# Extended for CFG-FZ-3 (A/M real bodies): scaffold now writes a filled
+# common.yaml + models/ + safety/ so A/M pass green. Framework tests
+# that only care about ORD-1 / MANIFEST shape no longer have to know
+# A/M schema; they just call this helper.
+_GREEN_COMMON_TREE = {
+    "common": {
+        "robot_id": "gj-001",
+        "spec": {
+            "max_vx_mps": 2.0, "max_vy_mps": 0.3, "max_wz_radps": 0.4,
+            "max_accel_mps2": 1.0, "max_decel_mps2": 2.5,
+        },
+        "safety": {"t_lat_s": 0.4, "d_safe_m": 1.0},
+        "motion": {"profiles": {
+            "obstacle_avoid": {"max_mps": 0.5},
+            "patrol": {"max_mps": 2.0},
+        }},
+        "fence": {"soft_margin_min_m": 0.30, "predict_dt_s": 0.45},
+    },
+}
+
+
 def _scaffold_config_ctx(tmp_path):
-    """Build a minimal green config tree and return ctx pointing at it."""
+    """Build a minimal green config tree that passes J + A + M and
+    return ctx pointing at it."""
     root = tmp_path / "configs_for_registry_tests"
     root.mkdir()
+    # Every J-required file must exist; common.yaml also carries the
+    # filled tree M validates. Other required files stay as headers
+    # (they're process-scoped and M doesn't check them).
     for name in _REQUIRED_FILES:
-        (root / name).write_text("# scaffold for framework tests\n")
+        if name == "common.yaml":
+            (root / name).write_text(
+                yaml.safe_dump(_GREEN_COMMON_TREE, allow_unicode=True)
+            )
+        else:
+            (root / name).write_text("# scaffold for framework tests\n")
+    # A/M also load models/ and safety/ directories -- create empty so
+    # _read_dir doesn't complain about missing paths.
+    (root / "models").mkdir()
+    (root / "safety").mkdir()
     # secrets/ is optional -- skipping it lets J skip its perm check.
     return {"config_root": str(root)}
 

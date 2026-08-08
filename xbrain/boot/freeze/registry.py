@@ -55,7 +55,9 @@ from typing import Any, Callable, Mapping, Optional, Tuple
 # Real bodies live under xbrain/boot/freeze/assertions/. Import them here
 # so the registry rows can point at the callable directly. Stubs (below)
 # stand in for rows whose CFG-FZ-N item has not yet landed a real body.
+from xbrain.boot.freeze.assertions.a_references import run as _a_run
 from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
+from xbrain.boot.freeze.assertions.m_required import run as _m_run
 
 # Every assertion body lives in a CFG-FZ-N item's own file eventually. Until
 # that item lands, the stub below stands in -- visible, not silent. The stub
@@ -127,14 +129,14 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     # tree without unresolved ${common.*}.
     # ---------------------------------------------------------------------
     AssertSpec("A", "reference completeness (no unresolved ${common.*})",
-               depends_on=("J",), runner=_runner_stub("A"),
+               depends_on=("J",), runner=_a_run,
                impl_item="CFG-FZ-3"),
     # ---------------------------------------------------------------------
     # M -- required-key completeness. Runs after A because a required key
     # may hide behind a resolved reference.
     # ---------------------------------------------------------------------
     AssertSpec("M", "required-key completeness (walk resolved tree)",
-               depends_on=("A",), runner=_runner_stub("M"),
+               depends_on=("A",), runner=_m_run,
                impl_item="CFG-FZ-3"),
     # ---------------------------------------------------------------------
     # B / C / D -- structural. B (no duplicates) BEFORE C (cross-file
