@@ -109,10 +109,13 @@ def check_c_retention_and_fence_relation(config: dict) -> None:
 
 
 def check_j_config_root(path: str) -> None:
-    """Path must be under /opt/xbrain_v6/configs/ (absolute, plural)."""
-    if not path.startswith("/opt/xbrain_v6/configs/"):
+    """Path must be under /opt/xbrain_v6/configs/ (absolute, plural).
+    CONFIG-SOURCE-OK(J): assertion J's whole job is to police the
+    source-root path, so it must literally contain that string --
+    the marker documents the deliberate exception."""
+    if not path.startswith("/opt/xbrain_v6/configs/"):  # CONFIG-SOURCE-OK(J): assertion J prose
         raise FreezeAssertionFailure(
-            f"assertion J: config path {path!r} not under "
+            f"assertion J: config path {path!r} not under "  # CONFIG-SOURCE-OK(J): error text of assertion J
             f"/opt/xbrain_v6/configs/")
 
 

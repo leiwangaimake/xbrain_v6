@@ -29,6 +29,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from xbrain.common.errors import E_DEGRADED
+
 
 READONLY_ENDPOINTS = frozenset({
     "/api/health",
@@ -67,5 +69,5 @@ def fences_endpoint(fence_db_degraded: bool):
     DB is in degraded write mode."""
     if fence_db_degraded:
         return DegradedResponse(status=503,
-                                  body={"error": "E_DEGRADED"})
+                                  body={"error": E_DEGRADED})
     return DegradedResponse(status=200, body={"fences": []})

@@ -37,6 +37,7 @@ from typing import List
 import yaml
 
 from xbrain.boot.probe import checks, net_profile
+from xbrain.common.errors import E_CONFIG_INVALID, E_STORAGE_CORRUPT
 from xbrain.common.errors.exceptions import XbrainError
 
 
@@ -84,7 +85,7 @@ def run(config_path: str = _DEFAULT_CONFIG_PATH,
     try:
         cfg = _load_config(config_path)
     except (FileNotFoundError, ValueError, yaml.YAMLError) as exc:
-        _emit("E_CONFIG_INVALID", {
+        _emit(E_CONFIG_INVALID, {
             "kind": "probe_config_invalid",
             "config_path": config_path,
             "reason": str(exc),
@@ -98,20 +99,20 @@ def run(config_path: str = _DEFAULT_CONFIG_PATH,
         thresh = entry["threshold_pct"]
         f = checks.check_disk(path, thresh)
         if f is not None:
-            failures.append(("E_CONFIG_INVALID", f))
+            failures.append((E_CONFIG_INVALID, f))
 
     # --- Memory -------------------------------------------------
     mem_cfg = cfg["memory"]
     f = checks.check_memory(mem_cfg["min_free_kb"])
     if f is not None:
-        failures.append(("E_CONFIG_INVALID", f))
+        failures.append((E_CONFIG_INVALID, f))
 
     # --- Temperature --------------------------------------------
     temp_cfg = cfg["temperature"]
     f = checks.check_temperature(
         temp_cfg["sensors"], temp_cfg["max_temp_c"])
     if f is not None:
-        failures.append(("E_CONFIG_INVALID", f))
+        failures.append((E_CONFIG_INVALID, f))
 
     # --- Databases (E_STORAGE_CORRUPT on corruption) ------------
     for db in cfg["databases"]:
@@ -119,18 +120,18 @@ def run(config_path: str = _DEFAULT_CONFIG_PATH,
         if f is None:
             continue
         if f["kind"] == "db_corrupt":
-            failures.append(("E_STORAGE_CORRUPT", f))
+            failures.append((E_STORAGE_CORRUPT, f))
         else:
             # Missing / schema mismatch are config-invalid, not
             # storage-corrupt (the file is fine, just wrong version
             # or absent).
-            failures.append(("E_CONFIG_INVALID", f))
+            failures.append((E_CONFIG_INVALID, f))
 
     # --- GATE-6 network profile ---------------------------------
     try:
         profile = net_profile.load_profile(hw_profile_path)
     except (FileNotFoundError, ValueError, yaml.YAMLError) as exc:
-        _emit("E_CONFIG_INVALID", {
+        _emit(E_CONFIG_INVALID, {
             "kind": "hw_profile_missing",
             "hw_profile_path": hw_profile_path,
             "reason": str(exc),
@@ -141,7 +142,7 @@ def run(config_path: str = _DEFAULT_CONFIG_PATH,
     # overlapping segments there is no point comparing to actuals.
     overlaps = net_profile.find_network_overlaps(profile)
     for o in overlaps:
-        failures.append(("E_CONFIG_INVALID", o))
+        failures.append((E_CONFIG_INVALID, o))
 
     if not overlaps:
         if iface_reader is None:
@@ -149,7 +150,7 @@ def run(config_path: str = _DEFAULT_CONFIG_PATH,
         else:
             actual = net_profile.read_actual(profile, iface_reader=iface_reader)
         for d in net_profile.diff_profile(profile, actual):
-            failures.append(("E_CONFIG_INVALID", d))
+            failures.append((E_CONFIG_INVALID, d))
 
     # --- Emit and exit ------------------------------------------
     for code, detail in failures:

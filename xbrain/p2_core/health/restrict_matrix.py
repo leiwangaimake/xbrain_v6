@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import FrozenSet, Mapping
 
+from xbrain.common.errors import E_DEGRADED, E_UNHEALTHY
 from xbrain.p2_core.health.items import HealthState
 
 
@@ -45,7 +46,7 @@ def check_new_task_admission(item_states: Mapping[str, HealthState]) -> Restrict
     rtk = item_states.get("rtk", HealthState.UNKNOWN)
     if rtk == HealthState.DEGRADED:
         return RestrictDecision(
-            allowed=False, code="E_DEGRADED",
+            allowed=False, code=E_DEGRADED,
             detail_item="rtk",
         )
     # Fatal-fail items handled elsewhere (factor.py returns
@@ -59,7 +60,7 @@ def check_asr_local_admission(item_states: Mapping[str, HealthState]) -> Restric
     mic = item_states.get("mic", HealthState.UNKNOWN)
     if mic == HealthState.FAIL:
         return RestrictDecision(
-            allowed=False, code="E_UNHEALTHY",
+            allowed=False, code=E_UNHEALTHY,
             detail_item="mic",
         )
     return RestrictDecision(allowed=True)
@@ -71,7 +72,7 @@ def check_ptz_command(item_states: Mapping[str, HealthState]) -> RestrictDecisio
     ptz = item_states.get("ptz", HealthState.UNKNOWN)
     if ptz == HealthState.FAIL:
         return RestrictDecision(
-            allowed=False, code="E_UNHEALTHY",
+            allowed=False, code=E_UNHEALTHY,
             detail_item="ptz",
         )
     return RestrictDecision(allowed=True)

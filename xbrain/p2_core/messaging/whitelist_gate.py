@@ -39,6 +39,7 @@ from __future__ import annotations
 import re
 from typing import Iterable, List, Set, Tuple
 
+from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 from xbrain.common.zenoh.whitelists import P2_CORE_PUB, P2_CORE_SUB
 
@@ -99,7 +100,7 @@ def check_pub_keys(declared: Iterable[str]) -> None:
             bad.append(k)
     if bad:
         raise WhitelistViolation(
-            "E_CONFIG_INVALID",
+            E_CONFIG_INVALID,
             "p2_core declared publisher key(s) NOT in P2_CORE_PUB "
             "whitelist: %s. Registered pubs are: %s (see 11 S1.1.6 + "
             "xbrain/common/zenoh/whitelists.py)"
@@ -117,7 +118,7 @@ def check_sub_keys(declared: Iterable[str]) -> None:
             bad.append(k)
     if bad:
         raise WhitelistViolation(
-            "E_CONFIG_INVALID",
+            E_CONFIG_INVALID,
             "p2_core declared subscriber key(s) NOT in P2_CORE_SUB "
             "whitelist: %s. Registered subs are: %s"
             % (sorted(bad), sorted(P2_CORE_SUB)),

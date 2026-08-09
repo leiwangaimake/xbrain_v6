@@ -26,6 +26,14 @@ Health item mapping:
   cam_ptz_ir: healthy | warn | error
   NEVER contributes to overall availability computation
   (uses `blocking=False` flag on the item spec).
+
+Rejection code: BIT-35 named the rejection with an E_IR_UNAVAILABLE
+mnemonic, but the E_* closed set in codes.yaml (11 §13.4~§13.15)
+does NOT define that code and CLAUDE.md §1 forbids unilaterally
+adding one. Until the contract adds it, IR-observation rejections
+carry E_UNHEALTHY with detail={'item': 'cam_ptz_ir'}; downstream
+routes on both the code AND the item field so the semantic is
+unambiguous.
 """
 
 from __future__ import annotations
@@ -33,8 +41,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 
+from xbrain.common.errors import E_UNHEALTHY
 
-IR_UNAVAILABLE_ERR = "E_IR_UNAVAILABLE"
+
+IR_UNAVAILABLE_ERR = E_UNHEALTHY
+IR_UNAVAILABLE_DETAIL = {"item": "cam_ptz_ir"}
 
 
 @dataclass

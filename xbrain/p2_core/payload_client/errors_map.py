@@ -27,13 +27,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from xbrain.common.errors import E_BUSY, E_SCHEMA, E_UNHEALTHY
 
-# Closed-set codes we produce; must be imported from errors module in
-# production callers (this file returns strings and the caller wraps
-# them in XbrainError with the imported constant).
-E_SCHEMA = "E_SCHEMA"
-E_BUSY = "E_BUSY"
-E_UNHEALTHY = "E_UNHEALTHY"
+
+# Closed-set codes we produce come from the shared library above
+# (CLAUDE.md 3.5). No local re-declaration -- that risks the string
+# drifting from the yaml source of truth.
 
 
 @dataclass(frozen=True)
