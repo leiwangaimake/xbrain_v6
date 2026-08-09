@@ -110,6 +110,12 @@ CLEAN_LINTS = [
      "no Chinese (CJK) character in log / print / exception message "
      "literals under xbrain/, the ast-driven half of CLAUDE.md 2.1 "
      "(CFG-CM-15 partial)"),
+    # Added with CFG-DC-3 rule 2. Its zero means every declare_subscriber
+    # return value is captured (self.<attr> / list.append / registry).
+    ("no_dangling_subscriber.py",
+     "no bare or _-discarded zenoh declare_subscriber(...) under xbrain/; "
+     "return value must be captured or Rust-side GC silently unsubscribes "
+     "(CFG-DC-3 / CLAUDE.md 4.3)"),
 ]
 
 #: Lints that also ship a --self-test. Running it here keeps the probes honest;
@@ -118,7 +124,7 @@ SELF_TESTED = ["comment_ratio.py", "no_config_source_read.py", "clock_scan.py",
                "no_literal_ecode.py", "zenoh_callback_scan.py",
                "no_disabled_switch.py", "no_safety_default.py",
                "no_business_imports.py", "no_config_singular.py",
-               "no_chinese_in_log.py"]
+               "no_chinese_in_log.py", "no_dangling_subscriber.py"]
 
 
 def run_lint(script, *args):
