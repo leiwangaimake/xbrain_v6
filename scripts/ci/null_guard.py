@@ -60,15 +60,28 @@ _DEBT_DOC_REL = "docs/21-实测与第三方欠账.md"
 # Config root scanned for filled keys.
 _CONFIGS_ROOT_REL = "configs"
 
-# 21 rows whose keys are owned by the PTZ-autonomous layer and are
-# already permanently null-guarded at the INF-DB-3 rejection layer.
-# User 2026-08-09: PTZ is remote-manual-only in V6; no autonomous
-# ptz key needs null-guarding here.
-_PTZ_EXEMPT_DEBT_IDS = frozenset({
-    "T-PTZ-1",   # preset_effective (INF-DB-3 rejects E02/E03/E04)
-    "T-PTZ-3",   # omega (INF-DB-3 rejects E10 / E09 closed set)
-    "M-PTZ-1",   # k_ms_per_deg (subsumed by T-PTZ-3)
-})
+# User 2026-08-09 correction: PTZ is NOT manual-only. Cloud voice /
+# text / local voice can control PTZ via 18 intent set:
+#   E01 ptz_move_speed          three-tier closed-set speed  (supported)
+#   E09 set_ptz_speed           closed-set speed name         (supported)
+#   E02 ptz_home                needs preset_effective        (INF-DB-3 rejects)
+#   E03 ptz_preset (goto)       needs preset_effective        (INF-DB-3 rejects)
+#   E04 ptz_track               needs preset_effective        (INF-DB-3 rejects)
+#   E10 ptz_move_deg (degrees)  needs omega calibration       (INF-DB-3 rejects)
+#
+# For the four rejected intents, the ONLY way to unblock them is to
+# CLOSE T-PTZ-1 (real preset_effective measurement) or T-PTZ-3 (real
+# omega measurement). Until then, the corresponding config keys must
+# stay null. INF-DB-2 (this file) is the guard that catches an
+# operator filling a value before the measurement is recorded --
+# which INF-DB-3 alone cannot catch (INF-DB-3 only rejects intents;
+# it does not check whether the config claims to be calibrated).
+#
+# Therefore _PTZ_EXEMPT_DEBT_IDS is EMPTY: every PTZ debt gets the
+# same null-guard treatment as V-01 spec keys. Left as a documented
+# frozenset for symmetry with _CLOSED_DEBT_IDS + so a future exempt
+# addition has an obvious place.
+_PTZ_EXEMPT_DEBT_IDS: frozenset = frozenset()
 
 # 21 rows whose 'must be null' claim is superseded by a later user
 # decision that pinned a concrete value. Each entry MUST cite the
@@ -139,10 +152,12 @@ def _extract_null_keys(rows: List[Tuple[str, str]]) -> Dict[str, str]:
             continue
         for m in _NULL_KEY_RE.finditer(line):
             key = m.group("key")
-            # Only capture keys that start with 'common.' -- other
-            # bare identifiers ('omega', 'covered') are prose, not
-            # config keys.
-            if not key.startswith("common."):
+            # Only capture keys that start with 'common.' or 'ptz.' --
+            # 'common.' is the shared config namespace, 'ptz.' is the
+            # p2_core.yaml subsection for PTZ config (per CHK-1-07).
+            # Other bare identifiers ('covered', 'sources') are prose,
+            # not config keys.
+            if not (key.startswith("common.") or key.startswith("ptz.")):
                 continue
             out.setdefault(key, debt_id)
     return out
@@ -169,6 +184,25 @@ _EXTRA_KEYS: Dict[str, Tuple[str, str]] = {
         ("V-01", "vendor written max_v/wz/accel/decel spec pending"),
     "common.spec.max_decel_mps2":
         ("V-01", "vendor written max_v/wz/accel/decel spec pending"),
+    # PTZ keys: user 2026-08-09 confirmed PTZ IS controlled by AI
+    # (cloud voice / text / local voice via 18 intents E01/E09/E02/
+    # E03/E04/E10). But calibration debts remain open:
+    #   T-PTZ-1: preset_effective must stay null until measured
+    #   T-PTZ-3: omega/speed calibration must stay null (bare 'omega'
+    #            in 21 -- no common. prefix -- regex cannot capture)
+    #   M-PTZ-1: k_ms_per_deg must stay null (belt-and-braces)
+    # These keys live under p2_core.yaml's ptz.* section (per CHK-1-07
+    # spec), not under common.*, so the auto-extract cannot see them.
+    # Explicit here until the doc format converges or an operator
+    # closes the debt via field measurement.
+    "ptz.preset_effective":
+        ("T-PTZ-1", "human-eye preset return verification pending"),
+    "ptz.omega_pan":
+        ("T-PTZ-3", "external-measured degrees-per-second calibration pending"),
+    "ptz.omega_tilt":
+        ("T-PTZ-3", "external-measured degrees-per-second calibration pending"),
+    "ptz.k_ms_per_deg":
+        ("M-PTZ-1", "pulse-duration <-> angle table per speed tier pending"),
 }
 
 

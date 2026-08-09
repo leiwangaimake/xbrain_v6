@@ -31,8 +31,9 @@ def test_the_repository_currently_passes():
 
 def test_scan_reports_guarded_key_count():
     r = _run("-v")
-    # 5 V-01 spec keys are guarded (M-01 closed).
-    assert "guards 5 keys" in r.stdout
+    # 5 V-01 spec keys + 4 PTZ keys (preset_effective / omega_pan /
+    # omega_tilt / k_ms_per_deg). M-01 closed by U54.
+    assert "guards 9 keys" in r.stdout
 
 
 def test_verbose_lists_debt_ids():
@@ -40,14 +41,22 @@ def test_verbose_lists_debt_ids():
     assert "V-01" in r.stdout
 
 
-def test_ptz_debts_are_skipped():
-    """PTZ debts (T-PTZ-1/T-PTZ-3/M-PTZ-1) are handled by INF-DB-3
-    rejection layer; null-guard skips them (V6 manual-only PTZ)."""
+def test_ptz_debts_are_guarded():
+    """User 2026-08-09 correction: PTZ is NOT manual-only. AI cloud
+    voice / text / local voice can control it via 18 intents.
+    E01/E09 work; E02/E03/E04/E10 need real measurement first.
+    Null-guard therefore covers the PTZ calibration keys so an
+    operator cannot fill them prematurely (INF-DB-3 rejects intents
+    but does not check config)."""
     r = _run("-v")
-    # None of the ptz.* keys should appear in the guarded list.
     lines = r.stdout.splitlines()
     ptz_lines = [ln for ln in lines if "guarded" in ln and "ptz" in ln.lower()]
-    assert not ptz_lines, "ptz keys appeared: %s" % ptz_lines
+    # Must have at least T-PTZ-1 preset_effective + T-PTZ-3 omega +
+    # M-PTZ-1 k_ms_per_deg.
+    debt_ids = {ln.split("<-")[-1].strip() for ln in ptz_lines}
+    assert "T-PTZ-1" in debt_ids
+    assert "T-PTZ-3" in debt_ids
+    assert "M-PTZ-1" in debt_ids
 
 
 def test_m01_closure_by_u54_recorded():
