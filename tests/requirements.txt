@@ -1,0 +1,27 @@
+# CFG-DC-4 -- test-time dependencies for pytest --collect-only zero errors.
+#
+# Installed via: pip install -r tests/requirements.txt
+#
+# Category A: test infrastructure (must be present for any pytest run).
+pytest>=7.0
+pytest-asyncio>=0.21
+hypothesis>=6.100
+pyyaml>=6.0
+
+# Category B: service-layer dependencies (needed by tests that import
+# ai_runtime clients, ASR service, etc.). Without these, collect_only
+# would fail on tests that import fastapi/uvicorn/sherpa-onnx.
+fastapi>=0.100
+uvicorn>=0.20
+# sherpa-onnx pinned loose so wheel availability across arm64/x86_64
+# does not break dev-machine collection. The actual model runtime
+# uses the ORIN-installed version.
+sherpa-onnx>=1.0
+opuslib>=3.0
+
+# Category C: optional dev tooling (linters + type-checker). Their
+# absence does not break pytest collection but keeps `scripts/ci/`
+# tools runnable.
+ruff>=0.4
+# mypy stays optional here -- CFG-DC-2 / INF-CI-3 will pin strict
+# config in pyproject.toml when it lands.
