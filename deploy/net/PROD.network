@@ -1,0 +1,68 @@
+# CFG-BT-20 / INF-DP-9 -- systemd-networkd config template (PROD branch)
+#
+# One .network file per interface would be idiomatic; we bundle them
+# in a single per-branch file so the whole hw_profile is one artefact
+# per deploy. The deploy script splits this at install time.
+#
+# CLAUDE.md 3.1: every value here must be resolved BEFORE the file is
+# copied into /etc/systemd/network/. Leaving a ${...} placeholder in
+# the deployed file causes systemd-networkd to fail with a rendering
+# error, which is fail-loud (the interface stays down); a fabricated
+# default IP would be fail-silent (interface up but routing wrong).
+#
+# ${...} placeholders must be substituted by the deploy job from the
+# hw_profile YAML at /etc/xbrain/hw_profile. If envsubst leaves any
+# placeholder in the deployed copy, scripts/check_net.sh flags it.
+
+# --- LAN1: WAN uplink ---------------------------------------------
+[Match]
+Name=lan1
+
+[Network]
+Address=${LAN1_IP}/${LAN1_PREFIX}
+Gateway=${LAN1_GATEWAY}
+
+---
+
+# --- LAN2: operator LAN -------------------------------------------
+[Match]
+Name=lan2
+
+[Network]
+Address=${LAN2_IP}/${LAN2_PREFIX}
+# No default route out of LAN2 (uplink is LAN1). Explicit no-gateway
+# defeats a race between two default routes with equal metric.
+
+---
+
+# --- LAN3: device LAN (PTZ, DVR, ...) -----------------------------
+[Match]
+Name=lan3
+
+[Network]
+Address=${LAN3_IP}/${LAN3_PREFIX}
+
+---
+
+# --- LAN4: chassis LAN --------------------------------------------
+[Match]
+Name=lan4
+
+[Network]
+# V-15 pending -- chassis_ip is 10.21.33.103 (per 11 §9.1.1) or
+# 10.21.31.103 (per 11 §9.5). The deploy MUST resolve which one this
+# machine's chassis actually answers on before this file is installed.
+Address=${LAN4_IP}/${LAN4_PREFIX}
+
+---
+
+# --- WLAN0: backup cloud path -------------------------------------
+[Match]
+Name=wlan0
+
+[Network]
+Address=${WIFI_IP}/${WIFI_PREFIX}
+# WiFi default route metric is above LAN1's so LAN1 wins when both
+# are up. This is the "primary via wired, fall back to WiFi" policy.
+Gateway=${WIFI_GATEWAY}
+RouteMetric=1024

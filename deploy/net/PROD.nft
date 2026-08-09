@@ -1,0 +1,80 @@
+# CFG-BT-20 / INF-DP-9 -- nftables ruleset template (PROD branch)
+#
+# Idiomatic nftables: one ruleset file, atomically applied via
+# `nft -f`. Loaded at boot by nftables.service.
+#
+# The three DEP-* rules this ruleset enforces:
+#   DEP-6  FORWARD default is DROP; every allowed flow is explicit
+#   DEP-7  From LAN2 we can only reach the media ports (RTSP) and
+#          the general-plane router (7447), NOT the device management
+#          plane on LAN3.
+#   DEP-8  LAN2 cannot reach LAN1 / LAN3 directly; WiFi cannot reach
+#          LAN2 (isolation is chief operational property of the design).
+#
+# CLAUDE.md 3.1: ${...} placeholders MUST be substituted before this
+# file is loaded. A DNAT rule with source 0.0.0.0/0 is banned (SEC-2);
+# check_net.sh flags either.
+
+table inet xbrain {
+
+    # --- Named sets: fill from hw_profile at deploy time --------
+    set trusted_operators {
+        type ipv4_addr; flags interval;
+        # elements = { ${OPERATOR_CIDR} }
+    }
+
+    set media_ports {
+        type inet_service
+        elements = { 554, 8554 }   # RTSP main + secondary
+    }
+
+    # --- INPUT chain: what the robot accepts ---------------------
+    chain input {
+        type filter hook input priority 0; policy drop;
+
+        iif lo accept
+        ct state established,related accept
+
+        # LAN2 -> Zenoh general-plane router (per NET-C9 per-port bind)
+        iifname "lan2" ip daddr ${LAN2_IP} tcp dport 7447 accept
+
+        # LAN2 -> media ports (RTSP relay to operator)
+        iifname "lan2" ip daddr ${LAN2_IP} tcp dport @media_ports accept
+
+        # LAN1 uplink: only responses to established connections
+        iifname "lan1" ct state new drop
+
+        # Everything else: dropped by policy above
+    }
+
+    # --- FORWARD chain: policy DROP by DEP-6 --------------------
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+
+        # NO cross-interface forwarding by default. Every allowed
+        # cross-interface flow must be an explicit accept below.
+        # If you find yourself wanting to add "policy accept", stop
+        # -- DEP-8 requires drop.
+    }
+
+    # --- OUTPUT chain: robot-initiated traffic ------------------
+    chain output {
+        type filter hook output priority 0; policy accept;
+        # Default accept is fine for robot-initiated. Cloud/uplink
+        # limits are enforced by the peer side.
+    }
+
+    # --- NAT (DNAT for media pass-through, restricted) ----------
+    chain prerouting {
+        type nat hook prerouting priority -100; policy accept;
+
+        # DNAT the RTSP inbound to the actual DVR. Source must be
+        # inside trusted_operators -- 0.0.0.0/0 is SEC-2 violation.
+        iifname "lan2" ip saddr @trusted_operators tcp dport 8554 \
+            dnat ip to ${DVR_IP}:554
+    }
+
+    chain postrouting {
+        type nat hook postrouting priority 100; policy accept;
+    }
+}

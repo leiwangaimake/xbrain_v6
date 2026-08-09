@@ -1,0 +1,28 @@
+# CFG-BT-20 / INF-DP-9 -- nftables ruleset template (DBG branch)
+#
+# Simpler than PROD -- no media pass-through, no LAN2/LAN3/LAN4.
+# Only rule of note: FORWARD policy drop stays (DEP-6) even on bench.
+
+table inet xbrain {
+
+    chain input {
+        type filter hook input priority 0; policy drop;
+
+        iif lo accept
+        ct state established,related accept
+
+        # SSH from operator (bench convenience only; disabled in PROD).
+        iifname "lan1" tcp dport 22 accept
+
+        # Zenoh general-plane router.
+        iifname "lan1" tcp dport 7447 accept
+    }
+
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+    }
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+    }
+}

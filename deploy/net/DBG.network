@@ -1,0 +1,11 @@
+# CFG-BT-20 / INF-DP-9 -- systemd-networkd config template (DBG branch)
+#
+# DBG runs on the bench. Only LAN1 exists on typical bench hardware.
+# If your bench has more interfaces, copy the block(s) from PROD.network.
+
+[Match]
+Name=lan1
+
+[Network]
+Address=${LAN1_IP}/${LAN1_PREFIX}
+Gateway=${LAN1_GATEWAY}
