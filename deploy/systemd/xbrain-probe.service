@@ -1,0 +1,50 @@
+# CFG-BT-1 -- xbrain-probe.service (Stage 0 platform probe + GATE-6)
+#
+# oneshot: runs, exits, and its result gates the whole Requires= chain
+# below it. If ExecStart exits non-zero, systemd refuses to start any
+# unit that Requires=xbrain-probe.service, which means Stage 0z / 0c
+# and everything downstream stays down (R class per 10 S3.3.6 row 13).
+#
+# Checks performed (see xbrain/boot/probe/__main__.py):
+#   * disk usage vs threshold (per mount)
+#   * MemAvailable vs floor
+#   * thermal_zoneN temp vs ceiling
+#   * PRAGMA user_version on task.db / fence.db / geo.db / record.db
+#     (S-8 in 10 S3.3.1)
+#   * GATE-6: /sys/class/net vs /etc/xbrain/hw_profile per-port
+#   * NET-C1: any two interfaces in the profile share a segment
+#
+# Failure output: one JSON line per failure to stderr. systemd captures
+# to journal; the gateway (11 S8.13.5 = single mapping point) turns
+# journal lines into event/fault/system entries once P5 is up.
+
+[Unit]
+Description=XBRAIN v6 Stage 0 probe (CFG-BT-1, GATE-6)
+Documentation=file:///opt/xbrain_v6/docs/10-%E9%A1%B6%E5%B1%82%E8%AE%BE%E8%AE%A1.md
+# Stage 0 is the earliest unit in the boot chain. It has no upstream
+# XBRAIN unit and no filesystem prerequisites beyond the root fs.
+After=local-fs.target
+# Downstream: freeze and the two routers all wait for us. Their own
+# unit files declare Requires=xbrain-probe.service so we can withhold
+# any of them by exiting non-zero here.
+Before=xbrain-zenohd-rt.service xbrain-zenohd-gen.service xbrain-config-freeze.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The probe must never hang the boot; it's O(files + interface count).
+# TimeoutStartSec bounds the worst case (a stuck sqlite CoW read).
+TimeoutStartSec=30
+# Every failure is a hard boot halt. There is no "retry on transient".
+# Transient at Stage 0 is a symptom, not a category worth handling
+# separately.
+ExecStart=/usr/bin/env python3 -m xbrain.boot.probe
+# Never run as root -- probe reads only, but least-privilege is
+# defence in depth vs a bug that opens something rw.
+# TODO(U-15): xbrain user creation is a deploy job; enable after that
+# lands. For now keep root so the unit is testable on dev machines.
+# User=xbrain
+# Group=xbrain
+
+[Install]
+WantedBy=multi-user.target

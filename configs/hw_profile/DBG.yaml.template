@@ -1,0 +1,21 @@
+# CFG-BT-1 -- hw_profile template (DBG branch)
+#
+# Copied to /etc/xbrain/hw_profile at deploy time. GATE-6 compares the
+# machine's actual interfaces against this file; any mismatch withholds
+# Stage 0.
+#
+# CLAUDE.md 3.1: every field must be resolved before deploy. Fields
+# set to null crash the probe, naming the key. Do NOT commit "127.0.0.1"
+# or 0-value placeholders here -- 127.0.0.1 does not match any physical
+# interface so the probe would print a red diff every boot; a "safe
+# default" 0 IP would be silently accepted by ip-addr parsing.
+#
+# The DBG branch runs on the office bench and has fewer interfaces
+# than PROD. If you are on a bench machine and see "interface does
+# not exist", the wrong branch's template was deployed.
+
+interfaces:
+  lan1:                      # cloud uplink (bench: office network)
+    ipv4:    null            # e.g. "192.168.1.100"
+    netmask: null            # e.g. "255.255.255.0"
+    network: null            # e.g. "192.168.1.0/24"

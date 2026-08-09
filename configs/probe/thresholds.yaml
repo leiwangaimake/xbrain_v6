@@ -1,0 +1,43 @@
+# CFG-BT-1 -- probe thresholds
+#
+# Every value here is a SAFETY parameter. CLAUDE.md 3.1 forbids default
+# tolerance: absent keys crash the probe, which withholds Stage 0. Do
+# NOT add fallback constants in code to make the probe "just run".
+#
+# All values are provisional and MUST be validated on the target
+# hardware (T-PB-1 to T-PB-4 in 21). If a value is unresolved for
+# THIS deploy, set it to null so the probe crashes and names it, per
+# CLAUDE.md 3.1. Do NOT set 0 or "some safe number" -- 0 will silently
+# pass every check, and "some safe number" is a fabrication.
+
+disk:
+  - path: "/"
+    threshold_pct: 90.0
+  - path: "/opt/xbrain_v6"
+    threshold_pct: 90.0
+
+memory:
+  # MemAvailable floor. Below this the LLM + perception fleet cannot
+  # both start; 1.5 GiB matches the LLM's headroom target.
+  min_free_kb: 1572864          # 1.5 GiB
+
+temperature:
+  # Orin has multiple thermal zones. sensors list is per-board and
+  # must be validated on the actual hardware. thermal_zone0 alone is
+  # NOT a safe default -- some boards route CPU temp to zone3.
+  sensors:
+    - "/sys/class/thermal/thermal_zone0/temp"
+  max_temp_c: 90.0
+
+databases:
+  # schema_version integers are the CURRENT authoritative version. If
+  # you migrate a schema, bump the value here AND ensure the migration
+  # ran; otherwise the probe blocks Stage 0.
+  - path: "/opt/xbrain_v6/data/task.db"
+    expected_version: 1
+  - path: "/opt/xbrain_v6/data/fence.db"
+    expected_version: 1
+  - path: "/opt/xbrain_v6/data/geo.db"
+    expected_version: 1
+  - path: "/opt/xbrain_v6/data/record.db"
+    expected_version: 1

@@ -1,0 +1,28 @@
+# CFG-BT-1 -- hw_profile template (PROD branch)
+#
+# See DBG.yaml.template for template semantics.
+#
+# PROD branch is a M20S-mounted deployment: four independent LAN ports
+# plus a WiFi interface. Ports named per 11 S1.1.4 and pending U-15.
+
+interfaces:
+  lan1:                      # cloud uplink (WAN gateway)
+    ipv4:    null
+    netmask: null
+    network: null
+  lan2:                      # LAN2 office / operator interface
+    ipv4:    null
+    netmask: null
+    network: null
+  lan3:                      # LAN3 device network (PTZ, DVR, ...)
+    ipv4:    null
+    netmask: null
+    network: null
+  lan4:                      # LAN4 chassis network (M20S chassis IP)
+    ipv4:    null            # V-15 pending: 10.21.33.103 or 10.21.31.103
+    netmask: null
+    network: null
+  wlan0:                     # WiFi uplink (backup cloud path)
+    ipv4:    null
+    netmask: null
+    network: null
