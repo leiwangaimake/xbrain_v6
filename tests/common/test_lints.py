@@ -102,6 +102,14 @@ CLEAN_LINTS = [
     ("no_config_singular.py",  # NO-CONFIG-SINGULAR-LINT
      "no singular 'config/*.yaml' path in any source file; the config root "  # NO-CONFIG-SINGULAR-LINT
      "is plural 'configs/' (CFG-DC-3 / CLAUDE.md 3.6)"),
+    # Added with CFG-CM-15 (partial). Its zero means no CJK codepoint in any
+    # log.<level>(...) / print(...) / raise ...(msg) call arg under xbrain/;
+    # docstrings and comments are exempt (CLAUDE.md 2.1 allows single-file
+    # consistency for those).
+    ("no_chinese_in_log.py",
+     "no Chinese (CJK) character in log / print / exception message "
+     "literals under xbrain/, the ast-driven half of CLAUDE.md 2.1 "
+     "(CFG-CM-15 partial)"),
 ]
 
 #: Lints that also ship a --self-test. Running it here keeps the probes honest;
@@ -109,7 +117,8 @@ CLEAN_LINTS = [
 SELF_TESTED = ["comment_ratio.py", "no_config_source_read.py", "clock_scan.py",
                "no_literal_ecode.py", "zenoh_callback_scan.py",
                "no_disabled_switch.py", "no_safety_default.py",
-               "no_business_imports.py", "no_config_singular.py"]
+               "no_business_imports.py", "no_config_singular.py",
+               "no_chinese_in_log.py"]
 
 
 def run_lint(script, *args):

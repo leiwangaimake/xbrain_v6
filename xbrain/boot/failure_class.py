@@ -121,7 +121,21 @@ Anti-patterns this module deliberately does NOT support:
 
 # NamedTuple for the frozen class-result row; dataclass would work
 # but tuples are hashable + trivial to use in sets and dict keys.
+# Optional in the field type for ecode / upgrade_to (None means
+# the row does NOT carry that field).
 from typing import Dict, NamedTuple, Optional
+
+# Ten E_* constants imported from the shared library, one per unique
+# code used in the classifier table. Imported by NAME (not a string
+# literal) per CLAUDE.md 3.5; scripts/lint/no_literal_ecode.py
+# enforces this tree-wide, and a string literal here would fail its
+# scan.
+from xbrain.common.errors import (
+    E_CONFIG_INVALID, E_CONFIG_LOCKED, E_FENCE_INVALID,
+    E_LOCKED, E_PROTO_VERSION, E_QOS_VIOLATION,
+    E_SAFETY_LINK_LOST, E_STORAGE_CORRUPT, E_TIMEOUT,
+    E_UNHEALTHY,
+)
 
 
 # Class constants. Kept as bare str (not enum) because the values
@@ -191,78 +205,85 @@ class ClassResult(NamedTuple):
 #
 # The rows are declared in doc order for review. Runtime lookup is
 # via _BY_ID (dict) so declaration order does not affect performance.
+#
+# Row-level comments below name the specific 10 S3.3.6 group each
+# row cluster belongs to; a reader can jump straight to the block
+# their doc anchor points at without walking the whole table.
 _CLASSIFIER_TABLE = (
     # Storage / migration failures -- all R (data loss avoidance).
+    # Rows 1-3: databases in a bad state before startup can proceed;
+    # trying anyway would silently accept a broken schema, which is
+    # the exact class of defect the storage assertions guard against.
     ClassResult("1",  "Stage 0 disk image malformed",   CLASS_R,
-                "E_STORAGE_CORRUPT", "10 S3.3.6.1"),
+                E_STORAGE_CORRUPT, "10 S3.3.6.1"),
     ClassResult("2",  "Stage 0 migration failure",       CLASS_R,
-                "E_STORAGE_CORRUPT", "10 S3.3.6.2"),
+                E_STORAGE_CORRUPT, "10 S3.3.6.2"),
     ClassResult("3",  "assertion C retention monotone",  CLASS_R,
-                "E_CONFIG_INVALID", "10 S3.3.6.3"),
+                E_CONFIG_INVALID, "10 S3.3.6.3"),
     ClassResult("3b", "GATE-6 net profile mismatch",     CLASS_R,
-                "E_CONFIG_INVALID", "10 S3.3.6.3b"),
+                E_CONFIG_INVALID, "10 S3.3.6.3b"),
     ClassResult("4",  "assertion A/B/D unresolved refs", CLASS_R,
-                "E_CONFIG_INVALID", "10 S3.3.6.4"),
+                E_CONFIG_INVALID, "10 S3.3.6.4"),
     ClassResult("5",  "assertion E safety namespaces vs hot-update",
-                CLASS_R, "E_CONFIG_LOCKED", "10 S3.3.6.5"),
+                CLASS_R, E_CONFIG_LOCKED, "10 S3.3.6.5"),
     ClassResult("6",  "assertion C dead cruise/transit", CLASS_R,
-                "E_CONFIG_INVALID", "10 S3.3.6.6"),
+                E_CONFIG_INVALID, "10 S3.3.6.6"),
     ClassResult("7",  "assertion G obstacle/patrol relation",
-                CLASS_R, "E_CONFIG_INVALID", "10 S3.3.6.7"),
+                CLASS_R, E_CONFIG_INVALID, "10 S3.3.6.7"),
     ClassResult("7b", "assertion G safety-param range (SP-*/AS-7)",
-                CLASS_R, "E_CONFIG_INVALID", "10 S3.3.6.7b"),
+                CLASS_R, E_CONFIG_INVALID, "10 S3.3.6.7b"),
     ClassResult("7c", "assertion H calibration accuracy",
-                CLASS_R, "E_CONFIG_INVALID", "10 S3.3.6.7c"),
+                CLASS_R, E_CONFIG_INVALID, "10 S3.3.6.7c"),
     ClassResult("7d", "assertion I TRT engine / sha256",
-                CLASS_R, "E_CONFIG_INVALID", "10 S3.3.6.7d"),
+                CLASS_R, E_CONFIG_INVALID, "10 S3.3.6.7d"),
     ClassResult("7e", "assertion K quadruped QC-1..17",
-                CLASS_R, "E_CONFIG_INVALID", "10 S3.3.6.7e"),
+                CLASS_R, E_CONFIG_INVALID, "10 S3.3.6.7e"),
     ClassResult("7f", "assertion L BIT fatal exemption",
-                CLASS_R, "E_CONFIG_INVALID", "10 S3.3.6.7f"),
+                CLASS_R, E_CONFIG_INVALID, "10 S3.3.6.7f"),
     ClassResult("7g", "assertion M required key missing",
-                CLASS_R, "E_CONFIG_INVALID", "10 S3.3.6.7g"),
+                CLASS_R, E_CONFIG_INVALID, "10 S3.3.6.7g"),
     ClassResult("7h", "assertion N margin_base == d_safe",
-                CLASS_R, "E_CONFIG_INVALID", "10 S3.3.6.7h"),
+                CLASS_R, E_CONFIG_INVALID, "10 S3.3.6.7h"),
     ClassResult("7i", "assertion O teleop cloud priority",
-                CLASS_R, "E_CONFIG_INVALID", "10 S3.3.6.7i"),
+                CLASS_R, E_CONFIG_INVALID, "10 S3.3.6.7i"),
     # QoS + boot-time infra failures.
     ClassResult("8",  "assertion F QoS anti-pattern A2-A7", CLASS_R,
-                "E_QOS_VIOLATION", "10 S3.3.6.8"),
+                E_QOS_VIOLATION, "10 S3.3.6.8"),
     ClassResult("9",  "process-local A-1 anti-pattern",     CLASS_R,
-                "E_QOS_VIOLATION", "10 S3.3.6.9"),
+                E_QOS_VIOLATION, "10 S3.3.6.9"),
     ClassResult("10", "assertion F Q4_stream depth=0",      CLASS_R,
-                "E_QOS_VIOLATION", "10 S3.3.6.10"),
+                E_QOS_VIOLATION, "10 S3.3.6.10"),
     ClassResult("11", "MANIFEST boot_id mismatch",          CLASS_R,
-                "E_CONFIG_INVALID", "10 S3.3.6.11"),
+                E_CONFIG_INVALID, "10 S3.3.6.11"),
     ClassResult("12", "F' 7447 hijacked by V5 bridge",      CLASS_R,
-                "E_CONFIG_INVALID", "10 S3.3.6.12"),
+                E_CONFIG_INVALID, "10 S3.3.6.12"),
     # Router / link failures: T with upgrade path.
     ClassResult("13", "Stage 0z RT/GEN router not ready",   CLASS_T,
-                "E_CONFIG_INVALID", "10 S3.3.6.13", upgrade_to=CLASS_R),
+                E_CONFIG_INVALID, "10 S3.3.6.13", upgrade_to=CLASS_R),
     ClassResult("14", "Stage 0z-3 chassis tcp/30003 unreachable",
-                CLASS_T, "E_SAFETY_LINK_LOST", "10 S3.3.6.14",
+                CLASS_T, E_SAFETY_LINK_LOST, "10 S3.3.6.14",
                 upgrade_to=CLASS_B),
     # Version / protocol block.
     ClassResult("15", "proto_version major mismatch",       CLASS_B,
-                "E_PROTO_VERSION", "10 S3.3.6.15"),
+                E_PROTO_VERSION, "10 S3.3.6.15"),
     # Fence + BIT block.
     ClassResult("16", "forbid fence load fail / empty",     CLASS_R,
-                "E_FENCE_INVALID", "10 S3.3.6.16"),
+                E_FENCE_INVALID, "10 S3.3.6.16"),
     ClassResult("17", "allow fence load fail",              CLASS_D,
-                "E_FENCE_INVALID", "10 S3.3.6.17"),
+                E_FENCE_INVALID, "10 S3.3.6.17"),
     ClassResult("18", "zone load fail",                     CLASS_D,
                 None, "10 S3.3.6.18"),
     ClassResult("19", "BIT fatal item fail",                CLASS_B,
-                "E_UNHEALTHY", "10 S3.3.6.19"),
+                E_UNHEALTHY, "10 S3.3.6.19"),
     ClassResult("20", "BIT degraded item fail",             CLASS_D,
                 None, "10 S3.3.6.20"),
     ClassResult("21", "state/robot.timeout_lock=true",      CLASS_B,
-                "E_LOCKED", "10 S3.3.6.21"),
+                E_LOCKED, "10 S3.3.6.21"),
     ClassResult("22", "common_digest mismatch MANIFEST",    CLASS_B,
                 None, "10 S3.3.6.22"),
     # AI runtime + gpu + link degradations.
     ClassResult("23", "AI service (ASR/LLM) not ready",     CLASS_T,
-                "E_TIMEOUT", "10 S3.3.6.23", upgrade_to=CLASS_D),
+                E_TIMEOUT, "10 S3.3.6.23", upgrade_to=CLASS_D),
     ClassResult("24", "GPU/TensorRT engine load fail",      CLASS_D,
                 None, "10 S3.3.6.24"),
     ClassResult("25", "cloud unreachable",                  CLASS_D,

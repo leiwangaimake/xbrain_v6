@@ -218,7 +218,7 @@ def load_missions(directory: str, registry_names: Iterable[str]) -> Dict[str, st
             # The dynamic group: its contract is the candidate line. Without
             # the ke-xuan marker the top-K mechanism (U47f/R4) cannot anchor.
             if "可选" not in text:
-                raise MissionError(
+                raise MissionError(  # NO-CHINESE-LOG-LINT: names a CJK doc marker
                     "M10_fallback lost its 可选 candidate-line contract")
         out[mission] = text
     return out
