@@ -1,0 +1,29 @@
+# INF-DP-11 -- logrotate rules for xbrain process logs
+#
+# Installed to /etc/logrotate.d/xbrain by the deploy script. Rotates
+# each process's log file separately so a single hot process (e.g.
+# p1_motion at 20 Hz) does not trip rotation on quiet processes.
+#
+# Why weekly, not daily. Daily rotation on a 20 Hz process produces
+# small files and heavy fs churn; weekly + size caps hit the same
+# ceiling with fewer files.
+#
+# missingok is intentional: a service that never started (Stage 0
+# blocked it) never writes a log file, and that must not fail rotate.
+#
+# copytruncate is intentional: the processes keep the file open via a
+# python logging FileHandler; without copytruncate, rotate would move
+# the file and the process would keep writing to the now-hidden inode.
+
+/opt/xbrain_v6/data/logs/*.log {
+    weekly
+    rotate 8
+    size 100M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    dateext
+    dateformat -%Y%m%d
+}
