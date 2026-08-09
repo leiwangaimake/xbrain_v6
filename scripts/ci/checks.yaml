@@ -1,0 +1,59 @@
+# INF-CI-5 registry of CI checks
+#
+# Every check that run_all.sh actually invokes MUST appear here, and every
+# entry here MUST be invoked by run_all.sh. The bidirectional diff is
+# enforced by tests/common/test_ci_registry.py.
+#
+# Adding a new check:
+#   1. Add the script under scripts/ci/ (or point at an existing lint).
+#   2. Add an entry here with a `name`, `path`, and `reason`.
+#   3. Add an invocation line to scripts/ci/run_all.sh.
+# Missing any of (1)/(2)/(3) fails the meta test.
+#
+# NOT in this registry (deliberately):
+#   * Individual scripts/lint/*.py -- they roll up under static_rules.py
+#     (INF-CI-1 bundle) which IS registered here as one entry.
+#   * scripts/doccheck/*.py individual scripts -- they roll up under
+#     tests/common/test_doccheck_coverage.py (INF-CI-4) which itself is
+#     invoked via pytest below.
+
+checks:
+
+  - name: static_rules
+    path: scripts/ci/static_rules.py
+    reason: "INF-CI-1 -- 9 CLAUDE.md 8.2 static rules bundle"
+
+  - name: layout_gate
+    path: scripts/ci/layout_gate.py
+    reason: "CHK-1-52 -- directory layout guard (common/deploy/data etc.)"
+
+  - name: header_lint
+    path: scripts/lint/header_lint.py
+    reason: "CLAUDE.md 2.5 -- five-field file header + File field mismatch"
+
+  - name: comment_ratio
+    path: scripts/lint/comment_ratio.py
+    reason: "CLAUDE.md 2.4 -- comment ratio >= 70% for xbrain/"
+
+  - name: no_chinese_in_log
+    path: scripts/lint/no_chinese_in_log.py
+    reason: "CFG-CM-15 -- log/print/exception message must be English"
+
+  - name: map1_scan
+    path: scripts/doccheck/map1_scan.py
+    reason: "CFG-DC-1 -- 10 S3.3.6 alignment table diff (may fail on doc drift)"
+
+  - name: pytest_common
+    path: pytest
+    args: ["tests/common"]
+    reason: "unit tests for xbrain/common (arbiter, config, digest, enums, ...)"
+
+  - name: pytest_boot_freeze
+    path: pytest
+    args: ["tests/boot/freeze"]
+    reason: "freeze pipeline assertion tests (CFG-FZ-1..17)"
+
+  - name: pytest_configs
+    path: pytest
+    args: ["tests/configs"]
+    reason: "config-tree tests (CFG-CF-2/3/4/CF-1 secrets baseline)"
