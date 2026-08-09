@@ -74,7 +74,7 @@ def main() -> int:
     args = ap.parse_args()
 
     robot_id = os.environ.get("XBRAIN_ROBOT_ID") or socket.gethostname()
-    ts = int(time.time())
+    ts = int(time.time())  # WALL-CLOCK-OK(record): bundle filename timestamp -- when the snapshot was taken; a monotonic value would be unreadable
     bundle_name = "xbrain-diag-{}-{}.tar.gz".format(robot_id, ts)
 
     data_root = Path(args.data_root)
