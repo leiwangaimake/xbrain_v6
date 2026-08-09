@@ -1,0 +1,49 @@
+# INF-ZN-8 / CFG-BT-2 -- RT-plane Zenoh router (Stage 0z-1).
+#
+# The RT router is the LOOPBACK-ONLY Zenoh router for the three cross-plane
+# processes (p1_motion, chassis_relay, perception). It carries 20 Hz
+# cmd_vel, estop, chassis heartbeat -- everything that must not touch a
+# wire.
+#
+# Boot placement (10 S3.3): Stage 0z-1 -- BEFORE any runtime unit and
+# BEFORE the config-freeze service (which runs at 0c and needs the
+# routers up so processes can discover each other after freeze).
+#
+# Failure discipline: hard-gated. If this service fails to start, no
+# runtime participant can bring up its RT session; the whole stack
+# stays down (10 S3.3.6 row 13 = R class).
+
+[Unit]
+Description=XBRAIN v6 RT-plane Zenoh router (Stage 0z-1, loopback only)
+Documentation=file:///opt/xbrain_v6/docs/11-%E6%8E%A5%E5%8F%A3%E5%A5%91%E7%BA%A6.md
+# tmpfs must be mounted before us so pidfile / socket / logs are writable.
+Requires=run-xbrain.mount
+After=run-xbrain.mount network-online.target
+# Config-freeze depends on us via CFG-FZ-1's env-var pass; we come up
+# before it. Runtime units come up further down the sequence.
+Before=xbrain-zenohd-gen.service xbrain-config-freeze.service
+
+[Service]
+Type=simple
+# Restart aggressively but with backoff -- a router that oomed once
+# comes back; a router that keeps restarting fires the systemd
+# StartLimit and stops.
+Restart=always
+RestartSec=2s
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+# The router itself. zenohd is bundled in the deploy AI-container so
+# path is under /opt/xbrain_v6/services/. Adjust if a system-wide
+# zenohd install becomes the deploy target.
+ExecStart=/opt/xbrain_v6/services/zenoh/zenohd \
+    --config /opt/xbrain_v6/deploy/zenoh/zenohd-rt.json5
+# Refuse to start if the config file is missing (rather than starting
+# a router with implicit defaults, which would silently allow 0.0.0.0
+# listen and defeat NET-C9).
+ExecStartPre=/usr/bin/test -f /opt/xbrain_v6/deploy/zenoh/zenohd-rt.json5
+# Watchdog: zenohd notifies via sd_notify if compiled with systemd
+# support; if not, this watchdog is a no-op and Restart=always covers.
+WatchdogSec=15s
+
+[Install]
+WantedBy=multi-user.target

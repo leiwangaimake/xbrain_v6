@@ -1,0 +1,54 @@
+# INF-ZN-8 / CFG-BT-2 -- GEN-plane Zenoh router (Stage 0z-2).
+#
+# The GEN router carries general-plane traffic (state/*, cmd/*, event/*)
+# for p2_core, p3_task, p4_agent, p5_gateway, behavior_proxy, cloud
+# uplink via LAN2 / WiFi.
+#
+# Boot placement (10 S3.3): Stage 0z-2 -- after the RT router
+# (Stage 0z-1) but before Stage 0z-3 (chassis probe) and 0c
+# (config-freeze).
+#
+# Per-port binding (NET-C9 verbatim): binds ONLY specific IPs, never
+# 0.0.0.0. LAN2_IP / WIFI_IP come from /etc/xbrain/network.env at
+# service start via EnvironmentFile= below. If either env var is
+# missing, envsubst emits a literal "${LAN2_IP}" that zenohd rejects
+# as an invalid endpoint -- refusing to start beats binding wildcard.
+#
+# Failure discipline: hard-gated. Same as RT router (10 S3.3.6 row 13
+# = R class).
+
+[Unit]
+Description=XBRAIN v6 GEN-plane Zenoh router (Stage 0z-2, per-IP binding)
+Documentation=file:///opt/xbrain_v6/docs/11-%E6%8E%A5%E5%8F%A3%E5%A5%91%E7%BA%A6.md
+Requires=run-xbrain.mount
+After=run-xbrain.mount network-online.target xbrain-zenohd-rt.service
+Before=xbrain-config-freeze.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=2s
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+# Deploy writes /etc/xbrain/network.env with LAN2_IP / WIFI_IP per
+# site. Missing file = service refuses to start (per-site config is
+# mandatory for the GEN router; a default would silently bind wrong).
+EnvironmentFile=/etc/xbrain/network.env
+# Resolved config path: envsubst expands ${LAN2_IP} / ${WIFI_IP} into
+# a per-boot copy under /run/xbrain/zenoh/zenohd-gen.json5. Prevents
+# the source template from ever containing resolved values.
+ExecStartPre=/usr/bin/mkdir -p /run/xbrain/zenoh
+ExecStartPre=/usr/bin/env bash -c 'envsubst < /opt/xbrain_v6/deploy/zenoh/zenohd-gen.json5 > /run/xbrain/zenoh/zenohd-gen.json5'
+# Refuse to start if the resolved config still contains a placeholder
+# (indicates envsubst had an empty variable, which would fall back to
+# empty string and yield a bad endpoint spec).
+ExecStartPre=/usr/bin/env bash -c '! grep -q "\${" /run/xbrain/zenoh/zenohd-gen.json5'
+# Refuse if the resolved config contains 0.0.0.0 anywhere (belt-and-
+# braces vs a hand edit that slipped past code review).
+ExecStartPre=/usr/bin/env bash -c '! grep -q "0\\.0\\.0\\.0" /run/xbrain/zenoh/zenohd-gen.json5'
+ExecStart=/opt/xbrain_v6/services/zenoh/zenohd \
+    --config /run/xbrain/zenoh/zenohd-gen.json5
+WatchdogSec=15s
+
+[Install]
+WantedBy=multi-user.target

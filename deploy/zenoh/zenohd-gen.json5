@@ -1,0 +1,54 @@
+// deploy/zenoh/zenohd-gen.json5
+//
+// INF-ZN-8 -- GEN-plane Zenoh router config for the xbrain-zenohd-gen.service
+// unit. This is the general-plane router for p2_core / p3_task / p4_agent /
+// p5_gateway / behavior_proxy plus cloud uplink via LAN2 / WiFi.
+//
+// Ports (11 S1.1.4 + NET-C9 verbatim "逐口绑定, 禁 0.0.0.0"):
+//   loopback  tcp/127.0.0.1:7447        local processes
+//   LAN2      tcp/${LAN2_IP}:7447       office LAN uplink   (U-15 pending)
+//   WiFi      tcp/${WIFI_IP}:7447       cloud uplink        (U-15 pending)
+//
+// ${LAN2_IP} / ${WIFI_IP} are resolved at unit startup by envsubst; the
+// xbrain-zenohd-gen.service unit reads /etc/xbrain/network.env for the
+// values (see deploy/systemd/xbrain-zenohd-gen.service). This templating
+// approach lets a per-site deploy substitute without editing this file.
+//
+// NET-C9 (V6 iron rule): a zenohd router that binds 0.0.0.0 is a security
+// violation: anyone on the LAN can join the general plane and publish
+// arbitrary cmd/* keys. Every listen entry must name a specific interface.
+//
+// Rules this config enforces (grep-verified by
+// scripts/check_router_config.sh):
+//   * mode: router
+//   * multicast + gossip both disabled (no cluster discovery)
+//   * NO 0.0.0.0 anywhere (both the literal "0.0.0.0" and any bare
+//     numeric-quad without a specific octet)
+//   * listen entries are per-IP, not per-interface-name
+
+{
+  mode: "router",
+  listen: {
+    endpoints: [
+      "tcp/127.0.0.1:7447",
+      "tcp/${LAN2_IP}:7447",
+      "tcp/${WIFI_IP}:7447",
+    ],
+  },
+  scouting: {
+    multicast: {
+      enabled: false,
+    },
+    gossip: {
+      enabled: false,
+    },
+  },
+  connect: {
+    endpoints: [],
+  },
+  transport: {
+    unicast: {
+      accept_timeout: 5000,
+    },
+  },
+}

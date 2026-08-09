@@ -1,0 +1,46 @@
+// deploy/zenoh/zenohd-rt.json5
+//
+// INF-ZN-8 -- RT-plane Zenoh router config for the xbrain-zenohd-rt.service
+// unit. This is the 20 Hz control-plane router that only sees loopback
+// traffic between P1 / chassis_relay / perception (three cross-plane
+// processes on 11 S1.1.6 R-3 closed set).
+//
+// Ports (11 S1.1.4):
+//   loopback  tcp/127.0.0.1:7449   RT participants only
+//
+// NET-C9 verbatim: RT face binds ONLY to loopback. No LAN, no WiFi.
+// The RT surface exists to keep the 20 Hz cmd_vel / estop / chassis
+// heartbeat off any wire that could drop it.
+//
+// Rules this config enforces (grep-verified by
+// scripts/check_router_config.sh):
+//   * mode: peer + router disabled (no cluster gossip)
+//   * multicast disabled (RT-C3.d)
+//   * gossip disabled
+//   * NO 0.0.0.0 listen anywhere (SEC-2, SEC-7)
+//   * listen limited to loopback only
+
+{
+  mode: "router",
+  listen: {
+    endpoints: [
+      "tcp/127.0.0.1:7449",
+    ],
+  },
+  scouting: {
+    multicast: {
+      enabled: false,
+    },
+    gossip: {
+      enabled: false,
+    },
+  },
+  connect: {
+    endpoints: [],
+  },
+  transport: {
+    unicast: {
+      accept_timeout: 5000,
+    },
+  },
+}
