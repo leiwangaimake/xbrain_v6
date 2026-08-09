@@ -80,6 +80,7 @@ run_check header_lint        scripts/lint/header_lint.py
 run_check comment_ratio      scripts/lint/comment_ratio.py
 run_check no_chinese_in_log  scripts/lint/no_chinese_in_log.py
 run_check map1_scan          scripts/doccheck/map1_scan.py
+run_check null_guard         scripts/ci/null_guard.py
 run_check pytest_common      pytest tests/common
 run_check pytest_boot_freeze pytest tests/boot/freeze
 run_check pytest_configs     pytest tests/configs

@@ -43,6 +43,10 @@ checks:
     path: scripts/doccheck/map1_scan.py
     reason: "CFG-DC-1 -- 10 S3.3.6 alignment table diff (may fail on doc drift)"
 
+  - name: null_guard
+    path: scripts/ci/null_guard.py
+    reason: "INF-DB-2 -- guarded config keys must stay null until 21 debt closes"
+
   - name: pytest_common
     path: pytest
     args: ["tests/common"]
