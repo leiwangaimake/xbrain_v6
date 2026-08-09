@@ -115,8 +115,7 @@ def check_j_config_root(path: str) -> None:
     the marker documents the deliberate exception."""
     if not path.startswith("/opt/xbrain_v6/configs/"):  # CONFIG-SOURCE-OK(J): assertion J prose
         raise FreezeAssertionFailure(
-            f"assertion J: config path {path!r} not under "  # CONFIG-SOURCE-OK(J): error text of assertion J
-            f"/opt/xbrain_v6/configs/")
+            "assertion J: config path %r not under /opt/xbrain_v6/configs/" % path)  # CONFIG-SOURCE-OK(J): error text of assertion J
 
 
 def run_all_assertions(config: dict, config_path: str) -> None:
