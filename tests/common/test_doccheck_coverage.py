@@ -36,6 +36,11 @@ _EXEMPT = {
         "reads patch blocks and diffs against surrounding text; the "
         "self-test would be a full round-trip of the doc which is "
         "outside the tool's own scope.",
+    "debt_code_cover.py":
+        "reports live coverage between 21-实测与第三方欠账.md rows "
+        "and tests/debt/{ID}.py files (INF-DB-1). Failure is by design "
+        "when tests/debt/ is empty; a --self-test that stubbed both "
+        "sides would defeat the discovery purpose (see file header).",
 }
 
 
