@@ -15,6 +15,6 @@ Regenerate with:
     python scripts/version/gen_build_version.py --write
 """
 
-build_version = 'e32815c-dirty'
-commit_sha = 'e32815c88f5c4e8c71330260c37542f3e6ae9adf'
-commit_date_iso = '2026-08-09T20:39:39+09:00'
+build_version = 'dc7ea5e-dirty'
+commit_sha = 'dc7ea5e2f78771f04b72c914e6e19b0389c3d891'
+commit_date_iso = '2026-08-09T20:44:39+09:00'
