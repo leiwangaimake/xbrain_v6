@@ -1,4 +1,14 @@
-"""BIZ-P2-16 -- D-mode sequencer tests."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_sequencer.py
+Brief: d_mode tests -- sequencer
+
+Description:
+BIZ-P2-16 -- D-mode sequencer tests.
+"""
+
 
 import pytest
 

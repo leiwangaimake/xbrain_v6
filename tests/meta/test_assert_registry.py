@@ -1,4 +1,12 @@
-"""INF-TS-2 -- assertion registry ↔ spec table bidirectional diff.
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_assert_registry.py
+Brief: meta tests -- assert registry
+
+Description:
+INF-TS-2 -- assertion registry ↔ spec table bidirectional diff.
 
 Re-exposes the SP/S/QC/AS ↔ ASSERT_REGISTRY diff at the tests/meta/
 path INF-TS-2 names. The primitive lives in xbrain/boot/freeze/
@@ -21,6 +29,7 @@ Variants ① and ② live in tests/boot/freeze/test_meta_diff.py which
 exercises xbrain/boot/freeze/meta.py directly. Variant ③ is
 enforced by tests/meta/test_mutant_coverage.py.
 """
+
 
 import pytest
 

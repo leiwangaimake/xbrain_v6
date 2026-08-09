@@ -1,10 +1,19 @@
-"""p4_agent __main__ entry-point tests.
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_main_entry.py
+Brief: p4_agent tests -- main entry
+
+Description:
+p4_agent __main__ entry-point tests.
 
 The systemd unit's ExecStart is `python3 -m xbrain.p4_agent`. Before
 this test file existed, that command failed with 'No module named
 xbrain.p4_agent.__main__' -- the unit was compiled to a target that
 did not exist. These tests catch regressions of that shape.
 """
+
 
 import subprocess
 import sys

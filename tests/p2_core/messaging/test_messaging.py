@@ -1,4 +1,14 @@
-"""BIZ-P2-0 -- p2_core messaging layer tests + spec variants."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_messaging.py
+Brief: messaging tests -- messaging
+
+Description:
+BIZ-P2-0 -- p2_core messaging layer tests + spec variants.
+"""
+
 
 from pathlib import Path
 from typing import List

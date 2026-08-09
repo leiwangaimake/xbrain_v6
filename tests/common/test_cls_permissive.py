@@ -1,4 +1,14 @@
-"""MOT-CM-1 (PRC-69/PRC-70) permissive cls parser tests."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_cls_permissive.py
+Brief: common tests -- cls permissive
+
+Description:
+MOT-CM-1 (PRC-69/PRC-70) permissive cls parser tests.
+"""
+
 
 import pytest
 

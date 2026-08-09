@@ -1,4 +1,12 @@
-"""INF-TS-2 -- mutation coverage: every registered assertion has
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_mutant_coverage.py
+Brief: meta tests -- mutant coverage
+
+Description:
+INF-TS-2 -- mutation coverage: every registered assertion has
 at least one variant test.
 
 For each rule in the four families (SP/S/QC/AS) that is currently
@@ -16,6 +24,7 @@ The intersection with the implemented set is the covered set. A
 rule that is implemented but has NO test with either marker is a
 mutation-coverage hole.
 """
+
 
 import re
 from pathlib import Path

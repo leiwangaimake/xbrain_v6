@@ -1,4 +1,14 @@
-"""CFG-BT-17 -- whitelist yaml loader tests."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_whitelist_yaml.py
+Brief: zenoh tests -- whitelist yaml
+
+Description:
+CFG-BT-17 -- whitelist yaml loader tests.
+"""
+
 
 import subprocess
 import sys

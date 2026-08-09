@@ -1,9 +1,18 @@
-"""p3_task / p5_gateway __main__ entry-point tests.
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_p3_p5_main_entry.py
+Brief: p_processes tests -- p3 p5 main entry
+
+Description:
+p3_task / p5_gateway __main__ entry-point tests.
 
 p5_gateway is the special case: it MUST NOT refuse to start on
 missing config -- it enters minimal-mode observation window instead
 (10 S3.3 W-1, INF-DP-8). All other P-processes exit non-zero.
 """
+
 
 import os
 import subprocess

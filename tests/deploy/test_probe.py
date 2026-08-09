@@ -1,9 +1,18 @@
-"""CFG-BT-1 -- xbrain-probe (Stage 0 + GATE-6) tests + variants.
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_probe.py
+Brief: deploy tests -- probe
+
+Description:
+CFG-BT-1 -- xbrain-probe (Stage 0 + GATE-6) tests + variants.
 
 Every negative assertion is paired with a mutation (a variant that
 must go red) per CLAUDE.md 3.3. Without the mutation, a "return None"
 stub for any check would pass the test as-is.
 """
+
 
 import json
 import os

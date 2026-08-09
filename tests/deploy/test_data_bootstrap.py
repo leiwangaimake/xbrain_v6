@@ -1,4 +1,14 @@
-"""INF-DP-11 -- data/ dir + init_data.sh + logrotate + variants."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_data_bootstrap.py
+Brief: deploy tests -- data bootstrap
+
+Description:
+INF-DP-11 -- data/ dir + init_data.sh + logrotate + variants.
+"""
+
 
 import os
 import sqlite3

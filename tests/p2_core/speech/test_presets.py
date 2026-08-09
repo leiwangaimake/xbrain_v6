@@ -1,4 +1,14 @@
-"""BIZ-P2-30 -- speech_presets loader + BIT announce sequence."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_presets.py
+Brief: speech tests -- presets
+
+Description:
+BIZ-P2-30 -- speech_presets loader + BIT announce sequence.
+"""
+
 
 import pytest
 

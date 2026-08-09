@@ -1,4 +1,12 @@
-"""INF-TS-1 -- every test file MUST carry a hardware marker.
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_marker_coverage.py
+Brief: meta tests -- marker coverage
+
+Description:
+INF-TS-1 -- every test file MUST carry a hardware marker.
 
 The three legal marker forms at module level are:
   pytestmark = pytest.mark.no_device
@@ -15,6 +23,7 @@ until each is migrated. A NEW file that lands without a marker will
 NOT be in _LEGACY_UNMARKED, so this test fires on it. When migrating
 a legacy file: add pytestmark line + remove it from _LEGACY_UNMARKED.
 """
+
 
 import re
 from pathlib import Path

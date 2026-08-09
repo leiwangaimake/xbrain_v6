@@ -1,4 +1,14 @@
-"""CFG-DC-1 / INF-QD-1 -- MAP-1 alignment-diff scanner tests."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_map1_scan.py
+Brief: common tests -- map1 scan
+
+Description:
+CFG-DC-1 / INF-QD-1 -- MAP-1 alignment-diff scanner tests.
+"""
+
 
 import subprocess
 import sys

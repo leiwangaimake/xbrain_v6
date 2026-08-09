@@ -1,4 +1,14 @@
-"""BIZ-P2-26 + P2-29 -- motion_behavior mapper + B-mode forward tests."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_motion_and_forward.py
+Brief: mode tests -- motion and forward
+
+Description:
+BIZ-P2-26 + P2-29 -- motion_behavior mapper + B-mode forward tests.
+"""
+
 
 import pytest
 

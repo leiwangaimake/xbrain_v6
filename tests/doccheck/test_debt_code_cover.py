@@ -1,4 +1,14 @@
-"""INF-DB-1 -- 21册 debt-trace parser + coverage checker + variants."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_debt_code_cover.py
+Brief: doccheck tests -- debt code cover
+
+Description:
+INF-DB-1 -- 21册 debt-trace parser + coverage checker + variants.
+"""
+
 
 import json
 import os

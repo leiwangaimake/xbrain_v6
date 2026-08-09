@@ -1,4 +1,14 @@
-"""GWY-P4-24/25/26/27/28/30/31 batch 7 tests (final P4 batch)."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_batch7.py
+Brief: p4_agent tests -- batch7
+
+Description:
+GWY-P4-24/25/26/27/28/30/31 batch 7 tests (final P4 batch).
+"""
+
 
 import pytest
 

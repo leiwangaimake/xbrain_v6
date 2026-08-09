@@ -1,4 +1,12 @@
-"""p1_motion / p2_core __main__ entry-point tests.
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_p1_p2_main_entry.py
+Brief: p_processes tests -- p1 p2 main entry
+
+Description:
+p1_motion / p2_core __main__ entry-point tests.
 
 Regression guard for the "systemd unit ExecStart points at a module
 that does not exist" failure. Both p1_motion and p2_core have systemd
@@ -6,6 +14,7 @@ units under deploy/systemd/ that ExecStart=`python3 -m xbrain.pN_*`;
 these tests verify the module targets actually exist and behave
 sensibly on the config-not-there path.
 """
+
 
 import os
 import subprocess

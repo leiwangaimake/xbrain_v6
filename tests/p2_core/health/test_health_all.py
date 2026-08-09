@@ -1,4 +1,14 @@
-"""BIZ-P2-18/19/20/21 -- health items + factor + restrict matrix + three-stops."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_health_all.py
+Brief: health tests -- health all
+
+Description:
+BIZ-P2-18/19/20/21 -- health items + factor + restrict matrix + three-stops.
+"""
+
 
 import pytest
 

@@ -1,4 +1,14 @@
-"""BIZ-P2-24 -- p2_core.yaml assertion tests + variants."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_assertions.py
+Brief: config tests -- assertions
+
+Description:
+BIZ-P2-24 -- p2_core.yaml assertion tests + variants.
+"""
+
 
 from pathlib import Path
 

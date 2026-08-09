@@ -1,4 +1,14 @@
-"""BIZ-P2-27 + P2-28 -- chassis light no-merge + night_patrol RE-7."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_chassis_light_and_night.py
+Brief: domains tests -- chassis light and night
+
+Description:
+BIZ-P2-27 + P2-28 -- chassis light no-merge + night_patrol RE-7.
+"""
+
 
 import pytest
 

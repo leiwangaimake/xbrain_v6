@@ -1,4 +1,12 @@
-"""BIZ-CM-5 P-2 + T-4 -- ack-before-cleanup order + gen-drop safety net.
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_arbiter_p2_t4.py
+Brief: common tests -- arbiter p2 t4
+
+Description:
+BIZ-CM-5 P-2 + T-4 -- ack-before-cleanup order + gen-drop safety net.
 
 Complements BIZ-CM-4's ARB-8 test with two explicit rules from the
 抢占协议 spec:
@@ -12,6 +20,7 @@ Complements BIZ-CM-4's ARB-8 test with two explicit rules from the
        Assertion is 'only count, never error': overlap after force is
        normal and expected, drop it, do not raise.
 """
+
 
 import pytest
 

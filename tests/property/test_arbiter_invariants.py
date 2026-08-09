@@ -1,4 +1,12 @@
-"""INF-TS-5 + BIZ-CM-4 -- hypothesis property tests for the 8 ARB invariants.
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_arbiter_invariants.py
+Brief: property tests -- arbiter invariants
+
+Description:
+INF-TS-5 + BIZ-CM-4 -- hypothesis property tests for the 8 ARB invariants.
 
 Two-part contract this file lives up to:
 
@@ -39,6 +47,7 @@ sequence"; hand tests are used where the property is "under this
 SPECIFIC race condition" (ARB-4 lease expiry, ARB-8 stale-gen). Both
 are strong forms; hypothesis is not always the better tool.
 """
+
 
 import pytest
 from hypothesis import HealthCheck, given, settings, strategies as st

@@ -1,4 +1,14 @@
-"""INF-DP-9 / CFG-BT-20 -- deploy/net + check_net.sh + variants."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_net_config.py
+Brief: deploy tests -- net config
+
+Description:
+INF-DP-9 / CFG-BT-20 -- deploy/net + check_net.sh + variants.
+"""
+
 
 import os
 import re

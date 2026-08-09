@@ -1,4 +1,14 @@
-"""GWY-P4-01 -- tts_client wrapper tests + variants."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_tts_client.py
+Brief: ai_client tests -- tts client
+
+Description:
+GWY-P4-01 -- tts_client wrapper tests + variants.
+"""
+
 
 import pytest
 import requests

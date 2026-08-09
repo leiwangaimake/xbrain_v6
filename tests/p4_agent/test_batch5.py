@@ -1,4 +1,14 @@
-"""GWY-P4-15/16/17/18 batch 5 tests."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_batch5.py
+Brief: p4_agent tests -- batch5
+
+Description:
+GWY-P4-15/16/17/18 batch 5 tests.
+"""
+
 
 import pytest
 

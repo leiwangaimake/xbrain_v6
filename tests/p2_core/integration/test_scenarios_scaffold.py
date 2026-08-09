@@ -1,4 +1,12 @@
-"""BIZ-P2-25 -- integration scenario scaffold + placeholder tests.
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_scenarios_scaffold.py
+Brief: integration tests -- scenarios scaffold
+
+Description:
+BIZ-P2-25 -- integration scenario scaffold + placeholder tests.
 
 14 S12.1 lists 8 scenarios that require a FULL P2 runtime with
 arbiters + mode SM + BIT + payload_io + Zenoh session all wired
@@ -14,6 +22,7 @@ The skip reason IS the deliverable at this stage; it turns 'nobody
 knows what still blocks this' into 'this specific line will unlock
 this specific test'.
 """
+
 
 import pytest
 

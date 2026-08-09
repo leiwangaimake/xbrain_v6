@@ -1,4 +1,12 @@
-"""BIZ-CM-5 T-3 -- stuck-source ban and process-restart recovery.
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_arbiter_t3_ban.py
+Brief: common tests -- arbiter t3 ban
+
+Description:
+BIZ-CM-5 T-3 -- stuck-source ban and process-restart recovery.
 
 14 S3.4 T-3: a source that gets forced_preempt-ed forced_preempt_max
 times inside forced_preempt_window_ms is DISABLED; subsequent
@@ -12,6 +20,7 @@ one-sided assertion that only checks the ban would let a stub
 voice source forever. So this file pairs every ban test with a
 recovery test.
 """
+
 
 import pytest
 

@@ -1,4 +1,14 @@
-"""INF-ZN-8 / CFG-BT-2 -- Zenoh router config + unit + check sanity."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_zenoh_router_config.py
+Brief: deploy tests -- zenoh router config
+
+Description:
+INF-ZN-8 / CFG-BT-2 -- Zenoh router config + unit + check sanity.
+"""
+
 
 import os
 import subprocess

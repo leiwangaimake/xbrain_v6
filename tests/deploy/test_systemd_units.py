@@ -1,4 +1,14 @@
-"""INF-DP-7 / CFG-BT-3 -- systemd 15-unit set integrity."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_systemd_units.py
+Brief: deploy tests -- systemd units
+
+Description:
+INF-DP-7 / CFG-BT-3 -- systemd 15-unit set integrity.
+"""
+
 
 import re
 from pathlib import Path

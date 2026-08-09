@@ -1,4 +1,14 @@
-"""INF-CI-1 -- static_rules.py bundle runner tests."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_static_rules_bundle.py
+Brief: common tests -- static rules bundle
+
+Description:
+INF-CI-1 -- static_rules.py bundle runner tests.
+"""
+
 
 import subprocess
 import sys

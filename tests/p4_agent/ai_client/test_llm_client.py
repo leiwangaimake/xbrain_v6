@@ -1,4 +1,14 @@
-"""GWY-P4-01 -- llm_client wrapper tests + variants."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_llm_client.py
+Brief: ai_client tests -- llm client
+
+Description:
+GWY-P4-01 -- llm_client wrapper tests + variants.
+"""
+
 
 import json
 from typing import Iterator, List

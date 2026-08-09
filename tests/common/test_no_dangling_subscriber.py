@@ -1,4 +1,14 @@
-"""CFG-DC-3 part 2 no_dangling_subscriber tests."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_no_dangling_subscriber.py
+Brief: common tests -- no dangling subscriber
+
+Description:
+CFG-DC-3 part 2 no_dangling_subscriber tests.
+"""
+
 
 import subprocess
 import sys

@@ -1,4 +1,14 @@
-"""CFG-BT-7 -- start_all.sh / stop_all.sh / clean_pyc.sh sanity tests."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_start_stop_scripts.py
+Brief: deploy tests -- start stop scripts
+
+Description:
+CFG-BT-7 -- start_all.sh / stop_all.sh / clean_pyc.sh sanity tests.
+"""
+
 
 import os
 import subprocess

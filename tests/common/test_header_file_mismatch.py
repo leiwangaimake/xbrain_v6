@@ -1,4 +1,14 @@
-"""INF-CI-2 variant 2 -- File field mismatch check in header_lint."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_header_file_mismatch.py
+Brief: common tests -- header file mismatch
+
+Description:
+INF-CI-2 variant 2 -- File field mismatch check in header_lint.
+"""
+
 
 import subprocess
 import sys

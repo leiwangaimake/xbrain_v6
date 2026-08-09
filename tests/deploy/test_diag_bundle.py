@@ -1,4 +1,14 @@
-"""CHK-2-63 -- support-bundle collector + 4 variants."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_diag_bundle.py
+Brief: deploy tests -- diag bundle
+
+Description:
+CHK-2-63 -- support-bundle collector + 4 variants.
+"""
+
 
 import json
 import os

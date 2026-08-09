@@ -1,4 +1,14 @@
-"""CFG-BT-21 / INF-DB-5 -- SEC-1..SEC-12 checklist + severity + variants."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_sec_checklist.py
+Brief: deploy tests -- sec checklist
+
+Description:
+CFG-BT-21 / INF-DB-5 -- SEC-1..SEC-12 checklist + severity + variants.
+"""
+
 
 import json
 import os

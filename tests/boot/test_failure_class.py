@@ -1,4 +1,14 @@
-"""CFG-BT-14 startup failure classifier tests."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_failure_class.py
+Brief: boot tests -- failure class
+
+Description:
+CFG-BT-14 startup failure classifier tests.
+"""
+
 
 import pytest
 

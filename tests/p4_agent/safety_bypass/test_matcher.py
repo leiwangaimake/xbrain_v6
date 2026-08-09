@@ -1,4 +1,14 @@
-"""16 §4 safety-bypass matcher tests + non-symmetric-cost variants."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_matcher.py
+Brief: safety_bypass tests -- matcher
+
+Description:
+16 §4 safety-bypass matcher tests + non-symmetric-cost variants.
+"""
+
 
 import pytest
 

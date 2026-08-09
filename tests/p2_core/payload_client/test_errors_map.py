@@ -1,4 +1,14 @@
-"""BIZ-P2-2 -- payload-service error map tests + spec variant."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_errors_map.py
+Brief: payload_client tests -- errors map
+
+Description:
+BIZ-P2-2 -- payload-service error map tests + spec variant.
+"""
+
 
 import pytest
 

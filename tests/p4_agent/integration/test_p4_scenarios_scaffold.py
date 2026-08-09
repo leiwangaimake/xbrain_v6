@@ -1,4 +1,12 @@
-"""GWY-P4-22 -- goldset + 12 must-run scenarios scaffold.
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_p4_scenarios_scaffold.py
+Brief: integration tests -- p4 scenarios scaffold
+
+Description:
+GWY-P4-22 -- goldset + 12 must-run scenarios scaffold.
 
 16 S15.4 lists 12 must-run scenarios. Each requires a full P4
 runtime with all modules wired + real ASR service + real llama-
@@ -6,6 +14,7 @@ server + real payload TTS. This file provides skip placeholders
 naming exact preconditions per scenario -- the skip.reason is the
 work list for landing each.
 """
+
 
 import pytest
 

@@ -1,4 +1,14 @@
-"""CFG-CM-15 (partial) no_chinese_in_log tests."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_no_chinese_in_log.py
+Brief: common tests -- no chinese in log
+
+Description:
+CFG-CM-15 (partial) no_chinese_in_log tests.
+"""
+
 
 import subprocess
 import sys

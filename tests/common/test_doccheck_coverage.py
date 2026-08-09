@@ -1,4 +1,14 @@
-"""INF-CI-4 -- every doccheck script has --self-test or is exempted."""
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_doccheck_coverage.py
+Brief: common tests -- doccheck coverage
+
+Description:
+INF-CI-4 -- every doccheck script has --self-test or is exempted.
+"""
+
 
 import subprocess
 import sys
