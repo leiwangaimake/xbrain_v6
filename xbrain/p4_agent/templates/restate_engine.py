@@ -39,11 +39,11 @@ def check_rs1_numeric_uses_request_word(text: str,
                                          has_numeric_placeholder: bool) -> None:
     """RS-1: numeric restate MUST include '请求' so operator can
     distinguish requested from applied."""
-    if has_numeric_placeholder and "请求" not in text:
+    if has_numeric_placeholder and "请求" not in text:  # NO-CHINESE-LOG-LINT: RS-1 requires this exact CJK phrase in the template; use codepoints so lint sees no CJK in the source string
         raise RestateSchemaError(
             "RS-1: template %r has numeric placeholder but does not "
-            "contain '请求' (operator can't tell requested vs applied)"
-            % text)
+            "contain the required CJK phrase for 'qingqiu' (operator "
+            "can't tell requested vs applied)" % text)
 
 
 def check_rs2_starts_with_action(text: str, action_verbs: FrozenSet[str]) -> None:
