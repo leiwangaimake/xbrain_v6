@@ -32,7 +32,7 @@ import logging
 import re
 from typing import Optional
 
-import requests  # ECODE-OK(ai_client): CLAUDE.md 4.1 authorizes requests HERE
+import requests  # BUSINESS-IMPORT-OK(ai-client): CLAUDE.md 4.1 sanctions requests only inside ai_client/
 
 
 _logger = logging.getLogger("xbrain.ai_client.tts")

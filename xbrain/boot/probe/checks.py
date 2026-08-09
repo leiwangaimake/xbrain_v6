@@ -31,7 +31,7 @@ is a boot probe.
 
 import os
 import shutil
-import sqlite3
+import sqlite3  # BUSINESS-IMPORT-OK(probe-bootstrap): probe runs BEFORE aiosqlite loop is up and only needs schema+integrity_check on cold-open DBs -- persistence layer would be a chicken-and-egg dependency
 from pathlib import Path
 from typing import List, Optional
 
