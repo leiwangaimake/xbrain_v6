@@ -80,14 +80,21 @@ SEVERITY_BY_ACTION: Dict[ArbAction, str] = {
     # BIZ-CM-3 disarm actions (11 S7A.7 / 14 S3.6: suspend/rearm -> info).
     ArbAction.SUSPEND: SEVERITY.parse("info"),
     ArbAction.REARM: SEVERITY.parse("info"),
+    # BIZ-CM-5 T-3 stuck-source ban: fault-level. A source that got three
+    # forced_preempts inside 60 s is unreliable enough that operators need
+    # to know NOW (14 S3.4 T-3: "此后一律 denied E_ARB_DISABLED").
+    ArbAction.SOURCE_DISABLED: SEVERITY.parse("fault"),
 }
 
 # 11 S7A.7 / 14 S3.6: the actions that are NEVER merged. The urgent, rare ones.
 # suspend / rearm join forced_preempt / source_death here (a soft-estop must not
-# be collapsed into a count). source_disabled joins when T-3 adds it. See trap 1.
+# be collapsed into a count). source_disabled also joins per its trap-1 rule
+# (a ban is a single event; merging two bans would mean two banned sources
+# turned into one event that could be read as one ban).
 DEDUP_EXEMPT = frozenset({
     ArbAction.FORCED_PREEMPT, ArbAction.SOURCE_DEATH,
     ArbAction.SUSPEND, ArbAction.REARM,
+    ArbAction.SOURCE_DISABLED,
 })
 
 # 11 S7A.7: the merge window for the dedupable actions, seconds.

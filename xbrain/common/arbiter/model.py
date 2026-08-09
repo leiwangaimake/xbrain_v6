@@ -70,6 +70,7 @@ __all__ = [
     "WaiterSnapshot", "SourceSnapshot",
     "ArbEvent",
     "DEFAULT_LEASE_MS", "IMMEDIATE_GRACE_MS", "DEFAULT_WAIT_ATOMIC_TIMEOUT_MS",
+    "FORCED_PREEMPT_WINDOW_MS", "FORCED_PREEMPT_MAX",
 ]
 
 
@@ -96,6 +97,15 @@ IMMEDIATE_GRACE_MS = 100
 #: than defaulting it in code, but the contract default is recorded here for the
 #: one caller (a test, a bring-up) that has no domain config to hand.
 DEFAULT_WAIT_ATOMIC_TIMEOUT_MS = 3000
+
+#: BIZ-CM-5 T-3: window and count for the stuck-source ban. A source that is
+#: FORCED_PREEMPT-ed FORCED_PREEMPT_MAX times within FORCED_PREEMPT_WINDOW_MS
+#: is disabled (subsequent request() returns denied E_ARB_DISABLED) until its
+#: process restarts (a fresh register() call replaces the entry). The window
+#: is sliding: only the last N timestamps are kept, older ones drop off.
+#: Values are per 14 S3.4 T-3 (also 11 S7A.3 T-3 note).
+FORCED_PREEMPT_WINDOW_MS = 60_000
+FORCED_PREEMPT_MAX = 3
 
 
 class PreemptPolicy(str, Enum):
@@ -153,6 +163,12 @@ class ArbAction(str, Enum):
     # is T-3 (E_ARB_DISABLED), a separate mechanism that adds its own action.
     SUSPEND = "suspend"                # domain disarmed (soft_estop / hes / cmd_timeout)
     REARM = "rearm"                    # domain re-armed on a new command
+    # BIZ-CM-5 T-3 stuck-source ban. SOURCE_DISABLED is emitted when a source
+    # has been forced_preempt-ed forced_preempt_max times in the window; it stays
+    # disabled (denied E_ARB_DISABLED) until its process restarts (a fresh
+    # register() call replaces the entry). Recovery is process restart per
+    # 11 S7A.3 T-3 note; there is no cooldown timer.
+    SOURCE_DISABLED = "source_disabled"
 
 
 @dataclass(frozen=True)

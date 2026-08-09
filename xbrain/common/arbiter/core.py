@@ -77,7 +77,8 @@ from xbrain.common.enums import (                   # closed-set validators
 )
 
 from .model import (                                # the frozen value layer
-    ArbAction, ArbEvent, Grant, GrantResult, Holder, IMMEDIATE_GRACE_MS,
+    ArbAction, ArbEvent, FORCED_PREEMPT_MAX, FORCED_PREEMPT_WINDOW_MS,
+    Grant, GrantResult, Holder, IMMEDIATE_GRACE_MS,
     LastChange, Preempt, PreemptPolicy, Request, SourceSnapshot, SourceSpec,
     WaiterSnapshot,
 )
@@ -138,15 +139,23 @@ class _Waiter:
 
 
 class _SourceEntry:
-    """One registered source: its spec plus whether its process is alive."""
+    """One registered source: its spec, alive flag, and T-3 ban state."""
 
-    __slots__ = ("spec", "alive")                  # spec is frozen; alive flips
+    # BIZ-CM-5 T-3 additions: disabled + forced_history. A registered source
+    # tracks the mono_ms of each FORCED_PREEMPT it took; if the count within
+    # the window exceeds the threshold it is disabled. Recovery is process
+    # restart (a fresh register() replaces the entire entry).
+    __slots__ = ("spec", "alive", "disabled", "forced_history")
 
     def __init__(self, spec):
         self.spec = spec                            # the registered SourceSpec
         # alive starts True and is flipped by reap_dead_source(); a live request
         # flips it back, because a request is proof the process is running.
         self.alive = True
+        # T-3 state. A fresh entry starts enabled with an empty history;
+        # register() replacing the entry is the T-3 recovery path.
+        self.disabled = False
+        self.forced_history: List[int] = []          # mono_ms of forced preempts
 
 
 class Arbiter:
@@ -168,11 +177,21 @@ class Arbiter:
     # ceiling for how long a wait_atomic preemptor waits (11 S7A.3); it has no
     # code default so a caller states it (DEFAULT_WAIT_ATOMIC_TIMEOUT_MS in the
     # model is the contract value for a bring-up caller with no domain config).
-    def __init__(self, domain: str, wait_atomic_timeout_ms: int) -> None:
+    def __init__(self, domain: str, wait_atomic_timeout_ms: int,
+                 forced_preempt_window_ms: int = FORCED_PREEMPT_WINDOW_MS,
+                 forced_preempt_max: int = FORCED_PREEMPT_MAX) -> None:
         # DOMAIN.parse raises ClosedSetViolation on an off-contract domain -- the
         # same boundary discipline every other decode uses, no silent accept.
         self._domain = DOMAIN.parse(domain)             # validated once, at startup
         self._wait_atomic_timeout_ms = wait_atomic_timeout_ms   # the domain ceiling
+        # BIZ-CM-5 T-3 knobs. Contract defaults come from model.FORCED_PREEMPT_*
+        # (60s window, 3-strike). Both are injectable so tests can shrink them
+        # without spinning through 60 s of wall-clock; production reads the
+        # defaults, and CLAUDE.md 3.1 is not violated because these are not
+        # common.safety.* values (they are framework-internal thresholds with
+        # documented 14 S3.4 defaults, same class as IMMEDIATE_GRACE_MS).
+        self._forced_window_ms = forced_preempt_window_ms
+        self._forced_max = forced_preempt_max
         self._registry: Dict[str, _SourceEntry] = {}    # source_id -> entry
         self._holder: Optional[_Holding] = None         # None == idle domain
         self._waiting: List[_Waiter] = []               # queued higher requests
@@ -232,6 +251,11 @@ class Arbiter:
             # Unregistered: denied, no holder change, no audit event (denials are
             # not in the 14 S3.6 audited-action set).
             return self._denied(req, source_id, errors.E_ARB_NO_SOURCE)
+        # BIZ-CM-5 T-3: a stuck source (three forced_preempts in 60 s) stays
+        # disabled until its process restarts. register() replacing the entry
+        # is the T-3 recovery path; nothing here clears .disabled.
+        if entry.disabled:
+            return self._denied(req, source_id, errors.E_ARB_DISABLED)
         entry.alive = True                              # a request proves the process is up
 
         h = self._holder                                # the current holder, or None
@@ -644,6 +668,12 @@ class Arbiter:
         was cleared, so exactly one gen increment and one audit event correspond
         to the change (ARB-5 / G-1). Returns the new holder's Grant, or None when
         the domain went idle.
+
+        BIZ-CM-5 T-3: if this promotion is a FORCED_PREEMPT of an old holder,
+        record the timestamp on that source's history; if the count in the
+        window meets the threshold, disable it and emit SOURCE_DISABLED. The
+        one holder change still gets one audit event; the disable event is
+        a SEPARATE second event on the same tick (it is not a holder change).
         """
         w = self._pop_highest_waiter()                  # the winning waiter, or None
         if w is None:
@@ -659,11 +689,50 @@ class Arbiter:
                                        forced, now_mono_ms)   # mirror the event
         sink.append(self._make_event(action, from_source, to, reason, forced,
                                      detail, now_mono_ms))   # one audit record
+        # BIZ-CM-5 T-3: check ban ONLY on FORCED_PREEMPT with a known from.
+        # LEASE_TIMEOUT and SOURCE_DEATH do not count toward the strike total
+        # (14 S3.4 T-3 verbatim: 'forced_preempt' is the strike, not any
+        # involuntary reclaim).
+        if (action is ArbAction.FORCED_PREEMPT
+                and from_source is not None
+                and from_source in self._registry):
+            self._record_forced_and_maybe_ban(from_source, now_mono_ms, sink)
         if to is None:
             return None                                 # went idle: no Grant to return
         return Grant(self._domain, GrantResult.GRANTED, self._holder.req_id, to,
                      errors.OK, self._gen, self._holder_snapshot(), None, forced,
                      now_mono_ms)                        # the promoted holder's grant
+
+    def _record_forced_and_maybe_ban(self, source_id: str,
+                                     now_mono_ms: int, sink) -> None:
+        """BIZ-CM-5 T-3: append to the source's forced-preempt history,
+        drop entries outside the window, and disable + emit SOURCE_DISABLED
+        if the count meets the strike threshold.
+
+        The window is sliding, not fixed: entries older than window drop off
+        so a source that misbehaved once per day never accumulates strikes.
+        The threshold is >= (not >): three in the window disables on the third,
+        matching '被抢占 forced_preempt_max 次'.
+        """
+        entry = self._registry[source_id]
+        # Slide the window: drop timestamps older than window_ms.
+        cutoff = now_mono_ms - self._forced_window_ms
+        entry.forced_history = [t for t in entry.forced_history if t >= cutoff]
+        entry.forced_history.append(now_mono_ms)
+        if len(entry.forced_history) >= self._forced_max and not entry.disabled:
+            entry.disabled = True
+            # Emit SOURCE_DISABLED. This is NOT a holder change (holder is
+            # already the promoted waiter installed above), so gen is NOT
+            # advanced again -- the event just marks the ban for the audit
+            # trail. from_source = source_id (the banned one); to_source =
+            # None (nothing takes its place).
+            sink.append(self._make_event(
+                ArbAction.SOURCE_DISABLED, source_id, None,
+                "forced_preempt_threshold",
+                False,
+                {"strikes": len(entry.forced_history),
+                 "window_ms": self._forced_window_ms},
+                now_mono_ms))
 
     def _pop_highest_waiter(self) -> Optional[_Waiter]:
         """Remove and return the winning waiter: highest priority, then highest
