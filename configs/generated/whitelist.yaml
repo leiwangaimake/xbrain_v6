@@ -1,0 +1,147 @@
+schema_version: 1
+source_note: generated from 11 S1.1.6 hand tables (perception/p1_motion/chassis_relay) + WL-G1 auto extract from S2.2 (p2_core/p4_agent).
+  CFG-BT-17.
+processes:
+  perception:
+    pub:
+    - event/{severity}/perception
+    - state/targets
+    sub: []
+  p1_motion:
+    pub:
+    - cmd/config/ack
+    - cmd/fence/ack
+    - cmd/motion/relative_move/status
+    - event/{severity}/arbitration
+    - event/{severity}/motion
+    - state/arb/{domain}
+    - state/clock
+    - state/fence
+    - state/motion/path_progress
+    - state/pose
+    - state/teleop
+    sub:
+    - cmd/chassis/light
+    - cmd/chassis/mode
+    - cmd/config
+    - cmd/estop
+    - cmd/fence
+    - cmd/motion/behavior
+    - cmd/motion/factor
+    - cmd/motion/relative_move
+    - cmd/motion/route
+    - cmd/teleop
+    - rt/chassis/fault
+  chassis_relay:
+    pub:
+    - rt/chassis/basic
+    - rt/chassis/ctrl/ack
+    - rt/chassis/device
+    - rt/chassis/fault
+    - rt/chassis/motion
+    - rt/chassis/power
+    - rt/chassis/state
+    - rt/safety/estop/ack
+    - rt/safety/probe/pong
+    sub:
+    - cmd/chassis/ctrl
+    - cmd/estop
+    - probe/estop/ping
+  p2_core:
+    pub:
+    - cmd/arb/{domain}/req
+    - cmd/audio/speak
+    - cmd/audio/speak/ack
+    - cmd/chassis/light
+    - cmd/chassis/mode
+    - cmd/config/ack
+    - cmd/fence/ack
+    - cmd/mode/ack
+    - cmd/motion/behavior
+    - cmd/motion/factor
+    - cmd/motion/intent/ack
+    - cmd/motion/relative_move
+    - cmd/payload/ack
+    - cmd/ptz/ack
+    - cmd/system/ack
+    - health/bit
+    - health/summary
+    - rt/audio/gate
+    - rt/audio/lease
+    - rt/audio/mic
+    - state/arb/{domain}
+    - state/audio
+    - state/mode
+    sub:
+    - audio/broadcast
+    - audio/voice_in
+    - cmd/arb/{domain}/req
+    - cmd/audio/speak
+    - cmd/audio/speak/ack
+    - cmd/estop
+    - cmd/fence
+    - cmd/mode
+    - cmd/motion/intent
+    - cmd/motion/relative_move/status
+    - cmd/payload
+    - cmd/ptz
+    - cmd/system
+    - health/ai
+    - health/bit
+    - rt/audio/play
+    - state/chassis_basic
+    - state/chassis_device
+    - state/chassis_motion
+    - state/clock
+    - state/fence
+    - state/link
+    - state/pose
+    - state/power
+    - state/robot
+    - state/targets
+  p4_agent:
+    pub:
+    - cmd/approval
+    - cmd/arb/{domain}/req
+    - cmd/audio/speak
+    - cmd/chassis/ctrl
+    - cmd/config/ack
+    - cmd/estop
+    - cmd/fence/ack
+    - cmd/geo
+    - cmd/mode
+    - cmd/motion/intent
+    - cmd/payload
+    - cmd/ptz
+    - cmd/system
+    - cmd/task
+    - cmd/teach
+    - health/ai
+    - rt/audio/play
+    - state/arb/{domain}
+    - state/voice_turn
+    sub:
+    - audio/broadcast
+    - audio/voice_in
+    - cmd/audio/speak/ack
+    - cmd/chassis/ctrl/ack
+    - cmd/estop/ack
+    - cmd/fence
+    - cmd/motion/intent/ack
+    - cmd/motion/relative_move/status
+    - cmd/system/ack
+    - cmd/voice_text
+    - rt/audio/gate
+    - rt/audio/lease
+    - rt/audio/mic
+    - state/approval
+    - state/arbitration
+    - state/audio
+    - state/fence
+    - state/geo/manifest
+    - state/link
+    - state/mode
+    - state/pose
+    - state/task
+    - state/teach
+
