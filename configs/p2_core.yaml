@@ -1,15 +1,339 @@
-# ═══════════════════════════════════════════════════════════════════════════
+# ============================================================================
 # /opt/xbrain_v6/configs/p2_core.yaml
-#   层：L6（进程私有）    归属进程：`xbrain_core`（P2）
-#   ★ 权威定义处：`14` §11
+#   layer:            L6 (per-process)
+#   owning process:   xbrain_core (P2)
+#   authoritative source: 14 S11 (this file's key structure and values come
+#                                  from that section verbatim)
 #
-#   ★★★ 本文件当前是【空骨架】—— 一个键都没有，🚫 本轮未凭空填任何配置值。
-#   ★ 落值时逐键去权威节抄，🚫 不得从本文件或任何别处推断默认值：
-#     10 §5.4.2 R-3 逐字「不提供默认值语法……解析不到即 E_CONFIG_INVALID 拒绝启动」。
-#   ★★ 未标定的参数留 null（＝「声明键位但未赋值」），🚫 绝不写 0.0 冒充已赋值。
-#   ★★ L6 只【取值】不【定义】：🚫 不得出现 common 顶层键，共享值一律写 ${common.xxx}
-#     （10 §5.4.2 R-6 / R-1；违反即被 §5.4.4 断言 B 判「疑似复制」而拒绝启动）。
-#   ★★ 含 `bit:` 段（U48：BIT 并入 P2，🚫 不再有独立的 bit_service.yaml）。
-# ═══════════════════════════════════════════════════════════════════════════
+# CLAUDE.md 3.1: safety parameters have NO defaults in code. Values that are
+# structural contract (main_rate_hz, switch_order, priorities) are literal
+# per 14 S11. Values still waiting on measurement (M-27 photocell, T-BIT-1
+# quick-BIT budget, T-PAY-3 device latency) stay null and cause Stage 0c to
+# refuse startup with a keypath.
+#
+# L6 only CONSUMES cross-process values, never DEFINES them: refer via
+# ${common.xxx} placeholders so config-freeze can catch a duplicated
+# top-level `common` key with assertion B "suspected copy".
+#
+# Hot-update: NONE of the keys here are hot-updatable (CFG-31). The only
+# hot-reloadable files in the whole system are suspicion_rules.yaml and
+# speech_presets.yaml -- p2_core.yaml requires a P2 restart.
+# ============================================================================
 
-# TODO(`14` §11)：按该节逐键落值。本文件在落值前会让整栈按设计拒绝启动，这是预期行为。
+
+# --- Loop timing (14 S2.1) --------------------------------------------------
+
+loop:
+  # main thread: 10 Hz arbitration tick + mode SM + health aggregation.
+  main_rate_hz: 10
+  # fast thread: 50 Hz for preempt + estop only (14 S2.2).
+  fast_rate_hz: 50
+  # main-loop per-tick budget: 50 ms (50% of 10 Hz period, 14 S2.3 P-1).
+  main_budget_ms: 50
+
+
+# --- payload_svc: P2's only channel to payload-service (14 S4.0 / 11 S7.5A) -
+
+payload_svc:
+  # loopback per PAY-L5; only P2 is allowed to connect (PAY-L3).
+  base_url: "http://127.0.0.1:18080"
+  # T-PAY-1 hard timeout for POST /mode /deter /lights /tts (14 S2.3 P-3).
+  rest_timeout_ms: 300
+  # T-PAY-2: wait one more 0x25 status frame before assembling ack.detail.applied.
+  lights_apply_confirm_ms: 500
+  # exponential backoff for connect retries. cap 2 s, never infinite retry.
+  connect_retry_backoff_ms: [200, 500, 1000, 2000]
+  # TTS length cap. NOT anti-spam -- it's a HALF-DUPLEX SAFETY floor:
+  # est_ms is linear in char count, and long text has positive error =
+  # premature mic reopen = self-trigger feedback (14 S4.1.1).
+  tts_max_chars: 60
+  # T-PAY-3 device latency. 0 is direction-safe placeholder (only ever CLOSES
+  # mic longer). Real value pending M-PAY-3 measurement.
+  t_device_ms: 0
+
+
+# --- arbiter framework knobs (11 S7A + BIZ-CM-1 / 5) ------------------------
+
+arbiter:
+  # 11 S7A.4 default lease; renew at >= 2 Hz.
+  default_lease_timeout_s: 1.0
+  renew_rate_hz: 2
+  # 11 S7A.3 wait_atomic timeout (per-domain ceiling).
+  wait_atomic_timeout_s: 3.0
+  # 11 S7A.3 immediate preempt grace: 100 ms.
+  immediate_deadline_ms: 100
+  # BIZ-CM-5 T-3 stuck-source ban. Same source forced_preempt-ed
+  # forced_preempt_max times in window -> denied E_ARB_DISABLED until
+  # process restart. Values are 14 S3.4 T-3 defaults.
+  forced_preempt_window_s: 60
+  forced_preempt_max: 3
+
+  domains:
+    # domain 2 (14 S4.1) -- speaker. Priority table verbatim.
+    speaker:
+      sources:
+        alarm_d:      { priority: 900, policy: immediate }
+        broadcast_b:  { priority: 800, policy: immediate }
+        tts_cloud:    { priority: 600, policy: wait_atomic }
+        tts_wecom:    { priority: 500, policy: wait_atomic }
+        tts_local:    { priority: 400, policy: wait_atomic }
+        prompt_tone:  { priority: 200, policy: wait_atomic }
+        bit_announce: { priority: 100, policy: wait_atomic }
+      # 14 S4.1.3 half-duplex windows.
+      # T_head: gate must engage BEFORE first sound frame; discard in-flight
+      # mic frames within this window (11 S8.9.4). Pending T7 (M-10).
+      half_duplex_head_ms: 100
+      # T_tail: silence-tail after speech end (buffer + acoustic tail 14 S4.1.2).
+      half_duplex_tail_ms: 300
+      # min hold after reopen -- prevents rapid short-prompt gate flapping.
+      gate_hold_min_ms: 200
+      # 1 Hz heartbeat on rt/audio/gate (11 PT-2 / P2 TX-1).
+      # If gate is not re-published within 1 s, P4 fail-safes to closed mic.
+      gate_heartbeat_hz: 1
+      # kind=tone fallback (14 S5.7.4 mismatch 2). Closed 2-value set.
+      tone_fallback: none
+
+    # domain 3 (14 S4.2) -- ASR pipeline.
+    asr:
+      sources:
+        asr_cloud: { priority: 600, policy: immediate }
+        asr_wecom: { priority: 500, policy: immediate }
+        asr_local: { priority: 400, policy: immediate }
+      # Local mic: ORIN USB device, audio_io RT-A1 exclusive owner.
+      local_mic:
+        device: "hw:0,0"                # JMTek 0c76:161f USB PnP audio
+        capture_rate_hz: 48000          # hardware-only rate; no direct 16k
+        asr_rate_hz:     16000          # 48/16 = 3 -> integer 3:1 downsample
+        channels: 1                     # S16_LE mono only
+        frame_ms: 20                    # 960 samples @48k -> 320 @16k
+
+    # domain 4 (14 S4.3) -- payload light.
+    payload_light:
+      sources:
+        # mode_driver: resident, no lease (11 S7A.4). null = no lease.
+        mode_driver: { priority: 900, policy: immediate, lease_timeout_s: null }
+        # manual: 30 s lease. reject policy (14 S4.3: manual never fights D-mode).
+        manual:      { priority: 500, policy: reject,    lease_timeout_s: 30.0 }
+      # 0x07 red/blue strobe internal pattern number (1..16). 0 = off, banned.
+      # MUST equal d_mode.redblue_mode (assertion below).
+      deter_redblue_mode: 1
+      # 0x03 searchlight strobe -- GL-2 hard ban, permanently false.
+      # Loader reads true -> E_CONFIG_INVALID.
+      searchlight_strobe_in_deter: false
+      # PAY-03 auto lighting (14 S4.3.2). Values pending M-27 photocell calibration.
+      auto:
+        eval_rate_hz: 1
+        # A/B/C source chain per rule A-1 (14 S4.3.2).
+        src_chain: [photocell, image, almanac]
+        photocell:
+          enabled: false          # pending V-28 (payload photocell present?)
+          max_age_s: 3.0
+        image:
+          on_lux_equiv:  null     # pending M-27 photocell calibration
+          off_lux_equiv: null     # pending M-27 photocell calibration
+          max_age_s: 5.0
+        almanac:
+          # civil twilight (astronomical definition).
+          night_on_sun_elev_deg:  -6.0
+          # 3-degree hysteresis ~= 12 min. Field can narrow.
+          night_off_sun_elev_deg: -3.0
+          # if time is not synced, this level is unavailable.
+          require_ts_sync: true
+        # minimum dwell (structural lower bound: 60 s per 11 M-27).
+        min_dwell_s:    120.0
+        # rule A-4: doubled dwell on turn-off direction.
+        off_dwell_mult: 2.0
+        # rule A-6: all judges failed -> turn ON (fail-safe).
+        fail_safe_on:   true
+        # rule A-7: red/blue strobe ON and it's dark -> illumination ON.
+        strobe_implies_light: true
+
+    # domain 5 (14 S4.4) -- PTZ.
+    ptz:
+      sources:
+        manual_cloud:   { priority: 700, policy: immediate, lease_timeout_s: 30.0 }
+        auto_track:     { priority: 500, policy: immediate }
+        preset_patrol:  { priority: 300, policy: wait_atomic }
+      manual_idle_release_s: 30.0
+
+
+# --- mode state machine (14 S5) ---------------------------------------------
+
+mode:
+  # minimum dwell (not a suppression window).
+  min_dwell_s: 3.0
+  # MD-1: min_dwell applies only to autonomous rule-engine triggers;
+  # cmd / timeout / safety trigger paths are exempt.
+  # Closed set: autonomous | cmd | timeout | safety.
+  min_dwell_applies_to: [autonomous]
+  # B-mode auto-exit ceiling (VOI-26). T-BCAST-MAX; pinned 300 s.
+  # 14 S5.6.1 pinned this as a decided value (NOT a null placeholder).
+  b_cast_max_duration_s: 300
+  # switch ordering. ASSERTION: this list must be EXACTLY 5 entries in this
+  # order. Any reorder or missing entry is E_CONFIG_INVALID.
+  switch_order: [device_mode, payload_light, ptz, motion, audio]
+  # step-4 "wait for holder" timeout. Must align with arbiter wait_atomic.
+  switch_timeout_s: 3.0
+  # per-tick switch budget (in-process, excludes cloud T_cloud).
+  # Overrun emits event/warn/system{type:"switch_slow"}.
+  switch_budget_ms: 100
+  # self-held domain release_reason (14 CR-1). Pending 11 merging CR-1:
+  # implementation emits mode_exit + detail.note="self_held_handover".
+  self_held_release_reason: mode_switch
+  # system-layer -> device-layer mode map (14 S5.7.1).
+  device_mode_map:
+    idle:      func1        # MM-1: hang func1 not idle (func1 is idle's strict superset)
+    dialog:    func1        # A/C/E dialog all func1
+    broadcast: func2
+    alarm:     deter
+  # ML-2: 409 = re-entering current mode = NOT an error.
+  device_mode_409_is_ok: true
+  # ML-4d: D->B red/blue dark-window must be observable.
+  strobe_gap_event: true
+
+
+# --- suspicion judgment engine (14 S6) --------------------------------------
+
+suspicion:
+  # frames of consecutive absence to confirm target lost.
+  lost_confirm_frames: 15
+  # track TTL after last hit (seconds).
+  track_ttl_s: 30.0
+  # dedup window for identical events (seconds).
+  dedup_window_s: 300
+  # rules file path -- the ONLY hot-updatable file P2 reads.
+  rules_file: /opt/xbrain_v6/configs/suspicion_rules.yaml
+  # PER-40 / U-18 night patrol. false disables all rules that reference it.
+  night_patrol:
+    enabled: true           # pending party-A confirmation
+    window: { start: "22:00", end: "05:00" }
+    speed_limit_enabled: false   # PER-43; value pending U-18
+  # RE-3a: rules with time_window MUST have ts_sync=true or they do not match.
+  # Failure direction: no false positive.
+  require_ts_sync_for_time_window: true
+
+
+# --- D-mode (14 S7 / DT-*) --------------------------------------------------
+
+d_mode:
+  speech_sequence: [warn_01, warn_02]
+  # v0.7: real-device tuning result 1.0 s (was 8.0, doesn't match device).
+  speech_interval_s: 1.0
+  # after this many rounds, keep siren + strobe but stop speech (DT-5).
+  speech_max_repeats: 10
+  # device only has male / female; male -> [31] voice = 0.
+  voice: male
+  # 0x07 red/blue strobe pattern (1..16). MUST equal
+  # payload_light.deter_redblue_mode (loader asserts equality;
+  # unequal -> E_CONFIG_INVALID).
+  redblue_mode: 1
+  # real-device tuning: 0.45 (peak 0.72 -> 0.36 by user step 3).
+  # Only adjusts siren WAV; does NOT touch device volume [14] (that
+  # would drop TTS too).
+  siren_level: 0.45
+  # real device: male voice x 3, 1 s interval per round.
+  tts_reps: 3
+  # a full loop ~ 6.0 + 0.3 + 3 x 4.0 + 2 x 1.0. Used only for DT-5
+  # max_repeats timing, NEVER sent to device.
+  loop_s: 20.3
+  # DT-7 one-key flag: payload-service supports texts[] -> set true.
+  # false (default): send four implemented fields only, use device-side single lines.
+  deter_texts_supported: false
+
+
+# --- mode_motion: NAV-50 D/B motion behavior (14 S5.6.3, CFG-40) ------------
+# This is the ONLY mapping from mode -> BehaviorCommand.
+# p1_motion.yaml MUST NOT redefine keep_dist_m / max_speed_mps.
+
+mode_motion:
+  d_alarm:
+    # ASSERTION: behavior in closed set
+    #   {face_target_stop, face_target_follow, hold}
+    # Out-of-set -> E_CONFIG_INVALID. NOT downgraded to default.
+    behavior: face_target_stop
+    params:
+      keep_dist_m:   3.0     # only used by face_target_follow
+      max_speed_mps: 1.0     # only used by face_target_follow; still under speed gate
+      stop_at_fence: true    # NAV-50c: stop at fence boundary
+  b_cast:
+    behavior: face_target_stop
+    params:
+      keep_dist_m:   3.0
+      max_speed_mps: 1.0
+      stop_at_fence: true
+  # on target lost: hold | resume_task.
+  on_target_lost: hold
+
+
+# --- PTZ (14 S11 ptz block, after boost was removed) ------------------------
+
+ptz:
+  h_target_m: 1.6
+  # from calibration (CAL-13, per-robot); refers via ${common.*}.
+  h_camera_m: ${common.calib.frames.ptz_base.h_camera_m}
+  # empirical value when target elevation out of range.
+  tilt_default_deg: -15.0
+  preset_on_exit: patrol_view
+  # BR-4 idempotent reset on start. MUST NOT be disabled -- last-crash
+  # manual-focus state would otherwise persist.
+  reset_on_start:  true
+  # C28.4 focus mode. 2 = auto-focus LAPI (NOT ONVIF, which does not
+  # map back to LAPI).
+  focus_mode:      2
+  # C28.4 shield: 1 = suppress refocus while PTZ moving (default 0 causes
+  # focus pumping on any pan/tilt).
+  shield_move_ptz: 1
+
+
+# --- health (14 S11 health block) -------------------------------------------
+
+health:
+  publish_rate_hz: 1
+  recover_hold_s: 5.0
+  factors:
+    fatal_degraded: 0.3
+    degraded_fail: 0.5
+    degraded_degraded: 0.7
+    unknown: 0.5
+  # ASSERTION: keys(profile_admission) MUST equal keys(common.motion.profiles).
+  # This is 10 S5.4.4 assertion C (cross-file). Adding a third or removing one
+  # here without matching common.yaml -> E_CONFIG_INVALID.
+  # cruise / transit are U33-deleted dead configs; loader rejects them.
+  profile_admission:
+    obstacle_avoid: { require: [cam_rgbd] }
+    patrol:         { require: [cam_rgbd] }
+
+
+# --- BIT (U48: BIT is inside P2, no separate bit_service.yaml) --------------
+
+bit:
+  quick:
+    # T-BIT-1 target, pending measurement (11 S5.1B).
+    timeout_s: 20.0
+    # CFG-42: items listed here get their fail NON-blocking. Renamed from
+    # `required_items` (that name was inverted vs semantics).
+    # BIT-G1: any item with level=fatal (per 11 S5.1A) listed here is
+    # E_CONFIG_INVALID.
+    non_blocking_items: []
+    # explicit skips; always in BitReport.skipped[]. Same fatal-guard.
+    skip_items: []
+  deep:
+    timeout_s: 180.0
+    allow_payload_actuate: false   # bit deep does not fire siren/lights (annoying)
+    allow_ptz_home: true           # BIT-32 / CAL-30
+  announce:
+    # BIT-03 policy. Closed 4-value set: off | fail_only | pass_fail | full.
+    policy: fail_only
+    # warn-level items announced? default no (L2-blind would spam).
+    include_warn: false
+    max_items: 5
+    # deep policy defaults to full (human-triggered).
+    deep_policy: full
+    # BA-1: quick BIT frozen as preset. deep can stream (BA-2).
+    kind: preset
+    # 11 S8.8.1 upper bound on preset_seq length.
+    preset_seq_max: 12
+    gap_ms: 250
+    volume: 80
+    # 11 S8.8.1 mandatory hard ceiling on total announce duration.
+    max_duration_ms: 20000
