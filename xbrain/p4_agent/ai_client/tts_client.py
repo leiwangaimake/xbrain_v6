@@ -8,23 +8,22 @@ Brief: GWY-P4-01 -- P4's ONLY authorized TTS speak call (via payload-service)
 Description:
 Emits one TTS utterance via payload-service's REST /tts endpoint.
 
-★ Where the TTS actually runs. There is NO on-Orin TTS engine.
+Where TTS actually runs. There is NO on-Orin TTS engine.
 payload-service forwards the text to the GZH-2 payload device, which
 synthesizes and plays it over its integrated speaker (VOI-* series in
-00). U52 pins this: "机上零进程零显存"; adding an xbrain-ai-tts.service
-unit is banned (SEC-06 variant catches it).
+00). U52 pins this: no on-machine TTS process, no VRAM used; adding
+an xbrain-ai-tts.service unit is banned (SEC-06 variant catches it).
 
-★ Half-duplex is client-side. GZH-2 emits NO "playback complete"
-event. payload-service ESTIMATES speech duration from the text length
-and returns it as `est_ms`. The intent router uses est_ms to keep the
-mic gate closed for that duration; if the mic reopened during playback,
-the ASR would pick up the robot's own voice and produce a feedback
-loop (AEC is structurally impossible per 00 VOI-*).
+Half-duplex is client-side. GZH-2 emits NO playback-complete event.
+payload-service ESTIMATES speech duration from text length and
+returns it as `est_ms`. The intent router uses est_ms to keep the
+mic gate closed for that duration; if the mic reopened during
+playback, the ASR would pick up the robot's own voice and produce a
+feedback loop (AEC is structurally impossible per 00 VOI-*).
 
-★ 4.0 s/sentence default is per U62; the config-loaded value overrides.
-Sentence count = number of Chinese periods/question marks/exclamation
-marks in the text. If the text has zero terminal punctuation, count=1
-(the whole reply is one utterance).
+4.0 s per sentence is the U62 default; the config-loaded value
+overrides. Sentence count = number of CJK / ASCII terminators in
+the text. Zero terminators -> count = 1 (whole reply is one utterance).
 """
 
 from __future__ import annotations
@@ -40,12 +39,15 @@ _logger = logging.getLogger("xbrain.ai_client.tts")
 
 _TTS_PATH = "/tts"
 
-# Chinese sentence terminators (also Latin ? ! .). Used for the
-# "est_ms per sentence" default when payload-service does not return
-# est_ms itself. Doubled question / period patterns are common in
-# generated text and would double-count without the trailing space
-# check, but for a fallback estimate an overcount is safer than under.
-_SENTENCE_END = re.compile(r"[。？！?!]|(?:\.(?=\s|$))")
+# CJK + ASCII sentence terminators. Runtime chars covered:
+#   U+3002 IDEOGRAPHIC FULL STOP        (CJK period)
+#   U+FF1F FULLWIDTH QUESTION MARK
+#   U+FF01 FULLWIDTH EXCLAMATION MARK
+#   ASCII ? ! .  (period requires trailing whitespace / EOL to avoid
+#                 counting an in-word abbreviation like "u.s." as three)
+# CJK code points expressed as \u escapes so this file stays ASCII-
+# clean per CLAUDE.md 2.2.
+_SENTENCE_END = re.compile("[\u3002\uff1f\uff01?!]|(?:\\.(?=\\s|$))")
 
 
 class TtsClientError(RuntimeError):
@@ -84,8 +86,9 @@ def speak(
         timeout_s: HTTP timeout for the POST itself, NOT the estimated
             playback duration (which the caller waits out separately)
         est_ms_per_sentence: fallback estimate if payload-service's
-            response does not include an `est_ms` field; 4000 = 4 s/句
-            per U62 default. The config-loaded value should override.
+            response does not include an `est_ms` field; 4000 =
+            4 s / sentence, U62 default. The config-loaded value
+            should override.
 
     Returns:
         Estimated playback duration in ms. Router uses this to time

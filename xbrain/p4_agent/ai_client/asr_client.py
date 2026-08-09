@@ -34,7 +34,7 @@ all map to one AsrClientError. The intent router's response to all
 three is identical -- log, drop this turn, keep listening -- so
 splitting the types would invite handling that does not differ.
 
-★ paraformer specific: the recognizer returns `conf` as null; any
+* paraformer specific: the recognizer returns `conf` as null; any
 downstream comparison like `if conf > 0.8:` must guard the null case
 (GWY-P4-01 judgeria #6). This wrapper does not filter on conf; that
 policy lives in intent_router.

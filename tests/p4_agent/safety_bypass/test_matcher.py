@@ -51,7 +51,7 @@ def test_non_stop_text_returns_none():
     "急停急停",           # V5 R68/69 phrase-fold case
 ])
 def test_estop_variants_match(phrase):
-    """★ 16 §4.1: 漏 > 误. These are V5 field-test panic phrases;
+    """* 16 §4.1: 漏 > 误. These are V5 field-test panic phrases;
     the anchored regex missed them all in V5 R8/R79. V6 CONTAINS
     matching MUST catch every one -- regression here would silently
     revive the missed-stop bug.
@@ -84,7 +84,7 @@ def test_prone_stand_variants_match(phrase, expected):
 # --- Priority: estop wins over prone/stand on ambiguous text ----
 
 def test_estop_wins_over_stand_when_both_present():
-    """★ 16 §4.1: safety-first. On the (unlikely) mixed phrase where
+    """* 16 §4.1: safety-first. On the (unlikely) mixed phrase where
     an estop token AND a stand token both occur, estop must win --
     the failure direction is that a missed stop is unrecoverable."""
     hit = matcher.match_bypass("急停站立")
@@ -113,9 +113,9 @@ def test_match_normalized_none_on_no_match():
     assert matcher.match_normalized("你好") is None
 
 
-# --- ★ 16 §4 变异体: 若 L1 词典把「急停」替换成「紧张」------------
-# 只有 raw match 能救回来 — normalized 也失败了。
-# 这条测试证明 "双次匹配" 的价值: raw 单独存在就是护栏。
+# --- * 16 §4 变异体: 若 L1 词典把"急停"替换成"紧张"------------
+# 只有 raw match 能救回来 -- normalized 也失败了.
+# 这条测试证明 "双次匹配" 的价值: raw 单独存在就是护栏.
 
 def test_double_match_catches_post_processing_corruption():
     """VARIANT: simulate the failure 16 §4 约束表 P.1 warns about --
@@ -144,7 +144,7 @@ def test_double_match_catches_post_processing_corruption():
     assert winner.action == matcher.BYPASS_ESTOP
 
 
-# --- ★ Purity: same input -> same output --------------------------
+# --- * Purity: same input -> same output --------------------------
 
 def test_matcher_is_pure_function():
     """Called twice, must return equal results. Any state that

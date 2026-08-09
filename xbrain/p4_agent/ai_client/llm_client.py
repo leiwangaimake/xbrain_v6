@@ -30,7 +30,7 @@ audible hole. One utterance -> one estimate.
 Failure semantics match asr_client: one exception type covers all
 three failure classes because the router treats them identically.
 
-★ SSE encoding pin: llama-server sends `text/event-stream` without a
+* SSE encoding pin: llama-server sends `text/event-stream` without a
 charset; requests falls back to latin-1 which mojibakes every Chinese
 reply. `response.encoding = 'utf-8'` is not optional -- removing it
 silently reintroduces the bug and there is no error path to hit.
@@ -171,7 +171,7 @@ def complete(
                 # after context close).
                 raise LlmClientError(
                     "llm returned %d: %s" % (r.status_code, r.text[:200]))
-            # ★ SSE UTF-8 pin -- see module docstring. Without this
+            # * SSE UTF-8 pin -- see module docstring. Without this
             # every Chinese reply reaches the device as mojibake.
             r.encoding = "utf-8"
             for raw in r.iter_lines(decode_unicode=True):

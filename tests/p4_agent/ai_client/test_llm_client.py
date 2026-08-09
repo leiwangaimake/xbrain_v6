@@ -126,7 +126,7 @@ def test_complete_caps_at_reply_max_chars(monkeypatch):
 
 
 def test_complete_utf8_encoding_pin(monkeypatch):
-    """★ SSE UTF-8 pin -- llama-server sends text/event-stream without
+    """* SSE UTF-8 pin -- llama-server sends text/event-stream without
     a charset; requests would default to latin-1 and mojibake Chinese.
     The wrapper sets encoding='utf-8' explicitly. This test verifies."""
     lines = _build_sse_lines(["中文回复"])

@@ -58,7 +58,7 @@ def test_parser_skips_header_tables():
 
 def test_fail_silent_in_positive_context_negation_aware():
     """The parser must NOT false-fire on Chinese negations like
-    「🚫 不得为「先跑起来」而填手感值」."""
+    "!! 不得为"先跑起来"而填手感值"."""
     # Negated: should NOT fire.
     negated = '🚫 **不得**为「先跑起来」而填手感值'
     assert _fail_silent_in_positive_context(negated, "先跑起来") is False

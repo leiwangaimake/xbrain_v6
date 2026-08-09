@@ -56,7 +56,7 @@ def test_p5_gateway_module_help_exits_zero():
 
 
 def test_p5_gateway_missing_config_enters_minimal_mode(tmp_path):
-    """★ CRITICAL: p5_gateway MUST NOT exit non-zero when config-freeze
+    """* CRITICAL: p5_gateway MUST NOT exit non-zero when config-freeze
     failed. It enters minimal mode. This is the observation window
     W-1 (10 S3.3). If future code regresses and adds `sys.exit(4)` on
     missing config, this test catches it."""

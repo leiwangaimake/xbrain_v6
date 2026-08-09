@@ -11,7 +11,7 @@ xbrain-p3-task.service runnable. Full runtime (task queue + docking
 orchestration + fence writer + 15 S12 TC-1..TC-48 test scenarios)
 lands with BIZ-P3-24 and dependencies.
 
-★ What this does NOT do yet:
+* What this does NOT do yet:
   * open aiosqlite connections to task.db / fence.db / geo.db
   * subscribe cmd/task/create, cmd/task/start, cmd/task/cancel
   * publish state/task, state/dock, event/task/*

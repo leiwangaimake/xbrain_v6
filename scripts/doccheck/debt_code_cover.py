@@ -139,7 +139,7 @@ def _fail_silent_in_positive_context(text: str, phrase: str) -> bool:
     ~20 chars on the same clause) by a Chinese negation marker.
 
     Rows in 21 often say things like:
-       🚫 不得为「先跑起来」而填手感值
+       !! 不得为"先跑起来"而填手感值
     which is a WARNING against the pattern, not an instance of it.
     Naive substring match false-fires on those."""
     idx = 0

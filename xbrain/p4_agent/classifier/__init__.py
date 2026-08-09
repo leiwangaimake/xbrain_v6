@@ -11,7 +11,7 @@ Two-level routing per 16 §5:
                             (bypass | fastpath | fastpath_then_llm | llm)
   Level 2 (§6/§7)         -- slot filling via GBNF + LLM
 
-★ IMPORTANT SCOPE: this package does NOT include the safety-bypass
+* IMPORTANT SCOPE: this package does NOT include the safety-bypass
 matcher (急停/趴下/站立). That matcher lives at xbrain/p4_agent/
 safety_bypass/ and runs BEFORE this classifier (16 §4). The reason
 they are separate:
@@ -34,7 +34,7 @@ Public API (added incrementally as GWY-P4-* items land):
   * (future) directional.py -- §5.2.1 overheard filter
   * (future) session_state.py -- §5.2 rule ③ (recording/awaiting state)
 
-★ This package currently holds ONLY routes.py + closed-set enforcement.
+* This package currently holds ONLY routes.py + closed-set enforcement.
 The 5-layer chain body is GWY-P4-06 / GWY-P4-08 territory and depends
 on the intents.yaml registry being loaded (GWY-P4-07). Landing the
 chain before those would be building on unresolved values.

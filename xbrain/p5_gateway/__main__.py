@@ -9,7 +9,7 @@ Description:
 Same skeleton pattern as p1_motion / p2_core / p3_task / p4_agent.
 Makes xbrain-p5-gateway.service runnable.
 
-★ ONE DIFFERENCE from the other P-processes: p5_gateway supports a
+* ONE DIFFERENCE from the other P-processes: p5_gateway supports a
 MINIMAL MODE (observation window W-1, INF-DP-8). When
 xbrain-config-freeze.service failed to produce a snapshot, p5_gateway
 must still start (with default L0 constants only) so HMI can display
@@ -20,7 +20,7 @@ MVP status: the config-optional path lands here (no snapshot ->
 minimal mode heartbeat), but the FULL minimal mode (HMI + boot_fail
 replay + three-state BIT annotation) is INF-DP-8 proper.
 
-★ What this does NOT do yet:
+* What this does NOT do yet:
   * FastAPI HMI backend on 127.0.0.1:8080 (not 0.0.0.0, per SEC-06)
   * event pipeline: sub cmd/event/*, dedup, write to record.db
   * state/link publisher (P5 is the UNIQUE publisher of state/link)
@@ -105,7 +105,7 @@ def main(argv: Optional[list] = None) -> int:
             _cfg = load_resolved("p5_gateway")
             _logger.info("p5_gateway config OK; entering full mode")
         except FileNotFoundError:
-            # ★ p5_gateway SPECIFIC: config-freeze failed = enter
+            # * p5_gateway SPECIFIC: config-freeze failed = enter
             # minimal mode, NOT exit. This is the whole point of the
             # observation window W-1 per 10 S3.3 -- HMI must still
             # come up so operator can see the failure. Other P-procs

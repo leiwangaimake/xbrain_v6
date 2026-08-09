@@ -30,7 +30,7 @@ Recording-state suppression (16 §4.2 U45):
     The caller (audio_rx) owns the state check and the suppression
     log + TTS "录制中,请用手柄急停" advisory.
 
-★ Why NOT reuse V5's regex directly here: V5's ESTOP_PATTERN uses a
+* Why NOT reuse V5's regex directly here: V5's ESTOP_PATTERN uses a
 big anchored regex; V6 spec explicitly ships the CONTAINS approach
 (V5 also has ESTOP_CONTAINS which is the actually-used path). The
 regex path is a legacy fallback in V5; V6 takes the more-permissive
@@ -71,14 +71,14 @@ class BypassHit:
 
 
 # --- Token tables (16 §4 + V5 field-test harvest) ----------------
-# ★ ORDERED tuples sorted LONGEST-FIRST -- this is the "长优先" rule
+# * ORDERED tuples sorted LONGEST-FIRST -- this is the "长优先" rule
 # from 16 §5.2 (long phrase beats short substring). For estop
 # specifically, "立刻停" must win over "停下" when text is "现在立
 # 刻停下来", so the fired token identifies the operator intent
 # accurately for logs/audit. Substring match then finds the first
 # (longest) hit and returns.
 
-# ★ estop tokens: comprehensive because 漏 > 误 (16 §4.1).
+# * estop tokens: comprehensive because 漏 > 误 (16 §4.1).
 # Sourced from 16 §4 verbatim yaml sample + V5's ESTOP_CONTAINS set
 # + V5's ESTOP_PATTERN alternation.
 _ESTOP_TOKENS_UNSORTED = (
@@ -90,12 +90,12 @@ _ESTOP_TOKENS_UNSORTED = (
 )
 _ESTOP_TOKENS = tuple(sorted(_ESTOP_TOKENS_UNSORTED, key=len, reverse=True))
 
-# ★ prone tokens (趴下 = go to lying-down / down posture).
+# * prone tokens (趴下 = go to lying-down / down posture).
 # V5 field-test discovered ASR appends colloquial particles (趴下去
 # / 趴下来); the substring match tolerates them naturally.
 _PRONE_TOKENS = tuple(sorted(("趴下", "卧倒"), key=len, reverse=True))
 
-# ★ stand tokens (站立 / 站起来 / 起立).
+# * stand tokens (站立 / 站起来 / 起立).
 _STAND_TOKENS = tuple(sorted(
     ("站立", "站起来", "起立", "起来"), key=len, reverse=True))
 

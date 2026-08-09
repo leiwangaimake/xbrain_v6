@@ -19,7 +19,7 @@ Four values, no more:
   * fastpath_then_llm     -- fastpath dispatch AND parallel LLM reply
   * llm                   -- open dialog / mission grammar via LLM
 
-★ CLAUDE.md 3.5 closed-set enforcement: adding a fifth route requires
+* CLAUDE.md 3.5 closed-set enforcement: adding a fifth route requires
 a 16 doc change AND a change here. `validate_route` raises on any
 value not in the set; the classifier's return type is a RouteDecision
 whose __post_init__ calls validate_route.

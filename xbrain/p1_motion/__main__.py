@@ -9,7 +9,7 @@ Description:
 Same skeleton pattern as xbrain/p2_core and xbrain/p4_agent. Makes
 systemd unit xbrain-p1-motion.service runnable.
 
-★ What this does NOT do yet:
+* What this does NOT do yet:
   * open two Zenoh sessions (RT plane + GEN plane -- p1 is one of the
     three cross-plane processes per 11 S1.1.6)
   * subscribe cmd/motion/factor (from p2_core), perception/targets
@@ -60,7 +60,7 @@ def main_loop(
 ) -> int:
     """Heartbeat loop; returns 0 on clean exit.
 
-    ★ CRITICAL: this loop MUST NOT publish any cmd_vel while the real
+    * CRITICAL: this loop MUST NOT publish any cmd_vel while the real
     runtime is stubbed. A stub that published even 'zero cmd_vel'
     would be misleading -- it looks like p1 is working, but there is
     no arbitrated factor coming in, no perception overlay, no speed

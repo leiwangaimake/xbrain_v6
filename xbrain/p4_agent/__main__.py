@@ -12,7 +12,7 @@ unit's ExecStart pointed at `python3 -m xbrain.p4_agent` which threw
 "No module named xbrain.p4_agent.__main__" -- the systemd unit was
 compiled to a target that did not exist.
 
-★ What this file does today (MVP scope):
+* What this file does today (MVP scope):
   * loads /run/xbrain/resolved/p4_agent.yaml via the existing config
     loader (xbrain/p4_agent/config/loader.py), refusing to start on
     unresolved values per CLAUDE.md 3.1
@@ -21,7 +21,7 @@ compiled to a target that did not exist.
   * enters a heartbeat loop that logs "p4_agent ready" every 30 s
     until SIGTERM
 
-★ What this file does NOT do yet (post-MVP):
+* What this file does NOT do yet (post-MVP):
   * open a Zenoh session (needs xbrain/common/zenoh session_factory
     wired to p4_agent's cross-plane whitelist -- done, but that's a
     separate wire-up)
@@ -37,7 +37,7 @@ xbrain/p4_agent/runtime/ is a mechanical move (rename + import
 path change) that must wait until this __main__ is verified in
 isolation.
 
-★ Why heartbeat instead of a stub crash. A stub that exits 0 makes
+* Why heartbeat instead of a stub crash. A stub that exits 0 makes
 systemd restart it repeatedly (with StartLimitBurst=5 the unit ends
 up in `failed` after five restarts). A stub that exits non-zero
 never leaves `activating`. A heartbeat that RUNS but doesn't do

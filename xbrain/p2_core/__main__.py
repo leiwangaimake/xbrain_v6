@@ -12,7 +12,7 @@ Same skeleton pattern as xbrain/p4_agent/__main__.py:
   * enter a heartbeat loop that logs "p2_core ready" every 30 s
   * install SIGTERM/SIGINT handlers so systemd stop is graceful
 
-★ What this does NOT do yet (documented for the reader who wonders):
+* What this does NOT do yet (documented for the reader who wonders):
   * instantiate the seven Arbiter domains (motion / speaker / asr /
     payload_light / ptz / gpu / dock) -- their construction needs the
     per-domain source specs from p2_core.yaml which are currently
