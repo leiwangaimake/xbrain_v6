@@ -140,6 +140,19 @@ def check(path):
         if desc and desc.group(1).strip() == brief_text:
             problems.append("Description merely repeats Brief (CLAUDE.md 2.5)")
 
+    # File-field must match the actual filename basename. This catches
+    # copy-paste headers where a file was duplicated and the header
+    # not updated. INF-CI-2 variant ② verbatim: 'File 字段写成别的
+    # 文件名 -> 红'.
+    file_match = re.search(r"^\s*[#*]?\s*File\s*:\s*(\S+)", body_text, re.M)
+    if file_match:
+        declared = file_match.group(1).strip().rstrip("*").rstrip(":")
+        actual = os.path.basename(path)
+        if declared != actual:
+            problems.append(
+                "File field %r does not match actual filename %r "
+                "(copy-paste header)" % (declared, actual))
+
     return problems, True
 
 
