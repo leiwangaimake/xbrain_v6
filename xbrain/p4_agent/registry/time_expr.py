@@ -29,7 +29,7 @@ from typing import Optional
 class TimeExpr:
     """Parsed time expression. Exactly one of delay_s / at_local
     is set; day_offset is optional (only meaningful with at_local)."""
-    delay_s: Optional[int] = None
+    delay_seconds: Optional[int] = None
     at_local: Optional[str] = None      # 'HH:MM'
     day_offset: int = 0                 # 0=today, 1=tomorrow, -1=yesterday
 
@@ -63,7 +63,7 @@ def parse_delay(text: str) -> Optional[TimeExpr]:
     n_txt = _cn_to_arabic(m.group("n").replace("十", ""))
     if not n_txt.isdigit():
         return None
-    return TimeExpr(delay_s=int(n_txt))
+    return TimeExpr(delay_seconds=int(n_txt))
 
 
 _AT_LOCAL_RE = re.compile(

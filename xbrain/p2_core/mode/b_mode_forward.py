@@ -21,7 +21,7 @@ WS /play. Rules:
   * broadcast_after_mode_exit: if mode exited B while a chunk was
     in flight, drop it -- audio must not play post-exit.
 
-★ Actual WS forwarding is BIZ-P2-2 payload_client's responsibility;
+* Actual WS forwarding is BIZ-P2-2 payload_client's responsibility;
 this module owns the gen-check + mode-exit guard.
 """
 

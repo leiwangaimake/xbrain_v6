@@ -45,7 +45,7 @@ class InvocationGuard:
     bypass_checked: bool = False
     asr_post_run: bool = False
     llm_called: bool = False
-    llm_timeout_ms: Optional[int] = None
+    llm_timeout_millis: Optional[int] = None
 
     def note_bypass_check(self) -> None:
         self.bypass_checked = True
@@ -63,4 +63,4 @@ class InvocationGuard:
                 "LLM invocation without a bounded timeout -- 16 P-2 "
                 "requires timeout_ms > 0; got %r" % timeout_ms)
         self.llm_called = True
-        self.llm_timeout_ms = timeout_ms
+        self.llm_timeout_millis = timeout_ms

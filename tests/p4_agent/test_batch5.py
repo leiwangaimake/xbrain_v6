@@ -108,28 +108,28 @@ def test_downgrade_after_upgrade_raises_cl2():
 # --- P4-18 session state machines ---
 
 def test_l2_confirm_happy_path():
-    slot = L2Slot(timeout_ms=1000)
+    slot = L2Slot(timeout_millis=1000)
     slot.request(now_mono_ms=0)
     slot.confirm()
     assert slot.state == L2ConfirmState.CONFIRMED
 
 
 def test_l2_confirm_times_out():
-    slot = L2Slot(timeout_ms=1000)
+    slot = L2Slot(timeout_millis=1000)
     slot.request(now_mono_ms=0)
     slot.tick(now_mono_ms=2000)
     assert slot.state == L2ConfirmState.TIMED_OUT
 
 
 def test_l3_approve_happy_path():
-    slot = L3Slot(timeout_ms=60_000)
+    slot = L3Slot(timeout_millis=60_000)
     slot.request(now_mono_ms=0)
     slot.approve()
     assert slot.state == L3ApprovalState.APPROVED
 
 
 def test_l3_stale_after_timeout():
-    slot = L3Slot(timeout_ms=1000)
+    slot = L3Slot(timeout_millis=1000)
     slot.request(now_mono_ms=0)
     slot.tick(now_mono_ms=2000)
     assert slot.state == L3ApprovalState.STALE

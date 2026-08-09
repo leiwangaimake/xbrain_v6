@@ -19,10 +19,10 @@ The factor table comes from p2_core.yaml.health.factors:
   degraded_degraded: 0.7 (a degraded item in DEGRADED state)
   unknown:        0.5   (any item in UNKNOWN state)
 
-★ Publish rate is 1 Hz stable (14 S2.3 P-2). If P1 does not receive
+* Publish rate is 1 Hz stable (14 S2.3 P-2). If P1 does not receive
 health/factor for 3 s -> P1 downgrades; for 10 s -> P1 stops.
 
-★ No hot-swap of mode: FM-3 verbatim 'health downgrade must NOT
+* No hot-swap of mode: FM-3 verbatim 'health downgrade must NOT
 auto-switch mode' -- it only lowers speed_factor / disallows motion.
 """
 

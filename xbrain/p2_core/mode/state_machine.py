@@ -24,7 +24,7 @@ Transition invariants (14 S5, 11 S7A):
   * min_dwell_s: applies to `autonomous` triggers only; cmd / timeout
     / safety triggers are exempt (MD-1).
 
-★ This module owns the STATE MACHINE (states, transitions, preflight
+* This module owns the STATE MACHINE (states, transitions, preflight
 result). It does NOT own the actual acquire/release calls (those are
 BIZ-P2-12 two-layer mapper + BIZ-P2-16 D-mode sequencer).
 """

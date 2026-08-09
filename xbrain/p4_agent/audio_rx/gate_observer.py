@@ -11,15 +11,15 @@ P4 subscribes rt/audio/gate to know when its mic is closed. Spec (GWY-P4-02b):
   * P4 MUST NOT open any audio device -- static grep guard elsewhere
   * P4 receives ALREADY-16k PCM via rt/audio/mic
   * Half-duplex EXECUTOR is P2; P4 is only an OBSERVER
-  * ★★★ mic_open == False must be tested with:
+  * *** mic_open == False must be tested with:
       mic_open is False and reason in {speaker_active, tail_hold}
     NOT with `== 'muted'`  (no such value; that spelling is a
     perma-false test that fires never)
 
-★ 1 s heartbeat gap fail-safe: if rt/audio/gate has not been
+* 1 s heartbeat gap fail-safe: if rt/audio/gate has not been
 re-published for > 1 s, P4 assumes CLOSED (defensive; PA-3).
 
-★ SpeakRequest.max_duration_ms is REQUIRED (E_SCHEMA if missing);
+* SpeakRequest.max_duration_ms is REQUIRED (E_SCHEMA if missing);
 est_duration_ms defaults to 4.0 s/sentence * sentences.
 """
 
@@ -42,7 +42,7 @@ class GateSample:
 
 
 def is_mic_closed_by_speaker(sample: GateSample) -> bool:
-    """★★★ The correct check per GWY-P4-02b judgeria #3:
+    """*** The correct check per GWY-P4-02b judgeria #3:
         mic_open is False AND reason in {speaker_active, tail_hold}
 
     The wrong (banned) form is `sample.reason == 'muted'` -- there
@@ -57,18 +57,18 @@ class GateHeartbeatWatch:
     """PA-3: if the gate publisher goes silent > 1 s the observer
     assumes mic is CLOSED (fail-safe direction: refuse to send
     audio to ASR while state is unknown)."""
-    last_seen_mono_ms: int = 0
-    max_gap_ms: int = 1000
+    last_seen_millis: int = 0
+    max_gap_millis: int = 1000
 
     def note_publish(self, now_mono_ms: int) -> None:
-        self.last_seen_mono_ms = now_mono_ms
+        self.last_seen_millis = now_mono_ms
 
     def assume_closed(self, now_mono_ms: int) -> bool:
         """True iff no publish for > max_gap_ms."""
-        if self.last_seen_mono_ms == 0:
+        if self.last_seen_millis == 0:
             # never seen anything; assume closed (never seen != OK)
             return True
-        return (now_mono_ms - self.last_seen_mono_ms) > self.max_gap_ms
+        return (now_mono_ms - self.last_seen_millis) > self.max_gap_millis
 
 
 class SchemaError(RuntimeError):
@@ -85,7 +85,7 @@ class SpeakRequest:
     """
     text: str
     max_duration_ms: int
-    est_duration_ms: Optional[int] = None
+    est_duration_millis: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.max_duration_ms <= 0:
@@ -95,11 +95,11 @@ class SpeakRequest:
 
 
 def default_est_duration_ms(text: str,
-                            sentence_ms: float = 4000.0) -> int:
+                            sentence_millis: float = 4000.0) -> int:
     """When caller does not supply est_duration_ms, derive it as
     sentence_count * sentence_ms. Sentence count is the number of
     CJK / ASCII sentence terminators; minimum 1."""
     import re
-    n = len(re.findall("[。？！?!]|(?:\\.(?=\\s|$))", text))
+    n = len(re.findall("[\u3002\uff1f\uff01?!]|(?:\\.(?=\\s|$))", text))
     n = max(1, n)
-    return int(n * sentence_ms)
+    return int(n * sentence_millis)

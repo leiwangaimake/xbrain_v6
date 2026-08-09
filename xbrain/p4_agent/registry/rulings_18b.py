@@ -80,19 +80,19 @@ def check_r5_restate_no_forbidden(text: str) -> None:
 class CumulativeDrift:
     """R-4: track cumulative deltas so operator stacking a series of
     tiny E09s doesn't drift past the pan/tilt limits without warning."""
-    total_pan_deg: float = 0.0
-    total_tilt_deg: float = 0.0
+    total_pan_degrees: float = 0.0
+    total_tilt_degrees: float = 0.0
 
     def add(self, dpan: float, dtilt: float,
             pan_limit: float, tilt_limit: float) -> Optional[str]:
         """Return None if within limits; return a warning string on
         exceeding either limit (caller then STOPS + warn TTS)."""
-        self.total_pan_deg += dpan
-        self.total_tilt_deg += dtilt
-        if abs(self.total_pan_deg) > pan_limit:
+        self.total_pan_degrees += dpan
+        self.total_tilt_degrees += dtilt
+        if abs(self.total_pan_degrees) > pan_limit:
             return "R-4: cumulative pan %.1f exceeds limit %.1f" % (
-                self.total_pan_deg, pan_limit)
-        if abs(self.total_tilt_deg) > tilt_limit:
+                self.total_pan_degrees, pan_limit)
+        if abs(self.total_tilt_degrees) > tilt_limit:
             return "R-4: cumulative tilt %.1f exceeds limit %.1f" % (
-                self.total_tilt_deg, tilt_limit)
+                self.total_tilt_degrees, tilt_limit)
         return None

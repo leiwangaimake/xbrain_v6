@@ -18,12 +18,12 @@ Schema:
             wrong correction). accepted=False rows form the negative
             sample set for L1 dict curation.
 
-★ CLAUDE.md 4.1: persistence layer MUST use aiosqlite (not sqlite3).
+* CLAUDE.md 4.1: persistence layer MUST use aiosqlite (not sqlite3).
 This module offers a SYNC facade for tests + writes; the
 production adapter (P3 owns the DB actually) uses aiosqlite.
 The actual DB opens live in xbrain/persistence/ per DAO discipline.
 
-★ CLAUDE.md 3.4: ts is for DISPLAY only. Use monotonic clock for
+* CLAUDE.md 3.4: ts is for DISPLAY only. Use monotonic clock for
 any age / timeout logic; never derive it from ts. Documented here
 because a naive `age_s = now - row.ts` would be a wall-clock
 violation.

@@ -14,7 +14,7 @@ Description:
   L3   cloud-signed confirm_token (only for shutdown / reboot;
        CMD-33: 'switch to pending-approval' 5-step flow)
 
-The L3 5-step flow (14 CMD-33) — this is what governs H08 shutdown:
+The L3 5-step flow (14 CMD-33) -- this is what governs H08 shutdown:
   1. P2 sees cmd/system{action:shutdown}, LEVEL=L3
   2. Set pending_approval state, publish state/system{approval=needed}
   3. Wait for cmd/system/confirm{token: <cloud-signed>}

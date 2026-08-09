@@ -162,12 +162,12 @@ def test_route_lights_on_rejects_unknown_which():
 
 def test_parse_delay_arabic():
     r = parse_delay("30 秒后")
-    assert r.delay_s == 30
+    assert r.delay_seconds == 30
 
 
 def test_parse_delay_chinese_digits():
     r = parse_delay("五秒后")
-    assert r.delay_s == 5
+    assert r.delay_seconds == 5
 
 
 def test_parse_at_local_afternoon():

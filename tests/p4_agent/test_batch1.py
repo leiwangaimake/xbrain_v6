@@ -95,7 +95,7 @@ def test_success_between_timeouts_resets_counter():
 
 
 def test_circuit_transitions_to_half_open_after_duration():
-    st = GpuTokenState(timeouts_before_open=1, open_duration_ms=1000)
+    st = GpuTokenState(timeouts_before_open=1, open_duration_millis=1000)
     try_admit(st, 0)
     release(st, success=False, now_mono_ms=100)   # opens circuit
     assert st.circuit_state(500) == CircuitState.OPEN
@@ -135,7 +135,7 @@ def test_muted_string_would_never_match():
 
 
 def test_gate_heartbeat_assumes_closed_after_gap():
-    w = GateHeartbeatWatch(max_gap_ms=1000)
+    w = GateHeartbeatWatch(max_gap_millis=1000)
     # note_publish at non-zero time so 'never seen' branch (== 0) does not fire.
     w.note_publish(now_mono_ms=100)
     assert not w.assume_closed(500)
@@ -143,7 +143,7 @@ def test_gate_heartbeat_assumes_closed_after_gap():
 
 
 def test_gate_heartbeat_assumes_closed_when_never_seen():
-    w = GateHeartbeatWatch(max_gap_ms=1000)
+    w = GateHeartbeatWatch(max_gap_millis=1000)
     assert w.assume_closed(now_mono_ms=100)
 
 

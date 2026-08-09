@@ -17,10 +17,10 @@ D-mode entry sequence (14 S7.3.2 DT-1..DT-7):
   DT-7: deter_texts_supported = false -> use device-side single lines,
         NOT texts[] field; on 422 auto-fallback (DT-7c)
 
-★ D-mode enter/exit is ATOMIC at the mode SM level (BIZ-P2-11). This
+* D-mode enter/exit is ATOMIC at the mode SM level (BIZ-P2-11). This
 module owns the WITHIN-D-mode step-by-step orchestration.
 
-★ Implementation note: actual HTTP calls delegate to payload_client
+* Implementation note: actual HTTP calls delegate to payload_client
 (BIZ-P2-2). This module holds the state (which step we're in,
 current cycle count) and returns SequenceCommands the payload_io
 thread executes.

@@ -19,7 +19,7 @@ process start if it fails.
   CS-A4  each mission prompt's alternation size + 1 (unknown) <= 5
          (AI-36 hard limit); one break allowed: M4_follow at 6
 
-★ CS-A3 has a 3-step transitional implementation (spec verbatim):
+* CS-A3 has a 3-step transitional implementation (spec verbatim):
     if a prompt references an intent NOT in the closed set, run in
     'warn'-forced mode instead of refuse: log the mismatch, load the
     prompt with the unknown intent DROPPED from the alternation.

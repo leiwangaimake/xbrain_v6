@@ -48,17 +48,17 @@ class RecordingState(str, Enum):
 class L2Slot:
     """One outstanding L2 confirm request."""
     state: L2ConfirmState = L2ConfirmState.IDLE
-    started_mono_ms: int = 0
-    timeout_ms: int = 10_000        # 10 s per 16 S11
+    started_millis: int = 0
+    timeout_millis: int = 10_000        # 10 s per 16 S11
 
     def request(self, now_mono_ms: int) -> None:
         self.state = L2ConfirmState.WAITING
-        self.started_mono_ms = now_mono_ms
+        self.started_millis = now_mono_ms
 
     def tick(self, now_mono_ms: int) -> None:
         """Advance the SM based on elapsed time."""
         if self.state == L2ConfirmState.WAITING:
-            if now_mono_ms - self.started_mono_ms > self.timeout_ms:
+            if now_mono_ms - self.started_millis > self.timeout_millis:
                 self.state = L2ConfirmState.TIMED_OUT
 
     def confirm(self) -> None:
@@ -71,16 +71,16 @@ class L2Slot:
 class L3Slot:
     """One outstanding L3 approval (cloud token)."""
     state: L3ApprovalState = L3ApprovalState.IDLE
-    started_mono_ms: int = 0
-    timeout_ms: int = 60_000
+    started_millis: int = 0
+    timeout_millis: int = 60_000
 
     def request(self, now_mono_ms: int) -> None:
         self.state = L3ApprovalState.PENDING_TOKEN
-        self.started_mono_ms = now_mono_ms
+        self.started_millis = now_mono_ms
 
     def tick(self, now_mono_ms: int) -> None:
         if self.state == L3ApprovalState.PENDING_TOKEN:
-            if now_mono_ms - self.started_mono_ms > self.timeout_ms:
+            if now_mono_ms - self.started_millis > self.timeout_millis:
                 self.state = L3ApprovalState.STALE
 
     def approve(self) -> None:

@@ -16,11 +16,11 @@ walks a SIX-LAYER priority chain:
   5. directional check   (is this even addressed at the robot? overheard filter)
   6. unknown             (falls to LLM)
 
-★ Layer 5 is CRITICAL: without it every ambient conversation reaches
+* Layer 5 is CRITICAL: without it every ambient conversation reaches
 the LLM (waste + noise pollution + operators can't stop the robot
 talking).
 
-★ Directional signals (16 S5.2.1):
+* Directional signals (16 S5.2.1):
   * contains wake-word / robot address -> DIRECTED
   * second-person imperative -> DIRECTED
   * matched a known intent keyword (layer 4 fired) -> DIRECTED
@@ -28,7 +28,7 @@ talking).
   * other person names / topic unrelated to robot -> OVERHEARD
   * ASR low confidence AND semantically broken -> OVERHEARD
 
-★ Asymmetric rule: when uncertain -> judge OVERHEARD.
+* Asymmetric rule: when uncertain -> judge OVERHEARD.
 False-suppress = operator repeats; false-reply = robot talks to air.
 
 Only exception: safety-bypass words (急停 etc.) always win at layer 1,

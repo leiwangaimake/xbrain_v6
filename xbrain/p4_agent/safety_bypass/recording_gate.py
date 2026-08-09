@@ -10,7 +10,7 @@ Description:
 session), VOICE estop is SUPPRESSED. Keyboard / handle estop
 remain active as the safety baseline.
 
-★ Reason: operator holds keyboard, stands next to robot, talks
+* Reason: operator holds keyboard, stands next to robot, talks
 constantly (announces waypoints, reports back). A voice estop
 false-trigger DESTROYS the recording session.
 
@@ -49,7 +49,7 @@ def evaluate(state: RecordingState, bypass_action: str) -> SuppressionRecord | N
     U45 SUPPRESSES only VOICE ESTOP during recording. prone / stand
     remain executable (they are movement commands, not stops).
 
-    ★ Keyboard / handle estop bypass this path entirely -- they
+    * Keyboard / handle estop bypass this path entirely -- they
     are hardware buttons wired below the voice layer."""
     if not state.in_recording:
         return None

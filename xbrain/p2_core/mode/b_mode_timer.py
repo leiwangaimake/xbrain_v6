@@ -32,7 +32,7 @@ from typing import Callable, Optional
 class BModeTimer:
     """Monotonic-clock B-mode timeout tracker.
 
-    ★ Deliberately holds no clock inside; caller supplies mono_ms
+    * Deliberately holds no clock inside; caller supplies mono_ms
     (CLK-C1: monotonic clock ONLY for age/timeout, not wall-clock).
     """
     max_duration_s: float

@@ -15,7 +15,7 @@ BIZ-P2-2 assertion table (11 S7.5A + 8.13.5):
   WS close 1003   -> event/warn/system (implementation bug -- schema mismatch)
   WS close 1011   -> fail
 
-★ VARIANT of spec: 503 and connect_refused MUST NOT collapse into
+* VARIANT of spec: 503 and connect_refused MUST NOT collapse into
 the same detail.reason -- '换线' (device link changed) is a device-
 side event; 'service_down' is a service-side event. Operator's next
 action is different for each; collapsing them would erase that

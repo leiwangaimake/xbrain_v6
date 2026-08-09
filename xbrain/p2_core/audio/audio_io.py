@@ -21,7 +21,7 @@ without any audio device. The ALSA capture is a subprocess.Popen
 around arecord; the actual open-and-read is out of scope for the
 tests here (would need a live USB MIC on the CI host).
 
-★ RT-A1: this module is the ONLY place in p2_core that opens the
+* RT-A1: this module is the ONLY place in p2_core that opens the
 ALSA device. All other modules subscribe to rt/audio/mic (Zenoh) --
 they must NOT directly open hw:0,0 (verifiable by CI grep, already
 enforced by scripts/lint/no_business_imports.py or similar).
@@ -74,7 +74,7 @@ def decimate_3to1(samples_48k: List[int]) -> List[int]:
     Input: exactly CAPTURE_SAMPLES_PER_FRAME (960) int16 samples at 48 kHz.
     Output: exactly ASR_SAMPLES_PER_FRAME (320) int16 samples at 16 kHz.
 
-    ★ The 3-tap moving average is a rough anti-aliasing filter that
+    * The 3-tap moving average is a rough anti-aliasing filter that
     attenuates content above 16 kHz Nyquist / 2 = 8 kHz. For ASR
     quality on speech (well within 8 kHz), this is adequate. A
     higher-quality kaiser-window FIR is a natural production-time
@@ -130,11 +130,11 @@ def open_capture(device: str = "hw:0,0",
     Returns a subprocess.Popen with stdout ready for read. Callers
     read 2 * CAPTURE_SAMPLES_PER_FRAME bytes per frame (s16le mono).
 
-    ★ Runtime-only: requires arecord + the actual USB MIC. On a
+    * Runtime-only: requires arecord + the actual USB MIC. On a
     dev host without either, raises AlsaCaptureUnavailable so the
     audio_state.py device_fault path can fire coherently.
 
-    ★ RT-A1: this is the SINGLE call site that opens the ALSA
+    * RT-A1: this is the SINGLE call site that opens the ALSA
     device. A CI grep of `hw:0,0` outside this file catches
     double-open regressions.
     """

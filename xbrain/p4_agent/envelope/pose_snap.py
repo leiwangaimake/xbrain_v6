@@ -52,7 +52,7 @@ class PoseRing:
         return [p for p in self._buf if p.mono_ms >= since_mono_ms]
 
     def is_still_1s(self, now_mono_ms: int,
-                    variance_threshold_m: float = 0.05) -> bool:
+                    variance_threshold_meters: float = 0.05) -> bool:
         """PS-3: variance of x/y over last 1 s below threshold."""
         window = self.window(now_mono_ms - 1000)
         # PS-5: less than 1 s of data -> not still.
@@ -65,7 +65,7 @@ class PoseRing:
         mean_y = sum(p.y for p in window) / len(window)
         var_x = sum((p.x - mean_x) ** 2 for p in window) / len(window)
         var_y = sum((p.y - mean_y) ** 2 for p in window) / len(window)
-        return (var_x + var_y) ** 0.5 < variance_threshold_m
+        return (var_x + var_y) ** 0.5 < variance_threshold_meters
 
 
 @dataclass(frozen=True)

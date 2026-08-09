@@ -17,10 +17,10 @@ Description:
                   path names, action words); if best score < threshold,
                   keep raw (mark unknown for LLM)
 
-★ HOT UPDATE: L1 dict is one of the two hot-updatable files
+* HOT UPDATE: L1 dict is one of the two hot-updatable files
 (asr_dict.yaml). Reload atomic; schema fail keeps old dict.
 
-★ Q-P4-9 discipline: L3 threshold defaults to 0.75; a value below
+* Q-P4-9 discipline: L3 threshold defaults to 0.75; a value below
 that would rescue a false candidate. NEVER snap on a tie.
 """
 
