@@ -1,0 +1,28 @@
+# INF-DP-7 / CFG-BT-3 -- p1_motion (Stage 2, cross-plane, 20 Hz cmd_vel authority)
+#
+# Stage 2 of 10 S3.3 boot sequence.
+# OOMScoreAdjust=-1000 per 11 S11A.6.3 (see reason in the doc row).
+
+[Unit]
+Description=XBRAIN v6 p1_motion (Stage 2, cross-plane, 20 Hz cmd_vel authority)
+Documentation=file:///opt/xbrain_v6/docs/11-%E6%8E%A5%E5%8F%A3%E5%A5%91%E7%BA%A6.md
+Requires=xbrain-config-freeze.service
+After=xbrain-quadruped.service
+After=xbrain-chassis-relay.service
+After=xbrain-perception.service
+After=xbrain-config-freeze.service
+
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=2s
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+OOMScoreAdjust=-1000
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/usr/bin/env python3 -m xbrain.p1_motion
+WatchdogSec=15s
+
+[Install]
+WantedBy=multi-user.target

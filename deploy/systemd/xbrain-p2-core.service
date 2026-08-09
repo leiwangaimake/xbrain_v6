@@ -1,0 +1,26 @@
+# INF-DP-7 / CFG-BT-3 -- p2_core (Stage 3, arbiter + mode SM + BIT)
+#
+# Stage 3 of 10 S3.3 boot sequence.
+# OOMScoreAdjust=-500 per 11 S11A.6.3 (see reason in the doc row).
+
+[Unit]
+Description=XBRAIN v6 p2_core (Stage 3, arbiter + mode SM + BIT)
+Documentation=file:///opt/xbrain_v6/docs/11-%E6%8E%A5%E5%8F%A3%E5%A5%91%E7%BA%A6.md
+Requires=xbrain-config-freeze.service
+After=xbrain-p1-motion.service
+After=xbrain-config-freeze.service
+
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=2s
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+OOMScoreAdjust=-500
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/usr/bin/env python3 -m xbrain.p2_core
+WatchdogSec=15s
+
+[Install]
+WantedBy=multi-user.target

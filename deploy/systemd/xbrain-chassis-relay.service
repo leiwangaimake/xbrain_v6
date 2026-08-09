@@ -1,0 +1,26 @@
+# INF-DP-7 / CFG-BT-3 -- chassis_relay (Stage 2, cross-plane emergency-stop relay)
+#
+# Stage 2 of 10 S3.3 boot sequence.
+# OOMScoreAdjust=-1000 per 11 S11A.6.3 (see reason in the doc row).
+
+[Unit]
+Description=XBRAIN v6 chassis_relay (Stage 2, cross-plane emergency-stop relay)
+Documentation=file:///opt/xbrain_v6/docs/11-%E6%8E%A5%E5%8F%A3%E5%A5%91%E7%BA%A6.md
+Requires=xbrain-config-freeze.service
+After=xbrain-quadruped.service
+After=xbrain-config-freeze.service
+Before=xbrain-p1-motion.service
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1s
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+OOMScoreAdjust=-1000
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/opt/xbrain_v6/ros2_ws/install/chassis_relay/lib/chassis_relay/chassis_relay
+WatchdogSec=15s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,27 @@
+# INF-DP-7 / CFG-BT-3 -- p5_gateway (Stage 3, HMI backend + event pipeline)
+#
+# Stage 3 of 10 S3.3 boot sequence.
+# OOMScoreAdjust=200 per 11 S11A.6.3 (see reason in the doc row).
+
+[Unit]
+Description=XBRAIN v6 p5_gateway (Stage 3, HMI backend + event pipeline)
+Documentation=file:///opt/xbrain_v6/docs/11-%E6%8E%A5%E5%8F%A3%E5%A5%91%E7%BA%A6.md
+# p5_gateway supports minimal mode WITHOUT freeze -- observation window
+# per 10 S3.3 requires this unit start even if freeze failed.
+# So NO 'Requires=xbrain-config-freeze.service' here.
+After=xbrain-p4-agent.service
+
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=2s
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+OOMScoreAdjust=200
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/usr/bin/env python3 -m xbrain.p5_gateway
+WatchdogSec=15s
+
+[Install]
+WantedBy=multi-user.target
