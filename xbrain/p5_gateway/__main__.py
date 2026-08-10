@@ -91,6 +91,8 @@ def main(argv: Optional[list] = None) -> int:
                          "(observation window W-1) directly")
     ap.add_argument("--heartbeat-seconds", type=float,
                     default=_HEARTBEAT_SECONDS)
+    ap.add_argument("--voice-loop", action="store_true",
+                    help="run voice-loop MVP wiring instead of heartbeat")
     args = ap.parse_args(argv)
 
     logging.basicConfig(
@@ -128,6 +130,11 @@ def main(argv: Optional[list] = None) -> int:
 
     stop_flag: dict = {"stop": False}
     _install_signal_handlers(stop_flag)
+
+    if args.voice_loop:
+        from xbrain.p5_gateway.runtime.main_wiring import run_voice_loop_wiring
+        return run_voice_loop_wiring(stop_flag=stop_flag)
+
     return main_loop(
         minimal_mode=minimal_mode,
         tick_seconds=args.heartbeat_seconds,

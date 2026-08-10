@@ -98,6 +98,12 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--heartbeat-seconds", type=float,
                     default=_HEARTBEAT_SECONDS,
                     help="seconds between heartbeat log lines")
+    ap.add_argument("--voice-loop", action="store_true",
+                    help="run voice-loop MVP wiring instead of heartbeat")
+    ap.add_argument("--chassis-host", default="127.0.0.1",
+                    help="chassis_stub host (voice-loop only)")
+    ap.add_argument("--chassis-port", type=int, default=30004,
+                    help="chassis_stub port (voice-loop only)")
     args = ap.parse_args(argv)
 
     logging.basicConfig(
@@ -132,6 +138,19 @@ def main(argv: Optional[list] = None) -> int:
 
     stop_flag: dict = {"stop": False}
     _install_signal_handlers(stop_flag)
+
+    if args.voice_loop:
+        from xbrain.p1_motion.runtime.main_wiring import (
+            ChassisClientConfig, run_voice_loop_wiring,
+        )
+        chassis_cfg = ChassisClientConfig(
+            host=args.chassis_host,
+            port=args.chassis_port,
+            connect_timeout_s=2.0,
+            retry_delay_s=1.0)
+        return run_voice_loop_wiring(
+            chassis_cfg=chassis_cfg, stop_flag=stop_flag)
+
     return main_loop(tick_seconds=args.heartbeat_seconds, stop_flag=stop_flag)
 
 
