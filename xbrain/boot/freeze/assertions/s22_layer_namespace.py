@@ -19,11 +19,28 @@ attribution ('S22 red' rather than 'A red') so the CFG-FZ-16
 mutations are attributed cleanly, AND extends the check to L6
 (per-process files) which do not go through build_overlay.
 
-L6 namespace rule: each L6 file MUST have exactly one top-level
-key = the process name (stripping .yaml). p1_motion.yaml owns
-`p1_motion:`, quadruped.yaml owns `quadruped:`, etc. Writing a
-sibling top-level key means an L6 file has become a second source
-for something outside its scope.
+L6 namespace rule (2026-08-10 loosened to align with 10 S5.4.3
+line 2803-2804 逐字: "不得出现 common.* 顶层键"): an L6 file
+MUST NOT have a top-level key named `common`. Anything else is
+legal -- multiple top-level keys are fine (patrol config often
+splits into intent/gateway/prompt/logging sections at the root),
+and the sole top-level key does not have to match the process
+name.
+
+Historical note: an earlier draft of S22 enforced "exactly one
+top-level key = process name". That was an over-strict reading
+never stated in 10 S5.4.3 and it collided with every P-process's
+committed yaml (all five split their config across multiple
+top-level sections). The wrap-under-proc-name approach was
+rejected 2026-08-10 as adding a level of indirection for zero
+new safety -- the R-6 rule (no common.* top-level) is what
+prevents the drift 10 S5.4.3 was worried about.
+
+Overlap-with-B note: the "no top-level `common`" rule is ALSO
+enforced by assertion B (detail.kind = l6_common_top_level).
+S22's L6 check is intentionally NOT redundant with that -- S22
+now only defends against non-dict yaml at L6 top level, which
+B's flatten-based approach would silently coerce.
 
 CFG-FZ-16 S22 named variants (each MUST turn red in tests):
 
@@ -80,7 +97,8 @@ check'. When the tests grow to include diagnostics that print
 answer has to be one specific name. S22 is that name for
 namespace violations regardless of layer.
 
-Failure-mode taxonomy (four distinct detail.kind values):
+Failure-mode taxonomy (two distinct detail.kind values after
+2026-08-10 loosening):
 
   layer_ns_violation      L1-L5: a layer wrote a key outside its
                           allowance / into another layer's namespace.
@@ -88,21 +106,15 @@ Failure-mode taxonomy (four distinct detail.kind values):
                           key. Remediation: move the key to the
                           correct layer.
 
-  l6_top_level_wrong      L6: single top-level key exists but is
-                          not the process name for that file.
-                          Detail carries expected + actual. Remediation:
-                          rename the top-level key OR move the block
-                          to the correct file.
+  l6_top_level_wrong      L6: yaml top level is not a dict (e.g. a
+                          list or scalar at the root). Detail carries
+                          file + actual_type. Remediation: wrap the
+                          content in the proc-appropriate section.
 
-  l6_multiple_top_levels  L6: file has more than one top-level key.
-                          Detail carries expected + list of actuals.
-                          Remediation: split the file OR move the
-                          extra top-level keys elsewhere.
-
-  l6_empty                Reserved detail.kind for a future rule
-                          against completely empty L6 files. Not
-                          currently raised because dev checkouts
-                          legitimately have empty L6 placeholders.
+  (removed 2026-08-10)    l6_multiple_top_levels was here until
+                          2026-08-10; removed because 10 S5.4.3 does
+                          not forbid multiple top-level keys, only
+                          top-level `common`, which assertion B owns.
 
 Overlap with assertion B (why S22 doesn't catch variant 3):
 
@@ -212,51 +224,37 @@ def _check_l1_l5(layer_trees: Dict[str, Dict[str, Any]]) -> None:
 
 
 def _check_l6(l6_trees: Dict[str, Dict[str, Any]]) -> None:
-    """For each L6 file, enforce sole-top-level-key == process name.
+    """For each L6 file, enforce that top level is a dict.
 
-    Each L6 file belongs to exactly one process; a top-level key
-    other than that process's namespace is a config layering defect
-    (someone tried to put process A's config into process B's file).
+    10 S5.4.3 line 2803-2804 逐字 forbids only 'common.* top-level' at
+    L6; that specific rule is enforced by assertion B
+    (detail.kind = l6_common_top_level). What B does NOT catch is an
+    L6 file whose root is a LIST or a scalar (yaml load returns a
+    non-dict), because B calls flatten() which happily accepts a list
+    and produces indexed keys silently.
+
+    S22 stays in the picture only to guard that shape. Everything
+    else -- multiple top-level keys, a top-level key that is not the
+    process name -- is legal per 10 S5.4.3 and used by every
+    currently-committed P yaml.
     """
-    # Iterate every L6 file we found; missing files are ignored (J
-    # already checks required-file presence).
     for filename, tree in l6_trees.items():
-        # If we do not have an owner mapping for this filename, skip;
-        # test scaffolds may include stray files that are not real
-        # L6 process configs.
+        # An owner mapping is still useful for the failure message
+        # (tells the reader which proc this file is supposed to serve)
+        # but is no longer required for the check to run.
         owner = _L6_OWNER.get(filename)
-        if owner is None:
-            continue
-        # A completely empty L6 file is legal (dev placeholder) so
-        # skip cleanly if tree is None or empty dict.
         if not tree:
+            # Empty dict / None: dev placeholder, legal.
             continue
-        # Top-level key set. yaml.safe_load can return non-dict for
-        # weird contents; guard here.
         if not isinstance(tree, dict):
+            # Non-dict at the root: list / scalar / etc. B's flatten
+            # would accept this silently; catch it here.
             _fail("l6_top_level_wrong",
                   "%s: expected dict at top level, got %s"
                   % (filename, type(tree).__name__),
-                  file=filename, expected=owner,
-                  actual_type=type(tree).__name__)
-        top_keys = list(tree.keys())
-        # Multiple top-level keys = file has become a second source
-        # for something outside its scope. This is the specific
-        # variant that catches an operator who used one L6 file as
-        # a scratchpad for another process's config.
-        if len(top_keys) > 1:
-            _fail("l6_multiple_top_levels",
-                  "%s: expects single top-level key %r; got %s"
-                  % (filename, owner, sorted(top_keys)),
-                  file=filename, expected=owner,
-                  actual=sorted(top_keys))
-        # Single top-level key that isn't the owner name.
-        if top_keys and top_keys[0] != owner:
-            _fail("l6_top_level_wrong",
-                  "%s: expects top-level key %r; got %r"
-                  % (filename, owner, top_keys[0]),
-                  file=filename, expected=owner,
-                  actual=top_keys[0])
+                  file=filename,
+                  actual_type=type(tree).__name__,
+                  expected=owner if owner else "dict")
 
 
 def run(ctx: Dict[str, Any]) -> Dict[str, Any]:

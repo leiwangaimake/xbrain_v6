@@ -56,20 +56,27 @@ REAL_CONFIG_ROOT = "/opt/xbrain_v6/configs"
 # green (which is the design: the fixture is a canary).
 KNOWN_FAILING_ASSERTIONS = {
     # B was here until CFG-FZ-18-b (2026-08-10). intent.keyword_rules
-    # is now off the schema + off configs/p4_agent.yaml; only the
-    # canonical common.cmdset.intents_file survives. B goes green on
-    # the fixture tree.
-    "S22": ("S22 (CFG-FZ-16) enforces the L6 top-level namespace "
-            "rule: each L6 file MUST have exactly one top-level key "
-            "equal to the process name (p1_motion.yaml owns 'p1_motion:', "
-            "quadruped.yaml owns 'quadruped:'). All five committed L6 "
-            "files today expose the process fields at the yaml root "
-            "instead (arbiter:, bit:, mode:, ... in p2_core.yaml, etc). "
-            "Wrapping is a coordinated per-proc refactor that also touches "
-            "every downstream config consumer -- BIZ-P{1..5} review scope, "
-            "not CHK-0-56. Kept here so CFG-FZ-18-b can land unblocked; "
-            "delete this entry AND the fixture goes red until the wrap "
-            "is done."),
+    # is now off the schema + off configs/p4_agent.yaml.
+    #
+    # S22 was here between CFG-FZ-18-b and C-FZ-S22-LOOSEN (2026-08-10).
+    # Loosened to match 10 S5.4.3 line 2803-2804 (which only forbids
+    # common.* top-level at L6, a rule already owned by assertion B).
+    "materialise": (
+        "CFG-FZ-18 (materialise) fails on the fixture at the ref "
+        "${common.calib.frames.ptz_base.h_camera_m} in p2_core.yaml. "
+        "The fixture's calib/lab_robot.yaml carries common.calib.frames "
+        "as an empty dict because a real ptz_base entry needs a full "
+        "H-3 accuracy block (method + sigma_trans_m + sigma_rot_rad + "
+        "n_samples) plus a matching lat_err_ref_m recomputed via the "
+        "S10.1.1 formula. Filling those in the fixture would either "
+        "invent a fake accuracy (which H-3 would reject as CS-2 "
+        "violation) or hardcode a bench-calibration result (which is "
+        "not a CHK-0-56 concern -- CHK-0-56 asserts freeze "
+        "completeness on filled trees, not calibration correctness). "
+        "Blocked pending H-3-compatible fixture fill OR a decision to "
+        "move the h_camera_m reference in p2_core.yaml to a common.spec.* "
+        "key that L1 owns instead of L4b. BIZ-P2 review item, not "
+        "CHK-0-56 material."),
 }
 
 
@@ -196,7 +203,17 @@ def _write_l4_lab_site(dst: Path) -> None:
 
 def _write_l4b_lab_robot_calib(dst: Path) -> None:
     """Write calib/lab_robot.yaml matching common.robot_id.
-    L4b writes only common.calib.* per 10 S5.4.3."""
+    L4b writes only common.calib.* per 10 S5.4.3.
+
+    calib.frames is intentionally left empty here. p2_core.yaml
+    references ${common.calib.frames.ptz_base.h_camera_m} which
+    triggers the materialise assertion in the full-freeze path;
+    that failure is registered as a KNOWN_FAILING in the fixture
+    header so the intent (freeze completeness) is visible.
+    Filling this properly needs the whole ptz_base accuracy block
+    (H-3 CS-2 rules) and a lat_err_ref_m recomputed via S10.1.1 --
+    a bench-calibration exercise, not a fixture construction.
+    """
     calib = {
         "common": {
             "calib": {

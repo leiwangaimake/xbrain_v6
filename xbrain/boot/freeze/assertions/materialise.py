@@ -108,6 +108,16 @@ import yaml
 from xbrain.boot.freeze.assertions._layer_loader import (
     _L6_FILES, load_l6_files, load_layers,
 )
+# L4/L4b loaders live in fv_org_enu because that assertion was the first
+# consumer that needed the two-step load (read L1 -> get site_id/robot_id
+# -> read L4/L4b). Materialise is the second consumer and reuses them
+# rather than reimplementing the file-path-composition + missing-file
+# tolerance logic. If a third consumer arrives, the pair should get
+# promoted to _layer_loader.py; today the cross-assertion import stays
+# because promoting for two callers would be premature abstraction.
+from xbrain.boot.freeze.assertions.fv_org_enu import (
+    _load_l4_tree, _load_l4b_tree,
+)
 from xbrain.common.config import build_overlay
 from xbrain.common.config.merge import deep_merge
 from xbrain.common.config.refs import ReferenceError_, resolve
@@ -221,22 +231,38 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     if overlay is None:
         overlay = build_overlay(load_layers(config_root))
 
-    # Resolve refs in the overlay (assertion A already verified there
-    # are none unresolvable, so this raise-branch is a construction
-    # guard, not a config error).
+    # L4 (site) + L4b (calib) are picked by common.site_id + robot_id,
+    # so they cannot be loaded by load_layers (chicken-and-egg -- the
+    # picker values live INSIDE the tree being loaded). Load them here
+    # using the overlay's already-resolved site_id/robot_id, then merge
+    # them into the overlay tree BEFORE the per-proc resolve. Without
+    # this step, a per-proc ${common.calib.*} or ${common.geo.*} ref
+    # would raise per_proc_ref_unresolved because those keys only exist
+    # in the layer we did not load.
+    site_id = overlay.tree.get("common", {}).get("site_id")
+    robot_id = overlay.tree.get("common", {}).get("robot_id")
+    l4_tree = _load_l4_tree(config_root, site_id)
+    l4b_tree = _load_l4b_tree(config_root, robot_id)
+    # deep_merge order: base overlay <- L4 <- L4b. Both L4/L4b live
+    # under common.*; deep_merge preserves the layering (see
+    # layers.py header on precedence order). Then re-resolve the
+    # composite tree so any ${common.*} inside L4/L4b itself expands.
+    merged = deep_merge(overlay.tree, l4_tree)
+    merged = deep_merge(merged, l4b_tree)
     try:
-        resolved_overlay_tree = resolve(overlay.tree)
+        resolved_overlay_tree = resolve(merged)
     except ReferenceError_ as exc:
-        # If A cleared but we reach here, an untrapped drift happened.
-        # This should be unreachable in production; keeping the raise
-        # explicit rather than degrading to a warn per CLAUDE.md 3.6
-        # 'never introduce assertion downgrade'.
+        # If A cleared and we reach here, an L4/L4b ref is broken (A
+        # never walked L4/L4b so a broken ref there would have slipped
+        # past A's check). Report with a distinct kind so the operator
+        # sees WHERE the unresolvable ref lives.
         raise XbrainError(
             E_CONFIG_INVALID,
-            "materialise: overlay re-resolve failed after assertion A "
-            "reported pass -- registry drift or caller skipped A. %s"
-            % exc,
-            {"kind": "overlay_reresolve_failed", "reason": str(exc)},
+            "materialise: L4/L4b resolve failed. site_id=%r robot_id=%r %s"
+            % (site_id, robot_id, exc),
+            {"kind": "l4_l4b_resolve_failed",
+             "site_id": site_id, "robot_id": robot_id,
+             "reason": str(exc)},
         )
 
     # Isolate the common subtree; that is the ONLY namespace L6 refs

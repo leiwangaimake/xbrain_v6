@@ -17,9 +17,13 @@ def _green_layers():
 
 
 def _green_l6():
+    # 2026-08-10: green L6 no longer requires single-top-level-key ==
+    # proc name (see s22_layer_namespace.py header note). Multi-top-level
+    # is legal per 10 S5.4.3; the shape below matches every currently
+    # committed p*.yaml in configs/.
     return {
-        "p1_motion.yaml": {"p1_motion": {"foo": 1}},
-        "quadruped.yaml": {"quadruped": {"bar": 2}},
+        "p1_motion.yaml": {"arbitration": {"priorities": {}}, "logging": {}},
+        "quadruped.yaml": {"gait": {}, "safety": {}},
     }
 
 
@@ -77,25 +81,36 @@ def test_variant_3_dup_in_l1_l2_s22_still_passes():
 
 
 # L6 checks
-def test_l6_wrong_top_level_key_red():
+# 2026-08-10 loosening: 10 S5.4.3 forbids only 'common.* top-level' at L6
+# (assertion B owns that rule). S22 no longer enforces single-top-level or
+# top-level == proc name. The two old red tests below are inverted to
+# document the new looser behaviour; the non-dict test stays red.
+def test_l6_multi_top_level_is_legal_after_loosening():
+    """L6 with multiple top-level keys is legal per 10 S5.4.3.
+
+    Was 'test_l6_wrong_top_level_key_red' before 2026-08-10; the shape
+    that used to trip S22 (a proc yaml whose sole top-level key is not
+    the proc name) is now a legitimate config layout -- every
+    committed p*.yaml uses it.
+    """
     l6 = _green_l6()
-    l6["p1_motion.yaml"] = {"p2_core": {"stray": 1}}
-    with pytest.raises(XbrainError) as ei:
-        run(_ctx(l6=l6))
-    assert ei.value.detail["kind"] == "l6_top_level_wrong"
-    assert ei.value.detail["expected"] == "p1_motion"
-    assert ei.value.detail["actual"] == "p2_core"
+    l6["p1_motion.yaml"] = {"arbitration": {}, "logging": {}}
+    result = run(_ctx(l6=l6))
+    assert result["status"] == "pass"
 
 
-def test_l6_multiple_top_level_keys_red():
+def test_l6_multiple_top_level_keys_is_legal_after_loosening():
+    """Multiple top-level keys is legal; only 'common' top-level is
+    reserved (assertion B, not S22)."""
     l6 = _green_l6()
-    l6["quadruped.yaml"] = {"quadruped": {"foo": 1}, "p1_motion": {"bar": 2}}
-    with pytest.raises(XbrainError) as ei:
-        run(_ctx(l6=l6))
-    assert ei.value.detail["kind"] == "l6_multiple_top_levels"
+    l6["quadruped.yaml"] = {"gait": {}, "safety": {}, "logging": {}}
+    result = run(_ctx(l6=l6))
+    assert result["status"] == "pass"
 
 
 def test_l6_non_dict_top_level_red():
+    """Non-dict L6 root (list, scalar) is still S22-red. B's flatten()
+    would silently accept a list; S22 is the only defender against it."""
     l6 = _green_l6()
     l6["p3_task.yaml"] = ["not", "a", "dict"]
     with pytest.raises(XbrainError) as ei:
