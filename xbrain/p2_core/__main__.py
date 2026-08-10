@@ -99,6 +99,15 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--heartbeat-seconds", type=float,
                     default=_HEARTBEAT_SECONDS,
                     help="seconds between heartbeat log lines")
+    ap.add_argument("--voice-loop", action="store_true",
+                    help="run voice-loop wiring (MIC capture + speaker + "
+                         "half-duplex gate) instead of pure heartbeat")
+    ap.add_argument("--payload-base-url", default="http://127.0.0.1:18080",
+                    help="payload-service base URL (voice-loop only)")
+    ap.add_argument("--arecord-device", default="hw:0,0",
+                    help="ALSA device (voice-loop only)")
+    ap.add_argument("--tts-http-timeout-s", type=float, default=5.0,
+                    help="TTS HTTP timeout in seconds (voice-loop only)")
     args = ap.parse_args(argv)
 
     logging.basicConfig(
@@ -137,6 +146,25 @@ def main(argv: Optional[list] = None) -> int:
 
     stop_flag: dict = {"stop": False}
     _install_signal_handlers(stop_flag)
+
+    if args.voice_loop:
+        # Voice-loop wiring path: real MIC + speaker + half-duplex gate.
+        from xbrain.p2_core.runtime.main_wiring import run_voice_loop_wiring
+        from xbrain.p2_core.runtime.mic_capture import (
+            DEFAULT_MIC_TOPIC, MicCaptureConfig,
+        )
+        from xbrain.p2_core.runtime.speaker_wiring import SpeakerWiringConfig
+        mic_cfg = MicCaptureConfig(
+            arecord_device=args.arecord_device,
+            zenoh_topic=DEFAULT_MIC_TOPIC,
+            max_queue_frames=8)
+        spk_cfg = SpeakerWiringConfig(
+            payload_base_url=args.payload_base_url,
+            tts_http_timeout_s=args.tts_http_timeout_s,
+            est_ms_per_sentence=4000.0)
+        return run_voice_loop_wiring(
+            mic_cfg=mic_cfg, spk_cfg=spk_cfg, stop_flag=stop_flag)
+
     return main_loop(tick_seconds=args.heartbeat_seconds, stop_flag=stop_flag)
 
 
