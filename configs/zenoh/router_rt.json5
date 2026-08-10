@@ -13,6 +13,25 @@
 //
 // This config is loaded by scripts/dev/start_voice_loop.sh via
 //   zenohd --config configs/zenoh/router_rt.json5
+// 2026-08-10 (V-ORIN-ZN-GOSSIP): gossip enabled on the ROUTER side.
+//
+// The peer-session <-> router setup requires SOMEONE to propagate
+// subscription/publisher declarations between peers, so a subscriber
+// on one peer can be reached by a publisher on another. When BOTH
+// router and sessions had gossip=false, the router accepted every
+// peer's TCP connection but never forwarded declarations, so
+// pub.put() vanished (verified via two-session probe 2026-08-10:
+// mode=peer/gossip=off -> 0 rx; mode=client -> 3 rx).
+//
+// The RT-C1/C2 rule "RT plane MUST NOT auto-discover the general
+// plane" is preserved by:
+//   * multicast STILL disabled (no beacon frames)
+//   * gossip enabled ONLY inside this router's connected peer set,
+//     which is scoped to loopback tcp:7449 -- the RT router does
+//     not connect to any other router, so its gossip domain is
+//     exactly the RT-plane processes and nothing else.
+//
+// Sessions themselves keep gossip disabled (session_factory.py).
 {
   mode: "router",
   listen: {
@@ -25,7 +44,8 @@
       enabled: false,
     },
     gossip: {
-      enabled: false,
+      enabled: true,
+      multihop: false,
     },
   },
 }

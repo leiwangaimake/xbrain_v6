@@ -99,10 +99,30 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             while not stop_flag.get("stop"):
                 now = time.monotonic()
                 if now - last_hb >= heartbeat_period_s:
+                    # Rich heartbeat: capture/publisher alive flags,
+                    # capture/publish counters, and the bug-net
+                    # exception messages if either thread died. Without
+                    # this a threading exception vanishes into
+                    # threading._threading_default_excepthook and the
+                    # log shows only mic_frames=0 with no cause.
+                    cap_alive = mic_thread.is_alive()
+                    pub_alive = mic_pub_thread.is_alive()
+                    cap_exc = getattr(mic_thread, "last_exception", None)
+                    pub_exc = getattr(mic_pub_thread, "last_exception", None)
+                    pub_errs = list(getattr(mic_pub_thread, "errors", ()))
                     _logger.info(
-                        "p2 alive; mic_frames=%d speak_pending_ok=%s",
+                        "p2 alive; captured=%d published=%d "
+                        "cap_alive=%s pub_alive=%s errors=%s",
+                        getattr(mic_thread, "frames_captured", 0),
                         mic_pub_thread.frames_published,
-                        speaker is not None)
+                        cap_alive, pub_alive,
+                        pub_errs[-1] if pub_errs else "none")
+                    if cap_exc:
+                        _logger.error("mic capture thread crashed:\n%s",
+                                      cap_exc)
+                    if pub_exc:
+                        _logger.error("mic publisher thread crashed:\n%s",
+                                      pub_exc)
                     last_hb = now
                 time.sleep(0.1)
         finally:

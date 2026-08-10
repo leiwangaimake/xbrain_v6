@@ -127,21 +127,24 @@ class TurnLoopWorker(threading.Thread):
         self._cfg = cfg
         self._q = in_queue
         self._publish = publish_fn
-        self._stop = stop_evt
+        self._stop_evt = stop_evt
         self._vad_state = VadState_()
         # Public counters for smoke-test assertions
         self.turns_dispatched = 0
+        self.frames_received = 0
+        self.frames_speech = 0
         self.last_intent_id: Optional[str] = None
         self.last_text: Optional[str] = None
         self.errors: List[str] = []
 
     def run(self) -> None:
-        while not self._stop.is_set():
+        while not self._stop_evt.is_set():
             try:
                 item = self._q.get(timeout=0.1)
             except queue.Empty:
                 continue
             if isinstance(item, AudioFrame):
+                self.frames_received += 1
                 self._on_frame(item)
             else:
                 _logger.warning("turn_loop: unknown queue item type")

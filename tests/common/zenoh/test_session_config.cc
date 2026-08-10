@@ -67,11 +67,11 @@ const char* const kGenConnect = "tcp/127.0.0.1:7447";
 const char* const kRtJson5 =
     "{\"mode\":\"peer\",\"connect\":{\"endpoints\":[\"tcp/127.0.0.1:7449\"]},"
     "\"listen\":{\"endpoints\":[]},\"scouting\":{\"multicast\":{\"enabled\":"
-    "false},\"gossip\":{\"enabled\":false}}}";
+    "false},\"gossip\":{\"enabled\":true}}}";
 const char* const kGenJson5 =
     "{\"mode\":\"peer\",\"connect\":{\"endpoints\":[\"tcp/127.0.0.1:7447\"]},"
     "\"listen\":{\"endpoints\":[]},\"scouting\":{\"multicast\":{\"enabled\":"
-    "false},\"gossip\":{\"enabled\":false}}}";
+    "false},\"gossip\":{\"enabled\":true}}}";
 
 // Both planes get the identical field checks. Written once and called twice
 // rather than copied, because a copied second case is how one plane keeps a
@@ -88,7 +88,9 @@ void ExpectContractFields(const zc::SessionConfig& cfg, const char* connect) {
   EXPECT_EQ(0u, cfg.listen_endpoint_count);
   // RT-C1 and RT-C2.
   EXPECT_FALSE(cfg.scouting_multicast_enabled);
-  EXPECT_FALSE(cfg.scouting_gossip_enabled);
+  // V-ORIN-ZN-GOSSIP: gossip is now required-on. Multicast (RT-C1)
+  // stays off; the cross-plane leak vector is multicast, not gossip.
+  EXPECT_TRUE(cfg.scouting_gossip_enabled);
   // Exactly one connect endpoint is structural here: the struct holds a single
   // pointer, so "unique" cannot be violated by appending. What can go wrong is
   // the value, and that is what is checked.
@@ -137,19 +139,16 @@ TEST(SessionConfig, ConfigsAreDistinctObjects) {
 TEST(SessionConfig, ConfigsDoNotShareState) {
   zc::SessionConfig rt = zc::PlaneConfig(zc::Plane::kRt);
   zc::SessionConfig gen = zc::PlaneConfig(zc::Plane::kGen);
-  rt.scouting_gossip_enabled = true;
+  // V-ORIN-ZN-GOSSIP: default is now true; mutate to false to prove
+  // independence. Same property (no shared state), inverted probe.
+  rt.scouting_gossip_enabled = false;
   rt.listen_endpoint_count = 1;
-  // The edit is confirmed on the object that was edited before the other one is
-  // checked. Without this the case would pass vacuously if the write never took
-  // effect -- "gen is unchanged" says nothing when nothing was changed anywhere.
-  EXPECT_TRUE(rt.scouting_gossip_enabled);
+  EXPECT_FALSE(rt.scouting_gossip_enabled);
   EXPECT_EQ(1u, rt.listen_endpoint_count);
-  EXPECT_FALSE(gen.scouting_gossip_enabled);
+  EXPECT_TRUE(gen.scouting_gossip_enabled);
   EXPECT_EQ(0u, gen.listen_endpoint_count);
-  // And a config fetched afterwards must be clean, which is what fails if the
-  // table is a mutable static the first call handed out.
   const zc::SessionConfig rt_again = zc::PlaneConfig(zc::Plane::kRt);
-  EXPECT_FALSE(rt_again.scouting_gossip_enabled);
+  EXPECT_TRUE(rt_again.scouting_gossip_enabled);
   EXPECT_EQ(0u, rt_again.listen_endpoint_count);
 }
 
@@ -173,9 +172,12 @@ TEST(SessionConfig, ContractCheckRejectsEachViolation) {
   multicast_on.scouting_multicast_enabled = true;
   EXPECT_FALSE(zc::IsContractCompliant(multicast_on));
 
-  zc::SessionConfig gossip_on = good;
-  gossip_on.scouting_gossip_enabled = true;
-  EXPECT_FALSE(zc::IsContractCompliant(gossip_on));
+  // V-ORIN-ZN-GOSSIP: the compliance check inverted for gossip.
+  // Turning gossip OFF is now the violation (required-on for
+  // router-brokered subscription discovery).
+  zc::SessionConfig gossip_off = good;
+  gossip_off.scouting_gossip_enabled = false;
+  EXPECT_FALSE(zc::IsContractCompliant(gossip_off));
 
   // An empty endpoint string is not the same as no endpoint: the binding would
   // accept the document and fail at session-open with a message naming the empty

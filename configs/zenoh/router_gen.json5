@@ -21,12 +21,18 @@
       "tcp/127.0.0.1:7447",
     ],
   },
+  // 2026-08-10 (V-ORIN-ZN-GOSSIP): gossip enabled on the router --
+  // required for peer-session subscription discovery. See router_rt.json5
+  // for the full rationale (verified via two-session probe: peer+gossip=off
+  // -> 0 rx; client-mode -> 3 rx). multihop=false + multicast=false keep
+  // the gossip domain scoped to this router's directly-connected peers.
   scouting: {
     multicast: {
       enabled: false,
     },
     gossip: {
-      enabled: false,
+      enabled: true,
+      multihop: false,
     },
   },
 }

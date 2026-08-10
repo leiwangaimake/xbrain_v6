@@ -99,8 +99,9 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                 now = time.monotonic()
                 if now - last_hb >= _VOICE_LOOP_HEARTBEAT_PERIOD:
                     _logger.info(
-                        "p4 alive; turns_dispatched=%d last_intent=%s "
-                        "queue_depth=%d",
+                        "p4 alive; frames_rx=%d turns_dispatched=%d "
+                        "last_intent=%s queue_depth=%d",
+                        worker.frames_received,
                         worker.turns_dispatched,
                         worker.last_intent_id,
                         q.qsize())

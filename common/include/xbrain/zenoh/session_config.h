@@ -126,9 +126,17 @@ inline SessionConfig PlaneConfig(Plane plane) {
   // declarations, which is precisely the "no subscription forwarding" the
   // sub-condition is named after.
   cfg.listen_endpoint_count = 0;
-  // RT-C1 and RT-C2. Both planes, both flags, explicitly.
+  // RT-C1 stays hard-off (multicast is the actual cross-plane leak
+  // vector; scouting via UDP multicast crosses interface boundaries).
   cfg.scouting_multicast_enabled = false;
-  cfg.scouting_gossip_enabled = false;
+  // RT-C2 was 'gossip disabled'. 2026-08-10 (V-ORIN-ZN-GOSSIP) flipped
+  // this to true in the Python side to unbreak the router-brokered
+  // peer topology (a subscriber's declaration only reaches a publisher
+  // on another peer when gossip is on -- verified 2026-08-10 via a
+  // two-session probe: gossip=false both -> 0 rx; gossip=true both
+  // -> 3 rx). The C++ replica must match the Python side or the
+  // cxx-vs-python parity test reports a divergence.
+  cfg.scouting_gossip_enabled = true;
   // The one field that differs. A switch with no default clause: adding a third
   // plane must fail to compile here rather than silently fall through to the RT
   // endpoint, which would put the new plane on the real-time router.
@@ -187,7 +195,15 @@ inline bool IsContractCompliant(const SessionConfig& cfg) {
   if (cfg.listen_endpoint_count != 0) {
     return false;
   }
-  if (cfg.scouting_multicast_enabled || cfg.scouting_gossip_enabled) {
+  // V-ORIN-ZN-GOSSIP: multicast stays hard-off (cross-plane leak); gossip
+  // is REQUIRED-on now (router-brokered subscription discovery). The
+  // predicate mirrors the Python self_check in session_factory.py:
+  //   * multicast MUST be false
+  //   * gossip MUST be true (not just 'not multicast')
+  if (cfg.scouting_multicast_enabled) {
+    return false;
+  }
+  if (!cfg.scouting_gossip_enabled) {
     return false;
   }
   // An empty endpoint string is not "no endpoint": it is an endpoint the binding

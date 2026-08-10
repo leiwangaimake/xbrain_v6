@@ -111,7 +111,7 @@ class MicCaptureThread(threading.Thread):
         super().__init__(name="p2.mic_capture", daemon=True)
         self._cfg = cfg
         self._q = out_queue
-        self._stop = stop_evt
+        self._stop_evt = stop_evt
         self._proc: Optional[subprocess.Popen] = None
 
     def _spawn_arecord(self) -> subprocess.Popen:
@@ -123,10 +123,56 @@ class MicCaptureThread(threading.Thread):
             "-c", "1",
             "-D", self._cfg.arecord_device,
         ]
-        return subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE, bufsize=0)
+        # stderr goes to DEVNULL, NOT PIPE. Under -q arecord still
+        # emits occasional ALSA info to stderr; with stderr=PIPE and
+        # no drainer thread, the kernel pipe buffer fills at ~64 KB
+        # and arecord blocks on the NEXT stderr write. Once arecord
+        # blocks, its stdout writes stop too, and MicCaptureThread's
+        # stdout.read() hangs forever with no diagnostic -- exactly
+        # the silent-hang mode observed on ORIN 2026-08-10. DEVNULL
+        # loses stderr for post-mortem, which is the acceptable
+        # trade-off for a live MIC pipeline (an audio driver failure
+        # shows up as arecord exiting -- the EOF branch below handles
+        # that separately).
+        #
+        # Also arecord writes a WAV header (44 bytes) at the very
+        # start of stdout by default when -t is not set. -t raw
+        # suppresses that so every 20 ms chunk is exactly 1920 raw
+        # bytes -- without -t raw the first frame is 44 bytes of
+        # header + partial audio, which with bufsize=0 semantics
+        # (short read = short return) triggered a false-EOF branch
+        # on ORIN 2026-08-10.
+        #
+        # bufsize=-1 uses io.DEFAULT_BUFFER_SIZE (8192) with a
+        # BufferedReader wrapper on stdout. .read(N) then blocks
+        # until it collects N bytes OR hits EOF -- exactly what
+        # the read loop expects. bufsize=0 returns a raw FileIO
+        # whose .read(N) can return short without EOF, which is
+        # what tripped the false-EOF branch.
+        cmd_with_raw = list(cmd)
+        cmd_with_raw.insert(1, "raw")
+        cmd_with_raw.insert(1, "-t")
+        return subprocess.Popen(cmd_with_raw, stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL, bufsize=-1)
+
+    # Set on any uncaught exception in run() so main_wiring's heartbeat
+    # can log it. Threading uncaught exceptions otherwise vanish silently
+    # into threading._threading_default_excepthook, which writes to
+    # stderr WITHOUT the process logging config -- so nothing shows in
+    # the systemd/nohup log file. This class-level flag closes that gap.
+    last_exception: Optional[str] = None
+    frames_captured: int = 0
 
     def run(self) -> None:
+        try:
+            self._run_body()
+        except Exception as exc:      # noqa: BLE001 -- bug net for the whole thread
+            import traceback
+            self.last_exception = "%s: %s\n%s" % (
+                type(exc).__name__, exc, traceback.format_exc())
+            self._q.put(("error", "capture crashed: %s" % exc))
+
+    def _run_body(self) -> None:
         try:
             self._proc = self._spawn_arecord()
         except FileNotFoundError:
@@ -138,12 +184,20 @@ class MicCaptureThread(threading.Thread):
         # Each 20 ms frame = CAPTURE_SAMPLES_PER_FRAME (960) samples
         # of 2 bytes each = 1920 bytes at 48 kHz s16le.
         raw_bytes_per_frame = CAPTURE_SAMPLES_PER_FRAME * 2
-        while not self._stop.is_set():
+        while not self._stop_evt.is_set():
             raw = self._proc.stdout.read(raw_bytes_per_frame)
             if len(raw) < raw_bytes_per_frame:
                 # EOF from arecord (device unplugged or process
-                # terminated). Signal upstream and exit.
-                self._q.put(("error", "arecord stream ended"))
+                # terminated). stderr is DEVNULL, so no stderr trace;
+                # the exit code from wait() is the best signal.
+                rc = None
+                try:
+                    rc = self._proc.wait(timeout=0.5)
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
+                self._q.put(("error",
+                              "arecord stream ended (raw_len=%d, rc=%s)"
+                              % (len(raw), rc)))
                 return
             samples_48k = list(struct.unpack(
                 f"<{CAPTURE_SAMPLES_PER_FRAME}h", raw))
@@ -151,6 +205,7 @@ class MicCaptureThread(threading.Thread):
             frame = AudioFrame(
                 rate_hz=ASR_RATE_HZ, channels=1, sample_width=2,
                 frame_ms=FRAME_MS, samples=samples_16k)
+            self.frames_captured += 1
             try:
                 self._q.put_nowait(("frame", frame))
             except queue.Full:
@@ -163,7 +218,7 @@ class MicCaptureThread(threading.Thread):
                 self._q.put_nowait(("frame", frame))
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_evt.set()
         if self._proc is not None:
             try:
                 self._proc.terminate()
@@ -186,14 +241,27 @@ class MicPublisherThread(threading.Thread):
         self._cfg = cfg
         self._q = in_queue
         self._sess = zenoh_session
-        self._stop = stop_evt
+        self._stop_evt = stop_evt
         self.frames_published = 0
         self.errors: list = []
 
+    # Same 'bug net' pattern as MicCaptureThread: a class-level flag
+    # so a silent uncaught exception surfaces in the heartbeat log.
+    last_exception: Optional[str] = None
+
     def run(self) -> None:
+        try:
+            self._run_body()
+        except Exception as exc:      # noqa: BLE001
+            import traceback
+            self.last_exception = "%s: %s\n%s" % (
+                type(exc).__name__, exc, traceback.format_exc())
+            self.errors.append("publisher crashed: %s" % exc)
+
+    def _run_body(self) -> None:
         pub = self._sess.declare_publisher(self._cfg.zenoh_topic)
         try:
-            while not self._stop.is_set():
+            while not self._stop_evt.is_set():
                 try:
                     kind, payload = self._q.get(timeout=0.1)
                 except queue.Empty:

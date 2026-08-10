@@ -116,8 +116,14 @@ def test_document_fields(plane):
     # RT-C1. Identity against False, not a truthiness check: 0 is falsy and
     # serialises as a number, which is not the boolean the contract requires.
     assert doc["scouting"]["multicast"]["enabled"] is False
-    # RT-C2.
-    assert doc["scouting"]["gossip"]["enabled"] is False
+    # RT-C2 was 'gossip disabled'. 2026-08-10 (V-ORIN-ZN-GOSSIP): the
+    # strict 'no gossip' reading of 11 S1.1.2 broke pub/sub routing in
+    # the router-brokered peer topology. Gossip is now REQUIRED on the
+    # session side; the router propagates subscription tables only
+    # when both ends gossip. Multicast (RT-C1) stays False and is the
+    # actual cross-plane leak vector; loopback-only gossip does not
+    # cross planes.
+    assert doc["scouting"]["gossip"]["enabled"] is True
     # RT-C3.d. Equality against the empty list, not "not doc[...]": None would
     # also be falsy, and None is a missing field rather than an empty one.
     assert doc["listen"]["endpoints"] == []
@@ -152,10 +158,12 @@ def test_zenoh_config_fields(plane):
     # RT-C1. Zenoh's own default here is ON, which is why an unread field is
     # worse than a wrong one.
     assert json.loads(cfg.get_json("scouting/multicast/enabled")) is False
-    # RT-C2. Gossip is the field V5 could leave alone -- one router made it
-    # harmless -- and V6 cannot, because the cross-plane processes hold the two
-    # links gossip would spread along.
-    assert json.loads(cfg.get_json("scouting/gossip/enabled")) is False
+    # RT-C2 was 'gossip disabled'. 2026-08-10 (V-ORIN-ZN-GOSSIP)
+    # inverted this in session_config_document: gossip is required for
+    # the router-brokered peer topology. Cross-plane isolation (RT-C1)
+    # is preserved by multicast staying off; gossip only propagates
+    # over the ESTABLISHED TCP connect endpoint, which is loopback-only.
+    assert json.loads(cfg.get_json("scouting/gossip/enabled")) is True
     # RT-C3.d. A listening peer propagates subscription declarations.
     assert json.loads(cfg.get_json("listen/endpoints")) == []
     # The whole list, so a second endpoint cannot hide behind the correct first.
@@ -213,14 +221,16 @@ def test_documents_do_not_share_nested_state():
     # Mutating a nested dict, not the top level: a shallow copy of a template
     # gives distinct top-level dicts that still share everything below them,
     # so a top-level edit would not detect the defect this case exists for.
-    rt["scouting"]["gossip"]["enabled"] = True
+    # V-ORIN-ZN-GOSSIP: default is now True; mutate to False to prove
+    # the two documents don't share nested state.
+    rt["scouting"]["gossip"]["enabled"] = False
     rt["listen"]["endpoints"].append("tcp/0.0.0.0:7449")
-    assert gen["scouting"]["gossip"]["enabled"] is False   # RT-C2 on the other plane
+    assert gen["scouting"]["gossip"]["enabled"] is True    # untouched other plane
     assert gen["listen"]["endpoints"] == []                # RT-C3.d, still empty
     # Same plane twice. A module-level template shared by every call fails here
     # and passes the cross-plane half above whenever the template is per plane.
     rt_again = session_config_document(PLANE_RT)
-    assert rt_again["scouting"]["gossip"]["enabled"] is False
+    assert rt_again["scouting"]["gossip"]["enabled"] is True
     assert rt_again["listen"]["endpoints"] == []
 
 
@@ -237,12 +247,14 @@ def test_zenoh_configs_do_not_share_state():
     """
     cfg_rt = build_session_config(PLANE_RT)
     cfg_gen = build_session_config(PLANE_GEN)
-    cfg_rt.insert_json5("scouting/gossip/enabled", "true")
+    # V-ORIN-ZN-GOSSIP: default is now true; flip RT to false and
+    # confirm GEN untouched. The property (no shared state) is the same.
+    cfg_rt.insert_json5("scouting/gossip/enabled", "false")
     # The edited object is checked first. Without it the case would pass
     # vacuously if insert_json5 silently did nothing -- "gen is unchanged" says
     # nothing when nothing changed anywhere.
-    assert json.loads(cfg_rt.get_json("scouting/gossip/enabled")) is True
-    assert json.loads(cfg_gen.get_json("scouting/gossip/enabled")) is False
+    assert json.loads(cfg_rt.get_json("scouting/gossip/enabled")) is False
+    assert json.loads(cfg_gen.get_json("scouting/gossip/enabled")) is True
 
 
 # ---------------------------------------------------------------------------

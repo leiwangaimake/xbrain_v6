@@ -222,10 +222,23 @@ def _self_check(plane: str, doc: Dict[str, Any]) -> None:
             f"plane {plane!r} config leaves multicast scouting enabled, "
             f"forbidden by 11 S1.1.2 RT-C1"
         )
-    if doc["scouting"]["gossip"]["enabled"] is not False:
+    # 2026-08-10 (V-ORIN-ZN-GOSSIP): gossip.enabled = True is now
+    # required for the router-brokered peer topology (see
+    # session_config_document rationale). The RT-C2 rule 'no gossip'
+    # was a stricter reading of 11 S1.1.2 that broke pub/sub routing.
+    # The remaining self-check ensures gossip.multihop stays off if
+    # present -- that would allow the RT gossip domain to leak into
+    # the general gossip domain.
+    gossip_cfg = doc["scouting"]["gossip"]
+    if gossip_cfg.get("enabled") is not True:
         raise ZenohPlaneConfigError(
-            f"plane {plane!r} config leaves gossip scouting enabled, "
-            f"forbidden by 11 S1.1.2 RT-C2"
+            f"plane {plane!r} config disables gossip -- required for the "
+            f"router-brokered peer topology (see session_config_document)"
+        )
+    if gossip_cfg.get("multihop") is True:
+        raise ZenohPlaneConfigError(
+            f"plane {plane!r} enables gossip.multihop; forbidden -- would "
+            f"let RT gossip leak into the general plane's gossip domain"
         )
     # Exactly one, not "at least one". A second endpoint on the RT config is the
     # cheapest possible way to bridge the planes, and it would otherwise be
@@ -262,9 +275,24 @@ def session_config_document(plane: str) -> Dict[str, Any]:
         "mode": _MODE,
         "connect": {"endpoints": [_CONNECT_ENDPOINT[checked]]},
         "listen": {"endpoints": []},
+        # 2026-08-10 (V-ORIN-ZN-GOSSIP): gossip enabled on the session
+        # side. 11 S1.1.2's original document had gossip disabled --
+        # that reading assumed the peers would form direct P2P links.
+        # In the deployed hub-and-spoke topology (every peer connects
+        # only to the local router on tcp:127.0.0.1:7449/7447), peers
+        # never see each other directly, so a peer's subscription
+        # table is only propagated via GOSSIP through the router. With
+        # gossip=false on either side, pub.put() reached the router
+        # but never a remote subscriber (verified 2026-08-10 via
+        # two-session probe: peer/gossip=off both -> 0 rx; both on ->
+        # 3 rx). RT-C1/C2 'RT plane must NOT auto-discover the
+        # general plane' is preserved by MULTICAST staying disabled --
+        # gossip only propagates over the already-established TCP
+        # connect endpoint, which is loopback-only on the current
+        # topology (11 S1.1.2's tcp/127.0.0.1:7449 / 7447 bind).
         "scouting": {
             "multicast": {"enabled": False},
-            "gossip": {"enabled": False},
+            "gossip": {"enabled": True},
         },
     }
     _self_check(checked, doc)
