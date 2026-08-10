@@ -43,6 +43,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -50,6 +51,69 @@ from pathlib import Path
 
 
 DEFAULT_OUT = "/opt/xbrain_v6/data/run/resolved"
+BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+
+
+def _read_real_boot_id() -> str:
+    """Return the running kernel's boot_id, stripped.
+
+    The fixture writes 'fixture-boot-id' into MANIFEST.boot_id because
+    it does not know the ambient boot id and pytest cases must be
+    deterministic. On a real machine load_resolved's gate compares the
+    manifest boot_id against /proc/sys/kernel/random/boot_id and
+    refuses any snapshot from a previous boot. This helper reads the
+    current boot_id so the dev-materialise flow can rewrite the
+    fixture-shaped MANIFEST with a value that matches the running
+    kernel -- exactly what xbrain-config-freeze.service would do on a
+    real boot.
+    """
+    with open(BOOT_ID_PATH, encoding="utf-8") as fh:
+        value = fh.read().strip()
+    if not value:
+        # Same guard as xbrain.common.config.resolved: an empty boot_id
+        # cannot establish freshness. Refuse loudly.
+        raise RuntimeError(
+            "%s is empty; cannot rewrite MANIFEST.boot_id without a real "
+            "kernel boot_id to substitute" % BOOT_ID_PATH)
+    return value
+
+
+def _rewrite_manifest_for_final_location(
+    manifest_path: Path, boot_id: str, final_root: Path
+) -> None:
+    """Rewrite MANIFEST.json for post-copy state: boot_id + per-proc
+    paths. Both are needed because materialise ran under the fixture's
+    staging dir; after this helper moved the files to `final_root`,
+    the MANIFEST still names the staging paths and the fixture boot_id.
+
+    Path rewrite: for each MANIFEST.processes[proc]['path'], swap the
+    basename onto `final_root`. Load_resolved's path-confinement gate
+    (10 S5.4.1, CFG-ROOT-5) refuses any path outside RESOLVED_ROOT.
+
+    Boot_id rewrite: fixture writes 'fixture-boot-id'; the ambient
+    kernel boot_id is what load_resolved's freshness gate compares
+    against /proc/sys/kernel/random/boot_id.
+
+    Same .new + os.replace atomic-write pattern the freeze pipeline
+    uses so a concurrent reader either sees the fixture-stamped
+    MANIFEST or the fully-rewritten one, never a truncated file.
+    """
+    with open(manifest_path, encoding="utf-8") as fh:
+        manifest = json.load(fh)
+    manifest["boot_id"] = boot_id
+    processes = manifest.get("processes") or {}
+    for proc_name, entry in processes.items():
+        if not isinstance(entry, dict):
+            continue
+        src_path = entry.get("path")
+        if not src_path:
+            continue
+        entry["path"] = str(final_root / Path(src_path).name)
+    tmp = manifest_path.with_suffix(manifest_path.suffix + ".new")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, manifest_path)
 
 
 def main() -> int:
@@ -132,6 +196,15 @@ def main() -> int:
             shutil.copytree(item, dst)
         else:
             shutil.copy2(item, dst)
+
+    # Rewrite MANIFEST after the copy: substitute the ambient boot_id
+    # (fixture writes 'fixture-boot-id') AND swap staging paths in
+    # processes[proc].path to the final resolved-root location. Both
+    # are load_resolved gates that would otherwise refuse the snapshot.
+    manifest_path = out / "MANIFEST.json"
+    if manifest_path.exists():
+        real_boot_id = _read_real_boot_id()
+        _rewrite_manifest_for_final_location(manifest_path, real_boot_id, out)
 
     written = sorted(p.name for p in out.iterdir())
     print("materialize_resolved: wrote %s" % out)

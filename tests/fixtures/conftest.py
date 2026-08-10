@@ -141,6 +141,15 @@ def _rewrite_yaml_with_overrides(dst: Path,
             for rel in _route(k):
                 per_file.setdefault(rel, {})[k] = v
 
+    # 2026-08-10 V-P4-NULLS: also route P4_L6_FILL into p4_agent.yaml.
+    # These are 12 P4-scoped keys (gateway.* + grammar.*) that live in
+    # the L6 per-proc file, not in common.*. The routing above only
+    # knows about common.*/models routes; per-proc gateway/grammar
+    # keys have their own destination.
+    from tests.fixtures.overrides import P4_L6_FILL
+    for k, v in P4_L6_FILL.items():
+        per_file.setdefault("p4_agent.yaml", {})[k] = v
+
     for rel, subset in per_file.items():
         path = dst / rel
         if not path.exists():

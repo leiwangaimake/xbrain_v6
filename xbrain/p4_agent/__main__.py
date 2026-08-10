@@ -152,17 +152,39 @@ def main(argv: Optional[list] = None) -> int:
         _logger.error("cannot import p4_agent config loader: %s", exc)
         return 2
 
+    # load_p4_config signature is (agent_version, root=..., ...) --
+    # the FIRST arg is the running agent's own semver, compared against
+    # the resolved config's min_agent_version (16 S12.4). Passing the
+    # yaml PATH here was a V-2B mistake; the loader tried to parse
+    # '/opt/.../p4_agent.yaml' as a semver and refused startup.
+    #
+    # AGENT_VERSION is the P4 process's own release identifier. Kept
+    # a module-local constant here because the p4_agent package has
+    # no single 'version.py' today; when it lands, this should read
+    # that value instead of hard-coding.
+    AGENT_VERSION = "1.0"
     if args.config:
         product_path = args.config
+        product_root = None
     elif args.resolved_root:
-        product_path = f"{args.resolved_root.rstrip('/')}/p4_agent.yaml"
+        product_root = args.resolved_root.rstrip('/')
+        product_path = f"{product_root}/p4_agent.yaml"
     else:
+        product_root = None
         product_path = "/opt/xbrain_v6/data/run/resolved/p4_agent.yaml"
     try:
         # load_p4_config performs the CLAUDE.md 3.1 null-guard + the
         # 16 S12.4 min_agent_version check + the enable_on closed-set
         # check. It refuses to start on any of the three.
-        _cfg = load_p4_config(product_path)
+        if args.config:
+            # Explicit config path -- caller pinned a specific yaml;
+            # the loader still needs a root, derive it from the path.
+            derived_root = os.path.dirname(args.config)
+            _cfg = load_p4_config(AGENT_VERSION, root=derived_root)
+        elif product_root:
+            _cfg = load_p4_config(AGENT_VERSION, root=product_root)
+        else:
+            _cfg = load_p4_config(AGENT_VERSION)
     except FileNotFoundError:
         # Special case for on-bench dev: if resolved product is
         # absent, print a clear message rather than a traceback --

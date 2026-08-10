@@ -197,3 +197,31 @@ def apply_overrides(tree: Dict[str, Any],
     if extras:
         for k, v in extras.items():
             set_by_path(tree, k, v)
+
+
+# ---- Per-proc L6 null fills -----------------------------------------
+# 2026-08-10 (V-P4-NULLS): p4_agent.yaml declares 12 undecided keys as
+# null per CLAUDE.md 3.1 -- freeze assertion A rejects them, and so
+# does load_p4_config at process start. For dev voice-loop testing the
+# fixture needs to substitute a non-null placeholder for each so
+# freeze can complete AND the P4 process boots. Values here are the
+# same 'fixture-not-a-*' + 0.987654 markers used in
+# tests/p4_agent/test_config_loader.py::FIXTURE_FILL; a real deploy
+# still needs Q-P4-2 / Q-P4-3 / D-AI-1..3 decisions before it can
+# ship these values. The keys live in P4's own namespace, so they
+# route to p4_agent.yaml (NOT common.yaml) per 10 S5.4.3 (L6 owns
+# its own top-level namespace).
+P4_L6_FILL: Dict[str, Any] = {
+    "grammar.max_enum_items": 7,
+    "gateway.llm.endpoint": "http://not-a-real-host.invalid/v1/chat/completions",
+    "gateway.asr.model": "fixture-not-a-model",
+    "gateway.tts.base_url": "http://not-a-real-host.invalid",
+    "gateway.tts.path": "/fixture",
+    "gateway.tts.model": "fixture-not-a-model",
+    "gateway.tts.voice": "fixture-not-a-voice",
+    "gateway.tts.speed": 0.987654,
+    "gateway.tts.response_format": "fixture",
+    "gateway.tts.stream": False,
+    "gateway.tts.timeout_s": 5.0,
+    "gateway.gpu_token.throttle_speed_mps": 0.987654,
+}
