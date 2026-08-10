@@ -17,11 +17,16 @@ one hard-invariant way:
     reason freeze failed was we could not trust our config).
 
 boot_fail persistence (W-2):
-  * /run/xbrain/boot_fail.json    -- volatile, current-boot state
-  * /var/xbrain/boot_fail.jsonl   -- durable, APPEND-only (never
-                                    overwrite -- otherwise a
-                                    fresh failure erases the
-                                    previous failure record)
+  * /opt/xbrain_v6/data/run/boot_fail.json    -- volatile snapshot
+                                                for current-boot state
+  * /opt/xbrain_v6/data/boot_fail.jsonl       -- durable, APPEND-only
+                                                (never overwrite --
+                                                otherwise a fresh
+                                                failure erases the
+                                                previous record)
+  Both paths are the V6-standard 'runtime files under /opt/xbrain_v6/'
+  location. The functions here take paths as arguments; the constants
+  above are what callers (p5_gateway minimal mode + diag bundler) use.
   * on next successful boot, each JSONL row is transposed to
     event/fault/system with the recorded (stage, code, boot_id,
     message) fields.

@@ -11,7 +11,8 @@ When the real M20S chassis is not connected, run this on the ORIN to
 receive CHS-A frames p1_motion / chassis_relay would have sent. It
 binds tcp/0.0.0.0:30004 (matches 13 S2.2 channel 1 for control), reads
 the 16-byte APDU header + ASDU JSON payload, prints one line per frame
-to stdout + appends to /tmp/xbrain_v6/chassis_stub.log.
+to stdout + appends to /opt/xbrain_v6/logs/chassis_stub.log (V6 rule:
+all runtime logs under /opt/xbrain_v6/logs/, never /tmp).
 
 The stub does NOT synthesise chassis state feedback -- p1 will
 observe cmd_age stall + state/chassis_basic timeout, which is the
@@ -37,7 +38,7 @@ import time
 
 DEFAULT_PORT = 30004
 DEFAULT_HOST = "0.0.0.0"
-LOG_PATH = "/tmp/xbrain_v6/chassis_stub.log"
+LOG_PATH = "/opt/xbrain_v6/logs/chassis_stub.log"
 
 # CHS-A APDU header = 16 bytes (13 S2.2). Exact field layout is
 # vendor-specific; for the stub we just read 16 bytes then read the

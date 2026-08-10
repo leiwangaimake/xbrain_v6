@@ -7,15 +7,17 @@
 # Brief: Stop the voice-loop stack started by start_voice_loop.sh
 #
 # Description:
-# Reads /tmp/xbrain_v6/voice_loop.pids and sends SIGTERM to each
-# recorded pid. Waits up to 5 s for graceful shutdown; escalates to
-# SIGKILL for anything still alive. Preserves the log dir so
-# post-mortem is possible.
+# Reads /opt/xbrain_v6/data/run/voice_loop.pids and sends SIGTERM to
+# each recorded pid. Waits up to 5 s for graceful shutdown; escalates
+# to SIGKILL for anything still alive. Preserves the log dir so
+# post-mortem is possible. Path defaults follow the V6 rule 'all
+# runtime files under /opt/xbrain_v6/' -- override with
+# XBRAIN_PID_FILE / XBRAIN_LOG_DIR only for isolated dev sandboxes.
 
 set -euo pipefail
 
-PID_FILE="/tmp/xbrain_v6/voice_loop.pids"
-LOG_DIR="/tmp/xbrain_v6/voice_loop_logs"
+PID_FILE="${XBRAIN_PID_FILE:-/opt/xbrain_v6/data/run/voice_loop.pids}"
+LOG_DIR="${XBRAIN_LOG_DIR:-/opt/xbrain_v6/logs/voice_loop}"
 
 if [[ ! -f "${PID_FILE}" ]]; then
     echo "[stop_voice_loop] no pid file at ${PID_FILE}; nothing to do"

@@ -82,7 +82,9 @@ MANIFEST_SCHEMA = "xbrain-manifest-v1"
 # Tmpfs mount that receives all freeze output. CFG-BT-22 owns the mount
 # (tmpfiles.d config); the pipeline REFUSES to run when the directory is
 # missing rather than mkdir-ing over what might be a failed mount.
-RESOLVED_ROOT_DEFAULT = "/run/xbrain/resolved"
+# 2026-08-10 relocated to /opt/xbrain_v6/data/run/resolved; see
+# xbrain/common/config/resolved.py:RESOLVED_ROOT for the rationale.
+RESOLVED_ROOT_DEFAULT = "/opt/xbrain_v6/data/run/resolved"
 
 # The six processes that receive a per-process YAML snapshot. Same set as
 # xbrain.common.config.resolved.SNAPSHOT_PROCESSES; kept a local literal so

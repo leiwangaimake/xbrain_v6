@@ -8,9 +8,10 @@
 #
 # Description:
 # Starts the whole voice-loop test stack in the background. Each process
-# has its own stdout+stderr log under /tmp/xbrain_v6/voice_loop_logs/.
-# A tag file /tmp/xbrain_v6/voice_loop.pids records the pgids so
-# stop_voice_loop.sh can clean up.
+# has its own stdout+stderr log under /opt/xbrain_v6/logs/voice_loop/.
+# A tag file /opt/xbrain_v6/data/run/voice_loop.pids records the pids so
+# stop_voice_loop.sh can clean up. V6 rule: all runtime files under
+# /opt/xbrain_v6/ -- never /tmp, never /run outside boot-critical paths.
 #
 # Startup order (no waits, just ordering):
 #   1. zenohd-gen (tcp/7447)
@@ -26,8 +27,8 @@
 #   11. p1_motion --voice-loop (cmd/motion/intent -> chassis_stub)
 #
 # What this DOES NOT do:
-#   * config-freeze -- if /run/xbrain/resolved is missing p2/p3/p4/p1
-#     exit with code 3; run `python -m xbrain.boot.freeze` first
+#   * config-freeze -- if the resolved-root is missing p2/p3/p4/p1
+#     exit with code 3; materialize_resolved.py handles the dev path
 #   * NTP sync
 #   * device permissions -- USB MIC needs the audio group; GZH-2 IP
 #     must be reachable
@@ -39,10 +40,12 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$( cd "${SCRIPT_DIR}/../.." && pwd )"
 
-LOG_DIR="/tmp/xbrain_v6/voice_loop_logs"
-PID_FILE="/tmp/xbrain_v6/voice_loop.pids"
+# V6 rule: all runtime files under /opt/xbrain_v6/. Override with
+# XBRAIN_LOG_DIR / XBRAIN_PID_FILE only for isolated dev sandboxes.
+LOG_DIR="${XBRAIN_LOG_DIR:-/opt/xbrain_v6/logs/voice_loop}"
+PID_FILE="${XBRAIN_PID_FILE:-/opt/xbrain_v6/data/run/voice_loop.pids}"
 
-mkdir -p "${LOG_DIR}"
+mkdir -p "${LOG_DIR}" "$(dirname "${PID_FILE}")"
 : > "${PID_FILE}"
 
 # Config: allow override via env, default to on-ORIN topology.
@@ -57,10 +60,12 @@ ZENOHD_BIN="${ZENOHD_BIN:-zenohd}"
 ZENOHD_GEN_CONFIG="${ZENOHD_GEN_CONFIG:-${REPO_ROOT}/configs/zenoh/router_gen.json5}"
 ZENOHD_RT_CONFIG="${ZENOHD_RT_CONFIG:-${REPO_ROOT}/configs/zenoh/router_rt.json5}"
 
-# Dev-only resolved-config root. Not /run/xbrain/resolved (systemd
-# freeze writes there and needs root). materialize_resolved.py
-# populates this from the CHK-0-56 fixture pattern.
-RESOLVED_ROOT="${XBRAIN_RESOLVED_ROOT:-/tmp/xbrain_v6/resolved}"
+# Dev-only resolved-config root. Same directory as the production
+# constant (xbrain.common.config.resolved.RESOLVED_ROOT) so the
+# systemd path and the dev path do not diverge; materialize_resolved.py
+# populates this from the CHK-0-56 fixture pattern instead of running
+# the full xbrain-config-freeze.service (which would need root).
+RESOLVED_ROOT="${XBRAIN_RESOLVED_ROOT:-/opt/xbrain_v6/data/run/resolved}"
 
 _spawn() {
     local name="$1"; shift

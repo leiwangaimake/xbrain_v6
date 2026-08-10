@@ -157,7 +157,7 @@ def main(argv: Optional[list] = None) -> int:
     elif args.resolved_root:
         product_path = f"{args.resolved_root.rstrip('/')}/p4_agent.yaml"
     else:
-        product_path = "/run/xbrain/resolved/p4_agent.yaml"
+        product_path = "/opt/xbrain_v6/data/run/resolved/p4_agent.yaml"
     try:
         # load_p4_config performs the CLAUDE.md 3.1 null-guard + the
         # 16 S12.4 min_agent_version check + the enable_on closed-set

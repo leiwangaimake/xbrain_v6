@@ -8,13 +8,15 @@ Brief: Dev-only helper -- materialise resolved config products at a writable pat
 
 Description:
 For the voice-loop smoke test, xbrain-config-freeze.service is NOT
-run (systemd freeze writes /run/xbrain/resolved/ which needs root).
-This helper reuses the CHK-0-56 fixture (tests/fixtures/conftest.py
-+ overrides.py) to build a filled config tree and runs run_freeze
-against it, writing MANIFEST.json + per-process resolved snapshots
-to a caller-chosen directory.
+run (systemd freeze writes to the production RESOLVED_ROOT which is
+now /opt/xbrain_v6/data/run/resolved and would still need root to
+create on first boot). This helper reuses the CHK-0-56 fixture
+(tests/fixtures/conftest.py + overrides.py) to build a filled
+config tree and runs run_freeze against it, writing MANIFEST.json +
+per-process resolved snapshots to a caller-chosen directory.
 
-Default output: /tmp/xbrain_v6/resolved
+Default output: /opt/xbrain_v6/data/run/resolved   (V6 rule -- all
+                runtime dependencies MUST live under /opt/xbrain_v6/)
 Env override:   XBRAIN_RESOLVED_ROOT
 
 The output tree can be pointed at with --resolved-root when
@@ -23,7 +25,7 @@ runs unchanged.
 
 Usage:
   python3 scripts/dev/materialize_resolved.py
-    -> writes /tmp/xbrain_v6/resolved/{MANIFEST.json,*.yaml}
+    -> writes /opt/xbrain_v6/data/run/resolved/{MANIFEST.json,*.yaml}
   python3 scripts/dev/materialize_resolved.py --root /custom/path
     -> writes to /custom/path
 """
@@ -37,7 +39,7 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_OUT = "/tmp/xbrain_v6/resolved"
+DEFAULT_OUT = "/opt/xbrain_v6/data/run/resolved"
 
 
 def main() -> int:

@@ -83,7 +83,13 @@ from .merge import MISSING, flatten
 #: root and it applies identically here: a relative path resolves against
 #: whatever WorkingDirectory the unit happens to have, so the same code would
 #: read different files depending on how it was started.
-RESOLVED_ROOT = "/run/xbrain/resolved"
+# 2026-08-10 relocated: user-facing rule 'V6 系统一切运行时依赖资产必须在 /opt/xbrain_v6/ 下',
+# so the freeze product tree moved from the 10 S5.4.6 default tmpfs mount
+# (/run/xbrain/resolved) to /opt/xbrain_v6/data/run/resolved. The invariant
+# preserved is 'resolved products are NOT under configs/'; the difference is
+# the storage medium (data/run is disk-backed, not tmpfs). ProductRoot still
+# refuses to open anything outside this root -- see path-confinement below.
+RESOLVED_ROOT = "/opt/xbrain_v6/data/run/resolved"
 
 #: The kernel's per-boot identifier. Read as a path rather than through a helper
 #: so a test can point it somewhere else without monkey-patching.

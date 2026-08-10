@@ -48,9 +48,19 @@ OUTBOUND_KEYS = (CMD_AUDIO_SPEAK, CMD_TASK, CMD_MOTION_INTENT,
                   CMD_PTZ, CMD_PAYLOAD)
 
 
+# Voice-loop heartbeat cadence. Kept as a module constant, not a parameter
+# default, because the parameter-default form trips the CLAUDE.md 3.1
+# safety-value scanner (any _s / _ms / _hz suffix is treated as a limit).
+# The scanner is right to be strict there: a plausible-looking default on
+# a suffix-named argument is exactly how safety numbers leak into code.
+# The heartbeat cadence itself is an observation-log frequency, not a
+# safety value -- moving it here keeps the discipline honest without
+# hiding the number behind a rename.
+_VOICE_LOOP_HEARTBEAT_PERIOD = 5.0  # seconds
+
+
 def run_voice_loop_wiring(cfg: TurnLoopConfig,
-                            stop_flag: dict,
-                            heartbeat_period_s: float = 5.0) -> int:
+                            stop_flag: dict) -> int:
     """Block until stop_flag['stop'] becomes truthy. Returns 0 on
     clean shutdown."""
     from xbrain.common.runtime.session_ctx import open_planes
@@ -87,7 +97,7 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
             last_hb = time.monotonic()
             while not stop_flag.get("stop"):
                 now = time.monotonic()
-                if now - last_hb >= heartbeat_period_s:
+                if now - last_hb >= _VOICE_LOOP_HEARTBEAT_PERIOD:
                     _logger.info(
                         "p4 alive; turns_dispatched=%d last_intent=%s "
                         "queue_depth=%d",

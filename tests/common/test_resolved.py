@@ -547,5 +547,11 @@ def test_the_resolved_root_is_not_under_the_configuration_root():
     Asserted because the constant is the one thing that, changed, would make
     every other test here pass while the reader read the source.
     """
-    assert R.RESOLVED_ROOT.startswith("/run/")
+    # 2026-08-10: relocated from /run/xbrain/resolved to
+    # /opt/xbrain_v6/data/run/resolved per user directive that all V6
+    # runtime dependencies live under /opt/xbrain_v6/. The invariant
+    # this test defends is still 'RESOLVED_ROOT is not under configs/'
+    # (source vs product separation), just checked at the new location.
+    assert R.RESOLVED_ROOT == "/opt/xbrain_v6/data/run/resolved"
     assert "configs" not in R.RESOLVED_ROOT
+    assert "/data/run/" in R.RESOLVED_ROOT
