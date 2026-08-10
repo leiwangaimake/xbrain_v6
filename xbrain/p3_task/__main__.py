@@ -68,6 +68,8 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--heartbeat-seconds", type=float,
                     default=_HEARTBEAT_SECONDS)
+    ap.add_argument("--resolved-root", default=None,
+                    help="dev-only: override /run/xbrain/resolved for local smoke")
     ap.add_argument("--voice-loop", action="store_true",
                     help="run voice-loop MVP wiring instead of heartbeat")
     args = ap.parse_args(argv)
@@ -83,7 +85,8 @@ def main(argv: Optional[list] = None) -> int:
         return 2
 
     try:
-        _cfg = load_resolved("p3_task")
+        _load_kwargs = {"root": args.resolved_root} if args.resolved_root else {}
+        _cfg = load_resolved("p3_task", **_load_kwargs)
     except FileNotFoundError:
         _logger.error(
             "resolved config for p3_task not found; run "

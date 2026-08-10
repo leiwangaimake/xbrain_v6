@@ -121,11 +121,14 @@ def main(argv: Optional[list] = None) -> int:
                     help="load config then exit 0 without heartbeat")
     ap.add_argument("--heartbeat-s", type=float, default=_HEARTBEAT_S,
                     help="seconds between heartbeat log lines")
+    ap.add_argument("--resolved-root", default=None,
+                    help="dev-only: override /run/xbrain/resolved (composes "
+                         "resolved-root/p4_agent.yaml)")
     ap.add_argument("--voice-loop", action="store_true",
                     help="run voice-loop wiring (rt/audio/mic subscriber + "
                          "VAD + ASR + intent dispatch) instead of heartbeat")
-    ap.add_argument("--asr-base-url", default="http://127.0.0.1:8010",
-                    help="services/asr base URL (voice-loop only)")
+    ap.add_argument("--asr-base-url", default="http://127.0.0.1:18081",
+                    help="services/asr base URL (voice-loop only; U52 port allocation)")
     ap.add_argument("--asr-http-timeout-s", type=float, default=5.0,
                     help="ASR HTTP timeout (voice-loop only)")
     ap.add_argument("--vad-energy-threshold", type=int, default=300,
@@ -149,7 +152,12 @@ def main(argv: Optional[list] = None) -> int:
         _logger.error("cannot import p4_agent config loader: %s", exc)
         return 2
 
-    product_path = args.config or "/run/xbrain/resolved/p4_agent.yaml"
+    if args.config:
+        product_path = args.config
+    elif args.resolved_root:
+        product_path = f"{args.resolved_root.rstrip('/')}/p4_agent.yaml"
+    else:
+        product_path = "/run/xbrain/resolved/p4_agent.yaml"
     try:
         # load_p4_config performs the CLAUDE.md 3.1 null-guard + the
         # 16 S12.4 min_agent_version check + the enable_on closed-set

@@ -91,6 +91,8 @@ def main(argv: Optional[list] = None) -> int:
                          "(observation window W-1) directly")
     ap.add_argument("--heartbeat-seconds", type=float,
                     default=_HEARTBEAT_SECONDS)
+    ap.add_argument("--resolved-root", default=None,
+                    help="dev-only: override /run/xbrain/resolved for local smoke")
     ap.add_argument("--voice-loop", action="store_true",
                     help="run voice-loop MVP wiring instead of heartbeat")
     args = ap.parse_args(argv)
@@ -104,7 +106,8 @@ def main(argv: Optional[list] = None) -> int:
     if not minimal_mode:
         try:
             from xbrain.common.config.resolved import load_resolved
-            _cfg = load_resolved("p5_gateway")
+            _load_kwargs = {"root": args.resolved_root} if args.resolved_root else {}
+            _cfg = load_resolved("p5_gateway", **_load_kwargs)
             _logger.info("p5_gateway config OK; entering full mode")
         except FileNotFoundError:
             # * p5_gateway SPECIFIC: config-freeze failed = enter

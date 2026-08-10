@@ -57,6 +57,11 @@ ZENOHD_BIN="${ZENOHD_BIN:-zenohd}"
 ZENOHD_GEN_CONFIG="${ZENOHD_GEN_CONFIG:-${REPO_ROOT}/configs/zenoh/router_gen.json5}"
 ZENOHD_RT_CONFIG="${ZENOHD_RT_CONFIG:-${REPO_ROOT}/configs/zenoh/router_rt.json5}"
 
+# Dev-only resolved-config root. Not /run/xbrain/resolved (systemd
+# freeze writes there and needs root). materialize_resolved.py
+# populates this from the CHK-0-56 fixture pattern.
+RESOLVED_ROOT="${XBRAIN_RESOLVED_ROOT:-/tmp/xbrain_v6/resolved}"
+
 _spawn() {
     local name="$1"; shift
     local logfile="${LOG_DIR}/${name}.log"
@@ -88,6 +93,16 @@ _spawn zenohd-rt "${ZENOHD_BIN}" --config "${ZENOHD_RT_CONFIG}"
 # Give routers 0.5 s to bind their listen ports before clients connect.
 sleep 0.5
 
+# 2.5. Materialise resolved config products so P-processes can start
+# without config-freeze systemd unit + root privileges.
+echo "[start_voice_loop] materialising resolved products at ${RESOLVED_ROOT}"
+if ! python3 "${REPO_ROOT}/scripts/dev/materialize_resolved.py" \
+        --root "${RESOLVED_ROOT}" > "${LOG_DIR}/materialize_resolved.log" 2>&1; then
+    echo "[start_voice_loop] ERROR materialize_resolved failed; see ${LOG_DIR}/materialize_resolved.log"
+    cat "${LOG_DIR}/materialize_resolved.log" | tail -20
+    exit 2
+fi
+
 # 3-5. AI services (background). Only start if not already listening.
 _port_free() {
     ! ss -ln 2>/dev/null | grep -q ":$1 " || return 1
@@ -104,7 +119,10 @@ else
     echo "[start_voice_loop] llm already on :18082, skipping"
 fi
 if _port_free 18080; then
-    _spawn payload-service python3 "${REPO_ROOT}/services/payload/app.py"
+    # payload/app.py uses relative imports (from .api.rest ...) so it
+    # must be invoked as a module from the repo root, not as a script.
+    _spawn payload-service bash -c \
+        "cd '${REPO_ROOT}' && python3 -m services.payload.app"
 else
     echo "[start_voice_loop] payload already on :18080, skipping"
 fi
@@ -116,17 +134,22 @@ _spawn chassis_stub python3 "${REPO_ROOT}/scripts/dev/chassis_stub.py" \
 # 7-11. P-processes in dependency order.
 # p2_core owns MIC; must be up before p4 subscribes rt/audio/mic.
 _spawn p2_core python3 -m xbrain.p2_core --voice-loop \
+    --resolved-root "${RESOLVED_ROOT}" \
     --payload-base-url "${PAYLOAD_URL}" \
     --arecord-device "${ARECORD_DEVICE}"
 
 # p3/p5 pure observers; start before p4 so we don't miss early frames.
-_spawn p3_task python3 -m xbrain.p3_task --voice-loop
-_spawn p5_gateway python3 -m xbrain.p5_gateway --voice-loop
+_spawn p3_task python3 -m xbrain.p3_task --voice-loop \
+    --resolved-root "${RESOLVED_ROOT}"
+_spawn p5_gateway python3 -m xbrain.p5_gateway --voice-loop \
+    --resolved-root "${RESOLVED_ROOT}"
 
 _spawn p4_agent python3 -m xbrain.p4_agent --voice-loop \
+    --resolved-root "${RESOLVED_ROOT}" \
     --asr-base-url "${ASR_URL}"
 
 _spawn p1_motion python3 -m xbrain.p1_motion --voice-loop \
+    --resolved-root "${RESOLVED_ROOT}" \
     --chassis-host "${CHASSIS_HOST}" \
     --chassis-port "${CHASSIS_PORT}"
 

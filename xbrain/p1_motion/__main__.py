@@ -98,6 +98,8 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--heartbeat-seconds", type=float,
                     default=_HEARTBEAT_SECONDS,
                     help="seconds between heartbeat log lines")
+    ap.add_argument("--resolved-root", default=None,
+                    help="dev-only: override /run/xbrain/resolved for local smoke")
     ap.add_argument("--voice-loop", action="store_true",
                     help="run voice-loop MVP wiring instead of heartbeat")
     ap.add_argument("--chassis-host", default="127.0.0.1",
@@ -117,7 +119,8 @@ def main(argv: Optional[list] = None) -> int:
         return 2
 
     try:
-        _cfg = load_resolved("p1_motion")
+        _load_kwargs = {"root": args.resolved_root} if args.resolved_root else {}
+        _cfg = load_resolved("p1_motion", **_load_kwargs)
     except FileNotFoundError:
         _logger.error(
             "resolved config for p1_motion not found; run "
