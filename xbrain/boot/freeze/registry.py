@@ -131,6 +131,7 @@ from xbrain.boot.freeze.assertions.j_config_root import run as _j_run
 from xbrain.boot.freeze.assertions.k_quadruped_qc import run as _k_run
 from xbrain.boot.freeze.assertions.l_bit_exemption import run as _l_run
 from xbrain.boot.freeze.assertions.m_required import run as _m_run
+from xbrain.boot.freeze.assertions.materialise import run as _materialise_run
 from xbrain.boot.freeze.assertions.n_o_identities import (
     run_n as _n_run, run_o as _o_run,
 )
@@ -318,6 +319,27 @@ ASSERT_REGISTRY: Tuple[AssertSpec, ...] = (
     AssertSpec("S22", "per-layer namespace validation",
                depends_on=("J",), runner=_s22_run,
                impl_item="CFG-FZ-16"),
+    # ---------------------------------------------------------------------
+    # materialise -- write /opt/xbrain_v6/data/run/resolved/{proc}.yaml
+    # snapshots with ${common.*} references pre-expanded (CFG-FZ-18).
+    #
+    # LAST in ORD-1 on purpose: 10 S5.4.4 requires the freeze line to be
+    # all-or-nothing. Writing per-proc yamls before any prior assertion
+    # could still raise would leave orphan snapshots on disk. Depending
+    # on every prior row pins this to run last; if any earlier row
+    # raises, this never runs and no files land on disk.
+    #
+    # Failure of this runner is itself all-or-nothing: run_freeze
+    # catches the raise via run_assertions and does NOT proceed to write
+    # MANIFEST.json, so per-proc yamls that landed before the crash are
+    # orphaned but load_resolved refuses to open them without MANIFEST.
+    # ---------------------------------------------------------------------
+    AssertSpec("materialise", "write per-process resolved YAML snapshots",
+               depends_on=("A", "M", "B", "C", "D", "E", "F", "G",
+                            "N", "O", "H", "I", "K", "L",
+                            "FV-ORG", "C-6+MR-1", "S10", "S22"),
+               runner=_materialise_run,
+               impl_item="CFG-FZ-18"),
 )
 
 

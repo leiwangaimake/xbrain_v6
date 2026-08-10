@@ -198,7 +198,21 @@ def run_freeze(*, boot_id: str, config_root: str,
     ctx = dict(context) if context is not None else {}
     ctx.setdefault("config_root", config_root)
     ctx.setdefault("config_root_overridden", config_root_overridden)
+    # CFG-FZ-18 (materialise) writes per-proc yamls to resolved_root and
+    # populates ctx['processes'] so the entries land in MANIFEST.processes
+    # below. resolved_root has to reach the runner via ctx because
+    # AssertSpec.runner takes only ctx -- adding a positional arg would
+    # break every existing runner. setdefault so a caller that already
+    # populated ctx['resolved_root'] (unit-test isolation) wins.
+    ctx.setdefault("resolved_root", resolved_root)
     assertions = run_assertions(ctx)
+    # Explicit caller override wins over materialise's ctx population --
+    # so a test that wants to inject a specific processes dict still
+    # can. Fall back to whatever materialise wrote; final fallback is
+    # empty (matches the pre-CFG-FZ-18 behaviour).
+    _processes = processes
+    if _processes is None:
+        _processes = ctx.get("processes", {})
     manifest = build_manifest(
         boot_id=boot_id,
         config_root=config_root,
@@ -207,7 +221,7 @@ def run_freeze(*, boot_id: str, config_root: str,
         config_rev=config_rev,
         calib_rev=calib_rev,
         layers=layers or [],
-        processes=processes or {},
+        processes=_processes,
         assertions=assertions,
     )
     manifest_path = os.path.join(resolved_root, "MANIFEST.json")

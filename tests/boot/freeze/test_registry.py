@@ -101,7 +101,16 @@ def _scaffold_config_ctx(tmp_path):
     # placeholders, S10's is stricter), so skip S10's whole file list
     # for framework tests that only exercise the pipeline shape.
     from xbrain.common.config.schemas.registry import CONFIG_FILES
+    # CFG-FZ-18 (materialise) writes /{proc}.yaml under resolved_root; without
+    # a real dir here the runner would AssertionError on the missing ctx key
+    # (which is the point of the runner's guard -- caller wiring bug, not a
+    # config problem). Framework tests exercise pipeline shape, so a
+    # sibling tmp resolved dir is enough: materialise's per-proc write is
+    # a no-op here because the scaffold does not include any L6 files.
+    resolved = root.parent / (root.name + "_resolved")
+    resolved.mkdir()
     return {"config_root": str(root),
+            "resolved_root": str(resolved),
             "skip_files": list(CONFIG_FILES)}
 
 
