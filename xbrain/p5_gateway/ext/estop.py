@@ -115,8 +115,9 @@ def build_ack(frame: EstopFrame,
                 applied: bool,
                 hes: str,
                 timeout_lock: bool) -> EstopAck:
-    """Assemble the ack. latency_ms uses monotonic diff (R3.3
-    "该判定使用机器人单调钟字段，不用两端 ts 相减")."""
+    """Assemble the ack. latency_ms uses monotonic diff (R3.3:
+    'the judgement uses the robot monotonic-clock field, NOT ts
+    subtraction across both ends')."""
     if hes not in ("engaged", "cleared", "unknown"):
         raise EstopSchemaError(
             f"hes closed set violation: {hes!r}")
