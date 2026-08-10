@@ -1,0 +1,630 @@
+# XBRAIN_V6 voice/text command corpus
+# Auto-extracted from docs/18-* by scripts/dev/extract_voice_text_cmds.py
+# One phrase per line; blank lines and # comment blocks separate commands.
+# Format per command:
+#   ## <ID> <intent>  [L-level | channel | source]
+#   phrase1
+#   phrase2
+#   ...
+
+
+# ============ A run/motion ============
+
+## A01 estop  [L0 | 全 | 18]
+急停
+停止
+紧急停止
+立刻停下
+停
+
+## A02 prone  [L0 | 全 | 18]
+趴下
+卧倒
+趴着
+
+## A03 stand  [L0 | 全 | 18]
+站立
+站起来
+起立
+
+## A04 hold  [L0 | 全 | 18]
+原地待命
+别动
+停在这儿
+待命
+
+## A05 move_forward  [L1a | 全 | 18]
+前进 N 米
+往前走 N 米
+向前 N 米
+
+## A06 move_backward  [L1a  见 CL-3 | 全 | 18]
+后退 N 米
+往后退 N 米
+倒退
+
+## A07 move_left  [L1b | 全 | 18]
+左移 N 米
+向左平移
+
+## A08 move_right  [L1b | 全 | 18]
+右移 N 米
+向右平移
+
+## A09 turn_left  [L1b | 全 | 18]
+左转 N 度
+向左转
+
+## A10 turn_right  [L1b | 全 | 18]
+右转 N 度
+向右转
+
+## A11 turn_around  [L1b | 全 | 18]
+转身
+
+## A12 face_heading  [L1b | 全 | 18]
+朝北
+面向东边
+转向正南
+
+## A13 set_speed_profile  [L1b | 全 | 18]
+慢一点
+快一点
+用巡逻速度
+全速
+
+## A14 set_gait  [L1b | 全 | 18]
+切到楼梯步态
+走平地
+用敏捷模式
+
+
+# ============ B navigation task ============
+
+## B01 goto_waypoint  [L1a | 全 | 18]
+去东门
+到 3 号点
+前往岗亭
+
+## B02 patrol_route  [L1a | 全 | 18]
+沿 1 号路径巡逻
+巡逻 3 号路线
+
+## B03 patrol_schedule  [at_local, loops | L1a | 18]
+两个小时后沿 3 号路径巡逻
+晚上八点开始巡逻
+
+## B04 patrol_repeat  [L1a | 全 | 18]
+再巡一圈
+来回巡三次
+
+## B05 pause_task  [L0 | 全 | 18]
+暂停
+先停一下
+停一停
+
+## B06 resume_task  [L0 | 全 | 18]
+继续
+接着走
+恢复任务
+
+## B07 cancel_task  [L2 | 全 | 18]
+别巡了
+不巡了
+
+## B08 return_home  [L1a | 全 | 18]
+回来
+返航
+回到起点
+
+## B09 goto_dock  [L1a | 全 | 18]
+去充电
+回充电桩
+充电去
+
+## B10 skip_waypoint  [L1b | 全 | 18]
+跳过这个点
+下一个点
+
+## B11 follow_target  [L3 | 全 | 18]
+跟着他
+跟上那个人
+
+## B12 stop_follow  [L0 | 全 | 18]
+别跟了
+停止跟随
+
+
+# ============ C mode control ============
+
+## C01 enter_alarm  [L1b | 全 | 18]
+进入报警模式
+开始报警
+警戒
+
+## C02 exit_alarm  [L1a | 全 | 18]
+退出报警
+别报警了
+解除警戒
+
+## C03 enter_broadcast  [L1b | C/T/E | 18]
+开始喊话
+进入喊话模式
+
+## C04 exit_broadcast  [L0 | T/E | 18]
+停止喊话
+退出喊话
+
+## C05 enter_patrol_mode  [L1b | 全 | 18]
+进入巡逻模式
+开始工作
+
+## C06 standby  [L1a | 全 | 18]
+待命
+休息
+别工作了
+
+## C07 set_motion_behavior  [L1b | 全 | 18]
+跟着目标走
+停下面对他
+
+## C08 query_mode_switch_ok  [L0 | 全 | 18]
+能切到喊话吗
+
+
+# ============ D payload ============
+
+## D01 light_on  [L0 | 全 | 18]
+开灯
+打开照明
+前灯打开
+
+## D02 light_off  [L0 | 全 | 18]
+关灯
+关掉照明
+
+## D03 light_auto  [L0 | 全 | 18]
+灯光自动
+自动开灯
+
+## D04 siren_on  [L1b | 全 | 18]
+开警笛
+拉警报
+响警报
+
+## D05 siren_off  [L0 | 全 | 18]
+关警笛
+别响了
+
+## D06 strobe_on  [L1b | 全 | 18]
+开爆闪
+开警灯
+开红蓝
+开双闪
+开警示灯
+
+## D07 strobe_off  [L0 | 全 | 18]
+关爆闪
+关警灯
+关红蓝
+关双闪
+关警示灯
+
+## D08 speak_preset  [L1b | 全 | 18]
+喊话
+警告他
+播放警告
+喊第二条
+
+## D09 speak_custom  [L3 | 全 | 18]
+说"请立即离开"
+喊一句……
+
+## D10 set_volume  [L0 | 全 | 18]
+大声点
+小声点
+音量调到最大
+
+## D11 chassis_light  [L0 | 全 | 18]
+打开底盘灯
+尾灯呼吸
+
+## D12 speak_stop  [L0 | 全 | 18]
+别喊了
+停止喊话
+停止播报
+别播了
+闭嘴
+
+## D13 payload_all_off  [L0 | 全 | 18]
+全部关掉
+都关了
+声光全关
+关掉所有
+
+## D17 set_light_bright  [L0 | 全 | 18]
+灯调亮一点
+暗一点
+最亮
+调到最暗
+亮度中等
+亮度一半
+灯太刺眼了
+
+## D18 set_strobe_mode  [L0 | 全 | 18]
+换一种闪法
+用第三种模式
+换个警灯样式
+警灯换一种
+
+
+# ============ E PTZ ============
+
+## E01 ptz_move  [L0 | 改：ContinuousMove 定时脉冲，见 §7.2 | 18]
+云台向左
+往上看
+看右边一点
+
+## E02 ptz_home  [L0 | 改：goto_preset(ptz.home_preset_id)，见 §7.3。 T-PTZ-1 | 18]
+云台归位
+回中
+看正前方
+
+## E03 ptz_preset  [L0 | 预置位（ 现在是 E02/E04 的唯一依赖，见 §7.3） | 18]
+看充电桩方向
+转到 2 号预置位
+
+## E04 ptz_track  [L1b | 改：开环增量跟随，会漂移，见 §7.4 | 18]
+跟踪目标
+盯住他
+一直看着
+
+## E05 ptz_stop_track  [L0 | 改：先发 ONVIF Stop，再释放【域5】，见 §7.5 | 18]
+停止跟踪
+别盯了
+
+## E06 ptz_zoom  [L0 | 改：能力已确认可用（MaxZoom=3300），见 §7.6 | 18]
+拉近
+推远
+放大点
+
+## E07 ptz_scan  [L1b | 改：上装发脉冲，不用设备内置巡航，见 §7.7 | 18]
+左右扫一遍
+环视
+
+## E08 ptz_stop_scan  [L0 | 本轮新增：终止扫描序列 → ONVIF Stop → 释放【域5】，见 §7.7A | 18]
+停止扫描
+别扫了
+停止环视
+云台别转了
+
+## E09 set_ptz_speed  [L1b | ⭐ 2026-08-07 自 18-B §1 落地（GWY-P4-23）。 三档值待 T-PTZ-3 实测（18-B §2） | 18]
+云台转速加快
+转速慢一点
+转速最快
+
+## E10 ptz_move_deg  [L1b | ⭐ 2026-08-07 自 18-B §1 落地。 与契约 PTZ-C1 冲突（PELCO-D 无绝对定位回读）：T-PTZ-3 闭环前恒 rejected 并引导改用 E01 三档（18-B §3； 不得拿猜的 omega 先跑） | 18]
+云台向左转 N 度
+向上转 N 度
+
+
+# ============ F settings + recording ============
+
+## F01 record_route_start  [L1b | A | 18]
+开始录制路径
+记录路线
+
+## F02 record_route_stop  [L1a | A | 18]
+结束录制
+录完了
+停止记录
+
+## F03 record_route_save  [L1a | A | 18]
+保存为 3 号路径
+命名为东门路线
+
+## F04 record_route_cancel  [L2（本轮提级，原 L1） | A | 18]
+不要了
+作废
+
+## F05 record_route_mark  [L0 | A | 18]
+这里加个点
+标记一下
+
+## F06 record_waypoint  [L1a | A | 18]
+把这里记为东门岗亭
+标记当前位置为 X
+
+## F07 record_fence_start  [L1b | A | 18]
+开始录制围栏
+画围栏
+
+## F08 record_fence_stop  [L1a | A | 18]
+围栏录完了
+结束围栏
+
+## F09 record_fence_save  [L2 | A | 18]
+保存围栏
+命名为营区外围
+
+## F10 record_dock  [L1a | A | 18]
+把这里记为充电桩
+标记充电桩
+
+## F14 rename_object  [L1a | 全 | 18]
+把 3 号路径改名为东门路线
+
+## F15 set_active_fence  [L2 | 全 | 18]
+启用营区外围围栏
+换成 2 号围栏
+
+
+# ============ G queries ============
+
+## G01 query_position  [ |  | 18]
+你在哪
+当前位置
+在什么地方
+
+## G02 query_battery  [ |  | 18]
+电量多少
+还有多少电
+
+## G03 query_range  [ |  | 18]
+还能跑多久
+剩余续航
+
+## G04 query_speed  [ |  | 18]
+现在多快
+什么速度
+
+## G05 query_mode  [ |  | 18]
+当前什么模式
+在什么状态
+
+## G06 query_task  [ |  | 18]
+当前任务
+在干什么
+
+## G07 query_progress  [ |  | 18]
+还有多久完成
+巡逻到哪了
+
+## G08 query_heading  [ |  | 18]
+朝哪个方向
+面向哪
+
+## G09 query_uptime  [ |  | 18]
+开机多久了
+
+## G10 query_events_recent  [SQLite event |  | 18]
+最近有什么情况
+有报警吗
+
+## G11 query_events_period  [同上 |  | 18]
+今天有几次告警
+这一周的报警
+
+## G12 query_events_by_type  [同上 |  | 18]
+有入侵报警吗
+有故障事件吗
+
+## G13 query_last_alarm  [同上 |  | 18]
+最近一次报警什么时候
+上次警报
+
+## G14 query_event_detail  [同上 |  | 18]
+刚才那个报警什么情况
+
+## G15 query_faults  [ |  | 18]
+有故障吗
+哪里不正常
+有问题吗
+
+## G16 query_health  [ |  | 18]
+系统状态怎么样
+一切正常吗
+
+## G17 query_sensor  [ |  | 18]
+雷达正常吗
+相机好使吗
+定位怎么样
+
+## G18 query_bit_result  [ |  | 18]
+自检结果怎么样
+开机检查过了吗
+
+## G19 query_detection  [ |  | 18]
+前面有人吗
+看到什么了
+有情况吗
+
+## G20 query_target_count  [ |  | 18]
+有几个人
+几个目标
+
+## G21 query_routes  [ |  | 18]
+有哪些路径
+都能巡哪些线
+
+## G22 query_waypoints  [ |  | 18]
+有哪些位置点
+能去哪些地方
+
+## G23 query_docks  [ |  | 18]
+充电桩在哪
+有几个充电桩
+
+## G24 query_time  [ |  | 18]
+几点了
+现在什么时候
+今天几号
+
+## G25 query_payload_all  [L0 | 全 | 18]
+声光现在什么状态
+载荷都开着吗
+
+## G26 query_light_state  [L0 | 全 | 18]
+灯开着吗
+照明什么状态
+
+## G27 query_siren_state  [L0 | 全 | 18]
+警笛响着吗
+警报开了没
+
+## G28 query_strobe_state  [L0 | 全 | 18]
+爆闪开着吗
+警灯亮着吗
+红蓝开着吗
+
+## G29 query_volume  [L0 | 全 | 18]
+音量多大
+现在几档
+
+## G30 query_speaking  [L0 | 全 | 18]
+在喊话吗
+还剩几遍
+喊的哪条
+
+## G31 query_speak_presets  [L0 | 全 | 18]
+能喊哪些
+有哪些预设语句
+
+## G32 query_ptz_pose  [L0 | 全 | 18]
+云台朝哪
+现在看哪边
+
+## G33 query_ptz_zoom  [L0 | 全 | 18]
+放大了几倍
+现在什么倍率
+
+## G34 query_ptz_track  [L0 | 全 | 18]
+在跟踪吗
+盯着谁呢
+
+## G35 query_ptz_preset  [L0 | 全 | 18]
+在哪个预置位
+现在是几号位
+
+## G36 query_ptz_presets  [L0 | 全 | 18]
+有哪些预置位
+能看哪几个方向
+
+## G37 query_ptz_owner  [L0 | 全 | 18]
+云台谁在控
+我为什么转不动云台
+
+## G38 query_fences  [L0 | 全 | 18]
+有哪些围栏
+都设了什么围栏
+
+## G39 query_active_fence  [L0 | 全 | 18]
+现在用的哪个围栏
+生效的是哪个
+
+## G40 query_fence_health  [L0 | 全 | 18]
+围栏还管用吗
+保护降级了吗
+
+## G41 query_fence_relation  [L0 | 全 | 18]
+我在围栏里吗
+离边界还有多远
+
+## G42 query_fence_detail  [L0 | 全 | 18]
+营区外围围栏什么情况
+那个围栏多大
+
+
+# ============ H system ============
+
+## H01a run_bit  [L1a | 全 | 18]
+做个自检
+自检一下
+检查系统
+
+## H01b run_bit  [L2 | C/T ＋ H（ A 现场语音 → E_CHANNEL_DENIED； E 微信） | 18]
+做个深度自检
+全面检查一遍
+
+## H02 generate_report  [L1a | 全 | 18]
+生成巡逻报告
+汇报一下
+说说今天情况
+
+## H03 set_time_sync  [L1b | C/T/E ＋ H（ A 现场语音 → E_CHANNEL_DENIED） | 18]
+校时
+同步时间
+
+## H03f set_time_sync  [L2 | 仅 C（ A ·  T ·  E ·  H → 一律 E_CHANNEL_DENIED） | 18]
+强制校时
+强行对时
+时间跳过来
+
+## H04 reload_config  [L2 | C/T（ H，CH-18-1c） | 18]
+重新加载配置
+刷新规则
+
+## H05 sleep  [L1b | 全 | 18]
+休眠
+睡吧
+省电模式
+
+## H06 wake  [L0 | 全 | 18]
+唤醒
+醒醒
+开始工作
+
+## H07 reboot  [L2 | C/T（ H） | 18]
+重启系统
+
+## H08 shutdown  [L3（ 本轮由 L2 加严，见 §10.2B） | C/T（ H） | 18]
+关机
+
+
+# ============ I session ============
+
+## I01 confirm  [ |  | 18]
+是
+对
+确认
+好的
+可以
+覆盖
+
+## I02 deny  [ |  | 18]
+不是
+不
+算了
+不用
+
+## I03 repeat  [ |  | 18]
+再说一遍
+什么
+没听清
+
+## I04 cancel_session  [ |  | 18]
+没事了
+不用了
+结束对话
+
+## I05 help  [ |  | 18]
+你能做什么
+帮助
+怎么用
+
+
+# ============ J chitchat ============
+
+## J01 greeting  [ |  | 18]
+你好
+在吗
+嗨
+早上好
+
+## J02 identity  [ |  | 18]
+你是谁
+你叫什么
+什么型号
+
+# total commands: 130
+# total phrases: 329
