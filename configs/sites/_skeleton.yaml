@@ -12,7 +12,7 @@
 #     D also requires site_id to equal the L4 file name (10 S5.4.4 assertion D).
 #
 #   Namespace this layer may write (10 S5.4.3 L4 / layers.py L4 allowed):
-#     common.geo.*   common.site.*   common.retention.*
+#     common.geo.* common.site.* common.retention.*
 #   Any other top-level namespace in a real site file is rejected by the
 #   freeze namespace check.
 #

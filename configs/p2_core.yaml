@@ -1,7 +1,7 @@
 # ============================================================================
 # /opt/xbrain_v6/configs/p2_core.yaml
-#   layer:            L6 (per-process)
-#   owning process:   xbrain_core (P2)
+#   layer: L6 (per-process)
+#   owning process: xbrain_core (P2)
 #   authoritative source: 14 S11 (this file's key structure and values come
 #                                  from that section verbatim)
 #

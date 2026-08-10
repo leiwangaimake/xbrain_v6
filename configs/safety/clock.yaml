@@ -5,25 +5,25 @@
 #   * 权威定义处:11 §1.5.5"ts_sync = false 时的系统行为(U34 落地)"的配置块
 #      逐字锚点"配置项(/opt/xbrain_v6/configs/safety/clock.yaml)"(NUM-4:只写章节锚点不写行号)
 #
-#   *** 键路径 = common.safety.clock.*(99 U73,2026-08-06 用户拍板确认 7b):
+#   键路径 = common.safety.clock.*(99 U73,2026-08-06 用户拍板确认 7b):
 #        10 §5.4.5 对照表已登记该命名空间,11 §1.5.5 的 yaml 样例已嵌套到 common.safety.clock.
 #         不得写顶层 clock:(L3 层只许 common.safety.*,顶层裸键即拒 ---- 10 §5.4.3 L3 行).
 #        (前一轮头注登记的"命名空间分歧待裁"已由 U73 解除,本轮据此落值.)
 #
-#   *** 七个键的取值[逐字转抄自 11 §1.5.5 配置块], 未凭空造任何值(CLAUDE.md 3.1).
+#   七个键的取值[逐字转抄自 11 §1.5.5 配置块], 未凭空造任何值(CLAUDE.md 3.1).
 #
-#   ** 本文件[不写]# PROVENANCE 标记 ---- 与 configs/models/m20s.yaml 同款处理,理由相同:
+#   本文件[不写]# PROVENANCE 标记 ---- 与 configs/models/m20s.yaml 同款处理,理由相同:
 #        brake.yaml 头注称 PROVENANCE 取值域出自"SET-01 护栏 3",而 SET-01 在 docs 正式册内
 #        grep 全库零命中(悬空引用),其取值域的唯一定义处待 CFG-DC-5 由用户裁定.
 #         在裁决落定前不把这条未批准的约定扩散到新文件;每个值的出处改用"册号 + 章节锚点"
 #        写在行尾注里(源都是 11 §1.5.5,均为 U34 落地的设计取值).
 #
-#   ** rtc_trusted:11 §1.5.5 逐字给的取值就是 false,行注"待确认板载 RTC 是否装配电池".
+#   rtc_trusted:11 §1.5.5 逐字给的取值就是 false,行注"待确认板载 RTC 是否装配电池".
 #        此处按[文档给定的 fail-safe]写 false(硬件未确认即不信任 RTC 墙钟)----
 #        * 这不是"凭空造值":false 是 §1.5.5 的字面取值,也恰是安全侧的兜底方向.
 #         未经硬件确认 RTC 电池到位前不得改 true(改 true 是朝"信任未验证时钟"放松,方向相反).
 #
-#   *** 本层不支持 ConfigCommand 热更新(全部 clock.* 属安全参数)----
+#   本层不支持 ConfigCommand 热更新(全部 clock.* 属安全参数)----
 #        收到即回 E_CONFIG_LOCKED(11 §1.5.5 护栏 1 / §7.6).尤其 allow_unsynced_motion
 #        一旦可热更新即一条"远程解除时钟安全约束"的通道.改动只能改文件 + 整栈重启.
 # ===========================================================================
@@ -58,10 +58,10 @@ common:                        # L3 层只许 common.safety.*(10 §5.4.3 L3 行)
       # 见 11 §1.5.5 配置块 / §1.5.6"阶跃通知"行.
       step_notify_ms:          100.0
 
-      # ** 实验室联调开关 ---- 现场部署[强制 false](§1.5.5 护栏 3 / 配置项表).
+      # 实验室联调开关 ---- 现场部署[强制 false](§1.5.5 护栏 3 / 配置项表).
       #   false(现场强制):ts_sync=false 时只允许 <= unsynced_max_speed_mps 的手柄/键盘遥控,
       #                      全部自主模式(patrol / goto / 相对位移 / 自主充电)拒绝.
       #   true(仅室内无 RTK 台架):允许未同步下进 patrol / goto / 相对位移,
       #                      但速度上限仍为 unsynced_max_speed_mps,不放宽.
-      # *** 属安全参数,不接受 ConfigCommand 热更新(§1.5.5 护栏 1 -> E_CONFIG_LOCKED).
+      # 属安全参数,不接受 ConfigCommand 热更新(§1.5.5 护栏 1 -> E_CONFIG_LOCKED).
       allow_unsynced_motion:   false

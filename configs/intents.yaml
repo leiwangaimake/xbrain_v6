@@ -1,17 +1,17 @@
 # ===========================================================================
 # /opt/xbrain_v6/configs/intents.yaml
-#   layer: L6 content table    owning process: P4 (p4_agent)
+#   layer: L6 content table owning process: P4 (p4_agent)
 #   authority: 16 S6.6 (route + slots) . 16 S8.3A.2 (auth) . 18 S13.1 (auth)
 #
 #   This is the intent registry: one entry per intent in the 18 command
 #   closed set. Each entry carries the four fields the loader asserts present
 #   (GWY-P4-07 criterion 1 / 16 S5.3 ID-1):
-#     id     <- 18 # column (A05, B02, ...). The intent id, one letter + two
+#     id <- 18 # column (A05, B02, ...). The intent id, one letter + two
 #              digits. Confirmation level is registered per id row (16 S8.3A).
-#     route  <- 16 S6.6 triage table: bypass | fastpath | fastpath_then_llm | llm.
-#     auth   <- 18 S13.1 per-row registration, folded to per-id here: the base
+#     route <- 16 S6.6 triage table: bypass | fastpath | fastpath_then_llm | llm.
+#     auth <- 18 S13.1 per-row registration, folded to per-id here: the base
 #              (default-slot) confirmation level L0 | L1a | L1b | L2 | L3.
-#     slots  <- 16 S6.6 triage table. Slot NAMES only, no example values.
+#     slots <- 16 S6.6 triage table. Slot NAMES only, no example values.
 #
 #   Provenance, and why nothing here was hand-typed. The four columns were
 #   generated from the two on-disk sources (docs/temp/_prompt_work/_triage.json
@@ -38,7 +38,7 @@
 #   Two intents are level-split by a slot value (16 S8.3A.2). They carry the
 #   base auth (the default-slot level) PLUS an auth_by_slot sub-table so the
 #   130-row registration can be reconstructed from this file alone:
-#     run_bit       H01: scope default quick -> L1a; deep -> L2.
+#     run_bit H01: scope default quick -> L1a; deep -> L2.
 #     set_time_sync H03: force_step default false -> L1b; true -> L2.
 #   The default-slot rule (scope->quick, force_step->false) is 16 S8.3A.2
 #   verbatim: defaulting to the wider (more dangerous) branch is forbidden.

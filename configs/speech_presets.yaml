@@ -1,20 +1,20 @@
 # ===========================================================================
 # /opt/xbrain_v6/configs/speech_presets.yaml
-#   层:L6 内容表    归属进程:P2(授权 L2 预设语句). P4 只读
+#   层:L6 内容表 归属进程:P2(授权 L2 预设语句). P4 只读
 #   * 权威定义处:`14` §7.3.3(语句文本,VOI-47 / PAY-04). `16` §5.3 ID-2(id 形态)
 #
-#   ** 2026-08-07 落值(GWY-P4-29).逐键来历:
-#     text  <- `14` §7.3.3"系统层期望的语句库"三条[逐字](warn_01/02/03).
+#   2026-08-07 落值(GWY-P4-29).逐键来历:
+#     text <- `14` §7.3.3"系统层期望的语句库"三条[逐字](warn_01/02/03).
 #     voice <- `14` §7.3.3 d_mode 块 voice: male(设备只有男/女两档,[31] 性别字节,
-#              male -> voice=0).*** GWY-P4-29:voice 性别[落预设],
+#              male -> voice=0). GWY-P4-29:voice 性别[落预设],
 #               不落 D08 槽位 ---- D08 的 slots 只有 preset_id(加 voice 槽 = 付
 #              GBNF 闭集 + mission few-shot 的 token,还给 LLM 一个可填错的洞).
-#     preset_id <- ** `16` §5.3 ID-2:预设语句 id 一律 `p-<slug>` 形态(few-shot
+#     preset_id <- `16` §5.3 ID-2:预设语句 id 一律 `p-<slug>` 形态(few-shot
 #              与枚举发射器已按此形态教,`p-x1` 等是占位例).WARN: `14` §7.3.3 草图
 #              键 warn_01/02/03 与 ID-2 形态不合 ---- 按 `16` 硬规则落 `p-` 形态,
 #              对应关系已在 `14` §7.3.3 加注(warn_01 -> p-warn_leave 等).
 #
-#   ** L6 只[取值]不[定义]: 不得出现 common 顶层键.
+#   L6 只[取值]不[定义]: 不得出现 common 顶层键.
 #   * 本文件在热更新白名单内(CFG-30 scope=speech_presets).
 #   * P2 侧离线预合成 WAV(data/speech_presets/{preset_id}.wav + manifest.json,
 #     `11` §8.8.2)属 Phase 2;本表是其唯一输入.

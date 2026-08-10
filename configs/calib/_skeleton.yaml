@@ -11,7 +11,7 @@
 #     NOT glob this directory, so this template file is inert.
 #
 #   Namespace this layer may write (10 S5.4.3 L4b / layers.py L4b allowed):
-#     common.calib.*   ONLY. L4 (site) and L4b (calib) namespaces are disjoint
+#     common.calib.* ONLY. L4 (site) and L4b (calib) namespaces are disjoint
 #     by design, which is why their relative order need not be defined.
 #
 #   Keys that live here, and where each is defined (10 S5.4.5 / 11 S10.1.1 /
