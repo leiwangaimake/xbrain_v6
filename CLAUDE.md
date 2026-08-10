@@ -149,9 +149,9 @@ log.info("compute corridor min distance, bands=%d", len(bands))
 log.info("计算走廊内最近障碍距离, 数量=%d", len(bands))   # X 中文日志
 ```
 
-### 2.2 字符集（★ 只管源代码，不管 markdown 文档）
+### 2.2 字符集（★ 只管源代码 + yaml 配置 + sh 脚本，不管 markdown 文档）
 
-- **源代码内严禁 emoji 与特殊符号**（✅ ❌ ⚠️ 🔴 → ★ ☑ ☐ 等）。
+- **源代码 + yaml 配置文件 + sh 脚本内严禁 emoji 与特殊符号**（✅ ❌ ⚠️ 🔴 → ★ ☑ ☐ 等）。
 - 所有标点必须是 **ASCII 英文标点**，🚫 严禁中文标点 `，。；：？！""''（）【】《》、—…`。
 - ★ **例外**：`docs/` 下的 markdown 文档不受此限（本项目文档大量使用 ★ / ⚠️ / 🚫 作为分级标记，这是有意的）。
 - ★★★ **本条【对注释同样生效】** —— 用户 2026-08-06 重申：**无论中文注释还是英文注释，标点一律 ASCII**。
@@ -159,6 +159,9 @@ log.info("计算走廊内最近障碍距离, 数量=%d", len(bands))   # X 中�
 - ★★ **中文注释本身是允许的**（§2.1：单文件统一即可），🚫 **禁的是中文【标点】与特殊符号**，不是中文字。
 - ⚠️★★★ **本条曾被大面积违反**：2026-08-06 自查，我方新写的 18 个 `.py` 里有 **276 个特殊符号**
   （`★` `→` `🚫` `⚠` `⇒` `✅` `❌` `⌦`）与约 **3000 个中文标点**。⇒ **由 `scripts/lint/charset_lint.py` 逐文件求值，进 CI 门禁**。
+- ★★★ **2026-08-10 用户明令扩到 yaml + sh**：本项目 `configs/*.yaml` 内大量存在
+  emoji 与中文标点（尤以 `p4_agent.yaml` 为甚），必须**逐文件清洁**；今后新写
+  yaml / sh 都按本条求值。`.yaml` / `.sh` / `.bash` 加入 `charset_lint.py` 扫描面。
 
 ### 2.3 命名规范
 
@@ -195,14 +198,22 @@ class TasksDAO:                     # 类名 PascalCase
 
 ### 2.5 头部注释模板
 
-每个源文件必须有头部注释，五字段齐全（Copyright / Author / File / Brief / Description）。
+★★★ **头注规则覆盖面**（用户 2026-08-10 明令扩展）：
+- **代码**：`.py` / `.cc` / `.cpp` / `.h` / `.hpp`
+- **脚本**：`.sh` / `.bash`
+- **配置**：`.yaml` / `.yml`
+
+四类**同一套规则**：五字段齐全（Copyright / Author / File / Brief / Description），
+公司名逐字中文（§2.5.0），字符集 ASCII 标点（§2.2）。差别只在注释语法（`"""` /
+`/* */` / `# `）。yaml 与 sh 共用 `# ` 起首，格式与 shell 相同。
 
 ### 2.5.0 ★★★ 铁律 · 公司名必须用中文
 
 > **头部注释的公司名必须逐字是：`上海哈船智能船舶技术有限公司`**
 > 🚫 **严禁用英文** `Shanghai Hachist Intelligent Ship Technology Co., Ltd.` 或任何英译变体。
 
-★★ 用户 2026-08-06 明令，**这是铁律**。
+★★ 用户 2026-08-06 明令，**这是铁律**。★★★ 2026-08-10 扩展：本条对**所有需要头注的文件类型都生效**
+（见 §2.5 覆盖面表 —— py/cpp/h/sh/bash/yaml/yml）。
 ★ **与 §2.2 不冲突** —— §2.2 禁的是中文【标点】与装饰符号，**中文文字本身允许**；公司名里没有标点。
 ★★ 由 `scripts/lint/header_lint.py` 逐文件求值，进 CI 门禁。
 
@@ -264,6 +275,24 @@ construction time, never defaulted in code (see CLAUDE.md 3.1).
 # minimal mode (observation window W-1).
 #
 ```
+
+**YAML（配置文件）**：
+```yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: p4_agent.yaml
+# Brief: L6 per-process config for xbrain.p4_agent (16 S1)
+#
+# Description:
+# Only per-process values; must never carry a common.* top-level key
+# (R-6 in 10 S5.4.3). References into ${common.*} are resolved by
+# the freeze line (CFG-FZ-18 materialiser) and the resulting snapshot
+# lands at /opt/xbrain_v6/data/run/resolved/p4_agent.yaml. Runtime
+# reads the SNAPSHOT, never this source (see 10 S5.4.1).
+```
+★ yaml 头注**必须写在 document 起始**（第一行就是 `# Copyright`；yaml `---` 分隔符若存在，头注放其前）。
+★ 与 Python/C++/Shell 一样 5 字段齐全 + 中文公司名 + ASCII 标点。
 
 ---
 
