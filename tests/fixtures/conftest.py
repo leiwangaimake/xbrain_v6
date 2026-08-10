@@ -55,28 +55,21 @@ REAL_CONFIG_ROOT = "/opt/xbrain_v6/configs"
 # ticket, delete the entry AND the fixture will start requiring it
 # green (which is the design: the fixture is a canary).
 KNOWN_FAILING_ASSERTIONS = {
-    # B was here until CFG-FZ-18-b (2026-08-10). intent.keyword_rules
-    # is now off the schema + off configs/p4_agent.yaml.
+    # B     was here until CFG-FZ-18-b (2026-08-10). intent.keyword_rules
+    #       is now off the schema + off configs/p4_agent.yaml.
+    # S22   was here between CFG-FZ-18-b and C-FZ-S22-LOOSEN (2026-08-10).
+    #       Loosened to match 10 S5.4.3 line 2803-2804 which only forbids
+    #       common.* top-level at L6, a rule already owned by assertion B.
+    # materialise was here between C-FZ-S22-LOOSEN and V-CALIB-FIXTURE.
+    #       Resolved by giving the CHK-0-56 fixture a full H-3 compatible
+    #       ptz_base accuracy block (see _write_l4b_lab_robot_calib) so
+    #       H-3 + H-4 both pass and materialise can expand the
+    #       ${common.calib.frames.ptz_base.h_camera_m} ref in
+    #       p2_core.yaml. Fixture values are synthetic (1 cm trans, ~0.057
+    #       deg rot); real deployment still needs on-bench calibration.
     #
-    # S22 was here between CFG-FZ-18-b and C-FZ-S22-LOOSEN (2026-08-10).
-    # Loosened to match 10 S5.4.3 line 2803-2804 (which only forbids
-    # common.* top-level at L6, a rule already owned by assertion B).
-    "materialise": (
-        "CFG-FZ-18 (materialise) fails on the fixture at the ref "
-        "${common.calib.frames.ptz_base.h_camera_m} in p2_core.yaml. "
-        "The fixture's calib/lab_robot.yaml carries common.calib.frames "
-        "as an empty dict because a real ptz_base entry needs a full "
-        "H-3 accuracy block (method + sigma_trans_m + sigma_rot_rad + "
-        "n_samples) plus a matching lat_err_ref_m recomputed via the "
-        "S10.1.1 formula. Filling those in the fixture would either "
-        "invent a fake accuracy (which H-3 would reject as CS-2 "
-        "violation) or hardcode a bench-calibration result (which is "
-        "not a CHK-0-56 concern -- CHK-0-56 asserts freeze "
-        "completeness on filled trees, not calibration correctness). "
-        "Blocked pending H-3-compatible fixture fill OR a decision to "
-        "move the h_camera_m reference in p2_core.yaml to a common.spec.* "
-        "key that L1 owns instead of L4b. BIZ-P2 review item, not "
-        "CHK-0-56 material."),
+    # Empty dict = no KNOWN_FAILING. Any freeze failure below this line
+    # surfaces as a real regression, not a documented gap.
 }
 
 
@@ -205,22 +198,62 @@ def _write_l4b_lab_robot_calib(dst: Path) -> None:
     """Write calib/lab_robot.yaml matching common.robot_id.
     L4b writes only common.calib.* per 10 S5.4.3.
 
-    calib.frames is intentionally left empty here. p2_core.yaml
-    references ${common.calib.frames.ptz_base.h_camera_m} which
-    triggers the materialise assertion in the full-freeze path;
-    that failure is registered as a KNOWN_FAILING in the fixture
-    header so the intent (freeze completeness) is visible.
-    Filling this properly needs the whole ptz_base accuracy block
-    (H-3 CS-2 rules) and a lat_err_ref_m recomputed via S10.1.1 --
-    a bench-calibration exercise, not a fixture construction.
+    ptz_base frame is filled with a fixture-synthetic accuracy block
+    complete enough to satisfy H-3 (schema) + H-4 (recompute) so
+    freeze can reach the materialise assertion. Values are NOT real
+    calibration -- they exist so:
+      1. p2_core.yaml's ${common.calib.frames.ptz_base.h_camera_m}
+         resolves
+      2. H's mutation tests can still detect real defects when the
+         fixture is derived-from (each H mutation flips ONE field
+         and expects the resulting fixture to red)
+    Every number here is derivable arithmetic (see the sigma_rot/
+    sigma_trans below and the lat_err_ref_m recompute alongside),
+    not a bench measurement -- so no operator will mistake this for
+    a real calibration.
     """
+    import math
+    sigma_trans_m = [0.01, 0.01, 0.01]           # 1 cm translation
+    sigma_rot_rad = [0.001, 0.001, 0.001]        # ~0.057 deg rotation
+    d_ref = 10.0                                  # H-4 formula d_ref
+    sigma_rot_max = max(sigma_rot_rad)
+    sigma_trans_lat = math.hypot(sigma_trans_m[0], sigma_trans_m[1])
+    # S10.1.1 formula verbatim: lat_err_at_d = d * sin(sigma_rot_max)
+    # + sigma_trans_lat. Recomputed here so H-4's file-vs-formula
+    # comparison matches to within 1e-6 m.
+    lat_err_ref_m = d_ref * math.sin(sigma_rot_max) + sigma_trans_lat
+
     calib = {
         "common": {
             "calib": {
                 "calib_rev": 1,
-                "frames": {},
-                "gate": {},
-                "lat_err_ref_m": 0.05,
+                # H-1 identity check: calib.robot_id == common.robot_id
+                "robot_id": "lab_robot",
+                "frames": {
+                    # ptz_base -- H-2 whitelisted (S10.4.4 example).
+                    "ptz_base": {
+                        # Accuracy block nested under 'accuracy:' per
+                        # h_calib.py's _accuracy_reader shape.
+                        "accuracy": {
+                            "method": "fixture-synthetic",
+                            "sigma_trans_m": sigma_trans_m,
+                            "sigma_rot_rad": sigma_rot_rad,
+                            "n_samples": 100,
+                        },
+                        # xyz + rpy extrinsics.
+                        "xyz": [0.0, 0.0, 0.42],
+                        "rpy": [0.0, 0.0, 0.0],
+                        # Consumed by p2_core.yaml ptz.h_camera_m ref.
+                        "h_camera_m": 0.42,
+                    },
+                },
+                # H-5 gate thresholds (M-24 placeholders per h_calib.py).
+                "gate": {
+                    "warn_m": 0.17,
+                    "reject_m": 0.35,
+                },
+                # H-4 recompute target -- must match the formula above.
+                "lat_err_ref_m": lat_err_ref_m,
             },
         },
     }
