@@ -1,16 +1,16 @@
-# ═══════════════════════════════════════════════════════════════════════════
+# ===========================================================================
 # /opt/xbrain_v6/configs/p5_gateway.yaml
-#   层：L6（进程私有）    归属进程：`xbrain_gateway`（P5）
-#   ★ 权威定义处：`17` §10.1（「本段即现行规范」，2026-08-07 逐键抄入，GWY-P5-17）
+#   层:L6(进程私有)    归属进程:`xbrain_gateway`(P5)
+#   * 权威定义处:`17` §10.1("本段即现行规范",2026-08-07 逐键抄入,GWY-P5-17)
 #
-#   ★★ 未定值一律 null（拒绝启动是预期行为）：
-#     hmi.bind / delivery.ftp.listen_address 里的 LAN2 口 —— 网段待 U-15；
-#     wifi 口本机 IP —— 待部署定值；cloud.rtb_s —— U-05 未定；
-#     approval.expires_s —— 甲方决策（17 Q-P5-19，🚫 不得填工程猜测值）。
-#   ★★★ hmi.bind 逐口显式绑定，🚫 禁 0.0.0.0（17 §10.2：绑宽 = 被接管的
-#     布控球可直接点急停；🚫 禁出现在 LAN1/LAN3/LAN4 任一口上）。
-#   ★★ L6 只【取值】不【定义】：🚫 不得出现 common 顶层键。
-# ═══════════════════════════════════════════════════════════════════════════
+#   ** 未定值一律 null(拒绝启动是预期行为):
+#     hmi.bind / delivery.ftp.listen_address 里的 LAN2 口 ---- 网段待 U-15;
+#     wifi 口本机 IP ---- 待部署定值;cloud.rtb_s ---- U-05 未定;
+#     approval.expires_s ---- 甲方决策(17 Q-P5-19, 不得填工程猜测值).
+#   *** hmi.bind 逐口显式绑定, 禁 0.0.0.0(17 §10.2:绑宽 = 被接管的
+#     布控球可直接点急停; 禁出现在 LAN1/LAN3/LAN4 任一口上).
+#   ** L6 只[取值]不[定义]: 不得出现 common 顶层键.
+# ===========================================================================
 
 event:
   db:                                 # 库定义在 15 §12 的 db 段, 此处只引用
@@ -19,9 +19,9 @@ event:
     # PRAGMA/WAL/busy_timeout 不在此处配置 -- 四库一致且冻结, 见 15 §9.1
   batch_commit_ms:  100
   batch_commit_max: 50
-  retention_days:   90                # ★ 单值(GWY-P5-17 ⑤); task(30) <= event(90) <= command_log(180)
+  retention_days:   90                # * 单值(GWY-P5-17 (5)); task(30) <= event(90) <= command_log(180)
                                       # delivered != 1 的行不受保留期约束 (17 §3.5.4)
-  need_ack_rule:    union             # channel='alarm' ∪ sev∈{alarm,fault} (17 §3.3 ②)
+  need_ack_rule:    union             # channel='alarm'  union  sev in {alarm,fault} (17 §3.3 (2))
   ack_timeout_s:    5.0               # 与 11 §1.6 T-45 一致 (v0.7 定案 5.0)
   max_deliver_tries: 5
 
@@ -43,17 +43,17 @@ recon:                                # 17 §3Y.3 事件送达对账 (三层送�
   max_ranges:   64                    # missing_ranges 条数上限
 
 startup:
-  pending_keys:                       # ★★ 17 §3.5.6 过渡约定 -- 自检对且仅对这三条放行,
+  pending_keys:                       # ** 17 §3.5.6 过渡约定 -- 自检对且仅对这三条放行,
     - event/replay                    #   并强制落 warn/system{key_pending_registration}
-    - event/recon/req                 # 🚫 CR-EVT-1 落笔后必须清空本列表
+    - event/recon/req                 #  CR-EVT-1 落笔后必须清空本列表
     - event/recon/rsp                 #   (回归测试断言它为空数组)
 
 approval:                             # 17 §3.8 L3 待批准队列 (CMD-33 / 11 §7.17)
   max_pending: 8                      # 满时新 L3 -> rejected + E_BUSY (AV-6)
   publish_hz: 1                       # state/approval 保底频率
-  expires_s: null                     # ⚠️ 审批等待上限待甲方 (Q-P5-19); null = 不超时
-                                      # 🚫 不得填工程猜测值, 也不得套用 CT-3 的 30s
-  rebuild_on_start: true              # 启动时从 record.db pending 重建 (AV-8), 🚫 不得 false
+  expires_s: null                     # WARN: 审批等待上限待甲方 (Q-P5-19); null = 不超时
+                                      #  不得填工程猜测值, 也不得套用 CT-3 的 30s
+  rebuild_on_start: true              # 启动时从 record.db pending 重建 (AV-8),  不得 false
   exempt_from_backpressure: true      # approval.requested/expired 不进丢弃面 (待 Q-P5-11)
 
 backpressure:
@@ -81,7 +81,7 @@ delivery:                             # 17 §5.0 交付台账
   retention_days: 90                  # 与 events 一致; state 非 {acked,reclaimed} 不删 (DP-8)
   outbox_dir:     outbox              # 相对 disk.data_root; 无同名 .meta.json 不进交付 (DP-6)
   ftp:
-    listen_address:                   # ★★ COM-43: vsftpd 亦须逐口绑定, 🚫 禁 0.0.0.0
+    listen_address:                   # ** COM-43: vsftpd 亦须逐口绑定,  禁 0.0.0.0
       - null                          #   LAN2 口 -- 网段待 U-15, 定值后填 "<LAN2_IP>"
       - null                          #   wifi 口 -- 本机 IP 待部署定值 "<WIFI_IP>"
     chroot_to_data_root: true         # 只读账号 + chroot (17 §5.5)
@@ -93,10 +93,10 @@ disk:
   check_interval_s: 60
 
 hmi:
-  # ★★★ 逐口显式绑定, 禁止 0.0.0.0 (17 §10.2; 承 11 §1.1.9 NET-C9 同一理由)。
-  # 🚫 不得出现在 LAN1(底盘段)/LAN3(GZH-2)/LAN4(布控球)任一口上。
+  # *** 逐口显式绑定, 禁止 0.0.0.0 (17 §10.2; 承 11 §1.1.9 NET-C9 同一理由).
+  #  不得出现在 LAN1(底盘段)/LAN3(GZH-2)/LAN4(布控球)任一口上.
   # 绑窄的代价是某段连不上 HMI(现场立即发现); 绑宽的代价是被接管的第三方
-  # 相机能点急停(不会被发现) -- 不对称, 取保守侧。
+  # 相机能点急停(不会被发现) -- 不对称, 取保守侧.
   bind:
     - null                            # "<LAN2_IP>:8080" 上云通道口 -- 网段待 U-15
     - null                            # "<WIFI_IP>:8080" 现场平板/笔记本 -- 待部署定值
@@ -110,19 +110,19 @@ hmi:
 cloud:                                # 17 §7.1A state/link 阈值来源 (thresholds 回显)
   heartbeat_timeout_s: 5              # -> thresholds.degraded_s = 5.0 (L0->L1)
   disconnect_timeout_s: 15            # -> thresholds.down_s = 20.0 (L1->L2)
-  rtb_s: null                         # ⚠️ U-05 未定; null = L3 不启用, 系统停在 L2
-                                      # 🚫 实现不得自行取一个数 (11 §4.6.4)
+  rtb_s: null                         # WARN: U-05 未定; null = L3 不启用, 系统停在 L2
+                                      #  实现不得自行取一个数 (11 §4.6.4)
   link_stable_s: 10                   # -> thresholds.stable_s 重连迟滞 (LNK-3) [建议] 待实测
   dscp_control_plane: 46              # EF, 控制面标记
 
 uplink:                               # 17 §7.3 上行带宽账本 (U50/C28.3)
-                                      # ★ 2026-08-05 取消云台码率控制后只剩【账本】:
+                                      # * 2026-08-05 取消云台码率控制后只剩[账本]:
                                       #   不驱动任何行为, 只回显到 state/link.uplink
   budget_mbps:        48              # 一律按低端判 (B-1); 高端 64 仅作余量参考
-  # 流清单 -- 全部为文档估算, 待 T-BW-1 实测后回填 (Q-P5-14)。只用于算账。
+  # 流清单 -- 全部为文档估算, 待 T-BW-1 实测后回填 (Q-P5-14).只用于算账.
   flows:
     ptz_visible:   { normal_mbps: 6.0 }   # C28.3 实测: 6144kbps 配置封顶 6.4Mbps
     ptz_thermal:   { normal_mbps: 6.0 }   # 估算; 11 §1.1.8 未登记该流 (CR-BW-3)
     chassis_front: { normal_mbps: 6.5 }
     chassis_rear:  { normal_mbps: 6.5 }   # 估算; 归属未定 (Q-P5-12)
-    delivery_ftp:  { normal_mbps: 15.0 }  # 「事件+遥测+交付」合计口径 (U50)
+    delivery_ftp:  { normal_mbps: 15.0 }  # "事件+遥测+交付"合计口径 (U50)
