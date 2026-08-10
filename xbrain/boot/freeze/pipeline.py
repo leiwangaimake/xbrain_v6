@@ -17,7 +17,7 @@ own docstring on the "invisible if" trap.
 Output shape (10 S5.4.6, and the CFG-FZ-1 field-list correction):
   /run/xbrain/resolved/MANIFEST.json
     {
-      "schema": "xbrain-manifest-v1",
+      "schema": "xbrain.config.manifest/1",
       "boot_id": ...,                    # /proc/sys/kernel/random/boot_id
       "config_root": ...,                # absolute path used
       "config_root_overridden": bool,    # XBRAIN_CONFIG_DIR set?
@@ -77,7 +77,14 @@ from xbrain.boot.freeze.registry import (
 # v1 is what xbrain.common.config.resolved.load_manifest expects. A bump
 # here without updating the reader would refuse ALL manifests, so both
 # constants move together in the same commit.
-MANIFEST_SCHEMA = "xbrain-manifest-v1"
+# 2026-08-10 unified with the reader: the authoritative schema string
+# is 10 S5.4.6 line 3305 verbatim 'xbrain.config.manifest/1', which is
+# what xbrain.common.config.resolved.MANIFEST_SCHEMA also carries. Prior
+# to this line the writer wrote 'xbrain-manifest-v1' and every P-process
+# boot rejected the manifest at load time with a schema-mismatch error.
+# The two constants live in two modules on purpose (writer + reader
+# isolation) but the string value MUST match.
+MANIFEST_SCHEMA = "xbrain.config.manifest/1"
 
 # Tmpfs mount that receives all freeze output. CFG-BT-22 owns the mount
 # (tmpfiles.d config); the pipeline REFUSES to run when the directory is
