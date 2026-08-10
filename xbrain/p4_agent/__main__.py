@@ -121,6 +121,19 @@ def main(argv: Optional[list] = None) -> int:
                     help="load config then exit 0 without heartbeat")
     ap.add_argument("--heartbeat-s", type=float, default=_HEARTBEAT_S,
                     help="seconds between heartbeat log lines")
+    ap.add_argument("--voice-loop", action="store_true",
+                    help="run voice-loop wiring (rt/audio/mic subscriber + "
+                         "VAD + ASR + intent dispatch) instead of heartbeat")
+    ap.add_argument("--asr-base-url", default="http://127.0.0.1:8010",
+                    help="services/asr base URL (voice-loop only)")
+    ap.add_argument("--asr-http-timeout-s", type=float, default=5.0,
+                    help="ASR HTTP timeout (voice-loop only)")
+    ap.add_argument("--vad-energy-threshold", type=int, default=300,
+                    help="energy VAD threshold (voice-loop only)")
+    ap.add_argument("--vad-tail-silence-ms", type=int, default=500,
+                    help="silence to close utterance (voice-loop only)")
+    ap.add_argument("--vad-min-utterance-ms", type=int, default=200,
+                    help="min utterance to send to ASR (voice-loop only)")
     args = ap.parse_args(argv)
 
     logging.basicConfig(
@@ -168,7 +181,25 @@ def main(argv: Optional[list] = None) -> int:
 
     stop_flag: dict = {"stop": False}
     _install_signal_handlers(stop_flag)
-    return main_loop(tick_seconds=args.heartbeat_seconds, stop_flag=stop_flag)
+
+    if args.voice_loop:
+        from xbrain.p4_agent.runtime.main_wiring import run_voice_loop_wiring
+        from xbrain.p4_agent.runtime.turn_loop import TurnLoopConfig
+        from xbrain.p4_agent.runtime.vad import VadConfig
+        vad_cfg = VadConfig(
+            energy_threshold=args.vad_energy_threshold,
+            tail_silence_ms=args.vad_tail_silence_ms,
+            min_utterance_ms=args.vad_min_utterance_ms,
+            frame_ms=20)
+        tl_cfg = TurnLoopConfig(
+            asr_base_url=args.asr_base_url,
+            asr_http_timeout_s=args.asr_http_timeout_s,
+            vad_cfg=vad_cfg)
+        return run_voice_loop_wiring(cfg=tl_cfg, stop_flag=stop_flag)
+
+    # Pre-existing bug fix: attr is heartbeat_s (from --heartbeat-s),
+    # not heartbeat_seconds. Silently correcting the old typo here.
+    return main_loop(tick_seconds=args.heartbeat_s, stop_flag=stop_flag)
 
 
 if __name__ == "__main__":
