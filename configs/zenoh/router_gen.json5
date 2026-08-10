@@ -1,0 +1,32 @@
+// XBRAIN_V6 general-plane Zenoh router configuration.
+//
+// See 11 §1.1.2 / §1.1.4 / §1.1.7:
+//   * mode: router (this is the router-side config; xbrain client
+//     participants use mode: peer and connect to us)
+//   * general-plane endpoint: tcp/127.0.0.1:7447
+//     (deliberately 127.0.0.1 for the MVP: NET-C9 will move it to
+//     explicit-per-port bind after the LAN/host allocation freezes;
+//     until then loopback prevents an unauthenticated participant
+//     from joining over the network)
+//   * scouting: multicast + gossip DISABLED (RT-C1 / RT-C2)
+//     -- the RT plane must NOT be discoverable via multicast; both
+//     planes disable both mechanisms to keep the topology explicit.
+//
+// This config is loaded by scripts/dev/start_voice_loop.sh via
+//   zenohd --config configs/zenoh/router_gen.json5
+{
+  mode: "router",
+  listen: {
+    endpoints: [
+      "tcp/127.0.0.1:7447",
+    ],
+  },
+  scouting: {
+    multicast: {
+      enabled: false,
+    },
+    gossip: {
+      enabled: false,
+    },
+  },
+}

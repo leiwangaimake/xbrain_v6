@@ -68,22 +68,25 @@ _spawn() {
     sleep 0.15
 }
 
-# 1-2. Zenoh routers -- optional (skip if config missing).
-if command -v "${ZENOHD_BIN}" >/dev/null 2>&1; then
-    if [[ -f "${ZENOHD_GEN_CONFIG}" ]]; then
-        _spawn zenohd-gen "${ZENOHD_BIN}" --config "${ZENOHD_GEN_CONFIG}"
-    else
-        echo "[start_voice_loop] WARN zenoh-gen config missing: ${ZENOHD_GEN_CONFIG}"
-    fi
-    if [[ -f "${ZENOHD_RT_CONFIG}" ]]; then
-        _spawn zenohd-rt "${ZENOHD_BIN}" --config "${ZENOHD_RT_CONFIG}"
-    else
-        echo "[start_voice_loop] WARN zenoh-rt config missing: ${ZENOHD_RT_CONFIG}"
-    fi
-else
+# 1-2. Zenoh routers -- REQUIRED. Fail-loud on missing binary OR config.
+# Without either, downstream P-processes cannot connect and will crash
+# 30 s later with 'connect timeout' messages that hide the real cause.
+if ! command -v "${ZENOHD_BIN}" >/dev/null 2>&1; then
     echo "[start_voice_loop] ERROR ${ZENOHD_BIN} not on PATH; aborting"
     exit 2
 fi
+if [[ ! -f "${ZENOHD_GEN_CONFIG}" ]]; then
+    echo "[start_voice_loop] ERROR zenoh-gen config missing: ${ZENOHD_GEN_CONFIG}"
+    exit 2
+fi
+if [[ ! -f "${ZENOHD_RT_CONFIG}" ]]; then
+    echo "[start_voice_loop] ERROR zenoh-rt config missing: ${ZENOHD_RT_CONFIG}"
+    exit 2
+fi
+_spawn zenohd-gen "${ZENOHD_BIN}" --config "${ZENOHD_GEN_CONFIG}"
+_spawn zenohd-rt "${ZENOHD_BIN}" --config "${ZENOHD_RT_CONFIG}"
+# Give routers 0.5 s to bind their listen ports before clients connect.
+sleep 0.5
 
 # 3-5. AI services (background). Only start if not already listening.
 _port_free() {

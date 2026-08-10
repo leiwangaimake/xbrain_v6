@@ -1,0 +1,31 @@
+// XBRAIN_V6 realtime-plane Zenoh router configuration.
+//
+// See 11 §1.1.2:
+//   * mode: router
+//   * realtime-plane endpoint: tcp/127.0.0.1:7449 (loopback ONLY)
+//   * scouting: multicast + gossip DISABLED (RT-C1 / RT-C2)
+//     -- the RT plane MUST NOT auto-discover with the general plane;
+//     both scouting mechanisms are hard-off.
+//
+// The RT plane is a 20 Hz safety-critical control loop and MUST stay
+// on-host. The tcp/127.0.0.1 bind guarantees no packet leaves the
+// ORIN loopback interface (RT-C4 assumption).
+//
+// This config is loaded by scripts/dev/start_voice_loop.sh via
+//   zenohd --config configs/zenoh/router_rt.json5
+{
+  mode: "router",
+  listen: {
+    endpoints: [
+      "tcp/127.0.0.1:7449",
+    ],
+  },
+  scouting: {
+    multicast: {
+      enabled: false,
+    },
+    gossip: {
+      enabled: false,
+    },
+  },
+}
