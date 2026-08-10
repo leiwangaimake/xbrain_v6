@@ -68,8 +68,17 @@ bypass:
 
 
 # ── 两级路由（`16` §5）──────────────────────────────────────────────────
+# 2026-08-10 CFG-FZ-18-b: intent.keyword_rules 已迁出.
+#   * 出处: 10 S5.4.5 cmdset 行 -- 权威名 common.cmdset.intents_file, 别名
+#     keyword_rules / intents_path 是 BLACKLIST 条 (_alias_table.py:69-71).
+#   * 冲突: intent.keyword_rules 曾同时被 schema (_P4 registry) 声明为
+#     required-key, 又被 assertion B 判为 blacklisted alias, 令 CHK-0-56
+#     fixture 长期 KNOWN_FAILING. 十一册没有第三条规则调解, BIZ-P4 复审的
+#     结论 = 权威名唯一, per-proc 若需路径就通过 ${common.cmdset.intents_file}
+#     引用 -- 而 cmdset.intents_file 在 P4 已由 line ~313 承载 (canonical).
+#   * 效果: intent.keyword_rules key 完全从 p4_agent.yaml 消失, schema
+#     侧同步删除, 无消费者依赖 (全库 grep 零命中).
 intent:
-  keyword_rules: /opt/xbrain_v6/configs/intents.yaml
   # ★ `16` §14 就近标注为【建议】：二级分类器暂不启用。
   #   ★★ 落 false 的失效方向是「少一级分类器，落 LLM 兜底」；落 true 会去加载
   #      一个本轮根本没有的模型 ⇒ 启动即失败。★ 两个方向不对称，故取 false。

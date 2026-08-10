@@ -240,7 +240,11 @@ _P4: Dict[str, Any] = {
     "bypass.prone": listof(),                        # prone word list
     "bypass.stand": listof(),                        # stand word list
     # intent routing (16 S5)
-    "intent.keyword_rules": text(),                  # intents.yaml path
+    # 2026-08-10 CFG-FZ-18-b: intent.keyword_rules removed. The path is
+    # provided by common.cmdset.intents_file (canonical name from 10
+    # S5.4.5 cmdset row) and consumed via ${common.cmdset.intents_file}
+    # -- see configs/p4_agent.yaml top-of-intent-block comment. Zero
+    # consumers grep in xbrain/p4_agent for the old key; safe to drop.
     "intent.use_small_model": boolean(),             # enable tier-2 classifier
     "intent.fallback_to_llm": boolean(),             # fall through to llm
     # prompt (16 S6): integer token budgets + files + history

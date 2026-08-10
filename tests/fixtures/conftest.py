@@ -55,12 +55,21 @@ REAL_CONFIG_ROOT = "/opt/xbrain_v6/configs"
 # ticket, delete the entry AND the fixture will start requiring it
 # green (which is the design: the fixture is a canary).
 KNOWN_FAILING_ASSERTIONS = {
-    "B": ("intent.keyword_rules in p4_agent.yaml matches the alias "
-          "blacklist entry 'keyword_rules' (S5.4.5 cmdset row), but "
-          "the schema registry (schemas/registry.py _P4) declares "
-          "'intent.keyword_rules' as a required key. Schema and "
-          "alias table contradict each other; reconciliation is a "
-          "BIZ-P4 review item, not CHK-0-56."),
+    # B was here until CFG-FZ-18-b (2026-08-10). intent.keyword_rules
+    # is now off the schema + off configs/p4_agent.yaml; only the
+    # canonical common.cmdset.intents_file survives. B goes green on
+    # the fixture tree.
+    "S22": ("S22 (CFG-FZ-16) enforces the L6 top-level namespace "
+            "rule: each L6 file MUST have exactly one top-level key "
+            "equal to the process name (p1_motion.yaml owns 'p1_motion:', "
+            "quadruped.yaml owns 'quadruped:'). All five committed L6 "
+            "files today expose the process fields at the yaml root "
+            "instead (arbiter:, bit:, mode:, ... in p2_core.yaml, etc). "
+            "Wrapping is a coordinated per-proc refactor that also touches "
+            "every downstream config consumer -- BIZ-P{1..5} review scope, "
+            "not CHK-0-56. Kept here so CFG-FZ-18-b can land unblocked; "
+            "delete this entry AND the fixture goes red until the wrap "
+            "is done."),
 }
 
 
