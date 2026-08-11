@@ -173,7 +173,13 @@ def decision_to_publishes(decision: TurnDecision) -> List[Tuple[str, dict]]:
 
     if kind == "dispatch":
         dr = decision.dispatch_result
-        return [(dr.key, dr.payload)]
+        out = [(dr.key, dr.payload)]
+        # Speak a brief acknowledgment so a dispatched action (esp. motion,
+        # which has no other audible feedback) is not silent. 2026-08-11
+        # ORIN test: '原地待命' dispatched but the operator heard nothing.
+        if decision.tts_text:
+            out.append(_speak(decision.tts_text))
+        return out
 
     if kind == "reply":
         return [_speak(decision.reply_text or decision.tts_text or "")]

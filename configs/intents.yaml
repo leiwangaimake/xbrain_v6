@@ -75,12 +75,12 @@ intents:
 
   # -- B 导航与任务 --
   goto_waypoint: { id: B01, keywords: ["去", "到", "前往"], slots: [waypoint], route: fastpath_then_llm, auth: L1a }
-  patrol_route: { id: B02, keywords: ["巡逻", "巡查"], slots: [route, loops], route: fastpath_then_llm, auth: L1a }
+  patrol_route: { id: B02, keywords: ["开始巡逻", "去巡逻", "巡逻", "巡查"], slots: [route, loops], route: fastpath_then_llm, auth: L1a }
   patrol_schedule: { id: B03, keywords: ["之后", "小时后", "点钟"], slots: [route, loops, delay_s, at_local, day_offset], route: llm, auth: L1a }
   patrol_repeat: { id: B04, keywords: ["再巡", "接着巡"], slots: [loops], route: fastpath_then_llm, auth: L1a }
   pause_task: { id: B05, keywords: ["暂停", "先停一下", "停一停"], slots: [], route: fastpath, auth: L0 }
   resume_task: { id: B06, keywords: ["继续", "接着走", "恢复任务"], slots: [], route: fastpath, auth: L0 }
-  cancel_task: { id: B07, keywords: ["别巡了", "不巡了"], slots: [], route: fastpath, auth: L2 }
+  cancel_task: { id: B07, keywords: ["取消任务", "结束任务", "停止任务", "别巡了", "不巡了"], slots: [], route: fastpath, auth: L2 }
   return_home: { id: B08, keywords: ["回来", "返航", "回到起点"], slots: [], route: fastpath, auth: L1a }
   goto_dock: { id: B09, keywords: ["充电", "回桩", "回充电桩"], slots: [dock], route: fastpath, auth: L1a }
   skip_waypoint: { id: B10, keywords: ["跳过这个点", "下一个点"], slots: [], route: fastpath, auth: L1b }
@@ -98,13 +98,13 @@ intents:
   query_mode_switch_ok: { id: C08, keywords: ["能切到喊话吗"], slots: [target_mode], route: fastpath, auth: L0 }
 
   # -- D 载荷 --
-  light_on: { id: D01, keywords: ["开灯", "打开照明", "前灯打开"], slots: [which], route: fastpath, auth: L0 }
-  light_off: { id: D02, keywords: ["关灯", "关掉照明"], slots: [which], route: fastpath, auth: L0 }
+  light_on: { id: D01, keywords: ["打开照明灯", "把灯打开", "打开灯", "开启照明", "开灯", "打开照明", "前灯打开"], slots: [which], route: fastpath, auth: L0 }
+  light_off: { id: D02, keywords: ["关闭照明灯", "把灯关掉", "关闭照明", "关灯", "关掉照明"], slots: [which], route: fastpath, auth: L0 }
   light_auto: { id: D03, keywords: ["灯光自动", "自动开灯"], slots: [], route: fastpath, auth: L0 }
   siren_on: { id: D04, keywords: ["开警笛", "拉警报", "响警报"], slots: [], route: fastpath, auth: L1b }
   siren_off: { id: D05, keywords: ["关警笛", "别响了"], slots: [], route: fastpath, auth: L0 }
-  strobe_on: { id: D06, keywords: ["开爆闪", "开警灯", "开红蓝", "开双闪", "开警示灯"], slots: [], route: fastpath, auth: L1b }
-  strobe_off: { id: D07, keywords: ["关爆闪", "关警灯", "关红蓝", "关双闪", "关警示灯"], slots: [], route: fastpath, auth: L0 }
+  strobe_on: { id: D06, keywords: ["开启爆闪灯", "打开爆闪灯", "把爆闪打开", "开启双闪", "打开警灯", "打开警示灯", "开爆闪", "开警灯", "开红蓝", "开双闪", "开警示灯", "爆闪灯"], slots: [], route: fastpath, auth: L1b }
+  strobe_off: { id: D07, keywords: ["关闭爆闪灯", "把爆闪关了", "关闭双闪", "关爆闪", "关警灯", "关红蓝", "关双闪", "关警示灯"], slots: [], route: fastpath, auth: L0 }
   speak_preset: { id: D08, keywords: ["喊话", "警告他", "播放警告", "喊第二条"], slots: [preset_id], route: fastpath_then_llm, auth: L1b }
   speak_custom: { id: D09, keywords: ["说请立即离开", "喊一句"], slots: [text], route: llm, auth: L3 }
   set_volume: { id: D10, keywords: ["大声点", "小声点", "音量调到最大"], slots: [level], route: fastpath, auth: L0 }

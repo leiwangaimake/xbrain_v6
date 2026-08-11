@@ -67,6 +67,19 @@ from xbrain.p4_agent.session.state_machines import L2ConfirmState, L2Slot
 # never echo). J01/J02/I05 plus the out_of_scope sentinel (16 S11.5).
 _CHITCHAT_NAMES = frozenset({"greeting", "identity", "help", "out_of_scope"})
 
+# Short Chinese labels for spoken confirm/ack feedback (hot-tunable
+# wording; ASCII punct). Keyed by 18 id. Only the common action/payload
+# intents need one; anything absent falls back to a generic ack. This is
+# feedback wording, NOT a data source -- the authoritative restate with
+# slot values is GWY-P4-35 (render_restate), wired separately.
+_CN_LABELS = {
+    "A04": "原地待命", "A05": "站起来", "A06": "趴下", "A11": "转身",
+    "B02": "开始巡逻", "B07": "取消任务", "B08": "返航", "B09": "回充电桩",
+    "D01": "打开照明灯", "D02": "关闭照明灯", "D04": "打开警笛",
+    "D06": "打开爆闪灯", "D07": "关闭爆闪灯",
+    "E01": "转动云台", "H07": "重启系统",
+}
+
 # latency_class per route (EV-7 consistency, mirrored from the envelope).
 _LATENCY_BY_ROUTE = {
     "fastpath": "fastpath",
@@ -271,6 +284,7 @@ class TurnOrchestrator:
             kind="dispatch", intent_id=entry.id, intent_name=entry.name,
             route=entry.route, auth=eff_auth, level=eff_auth, layer=layer,
             dispatch_result=result, envelope=env,
+            tts_text=self._dispatch_ack(entry),
             llm_used=llm_used, prompt_assembled=llm_used)
 
     def _run_tier2(self, text: str, session: OrchestratorSession,
@@ -335,7 +349,8 @@ class TurnOrchestrator:
         return TurnDecision(
             kind="dispatch", intent_id=entry.id, intent_name=entry.name,
             route=entry.route, auth="L2", level="L2", layer="session_state",
-            dispatch_result=result, envelope=env)
+            dispatch_result=result, envelope=env,
+            tts_text=self._dispatch_ack(entry))
 
     def _classify_confirm_response(self, text: str) -> Optional[str]:
         """Map a confirm-window utterance to I01 (confirm) / I02 (deny) /
@@ -386,9 +401,15 @@ class TurnOrchestrator:
             return "L2"
         return auth
 
-    # Prompt wording (hot phrasing; ASCII punct, Chinese words).
+    # Prompt wording (hot phrasing; ASCII punct, Chinese words). A Chinese
+    # label per intent gives the operator something meaningful to confirm;
+    # falls back to a generic prompt. NEVER speaks the English intent name
+    # (the 2026-08-11 ORIN test heard '确认要执行cancel_task吗').
     def _confirm_prompt(self, entry: IntentEntry) -> str:
-        return "确认要执行" + entry.name + "吗"
+        label = _CN_LABELS.get(entry.id)
+        if label:
+            return "确认" + label + "吗,请说是或否"
+        return "确认执行这个操作吗,请说是或否"
 
     def _approval_prompt(self, entry: IntentEntry) -> str:
         return "该操作需要云端审批,已上报等待批准"
@@ -398,3 +419,11 @@ class TurnOrchestrator:
 
     def _timeout_prompt(self, entry: IntentEntry) -> str:
         return "没有收到确认,已取消"
+
+    def _dispatch_ack(self, entry: IntentEntry) -> str:
+        """Brief spoken acknowledgment for a dispatched action, so a motion
+        command is not silent. A Chinese label when known, else 'received'.
+        (Full L1a/L1b restate with slot values is GWY-P4-35 wiring; this is
+        the minimal feedback the 2026-08-11 ORIN test showed was missing.)"""
+        label = _CN_LABELS.get(entry.id)
+        return ("好的," + label) if label else "收到"

@@ -45,14 +45,20 @@ from xbrain.p4_agent.runtime.turn_loop import (
     MIC_TOPIC, TurnLoopConfig, TurnLoopWorker,
     on_mic_frame_callback,
 )
+from xbrain.p4_agent.runtime.orchestrator_turn import CMD_ESTOP
 from xbrain.p4_agent.runtime.turn_orchestrator import OrchestratorSession
 
 
 _logger = logging.getLogger("xbrain.p4.wiring")
 
 
+# Outbound keys the orchestrator can publish. CMD_ESTOP is included because
+# a safety-bypass (急停) turn publishes there (16 S4 -> Tier1); leaving it
+# out silently DROPS the estop -- the 2026-08-11 ORIN test hit exactly that
+# ('no cached publisher for cmd/estop'). The bypass path must have a
+# publisher like any other key.
 OUTBOUND_KEYS = (CMD_AUDIO_SPEAK, CMD_TASK, CMD_MOTION_INTENT,
-                  CMD_PTZ, CMD_PAYLOAD)
+                  CMD_PTZ, CMD_PAYLOAD, CMD_ESTOP)
 
 
 # Voice-loop heartbeat cadence. Kept as a module constant, not a parameter
