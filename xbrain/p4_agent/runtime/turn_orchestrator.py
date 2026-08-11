@@ -114,7 +114,7 @@ def _payload_slots(intent_id: str, text: str) -> Dict[str, Any]:
     )
     from xbrain.p4_agent.slots.ptz_slots import (
         parse_ptz_amount, parse_ptz_direction, parse_ptz_speed_level,
-        parse_zoom_direction,
+        parse_scan, parse_zoom_direction,
     )
     if intent_id == "D17":                       # set_light_bright
         level = parse_light_level(text)
@@ -137,6 +137,8 @@ def _payload_slots(intent_id: str, text: str) -> Dict[str, Any]:
         if z:
             out["zoom_dir"] = z
         return out
+    if intent_id == "E07":                        # ptz_scan (sweep/orbit)
+        return parse_scan(text)
     if intent_id == "E09":                        # set_ptz_speed
         level = parse_ptz_speed_level(text)
         return {"level": level} if level else {}

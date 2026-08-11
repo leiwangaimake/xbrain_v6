@@ -56,9 +56,15 @@ _SPEED_ORDER = ("slow", "normal", "fast")
 # E01 direction -> (pan, tilt) unit sign.
 _DIR_VEC = {"left": (-1.0, 0.0), "right": (1.0, 0.0),
             "up": (0.0, 1.0), "down": (0.0, -1.0)}
-# E07 scan: sweep right, back left (2x), back right (2x), stop -- a bounded
-# look-around, not the device's built-in cruise (18-B E07: 上装发脉冲).
+# E07 sweep: right, left (2x), right (2x), stop -- a bounded look-around,
+# not the device's built-in cruise (18-B E07: 上装发脉冲).
 _SCAN_LEG_MS = 1500
+# E07 orbit ('环视一周'): one long single-direction pan approximating a full
+# circle. The exact 360-degree duration depends on the pan rate (uncalibrated,
+# T-PTZ-4-like) and the head may hit a pan limit before a full turn -- initial
+# value, field-tune. 2026-08-11 ORIN ask: '环视' should be a full turn, not a
+# small sweep.
+_ORBIT_MS = 12000
 
 
 @dataclass
@@ -103,7 +109,7 @@ class PtzDriver:
             if intent_id in ("E05", "E08"):
                 return self._stop()
             if intent_id == "E07":
-                return self._scan()
+                return self._scan(slots)
             if intent_id == "E09":
                 return self._set_speed(slots)
             # E02/E03/E04/E10 are capability-blocked (rejected upstream); if
@@ -169,11 +175,21 @@ class PtzDriver:
         _logger.info("ptz stop")
         return "stop"
 
-    def _scan(self) -> str:
-        """A bounded left-right-left sweep (18-B E07). Not interruptible
-        mid-sweep in this simple form; kept short (three legs)."""
+    def _scan(self, slots: Mapping[str, object]) -> str:
+        """E07: a bounded left-right sweep, or a full-circle orbit in one
+        direction ('环视一周'). Not interruptible mid-motion in this simple
+        form (a following E08 stop runs after)."""
         spd = self._speed()
-        # right, left(long), right(back to center-ish)
+        mode = slots.get("scan_mode", "sweep")
+        if mode == "orbit":
+            # One long single-direction pan approximating a full turn.
+            direction = slots.get("direction", "left")
+            pan = spd if direction == "right" else -spd
+            self._pulse(pan=pan, tilt=0.0, zoom=0.0, pulse_ms=_ORBIT_MS)
+            self.calls_made += 1
+            _logger.info("ptz E07 orbit %s (~full circle) done", direction)
+            return "orbit:" + str(direction)
+        # sweep: right, left(long), right(back toward center)
         self._pulse(pan=spd, tilt=0.0, zoom=0.0, pulse_ms=_SCAN_LEG_MS)
         self._pulse(pan=-spd, tilt=0.0, zoom=0.0, pulse_ms=_SCAN_LEG_MS * 2)
         self._pulse(pan=spd, tilt=0.0, zoom=0.0, pulse_ms=_SCAN_LEG_MS)

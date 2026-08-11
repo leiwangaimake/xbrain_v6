@@ -121,6 +121,25 @@ def test_speed_up_down_steps(driver):
 
 # -- blocked intents are not driven (E_CAPABILITY handled upstream) ------
 
+def test_scan_orbit_is_one_long_pan(driver, monkeypatch):
+    """E07 orbit ('环视一周') is one long single-direction pan, not the
+    3-leg sweep. MUTATION: routing orbit through the sweep path would emit
+    three moves with alternating sign."""
+    slept = []
+    monkeypatch.setattr("xbrain.p2_core.ptz.ptz_driver.time.sleep",
+                        lambda s: slept.append(s))
+    driver.handle("E07", {"scan_mode": "orbit", "direction": "right"})
+    moves = _moves(driver)
+    assert len(moves) == 1 and moves[0]["pan"] > 0     # one pan, rightward
+    assert slept[0] >= 8.0                              # a long (~full) turn
+
+
+def test_scan_sweep_is_three_legs(driver):
+    driver.handle("E07", {"scan_mode": "sweep", "direction": "left"})
+    moves = _moves(driver)
+    assert len(moves) == 3                              # right, left, right
+
+
 def test_blocked_intent_dropped_not_faked(driver):
     before_made = driver.calls_made
     driver.handle("E02", {})                          # home: T-PTZ-1 blocked

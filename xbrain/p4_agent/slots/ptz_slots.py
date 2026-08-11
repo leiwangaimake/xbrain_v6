@@ -86,19 +86,42 @@ def parse_ptz_amount(text: str) -> str:
     return "normal"
 
 
+# --- E07 scan mode + direction (sweep vs full-circle orbit) -------------
+# 2026-08-11 ORIN: the operator distinguishes '左右扫一遍' (a small
+# left-right sweep) from '环视一周' (a full-circle orbit). E07 carries a
+# scan_mode + direction; p2 drives a bounded sweep or a long single-
+# direction pan accordingly.
+
+def parse_scan(text: str) -> dict:
+    """Return {'scan_mode': 'sweep'|'orbit', 'direction': 'left'|'right'}.
+    '扫' -> sweep; '环视'/'一圈'/'一周' -> orbit. Direction from 左/右 (orbit
+    only; sweep ignores it), defaulting left."""
+    text = text or ""
+    if "扫" in text:
+        mode = "sweep"
+    elif ("环视" in text) or ("一圈" in text) or ("一周" in text):
+        mode = "orbit"
+    else:
+        mode = "sweep"
+    direction = "right" if "右" in text else "left"
+    return {"scan_mode": mode, "direction": direction}
+
+
 # --- E09 ptz speed level (18-B S2) --------------------------------------
 _SPEED_LEVEL = {
-    "转速最慢": "slow", "最慢": "slow",
-    "转速最快": "fast", "最快": "fast",
+    "转速调到最慢": "slow", "转速最慢": "slow", "最慢": "slow",
+    "转速调到最快": "fast", "转速最快": "fast", "最快": "fast",
     "恢复正常转速": "normal", "正常转速": "normal", "转速正常": "normal",
-    "转速加快": "up", "转速快一点": "up", "快一点": "up", "加快": "up",
-    "转速减慢": "down", "转速慢一点": "down", "慢一点": "down", "减慢": "down",
+    "云台转速加快": "up", "转速加快": "up", "转速快一点": "up",
+    "转速调快": "up", "云台转快点": "up", "快一点": "up", "加快": "up",
+    "云台转速减慢": "down", "转速减慢": "down", "转速慢一点": "down",
+    "转速调慢": "down", "云台转慢点": "down", "慢一点": "down", "减慢": "down",
 }
 
 
 def parse_ptz_speed_level(text: str) -> Optional[str]:
     """Return the E09 speed level (slow/normal/fast/up/down) or None.
-    Longest-first so '转速最快' wins over '快一点'."""
+    Longest-first so '转速调到最快' wins over '快一点'."""
     text = text or ""
     for kw in sorted(_SPEED_LEVEL, key=len, reverse=True):
         if kw in text:

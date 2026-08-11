@@ -120,19 +120,19 @@ intents:
   set_strobe_mode: { id: D18, keywords: ["切换到红蓝爆闪模式", "红蓝爆闪模式", "红蓝模式", "切换到红蓝", "换一种闪法", "用第三种模式", "换个警灯样式", "警灯换一种", "换个闪法"], slots: [mode], route: fastpath, auth: L0 }
 
   # -- E 云台 (E01/E06 direction slots are legitimate; see ID-3 note in header) --
-  ptz_move: { id: E01, keywords: ["云台向左", "往上看", "看右边一点"], slots: [direction, amount], route: fastpath, auth: L0 }
+  ptz_move: { id: E01, keywords: ["云台向左", "云台向右", "云台向上", "云台向下", "云台左转", "云台右转", "云台上转", "云台下转", "云台往左", "云台往右", "云台往上", "云台往下", "云台抬高", "云台低头", "平台向左", "平台向右", "平台向上", "平台向下", "平台左转", "平台右转", "往上看", "往下看", "往左看", "往右看", "看左边一点", "看右边一点", "看左边", "看右边"], slots: [direction, amount], route: fastpath, auth: L0 }
   ptz_home: { id: E02, keywords: ["云台归位", "回中", "看正前方"], slots: [], route: fastpath, auth: L0 }
   ptz_preset: { id: E03, keywords: ["看充电桩方向", "转到2号预置位"], slots: [preset], route: fastpath, auth: L0 }
   ptz_track: { id: E04, keywords: ["跟踪目标", "盯住他", "一直看着"], slots: [], route: fastpath_then_llm, auth: L1b }
   ptz_stop_track: { id: E05, keywords: ["停止跟踪", "别盯了"], slots: [], route: fastpath_then_llm, auth: L0 }
-  ptz_zoom: { id: E06, keywords: ["拉近", "推远", "放大点"], slots: [direction, amount], route: fastpath, auth: L0 }
-  ptz_scan: { id: E07, keywords: ["左右扫一遍", "环视"], slots: [], route: fastpath, auth: L1b }
+  ptz_zoom: { id: E06, keywords: ["拉近", "推近", "拉远", "推远", "放大", "放大点", "缩小", "变焦", "近一点", "远一点", "云台放大", "云台缩小", "平台放大", "平台缩小"], slots: [direction, amount], route: fastpath, auth: L0 }
+  ptz_scan: { id: E07, keywords: ["左右扫一遍", "左右扫", "扫一遍", "云台扫描", "云台左右扫", "平台左右扫", "环视", "环视一周", "环视一圈", "转一圈", "转一周", "云台环视", "平台环视", "云台向左环视", "云台向右环视", "向左环视", "向右环视", "云台转一圈", "云台转一周", "云台向左转一圈", "云台向右转一圈"], slots: [scan_mode, direction], route: fastpath, auth: L1b }
   ptz_stop_scan: { id: E08, keywords: ["停止扫描", "别扫了", "停止环视", "云台别转了"], slots: [], route: fastpath, auth: L0 }
   # E09/E10 from 18-B S1 (GWY-P4-23, 2026-08-07). E09 three speed levels await
   # T-PTZ-3 measurement. E10 conflicts with the contract's PTZ-C1 (PELCO-D has
   # no absolute-position readback): until T-PTZ-3 closes, the executor answers
   # rejected and steers to E01 -- never runs on a guessed omega (18-B S3).
-  set_ptz_speed: { id: E09, keywords: ["云台转速加快", "转速慢一点", "转速最快"], slots: [level], route: fastpath, auth: L1b }
+  set_ptz_speed: { id: E09, keywords: ["转速最快", "转速最慢", "转速调到最快", "转速调到最慢", "云台转速加快", "云台转速减慢", "转速加快", "转速减慢", "转速快一点", "转速慢一点", "转速调快", "转速调慢", "云台转快点", "云台转慢点", "恢复正常转速", "云台转速", "平台转速"], slots: [level], route: fastpath, auth: L1b }
   ptz_move_deg: { id: E10, keywords: ["云台向左转N度", "向上转N度"], slots: [direction, angle_deg], route: llm, auth: L1b }
 
   # -- F 录制 --
