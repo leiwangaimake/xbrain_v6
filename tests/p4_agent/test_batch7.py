@@ -148,7 +148,9 @@ def test_route_redblue_pattern_range():
 
 
 def test_route_volume_range():
-    assert route_volume(50) == "D14_set_volume"
+    # 2026-08-11: set_volume is D10 (not the old D14; 18-A reserved D14-16
+    # for payload_tilt_*).
+    assert route_volume(50) == "D10_set_volume"
     with pytest.raises(DRangeError):
         route_volume(150)
 

@@ -51,11 +51,15 @@ def route_redblue_pattern(value: int) -> str:
 
 
 def route_volume(value: int) -> str:
-    """PL-6: 0..100 -> D14 set_volume."""
+    """PL-6: 0..100 -> D10 set_volume.
+
+    2026-08-11: corrected the id from D14 to D10. set_volume is D10 in the
+    registry (intents.yaml); 18-A renumbered D14/D15/D16 to reserve them for
+    payload_tilt_*, and the id here had drifted to the old D14 label."""
     if not (0 <= value <= 100):
         raise DRangeError(
             "PL-6: volume %d out of range [0..100]" % value)
-    return "D14_set_volume"
+    return "D10_set_volume"
 
 
 class LightWhich(str, Enum):

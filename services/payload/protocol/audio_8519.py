@@ -58,6 +58,13 @@ CMD_HAIL_STOP = 11      # stop the realtime hail stream (verified to end a [42] 
 CMD_TTS_V2 = 31         # device-side TTS with gender; payload = voice byte + UTF-8 text
 CMD_RECORD_START = 40   # ask the device to start streaming mic audio (no payload)
 CMD_RECORD_STOP = 41    # ask the device to stop streaming mic audio (no payload)
+CMD_VOLUME = 14         # set persistent playback volume; payload = one byte 0..100
+
+# Volume payload range (protocol doc section 4, [14]${vol}): one raw byte 0..100.
+# This is the PERSISTENT playback volume (11 S7.5 volume_pct), retained across
+# hails -- distinct from a one-shot speak gain.
+VOLUME_MIN = 0
+VOLUME_MAX = 100
 
 # TTS voice selector byte values (protocol doc section 4, [31] payload first byte).
 VOICE_MALE = 0
@@ -167,6 +174,21 @@ def build_tts(voice: int, text: str) -> bytes:
     # documented text encoding, so Chinese prompts survive the round trip unaltered.
     payload = bytes([voice]) + text.encode("utf-8")
     return encode_frame(CMD_TTS_V2, payload)
+
+
+def build_volume(volume: int) -> bytes:
+    """Build a [14] set-volume frame: one raw byte 0..100 (protocol doc
+    section 4, [14]${vol}). This sets the PERSISTENT playback volume
+    (11 S7.5 volume_pct), retained after a hail ends.
+
+    Raises AudioProtocolError if volume is outside 0..100 -- an out-of-range
+    byte is refused here rather than sent, mirroring build_tts's bad-voice
+    guard, because the device's behaviour on an illegal value is undefined.
+    """
+    if not VOLUME_MIN <= volume <= VOLUME_MAX:
+        raise AudioProtocolError(
+            f"volume must be {VOLUME_MIN}..{VOLUME_MAX}, got {volume}")
+    return encode_frame(CMD_VOLUME, bytes([volume]))
 
 
 def build_record_start() -> bytes:

@@ -18,11 +18,12 @@ Description:
   talks to: instead of every module knowing the 8519/8529 wire protocol, they call this
   loopback HTTP surface and let payload-service own the hardware conversation.
 
-  Scope discipline (house V1/V2 rule): the one remaining control route -- /volume -- is
-  deliberately NOT stubbed here. It arrives in the milestone that first implements its
-  behaviour, so this file never carries an empty interface that merely reserves a URL for
-  the future. An unimplemented route that 404s is more honest than a stub that 200s with
-  a fabricated body, because a caller can detect the former and cannot detect the latter.
+  Scope discipline (house V1/V2 rule): every route here implements its behaviour end
+  to end -- this file never carries an empty interface that merely reserves a URL for
+  the future. POST /volume (2026-08-11, Q-18-30) is the last of these: 18-A PL-4
+  recorded it as the G-1 gap ('D10 音量 cannot execute, no endpoint'); it is now real,
+  setting the persistent playback volume ([14] on 8519) so a spoken '大声点' actually
+  changes the device volume instead of failing E_CAPABILITY.
   POST /mode and POST /deter appear now precisely because M4 implements their behaviour
   end to end (the streaming /mic and /play audio routes live in api/ws.py, since they are
   WebSocket, not REST); they are not placeholders.
@@ -99,7 +100,10 @@ from ..core.session import (
 from ..protocol.audio_8519 import (
     VOICE_FEMALE,
     VOICE_MALE,
+    VOLUME_MAX,
+    VOLUME_MIN,
     build_tts,
+    build_volume,
 )
 
 # POST /lights is where an HTTP command becomes wire bytes, so this module imports the
@@ -477,6 +481,62 @@ async def post_tts(command: TtsCommand, request: Request) -> TtsAck:
     # The frame is on its way; return the playback estimate the caller needs to time its
     # mic gate. Computed here (post-send) so a failed send never returns a stale est_ms.
     return TtsAck(ok=True, est_ms=config.estimate_tts_ms(command.text))
+
+
+class VolumeCommand(BaseModel):
+    """Body of POST /volume: the persistent playback volume (18 S6.4 / Q-18-30).
+
+    volume is required and range-checked at the boundary against the same
+    VOLUME_MIN/VOLUME_MAX the [14] builder uses, so an out-of-range value is a 422
+    before any frame is built. This sets the PERSISTENT volume (11 S7.5 volume_pct),
+    retained after a hail -- distinct from a one-shot speak gain.
+    """
+
+    volume: int = Field(ge=VOLUME_MIN, le=VOLUME_MAX)
+
+
+class VolumeAck(BaseModel):
+    """Body of a successful POST /volume: a bare {"ok": true}.
+
+    A command, not a query: this unit emits no [99] volume auto-report, so there is no
+    authoritative readback to echo (GET /status.volume is null here). A minimal ack
+    avoids fabricating a state the hardware never confirms.
+    """
+
+    ok: bool
+
+
+@router.post("/volume", response_model=VolumeAck)
+async def post_volume(command: VolumeCommand, request: Request) -> VolumeAck:
+    """Set the persistent playback volume (18-A PL-4 G-1 gap, Q-18-30).
+
+    Args:
+        command: the target volume 0..100.
+        request: the incoming request, used only to reach app.state.device_link.
+
+    Returns:
+        VolumeAck(ok=True) once the [14] frame has been handed to the device.
+
+    Raises:
+        HTTPException(503): if the audio link is down or the send fails mid-write;
+            DeviceLinkError is mapped to Service Unavailable so the client can tell
+            "device not reachable" from a request it got wrong (a 4xx, which pydantic
+            returns for an out-of-range volume before this handler runs).
+
+    Unlike /tts there is NO mode gate: volume is a persistent setting, not a one-shot
+    utterance that competes for the audio path, so it may be set in any mode. Mirrors
+    /tts otherwise: build the [14] frame, offload the blocking write to a worker thread
+    (asyncio.to_thread) so the loop is never blocked and the handler owns no socket (R1).
+    """
+    link: DeviceLink = request.app.state.device_link
+    # Encode the [14] volume frame. The builder re-validates the range; redundant with
+    # the Field check above, so on this path it is never expected to raise.
+    frame = build_volume(command.volume)
+    try:
+        await asyncio.to_thread(link.send_audio, [frame])
+    except DeviceLinkError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return VolumeAck(ok=True)
 
 
 class ModeCommand(BaseModel):

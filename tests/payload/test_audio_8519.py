@@ -22,6 +22,7 @@ import pytest
 
 from services.payload.protocol.audio_8519 import (
     AudioProtocolError,
+    build_volume,
     AudioUplinkFramer,
     build_hail,
     build_hail_stop,
@@ -53,6 +54,21 @@ def test_builders_match_known_frames() -> None:
     assert build_hail_stop() == b"[11]"
     assert build_record_start() == b"[40]"
     assert build_record_stop() == b"[41]"
+
+
+def test_build_volume_encodes_one_byte() -> None:
+    # [14] volume frame: bracket marker + one raw byte 0..100 (18 S6.4).
+    assert build_volume(100) == b"[14]" + bytes([100])
+    assert build_volume(0) == b"[14]" + bytes([0])
+    assert build_volume(50) == b"[14]" + bytes([50])
+
+
+@pytest.mark.parametrize("vol", [-1, 101, 200])
+def test_build_volume_rejects_out_of_range(vol: int) -> None:
+    # MUTATION guard: an out-of-range byte is refused, not sent (undefined
+    # device behaviour), mirroring build_tts's bad-voice guard.
+    with pytest.raises(AudioProtocolError):
+        build_volume(vol)
 
 
 def test_build_tts_encodes_voice_then_utf8() -> None:

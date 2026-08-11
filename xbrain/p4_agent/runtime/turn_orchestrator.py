@@ -89,6 +89,26 @@ _LATENCY_BY_ROUTE = {
 }
 
 
+def _payload_slots(intent_id: str, text: str) -> Dict[str, Any]:
+    """Fill the closed-set slot for a payload level/mode/volume intent from
+    the ASR text (16 S8.0.4). Returns an extra dict merged into the dispatch
+    payload so p2 gets the requested value. Empty when the slot is absent
+    (e.g. D18 '换一种' -> no mode -> p2 cycles)."""
+    from xbrain.p4_agent.slots.payload_slots import (
+        parse_light_level, parse_strobe_mode, parse_volume,
+    )
+    if intent_id == "D17":                       # set_light_bright
+        level = parse_light_level(text)
+        return {"level": level} if level else {}
+    if intent_id == "D18":                       # set_strobe_mode
+        mode = parse_strobe_mode(text)
+        return {"mode": mode} if mode is not None else {}
+    if intent_id == "D10":                        # set_volume
+        vol = parse_volume(text)
+        return {"volume": vol} if vol else {}
+    return {}
+
+
 @dataclass
 class PendingConfirm:
     """An L2 intent awaiting I01/I02. Holds enough to dispatch on confirm."""
@@ -277,9 +297,13 @@ class TurnOrchestrator:
                                     intent_name=entry.name, route=entry.route,
                                     auth=eff_auth, layer=layer, llm_used=True,
                                     prompt_assembled=True)
+        # Fill fastpath closed-set slots from the text (16 S8.0.4) for the
+        # payload level/mode/volume intents, so p2 gets the requested value
+        # (D17 level / D18 mode / D10 volume), not just the intent id.
+        extra = _payload_slots(entry.id, text)
         # Build the envelope (EV-1..7) and dispatch.
-        env = self._build_envelope(entry, eff_auth, slots={})
-        result = dispatch(entry.id, text)
+        env = self._build_envelope(entry, eff_auth, slots=dict(extra))
+        result = dispatch(entry.id, text, extra or None)
         return TurnDecision(
             kind="dispatch", intent_id=entry.id, intent_name=entry.name,
             route=entry.route, auth=eff_auth, level=eff_auth, layer=layer,

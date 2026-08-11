@@ -86,9 +86,26 @@ def set_searchlight(base_url: str, *, on: bool, timeout_s: float,
     return _post_lights(url, body, timeout_s)
 
 
+_VOLUME_PATH = "/volume"
+
+
+def set_volume(base_url: str, *, volume: int, timeout_s: float) -> dict:
+    """POST /volume to set the persistent playback volume 0..100 (18 S6.4 /
+    Q-18-30). This is the 8519 audio device volume ([14]); it is on the same
+    payload-service base_url as /lights, so it lives in this payload client.
+
+    Raises LightsClientError on an out-of-range volume or any transport
+    failure. The volume persists after a hail (11 S7.5 volume_pct)."""
+    if not 0 <= volume <= 100:
+        raise LightsClientError(
+            "volume %r out of 0..100 (18 S6.4)" % volume)
+    url = base_url.rstrip("/") + _VOLUME_PATH
+    return _post_lights(url, {"volume": volume}, timeout_s)
+
+
 def _post_lights(url: str, body: dict, timeout_s: float) -> dict:
-    """Shared POST /lights transport. Raises LightsClientError on any HTTP
-    or transport failure."""
+    """Shared payload-service POST transport (/lights, /volume). Raises
+    LightsClientError on any HTTP or transport failure."""
     try:
         r = requests.post(url, json=body, timeout=timeout_s)
     except requests.RequestException as exc:

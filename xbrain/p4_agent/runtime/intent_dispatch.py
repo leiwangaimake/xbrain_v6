@@ -37,7 +37,7 @@ class UnknownIntentDispatch(Exception):
     pass
 
 
-# Key families (11 §2.2). Table lookup by intent-id prefix + specific id.
+# Key families (11 S2.2). Table lookup by intent-id prefix + specific id.
 CMD_AUDIO_SPEAK = "cmd/audio/speak"
 CMD_TASK = "cmd/task"
 CMD_MOTION_INTENT = "cmd/motion/intent"
@@ -78,6 +78,7 @@ INTENT_TO_KEY: Dict[str, str] = {
     "D05": CMD_PAYLOAD,          # siren_off
     "D06": CMD_PAYLOAD,          # strobe_on (red-blue warning lamp)
     "D07": CMD_PAYLOAD,          # strobe_off
+    "D10": CMD_PAYLOAD,          # set_volume (8519 audio; p2 -> POST /volume)
     "D11": CMD_PAYLOAD,          # chassis_light
     "D17": CMD_PAYLOAD,          # set_light_bright (18-A)
     "D18": CMD_PAYLOAD,          # set_strobe_mode (18-A)
