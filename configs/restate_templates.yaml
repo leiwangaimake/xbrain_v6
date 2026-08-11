@@ -1,14 +1,93 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/restate_templates.yaml
-#   层:L6 内容表 归属进程:P4(复述模板)
-#   * 权威定义处:`16`
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: restate_templates.yaml
+# Brief: L1a/L1b restate templates (16 S8.3 + S8.3B, CFG-30 hot-update)
 #
-#   本文件当前是[空骨架]---- 一个键都没有, 本轮未凭空填任何配置值.
-#   * 落值时逐键去权威节抄, 不得从本文件或任何别处推断默认值:
-#     10 §5.4.2 R-3 逐字"不提供默认值语法......解析不到即 E_CONFIG_INVALID 拒绝启动".
-#   未标定的参数留 null(="声明键位但未赋值"), 绝不写 0.0 冒充已赋值.
-#   L6 只[取值]不[定义]: 不得出现 common 顶层键,共享值一律写 ${common.xxx}
-#     (10 §5.4.2 R-6 / R-1;违反即被 §5.4.4 断言 B 判"疑似复制"而拒绝启动).
-# ===========================================================================
+# Description:
+# 00 CMD-30 / 18 S13.2 / 11 S12.1.2: an L1a/L1b restate must state WHAT
+# WILL ACTUALLY BE EXECUTED, never echo the user's raw words. When P4
+# runs an L1a/L1b command it plays a TTS restate: L1a restates the
+# MEASURED value (post-ack, concurrent with execution); L1b PRE-announces
+# the REQUEST value (before dispatch, waits for TTS to finish, then
+# dispatches, then corrects via l1b_correct if applied != requested).
+#
+# 16 S8.3 four invariants (checked in restate_engine.py):
+#   RS-1  a numeric value in the text must trace to one of three sources
+#         (ack.applied / state.pose.motion / l1b request); an l1b request
+#         number MUST carry the word for 'request' so the operator can
+#         tell requested from applied.
+#   RS-2/RS-3  first semantic unit is the action (00 CMD-38); the
+#         _constraint_suffix and any reason go LAST -- operator hears the
+#         keyword first. '只能'+action is allowed for a clipped line.
+#   RS-4  if applied != requested (clipping/downgrade/lock), the
+#         l1b_correct line MUST be played; silence is forbidden.
+#
+# The {limiter_cn} placeholder is filled from the common/ shared library
+# (16 S8.3B), NOT from a map in this file -- the map lives next to the
+# gate.limiter closed set so a new value cannot be added without its
+# Chinese text. This file carries only wording and stays hot-updatable.
+#
+# Text is 16 S8.3 / S8.3B verbatim with CJK punctuation transliterated to
+# ASCII and the doc's decorative markers stripped (2026-08-11 iron rule:
+# non-doc files are ASCII-punct; Chinese words stay). One deliberate
+# divergence from the doc example is recorded at l1b_pre below.
 
-# TODO(`16`):按该节逐键落值.本文件在落值前会让整栈按设计拒绝启动,这是预期行为.
+# -- shared constraint suffix, appended by branch (RS-3: always LAST) --
+# The suffix carries {v_max_eff}/{limiter_cn}/{profile}; the CALLER
+# resolves the suffix branch first, then passes the resolved string as the
+# {suffix} value of the action template. render_restate refuses any
+# leftover {placeholder} so a half-resolved suffix is never spoken.
+_constraint_suffix:
+  none:         ""
+  limited:      ",当前限速{v_max_eff}"
+  downgraded:   ",已降到{profile}档,当前限速{v_max_eff}"
+  locked:       ",档位已锁定(环境反复受限),当前限速{v_max_eff}"
+  zero:         ".但当前限速为零,原因是{limiter_cn},机器人不会动"
+  # 16 S8.3 v0.8: limiter outside the closed set uses zero_unknown (do
+  # not read a reason we cannot name); see 16 S13 LIMITER-1 fail-safe.
+  zero_unknown: ".但当前限速为零,机器人不会动"
+
+# -- L1a action templates (post-ack, MEASURED value; action first RS-2) --
+move_relative:              # 18 A02-A05 forward/back/turn
+  exact:   "{action_cn}{dist}{unit_cn}{suffix}"
+  clipped: "只能{action_cn}{applied_dist}{unit_cn}(请求{req_dist},{limiter_cn}限制){suffix}"
+
+set_speed_profile:          # 18 A13 slower/faster/full
+  # 99 U54: no speed number appears here; the profile name goes via
+  # {profile_cn} and the effective speed via {v_max_eff} inside {suffix}.
+  ok:     "已切换到{profile_cn}档{suffix}"
+  capped: "已请求{profile_req_cn}档,但健康度只允许{profile_cn}档{suffix}"
+  locked: "档位已锁定在{profile_cn}档,本任务内不再升档{suffix}"
+
+start_patrol:               # 18 B01 patrol route N loops
+  ok: "巡逻{route_name}{loops}圈,已入队排第{queue_position}位,单圈{route_km}公里{suffix}"
+
+goto_waypoint:
+  ok: "前往{waypoint_name},规划{dist_km}公里{suffix}"
+
+set_voice_mode:
+  ok: "已切换到{mode_cn}"
+
+payload_set:                # 18 D class, per-channel applied value
+  ok: "{applied_cn}"        # read applied per channel, never the request
+
+# -- L1b pre-announce (BEFORE execution, REQUEST value, RS-1 source 3) --
+# DIVERGENCE FROM 16 S8.3 EXAMPLE (recorded, 2026-08-11): the doc example
+# was "即将{action_cn}{req_dist}{unit_cn}{suffix}" -- but the same block's
+# comment and RS-1 source-3 both mandate the request number carry the word
+# for 'request'. The example line dropped it (doc drift, CLAUDE.md 3.2
+# "unfulfilled verbatim"). This file follows the authoritative comment +
+# RS-1: the numeric l1b_pre line carries 请求. Wording is hot-updatable
+# (CFG-30), so field tuning can adjust the exact phrasing by ear.
+l1b_pre:
+  move_relative:     "即将{action_cn},请求{req_dist}{unit_cn}{suffix}"
+  set_speed_profile: "即将切换到{profile_req_cn}档{suffix}"   # profile name, no number -> no 请求
+  ptz_track:         "即将开始云台跟踪{suffix_none}"
+  enter_alarm:       "即将进入报警模式,声光将启动"
+  payload_set:       "即将{req_cn}"
+
+# -- L1b correction (AFTER execution, applied != request -> RS-4) --
+l1b_correct:
+  move_relative:     "实际只能{action_cn}{applied_dist}{unit_cn}({limiter_cn}限制){suffix}"
+  set_speed_profile: "实际只切到{profile_cn}档({limiter_cn}限制){suffix}"
