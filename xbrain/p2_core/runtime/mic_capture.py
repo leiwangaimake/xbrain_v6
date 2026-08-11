@@ -243,7 +243,17 @@ class MicPublisherThread(threading.Thread):
         self._sess = zenoh_session
         self._stop_evt = stop_evt
         self.frames_published = 0
+        self.frames_muted = 0
         self.errors: list = []
+        # 2026-08-11 V-HALFDUPLEX-1: half-duplex mute flag. When True,
+        # frames pulled from the capture queue are DROPPED (not sent to
+        # Zenoh) so TTS audio played through the GZH-2 speaker cannot
+        # feed back into the USB MIC -> ASR -> intent loop. SpeakerDomain
+        # toggles this: pause() before /tts, resume() after playback ends.
+        # Muting AT PUBLISHER (not at consumer): frames never leave p2,
+        # so p4 doesn't need any gate awareness, and Zenoh RT plane
+        # stays silent during TTS.
+        self._muted = threading.Event()  # cleared by default (not muted)
 
     # Same 'bug net' pattern as MicCaptureThread: a class-level flag
     # so a silent uncaught exception surfaces in the heartbeat log.
@@ -258,6 +268,27 @@ class MicPublisherThread(threading.Thread):
                 type(exc).__name__, exc, traceback.format_exc())
             self.errors.append("publisher crashed: %s" % exc)
 
+    def mute(self) -> None:
+        """Pause frame publish. Capture keeps running (arecord is not
+        killed; its stdout is still drained by MicCaptureThread) so
+        arecord never blocks on a full pipe. Frames pulled from the
+        queue while muted are counted (frames_muted++) then discarded."""
+        self._muted.set()
+
+    def unmute(self) -> None:
+        """Resume publish. Also drain any pending queued frames so the
+        first post-mute frame is genuinely post-mute, not a stale one
+        that was captured DURING the mute window (still contains TTS
+        audio bleed from the speaker/mic path)."""
+        self._muted.clear()
+        drained = 0
+        while True:
+            try:
+                self._q.get_nowait()
+                drained += 1
+            except queue.Empty:
+                break
+
     def _run_body(self) -> None:
         pub = self._sess.declare_publisher(self._cfg.zenoh_topic)
         try:
@@ -269,6 +300,13 @@ class MicPublisherThread(threading.Thread):
                 if kind == "error":
                     self.errors.append(str(payload))
                     return
+                if self._muted.is_set():
+                    # TTS playback in progress on the SAME device that
+                    # feeds this MIC -- dropping the frame is the whole
+                    # point of half-duplex. Count so heartbeat can show
+                    # the mute window worked.
+                    self.frames_muted += 1
+                    continue
                 pub.put(encode_frame(payload))
                 self.frames_published += 1
         finally:

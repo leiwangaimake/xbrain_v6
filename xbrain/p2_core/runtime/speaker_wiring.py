@@ -87,12 +87,20 @@ class SpeakerDomain:
     blocks the caller for est_ms."""
 
     def __init__(self, cfg: SpeakerWiringConfig, rt_session,
-                 now_mono_ms_fn) -> None:
+                 now_mono_ms_fn, mic_publisher=None) -> None:
         self._cfg = cfg
         self._rt = rt_session
         self._now = now_mono_ms_fn
         self._lock = threading.Lock()
         self._gate_pub = rt_session.declare_publisher(GATE_TOPIC)
+        # 2026-08-11 V-HALFDUPLEX-1: optional handle to MicPublisherThread.
+        # When set, handle_speak() calls .mute()/.unmute() around the
+        # TTS playback window so the TTS audio played through the GZH-2
+        # speaker never re-enters through the USB MIC. rt/audio/gate is
+        # still published for external observers (HMI, event log), but
+        # the actual gating is done at the p2 publisher source -- p4
+        # doesn't need to filter anything.
+        self._mic_pub = mic_publisher
         # Announce idle-open initially.
         self._publish_gate(open_=True, reason="idle")
 
@@ -102,22 +110,46 @@ class SpeakerDomain:
         self._gate_pub.put(payload.to_bytes())
 
     def handle_speak(self, text: str) -> dict:
-        """Blocking. Returns an ack dict with {ok, actual_ms, code}."""
+        """Blocking. Returns an ack dict with {ok, actual_ms, code}.
+
+        Half-duplex order:
+          1. mute MicPublisher BEFORE the TTS request lands on GZH-2,
+             so the very first sample the speaker plays cannot enter
+             the MIC pipeline.
+          2. publish gate=closed for external observers.
+          3. call TTS + sleep the estimated playback duration.
+          4. publish gate=open + unmute (drains any queued frames
+             captured during the mute window -- see unmute()).
+        """
         if not self._lock.acquire(blocking=False):
             return {"ok": False, "code": E_BUSY,
                     "reason": "speaker busy"}
+        muted_here = False
         try:
+            if self._mic_pub is not None:
+                self._mic_pub.mute()
+                muted_here = True
             self._publish_gate(open_=False, reason="tts_playback")
             try:
                 est_ms = self._invoke_tts(text)
             except SpeakerHwError as exc:
                 self._publish_gate(open_=True, reason="idle")
+                if muted_here:
+                    self._mic_pub.unmute()
+                    muted_here = False
                 return {"ok": False, "code": E_UNHEALTHY,
                         "reason": str(exc)}
+            # Playback is asynchronous on the device side; est_ms is the
+            # TTS builder's estimate. Sleep the same window so the mute
+            # is released only after the speaker has actually gone quiet.
             time.sleep(est_ms / 1000.0)
             self._publish_gate(open_=True, reason="idle")
             return {"ok": True, "actual_ms": est_ms, "code": "OK"}
         finally:
+            if muted_here:
+                # unmute drains the capture queue so residual DURING-tts
+                # frames don't leak through after we unmute.
+                self._mic_pub.unmute()
             self._lock.release()
 
     def _invoke_tts(self, text: str) -> float:

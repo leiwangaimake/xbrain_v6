@@ -162,9 +162,14 @@ def test_dispatch_patrol_goes_to_task():
     assert r.payload["text"] == "巡逻"
 
 
-def test_dispatch_d07_greeting_goes_to_speak():
-    r = dispatch("D07", "你好")
-    assert r.key == CMD_AUDIO_SPEAK
+def test_dispatch_d07_strobe_off_goes_to_payload():
+    # V-2B originally mislabeled D07 as 'greeting' because naive_classify's
+    # demo map had 你好->D07 (a wrong mapping). D07 is really strobe_off
+    # (18 S6 D-class: red-blue warning lamp OFF), which routes to
+    # cmd/payload (14 S4 P2 payload domain), NOT cmd/audio/speak. Corrected
+    # 2026-08-11 to reflect the real 18 command-set identity.
+    r = dispatch("D07", "关爆闪")
+    assert r.key == CMD_PAYLOAD
 
 
 def test_dispatch_speak_stop_overrides_to_task():

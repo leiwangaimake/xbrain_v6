@@ -55,6 +55,9 @@ _PREFIX_MAP = {
     "E": CMD_PTZ,              # PTZ family
     "F": CMD_TASK,             # follow variants
     "G": CMD_AUDIO_SPEAK,      # G01-G24 queries -> speak the reply
+    "H": CMD_TASK,             # H01-H08 system (bit / report / sleep / reboot)
+    "I": CMD_AUDIO_SPEAK,      # I01-I05 session ack (confirm/deny/repeat)
+    "J": CMD_AUDIO_SPEAK,      # J01/J02 chitchat -> speak canned reply
     "R": CMD_PAYLOAD,          # R-* payload/lights/siren
     "T": CMD_TASK,             # T-* task lifecycle
 }
@@ -64,6 +67,20 @@ _PREFIX_MAP = {
 INTENT_TO_KEY: Dict[str, str] = {
     "B09": CMD_TASK,            # estop is a task-family event (queued)
     "D12": CMD_TASK,            # speak_stop is a TASK-side action + audio ack
+    # 2026-08-11 V-STROBE-1: D-prefix defaults to CMD_AUDIO_SPEAK but
+    # the actual lamp / siren D-intents drive HARDWARE via
+    # payload-service. Route them to cmd/payload; p2 PayloadDomain
+    # subscribes and calls the HTTP endpoints.
+    "D01": CMD_PAYLOAD,          # light_on
+    "D02": CMD_PAYLOAD,          # light_off
+    "D03": CMD_PAYLOAD,          # light_auto
+    "D04": CMD_PAYLOAD,          # siren_on
+    "D05": CMD_PAYLOAD,          # siren_off
+    "D06": CMD_PAYLOAD,          # strobe_on (red-blue warning lamp)
+    "D07": CMD_PAYLOAD,          # strobe_off
+    "D11": CMD_PAYLOAD,          # chassis_light
+    "D17": CMD_PAYLOAD,          # set_light_bright (18-A)
+    "D18": CMD_PAYLOAD,          # set_strobe_mode (18-A)
 }
 
 

@@ -105,7 +105,15 @@ def speak(
 
     url = base_url.rstrip("/") + _TTS_PATH
     try:
-        r = requests.post(url, json={"text": text}, timeout=timeout_s)
+        # payload-service TtsCommand (services/payload/api/rest.py:386)
+        # requires BOTH 'text' AND 'voice' (0 = male, 1 = female). The
+        # earlier client sent only text and got a 422 with the missing
+        # field named. Default 1 (female voice) here; if a per-intent
+        # choice is needed later, threading a voice kwarg through
+        # SpeakerDomain is the incremental fix.
+        r = requests.post(url,
+                          json={"text": text, "voice": 1},
+                          timeout=timeout_s)
     except requests.RequestException as exc:
         raise TtsClientError(
             "tts request to %s failed: %s" % (url, exc)) from exc

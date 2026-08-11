@@ -60,7 +60,11 @@ def test_speak_returns_est_ms_from_response(monkeypatch):
     )
     assert est == 2500.0
     assert captured["url"] == "http://127.0.0.1:18080/tts"
-    assert captured["json"] == {"text": "你好机器人"}
+    # payload-service TtsCommand (services/payload/api/rest.py) requires
+    # BOTH text AND voice (voice: 0=male, 1=female). The client defaults
+    # voice=1; sending text only got a 422 'voice field required' on ORIN
+    # 2026-08-11.
+    assert captured["json"] == {"text": "你好机器人", "voice": 1}
 
 
 def test_speak_falls_back_to_sentence_estimate_when_no_est_ms(monkeypatch):

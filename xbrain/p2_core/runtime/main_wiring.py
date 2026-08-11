@@ -62,15 +62,22 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
 
     _logger.info("p2 wiring: opening RT + GEN Zenoh sessions")
     with open_planes(("rt", "gen")) as (rt, gen):
-        # Speaker domain -- publishes rt/audio/gate on RT plane.
-        speaker = SpeakerDomain(cfg=spk_cfg, rt_session=rt,
-                                  now_mono_ms_fn=_now_mono_ms)
-
-        # MIC pipeline (RT plane).
+        # MIC pipeline (RT plane) -- constructed FIRST so SpeakerDomain
+        # can hold a reference to mic_pub_thread for the half-duplex
+        # mute() / unmute() calls around TTS playback (V-HALFDUPLEX-1,
+        # 2026-08-11). Without this, TTS audio played through the
+        # GZH-2 speaker re-entered the USB MIC, ASR transcribed it,
+        # and the same intent looped forever every ~2s.
         mic_thread, mic_pub_thread, mic_stop = spawn_mic_pipeline(
             mic_cfg, zenoh_session=rt)
         _logger.info("p2 wiring: MIC capture started (dev=%s topic=%s)",
                      mic_cfg.arecord_device, mic_cfg.zenoh_topic)
+
+        # Speaker domain -- publishes rt/audio/gate on RT plane AND
+        # holds the mic-publisher handle for half-duplex mute.
+        speaker = SpeakerDomain(cfg=spk_cfg, rt_session=rt,
+                                  now_mono_ms_fn=_now_mono_ms,
+                                  mic_publisher=mic_pub_thread)
 
         # GEN plane subscribers.
         def _on_speak(sample) -> None:
@@ -93,6 +100,29 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         speak_sub = gen.declare_subscriber(SPEAK_TOPIC, _on_speak)
         _logger.info("p2 wiring: subscribed %s", SPEAK_TOPIC)
 
+        # -- cmd/payload subscriber (2026-08-11 V-STROBE-1) ------------
+        # p4 dispatch routes D01-D07/D11/D17/D18 (lamp/siren) here;
+        # PayloadDomain translates the envelope into a payload-service
+        # /lights HTTP call. GEN plane like speak. Same Rust-thread
+        # handoff pattern to avoid blocking Zenoh.
+        from xbrain.p2_core.runtime.payload_wiring import (
+            CMD_PAYLOAD_TOPIC, PayloadDomain, PayloadWiringConfig,
+        )
+        payload_cfg = PayloadWiringConfig(
+            payload_base_url=spk_cfg.payload_base_url,
+            http_timeout_s=spk_cfg.tts_http_timeout_s)
+        payload = PayloadDomain(cfg=payload_cfg)
+
+        def _on_payload(sample) -> None:
+            import threading as _t
+            data = bytes(sample.payload)
+            _t.Thread(
+                target=lambda: payload.handle_envelope(data),
+                name="p2.payload_handler", daemon=True).start()
+
+        payload_sub = gen.declare_subscriber(CMD_PAYLOAD_TOPIC, _on_payload)
+        _logger.info("p2 wiring: subscribed %s", CMD_PAYLOAD_TOPIC)
+
         # Main loop: wait for stop.
         try:
             last_hb = time.monotonic()
@@ -111,10 +141,11 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     pub_exc = getattr(mic_pub_thread, "last_exception", None)
                     pub_errs = list(getattr(mic_pub_thread, "errors", ()))
                     _logger.info(
-                        "p2 alive; captured=%d published=%d "
+                        "p2 alive; captured=%d published=%d muted=%d "
                         "cap_alive=%s pub_alive=%s errors=%s",
                         getattr(mic_thread, "frames_captured", 0),
                         mic_pub_thread.frames_published,
+                        getattr(mic_pub_thread, "frames_muted", 0),
                         cap_alive, pub_alive,
                         pub_errs[-1] if pub_errs else "none")
                     if cap_exc:
