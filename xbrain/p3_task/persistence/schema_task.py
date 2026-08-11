@@ -20,7 +20,12 @@ git history and reviewable one table at a time.
 from __future__ import annotations
 
 from xbrain.common.enums import SUSPEND_KIND, TASK_STATE
-from xbrain.p3_task.state.machine import SUSPEND_REASONS
+from xbrain.p3_task.state.machine import SUSPEND_REASONS, TERMINAL_STATES
+
+# Terminal states, for the duration_sec CHECK (duration is written only at a
+# terminal). Imported from the machine so the DDL and the graph agree on which
+# states are terminal.
+_TERMINAL_FOR_DDL = TERMINAL_STATES
 
 
 # 12-value task state closed set. NOT re-listed here -- taken from the single
@@ -48,6 +53,15 @@ TASK_TYPES = (
     "follow",
 )
 
+# source closed set (15 S9.5): where the task came from, and the axis the
+# scheduler priority table ranks on (cloud > wecom > local > auto). 'charge' is
+# P3's own return_home source (S4.2.1). 'auto' has no producer yet (reserved).
+TASK_SOURCES = ("cloud", "wecom", "local", "auto", "charge")
+
+# resume_policy closed set (15 S7.5 / CHG-32-33): resolved at admission and
+# frozen on the row (never re-read from config afterwards).
+RESUME_POLICIES = ("continue", "restart", "abort", "manual")
+
 
 def _in_clause(items) -> str:
     return "(" + ",".join(f"'{v}'" for v in items) + ")"
@@ -56,19 +70,48 @@ def _in_clause(items) -> str:
 DDL_TASKS = f"""
 CREATE TABLE IF NOT EXISTS tasks (
   task_id       TEXT PRIMARY KEY,
+  parent_task_id TEXT,
   task_type     TEXT NOT NULL CHECK (task_type IN {_in_clause(TASK_TYPES)}),
   state         TEXT NOT NULL CHECK (state IN {_in_clause(TASK_STATES)}),
   priority      INTEGER NOT NULL CHECK (priority BETWEEN 0 AND 100),
   submit_seq    INTEGER NOT NULL,
   suspend_kind  TEXT,
   suspend_reason TEXT,
+  interrupt_reason TEXT,     -- last interrupt cause; NOT cleared on resume (audit)
   mission_json  TEXT NOT NULL,
   total_steps   INTEGER NOT NULL CHECK (total_steps >= 0),
   current_step  INTEGER NOT NULL DEFAULT 0
                  CHECK (current_step BETWEEN 0 AND total_steps),
   step_status_json TEXT NOT NULL DEFAULT '[]',
+  result_json   TEXT,
+  error_context_json TEXT,
+  source        TEXT NOT NULL CHECK (source IN {_in_clause(TASK_SOURCES)}),
+  resume_policy TEXT NOT NULL CHECK (resume_policy IN {_in_clause(RESUME_POLICIES)}),
+  resume_count  INTEGER NOT NULL DEFAULT 0 CHECK (resume_count >= 0),
+  route_geo_id  TEXT,        -- immutable geo_id of the referenced route (tombstone)
+  user_id       TEXT,
+  trace_id      TEXT NOT NULL,   -- ties cmd -> task -> event across the stack
+  ttl_seconds   INTEGER,
+  scheduled_at  TEXT,        -- ISO wall time a timed task becomes due
+  -- Monotonic anchors (CLK-C1): internal ordering / age. created_ms drives the
+  -- ix_tasks_created index; NOT a wall clock, so it never steps at RTK/NTP sync.
   created_ms    INTEGER NOT NULL,
   updated_ms    INTEGER NOT NULL,
+  -- Wall-clock audit columns (15 S9.5): DISPLAY / AUDIT ONLY, filled at the
+  -- matching transition. Never used to compute a duration (a wall diff steps
+  -- seconds at every cold-boot RTK/NTP sync) -- that is started_mono below.
+  created_at    TEXT,
+  started_at    TEXT,
+  paused_at     TEXT,
+  finished_at   TEXT,
+  cancelled_at  TEXT,
+  -- Authoritative duration (15 S9.5, R12.4): started_mono is the monotonic read
+  -- at entry to running; duration_sec = now_mono - started_mono at the terminal.
+  -- If the terminal's boot != started_boot the task crossed a restart and
+  -- duration_sec MUST be NULL (never a wall diff) -- enforced by the writer.
+  started_mono  REAL,
+  started_boot  TEXT,
+  duration_sec  REAL,
   -- suspend_kind / suspend_reason are non-null IFF state == 'suspended'
   -- (11 S4.4 / 15 S9.5). A bare closed-set CHECK is not enough: it admits a
   -- suspend field on a running row (fail-silent).
@@ -80,13 +123,20 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- (SUSPEND_REASONS is that subset, owned by state.machine).
   CHECK (suspend_reason IS NULL OR
          suspend_reason IN {_in_clause(SUSPEND_REASON_VALUES)}),
+  -- interrupt_reason shares the suspend_reason value set (15 S9.5): only the
+  -- suspend closed set, but NOT paired with the suspended state (it survives a
+  -- resume). A missing CHECK here is the documented hole where a typo persists.
+  CHECK (interrupt_reason IS NULL OR
+         interrupt_reason IN {_in_clause(SUSPEND_REASON_VALUES)}),
   -- CR-8 (15 S9.5): the two closed-set CHECKs above each pass the combo
   -- kind='passive' + reason='preempted' -- a fail-silent row that never enters
   -- the yielding auto-resume scan (idx_tasks_yielding). Enforce the pairing:
   -- kind is 'yielding' exactly when reason is preempted/mode_takeover.
   CHECK (suspend_kind IS NULL OR suspend_reason IS NULL OR
          (suspend_kind = 'yielding')
-           = (suspend_reason IN ('preempted','mode_takeover')))
+           = (suspend_reason IN ('preempted','mode_takeover'))),
+  -- duration_sec is non-null only at a terminal state (15 S9.5).
+  CHECK (duration_sec IS NULL OR state IN {_in_clause(sorted(_TERMINAL_FOR_DDL))})
 );
 """.strip()
 
@@ -104,11 +154,13 @@ DDL_TASKS_INDEXES = (
     # the CHECK vocabulary or it never fires (the fail-silent index trap).
     "CREATE INDEX IF NOT EXISTS ix_tasks_yielding ON tasks(suspend_reason) "
     "WHERE suspend_kind = 'yielding';",
-    # NOTE: the scheduled-wakeup partial index (idx_tasks_scheduled ON
-    # tasks(state, scheduled_at) WHERE state = 'scheduled', 15 S9.5) lands in
-    # PB2 together with the scheduled_at column it indexes -- building it now,
-    # before that column exists, is not possible. 'scheduled' is already a legal
-    # state after this batch, so no row is lost meanwhile.
+    # Scheduled-wakeup partial index (15 S9.5): the delayed-wakeup loop polls
+    # timed tasks by scheduled_at cheaply. The predicate MUST be lowercase
+    # 'scheduled' and match the CHECK vocabulary, or it never fires and a timed
+    # task reads as 'due at its time but never started' with no error (the
+    # fail-silent index trap 15 S3.2 names as the one real runtime risk).
+    "CREATE INDEX IF NOT EXISTS ix_tasks_scheduled ON tasks(scheduled_at) "
+    "WHERE state = 'scheduled';",
 )
 
 

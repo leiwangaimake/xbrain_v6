@@ -34,11 +34,31 @@ import json
 from typing import Any, Mapping
 
 from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO
-from xbrain.p3_task.persistence.schema_task import TASK_TYPES
+from xbrain.p3_task.persistence.schema_task import TASK_SOURCES, TASK_TYPES
 
 
 class VoiceTaskIngestError(RuntimeError):
     """A voice/text task request is not recordable (bad task_type)."""
+
+
+# request 'source' (the CHANNEL a task arrived on) -> the tasks.source column
+# closed set (15 S9.5: cloud|wecom|local|auto|charge, the scheduler priority
+# axis). Voice and on-site text are 'local'; a cloud/wecom text keeps its
+# channel. The detail ('voice'/'text') is preserved in mission_json.source.
+_CHANNEL_TO_SOURCE = {
+    "voice": "local", "text": "local", "hmi": "local", "local": "local",
+    "cloud": "cloud", "wecom": "wecom",
+}
+
+# Default resume_policy per task_type (15 S7.5 / 11 S4.4 lines on abort/manual):
+# teach -> manual (operator decides, S3.4); follow -> abort (target already
+# lost); everything else is resumable -> continue. Resolved at admission and
+# frozen on the row.
+_RESUME_POLICY_BY_TYPE = {"teach": "manual", "follow": "abort"}
+
+
+def default_resume_policy(task_type: str) -> str:
+    return _RESUME_POLICY_BY_TYPE.get(task_type, "continue")
 
 
 def task_row_from_request(
@@ -48,23 +68,31 @@ def task_row_from_request(
     submit_seq: int,
     priority: int,
     now_mono_ms: int,
+    trace_id: str,
 ) -> TaskRow:
     """Convert a P4 cmd/task request into the unified TaskRow.
 
     request is the dict from task_request.to_task_request: task_type
-    (7-value closed set) + intent + id + slots + source. The task_type is
-    re-checked against the closed set here (the DB CHECK would also reject
-    it, but failing with the value is clearer); mission_json carries the
-    intent + slots + source so the scheduler and any audit can see WHERE
-    the task came from and WHAT it asked for.
-    """
+    (7-value closed set) + intent + id + slots + source (the channel). The
+    task_type is re-checked against the closed set here (the DB CHECK would
+    also reject it, but failing with the value is clearer); mission_json
+    carries the intent + slots + channel so the scheduler and any audit can
+    see WHERE the task came from and WHAT it asked for. source / trace_id /
+    resume_policy are the 15 S9.5 NOT NULL columns: source is the channel
+    mapped to the closed set, resume_policy is the per-type default, trace_id
+    threads the cmd -> task -> event chain (supplied by the caller from the
+    intent envelope, never invented here)."""
     task_type = request.get("task_type")
     if task_type not in TASK_TYPES:
         raise VoiceTaskIngestError(
             "task_type %r not in the 15 S12 closed set %s"
             % (task_type, sorted(TASK_TYPES)))
+    channel = request.get("source")
+    source = _CHANNEL_TO_SOURCE.get(channel, "local")
+    if source not in TASK_SOURCES:                 # defensive; map is closed
+        source = "local"
     mission = {
-        "source": request.get("source"),      # 'voice' | 'text'
+        "source": channel,                     # 'voice' | 'text' (detail)
         "intent": request.get("intent"),       # fine registry name (CS-A1)
         "id": request.get("id"),               # 18 id (B02, ...)
         "slots": request.get("slots", {}),
@@ -82,6 +110,9 @@ def task_row_from_request(
         step_status_json="[]",
         created_ms=now_mono_ms,
         updated_ms=now_mono_ms,
+        source=source,
+        trace_id=trace_id,
+        resume_policy=default_resume_policy(task_type),
     )
 
 
@@ -93,6 +124,7 @@ async def record_voice_task(
     submit_seq: int,
     priority: int,
     now_mono_ms: int,
+    trace_id: str,
 ) -> TaskRow:
     """Build + INSERT the voice/text task via the same DAO as party-A.
 
@@ -100,6 +132,6 @@ async def record_voice_task(
     `tasks` table, so the schema is literally the party-A schema."""
     row = task_row_from_request(
         request, task_id=task_id, submit_seq=submit_seq,
-        priority=priority, now_mono_ms=now_mono_ms)
+        priority=priority, now_mono_ms=now_mono_ms, trace_id=trace_id)
     await dao.insert(row)
     return row

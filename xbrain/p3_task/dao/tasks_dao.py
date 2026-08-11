@@ -28,6 +28,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TaskRow:
+    """One row of the `tasks` table (15 S9.5). The Python side uses '' for an
+    absent TEXT column and None for an absent number; insert() maps '' -> NULL
+    so the DB canonical (NULL = absent) holds and the pairing CHECKs behave.
+
+    Required (no default): the identity + the 15 S9.5 NOT NULL columns
+    (source / trace_id / resume_policy). Everything a lifecycle transition
+    fills later (timestamps, result, duration) defaults to absent."""
+    # -- identity + required (15 S9.5 NOT NULL) --
     task_id: str
     task_type: str
     state: str
@@ -39,8 +47,66 @@ class TaskRow:
     step_status_json: str
     created_ms: int
     updated_ms: int
+    source: str                 # cloud|wecom|local|auto|charge (priority axis)
+    trace_id: str               # cmd -> task -> event correlation
+    resume_policy: str          # continue|restart|abort|manual (frozen at admit)
+    # -- optional (absent until set) --
     suspend_kind: str = ""
     suspend_reason: str = ""
+    interrupt_reason: str = ""   # last interrupt cause; kept across resume
+    parent_task_id: str = ""
+    result_json: str = ""
+    error_context_json: str = ""
+    resume_count: int = 0
+    route_geo_id: str = ""
+    user_id: str = ""
+    ttl_seconds: "int | None" = None
+    scheduled_at: str = ""       # ISO wall time a timed task becomes due
+    # wall-clock audit (display only); filled at the matching transition
+    created_at: str = ""
+    started_at: str = ""
+    paused_at: str = ""
+    finished_at: str = ""
+    cancelled_at: str = ""
+    # monotonic duration (authoritative; NULL if the task crossed a restart)
+    started_mono: "float | None" = None
+    started_boot: str = ""
+    duration_sec: "float | None" = None
+
+
+# Column order shared by INSERT and SELECT (one list, so the two can never
+# drift out of alignment). Matches the DDL column order in schema_task.
+_COLUMNS = (
+    "task_id", "parent_task_id", "task_type", "state", "priority",
+    "submit_seq", "suspend_kind", "suspend_reason", "interrupt_reason",
+    "mission_json", "total_steps", "current_step", "step_status_json",
+    "result_json", "error_context_json", "source", "resume_policy",
+    "resume_count", "route_geo_id", "user_id", "trace_id", "ttl_seconds",
+    "scheduled_at", "created_ms", "updated_ms", "created_at", "started_at",
+    "paused_at", "finished_at", "cancelled_at", "started_mono", "started_boot",
+    "duration_sec",
+)
+
+# TEXT columns whose '' Python value must persist as NULL (absent). Numbers
+# already use None for absent, so they are not listed here.
+_NULLABLE_TEXT = frozenset({
+    "parent_task_id", "suspend_kind", "suspend_reason", "interrupt_reason",
+    "result_json", "error_context_json", "route_geo_id", "user_id",
+    "scheduled_at", "created_at", "started_at", "paused_at", "finished_at",
+    "cancelled_at", "started_boot",
+})
+
+
+def _row_values(row: "TaskRow") -> tuple:
+    """Row -> value tuple in _COLUMNS order, coercing '' -> NULL for the
+    nullable TEXT columns (see TaskRow docstring)."""
+    out = []
+    for c in _COLUMNS:
+        v = getattr(row, c)
+        if c in _NULLABLE_TEXT and v == "":
+            v = None
+        out.append(v)
+    return tuple(out)
 
 
 class TasksDAO:
@@ -50,22 +116,13 @@ class TasksDAO:
         self._conn = conn
 
     async def insert(self, row: TaskRow) -> None:
-        # suspend_kind / suspend_reason are '' in the Python row when absent,
-        # but the DB canonical for absent is NULL: the tasks CHECK pairs them
-        # with the suspended state via IS NOT NULL, and '' IS NOT NULL is TRUE,
-        # so an empty string on a non-suspended row would (wrongly) read as a
-        # present suspend field and fail the CHECK. Coerce empty -> NULL here;
-        # fetch_by_id maps NULL -> '' back, so the Python side never sees None.
+        # Values in _COLUMNS order, with '' -> NULL for nullable TEXT (so the
+        # suspend/interrupt closed-set + pairing CHECKs see NULL, not '', for
+        # absent -- '' IS NOT NULL is TRUE and would fail those CHECKs).
+        placeholders = ", ".join("?" for _ in _COLUMNS)
         await self._conn.execute(
-            "INSERT INTO tasks (task_id, task_type, state, priority, "
-            " submit_seq, suspend_kind, suspend_reason, mission_json, "
-            " total_steps, current_step, step_status_json, created_ms, "
-            " updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (row.task_id, row.task_type, row.state, row.priority,
-             row.submit_seq, row.suspend_kind or None,
-             row.suspend_reason or None,
-             row.mission_json, row.total_steps, row.current_step,
-             row.step_status_json, row.created_ms, row.updated_ms))
+            f"INSERT INTO tasks ({', '.join(_COLUMNS)}) VALUES ({placeholders})",
+            _row_values(row))
 
     async def update_state(self, task_id: str, state: str,
                             updated_ms: int) -> int:
@@ -76,19 +133,19 @@ class TasksDAO:
 
     async def fetch_by_id(self, task_id: str):
         cur = await self._conn.execute(
-            "SELECT task_id, task_type, state, priority, submit_seq, "
-            " suspend_kind, suspend_reason, mission_json, total_steps, "
-            " current_step, step_status_json, created_ms, updated_ms "
-            " FROM tasks WHERE task_id=?", (task_id,))
+            f"SELECT {', '.join(_COLUMNS)} FROM tasks WHERE task_id=?",
+            (task_id,))
         row = await cur.fetchone()
         if row is None:
             return None
-        return TaskRow(
-            task_id=row[0], task_type=row[1], state=row[2],
-            priority=row[3], submit_seq=row[4],
-            suspend_kind=row[5] or "", suspend_reason=row[6] or "",
-            mission_json=row[7], total_steps=row[8], current_step=row[9],
-            step_status_json=row[10], created_ms=row[11], updated_ms=row[12])
+        # NULL -> '' for TEXT so the Python side never sees None on a str field;
+        # numbers keep None. Build kwargs by column name (order-independent).
+        kw = {}
+        for c, v in zip(_COLUMNS, row):
+            if c in _NULLABLE_TEXT and v is None:
+                v = ""
+            kw[c] = v
+        return TaskRow(**kw)
 
     async def list_by_priority(self, limit: int = 32):
         cur = await self._conn.execute(

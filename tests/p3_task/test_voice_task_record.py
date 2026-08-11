@@ -118,9 +118,13 @@ def test_task_row_uses_unified_schema_and_fields():
     req = to_task_request("patrol_route", reg, slots={"loops": 2},
                           source="voice")
     row = task_row_from_request(req, task_id="t-voice-1", submit_seq=1,
-                                priority=50, now_mono_ms=1000)
+                                priority=50, now_mono_ms=1000, trace_id="tr-1")
     assert row.task_type == "patrol"
     assert row.state == "pending"
+    # 15 S9.5 NOT NULL columns are populated: source mapped to the closed set,
+    # resume_policy the per-type default, trace_id threaded from the envelope.
+    assert row.source == "local" and row.trace_id == "tr-1"
+    assert row.resume_policy == "continue"
     mission = json.loads(row.mission_json)
     assert mission["source"] == "voice"
     assert mission["intent"] == "patrol_route"
@@ -137,7 +141,8 @@ async def test_voice_task_inserts_into_same_tasks_table(task_conn):
     req = to_task_request("goto_waypoint", reg, slots={"waypoint": "w-1"},
                           source="voice")
     row = await record_voice_task(dao, req, task_id="t-voice-2",
-                                  submit_seq=1, priority=50, now_mono_ms=2000)
+                                  submit_seq=1, priority=50, now_mono_ms=2000,
+                                  trace_id="tr-2")
     await task_conn.commit()
     fetched = await dao.fetch_by_id("t-voice-2")
     assert fetched is not None
@@ -155,4 +160,5 @@ async def test_bad_task_type_rejected_by_db_check(task_conn):
         task_row_from_request(
             {"task_type": "patrol_voice", "intent": "patrol_route",
              "id": "B02", "slots": {}, "source": "voice"},
-            task_id="t-bad", submit_seq=1, priority=50, now_mono_ms=1)
+            task_id="t-bad", submit_seq=1, priority=50, now_mono_ms=1,
+            trace_id="tr-bad")
