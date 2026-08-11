@@ -52,6 +52,7 @@ from typing import Any, Callable, Dict, Optional
 from xbrain.p4_agent.classifier.keyword_matcher import (
     KeywordMatcher, classify_text,
 )
+from xbrain.p4_agent.classifier.large_class import resolve_large_class
 from xbrain.p4_agent.envelope.intent_envelope import IntentEnvelope
 from xbrain.p4_agent.registry.intents import IntentEntry, IntentRegistry
 from xbrain.p4_agent.runtime.intent_dispatch import (
@@ -253,8 +254,13 @@ class TurnOrchestrator:
         if not text:
             return TurnDecision(kind="overheard", layer="overheard")
 
-        # STEPS 2-6: the priority chain.
-        result = classify_text(text, self._registry, self._matcher)
+        # STEPS 2-6: the priority chain. large_class_fn supplies layer 4
+        # (16 S5.2): the deterministic device-family router that rescues
+        # keyword MISSES for PTZ (E) and payload (D) so a slightly-reworded
+        # command ("云台朝左", "把照明灯搞亮点") still resolves. It runs only
+        # when layer 2 missed, so exact keywords are never overridden.
+        result = classify_text(text, self._registry, self._matcher,
+                               large_class_fn=resolve_large_class)
         if result.layer == "overheard":
             # 16 S5.2.1: not addressed to the robot -> completely silent.
             return TurnDecision(kind="overheard", layer="overheard")

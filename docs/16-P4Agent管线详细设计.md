@@ -711,6 +711,14 @@ bypass:
 
 ★ **无论如何分类，每次装载给 LLM 的工具数仍须 ≤5**（AI-36）—— 大类只是缩小候选范围，不是一次全给。
 
+> ★★★ **2026-08-11 · 第 ④ 层「类内规则」对设备闭类已确定性落地（🚫 无 LLM）**：
+> 对 `E` 云台类与 `D` 载荷类，类内选择是**确定性规则**（主语 + 动作），不需要 LLM ——
+> 落点 `xbrain/p4_agent/classifier/large_class.py`，由 `classify_text(large_class_fn=...)` 注入。
+> 它**只在第 ② 层精确关键词漏判后触发**，🚫 不覆盖既有判定；作用是让「说法略变」的设备指令
+> （`云台朝左`/`把照明灯搞亮点`）仍能命中。★★ **`E`/`A` 重叠方向词的归属**（`左转` 是云台还是底盘）
+> 由**云台前缀**唯一决定，逐字裁定见 `18-B` §4B.1。★ 其余大类（含需 LLM 选型的开放类）仍走
+> 第 ⑥ 层兜底，本次未改。
+
 ### 5.3 意图分类器
 
 > ★★★ **v0.8 全表重写 —— 词表唯一真源是 `18` 与 `_prompt_work/_triage.json`，不是本节。**
@@ -1268,7 +1276,7 @@ E01 / E06 判为 `fastpath`，**不属于任何 mission 组**，与 M1 / M2 从�
 | E04 | ptz_track | fastpath_then_llm | -- |
 | E05 | ptz_stop_track | fastpath_then_llm | -- |
 | E06 | ptz_zoom | fastpath | direction, amount |
-| E07 | ptz_scan | fastpath | -- |
+| E07 | ptz_scan | fastpath | scan_mode, direction |
 | E08 | ptz_stop_scan | fastpath | -- |
 | E09 | set_ptz_speed | fastpath | level |
 | E10 | ptz_move_deg | llm | direction, angle_deg |

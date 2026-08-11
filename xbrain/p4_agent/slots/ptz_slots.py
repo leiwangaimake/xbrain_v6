@@ -31,19 +31,31 @@ from typing import Optional
 # --- E01 pan/tilt direction (18-B E01) ----------------------------------
 # Keyword substrings -> direction enum. Longest-first at match time.
 _MOVE_DIR = {
-    "向左": "left", "往左": "left", "左边": "left", "左转": "left", "左": "left",
-    "向右": "right", "往右": "right", "右边": "right", "右转": "right", "右": "right",
-    "往上": "up", "向上": "up", "上面": "up", "上仰": "up", "抬高": "up", "上": "up",
-    "往下": "down", "向下": "down", "下面": "down", "下俯": "down", "低头": "down",
-    "下": "down",
+    "向左": "left", "往左": "left", "朝左": "left", "左边": "left",
+    "左转": "left", "左": "left",
+    "向右": "right", "往右": "right", "朝右": "right", "右边": "right",
+    "右转": "right", "右": "right",
+    "往上": "up", "向上": "up", "朝上": "up", "上面": "up", "上仰": "up",
+    "抬高": "up", "上": "up",
+    "往下": "down", "向下": "down", "朝下": "down", "下面": "down",
+    "下俯": "down", "低头": "down", "下": "down",
 }
 
 
-def parse_ptz_direction(text: str) -> Optional[str]:
+def parse_ptz_direction(text: str, allow_bare: bool = True) -> Optional[str]:
     """Return the E01 direction (left/right/up/down) or None. Longest-first
-    so '向左' wins over the bare '左' and '左转' is not mistaken."""
+    so '向左' wins over the bare '左' and '左转' is not mistaken.
+
+    allow_bare: when False, single-character cues (左/右/上/下) are skipped so
+    an incidental char does not read as a direction -- e.g. the '下' inside
+    the amount word '一下', or '楼下'. The layer-4 CLASS router (large_class)
+    passes allow_bare=False (a bare char is too weak to CLASSIFY an intent);
+    the downstream slot filler keeps the default True (by then the intent is
+    known to be E01, so a best-effort bare-char extraction is wanted)."""
     text = text or ""
     for kw in sorted(_MOVE_DIR, key=len, reverse=True):
+        if not allow_bare and len(kw) == 1:
+            continue
         if kw in text:
             return _MOVE_DIR[kw]
     return None

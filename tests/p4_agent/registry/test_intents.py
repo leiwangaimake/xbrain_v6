@@ -271,11 +271,20 @@ def test_bonus_cross_check_against_triage_when_present():
         "set_light_bright", "set_strobe_mode",           # 18-A D17/D18
         "set_ptz_speed", "ptz_move_deg",                 # 18-B E09/E10
     }
+    # A migrated intent whose SLOTS legitimately evolved after the freeze is
+    # enumerated here (not open-ended): the frozen _triage.json cannot be
+    # back-filled without recreating a dependency on a _ document (CLAUDE.md
+    # 0.2), so the evolution is asserted against the formal source instead.
+    #   ptz_scan (E07): gained [scan_mode, direction] when E07 was split into
+    #   sweep vs full-circle orbit (18-B S1 E07 row, 2026-08-11). id/route are
+    #   still reproduced faithfully; only the slot list grew.
+    _SLOT_EVOLVED = {"ptz_scan": ["scan_mode", "direction"]}
     for e in tr:                                         # and per migrated record
         row = doc[e["intent"]]                            # the doc row
         assert row["id"] == e["id"]                       # id reproduced
         assert row["route"] == e["route"]                 # route reproduced
-        assert row["slots"] == list(e["slots"])           # slots reproduced
+        expect = _SLOT_EVOLVED.get(e["intent"], list(e["slots"]))
+        assert row["slots"] == expect                     # slots reproduced (or evolved)
 
 
 # --- criterion 1 / ID-1: field presence, with the red mutation ---------------

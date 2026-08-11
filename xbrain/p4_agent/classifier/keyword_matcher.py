@@ -38,7 +38,7 @@ bypass first).
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from xbrain.p4_agent.classifier.priority_chain import (
     ClassifyResult, classify_after_bypass,
@@ -112,6 +112,7 @@ def classify_text(
     matcher: Optional[KeywordMatcher] = None,
     session_state_match: Optional[str] = None,
     asr_confidence: Optional[float] = None,
+    large_class_fn: Optional[Callable[[str], Optional[str]]] = None,
 ) -> ClassifyResult:
     """Run 16 S5.2 layers 2-6 on ASR text (bypass already handled).
 
@@ -119,8 +120,12 @@ def classify_text(
     layer 3 (session_state) = passed in by the caller (the session
       state machine supplies the legal in-flow response when recording
       / awaiting-confirm; None here, wired by GWY-P4-38 32.F).
-    layer 4 (large_class) = None; no class-cue table exists yet (see
-      module docstring), so a keyword miss falls to layer 6 LLM.
+    layer 4 (large_class) = large_class_fn(text) when supplied -- the
+      deterministic device-family router (classifier.large_class), which
+      rescues keyword MISSES for the PTZ (E) and payload (D) closed classes
+      per the 16 S5.2 "大类 + 类内规则". It only runs when layer 2 missed
+      (classify_after_bypass tries long_phrase first), so it never overrides
+      an exact keyword. None when not supplied -> a miss falls to layer 6.
 
     matcher is built fresh if not supplied; a long-lived caller should
     build one KeywordMatcher and reuse it (index build is O(intents *
@@ -128,10 +133,16 @@ def classify_text(
     if matcher is None:
         matcher = KeywordMatcher(registry)
     long_phrase = matcher.longest_match(text)
+    # Layer 4 is only consulted when layer 2 missed. Computing it here is
+    # cheap and classify_after_bypass ignores it when long_phrase fired, but
+    # short-circuit anyway so the router is not run needlessly on every hit.
+    large_class = None
+    if long_phrase is None and large_class_fn is not None:
+        large_class = large_class_fn(text)
     return classify_after_bypass(
         text=text,
         long_phrase_match=long_phrase,
         session_state_match=session_state_match,
-        large_class_match=None,
+        large_class_match=large_class,
         asr_confidence=asr_confidence,
     )
