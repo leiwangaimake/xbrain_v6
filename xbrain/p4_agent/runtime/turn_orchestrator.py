@@ -53,7 +53,9 @@ from typing import Any, Callable, Dict, Optional
 from xbrain.p4_agent.classifier.keyword_matcher import (
     KeywordMatcher, classify_text,
 )
-from xbrain.p4_agent.classifier.large_class import resolve_large_class
+from xbrain.p4_agent.classifier.large_class import (
+    has_ptz_subject, resolve_large_class, resolve_ptz,
+)
 from xbrain.p4_agent.envelope.intent_envelope import IntentEnvelope
 from xbrain.p4_agent.registry.intents import IntentEntry, IntentRegistry
 from xbrain.p4_agent.runtime.intent_dispatch import (
@@ -123,9 +125,25 @@ def _has_scan_cue(text: str) -> bool:
 
 
 def refine_ptz_intent(intent_id: str, text: str) -> str:
-    """Post-classify PTZ correction (18-B). A flat keyword/large-class match
-    can land on E01 when the utterance is really a degree move (E10, rejected)
-    or a scan (E07). Applied to E01 only; other intents pass through."""
+    """Post-classify PTZ correction (18-B). Three fixes a flat keyword match
+    cannot make:
+
+      * PTZ-prefix reclaim: a 云台-prefixed command that a chassis keyword
+        stole (A13 '慢一点' <- '云台旋转速度慢一点', matched at layer 2 before
+        the large-class router could run) is reclaimed to the PTZ family, per
+        the operator's prefix rule (云台 prefix -> PTZ). Only when resolve_ptz
+        finds a concrete E-intent; otherwise the original stands (so a
+        non-action like '云台坏了' is not forced into a move).
+      * degree move -> E10 (rejected): an explicit angle is unsupported.
+      * scan phrased as a move -> E07.
+    """
+    # Reclaim first: a non-PTZ classification with a PTZ subject present is the
+    # prefix-rule violation; resolve_ptz gives the right E-intent (possibly
+    # E01, which the degree/scan step below then refines further).
+    if intent_id[:1] != "E" and has_ptz_subject(text):
+        reclaimed = resolve_ptz(text)
+        if reclaimed is not None:
+            intent_id = reclaimed
     if intent_id == "E01":
         # Degree move first: an angle makes it E10 (rejected), even if it also
         # said a scan word (a degree'd scan is not a thing we support).

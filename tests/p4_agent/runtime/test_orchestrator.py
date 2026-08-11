@@ -265,3 +265,43 @@ def test_scan_move_end_to_end_dispatches_e07():
                          now_mono_ms=1000)
     assert d.kind == "dispatch"
     assert d.intent_id == "E07"
+
+
+# -- PTZ-prefix reclaim: a 云台 command a chassis keyword stole -----------
+
+@pytest.mark.parametrize("text,expect", [
+    ("云台旋转速度慢一点", "E09"),   # A13 '慢一点' stole it -> reclaim E09
+    ("平台旋转速度快一点", "E09"),   # 平台 alias reclaimed too
+    ("云台慢一点", "E09"),
+])
+def test_ptz_prefix_reclaims_from_chassis(text, expect):
+    """A 云台-prefixed command wrongly keyword-matched to a chassis intent
+    (A13 set_speed_profile) is reclaimed to PTZ. MUTATION: drop the reclaim ->
+    '云台旋转速度慢一点' stays A13 and changes the CHASSIS speed instead of the
+    camera's."""
+    assert refine_ptz_intent("A13", text) == expect
+
+
+@pytest.mark.parametrize("text", ["慢一点", "快一点", "全速"])
+def test_bare_speed_stays_chassis(text):
+    """Without a PTZ subject the same speed word is the chassis (A13) and must
+    NOT be reclaimed. MUTATION: reclaim without the subject gate -> a bare
+    '慢一点' becomes a PTZ speed and the chassis can no longer be slowed."""
+    assert refine_ptz_intent("A13", text) == "A13"
+
+
+def test_reclaim_only_when_resolve_ptz_finds_an_action():
+    """A PTZ subject with no recognisable PTZ action is left as-is (not forced
+    into a move). MUTATION: reclaim unconditionally -> a non-action utterance
+    that merely names 云台 gets turned into a spurious PTZ command."""
+    # '云台' present but no direction/zoom/scan/speed -> resolve_ptz is None.
+    assert refine_ptz_intent("J01", "云台你好呀") == "J01"
+
+
+def test_prefix_reclaim_end_to_end():
+    """Through handle_turn: '云台旋转速度慢一点' dispatches the PTZ speed intent
+    E09, not the chassis A13."""
+    orch = _orch()
+    d = orch.handle_turn("云台旋转速度慢一点", OrchestratorSession(),
+                         now_mono_ms=1000)
+    assert d.intent_id == "E09"

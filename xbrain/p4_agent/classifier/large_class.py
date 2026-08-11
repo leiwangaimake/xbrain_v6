@@ -88,12 +88,13 @@ _ZOOM_UNAMBIGUOUS = ("变焦", "拉近", "拉远", "推近", "推远", "放大",
 _SCAN_ORBIT = ("环视", "一圈", "一周")
 
 
-def _has_ptz_subject(text: str) -> bool:
+def has_ptz_subject(text: str) -> bool:
     # A plain substring test is enough: the subject set is short and the words
     # do not appear as fragments of unrelated commands in the 18 command set
     # (there is no chassis/task word containing 云台/镜头/布控球). "平台" is the
     # one risk word, accepted because operators do not issue "平台"-anything
-    # else by voice here, and this only runs after a layer-2 keyword miss.
+    # else by voice here. Public because the orchestrator's PTZ-prefix reclaim
+    # (a 云台-prefixed command a chassis keyword stole) also needs it.
     return any(s in text for s in _PTZ_SUBJECT)
 
 
@@ -103,7 +104,7 @@ def resolve_ptz(text: str) -> Optional[str]:
     tilt up/down) are checked before the OVERLAPPING left/right, and a
     left/right move needs a PTZ subject (else the chassis owns it)."""
     text = text or ""
-    subj = _has_ptz_subject(text)
+    subj = has_ptz_subject(text)
 
     # The order below is load-bearing: the PTZ-only vocabularies (speed, scan,
     # unambiguous zoom, tilt up/down) are tried before the OVERLAPPING
