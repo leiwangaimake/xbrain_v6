@@ -75,7 +75,10 @@ def test_strobe_mode_zero_and_out_of_range_rejected():
 
 def test_volume_absolute():
     assert parse_volume("音量调到最大") == {"abs": 100}
-    assert parse_volume("音量调到最小") == {"abs": 0}
+    # 2026-08-11 ORIN: the device ignores [14]00, so '音量最小' is a low
+    # NONZERO (quietest audible), distinct from '静音' (explicit mute = 0).
+    assert parse_volume("音量调到最小") == {"abs": 5}
+    assert parse_volume("音量最小") == {"abs": 5}
     assert parse_volume("静音") == {"abs": 0}
     assert parse_volume("音量一半") == {"abs": 50}
 

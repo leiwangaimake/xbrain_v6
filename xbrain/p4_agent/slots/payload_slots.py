@@ -104,12 +104,20 @@ def parse_strobe_mode(text: str) -> Optional[int]:
 # Absolute anchors and relative deltas. The relative step (+/-20) is an
 # initial value (18 gives no delta), tuned in the field like 18-A S1.1's
 # brightness +/-7. Not a safety value (audio level).
+# '音量调到最小' etc. -> a low NONZERO value, not 0. 2026-08-11 ORIN: the
+# device accepts [14]00 with ok but does NOT actually change volume (0 is
+# ignored/no-op); any nonzero value works (25/50/75/100 all effective). So
+# '最小音量' = quietest audible (5), distinct from '静音' (explicit mute = 0,
+# which may itself be device-limited -- see 18-A Q-18A-4).
+_VOL_MIN_AUDIBLE = 5
 _VOL_STEP = 25
 _VOL_ABS = {
     "音量调到最大": 100, "音量最大": 100, "开到最大": 100, "最大声": 100,
     "声音最大": 100, "音量调到最高": 100, "声音开到最大": 100,
-    "音量调到最小": 0, "音量最小": 0, "静音": 0, "关掉声音": 0,
-    "最小声": 0, "声音最小": 0, "音量调到最低": 0,
+    "音量调到最小": _VOL_MIN_AUDIBLE, "音量最小": _VOL_MIN_AUDIBLE,
+    "最小声": _VOL_MIN_AUDIBLE, "声音最小": _VOL_MIN_AUDIBLE,
+    "音量调到最低": _VOL_MIN_AUDIBLE,
+    "静音": 0, "关掉声音": 0,
     "音量一半": 50, "中等音量": 50, "音量中等": 50,
 }
 # Relative up/down. Word-order variants matter: ASR gives both '大声点' and
