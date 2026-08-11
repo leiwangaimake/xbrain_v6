@@ -57,6 +57,13 @@ def test_strobe_mode_empty_means_cycle():
     assert parse_strobe_mode("换个警灯样式") is None
 
 
+def test_strobe_mode_redblue_selects_pattern_1():
+    # '切换到红蓝爆闪模式' -> mode 1 (red-blue), a way back from a pure-red
+    # pattern (2026-08-11 ORIN).
+    assert parse_strobe_mode("切换到红蓝爆闪模式") == 1
+    assert parse_strobe_mode("红蓝模式") == 1
+
+
 def test_strobe_mode_zero_and_out_of_range_rejected():
     """MUTATION guard: mode 0 is off (D07), not a pattern; >16 is out of
     range. Both yield None (cycle) rather than an invalid pattern."""
@@ -68,13 +75,18 @@ def test_strobe_mode_zero_and_out_of_range_rejected():
 
 def test_volume_absolute():
     assert parse_volume("音量调到最大") == {"abs": 100}
+    assert parse_volume("音量调到最小") == {"abs": 0}
     assert parse_volume("静音") == {"abs": 0}
     assert parse_volume("音量一半") == {"abs": 50}
 
 
-def test_volume_relative():
-    assert parse_volume("大声点") == {"rel": 20}
-    assert parse_volume("小声点") == {"rel": -20}
+def test_volume_relative_both_word_orders():
+    """2026-08-11 ORIN: '大点声'/'音量大一点' missed. Both word orders map."""
+    assert parse_volume("大声点") == {"rel": 25}
+    assert parse_volume("大点声") == {"rel": 25}
+    assert parse_volume("音量大一点") == {"rel": 25}
+    assert parse_volume("小声点") == {"rel": -25}
+    assert parse_volume("小点声") == {"rel": -25}
 
 
 def test_volume_none_when_no_keyword():

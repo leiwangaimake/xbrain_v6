@@ -107,7 +107,7 @@ intents:
   strobe_off: { id: D07, keywords: ["关闭爆闪灯", "把爆闪关了", "关闭双闪", "关爆闪", "关警灯", "关红蓝", "关双闪", "关警示灯"], slots: [], route: fastpath, auth: L0 }
   speak_preset: { id: D08, keywords: ["喊话", "警告他", "播放警告", "喊第二条"], slots: [preset_id], route: fastpath_then_llm, auth: L1b }
   speak_custom: { id: D09, keywords: ["说请立即离开", "喊一句"], slots: [text], route: llm, auth: L3 }
-  set_volume: { id: D10, keywords: ["大声点", "小声点", "音量调到最大"], slots: [level], route: fastpath, auth: L0 }
+  set_volume: { id: D10, keywords: ["音量调到最大", "音量调到最小", "音量最大", "音量最小", "大声点", "大点声", "音量大一点", "声音大一点", "小声点", "小点声", "音量小一点", "声音小一点", "调大音量", "调小音量", "静音"], slots: [level], route: fastpath, auth: L0 }
   chassis_light: { id: D11, keywords: ["打开底盘灯", "尾灯呼吸"], slots: [pattern, color], route: fastpath, auth: L0 }
   speak_stop: { id: D12, keywords: ["别喊了", "停止喊话", "停止播报", "别播了", "闭嘴"], slots: [], route: fastpath, auth: L0 }
   payload_all_off: { id: D13, keywords: ["全部关掉", "都关了", "声光全关", "关掉所有"], slots: [], route: fastpath, auth: L0 }
@@ -116,8 +116,8 @@ intents:
   # (max/high/mid/low/min/up/down), deliberately type-incompatible with D10's
   # numeric level so a misclassified volume utterance fails E_SCHEMA instead of
   # silently changing the light (18-A S1.1). D18 mode is 1-16, no 0 (off is D07).
-  set_light_bright: { id: D17, keywords: ["灯调亮一点", "暗一点", "最亮", "调到最暗", "亮度中等", "亮度一半", "灯太刺眼了"], slots: [level], route: fastpath, auth: L0 }
-  set_strobe_mode: { id: D18, keywords: ["换一种闪法", "用第三种模式", "换个警灯样式", "警灯换一种"], slots: [mode], route: fastpath, auth: L0 }
+  set_light_bright: { id: D17, keywords: ["灯调亮一点", "调亮一点", "亮一点", "调亮", "亮点", "亮一些", "暗一点", "调暗一点", "调暗", "暗点", "暗一些", "最亮", "调到最亮", "调到最暗", "亮度中等", "亮度一半", "灯太刺眼了"], slots: [level], route: fastpath, auth: L0 }
+  set_strobe_mode: { id: D18, keywords: ["切换到红蓝爆闪模式", "红蓝爆闪模式", "红蓝模式", "切换到红蓝", "换一种闪法", "用第三种模式", "换个警灯样式", "警灯换一种", "换个闪法"], slots: [mode], route: fastpath, auth: L0 }
 
   # -- E 云台 (E01/E06 direction slots are legitimate; see ID-3 note in header) --
   ptz_move: { id: E01, keywords: ["云台向左", "往上看", "看右边一点"], slots: [direction, amount], route: fastpath, auth: L0 }

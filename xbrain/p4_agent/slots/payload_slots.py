@@ -67,15 +67,24 @@ _CN_NUM = {
 }
 _STROBE_MODE_RE = re.compile(r"(?:第|用|换成|模式|图案)\s*([0-9]{1,2})")
 
+# The standard red-blue alternating pattern (mode 1). '切换到红蓝爆闪模式' etc.
+# ask for this specific pattern (2026-08-11 ORIN: mode 3 turned out to be
+# pure red, so the operator needs a way back to red-blue). D06 also defaults
+# to pattern 1.
+_REDBLUE_PATTERN = 1
+
 
 def parse_strobe_mode(text: str) -> Optional[int]:
     """Return the D18 mode 1..16, or None meaning 'cycle to next'.
 
     18-A S1.2: an explicit ordinal ('用第三种' / '换成5') sets the mode;
-    '换一种'/'换个样式' leaves it None (p2 cycles current+1). mode 0 is
+    '换一种'/'换个样式' leaves it None (p2 cycles current+1). A '红蓝' phrase
+    ('切换到红蓝爆闪模式') selects the red-blue pattern (mode 1). mode 0 is
     NEVER returned (0 = off = D07); an out-of-range number returns None so
     the caller cycles rather than dispatching an invalid pattern."""
     text = text or ""
+    if "红蓝" in text:
+        return _REDBLUE_PATTERN
     m = _STROBE_MODE_RE.search(text)
     if m:
         n = int(m.group(1))
@@ -95,14 +104,20 @@ def parse_strobe_mode(text: str) -> Optional[int]:
 # Absolute anchors and relative deltas. The relative step (+/-20) is an
 # initial value (18 gives no delta), tuned in the field like 18-A S1.1's
 # brightness +/-7. Not a safety value (audio level).
-_VOL_STEP = 20
+_VOL_STEP = 25
 _VOL_ABS = {
-    "音量调到最大": 100, "开到最大": 100, "最大声": 100, "声音最大": 100,
-    "静音": 0, "关掉声音": 0, "最小声": 0, "声音最小": 0,
+    "音量调到最大": 100, "音量最大": 100, "开到最大": 100, "最大声": 100,
+    "声音最大": 100, "音量调到最高": 100, "声音开到最大": 100,
+    "音量调到最小": 0, "音量最小": 0, "静音": 0, "关掉声音": 0,
+    "最小声": 0, "声音最小": 0, "音量调到最低": 0,
     "音量一半": 50, "中等音量": 50, "音量中等": 50,
 }
-_VOL_UP = ("大声", "大点", "响一点", "响点", "调大", "声音大")
-_VOL_DOWN = ("小声", "小点", "轻一点", "轻点", "调小", "声音小")
+# Relative up/down. Word-order variants matter: ASR gives both '大声点' and
+# '大点声' (2026-08-11 ORIN: '大点声'/'音量大一点' missed and went overheard).
+_VOL_UP = ("大声", "大点声", "大一点", "大点", "响一点", "响点", "调大",
+           "声音大", "音量大")
+_VOL_DOWN = ("小声", "小点声", "小一点", "小点", "轻一点", "轻点", "调小",
+             "声音小", "音量小")
 
 
 def parse_volume(text: str) -> Optional[dict]:

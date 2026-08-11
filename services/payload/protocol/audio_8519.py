@@ -188,7 +188,14 @@ def build_volume(volume: int) -> bytes:
     if not VOLUME_MIN <= volume <= VOLUME_MAX:
         raise AudioProtocolError(
             f"volume must be {VOLUME_MIN}..{VOLUME_MAX}, got {volume}")
-    return encode_frame(CMD_VOLUME, bytes([volume]))
+    # Payload is the volume as a 2-char UPPERCASE hex string, zero-padded --
+    # NOT a raw byte. The vendor 喊话器协议 says '使用 16 进制数据传输, 小于 16 的
+    # 数据需要前置补齐', example '[14]64' (64 = the ASCII chars for 0x64 = 100).
+    # 2026-08-11 ORIN: the earlier raw-byte form (b'\\x64') did NOT change the
+    # device volume; the dev notes' 'single raw byte' was an untested
+    # assumption (they deliberately never sent [14], see the dev-notes 5.x
+    # 'do not touch [14]' entry). So 100 -> b'64', 50 -> b'32', 5 -> b'05'.
+    return encode_frame(CMD_VOLUME, b"%02X" % volume)
 
 
 def build_record_start() -> bytes:

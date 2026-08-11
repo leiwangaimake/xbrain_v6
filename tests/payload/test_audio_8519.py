@@ -56,11 +56,13 @@ def test_builders_match_known_frames() -> None:
     assert build_record_stop() == b"[41]"
 
 
-def test_build_volume_encodes_one_byte() -> None:
-    # [14] volume frame: bracket marker + one raw byte 0..100 (18 S6.4).
-    assert build_volume(100) == b"[14]" + bytes([100])
-    assert build_volume(0) == b"[14]" + bytes([0])
-    assert build_volume(50) == b"[14]" + bytes([50])
+def test_build_volume_encodes_2char_hex() -> None:
+    # [14] volume frame: bracket marker + 2-char uppercase hex string,
+    # zero-padded (喊话器协议: '16进制数据传输,小于16前置补齐'; example '[14]64').
+    assert build_volume(100) == b"[14]64"      # 0x64 = 100
+    assert build_volume(50) == b"[14]32"       # 0x32 = 50
+    assert build_volume(5) == b"[14]05"        # padded to 2 chars
+    assert build_volume(0) == b"[14]00"
 
 
 @pytest.mark.parametrize("vol", [-1, 101, 200])
