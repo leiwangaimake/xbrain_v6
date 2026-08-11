@@ -79,7 +79,11 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                                   now_mono_ms_fn=_now_mono_ms,
                                   mic_publisher=mic_pub_thread)
 
-        # GEN plane subscribers.
+        # GEN plane subscribers. All handles are held in one list so the
+        # Rust-side subscriptions are not GC'd out from under us (CLAUDE.md
+        # 4.3: a dropped declare_subscriber handle silently unsubscribes).
+        _gen_subs: list = []
+
         def _on_speak(sample) -> None:
             """Zenoh subscriber callback. RUNS ON RUST THREAD --
             must not do async / long blocking directly (CLAUDE.md
@@ -97,7 +101,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 target=lambda: _speak_and_log(speaker, text),
                 name="p2.speak_handler", daemon=True).start()
 
-        speak_sub = gen.declare_subscriber(SPEAK_TOPIC, _on_speak)
+        _gen_subs.append(gen.declare_subscriber(SPEAK_TOPIC, _on_speak))
         _logger.info("p2 wiring: subscribed %s", SPEAK_TOPIC)
 
         # -- cmd/payload subscriber (2026-08-11 V-STROBE-1) ------------
@@ -120,7 +124,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 target=lambda: payload.handle_envelope(data),
                 name="p2.payload_handler", daemon=True).start()
 
-        payload_sub = gen.declare_subscriber(CMD_PAYLOAD_TOPIC, _on_payload)
+        _gen_subs.append(gen.declare_subscriber(CMD_PAYLOAD_TOPIC, _on_payload))
         _logger.info("p2 wiring: subscribed %s", CMD_PAYLOAD_TOPIC)
 
         # -- cmd/ptz subscriber (2026-08-11 PTZ audit) ----------------
@@ -128,11 +132,10 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # the 布控球 via ONVIF ContinuousMove/Stop. Before this cmd/ptz had
         # NO consumer. Camera credentials come from onvif_credentials.json;
         # a missing file just disables PTZ (audio/payload keep running).
-        # Sub handle held in a list (strong ref, CLAUDE.md 4.3).
+        # Sub handle held in _gen_subs (strong ref, CLAUDE.md 4.3).
         from xbrain.p2_core.runtime.ptz_wiring import (
             CMD_PTZ_TOPIC, PtzDomain, load_onvif_config,
         )
-        _ptz_subs = []
         ptz_domain = None
         onvif_cfg = load_onvif_config(
             "/opt/xbrain_v6/configs/secrets/onvif_credentials.json")
@@ -146,7 +149,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     target=lambda: ptz_domain.handle_envelope(data),
                     name="p2.ptz_handler", daemon=True).start()
 
-            _ptz_subs.append(gen.declare_subscriber(CMD_PTZ_TOPIC, _on_ptz))
+            _gen_subs.append(gen.declare_subscriber(CMD_PTZ_TOPIC, _on_ptz))
             _logger.info("p2 wiring: subscribed %s (PTZ active)", CMD_PTZ_TOPIC)
         else:
             _logger.warning("p2 wiring: PTZ disabled (no onvif credentials)")
