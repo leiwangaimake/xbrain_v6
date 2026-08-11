@@ -51,12 +51,19 @@ def mutate(fn):
 
 def test_real_library_loads_with_the_14_s7_3_3_texts():
     """The committed file loads; ids are the p- forms mapped from warn_01/02/03
-    and the texts are the 14 S7.3.3 sentences verbatim."""
+    and the texts are the 14 S7.3.3 sentences.
+
+    2026-08-11 punctuation ruling: 14 S7.3.3 (docs markdown, exempt from
+    CLAUDE.md 2.2) keeps Chinese punctuation, but the speech_presets.yaml
+    VALUE is ASCII-punctuated per the 2.2 ruling that 2.2 governs ALL yaml
+    content, data values included. This test guards the yaml value (ASCII
+    comma) -- that is exactly what load_speech_presets returns and what TTS
+    receives."""
     rows = load_speech_presets(real_mapping())
     by_id = {r.preset_id: r for r in rows}
     assert set(by_id) == {"p-warn_leave", "p-warn_no_photo", "p-warn_wait"}
-    assert by_id["p-warn_leave"].text == "您已进入管制区域，请立即离开"
-    assert by_id["p-warn_no_photo"].text == "此处为管制区域，禁止拍摄"
+    assert by_id["p-warn_leave"].text == "您已进入管制区域,请立即离开"
+    assert by_id["p-warn_no_photo"].text == "此处为管制区域,禁止拍摄"
     assert by_id["p-warn_wait"].text == "请出示证件并原地等待"
     # voice on every preset (GWY-P4-29), and within the device's two genders.
     assert all(r.voice in VOICES for r in rows)

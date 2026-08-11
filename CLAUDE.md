@@ -162,6 +162,15 @@ log.info("计算走廊内最近障碍距离, 数量=%d", len(bands))   # X 中�
 - ★★★ **2026-08-10 用户明令扩到 yaml + sh**：本项目 `configs/*.yaml` 内大量存在
   emoji 与中文标点（尤以 `p4_agent.yaml` 为甚），必须**逐文件清洁**；今后新写
   yaml / sh 都按本条求值。`.yaml` / `.sh` / `.bash` 加入 `charset_lint.py` 扫描面。
+- ★★★ **2026-08-11 用户裁决 · yaml 数据值同样受本条约束（不止注释）**：yaml 里要
+  TTS 播出 / HMI 显示的**中文内容数据值**（话术 `text` / 词表 / 模板串）标点也
+  必须 ASCII。⚠️ 这与 `14` §7.3.3 等 docs 里的**逐字话术含中文标点**看似冲突 ——
+  裁决是：**docs markdown 保留中文标点（§2.2 例外），落到 yaml 时转 ASCII**。
+  例：`14` §7.3.3 `"您已进入管制区域，请立即离开"`（中文逗号，docs）⇒
+  `configs/speech_presets.yaml` 里落 `"您已进入管制区域,请立即离开"`（ASCII 逗号）。
+  ★ 守此差异的测试（`tests/p4_agent/registry/test_speech_presets.py`）断言 **yaml 值**
+  （ASCII），不是 docs 逐字；测试注释须写明这层标点差异，否则下一个读者会以为
+  yaml 抄错了 `14`。
 
 ### 2.3 命名规范
 
