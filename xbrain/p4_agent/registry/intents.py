@@ -223,6 +223,12 @@ class IntentEntry:
     route: str                      # member of ROUTES
     auth: str                       # base confirmation level, member of CONFIRM_LEVELS
     slots: Tuple[str, ...]          # slot names, in file order
+    # Layer-2/4 classifier match tokens (16 S6.6 keywords column). GWY-P4-33
+    # (32.A): 26 rows sourced from 16 S6.6, 106 from 18 trigger words, 3
+    # bypass from p4_agent.yaml. Empty tuple for clarify_answer (I06),
+    # matched by session-state layer 3 not by keyword. Default () so a row
+    # without keywords stays legal (all 132 are filled today).
+    keywords: Tuple[str, ...] = ()
     # Present only for the two slot-level-split intents (H01, H03); None for the
     # other 126, where auth alone is the whole story. Not {} -- an empty mapping
     # would read as "split, but into nothing", which is a different claim.
@@ -508,6 +514,10 @@ def _build_entries(raw: Mapping[str, Any]) -> List[IntentEntry]:
             route=entry["route"],
             auth=entry["auth"],
             slots=tuple(entry["slots"]),
+            # keywords added GWY-P4-33 (32.A). .get with () default so a row
+            # without keywords stays legal; all 132 are filled today (26 from
+            # 16 S6.6, 106 from 18 trigger words, 3 bypass from p4_agent.yaml).
+            keywords=tuple(entry.get("keywords", [])),
             # .get, not [ ]: absent means "not a split intent", which is None.
             auth_by_slot=entry.get("auth_by_slot")))
     return out

@@ -58,162 +58,162 @@
 intents:
 
   # -- A 运动 --
-  estop: { id: A01, slots: [], route: bypass, auth: L0 }
-  prone: { id: A02, slots: [], route: bypass, auth: L0 }
-  stand: { id: A03, slots: [], route: bypass, auth: L0 }
-  hold: { id: A04, slots: [], route: fastpath, auth: L0 }
-  move_forward: { id: A05, slots: [distance_m], route: fastpath_then_llm, auth: L1a }
-  move_backward: { id: A06, slots: [distance_m], route: fastpath_then_llm, auth: L1a }
-  move_left: { id: A07, slots: [distance_m], route: fastpath_then_llm, auth: L1b }
-  move_right: { id: A08, slots: [distance_m], route: fastpath_then_llm, auth: L1b }
-  turn_left: { id: A09, slots: [angle_deg], route: fastpath_then_llm, auth: L1b }
-  turn_right: { id: A10, slots: [angle_deg], route: fastpath_then_llm, auth: L1b }
-  turn_around: { id: A11, slots: [], route: fastpath, auth: L1b }
-  face_heading: { id: A12, slots: [heading], route: fastpath_then_llm, auth: L1b }
-  set_speed_profile: { id: A13, slots: [profile], route: fastpath, auth: L1b }
-  set_gait: { id: A14, slots: [gait], route: fastpath, auth: L1b }
+  estop: { id: A01, keywords: ["急停", "停止", "紧急停止", "立刻停下", "stop"], slots: [], route: bypass, auth: L0 }
+  prone: { id: A02, keywords: ["趴下", "卧倒"], slots: [], route: bypass, auth: L0 }
+  stand: { id: A03, keywords: ["站立", "站起来", "起立"], slots: [], route: bypass, auth: L0 }
+  hold: { id: A04, keywords: ["原地待命", "别动", "停在这儿", "待命"], slots: [], route: fastpath, auth: L0 }
+  move_forward: { id: A05, keywords: ["前进", "往前走", "向前"], slots: [distance_m], route: fastpath_then_llm, auth: L1a }
+  move_backward: { id: A06, keywords: ["后退", "往后退", "倒退"], slots: [distance_m], route: fastpath_then_llm, auth: L1a }
+  move_left: { id: A07, keywords: ["左移", "向左平移"], slots: [distance_m], route: fastpath_then_llm, auth: L1b }
+  move_right: { id: A08, keywords: ["右移", "向右平移"], slots: [distance_m], route: fastpath_then_llm, auth: L1b }
+  turn_left: { id: A09, keywords: ["左转", "向左转"], slots: [angle_deg], route: fastpath_then_llm, auth: L1b }
+  turn_right: { id: A10, keywords: ["右转", "向右转"], slots: [angle_deg], route: fastpath_then_llm, auth: L1b }
+  turn_around: { id: A11, keywords: ["转身", "掉头"], slots: [], route: fastpath, auth: L1b }
+  face_heading: { id: A12, keywords: ["朝北", "面向", "转向正"], slots: [heading], route: fastpath_then_llm, auth: L1b }
+  set_speed_profile: { id: A13, keywords: ["慢一点", "快一点", "全速"], slots: [profile], route: fastpath, auth: L1b }
+  set_gait: { id: A14, keywords: ["步态", "楼梯", "敏捷"], slots: [gait], route: fastpath, auth: L1b }
 
   # -- B 导航与任务 --
-  goto_waypoint: { id: B01, slots: [waypoint], route: fastpath_then_llm, auth: L1a }
-  patrol_route: { id: B02, slots: [route, loops], route: fastpath_then_llm, auth: L1a }
-  patrol_schedule: { id: B03, slots: [route, loops, delay_s, at_local, day_offset], route: llm, auth: L1a }
-  patrol_repeat: { id: B04, slots: [loops], route: fastpath_then_llm, auth: L1a }
-  pause_task: { id: B05, slots: [], route: fastpath, auth: L0 }
-  resume_task: { id: B06, slots: [], route: fastpath, auth: L0 }
-  cancel_task: { id: B07, slots: [], route: fastpath, auth: L2 }
-  return_home: { id: B08, slots: [], route: fastpath, auth: L1a }
-  goto_dock: { id: B09, slots: [dock], route: fastpath, auth: L1a }
-  skip_waypoint: { id: B10, slots: [], route: fastpath, auth: L1b }
-  follow_target: { id: B11, slots: [target_id], route: fastpath_then_llm, auth: L3 }
-  stop_follow: { id: B12, slots: [], route: fastpath_then_llm, auth: L0 }
+  goto_waypoint: { id: B01, keywords: ["去", "到", "前往"], slots: [waypoint], route: fastpath_then_llm, auth: L1a }
+  patrol_route: { id: B02, keywords: ["巡逻", "巡查"], slots: [route, loops], route: fastpath_then_llm, auth: L1a }
+  patrol_schedule: { id: B03, keywords: ["之后", "小时后", "点钟"], slots: [route, loops, delay_s, at_local, day_offset], route: llm, auth: L1a }
+  patrol_repeat: { id: B04, keywords: ["再巡", "接着巡"], slots: [loops], route: fastpath_then_llm, auth: L1a }
+  pause_task: { id: B05, keywords: ["暂停", "先停一下", "停一停"], slots: [], route: fastpath, auth: L0 }
+  resume_task: { id: B06, keywords: ["继续", "接着走", "恢复任务"], slots: [], route: fastpath, auth: L0 }
+  cancel_task: { id: B07, keywords: ["别巡了", "不巡了"], slots: [], route: fastpath, auth: L2 }
+  return_home: { id: B08, keywords: ["回来", "返航", "回到起点"], slots: [], route: fastpath, auth: L1a }
+  goto_dock: { id: B09, keywords: ["充电", "回桩", "回充电桩"], slots: [dock], route: fastpath, auth: L1a }
+  skip_waypoint: { id: B10, keywords: ["跳过这个点", "下一个点"], slots: [], route: fastpath, auth: L1b }
+  follow_target: { id: B11, keywords: ["跟着他", "跟上那个人"], slots: [target_id], route: fastpath_then_llm, auth: L3 }
+  stop_follow: { id: B12, keywords: ["别跟了", "停止跟随"], slots: [], route: fastpath_then_llm, auth: L0 }
 
   # -- C 模式 --
-  enter_alarm: { id: C01, slots: [], route: fastpath, auth: L1b }
-  exit_alarm: { id: C02, slots: [], route: fastpath, auth: L1a }
-  enter_broadcast: { id: C03, slots: [], route: fastpath, auth: L1b }
-  exit_broadcast: { id: C04, slots: [], route: fastpath, auth: L0 }
-  enter_patrol_mode: { id: C05, slots: [], route: fastpath, auth: L1b }
-  standby: { id: C06, slots: [], route: fastpath, auth: L1a }
-  set_motion_behavior: { id: C07, slots: [behavior], route: llm, auth: L1b }
-  query_mode_switch_ok: { id: C08, slots: [target_mode], route: fastpath, auth: L0 }
+  enter_alarm: { id: C01, keywords: ["报警模式", "警戒"], slots: [], route: fastpath, auth: L1b }
+  exit_alarm: { id: C02, keywords: ["退出报警", "别报警了", "解除警戒"], slots: [], route: fastpath, auth: L1a }
+  enter_broadcast: { id: C03, keywords: ["开始喊话", "喊话模式"], slots: [], route: fastpath, auth: L1b }
+  exit_broadcast: { id: C04, keywords: ["停止喊话", "退出喊话"], slots: [], route: fastpath, auth: L0 }
+  enter_patrol_mode: { id: C05, keywords: ["进入巡逻模式", "开始工作"], slots: [], route: fastpath, auth: L1b }
+  standby: { id: C06, keywords: ["待命", "休息", "别工作了"], slots: [], route: fastpath, auth: L1a }
+  set_motion_behavior: { id: C07, keywords: ["跟着目标走", "停下面对"], slots: [behavior], route: llm, auth: L1b }
+  query_mode_switch_ok: { id: C08, keywords: ["能切到喊话吗"], slots: [target_mode], route: fastpath, auth: L0 }
 
   # -- D 载荷 --
-  light_on: { id: D01, slots: [which], route: fastpath, auth: L0 }
-  light_off: { id: D02, slots: [which], route: fastpath, auth: L0 }
-  light_auto: { id: D03, slots: [], route: fastpath, auth: L0 }
-  siren_on: { id: D04, slots: [], route: fastpath, auth: L1b }
-  siren_off: { id: D05, slots: [], route: fastpath, auth: L0 }
-  strobe_on: { id: D06, slots: [], route: fastpath, auth: L1b }
-  strobe_off: { id: D07, slots: [], route: fastpath, auth: L0 }
-  speak_preset: { id: D08, slots: [preset_id], route: fastpath_then_llm, auth: L1b }
-  speak_custom: { id: D09, slots: [text], route: llm, auth: L3 }
-  set_volume: { id: D10, slots: [level], route: fastpath, auth: L0 }
-  chassis_light: { id: D11, slots: [pattern, color], route: fastpath, auth: L0 }
-  speak_stop: { id: D12, slots: [], route: fastpath, auth: L0 }
-  payload_all_off: { id: D13, slots: [], route: fastpath, auth: L0 }
+  light_on: { id: D01, keywords: ["开灯", "打开照明", "前灯打开"], slots: [which], route: fastpath, auth: L0 }
+  light_off: { id: D02, keywords: ["关灯", "关掉照明"], slots: [which], route: fastpath, auth: L0 }
+  light_auto: { id: D03, keywords: ["灯光自动", "自动开灯"], slots: [], route: fastpath, auth: L0 }
+  siren_on: { id: D04, keywords: ["开警笛", "拉警报", "响警报"], slots: [], route: fastpath, auth: L1b }
+  siren_off: { id: D05, keywords: ["关警笛", "别响了"], slots: [], route: fastpath, auth: L0 }
+  strobe_on: { id: D06, keywords: ["开爆闪", "开警灯", "开红蓝", "开双闪", "开警示灯"], slots: [], route: fastpath, auth: L1b }
+  strobe_off: { id: D07, keywords: ["关爆闪", "关警灯", "关红蓝", "关双闪", "关警示灯"], slots: [], route: fastpath, auth: L0 }
+  speak_preset: { id: D08, keywords: ["喊话", "警告他", "播放警告", "喊第二条"], slots: [preset_id], route: fastpath_then_llm, auth: L1b }
+  speak_custom: { id: D09, keywords: ["说请立即离开", "喊一句"], slots: [text], route: llm, auth: L3 }
+  set_volume: { id: D10, keywords: ["大声点", "小声点", "音量调到最大"], slots: [level], route: fastpath, auth: L0 }
+  chassis_light: { id: D11, keywords: ["打开底盘灯", "尾灯呼吸"], slots: [pattern, color], route: fastpath, auth: L0 }
+  speak_stop: { id: D12, keywords: ["别喊了", "停止喊话", "停止播报", "别播了", "闭嘴"], slots: [], route: fastpath, auth: L0 }
+  payload_all_off: { id: D13, keywords: ["全部关掉", "都关了", "声光全关", "关掉所有"], slots: [], route: fastpath, auth: L0 }
   # D14-D16 reserved for payload_tilt_* (18 S13.1 collision note); D17/D18 from
   # 18-A S1 (GWY-P4-23, 2026-08-07). D17 level is a CLOSED SET
   # (max/high/mid/low/min/up/down), deliberately type-incompatible with D10's
   # numeric level so a misclassified volume utterance fails E_SCHEMA instead of
   # silently changing the light (18-A S1.1). D18 mode is 1-16, no 0 (off is D07).
-  set_light_bright: { id: D17, slots: [level], route: fastpath, auth: L0 }
-  set_strobe_mode: { id: D18, slots: [mode], route: fastpath, auth: L0 }
+  set_light_bright: { id: D17, keywords: ["灯调亮一点", "暗一点", "最亮", "调到最暗", "亮度中等", "亮度一半", "灯太刺眼了"], slots: [level], route: fastpath, auth: L0 }
+  set_strobe_mode: { id: D18, keywords: ["换一种闪法", "用第三种模式", "换个警灯样式", "警灯换一种"], slots: [mode], route: fastpath, auth: L0 }
 
   # -- E 云台 (E01/E06 direction slots are legitimate; see ID-3 note in header) --
-  ptz_move: { id: E01, slots: [direction, amount], route: fastpath, auth: L0 }
-  ptz_home: { id: E02, slots: [], route: fastpath, auth: L0 }
-  ptz_preset: { id: E03, slots: [preset], route: fastpath, auth: L0 }
-  ptz_track: { id: E04, slots: [], route: fastpath_then_llm, auth: L1b }
-  ptz_stop_track: { id: E05, slots: [], route: fastpath_then_llm, auth: L0 }
-  ptz_zoom: { id: E06, slots: [direction, amount], route: fastpath, auth: L0 }
-  ptz_scan: { id: E07, slots: [], route: fastpath, auth: L1b }
-  ptz_stop_scan: { id: E08, slots: [], route: fastpath, auth: L0 }
+  ptz_move: { id: E01, keywords: ["云台向左", "往上看", "看右边一点"], slots: [direction, amount], route: fastpath, auth: L0 }
+  ptz_home: { id: E02, keywords: ["云台归位", "回中", "看正前方"], slots: [], route: fastpath, auth: L0 }
+  ptz_preset: { id: E03, keywords: ["看充电桩方向", "转到2号预置位"], slots: [preset], route: fastpath, auth: L0 }
+  ptz_track: { id: E04, keywords: ["跟踪目标", "盯住他", "一直看着"], slots: [], route: fastpath_then_llm, auth: L1b }
+  ptz_stop_track: { id: E05, keywords: ["停止跟踪", "别盯了"], slots: [], route: fastpath_then_llm, auth: L0 }
+  ptz_zoom: { id: E06, keywords: ["拉近", "推远", "放大点"], slots: [direction, amount], route: fastpath, auth: L0 }
+  ptz_scan: { id: E07, keywords: ["左右扫一遍", "环视"], slots: [], route: fastpath, auth: L1b }
+  ptz_stop_scan: { id: E08, keywords: ["停止扫描", "别扫了", "停止环视", "云台别转了"], slots: [], route: fastpath, auth: L0 }
   # E09/E10 from 18-B S1 (GWY-P4-23, 2026-08-07). E09 three speed levels await
   # T-PTZ-3 measurement. E10 conflicts with the contract's PTZ-C1 (PELCO-D has
   # no absolute-position readback): until T-PTZ-3 closes, the executor answers
   # rejected and steers to E01 -- never runs on a guessed omega (18-B S3).
-  set_ptz_speed: { id: E09, slots: [level], route: fastpath, auth: L1b }
-  ptz_move_deg: { id: E10, slots: [direction, angle_deg], route: llm, auth: L1b }
+  set_ptz_speed: { id: E09, keywords: ["云台转速加快", "转速慢一点", "转速最快"], slots: [level], route: fastpath, auth: L1b }
+  ptz_move_deg: { id: E10, keywords: ["云台向左转N度", "向上转N度"], slots: [direction, angle_deg], route: llm, auth: L1b }
 
   # -- F 录制 --
-  record_route_start: { id: F01, slots: [], route: fastpath, auth: L1b }
-  record_route_stop: { id: F02, slots: [], route: fastpath, auth: L1a }
-  record_route_save: { id: F03, slots: [name], route: llm, auth: L1a }
-  record_route_cancel: { id: F04, slots: [], route: fastpath, auth: L2 }
-  record_route_mark: { id: F05, slots: [], route: fastpath, auth: L0 }
-  record_waypoint: { id: F06, slots: [name], route: llm, auth: L1a }
-  record_fence_start: { id: F07, slots: [], route: fastpath, auth: L1b }
-  record_fence_stop: { id: F08, slots: [], route: fastpath, auth: L1a }
-  record_fence_save: { id: F09, slots: [name], route: llm, auth: L2 }
-  record_dock: { id: F10, slots: [name], route: llm, auth: L1a }
-  delete_route: { id: F11, slots: [route], route: fastpath_then_llm, auth: L2 }
-  delete_waypoint: { id: F12, slots: [waypoint], route: fastpath_then_llm, auth: L2 }
-  delete_fence: { id: F13, slots: [fence], route: fastpath_then_llm, auth: L2 }
-  rename_object: { id: F14, slots: [type, old, new], route: llm, auth: L1a }
-  set_active_fence: { id: F15, slots: [fence], route: fastpath_then_llm, auth: L2 }
+  record_route_start: { id: F01, keywords: ["开始录制路径", "记录路线"], slots: [], route: fastpath, auth: L1b }
+  record_route_stop: { id: F02, keywords: ["结束录制", "录完了", "停止记录"], slots: [], route: fastpath, auth: L1a }
+  record_route_save: { id: F03, keywords: ["保存为3号路径", "命名为东门路线"], slots: [name], route: llm, auth: L1a }
+  record_route_cancel: { id: F04, keywords: ["不要了", "作废"], slots: [], route: fastpath, auth: L2 }
+  record_route_mark: { id: F05, keywords: ["这里加个点", "标记一下"], slots: [], route: fastpath, auth: L0 }
+  record_waypoint: { id: F06, keywords: ["把这里记为东门岗亭", "标记当前位置为X"], slots: [name], route: llm, auth: L1a }
+  record_fence_start: { id: F07, keywords: ["开始录制围栏", "画围栏"], slots: [], route: fastpath, auth: L1b }
+  record_fence_stop: { id: F08, keywords: ["围栏录完了", "结束围栏"], slots: [], route: fastpath, auth: L1a }
+  record_fence_save: { id: F09, keywords: ["保存围栏", "命名为营区外围"], slots: [name], route: llm, auth: L2 }
+  record_dock: { id: F10, keywords: ["把这里记为充电桩", "标记充电桩"], slots: [name], route: llm, auth: L1a }
+  delete_route: { id: F11, keywords: ["删除路径", "删掉路径"], slots: [route], route: fastpath_then_llm, auth: L2 }
+  delete_waypoint: { id: F12, keywords: ["删除航点", "删除点位"], slots: [waypoint], route: fastpath_then_llm, auth: L2 }
+  delete_fence: { id: F13, keywords: ["删除围栏"], slots: [fence], route: fastpath_then_llm, auth: L2 }
+  rename_object: { id: F14, keywords: ["把3号路径改名为东门路线"], slots: [type, old, new], route: llm, auth: L1a }
+  set_active_fence: { id: F15, keywords: ["启用营区外围围栏", "换成2号围栏"], slots: [fence], route: fastpath_then_llm, auth: L2 }
 
   # -- G 查询 --
-  query_position: { id: G01, slots: [], route: fastpath, auth: L0 }
-  query_battery: { id: G02, slots: [], route: fastpath, auth: L0 }
-  query_range: { id: G03, slots: [], route: fastpath, auth: L0 }
-  query_speed: { id: G04, slots: [], route: fastpath, auth: L0 }
-  query_mode: { id: G05, slots: [], route: fastpath, auth: L0 }
-  query_task: { id: G06, slots: [], route: fastpath, auth: L0 }
-  query_progress: { id: G07, slots: [], route: fastpath, auth: L0 }
-  query_heading: { id: G08, slots: [], route: fastpath, auth: L0 }
-  query_uptime: { id: G09, slots: [], route: fastpath, auth: L0 }
-  query_events_recent: { id: G10, slots: [count, time_range], route: fastpath_then_llm, auth: L0 }
-  query_events_period: { id: G11, slots: [date_range], route: llm, auth: L0 }
-  query_events_by_type: { id: G12, slots: [category], route: llm, auth: L0 }
-  query_last_alarm: { id: G13, slots: [], route: fastpath, auth: L0 }
-  query_event_detail: { id: G14, slots: [event_ref], route: llm, auth: L0 }
-  query_faults: { id: G15, slots: [], route: fastpath, auth: L0 }
-  query_health: { id: G16, slots: [], route: fastpath, auth: L0 }
-  query_sensor: { id: G17, slots: [sensor], route: fastpath, auth: L0 }
-  query_bit_result: { id: G18, slots: [], route: fastpath, auth: L0 }
-  query_detection: { id: G19, slots: [], route: fastpath, auth: L0 }
-  query_target_count: { id: G20, slots: [], route: fastpath, auth: L0 }
-  query_routes: { id: G21, slots: [], route: fastpath, auth: L0 }
-  query_waypoints: { id: G22, slots: [], route: fastpath, auth: L0 }
-  query_docks: { id: G23, slots: [], route: fastpath, auth: L0 }
-  query_time: { id: G24, slots: [], route: fastpath, auth: L0 }
-  query_payload_all: { id: G25, slots: [], route: fastpath, auth: L0 }
-  query_light_state: { id: G26, slots: [which], route: fastpath, auth: L0 }
-  query_siren_state: { id: G27, slots: [], route: fastpath, auth: L0 }
-  query_strobe_state: { id: G28, slots: [], route: fastpath, auth: L0 }
-  query_volume: { id: G29, slots: [], route: fastpath, auth: L0 }
-  query_speaking: { id: G30, slots: [], route: fastpath, auth: L0 }
-  query_speak_presets: { id: G31, slots: [], route: fastpath, auth: L0 }
-  query_ptz_pose: { id: G32, slots: [], route: fastpath, auth: L0 }
-  query_ptz_zoom: { id: G33, slots: [], route: fastpath, auth: L0 }
-  query_ptz_track: { id: G34, slots: [], route: fastpath, auth: L0 }
-  query_ptz_preset: { id: G35, slots: [], route: fastpath, auth: L0 }
-  query_ptz_presets: { id: G36, slots: [], route: fastpath, auth: L0 }
-  query_ptz_owner: { id: G37, slots: [], route: fastpath, auth: L0 }
-  query_fences: { id: G38, slots: [], route: fastpath, auth: L0 }
-  query_active_fence: { id: G39, slots: [], route: fastpath, auth: L0 }
-  query_fence_health: { id: G40, slots: [], route: fastpath, auth: L0 }
-  query_fence_relation: { id: G41, slots: [], route: fastpath, auth: L0 }
-  query_fence_detail: { id: G42, slots: [fence], route: fastpath, auth: L0 }
+  query_position: { id: G01, keywords: ["在哪", "什么位置"], slots: [], route: fastpath, auth: L0 }
+  query_battery: { id: G02, keywords: ["电量", "还有多少电"], slots: [], route: fastpath, auth: L0 }
+  query_range: { id: G03, keywords: ["还能跑多久", "剩余续航"], slots: [], route: fastpath, auth: L0 }
+  query_speed: { id: G04, keywords: ["现在多快", "什么速度"], slots: [], route: fastpath, auth: L0 }
+  query_mode: { id: G05, keywords: ["当前什么模式", "在什么状态"], slots: [], route: fastpath, auth: L0 }
+  query_task: { id: G06, keywords: ["当前任务", "在干什么"], slots: [], route: fastpath, auth: L0 }
+  query_progress: { id: G07, keywords: ["还有多久完成", "巡逻到哪了"], slots: [], route: fastpath, auth: L0 }
+  query_heading: { id: G08, keywords: ["朝哪个方向", "面向哪"], slots: [], route: fastpath, auth: L0 }
+  query_uptime: { id: G09, keywords: ["开机多久了"], slots: [], route: fastpath, auth: L0 }
+  query_events_recent: { id: G10, keywords: ["最近有什么情况", "有报警吗"], slots: [count, time_range], route: fastpath_then_llm, auth: L0 }
+  query_events_period: { id: G11, keywords: ["今天有几次告警", "这一周的报警"], slots: [date_range], route: llm, auth: L0 }
+  query_events_by_type: { id: G12, keywords: ["有入侵报警吗", "有故障事件吗"], slots: [category], route: llm, auth: L0 }
+  query_last_alarm: { id: G13, keywords: ["最近一次报警什么时候", "上次警报"], slots: [], route: fastpath, auth: L0 }
+  query_event_detail: { id: G14, keywords: ["刚才那个报警什么情况"], slots: [event_ref], route: llm, auth: L0 }
+  query_faults: { id: G15, keywords: ["有故障吗", "哪里不正常", "有问题吗"], slots: [], route: fastpath, auth: L0 }
+  query_health: { id: G16, keywords: ["系统状态怎么样", "一切正常吗"], slots: [], route: fastpath, auth: L0 }
+  query_sensor: { id: G17, keywords: ["雷达正常吗", "相机好使吗", "定位怎么样"], slots: [sensor], route: fastpath, auth: L0 }
+  query_bit_result: { id: G18, keywords: ["自检结果怎么样", "开机检查过了吗"], slots: [], route: fastpath, auth: L0 }
+  query_detection: { id: G19, keywords: ["前面有人吗", "看到什么了", "有情况吗"], slots: [], route: fastpath, auth: L0 }
+  query_target_count: { id: G20, keywords: ["有几个人", "几个目标"], slots: [], route: fastpath, auth: L0 }
+  query_routes: { id: G21, keywords: ["有哪些路径", "都能巡哪些线"], slots: [], route: fastpath, auth: L0 }
+  query_waypoints: { id: G22, keywords: ["有哪些位置点", "能去哪些地方"], slots: [], route: fastpath, auth: L0 }
+  query_docks: { id: G23, keywords: ["充电桩在哪", "有几个充电桩"], slots: [], route: fastpath, auth: L0 }
+  query_time: { id: G24, keywords: ["几点了", "现在什么时候", "今天几号"], slots: [], route: fastpath, auth: L0 }
+  query_payload_all: { id: G25, keywords: ["声光现在什么状态", "载荷都开着吗"], slots: [], route: fastpath, auth: L0 }
+  query_light_state: { id: G26, keywords: ["灯开着吗", "照明什么状态"], slots: [which], route: fastpath, auth: L0 }
+  query_siren_state: { id: G27, keywords: ["警笛响着吗", "警报开了没"], slots: [], route: fastpath, auth: L0 }
+  query_strobe_state: { id: G28, keywords: ["爆闪开着吗", "警灯亮着吗", "红蓝开着吗"], slots: [], route: fastpath, auth: L0 }
+  query_volume: { id: G29, keywords: ["音量多大", "现在几档"], slots: [], route: fastpath, auth: L0 }
+  query_speaking: { id: G30, keywords: ["在喊话吗", "还剩几遍", "喊的哪条"], slots: [], route: fastpath, auth: L0 }
+  query_speak_presets: { id: G31, keywords: ["能喊哪些", "有哪些预设语句"], slots: [], route: fastpath, auth: L0 }
+  query_ptz_pose: { id: G32, keywords: ["云台朝哪", "现在看哪边"], slots: [], route: fastpath, auth: L0 }
+  query_ptz_zoom: { id: G33, keywords: ["放大了几倍", "现在什么倍率"], slots: [], route: fastpath, auth: L0 }
+  query_ptz_track: { id: G34, keywords: ["在跟踪吗", "盯着谁呢"], slots: [], route: fastpath, auth: L0 }
+  query_ptz_preset: { id: G35, keywords: ["在哪个预置位", "现在是几号位"], slots: [], route: fastpath, auth: L0 }
+  query_ptz_presets: { id: G36, keywords: ["有哪些预置位", "能看哪几个方向"], slots: [], route: fastpath, auth: L0 }
+  query_ptz_owner: { id: G37, keywords: ["云台谁在控", "我为什么转不动云台"], slots: [], route: fastpath, auth: L0 }
+  query_fences: { id: G38, keywords: ["有哪些围栏", "都设了什么围栏"], slots: [], route: fastpath, auth: L0 }
+  query_active_fence: { id: G39, keywords: ["现在用的哪个围栏", "生效的是哪个"], slots: [], route: fastpath, auth: L0 }
+  query_fence_health: { id: G40, keywords: ["围栏还管用吗", "保护降级了吗"], slots: [], route: fastpath, auth: L0 }
+  query_fence_relation: { id: G41, keywords: ["我在围栏里吗", "离边界还有多远"], slots: [], route: fastpath, auth: L0 }
+  query_fence_detail: { id: G42, keywords: ["围栏什么情况", "围栏多大"], slots: [fence], route: fastpath, auth: L0 }
 
   # -- H 系统 (H01/H03 carry auth_by_slot; see header) --
-  run_bit: { id: H01, slots: [scope], route: fastpath, auth: L1a, auth_by_slot: { scope: { quick: L1a, deep: L2 } } }
-  generate_report: { id: H02, slots: [scope, date_range], route: llm, auth: L1a }
-  set_time_sync: { id: H03, slots: [force_step], route: fastpath, auth: L1b, auth_by_slot: { force_step: { false: L1b, true: L2 } } }
-  reload_config: { id: H04, slots: [scope], route: fastpath, auth: L2 }
-  sleep: { id: H05, slots: [], route: fastpath, auth: L1b }
-  wake: { id: H06, slots: [], route: fastpath, auth: L0 }
-  reboot: { id: H07, slots: [], route: fastpath, auth: L2 }
-  shutdown: { id: H08, slots: [], route: fastpath, auth: L3 }
+  run_bit: { id: H01, keywords: ["做个自检", "自检一下", "检查系统", "做个深度自检", "全面检查一遍"], slots: [scope], route: fastpath, auth: L1a, auth_by_slot: { scope: { quick: L1a, deep: L2 } } }
+  generate_report: { id: H02, keywords: ["报告", "汇报", "说说情况"], slots: [scope, date_range], route: llm, auth: L1a }
+  set_time_sync: { id: H03, keywords: ["校时", "同步时间"], slots: [force_step], route: fastpath, auth: L1b, auth_by_slot: { force_step: { false: L1b, true: L2 } } }
+  reload_config: { id: H04, keywords: ["重新加载配置", "刷新规则"], slots: [scope], route: fastpath, auth: L2 }
+  sleep: { id: H05, keywords: ["休眠", "睡吧", "省电模式"], slots: [], route: fastpath, auth: L1b }
+  wake: { id: H06, keywords: ["唤醒", "醒醒", "开始工作"], slots: [], route: fastpath, auth: L0 }
+  reboot: { id: H07, keywords: ["重启系统"], slots: [], route: fastpath, auth: L2 }
+  shutdown: { id: H08, keywords: ["关机"], slots: [], route: fastpath, auth: L3 }
 
   # -- I 会话 --
-  confirm: { id: I01, slots: [], route: fastpath, auth: L0 }
-  deny: { id: I02, slots: [], route: fastpath, auth: L0 }
-  repeat: { id: I03, slots: [], route: fastpath, auth: L0 }
-  cancel_session: { id: I04, slots: [], route: fastpath, auth: L0 }
-  help: { id: I05, slots: [], route: fastpath, auth: L0 }
-  clarify_answer: { id: I06, slots: [pending_slot_value], route: llm, auth: L0 }
+  confirm: { id: I01, keywords: ["是", "对", "确认", "好的", "可以", "覆盖"], slots: [], route: fastpath, auth: L0 }
+  deny: { id: I02, keywords: ["不是", "不", "算了", "不用"], slots: [], route: fastpath, auth: L0 }
+  repeat: { id: I03, keywords: ["再说一遍", "什么", "没听清"], slots: [], route: fastpath, auth: L0 }
+  cancel_session: { id: I04, keywords: ["没事了", "不用了", "结束对话"], slots: [], route: fastpath, auth: L0 }
+  help: { id: I05, keywords: ["你能做什么", "帮助", "怎么用"], slots: [], route: fastpath, auth: L0 }
+  clarify_answer: { id: I06, keywords: [], slots: [pending_slot_value], route: llm, auth: L0 }
 
   # -- J 闲聊 --
-  greeting: { id: J01, slots: [], route: fastpath, auth: L0 }
-  identity: { id: J02, slots: [], route: fastpath, auth: L0 }
+  greeting: { id: J01, keywords: ["你好", "在吗", "嗨", "早上好"], slots: [], route: fastpath, auth: L0 }
+  identity: { id: J02, keywords: ["你是谁", "你叫什么", "什么型号"], slots: [], route: fastpath, auth: L0 }
