@@ -1,6 +1,6 @@
 // XBRAIN_V6 realtime-plane Zenoh router configuration.
 //
-// See 11 §1.1.2:
+// See 11 S1.1.2:
 //   * mode: router
 //   * realtime-plane endpoint: tcp/127.0.0.1:7449 (loopback ONLY)
 //   * scouting: multicast + gossip DISABLED (RT-C1 / RT-C2)

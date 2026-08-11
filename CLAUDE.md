@@ -171,6 +171,19 @@ log.info("计算走廊内最近障碍距离, 数量=%d", len(bands))   # X 中�
   ★ 守此差异的测试（`tests/p4_agent/registry/test_speech_presets.py`）断言 **yaml 值**
   （ASCII），不是 docs 逐字；测试注释须写明这层标点差异，否则下一个读者会以为
   yaml 抄错了 `14`。
+- ★★★ **2026-08-11 用户铁律 · 扩到【所有非文档文件】（含 json / json5）**：除
+  `.md` / `.pdf` / `.doc(x)` 外的**任何文件** —— `.c` / `.cc` / `.cpp` / `.h` /
+  `.py` / `.yaml` / `.yml` / `.json` / `.json5` / `.sh` / `.bash` 等 —— 标点与符号
+  **一律 ASCII**，🚫 零中文标点 / 特殊符号（`§` `★` `→` `⚠` `🚫` `⇒` 等）/ emoji。
+  ★★ **中文【文字】仍允许**（§2.1 单文件统一即可），禁的只是【标点 / 符号 / emoji】。
+  ★ **扫描面 = 我方书写并维护的源文件与配置**。🚫 **不适用**于以下【非我方书写标点】的资产：
+    - 第三方模型元数据 `services/*/models/**` · `services/llm/model/**`（厂商给的）
+    - 运行期生成物 `data/**` · `/run/xbrain/**` · `MANIFEST.json`（freeze 产出，🚫 不手改）
+    - golden 测试向量里的【被测中文数据】`tests/**/golden/**` · ASR 金标语料
+      —— 那是要识别 / 比对的**输入数据**，清标点会破坏金标真实性。★ 与本节话术裁决
+      不同：话术是我方书写的【输出内容】（转 ASCII），golden 是【被测输入】（保留原样）。
+    - 工具 / IDE 配置 `.vscode/**` · `**/.claude/**` · `docs/temp/_` 待迁移素材（§0.2）
+  ★ `.json` / `.json5` 加入 `scripts/lint/charset_lint.py` 扫描面（带上述排除清单）。
 
 ### 2.3 命名规范
 
