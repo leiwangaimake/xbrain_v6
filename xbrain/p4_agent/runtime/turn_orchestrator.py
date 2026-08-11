@@ -1,0 +1,382 @@
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: turn_orchestrator.py
+Brief: GWY-P4-38 (32.F) -- one P4 turn: six-step chain + confirm + envelope
+
+Description:
+16 S5.2: the authoritative order for turning one ASR utterance into an
+action. This orchestrator strings the already-built P4 modules into that
+order, REPLACING the V-2B naive_classify MVP (turn_loop.py). The steps:
+
+  1 safety-bypass (16 S4)   estop / prone / stand match BEFORE any
+    classification. A bypass hit goes straight to Tier1 and NEVER reaches
+    the classifier -- the whole point of a bypass is that it cannot be
+    reasoned about. Recording suppresses VOICE estop (U45).
+  2-6 priority chain (16 S5.2) via classifier.classify_text:
+    2 long-phrase exact, 3 session-state (confirm response), 4 large-class,
+    5 overheard (silent, 16 S5.2.1), 6 unknown -> LLM.
+  route (registry): fastpath -> dispatch DIRECTLY (no LLM, no prompt
+    assemble); llm / unknown -> tier-2 (GPU-gated grammar-constrained
+    classify, GWY-P4-37).
+  auth gate: L0/L1a/L1b dispatch now; L2 opens a confirm and WAITS for
+    I01/I02 (the confirm response arrives as the NEXT turn's session-state
+    match) -- it is NOT dispatched until confirmed; L3 opens a cloud
+    approval. CL-2: estop_path==down upgrades an L1b to L2 (one more gate
+    when both non-voice estops are unhealthy).
+  envelope + validation: a dispatched intent is wrapped in an
+    IntentEnvelope (EV-1..7) before it leaves P4.
+  reply: chitchat/out_of_scope go through the preset responder (never the
+    LLM, never an echo of the user's words).
+
+What this does NOT own (kept in their sub-tasks, injected here): the LLM
+call + grammar + prompt assembly (tier2_fn, GWY-P4-37/12/10); live state
+for G-query data (GWY-P4-39); DB record/schedule (GWY-P4-40). The
+orchestrator decides WHAT happens; those provide the moving parts.
+
+Traps this guards (each has a mutation test):
+  * a bypass that went through the classify chain -- estop would then be
+    subject to overheard/LLM latency, which is the one thing it must not be
+  * an L2 intent dispatched on the same turn it was heard -- the confirm
+    would be cosmetic
+  * a fastpath intent that touched the LLM -- burns the GPU slot and adds
+    latency to a path defined as not needing it
+"""
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Optional
+
+from xbrain.p4_agent.classifier.keyword_matcher import (
+    KeywordMatcher, classify_text,
+)
+from xbrain.p4_agent.envelope.intent_envelope import IntentEnvelope
+from xbrain.p4_agent.registry.intents import IntentEntry, IntentRegistry
+from xbrain.p4_agent.runtime.intent_dispatch import (
+    DispatchResult, dispatch,
+)
+from xbrain.p4_agent.safety_bypass import matcher as bypass_matcher
+from xbrain.p4_agent.safety_bypass import recording_gate
+from xbrain.p4_agent.session.chitchat import ChitchatResponder, ChitchatState
+from xbrain.p4_agent.session.state_machines import L2ConfirmState, L2Slot
+
+
+# Reply-family intent NAMES routed to the preset responder (never LLM,
+# never echo). J01/J02/I05 plus the out_of_scope sentinel (16 S11.5).
+_CHITCHAT_NAMES = frozenset({"greeting", "identity", "help", "out_of_scope"})
+
+# latency_class per route (EV-7 consistency, mirrored from the envelope).
+_LATENCY_BY_ROUTE = {
+    "fastpath": "fastpath",
+    "fastpath_then_llm": "fastpath",
+    "llm": "llm",
+    "bypass": "bypass",
+}
+
+
+@dataclass
+class PendingConfirm:
+    """An L2 intent awaiting I01/I02. Holds enough to dispatch on confirm."""
+    entry: IntentEntry
+    text: str
+    slot: L2Slot
+
+
+@dataclass
+class OrchestratorSession:
+    """Per-operator turn state. One instance lives across a dialog."""
+    recording: recording_gate.RecordingState = field(
+        default_factory=recording_gate.RecordingState)
+    chitchat: ChitchatState = field(default_factory=ChitchatState)
+    pending_confirm: Optional[PendingConfirm] = None
+    # CL-2 (16): when both non-voice estop paths are unhealthy the link
+    # publisher sets estop_path=down; an L1b then upgrades to L2.
+    estop_path: str = "up"
+
+
+@dataclass
+class TurnDecision:
+    """The outcome of one turn. `kind` names the branch taken."""
+    kind: str
+    intent_id: Optional[str] = None
+    intent_name: Optional[str] = None
+    route: Optional[str] = None
+    auth: Optional[str] = None
+    level: Optional[str] = None
+    layer: Optional[str] = None
+    bypass_action: Optional[str] = None
+    dispatch_result: Optional[DispatchResult] = None
+    envelope: Optional[IntentEnvelope] = None
+    reply_text: Optional[str] = None
+    tts_text: Optional[str] = None
+    # Observability for the mutation tests: did this turn touch the LLM /
+    # assemble a prompt? A fastpath turn must show both false.
+    llm_used: bool = False
+    prompt_assembled: bool = False
+
+
+# tier2_fn(text, session, now_mono_ms) -> classified intent NAME or None.
+# None means the GPU gate denied the call or the LLM failed (the caller
+# drops the turn). It is injected so the orchestrator stays testable
+# without a live LLM; main_wiring binds it to GWY-P4-37 classify_unknown +
+# generate_grammar + prompt assembly. Calling it is what marks a turn as
+# LLM-using.
+Tier2Fn = Callable[[str, "OrchestratorSession", int], Optional[str]]
+
+
+class TurnOrchestrator:
+    """Runs 16 S5.2 for one utterance. Stateless across turns except for
+    what the caller carries in OrchestratorSession."""
+
+    def __init__(
+        self,
+        registry: IntentRegistry,
+        *,
+        chitchat: ChitchatResponder,
+        tier2_fn: Tier2Fn,
+        l2_timeout_ms: int,
+        matcher: Optional[KeywordMatcher] = None,
+    ) -> None:
+        self._registry = registry
+        self._matcher = matcher or KeywordMatcher(registry)
+        self._chitchat = chitchat
+        self._tier2 = tier2_fn
+        self._l2_timeout_ms = l2_timeout_ms
+
+    # -- public entry ----------------------------------------------------
+
+    def handle_turn(self, text: str, session: OrchestratorSession,
+                    now_mono_ms: int) -> TurnDecision:
+        """Process one ASR utterance end-to-end. See module docstring for
+        the ordering (16 S5.2)."""
+        text = (text or "").strip()
+
+        # STEP 1: safety-bypass BEFORE classification (16 S4). Match raw
+        # then normalized; a hit here never reaches the classifier.
+        hit = (bypass_matcher.match_raw(text)
+               or bypass_matcher.match_normalized(text))
+        if hit is not None:
+            supp = recording_gate.evaluate(session.recording, hit.action)
+            if supp is not None:
+                # U45: voice estop suppressed while recording; still logged
+                # + advise the handle. NOT dispatched as a stop.
+                return TurnDecision(
+                    kind="bypass_suppressed",
+                    bypass_action=hit.action,
+                    tts_text=supp.tts_advice)
+            # Straight to Tier1 (bypass route). No classify, no envelope
+            # gating -- that is the safety guarantee.
+            return TurnDecision(
+                kind="bypass", bypass_action=hit.action, route="bypass")
+
+        # STEP 3 (early): if a confirm is open, THIS turn is its response.
+        if session.pending_confirm is not None:
+            return self._resolve_pending_confirm(text, session, now_mono_ms)
+
+        if not text:
+            return TurnDecision(kind="overheard", layer="overheard")
+
+        # STEPS 2-6: the priority chain.
+        result = classify_text(text, self._registry, self._matcher)
+        if result.layer == "overheard":
+            # 16 S5.2.1: not addressed to the robot -> completely silent.
+            return TurnDecision(kind="overheard", layer="overheard")
+        if result.fires_llm:
+            # Layer 6: nothing matched but it was directed -> tier-2 LLM.
+            return self._run_tier2(text, session, now_mono_ms)
+
+        # Layers 2/3/4 matched an intent id.
+        entry = self._registry.by_id(result.intent)
+        return self._route_entry(entry, text, session, now_mono_ms,
+                                 layer=result.layer)
+
+    # -- routing ---------------------------------------------------------
+
+    def _route_entry(self, entry: IntentEntry, text: str,
+                     session: OrchestratorSession, now_mono_ms: int,
+                     layer: str) -> TurnDecision:
+        """Apply route (fastpath vs LLM) and auth (confirm gate)."""
+        # Reply-family intents (chitchat / help) answer from a preset and
+        # never dispatch an action. Handled before the auth gate: they are
+        # all L0 and produce speech, not motion.
+        if entry.name in _CHITCHAT_NAMES:
+            return self._reply_chitchat(entry, session, layer)
+
+        # Effective auth with CL-2 upgrade (L1b -> L2 when estop down).
+        eff_auth = self._effective_auth(entry.auth, session)
+
+        if eff_auth == "L2":
+            # Open a confirm and WAIT. Do NOT dispatch this turn.
+            slot = L2Slot(timeout_millis=self._l2_timeout_ms)
+            slot.request(now_mono_ms=now_mono_ms)
+            session.pending_confirm = PendingConfirm(
+                entry=entry, text=text, slot=slot)
+            return TurnDecision(
+                kind="await_confirm", intent_id=entry.id,
+                intent_name=entry.name, route=entry.route, auth=eff_auth,
+                layer=layer, tts_text=self._confirm_prompt(entry))
+        if eff_auth == "L3":
+            # Cloud approval flow (GWY-P4-38 hand-off to P5). Not dispatched
+            # until the cloud confirm_token arrives.
+            return TurnDecision(
+                kind="await_approval", intent_id=entry.id,
+                intent_name=entry.name, route=entry.route, auth=eff_auth,
+                layer=layer, tts_text=self._approval_prompt(entry))
+
+        # L0 / L1a / L1b -> dispatch now.
+        return self._dispatch_entry(entry, text, session, now_mono_ms,
+                                    layer, eff_auth)
+
+    def _dispatch_entry(self, entry: IntentEntry, text: str,
+                        session: OrchestratorSession, now_mono_ms: int,
+                        layer: str, eff_auth: str) -> TurnDecision:
+        """Route the FAST leg. fastpath / fastpath_then_llm dispatch
+        directly (no LLM, no prompt assemble). A pure-llm matched intent
+        still needs slot fill via tier-2."""
+        llm_used = False
+        if entry.route == "llm":
+            # Known intent, but its slots need the LLM (grammar-constrained)
+            # to fill. tier2 marks the turn as LLM-using.
+            classified = self._tier2(text, session, now_mono_ms)
+            llm_used = True
+            if classified is None:
+                return TurnDecision(kind="denied", intent_id=entry.id,
+                                    intent_name=entry.name, route=entry.route,
+                                    auth=eff_auth, layer=layer, llm_used=True,
+                                    prompt_assembled=True)
+        # Build the envelope (EV-1..7) and dispatch.
+        env = self._build_envelope(entry, eff_auth, slots={})
+        result = dispatch(entry.id, text)
+        return TurnDecision(
+            kind="dispatch", intent_id=entry.id, intent_name=entry.name,
+            route=entry.route, auth=eff_auth, level=eff_auth, layer=layer,
+            dispatch_result=result, envelope=env,
+            llm_used=llm_used, prompt_assembled=llm_used)
+
+    def _run_tier2(self, text: str, session: OrchestratorSession,
+                   now_mono_ms: int) -> TurnDecision:
+        """Layer-6 unknown: tier-2 LLM classify. Marks LLM used + prompt
+        assembled (both happen inside tier2_fn)."""
+        classified = self._tier2(text, session, now_mono_ms)
+        if classified is None:
+            # Gate denied or LLM failed: drop the turn (caller may TTS).
+            return TurnDecision(kind="denied", layer="unknown",
+                                llm_used=True, prompt_assembled=True)
+        if classified in _CHITCHAT_NAMES:
+            # The LLM classified it as out_of_scope / chitchat.
+            reply = self._chitchat.respond(classified, session.chitchat)
+            return TurnDecision(
+                kind="reply", intent_name=classified, layer="unknown",
+                reply_text=reply, tts_text=reply, route="llm",
+                llm_used=True, prompt_assembled=True)
+        # A real intent the LLM picked: route it like a matched intent, but
+        # the turn already used the LLM.
+        entry = self._registry.by_name(classified)
+        decision = self._route_entry(entry, text, session, now_mono_ms,
+                                     layer="unknown")
+        # Preserve the fact the LLM was used to reach this classification.
+        decision.llm_used = True
+        decision.prompt_assembled = True
+        return decision
+
+    # -- confirm resolution ---------------------------------------------
+
+    def _resolve_pending_confirm(self, text: str,
+                                 session: OrchestratorSession,
+                                 now_mono_ms: int) -> TurnDecision:
+        """A confirm is open; interpret this turn as the I01/I02 response
+        (16 S5.2 layer 3 session-state)."""
+        pc = session.pending_confirm
+        # Timeout first: a stale confirm must not accept a late 'yes'.
+        pc.slot.tick(now_mono_ms=now_mono_ms)
+        if pc.slot.state == L2ConfirmState.TIMED_OUT:
+            session.pending_confirm = None
+            return TurnDecision(kind="confirm_timeout", intent_id=pc.entry.id,
+                                intent_name=pc.entry.name,
+                                tts_text=self._timeout_prompt(pc.entry))
+        # Classify the response; I01 confirm / I02 deny are session-state
+        # intents supplied here (they are excluded from the layer-2 index).
+        response = self._classify_confirm_response(text)
+        if response == "I02":       # deny
+            session.pending_confirm = None
+            return TurnDecision(kind="confirm_denied", intent_id=pc.entry.id,
+                                intent_name=pc.entry.name,
+                                tts_text=self._denied_prompt(pc.entry))
+        if response != "I01":       # neither yes nor no -> keep waiting
+            return TurnDecision(kind="await_confirm", intent_id=pc.entry.id,
+                                intent_name=pc.entry.name,
+                                tts_text=self._confirm_prompt(pc.entry))
+        # Confirmed: dispatch the held intent NOW.
+        pc.slot.confirm()
+        entry, held_text = pc.entry, pc.text
+        session.pending_confirm = None
+        env = self._build_envelope(entry, "L2", slots={})
+        result = dispatch(entry.id, held_text)
+        return TurnDecision(
+            kind="dispatch", intent_id=entry.id, intent_name=entry.name,
+            route=entry.route, auth="L2", level="L2", layer="session_state",
+            dispatch_result=result, envelope=env)
+
+    def _classify_confirm_response(self, text: str) -> Optional[str]:
+        """Map a confirm-window utterance to I01 (confirm) / I02 (deny) /
+        None. Uses the registry keywords for I01/I02 (which are excluded
+        from the layer-2 index, so they are matched here, at layer 3)."""
+        i01 = self._registry.by_id("I01")
+        i02 = self._registry.by_id("I02")
+        # Deny checked with the same longest-first spirit; here a simple
+        # substring is enough because the window is a yes/no context.
+        for kw in i02.keywords:
+            if kw and kw in text:
+                return "I02"
+        for kw in i01.keywords:
+            if kw and kw in text:
+                return "I01"
+        return None
+
+    # -- replies ---------------------------------------------------------
+
+    def _reply_chitchat(self, entry: IntentEntry,
+                        session: OrchestratorSession,
+                        layer: str) -> TurnDecision:
+        reply = self._chitchat.respond(entry.name, session.chitchat)
+        return TurnDecision(
+            kind="reply", intent_id=entry.id, intent_name=entry.name,
+            route=entry.route, auth=entry.auth, layer=layer,
+            reply_text=reply, tts_text=reply)
+
+    # -- envelope + helpers ---------------------------------------------
+
+    def _build_envelope(self, entry: IntentEntry, level: str,
+                        slots: Dict[str, Any]) -> IntentEnvelope:
+        """Wrap a dispatched intent (EV-1..7 checked in __post_init__)."""
+        return IntentEnvelope(
+            id=entry.id,
+            intent=entry.name,
+            route=entry.route,
+            auth=entry.auth,
+            level=level,
+            slots=slots,
+            cmd_id=uuid.uuid4().hex,
+            latency_class=_LATENCY_BY_ROUTE[entry.route],
+        )
+
+    def _effective_auth(self, auth: str, session: OrchestratorSession) -> str:
+        """CL-2: estop_path==down upgrades L1b -> L2 (one extra gate)."""
+        if auth == "L1b" and session.estop_path == "down":
+            return "L2"
+        return auth
+
+    # Prompt wording (hot phrasing; ASCII punct, Chinese words).
+    def _confirm_prompt(self, entry: IntentEntry) -> str:
+        return "确认要执行" + entry.name + "吗"
+
+    def _approval_prompt(self, entry: IntentEntry) -> str:
+        return "该操作需要云端审批,已上报等待批准"
+
+    def _denied_prompt(self, entry: IntentEntry) -> str:
+        return "好的,已取消"
+
+    def _timeout_prompt(self, entry: IntentEntry) -> str:
+        return "没有收到确认,已取消"
