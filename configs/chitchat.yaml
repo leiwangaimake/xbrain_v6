@@ -1,14 +1,53 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/chitchat.yaml
-#   层:L6 内容表 归属进程:P4(闲聊)
-#   * 权威定义处:`16`
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: chitchat.yaml
+# Brief: J-class chitchat + out_of_scope presets (16 S11.5, zero-LLM)
 #
-#   本文件当前是[空骨架]---- 一个键都没有, 本轮未凭空填任何配置值.
-#   * 落值时逐键去权威节抄, 不得从本文件或任何别处推断默认值:
-#     10 §5.4.2 R-3 逐字"不提供默认值语法......解析不到即 E_CONFIG_INVALID 拒绝启动".
-#   未标定的参数留 null(="声明键位但未赋值"), 绝不写 0.0 冒充已赋值.
-#   L6 只[取值]不[定义]: 不得出现 common 顶层键,共享值一律写 ${common.xxx}
-#     (10 §5.4.2 R-6 / R-1;违反即被 §5.4.4 断言 B 判"疑似复制"而拒绝启动).
-# ===========================================================================
+# Description:
+# 18 S12 / 16 S11.5 / CMD-50..54: chitchat replies are PRESETS, never
+# LLM free-form (18 S12.1 reason 2: a 3B model hallucinates freely; reason
+# 3: a reply occupies the speaker and reveals the robot's position). The
+# only value of chitchat is the LIVENESS signal (18 S12.1): a '你好' that
+# gets a reply proves the system is alive AND the USB MIC works.
+#
+# Closed-set consumers (configs/intents.yaml): J01 greeting, J02 identity,
+# I05 help (capability overview). out_of_scope is the catch-all fallback
+# for a directed phrase beyond capability. After consecutive_threshold
+# out_of_scope hits in one session, the capability overview (help.reply)
+# is announced proactively (16 S6.7.10 [5] / 18 S12.5).
+#
+# DIVERGENCE FROM 16 S11.5 (recorded, 2026-08-11): the S11.5 yaml block
+# still lists thanks / farewell / weather as separate presets, but 18 S12.3
+# CONVERGED the J class to 2 (J01/J02) and moved thanks/farewell/weather
+# INTO out_of_scope with reasons. configs/intents.yaml has no such intents,
+# so those presets would be dead config with no consumer (CLAUDE.md 9.3,
+# no dangling hooks). This file follows the 18 S12 convergence: only the
+# presets an actual closed-set intent routes to are kept.
+#
+# Q-18-2 is deferred (limited LLM free chitchat?) -- default is NOT
+# allowed; the executor's allow_llm_freeform stays false. All text is
+# ASCII-punct per the 2026-08-11 iron rule; Chinese words stay.
 
-# TODO(`16`):按该节逐键落值.本文件在落值前会让整栈按设计拒绝启动,这是预期行为.
+# -- J01 greeting: liveness signal, may vary by time of day --
+greeting:
+  default: ["你好", "在的", "您好,有什么需要"]
+  time_variant:
+    morning: ["早上好"]
+    evening: ["晚上好"]
+
+# -- J02 identity: name + one-line duty --
+identity:
+  reply: "我是场区巡检机器人,负责巡检,隐患发现和现场情况上报"
+
+# -- I05 help: capability overview (18 S12.3: J03 capability merged here).
+# Grounded in the real command classes (A motion / B patrol / G query /
+# E ptz / D payload); no capability the robot lacks (weather/door/carry are
+# out_of_scope per 18 S12.3). Hot-updatable wording (16 S11.5). --
+help:
+  reply: "我能巡逻,前往指定地点,查询当前状态和电量,控制云台和补光灯,还能喊话播报.您可以直接下达任务,或问我当前状态"
+
+# -- out_of_scope: directed but beyond capability; guide back to business --
+out_of_scope:
+  reply: "抱歉,我只能处理巡逻相关的事情.您可以问我当前状态,下达巡逻任务,或者说\"你能做什么\"了解更多"
+  consecutive_threshold: 3    # N consecutive out_of_scope -> announce help.reply
