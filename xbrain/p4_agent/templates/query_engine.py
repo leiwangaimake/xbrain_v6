@@ -26,19 +26,31 @@ from dataclasses import dataclass
 from typing import Dict, FrozenSet, List
 
 
-# Categories that need the multi-branch shape per 16 S8.4.
+# 16 S8.2.1 QT-1..QT-11 -> 16 S8.4 template branch keys. KEY IS THE
+# TEMPLATE NAME (query_light_state), NOT "QT-1_battery".
+#
+# 2026-08-11 (GWY-P4-34 / 32.B): the earlier table drifted badly from
+# the doc -- it had QT-1=battery with ok/unknown/shadow branches, but
+# 16 S8.2.1 QT-1 is G26 query_light_state (payload/chassis/all), QT-3 is
+# G28 strobe (shadow-only, "per our record cannot read back"), QT-5 is
+# G32 ptz_pose (unknown / unknown_moving, position readback is a fake
+# value), etc. The eight-hard-branch table (16 S8.2.1) plus the S8.4
+# template library are the authority; the branch keys below are the
+# EXACT branch names from the S8.4 template blocks.
 _QT_REQUIRED_BRANCHES: Dict[str, FrozenSet[str]] = {
-    "QT-1_battery":       frozenset({"ok", "unknown", "shadow"}),
-    "QT-2_mode":          frozenset({"ok", "unknown"}),
-    "QT-3_position":      frozenset({"ok", "unknown", "est"}),
-    "QT-4_time":          frozenset({"ok", "est"}),
-    "QT-5_next_task":     frozenset({"ok", "unknown"}),
-    "QT-6_light":         frozenset({"ok", "unknown"}),
-    "QT-7_target_count":  frozenset({"ok", "unknown"}),
-    "QT-8_current_task":  frozenset({"ok", "unknown", "shadow"}),
-    "QT-9_speed":         frozenset({"ok", "unknown"}),
-    "QT-10_fence_name":   frozenset({"ok", "unknown"}),
-    "QT-11_charge_state": frozenset({"ok", "unknown", "shadow"}),
+    "query_light_state":    frozenset({"payload", "chassis", "all"}),      # QT-1/QT-2 G26
+    "query_strobe_state":   frozenset({"shadow"}),                          # QT-3 G28
+    "query_speaking":       frozenset({"idle", "speaking", "queued"}),      # QT-4 G30
+    "query_ptz_pose":       frozenset({"unknown", "unknown_moving"}),       # QT-5 G32
+    "query_ptz_zoom":       frozenset({"step_only"}),                       # QT-6 G33
+    "query_ptz_owner":      frozenset({"held", "stale"}),                   # QT-7 G37
+    "query_active_fence":   frozenset({"agree", "disagree"}),               # QT-8 G39
+    "query_fence_relation": frozenset({"ok_in", "ok_out", "degraded"}),     # QT-9 G41
+    "query_fence_detail":   frozenset({"ok", "timeout"}),                   # QT-11 G42
+    # QT-10 G34 query_ptz_track has no multi-branch template in 16 S8.4
+    # (it is "answer 'tracking' + target description"), so no required
+    # branch set -- check_qt_branches no-ops for it, same as any
+    # non-multi-branch query template.
 }
 
 

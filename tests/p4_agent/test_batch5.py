@@ -35,17 +35,26 @@ from xbrain.p4_agent.templates.restate_engine import (
 pytestmark = pytest.mark.no_device
 
 
-# --- P4-15 query template branches ---
+# --- P4-15 query template branches (2026-08-11 GWY-P4-34: keys realigned
+# to 16 S8.2.1 template names; QT-1 is G26 light, NOT battery) ---
 
-def test_qt_battery_requires_ok_unknown_shadow():
-    check_qt_branches("QT-1_battery",
-                      frozenset({"ok", "unknown", "shadow"}))
+def test_qt_light_state_requires_payload_chassis_all():
+    check_qt_branches("query_light_state",
+                      frozenset({"payload", "chassis", "all"}))
 
 
-def test_qt_battery_missing_shadow_raises():
+def test_qt_light_state_missing_all_raises():
     with pytest.raises(TemplateSchemaError) as ei:
-        check_qt_branches("QT-1_battery", frozenset({"ok", "unknown"}))
-    assert "shadow" in str(ei.value)
+        check_qt_branches("query_light_state",
+                          frozenset({"payload", "chassis"}))
+    assert "all" in str(ei.value)
+
+
+def test_qt_ptz_pose_requires_unknown_and_moving():
+    # QT-5 G32: position readback is a fake value, so both the unknown
+    # and unknown_moving branches must exist (16 S8.2.1 QT-5).
+    check_qt_branches("query_ptz_pose",
+                      frozenset({"unknown", "unknown_moving"}))
 
 
 def test_qt_non_registered_id_no_op():
