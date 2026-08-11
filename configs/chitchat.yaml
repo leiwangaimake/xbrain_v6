@@ -29,16 +29,30 @@
 # allowed; the executor's allow_llm_freeform stays false. All text is
 # ASCII-punct per the 2026-08-11 iron rule; Chinese words stay.
 
-# -- J01 greeting: liveness signal, may vary by time of day --
+# -- J01 greeting: liveness signal, may vary by time of day. Multiple
+# variants (rotated) so it is not rigid; some carry the robot name 海卫
+# (party-A identity, see robot_identity below / configs/prompts/system.txt). --
 greeting:
-  default: ["你好", "在的", "您好,有什么需要"]
+  default:
+    - "你好,我是海卫"
+    - "在的,有什么需要"
+    - "您好,我是海卫,请说"
+    - "你好,请讲"
+    - "我在,海卫随时待命"
   time_variant:
-    morning: ["早上好"]
-    evening: ["晚上好"]
+    morning: ["早上好,我是海卫", "早上好,请说"]
+    evening: ["晚上好,我在呢", "晚上好,有什么需要"]
 
-# -- J02 identity: name + one-line duty --
+# -- J02 identity: party-A robot name 海卫-风息 / model SNARC-HW-001.
+# Multiple variants (rotated) so self-introduction is varied, not rigid.
+# Base identity is always "海卫, 巡逻机器人". --
 identity:
-  reply: "我是场区巡检机器人,负责巡检,隐患发现和现场情况上报"
+  replies:
+    - "我是海卫,场区巡逻机器人,负责巡检和隐患排查"
+    - "我叫海卫,型号SNARC-HW-001,负责场区巡逻和现场情况上报"
+    - "海卫,一台巡逻机器人,平时负责巡检,发现隐患就上报"
+    - "我是巡逻机器人海卫,全名海卫-风息,有什么可以帮您"
+    - "我是海卫,负责这片场区的巡逻值守和隐患发现"
 
 # -- I05 help: capability overview (18 S12.3: J03 capability merged here).
 # Grounded in the real command classes (A motion / B patrol / G query /

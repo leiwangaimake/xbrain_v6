@@ -55,6 +55,11 @@ class ChitchatState:
     matters (18 S12.5): any successful interaction breaks the streak."""
 
     consecutive_out_of_scope: int = 0
+    # Rotates greeting/identity variants so a self-introduction is varied,
+    # not rigid (party-A ask 2026-08-11). Deterministic rotation (not
+    # random) keeps field logs + tests reproducible while still cycling
+    # through every variant.
+    variant_turn: int = 0
 
     def reset_out_of_scope(self) -> None:
         self.consecutive_out_of_scope = 0
@@ -91,16 +96,24 @@ class ChitchatResponder:
         self._threshold = int(oos["consecutive_threshold"])
         self._p = presets
 
-    def _greeting(self, time_of_day: Optional[str]) -> str:
+    @staticmethod
+    def _rotate(variants, state: "ChitchatState") -> str:
+        """Pick the next variant by rotation and advance the counter, so
+        consecutive calls cycle through all variants (varied, not rigid,
+        yet deterministic for tests / field logs). A single-item list just
+        returns that item."""
+        idx = state.variant_turn % len(variants)
+        state.variant_turn += 1
+        return variants[idx]
+
+    def _greeting(self, state: "ChitchatState",
+                  time_of_day: Optional[str]) -> str:
         g = self._p["greeting"]
-        # Deterministic pick: index 0. The liveness signal (18 S12.1) does
-        # not need randomness, and a deterministic reply keeps tests and
-        # field logs reproducible. time_of_day picks a variant when given.
         if time_of_day:
             variants = g.get("time_variant", {}).get(time_of_day)
             if variants:
-                return variants[0]
-        return g["default"][0]
+                return self._rotate(variants, state)
+        return self._rotate(g["default"], state)
 
     def respond(self, intent_name: str, state: ChitchatState,
                 *, time_of_day: Optional[str] = None) -> str:
@@ -113,10 +126,12 @@ class ChitchatResponder:
         overview (help.reply) and resets the run."""
         if intent_name == "greeting":
             state.reset_out_of_scope()
-            return self._greeting(time_of_day)
+            return self._greeting(state, time_of_day)
         if intent_name == "identity":
             state.reset_out_of_scope()
-            return self._p["identity"]["reply"]
+            # Rotate through the 海卫 identity variants (party-A ask): a
+            # self-introduction should not be the same sentence every time.
+            return self._rotate(self._p["identity"]["replies"], state)
         if intent_name == "help":
             state.reset_out_of_scope()
             return self._p["help"]["reply"]

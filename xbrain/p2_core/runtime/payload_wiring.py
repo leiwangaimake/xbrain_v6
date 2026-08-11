@@ -31,6 +31,13 @@ _logger = logging.getLogger("xbrain.p2.payload")
 
 CMD_PAYLOAD_TOPIC = "cmd/payload"
 
+# Brightness sent when D01 turns the searchlight on, so 开灯 visibly
+# illuminates instead of resuming a possibly-zero remembered level. A UX
+# level, NOT a safety value: 14 GL-2 MSG_BRIGHT range is 0..30, and 30 is
+# the device's own remembered default (payload memory note). Fine-grained
+# brightness is D17 set_light_bright, a separate intent.
+_LIGHT_ON_BRIGHT = 30
+
 
 @dataclass
 class PayloadWiringConfig:
@@ -74,7 +81,7 @@ class PayloadDomain:
         WHICH intent triggered the HTTP call -- 'D06 lights on' beats
         'lights on' when three intents route here."""
         from xbrain.p4_agent.ai_client.lights_client import (
-            LightsClientError, set_redblue,
+            LightsClientError, set_redblue, set_searchlight,
         )
         try:
             if intent_id == "D06":
@@ -90,11 +97,27 @@ class PayloadDomain:
                                 timeout_s=self._cfg.http_timeout_s)
                 self.calls_made += 1
                 _logger.info("payload D07 lights redblue OFF -> %s", r)
+            elif intent_id == "D01":
+                # light_on == searchlight (照明灯) on. Send a visible
+                # brightness so it illuminates (2026-08-11 ORIN: D01 was
+                # dropped and the lamp never lit). _LIGHT_ON_BRIGHT is a UX
+                # level, not a safety value (14 GL-2 range 0..30).
+                r = set_searchlight(base_url=self._cfg.payload_base_url,
+                                    on=True, bright=_LIGHT_ON_BRIGHT,
+                                    timeout_s=self._cfg.http_timeout_s)
+                self.calls_made += 1
+                _logger.info("payload D01 searchlight ON -> %s", r)
+            elif intent_id == "D02":
+                r = set_searchlight(base_url=self._cfg.payload_base_url,
+                                    on=False,
+                                    timeout_s=self._cfg.http_timeout_s)
+                self.calls_made += 1
+                _logger.info("payload D02 searchlight OFF -> %s", r)
             else:
                 self.calls_dropped += 1
                 _logger.warning(
                     "payload envelope intent_id=%r not in the p2 "
-                    "handled set (D06/D07 today); dropped",
+                    "handled set (D01/D02/D06/D07 today); dropped",
                     intent_id)
         except LightsClientError as exc:
             self.errors.append(str(exc))

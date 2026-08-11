@@ -45,14 +45,38 @@ def test_greeting_returns_preset_not_echo():
 
 def test_greeting_time_variant():
     r = ChitchatResponder(_presets())
-    assert r.respond("greeting", ChitchatState(), time_of_day="morning") == "早上好"
-    assert r.respond("greeting", ChitchatState(), time_of_day="evening") == "晚上好"
+    p = _presets()
+    assert r.respond("greeting", ChitchatState(),
+                     time_of_day="morning") in p["greeting"]["time_variant"]["morning"]
+    assert r.respond("greeting", ChitchatState(),
+                     time_of_day="evening") in p["greeting"]["time_variant"]["evening"]
 
 
 def test_identity_and_help_are_presets():
     r = ChitchatResponder(_presets())
-    assert r.respond("identity", ChitchatState()) == _presets()["identity"]["reply"]
-    assert r.respond("help", ChitchatState()) == _presets()["help"]["reply"]
+    p = _presets()
+    # identity now rotates through multiple 海卫 variants (party-A ask).
+    ident = r.respond("identity", ChitchatState())
+    assert ident in p["identity"]["replies"]
+    assert "海卫" in ident                       # every variant carries the name
+    assert r.respond("help", ChitchatState()) == p["help"]["reply"]
+
+
+def test_identity_rotates_not_rigid():
+    """Party-A ask: a self-introduction should not be the same sentence
+    every time. Consecutive calls on one session must cycle variants.
+    MUTATION: a fixed index-0 pick would return the same string here."""
+    r = ChitchatResponder(_presets())
+    st = ChitchatState()
+    seen = {r.respond("identity", st) for _ in range(5)}
+    assert len(seen) >= 2                        # more than one distinct reply
+
+
+def test_greeting_rotates():
+    r = ChitchatResponder(_presets())
+    st = ChitchatState()
+    seen = {r.respond("greeting", st) for _ in range(5)}
+    assert len(seen) >= 2
 
 
 def test_zero_llm_freeform_construction_rejected():
