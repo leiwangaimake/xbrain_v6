@@ -6,13 +6,14 @@ File: mission_json.py
 Brief: BIZ-P3-28 mission_json / total_steps / current_step / step_status_json (ST-1..3 + SS-1..3)
 
 Description:
-15 §5.10 defines the semantics of the mission_json / step columns:
+15 S5.10 defines the semantics of the mission_json / step columns:
 
   ST-1  total_steps is authoritative -- current_step MUST be
         in [0, total_steps]. Progress > total_steps is a bug.
-  ST-2  current_step is monotone non-decreasing until 'completing'
+  ST-2  current_step is monotone non-decreasing WHILE running
         (no rewind); 'resume' with resume_policy='restart' resets
-        the value to 0 by explicit write, not by transition.
+        the value to 0 by explicit write while NOT running (the task
+        is suspended/ready at that point), not by a running rewind.
   ST-3  mission_json is IMMUTABLE after admission. Editing it
         while the task is running is a spec violation; only new
         tasks may replace it.
@@ -20,9 +21,9 @@ Description:
   SS-1  step_status_json is a JSON list with total_steps entries,
         each being one of 'pending' / 'ok' / 'skipped' / 'failed'.
   SS-2  Length invariant: len(step_status_json) == total_steps.
-  SS-3  Terminal-state consistency: if state=='completed', all
-        entries must be 'ok' or 'skipped'; if 'failed', at least
-        one must be 'failed'.
+  SS-3  Terminal-state consistency: if state=='done' (11 S4.4 normal
+        completion), all entries must be 'ok' or 'skipped'; if
+        'failed', at least one must be 'failed'.
 """
 
 from __future__ import annotations
@@ -45,10 +46,14 @@ def assert_current_in_range(current: int, total: int) -> None:
 
 
 def assert_monotone(prev: int, new: int, state: str) -> None:
-    """ST-2: no rewind unless state == 'resuming' with restart."""
-    if new < prev and state != "resuming":
+    """ST-2: current_step must not rewind WHILE running. A resume with
+    resume_policy='restart' resets it to 0, but that write happens while the
+    task is not running (it is suspended/ready during resume prep, 11 S4.4),
+    so keying the guard on state=='running' is both correct and independent of
+    the transient state names (the old 'resuming' state no longer exists)."""
+    if new < prev and state == "running":
         raise MissionJsonInvariantViolation(
-            f"current_step rewind {prev}->{new} in state={state!r}")
+            f"current_step rewind {prev}->{new} while running")
 
 
 def parse_step_status(step_status_json: str, total: int):
@@ -71,12 +76,13 @@ def parse_step_status(step_status_json: str, total: int):
 
 
 def assert_ss3_terminal(entries, state: str) -> None:
-    """SS-3: terminal-state consistency."""
-    if state == "completed":
+    """SS-3: terminal-state consistency. 'done' is 11 S4.4 normal completion
+    (the old vocabulary spelled it 'completed')."""
+    if state == "done":
         for i, v in enumerate(entries):
             if v not in ("ok", "skipped"):
                 raise MissionJsonInvariantViolation(
-                    f"completed task step[{i}]={v!r}")
+                    f"done task step[{i}]={v!r}")
     elif state == "failed":
         if not any(v == "failed" for v in entries):
             raise MissionJsonInvariantViolation(

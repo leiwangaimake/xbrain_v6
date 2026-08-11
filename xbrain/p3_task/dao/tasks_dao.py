@@ -50,13 +50,20 @@ class TasksDAO:
         self._conn = conn
 
     async def insert(self, row: TaskRow) -> None:
+        # suspend_kind / suspend_reason are '' in the Python row when absent,
+        # but the DB canonical for absent is NULL: the tasks CHECK pairs them
+        # with the suspended state via IS NOT NULL, and '' IS NOT NULL is TRUE,
+        # so an empty string on a non-suspended row would (wrongly) read as a
+        # present suspend field and fail the CHECK. Coerce empty -> NULL here;
+        # fetch_by_id maps NULL -> '' back, so the Python side never sees None.
         await self._conn.execute(
             "INSERT INTO tasks (task_id, task_type, state, priority, "
             " submit_seq, suspend_kind, suspend_reason, mission_json, "
             " total_steps, current_step, step_status_json, created_ms, "
             " updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (row.task_id, row.task_type, row.state, row.priority,
-             row.submit_seq, row.suspend_kind, row.suspend_reason,
+             row.submit_seq, row.suspend_kind or None,
+             row.suspend_reason or None,
              row.mission_json, row.total_steps, row.current_step,
              row.step_status_json, row.created_ms, row.updated_ms))
 

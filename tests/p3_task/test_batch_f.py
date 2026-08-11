@@ -123,7 +123,7 @@ def test_progress_waypoint_event():
 def test_heartbeat_excludes_terminal():
     tasks = [
         HeartbeatState("t1", "running", 3, 10),
-        HeartbeatState("t2", "completed", 10, 10),   # terminal - filter
+        HeartbeatState("t2", "done", 10, 10),   # terminal - filter
         HeartbeatState("t3", "suspended", 5, 10),
     ]
     snap = heartbeat_snapshot(tasks)
@@ -209,9 +209,13 @@ def test_monotone_rewind_rejected_in_running():
         assert_monotone(5, 3, state="running")
 
 
-def test_monotone_rewind_allowed_in_resuming():
-    """ST-2: resume with restart may reset current_step to 0."""
-    assert_monotone(5, 0, state="resuming")
+def test_monotone_rewind_allowed_when_not_running():
+    """ST-2: resume with restart may reset current_step to 0 while the task is
+    NOT running (it is suspended/ready during resume prep, 11 S4.4). MUTATION:
+    keying the guard back on a specific state name ('resuming', which no longer
+    exists) would raise here."""
+    assert_monotone(5, 0, state="suspended")   # no raise
+    assert_monotone(5, 0, state="ready")       # no raise
 
 
 def test_step_status_bad_json_rejected():
@@ -236,14 +240,15 @@ def test_step_status_valid_shape():
     assert got == ["ok", "skipped", "failed"]
 
 
-def test_ss3_completed_rejects_failed_step():
-    """SS-3: completed task cannot have failed steps."""
+def test_ss3_done_rejects_failed_step():
+    """SS-3: a 'done' task (normal completion, 11 S4.4) cannot have failed
+    steps."""
     with pytest.raises(MissionJsonInvariantViolation):
-        assert_ss3_terminal(["ok", "failed"], state="completed")
+        assert_ss3_terminal(["ok", "failed"], state="done")
 
 
-def test_ss3_completed_ok_and_skipped_ok():
-    assert_ss3_terminal(["ok", "skipped", "ok"], state="completed")
+def test_ss3_done_ok_and_skipped_ok():
+    assert_ss3_terminal(["ok", "skipped", "ok"], state="done")
 
 
 def test_ss3_failed_without_failed_step_rejected():

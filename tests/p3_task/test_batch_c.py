@@ -21,8 +21,8 @@ from xbrain.p3_task.schedule.loop import (
     ScheduleCandidate, decide, pick_next,
 )
 from xbrain.p3_task.state.machine import (
-    InvalidTransition, TERMINAL_STATES, apply_transition,
-    validate_suspend_fields,
+    InvalidTransition, TASK_STATES, TERMINAL_STATES, TRANSITIONS,
+    apply_transition, validate_suspend_fields,
 )
 from xbrain.p3_task.state.preconditions import (
     check_v1_type, check_v2_priority, check_v3_energy_reach,
@@ -33,58 +33,118 @@ from xbrain.p3_task.state.preconditions import (
 pytestmark = pytest.mark.no_device
 
 
-# --- BIZ-P3-7 state machine ---
+# --- BIZ-P3-7 state machine (11 S4.4 12-value model) ---
 
-def test_transition_pending_admit():
-    r = apply_transition("pending", "admit")
-    assert r.to_state == "queued" and r.idempotent is False
+def test_transition_pending_validate_ok():
+    r = apply_transition("pending", "validate_ok")
+    assert r.to_state == "ready" and r.idempotent is False
 
 
-def test_transition_running_to_completing():
+def test_transition_pending_defers():
+    """Admission can defer a task by time or dependency (15 S3.2)."""
+    assert apply_transition("pending", "validate_defer_time").to_state \
+        == "scheduled"
+    assert apply_transition("pending", "validate_defer_dep").to_state \
+        == "blocked"
+    # A rejected task lands in a terminal (failed), not left pending.
+    assert apply_transition("pending", "validate_fail").to_state == "failed"
+
+
+def test_transition_scheduled_and_blocked_to_ready():
+    assert apply_transition("scheduled", "due").to_state == "ready"
+    assert apply_transition("blocked", "unblock").to_state == "ready"
+
+
+def test_transition_ready_dispatch_to_running():
+    assert apply_transition("ready", "dispatch").to_state == "running"
+
+
+def test_transition_running_to_done():
+    """Normal completion is 'done' (11 S4.4), not the old 'completing'.
+    MUTATION: reverting the target to 'completing' would fail the CHECK on
+    INSERT because 'completing' is no longer a member of the closed set."""
     r = apply_transition("running", "complete")
-    assert r.to_state == "completing"
+    assert r.to_state == "done"
+
+
+def test_transition_suspend_and_resume():
+    assert apply_transition("running", "suspend").to_state == "suspended"
+    assert apply_transition("suspended", "resume").to_state == "ready"
+    assert apply_transition("suspended", "review").to_state == "needs_review"
 
 
 def test_transition_unknown_from_state_rejected():
     with pytest.raises(InvalidTransition, match="unknown from_state"):
-        apply_transition("halfway", "admit")
+        apply_transition("halfway", "validate_ok")
 
 
 def test_transition_bad_event_rejected():
-    """running + 'admit' is not in the table -- must reject
+    """running + 'validate_ok' is not in the table -- must reject
     (CLAUDE.md 3.5 closed set)."""
     with pytest.raises(InvalidTransition, match="no transition"):
-        apply_transition("running", "admit")
+        apply_transition("running", "validate_ok")
 
 
 def test_transition_terminal_idempotent():
-    """T-3: re-emitting 'completed' on a completed task is a no-op."""
-    r = apply_transition("completed", "completed")
-    assert r.idempotent is True and r.to_state == "completed"
+    """T-3: re-emitting 'complete' on a task already 'done' is a no-op (the
+    idempotency check keys on the TARGET state)."""
+    r = apply_transition("done", "complete")
+    assert r.idempotent is True and r.to_state == "done"
+
+
+def test_interrupted_has_no_producer():
+    """15 S3.2 v0.4: 'interrupted' stays in the closed set but no arrow emits
+    it this period. MUTATION: an arrow producing it would show up here."""
+    assert "interrupted" in TASK_STATES
+    assert "interrupted" not in set(TRANSITIONS.values())
 
 
 def test_terminal_states_complete():
-    assert TERMINAL_STATES == frozenset(
-        {"completed", "cancelled", "failed", "aborted"})
+    assert TERMINAL_STATES == frozenset({
+        "done", "failed", "cancelled", "needs_review", "interrupted",
+        "wait_for_power_off"})
 
 
-def test_suspend_kind_required_when_suspended():
-    with pytest.raises(InvalidTransition, match="requires non-empty"):
-        validate_suspend_fields("suspended", "")
+def test_suspend_fields_required_when_suspended():
+    with pytest.raises(InvalidTransition, match="present iff suspended"):
+        validate_suspend_fields("suspended", None, None)
 
 
-def test_suspend_kind_must_be_empty_when_not_suspended():
-    with pytest.raises(InvalidTransition, match="must have empty"):
-        validate_suspend_fields("running", "estop")
+def test_suspend_fields_must_be_empty_when_not_suspended():
+    with pytest.raises(InvalidTransition, match="present iff suspended"):
+        validate_suspend_fields("running", "passive", "operator_pause")
 
 
 def test_suspend_kind_closed_set():
     with pytest.raises(InvalidTransition, match="unknown suspend_kind"):
-        validate_suspend_fields("suspended", "coffee_break")
+        validate_suspend_fields("suspended", "coffee_break", "low_battery")
 
 
-def test_suspend_kind_valid_pair():
-    validate_suspend_fields("suspended", "estop")   # no raise
+def test_suspend_reason_excludes_energy_unreachable():
+    """CR-6: energy_unreachable is a closed-set MEMBER but has no producer, so
+    the machine (matching the DDL CHECK) must reject it. MUTATION: adding it
+    back to SUSPEND_REASONS would let this pass and then fail the INSERT."""
+    with pytest.raises(InvalidTransition, match="unknown suspend_reason"):
+        validate_suspend_fields("suspended", "passive", "energy_unreachable")
+
+
+def test_suspend_valid_passive_pair():
+    validate_suspend_fields("suspended", "passive", "low_battery")   # no raise
+
+
+def test_suspend_valid_yielding_pair():
+    validate_suspend_fields("suspended", "yielding", "preempted")    # no raise
+
+
+def test_suspend_cr8_pairing_enforced():
+    """CR-8: kind and reason must agree on yielding-vs-passive. The combo
+    passive+preempted passes each closed-set CHECK alone but is fail-silent
+    (a preempted task written passive never auto-resumes). MUTATION: dropping
+    the pairing check lets this through."""
+    with pytest.raises(InvalidTransition, match="does not pair"):
+        validate_suspend_fields("suspended", "passive", "preempted")
+    with pytest.raises(InvalidTransition, match="does not pair"):
+        validate_suspend_fields("suspended", "yielding", "low_battery")
 
 
 # --- BIZ-P3-8 preconditions ---
