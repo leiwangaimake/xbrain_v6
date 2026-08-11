@@ -77,7 +77,20 @@ _CN_LABELS = {
     "B02": "开始巡逻", "B07": "取消任务", "B08": "返航", "B09": "回充电桩",
     "D01": "打开照明灯", "D02": "关闭照明灯", "D04": "打开警笛",
     "D06": "打开爆闪灯", "D07": "关闭爆闪灯",
-    "E01": "转动云台", "H07": "重启系统",
+    "E01": "转动云台", "E05": "停止跟踪", "E06": "变焦", "E07": "云台扫描",
+    "E08": "停止扫描", "E09": "调整云台转速", "H07": "重启系统",
+}
+
+# PTZ intents that are capability-BLOCKED on this head (18-B): E02 home /
+# E03 preset / E04 track sit behind T-PTZ-1 (absolute positioning is a
+# no-op on the PELCO-D head), E10 degree-move behind T-PTZ-3. They are
+# rejected with an E_CAPABILITY spoken reply BEFORE dispatch -- never sent
+# to cmd/ptz (where they would be a no-op that looks like success).
+_PTZ_BLOCKED = {
+    "E02": "云台归位暂时用不了,可以说向左或向右转一点",
+    "E03": "云台预置位暂时用不了,可以说向左或向右转一点",
+    "E04": "云台自动跟踪暂时用不了",
+    "E10": "云台按角度转暂不支持,可以说向左转一点或向右转一点",
 }
 
 # latency_class per route (EV-7 consistency, mirrored from the envelope).
@@ -90,12 +103,18 @@ _LATENCY_BY_ROUTE = {
 
 
 def _payload_slots(intent_id: str, text: str) -> Dict[str, Any]:
-    """Fill the closed-set slot for a payload level/mode/volume intent from
-    the ASR text (16 S8.0.4). Returns an extra dict merged into the dispatch
-    payload so p2 gets the requested value. Empty when the slot is absent
-    (e.g. D18 '换一种' -> no mode -> p2 cycles)."""
+    """Fill the closed-set slot for a device intent from the ASR text
+    (16 S8.0.4). Returns an extra dict merged into the dispatch payload so
+    the consumer (p2) gets the requested value. Empty when a slot is absent
+    (e.g. D18 '换一种' -> no mode -> p2 cycles). Covers the payload
+    level/mode/volume intents (D10/D17/D18) and the PTZ move/zoom/speed
+    intents (E01/E06/E09)."""
     from xbrain.p4_agent.slots.payload_slots import (
         parse_light_level, parse_strobe_mode, parse_volume,
+    )
+    from xbrain.p4_agent.slots.ptz_slots import (
+        parse_ptz_amount, parse_ptz_direction, parse_ptz_speed_level,
+        parse_zoom_direction,
     )
     if intent_id == "D17":                       # set_light_bright
         level = parse_light_level(text)
@@ -106,6 +125,21 @@ def _payload_slots(intent_id: str, text: str) -> Dict[str, Any]:
     if intent_id == "D10":                        # set_volume
         vol = parse_volume(text)
         return {"volume": vol} if vol else {}
+    if intent_id == "E01":                        # ptz_move
+        d = parse_ptz_direction(text)
+        out: Dict[str, Any] = {"amount": parse_ptz_amount(text)}
+        if d:
+            out["direction"] = d
+        return out
+    if intent_id == "E06":                        # ptz_zoom
+        z = parse_zoom_direction(text)
+        out = {"amount": parse_ptz_amount(text)}
+        if z:
+            out["zoom_dir"] = z
+        return out
+    if intent_id == "E09":                        # set_ptz_speed
+        level = parse_ptz_speed_level(text)
+        return {"level": level} if level else {}
     return {}
 
 
@@ -242,6 +276,16 @@ class TurnOrchestrator:
         # all L0 and produce speech, not motion.
         if entry.name in _CHITCHAT_NAMES:
             return self._reply_chitchat(entry, session, layer)
+
+        # Capability-blocked PTZ intents (18-B T-PTZ-1/3): reject with a
+        # spoken reason and do NOT dispatch -- they are a no-op on the head,
+        # and a silent dispatch would look like success.
+        blocked = _PTZ_BLOCKED.get(entry.id)
+        if blocked is not None:
+            return TurnDecision(
+                kind="denied", intent_id=entry.id, intent_name=entry.name,
+                route=entry.route, auth=entry.auth, layer=layer,
+                tts_text=blocked)
 
         # G-class query: answer from LIVE state (GWY-P4-39). query_fn
         # returns the rendered answer (or an 'unknown' reply when the state

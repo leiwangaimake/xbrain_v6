@@ -123,6 +123,34 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         payload_sub = gen.declare_subscriber(CMD_PAYLOAD_TOPIC, _on_payload)
         _logger.info("p2 wiring: subscribed %s", CMD_PAYLOAD_TOPIC)
 
+        # -- cmd/ptz subscriber (2026-08-11 PTZ audit) ----------------
+        # p4 dispatch routes the E-class PTZ intents here; PtzDomain drives
+        # the 布控球 via ONVIF ContinuousMove/Stop. Before this cmd/ptz had
+        # NO consumer. Camera credentials come from onvif_credentials.json;
+        # a missing file just disables PTZ (audio/payload keep running).
+        # Sub handle held in a list (strong ref, CLAUDE.md 4.3).
+        from xbrain.p2_core.runtime.ptz_wiring import (
+            CMD_PTZ_TOPIC, PtzDomain, load_onvif_config,
+        )
+        _ptz_subs = []
+        ptz_domain = None
+        onvif_cfg = load_onvif_config(
+            "/opt/xbrain_v6/configs/secrets/onvif_credentials.json")
+        if onvif_cfg is not None:
+            ptz_domain = PtzDomain(onvif_cfg)
+
+            def _on_ptz(sample) -> None:
+                import threading as _t
+                data = bytes(sample.payload)
+                _t.Thread(
+                    target=lambda: ptz_domain.handle_envelope(data),
+                    name="p2.ptz_handler", daemon=True).start()
+
+            _ptz_subs.append(gen.declare_subscriber(CMD_PTZ_TOPIC, _on_ptz))
+            _logger.info("p2 wiring: subscribed %s (PTZ active)", CMD_PTZ_TOPIC)
+        else:
+            _logger.warning("p2 wiring: PTZ disabled (no onvif credentials)")
+
         # Main loop: wait for stop.
         try:
             last_hb = time.monotonic()
