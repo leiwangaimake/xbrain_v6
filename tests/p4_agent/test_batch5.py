@@ -10,7 +10,10 @@ GWY-P4-15/16/17/18 batch 5 tests.
 """
 
 
+import os
+
 import pytest
+import yaml
 
 from xbrain.p4_agent.session.level_routing import (
     Level, LevelRoutingError, SessionUpgrade,
@@ -21,7 +24,7 @@ from xbrain.p4_agent.session.state_machines import (
     RecordingSlot, RecordingState, is_chitchat_interrupt,
 )
 from xbrain.p4_agent.templates.query_engine import (
-    TemplateSchemaError, check_qt_branches,
+    TemplateSchemaError, check_qt_branches, render_reply,
 )
 from xbrain.p4_agent.templates.restate_engine import (
     RestateSchemaError,
@@ -59,6 +62,76 @@ def test_qt_ptz_pose_requires_unknown_and_moving():
 
 def test_qt_non_registered_id_no_op():
     check_qt_branches("not_a_qt_template", frozenset())   # no raise
+
+
+# --- P4-34 (32.B step3) render_reply executor over query_templates.yaml ---
+
+_TEMPLATES_PATH = "/opt/xbrain_v6/configs/query_templates.yaml"
+
+
+def _templates():
+    with open(_TEMPLATES_PATH, encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def test_render_fills_placeholders():
+    t = _templates()
+    out = render_reply(t, "query_battery", "ok", {"soc": 80, "range_km": 5})
+    assert out == "当前电量80%,剩余续航约5公里"
+    assert "{" not in out    # no unfilled placeholder survives to TTS
+
+
+def test_render_missing_value_raises_not_literal_brace():
+    """MUTATION guard: if render_reply skipped the missing-value check it
+    would emit '当前电量50%,剩余续航约{range_km}公里' -- TTS reads '{range_km}'
+    aloud. The check must raise instead (16 S8.4: no half-filled answer)."""
+    t = _templates()
+    with pytest.raises(TemplateSchemaError) as ei:
+        render_reply(t, "query_battery", "ok", {"soc": 50})   # range_km absent
+    assert "range_km" in str(ei.value)
+
+
+def test_render_unknown_template_raises():
+    t = _templates()
+    with pytest.raises(TemplateSchemaError):
+        render_reply(t, "query_nonexistent", "ok", {})
+
+
+def test_render_unknown_branch_raises():
+    t = _templates()
+    with pytest.raises(TemplateSchemaError):
+        render_reply(t, "query_battery", "critical", {"soc": 5})
+
+
+def test_render_ptz_pose_unknown_never_broadcasts_fake_position():
+    """16 S8.2.1 QT-5 G32: PTZ position readback is a FAKE value. The
+    unknown branch must say 'cannot read' and MUST NOT contain a
+    coordinate. MUTATION: a template that filled in {pan}/{tilt} would
+    speak a fabricated bearing -- the branch text carries no placeholder
+    at all, so render returns the honest 'do not know' sentence."""
+    t = _templates()
+    out = render_reply(t, "query_ptz_pose", "unknown", {})
+    assert "读不回来" in out
+    assert "{" not in out    # no coordinate placeholder smuggled in
+
+
+def test_render_light_chassis_says_sent_not_on():
+    """16 S8.2.1 QT-1 GQ-1: the chassis light has no readback, so the
+    answer is 'sent X, chassis does not report' -- NEVER 'on'. MUTATION:
+    a template that claimed the light state would lie."""
+    t = _templates()
+    out = render_reply(t, "query_light_state", "chassis", {"req": "开"})
+    assert "不回报" in out
+    assert "亮着" not in out
+
+
+def test_render_strobe_shadow_carries_record_caveat():
+    """16 S8.2.1 QT-3 G28: strobe cannot be read back; the answer must
+    flag it is 'per our record'. MUTATION: dropping the caveat would
+    present a shadow value as ground truth."""
+    t = _templates()
+    out = render_reply(t, "query_strobe_state", "shadow", {"on_off": "开"})
+    assert "按我方记录" in out
 
 
 # --- P4-16 restate ---
