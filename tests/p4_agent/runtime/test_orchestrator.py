@@ -19,7 +19,7 @@ import yaml
 from xbrain.p4_agent.registry.intents import load_intent_registry
 from xbrain.p4_agent.session.chitchat import ChitchatResponder
 from xbrain.p4_agent.runtime.turn_orchestrator import (
-    OrchestratorSession, TurnOrchestrator,
+    OrchestratorSession, TurnOrchestrator, refine_ptz_intent,
 )
 
 pytestmark = pytest.mark.no_device
@@ -212,3 +212,56 @@ def test_l1b_dispatches_normally_when_estop_up():
     d = orch.handle_turn("转身", s, now_mono_ms=1000)
     assert d.kind == "dispatch"
     assert d.intent_id == "A11"
+
+
+# -- PTZ post-classify refinement (18-B): degree -> E10, scan -> E07 -----
+
+@pytest.mark.parametrize("text", [
+    "云台左转30度", "云台向左转90度", "云台右转180度",
+    "云台向上转45度", "云台左转九十度",
+])
+def test_ptz_degree_move_reclassified_to_e10(text):
+    """A degree-bearing PTZ move is E10 (unsupported on the PELCO-D head),
+    NOT the E01 jog its keyword ('云台左转') matches. MUTATION: drop the
+    degree guard -> refine returns E01 and the head silently jogs a fixed
+    pulse, so 30/90/180 all turn the same amount (18-B R-6 violation)."""
+    assert refine_ptz_intent("E01", text) == "E10"
+
+
+@pytest.mark.parametrize("text", [
+    "云台向左环视一周", "平台向左环视一周", "镜头向右环视一周", "云台向左扫",
+])
+def test_ptz_scan_phrased_as_move_reclassified_to_e07(text):
+    """A move that also says 环视/一圈/一周/扫 is a scan (E07). MUTATION: drop
+    the scan override -> '平台向左环视一周' stays E01 (its 平台向左 keyword ties
+    环视一周 and wins as the earlier registry entry) and does one small move
+    instead of a full turn."""
+    assert refine_ptz_intent("E01", text) == "E07"
+
+
+def test_ptz_plain_move_is_unchanged():
+    """A bare direction with no degree and no scan cue stays E01. MUTATION:
+    an over-broad guard (e.g. any '度'/'周' substring) would divert these."""
+    for text in ("云台向左", "云台左转", "平台向右", "向下看"):
+        assert refine_ptz_intent("E01", text) == "E01"
+
+
+def test_degree_move_end_to_end_is_denied_with_reason(monkeypatch):
+    """Through handle_turn: a degree move is denied (E10) with a spoken reason,
+    never dispatched to cmd/ptz. MUTATION: without the guard it dispatches E01
+    and kind=='dispatch' with no denial."""
+    orch = _orch()
+    d = orch.handle_turn("云台左转90度", OrchestratorSession(), now_mono_ms=1000)
+    assert d.kind == "denied"
+    assert d.intent_id == "E10"
+    assert d.tts_text and "角度" in d.tts_text     # explains the limitation
+
+
+def test_scan_move_end_to_end_dispatches_e07():
+    """Through handle_turn: '平台向左环视一周' dispatches E07 (a full scan), not
+    a small E01 move. This is the ASR-alias case the operator hit."""
+    orch = _orch()
+    d = orch.handle_turn("平台向左环视一周", OrchestratorSession(),
+                         now_mono_ms=1000)
+    assert d.kind == "dispatch"
+    assert d.intent_id == "E07"

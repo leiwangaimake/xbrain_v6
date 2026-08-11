@@ -45,6 +45,7 @@ Traps this guards (each has a mutation test):
 """
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
@@ -93,6 +94,46 @@ _PTZ_BLOCKED = {
     "E04": "云台自动跟踪暂时用不了",
     "E10": "云台按角度转暂不支持,可以说向左转一点或向右转一点",
 }
+
+# A degree/angle specifier (30 du / 九十度 / 一百八十度). A PTZ move carrying
+# an explicit angle is E10 ptz_move_deg -- NOT a bounded jog (E01). The head
+# has no absolute positioning (T-PTZ-1) and the pulse->degree map is
+# uncalibrated (T-PTZ-4), so E10 is capability-rejected. Without this guard a
+# degree move keyword-matches E01 ("云台左转") and silently jogs a fixed pulse,
+# so 30/90/180 du all turn the same small amount and the operator is misled
+# that the angle took effect (18-B R-6: never execute a clamped/ignored angle
+# silently). The number may be Arabic or Chinese numerals.
+_DEGREE_RE = re.compile(r"[0-9零一二三四五六七八九十百千两]+\s*度")
+
+# Scan cues. A ptz_move (E01) whose text ALSO says 环视/一圈/一周/扫 is really
+# a scan (E07). Layer-2 keyword match cannot decide this: for "平台向左环视一周"
+# the E01 keyword "平台向左" (4) TIES the E07 "环视一周" (4), and E01 (earlier in
+# the registry) wins the tie -> a full-circle command executes as a single
+# small move. Overriding E01->E07 when a scan cue is present fixes every
+# prefix (云台/平台/镜头) uniformly, without piling more keyword strings.
+_SCAN_CUES = ("环视", "一圈", "一周", "扫")
+
+
+def _has_ptz_degree(text: str) -> bool:
+    return bool(_DEGREE_RE.search(text or ""))
+
+
+def _has_scan_cue(text: str) -> bool:
+    return any(c in (text or "") for c in _SCAN_CUES)
+
+
+def refine_ptz_intent(intent_id: str, text: str) -> str:
+    """Post-classify PTZ correction (18-B). A flat keyword/large-class match
+    can land on E01 when the utterance is really a degree move (E10, rejected)
+    or a scan (E07). Applied to E01 only; other intents pass through."""
+    if intent_id == "E01":
+        # Degree move first: an angle makes it E10 (rejected), even if it also
+        # said a scan word (a degree'd scan is not a thing we support).
+        if _has_ptz_degree(text):
+            return "E10"
+        if _has_scan_cue(text):
+            return "E07"
+    return intent_id
 
 # latency_class per route (EV-7 consistency, mirrored from the envelope).
 _LATENCY_BY_ROUTE = {
@@ -268,8 +309,11 @@ class TurnOrchestrator:
             # Layer 6: nothing matched but it was directed -> tier-2 LLM.
             return self._run_tier2(text, session, now_mono_ms)
 
-        # Layers 2/3/4 matched an intent id.
-        entry = self._registry.by_id(result.intent)
+        # Layers 2/3/4 matched an intent id. Apply the PTZ post-classify
+        # correction (18-B): a degree move -> E10 (rejected), a scan phrased
+        # as a move -> E07. A flat keyword match cannot make either call.
+        intent_id = refine_ptz_intent(result.intent, text)
+        entry = self._registry.by_id(intent_id)
         return self._route_entry(entry, text, session, now_mono_ms,
                                  layer=result.layer)
 
