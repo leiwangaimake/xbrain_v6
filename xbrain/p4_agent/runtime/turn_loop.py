@@ -122,12 +122,20 @@ class TurnLoopWorker(threading.Thread):
     def __init__(self, cfg: TurnLoopConfig,
                  in_queue: queue.Queue,
                  publish_fn: Callable[[str, bytes], None],
-                 stop_evt: threading.Event) -> None:
+                 stop_evt: threading.Event,
+                 turn_handler: Optional[
+                     Callable[[str], List]] = None) -> None:
         super().__init__(name="p4.turn_loop", daemon=True)
         self._cfg = cfg
         self._q = in_queue
         self._publish = publish_fn
         self._stop_evt = stop_evt
+        # GWY-P4-41 (32.I): when a turn_handler is supplied, each ASR text
+        # goes through it (the six-step TurnOrchestrator) and it returns the
+        # (key, payload_bytes) pairs to publish. When None, the loop falls
+        # back to the V-2B naive_classify + dispatch path (kept only for the
+        # V-2B smoke test; production wiring always passes the handler).
+        self._turn_handler = turn_handler
         self._vad_state = VadState_()
         # Public counters for smoke-test assertions
         self.turns_dispatched = 0
@@ -163,6 +171,25 @@ class TurnLoopWorker(threading.Thread):
             return
         text = (text or "").strip()
         _logger.info("turn_loop asr='%s'", text)
+
+        # GWY-P4-41: production path -- route the turn through the
+        # orchestrator handler, which returns (key, payload_bytes) pairs.
+        if self._turn_handler is not None:
+            try:
+                pairs = self._turn_handler(text)
+            except Exception as exc:      # noqa: BLE001 -- one turn must not kill the loop
+                self.errors.append(str(exc))
+                _logger.warning("turn_loop handler fail: %s", exc)
+                return
+            for key, payload_bytes in pairs:
+                self._publish(key, payload_bytes)
+            self.turns_dispatched += 1
+            self.last_text = text
+            _logger.info("turn_loop orchestrated text=%r publishes=%d",
+                         text, len(pairs))
+            return
+
+        # V-2B fallback path (smoke test only): naive_classify + dispatch.
         intent_id = naive_classify(text)
         try:
             result = dispatch(intent_id, text)

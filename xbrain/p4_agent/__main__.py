@@ -112,6 +112,31 @@ def main_loop(
     return 0
 
 
+def _load_orchestrator_inputs(config_dir: str):
+    """Load the registry + chitchat responder + query templates from the
+    static content files (GWY-P4-41). Returns (registry, chitchat,
+    query_templates). Raises on a missing/invalid file -- the loop cannot
+    classify without the registry, so a partial load is not startable."""
+    import os
+
+    import yaml
+
+    from xbrain.p4_agent.registry.intents import (
+        load_intent_registry_from_yaml,
+    )
+    from xbrain.p4_agent.session.chitchat import ChitchatResponder
+
+    registry = load_intent_registry_from_yaml(
+        os.path.join(config_dir, "intents.yaml"))
+    with open(os.path.join(config_dir, "chitchat.yaml"),
+              encoding="utf-8") as fh:
+        chitchat = ChitchatResponder(yaml.safe_load(fh))
+    with open(os.path.join(config_dir, "query_templates.yaml"),
+              encoding="utf-8") as fh:
+        query_templates = yaml.safe_load(fh)
+    return registry, chitchat, query_templates
+
+
 def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(prog="xbrain.p4_agent")
     ap.add_argument("--config", default=None,
@@ -137,6 +162,17 @@ def main(argv: Optional[list] = None) -> int:
                     help="silence to close utterance (voice-loop only)")
     ap.add_argument("--vad-min-utterance-ms", type=int, default=200,
                     help="min utterance to send to ASR (voice-loop only)")
+    ap.add_argument("--config-dir", default="/opt/xbrain_v6/configs",
+                    help="dir holding intents.yaml/chitchat.yaml/"
+                         "query_templates.yaml (voice-loop orchestrator)")
+    ap.add_argument("--l2-confirm-timeout-ms", type=int, default=8000,
+                    help="L2 confirm wait window (voice-loop only)")
+    ap.add_argument("--query-state-max-age-ms", type=int, default=2000,
+                    help="max age before a state reading is 'unknown' "
+                         "(voice-loop G queries)")
+    ap.add_argument("--query-battery-low-pct", type=int, default=20,
+                    help="SOC at/below which battery answer uses the low "
+                         "branch (voice-loop only)")
     args = ap.parse_args(argv)
 
     logging.basicConfig(
@@ -225,7 +261,30 @@ def main(argv: Optional[list] = None) -> int:
             asr_base_url=args.asr_base_url,
             asr_http_timeout_s=args.asr_http_timeout_s,
             vad_cfg=vad_cfg)
-        return run_voice_loop_wiring(cfg=tl_cfg, stop_flag=stop_flag)
+        # GWY-P4-41 (32.I): build the orchestrator inputs from the static
+        # content files (intents / chitchat / query templates) so the loop
+        # runs the six-step chain, not the V-2B naive path. A missing file
+        # is a hard startup failure -- the loop cannot classify without the
+        # registry.
+        from xbrain.p4_agent.runtime.orchestrator_turn import (
+            VoiceOrchestratorInputs,
+        )
+        try:
+            registry, chitchat, query_templates = _load_orchestrator_inputs(
+                args.config_dir)
+        except Exception as exc:      # noqa: BLE001
+            _logger.error("voice-loop: cannot load orchestrator inputs "
+                          "from %s: %s: %s", args.config_dir,
+                          type(exc).__name__, exc)
+            return 5
+        orch = VoiceOrchestratorInputs(
+            registry=registry, chitchat=chitchat,
+            l2_timeout_ms=args.l2_confirm_timeout_ms,
+            query_templates=query_templates,
+            query_max_age_ms=args.query_state_max_age_ms,
+            query_low_soc_pct=args.query_battery_low_pct)
+        return run_voice_loop_wiring(cfg=tl_cfg, stop_flag=stop_flag,
+                                     orch=orch)
 
     # Pre-existing bug fix: attr is heartbeat_s (from --heartbeat-s),
     # not heartbeat_seconds. Silently correcting the old typo here.

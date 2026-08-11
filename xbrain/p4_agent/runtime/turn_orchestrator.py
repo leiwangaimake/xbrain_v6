@@ -138,12 +138,18 @@ class TurnOrchestrator:
         tier2_fn: Tier2Fn,
         l2_timeout_ms: int,
         matcher: Optional[KeywordMatcher] = None,
+        query_fn: Optional[Callable[[IntentEntry], Optional[str]]] = None,
     ) -> None:
         self._registry = registry
         self._matcher = matcher or KeywordMatcher(registry)
         self._chitchat = chitchat
         self._tier2 = tier2_fn
         self._l2_timeout_ms = l2_timeout_ms
+        # GWY-P4-39/41: for a G-class query, query_fn returns the answer
+        # rendered from LIVE state (or an 'unknown' reply when stale). When
+        # it is None or returns None, the query falls through to a normal
+        # dispatch (the data source for that G id is not wired yet).
+        self._query_fn = query_fn
 
     # -- public entry ----------------------------------------------------
 
@@ -203,6 +209,18 @@ class TurnOrchestrator:
         # all L0 and produce speech, not motion.
         if entry.name in _CHITCHAT_NAMES:
             return self._reply_chitchat(entry, session, layer)
+
+        # G-class query: answer from LIVE state (GWY-P4-39). query_fn
+        # returns the rendered answer (or an 'unknown' reply when the state
+        # is stale); None means the data source for this G id is not wired,
+        # so fall through to a normal dispatch.
+        if entry.id[:1] == "G" and self._query_fn is not None:
+            answer = self._query_fn(entry)
+            if answer is not None:
+                return TurnDecision(
+                    kind="reply", intent_id=entry.id, intent_name=entry.name,
+                    route=entry.route, auth=entry.auth, layer=layer,
+                    reply_text=answer, tts_text=answer)
 
         # Effective auth with CL-2 upgrade (L1b -> L2 when estop down).
         eff_auth = self._effective_auth(entry.auth, session)

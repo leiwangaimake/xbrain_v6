@@ -188,7 +188,10 @@ def test_p4_dispatch_covers_five_key_families():
         CMD_TASK, dispatch,
     )
     cases = [
-        ("D07", CMD_AUDIO_SPEAK),
+        # 2026-08-11 (GWY-P4-41): D07 (strobe_off) was remapped to
+        # cmd/payload by V-STROBE-1; the speak-family example is now a
+        # G-class query (G-prefix -> cmd/audio/speak in intent_dispatch).
+        ("G01", CMD_AUDIO_SPEAK),
         ("B01", CMD_TASK),
         ("A05", CMD_MOTION_INTENT),
         ("E01", CMD_PTZ),
