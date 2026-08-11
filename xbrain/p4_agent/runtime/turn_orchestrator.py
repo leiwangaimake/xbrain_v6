@@ -61,6 +61,9 @@ from xbrain.p4_agent.registry.intents import IntentEntry, IntentRegistry
 from xbrain.p4_agent.runtime.intent_dispatch import (
     DispatchResult, dispatch,
 )
+from xbrain.p4_agent.runtime.task_request import (
+    is_task_create_intent, to_task_request,
+)
 from xbrain.p4_agent.safety_bypass import matcher as bypass_matcher
 from xbrain.p4_agent.safety_bypass import recording_gate
 from xbrain.p4_agent.session.chitchat import ChitchatResponder, ChitchatState
@@ -268,12 +271,17 @@ class TurnOrchestrator:
         l2_timeout_ms: int,
         matcher: Optional[KeywordMatcher] = None,
         query_fn: Optional[Callable[[IntentEntry], Optional[str]]] = None,
+        source: str = "voice",
     ) -> None:
         self._registry = registry
         self._matcher = matcher or KeywordMatcher(registry)
         self._chitchat = chitchat
         self._tier2 = tier2_fn
         self._l2_timeout_ms = l2_timeout_ms
+        # The channel this orchestrator serves ('voice' for the mic loop, or a
+        # text channel). Recorded into a task-create request's `source` so P3
+        # (and telemetry) can tell a spoken task from a typed one.
+        self._source = source
         # GWY-P4-39/41: for a G-class query, query_fn returns the answer
         # rendered from LIVE state (or an 'unknown' reply when stale). When
         # it is None or returns None, the query falls through to a normal
@@ -415,6 +423,18 @@ class TurnOrchestrator:
         # payload level/mode/volume intents, so p2 gets the requested value
         # (D17 level / D18 mode / D10 volume), not just the intent id.
         extra = _payload_slots(entry.id, text)
+        # PB4: a task-CREATE intent (goto/patrol/charge/teach/follow) carries a
+        # cmd/task REQUEST P3's ingest records into task.db -- {task_type,
+        # intent, id, slots, source}. Without it the cmd/task frame is just the
+        # p4_intent_v1 {intent_id, text} P3 cannot turn into a task row. Control
+        # intents (pause/cancel/stop_follow) are NOT creates: to_task_request
+        # returns None and the frame stays as-is (they act on an existing task).
+        if is_task_create_intent(entry.name):
+            treq = to_task_request(
+                entry.name, self._registry,
+                slots=dict(extra), source=self._source)
+            if treq is not None:
+                extra = {**(extra or {}), "task_request": treq}
         # Build the envelope (EV-1..7) and dispatch.
         env = self._build_envelope(entry, eff_auth, slots=dict(extra))
         result = dispatch(entry.id, text, extra or None)

@@ -305,3 +305,38 @@ def test_prefix_reclaim_end_to_end():
     d = orch.handle_turn("云台旋转速度慢一点", OrchestratorSession(),
                          now_mono_ms=1000)
     assert d.intent_id == "E09"
+
+
+# -- PB4: task-create dispatch carries a cmd/task request ------------------
+
+def test_task_create_carries_task_request():
+    """A task-create intent's cmd/task payload includes the task_request P3
+    records ({task_type, intent, id, slots, source}). MUTATION: dropping the
+    enrichment leaves only the p4_intent_v1 frame and P3 cannot build a row."""
+    orch = _orch()
+    d = orch.handle_turn("开始巡逻", OrchestratorSession(), now_mono_ms=1000)
+    assert d.kind == "dispatch"
+    tr = d.dispatch_result.payload.get("task_request")
+    assert tr is not None
+    assert tr["task_type"] == "patrol" and tr["intent"] == "patrol_route"
+    assert tr["id"] == "B02" and tr["source"] == "voice"
+
+
+def test_device_intent_has_no_task_request():
+    """A payload/PTZ command is NOT a task: its payload must not carry a
+    task_request. MUTATION: enriching every dispatch (not just task-creates)
+    would mint a task for a light command."""
+    orch = _orch()
+    d = orch.handle_turn("开灯", OrchestratorSession(), now_mono_ms=1000)
+    assert d.kind == "dispatch"
+    assert "task_request" not in d.dispatch_result.payload
+
+
+def test_orchestrator_source_flows_into_request():
+    """The orchestrator's source ('text' for a text channel) is what the
+    request records. MUTATION: hard-coding 'voice' would fail here."""
+    orch = TurnOrchestrator(
+        _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
+        l2_timeout_ms=5000, source="text")
+    d = orch.handle_turn("开始巡逻", OrchestratorSession(), now_mono_ms=1000)
+    assert d.dispatch_result.payload["task_request"]["source"] == "text"
