@@ -209,3 +209,66 @@ def complete(
     # crossed the limit is appended, so accumulated text can overshoot
     # by up to one token's worth of characters.
     return reply[:reply_max_chars]
+
+
+def classify(
+    base_url: str,
+    prompt: str,
+    grammar: str,
+    *,
+    timeout_s: float,
+    model: str,
+    max_tokens: int = 128,
+) -> str:
+    """GWY-P4-37 (32.E) grammar-constrained classify (tier-2 slot fill).
+
+    Unlike complete() (open dialog, free text), this sends the mission
+    GBNF as the `grammar` field so llama-server's sampler can ONLY emit a
+    string the grammar accepts -- the {"intent":..,"slots":..} shape
+    (16 S7). The reply is NOT streamed/capped by characters: it is a
+    single small JSON object that must arrive whole to parse, so a
+    non-stream request is the honest shape (a half-JSON is unparseable,
+    not a shorter answer).
+
+    grammar MUST be non-empty: an empty grammar would let the model emit
+    free text and defeat the closed-set guarantee (16 S7 GB-1). This is a
+    hard precondition, not a default -- caller passes the generate_grammar
+    output.
+
+    Returns the raw JSON string (the caller parses + runs V1..V7). Raises
+    LlmClientError on request failure / non-200 / empty body.
+
+    Blocking: run under asyncio.to_thread for async callers.
+    """
+    if not grammar:
+        raise LlmClientError(
+            "classify requires a non-empty GBNF grammar (16 S7 GB-1); "
+            "an empty grammar defeats the closed-set constraint")
+    url = base_url.rstrip("/") + _CHAT_PATH
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": 0.0,        # classification is deterministic, not creative
+        "stream": False,
+        "grammar": grammar,        # llama-server GBNF constraint (16 S7)
+    }
+    try:
+        r = requests.post(url, json=body, timeout=timeout_s)
+    except requests.RequestException as exc:
+        raise LlmClientError(
+            "llm classify to %s failed: %s" % (url, exc)) from exc
+    if r.status_code != 200:
+        raise LlmClientError(
+            "llm classify returned %d: %s" % (r.status_code, r.text[:200]))
+    r.encoding = "utf-8"
+    try:
+        data = r.json()
+        content = data["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise LlmClientError(
+            "llm classify body not in expected shape: %s" % exc) from exc
+    content = (content or "").strip()
+    if not content:
+        raise LlmClientError("llm classify produced no content")
+    return content
