@@ -1,5 +1,10 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/speech_presets.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: speech_presets.yaml
+# Brief: L6 speech preset sentences for P2 L2 broadcast (14 S7.3.3)
+#
+# Description:
 #   层:L6 内容表 归属进程:P2(授权 L2 预设语句). P4 只读
 #   * 权威定义处:`14` §7.3.3(语句文本,VOI-47 / PAY-04). `16` §5.3 ID-2(id 形态)
 #

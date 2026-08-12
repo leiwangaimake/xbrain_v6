@@ -1,5 +1,10 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/safety/brake.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: brake.yaml
+# Brief: L3 safety layer -- common.safety.* brake params (10 S5.4.3)
+#
+# Description:
 #   层:L3(安全层)---- 本层[整目录]自动 locked(10 §5.4.3 L3 行 / CFG-31)
 #   本层允许写入的命名空间:common.safety.* (10 §5.4.3 . 出现其他顶层键即拒绝)
 #   本文件的键归属:10 §5.4.0 (1) 目录树逐字"brake.yaml common.safety.brake.* . t_lat_s"

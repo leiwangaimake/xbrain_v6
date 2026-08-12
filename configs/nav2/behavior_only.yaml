@@ -1,5 +1,10 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/nav2/behavior_only.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: behavior_only.yaml
+# Brief: Nav2 behavior_server params -- spin/backup/wait only (11 S10.3)
+#
+# Description:
 #   层:--(ROS 2 侧参数,不进 L0-L6 覆盖轴) 归属进程:Nav2 `behavior_server` + 专用 lifecycle_manager
 #   * 权威定义处:`11` §10.3(配置 `/opt/xbrain_v6/configs/nav2/behavior_only.yaml`)
 #

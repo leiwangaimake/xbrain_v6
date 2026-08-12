@@ -1,5 +1,10 @@
-# ============================================================================
-# /opt/xbrain_v6/configs/p2_core.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: p2_core.yaml
+# Brief: L6 per-process config for xbrain_core P2
+#
+# Description:
 #   layer: L6 (per-process)
 #   owning process: xbrain_core (P2)
 #   authoritative source: 14 S11 (this file's key structure and values come

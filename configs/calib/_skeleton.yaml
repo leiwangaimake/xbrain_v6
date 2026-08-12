@@ -1,5 +1,10 @@
-# ==========================================================================
-# /opt/xbrain_v6/configs/calib/_skeleton.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: _skeleton.yaml
+# Brief: TEMPLATE ONLY -- per-unit calibration skeleton, never loaded
+#
+# Description:
 #   TEMPLATE ONLY -- this is NOT a calibration instance and is never loaded.
 #   A leading underscore marks it as a template; a real calib file is
 #   calib/<robot_id>.yaml (see below).

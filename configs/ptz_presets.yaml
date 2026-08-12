@@ -1,5 +1,10 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/ptz_presets.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: ptz_presets.yaml
+# Brief: L6 PTZ preset content table for P2 (14)
+#
+# Description:
 #   层:L6 内容表 归属进程:P2(PTZ 预置位)
 #   * 权威定义处:`14`
 #

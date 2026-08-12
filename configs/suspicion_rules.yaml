@@ -1,5 +1,10 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/suspicion_rules.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: suspicion_rules.yaml
+# Brief: L6 suspicion-judgement rules content table for P2 (14)
+#
+# Description:
 #   层:L6 内容表 归属进程:P2(可疑判定规则)
 #   * 权威定义处:`14`
 #

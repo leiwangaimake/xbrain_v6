@@ -1,5 +1,10 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/p5_gateway.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: p5_gateway.yaml
+# Brief: L6 per-process config for xbrain_gateway P5 (17 S10.1)
+#
+# Description:
 #   层:L6(进程私有) 归属进程:`xbrain_gateway`(P5)
 #   * 权威定义处:`17` §10.1("本段即现行规范",2026-08-07 逐键抄入,GWY-P5-17)
 #

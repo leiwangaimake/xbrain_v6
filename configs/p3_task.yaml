@@ -1,5 +1,10 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/p3_task.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: p3_task.yaml
+# Brief: L6 per-process config for xbrain_task P3 (15 S12)
+#
+# Description:
 #   层:L6(进程私有) 归属进程:`xbrain_task`(P3)
 #   * 权威定义处:`15` §12
 #

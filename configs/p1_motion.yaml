@@ -1,5 +1,10 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/p1_motion.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: p1_motion.yaml
+# Brief: L6 per-process config for xbrain_motion P1 (12 S12)
+#
+# Description:
 #   层:L6(进程私有) 归属进程:`xbrain_motion`(P1)
 #   * 权威定义处:`12` §12 配置
 #

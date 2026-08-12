@@ -1,5 +1,10 @@
-# ==========================================================================
-# /opt/xbrain_v6/configs/sites/_skeleton.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: _skeleton.yaml
+# Brief: TEMPLATE ONLY -- per-site geo skeleton, never loaded
+#
+# Description:
 #   TEMPLATE ONLY -- this is NOT a site instance and is never loaded.
 #   A leading underscore marks it as a template; a real site file is
 #   sites/<site_id>.yaml (see below).

@@ -1,3 +1,10 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: thresholds.yaml
+# Brief: CFG-BT-1 probe safety thresholds gating Stage 0
+#
+# Description:
 # CFG-BT-1 -- probe thresholds
 #
 # Every value here is a SAFETY parameter. CLAUDE.md 3.1 forbids default

@@ -1,5 +1,10 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/models/m20s.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: m20s.yaml
+# Brief: L2 M20S model static spec (11 S9.6 configuration source)
+#
+# Description:
 #   层:L2(机型层) 归属进程:同型号共用(不是某一个进程的私有文件)
 #   * 权威定义处:`11` §9.6"静态规格(配置来源)"
 #                 + `11` §9.6.1.1"按步态的速度上限表"(gait_limits 的载体)

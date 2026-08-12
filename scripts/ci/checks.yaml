@@ -1,3 +1,10 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: checks.yaml
+# Brief: INF-CI-5 registry of CI checks invoked by run_all.sh
+#
+# Description:
 # INF-CI-5 registry of CI checks
 #
 # Every check that run_all.sh actually invokes MUST appear here, and every

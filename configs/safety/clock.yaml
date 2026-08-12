@@ -1,5 +1,10 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/safety/clock.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: clock.yaml
+# Brief: L3 safety layer -- common.safety.clock.* params (10 S5.4.5)
+#
+# Description:
 #   层:L3(安全层,整目录自动 locked,永不跟随 XBRAIN_CONFIG_DIR ---- 10 §5.4.0 ENV-2)
 #   归属进程:P1 速度门 . P2 健康度 . rtk_driver(10 §5.4.5 行"common.safety.clock.*")
 #   * 权威定义处:11 §1.5.5"ts_sync = false 时的系统行为(U34 落地)"的配置块

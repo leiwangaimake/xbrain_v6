@@ -1,5 +1,10 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/asr_dict.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: asr_dict.yaml
+# Brief: L6 ASR hotword dictionary content table for P4 (16)
+#
+# Description:
 #   层:L6 内容表 归属进程:P4(ASR 词典)
 #   * 权威定义处:`16`
 #

@@ -1,5 +1,10 @@
-# ==========================================================================
-# /opt/xbrain_v6/configs/common.yaml
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: common.yaml
+# Brief: L1 shared namespace -- sole definition site for common.* (10 S5.4.5)
+#
+# Description:
 #   层: L1 (共享命名空间的唯一定义处) 归属进程: 无归属 (全部进程经 freeze 读快照)
 #   键位清单的真源: 10 S5.4.5 "共享参数唯一定义处对照表" -- 该表[左列]逐行
 #     给出的 common.* 路径, 就是本文件必须声明的键位集合 (10 S5.4.4 断言 M 逐字:

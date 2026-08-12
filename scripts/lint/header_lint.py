@@ -45,9 +45,15 @@ import sys
 
 ROOT = "/opt/xbrain_v6"
 
-# Directories holding source we own.
-SOURCE_DIRS = ("xbrain", "scripts", "tests", "common", "ros2_ws", "services")
-SOURCE_EXT = (".py", ".c", ".cc", ".cpp", ".h", ".hpp", ".sh", ".bash")
+# Directories holding source we own. configs/ was added 2026-08-12: the yaml
+# there (CLAUDE.md 2.5 requires the five-field header on yaml too, 2026-08-10)
+# was never gated because neither configs/ was a source dir NOR .yaml a source
+# ext -- 18 configs yaml carried no header and nothing caught it (a scan-surface
+# blind spot, CLAUDE.md 3.2 form "扫描面不声明").
+SOURCE_DIRS = ("xbrain", "scripts", "tests", "common", "ros2_ws", "services",
+               "configs")
+SOURCE_EXT = (".py", ".c", ".cc", ".cpp", ".h", ".hpp", ".sh", ".bash",
+              ".yaml", ".yml")
 
 #: The iron rule. Written as a codepoint join so this file does not itself need
 #: to be exempted from any future check that scans for the English form.
@@ -72,9 +78,15 @@ def iter_sources():
         if not os.path.isdir(base):
             continue
         for dirpath, dirnames, filenames in os.walk(base):
+            # generated/ holds build artifacts (configs/generated/whitelist.yaml
+            # is materialised from 11 S1.1.6; CLAUDE.md 2.2 exempts generated
+            # output, which must not be hand-edited). The model* skip targets
+            # vendor ML payloads, which all live under services/ -- scoped to
+            # services/ so configs/models/ (real config, not vendored) IS gated.
             dirnames[:] = [d for d in dirnames
-                           if d not in ("__pycache__", ".git", "node_modules")
-                           and not d.startswith("model")]
+                           if d not in ("__pycache__", ".git", "node_modules",
+                                        "generated")
+                           and not (d.startswith("model") and "services" in dirpath)]
             for name in filenames:
                 if name.endswith(SOURCE_EXT):
                     yield os.path.join(dirpath, name)

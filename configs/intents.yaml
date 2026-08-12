@@ -1,7 +1,16 @@
-# ===========================================================================
-# /opt/xbrain_v6/configs/intents.yaml
-#   layer: L6 content table owning process: P4 (p4_agent)
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: intents.yaml
+# Brief: P4 L6 intent registry -- id/route/auth/slots for the 18 command closed set
+#
+# Description:
+# Intent registry owned by p4_agent (L6 content table). One entry per intent
+# in the 18 command closed set. Authority for each column:
 #   authority: 16 S6.6 (route + slots) . 16 S8.3A.2 (auth) . 18 S13.1 (auth)
+# The runtime loads the FROZEN product under /run/xbrain/resolved/, never this
+# source (10 S5.4.1). Detail below: the four loader-asserted fields, the
+# ID-2/ID-3 rules, the two slot-level auth splits, and the routing sentinels.
 #
 #   This is the intent registry: one entry per intent in the 18 command
 #   closed set. Each entry carries the four fields the loader asserts present
