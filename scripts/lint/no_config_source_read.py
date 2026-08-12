@@ -128,6 +128,18 @@ EXEMPT_TAGS = {
          "13 S8.3 puts QC-1 on the L6 source because it must tell DEFINING a "
          "spec. key from REFERENCING ${common.spec.*}, and the reference form "
          "does not survive expansion",
+    "secrets": "credentials under configs/secrets/ (onvif_credentials.json etc.) "
+               "-- NOT config values on the L0-L6 axis, never pass through the "
+               "freeze expansion and have no resolved product. The codebase "
+               "treats configs/secrets/ as a special never-copied tree "
+               "(boot/diag secrets ban, assertion J perms 0600), so a consumer "
+               "must name the source path directly",
+    "content": "an L6 content table with ZERO ${common.*} references "
+               "(intents.yaml / chitchat.yaml / query_templates.yaml). The "
+               "freeze pipeline materialises only per-process yaml, not "
+               "reference-free content tables, so source and resolved are "
+               "byte-identical and the rule's misresolution concern -- a "
+               "different result per process -- cannot arise for them",
 }
 
 #: The marker itself. Deliberately shouty and greppable: an exemption that a

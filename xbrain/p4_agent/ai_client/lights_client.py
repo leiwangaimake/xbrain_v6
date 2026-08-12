@@ -25,7 +25,7 @@ pattern is ever needed, thread `pattern` through the call site.
 
 from __future__ import annotations
 
-import requests
+import requests  # BUSINESS-IMPORT-OK(ai-client): CLAUDE.md 4.1 sanctions requests only inside ai_client/
 
 
 class LightsClientError(Exception):

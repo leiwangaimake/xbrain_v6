@@ -78,7 +78,9 @@ def _ws_header(user: str, pwd: str) -> str:
     (report S4.3). A fresh nonce + timestamp per call, so a captured header
     cannot be replayed."""
     nonce = os.urandom(16)
-    # Wall-clock UTC is REQUIRED by the ONVIF protocol here (not a timeout).
+    # ONVIF WS-Security Created binds this request to the camera clock for auth;
+    # the protocol requires wall-clock UTC here, never a monotonic value (S4.3).
+    # WALL-CLOCK-OK(align): camera-clock alignment for the ONVIF auth timestamp.
     created = datetime.datetime.now(datetime.timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
     digest = base64.b64encode(

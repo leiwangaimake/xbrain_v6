@@ -137,8 +137,10 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             CMD_PTZ_TOPIC, PtzDomain, load_onvif_config,
         )
         ptz_domain = None
-        onvif_cfg = load_onvif_config(
-            "/opt/xbrain_v6/configs/secrets/onvif_credentials.json")
+        # CONFIG-SOURCE-OK(secrets): a credentials file, not a config value on the
+        # L0-L6 axis; configs/secrets/ is never materialised to resolved/.
+        onvif_secrets = "/opt/xbrain_v6/configs/secrets/onvif_credentials.json"
+        onvif_cfg = load_onvif_config(onvif_secrets)
         if onvif_cfg is not None:
             ptz_domain = PtzDomain(onvif_cfg)
 

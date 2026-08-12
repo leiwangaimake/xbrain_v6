@@ -199,6 +199,10 @@ def main(argv: Optional[list] = None) -> int:
                     help="silence to close utterance (voice-loop only)")
     ap.add_argument("--vad-min-utterance-ms", type=int, default=200,
                     help="min utterance to send to ASR (voice-loop only)")
+    # The --config-dir default names the source for the reference-free content
+    # tables (intents/chitchat/query_templates); with zero ${common.*} their
+    # CONFIG-SOURCE-OK(content): source and resolved are byte-identical, so no
+    # misresolution can arise (p4_agent.yaml itself is still read from resolved).
     ap.add_argument("--config-dir", default="/opt/xbrain_v6/configs",
                     help="dir holding intents.yaml/chitchat.yaml/"
                          "query_templates.yaml (voice-loop orchestrator)")
