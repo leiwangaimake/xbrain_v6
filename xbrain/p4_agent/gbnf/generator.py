@@ -176,15 +176,21 @@ def generate_grammar(
             "mission must expose only its own <=5 intents, never the full "
             "registry -- a 3B model degrades past ~5 tools."
             % (len(set(alternation)), MAX_MISSION_INTENTS))
-    # Minimal root: the object must carry an intent; slots are filled by
-    # the fastpath regex for closed-set enums (16 S8.0.4), so the mission
-    # grammar constrains the intent choice and leaves slots to a permissive
-    # object the validation layer (V1..V7) then checks.
-    root = 'root ::= "{" ws "\\"intent\\":" ws intent (ws "," ws rest)? ws "}"'
+    # The object carries the intent (closed-set) and a BALANCED slots object.
+    # An earlier version left slots as `rest ::= [^}]*` -- too loose: a 3B model
+    # then rambled past the object (repeating "reason"/"detail" until the token
+    # cap), producing invalid JSON that never parsed. Constraining slots to a
+    # flat {"key": string|number, ...} forces the model to CLOSE the object, so
+    # the reply is always parseable; V1..V7 still validate the values downstream.
+    root = ('root ::= "{" ws "\\"intent\\":" ws intent '
+            '(ws "," ws "\\"slots\\":" ws slots)? ws "}"')
     lines = [
         root,
         _gbnf_intent_rule(alternation),
-        'rest ::= [^}]*',           # slots and remainder; validated downstream
+        'slots ::= "{" ws (kv (ws "," ws kv)*)? ws "}"',
+        'kv ::= "\\"" key "\\"" ws ":" ws val',
+        'key ::= [a-z_]+',
+        'val ::= "\\"" [^"]* "\\"" | "-"? [0-9]+ ("." [0-9]+)?',
         'ws ::= [ \\t\\n]*',
     ]
     return "\n".join(lines) + "\n"
