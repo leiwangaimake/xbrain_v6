@@ -19,7 +19,7 @@
 # below records which volume it was taken from, and the metatest reads that
 # volume rather than assuming 11.
 #
-# ★★★ Each set is bound to the contract by a symmetric-difference metatest in
+#  Each set is bound to the contract by a symmetric-difference metatest in
 # tests/common/test_closed_sets.py. One-directional containment would pass while
 # the library is missing a value the contract added, which is how Event.category
 # sat at 21 while the contract had moved to 23.
@@ -27,14 +27,14 @@
 # No counts here or in comments (CLAUDE.md 3.7). The contract's own tallies
 # have already rotted once: S13.3 still says the error set holds 40.
 #
-# ★ order matters for gate_limiter and stop_reason -- both are documented as
+#  order matters for gate_limiter and stop_reason -- both are documented as
 #   decision orders, not just membership. The metatest checks order for those two.
 
 sets:
   plane:
     source: "11 S2.1"
     anchor: "| `plane` |"        # the table header / row the parser keys off
-    note: "key 空间第二段。xbrain/{robot_id}/{plane}/{domain}/{name}"
+    note: "key 空间第二段.xbrain/{robot_id}/{plane}/{domain}/{name}"
     ordered: false
     values:
       - rt
@@ -48,7 +48,7 @@ sets:
   domain:
     source: "11 S7A.0"
     anchor: "| 域 | `domain` |"        # the table header / row the parser keys off
-    note: "七域仲裁。domain 5 ptz / 4 payload_light 由 p2_core 裁"
+    note: "七域仲裁.domain 5 ptz / 4 payload_light 由 p2_core 裁"
     ordered: false
     values:
       - motion
@@ -61,7 +61,7 @@ sets:
   event_category:
     source: "11 S6.2"
     anchor: "| category | ... | channel |"        # the table header / row the parser keys off
-    note: "事件类别。2026-08-05 由 21 扩为 23（补 ptz / voice）"
+    note: "事件类别.2026-08-05 由 21 扩为 23(补 ptz / voice)"
     ordered: false
     values:
       - intrusion
@@ -90,7 +90,7 @@ sets:
   severity:
     source: "11 S6.1 / S2.2.11"
     anchor: "`{severity}` | `info`"        # the S2.2.11 W-5 row for the event/{severity}/{category} key segment
-    note: "事件严重度。event/{severity}/{category} key 段闭集(S2.2.11 W-5) = Event.sev(S6.1). 4 值 全小写. arbiter 只发 info/warn/fault(S7A.7), alarm 归其他类别(如 intrusion)"
+    note: "事件严重度.event/{severity}/{category} key 段闭集(S2.2.11 W-5) = Event.sev(S6.1). 4 值 全小写. arbiter 只发 info/warn/fault(S7A.7), alarm 归其他类别(如 intrusion)"
     ordered: false
     values:
       - info
@@ -100,7 +100,7 @@ sets:
   reason:
     source: "11 S R2.6-e"
     anchor: "task/progress 的 reason 闭集"        # 11 S R2.6-e 补丁行(§13 正表落地后迁锚)
-    note: "task/progress 运动/遥控阻塞原因(CFG-CM-16, 11 R2.6-e). rotation_blocked/lateral_clearance = RNS 几何门; teleop_stale/deadman_released = 遥控 deadman(M20S 遥控时基). 我方闭集非底盘上报, 非 suspend_reason. §13 正表未落 ⇒ 提取器暂锚 R2.6-e 补丁行"
+    note: "task/progress 运动/遥控阻塞原因(CFG-CM-16, 11 R2.6-e). rotation_blocked/lateral_clearance = RNS 几何门; teleop_stale/deadman_released = 遥控 deadman(M20S 遥控时基). 我方闭集非底盘上报, 非 suspend_reason. §13 正表未落 => 提取器暂锚 R2.6-e 补丁行"
     ordered: false
     values:
       - rotation_blocked
@@ -117,7 +117,7 @@ sets:
   gate_limiter:
     source: "11 S9.6.5"
     anchor: "| 优先级 | `limiter` |"        # the table header / row the parser keys off
-    note: "速度门归因。★ 表序即优先级，estop 最高"
+    note: "速度门归因. 表序即优先级,estop 最高"
     ordered: true
     values:
       - estop
@@ -137,7 +137,7 @@ sets:
   stop_reason:
     source: "11 S4.1"
     anchor: "| `stop_reason` |"        # the table header / row the parser keys off
-    note: "本拍零速的唯一归因。★ 取值顺序即 S9.12.2 的判定顺序"
+    note: "本拍零速的唯一归因. 取值顺序即 S9.12.2 的判定顺序"
     ordered: true
     values:
       - none
@@ -151,7 +151,7 @@ sets:
   task_state:
     source: "11 S4.4"
     anchor: "| 分组 | `state` |"        # the table header / row the parser keys off
-    note: "任务状态。12 值 全小写 冻结"
+    note: "任务状态.12 值 全小写 冻结"
     ordered: false
     values:
       - pending

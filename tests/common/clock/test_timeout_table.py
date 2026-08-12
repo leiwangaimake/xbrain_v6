@@ -87,6 +87,26 @@ EXPECTED_GROUPS = frozenset("ABC")
 #: brackets or Chinese characters.
 _DECORATION = set("*`★☆⚠️✅❌\U0001f6ab☑☰")
 
+#: CJK / full-width punctuation -> ASCII, applied to BOTH sides before compare.
+#: The contract (11 S1.6, docs markdown) keeps CJK punctuation (CLAUDE.md 2.2
+#: exempts docs); the committed copy (timeouts.yaml) must be ASCII (2.2 iron rule
+#: for non-doc files, 2026-08-11). Normalising punctuation on both sides lets the
+#: two forms compare equal while a changed VALUE or Chinese TEXT still drifts the
+#: token -- a pure punctuation map, no interpretation (same ethos as _DECORATION).
+#: This is the timeouts twin of the speech_presets punctuation ruling.
+#: Keys are codepoints, not literal glyphs, so this file stays ASCII and does not
+#: itself trip charset_lint (same tactic as charset_lint BANNED / header_lint
+#: COMPANY_CN). Values are the ASCII replacements the yaml uses. Covers the CJK /
+#: full-width set charset_lint bans (its BANNED_CJK table).
+_CJK_TO_ASCII = {
+    0xff0c: ",", 0x3002: ".", 0xff1b: ";", 0xff1a: ":", 0x3001: ",",
+    0xff08: "(", 0xff09: ")", 0x3010: "[", 0x3011: "]",
+    0x300a: "<", 0x300b: ">", 0x300c: "'", 0x300d: "'",
+    0x2014: "--", 0x2026: "...", 0x00b7: ".", 0x21d2: "=>",
+    0xff5e: "~", 0xff0e: ".", 0xff1d: "=", 0xff06: "&", 0xff5c: "|",
+    0xff1f: "?", 0xff01: "!",
+}
+
 
 def _split_row(line):
     """Split a markdown table row on UNESCAPED pipes only.
@@ -138,6 +158,10 @@ def normalize_threshold(cell):
     """
     head = cell.split("<br>")[0]
     kept = "".join(ch for ch in head if ch not in _DECORATION)
+    # Punctuation normalised to ASCII on both sides (see _CJK_TO_ASCII): the
+    # contract writes CJK punctuation, the committed yaml writes ASCII, and the
+    # token must not drift on that difference alone (CLAUDE.md 2.2).
+    kept = kept.translate(_CJK_TO_ASCII)
     # \s+ -> single space, then strip: removing a glyph that sat between two
     # spaces leaves a double space, and an unstable amount of whitespace would
     # make the token depend on invisible detail.

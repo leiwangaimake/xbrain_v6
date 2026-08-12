@@ -12,11 +12,11 @@
 # else: a code spelled slightly differently in two processes compiles, runs, and
 # only surfaces during integration.
 #
-# ★★★ This file and the contract must agree in BOTH directions. The metatest
+#  This file and the contract must agree in BOTH directions. The metatest
 # tests/common/test_error_codes.py asserts an empty symmetric difference and is
 # the only thing keeping them in sync; see its two mutation cases.
 #
-# 🚫 Do NOT write a total count here or in any comment. S13.3 of the contract
+#  Do NOT write a total count here or in any comment. S13.3 of the contract
 # carries one and it is already stale: it says group L holds 2 codes and the
 # total is 40, while S13.15 now holds 3. A number a human copies is a number that
 # rots (CLAUDE.md 3.7).
@@ -34,7 +34,7 @@
 #   required    the contract literally says detail 必填
 #   implied     the contract prescribes detail contents in other words
 #   unspecified the contract says nothing about detail for this code
-# ⚠️ Only one code carries the literal wording while several others prescribe
+#  Only one code carries the literal wording while several others prescribe
 #    detail contents differently. That is a contract-side question and is NOT
 #    resolved by guessing here.
 
@@ -53,7 +53,7 @@ codes:
     group: C          # 11 S13.6
     retryable: no
     detail: unspecified
-    meaning: "消息结构非法：v 不认识、必填字段缺失、枚举值越界、校验和不符"
+    meaning: "消息结构非法:v 不认识,必填字段缺失,枚举值越界,校验和不符"
   - code: E_TASK_STATE
     group: D          # 11 S13.7
     retryable: conditional
@@ -68,12 +68,12 @@ codes:
     group: D          # 11 S13.7
     retryable: n_a
     detail: unspecified
-    meaning: "幂等命中，未重复执行"
+    meaning: "幂等命中,未重复执行"
   - code: E_BUSY
     group: E          # 11 S13.8
     retryable: conditional
     detail: unspecified
-    meaning: "资源被更高优先级占用，或前置的「先停下来」条件不满足"
+    meaning: "资源被更高优先级占用,或前置的'先停下来'条件不满足"
   - code: E_ARB_NO_DOMAIN
     group: E          # 11 S13.8
     retryable: no
@@ -88,12 +88,12 @@ codes:
     group: E          # 11 S13.8
     retryable: conditional
     detail: unspecified
-    meaning: "域已被缴械（ArbDomainState.suspended != null），域内全部源失去持有资格"
+    meaning: "域已被缴械(ArbDomainState.suspended != null),域内全部源失去持有资格"
   - code: E_ARB_DISABLED
     group: E          # 11 S13.8
     retryable: no
     detail: unspecified
-    meaning: "源被判定为「卡死源」，已降级为不可持有"
+    meaning: "源被判定为'卡死源',已降级为不可持有"
   - code: E_ARB_LEASE_EXPIRED
     group: E          # 11 S13.8
     retryable: yes
@@ -103,7 +103,7 @@ codes:
     group: F          # 11 S13.9
     retryable: conditional
     detail: unspecified
-    meaning: "处于真正的锁定态，需显式解除"
+    meaning: "处于真正的锁定态,需显式解除"
   - code: E_UNHEALTHY
     group: F          # 11 S13.9
     retryable: conditional
@@ -118,12 +118,12 @@ codes:
     group: F          # 11 S13.9
     retryable: conditional
     detail: unspecified
-    meaning: "定位/航向质量降级，不接受新任务（已在执行的任务可继续）"
+    meaning: "定位/航向质量降级,不接受新任务(已在执行的任务可继续)"
   - code: E_NO_HEADING
     group: F          # 11 S13.9
     retryable: conditional
     detail: unspecified
-    meaning: "航向已降级到 L2 / L3，该指令需要绝对航向基准"
+    meaning: "航向已降级到 L2 / L3,该指令需要绝对航向基准"
   - code: E_OUT_OF_FENCE
     group: F          # 11 S13.9
     retryable: conditional
@@ -138,22 +138,22 @@ codes:
     group: F          # 11 S13.9
     retryable: conditional
     detail: unspecified
-    meaning: "急停链路探活中断 —— quadruped > 3 s 未收到 rt/safety/probe/ping"
+    meaning: "急停链路探活中断 ---- quadruped > 3 s 未收到 rt/safety/probe/ping"
   - code: E_STATUS
     group: F          # 11 S13.9
     retryable: conditional
     detail: unspecified
-    meaning: "云端链路失联，按来源拒绝「无监管来源」的新任务（TSK-22）"
+    meaning: "云端链路失联,按来源拒绝'无监管来源'的新任务(TSK-22)"
   - code: E_GEO_CONFLICT
     group: G          # 11 S13.10
     retryable: conditional
     detail: unspecified
-    meaning: "乐观并发版本冲突：base_rev != local.rev"
+    meaning: "乐观并发版本冲突:base_rev != local.rev"
   - code: E_GEO_INVALID
     group: G          # 11 S13.10
     retryable: no
     detail: implied
-    meaning: "地理对象落库校验不通过（非围栏运行期几何专用）"
+    meaning: "地理对象落库校验不通过(非围栏运行期几何专用)"
   - code: E_GEO_TOO_LARGE
     group: G          # 11 S13.10
     retryable: no
@@ -163,12 +163,12 @@ codes:
     group: G          # 11 S13.10
     retryable: conditional
     detail: required
-    meaning: "分片传输未集齐 —— 已收到的片有效，但对象尚未成形"
+    meaning: "分片传输未集齐 ---- 已收到的片有效,但对象尚未成形"
   - code: E_FENCE_INVALID
     group: G          # 11 S13.10
     retryable: no
     detail: implied
-    meaning: "围栏几何编译期校验失败（op=stage 时由每个消费者独立执行）"
+    meaning: "围栏几何编译期校验失败(op=stage 时由每个消费者独立执行)"
   - code: E_NAME_CONFLICT
     group: G          # 11 S13.10
     retryable: conditional
@@ -178,17 +178,17 @@ codes:
     group: H          # 11 S13.11
     retryable: conditional
     detail: unspecified
-    meaning: "已存在录制会话（ 全局单例）"
+    meaning: "已存在录制会话( 全局单例)"
   - code: E_TEACH_STATE
     group: H          # 11 S13.11
     retryable: conditional
     detail: unspecified
-    meaning: "当前会话状态不允许该动作，或 session_id 不匹配"
+    meaning: "当前会话状态不允许该动作,或 session_id 不匹配"
   - code: E_TEACH_GEOMETRY
     group: H          # 11 S13.11
     retryable: conditional
     detail: unspecified
-    meaning: "录制几何校验失败（阻断级）"
+    meaning: "录制几何校验失败(阻断级)"
   - code: E_TEACH_QUALITY
     group: H          # 11 S13.11
     retryable: conditional
@@ -208,12 +208,12 @@ codes:
     group: I          # 11 S13.12
     retryable: no
     detail: unspecified
-    meaning: "该动作需要人工确认凭据，请求未携带"
+    meaning: "该动作需要人工确认凭据,请求未携带"
   - code: E_CAPABILITY
     group: J          # 11 S13.13
     retryable: no
     detail: unspecified
-    meaning: "三类语义（⚠️ 见 §13.18 第 5 条，建议未来拆分）：① 本体能力不支持；② 指令已被删除；③ 来源与进程绑定不符"
+    meaning: "三类语义( 见 §13.18 第 5 条,建议未来拆分):① 本体能力不支持;② 指令已被删除;③ 来源与进程绑定不符"
   - code: E_NOT_IMPLEMENTED
     group: J          # 11 S13.13
     retryable: no
@@ -223,24 +223,24 @@ codes:
     group: K          # 11 S13.14
     retryable: conditional
     detail: unspecified
-    meaning: "超时。 detail.item 必填（覆盖面过宽，见 §13.18 第 6 条）"
+    meaning: "超时. detail.item 必填(覆盖面过宽,见 §13.18 第 6 条)"
   - code: E_INTERNAL
     group: K          # 11 S13.14
     retryable: conditional
     detail: unspecified
-    meaning: "内部错误 ——  本节所有其他码都不适用时的兜底"
+    meaning: "内部错误 ----  本节所有其他码都不适用时的兜底"
   - code: E_QOS_VIOLATION
     group: L          # 11 S13.15
     retryable: no
     detail: implied
-    meaning: "QoS 配置违反冻结约束，启动自检拒绝放行"
+    meaning: "QoS 配置违反冻结约束,启动自检拒绝放行"
   - code: E_CONFIG_INVALID
     group: L          # 11 S13.15
     retryable: no
     detail: unspecified
-    meaning: "配置文件自校验不通过，启动自检拒绝放行"
+    meaning: "配置文件自校验不通过,启动自检拒绝放行"
   - code: E_STORAGE_CORRUPT
     group: L          # 11 S13.15
     retryable: no
     detail: unspecified
-    meaning: "持久化库文件损坏，启动自检拒绝放行"
+    meaning: "持久化库文件损坏,启动自检拒绝放行"

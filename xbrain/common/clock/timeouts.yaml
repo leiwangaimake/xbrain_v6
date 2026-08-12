@@ -30,17 +30,17 @@
 # as the one wall-clock entry. The metatest asserts both anchor phrases still
 # exist before trusting that derivation.
 #
-# 🚫 Do NOT write a count of rows here or in any comment. S1.6 does not carry one
+#  Do NOT write a count of rows here or in any comment. S1.6 does not carry one
 # and a human-copied tally rots (CLAUDE.md 3.7). The scan-surface metatest is
 # what proves nothing was dropped.
 #
-# 🚫 This is NOT configuration. It ships inside the package like codes.yaml, is
+#  This is NOT configuration. It ships inside the package like codes.yaml, is
 # read from the package directory, and must be byte-identical for every process
 # -- the resolved config tree deliberately expands per process and cannot offer
 # that (10 S5.4.1).
 
 timeouts:
-  # --- A group: 11 S1.6.1 · safety loop · all monotonic, no wall clock ---
+  # --- A group: 11 S1.6.1 . safety loop . all monotonic, no wall clock ---
   - id: T-01
     group: A          # 11 S1.6.1
     timebase: monotonic
@@ -76,11 +76,11 @@ timeouts:
   - id: T-09
     group: A          # 11 S1.6.1
     timebase: monotonic
-    threshold: "500 ms（本次新增）"
+    threshold: "500 ms(本次新增)"
   - id: T-10
     group: A          # 11 S1.6.1
     timebase: monotonic
-    threshold: "1 s（本次新增）"
+    threshold: "1 s(本次新增)"
   - id: T-11
     group: A          # 11 S1.6.1
     timebase: monotonic
@@ -88,8 +88,8 @@ timeouts:
   - id: T-12
     group: A          # 11 S1.6.1
     timebase: monotonic
-    threshold: "timeout_s（默认 20 s）"
-  # --- B group: 11 S1.6.2 · link, session, health · monotonic ---
+    threshold: "timeout_s(默认 20 s)"
+  # --- B group: 11 S1.6.2 . link, session, health . monotonic ---
   - id: T-20
     group: B          # 11 S1.6.2
     timebase: monotonic
@@ -101,7 +101,7 @@ timeouts:
   - id: T-22
     group: B          # 11 S1.6.2
     timebase: monotonic
-    threshold: "≥ 1 Hz（建议 2 Hz）"
+    threshold: "≥ 1 Hz(建议 2 Hz)"
   - id: T-23
     group: B          # 11 S1.6.2
     timebase: monotonic
@@ -122,7 +122,7 @@ timeouts:
     group: B          # 11 S1.6.2
     timebase: monotonic
     threshold: "1 s"
-  # --- C group: 11 S1.6.3 · non-safety loop · monotonic except T-46 ---
+  # --- C group: 11 S1.6.3 . non-safety loop . monotonic except T-46 ---
   - id: T-40
     group: C          # 11 S1.6.3
     timebase: monotonic
@@ -146,7 +146,7 @@ timeouts:
   - id: T-45
     group: C          # 11 S1.6.3
     timebase: monotonic
-    threshold: "5.0 s 后转补发（v0.7 定案，）"
+    threshold: "5.0 s 后转补发(v0.7 定案,)"
   - id: T-46
     group: C          # 11 S1.6.3
     timebase: wall
@@ -154,12 +154,12 @@ timeouts:
   - id: T-ESTOP-CLOUD
     group: C          # 11 S1.6.3
     timebase: monotonic
-    threshold: "待实测（M-23／00 COM-56）"
+    threshold: "待实测(M-23／00 COM-56)"
   - id: T-TELEOP-CMD
     group: C          # 11 S1.6.3
     timebase: monotonic
-    threshold: "取甲方下发值，缺省 / 越界时用 400 ms（与本地 cmd/teleop 计龄口径同源）"
+    threshold: "取甲方下发值,缺省 / 越界时用 400 ms(与本地 cmd/teleop 计龄口径同源)"
   - id: T-BCAST-MAX
     group: C          # 11 S1.6.3
     timebase: monotonic
-    threshold: "现行值见 14 §11 mode.b_cast_max_duration_s（ 现场可调 —— 涉扰民与电量； 不是「未标定」，不得回填 null，见本行 2026-08-05 对抗验收订正 ②）"
+    threshold: "现行值见 14 §11 mode.b_cast_max_duration_s( 现场可调 ---- 涉扰民与电量; 不是'未标定',不得回填 null,见本行 2026-08-05 对抗验收订正 ②)"

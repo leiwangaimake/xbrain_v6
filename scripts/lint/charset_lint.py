@@ -41,9 +41,15 @@ import unicodedata
 ROOT = "/opt/xbrain_v6"
 
 # Directories that hold source we own. services/ is included: it is our code too.
-SOURCE_DIRS = ("xbrain", "scripts", "tests", "common", "ros2_ws", "services")
+# configs/ added 2026-08-12: CLAUDE.md 2.2 (2026-08-10) put .yaml under this rule,
+# but configs/ was never a source dir nor .yaml a source ext, so configs yaml were
+# never scanned by default (only when an arg was passed, and this main() ignores
+# file args) -- a scan-surface blind spot (CLAUDE.md 3.2).
+SOURCE_DIRS = ("xbrain", "scripts", "tests", "common", "ros2_ws", "services",
+               "configs")
 
-SOURCE_EXT = (".py", ".c", ".cc", ".cpp", ".h", ".hpp", ".sh", ".bash")
+SOURCE_EXT = (".py", ".c", ".cc", ".cpp", ".h", ".hpp", ".sh", ".bash",
+              ".yaml", ".yml")
 
 # Decorative symbols the project uses in markdown and forbids in source.
 # Listed explicitly rather than by Unicode block: a block test would also catch
@@ -131,10 +137,15 @@ def iter_sources():
         if not os.path.isdir(base):
             continue
         for dirpath, dirnames, filenames in os.walk(base):
-            # Skip caches and any vendored model or third-party payload.
+            # Skip caches, generated build artifacts, and vendored payloads.
+            # generated/ = materialised output (configs/generated/whitelist.yaml,
+            # CLAUDE.md 2.2 exempts it, hand-editing forbidden). The model* skip
+            # is vendor ML payloads under services/ -- scoped to services/ so
+            # configs/models/ (real config, not vendored) IS scanned.
             dirnames[:] = [d for d in dirnames
-                           if d not in ("__pycache__", ".git", "node_modules")
-                           and not d.startswith("model")]
+                           if d not in ("__pycache__", ".git", "node_modules",
+                                        "generated")
+                           and not (d.startswith("model") and "services" in dirpath)]
             for name in filenames:
                 if name.endswith(SOURCE_EXT):
                     yield os.path.join(dirpath, name)
