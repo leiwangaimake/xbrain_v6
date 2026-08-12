@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>XBRAIN_V6 GPS 网格地图 HMI</title>
+<link rel="stylesheet" href="hmi.css">
+</head>
+<body>
+<main class="hmi">
+  <section class="map-shell" aria-label="GPS 网格地图">
+    <header class="map-toolbar">
+      <div class="map-title">GPS 网格地图</div>
+      <!-- ESTOP: 17 S6.10.1 / W1. Greyed when link.estop_path != ok (NAV-64). -->
+      <button id="estopBtn" class="estop-btn" title="紧急停止" disabled>急停 ESTOP</button>
+      <div class="zoom-group">
+        <button id="zoomIn" class="zoom-btn" title="放大">＋</button>
+        <button id="zoomOut" class="zoom-btn" title="缩小">－</button>
+        <button id="zoomReset" class="zoom-btn" title="复位">⟳</button>
+      </div>
+    </header>
+
+    <div id="viewport" class="map-viewport" title="拖动平移, 滚轮缩放">
+      <svg id="mapSvg" preserveAspectRatio="none">
+        <defs>
+          <pattern id="minorGrid" patternUnits="userSpaceOnUse">
+            <path id="minorGridPath" fill="none" class="map-grid-minor"/>
+          </pattern>
+          <pattern id="majorGrid" patternUnits="userSpaceOnUse">
+            <rect id="majorGridRect" fill="url(#minorGrid)"/>
+            <path id="majorGridPath" fill="none" class="map-grid-major"/>
+          </pattern>
+        </defs>
+        <rect id="gridBg" fill="url(#majorGrid)"/>
+
+        <!-- Layers filled by hmi.js from /api/hmi/snapshot. Empty until data. -->
+        <g id="keepInLayer"></g>
+        <g id="alarmLayer"></g>
+        <g id="recordedRouteLayer"></g>
+        <g id="realtimeTrajectoryLayer"></g>
+        <g id="keypointLayer"></g>
+        <g id="robotLayer"></g>
+        <g id="eventLayer"></g>
+      </svg>
+
+      <div class="map-overlay legend">
+        <div class="legend-row"><i class="legend-mark recorded-route-mark"></i><span>已录制轨迹</span></div>
+        <div class="legend-row"><i class="legend-mark realtime-route-mark"></i><span>实时行走轨迹</span></div>
+        <div class="legend-row"><i class="legend-mark fence"></i><span>营区边界</span></div>
+        <div class="legend-row"><i class="legend-mark alarm"></i><span>报警区域</span></div>
+      </div>
+
+      <div class="map-overlay compass" title="地图指北针">
+        <span class="compass-n">N</span>
+        <span class="compass-arrow">▲</span>
+      </div>
+
+      <section class="map-overlay current-plan" aria-label="当前计划显示">
+        <div class="plan-window-title">当前计划</div>
+        <div id="planList"><div class="plan-empty">暂无计划</div></div>
+      </section>
+
+      <div class="map-overlay coord">
+        <div><strong>GPS</strong> <span id="coordGps">无定位</span></div>
+        <div><strong>ENU</strong> <span id="coordEnu">--</span></div>
+      </div>
+    </div>
+
+    <footer class="map-footer">
+      <span class="mode-text" id="modeText">--</span>
+      <span class="gps-state"><i class="dot" id="rtkDot"></i><span id="rtkText">无 RTK</span></span>
+      <span>精度 <strong id="precText">--</strong></span>
+      <span>地图基准 <strong>WGS84 / ENU</strong></span>
+      <span>缩放 <strong id="zoomText">1.0x</strong></span>
+      <span class="scale" id="scaleText">网格 --</span>
+      <span class="link-state"><i class="dot" id="linkDot"></i><span id="linkText">链路 --</span></span>
+    </footer>
+  </section>
+</main>
+<script src="hmi.js"></script>
+</body>
+</html>
