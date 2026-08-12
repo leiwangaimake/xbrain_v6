@@ -45,7 +45,8 @@ _TASK_CREATE_INTENTS: Dict[str, str] = {
     "return_home":        "return_home",  # B08
     "goto_dock":          "charge",       # B09 (docking is a charge task)
     "follow_target":      "follow",       # B11
-    "record_route_start": "teach",        # F01 (recording is a teach task)
+    "record_route_start": "teach",        # F01 (route recording is a teach task)
+    "record_fence_start": "teach",        # F07 (fence recording is a teach task)
 }
 
 # 15 S12 TASK_TYPES -- duplicated as the validation target so a mapping

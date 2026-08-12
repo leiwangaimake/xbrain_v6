@@ -70,6 +70,35 @@ def validate_polygon(points) -> None:
         raise InvalidPolygon("degenerate polygon (area = 0)")
 
 
+def assert_perimeter_closed(points, tol_m: float) -> None:
+    """Recording-time check (15 S8.1A '闭合点错 = 多边形错'): a walked fence
+    perimeter MUST return near its start -- the last recorded point within
+    tol_m of the first -- else the operator did not close the loop and the
+    polygon is wrong. This is DISTINCT from validate_polygon (which checks the
+    stored ring): here we check the RAW walked track before storing. tol_m is
+    injected (a recording tolerance; no code default, CLAUDE.md 3.1)."""
+    if len(points) < 3:
+        raise InvalidPolygon(f"only {len(points)} points, need >= 3")
+    (x0, y0), (xn, yn) = points[0], points[-1]
+    d = math.hypot(xn - x0, yn - y0)
+    if d > tol_m:
+        raise InvalidPolygon(
+            f"perimeter not closed: last-to-first {d:.2f}m > tol {tol_m}m")
+
+
+def close_ring(points, tol_m: float):
+    """Return the vertex ring to STORE: if the last walked point coincides with
+    the first (within tol_m), drop it. The stored polygon closes implicitly via
+    the (i+1) % n wraparound in polygon_area / point_in_polygon, so a duplicated
+    closing vertex would double-count the seam (zero-length edge)."""
+    pts = list(points)
+    if len(pts) >= 2:
+        (x0, y0), (xn, yn) = pts[0], pts[-1]
+        if math.hypot(xn - x0, yn - y0) <= tol_m:
+            return pts[:-1]
+    return pts
+
+
 def point_in_circle(x: float, y: float, c: Circle) -> bool:
     return math.hypot(x - c.cx, y - c.cy) <= c.r
 
