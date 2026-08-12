@@ -19,7 +19,7 @@ import pytest_asyncio
 
 from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
-from xbrain.p3_task.schedule.driver import scheduler_tick
+from xbrain.p3_task.schedule.driver import apply_motion_result, scheduler_tick
 
 
 pytestmark = pytest.mark.no_device
@@ -110,3 +110,57 @@ async def test_bad_type_validate_fails(dao_conn):
 
 async def _noop(task_id, to_state, reason):
     return None
+
+
+# -- apply_motion_result: running -> done/failed (PB8) --------------------
+
+async def _run_one(dao, conn, task_id="t1"):
+    """Record a task and drive it to 'running' via a tick."""
+    await dao.insert(_pending(task_id))
+    await conn.commit()
+    await scheduler_tick(conn, dao, now_mono_ms=1, on_transition=_noop)
+
+
+@pytest.mark.asyncio
+async def test_motion_succeeded_completes(dao_conn):
+    dao, conn = dao_conn
+    await _run_one(dao, conn)
+    made = await apply_motion_result(conn, dao, "t1", "succeeded",
+                                     now_mono_ms=2, on_transition=_noop)
+    assert made is True
+    assert (await dao.fetch_by_id("t1")).state == "done"
+
+
+@pytest.mark.asyncio
+async def test_motion_aborted_fails(dao_conn):
+    """MUTATION: mapping aborted to 'complete' would mark a crashed run done."""
+    dao, conn = dao_conn
+    await _run_one(dao, conn)
+    await apply_motion_result(conn, dao, "t1", "aborted", now_mono_ms=2,
+                              on_transition=_noop)
+    assert (await dao.fetch_by_id("t1")).state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_motion_in_flight_is_noop(dao_conn):
+    """'running'/'accepted' are in-flight -> no transition. MUTATION: treating
+    them as terminal would end the task on the first progress frame."""
+    dao, conn = dao_conn
+    await _run_one(dao, conn)
+    made = await apply_motion_result(conn, dao, "t1", "running", now_mono_ms=2,
+                                     on_transition=_noop)
+    assert made is False
+    assert (await dao.fetch_by_id("t1")).state == "running"
+
+
+@pytest.mark.asyncio
+async def test_motion_result_for_non_running_is_noop(dao_conn):
+    """A late 'succeeded' after the task already left running (e.g. cancelled)
+    must not resurrect it. MUTATION: skipping the state guard would."""
+    dao, conn = dao_conn
+    await dao.insert(_pending("t1"))
+    await conn.commit()                            # stays pending, never ran
+    made = await apply_motion_result(conn, dao, "t1", "succeeded",
+                                     now_mono_ms=2, on_transition=_noop)
+    assert made is False
+    assert (await dao.fetch_by_id("t1")).state == "pending"

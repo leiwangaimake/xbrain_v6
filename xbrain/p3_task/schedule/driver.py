@@ -100,3 +100,36 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
     # One commit closes the whole tick atomically (see module docstring).
     await conn.commit()
     return made
+
+
+# Motion result closed set (11 S3.5 relative_move/status terminal values). A
+# 'succeeded' completes the task; 'aborted'/'rejected' fail it. 'accepted'/
+# 'running' are in-flight and drive no task transition.
+_MOTION_TERMINAL = {"succeeded": "complete", "aborted": "fail",
+                    "rejected": "fail"}
+
+
+async def apply_motion_result(conn, dao, task_id: str, result: str, *,
+                              now_mono_ms: int,
+                              on_transition: OnTransition) -> bool:
+    """Close a running task on the P1 motion result (11 S3.5). 'succeeded' ->
+    running -> done; 'aborted'/'rejected' -> running -> failed. Returns True if
+    a transition was made.
+
+    This is the lifecycle-closing half of execution. It is a pure step the
+    (future) motion-status subscriber calls; it does NOT subscribe or emit
+    cmd/motion -- P1 executing a real path + reporting this status is the
+    execution-wiring milestone (P1 today is an ad-hoc-motion MVP). An in-flight
+    'accepted'/'running', or a result for a task that is not running, is a
+    no-op (not an error: a late status after cancel is legal)."""
+    event = _MOTION_TERMINAL.get(result)
+    if event is None:
+        return False                              # accepted/running: in-flight
+    full = await dao.fetch_by_id(task_id)
+    if full is None or full.state != "running":
+        return False                              # already terminal / cancelled
+    transition = apply_transition("running", event)
+    await dao.update_state(task_id, transition.to_state, now_mono_ms)
+    await conn.commit()
+    await on_transition(task_id, transition.to_state, f"motion:{result}")
+    return True
