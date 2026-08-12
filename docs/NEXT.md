@@ -86,3 +86,23 @@
 3. **SW-6 配置落值 / SW-5 测试框架 / SW-7 字符集债** —— housekeeping，随时可插。
 
 > 硬件/云深处到位后，再推第 1-4 节（执行环 + C++ 层 + P1 运动 + 硬件集成）。
+
+---
+
+## 7. HMI web server 接线剩余（2026-08-12 · 17 §6.10）
+
+> ★ 已建成:HMI web server 骨架 + 数据读取方法(17 §6.8 A-F 投影)+ 客户样式前端(格栅 1m/字体/尺寸/滚轮/连线样式/标记形状全配置化)+ ESTOP 按钮,已接进 p5_gateway voice-loop 路径,绑 `192.168.1.7:18083` + `127.0.0.1:18083`(逐口, NET-C9)。浏览器 `192.168.1.7:18083` 可看外壳。
+> ★★ 本轮**已接**:state/task -> 计划面板、state/link -> 状态/ESTOP 置灰、ESTOP 按钮 -> `cmd/estop`。**其余按下列待补**,现状源缺前端置灰(不造假, §3.1/3.2)。
+
+| # | 缺什么 | 状态 | 依赖 |
+|---|---|---|---|
+| HMI-W1 | 围栏/报警区几何:订阅 `cmd/fence` + 接 `FenceCache`(类已建)喂 provider; `/api/fences` 接缓存(现恒 503 E_DEGRADED, 诚实但空) | 未接 `[SW-NOW]` | FenceCache 订阅接线 |
+| HMI-W2 | 事件:读 P5 自有 record.db 近期事件喂 events_group(地图报警点 + 事件流) | 未接 `[SW-NOW]` | record.db 读方法 |
+| HMI-W3 | 当前模式:订阅 P2 `state/mode` 喂 status.mode | 未接 `[SW-NOW]` | state/mode 订阅 |
+| HMI-W4 | **位姿/GPS/ENU/航向/速度/实时轨迹/RTK/精度/报警点落位** | 未接 `[GATED-HW]` | perception(设计未写)+ rtk_driver(未建)+ quadruped(云深处) |
+| HMI-W5 | 真端到端 ESTOP:§6.4 专用 <=10ms 快路(P-1)+ §6.3 estop 探活喂 estop_path(现 MVP 恒 "ok" + 走 cmd/estop) | 部分 `[SW-NOW]` | estop 快路 + 探活接线 |
+| HMI-W6 | WS 推送 state_snapshot/delta(现 1Hz REST 轮询) | 未做 `[SW-NOW]` | ws_protocol 已建, 需接 push |
+| HMI-W7 | 计划目标点有序表 + 逐点勾选 + 进度 2/N:路径展开(EX-1) | 未做 `[部分 GATED-HW]` | geo.db 航点 + P1 真执行上报 |
+| HMI-W8 | 端点集对齐冻结契约(17 §6.5):补 `/api/routes` `/api/geo/*` `/api/fences/active`(代码现缺, agent 2026-08-12 照出) | 未做 `[SW-NOW]` | geo 端点 + 契约对齐 |
+
+> ★ W1/W2/W3/W6/W8 是纯软件, 可现在推; W4 是硬件总闸(位姿那一整片); W5/W7 部分卡硬件。

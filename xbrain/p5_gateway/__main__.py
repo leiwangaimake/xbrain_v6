@@ -102,6 +102,7 @@ def main(argv: Optional[list] = None) -> int:
         format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
     minimal_mode = args.force_minimal_mode
+    _cfg = None                       # set below in full mode; feeds the HMI cfg
 
     if not minimal_mode:
         try:
@@ -136,7 +137,16 @@ def main(argv: Optional[list] = None) -> int:
 
     if args.voice_loop:
         from xbrain.p5_gateway.runtime.main_wiring import run_voice_loop_wiring
-        return run_voice_loop_wiring(stop_flag=stop_flag)
+        # Pass the resolved hmi subtree (bind + web) so the wiring can start the
+        # HMI web server (17 S6.10). None in minimal mode -> voice loop runs
+        # without HMI, exactly as before (HMI is strictly additive).
+        hmi_cfg = None
+        if _cfg is not None:
+            try:
+                hmi_cfg = _cfg.get("hmi")
+            except Exception:      # noqa: BLE001
+                hmi_cfg = None      # HMI absent from config -> just skip it
+        return run_voice_loop_wiring(stop_flag=stop_flag, hmi_cfg=hmi_cfg)
 
     return main_loop(
         minimal_mode=minimal_mode,

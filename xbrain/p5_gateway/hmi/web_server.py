@@ -149,7 +149,8 @@ def build_app(
     # Imported lazily (like services/payload) so importing this module has no
     # FastAPI side effect and the W-1 startup window can still report why P5 did
     # not come up. FastAPI is a p5_gateway dependency (17 S6.10.0).
-    from fastapi import FastAPI, Response          # noqa: PLC0415
+    from fastapi import FastAPI                     # noqa: PLC0415
+    from fastapi.responses import JSONResponse      # noqa: PLC0415
     from fastapi.staticfiles import StaticFiles     # noqa: PLC0415
 
     from xbrain.p5_gateway.rest.endpoints import fences_endpoint  # noqa: PLC0415
@@ -170,12 +171,13 @@ def build_app(
         return data_readers.build_snapshot(**provider.snapshot_inputs())
 
     @app.get("/api/fences")
-    def get_fences(response: Response) -> Dict[str, Any]:
+    def get_fences() -> JSONResponse:
         """17 S6.5/S6.9: fence polygons, but 503 E_DEGRADED (never 200 []) when
-        the cache is degraded (P5F-2). fences_endpoint picks the status/body."""
+        the cache is degraded (P5F-2). fences_endpoint picks the status/body;
+        JSONResponse carries the status code directly (a `Response` PARAMETER
+        makes FastAPI try to validate it as a request field -> 422)."""
         result = fences_endpoint(provider.fence_degraded())
-        response.status_code = result.status
-        return result.body
+        return JSONResponse(status_code=result.status, content=result.body)
 
     @app.post("/api/estop")
     def post_estop() -> Dict[str, str]:
@@ -193,19 +195,34 @@ def build_app(
     return app
 
 
-async def serve(
-    app,
-    sockets: List[socket.socket],
-) -> None:
-    """Run the app on the pre-bound sockets (never re-binding, never widening).
+def start_in_thread(app, sockets: List[socket.socket]):
+    """Serve `app` on the pre-bound sockets in a daemon thread; return the
+    uvicorn Server so the caller can stop it (server.should_exit = True).
 
-    uvicorn's Server.serve(sockets=...) attaches to exactly the sockets
-    make_bound_sockets created, so the NET-C9 per-interface guarantee made at
-    bind time is the one that actually serves. Kept async so it composes into
-    the p5_gateway event loop next to the voice-loop / link tasks.
+    Why a thread. The p5_gateway voice-loop wiring (main_wiring) is a synchronous
+    stop-flag loop, not an asyncio loop, so the async HMI server runs beside it
+    on its own loop rather than trying to own the process loop. daemon=True means
+    a hard process exit never hangs on it; the caller sets should_exit for a
+    clean stop. uvicorn's Server.serve(sockets=...) attaches to exactly the
+    sockets make_bound_sockets created -- the NET-C9 per-interface guarantee made
+    at bind time is the one that actually serves, never widened here.
     """
-    import uvicorn                                   # noqa: PLC0415
+    import asyncio                                   # noqa: PLC0415
+    import threading                                 # noqa: PLC0415
+
+    import uvicorn                                    # noqa: PLC0415
 
     config = uvicorn.Config(app, log_level="info", access_log=False)
     server = uvicorn.Server(config)
-    await server.serve(sockets=sockets)
+    # install_signal_handlers=False: the process's own signal handlers own
+    # shutdown (the voice-loop stop flag); uvicorn must not steal SIGINT/SIGTERM
+    # from a background thread (it cannot install handlers off the main thread
+    # anyway, and trying warns).
+    server.config.install_signal_handlers = False
+
+    def _run() -> None:
+        asyncio.run(server.serve(sockets=sockets))
+
+    thread = threading.Thread(target=_run, name="hmi-web", daemon=True)
+    thread.start()
+    return server, thread
