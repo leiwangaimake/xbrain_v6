@@ -78,13 +78,17 @@ def clean_phrase(raw: str) -> str:
     s = re.sub(r'\s+', ' ', s)
     # Remove trailing/embedded editorial pointers like '(v0.1 语料)'.
     s = re.sub(r'[(\uff08][^)\uff09]*[)\uff09]', '', s).strip()
-    # Editorial noise heuristics:
+    # Editorial noise heuristics.
     if not s:
         return ''
     if len(s) > 60:                          # phrases are short imperatives
         return ''
     lowered = s.lower()
-    if any(t in s for t in ('删除', '取消', '订正', '关闭', 'U33', 'U54', '云深处', '2026-')):
+    # NOTE: 删除/取消/关闭 are COMMAND verbs (delete_route/_waypoint/_fence,
+    # light_off, cancel_task), NOT editorial noise -- they were dropping the
+    # whole delete family (F11/F12/F13) and every 关闭/取消 phrasing from the
+    # test corpus. Only true editorial markers stay in this filter.
+    if any(t in s for t in ('订正', 'U33', 'U54', '云深处', '2026-')):
         return ''
     if any(t in lowered for t in ('v0.', 'q-18-', 'q-p4-', 'cl-')):
         return ''
