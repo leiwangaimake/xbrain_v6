@@ -78,6 +78,25 @@ def _task(**over) -> TaskRow:
     return TaskRow(**base)
 
 
+@pytest.mark.asyncio
+async def test_open_configured_sets_wal_and_creates_schema(tmp_path):
+    """open_configured (the ONLY place outside DAOs that opens aiosqlite,
+    4.1) applies WAL + creates the tables. MUTATION: skipping the pragma pass
+    would leave journal_mode at the 'delete' default; skipping the DDL would
+    leave no tasks table."""
+    from xbrain.p3_task.persistence.base import open_configured
+    db = tmp_path / "sub" / "task.db"          # parent dir must be created too
+    conn = await open_configured(str(db), ALL_DDL_STATEMENTS)
+    try:
+        cur = await conn.execute("PRAGMA journal_mode")
+        assert (await cur.fetchone())[0].lower() == "wal"
+        cur = await conn.execute("SELECT name FROM sqlite_master "
+                                 "WHERE type='table' AND name='tasks'")
+        assert await cur.fetchone() is not None
+    finally:
+        await conn.close()
+
+
 # --- BIZ-P3-4 tasks DDL ---
 
 @pytest.mark.asyncio

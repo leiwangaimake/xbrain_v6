@@ -33,9 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
-from typing import Optional
 
 
 _logger = logging.getLogger("xbrain.p3.wiring")
@@ -69,23 +67,17 @@ def run_voice_loop_wiring(stop_flag: dict,
 
 async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  task_db_path: str) -> int:
-    import aiosqlite
-
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
-    from xbrain.p3_task.persistence.base import format_pragma_statements
+    from xbrain.p3_task.persistence.base import open_configured
     from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 
-    # Ensure data/run/ exists, then open + configure + create-schema.
-    os.makedirs(os.path.dirname(task_db_path), exist_ok=True)
+    # Open + configure + create-schema THROUGH the persistence layer -- this
+    # file imports no sqlite driver of its own (CLAUDE.md 4.1); it holds the
+    # connection only to hand it to the DAO / recorder.
     _logger.info("p3 wiring: opening task.db at %s", task_db_path)
-    conn = await aiosqlite.connect(task_db_path)
+    conn = await open_configured(task_db_path, ALL_DDL_STATEMENTS)
     try:
-        for stmt in format_pragma_statements():
-            await conn.execute(stmt)
-        for stmt in ALL_DDL_STATEMENTS:      # CREATE ... IF NOT EXISTS
-            await conn.execute(stmt)
-        await conn.commit()
         dao = TasksDAO(conn)
 
         loop = asyncio.get_running_loop()

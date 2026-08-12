@@ -79,3 +79,27 @@ def assert_all_required_pragmas(pragmas: dict) -> None:
         if str(got).upper() != str(want).upper():
             raise PersistenceMisuse(
                 f"pragma {k}: got {got!r}, need {want!r}")
+
+
+async def open_configured(path: str, ddl_statements=()):
+    """Open ONE aiosqlite connection to `path`, apply the REQUIRED_PRAGMAs, and
+    run `ddl_statements` (CREATE ... IF NOT EXISTS), returning the connection.
+
+    aiosqlite is imported HERE, inside persistence/, on purpose: CLAUDE.md 4.1
+    forbids importing sqlite3/aiosqlite anywhere else -- business/wiring code
+    opens no connection of its own, it calls this and then goes through a DAO.
+    The parent directory is created if missing (the voice-loop data/run dir)."""
+    import os
+
+    import aiosqlite
+
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    conn = await aiosqlite.connect(path)
+    for stmt in format_pragma_statements():
+        await conn.execute(stmt)
+    for stmt in ddl_statements:
+        await conn.execute(stmt)
+    await conn.commit()
+    return conn
