@@ -72,6 +72,9 @@ def main(argv: Optional[list] = None) -> int:
                     help="dev-only: override /run/xbrain/resolved for local smoke")
     ap.add_argument("--voice-loop", action="store_true",
                     help="run voice-loop MVP wiring instead of heartbeat")
+    ap.add_argument("--task-db", default=None,
+                    help="dev/voice-loop: task.db path "
+                         "(default data/run/task.db)")
     args = ap.parse_args(argv)
 
     logging.basicConfig(
@@ -109,8 +112,12 @@ def main(argv: Optional[list] = None) -> int:
     _install_signal_handlers(stop_flag)
 
     if args.voice_loop:
-        from xbrain.p3_task.runtime.main_wiring import run_voice_loop_wiring
-        return run_voice_loop_wiring(stop_flag=stop_flag)
+        from xbrain.p3_task.runtime.main_wiring import (
+            DEFAULT_TASK_DB, run_voice_loop_wiring,
+        )
+        return run_voice_loop_wiring(
+            stop_flag=stop_flag,
+            task_db_path=args.task_db or DEFAULT_TASK_DB)
 
     return main_loop(tick_seconds=args.heartbeat_seconds, stop_flag=stop_flag)
 

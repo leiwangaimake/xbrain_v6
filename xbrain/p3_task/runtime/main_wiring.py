@@ -3,25 +3,37 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: main_wiring.py
-Brief: p3_task voice-loop MVP wiring -- subscribe cmd/task + log observed
+Brief: p3_task voice-loop wiring -- subscribe cmd/task + RECORD into task.db
 
 Description:
-Minimum-viable p3 for the voice-loop smoke test:
+The live P3 half of voice/text -> task.db (15 S3.3). Earlier this file only
+logged cmd/task; now it opens task.db and records each task-create request:
 
-  * open GEN Zenoh session
-  * subscribe cmd/task -- log each admitted task (intent_id + text)
-  * publish state/task heartbeat frame every 5 s so p5 sees life
+  * open one aiosqlite connection to task.db (WAL + the 15 S9.1 REQUIRED
+    PRAGMAs) and apply the DDL (CREATE ... IF NOT EXISTS is idempotent);
+  * subscribe cmd/task. The Zenoh callback runs on a RUST thread, so it does
+    NO async and NO db work (CLAUDE.md 4.2): it decodes the frame and hands it
+    to the asyncio loop via loop.call_soon_threadsafe -> an asyncio.Queue;
+  * a consumer coroutine drains the queue and calls record_task_from_payload
+    (dedup + BEGIN IMMEDIATE transaction), then reflects the recorded task into
+    state/task so p5/HMI see it;
+  * a heartbeat line every few seconds so p5 sees life.
 
-Task queue + task.db + docking SM live in xbrain/p3_task/{state,
-schedule,charge,...} and stay untouched by this MVP -- wiring them
-into a live queue is a later batch. The purpose of this file is
-the loop: 'when p4 says patrol, p3 hears it AND signals ack'.
+Why an asyncio loop here: aiosqlite is async (15 S9 forbids the sync sqlite3
+driver on the event loop). The whole wiring therefore runs under asyncio.run;
+the sync Zenoh session lives inside it and bridges into the loop by the
+threadsafe hand-off above.
+
+The task.db PATH is injected (the voice-loop default is data/run/task.db). The
+scheduler that MOVES a recorded task out of 'pending' is PB6 -- until then a
+recorded task correctly sits at 'pending' (recorded, not yet validated).
 """
-
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 import time
 from typing import Optional
 
@@ -32,73 +44,140 @@ _logger = logging.getLogger("xbrain.p3.wiring")
 CMD_TASK_TOPIC = "cmd/task"
 STATE_TASK_TOPIC = "state/task"
 
+# Voice-loop default. All four DBs live under data/run/ (operator 2026-08-12).
+DEFAULT_TASK_DB = "/opt/xbrain_v6/data/run/task.db"
+
 
 def _now_mono_ms() -> int:
     return int(time.monotonic() * 1000)
 
 
-def run_voice_loop_wiring(stop_flag: dict,
-                            heartbeat_period_s: float = 5.0) -> int:
-    """Block until stop_flag['stop'] is truthy. Returns 0 on
-    clean shutdown."""
-    from xbrain.common.runtime.session_ctx import open_planes
+def _today_yyyymmdd() -> str:
+    # DISPLAY value for the task_id (t-YYYYMMDD-NNN): operators read/say it.
+    # strftime is a wall-clock READ but not a timing decision, so it is outside
+    # the CLK-C1 ban (which is about timeouts/age via time.time/datetime.now).
+    return time.strftime("%Y%m%d")
 
-    _logger.info("p3 wiring: opening GEN session")
-    with open_planes(("gen",)) as gen:
-        state_pub = gen.declare_publisher(STATE_TASK_TOPIC)
-        # Announce init state.
+
+def run_voice_loop_wiring(stop_flag: dict,
+                          heartbeat_period_s: float = 5.0,
+                          task_db_path: str = DEFAULT_TASK_DB) -> int:
+    """Block until stop_flag['stop'] is truthy. Returns 0 on clean shutdown."""
+    return asyncio.run(
+        _amain(stop_flag, heartbeat_period_s, task_db_path))
+
+
+async def _amain(stop_flag: dict, heartbeat_period_s: float,
+                 task_db_path: str) -> int:
+    import aiosqlite
+
+    from xbrain.common.runtime.session_ctx import open_planes
+    from xbrain.p3_task.dao.tasks_dao import TasksDAO
+    from xbrain.p3_task.persistence.base import format_pragma_statements
+    from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
+
+    # Ensure data/run/ exists, then open + configure + create-schema.
+    os.makedirs(os.path.dirname(task_db_path), exist_ok=True)
+    _logger.info("p3 wiring: opening task.db at %s", task_db_path)
+    conn = await aiosqlite.connect(task_db_path)
+    try:
+        for stmt in format_pragma_statements():
+            await conn.execute(stmt)
+        for stmt in ALL_DDL_STATEMENTS:      # CREATE ... IF NOT EXISTS
+            await conn.execute(stmt)
+        await conn.commit()
+        dao = TasksDAO(conn)
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        recorded = 0
+
+        _logger.info("p3 wiring: opening GEN session")
+        with open_planes(("gen",)) as gen:
+            state_pub = gen.declare_publisher(STATE_TASK_TOPIC)
+            state_pub.put(json.dumps({
+                "schema": "state_task_v1", "active_task": None,
+                "mono_ms": _now_mono_ms()}).encode("utf-8"))
+
+            def _on_task(sample) -> None:
+                # RUST THREAD: decode only, then hand to the loop. No await, no
+                # db, no state_pub here (CLAUDE.md 4.2 -- the callback must
+                # return fast and touch nothing the loop owns).
+                try:
+                    payload = json.loads(bytes(sample.payload).decode("utf-8"))
+                except Exception:      # noqa: BLE001
+                    _logger.warning("p3 malformed cmd/task payload")
+                    return
+                loop.call_soon_threadsafe(queue.put_nowait, payload)
+
+            # Sub handle held in a list (strong ref, CLAUDE.md 4.3).
+            _subs = [gen.declare_subscriber(CMD_TASK_TOPIC, _on_task)]
+            _logger.info("p3 wiring: subscribed %s (recording to task.db)",
+                         CMD_TASK_TOPIC)
+
+            last_hb = time.monotonic()
+            try:
+                while not stop_flag.get("stop"):
+                    # Wait for a task or wake up to heartbeat / re-check stop.
+                    try:
+                        payload = await asyncio.wait_for(queue.get(),
+                                                         timeout=0.5)
+                    except asyncio.TimeoutError:
+                        payload = None
+                    if payload is not None:
+                        recorded += await _record_one(
+                            conn, dao, payload, state_pub)
+                    now = time.monotonic()
+                    if now - last_hb >= heartbeat_period_s:
+                        _logger.info("p3 alive; recorded=%d qdepth=%d",
+                                     recorded, queue.qsize())
+                        last_hb = now
+            finally:
+                for s in _subs:
+                    try:
+                        s.undeclare()
+                    except Exception:      # noqa: BLE001
+                        pass
+                try:
+                    state_pub.undeclare()
+                except Exception:          # noqa: BLE001
+                    pass
+    finally:
+        await conn.close()
+    return 0
+
+
+async def _record_one(conn, dao, payload, state_pub) -> int:
+    """Record one cmd/task payload; reflect the outcome into state/task.
+    Returns 1 if a NEW task was recorded, else 0 (duplicate/skipped/error)."""
+    try:
+        out = await record_task_from_payload(
+            conn, dao, payload,
+            date_str=_today_yyyymmdd(), now_mono_ms=_now_mono_ms())
+    except Exception as exc:               # noqa: BLE001
+        # A bad row must not kill the loop -- log and drop this one task.
+        _logger.error("p3 record failed: %s", exc)
+        return 0
+    if out.kind == "recorded":
+        _logger.info("p3 recorded task %s type=%s state=%s",
+                     out.task_id, payload.get("task_request", {}).get(
+                         "task_type"), out.state)
         state_pub.put(json.dumps({
             "schema": "state_task_v1",
-            "active_task": None,
-            "mono_ms": _now_mono_ms(),
+            "active_task": {"task_id": out.task_id, "state": out.state,
+                            "admitted_mono_ms": _now_mono_ms()},
         }).encode("utf-8"))
-
-        tasks_seen = 0
-        last_admitted_intent: Optional[str] = None
-
-        def _on_task(sample) -> None:
-            nonlocal tasks_seen, last_admitted_intent
-            try:
-                d = json.loads(bytes(sample.payload).decode("utf-8"))
-            except Exception:      # noqa: BLE001
-                _logger.warning("p3 malformed cmd/task payload")
-                return
-            intent = d.get("intent_id", "?")
-            text = d.get("text", "")
-            last_admitted_intent = intent
-            tasks_seen += 1
-            _logger.info(
-                "p3 admit cmd/task intent=%s text=%r (seen=%d)",
-                intent, text, tasks_seen)
-            # Reflect into state/task so p5 can see it.
-            state_pub.put(json.dumps({
-                "schema": "state_task_v1",
-                "active_task": {
-                    "intent_id": intent,
-                    "text": text,
-                    "admitted_mono_ms": _now_mono_ms(),
-                },
-            }).encode("utf-8"))
-
-        task_sub = gen.declare_subscriber(CMD_TASK_TOPIC, _on_task)
-        _logger.info("p3 wiring: subscribed %s", CMD_TASK_TOPIC)
-
-        try:
-            last_hb = time.monotonic()
-            while not stop_flag.get("stop"):
-                now = time.monotonic()
-                if now - last_hb >= heartbeat_period_s:
-                    _logger.info("p3 alive; tasks_seen=%d last_intent=%s",
-                                 tasks_seen, last_admitted_intent)
-                    last_hb = now
-                time.sleep(0.1)
-        finally:
-            try:
-                task_sub.undeclare()
-            except Exception:      # noqa: BLE001
-                pass
-            try:
-                state_pub.undeclare()
-            except Exception:      # noqa: BLE001
-                pass
+        return 1
+    if out.kind == "duplicate":
+        _logger.info("p3 duplicate task %s ignored (TSK-12)", out.task_id)
+    else:
+        # A control/device frame reached cmd/task (e.g. a non-create); log the
+        # intent for visibility but record nothing.
+        _logger.info("p3 cmd/task not a task-create (intent=%s); no row",
+                     payload.get("intent_id"))
     return 0
+
+
+# Import at module scope so the recorder is a stable reference (not re-imported
+# per call). Kept after the functions to avoid a circular import at load.
+from xbrain.p3_task.ingest.task_recorder import record_task_from_payload  # noqa: E402
