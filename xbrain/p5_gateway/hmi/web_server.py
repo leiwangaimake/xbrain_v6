@@ -179,6 +179,30 @@ def build_app(
         result = fences_endpoint(provider.fence_degraded())
         return JSONResponse(status_code=result.status, content=result.body)
 
+    from xbrain.p5_gateway.hmi.data_readers import (  # noqa: PLC0415
+        events_group, geo_group,
+    )
+
+    @app.get("/api/fences/active")
+    def get_fences_active() -> JSONResponse:
+        """17 S6.5 / 11 S9A.11: the active fence set's full geometry. Same P5F-2
+        degraded rule as /api/fences (503, never a 200 empty set); on a fresh
+        cache it returns the geo group's fence layer (W8 endpoint alignment)."""
+        result = fences_endpoint(provider.fence_degraded())
+        if result.status != 200:
+            return JSONResponse(status_code=result.status, content=result.body)
+        inputs = provider.snapshot_inputs()
+        layer = geo_group(inputs.get("fences"), None, None,
+                          inputs.get("enu_origin"))["fences"]
+        return JSONResponse(status_code=200, content=layer)
+
+    @app.get("/api/events")
+    def get_events() -> Dict[str, Any]:
+        """17 S6.5: recent events for the HMI stream + map dots. Sourced from the
+        wiring's event ring (W2); available:false until the ring is fed. Map dots
+        appear only for events with a stamped pos (W4)."""
+        return events_group(provider.snapshot_inputs().get("events"))
+
     @app.post("/api/estop")
     def post_estop() -> Dict[str, str]:
         """17 S6.2 W1 / S6.4: the ESTOP button. Delegates to estop_sender, which

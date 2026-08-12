@@ -41,6 +41,28 @@ def _now_mono_ms() -> int:
 
 
 CMD_ESTOP_TOPIC = "cmd/estop"
+CMD_FENCE_TOPIC = "cmd/fence"            # W1: fence geometry (17 S6.9, P5 consumes)
+STATE_MODE_TOPIC = "state/mode"          # W3: P2 usage mode (10 Hz)
+EVENT_WILDCARD_TOPIC = "event/**"        # W2: event/{severity}/{category} stream
+FENCE_STALE_AFTER_MS = 10000             # P5F-2: cache silent this long -> degraded
+EVENT_RING = 50                          # HMI keeps the most recent N events
+
+
+def _fence_snapshot(hmi_state: dict):
+    """(fences_list_or_None, is_degraded) from the P5F-2 FenceCache.
+
+    is_degraded is True when the cmd/fence stream has been silent past
+    FENCE_STALE_AFTER_MS OR nothing has ever been staged -- in both cases the
+    HMI must not present the (possibly empty) cache as authoritative: the map
+    greys the layer and /api/fences returns 503 E_DEGRADED, never 200 [] (17
+    S6.9 P5F-2). A fresh non-empty cache returns the fence list."""
+    cache = hmi_state.get("fence_cache")
+    if cache is None:
+        return None, True
+    fences, is_stale = cache.snapshot(_now_mono_ms(), FENCE_STALE_AFTER_MS)
+    if is_stale or not fences:
+        return None, True
+    return list(fences), False
 
 
 def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict):
@@ -79,22 +101,28 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict):
         None so data_readers reports them unavailable (17 S6.10.4)."""
 
         def snapshot_inputs(self):
-            # Copy references under the GIL; the callback replaces whole values,
-            # never mutates in place, so a torn read is not possible here.
+            # Copy references under the GIL; the callbacks REPLACE whole values,
+            # never mutate in place, so a torn read is not possible here.
+            fences, _degraded = _fence_snapshot(hmi_state)
             return {
-                "tasks": hmi_state.get("tasks"),   # from state/task (wired)
-                "link": hmi_state.get("link"),     # from state/link (wired)
-                # NOT wired yet -> None -> frontend greys (NEXT.md HMI-W1..W4):
-                "fences": None, "routes": None, "waypoints": None,
-                "enu_origin": None, "pose": None, "mode": None,
-                "health": None, "events": None,
+                "tasks": hmi_state.get("tasks"),   # state/task (W-wired)
+                "link": hmi_state.get("link"),     # state/link (W-wired)
+                "fences": fences,                  # cmd/fence cache (W1)
+                "mode": hmi_state.get("mode"),     # state/mode (W3)
+                "events": hmi_state.get("events"),  # event/** ring (W2)
+                # Still gated: routes/waypoints need geo endpoints (W8/geo src);
+                # enu_origin + pose need localisation (W4 GATED-HW). None here ->
+                # frontend greys those layers, never fabricates.
+                "routes": None, "waypoints": None,
+                "enu_origin": hmi_state.get("enu_origin"),
+                "pose": None, "health": None,
             }
 
         def fence_degraded(self):
-            # Fence cache is not subscribed in the MVP wiring, so /api/fences
-            # cannot answer authoritatively -> 503 E_DEGRADED (P5F-2), the honest
-            # code, never a 200 empty set.
-            return True
+            # 503 E_DEGRADED (P5F-2) until a fresh cmd/fence has been staged;
+            # never a 200 empty set.
+            _fences, degraded = _fence_snapshot(hmi_state)
+            return degraded
 
     try:
         socks = make_bound_sockets(bind)
@@ -128,11 +156,20 @@ def run_voice_loop_wiring(stop_flag: dict,
     strictly additive and never a precondition for the voice side.
     """
     from xbrain.common.runtime.session_ctx import open_planes
+    from xbrain.p5_gateway.fence.cache import FenceCache
 
     # Shared state the HMI provider reads. The sync callbacks below REPLACE whole
-    # values (never mutate in place) so the web thread's reads are consistent
-    # under the GIL without a lock.
-    hmi_state: dict = {"tasks": None, "link": None}
+    # values (never mutate in place) so the web thread's reads stay consistent
+    # under the GIL without a lock. fence_cache follows the same rule: on_update
+    # swaps the tuple wholesale (P5F-1), so a concurrent snapshot is consistent.
+    hmi_state: dict = {
+        "tasks": None,               # state/task  -> plan panel
+        "link": None,                # state/link  -> status + ESTOP arming
+        "mode": None,                # state/mode  -> footer mode (W3)
+        "events": [],                # event/**    -> event stream ring (W2)
+        "enu_origin": None,          # localisation origin (gated, W4)
+        "fence_cache": FenceCache(),  # cmd/fence   -> map fences (W1)
+    }
 
     _logger.info("p5 wiring: opening GEN session")
     with open_planes(("gen",)) as gen:
@@ -168,11 +205,60 @@ def run_voice_loop_wiring(stop_flag: dict,
                          state_task_updates,
                          json.dumps(d, ensure_ascii=False))
 
+        def _on_cmd_fence(sample) -> None:
+            # W1: cache the staged FenceSet geometry (P5F-1 overwrite). Each
+            # polygon keeps name + vertices (WGS84 lat/lon) + role for the map;
+            # role 'zone' renders as an alarm region, else a keep-in boundary.
+            # (The map can place them once an enu_origin exists -- gated, W4.)
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                d = {}
+            polys = d.get("polygons")
+            if polys:
+                fences = [{"name": p.get("name"),
+                           "vertices": p.get("vertices"),
+                           "role": p.get("role")} for p in polys]
+                hmi_state["fence_cache"].on_update(fences, _now_mono_ms())
+
+        def _on_state_mode(sample) -> None:
+            # W3: last usage mode for the footer (P2 publishes state/mode 10 Hz).
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                d = {}
+            if d.get("mode"):
+                hmi_state["mode"] = d["mode"]
+
+        def _on_event(sample) -> None:
+            # W2: keep the most recent EVENT_RING events for the stream + map
+            # dots. REPLACE the whole list (never append in place) so the web
+            # thread's read is consistent under the GIL.
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                d = {}
+            if not d:
+                return
+            ev = {
+                "eid": d.get("eid") or d.get("event_id"),
+                "title": d.get("title") or d.get("message"),
+                "sev": d.get("severity") or d.get("sev"),
+                "cat": d.get("category") or d.get("cat"),
+                "ts": d.get("ts"),
+                "pos": d.get("pos"),   # None until pose stamps it (W4)
+            }
+            hmi_state["events"] = (hmi_state["events"] + [ev])[-EVENT_RING:]
+
         ack_sub = gen.declare_subscriber(
             CMD_AUDIO_SPEAK_ACK_TOPIC, _on_speak_ack)
         task_sub = gen.declare_subscriber(
             STATE_TASK_TOPIC, _on_state_task)
-        _logger.info("p5 wiring: subscribed speak/ack + state/task")
+        fence_sub = gen.declare_subscriber(CMD_FENCE_TOPIC, _on_cmd_fence)
+        mode_sub = gen.declare_subscriber(STATE_MODE_TOPIC, _on_state_mode)
+        event_sub = gen.declare_subscriber(EVENT_WILDCARD_TOPIC, _on_event)
+        _logger.info("p5 wiring: subscribed speak/ack + state/task + "
+                     "cmd/fence + state/mode + event/**")
 
         # Start the HMI web server (best-effort; never blocks the voice loop).
         hmi_server, _hmi_thread = (None, None)
@@ -205,7 +291,8 @@ def run_voice_loop_wiring(stop_flag: dict,
             # the zenoh entities. should_exit is uvicorn's clean-stop flag.
             if hmi_server is not None:
                 hmi_server.should_exit = True
-            for entity in (ack_sub, task_sub, link_pub):
+            for entity in (ack_sub, task_sub, fence_sub, mode_sub, event_sub,
+                           link_pub):
                 try:
                     entity.undeclare()
                 except Exception:      # noqa: BLE001
