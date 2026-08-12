@@ -1258,7 +1258,7 @@ LIMIT :batch;
 
 ### 6.2 WebSocket
 
-`ws://<host>:8080/ws`
+`ws://<host>:<port>/ws` —— ★ `<port>` 取 `hmi.web.port`（默认 `18083`，见 §6.10.3；原示例 `8080` 已由用户 2026-08-12「AI 服务端口顺延」需求取代）
 
 **下行（server → client）** —— ★★ **闭集，9 类**（`11` §12.1.6）
 
@@ -1830,6 +1830,57 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 > 🚫 **不会退回**「屏上一片空白、无从分辨」的那个 fail-silent 原状。
 > ★★ **推翻这段需要什么证据**：`15` 写明 P3 **不**处理非 `require_ack_from` 成员的 ack，且**同时**拒绝给出任何
 > 重取通道 —— 那样 P5F-1 应当整条改判为「P5 自行按固定周期主动请求」，而不是继续挂在 `ping` 上。
+
+---
+
+
+### 6.10 ★★★ HMI web server 落地需求（客户样式 + 配置化 · v1.0 · 2026-08-12 收口用户需求）
+
+> 本节把「按客户样式做出一个可跑的 HMI web server」的**落地与配置化需求**一次收口，供实现对账。
+> ★ 视觉母本 = `docs/HMI/GPS导航HMI_设计样例.html` / `.css`（客户交付的 GPS 网格地图样例）。
+> ★★ 本节**只加落地与配置化需求**，🚫 不改 §6.8 冻结数据集、不改 §6.2 WS 契约、不改 §6.6 前端红线（尤其 🚫 不显示云台角度 / PTZ-C2）。
+
+#### 6.10.0 形态与目录
+
+| 项 | 落点 |
+|---|---|
+| 后端 | `p5_gateway` 进程内（本系统无独立 HMI 进程，`10` §3.1）—— FastAPI + uvicorn，服务 REST（§6.5）＋ WS（§6.2）＋ 静态前端 |
+| 静态前端资产 | `xbrain/p5_gateway/hmi/static/`（`index.html` · `hmi.css` · `hmi.js`）—— ★ 按客户母本落地，Chinese UI 文本保留（`.html/.css/.js` 不在 charset_lint 扫描面） |
+| 配置 | `configs/p5_gateway.yaml` 的 `hmi.web.*`（见 §6.10.2）—— ★ 运行期读 resolved 产物（`10` §5.4.1），🚫 不读源 |
+
+#### 6.10.1 ★★★ ESTOP 按钮（设计既有，本节只落 UI）
+
+- ★ ESTOP 控制面本就在设计里：§6.2 W1 `{"type":"estop","action":"stop"}`（L0 · 旁路校验 · 不限流）、§6.4 专用最短路径（P-1 ≤10ms）、§6.3 链路心跳。
+- ★★ HMI 顶部**常驻一个显著 ESTOP 按钮**：点击 → 走 W1 上行 → §6.4 专用路径。
+- ★★★ **链路断（`state/link.estop_path != ok`）时按钮置灰 ＋ 文案「急停不可用」**（NAV-64，§6.3），🚫 不得亮着却发不出去。
+
+#### 6.10.2 ★★★ 配置化需求（用户 2026-08-12）—— `hmi.web.*` 键
+
+| # | 需求 | config 键（`hmi.web.*`） | 默认 |
+|---|---|---|---|
+| U1 | 地图格栅每格距离等参数可配 | `map.grid.minor_m` · `map.grid.major_m` | ★ `minor_m: 1.0`（每格 **1m**）· `major_m: 5.0` |
+| U2 | 地图/各信息栏/状态栏字体与字号可配 | `font.map/legend/plan/status/coord`（`family` ＋ `size_px`） | 见 yaml 骨架 |
+| U3 | 任务栏/状态栏大小可配 | `layout.plan_panel` · `layout.status_bar`（`width/height/max_*`） | 见 yaml 骨架 |
+| U4 | 滚轮上下滚动缩放 | `map.zoom.{min,max,wheel_step}` | `0.65 / 2.8 / 0.12`（对齐母本脚本） |
+| U5 | 围栏/路径命名 ＋ 连线类型与颜色可配 | `fence.line.{style,color,width}` · `route.recorded.line.*` · `route.realtime.line.*`（`style ∈ solid/dashed/dotted`） | 见 yaml；★ 命名走 F 类录制（`18` F07/F03，写路径 PB7 已建） |
+| U6 | 位置点标识符形状与颜色可配 | `waypoint.marker.{shape,color,size}`（`shape ∈ circle/square/triangle/diamond`），可分 recorded/unrecorded | 见 yaml 骨架 |
+| U7 | 对外绑定 ＋ 端口 | 见 §6.10.3 | — |
+
+★★ **这些是 UI 呈现参数，不是安全参数** ⇒ 允许有默认值（§3.1 只管 `common.spec.*`/`common.safety.*`，UI 参数不在其列）。
+★ 下发方式：后端在**首屏内联**或 `GET /api/hmi/ui_config` 把 `hmi.web.*` 交给 `hmi.js` ＋ CSS 变量，前端据此渲染。
+
+#### 6.10.3 ★★★ 绑定与端口（NET-C9 —— 逐口显式绑定，🚫 禁 0.0.0.0）
+
+- ★★★ **用户 2026-08-12 拍板：逐口显式绑定 LAN2 IP ＋ wifi IP，🚫 不绑 `0.0.0.0`**（NET-C9 · §10.2 · `10` §4.5 一律不变）。
+- ★ 理由（`10` §4.5 逐字）：通用面**不鉴权**，ESTOP web server 绑 `0.0.0.0` = 把不鉴权 `cmd/estop`/`cmd/mode`/`cmd/ptz` 暴露给整个网络（§10.2 威胁模型：被接管的第三方相机能点急停）。★ 逐口绑定同样**对外可达**（那两张网口上的机器），但不暴露给 0.0.0.0。
+- config 键 `hmi.web.bind.interfaces`（列表，逐口 IP，由部署时 GATE-6 保证存在的 LAN2/wifi IP 填入；`null` 未标定则拒绝起 HMI，同 vsftpd `listen_address`）。
+- 端口 `hmi.web.port`：★ 用户需求「在 AI 服务端口上顺延」⇒ **默认取 AI 服务端口段之后（LLM `18082` → HMI `18083`）**，可配。★★ 这**取代** §6.2 里 `ws://<host>:8080/ws` 的 `8080`（**本节为准**，§6.2 端口示例已同步指向本键）。
+
+#### 6.10.4 数据来源与今日可显程度（对齐 §6.8 与硬件门）
+
+- ★ 后端**数据读取方法**读 P3 三库（`task.db`/`geo.db`/`fence.db`）＋ 订阅 `state/*`，按 §6.8 A~F 组投影。
+- ⚠️★★★ **今日真数据受硬件门约束**：位姿/GPS/ENU/航向/速度/RTK/精度/报警坐标全挂 `perception`（设计未写 `GATED-DESIGN`）＋ `rtk_driver`（未建 `GATED-HW`）＋ `quadruped`（等云深处）⇒ **这些字段现只能空态/桩**。今日能显接近真值的只有：围栏/报警区多边形（fence.db 已录）、计划状态徽标与近似下发时间（task.db 已落库 PB1-8）、当前模式与健康结构、事件文本。
+- ★ 故 web server **先做骨架 ＋ 数据读取方法 ＋ 前端外壳**：数据源缺时字段返回 `null`/空，前端按「无数据」态渲染（🚫 不编造假位姿，§3.1/§3.2）。
 
 ---
 
