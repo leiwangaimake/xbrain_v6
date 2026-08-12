@@ -73,7 +73,14 @@ def test_registry_covers_exactly_the_on_disk_config_set():
     for dirpath, dirs, files in os.walk(CONFIG_ROOT):
         # sites/ and calib/ are per-instance templates, not among the 19
         # (CFG-FZ-17 triage); prompts/ and secrets/ are not yaml config files.
-        dirs[:] = [d for d in dirs if d not in ("sites", "calib", "prompts", "secrets")]
+        # generated/ is a build artifact (whitelist.yaml materialised from
+        # 11 S1.1.6, validated by its consumer xbrain/common/zenoh/whitelists.py),
+        # and probe/ is a Stage-0 config (thresholds.yaml, CFG-BT-1) the probe
+        # validates itself by crashing on any absent key -- neither passes
+        # through the SCHEMAS registry, so both sit outside this 19-file set.
+        dirs[:] = [d for d in dirs
+                   if d not in ("sites", "calib", "prompts", "secrets",
+                                "generated", "probe")]
         for name in files:
             if name.endswith(".yaml"):
                 on_disk.add(os.path.relpath(os.path.join(dirpath, name), CONFIG_ROOT))
