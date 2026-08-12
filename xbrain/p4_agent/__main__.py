@@ -137,6 +137,36 @@ def _load_orchestrator_inputs(config_dir: str):
     return registry, chitchat, query_templates
 
 
+def _build_tier2_fn(config_dir, registry, *, base_url, model, timeout_s):
+    """Assemble the live tier-2 classify fn from the mission prompts + LLM, or
+    return None (-> the orchestrator uses null_tier2) when disabled or the
+    content fails to load. Fail-open on purpose: tier-2 is an enhancement over
+    the plain decline, so a missing prompt must degrade, never crash the loop."""
+    if not base_url:
+        _logger.info("tier-2 disabled (empty --llm-base-url)")
+        return None
+    try:
+        from xbrain.p4_agent.gateway.gpu_token import GpuTokenState
+        from xbrain.p4_agent.registry.missions import load_missions
+        from xbrain.p4_agent.runtime.llm_tier2_fn import build_tier2_fn
+        prompts = os.path.join(config_dir, "prompts")
+        names = [e.name for e in registry.entries]
+        missions = load_missions(os.path.join(prompts, "missions"), names)
+        with open(os.path.join(prompts, "system.txt"), encoding="utf-8") as fh:
+            system_text = fh.read()
+        fn = build_tier2_fn(
+            registry, missions, system_text,
+            base_url=base_url, model=model, timeout_s=timeout_s,
+            token_state=GpuTokenState())
+        _logger.info("tier-2 enabled: %d missions, llm=%s", len(missions),
+                     base_url)
+        return fn
+    except Exception as exc:      # noqa: BLE001
+        _logger.warning("tier-2 disabled (content load failed): %s: %s",
+                        type(exc).__name__, exc)
+        return None
+
+
 def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(prog="xbrain.p4_agent")
     ap.add_argument("--config", default=None,
@@ -156,6 +186,13 @@ def main(argv: Optional[list] = None) -> int:
                     help="services/asr base URL (voice-loop only; U52 port allocation)")
     ap.add_argument("--asr-http-timeout-s", type=float, default=5.0,
                     help="ASR HTTP timeout (voice-loop only)")
+    ap.add_argument("--llm-base-url", default="http://127.0.0.1:18082",
+                    help="services/llm base URL for tier-2 classify "
+                         "(voice-loop only). Empty disables tier-2 (null_tier2)")
+    ap.add_argument("--llm-model", default="qwen2.5-3b-instruct",
+                    help="model field sent to llama-server (voice-loop only)")
+    ap.add_argument("--llm-timeout-s", type=float, default=5.0,
+                    help="tier-2 LLM HTTP timeout (voice-loop only; AS-7)")
     ap.add_argument("--vad-energy-threshold", type=int, default=300,
                     help="energy VAD threshold (voice-loop only)")
     ap.add_argument("--vad-tail-silence-ms", type=int, default=500,
@@ -277,12 +314,16 @@ def main(argv: Optional[list] = None) -> int:
                           "from %s: %s: %s", args.config_dir,
                           type(exc).__name__, exc)
             return 5
+        tier2_fn = _build_tier2_fn(
+            args.config_dir, registry, base_url=args.llm_base_url,
+            model=args.llm_model, timeout_s=args.llm_timeout_s)
         orch = VoiceOrchestratorInputs(
             registry=registry, chitchat=chitchat,
             l2_timeout_ms=args.l2_confirm_timeout_ms,
             query_templates=query_templates,
             query_max_age_ms=args.query_state_max_age_ms,
-            query_low_soc_pct=args.query_battery_low_pct)
+            query_low_soc_pct=args.query_battery_low_pct,
+            tier2_fn=tier2_fn)
         return run_voice_loop_wiring(cfg=tl_cfg, stop_flag=stop_flag,
                                      orch=orch)
 

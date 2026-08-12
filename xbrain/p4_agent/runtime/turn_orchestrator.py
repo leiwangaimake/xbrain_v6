@@ -249,13 +249,24 @@ class TurnDecision:
     prompt_assembled: bool = False
 
 
-# tier2_fn(text, session, now_mono_ms) -> classified intent NAME or None.
-# None means the GPU gate denied the call or the LLM failed (the caller
-# drops the turn). It is injected so the orchestrator stays testable
-# without a live LLM; main_wiring binds it to GWY-P4-37 classify_unknown +
-# generate_grammar + prompt assembly. Calling it is what marks a turn as
-# LLM-using.
-Tier2Fn = Callable[[str, "OrchestratorSession", int], Optional[str]]
+@dataclass(frozen=True)
+class Tier2Classification:
+    """What the tier-2 LLM classify returns: the picked intent NAME plus the
+    slots the model extracted (e.g. speak_custom's `text`, a route `name`).
+    The slots are what the fastpath could not fill -- carrying them is why
+    tier-2 returns this instead of a bare name (the free-text slot would be
+    lost otherwise)."""
+    name: str
+    slots: dict
+
+
+# tier2_fn(text, session, now_mono_ms) -> Tier2Classification or None. None
+# means no confident mission / the GPU gate denied the call / the LLM failed
+# (the caller declines the turn). Injected so the orchestrator stays testable
+# without a live LLM; main_wiring binds it to llm_tier2_fn.build_tier2_fn.
+# Calling it is what marks a turn as LLM-using.
+Tier2Fn = Callable[[str, "OrchestratorSession", int],
+                   Optional[Tier2Classification]]
 
 
 class TurnOrchestrator:
@@ -347,8 +358,11 @@ class TurnOrchestrator:
 
     def _route_entry(self, entry: IntentEntry, text: str,
                      session: OrchestratorSession, now_mono_ms: int,
-                     layer: str) -> TurnDecision:
-        """Apply route (fastpath vs LLM) and auth (confirm gate)."""
+                     layer: str,
+                     llm_slots: Optional[dict] = None) -> TurnDecision:
+        """Apply route (fastpath vs LLM) and auth (confirm gate). llm_slots
+        (tier-2 only) are the slots the LLM extracted; they are merged OVER the
+        fastpath slots so a free-text slot (speak_custom's text) survives."""
         # Reply-family intents (chitchat / help) answer from a preset and
         # never dispatch an action. Handled before the auth gate: they are
         # all L0 and produce speech, not motion.
@@ -398,20 +412,23 @@ class TurnOrchestrator:
                 intent_name=entry.name, route=entry.route, auth=eff_auth,
                 layer=layer, tts_text=self._approval_prompt(entry))
 
-        # L0 / L1a / L1b -> dispatch now.
+        # L0 / L1a / L1b -> dispatch now. Pass through any tier-2 LLM slots.
         return self._dispatch_entry(entry, text, session, now_mono_ms,
-                                    layer, eff_auth)
+                                    layer, eff_auth, llm_slots=llm_slots)
 
     def _dispatch_entry(self, entry: IntentEntry, text: str,
                         session: OrchestratorSession, now_mono_ms: int,
-                        layer: str, eff_auth: str) -> TurnDecision:
+                        layer: str, eff_auth: str,
+                        llm_slots: Optional[dict] = None) -> TurnDecision:
         """Route the FAST leg. fastpath / fastpath_then_llm dispatch
         directly (no LLM, no prompt assemble). A pure-llm matched intent
-        still needs slot fill via tier-2."""
-        llm_used = False
-        if entry.route == "llm":
-            # Known intent, but its slots need the LLM (grammar-constrained)
-            # to fill. tier2 marks the turn as LLM-using.
+        still needs slot fill via tier-2. llm_slots (from a layer-6 tier-2
+        classification) are merged over the fastpath slots below."""
+        llm_used = llm_slots is not None       # layer-6 already ran the LLM
+        # A route=='llm' matched intent needs the LLM to fill its slots -- BUT
+        # only when a layer-6 classification did not already supply them (else
+        # this would be a wasteful second LLM call on the same utterance).
+        if entry.route == "llm" and llm_slots is None:
             classified = self._tier2(text, session, now_mono_ms)
             llm_used = True
             if classified is None:
@@ -419,10 +436,16 @@ class TurnOrchestrator:
                                     intent_name=entry.name, route=entry.route,
                                     auth=eff_auth, layer=layer, llm_used=True,
                                     prompt_assembled=True)
+            llm_slots = classified.slots
         # Fill fastpath closed-set slots from the text (16 S8.0.4) for the
         # payload level/mode/volume intents, so p2 gets the requested value
         # (D17 level / D18 mode / D10 volume), not just the intent id.
         extra = _payload_slots(entry.id, text)
+        # Merge the tier-2 LLM slots OVER the fastpath ones: the LLM fills the
+        # slots the fastpath regex cannot (free text, names), and the fastpath
+        # fills the closed-set enums. LLM values win a key collision.
+        if llm_slots:
+            extra = {**(extra or {}), **llm_slots}
         # PB4: a task-CREATE intent (goto/patrol/charge/teach/follow) carries a
         # cmd/task REQUEST P3's ingest records into task.db -- {task_type,
         # intent, id, slots, source}. Without it the cmd/task frame is just the
@@ -449,11 +472,12 @@ class TurnOrchestrator:
                    now_mono_ms: int) -> TurnDecision:
         """Layer-6 unknown: tier-2 LLM classify. Marks LLM used + prompt
         assembled (both happen inside tier2_fn)."""
-        classified = self._tier2(text, session, now_mono_ms)
-        if classified is None:
-            # Gate denied or LLM failed: drop the turn (caller may TTS).
+        result = self._tier2(text, session, now_mono_ms)
+        if result is None:
+            # No mission / gate denied / LLM failed: decline (caller may TTS).
             return TurnDecision(kind="denied", layer="unknown",
                                 llm_used=True, prompt_assembled=True)
+        classified = result.name
         if classified in _CHITCHAT_NAMES:
             # The LLM classified it as out_of_scope / chitchat.
             reply = self._chitchat.respond(classified, session.chitchat)
@@ -461,11 +485,11 @@ class TurnOrchestrator:
                 kind="reply", intent_name=classified, layer="unknown",
                 reply_text=reply, tts_text=reply, route="llm",
                 llm_used=True, prompt_assembled=True)
-        # A real intent the LLM picked: route it like a matched intent, but
-        # the turn already used the LLM.
+        # A real intent the LLM picked: route it like a matched intent, passing
+        # the LLM-extracted slots (the free-text ones the fastpath cannot fill).
         entry = self._registry.by_name(classified)
         decision = self._route_entry(entry, text, session, now_mono_ms,
-                                     layer="unknown")
+                                     layer="unknown", llm_slots=result.slots)
         # Preserve the fact the LLM was used to reach this classification.
         decision.llm_used = True
         decision.prompt_assembled = True

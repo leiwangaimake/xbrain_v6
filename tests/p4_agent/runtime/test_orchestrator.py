@@ -19,7 +19,8 @@ import yaml
 from xbrain.p4_agent.registry.intents import load_intent_registry
 from xbrain.p4_agent.session.chitchat import ChitchatResponder
 from xbrain.p4_agent.runtime.turn_orchestrator import (
-    OrchestratorSession, TurnOrchestrator, refine_ptz_intent,
+    OrchestratorSession, Tier2Classification, TurnOrchestrator,
+    refine_ptz_intent,
 )
 
 pytestmark = pytest.mark.no_device
@@ -181,8 +182,23 @@ def test_unknown_directed_goes_to_tier2():
     assert d.kind == "denied"               # tier2 returned None
 
 
+def test_tier2_slots_propagate_to_dispatch():
+    """The LLM-extracted slots reach the dispatch payload (the free-text/number
+    slots the fastpath cannot fill). MUTATION: dropping the llm_slots merge in
+    _dispatch_entry loses distance_m here. Also asserts tier-2 is called ONCE
+    (no wasteful second call when the classified intent is route=='llm')."""
+    t2 = _RecordingTier2(ret=Tier2Classification(
+        name="move_forward", slots={"distance_m": 3}))
+    orch = _orch(t2)
+    d = orch.handle_turn("帮我处理一下那个事情", OrchestratorSession(),
+                         now_mono_ms=1)
+    assert d.kind == "dispatch" and d.intent_name == "move_forward"
+    assert d.dispatch_result.payload.get("distance_m") == 3
+    assert len(t2.calls) == 1
+
+
 def test_tier2_classifies_out_of_scope_to_preset():
-    t2 = _RecordingTier2(ret="out_of_scope")
+    t2 = _RecordingTier2(ret=Tier2Classification(name="out_of_scope", slots={}))
     orch = _orch(t2)
     # A DIRECTED phrase (imperative '帮我') that matches no keyword reaches
     # tier-2; the stub classifies it out_of_scope.
