@@ -95,7 +95,7 @@ intents:
   enter_patrol_mode: { id: C05, keywords: ["进入巡逻模式", "开始工作"], slots: [], route: fastpath, auth: L1b }
   standby: { id: C06, keywords: ["待命", "休息", "别工作了"], slots: [], route: fastpath, auth: L1a }
   set_motion_behavior: { id: C07, keywords: ["跟着目标走", "停下面对"], slots: [behavior], route: llm, auth: L1b }
-  query_mode_switch_ok: { id: C08, keywords: ["能切到喊话吗"], slots: [target_mode], route: fastpath, auth: L0 }
+  query_mode_switch_ok: { id: C08, keywords: ["能切到喊话吗", "能切到", "能切换到", "可以切到", "能不能切到", "现在能切", "可以切换到"], slots: [target_mode], route: fastpath, auth: L0 }
 
   # -- D 载荷 --
   light_on: { id: D01, keywords: ["打开照明灯", "把灯打开", "打开灯", "开启照明", "开灯", "打开照明", "前灯打开"], slots: [which], route: fastpath, auth: L0 }
@@ -148,7 +148,7 @@ intents:
   record_dock: { id: F10, keywords: ["把这里记为充电桩", "标记充电桩"], slots: [name], route: llm, auth: L1a }
   delete_route: { id: F11, keywords: ["删除路径", "删掉路径"], slots: [route], route: fastpath_then_llm, auth: L2 }
   delete_waypoint: { id: F12, keywords: ["删除航点", "删除点位"], slots: [waypoint], route: fastpath_then_llm, auth: L2 }
-  delete_fence: { id: F13, keywords: ["删除围栏"], slots: [fence], route: fastpath_then_llm, auth: L2 }
+  delete_fence: { id: F13, keywords: ["删除围栏", "删掉围栏", "去掉围栏", "把围栏删了", "移除围栏"], slots: [fence], route: fastpath_then_llm, auth: L2 }
   rename_object: { id: F14, keywords: ["把3号路径改名为东门路线"], slots: [type, old, new], route: llm, auth: L1a }
   set_active_fence: { id: F15, keywords: ["启用营区外围围栏", "换成2号围栏"], slots: [fence], route: fastpath_then_llm, auth: L2 }
 
@@ -161,7 +161,7 @@ intents:
   query_task: { id: G06, keywords: ["当前任务", "在干什么"], slots: [], route: fastpath, auth: L0 }
   query_progress: { id: G07, keywords: ["还有多久完成", "巡逻到哪了"], slots: [], route: fastpath, auth: L0 }
   query_heading: { id: G08, keywords: ["朝哪个方向", "面向哪"], slots: [], route: fastpath, auth: L0 }
-  query_uptime: { id: G09, keywords: ["开机多久了"], slots: [], route: fastpath, auth: L0 }
+  query_uptime: { id: G09, keywords: ["开机多久了", "开机多久", "运行多久", "运行多长时间", "开机多长时间", "跑了多久", "上电多久", "启动多久"], slots: [], route: fastpath, auth: L0 }
   query_events_recent: { id: G10, keywords: ["最近有什么情况", "有报警吗"], slots: [count, time_range], route: fastpath_then_llm, auth: L0 }
   query_events_period: { id: G11, keywords: ["今天有几次告警", "这一周的报警"], slots: [date_range], route: llm, auth: L0 }
   query_events_by_type: { id: G12, keywords: ["有入侵报警吗", "有故障事件吗"], slots: [category], route: llm, auth: L0 }
@@ -203,8 +203,8 @@ intents:
   reload_config: { id: H04, keywords: ["重新加载配置", "刷新规则"], slots: [scope], route: fastpath, auth: L2 }
   sleep: { id: H05, keywords: ["休眠", "睡吧", "省电模式"], slots: [], route: fastpath, auth: L1b }
   wake: { id: H06, keywords: ["唤醒", "醒醒", "开始工作"], slots: [], route: fastpath, auth: L0 }
-  reboot: { id: H07, keywords: ["重启系统"], slots: [], route: fastpath, auth: L2 }
-  shutdown: { id: H08, keywords: ["关机"], slots: [], route: fastpath, auth: L3 }
+  reboot: { id: H07, keywords: ["重启系统", "重启", "重新启动", "重启一下", "重启机器", "重启设备"], slots: [], route: fastpath, auth: L2 }
+  shutdown: { id: H08, keywords: ["关机", "关闭系统", "系统关机", "关机吧", "把系统关了"], slots: [], route: fastpath, auth: L3 }
 
   # -- I 会话 --
   confirm: { id: I01, keywords: ["是", "对", "确认", "好的", "可以", "覆盖"], slots: [], route: fastpath, auth: L0 }
