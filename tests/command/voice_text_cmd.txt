@@ -61,6 +61,7 @@
 
 ## A11 turn_around  [L1b | 全 | 18]
 转身
+掉头
 
 ## A12 face_heading  [L1b | 全 | 18]
 朝北
@@ -183,10 +184,19 @@
 开灯
 打开照明
 前灯打开
+打开探照灯
+开启探照灯
+打开照明灯
+开启照明灯
+把灯打开
 
 ## D02 light_off  [L0 | 全 | 18]
 关灯
 关掉照明
+关闭探照灯
+关闭照明灯
+把灯关了
+灯关掉
 
 ## D03 light_auto  [L0 | 全 | 18]
 灯光自动
@@ -207,6 +217,10 @@
 开红蓝
 开双闪
 开警示灯
+打开爆闪灯
+开启爆闪灯
+把爆闪打开
+开启双闪
 
 ## D07 strobe_off  [L0 | 全 | 18]
 关爆闪
@@ -214,6 +228,9 @@
 关红蓝
 关双闪
 关警示灯
+关闭爆闪灯
+把爆闪关了
+关闭双闪
 
 ## D08 speak_preset  [L1b | 全 | 18]
 喊话
@@ -229,6 +246,15 @@
 大声点
 小声点
 音量调到最大
+音量大一点
+音量小一点
+音量最大
+音量最小
+静音
+别出声
+音量恢复正常
+小点声
+音量调到最小
 
 ## D11 chassis_light  [L0 | 全 | 18]
 打开底盘灯
@@ -255,6 +281,13 @@
 亮度中等
 亮度一半
 灯太刺眼了
+调亮
+亮点
+亮一些
+调暗
+暗点
+暗一些
+调到最亮
 
 ## D18 set_strobe_mode  [L0 | 全 | 18]
 换一种闪法
@@ -292,10 +325,18 @@
 拉近
 推远
 放大点
+近一点
+放大
+大一点
+拉远
+远一点
+缩小
+小一点
 
 ## E07 ptz_scan  [L1b | 改：上装发脉冲，不用设备内置巡航，见 §7.7 | 18]
 左右扫一遍
 环视
+云台向左·向右环视
 
 ## E08 ptz_stop_scan  [L0 | 本轮新增：终止扫描序列 → ONVIF Stop → 释放【域5】，见 §7.7A | 18]
 停止扫描
@@ -307,10 +348,16 @@
 云台转速加快
 转速慢一点
 转速最快
+转速快一点
+转速减慢
+转速最慢
 
 ## E10 ptz_move_deg  [L1b | ⭐ 2026-08-07 自 18-B §1 落地。 与契约 PTZ-C1 冲突（PELCO-D 无绝对定位回读）：T-PTZ-3 闭环前恒 rejected 并引导改用 E01 三档（18-B §3； 不得拿猜的 omega 先跑） | 18]
 云台向左转 N 度
 向上转 N 度
+向右转 N 度
+云台向上转 N 度
+向下转 N 度
 
 
 # ============ F settings + recording ============
@@ -676,5 +723,58 @@
 你是什么机器人
 报个名
 
+
+# ============ TIER-2 圆润例 (LLM 兜底, 非关键词, 应执行) ============
+# 经层6 LLM 到达意图, 非层2 关键词. 说这些测圆润理解.
+
+## speak_custom (tier-2 via M5_speak)  [tier-2 | 18 S2.2]
+给大伙儿播报前方施工
+
+## record_route_save (tier-2 via M6_naming)  [tier-2 | 18 S2.2]
+这条路线命名为东门线
+
+## record_waypoint (tier-2 via M6b_mark)  [tier-2 | 18 S2.2]
+把当前位置记为集合点
+
+## delete_route (tier-2 via M7_objref)  [tier-2 | 18 S2.2]
+删掉三号路径
+
+## query_events_* (tier-2 via M8_events)  [tier-2 | 18 S2.2]
+最近都发生了什么
+
+## follow_target (tier-2 via M4_follow)  [tier-2 | 18 S2.2]
+盯住那个人别跟丢
+
+## patrol_route (tier-2 via M3_nav)  [tier-2 | 18 S2.2]
+去南边操场巡逻一圈
+
+## turn_left (tier-2 via M2_turn)  [tier-2 | 18 S2.2]
+向左转个身
+
+## move_forward (tier-2 via M1_translate)  [tier-2 | 18 S2.2]
+往前挪三米
+
+
+# ============ 拒识负例 (NEGATIVE, 应拒绝/静默/拒识, 不要期望执行) ============
+# 每条都必须被礼貌拒绝(out_of_scope) / 完全静默(overheard) /
+# 归底盘 A 类 / 或拒绝. 因它没执行就报缺陷, 正是本段要防的错.
+
+## out_of_scope  [decline-negative | 18 S2.2]
+今天股市怎么样
+
+## overheard  [decline-negative | 18 S2.2]
+就这个态度
+
+## overheard  [decline-negative | 18 S2.2]
+我手都酸了
+
+## 不误伤底盘  [decline-negative | 18 S2.2]
+向左转
+
+## 度数不假装  [decline-negative | 18 S2.2]
+云台右转180度
+
 # total commands: 133
-# total phrases: 373
+# total phrases: 420
+# total tier-2 examples: 9
+# total decline negatives: 5
