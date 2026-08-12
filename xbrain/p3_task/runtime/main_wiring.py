@@ -71,6 +71,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
     from xbrain.p3_task.persistence.base import open_configured
     from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
+    from xbrain.p3_task.schedule.driver import scheduler_tick
 
     # Open + configure + create-schema THROUGH the persistence layer -- this
     # file imports no sqlite driver of its own (CLAUDE.md 4.1); it holds the
@@ -119,6 +120,15 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     if payload is not None:
                         recorded += await _record_one(
                             conn, dao, payload, state_pub)
+                    # Drive the machine every pass: validate pending -> ready,
+                    # dispatch the top ready -> running (PB6). Cheap on a small
+                    # table; a bad tick is logged, never crashes the loop.
+                    try:
+                        await scheduler_tick(
+                            conn, dao, now_mono_ms=_now_mono_ms(),
+                            on_transition=_make_publish(state_pub))
+                    except Exception as exc:      # noqa: BLE001
+                        _logger.error("p3 scheduler tick failed: %s", exc)
                     now = time.monotonic()
                     if now - last_hb >= heartbeat_period_s:
                         _logger.info("p3 alive; recorded=%d qdepth=%d",
@@ -137,6 +147,23 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     finally:
         await conn.close()
     return 0
+
+
+def _make_publish(state_pub):
+    """Build the scheduler on_transition callback: publish each task state
+    change on state/task (event + 1 Hz, 11 S2.2.2) so p5/HMI/cloud can rebuild
+    the machine, and log it. reason is non-empty only on a validate_fail."""
+    async def _publish(task_id: str, to_state: str, reason: str) -> None:
+        if reason:
+            _logger.info("p3 task %s -> %s (%s)", task_id, to_state, reason)
+        else:
+            _logger.info("p3 task %s -> %s", task_id, to_state)
+        state_pub.put(json.dumps({
+            "schema": "state_task_v1",
+            "active_task": {"task_id": task_id, "state": to_state,
+                            "mono_ms": _now_mono_ms()},
+        }).encode("utf-8"))
+    return _publish
 
 
 async def _record_one(conn, dao, payload, state_pub) -> int:
