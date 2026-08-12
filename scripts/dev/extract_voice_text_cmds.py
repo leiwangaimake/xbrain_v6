@@ -19,9 +19,14 @@ path and is safe to re-run whenever 18 changes -- deterministic
 output, no side effects outside /opt/xbrain_v6/tests/command/.
 
 Each row's phrase cell is normalised (backticks / bold markers / HTML
-break tags / decorative ★ / editorial parentheticals stripped) and
-split on '/' (or full-width '｜'). Empty results and 'editorial noise'
-strings are dropped so the output contains only speakable phrases.
+break tags / decorative stars U+2605 / editorial parentheticals stripped)
+and split on '/' (or full-width bar U+FF5C). Empty results and 'editorial
+noise' strings are dropped so the output contains only speakable phrases.
+
+Non-ASCII chars this extractor must MATCH in the markdown (stars, the
+full-width bar, full-width parentheses) are written as \\uXXXX escapes, not
+literals, so this source stays ASCII (CLAUDE.md 2.2) while the regex still
+matches the same input glyphs -- the same rule golden test inputs follow.
 
 
 Each command row has shape:
@@ -47,11 +52,11 @@ DOCS = [
 ]
 
 # Matches a command-table row. The row starts with '|' then possibly
-# decorative prefix (**, ★, ⭐, etc.), then an ID like A01 / B03 / E08 /
-# H03f (letter + digits + optional lowercase suffix), possibly followed
-# by more decoration before the closing '|'.
+# decorative prefix (**, stars U+2605/U+2B50, warning sign, etc.), then an
+# ID like A01 / B03 / E08 / H03f (letter + digits + optional lowercase
+# suffix), possibly followed by more decoration before the closing '|'.
 ROW = re.compile(
-    r'^\|\s*(?:[*★⭐⚠️]+\s*)?'          # optional leading decoration
+    r'^\|\s*(?:[*\u2605\u2b50\u26a0\ufe0f]+\s*)?'   # leading decor
     r'(?:\*\*)?\s*'                     # optional bold open
     r'([A-Z][0-9]+[a-z]?)'              # captured id
     r'\s*(?:\*\*)?'                     # optional bold close
@@ -61,7 +66,7 @@ ROW = re.compile(
 )
 
 # Strip these decorative artefacts from phrase text.
-DECOR = re.compile(r'\*\*|__|<br\s*/?>|<[^>]+>|`|⚠️|⚠|★|✅|❌|🚫')
+DECOR = re.compile(r'\*\*|__|<br\s*/?>|<[^>]+>|`|\u26a0\ufe0f|\u26a0|\u2605|\u2705|\u274c|\U0001f6ab')
 
 
 def clean_phrase(raw: str) -> str:
@@ -72,7 +77,7 @@ def clean_phrase(raw: str) -> str:
     # Squeeze whitespace and drop full-width dashes.
     s = re.sub(r'\s+', ' ', s)
     # Remove trailing/embedded editorial pointers like '(v0.1 语料)'.
-    s = re.sub(r'[(（][^)）]*[)）]', '', s).strip()
+    s = re.sub(r'[(\uff08][^)\uff09]*[)\uff09]', '', s).strip()
     # Editorial noise heuristics:
     if not s:
         return ''
@@ -106,9 +111,9 @@ def parse_doc(path: pathlib.Path, source_tag: str) -> list[dict]:
         slots  = rest_cells[0] if len(rest_cells) > 0 else ''
         level  = rest_cells[1] if len(rest_cells) > 1 else ''
         chan   = rest_cells[2] if len(rest_cells) > 2 else ''
-        # Split by '/' or '｜' (full-width slash). Strip decoration
+        # Split by '/' or '\uff5c' (full-width slash). Strip decoration
         # from each fragment and drop empties.
-        raw_phrases = re.split(r'[/｜]', phrases_cell)
+        raw_phrases = re.split(r'[/\uff5c]', phrases_cell)
         phrases = []
         seen = set()
         for r in raw_phrases:
