@@ -34,6 +34,23 @@
     el.setAttribute("stroke-width", line.width_px || 1.4);
     if (line.style === "dashed") el.setAttribute("stroke-dasharray", "4 3");
     else if (line.style === "dotted") el.setAttribute("stroke-dasharray", "1 2");
+    else el.removeAttribute("stroke-dasharray");     // solid
+  }
+
+  // Map a fence to its display type. The contract role (17 S6.8: allow/forbid/
+  // zone) wins; if role is absent -- P3's fence table stores a free-text
+  // zone_label, not the role enum -- fall back to the name ("活动"->active,
+  // "禁入"->forbid, "报警"->alarm). Default active (keep-in) when neither says.
+  function fenceType(fen) {
+    const r = fen.role;
+    if (r === "allow") return "active";
+    if (r === "forbid") return "forbid";
+    if (r === "zone") return "alarm";
+    const n = fen.name || fen.zone_label || "";
+    if (n.indexOf("禁入") >= 0) return "forbid";
+    if (n.indexOf("报警") >= 0) return "alarm";
+    if (n.indexOf("活动") >= 0) return "active";
+    return "active";
   }
 
   // -- apply ui_config: CSS vars (U2/U3/U5), grid pattern metres (U1), zoom (U4) --
@@ -114,14 +131,23 @@
     const fences = geo.fences || {};
     if (fences.available) for (const fen of fences.items) {
       const pts = ptsAttr(fen.vertices || [], origin); if (!pts) continue;
-      const zone = fen.role === "zone";
-      const layer = zone ? "alarmLayer" : "keepInLayer";
-      $(layer).appendChild(poly(zone ? "alarm-region" : "keep-in", pts,
-        zone ? (cfg.alarm_region || {}).line : cfg.fence.line));
+      const type = fenceType(fen);            // active | forbid | alarm
+      const line = ((cfg.fence || {})[type] || (cfg.fence || {}).active || {}).line
+                   || { style: "solid", color: "#e0b000", width_px: 1.6 };
+      const active = type === "active";
+      const layer = active ? "keepInLayer" : "alarmLayer";
+      const el = poly(active ? "keep-in" : "alarm-region", pts, line);
+      // fill: faint tint of the same colour so the polygon body reads as its type.
+      el.setAttribute("fill", active ? "rgba(46,204,64,.06)" : "rgba(255,32,32,.07)");
+      $(layer).appendChild(el);
+      // U5: fence naming -- show the name (zone_label) in the line colour.
       if (fen.name && fen.vertices && fen.vertices[0]) {
         const xy = toXY(fen.vertices[0], origin);
-        if (xy) $(layer).appendChild(label(xy[0], xy[1] - 2,
-          zone ? "alarm-label" : "keep-in-label", fen.name));
+        if (xy) {
+          const t = label(xy[0], xy[1] - 2, "keep-in-label", fen.name);
+          t.setAttribute("fill", line.color);
+          $(layer).appendChild(t);
+        }
       }
     }
     const routes = geo.routes || {};
@@ -278,12 +304,29 @@
     try { renderSnapshot(await getJSON("/api/hmi/snapshot")); }
     catch (e) { /* transient; next tick retries */ }
   }
+  // W6: WS server push is primary; REST poll is the fallback when WS is down.
+  let pollTimer = null;
+  function startPoll() { if (!pollTimer) { tick(); pollTimer = setInterval(tick, 1000); } }
+  function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+  function connectWS() {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    let ws;
+    try { ws = new WebSocket(`${proto}://${location.host}/ws`); }
+    catch (e) { startPoll(); return; }               // no WS -> poll
+    ws.onopen = () => stopPoll();                     // push takes over from poll
+    ws.onmessage = (e) => {
+      try { const m = JSON.parse(e.data); if (m.kind === "state_snapshot") renderSnapshot(m.data); }
+      catch (_) { /* ignore a malformed frame */ }
+    };
+    ws.onclose = () => { startPoll(); setTimeout(connectWS, 3000); };  // fall back + reconnect
+    ws.onerror = () => { try { ws.close(); } catch (_) {} };
+  }
   async function init() {
     wireInteraction(); applyView();
     try { applyUiConfig(await getJSON("/api/hmi/ui_config")); }
     catch (e) { console.error("ui_config load failed", e); return; }
-    await tick();
-    setInterval(tick, 1000);                          // 1 Hz REST poll (WS later)
+    await tick();                                     // instant first paint (REST)
+    connectWS();                                      // then live server push (W6)
   }
   init();
 })();

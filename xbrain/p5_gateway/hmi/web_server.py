@@ -45,8 +45,20 @@ from __future__ import annotations
 import socket
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
+from starlette.websockets import WebSocket, WebSocketDisconnect
+
 from xbrain.p5_gateway.hmi import data_readers
 from xbrain.p5_gateway.hmi.ui_config import build_ui_config
+
+# WebSocket / WebSocketDisconnect are imported at MODULE level, not lazily inside
+# build_app, on purpose: `from __future__ import annotations` (top of this file)
+# turns the endpoint annotation `websocket: WebSocket` into the STRING
+# "WebSocket", which FastAPI resolves against THIS module's globals. A local
+# import inside build_app is invisible there, so FastAPI mis-reads `websocket` as
+# a required query param and rejects every handshake 403. Resolving the name here
+# fixes it (starlette's WebSocket IS fastapi's -- same class). Starlette is a
+# FastAPI dependency and this module is itself imported lazily by the wiring, so
+# there is no new package-import side effect.
 
 
 class HmiBindError(RuntimeError):
@@ -212,6 +224,30 @@ def build_app(
         estop_sender()
         return {"status": "sent"}
 
+    # W6: WS push. Replaces the frontend's 1 Hz REST poll with a server push
+    # (17 S6.2 state_snapshot). On connect the client gets a full snapshot, then
+    # one snapshot per push interval until it disconnects. state_delta is a later
+    # optimisation (NEXT HMI-W6); a full snapshot per tick is correct + simplest,
+    # and the frontend renders it exactly like the /api/hmi/snapshot poll body.
+    push_hz = float(hmi_web.get("push_hz", 2) or 2)
+    push_interval_s = 1.0 / max(0.2, min(20.0, push_hz))
+
+    @app.websocket("/ws")
+    async def ws_snapshot(websocket: WebSocket) -> None:
+        # The `WebSocket` type annotation is REQUIRED -- FastAPI injects the
+        # connection by type, and without it the handshake is rejected 403.
+        import asyncio                          # noqa: PLC0415
+        await websocket.accept()
+        try:
+            while True:
+                snap = data_readers.build_snapshot(**provider.snapshot_inputs())
+                await websocket.send_json({"kind": "state_snapshot", "data": snap})
+                await asyncio.sleep(push_interval_s)
+        except WebSocketDisconnect:
+            # Normal client close; nothing to clean up (the server owns no
+            # per-connection state beyond this coroutine).
+            return
+
     # Static frontend LAST so /api/* is matched first. html=True serves
     # index.html at "/". A missing static_root is a deploy error, surfaced by
     # StaticFiles at mount time rather than a blank 404 later.
@@ -236,7 +272,16 @@ def start_in_thread(app, sockets: List[socket.socket]):
 
     import uvicorn                                    # noqa: PLC0415
 
-    config = uvicorn.Config(app, log_level="info", access_log=False)
+    # ws="wsproto": uvicorn's legacy websockets_impl handshake is incompatible
+    # with the websockets 16.x API present here (rejects the upgrade 403);
+    # wsproto is the stable backend across versions. Falls back to "auto" if
+    # wsproto is not installed so a REST-poll-only deploy still starts.
+    ws_impl = "wsproto"
+    try:
+        import wsproto  # noqa: F401,PLC0415
+    except ImportError:
+        ws_impl = "auto"
+    config = uvicorn.Config(app, log_level="info", access_log=False, ws=ws_impl)
     server = uvicorn.Server(config)
     # install_signal_handlers=False: the process's own signal handlers own
     # shutdown (the voice-loop stop flag); uvicorn must not steal SIGINT/SIGTERM

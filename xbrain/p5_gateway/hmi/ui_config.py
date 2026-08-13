@@ -77,8 +77,7 @@ def build_ui_config(hmi_web: Mapping[str, Any]) -> Dict[str, Any]:
         "map": dict(hmi_web["map"]),          # U1/U4: grid metres + zoom bounds
         "font": dict(hmi_web["font"]),        # U2: per-panel family + size_px
         "layout": dict(hmi_web["layout"]),    # U3: plan panel + status bar sizes
-        "fence": dict(hmi_web["fence"]),      # U5: fence line style/colour/width
+        "fence": dict(hmi_web["fence"]),      # U5: fence line by type (active/forbid/alarm)
         "route": dict(hmi_web["route"]),      # U5: recorded/realtime route lines
-        "alarm_region": dict(hmi_web.get("alarm_region", {})),  # U5: alarm zone line
         "waypoint": dict(hmi_web["waypoint"]),  # U6: marker shape/colour/size
     }
