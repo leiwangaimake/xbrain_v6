@@ -69,10 +69,12 @@
       root.setProperty("--plan-max-h", (lay.plan_panel.max_height_px || 420) + "px");
     }
     if (lay.status_bar) root.setProperty("--status-h", (lay.status_bar.height_px || 34) + "px");
-    if (c.fence && c.fence.line) root.setProperty("--fence-color", c.fence.line.color);
+    // legend colours (17 S6.10.2A): fence by type + route recorded/realtime.
+    const fc = c.fence || {};
+    if (fc.active) root.setProperty("--fence-active-color", fc.active.line.color);
+    if (fc.alarm) root.setProperty("--fence-alarm-color", fc.alarm.line.color);
     if (c.route && c.route.recorded) root.setProperty("--route-recorded-color", c.route.recorded.line.color);
     if (c.route && c.route.realtime) root.setProperty("--route-realtime-color", c.route.realtime.line.color);
-    if (c.alarm_region && c.alarm_region.line) root.setProperty("--alarm-color", c.alarm_region.line.color);
 
     // U1: grid metres. viewBox is in ENU metres, so a pattern of `minor_m`
     // metres draws one cell per metre when minor_m = 1 (the default).
@@ -101,7 +103,11 @@
   // -- render one snapshot -------------------------------------------------- */
   function renderSnapshot(snap) {
     const origin = (snap.geo && snap.geo.enu_origin) || null;
-    renderGeo(snap.geo || {}, origin);
+    // patrolling = a plan is running -> the yellow realtime trajectory shows;
+    // once no plan runs (patrol complete) it hides unless show_after_complete.
+    const plans = (snap.plan && snap.plan.plans) || [];
+    const patrolling = plans.some((p) => p.state === "running");
+    renderGeo(snap.geo || {}, origin, patrolling);
     renderRobot(snap.pose || {}, origin);
     renderEvents(snap.events || {}, origin);
     renderPlan(snap.plan || {});
@@ -125,7 +131,7 @@
     t.textContent = text; return t;
   }
 
-  function renderGeo(geo, origin) {
+  function renderGeo(geo, origin, patrolling) {
     clear("keepInLayer"); clear("alarmLayer");
     clear("recordedRouteLayer"); clear("realtimeTrajectoryLayer"); clear("keypointLayer");
     const fences = geo.fences || {};
@@ -137,8 +143,9 @@
       const active = type === "active";
       const layer = active ? "keepInLayer" : "alarmLayer";
       const el = poly(active ? "keep-in" : "alarm-region", pts, line);
-      // fill: faint tint of the same colour so the polygon body reads as its type.
-      el.setAttribute("fill", active ? "rgba(46,204,64,.06)" : "rgba(255,32,32,.07)");
+      // fill: faint tint of the same colour so the polygon body reads as its type
+      // (active -> blue, 17 S6.10.2A; alarm/forbid -> red).
+      el.setAttribute("fill", active ? "rgba(47,136,255,.06)" : "rgba(255,32,32,.07)");
       $(layer).appendChild(el);
       // U5: fence naming -- show the name (zone_label) in the line colour.
       if (fen.name && fen.vertices && fen.vertices[0]) {
@@ -154,6 +161,12 @@
     if (routes.available) for (const r of routes.items) {
       const pts = ptsAttr(r.points || [], origin); if (!pts) continue;
       const realtime = r.kind === "realtime";
+      if (realtime) {
+        // 17 S6.10.2A: the yellow realtime trajectory shows while patrolling;
+        // after patrol completes it hides unless show_after_complete is true.
+        const rt = (cfg.route || {}).realtime || {};
+        if (!patrolling && rt.show_after_complete === false) continue;
+      }
       $(realtime ? "realtimeTrajectoryLayer" : "recordedRouteLayer").appendChild(
         polyline(realtime ? "realtime-trajectory" : "recorded-route", pts,
           realtime ? cfg.route.realtime.line : cfg.route.recorded.line));

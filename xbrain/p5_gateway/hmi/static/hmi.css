@@ -12,9 +12,9 @@
   --font-coord-family: ui-monospace, monospace; --font-coord-size: 12px;
   /* U3 panel sizes */
   --plan-width: 260px;   --plan-max-h: 420px;   --status-h: 34px;
-  /* U5 line colours (legend marks; SVG strokes are set per-element by hmi.js) */
-  --fence-color: #e0b000;  --route-recorded-color: #3aa0ff;
-  --route-realtime-color: #33d17a;  --alarm-color: #ff4d4f;
+  /* U5 line colours (legend marks; SVG strokes set per-element by hmi.js, 17 S6.10.2A) */
+  --fence-active-color: #2f88ff;  --fence-alarm-color: #ff2020;
+  --route-recorded-color: #2ecc40;  --route-realtime-color: #ffd400;
   /* palette */
   --bg: #0e1116;  --panel: rgba(20,26,34,.86);  --ink: #d7dde6;  --muted: #8a8f99;
 }
@@ -52,14 +52,14 @@ body { margin: 0; background: var(--bg); color: var(--ink);
 .map-grid-minor { stroke: #1b2430; stroke-width: .3; }
 .map-grid-major { stroke: #26313f; stroke-width: .5; }
 
-.keep-in { fill: rgba(224,176,0,.05); stroke: var(--fence-color); }
-.alarm-region { fill: rgba(255,77,79,.08); stroke: var(--alarm-color); }
+.keep-in { fill: rgba(224,176,0,.05); stroke: var(--fence-active-color); }
+.alarm-region { fill: rgba(255,77,79,.08); stroke: var(--fence-alarm-color); }
 .keep-in-label, .alarm-label, .keypoint text, .alarm-event-label {
   font-family: var(--font-map-family); font-size: 3px; fill: var(--ink); }
 .recorded-route { fill: none; stroke: var(--route-recorded-color); }
 .realtime-trajectory { fill: none; stroke: var(--route-realtime-color); }
 .robot-arrow { fill: var(--route-realtime-color); }
-.alarm-dot { fill: var(--alarm-color); }
+.alarm-dot { fill: var(--fence-alarm-color); }
 
 /* -- overlays ------------------------------------------------------------- */
 .map-overlay { position: absolute; background: var(--panel); border: 1px solid #222c38;
@@ -69,9 +69,9 @@ body { margin: 0; background: var(--bg); color: var(--ink);
 .legend-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
 .legend-mark { width: 16px; height: 0; border-top: 3px solid var(--muted); }
 .recorded-route-mark { border-top-color: var(--route-recorded-color); }
-.realtime-route-mark { border-top-style: dashed; border-top-color: var(--route-realtime-color); }
-.legend-mark.fence { border-top-color: var(--fence-color); }
-.legend-mark.alarm { border-top-color: var(--alarm-color); }
+.realtime-route-mark { border-top-color: var(--route-realtime-color); }
+.legend-mark.fence { border-top-color: var(--fence-active-color); }
+.legend-mark.alarm { border-top-color: var(--fence-alarm-color); }
 
 .compass { left: 10px; top: 118px; width: 42px; text-align: center; }
 .compass-n { display: block; font-weight: 700; }

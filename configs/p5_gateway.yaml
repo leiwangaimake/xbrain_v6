@@ -135,13 +135,15 @@ hmi:
     layout:                           # U3: panel sizes (css px)
       plan_panel: { width_px: 260, max_height_px: 420 }
       status_bar: { height_px: 34 }
-    fence:                            # U5: fence line by TYPE (17 S6.8 role: allow/forbid/zone)
-      active: { line: { style: "dashed", color: "#2ecc40", width_px: 2.4 } }  # allow -> 活动区域: 亮绿粗虚线
-      forbid: { line: { style: "solid",  color: "#ff2020", width_px: 2.4 } }  # forbid -> 禁入区域: 亮红粗实线
-      alarm:  { line: { style: "solid",  color: "#ff2020", width_px: 2.4 } }  # zone -> 报警区域: 亮红粗实线
-    route:                            # U5: route line styles
-      recorded: { line: { style: "solid",  color: "#3aa0ff", width_px: 1.6 } }
-      realtime: { line: { style: "dashed", color: "#33d17a", width_px: 1.6 } }
+    fence:                            # U5: fence line by TYPE (17 S6.10.2A, user 2026-08-13)
+      active: { line: { style: "solid", color: "#2f88ff", width_px: 2.4 } }  # allow -> 活动区域: 亮蓝粗实线
+      forbid: { line: { style: "solid", color: "#ff2020", width_px: 2.4 } }  # forbid -> 禁入区域: 亮红粗实线
+      alarm:  { line: { style: "solid", color: "#ff2020", width_px: 2.4 } }  # zone -> 报警区域: 亮红粗实线
+    route:                            # U5: route line styles (17 S6.10.2A)
+      recorded: { line: { style: "solid", color: "#2ecc40", width_px: 1.0 } }  # 已录制路径: 亮绿细实线
+      realtime:                       # 实时行走轨迹: 亮黄粗实线
+        line: { style: "solid", color: "#ffd400", width_px: 2.4 }
+        show_after_complete: true     # 巡逻完成后是否仍显示黄色轨迹(false=隐藏)
     waypoint:                         # U6: marker shape/color/size (recorded vs unrecorded)
       recorded:   { shape: "circle", color: "#3aa0ff", size_px: 3 }
       unrecorded: { shape: "circle", color: "#8a8f99", size_px: 3 }

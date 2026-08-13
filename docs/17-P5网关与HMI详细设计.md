@@ -1862,12 +1862,27 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | U2 | 地图/各信息栏/状态栏字体与字号可配 | `font.map/legend/plan/status/coord`（`family` ＋ `size_px`） | 见 yaml 骨架 |
 | U3 | 任务栏/状态栏大小可配 | `layout.plan_panel` · `layout.status_bar`（`width/height/max_*`） | 见 yaml 骨架 |
 | U4 | 滚轮上下滚动缩放 | `map.zoom.{min,max,wheel_step}` | `0.65 / 2.8 / 0.12`（对齐母本脚本） |
-| U5 | 围栏/路径命名 ＋ 连线类型与颜色可配 | `fence.line.{style,color,width}` · `route.recorded.line.*` · `route.realtime.line.*`（`style ∈ solid/dashed/dotted`） | 见 yaml；★ 命名走 F 类录制（`18` F07/F03，写路径 PB7 已建） |
+| U5 | 围栏/路径命名 ＋ 连线类型与颜色可配 | `fence.{active,forbid,alarm}.line.*` · `route.{recorded,realtime}.line.*`（`style ∈ solid/dashed/dotted`；见 §6.10.2A 样式规范） | 见 yaml；★ 命名走 F 类录制（`18` F07/F03，写路径 PB7 已建） |
 | U6 | 位置点标识符形状与颜色可配 | `waypoint.marker.{shape,color,size}`（`shape ∈ circle/square/triangle/diamond`），可分 recorded/unrecorded | 见 yaml 骨架 |
 | U7 | 对外绑定 ＋ 端口 | 见 §6.10.3 | — |
 
 ★★ **这些是 UI 呈现参数，不是安全参数** ⇒ 允许有默认值（§3.1 只管 `common.spec.*`/`common.safety.*`，UI 参数不在其列）。
 ★ 下发方式：后端在**首屏内联**或 `GET /api/hmi/ui_config` 把 `hmi.web.*` 交给 `hmi.js` ＋ CSS 变量，前端据此渲染。
+
+##### 6.10.2A ★★★ 连线与要素样式规范（客户定义 · 2026-08-13 用户订正 · 默认值，可配）
+
+> ★ 这是**默认样式**的权威表；每一项都由 `hmi.web.*` 配置驱动（代码不硬编码），前端据 `role`（缺则据名称「活动/禁入/报警」推）着色。
+
+| 要素 | 类型/role | 连线样式 | 颜色（默认） | 粗细 | config 键 |
+|---|---|---|---|---|---|
+| ★ 活动区域围栏 | `allow` | **实线** | ★ **亮蓝 `#2f88ff`** | 粗 `2.4` | `fence.active.line` |
+| ★ 报警区域围栏 | `zone` | **实线** | ★ **亮红 `#ff2020`** | 粗 `2.4` | `fence.alarm.line` |
+| 禁入区域围栏 | `forbid` | **实线** | 亮红 `#ff2020`（同报警，用户本轮未单列，暂沿用红色危险语义） | 粗 `2.4` | `fence.forbid.line` |
+| ★ 路径（已录制） | route recorded | **实线** | ★ **亮绿 `#2ecc40`** | ★ **细 `1.0`** | `route.recorded.line` |
+| ★ 实时行走轨迹（巡逻中） | route realtime | **实线** | ★ **亮黄 `#ffd400`** | 粗 `2.4` | `route.realtime.line` |
+| 位置点 | waypoint | 标记 | 见 U6 | — | `waypoint.marker` |
+
+★★★ **实时黄色轨迹的显隐（用户 2026-08-13）**：巡逻**执行中**始终显示黄色轨迹；**巡逻完成后**是否继续显示由 `route.realtime.show_after_complete`（bool，默认 `true`）控制 —— 前端据 `plan` 是否有 `running` 计划判「执行中」，无则视为完成，`false` 时隐藏黄色轨迹。
 
 #### 6.10.3 ★★★ 绑定与端口（NET-C9 —— 逐口显式绑定，🚫 禁 0.0.0.0）
 
