@@ -204,6 +204,34 @@ def _event(ev: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def rest_list_endpoint(value: Optional[Sequence[Any]],
+                        key: str) -> Dict[str, Any]:
+    """W8: body for the 17 S6.5 read-only LIST endpoints (/api/routes,
+    /api/docks, /api/approval/pending).
+
+    available reflects whether the source is actually wired: None -> false + [],
+    NEVER a 200 empty set presented as authoritative (the same P5F-2 lesson the
+    fence endpoint enforces -- an empty list a client cannot tell from "no data"
+    is the fail-silent 3.2 forbids). routes/docks are gated on geo.db (P5 does
+    not read P3 dbs, 15 four-DB model), approval on the L3 queue (no feed yet).
+    """
+    return {"available": value is not None,
+            key: list(value) if value else []}
+
+
+def rest_object_endpoint(value: Optional[Any], key: str) -> Dict[str, Any]:
+    """W8: body for the 17 S6.5 read-only OBJECT endpoints (/api/health,
+    /api/bit, /api/metrics).
+
+    Passthrough of the authoritative upstream payload: P5 RELAYS P2's health/*
+    (health/factor, health/bit) unchanged -- it does not recompute a second
+    truth (G-2 same-source; 17 S3.8 warns a re-reported metric is a second
+    source). available:false + null until the topic is subscribed; /api/metrics
+    stays gated until a telemetry aggregator is wired (NEXT.md).
+    """
+    return {"available": value is not None, key: value}
+
+
 def build_snapshot(
     *,
     fences: Optional[Sequence[Dict[str, Any]]] = None,

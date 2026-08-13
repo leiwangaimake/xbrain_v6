@@ -46,6 +46,8 @@ STATE_MODE_TOPIC = "state/mode"          # W3: P2 usage mode (10 Hz)
 EVENT_WILDCARD_TOPIC = "event/**"        # W2: event/{severity}/{category} stream
 PROBE_ESTOP_PING_TOPIC = "probe/estop/ping"  # W5: P5 ping (11 CR-2, 17 S6.3)
 PROBE_ESTOP_PONG_TOPIC = "probe/estop/pong"  # W5: quadruped pong (11 CR-3, authoritative source)
+HEALTH_FACTOR_TOPIC = "health/factor"    # W8: P2 health snapshot -> /api/health
+HEALTH_BIT_TOPIC = "health/bit"          # W8: P2 self-test report -> /api/bit
 FENCE_STALE_AFTER_MS = 10000             # P5F-2: cache silent this long -> degraded
 EVENT_RING = 50                          # HMI keeps the most recent N events
 DEFAULT_RTT_DEGRADE_MS = 200             # hmi.link_rtt_degrade_ms fallback (probe, not safety)
@@ -146,7 +148,8 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict):
                 # frontend greys those layers, never fabricates.
                 "routes": None, "waypoints": None,
                 "enu_origin": hmi_state.get("enu_origin"),
-                "pose": None, "health": None,
+                "pose": None,
+                "health": hmi_state.get("health"),  # health/factor (W8)
             }
 
         def fence_degraded(self):
@@ -154,6 +157,19 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict):
             # never a 200 empty set.
             _fences, degraded = _fence_snapshot(hmi_state)
             return degraded
+
+        def rest_inputs(self):
+            # W8: sources for the 17 S6.5 REST endpoints NOT in the A..F snapshot.
+            # health/bit are wired (P2 health/factor / health/bit); routes/docks/
+            # metrics/approval have no P5 source yet -> None -> available:false.
+            return {
+                "health": hmi_state.get("health"),  # /api/health (W8-wired)
+                "bit": hmi_state.get("bit"),        # /api/bit (W8-wired)
+                "routes": None,      # /api/routes: geo.db gated (W8/geo src)
+                "docks": None,       # /api/docks: geo.db gated
+                "metrics": None,     # /api/metrics: telemetry aggregator gated
+                "approval_pending": None,  # /api/approval/pending: L3 queue gated
+            }
 
     try:
         socks = make_bound_sockets(bind)
@@ -211,6 +227,8 @@ def run_voice_loop_wiring(stop_flag: dict,
         "link": None,                # state/link  -> status + ESTOP arming
         "mode": None,                # state/mode  -> footer mode (W3)
         "events": [],                # event/**    -> event stream ring (W2)
+        "health": None,              # health/factor -> /api/health (W8)
+        "bit": None,                 # health/bit  -> /api/bit (W8)
         "enu_origin": None,          # localisation origin (gated, W4)
         "fence_cache": FenceCache(),  # cmd/fence   -> map fences (W1)
     }
@@ -311,6 +329,26 @@ def run_voice_loop_wiring(stop_flag: dict,
             }
             hmi_state["events"] = (hmi_state["events"] + [ev])[-EVENT_RING:]
 
+        def _on_health(sample) -> None:
+            # W8: relay P2's latest health/factor to /api/health. P5 forwards the
+            # authoritative payload unchanged (G-2 same-source), REPLACING the
+            # whole value so the web thread's read stays consistent under the GIL.
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                d = None
+            if d:
+                hmi_state["health"] = d
+
+        def _on_bit(sample) -> None:
+            # W8: relay P2's latest health/bit self-test report to /api/bit.
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                d = None
+            if d:
+                hmi_state["bit"] = d
+
         ack_sub = gen.declare_subscriber(
             CMD_AUDIO_SPEAK_ACK_TOPIC, _on_speak_ack)
         task_sub = gen.declare_subscriber(
@@ -320,8 +358,10 @@ def run_voice_loop_wiring(stop_flag: dict,
         event_sub = gen.declare_subscriber(EVENT_WILDCARD_TOPIC, _on_event)
         estop_pong_sub = gen.declare_subscriber(
             PROBE_ESTOP_PONG_TOPIC, _on_estop_pong)
+        health_sub = gen.declare_subscriber(HEALTH_FACTOR_TOPIC, _on_health)
+        bit_sub = gen.declare_subscriber(HEALTH_BIT_TOPIC, _on_bit)
         _logger.info("p5 wiring: subscribed speak/ack + state/task + "
-                     "cmd/fence + state/mode + event/** + estop/pong")
+                     "cmd/fence + state/mode + event/** + estop/pong + health")
 
         # Start the HMI web server (best-effort; never blocks the voice loop).
         hmi_server, _hmi_thread = (None, None)
@@ -353,7 +393,10 @@ def run_voice_loop_wiring(stop_flag: dict,
                         # threshold, degraded when slow, down after
                         # link_down_misses missing pongs (17 S6.3).
                         "estop_path": estop_probe.estop_path(),
-                        "estop_rtt_ms": estop_probe.rtt_ms,
+                        # latency_ms IS the estop probe's last RTT (11 S4.6.5 /
+                        # 17 S6.2 link.data.latency_ms; 17 line "latency_ms = S6.3
+                        # link_probe 最近一次 RTT"). status_group reads latency_ms.
+                        "latency_ms": estop_probe.rtt_ms,
                         "mono_ms": _now_mono_ms(),
                         "speak_acks": speak_acks_seen,
                         "task_updates": state_task_updates,
@@ -368,7 +411,8 @@ def run_voice_loop_wiring(stop_flag: dict,
             if hmi_server is not None:
                 hmi_server.should_exit = True
             for entity in (ack_sub, task_sub, fence_sub, mode_sub, event_sub,
-                           estop_pong_sub, estop_ping_pub, link_pub):
+                           estop_pong_sub, health_sub, bit_sub,
+                           estop_ping_pub, link_pub):
                 try:
                     entity.undeclare()
                 except Exception:      # noqa: BLE001

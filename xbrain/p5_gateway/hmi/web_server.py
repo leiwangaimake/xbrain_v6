@@ -91,6 +91,13 @@ class RuntimeStateProvider(Protocol):
         E_DEGRADED on /api/fences (17 S6.9 P5F-2), never a 200 empty set."""
         ...
 
+    def rest_inputs(self) -> Dict[str, Any]:
+        """Sources for the 17 S6.5 REST endpoints NOT in the build_snapshot A..F
+        set (health/bit/routes/docks/metrics/approval_pending), each None when
+        absent. OPTIONAL: build_app reads it via getattr, so a legacy provider
+        without it simply serves those endpoints as available:false."""
+        ...
+
 
 def parse_bind_entry(entry: str) -> Tuple[str, int]:
     """Split a "IP:port" bind entry into (host, port).
@@ -214,6 +221,58 @@ def build_app(
         wiring's event ring (W2); available:false until the ring is fed. Map dots
         appear only for events with a stamped pos (W4)."""
         return events_group(provider.snapshot_inputs().get("events"))
+
+    # W8: the remaining 17 S6.5 read-only endpoints, so the endpoint SET matches
+    # the frozen contract (11 S12.2 == 17 S6.5). Each reads provider.rest_inputs()
+    # (separate from snapshot_inputs, which is the keyword-locked build_snapshot
+    # A..F set -- adding keys there would break build_snapshot(**inputs)). Sources
+    # not yet subscribed report available:false, never a fabricated body.
+    from xbrain.p5_gateway.hmi.data_readers import (  # noqa: PLC0415
+        rest_list_endpoint, rest_object_endpoint,
+    )
+
+    def _rest() -> Dict[str, Any]:
+        # getattr so a minimal/legacy provider (or a test fake) without
+        # rest_inputs still serves these endpoints as uniformly unavailable
+        # rather than 500-ing -- the HMI degrades, it does not crash.
+        fn = getattr(provider, "rest_inputs", None)
+        return fn() if callable(fn) else {}
+
+    @app.get("/api/routes")
+    def get_routes() -> Dict[str, Any]:
+        """17 S6.5: route + waypoint list. Gated on geo.db (P5 does not read P3's
+        dbs; needs the geo query key, 17 S6.9 note) -> available:false today."""
+        return rest_list_endpoint(_rest().get("routes"), "routes")
+
+    @app.get("/api/docks")
+    def get_docks() -> Dict[str, Any]:
+        """17 S6.5: charging-dock list. Same geo.db gate as /api/routes."""
+        return rest_list_endpoint(_rest().get("docks"), "docks")
+
+    @app.get("/api/health")
+    def get_health() -> Dict[str, Any]:
+        """17 S6.5: health snapshot -- passthrough of P2 health/factor (W8 wired).
+        available:false until the first health/factor arrives."""
+        return rest_object_endpoint(_rest().get("health"), "health")
+
+    @app.get("/api/bit")
+    def get_bit() -> Dict[str, Any]:
+        """17 S6.5: last self-test report -- passthrough of P2 health/bit (W8
+        wired). available:false until the first health/bit arrives."""
+        return rest_object_endpoint(_rest().get("bit"), "bit")
+
+    @app.get("/api/metrics")
+    def get_metrics() -> Dict[str, Any]:
+        """17 S6.5: telemetry snapshot. Gated on a telemetry aggregator not yet
+        instantiated in the voice-loop MVP -> available:false (NEXT.md)."""
+        return rest_object_endpoint(_rest().get("metrics"), "metrics")
+
+    @app.get("/api/approval/pending")
+    def get_approval_pending() -> Dict[str, Any]:
+        """17 S6.5 / S3.8: L3 pending-approval queue snapshot. Same in-memory
+        queue as state/approval (G-2), which has no feed in the MVP -> empty +
+        available:false, never a fabricated pending item."""
+        return rest_list_endpoint(_rest().get("approval_pending"), "pending")
 
     @app.post("/api/estop")
     def post_estop() -> Dict[str, str]:
