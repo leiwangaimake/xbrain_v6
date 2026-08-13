@@ -100,7 +100,7 @@
 | HMI-W2 | 事件:订阅 `event/**` -> 近期环(EVENT_RING=50)喂 events_group + `/api/events` | ✅ **已接** | ★ 实测发 event -> /api/events 返真事件; 地图**红点落位**需 pose 打坐标(W4) |
 | HMI-W3 | 当前模式:订阅 P2 `state/mode` 喂 status.mode | ✅ **已接** | ★ 实测发 state/mode=patrol -> snapshot.status.mode=patrol |
 | HMI-W4 | **位姿/GPS/ENU/航向/速度/实时轨迹/RTK/精度; 且 W1 围栏/W2 事件的【地图坐标落点】依赖 enu_origin** | 未接 `[GATED-HW]` | perception(设计未写)+ rtk_driver(未建)+ quadruped(云深处) |
-| HMI-W5 | 真端到端 ESTOP:§6.4 专用 <=10ms 快路(P-1)+ §6.3 estop 探活喂 estop_path(现 MVP 恒 "ok" + 走 cmd/estop) | 部分 `[SW-NOW]` | estop 快路 + 探活接线 |
+| HMI-W5 | 真端到端 ESTOP:§6.3 estop 探活喂 estop_path;§6.4 专用 <=10ms 快路(P-1) | ✅ **探活已接** / 快路 `[GATED-HW]` | ★ **探活机制已落**:`EstopProbe` 状态机(estop_probe.py)+ 每拍 `probe/estop/ping` -> 收 `probe/estop/pong` -> RTT/连续无 pong -> ok/degraded/down(11 CR-2/CR-3 · T-23/T-24)。★★ **无底盘时诚实报 "down"**(按钮置灰),🚫 不再恒 "ok" 造假。★ 剩 §6.4 <=10ms 专用快路(P-1)与 pong 权威源都要 `quadruped`/`chassis_relay`(云深处) |
 | HMI-W6 | WS 推送 state_snapshot(替代 1Hz REST 轮询) | ✅ **已接** | ★ /ws 端点推 state_snapshot(push_hz 可配), 前端 WS 主、REST 轮询兜底。★ 依赖 **wsproto**(uvicorn 0.52 与 websockets 16.x 服务端不兼容, 用 wsproto 后端; 缺则回退 auto+REST)。★ 修了 `from __future__ annotations` 致 FastAPI 把 ws 参数误判查询参数的 403 坑。剩 state_delta 增量(现全量快照/次) |
 | HMI-W7 | 计划目标点有序表 + 逐点勾选 + 进度 2/N:路径展开(EX-1) | 未做 `[部分 GATED-HW]` | geo.db 航点 + P1 真执行上报 |
 | HMI-W8 | 端点集对齐冻结契约(17 §6.5):`/api/fences/active` + `/api/events` 已加 | ✅ **部分** | ★ 剩 `/api/routes` `/api/geo/*` `/api/docks` `/api/bit` `/api/metrics` `/api/approval/pending` 需各自数据源 |

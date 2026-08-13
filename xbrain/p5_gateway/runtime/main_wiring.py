@@ -44,8 +44,12 @@ CMD_ESTOP_TOPIC = "cmd/estop"
 CMD_FENCE_TOPIC = "cmd/fence"            # W1: fence geometry (17 S6.9, P5 consumes)
 STATE_MODE_TOPIC = "state/mode"          # W3: P2 usage mode (10 Hz)
 EVENT_WILDCARD_TOPIC = "event/**"        # W2: event/{severity}/{category} stream
+PROBE_ESTOP_PING_TOPIC = "probe/estop/ping"  # W5: P5 ping (11 CR-2, 17 S6.3)
+PROBE_ESTOP_PONG_TOPIC = "probe/estop/pong"  # W5: quadruped pong (11 CR-3, authoritative source)
 FENCE_STALE_AFTER_MS = 10000             # P5F-2: cache silent this long -> degraded
 EVENT_RING = 50                          # HMI keeps the most recent N events
+DEFAULT_RTT_DEGRADE_MS = 200             # hmi.link_rtt_degrade_ms fallback (probe, not safety)
+DEFAULT_DOWN_MISSES = 3                   # hmi.link_down_misses fallback (17 S6.3)
 
 
 def _fence_snapshot(hmi_state: dict):
@@ -157,6 +161,19 @@ def run_voice_loop_wiring(stop_flag: dict,
     """
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p5_gateway.fence.cache import FenceCache
+    from xbrain.p5_gateway.hmi.estop_probe import EstopProbe
+
+    # W5: estop-path probe (17 S6.3). Thresholds ride on the hmi subtree
+    # (link_rtt_degrade_ms / link_down_misses); the fallbacks are probe tuning,
+    # NOT safety params, so a default is allowed here (3.1 governs common.spec/
+    # safety, not HMI liveness thresholds). Starts "down": until the quadruped
+    # estop channel actually replies the button greys honestly, never armed on
+    # faith (the endpoint is GATED-HW today, so "down" is the truthful state).
+    _probe_cfg = hmi_cfg if isinstance(hmi_cfg, dict) else {}
+    estop_probe = EstopProbe(
+        _probe_cfg.get("link_rtt_degrade_ms", DEFAULT_RTT_DEGRADE_MS),
+        _probe_cfg.get("link_down_misses", DEFAULT_DOWN_MISSES),
+    )
 
     # Shared state the HMI provider reads. The sync callbacks below REPLACE whole
     # values (never mutate in place) so the web thread's reads stay consistent
@@ -174,9 +191,25 @@ def run_voice_loop_wiring(stop_flag: dict,
     _logger.info("p5 wiring: opening GEN session")
     with open_planes(("gen",)) as gen:
         link_pub = gen.declare_publisher(STATE_LINK_TOPIC)
+        # W5: probe ping out, pong in (11 CR-2/CR-3). The ping rides the estop
+        # channel path (via chassis_relay) so a dead estop LINK (not merely a
+        # dead app) surfaces as estop_path "down", not a false "ok".
+        estop_ping_pub = gen.declare_publisher(PROBE_ESTOP_PING_TOPIC)
 
         speak_acks_seen = 0
         state_task_updates = 0
+        probe_seq = 0
+
+        def _on_estop_pong(sample) -> None:
+            # W5: a quadruped reply. Match by seq so a late pong for an older
+            # ping cannot mask a current outage (EstopProbe ignores the mismatch).
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                d = {}
+            seq = d.get("seq")
+            if isinstance(seq, int):
+                estop_probe.on_pong(seq, _now_mono_ms())
 
         def _on_speak_ack(sample) -> None:
             nonlocal speak_acks_seen
@@ -257,8 +290,10 @@ def run_voice_loop_wiring(stop_flag: dict,
         fence_sub = gen.declare_subscriber(CMD_FENCE_TOPIC, _on_cmd_fence)
         mode_sub = gen.declare_subscriber(STATE_MODE_TOPIC, _on_state_mode)
         event_sub = gen.declare_subscriber(EVENT_WILDCARD_TOPIC, _on_event)
+        estop_pong_sub = gen.declare_subscriber(
+            PROBE_ESTOP_PONG_TOPIC, _on_estop_pong)
         _logger.info("p5 wiring: subscribed speak/ack + state/task + "
-                     "cmd/fence + state/mode + event/**")
+                     "cmd/fence + state/mode + event/** + estop/pong")
 
         # Start the HMI web server (best-effort; never blocks the voice loop).
         hmi_server, _hmi_thread = (None, None)
@@ -270,14 +305,27 @@ def run_voice_loop_wiring(stop_flag: dict,
             while not stop_flag.get("stop"):
                 now = time.monotonic()
                 if now - last_hb >= heartbeat_period_s:
+                    # W5: send one estop probe per heartbeat and read back the
+                    # ok/degraded/down verdict. on_ping_sent must run BEFORE the
+                    # verdict so a missing pong for the prior ping is counted this
+                    # tick; without a chassis no pong ever arrives -> "down", and
+                    # the HMI greys the button honestly (17 S6.3).
+                    probe_seq += 1
+                    ping_mono = _now_mono_ms()
+                    estop_probe.on_ping_sent(probe_seq, ping_mono)
+                    # ping payload per 11 S8.5: {type:"ping", seq, t_mono_ms}.
+                    estop_ping_pub.put(json.dumps(
+                        {"type": "ping", "seq": probe_seq,
+                         "t_mono_ms": ping_mono}).encode("utf-8"))
                     link_payload = {
                         "schema": "state_link_v1",
                         "gateway_up": True,
                         # estop_path lets the HMI arm/grey its ESTOP button
-                        # (NAV-64). MVP reports "ok" whenever the gateway loop is
-                        # alive; the real end-to-end estop probe (17 S6.3) is a
-                        # follow-up (NEXT.md HMI-W5).
-                        "estop_path": "ok",
+                        # (NAV-64): ok only on a fresh pong under the RTT
+                        # threshold, degraded when slow, down after
+                        # link_down_misses missing pongs (17 S6.3).
+                        "estop_path": estop_probe.estop_path(),
+                        "estop_rtt_ms": estop_probe.rtt_ms,
                         "mono_ms": _now_mono_ms(),
                         "speak_acks": speak_acks_seen,
                         "task_updates": state_task_updates,
@@ -292,7 +340,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             if hmi_server is not None:
                 hmi_server.should_exit = True
             for entity in (ack_sub, task_sub, fence_sub, mode_sub, event_sub,
-                           link_pub):
+                           estop_pong_sub, estop_ping_pub, link_pub):
                 try:
                     entity.undeclare()
                 except Exception:      # noqa: BLE001
