@@ -50,15 +50,19 @@ def assigned():
 # --------------------------------------------------------------------------
 
 def test_real_file_refuses_naming_the_unassigned_binds():
-    """*** Today's truth: the file is shape-clean but LAN2/wifi binds are null
-    (U-15 / deployment pending), so startup must refuse AND name every
-    unassigned key path in one message -- the designed unfilled-config
-    behaviour, not an error in the file."""
+    """*** Today's truth: the file is shape-clean, and the WIFI bind hmi.bind[1]
+    is now ASSIGNED (192.168.1.7:18083, the deployment access address the user
+    required 2026-08-12); only the LAN2 bind hmi.bind[0] is still null (U-15
+    pending). So startup must refuse AND name the still-unassigned LAN2 key --
+    but must NOT name bind[1], which is filled. This pins the designed
+    unfilled-config behaviour without regressing the intentional wifi fill."""
     with pytest.raises(P5ConfigError) as err:
         check_p5_config(real_mapping())
     msg = str(err.value)
     assert "unassigned" in msg
-    assert "hmi.bind[0]" in msg and "hmi.bind[1]" in msg
+    # bind[0] (LAN2) still null -> named; bind[1] (wifi) assigned -> NOT named.
+    assert "hmi.bind[0]" in msg
+    assert "hmi.bind[1]" not in msg
     assert "delivery.ftp.listen_address[0]" in msg
 
 
