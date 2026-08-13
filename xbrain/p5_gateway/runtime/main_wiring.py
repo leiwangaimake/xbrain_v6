@@ -52,6 +52,33 @@ DEFAULT_RTT_DEGRADE_MS = 200             # hmi.link_rtt_degrade_ms fallback (pro
 DEFAULT_DOWN_MISSES = 3                   # hmi.link_down_misses fallback (17 S6.3)
 
 
+def _extract_active_tasks(payload: dict) -> list:
+    """W7: flatten a state/task envelope into the flat task dicts the HMI plan
+    panel reads (data_readers._plan needs task_id/state/current_step/total_steps
+    at the top level, not nested).
+
+    P3 publishes {schema, active_task:{task_id, state, mono_ms}} today (11 S2.2.2,
+    p3 main_wiring _make_publish). A future 1 Hz heartbeat may instead carry a
+    LIST of HeartbeatState (progress.py: task_id/state/current_step/total_steps).
+    Accept BOTH shapes so the panel keeps working when P3 upgrades the payload,
+    and return [] (not a fabricated card) for anything without a task_id -- the
+    trap here is wrapping the whole envelope as one 'plan', which is what the MVP
+    did and made _plan read state/targets off {schema, active_task} and get None.
+    """
+    if not isinstance(payload, dict):
+        return []
+    # Current P3 shape: a single active_task object.
+    at = payload.get("active_task")
+    if isinstance(at, dict) and at.get("task_id"):
+        return [at]
+    # Forward-compat: a list of per-task heartbeat states.
+    for key in ("active_tasks", "tasks"):
+        lst = payload.get(key)
+        if isinstance(lst, list):
+            return [t for t in lst if isinstance(t, dict) and t.get("task_id")]
+    return []
+
+
 def _fence_snapshot(hmi_state: dict):
     """(fences_list_or_None, is_degraded) from the P5F-2 FenceCache.
 
@@ -229,11 +256,12 @@ def run_voice_loop_wiring(stop_flag: dict,
                 d = json.loads(bytes(sample.payload).decode("utf-8"))
             except Exception:      # noqa: BLE001
                 d = {}
-            # Feed the HMI plan panel. state/task carries the current task view;
-            # wrap it as a one-element list (the panel renders a list of plans),
-            # or None when the payload had nothing usable so the panel stays
-            # "no plan" rather than showing an empty card.
-            hmi_state["tasks"] = [d] if d else None
+            # W7: feed the HMI plan panel. Flatten the state/task envelope into
+            # the flat task dicts _plan reads (extract active_task, NOT the whole
+            # {schema, active_task} envelope). None when nothing usable so the
+            # panel stays "no plan" rather than showing an empty card.
+            tasks = _extract_active_tasks(d)
+            hmi_state["tasks"] = tasks or None
             _logger.info("p5 obs state/task update #%d: %s",
                          state_task_updates,
                          json.dumps(d, ensure_ascii=False))
