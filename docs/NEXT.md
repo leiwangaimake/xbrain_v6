@@ -107,12 +107,18 @@
 
 > ★ W1/W2/W3/W5(探活)/W6/W7(映射)/W8 已接(纯软件); W4 是硬件总闸(位姿那一整片, 也卡 W1/W2 地图落点); W5 快路/W7 数据部分卡硬件。
 
-#### 7.1 ⚠️ 待用户裁决 · 两套 REST 端点词表分歧(W8 附带发现)
+#### 7.1 REST 端点词表:死代码已删,全面对齐留给真实现 GWY-P5-13(2026-08-14 裁决)
 
-★★ `xbrain/p5_gateway/rest/endpoints.py` 的 `READONLY_ENDPOINTS`(自称 GWY-P5-13 / 引"17 S12")是**早期残留**, 与现行冻结契约 **11 §12.2 == 17 §6.5 不一致**:
-- 它有的、契约里**没有**: `/api/telemetry/{class}` `/api/tasks[/{id}]` `/api/dock/status` `/api/link/status`
-- 契约有的、它**缺**: `/api/routes` `/api/docks` `/api/bit` `/api/metrics` `/api/approval/pending` `/api/geo/manifest`
-- 引用节号也错(应为 11 §12.2 / 17 §6.5, 不是"17 S12")
+**背景**:`xbrain/p5_gateway/rest/endpoints.py` 原有 `READONLY_ENDPOINTS`(自称 GWY-P5-13 / 引"17 S12")是早期残留,与现行冻结契约不一致,且它的 `check_readonly()` 是**死代码**(全仓无 live 调用,只有 `test_batch_c.py` 测它;实际 HMI server 只用 `fences_endpoint`)。
 
-★ **影响有限**: 其 `check_readonly()` 并**未接入**实际 HMI web server(build_app 只用 `fences_endpoint`), 所以 W8 的 §6.5 端点面**已正确对齐契约**, 与此旧 registry 无关。
-🚫 **未擅改**(§9.1): 该 registry 有元测试 `test_batch_c.py::len==8` 且是已提交契约面, 词表以谁为准 + `check_readonly` 是否该并入 WS 写守卫, 需用户裁决。
+**已做(选项 A · 删死代码,不重写)**:删除 `READONLY_ENDPOINTS` + `EndpointNotAllowed` + `check_readonly` 及其 4 条元测试(`test_rest_get_ok`/`post_rejected`/`unknown_endpoint`/`len==8`),保留已接线且正确的 `fences_endpoint`(P5F-2 的 E_DEGRADED 前置)+ 其 2 条测试。理由:重写一个没人读的死常量只会造成"已对齐"假信号(§3.2);删掉即让全仓**只剩一份端点真源**(build_app 的 §6.5 live 面)。
+
+**契约调查结论(供真实现时用)**:
+- ★ REST 只读端点集**无 HW-1 式硬约束**(「单一常量生成+不一致拒启动」只管 WS 上行写白名单, 11 §12.1.4),只受 F-8 冻结评审门管;所以运行期"拒非白名单 REST 路径"守卫**并非契约要求**。
+- ★★ **11 §12.2 与 17 §6.5 两张权威表本身不一致**(实测逐字):§12.2 独有 `teach/session[/points]` `teleop/state` `arbitration[/{domain}]` `geo/manifest` `geo/{type}/{id}[/refs]` `geo/conflicts`;§6.5 独有 `metrics` `approval/pending`(后者带 G-2「与 state/approval 同队列」硬语义)。W8 现按 §6.5 落。
+- ★ 那 4 个旧端点(telemetry/tasks/dock/link)在 11/17/99 **零命中**——从未进过契约,非被删。归宿:telemetry 被 G-2 砍(留单个 metrics)、tasks 走 WS `state/task`、link 走 WS 下行 `link` 投影、dock 仅存 geo `/api/docks`。
+
+**留给真实现 GWY-P5-13 一并处理**(部分卡):
+1. ★★★ **先裁 REST 面以 11 §12.2 还是 17 §6.5 为准**(11 是契约唯一真源→§12.2,但 §6.5 的 metrics/approval 要有归宿);据此重建 build_app 端点集。
+2. GWY-P5-13 真验收:只读拒写守卫(按定案词表重新生成)、`/api/fences*` 的 E_DEGRADED 带 `(fence_set_id,rev,crc32)` 三元组、`/api/approval/pending` 与 `state/approval` 同队列、`/api/events` 排序键 `(channel,ch_seq)`、`test_rest.py` harness。
+3. ⚠️ `/api/events` 返回体 schema / since 语义 / 排序键 / 分页游标在契约里**本身仍"未定"**(17 §6.8.5 第 8 项),须 11 侧先落笔。

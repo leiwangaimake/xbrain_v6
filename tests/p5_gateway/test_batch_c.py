@@ -24,10 +24,7 @@ from xbrain.p5_gateway.hmi.ws_protocol import (
     DOWN_MESSAGE_KINDS, RateLimitBucket, UP_MESSAGE_KINDS,
     UnknownMessageKind, classify_down, classify_up,
 )
-from xbrain.p5_gateway.rest.endpoints import (
-    EndpointNotAllowed, READONLY_ENDPOINTS,
-    check_readonly, fences_endpoint,
-)
+from xbrain.p5_gateway.rest.endpoints import fences_endpoint
 from xbrain.p5_gateway.telemetry.aggregator import (
     Sample, TELEMETRY_CLASSES, TelemetryClass, TelemetryRing,
     WEAK_LINK_DOWNSAMPLE, is_weak_link, uplink_cadence_ms,
@@ -170,25 +167,12 @@ def test_rate_limit_refills():
     assert b.try_take(now_ms=3000) is True
 
 
-# --- GWY-P5-13 REST ---
-
-def test_rest_get_ok():
-    check_readonly("GET", "/api/health")
-
-
-def test_rest_post_rejected():
-    with pytest.raises(EndpointNotAllowed, match="read-only"):
-        check_readonly("POST", "/api/health")
-
-
-def test_rest_unknown_endpoint_rejected():
-    with pytest.raises(EndpointNotAllowed, match="unknown endpoint"):
-        check_readonly("GET", "/api/wombats")
-
-
-def test_readonly_endpoints_exactly_eight():
-    assert len(READONLY_ENDPOINTS) == 8
-
+# --- GWY-P5-13 REST: /api/fences* E_DEGRADED precondition ---
+# The read-only whitelist guard (check_readonly / READONLY_ENDPOINTS) was removed
+# 2026-08-14: it was dead code (no live caller -- web_server uses only
+# fences_endpoint) AND its 8-entry list had drifted from the frozen contract
+# (11 S12.2 / 17 S6.5). Full REST-surface reconciliation is deferred to the real
+# GWY-P5-13 implementation (NEXT.md S7.1). fences_endpoint stays -- it is wired.
 
 def test_fences_degraded_returns_503():
     r = fences_endpoint(fence_db_degraded=True)
