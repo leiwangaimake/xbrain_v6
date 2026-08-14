@@ -87,8 +87,7 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 /* -- overlays ------------------------------------------------------------- */
 .map-overlay { position: absolute; z-index: 3; background: rgba(27,38,59,.92);
   border: 1px solid rgba(192,192,192,.42); border-radius: 5px; padding: 8px 10px; }
-/* moved to bottom-right (2026-08-14): the heading dial took the top-left corner. */
-.legend { right: 14px; bottom: 14px; display: grid; grid-template-columns: auto auto;
+.legend { left: 10px; top: 10px; display: grid; grid-template-columns: auto auto;
   column-gap: 16px; row-gap: 8px; font-family: var(--font-legend-family);
   font-size: var(--font-legend-size); }
 .legend-row { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
@@ -104,8 +103,8 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
    中心镂空. 数据源仅 pose.heading_rad(本体航向真值). 17 S6.6/PTZ-C2 禁的"罗盘/朝向
    指针"是【云台】朝向(假值回读), 本体航向是真值且 S6.10 item 6 已允许文字显示 --
    本盘绝不接云台角. heading 卡硬件(W4)时置灰不显假值(3.2). */
-.heading-dial { position: absolute; left: 14px; top: 14px; width: 300px; height: 300px; z-index: 3;
-  opacity: .9; }                            /* top-left (old N+arrow spot); slightly transparent */
+.heading-dial { position: absolute; left: 14px; top: 118px; width: 300px; height: 300px; z-index: 3;
+  opacity: .9; }                            /* top-left, below the legend (old N+arrow spot) */
 #dialFace { transform-box: fill-box; transform-origin: center; transition: transform .18s ease-out; }
 .dial-ring { fill: none; stroke: #8a8a8a; stroke-width: 1.9; }
 .dial-tick { stroke: #b0b0b0; stroke-width: 1.4; }
