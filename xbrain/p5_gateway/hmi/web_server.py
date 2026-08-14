@@ -183,6 +183,20 @@ def build_app(
     ui_config = build_ui_config(hmi_web)            # raises on malformed config
     app = FastAPI(title="XBRAIN_V6 HMI", docs_url=None, redoc_url=None)
 
+    @app.middleware("http")
+    async def _no_stale_cache(request, call_next):
+        # HMI assets + data must never be served stale from the browser cache.
+        # StaticFiles sends etag/last-modified but NO Cache-Control, so browsers
+        # apply heuristic caching and can keep an OLD hmi.css/hmi.js after a
+        # redeploy (observed: a cached hmi.css kept the coord panel bottom-RIGHT
+        # after the source moved it bottom-LEFT). "no-cache" forces revalidation
+        # every load -- with the etag that is a cheap 304 when nothing changed,
+        # a 200 with the new bytes when it did. Applies to /api + /ws too, which
+        # is correct: the operator must always see current UI and current state.
+        resp = await call_next(request)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
     @app.get("/api/hmi/ui_config")
     def get_ui_config() -> Dict[str, Any]:
         """U1..U6 presentation config for the frontend (17 S6.10.2). Static per
