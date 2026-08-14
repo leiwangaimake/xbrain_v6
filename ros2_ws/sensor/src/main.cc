@@ -3,55 +3,72 @@
  * Author: wanglei@hachist.com
  * 上海哈船智能船舶技术有限公司
  * File: main.cc
- * Brief: rtk_driver serial smoke tool -- open the module, parse NMEA, print facts
+ * Brief: rtk_driver process entry -- config -> serial -> RtkDriver -> RT publish
  *
  * Description:
- * What this runs today. The full rtk_driver loop (parse -> resolver -> GnssHeading
- * -> RT publish) needs two foundations that are not in place yet: a C++ config
- * loader for configs/rtk_driver.yaml (none exists under common/, 10 S5.4.1) and
- * the Zenoh binding (11 S2.4.1 version unlocked, not installed). The resolver and
- * driver core are already built and OFFLINE-tested (test_heading_resolver /
- * test_rtk_driver). So this executable is the piece that needs REAL HARDWARE: it
- * opens the serial port, parses the module's NMEA with the same nmea_parser the
- * driver uses, and prints the GGA / TRA / RMC facts plus the ENU heading the
- * resolver would compute -- verifying serial + parse + convert on the ORIN with
- * the real module, on the real aarch64 build.
+ * The real process now (the earlier parse-only smoke tool is gone). Startup order
+ * is deliberate and fail-STOP: read the runtime identity, load the resolved config
+ * (3.1 -- a null threshold throws here), open the serial port, open the RT-plane
+ * ZenohSink, then run the 20 Hz loop. Any of the first four failing prints an
+ * English reason and exits non-zero, so the process never runs half-configured.
  *
- * Why it does not build a RtkDriver. That needs DriverConfig, whose resolver
- * thresholds are safety values (CLAUDE.md 3.1 forbids a code default), so they
- * must come from configs/ via a loader that does not exist yet. Hardcoding them
- * here to make a demo run is exactly the silent default 3.1 rules out. When the
- * config loader lands, this becomes the 20 Hz loop feeding a RtkDriver + a Zenoh
- * PublishSink; until then it is an honest hardware smoke test, not a stub of the
- * running process.
+ * Identity sourcing (not in the per-proc config file): rid comes from the L5
+ * whitelist env XBRAIN_ROBOT_ID (layers.py maps it to common.robot_id) and is
+ * required -- an empty rid cannot form a valid xbrain/{rid}/... key, so it throws
+ * rather than defaulting. boot is the OS boot_id first-8-hex, the SAME value the
+ * Python read_local_boot_id uses, so envelopes from C++ and Python age-compare on
+ * one host. src is the fixed "rtk_driver".
  *
- * Boundary: no rclcpp, no zenoh. port/baud come from argv (I/O config, not safety
- * params -- a default is fine); nothing here reads configs/.
+ * Clocks (CLK-C1 / 3.4): the loop period, and every age the driver computes, use
+ * steady_clock. system_clock is read ONLY for the envelope ts (wall, for cross-
+ * host align + logging), never for a timeout.
  */
 
 #include <fcntl.h>
 #include <termios.h>
 #include <unistd.h>
 
-#include <cmath>
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <string>
+#include <thread>
 
-#include "sensor/nmea_parser.h"
+#include "sensor/rtk_config.h"
+#include "sensor/rtk_driver.h"
+#include "sensor/zenoh_sink.h"
 
 namespace {
-constexpr double kPi = 3.14159265358979323846;
 
-// True-north clockwise degrees -> ENU radians, the same flip the resolver does
-// (11 S3.3: heading_enu = wrap(pi/2 - heading_ned)). Shown so the operator can
-// sanity-check the conversion against the physical antenna direction on the bench.
-double TrueDegToEnuDeg(double deg) {
-  double a = kPi / 2.0 - deg * kPi / 180.0;
-  a = std::fmod(a + kPi, 2.0 * kPi);
-  if (a < 0.0) a += 2.0 * kPi;
-  return (a - kPi) * 180.0 / kPi;
+// Monotonic seconds for periods and ages (CLK-C1). Never the wall clock.
+double MonoNowS() {
+  return std::chrono::duration<double>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+// Wall milliseconds for the envelope ts only (align + log, 11 S3.0). Not a timeout.
+int64_t WallMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+
+// OS boot id, first 8 hex chars -- matches Python read_local_boot_id so a C++
+// envelope's boot equals its Python neighbours' on the same host.
+std::string ReadBootId() {
+  std::ifstream f("/proc/sys/kernel/random/boot_id");
+  std::string s;
+  std::getline(f, s);
+  std::string hex;
+  for (char c : s) {
+    if (std::isxdigit(static_cast<unsigned char>(c))) hex.push_back(c);
+    if (hex.size() >= 8) break;
+  }
+  return hex;
 }
 
 speed_t BaudConst(int baud) {
@@ -65,98 +82,114 @@ speed_t BaudConst(int baud) {
   }
 }
 
-// Open the serial port raw 8N1 at `baud`. Returns the fd, or -1 on failure.
-int OpenSerial(const char* port, int baud) {
-  const int fd = open(port, O_RDONLY | O_NOCTTY);
+// Open the serial port raw 8N1, non-blocking. Returns the fd or -1 on failure.
+int OpenSerial(const std::string& port, int baud) {
+  const int fd = open(port.c_str(), O_RDONLY | O_NOCTTY | O_NONBLOCK);
   if (fd < 0) {
-    std::fprintf(stderr, "open %s failed: %s\n", port, std::strerror(errno));
+    std::fprintf(stderr, "rtk_driver: open %s failed: %s\n", port.c_str(), std::strerror(errno));
     return -1;
   }
   struct termios tty;
   if (tcgetattr(fd, &tty) != 0) {
-    std::fprintf(stderr, "tcgetattr failed: %s\n", std::strerror(errno));
+    std::fprintf(stderr, "rtk_driver: tcgetattr failed: %s\n", std::strerror(errno));
     close(fd);
     return -1;
   }
   const speed_t b = BaudConst(baud);
   if (b == B0) {
-    std::fprintf(stderr, "unsupported baud %d\n", baud);
+    std::fprintf(stderr, "rtk_driver: unsupported baud %d\n", baud);
     close(fd);
     return -1;
   }
   cfsetispeed(&tty, b);
   cfsetospeed(&tty, b);
-  tty.c_cflag &= ~PARENB;
-  tty.c_cflag &= ~CSTOPB;
-  tty.c_cflag &= ~CSIZE;
-  tty.c_cflag |= CS8;
-  tty.c_cflag &= ~CRTSCTS;
-  tty.c_cflag |= (CLOCAL | CREAD);
+  tty.c_cflag &= ~(PARENB | CSTOPB | CSIZE | CRTSCTS);
+  tty.c_cflag |= (CS8 | CLOCAL | CREAD);
   tty.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
   tty.c_iflag &= ~(IXON | IXOFF | IXANY | ICRNL | INLCR);
   tty.c_oflag &= ~OPOST;
   tty.c_cc[VMIN] = 0;
-  tty.c_cc[VTIME] = 10;   // 1 s read timeout so the loop can bound itself
+  tty.c_cc[VTIME] = 0;  // non-blocking; the 20 Hz pacing is done by the loop
   if (tcsetattr(fd, TCSANOW, &tty) != 0) {
-    std::fprintf(stderr, "tcsetattr failed: %s\n", std::strerror(errno));
+    std::fprintf(stderr, "rtk_driver: tcsetattr failed: %s\n", std::strerror(errno));
     close(fd);
     return -1;
   }
   return fd;
 }
 
-void PrintLine(const std::string& line) {
-  sensor::GgaFix gga;
-  if (sensor::ParseGga(line, &gga)) {
-    std::printf("GGA  q=%d sats=%d %s%.7f,%.7f alt=%.1f\n", gga.quality,
-                gga.num_satellites, gga.valid ? "" : "(no-fix) ",
-                gga.latitude_deg, gga.longitude_deg, gga.altitude_m);
-    return;
-  }
-  sensor::TraHeading tra;
-  if (sensor::ParseTra(line, &tra)) {
-    std::printf("TRA  hdg=%.2f (ENU %.2f) pitch=%.2f QF=%d%s sats=%d\n",
-                tra.heading_true_deg, TrueDegToEnuDeg(tra.heading_true_deg),
-                tra.pitch_deg, tra.quality,
-                tra.quality == 4 ? "(NARROW_INT)" : tra.quality == 5 ? "(FLOAT)" : "",
-                tra.num_satellites);
-    return;
-  }
-  sensor::RmcData rmc;
-  if (sensor::ParseRmc(line, &rmc)) {
-    std::printf("RMC  %s spd=%.3f m/s cog=%s\n", rmc.status_active ? "A" : "V",
-                rmc.speed_mps, rmc.cog_present ? std::to_string(rmc.cog_deg).c_str()
-                                               : "(empty)");
-  }
+const char* EnvOr(const char* name, const char* fallback) {
+  const char* v = std::getenv(name);
+  return (v && *v) ? v : fallback;
 }
+
 }  // namespace
 
-int main(int argc, char** argv) {
-  const char* port = (argc > 1) ? argv[1] : "/dev/ttyACM0";
-  const int baud = (argc > 2) ? std::atoi(argv[2]) : 115200;
-  const int max_sentences = (argc > 3) ? std::atoi(argv[3]) : 0;  // 0 = run forever
+int main() {
+  // 1) Identity. rid is required (3.1): no valid key without it.
+  const char* rid_env = std::getenv("XBRAIN_ROBOT_ID");
+  if (rid_env == nullptr || *rid_env == '\0') {
+    std::fprintf(stderr, "rtk_driver: XBRAIN_ROBOT_ID is not set (required, no default)\n");
+    return 1;
+  }
+  const std::string rid = rid_env;
+  const std::string boot = ReadBootId();
+  const std::string src = "rtk_driver";
 
-  const int fd = OpenSerial(port, baud);
+  // 2) Config: read the resolved product (10 S5.4.1), never the source.
+  const std::string resolved_dir = EnvOr("XBRAIN_RESOLVED_DIR", "/run/xbrain/resolved");
+  const std::string cfg_path = resolved_dir + "/rtk_driver.yaml";
+  sensor::RtkConfig cfg;
+  try {
+    cfg = sensor::LoadRtkConfig(cfg_path, rid, src, boot);
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "rtk_driver: config load failed: %s\n", e.what());
+    return 1;
+  }
+
+  // 3) Serial.
+  const int fd = OpenSerial(cfg.serial_port, cfg.serial_baud);
   if (fd < 0) return 1;
-  std::printf("rtk_driver smoke: %s @ %d 8N1 (parse-only; full loop needs config"
-              " loader + zenoh)\n", port, baud);
 
-  std::string rx;
-  int printed = 0;
-  char buf[512];
+  // 4) RT-plane transport (throws if the RT router is unreachable).
+  std::unique_ptr<sensor::ZenohSink> sink;
+  try {
+    sink = std::make_unique<sensor::ZenohSink>();
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "rtk_driver: %s\n", e.what());
+    close(fd);
+    return 1;
+  }
+
+  sensor::RtkDriver driver(cfg.driver, sink.get());
+  std::printf("rtk_driver: rid=%s boot=%s serial=%s@%d -> RT rt/gnss/heading @20Hz\n",
+              rid.c_str(), boot.c_str(), cfg.serial_port.c_str(), cfg.serial_baud);
+
+  // 5) 20 Hz loop. steady_clock paces the period; each tick feeds fresh serial
+  //    bytes and publishes the resolved GnssHeading.
+  constexpr auto kPeriod = std::chrono::milliseconds(50);
+  auto next = std::chrono::steady_clock::now();
+  char buf[1024];
+  int64_t ticks = 0;
+  int64_t bytes_total = 0;
+  double last_hb = MonoNowS();
   for (;;) {
     const ssize_t n = read(fd, buf, sizeof(buf));
-    if (n > 0) rx.append(buf, static_cast<size_t>(n));
-    std::size_t nl;
-    while ((nl = rx.find('\n')) != std::string::npos) {
-      const std::string line = rx.substr(0, nl);
-      rx.erase(0, nl + 1);
-      if (line.find('$') == std::string::npos) continue;
-      PrintLine(line);
-      if (max_sentences > 0 && ++printed >= max_sentences) {
-        close(fd);
-        return 0;
-      }
+    const double mono = MonoNowS();
+    if (n > 0) {
+      driver.feed(buf, static_cast<std::size_t>(n), mono);
+      bytes_total += n;
     }
+    driver.tick(mono, WallMs());
+    ++ticks;
+    if (mono - last_hb >= 2.0) {  // heartbeat: proves the loop and serial are alive
+      std::printf("rtk_driver: alive ticks=%lld serial_bytes=%lld\n",
+                  static_cast<long long>(ticks), static_cast<long long>(bytes_total));
+      std::fflush(stdout);
+      last_hb = mono;
+    }
+    next += kPeriod;
+    std::this_thread::sleep_until(next);
   }
+  // unreachable
 }

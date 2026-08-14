@@ -34,10 +34,19 @@ add_library(rtk_driver_core STATIC
 )
 target_include_directories(rtk_driver_core PUBLIC include ${COMMON_INCLUDE})
 
-# The process binary. Today a serial smoke tool (parse + print); becomes the
-# 20 Hz loop when the config loader + a Zenoh PublishSink land (see src/main.cc).
-add_executable(rtk_driver src/main.cc)
-target_link_libraries(rtk_driver PRIVATE rtk_driver_core)
+# The process binary: config -> serial -> RtkDriver -> RT-plane ZenohSink @20Hz.
+# It links zenoh-c (installed at /usr/local by the Z1 step). zenoh lives ONLY in
+# zenoh_sink.cc (pImpl), so rtk_driver_core and the offline tests never see it.
+# The link is OPTIONAL: on a host without libzenohc (e.g. x86 CI) the core lib and
+# all offline tests still build; only this executable is skipped.
+find_library(ZENOHC_LIB zenohc PATHS /usr/local/lib)
+if(ZENOHC_LIB)
+  add_executable(rtk_driver src/main.cc src/zenoh_sink.cc)
+  target_include_directories(rtk_driver PRIVATE /usr/local/include)
+  target_link_libraries(rtk_driver PRIVATE rtk_driver_core ${ZENOHC_LIB} pthread)
+else()
+  message(STATUS "libzenohc not found -- skipping rtk_driver executable (offline tests still build)")
+endif()
 
 # Offline tests: plain executables, no ROS / no hardware, registered with CTest.
 enable_testing()
