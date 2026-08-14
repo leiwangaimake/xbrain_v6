@@ -57,14 +57,19 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 @keyframes estop-pulse { 50% { box-shadow: 0 0 0 4px rgba(230,57,50,.28); } }
 
 /* -- map ------------------------------------------------------------------ */
+/* Grid background: deep black (user 2026-08-14). Only the map area is black;
+   the chrome panels stay navy (var(--bg)). The SVG is transparent, so this
+   shows through the grid pattern's cells as the井字格 backdrop. */
 .map-viewport { position: relative; flex: 1; overflow: hidden; cursor: grab;
-  background: var(--bg); }
+  background: #0a0a0a; }
 .map-viewport.dragging { cursor: grabbing; }
 /* Pan/zoom is applied via the viewBox attribute (hmi.js applyView), NOT a CSS
    transform, so the element always fills the viewport and the grid stays infinite. */
 #mapSvg { width: 100%; height: 100%; }
-.map-grid-minor { stroke: rgba(176,176,176,.15); stroke-width: .6; }
-.map-grid-major { stroke: rgba(91,192,235,.30); stroke-width: 1.1; }
+/* minor (1 m cells): deep-gray thin lines; major (5 m cells): light-gray, only a
+   touch thicker than minor (user 2026-08-14 "just a bit thicker, not too thick"). */
+.map-grid-minor { stroke: #3a3a3a; stroke-width: .5; }
+.map-grid-major { stroke: #8f8f8f; stroke-width: .7; }
 
 .keep-in { fill: rgba(47,136,255,.06); stroke: var(--fence-active-color); }
 .alarm-region { fill: rgba(255,32,32,.07); stroke: var(--fence-alarm-color); }
