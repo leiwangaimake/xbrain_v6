@@ -53,7 +53,7 @@ def test_group_absent_in_prev_counts_as_changed():
     # were None would be dropped; here the empty-prev case must send all 5.
     b = _snap(mode="patrol")
     delta = snapshot_delta({}, b)
-    assert set(delta.keys()) == {"geo", "pose", "plan", "status", "events"}
+    assert set(delta.keys()) == {"geo", "pose", "plan", "status", "events", "clock"}
 
 
 def test_delta_merge_round_trips_to_the_new_snapshot():

@@ -99,6 +99,7 @@ def pose_group(pose: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             "available": False,
             "lat": None, "lon": None, "alt": None,
             "heading_rad": None, "heading_valid": False,
+            "heading_source": None, "heading_level": None,
             "speed_mps": None, "fix_type": None, "cov_h_m": None,
             "yaw_capable": False,
         }
@@ -109,10 +110,27 @@ def pose_group(pose: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "lat": pose.get("lat"), "lon": pose.get("lon"), "alt": pose.get("alt"),
         "heading_rad": pose.get("heading_rad"),
         "heading_valid": bool(pose.get("heading_valid", False)),
+        # RTK heading status (18-C G45/G46): source + degradation level, so the UI
+        # can show 双天线(L1)/航迹(L2)/无(L3) instead of only the raw angle.
+        "heading_source": pose.get("heading_source"),
+        "heading_level": pose.get("heading_level"),
         "speed_mps": pose.get("speed_mps"),
         "fix_type": pose.get("fix_type"),
         "cov_h_m": pose.get("cov_h_m"),
         "yaw_capable": bool(pose.get("yaw_capable", False)),
+    }
+
+
+def clock_group(clock: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """state/clock -> HMI clock group (18-C G47). sync judgement belongs to
+    rtk_driver (CLK-A1); the HMI only DISPLAYS it. No source (not wired / stale)
+    -> sync False, source none -- fail-safe, never a fabricated 'synced'."""
+    if not clock:
+        return {"available": False, "sync": False, "source": "none"}
+    return {
+        "available": True,
+        "sync": bool(clock.get("sync", False)),
+        "source": clock.get("source", "none"),
     }
 
 
@@ -244,6 +262,7 @@ def build_snapshot(
     link: Optional[Dict[str, Any]] = None,
     health: Optional[Dict[str, Any]] = None,
     events: Optional[Sequence[Dict[str, Any]]] = None,
+    clock: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble the full 17 S6.8 HMI snapshot from P5 runtime state.
 
@@ -260,6 +279,7 @@ def build_snapshot(
         "plan": plan_group(tasks),
         "status": status_group(mode, link, health),
         "events": events_group(events),
+        "clock": clock_group(clock),
     }
 
 

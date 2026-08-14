@@ -43,6 +43,8 @@ def _now_mono_ms() -> int:
 CMD_ESTOP_TOPIC = "cmd/estop"
 CMD_FENCE_TOPIC = "cmd/fence"            # W1: fence geometry (17 S6.9, P5 consumes)
 STATE_MODE_TOPIC = "state/mode"          # W3: P2 usage mode (10 Hz)
+STATE_POSE_TOPIC = "state/pose"          # P1-1: pose + RTK heading (p1 bridge)
+STATE_CLOCK_TOPIC = "state/clock"        # P1-13: clock sync mirror (18-C G47)
 EVENT_WILDCARD_TOPIC = "event/**"        # W2: event/{severity}/{category} stream
 PROBE_ESTOP_PING_TOPIC = "probe/estop/ping"  # W5: P5 ping (11 CR-2, 17 S6.3)
 PROBE_ESTOP_PONG_TOPIC = "probe/estop/pong"  # W5: quadruped pong (11 CR-3, authoritative source)
@@ -144,11 +146,16 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict):
                 "mode": hmi_state.get("mode"),     # state/mode (W3)
                 "events": hmi_state.get("events"),  # event/** ring (W2)
                 # Still gated: routes/waypoints need geo endpoints (W8/geo src);
-                # enu_origin + pose need localisation (W4 GATED-HW). None here ->
+                # enu_origin needs localisation (W4 GATED-HW). None here ->
                 # frontend greys those layers, never fabricates.
                 "routes": None, "waypoints": None,
                 "enu_origin": hmi_state.get("enu_origin"),
-                "pose": None,
+                # pose now flows: p1 assembles rt/gnss/heading -> state/pose. Fix
+                # half (lat/lon/fix_type) stays None until rtk_driver publishes
+                # rt/gnss/fix, so the map arrow greys but the heading dial + RTK
+                # heading status come alive.
+                "pose": hmi_state.get("pose"),
+                "clock": hmi_state.get("clock"),   # RTK time-sync (18-C G47)
                 "health": hmi_state.get("health"),  # health/factor (W8)
             }
 
@@ -226,6 +233,8 @@ def run_voice_loop_wiring(stop_flag: dict,
         "tasks": None,               # state/task  -> plan panel
         "link": None,                # state/link  -> status + ESTOP arming
         "mode": None,                # state/mode  -> footer mode (W3)
+        "pose": None,                # state/pose  -> coord panel + heading dial + RTK
+        "clock": None,               # state/clock -> RTK time-sync indicator
         "events": [],                # event/**    -> event stream ring (W2)
         "health": None,              # health/factor -> /api/health (W8)
         "bit": None,                 # health/bit  -> /api/bit (W8)
@@ -309,6 +318,24 @@ def run_voice_loop_wiring(stop_flag: dict,
             if d.get("mode"):
                 hmi_state["mode"] = d["mode"]
 
+        def _on_state_pose(sample) -> None:
+            # P1-1: p1 publishes state/pose (3.0 envelope) 10 Hz; the HMI reads the
+            # data part for the coord panel + heading dial + RTK status. Callback
+            # stores data only (dict assign is atomic; no work on the Rust thread).
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                return
+            hmi_state["pose"] = d.get("data")
+
+        def _on_state_clock(sample) -> None:
+            # P1-13: clock sync mirror -> RTK time-sync indicator (18-C G47).
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                return
+            hmi_state["clock"] = d.get("data")
+
         def _on_event(sample) -> None:
             # W2: keep the most recent EVENT_RING events for the stream + map
             # dots. REPLACE the whole list (never append in place) so the web
@@ -355,6 +382,8 @@ def run_voice_loop_wiring(stop_flag: dict,
             STATE_TASK_TOPIC, _on_state_task)
         fence_sub = gen.declare_subscriber(CMD_FENCE_TOPIC, _on_cmd_fence)
         mode_sub = gen.declare_subscriber(STATE_MODE_TOPIC, _on_state_mode)
+        pose_sub = gen.declare_subscriber(STATE_POSE_TOPIC, _on_state_pose)
+        clock_sub = gen.declare_subscriber(STATE_CLOCK_TOPIC, _on_state_clock)
         event_sub = gen.declare_subscriber(EVENT_WILDCARD_TOPIC, _on_event)
         estop_pong_sub = gen.declare_subscriber(
             PROBE_ESTOP_PONG_TOPIC, _on_estop_pong)

@@ -117,7 +117,7 @@
     renderRobot(snap.pose || {}, origin);
     renderEvents(snap.events || {}, origin);
     renderPlan(snap.plan || {});
-    renderStatus(snap.status || {}, snap.pose || {}, origin);
+    renderStatus(snap.status || {}, snap.pose || {}, origin, snap.clock || {});
     renderHeading(snap.pose || {});
   }
 
@@ -265,7 +265,20 @@
     }
   }
 
-  function renderStatus(status, pose, origin) {
+  // RTK/heading status text. fix_type comes from rt/gnss/fix (not published yet),
+  // so until then surface the heading status that IS flowing: 双天线(L1)/航迹(L2)/
+  // 无(L3). Never fabricate -- an unavailable pose reads "无定位/航向".
+  function rtkStatusText(pose) {
+    if (pose.fix_type) return pose.fix_type;
+    if (pose.available && pose.heading_valid) {
+      const src = { dual_antenna: "双天线", cog: "航迹", none: "无" }[pose.heading_source] || "航向";
+      const lvl = pose.heading_level != null ? `(L${pose.heading_level})` : "";
+      return `航向 ${src}${lvl}`;
+    }
+    return "无定位/航向";
+  }
+
+  function renderStatus(status, pose, origin, clock) {
     $("modeText").textContent = status.mode ? `模式: ${status.mode}` : "模式: --";
     // pose-derived readouts: null until perception/rtk exist (17 S6.10.4).
     $("coordGps").textContent = pose.available && pose.lat != null
@@ -284,8 +297,13 @@
       ? pose.speed_mps.toFixed(1) : "--";
     $("coordEnu").textContent =
       `E ${e}m · N ${n}m　航向 ${hdg}°　速度 ${spd}m/s`;
-    setDot($("rtkDot"), pose.fix_type ? "ok" : "");
-    $("rtkText").textContent = pose.fix_type || "无 RTK";
+    // Green when EITHER a position fix or a valid heading is present.
+    const rtkOk = !!pose.fix_type || (pose.available && pose.heading_valid);
+    setDot($("rtkDot"), rtkOk ? "ok" : "");
+    // Append RTK time-sync (18-C G47) when state/clock is flowing.
+    const syncTxt = (clock && clock.available)
+      ? (clock.sync ? " · 授时同步" : " · 授时未同步") : "";
+    $("rtkText").textContent = rtkStatusText(pose) + syncTxt;
     $("precText").textContent = pose.cov_h_m != null ? `${pose.cov_h_m.toFixed(2)}m` : "--";
     // link + ESTOP arming (NAV-64): estop_path ok -> button enabled + pulse.
     const ok = status.estop_path === "ok";
