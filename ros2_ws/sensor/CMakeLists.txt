@@ -30,6 +30,7 @@ add_library(rtk_driver_core STATIC
   src/gnss_heading.cc
   src/heading_resolver.cc
   src/rtk_driver.cc
+  src/rtk_config.cc
 )
 target_include_directories(rtk_driver_core PUBLIC include ${COMMON_INCLUDE})
 
@@ -40,7 +41,7 @@ target_link_libraries(rtk_driver PRIVATE rtk_driver_core)
 
 # Offline tests: plain executables, no ROS / no hardware, registered with CTest.
 enable_testing()
-foreach(t nmea_parser gnss_heading heading_resolver rtk_driver)
+foreach(t nmea_parser gnss_heading heading_resolver rtk_driver yaml_lite rtk_config)
   add_executable(test_${t} test/test_${t}.cc)
   target_link_libraries(test_${t} PRIVATE rtk_driver_core)
   add_test(NAME test_${t} COMMAND test_${t})

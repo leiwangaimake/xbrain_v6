@@ -127,6 +127,10 @@ BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
 #: converts a startup refusal into a file-not-found at a random later moment.
 SNAPSHOT_PROCESSES = frozenset({
     "p1_motion", "p2_core", "p3_task", "p4_agent", "p5_gateway", "quadruped",
+    # rtk_driver: C++ RT-plane GNSS process, config-in-register like quadruped
+    # (10 S5.4.0 exhaustive table + 13-style private-config; freeze writes its
+    # resolved snapshot so 11 S3.3 thresholds are not defaulted in code, 3.1).
+    "rtk_driver",
 })
 
 #: MANIFEST fields this reader requires to be present. Absence is refused rather

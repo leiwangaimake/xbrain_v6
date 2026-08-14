@@ -103,6 +103,9 @@ SNAPSHOT_PROCESSES = (
     # Order is p1..p5 alphabetical, then quadruped -- kept stable so a
     # MANIFEST.processes JSON diff between runs is legible.
     "p1_motion", "p2_core", "p3_task", "p4_agent", "p5_gateway", "quadruped",
+    # rtk_driver: C++ RT-plane GNSS process; reads a resolved snapshot for its
+    # 11 S3.3.1/S3.3.3 resolver thresholds (like quadruped, config-in-register).
+    "rtk_driver",
 )
 
 

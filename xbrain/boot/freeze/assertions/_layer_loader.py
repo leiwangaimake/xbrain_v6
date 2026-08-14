@@ -212,6 +212,7 @@ _L6_FILES: Tuple[str, ...] = (
     "p4_agent.yaml",
     "p5_gateway.yaml",
     "quadruped.yaml",
+    "rtk_driver.yaml",
 )
 
 
