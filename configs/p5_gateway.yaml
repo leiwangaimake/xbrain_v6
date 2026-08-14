@@ -126,12 +126,12 @@ hmi:
         major_m: 5.0                  # U1: major grid cell = 5 m
       viewbox: "-100 -65 240 145"     # ENU meters; from customer sample
       zoom: { min: 0.65, max: 2.8, wheel_step: 0.12 }  # U4: wheel zoom bounds/step
-    font:                             # U2: family + size_px per panel (customer YaHei/PingFang)
-      map:    { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 12 }
-      legend: { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 11 }
-      plan:   { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 12 }
-      status: { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 11 }
-      coord:  { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 11 }
+    font:                             # U2: family + size_px per panel; size_px = 2x sample (user 2026-08-14)
+      map:    { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 24 }
+      legend: { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 22 }
+      plan:   { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 24 }
+      status: { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 22 }
+      coord:  { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 22 }
     layout:                           # U3: panel sizes (css px) -- customer sample
       plan_panel: { width_px: 370, max_height_px: 420 }
       status_bar: { height_px: 39 }

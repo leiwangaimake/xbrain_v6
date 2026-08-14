@@ -8,9 +8,10 @@
   "use strict";
   const SVGNS = "http://www.w3.org/2000/svg";
   const $ = (id) => document.getElementById(id);
-  const view = { zoom: 1, pan: { x: 0, y: 0 } };
+  const view = { zoom: 1, pan: { x: 0, y: 0 } };   // pan in ENU metres
   let cfg = null;                       // ui_config, set on load
   let zoomBounds = { min: 0.65, max: 2.8, wheel: 0.12 };
+  let baseVB = [-100, -65, 240, 145];   // ENU-metre base viewBox window (U1)
 
   // -- ENU projection: snapshot geometry may be {lat,lon} or [e_m,n_m]. When
   //    lat/lon + enu_origin are present, project to local ENU metres (the SVG
@@ -76,20 +77,24 @@
     if (c.route && c.route.recorded) root.setProperty("--route-recorded-color", c.route.recorded.line.color);
     if (c.route && c.route.realtime) root.setProperty("--route-realtime-color", c.route.realtime.line.color);
 
-    // U1: grid metres. viewBox is in ENU metres, so a pattern of `minor_m`
-    // metres draws one cell per metre when minor_m = 1 (the default).
+    // U1: grid metres. The viewBox (ENU metres) is the BASE window; applyView()
+    // pans/zooms it by rewriting the viewBox attribute (NOT a CSS transform on
+    // the element), so the SVG element always fills the viewport. The grid rect
+    // spans a huge extent and its pattern is userSpaceOnUse (anchored at the ENU
+    // origin), so the井字格 fills the screen at ANY pan/zoom and never shows an
+    // edge -- an infinite grid the operator cannot drag or zoom off.
     const map = c.map || {};
     const grid = map.grid || { minor_m: 1, major_m: 5 };
-    const vb = map.viewbox || "-100 -65 240 145";
-    const [vx, vy, vw, vh] = vb.split(/\s+/).map(Number);
-    $("mapSvg").setAttribute("viewBox", vb);
+    baseVB = (map.viewbox || "-100 -65 240 145").split(/\s+/).map(Number);
     setPattern("minorGrid", grid.minor_m, `M ${grid.minor_m} 0 L 0 0 0 ${grid.minor_m}`);
     setPattern("majorGrid", grid.major_m, `M ${grid.major_m} 0 L 0 0 0 ${grid.major_m}`);
     $("majorGridRect").setAttribute("width", grid.major_m);
     $("majorGridRect").setAttribute("height", grid.major_m);
-    for (const attr of [["x", vx], ["y", vy], ["width", vw], ["height", vh]])
-      $("gridBg").setAttribute(attr[0], attr[1]);
+    const G = 100000;                     // metres; far beyond any mouse pan/zoom
+    for (const [k, v] of [["x", -G], ["y", -G], ["width", 2 * G], ["height", 2 * G]])
+      $("gridBg").setAttribute(k, v);
     $("scaleText").textContent = `网格 ${grid.minor_m}m / ${grid.major_m}m`;
+    applyView();                          // set the initial viewBox from base + view
 
     const z = map.zoom || {};
     zoomBounds = { min: z.min || 0.65, max: z.max || 2.8, wheel: z.wheel_step || 0.12 };
@@ -294,7 +299,14 @@
 
   // -- zoom / pan (U4 wheel) ------------------------------------------------ */
   function applyView() {
-    $("mapSvg").style.transform = `translate(${view.pan.x}px,${view.pan.y}px) scale(${view.zoom})`;
+    // Pan/zoom by rewriting the SVG viewBox (NOT a CSS transform on the element).
+    // The element always fills the viewport, so the huge grid rect always covers
+    // it -> the井字格 is infinite. zoom scales the window around its centre; pan
+    // shifts the window in ENU metres.
+    const [bx, by, bw, bh] = baseVB;
+    const w = bw / view.zoom, h = bh / view.zoom;
+    const cx = bx + bw / 2 + view.pan.x, cy = by + bh / 2 + view.pan.y;
+    $("mapSvg").setAttribute("viewBox", `${cx - w / 2} ${cy - h / 2} ${w} ${h}`);
     $("zoomText").textContent = `${view.zoom.toFixed(1)}x`;
   }
   function clampZoom(z) { return Math.max(zoomBounds.min, Math.min(zoomBounds.max, z)); }
@@ -310,11 +322,19 @@
     }, { passive: false });
     let drag = null;
     vp.addEventListener("mousedown", (e) => {
-      drag = { x: e.clientX - view.pan.x, y: e.clientY - view.pan.y };
+      drag = { x: e.clientX, y: e.clientY, px: view.pan.x, py: view.pan.y };
       vp.classList.add("dragging");
     });
     window.addEventListener("mousemove", (e) => {
-      if (!drag) return; view.pan = { x: e.clientX - drag.x, y: e.clientY - drag.y }; applyView();
+      if (!drag) return;
+      // pixel delta -> ENU metre delta via the current viewBox scale (non-uniform,
+      // preserveAspectRatio=none). Drag right -> the window moves left (grab-pan).
+      const r = vp.getBoundingClientRect();
+      const mppx = (baseVB[2] / view.zoom) / r.width;
+      const mppy = (baseVB[3] / view.zoom) / r.height;
+      view.pan.x = drag.px - (e.clientX - drag.x) * mppx;
+      view.pan.y = drag.py - (e.clientY - drag.y) * mppy;
+      applyView();
     });
     window.addEventListener("mouseup", () => { drag = null; vp.classList.remove("dragging"); });
     // ESTOP: W1 (17 S6.4). Button is only enabled when estop_path ok (NAV-64).
