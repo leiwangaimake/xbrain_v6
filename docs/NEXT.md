@@ -122,3 +122,24 @@
 1. ★★★ **先裁 REST 面以 11 §12.2 还是 17 §6.5 为准**(11 是契约唯一真源→§12.2,但 §6.5 的 metrics/approval 要有归宿);据此重建 build_app 端点集。
 2. GWY-P5-13 真验收:只读拒写守卫(按定案词表重新生成)、`/api/fences*` 的 E_DEGRADED 带 `(fence_set_id,rev,crc32)` 三元组、`/api/approval/pending` 与 `state/approval` 同队列、`/api/events` 排序键 `(channel,ch_seq)`、`test_rest.py` harness。
 3. ⚠️ `/api/events` 返回体 schema / since 语义 / 排序键 / 分页游标在契约里**本身仍"未定"**(17 §6.8.5 第 8 项),须 11 侧先落笔。
+
+#### 7.2 ⚠️ 待裁决 · 围栏 role 枚举 vs P3 zone_label(W1 附带发现)
+
+**现象**:契约围栏 role 是闭集 `allow/forbid/zone`(17 §6.8 / 11 §9A.2),映射到显示类型 `active/forbid/alarm`(活动/禁入/报警,决定连线样式着色 17 §6.10.2A)。但 **P3 的 `fences` 表(15 四库模型)只存自由文本 `zone_label`,没有 role 枚举列** —— 所以 `cmd/fence` 几何 P5 收到时可能不带 role。
+
+**现处理**(hmi.js `fenceType`):优先读 `role`;缺则按 `name`/`zone_label` 关键字回退(含"禁入"->forbid、"报警"->alarm、"活动"->active);**再缺默认 `active`(keep-in)**。⚠️ 即**未按这三个关键字命名的围栏会被误判为活动区**(亮蓝粗实线),而它可能实为禁入/报警。
+
+**待裁决**(归 P3 `15` / 契约 `11` §9A.2,本册不代改):P3 `fences` 表是否补 role 枚举列并在 `cmd/fence` 携带 role,还是契约正式承认"按名判型 + 默认 active"这套启发式?在裁定前,W1 围栏样式对**非常规命名**的围栏不可靠。
+
+---
+
+## 8. 汇总 · 剩余全部卡点(2026-08-14 核对)
+
+> 纯软件能推的都已推完(HMI W 系列 + SW-1)。以下是**现在推不动**的,按卡因归三类。已在上文各节详列,此处只作索引确认"全部有落点"。
+
+| 卡因 | 项(章节索引) |
+|---|---|
+| **[GATED-HW] 云深处底盘/RTK/相机/遥控** | EX-2..6(§1)· quadruped/chassis_relay/rtk_driver/teleop_input(§2)· P1-1(§3)· 硬件集成(§4)· HMI-W4 位姿全片 / W5 §6.4 快路 / W7 EX-1 数据(§7) |
+| **[GATED-DESIGN] 设计未写** | perception 详设(§2/SW-2)· RNS 详设(§3/SW-3) |
+| **[GATED-DECISION] 待用户/契约裁决** | REST §12.2 vs §6.5 谁权威 + GWY-P5-13 真实现(§7.1)· 围栏 role 枚举 vs zone_label(§7.2)· D-45 平台基线 humble/jazzy(§2 rtk_driver 语言)|
+| **[SW-NOW] 纯软件可推(非卡,待排期)** | SW-2/3 设计 · SW-4 云上行 · SW-5 测试框架 · SW-6 配置落值 · SW-7 字符集债 · SW-8 充电执行 · SW-9 全系统圆润 · SW-10 comment_ratio |
