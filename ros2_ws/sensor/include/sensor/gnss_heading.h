@@ -17,7 +17,7 @@
  * REP-105 frame the control loop uses); heading_true_north_rad is the raw
  * true-north clockwise value (0 = north) and is HMI-display-only -- 11 S3.3 marks
  * it "控制回路禁用". cov_rad is std::optional because 11 S3.3 makes it null at L3
- * (no heading solution has no covariance); the other optionals are the "—"
+ * (no heading solution has no covariance); the other optionals are the "--"
  * (not-required) fields (heading_true_north_rad, cog_rad, baseline_m,
  * baseline_valid).
  *

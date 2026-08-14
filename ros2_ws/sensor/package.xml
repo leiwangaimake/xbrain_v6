@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<!--
+ Copyright (c) 2026 Hachist Robotics
+ Author: wanglei@hachist.com
+ 上海哈船智能船舶技术有限公司
+ File: package.xml
+ Brief: Manifest for rtk_driver -- a NON-ROS plain-CMake package (build_type cmake)
+
+ Description:
+ rtk_driver is a non-ROS C++ process (CLAUDE.md 0.2): it publishes to the RT-plane
+ Zenoh, not ROS topics, so it declares build_type cmake and depends on NO ROS
+ package (no rclcpp / sensor_msgs / std_msgs). It builds today with plain cmake +
+ make on the ORIN, which has no colcon / ROS2 installed; if colcon is later
+ available it will pick this up as a plain-CMake package. Its only dependency is
+ the header-only common/ foundation, consumed by include path (nothing to link).
+-->
+<package format="3">
+  <name>rtk_driver</name>
+  <version>2.0.0</version>
+  <description>Dual-antenna RTK GNSS driver: NMEA -> RT-plane GnssHeading (11 S3.3)</description>
+  <maintainer email="wanglei@hachist.com">wanglei</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>cmake</buildtool_depend>
+
+  <export>
+    <build_type>cmake</build_type>
+  </export>
+</package>

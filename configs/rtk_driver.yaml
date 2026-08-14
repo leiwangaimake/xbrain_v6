@@ -1,0 +1,40 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: rtk_driver.yaml
+# Brief: L6 per-process config for rtk_driver (11 S3.3 / S3.11 / serial)
+#
+# Description:
+# Runtime config for the rtk_driver process (dual-antenna RTK GNSS -> RT-plane
+# GnssHeading). The CODE carries NO default for any value here (CLAUDE.md 3.1):
+# the resolver + driver take every threshold by injection and refuse to start if
+# one is missing, so this file is the single home for the numbers. Runtime reads
+# the freeze PRODUCT /run/xbrain/resolved/rtk_driver.yaml, never this source
+# (10 S5.4.1). The resolver.* thresholds are the 11 S3.3.1/S3.3.3 ENGINEERING
+# DEFAULTS -- explicitly pending T7 field calibration (11 S3.3.3 note), not
+# measured values; they are written here so nothing is silently defaulted in code.
+
+rtk_driver:
+  serial:
+    port: "/dev/ttyACM0"       # WCH CH343 USB serial -> Unicore UM982-class module
+    baudrate: 115200           # module saved config; 8N1, no flow control
+  heading_stddev_deg: 1.0      # L1 heading 1sigma. ~0.35 m baseline bench ~1 deg;
+                               # a config value until UNIHEADINGA per-solution cov is parsed
+  gga_timeout_s: 1.0           # a GGA older than this -> fix stale (fix_is_lost)
+  tra_timeout_s: 1.0           # a TRA older than this -> no dual-antenna heading
+  rmc_timeout_s: 1.0           # an RMC older than this -> no COG
+  sync_timeout_ms: 5000        # CLK-A3 envelope ts_sync fail-safe window (T-11 = 5 s)
+  resolver:                    # 11 S3.3.1/S3.3.3 thresholds -- engineering defaults, T7-pending
+    cov_thresh_rad: 0.02       # L1 admission: cov_rad <= this (~1.15 deg)
+    age_thresh_s: 0.2          # L1 admission: heading age <= this
+    cog_speed_thresh_mps: 0.5  # L2/blind: speed >= this to trust COG
+    degrade_sustain_s: 0.5     # L1 -> L2 hold
+    recover_sustain_s: 2.0     # any recovery hold (degrade fast, recover slow)
+    fix_lost_sustain_s: 1.0    # -> L3 fix_lost / dual_antenna_fail hold
+    blind_rise_sustain_s: 0.5  # L2-blind -> L2-active rise (fall is immediate)
+    blind_timeout_s: 30.0      # L2-blind + pending autonomous move -> L3
+    cov_h_m: 0.05              # horizontal position 1sigma, for the L2 cov estimate
+    cog_diff_dt_s: 0.9         # COG differencing window, for the L2 cov estimate (T7)
+    i_heading_l1: 1.0          # heading -> speed-gate factor per level (11 S3.3.1)
+    i_heading_l2: 0.4
+    i_heading_l3: 0.0
