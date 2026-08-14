@@ -69,7 +69,7 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 /* minor (1 m cells): deep-gray thin lines; major (5 m cells): light-gray, only a
    touch thicker than minor (user 2026-08-14 "just a bit thicker, not too thick"). */
 .map-grid-minor { stroke: #3a3a3a; stroke-width: .5; }
-.map-grid-major { stroke: #8f8f8f; stroke-width: .7; }
+.map-grid-major { stroke: #555555; stroke-width: .7; }
 
 .keep-in { fill: rgba(47,136,255,.06); stroke: var(--fence-active-color); }
 .alarm-region { fill: rgba(255,32,32,.07); stroke: var(--fence-alarm-color); }
