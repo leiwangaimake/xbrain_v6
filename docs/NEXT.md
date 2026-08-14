@@ -76,6 +76,7 @@
 | SW-8 | 充电/对接**执行**串联（状态机+仲裁器已建） | 中 `[部分 GATED-HW]` | 三级选桩逻辑可测，真对接需底盘 |
 | SW-9 | **全系统圆润扩展**（非设备类的同义说法加宽） | 中 | ★ 用户早先定「聚焦 PTZ/payload，后面慢慢扩展到整个系统」的那一批。2026-08-12 已收口薄意图（1词无兜底）：C08/G09/H07/H08/F13 加同义说法 + 18 对齐 + 变异守护。★ **剩 47 个恰 2 词且无 tier-2 的意图**（多为 G 类只读查询 L0），是下一批候选；现状不是缺陷（各有 2 说法 + §2.2 边界节 C 已载「贴 keywords 说」），扩不扩看优先级 |
 | SW-10 | **comment_ratio 注释债**（498 文件 < 70%） | 低-中 | ★ 2026-08-12 跑全量 tests/common/ 照出：`test_lints::test_comment_ratio_holds` 是唯一未修的元测试失败（另 6 个 08-11 静态规则违规已 commit 07573a4 修）。§2.4 阈值 08-06 从 25% 上调 70% 后累积。按 §2.4「每块解释 why」分批补，不刷百分比。已开 chip（task_3e48348d）。★ 教训：yaml 头/字符集门禁盲区（configs/.yaml 从没被扫）已于 2026-08-12 关闭（ca08aaa/1bc9702），今后新增 yaml 自动拦 |
+| SW-11 | **`hmi.bind[0]` LAN2 地址落值**(现 null) | 低 | ★ full 启动 `check_p5_config` 因 LAN2 bind 为 null 而**拒启**(§3.1 设计行为, 报 `hmi.bind[0] unassigned`);voice-loop MVP 走宽松 `make_bound_sockets` 只绑非空口(wifi `192.168.1.7` + `127.0.0.1`)故能跑。等 U-15 部署分配 LAN2 网段地址即落值解除。★ `bind[1]` wifi 已填(2026-08-12 用户明令),`bind_guard` 测试已对齐(f7803c9) |
 
 ---
 
@@ -142,4 +143,4 @@
 | **[GATED-HW] 云深处底盘/RTK/相机/遥控** | EX-2..6(§1)· quadruped/chassis_relay/rtk_driver/teleop_input(§2)· P1-1(§3)· 硬件集成(§4)· HMI-W4 位姿全片 / W5 §6.4 快路 / W7 EX-1 数据(§7) |
 | **[GATED-DESIGN] 设计未写** | perception 详设(§2/SW-2)· RNS 详设(§3/SW-3) |
 | **[GATED-DECISION] 待用户/契约裁决** | REST §12.2 vs §6.5 谁权威 + GWY-P5-13 真实现(§7.1)· 围栏 role 枚举 vs zone_label(§7.2)· D-45 平台基线 humble/jazzy(§2 rtk_driver 语言)|
-| **[SW-NOW] 纯软件可推(非卡,待排期)** | SW-2/3 设计 · SW-4 云上行 · SW-5 测试框架 · SW-6 配置落值 · SW-7 字符集债 · SW-8 充电执行 · SW-9 全系统圆润 · SW-10 comment_ratio |
+| **[SW-NOW] 纯软件可推(非卡,待排期)** | SW-2/3 设计 · SW-4 云上行 · SW-5 测试框架 · SW-6 配置落值 · SW-7 字符集债 · SW-8 充电执行 · SW-9 全系统圆润 · SW-10 comment_ratio · SW-11 LAN2 bind 落值 |
