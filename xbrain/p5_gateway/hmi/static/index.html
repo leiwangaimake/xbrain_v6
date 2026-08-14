@@ -50,10 +50,14 @@
         <div class="legend-row"><i class="legend-mark alarm"></i><span>报警区域</span></div>
       </div>
 
-      <div class="map-overlay compass" title="地图指北针">
-        <span class="compass-n">N</span>
-        <span class="compass-arrow">▲</span>
-      </div>
+      <!-- 机器人本体航向仪(替代原左上角 N+三角指北针). 表盘层旋转 + 指针层固定朝上 +
+           中心镂空(见 hmi.js buildDialFace/renderHeading). 数据仅 pose.heading_rad
+           本体航向, 非云台朝向(17 S6.6/PTZ-C2 边界). heading 未就位时 no-heading 置灰. -->
+      <svg id="headingDial" class="heading-dial no-heading" viewBox="-100 -100 200 200"
+           aria-label="机器人航向仪表盘">
+        <g id="dialFace"></g>
+        <polygon id="dialPointer" points="0,-50 18,28 0,12 -18,28"/>
+      </svg>
 
       <section class="map-overlay current-plan" aria-label="当前计划显示">
         <div class="plan-window-title">当前计划</div>

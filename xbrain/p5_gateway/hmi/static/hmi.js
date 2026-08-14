@@ -117,6 +117,7 @@
     renderEvents(snap.events || {}, origin);
     renderPlan(snap.plan || {});
     renderStatus(snap.status || {}, snap.pose || {}, origin);
+    renderHeading(snap.pose || {});
   }
 
   function clear(id) { const g = $(id); while (g.firstChild) g.removeChild(g.firstChild); }
@@ -297,6 +298,64 @@
   function setDot(el, cls) { el.className = "dot" + (cls ? " " + cls : ""); }
   function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
+  // -- heading dial (机器人本体航向, 17 S6.10 item 6) ----------------------- */
+  // A rotating compass CARD: the card turns so the current heading sits at the
+  // top under the fixed yellow pointer (user 2026-08-14: rotate the dial, not the
+  // pointer). Driven ONLY by pose.heading_rad -- the ROBOT BODY heading, a real
+  // state/pose field already shown as text in .coord. It is NOT a gimbal angle:
+  // the 17 S6.6/PTZ-C2 ban on a "罗盘/朝向指针" is gimbal-specific (PTZ readback
+  // is a fake constant (180,0)); body heading is real, so this dial is in bounds.
+  function buildDialFace() {
+    const face = $("dialFace");
+    if (!face || face.childNodes.length) return;   // static content, build once
+    const NS = SVGNS, rad = (a) => a * Math.PI / 180;
+    const at = (r, a) => [(r * Math.sin(rad(a))).toFixed(2), (-r * Math.cos(rad(a))).toFixed(2)];
+    const ring = document.createElementNS(NS, "circle");
+    ring.setAttribute("r", 90); ring.setAttribute("class", "dial-ring");
+    face.appendChild(ring);
+    for (let a = 0; a < 360; a += 10) {             // ticks: major every 30, minor every 10
+      const major = a % 30 === 0, p1 = at(90, a), p2 = at(major ? 76 : 83, a);
+      const ln = document.createElementNS(NS, "line");
+      ln.setAttribute("x1", p1[0]); ln.setAttribute("y1", p1[1]);
+      ln.setAttribute("x2", p2[0]); ln.setAttribute("y2", p2[1]);
+      ln.setAttribute("class", major ? "dial-tick major" : "dial-tick");
+      face.appendChild(ln);
+    }
+    const CARD = { 0: "N", 90: "E", 180: "S", 270: "W" };
+    for (let a = 0; a < 360; a += 30) {             // labels rotated TANGENTIALLY (斜排):
+      const [x, y] = at(61, a);                      // each reads upright only when at the top,
+      const t = document.createElementNS(NS, "text");  // so the whole-card rotation reads right.
+      t.setAttribute("x", x); t.setAttribute("y", y);
+      t.setAttribute("transform", `rotate(${a} ${x} ${y})`);
+      t.setAttribute("class", CARD[a] !== undefined ? "dial-label cardinal" : "dial-label");
+      t.textContent = CARD[a] !== undefined ? CARD[a] : String(a / 10);   // number = heading/10
+      face.appendChild(t);
+    }
+    for (const a of [0, 90, 180, 270]) {            // yellow cardinal index triangles (on the card)
+      const tri = document.createElementNS(NS, "polygon");
+      tri.setAttribute("points", "0,-74 -7,-90 7,-90");
+      tri.setAttribute("class", "dial-cardinal-tri");
+      tri.setAttribute("transform", `rotate(${a})`);
+      face.appendChild(tri);
+    }
+  }
+  function renderHeading(pose) {
+    const face = $("dialFace"), dial = $("headingDial");
+    if (!face || !dial) return;
+    if (pose.available && pose.heading_valid && pose.heading_rad != null) {
+      // ENU (east=0, CCW+) -> compass (north=0, CW+): compass = (90 - enu) mod 360.
+      const enu = pose.heading_rad * 180 / Math.PI;
+      const compass = ((90 - enu) % 360 + 360) % 360;
+      face.style.transform = `rotate(${-compass}deg)`;   // CARD rotates -> heading to top
+      dial.classList.remove("no-heading");
+    } else {
+      // Heading gated (perception/rtk, W4). Dim the dial at North -- the dimming
+      // signals "no fix", NOT "heading = North" (3.2: never a fabricated heading).
+      face.style.transform = "rotate(0deg)";
+      dial.classList.add("no-heading");
+    }
+  }
+
   // -- zoom / pan (U4 wheel) ------------------------------------------------ */
   function applyView() {
     // Pan/zoom by rewriting the SVG viewBox (NOT a CSS transform on the element).
@@ -383,7 +442,7 @@
     ws.onerror = () => { try { ws.close(); } catch (_) {} };
   }
   async function init() {
-    wireInteraction(); applyView();
+    wireInteraction(); applyView(); buildDialFace();
     try { applyUiConfig(await getJSON("/api/hmi/ui_config")); }
     catch (e) { console.error("ui_config load failed", e); return; }
     await tick();                                     // instant first paint (REST)

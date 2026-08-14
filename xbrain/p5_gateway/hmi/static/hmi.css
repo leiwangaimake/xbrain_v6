@@ -99,10 +99,21 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .legend-mark.alarm { border: 2px solid var(--fence-alarm-color);
   background: rgba(255,32,32,.12); }
 
-/* top clears the doubled 2-column legend; sizes are 2x the sample. */
-.compass { left: 10px; top: 118px; width: 70px; text-align: center; font-size: 22px; }
-.compass-n { display: block; font-weight: 700; }
-.compass-arrow { color: var(--cyan); font-size: 50px; line-height: 50px; }
+/* 机器人本体航向仪(替代原左上角指北针 N+三角): 右下角 150px, 表盘旋转/指针固定/
+   中心镂空. 数据源仅 pose.heading_rad(本体航向真值). 17 S6.6/PTZ-C2 禁的"罗盘/朝向
+   指针"是【云台】朝向(假值回读), 本体航向是真值且 S6.10 item 6 已允许文字显示 --
+   本盘绝不接云台角. heading 卡硬件(W4)时置灰不显假值(3.2). */
+.heading-dial { position: absolute; right: 14px; bottom: 14px; width: 150px; height: 150px; z-index: 3; }
+#dialFace { transform-box: fill-box; transform-origin: center; transition: transform .18s ease-out; }
+.dial-ring { fill: none; stroke: #8a8a8a; stroke-width: 1.4; }
+.dial-tick { stroke: #b0b0b0; stroke-width: 1; }
+.dial-tick.major { stroke: #e6e6e6; stroke-width: 1.8; }
+.dial-label { fill: var(--ink); font-family: var(--font-map-family); font-size: 16px; font-weight: 600;
+  text-anchor: middle; dominant-baseline: central; }
+.dial-label.cardinal { font-size: 21px; font-weight: 700; }
+.dial-cardinal-tri { fill: #ffd400; }
+#dialPointer { fill: #ffd400; }
+.heading-dial.no-heading { opacity: .5; }   /* heading gated (W4) -> dimmed, not faked */
 
 .current-plan { right: 11px; top: 10px; width: var(--plan-width);
   max-height: var(--plan-max-h); overflow-y: auto; padding: 9px;
