@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import socket
 import struct
 import threading
@@ -159,16 +160,88 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         factor_sub = gen.declare_subscriber(
             CMD_MOTION_FACTOR_TOPIC, _on_factor)
 
+        # --- RTK GNSS cross-plane bridge (11 S1.1.6: p1 订 rt/gnss/*, 发 state/pose) ---
+        # rtk_driver publishes FULL RT keys (xbrain/{rid}/rt/gnss/*); the general
+        # plane uses bare keys (state/pose). p1 IS the cross-plane point, so it
+        # subscribes the full RT key and republishes the bare GEN key. Needs rid;
+        # if XBRAIN_ROBOT_ID is unset the bridge is skipped (the MVP voice loop
+        # still runs) rather than forming an invalid key.
+        from xbrain.common.envelope import read_local_boot_id
+        from xbrain.p1_motion.path import gnss_pose
+
+        rid = os.environ.get("XBRAIN_ROBOT_ID", "")
+        boot = ""
+        gnss_subs = []
+        pose_pub = None
+        clock_pub = None
+        # Rust-thread callbacks store only; a dict assignment is atomic (CLAUDE.md
+        # 4.2 forbids await/publish in a Zenoh callback). Publishing is done by the
+        # loop thread below.
+        gnss_cache = {"data": None}
+        clock_cache = {"data": None}
+        pose_seq = {"n": 0}
+        clock_seq = {"n": 0}
+        if rid:
+            boot = read_local_boot_id()
+
+            def _on_gnss(sample) -> None:
+                try:
+                    msg = json.loads(bytes(sample.payload).decode("utf-8"))
+                    gnss_cache["data"] = msg.get("data")
+                except Exception:      # noqa: BLE001
+                    _logger.warning("p1 malformed rt/gnss/heading")
+
+            def _on_clock(sample) -> None:
+                try:
+                    msg = json.loads(bytes(sample.payload).decode("utf-8"))
+                    clock_cache["data"] = msg.get("data")
+                except Exception:      # noqa: BLE001
+                    _logger.warning("p1 malformed rt/clock/status")
+
+            # Hold sub handles in a long-lived list (CLAUDE.md 4.3: a dropped
+            # declare_subscriber return silently unsubscribes on GC).
+            gnss_subs.append(rt.declare_subscriber(
+                "xbrain/%s/rt/gnss/heading" % rid, _on_gnss))
+            gnss_subs.append(rt.declare_subscriber(
+                "xbrain/%s/rt/clock/status" % rid, _on_clock))
+            pose_pub = gen.declare_publisher("state/pose")
+            clock_pub = gen.declare_publisher("state/clock")
+            _logger.info("p1 gnss bridge on: rid=%s (rt/gnss/heading -> state/pose)",
+                         rid)
+        else:
+            _logger.warning("p1 gnss bridge OFF: XBRAIN_ROBOT_ID unset")
+
         try:
             last_hb = time.monotonic()
+            last_clock = 0.0
             while not stop_flag.get("stop"):
                 now = time.monotonic()
+                if pose_pub is not None:
+                    # 10 Hz state/pose from the latest GnssHeading. When heading is
+                    # invalid the cache still holds the last L3 frame (H-2 freeze),
+                    # so the published pose degrades gracefully, never goes silent.
+                    ts_sync = bool((clock_cache["data"] or {}).get("sync", False))
+                    pose = gnss_pose.assemble_pose(gnss_cache["data"])
+                    penv = gnss_pose.stamp_envelope(
+                        pose, rid=rid, boot=boot, seq=pose_seq["n"],
+                        src="p1_motion", ts_sync=ts_sync)
+                    pose_pub.put(json.dumps(penv, ensure_ascii=False).encode("utf-8"))
+                    pose_seq["n"] += 1
+                    if now - last_clock >= 1.0:   # 1 Hz state/clock mirror (P1-13)
+                        cs = gnss_pose.mirror_clock(clock_cache["data"])
+                        cenv = gnss_pose.stamp_envelope(
+                            cs, rid=rid, boot=boot, seq=clock_seq["n"],
+                            src="p1_motion", ts_sync=cs["sync"])
+                        clock_pub.put(
+                            json.dumps(cenv, ensure_ascii=False).encode("utf-8"))
+                        clock_seq["n"] += 1
+                        last_clock = now
                 if now - last_hb >= heartbeat_period_s:
                     _logger.info(
-                        "p1 alive; chassis_frames=%d "
-                        "chassis_reconnects=%d chassis_fails=%d",
+                        "p1 alive; chassis_frames=%d chassis_reconnects=%d "
+                        "chassis_fails=%d pose_pub=%d",
                         client.frames_sent, client.connect_attempts,
-                        client.connect_failures)
+                        client.connect_failures, pose_seq["n"])
                     last_hb = now
                 time.sleep(0.1)
         finally:
@@ -180,5 +253,10 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 factor_sub.undeclare()
             except Exception:      # noqa: BLE001
                 pass
+            for _s in gnss_subs:
+                try:
+                    _s.undeclare()
+                except Exception:      # noqa: BLE001
+                    pass
             client.close()
     return 0
