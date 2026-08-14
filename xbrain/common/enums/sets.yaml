@@ -329,6 +329,21 @@ sets:
       - shutdown_pending
       - preempted
       - mode_takeover
+  heading_source:
+    source: "11 S3.3"
+    anchor: "| `heading_source` | string |"
+    # GnssHeading.source (11 S3.3): dual-antenna heading / COG fallback / none, the
+    # L1 -> L2 -> L3 degradation. Membership only -- the L1>L2>L3 rank is the level
+    # int's job (level == 1/2/3, one-to-one), and marking this ordered would hand
+    # index() a second rank that duplicates level. rtk_driver is the sole producer;
+    # per 11 H-1 consumers read heading_valid, never branch on this string.
+    note: "GnssHeading.source; produced by rtk_driver; consumers gate on heading_valid (H-1)"
+    ordered: false
+    values:
+      - dual_antenna
+      - cog
+      - none
+
   charge_stage:
     # *** 15, not 11. See the note at the top of this file: 11 defers the
     # criteria to 15 S8.5 and its own synchronisation column omits to_handover,

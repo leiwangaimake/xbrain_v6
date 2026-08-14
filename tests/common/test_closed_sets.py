@@ -301,7 +301,7 @@ SET_DOC = {
     "stop_reason": "11", "task_state": "11", "cls": "11", "device": "11",
     "release_reason": "11", "arb_suspended": "11", "gate_reason": "11",
     "suspend_kind": "11", "suspend_reason": "11", "severity": "11",
-    "reason": "11", "control_mode": "11",
+    "reason": "11", "control_mode": "11", "heading_source": "11",
     # The one set defined outside the contract. See the module docstring.
     "charge_stage": "15",
 }
@@ -409,6 +409,15 @@ EXTRACTORS.update({
     "control_mode": lambda: _row_backticked(
         _DOCS["11"], "闭集章补 `control_mode` 一项",
         "control_mode", exclude=("control_mode",)),
+    # heading_source (GnssHeading.source, 11 S3.3) is stated inline in one field
+    # cell: `dual_antenna` \| `cog` \| `none`. The anchor is the field-name cell,
+    # unique to the one "| `heading_source` | string |" row (the S3.3 field table
+    # writes `source` as the field name and lists motion_derived as retired; that
+    # OTHER row would drag the retired value in, so we anchor the clean row and
+    # exclude the set's own backticked name).
+    "heading_source": lambda: _row_backticked(
+        _DOCS["11"], "| `heading_source` | string |",
+        "heading_source", exclude=("heading_source",)),
     # severity is the {severity} key segment of event/{severity}/{category}
     # (S2.2.11 W-5), stated inline in one cell as info / warn / alarm / fault.
     # The anchor carries the value column too (`{severity}` | `info`):

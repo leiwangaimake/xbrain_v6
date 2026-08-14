@@ -176,6 +176,13 @@ inline constexpr std::string_view kGateReason[] = {
     "manual_mute",
 };
 
+// heading_source -- 11 S3.3   anchor: | `heading_source` | string |
+inline constexpr std::string_view kHeadingSource[] = {
+    "dual_antenna",
+    "cog",
+    "none",
+};
+
 // plane -- 11 S2.1   anchor: | `plane` |
 inline constexpr std::string_view kPlane[] = {
     "rt",
