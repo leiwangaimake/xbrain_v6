@@ -101,11 +101,11 @@
 | HMI-W3 | 当前模式:订阅 P2 `state/mode` 喂 status.mode | ✅ **已接** | ★ 实测发 state/mode=patrol -> snapshot.status.mode=patrol |
 | HMI-W4 | **位姿/GPS/ENU/航向/速度/实时轨迹/RTK/精度; 且 W1 围栏/W2 事件的【地图坐标落点】依赖 enu_origin** | 未接 `[GATED-HW]` | perception(设计未写)+ rtk_driver(未建)+ quadruped(云深处) |
 | HMI-W5 | 真端到端 ESTOP:§6.3 estop 探活喂 estop_path;§6.4 专用 <=10ms 快路(P-1) | ✅ **探活已接** / 快路 `[GATED-HW]` | ★ **探活机制已落**:`EstopProbe` 状态机(estop_probe.py)+ 每拍 `probe/estop/ping` -> 收 `probe/estop/pong` -> RTT/连续无 pong -> ok/degraded/down(11 CR-2/CR-3 · T-23/T-24)。★★ **无底盘时诚实报 "down"**(按钮置灰),🚫 不再恒 "ok" 造假。★ 剩 §6.4 <=10ms 专用快路(P-1)与 pong 权威源都要 `quadruped`/`chassis_relay`(云深处) |
-| HMI-W6 | WS 推送 state_snapshot(替代 1Hz REST 轮询) | ✅ **已接** | ★ /ws 端点推 state_snapshot(push_hz 可配), 前端 WS 主、REST 轮询兜底。★ 依赖 **wsproto**(uvicorn 0.52 与 websockets 16.x 服务端不兼容, 用 wsproto 后端; 缺则回退 auto+REST)。★ 修了 `from __future__ annotations` 致 FastAPI 把 ws 参数误判查询参数的 403 坑。剩 state_delta 增量(现全量快照/次) |
+| HMI-W6 | WS 推送 state_snapshot + state_delta 增量 | ✅ **完整** | ★ /ws 端点(push_hz 可配), 前端 WS 主、REST 轮询兜底。★ 依赖 **wsproto**(uvicorn 0.52 与 websockets 16.x 服务端不兼容, 用 wsproto 后端; 缺则回退 auto+REST)。★ 修了 `from __future__ annotations` 致 FastAPI 把 ws 参数误判查询参数的 403 坑。★★ **state_delta 已接**(2026-08-14):连接发全量 keyframe, 之后每拍只发变化的顶层组(geo/pose/plan/status/events), 静默拍发空 delta 作 keepalive, 每 30 拍周期 keyframe 自愈; 前端 group-level 合并。ORIN 实测:连接 keyframe -> 静默空 delta -> 注入 state/task 后单拍 `keys=['plan']` 只带变化组 |
 | HMI-W7 | 计划目标点有序表 + 逐点勾选 + 进度 2/N | ✅ **映射已接** / 数据 `[GATED-HW]` | ★ **映射已修**:`_extract_active_tasks` 从 P3 `{schema,active_task:{task_id,state}}` 抽取扁平 task 喂 `_plan`(旧 MVP 把整信封当计划 -> state/targets 全落 None 空白卡)。前端 `state==running` 驱动黄色实时轨迹显隐。兼容未来 1Hz 心跳列表(current_step/total_steps)。★ 剩目标点有序表 + 进度分数需路径展开(EX-1):geo.db 航点 + P1 真执行上报(云深处) |
 | HMI-W8 | 端点集对齐冻结契约(17 §6.5 == 11 §12.2) | ✅ **端点面已齐** | ★ **全部 §6.5 只读端点已上**:`/api/routes` `/api/docks` `/api/health` `/api/bit` `/api/metrics` `/api/approval/pending`(加上已有 fences/fences_active/events)。★★ **诚实可用性**(ORIN 实测六端点全 200):`/api/health`+`/api/bit` **订阅 P2 `health/factor`/`health/bit` 已接、中继链路已证**(注入 health/factor -> available:true 原样直透, G-2 同源),但 **P2 voice-loop MVP 尚不发 health/**(那是 P2 全设计行为), 故当前 available:false;routes/docks(geo.db 卡)/metrics(遥测聚合器未实例化)/approval(L3 队列无喂入)一律 available:false 不造假。★ 剩 `/api/geo/manifest`(§12.2 新规范式, routes/fences/docks 作兼容别名)与上述源真正产数 |
 
-> ★ W1/W2/W3/W5(探活)/W6/W7(映射)/W8 已接(纯软件); W4 是硬件总闸(位姿那一整片, 也卡 W1/W2 地图落点); W5 快路/W7 数据部分卡硬件。
+> ★ **纯软件部分全部完成**:W1/W2/W3/W5(探活)/W6(含 state_delta)/W7(映射)/W8。剩余全部卡硬件(云深处底盘/rtk_driver/perception):W4 位姿全片(总闸,也解锁 W1/W2 地图落点)· W5 §6.4 <=10ms 快路 · W7 目标点表+进度(EX-1)。
 
 #### 7.1 REST 端点词表:死代码已删,全面对齐留给真实现 GWY-P5-13(2026-08-14 裁决)
 

@@ -61,6 +61,12 @@ from xbrain.p5_gateway.hmi.ui_config import build_ui_config
 # there is no new package-import side effect.
 
 
+# W6: resend a full keyframe every N WS ticks so a missed/misapplied delta cannot
+# drift the client past one period (at push_hz=2 this is ~15 s). Not a safety
+# value -- purely a self-heal cadence, so a literal is fine here (not 3.1).
+WS_KEYFRAME_EVERY = 30
+
+
 class HmiBindError(RuntimeError):
     """No usable bind interface, or a 0.0.0.0 bind was requested.
 
@@ -284,10 +290,11 @@ def build_app(
         return {"status": "sent"}
 
     # W6: WS push. Replaces the frontend's 1 Hz REST poll with a server push
-    # (17 S6.2 state_snapshot). On connect the client gets a full snapshot, then
-    # one snapshot per push interval until it disconnects. state_delta is a later
-    # optimisation (NEXT HMI-W6); a full snapshot per tick is correct + simplest,
-    # and the frontend renders it exactly like the /api/hmi/snapshot poll body.
+    # (17 S6.2). On connect the client gets a full state_snapshot (keyframe), then
+    # a state_delta each tick carrying ONLY the changed top-level groups -- most
+    # quiet ticks send an empty delta (the bandwidth win over a full snapshot per
+    # tick, HMI-06 "front-end must stay light"). A periodic keyframe self-heals
+    # any drift, and reconnect always starts with a fresh keyframe.
     push_hz = float(hmi_web.get("push_hz", 2) or 2)
     push_interval_s = 1.0 / max(0.2, min(20.0, push_hz))
 
@@ -297,10 +304,30 @@ def build_app(
         # connection by type, and without it the handshake is rejected 403.
         import asyncio                          # noqa: PLC0415
         await websocket.accept()
+        # Per-connection delta state: the last-sent snapshot for THIS client (a
+        # late joiner must diff against what it has actually received, so this is
+        # local to the coroutine, never shared between connections).
+        last: Dict[str, Any] = {}
+        ticks = 0
         try:
             while True:
                 snap = data_readers.build_snapshot(**provider.snapshot_inputs())
-                await websocket.send_json({"kind": "state_snapshot", "data": snap})
+                if not last or ticks % WS_KEYFRAME_EVERY == 0:
+                    # Keyframe: full snapshot on connect + every N ticks to self-
+                    # heal (a missed/misapplied delta cannot drift past one period).
+                    await websocket.send_json(
+                        {"kind": "state_snapshot", "data": snap})
+                    last = snap
+                else:
+                    # Delta: only the changed groups. An empty delta is still sent
+                    # as a keepalive so the frontend's no-message watchdog (17 S6.3
+                    # "2 s no link -> grey") never trips on a live-but-quiet link.
+                    changed = data_readers.snapshot_delta(last, snap)
+                    await websocket.send_json(
+                        {"kind": "state_delta", "data": changed})
+                    if changed:
+                        last = {**last, **changed}
+                ticks += 1
                 await asyncio.sleep(push_interval_s)
         except WebSocketDisconnect:
             # Normal client close; nothing to clean up (the server owns no

@@ -313,8 +313,21 @@
   }
 
   async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(url + " " + r.status); return r.json(); }
+  // W6: the last full snapshot the client holds. A keyframe (state_snapshot or
+  // a REST poll) replaces it wholesale; a state_delta merges changed groups in.
+  let currentSnap = null;
+  function applyFull(snap) { currentSnap = snap; renderSnapshot(snap); }
+  function applyDelta(delta) {
+    // No base yet -> wait for the next keyframe (do not render a partial view).
+    if (!currentSnap) return;
+    const keys = Object.keys(delta);
+    if (!keys.length) return;                        // empty delta = keepalive only
+    // Group-level merge: each key (geo/pose/plan/status/events) is replaced whole.
+    for (const k of keys) currentSnap[k] = delta[k];
+    renderSnapshot(currentSnap);
+  }
   async function tick() {
-    try { renderSnapshot(await getJSON("/api/hmi/snapshot")); }
+    try { applyFull(await getJSON("/api/hmi/snapshot")); }
     catch (e) { /* transient; next tick retries */ }
   }
   // W6: WS server push is primary; REST poll is the fallback when WS is down.
@@ -328,8 +341,11 @@
     catch (e) { startPoll(); return; }               // no WS -> poll
     ws.onopen = () => stopPoll();                     // push takes over from poll
     ws.onmessage = (e) => {
-      try { const m = JSON.parse(e.data); if (m.kind === "state_snapshot") renderSnapshot(m.data); }
-      catch (_) { /* ignore a malformed frame */ }
+      try {
+        const m = JSON.parse(e.data);
+        if (m.kind === "state_snapshot") applyFull(m.data);      // keyframe
+        else if (m.kind === "state_delta") applyDelta(m.data);   // W6 delta merge
+      } catch (_) { /* ignore a malformed frame */ }
     };
     ws.onclose = () => { startPoll(); setTimeout(connectWS, 3000); };  // fall back + reconnect
     ws.onerror = () => { try { ws.close(); } catch (_) {} };

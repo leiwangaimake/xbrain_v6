@@ -261,3 +261,25 @@ def build_snapshot(
         "status": status_group(mode, link, health),
         "events": events_group(events),
     }
+
+
+_MISSING = object()   # sentinel: a group present in curr but absent in prev
+
+
+def snapshot_delta(prev: Dict[str, Any],
+                   curr: Dict[str, Any]) -> Dict[str, Any]:
+    """W6: the changed top-level groups between two snapshots (17 S6.2 state_delta).
+
+    Returns {group_key: new_value} for each of the build_snapshot groups (geo /
+    pose / plan / status / events) whose value differs from prev, and {} when
+    nothing changed. The WS sends {} as a keepalive, never a full resend -- an
+    all-quiet tick is the common case and its delta is empty (that IS the
+    bandwidth win over pushing the whole snapshot every tick).
+
+    Group-level, NOT deep field-level: the frontend merges a changed group
+    wholesale (currentSnap[k] = delta[k]), so a single changed status replaces
+    the whole status group. Cheap to compute, trivially correct to merge. The
+    _MISSING sentinel makes a group that is present in curr but absent in prev
+    count as changed (a value of None is a real value, not 'absent').
+    """
+    return {k: v for k, v in curr.items() if v != prev.get(k, _MISSING)}
