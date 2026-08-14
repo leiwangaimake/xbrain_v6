@@ -126,15 +126,15 @@ hmi:
         major_m: 5.0                  # U1: major grid cell = 5 m
       viewbox: "-100 -65 240 145"     # ENU meters; from customer sample
       zoom: { min: 0.65, max: 2.8, wheel_step: 0.12 }  # U4: wheel zoom bounds/step
-    font:                             # U2: family + size_px per panel
-      map:    { family: "system-ui, sans-serif", size_px: 12 }
-      legend: { family: "system-ui, sans-serif", size_px: 12 }
-      plan:   { family: "system-ui, sans-serif", size_px: 13 }
-      status: { family: "system-ui, sans-serif", size_px: 12 }
-      coord:  { family: "ui-monospace, monospace", size_px: 12 }
-    layout:                           # U3: panel sizes (css px)
-      plan_panel: { width_px: 260, max_height_px: 420 }
-      status_bar: { height_px: 34 }
+    font:                             # U2: family + size_px per panel (customer YaHei/PingFang)
+      map:    { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 12 }
+      legend: { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 11 }
+      plan:   { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 12 }
+      status: { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 11 }
+      coord:  { family: '"Microsoft YaHei","PingFang SC",sans-serif', size_px: 11 }
+    layout:                           # U3: panel sizes (css px) -- customer sample
+      plan_panel: { width_px: 370, max_height_px: 420 }
+      status_bar: { height_px: 39 }
     fence:                            # U5: fence line by TYPE (17 S6.10.2A, user 2026-08-13)
       active: { line: { style: "solid", color: "#2f88ff", width_px: 2.4 } }  # allow -> 活动区域: 亮蓝粗实线
       forbid: { line: { style: "solid", color: "#ff2020", width_px: 2.4 } }  # forbid -> 禁入区域: 亮红粗实线

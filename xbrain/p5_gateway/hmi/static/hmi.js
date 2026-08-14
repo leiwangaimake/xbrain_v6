@@ -111,7 +111,7 @@
     renderRobot(snap.pose || {}, origin);
     renderEvents(snap.events || {}, origin);
     renderPlan(snap.plan || {});
-    renderStatus(snap.status || {}, snap.pose || {});
+    renderStatus(snap.status || {}, snap.pose || {}, origin);
   }
 
   function clear(id) { const g = $(id); while (g.firstChild) g.removeChild(g.firstChild); }
@@ -258,13 +258,25 @@
     }
   }
 
-  function renderStatus(status, pose) {
+  function renderStatus(status, pose, origin) {
     $("modeText").textContent = status.mode ? `模式: ${status.mode}` : "模式: --";
     // pose-derived readouts: null until perception/rtk exist (17 S6.10.4).
     $("coordGps").textContent = pose.available && pose.lat != null
       ? `${pose.lat.toFixed(6)}°N · ${pose.lon.toFixed(6)}°E` : "无定位";
-    $("coordEnu").textContent = pose.available && pose.speed_mps != null
-      ? `航向 ${pose.heading_valid ? (pose.heading_rad * 180 / Math.PI).toFixed(1) : "--"}°  速度 ${pose.speed_mps.toFixed(1)}m/s` : "--";
+    // ENU line = customer block: E / N (lat/lon vs origin) + 航向 + 速度. toXY
+    // negates N for SVG screen coords, so flip it back for the northward reading.
+    // Each field falls back to "--" until pose exists (W4 GATED), never a fake 0.
+    let e = "--", n = "--";
+    if (pose.available && pose.lat != null && origin) {
+      const xy = toXY({ lat: pose.lat, lon: pose.lon }, origin);
+      if (xy) { e = xy[0].toFixed(1); n = (-xy[1]).toFixed(1); }
+    }
+    const hdg = (pose.available && pose.heading_valid && pose.heading_rad != null)
+      ? (pose.heading_rad * 180 / Math.PI).toFixed(1) : "--";
+    const spd = (pose.available && pose.speed_mps != null)
+      ? pose.speed_mps.toFixed(1) : "--";
+    $("coordEnu").textContent =
+      `E ${e}m · N ${n}m　航向 ${hdg}°　速度 ${spd}m/s`;
     setDot($("rtkDot"), pose.fix_type ? "ok" : "");
     $("rtkText").textContent = pose.fix_type || "无 RTK";
     $("precText").textContent = pose.cov_h_m != null ? `${pose.cov_h_m.toFixed(2)}m` : "--";

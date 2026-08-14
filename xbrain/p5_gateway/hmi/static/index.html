@@ -60,9 +60,10 @@
         <div id="planList"><div class="plan-empty">暂无计划</div></div>
       </section>
 
+      <!-- 左下角坐标块(客户样例): GPS 一行, ENU 一行含 E/N + 航向 + 速度 -->
       <div class="map-overlay coord">
-        <div><strong>GPS</strong> <span id="coordGps">无定位</span></div>
-        <div><strong>ENU</strong> <span id="coordEnu">--</span></div>
+        <strong>GPS</strong> <span id="coordGps">无定位</span><br>
+        <strong>ENU</strong> <span id="coordEnu">E --m &middot; N --m&#12288;航向 --&deg;&#12288;速度 --m/s</span>
       </div>
     </div>
 
@@ -72,8 +73,9 @@
       <span>精度 <strong id="precText">--</strong></span>
       <span>地图基准 <strong>WGS84 / ENU</strong></span>
       <span>缩放 <strong id="zoomText">1.0x</strong></span>
-      <span class="scale" id="scaleText">网格 --</span>
+      <!-- link-state: 契约强制(17 S6.6 / NAV-64), 客户样例无此位; 放 scale 前, 让"网格"最右 -->
       <span class="link-state"><i class="dot" id="linkDot"></i><span id="linkText">链路 --</span></span>
+      <span class="scale" id="scaleText">网格 --</span>
     </footer>
   </section>
 </main>

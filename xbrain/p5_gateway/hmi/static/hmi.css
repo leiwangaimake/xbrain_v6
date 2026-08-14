@@ -1,111 +1,137 @@
-/* XBRAIN_V6 HMI stylesheet. Customer-sample look (docs/HMI/GPS导航HMI_设计样例.css)
-   with every configurable value (17 S6.10.2 U2/U3/U5/U6) driven by a CSS custom
-   property that hmi.js sets from /api/hmi/ui_config -- nothing here is hardcoded
-   that the operator asked to make configurable. */
+/* XBRAIN_V6 HMI stylesheet. Customer-sample look (docs/HMI/GPS导航HMI_设计样例.css):
+   navy #1B263B + cyan #5BC0EB. Every operator-configurable value (17 S6.10.2
+   U1..U7) is a CSS custom property hmi.js sets from /api/hmi/ui_config -- nothing
+   the operator asked to configure is hardcoded here. Two things are intentionally
+   ADDED beyond the customer sample and must NOT be dropped: the ESTOP button
+   (.estop-btn) and the footer link-state (.link-state) -- both contract-mandated
+   (17 S6.6 / NAV-64) though the sample omits them (17 S6.10 note). The fence/route
+   line colours are the user's 2026-08-13 correction (17 S6.10.2A), carried by the
+   --*-color vars, so they win over the sample's own line styles. */
 
 :root {
   /* U2 fonts (family + px) -- overwritten by hmi.js from ui_config.font.* */
-  --font-map-family: system-ui, sans-serif;   --font-map-size: 12px;
-  --font-legend-family: system-ui, sans-serif; --font-legend-size: 12px;
-  --font-plan-family: system-ui, sans-serif;   --font-plan-size: 13px;
-  --font-status-family: system-ui, sans-serif; --font-status-size: 12px;
-  --font-coord-family: ui-monospace, monospace; --font-coord-size: 12px;
-  /* U3 panel sizes */
-  --plan-width: 260px;   --plan-max-h: 420px;   --status-h: 34px;
-  /* U5 line colours (legend marks; SVG strokes set per-element by hmi.js, 17 S6.10.2A) */
+  --font-map-family: "Microsoft YaHei","PingFang SC",sans-serif;    --font-map-size: 12px;
+  --font-legend-family: "Microsoft YaHei","PingFang SC",sans-serif; --font-legend-size: 11px;
+  --font-plan-family: "Microsoft YaHei","PingFang SC",sans-serif;   --font-plan-size: 12px;
+  --font-status-family: "Microsoft YaHei","PingFang SC",sans-serif; --font-status-size: 11px;
+  --font-coord-family: "Microsoft YaHei","PingFang SC",sans-serif;  --font-coord-size: 11px;
+  /* U3 panel sizes -- customer defaults; overwritten by hmi.js from layout.* */
+  --plan-width: 370px;   --plan-max-h: 420px;   --status-h: 39px;
+  /* U5 line colours (user 2026-08-13 correction, 17 S6.10.2A) -- set by hmi.js */
   --fence-active-color: #2f88ff;  --fence-alarm-color: #ff2020;
   --route-recorded-color: #2ecc40;  --route-realtime-color: #ffd400;
-  /* palette */
-  --bg: #0e1116;  --panel: rgba(20,26,34,.86);  --ink: #d7dde6;  --muted: #8a8f99;
+  /* palette -- customer navy/cyan scheme (docs/HMI sample), NOT config-driven */
+  --bg: #1B263B;  --panel: #3A506B;  --blue: #326491;  --cyan: #5BC0EB;
+  --ok: #6BA292;  --warn: #F18F17;  --danger: #E63932;
+  --ink: #F1F1F1;  --muted: #B0B0B0;  --line: #C0C0C0;  --gold: #F0E173;
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink);
+body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
        font-family: var(--font-status-family); }
 
-.map-shell { display: flex; flex-direction: column; height: 100vh; }
+.map-shell { display: flex; flex-direction: column; height: 100vh;
+  border: 1px solid rgba(192,192,192,.55); background: rgba(27,38,59,.78); }
 
 /* -- toolbar + ESTOP ------------------------------------------------------ */
-.map-toolbar { display: flex; align-items: center; gap: 12px; padding: 6px 12px;
-  background: #11161d; border-bottom: 1px solid #222a34; }
-.map-title { font-weight: 600; font-family: var(--font-map-family); }
-.zoom-group { margin-left: auto; display: flex; gap: 6px; }
-.zoom-btn { width: 30px; height: 30px; border: 1px solid #2b3542; border-radius: 6px;
-  background: #1a212b; color: var(--ink); cursor: pointer; font-size: 16px; }
-.zoom-btn:hover { background: #232c38; }
+.map-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  background: var(--panel); border-bottom: 1px solid var(--line); }
+.map-title { font-weight: 700; font-size: 15px; color: var(--cyan);
+  font-family: var(--font-map-family); }
+.zoom-group { margin-left: auto; display: flex; gap: 5px; }
+.zoom-btn { width: 31px; height: 30px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg); color: var(--ink); cursor: pointer; font-size: 16px; }
+.zoom-btn:hover { background: var(--blue); border-color: var(--cyan); }
 
-/* ESTOP: prominent, red. Disabled (greyed) when estop_path != ok (NAV-64). */
-.estop-btn { padding: 6px 16px; border: 2px solid #ff4d4f; border-radius: 6px;
-  background: #b0161a; color: #fff; font-weight: 700; letter-spacing: 1px;
-  cursor: pointer; }
-.estop-btn:hover:not(:disabled) { background: #d81e23; }
+/* ESTOP (ADDED, contract 17 S6.4 / NAV-64): prominent red; greyed when estop_path != ok. */
+.estop-btn { padding: 6px 16px; border: 2px solid var(--danger); border-radius: 5px;
+  background: #b0161a; color: #fff; font-weight: 700; letter-spacing: 1px; cursor: pointer; }
+.estop-btn:hover:not(:disabled) { background: var(--danger); }
 .estop-btn:disabled { background: #3a2b2c; border-color: #6b4b4c; color: #8a7576;
   cursor: not-allowed; }
 .estop-btn.armed { animation: estop-pulse 1.4s ease-in-out infinite; }
-@keyframes estop-pulse { 50% { box-shadow: 0 0 0 4px rgba(255,77,79,.25); } }
+@keyframes estop-pulse { 50% { box-shadow: 0 0 0 4px rgba(230,57,50,.28); } }
 
 /* -- map ------------------------------------------------------------------ */
 .map-viewport { position: relative; flex: 1; overflow: hidden; cursor: grab;
-  background: #0b0e13; }
+  background: var(--bg); }
 .map-viewport.dragging { cursor: grabbing; }
 #mapSvg { width: 100%; height: 100%; transform-origin: 0 0; }
-.map-grid-minor { stroke: #1b2430; stroke-width: .3; }
-.map-grid-major { stroke: #26313f; stroke-width: .5; }
+.map-grid-minor { stroke: rgba(176,176,176,.15); stroke-width: .6; }
+.map-grid-major { stroke: rgba(91,192,235,.30); stroke-width: 1.1; }
 
-.keep-in { fill: rgba(224,176,0,.05); stroke: var(--fence-active-color); }
-.alarm-region { fill: rgba(255,77,79,.08); stroke: var(--fence-alarm-color); }
+.keep-in { fill: rgba(47,136,255,.06); stroke: var(--fence-active-color); }
+.alarm-region { fill: rgba(255,32,32,.07); stroke: var(--fence-alarm-color); }
 .keep-in-label, .alarm-label, .keypoint text, .alarm-event-label {
-  font-family: var(--font-map-family); font-size: 3px; fill: var(--ink); }
+  font-family: var(--font-map-family); font-size: 5px; fill: var(--ink);
+  paint-order: stroke; stroke: var(--bg); stroke-width: 2px; }
 .recorded-route { fill: none; stroke: var(--route-recorded-color); }
 .realtime-trajectory { fill: none; stroke: var(--route-realtime-color); }
-.robot-arrow { fill: var(--route-realtime-color); }
-.alarm-dot { fill: var(--fence-alarm-color); }
+.robot-arrow { fill: var(--ink); }
+.alarm-dot { fill: var(--fence-alarm-color); stroke: var(--ink); stroke-width: 1; }
+.keypoint circle { stroke-width: 2; }
+.keypoint.recorded circle { fill: var(--ok); stroke: var(--ok); }
+.keypoint.unrecorded circle { fill: var(--warn); stroke: var(--warn); }
 
 /* -- overlays ------------------------------------------------------------- */
-.map-overlay { position: absolute; background: var(--panel); border: 1px solid #222c38;
-  border-radius: 8px; padding: 8px 10px; backdrop-filter: blur(2px); }
-.legend { left: 10px; top: 10px; font-family: var(--font-legend-family);
+.map-overlay { position: absolute; z-index: 3; background: rgba(27,38,59,.92);
+  border: 1px solid rgba(192,192,192,.42); border-radius: 5px; padding: 8px 10px; }
+.legend { left: 10px; top: 10px; display: grid; grid-template-columns: auto auto;
+  column-gap: 16px; row-gap: 8px; font-family: var(--font-legend-family);
   font-size: var(--font-legend-size); }
-.legend-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
-.legend-mark { width: 16px; height: 0; border-top: 3px solid var(--muted); }
-.recorded-route-mark { border-top-color: var(--route-recorded-color); }
-.realtime-route-mark { border-top-color: var(--route-realtime-color); }
-.legend-mark.fence { border-top-color: var(--fence-active-color); }
-.legend-mark.alarm { border-top-color: var(--fence-alarm-color); }
+.legend-row { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.legend-mark { width: 24px; height: 12px; display: inline-block; flex: 0 0 24px; }
+.legend-mark.recorded-route-mark { height: 3px; background: var(--route-recorded-color); }
+.legend-mark.realtime-route-mark { height: 3px; background: var(--route-realtime-color); }
+.legend-mark.fence { border: 2px solid var(--fence-active-color);
+  background: rgba(47,136,255,.12); }
+.legend-mark.alarm { border: 2px solid var(--fence-alarm-color);
+  background: rgba(255,32,32,.12); }
 
-.compass { left: 10px; top: 118px; width: 42px; text-align: center; }
+.compass { left: 10px; top: 84px; width: 48px; text-align: center; }
 .compass-n { display: block; font-weight: 700; }
-.compass-arrow { color: var(--route-recorded-color); }
+.compass-arrow { color: var(--cyan); font-size: 25px; line-height: 25px; }
 
-.current-plan { right: 10px; top: 10px; width: var(--plan-width);
-  max-height: var(--plan-max-h); overflow-y: auto;
+.current-plan { right: 11px; top: 10px; width: var(--plan-width);
+  max-height: var(--plan-max-h); overflow-y: auto; padding: 9px;
   font-family: var(--font-plan-family); font-size: var(--font-plan-size); }
-.plan-window-title { font-weight: 600; margin-bottom: 6px; }
+.plan-window-title { color: var(--cyan); font-weight: 700; margin-bottom: 6px; }
 .plan-empty { color: var(--muted); }
-.robot-plan { border: 1px solid #263140; border-radius: 6px; padding: 6px 8px;
-  margin-bottom: 6px; }
-.robot-plan-header { display: flex; justify-content: space-between; }
-.plan-state { font-size: .85em; padding: 0 6px; border-radius: 4px; }
-.plan-state.running { background: #1d3a2a; color: #6fe0a0; }
-.plan-state.completed { background: #2a3140; color: #9fb0c8; }
-.robot-plan-name { color: var(--muted); margin: 2px 0; }
+.robot-plan { border: 1px solid rgba(192,192,192,.24); border-left: 3px solid var(--cyan);
+  border-radius: 4px; padding: 8px 9px; margin-bottom: 8px; background: rgba(58,80,107,.45); }
+.robot-plan-header { display: flex; justify-content: space-between; align-items: center; }
+.robot-plan-header > strong { color: var(--cyan); }
+.plan-state { font-size: .85em; padding: 2px 7px; border-radius: 9px; }
+.plan-state.running { color: var(--gold); background: rgba(240,225,115,.12);
+  border: 1px solid rgba(240,225,115,.45); }
+.plan-state.completed { color: var(--ok); background: rgba(107,162,146,.13);
+  border: 1px solid rgba(107,162,146,.48); }
+.robot-plan-name { color: var(--ink); margin: 3px 0; font-weight: 700; }
 .target-list { list-style: none; padding-left: 0; margin: 4px 0; }
 .target-list li { display: flex; gap: 6px; align-items: center; }
-.target-list li i { width: 16px; text-align: center; }
-.target-list li.finished i { color: #6fe0a0; }
-.robot-plan-result { display: flex; justify-content: space-between; margin-top: 4px; }
-.result-ok { color: #6fe0a0; }
-.result-warning { color: #e0b000; }
+.target-list li i { width: 16px; text-align: center; font-style: normal; }
+.target-list li.finished i { color: var(--ok); }
+.robot-plan-result { display: flex; justify-content: space-between; margin-top: 6px;
+  padding-top: 6px; border-top: 1px solid rgba(192,192,192,.16); color: var(--muted); }
+.robot-plan-result strong { color: var(--cyan); }
+.result-ok { color: var(--ok); }
+.result-warning { color: var(--warn); }
 
-.coord { right: 10px; bottom: calc(var(--status-h) + 10px);
-  font-family: var(--font-coord-family); font-size: var(--font-coord-size); }
+/* coord: BOTTOM-LEFT (customer), one block: GPS line + ENU E/N + 航向 + 速度 */
+.coord { left: 10px; bottom: 10px; color: var(--muted);
+  font-family: var(--font-coord-family); font-size: var(--font-coord-size); line-height: 1.65; }
+.coord strong { color: var(--cyan); }
 
 /* -- footer status bar ---------------------------------------------------- */
-.map-footer { height: var(--status-h); display: flex; align-items: center; gap: 16px;
-  padding: 0 12px; background: #11161d; border-top: 1px solid #222a34;
-  font-family: var(--font-status-family); font-size: var(--font-status-size); }
+.map-footer { height: var(--status-h); display: flex; align-items: center; gap: 18px;
+  padding: 0 12px; background: var(--panel); border-top: 1px solid var(--line);
+  font-family: var(--font-status-family); font-size: var(--font-status-size);
+  color: var(--muted); white-space: nowrap; }
+.map-footer strong { color: var(--cyan); }
+.mode-text { color: var(--cyan); font-weight: 700; }
+.gps-state { color: var(--ok); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
   background: var(--muted); margin-right: 5px; }
-.dot.ok { background: #33d17a; } .dot.warn { background: #e0b000; }
-.dot.bad { background: #ff4d4f; }
-.scale { color: var(--muted); } .link-state { margin-left: auto; }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
+.dot.bad { background: var(--danger); }
+.scale { margin-left: auto; }             /* 网格 pushed far-right (customer) */
