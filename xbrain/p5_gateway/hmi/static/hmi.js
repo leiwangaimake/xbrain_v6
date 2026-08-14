@@ -12,6 +12,7 @@
   let cfg = null;                       // ui_config, set on load
   let zoomBounds = { min: 0.65, max: 2.8, wheel: 0.12 };
   let baseVB = [-100, -65, 240, 145];   // ENU-metre base viewBox window (U1)
+  let lastHeadingCompass = null;        // last VALID compass heading (deg); null until first fix
 
   // -- ENU projection: snapshot geometry may be {lat,lon} or [e_m,n_m]. When
   //    lat/lon + enu_origin are present, project to local ENU metres (the SVG
@@ -339,6 +340,14 @@
       face.appendChild(tri);
     }
   }
+  // Three states (user 2026-08-14). Source is RTK dual-antenna heading, a physical
+  // true value: heading_valid is true when EITHER the FIXED dual-antenna RTK
+  // heading OR the COG fallback is available -- folded upstream. Per 11 H-1 the
+  // HMI reads heading_valid ONLY, never deriving validity from source/level.
+  //   1. startup / never had a fix   -> point North (dial at 0).
+  //   2. heading valid               -> rotate the CARD in real time (not pointer).
+  //   3. BOTH headings lost after a fix -> FREEZE at the last valid tick (stop
+  //      rotating, hold), NOT reset to North.
   function renderHeading(pose) {
     const face = $("dialFace"), dial = $("headingDial");
     if (!face || !dial) return;
@@ -346,11 +355,17 @@
       // ENU (east=0, CCW+) -> compass (north=0, CW+): compass = (90 - enu) mod 360.
       const enu = pose.heading_rad * 180 / Math.PI;
       const compass = ((90 - enu) % 360 + 360) % 360;
+      lastHeadingCompass = compass;                       // remember for freeze-on-loss
       face.style.transform = `rotate(${-compass}deg)`;   // CARD rotates -> heading to top
       dial.classList.remove("no-heading");
+    } else if (lastHeadingCompass !== null) {
+      // Both sources lost -> hold the last valid heading (freeze). The transform
+      // is already there; re-assert it (in case anything reset it) and stop.
+      face.style.transform = `rotate(${-lastHeadingCompass}deg)`;
+      dial.classList.remove("no-heading");
     } else {
-      // Heading gated (perception/rtk, W4). Dim the dial at North -- the dimming
-      // signals "no fix", NOT "heading = North" (3.2: never a fabricated heading).
+      // Startup default: no heading ever -> point North. Slightly dimmed
+      // (.no-heading) to signal "no fix yet", never a fabricated heading (3.2).
       face.style.transform = "rotate(0deg)";
       dial.classList.add("no-heading");
     }
