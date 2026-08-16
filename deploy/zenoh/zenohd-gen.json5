@@ -21,7 +21,7 @@
 // Rules this config enforces (grep-verified by
 // scripts/check_router_config.sh):
 //   * mode: router
-//   * multicast + gossip both disabled (no cluster discovery)
+//   * multicast disabled; gossip ENABLED (2026-08-16, F4: mode=peer router-brokered discovery)
 //   * NO 0.0.0.0 anywhere (both the literal "0.0.0.0" and any bare
 //     numeric-quad without a specific octet)
 //   * listen entries are per-IP, not per-interface-name
@@ -39,8 +39,11 @@
     multicast: {
       enabled: false,
     },
+    // gossip ENABLED (2026-08-16, F4): same reason as zenohd-rt -- mode=peer
+    // participants need router-propagated gossip to discover each other's
+    // declarations. Mirrors the 2026-08-10 client-side flip. Multicast stays OFF.
     gossip: {
-      enabled: false,
+      enabled: true,
     },
   },
   connect: {

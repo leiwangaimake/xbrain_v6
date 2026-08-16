@@ -14,7 +14,7 @@
 #
 # Checks:
 #   1. Both configs contain NO "0.0.0.0" literal (SEC-2, SEC-7).
-#   2. Both configs disable multicast + gossip (RT-C3.d verbatim).
+#   2. Both configs disable multicast (RT-C1); gossip ENABLED (F4, mode=peer).
 #   3. RT config binds ONLY loopback (127.0.0.1) -- NET-C9 for RT.
 #   4. GEN config binds loopback + at least one templated per-IP
 #      endpoint (LAN2 / WiFi via ${LAN2_IP} / ${WIFI_IP}).
@@ -83,7 +83,12 @@ for cfg in "$RT_CFG" "$GEN_CFG"; do
     fi
 done
 
-# --- Check 2: multicast + gossip disabled --------------------------
+# --- Check 2: multicast disabled, gossip ENABLED -------------------
+# multicast OFF is the real cross-plane leak vector (RT-C1). gossip was flipped
+# ON 2026-08-16 (F4): mode=peer participants need router-propagated gossip to
+# discover each other's declarations (verified: gossip=false -> 0 rx). This
+# completes the 2026-08-10 client-side flip. If mode=client is later adopted
+# (session_factory 待确认), gossip can go back OFF -- flip this check with it.
 for cfg in "$RT_CFG" "$GEN_CFG"; do
     [[ -f "$cfg" ]] || continue
     if grep -A1 'multicast:' "$cfg" | grep -q 'enabled:\s*false'; then
@@ -91,10 +96,10 @@ for cfg in "$RT_CFG" "$GEN_CFG"; do
     else
         _fail "$cfg: multicast not explicitly disabled"
     fi
-    if grep -A1 'gossip:' "$cfg" | grep -q 'enabled:\s*false'; then
-        _pass "$cfg: gossip disabled"
+    if grep -A1 'gossip:' "$cfg" | grep -q 'enabled:\s*true'; then
+        _pass "$cfg: gossip enabled (mode=peer router-brokered discovery, F4)"
     else
-        _fail "$cfg: gossip not explicitly disabled"
+        _fail "$cfg: gossip not explicitly enabled (mode=peer needs it)"
     fi
 done
 

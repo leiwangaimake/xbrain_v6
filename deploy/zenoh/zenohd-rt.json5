@@ -15,8 +15,9 @@
 // Rules this config enforces (grep-verified by
 // scripts/check_router_config.sh):
 //   * mode: peer + router disabled (no cluster gossip)
-//   * multicast disabled (RT-C3.d)
-//   * gossip disabled
+//   * multicast disabled (RT-C1, the real cross-plane leak vector)
+//   * gossip ENABLED (2026-08-16, F4): required for mode=peer router-brokered
+//     discovery; completes the 2026-08-10 client flip. See the scouting block.
 //   * NO 0.0.0.0 listen anywhere (SEC-2, SEC-7)
 //   * listen limited to loopback only
 
@@ -31,8 +32,17 @@
     multicast: {
       enabled: false,
     },
+    // gossip ENABLED (2026-08-16, F4): mode=peer participants connect to this
+    // router and discover each other's pub/sub declarations via gossip. With it
+    // OFF the router does not propagate those declarations between peers, so a
+    // subscriber never learns of a publisher on another peer -- verified: rt/gnss
+    // publish reached 0 subscribers with gossip=false, 120/6s with gossip=true.
+    // This completes the 2026-08-10 client-side flip (session_config.h) that was
+    // not mirrored to the routers. Multicast stays OFF (RT-C1, the real leak
+    // vector). mode=client would broker without gossip (session_factory 待确认)
+    // -- if that is adopted, flip this back.
     gossip: {
-      enabled: false,
+      enabled: true,
     },
   },
   connect: {
