@@ -1869,6 +1869,11 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 ★★ **这些是 UI 呈现参数，不是安全参数** ⇒ 允许有默认值（§3.1 只管 `common.spec.*`/`common.safety.*`，UI 参数不在其列）。
 ★ 下发方式：后端在**首屏内联**或 `GET /api/hmi/ui_config` 把 `hmi.web.*` 交给 `hmi.js` ＋ CSS 变量，前端据此渲染。
 
+★★★ **v1.2 新增（2026-08-16）· ui_config 还带一个 `timezone` 字段（页脚本地时钟）**：
+- 来源**不是** `hmi.web.*`，而是 `common.timezone`（站点显示时区，IANA 名；`p5_gateway.yaml` 顶层 `timezone: ${common.timezone}` 引用，freeze 展开，运行期读 resolved 顶层键）。后端 `build_ui_config` 把它并入 ui_config 一并下发。
+- 页脚新增一格**本地时钟**（`.map-footer` 内 `#clockText` ＋ 授时徽标 `#clockDot`）：前端按该时区**每秒本地 tick**（`Intl.DateTimeFormat`），只有徽标随每帧 `snapshot.clock`（§3.11 `ClockStatus.sync`）变色（绿=已同步 · 红=未同步 · 灰=源未接）。
+- ★★ **这是便捷显示钟，非权威时刻**：权威报时是 `18` G24 语音答复，读机器人授时锚点 `(mono_ref, utc_ref)` 用单调钟换算（`11` §3.11 / CLK-C1）。时区错了顶多显示错，**不碰安全**（内部墙钟恒 UTC，一切超时/周期用单调钟）。国际化售卖时改 `common.timezone` 一处即整栈切。
+
 ##### 6.10.2A ★★★ 连线与要素样式规范（客户定义 · 2026-08-13 用户订正 · 默认值，可配）
 
 > ★ 这是**默认样式**的权威表；每一项都由 `hmi.web.*` 配置驱动（代码不硬编码），前端据 `role`（缺则据名称「活动/禁入/报警」推）着色。

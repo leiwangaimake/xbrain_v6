@@ -4155,6 +4155,15 @@ cmdset:                                   # ★ 指令集版本（§12.4）
   query_templates: /opt/xbrain_v6/configs/query_templates.yaml
   restate_templates: /opt/xbrain_v6/configs/restate_templates.yaml   # ★ v0.3（§8.3）
   conflict_check_on_load: true            # ★ 启动时检测关键词冲突
+
+# ★★★ v1.2 新增（2026-08-16）：站点显示时区，供 G24 query_time 本地报时。
+#   * 唯一真源是 common.timezone（IANA 名，如 Asia/Shanghai / Asia/Tokyo）；本段是
+#     L6 对它的【引用】，freeze 线展开，运行期读解析产物顶层 timezone 键。
+#   * 纯【显示】值：G24 用 state/clock 的 (mono_ref, utc_ref) 锚点把单调钟换算成
+#     UTC（§9.5 / 11 §3.11），再按本时区格式化本地时刻；一切超时/周期/年龄仍用单调
+#     钟（CLK-C1），故本值【不影响安全】。国际化售卖时改 common.timezone 一处即整栈切。
+#   * ★ 这是本册配置块【第十三个顶层键】，也是 p4_agent.yaml 唯一的 ${common.*} 引用。
+timezone: ${common.timezone}
 ```
 
 ---

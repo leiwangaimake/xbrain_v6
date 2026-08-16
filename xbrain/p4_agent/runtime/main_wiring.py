@@ -39,7 +39,8 @@ from xbrain.p4_agent.runtime.intent_dispatch import (
 )
 from xbrain.p4_agent.runtime.orchestrator_turn import (
     VoiceOrchestratorInputs, build_orchestrator, compose_query_fns,
-    make_battery_query_fn, make_rtk_query_fn, make_turn_handler,
+    make_battery_query_fn, make_rtk_query_fn, make_time_query_fn,
+    make_turn_handler,
 )
 from xbrain.p4_agent.runtime.turn_loop import (
     MIC_TOPIC, TurnLoopConfig, TurnLoopWorker,
@@ -134,7 +135,8 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
         if orch is not None:
             state_cache = _wire_state_subscriptions(gen, state_subs)
             # Compose the group query_fns: battery (G02) + RTK/heading (G43-G47,
-            # 18-C/F5). Each owns its ids; the first to answer wins.
+            # 18-C/F5) + time (G24, site-tz local clock). Each owns its ids; the
+            # first to answer wins.
             query_fn = compose_query_fns([
                 make_battery_query_fn(
                     state_cache, orch.query_templates,
@@ -142,6 +144,9 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                     low_soc_pct=orch.query_low_soc_pct),
                 make_rtk_query_fn(
                     state_cache, max_age_ms=orch.query_max_age_ms),
+                make_time_query_fn(
+                    state_cache, orch.site_timezone,
+                    max_age_ms=orch.query_max_age_ms),
             ])
             orchestrator = build_orchestrator(
                 orch.registry, orch.chitchat, l2_timeout_ms=orch.l2_timeout_ms,

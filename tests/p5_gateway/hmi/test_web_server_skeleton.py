@@ -96,3 +96,21 @@ def test_ui_config_refuses_missing_group():
     silent browser-default fallback. MUTATION: return {} on missing and fail."""
     with pytest.raises(UiConfigError):
         build_ui_config({"map": {}})       # missing font/layout/fence/route/waypoint
+
+
+_FULL_WEB = {"map": {}, "font": {}, "layout": {},
+             "fence": {}, "route": {}, "waypoint": {}}
+
+
+def test_ui_config_forwards_site_timezone():
+    """The site tz reaches the frontend via ui_config (once-loaded), so the
+    footer clock ticks in the site zone. MUTATION: drop the timezone key and the
+    footer clock silently uses the operator's browser zone -> this fails."""
+    cfg = build_ui_config(_FULL_WEB, site_timezone="Asia/Tokyo")
+    assert cfg["timezone"] == "Asia/Tokyo"
+
+
+def test_ui_config_timezone_defaults_none():
+    """No site tz (minimal mode) -> timezone None, and the frontend falls back to
+    the browser zone rather than blocking the page (DISPLAY value, not hmi.bind)."""
+    assert build_ui_config(_FULL_WEB)["timezone"] is None

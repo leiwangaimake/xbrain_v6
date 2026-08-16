@@ -100,7 +100,8 @@ def _fence_snapshot(hmi_state: dict):
     return list(fences), False
 
 
-def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict):
+def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
+               site_timezone: Optional[str] = None):
     """Wire + start the HMI web server against what P5 can serve TODAY.
 
     Returns (server, thread) or (None, None) when HMI is not configured / cannot
@@ -183,7 +184,8 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict):
         import os                                    # noqa: PLC0415
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         static_root = os.path.join(here, web.get("static_dir", "hmi/static"))
-        app = build_app(web, _Provider(), _estop_sender, static_root)
+        app = build_app(web, _Provider(), _estop_sender, static_root,
+                        site_timezone=site_timezone)
         server, thread = start_in_thread(app, socks)
         _logger.info("p5 HMI: serving on %s (static %s)",
                      [e for e in bind if e], static_root)
@@ -201,13 +203,17 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict):
 
 def run_voice_loop_wiring(stop_flag: dict,
                             heartbeat_period_s: float = 1.0,
-                            hmi_cfg: Optional[dict] = None) -> int:
+                            hmi_cfg: Optional[dict] = None,
+                            site_timezone: Optional[str] = None) -> int:
     """Block until stop_flag['stop'] truthy. Returns 0 on clean shutdown.
 
     hmi_cfg is the resolved `hmi` config subtree (bind + web) or None. When
     present the HMI web server starts in a background thread (17 S6.10); when
     absent or malformed the voice loop runs exactly as before -- the HMI is
     strictly additive and never a precondition for the voice side.
+
+    site_timezone (common.timezone) is forwarded to the HMI so its footer clock
+    shows site-local time; None leaves the frontend on the browser zone.
     """
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p5_gateway.fence.cache import FenceCache
@@ -395,7 +401,8 @@ def run_voice_loop_wiring(stop_flag: dict,
         # Start the HMI web server (best-effort; never blocks the voice loop).
         hmi_server, _hmi_thread = (None, None)
         if hmi_cfg:
-            hmi_server, _hmi_thread = _start_hmi(gen, hmi_cfg, hmi_state)
+            hmi_server, _hmi_thread = _start_hmi(gen, hmi_cfg, hmi_state,
+                                                 site_timezone)
 
         try:
             last_hb = time.monotonic()

@@ -84,14 +84,26 @@ def assemble_pose(gnss_heading: Optional[Dict[str, Any]],
 
 def mirror_clock(clock_status: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Mirror a received ClockStatus `data` into the state/clock `data`. P1 copies
-    sync/source verbatim and NEVER re-judges (CLK-A1 gives that power to
-    rtk_driver alone; CLK-A2 says copy). Missing/None -> fail-safe sync=false."""
+    the fields VERBATIM and NEVER re-judges (CLK-A1 gives that power to
+    rtk_driver alone; CLK-A2 says copy). Missing/None -> fail-safe sync=false.
+
+    Carries the (mono_ref, utc_ref) anchor through, not just sync/source: 11 S3.11
+    marks both required on state/clock and states 'any consumer can convert mono
+    to UTC' from the pair. G24 query_time (18 S9.5) is exactly that consumer -- it
+    reconstructs the current UTC as utc_ref + (now_mono - mono_ref), so the answer
+    rides the rtk_driver's synced wall baseline via a MONOTONIC delta (CLK-C1),
+    never a local wall-clock read. Absent anchor -> the fields stay None and the
+    consumer falls back to 'unsynced' rather than fabricating a time."""
     cs = clock_status
     if not cs:
         return {"sync": False, "source": "none"}     # CLK-A3 fail-safe
     return {
         "sync": bool(cs.get("sync", False)),
         "source": cs.get("source", "none"),
+        # (mono, wall) anchor for mono->UTC reconstruction (11 S3.11). Copied as
+        # received; None when the source did not carry them (older publisher).
+        "mono_ref": cs.get("mono_ref"),
+        "utc_ref": cs.get("utc_ref"),
     }
 
 

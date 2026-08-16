@@ -54,6 +54,12 @@ common:
   #   本文件只声明键位, 不落值; 落值见 CFG-CF-7.
   site_id: null
 
+  # 站点显示时区 (IANA 名, 如 Asia/Shanghai / Asia/Tokyo). 本地时间[显示]的唯一
+  #   源: HMI 时钟 / TTS G24 (几点了) / CHS-A Time 字段. 纯显示值 -- 所有超时/
+  #   控制用单调钟 (CLK-C1), 内部墙钟恒 UTC, 故本值[不影响安全]. 按部署站点设置
+  #   (国际化售卖). 默认中国 (主力市场). 消费方: p4 (G24) / p5 (HMI) 经 ${common.timezone}.
+  timezone: "Asia/Shanghai"
+
   # -- Zenoh 端点 (10 S5.4.5 zenoh 两行; 权威 11 S1.1.2 / S1.1.4 / NET-C9) --
   zenoh:
     # rt_endpoint: RT 面 router 的地址, RT 面封闭集 9 个进程 (11 S1.1.3 R-3) 与

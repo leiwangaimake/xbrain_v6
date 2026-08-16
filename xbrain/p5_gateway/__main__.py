@@ -141,12 +141,29 @@ def main(argv: Optional[list] = None) -> int:
         # HMI web server (17 S6.10). None in minimal mode -> voice loop runs
         # without HMI, exactly as before (HMI is strictly additive).
         hmi_cfg = None
+        site_timezone = None
         if _cfg is not None:
             try:
                 hmi_cfg = _cfg.get("hmi")
             except Exception:      # noqa: BLE001
                 hmi_cfg = None      # HMI absent from config -> just skip it
-        return run_voice_loop_wiring(stop_flag=stop_flag, hmi_cfg=hmi_cfg)
+            # Site display timezone (common.timezone) for the HMI footer clock.
+            # A DISPLAY value only -- unlike p4 (which refuses startup on a bad
+            # zone), the HMI must stay up (W-1 observation window), so an
+            # unresolvable zone is logged and the frontend falls back to the
+            # browser zone rather than blocking the page.
+            try:
+                from xbrain.common.time.local_time import is_valid_tz
+                site_timezone = _cfg.get("timezone")
+                if site_timezone is not None and not is_valid_tz(site_timezone):
+                    _logger.warning(
+                        "common.timezone %r is not a resolvable IANA zone; HMI "
+                        "footer clock will use the browser zone", site_timezone)
+                    site_timezone = None
+            except Exception:      # noqa: BLE001
+                site_timezone = None
+        return run_voice_loop_wiring(stop_flag=stop_flag, hmi_cfg=hmi_cfg,
+                                     site_timezone=site_timezone)
 
     return main_loop(
         minimal_mode=minimal_mode,

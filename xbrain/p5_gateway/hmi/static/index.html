@@ -73,6 +73,8 @@
 
     <footer class="map-footer">
       <span class="mode-text" id="modeText">--</span>
+      <!-- 站点本地时钟(common.timezone): 前端本地每秒 tick; 授时未同步时 clockDot 变红 -->
+      <span class="clock-state"><i class="dot" id="clockDot"></i><span id="clockText">--:--:--</span></span>
       <span class="gps-state"><i class="dot" id="rtkDot"></i><span id="rtkText">无 RTK</span></span>
       <span>精度 <strong id="precText">--</strong></span>
       <span>地图基准 <strong>WGS84 / ENU</strong></span>

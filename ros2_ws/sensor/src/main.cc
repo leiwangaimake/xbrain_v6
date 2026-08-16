@@ -52,8 +52,11 @@ double MonoNowS() {
 
 // Wall milliseconds for the envelope ts only (align + log, 11 S3.0). Not a timeout.
 int64_t WallMs() {
+  // Marker on the system_clock line itself (clock_scan associates the exemption
+  // with the occurrence line): envelope ts is cross-machine align / log only.
+  auto now = std::chrono::system_clock::now();  // WALL-CLOCK-OK(align): envelope ts (11 S3.0), never an age/timeout
   return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
+             now.time_since_epoch())
       .count();
 }
 

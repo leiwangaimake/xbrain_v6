@@ -512,8 +512,11 @@ def test_the_source_covers_every_section_the_design_names():
     # them. Written out rather than counted: a count would pass on twelve
     # sections with the wrong names, which is CLAUDE.md 3.7's point about a
     # number standing in for the thing it measured.
+    # `timezone` is the 13th top-level key (16 S14 v1.2, 2026-08-16): the L6
+    # reference to common.timezone that G24 query_time formats local time with.
     expected = {"asr_post", "bypass", "intent", "prompt", "grammar", "gateway",
-                "auth", "session", "recording", "confirm", "chitchat", "cmdset"}
+                "auth", "session", "recording", "confirm", "chitchat", "cmdset",
+                "timezone"}
     # Top level only. Going deeper would duplicate the design document key by
     # key here, and the copy would then be the thing that has to be kept in step
     # -- exactly the second-source-of-truth problem the whole configuration
@@ -609,11 +612,12 @@ def test_a_complete_configuration_loads(tmp_path):
     assert cfg.proc == "p4_agent"
     # Two values from opposite ends of the file, so a loader that returned an
     # empty tree would not pass by accident. assert_intent_count in particular
-    # is the 132-intent closed set count from 16 S0.5 CS-A2 (128 until
-    # GWY-P4-23 landed D17/D18/E09/E10, 2026-08-07), which is the kind of value
-    # a truncated read would silently lose.
+    # is the intent closed-set count from 16 S0.5 CS-A2 (128 until GWY-P4-23
+    # landed D17/D18/E09/E10 2026-08-07 -> 132; then +5 for 18-C G43-G47
+    # 2026-08-16 -> 137), which is the kind of value a truncated read would
+    # silently lose.
     assert cfg.require("cmdset.min_agent_version") == "1.0"
-    assert cfg.require("auth.assert_intent_count") == 132
+    assert cfg.require("auth.assert_intent_count") == 137
 
 
 def test_zero_and_empty_string_are_assigned_values_not_holes(tmp_path):

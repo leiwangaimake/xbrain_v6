@@ -154,6 +154,41 @@ RTK_QUERY_ANSWERS = {
 }
 
 
+# --- G24 query_time: local time in the SITE timezone (18 S9.5 hard branch) ---
+from xbrain.common.time.local_time import format_spoken  # noqa: E402
+
+_CLOCK_UNSYNCED_TIME = "当前时钟未同步, 时间可能不准"
+
+
+def time_answer(cache, tz_name, now_mono_ms, *, max_age_ms) -> QueryAnswer:
+    """G24 query_time. HARD BRANCH (18 S9.5): if the clock is NOT synced
+    (state/clock.sync false or stale), answer the unsync warning, NEVER the
+    possibly-wrong time -- the wall clock steps seconds at RTK cold start, so a
+    read then would be wrong at the worst moment.
+
+    When synced, reconstruct the current UTC from state/clock's (mono_ref, utc_ref)
+    anchor -- the (monotonic, wall) baseline the rtk_driver publishes for exactly
+    this purpose (11 S3.11: 'any consumer can convert mono to UTC' from the pair).
+    The elapsed time is a MONOTONIC delta (now_mono - mono_ref), so no local
+    wall-clock read happens here (CLK-C1); the wall baseline is the sync judge's,
+    not p4's. Then format in the site timezone (common.timezone)."""
+    clk = _fresh_data(cache, "state/clock", now_mono_ms, max_age_ms)
+    if not clk or not clk.get("sync", False):
+        return QueryAnswer(known=False, text=_CLOCK_UNSYNCED_TIME)
+    utc_ref = clk.get("utc_ref")
+    mono_ref = clk.get("mono_ref")
+    if utc_ref is None or mono_ref is None:
+        # Synced but no anchor (an older publisher that dropped the pair) -> the
+        # wall time cannot be placed without reading a local clock, so answer the
+        # honest unsync line rather than fabricate a time.
+        return QueryAnswer(known=False, text=_CLOCK_UNSYNCED_TIME)
+    # now_mono_ms (p4 time.monotonic) and mono_ref (rtk_driver steady_clock) are
+    # both CLOCK_MONOTONIC on this host, same boot epoch, so their difference is
+    # the real elapsed seconds since the anchor was taken.
+    now_utc_s = utc_ref + (now_mono_ms / 1000.0 - mono_ref)
+    return QueryAnswer(known=True, text=format_spoken(now_utc_s, tz_name))
+
+
 def _require(state: Mapping[str, Any], field: str) -> Any:
     """Pull a required field from a live state value; raise if absent.
 

@@ -21,7 +21,7 @@ TODO names by hand and matter most:
       the schema first would have reported common.safety.t_lat_s cleanly.
 
 The coverage and baseline cases guard the assets: SCHEMAS must cover exactly the
-19 config files, and every file as it ships today must PASS (the schema runs
+20 config files, and every file as it ships today must PASS (the schema runs
 before assertion A, so null placeholders are not its to reject).
 """
 
@@ -59,10 +59,10 @@ def _brake_tree(t_lat_s=0.4, a_mps2=2.5, k=1.5):
                                   "brake": {"a_mps2": a_mps2, "k": k}}}}
 
 
-# ── coverage: the assets cover exactly the 19 files ──────────────────────────
+# ── coverage: the assets cover exactly the 20 files ──────────────────────────
 
 def test_registry_covers_exactly_the_on_disk_config_set():
-    """SCHEMAS must key exactly the 19 config files on disk.
+    """SCHEMAS must key exactly the 20 config files on disk.
 
     Mutation: drop one entry from SCHEMAS => the on-disk file has no schema and
     this set difference goes non-empty. The point is to catch a NEW config file
@@ -71,13 +71,13 @@ def test_registry_covers_exactly_the_on_disk_config_set():
     """
     on_disk = set()
     for dirpath, dirs, files in os.walk(CONFIG_ROOT):
-        # sites/ and calib/ are per-instance templates, not among the 19
+        # sites/ and calib/ are per-instance templates, not among the 20
         # (CFG-FZ-17 triage); prompts/ and secrets/ are not yaml config files.
         # generated/ is a build artifact (whitelist.yaml materialised from
         # 11 S1.1.6, validated by its consumer xbrain/common/zenoh/whitelists.py),
         # and probe/ is a Stage-0 config (thresholds.yaml, CFG-BT-1) the probe
         # validates itself by crashing on any absent key -- neither passes
-        # through the SCHEMAS registry, so both sit outside this 19-file set.
+        # through the SCHEMAS registry, so both sit outside this 20-file set.
         dirs[:] = [d for d in dirs
                    if d not in ("sites", "calib", "prompts", "secrets",
                                 "generated", "probe")]
@@ -85,7 +85,7 @@ def test_registry_covers_exactly_the_on_disk_config_set():
             if name.endswith(".yaml"):
                 on_disk.add(os.path.relpath(os.path.join(dirpath, name), CONFIG_ROOT))
     assert set(CONFIG_FILES) == on_disk
-    assert len(CONFIG_FILES) == 19
+    assert len(CONFIG_FILES) == 20
 
 
 @pytest.mark.parametrize("rel", CONFIG_FILES)
@@ -378,7 +378,7 @@ def test_every_fieldspec_type_is_a_known_token():
     """Self-test: no schema was authored with a token outside TYPE_TOKENS. A typo
     like num spelled as a bare string would be caught here, not at validation.
     """
-    for schema in SCHEMAS.values():           # every one of the 19 assets
+    for schema in SCHEMAS.values():           # every one of the 20 assets
         for path, spec in schema.fields.items():   # every declared field
             assert spec.type in TYPE_TOKENS, (schema.name, path, spec.type)  # legal token
 

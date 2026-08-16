@@ -6,8 +6,8 @@ File: registry.py
 Brief: CFG-10 schema assets, one per config file, plus the file-keyed lookup
 
 Description:
-CFG-FZ-17 requires a schema for each of the 19 config files under the config
-root. This module holds those 19 assets and validate_config(rel_path, tree),
+CFG-FZ-17 requires a schema for each of the 20 config files under the config
+root. This module holds those 20 assets and validate_config(rel_path, tree),
 which the freeze oneshot calls once per parsed file BEFORE it builds the overlay
 and BEFORE assertion A. The engine (type / required / range) lives in spec.py;
 this file is only the data and the lookup.
@@ -39,7 +39,7 @@ What this module does NOT encode, on purpose:
     S5.4.6 lists CFG-10 and CFG-11 as two layers, "不得合并成一层"; the authority
     table is 12 S12.1). t_lat_s >= 0.4, a_mps2 <= spec.max_decel_mps2 and the
     rest are checked there, not here. The FieldSpec range mechanism is for pure
-    per-key domain bounds; none of the 19 files has one that is doc-stated and
+    per-key domain bounds; none of the 20 files has one that is doc-stated and
     not already a safety assertion (closed_set_threshold, the only candidate, is
     an uncalibrated placeholder per 16 Q-P4-9), so the production schemas carry
     no ranges. The mechanism is exercised by its own test.
@@ -344,14 +344,14 @@ _P4: Dict[str, Any] = {
 }
 
 # ---------------------------------------------------------------------------
-# 6..19. The deferred files.
+# 6..20. The deferred files.
 #
 # Empty on disk; key set deferred to the cited volume and, in places, still
 # pending a ruling. Schema is intentionally empty (no fields): it accepts the
 # current empty file AND the eventual keys, and is the place to add types when
 # the file is transcribed. NOT invented ahead of the config -- see the module
 # header. Each entry still carries its authority so the next author knows the
-# source, and so the coverage self-test can prove all 19 files have an entry.
+# source, and so the coverage self-test can prove all 20 files have an entry.
 # ---------------------------------------------------------------------------
 _DEFERRED: Dict[str, str] = {
     # content files (data tables), authority per file header
@@ -370,11 +370,12 @@ _DEFERRED: Dict[str, str] = {
     "p3_task.yaml": "15 S12 (P3 private config)",
     "p5_gateway.yaml": "17 S10 (P5 private config)",
     "quadruped.yaml": "13 S8.1 / S8.2 (quadruped private config)",
+    "rtk_driver.yaml": "11 S3.2 / S3.11 (rtk_driver private config)",
 }
 
 
 def _build_registry() -> Dict[str, Schema]:
-    """Assemble the 19 Schema assets keyed by config-relative path.
+    """Assemble the 20 Schema assets keyed by config-relative path.
 
     Built once at import so a duplicate or a typo'd path fails loudly here rather
     than on first validate_config call in the field. The four typed files are
@@ -400,12 +401,12 @@ def _build_registry() -> Dict[str, Schema]:
     return reg
 
 
-#: rel_path -> Schema for all 19 files. The keys ARE the fixed config-file set
-#: (sites/ and calib/ are per-instance templates and are not among the 19, per
+#: rel_path -> Schema for all 20 files. The keys ARE the fixed config-file set
+#: (sites/ and calib/ are per-instance templates and are not among the 20, per
 #: the CFG-FZ-17 triage).
 SCHEMAS: Dict[str, Schema] = _build_registry()
 
-#: The 19 relative paths, sorted for a stable order. Consumers (and the coverage
+#: The 20 relative paths, sorted for a stable order. Consumers (and the coverage
 #: self-test) read this rather than re-deriving the set.
 CONFIG_FILES: Tuple[str, ...] = tuple(sorted(SCHEMAS))
 

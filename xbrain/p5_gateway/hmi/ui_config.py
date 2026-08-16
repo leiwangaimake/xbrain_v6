@@ -34,7 +34,7 @@ behaviour in the web server, not here.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Optional
 
 
 class UiConfigError(ValueError):
@@ -47,7 +47,8 @@ class UiConfigError(ValueError):
     """
 
 
-def build_ui_config(hmi_web: Mapping[str, Any]) -> Dict[str, Any]:
+def build_ui_config(hmi_web: Mapping[str, Any], *,
+                    site_timezone: Optional[str] = None) -> Dict[str, Any]:
     """Return the UI-config dict the frontend renders from.
 
     `hmi_web` is the resolved `hmi.web` subtree (the runtime passes the freeze
@@ -60,6 +61,13 @@ def build_ui_config(hmi_web: Mapping[str, Any]) -> Dict[str, Any]:
     reads `cfg.map.grid.minor_m`, `cfg.font.plan.size_px`, etc., so a new UI
     param is added in ONE place (the yaml + 17 S6.10.2) and reaches the browser
     with no code change here.
+
+    site_timezone is the site display timezone (common.timezone, IANA name).
+    It rides in the ONCE-loaded ui_config rather than the 2 Hz snapshot because
+    it is static per deployment -- the footer clock ticks locally in the browser
+    against this zone and only the sync badge (snapshot.clock) changes at run
+    time. None (minimal mode / no config) -> the frontend falls back to the
+    browser's own zone; a DISPLAY value never blocks the page (unlike hmi.bind).
     """
     if not isinstance(hmi_web, Mapping):
         raise UiConfigError("hmi.web must be a mapping, got %r" % type(hmi_web))
@@ -80,4 +88,7 @@ def build_ui_config(hmi_web: Mapping[str, Any]) -> Dict[str, Any]:
         "fence": dict(hmi_web["fence"]),      # U5: fence line by type (active/forbid/alarm)
         "route": dict(hmi_web["route"]),      # U5: recorded/realtime route lines
         "waypoint": dict(hmi_web["waypoint"]),  # U6: marker shape/colour/size
+        # Site display timezone for the footer clock (common.timezone). null ->
+        # frontend uses the browser zone.
+        "timezone": site_timezone,
     }

@@ -76,6 +76,12 @@ class VoiceOrchestratorInputs:
     query_templates: Any
     query_max_age_ms: int
     query_low_soc_pct: int
+    # Site display timezone (common.timezone, IANA name). The single source for
+    # G24 query_time's local-time answer; a REQUIRED field with no default so a
+    # deployment that forgets to set it fails loudly rather than silently
+    # answering UTC (the module ships nowhere but a site, and a site always has
+    # a timezone -- no code default is defensible here).
+    site_timezone: str
     tier2_fn: Optional[Callable[[str, "OrchestratorSession", int],
                                 Optional[str]]] = None
 
@@ -145,6 +151,23 @@ def make_rtk_query_fn(cache, *, max_age_ms: int):
             return None
         now_ms = int(time.monotonic() * 1000)
         return fn(cache, now_ms, max_age_ms=max_age_ms).text
+
+    return _query
+
+
+def make_time_query_fn(cache, tz_name, *, max_age_ms: int):
+    """Return a query_fn that answers G24 query_time in the SITE timezone
+    (common.timezone). Returns None for any other id. time_answer reconstructs the
+    wall time from state/clock's (mono_ref, utc_ref) anchor via a monotonic delta,
+    so NO wall clock is read here (CLK-C1); the unsync hard branch is in
+    time_answer (18 S9.5)."""
+    from xbrain.p4_agent.state.query_data import time_answer
+
+    def _query(entry) -> Optional[str]:
+        if entry.id != "G24":
+            return None
+        now_mono = int(time.monotonic() * 1000)
+        return time_answer(cache, tz_name, now_mono, max_age_ms=max_age_ms).text
 
     return _query
 

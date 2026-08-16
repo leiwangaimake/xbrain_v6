@@ -13,6 +13,13 @@
   let zoomBounds = { min: 0.65, max: 2.8, wheel: 0.12 };
   let baseVB = [-100, -65, 240, 145];   // ENU-metre base viewBox window (U1)
   let lastHeadingCompass = null;        // last VALID compass heading (deg); null until first fix
+  // Footer clock (common.timezone): siteTz from ui_config (null -> browser zone),
+  // clockSync from the latest snapshot clock group (null = unknown / not wired).
+  // The clock ticks LOCALLY every second (not off the 2 Hz snapshot) so the
+  // seconds advance smoothly; only the sync dot changes with the snapshot.
+  let siteTz = null;
+  let clockSync = null;
+  let clockTimer = null;
 
   // -- ENU projection: snapshot geometry may be {lat,lon} or [e_m,n_m]. When
   //    lat/lon + enu_origin are present, project to local ENU metres (the SVG
@@ -58,6 +65,10 @@
   // -- apply ui_config: CSS vars (U2/U3/U5), grid pattern metres (U1), zoom (U4) --
   function applyUiConfig(c) {
     cfg = c;
+    // Site display timezone for the footer clock (null -> browser zone). Start
+    // the local 1 Hz ticker once ui_config is in.
+    siteTz = c.timezone || null;
+    startClock();
     const root = document.documentElement.style;
     const f = c.font || {};
     for (const [k, v] of Object.entries(f)) {
@@ -304,6 +315,10 @@
     const syncTxt = (clock && clock.available)
       ? (clock.sync ? " · 授时同步" : " · 授时未同步") : "";
     $("rtkText").textContent = rtkStatusText(pose) + syncTxt;
+    // Drive the footer clock's sync dot from the same state/clock group: true /
+    // false when the source is wired, null (grey) when it is not.
+    clockSync = (clock && clock.available) ? !!clock.sync : null;
+    renderClock();
     $("precText").textContent = pose.cov_h_m != null ? `${pose.cov_h_m.toFixed(2)}m` : "--";
     // link + ESTOP arming (NAV-64): estop_path ok -> button enabled + pulse.
     const ok = status.estop_path === "ok";
@@ -316,6 +331,33 @@
   }
   function setDot(el, cls) { el.className = "dot" + (cls ? " " + cls : ""); }
   function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+  // -- footer clock: site-local time in common.timezone (18-C / G24 display) ---
+  // The displayed time comes from the browser wall clock formatted to the site
+  // zone. It is a convenience readout, NOT an authoritative timestamp: the
+  // AUTHORITATIVE answer is the voice G24 reply, which reads the robot's own
+  // (NTP-synced) clock. The dot mirrors the robot's sync state so an operator
+  // knows when the shown time may be off: green synced, red unsynced (time may
+  // be inaccurate, 18 S9.5), grey when the sync source is not wired yet.
+  function fmtClock() {
+    const opts = { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false };
+    // A bad tz name would throw in the Intl ctor; fall back to the browser zone
+    // so the clock still ticks (a DISPLAY value never breaks the page).
+    if (siteTz) { try { new Intl.DateTimeFormat("zh-CN", Object.assign({ timeZone: siteTz }, opts)); }
+                  catch (e) { siteTz = null; } }
+    const o = siteTz ? Object.assign({ timeZone: siteTz }, opts) : opts;
+    return new Intl.DateTimeFormat("zh-CN", o).format(new Date());
+  }
+  function renderClock() {
+    const el = $("clockText"); if (el) el.textContent = fmtClock();
+    const dot = $("clockDot");
+    if (dot) {
+      setDot(dot, clockSync === true ? "ok" : (clockSync === false ? "bad" : ""));
+      dot.title = clockSync === true ? "授时已同步"
+        : (clockSync === false ? "授时未同步, 时间可能不准" : "授时状态未知");
+    }
+  }
+  function startClock() { renderClock(); if (!clockTimer) clockTimer = setInterval(renderClock, 1000); }
 
   // -- heading dial (机器人本体航向, 17 S6.10 item 6) ----------------------- */
   // A rotating compass CARD: the card turns so the current heading sits at the

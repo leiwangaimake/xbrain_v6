@@ -162,6 +162,8 @@ def build_app(
     provider: RuntimeStateProvider,
     estop_sender: Callable[[], None],
     static_root: str,
+    *,
+    site_timezone: Optional[str] = None,
 ):
     """Build (do not run) the FastAPI app.
 
@@ -170,6 +172,7 @@ def build_app(
     POST /api/estop and MUST perform the 17 S6.4 dedicated-path W1 send; this
     module never routes estop itself. `hmi_web` is the resolved hmi.web subtree;
     ui_config is built once at construction so a malformed config refuses here.
+    site_timezone (common.timezone) rides in ui_config for the footer clock.
     """
     # Imported lazily (like services/payload) so importing this module has no
     # FastAPI side effect and the W-1 startup window can still report why P5 did
@@ -180,7 +183,7 @@ def build_app(
 
     from xbrain.p5_gateway.rest.endpoints import fences_endpoint  # noqa: PLC0415
 
-    ui_config = build_ui_config(hmi_web)            # raises on malformed config
+    ui_config = build_ui_config(hmi_web, site_timezone=site_timezone)
     app = FastAPI(title="XBRAIN_V6 HMI", docs_url=None, redoc_url=None)
 
     @app.middleware("http")

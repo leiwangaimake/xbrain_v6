@@ -321,12 +321,25 @@ def main(argv: Optional[list] = None) -> int:
         tier2_fn = _build_tier2_fn(
             args.config_dir, registry, base_url=args.llm_base_url,
             model=args.llm_model, timeout_s=args.llm_timeout_s)
+        # Site display timezone (common.timezone) for G24 query_time. Read from
+        # the RESOLVED snapshot (single source; freeze expanded ${common.*}),
+        # NOT a CLI default -- a wrong tz silently mis-answers 'what time is it',
+        # so refuse startup on an unresolvable zone rather than degrade to UTC.
+        from xbrain.common.time.local_time import is_valid_tz
+        site_tz = _cfg.require("timezone")
+        if not is_valid_tz(site_tz):
+            _logger.error(
+                "voice-loop: common.timezone %r is not a resolvable IANA zone "
+                "on this host; startup refused (fix configs/common.yaml)",
+                site_tz)
+            return 6
         orch = VoiceOrchestratorInputs(
             registry=registry, chitchat=chitchat,
             l2_timeout_ms=args.l2_confirm_timeout_ms,
             query_templates=query_templates,
             query_max_age_ms=args.query_state_max_age_ms,
             query_low_soc_pct=args.query_battery_low_pct,
+            site_timezone=site_tz,
             tier2_fn=tier2_fn)
         return run_voice_loop_wiring(cfg=tl_cfg, stop_flag=stop_flag,
                                      orch=orch)

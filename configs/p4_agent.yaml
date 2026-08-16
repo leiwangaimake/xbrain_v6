@@ -38,9 +38,10 @@
 #        改的是[冒充方式], 没有改任何值:两种写法下该键都仍然是未选型.
 #   L6 只[取值]不[定义]: 不得出现 common 顶层键,共享值一律写 ${common.xxx}
 #     (`10` §5.4.2 R-6 / R-1;违反即被 §5.4.4 断言 B 判"疑似复制"而拒绝启动).
-#     * 本文件当前[不需要任何 ${common.*} 引用]---- `11` §9.6 `SP-11` 拿
-#       `common.spec.max_vx_mps` 与本文件的一个键比大小,那是[冻结线]的求值,
-#        不是本文件要写的引用.
+#     * 本文件有一个 ${common.*} 引用: timezone: ${common.timezone}(站点显示时区,
+#       见文件尾同名段). 时区是站点级[显示]值, 多进程必须同源, 故落 common 由各
+#       进程引用. `11` §9.6 `SP-11` 拿 `common.spec.max_vx_mps` 与本文件的一个键
+#        比大小, 那是[冻结线]的求值, 不算本文件要写的引用.
 #   * 运行期读[解析产物]/run/xbrain/resolved/p4_agent.yaml, 不读本文件
 #     (`10` §5.4.1"引用不由各进程各自展开").* 读取侧 = xbrain/p4_agent/config/.
 #
@@ -349,3 +350,16 @@ cmdset:
   restate_templates: /opt/xbrain_v6/configs/restate_templates.yaml
   # * 启动时检测关键词冲突(`16` §12.5 (2),执行体归 GWY-P4-07 的注册表加载器).
   conflict_check_on_load: true
+
+
+# -- 站点显示时区(common.timezone,唯一真源)------------------------------
+# G24 query_time 的本地时间[显示]取此值;HMI 时钟 / TTS / CHS-A Time 字段同源.
+#   * 这是本文件唯一一个 ${common.*} 引用. 时区是站点级[显示]值, 多进程必须同源
+#     (HMI 显示 8 点, 语音也必须说 8 点), 故落 common 由各进程引用, 而非各写一份.
+#     机器人后续国际化售卖时, 只改 common.timezone 一处即可整栈切时区.
+#   * 纯[显示]值, 不碰安全: 内部墙钟恒 UTC(envelope ts), 一切超时/周期/年龄用
+#     单调钟(CLK-C1)=> 时区写错顶多显示错, 不影响任何判定.
+#   * freeze 线展开 ${common.timezone};运行期读解析产物顶层的 timezone 键,
+#     不读本源(10 S5.4.1). 读取侧 xbrain/p4_agent/__main__.py 启动时
+#     is_valid_tz 校验, 不可解析即拒绝启动, 不静默回落 UTC.
+timezone: ${common.timezone}
