@@ -13,6 +13,13 @@
   let zoomBounds = { min: 0.65, max: 2.8, wheel: 0.12 };
   let baseVB = [-100, -65, 240, 145];   // ENU-metre base viewBox window (U1)
   let lastHeadingCompass = null;        // last VALID compass heading (deg); null until first fix
+  // Continuous (unwrapped) dial angle in degrees + the last raw compass value,
+  // so the dial accumulates the SHORTEST step each update. Without this, a
+  // heading that jitters across the 0/360 compass seam (e.g. hovering near due
+  // east) makes the CSS `transition: transform` animate a ~360deg spin the long
+  // way every frame -- the "dial spins wildly" bug.
+  let dialAngle = null;
+  let lastCompass = 0;
   // Footer clock (common.timezone): siteTz from ui_config (null -> browser zone),
   // clockSync from the latest snapshot clock group (null = unknown / not wired).
   // The clock ticks LOCALLY every second (not off the 2 Hz snapshot) so the
@@ -280,13 +287,25 @@
   // so until then surface the heading status that IS flowing: 双天线(L1)/航迹(L2)/
   // 无(L3). Never fabricate -- an unavailable pose reads "无定位/航向".
   function rtkStatusText(pose) {
-    if (pose.fix_type) return pose.fix_type;
-    if (pose.available && pose.heading_valid) {
+    // Show BOTH convergence states: RTK fix (定位收敛) AND heading (航向收敛).
+    // The old code returned pose.fix_type early, so whenever a fix existed the
+    // heading convergence was NEVER shown -- the "缺航向收敛状态" bug.
+    if (!pose.available) return "无定位/航向";
+    const FIX = { rtk_fixed: "固定解", rtk_float: "浮动解", dgps: "差分",
+                  single: "单点", no_fix: "无定位" };
+    const parts = [];
+    // fix convergence (定位收敛): the rtk_fixed/float/dgps/single progression.
+    if (pose.fix_type) parts.push("定位 " + (FIX[pose.fix_type] || pose.fix_type));
+    // heading convergence (航向收敛): source + level. 11 H-1: validity is
+    // heading_valid alone, never derived from source/level.
+    if (pose.heading_valid) {
       const src = { dual_antenna: "双天线", cog: "航迹", none: "无" }[pose.heading_source] || "航向";
       const lvl = pose.heading_level != null ? `(L${pose.heading_level})` : "";
-      return `航向 ${src}${lvl}`;
+      parts.push("航向 " + src + lvl);
+    } else {
+      parts.push("航向 无");
     }
-    return "无定位/航向";
+    return parts.length ? parts.join(" · ") : "无定位/航向";
   }
 
   function renderStatus(status, pose, origin, clock) {
@@ -415,13 +434,23 @@
       // ENU (east=0, CCW+) -> compass (north=0, CW+): compass = (90 - enu) mod 360.
       const enu = pose.heading_rad * 180 / Math.PI;
       const compass = ((90 - enu) % 360 + 360) % 360;
+      // Unwrap: accumulate the SHORTEST signed step into a continuous angle, so
+      // the CSS transition always animates the short way -- a jitter across the
+      // 0/360 seam (compass ~0) no longer triggers a full-circle spin.
+      if (dialAngle === null) {
+        dialAngle = compass;
+      } else {
+        const step = ((compass - lastCompass + 540) % 360) - 180;   // (-180, 180]
+        dialAngle += step;
+      }
+      lastCompass = compass;
       lastHeadingCompass = compass;                       // remember for freeze-on-loss
-      face.style.transform = `rotate(${-compass}deg)`;   // CARD rotates -> heading to top
+      face.style.transform = `rotate(${-dialAngle}deg)`;  // CARD rotates -> heading to top
       dial.classList.remove("no-heading");
     } else if (lastHeadingCompass !== null) {
-      // Both sources lost -> hold the last valid heading (freeze). The transform
-      // is already there; re-assert it (in case anything reset it) and stop.
-      face.style.transform = `rotate(${-lastHeadingCompass}deg)`;
+      // Both sources lost -> FREEZE at the last valid heading: leave the
+      // continuous-angle transform exactly where it is (re-asserting a wrapped
+      // value here would itself cause a jump), just keep the dial visible.
       dial.classList.remove("no-heading");
     } else {
       // Startup default: no heading ever -> point North. Slightly dimmed
