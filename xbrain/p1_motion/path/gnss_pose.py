@@ -33,15 +33,31 @@ import time
 from typing import Any, Dict, Optional
 
 
+# i_fix by fix_type (11 S3.2.1 / S4.5): the speed-gate quality factor. rtk_fixed
+# full trust, rtk_float 0.4, everything else 0 (no autonomous motion). Derived
+# HERE from fix_type, not carried in GnssFix.
+_I_FIX_BY_TYPE = {
+    "rtk_fixed": 1.0,
+    "rtk_float": 0.4,
+    "dgps": 0.0,
+    "single": 0.0,
+    "no_fix": 0.0,
+}
+
+
 # state/pose keeps the flat shape the HMI reader (p5 data_readers.pose_group) and
 # the P4 query layer already read: heading_* / speed / fix_* at the top of `data`.
-def assemble_pose(gnss_heading: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Map a received GnssHeading `data` dict into the state/pose `data` dict.
+def assemble_pose(gnss_heading: Optional[Dict[str, Any]],
+                  gnss_fix: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Merge a GnssHeading `data` and a GnssFix `data` into the state/pose `data`.
 
-    None (no heading received yet) yields the safe L3 pose: heading invalid, every
-    field None -- the same shape a real L3 GnssHeading produces, so a consumer
-    cannot tell 'not wired yet' from 'no heading', and both mean do-not-trust."""
+    Either None yields the safe shell for that half: no heading -> invalid/None,
+    no fix -> fix_type None + position None -- the same shape a real L3/no_fix
+    solution produces, so a consumer cannot tell 'not wired' from 'no fix', and
+    both mean do-not-trust. i_fix is derived from fix_type here (11 S3.2.1)."""
     gh = gnss_heading or {}
+    gf = gnss_fix or {}
+    fix_type = gf.get("fix_type")
     return {
         # Heading half -- straight from GnssHeading (11 S3.3). heading_valid is
         # the SOLE downstream criterion (H-1); it is never synthesised here.
@@ -53,15 +69,16 @@ def assemble_pose(gnss_heading: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "cov_rad": gh.get("cov_rad"),                # null at L3 (NAV-02)
         "i_heading": gh.get("i_heading"),
         "yaw_capable": bool(gh.get("yaw_capable", False)),
-        # Fix half -- from rt/gnss/fix, NOT published by rtk_driver yet. Left None
-        # rather than defaulted; a fabricated fix_type would let a consumer act on
-        # a position that was never measured (3.1 fail-silent).
-        "fix_type": None,
-        "lat": None,
-        "lon": None,
-        "alt": None,
-        "cov_h_m": None,
-        "i_fix": None,
+        # Fix half -- from GnssFix (11 S3.2). lat/lon/cov are None (not 0) when the
+        # module had no position (NAV-02); fix_type is always present. i_fix is
+        # derived from fix_type; num_satellites feeds G44 (was the 18-C S7 gap).
+        "fix_type": fix_type,
+        "lat": gf.get("lat"),
+        "lon": gf.get("lon"),
+        "alt": gf.get("alt"),
+        "cov_h_m": gf.get("cov_h_m"),
+        "i_fix": _I_FIX_BY_TYPE.get(fix_type) if fix_type else None,
+        "num_satellites": gf.get("sats"),
     }
 
 

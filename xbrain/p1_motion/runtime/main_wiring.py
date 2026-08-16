@@ -178,6 +178,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         # 4.2 forbids await/publish in a Zenoh callback). Publishing is done by the
         # loop thread below.
         gnss_cache = {"data": None}
+        fix_cache = {"data": None}
         clock_cache = {"data": None}
         pose_seq = {"n": 0}
         clock_seq = {"n": 0}
@@ -191,6 +192,13 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 except Exception:      # noqa: BLE001
                     _logger.warning("p1 malformed rt/gnss/heading")
 
+            def _on_fix(sample) -> None:
+                try:
+                    msg = json.loads(bytes(sample.payload).decode("utf-8"))
+                    fix_cache["data"] = msg.get("data")
+                except Exception:      # noqa: BLE001
+                    _logger.warning("p1 malformed rt/gnss/fix")
+
             def _on_clock(sample) -> None:
                 try:
                     msg = json.loads(bytes(sample.payload).decode("utf-8"))
@@ -202,6 +210,8 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
             # declare_subscriber return silently unsubscribes on GC).
             gnss_subs.append(rt.declare_subscriber(
                 "xbrain/%s/rt/gnss/heading" % rid, _on_gnss))
+            gnss_subs.append(rt.declare_subscriber(
+                "xbrain/%s/rt/gnss/fix" % rid, _on_fix))
             gnss_subs.append(rt.declare_subscriber(
                 "xbrain/%s/rt/clock/status" % rid, _on_clock))
             pose_pub = gen.declare_publisher("state/pose")
@@ -221,7 +231,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                     # invalid the cache still holds the last L3 frame (H-2 freeze),
                     # so the published pose degrades gracefully, never goes silent.
                     ts_sync = bool((clock_cache["data"] or {}).get("sync", False))
-                    pose = gnss_pose.assemble_pose(gnss_cache["data"])
+                    pose = gnss_pose.assemble_pose(gnss_cache["data"], fix_cache["data"])
                     penv = gnss_pose.stamp_envelope(
                         pose, rid=rid, boot=boot, seq=pose_seq["n"],
                         src="p1_motion", ts_sync=ts_sync)

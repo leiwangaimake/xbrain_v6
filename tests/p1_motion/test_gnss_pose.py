@@ -43,7 +43,36 @@ def test_assemble_pose_none_is_safe_l3():
     assert p["heading_rad"] is None
     assert p["heading_source"] is None
     assert p["fix_type"] is None
+    assert p["i_fix"] is None
     assert p["yaw_capable"] is False
+
+
+def test_assemble_pose_merges_fix_half():
+    gf = {"fix_type": "rtk_fixed", "lat": 34.7, "lon": 135.5, "alt": 40.0,
+          "cov_h_m": 0.02, "sats": 24}
+    p = gnss_pose.assemble_pose({"heading_valid": True, "level": 1}, gf)
+    assert p["fix_type"] == "rtk_fixed"
+    assert p["lat"] == 34.7 and p["lon"] == 135.5
+    assert p["cov_h_m"] == 0.02
+    assert p["i_fix"] == 1.0                  # rtk_fixed -> full trust (11 S3.2.1)
+    assert p["num_satellites"] == 24          # feeds G44
+    # heading half still present
+    assert p["heading_valid"] is True
+
+
+def test_assemble_pose_i_fix_by_type():
+    # 3.3: i_fix follows fix_type exactly, single/no_fix -> 0 (no autonomous motion).
+    assert gnss_pose.assemble_pose(None, {"fix_type": "rtk_float"})["i_fix"] == 0.4
+    assert gnss_pose.assemble_pose(None, {"fix_type": "single"})["i_fix"] == 0.0
+    assert gnss_pose.assemble_pose(None, {"fix_type": "no_fix"})["i_fix"] == 0.0
+
+
+def test_assemble_pose_no_fix_position_none():
+    # A no_fix GnssFix (module had no position): lat/lon stay None, not 0 (NAV-02).
+    p = gnss_pose.assemble_pose(None, {"fix_type": "no_fix", "lat": None, "lon": None})
+    assert p["fix_type"] == "no_fix"
+    assert p["lat"] is None and p["lon"] is None
+    assert p["i_fix"] == 0.0
 
 
 def test_assemble_pose_invalid_stays_invalid():
