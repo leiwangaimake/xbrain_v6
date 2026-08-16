@@ -10,7 +10,7 @@
 
 [Unit]
 Description=XBRAIN v6 configuration freeze (Stage 0c)
-Documentation=file:///opt/xbrain_v6/docs/10-顶层设计.md
+Documentation=file:///opt/xbrain_v6/docs/
 # tmpfs must be mounted before us (CFG-BT-22).
 Requires=run-xbrain.mount
 After=run-xbrain.mount

@@ -12,7 +12,14 @@ Description=XBRAIN AI Runtime - llama-server (Qwen2.5-3B-Instruct Q4_K_M)
 # Requires=perception.service —— AI 失效不得连带 perception」. Ordering only, so a
 # perception failure never cascades into the LLM and, more importantly, the reverse:
 # AIR-H1 requires AI failure to leave motion untouched.
-After=network-online.target xbrain-config-freeze.service perception.service
+# DEVIATION #6 from the snippet (README deviation table): the contract writes the
+# bare unit name "perception.service", but the perception unit in this repo is
+# "xbrain-perception.service" (all 19 non-AI units use the xbrain- prefix). An After=
+# against a name no unit provides is a SILENT no-op -- systemd voids the ordering and
+# the LLM may start before perception, exactly what this line means to prevent. Renamed
+# to the de-facto repo name; DEC-15 may rename every unit together, at which point this
+# follows.
+After=network-online.target xbrain-config-freeze.service xbrain-perception.service
 
 # ★ AIR-F1: 不得无限重启. Five starts per 300 s, then the unit enters failed and stays
 # there. Each start costs 2.45 GB of unified memory; a restart loop under memory pressure

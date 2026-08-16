@@ -19,17 +19,19 @@
 
 [Unit]
 Description=XBRAIN v6 GEN-plane Zenoh router (Stage 0z-2, per-IP binding)
-Documentation=file:///opt/xbrain_v6/docs/11-%E6%8E%A5%E5%8F%A3%E5%A5%91%E7%BA%A6.md
+Documentation=file:///opt/xbrain_v6/docs/
 Requires=run-xbrain.mount
 After=run-xbrain.mount network-online.target xbrain-zenohd-rt.service
 Before=xbrain-config-freeze.service
+# StartLimit* live in [Unit], NOT [Service]: systemd >= v229 silently
+# ignores them in [Service], voiding the restart-loop cap (README dev #1).
+StartLimitBurst=5
+StartLimitIntervalSec=60s
 
 [Service]
 Type=simple
 Restart=always
 RestartSec=2s
-StartLimitBurst=5
-StartLimitIntervalSec=60s
 # Deploy writes /etc/xbrain/network.env with LAN2_IP / WIFI_IP per
 # site. Missing file = service refuses to start (per-site config is
 # mandatory for the GEN router; a default would silently bind wrong).
@@ -39,16 +41,24 @@ EnvironmentFile=/etc/xbrain/network.env
 # the source template from ever containing resolved values.
 ExecStartPre=/usr/bin/mkdir -p /run/xbrain/zenoh
 ExecStartPre=/usr/bin/env bash -c 'envsubst < /opt/xbrain_v6/deploy/zenoh/zenohd-gen.json5 > /run/xbrain/zenoh/zenohd-gen.json5'
-# Refuse to start if the resolved config still contains a placeholder
-# (indicates envsubst had an empty variable, which would fall back to
-# empty string and yield a bad endpoint spec).
-ExecStartPre=/usr/bin/env bash -c '! grep -q "\${" /run/xbrain/zenoh/zenohd-gen.json5'
+# Refuse to start if the resolved config still contains an unsubstituted
+# ${...} placeholder. -qF matches the LITERAL two chars ${ (fixed string,
+# no regex). Systemd double-quotes the arg and $$ emits one $, so bash's
+# single quotes keep ${ literal. The earlier form '"\${"' was an unknown
+# systemd escape -> bash saw "${" -> bad substitution -> bash errored ->
+# the leading ! swallowed the error and the check could NEVER fail
+# (CLAUDE.md 3.2 "always-green assertion").
+# GAP: an UNSET LAN2_IP/WIFI_IP is NOT caught here -- envsubst writes the
+# empty string, not ${...}, so no placeholder remains to grep; the endpoint
+# then reads tcp/:7447, which zenohd may treat as bind-all (NET-C9 risk).
+# The 0.0.0.0 check below does not catch it either. A real non-empty-var
+# guard is still owed -- see docs/NEXT.md.
+ExecStartPre=/usr/bin/env bash -c "! grep -qF '$${' /run/xbrain/zenoh/zenohd-gen.json5"
 # Refuse if the resolved config contains 0.0.0.0 anywhere (belt-and-
 # braces vs a hand edit that slipped past code review).
 ExecStartPre=/usr/bin/env bash -c '! grep -q "0\\.0\\.0\\.0" /run/xbrain/zenoh/zenohd-gen.json5'
-ExecStart=/opt/xbrain_v6/services/zenoh/zenohd \
+ExecStart=/usr/local/bin/zenohd \
     --config /run/xbrain/zenoh/zenohd-gen.json5
-WatchdogSec=15s
 
 [Install]
 WantedBy=multi-user.target

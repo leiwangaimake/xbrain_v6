@@ -20,7 +20,7 @@
 
 [Unit]
 Description=XBRAIN v6 Stage 0 probe (CFG-BT-1, GATE-6)
-Documentation=file:///opt/xbrain_v6/docs/10-%E9%A1%B6%E5%B1%82%E8%AE%BE%E8%AE%A1.md
+Documentation=file:///opt/xbrain_v6/docs/
 # Stage 0 is the earliest unit in the boot chain. It has no upstream
 # XBRAIN unit and no filesystem prerequisites beyond the root fs.
 After=local-fs.target

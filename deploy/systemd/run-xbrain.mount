@@ -1,0 +1,43 @@
+# INF-BT / CFG-BT-2 -- the /run/xbrain runtime tmpfs (Stage 0, before 0z).
+#
+# Every Stage 0z / 0c unit does Requires=run-xbrain.mount + After=run-xbrain.mount:
+# without this unit that Requires= points at nothing and the routers + config-freeze
+# refuse to start (a missing required unit is a hard start failure). This file is what
+# those references resolve to.
+#
+# What lives here (all runtime-only, wiped on reboot, never under configs/ -- 10 S5.4.0):
+#   /run/xbrain/resolved/{proc}.yaml + MANIFEST.json  the config-freeze products
+#                                                      (each process reads these, NOT
+#                                                      the source under configs/, 10 S5.4.1)
+#   /run/xbrain/zenoh/zenohd-gen.json5                the envsubst'd GEN router config
+#   router pidfiles / unix sockets
+# Logs do NOT go here -- those land under /opt/xbrain_v6/data (CLAUDE.md 0.2).
+#
+# Why a nested tmpfs when /run is already tmpfs: it gives this tree its own size cap and
+# a single clean unmount point on stop, and -- the real reason -- it turns "the runtime
+# dir exists and is writable" into an explicit ordering dependency the Stage 0z units can
+# name, instead of an implicit mkdir nobody sequences.
+#
+# The unit filename MUST be the systemd-escaped mount path: /run/xbrain -> run-xbrain.mount.
+
+[Unit]
+Description=XBRAIN v6 runtime tmpfs (/run/xbrain: resolved configs, router sockets, pidfiles)
+Documentation=file:///opt/xbrain_v6/docs/
+# Mount units default to a web of implicit deps; we want this one up very early (before
+# any XBRAIN unit) and torn down cleanly at shutdown, so manage the ordering explicitly.
+DefaultDependencies=no
+Conflicts=umount.target
+Before=umount.target xbrain-zenohd-rt.service xbrain-config-freeze.service
+
+[Mount]
+What=tmpfs
+Where=/run/xbrain
+Type=tmpfs
+# mode 0755: the XBRAIN processes run as one service user and only read each other's
+# resolved config; no cross-user write is intended. nosuid/nodev: nothing executable or
+# device-like is ever placed here. 64M: the resolved snapshot + MANIFEST + sockets are
+# well under 1 MB; 64M is generous headroom that still catches a runaway writer.
+Options=mode=0755,nosuid,nodev,size=64M
+
+[Install]
+WantedBy=multi-user.target

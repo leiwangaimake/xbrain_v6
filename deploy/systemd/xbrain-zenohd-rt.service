@@ -15,13 +15,17 @@
 
 [Unit]
 Description=XBRAIN v6 RT-plane Zenoh router (Stage 0z-1, loopback only)
-Documentation=file:///opt/xbrain_v6/docs/11-%E6%8E%A5%E5%8F%A3%E5%A5%91%E7%BA%A6.md
+Documentation=file:///opt/xbrain_v6/docs/
 # tmpfs must be mounted before us so pidfile / socket / logs are writable.
 Requires=run-xbrain.mount
 After=run-xbrain.mount network-online.target
 # Config-freeze depends on us via CFG-FZ-1's env-var pass; we come up
 # before it. Runtime units come up further down the sequence.
 Before=xbrain-zenohd-gen.service xbrain-config-freeze.service
+# StartLimit* live in [Unit], NOT [Service]: systemd >= v229 silently
+# ignores them in [Service], voiding the restart-loop cap (README dev #1).
+StartLimitBurst=5
+StartLimitIntervalSec=60s
 
 [Service]
 Type=simple
@@ -30,20 +34,21 @@ Type=simple
 # StartLimit and stops.
 Restart=always
 RestartSec=2s
-StartLimitBurst=5
-StartLimitIntervalSec=60s
-# The router itself. zenohd is bundled in the deploy AI-container so
-# path is under /opt/xbrain_v6/services/. Adjust if a system-wide
-# zenohd install becomes the deploy target.
-ExecStart=/opt/xbrain_v6/services/zenoh/zenohd \
+# The router itself. zenohd is the system-wide install at
+# /usr/local/bin/zenohd (verified 2026-08-16, Orin). ConditionPathExists
+# is deliberately NOT set: this is a hard-gated Stage 0z unit, so a
+# missing binary MUST fail the boot, not skip silently.
+ExecStart=/usr/local/bin/zenohd \
     --config /opt/xbrain_v6/deploy/zenoh/zenohd-rt.json5
 # Refuse to start if the config file is missing (rather than starting
 # a router with implicit defaults, which would silently allow 0.0.0.0
 # listen and defeat NET-C9).
 ExecStartPre=/usr/bin/test -f /opt/xbrain_v6/deploy/zenoh/zenohd-rt.json5
-# Watchdog: zenohd notifies via sd_notify if compiled with systemd
-# support; if not, this watchdog is a no-op and Restart=always covers.
-WatchdogSec=15s
+# No WatchdogSec: zenohd does not sd_notify WATCHDOG=1, and a watchdog
+# without pings is NOT a no-op -- systemd kills the unit at the timeout
+# (empirically confirmed 2026-08-16: a non-notifying unit with
+# WatchdogSec=3s went Result=watchdog after 6 s). It would restart-loop.
+# Liveness here rests on Restart=always + the StartLimit above.
 
 [Install]
 WantedBy=multi-user.target

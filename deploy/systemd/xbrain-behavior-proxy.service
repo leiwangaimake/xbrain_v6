@@ -5,23 +5,26 @@
 
 [Unit]
 Description=XBRAIN v6 behavior_proxy (Stage 1, Nav2 <-> Zenoh translator)
-Documentation=file:///opt/xbrain_v6/docs/11-%E6%8E%A5%E5%8F%A3%E5%A5%91%E7%BA%A6.md
+Documentation=file:///opt/xbrain_v6/docs/
 Requires=xbrain-config-freeze.service
+# Gated: binary not built yet -> ConditionPathExists makes systemd SKIP
+# this unit cleanly (start returns success) instead of failing the boot.
+ConditionPathExists=/opt/xbrain_v6/ros2_ws/install/behavior_proxy/lib/behavior_proxy/behavior_proxy
 After=xbrain-zenohd-rt.service
 After=xbrain-config-freeze.service
 After=xbrain-nav2-behavior.service
-
+# StartLimit* live in [Unit], NOT [Service]: systemd >= v229 silently
+# ignores them in [Service], voiding the restart-loop cap (README dev #1).
+StartLimitBurst=5
+StartLimitIntervalSec=60s
 
 [Service]
 Type=simple
 Restart=always
 RestartSec=2s
-StartLimitBurst=5
-StartLimitIntervalSec=60s
 OOMScoreAdjust=-500
 Environment="PYTHONUNBUFFERED=1"
 ExecStart=/opt/xbrain_v6/ros2_ws/install/behavior_proxy/lib/behavior_proxy/behavior_proxy
-WatchdogSec=15s
 
 [Install]
 WantedBy=multi-user.target
