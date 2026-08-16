@@ -60,6 +60,7 @@ static DriverConfig Cfg() {
   c.rmc_timeout_s = 1.0;
   c.resolver = {0.02, 0.2, 0.5, 0.5, 2.0, 1.0, 0.5, 30.0, 0.05, 0.9, 1.0, 0.4, 0.0};
   c.fix_cov = {0.02, 0.30, 1.50, 3.00, 1.5};   // rt/gnss/fix cov nominals
+  c.clock = {20.0, 5.0, false};                // offset<=20ms, ref_age<=5s, rtc untrusted
   return c;
 }
 

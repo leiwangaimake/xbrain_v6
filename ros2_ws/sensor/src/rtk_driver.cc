@@ -19,6 +19,7 @@
 
 #include "sensor/rtk_driver.h"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -62,8 +63,10 @@ RtkDriver::RtkDriver(DriverConfig cfg, PublishSink* sink)
       resolver_(cfg.resolver),
       envelope_(cfg.rid, cfg.src, cfg.boot, cfg.sync_timeout_ms),
       envelope_fix_(cfg.rid, cfg.src, cfg.boot, cfg.sync_timeout_ms),
+      envelope_clock_(cfg.rid, cfg.src, cfg.boot, cfg.sync_timeout_ms),
       heading_key_("xbrain/" + cfg.rid + "/rt/gnss/heading"),
-      fix_key_("xbrain/" + cfg.rid + "/rt/gnss/fix") {}
+      fix_key_("xbrain/" + cfg.rid + "/rt/gnss/fix"),
+      clock_key_("xbrain/" + cfg.rid + "/rt/clock/status") {}
 
 void RtkDriver::feed(const char* data, std::size_t n, double now_mono_s) {
   rx_.append(data, n);
@@ -171,6 +174,31 @@ void RtkDriver::tick(double now_mono_s, int64_t wall_ms) {
   }
   // r.event (rtk_lost / heading_degraded / heading_recovered) is produced here
   // but its full 11 S3.3.4 event message needs P3-owned fields -- follow-up.
+}
+
+void RtkDriver::tickClock(const ChronyReading& r, double now_mono_s,
+                          int64_t wall_ms) {
+  // Wall-step detection (CLK-C6): between two 1 Hz clock ticks the wall delta
+  // should track the monotonic delta. A disagreement beyond 500 ms is a step
+  // (an authoritative source corrected the wall clock). First tick sets a base.
+  if (last_clock_mono_s_ >= 0.0) {
+    const double mono_delta_ms = (now_mono_s - last_clock_mono_s_) * 1000.0;
+    const double wall_delta_ms = static_cast<double>(wall_ms - last_clock_wall_ms_);
+    if (std::fabs(wall_delta_ms - mono_delta_ms) > 500.0) {
+      ++step_count_;
+    }
+  }
+  last_clock_mono_s_ = now_mono_s;
+  last_clock_wall_ms_ = wall_ms;
+
+  const ClockStatus cs = JudgeClock(r, cfg_.clock, step_count_, now_mono_s, cfg_.boot);
+  const int64_t mono_ms = static_cast<int64_t>(now_mono_s * 1000.0);
+  const hachist::xbrain::envelope::StampedEnvelope env =
+      envelope_clock_.stamp(wall_ms, mono_ms);
+  const std::string payload = WrapEnvelope(env, ToJsonData(cs));
+  if (sink_ != nullptr) {
+    sink_->publish(clock_key_, payload);
+  }
 }
 
 }  // namespace sensor

@@ -78,7 +78,11 @@ static const char* kValid =
     "  rtk_float_h_m: 0.30\n"
     "  dgps_h_m: 1.50\n"
     "  single_h_m: 3.00\n"
-    "  vertical_factor: 1.5\n";
+    "  vertical_factor: 1.5\n"
+    "clock:\n"
+    "  offset_threshold_ms: 20.0\n"
+    "  ref_max_age_s: 5.0\n"
+    "  rtc_trusted: false\n";
 
 int main() {
   const std::string p = "test_rtk_cfg_tmp.yaml";

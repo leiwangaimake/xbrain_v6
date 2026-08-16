@@ -123,6 +123,50 @@ const char* EnvOr(const char* name, const char* fallback) {
   return (v && *v) ? v : fallback;
 }
 
+// Read chrony's tracking state (CLK-A2: only rtk_driver may read chrony). One CSV
+// line from `chronyc -c tracking`: refid, name, stratum, ref_time, sys_offset,
+// last_offset, rms_offset, ..., leap. have=false if chrony is unreachable, which
+// the judge maps to source=none / sync=false (fail-safe).
+sensor::ChronyReading ReadChrony(double wall_now_s) {
+  sensor::ChronyReading r;
+  FILE* p = popen("chronyc -c tracking 2>/dev/null", "r");
+  if (p == nullptr) return r;
+  char line[512];
+  char* got = std::fgets(line, sizeof(line), p);
+  pclose(p);
+  if (got == nullptr) return r;
+  std::string f[14];
+  int fi = 0;
+  std::string cur;
+  for (const char* c = line; *c != '\0' && fi < 14; ++c) {
+    if (*c == ',') {
+      f[fi++] = cur;
+      cur.clear();
+    } else if (*c != '\n' && *c != '\r') {
+      cur.push_back(*c);
+    }
+  }
+  if (fi < 14) f[fi++] = cur;   // the last (leap) field has no trailing comma
+  if (fi < 14) return r;        // malformed -> have=false
+  r.have = true;
+  const std::string& name = f[1];
+  // A refclock name -> rtk (PPS); an IP/hostname -> ntp; 00000000 -> no source.
+  if (name == "PPS" || name == "GPS" || name == "NMEA" || name == "SHM" ||
+      name == "PHC" || name == "SOCK") {
+    r.is_pps_refclock = true;
+  } else if (!name.empty() && f[0] != "00000000") {
+    r.is_ntp = true;
+  }
+  r.leap_normal =
+      !f[13].empty() && f[13].find("Not synchronised") == std::string::npos;
+  r.offset_ms = std::atof(f[5].c_str()) * 1000.0;
+  r.rms_ms = std::atof(f[6].c_str()) * 1000.0;
+  r.utc_ref = std::atof(f[3].c_str());
+  r.ref_age_s = wall_now_s - r.utc_ref;
+  if (r.ref_age_s < 0.0) r.ref_age_s = 0.0;
+  return r;
+}
+
 }  // namespace
 
 int main() {
@@ -173,6 +217,7 @@ int main() {
   int64_t ticks = 0;
   int64_t bytes_total = 0;
   double last_hb = MonoNowS();
+  double last_clock = 0.0;
   for (;;) {
     const ssize_t n = read(fd, buf, sizeof(buf));
     const double mono = MonoNowS();
@@ -181,6 +226,13 @@ int main() {
       bytes_total += n;
     }
     driver.tick(mono, WallMs());
+    // 1 Hz rt/clock/status (11 S3.11). The chrony read is I/O, done here (not in
+    // the 20 Hz gnss path), once per second.
+    if (mono - last_clock >= 1.0) {
+      const int64_t w = WallMs();
+      driver.tickClock(ReadChrony(static_cast<double>(w) / 1000.0), mono, w);
+      last_clock = mono;
+    }
     ++ticks;
     if (mono - last_hb >= 2.0) {  // heartbeat: proves the loop and serial are alive
       std::printf("rtk_driver: alive ticks=%lld serial_bytes=%lld\n",

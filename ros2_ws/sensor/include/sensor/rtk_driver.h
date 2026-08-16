@@ -44,6 +44,7 @@
 #include <cstdint>
 #include <string>
 
+#include "sensor/clock_status.h"
 #include "sensor/gnss_fix.h"
 #include "sensor/heading_resolver.h"
 #include "sensor/nmea_parser.h"
@@ -77,6 +78,7 @@ struct DriverConfig {
   double rmc_timeout_s;         // an RMC older than this -> no COG
   ResolverConfig resolver;      // the L1/L2/L3 thresholds
   FixCovConfig fix_cov;         // cov_h_m derivation for rt/gnss/fix (11 S3.2)
+  ClockConfig clock;            // sync-judgement thresholds for rt/clock/status (11 S3.11)
 };
 
 // The driver core. Owns the resolver + envelope writer; borrows a PublishSink.
@@ -89,8 +91,14 @@ class RtkDriver {
   void feed(const char* data, std::size_t n, double now_mono_s);
 
   // Build the resolver inputs from the latest facts, run one resolve step, and
-  // publish xbrain/{rid}/rt/gnss/heading. wall_ms goes only into the envelope ts.
+  // publish xbrain/{rid}/rt/gnss/heading + rt/gnss/fix. wall_ms -> envelope ts.
   void tick(double now_mono_s, int64_t wall_ms);
+
+  // Judge sync from the chrony reading (CLK-A1), track wall-step count, and
+  // publish xbrain/{rid}/rt/clock/status. Called at 1 Hz by main() (the chrony
+  // read is I/O, kept out of this testable core -- 11 S3.11 CLK-A2: only
+  // rtk_driver reads chrony, and it does so in the process, not this class).
+  void tickClock(const ChronyReading& r, double now_mono_s, int64_t wall_ms);
 
   int level() const { return resolver_.level(); }
 
@@ -99,10 +107,18 @@ class RtkDriver {
   PublishSink* sink_;
   HeadingResolver resolver_;
   hachist::xbrain::envelope::EnvelopeWriter envelope_;
-  hachist::xbrain::envelope::EnvelopeWriter envelope_fix_;  // own seq for the fix topic
+  hachist::xbrain::envelope::EnvelopeWriter envelope_fix_;    // own seq for the fix topic
+  hachist::xbrain::envelope::EnvelopeWriter envelope_clock_;  // own seq for the clock topic
   std::string rx_;                    // partial-line accumulator
   std::string heading_key_;           // precomputed xbrain/{rid}/rt/gnss/heading
   std::string fix_key_;               // precomputed xbrain/{rid}/rt/gnss/fix
+  std::string clock_key_;             // precomputed xbrain/{rid}/rt/clock/status
+
+  // Wall-step detection for ClockStatus.step_count: a wall delta that disagrees
+  // with the monotonic delta by more than a threshold is a clock step (CLK-C6).
+  int step_count_ = 0;
+  double last_clock_mono_s_ = -1.0;
+  int64_t last_clock_wall_ms_ = 0;
 
   // Latest parsed facts + the monotonic time each arrived (-1 = never).
   GgaFix gga_{};
