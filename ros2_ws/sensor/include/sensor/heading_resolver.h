@@ -54,9 +54,11 @@ namespace sensor {
 // The facts one tick feeds the resolver, already parsed and unit-converted. The
 // resolver never sees NMEA -- nmea_parser + the driver produce these.
 struct HeadingInputs {
-  // Position fix quality, mapped from GGA. The resolver only needs three facts:
-  bool fix_is_rtk = false;   // fix_type in {rtk_fixed, rtk_float} -- COG is admissible
-  bool fix_is_lost = false;  // fix_type in {single, no_fix} OR GnssFix stale (>1 s)
+  // Position fix quality, mapped from GGA. ONE fact drives COG: fix_is_lost.
+  // COG is admissible iff !fix_is_lost, i.e. fix in {rtk_fixed, rtk_float, dgps}
+  // (2026-08-16 user ruling: DGPS admitted to COG). fix_is_lost = {single,
+  // no_fix, DR} OR GnssFix stale (>1 s) -- the no-usable-heading set.
+  bool fix_is_lost = false;
   // Dual-antenna heading (from TRA / heading log):
   bool heading_present = false;   // a dual-antenna heading arrived this window
   bool baseline_valid = false;    // fixed-integer baseline (TRA QF == NARROW_INT)

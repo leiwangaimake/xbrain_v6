@@ -50,7 +50,7 @@ static HeadingInputs L1Good() {
   HeadingInputs in;
   in.heading_present = true; in.baseline_valid = true;
   in.heading_true_deg = 90.0; in.heading_cov_rad = 0.01; in.heading_age_s = 0.1;
-  in.fix_is_rtk = true; in.fix_is_lost = false;
+  in.fix_is_lost = false;   // COG-capable fix (rtk_fixed/float/dgps)
   in.speed_mps = 1.0; in.cog_true_deg = 95.0; in.cog_present = true;
   return in;
 }
@@ -63,7 +63,7 @@ static HeadingInputs L2Only() {
 static HeadingInputs FixLost() {
   HeadingInputs in;
   in.fix_is_lost = true; in.baseline_valid = false; in.heading_present = false;
-  in.fix_is_rtk = false; in.speed_mps = 0.0; in.cog_present = false;
+  in.speed_mps = 0.0; in.cog_present = false;
   return in;
 }
 
@@ -151,6 +151,23 @@ static void TestL1ToL3DualAntennaFail() {
   CHECK(res.lost_reason == LostReason::kDualAntennaFail);
 }
 
+// L3 -> L2 recovery on a COG-capable fix that is NOT dual-antenna -- the
+// DGPS-admitted-to-COG path (2026-08-16 user ruling: COG on {rtk_fixed,
+// rtk_float, dgps}). A dgps fix is fix_is_lost=false, so l2_admissible
+// (!fix_is_lost && speed) holds and L3 recovers to L2 (COG). MUTATION: the old
+// l2_admissible = fix_is_rtk ({rtk_fixed,rtk_float} only) left a dgps/non-rtk
+// fix STUCK in L3 -- this recovery would never fire.
+static void TestL3ToL2RecoverCogCapable() {
+  HeadingResolver r(Cfg());
+  double now = 0.0;
+  r.update(FixLost(), now); now += 0.1;                    // start at L3
+  CHECK(r.level() == 3);
+  ResolveResult res = Drive(r, L2Only(), now, 3.0, 0.1);   // recover_sustain 2.0 s
+  CHECK(r.level() == 2);
+  CHECK(res.heading.source == "cog");
+  CHECK(res.heading.heading_valid);
+}
+
 static void TestL3Fields() {
   HeadingResolver r(Cfg());
   double now = 0.0;
@@ -199,6 +216,7 @@ int main() {
   TestL2Substates();
   TestL2ToL3FixLost();
   TestL1ToL3DualAntennaFail();
+  TestL3ToL2RecoverCogCapable();
   TestL3Fields();
   TestBlindTimeout();
   TestAntiChatterDwell();

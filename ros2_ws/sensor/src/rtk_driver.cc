@@ -12,9 +12,13 @@
  * and publishes xbrain/{rid}/rt/gnss/heading. No serial I/O, no zenoh, no clock
  * read -- feed()/tick() take bytes and time as parameters.
  *
- * The GGA fix-quality -> resolver mapping (11 S3.3.3): quality 4/5 (RTK
- * fixed/float) -> fix_is_rtk (COG admissible); 0/1/6 (invalid/single/DR) or a
- * stale GGA -> fix_is_lost; 2 (DGPS) is neither (cannot start COG, is not lost).
+ * The GGA fix-quality -> resolver mapping (11 S3.3.3; 2026-08-16 user ruling:
+ * DGPS is admitted to COG). A fix supports COG heading iff it is NOT lost --
+ * quality in {4,5,2} = {rtk_fixed, rtk_float, dgps}. quality 0/1/6
+ * (invalid/single/DR) or a stale GGA -> fix_is_lost = no usable heading. So the
+ * COG gate is the SINGLE predicate !fix_is_lost; there is no separate
+ * fix_is_rtk (the old {4,5}-only split wrongly kept DGPS out of COG, so DGPS
+ * could enter L2 via L1-degrade yet never recover L3->L2 -- an asymmetry).
  */
 
 #include "sensor/rtk_driver.h"
@@ -106,7 +110,9 @@ HeadingInputs RtkDriver::buildInputs(double now_mono_s) const {
   // Fix: fresh GGA within gga_timeout, mapped to rtk / lost.
   const bool gga_fresh =
       gga_mono_ >= 0.0 && (now_mono_s - gga_mono_) <= cfg_.gga_timeout_s;
-  in.fix_is_rtk = gga_fresh && (gga_.quality == 4 || gga_.quality == 5);
+  // fix_is_lost = no usable heading: no_fix(0) / single(1) / DR(6) / stale.
+  // Its complement {rtk_fixed(4), rtk_float(5), dgps(2)} is exactly the COG-
+  // admissible set, so the resolver gates COG on !fix_is_lost (no fix_is_rtk).
   in.fix_is_lost = (!gga_fresh) || gga_.quality == 0 || gga_.quality == 1 ||
                    gga_.quality == 6;
   // Dual-antenna heading (TRA): present iff fresh; baseline fixed iff QF==4.

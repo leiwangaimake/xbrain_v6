@@ -50,7 +50,12 @@ ResolveResult HeadingResolver::update(const HeadingInputs& in, double now_s) {
   // rise (11 S3.3.3 "rise 0.5 s / fall immediate"). Advanced once per tick.
   const bool speed_sustained =
       g_speed_.held(speed_ok, now_s, cfg_.blind_rise_sustain_s);
-  const bool l2_admissible = in.fix_is_rtk && speed_sustained;
+  // L2 (COG) admission: fix supports COG AND speed sustained. "fix supports COG"
+  // is !fix_is_lost = {rtk_fixed, rtk_float, dgps} (2026-08-16 user ruling: DGPS
+  // is admitted). SAME predicate as the L1->L2 / L2->L3 gates below, so entry,
+  // retention and L3->L2 recovery are symmetric -- no fix quality can enter L2
+  // one way but not the other.
+  const bool l2_admissible = !in.fix_is_lost && speed_sustained;
 
   HeadingEvent event = HeadingEvent::kNone;
   LostReason reason = LostReason::kNone;
