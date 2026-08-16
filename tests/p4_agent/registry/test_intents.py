@@ -229,9 +229,10 @@ def test_auth_matches_16_s8_3a_2():
     row_auth, base = parse_s8_3a_2_per_id_auth(doc16_text())   # 134 rows + fold
     doc_ids = {v["id"] for v in parse_doc16_registry_table(doc16_text()).values()}  # S6.6 ids
     assert set(base) == doc_ids                          # fold covers exactly those ids
-    # 134 = 132 intents + H01 split + H03 split. Was 130/128 until GWY-P4-23
-    # landed D17/D18/E09/E10 (2026-08-07); CS-A3's declared histogram moved with it.
-    assert len(row_auth) == 134
+    # 139 = 137 intents + H01 split + H03 split. Was 130/128 until GWY-P4-23
+    # landed D17/D18/E09/E10 (2026-08-07); 134->139 when 18-C G43-G47 landed
+    # (2026-08-16, F3); CS-A3's declared histogram moved with it.
+    assert len(row_auth) == 139
     for e in reg.entries:                                # every registry entry
         assert e.auth == base[e.id], (e.name, e.id)      # base auth == folded doc level
 
@@ -270,6 +271,10 @@ def test_bonus_cross_check_against_triage_when_present():
     assert set(doc) - migrated == {
         "set_light_bright", "set_strobe_mode",           # 18-A D17/D18
         "set_ptz_speed", "ptz_move_deg",                 # 18-B E09/E10
+        # 18-C G43-G47 (2026-08-16, F3): added directly to the self-certifying
+        # source like D17/D18, not back-filled into the frozen _triage.json (0.2).
+        "query_rtk_fix", "query_satellites", "query_heading_status",
+        "query_heading_source", "query_clock_sync",
     }
     # A migrated intent whose SLOTS legitimately evolved after the freeze is
     # enumerated here (not open-ended): the frozen _triage.json cannot be

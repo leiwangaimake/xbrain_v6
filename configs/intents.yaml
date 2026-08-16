@@ -204,6 +204,12 @@ intents:
   query_fence_health: { id: G40, keywords: ["围栏还管用吗", "保护降级了吗"], slots: [], route: fastpath, auth: L0 }
   query_fence_relation: { id: G41, keywords: ["我在围栏里吗", "离边界还有多远"], slots: [], route: fastpath, auth: L0 }
   query_fence_detail: { id: G42, keywords: ["围栏什么情况", "围栏多大"], slots: [fence], route: fastpath, auth: L0 }
+  # -- 18-C 定位/RTK 状态查询 (G43-G47, 全 L0 fastpath) --
+  query_rtk_fix: { id: G43, keywords: ["定位状态", "RTK固定", "定位精度", "什么定位", "RTK状态"], slots: [], route: fastpath, auth: L0 }
+  query_satellites: { id: G44, keywords: ["几颗卫星", "几颗星", "卫星信号"], slots: [], route: fastpath, auth: L0 }
+  query_heading_status: { id: G45, keywords: ["航向准", "航向有效", "航向状态", "航向能用"], slots: [], route: fastpath, auth: L0 }
+  query_heading_source: { id: G46, keywords: ["航向来源", "航向哪来", "双天线还是航迹"], slots: [], route: fastpath, auth: L0 }
+  query_clock_sync: { id: G47, keywords: ["授时同步", "时钟同步", "RTK授时"], slots: [], route: fastpath, auth: L0 }
 
   # -- H 系统 (H01/H03 carry auth_by_slot; see header) --
   run_bit: { id: H01, keywords: ["做个自检", "自检一下", "检查系统", "做个深度自检", "全面检查一遍"], slots: [scope], route: fastpath, auth: L1a, auth_by_slot: { scope: { quick: L1a, deep: L2 } } }

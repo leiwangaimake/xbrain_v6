@@ -1337,6 +1337,11 @@ E01 / E06 判为 `fastpath`，**不属于任何 mission 组**，与 M1 / M2 从�
 | G40 | query_fence_health | fastpath | -- |
 | G41 | query_fence_relation | fastpath | -- |
 | G42 | query_fence_detail | fastpath | fence |
+| G43 | query_rtk_fix | fastpath | -- |
+| G44 | query_satellites | fastpath | -- |
+| G45 | query_heading_status | fastpath | -- |
+| G46 | query_heading_source | fastpath | -- |
+| G47 | query_clock_sync | fastpath | -- |
 | H01 | run_bit | fastpath | scope |
 | H02 | generate_report | llm | scope, date_range |
 | H03 | set_time_sync | fastpath | force_step |
@@ -3248,7 +3253,7 @@ l1b_correct:
 
 | 级别 | ★ 行数 | ★★ 全部条目（唯一真源 = `18` §13.1 逐条枚举表；★ 改任何一条必须同步两处） |
 |---|:---:|---|
-| ★★★ **L0** | ★★★ **78** | `A01`–`A04` `B05` `B06` `B12` `C04` `C08` `D01` `D02` `D03` `D05` `D07` `D10` `D11` ★★ `D12` ★★ `D13` ★★ `D17` ★★ `D18` `E01` `E02` `E03` `E05` `E06` `E08` `F05` `H06`（★ **28 条**）＋ ★★★ `G01`–`G42`（**42**）＋ `I01`–`I06`（6）＋ `J01` `J02`（2） |
+| ★★★ **L0** | ★★★ **83** | `A01`–`A04` `B05` `B06` `B12` `C04` `C08` `D01` `D02` `D03` `D05` `D07` `D10` `D11` ★★ `D12` ★★ `D13` ★★ `D17` ★★ `D18` `E01` `E02` `E03` `E05` `E06` `E08` `F05` `H06`（★ **28 条**）＋ ★★★ `G01`–`G47`（**47**，2026-08-16 补 `G43`–`G47` 五条 RTK/航向查询）＋ `I01`–`I06`（6）＋ `J01` `J02`（2） |
 | ★★ **L1a**（并发播报） | **18** | `A05` `A06`※ `B01` `B02` `B03` `B04` `B08` `B09` `C02` `C06` `F02` `F03`※ `F06` `F08` `F10` `F14` **`H01a`** `H02` |
 | ★★ **L1b**（前置播报） | **24** | `A07` `A08` `A09`◆ `A10`◆ `A11`◆ `A12`◆ `A13` `A14` `B10` `C01` `C03` `C05` `C07`◆ `D04` `D06` `D08` `E04` `E07` ⭐ `E09` ⭐ `E10` `F01` `F07` `H03` `H05` |
 | ★★ **L2**（口头确认） | ★★ **11** | `B07` `F04` `F09` `F11` `F12` `F13` `F15` **`H01b`** ★★★ **`H03f`** `H04` `H07`<br>（★★ **本轮移入 `L3`**）· （★★★ **本轮删除**） |
