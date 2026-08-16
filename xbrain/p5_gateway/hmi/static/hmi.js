@@ -296,14 +296,34 @@
       return { text: "定位 LOSS", cls: "bad" };
     return { text: "定位 " + (FIX[pose.fix_type] || pose.fix_type), cls: "ok" };
   }
-  // heading convergence: 双天线INT (baseline fixed) / 双天线FLOAT (baseline not
-  // fixed) / 航迹 (COG dead-reckoning) = ok(green); heading_valid false = LOSS(red).
-  // 11 H-1: validity is heading_valid alone. baseline_valid distinguishes INT/FLOAT.
+  // heading convergence -- FOUR states, in the resolver's degradation order
+  // (11 S3.3 L1->L2->L3):
+  //     L1 双天线INT   dual-antenna, baseline FIXED (integer)   green
+  //     L1 双天线FLOAT dual-antenna, baseline FLOAT             green
+  //     L2 航迹COG     dual-antenna lost, course-over-ground    green
+  //     L3 LOSS        ALL of the above unavailable             red
+  // ***CRITICAL semantics (user 2026-08-16): LOSS = NO USABLE HEADING from ANY
+  // source -- shown iff dual-antenna (INT/FLOAT) AND COG are ALL invalid.
+  // Losing the dual-antenna fix does NOT go straight to LOSS: while the robot
+  // moves, heading falls back to COG (still valid, still green). heading_valid
+  // (11 H-1) is THE criterion -- true whenever ANY of INT/FLOAT/COG yields a
+  // value, false only when none does: L3 (no source admitted) OR the transient
+  // L2-blind (in COG mode but too slow to resolve a course, resolver sets
+  // heading_valid=false). So the single `!heading_valid` test below is exactly
+  // "all sources exhausted", never "dual-antenna alone lost". Do NOT gate LOSS
+  // on source/level/baseline_valid -- a green painted while heading_valid=false
+  // would be a fabricated heading (3.1/3.2).
   function hdgStat(pose) {
+    // L3: no heading at all (no dual-antenna AND no COG). Only here is it LOSS.
     if (!pose.available || !pose.heading_valid) return { text: "航向 LOSS", cls: "bad" };
+    // L1: dual-antenna. INT when the baseline is integer-fixed, else FLOAT.
     if (pose.heading_source === "dual_antenna")
       return { text: "航向 双天线" + (pose.baseline_valid ? "INT" : "FLOAT"), cls: "ok" };
+    // L2: course-over-ground fallback (dual-antenna gone, robot moving).
     if (pose.heading_source === "cog") return { text: "航向 航迹COG", cls: "ok" };
+    // valid=true with a source outside the closed set {dual_antenna,cog} is a
+    // producer contract break (11 S3.3 source<->level is 1:1) -- surface it as
+    // LOSS rather than paint a fake green, but this branch should never fire.
     return { text: "航向 LOSS", cls: "bad" };
   }
   function setStat(id, s) {
