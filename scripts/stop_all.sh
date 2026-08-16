@@ -37,35 +37,47 @@ _stage_hdr() {
 }
 
 # --- Stage 5 down --------------------------------------------------
+# Reverse of start Stage 5 (10 S3.3). Correct unit names: xbrain-ai-asr /
+# xbrain-payload (the old script's xbrain-asr / xbrain-payload-service do not
+# exist).
 _stage_hdr 5 "AI runtime"
+_sudo_systemctl_stop xbrain-payload.service
 _sudo_systemctl_stop xbrain-llm.service
-_sudo_systemctl_stop xbrain-asr.service
-_sudo_systemctl_stop xbrain-payload-service.service
+_sudo_systemctl_stop xbrain-ai-asr.service
 
 # --- Stage 3 down --------------------------------------------------
+# Reverse of start Stage 3: p5 -> p4 -> p3 -> p2. behavior_proxy is NOT here
+# (it is a Stage-1 RT participant, torn down in Stage 1 below).
 _stage_hdr 3 "general-plane"
-_sudo_systemctl_stop xbrain-behavior-proxy.service
 _sudo_systemctl_stop xbrain-p5-gateway.service
 _sudo_systemctl_stop xbrain-p4-agent.service
 _sudo_systemctl_stop xbrain-p3-task.service
 _sudo_systemctl_stop xbrain-p2-core.service
 
 # --- Stage 2 down --------------------------------------------------
+# Reverse of start Stage 2: p1_motion before chassis_relay (dependent first).
 _stage_hdr 2 "cross-plane"
-_sudo_systemctl_stop xbrain-perception.service
+_sudo_systemctl_stop xbrain-p1-motion.service
 _sudo_systemctl_stop xbrain-chassis-relay.service
 
 # --- Stage 1 down --------------------------------------------------
+# Reverse of start Stage 1 RT participants.
 _stage_hdr 1 "RT-plane"
+_sudo_systemctl_stop xbrain-teleop-input.service
+_sudo_systemctl_stop xbrain-zenoh-bridge.service
+_sudo_systemctl_stop xbrain-nav2-behavior.service
+_sudo_systemctl_stop xbrain-behavior-proxy.service
+_sudo_systemctl_stop xbrain-rtk-driver.service
+_sudo_systemctl_stop xbrain-perception.service
 _sudo_systemctl_stop xbrain-quadruped.service
-_sudo_systemctl_stop xbrain-p1-motion.service
 
 # --- Stage 0c down -------------------------------------------------
 _stage_hdr 0c "config freeze (oneshot; nothing to stop)"
 
 # --- Stage 0z down -------------------------------------------------
-_stage_hdr 0z "Zenoh routers + chassis probe"
-_sudo_systemctl_stop xbrain-chassis-probe.service
+# No xbrain-chassis-probe.service exists (0z-3 is done by xbrain-probe,
+# 10 S3.3.8). Stop GEN before RT (reverse of start order).
+_stage_hdr 0z "Zenoh routers"
 _sudo_systemctl_stop xbrain-zenohd-gen.service
 _sudo_systemctl_stop xbrain-zenohd-rt.service
 
