@@ -180,15 +180,18 @@ do_install() {
 }
 
 do_uninstall() {
-  local base removed=0
+  local units base dst removed=0
   echo "Uninstalling xbrain units from $SYSTEMD_DIR:"
-  # Disable + remove every xbrain-*.service and run-xbrain.mount we may have installed.
-  # Explicit glob under a fixed dir -- never `rm -rf $VAR/` (CLAUDE.md 6).
-  for base in "$SYSTEMD_DIR"/xbrain-*.service "$SYSTEMD_DIR"/run-xbrain.mount; do
-    [[ -e "$base" ]] || continue
-    systemctl disable "$( basename "$base" )" >/dev/null 2>&1 || true
-    rm -f "$base"
-    echo "  removed $base"
+  # Remove ONLY units this script installs (the installable set), by exact name -- NEVER
+  # a xbrain-*.service glob: the host may carry unrelated xbrain-* units (e.g. a vendor
+  # xbrain-maxfan.service) that a glob would wrongly disable+delete. Explicit names only.
+  mapfile -t units < <( installable_units )
+  for base in "${units[@]}"; do
+    dst="$SYSTEMD_DIR/$base"
+    [[ -e "$dst" ]] || continue
+    systemctl disable "$base" >/dev/null 2>&1 || true
+    rm -f "$dst"
+    echo "  removed $dst"
     removed=$(( removed + 1 ))
   done
   systemctl daemon-reload
