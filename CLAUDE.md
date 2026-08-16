@@ -569,8 +569,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)      # 防 GNU 扩展悄悄引入 C++20 特性
 跑通的 13 个：**195 passed / 6 skipped / 2.47s**。
 
 ```bash
-pip install fastapi uvicorn sherpa-onnx opuslib
+pip install fastapi uvicorn sherpa-onnx opuslib httpx2
 ```
+
+★ 2026-08-16 补 `httpx2`：starlette 1.x 的 `TestClient` `import httpx2 as httpx`，
+缺它则 `tests/p5_gateway/hmi/test_rest_endpoints_w8.py` collect 即失败（权威清单在
+`tests/requirements.txt`）。
 
 ⚠️★★★ **集成测试清单目前【没有落点】** —— 原指向 `_plan/` 下的文件，
 而 🚫 **该目录已按用户明令永久移除、不得引用**（见 §0.2）。

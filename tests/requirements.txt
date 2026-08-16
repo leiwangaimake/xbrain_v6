@@ -13,6 +13,11 @@ pyyaml>=6.0
 # would fail on tests that import fastapi/uvicorn/sherpa-onnx.
 fastapi>=0.100
 uvicorn>=0.20
+# starlette's TestClient (FastAPI TestClient, used by the HMI rest-endpoint
+# tests) imports `httpx2 as httpx` on starlette 1.x and RAISES at import when
+# it is absent -- without this, tests/p5_gateway/hmi/test_rest_endpoints_w8.py
+# fails to collect. Plain `httpx` also works but starlette deprecates it.
+httpx2>=2.0
 # sherpa-onnx pinned loose so wheel availability across arm64/x86_64
 # does not break dev-machine collection. The actual model runtime
 # uses the ORIN-installed version.
