@@ -17,7 +17,7 @@
  * fusion hides which source is actually in use, which is exactly what field
  * triage needs to see).
  *
- * ★★★ A deliberate, documented reading of 11 S1.5.2 (surfaced for review):
+ * *** A deliberate, documented reading of 11 S1.5.2 (surfaced for review):
  * S1.5.2 gives NTP the SAME gate as the PPS rtk source: |offset|<=20 AND
  * ref_age<=5 s. But a chrony NTP source polls every minutes (ORIN: ~1000 s), so
  * its ref_age (age of the last poll sample) is ALWAYS >> 5 s even while the clock
