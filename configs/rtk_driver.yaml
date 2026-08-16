@@ -40,3 +40,9 @@ resolver:                    # 11 S3.3.1/S3.3.3 thresholds -- engineering defaul
   i_heading_l1: 1.0          # heading -> speed-gate factor per level (11 S3.3.1)
   i_heading_l2: 0.4
   i_heading_l3: 0.0
+fix_cov:                     # rt/gnss/fix cov_h_m = nominal x max(hdop,1) (11 S3.2, T7)
+  rtk_fixed_h_m: 0.02        # cm-level (11 S3.2.1)
+  rtk_float_h_m: 0.30        # dm-level
+  dgps_h_m: 1.50             # m-level
+  single_h_m: 3.00           # single point
+  vertical_factor: 1.5       # cov_v_m = cov_h_m x this (vertical ~1.5x horizontal)

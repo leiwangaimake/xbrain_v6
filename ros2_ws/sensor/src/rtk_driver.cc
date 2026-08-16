@@ -45,6 +45,15 @@ std::string WrapEnvelope(const hachist::xbrain::envelope::StampedEnvelope& e,
   o += "}";
   return o;
 }
+
+// Per-fix_type nominal horizontal sigma from config. no_fix never reaches here
+// (it has no position); single is the widest usable class.
+double NominalCovH(const std::string& fix_type, const FixCovConfig& c) {
+  if (fix_type == "rtk_fixed") return c.rtk_fixed_h_m;
+  if (fix_type == "rtk_float") return c.rtk_float_h_m;
+  if (fix_type == "dgps") return c.dgps_h_m;
+  return c.single_h_m;
+}
 }  // namespace
 
 RtkDriver::RtkDriver(DriverConfig cfg, PublishSink* sink)
@@ -52,7 +61,9 @@ RtkDriver::RtkDriver(DriverConfig cfg, PublishSink* sink)
       sink_(sink),
       resolver_(cfg.resolver),
       envelope_(cfg.rid, cfg.src, cfg.boot, cfg.sync_timeout_ms),
-      heading_key_("xbrain/" + cfg.rid + "/rt/gnss/heading") {}
+      envelope_fix_(cfg.rid, cfg.src, cfg.boot, cfg.sync_timeout_ms),
+      heading_key_("xbrain/" + cfg.rid + "/rt/gnss/heading"),
+      fix_key_("xbrain/" + cfg.rid + "/rt/gnss/fix") {}
 
 void RtkDriver::feed(const char* data, std::size_t n, double now_mono_s) {
   rx_.append(data, n);
@@ -70,7 +81,7 @@ void RtkDriver::processLine(const std::string& line, double now_mono_s) {
   if (line.find('$') == std::string::npos) return;
   GgaFix fix;
   if (ParseGga(line, &fix)) {
-    gga_quality_ = fix.quality;
+    gga_ = fix;
     gga_mono_ = now_mono_s;
     return;
   }
@@ -92,9 +103,9 @@ HeadingInputs RtkDriver::buildInputs(double now_mono_s) const {
   // Fix: fresh GGA within gga_timeout, mapped to rtk / lost.
   const bool gga_fresh =
       gga_mono_ >= 0.0 && (now_mono_s - gga_mono_) <= cfg_.gga_timeout_s;
-  in.fix_is_rtk = gga_fresh && (gga_quality_ == 4 || gga_quality_ == 5);
-  in.fix_is_lost = (!gga_fresh) || gga_quality_ == 0 || gga_quality_ == 1 ||
-                   gga_quality_ == 6;
+  in.fix_is_rtk = gga_fresh && (gga_.quality == 4 || gga_.quality == 5);
+  in.fix_is_lost = (!gga_fresh) || gga_.quality == 0 || gga_.quality == 1 ||
+                   gga_.quality == 6;
   // Dual-antenna heading (TRA): present iff fresh; baseline fixed iff QF==4.
   in.heading_present =
       tra_mono_ >= 0.0 && (now_mono_s - tra_mono_) <= cfg_.tra_timeout_s;
@@ -114,16 +125,49 @@ HeadingInputs RtkDriver::buildInputs(double now_mono_s) const {
   return in;
 }
 
+GnssFix RtkDriver::buildFix(double now_mono_s) const {
+  GnssFix fix;
+  const bool fresh =
+      gga_mono_ >= 0.0 && (now_mono_s - gga_mono_) <= cfg_.gga_timeout_s;
+  // fix_type follows the raw quality when fresh; a stale GGA is no_fix (T-09).
+  fix.fix_type = fresh ? FixTypeFromGgaQuality(gga_.quality) : "no_fix";
+  fix.t_mono = now_mono_s;
+  fix.age_s = (gga_mono_ >= 0.0) ? (now_mono_s - gga_mono_) : 1.0e9;
+  fix.sats = gga_.num_satellites;
+  fix.hdop = gga_.hdop;
+  // has_position only with a fresh, valid GGA that is an actual fix. Otherwise
+  // lat/lon/cov serialise null (NAV-02: no plotting 0,0, no 0 m cov).
+  fix.has_position = fresh && gga_.valid && fix.fix_type != "no_fix";
+  if (fix.has_position) {
+    fix.lat = gga_.latitude_deg;
+    fix.lon = gga_.longitude_deg;
+    fix.alt = gga_.altitude_m;
+    // cov_h_m = nominal(fix_type) x max(hdop, 1): moves with class + geometry,
+    // never a constant (NAV-02). GST/BESTPOS exact sigma is the T7 refinement.
+    const double hdop_factor = (gga_.hdop > 1.0) ? gga_.hdop : 1.0;
+    fix.cov_h_m = NominalCovH(fix.fix_type, cfg_.fix_cov) * hdop_factor;
+    fix.cov_v_m = fix.cov_h_m * cfg_.fix_cov.vertical_factor;
+  }
+  return fix;
+}
+
 void RtkDriver::tick(double now_mono_s, int64_t wall_ms) {
-  const HeadingInputs in = buildInputs(now_mono_s);
-  const ResolveResult r = resolver_.update(in, now_mono_s);
   // Envelope: mono/ts in ms (11 S3.0). ts is wall (align/log only, CLK-C1).
   const int64_t mono_ms = static_cast<int64_t>(now_mono_s * 1000.0);
-  const hachist::xbrain::envelope::StampedEnvelope env =
+  // rt/gnss/heading (11 S3.3).
+  const HeadingInputs in = buildInputs(now_mono_s);
+  const ResolveResult r = resolver_.update(in, now_mono_s);
+  const hachist::xbrain::envelope::StampedEnvelope env_h =
       envelope_.stamp(wall_ms, mono_ms);
-  const std::string payload = WrapEnvelope(env, ToJsonData(r.heading));
+  const std::string hpayload = WrapEnvelope(env_h, ToJsonData(r.heading));
+  // rt/gnss/fix (11 S3.2). Own envelope writer -> its own seq for gap detection.
+  const GnssFix fix = buildFix(now_mono_s);
+  const hachist::xbrain::envelope::StampedEnvelope env_f =
+      envelope_fix_.stamp(wall_ms, mono_ms);
+  const std::string fpayload = WrapEnvelope(env_f, ToJsonData(fix));
   if (sink_ != nullptr) {
-    sink_->publish(heading_key_, payload);
+    sink_->publish(heading_key_, hpayload);
+    sink_->publish(fix_key_, fpayload);
   }
   // r.event (rtk_lost / heading_degraded / heading_recovered) is produced here
   // but its full 11 S3.3.4 event message needs P3-owned fields -- follow-up.

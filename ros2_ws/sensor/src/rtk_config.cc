@@ -60,6 +60,14 @@ RtkConfig LoadRtkConfig(const std::string& path, const std::string& rid,
   r.i_heading_l2 = cfg.require_double("resolver.i_heading_l2");
   r.i_heading_l3 = cfg.require_double("resolver.i_heading_l3");
 
+  // rt/gnss/fix cov_h_m derivation nominals (11 S3.2, T7-refinable).
+  FixCovConfig& fc = out.driver.fix_cov;
+  fc.rtk_fixed_h_m = cfg.require_double("fix_cov.rtk_fixed_h_m");
+  fc.rtk_float_h_m = cfg.require_double("fix_cov.rtk_float_h_m");
+  fc.dgps_h_m = cfg.require_double("fix_cov.dgps_h_m");
+  fc.single_h_m = cfg.require_double("fix_cov.single_h_m");
+  fc.vertical_factor = cfg.require_double("fix_cov.vertical_factor");
+
   return out;
 }
 

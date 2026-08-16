@@ -72,7 +72,13 @@ static const char* kValid =
     "  cog_diff_dt_s: 0.9\n"
     "  i_heading_l1: 1.0\n"
     "  i_heading_l2: 0.4\n"
-    "  i_heading_l3: 0.0\n";
+    "  i_heading_l3: 0.0\n"
+    "fix_cov:\n"
+    "  rtk_fixed_h_m: 0.02\n"
+    "  rtk_float_h_m: 0.30\n"
+    "  dgps_h_m: 1.50\n"
+    "  single_h_m: 3.00\n"
+    "  vertical_factor: 1.5\n";
 
 int main() {
   const std::string p = "test_rtk_cfg_tmp.yaml";
@@ -92,6 +98,8 @@ int main() {
   CHECK(c.driver.resolver.blind_timeout_s == 30.0);
   CHECK(c.driver.resolver.i_heading_l1 == 1.0);
   CHECK(c.driver.resolver.i_heading_l3 == 0.0);
+  CHECK(c.driver.fix_cov.rtk_fixed_h_m == 0.02);
+  CHECK(c.driver.fix_cov.vertical_factor == 1.5);
 
   // 3.3 mutant A: a null safety threshold must stop the load.
   std::string null_cov = kValid;

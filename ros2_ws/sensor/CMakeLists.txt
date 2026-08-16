@@ -28,6 +28,7 @@ set(COMMON_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include)
 add_library(rtk_driver_core STATIC
   src/nmea_parser.cc
   src/gnss_heading.cc
+  src/gnss_fix.cc
   src/heading_resolver.cc
   src/rtk_driver.cc
   src/rtk_config.cc
@@ -50,7 +51,7 @@ endif()
 
 # Offline tests: plain executables, no ROS / no hardware, registered with CTest.
 enable_testing()
-foreach(t nmea_parser gnss_heading heading_resolver rtk_driver yaml_lite rtk_config)
+foreach(t nmea_parser gnss_heading gnss_fix heading_resolver rtk_driver yaml_lite rtk_config)
   add_executable(test_${t} test/test_${t}.cc)
   target_link_libraries(test_${t} PRIVATE rtk_driver_core)
   add_test(NAME test_${t} COMMAND test_${t})

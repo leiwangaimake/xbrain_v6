@@ -59,7 +59,17 @@ static DriverConfig Cfg() {
   c.tra_timeout_s = 1.0;
   c.rmc_timeout_s = 1.0;
   c.resolver = {0.02, 0.2, 0.5, 0.5, 2.0, 1.0, 0.5, 30.0, 0.05, 0.9, 1.0, 0.4, 0.0};
+  c.fix_cov = {0.02, 0.30, 1.50, 3.00, 1.5};   // rt/gnss/fix cov nominals
   return c;
+}
+
+// Most-recent published payload on `key`, or nullptr. tick() now publishes TWO
+// messages (heading then fix), so tests select by key rather than assume order.
+static const std::string* FindByKey(const CaptureSink& s, const std::string& key) {
+  for (auto it = s.msgs.rbegin(); it != s.msgs.rend(); ++it) {
+    if (it->first == key) return &it->second;
+  }
+  return nullptr;
 }
 
 // L1-good sentences (checksum-less -> tolerant parse): RTK-fixed GGA, NARROW_INT
@@ -87,9 +97,9 @@ static void TestPublishL1() {
   }
   CHECK(d.level() == 1);
   CHECK(!sink.msgs.empty());
-  const auto& last = sink.msgs.back();
-  CHECK(last.first == "xbrain/r1/rt/gnss/heading");   // keyexpr (mutation target)
-  const std::string& j = last.second;
+  const std::string* hp = FindByKey(sink, "xbrain/r1/rt/gnss/heading");
+  CHECK(hp != nullptr);   // keyexpr (mutation target)
+  const std::string& j = *hp;
   // envelope (11 S3.0)
   CHECK(Has(j, "\"v\":1"));
   CHECK(Has(j, "\"rid\":\"r1\""));
@@ -103,19 +113,32 @@ static void TestPublishL1() {
   CHECK(Has(j, "\"heading_valid\":true"));
   CHECK(Has(j, "\"level\":1"));
   CHECK(Has(j, "\"heading_rad\":0.000000"));
+  // rt/gnss/fix (11 S3.2): GGA quality 4 -> rtk_fixed, position present, cov real.
+  const std::string* fp = FindByKey(sink, "xbrain/r1/rt/gnss/fix");
+  CHECK(fp != nullptr);
+  const std::string& jf = *fp;
+  CHECK(Has(jf, "\"fix_type\":\"rtk_fixed\""));
+  CHECK(!Has(jf, "\"lat\":null"));          // has a position
+  CHECK(!Has(jf, "\"cov_h_m\":null"));      // cov is real, not null
+  CHECK(Has(jf, "\"sats\":18"));
 }
 
 static void TestPublishL3Startup() {
   CaptureSink sink;
   RtkDriver d(Cfg(), &sink);
-  d.tick(50.0, 1700000000000LL);   // no data fed -> L3 (startup / safe)
+  d.tick(50.0, 1700000000000LL);   // no data fed -> L3 heading + no_fix
   CHECK(d.level() == 3);
-  CHECK(sink.msgs.size() == 1);
-  const std::string& j = sink.msgs.back().second;
-  CHECK(Has(j, "\"source\":\"none\""));
-  CHECK(Has(j, "\"heading_valid\":false"));
-  CHECK(Has(j, "\"cov_rad\":null"));    // null, NOT 0 (NAV-02)
-  CHECK(Has(j, "\"level\":3"));
+  CHECK(sink.msgs.size() == 2);    // heading + fix, one tick
+  const std::string* hp = FindByKey(sink, "xbrain/r1/rt/gnss/heading");
+  CHECK(hp != nullptr);
+  CHECK(Has(*hp, "\"source\":\"none\""));
+  CHECK(Has(*hp, "\"heading_valid\":false"));
+  CHECK(Has(*hp, "\"cov_rad\":null"));    // null, NOT 0 (NAV-02)
+  CHECK(Has(*hp, "\"level\":3"));
+  const std::string* fp = FindByKey(sink, "xbrain/r1/rt/gnss/fix");
+  CHECK(fp != nullptr);
+  CHECK(Has(*fp, "\"fix_type\":\"no_fix\""));
+  CHECK(Has(*fp, "\"lat\":null"));        // no position -> null, NOT 0 (NAV-02)
 }
 
 static void TestSeqIncrements() {
@@ -123,9 +146,15 @@ static void TestSeqIncrements() {
   RtkDriver d(Cfg(), &sink);
   d.tick(1.0, 1000LL);
   d.tick(2.0, 1000LL);
-  CHECK(sink.msgs.size() == 2);
-  CHECK(Has(sink.msgs[0].second, "\"seq\":1"));   // per-producer seq starts at 1
-  CHECK(Has(sink.msgs[1].second, "\"seq\":2"));   // and strictly increases
+  // Two ticks x (heading + fix) = 4 messages; each topic has its OWN seq (its own
+  // envelope writer) so per-topic gap detection works: heading 1,2 and fix 1,2.
+  CHECK(sink.msgs.size() == 4);
+  CHECK(sink.msgs[0].first == "xbrain/r1/rt/gnss/heading");
+  CHECK(Has(sink.msgs[0].second, "\"seq\":1"));   // heading seq 1
+  CHECK(sink.msgs[1].first == "xbrain/r1/rt/gnss/fix");
+  CHECK(Has(sink.msgs[1].second, "\"seq\":1"));   // fix seq 1 (own counter)
+  CHECK(Has(sink.msgs[2].second, "\"seq\":2"));   // heading seq 2
+  CHECK(Has(sink.msgs[3].second, "\"seq\":2"));   // fix seq 2
 }
 
 int main() {

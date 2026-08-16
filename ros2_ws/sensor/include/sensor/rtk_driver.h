@@ -44,12 +44,24 @@
 #include <cstdint>
 #include <string>
 
+#include "sensor/gnss_fix.h"
 #include "sensor/heading_resolver.h"
 #include "sensor/nmea_parser.h"
 #include "sensor/publish_sink.h"
 #include "xbrain/envelope/envelope_writer.h"
 
 namespace sensor {
+
+// cov_h_m derivation (11 S3.2 / NAV-02): cov_h_m = nominal_sigma(fix_type) x
+// max(hdop, 1). The nominals are per solution class (T7-refinable; GST gives the
+// exact per-solution sigma later). Injected, no code default (3.1).
+struct FixCovConfig {
+  double rtk_fixed_h_m;   // ~0.02
+  double rtk_float_h_m;   // ~0.30
+  double dgps_h_m;        // ~1.50
+  double single_h_m;      // ~3.00
+  double vertical_factor; // cov_v_m = cov_h_m x this (~1.5)
+};
 
 // Injected identity + freshness thresholds. NO defaults (CLAUDE.md 3.1): the
 // driver refuses to invent a robot id, a boot id, or a staleness window. Filled
@@ -64,6 +76,7 @@ struct DriverConfig {
   double tra_timeout_s;         // a TRA older than this -> no dual-antenna heading
   double rmc_timeout_s;         // an RMC older than this -> no COG
   ResolverConfig resolver;      // the L1/L2/L3 thresholds
+  FixCovConfig fix_cov;         // cov_h_m derivation for rt/gnss/fix (11 S3.2)
 };
 
 // The driver core. Owns the resolver + envelope writer; borrows a PublishSink.
@@ -86,11 +99,13 @@ class RtkDriver {
   PublishSink* sink_;
   HeadingResolver resolver_;
   hachist::xbrain::envelope::EnvelopeWriter envelope_;
+  hachist::xbrain::envelope::EnvelopeWriter envelope_fix_;  // own seq for the fix topic
   std::string rx_;                    // partial-line accumulator
   std::string heading_key_;           // precomputed xbrain/{rid}/rt/gnss/heading
+  std::string fix_key_;               // precomputed xbrain/{rid}/rt/gnss/fix
 
   // Latest parsed facts + the monotonic time each arrived (-1 = never).
-  int gga_quality_ = 0;
+  GgaFix gga_{};
   double gga_mono_ = -1.0;
   TraHeading tra_{};
   double tra_mono_ = -1.0;
@@ -99,6 +114,7 @@ class RtkDriver {
 
   void processLine(const std::string& line, double now_mono_s);
   HeadingInputs buildInputs(double now_mono_s) const;
+  GnssFix buildFix(double now_mono_s) const;
 };
 
 }  // namespace sensor
