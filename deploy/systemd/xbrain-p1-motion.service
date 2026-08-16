@@ -22,6 +22,14 @@ Restart=always
 RestartSec=2s
 OOMScoreAdjust=-1000
 Environment="PYTHONUNBUFFERED=1"
+# XBRAIN_ROBOT_ID is read directly at RUNTIME by the gnss->state/pose bridge
+# (main_wiring.py): unset -> bridge OFF -> state/pose goes silent, the exact
+# rid-mismatch that broke rt/gnss->state/pose in dev. rtk_driver reads the same
+# var, so both must carry the identical rid; a single /etc/xbrain/robot.env keeps
+# them on one id. The leading - keeps p1 startable if the file is absent (the
+# bridge then logs OFF rather than failing the unit). p2..p5 do NOT need this --
+# they take robot_id from the resolved snapshot (common.robot_id), not the env.
+EnvironmentFile=-/etc/xbrain/robot.env
 ExecStart=/usr/bin/env python3 -m xbrain.p1_motion
 
 [Install]
