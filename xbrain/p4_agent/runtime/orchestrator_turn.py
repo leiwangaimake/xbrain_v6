@@ -133,6 +133,35 @@ def make_battery_query_fn(cache, templates, *, max_age_ms: int,
     return _query
 
 
+def make_rtk_query_fn(cache, *, max_age_ms: int):
+    """Return a query_fn that answers 18-C G43-G47 (RTK fix + heading + clock
+    status) from live state/pose + state/clock (F5). Returns None for any other
+    id so it composes with the other group query_fns. Injected max_age_ms."""
+    from xbrain.p4_agent.state.query_data import RTK_QUERY_ANSWERS
+
+    def _query(entry) -> Optional[str]:
+        fn = RTK_QUERY_ANSWERS.get(entry.id)
+        if fn is None:
+            return None
+        now_ms = int(time.monotonic() * 1000)
+        return fn(cache, now_ms, max_age_ms=max_age_ms).text
+
+    return _query
+
+
+def compose_query_fns(fns):
+    """Chain group query_fns; the first to return non-None wins. Lets battery, RTK
+    (and future groups) each own their own ids without one giant dispatcher."""
+    def _query(entry) -> Optional[str]:
+        for fn in fns:
+            r = fn(entry)
+            if r is not None:
+                return r
+        return None
+
+    return _query
+
+
 def _speak(text: str) -> Tuple[str, dict]:
     payload = {
         "schema": "p4_speak_v1",

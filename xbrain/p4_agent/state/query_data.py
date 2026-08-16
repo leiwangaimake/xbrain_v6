@@ -81,6 +81,79 @@ def battery_answer(
     return QueryAnswer(known=True, text=text)
 
 
+# --- 18-C G43-G47 RTK / heading status answers (F5 runtime wiring) ----------
+# Reuse the C2 deterministic renders (sources_g43_g47); this module only adds the
+# cache-freshness layer: a stale state/pose or state/clock -> 'unknown', never a
+# last-known RTK reading spoken as current (16 S8.2.1 QT shadow rule).
+from xbrain.p4_agent.query.sources_g43_g47 import (  # noqa: E402
+    g43_render, g44_render, g45_render, g46_render, g47_render,
+)
+
+_POSE_UNKNOWN = "定位信息暂时读不到,请稍后再问"
+_CLOCK_UNKNOWN = "授时状态暂时读不到,请稍后再问"
+
+
+def _fresh_data(cache: StateCache, key: str, now_mono_ms: int, max_age_ms: int):
+    """Fresh state value's DATA object, or None if stale/missing. Unwraps the
+    3.0 envelope (p1 publishes state/pose enveloped: {..., data:{...}}); tolerates
+    a flat value too so a producer that drops the envelope still reads."""
+    v = cache.get_fresh(key, now_mono_ms, max_age_ms)
+    if v is None:
+        return None
+    return v.get("data", v) if isinstance(v, Mapping) else None
+
+
+def rtk_fix_answer(cache, now_mono_ms, *, max_age_ms) -> QueryAnswer:
+    """G43 query_rtk_fix from live state/pose.fix_type."""
+    d = _fresh_data(cache, "state/pose", now_mono_ms, max_age_ms)
+    if d is None:
+        return QueryAnswer(known=False, text=_POSE_UNKNOWN)
+    return QueryAnswer(known=True, text=g43_render(d.get("fix_type")))
+
+
+def satellites_answer(cache, now_mono_ms, *, max_age_ms) -> QueryAnswer:
+    """G44 query_satellites from live state/pose.num_satellites."""
+    d = _fresh_data(cache, "state/pose", now_mono_ms, max_age_ms)
+    if d is None:
+        return QueryAnswer(known=False, text=_POSE_UNKNOWN)
+    return QueryAnswer(known=True, text=g44_render(d.get("num_satellites")))
+
+
+def heading_status_answer(cache, now_mono_ms, *, max_age_ms) -> QueryAnswer:
+    """G45 query_heading_status. H-1: heading_valid alone decides valid/invalid."""
+    d = _fresh_data(cache, "state/pose", now_mono_ms, max_age_ms)
+    if d is None:
+        return QueryAnswer(known=False, text=_POSE_UNKNOWN)
+    return QueryAnswer(known=True,
+                       text=g45_render(d.get("heading_valid"), d.get("heading_level")))
+
+
+def heading_source_answer(cache, now_mono_ms, *, max_age_ms) -> QueryAnswer:
+    """G46 query_heading_source from live state/pose.heading_source."""
+    d = _fresh_data(cache, "state/pose", now_mono_ms, max_age_ms)
+    if d is None:
+        return QueryAnswer(known=False, text=_POSE_UNKNOWN)
+    return QueryAnswer(known=True, text=g46_render(d.get("heading_source")))
+
+
+def clock_sync_answer(cache, now_mono_ms, *, max_age_ms) -> QueryAnswer:
+    """G47 query_clock_sync from live state/clock (P1-13 mirror; CLK-A1)."""
+    d = _fresh_data(cache, "state/clock", now_mono_ms, max_age_ms)
+    if d is None:
+        return QueryAnswer(known=False, text=_CLOCK_UNKNOWN)
+    return QueryAnswer(known=True, text=g47_render(d.get("sync"), d.get("source")))
+
+
+#: intent_id -> answer function, for the orchestrator query_fn dispatch.
+RTK_QUERY_ANSWERS = {
+    "G43": rtk_fix_answer,
+    "G44": satellites_answer,
+    "G45": heading_status_answer,
+    "G46": heading_source_answer,
+    "G47": clock_sync_answer,
+}
+
+
 def _require(state: Mapping[str, Any], field: str) -> Any:
     """Pull a required field from a live state value; raise if absent.
 

@@ -24,11 +24,13 @@ def test_pose_group_carries_heading_status():
         "heading_source": "dual_antenna", "heading_level": 1,
         "speed_mps": 0.4,
     }
+    pose["num_satellites"] = 22
     g = dr.pose_group(pose)
     assert g["available"] is True
     assert g["heading_source"] == "dual_antenna"
     assert g["heading_level"] == 1
     assert g["heading_valid"] is True
+    assert g["num_satellites"] == 22          # 18-C G44 / RTK panel
 
 
 def test_pose_group_none_is_no_fix():

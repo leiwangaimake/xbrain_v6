@@ -101,6 +101,7 @@ def pose_group(pose: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             "heading_rad": None, "heading_valid": False,
             "heading_source": None, "heading_level": None,
             "speed_mps": None, "fix_type": None, "cov_h_m": None,
+            "num_satellites": None,
             "yaw_capable": False,
         }
     # Pass through only the fields 17 S6.8 defines; a stray key from the source
@@ -117,6 +118,7 @@ def pose_group(pose: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "speed_mps": pose.get("speed_mps"),
         "fix_type": pose.get("fix_type"),
         "cov_h_m": pose.get("cov_h_m"),
+        "num_satellites": pose.get("num_satellites"),   # 18-C G44 / RTK panel
         "yaw_capable": bool(pose.get("yaw_capable", False)),
     }
 
