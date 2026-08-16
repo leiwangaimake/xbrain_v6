@@ -1,15 +1,24 @@
-# INF-DP-7 / CFG-BT-3 -- rtk_driver (Stage 1, RTK GPS + heading)
+# INF-DP-7 / CFG-BT-3 -- rtk_driver (Stage 1, RTK GPS + heading + clock)
 #
-# Stage 1 of 10 S3.3 boot sequence.
-# OOMScoreAdjust=-500 per 11 S11A.6.3 (see reason in the doc row).
+# Stage 1 of 10 S3.3 boot sequence: an RT-plane participant, publishes
+# rt/gnss/heading + rt/gnss/fix (11 S3.2/S3.3) + rt/clock/status (S3.11, CLK-A1).
+# OOMScoreAdjust=-500 per 11 S11A.6.3.
+#
+# Build: it is a plain-CMake binary (not colcon), so ExecStart points at the
+# CMake build dir. Deploy must have run:
+#   cd /opt/xbrain_v6/ros2_ws/sensor && cmake -B build && cmake --build build
+# LD_LIBRARY_PATH carries libzenohc (installed to /usr/local by the zenoh-c step).
+# SupplementaryGroups=dialout lets it open /dev/ttyACM0 without a chmod.
+# XBRAIN_ROBOT_ID (the {rid} key segment) comes from /etc/xbrain/robot.env, the
+# same site identity the rest of the stack uses; if absent the process refuses to
+# start (3.1: no default rid). No WatchdogSec: this binary does not sd_notify.
 
 [Unit]
-Description=XBRAIN v6 rtk_driver (Stage 1, RTK GPS + heading)
+Description=XBRAIN v6 rtk_driver (Stage 1, RTK GPS + heading + clock)
 Documentation=file:///opt/xbrain_v6/docs/11-%E6%8E%A5%E5%8F%A3%E5%A5%91%E7%BA%A6.md
 Requires=xbrain-config-freeze.service
 After=xbrain-zenohd-rt.service
 After=xbrain-config-freeze.service
-
 
 [Service]
 Type=simple
@@ -18,9 +27,10 @@ RestartSec=2s
 StartLimitBurst=5
 StartLimitIntervalSec=60s
 OOMScoreAdjust=-500
-Environment="PYTHONUNBUFFERED=1"
-ExecStart=/opt/xbrain_v6/ros2_ws/install/rtk_driver/lib/rtk_driver/rtk_driver
-WatchdogSec=15s
+SupplementaryGroups=dialout
+EnvironmentFile=-/etc/xbrain/robot.env
+Environment="LD_LIBRARY_PATH=/usr/local/lib"
+ExecStart=/opt/xbrain_v6/ros2_ws/sensor/build/rtk_driver
 
 [Install]
 WantedBy=multi-user.target

@@ -86,6 +86,10 @@ _sudo_systemctl start xbrain-config-freeze.service
 
 # --- Stage 1: RT-plane participants ---------------------------------
 _stage_hdr 1 "RT-plane participants"
+# rtk_driver first so its rt/gnss/* + rt/clock/status are already publishing when
+# p1_motion subscribes them (Zenoh reconnects regardless; this just avoids a first
+# empty poll). 11 S3.3 / S3.2 / S3.11.
+_sudo_systemctl start xbrain-rtk-driver.service
 _sudo_systemctl start xbrain-p1-motion.service
 _sudo_systemctl start xbrain-quadruped.service
 
