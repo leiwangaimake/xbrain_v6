@@ -44,6 +44,7 @@ find, rather than a silent gap.
 """
 
 import logging
+import logging.handlers
 import os
 import time
 
@@ -401,12 +402,30 @@ def test_bad_proc_name_raises():
 
 
 def test_repeated_calls_return_same_logger():
-    """Idempotence: same name -> same logger, no double-registration of
-    handlers (otherwise each line prints N times, per CHK-1-57 sinks)."""
+    """Idempotence: same name -> same logger, no double-registration of OUR
+    handler (otherwise each line prints N times, per CHK-1-57 sinks).
+
+    Count the QueueHandler get_logger attaches, NOT the total handler set:
+    logging.getLogger('xbrain.p1_motion') is a process-global singleton, and
+    pytest's logging plugin decorates it with its own LogCaptureHandler(s)
+    during a full-suite run (any earlier test that used caplog on this logger
+    leaves them behind). Asserting len(handlers) == 1 was therefore fragile --
+    green when this file runs alone, red after a caplog user runs first
+    (observed: 2 LogCaptureHandler + our 1 QueueHandler => 3). The invariant
+    get_logger actually owns is 'exactly ONE QueueHandler, never a second one'.
+
+    MUTATION: drop the `if proc_name in _LOGGERS` short-circuit in get_logger so
+    the second call re-runs _make_logger and adds a second QueueHandler -> the
+    count below is 2 -> red. Foreign (pytest) handlers are excluded on purpose;
+    they are not ours to count or remove.
+    """
     a = get_logger("p1_motion")
     b = get_logger("p1_motion")
     assert a is b
-    assert len(a.handlers) == 1
+    our_handlers = [h for h in a.handlers
+                    if isinstance(h, logging.handlers.QueueHandler)]
+    assert len(our_handlers) == 1, \
+        "get_logger must attach exactly one QueueHandler; got %r" % a.handlers
 
 
 # ---------------------------------------------------------------------------
