@@ -71,16 +71,19 @@
       </div>
     </div>
 
+    <!-- 状态栏(用户 2026-08-16 重做): 无前缀圆点; 各状态用文字颜色表状态(亮绿=正常, 红=丢失/断);
+         全部同一水平基线, 字体统一(模式不再加粗). 站点本地时钟走 common.timezone 每秒本地 tick. -->
     <footer class="map-footer">
-      <span class="mode-text" id="modeText">--</span>
-      <!-- 站点本地时钟(common.timezone): 前端本地每秒 tick; 授时未同步时 clockDot 变红 -->
-      <span class="clock-state"><i class="dot" id="clockDot"></i><span id="clockText">--:--:--</span></span>
-      <span class="gps-state"><i class="dot" id="rtkDot"></i><span id="rtkText">无 RTK</span></span>
+      <span class="mode-text" id="modeText">模式: --</span>
+      <span id="clockText">--:--:--</span>
+      <span class="stat" id="fixText">定位 --</span>
+      <span class="stat" id="hdgText">航向 --</span>
+      <span class="stat" id="syncText">授时 --</span>
       <span>精度 <strong id="precText">--</strong></span>
       <span>地图基准 <strong>WGS84 / ENU</strong></span>
       <span>缩放 <strong id="zoomText">1.0x</strong></span>
-      <!-- link-state: 契约强制(17 S6.6 / NAV-64), 客户样例无此位; 放 scale 前, 让"网格"最右 -->
-      <span class="link-state"><i class="dot" id="linkDot"></i><span id="linkText">链路 --</span></span>
+      <!-- 急停链路: 契约强制(17 S6.6 / NAV-64). 放 scale 前, 让"网格"最右 -->
+      <span class="stat" id="linkText">急停链路 --</span>
       <span class="scale" id="scaleText">网格 --</span>
     </footer>
   </section>

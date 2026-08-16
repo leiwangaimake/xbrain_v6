@@ -22,6 +22,7 @@ def test_pose_group_carries_heading_status():
     pose = {
         "heading_rad": 1.0, "heading_valid": True,
         "heading_source": "dual_antenna", "heading_level": 1,
+        "baseline_valid": False,
         "speed_mps": 0.4,
     }
     pose["num_satellites"] = 22
@@ -30,6 +31,10 @@ def test_pose_group_carries_heading_status():
     assert g["heading_source"] == "dual_antenna"
     assert g["heading_level"] == 1
     assert g["heading_valid"] is True
+    # baseline_valid distinguishes 双天线INT (true) vs FLOAT (false) in the HMI
+    # footer. MUTATION: drop it from pose_group -> the HMI can no longer tell
+    # INT from FLOAT and this goes red.
+    assert g["baseline_valid"] is False
     assert g["num_satellites"] == 22          # 18-C G44 / RTK panel
 
 

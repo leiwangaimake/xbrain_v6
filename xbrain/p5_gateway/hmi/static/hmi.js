@@ -286,26 +286,28 @@
   // RTK/heading status text. fix_type comes from rt/gnss/fix (not published yet),
   // so until then surface the heading status that IS flowing: 双天线(L1)/航迹(L2)/
   // 无(L3). Never fabricate -- an unavailable pose reads "无定位/航向".
-  function rtkStatusText(pose) {
-    // Show BOTH convergence states: RTK fix (定位收敛) AND heading (航向收敛).
-    // The old code returned pose.fix_type early, so whenever a fix existed the
-    // heading convergence was NEVER shown -- the "缺航向收敛状态" bug.
-    if (!pose.available) return "无定位/航向";
-    const FIX = { rtk_fixed: "固定解", rtk_float: "浮动解", dgps: "差分",
-                  single: "单点", no_fix: "无定位" };
-    const parts = [];
-    // fix convergence (定位收敛): the rtk_fixed/float/dgps/single progression.
-    if (pose.fix_type) parts.push("定位 " + (FIX[pose.fix_type] || pose.fix_type));
-    // heading convergence (航向收敛): source + level. 11 H-1: validity is
-    // heading_valid alone, never derived from source/level.
-    if (pose.heading_valid) {
-      const src = { dual_antenna: "双天线", cog: "航迹", none: "无" }[pose.heading_source] || "航向";
-      const lvl = pose.heading_level != null ? `(L${pose.heading_level})` : "";
-      parts.push("航向 " + src + lvl);
-    } else {
-      parts.push("航向 无");
-    }
-    return parts.length ? parts.join(" · ") : "无定位/航向";
+  // -- footer status labels (user 2026-08-16): uppercase EN convergence tokens,
+  //    coloured green(ok)/red(bad), no dots. Each returns {text, cls}.
+  // fix convergence: SINGLE/DGPS/FLOAT/FIXED = ok(green); no fix / LOSS = bad(red).
+  function fixStat(pose) {
+    const FIX = { rtk_fixed: "FIXED", rtk_float: "FLOAT", dgps: "DGPS",
+                  single: "SINGLE", no_fix: "LOSS" };
+    if (!pose.available || !pose.fix_type || pose.fix_type === "no_fix")
+      return { text: "定位 LOSS", cls: "bad" };
+    return { text: "定位 " + (FIX[pose.fix_type] || pose.fix_type), cls: "ok" };
+  }
+  // heading convergence: 双天线INT (baseline fixed) / 双天线FLOAT (baseline not
+  // fixed) / 航迹 (COG dead-reckoning) = ok(green); heading_valid false = LOSS(red).
+  // 11 H-1: validity is heading_valid alone. baseline_valid distinguishes INT/FLOAT.
+  function hdgStat(pose) {
+    if (!pose.available || !pose.heading_valid) return { text: "航向 LOSS", cls: "bad" };
+    if (pose.heading_source === "dual_antenna")
+      return { text: "航向 双天线" + (pose.baseline_valid ? "INT" : "FLOAT"), cls: "ok" };
+    if (pose.heading_source === "cog") return { text: "航向 航迹", cls: "ok" };
+    return { text: "航向 LOSS", cls: "bad" };
+  }
+  function setStat(id, s) {
+    const el = $(id); if (el) { el.textContent = s.text; el.className = "stat " + s.cls; }
   }
 
   function renderStatus(status, pose, origin, clock) {
@@ -327,22 +329,19 @@
       ? pose.speed_mps.toFixed(1) : "--";
     $("coordEnu").textContent =
       `E ${e}m · N ${n}m　航向 ${hdg}°　速度 ${spd}m/s`;
-    // Green when EITHER a position fix or a valid heading is present.
-    const rtkOk = !!pose.fix_type || (pose.available && pose.heading_valid);
-    setDot($("rtkDot"), rtkOk ? "ok" : "");
-    // Append RTK time-sync (18-C G47) when state/clock is flowing.
-    const syncTxt = (clock && clock.available)
-      ? (clock.sync ? " · 授时同步" : " · 授时未同步") : "";
-    $("rtkText").textContent = rtkStatusText(pose) + syncTxt;
-    // Drive the footer clock's sync dot from the same state/clock group: true /
-    // false when the source is wired, null (grey) when it is not.
-    clockSync = (clock && clock.available) ? !!clock.sync : null;
+    // Footer status (2026-08-16): fix / heading / sync as coloured text, no dots.
+    setStat("fixText", fixStat(pose));
+    setStat("hdgText", hdgStat(pose));
+    // sync (18-C G47): 授时同步 green / 授时未同步 red. Absent source -> unsynced.
+    const synced = !!(clock && clock.available && clock.sync);
+    setStat("syncText", synced ? { text: "授时同步", cls: "ok" }
+                                : { text: "授时未同步", cls: "bad" });
     renderClock();
     $("precText").textContent = pose.cov_h_m != null ? `${pose.cov_h_m.toFixed(2)}m` : "--";
     // link + ESTOP arming (NAV-64): estop_path ok -> button enabled + pulse.
     const ok = status.estop_path === "ok";
-    setDot($("linkDot"), ok ? "ok" : "bad");
-    $("linkText").textContent = ok ? "链路正常" : "急停链路断";
+    setStat("linkText", ok ? { text: "链路正常", cls: "ok" }
+                           : { text: "急停链路断", cls: "bad" });
     const btn = $("estopBtn");
     btn.disabled = !ok;
     btn.classList.toggle("armed", ok);
@@ -355,9 +354,8 @@
   // The displayed time comes from the browser wall clock formatted to the site
   // zone. It is a convenience readout, NOT an authoritative timestamp: the
   // AUTHORITATIVE answer is the voice G24 reply, which reads the robot's own
-  // (NTP-synced) clock. The dot mirrors the robot's sync state so an operator
-  // knows when the shown time may be off: green synced, red unsynced (time may
-  // be inaccurate, 18 S9.5), grey when the sync source is not wired yet.
+  // (NTP-synced) clock. Whether the shown time is trustworthy is conveyed by the
+  // separate coloured syncText span (授时同步 green / 授时未同步 red, 18 S9.5).
   function fmtClock() {
     const opts = { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false };
     // A bad tz name would throw in the Intl ctor; fall back to the browser zone
@@ -368,13 +366,9 @@
     return new Intl.DateTimeFormat("zh-CN", o).format(new Date());
   }
   function renderClock() {
+    // Only ticks the local time now; the sync state moved to the coloured
+    // syncText span (授时同步/未同步), no clock dot (2026-08-16 footer redo).
     const el = $("clockText"); if (el) el.textContent = fmtClock();
-    const dot = $("clockDot");
-    if (dot) {
-      setDot(dot, clockSync === true ? "ok" : (clockSync === false ? "bad" : ""));
-      dot.title = clockSync === true ? "授时已同步"
-        : (clockSync === false ? "授时未同步, 时间可能不准" : "授时状态未知");
-    }
   }
   function startClock() { renderClock(); if (!clockTimer) clockTimer = setInterval(renderClock, 1000); }
 

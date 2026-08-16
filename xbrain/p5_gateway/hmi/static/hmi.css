@@ -23,6 +23,8 @@
   /* palette -- customer navy/cyan scheme (docs/HMI sample), NOT config-driven */
   --bg: #1B263B;  --panel: #3A506B;  --blue: #326491;  --cyan: #5BC0EB;
   --ok: #6BA292;  --warn: #F18F17;  --danger: #E63932;
+  /* bright green for footer status text (user 2026-08-16: --ok 太暗). */
+  --ok-bright: #2ee86b;
   --ink: #F1F1F1;  --muted: #B0B0B0;  --line: #C0C0C0;  --gold: #F0E173;
 }
 
@@ -149,13 +151,21 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .coord strong { color: var(--cyan); }
 
 /* -- footer status bar ---------------------------------------------------- */
-.map-footer { height: var(--status-h); display: flex; align-items: center; gap: 18px;
+/* line-height == bar height so every span (ASCII digits vs taller CJK glyphs)
+   gets the SAME line box -> center-align puts them all on one baseline (user
+   2026-08-16: 时间与其他信息必须同一水平). */
+.map-footer { height: var(--status-h); line-height: var(--status-h);
+  display: flex; align-items: center; gap: 18px;
   padding: 0 12px; background: var(--panel); border-top: 1px solid var(--line);
   font-family: var(--font-status-family); font-size: var(--font-status-size);
   color: var(--muted); white-space: nowrap; }
 .map-footer strong { color: var(--cyan); }
-.mode-text { color: var(--cyan); font-weight: 700; }
-.gps-state { color: var(--ok); }
+/* mode: consistent with the rest of the footer -- no bold, no special colour
+   (user 2026-08-16: 模式字体和其他一致). */
+.mode-text { font-weight: 400; }
+/* footer convergence states: bright green = ok, red = LOSS/断. No dots. */
+.stat.ok  { color: var(--ok-bright); }
+.stat.bad { color: var(--danger); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
   background: var(--muted); margin-right: 5px; }
 .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }

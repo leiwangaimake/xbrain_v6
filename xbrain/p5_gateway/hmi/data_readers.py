@@ -100,6 +100,7 @@ def pose_group(pose: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             "lat": None, "lon": None, "alt": None,
             "heading_rad": None, "heading_valid": False,
             "heading_source": None, "heading_level": None,
+            "baseline_valid": None,
             "speed_mps": None, "fix_type": None, "cov_h_m": None,
             "num_satellites": None,
             "yaw_capable": False,
@@ -115,6 +116,9 @@ def pose_group(pose: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         # can show 双天线(L1)/航迹(L2)/无(L3) instead of only the raw angle.
         "heading_source": pose.get("heading_source"),
         "heading_level": pose.get("heading_level"),
+        # dual-antenna INT (true) vs FLOAT (false); None for cog/none. Lets the
+        # HMI footer show 双天线INT / 双天线FLOAT (18-C heading convergence).
+        "baseline_valid": pose.get("baseline_valid"),
         "speed_mps": pose.get("speed_mps"),
         "fix_type": pose.get("fix_type"),
         "cov_h_m": pose.get("cov_h_m"),

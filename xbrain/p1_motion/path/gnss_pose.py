@@ -65,6 +65,11 @@ def assemble_pose(gnss_heading: Optional[Dict[str, Any]],
         "heading_valid": bool(gh.get("heading_valid", False)),
         "heading_source": gh.get("source"),          # dual_antenna|cog|none
         "heading_level": gh.get("level"),            # 1|2|3
+        # baseline_valid distinguishes the dual-antenna INT (true = fixed/integer
+        # solve) from FLOAT (false) heading -- it varies within source=dual_antenna
+        # (11 S3.3 L1 gate). Passed through so the HMI can show 双天线INT vs
+        # 双天线FLOAT; None when the source carried no baseline (cog/none).
+        "baseline_valid": gh.get("baseline_valid"),
         "speed_mps": gh.get("speed_mps"),
         "cov_rad": gh.get("cov_rad"),                # null at L3 (NAV-02)
         "i_heading": gh.get("i_heading"),
