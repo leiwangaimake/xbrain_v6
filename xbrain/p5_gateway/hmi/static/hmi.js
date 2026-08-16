@@ -303,7 +303,7 @@
     if (!pose.available || !pose.heading_valid) return { text: "航向 LOSS", cls: "bad" };
     if (pose.heading_source === "dual_antenna")
       return { text: "航向 双天线" + (pose.baseline_valid ? "INT" : "FLOAT"), cls: "ok" };
-    if (pose.heading_source === "cog") return { text: "航向 航迹", cls: "ok" };
+    if (pose.heading_source === "cog") return { text: "航向 航迹COG", cls: "ok" };
     return { text: "航向 LOSS", cls: "bad" };
   }
   function setStat(id, s) {
