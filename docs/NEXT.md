@@ -52,6 +52,14 @@
 | P1-1 | 真 20Hz 控制环（现仅 voice-loop MVP） | 部分件(gate/failsafe)已建，未接真感知/底盘 `[GATED-HW]` |
 | P1-2 | 速度门四段 f(d_free) + 迟滞、路径跟随、旋转门 RCG 全接 | 零散件已建，未串成环 |
 | P1-3 | **RNS 避障**（进程内模块，行为源 rns_avoid 900） | ★ **详细设计未写** `[GATED-DESIGN]` |
+| ★ P1-4 | **航向丢失恢复：odom 桥接 + 视觉导向重捕 COG**（用户 2026-08-16 定方向） | ★ **设计意图已记，待 quadruped odom + perception + RNS 落地** `[GATED-DESIGN+HW]` |
+
+> ★★★ **P1-4 设计意图（用户 2026-08-16 · 航向恢复,不逼停）** —— 背景:双天线航向(L1,绝对,静止可用)突然丢时,现设计运动态已无缝切 COG(L2,`11` §3.3,不停车);但**静止 / 原地转向态**下 COG 物理上无解(无运动=无航迹),现状进 L2-blind(保持旧航向但 `heading_valid=false`)。用户方案分两级补:
+> - **① odom 桥接(治静止 + 转向)**:quadruped 的里程计 yaw **静止和原地转向都有效**(正是 COG 做不到的两工况),把丢失瞬间的 GNSS 绝对航向当锚点 + 叠加 odom yaw 增量 → 静止也有效、且**知道机器人转没转**(解掉"保持旧航向但机器人转了就错"的风险)。航向源链变为 `L1 双天线 → odom 桥接(相对锚定,慢漂,有界时间)→ L2 COG → L3`。
+> - **② 视觉导向重捕 COG**:odom 漂太多 / 需刷新绝对航向时,perception 找**无障碍方向**,P1/P3 控制机器人**朝该方向挪一小段** → 拿到 COG → 立刻回高精度航向、恢复任务("立刻开始任务")。
+> - **分工**:odom 数据归 `quadruped`(GATED-HW);无障碍方向归 `perception`(GATED-DESIGN);"要不要挪 + 挪哪"的决策与执行归 P1/P3;航向 resolver(rtk_driver)只**报状态**(L2-blind/L3),需给它**加一路 odom 输入** + 契约 `11` §3.3 **加"odom 桥接态"**。
+> - **落地必带的护栏**:(a) odom 桥接**最长时长 / 最大累积 yaw 漂移上界**,超了强制去拿 COG 或退 L3,不可无限信 odom;(b) 桥接精度受**丢失瞬间锚点新鲜度**约束(锚点 cov 大则桥接也差);(c) odom 自身异常(打滑 / 腿部估计坏)要能识别并退 L3。
+> - **依赖顺序**:必须在 **quadruped(odom)+ perception(无障碍方向)+ RNS** 三者落地之后做;三者任一 GATED 时本项不可动。
 
 ---
 
@@ -141,6 +149,6 @@
 | 卡因 | 项(章节索引) |
 |---|---|
 | **[GATED-HW] 云深处底盘/RTK/相机/遥控** | EX-2..6(§1)· quadruped/chassis_relay/rtk_driver/teleop_input(§2)· P1-1(§3)· 硬件集成(§4)· HMI-W4 位姿全片 / W5 §6.4 快路 / W7 EX-1 数据(§7) |
-| **[GATED-DESIGN] 设计未写** | perception 详设(§2/SW-2)· RNS 详设(§3/SW-3) |
+| **[GATED-DESIGN] 设计未写** | perception 详设(§2/SW-2)· RNS 详设(§3/SW-3)· P1-4 航向丢失恢复 odom 桥接+视觉重捕(§3，依赖 quadruped odom + perception + RNS) |
 | **[GATED-DECISION] 待用户/契约裁决** | REST §12.2 vs §6.5 谁权威 + GWY-P5-13 真实现(§7.1)· 围栏 role 枚举 vs zone_label(§7.2)· D-45 平台基线 humble/jazzy(§2 rtk_driver 语言)|
 | **[SW-NOW] 纯软件可推(非卡,待排期)** | SW-2/3 设计 · SW-4 云上行 · SW-5 测试框架 · SW-6 配置落值 · SW-7 字符集债 · SW-8 充电执行 · SW-9 全系统圆润 · SW-10 comment_ratio · SW-11 LAN2 bind 落值 |
