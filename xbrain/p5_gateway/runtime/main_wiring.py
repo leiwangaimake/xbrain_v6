@@ -366,6 +366,15 @@ def run_voice_loop_wiring(stop_flag: dict,
             degraded_s=5.0, down_s=20.0, rtb_s=1800.0, stable_s=10.0)
         link_state = LinkStateMachine(
             link_thresholds, gw_start_mono=time.monotonic())
+        # 11 S4.6.8 comm events: P5 owns the link state, so it produces one
+        # event/{sev}/comm per level transition. Track the previous level +
+        # disconnected_s to diff each heartbeat. eid is boot-unique (same F8
+        # rationale: link_epoch resets on restart, so a raw seq would collide).
+        from xbrain.p5_gateway.event.comm_events import comm_event_for_level
+        _prev_link_level: Optional[int] = None
+        _prev_disc_s = 0.0
+        _comm_seq = [0]
+        _comm_boot = os.urandom(3).hex()
 
         speak_acks_seen = 0
         state_task_updates = 0
@@ -647,6 +656,25 @@ def run_voice_loop_wiring(stop_flag: dict,
                             "cloud link reconnect (epoch %d) -> trigger backfill",
                             st.link_epoch)
                         event_subsystem.trigger_backfill()
+                    # 11 S4.6.8: a comm event on each cloud-link level transition.
+                    # P5 publishes it like any producer; its own event/** subscriber
+                    # persists it (not a self-loop -- it is a real event, not a
+                    # replay, so the R-2 filter lets 'comm' through).
+                    _ce = comm_event_for_level(
+                        _prev_link_level, st.level, _prev_disc_s, st.link_epoch)
+                    if _ce is not None:
+                        _ckind, _csev, _cdetail = _ce
+                        _comm_seq[0] += 1
+                        gen.put("event/%s/comm" % _csev, json.dumps({
+                            "eid": "comm-%s-%d" % (_comm_boot, _comm_seq[0]),
+                            "title": "cloud link %s" % _ckind,
+                            "detail": _cdetail,
+                            "src": "p5_gateway", "ts": 0.0,
+                        }).encode("utf-8"))
+                        _logger.info("p5 comm event: %s (sev=%s level=%d)",
+                                     _ckind, _csev, st.level)
+                    _prev_link_level = st.level
+                    _prev_disc_s = st.disconnected_s
                     last_hb = now
                 time.sleep(0.1)
         finally:
