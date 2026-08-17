@@ -1690,6 +1690,8 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | 13 | .robot-plan 左边框色（.running-plan 青色 / .completed-plan 绿色，CSS 178/183 行） | 无。由 .plan-state 的两态派生 | — | —（前端本地） | — |
 | 14 | .current-plan 面板容器（right/top 定位、width 370px、max-height、overflow-y:auto、@media 950px 降为 330px） | 无。纯布局 | — | —（前端本地） | — |
 
+> ★★★ **v1.3 落地（2026-08-17）· 本表大部已实现**：客户要求当前 + 历史任务同结构显示（用户 2026-08-17）。前端把面板拆为 **当前任务（浅绿）/ 历史任务（浅黄）** 两块，每块每张卡出五字段：①任务编号 `task_id` ②下发时间 `created_at`（UTC，按 GPS 时区渲染，§6.10.2 v1.3）③任务内容 `command_text`（语音/文本原文，`15` §9.5A.4）④巡逻点 `targets` ⑤已巡逻 `percent`（百分比 + 进度条）。数据源 = **`GET /api/tasks?scope=current|history`**（§6.5 / `11` §12.2A，P5 转发 P3 `query/tasks` queryable），前端自轮询 4s + 断线重连全量拉；历史面板**折叠堆叠**（默认折叠只显 ID/内容/时间，点击展开全字段，10s 无鼠标移动或再点收回）。<br>★ **仅字段 4（巡逻点 name + 逐点走过/未到）仍 ⚠️ 待建** —— 卡在未建的关键点录制层（`F06 record_waypoint`：waypoints 表无 name 列、无 commit_waypoint、route→task 展开 EX-1 未做），故 `targets` 恒空、该段不渲染，建成后自动填、前端不改。原表「计划名」按客户改判为「任务内容 command_text」，进度「分数」改「百分比」。
+
 #### 6.8.5 E · 报警事件（13 项）
 
 | # | UI 元素 | 必须提供的数据 | 刷新率 | 我方 key | 字段 |

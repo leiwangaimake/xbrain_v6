@@ -145,7 +145,9 @@
     renderGeo(snap.geo || {}, origin, patrolling);
     renderRobot(snap.pose || {}, origin);
     renderEvents(snap.events || {}, origin);
-    renderPlan(snap.plan || {});
+    // The task panel is NOT rendered from the snapshot -- it pulls current +
+    // history from GET /api/tasks (17 S6.8.4, refreshTasks below). snap.plan
+    // (state/task) still drives the `patrolling` trajectory flag above.
     renderStatus(snap.status || {}, snap.pose || {}, origin, snap.clock || {});
     renderHeading(snap.pose || {});
   }
@@ -269,29 +271,140 @@
     }
   }
 
-  function renderPlan(plan) {
-    const box = $("planList"); box.innerHTML = "";
-    if (!plan.available || !plan.plans || !plan.plans.length) {
-      box.innerHTML = '<div class="plan-empty">暂无计划</div>'; return;
+  // -- task panel (17 S6.8.4): current + history, five fields each ----------
+  // Data comes from GET /api/tasks (P5 -> P3 query/tasks queryable), NOT the
+  // snapshot -- current and history are the same TaskCard shape, one from each
+  // scope. Field 4 (巡逻点/targets) is empty until the keypoint layer (F06) is
+  // built, so those rows do not render yet; the other four fields are live.
+
+  // state -> {中文徽标, css 类}. 12-value closed set (11 S4.4); an unknown value
+  // still shows (never blank) but that means the closed set drifted.
+  function taskBadge(state) {
+    const M = {
+      running: ["执行中", "running"],
+      pending: ["待执行", "pending"], ready: ["待执行", "pending"],
+      scheduled: ["待执行", "pending"], blocked: ["待执行", "pending"],
+      suspended: ["已挂起", "suspended"], needs_review: ["待处理", "suspended"],
+      wait_for_power_off: ["待关机", "suspended"],
+      done: ["已完成", "done"], failed: ["失败", "failed"],
+      cancelled: ["已取消", "cancelled"], interrupted: ["已中断", "failed"],
+    };
+    const m = M[state] || [state || "--", "pending"];
+    return { label: m[0], cls: m[1] };
+  }
+
+  // 字段2 下发时间: created_at is UTC ISO ('...Z'); render it in the GPS-derived
+  // siteTz (17 S6.10.2 v1.3) as YY-MM-DD HH:MM:SS. null/unparseable -> '--'
+  // (a system-minted task has no created_at; never fabricate a time).
+  function fmtDispatchTime(iso) {
+    if (!iso) return "--";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "--";
+    const opts = { year: "2-digit", month: "2-digit", day: "2-digit",
+                   hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false };
+    const o = siteTz ? Object.assign({ timeZone: siteTz }, opts) : opts;
+    const g = {};
+    try { for (const p of new Intl.DateTimeFormat("zh-CN", o).formatToParts(d)) g[p.type] = p.value; }
+    catch (e) { return "--"; }
+    return `${g.year}-${g.month}-${g.day} ${g.hour}:${g.minute}:${g.second}`;
+  }
+
+  function taskCardHTML(card) {
+    const b = taskBadge(card.state);
+    // 字段3 内容 = command_text (语音/文本原文); 系统自发任务(返航/充电)无原文 ->
+    // 用类型名兜底, 不留空白.
+    const content = card.command_text || (card.task_type ? "(" + card.task_type + ")" : "--");
+    const pct = card.progress ? card.progress.percent : null;
+    // 字段5: percent 为 null(路由未展开)时显 '--', 🚫 不伪造 0/100 (同后端).
+    const pctText = (pct == null) ? "--" : Math.round(pct) + "%";
+    const pctW = (pct == null) ? 0 : Math.max(0, Math.min(100, pct));
+    // 字段4 巡逻点: 走过=finished(绿点绿字) / 当前=current / 未到=pending(灰).
+    // targets 现恒空(待关键点层 F06), 空则整段不渲染.
+    const targets = (card.targets || []).map((t) => {
+      const cls = t.status === "finished" ? "finished"
+        : (t.status === "current" ? "current" : "pending");
+      return `<li class="${cls}"><i></i><span>${esc(t.name || t.waypoint_id || "")}</span></li>`;
+    }).join("");
+    return (
+      `<div class="task-card-head"><strong class="task-id">${esc(card.task_id || "")}</strong>` +
+      `<span class="task-state ${b.cls}">${esc(b.label)}</span></div>` +
+      `<div class="task-content">${esc(content)}</div>` +
+      `<div class="task-time"><span>下发</span><time>${esc(fmtDispatchTime(card.created_at))}</time></div>` +
+      (targets ? `<div class="task-targets-title">巡逻点</div><ol class="task-targets">${targets}</ol>` : "") +
+      `<div class="task-progress"><span>已巡逻 <strong>${pctText}</strong></span>` +
+      `<div class="progress-bar"><div class="progress-fill" style="width:${pctW}%"></div></div></div>`
+    );
+  }
+
+  // task_ids the operator has expanded in the history stack. Preserved across the
+  // periodic refresh so a poll never collapses a card the operator is reading.
+  const expandedHistory = new Set();
+
+  function renderTaskList(elId, cards, isHistory) {
+    const box = $(elId);
+    if (!cards || !cards.length) {
+      box.innerHTML = `<div class="task-empty">${isHistory ? "暂无历史任务" : "暂无当前任务"}</div>`;
+      return;
     }
-    for (const p of plan.plans) {
-      const running = p.state === "running";
-      const total = p.progress && p.progress.total;
-      // 17 S6.10.4: show a fraction ONLY when total is known, never fabricate.
-      const frac = total != null ? `${p.progress.done} / ${total}` : "--";
-      const targets = (p.targets || []).map((t, i) =>
-        `<li class="${t.done ? "finished" : "current"}"><i>${t.done ? "✓" : i + 1}</i><span>${esc(t.name || "")}</span></li>`).join("");
-      const el = document.createElement("article");
-      el.className = "robot-plan";
-      el.innerHTML =
-        `<div class="robot-plan-header"><strong>${esc(p.task_id || "")}</strong>` +
-        `<span class="plan-state ${running ? "running" : "completed"}">${running ? "执行中" : (p.state || "")}</span></div>` +
-        `<div class="robot-plan-name">${esc(p.name || "未命名计划")}</div>` +
-        `<div class="dispatch-time"><span>下发时间</span> <time>${esc(p.dispatch_ts || "--")}</time></div>` +
-        (targets ? `<div class="target-title">巡检目标点</div><ol class="target-list">${targets}</ol>` : "") +
-        `<div class="robot-plan-result"><span>已巡检 <strong>${frac}</strong></span></div>`;
-      box.appendChild(el);
+    box.innerHTML = "";
+    for (const card of cards) {
+      const art = document.createElement("article");
+      art.className = "task-card";
+      art.dataset.taskId = card.task_id || "";
+      // History cards default collapsed (only id/content/time); a card the
+      // operator opened stays expanded. Current cards are always full.
+      if (isHistory)
+        art.classList.add(expandedHistory.has(card.task_id) ? "expanded" : "collapsed");
+      art.innerHTML = taskCardHTML(card);
+      box.appendChild(art);
     }
+  }
+
+  async function refreshTasks() {
+    // Pull both scopes; a failure leaves the last view up (a transient poll miss
+    // must not blank the panel). history limit is generous -- retention keeps it
+    // to 30 days (15 S8), and the stack scrolls.
+    try {
+      const [cur, his] = await Promise.all([
+        getJSON("/api/tasks?scope=current&limit=50"),
+        getJSON("/api/tasks?scope=history&limit=100"),
+      ]);
+      renderTaskList("currentTaskList", cur.tasks, false);
+      renderTaskList("historyTaskList", his.tasks, true);
+    } catch (e) { /* transient; next refresh retries */ }
+  }
+
+  // History folding (iPhone-lock-screen style, user 2026-08-17): click a collapsed
+  // card to expand it to the full five fields; it collapses again on a re-click OR
+  // after 10 s with no mouse movement.
+  let historyIdleTimer = null;
+  function collapseAllHistory() {
+    expandedHistory.clear();
+    $("historyTaskList").querySelectorAll(".task-card.expanded").forEach((el) => {
+      el.classList.remove("expanded"); el.classList.add("collapsed");
+    });
+  }
+  function armHistoryIdle() {
+    if (historyIdleTimer) clearTimeout(historyIdleTimer);
+    // Only arm while something is open, so an idle panel never runs a timer.
+    if (expandedHistory.size) historyIdleTimer = setTimeout(collapseAllHistory, 10000);
+  }
+  function wireHistoryFolding() {
+    // Delegation on the persistent container, so it survives each re-render.
+    $("historyTaskList").addEventListener("click", (e) => {
+      const card = e.target.closest(".task-card"); if (!card) return;
+      const id = card.dataset.taskId;
+      if (card.classList.contains("expanded")) {          // re-click -> collapse
+        card.classList.remove("expanded"); card.classList.add("collapsed");
+        expandedHistory.delete(id);
+      } else {                                             // expand to full
+        card.classList.remove("collapsed"); card.classList.add("expanded");
+        expandedHistory.add(id);
+      }
+      armHistoryIdle();
+    });
+    // Any mouse movement resets the idle countdown while a card is open.
+    document.addEventListener("mousemove", () => { if (expandedHistory.size) armHistoryIdle(); });
   }
 
   // RTK/heading status text. fix_type comes from rt/gnss/fix (not published yet),
@@ -554,6 +667,9 @@
   }
   // W6: WS server push is primary; REST poll is the fallback when WS is down.
   let pollTimer = null;
+  // The task panel (17 S6.8.4) has its OWN poll -- it pulls /api/tasks (P3
+  // queryable), which is NOT in the WS snapshot, so it runs regardless of WS.
+  let taskTimer = null;
   function startPoll() { if (!pollTimer) { tick(); pollTimer = setInterval(tick, 1000); } }
   function stopPoll() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
   function connectWS() {
@@ -561,7 +677,7 @@
     let ws;
     try { ws = new WebSocket(`${proto}://${location.host}/ws`); }
     catch (e) { startPoll(); return; }               // no WS -> poll
-    ws.onopen = () => stopPoll();                     // push takes over from poll
+    ws.onopen = () => { stopPoll(); refreshTasks(); };  // push takes over; re-pull tasks (reconnect full-pull)
     ws.onmessage = (e) => {
       try {
         const m = JSON.parse(e.data);
@@ -573,10 +689,12 @@
     ws.onerror = () => { try { ws.close(); } catch (_) {} };
   }
   async function init() {
-    wireInteraction(); applyView(); buildDialFace();
+    wireInteraction(); applyView(); buildDialFace(); wireHistoryFolding();
     try { applyUiConfig(await getJSON("/api/hmi/ui_config")); }
     catch (e) { console.error("ui_config load failed", e); return; }
     await tick();                                     // instant first paint (REST)
+    refreshTasks();                                   // 17 S6.8.4 task panel (own poll)
+    if (!taskTimer) taskTimer = setInterval(refreshTasks, 4000);
     connectWS();                                      // then live server push (W6)
   }
   init();

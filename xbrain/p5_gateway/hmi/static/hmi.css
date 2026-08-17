@@ -120,30 +120,65 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
    touch dimmer than the live state as a subtle "no live heading" hint (not faked). */
 .heading-dial.no-heading { opacity: .85; }
 
-.current-plan { right: 11px; top: 10px; width: var(--plan-width);
+/* 任务清单(17 S6.8.4): 当前(浅绿) + 历史(浅黄) 双面板. */
+.task-panel { right: 11px; top: 10px; width: var(--plan-width);
   max-height: var(--plan-max-h); overflow-y: auto; padding: 9px;
   font-family: var(--font-plan-family); font-size: var(--font-plan-size); }
-.plan-window-title { color: var(--cyan); font-weight: 700; margin-bottom: 6px; }
-.plan-empty { color: var(--muted); }
-.robot-plan { border: 1px solid rgba(192,192,192,.24); border-left: 3px solid var(--cyan);
-  border-radius: 4px; padding: 8px 9px; margin-bottom: 8px; background: rgba(58,80,107,.45); }
-.robot-plan-header { display: flex; justify-content: space-between; align-items: center; }
-.robot-plan-header > strong { color: var(--cyan); }
-.plan-state { font-size: .85em; padding: 2px 7px; border-radius: 9px; }
-.plan-state.running { color: var(--gold); background: rgba(240,225,115,.12);
-  border: 1px solid rgba(240,225,115,.45); }
-.plan-state.completed { color: var(--ok); background: rgba(107,162,146,.13);
-  border: 1px solid rgba(107,162,146,.48); }
-.robot-plan-name { color: var(--ink); margin: 3px 0; font-weight: 700; }
-.target-list { list-style: none; padding-left: 0; margin: 4px 0; }
-.target-list li { display: flex; gap: 6px; align-items: center; }
-.target-list li i { width: 16px; text-align: center; font-style: normal; }
-.target-list li.finished i { color: var(--ok); }
-.robot-plan-result { display: flex; justify-content: space-between; margin-top: 6px;
-  padding-top: 6px; border-top: 1px solid rgba(192,192,192,.16); color: var(--muted); }
-.robot-plan-result strong { color: var(--cyan); }
-.result-ok { color: var(--ok); }
-.result-warning { color: var(--warn); }
+.task-group { margin-bottom: 9px; border-radius: 5px; padding: 7px 8px; }
+.task-group:last-child { margin-bottom: 0; }
+/* 浅绿 = 当前, 浅黄 = 历史 (用户 2026-08-17). */
+.current-group { background: rgba(46,232,107,.08); border: 1px solid rgba(46,232,107,.28); }
+.history-group { background: rgba(240,225,115,.08); border: 1px solid rgba(240,225,115,.30); }
+.task-group-title { font-weight: 700; margin-bottom: 6px; }
+.current-group .task-group-title { color: var(--ok-bright); }
+.history-group .task-group-title { color: var(--gold); }
+.task-empty { color: var(--muted); }
+/* 历史面板可滚(折叠堆叠). */
+.history-list { max-height: 210px; overflow-y: auto; }
+
+.task-card { border: 1px solid rgba(192,192,192,.22); border-left: 3px solid var(--cyan);
+  border-radius: 4px; padding: 7px 8px; margin-bottom: 7px; background: rgba(27,38,59,.42); }
+.task-card:last-child { margin-bottom: 0; }
+.current-group .task-card { border-left-color: var(--ok-bright); }
+.history-group .task-card { border-left-color: var(--gold); cursor: pointer; }
+.task-card-head { display: flex; justify-content: space-between; align-items: center; }
+.task-id { color: var(--cyan); font-weight: 700; }
+.task-state { font-size: .82em; padding: 2px 7px; border-radius: 9px; }
+.task-state.running  { color: var(--gold);      background: rgba(240,225,115,.12); border: 1px solid rgba(240,225,115,.45); }
+.task-state.done     { color: var(--ok-bright);  background: rgba(46,232,107,.10);  border: 1px solid rgba(46,232,107,.42); }
+.task-state.pending  { color: var(--cyan);       background: rgba(91,192,235,.10);  border: 1px solid rgba(91,192,235,.42); }
+.task-state.suspended{ color: var(--warn);       background: rgba(241,143,23,.12);  border: 1px solid rgba(241,143,23,.45); }
+.task-state.failed,
+.task-state.cancelled{ color: var(--danger);     background: rgba(230,57,50,.12);   border: 1px solid rgba(230,57,50,.45); }
+/* 字段3 任务内容(语音原文). */
+.task-content { color: var(--ink); margin: 4px 0; font-weight: 700; word-break: break-all; }
+/* 字段2 下发时间. */
+.task-time { color: var(--muted); font-size: .9em; display: flex; gap: 6px; }
+/* 字段4 巡逻点(走过 绿, 未到 灰). */
+.task-targets { list-style: none; padding-left: 0; margin: 5px 0; }
+.task-targets-title { color: var(--muted); font-size: .9em; margin-top: 5px; }
+.task-targets li { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+.task-targets li i { width: 9px; height: 9px; border-radius: 50%; background: var(--muted);
+  display: inline-block; }
+.task-targets li.finished { color: var(--ok-bright); }
+.task-targets li.finished i { background: var(--ok-bright); }
+.task-targets li.current { color: var(--ink); }
+/* 字段5 已巡逻(百分比 + 进度条). */
+.task-progress { margin-top: 6px; padding-top: 6px;
+  border-top: 1px solid rgba(192,192,192,.14); color: var(--muted); }
+.task-progress strong { color: var(--cyan); }
+.progress-bar { height: 5px; border-radius: 3px; margin-top: 4px;
+  background: rgba(192,192,192,.18); overflow: hidden; }
+.progress-fill { height: 100%; background: var(--ok-bright); border-radius: 3px; }
+
+/* 折叠态(历史默认): 只显 ID / 内容 / 时间(用户 2026-08-17), 藏徽标/目标/进度. */
+.task-card.collapsed { padding: 5px 8px; opacity: .92; }
+.task-card.collapsed .task-state,
+.task-card.collapsed .task-targets,
+.task-card.collapsed .task-targets-title,
+.task-card.collapsed .task-progress { display: none; }
+.task-card.collapsed .task-content { margin: 2px 0; font-weight: 400; }
+.task-card.expanded { box-shadow: 0 0 0 1px rgba(240,225,115,.45); }
 
 /* coord: BOTTOM-LEFT (customer), one block: GPS line + ENU E/N + 航向 + 速度 */
 .coord { left: 10px; bottom: 10px; color: var(--muted);
