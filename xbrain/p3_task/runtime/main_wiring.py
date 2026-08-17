@@ -45,6 +45,8 @@ _logger = logging.getLogger("xbrain.p3.wiring")
 CMD_TASK_TOPIC = "cmd/task"
 STATE_TASK_TOPIC = "state/task"
 STATE_LINK_TOPIC = "state/link"          # 11 S4.6 cloud-link level -> F-5 return_home
+QUERY_TASKS_TOPIC = "query/tasks"        # 11 S12.4 HMI task-panel queryable (P5 pulls)
+QUERY_TASKS_TIMEOUT_S = 2.0              # cap the zenoh-thread block on a db read
 
 # Voice-loop default. All four DBs live under data/run/ (operator 2026-08-12).
 DEFAULT_TASK_DB = "/opt/xbrain_v6/data/run/task.db"
@@ -158,11 +160,33 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     return
                 loop.call_soon_threadsafe(queue.put_nowait, payload)
 
-            # Sub handles held in a list (strong ref, CLAUDE.md 4.3).
+            def _on_query(query) -> None:
+                # RUST THREAD: the HMI task-panel queryable (11 S12.4). Run the
+                # async db read on the loop and reply synchronously here --
+                # run_coroutine_threadsafe blocks THIS zenoh thread (never the
+                # loop), so the Query lifetime stays trivial (reply sent inside
+                # the callback). A slow/failed query -> log + no reply (the
+                # querier times out) rather than a wrong or partial answer.
+                try:
+                    payload = asyncio.run_coroutine_threadsafe(
+                        answer_task_query(conn, query.selector.parameters), loop
+                    ).result(timeout=QUERY_TASKS_TIMEOUT_S)
+                except ValueError as exc:          # unknown scope -> bad selector
+                    _logger.warning("p3 query/tasks bad selector: %s", exc)
+                    return
+                except Exception as exc:           # noqa: BLE001
+                    _logger.error("p3 query/tasks failed: %s", exc)
+                    return
+                query.reply(query.key_expr, payload)
+
+            # Sub/queryable handles held in a list (strong ref, CLAUDE.md 4.3 --
+            # a dropped queryable is silently unregistered, same GC trap as subs).
             _subs = [gen.declare_subscriber(CMD_TASK_TOPIC, _on_task),
-                     gen.declare_subscriber(STATE_LINK_TOPIC, _on_link)]
-            _logger.info("p3 wiring: subscribed %s + %s (task.db + F-5 return_home)",
-                         CMD_TASK_TOPIC, STATE_LINK_TOPIC)
+                     gen.declare_subscriber(STATE_LINK_TOPIC, _on_link),
+                     gen.declare_queryable(QUERY_TASKS_TOPIC, _on_query)]
+            _logger.info("p3 wiring: subscribed %s + %s, queryable %s "
+                         "(task.db + F-5 return_home)",
+                         CMD_TASK_TOPIC, STATE_LINK_TOPIC, QUERY_TASKS_TOPIC)
 
             last_hb = time.monotonic()
             try:
@@ -282,3 +306,4 @@ async def _record_one(conn, dao, payload, state_pub) -> int:
 # Import at module scope so the recorder is a stable reference (not re-imported
 # per call). Kept after the functions to avoid a circular import at load.
 from xbrain.p3_task.ingest.task_recorder import record_task_from_payload  # noqa: E402
+from xbrain.p3_task.query.queryable import answer_task_query  # noqa: E402
