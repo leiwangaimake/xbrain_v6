@@ -97,6 +97,11 @@ def task_row_from_request(
         "id": request.get("id"),               # 18 id (B02, ...)
         "slots": request.get("slots", {}),
     }
+    # command_text (15 S9.5A.4): the raw command the task was created from --
+    # the ASR transcript (post normalisation) or the typed text, threaded from
+    # P4 to_task_request. '' when absent -> DAO stores NULL. Party-A REQUIRES it
+    # for incident traceability; it is a first-class column, not a mission field.
+    command_text = request.get("text") or ""
     return TaskRow(
         task_id=task_id,
         task_type=task_type,
@@ -111,6 +116,7 @@ def task_row_from_request(
         created_ms=now_mono_ms,
         updated_ms=now_mono_ms,
         source=source,
+        command_text=command_text,
         trace_id=trace_id,
         resume_policy=default_resume_policy(task_type),
     )

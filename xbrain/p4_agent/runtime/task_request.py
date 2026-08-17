@@ -72,6 +72,7 @@ def to_task_request(
     *,
     slots: Mapping[str, Any],
     source: str,
+    text: str = "",
 ) -> Optional[Dict[str, Any]]:
     """Build the cmd/task request for a voice/text action, or None.
 
@@ -80,12 +81,18 @@ def to_task_request(
     enter the task queue (15 S12; criterion 3).
 
     For a task-create intent, returns a dict carrying the fine registry
-    intent name + id + the 7-value task_type + slots + source. The intent
-    is resolved through the registry (CS-A1): a mapping key that is not one
-    of the 128 raises rather than emitting an id no consumer knows.
+    intent name + id + the 7-value task_type + slots + source + text. The
+    intent is resolved through the registry (CS-A1): a mapping key that is not
+    one of the 128 raises rather than emitting an id no consumer knows.
 
     source is 'voice' or 'text' -- the channel the command arrived on, so
     the task record and telemetry can tell a spoken task from a typed one.
+
+    text is the raw command string the turn acted on (ASR transcript post
+    normalisation, or the typed text). It rides through to P3 and lands in
+    tasks.command_text for party-A incident traceability (15 S9.5A.4 /
+    17 S6.8.4 field 3). Defaulted to '' so a caller that has no text (or a
+    test) still builds a valid request -- P3 stores '' as NULL.
     """
     task_type = _TASK_CREATE_INTENTS.get(intent_name)
     if task_type is None:
@@ -106,6 +113,7 @@ def to_task_request(
         "id": entry.id,
         "slots": dict(slots),
         "source": source,
+        "text": text,          # raw command -> tasks.command_text (15 S9.5A.4)
     }
 
 

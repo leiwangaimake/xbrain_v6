@@ -55,6 +55,9 @@ class TaskRow:
     suspend_reason: str = ""
     interrupt_reason: str = ""   # last interrupt cause; kept across resume
     parent_task_id: str = ""
+    # Raw command text the task was created from (15 S9.5A.4): '' -> NULL for
+    # system-minted tasks (return_home/charge) with no human/cloud command.
+    command_text: str = ""
     result_json: str = ""
     error_context_json: str = ""
     resume_count: int = 0
@@ -80,7 +83,8 @@ _COLUMNS = (
     "task_id", "parent_task_id", "task_type", "state", "priority",
     "submit_seq", "suspend_kind", "suspend_reason", "interrupt_reason",
     "mission_json", "total_steps", "current_step", "step_status_json",
-    "result_json", "error_context_json", "source", "resume_policy",
+    "result_json", "error_context_json", "source", "command_text",
+    "resume_policy",
     "resume_count", "route_geo_id", "user_id", "trace_id", "ttl_seconds",
     "scheduled_at", "created_ms", "updated_ms", "created_at", "started_at",
     "paused_at", "finished_at", "cancelled_at", "started_mono", "started_boot",
@@ -93,7 +97,7 @@ _NULLABLE_TEXT = frozenset({
     "parent_task_id", "suspend_kind", "suspend_reason", "interrupt_reason",
     "result_json", "error_context_json", "route_geo_id", "user_id",
     "scheduled_at", "created_at", "started_at", "paused_at", "finished_at",
-    "cancelled_at", "started_boot",
+    "cancelled_at", "started_boot", "command_text",
 })
 
 

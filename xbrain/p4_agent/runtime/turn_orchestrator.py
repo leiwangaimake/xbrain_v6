@@ -453,9 +453,14 @@ class TurnOrchestrator:
         # intents (pause/cancel/stop_follow) are NOT creates: to_task_request
         # returns None and the frame stays as-is (they act on an existing task).
         if is_task_create_intent(entry.name):
+            # Pass the turn's text so it lands in tasks.command_text (15 S9.5A.4
+            # / 17 S6.8.4 field 3): party-A requires the raw command stored for
+            # incident traceability. `text` here is what the turn acted on (ASR
+            # transcript post normalisation, or the typed text), same value the
+            # dispatch below uses -- so what is stored is what was executed.
             treq = to_task_request(
                 entry.name, self._registry,
-                slots=dict(extra), source=self._source)
+                slots=dict(extra), source=self._source, text=text)
             if treq is not None:
                 extra = {**(extra or {}), "task_request": treq}
         # Build the envelope (EV-1..7) and dispatch.

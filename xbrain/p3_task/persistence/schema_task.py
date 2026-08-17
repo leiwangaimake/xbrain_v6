@@ -86,6 +86,15 @@ CREATE TABLE IF NOT EXISTS tasks (
   result_json   TEXT,
   error_context_json TEXT,
   source        TEXT NOT NULL CHECK (source IN {_in_clause(TASK_SOURCES)}),
+  -- Raw command text the task was created from: the voice ASR transcript (post
+  -- normalisation) or the typed text, for whichever channel (local / cloud /
+  -- wecom). Party-A REQUIRES this stored for post-incident traceability
+  -- (17 S6.8.4 field 3 / 15 S9.5A.4): given an incident event, follow trace_id
+  -- to the task and read what was actually commanded. NULL for system-minted
+  -- tasks (return_home / charge) that no human or cloud command produced. It is
+  -- a FIRST-CLASS column, NOT a mission_json field, so it stays queryable and
+  -- survives any change to the mission_json shape.
+  command_text  TEXT,
   resume_policy TEXT NOT NULL CHECK (resume_policy IN {_in_clause(RESUME_POLICIES)}),
   resume_count  INTEGER NOT NULL DEFAULT 0 CHECK (resume_count >= 0),
   route_geo_id  TEXT,        -- immutable geo_id of the referenced route (tombstone)

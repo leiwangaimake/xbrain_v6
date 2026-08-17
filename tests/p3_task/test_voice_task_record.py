@@ -151,6 +151,74 @@ async def test_voice_task_inserts_into_same_tasks_table(task_conn):
     assert fetched.task_id == row.task_id
 
 
+# -- command_text: raw command stored for party-A traceability (15 S9.5A.4) ----
+
+def test_to_task_request_carries_command_text():
+    """to_task_request threads the raw command `text` into the request.
+    MUTATION: drop the text= param (or the "text" key) -> the field is absent
+    and the command never reaches tasks.command_text."""
+    reg = _reg()
+    req = to_task_request("patrol_route", reg, slots={"route": "east"},
+                          source="voice", text="开始巡逻东区")
+    assert req["text"] == "开始巡逻东区"
+
+
+def test_task_row_stores_command_text_and_defaults_empty():
+    """task_row_from_request copies request['text'] into command_text, and
+    leaves it '' when the request has none (a system task). MUTATION: not
+    reading request.get('text') -> command_text stays '' even for a real
+    command, losing the traceability record party-A requires."""
+    reg = _reg()
+    req = to_task_request("patrol_route", reg, slots={}, source="voice",
+                          text="回充电站")
+    row = task_row_from_request(req, task_id="t-voice-3", submit_seq=1,
+                                priority=50, now_mono_ms=1, trace_id="tr-3")
+    assert row.command_text == "回充电站"
+    # No text supplied -> '' (a system-minted task; DAO will store NULL).
+    req_no_text = to_task_request("patrol_route", reg, slots={},
+                                  source="voice")   # text defaults to ''
+    row2 = task_row_from_request(req_no_text, task_id="t-voice-4", submit_seq=2,
+                                 priority=50, now_mono_ms=1, trace_id="tr-4")
+    assert row2.command_text == ""
+
+
+@pytest.mark.asyncio
+async def test_command_text_round_trips_through_dao(task_conn):
+    """The raw command actually PERSISTS: insert a voice task carrying text,
+    read it back through the SAME DAO, and the text survives. This is the
+    load-bearing party-A traceability guarantee. MUTATION: dropping
+    command_text from _COLUMNS makes the insert/select skip the column, so the
+    fetched command_text comes back '' -- the stored command is silently lost."""
+    reg = _reg()
+    dao = TasksDAO(task_conn)
+    req = to_task_request("goto_waypoint", reg, slots={"waypoint": "w-1"},
+                          source="voice", text="去西门入口")
+    await record_voice_task(dao, req, task_id="t-voice-5", submit_seq=1,
+                            priority=50, now_mono_ms=2000, trace_id="tr-5")
+    await task_conn.commit()
+    fetched = await dao.fetch_by_id("t-voice-5")
+    assert fetched is not None
+    assert fetched.command_text == "去西门入口"
+
+
+@pytest.mark.asyncio
+async def test_absent_command_text_round_trips_as_empty(task_conn):
+    """A task with no command text stores NULL and reads back '' (never None on
+    the str field). MUTATION: dropping command_text from _NULLABLE_TEXT makes
+    the '' persist as '' (not NULL) or the NULL read back as None, breaking the
+    '' <-> NULL contract the other nullable TEXT columns rely on."""
+    reg = _reg()
+    dao = TasksDAO(task_conn)
+    req = to_task_request("goto_waypoint", reg, slots={"waypoint": "w-2"},
+                          source="voice")            # no text
+    await record_voice_task(dao, req, task_id="t-voice-6", submit_seq=1,
+                            priority=50, now_mono_ms=2000, trace_id="tr-6")
+    await task_conn.commit()
+    fetched = await dao.fetch_by_id("t-voice-6")
+    assert fetched is not None
+    assert fetched.command_text == ""
+
+
 @pytest.mark.asyncio
 async def test_bad_task_type_rejected_by_db_check(task_conn):
     """MUTATION A guard: a request with a task_type OUTSIDE the closed set
