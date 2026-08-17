@@ -33,7 +33,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
+
+from xbrain.p3_task.state.task_events import task_event_for_transition
 
 
 _logger = logging.getLogger("xbrain.p3.wiring")
@@ -104,6 +107,23 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             link_holder: dict = {}
             return_trigger = LinkLossReturnTrigger()
 
+            # 11 S6.2 task events: emit event/{sev}/task on scheduler transitions.
+            # Published like any producer (RUST thread never touches this -- it runs
+            # on the loop from _publish); p5's event/** subscriber persists it. eid is
+            # boot-unique (a raw seq would collide across a P3 restart).
+            _task_evt_seq = [0]
+            _task_evt_boot = os.urandom(3).hex()
+
+            def _emit_task_event(task_id: str, to_state: str,
+                                 kind: str, sev: str) -> None:
+                _task_evt_seq[0] += 1
+                gen.put("event/%s/task" % sev, json.dumps({
+                    "eid": "task-%s-%d" % (_task_evt_boot, _task_evt_seq[0]),
+                    "title": "task %s %s" % (task_id, kind),
+                    "detail": {"kind": kind, "task_id": task_id, "state": to_state},
+                    "src": "p3_task", "ts": 0.0,
+                }).encode("utf-8"))
+
             def _on_link(sample) -> None:
                 try:
                     p = json.loads(bytes(sample.payload).decode("utf-8"))
@@ -169,7 +189,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     try:
                         await scheduler_tick(
                             conn, dao, now_mono_ms=_now_mono_ms(),
-                            on_transition=_make_publish(state_pub))
+                            on_transition=_make_publish(state_pub,
+                                                        _emit_task_event))
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p3 scheduler tick failed: %s", exc)
                     now = time.monotonic()
@@ -192,10 +213,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     return 0
 
 
-def _make_publish(state_pub):
-    """Build the scheduler on_transition callback: publish each task state
-    change on state/task (event + 1 Hz, 11 S2.2.2) so p5/HMI/cloud can rebuild
-    the machine, and log it. reason is non-empty only on a validate_fail."""
+def _make_publish(state_pub, emit_task_event=None):
+    """Build the scheduler on_transition callback: publish each task state change on
+    state/task (event + 1 Hz, 11 S2.2.2) so p5/HMI/cloud can rebuild the machine, log
+    it, AND emit the 11 S6.2 task event (accept/reject/start/complete/fail) via
+    emit_task_event when the transition warrants one. reason is non-empty only on a
+    validate_fail."""
     async def _publish(task_id: str, to_state: str, reason: str) -> None:
         if reason:
             _logger.info("p3 task %s -> %s (%s)", task_id, to_state, reason)
@@ -206,6 +229,11 @@ def _make_publish(state_pub):
             "active_task": {"task_id": task_id, "state": to_state,
                             "mono_ms": _now_mono_ms()},
         }).encode("utf-8"))
+        # 11 S6.2 task event -- a separate stream from the state/task heartbeat.
+        if emit_task_event is not None:
+            ev = task_event_for_transition(to_state, reason)
+            if ev is not None:
+                emit_task_event(task_id, to_state, ev[0], ev[1])
     return _publish
 
 
