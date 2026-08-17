@@ -137,15 +137,22 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # a missing file just disables PTZ (audio/payload keep running).
         # Sub handle held in _gen_subs (strong ref, CLAUDE.md 4.3).
         from xbrain.p2_core.runtime.ptz_wiring import (
-            CMD_PTZ_TOPIC, PtzDomain, load_onvif_config,
+            CMD_PTZ_TOPIC, PtzDomain, PtzLivenessProbe, load_onvif_config,
+            make_onvif_reachability_check,
         )
         ptz_domain = None
+        ptz_probe = None
         # CONFIG-SOURCE-OK(secrets): a credentials file, not a config value on the
         # L0-L6 axis; configs/secrets/ is never materialised to resolved/.
         onvif_secrets = "/opt/xbrain_v6/configs/secrets/onvif_credentials.json"
         onvif_cfg = load_onvif_config(onvif_secrets)
         if onvif_cfg is not None:
             ptz_domain = PtzDomain(onvif_cfg)
+            # SW-12: non-blocking ONVIF reachability probe on its own thread +
+            # session, so the heartbeat reads a cached verdict instead of blocking
+            # on the round-trip. Feeds the device bridge for ptz device_offline.
+            ptz_probe = PtzLivenessProbe(make_onvif_reachability_check(onvif_cfg))
+            ptz_probe.start()
 
             def _on_ptz(sample) -> None:
                 import threading as _t
@@ -160,11 +167,14 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             _logger.warning("p2 wiring: PTZ disabled (no onvif credentials)")
 
         # Device liveness -> 11 S6.2 device_offline/online events (SW-12 producers).
-        # p5 persists + backfills these. MIC is REAL today (arecord thread
-        # alive/dead below); payload + ptz are REGISTERED but fed 'unknown' (None)
-        # each tick until their clients expose a reachability check -- unknown
-        # emits nothing (never a false online), so wiring them now is a safe seam
-        # (their real detection is GATED-HW).
+        # p5 persists + backfills these. All three producers are REAL:
+        #   mic          -- arecord capture/publish thread alive/dead (below)
+        #   payload_*    -- PayloadDomain.device_status() polls the service /status
+        #                   for the 8519/8529 socket link state
+        #   ptz          -- PtzLivenessProbe (non-blocking ONVIF probe thread)
+        # Each source can return None ('unknown this tick', e.g. hung endpoint),
+        # and the bridge feeds nothing on None -- so an unknown never fabricates a
+        # false online/offline. The debounce lives in the monitor (no cloud flood).
         _dev_evt_seq = [0]
 
         def _emit_device_event(ev: dict) -> None:
@@ -189,8 +199,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         for _d in ("mic", "ptz", "payload_speaker", "payload_siren",
                    "payload_strobe", "payload_light"):
             device_bridge.register(_d)
-        _logger.info("p2 wiring: device health bridge ON (mic real; "
-                     "payload/ptz seamed, GATED-HW)")
+        _logger.info("p2 wiring: device health bridge ON "
+                     "(mic + payload + ptz all real)")
 
         # Main loop: wait for stop.
         try:
@@ -227,11 +237,12 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     # live (a dropped USB MIC kills them -> device_offline after the
                     # debounce). payload: poll payload-service GET /status for the
                     # 8519/8529 GZH-2 socket state (audio -> speaker/siren, lights ->
-                    # strobe/light); None -> unknown, no false offline. ptz: fed None
-                    # for now -- an ONVIF ping would block this loop, so it needs a
-                    # non-blocking probe thread (GATED-HW, seam ready).
+                    # strobe/light); None -> unknown, no false offline. ptz: read the
+                    # PtzLivenessProbe verdict (cached by its own thread, NON-blocking
+                    # here -- an inline ONVIF ping would stall this heartbeat).
                     device_bridge.observe("mic", bool(cap_alive and pub_alive))
-                    device_bridge.observe("ptz", None)
+                    device_bridge.observe(
+                        "ptz", ptz_probe.reachable if ptz_probe is not None else None)
                     _ps = payload.device_status()
                     _audio = _ps["audio"] if _ps else None
                     _lights = _ps["lights"] if _ps else None
@@ -248,6 +259,11 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 mic_thread.stop()
                 mic_thread.join(timeout=2.0)
                 mic_pub_thread.join(timeout=2.0)
+            except Exception:      # noqa: BLE001
+                pass
+            try:
+                if ptz_probe is not None:
+                    ptz_probe.stop()
             except Exception:      # noqa: BLE001
                 pass
             try:

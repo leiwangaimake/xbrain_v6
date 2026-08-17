@@ -28,7 +28,7 @@ import json
 import logging
 import threading
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from xbrain.p2_core.ptz.ptz_driver import PtzDriver, PtzDriverConfig
 
@@ -97,3 +97,117 @@ class PtzDomain:
     @property
     def calls_made(self) -> int:
         return self._driver.calls_made
+
+
+# --- SW-12 ptz liveness probe (non-blocking) --------------------------------
+#
+# Three-state verdict, NOT a bool. The distinction is a hard LOCKOUT-SAFETY
+# requirement, not a nicety: the PTZ report S8 records that BOTH cameras lock the
+# account after consecutive auth failures ("严禁撞密码; 探针内已硬编码认证一失败
+# 立即中止"). So the probe must tell apart:
+#   "up"   -- got a non-fault ONVIF response (auth accepted, camera reachable)
+#   "down" -- TRANSPORT failure: the HTTP call never completed, so no auth reached
+#             the camera. Safe to keep polling; this is the device_offline signal.
+#   "auth" -- a SOAP Fault came back (e.g. ter:NotAuthorized, PTZ report S4.3). Auth
+#             DID reach the camera and was rejected -> a misconfiguration, and each
+#             retry is one more strike toward lockout. The probe STOPS on the first
+#             one; it does NOT treat this as device_offline (a config fault is not a
+#             down camera).
+# Note OnvifSession.call raises OnvifError only on transport failure; on a SOAP
+# Fault it RETURNS the fault xml, so both branches must be inspected explicitly.
+
+VERDICT_UP = "up"
+VERDICT_DOWN = "down"
+VERDICT_AUTH = "auth"
+
+
+def make_onvif_reachability_check(cfg: "OnvifConfig",
+                                  media_path: str = "/onvif/media",
+                                  timeout_s: float = 3.0) -> Callable[[], str]:
+    """Return a check() -> VERDICT_UP / VERDICT_DOWN / VERDICT_AUTH that does one
+    GetProfiles on a DEDICATED session (OnvifSession is not thread-safe -- the probe
+    must NOT share the command path's session). A persistent session keeps the TCP
+    connection warm between polls."""
+    import xbrain.p2_core.ptz.onvif_client as oc
+
+    sess = oc.OnvifSession(cfg.host, cfg.user, cfg.pwd, timeout=timeout_s)
+    body = '<GetProfiles xmlns="http://www.onvif.org/ver10/media/wsdl"/>'
+
+    def _check() -> str:
+        try:
+            xml = sess.call(media_path, body)
+        except oc.OnvifError:
+            # Transport failure: auth never reached the camera -> safe to retry.
+            return VERDICT_DOWN
+        if oc.soap_fault(xml) is not None:
+            # Auth reached the camera and was rejected -> lockout risk, stop.
+            return VERDICT_AUTH
+        return VERDICT_UP
+
+    return _check
+
+
+class PtzLivenessProbe:
+    """Poll a three-state reachability check on a background thread and expose the
+    latest verdict as .reachable (Optional[bool]), so the p2 heartbeat can feed the
+    device bridge WITHOUT blocking on an ONVIF round-trip. The check is injected, so
+    the probe logic is testable with no camera.
+
+    .reachable is None until the first poll completes (unknown -> the bridge emits
+    nothing), then True on VERDICT_UP and False on VERDICT_DOWN. A configured-but-
+    unreachable camera settles to False and the bridge (with its debounce) emits one
+    ptz device_offline -- correct: the camera the operator provisioned is down.
+
+    VERDICT_AUTH is special: the loop STOPS and .reachable is set back to None. An
+    auth reject is an operator misconfiguration, not a down camera, so it must NOT
+    become a device_offline; and it must not be retried, or the camera locks the
+    account (PTZ report S8). A p2 restart re-arms the probe once the config is fixed.
+    """
+
+    def __init__(self, check_reachable: Callable[[], str],
+                 period_s: float = 5.0) -> None:
+        self._check = check_reachable
+        self._period = period_s
+        self._reachable: Optional[bool] = None
+        self._auth_blocked = False
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    @property
+    def reachable(self) -> Optional[bool]:
+        return self._reachable
+
+    @property
+    def auth_blocked(self) -> bool:
+        return self._auth_blocked
+
+    def start(self) -> None:
+        self._thread = threading.Thread(
+            target=self._run, name="p2.ptz-probe", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                verdict = self._check()
+            except Exception:      # noqa: BLE001 -- unexpected error = transport down
+                verdict = VERDICT_DOWN
+            if verdict == VERDICT_UP:
+                self._reachable = True
+            elif verdict == VERDICT_AUTH:
+                # LOCKOUT SAFETY (PTZ report S8): stop on the first auth reject.
+                self._auth_blocked = True
+                self._reachable = None   # config fault, not a device_offline
+                _logger.error(
+                    "ptz probe: ONVIF auth rejected; stopping probe to avoid "
+                    "account lockout -- fix onvif_credentials.json then restart p2")
+                return
+            else:
+                self._reachable = False   # VERDICT_DOWN (or defensive fallback)
+            # Interruptible sleep so stop() returns promptly.
+            self._stop.wait(self._period)
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
