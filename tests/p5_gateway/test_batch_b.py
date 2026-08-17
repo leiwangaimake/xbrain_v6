@@ -29,56 +29,14 @@ from xbrain.p5_gateway.delivery.recon import (
     ReconWindowExceeded, SeqRange,
     compute_missing, dedupe_ranges, enforce_window,
 )
-from xbrain.p5_gateway.reconnect.replay import (
-    ReplayViolation, build_replay_batch, drop_oldest_info_first,
-)
 
 
 pytestmark = pytest.mark.no_device
 
 
-# --- GWY-P5-03 replay ---
-
-def test_replay_batch_respects_max():
-    """R-1: batch size <= max_batch."""
-    evs = [{"event_seq": i} for i in range(1, 100)]
-    b = build_replay_batch("cloud", cursor=0, head_seq=99,
-                             events=evs, max_batch=10)
-    assert b.from_seq == 1 and b.to_seq == 10
-    assert len(b.events) == 10
-
-
-def test_replay_batch_head_below_cursor_raises():
-    """R-2: cursor cannot be ahead of head_seq."""
-    with pytest.raises(ReplayViolation):
-        build_replay_batch("cloud", cursor=100, head_seq=50,
-                             events=[], max_batch=10)
-
-
-def test_replay_idempotent_second_call_same_range():
-    """R-3: calling twice with same cursor produces same batch."""
-    evs = [{"event_seq": i} for i in range(1, 20)]
-    b1 = build_replay_batch("cloud", 5, 15, evs, 5)
-    b2 = build_replay_batch("cloud", 5, 15, evs, 5)
-    assert b1 == b2
-
-
-def test_drop_oldest_info_never_drops_warn():
-    """O-4: warn and error survive even if buffer over target."""
-    buf = [
-        {"level": "warn"}, {"level": "info"}, {"level": "info"},
-        {"level": "error"}, {"level": "info"},
-    ]
-    dropped = drop_oldest_info_first(buf, target_size=2)
-    assert dropped == 3
-    # Only warn + error remain.
-    assert all(e["level"] in ("warn", "error") for e in buf)
-
-
-def test_drop_oldest_stops_when_no_more_info():
-    buf = [{"level": "warn"}, {"level": "error"}]
-    dropped = drop_oldest_info_first(buf, target_size=0)
-    assert dropped == 0 and len(buf) == 2
+# GWY-P5-03 replay moved to tests/p5_gateway/reconnect/test_backfill.py -- the
+# old per-consumer/event_seq/level model was replaced by the contract backfill
+# (per-channel ch_seq cursors, 4:1 weight, rate limiter, EventReplay messages).
 
 
 # --- GWY-P5-04 recon ---
