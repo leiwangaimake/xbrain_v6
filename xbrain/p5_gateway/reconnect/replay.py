@@ -60,6 +60,12 @@ class RateLimiter:
         self._tokens = self._cap
         self._last: Optional[float] = None
 
+    @property
+    def rate_eps(self) -> float:
+        """The refill rate, so a caller can size its wait (~1/rate per token)
+        without reaching into the private field."""
+        return self._rate
+
     def take(self, now_mono: float) -> bool:
         """True (and spend a token) if the bucket has one, else False. Refills
         based on elapsed monotonic time since the last call."""
