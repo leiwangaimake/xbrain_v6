@@ -25,7 +25,8 @@ takes the write lock up front (15 S9.1).
 
 This module does NOT open the connection, run the loop, or subscribe -- it is
 a pure async step the db-thread loop (PB5 wiring) calls with a live conn/dao.
-It reads no clock: date_str (for the id) and now_mono_ms are injected.
+It reads no clock: date_str (for the id), now_mono_ms, and created_at (the
+UTC-ISO wall dispatch time for tasks.created_at, 15 S9.5) are all injected.
 """
 from __future__ import annotations
 
@@ -55,6 +56,7 @@ async def record_task_from_payload(
     now_mono_ms: int,
     priority: int = 50,
     trace_id: str = "",
+    created_at: str = "",
 ) -> RecordOutcome:
     """Record one cmd/task payload. Returns a RecordOutcome. See module doc.
 
@@ -95,7 +97,7 @@ async def record_task_from_payload(
             or task_id
         row = task_row_from_request(
             treq, task_id=task_id, submit_seq=submit_seq, priority=priority,
-            now_mono_ms=now_mono_ms, trace_id=tid)
+            now_mono_ms=now_mono_ms, trace_id=tid, created_at=created_at)
         await dao.insert(row)
         await conn.commit()
         return RecordOutcome(kind="recorded", task_id=task_id, state=row.state)

@@ -69,6 +69,7 @@ def task_row_from_request(
     priority: int,
     now_mono_ms: int,
     trace_id: str,
+    created_at: str = "",
 ) -> TaskRow:
     """Convert a P4 cmd/task request into the unified TaskRow.
 
@@ -102,6 +103,10 @@ def task_row_from_request(
     # P4 to_task_request. '' when absent -> DAO stores NULL. Party-A REQUIRES it
     # for incident traceability; it is a first-class column, not a mission field.
     command_text = request.get("text") or ""
+    # created_at (15 S9.5): the UTC-ISO wall dispatch time, injected by the db
+    # loop (a display/audit value, NOT a timing decision -- age uses created_ms).
+    # '' when not supplied (e.g. a test) -> DAO stores NULL. It is what the HMI
+    # task panel shows as 下发时间 (17 S6.8.4 field 2), rendered in the GPS zone.
     return TaskRow(
         task_id=task_id,
         task_type=task_type,
@@ -117,6 +122,7 @@ def task_row_from_request(
         updated_ms=now_mono_ms,
         source=source,
         command_text=command_text,
+        created_at=created_at,
         trace_id=trace_id,
         resume_policy=default_resume_policy(task_type),
     )

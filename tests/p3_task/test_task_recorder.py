@@ -104,6 +104,20 @@ async def test_explicit_id_dedups(conn):
 
 
 @pytest.mark.asyncio
+async def test_created_at_injected_to_dispatch_time(conn):
+    """The db loop injects created_at (UTC ISO wall time) -> tasks.created_at,
+    which is the HMI 下发时间 source (15 S9.5 CA-1 / 17 S6.8.4 field 2). MUTATION:
+    not threading created_at through the recorder -> created_at stays NULL and
+    the task panel has no dispatch time to show."""
+    dao = TasksDAO(conn)
+    await record_task_from_payload(
+        conn, dao, _voice_frame(), date_str="20260817", now_mono_ms=1,
+        created_at="2026-08-17T10:00:12Z")
+    got = await dao.fetch_by_id("t-20260817-001")
+    assert got is not None and got.created_at == "2026-08-17T10:00:12Z"
+
+
+@pytest.mark.asyncio
 async def test_recorded_row_is_committed(conn):
     """The insert is committed (a fresh reader sees it), proving the
     transaction closed rather than leaving an open write lock."""

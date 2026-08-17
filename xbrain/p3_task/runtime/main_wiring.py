@@ -61,6 +61,16 @@ def _today_yyyymmdd() -> str:
     return time.strftime("%Y%m%d")
 
 
+def _now_utc_iso() -> str:
+    # DISPLAY/AUDIT value for tasks.created_at (15 S9.5): the wall-clock dispatch
+    # time the HMI task panel shows as 下发时间 (17 S6.8.4 field 2), formatted in
+    # the viewer's GPS-derived zone. Stored as UTC ISO 'Z' so the HMI can render
+    # it in ANY zone (same wall-vs-monotonic split as _today_yyyymmdd: this is a
+    # display read, NOT a timing decision, so it is outside the CLK-C1 ban -- age
+    # and timeouts still use _now_mono_ms). gmtime() => UTC.
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
 def run_voice_loop_wiring(stop_flag: dict,
                           heartbeat_period_s: float = 5.0,
                           task_db_path: str = DEFAULT_TASK_DB) -> int:
@@ -243,7 +253,8 @@ async def _record_one(conn, dao, payload, state_pub) -> int:
     try:
         out = await record_task_from_payload(
             conn, dao, payload,
-            date_str=_today_yyyymmdd(), now_mono_ms=_now_mono_ms())
+            date_str=_today_yyyymmdd(), now_mono_ms=_now_mono_ms(),
+            created_at=_now_utc_iso())
     except Exception as exc:               # noqa: BLE001
         # A bad row must not kill the loop -- log and drop this one task.
         _logger.error("p3 record failed: %s", exc)
