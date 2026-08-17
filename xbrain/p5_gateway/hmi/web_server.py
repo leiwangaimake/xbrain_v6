@@ -412,7 +412,10 @@ def start_in_thread(app, sockets: List[socket.socket]):
         import wsproto  # noqa: F401,PLC0415
     except ImportError:
         ws_impl = "auto"
-    config = uvicorn.Config(app, log_level="info", access_log=False, ws=ws_impl)
+    # access_log ON: the HMI is a LAN dev/ops surface, and the request log is the
+    # only way to see which asset version + which /api/tasks a browser actually
+    # fetched (a cached old hmi.js is otherwise invisible from the server side).
+    config = uvicorn.Config(app, log_level="info", access_log=True, ws=ws_impl)
     server = uvicorn.Server(config)
     # install_signal_handlers=False: the process's own signal handlers own
     # shutdown (the voice-loop stop flag); uvicorn must not steal SIGINT/SIGTERM

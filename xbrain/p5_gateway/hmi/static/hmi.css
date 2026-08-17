@@ -133,8 +133,10 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .current-group .task-group-title { color: var(--ok-bright); }
 .history-group .task-group-title { color: var(--gold); }
 .task-empty { color: var(--muted); }
-/* 历史面板可滚(折叠堆叠). */
-.history-list { max-height: 210px; overflow-y: auto; }
+/* 两组各自限高可滚 -- 否则当前组任务一多(如一堆待执行/返航)会把历史组
+   挤到 420px 面板可视区之外, 用户以为"没有历史"(2026-08-17 实测坑). */
+.current-group .task-list { max-height: 150px; overflow-y: auto; }
+.history-list { max-height: 190px; overflow-y: auto; }
 
 .task-card { border: 1px solid rgba(192,192,192,.22); border-left: 3px solid var(--cyan);
   border-radius: 4px; padding: 7px 8px; margin-bottom: 7px; background: rgba(27,38,59,.42); }
