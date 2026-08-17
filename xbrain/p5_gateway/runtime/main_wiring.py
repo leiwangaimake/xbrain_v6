@@ -338,6 +338,15 @@ def run_voice_loop_wiring(stop_flag: dict,
 
                 event_subsystem.set_replay_publisher(_put_replay)
 
+        # Reconnect -> backfill trigger (17 S3.5.2). Detects the cloud-link down->up
+        # edge from cloud-rx liveness (ack / recon rsp) and fires one backfill, so
+        # events that piled up during an outage get re-sent (zenoh does not buffer
+        # for an offline subscriber). INTERIM signal until 11 S4.6 LinkState gives a
+        # link_epoch. 10.0 s = a few missed cloud messages -> 'disconnected'; interim
+        # constant (a config key lands with S4.6), NOT a safety param.
+        from xbrain.p5_gateway.reconnect.link_detector import LinkReconnectDetector
+        link_detector = LinkReconnectDetector(timeout_s=10.0)
+
         speak_acks_seen = 0
         state_task_updates = 0
         probe_seq = 0
@@ -476,6 +485,8 @@ def run_voice_loop_wiring(stop_flag: dict,
                 a = json.loads(bytes(sample.payload).decode("utf-8"))
             except Exception:      # noqa: BLE001
                 return
+            # A parsed ack IS cloud contact -> feed the reconnect detector.
+            link_detector.note_cloud_rx(time.monotonic())
             eid = a.get("eid") or a.get("event_id")
             # 11 S8.4 result closed set is {ok, duplicate}; a missing result is a
             # malformed ack -> "" (not in the set) leaves the event delivered=0 for
@@ -563,6 +574,13 @@ def run_voice_loop_wiring(stop_flag: dict,
                     }
                     hmi_state["link"] = link_payload   # feed HMI status/ESTOP
                     link_pub.put(json.dumps(link_payload).encode("utf-8"))
+                    # Reconnect -> backfill (17 S3.5.2): one backfill on the cloud
+                    # down->up edge. No-op while the cloud has never been heard from
+                    # (dev has no cloud), so this stays dormant until real uplink.
+                    if (event_subsystem is not None and event_subsystem.enabled
+                            and link_detector.poll(now)):
+                        _logger.info("cloud link reconnect -> trigger backfill")
+                        event_subsystem.trigger_backfill()
                     last_hb = now
                 time.sleep(0.1)
         finally:
