@@ -32,13 +32,14 @@ OOMScoreAdjust=-500
 SupplementaryGroups=dialout
 EnvironmentFile=-/etc/xbrain/robot.env
 Environment="LD_LIBRARY_PATH=/usr/local/lib"
-# DEC-15 (U83): the install root is /opt/xbrain_v6/data/install, and every OTHER
-# C++ unit now points there. rtk_driver still points at its raw CMake BUILD tree
-# because its CMakeLists has NO install() rule -- it can only build, not install,
-# and the ORIN has no colcon. This is the one C++ binary that actually exists, so
-# keeping the working build/ path beats pointing at an empty data/install. Migrate
-# to /opt/xbrain_v6/data/install/... once DEP-5 adds the install() rule (NEXT.md).
-ExecStart=/opt/xbrain_v6/ros2_ws/sensor/build/rtk_driver
+# DEC-15 (U83) install root = /opt/xbrain_v6/data/install. rtk_driver installs there
+# via its CMakeLists install() rule (DEP-5, done 2026-08-17):
+#   cmake --install <build> --prefix /opt/xbrain_v6/data/install/rtk_driver
+# The installed binary bakes RUNPATH=/usr/local/lib (CMAKE_INSTALL_RPATH), so it
+# self-locates libzenohc; the LD_LIBRARY_PATH above is now belt-and-braces. No
+# ConditionPathExists: rtk_driver is a REQUIRED Stage-1 unit, so a missing install
+# must fail (unlike the gated C++ units, which are optional until built).
+ExecStart=/opt/xbrain_v6/data/install/rtk_driver/lib/rtk_driver/rtk_driver
 
 [Install]
 WantedBy=multi-user.target

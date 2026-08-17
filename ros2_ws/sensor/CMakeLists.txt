@@ -11,7 +11,9 @@
 # links no ROS target, so a stray rclcpp include would fail to compile -- and it
 # does, because the ORIN has no ROS2 / colcon installed at all, which is exactly
 # why a plain-CMake package is the right (and only) way to build this today.
-# Build:  cd ros2_ws/sensor && cmake -B build && cmake --build build && ctest --test-dir build
+# Build:   cd ros2_ws/sensor && cmake -B build && cmake --build build && ctest --test-dir build
+# Install: cmake --install build --prefix /opt/xbrain_v6/data/install/rtk_driver
+#          (DEC-15 / 99 U83: the install root is /opt/xbrain_v6/data/install)
 # common/ is header-only (INTERFACE): consumed by include path, nothing to link.
 
 cmake_minimum_required(VERSION 3.16)
@@ -21,6 +23,14 @@ set(CMAKE_CXX_STANDARD 17)          # 13 CPP-1: exactly C++17
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)       # no GNU extensions (block accidental C++20)
 add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+
+# The INSTALLED binary must locate libzenohc (/usr/local/lib) on its own. CMake
+# STRIPS the RPATH on install by default, which would leave the data/install copy
+# unable to find libzenohc unless something (the unit's LD_LIBRARY_PATH) supplied
+# it -- a silent dependency. Bake /usr/local/lib into the install RPATH so the
+# binary is self-locating whether launched by systemd or run directly.
+set(CMAKE_INSTALL_RPATH "/usr/local/lib")
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 set(COMMON_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include)
 
@@ -46,6 +56,14 @@ if(ZENOHC_LIB)
   add_executable(rtk_driver src/main.cc src/zenoh_sink.cc)
   target_include_directories(rtk_driver PRIVATE /usr/local/include)
   target_link_libraries(rtk_driver PRIVATE rtk_driver_core ${ZENOHC_LIB} pthread)
+  # DEC-15 (99 U83): install root = /opt/xbrain_v6/data/install, supplied as the
+  # per-package prefix at `cmake --install --prefix <root>/rtk_driver`. DESTINATION
+  # lib/${PROJECT_NAME} mirrors the colcon/ament layout the other C++ units already
+  # expect (<pkg>/lib/<pkg>/<exe>), so EVERY C++ binary -- ament (perception/
+  # quadruped) or plain-CMake (this) -- lands at the same
+  # data/install/<pkg>/lib/<pkg>/<exe> shape. Only the executable is installed:
+  # rtk_driver_core is a build-time static lib and nothing consumes its headers.
+  install(TARGETS rtk_driver RUNTIME DESTINATION lib/${PROJECT_NAME})
 else()
   message(STATUS "libzenohc not found -- skipping rtk_driver executable (offline tests still build)")
 endif()
