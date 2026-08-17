@@ -14,8 +14,8 @@ backfill on reconnect. So this module is not a publisher of live events -- it is
                   event whose link was CONNECTED at insert is delivered=1 at once
                   (the producer's direct put reached the cloud); otherwise it
                   waits (need_ack=1 -> ack) or goes to the backfill queue.
-  AckTracker      on event/ack (result accepted|duplicate) mark that eid
-                  delivered. 'rejected' does NOT mark -- it will be re-sent.
+  AckTracker      on event/ack (result ok|duplicate, 11 S8.4) mark that eid
+                  delivered. Any other result leaves it delivered=0 for re-send.
   BackfillRunner  on link -> CONNECTED, freeze the backlog bounds, send a begin
                   per channel, drain both channels in 4:1 order through the rate
                   limiter, put each on event/replay/{channel} (R-3: NEVER on the
@@ -40,9 +40,13 @@ from ..reconnect.replay import (
 )
 
 
-# EventAck.result closed set (11 S8.4). accepted/duplicate both mean "the cloud
-# has it" (duplicate is the idempotent re-delivery, S2.3); rejected does not.
-ACK_ACCEPTED = frozenset({"accepted", "duplicate"})
+# EventAck.result closed set (11 S8.4): {ok, duplicate}. Both mean "the cloud has
+# it" -- duplicate is the idempotent re-delivery of an eid it already stored (11
+# S8.4 / S2.3 / 17 S3.5 result="duplicate"). CRITICAL: this is EventAck, NOT the
+# command Ack (11 S7.7, accepted/rejected/...). An earlier version used accepted/
+# duplicate here, which would have ignored a contract-compliant result="ok" and
+# re-sent every need_ack event forever (SW-12 audit F9).
+ACK_ACCEPTED = frozenset({"ok", "duplicate"})
 
 
 def replay_key(rid: str, channel: str) -> str:
@@ -80,8 +84,10 @@ class AckTracker:
         self._now_iso = now_iso
 
     async def on_ack(self, eid: str, result: str) -> bool:
-        """accepted/duplicate -> mark delivered. rejected -> leave delivered=0 so
-        it is re-sent (idempotent by eid, S8.4). Returns True if it marked."""
+        """ok/duplicate -> mark delivered (11 S8.4). Any other result leaves
+        delivered=0 so the event is re-sent (idempotent by eid: a re-send the
+        cloud already has comes back as result=duplicate, still accepted). Returns
+        True if it marked."""
         if result not in ACK_ACCEPTED:
             return False
         n = await self._dao.mark_delivered([eid], None, self._now_iso())

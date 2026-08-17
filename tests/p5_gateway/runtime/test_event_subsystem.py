@@ -92,7 +92,7 @@ def test_need_ack1_persisted_awaits_ack(tmp_path):
         rows = _query(db, "SELECT delivered FROM events WHERE eid='a1'")
         assert rows == [(0,)]        # persisted, not delivered until acked
         # An ack marks it.
-        subs.submit_ack("a1", "accepted")
+        subs.submit_ack("a1", "ok")
         # submit_ack is fire-and-forget; poll briefly for the mark.
         import time
         for _ in range(30):
@@ -116,6 +116,6 @@ def test_bad_path_degrades_to_noop(tmp_path):
     assert subs.enabled is False
     # No-op, returns None, does not raise (the voice loop survives).
     assert subs.submit_event(_ev("e1"), True) is None
-    subs.submit_ack("e1", "accepted")
+    subs.submit_ack("e1", "ok")
     subs.trigger_backfill()
     subs.stop()

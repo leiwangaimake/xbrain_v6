@@ -100,18 +100,32 @@ async def test_need_ack1_never_marked_at_persist(dao):
 # --- AckTracker (S3.5.1) ---
 
 @pytest.mark.asyncio
-async def test_ack_accepted_marks_delivered(dao):
+async def test_ack_ok_marks_delivered(dao):
+    # 11 S8.4 result closed set is {ok, duplicate}. "ok" is the PRIMARY success
+    # value the cloud sends. MUTATION (audit F9): if AckTracker used the command-
+    # Ack model {accepted, ...}, "ok" would fall through and the event would never
+    # be marked delivered -> re-sent forever.
     await dao.insert_event(_event("a1", channel="alarm", sev="alarm"))
     at = AckTracker(dao, _now_iso)
-    assert await at.on_ack("a1", "accepted") is True
+    assert await at.on_ack("a1", "ok") is True
     assert await dao.backlog("alarm", 10) == []
 
 
 @pytest.mark.asyncio
-async def test_ack_rejected_does_not_mark(dao):
+async def test_ack_duplicate_marks_delivered(dao):
+    # duplicate = the cloud already had this eid (idempotent re-delivery, S8.4).
     await dao.insert_event(_event("a1", channel="alarm", sev="alarm"))
     at = AckTracker(dao, _now_iso)
-    # MUTATION: treat rejected as delivered -> a refused event is lost.
+    assert await at.on_ack("a1", "duplicate") is True
+    assert await dao.backlog("alarm", 10) == []
+
+
+@pytest.mark.asyncio
+async def test_ack_offcontract_result_does_not_mark(dao):
+    await dao.insert_event(_event("a1", channel="alarm", sev="alarm"))
+    at = AckTracker(dao, _now_iso)
+    # A value outside {ok, duplicate} is NOT an ack -> leave delivered=0 for
+    # re-send. MUTATION: mark on any result -> a non-ack would drop the event.
     assert await at.on_ack("a1", "rejected") is False
     assert len(await dao.backlog("alarm", 10)) == 1
 

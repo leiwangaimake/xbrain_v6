@@ -477,7 +477,11 @@ def run_voice_loop_wiring(stop_flag: dict,
             except Exception:      # noqa: BLE001
                 return
             eid = a.get("eid") or a.get("event_id")
-            result = a.get("result") or "accepted"
+            # 11 S8.4 result closed set is {ok, duplicate}; a missing result is a
+            # malformed ack -> "" (not in the set) leaves the event delivered=0 for
+            # re-send. Do NOT default to a fake "accepted" (audit F9: that was the
+            # command-Ack model, and it is not an EventAck value).
+            result = a.get("result") or ""
             if eid:
                 event_subsystem.submit_ack(eid, result)
 
