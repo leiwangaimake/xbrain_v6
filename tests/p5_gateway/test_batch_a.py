@@ -3,28 +3,21 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_batch_a.py
-Brief: GWY-P5-25/01/02 skeleton + pipeline + events schema tests
+Brief: GWY-P5-25 lifecycle skeleton + GWY-P5-01 pipeline stage order
 
 Description:
-Batch A: nine-task registry with G-1 startup gate; seven-step
-pipeline stages with schema / dedupe / level branches (each with a
-paired negative test); events DDL applies against in-memory
-aiosqlite; UNIQUE (source, event_id) enforced; SEQ-3 cursor advance
-gates against gaps and rewinds.
+The lifecycle skeleton (nine-task registry, the two record.db writers) plus the
+pipeline STAGE-ORDER gate. The event schema + stage-branch tests that used to
+live here were against the placeholder model (categories {safety,...}, level
+{info,warn,error}, per-consumer cursor); they were removed when the pipeline +
+record.db were rewritten onto the real contract. Their replacements are
+tests/p5_gateway/event/test_pipeline.py and tests/p5_gateway/persistence/.
 """
 
 import pytest
-import pytest_asyncio
-import aiosqlite
 
 from xbrain.p5_gateway.event.pipeline import (
-    PIPELINE_STAGES, PipelineOrderViolation, VALID_CATEGORIES,
-    VALID_LEVELS, assert_stage_order,
-    stage_dedupe, stage_level, stage_schema,
-)
-from xbrain.p5_gateway.event.schema import (
-    ALL_EVENT_STATEMENTS, CONSUMERS, SeqOrderViolation,
-    UnknownConsumer, advance_cursor, validate_consumer,
+    PIPELINE_STAGES, PipelineOrderViolation, assert_stage_order,
 )
 from xbrain.p5_gateway.lifecycle.skeleton import (
     DuplicateTaskRegistration, IncompleteTaskRegistration,
@@ -81,124 +74,15 @@ def test_writer_check():
     assert r.can_write_record_db("hmi_ws") is False
 
 
-# --- GWY-P5-01 pipeline ---
+# --- GWY-P5-01 pipeline stage order (persist MUST precede cloud) ---
 
 def test_stage_order_matches_expected():
     assert_stage_order(PIPELINE_STAGES)
 
 
 def test_stage_order_bad_raises():
+    # MUTATION: swapping persist after cloud must be rejected -- it would let a
+    # crash lose a cloud-acked event (17 S3.1).
+    bad = ("schema", "dedupe", "level", "cloud", "persist", "hmi", "delivered")
     with pytest.raises(PipelineOrderViolation):
-        assert_stage_order(("schema", "level", "dedupe"))
-
-
-def test_schema_rejects_unknown_category():
-    r = stage_schema({"event_id": "e1", "source": "p1",
-                        "category": "halfway"})
-    assert r.dropped and "unknown_category" in r.reason
-
-
-def test_schema_rejects_missing_source():
-    r = stage_schema({"event_id": "e1", "category": "safety"})
-    assert r.dropped and "missing_id_or_source" in r.reason
-
-
-def test_schema_valid_event_passes():
-    r = stage_schema({"event_id": "e1", "source": "p1",
-                        "category": "safety"})
-    assert r.dropped is False
-
-
-def test_dedupe_drops_repeat():
-    seen = set()
-    e = {"event_id": "e1", "source": "p1", "category": "safety"}
-    r1 = stage_dedupe(e, seen)
-    r2 = stage_dedupe(e, seen)
-    assert r1.dropped is False
-    assert r2.dropped is True
-
-
-def test_level_bad_value_dropped():
-    r = stage_level({"level": "critical"})
-    assert r.dropped and "bad_level" in r.reason
-
-
-def test_level_default_info_applied():
-    e = {}
-    r = stage_level(e)
-    assert r.dropped is False and e["level"] == "info"
-
-
-def test_valid_categories_and_levels_are_closed_sets():
-    assert VALID_CATEGORIES == frozenset({
-        "safety", "task", "sensor", "network", "audit", "diagnostic",
-    })
-    assert VALID_LEVELS == frozenset({"info", "warn", "error"})
-
-
-# --- GWY-P5-02 events schema ---
-
-@pytest_asyncio.fixture
-async def event_conn():
-    async with aiosqlite.connect(":memory:") as c:
-        for s in ALL_EVENT_STATEMENTS:
-            await c.execute(s)
-        await c.commit()
-        yield c
-
-
-@pytest.mark.asyncio
-async def test_events_table_created(event_conn):
-    cur = await event_conn.execute(
-        "SELECT name FROM sqlite_master WHERE name='events'")
-    assert await cur.fetchone() is not None
-
-
-@pytest.mark.asyncio
-async def test_events_unique_source_event_id(event_conn):
-    await event_conn.execute(
-        "INSERT INTO events (event_id, source, category, level, "
-        " payload_json, received_ms) VALUES ('e1', 'p1', 'safety', "
-        " 'info', '{}', 0)")
-    with pytest.raises(Exception):
-        await event_conn.execute(
-            "INSERT INTO events (event_id, source, category, level, "
-            " payload_json, received_ms) VALUES ('e1', 'p1', 'safety', "
-            " 'info', '{}', 0)")
-
-
-@pytest.mark.asyncio
-async def test_events_check_rejects_bad_level(event_conn):
-    with pytest.raises(Exception):
-        await event_conn.execute(
-            "INSERT INTO events (event_id, source, category, level, "
-            " payload_json, received_ms) VALUES ('e2', 'p1', 'safety', "
-            " 'critical', '{}', 0)")
-
-
-def test_consumer_names_closed_set():
-    assert CONSUMERS == frozenset({"cloud", "hmi"})
-
-
-def test_validate_consumer_rejects_unknown():
-    with pytest.raises(UnknownConsumer):
-        validate_consumer("smtp")
-
-
-def test_advance_cursor_by_one_ok():
-    assert advance_cursor(current=5, next_seq=6) == 6
-
-
-def test_advance_cursor_same_seq_ok():
-    """SEQ-3: cursor can stay put (idempotent delivery)."""
-    assert advance_cursor(current=5, next_seq=5) == 5
-
-
-def test_advance_cursor_rewind_rejected():
-    with pytest.raises(SeqOrderViolation, match="rewind"):
-        advance_cursor(current=5, next_seq=3)
-
-
-def test_advance_cursor_gap_rejected():
-    with pytest.raises(SeqOrderViolation, match="gap"):
-        advance_cursor(current=5, next_seq=8)
+        assert_stage_order(bad)
