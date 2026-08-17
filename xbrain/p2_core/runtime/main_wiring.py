@@ -185,10 +185,17 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 "eid": ev["eid"], "title": ev["title"], "detail": ev["detail"],
                 "src": ev["src"], "ts": ev["ts"]}).encode("utf-8"))
 
+        # Boot-unique token: the seq resets to 0 each p2 start but record.db
+        # persists, so without it the first offline of a device after a restart
+        # regenerates an eid that already exists -> UNIQUE(eid) violation -> the
+        # DAO degrades it to JSONL instead of persisting (found in the SW-12 audit).
+        # os.urandom keeps the token independent of clock state (not a wall-clock).
+        _dev_eid_boot = os.urandom(3).hex()
+
         def _dev_eid(dev: str, offline: bool) -> str:
             _dev_evt_seq[0] += 1
-            return "dev-%s-%s-%d" % (dev, "off" if offline else "on",
-                                     _dev_evt_seq[0])
+            return "dev-%s-%s-%s-%d" % (dev, "off" if offline else "on",
+                                        _dev_eid_boot, _dev_evt_seq[0])
 
         from xbrain.p2_core.runtime.device_health_bridge import DeviceHealthBridge
         device_bridge = DeviceHealthBridge(
@@ -196,9 +203,20 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             emit=_emit_device_event,
             now_iso=lambda: datetime.now(timezone.utc).isoformat(),
             eid_gen=_dev_eid)
-        for _d in ("mic", "ptz", "payload_speaker", "payload_siren",
-                   "payload_strobe", "payload_light"):
-            device_bridge.register(_d)
+        # Per-device OFFLINE detail (11 S6.2 reason/socket evidence). audio sub-
+        # devices (speaker/siren) sit on the 8519 socket, lights (strobe/light) on
+        # 8529; mic reason aligns with AsrGate.reason device_fault (16 S8.9.2); ptz
+        # reason is the ONVIF-unreachable verdict the probe produces.
+        _dev_offline_detail = {
+            "mic": {"reason": "device_fault"},
+            "ptz": {"reason": "onvif_unreachable"},
+            "payload_speaker": {"reason": "device_link_down", "socket": 8519},
+            "payload_siren": {"reason": "device_link_down", "socket": 8519},
+            "payload_strobe": {"reason": "device_link_down", "socket": 8529},
+            "payload_light": {"reason": "device_link_down", "socket": 8529},
+        }
+        for _d, _od in _dev_offline_detail.items():
+            device_bridge.register(_d, offline_detail=_od)
         _logger.info("p2 wiring: device health bridge ON "
                      "(mic + payload + ptz all real)")
 

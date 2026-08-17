@@ -78,6 +78,28 @@ def test_recovery_emits_online():
     assert emitted[1]["cat"] == "voice" and emitted[1]["sev"] == "info"
 
 
+def test_offline_detail_attached_on_offline_only():
+    b, emitted = _bridge(down_threshold=1, up_threshold=1)
+    b.register("ptz", offline_detail={"reason": "onvif_unreachable"})
+    b.observe("ptz", False)   # offline
+    b.observe("ptz", True)    # online
+    # 11 S6.2: reason is offline evidence -> on the offline event.
+    assert emitted[0]["detail"] == {
+        "type": "device_offline", "device": "ptz", "reason": "onvif_unreachable"}
+    # MUTATION: if offline_detail leaked onto the online event, a failure reason
+    # would ride a recovery. Online must stay {type, device}.
+    assert emitted[1]["detail"] == {"type": "device_online", "device": "ptz"}
+
+
+def test_payload_offline_detail_carries_socket():
+    b, emitted = _bridge(down_threshold=1)
+    b.register("payload_strobe",
+               offline_detail={"reason": "device_link_down", "socket": 8529})
+    b.observe("payload_strobe", False)
+    assert emitted[0]["detail"]["socket"] == 8529
+    assert emitted[0]["detail"]["reason"] == "device_link_down"
+
+
 def test_observe_unregistered_device_is_noop():
     b, emitted = _bridge(down_threshold=1)
     # never registered -> observe does nothing (no monitor)

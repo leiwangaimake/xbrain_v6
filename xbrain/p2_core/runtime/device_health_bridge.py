@@ -51,12 +51,22 @@ class DeviceHealthBridge:
         self._down_thr = down_threshold
         self._up_thr = up_threshold
         self._monitors: dict = {}
+        # Per-device OFFLINE detail addendum (reason [+ socket]) per 11 S6.2. Kept
+        # here, not in build_device_event, because it is a wiring fact (which link /
+        # failure mode this device has), not intrinsic to the event shape.
+        self._offline_detail: dict = {}
 
-    def register(self, device_id: str) -> None:
-        """Add a monitor for one 11 S5.1A device id. Its emit builds the event and
-        forwards it. Registering twice is a no-op (idempotent wiring)."""
+    def register(self, device_id: str,
+                 offline_detail: Optional[dict] = None) -> None:
+        """Add a monitor for one 11 S5.1A device id. offline_detail is merged into
+        the detail of the OFFLINE event only (the 11 S6.2 'reason'/'socket'
+        evidence -- e.g. ptz reason=onvif_unreachable, payload socket=8519); the
+        online event stays {type, device}, since a failure 'reason' is meaningless
+        on a recovery. Registering twice is a no-op (idempotent wiring)."""
         if device_id in self._monitors:
             return
+        if offline_detail:
+            self._offline_detail[device_id] = dict(offline_detail)
         self._monitors[device_id] = DeviceLivenessMonitor(
             device_id, emit=self._on_transition,
             down_threshold=self._down_thr, up_threshold=self._up_thr)
@@ -75,11 +85,14 @@ class DeviceHealthBridge:
     def _on_transition(self, device_id: str, offline: bool) -> None:
         """A monitor confirmed a transition -> build + emit the event."""
         try:
+            # 11 S6.2: attach reason/socket on the OFFLINE event only (evidence of
+            # what went down); the paired online carries just {type, device}.
+            extra = self._offline_detail.get(device_id) if offline else None
             ev = build_device_event(
                 device_id, offline, rid=self._rid,
                 eid=self._eid_gen(device_id, offline),
                 detected_at=self._now_iso(), created_at=self._now_iso(),
-                ts=0.0, src="p2_core")
+                ts=0.0, src="p2_core", extra_detail=extra)
             self._emit(ev)
             _logger.info("device %s %s emitted", device_id,
                          "offline" if offline else "online")
