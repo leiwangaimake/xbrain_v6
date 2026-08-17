@@ -223,15 +223,22 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     if pub_exc:
                         _logger.error("mic publisher thread crashed:\n%s",
                                       pub_exc)
-                    # SW-12 device liveness: MIC is alive iff both arecord threads
-                    # live (a dropped USB MIC kills them -> device_offline after
-                    # the debounce). payload/ptz fed None (unknown) until their
-                    # reachability is plumbed -> they emit nothing yet (GATED-HW).
+                    # SW-12 device liveness. MIC: alive iff both arecord threads
+                    # live (a dropped USB MIC kills them -> device_offline after the
+                    # debounce). payload: poll payload-service GET /status for the
+                    # 8519/8529 GZH-2 socket state (audio -> speaker/siren, lights ->
+                    # strobe/light); None -> unknown, no false offline. ptz: fed None
+                    # for now -- an ONVIF ping would block this loop, so it needs a
+                    # non-blocking probe thread (GATED-HW, seam ready).
                     device_bridge.observe("mic", bool(cap_alive and pub_alive))
                     device_bridge.observe("ptz", None)
-                    for _pd in ("payload_speaker", "payload_siren",
-                                "payload_strobe", "payload_light"):
-                        device_bridge.observe(_pd, None)
+                    _ps = payload.device_status()
+                    _audio = _ps["audio"] if _ps else None
+                    _lights = _ps["lights"] if _ps else None
+                    device_bridge.observe("payload_speaker", _audio)
+                    device_bridge.observe("payload_siren", _audio)
+                    device_bridge.observe("payload_strobe", _lights)
+                    device_bridge.observe("payload_light", _lights)
                     last_hb = now
                 time.sleep(0.1)
         finally:

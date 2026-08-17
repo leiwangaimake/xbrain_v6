@@ -80,6 +80,24 @@ class PayloadDomain:
         self._last_bright = _LIGHT_ON_BRIGHT
         self._last_volume = 50               # initial; first abs/rel adjusts
 
+    def device_status(self, timeout_s: float = 1.0):
+        """Poll payload-service GET /status for the GZH-2 device-link state (the
+        SW-12 device liveness source). Returns {"audio": bool, "lights": bool}
+        (the 8519 / 8529 sockets) or None on ANY error -- None means 'unknown', so
+        a hung or absent service never fabricates a device_offline. Short timeout
+        so this cannot stall the p2 heartbeat that calls it."""
+        import json as _json
+        import urllib.request
+        try:
+            url = self._cfg.payload_base_url.rstrip("/") + "/status"
+            with urllib.request.urlopen(url, timeout=timeout_s) as r:
+                d = _json.loads(r.read().decode("utf-8"))
+            dev = d.get("device") or {}
+            return {"audio": bool(dev.get("audio_connected")),
+                    "lights": bool(dev.get("lights_connected"))}
+        except Exception:      # noqa: BLE001 -- unknown on error, never a false down
+            return None
+
     def handle_envelope(self, payload_bytes: bytes) -> None:
         """Callback body; runs from a worker thread hand-off, NOT the
         Rust Zenoh thread (see main_wiring for the trampoline)."""
