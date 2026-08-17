@@ -184,6 +184,17 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                 "approval_pending": None,  # /api/approval/pending: L3 queue gated
             }
 
+        def query_tasks(self, scope, limit, before):
+            # GET /api/tasks -> P3's query/tasks queryable (11 S12.2A). P5 does
+            # not read P3's task.db (plane isolation); it get()s over the gen
+            # session P3 answers on. BLOCKING (iterates the reply channel), so
+            # the route calls this via asyncio.to_thread -- never inline on the
+            # FastAPI loop. No reply -> empty page (task_query_client), never a 500.
+            from xbrain.p5_gateway.hmi.task_query_client import (  # noqa: PLC0415
+                query_tasks as _query_tasks,
+            )
+            return _query_tasks(gen, scope=scope, limit=limit, before=before)
+
     try:
         socks = make_bound_sockets(bind)
         import os                                    # noqa: PLC0415

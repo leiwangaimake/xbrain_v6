@@ -224,6 +224,28 @@ def build_app(
         result = fences_endpoint(provider.fence_degraded())
         return JSONResponse(status_code=result.status, content=result.body)
 
+    @app.get("/api/tasks")
+    async def get_tasks(scope: str = "current", limit: int = 50,
+                        before: Optional[int] = None):
+        """17 S6.5 / 11 S12.2A: current OR history task cards for the panel,
+        relayed from P3's query/tasks queryable (P5 does not read P3's task.db).
+        scope must be current|history; limit is clamped [1,500]; before is the
+        keyset paging cursor for lazy history. The Zenoh get() is BLOCKING, so it
+        runs in a worker thread -- never inline on the FastAPI event loop. A
+        provider without query_tasks (a legacy/test seam) -> available:false empty
+        so the panel greys rather than 500s."""
+        import asyncio                              # noqa: PLC0415
+        if scope not in ("current", "history"):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "scope must be current|history"})
+        limit = max(1, min(int(limit), 500))
+        qt = getattr(provider, "query_tasks", None)
+        if qt is None:
+            return {"tasks": [], "has_more": False, "next_before": None,
+                    "available": False}
+        return await asyncio.to_thread(qt, scope, limit, before)
+
     from xbrain.p5_gateway.hmi.data_readers import (  # noqa: PLC0415
         events_group, geo_group,
     )

@@ -1418,6 +1418,7 @@ Zenoh key 映射与 `geo` 的 **W4-F** 硬拒规则，一律**以 `11` §12.1.1 
 | `GET /api/fences` | 电子围栏多边形。<br>★★★ **v1.1 补（S15）**：几何的来源是 **`cmd/fence` 订阅**（P5 是真订阅者，见 **§6.9**）；★★ **未同步时 🚫 不得返回 `200` ＋ 空集**，必须显式 `E_DEGRADED` —— 见 **§6.9 `P5F-2`**。★ 同一约束适用于 `GET /api/fences/{fence_set_id}` 与 `GET /api/fences/active`（`11` §9A.11 的三端点） |
 | `GET /api/docks` | 充电桩列表 |
 | `GET /api/events?since=&sev=&cat=&limit=` | 历史事件查询（分页） |
+| ★ `GET /api/tasks?scope=&limit=&before=` | ★★★ **v1.3 新增（2026-08-17 · §6.8.4 任务面板）**：当前/历史任务卡片。P5 **不读 P3 task.db**（平面隔离），转发自 P3 `query/tasks` queryable（`11` §12.2A）。`scope ∈ {current, history}`（缺省 current）；`limit` 钳制 `[1,500]`；`before` 键集分页游标。回复 `{tasks:[TaskCard], has_more, next_before}`，TaskCard 出字段 1/2/3/5（`巡逻点` targets 待关键点层）。★ Zenoh `get()` 阻塞 → 路由经 `asyncio.to_thread` 调，不阻塞事件环 |
 | `GET /api/health` | 健康度快照 |
 | `GET /api/bit` | 最近一次自检报告 |
 | `GET /api/metrics` | 遥测指标快照 |
