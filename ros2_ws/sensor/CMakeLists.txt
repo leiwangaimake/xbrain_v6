@@ -70,7 +70,7 @@ endif()
 
 # Offline tests: plain executables, no ROS / no hardware, registered with CTest.
 enable_testing()
-foreach(t nmea_parser gnss_heading gnss_fix clock_status heading_resolver rtk_driver yaml_lite rtk_config)
+foreach(t nmea_parser gnss_heading gnss_fix clock_status heading_resolver rtk_driver yaml_lite rtk_config serial_reopen)
   add_executable(test_${t} test/test_${t}.cc)
   target_link_libraries(test_${t} PRIVATE rtk_driver_core)
   add_test(NAME test_${t} COMMAND test_${t})

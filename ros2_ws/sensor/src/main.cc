@@ -28,6 +28,8 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include <cerrno>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -39,6 +41,7 @@
 
 #include "sensor/rtk_config.h"
 #include "sensor/rtk_driver.h"
+#include "sensor/serial_reopen.h"
 #include "sensor/zenoh_sink.h"
 
 namespace {
@@ -194,8 +197,9 @@ int main() {
     return 1;
   }
 
-  // 3) Serial.
-  const int fd = OpenSerial(cfg.serial_port, cfg.serial_baud);
+  // 3) Serial. fd is mutable: the loop closes + reopens it on a USB unplug so the
+  //    link recovers when the cable is plugged back in (serial_reopen.h).
+  int fd = OpenSerial(cfg.serial_port, cfg.serial_baud);
   if (fd < 0) return 1;
 
   // 4) RT-plane transport (throws if the RT router is unreachable).
@@ -213,20 +217,63 @@ int main() {
               rid.c_str(), boot.c_str(), cfg.serial_port.c_str(), cfg.serial_baud);
 
   // 5) 20 Hz loop. steady_clock paces the period; each tick feeds fresh serial
-  //    bytes and publishes the resolved GnssHeading.
+  //    bytes and publishes the resolved GnssHeading. On a USB unplug the loop drops
+  //    the dead fd and re-open()s the port ~1 Hz until it is back (hotplug recovery,
+  //    serial_reopen.h). The driver core already fails safe on the data gap (facts
+  //    age out -> fix/heading invalid) and self-recovers when bytes resume.
   constexpr auto kPeriod = std::chrono::milliseconds(50);
+  // Serial-recovery timings (NOT safety params -- link recovery; a config key is a
+  // later refinement). A GPS/RTK module streams NMEA >= 1 Hz even with no fix, so
+  // kStaleReopenS well above that means "the port went quiet -> the USB is gone".
+  // kReopenTryS keeps us from calling open() at 20 Hz while it is unplugged.
+  constexpr double kStaleReopenS = 3.0;
+  constexpr double kReopenTryS = 1.0;
   auto next = std::chrono::steady_clock::now();
   char buf[1024];
   int64_t ticks = 0;
   int64_t bytes_total = 0;
   double last_hb = MonoNowS();
   double last_clock = 0.0;
+  double last_byte_mono = MonoNowS();   // for the stale-data reopen watchdog
+  double last_reopen_try = 0.0;
   for (;;) {
-    const ssize_t n = read(fd, buf, sizeof(buf));
     const double mono = MonoNowS();
-    if (n > 0) {
-      driver.feed(buf, static_cast<std::size_t>(n), mono);
-      bytes_total += n;
+    if (fd < 0) {
+      // Disconnected: retry opening the configured port ~1 Hz. When the USB is
+      // plugged back in the kernel re-creates the same CDC-ACM node, so this
+      // succeeds and the link resumes.
+      if (mono - last_reopen_try >= kReopenTryS) {
+        last_reopen_try = mono;
+        fd = OpenSerial(cfg.serial_port, cfg.serial_baud);
+        if (fd >= 0) {
+          last_byte_mono = mono;   // fresh grace window before the stale watchdog
+          std::printf("rtk_driver: serial %s reopened (hotplug recovery)\n",
+                      cfg.serial_port.c_str());
+          std::fflush(stdout);
+        }
+      }
+    } else {
+      const ssize_t n = read(fd, buf, sizeof(buf));
+      const int err = errno;
+      switch (sensor::ClassifySerialRead(n, err, mono, last_byte_mono,
+                                         kStaleReopenS)) {
+        case sensor::SerialAction::kFeed:
+          driver.feed(buf, static_cast<std::size_t>(n), mono);
+          bytes_total += n;
+          last_byte_mono = mono;
+          break;
+        case sensor::SerialAction::kKeep:
+          break;                 // normal: no data this tick
+        case sensor::SerialAction::kReopen:
+          std::fprintf(stderr,
+                       "rtk_driver: serial lost (n=%zd errno=%s); reopening %s\n",
+                       n, (n < 0 ? std::strerror(err) : "eof"),
+                       cfg.serial_port.c_str());
+          close(fd);
+          fd = -1;
+          last_reopen_try = mono;
+          break;
+      }
     }
     driver.tick(mono, WallMs());
     // 1 Hz rt/clock/status (11 S3.11). The chrony read is I/O, done here (not in
@@ -238,8 +285,9 @@ int main() {
     }
     ++ticks;
     if (mono - last_hb >= 2.0) {  // heartbeat: proves the loop and serial are alive
-      std::printf("rtk_driver: alive ticks=%lld serial_bytes=%lld\n",
-                  static_cast<long long>(ticks), static_cast<long long>(bytes_total));
+      std::printf("rtk_driver: alive ticks=%lld serial_bytes=%lld fd=%d\n",
+                  static_cast<long long>(ticks),
+                  static_cast<long long>(bytes_total), fd);
       std::fflush(stdout);
       last_hb = mono;
     }
