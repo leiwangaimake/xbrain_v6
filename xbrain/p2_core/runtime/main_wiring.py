@@ -32,8 +32,11 @@ seven arbiter domains (motion / speaker / asr / payload_light / ptz
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 from xbrain.p2_core.runtime.mic_capture import (
@@ -156,6 +159,39 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         else:
             _logger.warning("p2 wiring: PTZ disabled (no onvif credentials)")
 
+        # Device liveness -> 11 S6.2 device_offline/online events (SW-12 producers).
+        # p5 persists + backfills these. MIC is REAL today (arecord thread
+        # alive/dead below); payload + ptz are REGISTERED but fed 'unknown' (None)
+        # each tick until their clients expose a reachability check -- unknown
+        # emits nothing (never a false online), so wiring them now is a safe seam
+        # (their real detection is GATED-HW).
+        _dev_evt_seq = [0]
+
+        def _emit_device_event(ev: dict) -> None:
+            # Publish on the RELATIVE event/{sev}/{cat} key (bus convention); p5's
+            # event/** subscriber picks it up, derives channel, persists.
+            key = "event/%s/%s" % (ev["sev"], ev["cat"])
+            gen.put(key, json.dumps({
+                "eid": ev["eid"], "title": ev["title"], "detail": ev["detail"],
+                "src": ev["src"], "ts": ev["ts"]}).encode("utf-8"))
+
+        def _dev_eid(dev: str, offline: bool) -> str:
+            _dev_evt_seq[0] += 1
+            return "dev-%s-%s-%d" % (dev, "off" if offline else "on",
+                                     _dev_evt_seq[0])
+
+        from xbrain.p2_core.runtime.device_health_bridge import DeviceHealthBridge
+        device_bridge = DeviceHealthBridge(
+            rid=os.environ.get("XBRAIN_ROBOT_ID", "unknown"),
+            emit=_emit_device_event,
+            now_iso=lambda: datetime.now(timezone.utc).isoformat(),
+            eid_gen=_dev_eid)
+        for _d in ("mic", "ptz", "payload_speaker", "payload_siren",
+                   "payload_strobe", "payload_light"):
+            device_bridge.register(_d)
+        _logger.info("p2 wiring: device health bridge ON (mic real; "
+                     "payload/ptz seamed, GATED-HW)")
+
         # Main loop: wait for stop.
         try:
             last_hb = time.monotonic()
@@ -187,6 +223,15 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     if pub_exc:
                         _logger.error("mic publisher thread crashed:\n%s",
                                       pub_exc)
+                    # SW-12 device liveness: MIC is alive iff both arecord threads
+                    # live (a dropped USB MIC kills them -> device_offline after
+                    # the debounce). payload/ptz fed None (unknown) until their
+                    # reachability is plumbed -> they emit nothing yet (GATED-HW).
+                    device_bridge.observe("mic", bool(cap_alive and pub_alive))
+                    device_bridge.observe("ptz", None)
+                    for _pd in ("payload_speaker", "payload_siren",
+                                "payload_strobe", "payload_light"):
+                        device_bridge.observe(_pd, None)
                     last_hb = now
                 time.sleep(0.1)
         finally:
