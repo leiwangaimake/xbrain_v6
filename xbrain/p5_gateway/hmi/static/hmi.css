@@ -146,7 +146,8 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .task-state { font-size: .82em; padding: 2px 7px; border-radius: 9px; }
 .task-state.running  { color: var(--gold);      background: rgba(240,225,115,.12); border: 1px solid rgba(240,225,115,.45); }
 .task-state.done     { color: var(--ok-bright);  background: rgba(46,232,107,.10);  border: 1px solid rgba(46,232,107,.42); }
-.task-state.pending  { color: var(--cyan);       background: rgba(91,192,235,.10);  border: 1px solid rgba(91,192,235,.42); }
+/* 待执行(含定时/循环任务): 绿色标签 -- 与当前任务同属"活跃/即将执行"(用户 2026-08-17). */
+.task-state.pending  { color: var(--ok-bright);  background: rgba(46,232,107,.10);  border: 1px solid rgba(46,232,107,.42); }
 .task-state.suspended{ color: var(--warn);       background: rgba(241,143,23,.12);  border: 1px solid rgba(241,143,23,.45); }
 .task-state.failed,
 .task-state.cancelled{ color: var(--danger);     background: rgba(230,57,50,.12);   border: 1px solid rgba(230,57,50,.45); }
