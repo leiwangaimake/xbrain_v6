@@ -56,8 +56,10 @@
 
 > ★★★ **P1-4 设计意图（用户 2026-08-16 · 航向恢复,不逼停）** —— 背景:双天线航向(L1,绝对,静止可用)突然丢时,现设计运动态已无缝切 COG(L2,`11` §3.3,不停车);但**静止 / 原地转向态**下 COG 物理上无解(无运动=无航迹),现状进 L2-blind(保持旧航向但 `heading_valid=false`)。用户方案分两级补:
 > - **① odom 桥接(治静止 + 转向)**:quadruped 的里程计 yaw **静止和原地转向都有效**(正是 COG 做不到的两工况),把丢失瞬间的 GNSS 绝对航向当锚点 + 叠加 odom yaw 增量 → 静止也有效、且**知道机器人转没转**(解掉"保持旧航向但机器人转了就错"的风险)。航向源链变为 `L1 双天线 → odom 桥接(相对锚定,慢漂,有界时间)→ L2 COG → L3`。
+> - ★★★ **这不是新设计 —— 契约 `11` §3.3.2a 已把它定为 `L1.5 odom_aligned` 级**(2026-07-30 裁决,夹在 L1↔L2,`yaw_capable=true`):`heading_enu = wrap(odom_yaw + north_offset)`,`north_offset = wrap(abs_heading − odom_yaw)` 由 L1/COG **持续 EMA 标定**(NO-1 `alpha=0.08`)、**静止时保持**、**转弯时冻结**(NO-3 用 1.5s 窗**最小二乘斜率** > 0.06 rad/s 判转弯,🚫 不用瞬时角速度 —— 四足每步左右晃 ±7° 会被误判);准入 `unc ≤ 0.30 rad`(≈17°)且 odom 新鲜。★ `11`:3823 明写它正好**接住"减速停稳 → COG 失效"那一下** —— 即前面聊的 L2-blind 停车态(也就是 HMI 现在会闪红 LOSS 的那个边界,L1.5 落地后自然消失)。
+> - ★★ **为什么 resolver 现在没实现它(我特意留空)**:两个硬缺口 —— (a) **G-15**(`11` §14.4):L1.5 的 `i_heading` 与**硬速度上限**两格**至今空白**,须与 `odom.yaw_drift_dps`(NAV-96/97)一起标定,§3.1 禁止代码编默认;(b) **Q-U34-1**(`11`:3843):`rtk_driver` 需订阅 odom(`rt/chassis/state` 的 `odom_yaw` + 机体 `vx`),而 quadruped 未建。★ resolver 已留干净缝:`heading_resolver.h` 头注逐字写明"不实现 L1.5,消费方只见 L1/L2/L3",两缺口一补即可接上,不推翻现状态机。
 > - **② 视觉导向重捕 COG**:odom 漂太多 / 需刷新绝对航向时,perception 找**无障碍方向**,P1/P3 控制机器人**朝该方向挪一小段** → 拿到 COG → 立刻回高精度航向、恢复任务("立刻开始任务")。
-> - **分工**:odom 数据归 `quadruped`(GATED-HW);无障碍方向归 `perception`(GATED-DESIGN);"要不要挪 + 挪哪"的决策与执行归 P1/P3;航向 resolver(rtk_driver)只**报状态**(L2-blind/L3),需给它**加一路 odom 输入** + 契约 `11` §3.3 **加"odom 桥接态"**。
+> - **分工**:odom 数据归 `quadruped`(GATED-HW);无障碍方向归 `perception`(GATED-DESIGN);"要不要挪 + 挪哪"的决策与执行归 P1/P3;航向 resolver(rtk_driver)只**报状态**(L2-blind/L3),需给它**加一路 odom 输入** + 实现契约**已定义的** `11` §3.3.2a `L1.5`(🚫 不是"给契约加级",是填 G-15 两格 + 接 odom 输入)。
 > - **落地必带的护栏**:(a) odom 桥接**最长时长 / 最大累积 yaw 漂移上界**,超了强制去拿 COG 或退 L3,不可无限信 odom;(b) 桥接精度受**丢失瞬间锚点新鲜度**约束(锚点 cov 大则桥接也差);(c) odom 自身异常(打滑 / 腿部估计坏)要能识别并退 L3。
 > - **依赖顺序**:必须在 **quadruped(odom)+ perception(无障碍方向)+ RNS** 三者落地之后做;三者任一 GATED 时本项不可动。
 
