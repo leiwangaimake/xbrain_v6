@@ -360,18 +360,20 @@
     }
   }
 
-  async function refreshTasks() {
-    // Pull both scopes; a failure leaves the last view up (a transient poll miss
-    // must not blank the panel). history limit is generous -- retention keeps it
-    // to 30 days (15 S8), and the stack scrolls.
+  async function fetchTaskScope(scope, elId, isHistory) {
+    // Each scope fetched INDEPENDENTLY: a failure (or slow reply) on one panel
+    // must never blank or block the other -- one 404/500 should not swallow both
+    // renders. A transient miss leaves that panel's last view up; next poll retries.
     try {
-      const [cur, his] = await Promise.all([
-        getJSON("/api/tasks?scope=current&limit=50"),
-        getJSON("/api/tasks?scope=history&limit=100"),
-      ]);
-      renderTaskList("currentTaskList", cur.tasks, false);
-      renderTaskList("historyTaskList", his.tasks, true);
+      const d = await getJSON(`/api/tasks?scope=${scope}&limit=${isHistory ? 100 : 50}`);
+      renderTaskList(elId, d.tasks, isHistory);
     } catch (e) { /* transient; next refresh retries */ }
+  }
+  function refreshTasks() {
+    // history limit is generous -- retention keeps terminal rows to 30 days
+    // (15 S8) and the stack scrolls.
+    fetchTaskScope("current", "currentTaskList", false);
+    fetchTaskScope("history", "historyTaskList", true);
   }
 
   // History folding (iPhone-lock-screen style, user 2026-08-17): click a collapsed
