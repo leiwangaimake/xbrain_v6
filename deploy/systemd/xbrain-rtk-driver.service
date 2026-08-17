@@ -32,6 +32,12 @@ OOMScoreAdjust=-500
 SupplementaryGroups=dialout
 EnvironmentFile=-/etc/xbrain/robot.env
 Environment="LD_LIBRARY_PATH=/usr/local/lib"
+# DEC-15 (U83): the install root is /opt/xbrain_v6/data/install, and every OTHER
+# C++ unit now points there. rtk_driver still points at its raw CMake BUILD tree
+# because its CMakeLists has NO install() rule -- it can only build, not install,
+# and the ORIN has no colcon. This is the one C++ binary that actually exists, so
+# keeping the working build/ path beats pointing at an empty data/install. Migrate
+# to /opt/xbrain_v6/data/install/... once DEP-5 adds the install() rule (NEXT.md).
 ExecStart=/opt/xbrain_v6/ros2_ws/sensor/build/rtk_driver
 
 [Install]

@@ -146,7 +146,7 @@
 
 > 批2-4 把 `deploy/systemd/` 的单元从「草稿 + 若干失效」硬化成「可一键安装、ORIN 实测通」。
 > 提交：`38ee531`(批2 硬化)· `6dba157`(批3 install 机制)· 本批(批4 验证 + uninstall 通配修复)。
-> ★ 安装**机制已成 + ORIN 实测 install / uninstall / gated-skip / mount 全绿**；剩下是**卡 DEC-15 的 enable + AI 单元**，与**卡 sd_notify / 真配置的几项**。
+> ★ 安装**机制已成 + ORIN 实测 install / uninstall / gated-skip / mount 全绿**。**DEC-15 已于 2026-08-17 收口**(U83：命名 `xbrain-` + install root `/opt/xbrain_v6/data/install`)；剩下是**构建系统实现(DEP-5)+ 标定/回填**，enable 不再卡决策。
 
 ### 8.1 已完成（DEC-15 无关的正确性 + 机制）`[DONE]`
 
@@ -158,10 +158,11 @@
 
 | # | 缺什么 | 卡因 |
 |---|---|---|
-| DEP-1 | **enable 到 boot + 3 个 AI 单元(ai-asr/llm/payload)安装** | `[GATED-DECISION]` **DEC-15**(构建系统 + 仓库布局 + systemd 单元命名 + Stage 表位置，owner = **主会话**)未决 + 两处 `11` 回填(§11A.2.3 ai_asr 模型账按 AIR-M1、payload 的 §11A.6.3 OOM 行)。install 机制已备好，DEC-15 一落即 `sudo install_units.sh --enable`。 |
+| DEP-1 | **enable 到 boot + 3 个 AI 单元(ai-asr/llm/payload)安装** | ~~`[GATED-DECISION]` DEC-15~~ **已解**(U83, 2026-08-17)。enable 现只等：标定安全参数(§3.1，否则 freeze 拒 null)+ `/etc/xbrain` 真值；AI 三单元另等两处 `11` 回填(§11A.2.3 ai_asr 模型账按 AIR-M1、payload 的 §11A.6.3 OOM 行)。就绪即 `sudo install_units.sh --enable`。 |
 | DEP-2 | **chassis_relay 的 `10` §3.3.8 watchdog 重新加回**(Type=notify + WatchdogSec + sd_notify 三者同时) | `[GATED]` 卡 chassis_relay C++ 实现 `sd_notify(WATCHDOG=1)`；批2 已在单元内就地注明「延期非删除」。p1-p5 / 路由同理:实现心跳后可加。★ **单加 WatchdogSec 会重启环**(实测)，必须与 Type=notify + sd_notify 一起。 |
 | DEP-3 | **zenohd-gen 空变量守卫**：`LAN2_IP`/`WIFI_IP` 为空 → envsubst 写空串 → endpoint 变 `tcp/:7447` → zenohd 可能当 bind-all(触 NET-C9) | `[SW-NOW]` 现仅靠模板 127.0.0.1 占位兜底，**无单元级守卫**。需 `ExecStartPre` 校验两 env 非空再启。批2 已在 zenohd-gen 单元注释标记该 gap；现有 `grep '${'` 检查抓不到(envsubst 对未设变量写空、不留占位符)。 |
 | DEP-4 | **p2-p5 的 `common.robot_id` 来源确认**：config-freeze 必须**无** `XBRAIN_ROBOT_ID` 才能跑(否则 materialize abort，dev 实证)，那快照里 `common.robot_id` 从哪来? | `[SW-NOW 待核]` p1 / rtk 运行期直读 env 已解;p2-p5 走 freeze 快照的 `common.robot_id`(layers.py 在 freeze 期映射)。需确认**生产 freeze** 的 robot_id 流(configs/ 直填? 还是 freeze 另有取法)，避免快照 `common.robot_id` 为 null。 |
+| DEP-5 | **构建系统实现:C++ 装到 install root `/opt/xbrain_v6/data/install`**(DEC-15/U83 定的 root) | `[SW-NOW · 部分 GATED-HW]` 现状:6 个 gated C++ 单元路径已指向 `data/install`(U83 同批改)，但**无二进制真落那**——① 纯 CMake 包(chassis_relay/rtk_driver/teleop_input)**缺 `install()` 规则**(rtk 只能编到 `ros2_ws/sensor/build/`，其单元暂留该路径)；② ROS2 包(perception/quadruped)走 colcon，但 **ORIN 现无 colcon/ROS2**；③ 编译树(build/)按 §0.2 应移出 `ros2_ws/`。需:加 install 规则 + colcon/cmake `--install-base /opt/xbrain_v6/data/install` + 迁 rtk。感知/底盘本体仍 `[GATED-HW/DESIGN]`。 |
 
 ---
 
@@ -173,5 +174,5 @@
 |---|---|
 | **[GATED-HW] 云深处底盘/RTK/相机/遥控** | EX-2..6(§1)· quadruped/chassis_relay/rtk_driver/teleop_input(§2)· P1-1(§3)· 硬件集成(§4)· HMI-W4 位姿全片 / W5 §6.4 快路 / W7 EX-1 数据(§7)· chassis_relay watchdog 待 sd_notify(§8/DEP-2) |
 | **[GATED-DESIGN] 设计未写** | perception 详设(§2/SW-2)· RNS 详设(§3/SW-3)· P1-4 航向丢失恢复 odom 桥接+视觉重捕(§3，依赖 quadruped odom + perception + RNS) |
-| **[GATED-DECISION] 待用户/契约裁决** | REST §12.2 vs §6.5 谁权威 + GWY-P5-13 真实现(§7.1)· 围栏 role 枚举 vs zone_label(§7.2)· D-45 平台基线 humble/jazzy(§2 rtk_driver 语言)· **DEC-15 部署 enable + 3 AI 单元安装(§8/DEP-1)** |
-| **[SW-NOW] 纯软件可推(非卡,待排期)** | SW-2/3 设计 · SW-4 云上行 · SW-5 测试框架 · SW-6 配置落值 · SW-7 字符集债 · SW-8 充电执行 · SW-9 全系统圆润 · SW-10 comment_ratio · SW-11 LAN2 bind 落值 · DEP-3 zenohd-gen 空变量守卫 · DEP-4 robot_id 快照源核实(§8) |
+| **[GATED-DECISION] 待用户/契约裁决** | REST §12.2 vs §6.5 谁权威 + GWY-P5-13 真实现(§7.1)· 围栏 role 枚举 vs zone_label(§7.2)· rtk_driver 语言待定(§2；平台基线 D-45 本身已 U74 定 Humble/22.04)· ~~DEC-15~~ **已 U83 收口(§8)** |
+| **[SW-NOW] 纯软件可推(非卡,待排期)** | SW-2/3 设计 · SW-4 云上行 · SW-5 测试框架 · SW-6 配置落值 · SW-7 字符集债 · SW-8 充电执行 · SW-9 全系统圆润 · SW-10 comment_ratio · SW-11 LAN2 bind 落值 · DEP-3 zenohd-gen 空变量守卫 · DEP-4 robot_id 快照源核实 · DEP-5 构建系统装 data/install(§8) |
