@@ -24,7 +24,7 @@ from xbrain.p5_gateway.persistence.record_dao import RecordDao
 from xbrain.p5_gateway.persistence.schema_record import ALL_RECORD_STATEMENTS
 from xbrain.p5_gateway.reconnect.replay import RateLimiter
 from xbrain.p5_gateway.uplink.cloud import (
-    AckTracker, BackfillRunner, DeliveryMarker, replay_key,
+    AckTracker, BackfillRunner, DeliveryMarker, ReconRunner, replay_key,
 )
 
 
@@ -212,3 +212,85 @@ async def test_backfill_paces_through_rate_limiter(dao):
 
 def test_replay_key_shape():
     assert replay_key("m20s-001", "alarm") == "xbrain/m20s-001/event/replay/alarm"
+
+
+# --- ReconRunner (S3Y.3) ---
+
+async def _noop_sleep(_s):
+    return None
+
+
+@pytest.mark.asyncio
+async def test_recon_build_reqs_bounds(dao):
+    # alarm holds ch_seq 1..3, normal holds 1..2.
+    for i in range(3):
+        await dao.insert_event(_event(f"a{i}", channel="alarm", sev="alarm"))
+    for i in range(2):
+        await dao.insert_event(_event(f"n{i}", channel="normal", sev="info"))
+    rr = ReconRunner(dao, RID, _FakePub(), RateLimiter(1000.0), _now_iso)
+    reqs = await rr.build_reqs(now_mono=lambda: 1.0)
+    by_ch = {r["channel"]: r for r in reqs}
+    assert by_ch["alarm"]["my_max_seq"] == 3 and by_ch["alarm"]["my_min_seq"] == 1
+    assert by_ch["normal"]["my_max_seq"] == 2
+    assert by_ch["alarm"]["req_id"] == "rc-1000-alarm"
+
+
+@pytest.mark.asyncio
+async def test_recon_rsp_resends_gap(dao):
+    for i in range(3):                 # alarm ch_seq 1,2,3 (need_ack=1)
+        await dao.insert_event(_event(f"a{i}", channel="alarm", sev="alarm"))
+    pub = _FakePub()
+    rr = ReconRunner(dao, RID, pub, RateLimiter(1000.0), _now_iso)
+    await rr.build_reqs(now_mono=lambda: 1.0)          # req_id rc-1000-alarm
+    res = await rr.on_rsp(
+        {"req_id": "rc-1000-alarm", "channel": "alarm", "their_max_seq": 1},
+        now_mono=lambda: 2.0, sleep=_noop_sleep)
+    assert res["resent"] == 2                           # ch_seq 2,3
+    kinds = [d["kind"] for _k, d in pub.puts]
+    assert kinds == ["begin", "item", "item", "end"]
+    keys = {k for k, _d in pub.puts}
+    assert keys == {replay_key(RID, "alarm")}           # RC-1/R-3: replay key only
+    # batch id prefixed rc- (RC-2), NOT bf-.
+    assert all(d["batch_id"].startswith("rc-") for _k, d in pub.puts)
+
+
+@pytest.mark.asyncio
+async def test_recon_rsp_req_id_mismatch_discarded(dao):
+    await dao.insert_event(_event("a0", channel="alarm", sev="alarm"))
+    pub = _FakePub()
+    rr = ReconRunner(dao, RID, pub, RateLimiter(1000.0), _now_iso)
+    await rr.build_reqs(now_mono=lambda: 1.0)          # stores rc-1000-alarm
+    # MUTATION: acting on a stale/foreign req_id lets a late old rsp drive a resend.
+    res = await rr.on_rsp(
+        {"req_id": "rc-999-alarm", "channel": "alarm", "their_max_seq": 0},
+        now_mono=lambda: 2.0, sleep=_noop_sleep)
+    assert res["discarded"] == "req_id_mismatch"
+    assert pub.puts == []
+
+
+@pytest.mark.asyncio
+async def test_recon_rsp_nothing_missing(dao):
+    await dao.insert_event(_event("a0", channel="alarm", sev="alarm"))  # ch_seq 1
+    pub = _FakePub()
+    rr = ReconRunner(dao, RID, pub, RateLimiter(1000.0), _now_iso)
+    await rr.build_reqs(now_mono=lambda: 1.0)
+    res = await rr.on_rsp(
+        {"req_id": "rc-1000-alarm", "channel": "alarm", "their_max_seq": 1},
+        now_mono=lambda: 2.0, sleep=_noop_sleep)
+    assert res["resent"] == 0
+    assert pub.puts == []
+
+
+@pytest.mark.asyncio
+async def test_recon_resend_marks_need_ack0_delivered(dao):
+    # normal/info = need_ack=0: a recon resend is its delivery (like backfill).
+    for i in range(2):
+        await dao.insert_event(_event(f"n{i}", channel="normal", sev="info"))
+    pub = _FakePub()
+    rr = ReconRunner(dao, RID, pub, RateLimiter(1000.0), _now_iso)
+    await rr.build_reqs(now_mono=lambda: 1.0)          # rc-1000-normal
+    await rr.on_rsp(
+        {"req_id": "rc-1000-normal", "channel": "normal", "their_max_seq": 0},
+        now_mono=lambda: 2.0, sleep=_noop_sleep)
+    # both left the backfill index (delivered=1 on send).
+    assert await dao.backlog("normal", 10) == []

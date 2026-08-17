@@ -281,6 +281,43 @@ class RecordDao:
         row = await cur.fetchone()
         return {"next_ch_seq": row[0], "confirmed_upto": row[1]}
 
+    async def recon_bounds(self, channel: str) -> dict:
+        """MIN/MAX ch_seq still held for a channel (17 S3Y.3 recon req bounds:
+        my_min_seq / my_max_seq). Empty channel -> {min:0, max:0}. Reader conn.
+        my_min matters: it tells the cloud not to report purged rows as holes."""
+        if channel not in CHANNELS:
+            raise ValueError(f"channel not in {sorted(CHANNELS)}: {channel!r}")
+        cur = await self._rd.conn.execute(
+            "SELECT MIN(ch_seq), MAX(ch_seq) FROM events WHERE channel = ?",
+            (channel,))
+        row = await cur.fetchone()
+        lo = row[0] if row and row[0] is not None else 0
+        hi = row[1] if row and row[1] is not None else 0
+        return {"min": lo, "max": hi}
+
+    async def rows_by_seqs(self, channel: str, seqs: list) -> list:
+        """Fetch events for specific ch_seqs on a channel (recon resend, 17 S3Y.3).
+        Unlike backlog this IGNORES `delivered`: recon resends whatever the cloud
+        says it is missing, even a row we believed delivered (the cloud is
+        authoritative about what IT has). Reader conn; ch_seq order; a purged seq is
+        simply absent from the result. Same row shape as backlog so the replay path
+        (BackfillRunner._event_of) reconstructs the Event identically."""
+        if channel not in CHANNELS:
+            raise ValueError(f"channel not in {sorted(CHANNELS)}: {channel!r}")
+        if not seqs:
+            return []
+        marks = ", ".join("?" for _ in seqs)
+        cur = await self._rd.conn.execute(
+            f"SELECT ch_seq, eid, sev, cat, title, detail, need_ack FROM events "
+            f"WHERE channel = ? AND ch_seq IN ({marks}) ORDER BY ch_seq ASC",
+            (channel, *seqs))
+        rows = await cur.fetchall()
+        return [
+            {"ch_seq": r[0], "eid": r[1], "sev": r[2], "cat": r[3],
+             "title": r[4], "detail": json.loads(r[5]), "need_ack": bool(r[6])}
+            for r in rows
+        ]
+
     async def advance_confirmed_upto(self, channel: str, acked_upto: int,
                                      backfill_at: str) -> int:
         """Move confirmed_upto to the cloud-acked high-water mark (SEQ-3 monotonic;

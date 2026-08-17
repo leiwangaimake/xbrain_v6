@@ -60,7 +60,9 @@ class EventSubsystem:
         self._pipeline = None
         self._marker = None
         self._acks = None
+        self._rate = None
         self._runner = None
+        self._recon = None
 
     @property
     def enabled(self) -> bool:
@@ -110,7 +112,7 @@ class EventSubsystem:
         )
         from xbrain.p5_gateway.reconnect.replay import RateLimiter
         from xbrain.p5_gateway.uplink.cloud import (
-            AckTracker, BackfillRunner, DeliveryMarker,
+            AckTracker, BackfillRunner, DeliveryMarker, ReconRunner,
         )
 
         # writer_normal creates the schema; writer_full + reader open the same
@@ -125,9 +127,13 @@ class EventSubsystem:
         self._pipeline = EventPipeline(self._dao)
         self._marker = DeliveryMarker(self._dao, self._now_iso)
         self._acks = AckTracker(self._dao, self._now_iso)
+        # ONE rate limiter shared by backfill AND recon (RC-4): the two together
+        # must not exceed rate_eps_total, so they draw from the same bucket.
+        self._rate = RateLimiter(self._backfill_rate_eps)
         self._runner = BackfillRunner(
-            self._dao, self._rid, self._put_replay,
-            RateLimiter(self._backfill_rate_eps), self._now_iso)
+            self._dao, self._rid, self._put_replay, self._rate, self._now_iso)
+        self._recon = ReconRunner(
+            self._dao, self._rid, self._put_replay, self._rate, self._now_iso)
 
     def stop(self, timeout_s: float = 3.0) -> None:
         """Stop the loop + close connections. Best-effort; safe to call when never
@@ -197,6 +203,51 @@ class EventSubsystem:
         except Exception as exc:  # noqa: BLE001
             _logger.warning("backfill error (%s): %s",
                             type(exc).__name__, exc)
+
+    def send_recon_reqs(self) -> None:
+        """Periodic recon (17 S3Y.3): build + publish one recon/req per channel so
+        the cloud can report holes. No-op disabled or until the req publisher is
+        wired (set_recon_req_publisher)."""
+        if not self._enabled or self._loop is None:
+            return
+        asyncio.run_coroutine_threadsafe(self._send_recon_reqs(), self._loop)
+
+    async def _send_recon_reqs(self) -> None:
+        try:
+            reqs = await self._recon.build_reqs(self._now_mono)
+            if self._recon_req_put is not None:
+                for req in reqs:
+                    self._recon_req_put("event/recon/req", req)
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning("recon req error (%s): %s",
+                            type(exc).__name__, exc)
+
+    def submit_recon_rsp(self, rsp: dict) -> None:
+        """A cloud event/recon/rsp -> compute the gap and resend it (17 S3Y.3).
+        No-op disabled. A rsp with a stale/foreign req_id is discarded inside the
+        ReconRunner, not here."""
+        if not self._enabled or self._loop is None:
+            return
+        asyncio.run_coroutine_threadsafe(self._on_recon_rsp(rsp), self._loop)
+
+    async def _on_recon_rsp(self, rsp: dict) -> None:
+        try:
+            res = await self._recon.on_rsp(
+                rsp, now_mono=self._now_mono, sleep=asyncio.sleep)
+            _logger.info("recon rsp ch=%s: %s", rsp.get("channel"), res)
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning("recon rsp error (%s): %s",
+                            type(exc).__name__, exc)
+
+    # The recon/req publisher is injected by the wiring (Zenoh put on
+    # event/recon/req). Until wired, recon reqs go nowhere.
+    _recon_req_put: Optional[Callable[[str, dict], object]] = None
+
+    def set_recon_req_publisher(
+            self, put_fn: Callable[[str, dict], object]) -> None:
+        """Wire the Zenoh publisher for event/recon/req. put_fn(key, data) is a SYNC
+        call invoked from the event loop thread."""
+        self._recon_req_put = put_fn
 
     # The replay publisher is injected by the wiring (Zenoh put). Until wired,
     # a backfill's puts go nowhere -- set by set_replay_publisher.

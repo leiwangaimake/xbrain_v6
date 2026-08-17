@@ -119,3 +119,49 @@ def test_bad_path_degrades_to_noop(tmp_path):
     subs.submit_ack("e1", "ok")
     subs.trigger_backfill()
     subs.stop()
+
+
+def _wait(pred, timeout=3.0):
+    """Poll a predicate until true or timeout (submit_* is fire-and-forget)."""
+    import time
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.02)
+    return pred()
+
+
+def test_recon_req_then_rsp_resends_gap(tmp_path):
+    # End-to-end recon through the sync/async bridge (17 S3Y.3): P5 builds a req,
+    # the (fake) cloud answers, and P5 resends the gap on event/replay -- all via
+    # run_coroutine_threadsafe, so this also exercises the bridge for recon.
+    db = str(tmp_path / "record.db")
+    subs = EventSubsystem("m20s-001", db, str(tmp_path / "d.jsonl"),
+                          _now_iso, _now_mono)
+    recon_reqs, replays = [], []
+    subs.set_recon_req_publisher(lambda k, d: recon_reqs.append((k, d)))
+    subs.set_replay_publisher(lambda k, d: replays.append((k, d)))
+    assert subs.start() is True
+    try:
+        # two alarm-channel events pile up undelivered (link was down at persist).
+        # cat=intrusion so the pipeline DERIVES channel=alarm (S3.3: the producer's
+        # channel is overwritten; a task-cat event would land on normal instead).
+        subs.submit_event(_ev("a1", sev="alarm", cat="intrusion"),
+                          link_connected=False).result(timeout=3)
+        subs.submit_event(_ev("a2", sev="alarm", cat="intrusion"),
+                          link_connected=False).result(timeout=3)
+        subs.send_recon_reqs()
+        assert _wait(lambda: len(recon_reqs) >= 2)      # one per channel
+        alarm_req = next(d for _k, d in recon_reqs if d["channel"] == "alarm")
+        assert alarm_req["my_max_seq"] == 2 and alarm_req["my_min_seq"] == 1
+        # cloud has up to ch_seq 1 -> P5 must resend ch_seq 2 (eid a2) only.
+        subs.submit_recon_rsp({"req_id": alarm_req["req_id"], "channel": "alarm",
+                               "their_max_seq": 1})
+        assert _wait(lambda: any(d["kind"] == "item" for _k, d in replays))
+        items = [d for _k, d in replays if d["kind"] == "item"]
+        assert [it["event"]["eid"] for it in items] == ["a2"]
+        assert all(d["batch_id"].startswith("rc-") for _k, d in replays)
+        assert all("/event/replay/alarm" in k for k, _d in replays)
+    finally:
+        subs.stop()

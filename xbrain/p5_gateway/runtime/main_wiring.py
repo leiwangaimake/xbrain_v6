@@ -49,6 +49,8 @@ STATE_POSE_TOPIC = "state/pose"          # P1-1: pose + RTK heading (p1 bridge)
 STATE_CLOCK_TOPIC = "state/clock"        # P1-13: clock sync mirror (18-C G47)
 EVENT_WILDCARD_TOPIC = "event/**"        # W2: event/{severity}/{category} stream
 EVENT_ACK_TOPIC = "event/ack"            # 17 S3.5.1: cloud ack -> mark delivered
+EVENT_RECON_RSP_TOPIC = "event/recon/rsp"  # 17 S3Y.3: cloud recon answer
+RECON_PERIOD_S = 300.0                    # 17 S3Y.3 recon.period_s (interim const)
 PROBE_ESTOP_PING_TOPIC = "probe/estop/ping"  # W5: P5 ping (11 CR-2, 17 S6.3)
 PROBE_ESTOP_PONG_TOPIC = "probe/estop/pong"  # W5: quadruped pong (11 CR-3, authoritative source)
 HEALTH_FACTOR_TOPIC = "health/factor"    # W8: P2 health snapshot -> /api/health
@@ -314,6 +316,7 @@ def run_voice_loop_wiring(stop_flag: dict,
         # submit a no-op, the HMI ring below still works, voice loop untouched.
         event_subsystem = None
         replay_pub_normal = replay_pub_alarm = None
+        recon_req_pub = None
         if record_db_path:
             from xbrain.p5_gateway.runtime.event_subsystem import EventSubsystem
             event_subsystem = EventSubsystem(
@@ -337,6 +340,12 @@ def run_voice_loop_wiring(stop_flag: dict,
                     pub.put(json.dumps(data).encode("utf-8"))
 
                 event_subsystem.set_replay_publisher(_put_replay)
+                # recon/req publisher (17 S3Y.3): P5 periodically asks the cloud
+                # which ch_seqs it is missing. Relative key (dev bus); the cloud
+                # answers on event/recon/rsp (handled below). R-2 covers 'recon'.
+                recon_req_pub = gen.declare_publisher("event/recon/req")
+                event_subsystem.set_recon_req_publisher(
+                    lambda _k, d: recon_req_pub.put(json.dumps(d).encode("utf-8")))
 
         # Reconnect -> backfill trigger (17 S3.5.2). Detects the cloud-link down->up
         # edge from cloud-rx liveness (ack / recon rsp) and fires one backfill, so
@@ -434,17 +443,19 @@ def run_voice_loop_wiring(stop_flag: dict,
             hmi_state["clock"] = d.get("data")
 
         def _on_event(sample) -> None:
-            # R-2: "event/**" also matches our OWN event/replay/** (backfill) and
-            # event/ack (its own subscriber). Processing replay here would
-            # re-persist history and self-loop; skip both -- the segment right
-            # after 'event' is 'replay' or 'ack' (robust for absolute+relative).
+            # R-2: "event/**" also matches our OWN event/replay/** (backfill),
+            # event/ack, and event/recon/{req,rsp} -- all handled by dedicated
+            # subscribers, none are live events. Processing them here would
+            # re-persist / self-loop; skip when the segment right after 'event' is
+            # one of these (robust for absolute + relative keys).
             try:
                 key = str(sample.key_expr)
             except Exception:      # noqa: BLE001
                 key = ""
             _segs = key.split("/")
             _ei = _event_seg_index(_segs)
-            if 0 <= _ei < len(_segs) - 1 and _segs[_ei + 1] in ("replay", "ack"):
+            if (0 <= _ei < len(_segs) - 1
+                    and _segs[_ei + 1] in ("replay", "ack", "recon")):
                 return
             # W2: keep the most recent EVENT_RING events for the stream + map
             # dots. REPLACE the whole list (never append in place) so the web
@@ -496,6 +507,18 @@ def run_voice_loop_wiring(stop_flag: dict,
             if eid:
                 event_subsystem.submit_ack(eid, result)
 
+        def _on_recon_rsp(sample) -> None:
+            # 17 S3Y.3: the cloud's answer to our recon/req -> compute + resend the
+            # gap. A rsp is also cloud contact, so it feeds the reconnect detector.
+            if event_subsystem is None or not event_subsystem.enabled:
+                return
+            try:
+                r = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                return
+            link_detector.note_cloud_rx(time.monotonic())
+            event_subsystem.submit_recon_rsp(r)
+
         def _on_health(sample) -> None:
             # W8: relay P2's latest health/factor to /api/health. P5 forwards the
             # authoritative payload unchanged (G-2 same-source), REPLACING the
@@ -526,6 +549,8 @@ def run_voice_loop_wiring(stop_flag: dict,
         clock_sub = gen.declare_subscriber(STATE_CLOCK_TOPIC, _on_state_clock)
         event_sub = gen.declare_subscriber(EVENT_WILDCARD_TOPIC, _on_event)
         event_ack_sub = gen.declare_subscriber(EVENT_ACK_TOPIC, _on_event_ack)
+        recon_rsp_sub = gen.declare_subscriber(
+            EVENT_RECON_RSP_TOPIC, _on_recon_rsp)
         estop_pong_sub = gen.declare_subscriber(
             PROBE_ESTOP_PONG_TOPIC, _on_estop_pong)
         health_sub = gen.declare_subscriber(HEALTH_FACTOR_TOPIC, _on_health)
@@ -541,8 +566,16 @@ def run_voice_loop_wiring(stop_flag: dict,
 
         try:
             last_hb = time.monotonic()
+            last_recon = time.monotonic()
             while not stop_flag.get("stop"):
                 now = time.monotonic()
+                # Periodic recon (17 S3Y.3): ask the cloud what it is missing. Runs
+                # regardless of link state -- it is how P5 discovers holes AND that
+                # the cloud is back. No-op until the event subsystem + cloud exist.
+                if (event_subsystem is not None and event_subsystem.enabled
+                        and now - last_recon >= RECON_PERIOD_S):
+                    event_subsystem.send_recon_reqs()
+                    last_recon = now
                 if now - last_hb >= heartbeat_period_s:
                     # W5: send one estop probe per heartbeat and read back the
                     # ok/degraded/down verdict. on_ping_sent must run BEFORE the
@@ -591,9 +624,9 @@ def run_voice_loop_wiring(stop_flag: dict,
             if event_subsystem is not None:
                 event_subsystem.stop()
             for entity in (ack_sub, task_sub, fence_sub, mode_sub, event_sub,
-                           event_ack_sub, estop_pong_sub, health_sub, bit_sub,
-                           estop_ping_pub, link_pub,
-                           replay_pub_normal, replay_pub_alarm):
+                           event_ack_sub, recon_rsp_sub, estop_pong_sub,
+                           health_sub, bit_sub, estop_ping_pub, link_pub,
+                           replay_pub_normal, replay_pub_alarm, recon_req_pub):
                 if entity is None:
                     continue
                 try:

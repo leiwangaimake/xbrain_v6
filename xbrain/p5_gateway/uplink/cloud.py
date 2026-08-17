@@ -35,6 +35,8 @@ from __future__ import annotations
 
 from typing import Awaitable, Callable, Optional
 
+from ..persistence.schema_record import CHANNELS
+from ..reconnect.recon import build_recon_req, compute_resend_seqs
 from ..reconnect.replay import (
     RateLimiter, build_begin, build_end, build_item, weighted_interleave,
 )
@@ -172,3 +174,82 @@ class BackfillRunner:
             "eid": row["eid"], "channel": channel, "sev": row["sev"],
             "cat": row["cat"], "title": row["title"], "detail": row["detail"],
         }
+
+
+class ReconRunner:
+    """17 S3Y.3 reconciliation. P5 builds a per-channel recon/req; on the cloud's
+    recon/rsp it computes the missing set and resends it on event/replay/{channel}
+    with a batch_id 'rc-' prefix (RC-2), through the SAME rate limiter as the backfill
+    (RC-4), obeying R-1/R-2/R-3 (RC-3). A rsp whose req_id does not match the last req
+    we sent for that channel is DISCARDED (stale/foreign, S3Y.3: a late old rsp must
+    not overwrite newer state)."""
+
+    def __init__(self, dao, rid: str,
+                 put_fn: Callable[[str, dict], Awaitable],
+                 rate: RateLimiter, now_iso: Callable[[], str],
+                 max_resend: int = 200, max_ranges: int = 64) -> None:
+        self._dao = dao
+        self._rid = rid
+        self._put = put_fn
+        self._rate = rate            # SAME instance as BackfillRunner (RC-4)
+        self._now_iso = now_iso
+        self._max_resend = max_resend
+        self._max_ranges = max_ranges
+        # channel -> req_id of the outstanding req, so a mismatched rsp is dropped.
+        self._pending: dict = {}
+
+    async def build_reqs(self, now_mono: Callable[[], float]) -> list:
+        """One recon/req per channel; remember each req_id (rsp must echo it).
+        Returns the list of req `data` dicts -- the wiring publishes each on
+        event/recon/req."""
+        reqs = []
+        for channel in ("alarm", "normal"):
+            b = await self._dao.recon_bounds(channel)
+            req_id = "rc-%d-%s" % (int(now_mono() * 1000), channel)
+            self._pending[channel] = req_id
+            reqs.append(build_recon_req(channel, b["min"], b["max"], req_id))
+        return reqs
+
+    async def on_rsp(self, rsp: dict, now_mono: Callable[[], float],
+                     sleep: Callable[[float], Awaitable]) -> dict:
+        """Handle one recon/rsp: validate req_id, compute the gap, resend it."""
+        channel = rsp.get("channel")
+        if channel not in CHANNELS:
+            return {"discarded": "bad_channel"}
+        if rsp.get("req_id") != self._pending.get(channel):
+            # Stale or foreign rsp -- do NOT act on it (S3Y.3 req_id echo rule).
+            return {"discarded": "req_id_mismatch", "channel": channel}
+        b = await self._dao.recon_bounds(channel)
+        seqs = compute_resend_seqs(
+            rsp.get("their_max_seq"), rsp.get("missing_ranges"),
+            bool(rsp.get("truncated")), b["max"], b["min"], self._max_resend)
+        if not seqs:
+            return {"resent": 0, "channel": channel}
+        rows = await self._dao.rows_by_seqs(channel, seqs)
+        if not rows:
+            return {"resent": 0, "channel": channel}   # all purged; nothing to send
+        batch_id = "rc-%d" % int(now_mono() * 1000)
+        # Reuse the S3.5.3 begin/item/end batch protocol (RC-2). The 'rc-' prefix
+        # lets the cloud tell a recon resend from a reconnect backfill ('bf-').
+        chs = [r["ch_seq"] for r in rows]
+        await self._put(replay_key(self._rid, channel), build_begin(
+            batch_id, channel, from_ch_seq=chs[0], to_ch_seq=chs[-1],
+            count=len(rows), ts_first=0.0, ts_last=0.0,
+            outage_since_ts=0.0, outage_duration_s=0.0))
+        for row in rows:
+            # Shared rate limiter (RC-4): recon + backfill together must not exceed
+            # rate_eps_total, so we take from the SAME bucket.
+            while not self._rate.take(now_mono()):
+                await sleep(1.0 / max(self._rate.rate_eps, 1.0))
+            ev = {"eid": row["eid"], "channel": channel, "sev": row["sev"],
+                  "cat": row["cat"], "title": row["title"], "detail": row["detail"]}
+            await self._put(replay_key(self._rid, channel),
+                            build_item(batch_id, channel, ev))
+            if not row["need_ack"]:
+                await self._dao.mark_delivered(
+                    [row["eid"]], batch_id, self._now_iso())
+        cur = await self._dao.read_cursor(channel)
+        await self._put(replay_key(self._rid, channel), build_end(
+            batch_id, channel, sent=len(rows), given_up=0,
+            ts_first=0.0, ts_last=0.0, current_ch_seq=cur["next_ch_seq"] - 1))
+        return {"resent": len(rows), "channel": channel, "batch_id": batch_id}
