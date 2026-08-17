@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -46,6 +48,7 @@ STATE_MODE_TOPIC = "state/mode"          # W3: P2 usage mode (10 Hz)
 STATE_POSE_TOPIC = "state/pose"          # P1-1: pose + RTK heading (p1 bridge)
 STATE_CLOCK_TOPIC = "state/clock"        # P1-13: clock sync mirror (18-C G47)
 EVENT_WILDCARD_TOPIC = "event/**"        # W2: event/{severity}/{category} stream
+EVENT_ACK_TOPIC = "event/ack"            # 17 S3.5.1: cloud ack -> mark delivered
 PROBE_ESTOP_PING_TOPIC = "probe/estop/ping"  # W5: P5 ping (11 CR-2, 17 S6.3)
 PROBE_ESTOP_PONG_TOPIC = "probe/estop/pong"  # W5: quadruped pong (11 CR-3, authoritative source)
 HEALTH_FACTOR_TOPIC = "health/factor"    # W8: P2 health snapshot -> /api/health
@@ -201,10 +204,49 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
         return None, None
 
 
+def _normalise_event(sample, d: dict) -> Optional[dict]:
+    """Best-effort normalise an incoming event/{sev}/{cat} message to the
+    record.db ev shape (the EventSubsystem persists it). rid/sev/cat come from the
+    KEY (xbrain/{rid}/event/{sev}/{cat}, authoritative); eid/title/detail from the
+    payload. Returns None if the essentials are missing -- the pipeline would drop
+    it anyway, and a None here just skips the persist without touching the HMI
+    ring. created_at/detected_at are wall-clock record fields (p5 is not in the
+    monotonic-clock scan face; these are display/audit only, never used to order)."""
+    try:
+        key = str(sample.key_expr)
+    except Exception:      # noqa: BLE001
+        key = ""
+    segs = key.split("/")
+    # xbrain/{rid}/event/{sev}/{cat}
+    rid = segs[1] if len(segs) > 1 else None
+    sev = segs[4] if len(segs) > 4 else (d.get("sev") or d.get("severity"))
+    cat = segs[5] if len(segs) > 5 else (d.get("cat") or d.get("category"))
+    data = d.get("data") if isinstance(d.get("data"), dict) else d
+    eid = data.get("eid") or data.get("event_id") or d.get("eid")
+    if not (eid and rid and sev and cat):
+        return None
+    now = datetime.now(timezone.utc)
+    detail = data.get("detail")
+    return {
+        "eid": eid, "rid": rid, "sev": sev, "cat": cat,
+        "title": data.get("title") or data.get("message") or "",
+        "detail": detail if isinstance(detail, dict) else {},
+        "src": d.get("src") or data.get("src") or "unknown",
+        "ts": d.get("ts") or data.get("ts") or now.timestamp(),
+        "ts_sync": d.get("ts_sync") or data.get("ts_sync") or 0,
+        "detected_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "created_at": now.isoformat(),
+        "dedup_key": data.get("dedup_key"),
+        "dedup_window_s": data.get("dedup_window_s"),
+        "task_id": data.get("task_id"), "trace_id": data.get("trace_id"),
+    }
+
+
 def run_voice_loop_wiring(stop_flag: dict,
                             heartbeat_period_s: float = 1.0,
                             hmi_cfg: Optional[dict] = None,
-                            site_timezone: Optional[str] = None) -> int:
+                            site_timezone: Optional[str] = None,
+                            record_db_path: Optional[str] = None) -> int:
     """Block until stop_flag['stop'] truthy. Returns 0 on clean shutdown.
 
     hmi_cfg is the resolved `hmi` config subtree (bind + web) or None. When
@@ -255,6 +297,21 @@ def run_voice_loop_wiring(stop_flag: dict,
         # channel path (via chassis_relay) so a dead estop LINK (not merely a
         # dead app) surfaces as estop_path "down", not a false "ok".
         estop_ping_pub = gen.declare_publisher(PROBE_ESTOP_PING_TOPIC)
+
+        # Event subsystem (17 S3: record.db persist + delivery mark + backfill).
+        # ADDITIVE: record_db_path None or store-open failure -> disabled, every
+        # submit a no-op, the HMI ring below still works, voice loop untouched.
+        event_subsystem = None
+        if record_db_path:
+            from xbrain.p5_gateway.runtime.event_subsystem import EventSubsystem
+            event_subsystem = EventSubsystem(
+                os.environ.get("XBRAIN_ROBOT_ID", "unknown"),
+                record_db_path, record_db_path + ".degrade.jsonl",
+                now_iso=lambda: datetime.now(timezone.utc).isoformat(),
+                now_mono=time.monotonic)
+            if event_subsystem.start():
+                _logger.info("p5 wiring: event subsystem ON (record.db=%s)",
+                             record_db_path)
 
         speak_acks_seen = 0
         state_task_updates = 0
@@ -361,6 +418,31 @@ def run_voice_loop_wiring(stop_flag: dict,
                 "pos": d.get("pos"),   # None until pose stamps it (W4)
             }
             hmi_state["events"] = (hmi_state["events"] + [ev])[-EVENT_RING:]
+            # Persist + deliver via the event subsystem (fire-and-forget, no-op
+            # when disabled). A malformed event normalises to None and is skipped;
+            # the HMI ring above is unaffected either way.
+            if event_subsystem is not None and event_subsystem.enabled:
+                full = _normalise_event(sample, d)
+                if full is not None:
+                    link = hmi_state.get("link") or {}
+                    # Cloud-link signal for the S3.5.1 delivery judgment. In the
+                    # dev loop there is no cloud, so this is False and events queue
+                    # for backfill rather than being falsely marked delivered.
+                    connected = link.get("cloud_link") == "up"
+                    event_subsystem.submit_event(full, connected)
+
+        def _on_event_ack(sample) -> None:
+            # 17 S3.5.1: a cloud ack marks that eid delivered (out of backfill).
+            if event_subsystem is None or not event_subsystem.enabled:
+                return
+            try:
+                a = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                return
+            eid = a.get("eid") or a.get("event_id")
+            result = a.get("result") or "accepted"
+            if eid:
+                event_subsystem.submit_ack(eid, result)
 
         def _on_health(sample) -> None:
             # W8: relay P2's latest health/factor to /api/health. P5 forwards the
@@ -391,6 +473,7 @@ def run_voice_loop_wiring(stop_flag: dict,
         pose_sub = gen.declare_subscriber(STATE_POSE_TOPIC, _on_state_pose)
         clock_sub = gen.declare_subscriber(STATE_CLOCK_TOPIC, _on_state_clock)
         event_sub = gen.declare_subscriber(EVENT_WILDCARD_TOPIC, _on_event)
+        event_ack_sub = gen.declare_subscriber(EVENT_ACK_TOPIC, _on_event_ack)
         estop_pong_sub = gen.declare_subscriber(
             PROBE_ESTOP_PONG_TOPIC, _on_estop_pong)
         health_sub = gen.declare_subscriber(HEALTH_FACTOR_TOPIC, _on_health)
@@ -442,12 +525,14 @@ def run_voice_loop_wiring(stop_flag: dict,
                     last_hb = now
                 time.sleep(0.1)
         finally:
-            # Stop the HMI first so it stops reading shared state, then tear down
-            # the zenoh entities. should_exit is uvicorn's clean-stop flag.
+            # Stop the HMI first so it stops reading shared state, then the event
+            # subsystem (flush + close record.db), then the zenoh entities.
             if hmi_server is not None:
                 hmi_server.should_exit = True
+            if event_subsystem is not None:
+                event_subsystem.stop()
             for entity in (ack_sub, task_sub, fence_sub, mode_sub, event_sub,
-                           estop_pong_sub, health_sub, bit_sub,
+                           event_ack_sub, estop_pong_sub, health_sub, bit_sub,
                            estop_ping_pub, link_pub):
                 try:
                     entity.undeclare()

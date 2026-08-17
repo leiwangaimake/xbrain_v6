@@ -162,8 +162,21 @@ def main(argv: Optional[list] = None) -> int:
                     site_timezone = None
             except Exception:      # noqa: BLE001
                 site_timezone = None
+        # record.db path for the event subsystem (17 S3). From config when
+        # common.db.record_db is assigned; until then (SW-6 null) a direct env
+        # override XBRAIN_RECORD_DB lets the dev stack turn persistence on. None ->
+        # subsystem disabled, voice loop unaffected (persistence is additive).
+        import os as _os
+        record_db_path = None
+        if _cfg is not None:
+            try:
+                record_db_path = (_cfg.get("db") or {}).get("record_db")
+            except Exception:      # noqa: BLE001
+                record_db_path = None
+        record_db_path = record_db_path or _os.environ.get("XBRAIN_RECORD_DB")
         return run_voice_loop_wiring(stop_flag=stop_flag, hmi_cfg=hmi_cfg,
-                                     site_timezone=site_timezone)
+                                     site_timezone=site_timezone,
+                                     record_db_path=record_db_path)
 
     return main_loop(
         minimal_mode=minimal_mode,
