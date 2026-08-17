@@ -20,10 +20,12 @@
   // way every frame -- the "dial spins wildly" bug.
   let dialAngle = null;
   let lastCompass = 0;
-  // Footer clock (common.timezone): siteTz from ui_config (null -> browser zone),
-  // clockSync from the latest snapshot clock group (null = unknown / not wired).
-  // The clock ticks LOCALLY every second (not off the 2 Hz snapshot) so the
-  // seconds advance smoothly; only the sync dot changes with the snapshot.
+  // Footer clock timezone: ui_config.timezone (= common.timezone) is only the
+  // load-time DEFAULT; the live zone follows the GPS fix via snapshot.timezone
+  // (derived server-side from pose lat/lon, 17 S6.10.2 v1.3) and overrides it in
+  // renderSnapshot. null -> browser zone. The clock ticks LOCALLY every second
+  // (not off the 2 Hz snapshot) so the seconds advance smoothly; siteTz only
+  // changes when the robot crosses into a new timezone band.
   let siteTz = null;
   let clockSync = null;
   let clockTimer = null;
@@ -72,8 +74,10 @@
   // -- apply ui_config: CSS vars (U2/U3/U5), grid pattern metres (U1), zoom (U4) --
   function applyUiConfig(c) {
     cfg = c;
-    // Site display timezone for the footer clock (null -> browser zone). Start
-    // the local 1 Hz ticker once ui_config is in.
+    // Load-time DEFAULT footer-clock zone (= common.timezone; null -> browser
+    // zone). The live zone arrives with the first snapshot (snapshot.timezone,
+    // GPS-derived) and overrides this in renderSnapshot. Start the local 1 Hz
+    // ticker once ui_config is in.
     siteTz = c.timezone || null;
     startClock();
     const root = document.documentElement.style;
@@ -126,6 +130,13 @@
 
   // -- render one snapshot -------------------------------------------------- */
   function renderSnapshot(snap) {
+    // Footer-clock zone follows the GPS fix (17 S6.10.2 v1.3). snapshot.timezone
+    // is derived server-side (pose lat/lon -> IANA), or the common.timezone
+    // fallback when there is no fix -- always a usable string, so just adopt it.
+    // The 1 Hz ticker reads siteTz each tick, so the clock switches within a
+    // second of crossing a band. Guard on truthiness so an older backend that
+    // omits the field cannot clobber the ui_config default with undefined.
+    if (snap.timezone) siteTz = snap.timezone;
     const origin = (snap.geo && snap.geo.enu_origin) || null;
     // patrolling = a plan is running -> the yellow realtime trajectory shows;
     // once no plan runs (patrol complete) it hides unless show_after_complete.
@@ -370,9 +381,11 @@
   function setDot(el, cls) { el.className = "dot" + (cls ? " " + cls : ""); }
   function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
-  // -- footer clock: site-local time in common.timezone (18-C / G24 display) ---
-  // The displayed time comes from the browser wall clock formatted to the site
-  // zone. It is a convenience readout, NOT an authoritative timestamp: the
+  // -- footer clock: local time in the GPS-derived zone (17 S6.10.2 v1.3) ------
+  // The displayed time comes from the browser wall clock formatted to siteTz,
+  // which follows the robot's position (snapshot.timezone), falling back to
+  // common.timezone with no fix. It is a convenience readout, NOT an
+  // authoritative timestamp: the
   // AUTHORITATIVE answer is the voice G24 reply, which reads the robot's own
   // (NTP-synced) clock. Whether the shown time is trustworthy is conveyed by the
   // separate coloured syncText span (授时同步 green / 授时未同步 red, 18 S9.5).

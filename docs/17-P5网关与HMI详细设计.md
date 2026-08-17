@@ -1874,6 +1874,12 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 - 页脚新增一格**本地时钟**（`.map-footer` 内 `#clockText` ＋ 授时徽标 `#clockDot`）：前端按该时区**每秒本地 tick**（`Intl.DateTimeFormat`），只有徽标随每帧 `snapshot.clock`（§3.11 `ClockStatus.sync`）变色（绿=已同步 · 红=未同步 · 灰=源未接）。
 - ★★ **这是便捷显示钟，非权威时刻**：权威报时是 `18` G24 语音答复，读机器人授时锚点 `(mono_ref, utc_ref)` 用单调钟换算（`11` §3.11 / CLK-C1）。时区错了顶多显示错，**不碰安全**（内部墙钟恒 UTC，一切超时/周期用单调钟）。国际化售卖时改 `common.timezone` 一处即整栈切。
 
+★★★ **v1.3 修订（2026-08-17）· 页脚时钟时区改为【按 GPS 定位动态推导】**（用户明确要求「机器在日本就是东京时间，在中国就是北京时间，在马来西亚就是吉隆坡时间」）：
+- 时区不再取自静态 `common.timezone`，而是由后端 `build_snapshot` 从 `state/pose` 的 `lat/lon` **反查 IANA 时区**（`xbrain/p5_gateway/hmi/geo_timezone.py` 的 `timezone_for_fix`，底层用 tzfpy 的 Rust 反查表 `get_tz(lon, lat)` —— ★★ **经度在前**，传反了会静默返回错误区）。结果作为 snapshot **顶层 `timezone` 字段**随 **2 Hz 快照**下发（不再只在 ui_config 里一次性下发）。机器人跨时区带（如中日之间）行进时，页脚钟会自动切区。
+- **无定位 / 定位为 (0,0) Null Island / 经纬越界 / 本机未装 tzfpy** 一律回落到 `common.timezone`（由 `build_snapshot(site_timezone=...)` 传入）。⇒ `common.timezone` 从「唯一来源」降级为「**无 fix 时的兜底**」。ui_config 仍带 `timezone`（= `common.timezone`）只作前端**加载时初值**，首帧快照到达后即被 `snapshot.timezone` 覆盖。
+- ★★ **(0,0) 必须显式判成「无 fix」**：tzfpy 会把 (0,0) 映射成 `Etc/GMT`（一个看着像真区名的结果），不挡就会把零化 pose 静默钉在 GMT（§3.2 fail-silent）。经纬越界时 tzfpy 返回空串 `''`，也归入兜底。
+- ★★ 语义不变：仍是**便捷显示钟，非权威**（同 v1.2）；时区只影响显示，不碰安全。
+
 ##### 6.10.2A ★★★ 连线与要素样式规范（客户定义 · 2026-08-13 用户订正 · 默认值，可配）
 
 > ★ 这是**默认样式**的权威表；每一项都由 `hmi.web.*` 配置驱动（代码不硬编码），前端据 `role`（缺则据名称「活动/禁入/报警」推）着色。

@@ -45,6 +45,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
 
+from xbrain.p5_gateway.hmi.geo_timezone import timezone_for_fix
+
 
 def geo_group(
     fences: Optional[Sequence[Dict[str, Any]]],
@@ -269,6 +271,7 @@ def build_snapshot(
     health: Optional[Dict[str, Any]] = None,
     events: Optional[Sequence[Dict[str, Any]]] = None,
     clock: Optional[Dict[str, Any]] = None,
+    site_timezone: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Assemble the full 17 S6.8 HMI snapshot from P5 runtime state.
 
@@ -278,7 +281,18 @@ def build_snapshot(
     the single method the web server calls per push/GET; keeping the assembly
     here (not in the route handler) means the same projection is unit-tested
     without a running server.
+
+    `site_timezone` (common.timezone) is the FALLBACK for the footer-clock zone;
+    the live zone rides in the top-level `timezone` field, derived from the pose
+    fix so the clock follows the robot across timezone bands (17 S6.10.2 v1.3).
     """
+    # Footer-clock timezone follows the GPS fix (17 S6.10.2 v1.3): derive it from
+    # pose lat/lon and fall back to common.timezone when there is no usable fix.
+    # A top-level field (not inside a group) so a zone change re-sends only this
+    # key in the W6 delta, independent of pose/clock churn.
+    tz = timezone_for_fix((pose or {}).get("lat"),
+                          (pose or {}).get("lon"),
+                          site_timezone)
     return {
         "geo": geo_group(fences, routes, waypoints, enu_origin),
         "pose": pose_group(pose),
@@ -286,6 +300,7 @@ def build_snapshot(
         "status": status_group(mode, link, health),
         "events": events_group(events),
         "clock": clock_group(clock),
+        "timezone": tz,
     }
 
 

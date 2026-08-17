@@ -23,6 +23,12 @@ httpx2>=2.0
 # uses the ORIN-installed version.
 sherpa-onnx>=1.0
 opuslib>=3.0
+# tzfpy: Rust-backed lat/lon -> IANA timezone reverse lookup, used by the HMI
+# footer clock to follow the GPS fix (17 S6.10.2 v1.3, geo_timezone.py). The
+# module import-guards it so its ABSENCE degrades to the site fallback rather
+# than breaking collection, but tests/p5_gateway/hmi/test_geo_timezone.py needs
+# it present to assert the real reverse lookups (Osaka -> Asia/Tokyo).
+tzfpy>=1.3
 
 # Category C: optional dev tooling (linters + type-checker). Their
 # absence does not break pytest collection but keeps `scripts/ci/`

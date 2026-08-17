@@ -210,7 +210,10 @@ def build_app(
     def get_snapshot() -> Dict[str, Any]:
         """The 17 S6.8 A..F snapshot. Absent sources report available=false so
         the map greys those layers rather than drawing fabricated data."""
-        return data_readers.build_snapshot(**provider.snapshot_inputs())
+        # site_timezone is the footer-clock FALLBACK; the live zone is derived
+        # from the pose fix inside build_snapshot (17 S6.10.2 v1.3).
+        return data_readers.build_snapshot(**provider.snapshot_inputs(),
+                                           site_timezone=site_timezone)
 
     @app.get("/api/fences")
     def get_fences() -> JSONResponse:
@@ -328,7 +331,10 @@ def build_app(
         ticks = 0
         try:
             while True:
-                snap = data_readers.build_snapshot(**provider.snapshot_inputs())
+                # site_timezone is the footer-clock fallback; the live zone is
+                # derived from the pose fix in build_snapshot (17 S6.10.2 v1.3).
+                snap = data_readers.build_snapshot(**provider.snapshot_inputs(),
+                                                   site_timezone=site_timezone)
                 if not last or ticks % WS_KEYFRAME_EVERY == 0:
                     # Keyframe: full snapshot on connect + every N ticks to self-
                     # heal (a missed/misapplied delta cannot drift past one period).
