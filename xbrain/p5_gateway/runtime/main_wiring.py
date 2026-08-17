@@ -204,23 +204,34 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
         return None, None
 
 
-def _normalise_event(sample, d: dict) -> Optional[dict]:
-    """Best-effort normalise an incoming event/{sev}/{cat} message to the
-    record.db ev shape (the EventSubsystem persists it). rid/sev/cat come from the
-    KEY (xbrain/{rid}/event/{sev}/{cat}, authoritative); eid/title/detail from the
-    payload. Returns None if the essentials are missing -- the pipeline would drop
-    it anyway, and a None here just skips the persist without touching the HMI
-    ring. created_at/detected_at are wall-clock record fields (p5 is not in the
-    monotonic-clock scan face; these are display/audit only, never used to order)."""
+def _event_seg_index(segs: list) -> int:
+    """Index of the 'event' segment, or -1. Works for BOTH the absolute contract
+    key (xbrain/{rid}/event/{sev}/{cat}) and the relative dev-bus key
+    (event/{sev}/{cat}) -- the two schemes differ by the xbrain/{rid} prefix, so
+    locating 'event' rather than a fixed offset is the only robust parse."""
     try:
-        key = str(sample.key_expr)
-    except Exception:      # noqa: BLE001
-        key = ""
+        return segs.index("event")
+    except ValueError:
+        return -1
+
+
+def _normalise_event(key: str, d: dict) -> Optional[dict]:
+    """Best-effort normalise an incoming event/{sev}/{cat} message to the
+    record.db ev shape (the EventSubsystem persists it). sev/cat are the two
+    segments after 'event' in the KEY (authoritative); rid is the segment before
+    'event' when absolute, else XBRAIN_ROBOT_ID; eid/title/detail from the payload.
+    Returns None if the essentials are missing -- the pipeline would drop it
+    anyway, and a None here just skips the persist without touching the HMI ring.
+    created_at/detected_at are wall-clock record fields (p5 is not in the
+    monotonic-clock scan face; display/audit only, never used to order)."""
     segs = key.split("/")
-    # xbrain/{rid}/event/{sev}/{cat}
-    rid = segs[1] if len(segs) > 1 else None
-    sev = segs[4] if len(segs) > 4 else (d.get("sev") or d.get("severity"))
-    cat = segs[5] if len(segs) > 5 else (d.get("cat") or d.get("category"))
+    ei = _event_seg_index(segs)
+    sev = (segs[ei + 1] if 0 <= ei and len(segs) > ei + 1
+           else (d.get("sev") or d.get("severity")))
+    cat = (segs[ei + 2] if 0 <= ei and len(segs) > ei + 2
+           else (d.get("cat") or d.get("category")))
+    rid = segs[ei - 1] if ei >= 1 else None            # absolute: .../{rid}/event
+    rid = rid or os.environ.get("XBRAIN_ROBOT_ID") or d.get("rid")
     data = d.get("data") if isinstance(d.get("data"), dict) else d
     eid = data.get("eid") or data.get("event_id") or d.get("eid")
     if not (eid and rid and sev and cat):
@@ -302,6 +313,7 @@ def run_voice_loop_wiring(stop_flag: dict,
         # ADDITIVE: record_db_path None or store-open failure -> disabled, every
         # submit a no-op, the HMI ring below still works, voice loop untouched.
         event_subsystem = None
+        replay_pub_normal = replay_pub_alarm = None
         if record_db_path:
             from xbrain.p5_gateway.runtime.event_subsystem import EventSubsystem
             event_subsystem = EventSubsystem(
@@ -312,6 +324,19 @@ def run_voice_loop_wiring(stop_flag: dict,
             if event_subsystem.start():
                 _logger.info("p5 wiring: event subsystem ON (record.db=%s)",
                              record_db_path)
+                # Backfill replay publisher. The bus uses RELATIVE keys (no rid
+                # prefix), so publish to event/replay/{channel}; route by the
+                # message's channel field (the runner hands an absolute key we
+                # ignore). R-2: p5/HMI never SUBSCRIBE event/replay/** (self-loop).
+                replay_pub_normal = gen.declare_publisher("event/replay/normal")
+                replay_pub_alarm = gen.declare_publisher("event/replay/alarm")
+
+                def _put_replay(_key, data):
+                    pub = (replay_pub_alarm if data.get("channel") == "alarm"
+                           else replay_pub_normal)
+                    pub.put(json.dumps(data).encode("utf-8"))
+
+                event_subsystem.set_replay_publisher(_put_replay)
 
         speak_acks_seen = 0
         state_task_updates = 0
@@ -400,6 +425,18 @@ def run_voice_loop_wiring(stop_flag: dict,
             hmi_state["clock"] = d.get("data")
 
         def _on_event(sample) -> None:
+            # R-2: "event/**" also matches our OWN event/replay/** (backfill) and
+            # event/ack (its own subscriber). Processing replay here would
+            # re-persist history and self-loop; skip both -- the segment right
+            # after 'event' is 'replay' or 'ack' (robust for absolute+relative).
+            try:
+                key = str(sample.key_expr)
+            except Exception:      # noqa: BLE001
+                key = ""
+            _segs = key.split("/")
+            _ei = _event_seg_index(_segs)
+            if 0 <= _ei < len(_segs) - 1 and _segs[_ei + 1] in ("replay", "ack"):
+                return
             # W2: keep the most recent EVENT_RING events for the stream + map
             # dots. REPLACE the whole list (never append in place) so the web
             # thread's read is consistent under the GIL.
@@ -422,7 +459,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             # when disabled). A malformed event normalises to None and is skipped;
             # the HMI ring above is unaffected either way.
             if event_subsystem is not None and event_subsystem.enabled:
-                full = _normalise_event(sample, d)
+                full = _normalise_event(key, d)
                 if full is not None:
                     link = hmi_state.get("link") or {}
                     # Cloud-link signal for the S3.5.1 delivery judgment. In the
@@ -533,7 +570,10 @@ def run_voice_loop_wiring(stop_flag: dict,
                 event_subsystem.stop()
             for entity in (ack_sub, task_sub, fence_sub, mode_sub, event_sub,
                            event_ack_sub, estop_pong_sub, health_sub, bit_sub,
-                           estop_ping_pub, link_pub):
+                           estop_ping_pub, link_pub,
+                           replay_pub_normal, replay_pub_alarm):
+                if entity is None:
+                    continue
                 try:
                     entity.undeclare()
                 except Exception:      # noqa: BLE001

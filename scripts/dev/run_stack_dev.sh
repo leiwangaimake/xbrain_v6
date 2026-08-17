@@ -147,6 +147,12 @@ fi
 # rt/gnss -> state/pose. One export keeps rtk_driver + p1 + the rest on one rid.
 export XBRAIN_ROBOT_ID="$ROBOT_ID"
 
+# Turn the p5 event subsystem ON in the dev stack (SW-12): p5 reads XBRAIN_RECORD_DB
+# for the record.db path until common.db.record_db is assigned (SW-6). This is a
+# DIRECT env read in p5 __main__, NOT a config layer -- it never reaches freeze or
+# the L5 whitelist, so exporting it globally is safe (p2..p4 ignore it).
+export XBRAIN_RECORD_DB="$REPO_ROOT/data/run/record.db"
+
 # --- routers (loopback only; gossip default-on) ---------------------------
 echo "==> routers"
 _start_bg zenohd-rt  "$ZENOHD" -l tcp/127.0.0.1:7449 --no-multicast-scouting
