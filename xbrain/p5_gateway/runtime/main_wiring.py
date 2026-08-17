@@ -357,8 +357,13 @@ def run_voice_loop_wiring(stop_flag: dict,
         from xbrain.p5_gateway.uplink.link_state import (
             LinkStateMachine, LinkThresholds,
         )
+        # rtb_s = 1800 s (30 min): the L2->L3 return-to-base threshold. User decision
+        # 2026-08-17 taking the 11 S4.6.2 / 15 S11.2 suggested value; still an INTERIM
+        # value pending the operator's final sign-off (U-05 / TSK-21), and all four
+        # thresholds should migrate to a config key together (a follow-up), so this
+        # is not a frozen safety constant -- it is a recorded, changeable decision.
         link_thresholds = LinkThresholds(
-            degraded_s=5.0, down_s=20.0, rtb_s=None, stable_s=10.0)
+            degraded_s=5.0, down_s=20.0, rtb_s=1800.0, stable_s=10.0)
         link_state = LinkStateMachine(
             link_thresholds, gw_start_mono=time.monotonic())
 

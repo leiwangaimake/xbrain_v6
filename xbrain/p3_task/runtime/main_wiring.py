@@ -41,6 +41,7 @@ _logger = logging.getLogger("xbrain.p3.wiring")
 
 CMD_TASK_TOPIC = "cmd/task"
 STATE_TASK_TOPIC = "state/task"
+STATE_LINK_TOPIC = "state/link"          # 11 S4.6 cloud-link level -> F-5 return_home
 
 # Voice-loop default. All four DBs live under data/run/ (operator 2026-08-12).
 DEFAULT_TASK_DB = "/opt/xbrain_v6/data/run/task.db"
@@ -92,6 +93,30 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 "schema": "state_task_v1", "active_task": None,
                 "mono_ms": _now_mono_ms()}).encode("utf-8"))
 
+            # F-5 (11 S4.6.4): watch P5's cloud-link level and inject one
+            # return_home at L3 (cloud down past rtb_s). The subscriber only STORES
+            # the latest snapshot (RUST thread -> no db, no await, CLAUDE.md 4.2);
+            # the loop below reads it and does the insert.
+            from xbrain.p3_task.lifecycle.link_loss import (
+                RETURN_HOME_PRIORITY, LinkLossReturnTrigger,
+                maybe_inject_return_home,
+            )
+            link_holder: dict = {}
+            return_trigger = LinkLossReturnTrigger()
+
+            def _on_link(sample) -> None:
+                try:
+                    p = json.loads(bytes(sample.payload).decode("utf-8"))
+                except Exception:      # noqa: BLE001
+                    return
+                # Hand the fields to the loop thread; never touch the db here.
+                loop.call_soon_threadsafe(link_holder.update, {
+                    "level": p.get("level"),
+                    "gw_start_mono": p.get("gw_start_mono"),
+                    "link_epoch": p.get("link_epoch"),
+                    "disconnected_s": p.get("disconnected_s"),
+                })
+
             def _on_task(sample) -> None:
                 # RUST THREAD: decode only, then hand to the loop. No await, no
                 # db, no state_pub here (CLAUDE.md 4.2 -- the callback must
@@ -103,10 +128,11 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     return
                 loop.call_soon_threadsafe(queue.put_nowait, payload)
 
-            # Sub handle held in a list (strong ref, CLAUDE.md 4.3).
-            _subs = [gen.declare_subscriber(CMD_TASK_TOPIC, _on_task)]
-            _logger.info("p3 wiring: subscribed %s (recording to task.db)",
-                         CMD_TASK_TOPIC)
+            # Sub handles held in a list (strong ref, CLAUDE.md 4.3).
+            _subs = [gen.declare_subscriber(CMD_TASK_TOPIC, _on_task),
+                     gen.declare_subscriber(STATE_LINK_TOPIC, _on_link)]
+            _logger.info("p3 wiring: subscribed %s + %s (task.db + F-5 return_home)",
+                         CMD_TASK_TOPIC, STATE_LINK_TOPIC)
 
             last_hb = time.monotonic()
             try:
@@ -120,6 +146,24 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     if payload is not None:
                         recorded += await _record_one(
                             conn, dao, payload, state_pub)
+                    # F-5 (11 S4.6.4): if the cloud link is L3, inject one
+                    # return_home BEFORE the tick so it is dispatched this pass.
+                    # Idempotent per outage (LinkLossReturnTrigger); a bad insert
+                    # is logged, never crashes the loop.
+                    try:
+                        rtb_id = await maybe_inject_return_home(
+                            conn, dao, return_trigger, link_holder,
+                            priority=RETURN_HOME_PRIORITY,
+                            now_mono_ms=_now_mono_ms(),
+                            date_str=_today_yyyymmdd())
+                        if rtb_id:
+                            _logger.warning(
+                                "p3 F-5: cloud link L3 (epoch %s, %.0fs) -> "
+                                "injected return_home %s",
+                                link_holder.get("link_epoch"),
+                                link_holder.get("disconnected_s") or 0.0, rtb_id)
+                    except Exception as exc:      # noqa: BLE001
+                        _logger.error("p3 F-5 return_home inject failed: %s", exc)
                     # Drive the machine every pass: validate pending -> ready,
                     # dispatch the top ready -> running (PB6). Cheap on a small
                     # table; a bad tick is logged, never crashes the loop.
