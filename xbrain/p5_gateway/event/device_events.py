@@ -22,11 +22,14 @@ is that shared piece:
                        `up_threshold` before online), so a flapping socket does
                        not flood the cloud with offline/online pairs.
 
-Where cloud visibility stands (17 S3.5.0 note 3 / Q-P5-8, UNCLOSED): the cloud's
-real-time subscription is only event/alarm/** (the sev=alarm segment). A
-device_offline is sev=warn, so it reaches the cloud via P5's BACKFILL replay (on
-the alarm channel cursor -- prompt), not the live path. That is the contract's
-current state; making it live is Q-P5-8's job, not this module's.
+Where cloud visibility stands (Q-P5-8, CLOSED -- decision A, 2026-08-17): the cloud
+broadens its real-time subscription beyond event/alarm/** to the warn/fault segments
+(exact wildcard finalised with the operator at SW-4). A device_offline is sev=warn,
+so once the cloud subscribes event/warn/** it arrives LIVE via the producer's direct
+put (P5 is not a relay, 17 S3.5.0) -- no producer change here. Its channel=alarm +
+need_ack=1 make delivery guaranteed (ack, or backfill on a genuine disconnect). NOTE
+the disconnect safety net is still incomplete: the reconnect->trigger_backfill wiring
+and recon (17 S3Y.3) are not yet wired into the live loop (separate follow-up).
 """
 
 from __future__ import annotations
