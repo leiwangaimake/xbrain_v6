@@ -97,7 +97,7 @@ def build_return_home_row(task_id: str, submit_seq: int, *, priority: int,
         submit_seq=submit_seq,
         mission_json=json.dumps(mission, ensure_ascii=False,
                                 separators=(",", ":")),
-        total_steps=0,
+        total_steps=1,                    # 15 S4.2.1: return_home is one step (go home)
         current_step=0,
         step_status_json="[]",
         created_ms=now_mono_ms,
@@ -110,23 +110,31 @@ def build_return_home_row(task_id: str, submit_seq: int, *, priority: int,
 
 async def maybe_inject_return_home(conn, dao, trigger: LinkLossReturnTrigger,
                                    link: dict, *, priority: int,
-                                   now_mono_ms: int, date_str: str) -> Optional[str]:
-    """If `link` is L3 (a new outage), allocate an id + submit_seq and INSERT one
-    return_home through the same DAO as any task. Returns the task_id inserted, or
-    None. `link` = the latest {level, gw_start_mono, link_epoch, disconnected_s}."""
-    if not trigger.should_inject(
-            link.get("level"), link.get("gw_start_mono"), link.get("link_epoch")):
+                                   now_mono_ms: int) -> Optional[str]:
+    """If `link` is L3 (a new outage), INSERT one return_home through the same DAO as
+    any task, keyed by the deterministic 15 S4.2.1 task_id. Returns the task_id
+    inserted, or None (below L3, or already injected for this outage). `link` = the
+    latest {level, gw_start_mono, link_epoch, disconnected_s}."""
+    gw = link.get("gw_start_mono")
+    epoch = link.get("link_epoch")
+    if not trigger.should_inject(link.get("level"), gw, epoch):
         return None
-    # id_alloc queries the tasks table (survives restart, no in-memory counter).
-    from xbrain.p3_task.ingest.id_alloc import next_submit_seq, next_task_id
+    # 15 S4.2.1: the task_id ITSELF is the idempotency key -- rh-{gw_start_mono}-
+    # {link_epoch}. Because tasks.task_id is PRIMARY KEY, a duplicate is impossible,
+    # so idempotency survives a P3 restart (the in-memory trigger only re-arms; the
+    # persisted row is the real guard, T-3). Check-then-insert is race-free in P3's
+    # single-threaded loop; a hit means this outage already has a return_home.
+    task_id = "rh-%d-%d" % (int(gw), int(epoch))
+    if await dao.fetch_by_id(task_id) is not None:
+        return None
+    from xbrain.p3_task.ingest.id_alloc import next_submit_seq
 
-    task_id = await next_task_id(conn, date_str)
     submit_seq = await next_submit_seq(conn)
-    trace_id = link_loss_trace_id(link.get("gw_start_mono"), link.get("link_epoch"))
+    trace_id = link_loss_trace_id(gw, epoch)
     row = build_return_home_row(
         task_id, submit_seq, priority=priority,
         level=link.get("level"), disconnected_s=link.get("disconnected_s"),
-        link_epoch=link.get("link_epoch"), gw_start_mono=link.get("gw_start_mono"),
+        link_epoch=epoch, gw_start_mono=gw,
         now_mono_ms=now_mono_ms, trace_id=trace_id)
     await dao.insert(row)
     return task_id

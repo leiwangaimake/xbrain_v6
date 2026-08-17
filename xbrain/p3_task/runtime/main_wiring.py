@@ -154,8 +154,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         rtb_id = await maybe_inject_return_home(
                             conn, dao, return_trigger, link_holder,
                             priority=RETURN_HOME_PRIORITY,
-                            now_mono_ms=_now_mono_ms(),
-                            date_str=_today_yyyymmdd())
+                            now_mono_ms=_now_mono_ms())
                         if rtb_id:
                             _logger.warning(
                                 "p3 F-5: cloud link L3 (epoch %s, %.0fs) -> "

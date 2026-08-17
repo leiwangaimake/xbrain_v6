@@ -74,6 +74,7 @@ def test_return_home_row_shape():
         now_mono_ms=123, trace_id="tr")
     assert row.task_type == "return_home" and row.state == "pending"
     assert row.source == "charge" and row.priority == 95
+    assert row.total_steps == 1                  # 15 S4.2.1: one step (go home)
     m = json.loads(row.mission_json)
     assert m["reason"] == "cloud_link_lost" and m["link_epoch"] == 2
 
@@ -103,19 +104,19 @@ async def test_l3_injects_one_return_home(conn):
     link = {"level": 3, "gw_start_mono": 100.0, "link_epoch": 2,
             "disconnected_s": 1801.0}
     tid = await maybe_inject_return_home(
-        conn, dao, t, link, priority=RETURN_HOME_PRIORITY,
-        now_mono_ms=123, date_str="20260817")
-    assert tid is not None
+        conn, dao, t, link, priority=RETURN_HOME_PRIORITY, now_mono_ms=123)
+    assert tid == "rh-100-2"                      # 15 S4.2.1 deterministic task_id
     rows = await _tasks(conn)
     assert len(rows) == 1
     assert rows[0]["task_type"] == "return_home"
     assert rows[0]["source"] == "charge" and rows[0]["priority"] == 95
     assert rows[0]["state"] == "pending"
-    # idempotent: same outage -> no second row (MUTATION: a per-tick insert would
-    # flood the queue with duplicate return_home tasks).
+    # PERSISTENT idempotency: a FRESH trigger (as after a P3 restart) with the same
+    # outage still injects nothing, because the task_id already exists in task.db.
+    # MUTATION: a per-tick / per-restart insert would flood the queue OR hit the PK.
     tid2 = await maybe_inject_return_home(
-        conn, dao, t, link, priority=RETURN_HOME_PRIORITY,
-        now_mono_ms=124, date_str="20260817")
+        conn, dao, LinkLossReturnTrigger(), link,
+        priority=RETURN_HOME_PRIORITY, now_mono_ms=124)
     assert tid2 is None
     assert len(await _tasks(conn)) == 1
 
@@ -126,7 +127,6 @@ async def test_l2_injects_nothing(conn):
     t = LinkLossReturnTrigger()
     link = {"level": 2, "gw_start_mono": 100.0, "link_epoch": 2}
     tid = await maybe_inject_return_home(
-        conn, dao, t, link, priority=RETURN_HOME_PRIORITY,
-        now_mono_ms=123, date_str="20260817")
+        conn, dao, t, link, priority=RETURN_HOME_PRIORITY, now_mono_ms=123)
     assert tid is None
     assert await _tasks(conn) == []
