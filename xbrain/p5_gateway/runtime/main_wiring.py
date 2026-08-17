@@ -347,14 +347,20 @@ def run_voice_loop_wiring(stop_flag: dict,
                 event_subsystem.set_recon_req_publisher(
                     lambda _k, d: recon_req_pub.put(json.dumps(d).encode("utf-8")))
 
-        # Reconnect -> backfill trigger (17 S3.5.2). Detects the cloud-link down->up
-        # edge from cloud-rx liveness (ack / recon rsp) and fires one backfill, so
-        # events that piled up during an outage get re-sent (zenoh does not buffer
-        # for an offline subscriber). INTERIM signal until 11 S4.6 LinkState gives a
-        # link_epoch. 10.0 s = a few missed cloud messages -> 'disconnected'; interim
-        # constant (a config key lands with S4.6), NOT a safety param.
-        from xbrain.p5_gateway.reconnect.link_detector import LinkReconnectDetector
-        link_detector = LinkReconnectDetector(timeout_s=10.0)
+        # Cloud-link state machine (11 S4.6). P5 is the sole authority for cloud_link
+        # / level / disconnected_s / link_epoch (LNK-6) -- the one judge for return-
+        # to-base and the reconnect signal for the event backfill. Thresholds are the
+        # S4.6.2 values, injected as interim constants (config keys land later; rtb_s
+        # = None keeps L3/auto-RTB disabled while TSK-21 is undefined -- the fail-safe
+        # per 3.1). It also subsumes the old LinkReconnectDetector: its snapshot's
+        # .reconnected edge drives trigger_backfill.
+        from xbrain.p5_gateway.uplink.link_state import (
+            LinkStateMachine, LinkThresholds,
+        )
+        link_thresholds = LinkThresholds(
+            degraded_s=5.0, down_s=20.0, rtb_s=None, stable_s=10.0)
+        link_state = LinkStateMachine(
+            link_thresholds, gw_start_mono=time.monotonic())
 
         speak_acks_seen = 0
         state_task_updates = 0
@@ -482,9 +488,11 @@ def run_voice_loop_wiring(stop_flag: dict,
                 full = _normalise_event(key, d)
                 if full is not None:
                     link = hmi_state.get("link") or {}
-                    # Cloud-link signal for the S3.5.1 delivery judgment. In the
-                    # dev loop there is no cloud, so this is False and events queue
-                    # for backfill rather than being falsely marked delivered.
+                    # Cloud-link signal for the S3.5.1 delivery judgment -- now the
+                    # authoritative S4.6 cloud_link (up only after the LNK-3
+                    # hysteresis). In the dev loop the cloud is never heard from, so
+                    # this stays False and events queue for backfill rather than
+                    # being falsely marked delivered (DEGRADED counts as not-sent).
                     connected = link.get("cloud_link") == "up"
                     event_subsystem.submit_event(full, connected)
 
@@ -497,7 +505,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             except Exception:      # noqa: BLE001
                 return
             # A parsed ack IS cloud contact -> feed the reconnect detector.
-            link_detector.note_cloud_rx(time.monotonic())
+            link_state.on_cloud_rx(time.monotonic())
             eid = a.get("eid") or a.get("event_id")
             # 11 S8.4 result closed set is {ok, duplicate}; a missing result is a
             # malformed ack -> "" (not in the set) leaves the event delivered=0 for
@@ -516,7 +524,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                 r = json.loads(bytes(sample.payload).decode("utf-8"))
             except Exception:      # noqa: BLE001
                 return
-            link_detector.note_cloud_rx(time.monotonic())
+            link_state.on_cloud_rx(time.monotonic())
             event_subsystem.submit_recon_rsp(r)
 
         def _on_health(sample) -> None:
@@ -589,13 +597,31 @@ def run_voice_loop_wiring(stop_flag: dict,
                     estop_ping_pub.put(json.dumps(
                         {"type": "ping", "seq": probe_seq,
                          "t_mono_ms": ping_mono}).encode("utf-8"))
+                    # 11 S4.6 cloud-link state (P5 is the sole authority, LNK-6).
+                    st = link_state.evaluate(now)
                     link_payload = {
                         "schema": "state_link_v1",
                         "gateway_up": True,
+                        # -- cloud link (11 S4.6.2): the RTB judge (NFR-12/TSK-20..22)
+                        "cloud_link": st.cloud_link,
+                        "level": st.level,
+                        "disconnected_s": st.disconnected_s,
+                        "to_next_level_s": st.to_next_level_s,
+                        "reason": st.reason,
+                        "last_rx_mono": st.last_rx_mono,
+                        "link_epoch": st.link_epoch,
+                        "gw_start_mono": st.gw_start_mono,
+                        "thresholds": {
+                            "degraded_s": link_thresholds.degraded_s,
+                            "down_s": link_thresholds.down_s,
+                            "rtb_s": link_thresholds.rtb_s,
+                            "stable_s": link_thresholds.stable_s,
+                        },
                         # estop_path lets the HMI arm/grey its ESTOP button
                         # (NAV-64): ok only on a fresh pong under the RTT
                         # threshold, degraded when slow, down after
-                        # link_down_misses missing pongs (17 S6.3).
+                        # link_down_misses missing pongs (17 S6.3). EP-3: the
+                        # cloud link and the estop path are judged separately.
                         "estop_path": estop_probe.estop_path(),
                         # latency_ms IS the estop probe's last RTT (11 S4.6.5 /
                         # 17 S6.2 link.data.latency_ms; 17 line "latency_ms = S6.3
@@ -607,12 +633,14 @@ def run_voice_loop_wiring(stop_flag: dict,
                     }
                     hmi_state["link"] = link_payload   # feed HMI status/ESTOP
                     link_pub.put(json.dumps(link_payload).encode("utf-8"))
-                    # Reconnect -> backfill (17 S3.5.2): one backfill on the cloud
-                    # down->up edge. No-op while the cloud has never been heard from
-                    # (dev has no cloud), so this stays dormant until real uplink.
-                    if (event_subsystem is not None and event_subsystem.enabled
-                            and link_detector.poll(now)):
-                        _logger.info("cloud link reconnect -> trigger backfill")
+                    # Reconnect -> backfill (17 S3.5.2): the state machine flags the
+                    # once-per-outage down->up edge. No-op while the cloud has never
+                    # been heard from (dev has no cloud) -> dormant until real uplink.
+                    if (st.reconnected and event_subsystem is not None
+                            and event_subsystem.enabled):
+                        _logger.info(
+                            "cloud link reconnect (epoch %d) -> trigger backfill",
+                            st.link_epoch)
                         event_subsystem.trigger_backfill()
                     last_hb = now
                 time.sleep(0.1)
