@@ -185,6 +185,53 @@
     svg.querySelectorAll("circle.geo-dot").forEach((c) => c.setAttribute("r", rr));
   }
 
+  // req1 (2026-08-18): keep geo NAMES from overlapping. Greedy de-confliction in
+  // SCREEN space: each label keeps its anchor if free, else is nudged (down / up /
+  // side) to the first collision-free slot; if none fits (map too dense at this
+  // zoom) it is hidden and reappears when zoom-in spreads the features. Runs at
+  // the end of renderGeo (labels are fresh at their anchors each snapshot) and is
+  // re-evaluated as the operator zooms (2 Hz re-render).
+  function estWidthPx(txt, fontPx) {
+    let u = 0;                             // CJK ~1em, latin/space ~0.52em
+    for (let i = 0; i < txt.length; i++) u += (txt.charCodeAt(i) > 255 ? 1.0 : 0.52);
+    return u * fontPx + 4;
+  }
+  const LABEL_LAYERS = "#keepInLayer text, #alarmLayer text, #recordedRouteLayer text, " +
+                       "#realtimeTrajectoryLayer text, #keypointLayer text";
+  function declutterLabels() {
+    const svg = $("mapSvg");
+    const cw = svg.clientWidth || 1;
+    const vb = (svg.getAttribute("viewBox") || "").split(/\s+/).map(Number);
+    if (vb.length < 4) return;
+    const mpp = vb[2] / cw;                // metres per screen px (uniform)
+    const fontPx = parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue("--font-plan-size")) || 24;
+    const hpx = fontPx * 1.05;
+    const placed = [];
+    const hit = (a, b) => !(a.x2 < b.x1 || b.x2 < a.x1 || a.y2 < b.y1 || b.y2 < a.y1);
+    // candidate offsets (columns of screen px): stay, then step down/up/side.
+    const cand = [[0, 0], [0, 1], [0, -1], [0, 2], [0, -2], [1, 0], [-1, 0],
+                  [1, 1], [-1, 1], [1, -1], [-1, -1], [0, 3], [0, -3]];
+    for (const t of svg.querySelectorAll(LABEL_LAYERS)) {
+      t.style.display = "";
+      const ax = parseFloat(t.getAttribute("x")), ay = parseFloat(t.getAttribute("y"));
+      const sx = (ax - vb[0]) / mpp, sy = (ay - vb[1]) / mpp;   // anchor in screen px
+      const wpx = estWidthPx(t.textContent || "", fontPx);
+      let done = false;
+      for (const [ox, oy] of cand) {
+        const dx = ox * (wpx * 0.5 + 4), dy = oy * (hpx + 2);
+        const box = { x1: sx + dx - 1, y1: sy + dy - hpx, x2: sx + dx + wpx, y2: sy + dy + 2 };
+        if (!placed.some((p) => hit(box, p))) {
+          if (dx || dy) { t.setAttribute("x", ax + dx * mpp); t.setAttribute("y", ay + dy * mpp); }
+          placed.push(box);
+          done = true;
+          break;
+        }
+      }
+      if (!done) t.style.display = "none";   // no room at this zoom -> hide
+    }
+  }
+
   // -- render one snapshot -------------------------------------------------- */
   function renderSnapshot(snap) {
     // Footer-clock zone follows the GPS fix (17 S6.10.2 v1.3). snapshot.timezone
@@ -333,6 +380,7 @@
       }
     }
     updateGridAndDots();     // size the dots just drawn to a constant screen radius
+    declutterLabels();       // req1: nudge/hide names so they never overlap
   }
 
   // req1 (2026-08-18): a geo dot -- a round <circle class="geo-dot"> whose radius
