@@ -31,6 +31,7 @@ from __future__ import annotations
 DDL_WAYPOINTS = """
 CREATE TABLE IF NOT EXISTS waypoints (
   waypoint_id   TEXT PRIMARY KEY,
+  name          TEXT,
   x_m           REAL NOT NULL,
   y_m           REAL NOT NULL,
   heading_rad   REAL,
@@ -40,6 +41,11 @@ CREATE TABLE IF NOT EXISTS waypoints (
   updated_ms    INTEGER NOT NULL
 );
 """.strip()
+# name: the keypoint's display name (11 S7.8.2, "东门岗亭"), for the HMI keypoint
+# label + state/geo/objects broadcast (11 S7.10A). Nullable here because this
+# runtime schema was the minimal early cut (15 S9.3 has it NOT NULL); F06
+# record_waypoint populates it, and geo objects with no name render as an
+# unlabelled point (GO-4), never a fabricated one.
 
 
 DDL_ROUTES = """
@@ -67,6 +73,7 @@ CREATE TABLE IF NOT EXISTS route_waypoint_assoc (
 DDL_DOCKS = """
 CREATE TABLE IF NOT EXISTS docks (
   dock_id       TEXT PRIMARY KEY,
+  name          TEXT,
   x_m           REAL NOT NULL,
   y_m           REAL NOT NULL,
   heading_rad   REAL NOT NULL,
