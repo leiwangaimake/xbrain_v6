@@ -133,20 +133,16 @@
     // origin), so the井字格 fills the screen at ANY pan/zoom and never shows an
     // edge -- an infinite grid the operator cannot drag or zoom off.
     const map = c.map || {};
-    const grid = map.grid || { minor_m: 1, major_m: 5 };
     baseVB = (map.viewbox || "-100 -65 240 145").split(/\s+/).map(Number);
-    // req(2026-08-18): keep ONLY the 5m major grid, drop the 1m minor grid.
-    // Each major tile no longer fills with the minor pattern (fill=none), so the
-    // grid shows just the 5m gridlines.
-    setPattern("majorGrid", grid.major_m, `M ${grid.major_m} 0 L 0 0 0 ${grid.major_m}`);
-    $("majorGridRect").setAttribute("width", grid.major_m);
-    $("majorGridRect").setAttribute("height", grid.major_m);
+    // req(2026-08-18): the 1m minor grid is dropped (majorGridRect fill=none),
+    // and the cell size is ADAPTIVE + yaml-configurable (map.grid.cell_options_m)
+    // -- the actual cell metres + scaleText are chosen per zoom by
+    // updateGridAndDots() so a huge (~5km) map never shows a pinprick sieve.
     $("majorGridRect").setAttribute("fill", "none");     // no 1m minor grid
     const G = 100000;                     // metres; far beyond any mouse pan/zoom
     for (const [k, v] of [["x", -G], ["y", -G], ["width", 2 * G], ["height", 2 * G]])
       $("gridBg").setAttribute(k, v);
-    $("scaleText").textContent = `网格 ${grid.major_m}m`;
-    applyView();                          // set the initial viewBox from base + view
+    applyView();                          // sets viewBox + adaptive grid + dots
 
     const z = map.zoom || {};
     zoomBounds = { min: z.min || 0.65, max: z.max || 2.8, wheel: z.wheel_step || 0.12 };
@@ -155,6 +151,38 @@
     const p = $(id);
     p.setAttribute("width", size); p.setAttribute("height", size);
     p.querySelector("path").setAttribute("d", d);
+  }
+
+  // req(2026-08-18): fallback cell sizes if yaml has none. The real list is
+  // map.grid.cell_options_m (yaml-configurable). GRID_TARGET_PX = aim each cell
+  // this many screen px so a huge map never shows a pinprick sieve; DOT_PX =
+  // constant screen radius for the geo dots (so they never shrink to nothing on
+  // a ~5km view).
+  const GRID_CELLS_DEFAULT = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+  const GRID_TARGET_PX = 42;
+  const DOT_PX = 3.5;
+
+  // Chosen every view change (applyView) from the CURRENT metres-per-screen-px.
+  // The map uses preserveAspectRatio="none" but fitGeoToData matched the viewport
+  // aspect, so the scale is uniform (x==y) and mpp is a single value.
+  function updateGridAndDots() {
+    const svg = $("mapSvg");
+    const cw = svg.clientWidth || 1;
+    const vb = svg.getAttribute("viewBox");
+    const vbW = vb ? parseFloat(vb.split(/\s+/)[2]) : baseVB[2];
+    const mpp = vbW / cw;                  // metres per screen px
+    const cells = (cfg && cfg.map && cfg.map.grid && cfg.map.grid.cell_options_m)
+                  || GRID_CELLS_DEFAULT;
+    // smallest configured cell whose on-screen size >= target; else the largest.
+    let cell = cells[cells.length - 1];
+    for (const cm of cells) { if (cm / mpp >= GRID_TARGET_PX) { cell = cm; break; } }
+    setPattern("majorGrid", cell, `M ${cell} 0 L 0 0 0 ${cell}`);
+    $("majorGridRect").setAttribute("width", cell);
+    $("majorGridRect").setAttribute("height", cell);
+    $("scaleText").textContent = `网格 ${cell}m`;
+    // non-scaling geo dots: constant screen radius regardless of zoom.
+    const rr = (DOT_PX * mpp).toFixed(3);
+    svg.querySelectorAll("circle.geo-dot").forEach((c) => c.setAttribute("r", rr));
   }
 
   // -- render one snapshot -------------------------------------------------- */
@@ -218,12 +246,18 @@
     if (xs.length < 3) return;
     const minX = Math.min(...xs), maxX = Math.max(...xs);
     const minY = Math.min(...ys), maxY = Math.max(...ys);
-    const bw = maxX - minX, bh = maxY - minY;
-    const mx = bw * 0.06 + 30, my = bh * 0.06 + 30;
-    baseVB = [minX - mx, minY - my, bw + 2 * mx, bh + 2 * my];
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    let vbW = (maxX - minX) * 1.12 + 40, vbH = (maxY - minY) * 1.12 + 40;
+    // Match the viewport aspect so preserveAspectRatio="none" does NOT distort
+    // the true shape: a 5km x 1km lake stays 5:1 and dots stay round (uniform
+    // scale). Otherwise the box would be stretched to fill the viewport.
+    const svg = $("mapSvg");
+    const ar = (svg.clientWidth || 4) / (svg.clientHeight || 3);
+    if (vbW / vbH > ar) vbH = vbW / ar; else vbW = vbH * ar;
+    baseVB = [cx - vbW / 2, cy - vbH / 2, vbW, vbH];
     view.zoom = 1; view.pan = { x: 0, y: 0 };
-    // widen zoom-in so 200m (5m grid legible) is reachable from the ~5km fit.
-    zoomBounds = { min: 0.5, max: Math.max(zoomBounds.max, Math.ceil(bw / 200)),
+    // widen zoom-in so ~200m (5m grid legible) is reachable from the ~5km fit.
+    zoomBounds = { min: 0.5, max: Math.max(zoomBounds.max, Math.ceil((maxX - minX) / 200)),
                    wheel: zoomBounds.wheel };
     geoFitted = true;
     applyView();
@@ -269,6 +303,14 @@
       const rlayer = realtime ? "realtimeTrajectoryLayer" : "recordedRouteLayer";
       $(rlayer).appendChild(
         polyline(realtime ? "realtime-trajectory" : "recorded-route", pts, rline));
+      // req1 (2026-08-18): a round dot at EVERY RTK point on the route, coloured
+      // the route line. Constant screen size (updateGridAndDots), so visible even
+      // on the ~5km fit view. The points stay un-labelled (route points have no
+      // names); only keypoints carry a name.
+      for (const p of (r.points || [])) {
+        const pxy = toXY(p, origin);
+        if (pxy) $(rlayer).appendChild(dot(pxy[0], pxy[1], rline.color));
+      }
       // Route name label at its first vertex -- unified bright white (CSS).
       if (r.name && r.points && r.points[0]) {
         const rxy = toXY(r.points[0], origin);
@@ -281,40 +323,30 @@
     if (wps.available) for (const w of wps.items) {
       const xy = toXY(w.geom || w, origin); if (!xy) continue;
       const mk = (cfg.waypoint || {})[w.recorded ? "recorded" : "unrecorded"] || {};
-      const dotR = (mk.size_px || 3) / 3;     // req5: shrink dots to 1/3 of config size
-      $("keypointLayer").appendChild(marker(xy[0], xy[1], mk, dotR));
-      // Keypoint name in its own class (".keypoint text" never matched a
-      // <text class="keypoint">). Unified bright white via CSS .keypoint-label
-      // (user 2026-08-18), NOT the marker colour.
+      // req1: keypoint = a round dot (constant screen size) + its name in bright
+      // white (CSS .keypoint-label). The old ".keypoint text" selector never
+      // matched a <text class="keypoint">, hence the dedicated class.
+      $("keypointLayer").appendChild(dot(xy[0], xy[1], mk.color));
       if (w.name) {
         $("keypointLayer").appendChild(
-          label(xy[0] + dotR + 1, xy[1], "keypoint-label", w.name));
+          label(xy[0], xy[1] - 2, "keypoint-label", w.name));
       }
     }
+    updateGridAndDots();     // size the dots just drawn to a constant screen radius
   }
 
-  // U6: waypoint marker shape (circle/square/triangle/diamond) + colour + size.
-  function marker(x, y, mk, r) {
-    // req5 (2026-08-18): dot radius = 1/3 of the config size_px (was hard 3).
-    const s = r || (mk.size_px || 3) / 3, col = mk.color || "#3aa0ff", shape = mk.shape || "circle";
-    let el;
-    if (shape === "square") {
-      el = document.createElementNS(SVGNS, "rect");
-      el.setAttribute("x", x - s); el.setAttribute("y", y - s);
-      el.setAttribute("width", 2 * s); el.setAttribute("height", 2 * s);
-    } else if (shape === "triangle") {
-      el = document.createElementNS(SVGNS, "polygon");
-      el.setAttribute("points", `${x},${y - s} ${x - s},${y + s} ${x + s},${y + s}`);
-    } else if (shape === "diamond") {
-      el = document.createElementNS(SVGNS, "polygon");
-      el.setAttribute("points", `${x},${y - s} ${x + s},${y} ${x},${y + s} ${x - s},${y}`);
-    } else {
-      el = document.createElementNS(SVGNS, "circle");
-      el.setAttribute("cx", x); el.setAttribute("cy", y); el.setAttribute("r", s);
-    }
-    el.setAttribute("fill", col);
-    return el;
+  // req1 (2026-08-18): a geo dot -- a round <circle class="geo-dot"> whose radius
+  // is set to a constant screen size by updateGridAndDots (placeholder r here).
+  // Used for both route RTK points and keypoints so they never vanish on a big map.
+  function dot(x, y, color) {
+    const c = document.createElementNS(SVGNS, "circle");
+    c.setAttribute("cx", x); c.setAttribute("cy", y);
+    c.setAttribute("r", 1);
+    c.setAttribute("class", "geo-dot");
+    c.setAttribute("fill", color || "#3aa0ff");
+    return c;
   }
+
 
   function renderRobot(pose, origin) {
     clear("robotLayer");
@@ -796,6 +828,7 @@
         "--map-label-fs", (planPx * h / ch).toFixed(3) + "px");
     }
     $("zoomText").textContent = `${view.zoom.toFixed(1)}x`;
+    updateGridAndDots();                  // adaptive grid cell + non-scaling dots
   }
   function clampZoom(z) { return Math.max(zoomBounds.min, Math.min(zoomBounds.max, z)); }
   function wireInteraction() {

@@ -104,6 +104,11 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
   vector-effect: non-scaling-stroke; }
 .robot-arrow { fill: var(--ink); }
 .alarm-dot { fill: var(--fence-alarm-color); stroke: var(--ink); stroke-width: 1; }
+/* req1 (2026-08-18): geo dots (route RTK points + keypoints). Fill set inline to
+   the layer colour; a thin white ring makes a dot pop even on a same-colour line.
+   radius is set to a constant screen size by hmi.js updateGridAndDots(). */
+.geo-dot { stroke: rgba(255,255,255,.8); stroke-width: 1px;
+  vector-effect: non-scaling-stroke; }
 .keypoint circle { stroke-width: 2; }
 .keypoint.recorded circle { fill: var(--ok); stroke: var(--ok); }
 .keypoint.unrecorded circle { fill: var(--warn); stroke: var(--warn); }

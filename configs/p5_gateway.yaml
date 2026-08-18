@@ -133,8 +133,13 @@ hmi:
     static_dir: "hmi/static"          # index.html/hmi.css/hmi.js under xbrain/p5_gateway/
     map:
       grid:
-        minor_m: 1.0                  # U1: minor grid cell = 1 m (default)
-        major_m: 5.0                  # U1: major grid cell = 5 m
+        minor_m: 1.0                  # U1: minor grid cell = 1 m (kept for schema; not drawn)
+        major_m: 5.0                  # U1: legacy single major cell (superseded by cell_options_m)
+        # U1 (user 2026-08-18): the grid cell (metres) is ADAPTIVE + yaml-driven.
+        # The frontend picks the smallest of these whose on-screen size stays big
+        # enough (never a pinprick sieve) at the current zoom. Add/remove values
+        # here to tune -- no cell size is hard-coded in the frontend.
+        cell_options_m: [5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
       viewbox: "-100 -65 240 145"     # ENU meters; from customer sample
       zoom: { min: 0.65, max: 2.8, wheel_step: 0.12 }  # U4: wheel zoom bounds/step
     font:                             # U2: family + size_px per panel; size_px = 2x sample (user 2026-08-14)
