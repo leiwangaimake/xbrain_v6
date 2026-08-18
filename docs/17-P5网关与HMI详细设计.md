@@ -1657,7 +1657,9 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | 5 | .coord 内 ENU 坐标 —— 「<strong>ENU</strong> E 49.0m · N -23.0m」 | e_m (float64, m) · n_m (float64, m)，锚点 enu_origin。与 .robot-arrow 位置同一份数据，但这里是【显示为数字】，对口径一致性要求更高（操作员会拿它和围栏/位置点坐标对账）。 | state/pose 10 Hz；WS state 5 Hz | xbrain/{rid}/state/pose → WS state.pose | ★ 无对应字段（PoseState 只有 lat/lon/alt） |
 | 6 | .coord 内航向角 —— 「航向 92.5°」 | 航向角，度。前端需做 rad→deg 换算并声明基准。 | state/pose 10 Hz；WS state 5 Hz | xbrain/{rid}/state/pose → WS state.pose | heading_rad (float64, rad, ✅必填, ENU 约定：正东为 0、逆时针为正) |
 | 7 | .coord 内速度 —— 「速度 0.6m/s」 | 对地速度标量，float，m/s。 | state/pose 10 Hz；WS state 5 Hz | xbrain/{rid}/state/pose → WS state.pose | speed_mps (float, m/s, ✅必填) |
-| 8 | .compass —— 左上角指北针（<span class="compass-n">N</span> + <span class="compass-arrow">▲</span>） | 无。样例中该 overlay 是静态 DOM，JS 只对 #mapSvg 做 translate/scale（无 rotate），地图恒为「北朝上」的 ENU 平面 ⇒ 指北针恒指屏幕正上方。 | 一次性静态渲染，无刷新需求 | —（前端本地） | — |
+| 8 | ~~.compass —— 左上角指北针~~（★ v1.4 已废，见 §6.10.2B） | ★ **样例 item 8 已删** —— 改为**机器人航向仪表盘**（§6.10.2B）。★ 「地图北朝上」仍成立，但现由 §6.10.2C **M-1**（`toXY` 把 ENU `[e,-n]`）保证，不再靠静态指北针。 | — | —（前端本地） | — |
+
+> ★★ **v1.4 交叉引用（2026-08-18）**：<br>· **ENU E/N（item 5）与机器人位置/航向（item 1/2）**：`state/pose` **无 e_m/n_m 字段**（只 lat/lon），前端投影 lat/lon → ENU 需 `enu_origin`；现状与演示回退见 §6.10.2C **M-7**。<br>· **北朝上**：由 §6.10.2C **M-1** 统一保证（geometry 数组与 lat/lon 同朝向）。<br>· **机器人箭头（item 1/2）**：非缩放 9px；航向旋转 `a = π/2 − heading`（N 上屏下，ENU east=0/CCW+），`heading_valid=false` 时指北——见 §6.10.2C M-1 与 `renderRobot`。
 
 #### 6.8.3 C · 定位质量与模式（7 项）
 
@@ -1861,12 +1863,12 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 
 | # | 需求 | config 键（`hmi.web.*`） | 默认 |
 |---|---|---|---|
-| U1 | 地图格栅每格距离等参数可配 | `map.grid.minor_m` · `map.grid.major_m` | ★ `minor_m: 1.0`（每格 **1m**）· `major_m: 5.0` |
+| U1 | 地图格栅每格距离可配 | `map.grid.cell_options_m`（★ v1.4）· ~~`map.grid.minor_m` · `major_m`~~ | ★ v1.4：`cell_options_m: [5,10,20,50,100,200,500,1000,2000,5000]`（自适应挡位，见 §6.10.2C）。★ 旧 `minor_m: 1.0` **不再绘制**（1m 小格删）、`major_m: 5.0` 降级为遗留键 |
 | U2 | 地图/各信息栏/状态栏字体与字号可配 | `font.map/legend/plan/status/coord`（`family` ＋ `size_px`） | 见 yaml 骨架 |
 | U3 | 任务栏/状态栏大小可配 | `layout.plan_panel` · `layout.status_bar`（`width/height/max_*`） | 见 yaml 骨架 |
 | U4 | 滚轮上下滚动缩放 | `map.zoom.{min,max,wheel_step}` | `0.65 / 2.8 / 0.12`（对齐母本脚本） |
-| U5 | 围栏/路径命名 ＋ 连线类型与颜色可配 | `fence.{active,forbid,alarm}.line.*` · `route.{recorded,realtime}.line.*`（`style ∈ solid/dashed/dotted`；见 §6.10.2A 样式规范） | 见 yaml；★ 命名走 F 类录制（`18` F07/F03，写路径 PB7 已建） |
-| U6 | 位置点标识符形状与颜色可配 | `waypoint.marker.{shape,color,size}`（`shape ∈ circle/square/triangle/diamond`），可分 recorded/unrecorded | 见 yaml 骨架 |
+| U5 | 围栏/路径命名 ＋ 连线类型与颜色可配 | `fence.{active,warning,forbid,speed_limit}.line.*`（★ v1.4：四类 role，`warning` 旧名 `zone`，`11` §9A.1A）· `route.{recorded,realtime}.line.*`（`style ∈ solid/dashed/dotted`；见 §6.10.2A 样式规范） | 见 yaml；★ 命名走 F 类录制（`18` F07/F03，写路径 PB7 已建） |
+| U6 | 位置点标识符形状与颜色可配 | `waypoint.{recorded,unrecorded}.{shape,color,size_px}`（`shape ∈ circle/square/triangle/diamond`） | 见 yaml 骨架。⚠️ v1.4：前端**只画圆点**(§6.10.2C)且圆点半径由 `size_px/3` 起、再按屏幕像素定尺(非缩放)，`shape` 其余值本期不生效 |
 | U7 | 对外绑定 ＋ 端口 | 见 §6.10.3 | — |
 
 ★★ **这些是 UI 呈现参数，不是安全参数** ⇒ 允许有默认值（§3.1 只管 `common.spec.*`/`common.safety.*`，UI 参数不在其列）。
@@ -1885,22 +1887,41 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 
 ##### 6.10.2A ★★★ 连线与要素样式规范（客户定义 · 2026-08-13 用户订正 · 默认值，可配）
 
-> ★ 这是**默认样式**的权威表；每一项都由 `hmi.web.*` 配置驱动（代码不硬编码），前端据 `role`（缺则据名称「活动/禁入/报警」推）着色。
+> ★ 这是**默认样式**的权威表；每一项都由 `hmi.web.*` 配置驱动（代码不硬编码），前端据 `role`（缺则据名称「活动/禁止/限速/报警」推，见 `fenceType`）着色。
+> ⚠️★★★ **v1.4（2026-08-18）大改**：围栏由 3 类扩为 **4 类 role**（+`speed_limit`），颜色重定；连线宽度改**屏幕像素、非缩放、×2**；位置点/路径点改**圆点**；名称统一亮白 + 显长度。逐条见下表与 §6.10.2C。
 
-| 要素 | 类型/role | 连线样式 | 颜色（默认） | 粗细 | config 键 |
+| 要素 | 类型/role | 连线样式 | 颜色（默认） | 粗细（★ v1.4：屏幕 px · 非缩放 · ×2） | config 键 |
 |---|---|---|---|---|---|
-| ★ 活动区域围栏 | `allow` | **实线** | ★ **亮蓝 `#2f88ff`** | 粗 `2.4` | `fence.active.line` |
-| ★ 报警区域围栏 | `warning`（旧名 `zone`） | **实线** | ★ **亮红 `#ff2020`** | 粗 `2.4` | `fence.alarm.line` |
-| 禁入区域围栏 | `forbid` | **实线** | 亮红 `#ff2020`（同报警，用户本轮未单列，暂沿用红色危险语义） | 粗 `2.4` | `fence.forbid.line` |
-| ★ 路径（已录制） | route recorded | **实线** | ★ **亮绿 `#2ecc40`** | ★ **细 `1.0`** | `route.recorded.line` |
-| ★ 实时行走轨迹（巡逻中） | route realtime | **实线** | ★ **亮黄 `#ffd400`** | 粗 `2.4` | `route.realtime.line` |
-| 位置点 | waypoint | 标记 | 见 U6 | — | `waypoint.marker` |
+| ★ 活动区域围栏 | `allow` | **实线** | ★ **亮蓝 `#2f88ff`** | `4.8` | `fence.active.line`（color 从 config 取） |
+| ★ 报警区域围栏 | `warning`（旧名 `zone`） | **实线** | ★ **亮红 `#ff2020`** | `4.8` | `fence.alarm.line`（color 从 config 取） |
+| ★ 禁止区域围栏 | `forbid` | **实线** | ★ **v1.4 深红 `#8b0000`** | `4.8` | 前端 CSS `--fence-forbid-color`（★ config `fence.forbid.color` 仍为误值 `#ff2020`，`applyUiConfig` 只从 config 取 active/alarm，forbid/speed 用 CSS 默认胜出） |
+| ★ 限速区域围栏 | `speed_limit`（★ v1.4 新增） | **实线** | ★ **v1.4 亮青蓝 `#22c5ff`**（区别活动亮蓝） | `4.8` | 前端 CSS `--fence-speed-color`；`cfg.fence.speed` 缺则渲染回退用 `active` 的 line |
+| ★ 路径（已录制） | route recorded | **实线** | ★ **亮绿 `#2ecc40`** | `2.0` | `route.recorded.line` |
+| ★ 实时行走轨迹（巡逻中） | route realtime | **实线** | ★ **亮黄 `#ffd400`** | `4.8` | `route.realtime.line` |
+| ★ 关键点 / 路径点 | keypoint / route point | ★ **v1.4 圆点**（非缩放，半径 ~3.5 屏幕 px，`.geo-dot`） | 关键点 = marker 色 · 路径点 = 该路径线色 | — | `waypoint.{recorded,unrecorded}`（`size_px/3` 起，再定为屏幕 px） |
+
+★★★ **图例菜单（左上角，★ v1.4 六项）**：已录制路径 · 实时行走轨迹 · 活动区域 · 报警区域 · ★ **限速区域** · ★ **禁止区域**。★ v1.4：区域色块由镂空 border 改**实心填充矩形**（`.legend-mark` background 实色）；路径色块为填充细条。
+★★★ **名称标签（★ v1.4）**：围栏名后显**周长**、路径名后显**长度**，格式 `名称 (N m)`（几何 ENU 米，欧氏距离即米）；关键点名无长度。颜色**统一亮白 `#ffffff` + 粗体**（不再按图层线色）；字号 = **任务内容字号**（`--font-plan-size`，即 `font.plan.size_px`，非硬编码 12）；**非缩放**（不随地图缩放变），且**去重叠**（见 §6.10.2C）。
 
 ★★★ **实时黄色轨迹的显隐（用户 2026-08-13）**：巡逻**执行中**始终显示黄色轨迹；**巡逻完成后**是否继续显示由 `route.realtime.show_after_complete`（bool，默认 `true`）控制 —— 前端据 `plan` 是否有 `running` 计划判「执行中」，无则视为完成，`false` 时隐藏黄色轨迹。
 
+##### 6.10.2C ★★★ 地图渲染行为（v1.4 · 2026-08-18 · 大范围调试后收口）
+
+> ★ 本节把本轮实测定型的一批地图渲染规则成文（此前只在 `hmi.js` 里，文档缺）。全部在 `hmi.js`：`toXY` / `fitGeoToData` / `updateGridAndDots` / `declutterLabels` / `applyView` / `renderGeo`。
+
+| # | 规则 | 依据 / 实现 |
+|---|---|---|
+| ★★★ **M-1 北朝上** | 地图 **N 朝上**（与航向仪表盘一致）。SVG 的 y 朝下，故 `toXY` 把 ENU `[e_m, n_m]` 映射为 `[e, -n]`；lat/lon 分支也同样翻 N（`-(lat-origin)`）⇒ geometry（ENU 数组）与 robot/events（lat/lon）**同一朝向**。⚠️ 曾漏翻数组分支 → 地图北朝下,与罗盘相反 | `toXY` |
+| ★★★ **M-2 自动 fit** | 模拟/真实数据可跨 ~5km，远超 240m 默认视图。**首帧带围栏时**(围栏定义真实范围)按全 geo bounds **一次性 fit**：① 中心对齐；② **匹配视口宽高比**(否则 `preserveAspectRatio="none"` 会把长条形压扁、圆点变椭圆)；③ zoom 复位、放开 zoom 上限(≈ 场区宽/200，便于放大看 5m 级细节)。**只 fit 一次**，之后操作员自由平移缩放 | `fitGeoToData` |
+| ★★★ **M-3 自适应网格** | 只画一层网格(1m 小格删)。格子米数**不写死**：按当前「米/屏幕 px」从 `map.grid.cell_options_m`(yaml)选**屏上 ≥ `GRID_TARGET_PX`(42px)** 的**最小**挡位 ⇒ 巨大地图不再针尖筛网、放大自动换小格。右下角 `网格 Nm` 随之动态显示 | `updateGridAndDots`(每次 `applyView` 调) |
+| ★★★ **M-4 非缩放要素** | 线 / 标签 / 圆点均**固定屏幕大小**、不随缩放变：<br>· **线** `vector-effect:non-scaling-stroke` ⇒ `width_px` 变回真屏幕 px；<br>· **标签** 字号 `--map-label-fs` 由 `applyView` 按 `planPx·h/clientHeight` 算成恒定屏幕 px；<br>· **圆点** 半径 `DOT_PX·mpp`(user units) ⇒ 恒定屏幕 px。★ 否则 5km 全景下线/点缩成不可见针尖 | `updateGridAndDots` / CSS |
+| ★★★ **M-5 标签去重叠** | 围栏/路径/关键点名称**不得重叠**。`declutterLabels` 屏幕空间贪心去冲突：锚点不撞则留，否则依次试下/上/侧偏移到首个不撞位；全撞(该缩放太密)则**隐藏**，放大特征散开后自动重现。CJK 1em / latin 0.52em 估宽。渲染末尾调用(每帧从锚点重排)，随 2 Hz 重渲染跟缩放 | `declutterLabels` |
+| ★★ **M-6 关键点 vs 路径点** | **关键点**(命名 waypoint)画**带名圆点**；**路径点**(路径几何顶点，无名)只画**线上的圆点**、无名。运行时 routes 无独立几何列、顶点也存 waypoints 表(`15` §9.3 assoc)，故 `read_geo_objects._read_waypoints` 加 `NOT IN route_waypoint_assoc` 过滤，dots 层只留关键点；路径点圆点由前端从 `route.points` 另画。近路的关键点是独立(未 assoc)点，保留 | `read_geo_objects` / `renderGeo` |
+| ⚠️ **M-7 enu_origin 演示回退** | ENU E/N 读数与地图机器人需 `enu_origin` 投影 lat/lon。权威原点是 `common.geo.enu_origin`(SITE 现场标定，`7.8.4`，W4 未落地 ⇒ null ⇒ 曾恒显 `--`)。**演示回退**：`_on_state_pose` 里 `enu_origin` 若 null 就采纳**首个有效定位**(lat/lon)为本地原点。★★ 原始 `state/pose` **无 `available` 键**(`pose_group` 下游才加)，判有效按 lat/lon。⚠️ **非真标定替代**：原点随首次定位漂；真部署由 sites/ 标定，前端不改自动用真值 | `_on_state_pose` / `renderStatus` / `renderRobot` |
+
 ##### 6.10.2B ★★★ 机器人航向仪表盘（用户 2026-08-14 · 取代样例 item 8 的左上角指北针）
 
-> ★ **变更**：删除样例 item 8 的左上角静态指北针（`N` + `▲`，原语义「地图恒北朝上」），改为**机器人航向仪表盘**（放在原指北针的**左上角**位置——图例下方，用户 2026-08-14）。二者语义不同：旧的是「地图哪边是北」（静态），新的是「机器人朝哪」（随航向转）。★ 图例仍在左上角顶部，盘置于其下（`top:118px`），不与图例重叠。
+> ★ **变更**：删除样例 item 8 的左上角静态指北针（`N` + `▲`，原语义「地图恒北朝上」），改为**机器人航向仪表盘**（放在原指北针的**左上角**位置——图例下方，用户 2026-08-14）。二者语义不同：旧的是「地图哪边是北」（静态），新的是「机器人朝哪」（随航向转）。★ 图例仍在左上角顶部，盘置于其下（★ v1.4：`top:156px`，原 `118px`——图例由 4 行增到 6 行(加限速/禁止)变高后曾重叠，下移让开），不与图例重叠。
 
 - **实现方式**：**SVG 矢量**（🚫 不用 PNG）—— 旋转只需对一个 `<g>` 加 `rotate()`，任意缩放不糊、中心镂空天然成立、颜色可配、无二进制资产。用户 2026-08-14 明确「PNG 或 2D 绘图皆可，择便」，故定 SVG。
 - **两层结构**（＝用户示意的「两张图叠加」）：
@@ -1915,7 +1936,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
   - **② `heading_valid` 有效（L1 或 L2）**：**实时转盘**（转 `−罗盘度`）把当前航向送到顶部固定指针下，🚫 不转指针。
   - **③ 两路航向都丢（进入 L3，`heading_valid=false` 但曾有效）**：**停转，冻结在航向消失前的最后有效刻度**，🚫 **不回正北**、不置灰。★ 契约 **H-2**（`11` §3.3.5：`heading_valid==false` 时 `heading_rad` **仍可携带最后已知值**）为此背书；★ 前端另行记住 `lastHeadingCompass`（`renderHeading`），**不依赖上游是否兑现 H-2**，更稳。
 - **硬件门**：航向数据挂 `rtk_driver`（未建）+ `perception`（设计未写）+ `quadruped`（云深处）W4 `GATED-HW` ⇒ **现恒处①开机态**（正北略灰）；真数据到位后①→②→③自动切换。
-- **落地**：**左上角图例下方** `left:14px top:118px`、`300px`（用户 2026-08-14：由 150px 放大一倍、并置于左上角图例之下）；`configs` 暂未把盘尺寸/黄色抽成 `hmi.web` 键（后续可配化，现硬编码于 hmi.css）。
+- **落地**：**左上角图例下方** `left:14px top:156px`（★ v1.4 由 `118px` 下移，让开 6 行图例）、`300px`（用户 2026-08-14：由 150px 放大一倍、并置于左上角图例之下）；`configs` 暂未把盘尺寸/黄色抽成 `hmi.web` 键（后续可配化，现硬编码于 hmi.css）。
 
 #### 6.10.3 ★★★ 绑定与端口（NET-C9 —— 逐口显式绑定，🚫 禁 0.0.0.0）
 
@@ -1932,7 +1953,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
   - **按需历史**（任务历史 / 事件历史）：queryable / REST 全量拉 —— 任务走 `query/tasks`（§6.5 / `11` §12.2A），事件走 `/api/events`。
 - ★★★ **P5 🚫 不读 P3 三库**（`task.db` / `geo.db` / `fence.db`，`11` §7843 单写者铁律）。数据全经 Zenoh（订阅 / queryable / 广播）＋ P5 自有 `record.db`（事件）到手，**P5 只缓存 + 转发**。<br>⚠️★★★ **原文那句「后端数据读取方法读 P3 三库」是【错的】，已删** —— 它与 §7843 直接冲突，且正是 2026-08-18 实测「往 `geo.db` 插数据、HMI 却一条收不到」的根源（P5 根本不读 geo.db）。
 - ★ **geo 图层数据源**（替代原 `snapshot_inputs` 里 `routes` / `waypoints` **写死的 `None`**）：P5 订 `state/geo/objects` → `geo_cache`（照 `fence_cache`）→ 快照 `geo.{routes, waypoints, docks}` ＋ REST `/api/geo/*`；围栏仍走 `fence_cache`（`cmd/fence`）。
-- ⚠️★★★ **今日真数据仍受硬件门约束**：位姿/GPS/ENU/航向/速度/RTK/精度/报警坐标挂 `perception`（`GATED-DESIGN`）＋ `rtk_driver`＋ `quadruped`（等云深处）⇒ **这些字段现空态/桩**。能显真值的：围栏/报警区、**路线/关键点（录了就有）**、任务当前+历史、模式/健康结构、事件文本。
+- ⚠️★★★ **今日真数据现状（v1.4 · 2026-08-18 实测更新）**：<br>· ✅ **位姿/GPS/ENU/速度已实时**：`state/pose` 已在跑(single fix · 24 星 · cov 3.0m)，页脚 GPS 经纬、**ENU E/N**(经 §6.10.2C M-7 演示原点投影)、速度均显真值；<br>· ⚠️ **航向仍 LOSS**：无 RTK 双天线/COG(heading_valid=false)，仪表盘处①开机态(正北略灰)、页脚「航向 LOSS」——待 `rtk_driver` 双天线数据到位自动转②；<br>· ✅ 围栏/报警区、路线/关键点(录了就有)、任务当前+历史、模式/健康结构、事件文本均可显真值。<br>★ 原写「位姿/GPS/ENU 全空态/桩」已过时(pose 已接通)。
 - ★ 数据源缺时字段返回 `null`/空，前端按「无数据」态渲染（🚫 不编造，§3.1/§3.2）。
 
 ---
