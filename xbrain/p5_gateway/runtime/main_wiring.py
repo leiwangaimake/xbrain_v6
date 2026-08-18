@@ -485,6 +485,20 @@ def run_voice_loop_wiring(stop_flag: dict,
             except Exception:      # noqa: BLE001
                 return
             hmi_state["pose"] = d.get("data")
+            # DEMO / W4-pending (user 2026-08-18): the ENU E/N readout and the map
+            # robot need an enu_origin to project lat/lon into local metres. The
+            # authoritative origin is common.geo.enu_origin, set by SITE calibration
+            # in configs/sites/ (7.8.4) -- it is null until then, so ENU shows "--".
+            # Until that calibration exists, adopt the FIRST valid GPS fix as the
+            # local origin so the readout works. NOT a substitute for real
+            # calibration: this origin follows wherever the robot first fixed.
+            # NOTE: the RAW state/pose data has no "available" key (pose_group adds
+            # it downstream); a real fix is just lat/lon present, so key off those.
+            if hmi_state.get("enu_origin") is None:
+                p = hmi_state["pose"]
+                if isinstance(p, dict) and p.get("lat") is not None and p.get("lon") is not None:
+                    hmi_state["enu_origin"] = {
+                        "lat": p["lat"], "lon": p["lon"], "alt": p.get("alt")}
 
         def _on_state_clock(sample) -> None:
             # P1-13: clock sync mirror -> RTK time-sync indicator (18-C G47).
