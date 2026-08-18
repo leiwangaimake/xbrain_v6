@@ -125,19 +125,29 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .task-panel { right: 11px; top: 10px; min-width: var(--plan-width);
   max-width: 80vw; max-height: 90vh; overflow: auto; padding: 9px;
   font-family: var(--font-plan-family); font-size: var(--font-plan-size); }
-/* 每个子面板 = 可拉伸的 flex 列(用户 2026-08-18): 拖右下角改宽高(上下左右),
-   尺寸由 hmi.js wirePanelResize 存 localStorage, 刷新/重启浏览器恢复上次尺寸.
-   标题固定, 列表 flex 填充并可滚. */
+/* 每个子面板 = flex 列, 可从【左边/左下角/下边】拖拽拉伸(用户 2026-08-18):
+   菜单锚在 HMI 右侧边(右边贴屏固定), 故像拉窗口一样从左侧拉宽/缩窄, 从下边
+   拉高/缩矮. 手柄见 .rz-*; 尺寸由 hmi.js wirePanelResize 存 localStorage, 刷新/
+   重启浏览器恢复. 标题固定, 列表 flex 填充可滚. */
 .task-group { margin-bottom: 9px; border-radius: 5px; padding: 7px 8px;
-  resize: both; overflow: hidden; display: flex; flex-direction: column;
-  width: 350px; min-width: 240px; max-width: 78vw;
-  min-height: 70px; max-height: 80vh; }
+  position: relative; overflow: hidden; display: flex; flex-direction: column;
+  width: 350px; min-width: 350px; max-width: 78vw; max-height: 80vh; }
 .task-group:last-child { margin-bottom: 0; }
-/* 浅绿 = 当前, 浅黄 = 历史 (用户 2026-08-17); 默认高(可被存的尺寸覆盖). */
-.current-group { height: 180px;
+/* ★★★ 默认宽/高即【最小值】(用户明确): 当前显示宽度不可再缩窄, 只能拉宽后缩回;
+   高同理. min-width/min-height = 默认值. */
+.current-group { height: 180px; min-height: 180px;
   background: rgba(46,232,107,.08); border: 1px solid rgba(46,232,107,.28); }
-.history-group { height: 240px;
+.history-group { height: 240px; min-height: 240px;
   background: rgba(240,225,115,.08); border: 1px solid rgba(240,225,115,.30); }
+/* 拉伸手柄: 左边(ew 双箭头)/ 下边(ns 双箭头)/ 左下角(nesw 双箭头). 手柄透明,
+   靠光标提示; 左下角画个小 L 记号增强可发现性. */
+.rz-handle { position: absolute; z-index: 5; }
+.rz-left   { left: 0; top: 0;    width: 7px;  height: 100%; cursor: ew-resize; }
+.rz-bottom { left: 0; bottom: 0; width: 100%; height: 7px;  cursor: ns-resize; }
+.rz-corner { left: 0; bottom: 0; width: 15px; height: 15px; cursor: nesw-resize; z-index: 6; }
+.rz-corner::after { content: ""; position: absolute; left: 3px; bottom: 3px;
+  width: 7px; height: 7px; border-left: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted); opacity: .55; }
 .task-group-title { flex: 0 0 auto; font-weight: 700; margin-bottom: 6px; }
 .current-group .task-group-title { color: var(--ok-bright); }
 .history-group .task-group-title { color: var(--gold); }

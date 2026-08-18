@@ -429,39 +429,63 @@
     panel.addEventListener("mousedown", (e) => e.stopPropagation());
   }
 
-  // Each sub-panel (当前/历史) is CSS-resizable (resize: both). Persist the size
-  // the operator drags it to, and restore it on load, so a refresh or browser
-  // restart reopens at the last-left size (user 2026-08-18). localStorage keeps
-  // it per browser across sessions; a blocked/full store just falls back to the
-  // CSS default -- never throws.
+  // Each sub-panel resizes from its LEFT edge / LEFT-BOTTOM corner / BOTTOM edge:
+  // the panel is pinned to the HMI's right edge, so it grows/shrinks LEFTWARD like
+  // a window (user 2026-08-18). The DEFAULT size is the MINIMUM -- it can be
+  // widened/heightened and shrunk back, but never below the default. The dragged
+  // size is saved to localStorage and restored on load (survives refresh + restart).
   function wirePanelResize() {
-    const GROUPS = [
-      [".current-group", "xbrain_hmi_task_size_current"],
-      [".history-group", "xbrain_hmi_task_size_history"],
+    const GROUPS = [           // sel, storage key, min width, min height (= default)
+      [".current-group", "xbrain_hmi_task_size_current", 350, 180],
+      [".history-group", "xbrain_hmi_task_size_history", 350, 240],
     ];
-    for (const [sel, key] of GROUPS) {
+    for (const [sel, key, minW, minH] of GROUPS) {
       const el = document.querySelector(sel);
       if (!el) continue;
+      // Restore saved size, never below the minimum.
       try {
         const s = JSON.parse(localStorage.getItem(key) || "null");
-        if (s && s.w > 0) el.style.width = s.w + "px";
-        if (s && s.h > 0) el.style.height = s.h + "px";
-      } catch (e) { /* absent/corrupt -> CSS default size */ }
-      // Persist needs ResizeObserver; if the browser lacks it, resize still works
-      // (CSS), just the size is not remembered -- never break init over it.
-      if (typeof ResizeObserver !== "function") continue;
-      // ResizeObserver fires per drag frame; debounce the write.
-      let t = null;
-      const ro = new ResizeObserver(() => {
-        if (t) clearTimeout(t);
-        t = setTimeout(() => {
-          try { localStorage.setItem(key,
-            JSON.stringify({ w: el.offsetWidth, h: el.offsetHeight })); }
-          catch (e) { /* storage blocked/full -> size not remembered, no throw */ }
-        }, 250);
-      });
-      ro.observe(el);
+        if (s && s.w) el.style.width = Math.max(minW, s.w) + "px";
+        if (s && s.h) el.style.height = Math.max(minH, s.h) + "px";
+      } catch (e) { /* absent/corrupt -> CSS default */ }
+      // Three drag handles (left edge / bottom edge / left-bottom corner).
+      for (const hcls of ["rz-left", "rz-bottom", "rz-corner"]) {
+        const h = document.createElement("div");
+        h.className = "rz-handle " + hcls;
+        h.addEventListener("mousedown",
+          (e) => startPanelResize(e, el, hcls, minW, minH, key));
+        el.appendChild(h);
+      }
     }
+  }
+
+  function startPanelResize(e, el, hcls, minW, minH, key) {
+    e.preventDefault(); e.stopPropagation();          // no text-select, no map pan
+    const startX = e.clientX, startY = e.clientY;
+    const startW = el.offsetWidth, startH = el.offsetHeight;
+    const doW = hcls === "rz-left" || hcls === "rz-corner";
+    const doH = hcls === "rz-bottom" || hcls === "rz-corner";
+    const maxW = window.innerWidth * 0.78, maxH = window.innerHeight * 0.8;
+    function onMove(ev) {
+      // Right edge pinned: dragging the LEFT edge leftward (clientX decreases)
+      // widens; clamped [min, max]. min = default -> cannot narrow below default.
+      if (doW) el.style.width =
+        Math.max(minW, Math.min(maxW, startW + (startX - ev.clientX))) + "px";
+      // Bottom edge: dragging DOWN (clientY increases) heightens.
+      if (doH) el.style.height =
+        Math.max(minH, Math.min(maxH, startH + (ev.clientY - startY))) + "px";
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+      try { localStorage.setItem(key,
+        JSON.stringify({ w: el.offsetWidth, h: el.offsetHeight })); }
+      catch (e) { /* storage blocked -> not remembered, no throw */ }
+    }
+    document.body.style.userSelect = "none";          // no selection while dragging
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
   }
 
   // RTK/heading status text. fix_type comes from rt/gnss/fix (not published yet),
