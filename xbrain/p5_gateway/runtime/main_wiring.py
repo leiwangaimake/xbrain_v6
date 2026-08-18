@@ -44,6 +44,7 @@ def _now_mono_ms() -> int:
 
 CMD_ESTOP_TOPIC = "cmd/estop"
 CMD_FENCE_TOPIC = "cmd/fence"            # W1: fence geometry (17 S6.9, P5 consumes)
+STATE_GEO_OBJECTS_TOPIC = "state/geo/objects"  # 11 S7.10A: routes/keypoints/docks geometry
 STATE_MODE_TOPIC = "state/mode"          # W3: P2 usage mode (10 Hz)
 STATE_POSE_TOPIC = "state/pose"          # P1-1: pose + RTK heading (p1 bridge)
 STATE_CLOCK_TOPIC = "state/clock"        # P1-13: clock sync mirror (18-C G47)
@@ -145,16 +146,22 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
             # Copy references under the GIL; the callbacks REPLACE whole values,
             # never mutate in place, so a torn read is not possible here.
             fences, _degraded = _fence_snapshot(hmi_state)
+            # routes/keypoints from the state/geo/objects cache (11 S7.10A) -- P5
+            # never reads geo.db (S7843). None (never received / stale) -> the map
+            # greys those layers, never a fabricated set.
+            from xbrain.p5_gateway.geo.cache import geo_layers  # noqa: PLC0415
+            _geo = hmi_state["geo_cache"].snapshot(_now_mono_ms())
+            routes, waypoints = geo_layers(_geo)
             return {
                 "tasks": hmi_state.get("tasks"),   # state/task (W-wired)
                 "link": hmi_state.get("link"),     # state/link (W-wired)
                 "fences": fences,                  # cmd/fence cache (W1)
                 "mode": hmi_state.get("mode"),     # state/mode (W3)
                 "events": hmi_state.get("events"),  # event/** ring (W2)
-                # Still gated: routes/waypoints need geo endpoints (W8/geo src);
-                # enu_origin needs localisation (W4 GATED-HW). None here ->
-                # frontend greys those layers, never fabricates.
-                "routes": None, "waypoints": None,
+                # routes/keypoints now flow via state/geo/objects (11 S7.10A);
+                # enu_origin still needs localisation (W4 GATED-HW) but geo geometry
+                # is ENU metres so it renders without it.
+                "routes": routes, "waypoints": waypoints,
                 "enu_origin": hmi_state.get("enu_origin"),
                 # pose now flows: p1 assembles rt/gnss/heading -> state/pose. Fix
                 # half (lat/lon/fix_type) stays None until rtk_driver publishes
@@ -283,6 +290,7 @@ def run_voice_loop_wiring(stop_flag: dict,
     """
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p5_gateway.fence.cache import FenceCache
+    from xbrain.p5_gateway.geo.cache import GeoCache
     from xbrain.p5_gateway.hmi.estop_probe import EstopProbe
 
     # W5: estop-path probe (17 S6.3). Thresholds ride on the hmi subtree
@@ -312,6 +320,7 @@ def run_voice_loop_wiring(stop_flag: dict,
         "bit": None,                 # health/bit  -> /api/bit (W8)
         "enu_origin": None,          # localisation origin (gated, W4)
         "fence_cache": FenceCache(),  # cmd/fence   -> map fences (W1)
+        "geo_cache": GeoCache(),      # state/geo/objects -> routes/keypoints (11 S7.10A)
     }
 
     _logger.info("p5 wiring: opening GEN session")
@@ -446,6 +455,17 @@ def run_voice_loop_wiring(stop_flag: dict,
                            "role": p.get("role")} for p in polys]
                 hmi_state["fence_cache"].on_update(fences, _now_mono_ms())
 
+        def _on_geo_objects(sample) -> None:
+            # 11 S7.10A: P3 broadcasts routes/keypoints/docks geometry; cache the
+            # whole payload (RUST thread -> decode + store only). The snapshot
+            # reshapes it into the routes/waypoints map layers (geo_layers). P5
+            # never reads geo.db (S7843) -- this broadcast IS the data.
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                return
+            hmi_state["geo_cache"].on_update(d, _now_mono_ms())
+
         def _on_state_mode(sample) -> None:
             # W3: last usage mode for the footer (P2 publishes state/mode 10 Hz).
             try:
@@ -577,6 +597,7 @@ def run_voice_loop_wiring(stop_flag: dict,
         task_sub = gen.declare_subscriber(
             STATE_TASK_TOPIC, _on_state_task)
         fence_sub = gen.declare_subscriber(CMD_FENCE_TOPIC, _on_cmd_fence)
+        geo_sub = gen.declare_subscriber(STATE_GEO_OBJECTS_TOPIC, _on_geo_objects)
         mode_sub = gen.declare_subscriber(STATE_MODE_TOPIC, _on_state_mode)
         pose_sub = gen.declare_subscriber(STATE_POSE_TOPIC, _on_state_pose)
         clock_sub = gen.declare_subscriber(STATE_CLOCK_TOPIC, _on_state_clock)
@@ -695,8 +716,8 @@ def run_voice_loop_wiring(stop_flag: dict,
                 hmi_server.should_exit = True
             if event_subsystem is not None:
                 event_subsystem.stop()
-            for entity in (ack_sub, task_sub, fence_sub, mode_sub, event_sub,
-                           event_ack_sub, recon_rsp_sub, estop_pong_sub,
+            for entity in (ack_sub, task_sub, fence_sub, geo_sub, mode_sub,
+                           event_sub, event_ack_sub, recon_rsp_sub, estop_pong_sub,
                            health_sub, bit_sub, estop_ping_pub, link_pub,
                            replay_pub_normal, replay_pub_alarm, recon_req_pub):
                 if entity is None:
