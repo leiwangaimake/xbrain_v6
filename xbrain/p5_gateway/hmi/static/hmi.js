@@ -49,7 +49,12 @@
   function lineStroke(el, line) {
     if (!line) return;
     el.setAttribute("stroke", line.color);
-    el.setAttribute("stroke-width", line.width_px || 1.4);
+    // req(2026-08-18): double the config width; non-scaling-stroke (CSS) keeps it
+    // a constant screen px regardless of zoom. The per-fence stroke COLOUR here is
+    // overridden by the per-role CSS class (.keep-in/.alarm-region/.forbid-region/
+    // .speed-region) so forbid renders dark red and speed bright blue, not the
+    // config colour.
+    el.setAttribute("stroke-width", (line.width_px || 1.4) * 2);
     if (line.style === "dashed") el.setAttribute("stroke-dasharray", "4 3");
     else if (line.style === "dotted") el.setAttribute("stroke-dasharray", "1 2");
     else el.removeAttribute("stroke-dasharray");     // solid
@@ -65,9 +70,11 @@
     const r = fen.role;
     if (r === "allow") return "active";
     if (r === "forbid") return "forbid";
+    if (r === "speed_limit") return "speed";
     if (r === "warning" || r === "zone") return "alarm";
     const n = fen.name || fen.zone_label || "";
-    if (n.indexOf("禁入") >= 0) return "forbid";
+    if (n.indexOf("禁入") >= 0 || n.indexOf("禁止") >= 0) return "forbid";
+    if (n.indexOf("限速") >= 0) return "speed";
     if (n.indexOf("报警") >= 0) return "alarm";
     if (n.indexOf("活动") >= 0) return "active";
     return "active";
@@ -177,26 +184,21 @@
     const fences = geo.fences || {};
     if (fences.available) for (const fen of fences.items) {
       const pts = ptsAttr(fen.vertices || [], origin); if (!pts) continue;
-      const type = fenceType(fen);            // active | forbid | alarm
+      const type = fenceType(fen);            // active | forbid | alarm | speed
       const line = ((cfg.fence || {})[type] || (cfg.fence || {}).active || {}).line
                    || { style: "solid", color: "#e0b000", width_px: 1.6 };
-      const active = type === "active";
-      const layer = active ? "keepInLayer" : "alarmLayer";
-      const el = poly(active ? "keep-in" : "alarm-region", pts, line);
-      // fill: faint tint of the same colour so the polygon body reads as its type
-      // (active -> blue, 17 S6.10.2A; alarm/forbid -> red).
-      el.setAttribute("fill", active ? "rgba(47,136,255,.06)" : "rgba(255,32,32,.07)");
-      $(layer).appendChild(el);
-      // U5: fence naming -- show the name (zone_label) in the line colour.
+      // Per-role polygon class carries the stroke colour (CSS var) + faint fill
+      // tint: active blue / warning(alarm) bright red / forbid dark red /
+      // speed_limit bright blue. Fill comes from the class, not an inline attr.
+      const cls = { active: "keep-in", alarm: "alarm-region",
+                    forbid: "forbid-region", speed: "speed-region" }[type] || "keep-in";
+      const layer = type === "active" ? "keepInLayer" : "alarmLayer";
+      $(layer).appendChild(poly(cls, pts, line));
+      // Fence name label -- unified bright white (CSS .keep-in-label), NOT the
+      // line colour (user 2026-08-18). No per-layer inline fill.
       if (fen.name && fen.vertices && fen.vertices[0]) {
         const xy = toXY(fen.vertices[0], origin);
-        if (xy) {
-          const t = label(xy[0], xy[1] - 2, "keep-in-label", fen.name);
-          // req3: colour the name as its own fence line. Inline style beats the
-          // CSS var(--ink) fallback (a presentation attribute would NOT).
-          t.style.fill = line.color;
-          $(layer).appendChild(t);
-        }
+        if (xy) $(layer).appendChild(label(xy[0], xy[1] - 2, "keep-in-label", fen.name));
       }
     }
     const routes = geo.routes || {};
@@ -213,35 +215,32 @@
       const rlayer = realtime ? "realtimeTrajectoryLayer" : "recordedRouteLayer";
       $(rlayer).appendChild(
         polyline(realtime ? "realtime-trajectory" : "recorded-route", pts, rline));
-      // req3: label the route name at its first vertex, coloured its own line.
+      // Route name label at its first vertex -- unified bright white (CSS).
       if (r.name && r.points && r.points[0]) {
         const rxy = toXY(r.points[0], origin);
-        if (rxy) {
-          const rt = label(rxy[0], rxy[1] - 2, "route-label", r.name);
-          rt.style.fill = rline.color;
-          $(rlayer).appendChild(rt);
-        }
+        if (rxy) $(rlayer).appendChild(label(rxy[0], rxy[1] - 2, "route-label", r.name));
       }
     }
     const wps = geo.waypoints || {};
     if (wps.available) for (const w of wps.items) {
       const xy = toXY(w.geom || w, origin); if (!xy) continue;
       const mk = (cfg.waypoint || {})[w.recorded ? "recorded" : "unrecorded"] || {};
-      $("keypointLayer").appendChild(marker(xy[0], xy[1], mk));
-      // req3: keypoint name in its own class + its marker colour. The old
-      // ".keypoint text" selector never matched a <text class="keypoint"> (that
-      // needs a .keypoint ANCESTOR), so the name fell back to a huge default font.
+      const dotR = (mk.size_px || 3) / 3;     // req5: shrink dots to 1/3 of config size
+      $("keypointLayer").appendChild(marker(xy[0], xy[1], mk, dotR));
+      // Keypoint name in its own class (".keypoint text" never matched a
+      // <text class="keypoint">). Unified bright white via CSS .keypoint-label
+      // (user 2026-08-18), NOT the marker colour.
       if (w.name) {
-        const wl = label(xy[0] + (mk.size || 3) + 1, xy[1], "keypoint-label", w.name);
-        wl.style.fill = mk.color || "#3aa0ff";
-        $("keypointLayer").appendChild(wl);
+        $("keypointLayer").appendChild(
+          label(xy[0] + dotR + 1, xy[1], "keypoint-label", w.name));
       }
     }
   }
 
   // U6: waypoint marker shape (circle/square/triangle/diamond) + colour + size.
-  function marker(x, y, mk) {
-    const s = mk.size || 3, col = mk.color || "#3aa0ff", shape = mk.shape || "circle";
+  function marker(x, y, mk, r) {
+    // req5 (2026-08-18): dot radius = 1/3 of the config size_px (was hard 3).
+    const s = r || (mk.size_px || 3) / 3, col = mk.color || "#3aa0ff", shape = mk.shape || "circle";
     let el;
     if (shape === "square") {
       el = document.createElementNS(SVGNS, "rect");
@@ -724,19 +723,21 @@
     const cx = bx + bw / 2 + view.pan.x, cy = by + bh / 2 + view.pan.y;
     const svg = $("mapSvg");
     svg.setAttribute("viewBox", `${cx - w / 2} ${cy - h / 2} ${w} ${h}`);
-    // 17 S6.10.2A req3: keep map labels a constant ~12 screen px (the task-content
-    // font size), never scaling with zoom. An SVG font-size is in USER UNITS (ENU
-    // metres), mapped to the screen by clientHeight / viewBoxHeight; so 12 screen
-    // px equals 12 * h / clientHeight user units. Recomputed on every view change
-    // (zoom / pan / window resize) so labels never balloon when the map zooms in.
-    // Guard the pre-layout call (init runs applyView before the SVG has a size):
-    // ch==0 -> leave --map-label-fs unset so the CSS fallback (2.5px, ~12px at
-    // default zoom) holds until the next applyView measures a real height. A
-    // `|| h` fallback would set 12 USER UNITS = a giant label for one frame.
+    // req4 (2026-08-18): map labels match the TASK-CONTENT font size, never
+    // scaling with zoom. Task content uses the plan-panel font = config
+    // font.plan.size_px (applyUiConfig writes it to --font-plan-size, e.g. 24px),
+    // NOT the CSS 12px default -- targeting 12 made map labels look half-size.
+    // An SVG font-size is in USER UNITS (ENU m), mapped to screen by clientHeight
+    // / viewBoxHeight; so planPx screen == planPx * h / clientHeight user units.
+    // Recomputed on every view change (zoom / pan / resize) so labels stay a
+    // constant screen size. Guard the pre-layout call (ch==0 -> leave the CSS
+    // fallback until the next applyView measures a real height).
     const ch = svg.clientHeight || svg.getBoundingClientRect().height;
     if (ch > 0) {
+      const planPx = parseFloat(getComputedStyle(document.documentElement)
+        .getPropertyValue("--font-plan-size")) || 12;
       document.documentElement.style.setProperty(
-        "--map-label-fs", (12 * h / ch).toFixed(3) + "px");
+        "--map-label-fs", (planPx * h / ch).toFixed(3) + "px");
     }
     $("zoomText").textContent = `${view.zoom.toFixed(1)}x`;
   }

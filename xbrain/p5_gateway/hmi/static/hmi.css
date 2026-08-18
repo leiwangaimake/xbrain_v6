@@ -19,6 +19,7 @@
   --plan-width: 370px;   --plan-max-h: 420px;   --status-h: 39px;
   /* U5 line colours (user 2026-08-13 correction, 17 S6.10.2A) -- set by hmi.js */
   --fence-active-color: #2f88ff;  --fence-alarm-color: #ff2020;
+  --fence-forbid-color: #8b0000;  --fence-speed-color: #22c5ff;
   --route-recorded-color: #2ecc40;  --route-realtime-color: #ffd400;
   /* palette -- customer navy/cyan scheme (docs/HMI sample), NOT config-driven */
   --bg: #1B263B;  --panel: #3A506B;  --blue: #326491;  --cyan: #5BC0EB;
@@ -81,16 +82,22 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
    constant across zoom); label font-size is driven per view by --map-label-fs
    (set in applyView to a constant 12 screen px = the task-content font size).
    Per-label fill is set inline by renderGeo to each layer's own line colour
-   (fence -> line colour, route -> line colour, keypoint -> marker colour);
-   the fill below is only a fallback. */
+   All map labels render in one bright white (user 2026-08-18), NOT per-layer
+   colours -- renderGeo no longer sets a per-label fill. Four fence roles each
+   have their own polygon colour: active blue / warning bright red / forbid dark
+   red / speed_limit bright blue. */
 .keep-in { fill: rgba(47,136,255,.06); stroke: var(--fence-active-color);
   vector-effect: non-scaling-stroke; }
 .alarm-region { fill: rgba(255,32,32,.07); stroke: var(--fence-alarm-color);
   vector-effect: non-scaling-stroke; }
-.keep-in-label, .alarm-label, .route-label, .keypoint-label, .alarm-event-label {
-  font-family: var(--font-map-family); font-size: var(--map-label-fs, 2.5px);
-  fill: var(--ink); paint-order: stroke; stroke: var(--bg); stroke-width: 3px;
+.forbid-region { fill: rgba(139,0,0,.12); stroke: var(--fence-forbid-color);
   vector-effect: non-scaling-stroke; }
+.speed-region { fill: rgba(34,197,255,.07); stroke: var(--fence-speed-color);
+  vector-effect: non-scaling-stroke; }
+.keep-in-label, .alarm-label, .route-label, .keypoint-label, .alarm-event-label {
+  font-family: var(--font-map-family); font-size: var(--map-label-fs, 14px);
+  fill: #ffffff; font-weight: 700; paint-order: stroke; stroke: var(--bg);
+  stroke-width: 3px; vector-effect: non-scaling-stroke; }
 .recorded-route { fill: none; stroke: var(--route-recorded-color);
   vector-effect: non-scaling-stroke; }
 .realtime-trajectory { fill: none; stroke: var(--route-realtime-color);
@@ -111,10 +118,11 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .legend-mark { width: 24px; height: 12px; display: inline-block; flex: 0 0 24px; }
 .legend-mark.recorded-route-mark { height: 3px; background: var(--route-recorded-color); }
 .legend-mark.realtime-route-mark { height: 3px; background: var(--route-realtime-color); }
-.legend-mark.fence { border: 2px solid var(--fence-active-color);
-  background: rgba(47,136,255,.12); }
-.legend-mark.alarm { border: 2px solid var(--fence-alarm-color);
-  background: rgba(255,32,32,.12); }
+/* U5: area swatches are SOLID filled rectangles (user 2026-08-18), not hollow. */
+.legend-mark.fence  { background: var(--fence-active-color); }
+.legend-mark.alarm  { background: var(--fence-alarm-color); }
+.legend-mark.speed  { background: var(--fence-speed-color); }
+.legend-mark.forbid { background: var(--fence-forbid-color); }
 
 /* 机器人本体航向仪(替代原左上角指北针 N+三角): 右下角 150px, 表盘旋转/指针固定/
    中心镂空. 数据源仅 pose.heading_rad(本体航向真值). 17 S6.6/PTZ-C2 禁的"罗盘/朝向
