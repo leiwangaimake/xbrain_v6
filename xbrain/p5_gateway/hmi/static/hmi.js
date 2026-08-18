@@ -30,12 +30,14 @@
   let clockSync = null;
   let clockTimer = null;
 
-  // -- ENU projection: snapshot geometry may be {lat,lon} or [e_m,n_m]. When
-  //    lat/lon + enu_origin are present, project to local ENU metres (the SVG
-  //    frame). Equirectangular approx is enough at site scale. Absent origin ->
-  //    lat/lon points are skipped (cannot place them), never plotted at 0,0. --
+  // -- ENU projection: snapshot geometry may be {lat,lon} or [e_m,n_m]. Result is
+  //    SVG frame coords: x = east, y = -north (SVG y is DOWN, so negating north
+  //    puts NORTH UP -- matching the compass dial, user 2026-08-18). Both the
+  //    array [e_m,n_m] path and the lat/lon path negate north the SAME way so the
+  //    geo geometry and the lat/lon robot/events share one orientation. Absent
+  //    origin -> lat/lon points are skipped (cannot place), never plotted at 0,0.
   function toXY(pt, origin) {
-    if (Array.isArray(pt)) return pt;                 // already [e_m, n_m]
+    if (Array.isArray(pt)) return [pt[0], -pt[1]];    // [e_m, n_m] -> north up
     if (pt && pt.lat != null && pt.lon != null) {
       if (!origin) return null;                       // no origin -> cannot place
       const R = 111320, c = Math.cos((origin.lat || 0) * Math.PI / 180);
@@ -276,8 +278,8 @@
   // req(2026-08-18): the mock data spans ~5km, far beyond the config 240m
   // default view. Auto-fit the map to the geo BOUNDS once, on the first snapshot
   // that carries the fences (they define the true extent -- the active-area
-  // lake), so the operator sees the whole site on load. toXY returns [e_m,n_m]
-  // as-is (no flip), so SVG coords ARE the ENU metres. Zoom-in range is widened
+  // lake), so the operator sees the whole site on load. toXY maps [e_m,n_m] to
+  // [e, -n] (north up), so the fit bounds are already in SVG frame. Zoom-in is widened
   // so the 5m grid is legible when zoomed in. Fits ONCE; afterwards the operator
   // pans/zooms freely.
   let geoFitted = false;
@@ -401,7 +403,14 @@
     // No fix -> draw nothing. Never plot the robot at (0,0) (17 S6.10.4).
     if (!pose.available || pose.lat == null) return;
     const xy = toXY({ lat: pose.lat, lon: pose.lon }, origin); if (!xy) return;
-    const a = pose.heading_valid ? (pose.heading_rad || 0) : 0, s = 3;
+    // Arrow base points north (up) at a=0. ENU heading is east=0, CCW+; on the
+    // north-up screen (y=-north) that maps to rotation a = pi/2 - heading. Heading
+    // invalid -> a=0 (points north as a neutral default). NOTE: the valid-heading
+    // direction is untested here (heading is LOSS in this env) -- verify with real
+    // RTK heading. s in ENU metres, so the arrow is small on a wide (5km) fit.
+    const svg = $("mapSvg"), cw = svg.clientWidth || 1;
+    const mpp = (parseFloat((svg.getAttribute("viewBox") || "").split(/\s+/)[2]) || baseVB[2]) / cw;
+    const a = pose.heading_valid ? (Math.PI / 2 - (pose.heading_rad || 0)) : 0, s = 9 * mpp;
     const el = document.createElementNS(SVGNS, "polygon");
     // simple arrow along heading
     const pts = [[0, -s], [-s * 0.7, s], [0, s * 0.4], [s * 0.7, s]]
