@@ -23,6 +23,23 @@ Every geo_object row (waypoints / routes / docks / fences) carries
 rev (monotonic per object) + content_hash + tombstone. The rev
 column is the anchor for SN-5 dedupe and for outbound push
 ordering; see BIZ-P3-27 for the invariant work.
+
+ALIGNMENT (v1.4 / 2026-08-18, user approved PLAN A -- see 15 S9.3.0):
+This schema is the SIMPLIFIED early cut (ENU metres). The AUTHORITATIVE
+target is the full DDL in 15 S9.3 (WGS84 rtk_lat/lon + richer columns).
+They differ by MODEL, not just column names:
+  * route geometry: here it is route_waypoint_assoc(route_id,seq,waypoint_id)
+    ordered vertices; in 15 S9.3 it is INLINE on routes (path_points JSON or
+    waypoint_ids JSON) -- so waypoints here also holds UNNAMED route vertices,
+    whereas 15 S9.3 waypoints are named keypoints only.
+  * !!! route_waypoint_assoc means the OPPOSITE thing in the two schemas: here
+    it is the route GEOMETRY; in 15 S9.3 it is the keypoint<->route PROXIMITY
+    relation (min_distance_m / nearest_idx). Do NOT assume one from the other.
+  * coords: ENU x_m/y_m here vs WGS84 rtk_lat/lon in 15 S9.3.
+  * docks: no handover point here vs the full handover model in 15 S9.3.
+Plan A brings THIS schema up to 15 S9.3 as a coordinated multi-batch change
+(schema + DAOs + read_geo_objects + geo broadcast + HMI coords + tests +
+test-data reseed). fences (kind vs role) goes with the fence runtime, NOT here.
 """
 
 from __future__ import annotations
