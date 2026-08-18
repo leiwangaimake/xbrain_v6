@@ -47,9 +47,12 @@ STATE_TASK_TOPIC = "state/task"
 STATE_LINK_TOPIC = "state/link"          # 11 S4.6 cloud-link level -> F-5 return_home
 QUERY_TASKS_TOPIC = "query/tasks"        # 11 S12.4 HMI task-panel queryable (P5 pulls)
 QUERY_TASKS_TIMEOUT_S = 2.0              # cap the zenoh-thread block on a db read
+STATE_GEO_OBJECTS_TOPIC = "state/geo/objects"  # 11 S7.10A geo geometry broadcast (P5 -> HMI)
+GEO_PUBLISH_PERIOD_S = 5.0               # geo re-publish cadence (>= 0.1 Hz keepalive)
 
 # Voice-loop default. All four DBs live under data/run/ (operator 2026-08-12).
 DEFAULT_TASK_DB = "/opt/xbrain_v6/data/run/task.db"
+DEFAULT_GEO_DB = "/opt/xbrain_v6/data/run/geo.db"
 
 
 def _now_mono_ms() -> int:
@@ -75,17 +78,20 @@ def _now_utc_iso() -> str:
 
 def run_voice_loop_wiring(stop_flag: dict,
                           heartbeat_period_s: float = 5.0,
-                          task_db_path: str = DEFAULT_TASK_DB) -> int:
+                          task_db_path: str = DEFAULT_TASK_DB,
+                          geo_db_path: str = DEFAULT_GEO_DB) -> int:
     """Block until stop_flag['stop'] is truthy. Returns 0 on clean shutdown."""
     return asyncio.run(
-        _amain(stop_flag, heartbeat_period_s, task_db_path))
+        _amain(stop_flag, heartbeat_period_s, task_db_path, geo_db_path))
 
 
 async def _amain(stop_flag: dict, heartbeat_period_s: float,
-                 task_db_path: str) -> int:
+                 task_db_path: str, geo_db_path: str = DEFAULT_GEO_DB) -> int:
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
+    from xbrain.p3_task.geo.objects import read_geo_objects
     from xbrain.p3_task.persistence.base import open_configured
+    from xbrain.p3_task.persistence.schema_geo import GEO_DB_STATEMENTS
     from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
     from xbrain.p3_task.schedule.driver import scheduler_tick
 
@@ -94,6 +100,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     # connection only to hand it to the DAO / recorder.
     _logger.info("p3 wiring: opening task.db at %s", task_db_path)
     conn = await open_configured(task_db_path, ALL_DDL_STATEMENTS)
+    # Second connection: geo.db, read-only use here -- P3 broadcasts its geometry
+    # on state/geo/objects (11 S7.10A) so the HMI can render routes/keypoints/docks
+    # without P5 ever reading geo.db (11 S7843). A separate handle keeps geo reads
+    # off the task.db write path.
+    _logger.info("p3 wiring: opening geo.db at %s", geo_db_path)
+    geo_conn = await open_configured(geo_db_path, GEO_DB_STATEMENTS)
     try:
         dao = TasksDAO(conn)
 
@@ -107,6 +119,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             state_pub.put(json.dumps({
                 "schema": "state_task_v1", "active_task": None,
                 "mono_ms": _now_mono_ms()}).encode("utf-8"))
+            # 11 S7.10A: broadcast geo geometry (routes/keypoints/docks) so the
+            # HMI renders them live without P5 reading geo.db (S7843). Published
+            # from the loop below every GEO_PUBLISH_PERIOD_S (>= 0.1 Hz keepalive).
+            geo_pub = gen.declare_publisher(STATE_GEO_OBJECTS_TOPIC)
 
             # F-5 (11 S4.6.4): watch P5's cloud-link level and inject one
             # return_home at L3 (cloud down past rtb_s). The subscriber only STORES
@@ -189,6 +205,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                          CMD_TASK_TOPIC, STATE_LINK_TOPIC, QUERY_TASKS_TOPIC)
 
             last_hb = time.monotonic()
+            last_geo = 0.0            # 0 -> publish geo on the very first pass
             try:
                 while not stop_flag.get("stop"):
                     # Wait for a task or wake up to heartbeat / re-check stop.
@@ -232,18 +249,35 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         _logger.info("p3 alive; recorded=%d qdepth=%d",
                                      recorded, queue.qsize())
                         last_hb = now
+                    # 11 S7.10A: re-broadcast geo geometry every
+                    # GEO_PUBLISH_PERIOD_S (>= 0.1 Hz keepalive). Full payload each
+                    # time (幂等自愈, 同 manifest 语义); a read error is logged, never
+                    # crashes the loop.
+                    if now - last_geo >= GEO_PUBLISH_PERIOD_S:
+                        try:
+                            geo_pub.put(json.dumps(
+                                await read_geo_objects(geo_conn),
+                                ensure_ascii=False).encode("utf-8"))
+                        except Exception as exc:      # noqa: BLE001
+                            _logger.error("p3 geo broadcast failed: %s", exc)
+                        last_geo = now
             finally:
                 for s in _subs:
                     try:
                         s.undeclare()
                     except Exception:      # noqa: BLE001
                         pass
-                try:
-                    state_pub.undeclare()
-                except Exception:          # noqa: BLE001
-                    pass
+                for p in (state_pub, geo_pub):
+                    try:
+                        p.undeclare()
+                    except Exception:      # noqa: BLE001
+                        pass
     finally:
         await conn.close()
+        try:
+            await geo_conn.close()
+        except Exception:                  # noqa: BLE001
+            pass
     return 0
 
 
