@@ -23,7 +23,7 @@ from xbrain.p3_task.fence.geom import (
     InvalidPolygon, assert_perimeter_closed, close_ring,
 )
 from xbrain.p3_task.ingest.geo_commit import (
-    GeoCommitError, commit_fence, commit_route,
+    GeoCommitError, commit_fence, commit_route, commit_waypoint,
 )
 from xbrain.p3_task.lifecycle.teach import TeachSample
 from xbrain.p3_task.persistence.schema_geo import (
@@ -160,3 +160,32 @@ def test_record_fence_start_is_a_task_create():
     )
     assert is_task_create_intent("record_fence_start")
     assert _TASK_CREATE_INTENTS["record_fence_start"] == "teach"
+
+
+# -- commit_waypoint: F06 named keypoint (11 S7.10A / 18 F06) -----------------
+
+@pytest.mark.asyncio
+async def test_commit_waypoint_stores_name_and_coords(geo_conn):
+    """F06 record_waypoint (把这里记为X) -> a named keypoint in geo.db, so the HMI
+    keypoint layer can label it. MUTATION: not writing name -> the keypoint shows
+    as an unlabelled dot forever (the pre-F06 gap this closes)."""
+    await commit_waypoint(geo_conn, waypoint_id="w-东门岗亭", name="东门岗亭",
+                          x_m=12.0, y_m=-3.5, heading_rad=1.57, now_ms=1000)
+    cur = await geo_conn.execute(
+        "SELECT name, x_m, y_m, heading_rad FROM waypoints WHERE waypoint_id=?",
+        ("w-东门岗亭",))
+    row = await cur.fetchone()
+    assert row == ("东门岗亭", 12.0, -3.5, 1.57)
+
+
+@pytest.mark.asyncio
+async def test_commit_waypoint_idempotent_on_reid(geo_conn):
+    """A redelivered record command (same id) overwrites, never duplicates.
+    MUTATION: a plain INSERT would raise on the PK the second time."""
+    await commit_waypoint(geo_conn, waypoint_id="w-1", name="旧名",
+                          x_m=1.0, y_m=1.0, heading_rad=None, now_ms=1)
+    await commit_waypoint(geo_conn, waypoint_id="w-1", name="新名",
+                          x_m=2.0, y_m=2.0, heading_rad=None, now_ms=2)
+    cur = await geo_conn.execute("SELECT COUNT(*), MAX(name) FROM waypoints "
+                                 "WHERE waypoint_id='w-1'")
+    assert await cur.fetchone() == (1, "新名")

@@ -86,6 +86,30 @@ async def commit_route(conn, *, route_id: str, name: str,
     return route_id
 
 
+async def commit_waypoint(conn, *, waypoint_id: str, name: str, x_m: float,
+                          y_m: float, heading_rad: Optional[float],
+                          now_ms: int) -> str:
+    """Write ONE named keypoint to geo.db -- the F06 record_waypoint path
+    (把这里记为X, 18-C). name is the operator-given display name (11 S7.8.2);
+    x_m/y_m/heading come from the PS-1 pose snapshot at record time (rtk_fixed
+    required by the caller, 18 F06). This is the writer that lets a keypoint
+    carry a name (schema_geo waypoints.name) so the HMI keypoint layer can label
+    it (11 S7.10A). Idempotent per id via INSERT OR REPLACE -- re-recording the
+    same point-id (a redelivered command) overwrites rather than duplicating."""
+    ch = content_hash({"name": name, "x": x_m, "y": y_m, "h": heading_rad})
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        await conn.execute(
+            "INSERT OR REPLACE INTO waypoints (waypoint_id, name, x_m, y_m, "
+            " heading_rad, content_hash, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (waypoint_id, name, x_m, y_m, heading_rad, ch, now_ms))
+        await conn.commit()
+    except Exception:
+        await conn.rollback()
+        raise
+    return waypoint_id
+
+
 async def commit_fence(conn, *, fence_id: str, points: Sequence,
                        now_ms: int, zone_label: Optional[str] = None) -> str:
     """Write a recorded polygon fence to fence.db. `points` is the vertex ring
