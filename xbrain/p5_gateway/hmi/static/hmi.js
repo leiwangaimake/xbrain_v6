@@ -423,6 +423,45 @@
       e.preventDefault();                             // never zoom the map here
       e.stopPropagation();                            // stop before the vp handler
     }, { passive: false });
+    // Interacting with the panel (resize grip, scrollbar, card) must NOT start a
+    // map pan -- the viewport's mousedown-drag handler is an ancestor. Stop the
+    // mousedown here; clicks (folding) still fire, only the pan is suppressed.
+    panel.addEventListener("mousedown", (e) => e.stopPropagation());
+  }
+
+  // Each sub-panel (当前/历史) is CSS-resizable (resize: both). Persist the size
+  // the operator drags it to, and restore it on load, so a refresh or browser
+  // restart reopens at the last-left size (user 2026-08-18). localStorage keeps
+  // it per browser across sessions; a blocked/full store just falls back to the
+  // CSS default -- never throws.
+  function wirePanelResize() {
+    const GROUPS = [
+      [".current-group", "xbrain_hmi_task_size_current"],
+      [".history-group", "xbrain_hmi_task_size_history"],
+    ];
+    for (const [sel, key] of GROUPS) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      try {
+        const s = JSON.parse(localStorage.getItem(key) || "null");
+        if (s && s.w > 0) el.style.width = s.w + "px";
+        if (s && s.h > 0) el.style.height = s.h + "px";
+      } catch (e) { /* absent/corrupt -> CSS default size */ }
+      // Persist needs ResizeObserver; if the browser lacks it, resize still works
+      // (CSS), just the size is not remembered -- never break init over it.
+      if (typeof ResizeObserver !== "function") continue;
+      // ResizeObserver fires per drag frame; debounce the write.
+      let t = null;
+      const ro = new ResizeObserver(() => {
+        if (t) clearTimeout(t);
+        t = setTimeout(() => {
+          try { localStorage.setItem(key,
+            JSON.stringify({ w: el.offsetWidth, h: el.offsetHeight })); }
+          catch (e) { /* storage blocked/full -> size not remembered, no throw */ }
+        }, 250);
+      });
+      ro.observe(el);
+    }
   }
 
   // RTK/heading status text. fix_type comes from rt/gnss/fix (not published yet),
@@ -707,7 +746,8 @@
     ws.onerror = () => { try { ws.close(); } catch (_) {} };
   }
   async function init() {
-    wireInteraction(); applyView(); buildDialFace(); wireHistoryFolding(); wirePanelScroll();
+    wireInteraction(); applyView(); buildDialFace(); wireHistoryFolding();
+    wirePanelScroll(); wirePanelResize();
     try { applyUiConfig(await getJSON("/api/hmi/ui_config")); }
     catch (e) { console.error("ui_config load failed", e); return; }
     await tick();                                     // instant first paint (REST)
