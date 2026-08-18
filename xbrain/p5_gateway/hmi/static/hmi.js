@@ -190,7 +190,9 @@
         const xy = toXY(fen.vertices[0], origin);
         if (xy) {
           const t = label(xy[0], xy[1] - 2, "keep-in-label", fen.name);
-          t.setAttribute("fill", line.color);
+          // req3: colour the name as its own fence line. Inline style beats the
+          // CSS var(--ink) fallback (a presentation attribute would NOT).
+          t.style.fill = line.color;
           $(layer).appendChild(t);
         }
       }
@@ -205,16 +207,33 @@
         const rt = (cfg.route || {}).realtime || {};
         if (!patrolling && rt.show_after_complete === false) continue;
       }
-      $(realtime ? "realtimeTrajectoryLayer" : "recordedRouteLayer").appendChild(
-        polyline(realtime ? "realtime-trajectory" : "recorded-route", pts,
-          realtime ? cfg.route.realtime.line : cfg.route.recorded.line));
+      const rline = realtime ? cfg.route.realtime.line : cfg.route.recorded.line;
+      const rlayer = realtime ? "realtimeTrajectoryLayer" : "recordedRouteLayer";
+      $(rlayer).appendChild(
+        polyline(realtime ? "realtime-trajectory" : "recorded-route", pts, rline));
+      // req3: label the route name at its first vertex, coloured its own line.
+      if (r.name && r.points && r.points[0]) {
+        const rxy = toXY(r.points[0], origin);
+        if (rxy) {
+          const rt = label(rxy[0], rxy[1] - 2, "route-label", r.name);
+          rt.style.fill = rline.color;
+          $(rlayer).appendChild(rt);
+        }
+      }
     }
     const wps = geo.waypoints || {};
     if (wps.available) for (const w of wps.items) {
       const xy = toXY(w.geom || w, origin); if (!xy) continue;
       const mk = (cfg.waypoint || {})[w.recorded ? "recorded" : "unrecorded"] || {};
       $("keypointLayer").appendChild(marker(xy[0], xy[1], mk));
-      if (w.name) $("keypointLayer").appendChild(label(xy[0] + mk.size + 1, xy[1], "keypoint", w.name));
+      // req3: keypoint name in its own class + its marker colour. The old
+      // ".keypoint text" selector never matched a <text class="keypoint"> (that
+      // needs a .keypoint ANCESTOR), so the name fell back to a huge default font.
+      if (w.name) {
+        const wl = label(xy[0] + (mk.size || 3) + 1, xy[1], "keypoint-label", w.name);
+        wl.style.fill = mk.color || "#3aa0ff";
+        $("keypointLayer").appendChild(wl);
+      }
     }
   }
 
@@ -701,7 +720,22 @@
     const [bx, by, bw, bh] = baseVB;
     const w = bw / view.zoom, h = bh / view.zoom;
     const cx = bx + bw / 2 + view.pan.x, cy = by + bh / 2 + view.pan.y;
-    $("mapSvg").setAttribute("viewBox", `${cx - w / 2} ${cy - h / 2} ${w} ${h}`);
+    const svg = $("mapSvg");
+    svg.setAttribute("viewBox", `${cx - w / 2} ${cy - h / 2} ${w} ${h}`);
+    // 17 S6.10.2A req3: keep map labels a constant ~12 screen px (the task-content
+    // font size), never scaling with zoom. An SVG font-size is in USER UNITS (ENU
+    // metres), mapped to the screen by clientHeight / viewBoxHeight; so 12 screen
+    // px equals 12 * h / clientHeight user units. Recomputed on every view change
+    // (zoom / pan / window resize) so labels never balloon when the map zooms in.
+    // Guard the pre-layout call (init runs applyView before the SVG has a size):
+    // ch==0 -> leave --map-label-fs unset so the CSS fallback (2.5px, ~12px at
+    // default zoom) holds until the next applyView measures a real height. A
+    // `|| h` fallback would set 12 USER UNITS = a giant label for one frame.
+    const ch = svg.clientHeight || svg.getBoundingClientRect().height;
+    if (ch > 0) {
+      document.documentElement.style.setProperty(
+        "--map-label-fs", (12 * h / ch).toFixed(3) + "px");
+    }
     $("zoomText").textContent = `${view.zoom.toFixed(1)}x`;
   }
   function clampZoom(z) { return Math.max(zoomBounds.min, Math.min(zoomBounds.max, z)); }
@@ -782,6 +816,7 @@
   }
   async function init() {
     wireInteraction(); applyView(); buildDialFace(); wireHistoryFolding();
+    window.addEventListener("resize", applyView);   // req3: rescale map labels on resize
     wirePanelScroll(); wirePanelResize();
     try { applyUiConfig(await getJSON("/api/hmi/ui_config")); }
     catch (e) { console.error("ui_config load failed", e); return; }

@@ -73,13 +73,28 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .map-grid-minor { stroke: #3a3a3a; stroke-width: .5; }
 .map-grid-major { stroke: #555555; stroke-width: .7; }
 
-.keep-in { fill: rgba(47,136,255,.06); stroke: var(--fence-active-color); }
-.alarm-region { fill: rgba(255,32,32,.07); stroke: var(--fence-alarm-color); }
-.keep-in-label, .alarm-label, .keypoint text, .alarm-event-label {
-  font-family: var(--font-map-family); font-size: 10px; fill: var(--ink);
-  paint-order: stroke; stroke: var(--bg); stroke-width: 2px; }
-.recorded-route { fill: none; stroke: var(--route-recorded-color); }
-.realtime-trajectory { fill: none; stroke: var(--route-realtime-color); }
+/* 17 S6.10.2A geo layer styling.
+   Root bug: fence/route strokes and map labels were rendered in SVG USER UNITS
+   (ENU metres), so they scaled with the map viewBox and ballooned when zoomed --
+   the config fields are NAMED width_px / size_px but were being used as metres.
+   Fix: strokes use non-scaling-stroke, so width_px becomes real screen px (thin,
+   constant across zoom); label font-size is driven per view by --map-label-fs
+   (set in applyView to a constant 12 screen px = the task-content font size).
+   Per-label fill is set inline by renderGeo to each layer's own line colour
+   (fence -> line colour, route -> line colour, keypoint -> marker colour);
+   the fill below is only a fallback. */
+.keep-in { fill: rgba(47,136,255,.06); stroke: var(--fence-active-color);
+  vector-effect: non-scaling-stroke; }
+.alarm-region { fill: rgba(255,32,32,.07); stroke: var(--fence-alarm-color);
+  vector-effect: non-scaling-stroke; }
+.keep-in-label, .alarm-label, .route-label, .keypoint-label, .alarm-event-label {
+  font-family: var(--font-map-family); font-size: var(--map-label-fs, 2.5px);
+  fill: var(--ink); paint-order: stroke; stroke: var(--bg); stroke-width: 3px;
+  vector-effect: non-scaling-stroke; }
+.recorded-route { fill: none; stroke: var(--route-recorded-color);
+  vector-effect: non-scaling-stroke; }
+.realtime-trajectory { fill: none; stroke: var(--route-realtime-color);
+  vector-effect: non-scaling-stroke; }
 .robot-arrow { fill: var(--ink); }
 .alarm-dot { fill: var(--fence-alarm-color); stroke: var(--ink); stroke-width: 1; }
 .keypoint circle { stroke-width: 2; }
