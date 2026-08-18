@@ -409,6 +409,22 @@
     document.addEventListener("mousemove", () => { if (expandedHistory.size) armHistoryIdle(); });
   }
 
+  // Mouse-wheel over the task panel scrolls the list UNDER THE CURSOR (当前 or
+  // 历史), not the map. Needed because the map viewport's wheel=zoom handler is
+  // an ancestor and preventDefaults every wheel -- so it eats the panel's native
+  // scroll. Here we scroll the hovered list ourselves and stopPropagation so the
+  // zoom handler never fires while the cursor is over the panel (user 2026-08-18).
+  function wirePanelScroll() {
+    const panel = document.querySelector(".task-panel");
+    if (!panel) return;
+    panel.addEventListener("wheel", (e) => {
+      const list = e.target.closest(".task-list");   // current or history list
+      if (list) list.scrollTop += e.deltaY;           // wheel down -> scroll down
+      e.preventDefault();                             // never zoom the map here
+      e.stopPropagation();                            // stop before the vp handler
+    }, { passive: false });
+  }
+
   // RTK/heading status text. fix_type comes from rt/gnss/fix (not published yet),
   // so until then surface the heading status that IS flowing: 双天线(L1)/航迹(L2)/
   // 无(L3). Never fabricate -- an unavailable pose reads "无定位/航向".
@@ -691,7 +707,7 @@
     ws.onerror = () => { try { ws.close(); } catch (_) {} };
   }
   async function init() {
-    wireInteraction(); applyView(); buildDialFace(); wireHistoryFolding();
+    wireInteraction(); applyView(); buildDialFace(); wireHistoryFolding(); wirePanelScroll();
     try { applyUiConfig(await getJSON("/api/hmi/ui_config")); }
     catch (e) { console.error("ui_config load failed", e); return; }
     await tick();                                     // instant first paint (REST)
