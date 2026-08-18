@@ -50,9 +50,20 @@ async def read_geo_objects(conn) -> Dict[str, Any]:
 
 
 async def _read_waypoints(conn) -> List[Dict[str, Any]]:
+    # The "waypoints" layer is the KEYPOINT layer -- named standalone RTK points
+    # the operator deliberately saved (18 F06), shown as labelled dots. Route
+    # vertices are ALSO stored in the waypoints table (the runtime routes table
+    # has no geometry column, 15 S9.3 assoc model), but they are a route's
+    # polyline geometry, NOT keypoints -- they must not each draw their own dot.
+    # Exclude any waypoint referenced by route_waypoint_assoc so route vertices
+    # render only as the line, and only true keypoints appear as dots. A keypoint
+    # that merely lies near a route is a SEPARATE (un-assoc'd) waypoint, so it is
+    # kept.
     cur = await conn.execute(
         "SELECT waypoint_id, name, x_m, y_m, heading_rad, rev "
-        "FROM waypoints WHERE tombstone=0 ORDER BY waypoint_id")
+        "FROM waypoints WHERE tombstone=0 "
+        "AND waypoint_id NOT IN (SELECT waypoint_id FROM route_waypoint_assoc) "
+        "ORDER BY waypoint_id")
     rows = await cur.fetchall()
     return [{"geo_id": r[0], "name": r[1], "e_m": r[2], "n_m": r[3],
              "heading_rad": r[4], "rev": r[5]} for r in rows]

@@ -41,16 +41,21 @@ async def _wp(c, wid, name, x, y, ms, heading=None):
 
 
 async def _seed(c):
+    # keypoints: named, standalone (NOT route vertices) -> the dots layer.
     await _wp(c, "w-1", "东门岗亭", 12.0, -3.5, 100, heading=1.57)
     await _wp(c, "w-2", "西门入口", 20.4, 8.1, 110)
+    # route vertices: UNNAMED, referenced by the route -> the route's polyline
+    # geometry, not keypoints (excluded from the waypoints/dots layer).
+    await _wp(c, "rw-0", None, 20.4, 8.1, 118)
+    await _wp(c, "rw-1", None, 12.0, -3.5, 119)
     await c.execute("INSERT INTO routes (route_id, name, content_hash, "
                     "updated_ms) VALUES (?,?,?,?)", ("r-1", "营区日常", "h", 120))
-    # assoc: seq 0 -> w-2, seq 1 -> w-1  (deliberately NOT id order, to prove
+    # assoc: seq 0 -> rw-0, seq 1 -> rw-1  (deliberately NOT id order, to prove
     # the route follows assoc seq, not waypoint_id order)
     await c.execute("INSERT INTO route_waypoint_assoc (route_id, seq, "
-                    "waypoint_id) VALUES ('r-1', 0, 'w-2')")
+                    "waypoint_id) VALUES ('r-1', 0, 'rw-0')")
     await c.execute("INSERT INTO route_waypoint_assoc (route_id, seq, "
-                    "waypoint_id) VALUES ('r-1', 1, 'w-1')")
+                    "waypoint_id) VALUES ('r-1', 1, 'rw-1')")
     await c.execute("INSERT INTO docks (dock_id, name, x_m, y_m, heading_rad, "
                     "content_hash, updated_ms) VALUES (?,?,?,?,?,?,?)",
                     ("d-01", "1号充电桩", -40.0, 22.0, 0.0, "h", 130))
@@ -79,6 +84,21 @@ async def test_route_points_follow_assoc_seq(geo):
     # points in assoc seq order (w-2 then w-1), NOT waypoint_id order. MUTATION:
     # ordering by waypoint_id (or dropping ORDER BY a.seq) reverses the route.
     assert r["points"] == [[20.4, 8.1], [12.0, -3.5]]
+
+
+@pytest.mark.asyncio
+async def test_route_vertices_excluded_from_keypoints(geo):
+    # A route's vertices are stored in the waypoints table but are the route's
+    # polyline geometry, NOT keypoints -- they must not each draw their own dot.
+    # MUTATION: dropping the "NOT IN route_waypoint_assoc" filter makes every
+    # route vertex show as a keypoint dot.
+    await _seed(geo)
+    p = await read_geo_objects(geo)
+    ids = {w["geo_id"] for w in p["waypoints"]}
+    assert "rw-0" not in ids and "rw-1" not in ids     # route vertices excluded
+    assert ids == {"w-1", "w-2"}                        # only the true keypoints
+    # the route still renders through those excluded vertices:
+    assert p["routes"][0]["points"] == [[20.4, 8.1], [12.0, -3.5]]
 
 
 @pytest.mark.asyncio
