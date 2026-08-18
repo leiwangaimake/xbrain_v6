@@ -435,31 +435,39 @@
   // widened/heightened and shrunk back, but never below the default. The dragged
   // size is saved to localStorage and restored on load (survives refresh + restart).
   function wirePanelResize() {
-    const GROUPS = [           // sel, storage key, min width, min height (= default)
-      [".current-group", "xbrain_hmi_task_size_current", 350, 180],
-      [".history-group", "xbrain_hmi_task_size_history", 350, 240],
-    ];
-    for (const [sel, key, minW, minH] of GROUPS) {
-      const el = document.querySelector(sel);
-      if (!el) continue;
-      // Restore saved size, never below the minimum.
+    // ★ WIDTH is SHARED by both panels (they stack on the HMI's right edge, so a
+    // mismatched width misaligns them, user 2026-08-18): resizing width on EITHER
+    // panel syncs BOTH. HEIGHT is per-panel. Both persist and restore on load.
+    const MINW = 350;                                 // = default width (= minimum)
+    const cur = document.querySelector(".current-group");
+    const his = document.querySelector(".history-group");
+    const both = [cur, his].filter(Boolean);
+    if (!both.length) return;
+    // Restore the shared width onto BOTH panels.
+    try {
+      const w = parseInt(localStorage.getItem("xbrain_hmi_task_width") || "0", 10);
+      if (w >= MINW) for (const g of both) g.style.width = w + "px";
+    } catch (e) { /* absent/corrupt -> CSS default */ }
+    // Per-panel: restore height + attach the three drag handles.
+    const PANELS = [[cur, "xbrain_hmi_task_h_current", 180],
+                    [his, "xbrain_hmi_task_h_history", 240]];
+    for (const [g, hKey, minH] of PANELS) {
+      if (!g) continue;
       try {
-        const s = JSON.parse(localStorage.getItem(key) || "null");
-        if (s && s.w) el.style.width = Math.max(minW, s.w) + "px";
-        if (s && s.h) el.style.height = Math.max(minH, s.h) + "px";
-      } catch (e) { /* absent/corrupt -> CSS default */ }
-      // Three drag handles (left edge / bottom edge / left-bottom corner).
+        const h = parseInt(localStorage.getItem(hKey) || "0", 10);
+        if (h >= minH) g.style.height = h + "px";
+      } catch (e) { /* CSS default */ }
       for (const hcls of ["rz-left", "rz-bottom", "rz-corner"]) {
-        const h = document.createElement("div");
-        h.className = "rz-handle " + hcls;
-        h.addEventListener("mousedown",
-          (e) => startPanelResize(e, el, hcls, minW, minH, key));
-        el.appendChild(h);
+        const handle = document.createElement("div");
+        handle.className = "rz-handle " + hcls;
+        handle.addEventListener("mousedown",
+          (e) => startPanelResize(e, g, hcls, both, MINW, minH, hKey));
+        g.appendChild(handle);
       }
     }
   }
 
-  function startPanelResize(e, el, hcls, minW, minH, key) {
+  function startPanelResize(e, el, hcls, both, minW, minH, hKey) {
     e.preventDefault(); e.stopPropagation();          // no text-select, no map pan
     const startX = e.clientX, startY = e.clientY;
     const startW = el.offsetWidth, startH = el.offsetHeight;
@@ -467,11 +475,13 @@
     const doH = hcls === "rz-bottom" || hcls === "rz-corner";
     const maxW = window.innerWidth * 0.78, maxH = window.innerHeight * 0.8;
     function onMove(ev) {
-      // Right edge pinned: dragging the LEFT edge leftward (clientX decreases)
-      // widens; clamped [min, max]. min = default -> cannot narrow below default.
-      if (doW) el.style.width =
-        Math.max(minW, Math.min(maxW, startW + (startX - ev.clientX))) + "px";
-      // Bottom edge: dragging DOWN (clientY increases) heightens.
+      // WIDTH shared -> apply to BOTH panels so they stay aligned. Right edge
+      // pinned: dragging the LEFT edge leftward widens; min = default (no narrower).
+      if (doW) {
+        const w = Math.max(minW, Math.min(maxW, startW + (startX - ev.clientX)));
+        for (const g of both) g.style.width = w + "px";
+      }
+      // HEIGHT per-panel: only the dragged one. Drag DOWN heightens.
       if (doH) el.style.height =
         Math.max(minH, Math.min(maxH, startH + (ev.clientY - startY))) + "px";
     }
@@ -479,9 +489,10 @@
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       document.body.style.userSelect = "";
-      try { localStorage.setItem(key,
-        JSON.stringify({ w: el.offsetWidth, h: el.offsetHeight })); }
-      catch (e) { /* storage blocked -> not remembered, no throw */ }
+      try {
+        if (doW) localStorage.setItem("xbrain_hmi_task_width", String(el.offsetWidth));
+        if (doH) localStorage.setItem(hKey, String(el.offsetHeight));
+      } catch (e) { /* storage blocked -> not remembered, no throw */ }
     }
     document.body.style.userSelect = "none";          // no selection while dragging
     document.addEventListener("mousemove", onMove);
