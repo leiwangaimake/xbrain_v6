@@ -46,6 +46,23 @@
   const ptsAttr = (arr, origin) => arr.map((p) => toXY(p, origin))
     .filter(Boolean).map((xy) => xy.join(",")).join(" ");
 
+  // req4d (2026-08-18): geometry length in METRES for the label. Points are ENU
+  // metres ([e_m, n_m], 11 S7.10A GO-1) so euclidean distance == metres. Route =
+  // open-path sum; fence = closed perimeter (add the closing edge). Returns "" for
+  // degenerate input so the label just shows the name.
+  function segLen(pts) {
+    let d = 0;
+    for (let i = 1; i < (pts || []).length; i++)
+      d += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    return d;
+  }
+  function perimM(pts) {
+    if (!pts || pts.length < 2) return 0;
+    const n = pts.length;
+    return segLen(pts) + Math.hypot(pts[0][0] - pts[n - 1][0], pts[0][1] - pts[n - 1][1]);
+  }
+  const lenTag = (m) => (m > 0 ? ` (${Math.round(m)} m)` : "");
+
   function lineStroke(el, line) {
     if (!line) return;
     el.setAttribute("stroke", line.color);
@@ -118,14 +135,17 @@
     const map = c.map || {};
     const grid = map.grid || { minor_m: 1, major_m: 5 };
     baseVB = (map.viewbox || "-100 -65 240 145").split(/\s+/).map(Number);
-    setPattern("minorGrid", grid.minor_m, `M ${grid.minor_m} 0 L 0 0 0 ${grid.minor_m}`);
+    // req(2026-08-18): keep ONLY the 5m major grid, drop the 1m minor grid.
+    // Each major tile no longer fills with the minor pattern (fill=none), so the
+    // grid shows just the 5m gridlines.
     setPattern("majorGrid", grid.major_m, `M ${grid.major_m} 0 L 0 0 0 ${grid.major_m}`);
     $("majorGridRect").setAttribute("width", grid.major_m);
     $("majorGridRect").setAttribute("height", grid.major_m);
+    $("majorGridRect").setAttribute("fill", "none");     // no 1m minor grid
     const G = 100000;                     // metres; far beyond any mouse pan/zoom
     for (const [k, v] of [["x", -G], ["y", -G], ["width", 2 * G], ["height", 2 * G]])
       $("gridBg").setAttribute(k, v);
-    $("scaleText").textContent = `网格 ${grid.minor_m}m / ${grid.major_m}m`;
+    $("scaleText").textContent = `网格 ${grid.major_m}m`;
     applyView();                          // set the initial viewBox from base + view
 
     const z = map.zoom || {};
@@ -178,7 +198,39 @@
     t.textContent = text; return t;
   }
 
+  // req(2026-08-18): the mock data spans ~5km, far beyond the config 240m
+  // default view. Auto-fit the map to the geo BOUNDS once, on the first snapshot
+  // that carries the fences (they define the true extent -- the active-area
+  // lake), so the operator sees the whole site on load. toXY returns [e_m,n_m]
+  // as-is (no flip), so SVG coords ARE the ENU metres. Zoom-in range is widened
+  // so the 5m grid is legible when zoomed in. Fits ONCE; afterwards the operator
+  // pans/zooms freely.
+  let geoFitted = false;
+  function fitGeoToData(geo) {
+    if (geoFitted) return;
+    const f = geo.fences || {};
+    if (!(f.available && (f.items || []).length)) return;   // wait for fences
+    const xs = [], ys = [];
+    const add = (p) => { const xy = toXY(p, null); if (xy) { xs.push(xy[0]); ys.push(xy[1]); } };
+    for (const it of f.items) (it.vertices || []).forEach(add);
+    const r = geo.routes || {}; if (r.available) for (const it of r.items) (it.points || []).forEach(add);
+    const w = geo.waypoints || {}; if (w.available) for (const it of w.items) add(it.geom || it);
+    if (xs.length < 3) return;
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const bw = maxX - minX, bh = maxY - minY;
+    const mx = bw * 0.06 + 30, my = bh * 0.06 + 30;
+    baseVB = [minX - mx, minY - my, bw + 2 * mx, bh + 2 * my];
+    view.zoom = 1; view.pan = { x: 0, y: 0 };
+    // widen zoom-in so 200m (5m grid legible) is reachable from the ~5km fit.
+    zoomBounds = { min: 0.5, max: Math.max(zoomBounds.max, Math.ceil(bw / 200)),
+                   wheel: zoomBounds.wheel };
+    geoFitted = true;
+    applyView();
+  }
+
   function renderGeo(geo, origin, patrolling) {
+    fitGeoToData(geo);
     clear("keepInLayer"); clear("alarmLayer");
     clear("recordedRouteLayer"); clear("realtimeTrajectoryLayer"); clear("keypointLayer");
     const fences = geo.fences || {};
@@ -198,7 +250,9 @@
       // line colour (user 2026-08-18). No per-layer inline fill.
       if (fen.name && fen.vertices && fen.vertices[0]) {
         const xy = toXY(fen.vertices[0], origin);
-        if (xy) $(layer).appendChild(label(xy[0], xy[1] - 2, "keep-in-label", fen.name));
+        // req4d: name + fence perimeter in metres, e.g. "东油库报警区 (1627 m)".
+        if (xy) $(layer).appendChild(label(xy[0], xy[1] - 2, "keep-in-label",
+          fen.name + lenTag(perimM(fen.vertices))));
       }
     }
     const routes = geo.routes || {};
@@ -218,7 +272,9 @@
       // Route name label at its first vertex -- unified bright white (CSS).
       if (r.name && r.points && r.points[0]) {
         const rxy = toXY(r.points[0], origin);
-        if (rxy) $(rlayer).appendChild(label(rxy[0], rxy[1] - 2, "route-label", r.name));
+        // req4d: name + route length in metres, e.g. "环湖主巡逻线 (4561 m)".
+        if (rxy) $(rlayer).appendChild(label(rxy[0], rxy[1] - 2, "route-label",
+          r.name + lenTag(segLen(r.points))));
       }
     }
     const wps = geo.waypoints || {};
