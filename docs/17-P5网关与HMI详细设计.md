@@ -1628,10 +1628,10 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 
 | # | UI 元素 | 必须提供的数据 | 刷新率 | 我方 key | 字段 |
 |---|---|---|---|---|---|
-| 1 | #keepInLayer > polygon.keep-in（points 属性，营区边界多边形顶点序列） | 顶点数组 vertices[]：每顶点 {lat: float64 deg, lon: float64 deg}（或已投影的 {e_m, n_m} float 米）；首尾不重复、隐式闭合；顶点数 3~512；单个多边形。前端还需知道「这一圈是 keep-in（可活动区）」这个角色，才能套 .keep-in 的绿色虚线样式。 | 变化即发：WS 下行 `state.fence.active.rev`（§9A.5 `FenceRuntimeState | REST `GET /api/fences/active`（`11` §12.2 与 §9A.11 两处同列，逐字「当前生效围栏的全量几何 + FenceRuntimeState」）；另有 `GET /api/geo/fence/{geo_id}`（§12.2 逐字「单个要素全文（含几何）」） | `11` §9A.2 `FenceSet.polygons[].vertices`（字段表逐字：「array &#124; ✅ &#124; deg &#124; WGS84 十进制度，`float64`。★ **首尾不重复**」）＋ `polygons[].role`（字段表逐字「`allow` \&#124; `forbid` \&#124; `zone`」）；另一套是 `11` §7.8.3 `fence.geom.outer`（JSON5 逐字「// ★ 逆时针，隐式闭合，>= 3 顶点」）＋ `geom.kind` |
+| 1 | #keepInLayer > polygon.keep-in（points 属性，营区边界多边形顶点序列） | 顶点数组 vertices[]：每顶点 {lat: float64 deg, lon: float64 deg}（或已投影的 {e_m, n_m} float 米）；首尾不重复、隐式闭合；顶点数 3~512；单个多边形。前端还需知道「这一圈是 keep-in（可活动区）」这个角色，才能套 .keep-in 的绿色虚线样式。 | 变化即发：WS 下行 `state.fence.active.rev`（§9A.5 `FenceRuntimeState | REST `GET /api/fences/active`（`11` §12.2 与 §9A.11 两处同列，逐字「当前生效围栏的全量几何 + FenceRuntimeState」）；另有 `GET /api/geo/fence/{geo_id}`（§12.2 逐字「单个要素全文（含几何）」） | `11` §9A.2 `FenceSet.polygons[].vertices`（字段表逐字：「array &#124; ✅ &#124; deg &#124; WGS84 十进制度，`float64`。★ **首尾不重复**」）＋ `polygons[].role`（字段表逐字「`allow` \&#124; `forbid` \&#124; `speed_limit` \&#124; `warning`」，`warning` 旧名 `zone`）；另一套是 `11` §7.8.3 `fence.geom.outer`（JSON5 逐字「// ★ 逆时针，隐式闭合，>= 3 顶点」）＋ `geom.kind` |
 | 2 | #keepInLayer > text.keep-in-label（文字「营区边界」） | 该围栏多边形的中文显示名 name: string（人类可读，非 slug） | 随几何一次性快照 | 同上 `GET /api/fences/active` | `11` §9A.2 顶层 `name`（示例逐字 `name: "营区外围（夜间）"`，FenceSet 集合级）与 `polygons[].name`（示例逐字 `name: "camp_outer"`，多边形级） |
 | 3 | #keepInLayer > text.keep-in-label 的 x/y（标签落点，样例硬编码 -74,-50） | 无。由前端从多边形顶点自行推算（质心 / 最北顶点 / 首顶点偏移） | 一次性，随几何重算 | —（前端本地） | — |
-| 4 | #alarmLayer > polygon.alarm-region（报警区域多边形顶点） | 顶点数组 vertices[]（同 keep-in 格式）＋ 一个能让前端判定「这是报警区域」的角色/类别字段。★ 需先明确语义：是「机器人禁入区」还是「人进入即触发报警的管制区」——两者在我方是两个不同的 role。 | 同 keep-in：`state.fence.active.rev` 变化即重拉 | `GET /api/fences/active`（同一份 `FenceSet` 内，按 `polygons[].role` 区分） | `11` §9A.2 `polygons[].role`（字段表逐字「`allow` \&#124; `forbid` \&#124; `zone`」）；§9A.10A 的四值语义表逐字：「**`forbid`** &#124; 机器人必须在其**外部**」「★★ **`zone`** &#124; **命名子区域**，不产生任何运动约束 … ★ `inside_zones[]` / `exclude_zones[]`」 |
+| 4 | #alarmLayer > polygon.alarm-region（报警区域多边形顶点） | 顶点数组 vertices[]（同 keep-in 格式）＋ 一个能让前端判定「这是报警区域」的角色/类别字段。★ 需先明确语义：是「机器人禁入区」还是「人进入即触发报警的管制区」——两者在我方是两个不同的 role。 | 同 keep-in：`state.fence.active.rev` 变化即重拉 | `GET /api/fences/active`（同一份 `FenceSet` 内，按 `polygons[].role` 区分） | `11` §9A.2 `polygons[].role`（字段表逐字「`allow` \&#124; `forbid` \&#124; `speed_limit` \&#124; `warning`」，`warning` 旧名 `zone`）；§9A.10A 的四值语义表逐字：「**`forbid`** &#124; 机器人必须在其**外部**」「★★ **`warning`**（旧名 `zone`）&#124; **报警区域**，不产生任何运动约束 … ★ `inside_zones[]` / `exclude_zones[]`」 |
 | 5 | #alarmLayer > text.alarm-label（文字「报警区域」） | 该报警区域多边形的中文显示名 name: string | 随几何一次性快照 | `GET /api/fences/active` | `11` §9A.2 `polygons[].name`（示例值 `gate_guard_post` / `fuel_store`） |
 | 6 | #alarmLayer > text.alarm-label 的 x/y | 无，前端从顶点推算 | 一次性 | —（前端本地） | — |
 | 7 | #keypointLayer > g.keypoint > circle 的 cx/cy（关键点位置） | 每个关键点的 {lat: float64 deg, lon: float64 deg}（前端投影为 ENU 米）；数量级 41 个（我方 manifest 示例的 waypoint 计数） | 一次性快照；WS `geo_manifest`（变更 + 0.1 Hz）的 `catalog_rev` / `items | `GET /api/geo/waypoint/{geo_id}`（`11` §12.2 逐字「单个要素全文（含几何）」） | `11` §7.8.3 `waypoint` 的 `geom`，逐字 `"geom": { "lat": 35.012345, "lon": 135.098765, "alt": 12.4, "heading_rad": 1.5708, "arrive_radius_m": 1.5 }`；落库侧 `15` §9.3 `CREATE TABLE waypoints` 的 `rtk_lat REAL NOT NULL` / `rtk_lon REAL NOT NULL` |
@@ -1708,7 +1708,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | 10 | .alarm-dot 的历史点与实时点必须可区分（重连回填不得把两小时前的报警当新告警弹出） | 前端需知道一条 Event 是「实时」还是「回填」。后端侧的硬约束已定：补发事件走独立 key 且不推 HMI ⇒ 历史点只能来自 REST 回填，实时点只能来自 WS。 | 不适用（结构性约束） | xbrain/{rid}/event/replay/{channel}（仅 p5_gateway 发布、仅云端订阅） | 17 §3.5.3 R-2 / R-3、§3.5.5 O-4 |
 | 11 | .alarm-dot 画在【谁】的位置上 —— 机器人当时的位置，还是被发现目标的位置？（样例把红点画在轨迹之外的空地上，语义上是「目标/事发点」而非机器人点） | 一个统一的「事件位置」语义定义：该 pos 是机器人位姿还是事发对象位置；若两者都有，前端优先取哪个。 | 变化即发 | ⚠️ 待建 | ⚠️ 待建 |
 | 12 | .alarm-dot 的 r=2.4 / fill=var(--danger) / stroke=var(--text) stroke-width=2；.alarm-event-label 的 font-size:4.5 | 无。半径、颜色、描边、标签相对偏移、层级（位于 #trajectoryLayer 内）全部是渲染参数。 | 不适用 | —（前端本地） | — |
-| 13 | （跨组备注，防漏报）#alarmLayer 内的 .alarm-region 多边形 ＋ .alarm-label「报警区域」—— 与 E 组同名但不是事件点 | 静态几何：多边形顶点序列（lat/lon）＋ 名称。属地理要素，非事件。 | 变化即发 + 0.1 Hz（geo_manifest：11 §12.1.6 逐字「变更 + 0.1 Hz」） | REST GET /api/fences/active · GET /api/geo/manifest；Zenoh cmd/geo 写入侧由 p3_task 唯一落库 | FenceSet.polygons[] = { poly_id, role: allow&#124;forbid&#124;zone, name, winding, hard_enforce, vertices[{lat,lon}] } |
+| 13 | （跨组备注，防漏报）#alarmLayer 内的 .alarm-region 多边形 ＋ .alarm-label「报警区域」—— 与 E 组同名但不是事件点 | 静态几何：多边形顶点序列（lat/lon）＋ 名称。属地理要素，非事件。 | 变化即发 + 0.1 Hz（geo_manifest：11 §12.1.6 逐字「变更 + 0.1 Hz」） | REST GET /api/fences/active · GET /api/geo/manifest；Zenoh cmd/geo 写入侧由 p3_task 唯一落库 | FenceSet.polygons[] = { poly_id, role: allow&#124;forbid&#124;speed_limit&#124;warning, name, winding, hard_enforce, vertices[{lat,lon}] } |
 
 #### 6.8.6 F · 多机与链路（12 项）
 
@@ -1797,7 +1797,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 |---|---|---|
 | ★★★ **P5F-1** | ★★ P5 必须把 `op=ping` 当作**对账与重取触发**，🚫 **不只是心跳**：收到 `ping` 后比对自身持有的 `(fence_set_id, rev, crc32)`；**不一致（含「我什么都没有」这一情形）即请求 P3 重发 `stage`** —— `11` §9A.3 时序 ④ 逐字「比对；不一致则请求 P3 重发 stage」。<br>⇒ ★★ **冷启动空窗的上界 = 一个心跳周期**，🚫 不是无限 | 把 `ping` 实现成「只更新 `last_seen`、不比对」⇒ 冷启动后 `GET /api/fences/active` **必须一直取不到几何** ⇒ 断言变红 |
 | ★★★ **P5F-2** | ★★★ **在持有的几何与 `state/fence.active` 的 `(fence_set_id, rev, crc32)` 三元组一致之前，`GET /api/fences*` 🚫 不得返回 `200` ＋ 空集** —— 必须显式失败为 **`E_DEGRADED`**（★ 闭集内取码，`11` §13；🚫 不自造码），`detail` 同时带**本机持有的三元组**与**期望的三元组**。★ HMI 据此显示「**围栏未同步**」，而**不是**画一张空地图 | 让它在无几何时返回 `200` ＋ `polygons: []` ⇒ 断言必须变红。★★ **这正是本条要堵的形态**，🚫 不得以「前端自己判空」代替 —— 那把判据交给了一个看不见后端状态的进程 |
-| ★★ **P5F-3** | ★ P5 **必须**在 `stage` 后于 `stage_timeout_s` 内回 `cmd/fence/ack`（它在 `11` §2.2.4 的多发布者闭集内）。<br>★★★ **但 `require_ack_from` 🚫 不得含 `p5_gateway`** —— 列进去等于**让 HMI 显示层的故障阻塞一条安全围栏的生效**。★ 依据：`11` §9A.3 `require_ack_from` 字段表只把 `p1_motion` 定为**必含**，`p2_core` 是**条件必含**（引用 `zone` 时），**P5 两者都不是**。<br>⇒ ★★ **P5 的 ack 是【告知】，不是【否决】** | 把 `p5_gateway` 塞进 `require_ack_from`，再让 P5 不回 ack ⇒ `commit` **必须被卡住 3 s 后 `abort`** ⇒ 断言变红 |
+| ★★ **P5F-3** | ★ P5 **必须**在 `stage` 后于 `stage_timeout_s` 内回 `cmd/fence/ack`（它在 `11` §2.2.4 的多发布者闭集内）。<br>★★★ **但 `require_ack_from` 🚫 不得含 `p5_gateway`** —— 列进去等于**让 HMI 显示层的故障阻塞一条安全围栏的生效**。★ 依据：`11` §9A.3 `require_ack_from` 字段表只把 `p1_motion` 定为**必含**，`p2_core` 是**条件必含**（引用 `warning` 时），**P5 两者都不是**。<br>⇒ ★★ **P5 的 ack 是【告知】，不是【否决】** | 把 `p5_gateway` 塞进 `require_ack_from`，再让 P5 不回 ack ⇒ `commit` **必须被卡住 3 s 后 `abort`** ⇒ 断言变红 |
 
 > ★★ **为什么 P5F-1 与 P5F-2 必须同时做，少一条就退化**：
 > · 只做 **P5F-1** 不做 **P5F-2** ⇒ 心跳周期内的那个空窗仍然静默，且 `ping` 丢一次就退回原状；
@@ -1890,7 +1890,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | 要素 | 类型/role | 连线样式 | 颜色（默认） | 粗细 | config 键 |
 |---|---|---|---|---|---|
 | ★ 活动区域围栏 | `allow` | **实线** | ★ **亮蓝 `#2f88ff`** | 粗 `2.4` | `fence.active.line` |
-| ★ 报警区域围栏 | `zone` | **实线** | ★ **亮红 `#ff2020`** | 粗 `2.4` | `fence.alarm.line` |
+| ★ 报警区域围栏 | `warning`（旧名 `zone`） | **实线** | ★ **亮红 `#ff2020`** | 粗 `2.4` | `fence.alarm.line` |
 | 禁入区域围栏 | `forbid` | **实线** | 亮红 `#ff2020`（同报警，用户本轮未单列，暂沿用红色危险语义） | 粗 `2.4` | `fence.forbid.line` |
 | ★ 路径（已录制） | route recorded | **实线** | ★ **亮绿 `#2ecc40`** | ★ **细 `1.0`** | `route.recorded.line` |
 | ★ 实时行走轨迹（巡逻中） | route realtime | **实线** | ★ **亮黄 `#ffd400`** | 粗 `2.4` | `route.realtime.line` |
