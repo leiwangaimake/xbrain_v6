@@ -442,7 +442,8 @@ def run_voice_loop_wiring(stop_flag: dict,
         def _on_cmd_fence(sample) -> None:
             # W1: cache the staged FenceSet geometry (P5F-1 overwrite). Each
             # polygon keeps name + vertices (WGS84 lat/lon) + role for the map;
-            # role 'zone' renders as an alarm region, else a keep-in boundary.
+            # role 'warning' (old name 'zone', 11 S9A.1A) renders as an alarm
+            # region, else a keep-in boundary. The role passes through verbatim.
             # (The map can place them once an enu_origin exists -- gated, W4.)
             try:
                 d = json.loads(bytes(sample.payload).decode("utf-8"))

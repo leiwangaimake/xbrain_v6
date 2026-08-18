@@ -55,15 +55,17 @@
     else el.removeAttribute("stroke-dasharray");     // solid
   }
 
-  // Map a fence to its display type. The contract role (17 S6.8: allow/forbid/
-  // zone) wins; if role is absent -- P3's fence table stores a free-text
-  // zone_label, not the role enum -- fall back to the name ("活动"->active,
-  // "禁入"->forbid, "报警"->alarm). Default active (keep-in) when neither says.
+  // Map a fence to its display type. The contract role (11 S9A.1A: allow/forbid/
+  // speed_limit/warning) wins; if role is absent -- P3's fence table stores a
+  // free-text zone_label, not the role enum -- fall back to the name ("活动"->
+  // active, "禁入"->forbid, "报警"->alarm). Default active (keep-in) when neither
+  // says. NOTE: "warning" is the alarm role; "zone" is its old name (11 S9A.1A
+  // rename, 2026-08-18) -- accept both while the runtime still emits the old one.
   function fenceType(fen) {
     const r = fen.role;
     if (r === "allow") return "active";
     if (r === "forbid") return "forbid";
-    if (r === "zone") return "alarm";
+    if (r === "warning" || r === "zone") return "alarm";
     const n = fen.name || fen.zone_label || "";
     if (n.indexOf("禁入") >= 0) return "forbid";
     if (n.indexOf("报警") >= 0) return "alarm";
