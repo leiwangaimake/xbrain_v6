@@ -43,6 +43,11 @@ CMD_TASK = "cmd/task"
 CMD_MOTION_INTENT = "cmd/motion/intent"
 CMD_PTZ = "cmd/ptz"
 CMD_PAYLOAD = "cmd/payload"
+# 11 S12A.1 splits the F class across two keys: F01-F10 open / drive / end a
+# RECORDING SESSION on cmd/teach, F11-F15 are CRUD on an existing object and go
+# to cmd/geo. Neither is cmd/task -- see the note on the F prefix below.
+CMD_TEACH = "cmd/teach"
+CMD_GEO = "cmd/geo"
 
 
 # Prefix-first mapping. Exact intent ids that need a special
@@ -53,7 +58,11 @@ _PREFIX_MAP = {
     "C": CMD_TASK,             # C01-C07 (hold, slow, cancel, look, spin)
     "D": CMD_AUDIO_SPEAK,      # D01-D13 broadcast / chitchat / speak_stop
     "E": CMD_PTZ,              # PTZ family
-    "F": CMD_TASK,             # follow variants
+    # F is the RECORDING class (18 F01-F15), not follow -- follow is B11. Every
+    # F id is overridden below, so this prefix entry is only a backstop; it
+    # points at cmd/teach because that is where ten of the fifteen go and a new
+    # F id is far more likely to be a session action than a task.
+    "F": CMD_TEACH,            # F01-F15 recording (per-id overrides below)
     "G": CMD_AUDIO_SPEAK,      # G01-G24 queries -> speak the reply
     "H": CMD_TASK,             # H01-H08 system (bit / report / sleep / reboot)
     "I": CMD_AUDIO_SPEAK,      # I01-I05 session ack (confirm/deny/repeat)
@@ -83,6 +92,19 @@ INTENT_TO_KEY: Dict[str, str] = {
     "D17": CMD_PAYLOAD,          # set_light_bright (18-A)
     "D18": CMD_PAYLOAD,          # set_strobe_mode (18-A)
 }
+
+
+# 11 S12A.1, transcribed per id. F01-F10 are session actions on cmd/teach;
+# F11-F15 act on a stored object and go to cmd/geo. Written out rather than
+# derived from a number range so adding F16 is a decision somebody makes, not
+# something a comparison operator makes for them.
+INTENT_TO_KEY.update({
+    "F01": CMD_TEACH, "F02": CMD_TEACH, "F03": CMD_TEACH, "F04": CMD_TEACH,
+    "F05": CMD_TEACH, "F06": CMD_TEACH, "F07": CMD_TEACH, "F08": CMD_TEACH,
+    "F09": CMD_TEACH, "F10": CMD_TEACH,
+    "F11": CMD_GEO, "F12": CMD_GEO, "F13": CMD_GEO, "F14": CMD_GEO,
+    "F15": CMD_GEO,
+})
 
 
 @dataclass(frozen=True)

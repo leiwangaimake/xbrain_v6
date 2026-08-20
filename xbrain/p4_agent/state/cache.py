@@ -49,6 +49,14 @@ STATE_TOPICS: FrozenSet[str] = frozenset({
     "state/fence",         # P1-14 -- fence runtime state
     "state/arbitration",   # p5 aggregate of the 7 arb domains
     "state/targets",       # perception, 5-10 Hz -- detected targets
+    # 11 S12A.1 needs two more for the F class, and they are STATE the turn
+    # reads rather than data it answers from: state/teach carries the open
+    # recording session (F02-F05 must name it, S12A.4), state/geo/manifest the
+    # object catalogue a spoken name is resolved against (F11-F15). Without
+    # them every F intent answers "not available yet" rather than sending a
+    # command built on a guessed id.
+    "state/teach",         # p3_task, event + 1 Hz (11 S12A.5)
+    "state/geo/manifest",  # p3_task, on change + 0.1 Hz (11 S7.10)
 })
 
 

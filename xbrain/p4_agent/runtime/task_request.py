@@ -45,8 +45,13 @@ _TASK_CREATE_INTENTS: Dict[str, str] = {
     "return_home":        "return_home",  # B08
     "goto_dock":          "charge",       # B09 (docking is a charge task)
     "follow_target":      "follow",       # B11
-    "record_route_start": "teach",        # F01 (route recording is a teach task)
-    "record_fence_start": "teach",        # F07 (fence recording is a teach task)
+    # F01 / F07 were HERE until 2026-08-20, mapped to a task_type of "teach".
+    # 11 S12A.2 settles recording the other way: it is a SESSION owned by P3
+    # with its own key, machine and ack (cmd/teach, S12A.4). The task model
+    # cannot express mark / undo / pause / finish / save, so F02-F06 and
+    # F08-F10 had no outlet at all -- an operator could start a recording and
+    # then had no way to stop, name or discard it. They now go through
+    # runtime/teach_request.py; see intent_dispatch's F-class overrides.
 }
 
 # 15 S12 TASK_TYPES -- duplicated as the validation target so a mapping

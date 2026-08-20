@@ -217,14 +217,17 @@ def test_close_ring_drops_duplicate_closing_vertex():
     assert close_ring(open_pts, tol_m=0.2) == open_pts
 
 
-# -- record_fence is now a task-create -----------------------------------
-
-def test_record_fence_start_is_a_task_create():
-    from xbrain.p4_agent.runtime.task_request import (
-        _TASK_CREATE_INTENTS, is_task_create_intent,
-    )
-    assert is_task_create_intent("record_fence_start")
-    assert _TASK_CREATE_INTENTS["record_fence_start"] == "teach"
+# -- record_fence is NOT a task-create (corrected 2026-08-20) ---------------
+#
+# The case that stood here asserted the opposite: that record_fence_start maps
+# to a task_type of "teach". 11 S12A.2 settles recording as a SESSION owned by
+# P3 (cmd/teach, its own machine and ack), not a task -- and the task model
+# cannot express mark / undo / pause / finish / save, which is why F02-F06 and
+# F08-F10 had no outlet at all. Minting a teach TASK alongside the session
+# would also trip the session's own arming check 2 (no running task).
+#
+# Replaced by tests/p4_agent/test_f_class_requests.py, which pins the routing
+# per F id and asserts these two intents are no longer task-creates.
 
 
 # -- commit_waypoint: F06 named keypoint (11 S7.10A / 18 F06) -----------------

@@ -48,6 +48,7 @@ STATE_LINK_TOPIC = "state/link"          # 11 S4.6 cloud-link level -> F-5 retur
 QUERY_TASKS_TOPIC = "query/tasks"        # 11 S12.4 HMI task-panel queryable (P5 pulls)
 QUERY_TASKS_TIMEOUT_S = 2.0              # cap the zenoh-thread block on a db read
 STATE_GEO_OBJECTS_TOPIC = "state/geo/objects"  # 11 S7.10A geo geometry broadcast (P5 -> HMI)
+STATE_GEO_MANIFEST_TOPIC = "state/geo/manifest"  # 11 S7.10 sync baseline (P1/P4/P5)
 GEO_PUBLISH_PERIOD_S = 5.0               # geo re-publish cadence (>= 0.1 Hz keepalive)
 CMD_TEACH_TOPIC = "cmd/teach"            # 11 S12A.4: P3 owns the recording session
 CMD_TEACH_ACK_TOPIC = "cmd/teach/ack"
@@ -126,6 +127,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     from xbrain.p3_task.fence.geom import InvalidFenceSet
     from xbrain.p3_task.geo.objects import read_geo_objects
     from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
+    from xbrain.p3_task.ingest.geo_read import build_manifest
     from xbrain.p3_task.teach.runtime import TeachRuntime
     from xbrain.p3_task.persistence.base import open_configured
     from xbrain.p3_task.persistence.schema_geo import (
@@ -178,6 +180,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # HMI renders them live without P5 reading geo.db (S7843). Published
             # from the loop below every GEO_PUBLISH_PERIOD_S (>= 0.1 Hz keepalive).
             geo_pub = gen.declare_publisher(STATE_GEO_OBJECTS_TOPIC)
+            # 11 S7.10: the manifest is the SYNC baseline -- summaries only, no
+            # geometry, so it stays small enough for the 0.1 Hz floor. Its three
+            # subscribers each key off a different field: P1 on active_fence,
+            # P4 on catalog_rev (GBNF regeneration) and on items (resolving a
+            # spoken name to a geo_id), P5 as the cloud diff baseline.
+            geo_manifest_pub = gen.declare_publisher(STATE_GEO_MANIFEST_TOPIC)
             # 11 S9A.3: broadcast the active FenceSet from fence.db on cmd/fence so
             # the HMI (and later P1/P2) render/consume the real stored geometry.
             fence_pub = gen.declare_publisher(CMD_FENCE_TOPIC)
@@ -445,6 +453,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             geo_pub.put(json.dumps(
                                 await read_geo_objects(geo_conn),
                                 ensure_ascii=False).encode("utf-8"))
+                            manifest = await build_manifest(geo_ctx)
+                            manifest["schema"] = "geo_manifest_v1"
+                            geo_manifest_pub.put(json.dumps(
+                                manifest, ensure_ascii=False).encode("utf-8"))
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p3 geo broadcast failed: %s", exc)
                         last_geo = now
@@ -493,8 +505,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         s.undeclare()
                     except Exception:      # noqa: BLE001
                         pass
-                for p in (state_pub, geo_pub, fence_pub, geo_ack_pub,
-                          teach_ack_pub, teach_state_pub):
+                for p in (state_pub, geo_pub, geo_manifest_pub, fence_pub,
+                          geo_ack_pub, teach_ack_pub, teach_state_pub):
                     try:
                         p.undeclare()
                     except Exception:      # noqa: BLE001

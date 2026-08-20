@@ -61,14 +61,33 @@ from xbrain.p4_agent.registry.intents import IntentEntry, IntentRegistry
 from xbrain.p4_agent.runtime.intent_dispatch import (
     DispatchResult, dispatch,
 )
+from xbrain.p4_agent.runtime.geo_request import (
+    GeoRequestError, is_geo_intent, manifest_from_state, to_geo_command,
+)
 from xbrain.p4_agent.runtime.task_request import (
     is_task_create_intent, to_task_request,
+)
+from xbrain.p4_agent.runtime.teach_request import (
+    TeachRequestError, is_teach_intent, session_id_from_state,
+    to_teach_command,
 )
 from xbrain.p4_agent.safety_bypass import matcher as bypass_matcher
 from xbrain.p4_agent.safety_bypass import recording_gate
 from xbrain.p4_agent.session.chitchat import ChitchatResponder, ChitchatState
 from xbrain.p4_agent.session.state_machines import L2ConfirmState, L2Slot
 
+
+# Spoken wording for the F-class build failures. Hot-tunable phrasing, ASCII
+# punctuation per CLAUDE.md 2.2; the keys are the English reasons the builders
+# raise. An unmapped reason falls back to a generic line rather than speaking
+# the English text at the operator (the 2026-08-11 ORIN test heard an intent
+# name read aloud, which is the same defect).
+_F_REASON_CN = {
+    "no recording session is open": "现在没有正在录制的会话",
+    "save needs a name": "要保存的话请说个名字",
+    "a keypoint needs a name": "这个点要起个名字",
+    "the object catalogue is not available yet": "对象列表还没加载好, 稍后再说一次",
+}
 
 # Reply-family intent NAMES routed to the preset responder (never LLM,
 # never echo). J01/J02/I05 plus the out_of_scope sentinel (16 S11.5).
@@ -283,6 +302,7 @@ class TurnOrchestrator:
         matcher: Optional[KeywordMatcher] = None,
         query_fn: Optional[Callable[[IntentEntry], Optional[str]]] = None,
         source: str = "voice",
+        geo_state_fn: Optional[Callable[[], Dict[str, Any]]] = None,
     ) -> None:
         self._registry = registry
         self._matcher = matcher or KeywordMatcher(registry)
@@ -298,6 +318,14 @@ class TurnOrchestrator:
         # it is None or returns None, the query falls through to a normal
         # dispatch (the data source for that G id is not wired yet).
         self._query_fn = query_fn
+        # 11 S12A.1: the F class needs two pieces of LIVE state that only exist
+        # outside this class -- the open recording session (state/teach) and the
+        # object catalogue (state/geo/manifest). Injected as one getter for the
+        # same reason query_fn is: the orchestrator stays a pure decision
+        # function and the wiring owns the caches. None means neither is wired,
+        # and every F intent then answers with the reason rather than sending a
+        # command built on a guess.
+        self._geo_state_fn = geo_state_fn
 
     # -- public entry ----------------------------------------------------
 
@@ -463,6 +491,20 @@ class TurnOrchestrator:
                 slots=dict(extra), source=self._source, text=text)
             if treq is not None:
                 extra = {**(extra or {}), "task_request": treq}
+        # 11 S12A.1: the F class. F01-F10 build a TeachCommand for cmd/teach,
+        # F11-F15 a GeoCommand for cmd/geo. A build failure is spoken back
+        # ("there is no recording in progress", "no route named X") rather than
+        # dispatched -- sending a command that cannot succeed costs the operator
+        # a round trip and tells them nothing they can act on.
+        if is_teach_intent(entry.name) or is_geo_intent(entry.name):
+            extra, failure = self._build_f_class(entry, extra)
+            if failure is not None:
+                return TurnDecision(kind="reply", intent_id=entry.id,
+                                    intent_name=entry.name, route=entry.route,
+                                    auth=eff_auth, level=eff_auth, layer=layer,
+                                    reply_text=failure, tts_text=failure,
+                                    llm_used=llm_used,
+                                    prompt_assembled=llm_used)
         # Build the envelope (EV-1..7) and dispatch.
         env = self._build_envelope(entry, eff_auth, slots=dict(extra))
         result = dispatch(entry.id, text, extra or None)
@@ -567,6 +609,46 @@ class TurnOrchestrator:
             reply_text=reply, tts_text=reply)
 
     # -- envelope + helpers ---------------------------------------------
+
+    def _build_f_class(self, entry: IntentEntry,
+                       extra: Optional[Dict[str, Any]]):
+        """(slots with the command attached, None) or (slots, spoken reason).
+
+        Returned as a pair rather than stashed on self: an orchestrator that
+        carried per-turn state on the instance would leak one turn into the
+        next, and these turns are exactly the ones where that matters (a failed
+        save followed by a successful one).
+
+        The reason is Chinese because it is spoken straight back to the
+        operator; the codes behind it (E_TEACH_STATE, E_NOT_FOUND) would only
+        reach them as "internal error".
+        """
+        state = self._geo_state_fn() if self._geo_state_fn else {}
+        merged = dict(extra or {})
+        cmd_id = uuid.uuid4().hex
+        try:
+            if is_teach_intent(entry.name):
+                cmd = to_teach_command(
+                    entry.name, slots=merged, cmd_id=cmd_id,
+                    source=self._source,
+                    session_id=session_id_from_state(state.get("state/teach")))
+                if cmd is not None:
+                    merged["teach_command"] = cmd
+            else:
+                cmd = to_geo_command(
+                    entry.name, slots=merged, cmd_id=cmd_id,
+                    manifest=manifest_from_state(
+                        state.get("state/geo/manifest")),
+                    origin="voice" if self._source == "voice" else "voice")
+                if cmd is not None:
+                    merged["geo_command"] = cmd
+        except TeachRequestError as exc:
+            return dict(extra or {}), _F_REASON_CN.get(
+                str(exc), "这个录制指令现在没法执行")
+        except GeoRequestError as exc:
+            return dict(extra or {}), _F_REASON_CN.get(
+                str(exc), "没找到你说的那个对象")
+        return merged, None
 
     def _build_envelope(self, entry: IntentEntry, level: str,
                         slots: Dict[str, Any]) -> IntentEnvelope:
