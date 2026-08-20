@@ -305,6 +305,15 @@ inline constexpr std::string_view kSuspendReason[] = {
     "mode_takeover",
 };
 
+// task_action -- 11 S7.2   anchor: | `action` | 必填字段 | 可选 | 语义 |
+inline constexpr std::string_view kTaskAction[] = {
+    "submit",
+    "cancel",
+    "pause",
+    "resume",
+    "clear_queue",
+};
+
 // task_state -- 11 S4.4   anchor: | 分组 | `state` |
 inline constexpr std::string_view kTaskState[] = {
     "pending",

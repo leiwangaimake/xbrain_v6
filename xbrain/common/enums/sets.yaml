@@ -162,6 +162,17 @@ sets:
       - active
       - disabled
       - deleted
+  task_action:
+    source: "11 S7.2"
+    anchor: "| `action` | 必填字段 | 可选 | 语义 |"        # the S7.2 TaskCommand action table header
+    note: "cmd/task TaskCommand 的 action(S7.2). submit 是唯一造任务的; 其余四个作用于已存在的任务或队列. task_id 必填不许省略(队列是动态的, 省略写法会动错任务且事后查不出). clear_queue 不做 duplicate 判定(集合操作非对象操作)"
+    ordered: false
+    values:
+      - submit
+      - cancel
+      - pause
+      - resume
+      - clear_queue
   teach_action:
     source: "11 S12A.4"
     anchor: "`mark_once`\\|`undo`"        # the S12A.4 TeachCommand action field row

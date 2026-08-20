@@ -43,6 +43,7 @@ _logger = logging.getLogger("xbrain.p3.wiring")
 
 
 CMD_TASK_TOPIC = "cmd/task"
+CMD_TASK_ACK_TOPIC = "cmd/task/ack"      # 11 S7.7 Ack; W2/W7 require ack <= 2s
 STATE_TASK_TOPIC = "state/task"
 STATE_LINK_TOPIC = "state/link"          # 11 S4.6 cloud-link level -> F-5 return_home
 QUERY_TASKS_TOPIC = "query/tasks"        # 11 S12.4 HMI task-panel queryable (P5 pulls)
@@ -127,6 +128,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     from xbrain.p3_task.fence.geom import InvalidFenceSet
     from xbrain.p3_task.geo.objects import read_geo_objects
     from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
+    from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
+    from xbrain.p3_task.ingest.task_command import looks_like_p4_shape
     from xbrain.p3_task.ingest.geo_read import build_manifest
     from xbrain.p3_task.teach.runtime import TeachRuntime
     from xbrain.p3_task.persistence.base import open_configured
@@ -191,6 +194,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             fence_pub = gen.declare_publisher(CMD_FENCE_TOPIC)
             # 11 S7.9.4: every cmd/geo gets an answer here, including refusals.
             geo_ack_pub = gen.declare_publisher(CMD_GEO_ACK_TOPIC)
+            # 11 S7.7: every cmd/task frame in the contract shape gets an ack.
+            task_ack_pub = gen.declare_publisher(CMD_TASK_ACK_TOPIC)
             # 11 S12A.4 / S12A.5: the recording session answers on cmd/teach/ack
             # and publishes its state on state/teach at 1 Hz plus on change.
             teach_ack_pub = gen.declare_publisher(CMD_TEACH_ACK_TOPIC)
@@ -340,6 +345,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # with the scheduler instead of racing it.
             geo_ctx = GeoContext(geo_conn=geo_conn, fence_conn=fence_conn,
                                  task_conn=conn)
+            # 11 S7.2: the contract-shaped cmd/task path. Same connection and
+            # same DAO the scheduler uses -- P3 has one db thread (15 S2.1), so
+            # an HMI cancel serialises with the tick rather than racing it.
+            task_ctx = TaskContext(task_conn=conn, dao=dao)
 
             last_hb = time.monotonic()
             last_geo = 0.0            # 0 -> publish geo on the very first pass
@@ -357,8 +366,30 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     except asyncio.TimeoutError:
                         payload = None
                     if payload is not None:
-                        recorded += await _record_one(
-                            conn, dao, payload, state_pub)
+                        # 11 S7.2: a frame in the CONTRACT shape (an `action`
+                        # member) goes to the TaskCommand path; p4_agent's
+                        # legacy private shape (a `task_request` member) still
+                        # goes to the recorder while p4 is being migrated.
+                        # Neither is guessed at: the two are told apart by which
+                        # member is present, and anything that is neither gets a
+                        # rejected ack rather than being dropped.
+                        if isinstance(payload, dict) and "action" in payload:
+                            ack = await handle_task_payload(
+                                payload, task_ctx, now_mono_ms=_now_mono_ms(),
+                                created_at=_now_utc_iso(),
+                                on_transition=_make_publish(
+                                    state_pub, _emit_task_event))
+                            task_ack_pub.put(json.dumps(
+                                ack, ensure_ascii=False).encode("utf-8"))
+                            if ack.get("result") == "accepted":
+                                recorded += 1
+                        else:
+                            # p4_agent's legacy private shape, and anything that
+                            # is neither: the recorder already skips a frame it
+                            # cannot use, so this stays the p4 path unchanged
+                            # until that migration lands.
+                            recorded += await _record_one(
+                                conn, dao, payload, state_pub)
                     # 11 S7.9: drain every cmd/geo that arrived, answer each on
                     # cmd/geo/ack. Drained fully (not one per pass) so a burst of
                     # chunked upserts is not spread over seconds of loop passes.

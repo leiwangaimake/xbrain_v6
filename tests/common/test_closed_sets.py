@@ -305,7 +305,7 @@ SET_DOC = {
     "fence_role": "11",
     "geo_action": "11", "geo_origin": "11", "geo_type": "11", "geo_state": "11",
     "geo_created_by": "11",
-    "teach_action": "11", "teach_state": "11",
+    "teach_action": "11", "teach_state": "11", "task_action": "11",
     # The one set defined outside the contract. See the module docstring.
     "charge_stage": "15",
 }
@@ -462,6 +462,13 @@ EXTRACTORS.update({
     "geo_created_by": lambda: _row_backticked(
         _DOCS["11"], "| `created_by` / `updated_by` | string |",
         "geo_created_by", exclude=("created_by", "updated_by")),
+    # task_action -- column 0 of the S7.2 TaskCommand action table. take_all is
+    # False: the 语义 column backticks other identifiers (duplicate, E_NOT_FOUND
+    # and so on), and reading the whole row would sweep them in as actions.
+    "task_action": lambda: _table_column(
+        _DOCS["11"],
+        lambda c: len(c) > 3 and c[0] == "`action`" and c[1] == "必填字段",
+        0, "task_action", VALUE_RE, False),
     # teach_action -- the S12A.4 field row, whose value cell pipe-separates the
     # eleven actions. The row backticks its own field name in column 0, hence
     # the exclude. The anchor is a PAIR of values from the middle of the list,

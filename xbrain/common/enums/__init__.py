@@ -467,6 +467,14 @@ HEADING_SOURCE = _SETS["heading_source"]
 #   a task, and conflating them is what makes "the robot is recording" and "a
 #   task is running" look like the same condition when S12A.3 arming rule 2
 #   requires them to be mutually exclusive.
+# task_action -- cmd/task TaskCommand (11 S7.2). submit is the only member that
+#   MINTS a task; the other four act on one that exists (or on the queue). Note
+#   what is NOT here: there is no "current task" shorthand. S7.2 gives four
+#   reasons task_id must be explicit, and the first is the one that bites -- the
+#   queue is live, so between the operator seeing "A is running" and the command
+#   arriving, A may have finished and B started, and the wrong task gets paused
+#   with nothing in the log to show it happened.
+TASK_ACTION = _SETS["task_action"]
 TEACH_ACTION = _SETS["teach_action"]
 TEACH_STATE = _SETS["teach_state"]
 # reason / control_mode -- CFG-CM-16 (11 S R2.6-e / R2.6-f). reason is the
@@ -728,7 +736,7 @@ __all__ = ["ClosedSet", "ClosedSetViolation", "SET_NAMES", "get", "parse_enum",
            # so the omission surfaces at a consumer's import line, not here.
            "FENCE_ROLE", "HEADING_SOURCE",
            "GEO_ACTION", "GEO_ORIGIN", "GEO_CREATED_BY", "GEO_TYPE",
-           "GEO_STATE", "TEACH_ACTION", "TEACH_STATE"]
+           "GEO_STATE", "TEACH_ACTION", "TEACH_STATE", "TASK_ACTION"]
 
 
 # get -- look a set up by name, raising on an unknown NAME and not only on an
