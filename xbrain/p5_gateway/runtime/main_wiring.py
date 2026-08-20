@@ -49,6 +49,11 @@ CMD_ESTOP_TOPIC = "cmd/estop"
 # nothing to resolve against.
 CMD_GEO_TOPIC = "cmd/geo"
 CMD_GEO_ACK_TOPIC = "cmd/geo/ack"
+# 11 S12A.5: the recording session, READ ONLY on this side. P5 shows it and
+# never writes to cmd/teach -- teach is not one of the five upstream types of
+# S12.1.1, and W6 teleop being removed means a browser could not drive the
+# robot along a route it started recording anyway.
+STATE_TEACH_TOPIC = "state/teach"
 CMD_FENCE_TOPIC = "cmd/fence"            # W1: fence geometry (17 S6.9, P5 consumes)
 STATE_GEO_OBJECTS_TOPIC = "state/geo/objects"  # 11 S7.10A: routes/keypoints/docks geometry
 STATE_MODE_TOPIC = "state/mode"          # W3: P2 usage mode (10 Hz)
@@ -219,6 +224,7 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                                        _now_mono_ms()),
                 "clock": hmi_state.get("clock"),   # RTK time-sync (18-C G47)
                 "health": hmi_state.get("health"),  # health/factor (W8)
+                "teach": hmi_state.get("teach"),   # state/teach (S12A.5, read only)
             }
 
         def send_uplink(self, key, payload):
@@ -666,6 +672,16 @@ def run_voice_loop_wiring(stop_flag: dict,
             if d:
                 hmi_state["bit"] = d
 
+        def _on_state_teach(sample) -> None:
+            # RUST THREAD: decode + store. The snapshot builder reads it.
+            try:
+                body = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                return
+            hmi_state["teach"] = body
+
+        teach_sub = gen.declare_subscriber(STATE_TEACH_TOPIC, _on_state_teach)
+
         def _on_geo_ack(sample) -> None:
             # RUST THREAD: decode and stash only (CLAUDE.md 4.2). The WS loop
             # polls take_uplink_ack; nothing here touches a WebSocket.
@@ -702,7 +718,7 @@ def run_voice_loop_wiring(stop_flag: dict,
         bit_sub = gen.declare_subscriber(HEALTH_BIT_TOPIC, _on_bit)
         _logger.info("p5 wiring: subscribed speak/ack + state/task + "
                      "cmd/fence + state/mode + event/** + estop/pong + health "
-                     "+ cmd/geo/ack (HMI W4 uplink)")
+                     "+ cmd/geo/ack (HMI W4 uplink) + state/teach (read only)")
 
         # Start the HMI web server (best-effort; never blocks the voice loop).
         hmi_server, _hmi_thread = (None, None)

@@ -271,6 +271,7 @@ def build_snapshot(
     health: Optional[Dict[str, Any]] = None,
     events: Optional[Sequence[Dict[str, Any]]] = None,
     clock: Optional[Dict[str, Any]] = None,
+    teach: Optional[Dict[str, Any]] = None,
     site_timezone: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Assemble the full 17 S6.8 HMI snapshot from P5 runtime state.
@@ -300,7 +301,52 @@ def build_snapshot(
         "status": status_group(mode, link, health),
         "events": events_group(events),
         "clock": clock_group(clock),
+        "teach": teach_group(teach),
         "timezone": tz,
+    }
+
+
+def teach_group(teach: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """11 S12A.5 TeachState -> the HMI's recording indicator. READ ONLY.
+
+    The HMI has no write path into recording, and that is deliberate: 11
+    S12.1.1's upstream whitelist is a closed set of five types and teach is not
+    among it (frozen item F-8). It could not usefully be there either -- W6
+    teleop was removed entirely (00 HMI-03a: continuous driving never enters the
+    HMI writable surface), so a browser that could START a recording still could
+    not drive the robot along the route.
+
+    What it CAN do is show one. An operator recording by voice, watching the map
+    on a tablet, should see the session and the point count -- without it the
+    page looks identical whether the robot is recording or idle.
+
+    The full point sequence is deliberately absent (S12A.5: 2000 points would
+    blow up a 1 Hz state topic); the stats block plus the last point is what the
+    contract publishes and all a "recording now" cursor needs.
+    """
+    if not teach:
+        # No state/teach at all -> unavailable, NOT "idle". The two differ: idle
+        # means P3 said there is no session, unavailable means nobody said
+        # anything, and greying the indicator is the honest render for the
+        # second (17 S6.10.4).
+        return {"available": False}
+    session = teach.get("session") or {}
+    stats = teach.get("stats") or {}
+    return {
+        "available": True,
+        "state": session.get("state", "idle"),
+        "session_id": session.get("session_id"),
+        "kind": session.get("kind"),
+        "name_hint": session.get("name_hint"),
+        "elapsed_s": session.get("elapsed_s"),
+        "point_count": stats.get("point_count", 0),
+        "length_m": stats.get("length_m", 0.0),
+        "dropped_by_quality": stats.get("dropped_by_quality", 0),
+        "last_point": stats.get("last_point"),
+        "warn": teach.get("warn") or [],
+        # finalizing/closed carry the S12A.7 result; the dialog that asks for a
+        # name needs to show what the geometry check said.
+        "validation": teach.get("validation"),
     }
 
 

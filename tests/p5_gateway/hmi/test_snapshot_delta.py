@@ -48,14 +48,20 @@ def test_only_the_changed_group_is_sent():
 
 def test_group_absent_in_prev_counts_as_changed():
     # A group present in curr but absent in prev must be included (the _MISSING
-    # sentinel), so a first diff against {} yields every key -- the five S6.8
-    # groups plus the top-level `timezone` (17 S6.10.2 v1.3).
+    # sentinel), so a first diff against {} yields every key -- the S6.8 groups
+    # plus the top-level `timezone` (17 S6.10.2 v1.3).
     # RED MUTANT: drop the sentinel and default to None -> a group whose value
     # were None would be dropped; here the empty-prev case must send them all.
+    #
+    # Compared against build_snapshot's own keys rather than a transcribed list:
+    # a list here has to be edited every time a group is added (teach, 2026-08-20
+    # S12A.5), and the edit is indistinguishable from accepting a group that was
+    # dropped by accident.
     b = _snap(mode="patrol")
     delta = snapshot_delta({}, b)
-    assert set(delta.keys()) == {
-        "geo", "pose", "plan", "status", "events", "clock", "timezone"}
+    assert set(delta.keys()) == set(b.keys())
+    assert {"geo", "pose", "plan", "status", "events", "clock",
+            "timezone"} <= set(delta.keys())
 
 
 def test_delta_merge_round_trips_to_the_new_snapshot():
