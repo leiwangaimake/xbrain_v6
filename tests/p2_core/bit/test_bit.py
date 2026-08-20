@@ -99,8 +99,8 @@ def test_bit_g1_rejects_multiple_and_names_all():
     with pytest.raises(BitConfigViolation) as ei:
         check_bit_g1(
             non_blocking_items=["chassis", "ptz"],   # ptz is not fatal
-            skip_items=["estop"],
+            skip_items=["cam_rgbd"],
         )
     msg = str(ei.value)
     assert "chassis" in msg
-    assert "estop" in msg
+    assert "cam_rgbd" in msg
