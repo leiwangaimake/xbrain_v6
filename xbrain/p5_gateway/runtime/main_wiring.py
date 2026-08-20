@@ -49,6 +49,11 @@ CMD_ESTOP_TOPIC = "cmd/estop"
 # nothing to resolve against.
 CMD_GEO_TOPIC = "cmd/geo"
 CMD_GEO_ACK_TOPIC = "cmd/geo/ack"
+#: 11 S12.1.1 W2 (goto) and W7 (task) both land here. S2.2.3 (2) already listed
+#: the HMI as a cmd/task publisher, so opening those two classes adds no key --
+#: it uses one that was reserved for the HMI and never declared.
+CMD_TASK_TOPIC = "cmd/task"
+CMD_TASK_ACK_TOPIC = "cmd/task/ack"
 # 11 S12A.5: the recording session, READ ONLY on this side. P5 shows it and
 # never writes to cmd/teach -- teach is not one of the five upstream types of
 # S12.1.1, and W6 teleop being removed means a browser could not drive the
@@ -171,7 +176,11 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
     # field the whole permission boundary, so it has exactly one writer).
     # Publishers are declared once, not per frame: a per-frame declare leaks a
     # Zenoh resource for every click.
-    uplink_pubs = {"cmd/geo": gen.declare_publisher(CMD_GEO_TOPIC)}
+    uplink_pubs = {"cmd/geo": gen.declare_publisher(CMD_GEO_TOPIC),
+                   # W2 goto + W7 task: both build a TaskCommand (S7.2) and
+                   # both go out on this one key, which is why the map is keyed
+                   # by KEY and not by uplink class.
+                   "cmd/task": gen.declare_publisher(CMD_TASK_TOPIC)}
 
     def _send_uplink(key: str, payload: dict) -> None:
         pub = uplink_pubs.get(key)
@@ -183,7 +192,8 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
             raise KeyError("no publisher declared for uplink key %r" % (key,))
         pub.put(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
         _logger.info("p5 HMI uplink -> %s (%s %s)", key,
-                     payload.get("action"), payload.get("geo_id"))
+                     payload.get("action"),
+                     payload.get("geo_id") or payload.get("task_id") or "")
 
     class _Provider:
         """Reads P5's live shared state (updated by the sync callbacks) into the
@@ -682,23 +692,33 @@ def run_voice_loop_wiring(stop_flag: dict,
 
         teach_sub = gen.declare_subscriber(STATE_TEACH_TOPIC, _on_state_teach)
 
-        def _on_geo_ack(sample) -> None:
+        def _on_uplink_ack(sample) -> None:
             # RUST THREAD: decode and stash only (CLAUDE.md 4.2). The WS loop
             # polls take_uplink_ack; nothing here touches a WebSocket.
+            #
+            # Serves cmd/geo/ack (W4) AND cmd/task/ack (W2 goto, W7 task): the
+            # ack shapes are the same S7.7 Ack and the routing key is the cmd_id,
+            # so one handler is not a shortcut here -- two would be two places to
+            # forget the "h-" check below.
             try:
                 body = json.loads(bytes(sample.payload).decode("utf-8"))
             except Exception:      # noqa: BLE001
                 return
             cmd_id = body.get("cmd_id")
             if not isinstance(cmd_id, str) or not cmd_id.startswith("h-"):
-                # Not ours: cmd/geo/ack also carries answers to cloud- and
+                # Not ours: these keys also carry answers to cloud- and
                 # voice-originated commands. Keyed on the "h-" prefix P5 itself
                 # stamped, so one bus key serves every origin without P5
                 # claiming acks that belong to another sender.
                 return
             hmi_state.setdefault("uplink_acks", {})[cmd_id] = body
 
-        geo_ack_sub = gen.declare_subscriber(CMD_GEO_ACK_TOPIC, _on_geo_ack)
+        geo_ack_sub = gen.declare_subscriber(CMD_GEO_ACK_TOPIC, _on_uplink_ack)
+        # W2/W7 answers. The SAME handler: an ack is routed by the "h-" cmd_id
+        # P5 stamped, not by which key it arrived on, so cmd/task/ack answers to
+        # voice- and cloud-originated commands are ignored here exactly as
+        # cmd/geo/ack's already are.
+        task_ack_sub = gen.declare_subscriber(CMD_TASK_ACK_TOPIC, _on_uplink_ack)
         ack_sub = gen.declare_subscriber(
             CMD_AUDIO_SPEAK_ACK_TOPIC, _on_speak_ack)
         task_sub = gen.declare_subscriber(
@@ -718,7 +738,8 @@ def run_voice_loop_wiring(stop_flag: dict,
         bit_sub = gen.declare_subscriber(HEALTH_BIT_TOPIC, _on_bit)
         _logger.info("p5 wiring: subscribed speak/ack + state/task + "
                      "cmd/fence + state/mode + event/** + estop/pong + health "
-                     "+ cmd/geo/ack (HMI W4 uplink) + state/teach (read only)")
+                     "+ cmd/geo/ack + cmd/task/ack (HMI W4/W2/W7 uplink) "
+                     "+ state/teach (read only)")
 
         # Start the HMI web server (best-effort; never blocks the voice loop).
         hmi_server, _hmi_thread = (None, None)

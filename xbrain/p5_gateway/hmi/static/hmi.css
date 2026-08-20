@@ -214,6 +214,35 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .task-targets li.finished i { background: var(--ok-bright); }
 .task-targets li.current { color: var(--ink); }
 /* 字段5 已巡逻(百分比 + 进度条). */
+/* W7 task control (11 S12.1.1). Deliberately styled UNLIKE the estop button:
+   S12.1.1 forbids presenting cancel next to the e-stop, because W1 stops
+   MOTION and W7 stops the TASK, and an operator who confuses them either
+   slams the robot to zero for a merely-wrong task or thinks a cancel is an
+   emergency stop. */
+.task-actions { display: flex; gap: 6px; margin-top: 6px; }
+.task-act { flex: 1; padding: 5px 0; font-size: 12px; cursor: pointer;
+            border: 1px solid var(--line); border-radius: 3px;
+            background: transparent; color: var(--ink); }
+.task-act:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
+/* Disabled = a frame is in flight and its ack has not come back. Visibly
+   inert, so a second press is not attempted on a request still unanswered. */
+.task-act:disabled { opacity: 0.4; cursor: progress; }
+/* cancel is the destructive one and reads as such -- but it is a task control,
+   not an emergency control, so it takes --warn, NOT the --danger the estop
+   uses. Same reasoning as the placement rule above. */
+.task-act-cancel { color: var(--warn); border-color: var(--warn); }
+/* Armed cancel: the same button, visibly changed, awaiting a second click.
+   Filled rather than outlined so "armed" is not a subtle state -- an operator
+   must be able to tell at a glance that the next click ends the task. */
+.task-act.armed { background: var(--warn); color: var(--bg); font-weight: 600; }
+/* Inline result, in place of a modal. See hmi.js on why this is not alert():
+   a native dialog blocks the thread that redraws the map of a moving robot. */
+.task-notice { margin-top: 6px; font-size: 12px; color: var(--muted);
+               line-height: 1.35; word-break: break-all; }
+.task-notice.bad { color: var(--warn); }
+.task-card.collapsed .task-actions,
+.task-card.collapsed .task-notice { display: none; }
+
 .task-progress { margin-top: 6px; padding-top: 6px;
   border-top: 1px solid rgba(192,192,192,.14); color: var(--muted); }
 .task-progress strong { color: var(--cyan); }

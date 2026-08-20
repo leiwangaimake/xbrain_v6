@@ -3,7 +3,7 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: uplink.py
-Brief: HMI -> P5 upstream frames -- the 11 S12.1.1 whitelist, W4 geo (12.1.1)
+Brief: HMI -> P5 upstream frames -- the 11 S12.1.1 whitelist (W2 / W4 / W7)
 
 Description:
 The browser's writable surface. 11 S12.1.1 calls its table "the only
@@ -16,9 +16,20 @@ wire one more type in code. So the closed set here IS that table:
 W5 and W6 are tombstones (never reused, so an old reference points at "removed"
 rather than silently at another class), and W8 is reserved-unopened.
 
-This module implements W4 (geo) and refuses the rest with E_NOT_IMPLEMENTED --
-a refusal that names the class, rather than an unknown-type error that reads as
-a frontend bug.
+This module implements W2 (goto), W4 (geo) and W7 (task), and refuses the rest
+with E_NOT_IMPLEMENTED -- a refusal that names the class, rather than an
+unknown-type error that reads as a frontend bug.
+
+*** W2 and W7 both land on cmd/task, and neither writes anything itself.
+S12.1.1 requires goto to become a TASK rather than a BehaviorCommand (the fence
+pre-check and the U07a ledger live on the task path), and the W7 row notes that
+cmd/task already listed the HMI as a publisher -- so opening these two classes
+adds no key to S2.2.3.
+
+*** Of the five classes, only W1 / W2 / W7 can make the robot MOVE, and
+S12.1.1's own self-check is that all three are "stop, or go with a check": W1
+stops, W2 is L1 with a fence pre-check, W7 pauses/cancels. None of them drives
+continuously -- that is why W6 teleop was removed rather than narrowed.
 
 *** W4-F: no fence object is writable from the HMI, at all.
 
@@ -47,7 +58,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from xbrain.common.enums import GEO_ACTION, GEO_TYPE
+from xbrain.common.enums import GEO_TYPE
 from xbrain.common.errors import (
     E_BUSY, E_CHANNEL_DENIED, E_CONFIRM_REQUIRED, E_NOT_IMPLEMENTED, E_SCHEMA,
 )
@@ -72,6 +83,23 @@ W4_OPS: Dict[str, str] = {
 
 #: The ops that write. Read against geo.type for W4-F.
 _W4_WRITE_OPS = frozenset({"upsert", "delete", "rename", "set_state"})
+
+#: W7 actions and their confirmation level (S12.1.1 W7 row). pause/resume are
+#: L0 because "hold on a second" is the most frequent field intervention and a
+#: dialog on it would cost the seconds it exists to save; cancel is L2 per 18
+#: B07, and clear_queue is L2 because it acts on tasks the operator cannot all
+#: see at once.
+W7_ACTIONS: Dict[str, str] = {
+    "pause": "L0",
+    "resume": "L0",
+    "cancel": "L2",
+    "clear_queue": "L2",
+}
+
+#: W2 speed_profile closed set. U33 DELETED cruise and transit; they are not
+#: legacy spellings to be mapped onto patrol, they are gone (see the refusal in
+#: build_goto_command).
+SPEED_PROFILES = frozenset({"obstacle_avoid", "patrol"})
 
 #: S12.1.1: the downstream cmd_id is "h-" + req_id. Keeping the prefix means a
 #: cmd/geo/ack can be routed back to the browser session that asked, and it
@@ -182,6 +210,142 @@ def build_geo_command(msg: Dict[str, Any]) -> Any:
         payload["obj"] = {"state": state}
     return UplinkCommand(key="cmd/geo", payload=payload, req_id=req_id,
                          req_type="geo")
+
+
+def build_task_command(msg: Dict[str, Any]) -> Any:
+    """W7: an HMI task frame -> a cmd/task payload (11 S7.2), or a refusal.
+
+    *** Why the HMI gets this at all, from S12.1.1's W7 row: after a link loss
+    (U36) the robot KEEPS RUNNING its current task. The cloud is unreachable by
+    definition at that moment, so if the HMI cannot pause either, there is no
+    soft way to stop a task that is merely running WRONG -- only the e-stop.
+    Using an e-stop for that costs a zero-velocity slam and an estop audit
+    event, which is not what it is for.
+
+    That is also the W1/W7 split: W1 stops MOTION and does not end the task
+    (after U35 nothing latches, so the next motion command resumes), W7 changes
+    the TASK state machine. S12.1.1 requires the HMI to present them apart and
+    explicitly forbids putting cancel next to the e-stop button.
+    """
+    req_id = msg.get("req_id")
+    action = msg.get("action")
+    if action not in W7_ACTIONS:
+        return UplinkRefusal(
+            E_SCHEMA,
+            "action %r is not one of %s" % (action, sorted(W7_ACTIONS)),
+            {"action": action})
+    task_id = msg.get("task_id")
+    if action != "clear_queue":
+        # S12.1.1 W7 and S7.2 agree, and both say it in the same words: there is
+        # no "omit = the current task". The queue is live, so between the
+        # operator reading "A is running" off the panel and this frame arriving,
+        # A may have ended and B started -- the shorthand would pause B and
+        # nothing in the record would show it.
+        if not isinstance(task_id, str) or not task_id:
+            return UplinkRefusal(
+                E_SCHEMA,
+                "action %r requires task_id (S12.1.1 W7 forbids "
+                "'omit = the current task')" % (action,), {"action": action})
+    else:
+        task_id = None
+    level = W7_ACTIONS[action]
+    if level == "L2" and not _has_confirm(msg, "L2"):
+        return UplinkRefusal(
+            E_CONFIRM_REQUIRED,
+            "action %r requires confirm.level L2" % (action,),
+            {"action": action})
+    payload: Dict[str, Any] = {
+        "cmd_id": CMD_ID_PREFIX + str(req_id),
+        "action": action,
+        # CH-2 again: "hmi" is stamped here and is never taken from the frame.
+        "source": "hmi",
+    }
+    if task_id is not None:
+        payload["task_id"] = task_id
+    return UplinkCommand(key="cmd/task", payload=payload, req_id=str(req_id),
+                         req_type="task")
+
+
+def build_goto_command(msg: Dict[str, Any]) -> Any:
+    """W2: an HMI goto frame -> a cmd/task submit of a goto task, or a refusal.
+
+    *** Why this becomes a TASK and not a BehaviorCommand (S12.1.1 W2, verbatim
+    reasoning): BehaviorCommand's publisher closed set is p2_core / p3_task
+    only, so a P5-published one is caught by S2.2.14's startup self-check. More
+    importantly it would bypass P3's fence pre-check and the U07a breakpoint
+    ledger -- the operator would get motion with no fence validation and no
+    record of where it interrupted. "The HMI's goto MUST land as a task."
+
+    *** The validation split matters here. P5 (gate G4) rejects what it can see
+    from the frame alone -- both target forms missing, a non-numeric or
+    out-of-range coordinate, a retired speed_profile. P3 rejects what needs the
+    world: waypoint not found, target outside the fence, positioning degraded.
+    Doing P3's half here would need P5 to read geo.db, which it must not
+    (S7.8.4.3).
+    """
+    req_id = msg.get("req_id")
+    waypoint_id = msg.get("waypoint_id")
+    lat, lon = msg.get("lat"), msg.get("lon")
+    params: Dict[str, Any] = {}
+    if isinstance(waypoint_id, str) and waypoint_id:
+        # S12.1.1 W2: when both forms are present waypoint_id WINS. Written as
+        # a precedence rule the table states, not as "reject the ambiguity" --
+        # a frontend that sends the tapped point alongside the snapped waypoint
+        # is being helpful, not confused.
+        params["waypoint_id"] = waypoint_id
+    else:
+        ok, refusal = _valid_coords(lat, lon)
+        if not ok:
+            return refusal
+        params["lat"], params["lon"] = float(lat), float(lon)
+    profile = msg.get("speed_profile")
+    if profile is not None:
+        if profile not in SPEED_PROFILES:
+            # *** The retired values cruise / transit are refused, NOT read as
+            # patrol. S13.6 (3) forbids interpreting an off-set value as the
+            # nearest one, and U33 deleted these two: a stale frontend still
+            # asking for "transit" has to be told, because silently giving it
+            # patrol makes the bug invisible on both sides.
+            return UplinkRefusal(
+                E_SCHEMA,
+                "speed_profile %r is not one of %s (U33 removed cruise and "
+                "transit)" % (profile, sorted(SPEED_PROFILES)),
+                {"speed_profile": profile})
+        params["speed_profile"] = profile
+    payload: Dict[str, Any] = {
+        "cmd_id": CMD_ID_PREFIX + str(req_id),
+        "action": "submit",
+        # No task_id: the form is t-YYYYMMDD-NNN and only P3 holds the per-day
+        # sequence (S7.2, corrected 2026-08-20). It comes back in the ack.
+        "task": {"type": "goto", "params": params},
+        "source": "hmi",
+    }
+    return UplinkCommand(key="cmd/task", payload=payload, req_id=str(req_id),
+                         req_type="goto")
+
+
+def _valid_coords(lat: Any, lon: Any):
+    """(True, None) when lat/lon are usable WGS84, else (False, refusal).
+
+    bool is excluded explicitly: in Python `True` is an int, so a frontend bug
+    that sends lat: true would otherwise pass the numeric check and travel on
+    as latitude 1.0 -- a real place, roughly 110 km off the equator.
+    """
+    if lat is None and lon is None:
+        return False, UplinkRefusal(
+            E_SCHEMA, "goto needs either waypoint_id or lat+lon")
+    for name, value in (("lat", lat), ("lon", lon)):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False, UplinkRefusal(
+                E_SCHEMA, "%s %r is not a number" % (name, value),
+                {"field": name})
+    if not -90.0 <= float(lat) <= 90.0:
+        return False, UplinkRefusal(
+            E_SCHEMA, "lat %r is out of range" % (lat,), {"field": "lat"})
+    if not -180.0 <= float(lon) <= 180.0:
+        return False, UplinkRefusal(
+            E_SCHEMA, "lon %r is out of range" % (lon,), {"field": "lon"})
+    return True, None
 
 
 def _has_confirm(msg: Dict[str, Any], level: str) -> bool:

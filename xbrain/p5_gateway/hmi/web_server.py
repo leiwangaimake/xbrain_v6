@@ -183,6 +183,19 @@ def make_bound_sockets(bind: List[Optional[str]]) -> List[socket.socket]:
 UPLINK_RATE_PER_S = 10.0
 UPLINK_BURST = 10
 
+#: The S12.1.1 classes this build serves, and the builder for each. A dict
+#: rather than a chain of `if req_type ==` so that "which classes are wired"
+#: is one readable line -- the whitelist is frozen (F-8) and the gap between it
+#: and this map is exactly what not_implemented reports.
+#:
+#: Absent on purpose: estop (W1) has its own <=10 ms REST path and never comes
+#: through here, and exit_broadcast (W3) is not built yet.
+_UPLINK_BUILDERS = {
+    "geo": uplink.build_geo_command,        # W4
+    "task": uplink.build_task_command,      # W7
+    "goto": uplink.build_goto_command,      # W2
+}
+
 
 async def _uplink_reader(websocket, provider, bucket, pending) -> None:
     """Read HMI upstream frames for one connection until it closes.
@@ -221,12 +234,16 @@ async def _uplink_reader(websocket, provider, bucket, pending) -> None:
             await websocket.send_json(uplink.ack_frame(
                 req_id, req_type, "rejected", ref.code, ref.detail))
             continue
-        if req_type != "geo":
+        # The three classes this build serves. estop is handled above (its own
+        # REST path), and exit_broadcast is still unwired -- not_implemented
+        # names it, so "not built yet" never reads as "your frame was wrong".
+        builder = _UPLINK_BUILDERS.get(req_type)
+        if builder is None:
             ref = uplink.not_implemented(req_type)
             await websocket.send_json(uplink.ack_frame(
                 req_id, req_type, "rejected", ref.code, ref.detail))
             continue
-        built = uplink.build_geo_command(msg)
+        built = builder(msg)
         if isinstance(built, uplink.UplinkRefusal):
             await websocket.send_json(uplink.ack_frame(
                 req_id, req_type, "rejected", built.code,

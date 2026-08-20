@@ -571,7 +571,18 @@
     return `${g.year}-${g.month}-${g.day} ${g.hour}:${g.minute}:${g.second}`;
   }
 
-  function taskCardHTML(card) {
+  // W7 controls, current card only: a history card's task has already ended,
+  // so every action on it would come back E_TASK_STATE.
+  function taskActionsHTML(card) {
+    const acts = taskActions(card.state);
+    if (!acts.length || !card.task_id) return "";
+    return `<div class="task-actions">` + acts.map((a) =>
+      `<button type="button" class="task-act task-act-${a}" ` +
+      `data-task-action="${a}" data-task-id="${esc(card.task_id)}">` +
+      `${ACTION_LABEL[a]}</button>`).join("") + `</div>`;
+  }
+
+  function taskCardHTML(card, isCurrent) {
     const b = taskBadge(card.state);
     // 字段3 内容 = command_text (语音/文本原文); 系统自发任务(返航/充电)无原文 ->
     // 用类型名兜底, 不留空白.
@@ -593,6 +604,7 @@
       `<div class="task-content">${esc(content)}</div>` +
       `<div class="task-time"><span>下发</span><time>${esc(fmtDispatchTime(card.created_at))}</time></div>` +
       (targets ? `<div class="task-targets-title">巡逻点</div><ol class="task-targets">${targets}</ol>` : "") +
+      (isCurrent ? taskActionsHTML(card) : "") +
       `<div class="task-progress"><span>已巡逻 <strong>${pctText}</strong></span>` +
       `<div class="progress-bar"><div class="progress-fill" style="width:${pctW}%"></div></div></div>`
     );
@@ -617,7 +629,8 @@
       // operator opened stays expanded. Current cards are always full.
       if (isHistory)
         art.classList.add(expandedHistory.has(card.task_id) ? "expanded" : "collapsed");
-      art.innerHTML = taskCardHTML(card);
+      art.innerHTML = taskCardHTML(card, !isHistory);
+      if (!isHistory) wireTaskActions(art);
       box.appendChild(art);
     }
   }
@@ -1037,6 +1050,145 @@
     try { applyFull(await getJSON("/api/hmi/snapshot")); }
     catch (e) { /* transient; next tick retries */ }
   }
+  // -- W7 task control uplink (11 S12.1.1) ---------------------------------
+  // The browser's first WRITE path. Everything before this was read-only: the
+  // socket carried snapshots down and nothing up.
+  //
+  // Held here (not per call) because an ack arrives on the SAME socket, later,
+  // matched by req_id -- so the pending map has to outlive the call that sent
+  // the frame. A frame whose ack never comes stays pending and its button stays
+  // disabled, which is the honest display: "sent, no answer" is a different
+  // state from "refused", and an operator who cannot tell them apart will press
+  // it again.
+  let liveWS = null;
+  let reqSeq = 0;
+  const pendingReqs = new Map();               // req_id -> {btn, label}
+
+  // *** Feedback is INLINE, never alert() / confirm().
+  //
+  // A native dialog blocks the page's single thread: while it is open the map
+  // stops redrawing, incoming WS frames queue, and the pose readout freezes --
+  // on a screen whose entire job is showing where a moving robot is. An
+  // unattended refusal dialog would freeze it indefinitely. Found the hard way:
+  // an alert() left the page unresponsive for the full 300 s of a probe.
+  function taskNotice(taskId, text, cls) {
+    const card = document.querySelector(
+      `.task-card[data-task-id="${CSS.escape(taskId)}"]`);
+    if (!card) return;
+    let box = card.querySelector(".task-notice");
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "task-notice";
+      card.appendChild(box);
+    }
+    box.textContent = text;
+    box.classList.toggle("bad", cls === "bad");
+  }
+
+  function sendUplink(frame, btn) {
+    if (!liveWS || liveWS.readyState !== 1) {
+      // No socket = no task control. Reported, never queued: a queued pause
+      // that fired on reconnect would act on a task the operator stopped
+      // looking at minutes ago.
+      taskNotice(frame.task_id, "连接已断开, 任务控制不可用", "bad");
+      return;
+    }
+    reqSeq += 1;
+    // req_id is per connection, and P5 prefixes it with "h-" to make the cmd_id.
+    const reqId = "w" + Date.now().toString(36) + "-" + reqSeq;
+    frame.req_id = reqId;
+    if (btn) { btn.disabled = true; pendingReqs.set(reqId, btn); }
+    liveWS.send(JSON.stringify(frame));
+  }
+
+  function onUplinkAck(m) {
+    const btn = pendingReqs.get(m.req_id);
+    pendingReqs.delete(m.req_id);
+    if (btn) btn.disabled = false;
+    if (m.result === "accepted") { refreshTasks(); return; }
+    // A refusal is SHOWN on the card it belongs to. The codes reaching here are
+    // real outcomes the operator can act on -- E_TASK_STATE means the task
+    // already moved on (it finished, or someone else paused it), not that the
+    // click was wrong.
+    const taskId = (m.detail && m.detail.task_id) || "";
+    const reason = (m.detail && (m.detail.reason_text || m.detail.reason)) || "";
+    taskNotice(taskId, "操作被拒绝 " + (m.code || "") + (reason ? ": " + reason : ""),
+               "bad");
+    refreshTasks();
+  }
+
+  //: The W7 actions offered per task state. Taken from P3's transition graph
+  //: (11 S4.4), not guessed: pause is legal only from `running` (it maps onto
+  //: the graph's `suspend` arrow), resume only from `suspended`, and cancel
+  //: from EVERY live state including the queued ones.
+  //:
+  //: *** The queued states matter. A task submitted by mistake sits in
+  //: pending/ready and is the single most likely thing an operator wants gone
+  //: -- offering it no button at all (the first version of this table) leaves
+  //: them with the e-stop, which S12.1.1 says outright is not what it is for.
+  //:
+  //: An action the state forbids is not drawn, because P3 would answer
+  //: E_TASK_STATE and the operator would read a refusal as a broken button.
+  const QUEUED = ["pending", "scheduled", "ready", "blocked"];
+  function taskActions(state) {
+    if (state === "running") return ["pause", "cancel"];
+    if (state === "suspended") return ["resume", "cancel"];
+    if (QUEUED.indexOf(state) >= 0) return ["cancel"];
+    return [];                       // terminal: done / failed / cancelled
+  }
+
+  const ACTION_LABEL = { pause: "暂停", resume: "继续", cancel: "取消任务" };
+
+  //: How long an armed cancel stays armed. Long enough to read the progress it
+  //: shows, short enough that a stray first click cannot be completed by an
+  //: unrelated one minutes later.
+  const CANCEL_ARM_MS = 5000;
+
+  function armCancel(btn, card) {
+    btn.dataset.armed = "1";
+    btn.classList.add("armed");
+    const pct = (card.querySelector(".task-progress strong") || {}).textContent || "";
+    btn.textContent = "再点确认 (已完成 " + (pct || "--") + ")";
+    btn._armTimer = setTimeout(() => disarmCancel(btn), CANCEL_ARM_MS);
+  }
+
+  function disarmCancel(btn) {
+    clearTimeout(btn._armTimer);
+    btn.dataset.armed = "0";
+    btn.classList.remove("armed");
+    btn.textContent = ACTION_LABEL.cancel;
+  }
+
+  function wireTaskActions(root) {
+    root.querySelectorAll("button[data-task-action]").forEach((btn) => {
+      const card = btn.closest(".task-card");
+      btn.addEventListener("click", () => {
+        const action = btn.dataset.taskAction;
+        const taskId = btn.dataset.taskId;
+        const frame = { type: "task", action: action, task_id: taskId };
+        if (action === "cancel") {
+          // L2 (18 B07). Two deliberate clicks on the SAME button, not a modal:
+          // the first arms it and shows what will be lost, the second sends.
+          // S12.1.1 requires the dialog to name the task and its progress, and
+          // the armed label carries both -- a native confirm() could show the
+          // text but would freeze the map to do it.
+          //
+          // confirm.level is an AUDIT credential, not a permission check: 11
+          // S12.1.1 is explicit that an unauthenticated browser (U23) can fill
+          // the field in itself. What keeps the dangerous operations out is the
+          // whitelist, not this.
+          if (btn.dataset.armed !== "1") {
+            armCancel(btn, card);
+            return;
+          }
+          disarmCancel(btn);
+          frame.confirm = { level: "L2" };
+        }
+        sendUplink(frame, btn);
+      });
+    });
+  }
+
   // W6: WS server push is primary; REST poll is the fallback when WS is down.
   let pollTimer = null;
   // The task panel (17 S6.8.4) has its OWN poll -- it pulls /api/tasks (P3
@@ -1049,15 +1201,23 @@
     let ws;
     try { ws = new WebSocket(`${proto}://${location.host}/ws`); }
     catch (e) { startPoll(); return; }               // no WS -> poll
-    ws.onopen = () => { stopPoll(); refreshTasks(); };  // push takes over; re-pull tasks (reconnect full-pull)
+    ws.onopen = () => { liveWS = ws; stopPoll(); refreshTasks(); };  // push takes over; re-pull tasks (reconnect full-pull)
     ws.onmessage = (e) => {
       try {
         const m = JSON.parse(e.data);
         if (m.kind === "state_snapshot") applyFull(m.data);      // keyframe
         else if (m.kind === "state_delta") applyDelta(m.data);   // W6 delta merge
+        else if (m.kind === "ack") onUplinkAck(m);               // W7 uplink answer
       } catch (_) { /* ignore a malformed frame */ }
     };
-    ws.onclose = () => { startPoll(); setTimeout(connectWS, 3000); };  // fall back + reconnect
+    ws.onclose = () => {
+      liveWS = null;
+      // Every in-flight request dies with the socket: its ack can never arrive,
+      // so re-enable the buttons rather than leave them disabled forever.
+      pendingReqs.forEach((btn) => { btn.disabled = false; });
+      pendingReqs.clear();
+      startPoll(); setTimeout(connectWS, 3000);      // fall back + reconnect
+    };
     ws.onerror = () => { try { ws.close(); } catch (_) {} };
   }
   async function init() {
