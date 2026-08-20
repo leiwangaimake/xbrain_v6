@@ -49,6 +49,8 @@ QUERY_TASKS_TOPIC = "query/tasks"        # 11 S12.4 HMI task-panel queryable (P5
 QUERY_TASKS_TIMEOUT_S = 2.0              # cap the zenoh-thread block on a db read
 STATE_GEO_OBJECTS_TOPIC = "state/geo/objects"  # 11 S7.10A geo geometry broadcast (P5 -> HMI)
 GEO_PUBLISH_PERIOD_S = 5.0               # geo re-publish cadence (>= 0.1 Hz keepalive)
+CMD_GEO_TOPIC = "cmd/geo"                # 11 S7.9: P3 is the sole cmd/geo subscriber
+CMD_GEO_ACK_TOPIC = "cmd/geo/ack"        # 11 S7.9.4: the answer goes back to the sender
 CMD_FENCE_TOPIC = "cmd/fence"            # 11 S9A.3: P3 is the sole cmd/fence publisher
 FENCE_PUBLISH_PERIOD_S = 5.0             # fence re-publish cadence (>= 0.1 Hz keepalive)
 FENCE_SET_ID = "fs-active"               # the single active FenceSet's id (11 S9A.2)
@@ -61,6 +63,17 @@ DEFAULT_FENCE_DB = "/opt/xbrain_v6/data/run/fence.db"
 
 def _now_mono_ms() -> int:
     return int(time.monotonic() * 1000)
+
+
+def _now_wall_ms() -> int:
+    # AUDIT value for the geo tables' updated_ms column (15 S9.3): it is the
+    # "when was this object last edited" the HMI shows and the token
+    # state/geo/objects derives catalog_rev from. Monotonic ms cannot serve
+    # either -- it restarts at every boot, so an object edited before the last
+    # reboot would sort as NEWER than one edited after it. Same wall-vs-mono
+    # split as _now_utc_iso above; ages and timeouts still use _now_mono_ms.
+    # WALL-CLOCK-OK(record): geo edit timeline, 15 S9.3 updated_ms
+    return int(time.time() * 1000)
 
 
 def _today_yyyymmdd() -> str:
@@ -100,6 +113,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     from xbrain.p3_task.fence.fence_set import build_fence_set
     from xbrain.p3_task.fence.geom import InvalidFenceSet
     from xbrain.p3_task.geo.objects import read_geo_objects
+    from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
     from xbrain.p3_task.persistence.base import open_configured
     from xbrain.p3_task.persistence.schema_geo import (
         FENCE_DB_STATEMENTS, GEO_DB_STATEMENTS,
@@ -131,6 +145,11 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
 
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
+        # 11 S7.9: cmd/geo rides its OWN queue, not the cmd/task one. A geo CRUD
+        # frame and a task-create frame are answered on different keys and by
+        # different code; sharing a queue would force a type tag on every item
+        # and make one loop's back-pressure the other's problem.
+        geo_queue: asyncio.Queue = asyncio.Queue()
         recorded = 0
 
         _logger.info("p3 wiring: opening GEN session")
@@ -146,6 +165,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # 11 S9A.3: broadcast the active FenceSet from fence.db on cmd/fence so
             # the HMI (and later P1/P2) render/consume the real stored geometry.
             fence_pub = gen.declare_publisher(CMD_FENCE_TOPIC)
+            # 11 S7.9.4: every cmd/geo gets an answer here, including refusals.
+            geo_ack_pub = gen.declare_publisher(CMD_GEO_ACK_TOPIC)
 
             # F-5 (11 S4.6.4): watch P5's cloud-link level and inject one
             # return_home at L3 (cloud down past rtb_s). The subscriber only STORES
@@ -199,6 +220,19 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     return
                 loop.call_soon_threadsafe(queue.put_nowait, payload)
 
+            def _on_geo(sample) -> None:
+                # RUST THREAD: same discipline as _on_task -- decode, hand off,
+                # return. Everything about a GeoCommand (permission matrix, db
+                # write, ack) happens on the loop thread below (CLAUDE.md 4.2).
+                try:
+                    payload = json.loads(bytes(sample.payload).decode("utf-8"))
+                except Exception:      # noqa: BLE001
+                    # Undecodable bytes carry no cmd_id, so there is nobody to
+                    # ack: log and drop. Every DECODABLE frame gets an answer.
+                    _logger.warning("p3 malformed cmd/geo payload")
+                    return
+                loop.call_soon_threadsafe(geo_queue.put_nowait, payload)
+
             def _on_query(query) -> None:
                 # RUST THREAD: the HMI task-panel queryable (11 S12.4). Run the
                 # async db read on the loop and reply synchronously here --
@@ -222,10 +256,18 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # a dropped queryable is silently unregistered, same GC trap as subs).
             _subs = [gen.declare_subscriber(CMD_TASK_TOPIC, _on_task),
                      gen.declare_subscriber(STATE_LINK_TOPIC, _on_link),
+                     gen.declare_subscriber(CMD_GEO_TOPIC, _on_geo),
                      gen.declare_queryable(QUERY_TASKS_TOPIC, _on_query)]
-            _logger.info("p3 wiring: subscribed %s + %s, queryable %s "
-                         "(task.db + F-5 return_home)",
-                         CMD_TASK_TOPIC, STATE_LINK_TOPIC, QUERY_TASKS_TOPIC)
+            _logger.info("p3 wiring: subscribed %s + %s + %s, queryable %s "
+                         "(task.db + geo single writer + F-5 return_home)",
+                         CMD_TASK_TOPIC, STATE_LINK_TOPIC, CMD_GEO_TOPIC,
+                         QUERY_TASKS_TOPIC)
+            # 11 S7.9: the single-writer context. task_conn is the SAME handle
+            # the scheduler uses -- P3 has one db thread (15 S2.1), so a geo
+            # applier reaching into task.db (GC-1..7 linkage, refs) serialises
+            # with the scheduler instead of racing it.
+            geo_ctx = GeoContext(geo_conn=geo_conn, fence_conn=fence_conn,
+                                 task_conn=conn)
 
             last_hb = time.monotonic()
             last_geo = 0.0            # 0 -> publish geo on the very first pass
@@ -244,6 +286,22 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     if payload is not None:
                         recorded += await _record_one(
                             conn, dao, payload, state_pub)
+                    # 11 S7.9: drain every cmd/geo that arrived, answer each on
+                    # cmd/geo/ack. Drained fully (not one per pass) so a burst of
+                    # chunked upserts is not spread over seconds of loop passes.
+                    # An accepted write forces the geo/fence broadcasts to fire on
+                    # this pass instead of waiting out their period -- S7.10
+                    # specifies "on change plus a 0.1 Hz floor", and the change
+                    # is what the HMI is waiting to redraw.
+                    while not geo_queue.empty():
+                        ack = await handle_geo_payload(
+                            geo_queue.get_nowait(), geo_ctx,
+                            now_ms=_now_wall_ms())
+                        geo_ack_pub.put(json.dumps(
+                            ack, ensure_ascii=False).encode("utf-8"))
+                        if ack.get("result") == "accepted":
+                            last_geo = 0.0
+                            last_fence = 0.0
                     # F-5 (11 S4.6.4): if the cloud link is L3, inject one
                     # return_home BEFORE the tick so it is dispatched this pass.
                     # Idempotent per outage (LinkLossReturnTrigger); a bad insert
@@ -323,7 +381,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         s.undeclare()
                     except Exception:      # noqa: BLE001
                         pass
-                for p in (state_pub, geo_pub, fence_pub):
+                for p in (state_pub, geo_pub, fence_pub, geo_ack_pub):
                     try:
                         p.undeclare()
                     except Exception:      # noqa: BLE001

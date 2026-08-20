@@ -107,6 +107,50 @@ sets:
       - forbid
       - speed_limit
       - warning
+  geo_action:
+    source: "11 S7.9.1"
+    anchor: "| `action` | 语义 |"        # the S7.9.1 action table header
+    note: "cmd/geo GeoCommand 的 action(S7.9.1). 前 4 个是写(权限矩阵 S7.9.5 逐格), 后 4 个是读. resync 与 prune 同格但 prune 是 resync 的参数不是 action"
+    ordered: false
+    values:
+      - upsert
+      - delete
+      - rename
+      - set_state
+      - get
+      - list
+      - refs
+      - resync
+  geo_origin:
+    source: "11 S7.9.5"
+    anchor: "云端 `cloud`"        # the S7.9.5 permission-matrix header columns
+    note: "cmd/geo 的 origin = 通道, CH-1 唯一权限判据. 真源是 S7.9.5 表头四列(2026-08-20 裁决): S7.9.1 json5 注释曾多 teach 少 wecom, 已订正. teach/factory 是 created_by(S7.8.2)不是通道, 示教保存走 origin=voice"
+    ordered: false
+    values:
+      - cloud
+      - wecom
+      - hmi
+      - voice
+  geo_type:
+    source: "11 S7.8.2"
+    anchor: "| `type` | string |"        # the S7.8.2 common-metadata field row
+    note: "四类地理要素(S7.8.1/S7.8.2). geo_id 前缀 r-/w-/f-/d- 与本集一一对应. 物理上 route/waypoint/dock 在 geo.db, fence 在 fence.db(15 S9 双库)"
+    ordered: false
+    values:
+      - route
+      - waypoint
+      - fence
+      - dock
+  geo_state:
+    source: "11 S7.8.2"
+    anchor: "| `state` | string |"        # the S7.8.2 lifecycle field row
+    note: "地理要素生命周期(S7.8.2). deleted 是墓碑不物理删(S7.11.4) => 库里 state=deleted 与 tombstone=1 同义, 单写者两列一起改. F15 启用围栏 = set_state -> active"
+    ordered: false
+    values:
+      - draft
+      - active
+      - disabled
+      - deleted
   reason:
     source: "11 S R2.6-e"
     anchor: "task/progress 的 reason 闭集"        # 11 S R2.6-e 补丁行(§13 正表落地后迁锚)

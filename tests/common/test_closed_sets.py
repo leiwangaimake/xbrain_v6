@@ -303,6 +303,7 @@ SET_DOC = {
     "suspend_kind": "11", "suspend_reason": "11", "severity": "11",
     "reason": "11", "control_mode": "11", "heading_source": "11",
     "fence_role": "11",
+    "geo_action": "11", "geo_origin": "11", "geo_type": "11", "geo_state": "11",
     # The one set defined outside the contract. See the module docstring.
     "charge_stage": "15",
 }
@@ -432,6 +433,31 @@ EXTRACTORS.update({
     "fence_role": lambda: _row_backticked(
         _DOCS["11"], "`polygons[].role` | string", "fence_role",
         exclude=("zone",)),
+    # geo_action -- column 0 of the S7.9.1 action table. take_all is False: the
+    # 语义 column of the delete row backticks state="deleted" and the set_state
+    # row backticks all three lifecycle states, so reading the whole row (as
+    # _row_backticked does) would import four non-actions.
+    "geo_action": lambda: _table_column(
+        _DOCS["11"], lambda c: len(c) > 1 and c[0] == "`action`" and c[1] == "语义",
+        0, "geo_action", VALUE_RE, False),
+    # geo_origin -- the S7.9.5 permission-matrix HEADER row, which is the
+    # authority for this set (2026-08-20 correction; the S7.9.1 json5 comment was
+    # the drifted copy). Read from the header rather than from the json5 line ON
+    # PURPOSE: if a column is ever added or removed, the permission table and
+    # this set move together, which is the only pairing that cannot drift. The
+    # anchor is the first header cell; §7.15.4's matrix carries the same four
+    # column names but its header starts with `action`(及条件), and §7.9.5's own
+    # merged patch-block copy appears later in the file -- _row_backticked takes
+    # the first match, which is the S7.9.5 body table.
+    "geo_origin": lambda: _row_backticked(
+        _DOCS["11"], "| 操作 | 云端 `cloud` |", "geo_origin"),
+    # geo_type / geo_state -- two rows of the S7.8.2 common-metadata field table.
+    # Each row backticks its own field name in column 0, hence the exclude; the
+    # remaining backticked tokens on the row are exactly the members.
+    "geo_type": lambda: _row_backticked(
+        _DOCS["11"], "| `type` | string |", "geo_type", exclude=("type",)),
+    "geo_state": lambda: _row_backticked(
+        _DOCS["11"], "| `state` | string |", "geo_state", exclude=("state",)),
 })
 
 
@@ -445,6 +471,27 @@ def test_every_exported_set_has_an_extractor():
     assert set(EXTRACTORS) == set(enums.SET_NAMES), (
         f"extractors {sorted(EXTRACTORS)} vs exported sets {sorted(enums.SET_NAMES)}"
     )
+
+
+def test_every_set_is_exported_by_name():
+    """Guards the OTHER half of the export: the module-level constant.
+
+    SET_NAMES and get() reach a set by string; a consumer reaches it by name
+    (from xbrain.common.enums import FENCE_ROLE), and nothing tied the two
+    together. Two sets were already missing when this was written -- fence_role
+    and heading_source -- and both looked exported by every other check here,
+    because the yaml carried them and get() answered for them. The failure only
+    reaches a human at the consumer's import line, in whichever process next
+    needs the set.
+    """
+    for name in enums.SET_NAMES:
+        const = name.upper()
+        assert hasattr(enums, const), (
+            f"{name} is in sets.yaml but xbrain.common.enums has no {const} -- "
+            "add the constant beside its neighbours")
+        assert const in enums.__all__, (
+            f"{const} exists but is absent from __all__ -- `from enums import *` "
+            "would not carry it")
 
 
 @pytest.mark.parametrize("name", sorted(EXTRACTORS))

@@ -184,6 +184,42 @@ inline constexpr std::string_view kGateReason[] = {
     "manual_mute",
 };
 
+// geo_action -- 11 S7.9.1   anchor: | `action` | 语义 |
+inline constexpr std::string_view kGeoAction[] = {
+    "upsert",
+    "delete",
+    "rename",
+    "set_state",
+    "get",
+    "list",
+    "refs",
+    "resync",
+};
+
+// geo_origin -- 11 S7.9.5   anchor: 云端 `cloud`
+inline constexpr std::string_view kGeoOrigin[] = {
+    "cloud",
+    "wecom",
+    "hmi",
+    "voice",
+};
+
+// geo_state -- 11 S7.8.2   anchor: | `state` | string |
+inline constexpr std::string_view kGeoState[] = {
+    "draft",
+    "active",
+    "disabled",
+    "deleted",
+};
+
+// geo_type -- 11 S7.8.2   anchor: | `type` | string |
+inline constexpr std::string_view kGeoType[] = {
+    "route",
+    "waypoint",
+    "fence",
+    "dock",
+};
+
 // heading_source -- 11 S3.3   anchor: | `heading_source` | string |
 inline constexpr std::string_view kHeadingSource[] = {
     "dual_antenna",

@@ -429,6 +429,28 @@ SEVERITY = _SETS["severity"]
 #   (the SQL CHECK, commit_fence's guard, fence_set's winding map) collapse to one
 #   authority -- CLAUDE.md 3.5.
 FENCE_ROLE = _SETS["fence_role"]
+# geo_action / geo_origin / geo_type / geo_state -- the four cmd/geo closed sets
+#   (11 S7.9.1 / S7.9.5 / S7.8.2). GEO_ORIGIN is the one that carries weight: it
+#   is CH-1's SOLE permission discriminant, so an origin the S7.9.5 matrix has no
+#   column for must be refused rather than mapped onto a neighbouring column --
+#   accepting it would silently grant a channel a row of permissions nobody
+#   reviewed. Its authority is the matrix HEADER, not the S7.9.1 json5 comment
+#   (which said cloud|hmi|voice|teach until the 2026-08-20 correction); teach and
+#   factory belong to created_by (S7.8.2), a deliberately different set, and
+#   teach-recorded objects are saved with origin=voice + created_by=teach.
+#   GEO_STATE's deleted member is the tombstone (S7.11.4): rows are never
+#   physically removed, so state=deleted and tombstone=1 name the same condition
+#   and the single writer sets both in one transaction.
+GEO_ACTION = _SETS["geo_action"]
+GEO_ORIGIN = _SETS["geo_origin"]
+GEO_TYPE = _SETS["geo_type"]
+GEO_STATE = _SETS["geo_state"]
+# heading_source -- GnssHeading.source (11 S3.3): dual_antenna | cog | none.
+#   Bound late (the yaml has carried it since the RTK batch, but no constant was
+#   ever declared, so the only reader -- p4's G46 wording map -- reached for its
+#   own literal keys instead). Declared here so that map can be checked against
+#   the set rather than re-typing it.
+HEADING_SOURCE = _SETS["heading_source"]
 # reason / control_mode -- CFG-CM-16 (11 S R2.6-e / R2.6-f). reason is the
 #   task/progress motion/teleop block reason (rotation_blocked,
 #   lateral_clearance_unavailable, teleop_stale, deadman_released) -- our set, not
@@ -680,7 +702,14 @@ __all__ = ["ClosedSet", "ClosedSetViolation", "SET_NAMES", "get", "parse_enum",
            "LIMITER_CN", "assert_limiter_cn_matches_gate_limiter",
            "TASK_STATE", "CLS", "DEVICE",
            "RELEASE_REASON", "ARB_SUSPENDED", "GATE_REASON", "SUSPEND_KIND",
-           "SUSPEND_REASON", "CHARGE_STAGE"]
+           "SUSPEND_REASON", "CHARGE_STAGE",
+           # Kept in step with SET_NAMES by test_every_set_is_exported_by_name.
+           # fence_role and heading_source were both absent until that metatest
+           # was written: a set reachable only through get("...") looks exported
+           # (it is in SET_NAMES) while `from enums import *` does not carry it,
+           # so the omission surfaces at a consumer's import line, not here.
+           "FENCE_ROLE", "HEADING_SOURCE",
+           "GEO_ACTION", "GEO_ORIGIN", "GEO_TYPE", "GEO_STATE"]
 
 
 # get -- look a set up by name, raising on an unknown NAME and not only on an
