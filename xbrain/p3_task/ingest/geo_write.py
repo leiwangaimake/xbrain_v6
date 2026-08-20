@@ -99,7 +99,7 @@ async def lookup_cmd_log(conn, cmd_id: str) -> Optional[Tuple[str, str, str]]:
     return None if row is None else (row[0], row[1], row[2])
 
 
-async def _write_cmd_log(conn, cmd: GeoCommand, result: str, code: str,
+async def write_cmd_log(conn, cmd: GeoCommand, result: str, code: str,
                          detail: Optional[Dict[str, Any]], now_ms: int) -> None:
     """Record the outcome INSIDE the caller's open transaction (S7.9.2 step 5)."""
     await conn.execute(
@@ -110,7 +110,7 @@ async def _write_cmd_log(conn, cmd: GeoCommand, result: str, code: str,
          now_ms))
 
 
-def _duplicate(logged: Tuple[str, str, str]) -> ApplyResult:
+def replay_duplicate(logged: Tuple[str, str, str]) -> ApplyResult:
     """Replay a previous outcome for a redelivered cmd_id.
 
     result is "duplicate" rather than the original "accepted": the sender must
@@ -133,10 +133,14 @@ async def _current_row(conn, table: str, pk_col: str, geo_id: str):
     return await cur.fetchone()
 
 
-def _conflict(cmd: GeoCommand, row) -> GeoCommandError:
+def conflict_error(cmd: GeoCommand, row) -> GeoCommandError:
     """S7.9.2 step 3: the refusal carries the LOCAL version so the sender can
     re-read and retry, or escalate to force (cloud only)."""
-    rev, chash, _state, _created_by, updated_by, updated_ms = row
+    # Indexed, not unpacked: the delete path selects a seventh column (name) on
+    # the same row shape, and an unpack would raise there instead of building
+    # the conflict answer -- turning a plain version conflict into E_INTERNAL.
+    rev, chash = row[0], row[1]
+    updated_by, updated_ms = row[4], row[5]
     return GeoCommandError(
         E_GEO_CONFLICT,
         f"base_rev {cmd.base_rev} != local rev {rev}",
@@ -146,7 +150,7 @@ def _conflict(cmd: GeoCommand, row) -> GeoCommandError:
          "updated_ts": updated_ms / 1000.0})
 
 
-def _created_by(cmd: GeoCommand, obj: Optional[Dict[str, Any]]) -> str:
+def provenance_for(cmd: GeoCommand, obj: Optional[Dict[str, Any]]) -> str:
     """Provenance for the audit columns (S7.8.2 created_by / updated_by).
 
     Taken from the object body when it names a valid provenance, else from the
@@ -207,13 +211,13 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
     conn = conn_for(ctx, cmd.type)
     parsed = parse_geo_object(cmd.type, cmd.geo_id, cmd.obj)
     chash = content_hash(parsed.content)
-    created_by = _created_by(cmd, cmd.obj)
+    created_by = provenance_for(cmd, cmd.obj)
     await conn.execute("BEGIN IMMEDIATE")
     try:
         logged = await lookup_cmd_log(conn, cmd.cmd_id)
         if logged is not None:
             await conn.rollback()
-            return _duplicate(logged)
+            return replay_duplicate(logged)
         row = await _current_row(conn, parsed.table, parsed.pk_col, cmd.geo_id)
         await _fill_anchor_length(conn, parsed)
         events: List[Tuple[str, str, Dict[str, Any]]] = []
@@ -240,7 +244,7 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
                 # accepted with the unchanged rev keeps a re-sent save from
                 # inflating rev, which would make every other holder stale for
                 # no reason.
-                await _write_cmd_log(conn, cmd, "accepted", "OK",
+                await write_cmd_log(conn, cmd, "accepted", "OK",
                                      {"geo_id": cmd.geo_id, "rev": cur_rev,
                                       "unchanged": True}, now_ms)
                 await conn.commit()
@@ -248,7 +252,7 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
                     "accepted", "OK",
                     {"geo_id": cmd.geo_id, "rev": cur_rev, "unchanged": True})
             if cmd.base_rev != cur_rev and not cmd.force:
-                raise _conflict(cmd, row)
+                raise conflict_error(cmd, row)
             rev = cur_rev + 1
             state = row[2]                  # upsert does not change lifecycle
             cols = dict(parsed.columns)
@@ -276,12 +280,12 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
         if parsed.columns.get("path_points"):
             detail["point_count"] = len(
                 json.loads(parsed.columns["path_points"]))
-        await _write_cmd_log(conn, cmd, "accepted", "OK", detail, now_ms)
+        await write_cmd_log(conn, cmd, "accepted", "OK", detail, now_ms)
         await conn.commit()
         return ApplyResult("accepted", "OK", detail, tuple(events))
     except Exception as exc:
         await conn.rollback()
-        raise _as_name_conflict(exc, cmd)
+        raise _as_nameconflict_error(exc, cmd)
 
 
 async def apply_rename(cmd: GeoCommand, ctx: GeoContext,
@@ -315,13 +319,13 @@ async def apply_rename(cmd: GeoCommand, ctx: GeoContext,
         logged = await lookup_cmd_log(conn, cmd.cmd_id)
         if logged is not None:
             await conn.rollback()
-            return _duplicate(logged)
+            return replay_duplicate(logged)
         row = await _current_row(conn, table, pk_col, cmd.geo_id)
         if row is None:
             raise GeoCommandError(E_NOT_FOUND,
                                   f"{cmd.type} {cmd.geo_id!r} does not exist")
         if cmd.base_rev != row[0] and not cmd.force:
-            raise _conflict(cmd, row)
+            raise conflict_error(cmd, row)
         rev = row[0] + 1
         # content_hash covers name as well as geometry (S7.8.2), so a rename is
         # a content change and must re-hash -- otherwise a cloud sync comparing
@@ -333,14 +337,14 @@ async def apply_rename(cmd: GeoCommand, ctx: GeoContext,
                                  "name": cols.get("name"),
                                  "num": cols.get("num"),
                                  "alias": cols.get("alias_json")})
-        cols.update({"rev": rev, "updated_by": _created_by(cmd, cmd.obj),
+        cols.update({"rev": rev, "updated_by": provenance_for(cmd, cmd.obj),
                      "content_hash": new_hash, "updated_ms": now_ms})
         sets = ", ".join(f"{k}=?" for k in cols)
         await conn.execute(f"UPDATE {table} SET {sets} WHERE {pk_col}=?",
                            tuple(cols.values()) + (cmd.geo_id,))
         detail = {"geo_id": cmd.geo_id, "rev": rev,
                   "name": cols.get("name")}
-        await _write_cmd_log(conn, cmd, "accepted", "OK", detail, now_ms)
+        await write_cmd_log(conn, cmd, "accepted", "OK", detail, now_ms)
         await conn.commit()
         return ApplyResult("accepted", "OK", detail,
                            (("info", "geo.renamed",
@@ -348,7 +352,7 @@ async def apply_rename(cmd: GeoCommand, ctx: GeoContext,
                               "name": cols.get("name")}),))
     except Exception as exc:
         await conn.rollback()
-        raise _as_name_conflict(exc, cmd)
+        raise _as_nameconflict_error(exc, cmd)
 
 
 async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
@@ -381,7 +385,7 @@ async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
         logged = await lookup_cmd_log(conn, cmd.cmd_id)
         if logged is not None:
             await conn.rollback()
-            return _duplicate(logged)
+            return replay_duplicate(logged)
         row = await _current_row(conn, table, pk_col, cmd.geo_id)
         if row is None:
             raise GeoCommandError(E_NOT_FOUND,
@@ -393,7 +397,7 @@ async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
                 E_GEO_INVALID,
                 f"{cmd.geo_id!r} is deleted; set_state cannot revive it")
         if cmd.base_rev != row[0] and not cmd.force:
-            raise _conflict(cmd, row)
+            raise conflict_error(cmd, row)
         rev = row[0] + 1
         # The fence quota triggers fire on THIS update (S9A.1A: <= 5 active, at
         # most 1 allow), which is why activation is where they had to exist --
@@ -401,10 +405,10 @@ async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
         await conn.execute(
             f"UPDATE {table} SET state=?, rev=?, updated_by=?, updated_ms=? "
             f"WHERE {pk_col}=?",
-            (target, rev, _created_by(cmd, cmd.obj), now_ms, cmd.geo_id))
+            (target, rev, provenance_for(cmd, cmd.obj), now_ms, cmd.geo_id))
         detail = {"geo_id": cmd.geo_id, "rev": rev, "state": target,
                   "previous_state": row[2]}
-        await _write_cmd_log(conn, cmd, "accepted", "OK", detail, now_ms)
+        await write_cmd_log(conn, cmd, "accepted", "OK", detail, now_ms)
         await conn.commit()
         return ApplyResult("accepted", "OK", detail,
                            (("info", "geo.updated",
@@ -412,10 +416,10 @@ async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
                               "state": target}),))
     except Exception as exc:
         await conn.rollback()
-        raise _as_name_conflict(exc, cmd)
+        raise _as_nameconflict_error(exc, cmd)
 
 
-def _as_name_conflict(exc: Exception, cmd: GeoCommand) -> Exception:
+def _as_nameconflict_error(exc: Exception, cmd: GeoCommand) -> Exception:
     """Turn the UNIQUE(name) violation into E_NAME_CONFLICT, leave the rest.
 
     The name column is UNIQUE so voice navigation resolves a spoken name to one

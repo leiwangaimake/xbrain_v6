@@ -170,4 +170,4 @@ async def handle_geo_payload(payload: Dict[str, Any], ctx: GeoContext,
 # is empty in exactly one configuration -- and the symptom there is
 # E_NOT_IMPLEMENTED for an action that IS implemented, which reads as "not built
 # yet" rather than as a wiring bug. test_appliers_are_registered pins the set.
-from xbrain.p3_task.ingest import geo_write  # noqa: E402,F401
+from xbrain.p3_task.ingest import geo_delete, geo_write  # noqa: E402,F401

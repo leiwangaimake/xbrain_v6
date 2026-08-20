@@ -3,7 +3,7 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_batch_d.py
-Brief: BIZ-P3-11/12/13/14 route push + suspend/resume + remap + geo linkage tests
+Brief: BIZ-P3-11/12/13/14 route push + suspend/resume + remap tests
 
 Description:
 Batch D: chunking is exact and preserves order; ack codes outside
@@ -18,9 +18,6 @@ import math
 
 import pytest
 
-from xbrain.p3_task.route.geo_linkage import (
-    GeoChange, UnknownGeoChange, classify,
-)
 from xbrain.p3_task.route.push import (
     AckContractViolation, CHUNK_SIZE, RouteAck, RoutePushTrigger,
     build_route_push, chunk_waypoints, classify_ack,
@@ -155,35 +152,15 @@ def test_remap_divergent_route_raises():
 
 
 # --- BIZ-P3-14 geo linkage ---
-
-def test_gc1_waypoint_delete_referenced_suspends():
-    r = classify(GeoChange("waypoint", "delete", "w1"), referenced=True)
-    assert r == "suspend_system"
-
-
-def test_gc3_route_delete_referenced_aborts():
-    r = classify(GeoChange("route", "delete", "r1"), referenced=True)
-    assert r == "abort_immediately"
-
-
-def test_gc5_dock_delete_aborts_charging():
-    r = classify(GeoChange("dock", "delete", "d1"), referenced=True)
-    assert r == "abort_immediately"
-
-
-def test_gc7_fence_delete_re_evaluates_v4_even_when_no_refs():
-    """The fence rule fires even if the deleted fence had no
-    reference from a task -- V-4 must re-run so previously-blocked
-    tasks can now be admitted."""
-    r = classify(GeoChange("fence", "delete", "f1"), referenced=False)
-    assert r == "re_evaluate_v4"
-
-
-def test_no_op_when_object_unreferenced_and_not_fence():
-    r = classify(GeoChange("waypoint", "delete", "w1"), referenced=False)
-    assert r == "no_action"
-
-
-def test_unknown_kind_op_raises():
-    with pytest.raises(UnknownGeoChange):
-        classify(GeoChange("waypoint", "rotate", "w1"), referenced=True)
+#
+# The GC-1..GC-7 cases that lived here were REMOVED on 2026-08-20, not moved:
+# they asserted the previous classification, which disagreed with 15 S7.6 in the
+# dangerous direction (route deleted while running -> "abort_immediately", where
+# S7.6 GC-3 says in bold do NOT interrupt the motion). Keeping them would have
+# meant a green suite pinning a robot that stops in the middle of a camp roadway
+# when somebody tidies the map.
+#
+# The replacement is tests/p3_task/test_geo_delete.py, which drives the table
+# with the task STATE as an input -- every row of 15 S7.6 answers differently
+# for running / suspended / queued, which the old two-argument classify() could
+# not express at all.
