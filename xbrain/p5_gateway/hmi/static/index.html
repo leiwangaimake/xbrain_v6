@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>XBRAIN_V6 GPS 网格地图 HMI</title>
-<link rel="stylesheet" href="hmi.css?v=geo-wgs84-2">
+<link rel="stylesheet" href="hmi.css?v=teach-live-1">
 </head>
 <body>
 <main class="hmi">
@@ -38,6 +38,8 @@
         <g id="alarmLayer"></g>
         <g id="recordedRouteLayer"></g>
         <g id="realtimeTrajectoryLayer"></g>
+        <!-- 录制中的轨迹(11 S12A.5). 会话结束即清空, 交给 geo.db 的权威几何. -->
+        <g id="teachLayer"></g>
         <g id="keypointLayer"></g>
         <g id="robotLayer"></g>
         <g id="eventLayer"></g>
@@ -46,6 +48,7 @@
       <div class="map-overlay legend">
         <div class="legend-row"><i class="legend-mark recorded-route-mark"></i><span>已录制路径</span></div>
         <div class="legend-row"><i class="legend-mark realtime-route-mark"></i><span>实时行走轨迹</span></div>
+        <div class="legend-row"><i class="legend-mark teach-mark"></i><span>录制中(近似)</span></div>
         <div class="legend-row"><i class="legend-mark fence"></i><span>活动区域</span></div>
         <div class="legend-row"><i class="legend-mark alarm"></i><span>报警区域</span></div>
         <div class="legend-row"><i class="legend-mark speed"></i><span>限速区域</span></div>
@@ -74,6 +77,23 @@
         </div>
       </section>
 
+      <!-- 录制指示(11 S12A.5, 只读). 无会话时整块隐藏 -- HMI 不能开始/结束/保存录制
+           (S12.1.1 白名单 5 类不含 teach), 只显示 P3 正在做什么. -->
+      <div class="map-overlay teach-badge" id="teachBadge" hidden>
+        <div class="teach-line">
+          <span class="teach-dot" id="teachDot"></span>
+          <strong id="teachState">录制中</strong>
+          <span id="teachKind">路径</span>
+          <span id="teachName"></span>
+        </div>
+        <div class="teach-line teach-stats">
+          <span id="teachPoints">0 点</span>
+          <span id="teachLength">0 m</span>
+          <span id="teachElapsed">0s</span>
+          <span class="teach-warn" id="teachWarn" hidden></span>
+        </div>
+      </div>
+
       <!-- 左下角坐标块(客户样例): GPS 一行, ENU 一行含 E/N + 航向 + 速度 -->
       <div class="map-overlay coord">
         <strong>GPS</strong> <span id="coordGps">无定位</span><br>
@@ -98,6 +118,6 @@
     </footer>
   </section>
 </main>
-<script src="hmi.js?v=geo-wgs84-2"></script>
+<script src="hmi.js?v=teach-live-1"></script>
 </body>
 </html>

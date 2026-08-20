@@ -123,6 +123,7 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .legend-mark { width: 24px; height: 12px; display: inline-block; flex: 0 0 24px; }
 .legend-mark.recorded-route-mark { height: 3px; background: var(--route-recorded-color); }
 .legend-mark.realtime-route-mark { height: 3px; background: var(--route-realtime-color); }
+.legend-mark.teach-mark { height: 3px; background: var(--teach-color); }
 /* U5: area swatches are SOLID filled rectangles (user 2026-08-18), not hollow. */
 .legend-mark.fence  { background: var(--fence-active-color); }
 .legend-mark.alarm  { background: var(--fence-alarm-color); }
@@ -255,3 +256,26 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
 .dot.bad { background: var(--danger); }
 .scale { margin-left: auto; }             /* 网格 pushed far-right (customer) */
+
+/* -- 录制指示 (11 S12A.5, 只读) --------------------------------------------
+   颜色与已录制/实时两条线都拉开: 录制中的这条是【近似】轨迹, 会话一结束就消失,
+   让它看起来像已保存的路径会误导操作员。 */
+:root { --teach-color: #ff7ad9; }
+
+.teach-trail { fill: none; stroke: var(--teach-color); stroke-width: 2;
+               stroke-dasharray: 6 4; stroke-linejoin: round; }
+.teach-point { fill: var(--teach-color); }
+.teach-head  { r: 4; fill: none; stroke: var(--teach-color); stroke-width: 2; }
+
+.teach-badge { right: 10px; bottom: 10px; display: grid; gap: 4px;
+               padding: 8px 10px; min-width: 190px; }
+.teach-line { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.teach-stats { opacity: .85; font-variant-numeric: tabular-nums; }
+.teach-warn { color: var(--warn-color, #ffb454); }
+.teach-dot { width: 9px; height: 9px; border-radius: 50%;
+             background: var(--teach-color); flex: 0 0 9px; }
+/* recording 呼吸, paused 不闪 -- 静止的点表示"停着但还在会话里"。 */
+.teach-dot.recording { animation: teach-blink 1.2s ease-in-out infinite; }
+.teach-dot.paused { opacity: .45; }
+.teach-dot.finalizing { background: var(--warn-color, #ffb454); }
+@keyframes teach-blink { 0%,100% { opacity: 1; } 50% { opacity: .25; } }

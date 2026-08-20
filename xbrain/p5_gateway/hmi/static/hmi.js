@@ -257,6 +257,89 @@
     // (state/task) still drives the `patrolling` trajectory flag above.
     renderStatus(snap.status || {}, snap.pose || {}, origin, snap.clock || {});
     renderHeading(snap.pose || {});
+    renderTeach(snap.teach || {}, origin);
+  }
+
+  // -- 录制指示 (11 S12A.5) ------------------------------------------------
+  //
+  // 只读: HMI 开不了也停不了录制 (S12.1.1 白名单 5 类不含 teach), 这里只把 P3
+  // 正在做的事画出来。
+  //
+  // ★ 为什么要在前端累积: state/teach 【故意不带点序列】 -- S12A.5 逐字说 2000
+  // 个点会把 1 Hz 状态话题撑爆, 只给 stats + last_point。所以轨迹是按
+  // last_point.seq 逐帧攒出来的, 是【近似】: 采点 1 Hz、推送 1 Hz, 丢一帧就少一
+  // 个点, 折线会抄近路。图例上标了"近似"就是这个意思。
+  // ★ 保存后由 geo.db 的权威几何 (state/geo/objects) 接管 -- 所以会话一结束就把
+  // 这条近似轨迹清掉, 🚫 不留在图上冒充已保存的路径。
+  let teachTrail = [];        // [[x, y], ...] 已攒到的点 (frame 坐标)
+  let teachSeq = 0;           // 见过的最大 last_point.seq
+  let teachSession = null;    // 当前会话 id, 变了就重来
+
+  const TEACH_STATE_CN = {
+    recording: "录制中", paused: "已暂停", finalizing: "待命名",
+    arming: "准备中", closed: "已结束", idle: "无录制",
+  };
+
+  function renderTeach(teach, origin) {
+    const badge = $("teachBadge");
+    clear("teachLayer");
+    const live = teach.available &&
+      ["arming", "recording", "paused", "finalizing"].indexOf(teach.state) >= 0;
+    if (!live) {
+      // 会话结束 / 没有会话 / 这个后端还没有 teach 组: 收起指示并丢掉近似轨迹。
+      teachTrail = []; teachSeq = 0; teachSession = null;
+      badge.hidden = true;
+      return;
+    }
+    if (teach.session_id !== teachSession) {
+      // 新会话 (或 P3 重启后重新编号): 上一条的点绝不能续到这一条上。
+      teachTrail = []; teachSeq = 0; teachSession = teach.session_id;
+    }
+    const lp = teach.last_point;
+    if (lp && typeof lp.seq === "number" && lp.seq > teachSeq) {
+      const xy = toXY(lp, origin);
+      // seq 是单调的, 所以只按它去重就够 -- 不比坐标 (原地打的 mark 点坐标可能
+      // 与上一个几乎相同, 按坐标去重会把 F05 手动打的点吃掉)。
+      if (xy) { teachTrail.push(xy); teachSeq = lp.seq; }
+    }
+    if (teachTrail.length >= 2) {
+      const pts = teachTrail.map((p) => p[0] + "," + p[1]).join(" ");
+      $("teachLayer").appendChild(polyline("teach-trail", pts, null));
+    }
+    for (const p of teachTrail) {
+      $("teachLayer").appendChild(dot(p[0], p[1], null, "teach-point"));
+    }
+    if (teachTrail.length) {
+      // 当前点单独画大一圈, 让操作员一眼看到"录到这儿了"。
+      const head = teachTrail[teachTrail.length - 1];
+      const c = document.createElementNS(SVGNS, "circle");
+      c.setAttribute("cx", head[0]); c.setAttribute("cy", head[1]);
+      c.setAttribute("class", "teach-head");
+      $("teachLayer").appendChild(c);
+    }
+    badge.hidden = false;
+    $("teachDot").className = "teach-dot " + teach.state;
+    $("teachState").textContent = TEACH_STATE_CN[teach.state] || teach.state;
+    $("teachKind").textContent = teach.kind === "fence" ? "围栏" : "路径";
+    $("teachName").textContent = teach.name_hint || "";
+    // 点数用 P3 的 stats, 不用 teachTrail.length -- 后者是丢帧后的近似, 前者是
+    // 真正入库的点数, 两者不一致时该信 P3 的。
+    $("teachPoints").textContent = (teach.point_count || 0) + " 点";
+    $("teachLength").textContent = fmtLen(teach.length_m || 0);
+    $("teachElapsed").textContent = fmtDur(teach.elapsed_s || 0);
+    const warns = (teach.warn || []).slice();
+    if (teach.dropped_by_quality) warns.push("丢弃 " + teach.dropped_by_quality);
+    const w = $("teachWarn");
+    w.hidden = warns.length === 0;
+    w.textContent = warns.join(" / ");
+  }
+
+  function fmtLen(m) {
+    return m >= 1000 ? (m / 1000).toFixed(2) + " km" : m.toFixed(1) + " m";
+  }
+  function fmtDur(sec) {
+    const s = Math.max(0, Math.round(sec));
+    return s < 60 ? s + "s" : Math.floor(s / 60) + "m" + (s % 60) + "s";
   }
 
   function clear(id) { const g = $(id); while (g.firstChild) g.removeChild(g.firstChild); }
@@ -399,12 +482,15 @@
   // req1 (2026-08-18): a geo dot -- a round <circle class="geo-dot"> whose radius
   // is set to a constant screen size by updateGridAndDots (placeholder r here).
   // Used for both route RTK points and keypoints so they never vanish on a big map.
-  function dot(x, y, color) {
+  function dot(x, y, color, cls) {
     const c = document.createElementNS(SVGNS, "circle");
     c.setAttribute("cx", x); c.setAttribute("cy", y);
     c.setAttribute("r", 1);
-    c.setAttribute("class", "geo-dot");
-    c.setAttribute("fill", color || "#3aa0ff");
+    // cls lets a caller take the colour from CSS instead of an inline fill --
+    // the teach trail does, so its colour lives beside the other route colours
+    // rather than as a literal in here.
+    c.setAttribute("class", cls || "geo-dot");
+    if (!cls) c.setAttribute("fill", color || "#3aa0ff");
     return c;
   }
 
