@@ -42,6 +42,8 @@ from typing import Optional
 from xbrain.p2_core.runtime.mic_capture import (
     MicCaptureConfig, spawn_mic_pipeline,
 )
+from xbrain.p2_core.health.aggregate import HealthAggregator, refresh_health
+from xbrain.p2_core.health.factor import FactorConfig
 from xbrain.p2_core.runtime.speaker_wiring import (
     SPEAK_TOPIC, SpeakerBusy, SpeakerDomain, SpeakerHwError,
     SpeakerWiringConfig, parse_speak_payload,
@@ -49,6 +51,35 @@ from xbrain.p2_core.runtime.speaker_wiring import (
 
 
 _logger = logging.getLogger("xbrain.p2.wiring")
+
+# 11 S2.2: P2 is the publisher of health/summary; the five keys below are the
+# sources it derives items from. All GEN-plane, all relative keys (bus
+# convention -- the rid prefix is the session's, not the caller's).
+HEALTH_SUMMARY_TOPIC = "health/summary"
+HEALTH_PUBLISH_PERIOD_S = 1.0            # 11 S2.2 / 14 S2.3 P-2: 1 Hz stable
+STATE_POSE_TOPIC = "state/pose"          # -> rtk + heading (11 S3.2 / S3.3)
+STATE_CLOCK_TOPIC = "state/clock"        # -> clock (CLK-A2 mirror)
+STATE_ROBOT_TOPIC = "state/robot"        # -> chassis (chassis_relay, CR-4)
+STATE_POWER_TOPIC = "state/power"        # -> battery (chassis_relay, CR-5)
+STATE_LINK_TOPIC = "state/link"          # -> network (11 S4.6)
+
+
+def _factor_cfg() -> FactorConfig:
+    """The 14 S8.2 step-1 factor table from the resolved p2_core config.
+
+    Read through the config layer rather than defaulted here: these four values
+    decide how much a degraded item slows the robot, and a default in code
+    would keep the machine moving at a speed nobody configured. A missing key
+    raises, which is what the startup assertions are for.
+    """
+    from xbrain.common.config.resolved import load_resolved
+
+    cfg = load_resolved("p2_core")
+    return FactorConfig(
+        fatal_degraded=cfg.get("health.factors.fatal_degraded"),
+        degraded_fail=cfg.get("health.factors.degraded_fail"),
+        degraded_degraded=cfg.get("health.factors.degraded_degraded"),
+        unknown=cfg.get("health.factors.unknown"))
 
 
 def _now_mono_ms() -> int:
@@ -86,6 +117,43 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # Rust-side subscriptions are not GC'd out from under us (CLAUDE.md
         # 4.3: a dropped declare_subscriber handle silently unsubscribes).
         _gen_subs: list = []
+
+        # 11 S2.2 / S5.1: P2 is the publisher of health/summary at 1 Hz. The
+        # four state sources it derives items from are subscribed here; each
+        # callback only stores the decoded body (RUST THREAD, CLAUDE.md 4.2)
+        # and the loop below does the derivation and the publish.
+        health_pub = gen.declare_publisher(HEALTH_SUMMARY_TOPIC)
+        health_agg = HealthAggregator()
+        # Read ONCE at startup, not per tick: the resolved snapshot does not
+        # change while the process runs (a config change goes through the
+        # freeze line and a restart), and re-reading it at 1 Hz would put a
+        # file read plus a sha256 verification in the publish path.
+        factor_cfg = _factor_cfg()
+        state_cache: dict = {}
+
+        def _make_state_sink(name: str):
+            def _sink(sample) -> None:
+                try:
+                    body = json.loads(bytes(sample.payload).decode("utf-8"))
+                except Exception:      # noqa: BLE001
+                    return
+                # p1 publishes state/pose and state/clock enveloped as
+                # {..., data:{...}}; the bare form is accepted too so a stub
+                # publisher (or a future producer that does not envelope)
+                # works without a second code path.
+                data = body.get("data") if isinstance(body, dict) else None
+                state_cache[name] = data if isinstance(data, dict) else body
+            return _sink
+
+        for _topic, _name in ((STATE_POSE_TOPIC, "pose"),
+                              (STATE_CLOCK_TOPIC, "clock"),
+                              (STATE_ROBOT_TOPIC, "robot"),
+                              (STATE_POWER_TOPIC, "power"),
+                              (STATE_LINK_TOPIC, "link")):
+            _gen_subs.append(gen.declare_subscriber(_topic,
+                                                    _make_state_sink(_name)))
+        _logger.info("p2 wiring: health sources subscribed, publishing %s",
+                     HEALTH_SUMMARY_TOPIC)
 
         def _on_speak(sample) -> None:
             """Zenoh subscriber callback. RUNS ON RUST THREAD --
@@ -223,8 +291,22 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # Main loop: wait for stop.
         try:
             last_hb = time.monotonic()
+            last_health = 0.0        # 0 -> publish on the very first pass
             while not stop_flag.get("stop"):
                 now = time.monotonic()
+                # 11 S2.2: health/summary at 1 Hz. Derived every pass from the
+                # live caches; an item whose source has not been heard from
+                # stays UNKNOWN with a detail naming what is missing, never ok.
+                if now - last_health >= HEALTH_PUBLISH_PERIOD_S:
+                    try:
+                        refresh_health(health_agg, state_cache, now_mono_s=now,
+                                       device_states=device_bridge.states())
+                        health_pub.put(json.dumps(
+                            health_agg.build_summary(factor_cfg),
+                            ensure_ascii=False).encode("utf-8"))
+                    except Exception as exc:      # noqa: BLE001
+                        _logger.error("p2 health publish failed: %s", exc)
+                    last_health = now
                 if now - last_hb >= heartbeat_period_s:
                     # Rich heartbeat: capture/publisher alive flags,
                     # capture/publish counters, and the bug-net

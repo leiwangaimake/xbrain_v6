@@ -55,6 +55,14 @@ class DeviceHealthBridge:
         # here, not in build_device_event, because it is a wiring fact (which link /
         # failure mode this device has), not intrinsic to the event shape.
         self._offline_detail: dict = {}
+        # Devices whose liveness has actually been SAMPLED at least once.
+        # DeviceLivenessMonitor starts in the reported-up state on purpose (so a
+        # device that is fine at boot emits no spurious online event), which
+        # means reported_up cannot distinguish "up" from "never looked". The
+        # health summary must make that distinction -- reporting an unsampled
+        # device as ok is the fail-silent shape -- so the fact of having been
+        # sampled is recorded here rather than inferred from the monitor.
+        self._sampled: set = set()
 
     def register(self, device_id: str,
                  offline_detail: Optional[dict] = None) -> None:
@@ -80,7 +88,18 @@ class DeviceHealthBridge:
         mon = self._monitors.get(device_id)
         if mon is None:
             return
+        self._sampled.add(device_id)
         mon.observe(is_up)
+
+    def states(self) -> dict:
+        """{device_id: True | False | None} -- up, down, or never sampled.
+
+        None is what keeps an unplumbed device out of the health summary as
+        UNKNOWN instead of ok. GATED-HW devices (payload / ptz until their
+        clients expose a reachability check) live in that state for now.
+        """
+        return {dev: (mon.reported_up if dev in self._sampled else None)
+                for dev, mon in self._monitors.items()}
 
     def _on_transition(self, device_id: str, offline: bool) -> None:
         """A monitor confirmed a transition -> build + emit the event."""
