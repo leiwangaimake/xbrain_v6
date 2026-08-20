@@ -422,6 +422,13 @@ EVENT_CATEGORY = _SETS["event_category"]
 #   off-contract sev is E_SCHEMA, not a key the cloud alarm subscription silently
 #   never matches (V-2).
 SEVERITY = _SETS["severity"]
+# fence_role -- the FenceSet polygon role (11 S9A.2: allow/forbid/speed_limit/
+#   warning; warning was renamed from zone, S9A.1A). An off-role value must raise
+#   E_FENCE_INVALID, never silently pass, so P1 clip / P2 intrusion / HMI all
+#   classify the same. Kept a closed set here so the hand-written literal copies
+#   (the SQL CHECK, commit_fence's guard, fence_set's winding map) collapse to one
+#   authority -- CLAUDE.md 3.5.
+FENCE_ROLE = _SETS["fence_role"]
 # reason / control_mode -- CFG-CM-16 (11 S R2.6-e / R2.6-f). reason is the
 #   task/progress motion/teleop block reason (rotation_blocked,
 #   lateral_clearance_unavailable, teleop_stale, deadman_released) -- our set, not

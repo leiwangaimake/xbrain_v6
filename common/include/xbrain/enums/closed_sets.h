@@ -147,6 +147,14 @@ inline constexpr std::string_view kEventCategory[] = {
     "voice",
 };
 
+// fence_role -- 11 S9A.2   anchor: `polygons[].role` | string
+inline constexpr std::string_view kFenceRole[] = {
+    "allow",
+    "forbid",
+    "speed_limit",
+    "warning",
+};
+
 // gate_limiter -- 11 S9.6.5   anchor: | 优先级 | `limiter` |
 inline constexpr std::string_view kGateLimiter[] = {
     "estop",

@@ -97,6 +97,16 @@ sets:
       - warn
       - alarm
       - fault
+  fence_role:
+    source: "11 S9A.2"
+    anchor: "`polygons[].role` | string"        # the S9A.2 FenceSet field-table row
+    note: "围栏 role(S9A.2 / S9A.1A). allow 有且仅 1(FS-5A). warning 旧名 zone -- 提取器须滤掉行内 '旧名 zone' 注, 不把 zone 当值"
+    ordered: false
+    values:
+      - allow
+      - forbid
+      - speed_limit
+      - warning
   reason:
     source: "11 S R2.6-e"
     anchor: "task/progress 的 reason 闭集"        # 11 S R2.6-e 补丁行(§13 正表落地后迁锚)

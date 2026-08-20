@@ -38,6 +38,7 @@ import json
 import math
 from typing import Optional, Sequence
 
+from xbrain.common.enums import FENCE_ROLE       # 11 S9A.2 closed set (CLAUDE.md 3.5)
 from xbrain.p3_task.fence.geom import validate_polygon
 from xbrain.p3_task.state.geo_rev import content_hash
 
@@ -185,7 +186,7 @@ async def commit_fence(conn, *, fence_id: str, role: str, points: Sequence,
     count invariants (<= 5 active, at most 1 allow) are enforced by the fence.db
     triggers; the "exactly 1 allow" existence half is a set check at broadcast
     time (validate_active_fence_set)."""
-    if role not in ("allow", "forbid", "speed_limit", "warning"):
+    if role not in FENCE_ROLE:                  # 11 S9A.2 closed set, not a literal
         raise GeoCommitError(f"bad fence role {role!r}")
     validate_polygon(points)                   # raises InvalidPolygon on a bad ring
     verts = [[float(a), float(b)] for a, b in points]

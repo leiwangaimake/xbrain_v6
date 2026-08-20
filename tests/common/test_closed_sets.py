@@ -302,6 +302,7 @@ SET_DOC = {
     "release_reason": "11", "arb_suspended": "11", "gate_reason": "11",
     "suspend_kind": "11", "suspend_reason": "11", "severity": "11",
     "reason": "11", "control_mode": "11", "heading_source": "11",
+    "fence_role": "11",
     # The one set defined outside the contract. See the module docstring.
     "charge_stage": "15",
 }
@@ -425,6 +426,12 @@ EXTRACTORS.update({
     # V-2), and an anchor of just that would match one of them first.
     "severity": lambda: _inline_enum(
         _DOCS["11"], "`{severity}` | `info`", 2, "severity"),
+    # fence_role -- the S9A.2 FenceSet field-table row. VALUE_RE only matches
+    # backticked [a-z_]+ so `polygons[].role` (has [].) is skipped; the row's own
+    # 旧名 zone note backticks `zone`, which is NOT a role value, so exclude it.
+    "fence_role": lambda: _row_backticked(
+        _DOCS["11"], "`polygons[].role` | string", "fence_role",
+        exclude=("zone",)),
 })
 
 

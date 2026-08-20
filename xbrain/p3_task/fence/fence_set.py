@@ -34,10 +34,15 @@ import json
 import zlib
 from typing import Any, Dict, List, Optional, Sequence
 
+from xbrain.common.enums import FENCE_ROLE       # 11 S9A.2 closed set (CLAUDE.md 3.5)
 from xbrain.p3_task.fence.geom import validate_active_fence_set
 
-# Declared winding per role (11 S9A.2: receiver normalises, this is a hint).
+# Declared winding per role (11 S9A.2: receiver normalises, this is a hint). Keys
+# ARE the FENCE_ROLE closed set -- asserted at import so adding a role to 11 S9A.2
+# without a winding here fails loudly (same shape as limiter_cn / RS-LIM).
 _WINDING = {"allow": "ccw", "forbid": "cw", "speed_limit": "cw", "warning": "cw"}
+assert set(_WINDING) == set(FENCE_ROLE), (
+    "fence_set._WINDING keys must cover FENCE_ROLE (11 S9A.2)")
 
 
 def _vertices(geom_json: str) -> List[Dict[str, float]]:
