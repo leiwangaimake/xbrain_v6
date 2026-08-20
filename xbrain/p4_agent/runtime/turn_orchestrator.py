@@ -62,10 +62,11 @@ from xbrain.p4_agent.runtime.intent_dispatch import (
     DispatchResult, dispatch,
 )
 from xbrain.p4_agent.runtime.geo_request import (
-    GeoRequestError, is_geo_intent, manifest_from_state, to_geo_command,
+    GeoRequestError, is_geo_intent, manifest_from_state, resolve_geo_id,
+    to_geo_command,
 )
 from xbrain.p4_agent.runtime.task_request import (
-    is_task_create_intent, to_task_request,
+    TaskRequestError, is_task_create_intent, to_task_command,
 )
 from xbrain.p4_agent.runtime.teach_request import (
     TeachRequestError, is_teach_intent, session_id_from_state,
@@ -229,10 +230,21 @@ def _payload_slots(intent_id: str, text: str) -> Dict[str, Any]:
 
 @dataclass
 class PendingConfirm:
-    """An L2 intent awaiting I01/I02. Holds enough to dispatch on confirm."""
+    """An L2 intent awaiting I01/I02. Holds enough to dispatch on confirm.
+
+    *** llm_slots is held for a reason. The turn that OPENED the confirm may
+    have run tier-2 and extracted the slots (F14 rename's target, a route name);
+    the confirm turn itself says only 'yes'. Dropping them here meant the
+    confirmed dispatch had no slots at all -- and since the F-class and task
+    builders run off the slots, a confirmed 'delete the east route' dispatched
+    an EMPTY envelope: the operator was asked to confirm a deletion that was
+    then never commanded. Holding them also avoids a second LLM call on an
+    utterance already classified.
+    """
     entry: IntentEntry
     text: str
     slot: L2Slot
+    llm_slots: Optional[dict] = None
 
 
 @dataclass
@@ -427,7 +439,7 @@ class TurnOrchestrator:
             slot = L2Slot(timeout_millis=self._l2_timeout_ms)
             slot.request(now_mono_ms=now_mono_ms)
             session.pending_confirm = PendingConfirm(
-                entry=entry, text=text, slot=slot)
+                entry=entry, text=text, slot=slot, llm_slots=llm_slots)
             return TurnDecision(
                 kind="await_confirm", intent_id=entry.id,
                 intent_name=entry.name, route=entry.route, auth=eff_auth,
@@ -481,16 +493,20 @@ class TurnOrchestrator:
         # intents (pause/cancel/stop_follow) are NOT creates: to_task_request
         # returns None and the frame stays as-is (they act on an existing task).
         if is_task_create_intent(entry.name):
-            # Pass the turn's text so it lands in tasks.command_text (15 S9.5A.4
-            # / 17 S6.8.4 field 3): party-A requires the raw command stored for
-            # incident traceability. `text` here is what the turn acted on (ASR
-            # transcript post normalisation, or the typed text), same value the
-            # dispatch below uses -- so what is stored is what was executed.
-            treq = to_task_request(
-                entry.name, self._registry,
-                slots=dict(extra), source=self._source, text=text)
-            if treq is not None:
-                extra = {**(extra or {}), "task_request": treq}
+            # 11 S7.2 TaskCommand (migrated 2026-08-20 from the private
+            # task_request shape). The turn's text lands in task.params and
+            # from there in tasks.command_text (15 S9.5A.4 / 17 S6.8.4 field 3):
+            # party-A requires the raw command stored for incident
+            # traceability, and `text` here is what the turn acted on.
+            merged, failure = self._build_task_command(entry, extra, text)
+            if failure is not None:
+                return TurnDecision(kind="reply", intent_id=entry.id,
+                                    intent_name=entry.name, route=entry.route,
+                                    auth=eff_auth, level=eff_auth, layer=layer,
+                                    reply_text=failure, tts_text=failure,
+                                    llm_used=llm_used,
+                                    prompt_assembled=llm_used)
+            extra = merged
         # 11 S12A.1: the F class. F01-F10 build a TeachCommand for cmd/teach,
         # F11-F15 a GeoCommand for cmd/geo. A build failure is spoken back
         # ("there is no recording in progress", "no route named X") rather than
@@ -569,17 +585,25 @@ class TurnOrchestrator:
             return TurnDecision(kind="await_confirm", intent_id=pc.entry.id,
                                 intent_name=pc.entry.name,
                                 tts_text=self._confirm_prompt(pc.entry))
-        # Confirmed: dispatch the held intent NOW.
+        # Confirmed: dispatch the held intent NOW, through the SAME path an
+        # unconfirmed dispatch takes.
+        #
+        # *** It used to call dispatch(entry.id, held_text) directly, which
+        # skipped slot fill, the F-class GeoCommand/TeachCommand builder and the
+        # TaskCommand builder in one step. Every L2 intent is destructive by
+        # definition -- F11 delete_route, F13 delete_fence, F15 set_active_fence
+        # are all L2 -- so the intents that were BUILT most carefully were
+        # exactly the ones dispatched as a bare p4_intent_v1 envelope carrying
+        # no target and no action. P3 could not have acted on any of them.
+        #
+        # Reusing _dispatch_entry cannot re-open a confirm: the auth gate lives
+        # in the CALLER (_dispatch_or_confirm), not in _dispatch_entry.
         pc.slot.confirm()
         entry, held_text = pc.entry, pc.text
         session.pending_confirm = None
-        env = self._build_envelope(entry, "L2", slots={})
-        result = dispatch(entry.id, held_text)
-        return TurnDecision(
-            kind="dispatch", intent_id=entry.id, intent_name=entry.name,
-            route=entry.route, auth="L2", level="L2", layer="session_state",
-            dispatch_result=result, envelope=env,
-            tts_text=self._dispatch_ack(entry))
+        return self._dispatch_entry(entry, held_text, session, now_mono_ms,
+                                    "session_state", "L2",
+                                    llm_slots=pc.llm_slots)
 
     def _classify_confirm_response(self, text: str) -> Optional[str]:
         """Map a confirm-window utterance to I01 (confirm) / I02 (deny) /
@@ -609,6 +633,55 @@ class TurnOrchestrator:
             reply_text=reply, tts_text=reply)
 
     # -- envelope + helpers ---------------------------------------------
+
+    def _build_task_command(self, entry: IntentEntry,
+                            extra: Optional[Dict[str, Any]], text: str):
+        """(slots with the TaskCommand attached, None) or (slots, spoken reason).
+
+        The route name is resolved to a geo_id HERE, because this is where the
+        GeoManifest and the operator both are. A name that IS in the catalogue
+        but under a different spelling, or that names two routes, is refused at
+        the turn -- the old behaviour queued the task with route_geo_id NULL and
+        it failed later, further from the person who could have fixed it.
+
+        *** "The catalogue is absent" is NOT treated as "the route does not
+        exist", and the difference is deliberate.
+
+        geo_state_fn has no production call site yet (state/geo/manifest is
+        broadcast by P3 but nothing in p4_agent subscribes to it). If an absent
+        catalogue refused the turn, this migration would silently switch OFF the
+        one task path that already works on the robot -- every spoken
+        "go patrol the east route" would answer "no such route", and the cause
+        would be an unwired subscription, not anything the operator said.
+
+        So an absent catalogue degrades to the pre-migration behaviour: no
+        route_id, the spoken name still rides in task.params.slots, and P3's
+        geo_refs falls back to matching on the name (see task_row.py on why that
+        fallback exists). Capability lost: none. Capability gained: none either,
+        until the subscription is wired -- which is the honest description, and
+        is why this cannot be claimed as "route resolution is done".
+        """
+        merged = dict(extra or {})
+        route_id = None
+        spoken = merged.get("route")
+        state = self._geo_state_fn() if self._geo_state_fn else {}
+        manifest = manifest_from_state(state.get("state/geo/manifest"))
+        if isinstance(spoken, str) and spoken.strip() and manifest is not None:
+            try:
+                route_id = resolve_geo_id(list(manifest["items"]), "route",
+                                          spoken.strip())
+            except GeoRequestError as exc:
+                return merged, _F_REASON_CN.get(
+                    str(exc), "没找到你说的那条路径, 换个说法试试")
+        try:
+            cmd = to_task_command(
+                entry.name, self._registry, slots=merged, source=self._source,
+                cmd_id=uuid.uuid4().hex, text=text, route_id=route_id)
+        except TaskRequestError as exc:
+            return merged, _F_REASON_CN.get(str(exc), "这条任务现在没法下发")
+        if cmd is not None:
+            merged["task_command"] = cmd
+        return merged, None
 
     def _build_f_class(self, entry: IntentEntry,
                        extra: Optional[Dict[str, Any]]):

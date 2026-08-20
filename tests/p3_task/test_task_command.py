@@ -35,7 +35,7 @@ from xbrain.common.errors import E_NOT_FOUND, E_SCHEMA, E_TASK_STATE
 from xbrain.p3_task.dao.tasks_dao import TasksDAO
 from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
 from xbrain.p3_task.ingest.task_command import (
-    TaskCommandError, looks_like_p4_shape, parse_task_command,
+    TaskCommandError, parse_task_command,
 )
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 
@@ -136,11 +136,17 @@ def test_missing_cmd_id_is_refused():
         parse_task_command(frame)
 
 
-def test_p4_legacy_shape_is_recognisable():
-    """The transition needs to tell an old p4 frame from a malformed contract
-    frame -- they are different problems and only one is a sender bug."""
-    assert looks_like_p4_shape({"task_request": {"task_type": "patrol"}})
-    assert not looks_like_p4_shape(_submit())
+def test_the_legacy_p4_shape_is_no_longer_a_task_command():
+    """*** p4's private task_request shape is gone (2026-08-20).
+
+    It is asserted rather than deleted with the shim: if a stale p4 build were
+    redeployed, this shape must be REFUSED with a schema error and acked as
+    such -- not quietly re-accepted by a receiver that still knows how to read
+    it. A second accepted shape is what put the two senders out of step to
+    begin with (CLAUDE.md 9.3).
+    """
+    with pytest.raises(TaskCommandError, match="cmd_id"):
+        parse_task_command({"task_request": {"task_type": "patrol"}})
 
 
 # -------------------------------------------------------------- submit ----
@@ -168,6 +174,68 @@ async def test_submit_records_the_task_with_its_route_geo_id(ctx):
     assert row[2] == "r-east" and row[3] == "local"
     assert row[4] == "去东门巡逻"
     assert json.loads(row[5])["params"]["loops"] == 2
+
+
+@pytest.mark.asyncio
+async def test_submit_without_a_task_id_gets_one_allocated(ctx):
+    """*** S7.2 as corrected 2026-08-20: task.task_id is optional.
+
+    It has to be. The form is t-YYYYMMDD-NNN with a per-day sequence only P3
+    holds, so p4_agent and p5_gateway -- both listed publishers of this key
+    (S2.2) -- cannot produce a legal one. The original "required" reading made
+    them structurally unable to submit at all.
+
+    MUTATION: go back to requiring it -- every voice and HMI task is refused
+    with E_SCHEMA, and the two senders have no way to comply.
+    """
+    frame = _submit()
+    del frame["task"]["task_id"]
+    ack = await handle_task_payload(frame, ctx, now_mono_ms=1,
+                                    date_str="20260820")
+    assert ack["result"] == "accepted", ack
+    allocated = ack["detail"]["applied"]["task_id"]
+    # 15 S9.5 form is preserved -- P3 is the one that can produce it.
+    assert allocated.startswith("t-20260820-") and allocated.endswith("001")
+    cur = await ctx.task_conn.execute("SELECT task_id FROM tasks")
+    assert (await cur.fetchone())[0] == allocated
+
+
+@pytest.mark.asyncio
+async def test_a_redelivered_cmd_id_does_not_mint_a_second_task(ctx):
+    """*** 11 S2.3: the receiver de-duplicates on cmd_id. With the id now
+    allocated by P3, a redelivered submit has NOTHING else to be recognised by
+    -- the task it created has an id the sender never saw.
+
+    MUTATION: drop the cmd-log check and a retry after a lost ack mints a
+    SECOND patrol the operator never asked for, with a different id, and both
+    run.
+    """
+    frame = _submit()
+    del frame["task"]["task_id"]
+    first = await handle_task_payload(frame, ctx, now_mono_ms=1,
+                                      date_str="20260820")
+    again = await handle_task_payload(frame, ctx, now_mono_ms=2,
+                                      date_str="20260820")
+    assert first["result"] == "accepted" and again["result"] == "duplicate"
+    assert again["detail"]["replayed"] is True
+    # And the replay tells the sender which id it got the first time.
+    assert again["detail"]["applied"]["task_id"] == \
+        first["detail"]["applied"]["task_id"]
+    cur = await ctx.task_conn.execute("SELECT COUNT(*) FROM tasks")
+    assert (await cur.fetchone())[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_redelivered_cancel_replays_rather_than_reapplying(ctx):
+    """The same rule on a state change. MUTATION: skip the log for
+    cancel/pause/resume and a retry re-runs the transition -- harmless for
+    cancel, but a re-applied pause on a task that was resumed in between
+    suspends it again behind the operator's back."""
+    await _seed(ctx, "t-1", "ready")
+    frame = {"cmd_id": "c-same", "action": "cancel", "task_id": "t-1"}
+    first = await handle_task_payload(frame, ctx, now_mono_ms=5)
+    again = await handle_task_payload(frame, ctx, now_mono_ms=6)
+    assert first["result"] == "accepted" and again["result"] == "duplicate"
 
 
 @pytest.mark.asyncio

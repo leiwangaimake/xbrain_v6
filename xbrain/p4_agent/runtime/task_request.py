@@ -3,13 +3,41 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: task_request.py
-Brief: GWY-P4-40 (32.H) -- voice/text action intent -> cmd/task request
+Brief: GWY-P4-40 -- voice/text action intent -> 11 S7.2 TaskCommand
 
 Description:
 16 / 15 S12: P4 does NOT write task.db (P3 is the sole writer of the three
 DBs, CLAUDE.md 0.1). When a VOICE or TEXT command is a task-family action,
-P4 publishes a cmd/task REQUEST; P3 records it into the SAME task.db schema
-as a party-A cloud task (CHK-0-38). This module builds that request.
+P4 publishes a cmd/task command; P3 records it into the SAME task.db schema
+as a party-A cloud task (CHK-0-38). This module builds that command.
+
+*** MIGRATED 2026-08-20 to the contract shape (11 S7.2 TaskCommand).
+
+It used to emit a PRIVATE envelope -- {schema, intent_id, text, task_request:{
+task_type, intent, id, slots, source, text}} -- whose top-level keys had an
+EMPTY intersection with S7.2's. P3's receiver understood only that private
+shape, so the HMI and the cloud (both listed publishers of cmd/task in S2.2)
+were structurally unable to submit anything: their contract-shaped frames were
+dropped with no ack. Two shapes for one key is the "two sources of truth" this
+project keeps bleeding on, so the decision (user, 2026-08-20) was to move P4
+rather than teach P3 both dialects permanently.
+
+Two things the move changes for the better:
+
+  * the ROUTE is resolved here. S7.2 carries route_id (a geo_id); the old shape
+    carried the spoken NAME in slots and nobody resolved it, so every voice task
+    landed with route_geo_id NULL -- which is why the delete-impact query
+    (11 S7.9.4) had to match on names. Resolution belongs on this side anyway:
+    the GeoManifest and the operator are both here, so an ambiguous name can be
+    asked about instead of guessed at.
+  * a route the operator named but that does not exist is now refused AT THE
+    TURN ("there is no route called X") instead of becoming a queued task with
+    no route attached, which failed later and further from the person who
+    could fix it.
+
+task_id is deliberately NOT minted here: S7.2 (as corrected 2026-08-20) lets a
+sender omit it, and P3 allocates -- the form is t-YYYYMMDD-NNN and the per-day
+sequence is P3's alone.
 
 Two things it gets right, each with a mutation test:
   * Only TASK-family action intents become tasks (16 / 15 S12). A G-class
@@ -71,24 +99,31 @@ def is_task_create_intent(intent_name: str) -> bool:
     return intent_name in _TASK_CREATE_INTENTS
 
 
-def to_task_request(
+def to_task_command(
     intent_name: str,
     registry: IntentRegistry,
     *,
     slots: Mapping[str, Any],
     source: str,
+    cmd_id: str,
     text: str = "",
+    route_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Build the cmd/task request for a voice/text action, or None.
+    """Build the 11 S7.2 TaskCommand for a voice/text action, or None.
 
     Returns None when the intent is NOT a task-create action (a G query, a
     J chitchat, an ad-hoc motion, a payload/ptz command) -- those never
     enter the task queue (15 S12; criterion 3).
 
-    For a task-create intent, returns a dict carrying the fine registry
-    intent name + id + the 7-value task_type + slots + source + text. The
-    intent is resolved through the registry (CS-A1): a mapping key that is not
-    one of the 128 raises rather than emitting an id no consumer knows.
+    For a task-create intent, returns {cmd_id, action:"submit", task:{...},
+    source}. The intent is resolved through the registry (CS-A1): a mapping key
+    that is not one of the 128 raises rather than emitting an id no consumer
+    knows.
+
+    route_id is the resolved geo_id when the intent named a route, or None. The
+    CALLER resolves it (it holds the GeoManifest) and refuses the turn when the
+    name matched nothing -- see the module docstring on why that is better than
+    a task with no route.
 
     source is 'voice' or 'text' -- the channel the command arrived on, so
     the task record and telemetry can tell a spoken task from a typed one.
@@ -102,6 +137,10 @@ def to_task_request(
     task_type = _TASK_CREATE_INTENTS.get(intent_name)
     if task_type is None:
         return None    # not a task-family create intent
+    if not cmd_id:
+        # cmd_id is the idempotency key (S2.3) and, now that P3 allocates the
+        # task_id, the ONLY thing a redelivered submit can be recognised by.
+        raise TaskRequestError("cmd_id is required to build a TaskCommand")
     # CS-A1: the emitted intent MUST be in the 128 registry. by_name raises
     # on an unknown name, so a mapping that pointed at 'schedule_patrol'
     # (not in the closed set) fails here instead of shipping a dead id.
@@ -112,13 +151,26 @@ def to_task_request(
         raise TaskRequestError(
             "intent %r maps to task_type %r not in %s"
             % (intent_name, task_type, sorted(_TASK_TYPES)))
+    # S7.2 task.params carries what the contract has no field for: the 18
+    # intent id, the slots and the raw text. 15 S5.10's mission_json is built
+    # from it on the P3 side, so the provenance a party-A incident review needs
+    # (which utterance produced this task) survives the move.
+    params: Dict[str, Any] = {"intent": entry.name, "id": entry.id,
+                              "slots": dict(slots)}
+    if text:
+        params["text"] = text
+    task: Dict[str, Any] = {"type": task_type, "params": params}
+    if route_id:
+        task["route_id"] = route_id
     return {
-        "task_type": task_type,
-        "intent": entry.name,
-        "id": entry.id,
-        "slots": dict(slots),
+        "cmd_id": cmd_id,
+        "action": "submit",
+        # task_id omitted on purpose: P3 allocates (S7.2, corrected
+        # 2026-08-20). The per-day NNN sequence is not knowable here.
+        "task": task,
+        # S7.2 envelope `source` is the CHANNEL; P3 maps it onto the five-value
+        # tasks.source with an explicit table (15 S4.2: 现场语音 / HMI -> local).
         "source": source,
-        "text": text,          # raw command -> tasks.command_text (15 S9.5A.4)
     }
 
 

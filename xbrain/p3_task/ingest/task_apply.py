@@ -38,12 +38,13 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from typing import Any, Dict, List, Optional, Tuple
 
 from xbrain.common.errors import (
     E_INTERNAL, E_NOT_FOUND, E_TASK_STATE,
 )
-from xbrain.p3_task.ingest.id_alloc import next_submit_seq
+from xbrain.p3_task.ingest.id_alloc import next_submit_seq, next_task_id
 from xbrain.p3_task.ingest.task_command import (
     TaskCommand, TaskCommandError, parse_task_command, task_ack,
 )
@@ -74,6 +75,7 @@ class TaskContext:
 
 async def handle_task_payload(payload: Dict[str, Any], ctx: TaskContext, *,
                               now_mono_ms: int, created_at: str = "",
+                              date_str: str = "",
                               on_transition=None) -> Dict[str, Any]:
     """Run one cmd/task frame end to end and return the ack body to publish.
 
@@ -89,8 +91,14 @@ async def handle_task_payload(payload: Dict[str, Any], ctx: TaskContext, *,
     except TaskCommandError as exc:
         _logger.warning("p3 cmd/task refused (%s): %s", exc.code, exc)
         return task_ack(cmd_id, "rejected", exc.code, {"reason": str(exc)})
+    # 11 S2.3: the receiver de-duplicates on cmd_id. Checked before anything
+    # is applied, so a redelivery replays the first answer instead of acting a
+    # second time -- which for submit would mint a task nobody asked for.
     try:
-        return await _dispatch(cmd, ctx, now_mono_ms, created_at,
+        replay = await _replay_if_seen(ctx, cmd.cmd_id)
+        if replay is not None:
+            return replay
+        return await _dispatch(cmd, ctx, now_mono_ms, created_at, date_str,
                                on_transition)
     except TaskCommandError as exc:
         return task_ack(cmd.cmd_id, "rejected", exc.code,
@@ -102,11 +110,15 @@ async def handle_task_payload(payload: Dict[str, Any], ctx: TaskContext, *,
 
 
 async def _dispatch(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
-                    created_at: str, on_transition) -> Dict[str, Any]:
+                    created_at: str, date_str: str,
+                    on_transition) -> Dict[str, Any]:
     if cmd.action == "clear_queue":
+        # S7.2: clear_queue does NO duplicate check -- it is a set operation on
+        # whatever the queue holds at that instant, so it is deliberately NOT
+        # written to the cmd log either.
         return await _clear_queue(cmd, ctx, now_mono_ms, on_transition)
     if cmd.action == "submit":
-        return await _submit(cmd, ctx, now_mono_ms, created_at)
+        return await _submit(cmd, ctx, now_mono_ms, created_at, date_str)
     return await _transition_one(cmd, ctx, now_mono_ms, on_transition)
 
 
@@ -119,8 +131,38 @@ _ACTION_EVENT = {
 }
 
 
+async def _replay_if_seen(ctx: TaskContext,
+                          cmd_id: str) -> Optional[Dict[str, Any]]:
+    """The first answer for a cmd_id already applied, or None (11 S2.3)."""
+    cur = await ctx.task_conn.execute(
+        "SELECT result, code, detail_json FROM task_cmd_log WHERE cmd_id=?",
+        (cmd_id,))
+    row = await cur.fetchone()
+    if row is None:
+        return None
+    detail = json.loads(row[2]) if row[2] else {}
+    detail = dict(detail)
+    detail["replayed"] = True
+    # result is `duplicate`, not the original `accepted`: the sender must be
+    # able to tell a second delivery from a second effect.
+    return task_ack(cmd_id, "duplicate", row[1], detail)
+
+
+async def _write_cmd_log(conn, cmd: TaskCommand, task_id: Optional[str],
+                         result: str, code: str,
+                         detail: Optional[Dict[str, Any]],
+                         now_mono_ms: int) -> None:
+    """Record the outcome INSIDE the caller's open transaction (S2.3)."""
+    await conn.execute(
+        "INSERT INTO task_cmd_log (cmd_id, action, task_id, result, code, "
+        " detail_json, applied_ms) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (cmd.cmd_id, cmd.action, task_id, result, code,
+         None if detail is None else json.dumps(detail, ensure_ascii=False),
+         now_mono_ms))
+
+
 async def _submit(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
-                  created_at: str = "") -> Dict[str, Any]:
+                  created_at: str = "", date_str: str = "") -> Dict[str, Any]:
     """S7.2 submit: mint the task, idempotent on task.task_id.
 
     Unlike the p4 recorder path, the id arrives WITH the command (the sender
@@ -133,31 +175,46 @@ async def _submit(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
     the id match starts working and the name match becomes the fallback it was
     meant to be, rather than the only thing that finds anything.
     """
-    body = cmd.task or {}
     task_id = cmd.task_id
-    existing = await ctx.task_conn.execute(
-        "SELECT state FROM tasks WHERE task_id=?", (task_id,))
-    row = await existing.fetchone()
-    if row is not None:
-        # S7.2: a repeat returns duplicate and does NOT re-execute.
-        return task_ack(cmd.cmd_id, "duplicate", "OK",
-                        {"task_id": task_id,
-                         "applied": {"state": row[0], "changed": False}})
-    task_row = task_row_from_command(
-        cmd, submit_seq=await next_submit_seq(ctx.task_conn),
-        now_mono_ms=now_mono_ms, created_at=created_at)
+    if task_id:
+        # The sender supplied one (the party-A cloud path does). Business-level
+        # de-duplication on top of the cmd_id one: the same task pushed twice
+        # under two different cmd_ids is still one task.
+        existing = await ctx.task_conn.execute(
+            "SELECT state FROM tasks WHERE task_id=?", (task_id,))
+        row = await existing.fetchone()
+        if row is not None:
+            return task_ack(cmd.cmd_id, "duplicate", "OK",
+                            {"task_id": task_id,
+                             "applied": {"state": row[0], "task_id": task_id,
+                                         "changed": False}})
     await ctx.task_conn.execute("BEGIN IMMEDIATE")
     try:
+        if not task_id:
+            # S7.2 (corrected 2026-08-20): P3 allocates. Inside the transaction
+            # because next_task_id reads max(NNN) for the day -- allocating
+            # outside it would let two frames in the same tick take the same id.
+            task_id = await next_task_id(ctx.task_conn, date_str)
+            cmd = replace(cmd, task_id=task_id)
+        task_row = task_row_from_command(
+            cmd, submit_seq=await next_submit_seq(ctx.task_conn),
+            now_mono_ms=now_mono_ms, created_at=created_at)
         await ctx.dao.insert(task_row)
+        detail = {"task_id": task_id,
+                  "applied": {"state": task_row.state,
+                              # AP-2: the id is IN applied, not only alongside
+                              # it -- a sender that omitted one learns what it
+                              # got without having to read another field.
+                              "task_id": task_id,
+                              "type": task_row.task_type,
+                              "route_id": task_row.route_geo_id or None}}
+        await _write_cmd_log(ctx.task_conn, cmd, task_id, "accepted", "OK",
+                             detail, now_mono_ms)
         await ctx.task_conn.commit()
     except Exception:
         await ctx.task_conn.rollback()
         raise
-    return task_ack(cmd.cmd_id, "accepted", "OK",
-                    {"task_id": task_id,
-                     "applied": {"state": task_row.state,
-                                 "type": task_row.task_type,
-                                 "route_id": task_row.route_geo_id or None}})
+    return task_ack(cmd.cmd_id, "accepted", "OK", detail)
 
 
 async def _transition_one(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
@@ -194,16 +251,19 @@ async def _transition_one(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
                         {"task_id": cmd.task_id,
                          "applied": {"state": state, "changed": False}})
     await _write_state(ctx.task_conn, cmd, result.to_state, now_mono_ms)
+    detail = {"task_id": cmd.task_id,
+              "applied": {"state": result.to_state,
+                          "from": result.from_state, "changed": True}}
+    await _write_cmd_log(ctx.task_conn, cmd, cmd.task_id, "accepted", "OK",
+                         detail, now_mono_ms)
+    await ctx.task_conn.commit()
     if on_transition is not None:
         # Same seam the scheduler uses, so an HMI-driven change reaches
         # state/task and the S6.2 task events exactly like a scheduled one.
         await on_transition(cmd.task_id, result.to_state, cmd.reason)
     # AP-1/AP-2: `applied` carries the resulting STATE, which reads as a whole
     # sentence on its own ("task t-... is now cancelled") rather than {ok:true}.
-    return task_ack(cmd.cmd_id, "accepted", "OK",
-                    {"task_id": cmd.task_id,
-                     "applied": {"state": result.to_state,
-                                 "from": result.from_state, "changed": True}})
+    return task_ack(cmd.cmd_id, "accepted", "OK", detail)
 
 
 async def _write_state(conn, cmd: TaskCommand, to_state: str,

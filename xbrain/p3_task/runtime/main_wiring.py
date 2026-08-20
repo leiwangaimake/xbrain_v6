@@ -129,7 +129,6 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     from xbrain.p3_task.geo.objects import read_geo_objects
     from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
     from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
-    from xbrain.p3_task.ingest.task_command import looks_like_p4_shape
     from xbrain.p3_task.ingest.geo_read import build_manifest
     from xbrain.p3_task.teach.runtime import TeachRuntime
     from xbrain.p3_task.persistence.base import open_configured
@@ -367,16 +366,15 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         payload = None
                     if payload is not None:
                         # 11 S7.2: a frame in the CONTRACT shape (an `action`
-                        # member) goes to the TaskCommand path; p4_agent's
-                        # legacy private shape (a `task_request` member) still
-                        # goes to the recorder while p4 is being migrated.
-                        # Neither is guessed at: the two are told apart by which
-                        # member is present, and anything that is neither gets a
-                        # rejected ack rather than being dropped.
+                        # member) goes to the TaskCommand path. Since
+                        # 2026-08-20 every task-CREATE arrives that way --
+                        # p4_agent, the HMI and the cloud all send S7.2, and
+                        # p4's private task_request shape is gone.
                         if isinstance(payload, dict) and "action" in payload:
                             ack = await handle_task_payload(
                                 payload, task_ctx, now_mono_ms=_now_mono_ms(),
                                 created_at=_now_utc_iso(),
+                                date_str=_today_yyyymmdd(),
                                 on_transition=_make_publish(
                                     state_pub, _emit_task_event))
                             task_ack_pub.put(json.dumps(
@@ -384,10 +382,19 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             if ack.get("result") == "accepted":
                                 recorded += 1
                         else:
-                            # p4_agent's legacy private shape, and anything that
-                            # is neither: the recorder already skips a frame it
-                            # cannot use, so this stays the p4 path unchanged
-                            # until that migration lands.
+                            # What is left on this key with no `action`: p4's
+                            # p4_intent_v1 frames for the CONTROL intents
+                            # (voice pause / cancel / stop_follow). S7.2 cannot
+                            # express those -- it requires task_id and forbids
+                            # "omit = the current task" -- so they are not
+                            # contract frames and the recorder skips them.
+                            #
+                            # *** That means voice pause/cancel still does
+                            # NOTHING. It is a known gap, recorded in NEXT.md,
+                            # not something this branch quietly handles: the
+                            # missing piece is resolving "the task I mean" to a
+                            # task_id, which needs the operator to be told which
+                            # task that is.
                             recorded += await _record_one(
                                 conn, dao, payload, state_pub)
                     # 11 S7.9: drain every cmd/geo that arrived, answer each on

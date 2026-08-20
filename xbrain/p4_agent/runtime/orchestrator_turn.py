@@ -38,7 +38,9 @@ from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
 from xbrain.p4_agent.registry.intents import IntentRegistry
-from xbrain.p4_agent.runtime.intent_dispatch import CMD_AUDIO_SPEAK
+from xbrain.p4_agent.runtime.intent_dispatch import (
+    CMD_AUDIO_SPEAK, CMD_GEO, CMD_TASK, CMD_TEACH,
+)
 from xbrain.p4_agent.session.chitchat import ChitchatResponder
 from xbrain.p4_agent.runtime.turn_orchestrator import (
     OrchestratorSession, TurnDecision, TurnOrchestrator,
@@ -50,6 +52,29 @@ _logger = logging.getLogger("xbrain.p4.orch_turn")
 
 # Bypass posture keys (16 S4). estop is its own safety key; prone/stand are
 # posture motions.
+#: Keys whose frame IS a contract command, and the slot the orchestrator built
+#: it into. On these three keys the payload must be the command ITSELF (11 S7.2
+#: TaskCommand / S7.9 GeoCommand / S12A TeachCommand) -- P3 parses cmd_id and
+#: action at the TOP LEVEL.
+#:
+#: *** Until 2026-08-20 the built command travelled NESTED inside p4_agent's
+#: p4_intent_v1 envelope ({schema, intent_id, text, mono_ms, geo_command:{...}}),
+#: because build_payload merges the orchestrator's slots as members. P3 saw a
+#: frame with no top-level cmd_id and refused it as E_SCHEMA -- so the F-class
+#: voice path (record a route, save it, delete it) could not have worked on the
+#: wire, in either direction, however well each half tested on its own. Found
+#: while migrating cmd/task to the contract shape; the same unwrap fixes all
+#: three because they broke for one reason.
+#:
+#: Frames on these keys that carry NO built command (voice pause / cancel, which
+#: S7.2 cannot express without a task_id) pass through untouched and P3's
+#: receiver routes them by the absence of `action`, exactly as before.
+_CONTRACT_FRAME_SLOT = {
+    CMD_TASK: "task_command",
+    CMD_GEO: "geo_command",
+    CMD_TEACH: "teach_command",
+}
+
 CMD_ESTOP = "cmd/estop"
 CMD_MOTION_INTENT = "cmd/motion/intent"
 
@@ -225,7 +250,7 @@ def decision_to_publishes(decision: TurnDecision) -> List[Tuple[str, dict]]:
 
     if kind == "dispatch":
         dr = decision.dispatch_result
-        out = [(dr.key, dr.payload)]
+        out = [(dr.key, _unwrap_contract_frame(dr.key, dr.payload))]
         # Speak a brief acknowledgment so a dispatched action (esp. motion,
         # which has no other audible feedback) is not silent. 2026-08-11
         # ORIN test: '原地待命' dispatched but the operator heard nothing.
@@ -248,6 +273,19 @@ def decision_to_publishes(decision: TurnDecision) -> List[Tuple[str, dict]]:
     # Any unmodelled kind is a wiring bug, not a silent drop -- log it.
     _logger.warning("orch_turn: unhandled decision kind %r", kind)
     return []
+
+
+def _unwrap_contract_frame(key: str, payload: Any) -> Any:
+    """The contract command itself for the three contract keys, else payload.
+
+    See _CONTRACT_FRAME_SLOT for why this exists. The envelope's intent_id /
+    text are not lost: the builders copy them into the command's params, which
+    is where P3 reads provenance from (15 S9.5A.4 command_text).
+    """
+    slot = _CONTRACT_FRAME_SLOT.get(key)
+    if slot and isinstance(payload, dict) and isinstance(payload.get(slot), dict):
+        return payload[slot]
+    return payload
 
 
 def make_turn_handler(

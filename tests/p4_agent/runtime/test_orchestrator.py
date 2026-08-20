@@ -325,17 +325,32 @@ def test_prefix_reclaim_end_to_end():
 
 # -- PB4: task-create dispatch carries a cmd/task request ------------------
 
-def test_task_create_carries_task_request():
-    """A task-create intent's cmd/task payload includes the task_request P3
-    records ({task_type, intent, id, slots, source}). MUTATION: dropping the
-    enrichment leaves only the p4_intent_v1 frame and P3 cannot build a row."""
+def test_task_create_carries_a_contract_task_command():
+    """*** A task-create intent now carries the 11 S7.2 TaskCommand.
+
+    It used to carry a PRIVATE `task_request` whose top-level keys had an empty
+    intersection with S7.2's, and P3 understood only that -- so the HMI and the
+    cloud, both listed publishers of cmd/task (S2.2), could not submit at all.
+
+    MUTATION: go back to emitting task_request and P3's contract path stops
+    seeing voice tasks, which is the two-sources-of-truth split this migration
+    closed.
+    """
     orch = _orch()
     d = orch.handle_turn("开始巡逻", OrchestratorSession(), now_mono_ms=1000)
     assert d.kind == "dispatch"
-    tr = d.dispatch_result.payload.get("task_request")
-    assert tr is not None
-    assert tr["task_type"] == "patrol" and tr["intent"] == "patrol_route"
-    assert tr["id"] == "B02" and tr["source"] == "voice"
+    tc = d.dispatch_result.payload.get("task_command")
+    assert tc is not None
+    assert tc["action"] == "submit" and tc["source"] == "voice"
+    assert tc["task"]["type"] == "patrol"
+    # task_id is NOT minted here: the form is t-YYYYMMDD-NNN and the per-day
+    # sequence is P3's alone (S7.2, corrected 2026-08-20).
+    assert "task_id" not in tc["task"]
+    # 18 provenance survives the move, inside task.params -> mission_json.
+    assert tc["task"]["params"]["intent"] == "patrol_route"
+    assert tc["task"]["params"]["id"] == "B02"
+    # cmd_id is the idempotency key and must be present (S2.3).
+    assert tc["cmd_id"]
 
 
 def test_device_intent_has_no_task_request():
@@ -345,14 +360,103 @@ def test_device_intent_has_no_task_request():
     orch = _orch()
     d = orch.handle_turn("开灯", OrchestratorSession(), now_mono_ms=1000)
     assert d.kind == "dispatch"
-    assert "task_request" not in d.dispatch_result.payload
+    assert "task_command" not in d.dispatch_result.payload
 
 
 def test_orchestrator_source_flows_into_request():
     """The orchestrator's source ('text' for a text channel) is what the
-    request records. MUTATION: hard-coding 'voice' would fail here."""
+    command records -- P3 maps it onto the five-value tasks.source with an
+    explicit table (15 S4.2). MUTATION: hard-coding 'voice' would fail here."""
     orch = TurnOrchestrator(
         _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
         l2_timeout_ms=5000, source="text")
     d = orch.handle_turn("开始巡逻", OrchestratorSession(), now_mono_ms=1000)
-    assert d.dispatch_result.payload["task_request"]["source"] == "text"
+    assert d.dispatch_result.payload["task_command"]["source"] == "text"
+
+
+# -- route name -> route_id (batch 15) -----------------------------------
+
+def _manifest(items):
+    """A state map as geo_state_fn returns it: keyed by zenoh key (11 S7.10)."""
+    return lambda: {"state/geo/manifest": {"items": items}}
+
+
+_EAST = {"geo_id": "r-east", "type": "route", "name": "东门路线",
+         "state": "active", "num": 1}
+
+
+#: A DIRECTED utterance that matches no keyword, so it reaches layer-6 tier-2.
+#: It has to: patrol_route is `fastpath_then_llm`, and a keyword-matched turn
+#: never carries a route slot at all -- the slot only exists when the LLM
+#: classified the utterance. Using a phrase containing 巡逻 would silently take
+#: the fastpath and test nothing.
+_UNMATCHED = "帮我处理一下那个事情"
+
+
+def _route_orch(spoken="东门路线", geo_state_fn=None):
+    """An orchestrator whose tier-2 classifies to patrol_route with a spoken
+    route slot -- the shape the LLM returns for 'go patrol the east route'."""
+    return TurnOrchestrator(
+        _reg(), chitchat=_chitchat(),
+        tier2_fn=_RecordingTier2(ret=Tier2Classification(
+            name="patrol_route", slots={"route": spoken})),
+        l2_timeout_ms=5000, geo_state_fn=geo_state_fn)
+
+
+def test_spoken_route_name_becomes_route_id():
+    """*** The spoken name resolves to a geo_id, which lands in
+    task.route_id -> tasks.route_geo_id.
+
+    That column was NULL on every task ever recorded, which is why geo_refs had
+    to match on the NAME to answer 'is this route in use' before a delete.
+
+    MUTATION: passing route_id=None (or resolving against the manifest but
+    discarding the result) leaves route_id absent and this fails.
+    """
+    orch = _route_orch(geo_state_fn=_manifest([_EAST]))
+    d = orch.handle_turn(_UNMATCHED, OrchestratorSession(), now_mono_ms=1)
+    assert d.kind == "dispatch"
+    tc = d.dispatch_result.payload["task_command"]
+    assert tc["task"]["route_id"] == "r-east"
+    # The spoken name survives too: an audit reads what was SAID, not only
+    # what it resolved to.
+    assert tc["task"]["params"]["slots"]["route"] == "东门路线"
+
+
+def test_route_that_matches_nothing_is_refused_at_the_turn():
+    """*** A named route absent from the catalogue is refused while the
+    operator is still standing there, instead of becoming a queued task with no
+    route attached that fails minutes later.
+
+    MUTATION: swallowing GeoRequestError and continuing with route_id=None
+    makes this a dispatch, and the operator hears the task was accepted.
+    """
+    orch = _route_orch("西门路线", geo_state_fn=_manifest([_EAST]))
+    d = orch.handle_turn(_UNMATCHED, OrchestratorSession(), now_mono_ms=1)
+    assert d.kind == "reply"
+    assert d.reply_text and d.reply_text == d.tts_text
+    # No task frame was built: a refused turn must not also queue the task.
+    assert d.dispatch_result is None
+
+
+def test_absent_catalogue_still_submits_the_task():
+    """*** THE REGRESSION GUARD for this migration.
+
+    geo_state_fn has no production call site: nothing in p4_agent subscribes to
+    state/geo/manifest yet. If 'no catalogue' were treated as 'route not found',
+    this batch would switch OFF the voice task path that already runs on the
+    robot -- every patrol command would answer 'no such route', and the cause
+    would be an unwired subscription rather than anything the operator said.
+
+    MUTATION: refusing when manifest is None turns this into a reply. That
+    mutation is exactly the code I wrote first, which is why this test exists.
+    """
+    orch = _route_orch(geo_state_fn=None)          # production wiring today
+    d = orch.handle_turn(_UNMATCHED, OrchestratorSession(), now_mono_ms=1)
+    assert d.kind == "dispatch"
+    tc = d.dispatch_result.payload["task_command"]
+    assert tc["action"] == "submit"
+    # No route_id -- and that is the honest outcome, not a resolved one. P3
+    # falls back to matching the spoken name (see p3 task_row.py).
+    assert "route_id" not in tc["task"]
+    assert tc["task"]["params"]["slots"]["route"] == "东门路线"

@@ -215,7 +215,28 @@ CREATE TABLE IF NOT EXISTS geo_pending_push (
 """.strip()
 
 
+# 11 S2.3: "the receiver de-duplicates on cmd_id". cmd/task needs its own log
+# because the idempotency key is NOT the task_id -- 11 S7.2 (as corrected
+# 2026-08-20) lets a sender omit task.task_id and have P3 allocate one, so a
+# redelivered submit has nothing else to be recognised by. Written in the SAME
+# transaction as the insert: split across two commits, a crash between them
+# leaves the task recorded and the command unseen, and the retry mints a second
+# task the operator never asked for.
+DDL_TASK_CMD_LOG = """
+CREATE TABLE IF NOT EXISTS task_cmd_log (
+  cmd_id      TEXT PRIMARY KEY,
+  action      TEXT NOT NULL,
+  task_id     TEXT,                            -- the id acted on / allocated
+  result      TEXT NOT NULL,                   -- accepted | rejected | duplicate
+  code        TEXT NOT NULL,
+  detail_json TEXT,
+  applied_ms  INTEGER NOT NULL
+);
+""".strip()
+
+
 ALL_DDL_STATEMENTS = (
+    DDL_TASK_CMD_LOG,
     DDL_TASKS,
     *DDL_TASKS_INDEXES,
     DDL_PATROL_PROGRESS,

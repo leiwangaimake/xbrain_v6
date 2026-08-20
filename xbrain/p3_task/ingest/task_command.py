@@ -18,7 +18,8 @@ by a process whose logs said nothing. That closed the HMI's W2/W7 and the
 cloud's forwarded tasks at the same time, and neither would have looked like a
 bug from the sending side.
 
-*** task_id is required and there is deliberately NO "omit = the current task".
+*** For cancel / pause / resume, task_id is required and there is deliberately
+NO "omit = the current task".
 S7.2 gives four reasons and the first is the one that bites: the queue is LIVE.
 Between the operator seeing "A is running" on the HMI and the command arriving,
 A may have finished and B started -- the shorthand would pause the wrong task,
@@ -26,6 +27,11 @@ and nothing in the log would show that it happened. The other three: voice adds
 0.5-2 s of ASR + LLM + confirmation on top; idempotency requires a resent cmd_id
 to mean the same thing it meant the first time; and an audit has to be able to
 reconstruct which task the operator meant.
+
+submit is the exception, and for an unrelated reason: its task_id may be OMITTED
+(S7.2, corrected 2026-08-20), because the form is t-YYYYMMDD-NNN with a per-day
+sequence only P3 holds. That is not the "current task" shorthand -- nothing is
+being guessed at; a new id is minted and returned in the ack.
 
 Boundaries: this parses and validates. It opens no db, reads no clock, and
 applies nothing -- the appliers live in task_apply.py, the same split as
@@ -86,9 +92,15 @@ def parse_task_command(payload: Dict[str, Any]) -> TaskCommand:
         if not isinstance(task, dict):
             raise TaskCommandError(E_SCHEMA, "submit requires a task body")
         inner = task.get("task_id")
-        if not isinstance(inner, str) or not inner:
-            raise TaskCommandError(E_SCHEMA, "submit requires task.task_id")
-        if isinstance(task_id, str) and task_id and task_id != inner:
+        # S7.2 as corrected 2026-08-20: task.task_id is OPTIONAL. It has to be,
+        # because the id form is t-YYYYMMDD-NNN and NNN is a per-day sequence
+        # only P3 knows -- p4_agent and p5_gateway are both listed publishers of
+        # this key (S2.2) and neither can produce a legal one. Omitted here means
+        # "P3 allocates"; the idempotency key is cmd_id either way (S2.3).
+        if inner is not None and (not isinstance(inner, str) or not inner):
+            raise TaskCommandError(
+                E_SCHEMA, "task.task_id must be a non-empty string when given")
+        if isinstance(task_id, str) and task_id and inner and task_id != inner:
             # S7.2: on submit the authority is task.task_id, and if both appear
             # they must be equal.
             # Refused rather than resolved by precedence -- two ids in one frame
@@ -97,7 +109,7 @@ def parse_task_command(payload: Dict[str, Any]) -> TaskCommand:
             raise TaskCommandError(
                 E_SCHEMA,
                 "task_id %r and task.task_id %r disagree" % (task_id, inner))
-        task_id = inner
+        task_id = inner or (task_id if isinstance(task_id, str) else None)
     elif action in _NEEDS_TASK_ID:
         if not isinstance(task_id, str) or not task_id:
             raise TaskCommandError(
@@ -135,16 +147,3 @@ def task_ack(cmd_id: str, result: str, code: str = "OK",
     if detail is not None:
         ack["detail"] = detail
     return ack
-
-
-def looks_like_p4_shape(payload: Dict[str, Any]) -> bool:
-    """True for p4_agent's legacy private frame (a `task_request` member).
-
-    Kept ONLY for the transition: p4 is being changed to emit the S7.2 shape in
-    the next batch, and this predicate is what lets the receiver tell "an old
-    p4 frame" from "a malformed contract frame" while both can arrive. It is
-    NOT a second accepted shape -- see task_apply.handle_task_payload, which
-    logs a deprecation on this path so the transition cannot go quiet.
-    """
-    return isinstance(payload, dict) and isinstance(
-        payload.get("task_request"), dict)
