@@ -81,19 +81,18 @@
     else el.removeAttribute("stroke-dasharray");     // solid
   }
 
-  // Map a fence to its display type. The contract role (11 S9A.1A: allow/forbid/
-  // speed_limit/warning) wins; if role is absent -- P3's fence table stores a
-  // free-text zone_label, not the role enum -- fall back to the name ("活动"->
-  // active, "禁入"->forbid, "报警"->alarm). Default active (keep-in) when neither
-  // says. NOTE: "warning" is the alarm role; "zone" is its old name (11 S9A.1A
-  // rename, 2026-08-18) -- accept both while the runtime still emits the old one.
+  // Map a fence to its display type. The contract role (11 S9A.2: allow/forbid/
+  // speed_limit/warning) wins; the name fallback below is a defence for a
+  // role-less payload only. Default active (keep-in) when neither says. NOTE:
+  // "warning" is the alarm role; "zone" is its retired name (11 S9A.1A rename,
+  // 2026-08-18) -- still accepted defensively.
   function fenceType(fen) {
     const r = fen.role;
     if (r === "allow") return "active";
     if (r === "forbid") return "forbid";
     if (r === "speed_limit") return "speed";
     if (r === "warning" || r === "zone") return "alarm";
-    const n = fen.name || fen.zone_label || "";
+    const n = fen.name || "";
     if (n.indexOf("禁入") >= 0 || n.indexOf("禁止") >= 0) return "forbid";
     if (n.indexOf("限速") >= 0) return "speed";
     if (n.indexOf("报警") >= 0) return "alarm";
@@ -340,8 +339,11 @@
       if (fen.name && fen.vertices && fen.vertices[0]) {
         const xy = toXY(fen.vertices[0], origin);
         // req4d: name + fence perimeter in metres, e.g. "东油库报警区 (1627 m)".
+        // Vertices are WGS84 {lat,lon} now (v1.5) -- measure on the PROJECTED ring
+        // so the perimeter is metres, not degrees.
+        const fproj = (fen.vertices || []).map((p) => toXY(p, origin)).filter(Boolean);
         if (xy) $(layer).appendChild(label(xy[0], xy[1] - 2, "keep-in-label",
-          fen.name + lenTag(perimM(fen.vertices))));
+          fen.name + lenTag(perimM(fproj))));
       }
     }
     const routes = geo.routes || {};
