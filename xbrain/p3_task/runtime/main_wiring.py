@@ -328,10 +328,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # HMI tab is still holding.
             teach = TeachRuntime(conn, geo_conn, fence_conn,
                                  boot_id=os.urandom(3).hex())
-            _logger.info("p3 wiring: subscribed %s + %s + %s, queryable %s "
-                         "(task.db + geo single writer + F-5 return_home)",
-                         CMD_TASK_TOPIC, STATE_LINK_TOPIC, CMD_GEO_TOPIC,
-                         QUERY_TASKS_TOPIC)
+            _logger.info(
+                "p3 wiring: subscribed %s + %s + %s + %s (+ %d state sources), "
+                "queryable %s (task.db + geo single writer + teach session "
+                "+ F-5 return_home)",
+                CMD_TASK_TOPIC, STATE_LINK_TOPIC, CMD_GEO_TOPIC,
+                CMD_TEACH_TOPIC, 5, QUERY_TASKS_TOPIC)
             # 11 S7.9: the single-writer context. task_conn is the SAME handle
             # the scheduler uses -- P3 has one db thread (15 S2.1), so a geo
             # applier reaching into task.db (GC-1..7 linkage, refs) serialises

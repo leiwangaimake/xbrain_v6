@@ -211,6 +211,9 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 _logger.warning("p1 cmd/teleop: %s", exc)
 
         teleop_sub = gen.declare_subscriber(CMD_TELEOP_TOPIC, _on_teleop)
+        _logger.info("p1 wiring: subscribed %s, publishing %s at %.0f Hz",
+                     CMD_TELEOP_TOPIC, STATE_TELEOP_TOPIC,
+                     1.0 / TELEOP_PUBLISH_PERIOD_S)
 
         # --- RTK GNSS cross-plane bridge (11 S1.1.6: p1 订 rt/gnss/*, 发 state/pose) ---
         # rtk_driver publishes FULL RT keys (xbrain/{rid}/rt/gnss/*); the general
