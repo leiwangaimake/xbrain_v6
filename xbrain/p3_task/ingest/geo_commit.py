@@ -17,6 +17,11 @@ this writes that list to disk as a real geo object, atomically:
   commit_waypoint(conn, ...) -> geo.db: ONE named keypoint (WGS84 rtk_lat/lon).
   commit_fence(conn, ...)  -> fence.db: one fences row with its 11 S9A.2 role
       (allow/forbid/speed_limit/warning), geom_json = validated WGS84 vertex ring.
+      ** state is a REQUIRED argument on commit_fence and has no default. A
+         recorded fence is a DRAFT (11 S12A.7 constraint 1: saving is not
+         enabling, and activation is its own L2 action) -- but "draft" is the
+         wrong default for an imported or cloud-pushed fence, so neither value
+         may be assumed. Every caller states which it means.
 
 Before this, teach.py had only the dedup functions -- the '录完了 -> save to
 geo' path that 11 S12A promises had no writer, so a recorded route/fence was
@@ -75,7 +80,9 @@ async def commit_route(conn, *, route_id: str, name: str,
                        waypoint_ids: Optional[Sequence] = None,
                        loop_mode: str = "oneway", direction: str = "forward",
                        max_speed: Optional[float] = None,
-                       description: Optional[str] = None, now_ms: int) -> str:
+                       description: Optional[str] = None, now_ms: int,
+                       state: str = "active",
+                       created_by: str = "teach") -> str:
     """Write a route to geo.db as ONE routes row with INLINE geometry (15 S9.3).
     Geometry is XOR:
       * path_points  = [(lat, lon), ...]  mode B (voice recording, 11 S7.8.3)
@@ -130,10 +137,11 @@ async def commit_route(conn, *, route_id: str, name: str,
             ch = content_hash({"wi": wids, "name": name})
         await conn.execute(
             f"INSERT INTO routes (geo_id, name, {geom_col}, max_speed, loop_mode, "
-            " direction, total_len_m, description, content_hash, updated_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " direction, total_len_m, description, state, created_by, "
+            " updated_by, content_hash, updated_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (route_id, name, geom_json, max_speed, loop_mode, direction,
-             total, description, ch, now_ms))
+             total, description, state, created_by, created_by, ch, now_ms))
         await conn.commit()
     except Exception:
         await conn.rollback()
@@ -147,7 +155,8 @@ async def commit_waypoint(conn, *, geo_id: str, name: str, wtype: str,
                           yaw_deg: Optional[float] = None,
                           arrival_radius: float = 1.0,
                           description: Optional[str] = None,
-                          now_ms: int) -> str:
+                          now_ms: int, state: str = "active",
+                          created_by: str = "teach") -> str:
     """Write ONE named keypoint to geo.db -- the F06 record_waypoint path
     (ba zhe li ji wei X, 18-C). name is the operator-given display name
     (11 S7.8.2, NOT NULL UNIQUE so voice "go to <name>" resolves to one target);
@@ -164,10 +173,11 @@ async def commit_waypoint(conn, *, geo_id: str, name: str, wtype: str,
         await conn.execute(
             "INSERT OR REPLACE INTO waypoints (geo_id, name, type, rtk_lat, "
             " rtk_lon, rtk_alt, yaw_deg, arrival_radius, description, "
-            " content_hash, updated_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " state, created_by, updated_by, content_hash, updated_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (geo_id, name, wtype, rtk_lat, rtk_lon, rtk_alt, yaw_deg,
-             arrival_radius, description, ch, now_ms))
+             arrival_radius, description, state, created_by, created_by,
+             ch, now_ms))
         await conn.commit()
     except Exception:
         await conn.rollback()
@@ -176,8 +186,9 @@ async def commit_waypoint(conn, *, geo_id: str, name: str, wtype: str,
 
 
 async def commit_fence(conn, *, fence_id: str, role: str, points: Sequence,
-                       now_ms: int, name: Optional[str] = None,
-                       soft_margin_m: Optional[float] = None) -> str:
+                       now_ms: int, state: str, name: Optional[str] = None,
+                       soft_margin_m: Optional[float] = None,
+                       created_by: str = "teach") -> str:
     """Write a polygon fence to fence.db with its 11 S9A.2 role (allow | forbid |
     speed_limit | warning) and display name. `points` is the WGS84 vertex ring
     (lat, lon) WITHOUT a duplicated closing vertex (closes implicitly), validated
@@ -197,9 +208,11 @@ async def commit_fence(conn, *, fence_id: str, role: str, points: Sequence,
     try:
         await conn.execute(
             "INSERT INTO fences (fence_id, name, role, kind, geom_json, "
-            " hard_enforce, soft_margin_m, content_hash, updated_ms) "
-            "VALUES (?, ?, ?, 'polygon', ?, ?, ?, ?, ?)",
-            (fence_id, name, role, geom_json, hard_enforce, soft_margin_m, ch, now_ms))
+            " hard_enforce, soft_margin_m, state, created_by, updated_by, "
+            " content_hash, updated_ms) "
+            "VALUES (?, ?, ?, 'polygon', ?, ?, ?, ?, ?, ?, ?, ?)",
+            (fence_id, name, role, geom_json, hard_enforce, soft_margin_m,
+             state, created_by, created_by, ch, now_ms))
         await conn.commit()
     except Exception:
         await conn.rollback()

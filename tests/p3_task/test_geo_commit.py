@@ -150,7 +150,7 @@ async def test_commit_fence_stores_role_and_polygon(fence_conn):
     # (or defaulting it) loses the S9A.2 classification the HMI + P1 need.
     pts = [(31.20, 121.50), (31.21, 121.50), (31.21, 121.51), (31.20, 121.51)]
     await commit_fence(fence_conn, fence_id="f-forbid", role="forbid",
-                       name="东北禁止区", points=pts, now_ms=1)
+                       name="东北禁止区", points=pts, now_ms=1, state="draft")
     cur = await fence_conn.execute(
         "SELECT name, role, kind, hard_enforce, geom_json FROM fences "
         "WHERE fence_id='f-forbid'")
@@ -165,7 +165,7 @@ async def test_commit_fence_warning_never_hard_enforces(fence_conn):
     the caller's value) would let a warning zone hard-clip motion."""
     pts = [(31.20, 121.50), (31.21, 121.50), (31.205, 121.51)]
     await commit_fence(fence_conn, fence_id="f-warn", role="warning",
-                       points=pts, now_ms=1)
+                       points=pts, now_ms=1, state="draft")
     cur = await fence_conn.execute(
         "SELECT hard_enforce FROM fences WHERE fence_id='f-warn'")
     assert (await cur.fetchone())[0] == 0
@@ -178,7 +178,7 @@ async def test_commit_fence_rejects_bad_role(fence_conn):
     pts = [(31.20, 121.50), (31.21, 121.50), (31.205, 121.51)]
     with pytest.raises(GeoCommitError, match="role"):
         await commit_fence(fence_conn, fence_id="f-x", role="zone",
-                           points=pts, now_ms=1)
+                           points=pts, now_ms=1, state="draft")
 
 
 @pytest.mark.asyncio
@@ -186,7 +186,8 @@ async def test_commit_fence_rejects_degenerate(fence_conn):
     """MUTATION: skipping validate_polygon would store a zero-area 'fence'."""
     with pytest.raises(InvalidPolygon):
         await commit_fence(fence_conn, fence_id="f-bad", role="forbid",
-                           points=[(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)], now_ms=1)
+                           points=[(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)],
+                           now_ms=1, state="draft")
 
 
 # -- closure checks ------------------------------------------------------

@@ -49,6 +49,18 @@ QUERY_TASKS_TOPIC = "query/tasks"        # 11 S12.4 HMI task-panel queryable (P5
 QUERY_TASKS_TIMEOUT_S = 2.0              # cap the zenoh-thread block on a db read
 STATE_GEO_OBJECTS_TOPIC = "state/geo/objects"  # 11 S7.10A geo geometry broadcast (P5 -> HMI)
 GEO_PUBLISH_PERIOD_S = 5.0               # geo re-publish cadence (>= 0.1 Hz keepalive)
+CMD_TEACH_TOPIC = "cmd/teach"            # 11 S12A.4: P3 owns the recording session
+CMD_TEACH_ACK_TOPIC = "cmd/teach/ack"
+STATE_TEACH_TOPIC = "state/teach"        # 11 S12A.5, event + 1 Hz
+STATE_POSE_TOPIC = "state/pose"          # 11 S3.3, the sampling source
+# The three state sources the S12A.3 arming checks read. None of them has a
+# publisher in this build; the runtime refuses to arm and NAMES what is missing
+# rather than defaulting the gate to pass (see teach/runtime.py design point 2).
+HEALTH_SUMMARY_TOPIC = "health/summary"
+STATE_ROBOT_TOPIC = "state/robot"
+STATE_POWER_TOPIC = "state/power"
+STATE_TELEOP_TOPIC = "state/teleop"
+TEACH_PUBLISH_PERIOD_S = 1.0             # S12A.5 floor
 CMD_GEO_TOPIC = "cmd/geo"                # 11 S7.9: P3 is the sole cmd/geo subscriber
 CMD_GEO_ACK_TOPIC = "cmd/geo/ack"        # 11 S7.9.4: the answer goes back to the sender
 CMD_FENCE_TOPIC = "cmd/fence"            # 11 S9A.3: P3 is the sole cmd/fence publisher
@@ -114,6 +126,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     from xbrain.p3_task.fence.geom import InvalidFenceSet
     from xbrain.p3_task.geo.objects import read_geo_objects
     from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
+    from xbrain.p3_task.teach.runtime import TeachRuntime
     from xbrain.p3_task.persistence.base import open_configured
     from xbrain.p3_task.persistence.schema_geo import (
         FENCE_DB_STATEMENTS, GEO_DB_STATEMENTS,
@@ -150,6 +163,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
         # different code; sharing a queue would force a type tag on every item
         # and make one loop's back-pressure the other's problem.
         geo_queue: asyncio.Queue = asyncio.Queue()
+        # 11 S12A: cmd/teach gets its own queue for the same reason cmd/geo does
+        # -- a different key, a different answer topic, different code.
+        teach_queue: asyncio.Queue = asyncio.Queue()
         recorded = 0
 
         _logger.info("p3 wiring: opening GEN session")
@@ -167,6 +183,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             fence_pub = gen.declare_publisher(CMD_FENCE_TOPIC)
             # 11 S7.9.4: every cmd/geo gets an answer here, including refusals.
             geo_ack_pub = gen.declare_publisher(CMD_GEO_ACK_TOPIC)
+            # 11 S12A.4 / S12A.5: the recording session answers on cmd/teach/ack
+            # and publishes its state on state/teach at 1 Hz plus on change.
+            teach_ack_pub = gen.declare_publisher(CMD_TEACH_ACK_TOPIC)
+            teach_state_pub = gen.declare_publisher(STATE_TEACH_TOPIC)
 
             # F-5 (11 S4.6.4): watch P5's cloud-link level and inject one
             # return_home at L3 (cloud down past rtb_s). The subscriber only STORES
@@ -233,6 +253,34 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     return
                 loop.call_soon_threadsafe(geo_queue.put_nowait, payload)
 
+            def _on_teach(sample) -> None:
+                # RUST THREAD: decode and hand off only (CLAUDE.md 4.2).
+                try:
+                    payload = json.loads(bytes(sample.payload).decode("utf-8"))
+                except Exception:      # noqa: BLE001
+                    _logger.warning("p3 malformed cmd/teach payload")
+                    return
+                loop.call_soon_threadsafe(teach_queue.put_nowait, payload)
+
+            # The state caches the S12A.3 arming checks read. Each callback only
+            # stores the decoded body; the loop thread hands it to the runtime,
+            # so nothing touches the session from a Zenoh thread.
+            state_cache: dict = {}
+
+            def _make_state_sink(name: str):
+                def _sink(sample) -> None:
+                    try:
+                        body = json.loads(bytes(sample.payload).decode("utf-8"))
+                    except Exception:      # noqa: BLE001
+                        return
+                    # p1 publishes state/pose enveloped as {..., data:{...}};
+                    # the bare form is accepted too so a stub publisher works.
+                    data = body.get("data") if isinstance(body, dict) else None
+                    loop.call_soon_threadsafe(
+                        state_cache.__setitem__, name,
+                        data if isinstance(data, dict) else body)
+                return _sink
+
             def _on_query(query) -> None:
                 # RUST THREAD: the HMI task-panel queryable (11 S12.4). Run the
                 # async db read on the loop and reply synchronously here --
@@ -257,7 +305,21 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             _subs = [gen.declare_subscriber(CMD_TASK_TOPIC, _on_task),
                      gen.declare_subscriber(STATE_LINK_TOPIC, _on_link),
                      gen.declare_subscriber(CMD_GEO_TOPIC, _on_geo),
+                     gen.declare_subscriber(CMD_TEACH_TOPIC, _on_teach),
                      gen.declare_queryable(QUERY_TASKS_TOPIC, _on_query)]
+            # Held in the same strong-ref list (CLAUDE.md 4.3).
+            for _topic, _name in ((STATE_POSE_TOPIC, "pose"),
+                                  (HEALTH_SUMMARY_TOPIC, "health"),
+                                  (STATE_ROBOT_TOPIC, "robot"),
+                                  (STATE_POWER_TOPIC, "power"),
+                                  (STATE_TELEOP_TOPIC, "teleop")):
+                _subs.append(gen.declare_subscriber(_topic,
+                                                    _make_state_sink(_name)))
+            # boot_id makes session ids unique across a restart; a plain counter
+            # would re-mint ts-0001 after a reboot and collide with the id an
+            # HMI tab is still holding.
+            teach = TeachRuntime(conn, geo_conn, fence_conn,
+                                 boot_id=os.urandom(3).hex())
             _logger.info("p3 wiring: subscribed %s + %s + %s, queryable %s "
                          "(task.db + geo single writer + F-5 return_home)",
                          CMD_TASK_TOPIC, STATE_LINK_TOPIC, CMD_GEO_TOPIC,
@@ -272,6 +334,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             last_hb = time.monotonic()
             last_geo = 0.0            # 0 -> publish geo on the very first pass
             last_fence = 0.0          # 0 -> publish fence on the very first pass
+            last_teach = 0.0          # 0 -> publish teach state immediately
             fence_rev = [1]           # 11 S9A.2 rev; +1 on any geometry change
             last_fence_sig = [None]   # rev-0 crc32 of the last broadcast set
             fence_invalid_logged = [False]
@@ -302,6 +365,45 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         if ack.get("result") == "accepted":
                             last_geo = 0.0
                             last_fence = 0.0
+                    # 11 S12A: feed the caches, sample the pose, answer every
+                    # cmd/teach. Sampling runs BEFORE the commands so a finish
+                    # arriving in the same pass includes the point just taken.
+                    now_mono_s = time.monotonic()
+                    for _key, _setter in (("pose", None), ("health", None),
+                                          ("robot", None), ("power", None),
+                                          ("teleop", None)):
+                        _body = state_cache.get(_key)
+                        if _body is None:
+                            continue
+                        if _key == "pose":
+                            teach.update_pose(_body, now_mono_s)
+                        elif _key == "health":
+                            teach.update_health(_body)
+                        elif _key == "robot":
+                            teach.update_robot(_body)
+                        elif _key == "power":
+                            teach.update_power(_body)
+                        else:
+                            teach.update_teleop(_body)
+                    try:
+                        await teach.offer_pose(now_mono_s, _now_wall_ms())
+                        expired = teach.expire(now_mono_s)
+                        if expired:
+                            _logger.warning("p3 teach session auto-finished: %s",
+                                            expired)
+                    except Exception as exc:      # noqa: BLE001
+                        _logger.error("p3 teach sampling failed: %s", exc)
+                    while not teach_queue.empty():
+                        t_ack = await teach.handle(
+                            teach_queue.get_nowait(), now_mono_s=now_mono_s,
+                            now_ms=_now_wall_ms())
+                        teach_ack_pub.put(json.dumps(
+                            t_ack, ensure_ascii=False).encode("utf-8"))
+                        # A save writes geometry, so refresh the map broadcasts.
+                        if t_ack.get("result") == "accepted":
+                            last_geo = 0.0
+                            last_fence = 0.0
+                        last_teach = 0.0          # state change -> publish now
                     # F-5 (11 S4.6.4): if the cloud link is L3, inject one
                     # return_home BEFORE the tick so it is dispatched this pass.
                     # Idempotent per outage (LinkLossReturnTrigger); a bad insert
@@ -351,6 +453,16 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     # geometry change (detected via the rev-independent crc32). An
                     # invalid set (no allow / > 5, S9A.1A FS-5A) is NOT broadcast --
                     # the old fence stays in effect; logged once until it recovers.
+                    # 11 S12A.5: state/teach at 1 Hz plus on every change.
+                    if now - last_teach >= TEACH_PUBLISH_PERIOD_S:
+                        try:
+                            teach_state_pub.put(json.dumps(
+                                teach.teach_state_payload(now),
+                                ensure_ascii=False).encode("utf-8"))
+                        except Exception as exc:      # noqa: BLE001
+                            _logger.error("p3 teach state publish failed: %s",
+                                          exc)
+                        last_teach = now
                     if now - last_fence >= FENCE_PUBLISH_PERIOD_S:
                         try:
                             rows = await fences_dao.list_active()
@@ -381,7 +493,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         s.undeclare()
                     except Exception:      # noqa: BLE001
                         pass
-                for p in (state_pub, geo_pub, fence_pub, geo_ack_pub):
+                for p in (state_pub, geo_pub, fence_pub, geo_ack_pub,
+                          teach_ack_pub, teach_state_pub):
                     try:
                         p.undeclare()
                     except Exception:      # noqa: BLE001
