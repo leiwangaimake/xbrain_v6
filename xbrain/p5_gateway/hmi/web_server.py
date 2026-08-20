@@ -47,6 +47,10 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from xbrain.common.errors import E_SCHEMA
+from xbrain.p5_gateway.hmi import uplink
+from xbrain.p5_gateway.hmi.ws_protocol import RateLimitBucket
+
 from xbrain.p5_gateway.hmi import data_readers
 from xbrain.p5_gateway.hmi.ui_config import build_ui_config
 
@@ -104,6 +108,22 @@ class RuntimeStateProvider(Protocol):
         without it simply serves those endpoints as available:false."""
         ...
 
+    def send_uplink(self, key: str, payload: Dict[str, Any]) -> None:
+        """Publish one HMI-originated command on the general plane (11 S12.1.1
+        W2/W3/W4/W7). OPTIONAL: read via getattr, so a provider without it makes
+        the upstream classes answer E_NOT_IMPLEMENTED instead of failing the
+        handshake -- the browser then shows a refusal rather than a dead link."""
+        ...
+
+    def take_uplink_ack(self, req_id: str) -> Optional[Dict[str, Any]]:
+        """The downstream ack for a forwarded req_id, once, or None.
+
+        Once, because the WS loop polls: leaving it in place would resend the
+        same ack every tick. The wiring holds acks keyed by the cmd_id it
+        stamped (S12.1.1: "h-" + req_id), so the round trip needs no session
+        state in this module."""
+        ...
+
 
 def parse_bind_entry(entry: str) -> Tuple[str, int]:
     """Split a "IP:port" bind entry into (host, port).
@@ -155,6 +175,74 @@ def make_bound_sockets(bind: List[Optional[str]]) -> List[socket.socket]:
         sock.set_inheritable(False)
         socks.append(sock)
     return socks
+
+
+#: 11 S12.1.1 W4 rate limit: 10 msg/s. The burst is one second's worth -- a
+#: dialog that fires a refs query and then the delete must not be throttled,
+#: while a held button still cannot build a queue (SS-4 refuses, never queues).
+UPLINK_RATE_PER_S = 10.0
+UPLINK_BURST = 10
+
+
+async def _uplink_reader(websocket, provider, bucket, pending) -> None:
+    """Read HMI upstream frames for one connection until it closes.
+
+    Every outcome answers the browser -- forwarded, refused, or rate-limited.
+    A frame that produced no answer would leave the operator's dialog spinning,
+    and 12.3's reconnect rule (resend with the same req_id) depends on them
+    being able to tell "no answer yet" from "answered".
+    """
+    import time as _time                        # noqa: PLC0415
+
+    while True:
+        try:
+            msg = await websocket.receive_json()
+        except Exception:      # noqa: BLE001
+            # Disconnect, or a frame that is not JSON. Either way this
+            # connection is done; the send loop's finally cancels this task.
+            return
+        try:
+            env = uplink.parse_envelope(msg)
+        except ValueError as exc:
+            # No req_id may exist here, so the ack carries whatever was sent.
+            await websocket.send_json(uplink.ack_frame(
+                str(msg.get("req_id") or "") if isinstance(msg, dict) else "",
+                str(msg.get("type") or "") if isinstance(msg, dict) else "",
+                "rejected", E_SCHEMA, {"reason": str(exc)}))
+            continue
+        req_id, req_type = env["req_id"], env["type"]
+        # W1 estop bypasses the bucket (S12.1.1: it bypasses G1-G6, the rate
+        # limit and the restricted downgrade). It is not served here at all --
+        # the dedicated <=10 ms path is POST /api/estop -- so it is refused
+        # explicitly rather than silently rate-limited into a queue.
+        if req_type != "estop" and not bucket.try_take(
+                int(_time.monotonic() * 1000)):
+            ref = uplink.rate_limited(req_type)
+            await websocket.send_json(uplink.ack_frame(
+                req_id, req_type, "rejected", ref.code, ref.detail))
+            continue
+        if req_type != "geo":
+            ref = uplink.not_implemented(req_type)
+            await websocket.send_json(uplink.ack_frame(
+                req_id, req_type, "rejected", ref.code, ref.detail))
+            continue
+        built = uplink.build_geo_command(msg)
+        if isinstance(built, uplink.UplinkRefusal):
+            await websocket.send_json(uplink.ack_frame(
+                req_id, req_type, "rejected", built.code,
+                {**(built.detail or {}), "reason_text": built.reason}))
+            continue
+        sender = getattr(provider, "send_uplink", None)
+        if sender is None:
+            ref = uplink.not_implemented(req_type)
+            await websocket.send_json(uplink.ack_frame(
+                req_id, req_type, "rejected", ref.code, ref.detail))
+            continue
+        sender(built.key, built.payload)
+        # Answered later, when P3's cmd/geo/ack comes back through the poll in
+        # the send loop. Recorded as pending so a lost ack is visible as a
+        # request still waiting, rather than as one that was never sent.
+        pending[req_id] = req_type
 
 
 def build_app(
@@ -351,12 +439,26 @@ def build_app(
         # The `WebSocket` type annotation is REQUIRED -- FastAPI injects the
         # connection by type, and without it the handshake is rejected 403.
         import asyncio                          # noqa: PLC0415
+        import time                             # noqa: PLC0415
         await websocket.accept()
         # Per-connection delta state: the last-sent snapshot for THIS client (a
         # late joiner must diff against what it has actually received, so this is
         # local to the coroutine, never shared between connections).
         last: Dict[str, Any] = {}
         ticks = 0
+        # 11 S12.1.1: the upstream half. One bucket and one pending-set PER
+        # CONNECTION -- a shared bucket would let one browser tab rate-limit
+        # another, and a shared pending set would deliver tab A's ack to tab B.
+        uplink_bucket = RateLimitBucket(
+            capacity=UPLINK_BURST, tokens=UPLINK_BURST,
+            fill_rate_per_ms=UPLINK_RATE_PER_S / 1000.0,
+            last_refill_ms=int(time.monotonic() * 1000))
+        pending: Dict[str, str] = {}          # req_id -> req_type
+        # The receive side runs as its own task: the send loop below sleeps
+        # between pushes, and awaiting a frame inside it would stall the
+        # snapshot stream for as long as the operator is not clicking.
+        recv_task = asyncio.ensure_future(
+            _uplink_reader(websocket, provider, uplink_bucket, pending))
         try:
             while True:
                 # site_timezone is the footer-clock fallback; the live zone is
@@ -378,12 +480,28 @@ def build_app(
                         {"kind": "state_delta", "data": changed})
                     if changed:
                         last = {**last, **changed}
+                # 11 S12.1.1: drain whatever acks P3 answered since the last
+                # tick and push them to the tab that asked. Polling rather than
+                # a callback keeps the wiring free of any WebSocket knowledge.
+                for req_id in list(pending):
+                    ack = None
+                    taker = getattr(provider, "take_uplink_ack", None)
+                    if taker is not None:
+                        ack = taker(req_id)
+                    if ack is None:
+                        continue
+                    await websocket.send_json(uplink.ack_frame(
+                        req_id, pending.pop(req_id),
+                        ack.get("result", "rejected"), ack.get("code", "OK"),
+                        ack.get("detail")))
                 ticks += 1
                 await asyncio.sleep(push_interval_s)
         except WebSocketDisconnect:
             # Normal client close; nothing to clean up (the server owns no
             # per-connection state beyond this coroutine).
             return
+        finally:
+            recv_task.cancel()
 
     # Static frontend LAST so /api/* is matched first. html=True serves
     # index.html at "/". A missing static_root is a deploy error, surfaced by

@@ -6,25 +6,37 @@ File: ws_protocol.py
 Brief: GWY-P5-10 HMI WebSocket 9 down + 5 up + ack + SS-1..4
 
 Description:
-17 S11 HMI WebSocket protocol has closed sets in BOTH directions:
+The WebSocket envelope kinds this implementation uses, plus the SS-4 rate
+bucket.
 
-  DOWN (p5 -> HMI) 9 message kinds:
-    state_snapshot / state_delta / event / telemetry / approval /
-    task_status / dock_status / link_status / prompt
+*** READ THIS BEFORE CITING ANYTHING IN THIS FILE. Corrected 2026-08-20.
 
-  UP (HMI -> p5) 5 message kinds:
-    ack / cmd / query / approve / reject
+The original docstring attributed four session invariants SS-1..SS-4 to 17 S11
+and quoted a code E_RATE_LIMIT. Neither survives a check against the contract:
 
-Any message with a `kind` outside these sets is rejected (never
-routed). SS-1..4 session invariants:
+  * 17 S11's SS-1..SS-4 say something completely different (SS-1 session_id is
+    minted once per P5 start; SS-2 the first frame after a connect must be a
+    full snapshot; SS-3 the server declares a client dead at 30 s; SS-4 the
+    deadman fallback when a session closes). The msg_id / ack-every-downstream /
+    keepalive / rate-bucket set written here appears nowhere in the document
+    set.
+  * E_RATE_LIMIT does not exist. `grep -rn E_RATE_LIMIT docs/` returns nothing,
+    and 11 S13 -- the closed set -- has no such member. Anything over the bucket
+    answers E_BUSY with detail.reason="rate_limited" (see hmi/uplink.py).
 
-  SS-1  each up-message carries a msg_id; p5 acks with (msg_id, ok/err)
-  SS-2  the HMI is expected to ack every down-message within
-        hmi_ack_timeout_ms or the session is treated as broken
-  SS-3  a session with no successful ack for keepalive_timeout_ms
-        is closed and WD-1..6 deadman fires
-  SS-4  cmd/query/approve/reject go into a rate-limited bucket;
-        overrun -> return E_RATE_LIMIT (never queue up)
+So the two closed sets below are an IMPLEMENTATION RECORD of the kinds this
+build sends and accepts, not a contract citation. The authoritative upstream
+whitelist is 11 S12.1.1 (frozen item F-8) and it keys off `type`, not `kind`:
+estop | goto | exit_broadcast | geo | task. That set lives in hmi/uplink.py,
+which is what the WS reader actually consults.
+
+Of the nine downstream kinds, this build sends three -- state_snapshot,
+state_delta and ack. The rest are unimplemented names.
+
+RateLimitBucket is the one piece here with no such problem: a token bucket that
+refuses rather than queues. Queueing would let an operator build back-pressure
+by holding a button, which is the property worth keeping whatever the invariant
+ends up being numbered.
 """
 
 from __future__ import annotations
