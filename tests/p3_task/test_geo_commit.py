@@ -145,21 +145,47 @@ async def test_commit_route_is_atomic(geo_conn):
 # -- commit_fence --------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_commit_fence_stores_validated_polygon(fence_conn):
-    pts = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)]
-    await commit_fence(fence_conn, fence_id="f-perimeter", points=pts, now_ms=1)
+async def test_commit_fence_stores_role_and_polygon(fence_conn):
+    # WGS84 vertex ring; a forbid fence hard-enforces. MUTATION: not writing role
+    # (or defaulting it) loses the S9A.2 classification the HMI + P1 need.
+    pts = [(31.20, 121.50), (31.21, 121.50), (31.21, 121.51), (31.20, 121.51)]
+    await commit_fence(fence_conn, fence_id="f-forbid", role="forbid",
+                       points=pts, now_ms=1)
     cur = await fence_conn.execute(
-        "SELECT kind, geom_json FROM fences WHERE fence_id='f-perimeter'")
-    kind, geom = await cur.fetchone()
-    assert kind == "polygon"
-    assert json.loads(geom)["points"][0] == [0.0, 0.0]
+        "SELECT role, kind, hard_enforce, geom_json FROM fences "
+        "WHERE fence_id='f-forbid'")
+    role, kind, hard, geom = await cur.fetchone()
+    assert role == "forbid" and kind == "polygon" and hard == 1
+    assert json.loads(geom)["points"][0] == [31.20, 121.50]
+
+
+@pytest.mark.asyncio
+async def test_commit_fence_warning_never_hard_enforces(fence_conn):
+    """11 S9A.2: role=warning hard_enforce is ALWAYS 0. MUTATION: writing 1 (or
+    the caller's value) would let a warning zone hard-clip motion."""
+    pts = [(31.20, 121.50), (31.21, 121.50), (31.205, 121.51)]
+    await commit_fence(fence_conn, fence_id="f-warn", role="warning",
+                       points=pts, now_ms=1)
+    cur = await fence_conn.execute(
+        "SELECT hard_enforce FROM fences WHERE fence_id='f-warn'")
+    assert (await cur.fetchone())[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_commit_fence_rejects_bad_role(fence_conn):
+    """MUTATION: not checking role lets a typo ('zone', the retired name) reach
+    the DB and fail a CHECK with an opaque error."""
+    pts = [(31.20, 121.50), (31.21, 121.50), (31.205, 121.51)]
+    with pytest.raises(GeoCommitError, match="role"):
+        await commit_fence(fence_conn, fence_id="f-x", role="zone",
+                           points=pts, now_ms=1)
 
 
 @pytest.mark.asyncio
 async def test_commit_fence_rejects_degenerate(fence_conn):
     """MUTATION: skipping validate_polygon would store a zero-area 'fence'."""
     with pytest.raises(InvalidPolygon):
-        await commit_fence(fence_conn, fence_id="f-bad",
+        await commit_fence(fence_conn, fence_id="f-bad", role="forbid",
                            points=[(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)], now_ms=1)
 
 

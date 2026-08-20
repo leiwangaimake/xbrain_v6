@@ -143,18 +143,23 @@ class FencesDAO:
     def __init__(self, conn) -> None:
         self._conn = conn
 
-    async def insert(self, fence_id: str, kind: str, geom_json: str,
-                      zone_label: str, content_hash: str,
-                      updated_ms: int) -> None:
+    async def insert(self, fence_id: str, role: str, geom_json: str,
+                      content_hash: str, updated_ms: int, kind: str = "polygon",
+                      soft_margin_m=None) -> None:
+        # v1.5: role (11 S9A.2) replaces the old kind='zone'/zone_label overload;
+        # warning never hard-enforces (S9A.2). The S9A.1A count invariants are the
+        # fence.db triggers, not this DAO.
+        hard_enforce = 0 if role == "warning" else 1
         await self._conn.execute(
-            "INSERT INTO fences (fence_id, kind, geom_json, zone_label, "
-            " content_hash, updated_ms) VALUES (?, ?, ?, ?, ?, ?)",
-            (fence_id, kind, geom_json, zone_label, content_hash,
-             updated_ms))
+            "INSERT INTO fences (fence_id, role, kind, geom_json, hard_enforce, "
+            " soft_margin_m, content_hash, updated_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (fence_id, role, kind, geom_json, hard_enforce, soft_margin_m,
+             content_hash, updated_ms))
 
     async def list_active(self):
         cur = await self._conn.execute(
-            "SELECT fence_id, kind, geom_json, zone_label, rev "
+            "SELECT fence_id, role, kind, geom_json, hard_enforce, rev "
             "FROM fences WHERE tombstone=0")
         return await cur.fetchall()
 

@@ -3,7 +3,7 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: geom.py
-Brief: BIZ-P3-18 fence geometry (FS-1..4 painter algorithm, FS-5 zone tag, up to 5 fences)
+Brief: BIZ-P3-18 fence geometry (FS-1..4 painter, S9A.1A set rules, up to 5 fences)
 
 Description:
 15 S9 fence geometry supports composite geometry via the PAINTER
@@ -20,9 +20,11 @@ intersecting, its winding must be consistent, and its bounding box
 must fall inside the site bounds. A polygon that fails FS-4 is
 REJECTED at commit; runtime never sees a bad fence.
 
-FS-5 zone tag: fences of kind='zone' carry a label (e.g. 'safe',
-'restricted') used by V-4 for context-sensitive admission (a
-'restricted' zone rejects patrol tasks but admits 'inspect').
+v1.5 (PLAN A / fence runtime): the old kind='zone' + free-text label is
+retired. Fences now carry a ROLE (11 S9A.2: allow/forbid/speed_limit/warning).
+validate_active_fence_set enforces the 11 S9A.1A SET rules (exactly 1 allow, <=
+5 total) at FenceSet build/broadcast time -- the existence half the per-row
+fence.db triggers cannot assert.
 """
 
 from __future__ import annotations
@@ -45,6 +47,28 @@ class Polygon:
 
 class InvalidPolygon(Exception):
     pass
+
+
+class InvalidFenceSet(Exception):
+    """The active fence SET violates a 11 S9A.1A operating rule (allow count /
+    total). Maps to E_FENCE_INVALID at the FenceSet build/broadcast boundary."""
+
+
+def validate_active_fence_set(roles) -> None:
+    """11 S9A.1A FS-5A + S9A.1: the ACTIVE fence set must have EXACTLY ONE allow
+    (0 or >= 2 both reject) and AT MOST 5 fences total. `roles` is the list of
+    role strings of the active (non-tombstoned) fences. This is the SET invariant
+    the per-row fence.db triggers cannot assert (they enforce <= 5 and <= 1 allow,
+    but not the "at least 1 allow" existence half) -- call it when building the
+    FenceSet to broadcast, so a set with no activity area never goes live."""
+    roles = list(roles)
+    if len(roles) > 5:
+        raise InvalidFenceSet(f"{len(roles)} active fences, max 5 (11 S9A.1)")
+    allow_n = sum(1 for r in roles if r == "allow")
+    if allow_n != 1:
+        raise InvalidFenceSet(
+            f"active set has {allow_n} allow fences, need exactly 1 "
+            "(11 S9A.1A FS-5A)")
 
 
 def polygon_area(points) -> float:

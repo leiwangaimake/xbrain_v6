@@ -15,8 +15,8 @@ a real geo object, atomically:
       loop_mode / direction / computed total_len_m. No waypoints and no assoc
       rows -- route vertices are no longer keypoints (PLAN A, 15 S9.3).
   commit_waypoint(conn, ...) -> geo.db: ONE named keypoint (WGS84 rtk_lat/lon).
-  commit_fence(conn, ...)  -> fence.db: one fences row (kind='polygon') whose
-      geom_json is the validated vertex ring.
+  commit_fence(conn, ...)  -> fence.db: one fences row with its 11 S9A.2 role
+      (allow/forbid/speed_limit/warning), geom_json = validated WGS84 vertex ring.
 
 Before this, teach.py had only the dedup functions -- the '录完了 -> save to
 geo' path that 11 S12A promises had no writer, so a recorded route/fence was
@@ -174,22 +174,29 @@ async def commit_waypoint(conn, *, geo_id: str, name: str, wtype: str,
     return geo_id
 
 
-async def commit_fence(conn, *, fence_id: str, points: Sequence,
-                       now_ms: int, zone_label: Optional[str] = None) -> str:
-    """Write a recorded polygon fence to fence.db. `points` is the vertex ring
-    WITHOUT a duplicated closing vertex (the geometry closes implicitly). It is
-    validated (FS-4: >= 3 unique points, non-zero area) before the insert."""
+async def commit_fence(conn, *, fence_id: str, role: str, points: Sequence,
+                       now_ms: int, soft_margin_m: Optional[float] = None) -> str:
+    """Write a polygon fence to fence.db with its 11 S9A.2 role (allow | forbid |
+    speed_limit | warning). `points` is the WGS84 vertex ring (lat, lon) WITHOUT a
+    duplicated closing vertex (closes implicitly), validated (FS-4: >= 3 unique
+    points, non-zero area) before insert. hard_enforce is derived: warning fences
+    never hard-enforce (S9A.2), all others do. The S9A.1A count invariants (<= 5
+    active, at most 1 allow) are enforced by the fence.db triggers; the "exactly 1
+    allow" existence half is a set check at broadcast time (validate_active_fence_set)."""
+    if role not in ("allow", "forbid", "speed_limit", "warning"):
+        raise GeoCommitError(f"bad fence role {role!r}")
     validate_polygon(points)                   # raises InvalidPolygon on a bad ring
-    geom_json = json.dumps(
-        {"points": [[float(x), float(y)] for x, y in points]},
-        separators=(",", ":"))
-    ch = content_hash({"points": [[float(x), float(y)] for x, y in points]})
+    verts = [[float(a), float(b)] for a, b in points]
+    geom_json = json.dumps({"points": verts}, separators=(",", ":"))
+    ch = content_hash({"points": verts, "role": role})
+    hard_enforce = 0 if role == "warning" else 1
     await conn.execute("BEGIN IMMEDIATE")
     try:
         await conn.execute(
-            "INSERT INTO fences (fence_id, kind, geom_json, zone_label, "
-            " content_hash, updated_ms) VALUES (?, 'polygon', ?, ?, ?, ?)",
-            (fence_id, geom_json, zone_label, ch, now_ms))
+            "INSERT INTO fences (fence_id, role, kind, geom_json, hard_enforce, "
+            " soft_margin_m, content_hash, updated_ms) "
+            "VALUES (?, ?, 'polygon', ?, ?, ?, ?, ?)",
+            (fence_id, role, geom_json, hard_enforce, soft_margin_m, ch, now_ms))
         await conn.commit()
     except Exception:
         await conn.rollback()

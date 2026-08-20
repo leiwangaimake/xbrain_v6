@@ -8,7 +8,7 @@ Brief: BIZ-P3-3 geo.db + fence.db DDL + dock quota trigger + geo_object
 Description:
 15 S9 splits geographical data into TWO physical files:
   * geo.db   waypoints / routes / assoc / docks
-  * fence.db fences + zone tags
+  * fence.db fences (role: allow/forbid/speed_limit/warning, 11 S9A.2)
 This split lets fences reload independently of route edits and lets
 fence-only reads open a read-only handle without carrying the whole
 geo tree.
@@ -34,8 +34,10 @@ waypoints / routes / route_waypoint_assoc are now the 15 S9.3 model:
     (min_distance_m / nearest_idx), UNPOPULATED until F06 voice nav wires it.
   * sync columns rev / content_hash / tombstone / updated_ms ADDED on top
     (15 S9.3 DDL omits them; state/geo/objects needs them).
+fences now carry a ROLE (allow/forbid/speed_limit/warning, 11 S9A.2) with the
+S9A.1A count triggers (<= 5 active, at most 1 allow); vertices are WGS84.
 STILL interim (NOT yet 15 S9.3): docks stay ENU (charging-subsystem ripple,
-out of scope). fences (kind vs role) go with the fence runtime batch, NOT here.
+out of scope for this migration).
 """
 
 from __future__ import annotations
@@ -145,17 +147,53 @@ END;
 """.strip()
 
 
+# v1.5 (2026-08-20 PLAN A / fence runtime): fences carry a ROLE (11 S9A.2), NOT
+# the old kind='zone' overload. role = allow | forbid | speed_limit | warning;
+# kind is the GEOMETRY type (polygon | circle). Vertices in geom_json are WGS84
+# (11 S9A.2 line: "WGS84 十进制度 float64"), matching the geo WGS84 migration.
+# warning fences never hard-enforce (S9A.2: role=warning hard_enforce always 0).
 DDL_FENCES = """
 CREATE TABLE IF NOT EXISTS fences (
-  fence_id      TEXT PRIMARY KEY,
-  kind          TEXT NOT NULL CHECK (kind IN ('polygon','circle','zone')),
-  geom_json     TEXT NOT NULL,
-  zone_label    TEXT,
+  fence_id      TEXT PRIMARY KEY,                -- 'f-'+slug (11 S7.8.1)
+  role          TEXT NOT NULL,                   -- allow | forbid | speed_limit | warning
+  kind          TEXT NOT NULL DEFAULT 'polygon', -- polygon | circle (geometry type)
+  geom_json     TEXT NOT NULL,                   -- WGS84 vertices (11 S9A.2)
+  hard_enforce  INTEGER NOT NULL DEFAULT 1 CHECK (hard_enforce IN (0,1)),
+  soft_margin_m REAL,
   rev           INTEGER NOT NULL DEFAULT 1,
   content_hash  TEXT NOT NULL,
   tombstone     INTEGER NOT NULL DEFAULT 0 CHECK (tombstone IN (0,1)),
-  updated_ms    INTEGER NOT NULL
+  updated_ms    INTEGER NOT NULL,
+  CHECK (role IN ('allow','forbid','speed_limit','warning')),
+  CHECK (kind IN ('polygon','circle')),
+  CHECK (role <> 'warning' OR hard_enforce = 0),   -- 11 S9A.2: warning never hard-enforces
+  CHECK (fence_id GLOB 'f-*')
 );
+""".strip()
+
+
+# 11 S9A.1A operating rules enforced at the DB so a bulk import cannot violate them:
+#   total active <= 5 (S9A.1)  +  at most ONE active allow (S9A.1A FS-5A upper half).
+# The "at least one allow" half (FS-5A lower) is a SET invariant, not a single-row
+# one, so it is checked at FenceSet build/broadcast time (validate_active_fence_set
+# in fence/geom.py) -- a per-row INSERT trigger cannot assert existence.
+TRIGGER_FENCE_TOTAL_QUOTA = """
+CREATE TRIGGER IF NOT EXISTS trg_fence_total_quota
+BEFORE INSERT ON fences
+BEGIN
+  SELECT RAISE(ABORT, 'fence quota exceeded (max 5 active, 11 S9A.1)')
+   WHERE (SELECT COUNT(*) FROM fences WHERE tombstone = 0) >= 5;
+END;
+""".strip()
+
+TRIGGER_FENCE_SINGLE_ALLOW = """
+CREATE TRIGGER IF NOT EXISTS trg_fence_single_allow
+BEFORE INSERT ON fences
+WHEN NEW.role = 'allow'
+BEGIN
+  SELECT RAISE(ABORT, 'duplicate allow fence (11 S9A.1A: exactly 1)')
+   WHERE (SELECT COUNT(*) FROM fences WHERE tombstone = 0 AND role = 'allow') >= 1;
+END;
 """.strip()
 
 
@@ -170,6 +208,8 @@ GEO_DB_STATEMENTS = (
 
 FENCE_DB_STATEMENTS = (
     DDL_FENCES,
+    TRIGGER_FENCE_TOTAL_QUOTA,
+    TRIGGER_FENCE_SINGLE_ALLOW,
 )
 
 

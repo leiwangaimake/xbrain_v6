@@ -320,12 +320,54 @@ def test_geo_object_dao_rejects_unknown_table():
 @pytest.mark.asyncio
 async def test_fences_list_active_excludes_tombstoned(fence_conn):
     dao = FencesDAO(fence_conn)
-    await dao.insert("f1", "polygon", "[]", "safe", "h", 0)
+    await dao.insert("f-1", "allow", "[]", "h", 0)
     await fence_conn.execute(
-        "INSERT INTO fences (fence_id, kind, geom_json, content_hash, "
-        " updated_ms, tombstone) VALUES ('f2', 'circle', '[]', 'h', 0, 1)")
+        "INSERT INTO fences (fence_id, role, kind, geom_json, content_hash, "
+        " hard_enforce, updated_ms, tombstone) "
+        "VALUES ('f-2', 'forbid', 'polygon', '[]', 'h', 1, 0, 1)")
     rows = await dao.list_active()
-    assert {r[0] for r in rows} == {"f1"}
+    assert {r[0] for r in rows} == {"f-1"}
+    # role is carried out for the HMI/P1 (col 1). MUTATION: dropping role from the
+    # SELECT would leave downstream unable to classify the fence.
+    assert rows[0][1] == "allow"
+
+
+@pytest.mark.asyncio
+async def test_fence_total_quota_trigger_rejects_sixth(fence_conn):
+    # 11 S9A.1: at most 5 active fences. MUTATION: dropping the trigger lets a 6th
+    # active fence through. Use forbid for 2..5 (single-allow rule limits allow=1).
+    dao = FencesDAO(fence_conn)
+    await dao.insert("f-a", "allow", "[]", "h", 0)
+    for i in range(4):
+        await dao.insert(f"f-{i}", "forbid", "[]", "h", 0)
+    with pytest.raises(Exception, match="fence quota"):
+        await dao.insert("f-6", "forbid", "[]", "h", 0)
+
+
+@pytest.mark.asyncio
+async def test_fence_single_allow_trigger_rejects_second(fence_conn):
+    # 11 S9A.1A: at most ONE active allow. MUTATION: dropping the trigger lets a
+    # second activity area through (ambiguous keep-in).
+    dao = FencesDAO(fence_conn)
+    await dao.insert("f-a1", "allow", "[]", "h", 0)
+    with pytest.raises(Exception, match="allow fence"):
+        await dao.insert("f-a2", "allow", "[]", "h", 0)
+
+
+def test_validate_active_fence_set_exactly_one_allow():
+    from xbrain.p3_task.fence.geom import (
+        InvalidFenceSet, validate_active_fence_set,
+    )
+    validate_active_fence_set(["allow", "forbid", "warning"])   # ok: 1 allow, 3 total
+    # 0 allow (no activity area) and >= 2 allow both reject (FS-5A existence half,
+    # which the per-row triggers cannot assert). MUTATION: only checking <= 1 allow
+    # would let a set with NO allow go live.
+    with pytest.raises(InvalidFenceSet, match="need exactly 1"):
+        validate_active_fence_set(["forbid", "warning"])
+    with pytest.raises(InvalidFenceSet, match="need exactly 1"):
+        validate_active_fence_set(["allow", "allow"])
+    with pytest.raises(InvalidFenceSet, match="max 5"):
+        validate_active_fence_set(["allow", "f", "f", "f", "f", "f"])
 
 
 # --- BIZ-P3-5 record.db commands DDL (owner is P5) ---
