@@ -459,6 +459,16 @@ GEO_STATE = _SETS["geo_state"]
 #   own literal keys instead). Declared here so that map can be checked against
 #   the set rather than re-typing it.
 HEADING_SOURCE = _SETS["heading_source"]
+# teach_action / teach_state -- the cmd/teach recording session (11 S12A.3 /
+#   S12A.4). A SEPARATE channel from cmd/geo with its own eleven actions: the F
+#   class of 18 routes recording through cmd/teach and only the CRUD half
+#   (delete / rename / set_state) through cmd/geo. teach_state is the session
+#   machine and has nothing to do with task_state -- a recording session is not
+#   a task, and conflating them is what makes "the robot is recording" and "a
+#   task is running" look like the same condition when S12A.3 arming rule 2
+#   requires them to be mutually exclusive.
+TEACH_ACTION = _SETS["teach_action"]
+TEACH_STATE = _SETS["teach_state"]
 # reason / control_mode -- CFG-CM-16 (11 S R2.6-e / R2.6-f). reason is the
 #   task/progress motion/teleop block reason (rotation_blocked,
 #   lateral_clearance_unavailable, teleop_stale, deadman_released) -- our set, not
@@ -718,7 +728,7 @@ __all__ = ["ClosedSet", "ClosedSetViolation", "SET_NAMES", "get", "parse_enum",
            # so the omission surfaces at a consumer's import line, not here.
            "FENCE_ROLE", "HEADING_SOURCE",
            "GEO_ACTION", "GEO_ORIGIN", "GEO_CREATED_BY", "GEO_TYPE",
-           "GEO_STATE"]
+           "GEO_STATE", "TEACH_ACTION", "TEACH_STATE"]
 
 
 # get -- look a set up by name, raising on an unknown NAME and not only on an

@@ -27,9 +27,6 @@ from xbrain.p3_task.lifecycle.failure import (
     UnknownFailureKind, classify,
 )
 from xbrain.p3_task.lifecycle.shutdown import ShutdownController
-from xbrain.p3_task.lifecycle.teach import (
-    TeachSample, dedup_run, should_keep,
-)
 from xbrain.p3_task.persistence.retention import (
     RetentionOrderViolation, RetentionWindows,
     should_checkpoint, tombstone_safe_to_hard_delete, validate_windows,
@@ -125,36 +122,14 @@ def test_tombstone_safe_only_when_no_pending():
 
 # --- BIZ-P3-26 teach ---
 
-def test_teach_first_sample_always_kept():
-    s = TeachSample(0.0, 0.0, 0.0)
-    assert should_keep(s, last_kept=None, dedup_min_dist_m=0.5) is True
-
-
-def test_teach_close_sample_dropped():
-    prev = TeachSample(0.0, 0.0, 0.0)
-    new = TeachSample(0.2, 0.0, 0.0)
-    assert should_keep(new, prev, dedup_min_dist_m=0.5) is False
-
-
-def test_teach_far_sample_kept():
-    prev = TeachSample(0.0, 0.0, 0.0)
-    new = TeachSample(0.6, 0.0, 0.0)
-    assert should_keep(new, prev, dedup_min_dist_m=0.5) is True
-
-
-def test_teach_dedup_preserves_last():
-    """dedup_run must always include the final sample so the
-    recorded route ends where the operator ended."""
-    stream = [
-        TeachSample(0.0, 0.0, 0.0),
-        TeachSample(0.1, 0.0, 0.0),
-        TeachSample(0.2, 0.0, 0.0),
-    ]
-    out = dedup_run(stream, dedup_min_dist_m=1.0)
-    assert out[0] == stream[0] and out[-1] == stream[-1]
-
-
-# --- BIZ-P3-29 shutdown ---
+# The four ENU teach-dedup cases that lived here were REMOVED on 2026-08-20
+# with the module they tested (lifecycle/teach.py). They de-duplicated samples
+# in ENU metres, and the geo model moved to WGS84 earlier the same day -- so
+# the recording path would have needed a projection step whose failure mode is
+# an ENU metre landing in a latitude column. Sampling now happens in WGS84 all
+# the way through (xbrain/p3_task/teach/sampling.py), which removes the
+# conversion rather than guarding it; the replacement cases are in
+# tests/p3_task/test_teach_core.py.
 
 def test_shutdown_request_blocks_admission():
     c = ShutdownController()

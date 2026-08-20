@@ -321,6 +321,31 @@ inline constexpr std::string_view kTaskState[] = {
     "needs_review",
 };
 
+// teach_action -- 11 S12A.4   anchor: `mark_once`\\|`undo`
+inline constexpr std::string_view kTeachAction[] = {
+    "start",
+    "mark",
+    "mark_once",
+    "undo",
+    "pause",
+    "resume",
+    "finish",
+    "save",
+    "discard",
+    "takeover",
+    "query",
+};
+
+// teach_state -- 11 S12A.3   anchor: | 取值 | 含义 | 是否采点 |
+inline constexpr std::string_view kTeachState[] = {
+    "idle",
+    "arming",
+    "recording",
+    "paused",
+    "finalizing",
+    "closed",
+};
+
 /* Membership. constexpr, so a fixed value can be checked at compile time, and
  * allocation-free, so it is usable from the relay hop.
  *

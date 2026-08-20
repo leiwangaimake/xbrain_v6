@@ -305,6 +305,7 @@ SET_DOC = {
     "fence_role": "11",
     "geo_action": "11", "geo_origin": "11", "geo_type": "11", "geo_state": "11",
     "geo_created_by": "11",
+    "teach_action": "11", "teach_state": "11",
     # The one set defined outside the contract. See the module docstring.
     "charge_stage": "15",
 }
@@ -461,6 +462,21 @@ EXTRACTORS.update({
     "geo_created_by": lambda: _row_backticked(
         _DOCS["11"], "| `created_by` / `updated_by` | string |",
         "geo_created_by", exclude=("created_by", "updated_by")),
+    # teach_action -- the S12A.4 field row, whose value cell pipe-separates the
+    # eleven actions. The row backticks its own field name in column 0, hence
+    # the exclude. The anchor is a PAIR of values from the middle of the list,
+    # not the "| `action` | string |" prefix: four field tables in 11 open that
+    # way (cmd/estop, system, quadruped, this one) and _row_backticked takes the
+    # first match, which would have read the estop table's single value.
+    "teach_action": lambda: _row_backticked(
+        _DOCS["11"], "`mark_once`\\|`undo`",
+        "teach_action", exclude=("action",)),
+    # teach_state -- column 0 of the S12A.3 session-state table. Keyed off the
+    # 是否采点 column, which no other table in 11 has.
+    "teach_state": lambda: _table_column(
+        _DOCS["11"],
+        lambda c: len(c) > 2 and c[0] == "取值" and c[2] == "是否采点",
+        0, "teach_state", VALUE_RE, False),
     "geo_type": lambda: _row_backticked(
         _DOCS["11"], "| `type` | string |", "geo_type", exclude=("type",)),
     "geo_state": lambda: _row_backticked(

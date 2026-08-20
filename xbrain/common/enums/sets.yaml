@@ -162,6 +162,35 @@ sets:
       - active
       - disabled
       - deleted
+  teach_action:
+    source: "11 S12A.4"
+    anchor: "`mark_once`\\|`undo`"        # the S12A.4 TeachCommand action field row
+    note: "cmd/teach TeachCommand 的 action(S12A.4). mark_once 不开会话(F06/F10 单点录制 S12A.8); takeover/query 是会话查询与接管. 与 geo_action 是两条通道两个集"
+    ordered: false
+    values:
+      - start
+      - mark
+      - mark_once
+      - undo
+      - pause
+      - resume
+      - finish
+      - save
+      - discard
+      - takeover
+      - query
+  teach_state:
+    source: "11 S12A.3"
+    anchor: "| 取值 | 含义 | 是否采点 |"        # the S12A.3 session-state table header
+    note: "录制会话状态机(S12A.3). 只有 recording 采点; closed 后保留 60s 供幂等查询再回 idle. 与 task_state 无关(会话不是任务)"
+    ordered: false
+    values:
+      - idle
+      - arming
+      - recording
+      - paused
+      - finalizing
+      - closed
   reason:
     source: "11 S R2.6-e"
     anchor: "task/progress 的 reason 闭集"        # 11 S R2.6-e 补丁行(§13 正表落地后迁锚)

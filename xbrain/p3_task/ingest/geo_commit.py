@@ -6,9 +6,9 @@ File: geo_commit.py
 Brief: BIZ-P3-43 commit a recorded route / fence into geo.db / fence.db
 
 Description:
-The COMMIT step of teach recording (11 S12A / 15 S9.6). teach.dedup_run turns
-a dense pose stream into a sparse point list; this writes that list to disk as
-a real geo object, atomically:
+The COMMIT step of teach recording (11 S12A / 15 S9.6). The recorder
+(teach/sampling.py) turns a dense pose stream into a sparse WGS84 point list;
+this writes that list to disk as a real geo object, atomically:
 
   commit_route(conn, ...)  -> geo.db: ONE routes row with INLINE geometry
       (path_points [[lat,lon]] mode B, or waypoint_ids [geo_id] mode A, XOR),
