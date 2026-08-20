@@ -40,6 +40,13 @@ _logger = logging.getLogger("xbrain.p1.wiring")
 
 CMD_MOTION_INTENT_TOPIC = "cmd/motion/intent"
 CMD_MOTION_FACTOR_TOPIC = "cmd/motion/factor"
+# 11 S2.2 / S12A.9.7: P1 arbitrates the local teleop inputs and is the sole
+# publisher of state/teleop. cmd/teleop carries the HMI virtual stick (S12A.9.5);
+# gamepad / local keyboard arrive from teleop_input, which is not built yet, so
+# those two simply never appear in sources[].
+CMD_TELEOP_TOPIC = "cmd/teleop"
+STATE_TELEOP_TOPIC = "state/teleop"
+TELEOP_PUBLISH_PERIOD_S = 1.0
 
 
 @dataclass
@@ -160,6 +167,51 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         factor_sub = gen.declare_subscriber(
             CMD_MOTION_FACTOR_TOPIC, _on_factor)
 
+        # --- 11 S12A.9.7 teleop arbitration + state/teleop -------------------
+        # P1 owns the teleop behaviour source, so it is the only process that
+        # can say which input is driving. P3 reads sources[] as criterion 1 of
+        # the recording arming gate (S12A.3), so this is published whether or
+        # not any input exists -- "nobody is at the controls" is the answer that
+        # gate needs, and silence would be indistinguishable from a lost link.
+        from xbrain.p1_motion.teleop.state import TeleopTracker
+
+        teleop_tracker = TeleopTracker()
+        teleop_pub = gen.declare_publisher(STATE_TELEOP_TOPIC)
+
+        def _on_teleop(sample) -> None:
+            # RUST THREAD: decode and record only. The tracker holds plain
+            # fields and the publish happens on the loop below (CLAUDE.md 4.2).
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                _logger.warning("p1 malformed cmd/teleop")
+                return
+            # S12A.9.5: the HMI sends cmd/teleop. `device` names the physical
+            # input when the sender knows it; a sender that only says
+            # source=hmi is recorded as keyboard_hmi, which is the S12A.9.7
+            # name for that path. A cloud teleop frame is NOT one of the four
+            # arbitrated sources -- it drives the separate teleop_cloud
+            # behaviour source (550) -- so it is ignored here rather than
+            # promoted into the local arbitration.
+            device = d.get("device")
+            if device is None and d.get("source") == "hmi":
+                device = "keyboard_hmi"
+            if device is None:
+                return
+            try:
+                teleop_tracker.observe(
+                    device, now_mono_ms=int(time.monotonic() * 1000),
+                    deadman=bool(d.get("deadman", False)),
+                    axes=d.get("axes") if isinstance(d.get("axes"), dict)
+                    else None,
+                    mark_edge=bool(d.get("mark", False)))
+            except ValueError as exc:
+                # An off-set device name: refused rather than arbitrated (the
+                # S12A.9.7 set is closed and carries per-device timeouts).
+                _logger.warning("p1 cmd/teleop: %s", exc)
+
+        teleop_sub = gen.declare_subscriber(CMD_TELEOP_TOPIC, _on_teleop)
+
         # --- RTK GNSS cross-plane bridge (11 S1.1.6: p1 订 rt/gnss/*, 发 state/pose) ---
         # rtk_driver publishes FULL RT keys (xbrain/{rid}/rt/gnss/*); the general
         # plane uses bare keys (state/pose). p1 IS the cross-plane point, so it
@@ -224,6 +276,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         try:
             last_hb = time.monotonic()
             last_clock = 0.0
+            last_teleop = 0.0
             while not stop_flag.get("stop"):
                 now = time.monotonic()
                 if pose_pub is not None:
@@ -246,6 +299,16 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                             json.dumps(cenv, ensure_ascii=False).encode("utf-8"))
                         clock_seq["n"] += 1
                         last_clock = now
+                # 11 S12A.9.7: state/teleop at 1 Hz (plus on change, which the
+                # arbitration makes visible through active_source).
+                if now - last_teleop >= TELEOP_PUBLISH_PERIOD_S:
+                    try:
+                        teleop_pub.put(json.dumps(
+                            teleop_tracker.build_state(int(now * 1000)),
+                            ensure_ascii=False).encode("utf-8"))
+                    except Exception as exc:      # noqa: BLE001
+                        _logger.error("p1 teleop state publish failed: %s", exc)
+                    last_teleop = now
                 if now - last_hb >= heartbeat_period_s:
                     _logger.info(
                         "p1 alive; chassis_frames=%d chassis_reconnects=%d "

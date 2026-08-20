@@ -66,7 +66,8 @@ async def rt():
     runtime.update_health({"allow_motion": True})
     runtime.update_robot({"hes": False, "estop_path": "up"})
     runtime.update_power({"soc_pct": 80.0})
-    runtime.update_teleop({"sources": [{"device": "gamepad", "alive": True}]})
+    runtime.update_teleop({"sources": [{"device": "gamepad",
+                                       "stale": False, "alive": True}]})
     yield runtime
     for c in (task, geo, fence):
         await c.close()

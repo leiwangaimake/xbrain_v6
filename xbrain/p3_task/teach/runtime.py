@@ -159,11 +159,24 @@ class TeachRuntime:
         power = self._power or {}
         teleop = self._teleop or {}
         sources = teleop.get("sources") or []
-        # Criterion 1 of check 7: a gamepad/keyboard source that is alive. Its
+        # Criterion 1 of check 7: a LOCAL physical input that is alive -- its
         # dedicated e-stop key is the fallback the whole check is about.
+        #
+        # S12A.3 words this as device in {gamepad, keyboard}, a name that is in
+        # neither closed set; S12A.9.7 fixes the devices as gamepad |
+        # keyboard_local | keyboard_hmi | virtual_stick. Read as the two LOCAL
+        # ones: keyboard_hmi crosses the network, and this criterion exists
+        # because the operator needs a key they can physically reach. The
+        # stricter reading locks nobody out -- an HMI-only operator still
+        # passes on criterion 2 (the cmd/estop path). Mirrors
+        # p1_motion.teleop.state.LOCAL_ESTOP_DEVICES; P3 imports nothing from
+        # p1_motion, so the list is restated rather than shared.
+        _local_estop_devices = ("gamepad", "keyboard_local")
         nonvoice = any(
-            isinstance(s, dict) and s.get("alive")
-            and s.get("device") in ("gamepad", "keyboard")
+            isinstance(s, dict)
+            and (s.get("alive") if s.get("alive") is not None
+                 else not s.get("stale", True))
+            and s.get("device") in _local_estop_devices
             for s in sources)
         # Criterion 2: state/robot reachable and its e-stop path not down.
         estop_ok = bool(robot) and robot.get("estop_path") not in (None, "down")
