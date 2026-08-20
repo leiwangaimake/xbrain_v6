@@ -57,6 +57,11 @@ PROBE_ESTOP_PONG_TOPIC = "probe/estop/pong"  # W5: quadruped pong (11 CR-3, auth
 HEALTH_FACTOR_TOPIC = "health/factor"    # W8: P2 health snapshot -> /api/health
 HEALTH_BIT_TOPIC = "health/bit"          # W8: P2 self-test report -> /api/bit
 FENCE_STALE_AFTER_MS = 10000             # P5F-2: cache silent this long -> degraded
+# state/pose is 10 Hz (P1-1). If it goes silent this long the source is gone (RTK
+# unplugged, P1 stopped) -> the snapshot must report the pose UNAVAILABLE, never
+# keep showing the last fix as if it were live (3.1/3.2 fail-silent). Tight vs the
+# geo window because pose is a real-time safety readout, not semi-static geometry.
+POSE_STALE_AFTER_MS = 1500
 EVENT_RING = 50                          # HMI keeps the most recent N events
 DEFAULT_RTT_DEGRADE_MS = 200             # hmi.link_rtt_degrade_ms fallback (probe, not safety)
 DEFAULT_DOWN_MISSES = 3                   # hmi.link_down_misses fallback (17 S6.3)
@@ -104,6 +109,19 @@ def _fence_snapshot(hmi_state: dict):
     if is_stale or not fences:
         return None, True
     return list(fences), False
+
+
+def _pose_if_fresh(pose, updated_ms: int, now_ms: int,
+                   stale_after_ms: int = POSE_STALE_AFTER_MS):
+    """The pose ONLY while state/pose is still fresh; None once it has been silent
+    past stale_after_ms (RTK unplugged / P1 stopped). Returning None makes
+    pose_group emit the no-fix shell, so the HMI greys the coord/ENU/RTK readouts
+    and hides the robot arrow instead of freezing on the last fix as if it were
+    live (3.1/3.2 fail-silent). enu_origin is NOT gated this way -- once adopted it
+    is a fixed local anchor, so the geo layers keep rendering while pose greys."""
+    if pose is None:
+        return None
+    return pose if (now_ms - updated_ms) <= stale_after_ms else None
 
 
 def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
@@ -163,12 +181,17 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                 # enu_origin to project -- until SITE calibration (W4 GATED-HW) that
                 # origin is the first-fix demo fallback adopted below.
                 "routes": routes, "waypoints": waypoints,
+                # enu_origin PERSISTS once adopted (a fixed local anchor), so it is
+                # NOT staled here -- only the live pose is.
                 "enu_origin": hmi_state.get("enu_origin"),
-                # pose now flows: p1 assembles rt/gnss/heading -> state/pose. Fix
-                # half (lat/lon/fix_type) stays None until rtk_driver publishes
-                # rt/gnss/fix, so the map arrow greys but the heading dial + RTK
-                # heading status come alive.
-                "pose": hmi_state.get("pose"),
+                # pose flows: p1 assembles rt/gnss/heading -> state/pose. STALENESS
+                # GATE: if state/pose has been silent past POSE_STALE_AFTER_MS the
+                # source is gone (RTK unplugged, P1 stopped) -> pass None so
+                # pose_group returns the no-fix shell and the HMI greys the readout,
+                # never shows the last fix as if it were live (3.1/3.2 fail-silent).
+                "pose": _pose_if_fresh(hmi_state.get("pose"),
+                                       hmi_state.get("pose_updated_ms", 0),
+                                       _now_mono_ms()),
                 "clock": hmi_state.get("clock"),   # RTK time-sync (18-C G47)
                 "health": hmi_state.get("health"),  # health/factor (W8)
             }
@@ -315,6 +338,7 @@ def run_voice_loop_wiring(stop_flag: dict,
         "link": None,                # state/link  -> status + ESTOP arming
         "mode": None,                # state/mode  -> footer mode (W3)
         "pose": None,                # state/pose  -> coord panel + heading dial + RTK
+        "pose_updated_ms": 0,        # last state/pose arrival (mono) -> staleness gate
         "clock": None,               # state/clock -> RTK time-sync indicator
         "events": [],                # event/**    -> event stream ring (W2)
         "health": None,              # health/factor -> /api/health (W8)
@@ -486,6 +510,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             except Exception:      # noqa: BLE001
                 return
             hmi_state["pose"] = d.get("data")
+            hmi_state["pose_updated_ms"] = _now_mono_ms()   # for the staleness gate
             # DEMO / W4-pending (user 2026-08-18): the ENU E/N readout and the map
             # robot need an enu_origin to project lat/lon into local metres. The
             # authoritative origin is common.geo.enu_origin, set by SITE calibration

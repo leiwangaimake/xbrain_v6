@@ -18,6 +18,27 @@ from __future__ import annotations
 from xbrain.p5_gateway.hmi import data_readers as dr
 
 
+def test_pose_staleness_gate_greys_a_dead_source():
+    """The pose reaches the HMI ONLY while state/pose is fresh. Once the source
+    goes silent past POSE_STALE_AFTER_MS (RTK unplugged / P1 stopped), the gate
+    returns None -> pose_group emits the no-fix shell -> the HMI greys the readout
+    instead of freezing on the last fix as if it were live (the bug: a dead RTK's
+    last position kept showing). MUTATION: passing the pose through regardless of
+    age reddens the last two asserts."""
+    from xbrain.p5_gateway.runtime.main_wiring import (
+        POSE_STALE_AFTER_MS, _pose_if_fresh,
+    )
+    p = {"lat": 34.70, "lon": 135.50, "fix_type": "rtk_fixed"}
+    # fresh, exactly at the window edge -> passes through
+    assert _pose_if_fresh(p, 1000, 1000 + POSE_STALE_AFTER_MS) is p
+    # one ms past the window -> None (source declared dead)
+    assert _pose_if_fresh(p, 1000, 1000 + POSE_STALE_AFTER_MS + 1) is None
+    # never had a pose -> None, never a fabricated fix
+    assert _pose_if_fresh(None, 0, 999999) is None
+    # a staled pose flows into pose_group as None -> the no-fix shell the UI greys
+    assert dr.pose_group(_pose_if_fresh(p, 1000, 999999))["available"] is False
+
+
 def test_pose_group_carries_heading_status():
     pose = {
         "heading_rad": 1.0, "heading_valid": True,
