@@ -34,7 +34,8 @@ does not enforce confirm levels; see the note in geo_command.py.
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable, Dict, Optional
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from xbrain.common.errors import E_INTERNAL, E_NOT_IMPLEMENTED
 from xbrain.p3_task.ingest.geo_command import (
@@ -42,6 +43,27 @@ from xbrain.p3_task.ingest.geo_command import (
 )
 
 _logger = logging.getLogger("xbrain.p3.geo")
+
+
+@dataclass(frozen=True)
+class ApplyResult:
+    """What an applier returns: the ack fields plus any audit events.
+
+    Events are RETURNED rather than published from inside the applier so the
+    transaction boundary stays honest -- an event published mid-transaction
+    announces a change that a rollback can still undo, and 11 S7.10 is explicit
+    that the event stream carries no synchronisation duty, so a listener has no
+    way to discover the retraction. The wiring publishes them after the commit.
+
+    result is accepted | rejected | duplicate (S7.9.2 step 5 defines the third:
+    a redelivered cmd_id replays the first outcome and does NOT re-apply).
+    """
+    result: str = "accepted"
+    code: str = "OK"
+    detail: Optional[Dict[str, Any]] = None
+    #: (severity, detail.type, detail) triples -> event/{sev}/geo (11 S6.2).
+    events: Tuple[Tuple[str, str, Dict[str, Any]], ...] = field(
+        default_factory=tuple)
 
 
 class GeoContext:
@@ -62,9 +84,9 @@ class GeoContext:
 
 # action -> applier. Populated by the per-action batches; an absent action is a
 # clean refusal, not a crash and not a pretend-success. Appliers are async and
-# return the ack detail dict (or None), never the whole ack -- shaping the ack in
-# one place keeps result/code consistent across actions.
-Applier = Callable[[GeoCommand, GeoContext, int], Awaitable[Optional[Dict[str, Any]]]]
+# return an ApplyResult, never the whole ack -- shaping the ack in one place
+# keeps result/code consistent across actions.
+Applier = Callable[[GeoCommand, GeoContext, int], Awaitable[ApplyResult]]
 APPLIERS: Dict[str, Applier] = {}
 
 
@@ -78,13 +100,17 @@ def register_applier(action: str, fn: Applier) -> None:
 
 
 async def handle_geo_payload(payload: Dict[str, Any], ctx: GeoContext,
-                             *, now_ms: int) -> Dict[str, Any]:
+                             *, now_ms: int, on_event=None) -> Dict[str, Any]:
     """Run one cmd/geo payload end to end and return the ack body to publish.
 
     Never raises: every failure path becomes a rejected ack. An exception that
     escaped here would kill the P3 wiring loop, and P3 is the process that also
     holds task scheduling -- one malformed geo frame from a browser must not
     stop patrol tasks from being dispatched.
+
+    on_event(sev, type, detail) is called once per audit event AFTER the applier
+    returned, i.e. after its transaction committed. Optional: a caller with no
+    event publisher (a test, a tool) still gets the ack.
     """
     # cmd_id is needed for the ack even when parsing failed, so it is read
     # defensively before validation. An unusable cmd_id (missing / not a string)
@@ -107,7 +133,7 @@ async def handle_geo_payload(payload: Dict[str, Any], ctx: GeoContext,
                        {"action": cmd.action,
                         "reason": "action has no applier in this build"})
     try:
-        detail = await applier(cmd, ctx, now_ms)
+        res = await applier(cmd, ctx, now_ms)
     except GeoCommandError as exc:
         # The applier's own refusals (conflict, not found, invalid geometry)
         # carry their code the same way the envelope's do.
@@ -123,4 +149,25 @@ async def handle_geo_payload(payload: Dict[str, Any], ctx: GeoContext,
         # and permitted, and we failed to apply it.
         _logger.error("p3 cmd/geo %s failed: %s", cmd.action, exc)
         return geo_ack(cmd.cmd_id, "rejected", E_INTERNAL, {"reason": str(exc)})
-    return geo_ack(cmd.cmd_id, "accepted", "OK", detail)
+    # Events after the commit, and each one guarded: a publisher that throws
+    # must not turn an applied write into a rejected ack -- the write happened.
+    if on_event is not None:
+        for sev, etype, detail in res.events:
+            try:
+                on_event(sev, etype, detail)
+            except Exception as exc:      # noqa: BLE001
+                _logger.error("p3 geo event %s publish failed: %s", etype, exc)
+    return geo_ack(cmd.cmd_id, res.result, res.code, res.detail)
+
+
+# The applier modules are imported HERE, at the bottom, purely for their
+# registration side effect. Importing them at the top would be a cycle (they
+# import ApplyResult and register_applier from this module); by the time this
+# line runs, every name they need is bound.
+#
+# Why not leave the import to the wiring: an applier registry that fills up only
+# if some other module remembered to import the right thing is a registry that
+# is empty in exactly one configuration -- and the symptom there is
+# E_NOT_IMPLEMENTED for an action that IS implemented, which reads as "not built
+# yet" rather than as a wiring bug. test_appliers_are_registered pins the set.
+from xbrain.p3_task.ingest import geo_write  # noqa: E402,F401

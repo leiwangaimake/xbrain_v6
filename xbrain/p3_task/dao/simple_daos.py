@@ -159,9 +159,16 @@ class FencesDAO:
     async def list_active(self):
         # Ordered for a DETERMINISTIC FenceSet crc32 (11 S9A.2 concatenates
         # polygons in array order; a stable order keeps the crc32 reproducible).
+        # state='active' is the operative filter, not tombstone alone: a fence
+        # the operator recorded but has not activated (F15) is stored as draft
+        # and must NOT be enforced -- broadcasting it would put a keep-out zone
+        # into effect that nobody switched on. tombstone=0 stays as the second
+        # half (a deleted row is also state='deleted', both are checked so the
+        # filter still holds if one of the two is ever written alone).
         cur = await self._conn.execute(
             "SELECT fence_id, name, role, kind, geom_json, hard_enforce, rev "
-            "FROM fences WHERE tombstone=0 ORDER BY fence_id")
+            "FROM fences WHERE tombstone=0 AND state='active' "
+            "ORDER BY fence_id")
         return await cur.fetchall()
 
 
@@ -193,5 +200,5 @@ class DocksDAO:
         cur = await self._conn.execute(
             "SELECT geo_id, name, num, rtk_lat, rtk_lon, dock_heading_rad, "
             " handover_lat, handover_lon, handover_heading_rad, enabled, rev "
-            "FROM docks WHERE tombstone=0 ORDER BY geo_id")
+            "FROM docks WHERE tombstone=0 AND state='active' ORDER BY geo_id")
         return await cur.fetchall()

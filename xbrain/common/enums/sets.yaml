@@ -131,6 +131,17 @@ sets:
       - wecom
       - hmi
       - voice
+  geo_created_by:
+    source: "11 S7.8.2"
+    anchor: "| `created_by` / `updated_by` | string |"        # the S7.8.2 audit field row
+    note: "地理要素的创建者/最后修改者(S7.8.2 审计列). 与 geo_origin 是两个集: origin 是通道(权限判据, 无 teach 有 wecom); created_by 记来源形态(有 teach/factory 无 wecom). 示教录制 = origin voice + created_by teach"
+    ordered: false
+    values:
+      - cloud
+      - hmi
+      - voice
+      - teach
+      - factory
   geo_type:
     source: "11 S7.8.2"
     anchor: "| `type` | string |"        # the S7.8.2 common-metadata field row

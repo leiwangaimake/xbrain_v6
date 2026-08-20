@@ -441,8 +441,16 @@ FENCE_ROLE = _SETS["fence_role"]
 #   GEO_STATE's deleted member is the tombstone (S7.11.4): rows are never
 #   physically removed, so state=deleted and tombstone=1 name the same condition
 #   and the single writer sets both in one transaction.
+#   GEO_CREATED_BY is deliberately NOT the same set as GEO_ORIGIN, and the
+#   difference is load bearing in both directions: origin answers "through which
+#   channel did this arrive" (a permission question, so wecom is a member and
+#   teach is not), created_by answers "what produced it" (an audit question, so
+#   teach and factory are members and wecom is not). A teach recording is stored
+#   as origin=voice + created_by=teach. Merging them would either grant teach a
+#   permission row or lose the provenance of every recorded route.
 GEO_ACTION = _SETS["geo_action"]
 GEO_ORIGIN = _SETS["geo_origin"]
+GEO_CREATED_BY = _SETS["geo_created_by"]
 GEO_TYPE = _SETS["geo_type"]
 GEO_STATE = _SETS["geo_state"]
 # heading_source -- GnssHeading.source (11 S3.3): dual_antenna | cog | none.
@@ -709,7 +717,8 @@ __all__ = ["ClosedSet", "ClosedSetViolation", "SET_NAMES", "get", "parse_enum",
            # (it is in SET_NAMES) while `from enums import *` does not carry it,
            # so the omission surfaces at a consumer's import line, not here.
            "FENCE_ROLE", "HEADING_SOURCE",
-           "GEO_ACTION", "GEO_ORIGIN", "GEO_TYPE", "GEO_STATE"]
+           "GEO_ACTION", "GEO_ORIGIN", "GEO_CREATED_BY", "GEO_TYPE",
+           "GEO_STATE"]
 
 
 # get -- look a set up by name, raising on an unknown NAME and not only on an

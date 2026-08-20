@@ -27,8 +27,13 @@ BIZ-P3-3/4/5; DAO code in BIZ-P3-6.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Iterable
+
+# A migration that happens without a line in the log is a migration nobody can
+# confirm ran; this is the only thing this module logs.
+_logger = logging.getLogger("xbrain.p3.persistence")
 
 
 REQUIRED_PRAGMAS: dict = {
@@ -102,4 +107,15 @@ async def open_configured(path: str, ddl_statements=()):
     for stmt in ddl_statements:
         await conn.execute(stmt)
     await conn.commit()
+    # Additive column migration for the geo/fence tables, if this connection
+    # owns any of them. It runs after the DDL and is a no-op on a database that
+    # the DDL just created (every column is already there) and on task.db /
+    # record.db (they have none of those tables). It is here rather than at the
+    # call site so no future opener of geo.db can forget it -- an un-migrated
+    # geo.db does not fail at open, it fails at the first upsert on the robot.
+    from xbrain.p3_task.persistence.schema_geo import ensure_added_columns
+
+    added = await ensure_added_columns(conn)
+    if added:
+        _logger.info("db %s: migrated, %d column(s) added", path, added)
     return conn

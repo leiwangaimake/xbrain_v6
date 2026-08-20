@@ -304,6 +304,7 @@ SET_DOC = {
     "reason": "11", "control_mode": "11", "heading_source": "11",
     "fence_role": "11",
     "geo_action": "11", "geo_origin": "11", "geo_type": "11", "geo_state": "11",
+    "geo_created_by": "11",
     # The one set defined outside the contract. See the module docstring.
     "charge_stage": "15",
 }
@@ -454,6 +455,12 @@ EXTRACTORS.update({
     # geo_type / geo_state -- two rows of the S7.8.2 common-metadata field table.
     # Each row backticks its own field name in column 0, hence the exclude; the
     # remaining backticked tokens on the row are exactly the members.
+    # geo_created_by -- the S7.8.2 audit row. It backticks BOTH field names in
+    # column 0 (created_by / updated_by share one row), so both are excluded and
+    # the five provenance values remain.
+    "geo_created_by": lambda: _row_backticked(
+        _DOCS["11"], "| `created_by` / `updated_by` | string |",
+        "geo_created_by", exclude=("created_by", "updated_by")),
     "geo_type": lambda: _row_backticked(
         _DOCS["11"], "| `type` | string |", "geo_type", exclude=("type",)),
     "geo_state": lambda: _row_backticked(

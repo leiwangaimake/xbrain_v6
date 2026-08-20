@@ -177,19 +177,30 @@ def test_matrix_table_covers_every_action():
 # ------------------------------------------------------------- dispatch ----
 
 class _Ctx(GeoContext):
+    """A context with no connections: these cases never reach a real applier.
+    An applier that DID touch the db here would raise AttributeError on None,
+    which the dispatch reports as E_INTERNAL -- so a case that accidentally
+    reached storage fails loudly rather than passing on a half-write."""
+
     def __init__(self):
         super().__init__(geo_conn=None, fence_conn=None, task_conn=None)
 
 
 @pytest.mark.asyncio
-async def test_unwired_action_is_refused_not_accepted():
+async def test_unwired_action_is_refused_not_accepted(monkeypatch):
     """An action with no applier answers rejected + E_NOT_IMPLEMENTED.
 
-    *** This is the batch's load-bearing assertion. MUTATION: return an
-    accepted ack when APPLIERS has no entry -- a caller then hears "saved" for a
-    route that was never written, which is the fail-silent shape 3.2 catalogues.
+    *** Load-bearing. MUTATION: return an accepted ack when APPLIERS has no
+    entry -- a caller then hears "saved" for a route that was never written,
+    which is the fail-silent shape 3.2 catalogues.
+
+    The unwired action is SIMULATED by removing a registered one, rather than
+    naming whichever action happens to be unbuilt today: written the other way,
+    this case would quietly stop testing anything the batch that wires the last
+    action, and it would look like it still did.
     """
-    ack = await handle_geo_payload(_cmd(action="rename"), _Ctx(), now_ms=1)
+    monkeypatch.delitem(APPLIERS, "upsert")
+    ack = await handle_geo_payload(_cmd(), _Ctx(), now_ms=1)
     assert ack["result"] == "rejected"
     assert ack["code"] == E_NOT_IMPLEMENTED
     assert ack["cmd_id"] == "c-1"

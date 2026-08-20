@@ -196,6 +196,15 @@ inline constexpr std::string_view kGeoAction[] = {
     "resync",
 };
 
+// geo_created_by -- 11 S7.8.2   anchor: | `created_by` / `updated_by` | string |
+inline constexpr std::string_view kGeoCreatedBy[] = {
+    "cloud",
+    "hmi",
+    "voice",
+    "teach",
+    "factory",
+};
+
 // geo_origin -- 11 S7.9.5   anchor: 云端 `cloud`
 inline constexpr std::string_view kGeoOrigin[] = {
     "cloud",

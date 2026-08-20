@@ -55,10 +55,17 @@ CREATE TABLE IF NOT EXISTS waypoints (
   yaw_deg        REAL,                          -- heading at capture (true north, CW+)
   arrival_radius REAL NOT NULL DEFAULT 1.0,     -- per-point, not a global constant
   description    TEXT,
+  num            INTEGER,                       -- 1..99 voice "3 hao", unique per type (11 S7.8.2)
+  alias_json     TEXT NOT NULL DEFAULT '[]',    -- JSON [str] ASR L3 synonyms (11 S7.8.2)
+  state          TEXT NOT NULL DEFAULT 'active',-- draft|active|disabled|deleted (11 S7.8.2)
+  created_by     TEXT NOT NULL DEFAULT 'factory',
+  updated_by     TEXT NOT NULL DEFAULT 'factory',
   rev            INTEGER NOT NULL DEFAULT 1,
   content_hash   TEXT NOT NULL,
   tombstone      INTEGER NOT NULL DEFAULT 0 CHECK (tombstone IN (0,1)),
   updated_ms     INTEGER NOT NULL,
+  CHECK (state IN ('draft','active','disabled','deleted')),
+  CHECK (num IS NULL OR (num >= 1 AND num <= 99)),
   CHECK (geo_id GLOB 'w-*')
 );
 """.strip()
@@ -83,10 +90,17 @@ CREATE TABLE IF NOT EXISTS routes (
   direction     TEXT NOT NULL DEFAULT 'forward',-- forward | reverse (first entry direction)
   total_len_m   REAL,                           -- computed at commit (11 S7.8.3)
   description   TEXT,
+  num           INTEGER,                        -- 1..99 voice "3 hao lu jing" (11 S7.8.2)
+  alias_json    TEXT NOT NULL DEFAULT '[]',     -- JSON [str] ASR L3 synonyms
+  state         TEXT NOT NULL DEFAULT 'active', -- draft|active|disabled|deleted
+  created_by    TEXT NOT NULL DEFAULT 'factory',
+  updated_by    TEXT NOT NULL DEFAULT 'factory',
   rev           INTEGER NOT NULL DEFAULT 1,
   content_hash  TEXT NOT NULL,
   tombstone     INTEGER NOT NULL DEFAULT 0 CHECK (tombstone IN (0,1)),
   updated_ms    INTEGER NOT NULL,
+  CHECK (state IN ('draft','active','disabled','deleted')),
+  CHECK (num IS NULL OR (num >= 1 AND num <= 99)),
   CHECK ((waypoint_ids IS NULL) <> (path_points IS NULL)),   -- XOR: exactly one geometry
   CHECK (loop_mode IN ('oneway','pingpong','closed')),
   CHECK (direction IN ('forward','reverse')),
@@ -134,10 +148,15 @@ CREATE TABLE IF NOT EXISTS docks (
   enabled              INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),  -- disable != delete (G-3)
   occupied_by          TEXT,                       -- fleet reserve (CHG-42); single robot = NULL
   description          TEXT,
+  alias_json           TEXT NOT NULL DEFAULT '[]', -- JSON [str] ASR L3 synonyms (num already above)
+  state                TEXT NOT NULL DEFAULT 'active',
+  created_by           TEXT NOT NULL DEFAULT 'factory',
+  updated_by           TEXT NOT NULL DEFAULT 'factory',
   rev                  INTEGER NOT NULL DEFAULT 1,  -- sync (added on top of 15 S9.3)
   content_hash         TEXT NOT NULL,
   tombstone            INTEGER NOT NULL DEFAULT 0 CHECK (tombstone IN (0,1)),
   updated_ms           INTEGER NOT NULL,
+  CHECK (state IN ('draft','active','disabled','deleted')),
   CHECK (num IS NULL OR (num >= 1 AND num <= 99)),
   CHECK (handover_tol_m > 0.0 AND handover_tol_rad > 0.0),
   CHECK (geo_id GLOB 'd-*')
@@ -155,12 +174,37 @@ CREATE TABLE IF NOT EXISTS docks (
 # The old "16 waypoints per route" trigger is GONE: in the 15 S9.3 model route
 # geometry is INLINE (path_points, capped in commit_route, 11 S7.8.3 <= 5000),
 # and route_waypoint_assoc is now proximity (no natural per-route cap).
+# Quota triggers count LIVE rows, and "live" now means state='active' AND
+# tombstone=0, not tombstone alone. A draft object is one the operator recorded
+# but has not put into service (11 S7.8.2), and charging it against the quota
+# would mean a recorded-but-unused dock blocks a real one.
+#
+# Every trigger below is DROPped before it is created (see the *_STATEMENTS
+# tuples). CREATE TRIGGER IF NOT EXISTS on an EXISTING database keeps the OLD
+# body silently -- the definition changed here would simply never take effect on
+# any robot that has already run, and the symptom would be a quota enforced by
+# yesterday's rule with nothing in any log to say so.
 TRIGGER_DOCK_QUOTA = """
-CREATE TRIGGER IF NOT EXISTS trg_dock_quota
+CREATE TRIGGER trg_dock_quota
 BEFORE INSERT ON docks
+WHEN NEW.state = 'active'
 BEGIN
   SELECT RAISE(ABORT, 'dock quota exceeded (max 5)')
-   WHERE (SELECT COUNT(*) FROM docks WHERE tombstone = 0) >= 5;
+   WHERE (SELECT COUNT(*) FROM docks
+           WHERE tombstone = 0 AND state = 'active') >= 5;
+END;
+""".strip()
+
+# The UPDATE half. Without it, set_state can walk a sixth dock into service one
+# state flip at a time -- the INSERT trigger only ever sees the row arrive.
+TRIGGER_DOCK_QUOTA_UPD = """
+CREATE TRIGGER trg_dock_quota_upd
+BEFORE UPDATE OF state ON docks
+WHEN NEW.state = 'active' AND OLD.state <> 'active'
+BEGIN
+  SELECT RAISE(ABORT, 'dock quota exceeded (max 5)')
+   WHERE (SELECT COUNT(*) FROM docks
+           WHERE tombstone = 0 AND state = 'active') >= 5;
 END;
 """.strip()
 
@@ -179,10 +223,17 @@ CREATE TABLE IF NOT EXISTS fences (
   geom_json     TEXT NOT NULL,                   -- WGS84 vertices (11 S9A.2)
   hard_enforce  INTEGER NOT NULL DEFAULT 1 CHECK (hard_enforce IN (0,1)),
   soft_margin_m REAL,
+  num           INTEGER,                        -- 1..99 voice "2 hao wei lan" (F15)
+  alias_json    TEXT NOT NULL DEFAULT '[]',
+  state         TEXT NOT NULL DEFAULT 'active', -- draft|active|disabled|deleted
+  created_by    TEXT NOT NULL DEFAULT 'factory',
+  updated_by    TEXT NOT NULL DEFAULT 'factory',
   rev           INTEGER NOT NULL DEFAULT 1,
   content_hash  TEXT NOT NULL,
   tombstone     INTEGER NOT NULL DEFAULT 0 CHECK (tombstone IN (0,1)),
   updated_ms    INTEGER NOT NULL,
+  CHECK (state IN ('draft','active','disabled','deleted')),
+  CHECK (num IS NULL OR (num >= 1 AND num <= 99)),
   CHECK (role IN ('allow','forbid','speed_limit','warning')),
   CHECK (kind IN ('polygon','circle')),
   CHECK (role <> 'warning' OR hard_enforce = 0),   -- 11 S9A.2: warning never hard-enforces
@@ -197,22 +248,72 @@ CREATE TABLE IF NOT EXISTS fences (
 # one, so it is checked at FenceSet build/broadcast time (validate_active_fence_set
 # in fence/geom.py) -- a per-row INSERT trigger cannot assert existence.
 TRIGGER_FENCE_TOTAL_QUOTA = """
-CREATE TRIGGER IF NOT EXISTS trg_fence_total_quota
+CREATE TRIGGER trg_fence_total_quota
 BEFORE INSERT ON fences
+WHEN NEW.state = 'active'
 BEGIN
   SELECT RAISE(ABORT, 'fence quota exceeded (max 5 active, 11 S9A.1)')
-   WHERE (SELECT COUNT(*) FROM fences WHERE tombstone = 0) >= 5;
+   WHERE (SELECT COUNT(*) FROM fences
+           WHERE tombstone = 0 AND state = 'active') >= 5;
 END;
 """.strip()
 
 TRIGGER_FENCE_SINGLE_ALLOW = """
-CREATE TRIGGER IF NOT EXISTS trg_fence_single_allow
+CREATE TRIGGER trg_fence_single_allow
 BEFORE INSERT ON fences
-WHEN NEW.role = 'allow'
+WHEN NEW.role = 'allow' AND NEW.state = 'active'
 BEGIN
   SELECT RAISE(ABORT, 'duplicate allow fence (11 S9A.1A: exactly 1)')
-   WHERE (SELECT COUNT(*) FROM fences WHERE tombstone = 0 AND role = 'allow') >= 1;
+   WHERE (SELECT COUNT(*) FROM fences
+           WHERE tombstone = 0 AND state = 'active' AND role = 'allow') >= 1;
 END;
+""".strip()
+
+# The UPDATE halves. F15 (set_state fence -> active) is precisely the path that
+# turns a stored draft into a live fence, so without these two the S9A.1A
+# invariants hold at INSERT and are then walked past one activation at a time --
+# and the second allow fence is the dangerous one: two keep-in polygons make the
+# permitted area their union, quietly widening it.
+TRIGGER_FENCE_TOTAL_QUOTA_UPD = """
+CREATE TRIGGER trg_fence_total_quota_upd
+BEFORE UPDATE OF state ON fences
+WHEN NEW.state = 'active' AND OLD.state <> 'active'
+BEGIN
+  SELECT RAISE(ABORT, 'fence quota exceeded (max 5 active, 11 S9A.1)')
+   WHERE (SELECT COUNT(*) FROM fences
+           WHERE tombstone = 0 AND state = 'active') >= 5;
+END;
+""".strip()
+
+TRIGGER_FENCE_SINGLE_ALLOW_UPD = """
+CREATE TRIGGER trg_fence_single_allow_upd
+BEFORE UPDATE OF state ON fences
+WHEN NEW.role = 'allow' AND NEW.state = 'active' AND OLD.state <> 'active'
+BEGIN
+  SELECT RAISE(ABORT, 'duplicate allow fence (11 S9A.1A: exactly 1)')
+   WHERE (SELECT COUNT(*) FROM fences
+           WHERE tombstone = 0 AND state = 'active' AND role = 'allow') >= 1;
+END;
+""".strip()
+
+
+# 11 S7.9.2 step 5: idempotency is keyed on cmd_id. A redelivered command (Zenoh
+# does not guarantee exactly-once, C-5) must return the FIRST execution's result
+# and must not bump rev a second time. The log lives in BOTH databases, not in one
+# shared place, so the log row is written inside the SAME transaction as the
+# mutation it records: a fence upsert writes fence.db only, and a log row in
+# geo.db would be a second commit that can be lost independently -- after which
+# the command looks unseen and gets applied twice.
+DDL_GEO_CMD_LOG = """
+CREATE TABLE IF NOT EXISTS geo_cmd_log (
+  cmd_id      TEXT PRIMARY KEY,                -- 11 S7.9.1 sender-minted id
+  action      TEXT NOT NULL,
+  geo_id      TEXT,                            -- NULL for set-wide actions
+  result      TEXT NOT NULL,                   -- accepted | rejected
+  code        TEXT NOT NULL,                   -- OK or a closed-set E_*
+  detail_json TEXT,                            -- the ack detail, replayed verbatim
+  applied_ms  INTEGER NOT NULL
+);
 """.strip()
 
 
@@ -221,15 +322,124 @@ GEO_DB_STATEMENTS = (
     DDL_ROUTES,
     DDL_ROUTE_WAYPOINT_ASSOC,
     DDL_DOCKS,
+    DDL_GEO_CMD_LOG,
+    # DROP before CREATE: see the comment above TRIGGER_DOCK_QUOTA. These run on
+    # every open, so a trigger body edited here reaches an existing robot's db.
+    "DROP TRIGGER IF EXISTS trg_dock_quota;",
+    "DROP TRIGGER IF EXISTS trg_dock_quota_upd;",
     TRIGGER_DOCK_QUOTA,
+    TRIGGER_DOCK_QUOTA_UPD,
 )
 
 
 FENCE_DB_STATEMENTS = (
     DDL_FENCES,
+    DDL_GEO_CMD_LOG,
+    "DROP TRIGGER IF EXISTS trg_fence_total_quota;",
+    "DROP TRIGGER IF EXISTS trg_fence_single_allow;",
+    "DROP TRIGGER IF EXISTS trg_fence_total_quota_upd;",
+    "DROP TRIGGER IF EXISTS trg_fence_single_allow_upd;",
     TRIGGER_FENCE_TOTAL_QUOTA,
     TRIGGER_FENCE_SINGLE_ALLOW,
+    TRIGGER_FENCE_TOTAL_QUOTA_UPD,
+    TRIGGER_FENCE_SINGLE_ALLOW_UPD,
 )
+
+
+# ---------------------------------------------------------------------------
+# Additive column migration.
+#
+# CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so the
+# columns added above would be missing on every robot whose geo.db/fence.db was
+# created by an earlier build -- and the failure would be an OperationalError on
+# the first upsert, on the robot, not here. This closes that gap the only way
+# SQLite offers: read PRAGMA table_info and ADD COLUMN what is absent.
+#
+# Why not the versioned Migration framework in migration.py: that framework keys
+# off a schema_version row these two files have never carried, so every existing
+# geo.db would present as version 0 and re-run the whole ladder against tables
+# that are already at the top of it. An idempotent column-presence check needs no
+# version at all, and it converges from ANY prior shape, including the ones no
+# recorded version ever described.
+#
+# Every default here matches the CREATE TABLE default above, so an old database
+# and a fresh one end up identical -- test_schema_migration asserts exactly that
+# by comparing PRAGMA table_info of both, because a divergence between the DDL
+# and this table is silent and permanent otherwise.
+#
+# state defaults to 'active' for EXISTING rows on purpose. Those rows predate the
+# lifecycle column and are in service right now; defaulting them to 'draft' would
+# switch off every fence and dock on the robot at the next process start, which
+# is a fail-DANGEROUS migration. New objects get their state from the applier,
+# where a newly recorded fence IS a draft until F15 activates it.
+# The two column definitions that carry a CHECK. Written once and referenced
+# below so the ADD COLUMN form cannot drift from the CREATE TABLE form: a
+# migrated database WITHOUT the constraint would accept an off-set state, and
+# PRAGMA table_info -- what the migration test compares -- does not report CHECK
+# constraints, so that particular divergence is invisible to the test that
+# exists to catch divergence.
+_STATE_COLDEF = ("TEXT NOT NULL DEFAULT 'active' "
+                 "CHECK (state IN ('draft','active','disabled','deleted'))")
+_NUM_COLDEF = "INTEGER CHECK (num IS NULL OR (num >= 1 AND num <= 99))"
+
+ADDED_COLUMNS = {
+    "waypoints": (
+        ("num", _NUM_COLDEF),
+        ("alias_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("state", _STATE_COLDEF),
+        ("created_by", "TEXT NOT NULL DEFAULT 'factory'"),
+        ("updated_by", "TEXT NOT NULL DEFAULT 'factory'"),
+    ),
+    "routes": (
+        ("num", _NUM_COLDEF),
+        ("alias_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("state", _STATE_COLDEF),
+        ("created_by", "TEXT NOT NULL DEFAULT 'factory'"),
+        ("updated_by", "TEXT NOT NULL DEFAULT 'factory'"),
+    ),
+    "docks": (
+        ("alias_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("state", _STATE_COLDEF),
+        ("created_by", "TEXT NOT NULL DEFAULT 'factory'"),
+        ("updated_by", "TEXT NOT NULL DEFAULT 'factory'"),
+    ),
+    "fences": (
+        ("num", _NUM_COLDEF),
+        ("alias_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("state", _STATE_COLDEF),
+        ("created_by", "TEXT NOT NULL DEFAULT 'factory'"),
+        ("updated_by", "TEXT NOT NULL DEFAULT 'factory'"),
+    ),
+}
+
+
+async def ensure_added_columns(conn) -> int:
+    """ADD COLUMN whatever ADDED_COLUMNS lists and this database lacks.
+
+    Idempotent and order-free: it asks the database what it has rather than what
+    version it claims to be. Returns the number of columns added, so the caller
+    can log a migration having happened instead of it being invisible.
+
+    Tables the connection does not own are skipped (geo.db has no fences table
+    and vice versa) -- PRAGMA table_info on an absent table returns no rows,
+    which is exactly the "nothing to do" answer.
+    """
+    added = 0
+    for table, columns in ADDED_COLUMNS.items():
+        cur = await conn.execute(f"PRAGMA table_info({table})")
+        rows = await cur.fetchall()
+        if not rows:
+            continue                        # not a table of this database
+        have = {r[1] for r in rows}
+        for name, coldef in columns:
+            if name in have:
+                continue
+            await conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN {name} {coldef}")
+            added += 1
+    if added:
+        await conn.commit()
+    return added
 
 
 DDL_COMMANDS = """

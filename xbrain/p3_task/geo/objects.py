@@ -23,6 +23,14 @@ their keypoints mode A), NOT the old assoc vertex list. Tombstoned rows are
 excluded. A waypoint with no name never happens now (name is NOT NULL). docks are
 still ENU (e_m/n_m) -- out of scope for this migration and not rendered on the map.
 
+Every object carries its lifecycle `state` (11 S7.8.2). The map shows draft and
+disabled objects as well as active ones -- an operator who just recorded a route
+must SEE it, and a route that exists but is switched off is exactly what the
+operator needs to be told about. Only tombstones (state='deleted') are withheld.
+Distinguishing the three visible states is the frontend's job; withholding the
+field would make that impossible, and withholding drafts would make a freshly
+recorded route look like a recording that failed.
+
 catalog_rev is max(updated_ms) across the live geo rows: it changes on any edit,
 so P5 can cheaply tell "did the geo set change" without diffing the whole payload
 (GO-2). It is 0 for an empty/absent geo set.
@@ -58,11 +66,11 @@ async def _read_waypoints(conn) -> List[Dict[str, Any]]:
     # route vertices are INLINE on routes now, so EVERY waypoint row is a keypoint
     # (no assoc exclusion). lat/lon are emitted for the frontend to project.
     cur = await conn.execute(
-        "SELECT geo_id, name, rtk_lat, rtk_lon, yaw_deg, rev "
-        "FROM waypoints WHERE tombstone=0 ORDER BY geo_id")
+        "SELECT geo_id, name, rtk_lat, rtk_lon, yaw_deg, rev, state "
+        "FROM waypoints WHERE state<>'deleted' AND tombstone=0 ORDER BY geo_id")
     rows = await cur.fetchall()
     return [{"geo_id": r[0], "name": r[1], "lat": r[2], "lon": r[3],
-             "yaw_deg": r[4], "rev": r[5]} for r in rows]
+             "yaw_deg": r[4], "rev": r[5], "state": r[6]} for r in rows]
 
 
 async def _read_docks(conn) -> List[Dict[str, Any]]:
@@ -70,20 +78,21 @@ async def _read_docks(conn) -> List[Dict[str, Any]]:
     # waypoints (the frontend does not render docks, but the payload stays
     # coordinate-consistent). heading is the dock body approach heading.
     cur = await conn.execute(
-        "SELECT geo_id, name, rtk_lat, rtk_lon, dock_heading_rad, rev "
-        "FROM docks WHERE tombstone=0 ORDER BY geo_id")
+        "SELECT geo_id, name, rtk_lat, rtk_lon, dock_heading_rad, rev, state "
+        "FROM docks WHERE state<>'deleted' AND tombstone=0 ORDER BY geo_id")
     rows = await cur.fetchall()
     return [{"geo_id": r[0], "name": r[1], "lat": r[2], "lon": r[3],
-             "heading_rad": r[4], "rev": r[5]} for r in rows]
+             "heading_rad": r[4], "rev": r[5], "state": r[6]} for r in rows]
 
 
 async def _read_routes(conn) -> List[Dict[str, Any]]:
     cur = await conn.execute(
-        "SELECT geo_id, name, waypoint_ids, path_points, loop_mode, rev "
-        "FROM routes WHERE tombstone=0 ORDER BY geo_id")
+        "SELECT geo_id, name, waypoint_ids, path_points, loop_mode, rev, state "
+        "FROM routes WHERE state<>'deleted' AND tombstone=0 ORDER BY geo_id")
     routes = await cur.fetchall()
     out: List[Dict[str, Any]] = []
-    for geo_id, name, waypoint_ids, path_points, loop_mode, rev in routes:
+    for (geo_id, name, waypoint_ids, path_points, loop_mode, rev,
+         state) in routes:
         # Geometry is INLINE (15 S9.3): mode B = path_points [[lat,lon]] verbatim;
         # mode A = waypoint_ids resolved to each anchor keypoint's rtk_lat/lon. A
         # deleted anchor simply drops from the line (never a fabricated point).
@@ -99,7 +108,7 @@ async def _read_routes(conn) -> List[Dict[str, Any]]:
                 if wr is not None:
                     points.append({"lat": wr[0], "lon": wr[1]})
         out.append({"geo_id": geo_id, "name": name, "rev": rev,
-                    "loop_mode": loop_mode, "points": points})
+                    "loop_mode": loop_mode, "points": points, "state": state})
     return out
 
 
