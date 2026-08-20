@@ -229,25 +229,10 @@ async def test_dock_quota_trigger_rejects_sixth(geo_conn):
         await dao.insert("d5", 5.0, 0.0, 0.0, "h5", 0)
 
 
-@pytest.mark.asyncio
-async def test_waypoint_quota_per_route_trigger(geo_conn):
-    await geo_conn.execute(
-        "INSERT INTO routes (route_id, name, content_hash, updated_ms) "
-        "VALUES ('r1', 'R', 'h', 0)")
-    for i in range(16):
-        await geo_conn.execute(
-            "INSERT INTO waypoints (waypoint_id, x_m, y_m, content_hash, "
-            " updated_ms) VALUES (?, 0, 0, 'h', 0)", (f"w{i}",))
-        await geo_conn.execute(
-            "INSERT INTO route_waypoint_assoc (route_id, seq, waypoint_id) "
-            "VALUES ('r1', ?, ?)", (i, f"w{i}"))
-    await geo_conn.execute(
-        "INSERT INTO waypoints (waypoint_id, x_m, y_m, content_hash, "
-        " updated_ms) VALUES ('w17', 0, 0, 'h', 0)")
-    with pytest.raises(Exception, match="waypoint quota"):
-        await geo_conn.execute(
-            "INSERT INTO route_waypoint_assoc (route_id, seq, waypoint_id) "
-            "VALUES ('r1', 16, 'w17')")
+# The old "16 waypoints per route" trigger was RETIRED by PLAN A (v1.5): route
+# geometry is inline (routes.path_points), so the cap moved into commit_route
+# (11 S7.8.3 <= 5000), covered by test_geo_commit::test_commit_route_rejects_over_cap.
+# route_waypoint_assoc is now a proximity relation with no per-route cap.
 
 
 # --- BIZ-P3-6 DAO layer basics ---
@@ -307,15 +292,17 @@ async def test_patrol_progress_upsert(task_conn):
 
 @pytest.mark.asyncio
 async def test_geo_object_rev_bump_and_idempotency(geo_conn):
+    # v1.5: waypoints are WGS84 named keypoints keyed by geo_id (GeoObjectDAO
+    # looks up by geo_id now, not the retired waypoint_id).
     await geo_conn.execute(
-        "INSERT INTO waypoints (waypoint_id, x_m, y_m, content_hash, "
-        " updated_ms) VALUES ('w1', 0, 0, 'h1', 0)")
+        "INSERT INTO waypoints (geo_id, name, type, rtk_lat, rtk_lon, "
+        " content_hash, updated_ms) VALUES ('w-1', '甲', 'poi', 31.2, 121.5, 'h1', 0)")
     dao = GeoObjectDAO(geo_conn, "waypoints")
     # Same hash -> no bump, same rev.
-    assert await dao.bump_rev("w1", "h1", 1) == 1
+    assert await dao.bump_rev("w-1", "h1", 1) == 1
     # Different hash -> rev goes up by exactly 1.
-    assert await dao.bump_rev("w1", "h2", 2) == 2
-    assert await dao.bump_rev("w1", "h3", 3) == 3
+    assert await dao.bump_rev("w-1", "h2", 2) == 2
+    assert await dao.bump_rev("w-1", "h3", 3) == 3
 
 
 @pytest.mark.asyncio

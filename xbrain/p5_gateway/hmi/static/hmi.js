@@ -48,10 +48,12 @@
   const ptsAttr = (arr, origin) => arr.map((p) => toXY(p, origin))
     .filter(Boolean).map((xy) => xy.join(",")).join(" ");
 
-  // req4d (2026-08-18): geometry length in METRES for the label. Points are ENU
-  // metres ([e_m, n_m], 11 S7.10A GO-1) so euclidean distance == metres. Route =
-  // open-path sum; fence = closed perimeter (add the closing edge). Returns "" for
-  // degenerate input so the label just shows the name.
+  // req4d (2026-08-18): geometry length in METRES for the label. segLen/perimM
+  // operate on PROJECTED [x,y] points (SVG-frame metres from toXY), so euclidean
+  // distance == metres for BOTH ENU fences and WGS84 {lat,lon} routes -- callers
+  // must toXY the points first (v1.5 PLAN A: raw route points are lat/lon degrees,
+  // not metres). Route = open-path sum; fence = closed perimeter (add the closing
+  // edge). Returns "" for degenerate input so the label just shows the name.
   function segLen(pts) {
     let d = 0;
     for (let i = 1; i < (pts || []).length; i++)
@@ -278,17 +280,21 @@
   // req(2026-08-18): the mock data spans ~5km, far beyond the config 240m
   // default view. Auto-fit the map to the geo BOUNDS once, on the first snapshot
   // that carries the fences (they define the true extent -- the active-area
-  // lake), so the operator sees the whole site on load. toXY maps [e_m,n_m] to
-  // [e, -n] (north up), so the fit bounds are already in SVG frame. Zoom-in is widened
+  // lake), so the operator sees the whole site on load. toXY maps every point
+  // (ENU array or WGS84 {lat,lon}) into the SVG frame (north up), so the fit
+  // bounds are already in frame coords. Zoom-in is widened
   // so the 5m grid is legible when zoomed in. Fits ONCE; afterwards the operator
   // pans/zooms freely.
   let geoFitted = false;
-  function fitGeoToData(geo) {
+  function fitGeoToData(geo, origin) {
     if (geoFitted) return;
     const f = geo.fences || {};
     if (!(f.available && (f.items || []).length)) return;   // wait for fences
     const xs = [], ys = [];
-    const add = (p) => { const xy = toXY(p, null); if (xy) { xs.push(xy[0]); ys.push(xy[1]); } };
+    // v1.5 PLAN A: routes/keypoints are WGS84 {lat,lon} and need the origin to
+    // project; ENU fence arrays ignore it. Passing origin lets all three define
+    // the fit extent (fences alone already bound it -- the active-area lake).
+    const add = (p) => { const xy = toXY(p, origin); if (xy) { xs.push(xy[0]); ys.push(xy[1]); } };
     for (const it of f.items) (it.vertices || []).forEach(add);
     const r = geo.routes || {}; if (r.available) for (const it of r.items) (it.points || []).forEach(add);
     const w = geo.waypoints || {}; if (w.available) for (const it of w.items) add(it.geom || it);
@@ -313,7 +319,7 @@
   }
 
   function renderGeo(geo, origin, patrolling) {
-    fitGeoToData(geo);
+    fitGeoToData(geo, origin);
     clear("keepInLayer"); clear("alarmLayer");
     clear("recordedRouteLayer"); clear("realtimeTrajectoryLayer"); clear("keypointLayer");
     const fences = geo.fences || {};
@@ -364,8 +370,11 @@
       if (r.name && r.points && r.points[0]) {
         const rxy = toXY(r.points[0], origin);
         // req4d: name + route length in metres, e.g. "环湖主巡逻线 (4561 m)".
+        // Measure on the PROJECTED points (WGS84 {lat,lon} -> SVG metres) so the
+        // length is metres, not degrees (v1.5 PLAN A).
+        const rproj = (r.points || []).map((p) => toXY(p, origin)).filter(Boolean);
         if (rxy) $(rlayer).appendChild(label(rxy[0], rxy[1] - 2, "route-label",
-          r.name + lenTag(segLen(r.points))));
+          r.name + lenTag(segLen(rproj))));
       }
     }
     const wps = geo.waypoints || {};

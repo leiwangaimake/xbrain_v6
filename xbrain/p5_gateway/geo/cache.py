@@ -13,11 +13,13 @@ time, reshapes it into the routes/waypoints lists the frontend renderGeo consume
 is served until a generous stale window (P3 clearly down) rather than blanked on a
 brief silence.
 
-The shape conversion is the load-bearing detail: GeoObjects carries a keypoint's
-position as SEPARATE e_m/n_m fields, but the frontend's toXY places a point only
-from an [e_m, n_m] ARRAY (or {lat,lon}); so waypoints are reshaped to geom:[e,n]
-and routes' points pass through as [[e,n],...]. A wrong shape here renders nothing
-(toXY returns null) -- exactly the bug that would look like "no geo".
+The shape conversion is the load-bearing detail: GeoObjects (v1.5 PLAN A) carries
+a keypoint's position as SEPARATE lat/lon fields, and the frontend's toXY projects
+a {lat,lon} object through enu_origin; so waypoints are reshaped to geom:{lat,lon}
+and routes' points (already {lat,lon} objects from P3) pass through. A wrong shape
+here renders nothing (toXY returns null) -- exactly the bug that looks like "no
+geo". Route points must stay {lat,lon} OBJECTS: a bare [a,b] array would be read as
+ENU metres and land the route in the wrong frame.
 """
 
 from __future__ import annotations
@@ -60,18 +62,18 @@ def geo_layers(payload: Optional[Dict[str, Any]]
 
     Returns (None, None) when there is no payload -> the snapshot marks those
     layers unavailable (grey), never an empty-set-as-authoritative. Waypoints get
-    geom:[e_m,n_m] (so toXY places them without an enu_origin); routes keep their
-    [[e,n],...] points and are tagged kind:"recorded" (the yellow realtime layer
-    is the live pose trail, not a stored route).
+    geom:{lat,lon} (so toXY projects them through enu_origin); routes keep their
+    [{lat,lon},...] points and are tagged kind:"recorded" (the yellow realtime
+    layer is the live pose trail, not a stored route).
     """
     if not payload:
         return None, None
     waypoints = [
         {"name": w.get("name"),
-         "geom": [w["e_m"], w["n_m"]],
+         "geom": {"lat": w["lat"], "lon": w["lon"]},
          "recorded": True}                          # a stored keypoint = recorded
         for w in payload.get("waypoints", [])
-        if w.get("e_m") is not None and w.get("n_m") is not None
+        if w.get("lat") is not None and w.get("lon") is not None
     ]
     routes = [
         {"name": r.get("name"),

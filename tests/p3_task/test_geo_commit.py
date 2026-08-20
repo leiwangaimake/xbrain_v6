@@ -25,7 +25,6 @@ from xbrain.p3_task.fence.geom import (
 from xbrain.p3_task.ingest.geo_commit import (
     GeoCommitError, commit_fence, commit_route, commit_waypoint,
 )
-from xbrain.p3_task.lifecycle.teach import TeachSample
 from xbrain.p3_task.persistence.schema_geo import (
     FENCE_DB_STATEMENTS, GEO_DB_STATEMENTS,
 )
@@ -52,56 +51,95 @@ async def fence_conn():
         yield c
 
 
-def _samples(n):
-    return [TeachSample(x_m=float(i), y_m=0.0, heading_rad=0.0)
-            for i in range(n)]
+def _path(n, lat0=31.2000, lon0=121.5000):
+    # A WGS84 (lat, lon) polyline heading north; 0.0001 deg lat ~ 11 m, so the
+    # segments are non-degenerate and total_len_m > 0.
+    return [(lat0 + i * 0.0001, lon0) for i in range(n)]
 
 
-# -- commit_route --------------------------------------------------------
+# -- commit_route: mode B (inline path_points), the 15 S9.3 model --------
 
 @pytest.mark.asyncio
-async def test_commit_route_writes_waypoints_and_assoc(geo_conn):
+async def test_commit_route_writes_inline_geometry_no_waypoints(geo_conn):
+    """PLAN A: a route is ONE routes row with inline path_points -- no waypoints
+    and no assoc rows. MUTATION: the old model wrote one waypoint per point +
+    assoc, so asserting waypoints==0 and assoc==0 catches a regression to it."""
     await commit_route(geo_conn, route_id="r-eastgate", name="东门路线",
-                       samples=_samples(3), now_ms=1)
+                       path_points=_path(3), now_ms=1)
     cur = await geo_conn.execute("SELECT COUNT(*) FROM waypoints")
-    assert (await cur.fetchone())[0] == 3
+    assert (await cur.fetchone())[0] == 0
+    cur = await geo_conn.execute("SELECT COUNT(*) FROM route_waypoint_assoc")
+    assert (await cur.fetchone())[0] == 0
     cur = await geo_conn.execute(
-        "SELECT waypoint_id FROM route_waypoint_assoc "
-        "WHERE route_id='r-eastgate' ORDER BY seq")
-    assert [r[0] for r in await cur.fetchall()] == [
-        "r-eastgate-w000", "r-eastgate-w001", "r-eastgate-w002"]
-    cur = await geo_conn.execute("SELECT name FROM routes WHERE route_id=?",
-                                 ("r-eastgate",))
-    assert (await cur.fetchone())[0] == "东门路线"
+        "SELECT name, path_points, waypoint_ids, total_len_m "
+        "FROM routes WHERE geo_id=?", ("r-eastgate",))
+    name, pp, wi, total = await cur.fetchone()
+    assert name == "东门路线"
+    assert wi is None                            # XOR: path mode leaves anchors NULL
+    assert json.loads(pp) == [[31.2, 121.5], [31.2001, 121.5], [31.2002, 121.5]]
+    assert total > 20.0                          # ~22 m over the two 11 m segments
+
+
+@pytest.mark.asyncio
+async def test_commit_route_rejects_both_or_neither_geometry(geo_conn):
+    """MUTATION: dropping the XOR guard lets a route with BOTH (or NEITHER)
+    geometry through the Python layer to a cryptic DB CHECK abort."""
+    with pytest.raises(GeoCommitError, match="exactly one"):
+        await commit_route(geo_conn, route_id="r-x", name="x", now_ms=1)
+    with pytest.raises(GeoCommitError, match="exactly one"):
+        await commit_route(geo_conn, route_id="r-y", name="y",
+                           path_points=_path(2), waypoint_ids=["w-a"], now_ms=1)
 
 
 @pytest.mark.asyncio
 async def test_commit_route_rejects_too_few_points(geo_conn):
     with pytest.raises(GeoCommitError, match=">= 2"):
         await commit_route(geo_conn, route_id="r-x", name="x",
-                           samples=_samples(1), now_ms=1)
+                           path_points=_path(1), now_ms=1)
 
 
 @pytest.mark.asyncio
 async def test_commit_route_rejects_over_cap(geo_conn):
-    """MUTATION: dropping the cap check lets a 17-point route through the
-    Python layer (the DB trigger also aborts, but with a less clear error)."""
+    """MUTATION: dropping the cap check lets a >5000-point route (11 S7.8.3
+    RouteGeometry bound) through."""
     with pytest.raises(GeoCommitError, match="cap"):
         await commit_route(geo_conn, route_id="r-x", name="x",
-                           samples=_samples(17), now_ms=1)
+                           path_points=_path(5001), now_ms=1)
+
+
+@pytest.mark.asyncio
+async def test_commit_route_mode_a_anchors(geo_conn):
+    """Mode A: waypoint_ids reference committed keypoints; total_len_m is the
+    anchor polyline length. MUTATION: a missing anchor must raise, not store a
+    route pointing at a non-existent keypoint."""
+    await commit_waypoint(geo_conn, geo_id="w-a", name="甲", wtype="poi",
+                          rtk_lat=31.2000, rtk_lon=121.5000, now_ms=1)
+    await commit_waypoint(geo_conn, geo_id="w-b", name="乙", wtype="poi",
+                          rtk_lat=31.2010, rtk_lon=121.5000, now_ms=1)
+    await commit_route(geo_conn, route_id="r-anchored", name="锚点线",
+                       waypoint_ids=["w-a", "w-b"], now_ms=2)
+    cur = await geo_conn.execute(
+        "SELECT waypoint_ids, path_points, total_len_m FROM routes WHERE geo_id=?",
+        ("r-anchored",))
+    wi, pp, total = await cur.fetchone()
+    assert pp is None and json.loads(wi) == ["w-a", "w-b"]
+    assert total > 100.0                         # ~111 m for 0.001 deg lat
+    with pytest.raises(GeoCommitError, match="not found"):
+        await commit_route(geo_conn, route_id="r-bad", name="坏线",
+                           waypoint_ids=["w-a", "w-missing"], now_ms=3)
 
 
 @pytest.mark.asyncio
 async def test_commit_route_is_atomic(geo_conn):
-    """A duplicate route_id fails the second commit and leaves NO orphan
-    waypoints from the failed attempt (BEGIN IMMEDIATE rollback)."""
+    """A duplicate geo_id fails the second commit; the first route survives and
+    no partial row from the failed attempt remains (BEGIN IMMEDIATE rollback)."""
     await commit_route(geo_conn, route_id="r-a", name="a",
-                       samples=_samples(3), now_ms=1)
+                       path_points=_path(3), now_ms=1)
     with pytest.raises(Exception):
         await commit_route(geo_conn, route_id="r-a", name="a2",
-                           samples=_samples(2), now_ms=2)
-    cur = await geo_conn.execute("SELECT COUNT(*) FROM waypoints")
-    assert (await cur.fetchone())[0] == 3        # only the first route's 3
+                           path_points=_path(2), now_ms=2)
+    cur = await geo_conn.execute("SELECT COUNT(*) FROM routes")
+    assert (await cur.fetchone())[0] == 1        # only the first route
 
 
 # -- commit_fence --------------------------------------------------------
@@ -165,27 +203,28 @@ def test_record_fence_start_is_a_task_create():
 # -- commit_waypoint: F06 named keypoint (11 S7.10A / 18 F06) -----------------
 
 @pytest.mark.asyncio
-async def test_commit_waypoint_stores_name_and_coords(geo_conn):
-    """F06 record_waypoint (把这里记为X) -> a named keypoint in geo.db, so the HMI
-    keypoint layer can label it. MUTATION: not writing name -> the keypoint shows
-    as an unlabelled dot forever (the pre-F06 gap this closes)."""
-    await commit_waypoint(geo_conn, waypoint_id="w-东门岗亭", name="东门岗亭",
-                          x_m=12.0, y_m=-3.5, heading_rad=1.57, now_ms=1000)
+async def test_commit_waypoint_stores_name_and_wgs84(geo_conn):
+    """F06 record_waypoint (把这里记为X) -> a named WGS84 keypoint in geo.db, so
+    the HMI keypoint layer can label it. MUTATION: not writing name/type breaks
+    the NOT NULL columns; wrong coords column drops the point off the map."""
+    await commit_waypoint(geo_conn, geo_id="w-eastgate", name="东门岗亭",
+                          wtype="poi", rtk_lat=31.2003, rtk_lon=121.5007,
+                          yaw_deg=90.0, now_ms=1000)
     cur = await geo_conn.execute(
-        "SELECT name, x_m, y_m, heading_rad FROM waypoints WHERE waypoint_id=?",
-        ("w-东门岗亭",))
+        "SELECT name, type, rtk_lat, rtk_lon, yaw_deg, arrival_radius "
+        "FROM waypoints WHERE geo_id=?", ("w-eastgate",))
     row = await cur.fetchone()
-    assert row == ("东门岗亭", 12.0, -3.5, 1.57)
+    assert row == ("东门岗亭", "poi", 31.2003, 121.5007, 90.0, 1.0)
 
 
 @pytest.mark.asyncio
 async def test_commit_waypoint_idempotent_on_reid(geo_conn):
-    """A redelivered record command (same id) overwrites, never duplicates.
-    MUTATION: a plain INSERT would raise on the PK the second time."""
-    await commit_waypoint(geo_conn, waypoint_id="w-1", name="旧名",
-                          x_m=1.0, y_m=1.0, heading_rad=None, now_ms=1)
-    await commit_waypoint(geo_conn, waypoint_id="w-1", name="新名",
-                          x_m=2.0, y_m=2.0, heading_rad=None, now_ms=2)
+    """A redelivered record command (same geo_id) overwrites, never duplicates.
+    MUTATION: a plain INSERT would raise on the UNIQUE geo_id the second time."""
+    await commit_waypoint(geo_conn, geo_id="w-1", name="旧名", wtype="poi",
+                          rtk_lat=31.20, rtk_lon=121.50, now_ms=1)
+    await commit_waypoint(geo_conn, geo_id="w-1", name="新名", wtype="poi",
+                          rtk_lat=31.21, rtk_lon=121.51, now_ms=2)
     cur = await geo_conn.execute("SELECT COUNT(*), MAX(name) FROM waypoints "
-                                 "WHERE waypoint_id='w-1'")
+                                 "WHERE geo_id='w-1'")
     assert await cur.fetchone() == (1, "新名")

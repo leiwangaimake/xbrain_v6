@@ -1901,7 +1901,7 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 | ★ 关键点 / 路径点 | keypoint / route point | ★ **v1.4 圆点**（非缩放，半径 ~3.5 屏幕 px，`.geo-dot`） | 关键点 = marker 色 · 路径点 = 该路径线色 | — | `waypoint.{recorded,unrecorded}`（`size_px/3` 起，再定为屏幕 px） |
 
 ★★★ **图例菜单（左上角，★ v1.4 六项）**：已录制路径 · 实时行走轨迹 · 活动区域 · 报警区域 · ★ **限速区域** · ★ **禁止区域**。★ v1.4：区域色块由镂空 border 改**实心填充矩形**（`.legend-mark` background 实色）；路径色块为填充细条。
-★★★ **名称标签（★ v1.4）**：围栏名后显**周长**、路径名后显**长度**，格式 `名称 (N m)`（几何 ENU 米，欧氏距离即米）；关键点名无长度。颜色**统一亮白 `#ffffff` + 粗体**（不再按图层线色）；字号 = **任务内容字号**（`--font-plan-size`，即 `font.plan.size_px`，非硬编码 12）；**非缩放**（不随地图缩放变），且**去重叠**（见 §6.10.2C）。
+★★★ **名称标签（★ v1.4）**：围栏名后显**周长**、路径名后显**长度**，格式 `名称 (N m)`；关键点名无长度。★ **v1.5（方案 A）**：路径点是 WGS84 `{lat,lon}`，长度在 **`toXY` 投影后的屏幕米**上算欧氏距离（`segLen(rproj)`），围栏(ENU 米)仍直接算 —— 二者投影后同为米。颜色**统一亮白 `#ffffff` + 粗体**（不再按图层线色）；字号 = **任务内容字号**（`--font-plan-size`，即 `font.plan.size_px`，非硬编码 12）；**非缩放**（不随地图缩放变），且**去重叠**（见 §6.10.2C）。
 
 ★★★ **实时黄色轨迹的显隐（用户 2026-08-13）**：巡逻**执行中**始终显示黄色轨迹；**巡逻完成后**是否继续显示由 `route.realtime.show_after_complete`（bool，默认 `true`）控制 —— 前端据 `plan` 是否有 `running` 计划判「执行中」，无则视为完成，`false` 时隐藏黄色轨迹。
 
@@ -1911,12 +1911,12 @@ dead-man 会在「按住不动」的过程中触发一次 `Stop`** —— ★ �
 
 | # | 规则 | 依据 / 实现 |
 |---|---|---|
-| ★★★ **M-1 北朝上** | 地图 **N 朝上**（与航向仪表盘一致）。SVG 的 y 朝下，故 `toXY` 把 ENU `[e_m, n_m]` 映射为 `[e, -n]`；lat/lon 分支也同样翻 N（`-(lat-origin)`）⇒ geometry（ENU 数组）与 robot/events（lat/lon）**同一朝向**。⚠️ 曾漏翻数组分支 → 地图北朝下,与罗盘相反 | `toXY` |
+| ★★★ **M-1 北朝上** | 地图 **N 朝上**（与航向仪表盘一致）。SVG 的 y 朝下，故 `toXY` 把 ENU `[e_m, n_m]` 映射为 `[e, -n]`；`{lat,lon}` 分支经 `enu_origin` 投影后同样翻 N（`-(lat-origin)`）⇒ geometry 与 robot/events **同一朝向**。★ **v1.5（方案 A）**：路线 / 关键点几何改 WGS84 `{lat,lon}`，走投影分支（不再是 ENU 数组）；ENU 数组分支现只余围栏(`cmd/fence`)。⚠️ `{lat,lon}` 分支**缺 `origin` 返回 null**（不落 0,0），故 geometry 在 first-fix 到达前不渲染。⚠️ 曾漏翻数组分支 → 地图北朝下,与罗盘相反 | `toXY` |
 | ★★★ **M-2 自动 fit** | 模拟/真实数据可跨 ~5km，远超 240m 默认视图。**首帧带围栏时**(围栏定义真实范围)按全 geo bounds **一次性 fit**：① 中心对齐；② **匹配视口宽高比**(否则 `preserveAspectRatio="none"` 会把长条形压扁、圆点变椭圆)；③ zoom 复位、放开 zoom 上限(≈ 场区宽/200，便于放大看 5m 级细节)。**只 fit 一次**，之后操作员自由平移缩放 | `fitGeoToData` |
 | ★★★ **M-3 自适应网格** | 只画一层网格(1m 小格删)。格子米数**不写死**：按当前「米/屏幕 px」从 `map.grid.cell_options_m`(yaml)选**屏上 ≥ `GRID_TARGET_PX`(42px)** 的**最小**挡位 ⇒ 巨大地图不再针尖筛网、放大自动换小格。右下角 `网格 Nm` 随之动态显示 | `updateGridAndDots`(每次 `applyView` 调) |
 | ★★★ **M-4 非缩放要素** | 线 / 标签 / 圆点均**固定屏幕大小**、不随缩放变：<br>· **线** `vector-effect:non-scaling-stroke` ⇒ `width_px` 变回真屏幕 px；<br>· **标签** 字号 `--map-label-fs` 由 `applyView` 按 `planPx·h/clientHeight` 算成恒定屏幕 px；<br>· **圆点** 半径 `DOT_PX·mpp`(user units) ⇒ 恒定屏幕 px。★ 否则 5km 全景下线/点缩成不可见针尖 | `updateGridAndDots` / CSS |
 | ★★★ **M-5 标签去重叠** | 围栏/路径/关键点名称**不得重叠**。`declutterLabels` 屏幕空间贪心去冲突：锚点不撞则留，否则依次试下/上/侧偏移到首个不撞位；全撞(该缩放太密)则**隐藏**，放大特征散开后自动重现。CJK 1em / latin 0.52em 估宽。渲染末尾调用(每帧从锚点重排)，随 2 Hz 重渲染跟缩放 | `declutterLabels` |
-| ★★ **M-6 关键点 vs 路径点** | **关键点**(命名 waypoint)画**带名圆点**；**路径点**(路径几何顶点，无名)只画**线上的圆点**、无名。运行时 routes 无独立几何列、顶点也存 waypoints 表(`15` §9.3 assoc)，故 `read_geo_objects._read_waypoints` 加 `NOT IN route_waypoint_assoc` 过滤，dots 层只留关键点；路径点圆点由前端从 `route.points` 另画。近路的关键点是独立(未 assoc)点，保留 | `read_geo_objects` / `renderGeo` |
+| ★★ **M-6 关键点 vs 路径点** | **关键点**(命名 waypoint)画**带名圆点**；**路径点**(路径几何顶点，无名)只画**线上的圆点**、无名。★ **v1.5（方案 A）**：路径几何**内联**在 `routes.path_points`/`waypoint_ids`，`waypoints` 表**只存命名关键点**（不再存路径顶点）⇒ `_read_waypoints` **无需再排除** assoc（每行都是关键点）；路径点圆点由前端从 `route.points` 另画 | `read_geo_objects` / `renderGeo` |
 | ⚠️ **M-7 enu_origin 演示回退** | ENU E/N 读数与地图机器人需 `enu_origin` 投影 lat/lon。权威原点是 `common.geo.enu_origin`(SITE 现场标定，`7.8.4`，W4 未落地 ⇒ null ⇒ 曾恒显 `--`)。**演示回退**：`_on_state_pose` 里 `enu_origin` 若 null 就采纳**首个有效定位**(lat/lon)为本地原点。★★ 原始 `state/pose` **无 `available` 键**(`pose_group` 下游才加)，判有效按 lat/lon。⚠️ **非真标定替代**：原点随首次定位漂；真部署由 sites/ 标定，前端不改自动用真值 | `_on_state_pose` / `renderStatus` / `renderRobot` |
 
 ##### 6.10.2B ★★★ 机器人航向仪表盘（用户 2026-08-14 · 取代样例 item 8 的左上角指北针）

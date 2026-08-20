@@ -3,7 +3,7 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: schema_geo.py
-Brief: BIZ-P3-3 geo.db + fence.db DDL + 5/16 quota triggers + geo_object
+Brief: BIZ-P3-3 geo.db + fence.db DDL + dock quota trigger + geo_object
 
 Description:
 15 S9 splits geographical data into TWO physical files:
@@ -14,32 +14,28 @@ fence-only reads open a read-only handle without carrying the whole
 geo tree.
 
 Quotas (15 S9):
-  * waypoints per route <= 16
-  * docks total          <= 5
-Both enforced with sqlite triggers so a rogue writer or a bulk
-import script cannot exceed them silently.
+  * docks total <= 5  (sqlite trigger, so a bulk import cannot exceed it)
+The old "waypoints per route <= 16" trigger is retired: route geometry is now
+INLINE (path_points), capped in commit_route (11 S7.8.3 <= 5000), not by an
+assoc-row trigger.
 
 Every geo_object row (waypoints / routes / docks / fences) carries
 rev (monotonic per object) + content_hash + tombstone. The rev
 column is the anchor for SN-5 dedupe and for outbound push
 ordering; see BIZ-P3-27 for the invariant work.
 
-ALIGNMENT (v1.4 / 2026-08-18, user approved PLAN A -- see 15 S9.3.0):
-This schema is the SIMPLIFIED early cut (ENU metres). The AUTHORITATIVE
-target is the full DDL in 15 S9.3 (WGS84 rtk_lat/lon + richer columns).
-They differ by MODEL, not just column names:
-  * route geometry: here it is route_waypoint_assoc(route_id,seq,waypoint_id)
-    ordered vertices; in 15 S9.3 it is INLINE on routes (path_points JSON or
-    waypoint_ids JSON) -- so waypoints here also holds UNNAMED route vertices,
-    whereas 15 S9.3 waypoints are named keypoints only.
-  * !!! route_waypoint_assoc means the OPPOSITE thing in the two schemas: here
-    it is the route GEOMETRY; in 15 S9.3 it is the keypoint<->route PROXIMITY
-    relation (min_distance_m / nearest_idx). Do NOT assume one from the other.
-  * coords: ENU x_m/y_m here vs WGS84 rtk_lat/lon in 15 S9.3.
-  * docks: no handover point here vs the full handover model in 15 S9.3.
-Plan A brings THIS schema up to 15 S9.3 as a coordinated multi-batch change
-(schema + DAOs + read_geo_objects + geo broadcast + HMI coords + tests +
-test-data reseed). fences (kind vs role) goes with the fence runtime, NOT here.
+ALIGNMENT (v1.5 / 2026-08-20, PLAN A EXECUTED -- see 15 S9.3.0):
+waypoints / routes / route_waypoint_assoc are now the 15 S9.3 model:
+  * WGS84 (rtk_lat/lon) instead of ENU x_m/y_m.
+  * route geometry INLINE on routes (path_points JSON mode B, or waypoint_ids
+    JSON mode A, XOR) -- NOT an ordered route_waypoint_assoc(seq) vertex list.
+  * waypoints are NAMED keypoints only (route vertices no longer live here).
+  * route_waypoint_assoc restored to its 15 S9.3 PROXIMITY meaning
+    (min_distance_m / nearest_idx), UNPOPULATED until F06 voice nav wires it.
+  * sync columns rev / content_hash / tombstone / updated_ms ADDED on top
+    (15 S9.3 DDL omits them; state/geo/objects needs them).
+STILL interim (NOT yet 15 S9.3): docks stay ENU (charging-subsystem ripple,
+out of scope). fences (kind vs role) go with the fence runtime batch, NOT here.
 """
 
 from __future__ import annotations
@@ -47,42 +43,72 @@ from __future__ import annotations
 
 DDL_WAYPOINTS = """
 CREATE TABLE IF NOT EXISTS waypoints (
-  waypoint_id   TEXT PRIMARY KEY,
-  name          TEXT,
-  x_m           REAL NOT NULL,
-  y_m           REAL NOT NULL,
-  heading_rad   REAL,
-  rev           INTEGER NOT NULL DEFAULT 1,
-  content_hash  TEXT NOT NULL,
-  tombstone     INTEGER NOT NULL DEFAULT 0 CHECK (tombstone IN (0,1)),
-  updated_ms    INTEGER NOT NULL
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  geo_id         TEXT NOT NULL UNIQUE,          -- 'w-'+slug, immutable (11 S7.8.1)
+  name           TEXT NOT NULL UNIQUE,          -- named keypoints ONLY; route vertices are INLINE on routes
+  type           TEXT NOT NULL,                 -- poi | dock | home | gate | ...
+  rtk_lat        REAL NOT NULL,                 -- WGS84
+  rtk_lon        REAL NOT NULL,
+  rtk_alt        REAL,
+  yaw_deg        REAL,                          -- heading at capture (true north, CW+)
+  arrival_radius REAL NOT NULL DEFAULT 1.0,     -- per-point, not a global constant
+  description    TEXT,
+  rev            INTEGER NOT NULL DEFAULT 1,
+  content_hash   TEXT NOT NULL,
+  tombstone      INTEGER NOT NULL DEFAULT 0 CHECK (tombstone IN (0,1)),
+  updated_ms     INTEGER NOT NULL,
+  CHECK (geo_id GLOB 'w-*')
 );
 """.strip()
-# name: the keypoint's display name (11 S7.8.2, "东门岗亭"), for the HMI keypoint
-# label + state/geo/objects broadcast (11 S7.10A). Nullable here because this
-# runtime schema was the minimal early cut (15 S9.3 has it NOT NULL); F06
-# record_waypoint populates it, and geo objects with no name render as an
-# unlabelled point (GO-4), never a fabricated one.
+# v1.5 (2026-08-20 PLAN A): raised to the 15 S9.3 model -- WGS84 (rtk_lat/lon),
+# NAMED keypoints only (route geometry moved INLINE onto routes), name NOT NULL
+# UNIQUE (voice "go to <name>" needs a unique target). Sync columns rev /
+# content_hash / tombstone / updated_ms are ADDED on top of the 15 S9.3 DDL
+# (which omits them) because state/geo/objects needs catalog_rev + a tombstone
+# filter. id + geo_id UNIQUE matches 15 S9.3; GeoObjectDAO looks the row up by
+# the UNIQUE geo_id, so a separate AUTOINCREMENT id costs the DAO nothing.
 
 
 DDL_ROUTES = """
 CREATE TABLE IF NOT EXISTS routes (
-  route_id      TEXT PRIMARY KEY,
-  name          TEXT NOT NULL,
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  geo_id        TEXT NOT NULL UNIQUE,           -- 'r-'+slug, immutable (11 S7.8.1)
+  name          TEXT NOT NULL UNIQUE,
+  waypoint_ids  TEXT,                           -- JSON [geo_id,...]  mode A: named anchors (config import)
+  path_points   TEXT,                           -- JSON [[lat,lon],...] mode B: voice recording
+  max_speed     REAL,
+  loop_mode     TEXT NOT NULL DEFAULT 'oneway', -- oneway | pingpong | closed (NAV-22)
+  direction     TEXT NOT NULL DEFAULT 'forward',-- forward | reverse (first entry direction)
+  total_len_m   REAL,                           -- computed at commit (11 S7.8.3)
+  description   TEXT,
   rev           INTEGER NOT NULL DEFAULT 1,
   content_hash  TEXT NOT NULL,
   tombstone     INTEGER NOT NULL DEFAULT 0 CHECK (tombstone IN (0,1)),
-  updated_ms    INTEGER NOT NULL
+  updated_ms    INTEGER NOT NULL,
+  CHECK ((waypoint_ids IS NULL) <> (path_points IS NULL)),   -- XOR: exactly one geometry
+  CHECK (loop_mode IN ('oneway','pingpong','closed')),
+  CHECK (direction IN ('forward','reverse')),
+  CHECK (total_len_m IS NULL OR total_len_m > 0.0),
+  CHECK (geo_id GLOB 'r-*')
 );
 """.strip()
+# v1.5: route geometry is now INLINE (path_points OR waypoint_ids, XOR), NOT the
+# old route_waypoint_assoc(seq) vertex list. This is the model flip of 15 S9.3.
 
 
+# 15 S9.3 semantics: NOT the route geometry (that is INLINE on routes now), but
+# the keypoint<->route PROXIMITY relation -- a keypoint within min_distance_m of a
+# route, for "go to the Nth point" / "which route is this keypoint on" voice nav.
+# Left UNPOPULATED by commit_route for now (a derived relation, wired with F06
+# voice nav); the table exists so the read side never has to ALTER it in later.
 DDL_ROUTE_WAYPOINT_ASSOC = """
 CREATE TABLE IF NOT EXISTS route_waypoint_assoc (
-  route_id      TEXT NOT NULL REFERENCES routes(route_id),
-  seq           INTEGER NOT NULL,
-  waypoint_id   TEXT NOT NULL REFERENCES waypoints(waypoint_id),
-  PRIMARY KEY (route_id, seq)
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  route_id       TEXT NOT NULL REFERENCES routes(geo_id),
+  waypoint_id    TEXT NOT NULL REFERENCES waypoints(geo_id),
+  min_distance_m REAL NOT NULL,                 -- keypoint to route min distance; anchor mode = 0
+  nearest_idx    INTEGER NOT NULL,              -- index of the nearest path_points vertex
+  UNIQUE (route_id, waypoint_id)
 );
 """.strip()
 
@@ -100,19 +126,15 @@ CREATE TABLE IF NOT EXISTS docks (
   updated_ms    INTEGER NOT NULL
 );
 """.strip()
+# NOTE (v1.5): docks are DELIBERATELY still the ENU interim schema. The full 15
+# S9.3 dock model (WGS84 + handover point) ripples into the charging subsystem
+# (dock_select / dock_arbiter), out of scope for the geo/HMI migration. docks are
+# not rendered on the HMI map, so this ENU-vs-WGS84 mix is invisible there.
 
 
-TRIGGER_WAYPOINT_QUOTA = """
-CREATE TRIGGER IF NOT EXISTS trg_waypoint_quota
-BEFORE INSERT ON route_waypoint_assoc
-BEGIN
-  SELECT RAISE(ABORT, 'waypoint quota per route exceeded (max 16)')
-   WHERE (SELECT COUNT(*) FROM route_waypoint_assoc
-           WHERE route_id = NEW.route_id) >= 16;
-END;
-""".strip()
-
-
+# The old "16 waypoints per route" trigger is GONE: in the 15 S9.3 model route
+# geometry is INLINE (path_points, capped in commit_route, 11 S7.8.3 <= 5000),
+# and route_waypoint_assoc is now proximity (no natural per-route cap).
 TRIGGER_DOCK_QUOTA = """
 CREATE TRIGGER IF NOT EXISTS trg_dock_quota
 BEFORE INSERT ON docks
@@ -142,7 +164,6 @@ GEO_DB_STATEMENTS = (
     DDL_ROUTES,
     DDL_ROUTE_WAYPOINT_ASSOC,
     DDL_DOCKS,
-    TRIGGER_WAYPOINT_QUOTA,
     TRIGGER_DOCK_QUOTA,
 )
 

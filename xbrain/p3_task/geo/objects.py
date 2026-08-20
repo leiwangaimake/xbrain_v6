@@ -13,13 +13,15 @@ broadcasts the full geometry on state/geo/objects (11 S7.10A); P5 caches it and
 relays to the browser. (Fences keep their own cmd/fence path, 11 S9A.2.)
 
 This module is the read + shape half (pure async against a live aiosqlite conn on
-P3's single db thread, 15 S2.1). Geometry is emitted in ENU metres (e_m/n_m) --
-the runtime waypoints/docks tables store x_m/y_m, and the frontend's toXY places
-an [e_m, n_m] point with NO enu_origin (11 S7.10A GO-1). A route's geometry is its
-ordered waypoints' coordinates (route_waypoint_assoc -> waypoints), not a separate
-column. Tombstoned rows are excluded. A waypoint/dock with no name is emitted with
-name=None; the frontend draws an unlabelled point rather than a fabricated name
-(GO-4).
+P3's single db thread, 15 S2.1). v1.5 PLAN A: geometry is emitted in WGS84 as
+{lat, lon} (waypoints/routes are the 15 S9.3 model now); the frontend's toXY
+projects {lat,lon} through the shared enu_origin (11 S7.10A GO-1, {lat,lon} form).
+Route points are emitted as {lat,lon} OBJECTS, never [a,b] arrays -- an array would
+be read as ENU metres by toXY and land the route in the wrong frame. A route's
+geometry is INLINE (routes.path_points mode B, or routes.waypoint_ids resolved to
+their keypoints mode A), NOT the old assoc vertex list. Tombstoned rows are
+excluded. A waypoint with no name never happens now (name is NOT NULL). docks are
+still ENU (e_m/n_m) -- out of scope for this migration and not rendered on the map.
 
 catalog_rev is max(updated_ms) across the live geo rows: it changes on any edit,
 so P5 can cheaply tell "did the geo set change" without diffing the whole payload
@@ -28,6 +30,7 @@ so P5 can cheaply tell "did the geo set change" without diffing the whole payloa
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List
 
 GEO_OBJECTS_SCHEMA = "geo_objects_v1"
@@ -50,26 +53,21 @@ async def read_geo_objects(conn) -> Dict[str, Any]:
 
 
 async def _read_waypoints(conn) -> List[Dict[str, Any]]:
-    # The "waypoints" layer is the KEYPOINT layer -- named standalone RTK points
-    # the operator deliberately saved (18 F06), shown as labelled dots. Route
-    # vertices are ALSO stored in the waypoints table (the runtime routes table
-    # has no geometry column, 15 S9.3 assoc model), but they are a route's
-    # polyline geometry, NOT keypoints -- they must not each draw their own dot.
-    # Exclude any waypoint referenced by route_waypoint_assoc so route vertices
-    # render only as the line, and only true keypoints appear as dots. A keypoint
-    # that merely lies near a route is a SEPARATE (un-assoc'd) waypoint, so it is
-    # kept.
+    # The "waypoints" layer is the KEYPOINT layer -- named WGS84 points the
+    # operator deliberately saved (18 F06), shown as labelled dots. v1.5 PLAN A:
+    # route vertices are INLINE on routes now, so EVERY waypoint row is a keypoint
+    # (no assoc exclusion). lat/lon are emitted for the frontend to project.
     cur = await conn.execute(
-        "SELECT waypoint_id, name, x_m, y_m, heading_rad, rev "
-        "FROM waypoints WHERE tombstone=0 "
-        "AND waypoint_id NOT IN (SELECT waypoint_id FROM route_waypoint_assoc) "
-        "ORDER BY waypoint_id")
+        "SELECT geo_id, name, rtk_lat, rtk_lon, yaw_deg, rev "
+        "FROM waypoints WHERE tombstone=0 ORDER BY geo_id")
     rows = await cur.fetchall()
-    return [{"geo_id": r[0], "name": r[1], "e_m": r[2], "n_m": r[3],
-             "heading_rad": r[4], "rev": r[5]} for r in rows]
+    return [{"geo_id": r[0], "name": r[1], "lat": r[2], "lon": r[3],
+             "yaw_deg": r[4], "rev": r[5]} for r in rows]
 
 
 async def _read_docks(conn) -> List[Dict[str, Any]]:
+    # docks are still the ENU interim schema (charging-subsystem scope) and are
+    # not rendered on the HMI map, so they keep e_m/n_m -- see schema_geo v1.5.
     cur = await conn.execute(
         "SELECT dock_id, name, x_m, y_m, heading_rad, rev "
         "FROM docks WHERE tombstone=0 ORDER BY dock_id")
@@ -80,20 +78,27 @@ async def _read_docks(conn) -> List[Dict[str, Any]]:
 
 async def _read_routes(conn) -> List[Dict[str, Any]]:
     cur = await conn.execute(
-        "SELECT route_id, name, rev FROM routes WHERE tombstone=0 "
-        "ORDER BY route_id")
+        "SELECT geo_id, name, waypoint_ids, path_points, loop_mode, rev "
+        "FROM routes WHERE tombstone=0 ORDER BY geo_id")
     routes = await cur.fetchall()
     out: List[Dict[str, Any]] = []
-    for route_id, name, rev in routes:
-        # A route's geometry = its ordered waypoints' coordinates (there is no
-        # geometry column in the runtime routes table -- 15 S9.3 assoc model).
-        pc = await conn.execute(
-            "SELECT w.x_m, w.y_m FROM route_waypoint_assoc a "
-            "JOIN waypoints w ON a.waypoint_id = w.waypoint_id "
-            "WHERE a.route_id = ? ORDER BY a.seq", (route_id,))
-        points = [[x, y] for (x, y) in await pc.fetchall()]
-        out.append({"geo_id": route_id, "name": name, "rev": rev,
-                    "points": points})
+    for geo_id, name, waypoint_ids, path_points, loop_mode, rev in routes:
+        # Geometry is INLINE (15 S9.3): mode B = path_points [[lat,lon]] verbatim;
+        # mode A = waypoint_ids resolved to each anchor keypoint's rtk_lat/lon. A
+        # deleted anchor simply drops from the line (never a fabricated point).
+        if path_points is not None:
+            points = [{"lat": la, "lon": lo}
+                      for (la, lo) in json.loads(path_points)]
+        else:
+            points = []
+            for wid in json.loads(waypoint_ids or "[]"):
+                wc = await conn.execute(
+                    "SELECT rtk_lat, rtk_lon FROM waypoints WHERE geo_id=?", (wid,))
+                wr = await wc.fetchone()
+                if wr is not None:
+                    points.append({"lat": wr[0], "lon": wr[1]})
+        out.append({"geo_id": geo_id, "name": name, "rev": rev,
+                    "loop_mode": loop_mode, "points": points})
     return out
 
 

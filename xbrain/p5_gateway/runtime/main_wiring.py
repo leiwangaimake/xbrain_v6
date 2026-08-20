@@ -158,9 +158,10 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                 "fences": fences,                  # cmd/fence cache (W1)
                 "mode": hmi_state.get("mode"),     # state/mode (W3)
                 "events": hmi_state.get("events"),  # event/** ring (W2)
-                # routes/keypoints now flow via state/geo/objects (11 S7.10A);
-                # enu_origin still needs localisation (W4 GATED-HW) but geo geometry
-                # is ENU metres so it renders without it.
+                # routes/keypoints now flow via state/geo/objects (11 S7.10A).
+                # v1.5 PLAN A: geo geometry is WGS84 {lat,lon}, so it REQUIRES an
+                # enu_origin to project -- until SITE calibration (W4 GATED-HW) that
+                # origin is the first-fix demo fallback adopted below.
                 "routes": routes, "waypoints": waypoints,
                 "enu_origin": hmi_state.get("enu_origin"),
                 # pose now flows: p1 assembles rt/gnss/heading -> state/pose. Fix

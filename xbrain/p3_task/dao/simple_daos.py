@@ -119,9 +119,10 @@ class GeoObjectDAO:
         """Increment rev by exactly 1 and record the new hash.
         Returns the new rev. Idempotency: if content_hash matches,
         no-op and returns the current rev unchanged."""
-        pk = "waypoint_id" if self._table == "waypoints" else (
-             "route_id"    if self._table == "routes"    else (
-             "dock_id"     if self._table == "docks"     else "fence_id"))
+        # v1.5 PLAN A: waypoints / routes are keyed by the UNIQUE geo_id now (id
+        # is an internal AUTOINCREMENT). docks / fences keep their interim string PK.
+        pk = "geo_id"    if self._table in ("waypoints", "routes") else (
+             "dock_id"   if self._table == "docks"                else "fence_id")
         cur = await self._conn.execute(
             f"SELECT rev, content_hash FROM {self._table} "
             f"WHERE {pk}=?", (object_id,))
