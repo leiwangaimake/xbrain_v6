@@ -114,3 +114,25 @@ def test_ui_config_timezone_defaults_none():
     """No site tz (minimal mode) -> timezone None, and the frontend falls back to
     the browser zone rather than blocking the page (DISPLAY value, not hmi.bind)."""
     assert build_ui_config(_FULL_WEB)["timezone"] is None
+
+
+# -- OpenAPI schema builds (JSONResponse routes must carry response_model=None) --
+
+def test_openapi_schema_builds(tmp_path):
+    """FastAPI builds the OpenAPI schema by inspecting each route's return
+    annotation. A route annotated `-> JSONResponse` (a Response subclass) WITHOUT
+    response_model=None makes app.openapi() raise PydanticUserError -- with
+    `from __future__ import annotations` the annotation is the unresolved string
+    'JSONResponse' -- and /openapi.json 500s. MUTATION: drop response_model=None
+    on /api/fences (or /api/fences/active) and app.openapi() raises here.
+    build_app never calls the provider during construction/schema-gen (the routes
+    only reference it inside their bodies), so a bare stub provider is enough."""
+    from xbrain.p5_gateway.hmi.web_server import build_app
+
+    class _StubProvider:      # schema gen inspects signatures, never calls these
+        pass
+
+    app = build_app(_FULL_WEB, _StubProvider(), lambda: None, str(tmp_path))
+    schema = app.openapi()    # raises if any route return-annotation is unresolved
+    assert "/api/fences" in schema["paths"]
+    assert "/api/fences/active" in schema["paths"]

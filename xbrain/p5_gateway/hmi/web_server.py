@@ -215,7 +215,13 @@ def build_app(
         return data_readers.build_snapshot(**provider.snapshot_inputs(),
                                            site_timezone=site_timezone)
 
-    @app.get("/api/fences")
+    # response_model=None: the return annotation is JSONResponse (a Response
+    # subclass), and `from __future__ import annotations` makes it the STRING
+    # "JSONResponse"; without this, FastAPI 0.140 tries to build a response
+    # schema from that forward ref and /openapi.json 500s (PydanticUserError
+    # "not fully defined"). None tells it there is no response model. Same on
+    # every route below that returns a JSONResponse directly.
+    @app.get("/api/fences", response_model=None)
     def get_fences() -> JSONResponse:
         """17 S6.5/S6.9: fence polygons, but 503 E_DEGRADED (never 200 []) when
         the cache is degraded (P5F-2). fences_endpoint picks the status/body;
@@ -250,7 +256,7 @@ def build_app(
         events_group, geo_group,
     )
 
-    @app.get("/api/fences/active")
+    @app.get("/api/fences/active", response_model=None)
     def get_fences_active() -> JSONResponse:
         """17 S6.5 / 11 S9A.11: the active fence set's full geometry. Same P5F-2
         degraded rule as /api/fences (503, never a 200 empty set); on a fresh
