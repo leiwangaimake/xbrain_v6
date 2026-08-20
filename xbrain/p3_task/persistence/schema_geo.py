@@ -155,6 +155,7 @@ END;
 DDL_FENCES = """
 CREATE TABLE IF NOT EXISTS fences (
   fence_id      TEXT PRIMARY KEY,                -- 'f-'+slug (11 S7.8.1)
+  name          TEXT,                            -- display name (11 S9A.2 polygons[].name); nullable
   role          TEXT NOT NULL,                   -- allow | forbid | speed_limit | warning
   kind          TEXT NOT NULL DEFAULT 'polygon', -- polygon | circle (geometry type)
   geom_json     TEXT NOT NULL,                   -- WGS84 vertices (11 S9A.2)

@@ -145,22 +145,24 @@ class FencesDAO:
 
     async def insert(self, fence_id: str, role: str, geom_json: str,
                       content_hash: str, updated_ms: int, kind: str = "polygon",
-                      soft_margin_m=None) -> None:
+                      name=None, soft_margin_m=None) -> None:
         # v1.5: role (11 S9A.2) replaces the old kind='zone'/zone_label overload;
         # warning never hard-enforces (S9A.2). The S9A.1A count invariants are the
         # fence.db triggers, not this DAO.
         hard_enforce = 0 if role == "warning" else 1
         await self._conn.execute(
-            "INSERT INTO fences (fence_id, role, kind, geom_json, hard_enforce, "
-            " soft_margin_m, content_hash, updated_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (fence_id, role, kind, geom_json, hard_enforce, soft_margin_m,
+            "INSERT INTO fences (fence_id, name, role, kind, geom_json, "
+            " hard_enforce, soft_margin_m, content_hash, updated_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (fence_id, name, role, kind, geom_json, hard_enforce, soft_margin_m,
              content_hash, updated_ms))
 
     async def list_active(self):
+        # Ordered for a DETERMINISTIC FenceSet crc32 (11 S9A.2 concatenates
+        # polygons in array order; a stable order keeps the crc32 reproducible).
         cur = await self._conn.execute(
-            "SELECT fence_id, role, kind, geom_json, hard_enforce, rev "
-            "FROM fences WHERE tombstone=0")
+            "SELECT fence_id, name, role, kind, geom_json, hard_enforce, rev "
+            "FROM fences WHERE tombstone=0 ORDER BY fence_id")
         return await cur.fetchall()
 
 

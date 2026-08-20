@@ -320,16 +320,17 @@ def test_geo_object_dao_rejects_unknown_table():
 @pytest.mark.asyncio
 async def test_fences_list_active_excludes_tombstoned(fence_conn):
     dao = FencesDAO(fence_conn)
-    await dao.insert("f-1", "allow", "[]", "h", 0)
+    await dao.insert("f-1", "allow", "[]", "h", 0, name="活动区")
     await fence_conn.execute(
-        "INSERT INTO fences (fence_id, role, kind, geom_json, content_hash, "
+        "INSERT INTO fences (fence_id, name, role, kind, geom_json, content_hash, "
         " hard_enforce, updated_ms, tombstone) "
-        "VALUES ('f-2', 'forbid', 'polygon', '[]', 'h', 1, 0, 1)")
+        "VALUES ('f-2', '禁区', 'forbid', 'polygon', '[]', 'h', 1, 0, 1)")
     rows = await dao.list_active()
     assert {r[0] for r in rows} == {"f-1"}
-    # role is carried out for the HMI/P1 (col 1). MUTATION: dropping role from the
-    # SELECT would leave downstream unable to classify the fence.
-    assert rows[0][1] == "allow"
+    # list_active row = (fence_id, name, role, kind, geom_json, hard_enforce, rev);
+    # name + role carried out for the HMI/P1. MUTATION: wrong column order breaks
+    # the FenceSet builder downstream.
+    assert rows[0][1] == "活动区" and rows[0][2] == "allow"
 
 
 @pytest.mark.asyncio

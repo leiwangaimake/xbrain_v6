@@ -175,28 +175,30 @@ async def commit_waypoint(conn, *, geo_id: str, name: str, wtype: str,
 
 
 async def commit_fence(conn, *, fence_id: str, role: str, points: Sequence,
-                       now_ms: int, soft_margin_m: Optional[float] = None) -> str:
+                       now_ms: int, name: Optional[str] = None,
+                       soft_margin_m: Optional[float] = None) -> str:
     """Write a polygon fence to fence.db with its 11 S9A.2 role (allow | forbid |
-    speed_limit | warning). `points` is the WGS84 vertex ring (lat, lon) WITHOUT a
-    duplicated closing vertex (closes implicitly), validated (FS-4: >= 3 unique
-    points, non-zero area) before insert. hard_enforce is derived: warning fences
-    never hard-enforce (S9A.2), all others do. The S9A.1A count invariants (<= 5
-    active, at most 1 allow) are enforced by the fence.db triggers; the "exactly 1
-    allow" existence half is a set check at broadcast time (validate_active_fence_set)."""
+    speed_limit | warning) and display name. `points` is the WGS84 vertex ring
+    (lat, lon) WITHOUT a duplicated closing vertex (closes implicitly), validated
+    (FS-4: >= 3 unique points, non-zero area) before insert. hard_enforce is
+    derived: warning fences never hard-enforce (S9A.2), all others do. The S9A.1A
+    count invariants (<= 5 active, at most 1 allow) are enforced by the fence.db
+    triggers; the "exactly 1 allow" existence half is a set check at broadcast
+    time (validate_active_fence_set)."""
     if role not in ("allow", "forbid", "speed_limit", "warning"):
         raise GeoCommitError(f"bad fence role {role!r}")
     validate_polygon(points)                   # raises InvalidPolygon on a bad ring
     verts = [[float(a), float(b)] for a, b in points]
     geom_json = json.dumps({"points": verts}, separators=(",", ":"))
-    ch = content_hash({"points": verts, "role": role})
+    ch = content_hash({"points": verts, "role": role, "name": name})
     hard_enforce = 0 if role == "warning" else 1
     await conn.execute("BEGIN IMMEDIATE")
     try:
         await conn.execute(
-            "INSERT INTO fences (fence_id, role, kind, geom_json, hard_enforce, "
-            " soft_margin_m, content_hash, updated_ms) "
-            "VALUES (?, ?, 'polygon', ?, ?, ?, ?, ?)",
-            (fence_id, role, geom_json, hard_enforce, soft_margin_m, ch, now_ms))
+            "INSERT INTO fences (fence_id, name, role, kind, geom_json, "
+            " hard_enforce, soft_margin_m, content_hash, updated_ms) "
+            "VALUES (?, ?, ?, 'polygon', ?, ?, ?, ?, ?)",
+            (fence_id, name, role, geom_json, hard_enforce, soft_margin_m, ch, now_ms))
         await conn.commit()
     except Exception:
         await conn.rollback()

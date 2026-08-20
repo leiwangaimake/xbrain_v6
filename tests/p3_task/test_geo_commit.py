@@ -150,12 +150,12 @@ async def test_commit_fence_stores_role_and_polygon(fence_conn):
     # (or defaulting it) loses the S9A.2 classification the HMI + P1 need.
     pts = [(31.20, 121.50), (31.21, 121.50), (31.21, 121.51), (31.20, 121.51)]
     await commit_fence(fence_conn, fence_id="f-forbid", role="forbid",
-                       points=pts, now_ms=1)
+                       name="东北禁止区", points=pts, now_ms=1)
     cur = await fence_conn.execute(
-        "SELECT role, kind, hard_enforce, geom_json FROM fences "
+        "SELECT name, role, kind, hard_enforce, geom_json FROM fences "
         "WHERE fence_id='f-forbid'")
-    role, kind, hard, geom = await cur.fetchone()
-    assert role == "forbid" and kind == "polygon" and hard == 1
+    name, role, kind, hard, geom = await cur.fetchone()
+    assert name == "东北禁止区" and role == "forbid" and kind == "polygon" and hard == 1
     assert json.loads(geom)["points"][0] == [31.20, 121.50]
 
 

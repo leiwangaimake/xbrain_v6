@@ -49,10 +49,14 @@ QUERY_TASKS_TOPIC = "query/tasks"        # 11 S12.4 HMI task-panel queryable (P5
 QUERY_TASKS_TIMEOUT_S = 2.0              # cap the zenoh-thread block on a db read
 STATE_GEO_OBJECTS_TOPIC = "state/geo/objects"  # 11 S7.10A geo geometry broadcast (P5 -> HMI)
 GEO_PUBLISH_PERIOD_S = 5.0               # geo re-publish cadence (>= 0.1 Hz keepalive)
+CMD_FENCE_TOPIC = "cmd/fence"            # 11 S9A.3: P3 is the sole cmd/fence publisher
+FENCE_PUBLISH_PERIOD_S = 5.0             # fence re-publish cadence (>= 0.1 Hz keepalive)
+FENCE_SET_ID = "fs-active"               # the single active FenceSet's id (11 S9A.2)
 
 # Voice-loop default. All four DBs live under data/run/ (operator 2026-08-12).
 DEFAULT_TASK_DB = "/opt/xbrain_v6/data/run/task.db"
 DEFAULT_GEO_DB = "/opt/xbrain_v6/data/run/geo.db"
+DEFAULT_FENCE_DB = "/opt/xbrain_v6/data/run/fence.db"
 
 
 def _now_mono_ms() -> int:
@@ -79,19 +83,27 @@ def _now_utc_iso() -> str:
 def run_voice_loop_wiring(stop_flag: dict,
                           heartbeat_period_s: float = 5.0,
                           task_db_path: str = DEFAULT_TASK_DB,
-                          geo_db_path: str = DEFAULT_GEO_DB) -> int:
+                          geo_db_path: str = DEFAULT_GEO_DB,
+                          fence_db_path: str = DEFAULT_FENCE_DB) -> int:
     """Block until stop_flag['stop'] is truthy. Returns 0 on clean shutdown."""
     return asyncio.run(
-        _amain(stop_flag, heartbeat_period_s, task_db_path, geo_db_path))
+        _amain(stop_flag, heartbeat_period_s, task_db_path, geo_db_path,
+               fence_db_path))
 
 
 async def _amain(stop_flag: dict, heartbeat_period_s: float,
-                 task_db_path: str, geo_db_path: str = DEFAULT_GEO_DB) -> int:
+                 task_db_path: str, geo_db_path: str = DEFAULT_GEO_DB,
+                 fence_db_path: str = DEFAULT_FENCE_DB) -> int:
     from xbrain.common.runtime.session_ctx import open_planes
+    from xbrain.p3_task.dao.simple_daos import FencesDAO
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
+    from xbrain.p3_task.fence.fence_set import build_fence_set
+    from xbrain.p3_task.fence.geom import InvalidFenceSet
     from xbrain.p3_task.geo.objects import read_geo_objects
     from xbrain.p3_task.persistence.base import open_configured
-    from xbrain.p3_task.persistence.schema_geo import GEO_DB_STATEMENTS
+    from xbrain.p3_task.persistence.schema_geo import (
+        FENCE_DB_STATEMENTS, GEO_DB_STATEMENTS,
+    )
     from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
     from xbrain.p3_task.schedule.driver import scheduler_tick
 
@@ -106,8 +118,16 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     # off the task.db write path.
     _logger.info("p3 wiring: opening geo.db at %s", geo_db_path)
     geo_conn = await open_configured(geo_db_path, GEO_DB_STATEMENTS)
+    # Third connection: fence.db. P3 is the sole cmd/fence publisher (11 S9A.3);
+    # it reads the active fences here and broadcasts the FenceSet on cmd/fence so
+    # P1/P2/P4/P5 render/consume the real stored geometry (the demo injector is
+    # retired). Only the GEOMETRY broadcast half is wired now -- the two-stage
+    # stage/ack/commit handshake is deferred until P1 clipping lands (see fence_set).
+    _logger.info("p3 wiring: opening fence.db at %s", fence_db_path)
+    fence_conn = await open_configured(fence_db_path, FENCE_DB_STATEMENTS)
     try:
         dao = TasksDAO(conn)
+        fences_dao = FencesDAO(fence_conn)
 
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
@@ -123,6 +143,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # HMI renders them live without P5 reading geo.db (S7843). Published
             # from the loop below every GEO_PUBLISH_PERIOD_S (>= 0.1 Hz keepalive).
             geo_pub = gen.declare_publisher(STATE_GEO_OBJECTS_TOPIC)
+            # 11 S9A.3: broadcast the active FenceSet from fence.db on cmd/fence so
+            # the HMI (and later P1/P2) render/consume the real stored geometry.
+            fence_pub = gen.declare_publisher(CMD_FENCE_TOPIC)
 
             # F-5 (11 S4.6.4): watch P5's cloud-link level and inject one
             # return_home at L3 (cloud down past rtb_s). The subscriber only STORES
@@ -206,6 +229,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
 
             last_hb = time.monotonic()
             last_geo = 0.0            # 0 -> publish geo on the very first pass
+            last_fence = 0.0          # 0 -> publish fence on the very first pass
+            fence_rev = [1]           # 11 S9A.2 rev; +1 on any geometry change
+            last_fence_sig = [None]   # rev-0 crc32 of the last broadcast set
+            fence_invalid_logged = [False]
             try:
                 while not stop_flag.get("stop"):
                     # Wait for a task or wake up to heartbeat / re-check stop.
@@ -261,23 +288,53 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p3 geo broadcast failed: %s", exc)
                         last_geo = now
+                    # 11 S9A.3: re-broadcast the active FenceSet from fence.db every
+                    # FENCE_PUBLISH_PERIOD_S (>= 0.1 Hz keepalive); rev +1 on any
+                    # geometry change (detected via the rev-independent crc32). An
+                    # invalid set (no allow / > 5, S9A.1A FS-5A) is NOT broadcast --
+                    # the old fence stays in effect; logged once until it recovers.
+                    if now - last_fence >= FENCE_PUBLISH_PERIOD_S:
+                        try:
+                            rows = await fences_dao.list_active()
+                            # rev=0 gives a rev-independent signature to detect change.
+                            sig = build_fence_set(
+                                rows, fence_set_id=FENCE_SET_ID, rev=0)["crc32"]
+                            if sig != last_fence_sig[0]:
+                                if last_fence_sig[0] is not None:
+                                    fence_rev[0] += 1
+                                last_fence_sig[0] = sig
+                            fs = build_fence_set(
+                                rows, fence_set_id=FENCE_SET_ID, rev=fence_rev[0])
+                            fence_pub.put(json.dumps(
+                                fs, ensure_ascii=False).encode("utf-8"))
+                            fence_invalid_logged[0] = False
+                        except InvalidFenceSet as exc:
+                            if not fence_invalid_logged[0]:
+                                _logger.warning(
+                                    "p3 fence broadcast skipped, invalid set: %s",
+                                    exc)
+                                fence_invalid_logged[0] = True
+                        except Exception as exc:      # noqa: BLE001
+                            _logger.error("p3 fence broadcast failed: %s", exc)
+                        last_fence = now
             finally:
                 for s in _subs:
                     try:
                         s.undeclare()
                     except Exception:      # noqa: BLE001
                         pass
-                for p in (state_pub, geo_pub):
+                for p in (state_pub, geo_pub, fence_pub):
                     try:
                         p.undeclare()
                     except Exception:      # noqa: BLE001
                         pass
     finally:
         await conn.close()
-        try:
-            await geo_conn.close()
-        except Exception:                  # noqa: BLE001
-            pass
+        for c in (geo_conn, fence_conn):
+            try:
+                await c.close()
+            except Exception:              # noqa: BLE001
+                pass
     return 0
 
 
