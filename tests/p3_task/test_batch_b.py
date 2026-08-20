@@ -222,11 +222,15 @@ async def test_scheduled_partial_index_exists(task_conn):
 
 @pytest.mark.asyncio
 async def test_dock_quota_trigger_rejects_sixth(geo_conn):
+    # v1.5: full 15 S9.3 dock (WGS84 body + handover), keyed by geo_id 'd-*';
+    # names are UNIQUE. MUTATION: dropping the trigger lets a 6th active dock in.
     dao = DocksDAO(geo_conn)
     for i in range(5):
-        await dao.insert(f"d{i}", float(i), 0.0, 0.0, f"h{i}", 0)
+        await dao.insert(f"d-{i}", f"桩{i}", 31.2, 121.5, 0.0,
+                         31.2, 121.5, 0.0, f"h{i}", 0)
     with pytest.raises(Exception, match="dock quota"):
-        await dao.insert("d5", 5.0, 0.0, 0.0, "h5", 0)
+        await dao.insert("d-5", "桩5", 31.2, 121.5, 0.0,
+                         31.2, 121.5, 0.0, "h5", 0)
 
 
 # The old "16 waypoints per route" trigger was RETIRED by PLAN A (v1.5): route

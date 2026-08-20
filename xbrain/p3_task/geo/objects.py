@@ -66,13 +66,14 @@ async def _read_waypoints(conn) -> List[Dict[str, Any]]:
 
 
 async def _read_docks(conn) -> List[Dict[str, Any]]:
-    # docks are still the ENU interim schema (charging-subsystem scope) and are
-    # not rendered on the HMI map, so they keep e_m/n_m -- see schema_geo v1.5.
+    # v1.5: docks are the full 15 S9.3 WGS84 model now; emit lat/lon like
+    # waypoints (the frontend does not render docks, but the payload stays
+    # coordinate-consistent). heading is the dock body approach heading.
     cur = await conn.execute(
-        "SELECT dock_id, name, x_m, y_m, heading_rad, rev "
-        "FROM docks WHERE tombstone=0 ORDER BY dock_id")
+        "SELECT geo_id, name, rtk_lat, rtk_lon, dock_heading_rad, rev "
+        "FROM docks WHERE tombstone=0 ORDER BY geo_id")
     rows = await cur.fetchall()
-    return [{"geo_id": r[0], "name": r[1], "e_m": r[2], "n_m": r[3],
+    return [{"geo_id": r[0], "name": r[1], "lat": r[2], "lon": r[3],
              "heading_rad": r[4], "rev": r[5]} for r in rows]
 
 

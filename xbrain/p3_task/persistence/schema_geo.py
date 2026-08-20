@@ -36,8 +36,8 @@ waypoints / routes / route_waypoint_assoc are now the 15 S9.3 model:
     (15 S9.3 DDL omits them; state/geo/objects needs them).
 fences now carry a ROLE (allow/forbid/speed_limit/warning, 11 S9A.2) with the
 S9A.1A count triggers (<= 5 active, at most 1 allow); vertices are WGS84.
-STILL interim (NOT yet 15 S9.3): docks stay ENU (charging-subsystem ripple,
-out of scope for this migration).
+docks are now the FULL 15 S9.3 model too (WGS84 + handover point + num/on_route),
+so the whole geo tree is WGS84 (charging is unwired, so no integration ripple).
 """
 
 from __future__ import annotations
@@ -117,21 +117,39 @@ CREATE TABLE IF NOT EXISTS route_waypoint_assoc (
 
 DDL_DOCKS = """
 CREATE TABLE IF NOT EXISTS docks (
-  dock_id       TEXT PRIMARY KEY,
-  name          TEXT,
-  x_m           REAL NOT NULL,
-  y_m           REAL NOT NULL,
-  heading_rad   REAL NOT NULL,
-  rev           INTEGER NOT NULL DEFAULT 1,
-  content_hash  TEXT NOT NULL,
-  tombstone     INTEGER NOT NULL DEFAULT 0 CHECK (tombstone IN (0,1)),
-  updated_ms    INTEGER NOT NULL
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  geo_id               TEXT NOT NULL UNIQUE,       -- 'd-'+slug, immutable (11 S7.8.1)
+  name                 TEXT NOT NULL UNIQUE,       -- display / TTS name
+  num                  INTEGER,                    -- 1..99, voice "2 hao zhuang"
+  rtk_lat              REAL NOT NULL,              -- dock body (WGS84)
+  rtk_lon              REAL NOT NULL,
+  rtk_alt              REAL,
+  dock_heading_rad     REAL NOT NULL,              -- dock body heading = approach dir
+  handover_lat         REAL NOT NULL,              -- handover point (stage-1 nav target, CHG-35/36)
+  handover_lon         REAL NOT NULL,
+  handover_heading_rad REAL NOT NULL,
+  handover_tol_m       REAL NOT NULL DEFAULT 0.3,  -- Q19 eng default, recalibrate later
+  handover_tol_rad     REAL NOT NULL DEFAULT 0.09,
+  on_route_json        TEXT NOT NULL DEFAULT '[]', -- JSON ["r-...",...] dock-select (CHG-02)
+  enabled              INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),  -- disable != delete (G-3)
+  occupied_by          TEXT,                       -- fleet reserve (CHG-42); single robot = NULL
+  description          TEXT,
+  rev                  INTEGER NOT NULL DEFAULT 1,  -- sync (added on top of 15 S9.3)
+  content_hash         TEXT NOT NULL,
+  tombstone            INTEGER NOT NULL DEFAULT 0 CHECK (tombstone IN (0,1)),
+  updated_ms           INTEGER NOT NULL,
+  CHECK (num IS NULL OR (num >= 1 AND num <= 99)),
+  CHECK (handover_tol_m > 0.0 AND handover_tol_rad > 0.0),
+  CHECK (geo_id GLOB 'd-*')
 );
 """.strip()
-# NOTE (v1.5): docks are DELIBERATELY still the ENU interim schema. The full 15
-# S9.3 dock model (WGS84 + handover point) ripples into the charging subsystem
-# (dock_select / dock_arbiter), out of scope for the geo/HMI migration. docks are
-# not rendered on the HMI map, so this ENU-vs-WGS84 mix is invisible there.
+# v1.5 (2026-08-20): docks raised to the FULL 15 S9.3 model (WGS84 rtk_lat/lon +
+# handover point + num/on_route/enabled/occupied_by), completing the geo WGS84
+# migration. Safe because the charging subsystem (dock_select / dock_arbiter) is
+# NOT wired into the runtime yet -- dock_select is a pure function on an ENU Dock
+# dataclass, so its DB->Dock loader (a future charging batch) will project
+# handover_lat/lon -> ENU there, not here. docks are keyed by geo_id like
+# waypoints/routes; the sync columns are added on top of the 15 S9.3 DDL.
 
 
 # The old "16 waypoints per route" trigger is GONE: in the 15 S9.3 model route

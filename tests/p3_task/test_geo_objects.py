@@ -66,10 +66,13 @@ async def _seed(c):
     # a mode-B route: inline path_points (its own geometry, NOT keypoints).
     await _route_pp(c, "r-1", "营区日常",
                     [[31.2010, 121.4990], [31.2003, 121.5007]], 120)
-    # dock stays ENU (out of scope) -- e_m/n_m, not rendered on the map.
-    await c.execute("INSERT INTO docks (dock_id, name, x_m, y_m, heading_rad, "
-                    "content_hash, updated_ms) VALUES (?,?,?,?,?,?,?)",
-                    ("d-01", "1号充电桩", -40.0, 22.0, 0.0, "h", 130))
+    # dock: full 15 S9.3 WGS84 model (body + handover point). Not rendered on the
+    # map, but emitted as lat/lon for coordinate consistency.
+    await c.execute(
+        "INSERT INTO docks (geo_id, name, rtk_lat, rtk_lon, dock_heading_rad, "
+        "handover_lat, handover_lon, handover_heading_rad, content_hash, updated_ms) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("d-01", "1号充电桩", 31.2005, 121.5005, 0.0, 31.2006, 121.5006, 0.0, "h", 130))
     await c.commit()
 
 

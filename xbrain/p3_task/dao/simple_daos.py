@@ -119,10 +119,9 @@ class GeoObjectDAO:
         """Increment rev by exactly 1 and record the new hash.
         Returns the new rev. Idempotency: if content_hash matches,
         no-op and returns the current rev unchanged."""
-        # v1.5 PLAN A: waypoints / routes are keyed by the UNIQUE geo_id now (id
-        # is an internal AUTOINCREMENT). docks / fences keep their interim string PK.
-        pk = "geo_id"    if self._table in ("waypoints", "routes") else (
-             "dock_id"   if self._table == "docks"                else "fence_id")
+        # v1.5 PLAN A: waypoints / routes / docks are keyed by the UNIQUE geo_id
+        # now (id is an internal AUTOINCREMENT). Only fences keep a string PK.
+        pk = "fence_id" if self._table == "fences" else "geo_id"
         cur = await self._conn.execute(
             f"SELECT rev, content_hash FROM {self._table} "
             f"WHERE {pk}=?", (object_id,))
@@ -170,16 +169,29 @@ class DocksDAO:
     def __init__(self, conn) -> None:
         self._conn = conn
 
-    async def insert(self, dock_id: str, x_m: float, y_m: float,
-                      heading_rad: float, content_hash: str,
-                      updated_ms: int) -> None:
+    async def insert(self, geo_id: str, name: str, rtk_lat: float,
+                      rtk_lon: float, dock_heading_rad: float,
+                      handover_lat: float, handover_lon: float,
+                      handover_heading_rad: float, content_hash: str,
+                      updated_ms: int, num=None, rtk_alt=None,
+                      handover_tol_m: float = 0.3, handover_tol_rad: float = 0.09,
+                      on_route_json: str = "[]", enabled: int = 1,
+                      occupied_by=None, description=None) -> None:
+        # v1.5: full 15 S9.3 dock (WGS84 body + handover point), keyed by geo_id.
         await self._conn.execute(
-            "INSERT INTO docks (dock_id, x_m, y_m, heading_rad, "
-            " content_hash, updated_ms) VALUES (?, ?, ?, ?, ?, ?)",
-            (dock_id, x_m, y_m, heading_rad, content_hash, updated_ms))
+            "INSERT INTO docks (geo_id, name, num, rtk_lat, rtk_lon, rtk_alt, "
+            " dock_heading_rad, handover_lat, handover_lon, handover_heading_rad, "
+            " handover_tol_m, handover_tol_rad, on_route_json, enabled, "
+            " occupied_by, description, content_hash, updated_ms) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (geo_id, name, num, rtk_lat, rtk_lon, rtk_alt, dock_heading_rad,
+             handover_lat, handover_lon, handover_heading_rad, handover_tol_m,
+             handover_tol_rad, on_route_json, enabled, occupied_by, description,
+             content_hash, updated_ms))
 
     async def list_active(self):
         cur = await self._conn.execute(
-            "SELECT dock_id, x_m, y_m, heading_rad FROM docks "
-            "WHERE tombstone=0")
+            "SELECT geo_id, name, num, rtk_lat, rtk_lon, dock_heading_rad, "
+            " handover_lat, handover_lon, handover_heading_rad, enabled, rev "
+            "FROM docks WHERE tombstone=0 ORDER BY geo_id")
         return await cur.fetchall()
