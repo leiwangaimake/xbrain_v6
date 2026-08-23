@@ -197,3 +197,44 @@ def test_evidence_map_is_actually_consulted():
     hits = [it for it in rows if mod.norm_id(it["id"]) in ev]
     assert hits, "no TODO row matched any evidence row -- the id normalisation "\
                  "or the parser is broken"
+
+
+def test_no_test_file_greps_documents_with_ascii_stars():
+    """*** 这条守的是本轮批量清标点时踩的坑.
+
+    多个测试要剥掉文档表格里的装饰符(黑星), 做法是一个字符类正则. 批量清
+    标点的 sed 把源码里的黑星字面量一并换成了 ASCII *, 于是那些正则不再
+    剥离文档中的黑星 -- 解析立刻少认几行, 而表现是"代码表里多出几行",
+    会把人引去改代码而不是改正则.
+
+    正确写法是码位转义(★): 清标点脚本碰不到它, 运行期是同一个字符.
+
+    MUTATION: 把某个测试里的 ★ 换回字面量 -> 这里红.
+    """
+    import re as _re
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    bad = []
+    for path in (root / "tests").rglob("test_*.py"):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        # 找形如 re.sub(r"[...]", "", ...) 里同时含 * 而不含 ★ 的字符类,
+        # 且该文件确实在读 docs/ -- 只有读文档的才需要剥装饰符.
+        if "docs" not in text:
+            continue
+        # *** 本文件必须在扫描面之外.
+        # 第一版把示例正则写进了 docstring, 于是本用例[命中了自己] --
+        # 恒红, 而恒红的断言最终会被改成恒绿(CLAUDE.md 3.2 形态2/3).
+        # 排除自己, 并由下面那条断言证明排除没有写宽.
+        if path.resolve() == pathlib.Path(__file__).resolve():
+            continue
+        for m in _re.finditer(r're\.sub\(r"\[([^\]]*)\]"', text):
+            cls = m.group(1)
+            if "*" in cls and "\\u2605" not in cls and "★" not in cls:
+                bad.append("%s: %s" % (path.name, m.group(0)))
+    assert not bad, (
+        "这些正则用 ASCII 星号剥文档装饰符, 但文档里是黑星 -- "
+        "多半是被批量清标点改坏的: %s" % bad[:4])
+    # 扫描面不是空的 -- 否则上面那条恒过.
+    scanned = [p for p in (root / "tests").rglob("test_*.py")
+               if "docs" in p.read_text(encoding="utf-8", errors="replace")]
+    assert len(scanned) >= 3, "只扫到 %d 个读文档的测试" % len(scanned)

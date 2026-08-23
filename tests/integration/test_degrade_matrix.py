@@ -100,7 +100,7 @@ def slug(first_cell):
     改着改着就有人图省事把双向差集关掉.
     """
     s = re.sub(r"<br>.*", "", first_cell)
-    s = re.sub(r"[**`]", "", s)
+    s = re.sub(r"[*\u2605`]", "", s)
     s = re.sub(r"[（(].*?[)）]", "", s)
     s = re.sub(r"[^0-9a-zA-Z一-鿿]+", "_", s.strip().lower())
     return s.strip("_")
