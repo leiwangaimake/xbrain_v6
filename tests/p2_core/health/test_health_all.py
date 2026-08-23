@@ -3,9 +3,12 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_health_all.py
-Brief: health tests -- health all
+Brief: BIZ-P2-18/20 health items vs the contract + the restricted-function matrix
 
 Description:
+*** Brief 由占位串改写(2026-08-23). 原值是按路径自动生成的
+"health tests -- health all" -- 既没说清本文件测什么, 也无法据以索引任务号, 于是 P2 是唯一
+无法自动提取证据映射的子系统(CLAUDE.md 2.5 要求 Brief 一行说清).
 BIZ-P2-18/19/20/21 -- health items + factor + restrict matrix + three-stops.
 """
 

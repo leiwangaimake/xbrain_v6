@@ -3,9 +3,12 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_errors_map.py
-Brief: payload_client tests -- errors map
+Brief: BIZ-P2-2 payload-service client -- HTTP status -> E_* mapping (S8.13.5)
 
 Description:
+*** Brief 由占位串改写(2026-08-23). 原值是按路径自动生成的
+"payload_client tests -- errors map" -- 既没说清本文件测什么, 也无法据以索引任务号, 于是 P2 是唯一
+无法自动提取证据映射的子系统(CLAUDE.md 2.5 要求 Brief 一行说清).
 BIZ-P2-2 -- payload-service error map tests + spec variant.
 """
 

@@ -240,6 +240,29 @@
 2. GWY-P5-13 真验收:只读拒写守卫(按定案词表重新生成)、`/api/fences*` 的 E_DEGRADED 带 `(fence_set_id,rev,crc32)` 三元组、`/api/approval/pending` 与 `state/approval` 同队列、`/api/events` 排序键 `(channel,ch_seq)`、`test_rest.py` harness。
 3. ⚠️ `/api/events` 返回体 schema / since 语义 / 排序键 / 分页游标在契约里**本身仍"未定"**(17 §6.8.5 第 8 项),须 11 侧先落笔。
 
+#### 7.1A ⚠️★★★ 待裁决 · Zenoh gossip：RT-C2 平面隔离 vs 2026-08-10 实测（全库回归里长期红）
+
+> ★ 登记于 2026-08-23。`tests/deploy/test_zenoh_router_config.py` 两条用例
+> （`test_rt_config_disables_gossip` / `test_gen_config_disables_gossip`）**持续失败**，
+> 且**不是硬件阻塞** —— 是契约与实测正面冲突，必须人拍板。
+
+| 侧 | 逐字依据 | 后果 |
+|---|---|---|
+| **契约** | `11` §1.1.2 **RT-C2**：两个平面都必须显式 `scouting.gossip.enabled = false`。理由写得很硬：「gossip 会通过已建立的链路扩散节点信息，形成间接串接。★ V5 只有一个 router，gossip 未关无害；**V6 有两个 router，跨面进程的两条链路正好是 gossip 的扩散通道 —— V6 必须关**」 | 这是**平面隔离**约束，不是性能取舍 |
+| **实测** | `configs/zenoh/router_gen.json5` 现为 `gossip.enabled: true`（2026-08-10，标记 `V-ORIN-ZN-GOSSIP`），带 `multihop:false`。实测：peer 客户端经路由发布时 **`false` → 0 收包 / `true` → 160** | 关掉 gossip，peer 之间发现不了对方的订阅，总线不通 |
+
+**三条路，各自的代价**
+
+| # | 做法 | 代价 |
+|---|---|---|
+| ① | 客户端改 `mode=client` | 偏离 `11` §1.1.2 钉死的 `mode: peer`（`session_factory._MODE` 就是照它写的）；client 模式要求 router 先起，启动序变严 |
+| ② | 接受 `gossip=true` 并订正 RT-C2 | **削弱平面隔离约束本身**。⚠️ 需论证 `multihop:false` 是否足以堵住 RT-C2 点名的那条扩散通道（跨面进程同时直连两个 router） |
+| ③ | 另找发现机制（显式配置对端 / 静态订阅表） | 工作量最大，但两侧约束都不动 |
+
+★★ **在裁定前这两条用例会一直红。**🚫 不要为了让它绿而改测试 —— 它守的是 RT-C2，而 RT-C2 守的是隔离。
+
+---
+
 #### 7.2 ⚠️ 待裁决 · 围栏 role 枚举 vs P3 zone_label(W1 附带发现)
 
 **现象**:契约围栏 role 是闭集 `allow/forbid/zone`(17 §6.8 / 11 §9A.2),映射到显示类型 `active/forbid/alarm`(活动/禁入/报警,决定连线样式着色 17 §6.10.2A)。但 **P3 的 `fences` 表(15 四库模型)只存自由文本 `zone_label`,没有 role 枚举列** —— 所以 `cmd/fence` 几何 P5 收到时可能不带 role。

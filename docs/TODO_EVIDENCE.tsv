@@ -17,6 +17,29 @@
 #
 # 列: 任务ID <TAB> 验证产物(分号分隔) <TAB> 来源 <TAB> 核验日期
 #
+# -- 续做指南(给下一次接手的人, 含我自己) --------------------------------
+#
+# 已落: BIZ-P3 30 / GWY-P5 25 / GWY-P4 11 / BIZ-P2 27 = 93 项命中 TODO。
+# 待落: 约 355 项。跑 `python3 scripts/progress.py` 首行会打印当前命中数,
+#       NO 不要把这里的数字当真 -- 它是写下这行时的值, 会腐烂(CLAUDE.md 3.7)。
+#
+# 提取方法, 按可信度从高到低:
+#   1. 测试文件头注 Brief 行里作者【自己写了任务号】-> source=brief。最可信,
+#      因为那是写测试的人声明的覆盖面, 不是读者的推断。
+#   2. Brief 没写号, 但读测试内容能与 TODO 条目标题明确对上 -> source=manual。
+#   3. 都对不上 -> 不要猜。留空比错映射好: 一个错映射会让 progress.py 对没做
+#      的事报 DONE, 正是 CLAUDE.md 3.2 形态①。
+#
+# ★★ 遇到 Brief 是占位串时(如 "audio tests -- audio io"), 先把 Brief 补成真话
+#    并写上任务号, 再提取 -- 这是 2026-08-23 对 P2 用过的路子。绕过去只会让下一
+#    个人再读一遍同样的测试。占位 Brief 本身也违反 CLAUDE.md 2.5。
+#
+# ★ 已知没有自报覆盖、需要走慢路的子系统: MOT-PM(p1_motion) · CPP-*(C++ 侧,
+#   多数尚未建成) · MOT-PCP(perception, 未建) · 各类 INF-/CFG-/CHK- 基础设施项。
+#
+# 🚫 不按文件名相似度自动补映射: 2026-08-23 实测会配出 test_loader->test_logger、
+#    run_calib->run_all.sh 这类错配。
+#
 # 来源取值:
 #   brief   -- 测试文件头注 Brief 行自报覆盖该任务号
 #   manual  -- Brief 未写号, 由人工读判据后确认内容对应
@@ -92,3 +115,30 @@ GWY-P4-37	tests/p4_agent/test_llm_tier2.py	brief	2026-08-23
 GWY-P4-38	tests/p4_agent/runtime/test_orchestrator.py	brief	2026-08-23
 GWY-P4-39	tests/p4_agent/state/test_state_cache.py	brief	2026-08-23
 GWY-P4-42	tests/p4_agent/runtime/test_text_channel.py	brief	2026-08-23
+BIZ-P2-00	tests/p2_core/messaging/test_messaging.py	brief	2026-08-23
+BIZ-P2-01	tests/p2_core/test_threads.py	brief	2026-08-23
+BIZ-P2-02	tests/p2_core/payload_client/test_errors_map.py	brief	2026-08-23
+BIZ-P2-03	tests/p2_core/audio/test_audio_io.py	brief	2026-08-23
+BIZ-P2-04	tests/p2_core/audio/test_gate.py	brief	2026-08-23
+BIZ-P2-05	tests/p2_core/domains/test_domains.py	brief	2026-08-23
+BIZ-P2-06	tests/p2_core/domains/test_domains.py	brief	2026-08-23
+BIZ-P2-07	tests/p2_core/domains/test_domains.py	brief	2026-08-23
+BIZ-P2-09	tests/p2_core/domains/test_domains.py	brief	2026-08-23
+BIZ-P2-11	tests/p2_core/mode/test_mode_all.py;tests/p2_core/test_mode_wiring.py	manual	2026-08-23
+BIZ-P2-12	tests/p2_core/mode/test_mode_all.py	brief	2026-08-23
+BIZ-P2-13	tests/p2_core/mode/test_mode_all.py	brief	2026-08-23
+BIZ-P2-14	tests/p2_core/suspicion/test_suspicion.py	brief	2026-08-23
+BIZ-P2-15	tests/p2_core/suspicion/test_suspicion.py	brief	2026-08-23
+BIZ-P2-16	tests/p2_core/d_mode/test_sequencer.py	brief	2026-08-23
+BIZ-P2-17	tests/p2_core/authz/test_authz.py	brief	2026-08-23
+BIZ-P2-18	tests/p2_core/health/test_health_all.py	brief	2026-08-23
+BIZ-P2-20	tests/p2_core/health/test_health_all.py	brief	2026-08-23
+BIZ-P2-22	tests/p2_core/lifecycle/test_sm.py	brief	2026-08-23
+BIZ-P2-23	tests/p2_core/bit/test_bit.py	brief	2026-08-23
+BIZ-P2-24	tests/p2_core/config/test_assertions.py	brief	2026-08-23
+BIZ-P2-25	tests/p2_core/integration/test_scenarios_scaffold.py	brief	2026-08-23
+BIZ-P2-26	tests/p2_core/mode/test_motion_and_forward.py	brief	2026-08-23
+BIZ-P2-27	tests/p2_core/domains/test_chassis_light_and_night.py	brief	2026-08-23
+BIZ-P2-28	tests/p2_core/domains/test_chassis_light_and_night.py	brief	2026-08-23
+BIZ-P2-29	tests/p2_core/mode/test_motion_and_forward.py	brief	2026-08-23
+BIZ-P2-30	tests/p2_core/speech/test_presets.py	brief	2026-08-23

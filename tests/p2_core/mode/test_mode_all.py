@@ -3,9 +3,12 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_mode_all.py
-Brief: mode tests -- mode all
+Brief: BIZ-P2-11/12/13 mode machine core + two-layer device map + B-mode timer
 
 Description:
+*** Brief 由占位串改写(2026-08-23). 原值是按路径自动生成的
+"mode tests -- mode all" -- 既没说清本文件测什么, 也无法据以索引任务号, 于是 P2 是唯一
+无法自动提取证据映射的子系统(CLAUDE.md 2.5 要求 Brief 一行说清).
 BIZ-P2-11/12/13 -- mode SM + device map + B-mode timer tests.
 """
 

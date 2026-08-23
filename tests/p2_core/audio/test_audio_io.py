@@ -3,9 +3,12 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_audio_io.py
-Brief: audio tests -- audio io
+Brief: BIZ-P2-3 audio_io -- 48k S16_LE mono capture constants + 3:1 decimation
 
 Description:
+*** Brief 由占位串改写(2026-08-23). 原值是按路径自动生成的
+"audio tests -- audio io" -- 既没说清本文件测什么, 也无法据以索引任务号, 于是 P2 是唯一
+无法自动提取证据映射的子系统(CLAUDE.md 2.5 要求 Brief 一行说清).
 BIZ-P2-3 -- audio_io decimation math + AudioFrame invariants.
 """
 
