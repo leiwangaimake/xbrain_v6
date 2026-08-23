@@ -23,6 +23,27 @@ import pytest
 pytestmark = pytest.mark.no_device
 
 
+#: Per-script subprocess budget. NOT the criterion -- the criteria here are
+#: "emits exactly one valid JSON object" and "reports the right status". This
+#: is only a guard so a hung script cannot wedge the suite.
+#:
+#: *** Raised from 15 s on 2026-08-23, after SEC-11 timed out during the first
+#: full-repo run (4631 tests) while passing in ~1 s when run alone.
+#:
+#: Measured, not guessed: SEC-11 shells out to no_config_singular.py, which
+#: reads ~1071 source files. On this checkout -- an sshfs mount, which is how
+#: the repo is normally worked on -- that costs 7.2-8.5 s cold AND warm
+#: (~7 ms/file, dominated by per-open network round trips, so the mount cache
+#: does not help; a single `grep -rl` over the same files measured SLOWER at
+#: 11.8 s, so there is no cheap speedup to take instead).
+#:
+#: 15 s therefore left only ~1.7x margin over legitimate work, which a loaded
+#: machine eats easily. The failure direction of being too tight is worse than
+#: being too generous: a gate that reds at random gets read as noise and then
+#: ignored (CLAUDE.md 3.2 form 2), while a genuinely hung script now reports in
+#: two minutes instead of fifteen seconds -- fine for a 12-item checklist.
+SCRIPT_TIMEOUT_S = 120
+
 REPO = Path(__file__).parent.parent.parent
 CHECKS_DIR = REPO / "scripts" / "sec" / "checks"
 RUN_SEC = REPO / "scripts" / "sec" / "run_sec.sh"
@@ -50,8 +71,22 @@ def test_sec_check_script_exists(sec_id):
 
 @pytest.mark.parametrize("sec_id", EXPECTED_SEC_IDS)
 def test_sec_check_emits_valid_json(sec_id, tmp_path):
-    """Meta-check: aggregator counts on each script emitting exactly
-    one JSON object on stdout with id/severity/status/message."""
+    """Meta-check: the aggregator can parse each script's verdict.
+
+    *** The rule is "the LAST non-blank stdout line is the JSON object", not
+    "the script prints exactly one line". The docstring used to claim the
+    latter, and a mutation proved it was never checked: a script that printed
+    a noise line BEFORE its JSON passed this test unchanged.
+
+    That turned out to be correct behaviour rather than a hole -- aggregate.py
+    parses lines[-1] too -- so the fix was to state the real contract instead
+    of adding a stricter one the consumer does not need (a script that logs
+    progress to stdout is fine, as long as its verdict comes last).
+
+    What this DOES enforce, each with a mutation that turns it red: the last
+    line parses as JSON; the four keys are present; id matches the file; and
+    severity/status are in their closed sets.
+    """
     script = [p for p in CHECKS_DIR.iterdir()
               if p.name.startswith(sec_id + "-")][0]
     # Isolate env so device-optional vars are not set.
@@ -59,9 +94,12 @@ def test_sec_check_emits_valid_json(sec_id, tmp_path):
            if not k.startswith("XBRAIN_")}
     env["PATH"] = os.environ.get("PATH", "")
     r = subprocess.run(["bash", str(script)],
-                       env=env, capture_output=True, text=True, timeout=15)
+                       env=env, capture_output=True, text=True, timeout=SCRIPT_TIMEOUT_S)
     lines = [l for l in r.stdout.splitlines() if l.strip()]
     assert lines, "no output from %s (stderr: %s)" % (script, r.stderr)
+    # Parsed exactly the way scripts/sec/aggregate.py parses it (lines[-1]).
+    # If that ever diverges, a script could satisfy this test and still be
+    # unreadable to the thing that actually consumes it.
     parsed = json.loads(lines[-1])
     for k in ("id", "severity", "status", "message"):
         assert k in parsed, "%s: missing %s" % (script, k)
@@ -106,7 +144,7 @@ def test_variant_sec08_flags_legacy_bridge(tmp_path):
     (fake / "ros2_ws" / "bridge" / "config" / "zenoh_bridge.json5").write_text(
         "// V5 legacy junk\n")
     r = subprocess.run(["bash", str(dst)],
-                       capture_output=True, text=True, timeout=15)
+                       capture_output=True, text=True, timeout=SCRIPT_TIMEOUT_S)
     line = [l for l in r.stdout.splitlines() if l.strip()][-1]
     doc = json.loads(line)
     assert doc["status"] == "FAIL"
@@ -128,7 +166,7 @@ def test_variant_sec05_flags_injected_credential(tmp_path):
     (fake / "configs" / "bad.yaml").write_text(
         'server:\n  password: "supersecret123"\n')
     r = subprocess.run(["bash", str(dst)],
-                       capture_output=True, text=True, timeout=15)
+                       capture_output=True, text=True, timeout=SCRIPT_TIMEOUT_S)
     line = [l for l in r.stdout.splitlines() if l.strip()][-1]
     doc = json.loads(line)
     assert doc["status"] == "FAIL", "expected FAIL, got: %s" % doc
@@ -154,7 +192,7 @@ def test_variant_sec05_ignores_bare_mention(tmp_path):
         "# NOTE: the actual password lives in configs/secrets/\n"
         "server:\n  port: 7447\n")
     r = subprocess.run(["bash", str(dst)],
-                       capture_output=True, text=True, timeout=15)
+                       capture_output=True, text=True, timeout=SCRIPT_TIMEOUT_S)
     line = [l for l in r.stdout.splitlines() if l.strip()][-1]
     doc = json.loads(line)
     assert doc["status"] == "PASS", \
@@ -169,7 +207,7 @@ def test_sec09_severity_is_warning_never_blocks(tmp_path):
     reject deploys unnecessarily; this test guards against that."""
     src = CHECKS_DIR / "SEC-09-charge-manager-stopped.sh"
     r = subprocess.run(["bash", str(src)],
-                       capture_output=True, text=True, timeout=15)
+                       capture_output=True, text=True, timeout=SCRIPT_TIMEOUT_S)
     line = [l for l in r.stdout.splitlines() if l.strip()][-1]
     doc = json.loads(line)
     assert doc["severity"] == "WARNING", \
