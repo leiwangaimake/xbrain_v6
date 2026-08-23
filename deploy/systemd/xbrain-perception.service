@@ -24,6 +24,13 @@ Restart=always
 RestartSec=2s
 OOMScoreAdjust=-900
 Environment="PYTHONUNBUFFERED=1"
+# CHK-1-03 / 10 S3.2 CPU affinity baseline.
+# 核 2-3: C++ 负载最重, 含点云逐点处理
+# The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py
+# parses that table live and fails on any divergence, so editing this
+# line without editing the table is caught at CI time.
+CPUAffinity=2-3
+
 ExecStart=/opt/xbrain_v6/data/install/perception/lib/perception/perception_node
 
 [Install]

@@ -24,6 +24,13 @@ Restart=always
 RestartSec=2s
 OOMScoreAdjust=-500
 Environment="PYTHONUNBUFFERED=1"
+# CHK-1-03 / 10 S3.2 CPU affinity baseline.
+# 核 1: 同上, 云端方向网络 I/O 组
+# The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py
+# parses that table live and fails on any divergence, so editing this
+# line without editing the table is caught at CI time.
+CPUAffinity=1
+
 ExecStart=/usr/bin/zenoh-bridge-ros2dds --config /opt/xbrain_v6/deploy/zenoh/zenoh-bridge-ros2dds.json5
 
 [Install]

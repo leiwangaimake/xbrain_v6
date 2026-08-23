@@ -378,3 +378,4 @@ CFG-DC-04	tests/requirements.txt;pytest.ini;tests/conftest.py	manual	2026-08-23
 GWY-P4-32	xbrain/p4_agent/runtime/orchestrator_turn.py;tests/integration/test_orchestrator_wiring.py	manual	2026-08-23
 GWY-P4-34	xbrain/p4_agent/templates/query_engine.py;tests/p4_agent/test_batch5.py	manual	2026-08-23
 CHK-1-49	scripts/ci/gen_drift_gate.py;tests/ci/test_gen_drift_gate.py	manual	2026-08-23
+CHK-1-03	scripts/ci/check_affinity.py;tests/deploy/test_affinity_gate.py	manual	2026-08-23

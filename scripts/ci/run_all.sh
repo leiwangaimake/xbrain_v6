@@ -86,6 +86,10 @@ run_check null_guard         scripts/ci/null_guard.py
 # errors.h would otherwise pass every one of them -- the file is valid
 # C++, it just no longer matches codes.yaml.
 run_check gen_drift          scripts/ci/gen_drift_gate.py
+# CHK-1-03: systemd CPUAffinity must equal the 10 S3.2 core table. The
+# numbers live in two places (doc + units) and a divergence has no runtime
+# symptom -- only extra jitter that surfaces at T7 latency measurement.
+run_check cpu_affinity       scripts/ci/check_affinity.py
 run_check pytest_common      pytest tests/common
 run_check pytest_boot_freeze pytest tests/boot/freeze
 run_check pytest_configs     pytest tests/configs

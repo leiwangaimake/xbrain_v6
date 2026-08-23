@@ -57,6 +57,13 @@ ExecStartPre=/usr/bin/env bash -c "! grep -qF '$${' /run/xbrain/zenoh/zenohd-gen
 # Refuse if the resolved config contains 0.0.0.0 anywhere (belt-and-
 # braces vs a hand edit that slipped past code review).
 ExecStartPre=/usr/bin/env bash -c '! grep -q "0\\.0\\.0\\.0" /run/xbrain/zenoh/zenohd-gen.json5'
+# CHK-1-03 / 10 S3.2 CPU affinity baseline.
+# 核 1: 与 zenoh-bridge / P5 / FTP 同属云端方向的网络 I/O, 共核不引入新的跨核唤醒
+# The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py
+# parses that table live and fails on any divergence, so editing this
+# line without editing the table is caught at CI time.
+CPUAffinity=1
+
 ExecStart=/usr/local/bin/zenohd \
     --config /run/xbrain/zenoh/zenohd-gen.json5
 

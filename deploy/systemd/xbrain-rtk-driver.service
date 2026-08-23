@@ -39,6 +39,13 @@ Environment="LD_LIBRARY_PATH=/usr/local/lib"
 # self-locates libzenohc; the LD_LIBRARY_PATH above is now belt-and-braces. No
 # ConditionPathExists: rtk_driver is a REQUIRED Stage-1 unit, so a missing install
 # must fail (unlike the gated C++ units, which are optional until built).
+# CHK-1-03 / 10 S3.2 CPU affinity baseline.
+# 核 6: RT 面, 无 GIL 无 GC
+# The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py
+# parses that table live and fails on any divergence, so editing this
+# line without editing the table is caught at CI time.
+CPUAffinity=6
+
 ExecStart=/opt/xbrain_v6/data/install/rtk_driver/lib/rtk_driver/rtk_driver
 
 [Install]

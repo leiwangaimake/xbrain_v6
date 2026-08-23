@@ -24,6 +24,13 @@ Restart=always
 RestartSec=1s
 OOMScoreAdjust=-1000
 Environment="PYTHONUNBUFFERED=1"
+# CHK-1-03 / 10 S3.2 CPU affinity baseline.
+# 核 6: 急停链路, 无 GIL 无 GC (CRL-4 无动态分配无阻塞日志)
+# The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py
+# parses that table live and fails on any divergence, so editing this
+# line without editing the table is caught at CI time.
+CPUAffinity=6
+
 ExecStart=/opt/xbrain_v6/data/install/chassis_relay/lib/chassis_relay/chassis_relay
 # WatchdogSec DEFERRED, not dropped: 10 S3.3.8 mandates a watchdog on THIS
 # unit (the emergency-stop relay is the one place S3.3.8 names besides P1).

@@ -30,6 +30,13 @@ Environment="PYTHONUNBUFFERED=1"
 # bridge then logs OFF rather than failing the unit). p2..p5 do NOT need this --
 # they take robot_id from the resolved snapshot (common.robot_id), not the env.
 EnvironmentFile=-/etc/xbrain/robot.env
+# CHK-1-03 / 10 S3.2 CPU affinity baseline.
+# 核 4 独占(isolcpus 隔离): 20 Hz 周期 P99 的前提, RNS 的激光栅格绕障也在这个环里
+# The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py
+# parses that table live and fails on any divergence, so editing this
+# line without editing the table is caught at CI time.
+CPUAffinity=4
+
 ExecStart=/usr/bin/env python3 -m xbrain.p1_motion
 
 [Install]

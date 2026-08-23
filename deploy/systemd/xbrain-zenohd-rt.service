@@ -38,6 +38,13 @@ RestartSec=2s
 # /usr/local/bin/zenohd (verified 2026-08-16, Orin). ConditionPathExists
 # is deliberately NOT set: this is a hard-gated Stage 0z unit, so a
 # missing binary MUST fail the boot, not skip silently.
+# CHK-1-03 / 10 S3.2 CPU affinity baseline.
+# 核 6: RT 面 router, 与三个 C++ 进程同核 -- 四者全无 GIL 无 GC
+# The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py
+# parses that table live and fails on any divergence, so editing this
+# line without editing the table is caught at CI time.
+CPUAffinity=6
+
 ExecStart=/usr/local/bin/zenohd \
     --config /opt/xbrain_v6/deploy/zenoh/zenohd-rt.json5
 # Refuse to start if the config file is missing (rather than starting
