@@ -66,6 +66,10 @@ checks:
     path: scripts/ci/cxx_discipline_audit.py
     reason: "CHK-1-50 -- numbered C++ discipline rules (CRL/DDS/RT-C/CPP/PB-5); most have no scan target yet"
 
+  - name: m5_acceptance
+    path: scripts/ci/m5_acceptance.py
+    reason: "CHK-1-05 -- M5 exit report generated from test results; hand-written rows are rejected"
+
   - name: pytest_common
     path: pytest
     args: ["tests/common"]
