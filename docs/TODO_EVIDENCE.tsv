@@ -1,0 +1,83 @@
+# XBRAIN_V6 任务 -> 验证产物 证据映射
+#
+# 为什么需要这份文件: TODO 的完成判据写于开工前, 里面点名的测试路径是[预期
+# 文件名]而非实现 -- 实测 182 项点了名, 其中 123 项的文件根本不存在. 于是
+# scripts/progress.py 把它们全判成 IN_PROGRESS, 报出 DONE 2/250 这种无意义的
+# 数字. 按文件名相似度自动补映射也不可行(实测混入 test_loader->test_logger 这类
+# 错配, 一个错映射会让脚本对没做的事报 DONE, 正是 CLAUDE.md 3.2 形态①).
+#
+# 本文件是[逐条核过的]任务号 -> 真实验证产物, 由 progress.py 消费.
+#
+# * 证据强度的诚实说明: 一行的含义是"该测试文件自报覆盖此任务号, 且现在通过".
+#   这[不等于]该任务判据里的每条变异体都已验证 -- 那需要逐条读判据, 本表不
+#   声称做到了. 它解决的是更基础的问题: 让机器能找到该任务的验证产物.
+#
+# 来源: 测试文件头注 Brief 行里自报的任务号(作者写测试时声明的覆盖面),
+#       加人工补录 Brief 未写号但内容对应的条目(标 manual).
+#
+# 列: 任务ID <TAB> 验证产物(分号分隔) <TAB> 来源 <TAB> 核验日期
+#
+# 来源取值:
+#   brief   -- 测试文件头注 Brief 行自报覆盖该任务号
+#   manual  -- Brief 未写号, 由人工读判据后确认内容对应
+#   orphan  -- * 测试自报的任务号在 TODO 里[不存在]. 不是笔误就是这块工作在
+#              任务表外做的(TODO 自己的规矩: 新增任务必须先 grep 确认空号).
+#              保留在此以便回填 TODO, NO 不静默丢弃.
+
+BIZ-P3-00	tests/p3_task/test_batch_a.py	brief	2026-08-23
+BIZ-P3-01	tests/p3_task/test_batch_a.py	brief	2026-08-23
+BIZ-P3-02	tests/p3_task/test_batch_a.py	brief	2026-08-23
+BIZ-P3-03	tests/p3_task/test_batch_b.py	brief	2026-08-23
+BIZ-P3-04	tests/p3_task/test_batch_b.py	brief	2026-08-23
+BIZ-P3-05	tests/p3_task/test_batch_b.py	brief	2026-08-23
+BIZ-P3-06	tests/p3_task/test_batch_b.py	brief	2026-08-23
+BIZ-P3-07	tests/p3_task/test_batch_c.py	brief	2026-08-23
+BIZ-P3-08	tests/p3_task/test_batch_c.py	brief	2026-08-23
+BIZ-P3-09	tests/p3_task/test_batch_c.py	brief	2026-08-23
+BIZ-P3-10	tests/p3_task/test_batch_e.py	brief	2026-08-23
+BIZ-P3-11	tests/p3_task/test_batch_d.py	brief	2026-08-23
+BIZ-P3-12	tests/p3_task/test_batch_d.py	brief	2026-08-23
+BIZ-P3-13	tests/p3_task/test_batch_d.py	brief	2026-08-23
+BIZ-P3-14	tests/p3_task/test_batch_d.py	brief	2026-08-23
+BIZ-P3-15	tests/p3_task/test_batch_e.py	brief	2026-08-23
+BIZ-P3-16	tests/p3_task/test_batch_e.py	brief	2026-08-23
+BIZ-P3-17	tests/p3_task/test_batch_e.py	brief	2026-08-23
+BIZ-P3-18	tests/p3_task/test_batch_f.py	brief	2026-08-23
+BIZ-P3-19	tests/p3_task/test_batch_f.py	brief	2026-08-23
+BIZ-P3-20	tests/p3_task/test_batch_g.py	brief	2026-08-23
+BIZ-P3-21	tests/p3_task/test_batch_g.py	brief	2026-08-23
+BIZ-P3-22	tests/p3_task/test_batch_g.py	brief	2026-08-23
+BIZ-P3-23	tests/p3_task/test_batch_g.py	brief	2026-08-23
+BIZ-P3-24	tests/p3_task/test_batch_g.py	brief	2026-08-23
+BIZ-P3-25	tests/p3_task/test_batch_c.py	brief	2026-08-23
+BIZ-P3-26	tests/p3_task/test_batch_g.py	brief	2026-08-23
+BIZ-P3-27	tests/p3_task/test_batch_f.py	brief	2026-08-23
+BIZ-P3-28	tests/p3_task/test_batch_f.py	brief	2026-08-23
+BIZ-P3-29	tests/p3_task/test_batch_g.py	brief	2026-08-23
+BIZ-P3-40	tests/p3_task/test_id_alloc.py	orphan	2026-08-23
+BIZ-P3-42	tests/p3_task/test_scheduler_driver.py	orphan	2026-08-23
+GWY-P5-01	tests/p5_gateway/test_batch_a.py	brief	2026-08-23
+GWY-P5-02	tests/p5_gateway/persistence/test_record_dao.py	manual	2026-08-23
+GWY-P5-03	tests/p5_gateway/test_batch_b.py	brief	2026-08-23
+GWY-P5-04	tests/p5_gateway/test_batch_b.py	brief	2026-08-23
+GWY-P5-05	tests/p5_gateway/test_batch_b.py	brief	2026-08-23
+GWY-P5-06	tests/p5_gateway/test_batch_b.py	brief	2026-08-23
+GWY-P5-07	tests/p5_gateway/test_batch_c.py	brief	2026-08-23
+GWY-P5-08	tests/p5_gateway/test_batch_c.py	brief	2026-08-23
+GWY-P5-09	tests/p5_gateway/test_batch_e.py	brief	2026-08-23
+GWY-P5-10	tests/p5_gateway/test_batch_c.py	brief	2026-08-23
+GWY-P5-11	tests/p5_gateway/test_batch_d.py	brief	2026-08-23
+GWY-P5-12	tests/p5_gateway/test_batch_d.py	brief	2026-08-23
+GWY-P5-13	tests/p5_gateway/test_batch_c.py	brief	2026-08-23
+GWY-P5-14	tests/p5_gateway/test_batch_d.py	brief	2026-08-23
+GWY-P5-15	tests/p5_gateway/test_batch_d.py	brief	2026-08-23
+GWY-P5-16	tests/p5_gateway/test_batch_d.py	brief	2026-08-23
+GWY-P5-17	tests/p5_gateway/test_batch_e.py;tests/p5_gateway/test_bind_guard.py	brief	2026-08-23
+GWY-P5-18	tests/p5_gateway/test_batch_e.py	brief	2026-08-23
+GWY-P5-19	tests/p5_gateway/test_batch_e.py	brief	2026-08-23
+GWY-P5-20	tests/p5_gateway/test_batch_e.py	brief	2026-08-23
+GWY-P5-21	tests/p5_gateway/test_batch_e.py	brief	2026-08-23
+GWY-P5-22	tests/p5_gateway/test_batch_e.py	brief	2026-08-23
+GWY-P5-23	tests/p5_gateway/test_batch_e.py	brief	2026-08-23
+GWY-P5-24	tests/p5_gateway/test_batch_e.py	brief	2026-08-23
+GWY-P5-25	tests/p5_gateway/test_batch_a.py	brief	2026-08-23
