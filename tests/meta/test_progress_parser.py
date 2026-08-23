@@ -207,9 +207,10 @@ def test_no_test_file_greps_documents_with_ascii_stars():
     剥离文档中的黑星 -- 解析立刻少认几行, 而表现是"代码表里多出几行",
     会把人引去改代码而不是改正则.
 
-    正确写法是码位转义(★): 清标点脚本碰不到它, 运行期是同一个字符.
+    正确写法是码位转义(黑星的 U+2605): 清标点脚本碰不到它, 运行期是
+    同一个字符.
 
-    MUTATION: 把某个测试里的 ★ 换回字面量 -> 这里红.
+    MUTATION: 把某个测试里的码位转义换回字面量 -> 这里红.
     """
     import re as _re
 
@@ -217,7 +218,7 @@ def test_no_test_file_greps_documents_with_ascii_stars():
     bad = []
     for path in (root / "tests").rglob("test_*.py"):
         text = path.read_text(encoding="utf-8", errors="replace")
-        # 找形如 re.sub(r"[...]", "", ...) 里同时含 * 而不含 ★ 的字符类,
+        # 找形如 re.sub 的字符类里含 ASCII 星号, 却不含黑星码位的那些,
         # 且该文件确实在读 docs/ -- 只有读文档的才需要剥装饰符.
         if "docs" not in text:
             continue
@@ -229,7 +230,10 @@ def test_no_test_file_greps_documents_with_ascii_stars():
             continue
         for m in _re.finditer(r're\.sub\(r"\[([^\]]*)\]"', text):
             cls = m.group(1)
-            if "*" in cls and "\\u2605" not in cls and "★" not in cls:
+            # 黑星本身用码位构造 -- 直接写字面量的话, 清标点脚本会把
+            # 它换成 ASCII 星号, 这条检查当场失效(而它守的正是这件事).
+            _star = chr(0x2605)
+            if "*" in cls and "\\u2605" not in cls and _star not in cls:
                 bad.append("%s: %s" % (path.name, m.group(0)))
     assert not bad, (
         "这些正则用 ASCII 星号剥文档装饰符, 但文档里是黑星 -- "
