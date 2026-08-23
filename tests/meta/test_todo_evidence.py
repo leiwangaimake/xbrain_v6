@@ -141,6 +141,37 @@ def test_orphan_rows_are_marked_as_such():
         % (sorted(marked), sorted(DECLARED_ORPHANS)))
 
 
+def test_range_style_brief_ids_are_all_expanded():
+    """*** p1_motion 的 Brief 用[区间]写任务号(MOT-PM-1..15), 而前几批的提取
+    只认斜杠分隔.
+
+    这个差异是静默的: 把 "1..15" 当成单个 1 读, 结果是少算 14 项而不是报错 --
+    提取器不会抱怨, 证据表只是短了一截, 而短了多少没人看得出来.
+
+    本用例把两侧钉在一起: Brief 里出现的每个区间, 其[两端与中间]都必须在证据
+    表里有行. MUTATION: 把提取器改回只认 '/', 这里立刻红.
+    """
+    import re as _re
+    briefs = []
+    for f in (ROOT / "tests" / "p1_motion").rglob("*.py"):
+        m = _re.search(r"^Brief:(.*)$", f.read_text(encoding="utf-8",
+                                                    errors="replace"), _re.M)
+        if m:
+            briefs.append(m.group(1))
+    wanted = set()
+    for line in briefs:
+        for mm in _re.finditer(r"(MOT-PM|MOT-RD)-([0-9]+)\.\.([0-9]+)", line):
+            lo, hi = int(mm.group(2)), int(mm.group(3))
+            for n in (lo, (lo + hi) // 2, hi):        # 两端 + 中间各取一
+                wanted.add("%s-%02d" % (mm.group(1), n))
+    if not wanted:
+        pytest.skip("no range-style Brief ids present")
+    have = {t for t, _f, _s, _d in _rows()}
+    assert not sorted(wanted - have), (
+        "range-style ids missing from the evidence map -- the extractor is "
+        "probably reading '1..15' as a bare 1: %s" % sorted(wanted - have)[:6])
+
+
 def test_source_column_is_a_closed_set():
     """brief / manual / orphan and nothing else -- an unrecognised source is a
     row nobody can interpret."""
