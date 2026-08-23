@@ -53,6 +53,10 @@ import subprocess       # run the baseline script as a black box, the way deploy
 
 import pytest           # skip honestly when the host has no second account
 
+# INF-TS-1 三档 marker. 本文件是纯静态/元检查(读文件与仓库状态),
+# 不碰任何硬件, 故 no_device -- 2026-08-23 从 legacy 未标记名单迁出.
+pytestmark = pytest.mark.no_device
+
 # The repository root is three levels up from tests/configs/<this file>. Derived,
 # not a hardcoded literal, so the suite is not pinned to /opt and so this file
 # carries no source-root literal for a future scan to flag.

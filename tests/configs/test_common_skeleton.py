@@ -70,6 +70,10 @@ sys.path.insert(0, ROOT)
 
 from xbrain.common.config import layers, merge  # noqa: E402
 
+# INF-TS-1 三档 marker. 本文件是纯静态/元检查(读文件与仓库状态),
+# 不碰任何硬件, 故 no_device -- 2026-08-23 从 legacy 未标记名单迁出.
+pytestmark = pytest.mark.no_device
+
 # tests/ sits outside the scan surface of scripts/lint/no_config_source_read.py
 # (SCAN_DIRS is xbrain, ros2_ws, services) precisely so a test may name the config
 # SOURCE. This file has to: the artifact under test is the source file, not the
@@ -501,18 +505,46 @@ def test_no_zero_placeholder_anywhere_in_the_file():
             assert value != 0, "%s is assigned a zero; an unset value is null" % path
 
 
+#: Leaves deliberately LANDED, each with the reason it is not a skeleton hole.
+#: Adding to this dict is the "deliberate act" the case below describes; it is
+#: NOT a way to silence the check, because everything outside it still fails.
+_LANDED = {
+    # 2026-08-23: landed by 473dd81 (站点显示时区), which per this case's own
+    # instructions should have updated the test in the same commit and did not.
+    # Authorised as a landed value by 16 S(p4 config header) and 17 S6.10.2,
+    # both verbatim: it is a DISPLAY value only -- the HMI clock, the G24 spoken
+    # time and the CHS-A Time field -- while every timeout/period uses the
+    # monotonic clock (CLK-C1) and the internal wall clock is always UTC.
+    # "本值[不影响安全]". A null here would break G24 instead of protecting
+    # anything, which is why it is landed rather than left unassigned.
+    "common.timezone": "Asia/Shanghai",
+}
+
+
 def test_every_declared_leaf_is_null():
     """CFG-CF-2 delivers key POSITIONS; every value is still unlanded.
 
     Read this case as a statement about today's file, not as a ban on ever landing
     a value. Landing one is a deliberate act that cites the row of 5.4.5
-    authorising it, and it updates this case in the same commit. What must NOT
-    happen is the assertion being deleted to let a value through unremarked --
-    that turns the one check that knows this file is a skeleton into nothing.
+    authorising it, and it updates this case in the same commit -- by adding the
+    leaf to _LANDED above with its reason. What must NOT happen is the assertion
+    being deleted to let a value through unremarked -- that turns the one check
+    that knows this file is a skeleton into nothing.
 
-    Mutation run: give any leaf a value => red, naming the path.
+    Mutation run: give any OTHER leaf a value => red, naming the path; change a
+    landed value without updating _LANDED => red too, because the expected value
+    is pinned, not just the key.
     """
     for path, value in sorted(merge.flatten(load_common()).items()):
+        if path in _LANDED:
+            # Pinned by VALUE, not merely exempted by key: an exemption that
+            # only named the path would let the timezone be silently changed
+            # to anything at all.
+            assert value == _LANDED[path], (
+                "%s is a landed leaf but its value changed to %r; update "
+                "_LANDED (with the reason) in the same commit" % (path, value)
+            )
+            continue
         assert value is None, (
             "%s carries a value; CFG-CF-2 is a key-position skeleton and every "
             "landed value needs the 10 S5.4.5 row that authorises it" % path

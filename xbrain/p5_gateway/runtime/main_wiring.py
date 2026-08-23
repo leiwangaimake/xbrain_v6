@@ -336,7 +336,7 @@ def _normalise_event(key: str, d: dict) -> Optional[dict]:
     eid = data.get("eid") or data.get("event_id") or d.get("eid")
     if not (eid and rid and sev and cat):
         return None
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)  # WALL-CLOCK-OK(record): the event record ts, 11 S6.2; ages/timeouts elsewhere use the monotonic clock
     detail = data.get("detail")
     return {
         "eid": eid, "rid": rid, "sev": sev, "cat": cat,
@@ -423,7 +423,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             event_subsystem = EventSubsystem(
                 os.environ.get("XBRAIN_ROBOT_ID", "unknown"),
                 record_db_path, record_db_path + ".degrade.jsonl",
-                now_iso=lambda: datetime.now(timezone.utc).isoformat(),
+                now_iso=lambda: datetime.now(timezone.utc).isoformat(),  # WALL-CLOCK-OK(record): record.db event timestamp; the subsystem takes now_mono separately for ages
                 now_mono=time.monotonic)
             if event_subsystem.start():
                 _logger.info("p5 wiring: event subsystem ON (record.db=%s)",

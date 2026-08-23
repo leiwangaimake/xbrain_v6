@@ -173,6 +173,7 @@ def scan_third_party_imports(root):
                 # reviewer knows the check was NOT applied to that path.
                 sys.stderr.write("check_deps: could not parse %s\n" % path)
                 continue
+            optional = _optional_import_names(tree)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for n in node.names:
@@ -182,7 +183,56 @@ def scan_third_party_imports(root):
                     # own to lock; skip.
                     if node.level == 0 and node.module:
                         found.add(node.module.split(".")[0])
+            found -= optional
     return {n for n in found if n not in stdlib and n not in _FIRST_PARTY}
+
+
+def _optional_import_names(tree):
+    """Top-level module names imported INSIDE a try whose handler catches
+    ImportError -- i.e. the code already works without them.
+
+    *** Why assertion 4 needs this. The lock exists so a bring-up install has
+    every module the runtime needs. A module the source itself treats as
+    optional -- imported under try/except ImportError, with a fallback on the
+    handler path -- is by construction not needed for the process to run.
+    Locking it would make an optional dependency mandatory, and would
+    contradict the fallback the author deliberately wrote.
+
+    Concretely: hmi/geo_timezone.py imports tzfpy this way and falls back to
+    common.timezone, so a host without it shows the configured zone instead of
+    the GPS-derived one. Degraded, not broken.
+
+    *** Conservative: only the imports LEXICALLY inside the try body count, and
+    only when a handler names ImportError (or ModuleNotFoundError, its
+    subclass) or is a bare `except:`. An import in the else/finally clause, or
+    under a try that catches something else, is NOT optional and stays
+    required -- an unknown guard keeps the stricter answer.
+    """
+    names = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        catches_import = False
+        for h in node.handlers:
+            if h.type is None:
+                catches_import = True
+            else:
+                for t in (h.type.elts if isinstance(h.type, ast.Tuple)
+                          else [h.type]):
+                    if isinstance(t, ast.Name) and t.id in (
+                            "ImportError", "ModuleNotFoundError"):
+                        catches_import = True
+        if not catches_import:
+            continue
+        for stmt in node.body:
+            for sub in ast.walk(stmt):
+                if isinstance(sub, ast.Import):
+                    for n in sub.names:
+                        names.add(n.name.split(".")[0])
+                elif isinstance(sub, ast.ImportFrom):
+                    if sub.level == 0 and sub.module:
+                        names.add(sub.module.split(".")[0])
+    return names
 
 
 def check_imports_covered(lock, imports):

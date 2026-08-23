@@ -28,6 +28,10 @@ from check_deps import (                              # noqa: E402
     load_lock, scan_third_party_imports,
 )
 
+# INF-TS-1 三档 marker. 本文件是纯静态/元检查(读文件与仓库状态),
+# 不碰任何硬件, 故 no_device -- 2026-08-23 从 legacy 未标记名单迁出.
+pytestmark = pytest.mark.no_device
+
 LOCK_PATH = os.path.join(ROOT, "scripts", "deps", "requirements-runtime.txt")
 
 

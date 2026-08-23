@@ -46,6 +46,10 @@ import textwrap
 
 import pytest
 
+# INF-TS-1 三档 marker. 本文件是纯静态/元检查(读文件与仓库状态),
+# 不碰任何硬件, 故 no_device -- 2026-08-23 从 legacy 未标记名单迁出.
+pytestmark = pytest.mark.no_device
+
 # Absolute path to the lint script we exercise -- same one that runs in CI
 # and the same one the criterion names.
 _HERE = os.path.dirname(os.path.abspath(__file__))

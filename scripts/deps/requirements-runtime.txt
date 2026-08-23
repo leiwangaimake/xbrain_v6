@@ -4,15 +4,35 @@
 #   * every line is exactly `name==x.y.z` (no `>=`, no bare package name).
 #     tests/deps/test_dependency_lock.py assertion ① enforces this at load.
 #   * every third-party top-level import under xbrain/ and common/ MUST
-#     appear here (bidirectional diff empty). ★ 2026-08-08 audit: xbrain/
-#     imports exactly two -- `yaml` (PyYAML) and `zenoh` (eclipse-zenoh).
+#     appear here (bidirectional diff empty).
+#     ⚠️ The "2026-08-08 audit: xbrain/ imports exactly two" note that used to
+#     sit here went stale within days and is deleted rather than corrected:
+#     a counted fact baked into prose rots (CLAUDE.md 3.7), and this one did.
+#     Run check_deps.py for today's set; the diff below is what it reported on
+#     2026-08-23.
 #   * MAJOR of `eclipse-zenoh` must match the deployed `zenohd` binary
 #     (assertion ③): zenoh-python 1.x speaks a different wire protocol from
 #     0.x, so a mixed pair silently fails on the first pub/sub.
 #
-# Test / service deps (pytest, fastapi, httpx, aiosqlite, opuslib, sherpa-onnx)
-# live in separate files (requirements-test.txt / requirements-service.txt);
+# Test-only deps (pytest, httpx, opuslib, sherpa-onnx) live in separate files;
 # this file is the RUNTIME floor only, so a bare-bones bring-up install works.
+#
+# ★ fastapi / starlette / uvicorn / wsproto are RUNTIME, not test: the HMI web
+# server runs INSIDE p5_gateway (10 S3.1 -- there is no separate HMI process),
+# so a bring-up without them has no operator surface at all. aiosqlite is
+# runtime for the same reason: p3_task's four databases go through it and
+# 15 S9 forbids the synchronous sqlite3 driver.
+#
+# ★ Two runtime imports are deliberately ABSENT, both guarded by
+# try/except ImportError with a working fallback -- by this file's own
+# definition ("the RUNTIME floor, so a bare-bones bring-up install works")
+# neither is the floor, and locking them would make optional deps mandatory:
+#   * tzfpy   -- hmi/geo_timezone.py; without it the footer clock shows the
+#                configured common.timezone instead of the GPS-derived zone.
+#   * wsproto -- hmi/web_server.py; without it uvicorn falls back to ws="auto"
+#                and the HMI degrades to REST polling instead of WS push.
+# ⚠️ Both are wanted in a real deployment. "Not in the floor" means bring-up
+# does not BLOCK on them, not that the deployment should skip them.
 #
 # Versions: exact matches of what the paraformer-ASR + freeze pipeline were
 # validated against 2026-08. Update PROCESS: edit here, re-run
@@ -21,3 +41,7 @@
 eclipse-zenoh==1.9.0
 PyYAML==6.0.2
 requests==2.32.3
+aiosqlite==0.22.1
+fastapi==0.141.1
+starlette==1.4.1
+uvicorn==0.52.1

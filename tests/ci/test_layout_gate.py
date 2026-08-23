@@ -33,6 +33,10 @@ import pytest
 
 from scripts.ci.layout_gate import RULES, run
 
+# INF-TS-1 三档 marker. 本文件是纯静态/元检查(读文件与仓库状态),
+# 不碰任何硬件, 故 no_device -- 2026-08-23 从 legacy 未标记名单迁出.
+pytestmark = pytest.mark.no_device
+
 
 def _make_clean_scaffold(root):
     """Build a minimal green layout under `root`: common/ common/lib/

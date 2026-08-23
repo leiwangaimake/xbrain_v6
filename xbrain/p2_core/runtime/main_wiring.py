@@ -365,7 +365,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         device_bridge = DeviceHealthBridge(
             rid=os.environ.get("XBRAIN_ROBOT_ID", "unknown"),
             emit=_emit_device_event,
-            now_iso=lambda: datetime.now(timezone.utc).isoformat(),
+            now_iso=lambda: datetime.now(timezone.utc).isoformat(),  # WALL-CLOCK-OK(record): event record timestamp, never an age or timeout
             eid_gen=_dev_eid)
         # Per-device OFFLINE detail (11 S6.2 reason/socket evidence). audio sub-
         # devices (speaker/siren) sit on the 8519 socket, lights (strobe/light) on

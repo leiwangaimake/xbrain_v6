@@ -72,6 +72,10 @@ sys.path.insert(0, ROOT)
 # a branch someone emptied out still shows up here instead of vanishing silently.
 from xbrain.common.config import merge  # noqa: E402
 
+# INF-TS-1 三档 marker. 本文件是纯静态/元检查(读文件与仓库状态),
+# 不碰任何硬件, 故 no_device -- 2026-08-23 从 legacy 未标记名单迁出.
+pytestmark = pytest.mark.no_device
+
 # The three source files under test. Sources, not the resolved snapshot -- see the
 # module docstring for why a test is allowed to name them.
 CONFIGS = os.path.join(ROOT, "configs")
