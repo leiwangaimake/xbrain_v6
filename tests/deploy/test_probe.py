@@ -25,6 +25,18 @@ import pytest
 import yaml
 
 
+def _host_zone():
+    """本机 /etc/localtime 解析出的 IANA 区名.
+
+    夹具用它而不是硬写 "Asia/Shanghai": 开发机与 ORIN 的系统时区不一定相同
+    (实测本机是 Asia/Tokyo), 硬写会让这些与时区无关的用例在一部分机器上红.
+    时区断言本身由 tests/deploy/test_timezone_probe.py 专门守.
+    """
+    from xbrain.boot.probe.checks import resolve_system_zone
+
+    return resolve_system_zone()
+
+
 pytestmark = pytest.mark.no_device
 
 
@@ -81,6 +93,10 @@ def happy_env(tmp_path):
             "max_temp_c": 200.0,
         },
         "databases": [],   # empty list is valid; no DBs to check
+        # Stage 0 自 CHK-1-62 起还查系统时区. 这里填[本机实际区名]而不是
+        # 一个固定值: 本用例测的是磁盘/DB/GATE-6, 不该被时区这条新断言
+        # 顺带拦下 -- 时区本身由 test_timezone_probe.py 专门守.
+        "timezone": {"expected": _host_zone()},
     })
     hw_path = tmp_path / "hw_profile"
     _write_yaml(hw_path, {"interfaces": {}})
@@ -139,6 +155,10 @@ def test_probe_reports_disk_full_when_threshold_exceeded(happy_env, tmp_path):
         "memory": {"min_free_kb": 1024},
         "temperature": {"sensors": [], "max_temp_c": 100.0},
         "databases": [],
+        # Stage 0 自 CHK-1-62 起还查系统时区. 这里填[本机实际区名]而不是
+        # 一个固定值: 本用例测的是磁盘/DB/GATE-6, 不该被时区这条新断言
+        # 顺带拦下 -- 时区本身由 test_timezone_probe.py 专门守.
+        "timezone": {"expected": _host_zone()},
     })
     hw = tmp_path / "hw"; _write_yaml(hw, {"interfaces": {}})
     r = _run_probe({
@@ -163,6 +183,10 @@ def test_db_corruption_reports_storage_corrupt_with_db_name(happy_env, tmp_path)
         "disk": [], "memory": {"min_free_kb": 1024},
         "temperature": {"sensors": [], "max_temp_c": 100.0},
         "databases": [{"path": str(bad_db), "expected_version": 1}],
+        # Stage 0 自 CHK-1-62 起还查系统时区. 这里填[本机实际区名]而不是
+        # 一个固定值: 本用例测的是磁盘/DB/GATE-6, 不该被时区这条新断言
+        # 顺带拦下 -- 时区本身由 test_timezone_probe.py 专门守.
+        "timezone": {"expected": _host_zone()},
     })
     hw = tmp_path / "hw"; _write_yaml(hw, {"interfaces": {}})
     r = _run_probe({
@@ -190,6 +214,10 @@ def test_db_schema_mismatch_reports_config_invalid_not_storage_corrupt(
         "disk": [], "memory": {"min_free_kb": 1024},
         "temperature": {"sensors": [], "max_temp_c": 100.0},
         "databases": [{"path": str(good), "expected_version": 1}],
+        # Stage 0 自 CHK-1-62 起还查系统时区. 这里填[本机实际区名]而不是
+        # 一个固定值: 本用例测的是磁盘/DB/GATE-6, 不该被时区这条新断言
+        # 顺带拦下 -- 时区本身由 test_timezone_probe.py 专门守.
+        "timezone": {"expected": _host_zone()},
     })
     hw = tmp_path / "hw"; _write_yaml(hw, {"interfaces": {}})
     r = _run_probe({

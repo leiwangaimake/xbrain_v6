@@ -177,3 +177,99 @@ def check_db_schema(db_path: str, expected_version: int) -> Optional[dict]:
             "actual_version": actual,
         }
     return None
+
+
+# --- Timezone -----------------------------------------------------
+
+#: Where a distro keeps the IANA database. The zone name is whatever
+#: follows this prefix in the resolved path of /etc/localtime.
+_ZONEINFO_ROOTS = ("/usr/share/zoneinfo/", "/usr/lib/zoneinfo/")
+
+
+def resolve_system_zone(localtime_path: str = "/etc/localtime"
+                        ) -> Optional[str]:
+    """The IANA name /etc/localtime points at, or None if unresolvable.
+
+    None is returned for BOTH "missing" and "present but not a link
+    into the zoneinfo tree" -- and the caller must treat both as a
+    failure. That second case is the one worth naming: some images
+    ship /etc/localtime as a plain COPY of the zone file rather than a
+    symlink. The bytes are correct, the clock is correct, and the zone
+    NAME is simply not recoverable from the filesystem. Guessing it by
+    comparing file contents against every file under zoneinfo would
+    "work" until two zones share a definition (Asia/Shanghai and
+    Asia/Chongqing are byte-identical), at which point the guess is a
+    coin flip that reports success. A deploy-time check that cannot
+    read the name must say so, not invent one.
+    """
+    try:
+        # readlink -f semantics: follow the whole chain. A relative
+        # link (../usr/share/zoneinfo/Asia/Shanghai) is normal here.
+        real = os.path.realpath(localtime_path)
+    except OSError:
+        return None
+    if not os.path.exists(localtime_path):
+        return None
+    for root in _ZONEINFO_ROOTS:
+        if real.startswith(root):
+            name = real[len(root):]
+            # posix/Asia/Shanghai and right/Asia/Shanghai are the same
+            # zone under a different leap-second model; strip the
+            # qualifier so the comparison is against the IANA name.
+            for prefix in ("posix/", "right/"):
+                if name.startswith(prefix):
+                    name = name[len(prefix):]
+            return name or None
+    return None
+
+
+def check_timezone(expected_zone: Optional[str],
+                   localtime_path: str = "/etc/localtime"
+                   ) -> Optional[dict]:
+    """Fail unless the system zone is EXACTLY `expected_zone`.
+
+    Why this is a Stage 0 gate and not a warning (CHK-1-62). Two
+    unrelated subsystems silently depend on the machine's local zone:
+
+      1. CHS-A requires a "Time" field formatted in LOCAL time (see
+         CLAUDE.md 5.5 / the vendor PDF). Send it in UTC and the
+         chassis rejects the very first frame with 0xE002.
+      2. Operating-window rules (p2_core time_window) are wall-clock
+         windows in site-local terms. A machine that boots in UTC
+         evaluates "22:00-06:00" against the wrong hours and either
+         arms or fails to arm a restriction, with nothing logged.
+
+    Both failures are invisible at boot and expensive in the field,
+    and both share one precondition -- so the precondition is checked
+    once, here, before anything is released.
+
+    expected_zone of None means "not calibrated" (CLAUDE.md 3.1: an
+    uncalibrated safety value is null in config and refuses to start;
+    NO defaulting to UTC or to whatever the host happens to have,
+    since that is exactly the fail-silent path above).
+    """
+    actual = resolve_system_zone(localtime_path)
+    if expected_zone is None:
+        return {
+            "kind": "timezone_not_calibrated",
+            "key": "common.timezone",
+            "actual": actual,
+        }
+    if actual is None:
+        # NOT the same as a mismatch: nothing to compare. Reported
+        # separately so the operator fixes the link rather than
+        # hunting a zone difference that does not exist.
+        return {
+            "kind": "timezone_unresolvable",
+            "localtime": localtime_path,
+            "expected": expected_zone,
+        }
+    if actual != expected_zone:
+        # Both values in the detail: the operator needs to know which
+        # of the two is wrong, and only they can decide.
+        return {
+            "kind": "timezone_mismatch",
+            "expected": expected_zone,
+            "actual": actual,
+        }
+    return None

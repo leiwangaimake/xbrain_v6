@@ -127,6 +127,30 @@ def run(config_path: str = _DEFAULT_CONFIG_PATH,
             # or absent).
             failures.append((E_CONFIG_INVALID, f))
 
+    # --- System timezone (CHK-1-62) -----------------------------
+    # Placed before GATE-6 because it is the cheapest check that can
+    # invalidate everything downstream: a machine in the wrong zone
+    # produces CHS-A frames the chassis rejects and evaluates
+    # time_window rules against the wrong hours, and neither failure
+    # announces itself.
+    # NO 不用 .get 兜底(CLAUDE.md 3.1: 安全参数不写默认值) -- 但缺键要报出
+    # [键路径], 不是让 KeyError 带着 traceback 逃出去. 两者的差别在现场很实:
+    # 一条 "timezone.expected missing" 告诉运维去哪儿填, 一段 traceback 只
+    # 告诉他探针崩了. 键的[值]可以合法为 null(= 未标定), 那由 check_timezone
+    # 判并报 timezone_not_calibrated.
+    try:
+        expected_zone = cfg["timezone"]["expected"]
+    except (KeyError, TypeError):
+        _emit(E_CONFIG_INVALID, {
+            "kind": "probe_config_missing_key",
+            "config_path": config_path,
+            "key": "timezone.expected",
+        })
+        return 1
+    f = checks.check_timezone(expected_zone)
+    if f is not None:
+        failures.append((E_CONFIG_INVALID, f))
+
     # --- GATE-6 network profile ---------------------------------
     try:
         profile = net_profile.load_profile(hw_profile_path)

@@ -81,6 +81,11 @@ run_check comment_ratio      scripts/lint/comment_ratio.py
 run_check no_chinese_in_log  scripts/lint/no_chinese_in_log.py
 run_check map1_scan          scripts/doccheck/map1_scan.py
 run_check null_guard         scripts/ci/null_guard.py
+# CHK-1-49: every checked-in generated artifact must equal a fresh run of
+# its generator. Placed after the static rules because a hand-edited
+# errors.h would otherwise pass every one of them -- the file is valid
+# C++, it just no longer matches codes.yaml.
+run_check gen_drift          scripts/ci/gen_drift_gate.py
 run_check pytest_common      pytest tests/common
 run_check pytest_boot_freeze pytest tests/boot/freeze
 run_check pytest_configs     pytest tests/configs

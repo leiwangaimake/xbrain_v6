@@ -48,3 +48,20 @@ databases:
     expected_version: 1
   - path: "/opt/xbrain_v6/data/record.db"
     expected_version: 1
+
+# -- System timezone (CHK-1-62) --------------------------------------
+# Stage 0 refuses to release unless /etc/localtime resolves to exactly
+# this IANA name. Two subsystems depend on the machine's local zone and
+# both fail SILENTLY when it is wrong: the CHS-A "Time" field must be
+# local time (a UTC-formatted frame gets 0xE002 from the chassis on the
+# very first send), and p2_core time_window rules are site-local wall
+# windows.
+#
+# This value MUST stay identical to common.timezone in
+# configs/common.yaml. It is duplicated rather than referenced because
+# the probe runs at Stage 0, BEFORE the freeze line materialises
+# /run/xbrain/resolved/, so ${common.*} cannot be expanded here (see
+# 10 S5.4.1). tests/deploy/test_timezone_probe.py asserts the two are
+# equal, so a drift between them fails a test rather than a deploy.
+timezone:
+  expected: "Asia/Shanghai"

@@ -172,6 +172,39 @@ def test_range_style_brief_ids_are_all_expanded():
         "probably reading '1..15' as a bare 1: %s" % sorted(wanted - have)[:6])
 
 
+def test_ids_written_below_the_brief_line_are_also_extracted():
+    """*** 提取面必须是[模块头注全文], 不只是 Brief 那一行.
+
+    tests/checks 的作者把任务号[逐条写在 Description 里](每号一行, 下面有
+    对应的用例段), Brief 只写了 "CHK consolidation batch tests". 只读 Brief
+    行会把这 33 个号全漏掉 -- 而漏掉的表现是证据表短一截, 不是报错.
+
+    这是本轮第三次遇到同一种失效: 提取器的扫描面比作者的书写面窄, 差值静默.
+    前两次是区间写法(MOT-PM-1..15)与带标记行(progress.py 的正则).
+
+    MUTATION: 把提取面缩回 Brief 行, 这里立刻红.
+    """
+    import re as _re
+    src = (ROOT / "tests" / "checks" / "test_chk_batch.py")
+    if not src.exists():
+        pytest.skip("tests/checks/test_chk_batch.py absent")
+    head = _re.match(r'\s*"""(.*?)"""', src.read_text(encoding="utf-8"), _re.S)
+    assert head, "该文件没有模块头注"
+    body = head.group(1)
+    brief = _re.search(r"^Brief:(.*)$", body, _re.M)
+    ids_in_body = set(_re.findall(r"CHK-[12]-[0-9]+", body))
+    ids_in_brief = set(_re.findall(r"CHK-[12]-[0-9]+", brief.group(1) if brief else ""))
+    assert ids_in_body - ids_in_brief, (
+        "夹具前提不再成立: 该文件已把所有任务号写进 Brief 行, 本用例失去意义")
+    have = {t for t, _f, _s, _d in _rows()}
+    norm = {"%s-%02d" % (i.rsplit("-", 1)[0], int(i.rsplit("-", 1)[1]))
+            for i in ids_in_body}
+    missing = sorted(norm - have)
+    assert not missing, (
+        "头注里点名的任务号没进证据表 -- 提取面可能缩回了 Brief 行: %s"
+        % missing[:6])
+
+
 def test_source_column_is_a_closed_set():
     """brief / manual / orphan and nothing else -- an unrecognised source is a
     row nobody can interpret."""

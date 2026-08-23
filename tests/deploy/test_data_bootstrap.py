@@ -19,6 +19,13 @@ from pathlib import Path
 import pytest
 
 
+def _timezone_line():
+    """probe 配置里的 timezone 行, 用本机实际区名 -- 见 test_probe.py 同名说明."""
+    from xbrain.boot.probe.checks import resolve_system_zone
+
+    return "timezone: {expected: %s}\n" % resolve_system_zone()
+
+
 pytestmark = pytest.mark.no_device
 
 
@@ -106,7 +113,11 @@ def test_probe_fails_when_data_db_is_corrupt(tmp_path):
         "disk: []\n"
         "memory: {min_free_kb: 1024}\n"
         "temperature: {sensors: [], max_temp_c: 100.0}\n"
-        "databases:\n"
+        # Stage 0 自 CHK-1-62 起还查系统时区. 用本机实际区名而不是固定值:
+        # 本用例测的是 DB 损坏与版本上界, 不该被时区断言顺带拦下
+        # (时区本身由 test_timezone_probe.py 守).
+        + _timezone_line()
+        + "databases:\n"
         f"  - {{path: \"{p}\", expected_version: 1}}\n"
     )
     hw = tmp_path / "hw"
@@ -141,7 +152,11 @@ def test_version_above_expected_rejected_no_downward_compat(tmp_path):
         "disk: []\n"
         "memory: {min_free_kb: 1024}\n"
         "temperature: {sensors: [], max_temp_c: 100.0}\n"
-        "databases:\n"
+        # Stage 0 自 CHK-1-62 起还查系统时区. 用本机实际区名而不是固定值:
+        # 本用例测的是 DB 损坏与版本上界, 不该被时区断言顺带拦下
+        # (时区本身由 test_timezone_probe.py 守).
+        + _timezone_line()
+        + "databases:\n"
         f"  - {{path: \"{tmp_path/'task.db'}\", expected_version: 1}}\n"
     )
     hw = tmp_path / "hw"
