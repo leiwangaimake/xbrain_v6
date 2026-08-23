@@ -399,3 +399,4 @@ BIZ-P2-19	xbrain/p2_core/health/factor.py;tests/p2_core/health/test_factor_parti
 CFG-BT-18	xbrain/common/config/locked_keys.py;tests/configs/test_locked_keys.py	manual	2026-08-23
 BIZ-P2-08	xbrain/p2_core/domains/lighting_auto.py;tests/p2_core/domains/test_lighting_auto_rules.py	manual	2026-08-23
 CFG-BT-09	xbrain/persistence/migration.py;tests/persistence/test_migration.py	manual	2026-08-23
+CFG-BT-05	xbrain/boot/boot_fail.py;tests/boot/test_boot_fail.py	manual	2026-08-23
