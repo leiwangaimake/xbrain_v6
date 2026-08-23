@@ -1,0 +1,19 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: .clang-format
+# Brief: CFG-DC-2 -- Google C++ Style, per CLAUDE.md 5.1
+#
+# Description:
+# CLAUDE.md 5.1 requires the Google C++ Style Guide. Rather than restate its
+# rules here (a second source that will drift), this inherits BasedOnStyle:
+# Google and only records the two project-specific deviations below.
+---
+BasedOnStyle: Google
+# 100 rather than Google's 80: this project's identifiers carry domain
+# prefixes (chassis_ / rt_ / estop_) and 80 forces wraps that hide the
+# structure of a call.
+ColumnLimit: 100
+# C++17 exactly (CLAUDE.md 5.2 / 13 CPP-1). Telling the formatter the
+# standard keeps it from reformatting toward newer syntax.
+Standard: c++17

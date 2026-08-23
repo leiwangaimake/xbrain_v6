@@ -388,3 +388,8 @@ CFG-BT-11	xbrain/p2_core/boot/stage_machine.py;tests/startup/test_boot_invariant
 CFG-BT-12	xbrain/p2_core/boot/timeout_lock.py;tests/startup/test_boot_invariants.py	manual	2026-08-23
 CFG-BT-13	xbrain/p2_core/bit/report.py;tests/startup/test_boot_invariants.py	manual	2026-08-23
 CFG-BT-19	xbrain/p4_agent/registry/startup_assertions.py;tests/p4_agent/registry/test_cmdset_conflicts.py	manual	2026-08-23
+CFG-DC-02	pyproject.toml;tests/ci/test_toolchain_config.py	manual	2026-08-23
+INF-CI-03	pyproject.toml;.clang-tidy;tests/ci/test_toolchain_config.py	manual	2026-08-23
+CFG-CF-05	configs/p1_motion.yaml;tests/configs/test_config_layers.py	manual	2026-08-23
+CFG-CF-06	configs/intents.yaml;tests/configs/test_config_layers.py	manual	2026-08-23
+CFG-CF-08	configs/nav2/behavior_only.yaml;tests/configs/test_config_layers.py	manual	2026-08-23

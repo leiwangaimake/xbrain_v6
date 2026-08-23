@@ -1,0 +1,37 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: .clang-tidy
+# Brief: CFG-DC-2 -- static checks for the C++ side
+#
+# Description:
+# Checks are chosen for the failure modes this project actually has, not for
+# coverage: chassis_relay sits on the e-stop path (CRL-4 forbids dynamic
+# allocation and blocking logs), and 13 CPP-1 pins C++17 exactly.
+#
+# NOTE: the discipline rules that clang-tidy cannot express (RT-C4, DDS-3/4,
+# CRL-3 ...) live in scripts/ci/cxx_discipline_audit.py, which is table
+# driven and has fixtures. This file is not the place to restate them.
+Checks: >
+  bugprone-*,
+  performance-*,
+  readability-identifier-naming,
+  modernize-use-nullptr,
+  modernize-use-override,
+  -bugprone-easily-swappable-parameters,
+  -readability-magic-numbers
+WarningsAsErrors: 'bugprone-*'
+HeaderFilterRegex: '(common|ros2_ws)/.*\.(h|hpp)$'
+CheckOptions:
+  # CLAUDE.md 2.3: snake_case identifiers, trailing underscore on members,
+  # PascalCase for class names.
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: lower_case
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.PrivateMemberSuffix
+    value: _
+  - key: readability-identifier-naming.MacroDefinitionCase
+    value: UPPER_CASE
