@@ -3,9 +3,12 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_batch7.py
-Brief: p4_agent tests -- batch7
+Brief: GWY-P4-21/23/24 pose snap + channel permission + D-class intents
 
 Description:
+*** Brief 由占位串改写(2026-08-23). 原值是按路径自动生成的 "p4_agent tests -- batch7" --
+既没说清本文件测什么, 也无法据以索引任务号(CLAUDE.md 2.5). 同一处理已对
+P2 做过; 补 Brief 而不是绕过去, 是因为绕过去只会让下一个人再读一遍.
 GWY-P4-24/25/26/27/28/30/31 batch 7 tests (final P4 batch).
 """
 

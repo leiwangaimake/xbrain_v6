@@ -3,9 +3,12 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_batch6.py
-Brief: p4_agent tests -- batch6
+Brief: GWY-P4-18/19 failure handlers + registry evolution
 
 Description:
+*** Brief 由占位串改写(2026-08-23). 原值是按路径自动生成的 "p4_agent tests -- batch6" --
+既没说清本文件测什么, 也无法据以索引任务号(CLAUDE.md 2.5). 同一处理已对
+P2 做过; 补 Brief 而不是绕过去, 是因为绕过去只会让下一个人再读一遍.
 GWY-P4-19 + P4-21 batch 6 tests.
 """
 
