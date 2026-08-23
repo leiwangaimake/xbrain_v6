@@ -33,6 +33,10 @@ import yaml
 from xbrain.p3_task.ingest.geo_command import parse_geo_command
 from xbrain.p3_task.ingest.task_command import parse_task_command
 from xbrain.p2_core.runtime.mode_wiring import ModeFace
+from xbrain.p2_core.runtime.motion_intent_wiring import (
+    MotionLimits, evaluate as motion_evaluate, parse_intent_envelope,
+    to_relative_move,
+)
 from xbrain.p3_task.teach.command import parse_teach_command
 from xbrain.p4_agent.registry.intents import load_intent_registry
 from xbrain.p4_agent.runtime.orchestrator_turn import decision_to_publishes
@@ -136,6 +140,63 @@ def test_voice_mode_frame_is_applied_by_p2s_real_receiver():
     # warns about.
     assert face.state.value == "broadcast"
     assert payload["source"] == "voice"
+
+
+def test_voice_motion_frame_passes_p2s_real_gates():
+    """*** 18 A class -> cmd/motion/intent, checked against P2's ACTUAL gates.
+
+    Both halves were broken at once: P4's routing pointed at this key but it
+    sent its own p4_intent_v1 envelope (no data wrapper, no intent/slots/
+    auth_level/turn_id), and p2_core never subscribed the key at all. So
+    "go forward three metres" reached nobody, silently, from both ends.
+
+    MUTATION: drop CMD_MOTION_INTENT from _CONTRACT_FRAME_SLOT and the frame
+    arrives as the bare envelope -> parse_intent_envelope raises here.
+    """
+    tier2 = lambda *a, **k: Tier2Classification(          # noqa: E731
+        name="move_forward", slots={"distance_m": 3.0})
+    payload = _frames("帮我处理一下那个事情", tier2=tier2)["cmd/motion/intent"]
+    # G-1: the envelope is validated and NOT exempted.
+    cmd = parse_intent_envelope(payload)
+    # *** auth_level must be the contract's "L1", not the registry's L1a/L1b.
+    # Passing the registry value straight through would be refused by G-2 as a
+    # P4 defect -- it looks like a string detail and rejects the whole command.
+    assert cmd["auth_level"] == "L1"
+    assert cmd["intent"] == "move_forward"
+    assert cmd["slots"] == {"distance_m": 3.0}
+    assert cmd["channel"] == "mic_local"
+    assert cmd["turn_id"]
+    verdict = motion_evaluate(
+        cmd, limits=MotionLimits(max_distance_m=20.0, max_angle_deg=720.0),
+        clock={"ts_sync": True})
+    assert verdict.passed, verdict
+    body = to_relative_move(cmd, rm_cmd_id="rm-1", params={})
+    assert body["dx_m"] == 3.0
+
+
+def test_p4_never_clamps_an_over_range_distance():
+    """*** MI-1 with teeth: an over-range value must cross P4 UNCHANGED and be
+    refused by P2's G-3.
+
+    A "helpful" clamp in the builder (min(value, 20.0)) is the tempting bug:
+    the frame then passes G-3, the robot walks 20 m, and the operator who said
+    25 is never told the request was cut. It also breaks the audit premise --
+    state/voice_turn would say 25 while the command says 20, and MI-1 exists
+    precisely so those two can be compared byte for byte.
+
+    MUTATION: clamp in to_motion_intent -> the G-3 refusal below turns into a
+    pass and this test goes red.
+    """
+    tier2 = lambda *a, **k: Tier2Classification(          # noqa: E731
+        name="move_forward", slots={"distance_m": 25.0})
+    cmd = parse_intent_envelope(
+        _frames("帮我处理一下那个事情", tier2=tier2)["cmd/motion/intent"])
+    assert cmd["slots"]["distance_m"] == 25.0        # 原样, 没被 P4 削
+    verdict = motion_evaluate(
+        cmd, limits=MotionLimits(max_distance_m=20.0, max_angle_deg=720.0),
+        clock={"ts_sync": True})
+    assert not verdict.passed and verdict.gate == "G-3"
+    assert verdict.detail["limit"] == 20.0
 
 
 def test_a_control_intent_stays_an_envelope():

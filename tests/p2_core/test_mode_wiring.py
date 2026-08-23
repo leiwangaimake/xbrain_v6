@@ -123,6 +123,39 @@ def test_set_speed_profile_is_accepted_without_changing_mode():
     assert set(applied) >= {"profile_to", "profile_locked", "max_profile"}
 
 
+def test_a13_speed_profile_from_voice_is_accepted_without_changing_mode():
+    """*** A13 走 cmd/mode 而不是 cmd/motion/intent.
+
+    它在 18 的 A 类里, 但 11 S7.3 把 set_speed_profile 定为 ModeCommand 的
+    action, 且 S7.3.1(裁决 D-04)明确拒绝为它新开一条 MotionCommand --
+    理由是"系统里多一条能抬高速度上限的顶层 key"是更坏的失效方向.
+
+    这里连着 P4 的构建器一起测: 语音说"用巡逻速度"最终要能被 P2 吃下.
+    """
+    from xbrain.p4_agent.runtime.mode_request import to_mode_command
+    built = to_mode_command("set_speed_profile", slots={"profile": "patrol"},
+                            cmd_id="c-a13", source="voice")
+    pub = _Pub()
+    face = _face(pub, initial=ModeState.BROADCAST)
+    ack = face.handle_frame(json.dumps(built).encode("utf-8"), now_mono_ms=1)
+    assert ack["result"] == "accepted"
+    assert ack["detail"]["applied"]["profile_to"] == "patrol"
+    # 档位不是模式: 说一句"用巡逻速度"不该把喊话打断.
+    assert face.state is ModeState.BROADCAST and pub.sent == []
+
+
+@pytest.mark.parametrize("profile", ["cruise", "transit"])
+def test_a13_retired_profiles_are_refused_by_the_builder(profile):
+    """U33 删除了 cruise / transit; 18 S3.0 要求 GBNF 与 schema 两侧都拒,
+    NO 不得映射成 patrol -- 与 HMI W2 的 speed_profile 同一条规矩. """
+    from xbrain.p4_agent.runtime.mode_request import (
+        ModeRequestError, to_mode_command,
+    )
+    with pytest.raises(ModeRequestError):
+        to_mode_command("set_speed_profile", slots={"profile": profile},
+                        cmd_id="c-x", source="voice")
+
+
 def test_reset_profile_lock_without_token_is_refused():
     """SP-C2: 解锁必须带执行方签发的 confirm_token. """
     ack = _face().handle_frame(

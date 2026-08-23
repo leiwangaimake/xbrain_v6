@@ -270,6 +270,21 @@ mode_motion:
   on_target_lost: hold
 
 
+# --- cmd/motion/intent gates (11 S9.3.2A.5 G-3 range gate) ------------------
+# P2 turns an A-class voice intent into a cmd/motion/relative_move. G-3 bounds
+# the requested magnitude BEFORE forwarding. Values live here and not in code:
+# CLAUDE.md 3.1 forbids a code default for a limit, because a defaulted bound
+# is one nobody can see or change.
+rel_move:
+  # 12 S4.5.5 verbatim: "single displacement ceiling set to 20 m (configurable),
+  # beyond that use path navigation". A decided value, NOT an uncalibrated
+  # placeholder -- do not rewrite it to null.
+  max_distance_m: 20.0
+  # 11 S9.3.2A.5 G-3 gives 720 and marks the ceiling "pending review".
+  # 720 is carried here rather than left unbounded: enforcing a possibly-loose
+  # bound beats enforcing none, and when the review lands only this line moves.
+  max_angle_deg: 720.0
+
 # --- PTZ (14 S11 ptz block, after boost was removed) ------------------------
 
 ptz:

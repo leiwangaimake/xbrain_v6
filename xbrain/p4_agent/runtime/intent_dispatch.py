@@ -126,6 +126,10 @@ INTENT_TO_KEY.update({
 INTENT_TO_KEY.update({
     "C01": CMD_MODE, "C02": CMD_MODE, "C03": CMD_MODE,
     "C04": CMD_MODE, "C05": CMD_MODE, "C07": CMD_MODE,
+    # A13 set_speed_profile is an A-class intent but a ModeCommand ACTION
+    # (11 S7.3 + the D-04 ruling in S7.3.1), so it goes to cmd/mode, not to
+    # cmd/motion/intent -- it is not one of S9.3.2A.4's eight motion values.
+    "A13": CMD_MODE,
 })
 
 

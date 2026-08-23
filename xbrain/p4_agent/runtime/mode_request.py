@@ -57,10 +57,21 @@ _MODE_INTENTS: Dict[str, tuple] = {
     # 语音侧再补发一条 cmd/task 能替代的(那会造出第二个真源).
     "enter_patrol_mode": ("set_voice_mode", "dialog"),
     "set_motion_behavior": ("set_behavior", None),
+    # A13. It sits in the A class but 11 S7.3 makes set_speed_profile a
+    # ModeCommand ACTION, and S7.3.1 (ruling D-04) refused to open a separate
+    # MotionCommand for it: "one more top-level key that can raise the speed
+    # ceiling" is the worse failure direction, because every such key must
+    # then be justified in the S12.1.1 HMI whitelist.
+    "set_speed_profile": ("set_speed_profile", None),
 }
 
 #: C07 的 behavior 槽闭集 (NAV-50 三种). 闭集外必抛 -- 见 to_mode_command.
 BEHAVIOR_VALUES = frozenset({"normal", "follow", "face_target"})
+
+#: A13 profile closed set. U33 DELETED cruise and transit; 18 S3.0 says GBNF
+#: and schema validation must both REFUSE those two strings, never map them
+#: onto patrol.
+PROFILE_VALUES = frozenset({"obstacle_avoid", "patrol"})
 
 
 class ModeRequestError(RuntimeError):
@@ -92,6 +103,13 @@ def to_mode_command(intent_name: str, *, slots: Mapping[str, Any],
     }
     if voice_mode is not None:
         payload["voice_mode"] = voice_mode
+    if action == "set_speed_profile":
+        profile = slots.get("profile")
+        if profile not in PROFILE_VALUES:
+            raise ModeRequestError(
+                "profile %r is not one of %s (U33 removed cruise and transit)"
+                % (profile, sorted(PROFILE_VALUES)))
+        payload["profile"] = profile
     if action == "set_behavior":
         behavior = slots.get("behavior")
         if not isinstance(behavior, str) or behavior not in BEHAVIOR_VALUES:

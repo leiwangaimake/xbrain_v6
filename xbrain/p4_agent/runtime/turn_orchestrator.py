@@ -68,6 +68,9 @@ from xbrain.p4_agent.runtime.geo_request import (
 from xbrain.p4_agent.runtime.task_request import (
     TaskRequestError, is_task_create_intent, to_task_command,
 )
+from xbrain.p4_agent.runtime.motion_intent_request import (
+    MotionIntentError, is_motion_intent, to_motion_intent,
+)
 from xbrain.p4_agent.runtime.mode_request import (
     ModeRequestError, is_mode_intent, to_mode_command,
 )
@@ -95,6 +98,13 @@ _F_REASON_CN = {
 
 # Reply-family intent NAMES routed to the preset responder (never LLM,
 # never echo). J01/J02/I05 plus the out_of_scope sentinel (16 S11.5).
+# Spoken follow-ups when an A-class slot is missing (MI-2: ask, never send).
+_MOTION_REASON_CN = {
+    "missing_slot:distance_m": "要走多远? 请说一个米数",
+    "missing_slot:angle_deg": "要转多少度?",
+    "missing_slot:heading": "要朝哪个方向? 比如朝北",
+}
+
 _CHITCHAT_NAMES = frozenset({"greeting", "identity", "help", "out_of_scope"})
 
 # Short Chinese labels for spoken confirm/ack feedback (hot-tunable
@@ -510,6 +520,29 @@ class TurnOrchestrator:
                                     llm_used=llm_used,
                                     prompt_assembled=llm_used)
             extra = merged
+        # 18 A class -> 11 S9.3.2A.3 MotionIntent for cmd/motion/intent
+        # (2026-08-21). The routing already pointed at this key, but P4 sent
+        # its own p4_intent_v1 envelope -- no data wrapper, no intent/slots/
+        # auth_level/turn_id -- and P2 had no subscriber at all.
+        if is_motion_intent(entry.name):
+            try:
+                mi = to_motion_intent(
+                    entry.name, slots=dict(extra or {}),
+                    cmd_id="mi-" + uuid.uuid4().hex[:12],
+                    turn_id="vt-" + uuid.uuid4().hex[:12],
+                    source=self._source, asr_text=text)
+            except MotionIntentError as exc:
+                # MI-2: a missing slot NEVER goes on the wire -- ask again.
+                spoken = _MOTION_REASON_CN.get(
+                    str(exc), "这个动作没说清楚, 再说一遍")
+                return TurnDecision(kind="reply", intent_id=entry.id,
+                                    intent_name=entry.name, route=entry.route,
+                                    auth=eff_auth, level=eff_auth, layer=layer,
+                                    reply_text=spoken, tts_text=spoken,
+                                    llm_used=llm_used,
+                                    prompt_assembled=llm_used)
+            if mi is not None:
+                extra = {**(extra or {}), "motion_intent": mi}
         # 18 C class -> 11 S7.3 ModeCommand for cmd/mode (2026-08-21). Before
         # this the whole C class went to cmd/task and P3 skipped it: eight voice
         # commands ("enter broadcast", "exit alarm", ...) that reached nobody.

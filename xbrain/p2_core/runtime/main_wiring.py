@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import queue
+import uuid
 import logging
 import os
 import time
@@ -274,6 +275,61 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         _logger.info("p2 wiring: subscribed %s (mode face active)",
                      CMD_MODE_TOPIC)
 
+        # -- cmd/motion/intent subscriber (2026-08-21) ----------------
+        # 11 S2.2.3 makes p2_core the subscriber and p4_agent the ONLY
+        # publisher; S9.3.2A.1 rules the route P4 -> P2 -> P1. Like cmd/mode
+        # above, this key had no consumer, so the whole A class ("go forward
+        # three metres") reached nobody.
+        #
+        # Same main-thread discipline: the gates read the state caches this
+        # loop owns, so a Rust callback must not evaluate them.
+        from xbrain.p2_core.runtime.motion_intent_wiring import (
+            CMD_MOTION_INTENT_ACK_TOPIC, CMD_MOTION_INTENT_TOPIC,
+            CMD_RELATIVE_MOVE_TOPIC, MotionLimits,
+        )
+        # G-3 limits come from config, never from a code default
+        # (CLAUDE.md 3.1). A missing key raises here, at startup, naming the
+        # path -- not at the first "go forward" of a shift.
+        from xbrain.common.config.resolved import MISSING, load_resolved
+        _p2cfg = load_resolved("p2_core")
+        # Three outcomes, and they are NOT the same thing (resolved.get's own
+        # docstring makes the point): MISSING = the key is not in the snapshot
+        # at all (the source was edited but the freeze line never re-ran, which
+        # is 10 S5.4.1's whole reason for reading the PRODUCT and not the
+        # source); None = declared but unassigned, the CLAUDE.md 3.1 shape for
+        # an uncalibrated safety value. Both refuse startup, but they say
+        # different things because the fix is different.
+        _bad = []
+        for _path in ("rel_move.max_distance_m", "rel_move.max_angle_deg"):
+            _v = _p2cfg.get(_path)
+            if _v is MISSING:
+                _bad.append("%s absent from the resolved snapshot "
+                            "(re-run the freeze line)" % (_path,))
+            elif _v is None:
+                _bad.append("%s declared but unassigned" % (_path,))
+        if _bad:
+            # Fail loud NAMING THE KEY PATH, at startup -- not with a TypeError
+            # at the first "go forward" of a shift.
+            raise ValueError("p2_core config (11 S9.3.2A.5 G-3): "
+                             + "; ".join(_bad))
+        motion_limits = MotionLimits(
+            max_distance_m=float(_p2cfg.get("rel_move.max_distance_m")),
+            max_angle_deg=float(_p2cfg.get("rel_move.max_angle_deg")))
+        motion_queue: "queue.Queue" = queue.Queue(maxsize=64)
+        motion_ack_pub = gen.declare_publisher(CMD_MOTION_INTENT_ACK_TOPIC)
+        rel_move_pub = gen.declare_publisher(CMD_RELATIVE_MOVE_TOPIC)
+
+        def _on_motion_intent(sample) -> None:
+            try:
+                motion_queue.put_nowait(bytes(sample.payload))
+            except queue.Full:
+                _logger.error("p2 cmd/motion/intent queue full; frame dropped")
+
+        _gen_subs.append(gen.declare_subscriber(CMD_MOTION_INTENT_TOPIC,
+                                                _on_motion_intent))
+        _logger.info("p2 wiring: subscribed %s (G-1..G-11 gates active)",
+                     CMD_MOTION_INTENT_TOPIC)
+
         # Device liveness -> 11 S6.2 device_offline/online events (SW-12 producers).
         # p5 persists + backfills these. All three producers are REAL:
         #   mic          -- arecord capture/publish thread alive/dead (below)
@@ -346,6 +402,18 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         _raw, now_mono_ms=int(now * 1000))
                     mode_ack_pub.put(json.dumps(
                         ack, ensure_ascii=False).encode("utf-8"))
+                # Drain cmd/motion/intent on the MAIN thread: the gates read
+                # the state caches this loop owns.
+                while True:
+                    try:
+                        _raw = motion_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    _ack = _handle_motion_intent(
+                        _raw, motion_limits, state_cache, health_agg,
+                        factor_cfg, rel_move_pub)
+                    motion_ack_pub.put(json.dumps(
+                        _ack, ensure_ascii=False).encode("utf-8"))
                 # 11 S2.2: health/summary at 1 Hz. Derived every pass from the
                 # live caches; an item whose source has not been heard from
                 # stays UNKNOWN with a detail naming what is missing, never ok.
@@ -428,6 +496,62 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 pass
     _logger.info("p2 wiring: exited cleanly")
     return 0
+
+
+def _handle_motion_intent(raw, limits, state_cache, health_agg, factor_cfg,
+                          rel_move_pub):
+    """One cmd/motion/intent frame: G-1..G-11, then forward or refuse.
+
+    Never raises -- a malformed frame must not take down the loop that also
+    runs health and the device domains.
+    """
+    from xbrain.common.errors import E_INTERNAL, E_SCHEMA
+    from xbrain.p2_core.runtime.motion_intent_wiring import (
+        evaluate, motion_intent_ack, parse_intent_envelope, to_relative_move,
+    )
+    cmd_id = ""
+    try:
+        body = json.loads(raw.decode("utf-8"))
+        cmd = parse_intent_envelope(body)          # G-1
+        raw_id = cmd.get("cmd_id")
+        cmd_id = raw_id if isinstance(raw_id, str) else ""
+        verdict = evaluate(
+            cmd, limits=limits,
+            clock=state_cache.get("clock"),
+            health=health_agg.build_summary(factor_cfg),
+            pose=state_cache.get("pose"),
+            robot=state_cache.get("robot"),
+            teach=state_cache.get("teach"),
+            # holonomic is a body spec with no config key yet, so it stays
+            # None -> G-7 refuses move_left / move_right. That is the correct
+            # direction: a chassis whose spec we cannot read must not be told
+            # to walk sideways. The other six intents are unaffected.
+            holonomic=None)
+        if not verdict.passed:
+            _logger.info("p2 motion intent refused at %s (%s)",
+                         verdict.gate, verdict.code)
+            return motion_intent_ack(cmd_id, "rejected", verdict.code,
+                                     verdict.detail)
+        # MO-1: a NEW cmd_id for the forwarded command, returned to P4 in
+        # detail.rm_cmd_id so it can follow the status stream.
+        rm_cmd_id = "rm-" + uuid.uuid4().hex[:12]
+        # MO-2: motion params are P2's, filled here, never taken from the
+        # frame. abort_on_obstacle is hard true for voice sources (12 S4.5.6:
+        # "the user said go forward 1 m but someone is in front -- stop and
+        # say so, do not drive around them").
+        params = {"abort_on_obstacle": True}
+        rel_move_pub.put(json.dumps(
+            to_relative_move(cmd, rm_cmd_id=rm_cmd_id, params=params),
+            ensure_ascii=False).encode("utf-8"))
+        return motion_intent_ack(cmd_id, "accepted", "OK",
+                                 {"rm_cmd_id": rm_cmd_id})
+    except ValueError as exc:
+        return motion_intent_ack(cmd_id, "rejected", E_SCHEMA,
+                                 {"field": "envelope", "reason": str(exc)})
+    except Exception as exc:      # noqa: BLE001
+        _logger.error("p2 motion intent failed: %s", exc)
+        return motion_intent_ack(cmd_id, "error", E_INTERNAL,
+                                 {"reason": str(exc)})
 
 
 def _speak_and_log(speaker: SpeakerDomain, text: str) -> None:
