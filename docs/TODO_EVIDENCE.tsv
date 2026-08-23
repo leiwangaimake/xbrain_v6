@@ -402,3 +402,5 @@ CFG-BT-09	xbrain/persistence/migration.py;tests/persistence/test_migration.py	ma
 CFG-BT-05	xbrain/boot/boot_fail.py;tests/boot/test_boot_fail.py	manual	2026-08-23
 BIZ-P2-10	xbrain/p2_core/domains/lapi_guard.py;tests/p2_core/domains/test_domains.py	manual	2026-08-23
 BIZ-P2-21	xbrain/p2_core/three_stops.py;tests/p2_core/health/test_health_all.py	manual	2026-08-23
+CHK-1-23	tests/p1_motion/test_config_key_parity.py	manual	2026-08-23
+MOT-PM-33	tests/p1_motion/test_config_key_parity.py	manual	2026-08-23
