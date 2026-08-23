@@ -395,3 +395,4 @@ CFG-CF-06	configs/intents.yaml;tests/configs/test_config_layers.py	manual	2026-0
 CFG-CF-08	configs/nav2/behavior_only.yaml;tests/configs/test_config_layers.py	manual	2026-08-23
 INF-BT-02	xbrain/boot/failure_class.py;tests/boot/test_failure_class_table.py	manual	2026-08-23
 MOT-PM-35	tests/p1_motion/test_stage_budget.py	manual	2026-08-23
+BIZ-P2-19	xbrain/p2_core/health/factor.py;tests/p2_core/health/test_factor_participation.py	manual	2026-08-23
