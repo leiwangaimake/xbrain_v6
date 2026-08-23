@@ -90,6 +90,11 @@ run_check gen_drift          scripts/ci/gen_drift_gate.py
 # numbers live in two places (doc + units) and a divergence has no runtime
 # symptom -- only extra jitter that surfaces at T7 latency measurement.
 run_check cpu_affinity       scripts/ci/check_affinity.py
+# CHK-1-50: the numbered C++ discipline rules (CRL / DDS / RT-C / CPP / PB-5)
+# had no executable body -- they relied on someone remembering. Note that
+# most of them have NO scan target yet (quadruped / chassis_relay unbuilt);
+# the gate prints NO-TARGET for those rather than counting them as passed.
+run_check cxx_discipline     scripts/ci/cxx_discipline_audit.py
 run_check pytest_common      pytest tests/common
 run_check pytest_boot_freeze pytest tests/boot/freeze
 run_check pytest_configs     pytest tests/configs

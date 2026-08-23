@@ -54,6 +54,18 @@ checks:
     path: scripts/ci/null_guard.py
     reason: "INF-DB-2 -- guarded config keys must stay null until 21 debt closes"
 
+  - name: gen_drift
+    path: scripts/ci/gen_drift_gate.py
+    reason: "CHK-1-49 -- checked-in generated artifacts must equal a fresh run of their generator"
+
+  - name: cpu_affinity
+    path: scripts/ci/check_affinity.py
+    reason: "CHK-1-03 -- systemd CPUAffinity must equal the 10 S3.2 core table"
+
+  - name: cxx_discipline
+    path: scripts/ci/cxx_discipline_audit.py
+    reason: "CHK-1-50 -- numbered C++ discipline rules (CRL/DDS/RT-C/CPP/PB-5); most have no scan target yet"
+
   - name: pytest_common
     path: pytest
     args: ["tests/common"]
