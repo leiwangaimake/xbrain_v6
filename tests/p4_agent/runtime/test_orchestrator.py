@@ -103,8 +103,27 @@ def test_l2_intent_awaits_confirm_not_dispatched():
     assert s.pending_confirm is not None    # confirm is open
 
 
+#: A live state snapshot with one running task, as P3 broadcasts it
+#: (state_task_v1 + active_task). B-class control resolves its task_id here.
+_RUNNING_TASK = {"state/task": {"schema": "state_task_v1",
+                                "active_task": {"task_id": "t-20260823-004",
+                                                "state": "running"}}}
+
+
 def test_l2_confirm_then_dispatch():
-    orch = _orch()
+    """*** B07 cancel: L2 confirm, then a TaskCommand naming a REAL task_id.
+
+    The task_id is resolved on the SENDER side from state/task. S7.2 forbids
+    "omit = the current task" because it forbids the RECEIVER guessing; naming
+    the task in the frame is what makes P3 answer E_TASK_STATE instead of
+    quietly cancelling whatever happens to be running now.
+
+    MUTATION: send the frame without task_id (or with the id left None) and P3
+    is back to guessing -- parse_task_command refuses it outright.
+    """
+    orch = TurnOrchestrator(
+        _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
+        l2_timeout_ms=5000, state_fn=lambda: _RUNNING_TASK)
     s = OrchestratorSession()
     orch.handle_turn("不巡了", s, now_mono_ms=1000)          # opens confirm
     d = orch.handle_turn("确认", s, now_mono_ms=1500)        # I01 -> dispatch
@@ -112,6 +131,42 @@ def test_l2_confirm_then_dispatch():
     assert d.intent_id == "B07"
     assert d.dispatch_result is not None
     assert s.pending_confirm is None
+    tc = d.dispatch_result.payload["task_command"]
+    assert tc["action"] == "cancel"
+    assert tc["task_id"] == "t-20260823-004"
+
+
+def test_task_control_with_no_active_task_is_spoken_not_sent():
+    """*** Nothing running -> say so; NEVER send a task_id-less control frame.
+
+    A frame with no task_id hands the "which one?" decision to P3, which is
+    exactly what S7.2 forbids.
+
+    MUTATION: fall back to an empty task_id and dispatch anyway -- this turns
+    into a dispatch and the guard is gone.
+    """
+    orch = TurnOrchestrator(
+        _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
+        l2_timeout_ms=5000, state_fn=lambda: {})
+    s = OrchestratorSession()
+    # 用"暂停任务"而不是 18 里的"先停一下": 后者含"停", 会先被安全旁路
+    # (16 S4, 旁路先于分类)截走成 estop, 根本到不了 B05. 旁路优先是设计如此,
+    # 这里只是绕开它去测 B05 本身.
+    d = orch.handle_turn("暂停任务", s, now_mono_ms=1000)      # B05, L0
+    assert d.kind == "reply"
+    assert d.dispatch_result is None
+    assert "没有正在执行的任务" in d.reply_text
+
+
+def test_pause_resolves_the_running_task():
+    """B05 pause is L0 -- no confirm, straight to a TaskCommand."""
+    orch = TurnOrchestrator(
+        _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
+        l2_timeout_ms=5000, state_fn=lambda: _RUNNING_TASK)
+    d = orch.handle_turn("暂停任务", OrchestratorSession(), now_mono_ms=1)
+    assert d.kind == "dispatch"
+    tc = d.dispatch_result.payload["task_command"]
+    assert tc["action"] == "pause" and tc["task_id"] == "t-20260823-004"
 
 
 def test_l2_deny_cancels():
@@ -377,7 +432,7 @@ def test_orchestrator_source_flows_into_request():
 # -- route name -> route_id (batch 15) -----------------------------------
 
 def _manifest(items):
-    """A state map as geo_state_fn returns it: keyed by zenoh key (11 S7.10)."""
+    """A state map as state_fn returns it: keyed by zenoh key (11 S7.10)."""
     return lambda: {"state/geo/manifest": {"items": items}}
 
 
@@ -393,14 +448,14 @@ _EAST = {"geo_id": "r-east", "type": "route", "name": "东门路线",
 _UNMATCHED = "帮我处理一下那个事情"
 
 
-def _route_orch(spoken="东门路线", geo_state_fn=None):
+def _route_orch(spoken="东门路线", state_fn=None):
     """An orchestrator whose tier-2 classifies to patrol_route with a spoken
     route slot -- the shape the LLM returns for 'go patrol the east route'."""
     return TurnOrchestrator(
         _reg(), chitchat=_chitchat(),
         tier2_fn=_RecordingTier2(ret=Tier2Classification(
             name="patrol_route", slots={"route": spoken})),
-        l2_timeout_ms=5000, geo_state_fn=geo_state_fn)
+        l2_timeout_ms=5000, state_fn=state_fn)
 
 
 def test_spoken_route_name_becomes_route_id():
@@ -413,7 +468,7 @@ def test_spoken_route_name_becomes_route_id():
     MUTATION: passing route_id=None (or resolving against the manifest but
     discarding the result) leaves route_id absent and this fails.
     """
-    orch = _route_orch(geo_state_fn=_manifest([_EAST]))
+    orch = _route_orch(state_fn=_manifest([_EAST]))
     d = orch.handle_turn(_UNMATCHED, OrchestratorSession(), now_mono_ms=1)
     assert d.kind == "dispatch"
     tc = d.dispatch_result.payload["task_command"]
@@ -431,7 +486,7 @@ def test_route_that_matches_nothing_is_refused_at_the_turn():
     MUTATION: swallowing GeoRequestError and continuing with route_id=None
     makes this a dispatch, and the operator hears the task was accepted.
     """
-    orch = _route_orch("西门路线", geo_state_fn=_manifest([_EAST]))
+    orch = _route_orch("西门路线", state_fn=_manifest([_EAST]))
     d = orch.handle_turn(_UNMATCHED, OrchestratorSession(), now_mono_ms=1)
     assert d.kind == "reply"
     assert d.reply_text and d.reply_text == d.tts_text
@@ -442,7 +497,7 @@ def test_route_that_matches_nothing_is_refused_at_the_turn():
 def test_absent_catalogue_still_submits_the_task():
     """*** THE REGRESSION GUARD for this migration.
 
-    geo_state_fn has no production call site: nothing in p4_agent subscribes to
+    state_fn has no production call site: nothing in p4_agent subscribes to
     state/geo/manifest yet. If 'no catalogue' were treated as 'route not found',
     this batch would switch OFF the voice task path that already runs on the
     robot -- every patrol command would answer 'no such route', and the cause
@@ -451,7 +506,7 @@ def test_absent_catalogue_still_submits_the_task():
     MUTATION: refusing when manifest is None turns this into a reply. That
     mutation is exactly the code I wrote first, which is why this test exists.
     """
-    orch = _route_orch(geo_state_fn=None)          # production wiring today
+    orch = _route_orch(state_fn=None)          # production wiring today
     d = orch.handle_turn(_UNMATCHED, OrchestratorSession(), now_mono_ms=1)
     assert d.kind == "dispatch"
     tc = d.dispatch_result.payload["task_command"]

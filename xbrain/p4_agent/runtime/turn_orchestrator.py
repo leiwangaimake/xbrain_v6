@@ -68,6 +68,13 @@ from xbrain.p4_agent.runtime.geo_request import (
 from xbrain.p4_agent.runtime.task_request import (
     TaskRequestError, is_task_create_intent, to_task_command,
 )
+from xbrain.p4_agent.runtime.system_request import (
+    is_system_intent, to_system_command,
+)
+from xbrain.p4_agent.runtime.task_control_request import (
+    TaskControlError, is_task_control_intent, spoken_target,
+    to_task_control_command,
+)
 from xbrain.p4_agent.runtime.motion_intent_request import (
     MotionIntentError, is_motion_intent, to_motion_intent,
 )
@@ -98,6 +105,12 @@ _F_REASON_CN = {
 
 # Reply-family intent NAMES routed to the preset responder (never LLM,
 # never echo). J01/J02/I05 plus the out_of_scope sentinel (16 S11.5).
+# Spoken reply when B-class control has nothing to act on. Said plainly rather
+# than sending a task_id-less frame for P3 to guess at (S7.2).
+_TASK_CONTROL_CN = {
+    "no_active_task": "现在没有正在执行的任务",
+}
+
 # Spoken follow-ups when an A-class slot is missing (MI-2: ask, never send).
 _MOTION_REASON_CN = {
     "missing_slot:distance_m": "要走多远? 请说一个米数",
@@ -327,7 +340,12 @@ class TurnOrchestrator:
         matcher: Optional[KeywordMatcher] = None,
         query_fn: Optional[Callable[[IntentEntry], Optional[str]]] = None,
         source: str = "voice",
-        geo_state_fn: Optional[Callable[[], Dict[str, Any]]] = None,
+        # A snapshot of the state keys P4 subscribes, keyed by zenoh key.
+        # Named state_fn and not geo_state_fn (its 2026-08-20 name): it started
+        # out serving only state/geo/manifest, but the B-class task control
+        # added 2026-08-23 reads state/task from the same snapshot, and two
+        # accessors over one snapshot is how they drift.
+        state_fn: Optional[Callable[[], Dict[str, Any]]] = None,
     ) -> None:
         self._registry = registry
         self._matcher = matcher or KeywordMatcher(registry)
@@ -350,7 +368,7 @@ class TurnOrchestrator:
         # function and the wiring owns the caches. None means neither is wired,
         # and every F intent then answers with the reason rather than sending a
         # command built on a guess.
-        self._geo_state_fn = geo_state_fn
+        self._state_fn = state_fn
 
     # -- public entry ----------------------------------------------------
 
@@ -520,6 +538,35 @@ class TurnOrchestrator:
                                     llm_used=llm_used,
                                     prompt_assembled=llm_used)
             extra = merged
+        # 18 H class -> 11 S7.15 SystemCommand on cmd/system (2026-08-23).
+        if is_system_intent(entry.name):
+            sys_cmd = to_system_command(
+                entry.name, slots=dict(extra or {}),
+                cmd_id="c-" + uuid.uuid4().hex[:12], source=self._source)
+            if sys_cmd is not None:
+                extra = {**(extra or {}), "system_command": sys_cmd}
+        # 18 B class control (B05/B06/B07) -> 11 S7.2 TaskCommand, with the
+        # task_id resolved HERE (2026-08-23). S7.2 forbids "omit = the current
+        # task" -- it forbids the RECEIVER guessing, and resolving on the
+        # sender side satisfies all four of its stated reasons. See
+        # task_control_request.py.
+        if is_task_control_intent(entry.name):
+            _state = self._state_fn() if self._state_fn else {}
+            try:
+                tc = to_task_control_command(
+                    entry.name, state=_state,
+                    cmd_id=uuid.uuid4().hex, source=self._source)
+            except TaskControlError as exc:
+                spoken = _TASK_CONTROL_CN.get(
+                    str(exc), "现在没有可以操作的任务")
+                return TurnDecision(kind="reply", intent_id=entry.id,
+                                    intent_name=entry.name, route=entry.route,
+                                    auth=eff_auth, level=eff_auth, layer=layer,
+                                    reply_text=spoken, tts_text=spoken,
+                                    llm_used=llm_used,
+                                    prompt_assembled=llm_used)
+            if tc is not None:
+                extra = {**(extra or {}), "task_command": tc}
         # 18 A class -> 11 S9.3.2A.3 MotionIntent for cmd/motion/intent
         # (2026-08-21). The routing already pointed at this key, but P4 sent
         # its own p4_intent_v1 envelope -- no data wrapper, no intent/slots/
@@ -701,7 +748,7 @@ class TurnOrchestrator:
         *** "The catalogue is absent" is NOT treated as "the route does not
         exist", and the difference is deliberate.
 
-        geo_state_fn has no production call site yet (state/geo/manifest is
+        state_fn has no production call site yet (state/geo/manifest is
         broadcast by P3 but nothing in p4_agent subscribes to it). If an absent
         catalogue refused the turn, this migration would silently switch OFF the
         one task path that already works on the robot -- every spoken
@@ -718,7 +765,7 @@ class TurnOrchestrator:
         merged = dict(extra or {})
         route_id = None
         spoken = merged.get("route")
-        state = self._geo_state_fn() if self._geo_state_fn else {}
+        state = self._state_fn() if self._state_fn else {}
         manifest = manifest_from_state(state.get("state/geo/manifest"))
         if isinstance(spoken, str) and spoken.strip() and manifest is not None:
             try:
@@ -750,7 +797,7 @@ class TurnOrchestrator:
         operator; the codes behind it (E_TEACH_STATE, E_NOT_FOUND) would only
         reach them as "internal error".
         """
-        state = self._geo_state_fn() if self._geo_state_fn else {}
+        state = self._state_fn() if self._state_fn else {}
         merged = dict(extra or {})
         cmd_id = uuid.uuid4().hex
         try:

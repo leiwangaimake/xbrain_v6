@@ -39,7 +39,8 @@ from typing import Any, Callable, List, Optional, Tuple
 
 from xbrain.p4_agent.registry.intents import IntentRegistry
 from xbrain.p4_agent.runtime.intent_dispatch import (
-    CMD_AUDIO_SPEAK, CMD_GEO, CMD_MODE, CMD_MOTION_INTENT, CMD_TASK, CMD_TEACH,
+    CMD_AUDIO_SPEAK, CMD_GEO, CMD_MODE, CMD_MOTION_INTENT, CMD_SYSTEM,
+    CMD_TASK, CMD_TEACH,
 )
 from xbrain.p4_agent.session.chitchat import ChitchatResponder
 from xbrain.p4_agent.runtime.turn_orchestrator import (
@@ -79,6 +80,7 @@ _CONTRACT_FRAME_SLOT = {
     # exempt it -- a relative move is a "loose" command and falling back to
     # "pass it through" on a parse failure is dangerous.
     CMD_MOTION_INTENT: "motion_intent",
+    CMD_SYSTEM: "system_command",
 }
 
 CMD_ESTOP = "cmd/estop"

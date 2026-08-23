@@ -63,7 +63,17 @@ _MODE_INTENTS: Dict[str, tuple] = {
     # ceiling" is the worse failure direction, because every such key must
     # then be justified in the S12.1.1 HMI whitelist.
     "set_speed_profile": ("set_speed_profile", None),
+    # B12 stop_follow. 18's effect column reads "exit the target-directed
+    # behaviour" -- that is a motion BEHAVIOUR, not a task action, so it is a
+    # ModeCommand set_behavior back to NAV-50's `normal` and NOT a cmd/task
+    # cancel. Using cancel would end the whole patrol the operator is still
+    # running; they asked to stop FOLLOWING, not to stop working.
+    "stop_follow": ("set_behavior", None),
 }
+
+#: Intents whose behavior value is fixed by the intent itself rather than by a
+#: slot. B12 says "stop following", which can only mean normal.
+_FIXED_BEHAVIOR = {"stop_follow": "normal"}
 
 #: C07 的 behavior 槽闭集 (NAV-50 三种). 闭集外必抛 -- 见 to_mode_command.
 BEHAVIOR_VALUES = frozenset({"normal", "follow", "face_target"})
@@ -111,7 +121,7 @@ def to_mode_command(intent_name: str, *, slots: Mapping[str, Any],
                 % (profile, sorted(PROFILE_VALUES)))
         payload["profile"] = profile
     if action == "set_behavior":
-        behavior = slots.get("behavior")
+        behavior = _FIXED_BEHAVIOR.get(intent_name, slots.get("behavior"))
         if not isinstance(behavior, str) or behavior not in BEHAVIOR_VALUES:
             # 闭集外必抛(S13.6): "跟着他走"听成一个不认识的词时, 宁可让
             # 操作员再说一遍, 也不要把机器人切进一个最"接近"的运动行为.

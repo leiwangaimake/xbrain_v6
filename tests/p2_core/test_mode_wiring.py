@@ -156,6 +156,27 @@ def test_a13_retired_profiles_are_refused_by_the_builder(profile):
                         cmd_id="c-x", source="voice")
 
 
+def test_b12_stop_follow_returns_the_behavior_to_normal():
+    """*** B12 "别跟了" 走 cmd/mode set_behavior, 且行为值恒 normal.
+
+    18 的效果列是"退出目标导向行为" -- 那是运动[行为]不是任务动作, 所以它
+    不发 cmd/task cancel: cancel 会结束操作员还在跑的整条巡逻, 而他要停的只是
+    跟随.
+
+    变异体: 把 _FIXED_BEHAVIOR 里的 normal 改成 follow -- 说"别跟了"反而开始
+    跟. 这条断言在补上之前是空白的, 那个变异体一度全绿.
+    """
+    from xbrain.p4_agent.runtime.mode_request import to_mode_command
+    built = to_mode_command("stop_follow", slots={}, cmd_id="c-b12",
+                            source="voice")
+    assert built["action"] == "set_behavior"
+    assert built["behavior"] == "normal"
+    # 并且 P2 真的吃得下这一帧.
+    ack = _face().handle_frame(json.dumps(built).encode("utf-8"), now_mono_ms=1)
+    assert ack["result"] == "accepted"
+    assert ack["detail"]["applied"]["behavior_to"] == "normal"
+
+
 def test_reset_profile_lock_without_token_is_refused():
     """SP-C2: 解锁必须带执行方签发的 confirm_token. """
     ack = _face().handle_frame(

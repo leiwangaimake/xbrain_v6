@@ -63,7 +63,13 @@ def _orch(tier2=None):
         chitchat=ChitchatResponder(
             yaml.safe_load(open(_CHITCHAT, encoding="utf-8"))),
         tier2_fn=tier2 or (lambda *a, **k: None), l2_timeout_ms=5000,
-        geo_state_fn=lambda: {"state/geo/manifest": {"items": _ITEMS}})
+        state_fn=lambda: {"state/geo/manifest": {"items": _ITEMS}})
+
+
+#: A running task, as P3 broadcasts it. B-class control resolves its id here.
+_RUNNING_TASK = {"state/task": {"schema": "state_task_v1",
+                                "active_task": {"task_id": "t-20260823-004",
+                                                "state": "running"}}}
 
 
 def _frames(text: str, confirm: bool = False, tier2=None):
@@ -73,6 +79,10 @@ def _frames(text: str, confirm: bool = False, tier2=None):
     which is the ONLY way an operator reaches a destructive geo command.
     """
     orch, session = _orch(tier2), OrchestratorSession()
+    # state/task is part of the same snapshot state_fn returns, so B-class
+    # control can resolve a task_id in these frames too.
+    orch._state_fn = lambda: {**{"state/geo/manifest": {"items": _ITEMS}},
+                              **_RUNNING_TASK}
     decision = orch.handle_turn(text, session, now_mono_ms=1)
     if confirm:
         assert decision.kind == "await_confirm", (
@@ -199,17 +209,87 @@ def test_p4_never_clamps_an_over_range_distance():
     assert verdict.detail["limit"] == 20.0
 
 
-def test_a_control_intent_stays_an_envelope():
-    """*** The unwrap must NOT fire on frames with no built command.
+def test_voice_pause_now_parses_as_a_contract_task_command():
+    """*** 2026-08-23: voice pause/resume/cancel DO reach P3 now.
 
-    Voice pause/cancel cannot be expressed as an S7.2 TaskCommand (it requires
-    task_id, and S7.2 forbids 'omit = the current task'), so those frames stay
-    p4_intent_v1 and P3 routes them by the ABSENCE of a top-level `action`.
+    Until this batch they could not: S7.2 requires task_id and forbids
+    "omit = the current task", so P4 sent a bare p4_intent_v1 envelope that P3
+    skipped. The fix is to resolve the task_id on the SENDER side from
+    state/task -- S7.2 forbids the RECEIVER guessing, not the sender resolving,
+    and naming the task is what lets P3 answer E_TASK_STATE instead of pausing
+    whatever happens to be running by then.
 
-    MUTATION: unwrapping unconditionally, or making P3 reject anything without
-    an action, turns every voice pause into an E_SCHEMA ack.
+    MUTATION: drop the resolution and emit the envelope again -> P3's parser
+    refuses this frame for having no cmd_id.
     """
     payload = _frames("暂停任务")["cmd/task"]
+    cmd = parse_task_command(payload)
+    assert cmd.action == "pause"
+    assert cmd.task_id == "t-20260823-004"
+    assert cmd.cmd_id
+
+
+def test_h_class_lands_on_cmd_system_in_contract_shape():
+    """*** 18 H class -> cmd/system (11 S7.15), not cmd/task.
+
+    The prefix table had "H": CMD_TASK -- the same mistake as the C class --
+    so eight system commands went to P3, which skipped them for having no
+    top-level action.
+
+    Routed correctly they are still NOT consumed: no cmd/system subscriber
+    exists yet (S2.2.3 splits it across three by action, SYS-1). Asserted here
+    anyway, because "right key, right shape, waiting for a subscriber" and
+    "wrong key, actively dropped" look identical to the operator and totally
+    different during bring-up.
+    """
+    # *** The stub slots CLAIM cloud and carry params reboot does not use.
+    # Without them this test is vacuous: with no origin field in the frame,
+    # "pass the frame's origin through" and "hard-code voice" give the same
+    # answer, and the mutation stays green. Same for the param filter -- with
+    # no extra slots, "copy only this action's params" and "copy everything"
+    # are indistinguishable. Both mutations were green until this fixture
+    # carried the hostile values.
+    tier2 = lambda *a, **k: Tier2Classification(          # noqa: E731
+        name="reboot", slots={"origin": "cloud", "delay_s": 5,
+                              "scope": "deep", "force_step": True})
+    payload = _frames("帮我处理一下那个事情", confirm=True,
+                      tier2=tier2)["cmd/system"]
+    assert payload["action"] == "reboot"
+    assert payload["v"] == 1 and payload["cmd_id"]
+    # origin is one of only two authorisation boundaries in the whole system
+    # (U23: the HMI is unauthenticated, so the channel IS the permission).
+    # Voice must never be able to claim cloud.
+    assert payload["origin"] == "voice"
+    # reboot uses delay_s and nothing else. S7.15.1: params an action does not
+    # use are simply not filled -- copying the whole slot bag would ship a
+    # force_step (a WALL-CLOCK STEP flag, L2) on a reboot command.
+    assert payload["delay_s"] == 5
+    assert "scope" not in payload and "force_step" not in payload
+
+
+def test_h04_reload_config_is_not_on_cmd_system():
+    """*** 18 says verbatim that reload_config does NOT go on cmd/system --
+    it needs a ConfigCommand on cmd/config (S7.6), a different message body.
+
+    MUTATION: fold H04 into the cmd/system override list and it would ship a
+    SystemCommand with an action that is not in S7.15.2's seven-value set.
+    """
+    from xbrain.p4_agent.runtime.intent_dispatch import choose_key
+    assert choose_key("H04") != "cmd/system"
+
+
+def test_skip_waypoint_still_has_no_contract_action():
+    """*** B10 skip_waypoint is deliberately NOT mapped.
+
+    18's effect column says "P3 path advance", and S7.2's action closed set is
+    submit / cancel / pause / resume / clear_queue -- there is no skip. Mapping
+    it onto cancel would end the whole patrol the operator wants to continue.
+
+    So it stays a p4_intent_v1 envelope that P3 skips, which is a visible gap
+    rather than a wrong action. MUTATION: map it to cancel and this test goes
+    red -- as it should, because that mapping is the dangerous one.
+    """
+    payload = _frames("跳过这个点")["cmd/task"]
     assert payload["schema"] == "p4_intent_v1"
     assert "action" not in payload
 

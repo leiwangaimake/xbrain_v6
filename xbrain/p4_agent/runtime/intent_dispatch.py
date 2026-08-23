@@ -47,6 +47,7 @@ CMD_PAYLOAD = "cmd/payload"
 # RECORDING SESSION on cmd/teach, F11-F15 are CRUD on an existing object and go
 # to cmd/geo. Neither is cmd/task -- see the note on the F prefix below.
 CMD_MODE = "cmd/mode"
+CMD_SYSTEM = "cmd/system"
 CMD_TEACH = "cmd/teach"
 CMD_GEO = "cmd/geo"
 
@@ -74,7 +75,13 @@ _PREFIX_MAP = {
     # F id is far more likely to be a session action than a task.
     "F": CMD_TEACH,            # F01-F15 recording (per-id overrides below)
     "G": CMD_AUDIO_SPEAK,      # G01-G24 queries -> speak the reply
-    "H": CMD_TASK,             # H01-H08 system (bit / report / sleep / reboot)
+    # H is the SYSTEM class. 11 S2.2.3 registers cmd/system with p4_agent as a
+    # publisher and splits the subscription across THREE consumers by action
+    # (SYS-1). This prefix entry stays CMD_TASK only as the backstop for
+    # H04 reload_config, which 18 says verbatim does NOT go on cmd/system --
+    # it needs a ConfigCommand on cmd/config (S7.6), a different message body.
+    # Every other H id is overridden to cmd/system below.
+    "H": CMD_TASK,
     "I": CMD_AUDIO_SPEAK,      # I01-I05 session ack (confirm/deny/repeat)
     "J": CMD_AUDIO_SPEAK,      # J01/J02 chitchat -> speak canned reply
     "R": CMD_PAYLOAD,          # R-* payload/lights/siren
@@ -130,6 +137,30 @@ INTENT_TO_KEY.update({
     # (11 S7.3 + the D-04 ruling in S7.3.1), so it goes to cmd/mode, not to
     # cmd/motion/intent -- it is not one of S9.3.2A.4's eight motion values.
     "A13": CMD_MODE,
+    # B12 stop_follow is a BEHAVIOUR change (18: "exit the target-directed
+    # behaviour"), not a task action -- see mode_request.py. B05/B06/B07 stay
+    # on cmd/task: they are real S7.2 control actions. B10 skip_waypoint stays
+    # too, but S7.2 has NO skip action, so it is refused there rather than
+    # mapped onto cancel (which would end the whole task).
+    "B12": CMD_MODE,
+})
+
+# 18 H class -> cmd/system (11 S7.15). Per-id, because H04 is the exception.
+#
+# *** These are correctly ROUTED but not yet CONSUMED: no cmd/system subscriber
+# exists anywhere in the repo. So H-class voice still does nothing -- the
+# difference is that it now sits on the right key in the right shape, waiting
+# for a subscriber, instead of being actively dropped by P3 for having no
+# top-level action. Those two look identical to the operator and completely
+# different during bring-up.
+INTENT_TO_KEY.update({
+    "H01": CMD_SYSTEM,        # run_bit      -> p2_core (BIT)
+    "H02": CMD_SYSTEM,        # generate_report -> p5_gateway
+    "H03": CMD_SYSTEM,        # time_sync    -> p5_gateway
+    "H05": CMD_SYSTEM,        # sleep        -> p2_core
+    "H06": CMD_SYSTEM,        # wake         -> p2_core
+    "H07": CMD_SYSTEM,        # reboot       -> p5_gateway
+    "H08": CMD_SYSTEM,        # shutdown     -> p5_gateway
 })
 
 
