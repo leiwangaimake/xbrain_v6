@@ -181,9 +181,29 @@ def test_unit_names_are_derived_not_hand_mapped():
     MUTATION: 往 _UNIT_EXCEPTIONS 里加一条不必要的映射 -> 这里红.
     """
     gate = _gate()
-    assert len(gate._UNIT_EXCEPTIONS) <= 2, (
+    # 上限从 2 提到 4: 补登 payload-service 时暴露出 Nav2 与 payload-service
+    # 两条名字对不上的映射 -- 它们一直存在, 只是此前表体里看不见它们
+    # (payload 整表未列, Nav2 没加反引号), 所以门也就无从发现.
+    # ! 提上限是有代价的, 每一条例外都是一处要人维护的同源关系, 所以要
+    # 逐条写理由(下面那个 len(why) 断言在守).
+    assert len(gate._UNIT_EXCEPTIONS) <= 4, (
         "例外映射变多了(%d 条) -- 每一条都是一处需要人维护的同源关系, 需复核"
         % len(gate._UNIT_EXCEPTIONS))
+    # 每条例外都要在源码里带理由(注释形式). 没有这条, 上限一提就会有人
+    # 往里塞映射 -- 而一张没人说得清为什么的对照表, 就是那个"第三个会漂移
+    # 的副本".
+    import inspect
+    src = inspect.getsource(gate)
+    block = src[src.index("_UNIT_EXCEPTIONS = {"):]
+    block = block[:block.index("\n}\n")]
+    for key in gate._UNIT_EXCEPTIONS:
+        idx = block.index('"%s"' % key)
+        before = block[:idx]
+        # 该行之前必须有注释(最近一段以 # 开头的连续行).
+        prev = [l for l in before.split("\n") if l.strip()][-1]
+        assert prev.strip().startswith("#"), (
+            "例外映射的理由缺失: %s 上面没有注释" % key)
+
     # 推导规则本身要能自证: 表体里带 (Pn) 的必须落到 xbrain-pn-*.
     assert gate.unit_name_for("xbrain_motion", "P1") == "xbrain-p1-motion.service"
     assert gate.unit_name_for("chassis_relay", "") == "xbrain-chassis-relay.service"
@@ -204,7 +224,11 @@ def test_every_derived_unit_actually_exists():
 
 #: 允许出现在 PENDING_DOC_DECISION 里的键, 与门自己那份分开写 --
 #: 一份被测者自己维护的白名单证明不了任何事.
-_EXPECTED_PENDING = {"xbrain-payload.service": "SW-20"}
+#
+# 2026-08-23 起为空: payload-service 已由用户裁决并补登进 10 S3.2 核 7 行,
+# 那一条按规矩从待裁决清单移走了. 空集合是[好状态], 但它会让下面按条遍历
+# 的用例空过 -- 所以那条用例自己带了一句"集合为空时也要说话"的断言.
+_EXPECTED_PENDING = {}
 
 
 def test_pending_doc_decisions_are_exactly_what_was_reviewed():
@@ -226,6 +250,13 @@ def test_each_pending_entry_points_at_where_the_decision_lives():
     """一条写着"先放过"的待裁决, 与一条指向 NEXT SW-20 的待裁决, 对下一个
     读者的价值差一个量级."""
     gate = _gate()
+    if not gate.PENDING_DOC_DECISION:
+        # *** 空集合时本用例会空过, 所以在这里显式说明它是空的.
+        # 一条"遍历空集合因而通过"的断言与一条"逐条查过都对"的断言, 在
+        # 报告里看不出区别 -- 而前者什么也没验证(CLAUDE.md 3.2 形态1).
+        assert _EXPECTED_PENDING == {}, (
+            "门里没有待裁决项, 但复核清单里还有 %s" % sorted(_EXPECTED_PENDING))
+        return
     for unit, why in gate.PENDING_DOC_DECISION.items():
         assert _EXPECTED_PENDING[unit] in why, (
             "%s 的理由没有指向后续条目(期望提到 %s): %r"

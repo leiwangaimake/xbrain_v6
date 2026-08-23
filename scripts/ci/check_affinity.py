@@ -136,6 +136,17 @@ _UNIT_EXCEPTIONS = {
     # 表体是 zenoh 官方桥的全名, 单元名截短. 全名里的 ros2dds 是桥的类型,
     # 不是我方进程的一部分.
     "zenoh-bridge-ros2dds": "xbrain-zenoh-bridge.service",
+    # 以下两条是 2026-08-23 把 payload-service 补登进 10 S3.2 时暴露的:
+    # 补登本身让门从"少一行"变成"多两条名字对不上", 而那两条一直都在,
+    # 只是此前因为表体里没有它们(payload 整表未列, Nav2 没加反引号)
+    # 而看不见.
+    #
+    # 单元名带角色后缀: Nav2 的单元是 behavior_server 那一个, 名字里带
+    # 它的角色而不只是框架名 -- 将来若再接一个 Nav2 组件, 两者要分得开.
+    "Nav2": "xbrain-nav2-behavior.service",
+    # 表体写服务全名(payload-service), 单元名截短. 与 llama-server 同理:
+    # 单元名是角色, 不是二进制名.
+    "payload-service": "xbrain-payload.service",
 }
 
 
@@ -148,11 +159,13 @@ _UNIT_EXCEPTIONS = {
 #: UNREGISTERED_BY_DESIGN 同一个规矩: 每多一个不算失败的格子, 就多一个
 #: 藏真失败的地方, 所以要小, 要逐条, 要说得出为什么.
 PENDING_DOC_DECISION = {
-    "xbrain-payload.service":
-        "payload-service is one of the 15 resident processes (CLAUDE.md S0.1) "
-        "but 10 S3.2 does not list it on any core. The unit already pins core 7; "
-        "whether that is right is a design call, not something a CI gate may "
-        "decide. See NEXT SW-20.",
+    # 2026-08-23 起为空: xbrain-payload.service 那一条已由用户裁决, 10 S3.2
+    # 核 7 行补登了 payload-service, 于是它从"等裁决"变成"已登记", 按本清单
+    # 自己的规矩必须移走 -- 一个已经解决的问题挂在这里, 会把真正等裁决的
+    # 那些淹没掉.
+    #
+    # 保留这个空字典而不是删掉它: 下一条待裁决出现时要有地方写, 而且
+    # tests/deploy/test_affinity_gate.py 的边界用例仍在钉着它.
 }
 
 

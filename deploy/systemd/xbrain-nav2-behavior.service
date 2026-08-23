@@ -23,6 +23,14 @@ Restart=always
 RestartSec=2s
 OOMScoreAdjust=-500
 Environment="PYTHONUNBUFFERED=1"
+# CHK-1-03 / 10 S3.2 CPU affinity baseline.
+# Core 7: shares with P2/P3/P4 / behavior_proxy / AI runtime -- 10 S3.2
+# marks core 7 as knowingly overloaded, which is an accepted cost.
+# This unit had NO affinity until 2026-08-23; the table did list Nav2 but
+# without backticks, so the gate's parser never saw it. Adding the
+# backticks made the omission visible.
+CPUAffinity=7
+
 ExecStart=/opt/xbrain_v6/data/install/nav2_bt_navigator/lib/nav2_bt_navigator/behavior_server --ros-args --params-file /opt/xbrain_v6/configs/nav2/behavior_only.yaml
 
 [Install]
