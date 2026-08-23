@@ -129,6 +129,60 @@ def test_unmapped_and_unevaluable_are_never_done():
     assert st2 != "DONE", "an item with no runnable criterion must never be DONE"
 
 
+#: 允许出现在 NON_FAILURE 里的状态, 以及每条必须能在文档里查到的出处关键词.
+#: 与 progress.py 的表分开写: 一份被测者自己维护的白名单证明不了任何事.
+_EXPECTED_NON_FAILURE = {
+    # CFG-BT-02 曾在这里(WAITING_DECISION, gossip vs RT-C2). 2026-08-23 实测
+    # 裁决后移除 -- 豁免不该比它的理由活得久, 这正是本文件另一条用例守的方向.
+    "CHK-0-54": ("RELEASE_ONLY", "release"),
+}
+
+
+def test_non_failure_set_is_exactly_what_was_reviewed():
+    """*** 这是整套状态分类里最容易被滥用的一格, 所以钉得最死.
+
+    每多一个"不算失败"的状态, 就多一个藏真失败的地方 -- 本仓 charset_lint 的
+    头注自己写着"一条不可达的判据会被一路放宽到通过". 一条为了让数字好看而
+    加进 NON_FAILURE 的行, 测试套是分辨不出来的; 能分辨的只有复核的人.
+
+    所以本用例要求: 集合必须与这里[逐条列出的, 经过复核的]那份完全相等.
+    新增一项 -> 红, 直到有人把它加到这里并说明理由; 删掉一项 -> 也红, 免得
+    豁免比它的理由活得久.
+
+    MUTATION: 往 progress.py 的 NON_FAILURE 里加任意一行 -> 立刻红.
+    """
+    actual = {k: v[0] for k, v in _progress().NON_FAILURE.items()}
+    expected = {k: v[0] for k, v in _EXPECTED_NON_FAILURE.items()}
+    assert actual == expected, (
+        "NON_FAILURE 与已复核的集合不一致: 多了 %s, 少了 %s"
+        % (sorted(set(actual) - set(expected)), sorted(set(expected) - set(actual))))
+
+
+def test_every_non_failure_row_cites_where_the_reason_lives():
+    """*** 豁免必须[指得出出处], 否则半年后没人知道它为什么在这里.
+
+    一条写着"暂时先放过"的豁免与一条写着"见 NEXT S7.1A 的三条路"的豁免, 对
+    读者的价值差一个量级.
+
+    MUTATION: 把某行的理由改成一句不含出处的话 -> 红.
+    """
+    for task_id, (status, why) in _progress().NON_FAILURE.items():
+        kw = _EXPECTED_NON_FAILURE[task_id][1]
+        assert kw.lower() in why.lower(), (
+            "%s 的理由 %r 没有指向出处(期望提到 %r)" % (task_id, why, kw))
+
+
+def test_declared_non_failure_never_counts_as_done():
+    """*** 分类的意义是把"流程如此"与"做完了"分开, 不是给它们发通行证.
+
+    MUTATION: 让 evaluate() 对 NON_FAILURE 里的项直接返回 DONE -> 红.
+    """
+    mod = _progress()
+    for task_id, (status, _why) in mod.NON_FAILURE.items():
+        assert status != "DONE", "%s 被声明成 DONE 了" % task_id
+        assert status in ("WAITING_DECISION", "RELEASE_ONLY"), status
+
+
 def test_evidence_map_is_actually_consulted():
     """*** Guards the wiring itself: an evidence row must change the verdict.
 

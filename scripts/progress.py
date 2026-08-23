@@ -50,6 +50,29 @@ ROOT = "/opt/xbrain_v6"
 TODO = os.path.join(ROOT, "docs", "XBRAIN_V6_TODO.md")
 EVIDENCE = os.path.join(ROOT, "docs", "TODO_EVIDENCE.tsv")
 
+#: Items whose evidence artifact does not pass, for a reason that is NOT
+#: "the software is unfinished". Each entry is (status, why) and MUST name
+#: where the reason is recorded, so the exemption can be checked and revoked.
+#:
+#: *** Why this is declared here and not inferred.
+#: Every status that does not count as a failure is a place to hide a real
+#: failure. This project has live proof of the pattern -- charset_lint's own
+#: header says an unreachable criterion "gets loosened until it passes". So an
+#: item is only allowed out of the failure column by being NAMED here with its
+#: reason, and tests/meta/test_progress_parser.py fails if this set grows
+#: without the accompanying record.
+#:
+#: NO -- adding a row here to make a number look better is the exact abuse this
+#: mechanism enables. The test suite cannot tell the difference -- a reviewer
+#: can, which is why each row must cite a document.
+NON_FAILURE = {
+    # Self-reference: _build.py records the current head sha and is then
+    # committed, so it can never agree with the commit containing it. Moved to
+    # the release pipeline (XBRAIN_RELEASE_GATE=1); the per-commit half checks
+    # shape instead.
+    "CHK-0-54": ("RELEASE_ONLY", "version stamp verified at release, not commit"),
+}
+
 # Table rows look like: | `CFG-CM-1` | title | `common/errors/` | Python | criterion | dep | block |
 # IDs carry a lot prefix (CFG/MOT/BIZ/GWY/CPP/INF) because six parallel miners
 # reused 20 bare numbers across 46 items -- see docs/XBRAIN_V6_TODO.md S0.3.
@@ -129,7 +152,7 @@ def norm_id(task_id):
 def target_dir(d):
     """The directory an item lands in, with the annotated ones reduced to a path."""
     d = d.split("  ")[0].strip()
-    return os.path.join(ROOT, d) if d and not d.startswith(("?", "⚠", "（")) else None
+    return os.path.join(ROOT, d) if d and not d.startswith(("?", "!", "（")) else None
 
 
 def evaluate(item, run_tests, evidence=None, cache=None):
@@ -154,6 +177,12 @@ def evaluate(item, run_tests, evidence=None, cache=None):
             return "IN_PROGRESS", "证据产物齐备(未跑; 加 --run 实跑)"
         for f in mapped:
             if not _artifact_passes(f, cache):
+                # An item declared non-failing keeps its own status instead of
+                # being lumped in with unfinished work -- the two need
+                # different actions from a reader.
+                declared = NON_FAILURE.get(norm_id(item["id"]))
+                if declared:
+                    return declared[0], "%s (%s)" % (declared[1], f)
                 return "IN_PROGRESS", "证据未通过: %s" % f
         return "DONE", "证据全部通过: %s" % ", ".join(
             os.path.basename(f) for f in mapped[:2])
@@ -253,8 +282,10 @@ def main():
         print(f"  {ph[:44]:46} {done:3}/{tot:3} DONE"
               f"  · 进行 {c.get('IN_PROGRESS', 0):3}"
               f"  · 未开始 {c.get('NOT_STARTED', 0):3}"
+              f"  · 待裁决 {c.get('WAITING_DECISION', 0):3}"
+              f"  · 发布期 {c.get('RELEASE_ONLY', 0):3}"
               f"  · 待映射 {c.get('UNMAPPED', 0):3}"
-              f"  · ⚠️ 无法求值 {c.get('UNEVALUABLE', 0):3}")
+              f"  · !️ 无法求值 {c.get('UNEVALUABLE', 0):3}")
 
     print("\n  " + " · ".join(f"{k} {v}" for k, v in sorted(tally.items())))
 
@@ -267,7 +298,11 @@ def main():
 
     print("\n★★★ 口径（🚫 不要改成对自己有利的读法）：")
     print("  · DONE 必须【判据文件存在 ＋ 实跑通过】—— 存在但没跑只算 IN_PROGRESS。")
-    print("  · ⚠️ UNMAPPED / UNEVALUABLE 两者【都永远不计入 DONE】。")
+    print("  · WAITING_DECISION / RELEASE_ONLY 【都不计入 DONE, 也不算失败】——")
+    print("    它们不是【程序没写完】, 是流程如此: 前者等架构裁决, 后者只在发布线校验。")
+    print("    ★ 两者都必须在 progress.py 的 NON_FAILURE 里【具名声明并指出理由出处】,")
+    print("      否则就是一个藏真失败的地方(本仓已有【判据被一路放宽到通过】的活体证据)。")
+    print("  · !️ UNMAPPED / UNEVALUABLE 两者【都永远不计入 DONE】。")
     print("    UNMAPPED = 还没人记录【什么验证了这一项】（去补 docs/TODO_EVIDENCE.tsv 一行）；")
     print("    UNEVALUABLE = 判据本身没点名任何可执行件（要改的是判据）。两者要做的事不同，")
     print("    所以分开报；把任一算成完成，就是一条在空目录上也能报 100% 的恒绿判据（3.2 形态①）。")

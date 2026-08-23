@@ -17,6 +17,13 @@
 #
 # 列: 任务ID <TAB> 验证产物(分号分隔) <TAB> 来源 <TAB> 核验日期
 #
+# ! 已知会显示为未通过的行(不是映射错, 是产物本身在等裁决/等发布):
+#   (CFG-BT-02 曾在此列, 2026-08-23 gossip 实测裁决后转绿, 已移除)
+#   CHK-0-54  -> test_install_rollback.py 的版本漂移用例是【发布期门禁】:
+#                _build.py 记录当前 HEAD 而它自己要被提交进去, 提交后即漂。
+#   ⇒ 这两项在 progress.py 里会稳定显示 IN_PROGRESS。这是【诚实的显示】--
+#     证据产物确实没通过, NO 不要为了把数字做上去而改成指向别的测试。
+#
 # -- 续做指南(给下一次接手的人, 含我自己) --------------------------------
 #
 # 已落: BIZ-P3 30 / GWY-P5 25 / GWY-P4 11 / BIZ-P2 27 = 93 项命中 TODO。
@@ -276,3 +283,36 @@ INF-CM-03	tests/common/clock/test_timeout_table.py;tests/common/test_clock.py	ma
 INF-CM-04	tests/common/test_error_codes.py;tests/common/test_closed_sets.py	manual	2026-08-23
 INF-CM-05	tests/common/test_digest_cross_language.py	manual	2026-08-23
 MOT-CM-01	tests/common/test_closed_sets.py;tests/common/test_error_codes.py	manual	2026-08-23
+CHK-0-38	tests/p5_gateway/test_ext_batch.py	brief	2026-08-23
+CHK-0-39	tests/p5_gateway/test_ext_batch.py	brief	2026-08-23
+CHK-0-40	tests/p5_gateway/test_ext_batch.py	brief	2026-08-23
+CHK-0-53	tests/repo/test_vcs_hygiene.py	brief	2026-08-23
+CHK-0-54	tests/deploy/test_install_rollback.py	brief	2026-08-23
+CHK-0-55	tests/deps/test_dependency_lock.py	brief	2026-08-23
+CHK-0-56	tests/fixtures/test_fixture_integrity.py;tests/fixtures/test_fixture_mutations.py	brief	2026-08-23
+GWY-P4-40	tests/p3_task/test_voice_task_record.py	brief	2026-08-23
+GWY-P4-41	tests/integration/test_orchestrator_wiring.py	brief	2026-08-23
+CFG-BT-01	tests/deploy/test_probe.py	manual	2026-08-23
+CFG-BT-02	tests/deploy/test_zenoh_router_config.py;tests/deploy/test_net_config.py	manual	2026-08-23
+CFG-BT-03	tests/deploy/test_systemd_units.py	manual	2026-08-23
+CFG-BT-07	tests/deploy/test_start_stop_scripts.py	manual	2026-08-23
+CFG-BT-08	tests/deploy/test_systemd_units.py	manual	2026-08-23
+CFG-BT-14	tests/boot/test_failure_class.py	manual	2026-08-23
+CFG-BT-20	tests/deploy/test_net_config.py	manual	2026-08-23
+CFG-BT-21	tests/deploy/test_sec_checklist.py	manual	2026-08-23
+CFG-BT-22	tests/deploy/test_data_bootstrap.py	manual	2026-08-23
+INF-CI-01	tests/common/test_static_rules_bundle.py	manual	2026-08-23
+INF-CI-02	tests/common/test_lints.py	manual	2026-08-23
+INF-CI-04	tests/common/test_doccheck_coverage.py	manual	2026-08-23
+INF-CI-05	tests/common/test_ci_registry.py	manual	2026-08-23
+INF-DP-02	tests/boot/freeze/test_registry.py	manual	2026-08-23
+INF-DP-03	tests/boot/freeze/test_a_and_m.py;tests/boot/freeze/test_b_c_d.py	manual	2026-08-23
+INF-DP-04	tests/boot/freeze/test_g_safety_range.py;tests/boot/freeze/test_n_o_identities.py	manual	2026-08-23
+INF-DP-05	tests/boot/freeze/test_s10_schema.py;tests/boot/freeze/test_meta_diff.py	manual	2026-08-23
+INF-DP-06	tests/deploy/test_start_stop_scripts.py	manual	2026-08-23
+INF-DP-07	tests/deploy/test_systemd_units.py	manual	2026-08-23
+INF-DP-09	tests/deploy/test_net_config.py	manual	2026-08-23
+INF-DP-11	tests/deploy/test_data_bootstrap.py	manual	2026-08-23
+INF-TS-01	tests/meta/test_marker_coverage.py	manual	2026-08-23
+INF-TS-03	tests/common/test_closed_sets.py	manual	2026-08-23
+INF-TS-04	tests/common/test_digest_cross_language.py	manual	2026-08-23

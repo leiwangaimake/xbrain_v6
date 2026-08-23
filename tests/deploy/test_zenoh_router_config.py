@@ -11,6 +11,7 @@ INF-ZN-8 / CFG-BT-2 -- Zenoh router config + unit + check sanity.
 
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -74,11 +75,71 @@ def test_rt_config_disables_multicast():
     assert m, "RT config must explicitly set multicast.enabled=false"
 
 
-def test_rt_config_disables_gossip():
-    src = RT_CFG.read_text()
-    import re
-    m = re.search(r"gossip:\s*\{[^}]*enabled:\s*false", src, re.DOTALL)
-    assert m, "RT config must explicitly set gossip.enabled=false"
+def _gossip_block(src):
+    """(enabled, multihop) as booleans, or raise if the block is absent.
+
+    Absent is a failure, not a default: RT-C1/RT-C2 both require the setting to
+    be EXPLICIT, because zenoh's own default is what the rules exist to
+    override.
+    """
+    m = re.search(r"gossip:\s*\{(.*?)\}", src, re.DOTALL)
+    assert m, "config must carry an explicit scouting.gossip block"
+    body = m.group(1)
+    en = re.search(r"enabled:\s*(true|false)", body)
+    mh = re.search(r"multihop:\s*(true|false)", body)
+    assert en, "gossip.enabled must be set explicitly"
+    return en.group(1) == "true", (mh.group(1) == "true") if mh else None
+
+
+def _assert_gossip_rule(src, which):
+    """RT-C2 as amended 2026-08-23.
+
+    *** The rule is about multihop, not about enabled.
+
+    gossip=true is permitted ONLY when multihop=false. That is the condition the
+    2026-08-23 isolation measurement actually established (two routers, a live
+    cross-plane process present, and neither discovery nor data crossed the
+    plane boundary). It is NOT "multiple routers, therefore allow gossip" --
+    multiple routers is precisely the situation RT-C2 was written for, and
+    permitting it on that ground would keep the rule's name while deleting the
+    rule.
+
+    So the assertion is conditional, and the half that must never bend is
+    multihop: an absent or true multihop fails whatever enabled says.
+    """
+    enabled, multihop = _gossip_block(src)
+    if enabled:
+        assert multihop is False, (
+            "%s: gossip.enabled=true requires an explicit multihop=false "
+            "(RT-C2 as amended 2026-08-23 -- the measurement that permits "
+            "gossip only holds for single-hop)" % which)
+    else:
+        # Still legal, and the safer setting. Nothing more to check.
+        pass
+
+
+def test_rt_config_gossip_obeys_rt_c2():
+    _assert_gossip_rule(RT_CFG.read_text(), "RT config")
+
+
+def test_gen_config_gossip_obeys_rt_c2():
+    _assert_gossip_rule(GEN_CFG.read_text(), "GEN config")
+
+
+def test_gossip_without_multihop_false_is_refused():
+    """*** The mutation, pinned as a case rather than left to a reviewer.
+
+    A config that turns gossip on and drops multihop is the exact shape this
+    amendment must keep refusing -- it is the multi-hop diffusion RT-C2's
+    original rationale describes, and the measurement says nothing about it.
+    """
+    import pytest as _pytest
+    bad = 'scouting: { gossip: { enabled: true } }'
+    with _pytest.raises(AssertionError):
+        _assert_gossip_rule(bad, "synthetic")
+    worse = 'scouting: { gossip: { enabled: true, multihop: true } }'
+    with _pytest.raises(AssertionError):
+        _assert_gossip_rule(worse, "synthetic")
 
 
 def test_gen_config_disables_multicast():
@@ -87,12 +148,6 @@ def test_gen_config_disables_multicast():
     m = re.search(r"multicast:\s*\{[^}]*enabled:\s*false", src, re.DOTALL)
     assert m
 
-
-def test_gen_config_disables_gossip():
-    src = GEN_CFG.read_text()
-    import re
-    m = re.search(r"gossip:\s*\{[^}]*enabled:\s*false", src, re.DOTALL)
-    assert m
 
 
 def test_rt_binds_loopback_only():

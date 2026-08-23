@@ -180,13 +180,57 @@ def test_no_pycache_under_installed_root_and_new_code_wins(env):
 # 4) build_version live -- matches git describe on this repo
 # --------------------------------------------------------------------------
 
+#: Set XBRAIN_RELEASE_GATE=1 to run the checks that only make sense at release
+#: time. Off by default, and that default is the point -- see below.
+_RELEASE_GATE = os.environ.get("XBRAIN_RELEASE_GATE") == "1"
+
+
+@pytest.mark.skipif(not _RELEASE_GATE,
+                    reason="release-only gate; set XBRAIN_RELEASE_GATE=1")
 def test_build_version_matches_git_describe():
-    """*** Criterion ④: the committed _build.py matches `git describe`.
-    The generator's --check is the CI drift gate; running it here catches a
-    commit that forgot to regenerate."""
+    """*** Criterion 4, RELEASE-ONLY: the shipped _build.py matches git.
+
+    *** Why this cannot be a per-commit gate -- it is a self-reference problem.
+
+    _build.py records the sha of the CURRENT head, and then that file is itself
+    committed. The commit that contains it necessarily has a different sha, so
+    the file can never agree with the commit it lives in. Regenerating and
+    committing just moves the mismatch forward one commit; the drift is
+    structural, not a mistake anyone made.
+
+    Measured on 2026-08-23: regenerate -> green; commit -> red again, with
+    committed='21e2d1e' vs current='8de147e'. A gate that reds after every
+    single commit teaches people to ignore it, and an ignored gate protects
+    nothing (CLAUDE.md 3.2 form 2).
+
+    So it moves to where version stamping actually belongs -- the release
+    pipeline, which generates the file and verifies it in one step, the way the
+    kernel generates version.c at `make release` rather than at commit time.
+    Day-to-day CI keeps the two checks below, which ARE per-commit meaningful:
+    the file exists, imports, and does not carry the fallback literal.
+    """
     r = subprocess.run([sys.executable, GEN_VERSION, "--check"],
                        cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, "gen_build_version --check failed:\n" + r.stdout + r.stderr
+
+
+def test_build_version_file_is_well_formed():
+    """*** The per-commit half of criterion 4: shape, not git agreement.
+
+    This is what a normal commit CAN honestly be held to -- the generated file
+    is present, parses, and carries the three fields the release step fills in.
+    A commit that deleted _build.py or emptied a field still fails here, which
+    is the real regression this criterion was guarding.
+
+    MUTATION: blank out commit_sha in _build.py and this goes red, while the
+    git-agreement check above stays skipped.
+    """
+    from xbrain.common.version import _build            # noqa: PLC0415
+    for field in ("build_version", "commit_sha", "commit_date_iso"):
+        value = getattr(_build, field, None)
+        assert isinstance(value, str) and value.strip(), (
+            "_build.%s missing or empty -- the release step did not fill it"
+            % field)
 
 
 def test_build_version_is_importable_and_not_the_fallback():

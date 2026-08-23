@@ -43,6 +43,18 @@
     // -- if that is adopted, flip this back.
     gossip: {
       enabled: true,
+      // multihop: false -- RT-C2 as amended 2026-08-23.
+      // gossip is permitted ONLY single-hop. The 2026-08-23 isolation
+      // measurement (two routers, a live cross-plane process holding both
+      // sessions, probes on discovery AND reachability) found no crossing --
+      // but it measured multihop=false only. Leaving multihop unset takes
+      // zenoh's default, which is exactly the multi-hop diffusion RT-C2's
+      // rationale describes and which nothing here has measured.
+      // * 2026-08-23 用户裁决: V6 当前【不跨主机部署】, 两个 router 都 listen 在
+      //   127.0.0.1, 本机单跳足以完成发现 -- 这是 multihop=false 不损功能的
+      //   前提。若将来要跨主机, 本行需重新论证(多跳发现可能变成必需), 且必须
+      //   重做 2026-08-23 那次隔离实测: 那次只覆盖了单机双 router 的拓扑。
+      multihop: false,
     },
   },
   connect: {
