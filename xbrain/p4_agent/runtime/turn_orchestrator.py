@@ -68,6 +68,9 @@ from xbrain.p4_agent.runtime.geo_request import (
 from xbrain.p4_agent.runtime.task_request import (
     TaskRequestError, is_task_create_intent, to_task_command,
 )
+from xbrain.p4_agent.runtime.mode_request import (
+    ModeRequestError, is_mode_intent, to_mode_command,
+)
 from xbrain.p4_agent.runtime.teach_request import (
     TeachRequestError, is_teach_intent, session_id_from_state,
     to_teach_command,
@@ -507,6 +510,24 @@ class TurnOrchestrator:
                                     llm_used=llm_used,
                                     prompt_assembled=llm_used)
             extra = merged
+        # 18 C class -> 11 S7.3 ModeCommand for cmd/mode (2026-08-21). Before
+        # this the whole C class went to cmd/task and P3 skipped it: eight voice
+        # commands ("enter broadcast", "exit alarm", ...) that reached nobody.
+        if is_mode_intent(entry.name):
+            try:
+                mode_cmd = to_mode_command(
+                    entry.name, slots=dict(extra or {}),
+                    cmd_id=uuid.uuid4().hex, source=self._source)
+            except ModeRequestError as exc:
+                spoken = _F_REASON_CN.get(str(exc), "这个模式指令没听清, 再说一遍")
+                return TurnDecision(kind="reply", intent_id=entry.id,
+                                    intent_name=entry.name, route=entry.route,
+                                    auth=eff_auth, level=eff_auth, layer=layer,
+                                    reply_text=spoken, tts_text=spoken,
+                                    llm_used=llm_used,
+                                    prompt_assembled=llm_used)
+            if mode_cmd is not None:
+                extra = {**(extra or {}), "mode_command": mode_cmd}
         # 11 S12A.1: the F class. F01-F10 build a TeachCommand for cmd/teach,
         # F11-F15 a GeoCommand for cmd/geo. A build failure is spoken back
         # ("there is no recording in progress", "no route named X") rather than

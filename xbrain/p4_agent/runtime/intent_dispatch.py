@@ -46,6 +46,7 @@ CMD_PAYLOAD = "cmd/payload"
 # 11 S12A.1 splits the F class across two keys: F01-F10 open / drive / end a
 # RECORDING SESSION on cmd/teach, F11-F15 are CRUD on an existing object and go
 # to cmd/geo. Neither is cmd/task -- see the note on the F prefix below.
+CMD_MODE = "cmd/mode"
 CMD_TEACH = "cmd/teach"
 CMD_GEO = "cmd/geo"
 
@@ -55,7 +56,16 @@ CMD_GEO = "cmd/geo"
 _PREFIX_MAP = {
     "A": CMD_MOTION_INTENT,   # A01-A12 ad-hoc motion (forward/turn/etc)
     "B": CMD_TASK,             # B01-B09 tasks (patrol, charge, standby, estop)
-    "C": CMD_TASK,             # C01-C07 (hold, slow, cancel, look, spin)
+    # C is the MODE class (18 C01-C08). The six whose 18 effect column reads
+    # "P2 -> ..." are overridden to cmd/mode below; this prefix entry stays
+    # CMD_TASK as the backstop for the two that are NOT mode commands:
+    #   C06 standby  -- 18: "P3 挂起任务 + P1 hold", effect is P3/P1 not P2;
+    #   C08 query_mode_switch_ok -- 18: a QUERY ("can we switch to broadcast?").
+    # *** The old comment here read "C01-C07 (hold, slow, cancel, look, spin)",
+    # which describes a different intent set entirely -- this table was written
+    # against an assumed C class, and every C intent went to cmd/task where P3
+    # skipped it for having no top-level action. Eight dead voice commands.
+    "C": CMD_TASK,
     "D": CMD_AUDIO_SPEAK,      # D01-D13 broadcast / chitchat / speak_stop
     "E": CMD_PTZ,              # PTZ family
     # F is the RECORDING class (18 F01-F15), not follow -- follow is B11. Every
@@ -104,6 +114,18 @@ INTENT_TO_KEY.update({
     "F09": CMD_TEACH, "F10": CMD_TEACH,
     "F11": CMD_GEO, "F12": CMD_GEO, "F13": CMD_GEO, "F14": CMD_GEO,
     "F15": CMD_GEO,
+})
+
+# 18 C class -> cmd/mode. Per-id, NOT by prefix: only the six whose 18 effect
+# column reads "P2 -> ..." are mode commands.
+#
+# C06 standby and C08 query_mode_switch_ok are deliberately ABSENT -- see the
+# "C" entry in _PREFIX_MAP. Adding them here is the tempting one-line change
+# that would make a question ("can we switch to broadcast?") issue a mode
+# switch, which is the opposite of what the operator asked.
+INTENT_TO_KEY.update({
+    "C01": CMD_MODE, "C02": CMD_MODE, "C03": CMD_MODE,
+    "C04": CMD_MODE, "C05": CMD_MODE, "C07": CMD_MODE,
 })
 
 

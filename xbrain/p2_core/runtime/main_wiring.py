@@ -33,6 +33,7 @@ seven arbiter domains (motion / speaker / asr / payload_light / ptz
 from __future__ import annotations
 
 import json
+import queue
 import logging
 import os
 import time
@@ -234,6 +235,45 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         else:
             _logger.warning("p2 wiring: PTZ disabled (no onvif credentials)")
 
+        # -- cmd/mode subscriber (2026-08-21) -------------------------
+        # 11 S2.2.3 lists p2_core as THIS key's subscriber, and it had none:
+        # every 18-class-C intent (enter/exit alarm, enter/exit broadcast,
+        # patrol mode, standby, set behaviour) was routed by p4 to cmd/task,
+        # where P3 skipped it for having no top-level action. Eight voice
+        # commands that reached nobody, with no error on either side.
+        #
+        # Frames are QUEUED here and applied on the main loop below, NOT in
+        # this callback: ModeStateMachine documents itself as "not thread-safe
+        # by design (main-thread only)", and it holds the cmd_id idempotency
+        # history -- two Rust threads racing it would replay or double-apply.
+        # That is a different discipline from payload/ptz above, which hand off
+        # to a worker thread because their domains are I/O and stateless.
+        from xbrain.p2_core.runtime.mode_wiring import (
+            CMD_MODE_ACK_TOPIC, CMD_MODE_TOPIC, STATE_MODE_TOPIC, ModeFace,
+        )
+        mode_queue: "queue.Queue" = queue.Queue(maxsize=64)
+        mode_ack_pub = gen.declare_publisher(CMD_MODE_ACK_TOPIC)
+        mode_state_pub = gen.declare_publisher(STATE_MODE_TOPIC)
+
+        def _publish_mode_state(key: str, data: bytes) -> None:
+            mode_state_pub.put(data)
+
+        mode_face = ModeFace(publish=_publish_mode_state)
+
+        def _on_mode(sample) -> None:
+            # RUST THREAD: copy the bytes and hand off. Nothing else.
+            try:
+                mode_queue.put_nowait(bytes(sample.payload))
+            except queue.Full:
+                # Dropped LOUDLY. A silently dropped mode command is
+                # indistinguishable to the sender from one that was applied,
+                # and mode decides mic gating and broadcast.
+                _logger.error("p2 cmd/mode queue full; frame dropped")
+
+        _gen_subs.append(gen.declare_subscriber(CMD_MODE_TOPIC, _on_mode))
+        _logger.info("p2 wiring: subscribed %s (mode face active)",
+                     CMD_MODE_TOPIC)
+
         # Device liveness -> 11 S6.2 device_offline/online events (SW-12 producers).
         # p5 persists + backfills these. All three producers are REAL:
         #   mic          -- arecord capture/publish thread alive/dead (below)
@@ -294,6 +334,18 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             last_health = 0.0        # 0 -> publish on the very first pass
             while not stop_flag.get("stop"):
                 now = time.monotonic()
+                # Drain cmd/mode on the MAIN thread (see the subscriber above
+                # on why it is queued). Fully drained rather than one per pass:
+                # a burst of mode commands must not be spread over seconds.
+                while True:
+                    try:
+                        _raw = mode_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    ack = mode_face.handle_frame(
+                        _raw, now_mono_ms=int(now * 1000))
+                    mode_ack_pub.put(json.dumps(
+                        ack, ensure_ascii=False).encode("utf-8"))
                 # 11 S2.2: health/summary at 1 Hz. Derived every pass from the
                 # live caches; an item whose source has not been heard from
                 # stays UNKNOWN with a detail naming what is missing, never ok.

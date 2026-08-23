@@ -547,8 +547,12 @@ def run_voice_loop_wiring(stop_flag: dict,
                 d = json.loads(bytes(sample.payload).decode("utf-8"))
             except Exception:      # noqa: BLE001
                 d = {}
-            if d.get("mode"):
-                hmi_state["mode"] = d["mode"]
+            # 11 S4.3 ModeState 的字段是 voice_mode. 原来读的是 d["mode"] --
+            # 那个拼法在 2026-08-21 之前无所谓, 因为 state/mode 根本没有发布者
+            # (p2_core 的模式面当天才接线); 两边就着一个不存在于契约的名字对上
+            # 了, 谁也不会发现. 现按 S4.3 对齐.
+            if d.get("voice_mode"):
+                hmi_state["mode"] = d["voice_mode"]
 
         def _on_state_pose(sample) -> None:
             # P1-1: p1 publishes state/pose (3.0 envelope) 10 Hz; the HMI reads the

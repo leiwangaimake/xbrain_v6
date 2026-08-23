@@ -32,7 +32,14 @@ def test_g43_g47_route_to_direct_answer_not_scheduler():
 
 
 def test_action_prefixes_still_route_to_scheduler():
-    # Sanity anchor: action families (B/C/T) still go to cmd/task -> P3 scheduler,
-    # so "queries are not scheduled" is a real distinction, not a broken map.
-    for aid in ("B01", "C01", "T01"):
+    # Sanity anchor: action families still go to cmd/task -> P3 scheduler, so
+    # "queries are not scheduled" is a real distinction, not a broken map.
+    #
+    # *** C01 used to be the C-class anchor here and it was the WRONG one:
+    # 18 C01 enter_alarm is a MODE command ("P2 -> D 模式"), and this assertion
+    # was quietly holding the mis-routing in place -- the whole C class went to
+    # cmd/task where P3 skipped it. C06 standby is the honest C-class anchor:
+    # 18's effect column for it reads "P3 挂起任务 + P1 hold", so it really is
+    # a task-family command (see intent_dispatch's C entry).
+    for aid in ("B01", "C06", "T01"):
         assert choose_key(aid) == CMD_TASK

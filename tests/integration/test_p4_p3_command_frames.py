@@ -32,6 +32,7 @@ import yaml
 
 from xbrain.p3_task.ingest.geo_command import parse_geo_command
 from xbrain.p3_task.ingest.task_command import parse_task_command
+from xbrain.p2_core.runtime.mode_wiring import ModeFace
 from xbrain.p3_task.teach.command import parse_teach_command
 from xbrain.p4_agent.registry.intents import load_intent_registry
 from xbrain.p4_agent.runtime.orchestrator_turn import decision_to_publishes
@@ -106,6 +107,35 @@ def test_voice_teach_frame_parses_as_a_teach_command():
     payload = _frames("开始录制路径")["cmd/teach"]
     cmd = parse_teach_command(payload)
     assert cmd.action == "start" and cmd.cmd_id
+
+
+def test_voice_mode_frame_is_applied_by_p2s_real_receiver():
+    """*** 18 C class -> cmd/mode, checked against P2's ACTUAL ModeFace.
+
+    Before 2026-08-21 both halves were missing at once: p4 routed the whole C
+    class to cmd/task (its prefix table's comment described a different intent
+    set entirely), and p2_core never subscribed cmd/mode. Eight voice commands
+    that reached nobody, with no error on either side.
+
+    This asserts on the pair rather than on the builder: the frame goes through
+    decision_to_publishes and is then fed to the real receiver, which must both
+    accept it AND actually change mode.
+
+    MUTATION: leave "C": CMD_TASK in the prefix map (no per-id override) and the
+    key here is cmd/task, so the lookup fails. Or drop CMD_MODE from
+    _CONTRACT_FRAME_SLOT and the frame arrives nested -> E_SCHEMA.
+    """
+    import json as _json
+    payload = _frames("开始喊话")["cmd/mode"]
+    face = ModeFace()
+    ack = face.handle_frame(
+        _json.dumps(payload).encode("utf-8"), now_mono_ms=1)
+    assert ack["result"] == "accepted", ack
+    # Accepted is not enough -- the mode must actually have moved. An ack that
+    # says accepted while the machine sits in idle is the exact failure SP-C3
+    # warns about.
+    assert face.state.value == "broadcast"
+    assert payload["source"] == "voice"
 
 
 def test_a_control_intent_stays_an_envelope():

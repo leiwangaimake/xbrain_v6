@@ -39,7 +39,7 @@ from typing import Any, Callable, List, Optional, Tuple
 
 from xbrain.p4_agent.registry.intents import IntentRegistry
 from xbrain.p4_agent.runtime.intent_dispatch import (
-    CMD_AUDIO_SPEAK, CMD_GEO, CMD_TASK, CMD_TEACH,
+    CMD_AUDIO_SPEAK, CMD_GEO, CMD_MODE, CMD_TASK, CMD_TEACH,
 )
 from xbrain.p4_agent.session.chitchat import ChitchatResponder
 from xbrain.p4_agent.runtime.turn_orchestrator import (
@@ -73,6 +73,7 @@ _CONTRACT_FRAME_SLOT = {
     CMD_TASK: "task_command",
     CMD_GEO: "geo_command",
     CMD_TEACH: "teach_command",
+    CMD_MODE: "mode_command",
 }
 
 CMD_ESTOP = "cmd/estop"
