@@ -14,7 +14,7 @@ logged cmd/task; now it opens task.db and records each task-create request:
   * subscribe cmd/task. The Zenoh callback runs on a RUST thread, so it does
     NO async and NO db work (CLAUDE.md 4.2): it decodes the frame and hands it
     to the asyncio loop via loop.call_soon_threadsafe -> an asyncio.Queue;
-  * a consumer coroutine drains the queue and calls record_task_from_payload
+  * a consumer coroutine drains the queue and calls handle_task_payload
     (dedup + BEGIN IMMEDIATE transaction), then reflects the recorded task into
     state/task so p5/HMI see it;
   * a heartbeat line every few seconds so p5 sees life.
@@ -395,8 +395,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             # missing piece is resolving "the task I mean" to a
                             # task_id, which needs the operator to be told which
                             # task that is.
-                            recorded += await _record_one(
-                                conn, dao, payload, state_pub)
+                            recorded += _log_non_contract_frame(payload)
                     # 11 S7.9: drain every cmd/geo that arrived, answer each on
                     # cmd/geo/ack. Drained fully (not one per pass) so a burst of
                     # chunked upserts is not spread over seconds of loop passes.
@@ -585,39 +584,36 @@ def _make_publish(state_pub, emit_task_event=None):
     return _publish
 
 
-async def _record_one(conn, dao, payload, state_pub) -> int:
-    """Record one cmd/task payload; reflect the outcome into state/task.
-    Returns 1 if a NEW task was recorded, else 0 (duplicate/skipped/error)."""
-    try:
-        out = await record_task_from_payload(
-            conn, dao, payload,
-            date_str=_today_yyyymmdd(), now_mono_ms=_now_mono_ms(),
-            created_at=_now_utc_iso())
-    except Exception as exc:               # noqa: BLE001
-        # A bad row must not kill the loop -- log and drop this one task.
-        _logger.error("p3 record failed: %s", exc)
-        return 0
-    if out.kind == "recorded":
-        _logger.info("p3 recorded task %s type=%s state=%s",
-                     out.task_id, payload.get("task_request", {}).get(
-                         "task_type"), out.state)
-        state_pub.put(json.dumps({
-            "schema": "state_task_v1",
-            "active_task": {"task_id": out.task_id, "state": out.state,
-                            "admitted_mono_ms": _now_mono_ms()},
-        }).encode("utf-8"))
-        return 1
-    if out.kind == "duplicate":
-        _logger.info("p3 duplicate task %s ignored (TSK-12)", out.task_id)
-    else:
-        # A control/device frame reached cmd/task (e.g. a non-create); log the
-        # intent for visibility but record nothing.
-        _logger.info("p3 cmd/task not a task-create (intent=%s); no row",
-                     payload.get("intent_id"))
+def _log_non_contract_frame(payload) -> int:
+    """A cmd/task frame with no top-level `action`. Logged, recorded nowhere.
+
+    *** This REPLACED _record_one + record_task_from_payload on 2026-08-23.
+
+    That path existed to turn p4_agent's private `task_request` shape into a
+    task row. Since batch 15 no sender emits that shape -- p4_agent, the HMI and
+    the cloud all send the 11 S7.2 contract shape, which goes to
+    handle_task_payload instead. So the create half of the legacy path had
+    become unreachable code that still owned a db write.
+
+    What still arrives here is the handful of voice intents that route to
+    cmd/task but have no S7.2 action to express them:
+      * B10 skip_waypoint -- S7.2's five actions have no `skip`
+      * H04 reload_config -- 18 says verbatim it belongs on cmd/config (S7.6)
+    Both are logged by intent id so they are VISIBLE as gaps. They were being
+    silently dropped before; a log line is the difference between "we know this
+    does nothing" and "nobody noticed".
+
+    Returns 0 always -- nothing is recorded, and the caller's counter should
+    not move.
+    """
+    _logger.info(
+        "p3 cmd/task frame has no contract action (intent=%s); not a task, "
+        "nothing recorded -- see NEXT SW-16 for the two known gaps",
+        payload.get("intent_id") if isinstance(payload, dict) else None)
     return 0
+
 
 
 # Import at module scope so the recorder is a stable reference (not re-imported
 # per call). Kept after the functions to avoid a circular import at load.
-from xbrain.p3_task.ingest.task_recorder import record_task_from_payload  # noqa: E402
 from xbrain.p3_task.query.queryable import answer_task_query  # noqa: E402

@@ -45,6 +45,18 @@
     }
     return null;
   }
+  // The INVERSE of toXY, for W2 goto: a tap on the map -> {lat, lon}.
+  // Deliberately the exact algebraic inverse (same R, same cos(origin.lat),
+  // same north negation) rather than a second approximation -- if the two
+  // drifted, the pin the operator sees and the point the robot drives to
+  // would differ, and nothing on screen would show it.
+  // Returns null without an origin: better no goto than a goto to 0,0.
+  function fromXY(x, y, origin) {
+    if (!origin || origin.lat == null || origin.lon == null) return null;
+    const R = 111320, c = Math.cos((origin.lat || 0) * Math.PI / 180);
+    if (!c) return null;                              // at the pole, degenerate
+    return { lat: origin.lat - y / R, lon: origin.lon + x / (R * c) };
+  }
   const ptsAttr = (arr, origin) => arr.map((p) => toXY(p, origin))
     .filter(Boolean).map((xy) => xy.join(",")).join(" ");
 
@@ -245,6 +257,7 @@
     // omits the field cannot clobber the ui_config default with undefined.
     if (snap.timezone) siteTz = snap.timezone;
     const origin = (snap.geo && snap.geo.enu_origin) || null;
+    lastOrigin = origin;                  // W2 needs it to invert a map tap
     // patrolling = a plan is running -> the yellow realtime trajectory shows;
     // once no plan runs (patrol complete) it hides unless show_after_complete.
     const plans = (snap.plan && snap.plan.plans) || [];
@@ -263,14 +276,14 @@
   // -- 录制指示 (11 S12A.5) ------------------------------------------------
   //
   // 只读: HMI 开不了也停不了录制 (S12.1.1 白名单 5 类不含 teach), 这里只把 P3
-  // 正在做的事画出来。
+  // 正在做的事画出来.
   //
-  // ★ 为什么要在前端累积: state/teach 【故意不带点序列】 -- S12A.5 逐字说 2000
-  // 个点会把 1 Hz 状态话题撑爆, 只给 stats + last_point。所以轨迹是按
-  // last_point.seq 逐帧攒出来的, 是【近似】: 采点 1 Hz、推送 1 Hz, 丢一帧就少一
-  // 个点, 折线会抄近路。图例上标了"近似"就是这个意思。
-  // ★ 保存后由 geo.db 的权威几何 (state/geo/objects) 接管 -- 所以会话一结束就把
-  // 这条近似轨迹清掉, 🚫 不留在图上冒充已保存的路径。
+  // * 为什么要在前端累积: state/teach [故意不带点序列] -- S12A.5 逐字说 2000
+  // 个点会把 1 Hz 状态话题撑爆, 只给 stats + last_point. 所以轨迹是按
+  // last_point.seq 逐帧攒出来的, 是[近似]: 采点 1 Hz, 推送 1 Hz, 丢一帧就少一
+  // 个点, 折线会抄近路. 图例上标了"近似"就是这个意思.
+  // * 保存后由 geo.db 的权威几何 (state/geo/objects) 接管 -- 所以会话一结束就把
+  // 这条近似轨迹清掉, NO 不留在图上冒充已保存的路径.
   let teachTrail = [];        // [[x, y], ...] 已攒到的点 (frame 坐标)
   let teachSeq = 0;           // 见过的最大 last_point.seq
   let teachSession = null;    // 当前会话 id, 变了就重来
@@ -286,20 +299,20 @@
     const live = teach.available &&
       ["arming", "recording", "paused", "finalizing"].indexOf(teach.state) >= 0;
     if (!live) {
-      // 会话结束 / 没有会话 / 这个后端还没有 teach 组: 收起指示并丢掉近似轨迹。
+      // 会话结束 / 没有会话 / 这个后端还没有 teach 组: 收起指示并丢掉近似轨迹.
       teachTrail = []; teachSeq = 0; teachSession = null;
       badge.hidden = true;
       return;
     }
     if (teach.session_id !== teachSession) {
-      // 新会话 (或 P3 重启后重新编号): 上一条的点绝不能续到这一条上。
+      // 新会话 (或 P3 重启后重新编号): 上一条的点绝不能续到这一条上.
       teachTrail = []; teachSeq = 0; teachSession = teach.session_id;
     }
     const lp = teach.last_point;
     if (lp && typeof lp.seq === "number" && lp.seq > teachSeq) {
       const xy = toXY(lp, origin);
       // seq 是单调的, 所以只按它去重就够 -- 不比坐标 (原地打的 mark 点坐标可能
-      // 与上一个几乎相同, 按坐标去重会把 F05 手动打的点吃掉)。
+      // 与上一个几乎相同, 按坐标去重会把 F05 手动打的点吃掉).
       if (xy) { teachTrail.push(xy); teachSeq = lp.seq; }
     }
     if (teachTrail.length >= 2) {
@@ -310,7 +323,7 @@
       $("teachLayer").appendChild(dot(p[0], p[1], null, "teach-point"));
     }
     if (teachTrail.length) {
-      // 当前点单独画大一圈, 让操作员一眼看到"录到这儿了"。
+      // 当前点单独画大一圈, 让操作员一眼看到"录到这儿了".
       const head = teachTrail[teachTrail.length - 1];
       const c = document.createElementNS(SVGNS, "circle");
       c.setAttribute("cx", head[0]); c.setAttribute("cy", head[1]);
@@ -323,7 +336,7 @@
     $("teachKind").textContent = teach.kind === "fence" ? "围栏" : "路径";
     $("teachName").textContent = teach.name_hint || "";
     // 点数用 P3 的 stats, 不用 teachTrail.length -- 后者是丢帧后的近似, 前者是
-    // 真正入库的点数, 两者不一致时该信 P3 的。
+    // 真正入库的点数, 两者不一致时该信 P3 的.
     $("teachPoints").textContent = (teach.point_count || 0) + " 点";
     $("teachLength").textContent = fmtLen(teach.length_m || 0);
     $("teachElapsed").textContent = fmtDur(teach.elapsed_s || 0);
@@ -588,7 +601,7 @@
     // 用类型名兜底, 不留空白.
     const content = card.command_text || (card.task_type ? "(" + card.task_type + ")" : "--");
     const pct = card.progress ? card.progress.percent : null;
-    // 字段5: percent 为 null(路由未展开)时显 '--', 🚫 不伪造 0/100 (同后端).
+    // 字段5: percent 为 null(路由未展开)时显 '--', NO 不伪造 0/100 (同后端).
     const pctText = (pct == null) ? "--" : Math.round(pct) + "%";
     const pctW = (pct == null) ? 0 : Math.max(0, Math.min(100, pct));
     // 字段4 巡逻点: 走过=finished(绿点绿字) / 当前=current / 未到=pending(灰).
@@ -710,7 +723,7 @@
   // widened/heightened and shrunk back, but never below the default. The dragged
   // size is saved to localStorage and restored on load (survives refresh + restart).
   function wirePanelResize() {
-    // ★ WIDTH is SHARED by both panels (they stack on the HMI's right edge, so a
+    // * WIDTH is SHARED by both panels (they stack on the HMI's right edge, so a
     // mismatched width misaligns them, user 2026-08-18): resizing width on EITHER
     // panel syncs BOTH. HEIGHT is per-panel. Both persist and restore on load.
     const MINW = 350;                                 // = default width (= minimum)
@@ -825,7 +838,7 @@
     $("modeText").textContent = status.mode ? `模式: ${status.mode}` : "模式: --";
     // pose-derived readouts: null until perception/rtk exist (17 S6.10.4).
     $("coordGps").textContent = pose.available && pose.lat != null
-      ? `${pose.lat.toFixed(6)}°N · ${pose.lon.toFixed(6)}°E` : "无定位";
+      ? `${pose.lat.toFixed(6)}°N   ${pose.lon.toFixed(6)}°E` : "无定位";
     // ENU line = customer block: E / N (lat/lon vs origin) + 航向 + 速度. toXY
     // negates N for SVG screen coords, so flip it back for the northward reading.
     // Each field falls back to "--" until pose exists (W4 GATED), never a fake 0.
@@ -839,7 +852,7 @@
     const spd = (pose.available && pose.speed_mps != null)
       ? pose.speed_mps.toFixed(1) : "--";
     $("coordEnu").textContent =
-      `E ${e}m · N ${n}m　航向 ${hdg}°　速度 ${spd}m/s`;
+      `E ${e}m   N ${n}m　航向 ${hdg}°　速度 ${spd}m/s`;
     // Footer status (2026-08-16): fix / heading / sync as coloured text, no dots.
     setStat("fixText", fixStat(pose));
     setStat("hdgText", hdgStat(pose));
@@ -1103,6 +1116,18 @@
 
   function onUplinkAck(m) {
     const btn = pendingReqs.get(m.req_id);
+    // W2/W3 answer on the banner, not on a task card (they have no card).
+    if (m.req_type === "goto" || m.req_type === "exit_broadcast") {
+      pendingReqs.delete(m.req_id);
+      if (btn) btn.disabled = false;
+      const okTxt = m.req_type === "goto" ? "已下发前往目标点" : "已退出喊话";
+      if (m.result === "accepted") { alertBanner(okTxt); refreshTasks(); }
+      else {
+        const why = (m.detail && (m.detail.reason_text || m.detail.reason)) || "";
+        alertBanner("被拒绝 " + (m.code || "") + (why ? ": " + why : ""));
+      }
+      return;
+    }
     pendingReqs.delete(m.req_id);
     if (btn) btn.disabled = false;
     if (m.result === "accepted") { refreshTasks(); return; }
@@ -1189,6 +1214,82 @@
     });
   }
 
+  // -- W2 goto by tapping the map (11 S12.1.1) ------------------------------
+  // The operator taps a point; P5 turns it into a cmd/task submit of a goto
+  // task (NOT a BehaviorCommand -- that would bypass P3's fence pre-check and
+  // the U07a breakpoint ledger).
+  //
+  // Two clicks, like cancel: the first drops a pin and shows the coordinates,
+  // the second sends. A single click would make an accidental brush against a
+  // touchscreen dispatch the robot somewhere.
+  let gotoPin = null;                     // {lat, lon} awaiting confirmation
+  let lastOrigin = null;                  // set each render; needed to invert
+
+  function clearGotoPin() {
+    gotoPin = null;
+    const old = $("mapSvg").querySelector("#gotoPin");
+    if (old) old.remove();
+    const b = $("gotoBanner");
+    if (b) b.hidden = true;
+  }
+
+  function onMapClick(ev) {
+    const svg = $("mapSvg");
+    const vb = (svg.getAttribute("viewBox") || "").split(/\s+/).map(Number);
+    if (vb.length !== 4 || !svg.clientWidth) return;
+    const r = svg.getBoundingClientRect();
+    // preserveAspectRatio="none" on this svg, so x and y scale independently.
+    const x = vb[0] + (ev.clientX - r.left) / r.width * vb[2];
+    const y = vb[1] + (ev.clientY - r.top) / r.height * vb[3];
+    const ll = fromXY(x, y, lastOrigin);
+    if (!ll) {
+      // No enu_origin -> the map has no georeference, so a tap cannot be
+      // turned into a coordinate. Said out loud rather than silently ignored.
+      alertBanner("地图还没有定位基准, 无法点选目标点");
+      return;
+    }
+    gotoPin = ll;
+    let pin = svg.querySelector("#gotoPin");
+    if (!pin) {
+      pin = document.createElementNS(SVGNS, "circle");
+      pin.setAttribute("id", "gotoPin");
+      pin.setAttribute("class", "goto-pin");
+      svg.appendChild(pin);
+    }
+    pin.setAttribute("cx", x); pin.setAttribute("cy", y);
+    pin.setAttribute("r", 6);
+    alertBanner("目标点 " + ll.lat.toFixed(6) + ", " + ll.lon.toFixed(6)
+                + " -- 再点一次下方按钮确认发送", true);
+  }
+
+  function alertBanner(text, withConfirm) {
+    const b = $("gotoBanner");
+    if (!b) return;
+    b.hidden = false;
+    b.querySelector(".goto-text").textContent = text;
+    b.querySelector(".goto-send").hidden = !withConfirm;
+  }
+
+  function sendGoto() {
+    if (!gotoPin) return;
+    sendUplink({ type: "goto", lat: gotoPin.lat, lon: gotoPin.lon },
+               $("gotoSend"));
+    clearGotoPin();
+  }
+
+  // -- W3 exit_broadcast ----------------------------------------------------
+  // 11 S12.1.1 W3: while B mode runs the local mic is closed by the half-duplex
+  // gate, and a cloud operator saying "stop broadcasting" into a mic triggers
+  // the self-trigger loop. So this button is the ONLY non-voice way out of B
+  // mode -- it takes no confirm and no preconditions, deliberately.
+  function wireExitBroadcast() {
+    const btn = $("exitBroadcastBtn");
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      sendUplink({ type: "exit_broadcast" }, btn);
+    });
+  }
+
   // W6: WS server push is primary; REST poll is the fallback when WS is down.
   let pollTimer = null;
   // The task panel (17 S6.8.4) has its OWN poll -- it pulls /api/tasks (P3
@@ -1222,6 +1323,12 @@
   }
   async function init() {
     wireInteraction(); applyView(); buildDialFace(); wireHistoryFolding();
+    wireExitBroadcast();
+    $("mapSvg").addEventListener("click", onMapClick);
+    const gs = $("gotoSend");
+    if (gs) gs.addEventListener("click", sendGoto);
+    const gc = $("gotoCancel");
+    if (gc) gc.addEventListener("click", clearGotoPin);
     window.addEventListener("resize", applyView);   // req3: rescale map labels on resize
     wirePanelScroll(); wirePanelResize();
     try { applyUiConfig(await getJSON("/api/hmi/ui_config")); }

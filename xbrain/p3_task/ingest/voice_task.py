@@ -61,89 +61,14 @@ def default_resume_policy(task_type: str) -> str:
     return _RESUME_POLICY_BY_TYPE.get(task_type, "continue")
 
 
-def task_row_from_request(
-    request: Mapping[str, Any],
-    *,
-    task_id: str,
-    submit_seq: int,
-    priority: int,
-    now_mono_ms: int,
-    trace_id: str,
-    created_at: str = "",
-) -> TaskRow:
-    """Convert a P4 cmd/task request into the unified TaskRow.
+# *** task_row_from_request / record_voice_task were DELETED on 2026-08-23.
+#
+# They mapped p4_agent's private `task_request` frame onto a TaskRow. Since
+# batch 15 nothing emits that shape -- p4_agent, the HMI and the cloud all send
+# the 11 S7.2 TaskCommand, which task_row.py maps instead. Keeping them would
+# have left a second, unreachable way to admit a task, and CLAUDE.md 9.3 is
+# explicit that a spare door gets removed rather than left ajar.
+#
+# What stays here is what the contract path still uses: VoiceTaskIngestError
+# (the shared ingest error) and default_resume_policy.
 
-    request is the dict from task_request.to_task_request: task_type
-    (7-value closed set) + intent + id + slots + source (the channel). The
-    task_type is re-checked against the closed set here (the DB CHECK would
-    also reject it, but failing with the value is clearer); mission_json
-    carries the intent + slots + channel so the scheduler and any audit can
-    see WHERE the task came from and WHAT it asked for. source / trace_id /
-    resume_policy are the 15 S9.5 NOT NULL columns: source is the channel
-    mapped to the closed set, resume_policy is the per-type default, trace_id
-    threads the cmd -> task -> event chain (supplied by the caller from the
-    intent envelope, never invented here)."""
-    task_type = request.get("task_type")
-    if task_type not in TASK_TYPES:
-        raise VoiceTaskIngestError(
-            "task_type %r not in the 15 S12 closed set %s"
-            % (task_type, sorted(TASK_TYPES)))
-    channel = request.get("source")
-    source = _CHANNEL_TO_SOURCE.get(channel, "local")
-    if source not in TASK_SOURCES:                 # defensive; map is closed
-        source = "local"
-    mission = {
-        "source": channel,                     # 'voice' | 'text' (detail)
-        "intent": request.get("intent"),       # fine registry name (CS-A1)
-        "id": request.get("id"),               # 18 id (B02, ...)
-        "slots": request.get("slots", {}),
-    }
-    # command_text (15 S9.5A.4): the raw command the task was created from --
-    # the ASR transcript (post normalisation) or the typed text, threaded from
-    # P4 to_task_request. '' when absent -> DAO stores NULL. Party-A REQUIRES it
-    # for incident traceability; it is a first-class column, not a mission field.
-    command_text = request.get("text") or ""
-    # created_at (15 S9.5): the UTC-ISO wall dispatch time, injected by the db
-    # loop (a display/audit value, NOT a timing decision -- age uses created_ms).
-    # '' when not supplied (e.g. a test) -> DAO stores NULL. It is what the HMI
-    # task panel shows as 下发时间 (17 S6.8.4 field 2), rendered in the GPS zone.
-    return TaskRow(
-        task_id=task_id,
-        task_type=task_type,
-        state="pending",                        # head of the state closed set
-        priority=priority,
-        submit_seq=submit_seq,
-        mission_json=json.dumps(mission, ensure_ascii=False,
-                                separators=(",", ":")),
-        total_steps=0,                          # expanded later by route layer
-        current_step=0,
-        step_status_json="[]",
-        created_ms=now_mono_ms,
-        updated_ms=now_mono_ms,
-        source=source,
-        command_text=command_text,
-        created_at=created_at,
-        trace_id=trace_id,
-        resume_policy=default_resume_policy(task_type),
-    )
-
-
-async def record_voice_task(
-    dao: TasksDAO,
-    request: Mapping[str, Any],
-    *,
-    task_id: str,
-    submit_seq: int,
-    priority: int,
-    now_mono_ms: int,
-    trace_id: str,
-) -> TaskRow:
-    """Build + INSERT the voice/text task via the same DAO as party-A.
-
-    Returns the recorded TaskRow. The insert goes through TasksDAO into the
-    `tasks` table, so the schema is literally the party-A schema."""
-    row = task_row_from_request(
-        request, task_id=task_id, submit_seq=submit_seq,
-        priority=priority, now_mono_ms=now_mono_ms, trace_id=trace_id)
-    await dao.insert(row)
-    return row

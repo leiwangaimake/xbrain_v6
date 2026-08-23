@@ -132,7 +132,7 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 
 /* 机器人本体航向仪(替代原左上角指北针 N+三角): 右下角 150px, 表盘旋转/指针固定/
    中心镂空. 数据源仅 pose.heading_rad(本体航向真值). 17 S6.6/PTZ-C2 禁的"罗盘/朝向
-   指针"是【云台】朝向(假值回读), 本体航向是真值且 S6.10 item 6 已允许文字显示 --
+   指针"是[云台]朝向(假值回读), 本体航向是真值且 S6.10 item 6 已允许文字显示 --
    本盘绝不接云台角. heading 卡硬件(W4)时置灰不显假值(3.2). */
 .heading-dial { position: absolute; left: 14px; top: 156px; width: 300px; height: 300px; z-index: 3;
   opacity: .9; }   /* top-left, moved down (user 2026-08-18) to clear the taller
@@ -155,7 +155,7 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .task-panel { right: 11px; top: 10px; min-width: var(--plan-width);
   max-width: 80vw; max-height: 90vh; overflow: auto; padding: 9px;
   font-family: var(--font-plan-family); font-size: var(--font-plan-size); }
-/* 每个子面板 = flex 列, 可从【左边/左下角/下边】拖拽拉伸(用户 2026-08-18):
+/* 每个子面板 = flex 列, 可从[左边/左下角/下边]拖拽拉伸(用户 2026-08-18):
    菜单锚在 HMI 右侧边(右边贴屏固定), 故像拉窗口一样从左侧拉宽/缩窄, 从下边
    拉高/缩矮. 手柄见 .rz-*; 尺寸由 hmi.js wirePanelResize 存 localStorage, 刷新/
    重启浏览器恢复. 标题固定, 列表 flex 填充可滚. */
@@ -163,7 +163,7 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
   position: relative; overflow: hidden; display: flex; flex-direction: column;
   width: 350px; min-width: 350px; max-width: 78vw; max-height: 80vh; }
 .task-group:last-child { margin-bottom: 0; }
-/* ★★★ 默认宽/高即【最小值】(用户明确): 当前显示宽度不可再缩窄, 只能拉宽后缩回;
+/* *** 默认宽/高即[最小值](用户明确): 当前显示宽度不可再缩窄, 只能拉宽后缩回;
    高同理. min-width/min-height = 默认值. */
 .current-group { height: 180px; min-height: 180px;
   background: rgba(46,232,107,.08); border: 1px solid rgba(46,232,107,.28); }
@@ -219,6 +219,29 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
    MOTION and W7 stops the TASK, and an operator who confuses them either
    slams the robot to zero for a merely-wrong task or thinks a cancel is an
    emergency stop. */
+/* W3 exit_broadcast. Amber outline, NOT the estop red: W1 stops motion, W3
+   leaves B mode, and S12.1.1 forbids presenting the two as the same kind of
+   control. */
+.exit-bcast-btn { margin-left: 8px; padding: 6px 12px; cursor: pointer;
+                  background: transparent; color: var(--warn);
+                  border: 1px solid var(--warn); border-radius: 4px; }
+.exit-bcast-btn:disabled { opacity: 0.4; cursor: progress; }
+
+/* W2 goto: the dropped pin and its confirm banner. */
+.goto-pin { fill: var(--cyan); fill-opacity: 0.85; stroke: var(--ink);
+            stroke-width: 1.5; pointer-events: none; }
+.goto-banner { position: absolute; z-index: 5; left: 50%; top: 64px;
+               transform: translateX(-50%); display: flex; gap: 8px;
+               align-items: center; padding: 8px 12px; border-radius: 4px;
+               background: var(--panel); border: 1px solid var(--line);
+               color: var(--ink); font-size: 13px; }
+.goto-banner[hidden] { display: none; }
+.goto-send { padding: 4px 10px; cursor: pointer; color: var(--bg);
+             background: var(--cyan); border: none; border-radius: 3px; }
+.goto-cancel { padding: 4px 10px; cursor: pointer; color: var(--muted);
+               background: transparent; border: 1px solid var(--line);
+               border-radius: 3px; }
+
 .task-actions { display: flex; gap: 6px; margin-top: 6px; }
 .task-act { flex: 1; padding: 5px 0; font-size: 12px; cursor: pointer;
             border: 1px solid var(--line); border-radius: 3px;
@@ -287,8 +310,8 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .scale { margin-left: auto; }             /* 网格 pushed far-right (customer) */
 
 /* -- 录制指示 (11 S12A.5, 只读) --------------------------------------------
-   颜色与已录制/实时两条线都拉开: 录制中的这条是【近似】轨迹, 会话一结束就消失,
-   让它看起来像已保存的路径会误导操作员。 */
+   颜色与已录制/实时两条线都拉开: 录制中的这条是[近似]轨迹, 会话一结束就消失,
+   让它看起来像已保存的路径会误导操作员.  */
 :root { --teach-color: #ff7ad9; }
 
 .teach-trail { fill: none; stroke: var(--teach-color); stroke-width: 2;
@@ -303,7 +326,7 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .teach-warn { color: var(--warn-color, #ffb454); }
 .teach-dot { width: 9px; height: 9px; border-radius: 50%;
              background: var(--teach-color); flex: 0 0 9px; }
-/* recording 呼吸, paused 不闪 -- 静止的点表示"停着但还在会话里"。 */
+/* recording 呼吸, paused 不闪 -- 静止的点表示"停着但还在会话里".  */
 .teach-dot.recording { animation: teach-blink 1.2s ease-in-out infinite; }
 .teach-dot.paused { opacity: .45; }
 .teach-dot.finalizing { background: var(--warn-color, #ffb454); }

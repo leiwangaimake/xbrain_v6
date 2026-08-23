@@ -189,11 +189,13 @@ UPLINK_BURST = 10
 #: and this map is exactly what not_implemented reports.
 #:
 #: Absent on purpose: estop (W1) has its own <=10 ms REST path and never comes
-#: through here, and exit_broadcast (W3) is not built yet.
+#: through here. That leaves W1 as the only whitelist class not served by this
+#: map, which is the whole set closed.
 _UPLINK_BUILDERS = {
-    "geo": uplink.build_geo_command,        # W4
-    "task": uplink.build_task_command,      # W7
-    "goto": uplink.build_goto_command,      # W2
+    "geo": uplink.build_geo_command,                    # W4
+    "task": uplink.build_task_command,                  # W7
+    "goto": uplink.build_goto_command,                  # W2
+    "exit_broadcast": uplink.build_exit_broadcast_command,   # W3
 }
 
 

@@ -221,6 +221,49 @@ def test_action_outside_the_closed_set_is_refused():
     assert isinstance(ref, uplink.UplinkRefusal) and ref.code == E_SCHEMA
 
 
+# -- W3 exit_broadcast ---------------------------------------------------
+
+def test_exit_broadcast_needs_nothing_but_a_req_id():
+    """*** W3 carries no preconditions and no confirm, deliberately.
+
+    S12.1.1: it is subject to no task state, no mode state and no L2 confirm --
+    it does one thing, leave B mode. The situation it exists for is one where
+    the local mic is closed by the half-duplex gate and a cloud operator saying
+    "stop broadcasting" would trigger the self-trigger loop, so it is the ONLY
+    non-voice exit from B mode. A confirm dialog here would be actively harmful.
+
+    MUTATION: require confirm.level like W7 cancel does -> this goes red, and
+    on the robot the operator is left with a broadcasting robot and no way out.
+    """
+    built = uplink.build_exit_broadcast_command({"type": "exit_broadcast",
+                                                 "req_id": "r3"})
+    assert isinstance(built, uplink.UplinkCommand)
+    # It becomes a ModeCommand on cmd/mode -- P2's ModeFace maps the action to
+    # IDLE. Not a payload/audio command: leaving B mode is a MODE change.
+    assert built.key == "cmd/mode"
+    assert built.payload["action"] == "exit_broadcast"
+    assert built.payload["source"] == "hmi"
+    assert built.payload["cmd_id"] == "h-r3"
+
+
+def test_exit_broadcast_is_accepted_by_p2s_real_mode_face():
+    """*** The pair, not just the builder: P5 builds it, P2 must apply it.
+
+    MUTATION: emit action "stop_broadcast" (a plausible spelling that is NOT in
+    S7.3's six-value closed set) and P2 refuses with E_SCHEMA.
+    """
+    import json as _json
+    from xbrain.p2_core.mode.state_machine import ModeState, ModeStateMachine
+    from xbrain.p2_core.runtime.mode_wiring import ModeFace
+    built = uplink.build_exit_broadcast_command({"type": "exit_broadcast",
+                                                 "req_id": "r3"})
+    face = ModeFace(ModeStateMachine(ModeState.BROADCAST))
+    ack = face.handle_frame(_json.dumps(built.payload).encode("utf-8"),
+                            now_mono_ms=1)
+    assert ack["result"] == "accepted"
+    assert face.state is ModeState.IDLE
+
+
 # -- both: the fields P5 stamps and never reads -------------------------
 
 @pytest.mark.parametrize("build,extra", [

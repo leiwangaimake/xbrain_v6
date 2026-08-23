@@ -3,95 +3,68 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_p3_wiring_record.py
-Brief: p3 wiring _record_one -- record + reflect into state/task (PB5/2)
+Brief: p3 wiring -- cmd/task frames with no contract action are logged, not recorded
 
 Description:
-The Zenoh loop of p3 main_wiring is integration-only, but its recording step
-_record_one is unit-testable: given a decoded cmd/task payload and a live
-task.db conn, it records a task-create and reflects the recorded task_id/state
-into state/task, and it publishes NOTHING for a control frame. A fake state
-publisher captures the reflected frames. Mutation guards per CLAUDE.md 3.3.
+*** Rewritten 2026-08-23. This file used to test `_record_one`, the wiring hook
+that turned p4_agent's private `task_request` frame into a task row. Since batch
+15 nothing emits that shape -- p4_agent, the HMI and the cloud all send the
+11 S7.2 TaskCommand, which goes to handle_task_payload -- so `_record_one` and
+the recorder behind it were deleted rather than left as a second, unreachable
+way to admit a task (CLAUDE.md 9.3).
+
+Two of its three tests died with it (record-and-reflect, survive-a-bad-row);
+both are now covered on the contract path by tests/p3_task/test_task_command.py
+and test_p3_pipeline.py. The third -- "a control frame is skipped, not
+recorded" -- is the behaviour that survived, and it is what this file guards.
+
+Why it still matters: a few voice intents route to cmd/task but have no S7.2
+action that can express them (B10 skip_waypoint -- the five-action closed set
+has no `skip`; H04 reload_config -- 18 says verbatim it belongs on cmd/config).
+Those frames must land nowhere AND be visible. Before this they were dropped
+silently, which is indistinguishable from working.
 """
 from __future__ import annotations
 
-import json
+import logging
 
-import aiosqlite
 import pytest
-import pytest_asyncio
 
-from xbrain.p3_task.dao.tasks_dao import TasksDAO
-from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
-from xbrain.p3_task.runtime.main_wiring import _record_one
-
+from xbrain.p3_task.runtime.main_wiring import _log_non_contract_frame
 
 pytestmark = pytest.mark.no_device
 
 
-class _FakePub:
-    """Captures state/task frames the wiring reflects."""
+def test_a_non_contract_frame_records_nothing():
+    """*** Returns 0 -- the caller's recorded counter must not move.
 
-    def __init__(self):
-        self.frames = []
-
-    def put(self, data: bytes):
-        self.frames.append(json.loads(data.decode("utf-8")))
-
-
-@pytest_asyncio.fixture
-async def conn():
-    async with aiosqlite.connect(":memory:") as c:
-        for stmt in ALL_DDL_STATEMENTS:
-            await c.execute(stmt)
-        await c.commit()
-        yield c
+    MUTATION: return 1 and the p3 heartbeat starts claiming it recorded tasks
+    that are not in task.db, which is the one number an operator uses to tell
+    whether voice is landing.
+    """
+    assert _log_non_contract_frame({"schema": "p4_intent_v1",
+                                    "intent_id": "B10"}) == 0
 
 
-def _voice_frame():
-    return {"schema": "p4_intent_v1", "intent_id": "B02", "text": "巡逻",
-            "task_request": {"task_type": "patrol", "intent": "patrol_route",
-                             "id": "B02", "slots": {}, "source": "voice"}}
+def test_the_frame_is_logged_with_its_intent_id(caplog):
+    """*** Logged BY INTENT ID, so the gap is visible as a specific gap.
+
+    "p3 dropped something" is not actionable; "B10 has no contract action" is.
+
+    MUTATION: drop the log line (or log without the id) and these frames go
+    back to vanishing silently -- which is exactly how B10/H04 stayed invisible
+    until the 2026-08-21 audit counted them.
+    """
+    with caplog.at_level(logging.INFO):
+        _log_non_contract_frame({"schema": "p4_intent_v1", "intent_id": "H04"})
+    # getMessage(), not .message: the logger formats lazily, so .message is the
+    # raw "%s" template and the id lives in r.args. Asserting on .message would
+    # pass for a log line that never actually names the intent.
+    assert any("H04" in r.getMessage() for r in caplog.records)
 
 
-@pytest.mark.asyncio
-async def test_record_one_records_and_reflects(conn):
-    dao = TasksDAO(conn)
-    pub = _FakePub()
-    n = await _record_one(conn, dao, _voice_frame(), pub)
-    assert n == 1                                     # one new task
-    # It landed in task.db at pending...
-    cur = await conn.execute("SELECT task_id, state FROM tasks")
-    row = await cur.fetchone()
-    assert row[1] == "pending"
-    # ...and was reflected into state/task with the recorded id.
-    assert len(pub.frames) == 1
-    active = pub.frames[0]["active_task"]
-    assert active["task_id"] == row[0] and active["state"] == "pending"
-
-
-@pytest.mark.asyncio
-async def test_record_one_skips_control_frame(conn):
-    """A device/control frame (no task_request) records nothing AND reflects
-    nothing. MUTATION: reflecting or recording it would show a frame/row."""
-    dao = TasksDAO(conn)
-    pub = _FakePub()
-    n = await _record_one(
-        conn, dao, {"schema": "p4_intent_v1", "intent_id": "D01",
-                    "text": "开灯"}, pub)
-    assert n == 0
-    assert pub.frames == []
-    cur = await conn.execute("SELECT COUNT(*) FROM tasks")
-    assert (await cur.fetchone())[0] == 0
-
-
-@pytest.mark.asyncio
-async def test_record_one_survives_a_bad_row(conn):
-    """A malformed task_request must not kill the loop: _record_one logs and
-    returns 0 rather than raising. MUTATION: letting the exception escape would
-    crash the p3 consumer loop on one bad task."""
-    dao = TasksDAO(conn)
-    pub = _FakePub()
-    bad = {"task_request": {"task_type": "not_a_type", "intent": "x",
-                            "id": "x", "slots": {}, "source": "voice"}}
-    n = await _record_one(conn, dao, bad, pub)
-    assert n == 0 and pub.frames == []
+def test_a_malformed_frame_does_not_raise():
+    """A frame that is not even a dict must not take down the P3 loop -- that
+    loop also drives task scheduling."""
+    assert _log_non_contract_frame("not a dict") == 0
+    assert _log_non_contract_frame(None) == 0

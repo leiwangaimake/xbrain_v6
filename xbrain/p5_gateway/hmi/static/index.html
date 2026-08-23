@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>XBRAIN_V6 GPS 网格地图 HMI</title>
-<link rel="stylesheet" href="hmi.css?v=w7-task-2">
+<link rel="stylesheet" href="hmi.css?v=w2w3-1">
 </head>
 <body>
 <main class="hmi">
@@ -13,12 +13,27 @@
       <div class="map-title">GPS 网格地图</div>
       <!-- ESTOP: 17 S6.10.1 / W1. Greyed when link.estop_path != ok (NAV-64). -->
       <button id="estopBtn" class="estop-btn" title="紧急停止" disabled>急停 ESTOP</button>
+      <!-- W3 exit_broadcast (11 S12.1.1). Deliberately NOT styled like the
+           estop and not adjacent to it in meaning: W1 stops MOTION, W3 leaves
+           B mode. S12.1.1 forbids presenting task/mode controls as if they
+           were emergency controls. -->
+      <button type="button" id="exitBroadcastBtn" class="exit-bcast-btn"
+              title="退出喊话模式">退出喊话</button>
       <div class="zoom-group">
         <button id="zoomIn" class="zoom-btn" title="放大">＋</button>
         <button id="zoomOut" class="zoom-btn" title="缩小">－</button>
         <button id="zoomReset" class="zoom-btn" title="复位">⟳</button>
       </div>
     </header>
+
+    <!-- W2 goto banner: two-step confirm for a map tap. Hidden until a pin is
+         dropped. Not a modal -- a modal would block the map redraw while the
+         robot is moving (see hmi.js on why alert/confirm are not used). -->
+    <div id="gotoBanner" class="goto-banner" hidden>
+      <span class="goto-text"></span>
+      <button type="button" id="gotoSend" class="goto-send">确认前往</button>
+      <button type="button" id="gotoCancel" class="goto-cancel">取消</button>
+    </div>
 
     <div id="viewport" class="map-viewport" title="拖动平移, 滚轮缩放">
       <svg id="mapSvg" preserveAspectRatio="none">
@@ -118,6 +133,6 @@
     </footer>
   </section>
 </main>
-<script src="hmi.js?v=w7-task-2"></script>
+<script src="hmi.js?v=w2w3-1"></script>
 </body>
 </html>

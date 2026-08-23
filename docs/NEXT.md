@@ -39,9 +39,9 @@
 | 进程 | 语言 | 状态 | 依赖 |
 |---|---|---|---|
 | **quadruped**（底盘控制 CHS-A 三通道，13 册） | C++17 | 未建 `[GATED-HW]` | 云深处 M20S 底盘 + 厂商 PDF 实测 |
-| **perception**（定位/位姿/障碍/目标，33ms/30fps） | C++ | ★ **详细设计未写** `[GATED-DESIGN]` | 先写设计，再写码；需相机/LiDAR |
+| **perception**（定位/位姿/障碍/目标，33ms/30fps） | C++ | ✅ **详设已写** / 实现未建 `[GATED-HW]` | ★★ **2026-08-21 订正**：本行原写「详细设计未写 `[GATED-DESIGN]`」是**过时记录**，`docs/19-perception详细设计.md` 已 996 行且章节完整（§2 33ms 预算 · §3 走廊几何 · §9 启动自检 · §11 变异体表 · §13 未定项 · §14 配置键）。⚠️ 这条过时记录**已真实误导过一次判断**（2026-08-20 我据它建议「先写 perception 设计」，当天被 `d2e9ab1` 订正）。<br>★ 接续项是 **SW-2b 实现**，卡相机硬件与 `19` §13 的 PD-3/4/5/10 标定值（按设计**拒绝启动**，🚫 不得为让它起来而实现绕过路径） |
 | **chassis_relay**（急停链路 CRL-1..5） | C++ | 未建 | common 地基库 + 底盘 |
-| **rtk_driver**（GPS/授时，唯一判 ClockStatus.sync） | 待定(建议 C++) | 未建 `[GATED-HW]` | RTK 硬件；语言待 D-45 拍板 |
+| **rtk_driver**（GPS/授时，唯一判 ClockStatus.sync） | **C++** | ★★ **已建**（`ros2_ws/sensor/`，19 个 `.cc`：NMEA 解析 / gnss_heading / clock_status / serial_reopen 全套测试） | ★★ **2026-08-21 订正**：本行原写「未建 `[GATED-HW]`」是**过时记录** —— RTK 链路 2026-08-14 已端到端跑通（`rtk_driver → p1 → state/pose` ORIN 实测）。语言事实上已定 C++ |
 | **teleop_input**（遥控 deadman） | 待定 | 未建 `[GATED-HW]` | 遥控器 |
 | **behavior_proxy** + **Nav2 behavior_server** + **zenoh-bridge-ros2dds** | C++/Rust | 未建 | ROS2 环境 + Nav2 |
 
@@ -53,7 +53,7 @@
 |---|---|---|
 | P1-1 | 真 20Hz 控制环（现仅 voice-loop MVP） | 部分件(gate/failsafe)已建，未接真感知/底盘 `[GATED-HW]` |
 | P1-2 | 速度门四段 f(d_free) + 迟滞、路径跟随、旋转门 RCG 全接 | 零散件已建，未串成环 |
-| P1-3 | **RNS 避障**（进程内模块，行为源 rns_avoid 900） | ★ **详细设计未写** `[GATED-DESIGN]` |
+| P1-3 | **RNS 避障**（进程内模块，行为源 rns_avoid 900） | ✅ **详设已写** / 实现未建 —— `docs/20-RNS反应式避障详细设计.md` 1018 行（§10 单调钟 · §11 与 `12` 的接口清单 · §13 断言与变异体总表 · §14 实现要点与陷阱 · §15 待确认清单）。★★ **2026-08-21 订正**，原写「详细设计未写」过时。接续项 SW-3b 实现，输入是 `19` 产出的 `bands` |
 | ★ P1-4 | **航向丢失恢复：odom 桥接 + 视觉导向重捕 COG**（用户 2026-08-16 定方向） | ★ **设计意图已记，待 quadruped odom + perception + RNS 落地** `[GATED-DESIGN+HW]` |
 
 > ★★★ **P1-4 设计意图（用户 2026-08-16 · 航向恢复,不逼停）** —— 背景:双天线航向(L1,绝对,静止可用)突然丢时,现设计运动态已无缝切 COG(L2,`11` §3.3,不停车);但**静止 / 原地转向态**下 COG 物理上无解(无运动=无航迹),现状进 L2-blind(保持旧航向但 `heading_valid=false`)。用户方案分两级补:
@@ -184,8 +184,8 @@
 | `11` W# | 类 | 状态 | 说明 |
 |:--:|---|---|---|
 | **W1** `estop` | 急停 | ✅ **已接**（REST `POST /api/estop`） | ★ §12.1.1 明定它是全表唯一例外：**旁路 schema 校验、旁路限流、旁路降级**；WS 侧不再重复实现，避免两条 estop 路径 |
-| **W2** `goto` | 点击导航 | ✅★★ **P5 侧已接并 ORIN 实测** / 前端点图待接 | ★ `waypoint_id` 与 `lat`+`lon` 二选一（**两者同时给以 `waypoint_id` 为准**，§12.1.1 W2 明写的优先级，🚫 不是"拒绝歧义"）；落成 `cmd/task{submit, task.type:"goto"}`（🚫 **不发 `BehaviorCommand`** —— 发布者闭集只有 p2/p3，且会绕过 P3 围栏前置校验与 U07a 断点账本）。<br>★★ **退役的 `speed_profile` 一律拒不降级**：`cruise`/`transit` 已被 U33 删除，回 `E_SCHEMA`（§13.6 ③ 禁"就近解释"；降级成 `patrol` 会让停在旧词表的前端两侧都看不出错）。<br>★ **ORIN 实测**：WS → P5 → `cmd/task` → P3 `accepted`，`task.db` 落 `t-20260820-001/002`，`source=local`（§4.2 hmi→local）、`priority=40`（§4.2 起源表，🚫 不再是写死的 50）、`trace_id=h-<req_id>`。<br>⚠️ **前端地图点选未做** —— 后端可用，但浏览器上还没有"点一下地图发 goto"的交互；且机器人不动（见下表） |
-| **W3** `exit_broadcast` | 退出喊话 | ❌ 未接 | 需 P2 的 `cmd/mode{exit_broadcast}` 接收端 |
+| **W2** `goto` | 点击导航 | ✅★★ **P5 侧已接并 ORIN 实测** / 前端点图待接 | ★ `waypoint_id` 与 `lat`+`lon` 二选一（**两者同时给以 `waypoint_id` 为准**，§12.1.1 W2 明写的优先级，🚫 不是"拒绝歧义"）；落成 `cmd/task{submit, task.type:"goto"}`（🚫 **不发 `BehaviorCommand`** —— 发布者闭集只有 p2/p3，且会绕过 P3 围栏前置校验与 U07a 断点账本）。<br>★★ **退役的 `speed_profile` 一律拒不降级**：`cruise`/`transit` 已被 U33 删除，回 `E_SCHEMA`（§13.6 ③ 禁"就近解释"；降级成 `patrol` 会让停在旧词表的前端两侧都看不出错）。<br>★ **ORIN 实测**：WS → P5 → `cmd/task` → P3 `accepted`，`task.db` 落 `t-20260820-001/002`，`source=local`（§4.2 hmi→local）、`priority=40`（§4.2 起源表，🚫 不再是写死的 50）、`trace_id=h-<req_id>`。<br>✅ **前端地图点选已做（批20）**：点图落钉 → 横幅显示经纬度 → **再点「确认前往」才发**（两步，防触屏误触）。★ 反投影 `fromXY` 是 `toXY` 的**代数逆**（同 R、同 `cos(origin.lat)`、同北向取负）——两者若各写一套近似，操作员看到的钉与机器人去的点会不一致而屏幕上看不出来。★ 无 `enu_origin` 时**拒绝点选并说明**，🚫 不落到 0,0。<br>⚠️ 机器人仍不动（见下表） |
+| **W3** `exit_broadcast` | 退出喊话 | ✅★★ **已接并 ORIN 实测（批20）** | ★ 前置（P2 的 `cmd/mode` 接收端）已于批 17 建好。<br>★★ **无前置约束、无 L2 确认**，§12.1.1 逐字：不受任务状态/模式状态/L2 的任何约束，只做一件事——退出 B。**加确认反而有害**：它存在的场景正是本地麦被半双工门控关闭、云端对麦说「停止喊话」会触发自触发回路，此时它是**唯一不经语音的出口**。<br>★ 但**不旁路 `restricted`**（W1 是唯一旁路项）。<br>★ ORIN 实测：WS → `cmd/mode` → P2 ModeFace → `accepted`（`changed:false`，因当时已在 idle——诚实回答不是假成功） |
 | **W4** `geo` | 地理要素 CRUD | ✅★★★ **已接并 ORIN 实测** | ★ `rename`/`set_state`/`upsert`/`delete`/`refs` 五 op；`origin` 恒打 `hmi`（CH-2）；`cmd_id = "h-" + req_id`；限流 10 msg/s（超限回 **`E_BUSY`** + `detail.reason=rate_limited`）。<br>★★★ **W4-F 围栏一律不可写**（按 `geo.type` 判**不按 op 判**）：`upsert`/`delete`/`rename`/`set_state` 四写 op 全拒 `E_CHANNEL_DENIED{reason:"fence_not_writable_from_hmi"}`，`refs` 只读放行。依据 `00` HMI-03a + §12.1.1（**停用一个 `allow` 围栏与删除它等价**，故只拒 `delete` 不够）。<br>★ **ORIN 实测**：WS 帧 → `cmd/geo` → P3 `accepted` → `geo.db` 里 `updated_by="hmi"`、rev 1→2→3；围栏 `set_state` 被拒且 `fence.db` 四条 state/rev **全未变** |
 | **W5 / W6** | 墓碑 | — | ★ `W6` = `teleop` **整类移除**（`00` HMI-03a：持续驱动永不进 HMI 可写面）。号位保留不复用 |
 | **W7** `task` | 任务 pause/resume/cancel/clear_queue | ✅★★★ **已接并 ORIN 实测（含浏览器点击）** | ★ `task_id` **必填**（`clear_queue` 除外）—— §12.1.1 W7 与 §7.2 用同样的话禁止"省略=当前任务"：队列是活的，操作员看到"A 在跑"到帧到达之间 A 可能已结束而 B 开始。<br>★ `pause`/`resume` **L0**，`cancel`/`clear_queue` **L2**（`18` B07）。<br>★★ **前端按钮按 P3 转换图（§4.4）画**：`running`→暂停+取消 · `suspended`→继续+取消 · **排队态（pending/scheduled/ready/blocked）→取消**（★ 最初漏了排队态 —— 误提交的任务正停在那里，是最可能要撤的一条）· 终态无按钮。<br>★★★ **确认用"同一按钮两次点击"不用 `confirm()`/`alert()`** —— 原生模态会阻塞单线程，**地图在机器人移动时停止重绘**、WS 帧堆积；armed 态就地显示任务号与已完成进度（§12.1.1 要求弹窗显示这两项）。<br>★ **ORIN 实测**：浏览器点"暂停" → `rh-1-1` `running→suspended`（`suspend_kind=passive` / `operator_pause`，CR-8：人工暂停是 passive 不是 yielding）→ 点"继续" → `ready`；`task_cmd_log` 落 `h-<req_id>`。第一次点"取消"只 armed **不发帧**（实测状态与 cmd log 均未变） |

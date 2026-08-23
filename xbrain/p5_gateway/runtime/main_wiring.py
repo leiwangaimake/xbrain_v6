@@ -54,6 +54,11 @@ CMD_GEO_ACK_TOPIC = "cmd/geo/ack"
 #: it uses one that was reserved for the HMI and never declared.
 CMD_TASK_TOPIC = "cmd/task"
 CMD_TASK_ACK_TOPIC = "cmd/task/ack"
+#: 11 S12.1.1 W3 exit_broadcast lands on cmd/mode as a S7.3 ModeCommand.
+#: S2.2.3 already lists the HMI among that key's publishers, so W3 -- like
+#: W2/W7 before it -- opens a class without adding a key.
+CMD_MODE_TOPIC = "cmd/mode"
+CMD_MODE_ACK_TOPIC = "cmd/mode/ack"
 # 11 S12A.5: the recording session, READ ONLY on this side. P5 shows it and
 # never writes to cmd/teach -- teach is not one of the five upstream types of
 # S12.1.1, and W6 teleop being removed means a browser could not drive the
@@ -180,7 +185,9 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                    # W2 goto + W7 task: both build a TaskCommand (S7.2) and
                    # both go out on this one key, which is why the map is keyed
                    # by KEY and not by uplink class.
-                   "cmd/task": gen.declare_publisher(CMD_TASK_TOPIC)}
+                   "cmd/task": gen.declare_publisher(CMD_TASK_TOPIC),
+                   # W3 exit_broadcast.
+                   "cmd/mode": gen.declare_publisher(CMD_MODE_TOPIC)}
 
     def _send_uplink(key: str, payload: dict) -> None:
         pub = uplink_pubs.get(key)
@@ -723,6 +730,7 @@ def run_voice_loop_wiring(stop_flag: dict,
         # voice- and cloud-originated commands are ignored here exactly as
         # cmd/geo/ack's already are.
         task_ack_sub = gen.declare_subscriber(CMD_TASK_ACK_TOPIC, _on_uplink_ack)
+        mode_ack_sub = gen.declare_subscriber(CMD_MODE_ACK_TOPIC, _on_uplink_ack)
         ack_sub = gen.declare_subscriber(
             CMD_AUDIO_SPEAK_ACK_TOPIC, _on_speak_ack)
         task_sub = gen.declare_subscriber(
@@ -742,7 +750,8 @@ def run_voice_loop_wiring(stop_flag: dict,
         bit_sub = gen.declare_subscriber(HEALTH_BIT_TOPIC, _on_bit)
         _logger.info("p5 wiring: subscribed speak/ack + state/task + "
                      "cmd/fence + state/mode + event/** + estop/pong + health "
-                     "+ cmd/geo/ack + cmd/task/ack (HMI W4/W2/W7 uplink) "
+                     "+ cmd/geo/ack + cmd/task/ack + cmd/mode/ack "
+                     "(HMI W2/W3/W4/W7 uplink) "
                      "+ state/teach (read only)")
 
         # Start the HMI web server (best-effort; never blocks the voice loop).
