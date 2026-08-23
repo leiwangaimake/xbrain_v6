@@ -398,3 +398,4 @@ MOT-PM-35	tests/p1_motion/test_stage_budget.py	manual	2026-08-23
 BIZ-P2-19	xbrain/p2_core/health/factor.py;tests/p2_core/health/test_factor_participation.py	manual	2026-08-23
 CFG-BT-18	xbrain/common/config/locked_keys.py;tests/configs/test_locked_keys.py	manual	2026-08-23
 BIZ-P2-08	xbrain/p2_core/domains/lighting_auto.py;tests/p2_core/domains/test_lighting_auto_rules.py	manual	2026-08-23
+CFG-BT-09	xbrain/persistence/migration.py;tests/persistence/test_migration.py	manual	2026-08-23
