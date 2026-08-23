@@ -81,3 +81,14 @@ GWY-P5-22	tests/p5_gateway/test_batch_e.py	brief	2026-08-23
 GWY-P5-23	tests/p5_gateway/test_batch_e.py	brief	2026-08-23
 GWY-P5-24	tests/p5_gateway/test_batch_e.py	brief	2026-08-23
 GWY-P5-25	tests/p5_gateway/test_batch_a.py	brief	2026-08-23
+GWY-P4-07	tests/p4_agent/registry/test_geo_id.py;tests/p4_agent/registry/test_intents.py	brief	2026-08-23
+GWY-P4-11	tests/p4_agent/registry/test_missions.py	brief	2026-08-23
+GWY-P4-20	tests/p4_agent/test_config_loader.py	brief	2026-08-23
+GWY-P4-29	tests/p4_agent/registry/test_speech_presets.py	brief	2026-08-23
+GWY-P4-33	tests/p4_agent/classifier/test_layer_match.py	brief	2026-08-23
+GWY-P4-35	tests/p4_agent/templates/test_restate_render.py	brief	2026-08-23
+GWY-P4-36	tests/p4_agent/session/test_chitchat.py	brief	2026-08-23
+GWY-P4-37	tests/p4_agent/test_llm_tier2.py	brief	2026-08-23
+GWY-P4-38	tests/p4_agent/runtime/test_orchestrator.py	brief	2026-08-23
+GWY-P4-39	tests/p4_agent/state/test_state_cache.py	brief	2026-08-23
+GWY-P4-42	tests/p4_agent/runtime/test_text_channel.py	brief	2026-08-23
