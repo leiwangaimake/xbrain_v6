@@ -299,7 +299,54 @@ def _handler_arg(call: ast.Call) -> Optional[ast.AST]:
     return None
 
 
-def _scan_body(target: ast.AST) -> List[Tuple[int, Banned]]:
+def _stdlib_queue_names(tree) -> set:
+    """Names in this module bound to a STDLIB queue.Queue / SimpleQueue.
+
+    *** Why this exists. The rule being enforced is asyncio.Queue.put_nowait --
+    this file's own header gives the rationale as "an item put into a loop that
+    is asleep in epoll and was never woken for it". A stdlib queue.Queue is the
+    opposite: it is built for exactly this cross-thread handoff, and a process
+    with NO event loop at all (p2_core's wiring is a plain sync def) has nowhere
+    else to hand the frame to.
+
+    Matching put_nowait on any attribute could not tell the two apart, so a
+    correct stdlib handoff was reported as a violation. Resolving the
+    construction is not loosening the criterion -- it makes the criterion test
+    the thing it says it tests.
+
+    *** Conservative by construction. Only names whose assignment is literally
+    queue.Queue(...) / queue.SimpleQueue(...), or a name imported FROM queue,
+    are collected. An asyncio.Queue, a parameter, a value returned by a helper,
+    or a name assigned both ways anywhere in the module is NOT in this set and
+    stays banned. Unknown provenance keeps the old, stricter answer.
+    """
+    from_queue = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "queue":
+            for a in node.names:
+                from_queue.add(a.asname or a.name)
+    good, bad = set(), set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
+            continue
+        is_stdlib = False
+        if isinstance(value, ast.Call):
+            f = value.func
+            if isinstance(f, ast.Attribute) and f.attr in ("Queue", "SimpleQueue"):
+                is_stdlib = isinstance(f.value, ast.Name) and f.value.id == "queue"
+            elif isinstance(f, ast.Name) and f.id in from_queue:
+                is_stdlib = True
+        for t in targets:
+            if isinstance(t, ast.Name):
+                (good if is_stdlib else bad).add(t.id)
+    return good - bad
+
+
+def _scan_body(target: ast.AST, stdlib_queues=None) -> List[Tuple[int, Banned]]:
     """(lineno, Banned) for every forbidden operation in one callback body.
 
     target is a FunctionDef, AsyncFunctionDef or Lambda. Only the target's own
@@ -335,7 +382,12 @@ def _scan_body(target: ast.AST) -> List[Tuple[int, Banned]]:
             if func.attr == "create_task":
                 hits.append((node.lineno, BANNED_CREATE_TASK))
             elif func.attr == "put_nowait":
-                hits.append((node.lineno, BANNED_PUT_NOWAIT))
+                # Permitted only when the receiver is a name this module bound
+                # to a stdlib queue. Unknown provenance stays banned.
+                owner = func.value
+                if not (isinstance(owner, ast.Name)
+                        and owner.id in (stdlib_queues or set())):
+                    hits.append((node.lineno, BANNED_PUT_NOWAIT))
             elif func.attr == "publish":
                 # Exactly publish, not publish_threadsafe: an AST attribute name
                 # is the whole token, so the permitted call never matches here.
@@ -370,6 +422,10 @@ def scan_source(text: str, shown: str = "<source>"):
         return violations, notes
 
     defs_by_name = _defs_by_name(module)
+    # Which names in this file are STDLIB queues -- see _stdlib_queue_names on
+    # why the put_nowait rule needs to know, and why unknown provenance stays
+    # banned.
+    stdlib_queues = _stdlib_queue_names(module)
 
     # Each scope contributes its own local assignments and its own
     # declare_subscriber calls. A call is attributed to the innermost scope that
@@ -420,7 +476,7 @@ def scan_source(text: str, shown: str = "<source>"):
             # defs of the same name across classes -- every match is scanned, so
             # the conservative direction is "scan more bodies", never fewer.
             for target in targets:
-                for lineno, banned in _scan_body(target):
+                for lineno, banned in _scan_body(target, stdlib_queues):
                     violations.append((shown, lineno, banned.name, banned.why))
     return violations, notes
 
@@ -538,6 +594,32 @@ SELF_TEST_CASES: Tuple[Tuple[str, str, int, str], ...] = (
      "    q.put_nowait(sample)\n"
      "session.declare_subscriber(key, cb)\n", 1,
      "an asyncio queue put_nowait from the callback is a violation"),
+    # *** The two halves of the stdlib/asyncio distinction, pinned together.
+    # Neither is meaningful alone: without the FIRST, the resolver could ban
+    # everything and still look right; without the SECOND, it could permit
+    # everything and still look right.
+    ("put_nowait_stdlib_ok.py",
+     "import queue\n"
+     "q = queue.Queue(maxsize=8)\n"
+     "def cb(sample):\n"
+     "    q.put_nowait(sample)\n"
+     "session.declare_subscriber(key, cb)\n", 0,
+     "a STDLIB queue.Queue put_nowait is the correct cross-thread handoff and "
+     "is permitted -- the rule is about asyncio queues"),
+    ("put_nowait_asyncio_still_banned.py",
+     "import asyncio\n"
+     "q = asyncio.Queue()\n"
+     "def cb(sample):\n"
+     "    q.put_nowait(sample)\n"
+     "session.declare_subscriber(key, cb)\n", 1,
+     "an asyncio.Queue put_nowait stays a violation even though the call "
+     "spelling is identical to the stdlib one"),
+    ("put_nowait_unknown_provenance_banned.py",
+     "def cb(sample):\n"
+     "    inbox.put_nowait(sample)\n"
+     "session.declare_subscriber(key, cb)\n", 1,
+     "a queue this file never constructs has unknown provenance and stays "
+     "banned -- the conservative default"),
     # Op: await, which forces the callback to be async def. Expect TWO hits -- the
     # async-def shape and the await itself -- because both are true and both point
     # a reader at the same fix. The count is pinned so a change that stopped
