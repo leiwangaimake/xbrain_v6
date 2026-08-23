@@ -380,3 +380,4 @@ GWY-P4-34	xbrain/p4_agent/templates/query_engine.py;tests/p4_agent/test_batch5.p
 CHK-1-49	scripts/ci/gen_drift_gate.py;tests/ci/test_gen_drift_gate.py	manual	2026-08-23
 CHK-1-03	scripts/ci/check_affinity.py;tests/deploy/test_affinity_gate.py	manual	2026-08-23
 CHK-1-50	scripts/ci/cxx_discipline_audit.py;tests/ci/test_cxx_discipline.py	manual	2026-08-23
+CHK-1-04	tests/integration/test_degrade_matrix.py	manual	2026-08-23
