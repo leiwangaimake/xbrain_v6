@@ -79,10 +79,15 @@ def _bridge():
 
 
 def _qt_task(**over):
+    # 合法 v2.0 GOTO payload (审计 B-2 后 route 校验字段级约束: WGS84 大写,
+    # r-/w- 前缀, arrival_radius_m 0.5..10.0). fixture 必须过校验才能测拆分.
     data = {"msg_id": "m-1", "task_id": "t-1", "task_type": "GOTO_KEYPOINT",
-            "payload": {"recorded_path_id": "p-9",
-                        "coordinate_system": "wgs84",
-                        "waypoints": [{"lat": 34.697, "lon": 135.505}]}}
+            "payload": {"recorded_path_id": "r-route",
+                        "coordinate_system": "WGS84",
+                        "waypoints": [{"id": "w-gate", "name": "gate",
+                                       "latitude": 34.697, "longitude": 135.505,
+                                       "altitude": 8.4,
+                                       "arrival_radius_m": 3.0}]}}
     data.update(over.pop("data", {}))
     body = {"v": 1, "rid": RID, "ts": 1785732000.5, "seq": 1,
             "src": "qt_hmi", "data": data}

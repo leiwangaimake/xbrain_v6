@@ -47,6 +47,7 @@ from typing import Any, Dict, Tuple
 from ...common import errors
 from ..outbound.error_map import build_error_fields
 from .cloud_inbound import InboundReject
+from .field_validate import check_ids, validate_alarm, validate_goto
 
 #: 云端来的一律 origin/source = cloud. NO 不从报文里取 --
 #: origin 是授权边界(11 CH-1 通道即权限), 让发起方自称等于没有边界.
@@ -109,12 +110,11 @@ def route(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
             {"field": "payload",
              "got_type": type(payload).__name__}))
 
-    cmd_id = data.get("msg_id")
-    task_id = data.get("task_id")
-    if not cmd_id or not task_id:
-        raise InboundReject(build_error_fields(
-            errors.E_SCHEMA, "data is missing msg_id or task_id",
-            {"field": "msg_id" if not cmd_id else "task_id"}))
+    # C-2(审计): msg_id/task_id 必填 + v2.0 S1.2 ID 正则. check_ids 抛 1002
+    # (缺失)或 1003(格式). 早于拆分 -- 一个格式非法的 id 不该被带进机内.
+    check_ids(data)
+    cmd_id = data["msg_id"]
+    task_id = data["task_id"]
 
     if task_type == "GOTO_KEYPOINT":
         return KEY_TASK, _goto(cmd_id, task_id, payload)
@@ -130,10 +130,13 @@ def route(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
 def _goto(cmd_id: str, task_id: str, payload: Dict) -> Dict[str, Any]:
     """GOTO_KEYPOINT -> 11 S7.2 的 {action:"submit", task:{...}}.
 
-    * 只做形状转换, 不校验 waypoints 内容 -- 那由 p3_task 的既有解析器做,
-    而那个解析器正是语音下发的任务也在走的. 复用它, 两条输入才会得到
-    完全一致的判定(包括围栏, 路径版本这些).
+    *** 字段级校验(coordinate_system/arrival_radius_m/waypoint id)在
+    validate_goto -- 那些是 v2.0 协议字段, 机内不认, 网关是唯一能挡住非法
+    值的地方(审计 B-2). 但 waypoint 是否在围栏内 / 路径版本对不对这类[需要
+    geo.db 知识]的判定仍留给 p3 的既有解析器 -- 复用它, 云端与语音两条输入
+    才走同一套业务判定.
     """
+    validate_goto(payload)
     return {
         "cmd_id": cmd_id,
         "action": "submit",
@@ -228,6 +231,9 @@ def _alarm(cmd_id: str, payload: Dict) -> Dict[str, Any]:
                 "camp keep-in boundary is not configured through this channel",
                 {"field": "regions[%d].type" % idx,
                  "region_id": region.get("id")}))
+    # B-3(审计): 标量范围 + rules + regions 结构校验. keep_in 已在上面拒过
+    # (它是安全边界, 拒绝理由要逐字), 这里补其余 v2.0 S2.4 字段.
+    validate_alarm(payload)
     return {
         "cmd_id": cmd_id,
         "action": "upsert",

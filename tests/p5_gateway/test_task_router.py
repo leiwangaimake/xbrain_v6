@@ -65,10 +65,16 @@ def test_all_five_open_types_route_somewhere():
     payloads = {
         "GOTO_KEYPOINT": {"coordinate_system": "WGS84",
                           "recorded_path_id": "r-a",
-                          "waypoints": [{"id": "w-1"}]},
+                          "waypoints": [{"id": "w-1", "name": "x",
+                                         "latitude": 31.2, "longitude": 121.4,
+                                         "altitude": 8.4,
+                                         "arrival_radius_m": 3.0}]},
         "STOP_TASK": {"target_task_id": "task-x", "action": "cancel"},
         "ESTOP": {"action": "stop"},
-        "SET_ALARM_CONFIG": {"alarm_level": 1, "regions": []},
+        "SET_ALARM_CONFIG": {"alarm_level": 1, "siren_level": 70,
+                             "duration_sec": 5, "cooldown_sec": 2.0,
+                             "alarm_window": {"start": "22:00", "end": "05:00"},
+                             "rules": [], "regions": []},
         "AUDIO_CONTROL": {"mode": "pc_to_dog", "action": "start"},
     }
     assert set(payloads) == set(OPEN_TASK_TYPES), (
@@ -104,7 +110,9 @@ def test_goto_becomes_the_internal_submit_shape():
 
     _key, body = route(_data("GOTO_KEYPOINT", {
         "coordinate_system": "WGS84", "recorded_path_id": "r-north",
-        "waypoints": [{"id": "w-1", "latitude": 31.2, "longitude": 121.4}]}))
+        "waypoints": [{"id": "w-1", "name": "x", "latitude": 31.2,
+                       "longitude": 121.4, "altitude": 8.4,
+                       "arrival_radius_m": 3.0}]}))
     assert body["action"] == "submit"
     assert body["task"]["task_id"] == "task-1"
     assert body["task"]["recorded_path_id"] == "r-north"
@@ -223,12 +231,17 @@ def test_origin_is_always_cloud_never_taken_from_the_frame():
     # 报文里塞一个假的 source/origin, 结果必须仍是 cloud.
     _k, body = route(_data("GOTO_KEYPOINT", {
         "coordinate_system": "WGS84", "recorded_path_id": "r-a",
-        "waypoints": [{"id": "w-1"}],
+        "waypoints": [{"id": "w-1", "name": "x", "latitude": 31.2,
+                       "longitude": 121.4, "altitude": 8.4,
+                       "arrival_radius_m": 3.0}],
         "source": "voice", "origin": "voice"}))
     assert body["source"] == CLOUD_ORIGIN, "origin 被报文里的值覆盖了"
 
     _k2, body2 = route(_data("SET_ALARM_CONFIG",
-                             {"alarm_level": 1, "regions": [],
+                             {"alarm_level": 1, "siren_level": 70,
+                              "duration_sec": 5, "cooldown_sec": 2.0,
+                              "alarm_window": {"start": "22:00", "end": "05:00"},
+                              "rules": [], "regions": [],
                               "origin": "hmi"}))
     assert body2["origin"] == CLOUD_ORIGIN
 
