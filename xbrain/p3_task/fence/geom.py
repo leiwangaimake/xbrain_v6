@@ -30,19 +30,13 @@ fence.db triggers cannot assert.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 
-
-@dataclass(frozen=True)
-class Circle:
-    cx: float
-    cy: float
-    r: float
-
-
-@dataclass(frozen=True)
-class Polygon:
-    points: tuple    # ((x, y), ...)
+# Circle / Polygon / point_in_circle / point_in_polygon 现由跨进程共享库导出
+# (xbrain/common/fence/geom.py): p1_motion 自算 crc32 比对与报警区点在多边形内
+# 判定要与本进程用[同一套]实现, 否则两侧漂移. 这里 re-import 保持 p3 既有 API
+# (from xbrain.p3_task.fence.geom import Polygon / point_in_polygon 仍可用).
+from xbrain.common.fence.geom import (Circle, Polygon, point_in_circle,
+                                      point_in_polygon)
 
 
 class InvalidPolygon(Exception):
@@ -121,28 +115,6 @@ def close_ring(points, tol_m: float):
         if math.hypot(xn - x0, yn - y0) <= tol_m:
             return pts[:-1]
     return pts
-
-
-def point_in_circle(x: float, y: float, c: Circle) -> bool:
-    return math.hypot(x - c.cx, y - c.cy) <= c.r
-
-
-def point_in_polygon(x: float, y: float, poly: Polygon) -> bool:
-    """Ray-cast: cast horizontal ray from (x, y), count crossings.
-    Boundary points may be reported either way -- acceptable for
-    fence use (a robot at boundary is inside a safe region)."""
-    n = len(poly.points)
-    inside = False
-    j = n - 1
-    for i in range(n):
-        xi, yi = poly.points[i]
-        xj, yj = poly.points[j]
-        crosses = ((yi > y) != (yj > y)) and (
-            x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi)
-        if crosses:
-            inside = not inside
-        j = i
-    return inside
 
 
 def point_in_composite(x: float, y: float,

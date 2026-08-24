@@ -31,10 +31,13 @@ fence.db with proper metadata). Do NOT read this as the commit protocol.
 from __future__ import annotations
 
 import json
-import zlib
 from typing import Any, Dict, List, Optional, Sequence
 
 from xbrain.common.enums import FENCE_ROLE       # 11 S9A.2 closed set (CLAUDE.md 3.5)
+# fence_set_crc32 现由跨进程共享库导出 -- p1_motion 收到 cmd/fence 后自算比对必须
+#与本进程用同一套归一化(11 S9A.2). re-import 保持 from ...fence_set import
+# fence_set_crc32 的既有调用(test_fence_set / 跨语言金标)可用.
+from xbrain.common.fence.geom import fence_set_crc32
 from xbrain.p3_task.fence.geom import validate_active_fence_set
 
 # Declared winding per role (11 S9A.2: receiver normalises, this is a hint). Keys
@@ -49,23 +52,6 @@ def _vertices(geom_json: str) -> List[Dict[str, float]]:
     """fence.db geom_json {"points": [[lat,lon],...]} -> [{lat,lon},...]."""
     pts = json.loads(geom_json).get("points", [])
     return [{"lat": float(la), "lon": float(lo)} for la, lo in pts]
-
-
-def fence_set_crc32(fence_set_id: str, rev: int,
-                    polygons: Sequence[Dict[str, Any]]) -> str:
-    """11 S9A.2 crc32: fence_set_id|rev| then per polygon (array order)
-    poly_id|role|winding|hard_enforce(1/0)| then each vertex '%.8f,%.8f;'.
-    CRC-32 IEEE 802.3 (== zlib.crc32), 8 lowercase hex. The receiver self-computes
-    and compares (FV-8); a byte-identical set MUST yield the same crc32."""
-    parts = ["%s|%d|" % (fence_set_id, rev)]
-    for p in polygons:
-        parts.append("%s|%s|%s|%s|" % (
-            p["poly_id"], p["role"], p["winding"],
-            "1" if p["hard_enforce"] else "0"))
-        for v in p["vertices"]:
-            parts.append("%.8f,%.8f;" % (v["lat"], v["lon"]))
-    data = "".join(parts).encode("utf-8")
-    return "%08x" % (zlib.crc32(data) & 0xFFFFFFFF)
 
 
 def build_fence_set(active_rows: Sequence, *, fence_set_id: str, rev: int,
