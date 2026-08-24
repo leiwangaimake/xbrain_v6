@@ -280,7 +280,9 @@ class CloudBridge:
         try:
             body = parse_frame(raw, rid)
         except InboundReject as exc:
-            self._reject_task(raw, exc.fields)
+            # 协议层拒绝(信封坏/rid 不符/版本不符) -> event/warn/system
+            # (v2.0 S9.1/S2.6: 协议错误记 system, 不是 task).
+            self._reject_task(raw, exc.fields, event_category="system")
             return
 
         if not is_cloud_frame(body):
@@ -441,7 +443,7 @@ class CloudBridge:
                                 task_id: Optional[str],
                                 task_type: Optional[str],
                                 error_code: int, detail_code: str,
-                                reason: str) -> None:
+                                reason: str, category: str = "task") -> None:
         """一次云端 cmd/task 拒绝 -> 一条可靠 event/warn/task(审计 E-1).
 
         *** v2.0 S10 逐字: 每次任务拒绝必须产生一条可靠 event/{sev}/task,
@@ -454,16 +456,20 @@ class CloudBridge:
         任务事件(source=p3_task)不同源, 不同 eid, 不重复.
         """
         self._reject_seq += 1
+        # 协议层拒绝(信封坏/rid 不符/版本)归 system, task_id 无意义(报文可能
+        # 连 msg_id 都读不出); 任务层拒绝(task_type/字段)归 task.
+        title = ("cloud protocol error" if category == "system"
+                 else "cloud task rejected")
         try:
-            self.publish_event("warn", "task", {
+            self.publish_event("warn", category, {
                 "eid": "task-reject-%s-%d" % (self._reject_boot,
                                               self._reject_seq),
                 "state": "occurred",
                 "source": "p5_gateway",
                 "code": detail_code or errors.E_SCHEMA,
-                "title": "cloud task rejected",
+                "title": title,
                 "message": reason or "",
-                "task_id": task_id or None,
+                "task_id": task_id if category == "task" else None,
                 "detail": {"task_type": task_type, "ref_msg_id": ref_msg_id,
                            "error_code": error_code},
             })
@@ -474,7 +480,8 @@ class CloudBridge:
     def _reject_task(self, raw: bytes, fields: Dict[str, Any], *,
                      msg_id: Optional[str] = None,
                      task_id: Optional[str] = None,
-                     task_type: Optional[str] = None) -> None:
+                     task_type: Optional[str] = None,
+                     event_category: str = "task") -> None:
         """把一条拒绝填成 v2.0 S3.1 的八字段 ack.
 
         *** 拒绝也必须回 ack, 且必须尽量带上 ref_msg_id.
@@ -497,7 +504,7 @@ class CloudBridge:
         self._emit_task_reject_event(
             ref_msg_id=msg_id, task_id=task_id, task_type=task_type,
             error_code=fields["error_code"], detail_code=_det.get("code", ""),
-            reason=fields["reason"])
+            reason=fields["reason"], category=event_category)
 
     # --- 入站: cmd/estop ----------------------------------------------
 

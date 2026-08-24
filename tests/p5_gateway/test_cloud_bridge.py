@@ -1098,3 +1098,46 @@ def test_reject_events_get_distinct_eids():
     evts = _events_on(session, "warn", "task")
     eids = [e["data"]["eid"] for e in evts]
     assert len(eids) == 2 and len(set(eids)) == 2, "拒绝 event 的 eid 撞了"
+
+
+# --- E-2: 协议错误 -> system, 任务拒绝 -> task (审计第三轮) ------------
+
+def test_a_protocol_error_produces_a_system_event_not_task():
+    """*** v2.0 S9.1/S2.6: 协议错误(信封坏/rid 不符)记 event/warn/system.
+
+    协议层拒绝与任务层拒绝是两类, Qt 按 category 分流. 信封坏归到 task
+    category 会让 Qt 把一条"报文格式错"当成"某任务被拒".
+
+    MUTATION: parse_frame 拒绝路径不传 event_category=system -> 这里红.
+    """
+    _b, session = _bridge()
+
+    # 坏 JSON -> parse_frame 协议层拒绝.
+    _feed(session, "cmd/task", b'{"v": 1, "rid": ')
+
+    # 回了 rejected ack.
+    assert _puts_to(session, "cmd/task/ack")[0]["data"]["result"] == "rejected"
+    # 事件在 system, 不在 task.
+    assert _events_on(session, "warn", "system"), "协议错误没进 system category"
+    assert not _events_on(session, "warn", "task"), "协议错误跑到了 task category"
+
+
+def test_a_field_reject_stays_in_task_category():
+    """任务层拒绝(字段非法)仍归 event/warn/task."""
+    _b, session = _bridge()
+
+    bad = _qt_task()
+    bad["data"]["payload"]["coordinate_system"] = "GCJ02"
+    _feed(session, "cmd/task", bad)
+
+    assert _events_on(session, "warn", "task"), "字段拒绝没进 task category"
+    assert not _events_on(session, "warn", "system"), "字段拒绝跑到了 system"
+
+
+def test_a_rid_mismatch_is_a_system_event():
+    """rid 不一致(§9.1 协议错误) -> event/warn/system."""
+    _b, session = _bridge()
+
+    _feed(session, "cmd/task", _qt_task(rid="gj-999"))  # rid 与 key 不符
+
+    assert _events_on(session, "warn", "system"), "rid 不符没进 system category"
