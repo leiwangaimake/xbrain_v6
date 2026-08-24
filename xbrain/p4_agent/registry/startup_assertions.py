@@ -110,13 +110,13 @@ def check_intent_levels_match(yaml_rows, cmdset_rows) -> None:
     shared = sorted(set(want) & set(have))
     if not shared:
         raise CsAssertionError(
-            "CS-LEVEL: intents.yaml 与 cmdset_18 没有一个同名意图 -- "
-            "两边多半根本不是同一份指令集")
+            "CS-LEVEL: intents.yaml and cmdset_18 share no intent name -- "
+            "the two are most likely not the same command set")
     bad = [(n, have[n], want[n]) for n in shared if have[n] != want[n]]
     if bad:
         raise CsAssertionError(
-            "CS-LEVEL: 这些意图的级别与 18 的指令集表不一致 "
-            "(intent, intents.yaml, 18): %s" % bad[:8])
+            "CS-LEVEL: these intents disagree in auth level with the 18 "
+            "command table (intent, intents.yaml, 18): %s" % bad[:8])
 
 
 #: 18 自身就存在的触发词歧义, 每条附两个出处. 2026-08-23 实测抓出.
@@ -174,5 +174,5 @@ def check_no_trigger_word_conflict(yaml_rows) -> None:
     fresh = [c for c in conflicts if _norm(c) not in known]
     if fresh:
         raise CsAssertionError(
-            "CS-TRIGGER: 这些触发词被多个意图共用, 匹配结果将取决于遍历"
-            "顺序: %s" % fresh[:8])
+            "CS-TRIGGER: these trigger words are shared by multiple intents; "
+            "the match depends on traversal order: %s" % fresh[:8])
