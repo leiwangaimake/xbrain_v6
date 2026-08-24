@@ -63,7 +63,7 @@ OPEN_TASK_TYPES = ("GOTO_KEYPOINT", "STOP_TASK", "ESTOP",
                    "SET_ALARM_CONFIG", "AUDIO_CONTROL")
 
 #: v2.0 S3 逐字列出的[旧名称], 收到必须以"不支持的任务类型"拒绝,
-#: 🚫 不能静默映射到某个现有能力.
+#: NO 不能静默映射到某个现有能力.
 RETIRED_TASK_TYPES = (
     "INSPECTION_ROUTE", "FOLLOW_RECORDED_PATH", "PAUSE_TASK", "RESUME_TASK",
     "RETURN_HOME", "SET_GEOFENCE", "SET_KEYPOINTS", "SET_RECORDED_PATHS",
