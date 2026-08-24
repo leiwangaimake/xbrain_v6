@@ -52,7 +52,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..inbound.cloud_inbound import (InboundReject, SRC_QT, frame_ids,
                                      is_cloud_frame, parse_frame, rid_from_key)
-from ..inbound.task_router import CLOUD_ORIGIN, route
+from ..inbound.task_router import CLOUD_ORIGIN, KEY_AUDIO, route
 from ..outbound.cloud_envelope import SeqCounter, build_envelope
 from ..outbound.task_ack import (DedupWindow, RESULT_ACCEPTED, RESULT_REJECTED,
                                  build_ack, duplicate_ack)
@@ -157,6 +157,9 @@ class CloudBridge:
         self._internal_pubs: Dict[str, Any] = {}
         # 事件 publisher 按 (sev, cat) 缓存. 见 publish_event.
         self._event_pubs: Dict[str, Any] = {}
+        # AUDIO_CONTROL start 的 stream_id 由网关分配(审计 B-1). 按 rid 计数,
+        # 从 1 起. 见 _handle_audio.
+        self._audio_seq = 0
         #: 只为可观测: 各类报文的处理计数. 不参与任何判定.
         self.stats: Dict[str, int] = {"accepted": 0, "rejected": 0,
                                       "duplicate": 0, "ignored": 0}
@@ -271,6 +274,15 @@ class CloudBridge:
                               task_id=task_id, task_type=task_type)
             return
 
+        # *** AUDIO_CONTROL 的 ack 由网关自造 + 分配 stream_id(审计 B-1).
+        # 它走 cmd/audio/speak(p2 speaker), 而 p2 speaker 是语音 TTS 通道,
+        # NO 不产生 v2.0 的 stream_id -- 那是云端喊话协议的字段, 只有网关
+        # (云端翻译点)能给. start ack 必须带新分配的 stream_id(v2.0 S2.5/
+        # S3.1), 否则 Qt 拿不到它就发不了 audio/broadcast 帧(S8).
+        if internal_key == KEY_AUDIO:
+            self._handle_audio(msg_id, task_id, task_type, payload)
+            return
+
         # *** 先转发再回 ack.
         # 反过来的话, 一次转发失败会留下一条"已受理"的 ack 而机器人什么都
         # 没做 -- Qt 那边看到 accepted 就不会重发了.
@@ -283,6 +295,39 @@ class CloudBridge:
         self.stats["accepted"] += 1
         _logger.info("p5 cloud task %s -> %s (origin=%s)",
                      task_type, internal_key, CLOUD_ORIGIN)
+
+    def _alloc_stream_id(self) -> str:
+        """分配一个新 broadcast stream_id(v2.0 S2.5: 后端在 start 分配).
+
+        格式 audio-{rid}-{seq:04d}, 匹配 v2.0 S1.2 ID 正则. 按 rid 计数从 1
+        起 -- 同一台车的会话号连续, 便于联调时对上是第几次喊话.
+        """
+        self._audio_seq += 1
+        return "audio-%s-%04d" % (self._rid, self._audio_seq)
+
+    def _handle_audio(self, msg_id: Optional[str], task_id: Optional[str],
+                      task_type: Optional[str], payload: Dict[str, Any]) -> None:
+        """AUDIO_CONTROL 的转发 + 自造 ack(带 stream_id, 审计 B-1).
+
+        start          分配 stream_id -> ack.detail.stream_id -> 转发带该 id
+        exit_broadcast 回显请求里的 stream_id -> ack.detail.stream_id(同一个)
+                       (v2.0 S3.1: 退出 ack 回显原 id, NO 不分配新 id)
+        """
+        action = payload.get("action")
+        if action == "start":
+            stream_id = self._alloc_stream_id()
+            payload["stream_id"] = stream_id     # 转发给 p2 时带上
+        else:                                    # exit_broadcast: 回显原 id
+            stream_id = payload.get("stream_id")
+        # 先转发再回 ack(同 _handle_task 的顺序理由: 转发失败不留下假 accepted).
+        self._internal_put(KEY_AUDIO, json.dumps(
+            payload, ensure_ascii=False).encode("utf-8"))
+        self._publish_ack("cmd/task/ack", build_ack(
+            msg_id=_new_msg_id(), ref_msg_id=msg_id or "",
+            task_id=task_id or "", task_type=task_type or "AUDIO_CONTROL",
+            result=RESULT_ACCEPTED, detail={"stream_id": stream_id}))
+        self.stats["accepted"] += 1
+        _logger.info("p5 cloud audio %s stream_id=%s", action, stream_id)
 
     def _reject_task(self, raw: bytes, fields: Dict[str, Any], *,
                      msg_id: Optional[str] = None,

@@ -725,3 +725,87 @@ def test_main_wiring_relays_events_to_the_cloud():
     assert len(calls) == 1, (
         "main_wiring 里对 publish_event 的调用有 %d 处 -- 事件不会到云端"
         % len(calls))
+
+
+# --- B-1: 音频 stream_id 分配 -----------------------------------------
+
+def _audio(action, stream_id=None, msg_id="a-1"):
+    data = {"msg_id": msg_id, "task_id": "ta-1", "task_type": "AUDIO_CONTROL",
+            "payload": {"mode": "pc_to_dog", "action": action}}
+    if stream_id is not None:
+        data["payload"]["stream_id"] = stream_id
+    return {"v": 1, "rid": RID, "ts": 1.0, "seq": 1, "src": "qt_hmi",
+            "data": data}
+
+
+def test_audio_start_ack_carries_a_new_stream_id():
+    """*** v2.0 S2.5/S3.1: start ack 必须带后端新分配的 stream_id.
+
+    Qt 拿这个 stream_id 才能发 audio/broadcast 帧(S8). 没有它喊话发不出去.
+
+    MUTATION: _handle_audio 里 start 不分配 stream_id -> 这里红.
+    """
+    _b, session = _bridge()
+
+    _feed(session, "cmd/task", _audio("start"))
+
+    d = _puts_to(session, "cmd/task/ack")[0]["data"]
+    assert d["result"] == "accepted"
+    sid = d["detail"]["stream_id"]
+    assert sid and sid.startswith("audio-"), "start ack 没带分配的 stream_id"
+    # 机内转发也带上同一个 stream_id(p2 要按它标记这一路喊话).
+    fwd = _internal_puts(session, "cmd/audio/speak")[0]
+    assert fwd["stream_id"] == sid
+
+
+def test_audio_start_never_carries_a_client_stream_id():
+    """start 携带 stream_id 是非法的(网关分配, 不接受客户端给).
+
+    这条在 task_router 层拒(start must not carry stream_id). 验证它到不了
+    _handle_audio -- 一个 rejected ack, 不是 accepted.
+    """
+    _b, session = _bridge()
+
+    _feed(session, "cmd/task", _audio("start", stream_id="client-forced"))
+
+    d = _puts_to(session, "cmd/task/ack")[0]["data"]
+    assert d["result"] == "rejected"
+
+
+def test_audio_exit_echoes_the_original_stream_id():
+    """*** v2.0 S3.1: exit_broadcast ack 回显请求里的 stream_id, NO 不分配新的.
+
+    分配新 id 会让 Qt 无法确认自己退的是不是刚才那一路.
+
+    MUTATION: _handle_audio 的 exit 分支也调 _alloc_stream_id -> 这里红.
+    """
+    _b, session = _bridge()
+
+    _feed(session, "cmd/task", _audio("exit_broadcast", stream_id="audio-x-0007"))
+
+    d = _puts_to(session, "cmd/task/ack")[0]["data"]
+    assert d["result"] == "accepted"
+    assert d["detail"]["stream_id"] == "audio-x-0007", "退出没回显原 stream_id"
+
+
+def test_two_starts_get_distinct_stream_ids():
+    """每次 start 分配不同的 stream_id -- 两路喊话不能撞号."""
+    _b, session = _bridge()
+
+    _feed(session, "cmd/task", _audio("start", msg_id="a-1"))
+    _feed(session, "cmd/task", _audio("start", msg_id="a-2"))
+
+    acks = _puts_to(session, "cmd/task/ack")
+    s1 = acks[0]["data"]["detail"]["stream_id"]
+    s2 = acks[1]["data"]["detail"]["stream_id"]
+    assert s1 != s2, "两次 start 分配了同一个 stream_id"
+
+
+def test_audio_stream_id_matches_the_v2_id_regex():
+    """分配的 stream_id 必须匹配 v2.0 S1.2 ID 正则(audio/broadcast 帧要用它)."""
+    import re
+
+    _b, session = _bridge()
+    _feed(session, "cmd/task", _audio("start"))
+    sid = _puts_to(session, "cmd/task/ack")[0]["data"]["detail"]["stream_id"]
+    assert re.match(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", sid), sid
