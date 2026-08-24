@@ -46,6 +46,7 @@ CMD_MOTION_FACTOR_TOPIC = "cmd/motion/factor"
 # those two simply never appear in sources[].
 CMD_TELEOP_TOPIC = "cmd/teleop"
 CMD_ESTOP_TOPIC = "cmd/estop"            # P1-21: soft-estop latch (14 S3.7)
+CMD_FENCE_TOPIC = "cmd/fence"            # P1-15: FenceSet 接收 (11 S9A.3, 通用面)
 STATE_TELEOP_TOPIC = "state/teleop"
 TELEOP_PUBLISH_PERIOD_S = 1.0
 
@@ -188,6 +189,37 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                           len(bytes(sample.payload)))
         factor_sub = gen.declare_subscriber(
             CMD_MOTION_FACTOR_TOPIC, _on_factor)
+
+        # --- 11 S9A.3 P1-15 cmd/fence: FenceSet 接收 + 自算比对 + 持有 (报警 F1)
+        # P1 是围栏唯一执行者(S9A.0). p3 在[通用面]cmd/fence 上广播 FenceSet, P1
+        # 自算 crc32 比对(S9A.2)后持有. 本子集只做接收/持有, 供 F2(zone_enter)与
+        # F3(state/fence.active.rev)取用; 不做几何裁剪(那是安全关键运动约束, 本
+        # 子集显式不建). 通用面订阅, 严禁转发回 RT 面(S9A.3).
+        from xbrain.p1_motion.fence.fence_set import (FenceSetError,
+                                                      FenceSetHolder)
+        fence_holder = FenceSetHolder()
+
+        def _on_fence(sample) -> None:
+            # RUST THREAD (CLAUDE.md 4.2): 纯解析 + 校验 + 一次原子换指针, NO 不
+            # await/不发布. accept() 抛异常时 active 不动(FS-7 坏帧保留旧几何).
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                _logger.warning("p1 malformed cmd/fence frame")
+                return
+            try:
+                held = fence_holder.accept(d)
+            except FenceSetError as exc:
+                # 坏帧不清空 active -- 报一次 warn, 保留旧几何(绝不进无围栏态).
+                _logger.warning("p1 cmd/fence rejected, keeping old active: %s",
+                                exc)
+                return
+            _logger.info("p1 accepted FenceSet rev=%d crc32=%s (%d polygons)",
+                         held.rev, held.crc32, len(held.polygons))
+
+        fence_sub = gen.declare_subscriber(CMD_FENCE_TOPIC, _on_fence)
+        _logger.info("p1 wiring: subscribed %s (P1-15 FenceSet receive)",
+                     CMD_FENCE_TOPIC)
 
         # --- 11 S12A.9.7 teleop arbitration + state/teleop -------------------
         # P1 owns the teleop behaviour source, so it is the only process that
@@ -353,6 +385,10 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 pass
             try:
                 factor_sub.undeclare()
+            except Exception:      # noqa: BLE001
+                pass
+            try:
+                fence_sub.undeclare()
             except Exception:      # noqa: BLE001
                 pass
             for _s in gnss_subs:
