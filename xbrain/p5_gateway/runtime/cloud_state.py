@@ -367,9 +367,10 @@ class CloudProjector:
         try:
             word = link_state_word(link.get("level"))
         except UnmappedLinkLevel:
-            # L3(返航触发)在 v2.0 里没有落点 -- 这是待裁决项 E-2.
-            # NO 不擅自映成 down 或 degraded: 前者让 Qt 显示离线而机器人
-            # 仍在动, 后者丢掉"已触发返航"这个信息. 不发比编一个好.
+            # E-2 裁决(2026-08-24, 用户)后 L0..L3 都有落点(L3->degraded);
+            # 到这里说明 level 越界(<0 或 >3), 那是上游 link_state 的缺陷.
+            # 抛而不猜(3.5 越界必抛); tick 的兜底记 error, 这拍不发 state/link
+            # (Qt 按 3 秒规则判离线, 好过发一个与真实链路无关的猜测值).
             raise
         return {
             "state": word,

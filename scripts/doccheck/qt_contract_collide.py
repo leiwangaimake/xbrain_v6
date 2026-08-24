@@ -77,11 +77,16 @@ ITEMS = (
     Item("云端下发 key", "cmd/task/ext", BLOCK,
          "v2.0 用 xbrain/{rid}/cmd/task; 11 的云端入站口是 cmd/task/ext, "
          "且 11 逐字写 p3_task 不得订阅 ext. Qt 发到 cmd/task 会被 p3_task "
-         "直接收到, 绕过网关的信封重建与 rid 校验"),
+         "直接收到, 绕过网关的信封重建与 rid 校验. "
+         "[E-1 已裁决 2026-08-23: 网关多订 cmd/task; 批54 落地 -- 云端 key "
+         "xbrain/{rid}/cmd/task 与机内 cmd/task 是不同 Zenoh key, 网关校验后"
+         "重建, src 判别防回环. 实现已解决; 本条 BLOCK 是 11 文档未回填的债]"),
     Item("外层信封字段", "schema_version`/`msg_id", BLOCK,
          "11 记的是客户 v1.0 七字段(schema_version/robot_id/timestamp); "
          "v2.0 已全面改为六字段 v/rid/ts/seq/src/data -- 评审意见客户采纳了, "
-         "而 11 没跟着更新"),
+         "而 11 没跟着更新. "
+         "[已按 v2.0 六字段实现(批54 cloud_envelope.build_envelope); 客户三份"
+         "文档优先(用户 2026-08-24). 实现已解决; 本条 BLOCK 是 11 文档未回填的债]"),
     Item("ts 格式冻结", "float64 Unix", GAP,
          "v2.0 逐字冻结 float64 Unix 秒并禁 ISO8601; 11 只有一处提及, "
          "且未写明它只适用跨主机面(机内仍是 ts+mono 双字段, CLK-C3)"),
@@ -252,7 +257,9 @@ def main():
                 print("          " + line)
         print()
 
-    print("criterion: zero BLOCK before cloud integration testing")
+    print("criterion: BLOCK items must be DECIDED before cloud integration")
+    print("note: 2026-08-24 both BLOCKs are DECIDED (E-1 + v2.0 envelope) and "
+          "IMPLEMENTED; they remain flagged as 11-doc backfill debt, not gaps")
     print("BLOCK=%d GAP=%d MAP=%d OK=%d"
           % (counts[BLOCK], counts[GAP], counts[MAP], counts[OK]))
     # BLOCK 才让门失败. GAP 是"照 v2.0 实现即可"的活, MAP 是网关映射的活 --

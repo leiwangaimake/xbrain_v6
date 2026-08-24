@@ -133,20 +133,33 @@ def test_levels_zero_to_two_map_to_the_three_words():
     assert link_state_word(2) == "down"
 
 
-def test_level_three_raises_instead_of_guessing():
-    """*** L3 有意不映射.
+def test_level_three_maps_to_degraded():
+    """*** L3(返航触发)映 degraded -- E-2 裁决(2026-08-24, 用户).
 
-    L3 是"返航已触发", 机器人[仍在动]. 映成 down 会让 Qt 显示离线并可能
-    触发操作员的应急流程; 映成 degraded 则丢掉返航这件事. 两种都是错的,
-    选哪个要双方在联调纪要里定.
+    L3 时机器人仍在线且在动(正在返航). degraded 表示"链路降级但在线",
+    Qt 不会误判离线; 映 down 会让 Qt 显示离线并可能触发操作员应急流程.
+    "已触发返航"不经 state/link 表达(v2.0 只有三值, 无返航字段), 而是通过
+    state/task 的 return_home 任务体现 -- 各归各的 key, 不丢信息.
 
-    MUTATION: 给 L3 加一个默认落点 -> 这里红.
+    MUTATION: 把 _LEVEL_TO_STATE 的 3 改成 "down" -> 这里红.
+    """
+    from xbrain.p5_gateway.outbound.cloud_envelope import link_state_word
+
+    assert link_state_word(3) == "degraded"
+
+
+def test_a_level_out_of_range_still_raises():
+    """越界 level(<0 或 >3)仍抛 -- 那是上游缺陷, NO 不猜一个 state 发给 Qt.
+
+    E-2 裁决只给了 L0..L3 落点; 一个 level=4 或 -1 是 link_state.py 的 bug,
+    静默发一个猜的 state 会让 Qt 收到一个与真实链路无关的值.
     """
     from xbrain.p5_gateway.outbound.cloud_envelope import (UnmappedLinkLevel,
                                                            link_state_word)
 
-    with pytest.raises(UnmappedLinkLevel):
-        link_state_word(3)
+    for bad in (4, -1, 99):
+        with pytest.raises(UnmappedLinkLevel):
+            link_state_word(bad)
 
 
 def test_link_payload_has_exactly_four_fields():

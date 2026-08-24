@@ -24,12 +24,12 @@ v2.0 S1.1: "按[发布进程 + rid + 完整 key]分别递增; 发布进程启动
   * 只有进程重启才回到 1 -> Qt 在新连接周期重建水位.
 一个"全局一个计数器"的实现在前两点上都错, 而它在单流测试里看不出来.
 
-*** state/link 的 level -> state 是[有损]映射, 这里只做无争议的三段.
+*** state/link 的 level -> state 是[有损]映射.
 11 S4.6 用 level 0..3(L0 正常 / L1 degraded / L2 down / L3 返航触发),
-v2.0 只有三值 up|degraded|down. L0/L1/L2 一一对应, 而 L3 映到哪个值
-[需要裁决] -- L3 时机器人仍在动(正在返航), 映成 down 会让 Qt 显示离线,
-映成 degraded 又丢掉"已触发返航"这个信息.
-=> 本模块对 L3 显式抛, NO 不擅自选一个. 见 NEXT 的裁决项.
+v2.0 只有三值 up|degraded|down. L0/L1/L2 一一对应; L3 映 degraded --
+E-2 裁决(2026-08-24, 用户): L3 时机器人仍在线且在动(正在返航), degraded
+不会让 Qt 误判离线. "已触发返航"不经 state/link 表达(无此字段), 而是通过
+state/task 的 return_home 任务体现. 越界 level(<0 或 >3)仍抛(上游缺陷).
 
 Boundaries: 只做信封与形状转换. 不判断内容对错, 不发布 -- 发布在 runtime.
 """
@@ -48,7 +48,8 @@ SRC_QT = "qt_hmi"
 ENVELOPE_V = 1
 
 #: 11 S4.6 的 level -> v2.0 S4.1 的 state. L3 有意缺席, 见模块头注.
-_LEVEL_TO_STATE = {0: "up", 1: "degraded", 2: "down"}
+#: E-2 裁决(2026-08-24, 用户): L3(返航触发)映 degraded. 见 link_state_word.
+_LEVEL_TO_STATE = {0: "up", 1: "degraded", 2: "down", 3: "degraded"}
 
 
 class SeqCounter:
@@ -96,25 +97,33 @@ def build_envelope(rid: str, key: str, data: Dict[str, Any], *,
 
 
 class UnmappedLinkLevel(ValueError):
-    """link level 没有 v2.0 落点(今天只有 L3).
+    """link level 没有 v2.0 落点.
 
-    抛而不是挑一个: L3 是"返航已触发", 机器人仍在动. 映成 down 会让 Qt
-    显示离线并可能触发操作员的应急流程; 映成 degraded 则丢掉返航这件事.
-    两种都是错的, 而选哪个是[双方要在联调纪要里定]的事.
+    E-2 裁决(2026-08-24, 用户)后, L0..L3 都有落点; 本异常只在遇到一个真正
+    越界的 level(<0 或 >3)时抛 -- 那是上游 link_state.py 的缺陷, 不该静默
+    发一个猜的 state 给 Qt(CLAUDE.md 3.5 闭集越界必抛).
     """
 
 
 def link_state_word(level: int) -> str:
     """11 的 level -> v2.0 的 state 三值.
 
-    MUTATION 提示: 给 L3 加一个默认落点 -> tests 里那条 raises 变红.
+    *** L3(返航触发)映 degraded -- E-2 裁决(2026-08-24, 用户).
+    L3 时机器人[仍在线且在动](正在返航), degraded 表示"链路降级但在线",
+    Qt 不会误判离线; 映 down 会让 Qt 显示离线并可能触发操作员应急流程, 而
+    机器人其实在动.
+    ! "已触发返航"这件事[不经 state/link 表达] -- v2.0 的 state/link 只有
+    up|degraded|down 三值, 没有返航字段. 返航动作通过 state/task 的
+    return_home 任务出现体现. 所以 L3->degraded 不丢信息: 链路态归 link,
+    返航动作归 task, 各归各的 key.
+
+    越界 level(<0 或 >3)仍抛 UnmappedLinkLevel: 那是上游缺陷, 不猜.
     """
     if level in _LEVEL_TO_STATE:
         return _LEVEL_TO_STATE[level]
     raise UnmappedLinkLevel(
-        "link level %r has no v2.0 state word. L3 (return-to-base triggered) "
-        "is deliberately unmapped: the robot is still moving, so neither "
-        "'down' nor 'degraded' is right. Needs a joint decision." % level)
+        "link level %r is out of the 0..3 range; refusing to guess a v2.0 "
+        "state word (a bad level is an upstream link_state defect)." % level)
 
 
 def link_payload(snapshot, estop_path: str) -> Dict[str, Any]:
