@@ -221,6 +221,36 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         _logger.info("p1 wiring: subscribed %s (P1-15 FenceSet receive)",
                      CMD_FENCE_TOPIC)
 
+        # --- 11 S9A.9 FE-1 报警区入侵 zone_enter/zone_exit (报警 F2) ------------
+        # P1 持 pose + 编译围栏, 报警区(warning)入侵一并由它发(S9A.9 逐字"发送方 =
+        # p1_motion"). 纯机器人 pose 点在多边形内, 不依赖 perception. 事件发到
+        # event/{sev}/fence, p5 事件管线按 category=fence 派生 channel=alarm(E-1).
+        from xbrain.p1_motion.fence.zones import ZoneTracker
+        zone_tracker = ZoneTracker()
+        # eid 幂等 ID: boot token(与时钟无关, os.urandom)+ 进程内 seq. record.db
+        # UNIQUE(eid), 重启后 seq 归 0 但 boot 变, 不撞历史(同 p2 device 事件范式).
+        _zone_eid_boot = os.urandom(3).hex()
+        _zone_eid_seq = [0]
+
+        def _publish_zone_events(evs) -> None:
+            # 循环线程调用(非 Rust 回调): 组装 S9A.9 event/{sev}/fence 并发布.
+            # detail 载 kind/poly_id/poly_name/role/episode_id(无 d_nom/v_fence,
+            # 报警区无距离语义); dedup_key 供 p5 管线 60s 合并(E-3 已在 tracker
+            # 保证不刷屏, 这里再叠一层去重窗). channel 不由本进程定, p5 按 fence
+            # 类派生 alarm(E-1 成对同通道).
+            for ev in evs:
+                _zone_eid_seq[0] += 1
+                key = "event/%s/fence" % ev.severity
+                gen.put(key, json.dumps({
+                    "eid": "zone-%s-%d" % (_zone_eid_boot, _zone_eid_seq[0]),
+                    "title": ev.kind,
+                    "dedup_key": ev.dedup_key,
+                    "detail": {"kind": ev.kind, "poly_id": ev.poly_id,
+                               "poly_name": ev.poly_name, "role": "warning",
+                               "episode_id": ev.episode_id},
+                    "src": "p1_motion", "ts": 0.0,
+                }, ensure_ascii=False).encode("utf-8"))
+
         # --- 11 S12A.9.7 teleop arbitration + state/teleop -------------------
         # P1 owns the teleop behaviour source, so it is the only process that
         # can say which input is driving. P3 reads sources[] as criterion 1 of
@@ -347,6 +377,15 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                         src="p1_motion", ts_sync=ts_sync)
                     pose_pub.put(json.dumps(penv, ensure_ascii=False).encode("utf-8"))
                     pose_seq["n"] += 1
+                    # 报警区入侵判定(F2): pose 有效 + 有 active 围栏时, 判机器人是否
+                    # 在某 warning 多边形内, 发 zone_enter/zone_exit. pose lat/lon
+                    # 为 None(无 GNSS 定位)时[跳过] -- 位置未知不能判内外, 保持
+                    # tracker 状态不动(NO 不因定位丢失捏造 enter/exit, 见 zones.py).
+                    active = fence_holder.active
+                    plat, plon = pose.get("lat"), pose.get("lon")
+                    if active is not None and plat is not None and plon is not None:
+                        _publish_zone_events(zone_tracker.observe(
+                            plat, plon, active.warning_polygons()))
                     if now - last_clock >= 1.0:   # 1 Hz state/clock mirror (P1-13)
                         cs = gnss_pose.mirror_clock(clock_cache["data"])
                         cenv = gnss_pose.stamp_envelope(
