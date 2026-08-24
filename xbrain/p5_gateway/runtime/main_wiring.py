@@ -761,7 +761,14 @@ def run_voice_loop_wiring(stop_flag: dict,
         # and look exactly like a client that never connected.
         from xbrain.p5_gateway.runtime.cloud_wiring import maybe_wire
         cloud_bridge = maybe_wire(gen, os.environ.get("XBRAIN_ROBOT_ID", ""))
+        cloud_projector = None
         if cloud_bridge is not None:
+            from xbrain.p5_gateway.runtime.cloud_state import CloudProjector
+            # The outbound face needs DRIVING, not just publishers: a declared
+            # publisher nobody puts to looks exactly like a healthy key that
+            # happens to be quiet. The projector rides the 10 Hz loop below,
+            # which is also state/robot's required rate (v2.0 S4.2).
+            cloud_projector = CloudProjector(cloud_bridge)
             _logger.info("p5 wiring: cloud Qt face on, %d inbound keys",
                          cloud_bridge.alive())
         _logger.info("p5 wiring: subscribed speak/ack + state/task + "
@@ -866,6 +873,14 @@ def run_voice_loop_wiring(stop_flag: dict,
                     _prev_link_level = st.level
                     _prev_disc_s = st.disconnected_s
                     last_hb = now
+                # Cloud outbound projection. OUTSIDE the last_hb gate on
+                # purpose: that gate is the 1 Hz link heartbeat, and
+                # state/robot must go out at 10 Hz (v2.0 S4.2 verbatim).
+                # The projector does its own per-key cadence, so running it
+                # every loop iteration costs one dict build per key and no
+                # extra publishes.
+                if cloud_projector is not None:
+                    cloud_projector.tick(hmi_state)
                 time.sleep(0.1)
         finally:
             # Stop the HMI first so it stops reading shared state, then the event
