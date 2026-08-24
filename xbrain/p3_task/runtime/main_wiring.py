@@ -43,6 +43,7 @@ _logger = logging.getLogger("xbrain.p3.wiring")
 
 
 CMD_TASK_TOPIC = "cmd/task"
+CMD_ESTOP_TOPIC = "cmd/estop"            # 15 S11.1 ES-1: freeze scheduling
 CMD_TASK_ACK_TOPIC = "cmd/task/ack"      # 11 S7.7 Ack; W2/W7 require ack <= 2s
 STATE_TASK_TOPIC = "state/task"
 STATE_LINK_TOPIC = "state/link"          # 11 S4.6 cloud-link level -> F-5 return_home
@@ -241,6 +242,14 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     "disconnected_s": p.get("disconnected_s"),
                 })
 
+            # 15 S11.1 ES-1..3 estop handling. freeze() is idempotent and a
+            # scalar assignment, safe from the Rust callback (CLAUDE.md 4.2);
+            # the scheduling loop below reads scheduling_permitted() each pass.
+            # ES-3 / 15 S11.3: p3 does NOT auto-resume -- there is no time-based
+            # unfreeze, only an explicit p2 signal (CLAUDE.md 3.6: no bypass).
+            from xbrain.p3_task.lifecycle.estop import EstopController
+            estop_ctrl = EstopController()
+
             def _on_task(sample) -> None:
                 # RUST THREAD: decode only, then hand to the loop. No await, no
                 # db, no state_pub here (CLAUDE.md 4.2 -- the callback must
@@ -251,6 +260,17 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     _logger.warning("p3 malformed cmd/task payload")
                     return
                 loop.call_soon_threadsafe(queue.put_nowait, payload)
+
+            def _on_estop(sample) -> None:
+                # RUST THREAD (CLAUDE.md 4.2): ES-1 freeze only. freeze() is
+                # idempotent (keeps the first reason) and touches two scalar
+                # fields, so it is safe here; no db, no publish. The scheduling
+                # loop reads the freeze state. Parse is fail-safe (11 S3.0.1):
+                # a malformed estop must still freeze -- an unfrozen scheduler
+                # would keep dispatching patrol tasks through an emergency stop.
+                estop_ctrl.freeze("estop_soft")
+                _logger.warning("p3 ES-1: scheduling FROZEN by cmd/estop "
+                                "(no new dispatch; awaits p2 unfreeze, 15 S11.3)")
 
             def _on_geo(sample) -> None:
                 # RUST THREAD: same discipline as _on_task -- decode, hand off,
@@ -315,6 +335,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # Sub/queryable handles held in a list (strong ref, CLAUDE.md 4.3 --
             # a dropped queryable is silently unregistered, same GC trap as subs).
             _subs = [gen.declare_subscriber(CMD_TASK_TOPIC, _on_task),
+                     gen.declare_subscriber(CMD_ESTOP_TOPIC, _on_estop),
                      gen.declare_subscriber(STATE_LINK_TOPIC, _on_link),
                      gen.declare_subscriber(CMD_GEO_TOPIC, _on_geo),
                      gen.declare_subscriber(CMD_TEACH_TOPIC, _on_teach),
@@ -471,13 +492,21 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     # Drive the machine every pass: validate pending -> ready,
                     # dispatch the top ready -> running (PB6). Cheap on a small
                     # table; a bad tick is logged, never crashes the loop.
-                    try:
-                        await scheduler_tick(
-                            conn, dao, now_mono_ms=_now_mono_ms(),
-                            on_transition=_make_publish(state_pub,
-                                                        _emit_task_event))
-                    except Exception as exc:      # noqa: BLE001
-                        _logger.error("p3 scheduler tick failed: %s", exc)
+                    # ES-1: while frozen by an estop, dispatch NO new task
+                    # (15 S11.1). The tick is skipped entirely rather than run
+                    # and filtered, so a frozen scheduler cannot move pending ->
+                    # ready -> running. ES-3 keeps it frozen until an explicit
+                    # p2 unfreeze; there is no timeout path (15 S11.3).
+                    if not estop_ctrl.scheduling_permitted():
+                        pass
+                    else:
+                        try:
+                            await scheduler_tick(
+                                conn, dao, now_mono_ms=_now_mono_ms(),
+                                on_transition=_make_publish(state_pub,
+                                                            _emit_task_event))
+                        except Exception as exc:      # noqa: BLE001
+                            _logger.error("p3 scheduler tick failed: %s", exc)
                     now = time.monotonic()
                     if now - last_hb >= heartbeat_period_s:
                         _logger.info("p3 alive; recorded=%d qdepth=%d",

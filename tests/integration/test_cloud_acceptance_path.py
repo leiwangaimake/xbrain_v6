@@ -140,11 +140,10 @@ TERMINUS = {
     # 今天还不存在] -- 见 test_goto_stops_at_p3.
     "GOTO_KEYPOINT": ("cmd/task", {"p3_task"}),
     "STOP_TASK": ("cmd/task", {"p3_task"}),
-    # p2_core 已接(CLD-1 批62: 域1 缴械 + state/arb/motion 广播 + 爆闪).
-    # 契约(11 S1.4)四订阅者里 chassis_relay 是 C++(不在扫描面), p1_motion
-    # (零速 P1-21) 与 p3_task(充电中止) 仍未接 -- 见
-    # test_estop_reaches_p2_but_not_yet_p1_p3.
-    "ESTOP": ("cmd/estop", {"p2_core"}),
+    # cmd/estop 三个软件订阅者全接: p2_core(域1缴械+爆闪, 批62) +
+    # p1_motion(本拍零速+latch, 批63) + p3_task(ES-1 freeze 冻结调度, 批64).
+    # 契约(11 S1.4)第四个 chassis_relay 是 C++, 不在本扫描面.
+    "ESTOP": ("cmd/estop", {"p2_core", "p1_motion", "p3_task"}),
     # 报警区配置落 geo 库. p5 只是发布者, 不订它.
     "SET_ALARM_CONFIG": ("cmd/geo", {"p3_task"}),
     # 喊话经 p2_core 的 speaker_wiring 出 TTS. 这条是通的.
@@ -251,33 +250,27 @@ def test_the_chassis_exit_is_p1_turning_intents_into_apdu():
     assert "send_apdu" in names, "p1 不再把 APDU 交给底盘客户端"
 
 
-def test_estop_reaches_p2_but_not_yet_p1_p3():
-    """*** cmd/estop 接线现状: p2 已接, p1/p3 仍缺(CLD-1 批62 后).
+def test_estop_reaches_all_three_software_subscribers():
+    """*** cmd/estop 三个软件订阅者全接(CLD-1a 批62-64 后).
 
-    批59 查出 cmd/estop 零订阅者(三条软件急停路径发进空气). 批62 接了
-    p2_core: 域1 缴械 -> state/arb/motion.suspended="soft_estop" 广播 ->
-    p1 读它零速; 域4 强制爆闪(SE-1).
+    批59 查出 cmd/estop 零订阅者(三条软件急停路径发进空气). 现全接:
+      p2_core    域1 缴械 -> state/arb/motion 广播 + 域4 爆闪 (14 S3.7, 批62)
+      p1_motion  本拍零速 + stop_reason latch + re-arm (P1-21, 批63)
+      p3_task    ES-1 freeze 冻结调度 (15 S11.1, 批64)
+    契约(11 S1.4)第四个订阅者 chassis_relay 是 C++(CR-1 纯转发到
+    rt/safety/estop), 不在本扫描面 -- 那是真正的执行路径(SE-1a).
 
-    契约(11 S1.4)四并行订阅者:
-      chassis_relay  CR-1 纯转发到 rt/safety/estop (C++, 不在扫描面)
-      p2_core        缴械 + 爆闪 (已接)
-      p1_motion      本拍零速 + 落 stop_reason (P1-21, 仍缺)
-      p3_task        充电中止 (仍缺)
+    * 三个软件侧各司其职且互不依赖: p2 广播缴械态供 p1 冗余读, p1 自己也
+    直接订(不依赖广播到达), p3 冻结任务调度. 一条软件急停同时触发三者.
 
-    * 为什么 p2 接了还要 p1 也接: p2 的缴械经 state/arb/motion 广播, p1 读
-    到后零速 -- 那是[经一跳广播]的停. P1-21 要 p1[直接]订 cmd/estop 本拍
-    零速, 是不依赖 p2 广播到达的冗余. 安全路径要冗余, 两条都要.
-
-    p1/p3 补通后本条会红 -> 更新并删除.
+    这条从"补通即红"变成"全接即冻结": 若哪个订阅丢了 -> 红.
     """
     subs, pubs = _graph()
 
-    assert "p2_core" in subs.get("cmd/estop", set()), (
-        "cmd/estop 的 p2_core 订阅没了 -- 域1 缴械链路断了")
-    still_missing = {"p1_motion", "p3_task"} - subs.get("cmd/estop", set())
-    assert still_missing == {"p1_motion", "p3_task"}, (
-        "cmd/estop 的订阅者集合变了(%s) -- p1/p3 补通了就更新本用例"
-        % sorted(subs.get("cmd/estop", [])))
+    got = subs.get("cmd/estop", set())
+    assert got == {"p2_core", "p1_motion", "p3_task"}, (
+        "cmd/estop 的软件订阅者集合变了: %s -- 少一个就是一条软件急停路径断了"
+        % sorted(got))
     assert "p5_gateway" in pubs.get("cmd/estop", set()), (
         "连发布者都没了 -- 那 HMI 的 ESTOP 按钮也断了")
 

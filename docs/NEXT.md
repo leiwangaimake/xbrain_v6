@@ -329,7 +329,9 @@
 
 | # | 缺什么 | 影响 | 卡因 |
 |---|---|---|---|
-| ~~**CLD-1**~~ **CLD-1a** | ✅ **`cmd/estop` → p2_core 已接**（批62）：域① 缴械 → `state/arb/motion.suspended="soft_estop"` 广播 → p1 读它零速；域④ 强制爆闪（SE-1）。★ 契约（11 §1.4）四订阅者里 **`p1_motion`（本拍零速 P1-21）与 `p3_task`（充电中止）仍未接** | p1/p3 缺席时，软急停对运动的生效**仅靠 p2→state/arb/motion→p1 这一跳广播**；P1-21 要 p1 直接订 `cmd/estop` 本拍零速，是不依赖广播到达的**冗余**，安全路径应两条都有 | `[SW-NOW]` p1_motion 订 `cmd/estop`（P1-21，白名单已含）+ p3_task 订（充电中止）。判据：`test_cloud_acceptance_path::test_estop_reaches_p2_but_not_yet_p1_p3` 补通即红 |
+| ~~**CLD-1**~~ ✅ **CLD-1 已闭合（软件侧三订阅者全接）** | **`cmd/estop` 三个软件订阅者全接**：p2_core（域①缴械+`state/arb/motion`广播+域④爆闪，批62）· p1_motion（本拍零速+stop_reason latch+re-arm，批63）· p3_task（ES-1 freeze 冻结调度，批64）。契约（11 §1.4）第四个 chassis_relay 是 C++（CR-1 纯转发，真正执行路径 SE-1a）。判据 `test_estop_reaches_all_three_software_subscribers` | — | **剩余子项见 CLD-1b/1c** |
+| **CLD-1b** | p1 的**物理 20Hz cmd_vel 零速**待 ctrl_loop 在 `__main__` 激活（GATED-HW，整个控制循环的 gate，非 estop 引入）。订阅+latch+归因+ctrl_loop estop 逻辑均真实可测 | 真正的物理急停执行是 quadruped Tier1（SE-1a）；p1 是软件侧冗余记录+（未来）零速 | `[GATED-HW]` 随 20Hz 控制循环激活 |
+| **CLD-1c** | p3 的 **ES-2（suspend running task）** 与 **ES-3 的 p2 unfreeze 信号通道**未接。ES-2 需新 DAO suspend 方法（转 suspended 必带 suspend_kind=`passive`+suspend_reason=`estop_soft`，满足 schema CHECK 约束）；unfreeze 需确认 p2 通过哪条 key 发显式解冻信号 | ES-1 freeze（本批）已阻止**新**任务派发；ES-2 是主动挂起**当前 running** 任务；两者互补 | `[SW-NOW]` ES-2 DAO suspend 方法 + p2 unfreeze 通道确认 |
 | **CLD-2** | **`p3_task` 不发 `cmd/motion/intent`** —— 任务到运动执行那一跳未建（既有 PB8「执行接线」） | 云端 `GOTO_KEYPOINT` 会收到 `ack=accepted` 与 `state/task` 状态流转，而底盘那侧**一个 APDU 都不会出现** | `[SW-NOW]` 非本轮引入，但云端联调会第一次把它暴露在客户面前 |
 | **CLD-3** | `state/media` / `data/file/index` 无内容源 | 发空数组保活（不是不发），Qt 显示「无可用画面 / 无文件」 | `[GATED-HW]` 相机与文件面未建 |
 | **CLD-4** | `state/robot` 的 `battery` / `storage` 恒 `null`；`robot_state` 只报 `idle`/`running` | Qt 显示「未接入」而非编造值（§3.1 投到线上） | `[GATED-HW]` `state/power` 无发布者；充电态在 p3、急停接合态无发布者 |
