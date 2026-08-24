@@ -1,0 +1,361 @@
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_state_projection.py
+Brief: 机内状态 -> v2.0 state/* 投影的判据 (B-2)
+
+Description:
+本文件的重心是一件事: *** 无源的字段必须是 null, 不许编数.
+
+这是 CLAUDE.md 3.1 的线上版本. 那条铁律讲的是"安全参数写 0.0 冒充已赋值
+会让 v_max 静默限死整机"; 投到云端面就是: battery.soc 编一个 0 会让操作员
+中止出勤, 编一个 100 会让他派机器人出长任务然后半路没电. 两种都是
+fail-silent, 而且是[看起来完全正常]的那一种 -- Qt 上什么异常都没有.
+
+*** 于是本文件的用例分两类, 缺一不可:
+  正向  有源时字段确实带上了值(否则一个"全部返回 null"的实现能全绿)
+  负向  无源时字段确实是 null(否则一个"什么都编一个"的实现能全绿)
+只写其中一类, 另一类的空壳实现就能通过 -- 这正是 11 S14.6 那条"断言只有
+负向 -> 空壳实现全绿"的形状.
+
+Boundaries: 纯函数层. 发布与节律在 test_cloud_bridge.py.
+"""
+from __future__ import annotations
+
+import math
+
+import pytest
+
+pytestmark = pytest.mark.no_device
+
+
+POSE = {"lat": 31.2301971, "lon": 121.4732683, "alt": 8.4,
+        "heading_rad": math.radians(92.5), "heading_valid": True,
+        "speed_mps": 0.6, "fix_type": "rtk_fixed", "cov_h_m": 0.03}
+CLOCK = {"ts_sync": True, "source": "rtk", "age_ms": 80}
+
+
+def _robot(**over):
+    from xbrain.p5_gateway.outbound.state_projection import robot_payload
+
+    kw = {"robot_state": "running", "task_state": "running", "pose": POSE,
+          "clock": CLOCK, "devices": None, "alarm_window_active": True}
+    kw.update(over)
+    return robot_payload(**kw)
+
+
+# --- 无源即 null ------------------------------------------------------
+
+def test_battery_and_storage_are_null_not_invented():
+    """*** 本文件最重要的一条.
+
+    state/power 今天没有任何机内发布者. 三种做法:
+      soc: 0    -> Qt 显示电量耗尽, 操作员中止出勤
+      soc: 100  -> Qt 显示满电, 操作员派长任务, 半路没电
+      soc: null -> Qt 显示"未接入", 联调当天一眼看出哪一侧没做完
+前两种是 fail-silent 且看起来正常. 第三种难看但真实.
+
+    MUTATION: 把 battery 换成 {"soc": 0, ...} -> 这里红.
+    """
+    d = _robot()
+
+    assert d["battery"] is None, (
+        "battery 被编了一个值: %r -- 操作员会据此做出错误决定" % d["battery"])
+    assert d["storage"] is None
+
+
+def test_the_unsourced_list_matches_what_is_actually_null():
+    """*** 清单与产出必须一致, 两个方向都要.
+
+    正向: 清单里写的段, 产出里确实是 null.
+    反向: 产出里是 null 的段, 清单里必须写着 -- 否则某天一段悄悄变成 null
+          (比如上游改了字段名)而没人知道, 表现成 Qt 上那一栏突然空了.
+
+    这条也是为了将来: 源接上以后要删 UNSOURCED_ROBOT_SECTIONS 里的对应项,
+    忘了删的话本条会红, 提醒投影还在发 null.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (
+        UNSOURCED_ROBOT_SECTIONS, robot_payload)
+
+    d = _robot()
+    actually_null = {k for k, v in d.items() if v is None}
+
+    assert set(UNSOURCED_ROBOT_SECTIONS) == actually_null, (
+        "清单 %s 与实际为 null 的段 %s 对不上"
+        % (sorted(UNSOURCED_ROBOT_SECTIONS), sorted(actually_null)))
+    assert robot_payload is not None
+
+
+def test_no_pose_means_the_whole_gps_section_is_null():
+    """*** NO 不返回一个经纬度为 0 的壳.
+
+    (0, 0) 是几内亚湾上的一个真实坐标, Qt 会把机器人画在那里. 本项目在
+    HMI 时区推导上踩过这个具体的坑 -- geo_timezone 必须显式挡掉 (0,0),
+    否则它映到 Etc/GMT 而页脚钟显示一个错误时区.
+    """
+    d = _robot(pose=None)
+
+    assert d["gps"] is None, "无 pose 时 gps 段不是 null: %r" % d["gps"]
+
+
+def test_an_invalid_heading_is_null_not_a_converted_number():
+    """*** heading_valid 为假时不返回换算值.
+
+    一个无效航向换算成度仍然像模像样, Qt 会照着画箭头 -- 而机器人实际
+    朝哪没人知道. 画错方向的箭头比不画箭头更糟: 操作员会信它.
+
+    MUTATION: 删掉 _heading_deg 里的 heading_valid 判断 -> 这里红.
+    """
+    d = _robot(pose=dict(POSE, heading_valid=False))
+
+    assert d["gps"]["heading_deg"] is None, (
+        "无效航向被换算成了 %r 度" % d["gps"]["heading_deg"])
+
+
+# --- 有源即带上 -------------------------------------------------------
+
+def test_a_real_pose_lands_in_the_gps_section():
+    """反向. 没有这条, 一个"gps 恒 null"的实现能让上面三条全绿 --
+    而那个实现会让 Qt 永远看不到机器人在哪."""
+    d = _robot()
+
+    g = d["gps"]
+    assert g["fix"] == "rtk_fixed"
+    assert g["latitude"] == pytest.approx(31.2301971)
+    assert g["longitude"] == pytest.approx(121.4732683)
+    assert g["speed_mps"] == pytest.approx(0.6)
+    assert g["accuracy_m"] == pytest.approx(0.03)
+
+
+def test_heading_is_converted_from_radians_to_degrees():
+    """机内是弧度, v2.0 要度. 忘了换算的话数值差 57 倍 -- 而 92.5 弧度
+    取模后是个合法角度, 看不出错."""
+    d = _robot()
+
+    assert d["gps"]["heading_deg"] == pytest.approx(92.5, abs=1e-6)
+
+
+def test_devices_are_empty_list_not_null_when_none_are_found():
+    """*** 空数组与 null 对 Qt 的意思不同.
+
+    空数组说"一个设备都没发现"(这段实现了); null 说"这段我没实现".
+    devices 这段是实现了的, 只是今天一个都没有 -- 发 null 会让客户以为
+    我们还没做.
+    """
+    d = _robot(devices=None)
+
+    assert d["devices"] == [], "无设备时发了 %r" % d["devices"]
+
+
+def test_a_device_carries_all_four_required_fields():
+    """v2.0 S4.2 逐字: devices[] 每项必须有 id/name/status/last_update_ms."""
+    d = _robot(devices=[{"id": "cam_ptz_vis", "name": "布控球可见光",
+                         "status": "online", "last_update_ms": 120}])
+
+    dev = d["devices"][0]
+    assert set(dev) == {"id", "name", "status", "last_update_ms"}
+
+
+# --- 闭集 -------------------------------------------------------------
+
+def test_a_value_outside_the_closed_set_raises():
+    """CLAUDE.md 3.5: 闭集外的值必抛, NO 不静默透传.
+
+    v2.0 S1.3 从对面重复了同一条: 接收方不得把未知枚举降级解释为某个已知
+    值. 我方发出去一个闭集外的值, 就是逼 Qt 去做那件被禁止的事.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import ProjectionError
+
+    with pytest.raises(ProjectionError):
+        _robot(robot_state="running_fast")
+    with pytest.raises(ProjectionError):
+        _robot(task_state="pending")
+    with pytest.raises(ProjectionError):
+        _robot(pose=dict(POSE, fix_type="rtk"))       # 闭集里是 rtk_fixed
+
+
+def test_clock_ts_sync_is_only_true_when_literally_true():
+    """*** 缺省一律 false(11 F-2 逐字), 只有字面 true 才算同步.
+
+    rtk_driver 是唯一有权判定 ClockStatus.sync 的进程(CLK-A1); 消费者不得
+    把字符串 "true" 或数字 1 升格成同步. 方向是 fail-safe: 未同步只是让
+    带时间窗的规则不命中, 而误判已同步会让它们在错误的时刻命中.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import robot_payload
+
+    for bad in ("true", 1, "yes", None, {}):
+        d = robot_payload(robot_state="idle", task_state="idle", pose=None,
+                          clock={"ts_sync": bad}, devices=None,
+                          alarm_window_active=False)
+        assert d["clock"]["ts_sync"] is False, (
+            "ts_sync=%r 被当成了同步" % bad)
+    assert _robot()["clock"]["ts_sync"] is True     # 反向
+
+
+# --- state/mode -------------------------------------------------------
+
+def test_broadcast_without_a_stream_id_raises():
+    """v2.0 S4.3: broadcast 时 stream_id 必填.
+
+    没有它 Qt 没法把 state/audio 的帧对上是哪一次喊话 -- 两条 key 各说
+    各话, 而按钮选中态要同时参考两条(v2.0 S4.4 逐字).
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (ProjectionError,
+                                                             mode_payload)
+
+    with pytest.raises(ProjectionError):
+        mode_payload(voice_mode="broadcast", source="cloud")
+    # 反向: 带了就该通过.
+    d = mode_payload(voice_mode="broadcast", source="cloud",
+                     stream_id="audio-gj001-0001")
+    assert d["stream_id"] == "audio-gj001-0001"
+
+
+def test_mode_payload_carries_all_five_fields_even_when_null():
+    """五个字段全部必填, 值可以是 null 但键不能少.
+
+    少一个键的话 Qt 那边是 KeyError 而不是"这项未知" -- v2.0 S1.3 把
+    必填字段缺失列为拒绝条件.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import mode_payload
+
+    d = mode_payload(voice_mode="normal", source="system")
+    assert set(d) == {"voice_mode", "source", "stream_id", "entered_ts",
+                      "exit_reason"}
+
+
+# --- state/audio ------------------------------------------------------
+
+def test_playing_is_derived_never_contradicts_speaker_state():
+    """*** 与 ack 的 accepted 同一个道理.
+
+    两个字段表达同一件事时它们迟早会不一致, 而一条
+    {speaker_state:"fault", playing:true} 会让 Qt 的按钮亮着而喇叭是哑的.
+    所以 playing 由 speaker_state 推导, 不单独传.
+
+    MUTATION: 给 audio_payload 加一个 playing 形参 -> 本条的签名检查红.
+    """
+    import inspect
+
+    from xbrain.p5_gateway.outbound.state_projection import audio_payload
+
+    params = set(inspect.signature(audio_payload).parameters)
+    assert "playing" not in params and "recording" not in params, (
+        "playing/recording 成了独立形参 -- 它们迟早会与 speaker_state 打架")
+
+    for spk, want in (("playing", True), ("fault", False),
+                      ("idle", False), ("buffering", False)):
+        d = audio_payload(speaker_state=spk, microphone_state="disabled")
+        assert d["playing"] is want, spk
+        assert d["recording"] is False
+
+
+def test_recording_tracks_microphone_state():
+    from xbrain.p5_gateway.outbound.state_projection import audio_payload
+
+    d = audio_payload(speaker_state="idle", microphone_state="recording")
+    assert d["recording"] is True and d["playing"] is False
+
+
+# --- state/geo/manifest -----------------------------------------------
+
+def test_geo_id_prefix_must_match_the_type():
+    """*** 前缀与 type 是两条线索, 打架时 Qt 按哪条走都可能错.
+
+    v2.0 S4.5 逐字规定 waypoint=w-, path=r-, region=f-. 一条 type 说是
+    路点而 id 以 f- 开头的记录, 在 Qt 的两处代码里会被分到两个图层.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError, geo_manifest_payload)
+
+    with pytest.raises(ProjectionError):
+        geo_manifest_payload(manifest_rev=1, objects=[
+            {"geo_id": "f-north", "type": "waypoint", "name": "x", "rev": 1,
+             "latitude": 31.0, "longitude": 121.0}])
+
+
+def test_a_waypoint_without_coordinates_raises():
+    """v2.0 S4.5: waypoint 必须带 WGS84 坐标.
+
+    没有坐标的路点在地图上画不出来. 静默发出去只会让 Qt 空一格, 而
+    操作员看到的是"这个点不见了" -- 他会以为点被删了.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError, geo_manifest_payload)
+
+    with pytest.raises(ProjectionError):
+        geo_manifest_payload(manifest_rev=1, objects=[
+            {"geo_id": "w-north", "type": "waypoint", "name": "北门",
+             "rev": 3}])
+
+
+def test_an_alarm_region_must_carry_enabled():
+    """停用一个报警区与删除它是两件事(W4-F 的裁决).
+
+    enabled 缺失时 Qt 没法区分"这个区停用了"和"这个区还在生效" -- 而后者
+    会让操作员以为区域仍在保护现场.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError, geo_manifest_payload)
+
+    with pytest.raises(ProjectionError):
+        geo_manifest_payload(manifest_rev=1, objects=[
+            {"geo_id": "f-equip", "type": "alarm_region", "name": "设备区",
+             "rev": 8}])
+
+
+def test_a_full_manifest_round_trips():
+    """反向. 没有这条, 一个"什么都抛"的实现能让上面三条全绿."""
+    from xbrain.p5_gateway.outbound.state_projection import (
+        geo_manifest_payload)
+
+    d = geo_manifest_payload(manifest_rev=12, objects=[
+        {"geo_id": "w-north_gate", "type": "waypoint", "name": "北门",
+         "rev": 3, "latitude": 31.2301971, "longitude": 121.4732683,
+         "altitude": 8.4},
+        {"geo_id": "r-route_north", "type": "recorded_path",
+         "name": "北侧巡检路径", "rev": 5},
+        {"geo_id": "f-alarm_equipment", "type": "alarm_region",
+         "name": "设备区", "rev": 8, "enabled": True}])
+
+    assert d["manifest_rev"] == 12 and d["full"] is True
+    assert len(d["objects"]) == 3
+    assert d["objects"][0]["latitude"] == pytest.approx(31.2301971)
+    assert d["objects"][2]["enabled"] is True
+    # recorded_path 不带坐标, 也不该被塞一个 null 坐标进去.
+    assert "latitude" not in d["objects"][1]
+
+
+# --- state/task -------------------------------------------------------
+
+def test_unknown_progress_is_null_never_zero():
+    """*** v2.0 S3.2 逐字: 未知时必须为 null, 禁止填 0.
+
+    填 0 的话进度条停在最左边, 与"刚开始"完全一样 -- 操作员会以为任务
+    卡住并去中止它. 这与 CLAUDE.md 3.1 那条"0.0 冒充已赋值"是同一个失效
+    模式的两个面.
+
+    MUTATION: 把 normalise_progress 的 None 分支改成返回 0.0 -> 这里红.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import task_item
+
+    d = task_item({"task_id": "t-1", "task_type": "GOTO_KEYPOINT",
+                   "state": "running"})
+    assert d["progress_percent"] is None, (
+        "未知进度被填成了 %r" % d["progress_percent"])
+    # 反向: 真有进度时必须带上, 否则一个恒 null 的实现能通过.
+    d2 = task_item({"task_id": "t-1", "task_type": "GOTO_KEYPOINT",
+                    "state": "running", "progress_percent": 37.5})
+    assert d2["progress_percent"] == pytest.approx(37.5)
+
+
+def test_a_task_item_carries_all_eleven_keys():
+    """字段全部必填(值可为 null). 少一个键 Qt 那边就是 KeyError."""
+    from xbrain.p5_gateway.outbound.state_projection import task_item
+
+    d = task_item({"task_id": "t-1", "task_type": "GOTO_KEYPOINT",
+                   "state": "queued"})
+    assert set(d) == {"task_id", "task_type", "state", "current_waypoint_id",
+                      "completed_count", "total_count", "progress_percent",
+                      "route_id", "route_rev", "started_ts", "message"}

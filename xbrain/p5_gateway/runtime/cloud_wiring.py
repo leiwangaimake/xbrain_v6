@@ -77,6 +77,27 @@ CLOUD_CMD_TASK_ACK = "xbrain/%s/cmd/task/ack"
 CLOUD_CMD_ESTOP_ACK = "xbrain/%s/cmd/estop/ack"
 CLOUD_CMD_MEDIA_SESSION_ACK = "xbrain/%s/cmd/media/session/ack"
 
+# 出站状态面(B-2). 由 CloudProjector 按各自节律发布.
+CLOUD_STATE_TASK = "xbrain/%s/state/task"
+CLOUD_STATE_ROBOT = "xbrain/%s/state/robot"
+CLOUD_STATE_MODE = "xbrain/%s/state/mode"
+CLOUD_STATE_AUDIO = "xbrain/%s/state/audio"
+CLOUD_STATE_MEDIA = "xbrain/%s/state/media"
+CLOUD_STATE_GEO_MANIFEST = "xbrain/%s/state/geo/manifest"
+CLOUD_DATA_FILE_INDEX = "xbrain/%s/data/file/index"
+
+#: 出站状态面九条(不含 state/link 与 event/**, 那两条另有发布者).
+#: v2.0 S2 给的节律, 单位秒. state/robot 固定 10 Hz 是其中最快的一条.
+OUTBOUND_PERIODS = {
+    "state/robot": 0.1,           # v2.0 S4.2 逐字"固定 10 Hz"
+    "state/task": 1.0,            # 变化即发 + 至少 1 Hz
+    "state/mode": 1.0,            # 1 Hz + 变化即发
+    "state/audio": 1.0,           # 1 Hz + 变化即发
+    "state/media": 5.0,           # 每 5 s 全量保活
+    "state/geo/manifest": None,   # 变化即发; session 建立后 2 s 内一份全量
+    "data/file/index": None,      # 可靠面, 连接/变化时发
+}
+
 #: 入站五条. 顺序即 v2.0 S2 表的顺序.
 INBOUND_TEMPLATES = (CLOUD_CMD_TASK, CLOUD_CMD_ESTOP, CLOUD_CMD_MEDIA_SESSION,
                      CLOUD_CMD_FILE_ACK, CLOUD_AUDIO_BROADCAST)
@@ -143,6 +164,31 @@ class CloudBridge:
             CLOUD_CMD_ESTOP_ACK % rid)
         self._pubs["cmd/media/session/ack"] = self._session.declare_publisher(
             CLOUD_CMD_MEDIA_SESSION_ACK % rid)
+        # 出站状态面(B-2). declare 与 put 分开: Qt 一订阅就该看到有发布者,
+        # 哪怕第一帧还没到 -- 一条没有发布者的 key 在 Zenoh 上与"网络不通"
+        # 不可区分, 而客户会去查他们自己的网络.
+        #
+        # * 逐条写开, NO 不用循环 -- 循环把 key 藏进了运行期.
+        # 守这面的判据(tests/.../test_cloud_key_surface_wired.py)是静态
+        # AST 提取: 它读 declare_publisher 的第一个实参. 写成
+        # `for _, tpl in (...): declare_publisher(tpl % rid)` 的话, 实参是
+        # 一个循环变量, 提取器看不见任何 key -- 于是"这条 key 接了没有"
+        # 变成一个只能靠起栈才能回答的问题. 一段让静态检查失明的代码,
+        # 省下的几行不值.
+        self._pubs["state/task"] = self._session.declare_publisher(
+            CLOUD_STATE_TASK % rid)
+        self._pubs["state/robot"] = self._session.declare_publisher(
+            CLOUD_STATE_ROBOT % rid)
+        self._pubs["state/mode"] = self._session.declare_publisher(
+            CLOUD_STATE_MODE % rid)
+        self._pubs["state/audio"] = self._session.declare_publisher(
+            CLOUD_STATE_AUDIO % rid)
+        self._pubs["state/media"] = self._session.declare_publisher(
+            CLOUD_STATE_MEDIA % rid)
+        self._pubs["state/geo/manifest"] = self._session.declare_publisher(
+            CLOUD_STATE_GEO_MANIFEST % rid)
+        self._pubs["data/file/index"] = self._session.declare_publisher(
+            CLOUD_DATA_FILE_INDEX % rid)
         _logger.info("p5 cloud bridge wired: rid=%s, %d subs, %d pubs",
                      rid, len(self._subs), len(self._pubs))
 
@@ -363,6 +409,22 @@ class CloudBridge:
                               seq=self._seq.next(self._rid, name))
         pub.put(json.dumps(body, ensure_ascii=False).encode("utf-8"))
 
+    def publish_state(self, name: str, data: Dict[str, Any]) -> None:
+        """把一段已投影好的 data 发到对应云端 key.
+
+        *** 投影本身在 outbound/state_projection.py, 这里只负责发.
+        分开是因为投影是纯函数(可在本机逐字段断言), 而发布要 Zenoh. 混在
+        一起的话, "字段对不对"就只能在真机上验 -- 而真机验证的每一轮要
+        几分钟, 于是没人会去验边界情况.
+        """
+        pub = self._pubs.get(name)
+        if pub is None:
+            raise KeyError("no cloud publisher for %r" % name)
+        body = build_envelope(self._rid, name, data,
+                              ts=time.time(),   # WALL-CLOCK-OK(align)
+                              seq=self._seq.next(self._rid, name))
+        pub.put(json.dumps(body, ensure_ascii=False).encode("utf-8"))
+
     def _default_internal_put(self, key: str, payload: bytes) -> None:
         """往机内相对 key 发. publisher 按 key 缓存 -- 每条报文新建一个
         publisher 会在 Zenoh 侧反复做声明/注销, 而声明是有成本的."""
@@ -432,4 +494,4 @@ __all__ = ["CloudBridge", "maybe_wire", "relative_key", "INBOUND_TEMPLATES",
            "CLOUD_CMD_TASK", "CLOUD_CMD_ESTOP", "CLOUD_CMD_MEDIA_SESSION",
            "CLOUD_CMD_FILE_ACK", "CLOUD_AUDIO_BROADCAST",
            "CLOUD_CMD_TASK_ACK", "CLOUD_CMD_ESTOP_ACK",
-           "CLOUD_CMD_MEDIA_SESSION_ACK", "SRC_QT"]
+           "CLOUD_CMD_MEDIA_SESSION_ACK", "SRC_QT", "OUTBOUND_PERIODS"]

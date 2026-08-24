@@ -117,10 +117,19 @@ def test_five_inbound_and_three_ack_keys_are_declared():
         "xbrain/gj-001/cmd/file/ack",
         "xbrain/gj-001/cmd/media/session",
         "xbrain/gj-001/cmd/task"])
+    # 三条 ack + 七条出站状态面. state/link 与 event/** 不在这里 --
+    # 它们在 main_wiring 里另有发布者(接手前就存在), 桥不去抢.
     assert sorted(session.pubs) == sorted([
         "xbrain/gj-001/cmd/estop/ack",
         "xbrain/gj-001/cmd/media/session/ack",
-        "xbrain/gj-001/cmd/task/ack"])
+        "xbrain/gj-001/cmd/task/ack",
+        "xbrain/gj-001/data/file/index",
+        "xbrain/gj-001/state/audio",
+        "xbrain/gj-001/state/geo/manifest",
+        "xbrain/gj-001/state/media",
+        "xbrain/gj-001/state/mode",
+        "xbrain/gj-001/state/robot",
+        "xbrain/gj-001/state/task"])
 
 
 def test_subscriber_handles_are_held():
@@ -563,3 +572,73 @@ def test_the_cloud_face_declares_no_relative_key_that_p3_owns():
     relative = [k for k in session.subs if not k.startswith("xbrain/")]
     assert not relative, (
         "云端桥订了机内相对 key: %s -- 语音任务会被处理两遍" % relative)
+
+
+# --- 出站状态面 -------------------------------------------------------
+
+def test_publish_state_wraps_the_payload_in_the_six_field_envelope():
+    """投影产出的 data 必须被包进 v2.0 S1.1 的六字段信封.
+
+    裸发 data 的话 Qt 拿不到 rid/seq/ts, 也就没法做去重与乱序判定 --
+    而它对可靠面(event/data)是按业务 ID 去重的, 对状态面靠 seq.
+    """
+    bridge, session = _bridge()
+
+    bridge.publish_state("state/mode", {"voice_mode": "normal"})
+
+    env = _puts_to(session, "state/mode")[0]
+    assert set(env) == {"v", "rid", "ts", "seq", "src", "data"}
+    assert env["src"] == "p5_gateway" and env["rid"] == RID
+    assert env["data"]["voice_mode"] == "normal"
+
+
+def test_seq_is_per_key_not_global():
+    """*** seq 按 key 独立递增.
+
+    全局一个计数器的话, 10 Hz 的 state/robot 会把 1 Hz 的 state/mode 的
+    seq 顶到很大且跳跃 -- 而 Qt 用 seq 判乱序与丢包, 看到的就是"这条 key
+    一直在丢包". v2.0 S1.1 把 seq 定义在 key 维度上.
+
+    MUTATION: 把 SeqCounter 的 slot 从 (rid, key) 改成 rid -> 这里红.
+    """
+    bridge, session = _bridge()
+
+    for _ in range(3):
+        bridge.publish_state("state/robot", {"robot_state": "idle"})
+    bridge.publish_state("state/mode", {"voice_mode": "normal"})
+
+    assert [e["seq"] for e in _puts_to(session, "state/robot")] == [1, 2, 3]
+    assert [e["seq"] for e in _puts_to(session, "state/mode")] == [1], (
+        "state/mode 的 seq 被 state/robot 顶走了")
+
+
+def test_publishing_to_an_unknown_key_raises():
+    """NO 不静默吞掉一个发不出去的状态.
+
+    吞掉的表现是 Qt 上那一栏永远空着, 而日志里什么都没有 -- 联调时会被
+    当成"客户端没订阅".
+    """
+    bridge, _session = _bridge()
+
+    with pytest.raises(KeyError):
+        bridge.publish_state("state/nonexistent", {})
+
+
+def test_every_outbound_key_has_a_declared_period_or_an_explicit_none():
+    """*** 每条出站 key 的节律必须写下来.
+
+    没写的那条会以某个人当时顺手的频率发 -- 而 v2.0 S2 对每条都给了节律
+    (state/robot 固定 10 Hz, state/media 每 5 s 保活). 发慢了 Qt 判超时,
+    发快了挤占带宽. None 表示[事件驱动], 是一个明确的选择而不是遗漏.
+    """
+    from xbrain.p5_gateway.runtime.cloud_wiring import OUTBOUND_PERIODS
+
+    _b, session = _bridge()
+    state_pubs = {k.split("/", 2)[2] for k in session.pubs
+                  if "/ack" not in k}
+
+    assert state_pubs == set(OUTBOUND_PERIODS), (
+        "接线里的出站状态 key %s 与节律表 %s 对不上"
+        % (sorted(state_pubs), sorted(OUTBOUND_PERIODS)))
+    assert OUTBOUND_PERIODS["state/robot"] == 0.1, "v2.0 S4.2 逐字固定 10 Hz"
+    assert OUTBOUND_PERIODS["state/media"] == 5.0, "v2.0 S2 每 5 s 保活"
