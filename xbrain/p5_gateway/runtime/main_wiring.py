@@ -908,6 +908,9 @@ def run_voice_loop_wiring(stop_flag: dict,
                 # extra publishes.
                 if cloud_projector is not None:
                     cloud_projector.tick(hmi_state)
+                # A-1: 清理超时的 cmd/task pending, 回 timeout ack(v2.0 S1.4).
+                if cloud_bridge is not None:
+                    cloud_bridge.tick()
                 time.sleep(0.1)
         finally:
             # Stop the HMI first so it stops reading shared state, then the event

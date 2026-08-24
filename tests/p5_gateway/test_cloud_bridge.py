@@ -110,18 +110,36 @@ def _internal_puts(session, key):
     return [json.loads(p.decode("utf-8")) for k, p in session.puts if k == key]
 
 
+def _feed_internal_ack(session, ack_key, cmd_id, result, code="OK",
+                       message="", detail=None):
+    """模拟 p3 在机内 ack_key(cmd/task/ack 或 cmd/geo/ack)上回一条业务 ack.
+
+    这是 A-1 承接链路的另一半: 桥转发命令后, p3 处理并在机内 ack key 上回
+    结果, 桥订阅它, 翻译成 v2.0 发到云端. ack_key 是相对 key(p3 在本机发).
+    """
+    body = {"schema": "task_ack_v1", "cmd_id": cmd_id,
+            "result": result, "code": code}
+    if message:
+        body["message"] = message
+    if detail is not None:
+        body["detail"] = detail
+    session.subs[ack_key](_Sample(ack_key, body))
+
+
 # --- 接线本身 ---------------------------------------------------------
 
 def test_five_inbound_and_three_ack_keys_are_declared():
     """基线. 没有它, 下面每条"报文没到"的断言都可能只是喂错了 key."""
     _bridge_, session = _bridge()
 
+    # 5 条云端入站 + 2 条机内 ack(承接 p3 业务 ack, A-1). 机内 ack 是相对 key.
     assert sorted(session.subs) == sorted([
         "xbrain/gj-001/audio/broadcast",
         "xbrain/gj-001/cmd/estop",
         "xbrain/gj-001/cmd/file/ack",
         "xbrain/gj-001/cmd/media/session",
-        "xbrain/gj-001/cmd/task"])
+        "xbrain/gj-001/cmd/task",
+        "cmd/task/ack", "cmd/geo/ack"])
     # 三条 ack + 八条出站状态面.
     # * state/link 起初以为"main_wiring 里已有发布者", 那是看错了: 那条
     # 发的是机内相对 key, 而 Qt 订的是带 rid 前缀的. 两条 key 都要有,
@@ -151,8 +169,9 @@ def test_subscriber_handles_are_held():
     """
     bridge, _session = _bridge()
 
-    assert bridge.alive() == 5, (
-        "桥只接住了 %d 个订阅句柄, 其余会被 GC 掉" % bridge.alive())
+    assert bridge.alive() == 7, (
+        "桥只接住了 %d 个订阅句柄, 其余会被 GC 掉(5 云端入站 + 2 机内 ack)"
+        % bridge.alive())
 
 
 # --- 一条合法任务走完全程 ---------------------------------------------
@@ -172,7 +191,9 @@ def test_a_goto_lands_on_the_internal_key_in_the_s7_2_shape():
     assert len(internal) == 1, "机内 cmd/task 上没有出现报文: %s" % session.puts
     p = internal[0]
     assert p["action"] == "submit"
-    assert p["cmd_id"] == "m-1"          # 幂等键 = 云端 msg_id (11 S2.3)
+    # A-1: 转发的 cmd_id 打 "c-" 前缀, 网关据此在机内 ack 上认出云端发起的.
+    assert p["cmd_id"] == "c-m-1"        # "c-" + 云端 msg_id
+
     assert p["task"]["task_id"] == "t-1"
     assert p["task"]["type"] == "goto_keypoint"
     assert p["source"] == "cloud", (
@@ -195,11 +216,31 @@ def test_the_internal_key_carries_no_rid_prefix():
         "机内发布用了带前缀的 key: %s" % [k for k, _ in session.puts])
 
 
-def test_an_accepted_task_gets_an_ack_on_the_cloud_key():
-    """v2.0 S3.1: 每条 cmd/task 都要回 ack, 八字段齐全."""
+def test_a_forwarded_task_gets_no_cloud_ack_until_p3_answers():
+    """*** A-1 核心: 转发后[不]立即回 accepted, 等 p3 的机内 ack.
+
+    审计头号发现: 立即回乐观 accepted 会掩盖 p3 的业务拒绝. 改成 pending --
+    转发后云端还没有 ack, 桥有一条 pending 在等.
+
+    MUTATION: 恢复转发后立即 publish_ack(accepted) -> 这里红(pending 期就有
+    云端 ack 了).
+    """
     _b, session = _bridge()
 
     _feed(session, "cmd/task", _qt_task())
+
+    assert not _puts_to(session, "cmd/task/ack"), (
+        "转发后立即回了云端 ack -- 那会掩盖 p3 的业务判断")
+    assert _b.pending_count() == 1, "转发的任务没有登记 pending"
+
+
+def test_p3_accepted_ack_is_translated_to_the_cloud():
+    """*** 承接: p3 回 accepted, 桥翻译成 v2.0 八字段发云端(S3.1)."""
+    _b, session = _bridge()
+
+    _feed(session, "cmd/task", _qt_task())
+    # p3 处理后在机内 cmd/task/ack 回 accepted(cmd_id 复用 "c-m-1").
+    _feed_internal_ack(session, "cmd/task/ack", "c-m-1", "accepted")
 
     acks = _puts_to(session, "cmd/task/ack")
     assert len(acks) == 1
@@ -210,25 +251,76 @@ def test_an_accepted_task_gets_an_ack_on_the_cloud_key():
     assert d["ref_msg_id"] == "m-1" and d["task_id"] == "t-1"
     assert d["task_type"] == "GOTO_KEYPOINT"
     assert d["error_code"] == 0
-    assert d["msg_id"] != d["ref_msg_id"], (
-        "ack 的 msg_id 与被答复的那条相同 -- Qt 没法区分请求与答复")
+    assert d["msg_id"] != d["ref_msg_id"]
+    assert _b.pending_count() == 0, "翻译后 pending 没有清掉"
 
 
-def test_forwarding_happens_before_the_accepted_ack():
-    """*** 顺序有意义, 不是风格问题.
+def test_p3_business_reject_reaches_the_cloud():
+    """*** A-1 要害: p3 的业务拒绝(围栏外)必须回到云端(S1.4/S3.1).
 
-    先回 ack 再转发的话, 一次转发失败会留下一条"已受理"的 ack 而机器人
-    什么都没做 -- Qt 看到 accepted 就不会重发, 这条指令就此消失.
+    审计前这条永远回不去(网关乐观 accepted). 现在 p3 回 rejected+E_OUT_OF_FENCE,
+    桥翻译成 v2.0 rejected+2006 发云端.
 
-    MUTATION: 把 _handle_task 里的 put 与 _publish_ack 两行对调 -> 这里红.
+    MUTATION: _on_internal_ack 不发云端 ack -> 这里红.
     """
     _b, session = _bridge()
 
     _feed(session, "cmd/task", _qt_task())
+    _feed_internal_ack(session, "cmd/task/ack", "c-m-1", "rejected",
+                       code="E_OUT_OF_FENCE", message="第 4 个关键点位于围栏外")
+
+    d = _puts_to(session, "cmd/task/ack")[0]["data"]
+    assert d["result"] == "rejected" and d["accepted"] is False
+    assert d["error_code"] == 2006             # E_OUT_OF_FENCE -> 2006
+    assert d["detail"]["code"] == "E_OUT_OF_FENCE"
+    assert d["reason"]                          # 失败必须有可读 reason
+
+
+def test_p3_duplicate_reaches_the_cloud():
+    """p3 的 duplicate(重复的 STOP)也要回到云端(S1.4)."""
+    _b, session = _bridge()
+
+    _feed(session, "cmd/task", _qt_task())
+    _feed_internal_ack(session, "cmd/task/ack", "c-m-1", "duplicate")
+
+    d = _puts_to(session, "cmd/task/ack")[0]["data"]
+    assert d["result"] == "duplicate" and d["accepted"] is True
+    assert d["error_code"] == 0
+
+
+def test_an_internal_ack_for_a_non_cloud_command_is_ignored():
+    """*** HMI/语音发起的机内 ack 不转发到云端.
+
+    机内 cmd/task/ack 也载着 HMI(h-)与语音的答复. 桥只处理[自己转发过]的
+    (在 pending 里的); HMI 的 cmd_id 不在 pending -> 丢弃.
+
+    MUTATION: _on_internal_ack 无条件 publish(不查 pending) -> 这里红.
+    """
+    _b, session = _bridge()
+
+    _feed_internal_ack(session, "cmd/task/ack", "h-hmi-1", "accepted")
+
+    assert not _puts_to(session, "cmd/task/ack"), (
+        "HMI 发起的 ack 被当成云端的转发了")
+
+
+def test_audio_forwards_before_its_self_ack():
+    """*** 顺序有意义(AUDIO 仍是网关自造 ack, B-1).
+
+    GOTO/STOP/ALARM 不再自造 ack(A-1 改承接), 但 AUDIO 的 stream_id 由网关
+    分配, ack 仍自造 -- 且必须先转发再回 ack: 先回 ack 再转发的话, 一次转发
+    失败会留下一条 accepted 而 p2 什么都没收到.
+
+    MUTATION: 把 _handle_audio 里的 _internal_put 与 _publish_ack 对调 ->
+    这里红.
+    """
+    _b, session = _bridge()
+
+    _feed(session, "cmd/task", _audio("start"))
 
     keys = [k for k, _ in session.puts]
-    assert keys.index("cmd/task") < keys.index("xbrain/gj-001/cmd/task/ack"), (
-        "ack 先于转发发出: %s" % keys)
+    assert keys.index("cmd/audio/speak") < keys.index(
+        "xbrain/gj-001/cmd/task/ack"), "ack 先于转发发出: %s" % keys
 
 
 # --- 拒绝路径 ---------------------------------------------------------
@@ -344,13 +436,16 @@ def test_a_repeat_is_acked_duplicate_and_forwarded_only_once():
     """
     _b, session = _bridge()
 
-    _feed(session, "cmd/task", _qt_task())
-    _feed(session, "cmd/task", _qt_task())
+    _feed(session, "cmd/task", _qt_task())      # 第一次: 转发 + pending
+    _feed(session, "cmd/task", _qt_task())      # 第二次: dedup 命中
 
     assert len(_internal_puts(session, "cmd/task")) == 1, (
         "重发的任务被转了两次 -- 会创建第二条任务")
+    # 第一次转发不回 ack(等 p3, A-1); 第二次 dedup 直接回 duplicate.
     acks = _puts_to(session, "cmd/task/ack")
-    assert [a["data"]["result"] for a in acks] == ["accepted", "duplicate"]
+    assert [a["data"]["result"] for a in acks] == ["duplicate"], (
+        "第一次转发就回了 ack, 或 dedup 没生效: %s"
+        % [a["data"]["result"] for a in acks])
 
 
 def test_a_different_msg_id_is_not_deduped():
@@ -568,19 +663,26 @@ def test_main_wiring_actually_builds_the_bridge():
         "或者被调了两次(两座桥会各订一份, 每条报文处理两遍)" % len(calls))
 
 
-def test_the_cloud_face_declares_no_relative_key_that_p3_owns():
-    """*** 云端面不得抢机内 key 的订阅.
+def test_the_cloud_face_does_not_subscribe_a_command_key_p3_owns():
+    """*** 云端面不得抢机内[命令]key 的订阅.
 
-    网关若也订了裸 cmd/task, 它会收到 p4_agent 发的语音任务并当成云端报文
-    再处理一遍 -- 语音任务被执行两次. 这是"不影响语音链路"最容易破的一处.
+    网关若订了裸 cmd/task/cmd/geo(p3 订阅的命令 key), 它会收到 p4_agent 发的
+    语音任务并当成云端报文再处理一遍 -- 语音任务被执行两次.
 
-    判据: 桥声明的订阅 key 全部带 xbrain/ 前缀, 一条相对 key 都没有.
+    * A-1 后桥[确实]订了两条机内相对 key: cmd/task/ack 与 cmd/geo/ack. 但那是
+    [承接 p3 发布的 ack], 不是抢 p3 的命令订阅 -- p3 发布 ack, 桥消费 ack,
+    方向相反, 不会重复执行任何命令. 所以判据精确到: 桥订的相对 key 只能是
+    [ack key], 命令 key(cmd/task, cmd/geo, cmd/audio/speak, cmd/estop 裸形)
+    一条都不能有.
     """
     _b, session = _bridge()
 
     relative = [k for k in session.subs if not k.startswith("xbrain/")]
-    assert not relative, (
-        "云端桥订了机内相对 key: %s -- 语音任务会被处理两遍" % relative)
+    command_keys = [k for k in relative if not k.endswith("/ack")]
+    assert not command_keys, (
+        "云端桥订了机内命令 key: %s -- 语音任务会被处理两遍" % command_keys)
+    # 订的相对 key 必须全是 ack(承接), 不多不少两条.
+    assert sorted(relative) == ["cmd/geo/ack", "cmd/task/ack"], relative
 
 
 # --- 出站状态面 -------------------------------------------------------
@@ -809,3 +911,114 @@ def test_audio_stream_id_matches_the_v2_id_regex():
     _feed(session, "cmd/task", _audio("start"))
     sid = _puts_to(session, "cmd/task/ack")[0]["data"]["detail"]["stream_id"]
     assert re.match(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", sid), sid
+
+
+# --- A-1: pending 超时 tick --------------------------------------------
+
+def _bridge_clock():
+    """带假单调钟的桥, 用于测 pending 超时."""
+    from xbrain.p5_gateway.runtime.cloud_wiring import CloudBridge
+
+    session = _FakeSession()
+    clock = {"t": 1000.0}
+    bridge = CloudBridge(session, RID, now_mono=lambda: clock["t"])
+    bridge.wire()
+    return bridge, session, clock
+
+
+def test_pending_not_expired_before_the_timeout():
+    """*** tick 在超时前不清 pending, 不回 timeout ack.
+
+    MUTATION: PENDING_ACK_TIMEOUT_S 改成 0 -> 这里红(立刻超时).
+    """
+    bridge, session, clock = _bridge_clock()
+
+    _feed(session, "cmd/task", _qt_task())
+    clock["t"] += 1.9                            # < 2.0s
+    bridge.tick()
+
+    assert bridge.pending_count() == 1, "还没到点就清了 pending"
+    assert not _puts_to(session, "cmd/task/ack")
+
+
+def test_pending_expires_and_gets_a_timeout_reject():
+    """*** p3 2 秒没回, tick 清 pending 并回 rejected+timeout(v2.0 S1.4).
+
+    NO 不静默丢弃 -- 那样 Qt 会等到 3 秒判离线.
+
+    MUTATION: tick 里不 publish_ack -> 这里红(超时后云端没有 ack).
+    """
+    bridge, session, clock = _bridge_clock()
+
+    _feed(session, "cmd/task", _qt_task())
+    clock["t"] += 2.1                            # > 2.0s
+    bridge.tick()
+
+    assert bridge.pending_count() == 0, "超时后 pending 没清"
+    acks = _puts_to(session, "cmd/task/ack")
+    assert len(acks) == 1
+    d = acks[0]["data"]
+    assert d["result"] == "rejected" and d["error_code"] != 0
+    assert d["ref_msg_id"] == "m-1" and d["reason"]
+
+
+def test_a_p3_ack_before_timeout_cancels_the_pending():
+    """p3 在超时前回了 ack, 后续 tick 不该再发 timeout ack."""
+    bridge, session, clock = _bridge_clock()
+
+    _feed(session, "cmd/task", _qt_task())
+    _feed_internal_ack(session, "cmd/task/ack", "c-m-1", "accepted")
+    assert bridge.pending_count() == 0
+    clock["t"] += 5.0
+    bridge.tick()
+
+    # 只有 p3 的 accepted, 没有第二条 timeout ack.
+    acks = _puts_to(session, "cmd/task/ack")
+    assert [a["data"]["result"] for a in acks] == ["accepted"]
+
+
+def test_alarm_business_ack_comes_back_on_cmd_geo_ack():
+    """*** ALARM 走 cmd/geo, p3 的 ack 在 cmd/geo/ack 上回来, 也要翻译转发.
+
+    审计前 ALARM 的业务结果(版本冲突 E_GEO_CONFLICT)同样回不到云端.
+    """
+    bridge, session, _clock = _bridge_clock()
+
+    alarm = _qt_task(data={"task_type": "SET_ALARM_CONFIG",
+                           "payload": {"alarm_level": 1, "siren_level": 70,
+                                       "duration_sec": 5, "cooldown_sec": 2.0,
+                                       "alarm_window": {"start": "22:00",
+                                                        "end": "05:00"},
+                                       "rules": [], "regions": []}})
+    _feed(session, "cmd/task", alarm)
+    # p3 在 cmd/geo/ack 回版本冲突.
+    _feed_internal_ack(session, "cmd/geo/ack", "c-m-1", "rejected",
+                       code="E_GEO_CONFLICT", message="区域版本冲突")
+
+    d = _puts_to(session, "cmd/task/ack")[0]["data"]
+    assert d["result"] == "rejected"
+    assert d["detail"]["code"] == "E_GEO_CONFLICT"
+
+
+def test_main_wiring_ticks_the_cloud_bridge_for_pending_timeout():
+    """*** 守接线: pending 超时清理靠 main_wiring 主循环调 cloud_bridge.tick.
+
+    tick 写好了而主循环不调它, pending 会永远积着, 超时 ack 永远不发 --
+    p3 挂掉时云端无限等. AST 查 main_wiring 里对 cloud_bridge.tick 的调用.
+
+    MUTATION: 注释掉主循环里的 cloud_bridge.tick() -> 这里红.
+    """
+    import ast
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[2] / "xbrain"
+           / "p5_gateway" / "runtime" / "main_wiring.py").read_text(
+               encoding="utf-8")
+    ticks = [n for n in ast.walk(ast.parse(src))
+             if isinstance(n, ast.Call)
+             and getattr(n.func, "attr", "") == "tick"
+             and getattr(getattr(n.func, "value", None), "id", "")
+             == "cloud_bridge"]
+    assert len(ticks) == 1, (
+        "main_wiring 里对 cloud_bridge.tick 的调用有 %d 处 -- pending 超时"
+        "没有人清" % len(ticks))

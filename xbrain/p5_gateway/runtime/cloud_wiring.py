@@ -52,7 +52,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..inbound.cloud_inbound import (InboundReject, SRC_QT, frame_ids,
                                      is_cloud_frame, parse_frame, rid_from_key)
-from ..inbound.task_router import CLOUD_ORIGIN, KEY_AUDIO, route
+from ..inbound.task_router import (CLOUD_ORIGIN, KEY_AUDIO, KEY_GEO,
+                                    KEY_TASK, route)
+from ..outbound.ack_translate import translate_ack
 from ..outbound.cloud_envelope import SeqCounter, build_envelope
 from ..outbound.task_ack import (DedupWindow, RESULT_ACCEPTED, RESULT_REJECTED,
                                  build_ack, duplicate_ack)
@@ -86,6 +88,14 @@ CLOUD_STATE_MEDIA = "xbrain/%s/state/media"
 CLOUD_STATE_GEO_MANIFEST = "xbrain/%s/state/geo/manifest"
 CLOUD_DATA_FILE_INDEX = "xbrain/%s/data/file/index"
 CLOUD_STATE_LINK = "xbrain/%s/state/link"
+
+#: 云端发起的机内命令的 cmd_id 前缀(审计 A-1). 像 HMI 的 "h-", 网关用它在
+#: 机内 ack 上认出"这条是回应云端的", 与 HMI/语音发起的分开.
+CLOUD_CMD_PREFIX = "c-"
+
+#: pending ack 的超时(v2.0 S1.4: 2 秒内必回 ack). p3 正常 ms 级回, 这个超时
+#: 只兜 p3 挂了的情形 -- 到点还没收到机内 ack 就回一条 rejected+timeout.
+PENDING_ACK_TIMEOUT_S = 2.0
 
 #: 事件面. v2.0 的 key 是 xbrain/{rid}/event/{severity}/{category}, 而机内
 #: 生产者(p2_core / p3_task / p5 自己)一律发在相对 event/{sev}/{cat} 上.
@@ -142,7 +152,8 @@ class CloudBridge:
 
     def __init__(self, session: Any, rid: str, *,
                  internal_put: Optional[Callable[[str, bytes], None]] = None,
-                 dedup: Optional[DedupWindow] = None) -> None:
+                 dedup: Optional[DedupWindow] = None,
+                 now_mono: Optional[Callable[[], float]] = None) -> None:
         if not rid:
             # 没有 rid 就构不出合法 key. 宁可不建桥也不建一条 "xbrain//cmd/task"
             # -- 后者会订到一个谁都不发的 key 上, 表现为"客户端连上了但没反应".
@@ -160,6 +171,11 @@ class CloudBridge:
         # AUDIO_CONTROL start 的 stream_id 由网关分配(审计 B-1). 按 rid 计数,
         # 从 1 起. 见 _handle_audio.
         self._audio_seq = 0
+        # A-1 承接: 转发给 p3 的 cmd/task/geo 登记在这, 等 p3 的机内 ack 回来
+        # 翻译转发到云端. cmd_id("c-"+msg_id) -> (msg_id, task_id, task_type,
+        # mono_ms). 见 _handle_task / _on_internal_ack / tick.
+        self._pending: Dict[str, tuple] = {}
+        self._now_mono = now_mono or time.monotonic
         #: 只为可观测: 各类报文的处理计数. 不参与任何判定.
         self.stats: Dict[str, int] = {"accepted": 0, "rejected": 0,
                                       "duplicate": 0, "ignored": 0}
@@ -213,6 +229,13 @@ class CloudBridge:
             CLOUD_DATA_FILE_INDEX % rid)
         self._pubs["state/link"] = self._session.declare_publisher(
             CLOUD_STATE_LINK % rid)
+        # A-1: 承接 p3 的机内业务 ack. GOTO/STOP 走 cmd/task -> cmd/task/ack;
+        # ALARM 走 cmd/geo -> cmd/geo/ack. 两条都是[相对]机内 key(不带 rid
+        # 前缀), p3 在本机发. 收到后按 "c-" 前缀认出云端的, 翻译成 v2.0 回云端.
+        self._subs.append(self._session.declare_subscriber(
+            "cmd/task/ack", self._on_internal_ack))
+        self._subs.append(self._session.declare_subscriber(
+            "cmd/geo/ack", self._on_internal_ack))
         _logger.info("p5 cloud bridge wired: rid=%s, %d subs, %d pubs",
                      rid, len(self._subs), len(self._pubs))
 
@@ -283,18 +306,90 @@ class CloudBridge:
             self._handle_audio(msg_id, task_id, task_type, payload)
             return
 
-        # *** 先转发再回 ack.
-        # 反过来的话, 一次转发失败会留下一条"已受理"的 ack 而机器人什么都
-        # 没做 -- Qt 那边看到 accepted 就不会重发了.
+        # *** A-1: GOTO/STOP/ALARM 不回乐观 accepted, 而是[登记 pending +
+        # 转发], 等 p3 的机内 ack 回来翻译成 v2.0 回云端.
+        # 审计头号发现: 立即回 accepted 会掩盖 p3 的业务拒绝(E_NOT_FOUND /
+        # E_OUT_OF_FENCE / E_BUSY / duplicate), 而 v2.0 S1.4 逐字要求 ack
+        # "包括结构拒绝, 业务拒绝和 duplicate".
+        # 机内 payload 的 cmd_id 打上 "c-" 前缀, p3 回 ack 时复用它, 网关
+        # 据此在机内 cmd/task/ack 上认出云端发起的那些.
+        internal_cmd_id = CLOUD_CMD_PREFIX + (msg_id or "")
+        payload["cmd_id"] = internal_cmd_id
+        self._pending[internal_cmd_id] = (
+            msg_id or "", task_id or "", task_type or "", self._now_mono())
         self._internal_put(internal_key, json.dumps(
             payload, ensure_ascii=False).encode("utf-8"))
-        self._publish_ack("cmd/task/ack", build_ack(
-            msg_id=_new_msg_id(), ref_msg_id=msg_id or "",
-            task_id=task_id or "", task_type=task_type or "",
-            result=RESULT_ACCEPTED))
-        self.stats["accepted"] += 1
-        _logger.info("p5 cloud task %s -> %s (origin=%s)",
+        _logger.info("p5 cloud task %s -> %s (origin=%s, pending ack)",
                      task_type, internal_key, CLOUD_ORIGIN)
+
+    def _on_internal_ack(self, sample: Any) -> None:
+        """机内 cmd/task/ack 或 cmd/geo/ack 到达: 若是云端发起的, 翻译回云端.
+
+        RUST 线程(CLAUDE.md 4.2): 纯解码 + 查表 + 一次 put. NO 不 await.
+
+        *** 靠 "c-" 前缀 + pending 表[双重]认云端的.
+        这条机内 ack 也载着 HMI(h-)与语音发起的答复. 前缀先粗筛, pending 表
+        再精确匹配 -- 一条 "c-" 前缀但不在 pending 里的(比如网关重启后 p3
+        迟到的 ack)不会被误发, 因为 pending 里没有它.
+        """
+        try:
+            raw, _key = _sample_parts(sample)
+            body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                return
+            cmd_id = body.get("cmd_id")
+            if not isinstance(cmd_id, str):
+                return
+            # *** pending 表是唯一且充分的门, NO 不另加前缀检查.
+            # 机内 cmd/task/ack 也载着 HMI(h-)与语音发起的答复, 但只有网关
+            # 自己转发过的("c-"+msg_id)才在 pending 里 -- 查不到就丢弃. 这
+            # 一条 O(1) 查找同时完成了[是不是云端的]与[是否已超时清理]两件事:
+            #   HMI/语音的 cmd_id      -> 不在 pending -> 丢
+            #   网关重启后的迟到 ack   -> 不在 pending -> 丢(请求早已没人等)
+            # "c-" 前缀仍在转发时打上, 那是给 main_wiring 的 HMI 侧
+            # (_on_uplink_ack 查 "h-")区分用的, 不是本处的过滤依据.
+            entry = self._pending.pop(cmd_id, None)
+            if entry is None:
+                return
+            msg_id, task_id, task_type, _mono = entry
+            v2_ack = translate_ack(
+                body, ref_msg_id=msg_id, task_id=task_id, task_type=task_type,
+                new_msg_id=_new_msg_id())
+            self._publish_ack("cmd/task/ack", v2_ack)
+            self.stats["accepted" if v2_ack["accepted"] else "rejected"] += 1
+        except Exception:                        # noqa: BLE001
+            _logger.exception("p5 cloud internal-ack handler crashed")
+
+    def tick(self, now_mono_ms: int = None) -> None:
+        """由网关主循环周期调用: 清理超时的 pending, 回一条 timeout ack.
+
+        v2.0 S1.4: 2 秒内必回 ack. p3 正常 ms 级回, 到点还没回说明 p3 挂了或
+        极慢 -- 回一条 rejected(2002 忙/超时)让 Qt 不至于无限等; NO 不静默
+        丢弃, 那样 Qt 会一直等到 3 秒判离线.
+        """
+        from ...common import errors
+        from ..outbound.error_map import build_error_fields
+
+        now = self._now_mono()
+        expired = [cid for cid, (_m, _t, _tt, mono) in self._pending.items()
+                   if now - mono >= PENDING_ACK_TIMEOUT_S]
+        for cid in expired:
+            msg_id, task_id, task_type, _mono = self._pending.pop(cid)
+            fields = build_error_fields(
+                errors.E_TIMEOUT,
+                "backend did not answer within %.0fs" % PENDING_ACK_TIMEOUT_S)
+            self._publish_ack("cmd/task/ack", build_ack(
+                msg_id=_new_msg_id(), ref_msg_id=msg_id, task_id=task_id,
+                task_type=task_type, result=RESULT_REJECTED,
+                error_code=fields["error_code"], reason=fields["reason"],
+                detail=fields["detail"]))
+            self.stats["rejected"] += 1
+            _logger.warning("p5 cloud task %s timed out (no p3 ack in %.0fs)",
+                            task_type, PENDING_ACK_TIMEOUT_S)
+
+    def pending_count(self) -> int:
+        """在途 pending 数. 只为可观测/测试."""
+        return len(self._pending)
 
     def _alloc_stream_id(self) -> str:
         """分配一个新 broadcast stream_id(v2.0 S2.5: 后端在 start 分配).
