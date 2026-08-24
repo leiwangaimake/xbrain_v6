@@ -76,12 +76,42 @@ def _declared_keys(method_names):
                 fn, "id", "")
             if name not in method_names or not node.args:
                 continue
-            arg = node.args[0]
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                found.add(arg.value)
-            elif isinstance(arg, ast.Name) and arg.id in consts:
-                found.add(consts[arg.id])
+            key = _resolve_key(node.args[0], consts)
+            if key:
+                found.add(_strip_rid(key))
     return found
+
+
+def _resolve_key(arg, consts):
+    """把 declare_* 的第一个实参还原成 key 字符串, 还原不出返回 None.
+
+    三种形态, 都在真实接线里出现过:
+      "cmd/task"                    字面量
+      CMD_TASK_TOPIC                模块顶层常量
+      CLOUD_CMD_TASK % rid          常量模板 % 变量  <- 云端 key 都是这种
+    最后一种是必须支持的: 云端 key 带 rid 前缀, 不可能写成字面量.
+    """
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        return arg.value
+    if isinstance(arg, ast.Name):
+        return consts.get(arg.id)
+    if isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Mod):
+        # "模板" % rid -- 右边是运行期的值, 取左边的模板即可.
+        return _resolve_key(arg.left, consts)
+    return None
+
+
+def _strip_rid(key):
+    """xbrain/%s/cmd/task -> cmd/task.
+
+    *** 为什么在提取器里归一, 而不是在登记表里存绝对形.
+    登记表要与客户契约表逐条对齐, 而契约表写的是 xbrain/{rid}/cmd/task --
+    rid 是占位符. 若登记表也存占位符形式, 它就得同时匹配 %s 与 {rid} 两种
+    写法, 而两种写法哪天不一致了, 差集会报出一堆假缺失. 归一放在这里,
+    换算规则只有一处.
+    """
+    head = "xbrain/%s/"
+    return key[len(head):] if key.startswith(head) else key
 
 
 def test_the_extractor_finds_something():

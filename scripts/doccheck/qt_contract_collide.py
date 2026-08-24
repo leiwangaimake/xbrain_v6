@@ -171,9 +171,15 @@ def _read(path):
         return fh.read()
 
 
-def collide():
-    """跑一遍对撞. 返回 (结论列表, 是否有 BLOCK)."""
-    doc11 = _read(DOC11)
+def collide(doc11=None):
+    """跑一遍对撞. 返回 (结论列表, 是否有 BLOCK).
+
+    doc11 可注入, 只为 --self-test: 用一段不含任何锚点的替身文本跑一遍,
+    每条今天 OK 的项都必须失去命中. 留在原地读文件的话, 自检就没法证明
+    扫描器真的在读 11 -- 见下面 _self_test 的说明.
+    """
+    if doc11 is None:
+        doc11 = _read(DOC11)
     rows = []
     for item in ITEMS:
         hits = doc11.count(item.pattern)
@@ -182,7 +188,41 @@ def collide():
     return rows
 
 
+def _self_test():
+    """证明扫描器不是瞎的(CLAUDE.md 3.3: 只跑过绿的判据不算判据).
+
+    *** 这个脚本的失效模式很具体: 它对 11 做逐字 count(). 一旦锚点写错,
+    或者 DOC11 指到一个不存在的文件而 _read 又被人加了兜底, 每一项都会
+    命中 0 次 -- 而 0 次命中恰好就是 GAP 的形状. 于是一个完全瞎掉的扫描器
+    会报出"11 缺 17 项", 看起来像一次重大发现, 实际什么都没扫.
+
+    自检的做法: 拿一段替身文本(明确不含任何锚点)跑一遍. 今天判 OK 的项
+    是靠命中 11 才成立的, 它们必须[全部]失去命中. 一条在替身上仍然命中的
+    项, 说明它的锚点太短或者根本没在读输入.
+
+    反向也要判: 真文本上 OK 项的命中必须 > 0. 只做前一半的话, 一个恒返回
+    0 命中的实现能通过.
+    """
+    decoy = "这是一段替身文本, 不含任何契约锚点." * 200
+    blind = [i.name for i, hits, _ in collide(decoy) if hits]
+    real_ok = [(i.name, hits) for i, hits, _ in collide()
+               if i.verdict == OK]
+    dead = [n for n, h in real_ok if h == 0]
+
+    print("self-test: 替身文本上仍命中的项 = %d (应为 0)" % len(blind))
+    for name in blind:
+        print("    %s  <- 锚点太短或没在读输入" % name)
+    print("self-test: 真文本上 OK 项命中 0 次的 = %d (应为 0)" % len(dead))
+    for name in dead:
+        print("    %s  <- 判 OK 却一次都没命中, 结论无依据" % name)
+    rc = 1 if (blind or dead) else 0
+    print("self-test %s" % ("PASS" if rc == 0 else "FAIL -- 扫描器是瞎的"))
+    return rc
+
+
 def main():
+    if "--self-test" in sys.argv:
+        return _self_test()
     only_block = "--block" in sys.argv
     rows = collide()
     keys = qt_keys()

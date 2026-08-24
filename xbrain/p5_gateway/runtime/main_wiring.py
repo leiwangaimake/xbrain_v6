@@ -748,6 +748,22 @@ def run_voice_loop_wiring(stop_flag: dict,
             PROBE_ESTOP_PONG_TOPIC, _on_estop_pong)
         health_sub = gen.declare_subscriber(HEALTH_FACTOR_TOPIC, _on_health)
         bit_sub = gen.declare_subscriber(HEALTH_BIT_TOPIC, _on_bit)
+
+        # --- Cloud Qt face (v2.0). See runtime/cloud_wiring.py -------------
+        # ADDITIVE by construction: the cloud keys are xbrain/{rid}/... and
+        # every key declared above is relative, so the two sets cannot
+        # intersect. The bridge REPUBLISHES onto the relative keys p3_task
+        # already subscribes, in the same 11 S7.2 shape voice uses -- which is
+        # why turning the cloud face on changes nothing for voice/text/HMI.
+        #
+        # rid absent -> no bridge (same trade-off as p1 GNSS bridge): a
+        # "xbrain//cmd/task" key would subscribe to something nobody publishes
+        # and look exactly like a client that never connected.
+        from xbrain.p5_gateway.runtime.cloud_wiring import maybe_wire
+        cloud_bridge = maybe_wire(gen, os.environ.get("XBRAIN_ROBOT_ID", ""))
+        if cloud_bridge is not None:
+            _logger.info("p5 wiring: cloud Qt face on, %d inbound keys",
+                         cloud_bridge.alive())
         _logger.info("p5 wiring: subscribed speak/ack + state/task + "
                      "cmd/fence + state/mode + event/** + estop/pong + health "
                      "+ cmd/geo/ack + cmd/task/ack + cmd/mode/ack "
