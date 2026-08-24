@@ -47,6 +47,7 @@ CMD_MOTION_FACTOR_TOPIC = "cmd/motion/factor"
 CMD_TELEOP_TOPIC = "cmd/teleop"
 CMD_ESTOP_TOPIC = "cmd/estop"            # P1-21: soft-estop latch (14 S3.7)
 CMD_FENCE_TOPIC = "cmd/fence"            # P1-15: FenceSet 接收 (11 S9A.3, 通用面)
+STATE_FENCE_TOPIC = "state/fence"        # P1-14: FenceRuntimeState 广播 (11 S9A.5)
 STATE_TELEOP_TOPIC = "state/teleop"
 TELEOP_PUBLISH_PERIOD_S = 1.0
 
@@ -321,6 +322,10 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         clock_cache = {"data": None}
         pose_seq = {"n": 0}
         clock_seq = {"n": 0}
+        # state/fence 广播状态(F3): 1 Hz + rev 变更即发. applied_mono 在 rev 变的
+        # 那一拍戳(FS-4/S-6 生效唯一事实是 active.rev 换的那刻).
+        fence_state = {"seq": 0, "rev": None, "pub_mono": 0.0, "applied": None}
+        state_fence_pub = None
         if rid:
             boot = read_local_boot_id()
 
@@ -355,6 +360,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 "xbrain/%s/rt/clock/status" % rid, _on_clock))
             pose_pub = gen.declare_publisher("state/pose")
             clock_pub = gen.declare_publisher("state/clock")
+            state_fence_pub = gen.declare_publisher(STATE_FENCE_TOPIC)
             _logger.info("p1 gnss bridge on: rid=%s (rt/gnss/heading -> state/pose)",
                          rid)
         else:
@@ -395,6 +401,31 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                             json.dumps(cenv, ensure_ascii=False).encode("utf-8"))
                         clock_seq["n"] += 1
                         last_clock = now
+                # 11 S9A.5 state/fence 广播(F3): 1 Hz + rev 变更即发. 不依赖 GNSS
+                # 定位(围栏状态与 pose 无关), 但信封要 rid, 故与 pose 同在 rid 分支.
+                if state_fence_pub is not None:
+                    from xbrain.p1_motion.fence.fence_set import (
+                        build_fence_runtime_state)
+                    _held = fence_holder.active
+                    _cur_rev = _held.rev if _held is not None else None
+                    _changed = _cur_rev != fence_state["rev"]
+                    if _changed:
+                        # rev 换的这一拍即"生效"(S-6): 戳 applied_mono, 立即发.
+                        fence_state["applied"] = now if _held is not None else None
+                    if _changed or now - fence_state["pub_mono"] >= 1.0:
+                        _fst = build_fence_runtime_state(
+                            _held, now_mono_s=now,
+                            applied_mono_s=fence_state["applied"])
+                        _fenv = gnss_pose.stamp_envelope(
+                            _fst, rid=rid, boot=boot, seq=fence_state["seq"],
+                            src="p1_motion",
+                            ts_sync=bool((clock_cache["data"] or {}).get(
+                                "sync", False)))
+                        state_fence_pub.put(json.dumps(
+                            _fenv, ensure_ascii=False).encode("utf-8"))
+                        fence_state["seq"] += 1
+                        fence_state["rev"] = _cur_rev
+                        fence_state["pub_mono"] = now
                 # 11 S12A.9.7: state/teleop at 1 Hz (plus on change, which the
                 # arbitration makes visible through active_source).
                 if now - last_teleop >= TELEOP_PUBLISH_PERIOD_S:

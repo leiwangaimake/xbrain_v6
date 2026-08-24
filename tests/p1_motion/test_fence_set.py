@@ -14,6 +14,7 @@ import pytest
 
 from xbrain.common.fence.geom import fence_set_crc32
 from xbrain.p1_motion.fence.fence_set import (FenceSetError, FenceSetHolder,
+                                              build_fence_runtime_state,
                                               compile_fence_set)
 
 _RING = [{"lat": 34.697, "lon": 135.505}, {"lat": 34.698, "lon": 135.505},
@@ -102,6 +103,39 @@ def test_rev_bump_swaps_active_atomically():
     assert holder.active is new and holder.active.rev == 2
 
 
+def test_fence_runtime_state_carries_active_rev_and_is_honest():
+    """*** F3: state/fence 载 active.rev/crc32(D 的锚)且 enforcement 诚实.
+
+    子集不裁剪 -> enforcement=warn_only + degrade_reason=clip_deferred(不谎报
+    full). allow 走 fail-safe 拒动.
+
+    MUTATION: build 里 enforcement 写 "full" -> 这里断言 warn_only 红(谎报在裁剪).
+    """
+    holder = FenceSetHolder()
+    held = holder.accept(_wire(rev=7))
+    st = build_fence_runtime_state(held, now_mono_s=100.5, applied_mono_s=100.0)
+    assert st["active"]["rev"] == 7 and st["active"]["crc32"] == held.crc32
+    assert st["active"]["name"] == "camp"          # allow 围栏的 name
+    assert st["active"]["applied_mono_s"] == 100.0
+    assert st["src_age_s"] == 0.5                  # 单调钟 now-applied
+    assert st["enforcement"] == "warn_only"
+    assert st["degrade_reason"] == "clip_deferred"
+    # fail-safe 拒动: 无裁剪就不许自主运动/不接任务.
+    assert st["allow"] == {"autonomous": False, "accept_task": False,
+                           "teleop_max_mps": 0.0}
+
+
+def test_fence_runtime_state_no_fence_is_honest_none():
+    """*** 还没收到 cmd/fence: 老实报 src_state=none / no_fence, active 为 null.
+
+    MUTATION: 无 held 时也编一个 active -> 这里 active is None 断言红.
+    """
+    st = build_fence_runtime_state(None, now_mono_s=10.0, applied_mono_s=None)
+    assert st["active"] is None
+    assert st["src_state"] == "none" and st["degrade_reason"] == "no_fence"
+    assert st["enforcement"] == "disabled"
+
+
 def test_p1_wiring_actually_subscribes_cmd_fence():
     """*** 守接线: main_wiring 真的订了 cmd/fence 并喂给 holder.accept.
 
@@ -140,3 +174,38 @@ def test_p1_wiring_actually_subscribes_cmd_fence():
         "main_wiring 没订 cmd/fence -- FenceSet 收不到, F2/F3 全空转")
     assert "accept" in called, (
         "cmd/fence 回调没调 fence_holder.accept -- 收了不校验不持有")
+
+
+def test_p1_wiring_publishes_state_fence():
+    """*** 守接线(F3): main_wiring 声明 state/fence 发布者并在循环调 build.
+
+    MUTATION: 删掉 state_fence_pub = gen.declare_publisher(STATE_FENCE_TOPIC) 或
+    循环里的 build_fence_runtime_state 调用 -> 这里红(D 拿不到 active.rev).
+    """
+    import ast
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[2] / "xbrain" / "p1_motion"
+           / "runtime" / "main_wiring.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    consts = {t.id: n.value.value
+              for n in tree.body if isinstance(n, ast.Assign)
+              for t in n.targets
+              if isinstance(t, ast.Name) and isinstance(n.value, ast.Constant)
+              and isinstance(n.value.value, str)}
+    pub_keys = set()
+    called = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = getattr(node.func, "attr", "") or getattr(node.func, "id", "")
+            called.add(fn)
+            if fn == "declare_publisher" and node.args:
+                a = node.args[0]
+                if isinstance(a, ast.Constant):
+                    pub_keys.add(a.value)
+                elif isinstance(a, ast.Name):
+                    pub_keys.add(consts.get(a.id))
+    assert "state/fence" in pub_keys, (
+        "main_wiring 没发 state/fence -- D(SET_ALARM_CONFIG 终态)拿不到 active.rev")
+    assert "build_fence_runtime_state" in called, (
+        "循环没调 build_fence_runtime_state -- 发的不是 FenceRuntimeState")

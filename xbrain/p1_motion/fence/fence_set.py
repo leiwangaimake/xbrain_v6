@@ -175,5 +175,67 @@ class FenceSetHolder:
         return compiled
 
 
+def build_fence_runtime_state(held: Optional[HeldFenceSet], *,
+                              now_mono_s: float,
+                              applied_mono_s: Optional[float]) -> Dict[str, Any]:
+    """HeldFenceSet -> 11 S9A.5 FenceRuntimeState(state/fence 的 data), 报警 F3.
+
+    *** 本子集[诚实]的 enforcement/degrade_reason.
+    子集只接收/持有 + 判报警区入侵, [不做硬裁剪](d_eff/v_fence/向量投影押后).
+    11 S9A.5 逐字 warn_only = "只报事件不裁剪" -- 正是本子集. degrade_reason 用
+    2026-08-24 新增的 clip_deferred(裁剪执行器本期未建, 见 11 S9A.5 该值的注).
+    NO 不谎报 full(那等于宣称在裁剪运动, 而根本没裁).
+
+    *** allow{} 走[fail-safe 拒动] -- P1 无法执行围栏裁剪, 就不许自主运动/不接
+    运动任务/teleop 上限置 0. 这是 S9A FS-2 的方向(不能保证围栏就拒绝放行), NO
+    这里的 0.0 不是"冒充已赋值的安全参数", 是[有意的拒动](clip_deferred 期间).
+    报警区(warning)本就 hard_enforce=false, 所以拒动不影响报警链 E.
+
+    active.rev/crc32 是 D(SET_ALARM_CONFIG 终态 v2.0 S3.4 确认 active.rev)与 P2
+    版本核对(SR-2)的锚. 无 held(还没收到 cmd/fence)时 src_state=none/no_fence.
+    """
+    if held is None:
+        # 还没收到任何 FenceSet: 老实说"无围栏源", 不编造 active.
+        return {
+            "active": None,
+            "src_state": "none",
+            "src_age_s": 0.0,
+            "enforcement": "disabled",
+            "degrade_reason": "no_fence",
+            "geo": {"state": "unknown"},
+            "allow": {"autonomous": False, "accept_task": False,
+                      "teleop_max_mps": 0.0},
+        }
+    # applied_mono_s 缺省(理论上有 held 就有 applied)时退化为 now, src_age 记 0.
+    applied = applied_mono_s if applied_mono_s is not None else now_mono_s
+    return {
+        "active": {
+            "fence_set_id": held.fence_set_id,
+            "rev": held.rev,
+            "crc32": held.crc32,
+            "name": _active_name(held),
+            "applied_mono_s": applied,
+        },
+        # 有 held 即视源为 active. src_age_s 用单调钟(S9A.5 逐字非墙钟). 本子集
+        # 暂不做 stale 跃迁(需门限参数), 老实只报 active/none 两态.
+        "src_state": "active",
+        "src_age_s": max(0.0, now_mono_s - applied),
+        "enforcement": "warn_only",             # 只报事件不裁剪(S9A.5)
+        "degrade_reason": "clip_deferred",      # 裁剪执行器本期未建(S9A.5 新值)
+        "geo": {"state": "unknown"},            # 无裁剪 -> 不算 d_eff/v_fence
+        "allow": {"autonomous": False, "accept_task": False,
+                  "teleop_max_mps": 0.0},       # fail-safe 拒动(见 docstring)
+    }
+
+
+def _active_name(held: HeldFenceSet) -> str:
+    """active.name: 取 allow 围栏的 name(营区名), 没有则空. allow 恒有且仅 1
+    (FV-3), 是整个可行区的名字. HeldPolygon 没存 winding 但存了 name/role."""
+    for p in held.polygons:
+        if p.role == "allow":
+            return p.name
+    return ""
+
+
 __all__ = ["FenceSetError", "HeldPolygon", "HeldFenceSet", "compile_fence_set",
-           "FenceSetHolder"]
+           "FenceSetHolder", "build_fence_runtime_state"]
