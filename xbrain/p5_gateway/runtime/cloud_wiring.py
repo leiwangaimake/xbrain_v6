@@ -98,6 +98,10 @@ CLOUD_CMD_PREFIX = "c-"
 #: 只兜 p3 挂了的情形 -- 到点还没收到机内 ack 就回一条 rejected+timeout.
 PENDING_ACK_TIMEOUT_S = 2.0
 
+#: SET_ALARM_CONFIG 终态的超时(v2.0 S3.4: 受理到发终态 6 秒). 6s 内 state/fence.
+#: active.rev 没越过受理时的值就发 failed("生效未确认"). 用单调钟判.
+ALARM_RESULT_TIMEOUT_S = 6.0
+
 #: 事件面. v2.0 的 key 是 xbrain/{rid}/event/{severity}/{category}, 而机内
 #: 生产者(p2_core / p3_task / p5 自己)一律发在相对 event/{sev}/{cat} 上.
 #: 两者不是同一条 key, 所以[Qt 今天一条事件都收不到].
@@ -154,7 +158,8 @@ class CloudBridge:
     def __init__(self, session: Any, rid: str, *,
                  internal_put: Optional[Callable[[str, bytes], None]] = None,
                  dedup: Optional[DedupWindow] = None,
-                 now_mono: Optional[Callable[[], float]] = None) -> None:
+                 now_mono: Optional[Callable[[], float]] = None,
+                 now_wall: Optional[Callable[[], float]] = None) -> None:
         if not rid:
             # 没有 rid 就构不出合法 key. 宁可不建桥也不建一条 "xbrain//cmd/task"
             # -- 后者会订到一个谁都不发的 key 上, 表现为"客户端连上了但没反应".
@@ -188,6 +193,16 @@ class CloudBridge:
         self._pending: Dict[str, str] = {}
         self._fanout: Dict[str, Dict[str, Any]] = {}
         self._now_mono = now_mono or time.monotonic
+        # D(SET_ALARM_CONFIG 终态, v2.0 S3.4): accepted ack 不代表生效, 须[确认
+        # state/fence.active.rev]后发 state/task 终态(done), 6s 超时发 failed.
+        #   _fence_active_rev: 订 state/fence 追踪的当前 active.rev(P1 F3 发).
+        #   _alarm_pending: task_id -> {rev0, started_mono, started_wall, deadline}.
+        #     rev0 = 受理时的 active.rev; 之后 active.rev 越过 rev0 即生效.
+        # started_ts/ended_ts 是给 Qt 显示的[墙钟](S3.3 summary), 而 6s 判定用
+        # 单调钟(CLK-C1) -- 两套时钟各司其职, 不混用.
+        self._now_wall = now_wall or time.time
+        self._fence_active_rev: Optional[int] = None
+        self._alarm_pending: Dict[str, Dict[str, Any]] = {}
         #: 只为可观测: 各类报文的处理计数. 不参与任何判定.
         self.stats: Dict[str, int] = {"accepted": 0, "rejected": 0,
                                       "duplicate": 0, "ignored": 0}
@@ -248,6 +263,10 @@ class CloudBridge:
             "cmd/task/ack", self._on_internal_ack))
         self._subs.append(self._session.declare_subscriber(
             "cmd/geo/ack", self._on_internal_ack))
+        # D: 订机内 state/fence(P1 F3 发)追踪 active.rev, 用于确认 SET_ALARM_CONFIG
+        # 生效(v2.0 S3.4). 相对 key(p1 在本机发, 不带 rid 前缀).
+        self._subs.append(self._session.declare_subscriber(
+            "state/fence", self._on_state_fence))
         _logger.info("p5 cloud bridge wired: rid=%s, %d subs, %d pubs",
                      rid, len(self._subs), len(self._pubs))
 
@@ -416,8 +435,86 @@ class CloudBridge:
                     error_code=v2_ack["error_code"],
                     detail_code=v2_ack["detail"].get("code", ""),
                     reason=v2_ack["reason"])
+            # D(v2.0 S3.4): SET_ALARM_CONFIG 受理[不代表生效]. 登记一条待确认终态,
+            # 等 state/fence.active.rev 越过受理时的值(围栏真的换了)才发 done,
+            # 6s 没等到发 failed. 只对[受理成功]登记 -- 被拒的不必等生效.
+            if task_type == "SET_ALARM_CONFIG" and v2_ack["accepted"]:
+                self._register_alarm_terminal(task_id, task_type)
         except Exception:                        # noqa: BLE001
             _logger.exception("p5 cloud internal-ack handler crashed")
+
+    def _on_state_fence(self, sample: Any) -> None:
+        """机内 state/fence 到达: 追踪 active.rev, 推进待确认的报警终态(D).
+
+        RUST 线程(CLAUDE.md 4.2): 纯解码 + 更新 rev + 查表发终态. state/task 的
+        publish 走 self.publish_state(它只是 pub.put, 不 await), 允许.
+        """
+        try:
+            raw, _key = _sample_parts(sample)
+            env = json.loads(raw.decode("utf-8"))
+            data = env.get("data") if isinstance(env, dict) else None
+            active = data.get("active") if isinstance(data, dict) else None
+            rev = active.get("rev") if isinstance(active, dict) else None
+            if not isinstance(rev, int):
+                return                              # 无 active(none 态): 不推进
+            self._fence_active_rev = rev
+            self._resolve_ready_alarms()
+        except Exception:                        # noqa: BLE001
+            _logger.exception("p5 cloud state/fence handler crashed")
+
+    def _register_alarm_terminal(self, task_id: str, task_type: str) -> None:
+        """登记一条待确认的 SET_ALARM_CONFIG 终态(D). rev0 = 此刻的 active.rev
+        (可能为 None -- 还没收到 state/fence); 之后 active.rev [越过] rev0 即视为
+        本次报警配置生效. 用单调钟设 6s deadline(S3.4)."""
+        now_m = self._now_mono()
+        self._alarm_pending[task_id] = {
+            "task_type": task_type,
+            "rev0": self._fence_active_rev,
+            "started_mono": now_m,
+            "started_wall": self._now_wall(),
+            "deadline": now_m + ALARM_RESULT_TIMEOUT_S,
+        }
+
+    def _resolve_ready_alarms(self) -> None:
+        """active.rev 变化后: 凡 rev 已越过 rev0 的待确认报警, 发 done 终态.
+
+        *** rev0 为 None(受理时还没 state/fence)时, 收到[任何] active.rev 即算
+        推进 -- 从"没有围栏视图"到"有了", 本次写入必在其中(p3 单写者, 写在广播前).
+        rev0 为数时, 要 current > rev0(围栏集真的换了新版).
+        """
+        cur = self._fence_active_rev
+        if cur is None:
+            return
+        for task_id in list(self._alarm_pending.keys()):
+            p = self._alarm_pending[task_id]
+            if p["rev0"] is None or cur > p["rev0"]:
+                self._emit_alarm_result(task_id, p, "done")
+                self._alarm_pending.pop(task_id, None)
+
+    def _emit_alarm_result(self, task_id: str, pending: Dict[str, Any],
+                           state: str, reason: str = "") -> None:
+        """发一条 SET_ALARM_CONFIG 的 state/task 终态(v2.0 S3.3/S3.4).
+
+        done: 围栏已生效(active.rev 越过). failed: 6s 未确认("生效未确认").
+        summary 里 distance_m/route 均 null(配置任务无里程/路径); duration 用
+        单调钟差(准), started/ended_ts 用墙钟(给 Qt 显示).
+        """
+        from ..outbound.error_map import to_qt_code
+        from ..outbound.task_result import build_result
+
+        now_m = self._now_mono()
+        ended_wall = self._now_wall()
+        code = 0 if state == "done" else to_qt_code(errors.E_TIMEOUT)
+        result = build_result(
+            task_id=task_id, task_type=pending["task_type"], state=state,
+            result_code=code, reason=reason,
+            completed_count=1, total_count=1, distance_m=None,
+            duration_sec=max(0.0, now_m - pending["started_mono"]),
+            started_ts=pending["started_wall"], ended_ts=ended_wall,
+            route_id=None, route_rev=None)
+        self.publish_state("state/task", result)
+        _logger.info("p5 cloud SET_ALARM_CONFIG %s terminal -> state/task "
+                     "(task_id=%s)", state, task_id)
 
     def tick(self, now_mono_ms: int = None) -> None:
         """由网关主循环周期调用: 清理超时的 pending, 回一条 timeout ack.
@@ -450,6 +547,18 @@ class CloudBridge:
             self.stats["rejected"] += 1
             _logger.warning("p5 cloud task %s timed out (no p3 ack in %.0fs)",
                             group["task_type"], PENDING_ACK_TIMEOUT_S)
+
+        # D(v2.0 S3.4): 6s 内 state/fence.active.rev 没确认生效 -> 发 failed 终态
+        # ("生效未确认"). NO 不把 accepted 补解释为成功(S3.4 逐字禁止).
+        alarm_expired = [tid for tid, p in self._alarm_pending.items()
+                         if now >= p["deadline"]]
+        for tid in alarm_expired:
+            p = self._alarm_pending.pop(tid)
+            self._emit_alarm_result(
+                tid, p, "failed",
+                reason="alarm config effect not confirmed within %.0fs "
+                       "(state/fence.active.rev did not advance)"
+                       % ALARM_RESULT_TIMEOUT_S)
 
     def pending_count(self) -> int:
         """在途 pending 数. 只为可观测/测试."""

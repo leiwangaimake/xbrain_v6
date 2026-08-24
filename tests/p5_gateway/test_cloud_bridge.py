@@ -152,14 +152,15 @@ def test_five_inbound_and_three_ack_keys_are_declared():
     """基线. 没有它, 下面每条"报文没到"的断言都可能只是喂错了 key."""
     _bridge_, session = _bridge()
 
-    # 5 条云端入站 + 2 条机内 ack(承接 p3 业务 ack, A-1). 机内 ack 是相对 key.
+    # 5 条云端入站 + 2 条机内 ack(承接 p3 业务 ack, A-1) + 1 条机内 state/fence
+    # (D: 确认 SET_ALARM_CONFIG 生效, 追 active.rev). 后三条是相对 key.
     assert sorted(session.subs) == sorted([
         "xbrain/gj-001/audio/broadcast",
         "xbrain/gj-001/cmd/estop",
         "xbrain/gj-001/cmd/file/ack",
         "xbrain/gj-001/cmd/media/session",
         "xbrain/gj-001/cmd/task",
-        "cmd/task/ack", "cmd/geo/ack"])
+        "cmd/task/ack", "cmd/geo/ack", "state/fence"])
     # 三条 ack + 八条出站状态面.
     # * state/link 起初以为"main_wiring 里已有发布者", 那是看错了: 那条
     # 发的是机内相对 key, 而 Qt 订的是带 rid 前缀的. 两条 key 都要有,
@@ -189,9 +190,9 @@ def test_subscriber_handles_are_held():
     """
     bridge, _session = _bridge()
 
-    assert bridge.alive() == 7, (
-        "桥只接住了 %d 个订阅句柄, 其余会被 GC 掉(5 云端入站 + 2 机内 ack)"
-        % bridge.alive())
+    assert bridge.alive() == 8, (
+        "桥只接住了 %d 个订阅句柄, 其余会被 GC 掉(5 云端入站 + 2 机内 ack + "
+        "1 state/fence)" % bridge.alive())
 
 
 # --- 一条合法任务走完全程 ---------------------------------------------
@@ -698,11 +699,15 @@ def test_the_cloud_face_does_not_subscribe_a_command_key_p3_owns():
     _b, session = _bridge()
 
     relative = [k for k in session.subs if not k.startswith("xbrain/")]
-    command_keys = [k for k in relative if not k.endswith("/ack")]
+    # 命令 key = cmd/* 且非 ack. state/fence 是[状态]key(p1 发, 桥消费, 不会重复
+    # 执行命令), 不算命令 key -- D 订它确认 SET_ALARM_CONFIG 生效.
+    command_keys = [k for k in relative
+                    if k.startswith("cmd/") and not k.endswith("/ack")]
     assert not command_keys, (
         "云端桥订了机内命令 key: %s -- 语音任务会被处理两遍" % command_keys)
-    # 订的相对 key 必须全是 ack(承接), 不多不少两条.
-    assert sorted(relative) == ["cmd/geo/ack", "cmd/task/ack"], relative
+    # 订的相对 key: 两条 ack(承接)+ 一条 state/fence(D 确认生效), 不多不少.
+    assert sorted(relative) == ["cmd/geo/ack", "cmd/task/ack", "state/fence"], (
+        relative)
 
 
 # --- 出站状态面 -------------------------------------------------------
@@ -1219,3 +1224,109 @@ def test_a_rid_mismatch_is_a_system_event():
     _feed(session, "cmd/task", _qt_task(rid="gj-999"))  # rid 与 key 不符
 
     assert _events_on(session, "warn", "system"), "rid 不符没进 system category"
+
+
+# --- D: SET_ALARM_CONFIG 终态(state/fence.active.rev 确认) v2.0 S3.4 --------
+
+def _alarm_bridge():
+    """带单调钟+墙钟双注入的桥(D 用: 6s 判定单调, summary 时间戳墙钟)."""
+    from xbrain.p5_gateway.runtime.cloud_wiring import CloudBridge
+    session = _FakeSession()
+    mono = {"t": 1000.0}
+    wall = {"t": 1785732000.0}
+    b = CloudBridge(session, RID, now_mono=lambda: mono["t"],
+                    now_wall=lambda: wall["t"])
+    b.wire()
+    return b, session, mono, wall
+
+
+def _feed_state_fence(session, rev):
+    """喂一帧 P1 的 state/fence(相对 key), active.rev=rev."""
+    env = {"v": 1, "data": {"active": {"rev": rev}} if rev is not None
+           else {"active": None}}
+    session.subs["state/fence"](_Sample("state/fence", env))
+
+
+def _accept_one_alarm(session, msg_id="m-1"):
+    """下发单区域报警配置并喂 p3 accepted ack -> 聚合 accepted -> 登记待确认终态."""
+    _feed(session, "cmd/task", _alarm_body([_ALARM_REGION], msg_id=msg_id))
+    _feed_internal_ack(session, "cmd/geo/ack", "c-" + msg_id, "accepted")
+
+
+def _task_results(session):
+    """state/task 上 message_type=result 的那些 data."""
+    return [p["data"] for p in _puts_to(session, "state/task")
+            if p["data"].get("message_type") == "result"]
+
+
+def test_alarm_done_when_fence_active_rev_advances():
+    """*** D: 受理后 state/fence.active.rev 越过受理时的值 -> done 终态.
+
+    MUTATION: _register_alarm_terminal 不登记(受理即完事) -> rev 推进也不发终态
+    -> 这里无 result -> 红.
+    """
+    _b, session, _mono, _wall = _alarm_bridge()
+    _feed_state_fence(session, 3)                   # 受理前已有 active.rev=3
+    _accept_one_alarm(session)                      # rev0=3, 待确认
+    assert _task_results(session) == []             # 还没推进, 无终态
+    _feed_state_fence(session, 4)                   # 围栏换新版 -> 生效
+    res = _task_results(session)
+    assert len(res) == 1 and res[0]["state"] == "done"
+    assert res[0]["task_type"] == "SET_ALARM_CONFIG"
+    assert res[0]["result_code"] == 0
+
+
+def test_alarm_done_when_no_prior_fence_view_then_first_rev():
+    """rev0=None(受理时还没 state/fence): 收到第一帧 active.rev 即算生效 -> done."""
+    _b, session, _mono, _wall = _alarm_bridge()
+    _accept_one_alarm(session)                      # rev0=None
+    assert _task_results(session) == []
+    _feed_state_fence(session, 7)                   # 从"无视图"到"有" -> done
+    assert [r["state"] for r in _task_results(session)] == ["done"]
+
+
+def test_alarm_failed_on_6s_timeout():
+    """*** D: 6s 内 active.rev 没推进 -> failed 终态("生效未确认"), 非零 code.
+
+    MUTATION: tick 不清超时报警 -> 无 failed 终态 -> 红.
+    """
+    _b, session, mono, _wall = _alarm_bridge()
+    _feed_state_fence(session, 3)
+    _accept_one_alarm(session)                      # rev0=3
+    mono["t"] += 6.1                                # 越过 6s deadline
+    _b.tick()
+    res = _task_results(session)
+    assert len(res) == 1 and res[0]["state"] == "failed"
+    assert res[0]["result_code"] != 0 and res[0]["reason"]
+
+
+def test_no_advance_no_terminal_before_timeout():
+    """rev 没越过 rev0(同值再来): 不发终态(E-3 式不误报生效)."""
+    _b, session, _mono, _wall = _alarm_bridge()
+    _feed_state_fence(session, 3)
+    _accept_one_alarm(session)
+    _feed_state_fence(session, 3)                   # 同版, 没换
+    assert _task_results(session) == []
+
+
+def test_goto_does_not_register_an_alarm_terminal():
+    """*** 只有 SET_ALARM_CONFIG 登记待确认终态; GOTO 不受影响.
+
+    MUTATION: 登记条件去掉 task_type 判据 -> GOTO 也登记 -> rev 推进后冒出一条
+    GOTO 的终态 -> 红.
+    """
+    _b, session, _mono, _wall = _alarm_bridge()
+    _feed(session, "cmd/task", _qt_task())          # GOTO
+    _feed_internal_ack(session, "cmd/task/ack", "c-m-1", "accepted")
+    _feed_state_fence(session, 5)
+    assert _task_results(session) == [], "GOTO 不该产生 state/fence 驱动的终态"
+
+
+def test_rejected_alarm_does_not_wait_for_effect():
+    """被拒的报警配置不登记待确认 -- 没受理就没有生效可等."""
+    _b, session, _mono, _wall = _alarm_bridge()
+    _feed(session, "cmd/task", _alarm_body([_ALARM_REGION]))
+    _feed_internal_ack(session, "cmd/geo/ack", "c-m-1", "rejected",
+                       code="E_GEO_CONFLICT", message="ban ben chong tu")
+    _feed_state_fence(session, 9)
+    assert _task_results(session) == []
