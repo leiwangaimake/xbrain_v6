@@ -21,8 +21,8 @@ EstopController 自身的 freeze/unfreeze 语义由 test_batch_g 覆盖; 本文�
 EstopController 无 time-based unfreeze 路径(CLAUDE.md 3.6: 无绕过开关).
 本文件验证 freeze 持续到显式 unfreeze 为止.
 
-Boundaries: 测 ES-1 的门控效果 + 订阅接线. ES-2(suspend running task)与
-p2 unfreeze 信号通道见 NEXT(需新 DAO suspend 方法满足 CHECK 约束).
+Boundaries: ES-1 门控 + 订阅接线在本文件; ES-2(suspend running task)与
+ES-3(人显式 cmd/task 解冻)在 test_p3_estop_resume.py.
 """
 from __future__ import annotations
 

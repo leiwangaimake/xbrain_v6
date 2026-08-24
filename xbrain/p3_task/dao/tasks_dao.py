@@ -156,3 +156,25 @@ class TasksDAO:
             "SELECT task_id, priority, submit_seq, state FROM tasks "
             "ORDER BY priority DESC, submit_seq ASC LIMIT ?", (limit,))
         return await cur.fetchall()
+
+    async def suspend_task(self, task_id: str, kind: str, reason: str,
+                           updated_ms: int) -> int:
+        """Suspend a task, writing its suspend_kind/reason together.
+
+        The tasks DDL pairs suspend_kind/suspend_reason with the suspended
+        state (both non-null IFF suspended, schema CHECK). So the estop suspend
+        (ES-2) cannot go through update_state -- that writes only `state`, and
+        a suspended row with NULL kind/reason violates the CHECK. This method
+        writes all three atomically. The pause path (task_apply._write_state)
+        has its own; this one is the estop path (kind=passive, reason=
+        estop_soft), kept separate so the two reasons never get crossed.
+
+        The resume that later clears them is task_apply._write_state's else
+        branch (suspend_kind=NULL on any non-suspended target), so an
+        estop-suspended task resumes the same as a pause-suspended one.
+        """
+        cur = await self._conn.execute(
+            "UPDATE tasks SET state='suspended', suspend_kind=?, "
+            "suspend_reason=?, updated_ms=? WHERE task_id=?",
+            (kind, reason, updated_ms, task_id))
+        return cur.rowcount

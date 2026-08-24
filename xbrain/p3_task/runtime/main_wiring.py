@@ -247,7 +247,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # the scheduling loop below reads scheduling_permitted() each pass.
             # ES-3 / 15 S11.3: p3 does NOT auto-resume -- there is no time-based
             # unfreeze, only an explicit p2 signal (CLAUDE.md 3.6: no bypass).
-            from xbrain.p3_task.lifecycle.estop import EstopController
+            from xbrain.p3_task.lifecycle.estop import (EstopController,
+                                                        is_human_resume_command)
+            from xbrain.p3_task.lifecycle.estop_suspend import (
+                suspend_running_for_estop)
             estop_ctrl = EstopController()
 
             def _on_task(sample) -> None:
@@ -402,6 +405,19 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 ack, ensure_ascii=False).encode("utf-8"))
                             if ack.get("result") == "accepted":
                                 recorded += 1
+                                # ES-3 (15 S11.1 F5): a human submit/resume is
+                                # itself the unfreeze signal, and is executed
+                                # (already recorded above). NO an auto/charge
+                                # task must not unfreeze -- a return_home
+                                # arriving mid-estop must not lift the freeze.
+                                if (estop_ctrl.frozen
+                                        and is_human_resume_command(payload)):
+                                    estop_ctrl.unfreeze(payload.get("source"))
+                                    _logger.warning(
+                                        "p3 ES-3: unfrozen by human %s %s -> "
+                                        "scheduling resumes",
+                                        payload.get("source"),
+                                        payload.get("action"))
                         else:
                             # What is left on this key with no `action`: p4's
                             # p4_intent_v1 frames for the CONTROL intents
@@ -498,7 +514,23 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     # ready -> running. ES-3 keeps it frozen until an explicit
                     # p2 unfreeze; there is no timeout path (15 S11.3).
                     if not estop_ctrl.scheduling_permitted():
-                        pass
+                        # ES-2 (15 S11.1): suspend the currently-running task
+                        # (kind=passive, reason=estop_soft). Runs at most once
+                        # per freeze -- after it, freeze keeps anything new from
+                        # dispatching, so no task is running and this no-ops.
+                        try:
+                            _susp = await suspend_running_for_estop(
+                                dao, _now_mono_ms())
+                            if _susp is not None:
+                                _tid, _to, _reason = _susp
+                                _logger.warning(
+                                    "p3 ES-2: suspended running task %s "
+                                    "(reason=%s)", _tid, _reason)
+                                await _make_publish(
+                                    state_pub, _emit_task_event)(
+                                        _tid, _to, _reason)
+                        except Exception as exc:      # noqa: BLE001
+                            _logger.error("p3 ES-2 suspend failed: %s", exc)
                     else:
                         try:
                             await scheduler_tick(
