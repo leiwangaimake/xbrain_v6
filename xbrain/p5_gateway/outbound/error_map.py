@@ -188,16 +188,24 @@ def to_qt_code(e_code: str) -> int:
 
 
 def build_error_fields(e_code: str, reason: str,
-                       detail: Dict = None) -> Dict:
+                       detail: Dict = None, *,
+                       detail_code: str = None) -> Dict:
     """组装 v2.0 拒绝所需的四件: error_code / reason / detail.code / detail.
 
     v2.0 S10 逐字要求所有拒绝同时提供 result=rejected / accepted=false /
     非零 error_code / 人类可读 reason / detail.code. 前两项由调用方按
     ack 形状填, 本函数给后三项.
+
+    *** detail_code 参数(审计 C-1): 让调用方[按场景]指定 v2.0 的 detail.code.
+    S2.6 是全文档唯一逐字指定 detail.code 值的地方: 未支持[任务类型]要
+    "E_TASK_UNSUPPORTED". 而我方原生码 E_NOT_IMPLEMENTED 还用于别的场景
+    (未实现的 media 端点等), 那些不该被叫成 E_TASK_UNSUPPORTED -- 所以
+    override 必须[按调用场景]传, NO 不能全局把 E_NOT_IMPLEMENTED 都改名.
+    不传时 detail.code = 我方原生 e_code(S10 允许后端原生码, 表格是"典型"
+    示例). error_code(整数)始终按 40 码映射, 那才是 Qt 逻辑依赖的值.
     """
     body = dict(detail or {})
-    # detail.code 是[我方原生字符串码], 不被整数码取代 -- 两者都要在.
-    body["code"] = e_code
+    body["code"] = detail_code or e_code
     return {
         "error_code": to_qt_code(e_code),
         "reason": reason,

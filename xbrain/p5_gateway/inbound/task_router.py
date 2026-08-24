@@ -95,15 +95,20 @@ def route(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
             "cloud continuous teleop is not enabled this phase",
             {"task_type": task_type}))
     if task_type in RETIRED_TASK_TYPES:
+        # v2.0 S2.6: 未支持[任务类型] -> detail.code "E_TASK_UNSUPPORTED"
+        # (审计 C-1). 我方原生码是 E_NOT_IMPLEMENTED(-> 1006), 但发给 Qt 的
+        # detail.code 用 v2.0 逐字点名的值.
         raise InboundReject(build_error_fields(
             errors.E_NOT_IMPLEMENTED,
             "task type is no longer part of this phase protocol: %s" % task_type,
-            {"task_type": task_type, "allowed": list(OPEN_TASK_TYPES)}))
+            {"task_type": task_type, "allowed": list(OPEN_TASK_TYPES)},
+            detail_code="E_TASK_UNSUPPORTED"))
     if task_type not in OPEN_TASK_TYPES:
         raise InboundReject(build_error_fields(
             errors.E_NOT_IMPLEMENTED,
             "unsupported task type: %r" % (task_type,),
-            {"task_type": task_type, "allowed": list(OPEN_TASK_TYPES)}))
+            {"task_type": task_type, "allowed": list(OPEN_TASK_TYPES)},
+            detail_code="E_TASK_UNSUPPORTED"))
     if not isinstance(payload, dict):
         raise InboundReject(build_error_fields(
             errors.E_SCHEMA, "payload is not an object",

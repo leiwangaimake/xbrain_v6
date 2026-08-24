@@ -168,7 +168,7 @@ def test_retired_names_are_not_implemented_not_channel_denied():
     for name in RETIRED_TASK_TYPES:
         fields = _reject(name, {})
         assert fields, name
-        assert fields["detail"]["code"] == errors.E_NOT_IMPLEMENTED, name
+        assert fields["detail"]["code"] == "E_TASK_UNSUPPORTED", name
         # 报错里要给出当前允许的清单 -- 否则 Qt 开发者要去翻文档.
         assert fields["detail"]["allowed"], name
         # *** reason 必须点名"已不是本期协议能力", 而不只是"不支持".

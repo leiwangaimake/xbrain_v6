@@ -282,7 +282,7 @@ def test_a_retired_task_type_is_rejected_not_forwarded():
     assert not _internal_puts(session, "cmd/task"), "下线类型被转进了机内总线"
     d = _puts_to(session, "cmd/task/ack")[0]["data"]
     assert d["result"] == "rejected"
-    assert d["detail"]["code"] == "E_NOT_IMPLEMENTED"
+    assert d["detail"]["code"] == "E_TASK_UNSUPPORTED"
 
 
 def test_manual_velocity_is_refused_as_a_channel_violation():
