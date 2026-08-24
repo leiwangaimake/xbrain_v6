@@ -12,7 +12,7 @@ stages without spawning a subprocess.
 
 Process list discovery. CLAUDE.md 3.7 forbids hardcoding a count of
 processes in judge / test code. The list is derived at RUNTIME by
-scraping CLAUDE.md 0.1's process table (rows: `| \`{proc}\` | ...`).
+scraping CLAUDE.md 0.1's process table (rows shaped "| {proc} | ...").
 If a new row is added to CLAUDE.md 0.1, this collector picks it up on
 the next run WITHOUT edits here. If a row is deleted, likewise.
 
