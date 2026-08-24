@@ -45,6 +45,7 @@ CMD_MOTION_FACTOR_TOPIC = "cmd/motion/factor"
 # gamepad / local keyboard arrive from teleop_input, which is not built yet, so
 # those two simply never appear in sources[].
 CMD_TELEOP_TOPIC = "cmd/teleop"
+CMD_ESTOP_TOPIC = "cmd/estop"            # P1-21: soft-estop latch (14 S3.7)
 STATE_TELEOP_TOPIC = "state/teleop"
 TELEOP_PUBLISH_PERIOD_S = 1.0
 
@@ -146,12 +147,23 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
     with open_planes(("rt", "gen")) as (rt, gen):
         _rt = rt   # keep RT session alive for future cmd_vel pub
 
+        # P1-21 soft-estop latch. Its primary consumer is the 20 Hz ctrl_loop
+        # (estop -> zero cmd_vel + stop_reason=soft_estop); here in the running
+        # relative-move path the latch records the soft-estop and drives re-arm.
+        from xbrain.p1_motion.runtime.estop_latch import P1EstopLatch
+        estop_latch = P1EstopLatch()
+
         def _on_intent(sample) -> None:
             try:
                 d = json.loads(bytes(sample.payload).decode("utf-8"))
             except Exception:      # noqa: BLE001
                 _logger.warning("p1 malformed cmd/motion/intent")
                 return
+            # A new motion intent is the soft-estop re-arm key (14 S3.7 / U35:
+            # estop, then "go forward 2m", then go). gate_intent clears the
+            # latch and returns True; refusing motion here would block that
+            # documented field behaviour.
+            estop_latch.gate_intent()
             apdu = intent_to_apdu(d)
             ok = client.send_apdu(apdu)
             _logger.info("p1 forwarded intent -> chassis (ok=%s intent=%s)",
@@ -159,6 +171,16 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
 
         intent_sub = gen.declare_subscriber(
             CMD_MOTION_INTENT_TOPIC, _on_intent)
+
+        def _on_estop(sample) -> None:
+            # RUST THREAD (CLAUDE.md 4.2): latch only, no publish/await. The
+            # cmd/estop callback must return fast; the latch is read by the
+            # ctrl_loop (when active) and the intent path above.
+            estop_latch.on_estop(bytes(sample.payload))
+
+        estop_sub = gen.declare_subscriber(CMD_ESTOP_TOPIC, _on_estop)
+        _logger.info("p1 wiring: subscribed %s (P1-21 soft-estop latch)",
+                     CMD_ESTOP_TOPIC)
 
         # Also subscribe cmd/motion/factor (log only for MVP).
         def _on_factor(sample) -> None:
@@ -323,6 +345,10 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         finally:
             try:
                 intent_sub.undeclare()
+            except Exception:      # noqa: BLE001
+                pass
+            try:
+                estop_sub.undeclare()
             except Exception:      # noqa: BLE001
                 pass
             try:

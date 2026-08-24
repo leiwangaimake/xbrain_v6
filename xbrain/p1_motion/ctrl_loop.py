@@ -35,12 +35,19 @@ class CtrlState(str, Enum):
 
 @dataclass
 class CtrlTick:
-    """One tick's outcome for observability."""
+    """One tick's outcome for observability.
+
+    stop_reason is 本拍零速的唯一归因 (11 S4.1). It is the closed-set value
+    (STOP_REASON) explaining WHY this tick is zero, or "none" when driving.
+    P1-21 requires it on every soft-estop tick; without it a zeroed tick and
+    a not-yet-driving tick look identical downstream.
+    """
     tick_no: int
     state: str
     published_cmd_vel: bool
     vx: float
     wz: float
+    stop_reason: str = "none"
 
 
 class CtrlLoop:
@@ -77,16 +84,36 @@ class CtrlLoop:
 
     def run_one_tick(self,
                      computed_vx: float = 0.0,
-                     computed_wz: float = 0.0) -> CtrlTick:
+                     computed_wz: float = 0.0,
+                     estop: bool = False) -> CtrlTick:
         """Execute one tick. In non-ACTIVE states vx/wz are zero;
-        ACTIVE uses computed values. Always publishes."""
+        ACTIVE uses computed values. Always publishes.
+
+        *** estop wins over everything (11 S9.12.2, common/enums 逐字
+        "estop wins over everything"). A soft-estop tick is zero-vel
+        REGARDLESS of state -- even ACTIVE with a nonzero computed_vx --
+        and its stop_reason is "soft_estop". This is P1-21's 本拍零速: the
+        estop latch set by the cmd/estop callback is read here every tick,
+        so a stale ACTIVE state cannot leak one more nonzero cmd_vel through.
+
+        NO the estop check must come FIRST, before the ACTIVE branch. If it
+        were folded in after, an ACTIVE tick would compute vx/wz and a later
+        estop check would have to remember to overwrite them -- one forgotten
+        path and a moving robot ignores the estop. Ordering it first makes
+        that impossible.
+        """
         self._tick_no += 1
-        if self._state == CtrlState.ACTIVE:
-            vx, wz = computed_vx, computed_wz
+        if estop:
+            # 本拍零速, 归因 soft_estop. Highest precedence, checked first.
+            vx, wz, reason = 0.0, 0.0, "soft_estop"
+        elif self._state == CtrlState.ACTIVE:
+            vx, wz, reason = computed_vx, computed_wz, "none"
         elif self._state == CtrlState.SAFE_STOP:
-            vx, wz = 0.0, 0.0    # emergency zero-vel
+            vx, wz, reason = 0.0, 0.0, "soft_estop"   # emergency zero-vel
         else:
-            vx, wz = 0.0, 0.0    # not yet driving; publish zero
+            # not yet driving; publish zero. no_source distinguishes "nothing
+            # to drive" from "estop stopped me" -- both zero, different cause.
+            vx, wz, reason = 0.0, 0.0, "no_source"
         # ALWAYS publish -- chassis Tier 1 requires it.
         published = True
         try:
@@ -98,7 +125,7 @@ class CtrlLoop:
         report = CtrlTick(
             tick_no=self._tick_no, state=self._state.value,
             published_cmd_vel=published,
-            vx=vx, wz=wz,
+            vx=vx, wz=wz, stop_reason=reason,
         )
         self._history.append(report)
         return report
