@@ -50,6 +50,7 @@ import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from ...common import errors
 from ..inbound.cloud_inbound import (InboundReject, SRC_QT, frame_ids,
                                      is_cloud_frame, parse_frame, rid_from_key)
 from ..inbound.task_router import (CLOUD_ORIGIN, KEY_AUDIO, KEY_GEO,
@@ -171,6 +172,11 @@ class CloudBridge:
         # AUDIO_CONTROL start 的 stream_id 由网关分配(审计 B-1). 按 rid 计数,
         # 从 1 起. 见 _handle_audio.
         self._audio_seq = 0
+        # 拒绝审计事件的 eid 源(审计 E-1). v2.0 S10: 每次任务拒绝必须产生
+        # 一条可靠 event/{sev}/task. boot token 让 eid 跨网关重启不撞
+        # (record.db 持久化, 重启后 seq 从 0 但 boot 不同).
+        self._reject_boot = uuid.uuid4().hex[:6]
+        self._reject_seq = 0
         # A-1 承接: 转发给 p3 的 cmd/task/geo 登记在这, 等 p3 的机内 ack 回来
         # 翻译转发到云端. cmd_id("c-"+msg_id) -> (msg_id, task_id, task_type,
         # mono_ms). 见 _handle_task / _on_internal_ack / tick.
@@ -357,6 +363,14 @@ class CloudBridge:
                 new_msg_id=_new_msg_id())
             self._publish_ack("cmd/task/ack", v2_ack)
             self.stats["accepted" if v2_ack["accepted"] else "rejected"] += 1
+            # E-1: 承接的 p3 业务拒绝也要有审计 event(p3 只在状态迁移时发
+            # event, 被拒任务不进状态机 -> p3 没发, 网关补).
+            if not v2_ack["accepted"] and v2_ack["result"] == "rejected":
+                self._emit_task_reject_event(
+                    ref_msg_id=msg_id, task_id=task_id, task_type=task_type,
+                    error_code=v2_ack["error_code"],
+                    detail_code=v2_ack["detail"].get("code", ""),
+                    reason=v2_ack["reason"])
         except Exception:                        # noqa: BLE001
             _logger.exception("p5 cloud internal-ack handler crashed")
 
@@ -367,7 +381,6 @@ class CloudBridge:
         极慢 -- 回一条 rejected(2002 忙/超时)让 Qt 不至于无限等; NO 不静默
         丢弃, 那样 Qt 会一直等到 3 秒判离线.
         """
-        from ...common import errors
         from ..outbound.error_map import build_error_fields
 
         now = self._now_mono()
@@ -424,6 +437,40 @@ class CloudBridge:
         self.stats["accepted"] += 1
         _logger.info("p5 cloud audio %s stream_id=%s", action, stream_id)
 
+    def _emit_task_reject_event(self, *, ref_msg_id: Optional[str],
+                                task_id: Optional[str],
+                                task_type: Optional[str],
+                                error_code: int, detail_code: str,
+                                reason: str) -> None:
+        """一次云端 cmd/task 拒绝 -> 一条可靠 event/warn/task(审计 E-1).
+
+        *** v2.0 S10 逐字: 每次任务拒绝必须产生一条可靠 event/{sev}/task,
+        保证断网后可审计. 网关自己产生的拒绝(结构/路由/字段)p3 根本看不到,
+        p3 的业务拒绝也只在[状态迁移]时发 event, 而被拒的任务不进状态机 --
+        两处都不发, 于是[没有任何拒绝有审计]. 网关是云端唯一的审计点, 在这里
+        补上: 拒绝是可恢复的(操作员改了重发), 所以 sev=warn.
+
+        source=p5_gateway: 这条 event 是网关观测到云端拒绝而产生的; 与 p3 的
+        任务事件(source=p3_task)不同源, 不同 eid, 不重复.
+        """
+        self._reject_seq += 1
+        try:
+            self.publish_event("warn", "task", {
+                "eid": "task-reject-%s-%d" % (self._reject_boot,
+                                              self._reject_seq),
+                "state": "occurred",
+                "source": "p5_gateway",
+                "code": detail_code or errors.E_SCHEMA,
+                "title": "cloud task rejected",
+                "message": reason or "",
+                "task_id": task_id or None,
+                "detail": {"task_type": task_type, "ref_msg_id": ref_msg_id,
+                           "error_code": error_code},
+            })
+        except Exception:                        # noqa: BLE001
+            # 审计 event 发失败不能连累 ack -- ack 已经发出去了, 这是尽力而为.
+            _logger.exception("p5 cloud reject-event emit failed")
+
     def _reject_task(self, raw: bytes, fields: Dict[str, Any], *,
                      msg_id: Optional[str] = None,
                      task_id: Optional[str] = None,
@@ -445,6 +492,12 @@ class CloudBridge:
             error_code=fields["error_code"], reason=fields["reason"],
             detail=fields.get("detail")))
         self.stats["rejected"] += 1
+        # E-1: 网关自己产生的拒绝也要有审计 event(p3 看不到这条拒绝).
+        _det = fields.get("detail") or {}
+        self._emit_task_reject_event(
+            ref_msg_id=msg_id, task_id=task_id, task_type=task_type,
+            error_code=fields["error_code"], detail_code=_det.get("code", ""),
+            reason=fields["reason"])
 
     # --- 入站: cmd/estop ----------------------------------------------
 

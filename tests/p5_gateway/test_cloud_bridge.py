@@ -1022,3 +1022,79 @@ def test_main_wiring_ticks_the_cloud_bridge_for_pending_timeout():
     assert len(ticks) == 1, (
         "main_wiring 里对 cloud_bridge.tick 的调用有 %d 处 -- pending 超时"
         "没有人清" % len(ticks))
+
+
+# --- E-1: 拒绝产生可靠审计 event (审计第三轮) --------------------------
+
+def _events_on(session, sev, cat):
+    key = "xbrain/%s/event/%s/%s" % (RID, sev, cat)
+    return [json.loads(p.decode("utf-8")) for k, p in session.puts if k == key]
+
+
+def test_a_structural_reject_produces_a_task_event():
+    """*** v2.0 S10: 每次任务拒绝必须产生一条可靠 event/warn/task.
+
+    网关自己产生的拒绝(字段非法)p3 看不到 -- 不发 event 就断网后无审计.
+
+    MUTATION: _reject_task 里删掉 _emit_task_reject_event 调用 -> 这里红.
+    """
+    _b, session = _bridge()
+
+    # coordinate_system 非法 -> route/field_validate 拒(网关侧结构拒绝).
+    bad = _qt_task()
+    bad["data"]["payload"]["coordinate_system"] = "GCJ02"
+    _feed(session, "cmd/task", bad)
+
+    # 回了 rejected ack.
+    d = _puts_to(session, "cmd/task/ack")[0]["data"]
+    assert d["result"] == "rejected"
+    # 且产生了一条 event/warn/task.
+    evts = _events_on(session, "warn", "task")
+    assert len(evts) == 1, "结构拒绝没有产生审计 event"
+    ev = evts[0]["data"]
+    assert ev["sev"] == "warn" and ev["category"] == "task"
+    assert ev["eid"].startswith("task-reject-")
+    assert ev["source"] == "p5_gateway"
+
+
+def test_a_p3_business_reject_produces_a_task_event():
+    """*** 承接的 p3 业务拒绝(围栏外)也要有审计 event(E-1).
+
+    p3 只在状态迁移时发 event, 被拒任务不进状态机 -> p3 没发, 网关补.
+
+    MUTATION: _on_internal_ack 里删掉 reject event 分支 -> 这里红.
+    """
+    _b, session = _bridge()
+
+    _feed(session, "cmd/task", _qt_task())
+    _feed_internal_ack(session, "cmd/task/ack", "c-m-1", "rejected",
+                       code="E_OUT_OF_FENCE", message="围栏外")
+
+    evts = _events_on(session, "warn", "task")
+    assert len(evts) == 1, "p3 业务拒绝没有产生审计 event"
+    assert evts[0]["data"]["detail"]["error_code"] == 2006
+
+
+def test_an_accepted_task_produces_no_reject_event():
+    """反向: 受理的任务不产生拒绝 event(否则每条成功任务也刷一条 warn)."""
+    _b, session = _bridge()
+
+    _feed(session, "cmd/task", _qt_task())
+    _feed_internal_ack(session, "cmd/task/ack", "c-m-1", "accepted")
+
+    assert not _events_on(session, "warn", "task"), (
+        "受理的任务也产生了拒绝 event")
+
+
+def test_reject_events_get_distinct_eids():
+    """多次拒绝的 event eid 不撞(可靠去重靠 eid)."""
+    _b, session = _bridge()
+
+    for mid in ("x1", "x2"):
+        bad = _qt_task(data={"msg_id": mid, "task_id": "t",
+                             "task_type": "NOPE_TYPE", "payload": {}})
+        _feed(session, "cmd/task", bad)
+
+    evts = _events_on(session, "warn", "task")
+    eids = [e["data"]["eid"] for e in evts]
+    assert len(eids) == 2 and len(set(eids)) == 2, "拒绝 event 的 eid 撞了"
