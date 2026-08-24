@@ -85,6 +85,22 @@ CLOUD_STATE_AUDIO = "xbrain/%s/state/audio"
 CLOUD_STATE_MEDIA = "xbrain/%s/state/media"
 CLOUD_STATE_GEO_MANIFEST = "xbrain/%s/state/geo/manifest"
 CLOUD_DATA_FILE_INDEX = "xbrain/%s/data/file/index"
+CLOUD_STATE_LINK = "xbrain/%s/state/link"
+
+#: 事件面. v2.0 的 key 是 xbrain/{rid}/event/{severity}/{category}, 而机内
+#: 生产者(p2_core / p3_task / p5 自己)一律发在相对 event/{sev}/{cat} 上.
+#: 两者不是同一条 key, 所以[Qt 今天一条事件都收不到].
+#:
+#: *** 这一条与 17 S3.5.0"P5 不是实时中继"看似冲突, 裁决是转发, 理由有二:
+#: (1) 用户 2026-08-24 明令: 契约与这三份客户文档冲突时以客户文档为准,
+#:     而 v2.0 把 key 定死带 rid 前缀;
+#: (2) 更实质的一条 -- 生产者发的是[裸事件体], 没有 v2.0 的六字段信封
+#:     (rid / seq / src 都没有). 即便把生产者的 key 改成绝对形, 信封仍然
+#:     缺, Qt 会按 S1.3 的"必填字段缺失"整条拒收. 所以无论如何都要有一个
+#:     加信封的点, 那个点只能是网关.
+#: 改生产者的 key 会动到 p2_core / p3_task 的既有接线与 HMI 的事件流,
+#: 而转发是纯增量.
+CLOUD_EVENT = "xbrain/%s/event/%s/%s"
 
 #: 出站状态面九条(不含 state/link 与 event/**, 那两条另有发布者).
 #: v2.0 S2 给的节律, 单位秒. state/robot 固定 10 Hz 是其中最快的一条.
@@ -96,6 +112,7 @@ OUTBOUND_PERIODS = {
     "state/media": 5.0,           # 每 5 s 全量保活
     "state/geo/manifest": None,   # 变化即发; session 建立后 2 s 内一份全量
     "data/file/index": None,      # 可靠面, 连接/变化时发
+    "state/link": 1.0,            # v2.0 S4.1 逐字"1 Hz + 变化即发"
 }
 
 #: 入站五条. 顺序即 v2.0 S2 表的顺序.
@@ -138,6 +155,8 @@ class CloudBridge:
         self._dedup = dedup or DedupWindow()
         self._internal_put = internal_put or self._default_internal_put
         self._internal_pubs: Dict[str, Any] = {}
+        # 事件 publisher 按 (sev, cat) 缓存. 见 publish_event.
+        self._event_pubs: Dict[str, Any] = {}
         #: 只为可观测: 各类报文的处理计数. 不参与任何判定.
         self.stats: Dict[str, int] = {"accepted": 0, "rejected": 0,
                                       "duplicate": 0, "ignored": 0}
@@ -189,6 +208,8 @@ class CloudBridge:
             CLOUD_STATE_GEO_MANIFEST % rid)
         self._pubs["data/file/index"] = self._session.declare_publisher(
             CLOUD_DATA_FILE_INDEX % rid)
+        self._pubs["state/link"] = self._session.declare_publisher(
+            CLOUD_STATE_LINK % rid)
         _logger.info("p5 cloud bridge wired: rid=%s, %d subs, %d pubs",
                      rid, len(self._subs), len(self._pubs))
 
@@ -423,6 +444,28 @@ class CloudBridge:
         body = build_envelope(self._rid, name, data,
                               ts=time.time(),   # WALL-CLOCK-OK(align)
                               seq=self._seq.next(self._rid, name))
+        pub.put(json.dumps(body, ensure_ascii=False).encode("utf-8"))
+
+    def publish_event(self, severity: str, category: str,
+                      data: Dict[str, Any]) -> None:
+        """把一条机内事件转到云端 event key 上.
+
+        *** 每条 (sev, cat) 组合一个 publisher, 按需建并缓存.
+        事件 key 带两段通配, 逐条声明不现实(九类 x 四级). 缓存是为了不在
+        每条事件上做一次 declare -- 声明有成本, 而告警风暴时事件是成批的.
+
+        * seq 仍按 key 分区: Qt 对可靠面按业务 ID(eid)去重, 但 seq 的连续性
+        是它判丢包的依据, 混在一起会让每条 key 看起来一直在丢.
+        """
+        key = "event/%s/%s" % (severity, category)
+        pub = self._event_pubs.get(key)
+        if pub is None:
+            pub = self._session.declare_publisher(
+                CLOUD_EVENT % (self._rid, severity, category))
+            self._event_pubs[key] = pub
+        body = build_envelope(self._rid, key, data,
+                              ts=time.time(),   # WALL-CLOCK-OK(align)
+                              seq=self._seq.next(self._rid, key))
         pub.put(json.dumps(body, ensure_ascii=False).encode("utf-8"))
 
     def _default_internal_put(self, key: str, payload: bytes) -> None:

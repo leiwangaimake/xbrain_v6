@@ -385,6 +385,14 @@ def run_voice_loop_wiring(stop_flag: dict,
         _probe_cfg.get("link_down_misses", DEFAULT_DOWN_MISSES),
     )
 
+    # Pre-bound so the event callback below can read it safely. _on_event is
+    # registered (line ~750) BEFORE the bridge is built (line ~775), so a
+    # cloud event arriving in that window would hit an unbound closure cell
+    # and raise NameError inside a Zenoh Rust-thread callback -- where the
+    # exception is swallowed and the event silently vanishes. Binding None up
+    # front closes the window; the callback's `is not None` guard does the rest.
+    cloud_bridge = None
+
     # Shared state the HMI provider reads. The sync callbacks below REPLACE whole
     # values (never mutate in place) so the web thread's reads stay consistent
     # under the GIL without a lock. fence_cache follows the same rule: on_update
@@ -627,6 +635,17 @@ def run_voice_loop_wiring(stop_flag: dict,
                 "pos": d.get("pos"),   # None until pose stamps it (W4)
             }
             hmi_state["events"] = (hmi_state["events"] + [ev])[-EVENT_RING:]
+            # Cloud relay (v2.0 S2: the cloud event key is
+            # xbrain/{rid}/event/{sev}/{cat}, NOT the bare key producers use).
+            # Two reasons this must be a relay and not a producer-side key
+            # change -- see CLOUD_EVENT in cloud_wiring.py. Best-effort: a
+            # relay failure must never touch the HMI ring or the persistence
+            # path above, both of which are already done by this point.
+            if cloud_bridge is not None and ev["sev"] and ev["cat"]:
+                try:
+                    cloud_bridge.publish_event(ev["sev"], ev["cat"], d)
+                except Exception:      # noqa: BLE001
+                    _logger.exception("p5 cloud event relay failed")
             # Persist + deliver via the event subsystem (fire-and-forget, no-op
             # when disabled). A malformed event normalises to None and is skipped;
             # the HMI ring above is unaffected either way.

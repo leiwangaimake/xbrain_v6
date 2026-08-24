@@ -117,8 +117,11 @@ def test_five_inbound_and_three_ack_keys_are_declared():
         "xbrain/gj-001/cmd/file/ack",
         "xbrain/gj-001/cmd/media/session",
         "xbrain/gj-001/cmd/task"])
-    # 三条 ack + 七条出站状态面. state/link 与 event/** 不在这里 --
-    # 它们在 main_wiring 里另有发布者(接手前就存在), 桥不去抢.
+    # 三条 ack + 八条出站状态面.
+    # * state/link 起初以为"main_wiring 里已有发布者", 那是看错了: 那条
+    # 发的是机内相对 key, 而 Qt 订的是带 rid 前缀的. 两条 key 都要有,
+    # 形状还不一样(机内 11 S4.6 一大堆字段, 云端 v2.0 S4.1 只四个).
+    # event/** 不在这里 -- 它按 (sev, cat) 组合按需建, 见 publish_event.
     assert sorted(session.pubs) == sorted([
         "xbrain/gj-001/cmd/estop/ack",
         "xbrain/gj-001/cmd/media/session/ack",
@@ -129,7 +132,8 @@ def test_five_inbound_and_three_ack_keys_are_declared():
         "xbrain/gj-001/state/media",
         "xbrain/gj-001/state/mode",
         "xbrain/gj-001/state/robot",
-        "xbrain/gj-001/state/task"])
+        "xbrain/gj-001/state/task",
+        "xbrain/gj-001/state/link"])
 
 
 def test_subscriber_handles_are_held():
@@ -642,3 +646,77 @@ def test_every_outbound_key_has_a_declared_period_or_an_explicit_none():
         % (sorted(state_pubs), sorted(OUTBOUND_PERIODS)))
     assert OUTBOUND_PERIODS["state/robot"] == 0.1, "v2.0 S4.2 逐字固定 10 Hz"
     assert OUTBOUND_PERIODS["state/media"] == 5.0, "v2.0 S2 每 5 s 保活"
+
+
+# --- 事件转发 ---------------------------------------------------------
+
+def test_an_event_goes_out_on_the_prefixed_cloud_key():
+    """*** 机内事件发在相对 event/{sev}/{cat} 上, Qt 订的是带前缀的那条.
+
+    2026-08-24 查出: 全系统每一条事件(p2_core / p3_task / p5 自己)都只发
+    在相对 key 上 -- [Qt 一条事件都收不到], 而 Zenoh 不报错. 与 state/link
+    同一个病, 而事件面是断网补发与审计的依据, 丢了更要命.
+    """
+    bridge, session = _bridge()
+
+    bridge.publish_event("alarm", "task", {"eid": "e-1", "title": "x"})
+
+    keys = [k for k, _ in session.puts]
+    assert keys == ["xbrain/gj-001/event/alarm/task"], keys
+    env = json.loads(session.puts[0][1].decode("utf-8"))
+    assert set(env) == {"v", "rid", "ts", "seq", "src", "data"}
+    assert env["data"]["eid"] == "e-1"
+
+
+def test_event_publishers_are_cached_per_severity_and_category():
+    """按需建并缓存.
+
+    每条事件建一个 publisher 的话, 告警风暴时会做成百次 declare -- 而
+    声明在 Zenoh 侧要走一遍会话协商. 缓存后同一组合只声明一次.
+    """
+    bridge, session = _bridge()
+
+    for _ in range(5):
+        bridge.publish_event("alarm", "task", {"eid": "e"})
+    bridge.publish_event("warn", "comm", {"eid": "e2"})
+
+    event_pubs = [k for k in session.pubs if "/event/" in k]
+    assert sorted(event_pubs) == ["xbrain/gj-001/event/alarm/task",
+                                  "xbrain/gj-001/event/warn/comm"], event_pubs
+
+
+def test_event_seq_is_per_category_not_shared():
+    """seq 按 key 分区. Qt 对可靠面按 eid 去重, 但 seq 的连续性是它判丢包
+    的依据 -- 混在一起会让每条 key 看起来一直在丢."""
+    bridge, session = _bridge()
+
+    bridge.publish_event("alarm", "task", {"eid": "a"})
+    bridge.publish_event("warn", "comm", {"eid": "b"})
+    bridge.publish_event("alarm", "task", {"eid": "c"})
+
+    seqs = {}
+    for k, p in session.puts:
+        seqs.setdefault(k, []).append(json.loads(p.decode("utf-8"))["seq"])
+    assert seqs["xbrain/gj-001/event/alarm/task"] == [1, 2]
+    assert seqs["xbrain/gj-001/event/warn/comm"] == [1]
+
+
+def test_main_wiring_relays_events_to_the_cloud():
+    """*** 转发口有了, 事件回调要真的调它.
+
+    第三层的守门断言, 与 cloud_projector.tick 那条同形.
+
+    MUTATION: 注释掉 _on_event 里的 cloud_bridge.publish_event(...) -> 红.
+    """
+    import ast
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parents[2] / "xbrain"
+           / "p5_gateway" / "runtime" / "main_wiring.py").read_text(
+               encoding="utf-8")
+    calls = [n for n in ast.walk(ast.parse(src))
+             if isinstance(n, ast.Call)
+             and getattr(n.func, "attr", "") == "publish_event"]
+    assert len(calls) == 1, (
+        "main_wiring 里对 publish_event 的调用有 %d 处 -- 事件不会到云端"
+        % len(calls))

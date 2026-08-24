@@ -50,6 +50,7 @@ import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
+from ..outbound.cloud_envelope import UnmappedLinkLevel
 from ..outbound.state_projection import (ProjectionError, audio_payload,
                                          geo_manifest_payload, mode_payload,
                                          robot_payload, task_item)
@@ -105,10 +106,11 @@ class CloudProjector:
                 ("state/audio", self._audio),
                 ("state/media", self._media),
                 ("state/geo/manifest", self._manifest),
-                ("data/file/index", self._file_index)):
+                ("data/file/index", self._file_index),
+                ("state/link", self._link)):
             try:
                 data = build(state)
-            except ProjectionError as exc:
+            except (ProjectionError, UnmappedLinkLevel) as exc:
                 # 闭集越界之类. 记下来但不发 -- 发出去就是让 Qt 收到它
                 # 字典里没有的枚举, 而 v2.0 S1.3 禁止它降级解释.
                 self.errors += 1
@@ -255,6 +257,40 @@ class CloudProjector:
         return geo_manifest_payload(
             manifest_rev=int(state.get("geo_manifest_rev", 0)),
             objects=objects)
+
+    def _link(self, state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """v2.0 S4.1 的四字段.
+
+        *** 机内 state/link 与云端 state/link 形状完全不同.
+        机内那条(11 S4.6)带 level / gw_start_mono / link_epoch / thresholds
+        一大堆, 是给 P1 判返航和给 HMI 点亮 ESTOP 用的; v2.0 只要四个字段.
+        直接把机内那条转出去, Qt 会因为缺 state / cloud_link 而整条拒收
+        (S1.3 必填字段缺失是拒绝条件) -- 而拒收在 Zenoh 侧不产生任何回音,
+        表现就是"Qt 判机器人离线", 且它每 3 秒判一次, 永远离线.
+
+        * link 缺源时返回 None(不发) 而不是发一个 down.
+        发 down 的话 Qt 显示离线 -- 而"网关刚起来还没算出链路状态"与
+        "链路真的断了"是两件事. 不发, Qt 按它自己的 3 秒规则判离线, 结论
+        一样但没有我方编造的成分.
+        """
+        from ..outbound.cloud_envelope import UnmappedLinkLevel, link_state_word
+
+        link = state.get("link")
+        if not link:
+            return None
+        try:
+            word = link_state_word(link.get("level"))
+        except UnmappedLinkLevel:
+            # L3(返航触发)在 v2.0 里没有落点 -- 这是待裁决项 E-2.
+            # NO 不擅自映成 down 或 degraded: 前者让 Qt 显示离线而机器人
+            # 仍在动, 后者丢掉"已触发返航"这个信息. 不发比编一个好.
+            raise
+        return {
+            "state": word,
+            "cloud_link": word != "down",
+            "disconnected_s": float(link.get("disconnected_s") or 0.0),
+            "estop_path": link.get("estop_path") or "down",
+        }
 
     def _file_index(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """可下载文件索引.
