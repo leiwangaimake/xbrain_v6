@@ -329,7 +329,7 @@
 
 | # | 缺什么 | 影响 | 卡因 |
 |---|---|---|---|
-| **CLD-1** | ★★★ **`cmd/estop` 零订阅者** —— 三个来源在发（p4 语音急停 / p5 的 HMI 按钮 / p5 的云端 ESTOP），**没有任何进程在听** | 软件侧发起的急停三条全都到不了仲裁器。★ 硬件级急停（底盘 HES + chassis_relay 单跳 CRL-1）是**独立通路**，不受此影响 —— 下不得「急停完全失效」的结论 | `[SW-NOW]` p2_core 需真订 `cmd/estop`。★ 现状易被误判为已接线：`p2_subscriber.py` 的类 docstring 里有一句 `subs.declare(session, "cmd/estop", on_estop)`，那是**用法示例不是调用**，grep 会命中它 |
+| ~~**CLD-1**~~ **CLD-1a** | ✅ **`cmd/estop` → p2_core 已接**（批62）：域① 缴械 → `state/arb/motion.suspended="soft_estop"` 广播 → p1 读它零速；域④ 强制爆闪（SE-1）。★ 契约（11 §1.4）四订阅者里 **`p1_motion`（本拍零速 P1-21）与 `p3_task`（充电中止）仍未接** | p1/p3 缺席时，软急停对运动的生效**仅靠 p2→state/arb/motion→p1 这一跳广播**；P1-21 要 p1 直接订 `cmd/estop` 本拍零速，是不依赖广播到达的**冗余**，安全路径应两条都有 | `[SW-NOW]` p1_motion 订 `cmd/estop`（P1-21，白名单已含）+ p3_task 订（充电中止）。判据：`test_cloud_acceptance_path::test_estop_reaches_p2_but_not_yet_p1_p3` 补通即红 |
 | **CLD-2** | **`p3_task` 不发 `cmd/motion/intent`** —— 任务到运动执行那一跳未建（既有 PB8「执行接线」） | 云端 `GOTO_KEYPOINT` 会收到 `ack=accepted` 与 `state/task` 状态流转，而底盘那侧**一个 APDU 都不会出现** | `[SW-NOW]` 非本轮引入，但云端联调会第一次把它暴露在客户面前 |
 | **CLD-3** | `state/media` / `data/file/index` 无内容源 | 发空数组保活（不是不发），Qt 显示「无可用画面 / 无文件」 | `[GATED-HW]` 相机与文件面未建 |
 | **CLD-4** | `state/robot` 的 `battery` / `storage` 恒 `null`；`robot_state` 只报 `idle`/`running` | Qt 显示「未接入」而非编造值（§3.1 投到线上） | `[GATED-HW]` `state/power` 无发布者；充电态在 p3、急停接合态无发布者 |

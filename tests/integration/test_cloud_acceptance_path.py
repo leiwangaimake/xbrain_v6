@@ -140,9 +140,11 @@ TERMINUS = {
     # 今天还不存在] -- 见 test_goto_stops_at_p3.
     "GOTO_KEYPOINT": ("cmd/task", {"p3_task"}),
     "STOP_TASK": ("cmd/task", {"p3_task"}),
-    # *** 零个订阅者. 三个进程往这条 key 上发(语音急停 p4, HMI 按钮与云端
-    # 都在 p5), 而没有任何进程在听 -- 见 test_estop_has_no_consumer.
-    "ESTOP": ("cmd/estop", set()),
+    # p2_core 已接(CLD-1 批62: 域1 缴械 + state/arb/motion 广播 + 爆闪).
+    # 契约(11 S1.4)四订阅者里 chassis_relay 是 C++(不在扫描面), p1_motion
+    # (零速 P1-21) 与 p3_task(充电中止) 仍未接 -- 见
+    # test_estop_reaches_p2_but_not_yet_p1_p3.
+    "ESTOP": ("cmd/estop", {"p2_core"}),
     # 报警区配置落 geo 库. p5 只是发布者, 不订它.
     "SET_ALARM_CONFIG": ("cmd/geo", {"p3_task"}),
     # 喊话经 p2_core 的 speaker_wiring 出 TTS. 这条是通的.
@@ -249,32 +251,33 @@ def test_the_chassis_exit_is_p1_turning_intents_into_apdu():
     assert "send_apdu" in names, "p1 不再把 APDU 交给底盘客户端"
 
 
-def test_estop_has_no_consumer_at_all():
-    """*** 本轮最重的一条发现, 而且它在安全路径上.
+def test_estop_reaches_p2_but_not_yet_p1_p3():
+    """*** cmd/estop 接线现状: p2 已接, p1/p3 仍缺(CLD-1 批62 后).
 
-    三个来源往 cmd/estop 上发:
-      p4_agent   语音急停(16 S4 的 safety-bypass turn)
-      p5_gateway HMI 的 ESTOP 按钮(_estop_sender)
-      p5_gateway 云端 ESTOP(本轮新接)
-    而[没有任何进程订阅这条 key]. 三条急停路径全都发进了空气.
+    批59 查出 cmd/estop 零订阅者(三条软件急停路径发进空气). 批62 接了
+    p2_core: 域1 缴械 -> state/arb/motion.suspended="soft_estop" 广播 ->
+    p1 读它零速; 域4 强制爆闪(SE-1).
 
-    ! 这不是本轮引入的. p2_core/messaging/p2_subscriber.py 的类 docstring
-    里写着 `subs.declare(session, "cmd/estop", on_estop)` -- 那是[用法示例],
-    不是调用. 一次 grep "cmd/estop" 会命中它, 于是看起来像已接线.
-    我自己第一版的 TERMINUS 表就是这样填错的(照 grep 抄), 是本文件的 AST
-    判据把它纠正过来的.
+    契约(11 S1.4)四并行订阅者:
+      chassis_relay  CR-1 纯转发到 rt/safety/estop (C++, 不在扫描面)
+      p2_core        缴械 + 爆闪 (已接)
+      p1_motion      本拍零速 + 落 stop_reason (P1-21, 仍缺)
+      p3_task        充电中止 (仍缺)
 
-    * 真正的急停链路(硬件级)不经这条 key: 底盘的 HES 与 chassis_relay 的
-    单跳转发是独立通路(CRL-1). 所以"急停完全失效"这个结论下不得 --
-    下得的结论是: [软件侧发起的]急停, 三条都到不了仲裁器.
+    * 为什么 p2 接了还要 p1 也接: p2 的缴械经 state/arb/motion 广播, p1 读
+    到后零速 -- 那是[经一跳广播]的停. P1-21 要 p1[直接]订 cmd/estop 本拍
+    零速, 是不依赖 p2 广播到达的冗余. 安全路径要冗余, 两条都要.
 
-    补通后本条会红 -> 改 TERMINUS 表并删掉这条用例.
+    p1/p3 补通后本条会红 -> 更新并删除.
     """
     subs, pubs = _graph()
 
-    assert not subs.get("cmd/estop"), (
-        "cmd/estop 有订阅者了(%s) -- 软件急停链路已补通, "
-        "请更新 TERMINUS 表并删除本用例" % sorted(subs.get("cmd/estop", [])))
+    assert "p2_core" in subs.get("cmd/estop", set()), (
+        "cmd/estop 的 p2_core 订阅没了 -- 域1 缴械链路断了")
+    still_missing = {"p1_motion", "p3_task"} - subs.get("cmd/estop", set())
+    assert still_missing == {"p1_motion", "p3_task"}, (
+        "cmd/estop 的订阅者集合变了(%s) -- p1/p3 补通了就更新本用例"
+        % sorted(subs.get("cmd/estop", [])))
     assert "p5_gateway" in pubs.get("cmd/estop", set()), (
         "连发布者都没了 -- 那 HMI 的 ESTOP 按钮也断了")
 

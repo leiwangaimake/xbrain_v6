@@ -64,6 +64,8 @@ STATE_CLOCK_TOPIC = "state/clock"        # -> clock (CLK-A2 mirror)
 STATE_ROBOT_TOPIC = "state/robot"        # -> chassis (chassis_relay, CR-4)
 STATE_POWER_TOPIC = "state/power"        # -> battery (chassis_relay, CR-5)
 STATE_LINK_TOPIC = "state/link"          # -> network (11 S4.6)
+CMD_ESTOP_TOPIC = "cmd/estop"            # CLD-1: soft-estop disarm (14 S3.7)
+STATE_ARB_MOTION_TOPIC = "state/arb/motion"  # 11 S7A.5.1: suspended broadcast
 
 
 def _factor_cfg() -> FactorConfig:
@@ -132,6 +134,14 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # file read plus a sha256 verification in the publish path.
         factor_cfg = _factor_cfg()
         state_cache: dict = {}
+        # Boot-unique estop event token + seq (same rationale as _dev_eid: seq
+        # resets per boot but record.db persists, so a bare seq re-collides).
+        _estop_boot = os.urandom(3).hex()
+        _estop_seq = [0]
+
+        def _estop_seq_next() -> int:
+            _estop_seq[0] += 1
+            return _estop_seq[0]
 
         def _make_state_sink(name: str):
             def _sink(sample) -> None:
@@ -330,6 +340,63 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         _logger.info("p2 wiring: subscribed %s (G-1..G-11 gates active)",
                      CMD_MOTION_INTENT_TOPIC)
 
+        # -- cmd/estop -> domain-1 soft-estop disarm (CLD-1, 14 S3.7) --------
+        # P2 is NOT the estop execution path (SE-1a: quadruped Tier 1 executes;
+        # chassis_relay CR-1 forwards). P2 subscribes cmd/estop only to (1)
+        # disarm domain-1 so state/arb/motion.suspended goes "soft_estop" --
+        # p1 reads that and zeroes speed (P1-21) -- and (2) force the red/blue
+        # strobe on (SE-1). The four domains P2 owns (2/3/4/5) are NOT disarmed.
+        from xbrain.common.arbiter.core import Arbiter
+        from xbrain.p2_core.runtime.estop_wiring import (EstopCoordinator,
+                                                         suspended_frame)
+        from xbrain.p2_core.three_stops import ForceStrobeState
+        # wait_atomic_timeout does NOT participate in estop disarm: arb_suspend
+        # never reads it, and this motion arbiter registers no source so
+        # request() is never called (P2 does no motion multi-source arbitration
+        # -- that is p1's P1Arbiter). It is a construction-only ceiling. Read
+        # from arbiter.wait_atomic_timeout_s where the snapshot has it; the
+        # framework nominal (3 s) applies otherwise. This is NOT a CLAUDE.md 3.1
+        # safety value: it gates no safety decision on this arbiter.
+        _arb_to_s = _p2cfg.get("arbiter.wait_atomic_timeout_s")
+        _motion_wait_ms = (int(float(_arb_to_s) * 1000)
+                           if isinstance(_arb_to_s, (int, float)) else 3000)
+        motion_arb = Arbiter("motion", wait_atomic_timeout_ms=_motion_wait_ms)
+        strobe_state = ForceStrobeState()
+        arb_motion_pub = gen.declare_publisher(STATE_ARB_MOTION_TOPIC)
+        estop_queue: "queue.Queue" = queue.Queue(maxsize=32)
+
+        def _emit_estop_event(ev: dict) -> None:
+            # apply_stop/apply_rearm hand a {kind, detail} dict. Publish it as an
+            # event/{sev}/motion. soft_estop is recoverable (U35) -> warn.
+            gen.put("event/warn/motion", json.dumps({
+                "eid": "estop-%s-%d" % (_estop_boot, _estop_seq_next()),
+                "title": ev.get("kind", "estop"),
+                "detail": ev.get("detail", {}),
+                "src": "p2_core", "ts": 0.0,
+            }, ensure_ascii=False).encode("utf-8"))
+
+        def _publish_arb_motion(now_mono_ms: int) -> None:
+            arb_motion_pub.put(json.dumps(
+                suspended_frame(motion_arb, now_mono_ms),
+                ensure_ascii=False).encode("utf-8"))
+
+        estop_coord = EstopCoordinator(
+            motion_arb, strobe_state, _emit_estop_event, _publish_arb_motion)
+
+        def _on_estop(sample) -> None:
+            # RUST THREAD: enqueue only (CLAUDE.md 4.2). The main loop drains
+            # and runs the coordinator (which touches the arbiter + publishes).
+            # NO try to be clever here: even a full queue must not drop silently
+            # on the estop path.
+            try:
+                estop_queue.put_nowait(bytes(sample.payload))
+            except queue.Full:
+                _logger.error("p2 cmd/estop queue full -- estop frame dropped")
+
+        _gen_subs.append(gen.declare_subscriber(CMD_ESTOP_TOPIC, _on_estop))
+        _logger.info("p2 wiring: subscribed %s (domain-1 disarm + strobe)",
+                     CMD_ESTOP_TOPIC)
+
         # Device liveness -> 11 S6.2 device_offline/online events (SW-12 producers).
         # p5 persists + backfills these. All three producers are REAL:
         #   mic          -- arecord capture/publish thread alive/dead (below)
@@ -402,6 +469,14 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         _raw, now_mono_ms=int(now * 1000))
                     mode_ack_pub.put(json.dumps(
                         ack, ensure_ascii=False).encode("utf-8"))
+                # Drain cmd/estop FIRST (before motion): an estop must not
+                # wait behind a queued motion frame. Fully drained per pass.
+                while True:
+                    try:
+                        _eraw = estop_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    estop_coord.on_estop(_eraw, int(now * 1000))
                 # Drain cmd/motion/intent on the MAIN thread: the gates read
                 # the state caches this loop owns.
                 while True:
@@ -409,6 +484,10 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         _raw = motion_queue.get_nowait()
                     except queue.Empty:
                         break
+                    # A NEW motion command is the soft-estop re-arm key (14 S3.7
+                    # / motion_intent_wiring G-10: forwarding IS the key). Only
+                    # soft_estop is cleared here; hes/cmd_timeout need enable.
+                    estop_coord.maybe_rearm(int(now * 1000))
                     _ack = _handle_motion_intent(
                         _raw, motion_limits, state_cache, health_agg,
                         factor_cfg, rel_move_pub)
