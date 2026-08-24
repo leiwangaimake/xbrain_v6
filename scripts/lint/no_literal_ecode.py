@@ -171,6 +171,12 @@ EXEMPT_TAGS = {
               "test_cross_lang_codes.py keeps it byte-equal to a fresh render, "
               "and the codes are held correct against 11 S13.4~S13.15 by "
               "tests/common/test_error_codes.py",
+    "v2wire": "E_TASK_UNSUPPORTED / E_CHANNEL_DENIED as a v2.0 detail.code are "
+              "the CLOUD-FACING wire strings the gateway puts in ack.detail.code "
+              "(json格式文件_qt端v2.0 S2.6), NOT our internal E_* closed set -- "
+              "they are not in xbrain/common/errors and must not be (they belong "
+              "to the customer's protocol, not ours). One exempted definition "
+              "point in outbound/error_map.py; every use references the name",
 }
 
 #: The marker itself. Shouty and greppable on purpose: an exemption a reviewer

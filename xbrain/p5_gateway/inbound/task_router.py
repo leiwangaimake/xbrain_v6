@@ -45,7 +45,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Tuple
 
 from ...common import errors
-from ..outbound.error_map import build_error_fields
+from ..outbound.error_map import (V2_DETAIL_TASK_UNSUPPORTED,
+                                  build_error_fields)
 from .cloud_inbound import InboundReject
 from .field_validate import check_ids, validate_alarm, validate_goto
 
@@ -109,13 +110,13 @@ def route(data: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
             errors.E_NOT_IMPLEMENTED,
             "task type is no longer part of this phase protocol: %s" % task_type,
             {"task_type": task_type, "allowed": list(OPEN_TASK_TYPES)},
-            detail_code="E_TASK_UNSUPPORTED"))
+            detail_code=V2_DETAIL_TASK_UNSUPPORTED))
     if task_type not in OPEN_TASK_TYPES:
         raise InboundReject(build_error_fields(
             errors.E_NOT_IMPLEMENTED,
             "unsupported task type: %r" % (task_type,),
             {"task_type": task_type, "allowed": list(OPEN_TASK_TYPES)},
-            detail_code="E_TASK_UNSUPPORTED"))
+            detail_code=V2_DETAIL_TASK_UNSUPPORTED))
     if not isinstance(payload, dict):
         raise InboundReject(build_error_fields(
             errors.E_SCHEMA, "payload is not an object",

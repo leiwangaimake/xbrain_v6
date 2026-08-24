@@ -58,6 +58,12 @@ CODE_OUT_OF_FENCE = 2006
 CODE_ESTOP_ACTIVE = 2007
 CODE_STORAGE = 3001
 
+#: v2.0 的 detail.code 字符串值(对云端的 wire 值, 非我方内部 E_* 闭集). 网关把
+#: 它放进 ack.detail.code, Qt 逐字认(json格式文件_qt端v2.0 S2.6). 单一定义点 --
+#: 别处引用本名, 不再散落字面量. 它[不]属于 xbrain/common/errors, 也不该属于:
+#: 那是甲方协议的词, 不是我们的. no_literal_ecode 的 v2wire 豁免只此一处.
+V2_DETAIL_TASK_UNSUPPORTED = "E_TASK_UNSUPPORTED"  # ECODE-OK(v2wire): v2.0 detail.code wire value, not our E_* set
+
 QT_CODES = (
     CODE_OK, CODE_JSON_PARSE, CODE_REQUIRED_FIELD, CODE_INVALID_FIELD,
     CODE_RID_MISMATCH, CODE_VERSION_UNSUPPORTED, CODE_TASK_UNSUPPORTED,
