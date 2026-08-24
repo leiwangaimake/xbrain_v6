@@ -91,21 +91,21 @@ def route(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         # 应拒绝并回 E_CHANNEL_DENIED, 不能执行速度.
         raise InboundReject(build_error_fields(
             errors.E_CHANNEL_DENIED,
-            "云端连续遥控本期未立项, 不开放",
+            "cloud continuous teleop is not enabled this phase",
             {"task_type": task_type}))
     if task_type in RETIRED_TASK_TYPES:
         raise InboundReject(build_error_fields(
             errors.E_NOT_IMPLEMENTED,
-            "该任务类型已不是本期协议能力: %s" % task_type,
+            "task type is no longer part of this phase protocol: %s" % task_type,
             {"task_type": task_type, "allowed": list(OPEN_TASK_TYPES)}))
     if task_type not in OPEN_TASK_TYPES:
         raise InboundReject(build_error_fields(
             errors.E_NOT_IMPLEMENTED,
-            "不支持的任务类型: %r" % (task_type,),
+            "unsupported task type: %r" % (task_type,),
             {"task_type": task_type, "allowed": list(OPEN_TASK_TYPES)}))
     if not isinstance(payload, dict):
         raise InboundReject(build_error_fields(
-            errors.E_SCHEMA, "payload 不是对象",
+            errors.E_SCHEMA, "payload is not an object",
             {"field": "payload",
              "got_type": type(payload).__name__}))
 
@@ -113,7 +113,7 @@ def route(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     task_id = data.get("task_id")
     if not cmd_id or not task_id:
         raise InboundReject(build_error_fields(
-            errors.E_SCHEMA, "data 缺少 msg_id 或 task_id",
+            errors.E_SCHEMA, "data is missing msg_id or task_id",
             {"field": "msg_id" if not cmd_id else "task_id"}))
 
     if task_type == "GOTO_KEYPOINT":
@@ -163,13 +163,13 @@ def _stop(cmd_id: str, payload: Dict) -> Dict[str, Any]:
     if action not in _STOP_ACTIONS:
         raise InboundReject(build_error_fields(
             errors.E_SCHEMA,
-            "STOP_TASK 的 action 必须是 pause|resume|cancel",
+            "STOP_TASK action must be pause|resume|cancel",
             {"field": "action", "got": action}))
     target = payload.get("target_task_id")
     if not target:
         raise InboundReject(build_error_fields(
             errors.E_SCHEMA,
-            "target_task_id 必填, 不接受省略即当前任务",
+            "target_task_id is required; omission does not imply the current task",
             {"field": "target_task_id"}))
     return {
         "cmd_id": cmd_id,
@@ -192,7 +192,7 @@ def _estop(cmd_id: str, payload: Dict) -> Dict[str, Any]:
     action = payload.get("action")
     if action != "stop":
         raise InboundReject(build_error_fields(
-            errors.E_SCHEMA, "ESTOP 的 action 固定为 stop",
+            errors.E_SCHEMA, "ESTOP action must be stop",
             {"field": "action", "got": action}))
     return {
         "cmd_id": cmd_id,
@@ -209,23 +209,23 @@ def _alarm(cmd_id: str, payload: Dict) -> Dict[str, Any]:
     *** keep_in 一律拒, 且理由要逐字可读.
     v2.0 S3.4 逐字: "regions[] 只允许 alarm_region, 禁止 keep_in.
     营区 keep-in 必须走独立安全围栏接口". 评审 R10.5 给了兜底措辞:
-    回 3001 且 reason 逐字写"营区边界不经此通道配置".
+    回 3001 且 reason 英文 "camp keep-in boundary is not configured through this channel".
     * 这条不是形式主义: keep_in 是[安全围栏], 用报警配置通道改它意味着
     一条改报警的命令能改掉机器人的活动边界.
     """
     regions = payload.get("regions") or []
     if not isinstance(regions, list):
         raise InboundReject(build_error_fields(
-            errors.E_SCHEMA, "regions 不是数组", {"field": "regions"}))
+            errors.E_SCHEMA, "regions is not an array", {"field": "regions"}))
     for idx, region in enumerate(regions):
         if not isinstance(region, dict):
             raise InboundReject(build_error_fields(
-                errors.E_SCHEMA, "regions[%d] 不是对象" % idx,
+                errors.E_SCHEMA, "regions[%d] is not an object" % idx,
                 {"field": "regions[%d]" % idx}))
         if region.get("type") == "keep_in":
             raise InboundReject(build_error_fields(
                 errors.E_CONFIG_INVALID,
-                "营区边界不经此通道配置",
+                "camp keep-in boundary is not configured through this channel",
                 {"field": "regions[%d].type" % idx,
                  "region_id": region.get("id")}))
     return {
@@ -261,21 +261,21 @@ def _audio(cmd_id: str, payload: Dict) -> Dict[str, Any]:
     if mode != "pc_to_dog":
         raise InboundReject(build_error_fields(
             errors.E_CHANNEL_DENIED,
-            "本期只开放 pc_to_dog; dog_to_pc 不启用机上麦克风上行",
+            "only pc_to_dog is enabled this phase; dog_to_pc must not enable onboard mic uplink",
             {"field": "mode", "got": mode}))
     action = payload.get("action")
     if action not in ("start", "exit_broadcast"):
         raise InboundReject(build_error_fields(
-            errors.E_SCHEMA, "AUDIO_CONTROL 的 action 必须是 start|exit_broadcast",
+            errors.E_SCHEMA, "AUDIO_CONTROL action must be start|exit_broadcast",
             {"field": "action", "got": action}))
     stream_id = payload.get("stream_id")
     if action == "start" and stream_id:
         raise InboundReject(build_error_fields(
-            errors.E_SCHEMA, "start 不得携带 stream_id, 它由后端分配",
+            errors.E_SCHEMA, "start must not carry stream_id; the backend assigns it",
             {"field": "stream_id"}))
     if action == "exit_broadcast" and not stream_id:
         raise InboundReject(build_error_fields(
-            errors.E_SCHEMA, "exit_broadcast 必须携带要退出的 stream_id",
+            errors.E_SCHEMA, "exit_broadcast must carry the stream_id to exit",
             {"field": "stream_id"}))
     return {
         "cmd_id": cmd_id,

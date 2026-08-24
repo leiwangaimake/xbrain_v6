@@ -95,10 +95,10 @@ def parse_frame(raw: bytes, key_rid: str) -> Dict[str, Any]:
         body = json.loads(text)
     except (UnicodeDecodeError, ValueError) as exc:
         raise InboundReject(envelope_error(
-            CODE_JSON_PARSE, "报文不是合法 JSON", {"parse_error": str(exc)}))
+            CODE_JSON_PARSE, "frame is not valid JSON", {"parse_error": str(exc)}))
     if not isinstance(body, dict):
         raise InboundReject(envelope_error(
-            CODE_JSON_PARSE, "报文顶层不是对象",
+            CODE_JSON_PARSE, "frame top level is not an object",
             {"got_type": type(body).__name__}))
 
     # -- 1005 版本[先于]必填字段 ---------------------------------------
@@ -110,13 +110,13 @@ def parse_frame(raw: bytes, key_rid: str) -> Dict[str, Any]:
     # v=2 的报文其余字段可能是另一套语义, 按 v1 判它们本身就没有意义.
     if "v" not in body:
         raise InboundReject(envelope_error(
-            CODE_REQUIRED_FIELD, "信封缺少必填字段: v", {"missing": ["v"]}))
+            CODE_REQUIRED_FIELD, "envelope missing required field: v", {"missing": ["v"]}))
     if body["v"] != SUPPORTED_V:
         from ...common import errors
         from ..outbound.error_map import CODE_VERSION_UNSUPPORTED
         raise InboundReject({
             "error_code": CODE_VERSION_UNSUPPORTED,
-            "reason": "不支持的协议版本 %r" % (body["v"],),
+            "reason": "unsupported protocol version %r" % (body["v"],),
             "detail": {"code": errors.E_PROTO_VERSION,
                        "supported": [SUPPORTED_V], "got": body["v"]},
         })
@@ -125,26 +125,26 @@ def parse_frame(raw: bytes, key_rid: str) -> Dict[str, Any]:
     missing = [f for f in REQUIRED_FIELDS if f not in body]
     if missing:
         raise InboundReject(envelope_error(
-            CODE_REQUIRED_FIELD, "信封缺少必填字段: %s" % ", ".join(missing),
+            CODE_REQUIRED_FIELD, "envelope missing required field: %s" % ", ".join(missing),
             {"missing": missing}))
 
     # -- 1004 rid 与 key 逐字一致 --------------------------------------
     rid = body["rid"]
     if not isinstance(rid, str) or not RID_RE.match(rid):
         raise InboundReject(envelope_error(
-            CODE_RID_MISMATCH, "rid 不符合值域 [a-z0-9_-]{1,32}",
+            CODE_RID_MISMATCH, "rid outside the value range [a-z0-9_-]{1,32}",
             {"got": rid}))
     if rid != key_rid:
         # 逐字比, 大小写敏感 -- 这条守的是多机场景: 一条 rid 写错的报文会让
         # A 的指令落到 B 身上, 而 Zenoh 不会拦(key 是对的).
         raise InboundReject(envelope_error(
-            CODE_RID_MISMATCH, "rid 与 key 第二段不一致",
+            CODE_RID_MISMATCH, "rid does not match the second key segment",
             {"expected": key_rid, "got": rid}))
 
     # -- 1002 data 必须是对象 ------------------------------------------
     if not isinstance(body["data"], dict):
         raise InboundReject(envelope_error(
-            CODE_REQUIRED_FIELD, "data 不是对象",
+            CODE_REQUIRED_FIELD, "data is not an object",
             {"got_type": type(body["data"]).__name__}))
     return body
 

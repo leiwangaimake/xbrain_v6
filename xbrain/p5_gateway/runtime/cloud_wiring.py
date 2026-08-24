@@ -398,6 +398,7 @@ class CloudBridge:
 
     def _reject_unimplemented(self, sample: Any, ack_name: str,
                               reason: str) -> None:
+        from ...common import errors
         from ..outbound.error_map import to_qt_code
 
         try:
@@ -407,8 +408,9 @@ class CloudBridge:
                 msg_id=_new_msg_id(), ref_msg_id=msg_id or "",
                 task_id=task_id or "", task_type=task_type or "",
                 result=RESULT_REJECTED,
-                error_code=to_qt_code("E_NOT_IMPLEMENTED"), reason=reason,
-                detail={"code": "E_NOT_IMPLEMENTED"}))
+                error_code=to_qt_code(errors.E_NOT_IMPLEMENTED),
+                reason=reason,
+                detail={"code": errors.E_NOT_IMPLEMENTED}))
             self.stats["rejected"] += 1
         except Exception:                       # noqa: BLE001
             _logger.exception("p5 cloud %s reject failed", ack_name)

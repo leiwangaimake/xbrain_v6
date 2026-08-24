@@ -170,7 +170,7 @@ def test_retired_names_are_not_implemented_not_channel_denied():
         # E_NOT_IMPLEMENTED, 于是变异体不红. 两条分支的区别全在 reason:
         # "已不是本期协议能力"(去看新契约)与"不支持"(可能拼错了),
         # 对 Qt 开发者的指向完全不同.
-        assert "已不是本期协议能力" in fields["reason"], (
+        assert "no longer part of this phase protocol" in fields["reason"], (
             "%s 的拒绝理由没有点明它是退役名称: %r" % (name, fields["reason"]))
 
 
@@ -198,7 +198,7 @@ def test_keep_in_region_is_refused_with_the_verbatim_reason():
         "alarm_level": 1,
         "regions": [{"id": "f-camp", "type": "keep_in", "op": "upsert"}]})
     assert fields, "keep_in 被放行了"
-    assert "营区边界不经此通道配置" in fields["reason"]
+    assert "camp keep-in boundary is not configured through this channel" in fields["reason"]
     assert fields["detail"]["region_id"] == "f-camp"
 
 

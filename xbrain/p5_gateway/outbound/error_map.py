@@ -153,9 +153,9 @@ class UnmappedErrorCode(KeyError):
 #: 但它们必须[有明确来源], 否则 Qt 侧那三个分支永远走不到而没人发现.
 #: 所以在这里显式登记, 由 inbound 的信封校验调用 envelope_error() 产出.
 ENVELOPE_ONLY_CODES = {
-    CODE_JSON_PARSE: ("E_SCHEMA", "JSON 无法解析"),
-    CODE_REQUIRED_FIELD: ("E_SCHEMA", "缺少必填字段"),
-    CODE_RID_MISMATCH: ("E_SCHEMA", "rid 与 key 或 session 不匹配"),
+    CODE_JSON_PARSE: (errors.E_SCHEMA, "JSON 无法解析"),
+    CODE_REQUIRED_FIELD: (errors.E_SCHEMA, "缺少必填字段"),
+    CODE_RID_MISMATCH: (errors.E_SCHEMA, "rid 与 key 或 session 不匹配"),
 }
 
 
