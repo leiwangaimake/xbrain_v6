@@ -51,6 +51,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 from ..outbound.cloud_envelope import UnmappedLinkLevel
+from ..outbound.task_result import TaskResultTracker, build_result
 from ..outbound.state_projection import (ProjectionError, audio_payload,
                                          geo_manifest_payload, mode_payload,
                                          robot_payload, task_item)
@@ -84,6 +85,11 @@ class CloudProjector:
         self._last_body: Dict[str, str] = {}
         self._start = self._now()
         self._manifest_sent = False
+        # 终态跃迁跟踪. snapshot 按节律发, result 事件驱动 -- 两条走同一条
+        # key(v2.0 R12.4 不另设 task/result), 靠 message_type 区分.
+        self._results = TaskResultTracker()
+        # 回调线程 append, 循环线程取走. 见 observe_task.
+        self._pending_results: List[Dict[str, Any]] = []
         #: 只为可观测: 投影抛错的次数. 不参与判定.
         self.errors = 0
 
@@ -99,6 +105,13 @@ class CloudProjector:
         循环仍在跑).
         """
         sent: List[str] = []
+        # *** result 先于 snapshot 发.
+        # 反过来的话, 一个刚完成的任务会先从 snapshot 的 current 里消失
+        # (它不再 running), 然后才收到 result -- Qt 中间那一瞬看到的是
+        # "没有任务在跑, 也没有结果", 而操作员正盯着屏幕等结果.
+        for data in self._drain_results(state):
+            self._bridge.publish_state("state/task", data)
+            sent.append("state/task:result")
         for name, build in (
                 ("state/robot", self._robot),
                 ("state/task", self._task),
@@ -194,6 +207,79 @@ class CloudProjector:
             "suspended": [task_item(t) for t in tasks
                           if t.get("state") == "paused"],
         }
+
+    def observe_task(self, task: Any) -> None:
+        """从 state/task 的 Zenoh 回调调用, 每次广播一次.
+
+        *** 这是终态判定成立的前提, 不是优化.
+        跃迁规则(task_result.observe)要求看到 [非终态 -> 终态] 那一次跃迁.
+        只在 10 Hz 的 tick 上采样的话, 一个 50 ms 内 running -> completed
+        的快任务只会被看到 completed 一次, 于是永远发不出 result.
+
+        * RUST 线程(CLAUDE.md 4.2): 只做纯 CPU 判定与 list.append, NO 不
+        发布, 不 await. 发布在 tick 里, 由循环线程做.
+        """
+        if not isinstance(task, dict):
+            return
+        try:
+            data = self._result_for(task)
+        except Exception:                        # noqa: BLE001
+            self.errors += 1
+            _logger.exception("p5 cloud task result build failed")
+            return
+        if data is not None:
+            # list.append 在 GIL 下是原子的, 与本进程其它跨线程缓存同一
+            # 做法(见 main_wiring 的 hmi_state 注释).
+            self._pending_results.append(data)
+
+    def _result_for(self, task: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """一条任务观察 -> 一条 result(或 None). 跃迁判定在 tracker 里."""
+        hit = self._results.observe(task.get("task_id"), task.get("state"))
+        if hit is None:
+            return None
+        task_id, result_state = hit
+        failed = result_state != "done"
+        return build_result(
+            task_id=task_id,
+            task_type=task.get("task_type") or "",
+            state=result_state,
+            # 失败码与原因必须来自任务记录. 没有的话给一个通用码而不是 0 --
+            # 0 是"成功", 一条 state=failed 而 code=0 的 result 会让 Qt 走
+            # 成功分支.
+            result_code=0 if not failed else int(
+                task.get("result_code") or 2001),
+            reason="" if not failed else (
+                task.get("reason") or "task ended without a recorded reason"),
+            completed_count=int(task.get("completed_count") or 0),
+            total_count=int(task.get("total_count") or 0),
+            distance_m=task.get("distance_m"),
+            duration_sec=float(task.get("duration_sec") or 0.0),
+            started_ts=task.get("started_ts"),
+            ended_ts=task.get("ended_ts"),
+            route_id=task.get("route_id"),
+            route_rev=task.get("route_rev"),
+            detail=task.get("result_detail"))
+
+    def _drain_results(self, state: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """这一拍有哪些任务刚跃迁到终态.
+
+        NO 不走 _due 的节律判定 -- result 是[事件], 每一条都要发. 走节律的
+        话, 两个任务在同一秒内先后结束, 第二条会被"没到点"吃掉, 而它永远
+        不会再来一次(跃迁只发生一次).
+        """
+        # 回调那边攒下的先取走. 用 [:] 一次性换出而不是逐条 pop --
+        # 回调随时可能 append, 逐条 pop 会与它交错.
+        out: List[Dict[str, Any]] = self._pending_results[:]
+        del self._pending_results[:len(out)]
+        # 兜底: 快照里若有回调没见过的跃迁(比如回调那一瞬掉了一条), 这里
+        # 补上. tracker 的 _done 保证不会因此重复.
+        for task in (state.get("tasks") or []):
+            if not isinstance(task, dict):
+                continue
+            data = self._result_for(task)
+            if data is not None:
+                out.append(data)
+        return out
 
     def _mode(self, state: Dict[str, Any]) -> Dict[str, Any]:
         mode = state.get("mode")

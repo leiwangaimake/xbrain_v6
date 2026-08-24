@@ -392,6 +392,7 @@ def run_voice_loop_wiring(stop_flag: dict,
     # exception is swallowed and the event silently vanishes. Binding None up
     # front closes the window; the callback's `is not None` guard does the rest.
     cloud_bridge = None
+    cloud_projector = None
 
     # Shared state the HMI provider reads. The sync callbacks below REPLACE whole
     # values (never mutate in place) so the web thread's reads stay consistent
@@ -524,6 +525,14 @@ def run_voice_loop_wiring(stop_flag: dict,
             # panel stays "no plan" rather than showing an empty card.
             tasks = _extract_active_tasks(d)
             hmi_state["tasks"] = tasks or None
+            # Cloud result face (v2.0 R12.4). Observed HERE, on every
+            # broadcast, not on the 10 Hz projector tick: a task that goes
+            # running -> completed within one tick would only ever be SEEN
+            # terminal, and the transition rule would never fire. See
+            # TaskResultTracker.observe for why the rule needs this.
+            if cloud_projector is not None:
+                for _t in tasks or ():
+                    cloud_projector.observe_task(_t)
             _logger.info("p5 obs state/task update #%d: %s",
                          state_task_updates,
                          json.dumps(d, ensure_ascii=False))
@@ -780,7 +789,6 @@ def run_voice_loop_wiring(stop_flag: dict,
         # and look exactly like a client that never connected.
         from xbrain.p5_gateway.runtime.cloud_wiring import maybe_wire
         cloud_bridge = maybe_wire(gen, os.environ.get("XBRAIN_ROBOT_ID", ""))
-        cloud_projector = None
         if cloud_bridge is not None:
             from xbrain.p5_gateway.runtime.cloud_state import CloudProjector
             # The outbound face needs DRIVING, not just publishers: a declared
