@@ -58,6 +58,14 @@ SPEAKER_STATES = ("idle", "buffering", "playing", "fault")
 MIC_STATES = ("disabled", "idle", "recording", "fault")
 GEO_TYPES = ("waypoint", "recorded_path", "alarm_region")
 
+#: v2.0 S4.3 exit_reason 闭集(8 值). null 另外允许(表示"没有退出").
+EXIT_REASONS = ("requested", "timeout", "preempted", "fault", "target_lost",
+                "target_left_fence", "manual_cloud", "manual_wecom")
+
+#: v2.0 S5.1 事件 sev / state 闭集.
+EVENT_SEV = ("info", "warn", "error", "fatal")
+EVENT_STATES = ("active", "cleared", "acknowledged", "occurred")
+
 #: 今天没有任何机内发布者的段. 见模块头.
 UNSOURCED_ROBOT_SECTIONS = ("battery", "storage")
 
@@ -71,6 +79,57 @@ def _closed(value: Any, closed: Sequence[str], field: str) -> str:
         raise ProjectionError(
             "%s=%r not in the v2.0 closed set %s" % (field, value, closed))
     return value
+
+
+def _closed_or_none(value: Any, closed: Sequence[str], field: str):
+    """闭集校验, 但 None 放行(nullable 字段). exit_reason 这类"没有值"是
+    合法的, 只有[给了一个闭集外的非 null 值]才是错的. """
+    if value is None:
+        return None
+    return _closed(value, closed, field)
+
+
+def event_payload(internal: Dict[str, Any], *, sev: str,
+                  category: str) -> Dict[str, Any]:
+    """机内事件 -> v2.0 S5.1 event data(审计 D-2).
+
+    *** 为什么要重整, 不能直接透传机内事件.
+    机内事件的字段名与 v2.0 不一样(severity/event_id vs sev/eid), 而且
+    [sev/category 根本不在机内 data 里 -- 它们在 key 上]. 直接透传的话
+    Qt 按 S5 找 data.sev 会找不到, 且 S5 逐字"不发布 event_id/severity 别名".
+    本函数把机内事件规整成 S5.1 的 14 字段, 字段名归一, 缺的补 null/空数组.
+
+    *** sev/category 从 key 取(权威), 并校验闭集.
+    S5 逐字"event key 的 severity/category 与 data.sev/category 逐字一致".
+    key 是网关按 (sev, cat) 建的, 所以 key 就是权威源 -- data.sev/category
+    直接用它, 二者天然一致, NO 不从机内 data 里另取(那可能与 key 不符).
+    """
+    _closed(sev, EVENT_SEV, "sev")
+    state = internal.get("state") or "occurred"     # S5.4 任务事件默认 occurred
+    _closed(state, EVENT_STATES, "state")
+    eid = internal.get("eid") or internal.get("event_id")
+    if not eid:
+        # eid 是可靠事件的幂等 ID(S5.1 必填), 缺了 Qt 没法去重/补发关联.
+        raise ProjectionError("event missing eid (v2.0 S5.1)")
+    return {
+        "eid": eid,
+        "sev": sev,
+        "category": category,
+        "state": state,
+        # source 归一: 机内可能用 src. 缺则网关.
+        "source": internal.get("source") or internal.get("src") or "p5_gateway",
+        "code": internal.get("code") or "",
+        "title": internal.get("title") or "",
+        "message": internal.get("message") or "",
+        # 以下 nullable, 不适用为 null(S5.1).
+        "task_id": internal.get("task_id"),
+        "operator": internal.get("operator"),
+        "result": internal.get("result"),
+        "detail": dict(internal.get("detail") or {}),
+        # 无引用为空数组(S5.1), NO 不是 null.
+        "media": list(internal.get("media") or ()),
+        "file_refs": list(internal.get("file_refs") or ()),
+    }
 
 
 # --- state/robot ------------------------------------------------------
@@ -215,7 +274,9 @@ def mode_payload(*, voice_mode: str, source: str,
         "source": _closed(source, MODE_SOURCES, "source"),
         "stream_id": stream_id,
         "entered_ts": entered_ts,
-        "exit_reason": exit_reason,
+        # exit_reason 闭集(v2.0 S4.3, 审计 D-1). null 允许(没有退出), 非 null
+        # 必须在 8 值里 -- 我方发一个闭集外的值 Qt 会当未知枚举(S1.3 禁降级).
+        "exit_reason": _closed_or_none(exit_reason, EXIT_REASONS, "exit_reason"),
     }
 
 
@@ -245,7 +306,8 @@ def audio_payload(*, speaker_state: str, microphone_state: str,
         "speaker_holder": speaker_holder,
         "speaker_holder_type": speaker_holder_type,
         "last_frame_age_ms": last_frame_age_ms,
-        "exit_reason": exit_reason,
+        # 同 state/mode 的 exit_reason 闭集(D-1).
+        "exit_reason": _closed_or_none(exit_reason, EXIT_REASONS, "exit_reason"),
     }
 
 

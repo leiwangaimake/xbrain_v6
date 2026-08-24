@@ -605,7 +605,12 @@ class CloudBridge:
             pub = self._session.declare_publisher(
                 CLOUD_EVENT % (self._rid, severity, category))
             self._event_pubs[key] = pub
-        body = build_envelope(self._rid, key, data,
+        # D-2: 机内事件 -> v2.0 S5.1 字段集(字段名归一, sev/category 从 key
+        # 取, 补齐缺失). 直接透传机内 data 的话 Qt 找 data.sev 会找不到
+        # (机内 sev/category 在 key 上不在 data 里).
+        from ..outbound.state_projection import event_payload
+        v2_data = event_payload(data, sev=severity, category=category)
+        body = build_envelope(self._rid, key, v2_data,
                               ts=time.time(),   # WALL-CLOCK-OK(align)
                               seq=self._seq.next(self._rid, key))
         pub.put(json.dumps(body, ensure_ascii=False).encode("utf-8"))

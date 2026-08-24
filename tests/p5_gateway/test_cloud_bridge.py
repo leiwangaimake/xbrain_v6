@@ -766,10 +766,10 @@ def test_an_event_goes_out_on_the_prefixed_cloud_key():
     """
     bridge, session = _bridge()
 
-    bridge.publish_event("alarm", "task", {"eid": "e-1", "title": "x"})
+    bridge.publish_event("error", "alarm", {"eid": "e-1", "title": "x"})
 
     keys = [k for k, _ in session.puts]
-    assert keys == ["xbrain/gj-001/event/alarm/task"], keys
+    assert keys == ["xbrain/gj-001/event/error/alarm"], keys
     env = json.loads(session.puts[0][1].decode("utf-8"))
     assert set(env) == {"v", "rid", "ts", "seq", "src", "data"}
     assert env["data"]["eid"] == "e-1"
@@ -784,11 +784,11 @@ def test_event_publishers_are_cached_per_severity_and_category():
     bridge, session = _bridge()
 
     for _ in range(5):
-        bridge.publish_event("alarm", "task", {"eid": "e"})
+        bridge.publish_event("error", "alarm", {"eid": "e"})
     bridge.publish_event("warn", "comm", {"eid": "e2"})
 
     event_pubs = [k for k in session.pubs if "/event/" in k]
-    assert sorted(event_pubs) == ["xbrain/gj-001/event/alarm/task",
+    assert sorted(event_pubs) == ["xbrain/gj-001/event/error/alarm",
                                   "xbrain/gj-001/event/warn/comm"], event_pubs
 
 
@@ -797,14 +797,14 @@ def test_event_seq_is_per_category_not_shared():
     的依据 -- 混在一起会让每条 key 看起来一直在丢."""
     bridge, session = _bridge()
 
-    bridge.publish_event("alarm", "task", {"eid": "a"})
+    bridge.publish_event("error", "alarm", {"eid": "a"})
     bridge.publish_event("warn", "comm", {"eid": "b"})
-    bridge.publish_event("alarm", "task", {"eid": "c"})
+    bridge.publish_event("error", "alarm", {"eid": "c"})
 
     seqs = {}
     for k, p in session.puts:
         seqs.setdefault(k, []).append(json.loads(p.decode("utf-8"))["seq"])
-    assert seqs["xbrain/gj-001/event/alarm/task"] == [1, 2]
+    assert seqs["xbrain/gj-001/event/error/alarm"] == [1, 2]
     assert seqs["xbrain/gj-001/event/warn/comm"] == [1]
 
 

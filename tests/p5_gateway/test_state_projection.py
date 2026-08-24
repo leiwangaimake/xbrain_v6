@@ -359,3 +359,111 @@ def test_a_task_item_carries_all_eleven_keys():
     assert set(d) == {"task_id", "task_type", "state", "current_waypoint_id",
                       "completed_count", "total_count", "progress_percent",
                       "route_id", "route_rev", "started_ts", "message"}
+
+
+# --- D-1: exit_reason 闭集 (审计复审) ---------------------------------
+
+def test_exit_reason_closed_set_in_mode():
+    """*** state/mode 的 exit_reason 闭集(v2.0 S4.3, 审计 D-1).
+
+    null 允许(没有退出); 非 null 必须在 8 值里. 之前直接透传, 我方发一个
+    闭集外的值 Qt 会当未知枚举(S1.3 禁降级解释).
+
+    MUTATION: mode_payload 的 exit_reason 改回直接透传 -> 这里红.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (ProjectionError,
+                                                             mode_payload)
+
+    # 合法值 + null 都通过.
+    for good in (None, "requested", "target_left_fence", "manual_cloud"):
+        d = mode_payload(voice_mode="normal", source="system",
+                         exit_reason=good)
+        assert d["exit_reason"] == good
+    # 闭集外必抛.
+    for bad in ("stopped", "cancel", "done", ""):
+        with pytest.raises(ProjectionError):
+            mode_payload(voice_mode="normal", source="system",
+                         exit_reason=bad)
+
+
+def test_exit_reason_closed_set_in_audio():
+    from xbrain.p5_gateway.outbound.state_projection import (ProjectionError,
+                                                             audio_payload)
+
+    audio_payload(speaker_state="idle", microphone_state="idle",
+                  exit_reason="timeout")        # 合法
+    with pytest.raises(ProjectionError):
+        audio_payload(speaker_state="idle", microphone_state="idle",
+                      exit_reason="bogus")
+
+
+# --- D-2: event 规整成 v2.0 S5.1 (审计复审) --------------------------
+
+def test_event_payload_puts_sev_and_category_into_data():
+    """*** v2.0 S5.1/S5: data.sev/category 必须存在且与 key 逐字一致.
+
+    机内事件的 sev/category 在 key 上, 不在 data 里. 直接透传的话 Qt 按 S5
+    找 data.sev 会找不到. event_payload 从 key 取写进 data.
+
+    MUTATION: event_payload 不写 data.sev(留机内的) -> 这里红.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import event_payload
+
+    # 机内事件: sev/category 不在 data 里(它们在 key 上).
+    d = event_payload({"eid": "evt-1", "title": "x", "src": "p3_task"},
+                      sev="info", category="task")
+    assert d["sev"] == "info" and d["category"] == "task"
+
+
+def test_event_payload_normalises_alias_field_names():
+    """*** S5 逐字"不发布 event_id/severity 别名". 机内用 event_id/src 时归一.
+
+    MUTATION: eid 只取 internal.get("eid")(不认 event_id) -> 这里红.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import event_payload
+
+    # 机内老字段名 event_id / src.
+    d = event_payload({"event_id": "evt-9", "src": "p2_core"},
+                      sev="warn", category="comm")
+    assert d["eid"] == "evt-9"                   # event_id -> eid
+    assert d["source"] == "p2_core"              # src -> source
+    assert "event_id" not in d and "severity" not in d
+
+
+def test_event_payload_fills_the_full_s5_field_set():
+    """*** S5.1 的 14 字段一个不少(缺的补 null/空数组).
+
+    Qt 按 S5.1 读这些字段; 缺一个就是 KeyError. media/file_refs 无引用为
+    空数组不是 null(S5.1 逐字).
+    """
+    from xbrain.p5_gateway.outbound.state_projection import event_payload
+
+    d = event_payload({"eid": "evt-1"}, sev="info", category="system")
+    assert set(d) == {"eid", "sev", "category", "state", "source", "code",
+                      "title", "message", "task_id", "operator", "result",
+                      "detail", "media", "file_refs"}
+    assert d["media"] == [] and d["file_refs"] == []
+    assert d["task_id"] is None and d["operator"] is None
+
+
+def test_event_sev_and_state_closed_sets():
+    """sev(info|warn|error|fatal) 与 state(active|cleared|acknowledged|
+    occurred) 闭集(S5.1). 闭集外必抛.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (ProjectionError,
+                                                             event_payload)
+
+    with pytest.raises(ProjectionError):
+        event_payload({"eid": "e"}, sev="alarm", category="task")   # alarm 非 sev
+    with pytest.raises(ProjectionError):
+        event_payload({"eid": "e", "state": "bogus"}, sev="info",
+                      category="task")
+
+
+def test_event_missing_eid_raises():
+    """eid 是可靠事件的幂等 ID(S5.1 必填). 缺了 Qt 没法去重/补发关联."""
+    from xbrain.p5_gateway.outbound.state_projection import (ProjectionError,
+                                                             event_payload)
+
+    with pytest.raises(ProjectionError):
+        event_payload({"title": "no eid"}, sev="info", category="task")
