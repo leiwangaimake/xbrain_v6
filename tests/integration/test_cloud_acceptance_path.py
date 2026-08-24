@@ -144,10 +144,31 @@ TERMINUS = {
     # p1_motion(本拍零速+latch, 批63) + p3_task(ES-1 freeze 冻结调度, 批64).
     # 契约(11 S1.4)第四个 chassis_relay 是 C++, 不在本扫描面.
     "ESTOP": ("cmd/estop", {"p2_core", "p1_motion", "p3_task"}),
-    # 报警区配置落 geo 库. p5 只是发布者, 不订它.
+    # SET_ALARM_CONFIG 发 cmd/geo, p3 确实订这条 key -- 但网关转出的报文
+    # 形状 p3 的解析器认不出, 报警配置到 p3 就被拒(E_SCHEMA). 配置面是断的,
+    # 见 test_set_alarm_config_is_rejected_by_p3_today. p5 只发布, 不订它.
     "SET_ALARM_CONFIG": ("cmd/geo", {"p3_task"}),
     # 喊话经 p2_core 的 speaker_wiring 出 TTS. 这条是通的.
     "AUDIO_CONTROL": ("cmd/audio/speak", {"p2_core"}),
+}
+
+
+# 一份合法的 v2.0 SET_ALARM_CONFIG payload(能过网关 validate_alarm 放行).
+# 用于把[网关转出的报文]喂给 p3 解析器, 坐实两侧结构不对齐. 与
+# tests/p5_gateway/test_field_validate.py 的 _GOOD_ALARM 同源, 这里内联一份
+# 避免 integration 依赖 p5_gateway 的测试夹具.
+_GOOD_ALARM_PAYLOAD = {
+    "alarm_level": 1, "siren_level": 70, "duration_sec": 5, "cooldown_sec": 2.0,
+    "alarm_window": {"start": "22:00", "end": "05:00"},
+    "rules": [{"type": "person_in_region", "enabled": True,
+               "alarm_role": "include", "applies_to": ["person"],
+               "region_ids": ["f-x"]}],
+    "regions": [{"id": "f-x", "op": "upsert", "base_rev": 0, "name": "shebei",
+                 "type": "alarm_region", "enabled": True,
+                 "applies_to": ["person"],
+                 "vertices": [{"latitude": 31.0, "longitude": 121.0},
+                              {"latitude": 31.1, "longitude": 121.0},
+                              {"latitude": 31.1, "longitude": 121.1}]}],
 }
 
 
@@ -221,6 +242,14 @@ def test_goto_stops_at_p3_and_never_reaches_the_chassis_today():
     * 这不是本轮引入的缺口, 是既有的 PB8"执行接线"未做. 但云端联调会第一次
     把它暴露在客户面前, 所以必须在这里点名.
 
+    *** 比"p3 不发 intent"更深的一层(2026-08-24 查证): 底盘 CHS-A 只接
+    [速度](rt/motion/cmd_vel, 13 册; /NAV_CMD 自主导航通道本期明令不用),
+    没有"发目标点让底盘自己导航"这条路. 于是云端 GOTO 要变成底盘能懂的东西,
+    必经上装侧生成 20Hz cmd_vel -- 而 GOTO/patrol 的速度来自路径跟随
+    (Nav2 + perception + 定位 + RNS), 这一整片速度生成层都还不在(押后到真机
+    阶段). 所以即便把 PB8 的 route 推送接上, p1 也没有东西把 route 变成有
+    意义的速度 APDU. 运动出口卡的是这一整片, 不是 quadruped 单进程.
+
     链路补通后本条会红 -> 改 TERMINUS 表并删掉这条用例.
     """
     subs, pubs = _graph()
@@ -239,6 +268,11 @@ def test_the_chassis_exit_is_p1_turning_intents_into_apdu():
     用户要看的"下发给 quadruped 的消息"就是这一步的产物: p1_motion 把
     MotionIntent 换成 CHS-A APDU 交给 ChassisClient. 再往下是 socket 与
     真机, 不在本文件扫描面内.
+
+    NOTE 但今天的 intent_to_apdu 产出的是 {PatrolDevice:{Op:IntentForward,
+    Text}} -- 一个转发意图文本的 MVP 占位, 不是真正的 cmd_vel 速度帧. 真正
+    的运动 APDU 要等速度生成层(见上面的 goto 用例). 本用例只断言这两个转换
+    函数还在调用图里, 不断言它们已产出真实速度.
     """
     src = (XBRAIN / "p1_motion" / "runtime" / "main_wiring.py").read_text(
         encoding="utf-8")
@@ -273,6 +307,51 @@ def test_estop_reaches_all_three_software_subscribers():
         % sorted(got))
     assert "p5_gateway" in pubs.get("cmd/estop", set()), (
         "连发布者都没了 -- 那 HMI 的 ESTOP 按钮也断了")
+
+
+def test_set_alarm_config_is_rejected_by_p3_today():
+    """*** SET_ALARM_CONFIG 从网关到 p3 是断的 -- 结构错位, 写成断言.
+
+    TERMINUS 把它标为落 cmd/geo -> p3, p3 也确实订这条 key. 但网关 _alarm
+    转出的报文形状与 p3 geo 命令解析器期待的不是一回事:
+      网关发   {action:upsert, alarm_config:{...}, regions:[{type:alarm_region}]}
+      p3 期待  {action, type, geo_id, obj}          (parse_geo_command)
+    p3 收到会因 gtype=None not in GEO_TYPE 抛 E_SCHEMA. 也就是说云端下发
+    报警配置, p3 直接拒 -- 联调时这条以"报警设置不上"暴露, 且[不是]硬件问题.
+
+    * 报警区几何在 p3 侧是有模型的(fence role=warning, 旧名 zone, 11 S9A.2),
+    缺的是网关把 alarm_region 翻译成 fence upsert; alarm_config 的声光标量
+    (siren_level/rules/duration/cooldown)则在 fence 表没有字段承接, 落点待
+    契约定(11 S9A / S7.5). 这两件都是纯软件, 不卡真机.
+
+    * 执行面另有一处未接: 报警区入侵检测 zone_enter/zone_exit(点在多边形内,
+    FE-1)全仓无实现; 但那个"点"是机器人自身 pose(RTK 已通), 不依赖
+    perception -- 也是可做的.
+
+    接通后本条会红(p3 不再抛) -> 说明网关↔p3 报警接口对齐了, 更新本用例与
+    TERMINUS 注释.
+    """
+    from xbrain.p3_task.ingest.geo_command import (GeoCommandError,
+                                                   parse_geo_command)
+    from xbrain.p5_gateway.inbound.task_router import _alarm
+
+    # 网关把一份合法的 v2.0 报警配置转成它要发到 cmd/geo 的报文.
+    geo_body = _alarm("c-alarm-1", _GOOD_ALARM_PAYLOAD)
+    # 网关的报文没有 p3 单对象 upsert 需要的 type/geo_id/obj -- 用的是
+    # alarm_config + regions 数组这套 v2.0 结构.
+    assert "type" not in geo_body and "obj" not in geo_body, (
+        "网关 _alarm 开始发 p3 认识的单对象形状了 -- 报警接口可能已对齐, "
+        "请复核本用例")
+
+    # 把网关转出的报文喂给 p3 的解析器 -- 它认不出, 报警配置就此止步.
+    rejected = False
+    try:
+        parse_geo_command(geo_body)
+    except GeoCommandError:
+        rejected = True
+    assert rejected, (
+        "p3 parse_geo_command 现在接受网关的报警报文了 -- 网关↔p3 报警接口"
+        "对齐了(好事), 请更新本用例与 TERMINUS 的 SET_ALARM_CONFIG 注释")
 
 
 def test_audio_control_is_the_one_fully_wired_chain():
