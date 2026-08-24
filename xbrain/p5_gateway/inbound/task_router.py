@@ -42,7 +42,7 @@ Boundaries: 只做 task_type -> (key, 机内 payload) 的映射. 不校验业务
 
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
 from ...common import errors
 from ..outbound.error_map import build_error_fields
@@ -79,10 +79,17 @@ FORBIDDEN_TASK_TYPES = ("MANUAL_VELOCITY",)
 _STOP_ACTIONS = ("pause", "resume", "cancel")
 
 
-def route(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
-    """云端 data -> (机内 key, 机内 payload). 拒绝时抛 InboundReject.
+def route(data: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any]]]:
+    """云端 data -> [(机内 key, 机内 payload), ...]. 拒绝时抛 InboundReject.
 
     data 是已过信封校验的 v2.0 data 对象(msg_id/task_id/task_type/payload).
+
+    *** 返回[列表], 因为一条云端命令未必对应一条机内命令.
+    GOTO/STOP/ESTOP/AUDIO 都是一对一(列表里一条), 但 SET_ALARM_CONFIG 是一条
+    云端命令 fan-out 成 N 条机内命令(每个 alarm_region 一条 cmd/geo fence
+    upsert; 批B 起再加 cmd/config 的规则/声光). 网关收齐这 N 条的机内 ack 后
+    聚合成一条 v2.0 终态(见 cloud_wiring 的 _fanout). 早先本函数返回单条
+    tuple, 而报警配置本质是[跨多落点的配置事务], 单条装不下.
     """
     task_type = data.get("task_type")
     payload = data.get("payload")
@@ -122,14 +129,16 @@ def route(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     task_id = data["task_id"]
 
     if task_type == "GOTO_KEYPOINT":
-        return KEY_TASK, _goto(cmd_id, task_id, payload)
+        return [(KEY_TASK, _goto(cmd_id, task_id, payload))]
     if task_type == "STOP_TASK":
-        return KEY_TASK, _stop(cmd_id, payload)
+        return [(KEY_TASK, _stop(cmd_id, payload))]
     if task_type == "ESTOP":
-        return KEY_ESTOP, _estop(cmd_id, payload)
+        return [(KEY_ESTOP, _estop(cmd_id, payload))]
     if task_type == "SET_ALARM_CONFIG":
-        return KEY_GEO, _alarm(cmd_id, payload)
-    return KEY_AUDIO, _audio(cmd_id, payload)
+        # fan-out: 一条报警配置 -> N 条 cmd/geo fence(warning) upsert.
+        # 批A 只投影 regions(几何); rules/声光是批B/C 的 cmd/config.
+        return [(KEY_GEO, c) for c in _alarm(cmd_id, payload)]
+    return [(KEY_AUDIO, _audio(cmd_id, payload))]
 
 
 def _goto(cmd_id: str, task_id: str, payload: Dict) -> Dict[str, Any]:
@@ -211,15 +220,25 @@ def _estop(cmd_id: str, payload: Dict) -> Dict[str, Any]:
     }
 
 
-def _alarm(cmd_id: str, payload: Dict) -> Dict[str, Any]:
-    """SET_ALARM_CONFIG -> cmd/geo 的区域增量更新.
+def _alarm(cmd_id: str, payload: Dict) -> List[Dict[str, Any]]:
+    """SET_ALARM_CONFIG -> N 条 cmd/geo fence(warning) upsert (fan-out).
+
+    *** 报警配置不是一处 alarm_config, 是跨多落点的配置事务(方案 v0.1).
+    alarm_region 在我方就是 fence 的 warning role(11 S9A.2, 旧名 zone); 规则
+    (person/vehicle_in_region)与声光(alarm_level/siren_level)走 cmd/config 的
+    suspicion_rules(批B/C, 11 R4.5/R6.1). 早先本函数把全部塞进一条畸形
+    cmd/geo({alarm_config, regions}), p3 的 geo 解析器认不出(缺 type/geo_id/
+    obj)直接抛 E_SCHEMA -- 报警配置到 p3 就断了. 本函数改为字段级拆解: 每个
+    region 投影成一条 p3 认识的 fence upsert.
+
+    *** 批A 只投影 regions(几何). rules/声光在批B/C 追加为 cmd/config 命令.
+    => 本批过后, 只带 regions 的报警配置能落库; 只改 rules/声光(regions 为空)
+    的暂时 fan-out 出 0 条 -- 那条路径由批B 补(批B 起至少有一条 cmd/config).
 
     *** keep_in 一律拒, 且理由要逐字可读.
-    v2.0 S3.4 逐字: "regions[] 只允许 alarm_region, 禁止 keep_in.
-    营区 keep-in 必须走独立安全围栏接口". 评审 R10.5 给了兜底措辞:
-    回 3001 且 reason 英文 "camp keep-in boundary is not configured through this channel".
-    * 这条不是形式主义: keep_in 是[安全围栏], 用报警配置通道改它意味着
-    一条改报警的命令能改掉机器人的活动边界.
+    v2.0 S3.4 逐字: "regions[] 只允许 alarm_region, 禁止 keep_in. 营区 keep-in
+    必须走独立安全围栏接口". keep_in 是[安全围栏], 用报警配置通道改它意味着
+    一条改报警的命令能改掉机器人的活动边界 -- 评审 R10.5 措辞回 3001.
     """
     regions = payload.get("regions") or []
     if not isinstance(regions, list):
@@ -239,21 +258,44 @@ def _alarm(cmd_id: str, payload: Dict) -> Dict[str, Any]:
     # B-3(审计): 标量范围 + rules + regions 结构校验. keep_in 已在上面拒过
     # (它是安全边界, 拒绝理由要逐字), 这里补其余 v2.0 S2.4 字段.
     validate_alarm(payload)
-    return {
-        "cmd_id": cmd_id,
-        "action": "upsert",
-        # origin 是授权边界(CH-1 通道即权限), 恒 cloud, 不从报文取.
-        "origin": CLOUD_ORIGIN,
-        "alarm_config": {
-            "alarm_level": payload.get("alarm_level"),
-            "siren_level": payload.get("siren_level"),
-            "duration_sec": payload.get("duration_sec"),
-            "cooldown_sec": payload.get("cooldown_sec"),
-            "alarm_window": payload.get("alarm_window"),
-            "rules": payload.get("rules"),
-        },
-        "regions": regions,
-    }
+    # 每个 region 一条 fence upsert. cmd_id 是占位 -- 网关 fan-out 时会给每条
+    # 子命令打上唯一的子 cmd_id(见 cloud_wiring._handle_task).
+    return [_region_to_fence(cmd_id, region) for region in regions]
+
+
+def _region_to_fence(cmd_id: str, region: Dict) -> Dict[str, Any]:
+    """v2.0 alarm_region -> 11 S7.8 的 fence(role=warning) 命令.
+
+    alarm_region 与 fence warning 是同一个东西(11 S9A.2, warning 旧名 zone;
+    zone_enter/zone_exit 逐字"role=warning, 纯点在多边形内, FE-1"). 增量语义
+    op=upsert|delete|set_state 直接映到 p3 geo 命令的 action; role 恒 warning.
+
+    * vertices 是 v2.0 的 [{latitude, longitude}], p3 的 geom.outer 收
+    [[lat, lon]] 或 [{lat, lon}](geo_object._latlon 两种都认). 这里转成
+    [lat, lon] 对.
+    * applies_to(区域对哪类目标生效)不落 fence 几何 -- 它是[规则]维度, 在批B
+    随 rules 进 suspicion_rules(inside_zones). fence 只存几何 + role.
+    """
+    op = region.get("op")
+    geo_id = region.get("id")
+    base_rev = region.get("base_rev")
+    if op == "delete":
+        return {"cmd_id": cmd_id, "action": "delete", "type": "fence",
+                "geo_id": geo_id, "origin": CLOUD_ORIGIN, "base_rev": base_rev}
+    if op == "set_state":
+        # v2.0 enabled(bool) -> p3 fence state(active|disabled). 报警区停用 =
+        # 规则不再命中它, 但几何还在(不是删除).
+        state = "active" if region.get("enabled") else "disabled"
+        return {"cmd_id": cmd_id, "action": "set_state", "type": "fence",
+                "geo_id": geo_id, "origin": CLOUD_ORIGIN, "base_rev": base_rev,
+                "state": state}
+    # op == "upsert"(field_validate 已把 op 限在 upsert|delete|set_state).
+    verts = [[v["latitude"], v["longitude"]]
+             for v in (region.get("vertices") or [])]
+    return {"cmd_id": cmd_id, "action": "upsert", "type": "fence",
+            "geo_id": geo_id, "origin": CLOUD_ORIGIN, "base_rev": base_rev,
+            "obj": {"name": region.get("name"),
+                    "geom": {"role": "warning", "outer": verts}}}
 
 
 def _audio(cmd_id: str, payload: Dict) -> Dict[str, Any]:

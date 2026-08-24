@@ -144,9 +144,10 @@ TERMINUS = {
     # p1_motion(本拍零速+latch, 批63) + p3_task(ES-1 freeze 冻结调度, 批64).
     # 契约(11 S1.4)第四个 chassis_relay 是 C++, 不在本扫描面.
     "ESTOP": ("cmd/estop", {"p2_core", "p1_motion", "p3_task"}),
-    # SET_ALARM_CONFIG 发 cmd/geo, p3 确实订这条 key -- 但网关转出的报文
-    # 形状 p3 的解析器认不出, 报警配置到 p3 就被拒(E_SCHEMA). 配置面是断的,
-    # 见 test_set_alarm_config_is_rejected_by_p3_today. p5 只发布, 不订它.
+    # SET_ALARM_CONFIG 发 cmd/geo, p3 订这条 key. 批A 起 regions 已 fan-out 成
+    # p3 认识的 fence(warning) upsert(见
+    # test_set_alarm_config_regions_now_reach_p3_as_fence_upserts). rules/声光
+    # 走 cmd/config(批B/C), 不在本表. p5 只发布 cmd/geo, 不订它.
     "SET_ALARM_CONFIG": ("cmd/geo", {"p3_task"}),
     # 喊话经 p2_core 的 speaker_wiring 出 TTS. 这条是通的.
     "AUDIO_CONTROL": ("cmd/audio/speak", {"p2_core"}),
@@ -309,49 +310,37 @@ def test_estop_reaches_all_three_software_subscribers():
         "连发布者都没了 -- 那 HMI 的 ESTOP 按钮也断了")
 
 
-def test_set_alarm_config_is_rejected_by_p3_today():
-    """*** SET_ALARM_CONFIG 从网关到 p3 是断的 -- 结构错位, 写成断言.
+def test_set_alarm_config_regions_now_reach_p3_as_fence_upserts():
+    """*** 批A: SET_ALARM_CONFIG 的 regions 已接通到 p3(fence warning upsert).
 
-    TERMINUS 把它标为落 cmd/geo -> p3, p3 也确实订这条 key. 但网关 _alarm
-    转出的报文形状与 p3 geo 命令解析器期待的不是一回事:
-      网关发   {action:upsert, alarm_config:{...}, regions:[{type:alarm_region}]}
-      p3 期待  {action, type, geo_id, obj}          (parse_geo_command)
-    p3 收到会因 gtype=None not in GEO_TYPE 抛 E_SCHEMA. 也就是说云端下发
-    报警配置, p3 直接拒 -- 联调时这条以"报警设置不上"暴露, 且[不是]硬件问题.
+    这条曾是 test_set_alarm_config_is_rejected_by_p3_today(批76 坐实断裂: 网关
+    _alarm 发 {alarm_config, regions}, p3 parse_geo_command 期待
+    {type, geo_id, obj}, 收到抛 E_SCHEMA). 批A 把网关 _alarm 改成 fan-out --
+    每个 alarm_region 投影成一条 p3 认识的 fence(role=warning) upsert. 接通了,
+    所以本用例翻面: 断言 p3 现在[接受]这些命令.
 
-    * 报警区几何在 p3 侧是有模型的(fence role=warning, 旧名 zone, 11 S9A.2),
-    缺的是网关把 alarm_region 翻译成 fence upsert; alarm_config 的声光标量
-    (siren_level/rules/duration/cooldown)则在 fence 表没有字段承接, 落点待
-    契约定(11 S9A / S7.5). 这两件都是纯软件, 不卡真机.
+    * 覆盖面: 只到 regions(几何). rules/声光是批B/C 的 cmd/config, 不在本用例.
+    * fan-out: 一条 SET_ALARM_CONFIG -> N 条 fence 命令(N=区域数). 网关聚合 N
+    条机内 ack 成一条 v2.0 终态(见 test_cloud_bridge 的聚合用例).
 
-    * 执行面另有一处未接: 报警区入侵检测 zone_enter/zone_exit(点在多边形内,
-    FE-1)全仓无实现; 但那个"点"是机器人自身 pose(RTK 已通), 不依赖
-    perception -- 也是可做的.
-
-    接通后本条会红(p3 不再抛) -> 说明网关↔p3 报警接口对齐了, 更新本用例与
-    TERMINUS 注释.
+    MUTATION: 网关 _alarm 退回发一条 {alarm_config, regions} -> parse 抛 -> 红.
     """
-    from xbrain.p3_task.ingest.geo_command import (GeoCommandError,
-                                                   parse_geo_command)
+    from xbrain.p3_task.ingest.geo_command import parse_geo_command
     from xbrain.p5_gateway.inbound.task_router import _alarm
 
-    # 网关把一份合法的 v2.0 报警配置转成它要发到 cmd/geo 的报文.
-    geo_body = _alarm("c-alarm-1", _GOOD_ALARM_PAYLOAD)
-    # 网关的报文没有 p3 单对象 upsert 需要的 type/geo_id/obj -- 用的是
-    # alarm_config + regions 数组这套 v2.0 结构.
-    assert "type" not in geo_body and "obj" not in geo_body, (
-        "网关 _alarm 开始发 p3 认识的单对象形状了 -- 报警接口可能已对齐, "
-        "请复核本用例")
+    # 网关把一份合法的 v2.0 报警配置 fan-out 成 N 条 cmd/geo fence 命令.
+    cmds = _alarm("c-alarm-1", _GOOD_ALARM_PAYLOAD)
+    assert cmds, "regions 非空但 _alarm 没产出任何 fence 命令"
 
-    # 把网关转出的报文喂给 p3 的解析器 -- 它认不出, 报警配置就此止步.
-    rejected = False
-    try:
-        parse_geo_command(geo_body)
-    except GeoCommandError:
-        rejected = True
-    assert rejected, (
-        "p3 parse_geo_command 现在接受网关的报警报文了 -- 网关↔p3 报警接口"
-        "对齐了(好事), 请更新本用例与 TERMINUS 的 SET_ALARM_CONFIG 注释")
+    # 每一条都必须是 p3 认识的 fence(warning) upsert, 且被解析器接受.
+    for cmd in cmds:
+        parsed = parse_geo_command(cmd)          # 不再抛 -- 接通的标志
+        assert parsed.action == "upsert" and parsed.type == "fence", (
+            "报警区没投影成 fence upsert: action=%s type=%s"
+            % (parsed.action, parsed.type))
+        assert cmd["obj"]["geom"]["role"] == "warning", (
+            "alarm_region 必须落成 fence role=warning(11 S9A.2), 实际 %r"
+            % cmd["obj"]["geom"].get("role"))
 
 
 def test_audio_control_is_the_one_fully_wired_chain():

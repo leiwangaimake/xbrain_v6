@@ -71,10 +71,24 @@ def test_all_five_open_types_route_somewhere():
                                          "arrival_radius_m": 3.0}]},
         "STOP_TASK": {"target_task_id": "task-x", "action": "cancel"},
         "ESTOP": {"action": "stop"},
+        # SET_ALARM_CONFIG fan-out: 带一个 region 才产出命令(空 regions -> 0
+        # 条, 那条路径批B 才有 cmd/config). 这里给一个合法 alarm_region.
         "SET_ALARM_CONFIG": {"alarm_level": 1, "siren_level": 70,
                              "duration_sec": 5, "cooldown_sec": 2.0,
                              "alarm_window": {"start": "22:00", "end": "05:00"},
-                             "rules": [], "regions": []},
+                             "rules": [],
+                             "regions": [{"id": "f-x", "op": "upsert",
+                                          "base_rev": 0, "name": "z",
+                                          "type": "alarm_region",
+                                          "enabled": True,
+                                          "applies_to": ["person"],
+                                          "vertices": [
+                                              {"latitude": 31.0,
+                                               "longitude": 121.0},
+                                              {"latitude": 31.1,
+                                               "longitude": 121.0},
+                                              {"latitude": 31.1,
+                                               "longitude": 121.1}]}]},
         "AUDIO_CONTROL": {"mode": "pc_to_dog", "action": "start"},
     }
     assert set(payloads) == set(OPEN_TASK_TYPES), (
@@ -83,7 +97,10 @@ def test_all_five_open_types_route_somewhere():
             "ESTOP": KEY_ESTOP, "SET_ALARM_CONFIG": KEY_GEO,
             "AUDIO_CONTROL": KEY_AUDIO}
     for task_type, payload in payloads.items():
-        key, _body = route(_data(task_type, payload))
+        # route 现在返回 [(key, payload), ...]; 每类的第一条落点即验收目标.
+        cmds = route(_data(task_type, payload))
+        assert cmds, "%s 没有产出任何机内命令" % task_type
+        key = cmds[0][0]
         assert key == want[task_type], (
             "%s 落到了 %s, 应该是 %s" % (task_type, key, want[task_type]))
 
@@ -96,7 +113,7 @@ def test_estop_goes_to_its_own_key_not_the_task_queue():
     """
     from xbrain.p5_gateway.inbound.task_router import KEY_ESTOP, KEY_TASK, route
 
-    key, _ = route(_data("ESTOP", {"action": "stop"}))
+    (key, _body), = route(_data("ESTOP", {"action": "stop"}))
     assert key == KEY_ESTOP and key != KEY_TASK
 
 
@@ -108,7 +125,7 @@ def test_goto_becomes_the_internal_submit_shape():
     """
     from xbrain.p5_gateway.inbound.task_router import route
 
-    _key, body = route(_data("GOTO_KEYPOINT", {
+    (_key, body), = route(_data("GOTO_KEYPOINT", {
         "coordinate_system": "WGS84", "recorded_path_id": "r-north",
         "waypoints": [{"id": "w-1", "name": "x", "latitude": 31.2,
                        "longitude": 121.4, "altitude": 8.4,
@@ -229,7 +246,7 @@ def test_origin_is_always_cloud_never_taken_from_the_frame():
     from xbrain.p5_gateway.inbound.task_router import CLOUD_ORIGIN, route
 
     # 报文里塞一个假的 source/origin, 结果必须仍是 cloud.
-    _k, body = route(_data("GOTO_KEYPOINT", {
+    (_k, body), = route(_data("GOTO_KEYPOINT", {
         "coordinate_system": "WGS84", "recorded_path_id": "r-a",
         "waypoints": [{"id": "w-1", "name": "x", "latitude": 31.2,
                        "longitude": 121.4, "altitude": 8.4,
@@ -237,13 +254,24 @@ def test_origin_is_always_cloud_never_taken_from_the_frame():
         "source": "voice", "origin": "voice"}))
     assert body["source"] == CLOUD_ORIGIN, "origin 被报文里的值覆盖了"
 
-    _k2, body2 = route(_data("SET_ALARM_CONFIG",
-                             {"alarm_level": 1, "siren_level": 70,
-                              "duration_sec": 5, "cooldown_sec": 2.0,
-                              "alarm_window": {"start": "22:00", "end": "05:00"},
-                              "rules": [], "regions": [],
-                              "origin": "hmi"}))
-    assert body2["origin"] == CLOUD_ORIGIN
+    # SET_ALARM_CONFIG fan-out: 每条 fence 命令的 origin 也必须恒 cloud, 不被
+    # 报文里的 "hmi" 覆盖.
+    cmds2 = route(_data("SET_ALARM_CONFIG",
+                        {"alarm_level": 1, "siren_level": 70,
+                         "duration_sec": 5, "cooldown_sec": 2.0,
+                         "alarm_window": {"start": "22:00", "end": "05:00"},
+                         "rules": [],
+                         "regions": [{"id": "f-x", "op": "upsert",
+                                      "base_rev": 0, "name": "z",
+                                      "type": "alarm_region", "enabled": True,
+                                      "applies_to": ["person"],
+                                      "vertices": [
+                                          {"latitude": 31.0, "longitude": 121.0},
+                                          {"latitude": 31.1, "longitude": 121.0},
+                                          {"latitude": 31.1,
+                                           "longitude": 121.1}]}],
+                         "origin": "hmi"}))
+    assert cmds2[0][1]["origin"] == CLOUD_ORIGIN
 
 
 def test_cloud_origin_is_in_the_shared_closed_set():
@@ -306,7 +334,7 @@ def test_exit_must_carry_the_original_stream_id():
     assert _reject("AUDIO_CONTROL",
                    {"mode": "pc_to_dog", "action": "exit_broadcast"})
     from xbrain.p5_gateway.inbound.task_router import route
-    _k, body = route(_data("AUDIO_CONTROL",
-                           {"mode": "pc_to_dog", "action": "exit_broadcast",
-                            "stream_id": "audio-gj001-0001"}))
+    (_k, body), = route(_data("AUDIO_CONTROL",
+                              {"mode": "pc_to_dog", "action": "exit_broadcast",
+                               "stream_id": "audio-gj001-0001"}))
     assert body["stream_id"] == "audio-gj001-0001"

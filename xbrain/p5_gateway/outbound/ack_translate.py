@@ -93,4 +93,38 @@ def translate_ack(internal_ack: Dict[str, Any], *, ref_msg_id: str,
         reason=reason, detail=detail)
 
 
-__all__ = ["translate_ack"]
+def aggregate_child_acks(acks: list) -> Dict[str, Any]:
+    """N 条机内子 ack 聚合成一条(SET_ALARM_CONFIG 是配置事务: 全成才成).
+
+    一条 SET_ALARM_CONFIG fan-out 成 N 条机内命令(每个 alarm_region 一条
+    cmd/geo fence upsert; 批B 起再加 cmd/config), 每条回一条机内 ack. 但 v2.0
+    S4.1 只允许[一条] cmd/task/ack. 本函数把 N 条合成一条供 translate_ack 翻译:
+      任一子命令未受理(rejected/error) -> 整体取[首个失败]那条(带它的 code/
+        message/detail, Qt 据此定位是哪个 region 出的错);
+      全部 accepted/duplicate -> 整体 accepted(报警区重复提交是幂等的, duplicate
+        不算失败); 全 duplicate -> duplicate.
+
+    *** 为什么一票否决而不是部分成功.
+    配置是事务性的: 一半 region 写进去一半没写, 对操作员比"整体失败重发"更难
+    处理(他不知道哪几个生效了). 各条 fence upsert 幂等, 整体重发是安全的, 所以
+    宁可任一失败就整体判失败让操作员重发. 真正的[原子回滚]留给批D 的终态收尾
+    (那里才有 state/fence.active.rev 的权威确认).
+
+    返回机内 ack 形状 {result, code, message, detail}, 由 translate_ack 消费.
+    """
+    # NOTE 比较的是[机内] ack 的 result(accepted|duplicate|rejected|error,
+    # 见本模块 _RESULT_MAP 的键), NO 不是 v2.0 的 RESULT_* -- 机内多一个 error
+    # 值, 用 v2.0 常量比会漏掉它. 返回的也是机内形状, 交给 translate_ack 翻译.
+    if not acks:
+        # 收齐 N(>=1)条才调本函数, 不该为空. 防御: 当内部错处理.
+        return {"result": "error", "code": errors.E_INTERNAL,
+                "message": "empty alarm fan-out", "detail": {}}
+    for ack in acks:
+        if ack.get("result") not in ("accepted", "duplicate"):
+            return ack                          # 首个失败(rejected/error), 原样返回
+    if all(ack.get("result") == "duplicate" for ack in acks):
+        return {"result": "duplicate", "code": "OK", "message": "", "detail": {}}
+    return {"result": "accepted", "code": "OK", "message": "", "detail": {}}
+
+
+__all__ = ["translate_ack", "aggregate_child_acks"]

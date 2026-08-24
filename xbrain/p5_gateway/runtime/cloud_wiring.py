@@ -55,7 +55,7 @@ from ..inbound.cloud_inbound import (InboundReject, SRC_QT, frame_ids,
                                      is_cloud_frame, parse_frame, rid_from_key)
 from ..inbound.task_router import (CLOUD_ORIGIN, KEY_AUDIO, KEY_GEO,
                                     KEY_TASK, route)
-from ..outbound.ack_translate import translate_ack
+from ..outbound.ack_translate import aggregate_child_acks, translate_ack
 from ..outbound.cloud_envelope import SeqCounter, build_envelope
 from ..outbound.task_ack import (DedupWindow, RESULT_ACCEPTED, RESULT_REJECTED,
                                  build_ack, duplicate_ack)
@@ -180,7 +180,13 @@ class CloudBridge:
         # A-1 承接: 转发给 p3 的 cmd/task/geo 登记在这, 等 p3 的机内 ack 回来
         # 翻译转发到云端. cmd_id("c-"+msg_id) -> (msg_id, task_id, task_type,
         # mono_ms). 见 _handle_task / _on_internal_ack / tick.
-        self._pending: Dict[str, tuple] = {}
+        # fan-out 聚合(批A): 一条云端命令可拆成 N 条机内命令.
+        #   _pending: 子 cmd_id -> group_id(=云端 msg_id). 认哪条子 ack 属哪组.
+        #   _fanout:  group_id -> {expected, acks[], msg_id, task_id, task_type,
+        #             mono}. 收齐 expected 条子 ack 后聚合成一条 v2.0 终态.
+        # GOTO/STOP 是 N=1 的退化(一条子命令即一组), 与 fan-out 走同一条路.
+        self._pending: Dict[str, str] = {}
+        self._fanout: Dict[str, Dict[str, Any]] = {}
         self._now_mono = now_mono or time.monotonic
         #: 只为可观测: 各类报文的处理计数. 不参与任何判定.
         self.stats: Dict[str, int] = {"accepted": 0, "rejected": 0,
@@ -299,7 +305,7 @@ class CloudBridge:
             return
 
         try:
-            internal_key, payload = route(body["data"])
+            commands = route(body["data"])
         except InboundReject as exc:
             self._reject_task(raw, exc.fields, msg_id=msg_id,
                               task_id=task_id, task_type=task_type)
@@ -309,26 +315,48 @@ class CloudBridge:
         # 它走 cmd/audio/speak(p2 speaker), 而 p2 speaker 是语音 TTS 通道,
         # NO 不产生 v2.0 的 stream_id -- 那是云端喊话协议的字段, 只有网关
         # (云端翻译点)能给. start ack 必须带新分配的 stream_id(v2.0 S2.5/
-        # S3.1), 否则 Qt 拿不到它就发不了 audio/broadcast 帧(S8).
-        if internal_key == KEY_AUDIO:
-            self._handle_audio(msg_id, task_id, task_type, payload)
+        # S3.1), 否则 Qt 拿不到它就发不了 audio/broadcast 帧(S8). AUDIO 恒单条.
+        if len(commands) == 1 and commands[0][0] == KEY_AUDIO:
+            self._handle_audio(msg_id, task_id, task_type, commands[0][1])
             return
 
-        # *** A-1: GOTO/STOP/ALARM 不回乐观 accepted, 而是[登记 pending +
-        # 转发], 等 p3 的机内 ack 回来翻译成 v2.0 回云端.
-        # 审计头号发现: 立即回 accepted 会掩盖 p3 的业务拒绝(E_NOT_FOUND /
-        # E_OUT_OF_FENCE / E_BUSY / duplicate), 而 v2.0 S1.4 逐字要求 ack
+        # *** fan-out 为空: 只发生在 SET_ALARM_CONFIG 不带 regions(只想改 rules/
+        # 声光)时 -- 而那条 cmd/config 通道批B 才接. 明确拒绝而不是静默受理: 一条
+        # 什么都没投影出去的命令若回 accepted, Qt 会以为报警配好了.
+        if not commands:
+            from ..outbound.error_map import build_error_fields
+            # detail_code 省略: build_error_fields 的 code 默认取 e_code
+            # (= errors.E_NOT_IMPLEMENTED), 不必再写一遍字面值(no_literal_ecode).
+            self._reject_task(
+                raw, build_error_fields(
+                    errors.E_NOT_IMPLEMENTED,
+                    "alarm config without regions needs the rules channel "
+                    "(not wired until batch B)"),
+                msg_id=msg_id, task_id=task_id, task_type=task_type)
+            return
+
+        # *** A-1 + fan-out: 不回乐观 accepted, 而是[登记聚合组 + 转发 N 条],
+        # 等 N 条机内 ack 收齐后聚合翻译成一条 v2.0 回云端.
+        # A-1 头号发现: 立即回 accepted 会掩盖 p3 的业务拒绝(E_NOT_FOUND /
+        # E_OUT_OF_FENCE / E_BUSY / duplicate), v2.0 S1.4 逐字要求 ack
         # "包括结构拒绝, 业务拒绝和 duplicate".
-        # 机内 payload 的 cmd_id 打上 "c-" 前缀, p3 回 ack 时复用它, 网关
-        # 据此在机内 cmd/task/ack 上认出云端发起的那些.
-        internal_cmd_id = CLOUD_CMD_PREFIX + (msg_id or "")
-        payload["cmd_id"] = internal_cmd_id
-        self._pending[internal_cmd_id] = (
-            msg_id or "", task_id or "", task_type or "", self._now_mono())
-        self._internal_put(internal_key, json.dumps(
-            payload, ensure_ascii=False).encode("utf-8"))
-        _logger.info("p5 cloud task %s -> %s (origin=%s, pending ack)",
-                     task_type, internal_key, CLOUD_ORIGIN)
+        # 每条子命令 cmd_id 打 "c-"+msg_id(+":i" 若 N>1), p3 回 ack 复用它, 网关
+        # 据此在机内 cmd/task/ack 上认出云端发起的那条, 并归到对应聚合组.
+        group_id = msg_id or ""
+        n = len(commands)
+        self._fanout[group_id] = {
+            "expected": n, "acks": [], "msg_id": msg_id or "",
+            "task_id": task_id or "", "task_type": task_type or "",
+            "mono": self._now_mono(),
+        }
+        for i, (key, payload) in enumerate(commands):
+            child = CLOUD_CMD_PREFIX + (msg_id or "") + (":%d" % i if n > 1 else "")
+            payload["cmd_id"] = child
+            self._pending[child] = group_id
+            self._internal_put(key, json.dumps(
+                payload, ensure_ascii=False).encode("utf-8"))
+        _logger.info("p5 cloud task %s -> %d cmd(s) (origin=%s, pending ack)",
+                     task_type, n, CLOUD_ORIGIN)
 
     def _on_internal_ack(self, sample: Any) -> None:
         """机内 cmd/task/ack 或 cmd/geo/ack 到达: 若是云端发起的, 翻译回云端.
@@ -356,12 +384,27 @@ class CloudBridge:
             #   网关重启后的迟到 ack   -> 不在 pending -> 丢(请求早已没人等)
             # "c-" 前缀仍在转发时打上, 那是给 main_wiring 的 HMI 侧
             # (_on_uplink_ack 查 "h-")区分用的, 不是本处的过滤依据.
-            entry = self._pending.pop(cmd_id, None)
-            if entry is None:
+            group_id = self._pending.pop(cmd_id, None)
+            if group_id is None:
                 return
-            msg_id, task_id, task_type, _mono = entry
+            group = self._fanout.get(group_id)
+            if group is None:
+                # 组已被 tick 超时清理(N 条里先到几条, 剩下的迟到). 丢弃迟到
+                # 的这条 -- 超时 ack 已回过, 不能再回一条.
+                return
+            group["acks"].append(body)
+            if len(group["acks"]) < group["expected"]:
+                return                              # 还没收齐这一组
+
+            # *** 收齐: 聚合 N 条子 ack 成一条 v2.0 终态(配置事务, 全成才成).
+            # N=1(GOTO/STOP)时 aggregate 直接返回那一条, 退化为原来的一对一.
+            self._fanout.pop(group_id, None)
+            agg = aggregate_child_acks(group["acks"])
+            msg_id = group["msg_id"]
+            task_id = group["task_id"]
+            task_type = group["task_type"]
             v2_ack = translate_ack(
-                body, ref_msg_id=msg_id, task_id=task_id, task_type=task_type,
+                agg, ref_msg_id=msg_id, task_id=task_id, task_type=task_type,
                 new_msg_id=_new_msg_id())
             self._publish_ack("cmd/task/ack", v2_ack)
             self.stats["accepted" if v2_ack["accepted"] else "rejected"] += 1
@@ -386,21 +429,27 @@ class CloudBridge:
         from ..outbound.error_map import build_error_fields
 
         now = self._now_mono()
-        expired = [cid for cid, (_m, _t, _tt, mono) in self._pending.items()
-                   if now - mono >= PENDING_ACK_TIMEOUT_S]
-        for cid in expired:
-            msg_id, task_id, task_type, _mono = self._pending.pop(cid)
+        # 超时按[聚合组]判, 不按单条子命令 -- fan-out 出去的 N 条只要有一条 p3
+        # 没在 2s 内回, 整组超时(配置事务全成才成, 部分回来也拼不出终态).
+        expired = [gid for gid, g in self._fanout.items()
+                   if now - g["mono"] >= PENDING_ACK_TIMEOUT_S]
+        for gid in expired:
+            group = self._fanout.pop(gid)
+            # 清掉这组还挂着的子 pending, 免得迟到的子 ack 再触发一次.
+            stale = [c for c, g in self._pending.items() if g == gid]
+            for c in stale:
+                self._pending.pop(c, None)
             fields = build_error_fields(
                 errors.E_TIMEOUT,
                 "backend did not answer within %.0fs" % PENDING_ACK_TIMEOUT_S)
             self._publish_ack("cmd/task/ack", build_ack(
-                msg_id=_new_msg_id(), ref_msg_id=msg_id, task_id=task_id,
-                task_type=task_type, result=RESULT_REJECTED,
-                error_code=fields["error_code"], reason=fields["reason"],
-                detail=fields["detail"]))
+                msg_id=_new_msg_id(), ref_msg_id=group["msg_id"],
+                task_id=group["task_id"], task_type=group["task_type"],
+                result=RESULT_REJECTED, error_code=fields["error_code"],
+                reason=fields["reason"], detail=fields["detail"]))
             self.stats["rejected"] += 1
             _logger.warning("p5 cloud task %s timed out (no p3 ack in %.0fs)",
-                            task_type, PENDING_ACK_TIMEOUT_S)
+                            group["task_type"], PENDING_ACK_TIMEOUT_S)
 
     def pending_count(self) -> int:
         """在途 pending 数. 只为可观测/测试."""

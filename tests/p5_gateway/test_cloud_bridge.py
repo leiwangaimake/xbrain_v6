@@ -78,6 +78,26 @@ def _bridge():
     return bridge, session
 
 
+#: 一个合法的 v2.0 alarm_region(过 field_validate 的 _validate_regions).
+#: 报警测试复用它 -- op=upsert, f- 前缀 id, >=3 顶点.
+_ALARM_REGION = {"id": "f-x", "op": "upsert", "base_rev": 0, "name": "zone",
+                 "type": "alarm_region", "enabled": True,
+                 "applies_to": ["person"],
+                 "vertices": [{"latitude": 34.697, "longitude": 135.505},
+                              {"latitude": 34.698, "longitude": 135.505},
+                              {"latitude": 34.698, "longitude": 135.506}]}
+
+
+def _alarm_body(regions, msg_id="m-1"):
+    """一份合法 v2.0 SET_ALARM_CONFIG 报文, regions 由调用方给."""
+    return _qt_task(data={
+        "msg_id": msg_id, "task_type": "SET_ALARM_CONFIG",
+        "payload": {"alarm_level": 1, "siren_level": 70, "duration_sec": 5,
+                    "cooldown_sec": 2.0,
+                    "alarm_window": {"start": "22:00", "end": "05:00"},
+                    "rules": [], "regions": regions}})
+
+
 def _qt_task(**over):
     # 合法 v2.0 GOTO payload (审计 B-2 后 route 校验字段级约束: WGS84 大写,
     # r-/w- 前缀, arrival_radius_m 0.5..10.0). fixture 必须过校验才能测拆分.
@@ -978,9 +998,10 @@ def test_a_p3_ack_before_timeout_cancels_the_pending():
 
 
 def test_alarm_business_ack_comes_back_on_cmd_geo_ack():
-    """*** ALARM 走 cmd/geo, p3 的 ack 在 cmd/geo/ack 上回来, 也要翻译转发.
+    """*** ALARM fan-out 成 cmd/geo fence upsert, p3 的 ack 在 cmd/geo/ack 上
+    回来, 聚合翻译后转发. 单区域(N=1)是退化: 子 cmd_id 无 :i 后缀, 仍是 c-m-1.
 
-    审计前 ALARM 的业务结果(版本冲突 E_GEO_CONFLICT)同样回不到云端.
+    审计前 ALARM 的业务结果(版本冲突 E_GEO_CONFLICT)回不到云端.
     """
     bridge, session, _clock = _bridge_clock()
 
@@ -989,14 +1010,71 @@ def test_alarm_business_ack_comes_back_on_cmd_geo_ack():
                                        "duration_sec": 5, "cooldown_sec": 2.0,
                                        "alarm_window": {"start": "22:00",
                                                         "end": "05:00"},
-                                       "rules": [], "regions": []}})
+                                       "rules": [],
+                                       "regions": [_ALARM_REGION]}})
     _feed(session, "cmd/task", alarm)
+    # 单区域 fan-out -> 一条 cmd/geo fence upsert, 子 cmd_id = c-m-1(N=1 无后缀).
+    assert _internal_puts(session, "cmd/geo")[0]["type"] == "fence"
     # p3 在 cmd/geo/ack 回版本冲突.
     _feed_internal_ack(session, "cmd/geo/ack", "c-m-1", "rejected",
-                       code="E_GEO_CONFLICT", message="区域版本冲突")
+                       code="E_GEO_CONFLICT", message="qu yu ban ben chong tu")
 
     d = _puts_to(session, "cmd/task/ack")[0]["data"]
     assert d["result"] == "rejected"
+    assert d["detail"]["code"] == "E_GEO_CONFLICT"
+
+
+def test_alarm_fanout_two_regions_wait_for_both_then_aggregate():
+    """*** 批A fan-out+聚合: 两个 alarm_region -> 2 条 cmd/geo fence upsert;
+    网关必须[等两条机内 ack 都收齐]才回一条 v2.0 ack(配置是事务).
+
+    子 cmd_id 带 :i 后缀(N>1), 全成 -> 整体 accepted.
+
+    MUTATION: aggregate 在收齐前就回(去掉 len(acks)<expected 的等待) -> 第一
+    条子 ack 到就回终态, 下面"只收一条不该回"的断言红.
+    """
+    bridge, session, _clock = _bridge_clock()
+    r0 = dict(_ALARM_REGION, id="f-a")
+    r1 = dict(_ALARM_REGION, id="f-b")
+    _feed(session, "cmd/task", _alarm_body([r0, r1]))
+
+    # 两条 fence 命令出去, 子 cmd_id 带 :i 后缀.
+    geo = _internal_puts(session, "cmd/geo")
+    assert [g["cmd_id"] for g in geo] == ["c-m-1:0", "c-m-1:1"], (
+        "fan-out 没产出两条带 :i 后缀的子命令: %s" % [g["cmd_id"] for g in geo])
+    assert [g["geo_id"] for g in geo] == ["f-a", "f-b"]
+
+    # 只回一条子 ack -> 还没收齐, 不能回 v2.0 终态.
+    _feed_internal_ack(session, "cmd/geo/ack", "c-m-1:0", "accepted")
+    assert not _puts_to(session, "cmd/task/ack"), (
+        "只收到一条子 ack 网关就回了终态 -- 配置事务被拆成了半截")
+
+    # 第二条到 -> 收齐 -> 聚合成一条 accepted.
+    _feed_internal_ack(session, "cmd/geo/ack", "c-m-1:1", "accepted")
+    acks = _puts_to(session, "cmd/task/ack")
+    assert len(acks) == 1, "收齐后应恰好回一条 v2.0 ack, 实际 %d" % len(acks)
+    assert acks[0]["data"]["result"] == "accepted"
+
+
+def test_alarm_fanout_any_region_rejected_fails_the_whole():
+    """*** 一票否决: 两区域里一条被拒 -> 整体 rejected(带那条的 code).
+
+    配置事务: 一半区域写进去一半没写对操作员更难处理, 宁可整体失败让他重发.
+
+    MUTATION: aggregate 改成"全部收齐即 accepted"(忽略失败) -> 这里 result
+    仍是 accepted, 红.
+    """
+    bridge, session, _clock = _bridge_clock()
+    r0 = dict(_ALARM_REGION, id="f-a")
+    r1 = dict(_ALARM_REGION, id="f-b")
+    _feed(session, "cmd/task", _alarm_body([r0, r1]))
+
+    _feed_internal_ack(session, "cmd/geo/ack", "c-m-1:0", "accepted")
+    _feed_internal_ack(session, "cmd/geo/ack", "c-m-1:1", "rejected",
+                       code="E_GEO_CONFLICT", message="ban ben chong tu")
+
+    d = _puts_to(session, "cmd/task/ack")[0]["data"]
+    assert d["result"] == "rejected", "一条区域被拒, 整体却没判失败"
     assert d["detail"]["code"] == "E_GEO_CONFLICT"
 
 
