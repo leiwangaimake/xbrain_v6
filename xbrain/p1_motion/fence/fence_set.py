@@ -49,6 +49,11 @@ class FenceSetError(Exception):
     active(FS-7), 不清空. maps 到 E_SCHEMA 边界."""
 
 
+# *** 为什么 HeldPolygon/HeldFenceSet 都 frozen + 全用 tuple(不是 list/dataclass
+# 可变字段): 它们被[跨线程]读. cmd/fence 回调在 Rust 线程里 accept()(换 active
+# 指针), 而 F2/F3 在循环线程里读 active. 若持有态可变, 读者可能读到半改的集合;
+# 做成不可变 + 原子换指针(self._active = 新对象)后, 读者拿到的要么是旧的完整
+# 快照要么是新的完整快照, 天然无锁一致(CLAUDE.md 4.2 的读侧对应).
 @dataclass(frozen=True)
 class HeldPolygon:
     """一个已校验的围栏多边形. vertices 是 (lat, lon) 对的元组(WGS84, 首尾不重复,
@@ -122,6 +127,10 @@ def compile_fence_set(wire: Dict[str, Any]) -> HeldFenceSet:
          crc32 归一化含 winding, 而 P1 持有态里不留 winding(只报警用, 无所谓朝向),
          所以重算时从 wire 原样取 winding, 与 wire.crc32 比. 不一致 = 报文损坏.
     """
+    # *** 结构校验[先于]crc32 自算, 是有意的顺序: 一条缺字段/类型错的坏帧, 若直接
+    # 去算 crc32 会在取 wire["polygons"] 之类的地方抛 KeyError/TypeError(晦涩), 或
+    # 算出一个必不匹配的 crc32(把"报文结构坏"误报成"crc 不符"). 先在这里逐字段挡
+    # 住, 抛出的 FenceSetError 才点得准是哪个字段的问题, 联调时一眼定位.
     if not isinstance(wire, dict):
         raise FenceSetError("FenceSet is not an object")
     fence_set_id = wire.get("fence_set_id")
@@ -131,8 +140,12 @@ def compile_fence_set(wire: Dict[str, Any]) -> HeldFenceSet:
     if not isinstance(fence_set_id, str) or not fence_set_id:
         raise FenceSetError("FenceSet missing fence_set_id")
     if not isinstance(rev, int):
+        # rev 必须是 int: 它进 state/fence.active.rev, D 用 > 比较判生效前进
+        # (#1). 若是字符串/浮点, 比较语义就崩了.
         raise FenceSetError("FenceSet rev must be an integer")
     if not isinstance(claimed, str) or len(claimed) != 8:
+        # crc32 是 8 位小写 hex(32-bit crc). 长度不对说明发送方没按 S9A.2 归一化,
+        # 与其算完再比不如这里先挡.
         raise FenceSetError("FenceSet crc32 must be 8 hex chars")
     if not isinstance(polys_raw, list):
         raise FenceSetError("FenceSet polygons must be an array")
