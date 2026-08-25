@@ -172,3 +172,23 @@ def test_d_p1_state_fence_advance_resolves_p5_alarm_terminal():
         "p1 的 state/fence.active.rev 前进后, p5 没发 SET_ALARM_CONFIG done 终态 "
         "-- F3 与 D 的 state/fence 形状没接上")
     assert res[0]["task_type"] == "SET_ALARM_CONFIG"
+
+
+def test_set_state_region_carries_target_in_obj_state():
+    """*** 审计 #2: set_state 报警区的目标态必须在 obj.state, p3 才读得到.
+
+    apply_set_state 从 (cmd.obj or {}).get("state") 读(geo_write); 放顶层会被
+    parse_geo_command 丢弃 -> p3 回 "set_state needs obj.state". 本条把
+    _region_to_fence 的 set_state 输出喂 p3 解析器, 断言 cmd.obj.state 拿得到.
+
+    MUTATION: _region_to_fence set_state 放顶层 state(不放 obj) -> cmd.obj 为
+    None -> 这里红.
+    """
+    from xbrain.p3_task.ingest.geo_command import parse_geo_command
+    from xbrain.p5_gateway.inbound.task_router import _region_to_fence
+
+    region = {"id": "f-zone", "op": "set_state", "base_rev": 3, "enabled": False}
+    parsed = parse_geo_command(_region_to_fence("c-1", region))
+    assert parsed.action == "set_state" and parsed.type == "fence"
+    assert (parsed.obj or {}).get("state") == "disabled", (
+        "set_state 目标态没落在 obj.state -- p3 apply_set_state 读不到(审计 #2)")

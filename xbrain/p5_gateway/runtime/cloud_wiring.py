@@ -367,6 +367,11 @@ class CloudBridge:
             "expected": n, "acks": [], "msg_id": msg_id or "",
             "task_id": task_id or "", "task_type": task_type or "",
             "mono": self._now_mono(),
+            # *** D 的 rev0 必须在[此刻]捕获(fan-out 前, 围栏还没写), 不能等到
+            # 聚合时. 否则 state/fence(新 rev)若在 alarm ack 之前到网关(Zenoh
+            # 多线程回调无序), 聚合时取的 rev0 已是前进后的值, D 会把成功的报警
+            # 误判 failed. 现在锚在写入前的基线, 之后任何前进都是本次生效.
+            "fence_rev0": self._fence_active_rev,
         }
         for i, (key, payload) in enumerate(commands):
             child = CLOUD_CMD_PREFIX + (msg_id or "") + (":%d" % i if n > 1 else "")
@@ -439,7 +444,10 @@ class CloudBridge:
             # 等 state/fence.active.rev 越过受理时的值(围栏真的换了)才发 done,
             # 6s 没等到发 failed. 只对[受理成功]登记 -- 被拒的不必等生效.
             if task_type == "SET_ALARM_CONFIG" and v2_ack["accepted"]:
-                self._register_alarm_terminal(task_id, task_type)
+                # rev0 取[fan-out 时]捕获的基线(见 group 的 fence_rev0), 不是此刻
+                # 的 active.rev -- 避免 state/fence 抢先到达造成的误判(#1).
+                self._register_alarm_terminal(
+                    task_id, task_type, group.get("fence_rev0"))
         except Exception:                        # noqa: BLE001
             _logger.exception("p5 cloud internal-ack handler crashed")
 
@@ -462,18 +470,27 @@ class CloudBridge:
         except Exception:                        # noqa: BLE001
             _logger.exception("p5 cloud state/fence handler crashed")
 
-    def _register_alarm_terminal(self, task_id: str, task_type: str) -> None:
-        """登记一条待确认的 SET_ALARM_CONFIG 终态(D). rev0 = 此刻的 active.rev
-        (可能为 None -- 还没收到 state/fence); 之后 active.rev [越过] rev0 即视为
-        本次报警配置生效. 用单调钟设 6s deadline(S3.4)."""
+    def _register_alarm_terminal(self, task_id: str, task_type: str,
+                                 fence_rev0) -> None:
+        """登记一条待确认的 SET_ALARM_CONFIG 终态(D). fence_rev0 = [fan-out 时]
+        (围栏写入前)的 active.rev(可能为 None -- 那时还没收到 state/fence); 之后
+        active.rev [越过] rev0 即视为本次报警配置生效. 用单调钟设 6s deadline(S3.4).
+
+        *** rev0 由调用方从 fanout group 传入(fan-out 时捕获), NO 不在这里取
+        self._fence_active_rev -- 本方法在聚合时才调, 那时 rev 可能已被抢先到达的
+        state/fence 推进过, 取当下值会漏掉本次前进(#1 竞态)."""
         now_m = self._now_mono()
         self._alarm_pending[task_id] = {
             "task_type": task_type,
-            "rev0": self._fence_active_rev,
+            "rev0": fence_rev0,
             "started_mono": now_m,
             "started_wall": self._now_wall(),
             "deadline": now_m + ALARM_RESULT_TIMEOUT_S,
         }
+        # *** 立即查一次(#1 竞态的另一半): 若 state/fence 已抢先把 active.rev 推过
+        # rev0(登记时围栏已生效), 现在就结, 别干等下一帧 state/fence -- 那帧可能
+        # 不来, alarm 就冤枉超时了.
+        self._resolve_ready_alarms()
 
     def _resolve_ready_alarms(self) -> None:
         """active.rev 变化后: 凡 rev 已越过 rev0 的待确认报警, 发 done 终态.

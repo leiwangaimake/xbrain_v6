@@ -286,10 +286,17 @@ def _region_to_fence(cmd_id: str, region: Dict) -> Dict[str, Any]:
     if op == "set_state":
         # v2.0 enabled(bool) -> p3 fence state(active|disabled). 报警区停用 =
         # 规则不再命中它, 但几何还在(不是删除).
+        # *** 目标态走 obj.state, NO 不放顶层(11 S7.9.1 补: 信封没有 state 成员,
+        # 每个 action 的参数只能搭 obj; apply_set_state 从 (cmd.obj or {}).get(
+        # "state") 读). 早先放顶层, p3 解析器丢弃它 -> 回 "set_state needs
+        # obj.state" (审计 #2).
+        #  set_state fence->active 是 L2(11 S7.9.5 line 表), 普通 SET_ALARM_
+        # CONFIG 给不了 confirm_token -> p3 仍会以 L2 拒 active; 但命令本身要
+        # 良构(->disabled 是安全方向, 不受 L2 拦). 报警区启用整体卡 L2, 同 B/C.
         state = "active" if region.get("enabled") else "disabled"
         return {"cmd_id": cmd_id, "action": "set_state", "type": "fence",
                 "geo_id": geo_id, "origin": CLOUD_ORIGIN, "base_rev": base_rev,
-                "state": state}
+                "obj": {"state": state}}
     # op == "upsert"(field_validate 已把 op 限在 upsert|delete|set_state).
     verts = [[v["latitude"], v["longitude"]]
              for v in (region.get("vertices") or [])]

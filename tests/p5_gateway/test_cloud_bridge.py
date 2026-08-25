@@ -1330,3 +1330,26 @@ def test_rejected_alarm_does_not_wait_for_effect():
                        code="E_GEO_CONFLICT", message="ban ben chong tu")
     _feed_state_fence(session, 9)
     assert _task_results(session) == []
+
+
+def test_alarm_done_even_if_state_fence_beats_the_ack():
+    """*** #1 竞态修复: state/fence(新 rev) 抢在 alarm ack 之前到, D 仍能 done.
+
+    Zenoh 多线程回调无序, state/fence 可能先于 alarm ack 到网关. rev0 若取聚合
+    时的 active.rev(已被推进), 或登记后不立即查一次, 都会把成功的报警误判 failed.
+
+    MUTATION-a: rev0 取聚合时 self._fence_active_rev(=6) -> 6>6 假 -> 不 done -> 红.
+    MUTATION-b: 去掉 _register 末尾的 _resolve_ready_alarms() -> 干等下一帧 -> 红.
+    """
+    _b, session, _mono, _wall = _alarm_bridge()
+    _feed_state_fence(session, 5)                   # 稳态 rev=5(fan-out 时基线)
+    # fan-out alarm(此刻捕获 rev0=5), 但先不回 ack.
+    _feed(session, "cmd/task", _alarm_body([_ALARM_REGION]))
+    # state/fence 推进到 6 抢先到达(alarm 还没聚合登记).
+    _feed_state_fence(session, 6)
+    assert _task_results(session) == []             # 还没登记, 无终态
+    # alarm ack 到 -> 聚合 -> 登记(rev0=5)-> 立即查: active=6>5 -> done.
+    _feed_internal_ack(session, "cmd/geo/ack", "c-m-1", "accepted")
+    res = _task_results(session)
+    assert len(res) == 1 and res[0]["state"] == "done", (
+        "state/fence 抢先到达时 D 没 done -- rev0 时机或立即查缺失(#1 竞态)")
