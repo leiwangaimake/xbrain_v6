@@ -102,17 +102,19 @@ def _parse_polygon(raw: Any, idx: int) -> HeldPolygon:
         if not isinstance(v, dict) or "lat" not in v or "lon" not in v:
             raise FenceSetError("polygons[%d] vertex missing lat/lon" % idx)
         verts.append((float(v["lat"]), float(v["lon"])))
-    # 审计 #4(登记, 轻微/潜伏): 本子集[原样]存 hard_enforce, 不归一化
-    # warning->false. 11 S9A.2 说 warning 恒 false, p3 已保证(fence.db CHECK:
-    # role<>'warning' OR hard_enforce=0), 且本子集只报警不裁剪, 不读 hard_enforce
-    # -- 故现在无影响. 但 clipping 落地后 p1 用 hard_enforce 决定裁不裁, 那时若
-    # 收到一条 warning+hard_enforce=true 的畸形帧(crc 又恰好自洽), 会误裁报警区.
-    # => clipping 落地时, 此处补 role=='warning' -> hard_enforce=False 的归一化.
+    # 审计 #4(已修): warning 恒 hard_enforce=False, 接收方[归一化], NO 不信发送方.
+    # 11 S9A.2 逐字"warning 恒为 false"且"接收方必须按 role 归一化不得信任发送方".
+    # p3 虽已保证(fence.db CHECK: role<>'warning' OR hard_enforce=0), 但一条畸形帧
+    # (warning+hard_enforce=true 且 crc 自洽)不该被信 -- clipping 落地后 p1 用
+    # hard_enforce 决定裁不裁, 信了就会把不该裁的报警区拿去裁. 在源头归一化, 一劳
+    # 永逸. crc32 自算仍用[wire 原值](见 compile_fence_set), 与 p3 的 crc 对齐;
+    # 归一化只作用于[持有态], 两者不冲突.
+    hard_enforce = False if role == "warning" else bool(raw.get("hard_enforce"))
     return HeldPolygon(
         poly_id=str(raw.get("poly_id")),
         role=role,
         name=str(raw.get("name") or ""),
-        hard_enforce=bool(raw.get("hard_enforce")),
+        hard_enforce=hard_enforce,
         vertices=tuple(verts))
 
 

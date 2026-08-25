@@ -136,6 +136,26 @@ def test_fence_runtime_state_no_fence_is_honest_none():
     assert st["enforcement"] == "disabled"
 
 
+def test_warning_hard_enforce_is_normalized_to_false():
+    """*** 审计 #4: warning 恒 hard_enforce=False, 接收方归一化(不信发送方).
+
+    一条 warning+hard_enforce=true 的畸形帧(crc 自洽)不该被信 -- clipping 落地后
+    p1 用 hard_enforce 决定裁不裁, 信了会误裁报警区. compile 后持有态必须 False.
+
+    MUTATION: _parse_polygon 原样存 hard_enforce(不归一化) -> held True -> 红.
+    """
+    polys = [{"poly_id": "f-a", "role": "allow", "name": "camp",
+              "winding": "ccw", "hard_enforce": True, "vertices": _RING},
+             {"poly_id": "f-zone", "role": "warning", "name": "gate",
+              "winding": "cw", "hard_enforce": True, "vertices": _RING}]
+    crc = fence_set_crc32("fs-active", 1, polys)     # crc 用 wire 原值(含 true)
+    wire = {"fence_set_id": "fs-active", "rev": 1, "crc32": crc,
+            "enu_origin": None, "soft_margin_min_m": None, "polygons": polys}
+    held = compile_fence_set(wire)                   # crc 自洽 -> 接受
+    assert held.warning_polygons()[0].hard_enforce is False, (
+        "warning 的 hard_enforce 没归一化成 False -- 信了发送方(审计 #4)")
+
+
 def test_p1_wiring_actually_subscribes_cmd_fence():
     """*** 守接线: main_wiring 真的订了 cmd/fence 并喂给 holder.accept.
 
