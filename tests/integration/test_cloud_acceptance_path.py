@@ -319,28 +319,33 @@ def test_set_alarm_config_regions_now_reach_p3_as_fence_upserts():
     每个 alarm_region 投影成一条 p3 认识的 fence(role=warning) upsert. 接通了,
     所以本用例翻面: 断言 p3 现在[接受]这些命令.
 
-    * 覆盖面: 只到 regions(几何). rules/声光是批B/C 的 cmd/config, 不在本用例.
-    * fan-out: 一条 SET_ALARM_CONFIG -> N 条 fence 命令(N=区域数). 网关聚合 N
-    条机内 ack 成一条 v2.0 终态(见 test_cloud_bridge 的聚合用例).
+    * 覆盖面: 只到 regions(几何+激活). rules/声光是批B/C 的 cmd/config, 不在本用例.
+    * fan-out: 一条 SET_ALARM_CONFIG -> N~2N 条 fence 命令. 审计 #3 后 enabled=true
+    的区域展开成 upsert(建 draft) + set_state->active(激活), 都是 fence 类且 p3
+    认得(云端激活无需 L2, 11 S7.9.5). 网关聚合成一条 v2.0 终态.
 
     MUTATION: 网关 _alarm 退回发一条 {alarm_config, regions} -> parse 抛 -> 红.
     """
     from xbrain.p3_task.ingest.geo_command import parse_geo_command
     from xbrain.p5_gateway.inbound.task_router import _alarm
 
-    # 网关把一份合法的 v2.0 报警配置 fan-out 成 N 条 cmd/geo fence 命令.
+    # 网关把一份合法的 v2.0 报警配置 fan-out 成 fence 命令(upsert + 激活).
     cmds = _alarm("c-alarm-1", _GOOD_ALARM_PAYLOAD)
     assert cmds, "regions 非空但 _alarm 没产出任何 fence 命令"
 
-    # 每一条都必须是 p3 认识的 fence(warning) upsert, 且被解析器接受.
+    # 每一条都必须是 p3 认识的 fence 命令(upsert 或 set_state), 且被解析器接受.
+    actions = []
     for cmd in cmds:
         parsed = parse_geo_command(cmd)          # 不再抛 -- 接通的标志
-        assert parsed.action == "upsert" and parsed.type == "fence", (
-            "报警区没投影成 fence upsert: action=%s type=%s"
-            % (parsed.action, parsed.type))
-        assert cmd["obj"]["geom"]["role"] == "warning", (
-            "alarm_region 必须落成 fence role=warning(11 S9A.2), 实际 %r"
-            % cmd["obj"]["geom"].get("role"))
+        assert parsed.type == "fence", "报警命令不是 fence 类: %s" % parsed.type
+        actions.append(parsed.action)
+        if parsed.action == "upsert":
+            assert cmd["obj"]["geom"]["role"] == "warning", (
+                "alarm_region 必须落成 fence role=warning(11 S9A.2), 实际 %r"
+                % cmd["obj"]["geom"].get("role"))
+    # _GOOD_ALARM_PAYLOAD 的区域 enabled=true -> 必有 upsert 且必有激活(审计 #3).
+    assert "upsert" in actions and "set_state" in actions, (
+        "enabled=true 报警区应展开成 upsert + set_state(激活): %s" % actions)
 
 
 def test_audio_control_is_the_one_fully_wired_chain():

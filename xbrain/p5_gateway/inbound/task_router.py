@@ -259,51 +259,70 @@ def _alarm(cmd_id: str, payload: Dict) -> List[Dict[str, Any]]:
     # B-3(审计): 标量范围 + rules + regions 结构校验. keep_in 已在上面拒过
     # (它是安全边界, 拒绝理由要逐字), 这里补其余 v2.0 S2.4 字段.
     validate_alarm(payload)
-    # 每个 region 一条 fence upsert. cmd_id 是占位 -- 网关 fan-out 时会给每条
-    # 子命令打上唯一的子 cmd_id(见 cloud_wiring._handle_task).
-    return [_region_to_fence(cmd_id, region) for region in regions]
+    # 每个 region 展开成 1~2 条 fence 命令(见 _region_to_fence: enabled=true 的
+    # upsert 要 upsert + 激活两条). cmd_id 是占位 -- 网关 fan-out 时给每条子命令
+    # 打唯一子 cmd_id(见 cloud_wiring._handle_task). flatten 成一维.
+    return [c for region in regions for c in _region_to_fence(cmd_id, region)]
 
 
-def _region_to_fence(cmd_id: str, region: Dict) -> Dict[str, Any]:
-    """v2.0 alarm_region -> 11 S7.8 的 fence(role=warning) 命令.
+def _region_to_fence(cmd_id: str, region: Dict) -> List[Dict[str, Any]]:
+    """v2.0 alarm_region -> 11 S7.8 的 fence(role=warning) 命令[列表](1~2 条).
 
     alarm_region 与 fence warning 是同一个东西(11 S9A.2, warning 旧名 zone;
     zone_enter/zone_exit 逐字"role=warning, 纯点在多边形内, FE-1"). 增量语义
-    op=upsert|delete|set_state 直接映到 p3 geo 命令的 action; role 恒 warning.
+    op=upsert|delete|set_state 映到 p3 geo 命令的 action; role 恒 warning.
 
-    * vertices 是 v2.0 的 [{latitude, longitude}], p3 的 geom.outer 收
-    [[lat, lon]] 或 [{lat, lon}](geo_object._latlon 两种都认). 这里转成
-    [lat, lon] 对.
-    * applies_to(区域对哪类目标生效)不落 fence 几何 -- 它是[规则]维度, 在批B
-    随 rules 进 suspicion_rules(inside_zones). fence 只存几何 + role.
+    *** enabled=true 的 upsert 要[两条]: upsert + set_state->active(审计 #3).
+    p3 的 upsert 恒把新 fence 建成 draft(apply_upsert 用 _INITIAL_STATE=draft),
+    draft 不进 list_active -> 不广播 -> p1 不持有 -> 既不报 zone_enter(E), 也不
+    让 state/fence.active.rev 前进(D 恒 timeout). 所以要跟一条 set_state->active
+    把它激活. 云端激活[无需 L2](11 S7.9.5 cloud 列是  无 L2; L2 只在 hmi/
+    voice 列 -- 一度误读为 cloud 也要 L2, 复核订正). enabled=false 只 upsert(留
+    draft, 即"存了不启用").
+
+    *** 激活用 force=true: upsert 后的 rev 由 p3 定, 网关预测不了(identical
+    content 时 p3 还不 bump rev), base_rev 对不上会 conflict. 本网关刚建这条
+    fence, 无并发写者, force 只跳并发检查 -- NO 不跳 <=5-active/1-allow 配额触发
+    (那是 DB 触发, 激活超额仍会被挡, 安全的).
+
+    * vertices 是 v2.0 [{latitude, longitude}], p3 geom.outer 收 [[lat,lon]]
+    (geo_object._latlon 两种都认). applies_to(区域对哪类目标生效)不落 fence 几何
+    -- 它是[规则]维度, 随 rules 进 suspicion_rules(批B, 卡 L2 挂起).
     """
     op = region.get("op")
     geo_id = region.get("id")
     base_rev = region.get("base_rev")
     if op == "delete":
-        return {"cmd_id": cmd_id, "action": "delete", "type": "fence",
-                "geo_id": geo_id, "origin": CLOUD_ORIGIN, "base_rev": base_rev}
+        return [{"cmd_id": cmd_id, "action": "delete", "type": "fence",
+                 "geo_id": geo_id, "origin": CLOUD_ORIGIN, "base_rev": base_rev}]
     if op == "set_state":
-        # v2.0 enabled(bool) -> p3 fence state(active|disabled). 报警区停用 =
-        # 规则不再命中它, 但几何还在(不是删除).
-        # *** 目标态走 obj.state, NO 不放顶层(11 S7.9.1 补: 信封没有 state 成员,
-        # 每个 action 的参数只能搭 obj; apply_set_state 从 (cmd.obj or {}).get(
-        # "state") 读). 早先放顶层, p3 解析器丢弃它 -> 回 "set_state needs
-        # obj.state" (审计 #2).
-        #  set_state fence->active 是 L2(11 S7.9.5 line 表), 普通 SET_ALARM_
-        # CONFIG 给不了 confirm_token -> p3 仍会以 L2 拒 active; 但命令本身要
-        # 良构(->disabled 是安全方向, 不受 L2 拦). 报警区启用整体卡 L2, 同 B/C.
-        state = "active" if region.get("enabled") else "disabled"
-        return {"cmd_id": cmd_id, "action": "set_state", "type": "fence",
-                "geo_id": geo_id, "origin": CLOUD_ORIGIN, "base_rev": base_rev,
-                "obj": {"state": state}}
+        # v2.0 enabled(bool) -> p3 fence state(active|disabled). 停用 = 规则不再
+        # 命中它, 但几何还在(不是删除). 目标态走 obj.state(审计 #2: 信封无 state
+        # 成员, apply_set_state 从 (cmd.obj or {}).get("state") 读; 放顶层被丢).
+        # ->active 走 force(理由同下), ->disabled 是安全方向留 base_rev 走正常并发.
+        if region.get("enabled"):
+            return [_activate_fence(cmd_id, geo_id)]
+        return [{"cmd_id": cmd_id, "action": "set_state", "type": "fence",
+                 "geo_id": geo_id, "origin": CLOUD_ORIGIN, "base_rev": base_rev,
+                 "obj": {"state": "disabled"}}]
     # op == "upsert"(field_validate 已把 op 限在 upsert|delete|set_state).
     verts = [[v["latitude"], v["longitude"]]
              for v in (region.get("vertices") or [])]
-    return {"cmd_id": cmd_id, "action": "upsert", "type": "fence",
-            "geo_id": geo_id, "origin": CLOUD_ORIGIN, "base_rev": base_rev,
-            "obj": {"name": region.get("name"),
-                    "geom": {"role": "warning", "outer": verts}}}
+    cmds = [{"cmd_id": cmd_id, "action": "upsert", "type": "fence",
+             "geo_id": geo_id, "origin": CLOUD_ORIGIN, "base_rev": base_rev,
+             "obj": {"name": region.get("name"),
+                     "geom": {"role": "warning", "outer": verts}}}]
+    if region.get("enabled"):
+        cmds.append(_activate_fence(cmd_id, geo_id))
+    return cmds
+
+
+def _activate_fence(cmd_id: str, geo_id: str) -> Dict[str, Any]:
+    """set_state fence->active(force). 云端激活无需 L2(11 S7.9.5); force 因紧跟
+    upsert 时 rev 预测不了, 见 _region_to_fence 头注."""
+    return {"cmd_id": cmd_id, "action": "set_state", "type": "fence",
+            "geo_id": geo_id, "origin": CLOUD_ORIGIN, "force": True,
+            "obj": {"state": "active"}}
 
 
 def _audio(cmd_id: str, payload: Dict) -> Dict[str, Any]:

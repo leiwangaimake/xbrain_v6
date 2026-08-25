@@ -147,10 +147,12 @@ def test_d_p1_state_fence_advance_resolves_p5_alarm_terminal():
     # 云端下发 -> fan-out 一条 cmd/geo fence upsert.
     session.subs["xbrain/%s/cmd/task" % RID](
         _Sample("xbrain/%s/cmd/task" % RID, alarm))
-    # p3 承接: 单区域 -> 子 cmd_id c-m-1, 回 accepted.
-    session.subs["cmd/geo/ack"](_Sample("cmd/geo/ack", {
-        "schema": "task_ack_v1", "cmd_id": "c-m-1", "result": "accepted",
-        "code": "OK"}))
+    # p3 承接: 单 enabled=true 区域 fan-out 出[两条](upsert + 激活, 审计 #3),
+    # 子 cmd_id c-m-1:0 / c-m-1:1, 两条都回 accepted 才聚合成 accepted.
+    for _cid in ("c-m-1:0", "c-m-1:1"):
+        session.subs["cmd/geo/ack"](_Sample("cmd/geo/ack", {
+            "schema": "task_ack_v1", "cmd_id": _cid, "result": "accepted",
+            "code": "OK"}))
 
     def _task_results():
         return [json.loads(p.decode("utf-8"))["data"]
@@ -188,7 +190,40 @@ def test_set_state_region_carries_target_in_obj_state():
     from xbrain.p5_gateway.inbound.task_router import _region_to_fence
 
     region = {"id": "f-zone", "op": "set_state", "base_rev": 3, "enabled": False}
-    parsed = parse_geo_command(_region_to_fence("c-1", region))
+    # _region_to_fence 现返回列表(审计 #3), set_state 仍是单条, 取 [0].
+    parsed = parse_geo_command(_region_to_fence("c-1", region)[0])
     assert parsed.action == "set_state" and parsed.type == "fence"
     assert (parsed.obj or {}).get("state") == "disabled", (
         "set_state 目标态没落在 obj.state -- p3 apply_set_state 读不到(审计 #2)")
+
+
+def test_enabled_region_fans_out_upsert_plus_activate():
+    """*** 审计 #3: enabled=true 报警区 -> upsert(建 draft) + set_state->active.
+
+    没有激活那条, p3 的 upsert 把新 fence 留 draft(不进 list_active)-> 不广播 ->
+    p1 不持有 -> E 不报 zone_enter, 且 active.rev 不前进 -> D 恒 timeout. 云端激活
+    无需 L2(11 S7.9.5 cloud 列  无 L2), 用 force(upsert 后 rev 预测不了).
+
+    MUTATION: _region_to_fence 对 enabled=true 只回 upsert(不追激活) -> len 1 -> 红.
+    """
+    from xbrain.p3_task.ingest.geo_command import parse_geo_command
+    from xbrain.p5_gateway.inbound.task_router import _region_to_fence
+
+    region = {"id": "f-zone", "op": "upsert", "base_rev": 0, "name": "gate",
+              "type": "alarm_region", "enabled": True, "applies_to": ["person"],
+              "vertices": [{"latitude": 34.697, "longitude": 135.505},
+                           {"latitude": 34.698, "longitude": 135.505},
+                           {"latitude": 34.698, "longitude": 135.506}]}
+    cmds = _region_to_fence("c-1", region)
+    assert len(cmds) == 2, "enabled=true 没产出 upsert+激活两条(审计 #3)"
+    up, act = cmds
+    assert up["action"] == "upsert" and up["obj"]["geom"]["role"] == "warning"
+    # 激活那条 p3 认得(set_state, obj.state=active), 且 force(云端无 L2, rev 预测不了).
+    parsed = parse_geo_command(act)
+    assert parsed.action == "set_state" and parsed.type == "fence"
+    assert (parsed.obj or {}).get("state") == "active"
+    assert act["force"] is True
+
+    # enabled=false 只 upsert(留 draft, "存了不启用").
+    off = _region_to_fence("c-1", dict(region, enabled=False))
+    assert len(off) == 1 and off[0]["action"] == "upsert"

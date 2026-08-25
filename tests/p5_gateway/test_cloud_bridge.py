@@ -88,6 +88,11 @@ _ALARM_REGION = {"id": "f-x", "op": "upsert", "base_rev": 0, "name": "zone",
                               {"latitude": 34.698, "longitude": 135.506}]}
 
 
+#: enabled=false 的报警区: fan-out 只出[一条] upsert(不激活, 留 draft). 纯聚合/
+#: 拒绝机制的用例用它, 命令数=区域数, 不被 enabled=true 的"+激活"翻倍(审计 #3).
+_DISABLED_REGION = dict(_ALARM_REGION, enabled=False)
+
+
 def _alarm_body(regions, msg_id="m-1"):
     """一份合法 v2.0 SET_ALARM_CONFIG 报文, regions 由调用方给."""
     return _qt_task(data={
@@ -1007,18 +1012,12 @@ def test_alarm_business_ack_comes_back_on_cmd_geo_ack():
     回来, 聚合翻译后转发. 单区域(N=1)是退化: 子 cmd_id 无 :i 后缀, 仍是 c-m-1.
 
     审计前 ALARM 的业务结果(版本冲突 E_GEO_CONFLICT)回不到云端.
+    用 enabled=false 区域(单条 upsert, 无激活), 子 cmd_id 退化为 c-m-1(N=1).
     """
     bridge, session, _clock = _bridge_clock()
 
-    alarm = _qt_task(data={"task_type": "SET_ALARM_CONFIG",
-                           "payload": {"alarm_level": 1, "siren_level": 70,
-                                       "duration_sec": 5, "cooldown_sec": 2.0,
-                                       "alarm_window": {"start": "22:00",
-                                                        "end": "05:00"},
-                                       "rules": [],
-                                       "regions": [_ALARM_REGION]}})
-    _feed(session, "cmd/task", alarm)
-    # 单区域 fan-out -> 一条 cmd/geo fence upsert, 子 cmd_id = c-m-1(N=1 无后缀).
+    _feed(session, "cmd/task", _alarm_body([_DISABLED_REGION]))
+    # 单条 fence upsert(enabled=false 不激活), 子 cmd_id = c-m-1(N=1 无后缀).
     assert _internal_puts(session, "cmd/geo")[0]["type"] == "fence"
     # p3 在 cmd/geo/ack 回版本冲突.
     _feed_internal_ack(session, "cmd/geo/ack", "c-m-1", "rejected",
@@ -1039,8 +1038,8 @@ def test_alarm_fanout_two_regions_wait_for_both_then_aggregate():
     条子 ack 到就回终态, 下面"只收一条不该回"的断言红.
     """
     bridge, session, _clock = _bridge_clock()
-    r0 = dict(_ALARM_REGION, id="f-a")
-    r1 = dict(_ALARM_REGION, id="f-b")
+    r0 = dict(_DISABLED_REGION, id="f-a")
+    r1 = dict(_DISABLED_REGION, id="f-b")
     _feed(session, "cmd/task", _alarm_body([r0, r1]))
 
     # 两条 fence 命令出去, 子 cmd_id 带 :i 后缀.
@@ -1070,8 +1069,8 @@ def test_alarm_fanout_any_region_rejected_fails_the_whole():
     仍是 accepted, 红.
     """
     bridge, session, _clock = _bridge_clock()
-    r0 = dict(_ALARM_REGION, id="f-a")
-    r1 = dict(_ALARM_REGION, id="f-b")
+    r0 = dict(_DISABLED_REGION, id="f-a")
+    r1 = dict(_DISABLED_REGION, id="f-b")
     _feed(session, "cmd/task", _alarm_body([r0, r1]))
 
     _feed_internal_ack(session, "cmd/geo/ack", "c-m-1:0", "accepted")
@@ -1248,9 +1247,11 @@ def _feed_state_fence(session, rev):
 
 
 def _accept_one_alarm(session, msg_id="m-1"):
-    """下发单区域报警配置并喂 p3 accepted ack -> 聚合 accepted -> 登记待确认终态."""
+    """下发单区域(enabled=true)报警配置: fan-out 出[两条](upsert + 激活, 审计
+    #3), 喂两条 accepted -> 聚合 accepted -> 登记待确认终态. 子 cmd_id c-{id}:0/:1."""
     _feed(session, "cmd/task", _alarm_body([_ALARM_REGION], msg_id=msg_id))
-    _feed_internal_ack(session, "cmd/geo/ack", "c-" + msg_id, "accepted")
+    _feed_internal_ack(session, "cmd/geo/ack", "c-%s:0" % msg_id, "accepted")
+    _feed_internal_ack(session, "cmd/geo/ack", "c-%s:1" % msg_id, "accepted")
 
 
 def _task_results(session):
@@ -1325,7 +1326,7 @@ def test_goto_does_not_register_an_alarm_terminal():
 def test_rejected_alarm_does_not_wait_for_effect():
     """被拒的报警配置不登记待确认 -- 没受理就没有生效可等."""
     _b, session, _mono, _wall = _alarm_bridge()
-    _feed(session, "cmd/task", _alarm_body([_ALARM_REGION]))
+    _feed(session, "cmd/task", _alarm_body([_DISABLED_REGION]))
     _feed_internal_ack(session, "cmd/geo/ack", "c-m-1", "rejected",
                        code="E_GEO_CONFLICT", message="ban ben chong tu")
     _feed_state_fence(session, 9)
@@ -1348,8 +1349,9 @@ def test_alarm_done_even_if_state_fence_beats_the_ack():
     # state/fence 推进到 6 抢先到达(alarm 还没聚合登记).
     _feed_state_fence(session, 6)
     assert _task_results(session) == []             # 还没登记, 无终态
-    # alarm ack 到 -> 聚合 -> 登记(rev0=5)-> 立即查: active=6>5 -> done.
-    _feed_internal_ack(session, "cmd/geo/ack", "c-m-1", "accepted")
+    # alarm ack 到(两条子命令都要)-> 聚合 -> 登记(rev0=5)-> 立即查: 6>5 -> done.
+    _feed_internal_ack(session, "cmd/geo/ack", "c-m-1:0", "accepted")
+    _feed_internal_ack(session, "cmd/geo/ack", "c-m-1:1", "accepted")
     res = _task_results(session)
     assert len(res) == 1 and res[0]["state"] == "done", (
         "state/fence 抢先到达时 D 没 done -- rev0 时机或立即查缺失(#1 竞态)")
