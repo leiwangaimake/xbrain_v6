@@ -519,8 +519,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         # per freeze -- after it, freeze keeps anything new from
                         # dispatching, so no task is running and this no-ops.
                         try:
+                            # conn 显式传入: ES-2 自己开 BEGIN IMMEDIATE 并
+                            # 提交. 不传的话那次写会留在一条开着的隐式事务里,
+                            # 之后每一条 submit 都撞 "cannot start a
+                            # transaction within a transaction".
                             _susp = await suspend_running_for_estop(
-                                dao, _now_mono_ms())
+                                dao, conn, _now_mono_ms())
                             if _susp is not None:
                                 _tid, _to, _reason = _susp
                                 _logger.warning(

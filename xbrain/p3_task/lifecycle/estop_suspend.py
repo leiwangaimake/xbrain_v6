@@ -25,8 +25,20 @@ freeze 期间调度被 ES-1 冻住, 不会再派新任务成 running, 所以 ES-
 之后, 后续每拍 list 里都没有 running, 直接返回 None. 不需要额外的"已处理"
 标志.
 
-Boundaries: 只做[running -> suspended]这一步的 DB 写 + 归因. 不发布(调用方
-用返回值发 state/task), 不解冻(ES-3 的事), 不判断该不该急停(急停无条件).
+*** 事务由本函数显式管, NO 不能只 execute 完就返回.
+TasksDAO 的每个方法都只 execute 不 commit -- 事务边界归调用方(task_apply
+的 submit 就是 BEGIN IMMEDIATE ... commit/rollback). 本函数原先调完
+dao.suspend_task 直接 return, 于是 aiosqlite 那条隐式事务一直开着, 之后任何
+BEGIN IMMEDIATE 都报 "cannot start a transaction within a transaction".
+后果不是这次挂起没落盘那么简单 -- 是[急停之后每一条 cmd/task submit 都失败],
+一直到 p3 重启. 2026-09-01 联调预演实测: 11:50 GOTO 成功, 11:50 急停, 11:51
+下一条 GOTO 就回 E_INTERNAL.
+*** 原有 4 条 ES-2 判据都没抓到, 因为它们只在同一连接上读回那一行 --
+而未提交的写在同一连接上本来就读得到. 判据验的是"写可见", 不是"已提交",
+更没有验"连接之后还能用".
+
+Boundaries: 只做[running -> suspended]这一步的 DB 写 + 归因 + 提交. 不发布
+(调用方用返回值发 state/task), 不解冻(ES-3 的事), 不判断该不该急停(急停无条件).
 """
 
 from __future__ import annotations
@@ -42,7 +54,7 @@ ESTOP_SUSPEND_KIND = "passive"
 ESTOP_SUSPEND_REASON = "estop_soft"
 
 
-async def suspend_running_for_estop(dao, now_mono_ms: int
+async def suspend_running_for_estop(dao, conn, now_mono_ms: int
                                     ) -> Optional[Tuple[str, str, str]]:
     """ES-2: 把当前 running 任务挂起. 返回 (task_id, "suspended", reason)
     供调用方发 state/task; 没有 running 任务时返回 None.
@@ -63,8 +75,17 @@ async def suspend_running_for_estop(dao, now_mono_ms: int
     # kind/reason 配对再核一遍(CR-8), 越界在这里抛而不是到 sqlite.
     validate_suspend_fields(result.to_state, ESTOP_SUSPEND_KIND,
                             ESTOP_SUSPEND_REASON)
-    await dao.suspend_task(task_id, ESTOP_SUSPEND_KIND, ESTOP_SUSPEND_REASON,
-                           now_mono_ms)
+    # BEGIN IMMEDIATE ... commit/rollback: 与 task_apply 的 submit 同一范式.
+    # IMMEDIATE 而不是裸 BEGIN -- 立刻取写锁, 与既有写路径一致, 不给两条写
+    # 路径留下不同的加锁时机.
+    await conn.execute("BEGIN IMMEDIATE")
+    try:
+        await dao.suspend_task(task_id, ESTOP_SUSPEND_KIND,
+                               ESTOP_SUSPEND_REASON, now_mono_ms)
+        await conn.commit()
+    except Exception:
+        await conn.rollback()
+        raise
     return task_id, result.to_state, ESTOP_SUSPEND_REASON
 
 

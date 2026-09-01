@@ -63,12 +63,70 @@ async def test_es2_suspends_the_running_task(dao_conn):
     await dao.insert(_task("t1", "running"))
     await conn.commit()
 
-    result = await suspend_running_for_estop(dao, now_mono_ms=100)
+    result = await suspend_running_for_estop(dao, conn, now_mono_ms=100)
 
     assert result == ("t1", "suspended", "estop_soft")
     row = await dao.fetch_by_id("t1")
     assert row.state == "suspended"
     assert row.suspend_kind == "passive"
+    assert row.suspend_reason == "estop_soft"
+
+
+@pytest.mark.asyncio
+async def test_es2_commits_so_the_next_submit_still_works(dao_conn):
+    """*** 挂起之后, 连接必须能再开一条事务.
+
+    2026-09-01 联调预演实测出来的: ES-2 原先调完 dao.suspend_task 就 return,
+    aiosqlite 那条隐式事务一直开着, 之后任何 BEGIN IMMEDIATE 都报
+    "cannot start a transaction within a transaction". 后果是[急停之后每一条
+    cmd/task submit 都失败], 直到 p3 重启 -- 而急停是甲方验收的头号项.
+
+    *** 为什么既有 4 条 ES-2 判据全漏.
+    它们都是挂起后在[同一连接]上 fetch_by_id 读回那一行做断言. 而未提交的写
+    在同一连接上本来就读得到 -- 判据验的是"写可见", 不是"已提交". 一条永远
+    绿的断言(CLAUDE.md 3.2 形态1): 一个不 commit 的实现同样通过它们.
+
+    本条改验[副作用]: 挂起之后连接还能不能用. 这是调用方真正依赖的性质,
+    也是唯一能把"没提交"和"提交了"分开的观察点 -- 因为 sqlite 不提供
+    "当前是否在事务里"的公开查询.
+
+    MUTATION: 去掉 suspend_running_for_estop 里的 commit -> 这里红.
+    """
+    dao, conn = dao_conn
+    await dao.insert(_task("t1", "running"))
+    await conn.commit()
+
+    await suspend_running_for_estop(dao, conn, now_mono_ms=100)
+
+    # 这一句就是 task_apply.submit 的第一步. 事务没闭合时它抛 OperationalError.
+    await conn.execute("BEGIN IMMEDIATE")
+    await conn.rollback()
+
+
+@pytest.mark.asyncio
+async def test_es2_write_survives_a_rollback_by_another_writer(dao_conn):
+    """*** 挂起必须真的落盘, 不只是在本连接可见.
+
+    上一条验的是"连接还能用", 本条验的是"数据还在". 两者都需要: 一个把
+    suspend_task 换成 no-op 但保留 commit 的实现能过上一条, 一个不 commit
+    但没有后续写的实现能过原有 4 条.
+
+    做法是在挂起之后显式 rollback 一次. 已提交的写不受 rollback 影响; 留在
+    开着的事务里的写会被抹掉.
+
+    MUTATION: 去掉 commit -> rollback 抹掉挂起, state 退回 running -> 红.
+    """
+    dao, conn = dao_conn
+    await dao.insert(_task("t1", "running"))
+    await conn.commit()
+
+    await suspend_running_for_estop(dao, conn, now_mono_ms=100)
+    await conn.rollback()          # 已提交的写不该受影响
+
+    row = await dao.fetch_by_id("t1")
+    assert row.state == "suspended", (
+        "rollback 之后挂起没了 -- 说明 ES-2 的写没有提交, 只是留在一条"
+        "开着的事务里")
     assert row.suspend_reason == "estop_soft"
 
 
@@ -82,7 +140,7 @@ async def test_es2_is_a_noop_with_nothing_running(dao_conn):
     await dao.insert(_task("t1", "ready"))       # ready, 不是 running
     await conn.commit()
 
-    assert await suspend_running_for_estop(dao, now_mono_ms=100) is None
+    assert await suspend_running_for_estop(dao, conn, now_mono_ms=100) is None
     assert (await dao.fetch_by_id("t1")).state == "ready", "ready 任务被动了"
 
 
@@ -99,7 +157,7 @@ async def test_es2_leaves_a_valid_suspended_row(dao_conn):
     await dao.insert(_task("t1", "running"))
     await conn.commit()
 
-    await suspend_running_for_estop(dao, now_mono_ms=100)
+    await suspend_running_for_estop(dao, conn, now_mono_ms=100)
     await conn.commit()
     # 重新查, 若 CHECK 被违反上面的 commit 就已经抛了.
     row = await dao.fetch_by_id("t1")
@@ -117,7 +175,7 @@ async def test_es2_reason_differs_from_pause(dao_conn):
     await dao.insert(_task("t1", "running"))
     await conn.commit()
 
-    await suspend_running_for_estop(dao, now_mono_ms=100)
+    await suspend_running_for_estop(dao, conn, now_mono_ms=100)
 
     assert (await dao.fetch_by_id("t1")).suspend_reason == "estop_soft"
 
