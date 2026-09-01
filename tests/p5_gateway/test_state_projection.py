@@ -136,6 +136,137 @@ def test_heading_is_converted_from_radians_to_degrees():
     assert d["gps"]["heading_deg"] == pytest.approx(92.5, abs=1e-6)
 
 
+#: 11 S5.1 的真实 health/summary 形状(2026-09-01 从 ORIN 总线抓的那条裁剪而来).
+#: kind 混着 device 与 cap; state 是 11 S5.1 的五值, NO 不是 v2.0 的 status.
+_REAL_HEALTH = {
+    "allow_motion": False,
+    "items": {
+        "cam_rgbd": {"kind": "device", "level": "fatal", "state": "unknown"},
+        "chassis":  {"kind": "device", "level": "fatal", "state": "fail",
+                     "since_mono": 100.0},
+        "mic":      {"kind": "device", "level": "degraded", "state": "ok",
+                     "since_mono": 118.5},
+        "ptz":      {"kind": "device", "level": "degraded", "state": "warn"},
+        "battery":  {"kind": "cap", "level": "fatal", "state": "unknown"},
+        "clock":    {"kind": "cap", "level": "fatal", "state": "fail"},
+    },
+}
+
+
+def test_devices_come_from_the_real_health_summary_shape():
+    """*** 用 11 S5.1 的真实字段名喂, NO 不用想象的形状.
+
+    原实现找 item["status"] / item["label"] / item["age_ms"] -- 这三个键在
+    11 S5.1 里一个都不存在(真名是 state / 无 / since_mono). 于是每一项都落进
+    unknown 兜底, 而判据当时喂的是与实现同源的假形状, 两边一起错就都不红.
+    本条喂真形状: 只要有一个字段名对不上, status 就会退化成 unknown.
+
+    变异体: _devices_from_health 里 item.get("state") 改回 item.get("status")
+    => 四项全变 unknown, 本条红.
+    """
+    from xbrain.p5_gateway.runtime.cloud_state import _devices_from_health
+
+    out = {d["id"]: d for d in _devices_from_health(_REAL_HEALTH, now_mono=120.0)}
+
+    assert out["mic"]["status"] == "online", (
+        "state=ok 应映 online, 实得 %r -- 字段名或映射表对不上"
+        % out["mic"]["status"])
+    assert out["chassis"]["status"] == "fault"
+    assert out["cam_rgbd"]["status"] == "unknown"
+
+
+def test_warn_maps_to_degraded_not_online():
+    """*** warn -> degraded 是一个判断, 本条把它钉住(用户 2026-09-01 裁决).
+
+    v2.0 S4.2 的 status 没有 warn 档. 映 online 的话, 11 S5.1A 里那些"仅记录"
+    级的问题在 Qt 上完全看不见; 映 degraded 是显得比实际差, 而这个方向会被
+    操作员发现并追问, 反过来不会 -- 与 17 S10.2 "绑窄立即发现/绑宽永不发现"
+    同一条不对称取舍.
+
+    变异体: 映射表里 warn 改成 online => 本条红.
+    """
+    from xbrain.p5_gateway.runtime.cloud_state import _devices_from_health
+
+    out = {d["id"]: d for d in _devices_from_health(_REAL_HEALTH, now_mono=120.0)}
+    assert out["ptz"]["status"] == "degraded", (
+        "state=warn 映成了 %r" % out["ptz"]["status"])
+
+
+def test_cap_items_are_not_devices():
+    """*** v2.0 的 devices[] 是设备清单, cap 是能力, 不能混.
+
+    11 S5.1 的 items 里 kind 分 device/cap. battery/clock/compute 这些 cap 项
+    混进设备面板, Qt 上就会出现点不开也修不了的"设备". 不过滤的代价不是
+    多几行, 是操作员对着一个不存在的设备排障.
+
+    变异体: 去掉 kind != "device" 的 continue => battery/clock 出现, 本条红.
+    """
+    from xbrain.p5_gateway.runtime.cloud_state import _devices_from_health
+
+    ids = {d["id"] for d in _devices_from_health(_REAL_HEALTH, now_mono=120.0)}
+    assert ids == {"cam_rgbd", "chassis", "mic", "ptz"}, (
+        "cap 项混进了 devices: %s" % sorted(ids - {"cam_rgbd", "chassis", "mic", "ptz"}))
+
+
+def test_last_update_ms_is_null_when_since_mono_is_absent():
+    """*** 无来源必须是 null, NO 不填 0(CLAUDE.md 3.1 同一失效模式).
+
+    since_mono 在 11 S5.1 是可选字段. 填 0 表示"刚刚更新", 与真的刚更新完全
+    一样 -- 操作员据此判断"这个设备状态是新的", 而其实我们根本不知道.
+
+    变异体: age_ms 初值改成 0 => 本条红.
+    """
+    from xbrain.p5_gateway.runtime.cloud_state import _devices_from_health
+
+    out = {d["id"]: d for d in _devices_from_health(_REAL_HEALTH, now_mono=120.0)}
+    assert out["ptz"]["last_update_ms"] is None, (
+        "ptz 无 since_mono 却报了 %r" % out["ptz"]["last_update_ms"])
+    # 有 since_mono 的照单调钟差换算成毫秒.
+    assert out["mic"]["last_update_ms"] == 1500
+    assert out["chassis"]["last_update_ms"] == 20000
+
+
+def test_device_status_closed_set_is_complete_both_ways():
+    """*** 双向差集: 11 S5.1 的五个 state 每个都要有落点, 且落点都在 v2.0 闭集内.
+
+    单向检查会漏掉两种缺陷: 只查"落点合法"漏掉少映一个 state(那个 state 到达
+    时才抛); 只查"每个 state 有映射"漏掉映到一个 v2.0 不认的值.
+
+    变异体: 表里删掉 warn 一行 => 左边差集非空, 本条红.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (
+        HEALTH_STATE_TO_V2_STATUS)
+
+    internal = {"ok", "warn", "degraded", "fail", "unknown"}
+    v2_status = {"online", "degraded", "offline", "fault", "unknown"}
+
+    assert set(HEALTH_STATE_TO_V2_STATUS) == internal, (
+        "机内 state 闭集(11 S5.1)与映射表不一致, 差集 %s"
+        % sorted(set(HEALTH_STATE_TO_V2_STATUS) ^ internal))
+    assert set(HEALTH_STATE_TO_V2_STATUS.values()) <= v2_status, (
+        "映射落到了 v2.0 S4.2 闭集外的值: %s"
+        % sorted(set(HEALTH_STATE_TO_V2_STATUS.values()) - v2_status))
+    # *** offline 永远不会被产生 -- 机内没有对应态. 这是事实不是缺口,
+    # 断言它免得将来有人"补全"一个没有来源的映射.
+    assert "offline" not in set(HEALTH_STATE_TO_V2_STATUS.values()), (
+        "offline 被映出来了, 但机内 11 S5.1 五值里没有它的来源")
+
+
+def test_an_off_set_health_state_throws():
+    """*** 表外必抛, NO 不兜底成 unknown(CLAUDE.md 3.5).
+
+    兜底会让 11 S5.1 将来扩容的新 state 静默变成"未知设备" -- Qt 上看到一批
+    莫名其妙的 unknown, 而我们这边一行日志都没有.
+
+    变异体: to_v2_device_status 改成 .get(value, "unknown") => 本条红.
+    """
+    import pytest as _pytest
+    from xbrain.p5_gateway.outbound.state_projection import to_v2_device_status
+
+    with _pytest.raises(ValueError):
+        to_v2_device_status("brand_new_state")
+
+
 def test_devices_are_empty_list_not_null_when_none_are_found():
     """*** 空数组与 null 对 Qt 的意思不同.
 

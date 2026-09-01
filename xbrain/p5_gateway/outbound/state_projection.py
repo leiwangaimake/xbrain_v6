@@ -7,7 +7,7 @@ Brief: 机内状态 -> v2.0 云端 state/* 的纯投影函数 (B-2)
 
 Description:
 网关为了服务 HMI 已经把机内总线上的东西缓存了一份(state/task, state/mode,
-state/pose, state/clock, health/factor, geo objects). 云端面不另起一套采集,
+state/pose, state/clock, health/summary, geo objects). 云端面不另起一套采集,
 只是同一份缓存的第二个消费者 -- 两个消费者读同一份数据, HMI 上看到的和 Qt
 上看到的就不会打架. 本文件是那层换算, 全部是纯函数, 不碰 Zenoh 也不读钟.
 
@@ -27,7 +27,7 @@ pose". 云端面沿用它, 两个面才会同时诚实.
   battery   state/power 无发布者
   storage   无采集点
   motion    有 speed_mps, 无 gait / angular
-  devices   health/factor 只覆盖 11 S5.1A 十九项里的十二项
+  devices   health/summary 的 kind==device 项, 不含 cap
 接线补上以后, 对应的 UNSOURCED_* 常量要跟着删, 而 tests 里有一条断言盯着
 这份清单与真实产出一致 -- 免得源接上了而投影还在发 null.
 
@@ -113,6 +113,48 @@ def to_v2_task_state(value: Any) -> str:
             "task.state=%r not in the 15 S3.2 internal closed set %s"
             % (value, sorted(INTERNAL_TO_V2_TASK_STATE)))
     return mapped
+#: 机内 HealthSummary items[].state (11 S5.1 五值) -> v2.0 S4.2 devices[].status.
+#:
+#: *** 这张表原先不存在, 而两侧一个名字都不重合.
+#: _devices_from_health 原来找 item["status"] -- 那个键在 11 S5.1 里根本没有
+#: (真名是 state), 于是每一项都落进 "unknown" 兜底. 加上订阅的 key 也是错的
+#: (health/factor, 见 main_wiring), devices 实际是恒空数组.
+#:
+#: *** warn -> degraded 是一个判断, 记在这里.
+#: v2.0 没有 warn 档. 映 degraded 而不是 online: warn 在 11 S5.1A 是"仅记录"
+#: 级, 报 online 会让操作员完全看不见它; 报 degraded 是显得比实际差, 而这个
+#: 方向会被发现, 反过来不会. 与 17 S10.2 那条"绑窄立即发现 / 绑宽永不发现"
+#: 的不对称取舍同一理由.
+#:
+#: *** v2.0 的 offline 永远不会被产生 -- 机内 five 值里没有对应态.
+#: 一个设备没有生产者时 11 S5.1 报 unknown(不是 offline), 设备报错时报 fail.
+#: 映射非满射是事实不是缺口; 写在这里免得下一个人以为漏了一行.
+HEALTH_STATE_TO_V2_STATUS = {
+    "ok":       "online",
+    "warn":     "degraded",
+    "degraded": "degraded",
+    "fail":     "fault",
+    "unknown":  "unknown",
+}
+
+
+def to_v2_device_status(value: Any) -> str:
+    """HealthSummary items[].state -> v2.0 devices[].status. 表外的值抛.
+
+    与 to_v2_task_state 同一取舍(CLAUDE.md 3.5 越界必抛). 兜底成 unknown 会
+    让 11 S5.1 将来扩容的新 state 静默变成"未知设备", 而我们要的是在这里响.
+    """
+    mapped = HEALTH_STATE_TO_V2_STATUS.get(value)
+    if mapped is None:
+        # ProjectionError 而不是裸 ValueError: cloud_state 的 tick 只对它走
+        # "refused"分支(记 ERROR 并跳过这条 key), 裸 ValueError 会落进
+        # "crashed"分支, 日志措辞会指向一个不存在的实现 bug.
+        raise ProjectionError(
+            "health item state=%r not in the 11 S5.1 closed set %s"
+            % (value, sorted(HEALTH_STATE_TO_V2_STATUS)))
+    return mapped
+
+
 GPS_FIXES = ("none", "gps", "dgps", "rtk_float", "rtk_fixed")
 DEVICE_STATUSES = ("online", "degraded", "offline", "fault", "unknown")
 VOICE_MODES = ("normal", "broadcast", "alarm")

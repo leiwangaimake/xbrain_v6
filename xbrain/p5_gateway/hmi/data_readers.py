@@ -250,7 +250,7 @@ def rest_object_endpoint(value: Optional[Any], key: str) -> Dict[str, Any]:
     /api/bit, /api/metrics).
 
     Passthrough of the authoritative upstream payload: P5 RELAYS P2's health/*
-    (health/factor, health/bit) unchanged -- it does not recompute a second
+    (health/summary, health/bit) unchanged -- it does not recompute a second
     truth (G-2 same-source; 17 S3.8 warns a re-reported metric is a second
     source). available:false + null until the topic is subscribed; /api/metrics
     stays gated until a telemetry aggregator is wired (NEXT.md).

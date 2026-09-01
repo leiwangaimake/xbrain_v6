@@ -412,8 +412,11 @@ def build_app(
 
     @app.get("/api/health")
     def get_health() -> Dict[str, Any]:
-        """17 S6.5: health snapshot -- passthrough of P2 health/factor (W8 wired).
-        available:false until the first health/factor arrives."""
+        """17 S6.5 只读 REST: health snapshot -- P2 health/summary 原样透传.
+
+        available:false 直到收到第一条 health/summary. 本行原写 health/factor
+        (不是 key, 见 runtime/main_wiring 的 HEALTH_SUMMARY_TOPIC 注释)与 W8
+        (那是 17 S6.7 预留给 PTZ 直控的上行编号, 与健康度无关)."""
         return rest_object_endpoint(_rest().get("health"), "health")
 
     @app.get("/api/bit")

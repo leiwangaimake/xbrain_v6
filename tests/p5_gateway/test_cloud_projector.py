@@ -292,34 +292,54 @@ def test_media_and_file_index_send_empty_arrays_not_nothing():
 def test_devices_come_only_from_what_health_actually_reports():
     """*** 只报 health 真的有的那些(v2.0 S4.2: 只发布实际发现的设备).
 
-    health items 与 11 S5.1A 的十九项只有十二项重合 -- compute 与 battery
-    这两个禁动项在 health 里根本不存在. 报全十九项就是编.
+    *** 2026-09-01 重写: 本条原来喂的是 {"status","label","age_ms"} --
+    那三个键在 11 S5.1 里一个都不存在(真名 state / 无 / since_mono). 判据与
+    被测实现抄的是同一份想象, 于是两边一起错却一直绿, 而线上 devices 恒空.
+    现在喂 11 S5.1 的真实形状: 字段名对不上就红.
     """
     proj, bridge, _c = _proj()
 
     proj.tick(_state(health={"items": {
-        "cam_ptz_vis": {"status": "online", "label": "布控球可见光",
-                        "age_ms": 120},
-        "lidar": {"status": "degraded", "age_ms": 900}}}))
+        "cam_ptz_vis": {"kind": "device", "level": "degraded",
+                        "state": "ok", "since_mono": 100.0},
+        "lidar": {"kind": "device", "level": "degraded",
+                  "state": "degraded"}}}))
 
     devs = dict(bridge.published)["state/robot"]["devices"]
     assert {d["id"] for d in devs} == {"cam_ptz_vis", "lidar"}
     assert all(set(d) == {"id", "name", "status", "last_update_ms"}
                for d in devs)
+    by_id = {d["id"]: d for d in devs}
+    assert by_id["cam_ptz_vis"]["status"] == "online"
+    assert by_id["lidar"]["status"] == "degraded"
 
 
-def test_an_unknown_device_status_becomes_unknown_not_a_guess():
-    """闭集外的 status 映到 unknown, NO 不猜一个 online/offline.
+def test_an_off_set_health_state_refuses_the_whole_key():
+    """*** 闭集外的 state 让整条 state/robot 拒发, NO 不兜底成 unknown.
 
-    猜 online 会让一个状态不明的设备显示正常; 猜 offline 会让一台好设备
-    显示故障并触发不必要的检修. unknown 是唯一诚实的答案, 而它就在闭集里.
+    *** 2026-09-01 推翻本条原立论. 原文写"映到 unknown, 不猜一个" -- 但
+    CLAUDE.md 3.5 与 v2.0 S1.3 两侧都逐字禁止"未知值降级解释", 而兜底成
+    unknown 正是那个降级. 真正的区别在: unknown 是 11 S5.1 闭集里的一个
+    [有来源的]值(设备无生产者时 p2 就报它), 拿它去接一个[闭集外]的值, Qt
+    就再也分不清"p2 说不知道"和"p2 说了我们不认识的话".
+
+    ⚠️ 代价要写明: 一个坏的 health item 会让整条 state/robot 停发, 而它同时
+    载着 battery/gps/motion/clock. 这个爆炸半径是有意接受的 -- p2 是
+    health/summary 的唯一发布者, 出现闭集外的值只可能是 p2 坏了或契约变了,
+    两种都该立刻响, 而不是让 Qt 拿着一份掺了假值的快照继续跑.
+
+    变异体: to_v2_device_status 改成 .get(value, "unknown") => state/robot
+    重新出现在 published 里, 本条红.
     """
     proj, bridge, _c = _proj()
 
-    proj.tick(_state(health={"items": {"x": {"status": "weird"}}}))
+    proj.tick(_state(health={"items": {
+        "x": {"kind": "device", "state": "weird"}}}))
 
-    devs = dict(bridge.published)["state/robot"]["devices"]
-    assert devs[0]["status"] == "unknown"
+    assert "state/robot" not in dict(bridge.published), (
+        "闭集外的 health state 被放行了: %r"
+        % dict(bridge.published).get("state/robot", {}).get("devices"))
+    assert proj.errors >= 1, "拒发了却没记 errors, 那这次拒绝无人可见"
 
 
 # --- 主循环真的在驱动 -------------------------------------------------

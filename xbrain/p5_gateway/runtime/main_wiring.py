@@ -75,8 +75,22 @@ EVENT_RECON_RSP_TOPIC = "event/recon/rsp"  # 17 S3Y.3: cloud recon answer
 RECON_PERIOD_S = 300.0                    # 17 S3Y.3 recon.period_s (interim const)
 PROBE_ESTOP_PING_TOPIC = "probe/estop/ping"  # W5: P5 ping (11 CR-2, 17 S6.3)
 PROBE_ESTOP_PONG_TOPIC = "probe/estop/pong"  # W5: quadruped pong (11 CR-3, authoritative source)
-HEALTH_FACTOR_TOPIC = "health/factor"    # W8: P2 health snapshot -> /api/health
-HEALTH_BIT_TOPIC = "health/bit"          # W8: P2 self-test report -> /api/bit
+#: P2 的 1 Hz 健康度广播(11 S2.2 登记 p2_core 为唯一发布者, S5.1 定 schema).
+#:
+#: *** 本行原写 "health/factor" -- 那不是一个 key.
+#: 11 S2.2 逐字: "health/factor 不是 key -- 该写法是 v0.1 rt/health/factor 的
+#: 残留(S2.2.13 已登记为已迁移), 正确名为 cmd/motion/factor". 而
+#: cmd/motion/factor 是发给 P1 的速度门约束(给机器执行), 与健康度广播(给人看)
+#: 是两件事. 订一个不存在的 key 不会报任何错: Zenoh 照样建订阅, 只是永远收不
+#: 到东西. 表现为 /api/health 恒 available:false 与云端 devices 恒空数组, 而
+#: 后者在 v2.0 S4.2 下看起来完全合规("后端只发布实际发现的设备").
+#: 2026-09-01 联调预演: 总线上实测只有 health/summary 在流, 1 Hz, items 是满的.
+HEALTH_SUMMARY_TOPIC = "health/summary"  # -> /api/health + 云端 state/robot.devices
+#: 开机自检报告(11 S5.2 BitReport). p2 的 bit/report.py 已实现但未接线, 所以
+#: 这条今天没有发布者, /api/bit 恒 available:false.
+#: NO 本行原注释写 "W8" -- W8 是 17 S6.7 预留给 PTZ 直控的上行编号(本轮不开放),
+#: 与 BIT 无关. /api/bit 的出处是 17 S6.5 的只读 REST 表.
+HEALTH_BIT_TOPIC = "health/bit"
 FENCE_STALE_AFTER_MS = 10000             # P5F-2: cache silent this long -> degraded
 # state/pose is 10 Hz (P1-1). If it goes silent this long the source is gone (RTK
 # unplugged, P1 stopped) -> the snapshot must report the pose UNAVAILABLE, never
@@ -702,7 +716,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             event_subsystem.submit_recon_rsp(r)
 
         def _on_health(sample) -> None:
-            # W8: relay P2's latest health/factor to /api/health. P5 forwards the
+            # Relay P2's latest health/summary to /api/health. P5 forwards the
             # authoritative payload unchanged (G-2 same-source), REPLACING the
             # whole value so the web thread's read stays consistent under the GIL.
             try:
@@ -774,7 +788,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             EVENT_RECON_RSP_TOPIC, _on_recon_rsp)
         estop_pong_sub = gen.declare_subscriber(
             PROBE_ESTOP_PONG_TOPIC, _on_estop_pong)
-        health_sub = gen.declare_subscriber(HEALTH_FACTOR_TOPIC, _on_health)
+        health_sub = gen.declare_subscriber(HEALTH_SUMMARY_TOPIC, _on_health)
         bit_sub = gen.declare_subscriber(HEALTH_BIT_TOPIC, _on_bit)
 
         # --- Cloud Qt face (v2.0). See runtime/cloud_wiring.py -------------

@@ -55,6 +55,7 @@ from ..outbound.task_result import TaskResultTracker, build_result
 from ..outbound.state_projection import (ProjectionError, audio_payload,
                                          geo_manifest_payload, mode_payload,
                                          robot_payload, task_item,
+                                         to_v2_device_status,
                                          to_v2_task_state)
 
 _logger = logging.getLogger(__name__)
@@ -182,7 +183,10 @@ class CloudProjector:
             task_state="running" if running else "idle",
             pose=state.get("pose"),
             clock=clock,
-            devices=_devices_from_health(state.get("health")),
+            # CLK-C1: 单调钟从这里传进去, 投影函数自己不取时间
+            # (无设备单测才能喂一个固定的 now).
+            devices=_devices_from_health(state.get("health"),
+                                          time.monotonic()),
             # v2.0 S3.5: 授时未同步时带时间窗的规则不命中, 所以这里必须
             # 反映[实际生效]而不是配置里写没写. 没有窗配置来源时为 False.
             alarm_window_active=ts_sync and bool(state.get("alarm_window")),
@@ -414,26 +418,51 @@ def _closed_task_state(value: Any) -> str:
 
 
 
-def _devices_from_health(health: Optional[Dict[str, Any]]
+def _devices_from_health(health: Optional[Dict[str, Any]],
+                         now_mono: Optional[float] = None
                          ) -> List[Dict[str, Any]]:
-    """health/factor -> v2.0 的 devices[].
+    """health/summary -> v2.0 的 devices[].
 
-    *** 只发[实际发现的]设备(v2.0 S4.2 逐字).
-    health items 与 11 S5.1A 的十九项只有十二项重合 -- compute 与 battery
-    这两个禁动项在 health 里根本不存在. 于是这里只能报出 health 真的有的
-    那些, 报全十九项就是编.
+    *** 只发[实际发现的]设备(v2.0 S4.2 逐字), 且只发 kind=="device".
+    11 S5.1 的 items 混着两类: device(物理设备在不在) 与 cap(一项能力是否
+    成立 -- 时钟同步/算力余量/磁盘/电量). v2.0 要的是设备清单, 把 cap 混进去
+    会让 Qt 的设备面板出现 clock/compute 这种点不开也修不了的"设备".
+
+    *** 本函数 2026-09-01 重写. 原版对着一个想象的形状写, 三个字段全错:
+    找 item["status"](真名 state, 且值域完全不同) / item["label"](11 S5.1 没有
+    这个键) / item["age_ms"](真名 since_mono, 单位是单调钟秒不是毫秒).
+    加上订阅的 key 也是错的(见 main_wiring 的 HEALTH_SUMMARY_TOPIC 注释),
+    于是 devices 恒空. 而 v2.0 S4.2 的"后端只发布实际发现的设备"让这个空
+    数组看起来完全合规 -- 空的原因是"没收到", 不是"没发现", 两者在报文上
+    不可区分. 联调时甲方会以为机器人一个设备都没接.
+
+    *** name 用 id 本身, NO 不在这里建中文名表.
+    11 S5.1A 的十九项规范表只有 项/kind/level/是否计入 speed_factor/失败后果,
+    没有人类可读名这一列 -- 全库没有这个真源. 在网关新建一张 key->中文名的
+    表就是造第二份真源, 它会在闭集扩容时漂移(CLAUDE.md 3.7 那条"人抄的数
+    会过期"). 报 id 是诚实的; 要中文名应由 11 S5.1 加 label 字段, 那是改契约.
+
+    *** last_update_ms 无来源时为 null, NO 不填 0.
+    since_mono 在 11 S5.1 是可选字段. 填 0 表示"刚刚更新", 与真的刚更新完全
+    一样 -- 与 CLAUDE.md 3.1 那条"0.0 冒充已赋值"是同一个失效模式.
+    now_mono 由调用方传入(CLK-C1: 时间从外面传, 便于无设备单测).
     """
     items = (health or {}).get("items") or {}
     out = []
     for name, item in sorted(items.items()):
         if not isinstance(item, dict):
             continue
-        status = item.get("status")
-        if status not in ("online", "degraded", "offline", "fault"):
-            status = "unknown"
-        out.append({"id": name, "name": item.get("label", name),
-                    "status": status,
-                    "last_update_ms": item.get("age_ms")})
+        if item.get("kind") != "device":
+            continue
+        age_ms = None
+        since = item.get("since_mono")
+        if now_mono is not None and isinstance(since, (int, float)):
+            # 单调钟差; 负值(时钟回拨不可能, 但报文可能是坏的)夹到 0.
+            age_ms = int(max(0.0, now_mono - float(since)) * 1000.0)
+        out.append({"id": name,
+                    "name": name,
+                    "status": to_v2_device_status(item.get("state")),
+                    "last_update_ms": age_ms})
     return out
 
 
