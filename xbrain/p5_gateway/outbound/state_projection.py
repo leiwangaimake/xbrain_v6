@@ -50,6 +50,69 @@ ROBOT_STATES = ("offline", "idle", "running", "charging", "fault",
                 "emergency_stop")
 TASK_STATES = ("idle", "queued", "running", "paused", "completed", "failed",
                "cancelled")
+
+#: 机内 12 值(15 S3.2 / 11 S4.4) -> v2.0 S3.2 的 7 值.
+#:
+#: *** 这张表原先不存在, 而两侧只有 3 个名字碰巧相同.
+#: 投影原来拿机内值直接对 TASK_STATES 求值, 不中就抛, 于是 pending/ready/done
+#: 这些[每条任务必经]的状态一律被拒: 任务在 ack 之后就从 Qt 的 state/task 里
+#: 消失(current 恒 null), 而 15 S3.2 的 12 值里有 9 个不在 v2.0 那 7 值内.
+#: 2026-09-01 联调预演实测: 一条 GOTO 落库后, 该 ERROR 以 10 Hz 刷了三万条.
+#:
+#: *** 分档依据是 15 S3.2 的状态机图, 不是名字相近.
+#: - pending/scheduled/blocked/ready 都在图上 running 之前, 且都能[不经人工]
+#:   自动往前走(定时到 / 依赖解除 / 校验通过 / 被调度选中) => queued.
+#:   blocked 归 queued 而不是 paused: 图上它"解除"后自动回 ready, 与
+#:   suspended 需要 resume 是两回事; 报成 paused 会让操作员去按恢复.
+#: - suspended 是 15 S3.2 的"活跃"集成员且可 resume(passive 人工/急停/低电,
+#:   yielding 抢占) => paused, 正好落 v2.0 快照的 suspended 桶.
+#: - done => completed(只是换名).
+#:
+#: *** 三个"终态但非干净成败"的值统一归 failed, 这是一个判断, 记在这里.
+#: needs_review(15 S3.2: 挂起超时或恢复校验失败, 终态需人工处置) /
+#: interrupted(本期无产生者, 但历史库有行) / wait_for_power_off(关机流程里
+#: [已进终态但尚未上行完毕]的任务)三者都是终态, 都不是干净的成功, 也都不是
+#: 操作员主动取消.
+#: - NO 不映 paused: paused 在 v2.0 语义里可恢复, 而这三个是终态, 报 paused
+#:   会让 Qt 显示一个永远恢复不了的暂停任务.
+#: - wait_for_power_off 的原终态(done/failed/cancelled)从这个值本身读不出来,
+#:   所以只能选一个方向. 选 failed 而不是 completed: 报一个没核实过的成功,
+#:   操作员不会再去看; 报 failed 他会去看. 失效方向取"会被发现"的那个.
+#: - *** 这三个终态今天都进不了 v2.0 快照的任何一个桶(分桶只取
+#:   running/queued/paused), 所以本行今天只决定[校验过不过]. 权威终态另由
+#:   message_type=result 发出(v2.0 S4.1: 必须由任务权威模块产生, 网关不猜).
+#:   将来若分桶扩到终态, 这里的方向已经是安全的那个.
+INTERNAL_TO_V2_TASK_STATE = {
+    "pending":            "queued",
+    "scheduled":          "queued",
+    "blocked":            "queued",
+    "ready":              "queued",
+    "running":            "running",
+    "suspended":          "paused",
+    "done":               "completed",
+    "failed":             "failed",
+    "cancelled":          "cancelled",
+    "needs_review":       "failed",
+    "interrupted":        "failed",
+    "wait_for_power_off": "failed",
+}
+
+
+def to_v2_task_state(value: Any) -> str:
+    """机内 task.state -> v2.0 S3.2 的值. 表外的值抛.
+
+    *** 抛而不是兜底, 保留原实现选对了的那一半.
+    原实现的取舍是对的(越界必抛, CLAUDE.md 3.5) -- 它只是没写映射表.
+    一个"表外就返回 failed"的兜底会让新增的机内状态静默变成失败, 而 11 S4.4
+    的枚举一旦扩容, 我们要的是在这里响, 不是在 Qt 上看到一批莫名其妙的失败.
+    完备性由 tests/p5_gateway/test_state_projection.py 的双向差集判据守.
+    """
+    mapped = INTERNAL_TO_V2_TASK_STATE.get(value)
+    if mapped is None:
+        raise ValueError(
+            "task.state=%r not in the 15 S3.2 internal closed set %s"
+            % (value, sorted(INTERNAL_TO_V2_TASK_STATE)))
+    return mapped
 GPS_FIXES = ("none", "gps", "dgps", "rtk_float", "rtk_fixed")
 DEVICE_STATUSES = ("online", "degraded", "offline", "fault", "unknown")
 VOICE_MODES = ("normal", "broadcast", "alarm")

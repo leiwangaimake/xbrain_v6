@@ -54,7 +54,8 @@ from ..outbound.cloud_envelope import UnmappedLinkLevel
 from ..outbound.task_result import TaskResultTracker, build_result
 from ..outbound.state_projection import (ProjectionError, audio_payload,
                                          geo_manifest_payload, mode_payload,
-                                         robot_payload, task_item)
+                                         robot_payload, task_item,
+                                         to_v2_task_state)
 
 _logger = logging.getLogger(__name__)
 
@@ -195,6 +196,13 @@ class CloudProjector:
         # state 是闭集外值的任务[哪个桶都进不去, 就此消失] -- 快照里没有它,
         # Qt 上看不到它, 而它可能正在跑. 静默丢弃比抛错糟: 抛错至少有日志.
         # 这条同样是断言抓出来的(CLAUDE.md 3.5 越界必抛).
+        #
+        # *** 先映射再分桶. 上面三个桶名是 v2.0 的词, 而 tasks 里装的是机内
+        # 12 值(15 S3.2) -- 两侧只有 running/failed/cancelled 三个名字碰巧
+        # 相同. 不映射的话 pending/ready/done 这些每条任务必经的状态既过不了
+        # 闭集校验, 也一个桶都进不去.
+        tasks = [dict(t, state=to_v2_task_state(t.get("state")))
+                 for t in tasks]
         for task in tasks:
             _closed_task_state(task.get("state"))
         current = next((t for t in tasks if t.get("state") == "running"), None)

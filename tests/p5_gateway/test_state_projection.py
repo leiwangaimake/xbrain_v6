@@ -467,3 +467,104 @@ def test_event_missing_eid_raises():
 
     with pytest.raises(ProjectionError):
         event_payload({"title": "no eid"}, sev="info", category="task")
+
+
+# --- 机内 12 值 -> v2.0 7 值 的映射完备性 ---------------------------------
+
+def test_every_internal_task_state_has_a_v2_mapping():
+    """*** 双向完备性的前一半: 机内每个值都必须有落点.
+
+    守的是 2026-09-01 联调预演实测出来的缺陷: 这张表原先根本不存在, 投影拿
+    机内值直接对 v2.0 闭集求值, 于是 15 S3.2 的 12 值里有 9 个被拒 --
+    pending/ready/done 这些每条任务必经的状态首当其冲, 任务在 ack 之后就从
+    Qt 的 state/task 里消失(current 恒 null), 而 ERROR 以 10 Hz 刷屏.
+
+    *** 从 schema_task 读 INTERNAL, NO 不在这里重列一份.
+    重列的话 11 S4.4 扩容时两份各自漂移, 而本判据的全部价值就是不让它们漂:
+    新增一个机内状态而忘了给映射, 这里立刻红.
+
+    MUTATION: 从 INTERNAL_TO_V2_TASK_STATE 删掉任意一个键 -> 红.
+    """
+    from xbrain.p3_task.persistence.schema_task import TASK_STATES as INTERNAL
+    from xbrain.p5_gateway.outbound.state_projection import (
+        INTERNAL_TO_V2_TASK_STATE)
+
+    missing = sorted(set(INTERNAL) - set(INTERNAL_TO_V2_TASK_STATE))
+    assert not missing, (
+        "机内状态 %s 没有 v2.0 落点 -- 任务进这些状态时 state/task 投影会抛, "
+        "Qt 那侧表现为任务凭空消失" % missing)
+
+
+def test_the_mapping_never_produces_a_value_outside_v2():
+    """*** 双向完备性的后一半: 每个落点都必须在 v2.0 闭集内.
+
+    上一条保证"都有映射", 本条保证"映射的目标合法". 少了这条, 一个把
+    done 映成 "done"(而不是 "completed")的表能过上一条, 却在 task_item 的
+    _closed 里抛 -- 症状与完全没有映射时一模一样.
+
+    MUTATION: 把任意一个值改成 v2.0 闭集外的词(如 "done") -> 红.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (
+        INTERNAL_TO_V2_TASK_STATE, TASK_STATES)
+
+    bad = {k: v for k, v in INTERNAL_TO_V2_TASK_STATE.items()
+           if v not in TASK_STATES}
+    assert not bad, (
+        "这些映射目标不在 v2.0 S3.2 闭集 %s 内: %s" % (sorted(TASK_STATES), bad))
+
+
+def test_the_three_bucket_states_are_all_reachable():
+    """*** v2.0 快照的三个桶都必须有机内来源.
+
+    分桶只取 running/queued/paused. 若某个桶没有任何机内状态映过去, 那个桶
+    永远是空的 -- 而空桶与"确实没有这类任务"不可区分, 正是 CLAUDE.md 3.2
+    形态1(一条永远绿的断言)在数据面的样子: Qt 上看不出区别, 没人会发现.
+
+    MUTATION: 把 suspended 的映射从 paused 改成别的 -> paused 桶失去唯一
+    来源 -> 红.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (
+        INTERNAL_TO_V2_TASK_STATE)
+
+    produced = set(INTERNAL_TO_V2_TASK_STATE.values())
+    for bucket in ("running", "queued", "paused"):
+        assert bucket in produced, (
+            "v2.0 快照的 %r 桶没有任何机内状态映过来, 它会恒空" % bucket)
+
+
+def test_terminal_internal_states_never_map_to_paused():
+    """*** 终态不许映成 paused.
+
+    needs_review / interrupted / wait_for_power_off 都是 15 S3.2 的终态.
+    paused 在 v2.0 语义里是可恢复的暂停 -- 把终态报成 paused, Qt 上会出现
+    一个永远恢复不了的暂停任务, 而操作员会一直等它继续.
+
+    这条把映射表里那个判断(三者归 failed)钉住: 换成 completed 仍过本条,
+    但那是另一个方向的错(报没核实过的成功), 由映射表的注释记着理由.
+
+    MUTATION: 把 needs_review 映成 paused -> 红.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (
+        INTERNAL_TO_V2_TASK_STATE)
+
+    for terminal in ("needs_review", "interrupted", "wait_for_power_off",
+                     "done", "failed", "cancelled"):
+        assert INTERNAL_TO_V2_TASK_STATE[terminal] != "paused", (
+            "终态 %r 映成了 paused -- Qt 会显示一个恢复不了的暂停任务"
+            % terminal)
+
+
+def test_an_unknown_internal_state_raises_not_defaults():
+    """*** 表外的值抛, NO 不兜底.
+
+    一个"表外就返回 failed"的兜底会让 11 S4.4 将来新增的状态静默变成失败.
+    要的是在这里响, 不是在 Qt 上看到一批莫名其妙的失败任务
+    (CLAUDE.md 3.5: 闭集外必抛, 不得未知值降级解释).
+
+    MUTATION: 给 to_v2_task_state 加 .get(value, "failed") -> 红.
+    """
+    import pytest as _pytest
+    from xbrain.p5_gateway.outbound.state_projection import to_v2_task_state
+
+    with _pytest.raises(ValueError):
+        to_v2_task_state("some_future_state")
