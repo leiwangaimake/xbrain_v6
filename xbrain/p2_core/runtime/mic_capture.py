@@ -52,6 +52,57 @@ from xbrain.p2_core.audio.audio_io import (
 DEFAULT_ARECORD_DEVICE = "hw:0,0"
 DEFAULT_MIC_TOPIC = "rt/audio/mic"
 
+#: USB 热插拔重连的退避. 无上限重试 -- 现场把 MIC 拔下来可能隔很久才插回,
+#: 放弃重试就等于要重启 p2 才能恢复语音(用户 2026-09-01 裁决).
+#:
+#: *** 为什么这里退避而 rtk_driver 的 serial_reopen 不退避.
+#: 那边重连是一次 open() 系统调用, 每拍重试的代价可以忽略; 这边是 respawn
+#: 一个子进程, 设备真被拔走时立即重试会变成 spawn 风暴(每秒几十个 arecord
+#: 进程起了又死). 这是对 serial_reopen 范式的一处刻意偏离, 理由记在这里.
+#:
+#: NO 这三个不是 CLAUDE.md 3.1 意义上的安全参数(不在 common.spec.*/
+#: common.safety.* 轴上), 所以按模块常量放, 与 FRAME_MS 同级.
+#: 发布线程保留的最近错误条数. 设备被长期拔走时每次退避都产生一条报告,
+#: 无界 list 会在几小时内吃掉内存. 心跳只读最后一条, 留 16 条够查现场.
+_MAX_KEPT_ERRORS = 16
+
+RESPAWN_BACKOFF_INITIAL_S = 1.0
+RESPAWN_BACKOFF_FACTOR = 2.0
+RESPAWN_BACKOFF_CAP_S = 10.0
+
+
+def respawn_backoff_s(attempt: int) -> float:
+    """第 attempt 次重连前该等多久(attempt 从 1 起). 纯函数, 无设备可测.
+
+    *** 拆成纯函数是照 sensor/serial_reopen.h 的范式 -- 那里把"这次 read
+    结果意味着什么"从 I/O 里拆出来, 理由逐字是"split from the I/O so it is
+    unit-tested with no device". 退避表同理: 没有 USB MIC 的机器上也要能
+    验证它确实封顶, 确实单调, 确实不会退化成忙等.
+
+    1, 2, 4, 8, 10, 10, ... capped at 10 s.
+    """
+    if attempt < 1:
+        raise ValueError("attempt starts at 1, got %r" % (attempt,))
+    delay = RESPAWN_BACKOFF_INITIAL_S * (RESPAWN_BACKOFF_FACTOR ** (attempt - 1))
+    return min(delay, RESPAWN_BACKOFF_CAP_S)
+
+
+def is_stream_end(raw_len: int, expected_len: int) -> bool:
+    """一次 stdout.read 的结果是不是"流结束了"(设备拔掉 / arecord 退出).
+
+    *** 短读就是 EOF, 这条依赖 _spawn_arecord 的 bufsize=-1.
+    BufferedReader 的 .read(N) 会阻塞到凑满 N 字节或真 EOF, 所以短读不可能
+    是"这一拍数据还没到". bufsize=0 的裸 FileIO 没有这个性质 -- 两者一起改
+    才安全, 单独把 bufsize 改回 0 会让本函数把正常的短读误判成拔线.
+
+    NOTE 本函数[覆盖不到]另一种死法: arecord 进程还活着但不再出数据. 那种情况
+    下 .read() 永远阻塞, 从本线程内部看不见, 需要外部看门狗比对
+    frames_captured 是否停涨. serial_reopen.h 有对应的 stale_s 兜底, 这里
+    没有 -- 不写一个假的覆盖(CLAUDE.md 3.2: 不假装有保证). 2026-09-01 实测
+    的拔插走的是本函数这条 EOF 路径.
+    """
+    return raw_len < expected_len
+
 
 class MicCaptureError(Exception):
     pass
@@ -113,6 +164,14 @@ class MicCaptureThread(threading.Thread):
         self._q = out_queue
         self._stop_evt = stop_evt
         self._proc: Optional[subprocess.Popen] = None
+        #: 当前是否真的在出帧. NO 不能用 thread.is_alive() 代替 --
+        #: 重生循环让线程永不退出, is_alive() 就恒 True, 于是 device_health
+        #: 的 mic offline/online 两个事件都不会再发, 真实的断线被掩盖.
+        #: 那正是 CLAUDE.md 3.2 形态①: 一条空壳实现也能通过的断言.
+        #: main_wiring 的 observe("mic", ...) 读的就是本标志.
+        self.streaming: bool = False
+        #: 重生次数. 单调递增, 供心跳与判据区分"一直好"与"断过又回来".
+        self.respawns: int = 0
 
     def _spawn_arecord(self) -> subprocess.Popen:
         cmd = [
@@ -172,62 +231,111 @@ class MicCaptureThread(threading.Thread):
                 type(exc).__name__, exc, traceback.format_exc())
             self._q.put(("error", "capture crashed: %s" % exc))
 
-    def _run_body(self) -> None:
+    def _backoff_sleep(self, attempt: int, why: str) -> None:
+        """报告一次断线并按退避表等待. 等待期间可被 stop() 立刻打断.
+
+        *** 用 stop_evt.wait(delay) 而不是 time.sleep(delay):
+        封顶 10 s 的 sleep 会让 stop() 最坏等 10 s 才生效, 而 p2 关停有
+        时限. Event.wait 在 set 时立刻返回.
+        """
+        delay = respawn_backoff_s(attempt)
+        self._q.put(("error",
+                     "%s; respawn #%d in %.1fs" % (why, attempt, delay)))
+        self._stop_evt.wait(delay)
+
+    def _reap(self) -> Optional[int]:
+        """回收当前 arecord, 返回退出码. 重生前必须先做这一步.
+
+        *** RT-A1: p2 是声卡独占者. 两个 arecord 同时开 hw:0,0 时后一个拿到
+        EBUSY 立刻死, 而它死掉又触发下一次重生 -- 变成一个自我维持的失败环,
+        且每一圈都"正常"(没有异常, 只有短读). 所以先 terminate 再 kill,
+        确认进程走了才允许起新的.
+        """
+        proc, self._proc = self._proc, None
+        if proc is None:
+            return None
         try:
-            self._proc = self._spawn_arecord()
-        except FileNotFoundError:
-            # arecord absent -- log once and exit cleanly so the
-            # process doesn't crash on dev machines without alsa.
-            self._q.put(("error", "arecord binary not on PATH"))
-            return
-        assert self._proc.stdout is not None
+            proc.terminate()
+            return proc.wait(timeout=2.0)
+        except (subprocess.TimeoutExpired, OSError):
+            try:
+                proc.kill()
+                return proc.wait(timeout=1.0)
+            except (subprocess.TimeoutExpired, OSError):
+                return None
+
+    def _run_body(self) -> None:
         # Each 20 ms frame = CAPTURE_SAMPLES_PER_FRAME (960) samples
         # of 2 bytes each = 1920 bytes at 48 kHz s16le.
         raw_bytes_per_frame = CAPTURE_SAMPLES_PER_FRAME * 2
+        attempt = 0
         while not self._stop_evt.is_set():
-            raw = self._proc.stdout.read(raw_bytes_per_frame)
-            if len(raw) < raw_bytes_per_frame:
-                # EOF from arecord (device unplugged or process
-                # terminated). stderr is DEVNULL, so no stderr trace;
-                # the exit code from wait() is the best signal.
-                rc = None
-                try:
-                    rc = self._proc.wait(timeout=0.5)
-                except (subprocess.TimeoutExpired, OSError):
-                    pass
-                self._q.put(("error",
-                              "arecord stream ended (raw_len=%d, rc=%s)"
-                              % (len(raw), rc)))
-                return
-            samples_48k = list(struct.unpack(
-                f"<{CAPTURE_SAMPLES_PER_FRAME}h", raw))
-            samples_16k = decimate_3to1(samples_48k)
-            frame = AudioFrame(
-                rate_hz=ASR_RATE_HZ, channels=1, sample_width=2,
-                frame_ms=FRAME_MS, samples=samples_16k)
-            self.frames_captured += 1
             try:
-                self._q.put_nowait(("frame", frame))
-            except queue.Full:
-                # Backpressure: drop oldest, add newest. RT plane
-                # doesn't tolerate unbounded buffering.
+                self._proc = self._spawn_arecord()
+            except FileNotFoundError:
+                # arecord absent -- 这个重试也没用, 二进制不会自己长出来.
+                # 退出而不是无限重生: 无限重生会在没装 alsa 的开发机上刷屏,
+                # 而拔插场景下 arecord 一直在.
+                self._q.put(("error", "arecord binary not on PATH"))
+                return
+            except OSError as exc:
+                # 设备不在(拔掉了) / EBUSY. 这是要重试的那一类.
+                attempt += 1
+                self.respawns += 1
+                self._backoff_sleep(attempt, "spawn failed: %s" % exc)
+                continue
+            assert self._proc.stdout is not None
+            self.streaming = True
+            # *** 退避的重置点在[真的出了一帧]之后, NO 不在 spawn 成功之后.
+            # "spawn 成功"不等于"恢复成功": USB 设备半接触时 open() 会成功
+            # 然后立刻 EOF, 那样 attempt 每轮都被重置回 0, 退避永远停在初值,
+            # 变成以 1 s 为周期的 respawn 空转 -- 表面上"在重试", 实际既没
+            # 退避也没恢复. 2026-09-01 用假 arecord(起来就 EOF)实测到这个
+            # 形态: 1.2 s 内 spawn 了 24 次, 间隔恒为初值.
+            produced_a_frame = False
+            while not self._stop_evt.is_set():
+                raw = self._proc.stdout.read(raw_bytes_per_frame)
+                if is_stream_end(len(raw), raw_bytes_per_frame):
+                    # EOF: 设备被拔掉, 或 arecord 自己退了. stderr 是 DEVNULL
+                    # 所以没有 stderr 痕迹, wait() 的退出码是最好的信号.
+                    self.streaming = False
+                    rc = self._reap()
+                    attempt += 1
+                    self.respawns += 1
+                    self._backoff_sleep(
+                        attempt,
+                        "arecord stream ended (raw_len=%d, rc=%s)"
+                        % (len(raw), rc))
+                    break
+                samples_48k = list(struct.unpack(
+                    f"<{CAPTURE_SAMPLES_PER_FRAME}h", raw))
+                samples_16k = decimate_3to1(samples_48k)
+                frame = AudioFrame(
+                    rate_hz=ASR_RATE_HZ, channels=1, sample_width=2,
+                    frame_ms=FRAME_MS, samples=samples_16k)
+                self.frames_captured += 1
+                if not produced_a_frame:
+                    # 真的出帧了 = 这次重连成功, 退避从头算.
+                    produced_a_frame = True
+                    attempt = 0
                 try:
-                    self._q.get_nowait()
-                except queue.Empty:
-                    pass
-                self._q.put_nowait(("frame", frame))
+                    self._q.put_nowait(("frame", frame))
+                except queue.Full:
+                    # Backpressure: drop oldest, add newest. RT plane
+                    # doesn't tolerate unbounded buffering.
+                    try:
+                        self._q.get_nowait()
+                    except queue.Empty:
+                        pass
+                    self._q.put_nowait(("frame", frame))
 
     def stop(self) -> None:
+        # streaming 先清: 关停期间 device_health 不该看到"还在出帧".
+        self.streaming = False
+        # set() 在 _reap 之前: 重生循环与 _backoff_sleep 都查这个事件, 先置位
+        # 才能保证回收完不会再起一个新的 arecord.
         self._stop_evt.set()
-        if self._proc is not None:
-            try:
-                self._proc.terminate()
-                self._proc.wait(timeout=2.0)
-            except (subprocess.TimeoutExpired, OSError):
-                try:
-                    self._proc.kill()
-                except OSError:
-                    pass
+        self._reap()
 
 
 class MicPublisherThread(threading.Thread):
@@ -298,8 +406,21 @@ class MicPublisherThread(threading.Thread):
                 except queue.Empty:
                     continue
                 if kind == "error":
+                    # *** 记下来但 NO 不退出.
+                    # 关停信号只有一个: stop_evt. 队列里的 error 是采集侧的
+                    # [报告], 不是指令. 原来这里 return, 在采集线程"断了就死"
+                    # 的年代看着一致 -- 两个一起走. 2026-09-01 给采集加了重生
+                    # 循环之后这就成了缺口: 采集自己回来了, 发布线程却早在第一
+                    # 条 respawn 报告上退了, 于是 captured 一直涨而 published
+                    # 冻住, 帧再也上不了 RT 面. ORIN 实测抓到这个形态
+                    # (captured 1756->2199, published 恒 1756, pub_alive=False).
+                    #
+                    # 只留最近若干条: 设备被长期拔走时每次退避都产生一条,
+                    # 无界 list 会在几小时内吃掉内存.
                     self.errors.append(str(payload))
-                    return
+                    if len(self.errors) > _MAX_KEPT_ERRORS:
+                        del self.errors[:-_MAX_KEPT_ERRORS]
+                    continue
                 if self._muted.is_set():
                     # TTS playback in progress on the SAME device that
                     # feeds this MIC -- dropping the frame is the whole

@@ -323,7 +323,7 @@ def test_an_off_set_health_state_refuses_the_whole_key():
     [有来源的]值(设备无生产者时 p2 就报它), 拿它去接一个[闭集外]的值, Qt
     就再也分不清"p2 说不知道"和"p2 说了我们不认识的话".
 
-    ⚠️ 代价要写明: 一个坏的 health item 会让整条 state/robot 停发, 而它同时
+    NOTE 代价要写明: 一个坏的 health item 会让整条 state/robot 停发, 而它同时
     载着 battery/gps/motion/clock. 这个爆炸半径是有意接受的 -- p2 是
     health/summary 的唯一发布者, 出现闭集外的值只可能是 p2 坏了或契约变了,
     两种都该立刻响, 而不是让 Qt 拿着一份掺了假值的快照继续跑.

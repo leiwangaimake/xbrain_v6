@@ -514,17 +514,26 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     # threading._threading_default_excepthook and the
                     # log shows only mic_frames=0 with no cause.
                     cap_alive = mic_thread.is_alive()
+                    # *** 存活信号取 streaming, NO 不取 is_alive().
+                    # 重生循环让采集线程在拔插期间也不退出, is_alive() 于是
+                    # 恒 True -- device_health 看不到跃迁, mic 的
+                    # offline/online 两个事件都不会再发, 真实断线被掩盖
+                    # (CLAUDE.md 3.2 形态①). streaming 只在 arecord 真的
+                    # 在出帧时为 True, 退避等待期间为 False.
+                    cap_streaming = getattr(mic_thread, "streaming", cap_alive)
                     pub_alive = mic_pub_thread.is_alive()
                     cap_exc = getattr(mic_thread, "last_exception", None)
                     pub_exc = getattr(mic_pub_thread, "last_exception", None)
                     pub_errs = list(getattr(mic_pub_thread, "errors", ()))
                     _logger.info(
                         "p2 alive; captured=%d published=%d muted=%d "
-                        "cap_alive=%s pub_alive=%s errors=%s",
+                        "cap_alive=%s streaming=%s respawns=%d "
+                        "pub_alive=%s errors=%s",
                         getattr(mic_thread, "frames_captured", 0),
                         mic_pub_thread.frames_published,
                         getattr(mic_pub_thread, "frames_muted", 0),
-                        cap_alive, pub_alive,
+                        cap_alive, cap_streaming,
+                        getattr(mic_thread, "respawns", 0), pub_alive,
                         pub_errs[-1] if pub_errs else "none")
                     if cap_exc:
                         _logger.error("mic capture thread crashed:\n%s",
@@ -539,7 +548,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     # strobe/light); None -> unknown, no false offline. ptz: read the
                     # PtzLivenessProbe verdict (cached by its own thread, NON-blocking
                     # here -- an inline ONVIF ping would stall this heartbeat).
-                    device_bridge.observe("mic", bool(cap_alive and pub_alive))
+                    device_bridge.observe(
+                        "mic", bool(cap_streaming and pub_alive))
                     device_bridge.observe(
                         "ptz", ptz_probe.reachable if ptz_probe is not None else None)
                     _ps = payload.device_status()
