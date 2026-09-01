@@ -130,11 +130,16 @@ body { margin: 0; overflow: hidden; background: var(--bg); color: var(--ink);
 .legend-mark.speed  { background: var(--fence-speed-color); }
 .legend-mark.forbid { background: var(--fence-forbid-color); }
 
-/* 机器人本体航向仪(替代原左上角指北针 N+三角): 右下角 150px, 表盘旋转/指针固定/
+/* 机器人本体航向仪(替代原左上角指北针 N+三角): 左上角 300px, 表盘旋转/指针固定/
    中心镂空. 数据源仅 pose.heading_rad(本体航向真值). 17 S6.6/PTZ-C2 禁的"罗盘/朝向
    指针"是[云台]朝向(假值回读), 本体航向是真值且 S6.10 item 6 已允许文字显示 --
    本盘绝不接云台角. heading 卡硬件(W4)时置灰不显假值(3.2). */
-.heading-dial { position: absolute; left: 14px; top: 156px; width: 300px; height: 300px; z-index: 3;
+/* top: 原 156px 时表盘顶部的 N 指针压在 .legend 底边上(2026-09-01 实测:
+   legend bottom=316, 可见圆环 top=307, 重叠 9px). SVG viewBox 有 15px 留白,
+   所以圆环顶 = 本元素 top + 15 -- 按 legend bottom 反推需要 >= 177px, 取 180px
+   留 15px 间隙. legend 是 7 行静态图例(高度不随数据变化), 所以固定偏移是稳的;
+   若将来图例改成数据驱动, 这个数要跟着重算. */
+.heading-dial { position: absolute; left: 14px; top: 180px; width: 300px; height: 300px; z-index: 3;
   opacity: .9; }   /* top-left, moved down (user 2026-08-18) to clear the taller
                       6-row legend (added 限速/禁止) it was overlapping */
 #dialFace { transform-box: fill-box; transform-origin: center; transition: transform .18s ease-out; }
