@@ -40,6 +40,22 @@ def _data(task_type, payload, msg_id="msg-1", task_id="task-1"):
             "task_type": task_type, "payload": payload}
 
 
+#: 会在机内[创建任务行]的 task_type 及其最小合法 payload.
+#: 只列 create 类: STOP_TASK 是对既有任务的状态迁移, SET_ALARM_CONFIG 走
+#: cmd/geo, AUDIO_CONTROL 走 cmd/audio/speak -- 三者都不产生 tasks 行, 也就
+#: 不经过 15 S12 的闭集检查. 把它们混进来会让判据看起来覆盖更广而实际在测
+#: 无关的东西.
+_CREATE_TASK_SAMPLES = {
+    "GOTO_KEYPOINT": {
+        "coordinate_system": "WGS84",
+        "recorded_path_id": "r-north",
+        "waypoints": [{"id": "w-1", "name": "x", "latitude": 31.2,
+                       "longitude": 121.4, "altitude": 8.4,
+                       "arrival_radius_m": 3.0}],
+    },
+}
+
+
 def _reject(task_type, payload):
     from xbrain.p5_gateway.inbound.cloud_inbound import InboundReject
     from xbrain.p5_gateway.inbound.task_router import route
@@ -293,6 +309,75 @@ def test_cloud_origin_is_in_the_shared_closed_set():
     # 四种输入形式都在同一个闭集里 -- 这是"云端不是特权通道"的结构保证.
     for other in ("voice", "hmi", "wecom"):
         assert other in GEO_ORIGIN, other
+
+
+def test_every_emitted_task_type_is_in_p3_closed_set():
+    """*** 网关发出的 task.type 必须是 15 S12 闭集的成员.
+
+    这条守的是 2026-09-01 联调前实测抓到的缺陷: _goto 发的是 "goto_keypoint",
+    而 15 S12 的 TASK_TYPES 是 patrol|goto|charge|return_home|standby|teach|
+    follow. task_row_from_command 查不中即抛, 网关翻成 error_code 3001 /
+    E_INTERNAL -- 也就是[每一条云端导航指令都被拒].
+
+    *** 为什么原有的断言全部漏掉它.
+    test_goto_becomes_the_internal_submit_shape 与 test_cloud_bridge 的
+    test_a_goto_lands_on_the_internal_key_in_the_s7_2_shape 都只把本函数的
+    输出与一个写死的字面量比对 -- 而那个字面量抄的正是被测代码自己. 两侧各
+    自自洽, 中间那条缝没有断言(CLAUDE.md 3.2 形态6: 扫描面不声明).
+    同一个文件里的 test_cloud_origin_is_in_the_shared_closed_set 对 origin
+    轴做了正确的跨边界检查; 漏的是 task.type 轴.
+
+    *** 写成遍历而不是只钉 goto: 将来任何新增的 task_type 路由都自动进这条
+    判据. 只断言 goto 的话, 下一个 create-task 类型会重演同一个缺陷.
+
+    变异体: 把 _goto 的 "goto" 改回 "goto_keypoint" => 本条必红.
+    """
+    from xbrain.p3_task.persistence.schema_task import TASK_TYPES
+    from xbrain.p5_gateway.inbound.task_router import route
+
+    emitted = {}
+    for task_type, payload in _CREATE_TASK_SAMPLES.items():
+        for _key, body in route(_data(task_type, payload)):
+            if body.get("action") == "submit" and "task" in body:
+                emitted[task_type] = body["task"].get("type")
+
+    assert emitted, (
+        "一个 submit 都没抽到 -- 判据瞎了(CLAUDE.md 3.2 形态6). "
+        "_CREATE_TASK_SAMPLES 的 payload 可能已与 route 的校验脱节")
+
+    for wire_name, internal_type in sorted(emitted.items()):
+        assert internal_type in TASK_TYPES, (
+            "v2.0 的 %s 落到机内 task.type=%r, 不在 15 S12 闭集 %s 里. "
+            "p3 的 task_row_from_command 会抛, 云端收到 E_INTERNAL"
+            % (wire_name, internal_type, sorted(TASK_TYPES)))
+
+
+def test_goto_lands_the_same_task_type_as_the_voice_path():
+    """*** 云端与语音是同一个业务动作, 必须落同一个 task_type.
+
+    上一条只保证[在闭集里]; 在闭集里而选错值(比如落成 patrol)同样是缺陷,
+    且症状更隐蔽 -- 任务会被受理并入库, 只是语义错了, 调度优先级与终态解释
+    都跟着错, 而没有任何东西会报错.
+
+    锚点是语音侧的 B01: goto_waypoint -> "goto"
+    (p4_agent/runtime/task_request.py 的 _TASK_CREATE_INTENTS). 从那张表读,
+    NO 不在这里再写一遍字面量 -- 写死的话两处会各自漂移, 而这条断言的全部
+    价值就是不让它们漂.
+
+    变异体: 把 _goto 改成任何别的闭集成员(patrol/follow) => 本条必红,
+    而上一条仍绿. 两条判据合起来才既管[合法]又管[正确].
+    """
+    from xbrain.p4_agent.runtime.task_request import _TASK_CREATE_INTENTS
+    from xbrain.p5_gateway.inbound.task_router import route
+
+    voice_goto = _TASK_CREATE_INTENTS["goto_waypoint"]
+
+    (_key, body), = route(_data("GOTO_KEYPOINT",
+                                _CREATE_TASK_SAMPLES["GOTO_KEYPOINT"]))
+    assert body["task"]["type"] == voice_goto, (
+        "云端 GOTO_KEYPOINT 落 %r, 语音 goto_waypoint 落 %r -- "
+        "同一个动作在机内有了两套语义"
+        % (body["task"]["type"], voice_goto))
 
 
 def test_routing_targets_are_the_existing_internal_keys():

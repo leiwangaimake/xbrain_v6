@@ -221,7 +221,16 @@ def test_a_goto_lands_on_the_internal_key_in_the_s7_2_shape():
     assert p["cmd_id"] == "c-m-1"        # "c-" + 云端 msg_id
 
     assert p["task"]["task_id"] == "t-1"
-    assert p["task"]["type"] == "goto_keypoint"
+    # *** 从语音侧那张表读, NO 不写字面量.
+    # 本行原写 == "goto_keypoint", 与本函数 docstring 的理由("p3 收到的东西
+    # 与今天完全一样")直接矛盾: 语音链路从不产生这个值, 它落的是 "goto".
+    # 判据抄的是被测代码自己, 于是两侧自洽而机内闭集被绕过 -- 每一条云端
+    # 导航指令都被 p3 拒掉, 直到 2026-09-01 对真实栈发帧才暴露.
+    # 跨边界的闭集断言在 test_task_router.py 的
+    # test_every_emitted_task_type_is_in_p3_closed_set 与
+    # test_goto_lands_the_same_task_type_as_the_voice_path.
+    from xbrain.p4_agent.runtime.task_request import _TASK_CREATE_INTENTS
+    assert p["task"]["type"] == _TASK_CREATE_INTENTS["goto_waypoint"]
     assert p["source"] == "cloud", (
         "source 不是 cloud -- 下游没法按来源做互斥与权限判定")
 

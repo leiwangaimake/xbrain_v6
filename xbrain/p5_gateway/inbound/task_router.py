@@ -157,7 +157,20 @@ def _goto(cmd_id: str, task_id: str, payload: Dict) -> Dict[str, Any]:
         "action": "submit",
         "task": {
             "task_id": task_id,
-            "type": "goto_keypoint",
+            # *** "goto", NO 不是 "goto_keypoint".
+            # 权威闭集是 15 S12 的 TASK_TYPES(patrol|goto|charge|return_home|
+            # standby|teach|follow), 由 tasks 表的 DDL CHECK 强制. 云端的
+            # GOTO_KEYPOINT 是 v2.0 的 wire 名, 落到机内必须换成闭集里的值.
+            # 对照点: 语音链路的 B01 goto_waypoint 意图映射的也是 "goto"
+            # (p4_agent/runtime/task_request.py 的 _TASK_CREATE_INTENTS).
+            # 两条输入是同一个业务动作, 落不同 type 就等于机内有两套任务语义.
+            #
+            # 原写 "goto_keypoint" 的后果不是报错难懂, 而是[每一条云端导航
+            # 指令都被拒]: task_row_from_command 查闭集不中即抛, 网关把它
+            # 翻成 error_code 3001 / E_INTERNAL 回给 Qt. 2026-09-01 用
+            # scripts/dev/cloud_probe.py 对真实栈发帧才暴露 -- 单测只把
+            # 本函数的输出与自己比对, 从未与 15 S12 的闭集对撞.
+            "type": "goto",
             # 云端的计划级路径 ID; p3 解析时换成实际 route_id/route_rev
             # 并在回报里带上(v2.0 S3.1 要求).
             "recorded_path_id": payload.get("recorded_path_id"),
