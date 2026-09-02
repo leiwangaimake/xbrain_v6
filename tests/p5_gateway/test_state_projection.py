@@ -153,6 +153,50 @@ _REAL_HEALTH = {
 }
 
 
+def test_gps_fix_maps_the_internal_closed_set_to_v2():
+    """*** 机内 11 S4.5 五值 -> v2.0 五值, 不同名的两个是重点.
+
+    no_fix / single 在 v2.0 里没有同名项. 不映射的话, RTK 一上电报 no_fix
+    (锁星之前必经)就把整条 state/robot 打掉 -- 而 state/robot 同时载着电量/
+    定位/运动/时钟, Qt 那侧全瞎. 2026-09-02 联调现场实测: rtk_driver 一启动,
+    10 Hz 刷出几百条 ProjectionError.
+
+    *** 这条缺陷只在接了 RTK 的机器上出现. 没有 rtk_driver 时 gps 恒为 null,
+    走的是 `if fix else "none"` 那条短路, 永远碰不到映射. 所以它在开发机上
+    不可能被发现 -- 判据必须显式喂机内值, 不能等硬件.
+
+    变异体: 表里删掉 no_fix 一行 => 本条红.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (
+        INTERNAL_TO_V2_GPS_FIX, GPS_FIXES, to_v2_gps_fix)
+
+    internal = {"no_fix", "single", "dgps", "rtk_float", "rtk_fixed"}
+    assert set(INTERNAL_TO_V2_GPS_FIX) == internal, (
+        "与 11 S4.5 闭集不一致, 差集 %s"
+        % sorted(set(INTERNAL_TO_V2_GPS_FIX) ^ internal))
+    assert set(INTERNAL_TO_V2_GPS_FIX.values()) <= set(GPS_FIXES), (
+        "映射落到 v2.0 闭集外: %s"
+        % sorted(set(INTERNAL_TO_V2_GPS_FIX.values()) - set(GPS_FIXES)))
+    # 两个不同名的必须映对.
+    assert to_v2_gps_fix("no_fix") == "none"
+    assert to_v2_gps_fix("single") == "gps", (
+        "单点定位应映 gps(米级普通定位), 实得 %r" % to_v2_gps_fix("single"))
+
+
+def test_an_off_set_gps_fix_throws():
+    """表外必抛, NO 不兜底成 none.
+
+    兜底会把一个真实的定位状态报成"无定位", 操作员据此以为失去定位而中止
+    任务 -- 比抛错难查得多(CLAUDE.md 3.5).
+
+    变异体: 改成 .get(value, "none") => 本条红.
+    """
+    import pytest as _pytest
+    from xbrain.p5_gateway.outbound.state_projection import to_v2_gps_fix
+    with _pytest.raises(Exception):
+        to_v2_gps_fix("gnss_wtf")
+
+
 def test_devices_come_from_the_real_health_summary_shape():
     """*** 用 11 S5.1 的真实字段名喂, NO 不用想象的形状.
 

@@ -156,6 +156,43 @@ def to_v2_device_status(value: Any) -> str:
 
 
 GPS_FIXES = ("none", "gps", "dgps", "rtk_float", "rtk_fixed")
+
+#: 机内 fix_type (11 S4.5 五值) -> v2.0 S4.2 gps.fix (五值).
+#:
+#: *** 第三张这类表了(前两张: 任务态 15 S3.2->v2.0 S3.2, 设备态 11 S5.1->v2.0 S4.2).
+#: 同一个失效形状: 两侧各有闭集, 名字大部分相同, 于是没人写映射, 直到那个
+#: [不同名的] 值真的出现. 这里不同名的只有两个: no_fix 和 single.
+#:
+#: *** 2026-09-02 联调现场暴露: RTK 硬件接上, rtk_driver 一启动, 上报
+#: fix_type="no_fix"(还没锁星), 投影当场抛 ProjectionError, state/robot 整条
+#: 停发 -- 10 Hz 刷了几百条 ERROR, 而 state/robot 载着电量/定位/运动/时钟,
+#: Qt 那侧等于全瞎. 在此之前 gps 一直是 null(rtk_driver 没跑), 所以这条
+#: 缺陷在没有 RTK 的机器上永远不会出现 -- 它等的就是硬件接上那一刻.
+#:
+#: single -> gps: 单点定位就是普通 GPS 精度(米级), v2.0 的 gps 档正是这个意思.
+#: no_fix -> none: 两侧都表示"没有定位".
+INTERNAL_TO_V2_GPS_FIX = {
+    "no_fix":    "none",
+    "single":    "gps",
+    "dgps":      "dgps",
+    "rtk_float": "rtk_float",
+    "rtk_fixed": "rtk_fixed",
+}
+
+
+def to_v2_gps_fix(value: Any) -> str:
+    """机内 fix_type -> v2.0 gps.fix. 表外的值抛 ProjectionError.
+
+    与 to_v2_task_state / to_v2_device_status 同一取舍(CLAUDE.md 3.5 越界必抛).
+    兜底成 none 会让一个真实的定位状态被报成"无定位", 操作员据此以为
+    机器人失去定位而中止任务 -- 比抛错难查得多.
+    """
+    mapped = INTERNAL_TO_V2_GPS_FIX.get(value)
+    if mapped is None:
+        raise ProjectionError(
+            "fix_type=%r not in the 11 S4.5 closed set %s"
+            % (value, sorted(INTERNAL_TO_V2_GPS_FIX)))
+    return mapped
 DEVICE_STATUSES = ("online", "degraded", "offline", "fault", "unknown")
 VOICE_MODES = ("normal", "broadcast", "alarm")
 MODE_SOURCES = ("cloud", "local", "autonomy", "system")
@@ -281,7 +318,9 @@ def _gps(pose: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         return None
     fix = pose.get("fix_type")
     return {
-        "fix": _closed(fix, GPS_FIXES, "gps.fix") if fix else "none",
+        # 机内值先映射再出闭集 -- 直接拿机内值对 GPS_FIXES 求值,
+        # no_fix 与 single 这两个[每次开机必经]的状态就会把整条 state/robot 打掉.
+        "fix": to_v2_gps_fix(fix) if fix else "none",
         "latitude": pose.get("lat"),
         "longitude": pose.get("lon"),
         "altitude_m": pose.get("alt"),
