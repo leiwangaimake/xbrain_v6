@@ -65,7 +65,7 @@ def validate_pending(row) -> Tuple[str, str]:
 
 
 async def _dispatch(dao, task_id: str, now_mono_ms: int, started_at: str,
-                    made: List[Tuple[str, str, str]],
+                    boot_id: str, made: List[Tuple[str, str, str]],
                     on_transition: OnTransition) -> None:
     """ready -> running, 走状态机并落 started_at/started_mono.
 
@@ -75,14 +75,16 @@ async def _dispatch(dao, task_id: str, now_mono_ms: int, started_at: str,
     result = apply_transition("ready", "dispatch")
     await dao.dispatch_task(task_id, now_mono_ms,
                             started_at=started_at,
-                            started_mono=now_mono_ms / 1000.0)
+                            started_mono=now_mono_ms / 1000.0,
+                            started_boot=boot_id)
     made.append((task_id, "ready", result.to_state))
     await on_transition(task_id, result.to_state, "")
 
 
 async def scheduler_tick(conn, dao, *, now_mono_ms: int,
                          on_transition: OnTransition,
-                         started_at: str = "") -> List[Tuple[str, str, str]]:
+                         started_at: str = "",
+                         boot_id: str = "") -> List[Tuple[str, str, str]]:
     """One scheduler pass. Returns the transitions made as
     (task_id, from_state, to_state). See module docstring."""
     made: List[Tuple[str, str, str]] = []
@@ -150,7 +152,7 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
         # 决策树第 1 步: 没有 running -> 取 ready 队列最高优先级启动.
         if ready:
             await _dispatch(dao, ready[0][0], now_mono_ms, started_at,
-                            made, on_transition)
+                            boot_id, made, on_transition)
     elif ready:
         # 决策树第 2 步: 有 running, 且 ready 队列里有[更高]优先级 -> 抢占.
         #
@@ -183,7 +185,7 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
             # 的前提. suspend_kind=yielding 的恢复条件是"让位对象一进终态就
             # 自动回 ready"(15 S3.2), 不需要人工干预.
             await _dispatch(dao, top_id, now_mono_ms, started_at,
-                            made, on_transition)
+                            boot_id, made, on_transition)
 
     # One commit closes the whole tick atomically (see module docstring).
     await conn.commit()
@@ -197,9 +199,34 @@ _MOTION_TERMINAL = {"succeeded": "complete", "aborted": "fail",
                     "rejected": "fail"}
 
 
+def compute_duration_sec(started_mono: "float | None",
+                         started_boot: "str | None",
+                         now_mono_ms: int, boot_id: str) -> "float | None":
+    """15 S9.5 的 duration_sec 口径. 跨重启返回 None.
+
+    *** 跨重启必须是 NULL, NO 不得回退用墙钟差值.
+    文档逐字: "若终态时的 boot != started_boot, duration_sec 写 NULL, 不得
+    回退用墙钟差值充数 -- 那正是本组列要消除的东西". 理由是单调钟只在同一次
+    开机内可比(11 CLK-C4): 跨重启的 now_mono - started_mono 是个没有意义的
+    数, 而它[看起来完全像个正常时长], 没有任何迹象表明它是错的.
+    NULL 的含义是"这次任务跨了重启, 耗时不可知", 上报给甲方的
+    summary.duration_sec 也随之为 null(11 S4.4).
+
+    口径是[开始到终态], 不含排队等待 -- 所以基准是 started_mono(派发那一刻)
+    而不是 created_ms(入库那一刻).
+    """
+    if started_mono is None or not started_boot:
+        return None                    # 没记开始 -> 无从算起
+    if started_boot != boot_id:
+        return None                    # 跨重启
+    return max(0.0, now_mono_ms / 1000.0 - float(started_mono))
+
+
 async def apply_motion_result(conn, dao, task_id: str, result: str, *,
                               now_mono_ms: int,
-                              on_transition: OnTransition) -> bool:
+                              on_transition: OnTransition,
+                              finished_at: str = "",
+                              boot_id: str = "") -> bool:
     """Close a running task on the P1 motion result (11 S3.5). 'succeeded' ->
     running -> done; 'aborted'/'rejected' -> running -> failed. Returns True if
     a transition was made.
@@ -217,7 +244,17 @@ async def apply_motion_result(conn, dao, task_id: str, result: str, *,
     if full is None or full.state != "running":
         return False                              # already terminal / cancelled
     transition = apply_transition("running", event)
-    await dao.update_state(task_id, transition.to_state, now_mono_ms)
+    # 终态要落 finished_at 与 duration_sec(15 S9.5), update_state 只写 state.
+    # 少了这两列: v2.0 S3.3 的 result.summary.duration_sec 无源, 而
+    # idx_tasks_finished_at 这个部分索引(WHERE finished_at IS NOT NULL)
+    # 永远命中不了任何行 -- 历史任务查询会全表扫.
+    await dao.finish_task(
+        task_id, transition.to_state, now_mono_ms,
+        finished_at=finished_at,
+        duration_sec=compute_duration_sec(
+            getattr(full, "started_mono", None),
+            getattr(full, "started_boot", None),
+            now_mono_ms, boot_id))
     await conn.commit()
     await on_transition(task_id, transition.to_state, f"motion:{result}")
     return True

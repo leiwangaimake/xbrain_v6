@@ -99,6 +99,17 @@ def _today_yyyymmdd() -> str:
     return time.strftime("%Y%m%d")
 
 
+#: 本次开机的标识, 进程级唯一. 15 S9.5 的 duration_sec 判据依赖它:
+#: "若终态时的 boot != started_boot, duration_sec 写 NULL, 不得回退用墙钟
+#: 差值充数". 单调钟只在同一次开机内可比(11 CLK-C4), 跨重启的 started_mono
+#: 与当前 now_mono 之差是个没有意义的数, 而它看起来完全像个正常时长.
+#:
+#: NO 不在各处各自 os.urandom() -- 那样一个进程里会有多个 boot id, 比对就
+#: 恒不相等, 于是 duration_sec 永远为 NULL(一条永远绿的"跨重启"判定).
+#: 现状: teach 与 task_event 各自生成过一个, 本常量是唯一来源.
+_BOOT_ID = os.urandom(3).hex()
+
+
 def _now_utc_iso() -> str:
     # DISPLAY/AUDIT value for tasks.created_at (15 S9.5): the wall-clock dispatch
     # time the HMI task panel shows as 下发时间 (17 S6.8.4 field 2), formatted in
@@ -225,7 +236,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # on the loop from _publish); p5's event/** subscriber persists it. eid is
             # boot-unique (a raw seq would collide across a P3 restart).
             _task_evt_seq = [0]
-            _task_evt_boot = os.urandom(3).hex()
+            _task_evt_boot = _BOOT_ID
 
             def _emit_task_event(task_id: str, to_state: str,
                                  kind: str, sev: str) -> None:
@@ -363,7 +374,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # would re-mint ts-0001 after a reboot and collide with the id an
             # HMI tab is still holding.
             teach = TeachRuntime(conn, geo_conn, fence_conn,
-                                 boot_id=os.urandom(3).hex())
+                                 boot_id=_BOOT_ID)
             _logger.info(
                 "p3 wiring: subscribed %s + %s + %s + %s (+ %d state sources), "
                 "queryable %s (task.db + geo single writer + teach session "
@@ -553,7 +564,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 # started_at 是给人看的下发时间, 由调用方生成
                                 # 而不是 driver 自己取 -- driver 里不应有第二
                                 # 处时钟来源(CLK-C1 的同一理由: 时间从外面传).
-                                started_at=_now_utc_iso())
+                                started_at=_now_utc_iso(),
+                                boot_id=_BOOT_ID)
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p3 scheduler tick failed: %s", exc)
                     now = time.monotonic()

@@ -74,11 +74,18 @@ class _FakeDao:
         return 1
 
     async def dispatch_task(self, task_id, updated_ms, started_at,
-                            started_mono):
-        self.rows[task_id]["state"] = "running"
-        self.rows[task_id]["started_at"] = started_at
-        self.rows[task_id]["started_mono"] = started_mono
+                            started_mono, started_boot):
+        self.rows[task_id].update(state="running", started_at=started_at,
+                                  started_mono=started_mono,
+                                  started_boot=started_boot)
         self.calls.append(("dispatch", task_id, started_at))
+        return 1
+
+    async def finish_task(self, task_id, state, updated_ms, finished_at,
+                          duration_sec):
+        self.rows[task_id].update(state=state, finished_at=finished_at,
+                                  duration_sec=duration_sec)
+        self.calls.append(("finish", task_id, state, duration_sec))
         return 1
 
     async def list_yielding(self, limit: int = 512):
@@ -111,12 +118,12 @@ async def _noop(task_id, state, reason):
     return None
 
 
-def _tick(rows, started_at="2026-09-02T08:00:00Z"):
+def _tick(rows, started_at="2026-09-02T08:00:00Z", boot_id="boot1"):
     from xbrain.p3_task.schedule.driver import scheduler_tick
     dao = _FakeDao(rows)
     made = asyncio.run(scheduler_tick(_FakeConn(), dao, now_mono_ms=1000,
                                       on_transition=_noop,
-                                      started_at=started_at))
+                                      started_at=started_at, boot_id=boot_id))
     return dao, made
 
 
@@ -416,3 +423,90 @@ def test_resume_scan_runs_before_preemption_not_after():
     i_decide = src.index("phase 2")
     assert i_resume < i_decide, (
         "yielding 恢复扫描排在了调度决策之后 -- 会 resume/preempt 来回抖")
+
+
+# --- 终态时间戳 (15 S9.5) --------------------------------------------
+
+def test_duration_is_none_across_a_reboot():
+    """*** 跨重启 duration_sec 必须是 NULL, NO 不得回退用墙钟差值.
+
+    15 S9.5 逐字: "若终态时的 boot != started_boot, duration_sec 写 NULL,
+    不得回退用墙钟差值充数 -- 那正是本组列要消除的东西". 单调钟只在同一次
+    开机内可比(11 CLK-C4): 跨重启的 now_mono - started_mono 是个没有意义的
+    数, 而它[看起来完全像个正常时长], 没有任何迹象表明它是错的.
+
+    变异体: 去掉 started_boot != boot_id 的分支 => 本条红.
+    """
+    from xbrain.p3_task.schedule.driver import compute_duration_sec
+
+    # 同一次开机: 算得出
+    assert compute_duration_sec(10.0, "bootA", 15_000, "bootA") == 5.0
+    # 跨重启: 必须 None
+    assert compute_duration_sec(10.0, "bootA", 15_000, "bootB") is None, (
+        "跨重启却算出了一个时长 -- 那是个没有意义的数")
+    # 没记开始: 也是 None(无从算起), NO 不是 0
+    assert compute_duration_sec(None, "bootA", 15_000, "bootA") is None
+    assert compute_duration_sec(10.0, "", 15_000, "bootA") is None
+
+
+def test_duration_excludes_queue_wait():
+    """*** 口径是[开始到终态], 不含排队等待(15 S9.5).
+
+    基准必须是 started_mono(派发那一刻), 不是 created_ms(入库那一刻). 用后者
+    的话, 一条排了两小时队的任务会报出两小时的执行时长, 而 v2.0 S3.3 的
+    summary.duration_sec 逐字是"机上实际执行时长, 不含排队".
+
+    变异体: compute_duration_sec 改用 created_ms => 本条红(签名就不对).
+    """
+    import inspect
+    from xbrain.p3_task.schedule.driver import compute_duration_sec
+    sig = inspect.signature(compute_duration_sec)
+    assert "started_mono" in sig.parameters, "时长基准不是 started_mono"
+    assert "created_ms" not in sig.parameters, (
+        "时长用了入库时刻做基准 -- 那会把排队等待算进执行时长")
+
+
+def test_dispatch_records_started_boot():
+    """*** 派发时必须记 started_boot, 否则跨重启判据无据可依.
+
+    compute_duration_sec 要比对 started_boot 与当前 boot; 派发时不记的话
+    那个比对恒为"没记开始", duration_sec 永远 NULL -- 一条永远绿的
+    "跨重启"判定(CLAUDE.md 3.2 形态1).
+
+    *** 查[真 DAO 的 SQL], NO 不能只靠 fake.
+    2026-09-02 本文件第三次踩这个坑: fake 的 dispatch_task 自己写了
+    started_boot, 把真 DAO 的 UPDATE 去掉那一列, 判据依然全绿. fake 替被测
+    代码做了正确的事(CLAUDE.md 3.2 形态1) -- 前两次分别是 preempt 的
+    state='suspended' 与 list_yielding 的 kind 过滤.
+
+    变异体: dispatch_task 的 SQL 去掉 started_boot => 本条红.
+    """
+    import inspect
+    from xbrain.p3_task.dao.tasks_dao import TasksDAO
+    src = inspect.getsource(TasksDAO.dispatch_task)
+    assert "started_boot=?" in src, (
+        "dispatch_task 的 SQL 没写 started_boot -- 跨重启判据将永远无据可依")
+
+    dao, _made = _tick([
+        {"task_id": "t-a", "priority": 50, "submit_seq": 1, "state": "ready"},
+    ], boot_id="bootX")
+    assert dao.rows["t-a"].get("started_boot") == "bootX", (
+        "started_boot 没落: %r" % dao.rows["t-a"].get("started_boot"))
+
+
+def test_terminal_writes_finished_at_and_duration():
+    """*** apply_motion_result 必须走 finish_task 而不是 update_state.
+
+    update_state 只写 state, 于是任务进终态既没有完成时间也没有时长.
+    v2.0 S3.3 的 result.summary.duration_sec 因此无源; 而 15 S9.5 的
+    idx_tasks_finished_at 是个部分索引(WHERE finished_at IS NOT NULL),
+    列永远为空的话它命中不了任何行, 历史任务查询退化成全表扫.
+
+    变异体: 改回 update_state => 本条红.
+    """
+    import inspect
+    from xbrain.p3_task.schedule import driver
+    src = inspect.getsource(driver.apply_motion_result)
+    assert "dao.finish_task(" in src, (
+        "终态仍走 update_state -- finished_at 与 duration_sec 都不会写")
+    assert "compute_duration_sec(" in src, "终态没有算时长"

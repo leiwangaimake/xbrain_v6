@@ -136,7 +136,8 @@ class TasksDAO:
         return cur.rowcount
 
     async def dispatch_task(self, task_id: str, updated_ms: int,
-                            started_at: str, started_mono: float) -> int:
+                            started_at: str, started_mono: float,
+                            started_boot: str) -> int:
         """ready -> running, 同时落 started_at / started_mono.
 
         *** 与 update_state 分开, 因为派发要多写两列.
@@ -150,8 +151,28 @@ class TasksDAO:
         """
         cur = await self._conn.execute(
             "UPDATE tasks SET state='running', updated_ms=?, "
-            "started_at=?, started_mono=? WHERE task_id=?",
-            (updated_ms, started_at, started_mono, task_id))
+            "started_at=?, started_mono=?, started_boot=? WHERE task_id=?",
+            (updated_ms, started_at, started_mono, started_boot, task_id))
+        return cur.rowcount
+
+    async def finish_task(self, task_id: str, state: str, updated_ms: int,
+                          finished_at: str, duration_sec: "float | None") -> int:
+        """running -> 终态, 同时落 finished_at 与 duration_sec.
+
+        *** update_state 只写 state, 终态还要两列.
+        15 S9.5 有 finished_at(墙钟, 显示与审计)与 duration_sec(单调钟差).
+        apply_motion_result 原来走 update_state, 于是任务进终态既没有完成
+        时间也没有时长 -- 而 v2.0 S3.3 的 result.summary 要 duration_sec,
+        11 S4.4 也要.
+
+        duration_sec 由调用方算并允许 None: 15 S9.5 逐字"若终态时的 boot !=
+        started_boot, duration_sec 写 NULL, 不得回退用墙钟差值充数 -- 那正是
+        本组列要消除的东西". 判定要读 started_boot, 是调用方的活.
+        """
+        cur = await self._conn.execute(
+            "UPDATE tasks SET state=?, updated_ms=?, finished_at=?, "
+            "duration_sec=? WHERE task_id=?",
+            (state, updated_ms, finished_at, duration_sec, task_id))
         return cur.rowcount
 
     async def preempt_task(self, task_id: str, reason: str,
