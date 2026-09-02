@@ -28,6 +28,10 @@ from xbrain.p3_task.state.geo_events import (
 )
 
 
+# INF-TS-1: 纯单测, 不碰设备(无 zenohd / 无底盘 / 无 ORIN 专属硬件).
+pytestmark = pytest.mark.no_device
+
+
 # ----------------------------------------------------------------- closed set
 
 def test_the_severity_of_a_geo_event_is_read_off_its_type_not_chosen():

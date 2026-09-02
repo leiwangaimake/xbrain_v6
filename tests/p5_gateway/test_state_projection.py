@@ -515,13 +515,15 @@ def test_unknown_progress_is_null_never_zero():
     """
     from xbrain.p5_gateway.outbound.state_projection import task_item
 
-    d = task_item({"task_id": "t-1", "task_type": "GOTO_KEYPOINT",
-                   "state": "running"})
+    # 11 S4.4: progress 整块为 null(路径未展开, EX-4 门控)是常态.
+    d = task_item({"task_id": "t-1", "type": "GOTO_KEYPOINT",
+                   "state": "running", "progress": None})
     assert d["progress_percent"] is None, (
         "未知进度被填成了 %r" % d["progress_percent"])
     # 反向: 真有进度时必须带上, 否则一个恒 null 的实现能通过.
-    d2 = task_item({"task_id": "t-1", "task_type": "GOTO_KEYPOINT",
-                    "state": "running", "progress_percent": 37.5})
+    # pct 是 S4.4 里的字段名(按里程算, 不按 index 算).
+    d2 = task_item({"task_id": "t-1", "type": "GOTO_KEYPOINT",
+                    "state": "running", "progress": {"pct": 37.5}})
     assert d2["progress_percent"] == pytest.approx(37.5)
 
 

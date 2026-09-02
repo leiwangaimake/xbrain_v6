@@ -28,6 +28,12 @@ from xbrain.p5_gateway.runtime.main_wiring import (
 )
 
 
+# INF-TS-1: 纯单测, 不碰设备(无 zenohd / 无底盘 / 无 ORIN 专属硬件).
+import pytest
+
+pytestmark = pytest.mark.no_device
+
+
 #: What p3/p2/p1 actually put on the bus: no sev, no cat, no severity, no
 #: category -- those two live in the key and nowhere else.
 _PRODUCER_BODY = {"eid": "geo-abc-1", "title": "geo w-main_gate geo.renamed",

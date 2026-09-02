@@ -107,17 +107,38 @@ def _extract_active_tasks(payload: dict) -> list:
     panel reads (data_readers._plan needs task_id/state/current_step/total_steps
     at the top level, not nested).
 
-    P3 publishes {schema, active_task:{task_id, state, mono_ms}} today (11 S2.2.2,
-    p3 main_wiring _make_publish). A future 1 Hz heartbeat may instead carry a
-    LIST of HeartbeatState (progress.py: task_id/state/current_step/total_steps).
-    Accept BOTH shapes so the panel keeps working when P3 upgrades the payload,
-    and return [] (not a fabricated card) for anything without a task_id -- the
-    trap here is wrapping the whole envelope as one 'plan', which is what the MVP
-    did and made _plan read state/targets off {schema, active_task} and get None.
+    P3 publishes the 11 S4.4 TaskState: {schema, current, queue, suspended}. It
+    used to publish {schema, active_task:{task_id, state, mono_ms}} instead -- a
+    placeholder that carried neither route_id nor started_ts, which is how the
+    cloud came to show a running task with no route and no start time.
+
+    Flattening order is current, then queue, then suspended, so a consumer that
+    takes the first entry gets the running task. The older shapes are still
+    accepted: a list payload (HeartbeatState) has a live producer in progress.py,
+    and returning [] for an unrecognised payload (not a fabricated card) keeps the
+    panel at "no plan" -- the trap here is wrapping the whole envelope as one
+    'plan', which is what the MVP did and made _plan read state/targets off the
+    envelope and get None.
+
+    Contract field names pass through UNCHANGED (current.type stays `type`): the
+    v2.0 rename belongs in the projection that owns the v2.0 shape, not here,
+    where the HMI reads the same dicts.
     """
     if not isinstance(payload, dict):
         return []
-    # Current P3 shape: a single active_task object.
+    # 11 S4.4 TaskState: three lists, current first.
+    if ("current" in payload or "queue" in payload
+            or "suspended" in payload):
+        out = []
+        cur = payload.get("current")
+        if isinstance(cur, dict) and cur.get("task_id"):
+            out.append(cur)
+        for key in ("queue", "suspended"):
+            for t in (payload.get(key) or ()):
+                if isinstance(t, dict) and t.get("task_id"):
+                    out.append(t)
+        return out
+    # Legacy single-object shape.
     at = payload.get("active_task")
     if isinstance(at, dict) and at.get("task_id"):
         return [at]
@@ -559,11 +580,14 @@ def run_voice_loop_wiring(stop_flag: dict,
             # panel stays "no plan" rather than showing an empty card.
             tasks = _extract_active_tasks(d)
             hmi_state["tasks"] = tasks or None
-            # Cloud result face (v2.0 R12.4). Observed HERE, on every
-            # broadcast, not on the 10 Hz projector tick: a task that goes
-            # running -> completed within one tick would only ever be SEEN
-            # terminal, and the transition rule would never fire. See
-            # TaskResultTracker.observe for why the rule needs this.
+            # Cloud result face (v2.0 R12.4) is NOT fed from here any more --
+            # see _on_event. 11 S4.4 TaskState lists only non-terminal tasks, so
+            # a finishing task leaves the broadcast rather than appearing in it
+            # as done/failed/cancelled, and the transition rule needs to SEE the
+            # terminal state. Feeding the observer from here would silently stop
+            # producing results the moment the broadcast became contract-shaped.
+            # Live tasks are still observed so the tracker knows they were
+            # non-terminal before they go (the rule is a transition, not a level).
             if cloud_projector is not None:
                 for _t in tasks or ():
                     cloud_projector.observe_task(_t)
@@ -713,6 +737,21 @@ def run_voice_loop_wiring(stop_flag: dict,
                 "pos": d.get("pos"),   # None until pose stamps it (W4)
             }
             hmi_state["events"] = (hmi_state["events"] + [ev])[-EVENT_RING:]
+            # Cloud result face (v2.0 R12.4): the TERMINAL half of the task
+            # transition arrives here, not on state/task. 11 S4.4 TaskState lists
+            # only non-terminal tasks, so a finishing task drops OUT of that
+            # broadcast; 11 S6.2 makes the task event stream the thing that
+            # carries "完成 / 失败 / 取消", and p3 emits one per scheduler
+            # transition with detail {kind, task_id, state}. Observed on the
+            # event, never on the 10 Hz tick: a task that runs and completes
+            # inside one tick would only ever be sampled terminal, and the
+            # transition rule would never fire.
+            if cloud_projector is not None and _cat == "task":
+                _det = d.get("detail")
+                if isinstance(_det, dict) and _det.get("task_id"):
+                    cloud_projector.observe_task(
+                        {"task_id": _det.get("task_id"),
+                         "state": _det.get("state")})
             # Cloud relay (v2.0 S2: the cloud event key is
             # xbrain/{rid}/event/{sev}/{cat}, NOT the bare key producers use).
             # Two reasons this must be a relay and not a producer-side key

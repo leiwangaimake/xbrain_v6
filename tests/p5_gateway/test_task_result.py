@@ -327,9 +327,29 @@ def test_main_wiring_observes_every_broadcast_not_just_the_tick():
     calls = [n for n in ast.walk(tree)
              if isinstance(n, ast.Call)
              and getattr(n.func, "attr", "") == "observe_task"]
-    assert len(calls) == 1, (
-        "main_wiring 里对 observe_task 的调用有 %d 处 -- 跃迁规则的前提"
-        "不成立, 快任务的 result 会全部丢失" % len(calls))
+    # 观察点[必须在回调里], 不在 tick 上. 早先这条数调用点个数(必须恰好 1),
+    # 那只是"没被挪到 tick 里"的代理指标; 现在正当地有两处, 因为 11 S4.4
+    # TaskState 只列非终态任务 -- 任务终结时是[从广播里消失], 终态那一半只能
+    # 由 11 S6.2 的任务事件流带来(它逐字承担"完成/失败/取消").
+    assert calls, "main_wiring 里没有 observe_task -- 跃迁规则的前提不成立"
+    fn_of = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call) and \
+                        getattr(child.func, "attr", "") == "observe_task":
+                    fn_of[child] = node.name
+    # 守卫本身也要断言: 把条件改成恒假(if False:)时调用点还在原函数里,
+    # 只数宿主的话照样通过 -- 与 1 Hz 那条踩过的是同一个坑.
+    assert 'if cloud_projector is not None and _cat == "task":' in src, (
+        "终态观测的守卫没了或被改成恒假 -- 任务跑完不会再有 result 上云")
+    assert "if cloud_projector is not None:\n                for _t in tasks" in src, (
+        "在跑任务的观测守卫没了或被改成恒假 -- 跃迁规则看不到[非终态]那一半")
+    hosts = sorted(set(fn_of.values()))
+    assert hosts == ["_on_event", "_on_state_task"], (
+        "observe_task 的宿主是 %r -- 必须是这两个 Zenoh 回调: 一个喂在跑的"
+        "任务, 一个喂终态. 挪进 tick 的话, 50 ms 内跑完的任务只会被采样到"
+        "终态一次, result 永远发不出去" % hosts)
 
     # 而且它必须在 state/task 的回调里, 不在别处.
     holder = [f for f in ast.walk(tree)

@@ -83,3 +83,71 @@ def test_non_dict_payload_is_empty():
     # RED MUTANT: remove the isinstance guard -> AttributeError on .get.
     assert _extract_active_tasks(None) == []       # type: ignore[arg-type]
     assert _extract_active_tasks([1, 2, 3]) == []  # type: ignore[arg-type]
+
+# --- 11 S4.4 TaskState: P3 现在发的形状 -------------------------------
+
+#: 三列表齐全的一帧. current 在前, 因为取首条的消费者要的是在跑那条.
+_TASK_STATE = {
+    "schema": "task_state_v1",
+    "current": {"task_id": "t-run", "type": "goto", "state": "running",
+                "route_id": "r-charge", "started_ts": 1788339000.0},
+    "queue": [{"task_id": "t-q1", "type": "goto", "state": "ready"}],
+    "suspended": [{"task_id": "t-s1", "type": "patrol",
+                   "state": "suspended"}],
+}
+
+
+def test_task_state_three_lists_are_flattened_current_first():
+    """P3 改发 11 S4.4 TaskState 之后, 适配器必须认这个形状 -- 不认的话
+    HMI 计划面板与云端快照同时空掉.
+
+    MUTATION: 去掉 TaskState 分支 -> 红.
+    """
+    tasks = _extract_active_tasks(_TASK_STATE)
+    assert [t["task_id"] for t in tasks] == ["t-run", "t-q1", "t-s1"]
+
+
+def test_the_queue_and_suspended_lists_are_not_dropped():
+    """只取 current 的话 queue 与 suspended 在云端快照里恒空 -- 正是这次
+    修复要解决的症状之一.
+
+    MUTATION: 只 append current -> 红.
+    """
+    tasks = _extract_active_tasks(_TASK_STATE)
+    assert len(tasks) == 3, tasks
+
+
+def test_the_contract_field_names_pass_through_unchanged():
+    """route_id / started_ts / type 要原样传到投影层, 在那里才做 v2.0 的
+    改名. 适配器顺手改名的话, 两处改名各改一半是必然的.
+
+    MUTATION: 在适配器里把 type 改成 task_type -> 红.
+    """
+    first = _extract_active_tasks(_TASK_STATE)[0]
+    assert first["route_id"] == "r-charge"
+    assert first["started_ts"] == 1788339000.0
+    assert first["type"] == "goto"
+
+
+def test_a_current_without_a_task_id_is_not_a_card():
+    """一个有键无 id 的 current(半截报文 / 上游 bug)不能变成一张空白卡片 --
+    面板上会出现一条点不开, 也说不出是哪个任务的记录. 与旧形状那条
+    "active_task 为 {} 时不出卡" 是同一条规矩, 只是换了字段名.
+
+    MUTATION: 把 append 的条件放宽成只判 isinstance(cur, dict) -> 红.
+    """
+    assert _extract_active_tasks({"schema": "task_state_v1", "current": {},
+                                  "queue": [], "suspended": []}) == []
+    # 列表里的成员同样要过 id 这一关.
+    assert _extract_active_tasks({"schema": "task_state_v1", "current": None,
+                                  "queue": [{}, {"state": "ready"}],
+                                  "suspended": []}) == []
+
+
+def test_an_idle_task_state_yields_no_cards():
+    """current 为 null 且两个列表为空时不能造一张空卡片.
+
+    MUTATION: 无条件 append current -> 红.
+    """
+    assert _extract_active_tasks({"schema": "task_state_v1", "current": None,
+                                  "queue": [], "suspended": []}) == []

@@ -109,14 +109,32 @@ def current_item(row: Mapping[str, Any]) -> Dict[str, Any]:
     """
     return {
         "task_id": row.get("task_id"),
+        # S4.4 says `type`; the column is task_type. Renamed here rather than in
+        # the SELECT so the SQL keeps naming columns that exist.
         "type": row.get("task_type"),
+        # The internal 12-value state (15 S3.2). The v2.0 rename happens in P5's
+        # projection, not here: this key is the contract's own vocabulary, and a
+        # producer that pre-translated it would leave p4 and the HMI reading a
+        # cloud-shaped value they have no mapping for.
         "state": row.get("state"),
+        # Carried so a consumer can explain WHY this task is the running one
+        # rather than one of the queued ones (15 S6.1 orders on it).
         "priority": row.get("priority"),
+        # cloud | local | voice | charge ... -- the HMI badges it, and the cloud
+        # uses it to tell its own dispatches from the robot's self-issued ones
+        # (return_home shows up here as source=charge, not as a cloud task).
         "source": row.get("source"),
+        # THE field this module exists for: v2.0 S3.2 marks route_id mandatory
+        # and there was no other contracted path off the robot for it.
         "route_id": row.get("route_geo_id"),
+        # continue | restart | abort | manual (15 S7.5). Belongs in the broadcast
+        # because it decides what a resume will DO, and the operator confirming a
+        # resume needs to know that before pressing it.
         "resume_policy": row.get("resume_policy"),
         # null until the route layer expands the task -- see the module docstring.
         "progress": None,
+        # The other field this module exists for. Epoch, not the stored ISO
+        # string: v2.0 S3.2 types it as a number.
         "started_ts": wall_iso_to_epoch(row.get("started_at")),
     }
 
@@ -127,6 +145,10 @@ def queue_item(row: Mapping[str, Any]) -> Dict[str, Any]:
         "task_id": row.get("task_id"),
         "type": row.get("task_type"),
         "state": row.get("state"),
+        # Four fields only, per S4.4. Deliberately NOT route_id/started_ts: a
+        # queued task has not loaded a route and has not started, so those would
+        # be null for every entry -- keys that are always null read as "the data
+        # is missing" rather than "the question does not apply yet".
         "priority": row.get("priority"),
     }
 
@@ -141,10 +163,17 @@ def suspended_item(row: Mapping[str, Any]) -> Dict[str, Any]:
     return {
         "task_id": row.get("task_id"),
         "state": row.get("state"),
+        # passive = something stopped it (estop, low battery, operator); yielding
+        # = it stepped aside for a higher-priority task. The distinction drives
+        # auto-resume: only yielding comes back on its own, so showing the pair
+        # is what lets an operator tell "will resume itself" from "waiting for
+        # me" without reading the scheduler.
         "suspend_kind": row.get("suspend_kind"),
         "suspend_reason": row.get("suspend_reason"),
         "resume_policy": row.get("resume_policy"),
         "progress": None,
+        # paused_at is the wall-clock audit column written at the suspend
+        # transition (15 S9.5); same epoch conversion as started_ts.
         "suspended_ts": wall_iso_to_epoch(row.get("paused_at")),
         # Not recorded anywhere today; present as a null so a reader can tell
         # "not captured" from "this build predates the field".

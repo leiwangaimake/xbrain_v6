@@ -33,6 +33,10 @@ from xbrain.p3_task.state.task_state import (
 )
 
 
+# INF-TS-1: 纯单测, 不碰设备(无 zenohd / 无底盘 / 无 ORIN 专属硬件).
+pytestmark = pytest.mark.no_device
+
+
 def _row(**kw):
     """A tasks row with every column task_state reads, overridable per case."""
     base = {"task_id": "t-1", "task_type": "goto", "state": "running",

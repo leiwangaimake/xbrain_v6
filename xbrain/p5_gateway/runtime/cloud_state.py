@@ -173,22 +173,27 @@ class CloudProjector:
 
     @staticmethod
     def _all_tasks(state: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """云端快照要的任务全量, 优先取 cloud_tasks.
+        """云端快照要的任务全量, 优先取 state/task 广播.
 
-        *** 两个来源不是冗余, 是两种形状.
-        state["tasks"] 来自 state/task 广播, 15 S12A 的形状里只有 active_task
-        一条 -- 它是[跃迁即时]的, 终态判定靠它(见 observe_task 的说明).
-        state["cloud_tasks"] 来自 P3 的 query/tasks queryable(11 S12.2A), 是
-        [全量但低频](1 Hz). v2.0 S3.2 的 snapshot 要 current + queue +
-        suspended 三个列表, 只有全量填得出来 -- 用广播那条的话 queue 与
-        suspended 恒空(2026-09-02 实测, 库里明明有 ready/pending 的任务).
+        *** 两个来源不是冗余, 是两种形状, 而且[只有一种带得动 v2.0 的字段].
+        state["tasks"] 来自 state/task 广播 = 11 S4.4 TaskState. 契约把它定成
+        云端的任务态通道(S2.2.2 的消费者一栏逐字列了云端), 只有它带 route_id
+        与 started_ts -- v2.0 S3.2 两个必填字段.
+        state["cloud_tasks"] 来自 P3 的 query/tasks(11 S12.2A), 装的是
+        TaskCard, 那是 17 S6.8.4 的 HMI 面板形状, 没有上面两个字段.
 
-        取不到全量时回落到广播那条: 至少 current 还是对的, 比整个快照空掉好.
+        曾经反过来优先 cloud_tasks: 那时 P3 的 state/task 还是占位形状(只有
+        active_task 一条), 广播里 queue 与 suspended 恒空, 只能拿 TaskCard 凑
+        全量. P3 改发真正的 TaskState 之后这个理由没有了, 而按 TaskCard 取数
+        的代价一直都在 -- 它填不出 route_id / started_ts.
+
+        取不到广播时回落到 cloud_tasks: 少两个字段, 好过整个快照空掉.
         """
-        rows = state.get("cloud_tasks")
+        rows = state.get("tasks")
         if isinstance(rows, list) and rows:
             return [t for t in rows if isinstance(t, dict)]
-        return [t for t in (state.get("tasks") or []) if isinstance(t, dict)]
+        return [t for t in (state.get("cloud_tasks") or [])
+                if isinstance(t, dict)]
 
     # --- 各条 key 的投影 ------------------------------------------------
 

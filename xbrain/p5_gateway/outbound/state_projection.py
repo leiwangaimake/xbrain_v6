@@ -505,21 +505,57 @@ def geo_manifest_payload(*, manifest_rev: int,
 def task_item(task: Dict[str, Any]) -> Dict[str, Any]:
     """v2.0 S3.2 的任务项. 十个字段全部必填(值可为 null).
 
+    *** 入参是 11 S4.4 TaskState 的一条(current / queue / suspended 里的对象),
+    不是机内表的行. 两侧字段名不同, 映射逐条写在下面 -- 原实现按 v2.0 的名字
+    平取(task.get("route_id") 等), 而喂进来的字典用的是别的名字, 于是 route_id
+    与 started_ts 对每一条任务都是 null. 甲方界面上就是: 一条 running 的任务,
+    没有路径, 没有开始时间.
+
     *** progress_percent 未知必须是 null, 禁止填 0(v2.0 S3.2 逐字).
     填 0 的话进度条停在最左边, 与"刚开始"完全一样 -- 操作员会以为任务卡住
     并去中止它. 这一条与 CLAUDE.md 3.1 那条"0.0 冒充已赋值"是同一个失效
-    模式的两个面.
+    模式的两个面. progress 整块为 null(路径未展开, EX-4 门控)时, 三个进度字段
+    全部落到"未知": 百分比 null, 两个计数 0 -- 计数 0 是[还没完成任何一个点]
+    的诚实读数, 不是伪造的进度.
     """
+    # 11 S4.4 progress 是可为 null 的子对象; 取不到就当空表, 每个字段各自回落.
+    progress = task.get("progress")
+    if not isinstance(progress, dict):
+        progress = {}
     return {
         "task_id": task.get("task_id"),
-        "task_type": task.get("task_type"),
+        # S4.4 叫 type; TaskCard(11 S12.2A)叫 task_type. 两个都认: 同一个投影
+        # 在 HMI 面板降级取数时也会拿到 TaskCard 形状.
+        "task_type": task.get("type") or task.get("task_type"),
         "state": _closed(task.get("state"), TASK_STATES, "task.state"),
+        # S4.4 不带"当前正在去的那个点"的 id; 编一个会让操作员以为机器人已经
+        # 在往那个点走(3.2). 关键点层(F06)建成后由 progress 带出.
         "current_waypoint_id": task.get("current_waypoint_id"),
-        "completed_count": int(task.get("completed_count", 0)),
-        "total_count": int(task.get("total_count", 0)),
-        "progress_percent": normalise_progress(task.get("progress_percent")),
+        # S4.4 waypoint_index 是[已通过的最后一个下标](0 基, 未到首点 = -1),
+        # 而 v2.0 要的是[已完成个数] -- 差一, 且 -1 要映射成 0.
+        "completed_count": _completed_count(progress),
+        "total_count": int(progress.get("waypoint_total") or 0),
+        "progress_percent": normalise_progress(progress.get("pct")),
         "route_id": task.get("route_id"),
-        "route_rev": task.get("route_rev"),
+        "route_rev": progress.get("route_rev"),
         "started_ts": task.get("started_ts"),
         "message": task.get("message", ""),
     }
+
+
+def _completed_count(progress: Dict[str, Any]) -> int:
+    """11 S4.4 waypoint_index -> v2.0 completed_count.
+
+    waypoint_index 是已通过的最后一个航点下标(0 基), 未到首点时是 -1; 已完成
+    个数是 index + 1. 直接把 index 当计数会少报一个, 而把 -1 透传出去会在
+    Qt 上显示"已完成 -1 个点". progress 缺失时是 0: 一个点都没完成.
+
+    -1 不需要单独一个分支: index + 1 就是 0. 曾经写过一个 `if index >= 0`
+    的保护, 变异测试显示它杀不掉 -- 因为它对契约允许的每一个取值都不改变
+    结果, 只对 S4.4 不会产生的值(-5 之类)有效. 那种分支测不出来也没有依据,
+    按 9.3 删掉, 不留没有场景的防御.
+    """
+    index = progress.get("waypoint_index")
+    if not isinstance(index, int):
+        return 0
+    return index + 1

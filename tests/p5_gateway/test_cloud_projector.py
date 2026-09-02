@@ -384,25 +384,33 @@ def test_manifest_rejects_ids_that_violate_the_v2_regex():
     assert [o["geo_id"] for o in out] == ["r-oil_area"]
 
 
-def test_snapshot_queue_comes_from_the_full_task_list():
-    """*** v2.0 S3.2 的 queue/suspended 只有拿到任务全量才填得出来.
+def test_snapshot_lists_come_from_the_task_state_broadcast():
+    """*** v2.0 S3.2 的 current/queue/suspended 从 11 S4.4 TaskState 取.
 
-    state/task 广播是 15 S12A 的形状, 只带 active_task 一条 -- 靠它 queue 与
-    suspended 恒空. 2026-09-02 实测: 库里有 ready/pending 的任务, 而 Qt 收到的
-    快照三个列表全空. 全量来自 P3 的 query/tasks queryable(11 S12.2A), 就是
-    HMI 的 /api/tasks 已经在用的那条(平面隔离下 p5 不能直接读 p3 的 task.db).
+    契约把 state/task 定成云端的任务态通道(S2.2.2 消费者一栏逐字列了云端),
+    而且[只有它带 route_id 与 started_ts] -- v2.0 S3.2 的两个必填字段.
+    query/tasks 装的是 TaskCard(17 S6.8.4 的 HMI 面板形状), 填不出这两个.
 
-    变异体: _all_tasks 改回只读 state["tasks"] => 本条红.
+    本条早先断言的是反过来的优先级: 那时 P3 的 state/task 还是占位形状
+    (只有 active_task 一条), 广播里 queue 与 suspended 恒空, 只能拿 TaskCard
+    凑全量. P3 改发真正的 TaskState 之后那个理由没有了.
+
+    变异体: _all_tasks 改回优先 cloud_tasks => route_id 变 null, 本条红.
     """
     proj, bridge, _c = _proj()
 
     st = _state()
-    # 广播那条只有 active_task; 全量里还有两条排队的.
-    st["tasks"] = [{"task_id": "t-run", "state": "running"}]
+    # 广播 = TaskState 扁平化后的三段, 带 v2.0 要的字段.
+    st["tasks"] = [
+        {"task_id": "t-run", "type": "goto", "state": "running",
+         "route_id": "r-oil_area", "started_ts": 1788339000.0,
+         "progress": None},
+        {"task_id": "t-q1", "type": "goto", "state": "ready"},
+        {"task_id": "t-s1", "type": "patrol", "state": "suspended"},
+    ]
+    # TaskCard 那份仍在(HMI 面板用), 但不该被云端快照选中.
     st["cloud_tasks"] = [
-        {"task_id": "t-run", "task_type": "goto", "state": "running"},
-        {"task_id": "t-q1", "task_type": "goto", "state": "ready"},
-        {"task_id": "t-s1", "task_type": "patrol", "state": "suspended"},
+        {"task_id": "t-card", "task_type": "goto", "state": "running"},
     ]
     proj.tick(st)
 
@@ -412,10 +420,27 @@ def test_snapshot_queue_comes_from_the_full_task_list():
         "queue 没填出来: %r" % snap["queue"])
     assert [t["task_id"] for t in snap["suspended"]] == ["t-s1"], (
         "suspended 没填出来: %r" % snap["suspended"])
-    # task_type 也跟着全量一起有了(此前恒 null -- 广播里根本没这个字段).
-    assert snap["current"]["task_type"] == "goto", (
-        "task_type 仍为空, v2.0 S3.2 把它列为必填")
+    # 这两个字段是本次修复的靶心: TaskCard 那条路填不出来.
+    assert snap["current"]["route_id"] == "r-oil_area"
+    assert snap["current"]["started_ts"] == 1788339000.0
 
+
+def test_the_task_card_source_is_still_the_fallback():
+    """广播还没到(p3 刚起 / 丢了一拍)时不能让整个快照空掉: 回落到
+    query/tasks 的 TaskCard, 少两个字段好过一条任务都看不到.
+
+    变异体: 删掉 _all_tasks 的回落分支 => 本条红.
+    """
+    proj, bridge, _c = _proj()
+    st = _state()
+    st["tasks"] = []                      # 广播还没来
+    st["cloud_tasks"] = [
+        {"task_id": "t-card", "task_type": "goto", "state": "running"}]
+    proj.tick(st)
+    snap = dict(bridge.published)["state/task"]
+    assert snap["current"] and snap["current"]["task_id"] == "t-card"
+    # TaskCard 带不出 route_id -- 诚实地是 null, 不是编一个.
+    assert snap["current"]["route_id"] is None
 
 def test_it_falls_back_to_the_broadcast_when_the_query_is_empty():
     """*** 全量取不到时回落到广播那条, NO 不整个快照空掉.

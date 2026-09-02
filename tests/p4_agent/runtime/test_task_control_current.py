@@ -27,6 +27,10 @@ from xbrain.p4_agent.runtime.task_control_request import (
 )
 
 
+# INF-TS-1: 纯单测, 不碰设备(无 zenohd / 无底盘 / 无 ORIN 专属硬件).
+pytestmark = pytest.mark.no_device
+
+
 def _state(body):
     return {"state/task": body}
 
