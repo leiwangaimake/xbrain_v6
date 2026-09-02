@@ -162,6 +162,17 @@ def suspended_item(row: Mapping[str, Any]) -> Dict[str, Any]:
     """
     return {
         "task_id": row.get("task_id"),
+        # type / route_id / started_ts are NOT in the S4.4 suspended example,
+        # which lists only the suspend-specific fields. They are carried anyway
+        # because v2.0 S3.2 makes all three mandatory on EVERY task item, this
+        # list included, and a suspended task is one that RAN: it loaded a route
+        # and it has a start time, so both are real values sitting in task.db.
+        # Emitting null there is a false "unknown" -- and it is the list the
+        # operator looks at when a task stops, so it is the worst place to be
+        # blank. Adding fields takes nothing away from the S4.4 shape.
+        "type": row.get("task_type"),
+        "route_id": row.get("route_geo_id"),
+        "started_ts": wall_iso_to_epoch(row.get("started_at")),
         "state": row.get("state"),
         # passive = something stopped it (estop, low battery, operator); yielding
         # = it stepped aside for a higher-priority task. The distinction drives

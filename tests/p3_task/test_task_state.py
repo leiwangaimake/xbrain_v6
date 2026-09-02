@@ -128,6 +128,35 @@ def test_suspended_rows_go_to_the_suspended_list_with_their_kind_and_reason():
     assert isinstance(item["suspended_ts"], float)
 
 
+def test_a_suspended_task_keeps_its_type_route_and_start_time():
+    """v2.0 S3.2 makes task_type / route_id / started_ts mandatory on EVERY item,
+    and a suspended task is one that RAN -- it loaded a route and it started, so
+    both are real values, not unknowns. The S4.4 suspended example lists only the
+    suspend-specific fields; carrying these three as well takes nothing away and
+    is what keeps the paused list from showing typeless, routeless entries -- the
+    list an operator looks at precisely when something stopped.
+    MUTATION: drop any of the three from suspended_item -> red."""
+    item = suspended_item(_row(state="suspended", task_type="goto",
+                               route_geo_id="r-charge",
+                               started_at="2026-09-02T09:07:27Z",
+                               suspend_kind="yielding",
+                               suspend_reason="preempted"))
+    assert item["type"] == "goto"
+    assert item["route_id"] == "r-charge"
+    assert isinstance(item["started_ts"], float)
+
+
+def test_a_queued_task_reports_no_route_because_it_has_not_loaded_one():
+    """v2.0 defines route_id as the route ACTUALLY LOADED. A queued task has not
+    started, so it has loaded nothing -- naming its intended route here would
+    tell the operator it is under way. S4.4's queue entry has four fields for
+    this reason.
+    MUTATION: add route_id to queue_item -> red."""
+    item = queue_item(_row(state="ready", route_geo_id="r-charge"))
+    assert "route_id" not in item
+    assert sorted(item) == ["priority", "state", "task_id", "type"]
+
+
 def test_every_other_non_terminal_state_lands_in_the_queue():
     """blocked/pending/ready/scheduled all wait, so all four are queue.
     MUTATION: only bucket 'ready' -> red for the other three."""
