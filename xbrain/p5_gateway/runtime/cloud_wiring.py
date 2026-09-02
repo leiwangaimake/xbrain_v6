@@ -125,7 +125,22 @@ OUTBOUND_PERIODS = {
     "state/mode": 1.0,            # 1 Hz + 变化即发
     "state/audio": 1.0,           # 1 Hz + 变化即发
     "state/media": 5.0,           # 每 5 s 全量保活
-    "state/geo/manifest": None,   # 变化即发; session 建立后 2 s 内一份全量
+    # *** 2.0 s 保活, NO 不能是 None(只在变化时发).
+    # v2.0 S4.5 逐字: "session 建立后 2 秒内必须发布一份 full=true 的全量清单;
+    # 清单变化时立即重发全量". 我方[拿不到 session 建立信号] -- Qt 的订阅是
+    # Zenoh 内部的事, 不产生任何回调. 原实现用"网关启动"近似 session 建立,
+    # 于是 manifest 一辈子只在 p5 开机那一瞬发一次.
+    #
+    # 那个近似是错的, 而且注释里"Qt 连上时清单已经在发了"这句把[发过]当成了
+    # [在发]: Zenoh 不给后加入的订阅者补发历史消息, Qt 只要不是恰好在 p5 开机
+    # 那一秒连着, 就永远收不到清单 -- 而 v2.0 S2.1 要求 recorded_path_id
+    # "必须存在于当前 manifest", 拿不到清单就等于一条导航任务都发不出来.
+    # 2026-09-02 甲方实测反馈"没收到 state/geo/manifest, 没收到路径数据".
+    #
+    # 周期取 2.0 s 而不是更长: 那是 v2.0 承诺的上界本身. 取 5 s(与 state/media
+    # 一样)的话, 最坏情况下 Qt 要等 5 秒才拿到清单, 已经违约.
+    # 代价是每 2 s 一份全量; 19 个对象约 3 KB, 在 Q3 上可以忽略.
+    "state/geo/manifest": 2.0,
     "data/file/index": None,      # 可靠面, 连接/变化时发
     "state/link": 1.0,            # v2.0 S4.1 逐字"1 Hz + 变化即发"
 }

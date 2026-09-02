@@ -289,6 +289,101 @@ def test_media_and_file_index_send_empty_arrays_not_nothing():
     assert body["data/file/index"]["files"] == []
 
 
+def test_manifest_has_a_keepalive_period_not_change_only():
+    """*** manifest 必须周期重发, NO 不能只在变化时发.
+
+    v2.0 S4.5 逐字: "session 建立后 2 秒内必须发布一份 full=true 的全量清单".
+    我方拿不到 session 建立信号(Qt 的订阅是 Zenoh 内部的事, 不产生回调), 原
+    实现用"网关启动"近似, 结果 manifest 一辈子只在 p5 开机那一瞬发一次 --
+    而 Zenoh 不给后加入的订阅者补发历史消息, Qt 只要不是恰好在那一秒连着就
+    永远收不到. 2026-09-02 甲方实测反馈"没收到 state/geo/manifest".
+
+    连锁后果: v2.0 S2.1 要求 recorded_path_id "必须存在于当前 manifest",
+    拿不到清单 = 一条导航任务都发不出来.
+
+    周期必须 <= 2.0 s: 那是 v2.0 承诺的上界本身, 取更长就已经违约.
+
+    变异体: 改回 None 或改成 5.0 => 本条红.
+    """
+    from xbrain.p5_gateway.runtime.cloud_wiring import OUTBOUND_PERIODS
+
+    period = OUTBOUND_PERIODS["state/geo/manifest"]
+    assert period is not None, (
+        "manifest 仍是[只在变化时发] -- 后连的 Qt 永远收不到")
+    assert period <= 2.0, (
+        "周期 %.1fs 超过 v2.0 S4.5 承诺的 2 秒上界" % period)
+
+
+def test_manifest_reads_the_real_geocache_field_names():
+    """*** 用 GeoCache 的真实键名喂, NO 不用想象的形状.
+
+    _manifest_objects 原来读 snap["keypoints"] / snap["fences"] / obj["id"],
+    而 GeoCache 存的是 snap["waypoints"] / (没有 fences) / obj["geo_id"].
+    后果: 航点与围栏一条都不进 manifest; 路径能取到但 id 是空串.
+
+    变异体: 把 waypoints 改回 keypoints => 本条红.
+    """
+    from xbrain.p5_gateway.runtime.cloud_state import _manifest_objects
+
+    snap = {
+        "waypoints": [{"geo_id": "w-east_gate", "name": "东门岗", "rev": 1,
+                       "geom": {"lat": 31.2, "lon": 121.4}}],
+        "routes": [{"geo_id": "r-oil_area", "name": "油库线", "rev": 2}],
+        "fences": [{"geo_id": "f-alarm", "name": "报警区", "rev": 1}],
+    }
+    out = {o["geo_id"]: o for o in _manifest_objects(snap)}
+    assert set(out) == {"w-east_gate", "r-oil_area", "f-alarm"}, (
+        "三类没有都进来: %s" % sorted(out))
+    assert out["r-oil_area"]["type"] == "recorded_path"
+    assert out["w-east_gate"]["type"] == "waypoint"
+    assert out["f-alarm"]["type"] == "alarm_region"
+    assert out["w-east_gate"]["latitude"] == 31.2, "geom 里的坐标没取出来"
+
+
+def test_a_missing_geo_id_is_skipped_not_synthesised():
+    """*** 取不到 id 就跳过, NO 不能"补个前缀"合成一个.
+
+    原写法是 gid if gid.startswith("r-") else "r-" + gid -- 它把[取不到值]
+    与[值没有前缀]合成同一个动作, 于是空串被悄悄变成 "r-" 发了出去.
+    甲方 2026-09-02 收到的正是这批 "r-", 反馈"geo_id 名称不对, 格式应为
+    r-[a-z0-9_]{1,40}" -- 完全准确, 而拒绝理由指向格式, 没人会想到是我方
+    组装时丢了值.
+
+    一个不完整的清单比一个掺了假 id 的清单诚实: 前者 Qt 少看到一条, 后者
+    Qt 会拿着 "r-" 去下发.
+
+    变异体: 去掉正则校验直接 append => 本条红.
+    """
+    from xbrain.p5_gateway.runtime.cloud_state import _manifest_objects
+
+    out = _manifest_objects({
+        "routes": [{"geo_id": "", "name": "丢了id的路径", "rev": 1},
+                   {"name": "根本没有id字段", "rev": 1},
+                   {"geo_id": "r-good_one", "name": "正常的", "rev": 1}],
+    })
+    ids = [o["geo_id"] for o in out]
+    assert ids == ["r-good_one"], (
+        "合成了假 id 或漏掉了正常的: %r" % ids)
+    assert "r-" not in [i for i in ids if len(i) <= 2], "又造出了裸前缀"
+
+
+def test_manifest_rejects_ids_that_violate_the_v2_regex():
+    """*** 连字符在主体里是非法的, 必须挡住.
+
+    v2.0 S2.1: r-[a-z0-9_]{1,40} -- 类型前缀后那一位是连字符, 主体只允许
+    下划线. 一个 r-oil-area 在机内 cmd/geo 会被收下(机内规则宽松), 到云端
+    就被网关 field_validate 拒掉. manifest 发出去之前先挡, Qt 才不会拿到
+    一个它自己也用不了的 id.
+
+    变异体: 把正则放宽成 [a-z0-9_-] => 本条红.
+    """
+    from xbrain.p5_gateway.runtime.cloud_state import _manifest_objects
+    out = _manifest_objects({"routes": [
+        {"geo_id": "r-oil-area", "name": "带连字符", "rev": 1},
+        {"geo_id": "r-oil_area", "name": "合规", "rev": 1}]})
+    assert [o["geo_id"] for o in out] == ["r-oil_area"]
+
+
 def test_snapshot_queue_comes_from_the_full_task_list():
     """*** v2.0 S3.2 的 queue/suspended 只有拿到任务全量才填得出来.
 

@@ -45,6 +45,7 @@ outbound/state_projection.py, 信封与 seq 在 outbound/cloud_envelope.py.
 from __future__ import annotations
 
 import json
+import re as _re
 import logging
 import time
 import uuid
@@ -364,6 +365,23 @@ class CloudProjector:
         objects = []
         if cache is not None and hasattr(cache, "snapshot"):
             snap = cache.snapshot(int(self._now() * 1000.0))
+            # *** 围栏不在 GeoCache 里, 要从 fence_cache 并进来.
+            # state/geo/objects(11 S7.10A)只装 routes/waypoints/docks; 围栏走
+            # cmd/fence(11 S9A.2)由 fence_cache 持有. 两个来源分开是机内的
+            # 事实, 而 v2.0 S2 的 objects[] 要三类一起 -- 合并点在这里.
+            # 不合并的话 Qt 的 manifest 里永远没有 alarm_region, 而 v2.0 S2.4
+            # 的报警规则要用 region_ids 引用它们.
+            if isinstance(snap, dict) and not snap.get("fences"):
+                fcache = state.get("fence_cache")
+                if fcache is not None and hasattr(fcache, "snapshot"):
+                    rows, _stale = fcache.snapshot(
+                        int(self._now() * 1000.0), 10_000)
+                    snap = dict(snap)
+                    snap["fences"] = [
+                        {"geo_id": f.get("geo_id") or f.get("poly_id") or "",
+                         "name": f.get("name", ""), "rev": f.get("rev", 0),
+                         "enabled": True}
+                        for f in (rows or ()) if isinstance(f, dict)]
             objects = _manifest_objects(snap)
         if not objects and not self._manifest_sent:
             if self._now() - self._start < MANIFEST_FIRST_S:
@@ -485,34 +503,71 @@ def _devices_from_health(health: Optional[Dict[str, Any]],
     return out
 
 
+#: v2.0 S2.1 的三条 geo_id 正则. 主体只允许 [a-z0-9_], 类型前缀后面那一位
+#: 才是连字符 -- 一个只有前缀的 "r-" 不匹配(主体至少一字符).
+_GEO_ID_OK = {
+    "waypoint": _re.compile(r"^w-[a-z0-9_]{1,40}$"),
+    "recorded_path": _re.compile(r"^r-[a-z0-9_]{1,40}$"),
+    "alarm_region": _re.compile(r"^f-[a-z0-9_]{1,40}$"),
+}
+
+
 def _manifest_objects(snap: Any) -> List[Dict[str, Any]]:
     """GeoCache 快照 -> v2.0 objects[].
 
     只搬 v2.0 认的三类. 机内 geo 还有 dock 等对象, 它们不在客户契约里 --
     发过去 Qt 会因为 type 越界而拒收整条消息(v2.0 S1.3 把枚举越界列为
     拒绝条件), 于是[一个多余的对象会让整份清单发不出去].
+
+    *** 2026-09-02 重写: 三处键名全部对不上 GeoCache 的真实形状.
+    本函数原来读 snap["keypoints"] / snap["fences"] / obj["id"], 而 GeoCache
+    存的是 snap["waypoints"] / (没有 fences) / obj["geo_id"]. 后果连锁:
+      - waypoints 与 fences 取到空 => 12 个航点 3 个围栏一条都不进 manifest;
+      - routes 能取到, 但 rt.get("id") 是空串, 于是"补前缀"把它变成 "r-" --
+        一个只有前缀没有主体的畸形 id.
+    甲方 2026-09-02 反馈"recorded_path_id 的 geo_id 名称不对, 格式应为
+    r-[a-z0-9_]{1,40}" -- 他们收到的正是这批 "r-", 反馈一字不差是对的.
+
+    *** 那个"补前缀"的写法本身就是个陷阱, 一并删掉.
+    gid if gid.startswith("r-") else "r-" + gid 的用意大概是"容忍机内不带前缀
+    的 id", 但它把[取不到值]和[值没有前缀]两件事合成了同一个动作, 于是空串
+    被悄悄变成一个看起来像 id 的东西发了出去. 现在改成: 取不到就跳过并计数,
+    NO 不合成. 一个不完整的清单比一个掺了假 id 的清单诚实 -- 后者会让 Qt 拿
+    "r-" 去下发, 而拒绝理由指向格式, 没人会想到是我方组装时丢了值.
     """
     out: List[Dict[str, Any]] = []
     if not isinstance(snap, dict):
         return out
-    for kp in snap.get("keypoints") or ():
-        gid = kp.get("id") or ""
-        out.append({"geo_id": gid if gid.startswith("w-") else "w-" + gid,
-                    "type": "waypoint", "name": kp.get("name", ""),
-                    "rev": kp.get("rev", 0),
-                    "latitude": kp.get("lat"), "longitude": kp.get("lon"),
-                    "altitude": kp.get("alt")})
+
+    def _emit(obj: Dict[str, Any], gtype: str, extra: Dict[str, Any]) -> None:
+        gid = obj.get("geo_id") or ""
+        if not _GEO_ID_OK[gtype].match(gid):
+            # 越界/空值不合成, 只记日志. v2.0 S1.3 枚举越界是拒收条件, 发一个
+            # 畸形 id 会让 Qt 连整条 manifest 一起丢.
+            _logger.warning(
+                "p5 manifest: skipped %s with bad geo_id %r", gtype, gid)
+            return
+        item = {"geo_id": gid, "type": gtype,
+                "name": obj.get("name", ""), "rev": obj.get("rev", 0)}
+        item.update(extra)
+        out.append(item)
+
+    for kp in snap.get("waypoints") or ():
+        if isinstance(kp, dict):
+            geom = kp.get("geom") or {}
+            _emit(kp, "waypoint",
+                  {"latitude": geom.get("lat", kp.get("lat")),
+                   "longitude": geom.get("lon", kp.get("lon")),
+                   "altitude": geom.get("alt", kp.get("alt"))})
     for rt in snap.get("routes") or ():
-        gid = rt.get("id") or ""
-        out.append({"geo_id": gid if gid.startswith("r-") else "r-" + gid,
-                    "type": "recorded_path", "name": rt.get("name", ""),
-                    "rev": rt.get("rev", 0)})
+        if isinstance(rt, dict):
+            _emit(rt, "recorded_path", {})
+    # 围栏不在 state/geo/objects 里(GeoCache 只装 routes/waypoints/docks) --
+    # 它们走 cmd/fence, 由 fence_cache 持有. 从那份取.
     for fc in snap.get("fences") or ():
-        gid = fc.get("id") or ""
-        out.append({"geo_id": gid if gid.startswith("f-") else "f-" + gid,
-                    "type": "alarm_region", "name": fc.get("name", ""),
-                    "rev": fc.get("rev", 0),
-                    "enabled": bool(fc.get("enabled", True))})
+        if isinstance(fc, dict):
+            _emit(fc, "alarm_region",
+                  {"enabled": bool(fc.get("enabled", True))})
     return out
 
 

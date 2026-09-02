@@ -570,7 +570,12 @@ def run_voice_loop_wiring(stop_flag: dict,
                 d = {}
             polys = d.get("polygons")
             if polys:
-                fences = [{"name": p.get("name"),
+                # poly_id 也留下: v2.0 S2 的 manifest objects[] 要 geo_id,
+                # 而围栏只在这条 key 上出现(state/geo/objects 不含 fences).
+                # 不留的话 manifest 里永远没有 alarm_region, 而 v2.0 S2.4 的
+                # 报警规则要用 region_ids 引用它们.
+                fences = [{"geo_id": p.get("poly_id"),
+                           "name": p.get("name"),
                            "vertices": p.get("vertices"),
                            "role": p.get("role")} for p in polys]
                 hmi_state["fence_cache"].on_update(fences, _now_mono_ms())
