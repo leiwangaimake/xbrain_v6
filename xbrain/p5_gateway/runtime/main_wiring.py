@@ -423,6 +423,9 @@ def run_voice_loop_wiring(stop_flag: dict,
         "health": None,              # health/factor -> /api/health (W8)
         "bit": None,                 # health/bit  -> /api/bit (W8)
         "enu_origin": None,          # localisation origin (gated, W4)
+        # True 表示当前 enu_origin 来自 common.geo.enu_origin(经 cmd/fence 送达),
+        # False 表示来自首次定位兜底. 两者优先级不同, 见 _on_cmd_fence.
+        "enu_origin_authoritative": False,
         "fence_cache": FenceCache(),  # cmd/fence   -> map fences (W1)
         "geo_cache": GeoCache(),      # state/geo/objects -> routes/keypoints (11 S7.10A)
     }
@@ -567,6 +570,28 @@ def run_voice_loop_wiring(stop_flag: dict,
                            "vertices": p.get("vertices"),
                            "role": p.get("role")} for p in polys]
                 hmi_state["fence_cache"].on_update(fences, _now_mono_ms())
+            # *** 权威 enu_origin 走这条路进来.
+            # 11 S9A.2 把 enu_origin 定为 FenceSet 的必填字段, 值来自
+            # common.geo.enu_origin(L4 sites/{site_id}.yaml, 11 第 7815 行逐字
+            # "各进程不得各自选原点"). p3 从解析产物读出后随 FenceSet 发出,
+            # 这里是它到达 HMI 的入口.
+            #
+            # 它[覆盖]下面 _on_state_pose 的首次定位兜底, 而不是被后者挡住:
+            # 兜底原点跟着"机器人第一次定位在哪"跑, 换个地方开机就换一个原点,
+            # 只是 W4 场地标定落地前的权宜(见 _on_state_pose 的注释). 权威值
+            # 一旦到达就该顶掉它 -- 否则先开机后配围栏的顺序下, 系统会一直用
+            # 那个漂移的兜底原点, 而且没有任何迹象表明用错了.
+            eo = d.get("enu_origin")
+            if isinstance(eo, dict) and eo.get("lat") is not None \
+                    and eo.get("lon") is not None:
+                if not hmi_state.get("enu_origin_authoritative"):
+                    _logger.info(
+                        "p5 HMI: adopted authoritative enu_origin from "
+                        "cmd/fence (lat=%s lon=%s)", eo.get("lat"), eo.get("lon"))
+                hmi_state["enu_origin"] = {"lat": eo.get("lat"),
+                                           "lon": eo.get("lon"),
+                                           "alt": eo.get("alt")}
+                hmi_state["enu_origin_authoritative"] = True
 
         def _on_geo_objects(sample) -> None:
             # 11 S7.10A: P3 broadcasts routes/keypoints/docks geometry; cache the
@@ -611,7 +636,10 @@ def run_voice_loop_wiring(stop_flag: dict,
             # calibration: this origin follows wherever the robot first fixed.
             # NOTE: the RAW state/pose data has no "available" key (pose_group adds
             # it downstream); a real fix is just lat/lon present, so key off those.
-            if hmi_state.get("enu_origin") is None:
+            # NO 权威原点已到达时不再兜底 -- 否则一个跟着首次定位跑的原点会
+            # 把配置里那个测绘出来的锚点顶掉(优先级正好反了).
+            if hmi_state.get("enu_origin") is None \
+                    and not hmi_state.get("enu_origin_authoritative"):
                 p = hmi_state["pose"]
                 if isinstance(p, dict) and p.get("lat") is not None and p.get("lon") is not None:
                     hmi_state["enu_origin"] = {

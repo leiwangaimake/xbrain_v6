@@ -115,9 +115,21 @@ def main(argv: Optional[list] = None) -> int:
         from xbrain.p3_task.runtime.main_wiring import (
             DEFAULT_TASK_DB, run_voice_loop_wiring,
         )
+        # 11 S9A.2: FenceSet 的 enu_origin 是[必填]字段("本地 ENU 平面的锚点,
+        # 全系统唯一, 来自 common.geo.enu_origin"). 在此之前 p3 加载了配置却
+        # 只用来验证存在性, 没有任何值往下传, 于是 build_fence_set 的
+        # enu_origin 形参一直取默认 None, cmd/fence 上该字段恒为 null.
+        # 下游后果: HMI 拿不到投影锚点 -> 几何数据齐全却画不出来; 11 FV-7
+        # (顶点距原点 <= 20km) 连判据都无从谈起.
+        # NO 不在这里兜底成 0/0/0 -- 那是 CLAUDE.md 3.1 的 fail-silent 陷阱,
+        # 一个假原点会把所有围栏画到几千公里外而不报任何错. 配置缺失时传 None,
+        # 由既有的 FV-ORG 启动断言去拦.
+        _geo = (_cfg.get("geo") or {}) if hasattr(_cfg, "get") else {}
+        _enu = _geo.get("enu_origin") or None
         return run_voice_loop_wiring(
             stop_flag=stop_flag,
-            task_db_path=args.task_db or DEFAULT_TASK_DB)
+            task_db_path=args.task_db or DEFAULT_TASK_DB,
+            enu_origin=_enu)
 
     return main_loop(tick_seconds=args.heartbeat_seconds, stop_flag=stop_flag)
 

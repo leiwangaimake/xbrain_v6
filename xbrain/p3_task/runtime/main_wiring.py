@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import time
+from typing import Dict, Optional
 
 from xbrain.p3_task.state.task_events import task_event_for_transition
 
@@ -112,16 +113,23 @@ def run_voice_loop_wiring(stop_flag: dict,
                           heartbeat_period_s: float = 5.0,
                           task_db_path: str = DEFAULT_TASK_DB,
                           geo_db_path: str = DEFAULT_GEO_DB,
-                          fence_db_path: str = DEFAULT_FENCE_DB) -> int:
-    """Block until stop_flag['stop'] is truthy. Returns 0 on clean shutdown."""
+                          fence_db_path: str = DEFAULT_FENCE_DB,
+                          enu_origin: Optional[Dict[str, float]] = None) -> int:
+    """Block until stop_flag['stop'] is truthy. Returns 0 on clean shutdown.
+
+    enu_origin 来自 common.geo.enu_origin(L4 sites/{site_id}.yaml), 由
+    __main__ 从解析产物取出后传入. 默认 None 保留是为了既有调用方(测试)不必
+    全部改签名 -- 但生产路径必须传, 否则 FenceSet 的必填字段为空(11 S9A.2).
+    """
     return asyncio.run(
         _amain(stop_flag, heartbeat_period_s, task_db_path, geo_db_path,
-               fence_db_path))
+               fence_db_path, enu_origin))
 
 
 async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  task_db_path: str, geo_db_path: str = DEFAULT_GEO_DB,
-                 fence_db_path: str = DEFAULT_FENCE_DB) -> int:
+                 fence_db_path: str = DEFAULT_FENCE_DB,
+                 enu_origin: Optional[Dict[str, float]] = None) -> int:
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p3_task.dao.simple_daos import FencesDAO
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
@@ -583,14 +591,21 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         try:
                             rows = await fences_dao.list_active()
                             # rev=0 gives a rev-independent signature to detect change.
+                            # crc32 只用于[变更检测], 不上总线: 传 rev=0 让
+                            # 签名与 rev 无关. enu_origin 同样不参与 -- 它不
+                            # 进 crc32 配方(11 S9A.2 的配方只含 polygons), 所以
+                            # 这里传不传都不影响比对结果; 不传是为了让"签名"
+                            # 这一步与"发布"那一步的意图区分得更清楚.
                             sig = build_fence_set(
                                 rows, fence_set_id=FENCE_SET_ID, rev=0)["crc32"]
                             if sig != last_fence_sig[0]:
                                 if last_fence_sig[0] is not None:
                                     fence_rev[0] += 1
                                 last_fence_sig[0] = sig
+                            # enu_origin 必须随发布带上(11 S9A.2 必填字段).
                             fs = build_fence_set(
-                                rows, fence_set_id=FENCE_SET_ID, rev=fence_rev[0])
+                                rows, fence_set_id=FENCE_SET_ID,
+                                rev=fence_rev[0], enu_origin=enu_origin)
                             fence_pub.put(json.dumps(
                                 fs, ensure_ascii=False).encode("utf-8"))
                             fence_invalid_logged[0] = False

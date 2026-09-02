@@ -18,3 +18,24 @@
 # ===========================================================================
 
 # TODO(`15` §12):按该节逐键落值.本文件在落值前会让整栈按设计拒绝启动,这是预期行为.
+
+# -- 地理原点 (取值, 非定义) ------------------------------------------------
+#   P3 是 FenceSet 的组装者(11 S9A.2), 而该结构的 enu_origin 是[必填]字段:
+#   "本地 ENU 平面的锚点, 全系统唯一, 来自 common.geo.enu_origin(L4
+#   configs/sites/{site_id}.yaml)". 在此之前 p3 从不读配置(本文件是空骨架),
+#   于是 build_fence_set 的 enu_origin 形参一直取默认 None, cmd/fence 上
+#   这个必填字段恒为 null -- 下游拿不到投影锚点, HMI 有几何数据也画不出来,
+#   而 FV-7(顶点距原点 <= 20km)更是连判据都无从谈起.
+#
+#   NO 不在本文件写坐标值: 11 第 7815 行逐字"各进程不得各自选原点", 单一来源
+#   是 L4 场地层. 这里只写引用, 值由冻结线展开.
+#   写法: 引用[逐个叶子标量], NO 不能引用整个 mapping.
+#   refs.py 的查找在 flatten() 之后的键表上做, 而 flatten 把 mapping 拆成叶子:
+#   common.geo.enu_origin 本身不是键, 只有 .lat/.lon/.alt 三个是. 直接引用整个
+#   对象会撞 R-3 unresolvable. 既有的 p2_core.yaml 引用 calib 也是这个写法
+#   (${common.calib.frames.ptz_base.h_camera_m}).
+geo:
+  enu_origin:
+    lat: ${common.geo.enu_origin.lat}
+    lon: ${common.geo.enu_origin.lon}
+    alt: ${common.geo.enu_origin.alt}
