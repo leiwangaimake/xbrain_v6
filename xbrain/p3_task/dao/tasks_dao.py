@@ -135,6 +135,47 @@ class TasksDAO:
             (state, updated_ms, task_id))
         return cur.rowcount
 
+    async def dispatch_task(self, task_id: str, updated_ms: int,
+                            started_at: str, started_mono: float) -> int:
+        """ready -> running, 同时落 started_at / started_mono.
+
+        *** 与 update_state 分开, 因为派发要多写两列.
+        15 S9.5 有 started_at, 而 duration_sec 的 DDL CHECK 依赖终态时间戳 --
+        running 却没有开始时间的话, 任务时长永远算不出来. 2026-09-02 实测:
+        库里那条 running 的 started_at 是 NULL.
+
+        started_at 是墙钟(审计/上报用, 与 created_at 同口径), started_mono 是
+        单调钟(算时长用, CLK-C1: 一切时长判定用单调钟). 两个都写 -- 墙钟给人
+        看, 单调钟给机器算, 墙钟跳变时后者不受影响.
+        """
+        cur = await self._conn.execute(
+            "UPDATE tasks SET state='running', updated_ms=?, "
+            "started_at=?, started_mono=? WHERE task_id=?",
+            (updated_ms, started_at, started_mono, task_id))
+        return cur.rowcount
+
+    async def preempt_task(self, task_id: str, reason: str,
+                           updated_ms: int) -> int:
+        """running -> suspended(yielding), 15 S6.3 抢占.
+
+        *** kind 恒为 yielding, NO 不接受调用方指定.
+        CR-8 配对(11 S4.4): kind == 'yielding' IFF reason in
+        {preempted, mode_takeover}. 让调用方传 kind 就等于给了它写出
+        yielding+low_battery 这种组合的机会, 而那会被 DDL CHECK 拒掉 --
+        在这里定死, 违规不可能发生.
+
+        与 suspend_task(estop 那条, kind=passive)分开而不是合成一个带参数的:
+        两条路径的 kind 恒定且不同, 合并后第一个 bug 就是把 estop 写成
+        yielding -- 那会让急停挂起的任务在让位对象终态后[自动恢复运行]
+        (15 S3.2: yielding 的恢复条件是"让位对象一进终态就自动回 ready"),
+        而急停要求的是等人.
+        """
+        cur = await self._conn.execute(
+            "UPDATE tasks SET state='suspended', suspend_kind='yielding', "
+            "suspend_reason=?, updated_ms=? WHERE task_id=?",
+            (reason, updated_ms, task_id))
+        return cur.rowcount
+
     async def fetch_by_id(self, task_id: str):
         cur = await self._conn.execute(
             f"SELECT {', '.join(_COLUMNS)} FROM tasks WHERE task_id=?",
@@ -151,9 +192,29 @@ class TasksDAO:
             kw[c] = v
         return TaskRow(**kw)
 
-    async def list_by_priority(self, limit: int = 32):
+    async def list_by_priority(self, limit: int = 512):
+        """调度器的取数口: 只取[未终结]的任务, 按 15 S6.1 的序.
+
+        *** 必须按状态过滤, NO 不能取全表前 N.
+        原实现不带 WHERE, 于是终态任务(cancelled/done/failed/...)也按优先级
+        占名额. 2026-09-02 实测: 库里 145 行, LIMIT 32 取到的 32 行里 pending
+        数为 0 -- 107 条 pending [永远进不了调度视野], 不是排队等而是看不见.
+        而且会持续恶化: 终态行不会消失, 按优先级占着前 32 名, 最终把视野塞满,
+        任务系统在积累一定数量后静默停止工作.
+
+        15 S3.2 定义"活跃" = status IN (ready, running, suspended); 调度还要
+        看 pending(phase 1 要把它验成 ready)与 scheduled/blocked(到点/解除后
+        回 ready). 所以这里的集合是[活跃 + 未终结的等待态], 显式枚举而不是
+        NOT IN <终态集> -- 沿用 15 S3.2 的理由: 将来新增状态不会被静默归入.
+
+        limit 提到 512: 32 是个没有依据的小数, 而 15 S9.5 的队列没有深度上限.
+        512 仍是护栏(防一次读进十万行), 但已远超任何现场的活跃任务数; 真正
+        的保护是上面的状态过滤 -- 终态行再多也不占名额.
+        """
         cur = await self._conn.execute(
             "SELECT task_id, priority, submit_seq, state FROM tasks "
+            "WHERE state IN ('pending','scheduled','blocked',"
+            "                'ready','running','suspended') "
             "ORDER BY priority DESC, submit_seq ASC LIMIT ?", (limit,))
         return await cur.fetchall()
 

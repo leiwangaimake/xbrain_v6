@@ -548,7 +548,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             await scheduler_tick(
                                 conn, dao, now_mono_ms=_now_mono_ms(),
                                 on_transition=_make_publish(state_pub,
-                                                            _emit_task_event))
+                                                            _emit_task_event),
+                                # 与 created_at 同一口径的墙钟(15 S9.5):
+                                # started_at 是给人看的下发时间, 由调用方生成
+                                # 而不是 driver 自己取 -- driver 里不应有第二
+                                # 处时钟来源(CLK-C1 的同一理由: 时间从外面传).
+                                started_at=_now_utc_iso())
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p3 scheduler tick failed: %s", exc)
                     now = time.monotonic()

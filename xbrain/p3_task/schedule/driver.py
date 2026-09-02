@@ -38,7 +38,8 @@ from __future__ import annotations
 
 from typing import Awaitable, Callable, List, Tuple
 
-from xbrain.p3_task.state.machine import apply_transition
+from xbrain.p3_task.state.machine import (apply_transition,
+                                          validate_suspend_fields)
 from xbrain.p3_task.state.preconditions import (
     check_v1_type, check_v2_priority, check_v5_mission_parses,
 )
@@ -63,8 +64,25 @@ def validate_pending(row) -> Tuple[str, str]:
     return "validate_ok", ""
 
 
+async def _dispatch(dao, task_id: str, now_mono_ms: int, started_at: str,
+                    made: List[Tuple[str, str, str]],
+                    on_transition: OnTransition) -> None:
+    """ready -> running, 走状态机并落 started_at/started_mono.
+
+    抽出来是因为决策树的两个分支(空闲派发 / 抢占后派发)要做完全一样的事;
+    写两遍的话, 将来给派发加一步(比如发 cmd/motion/behavior)必然漏掉一处.
+    """
+    result = apply_transition("ready", "dispatch")
+    await dao.dispatch_task(task_id, now_mono_ms,
+                            started_at=started_at,
+                            started_mono=now_mono_ms / 1000.0)
+    made.append((task_id, "ready", result.to_state))
+    await on_transition(task_id, result.to_state, "")
+
+
 async def scheduler_tick(conn, dao, *, now_mono_ms: int,
-                         on_transition: OnTransition) -> List[Tuple[str, str, str]]:
+                         on_transition: OnTransition,
+                         started_at: str = "") -> List[Tuple[str, str, str]]:
     """One scheduler pass. Returns the transitions made as
     (task_id, from_state, to_state). See module docstring."""
     made: List[Tuple[str, str, str]] = []
@@ -83,19 +101,53 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
         made.append((task_id, "pending", result.to_state))
         await on_transition(task_id, result.to_state, reason)
 
-    # -- phase 2: dispatch one ready task if nothing is running --
+    # -- phase 2: 15 S6.1 的调度决策树 --
     # Re-read so the tasks just validated to 'ready' are visible (read-your-
     # writes on this connection, still inside the tick's transaction).
     rows2 = await dao.list_by_priority()
-    if not any(state == "running" for _i, _p, _s, state in rows2):
-        ready = [(tid, p, s) for tid, p, s, state in rows2 if state == "ready"]
+    ready = [(tid, p, s) for tid, p, s, state in rows2 if state == "ready"]
+    running = [(tid, p, s) for tid, p, s, state in rows2 if state == "running"]
+    # priority DESC, submit_seq ASC (15 S6.1). 排一次给下面两个分支共用.
+    ready.sort(key=lambda r: (-r[1], r[2]))
+
+    if not running:
+        # 决策树第 1 步: 没有 running -> 取 ready 队列最高优先级启动.
         if ready:
-            # priority DESC, submit_seq ASC (15 S6.1).
-            winner = sorted(ready, key=lambda r: (-r[1], r[2]))[0][0]
-            result = apply_transition("ready", "dispatch")
-            await dao.update_state(winner, result.to_state, now_mono_ms)
-            made.append((winner, "ready", result.to_state))
-            await on_transition(winner, result.to_state, "")
+            await _dispatch(dao, ready[0][0], now_mono_ms, started_at,
+                            made, on_transition)
+    elif ready:
+        # 决策树第 2 步: 有 running, 且 ready 队列里有[更高]优先级 -> 抢占.
+        #
+        # *** 严格大于, NO 不是 >=.
+        # 15 S6.3 表第二行逐字"同优先级任务到达 -> 不抢占, 入队等待". 用 >=
+        # 的话两条同优先级任务会互相抢占, 每拍换一次, 谁也跑不完 -- 而每次
+        # 抢占都是一次合法的状态迁移, 没有任何东西会报错.
+        cur_id, cur_prio, _cur_seq = running[0]
+        top_id, top_prio, _top_seq = ready[0]
+        if top_prio > cur_prio:
+            # 15 S7.2 挂起动作的四步, 顺序不可换:
+            #   1. 停止运动 cmd/motion/behavior=hold
+            #      -- NO 本期做不到: P3 到 P1 那一跳未建(NEXT.md CLD-2),
+            #         P3 全仓不发 cmd/motion/behavior. 与 ES-2(急停挂起)同一
+            #         处境, 那里也是只做 DB 写. 不假装做到了(CLAUDE.md 3.2):
+            #         链路建好后这里要补上, 且必须在状态写之前.
+            #   2. 采样进度并同步落盘
+            #      -- NO 本期无进度可采: 进度来自 state/motion/path_progress
+            #         (NEXT.md EX-3, 未建), current_step 恒 0.
+            #   3. status -> suspended, 同时写 suspend_kind/reason  <-- 做这步
+            #   4. 发 event/info/task                                <-- 做这步
+            # 3 与 4 是本期能做且必须做的部分: 少了 3, 抢占根本没发生; 少了 4,
+            # 操作员看不到"我的任务为什么停了".
+            result = apply_transition("running", "suspend")
+            validate_suspend_fields(result.to_state, "yielding", "preempted")
+            await dao.preempt_task(cur_id, "preempted", now_mono_ms)
+            made.append((cur_id, "running", result.to_state))
+            await on_transition(cur_id, result.to_state, "preempted")
+            # 抢占必须是"挂起"不是"取消"(15 S6.3 末行) -- 那是 U07 断点续跑
+            # 的前提. suspend_kind=yielding 的恢复条件是"让位对象一进终态就
+            # 自动回 ready"(15 S3.2), 不需要人工干预.
+            await _dispatch(dao, top_id, now_mono_ms, started_at,
+                            made, on_transition)
 
     # One commit closes the whole tick atomically (see module docstring).
     await conn.commit()
