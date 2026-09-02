@@ -174,13 +174,19 @@ class CloudBridge:
                  internal_put: Optional[Callable[[str, bytes], None]] = None,
                  dedup: Optional[DedupWindow] = None,
                  now_mono: Optional[Callable[[], float]] = None,
-                 now_wall: Optional[Callable[[], float]] = None) -> None:
+                 now_wall: Optional[Callable[[], float]] = None,
+                 on_cloud_rx: Optional[Callable[[], None]] = None) -> None:
         if not rid:
             # 没有 rid 就构不出合法 key. 宁可不建桥也不建一条 "xbrain//cmd/task"
             # -- 后者会订到一个谁都不发的 key 上, 表现为"客户端连上了但没反应".
             raise ValueError("cloud bridge needs a rid")
         self._session = session
         self._rid = rid
+        # 11 S4.6.3 步骤 1 逐字: "任何一条来自云端的报文都刷新起算点:
+        # 心跳 pong . cmd/** . event/ack . data/ack". 断线计时归 p5 的
+        # LinkStateMachine 管, 桥只负责报告"听见了", 所以是个回调而不是
+        # 在这里持有状态机 -- 桥不该知道 L2/L3 的阈值.
+        self._on_cloud_rx = on_cloud_rx
         self._subs: List[Any] = []          # 强引用容器, 见类文档
         self._pubs: Dict[str, Any] = {}
         self._seq = SeqCounter()
@@ -224,19 +230,41 @@ class CloudBridge:
 
     # --- 接线 ---------------------------------------------------------
 
+    def _rx(self, handler: Callable[[Any], None]) -> Callable[[Any], None]:
+        """把一个入站回调包成"先记一次云端在线, 再处理".
+
+        *** 包在[声明处]而不是每个回调里各写一行. 五个入站回调各加一行, 就有
+        五处可以漏, 而且下一个人新增订阅时第六处必然漏 -- 这个缺陷第一次发生
+        就是这么来的: on_cloud_rx 只挂在 event/ack 与 recon/rsp 上, cmd/** 一直
+        没挂, 于是甲方在持续下发任务, 而 p5 认定 never_connected, 断线时长一路
+        累到 L3, 自动注入返航(优先级 95)把客户刚下发的任务抢占成 suspended.
+
+        *** 在解析之前刷新. 契约说的是"任何一条报文", 不是"任何一条合法报文":
+        一条格式坏的下发同样证明云端在线, 而且恰恰是这种时候不能误判失联.
+        """
+        def wrapped(sample: Any) -> None:
+            if self._on_cloud_rx is not None:
+                try:
+                    self._on_cloud_rx()
+                except Exception:      # noqa: BLE001
+                    # 记时失败不能吃掉这条命令 -- 命令本身比链路计时重要.
+                    _logger.exception("p5 cloud rx notify failed")
+            handler(sample)
+        return wrapped
+
     def wire(self) -> None:
         """声明五条入站订阅与三条 ack 发布."""
         rid = self._rid
         self._subs.append(self._session.declare_subscriber(
-            CLOUD_CMD_TASK % rid, self._on_cloud_task))
+            CLOUD_CMD_TASK % rid, self._rx(self._on_cloud_task)))
         self._subs.append(self._session.declare_subscriber(
-            CLOUD_CMD_ESTOP % rid, self._on_cloud_estop))
+            CLOUD_CMD_ESTOP % rid, self._rx(self._on_cloud_estop)))
         self._subs.append(self._session.declare_subscriber(
-            CLOUD_CMD_MEDIA_SESSION % rid, self._on_cloud_media_session))
+            CLOUD_CMD_MEDIA_SESSION % rid, self._rx(self._on_cloud_media_session)))
         self._subs.append(self._session.declare_subscriber(
-            CLOUD_CMD_FILE_ACK % rid, self._on_cloud_file_ack))
+            CLOUD_CMD_FILE_ACK % rid, self._rx(self._on_cloud_file_ack)))
         self._subs.append(self._session.declare_subscriber(
-            CLOUD_AUDIO_BROADCAST % rid, self._on_cloud_audio_broadcast))
+            CLOUD_AUDIO_BROADCAST % rid, self._rx(self._on_cloud_audio_broadcast)))
 
         self._pubs["cmd/task/ack"] = self._session.declare_publisher(
             CLOUD_CMD_TASK_ACK % rid)
@@ -915,7 +943,9 @@ def _str_or_none(value: Any) -> Optional[str]:
     return value if isinstance(value, str) else None
 
 
-def maybe_wire(session: Any, rid: str) -> Optional[CloudBridge]:
+def maybe_wire(session: Any, rid: str,
+               on_cloud_rx: Optional[Callable[[], None]] = None
+               ) -> Optional[CloudBridge]:
     """rid 存在才建桥, 否则返回 None.
 
     与 p1_motion 的 GNSS 桥同一取舍: XBRAIN_ROBOT_ID 未设时跳过而不是拼一个
@@ -925,7 +955,7 @@ def maybe_wire(session: Any, rid: str) -> Optional[CloudBridge]:
     if not rid:
         _logger.warning("p5 cloud bridge skipped: XBRAIN_ROBOT_ID unset")
         return None
-    bridge = CloudBridge(session, rid)
+    bridge = CloudBridge(session, rid, on_cloud_rx=on_cloud_rx)
     bridge.wire()
     return bridge
 

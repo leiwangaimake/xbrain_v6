@@ -901,7 +901,12 @@ def run_voice_loop_wiring(stop_flag: dict,
         _last_task_query = [0.0]
 
         from xbrain.p5_gateway.runtime.cloud_wiring import maybe_wire
-        cloud_bridge = maybe_wire(gen, os.environ.get("XBRAIN_ROBOT_ID", ""))
+        # 11 S4.6.3 步骤 1: 云端来的每一条报文都刷新断线起算点. 不接这条线
+        # 的话, 甲方持续下发任务而我们仍判 never_connected -- 断线时长累到
+        # rtb_s(L3)就自动注入返航, 优先级 95, 把客户的任务抢占掉.
+        cloud_bridge = maybe_wire(gen, os.environ.get("XBRAIN_ROBOT_ID", ""),
+                                  on_cloud_rx=lambda: link_state.on_cloud_rx(
+                                      time.monotonic()))
         if cloud_bridge is not None:
             from xbrain.p5_gateway.runtime.cloud_state import CloudProjector
             # The outbound face needs DRIVING, not just publishers: a declared
