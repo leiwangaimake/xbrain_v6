@@ -65,6 +65,7 @@ STATE_ROBOT_TOPIC = "state/robot"
 STATE_POWER_TOPIC = "state/power"
 STATE_TELEOP_TOPIC = "state/teleop"
 TEACH_PUBLISH_PERIOD_S = 1.0             # S12A.5 floor
+TASK_STATE_PERIOD_S = 1.0                # 11 S2.2.2 state/task = event + 1 Hz
 CMD_GEO_TOPIC = "cmd/geo"                # 11 S7.9: P3 is the sole cmd/geo subscriber
 CMD_GEO_ACK_TOPIC = "cmd/geo/ack"        # 11 S7.9.4: the answer goes back to the sender
 CMD_FENCE_TOPIC = "cmd/fence"            # 11 S9A.3: P3 is the sole cmd/fence publisher
@@ -149,6 +150,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     from xbrain.p3_task.geo.objects import read_geo_objects
     from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
     from xbrain.p3_task.state.geo_events import render_geo_event
+    from xbrain.p3_task.state.task_state import read_task_state
     from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
     from xbrain.p3_task.ingest.geo_read import build_manifest
     from xbrain.p3_task.teach.runtime import TeachRuntime
@@ -196,9 +198,13 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
         _logger.info("p3 wiring: opening GEN session")
         with open_planes(("gen",)) as gen:
             state_pub = gen.declare_publisher(STATE_TASK_TOPIC)
+            # 11 S4.4 TaskState, empty shape: the db is not open on this line yet,
+            # and a subscriber that arrives before the first loop pass must still
+            # see the contract's three lists rather than a different schema it has
+            # to special-case (that is how the old active_task placeholder spread).
             state_pub.put(json.dumps({
-                "schema": "state_task_v1", "active_task": None,
-                "mono_ms": _now_mono_ms()}).encode("utf-8"))
+                "schema": "task_state_v1", "current": None,
+                "queue": [], "suspended": []}).encode("utf-8"))
             # 11 S7.10A: broadcast geo geometry (routes/keypoints/docks) so the
             # HMI renders them live without P5 reading geo.db (S7843). Published
             # from the loop below every GEO_PUBLISH_PERIOD_S (>= 0.1 Hz keepalive).
@@ -268,6 +274,17 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     "geo-%s-%d" % (_geo_evt_boot, _geo_evt_seq[0]))
                 gen.put(key, json.dumps(
                     body, ensure_ascii=False).encode("utf-8"))
+
+            # 11 S2.2.2 state/task = "event + 1 Hz". Both halves publish through
+            # this one builder: the transition callback awaits it (event) and the
+            # loop calls it every TASK_STATE_PERIOD_S (floor). Reading the db each
+            # time is deliberate -- a cached copy is how `queue` goes stale while
+            # `current` looks right, and the read is one indexed SELECT over the
+            # non-terminal rows only.
+            async def _publish_task_state() -> None:
+                state_pub.put(json.dumps(
+                    await read_task_state(conn),
+                    ensure_ascii=False).encode("utf-8"))
 
             def _on_link(sample) -> None:
                 try:
@@ -417,6 +434,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             last_geo = 0.0            # 0 -> publish geo on the very first pass
             last_fence = 0.0          # 0 -> publish fence on the very first pass
             last_teach = 0.0          # 0 -> publish teach state immediately
+            last_task_state = 0.0     # 0 -> publish TaskState on first pass
             fence_rev = [1]           # 11 S9A.2 rev; +1 on any geometry change
             last_fence_sig = [None]   # rev-0 crc32 of the last broadcast set
             fence_invalid_logged = [False]
@@ -580,7 +598,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             await scheduler_tick(
                                 conn, dao, now_mono_ms=_now_mono_ms(),
                                 on_transition=_make_publish(state_pub,
-                                                            _emit_task_event),
+                                                            _emit_task_event,
+                                                            _publish_task_state),
                                 # 与 created_at 同一口径的墙钟(15 S9.5):
                                 # started_at 是给人看的下发时间, 由调用方生成
                                 # 而不是 driver 自己取 -- driver 里不应有第二
@@ -615,6 +634,16 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     # geometry change (detected via the rev-independent crc32). An
                     # invalid set (no allow / > 5, S9A.1A FS-5A) is NOT broadcast --
                     # the old fence stays in effect; logged once until it recovers.
+                    # 11 S2.2.2: state/task at 1 Hz (the "event" half rides the
+                    # transition callback). The floor is what lets a consumer tell
+                    # "nothing changed" from "P3 is gone" -- with event-only
+                    # publishing an idle system and a dead one look identical.
+                    if now - last_task_state >= TASK_STATE_PERIOD_S:
+                        try:
+                            await _publish_task_state()
+                        except Exception as exc:      # noqa: BLE001
+                            _logger.error("p3 state/task broadcast failed: %s", exc)
+                        last_task_state = now
                     # 11 S12A.5: state/teach at 1 Hz plus on every change.
                     if now - last_teach >= TEACH_PUBLISH_PERIOD_S:
                         try:
@@ -678,22 +707,34 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     return 0
 
 
-def _make_publish(state_pub, emit_task_event=None):
+def _make_publish(state_pub, emit_task_event=None, publish_state=None):
     """Build the scheduler on_transition callback: publish each task state change on
     state/task (event + 1 Hz, 11 S2.2.2) so p5/HMI/cloud can rebuild the machine, log
     it, AND emit the 11 S6.2 task event (accept/reject/start/complete/fail) via
     emit_task_event when the transition warrants one. reason is non-empty only on a
-    validate_fail."""
+    validate_fail.
+
+    publish_state is the "event" half of S2.2.2: it re-reads the live tasks and puts
+    a full 11 S4.4 TaskState. It is a callback rather than a db read done here so
+    this factory keeps needing no connection, and so the loop's 1 Hz half and this
+    one publish through the same code (two builders of the same broadcast is how the
+    old placeholder shape survived -- nothing compared them).
+
+    Publishing the whole state on every transition, rather than just the task that
+    moved, is what makes `queue` and `suspended` correct: one task starting changes
+    the queue for all the others, and a delta of one task cannot express that."""
     async def _publish(task_id: str, to_state: str, reason: str) -> None:
         if reason:
             _logger.info("p3 task %s -> %s (%s)", task_id, to_state, reason)
         else:
             _logger.info("p3 task %s -> %s", task_id, to_state)
-        state_pub.put(json.dumps({
-            "schema": "state_task_v1",
-            "active_task": {"task_id": task_id, "state": to_state,
-                            "mono_ms": _now_mono_ms()},
-        }).encode("utf-8"))
+        if publish_state is not None:
+            try:
+                await publish_state()
+            except Exception as exc:      # noqa: BLE001
+                # A broadcast failure must not abort the transition: the state
+                # change is already committed, and the 1 Hz pass re-sends.
+                _logger.error("p3 state/task publish failed: %s", exc)
         # 11 S6.2 task event -- a separate stream from the state/task heartbeat.
         if emit_task_event is not None:
             ev = task_event_for_transition(to_state, reason)
