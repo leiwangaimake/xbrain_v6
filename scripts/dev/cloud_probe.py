@@ -214,6 +214,13 @@ def main(argv=None) -> int:
                     choices=sorted(COMMANDS))
     ap.add_argument("--seconds", type=float, default=8.0,
                     help="how long to collect uplink after publishing")
+    ap.add_argument("--waypoint", default=None,
+                    help="GOTO 用的真实 waypoint geo_id (默认用不存在的探针 id, "
+                         "那是有意的 -- 见 _goto_payload)")
+    ap.add_argument("--route", default=None,
+                    help="GOTO 用的真实 recorded_path_id")
+    ap.add_argument("--target", default=None,
+                    help="STOP_TASK 的 target_task_id")
     ap.add_argument("--listen-only", action="store_true",
                     help="subscribe and report without publishing anything")
     args = ap.parse_args(argv)
@@ -255,7 +262,17 @@ def main(argv=None) -> int:
     if not args.listen_only:
         key_tail, builder = COMMANDS[args.command]
         key = "xbrain/%s/%s" % (args.rid, key_tail)
-        frame = _envelope(args.rid, 1, builder())
+        data = builder()
+        # 用真实 geo_id 覆盖默认的探针 id, 好走通"查得到"的那条分支.
+        # 默认仍是查不到的 id -- 那条分支同样要能测(S3.1 的结构化拒绝).
+        pl = data.get("payload") or {}
+        if args.waypoint and pl.get("waypoints"):
+            pl["waypoints"][0]["id"] = args.waypoint
+        if args.route:
+            pl["recorded_path_id"] = args.route
+        if args.target:
+            pl["target_task_id"] = args.target
+        frame = _envelope(args.rid, 1, data)
         time.sleep(1.0)          # let the subscriptions land before publishing
         session.put(key, frame)
         print("published %s -> %s (%d bytes)" % (args.command, key, len(frame)))

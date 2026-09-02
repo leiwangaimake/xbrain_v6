@@ -168,10 +168,31 @@ class CloudProjector:
         self._last_sent[name] = now
         return True
 
+    # --- 任务全量的取数口 ----------------------------------------------
+
+    @staticmethod
+    def _all_tasks(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """云端快照要的任务全量, 优先取 cloud_tasks.
+
+        *** 两个来源不是冗余, 是两种形状.
+        state["tasks"] 来自 state/task 广播, 15 S12A 的形状里只有 active_task
+        一条 -- 它是[跃迁即时]的, 终态判定靠它(见 observe_task 的说明).
+        state["cloud_tasks"] 来自 P3 的 query/tasks queryable(11 S12.2A), 是
+        [全量但低频](1 Hz). v2.0 S3.2 的 snapshot 要 current + queue +
+        suspended 三个列表, 只有全量填得出来 -- 用广播那条的话 queue 与
+        suspended 恒空(2026-09-02 实测, 库里明明有 ready/pending 的任务).
+
+        取不到全量时回落到广播那条: 至少 current 还是对的, 比整个快照空掉好.
+        """
+        rows = state.get("cloud_tasks")
+        if isinstance(rows, list) and rows:
+            return [t for t in rows if isinstance(t, dict)]
+        return [t for t in (state.get("tasks") or []) if isinstance(t, dict)]
+
     # --- 各条 key 的投影 ------------------------------------------------
 
     def _robot(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        tasks = state.get("tasks") or []
+        tasks = self._all_tasks(state)
         running = any(t.get("state") == "running" for t in tasks
                       if isinstance(t, dict))
         clock = state.get("clock")
@@ -194,7 +215,7 @@ class CloudProjector:
 
     def _task(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """v2.0 S3.2 全机快照. result 形态由任务终结时另行发布(R12.4)."""
-        tasks = [t for t in (state.get("tasks") or []) if isinstance(t, dict)]
+        tasks = self._all_tasks(state)
         # *** 每一条都要过闭集, NO 不只挑三个桶里的.
         # 原先的写法按 running / queued / paused 三个桶分类, 于是一条
         # state 是闭集外值的任务[哪个桶都进不去, 就此消失] -- 快照里没有它,
@@ -285,9 +306,7 @@ class CloudProjector:
         del self._pending_results[:len(out)]
         # 兜底: 快照里若有回调没见过的跃迁(比如回调那一瞬掉了一条), 这里
         # 补上. tracker 的 _done 保证不会因此重复.
-        for task in (state.get("tasks") or []):
-            if not isinstance(task, dict):
-                continue
+        for task in self._all_tasks(state):
             data = self._result_for(task)
             if data is not None:
                 out.append(data)

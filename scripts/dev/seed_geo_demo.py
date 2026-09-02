@@ -20,6 +20,15 @@ P3 是 geo.db / fence.db 的唯一写者(11 S7.9). 直接 INSERT 会绕过三件
 所以这个脚本是一个[云端客户端], 与甲方 Qt 走同一条路. 副作用是它顺带验证了
 cmd/geo 这条链路本身.
 
+*** geo_id 一律 [a-z0-9_], NO 不能用连字符.
+v2.0 S2.1 的三条正则是 r-[a-z0-9_]{1,40} / w-[a-z0-9_]{1,40} / f-[a-z0-9_]{1,40}
+-- 类型前缀后面那一位是连字符, 但[标识主体只允许下划线]. 2026-09-02 第一版
+用了 r-oil-area 这样的名字, 机内 cmd/geo 照单全收(机内 id 规则宽松), 而云端
+下发 GOTO_KEYPOINT 时被网关 field_validate 挡掉:
+  E_SCHEMA recorded_path_id does not match r-[a-z0-9_]{1,40}: 'r-oil-area'
+=> 造调试数据时必须按[云端的]正则起名, 否则数据在机内看着好好的, 一到联调
+就发现云端根本引用不了它 -- 而那时候现场没人会想到是 id 里那个连字符.
+
 *** 坐标是[造的], 但格式与真实 RTK 一致.
 WGS84 十进制度, 7 位小数(厘米级) -- 与 rtk_driver 上报的 rt/gnss/fix 同格式,
 所以下游的解析 / 投影 / 渲染走的都是真实代码路径. 基准点取甲方 v2.0 文档示例
@@ -82,31 +91,31 @@ FENCES = [
 ]
 
 WAYPOINTS = [
-    ("w-main-gate", "主门岗", off(-2400, 0)),
-    ("w-oil-depot", "一号油库", off(1500, 800)),
-    ("w-oil-depot-2", "二号油库", off(1900, 500)),
-    ("w-pump-house", "消防泵房", off(600, 1400)),
+    ("w-main_gate", "主门岗", off(-2400, 0)),
+    ("w-oil_depot", "一号油库", off(1500, 800)),
+    ("w-oil_depot_2", "二号油库", off(1900, 500)),
+    ("w-pump_house", "消防泵房", off(600, 1400)),
     ("w-watchtower", "北瞭望塔", off(-200, 2000)),
     ("w-dorm", "值班宿舍", off(-1800, -900)),
     ("w-garage", "车库前坪", off(-1200, -1800)),
-    ("w-drill-yard", "训练场", off(400, -1900)),
+    ("w-drill_yard", "训练场", off(400, -1900)),
     ("w-substation", "变电所", off(2200, -1000)),
     ("w-warehouse", "器材仓库", off(1000, -1200)),
-    ("w-east-gate", "东门岗", off(2500, -200)),
-    ("w-charge-dock", "一号充电桩", off(-2000, 600)),
+    ("w-east_gate", "东门岗", off(2500, -200)),
+    ("w-charge_dock", "一号充电桩", off(-2000, 600)),
 ]
 _WP = {wid: c for wid, _n, c in WAYPOINTS}
 
 ROUTES = [
     ("r-perimeter", "外围巡逻线",
-     ["w-main-gate", "w-watchtower", "w-east-gate", "w-substation",
-      "w-drill-yard", "w-garage", "w-main-gate"]),
-    ("r-oil-area", "油库重点巡查线",
-     ["w-pump-house", "w-oil-depot", "w-oil-depot-2", "w-east-gate"]),
+     ["w-main_gate", "w-watchtower", "w-east_gate", "w-substation",
+      "w-drill_yard", "w-garage", "w-main_gate"]),
+    ("r-oil_area", "油库重点巡查线",
+     ["w-pump_house", "w-oil_depot", "w-oil_depot_2", "w-east_gate"]),
     ("r-night", "夜间值守线",
-     ["w-dorm", "w-garage", "w-drill-yard", "w-warehouse"]),
+     ["w-dorm", "w-garage", "w-drill_yard", "w-warehouse"]),
     ("r-charge", "充电返程线",
-     ["w-east-gate", "w-main-gate", "w-charge-dock"]),
+     ["w-east_gate", "w-main_gate", "w-charge_dock"]),
 ]
 
 

@@ -289,6 +289,59 @@ def test_media_and_file_index_send_empty_arrays_not_nothing():
     assert body["data/file/index"]["files"] == []
 
 
+def test_snapshot_queue_comes_from_the_full_task_list():
+    """*** v2.0 S3.2 的 queue/suspended 只有拿到任务全量才填得出来.
+
+    state/task 广播是 15 S12A 的形状, 只带 active_task 一条 -- 靠它 queue 与
+    suspended 恒空. 2026-09-02 实测: 库里有 ready/pending 的任务, 而 Qt 收到的
+    快照三个列表全空. 全量来自 P3 的 query/tasks queryable(11 S12.2A), 就是
+    HMI 的 /api/tasks 已经在用的那条(平面隔离下 p5 不能直接读 p3 的 task.db).
+
+    变异体: _all_tasks 改回只读 state["tasks"] => 本条红.
+    """
+    proj, bridge, _c = _proj()
+
+    st = _state()
+    # 广播那条只有 active_task; 全量里还有两条排队的.
+    st["tasks"] = [{"task_id": "t-run", "state": "running"}]
+    st["cloud_tasks"] = [
+        {"task_id": "t-run", "task_type": "goto", "state": "running"},
+        {"task_id": "t-q1", "task_type": "goto", "state": "ready"},
+        {"task_id": "t-s1", "task_type": "patrol", "state": "suspended"},
+    ]
+    proj.tick(st)
+
+    snap = dict(bridge.published)["state/task"]
+    assert snap["current"] and snap["current"]["task_id"] == "t-run"
+    assert [t["task_id"] for t in snap["queue"]] == ["t-q1"], (
+        "queue 没填出来: %r" % snap["queue"])
+    assert [t["task_id"] for t in snap["suspended"]] == ["t-s1"], (
+        "suspended 没填出来: %r" % snap["suspended"])
+    # task_type 也跟着全量一起有了(此前恒 null -- 广播里根本没这个字段).
+    assert snap["current"]["task_type"] == "goto", (
+        "task_type 仍为空, v2.0 S3.2 把它列为必填")
+
+
+def test_it_falls_back_to_the_broadcast_when_the_query_is_empty():
+    """*** 全量取不到时回落到广播那条, NO 不整个快照空掉.
+
+    query/tasks 可能因为 P3 忙 / queryable 掉线而无应答. 那时 current 至少还
+    能从广播里得出来 -- 比 Qt 看到"一个任务都没有"强, 后者与"真的没任务"
+    不可区分.
+
+    变异体: _all_tasks 去掉回落分支 => 本条红.
+    """
+    proj, bridge, _c = _proj()
+    st = _state()
+    st["tasks"] = [{"task_id": "t-run", "state": "running"}]
+    st["cloud_tasks"] = []          # 查询没结果
+    proj.tick(st)
+
+    snap = dict(bridge.published)["state/task"]
+    assert snap["current"] and snap["current"]["task_id"] == "t-run", (
+        "全量为空时连 current 都丢了")
+
+
 def test_devices_come_only_from_what_health_actually_reports():
     """*** 只报 health 真的有的那些(v2.0 S4.2: 只发布实际发现的设备).
 

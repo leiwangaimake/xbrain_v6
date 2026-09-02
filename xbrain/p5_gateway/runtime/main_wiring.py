@@ -426,6 +426,10 @@ def run_voice_loop_wiring(stop_flag: dict,
         # True 表示当前 enu_origin 来自 common.geo.enu_origin(经 cmd/fence 送达),
         # False 表示来自首次定位兜底. 两者优先级不同, 见 _on_cmd_fence.
         "enu_origin_authoritative": False,
+        #: query/tasks 拉来的任务全量(v2.0 snapshot 的 queue/suspended 用它).
+        #: 与 hmi_state["tasks"](只有 active_task, 供 HMI plan 面板)是两份,
+        #: 因为两者的形状与刷新节律都不同.
+        "cloud_tasks": [],
         "fence_cache": FenceCache(),  # cmd/fence   -> map fences (W1)
         "geo_cache": GeoCache(),      # state/geo/objects -> routes/keypoints (11 S7.10A)
     }
@@ -829,6 +833,11 @@ def run_voice_loop_wiring(stop_flag: dict,
         # rid absent -> no bridge (same trade-off as p1 GNSS bridge): a
         # "xbrain//cmd/task" key would subscribe to something nobody publishes
         # and look exactly like a client that never connected.
+        from xbrain.p5_gateway.hmi.task_query_client import query_tasks
+        #: query/tasks 的节流时刻. list 而不是标量, 因为它在下面的闭包与循环
+        #: 之间共享; nonlocal 在这个函数里已经用了好几个, 再加一个会更难读.
+        _last_task_query = [0.0]
+
         from xbrain.p5_gateway.runtime.cloud_wiring import maybe_wire
         cloud_bridge = maybe_wire(gen, os.environ.get("XBRAIN_ROBOT_ID", ""))
         if cloud_bridge is not None:
@@ -948,7 +957,30 @@ def run_voice_loop_wiring(stop_flag: dict,
                 # The projector does its own per-key cadence, so running it
                 # every loop iteration costs one dict build per key and no
                 # extra publishes.
+                # *** 云端快照的任务全量: 走 P3 的 query/tasks queryable.
+                # v2.0 S3.2 的 snapshot 要 current + queue + suspended 三个列表,
+                # 而 state/task 广播只带 active_task 一条(15 S12A 的形状) --
+                # 靠它永远填不出 queue/suspended, 实测两个列表恒空.
+                # 11 S12.2A 的 query/tasks 正是为这件事存在的(HMI 的
+                # /api/tasks 已经在用), 平面隔离下 p5 不能直接读 p3 的 task.db.
+                #
+                # *** 1 Hz, NO 不放进 0.1 s 主循环.
+                # query_tasks 是[阻塞]调用(迭代 reply channel), 每拍跑一次会把
+                # 10 Hz 的 state/robot 一起拖慢 -- 而后者是 Qt 判"机器人还活着"
+                # 的依据(v2.0 S4.2 逐字要求 10 Hz). 任务队列的变化是人操作的
+                # 节奏, 1 Hz 足够; 真正要求快的是终态, 而终态走 observe_task
+                # 那条即时路径(见 _on_state_task), 不受本节流影响.
                 if cloud_projector is not None:
+                    _now_q = time.monotonic()
+                    if _now_q - _last_task_query[0] >= 1.0:
+                        _last_task_query[0] = _now_q
+                        try:
+                            _page = query_tasks(gen, scope="current", limit=50)
+                            hmi_state["cloud_tasks"] = _page.get("tasks") or []
+                        except Exception:      # noqa: BLE001
+                            # 查不到就保持上一份, NO 不清空: 清空会让 Qt 看到
+                            # "队列突然空了", 与"任务真的都跑完了"不可区分.
+                            _logger.debug("p5 cloud task query failed")
                     cloud_projector.tick(hmi_state)
                 # A-1: 清理超时的 cmd/task pending, 回 timeout ack(v2.0 S1.4).
                 if cloud_bridge is not None:
