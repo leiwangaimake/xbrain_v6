@@ -101,6 +101,42 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
         made.append((task_id, "pending", result.to_state))
         await on_transition(task_id, result.to_state, reason)
 
+    # -- phase 1b: yielding 自动恢复扫描 (15 S3.2) --
+    #
+    # *** 让位对象一进终态, 被抢占的任务自动回 ready, 无需任何外部条件.
+    # 状态机逐字: suspended --resume--> ready (yielding: yielded-to task done).
+    # 只到 ready, NO 不是直接回 running -- 之后由下面的决策树按优先级正常
+    # 派发. 15 S7.3 那六步(快照比对/断点重映射/接入点/重推 route)是
+    # ready -> running 那一跳的事, 依赖 task_route_snapshot 与 patrol_progress
+    # 与 cmd/motion/route, 三者本期都未建, 所以这里[只做状态归位].
+    #
+    # *** 排在抢占之前, 顺序不能换.
+    # 放在后面的话, 刚恢复到 ready 的任务会在同一拍里被下面的决策树再抢一次
+    # (它优先级本来就低于当前 running), 于是 resume->preempt 每拍来回一次,
+    # 而每一步都是合法迁移, 日志里看起来像两条任务在正常调度.
+    #
+    # *** 两种 yielding 的恢复条件不同, 只处理 preempted 这一支.
+    # mode_takeover 的条件是 mode.motion_behavior 回 normal(15 S4.1A), 那要
+    # 订 state/mode 并由 P2 驱动, 不在调度器的知情范围内 -- 混在这里会让
+    # "模式还没交回来"的任务被误判为可恢复. 未建, 不假装(CLAUDE.md 3.2).
+    yielding = await dao.list_yielding()
+    if yielding:
+        rows_y = await dao.list_by_priority()
+        # 让位对象 = 当前仍在跑/在等的那些. 全部进终态(即活跃集里没有
+        # running 也没有 ready)才算"让位对象已完成".
+        # NO 不追踪"具体让给了谁": 那需要在抢占时记下被让位对象的 id, 而
+        # tasks 表没有这一列. 用"没有 running"近似是保守的 -- 它只会推迟
+        # 恢复(还有别的任务在跑时不恢复), 不会提前恢复.
+        busy = any(st == "running" for _i, _p, _s, st in rows_y)
+        if not busy:
+            for task_id, _p, _sq, reason in yielding:
+                if reason != "preempted":
+                    continue
+                result = apply_transition("suspended", "resume")
+                await dao.resume_task(task_id, now_mono_ms)
+                made.append((task_id, "suspended", result.to_state))
+                await on_transition(task_id, result.to_state, "yielded_to_done")
+
     # -- phase 2: 15 S6.1 的调度决策树 --
     # Re-read so the tasks just validated to 'ready' are visible (read-your-
     # writes on this connection, still inside the tick's transaction).

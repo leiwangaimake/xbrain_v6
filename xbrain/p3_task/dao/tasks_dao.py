@@ -176,6 +176,39 @@ class TasksDAO:
             (reason, updated_ms, task_id))
         return cur.rowcount
 
+    async def list_yielding(self, limit: int = 512):
+        """让位挂起的任务 (task_id, priority, submit_seq, suspend_reason).
+
+        15 S3.2 的两种 yielding 恢复条件不同, 所以把 reason 一起返回:
+          preempted     -> 让位对象一进终态就自动回 ready
+          mode_takeover -> mode.motion_behavior 回 normal 才回 ready
+        只按 kind 过滤而在调用方分 reason, 是因为 CR-8 已保证 kind==yielding
+        IFF reason in {preempted, mode_takeover} -- 这里多写一个 reason 条件
+        等于把那条不变式复制一份, 而复制出来的那份会先腐烂.
+        """
+        cur = await self._conn.execute(
+            "SELECT task_id, priority, submit_seq, suspend_reason FROM tasks "
+            "WHERE state='suspended' AND suspend_kind='yielding' "
+            "ORDER BY priority DESC, submit_seq ASC LIMIT ?", (limit,))
+        return await cur.fetchall()
+
+    async def resume_task(self, task_id: str, updated_ms: int) -> int:
+        """suspended -> ready, 同时清空 suspend_kind/reason.
+
+        *** 两个字段必须一起清, DDL CHECK 强制.
+        tasks 的 CHECK 是 (state='suspended') = (suspend_kind IS NOT NULL),
+        reason 同理. 只改 state 不清字段的话 UPDATE 会被 sqlite 拒掉 -- 这正是
+        estop 的 suspend 不能走 update_state 的同一个原因(见 suspend_task).
+
+        NO 不清 interrupt_reason: 15 S9.5 那一列逐字"NOT cleared on resume
+        (audit)" -- 它记的是最后一次中断的成因, 恢复后仍要能查到.
+        """
+        cur = await self._conn.execute(
+            "UPDATE tasks SET state='ready', suspend_kind=NULL, "
+            "suspend_reason=NULL, updated_ms=? WHERE task_id=?",
+            (updated_ms, task_id))
+        return cur.rowcount
+
     async def fetch_by_id(self, task_id: str):
         cur = await self._conn.execute(
             f"SELECT {', '.join(_COLUMNS)} FROM tasks WHERE task_id=?",

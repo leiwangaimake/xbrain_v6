@@ -81,6 +81,20 @@ class _FakeDao:
         self.calls.append(("dispatch", task_id, started_at))
         return 1
 
+    async def list_yielding(self, limit: int = 512):
+        out = [r for r in self.rows.values()
+               if r["state"] == "suspended"
+               and r.get("suspend_kind") == "yielding"]
+        out.sort(key=lambda r: (-r["priority"], r["submit_seq"]))
+        return [(r["task_id"], r["priority"], r["submit_seq"],
+                 r.get("suspend_reason")) for r in out[:limit]]
+
+    async def resume_task(self, task_id, updated_ms):
+        self.rows[task_id].update(state="ready", suspend_kind=None,
+                                  suspend_reason=None)
+        self.calls.append(("resume", task_id))
+        return 1
+
     async def preempt_task(self, task_id, reason, updated_ms):
         self.rows[task_id].update(state="suspended", suspend_kind="yielding",
                                   suspend_reason=reason)
@@ -283,3 +297,122 @@ def test_started_at_comes_from_the_caller_not_a_second_clock():
     assert "started_at: str" in src, "scheduler_tick 没有接收 started_at"
     for bad in ("datetime.utcnow", "time.gmtime", "strftime"):
         assert bad not in src, "driver 里出现了第二处时钟来源: %s" % bad
+
+
+# --- yielding 自动恢复 (15 S3.2) -------------------------------------
+
+def test_yielding_task_auto_resumes_when_nothing_is_running():
+    """*** 让位对象进终态后, 被抢占的任务自动回 ready, 无需人工.
+
+    15 S3.2 逐字: yielding 的恢复条件是"让位对象一进终态就自动回 ready --
+    无需任何外部条件". 状态机同样写着 suspended --resume--> ready
+    (yielding: yielded-to task done).
+
+    这条扫描此前[根本不存在] -- machine.py 的注释引用了"the yielding
+    auto-resume scan", 但全仓没有实现. 2026-09-02 补抢占之后, 被抢占的任务
+    会永久停在 suspended, 抢占反而变成了单向的丢弃.
+
+    变异体: 删掉 phase 1b => 本条红.
+    """
+    dao, _made = _tick([
+        {"task_id": "t-yield", "priority": 40, "submit_seq": 1,
+         "state": "suspended", "suspend_kind": "yielding",
+         "suspend_reason": "preempted"},
+    ])
+    assert dao.rows["t-yield"]["state"] in ("ready", "running"), (
+        "让位任务没有自动恢复: %r" % dao.rows["t-yield"]["state"])
+    assert dao.rows["t-yield"].get("suspend_kind") is None, (
+        "恢复后 suspend_kind 没清 -- DDL CHECK 要求非 suspended 时必须为 NULL")
+
+
+def test_yielding_does_not_resume_while_something_is_still_running():
+    """*** 还有任务在跑时不恢复 -- "让位对象一进终态"的那个前提没满足.
+
+    提前恢复的话, 刚回 ready 的任务会立刻参与调度, 而它当初正是因为优先级
+    低才被让位 -- 于是它要么再被抢一次, 要么在让位对象还没跑完时插进去.
+
+    变异体: 去掉 busy 判断 => 本条红.
+    """
+    dao, _made = _tick([
+        {"task_id": "t-run", "priority": 95, "submit_seq": 2,
+         "state": "running"},
+        {"task_id": "t-yield", "priority": 40, "submit_seq": 1,
+         "state": "suspended", "suspend_kind": "yielding",
+         "suspend_reason": "preempted"},
+    ])
+    assert dao.rows["t-yield"]["state"] == "suspended", (
+        "让位对象还在跑, 却提前恢复了")
+
+
+def test_passive_suspended_is_never_auto_resumed():
+    """*** passive 的挂起绝不自动恢复 -- 那是 15 S3.2 区分两种 kind 的全部理由.
+
+    文档逐字: "合成一种会导致低电暂停的任务在充电任务结束后被误判为可以
+    自动恢复, 而实际电量条件可能还没满足". 急停(estop_soft)同理: 15 S11.3
+    明令 p3 不自动恢复, 必须等人显式 submit/resume.
+
+    *** 查[真 DAO 的 SQL], NO 不能只靠 fake 的行状态.
+    2026-09-02 第一版只用 fake 断言, 而 fake 的 list_yielding 自己做了 kind
+    过滤 -- 把真 DAO 的 WHERE 去掉 suspend_kind='yielding', 本条依然全绿.
+    与本文件 test_preempt_is_suspend_not_cancel 第一版同一个坑: fake 替被测
+    代码做了正确的事(CLAUDE.md 3.2 形态1).
+
+    变异体: list_yielding 的 SQL 去掉 suspend_kind 条件 => 本条红.
+    """
+    import inspect
+    from xbrain.p3_task.dao.tasks_dao import TasksDAO
+    src = inspect.getsource(TasksDAO.list_yielding)
+    assert "suspend_kind='yielding'" in src, (
+        "list_yielding 没按 kind 过滤 -- passive 的挂起会被卷进自动恢复")
+
+    dao, _made = _tick([
+        {"task_id": "t-estop", "priority": 80, "submit_seq": 1,
+         "state": "suspended", "suspend_kind": "passive",
+         "suspend_reason": "estop_soft"},
+        {"task_id": "t-low", "priority": 70, "submit_seq": 2,
+         "state": "suspended", "suspend_kind": "passive",
+         "suspend_reason": "low_battery"},
+    ])
+    for tid in ("t-estop", "t-low"):
+        assert dao.rows[tid]["state"] == "suspended", (
+            "%s 被自动恢复了 -- passive 必须等条件满足或人工" % tid)
+
+
+def test_mode_takeover_is_not_resumed_by_this_scan():
+    """*** yielding 的两种 reason 恢复条件不同, 本扫描只处理 preempted.
+
+    mode_takeover 的条件是 mode.motion_behavior 回 normal(15 S4.1A), 要订
+    state/mode 并由 P2 驱动, 不在调度器的知情范围内. 混进来会让"模式还没
+    交回来"的任务被误判为可恢复 -- 而那时 P2 仍在驱动 P1, 两个源会对打.
+
+    变异体: 去掉 reason != "preempted" 的 continue => 本条红.
+    """
+    dao, _made = _tick([
+        {"task_id": "t-mode", "priority": 40, "submit_seq": 1,
+         "state": "suspended", "suspend_kind": "yielding",
+         "suspend_reason": "mode_takeover"},
+    ])
+    assert dao.rows["t-mode"]["state"] == "suspended", (
+        "mode_takeover 被本扫描恢复了 -- 它的条件是模式交回, 不是让位对象终态")
+
+
+def test_resume_scan_runs_before_preemption_not_after():
+    """*** 顺序不能换: 恢复扫描必须在抢占决策之前.
+
+    放在后面的话, 刚恢复到 ready 的任务会在同一拍里被决策树再抢一次(它优先级
+    本来就低于当前 running), 于是 resume->preempt 每拍来回一次 -- 而每一步都
+    是合法迁移, 日志里看起来像两条任务在正常调度.
+
+    静态查源码顺序(与 test_wiring_feeds_streaming_not_is_alive 同一手法):
+    行为上很难构造一个只在顺序错时才红的用例, 因为错的顺序在单拍内的[最终
+    状态]可能相同, 差别要跑很多拍才显现.
+
+    变异体: 把 phase 1b 挪到 phase 2 之后 => 本条红.
+    """
+    import inspect
+    from xbrain.p3_task.schedule import driver
+    src = inspect.getsource(driver.scheduler_tick)
+    i_resume = src.index("phase 1b")
+    i_decide = src.index("phase 2")
+    assert i_resume < i_decide, (
+        "yielding 恢复扫描排在了调度决策之后 -- 会 resume/preempt 来回抖")
