@@ -66,10 +66,12 @@ def _orch(tier2=None):
         state_fn=lambda: {"state/geo/manifest": {"items": _ITEMS}})
 
 
-#: A running task, as P3 broadcasts it. B-class control resolves its id here.
-_RUNNING_TASK = {"state/task": {"schema": "state_task_v1",
-                                "active_task": {"task_id": "t-20260823-004",
-                                                "state": "running"}}}
+#: A running task, as P3 broadcasts it: the 11 S4.4 TaskState shape. B-class
+#: control resolves its id from `current` (11 S9.5A), not the old `active_task`.
+_RUNNING_TASK = {"state/task": {"schema": "task_state_v1",
+                                "current": {"task_id": "t-20260823-004",
+                                            "state": "running"},
+                                "queue": [], "suspended": []}}
 
 
 def _frames(text: str, confirm: bool = False, tier2=None):

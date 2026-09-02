@@ -19,7 +19,7 @@ S7.2 给了四条理由, 第一条是要害: 队列是活的 -- 操作员在面�
 理由全部落地: P3 收到的是一个确定的 id, 若那条任务已经变了, P3 回 E_TASK_STATE
 而不是默默暂停另一条; 幂等键是 cmd_id; 审计能看到当时指的是谁.
 
-*** 解析源是 state/task 的 active_task, 不是猜.
+*** 解析源是 state/task 的 current(11 S4.4 TaskState), 不是猜.
 拿不到就[口头说没有正在执行的任务], NO 不发帧 -- 发一条 task_id 为空的
 control 命令就是把猜的动作推给 P3, 那正是 S7.2 要防的.
 
@@ -56,19 +56,28 @@ def is_task_control_intent(intent_name: str) -> bool:
     return intent_name in _CONTROL_INTENTS
 
 
-def active_task_from_state(state: Optional[Mapping[str, Any]]
-                           ) -> Optional[Dict[str, Any]]:
-    """state 快照里的 active_task, 或 None.
+def current_task_from_state(state: Optional[Mapping[str, Any]]
+                            ) -> Optional[Dict[str, Any]]:
+    """state 快照里 11 S4.4 TaskState 的 current, 或 None.
 
-    P3 在没有活动任务时发的是 active_task: null(不是省略该键), 所以 None 与
+    *** 字段名是契约的: 11 S9.5A 逐字"P4/P2 在生成 TaskCommand 时从
+    state/task.current.task_id 取值填入". 本函数曾读 active_task, 那是 P3
+    占位广播的字段名 -- 两侧一致地偏离契约, 于是谁也没发现, 直到 P3 改发
+    真正的 TaskState 才暴露.
+
+    P3 在没有活动任务时发的是 current: null(不是省略该键), 所以 None 与
     "没收到过 state/task" 在这里是同一个答案 -- 两者对操作员的意义相同:
     没有可控制的任务.
+
+    *** 只看 current, NO 不去 queue 里挑一条. 队列里的任务还没开跑,
+    对"暂停 / 取消当前任务"这句话来说它不是操作员指的那一条; 替他挑一条
+    正是 S7.2 禁止的"把猜哪条推给下游".
     """
     body = (state or {}).get(STATE_TASK_KEY)
     if not isinstance(body, Mapping):
         return None
-    active = body.get("active_task")
-    return dict(active) if isinstance(active, Mapping) else None
+    current = body.get("current")
+    return dict(current) if isinstance(current, Mapping) else None
 
 
 def to_task_control_command(intent_name: str, *,
@@ -82,7 +91,7 @@ def to_task_control_command(intent_name: str, *,
     action = _CONTROL_INTENTS.get(intent_name)
     if action is None:
         return None
-    active = active_task_from_state(state)
+    active = current_task_from_state(state)
     task_id = (active or {}).get("task_id")
     if not isinstance(task_id, str) or not task_id:
         # NO 不发一条 task_id 为空的 control 命令: 那等于把"猜哪条"推给 P3,
@@ -105,6 +114,6 @@ def spoken_target(state: Optional[Mapping[str, Any]]) -> str:
     *** 这不是装饰. S7.2 第一条理由是"队列是活的", 而发起方解析只在操作员
     [能听见解析结果]时才真正安全 -- 说出来他才有机会喊停一条选错的任务.
     """
-    active = active_task_from_state(state) or {}
+    active = current_task_from_state(state) or {}
     task_id = active.get("task_id")
     return str(task_id) if task_id else ""

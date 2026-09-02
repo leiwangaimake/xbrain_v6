@@ -103,11 +103,15 @@ def test_l2_intent_awaits_confirm_not_dispatched():
     assert s.pending_confirm is not None    # confirm is open
 
 
-#: A live state snapshot with one running task, as P3 broadcasts it
-#: (state_task_v1 + active_task). B-class control resolves its task_id here.
-_RUNNING_TASK = {"state/task": {"schema": "state_task_v1",
-                                "active_task": {"task_id": "t-20260823-004",
-                                                "state": "running"}}}
+#: A live state snapshot with one running task, as P3 broadcasts it: the 11 S4.4
+#: TaskState three-list shape. B-class control resolves its task_id from `current`
+#: (11 S9.5A names that field), NOT from the `active_task` placeholder this fixture
+#: used to carry -- the fixture and P3 were consistently off-contract together,
+#: which is why neither side looked wrong.
+_RUNNING_TASK = {"state/task": {"schema": "task_state_v1",
+                                "current": {"task_id": "t-20260823-004",
+                                            "state": "running"},
+                                "queue": [], "suspended": []}}
 
 
 def test_l2_confirm_then_dispatch():
