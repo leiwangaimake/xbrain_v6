@@ -148,7 +148,13 @@ def test_goto_becomes_the_internal_submit_shape():
                        "arrival_radius_m": 3.0}]}))
     assert body["action"] == "submit"
     assert body["task"]["task_id"] == "task-1"
-    assert body["task"]["recorded_path_id"] == "r-north"
+    # *** 2026-09-02 订正: 本行原写 body["task"]["recorded_path_id"], 与本条
+    # docstring 自己的理由("p3_task 既有解析器认的形状")直接矛盾 -- p3 读的是
+    # 11 S7.2 的 route_id, recorded_path_id 是 v2.0 那侧的 wire 名, 它一个字
+    # 都不认. 判据抄的是被测代码自己, 于是两边一起错却一直绿, 而线上甲方发的
+    # 路径引用静默丢失(库里 route_geo_id=NULL).
+    assert body["task"]["route_id"] == "r-north"
+    assert "recorded_path_id" not in body["task"]
 
 
 def test_stop_task_requires_an_explicit_target():
@@ -309,6 +315,68 @@ def test_cloud_origin_is_in_the_shared_closed_set():
     # 四种输入形式都在同一个闭集里 -- 这是"云端不是特权通道"的结构保证.
     for other in ("voice", "hmi", "wecom"):
         assert other in GEO_ORIGIN, other
+
+
+def test_goto_uses_the_s7_2_field_names_not_the_v2_wire_names():
+    """*** 机内 task 的字段名必须是 11 S7.2 的, NO 不是 v2.0 的 wire 名.
+
+    S7.2 的 task 结构逐字是 {task_id, type, priority, route_id, params,
+    resume_policy, not_before_ts}. p3 的 task_row_from_command 按这些名字取:
+      route_geo_id <- body["route_id"]
+      mission_json <- body["params"]
+    本函数原来发 recorded_path_id 与平铺的 waypoints/coordinate_system,
+    两个名字 p3 都不认 -> 路径引用与全部航点[静默丢失], 而 ack 照常 accepted,
+    任务照常入库, 从外面看一切正常.
+
+    2026-09-02 联调实测: 甲方发 r-night + 2 个航点, 库里 route_geo_id=NULL,
+    mission_json={"source":"cloud","params":{}}.
+
+    连带代价(task_row.py 头注): route_geo_id 为空时, geo_refs(11 S7.9.4 删除
+    确认的影响集)不得不同时按名字匹配 -- 纯 id 匹配会对一条正被三个任务引用
+    的路径回答"没有任何引用".
+
+    变异体: 把 route_id 改回 recorded_path_id => 本条红.
+    """
+    from xbrain.p5_gateway.inbound.task_router import route
+
+    (_key, body), = route(_data("GOTO_KEYPOINT",
+                                _CREATE_TASK_SAMPLES["GOTO_KEYPOINT"]))
+    task = body["task"]
+    assert task.get("route_id") == "r-north", (
+        "route_id 没带上(p3 读的是这个名字): %r" % task.get("route_id"))
+    assert "recorded_path_id" not in task, (
+        "还在用 v2.0 的 wire 名 -- p3 不认")
+    params = task.get("params") or {}
+    assert params.get("waypoints"), "航点没进 params, mission_json 会是空的"
+    assert params["waypoints"][0]["id"] == "w-1"
+    assert params.get("coordinate_system") == "WGS84"
+
+
+def test_the_payload_survives_into_the_task_row():
+    """*** 端到端: 网关发的形状必须能被 p3 的入库函数取出来.
+
+    上一条只测网关的输出形状; 这一条把它真的喂给 task_row_from_command,
+    确认 route_geo_id 与 mission_json 落到位. 两个模块各自"对"而合起来错,
+    正是这个缺陷的形状 -- 单测各测一半就都是绿的.
+
+    变异体: 网关改回 recorded_path_id => route_geo_id 变空, 本条红.
+    """
+    from dataclasses import replace as _replace
+    from xbrain.p3_task.ingest.task_row import task_row_from_command
+    from xbrain.p5_gateway.inbound.task_router import route
+    from xbrain.p3_task.ingest.task_command import parse_task_command
+
+    (_key, body), = route(_data("GOTO_KEYPOINT",
+                                _CREATE_TASK_SAMPLES["GOTO_KEYPOINT"]))
+    cmd = parse_task_command(body)
+    row = task_row_from_command(cmd, submit_seq=1, now_mono_ms=1000,
+                                created_at="2026-09-02T00:00:00Z")
+    assert row.route_geo_id == "r-north", (
+        "route_geo_id 没落库: %r" % row.route_geo_id)
+    import json as _json
+    mission = _json.loads(row.mission_json)
+    assert mission["params"].get("waypoints"), (
+        "航点没进 mission_json: %r" % mission)
 
 
 def test_every_emitted_task_type_is_in_p3_closed_set():

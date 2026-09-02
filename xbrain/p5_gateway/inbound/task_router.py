@@ -171,11 +171,34 @@ def _goto(cmd_id: str, task_id: str, payload: Dict) -> Dict[str, Any]:
             # scripts/dev/cloud_probe.py 对真实栈发帧才暴露 -- 单测只把
             # 本函数的输出与自己比对, 从未与 15 S12 的闭集对撞.
             "type": "goto",
-            # 云端的计划级路径 ID; p3 解析时换成实际 route_id/route_rev
-            # 并在回报里带上(v2.0 S3.1 要求).
-            "recorded_path_id": payload.get("recorded_path_id"),
-            "coordinate_system": payload.get("coordinate_system"),
-            "waypoints": payload.get("waypoints"),
+            # *** 用 11 S7.2 的字段名, NO 不是 v2.0 的 wire 名.
+            # S7.2 的 task 结构是 {task_id,type,priority,route_id,params,
+            # resume_policy,not_before_ts} -- p3 的 task_row_from_command 按
+            # 这些名字取值. 本函数原来发的是 v2.0 那侧的名字(recorded_path_id
+            # 与平铺的 waypoints/coordinate_system), p3 一个都不认:
+            #   route_geo_id  <- body["route_id"]      取到 None
+            #   mission_json  <- body["params"]        取到 {}
+            # 于是甲方发的路径引用与全部航点[静默丢失], 而 ack 照常 accepted,
+            # 任务照常入库 -- 从外面看一切正常. 2026-09-02 联调实测:
+            # 甲方发 r-night + 2 个航点, 库里 route_geo_id=NULL,
+            # mission_json={"source":"cloud","params":{}}.
+            #
+            # route_geo_id 为空的连带代价见 task_row.py 头注: geo_refs
+            # (11 S7.9.4 删除确认的影响集)因此不得不同时按名字匹配 --
+            # 列里没值时, 纯 id 匹配会对一条正被三个任务引用的路径回答
+            # "没有任何引用".
+            #
+            # * recorded_path_id 与 route_id 的关系(契约对撞 C-2): 前者是云端
+            # 的[计划级]路径 ID, 后者是后端[实际加载]的, 两者可能不同(路径被
+            # 重录过). 解析要查 geo 库, 而网关读不到(平面隔离) -- 所以这里
+            # 原样传, 由持有 geo.db 的 p3 去解析并在 state/task 回报实际值.
+            "route_id": payload.get("recorded_path_id"),
+            # 业务字段进 params: 15 S5.10 的 mission_json 就是从 task.params
+            # 建的, 它是"当初要求了什么"的不可变记录, 调度与审计都读它.
+            "params": {
+                "coordinate_system": payload.get("coordinate_system"),
+                "waypoints": payload.get("waypoints") or [],
+            },
         },
         "source": CLOUD_ORIGIN,
         "reason": "",

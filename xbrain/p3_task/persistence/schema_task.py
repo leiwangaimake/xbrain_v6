@@ -79,6 +79,22 @@ CREATE TABLE IF NOT EXISTS tasks (
   suspend_reason TEXT,
   interrupt_reason TEXT,     -- last interrupt cause; NOT cleared on resume (audit)
   mission_json  TEXT NOT NULL,
+  -- *** 实现是 >= 0, 而 15 S9.5 的 DDL 写的是 CHECK (total_steps >= 1).
+  -- 这处放宽此前没有任何记录, 2026-09-02 补登记.
+  --
+  -- 放宽的原因: task_row_from_command 建行时写死 total_steps=0, 注释是
+  -- "expanded later by the route layer" -- 那一层是路径展开(NEXT.md EX-1:
+  -- mission_json + 航点名 -> geo.db 航点 -> total_steps + V-3/V-6 校验),
+  -- 至今未建. 若保持 >= 1, 每一条 goto/patrol 在入库那一刻就被 DDL 拒掉.
+  --
+  -- 这不是"判据挡路就改判据"的豁免, 是一条[有期限的]欠账:
+  --   EX-1 落地后, total_steps 由路径展开填出真值, 本行应改回 >= 1,
+  --   并同批把存量 0 值的行迁移或清理(2026-09-02 时 144 行里有 142 行是 0).
+  -- 在那之前, >= 0 与 15 S9.5 的差异必须留在这里可见 -- 一处没有记录的
+  -- 放宽, 与"当初就是这么设计的"在代码上完全不可区分(CLAUDE.md 3.2 形态2).
+  --
+  -- NO 不把 total_steps 默认成 1 来"满足"约束: 那是编一个步数, 而下游的
+  -- current_step BETWEEN 0 AND total_steps 会据此放行一个不存在的进度.
   total_steps   INTEGER NOT NULL CHECK (total_steps >= 0),
   current_step  INTEGER NOT NULL DEFAULT 0
                  CHECK (current_step BETWEEN 0 AND total_steps),
