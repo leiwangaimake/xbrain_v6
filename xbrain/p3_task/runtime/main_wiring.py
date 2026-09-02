@@ -148,6 +148,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     from xbrain.p3_task.fence.geom import InvalidFenceSet
     from xbrain.p3_task.geo.objects import read_geo_objects
     from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
+    from xbrain.p3_task.state.geo_events import render_geo_event
     from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
     from xbrain.p3_task.ingest.geo_read import build_manifest
     from xbrain.p3_task.teach.runtime import TeachRuntime
@@ -247,6 +248,26 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     "detail": {"kind": kind, "task_id": task_id, "state": to_state},
                     "src": "p3_task", "ts": 0.0,
                 }).encode("utf-8"))
+
+            # 11 S6.2 geo events: 地理要素 CRUD 审计. applier 已经把
+            # (sev, detail.type, detail) 三元组放进 ApplyResult.events; 少的一直
+            # 是这个回调 -- handle_geo_payload 的 on_event 默认 None, 于是每一次
+            # 改图都不留审计. 与 task 事件同一条发布路径(p5 的 event/** 订阅入库
+            # 并转云), eid 同样带 boot token(裸 seq 跨 P3 重启会撞 UNIQUE(eid)).
+            _geo_evt_seq = [0]
+            _geo_evt_boot = _BOOT_ID
+
+            def _emit_geo_event(sev: str, etype: str, detail: dict) -> None:
+                # render_geo_event owns the S6.2 closed set + the info/warn
+                # pairing and raises on either violation. handle_geo_payload
+                # guards this callback per event, so a raise is logged and the
+                # already-committed write still acks accepted.
+                _geo_evt_seq[0] += 1
+                key, body = render_geo_event(
+                    sev, etype, detail,
+                    "geo-%s-%d" % (_geo_evt_boot, _geo_evt_seq[0]))
+                gen.put(key, json.dumps(
+                    body, ensure_ascii=False).encode("utf-8"))
 
             def _on_link(sample) -> None:
                 try:
@@ -462,7 +483,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     while not geo_queue.empty():
                         ack = await handle_geo_payload(
                             geo_queue.get_nowait(), geo_ctx,
-                            now_ms=_now_wall_ms())
+                            now_ms=_now_wall_ms(), on_event=_emit_geo_event)
                         geo_ack_pub.put(json.dumps(
                             ack, ensure_ascii=False).encode("utf-8"))
                         if ack.get("result") == "accepted":

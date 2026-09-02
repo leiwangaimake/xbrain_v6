@@ -50,6 +50,9 @@ from xbrain.p3_task.ingest.geo_object import (
     TABLE_FOR_TYPE, ParsedObject, parse_geo_object, polyline_len_m,
     resolvable_anchor_ids,
 )
+from xbrain.p3_task.state.geo_events import (
+    GEO_EVENT_INFO, GEO_EVENT_WARN,
+)
 from xbrain.p3_task.state.geo_rev import content_hash
 
 #: 11 S6.2 event/{sev}/geo detail.type closed set, info half + warn half. These
@@ -62,11 +65,11 @@ from xbrain.p3_task.state.geo_rev import content_hash
 #: adding them would need a second value shape in the metatest. The binding to
 #: the contract is kept instead by a case in test_geo_write that reads the S6.2
 #: row directly -- so the set is still checked against 11, just not from there.
-GEO_EVENT_INFO = frozenset({"geo.created", "geo.updated", "geo.deleted",
-                            "geo.renamed"})
-GEO_EVENT_WARN = frozenset({"geo.conflict", "geo.force_overwrite",
-                            "geo.route_changed", "geo.route_deleted",
-                            "geo.route_remap_failed"})
+# GEO_EVENT_INFO / GEO_EVENT_WARN live in state/geo_events.py with the
+# renderer that consumes them (imported above): severity is derived from the
+# type there, so keeping the sets next to the appliers would put the closed
+# set and the half-it-implies in two files. Re-exported by that import, so
+# importing them from here still works.
 
 #: The lifecycle state a newly created object starts in, by type. See the module
 #: docstring for why fence differs.
@@ -235,7 +238,7 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
                 f"INSERT INTO {parsed.table} ({names}) VALUES ({marks})",
                 tuple(cols.values()))
             events.append(("info", "geo.created",
-                           {"geo_id": cmd.geo_id, "type": cmd.type,
+                           {"geo_id": cmd.geo_id, "geo_type": cmd.type,
                             "state": state}))
         else:
             cur_rev, cur_hash = row[0], row[1]
@@ -263,7 +266,7 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
                 f"UPDATE {parsed.table} SET {sets} WHERE {parsed.pk_col}=?",
                 tuple(cols.values()) + (cmd.geo_id,))
             events.append(("info", "geo.updated",
-                           {"geo_id": cmd.geo_id, "type": cmd.type,
+                           {"geo_id": cmd.geo_id, "geo_type": cmd.type,
                             "rev": rev}))
             if cmd.force and cmd.base_rev != cur_rev:
                 # S7.9.2 step 4: a forced overwrite past a real conflict MUST
@@ -348,7 +351,7 @@ async def apply_rename(cmd: GeoCommand, ctx: GeoContext,
         await conn.commit()
         return ApplyResult("accepted", "OK", detail,
                            (("info", "geo.renamed",
-                             {"geo_id": cmd.geo_id, "type": cmd.type,
+                             {"geo_id": cmd.geo_id, "geo_type": cmd.type,
                               "name": cols.get("name")}),))
     except Exception as exc:
         await conn.rollback()
@@ -412,7 +415,7 @@ async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
         await conn.commit()
         return ApplyResult("accepted", "OK", detail,
                            (("info", "geo.updated",
-                             {"geo_id": cmd.geo_id, "type": cmd.type,
+                             {"geo_id": cmd.geo_id, "geo_type": cmd.type,
                               "state": target}),))
     except Exception as exc:
         await conn.rollback()
