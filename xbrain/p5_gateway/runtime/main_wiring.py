@@ -329,6 +329,22 @@ def _event_seg_index(segs: list) -> int:
         return -1
 
 
+def _event_sev_cat(key: str, d: dict):
+    """(sev, cat) for one event message. The KEY is authoritative: every on-board
+    producer publishes on event/{sev}/{cat} and puts NEITHER field in the body
+    (cloud_wiring.publish_event says so in as many words). Reading them off the
+    body instead yields (None, None) for every event ever produced -- which is
+    exactly how the cloud relay came to be silently disabled, so the body is kept
+    only as the fallback for a message that carries them and no usable key."""
+    segs = key.split("/")
+    ei = _event_seg_index(segs)
+    sev = (segs[ei + 1] if 0 <= ei and len(segs) > ei + 1
+           else (d.get("sev") or d.get("severity")))
+    cat = (segs[ei + 2] if 0 <= ei and len(segs) > ei + 2
+           else (d.get("cat") or d.get("category")))
+    return sev, cat
+
+
 def _normalise_event(key: str, d: dict) -> Optional[dict]:
     """Best-effort normalise an incoming event/{sev}/{cat} message to the
     record.db ev shape (the EventSubsystem persists it). sev/cat are the two
@@ -340,10 +356,7 @@ def _normalise_event(key: str, d: dict) -> Optional[dict]:
     monotonic-clock scan face; display/audit only, never used to order)."""
     segs = key.split("/")
     ei = _event_seg_index(segs)
-    sev = (segs[ei + 1] if 0 <= ei and len(segs) > ei + 1
-           else (d.get("sev") or d.get("severity")))
-    cat = (segs[ei + 2] if 0 <= ei and len(segs) > ei + 2
-           else (d.get("cat") or d.get("category")))
+    sev, cat = _event_sev_cat(key, d)
     rid = segs[ei - 1] if ei >= 1 else None            # absolute: .../{rid}/event
     rid = rid or os.environ.get("XBRAIN_ROBOT_ID") or d.get("rid")
     data = d.get("data") if isinstance(d.get("data"), dict) else d
@@ -686,11 +699,16 @@ def run_voice_loop_wiring(stop_flag: dict,
                 d = {}
             if not d:
                 return
+            # sev/cat off the KEY (see _event_sev_cat): reading them from the
+            # body left both None for every event, which blanked them in the HMI
+            # stream and, because the relay below gates on them, meant not one
+            # event ever reached the cloud.
+            _sev, _cat = _event_sev_cat(key, d)
             ev = {
                 "eid": d.get("eid") or d.get("event_id"),
                 "title": d.get("title") or d.get("message"),
-                "sev": d.get("severity") or d.get("sev"),
-                "cat": d.get("category") or d.get("cat"),
+                "sev": _sev,
+                "cat": _cat,
                 "ts": d.get("ts"),
                 "pos": d.get("pos"),   # None until pose stamps it (W4)
             }
