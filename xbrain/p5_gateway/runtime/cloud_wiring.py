@@ -224,7 +224,6 @@ class CloudBridge:
         self._event_pubs: Dict[str, Any] = {}
         # AUDIO_CONTROL start 的 stream_id 由网关分配(审计 B-1). 按 rid 计数,
         # 从 1 起. 见 _handle_audio.
-        self._audio_seq = 0
         # 拒绝审计事件的 eid 源(审计 E-1). v2.0 S10: 每次任务拒绝必须产生
         # 一条可靠 event/{sev}/task. boot token 让 eid 跨网关重启不撞
         # (record.db 持久化, 重启后 seq 从 0 但 boot 不同).
@@ -408,7 +407,8 @@ class CloudBridge:
         # (云端翻译点)能给. start ack 必须带新分配的 stream_id(v2.0 S2.5/
         # S3.1), 否则 Qt 拿不到它就发不了 audio/broadcast 帧(S8). AUDIO 恒单条.
         if len(commands) == 1 and commands[0][0] == KEY_AUDIO:
-            self._handle_audio(msg_id, task_id, task_type, commands[0][1])
+            self._handle_audio(msg_id, task_id, task_type, commands[0][1],
+                               raw)
             return
 
         # *** fan-out 为空: 只发生在 SET_ALARM_CONFIG 不带 regions(只想改 rules/
@@ -653,38 +653,49 @@ class CloudBridge:
         """在途 pending 数. 只为可观测/测试."""
         return len(self._pending)
 
-    def _alloc_stream_id(self) -> str:
-        """分配一个新 broadcast stream_id(v2.0 S2.5: 后端在 start 分配).
-
-        格式 audio-{rid}-{seq:04d}, 匹配 v2.0 S1.2 ID 正则. 按 rid 计数从 1
-        起 -- 同一台车的会话号连续, 便于联调时对上是第几次喊话.
-        """
-        self._audio_seq += 1
-        return "audio-%s-%04d" % (self._rid, self._audio_seq)
-
     def _handle_audio(self, msg_id: Optional[str], task_id: Optional[str],
-                      task_type: Optional[str], payload: Dict[str, Any]) -> None:
-        """AUDIO_CONTROL 的转发 + 自造 ack(带 stream_id, 审计 B-1).
+                      task_type: Optional[str], payload: Dict[str, Any],
+                      raw: bytes = b"") -> None:
+        """AUDIO_CONTROL: 本期如实拒绝(E_NOT_IMPLEMENTED).
 
-        start          分配 stream_id -> ack.detail.stream_id -> 转发带该 id
-        exit_broadcast 回显请求里的 stream_id -> ack.detail.stream_id(同一个)
-                       (v2.0 S3.1: 退出 ack 回显原 id, NO 不分配新 id)
+        *** 2026-09-03 实测后改为拒绝, 原实现是"分配 stream_id + 回 accepted".
+
+        云端喊话(pc_to_dog)的完整链路是:
+          云端 PCM -> audio/broadcast -> p5 -> p2 的 b_mode_forward(gen 检查 +
+          模式退出守卫) -> payload_client -> payload-service WS /play -> 8519
+        其中[只有两端建好了]: payload 侧的 WS /play 是实现了的, b_mode_forward
+        这个决策模块也在, 但它[零调用方](BIZ-P2-2 的 payload_client 转发未建),
+        而 p5 这一侧的 audio/broadcast 入站只统计字节数然后丢弃.
+
+        *** 原实现还把 AUDIO_CONTROL 的信封发到了 cmd/audio/speak 上.
+        那条 key 的消费方 (p2 的 parse_speak_payload) 要的是 {text: str} --
+        它是 TTS 文本通道, 不是喊话会话通道. 于是每一次 start 都在 p2 日志里
+        留一条 "cmd/audio/speak has no text field", 时间戳与网关的 accepted
+        逐条对齐. 即使将来喊话链路建好, 也不会走这条 key.
+
+        => 回 accepted 是 CLAUDE.md 3.2 的"能力不足时假装有保证": 甲方
+        2026-09-03 连点五次 start, 每次都拿到 accepted 与一个新 stream_id,
+        而声音不可能出来 -- 他们很可能正在排查自己的音频设备.
+        与 SET_ALARM_CONFIG 的规则半区同一处置(那条做对了): 如实拒绝, 让对方
+        一眼看出本期不支持.
+
+        NO 不按 action 分别处置: start 建不起来会话, exit_broadcast 也就没有
+        会话可退 -- 只拒一半会让 Qt 以为"退出成功了".
         """
-        action = payload.get("action")
-        if action == "start":
-            stream_id = self._alloc_stream_id()
-            payload["stream_id"] = stream_id     # 转发给 p2 时带上
-        else:                                    # exit_broadcast: 回显原 id
-            stream_id = payload.get("stream_id")
-        # 先转发再回 ack(同 _handle_task 的顺序理由: 转发失败不留下假 accepted).
-        self._internal_put(KEY_AUDIO, json.dumps(
-            payload, ensure_ascii=False).encode("utf-8"))
-        self._publish_ack("cmd/task/ack", build_ack(
-            msg_id=_new_msg_id(), ref_msg_id=msg_id or "",
-            task_id=task_id or "", task_type=task_type or "AUDIO_CONTROL",
-            result=RESULT_ACCEPTED, detail={"stream_id": stream_id}))
-        self.stats["accepted"] += 1
-        _logger.info("p5 cloud audio %s stream_id=%s", action, stream_id)
+        from ..outbound.error_map import build_error_fields
+        from ...common import errors
+
+        self._reject_task(
+            raw,
+            build_error_fields(
+                errors.E_NOT_IMPLEMENTED,
+                "cloud broadcast is not wired: the PCM path from "
+                "audio/broadcast to payload WS /play has no forwarder yet "
+                "(BIZ-P2-2)"),
+            msg_id=msg_id, task_id=task_id,
+            task_type=task_type or "AUDIO_CONTROL")
+        _logger.info("p5 cloud audio %s rejected (not wired)",
+                     payload.get("action"))
 
     def _emit_task_reject_event(self, *, ref_msg_id: Optional[str],
                                 task_id: Optional[str],

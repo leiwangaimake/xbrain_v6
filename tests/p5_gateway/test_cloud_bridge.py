@@ -343,27 +343,6 @@ def test_an_internal_ack_for_a_non_cloud_command_is_ignored():
         "HMI 发起的 ack 被当成云端的转发了")
 
 
-def test_audio_forwards_before_its_self_ack():
-    """*** 顺序有意义(AUDIO 仍是网关自造 ack, B-1).
-
-    GOTO/STOP/ALARM 不再自造 ack(A-1 改承接), 但 AUDIO 的 stream_id 由网关
-    分配, ack 仍自造 -- 且必须先转发再回 ack: 先回 ack 再转发的话, 一次转发
-    失败会留下一条 accepted 而 p2 什么都没收到.
-
-    MUTATION: 把 _handle_audio 里的 _internal_put 与 _publish_ack 对调 ->
-    这里红.
-    """
-    _b, session = _bridge()
-
-    _feed(session, "cmd/task", _audio("start"))
-
-    keys = [k for k, _ in session.puts]
-    assert keys.index("cmd/audio/speak") < keys.index(
-        "xbrain/gj-001/cmd/task/ack"), "ack 先于转发发出: %s" % keys
-
-
-# --- 拒绝路径 ---------------------------------------------------------
-
 def test_broken_json_still_gets_an_ack():
     """v2.0 S7.3 明禁静默丢弃.
 
@@ -886,81 +865,6 @@ def _audio(action, stream_id=None, msg_id="a-1"):
             "data": data}
 
 
-def test_audio_start_ack_carries_a_new_stream_id():
-    """*** v2.0 S2.5/S3.1: start ack 必须带后端新分配的 stream_id.
-
-    Qt 拿这个 stream_id 才能发 audio/broadcast 帧(S8). 没有它喊话发不出去.
-
-    MUTATION: _handle_audio 里 start 不分配 stream_id -> 这里红.
-    """
-    _b, session = _bridge()
-
-    _feed(session, "cmd/task", _audio("start"))
-
-    d = _puts_to(session, "cmd/task/ack")[0]["data"]
-    assert d["result"] == "accepted"
-    sid = d["detail"]["stream_id"]
-    assert sid and sid.startswith("audio-"), "start ack 没带分配的 stream_id"
-    # 机内转发也带上同一个 stream_id(p2 要按它标记这一路喊话).
-    fwd = _internal_puts(session, "cmd/audio/speak")[0]
-    assert fwd["stream_id"] == sid
-
-
-def test_audio_start_never_carries_a_client_stream_id():
-    """start 携带 stream_id 是非法的(网关分配, 不接受客户端给).
-
-    这条在 task_router 层拒(start must not carry stream_id). 验证它到不了
-    _handle_audio -- 一个 rejected ack, 不是 accepted.
-    """
-    _b, session = _bridge()
-
-    _feed(session, "cmd/task", _audio("start", stream_id="client-forced"))
-
-    d = _puts_to(session, "cmd/task/ack")[0]["data"]
-    assert d["result"] == "rejected"
-
-
-def test_audio_exit_echoes_the_original_stream_id():
-    """*** v2.0 S3.1: exit_broadcast ack 回显请求里的 stream_id, NO 不分配新的.
-
-    分配新 id 会让 Qt 无法确认自己退的是不是刚才那一路.
-
-    MUTATION: _handle_audio 的 exit 分支也调 _alloc_stream_id -> 这里红.
-    """
-    _b, session = _bridge()
-
-    _feed(session, "cmd/task", _audio("exit_broadcast", stream_id="audio-x-0007"))
-
-    d = _puts_to(session, "cmd/task/ack")[0]["data"]
-    assert d["result"] == "accepted"
-    assert d["detail"]["stream_id"] == "audio-x-0007", "退出没回显原 stream_id"
-
-
-def test_two_starts_get_distinct_stream_ids():
-    """每次 start 分配不同的 stream_id -- 两路喊话不能撞号."""
-    _b, session = _bridge()
-
-    _feed(session, "cmd/task", _audio("start", msg_id="a-1"))
-    _feed(session, "cmd/task", _audio("start", msg_id="a-2"))
-
-    acks = _puts_to(session, "cmd/task/ack")
-    s1 = acks[0]["data"]["detail"]["stream_id"]
-    s2 = acks[1]["data"]["detail"]["stream_id"]
-    assert s1 != s2, "两次 start 分配了同一个 stream_id"
-
-
-def test_audio_stream_id_matches_the_v2_id_regex():
-    """分配的 stream_id 必须匹配 v2.0 S1.2 ID 正则(audio/broadcast 帧要用它)."""
-    import re
-
-    _b, session = _bridge()
-    _feed(session, "cmd/task", _audio("start"))
-    sid = _puts_to(session, "cmd/task/ack")[0]["data"]["detail"]["stream_id"]
-    assert re.match(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", sid), sid
-
-
-# --- A-1: pending 超时 tick --------------------------------------------
-
 def _bridge_clock():
     """带假单调钟的桥, 用于测 pending 超时."""
     from xbrain.p5_gateway.runtime.cloud_wiring import CloudBridge
@@ -1408,3 +1312,70 @@ def test_the_key_severity_and_the_body_severity_agree():
     key, payload = session.puts[0]
     body = json.loads(payload.decode("utf-8"))
     assert key.split("/")[-2] == body["data"]["sev"] == "error", (key, body["data"]["sev"])
+
+
+# --- AUDIO_CONTROL: 本期如实拒绝 --------------------------------------
+
+def test_audio_control_is_rejected_while_the_path_is_not_wired():
+    """*** 2026-09-03 由"分配 stream_id + accepted"改为如实拒绝.
+
+    云端喊话(pc_to_dog)的完整链路是:
+      云端 PCM -> audio/broadcast -> p5 -> p2 的 b_mode_forward(gen 检查 +
+      模式退出守卫) -> payload_client -> payload-service WS /play -> 8519
+    只有两端建好了: payload 侧的 WS /play 实现了, b_mode_forward 也在, 但它
+    [零调用方](BIZ-P2-2 的 payload_client 转发未建), 而 p5 这侧的
+    audio/broadcast 入站只统计字节数然后丢弃.
+
+    v2.0 S2.5/S3.1 要求 start 的 ack 带新分配的 stream_id -- 那条要求只在我们
+    [接受]时才适用. 发一个 stream_id 出去, 等于请 Qt 往一个黑洞里推 PCM:
+    2026-09-03 甲方连点五次 start, 每次都拿到 accepted 与新 stream_id, 而声音
+    不可能出来, 他们很可能正在排查自己的音频设备.
+
+    *** 链路建好后本条要换回"accepted + stream_id", 并把 _alloc_stream_id
+    加回来(本次按 9.3 删掉了, 留着会谎报系统有这个能力).
+
+    MUTATION: 改回 accepted -> 红.
+    """
+    _b, session = _bridge()
+
+    _feed(session, "cmd/task", _audio("start"))
+
+    d = _puts_to(session, "cmd/task/ack")[0]["data"]
+    assert d["result"] == "rejected", d
+    assert d["accepted"] is False, d
+    assert d["error_code"] != 0, d
+    assert "not wired" in (d.get("reason") or ""), d
+
+
+def test_both_audio_actions_are_rejected_consistently():
+    """NO 不按 action 分别处置: start 建不起来会话, exit_broadcast 也就没有会话
+    可退 -- 只拒一半会让 Qt 以为"退出成功了".
+
+    MUTATION: 只拒 start 而放行 exit -> 红.
+    """
+    for action in ("start", "exit_broadcast"):
+        _b, session = _bridge()
+        _feed(session, "cmd/task", _audio(action))
+        d = _puts_to(session, "cmd/task/ack")[0]["data"]
+        assert d["result"] == "rejected", (action, d)
+
+
+def test_audio_control_is_not_posted_onto_the_tts_key():
+    """*** cmd/audio/speak 是 TTS [文本]通道, 不是喊话会话通道.
+
+    它的消费方(p2 的 parse_speak_payload)要 {text: str}, 拿不到就抛
+    "cmd/audio/speak has no text field". 原实现把 AUDIO_CONTROL 的信封
+    ({action, mode, stream_id})发到这条 key 上, 于是每一次 start 都在 p2 日志
+    里留一条 parse fail -- 2026-09-03 真机日志四次下发对应四条, 时间戳与网关
+    的 accepted 逐条对齐(相差 1 ms).
+
+    即使将来喊话链路建好也不会走这条 key -- PCM 走的是 audio/broadcast.
+
+    MUTATION: 恢复 _internal_put(KEY_AUDIO, ...) -> 红.
+    """
+    _b, session = _bridge()
+
+    _feed(session, "cmd/task", _audio("start"))
+
+    assert not _internal_puts(session, "cmd/audio/speak"), (
+        "AUDIO_CONTROL 被发到了 TTS 文本通道上")
