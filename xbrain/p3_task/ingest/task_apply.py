@@ -260,7 +260,7 @@ async def _transition_one(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
     if on_transition is not None:
         # Same seam the scheduler uses, so an HMI-driven change reaches
         # state/task and the S6.2 task events exactly like a scheduled one.
-        await on_transition(cmd.task_id, result.to_state, cmd.reason)
+        await on_transition(cmd.task_id, state, result.to_state, cmd.reason)
     # AP-1/AP-2: `applied` carries the resulting STATE, which reads as a whole
     # sentence on its own ("task t-... is now cancelled") rather than {ok:true}.
     return task_ack(cmd.cmd_id, "accepted", "OK", detail)
@@ -320,7 +320,8 @@ async def _clear_queue(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
     await ctx.task_conn.commit()
     if on_transition is not None:
         for task_id in cleared:
-            await on_transition(task_id, "cancelled", cmd.reason or "clear_queue")
+            await on_transition(task_id, state, "cancelled",
+                                cmd.reason or "clear_queue")
     # S7.2: cleared_ids MUST be reported, and an empty sweep is still accepted.
     return task_ack(cmd.cmd_id, "accepted", "OK",
                     {"cleared_ids": cleared,

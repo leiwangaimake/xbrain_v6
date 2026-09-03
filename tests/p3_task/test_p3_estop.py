@@ -55,7 +55,7 @@ def _pending(task_id, priority=50, seq=1):
         updated_ms=0, source="local", trace_id="tr", resume_policy="continue")
 
 
-async def _noop(task_id, to_state, reason):
+async def _noop(task_id, from_state, to_state, reason):
     return None
 
 

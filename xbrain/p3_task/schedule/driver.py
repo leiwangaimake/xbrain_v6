@@ -23,7 +23,8 @@ scheduler_tick is that driver, one atomic pass over the task table:
      'ready' -> 'running'. One running task at a time (single robot).
 
 Each transition goes through apply_transition (the graph is the authority) +
-TasksDAO.update_state, and calls on_transition(task_id, to_state, reason) so
+TasksDAO.update_state, and calls on_transition(task_id, from_state, to_state,
+reason) so
 the caller can publish state/task + an event. The whole tick is one
 transaction: a reader on another connection sees either the pre-tick or the
 post-tick state, never a half-applied pass. It reads no clock (now_mono_ms
@@ -45,7 +46,10 @@ from xbrain.p3_task.state.preconditions import (
 )
 
 
-# on_transition(task_id, to_state, reason) -> awaitable. reason is '' on a
+# on_transition(task_id, from_state, to_state, reason) -> awaitable.
+# from_state is what apply_transition was called with -- the event decision is
+# made on the (from, to) pair, never on whether reason is non-empty.
+# reason is '' on a
 # clean transition, or the failing precondition code on a validate_fail.
 OnTransition = Callable[[str, str, str], Awaitable[None]]
 
@@ -78,7 +82,7 @@ async def _dispatch(dao, task_id: str, now_mono_ms: int, started_at: str,
                             started_mono=now_mono_ms / 1000.0,
                             started_boot=boot_id)
     made.append((task_id, "ready", result.to_state))
-    await on_transition(task_id, result.to_state, "")
+    await on_transition(task_id, "ready", result.to_state, "")
 
 
 async def scheduler_tick(conn, dao, *, now_mono_ms: int,
@@ -101,7 +105,7 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
         result = apply_transition("pending", event)
         await dao.update_state(task_id, result.to_state, now_mono_ms)
         made.append((task_id, "pending", result.to_state))
-        await on_transition(task_id, result.to_state, reason)
+        await on_transition(task_id, "pending", result.to_state, reason)
 
     # -- phase 1b: yielding 自动恢复扫描 (15 S3.2) --
     #
@@ -137,7 +141,8 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
                 result = apply_transition("suspended", "resume")
                 await dao.resume_task(task_id, now_mono_ms)
                 made.append((task_id, "suspended", result.to_state))
-                await on_transition(task_id, result.to_state, "yielded_to_done")
+                await on_transition(task_id, "suspended", result.to_state,
+                                    "yielded_to_done")
 
     # -- phase 2: 15 S6.1 的调度决策树 --
     # Re-read so the tasks just validated to 'ready' are visible (read-your-
@@ -180,7 +185,7 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
             validate_suspend_fields(result.to_state, "yielding", "preempted")
             await dao.preempt_task(cur_id, "preempted", now_mono_ms)
             made.append((cur_id, "running", result.to_state))
-            await on_transition(cur_id, result.to_state, "preempted")
+            await on_transition(cur_id, "running", result.to_state, "preempted")
             # 抢占必须是"挂起"不是"取消"(15 S6.3 末行) -- 那是 U07 断点续跑
             # 的前提. suspend_kind=yielding 的恢复条件是"让位对象一进终态就
             # 自动回 ready"(15 S3.2), 不需要人工干预.
@@ -256,5 +261,6 @@ async def apply_motion_result(conn, dao, task_id: str, result: str, *,
             getattr(full, "started_boot", None),
             now_mono_ms, boot_id))
     await conn.commit()
-    await on_transition(task_id, transition.to_state, f"motion:{result}")
+    await on_transition(task_id, "running", transition.to_state,
+                        f"motion:{result}")
     return True

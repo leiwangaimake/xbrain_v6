@@ -46,7 +46,7 @@ async def _collect(dao, conn):
     """Run one tick, capturing the transitions the callback sees."""
     seen = []
 
-    async def on_t(task_id, to_state, reason):
+    async def on_t(task_id, from_state, to_state, reason):
         seen.append((task_id, to_state, reason))
 
     made = await scheduler_tick(conn, dao, now_mono_ms=1, on_transition=on_t)
@@ -108,7 +108,7 @@ async def test_bad_type_validate_fails(dao_conn):
                for s in seen)
 
 
-async def _noop(task_id, to_state, reason):
+async def _noop(task_id, from_state, to_state, reason):
     return None
 
 

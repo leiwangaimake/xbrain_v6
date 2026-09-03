@@ -65,7 +65,7 @@ async def _submit(conn, dao, frame, *, now_mono_ms):
     return ack["detail"]["task_id"]
 
 
-async def _noop(task_id, to_state, reason):
+async def _noop(task_id, from_state, to_state, reason):
     return None
 
 

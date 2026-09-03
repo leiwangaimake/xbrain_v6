@@ -114,7 +114,7 @@ class _FakeConn:
         return None
 
 
-async def _noop(task_id, state, reason):
+async def _noop(task_id, from_state, to_state, reason):
     return None
 
 
@@ -510,3 +510,71 @@ def test_terminal_writes_finished_at_and_duration():
     assert "dao.finish_task(" in src, (
         "终态仍走 update_state -- finished_at 与 duration_sec 都不会写")
     assert "compute_duration_sec(" in src, "终态没有算时长"
+
+
+# --- 接线: 传给回调的 from_state 必须是真实的来源状态 -------------------
+
+def _tick_capturing(rows, started_at="2026-09-02T08:00:00Z", boot_id="boot1"):
+    """跑一次 tick, 把 (task_id, from_state, to_state) 全记下来.
+
+    纯函数单测看不见接线传了什么: 变异测试显示, 把抢占那处的 from_state 写成
+    "pending" 时全部单测照样绿(查表抛 KeyError, 被 tick 外层的 except 吞掉,
+    只多一条日志). 判别既然按 (from, to) 做, 就必须有一条断言盯着真实传进去
+    的那一对.
+    """
+    from xbrain.p3_task.schedule.driver import scheduler_tick
+    seen = []
+
+    async def _cap(task_id, from_state, to_state, reason):
+        seen.append((task_id, from_state, to_state))
+
+    dao = _FakeDao(rows)
+    asyncio.run(scheduler_tick(_FakeConn(), dao, now_mono_ms=1000,
+                               on_transition=_cap,
+                               started_at=started_at, boot_id=boot_id))
+    return seen
+
+
+def test_dispatch_reports_the_ready_to_running_pair():
+    """派发的来源状态是 ready. 传错的话事件表要么查不到(抛), 要么映射成别的
+    kind -- 两种都不会被纯函数单测发现.
+
+    MUTATION: driver 的派发处把 "ready" 写成别的 -> 红.
+    """
+    seen = _tick_capturing([
+        {"task_id": "t-1", "priority": 50, "submit_seq": 1, "state": "ready"}])
+    assert ("t-1", "ready", "running") in seen, seen
+
+
+def test_preemption_reports_the_running_to_suspended_pair():
+    """*** 抢占的来源状态是 running. 这一对决定了甲方看到的是"无事件"还是
+    "被拒绝" -- 本次重写的靶心就在这里.
+
+    MUTATION: driver 的抢占处把 "running" 写成 "pending" -> 红.
+    """
+    seen = _tick_capturing([
+        {"task_id": "t-low", "priority": 40, "submit_seq": 1,
+         "state": "running"},
+        {"task_id": "t-high", "priority": 90, "submit_seq": 2,
+         "state": "ready"}])
+    assert ("t-low", "running", "suspended") in seen, seen
+    assert ("t-high", "ready", "running") in seen, seen
+
+
+def test_the_pairs_the_wiring_reports_are_all_known_to_the_event_table():
+    """接线传出去的每一对都必须在事件表里有表态 -- 否则运行期抛.
+
+    这条把[接线]与[事件表]钉在一起: 单独看任何一边都发现不了传错的 from_state.
+    MUTATION: 任意一处 on_transition 的 from_state 写错 -> 红.
+    """
+    from xbrain.p3_task.state.task_events import _TRANSITION_EVENT
+
+    seen = _tick_capturing([
+        {"task_id": "t-low", "priority": 40, "submit_seq": 1,
+         "state": "running"},
+        {"task_id": "t-high", "priority": 90, "submit_seq": 2,
+         "state": "ready"},
+        {"task_id": "t-new", "priority": 30, "submit_seq": 3,
+         "state": "pending"}])
+    unknown = [(f, t) for _tid, f, t in seen if (f, t) not in _TRANSITION_EVENT]
+    assert not unknown, "接线报出了事件表没表态的迁移: %r" % unknown

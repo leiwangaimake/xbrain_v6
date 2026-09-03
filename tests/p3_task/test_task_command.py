@@ -476,11 +476,13 @@ async def test_transitions_reach_the_publish_seam(ctx):
     cancels a task that every other consumer still believes is queued."""
     seen = []
 
-    async def _on(task_id, to_state, reason):
-        seen.append((task_id, to_state, reason))
+    async def _on(task_id, from_state, to_state, reason):
+        # from_state 一并记下: 事件判别现在按 (from, to) 做, 只记 to 就看不出
+        # "从哪来"这一半, 而那一半正是拒绝与取消的唯一区别.
+        seen.append((task_id, from_state, to_state, reason))
 
     await _seed(ctx, "t-1", "ready")
     await handle_task_payload(
         {"cmd_id": "c-1", "action": "cancel", "task_id": "t-1",
          "reason": "operator_hmi"}, ctx, now_mono_ms=5, on_transition=_on)
-    assert seen == [("t-1", "cancelled", "operator_hmi")]
+    assert seen == [("t-1", "ready", "cancelled", "operator_hmi")]

@@ -723,11 +723,13 @@ def _make_publish(state_pub, emit_task_event=None, publish_state=None):
     Publishing the whole state on every transition, rather than just the task that
     moved, is what makes `queue` and `suspended` correct: one task starting changes
     the queue for all the others, and a delta of one task cannot express that."""
-    async def _publish(task_id: str, to_state: str, reason: str) -> None:
+    async def _publish(task_id: str, from_state: str, to_state: str,
+                       reason: str) -> None:
         if reason:
-            _logger.info("p3 task %s -> %s (%s)", task_id, to_state, reason)
+            _logger.info("p3 task %s %s -> %s (%s)",
+                         task_id, from_state, to_state, reason)
         else:
-            _logger.info("p3 task %s -> %s", task_id, to_state)
+            _logger.info("p3 task %s %s -> %s", task_id, from_state, to_state)
         if publish_state is not None:
             try:
                 await publish_state()
@@ -737,7 +739,9 @@ def _make_publish(state_pub, emit_task_event=None, publish_state=None):
                 _logger.error("p3 state/task publish failed: %s", exc)
         # 11 S6.2 task event -- a separate stream from the state/task heartbeat.
         if emit_task_event is not None:
-            ev = task_event_for_transition(to_state, reason)
+            # 判别只看迁移. reason 仍然进日志(给人看), 但不再参与决定发什么
+            # 事件 -- 那正是"暂停被报成 rejected"的来源.
+            ev = task_event_for_transition(from_state, to_state)
             if ev is not None:
                 emit_task_event(task_id, to_state, ev[0], ev[1])
     return _publish
