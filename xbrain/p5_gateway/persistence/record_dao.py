@@ -34,6 +34,7 @@ merges a little wrong -- never mis-orders or drops a distinct event.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -91,6 +92,19 @@ class RecordDao:
         self._rd = reader
         # JSONL degrade sidecar; appended to only when a DB write fails (S-6).
         self._jsonl_path = jsonl_path
+        # *** 一把锁管住本 DAO 的每一个事务.
+        # 三个 RecordConn 角色共享底层连接, 而每个写方法都自己 BEGIN IMMEDIATE.
+        # 两条事件在同一毫秒到达时(accepted 与 started 就是这样), 两个协程在
+        # 同一个连接上交错: A 开了事务并在 await 处让出, B 也来 BEGIN ->
+        # "cannot start a transaction within a transaction". 更糟的是 B 的
+        # rollback 回滚的是[共享连接上的那个事务], 于是 A 已经写好的行一起没了.
+        # 2026-09-03 实测: task-evt-reject-1 的 accepted 事件既不在库里也不在
+        # JSONL 旁路里 -- 彻底丢失, 而同一毫秒的 started 在.
+        # 游标脱节也是同一个根因: A 的游标 UPDATE 被 B 的 rollback 带走, 而
+        # 它的 INSERT 已经落了.
+        # 锁不可重入, 所以 _attempt_insert / _resync_cursor 这些[已在锁内]的
+        # 内部方法一律不再自己取锁.
+        self._tx_lock = asyncio.Lock()
 
     # -- startup --------------------------------------------------------------
 
@@ -131,6 +145,12 @@ class RecordDao:
         # UNIQUE(channel, ch_seq). 下面的重试就是为这种脱节兜底.
         writer = self._wf if sev in ("alarm", "fault") else self._wn
         c = writer.conn
+        async with self._tx_lock:
+            return await self._insert_locked(c, ev, channel, sev)
+
+    async def _insert_locked(self, c, ev: dict, channel: str,
+                             sev: str) -> InsertResult:
+        """insert_event 的事务部分. 调用方已持有 _tx_lock."""
         try:
             return await self._attempt_insert(c, ev, channel, sev)
         except Exception as first:  # noqa: BLE001 -- 先修不变量再重试一次
@@ -318,6 +338,12 @@ class RecordDao:
             return 0
         c = self._wn.conn
         marks = ", ".join("?" for _ in eids)
+        async with self._tx_lock:
+            return await self._mark_locked(c, marks, eids, delivered_at, batch)
+
+    async def _mark_locked(self, c, marks: str, eids: list,
+                           delivered_at: str, batch: Optional[str]) -> int:
+        """mark_delivered 的事务部分. 调用方已持有 _tx_lock."""
         await c.execute("BEGIN IMMEDIATE")
         try:
             cur = await c.execute(
@@ -385,11 +411,19 @@ class RecordDao:
         if channel not in CHANNELS:
             raise ValueError(f"channel not in {sorted(CHANNELS)}: {channel!r}")
         c = self._wn.conn
-        cur = await c.execute(
-            "SELECT confirmed_upto FROM event_cursor WHERE channel = ?",
-            (channel,))
-        row = await cur.fetchone()
-        new_upto = advance_confirmed(row[0], acked_upto)  # raises on rewind
+        # 读游标与写回必须在同一个临界区: 读完再让出的话, 另一个协程可能已经
+        # 推进过 confirmed_upto, 这里就会把它写回旧值(SEQ-3 要求单调).
+        async with self._tx_lock:
+            cur = await c.execute(
+                "SELECT confirmed_upto FROM event_cursor WHERE channel = ?",
+                (channel,))
+            row = await cur.fetchone()
+            new_upto = advance_confirmed(row[0], acked_upto)  # raises on rewind
+            return await self._advance_locked(c, channel, new_upto, backfill_at)
+
+    async def _advance_locked(self, c, channel: str, new_upto: int,
+                              backfill_at: str) -> int:
+        """advance_confirmed_upto 的事务部分. 调用方已持有 _tx_lock."""
         await c.execute("BEGIN IMMEDIATE")
         try:
             await c.execute(
