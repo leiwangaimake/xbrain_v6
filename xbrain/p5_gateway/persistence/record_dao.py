@@ -35,6 +35,7 @@ merges a little wrong -- never mis-orders or drops a distinct event.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Optional
 
@@ -55,6 +56,11 @@ _INSERT_COLUMNS = (
     "need_ack", "delivered", "deliver_tries",
     "media_json",
 )
+
+
+#: 降级与游标修复都要留声. 这个模块此前没有 logger, 于是 JSONL 旁路是
+#: 完全静默的 -- 见 insert_event 的注释.
+_logger = logging.getLogger("xbrain.p5.record_dao")
 
 
 @dataclass(frozen=True)
@@ -118,26 +124,80 @@ class RecordDao:
             raise ValueError(f"sev not in {sorted(SEVERITIES)}: {sev!r}")
 
         # FS-d: alarm/fault durability is non-negotiable -> FULL writer.
+        # *** 注意这里按 sev 选连接, 而 ch_seq 游标按 channel 分配 -- 两者不是
+        # 同一个维度. S6.2 里 sev=alarm 而 channel=normal 的组合是常态(comm 的
+        # cloud_lost 就是), 所以同一个 normal 游标会被两条连接轮流取号. 观测到
+        # 过一次两者脱节(游标停在一个已用值上), 之后每一条事件都撞
+        # UNIQUE(channel, ch_seq). 下面的重试就是为这种脱节兜底.
         writer = self._wf if sev in ("alarm", "fault") else self._wn
         c = writer.conn
         try:
-            await c.execute("BEGIN IMMEDIATE")
-            if ev.get("dedup_key"):
-                merged = await self._try_merge(c, ev)
-                if merged:
-                    await c.commit()
-                    return InsertResult(status="merged", channel=channel)
-            ch_seq = await self._alloc_ch_seq(c, channel)
-            await self._insert_row(c, ev, channel, sev, ch_seq)
-            await c.commit()
-            return InsertResult(status="inserted", channel=channel, ch_seq=ch_seq)
-        except Exception:  # noqa: BLE001 -- any DB error degrades, never crashes p5
+            return await self._attempt_insert(c, ev, channel, sev)
+        except Exception as first:  # noqa: BLE001 -- 先修不变量再重试一次
+            await self._rollback_quiet(c)
+            # SEQ-3 的不变量是 next_ch_seq == MAX(ch_seq)+1. 它被破坏之后
+            # [每一条]事件都会失败, 而且不会自愈: 分配永远返回同一个已用号,
+            # 只有 p5 重启时的 init_cursors_from_table 才会重算. 实测代价是
+            # 15 小时的事件全部落进 JSONL 旁路而无人知晓, 所以这里就地重建.
             try:
-                await c.rollback()
-            except Exception:  # noqa: BLE001
-                pass
-            self._degrade_to_jsonl(ev)
-            return InsertResult(status="degraded", channel=channel)
+                await self._resync_cursor(c, channel)
+                result = await self._attempt_insert(c, ev, channel, sev)
+                _logger.warning(
+                    "record insert recovered after cursor resync "
+                    "(channel=%s, first error %s: %s)",
+                    channel, type(first).__name__, first)
+                return result
+            except Exception as second:  # noqa: BLE001 -- 真降级
+                await self._rollback_quiet(c)
+                # *** 降级必须留声. 原实现一行日志都没有, 于是"事件还在入库"
+                # 与"事件全进了旁路文件"在运行期完全不可区分 -- 这正是它能
+                # 持续 15 小时的原因(CLAUDE.md 3.2: 静默降级比报错糟).
+                _logger.warning(
+                    "record insert DEGRADED to JSONL (eid=%s channel=%s "
+                    "sev=%s): %s: %s", ev.get("eid"), channel, sev,
+                    type(second).__name__, second)
+                self._degrade_to_jsonl(ev)
+                return InsertResult(status="degraded", channel=channel)
+
+    async def _attempt_insert(self, c, ev: dict, channel: str,
+                              sev: str) -> InsertResult:
+        """One BEGIN IMMEDIATE attempt: dedup merge, else allocate + insert."""
+        await c.execute("BEGIN IMMEDIATE")
+        if ev.get("dedup_key"):
+            merged = await self._try_merge(c, ev)
+            if merged:
+                await c.commit()
+                return InsertResult(status="merged", channel=channel)
+        ch_seq = await self._alloc_ch_seq(c, channel)
+        await self._insert_row(c, ev, channel, sev, ch_seq)
+        await c.commit()
+        return InsertResult(status="inserted", channel=channel, ch_seq=ch_seq)
+
+    async def _resync_cursor(self, c, channel: str) -> None:
+        """Restore SEQ-3's invariant for one channel: next_ch_seq = MAX+1.
+
+        Same computation init_cursors_from_table does at startup; doing it here
+        turns a desync from "persistence is dead until someone restarts p5" into
+        "one event took two attempts".
+        """
+        await c.execute("BEGIN IMMEDIATE")
+        cur = await c.execute(
+            "SELECT MAX(ch_seq) FROM events WHERE channel = ?", (channel,))
+        row = await cur.fetchone()
+        max_seq = row[0] if row and row[0] is not None else 0
+        await c.execute(
+            "UPDATE event_cursor SET next_ch_seq = ? WHERE channel = ?",
+            (max_seq + 1, channel))
+        await c.commit()
+
+    @staticmethod
+    async def _rollback_quiet(c) -> None:
+        """Roll back, swallowing a failure: we are already on the error path and
+        the caller still has to decide what to do with the event."""
+        try:
+            await c.rollback()
+        except Exception:  # noqa: BLE001
+            pass
 
     async def _try_merge(self, c, ev: dict) -> bool:
         """S3.2: if a still-open row with this dedup_key exists within its window,
