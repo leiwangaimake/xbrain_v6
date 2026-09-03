@@ -540,3 +540,42 @@ def test_main_wiring_actually_ticks_the_projector():
     assert len(ticks) == 1, (
         "main_wiring 里对 cloud_projector.tick 的调用有 %d 处 -- "
         "出站面没有人驱动" % len(ticks))
+
+
+def test_the_file_index_has_a_keepalive_not_change_only():
+    """*** 一个恒为空的全量面必须靠周期发出去.
+
+    甲方协议: data/file/index "连接/变化时发完整索引". 我方拿不到 Qt 的
+    session 建立信号, 只能用周期近似"连接时" -- 与 state/geo/manifest 同一
+    取舍. 而这条比 manifest 更彻底: 文件面今天无内容, 索引恒为空数组也就
+    恒不变化, "变化时发"永远不触发, 一帧都发不出去. _file_index 的说明里
+    写着"不发则与后端挂了不可区分", 而 None 就是不发.
+
+    变异体: 把周期改回 None => 本条红.
+    """
+    from xbrain.p5_gateway.runtime.cloud_wiring import OUTBOUND_PERIODS
+
+    period = OUTBOUND_PERIODS["data/file/index"]
+    assert period is not None, (
+        "data/file/index 只在变化时发, 而它恒为空数组 -- Qt 永远收不到")
+    assert 0 < period <= 5.0, period
+    # 与 state/media 同类: 同为低频全量快照, 不该给不同的值.
+    assert period == OUTBOUND_PERIODS["state/media"], (
+        "同类的两条全量快照周期不一致: file/index=%r media=%r"
+        % (period, OUTBOUND_PERIODS["state/media"]))
+
+
+def test_no_outbound_key_is_change_only_without_a_change_signal():
+    """*** 守这一类, 不只守这一条.
+
+    geo/manifest 与 file/index 是同一个错法犯了两次: 周期 None 意味着"只在
+    变化时发", 而我方对这些面根本没有变化信号(也没有 session 建立信号).
+    这条断言把 None 整体挡掉, 免得第三次.
+
+    变异体: 给任意一条上行 key 的周期填 None => 本条红.
+    """
+    from xbrain.p5_gateway.runtime.cloud_wiring import OUTBOUND_PERIODS
+
+    change_only = [k for k, v in OUTBOUND_PERIODS.items() if v is None]
+    assert not change_only, (
+        "这些上行 key 只在变化时发, 但没有变化信号可依: %r" % change_only)
