@@ -457,6 +457,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 payload, task_ctx, now_mono_ms=_now_mono_ms(),
                                 created_at=_now_utc_iso(),
                                 date_str=_today_yyyymmdd(),
+                                # 与 created_at 同一范式: 墙钟与 boot 由调用方
+                                # 注入, 被调用方里不该有第二处时钟来源(CLK-C1).
+                                finished_at=_now_utc_iso(),
+                                boot_id=_BOOT_ID,
                                 on_transition=_make_publish(
                                     state_pub, _emit_task_event))
                             task_ack_pub.put(json.dumps(

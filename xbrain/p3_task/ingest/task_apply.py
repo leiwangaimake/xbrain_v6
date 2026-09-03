@@ -49,6 +49,9 @@ from xbrain.p3_task.ingest.task_command import (
     TaskCommand, TaskCommandError, parse_task_command, task_ack,
 )
 from xbrain.p3_task.ingest.task_row import task_row_from_command
+# compute_duration_sec 与 driver 共用一份: 15 S9.5 的口径(跨重启写
+# NULL, 不回退墙钟差值)只能有一个实现, 抄第二份必然漂.
+from xbrain.p3_task.schedule.driver import compute_duration_sec
 from xbrain.p3_task.state.machine import (
     InvalidTransition, TERMINAL_STATES, apply_transition,
 )
@@ -76,6 +79,7 @@ class TaskContext:
 async def handle_task_payload(payload: Dict[str, Any], ctx: TaskContext, *,
                               now_mono_ms: int, created_at: str = "",
                               date_str: str = "",
+                              finished_at: str = "", boot_id: str = "",
                               on_transition=None) -> Dict[str, Any]:
     """Run one cmd/task frame end to end and return the ack body to publish.
 
@@ -99,7 +103,8 @@ async def handle_task_payload(payload: Dict[str, Any], ctx: TaskContext, *,
         if replay is not None:
             return replay
         return await _dispatch(cmd, ctx, now_mono_ms, created_at, date_str,
-                               on_transition)
+                               on_transition, finished_at=finished_at,
+                               boot_id=boot_id)
     except TaskCommandError as exc:
         return task_ack(cmd.cmd_id, "rejected", exc.code,
                         exc.detail if exc.detail is not None
@@ -111,7 +116,8 @@ async def handle_task_payload(payload: Dict[str, Any], ctx: TaskContext, *,
 
 async def _dispatch(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
                     created_at: str, date_str: str,
-                    on_transition) -> Dict[str, Any]:
+                    on_transition, *, finished_at: str = "",
+                    boot_id: str = "") -> Dict[str, Any]:
     if cmd.action == "clear_queue":
         # S7.2: clear_queue does NO duplicate check -- it is a set operation on
         # whatever the queue holds at that instant, so it is deliberately NOT
@@ -119,7 +125,8 @@ async def _dispatch(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
         return await _clear_queue(cmd, ctx, now_mono_ms, on_transition)
     if cmd.action == "submit":
         return await _submit(cmd, ctx, now_mono_ms, created_at, date_str)
-    return await _transition_one(cmd, ctx, now_mono_ms, on_transition)
+    return await _transition_one(cmd, ctx, now_mono_ms, on_transition,
+                                 finished_at=finished_at, boot_id=boot_id)
 
 
 #: action -> (machine event, the states it is legal from, the code to refuse
@@ -218,7 +225,8 @@ async def _submit(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
 
 
 async def _transition_one(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
-                          on_transition) -> Dict[str, Any]:
+                          on_transition, *,
+                          finished_at: str = "", boot_id: str = "") -> Dict[str, Any]:
     """cancel / pause / resume on one existing task."""
     event, legal_from = _ACTION_EVENT[cmd.action]
     cur = await ctx.task_conn.execute(
@@ -250,7 +258,8 @@ async def _transition_one(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
         return task_ack(cmd.cmd_id, "duplicate", "OK",
                         {"task_id": cmd.task_id,
                          "applied": {"state": state, "changed": False}})
-    await _write_state(ctx.task_conn, cmd, result.to_state, now_mono_ms)
+    await _write_state(ctx.task_conn, cmd, result.to_state, now_mono_ms,
+                       finished_at=finished_at, boot_id=boot_id)
     detail = {"task_id": cmd.task_id,
               "applied": {"state": result.to_state,
                           "from": result.from_state, "changed": True}}
@@ -267,7 +276,8 @@ async def _transition_one(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
 
 
 async def _write_state(conn, cmd: TaskCommand, to_state: str,
-                       now_mono_ms: int) -> None:
+                       now_mono_ms: int, *, finished_at: str = "",
+                       boot_id: str = "") -> None:
     """One state write, with the suspend fields kept consistent.
 
     The tasks DDL pairs suspend_kind / suspend_reason with the suspended state
@@ -281,6 +291,26 @@ async def _write_state(conn, cmd: TaskCommand, to_state: str,
             "UPDATE tasks SET state=?, suspend_kind=?, suspend_reason=?, "
             " updated_ms=? WHERE task_id=?",
             (to_state, _PAUSE_KIND, _PAUSE_REASON, now_mono_ms, cmd.task_id))
+    elif to_state in TERMINAL_STATES:
+        # *** 终态还要写 finished_at 与 duration_sec (15 S9.5), NO 不能只写 state.
+        # 原实现走的是下面那条通用 UPDATE, 于是[凡是被取消的任务终态审计列全空]
+        # -- 2026-09-03 甲方停掉一条任务, 库里 started_at 有值而 finished_at 与
+        # duration_sec 都是 NULL, 上报给云端的 summary.duration_sec 因此是 0.0.
+        # finish_task 只被 apply_motion_result(执行完成路径)调用过, 而那条路
+        # 因为执行器未建从没跑过 -- 于是这两列在真机上一直是空的.
+        cur = await conn.execute(
+            "SELECT started_mono, started_boot FROM tasks WHERE task_id=?",
+            (cmd.task_id,))
+        row = await cur.fetchone()
+        started_mono = row[0] if row else None
+        started_boot = row[1] if row else None
+        await conn.execute(
+            "UPDATE tasks SET state=?, suspend_kind=NULL, suspend_reason=NULL, "
+            " updated_ms=?, finished_at=?, duration_sec=? WHERE task_id=?",
+            (to_state, now_mono_ms, finished_at or None,
+             compute_duration_sec(started_mono, started_boot,
+                                  now_mono_ms, boot_id),
+             cmd.task_id))
     else:
         await conn.execute(
             "UPDATE tasks SET state=?, suspend_kind=NULL, suspend_reason=NULL, "

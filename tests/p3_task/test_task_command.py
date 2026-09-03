@@ -486,3 +486,82 @@ async def test_transitions_reach_the_publish_seam(ctx):
         {"cmd_id": "c-1", "action": "cancel", "task_id": "t-1",
          "reason": "operator_hmi"}, ctx, now_mono_ms=5, on_transition=_on)
     assert seen == [("t-1", "ready", "cancelled", "operator_hmi")]
+
+
+# --- 终态审计列: 取消也要落 finished_at / duration_sec (15 S9.5) ---------
+
+@pytest.mark.asyncio
+async def test_cancel_writes_the_terminal_audit_columns(ctx):
+    """*** 被取消的任务, 终态审计列一直是空的.
+
+    finish_task(唯一写这两列的 DAO 方法)只有 apply_motion_result 一个调用点,
+    而那条路因为执行器未建从没跑过. 控制路径(取消/清队列)走的是通用 UPDATE,
+    只写 state -- 于是 2026-09-03 甲方停掉一条任务后, 库里 started_at 有值而
+    finished_at 与 duration_sec 都是 NULL, 上报的 summary.duration_sec 因此
+    是 0.0(而 15 S9.5 要求未知写 NULL).
+
+    MUTATION: 把终态分支去掉(退回通用 UPDATE) -> 红.
+    """
+    await _seed(ctx, "t-c", "running")
+    # started_mono / started_boot: 派发时写的, 这里补上才算真实的运行中任务
+    await ctx.task_conn.execute(
+        "UPDATE tasks SET started_mono=?, started_boot=? WHERE task_id=?",
+        (100.0, "boot-1", "t-c"))
+    await ctx.task_conn.commit()
+
+    ack = await handle_task_payload(
+        {"cmd_id": "c-fin", "action": "cancel", "task_id": "t-c",
+         "reason": "operator_stop"}, ctx, now_mono_ms=130_000,
+        finished_at="2026-09-03T10:00:00Z", boot_id="boot-1")
+    assert ack["result"] == "accepted", ack
+
+    cur = await ctx.task_conn.execute(
+        "SELECT state, finished_at, duration_sec FROM tasks WHERE task_id='t-c'")
+    state, finished_at, duration = await cur.fetchone()
+    assert state == "cancelled"
+    assert finished_at == "2026-09-03T10:00:00Z", finished_at
+    # 130000ms - 100.0s = 30.0s
+    assert duration == pytest.approx(30.0), duration
+
+
+@pytest.mark.asyncio
+async def test_duration_is_null_across_a_reboot_not_a_wall_clock_diff(ctx):
+    """15 S9.5 逐字: 终态时的 boot != started_boot 就写 NULL, 不得回退用墙钟
+    差值充数 -- 单调钟只在一次开机内可比(11 CLK-C4).
+
+    MUTATION: 跨重启时回退成墙钟差 -> 红.
+    """
+    await _seed(ctx, "t-r", "running")
+    await ctx.task_conn.execute(
+        "UPDATE tasks SET started_mono=?, started_boot=? WHERE task_id=?",
+        (100.0, "boot-OLD", "t-r"))
+    await ctx.task_conn.commit()
+
+    await handle_task_payload(
+        {"cmd_id": "c-r", "action": "cancel", "task_id": "t-r"},
+        ctx, now_mono_ms=130_000,
+        finished_at="2026-09-03T10:00:00Z", boot_id="boot-NEW")
+
+    cur = await ctx.task_conn.execute(
+        "SELECT finished_at, duration_sec FROM tasks WHERE task_id='t-r'")
+    finished_at, duration = await cur.fetchone()
+    assert finished_at == "2026-09-03T10:00:00Z"
+    assert duration is None, "跨重启的 duration 应为 NULL, 得到 %r" % duration
+
+
+@pytest.mark.asyncio
+async def test_a_pause_does_not_write_terminal_columns(ctx):
+    """suspended 不是终态, 写 finished_at 会让"这个任务结束了"变成假的.
+
+    MUTATION: 把终态判断放宽到所有非 suspended 分支 -> 红.
+    """
+    await _seed(ctx, "t-p", "running")
+    await handle_task_payload(
+        {"cmd_id": "c-p", "action": "pause", "task_id": "t-p"},
+        ctx, now_mono_ms=5, finished_at="2026-09-03T10:00:00Z",
+        boot_id="boot-1")
+    cur = await ctx.task_conn.execute(
+        "SELECT state, finished_at, duration_sec FROM tasks WHERE task_id='t-p'")
+    state, finished_at, duration = await cur.fetchone()
+    assert state == "suspended"
+    assert finished_at is None and duration is None
