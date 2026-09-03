@@ -190,7 +190,8 @@ class CloudBridge:
                  now_mono: Optional[Callable[[], float]] = None,
                  now_wall: Optional[Callable[[], float]] = None,
                  on_cloud_rx: Optional[Callable[[], None]] = None,
-                 on_cloud_down: Optional[Callable[[], None]] = None) -> None:
+                 on_cloud_down: Optional[Callable[[], None]] = None,
+                 on_new_session: Optional[Callable[[], None]] = None) -> None:
         if not rid:
             # 没有 rid 就构不出合法 key. 宁可不建桥也不建一条 "xbrain//cmd/task"
             # -- 后者会订到一个谁都不发的 key 上, 表现为"客户端连上了但没反应".
@@ -206,6 +207,13 @@ class CloudBridge:
         # 与 on_cloud_rx 同一范式 -- 桥只负责报告"听见了什么", 断开的判据与
         # 阈值归 LinkStateMachine, 桥不该知道 L2/L3.
         self._on_cloud_down = on_cloud_down
+        # HB-2(11 S2.2.2A): session_id 变化 = 一次新的 session 建立.
+        # 这是我方[唯一]能拿到的 session 建立信号 -- Qt 的订阅是 Zenoh 内部
+        # 行为, 不产生任何回调, 在此之前只能用周期重发近似.
+        self._on_new_session = on_new_session
+        # None 起步. *** 记一笔: 换成任何哨兵字符串都是等价变异 -- 它与任何
+        # 真实 session_id 都不相等, 首拍照样触发, 没有测试能区分.
+        self._hb_session: Optional[str] = None
         self._subs: List[Any] = []          # 强引用容器, 见类文档
         self._pubs: Dict[str, Any] = {}
         self._seq = SeqCounter()
@@ -861,6 +869,23 @@ class CloudBridge:
                     self._on_cloud_down()
                 except Exception:      # noqa: BLE001
                     _logger.exception("p5 cloud down notify failed")
+            # HB-2: session_id 变化(含首次出现)= 新 session 建立.
+            # NO 不看 state -- 一条 down 同样带着 session_id, 但那时重发全量
+            # 清单没有意义(对方正要走), 所以只在 up 上判.
+            session_id = data.get("session_id")
+            if (state == "up" and session_id
+                    and session_id != self._hb_session):
+                prev, self._hb_session = self._hb_session, session_id
+                _logger.info("p5 cloud new Qt session %s (was %s) -> full "
+                             "resend of the session-scoped keys",
+                             session_id, prev)
+                if self._on_new_session is not None:
+                    try:
+                        self._on_new_session()
+                    except Exception:      # noqa: BLE001
+                        # 重发失败不该吃掉这一拍心跳的存活语义(它已经在 _rx
+                        # 里刷新过链路计时).
+                        _logger.exception("p5 cloud new-session resend failed")
             self._hb_beats = getattr(self, "_hb_beats", 0) + 1
         except Exception:                       # noqa: BLE001
             # 心跳解析失败不影响它已经刷新过的断线计时(那一步在 _rx 里, 先于
@@ -1020,7 +1045,8 @@ def _str_or_none(value: Any) -> Optional[str]:
 
 def maybe_wire(session: Any, rid: str,
                on_cloud_rx: Optional[Callable[[], None]] = None,
-               on_cloud_down: Optional[Callable[[], None]] = None
+               on_cloud_down: Optional[Callable[[], None]] = None,
+               on_new_session: Optional[Callable[[], None]] = None
                ) -> Optional[CloudBridge]:
     """rid 存在才建桥, 否则返回 None.
 
@@ -1032,7 +1058,8 @@ def maybe_wire(session: Any, rid: str,
         _logger.warning("p5 cloud bridge skipped: XBRAIN_ROBOT_ID unset")
         return None
     bridge = CloudBridge(session, rid, on_cloud_rx=on_cloud_rx,
-                         on_cloud_down=on_cloud_down)
+                         on_cloud_down=on_cloud_down,
+                         on_new_session=on_new_session)
     bridge.wire()
     return bridge
 

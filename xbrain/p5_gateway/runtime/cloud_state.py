@@ -143,6 +143,28 @@ class CloudProjector:
                 sent.append(name)
         return sent
 
+    #: HB-2 触发时要重发的全量面. 两条都是"连接/变化时发完整快照"型:
+    #: v2.0 S4.5 对 manifest 逐字"session 建立后 2 秒内发一份 full=true 的全量
+    #: 清单"; 任务枚举件对 file/index 写的是"连接/变化时发完整索引".
+    SESSION_FULL_KEYS = ("state/geo/manifest", "data/file/index")
+
+    def force_resend(self, *names: str) -> None:
+        """HB-2(11 S2.2.2A): 新 session 建立 -> 这几条全量面立即重发.
+
+        *** 做法是[清掉节律记账], 不是直接 put.
+        直接 put 会绕过 tick 里的组装与闭集校验, 变成第二条发布路径 -- 两条
+        路径迟早会对同一条 key 发出形状不同的两种报文.
+        清掉 _last_sent 让 elapsed 变成无穷大(该发了), 清掉 _last_body 让
+        changed 为真 -- 两个都清是为了[周期若被改回 None 也仍然生效].
+
+        *** NO 这不取代周期保活.
+        周期是底线, session 触发是加速. 那两条 key 的内容可以长期不变(空清单
+        恒为空), "仅变化时发"等于永不发 -- 见 b11904b 与 cdbbd5c 修过的坑.
+        """
+        for name in (names or self.SESSION_FULL_KEYS):
+            self._last_sent.pop(name, None)
+            self._last_body.pop(name, None)
+
     def _due(self, name: str, data: Dict[str, Any]) -> bool:
         """该发了吗. 变化即发, 否则等周期.
 

@@ -912,7 +912,13 @@ def run_voice_loop_wiring(stop_flag: dict,
                                   on_cloud_rx=lambda: link_state.on_cloud_rx(
                                       time.monotonic()),
                                   # HB-1: 心跳带 state="down" -> 立即断开.
-                                  on_cloud_down=link_state.on_cloud_explicit_down)
+                                  on_cloud_down=link_state.on_cloud_explicit_down,
+                                  # HB-2: session_id 变化 -> 全量面立即重发.
+                                  # 用 lambda 而不是直接传方法: cloud_projector
+                                  # 在本行之后才建, 名字要到调用时才解析.
+                                  on_new_session=lambda: (
+                                      cloud_projector.force_resend()
+                                      if cloud_projector is not None else None))
         if cloud_bridge is not None:
             from xbrain.p5_gateway.runtime.cloud_state import CloudProjector
             # The outbound face needs DRIVING, not just publishers: a declared
