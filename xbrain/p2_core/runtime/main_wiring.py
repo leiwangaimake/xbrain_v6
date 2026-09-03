@@ -299,7 +299,16 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         _bcast_rid = os.environ.get("XBRAIN_ROBOT_ID")
         # T-BCAST-MAX(11 S1.5, 属 p2_core). 14 S11 把它钉在
         # mode.b_cast_max_duration_s, 是[已定值]不是 null 占位.
-        b_cast_max_duration_s = float(cfg.get("mode.b_cast_max_duration_s"))
+        # load_resolved 读的是解析产物 /run/xbrain/resolved/(10 S5.4.1),
+        # 不是 configs/ 源 -- 引用轴在冻结线一次性展开.
+        # NO 不能直接写 load_resolved: 本函数末尾另有一处
+        # `from ... import load_resolved`, 于是这个名字在[整个函数]里都是
+        # 局部的, 在那行之前用它是 UnboundLocalError -- 而单测跑不到这个
+        # 接线函数, 只有真起进程才会暴露(2026-09-03 实测到).
+        from xbrain.common.config.resolved import (
+            load_resolved as _load_resolved)
+        b_cast_max_duration_s = float(
+            _load_resolved("p2_core").get("mode.b_cast_max_duration_s"))
 
         # --- B 模式(云端喊话)的收发端 -------------------------------
         # 11 S2.2: audio/broadcast "仅 p2_core" 订阅(RT-A3). 三件东西跟着
@@ -325,32 +334,47 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             return "audio-%s-%04d" % (
                 (_bcast_rid or "unknown").replace("-", ""), bcast_seq["n"])
 
-        def _on_mode_transition(from_state, to_state) -> None:
-            """换态副作用. 只在真的换了态时被调(见 ModeFace)."""
+        def _on_mode_transition(from_state, to_state):
+            """换态副作用. 只在真的换了态时被调(见 ModeFace).
+
+            返回值并进 cmd/mode/ack 的 applied -- 进 B 模式时把新分配的
+            stream_id 带出去(v2.0 S2.5: start 的 ack 必须带它).
+            """
             try:
                 if to_state == ModeState.BROADCAST:
                     sid = _alloc_stream_id()
                     bcast_sess.begin(sid)
                     bcast_sink.start_session()
                     bcast_timer.start(int(time.monotonic() * 1000))
-                    mode_face.last_stream_id = sid
                     _logger.info("p2 B mode enter, stream_id=%s", sid)
+                    return {"stream_id": sid}
                 elif from_state == ModeState.BROADCAST:
                     # 先停收帧再关连接: 反过来的话, 关连接与最后几帧
                     # submit 会撞上, 那几帧进了队却永远发不出去.
+                    _ended = bcast_sess.stream_id
                     bcast_sess.end()
                     bcast_timer.stop()
                     bcast_sink.end_session()
-                    _logger.info("p2 B mode exit, sent=%d dropped=%s",
-                                 bcast_sink.sent, bcast_sess.drops)
+                    # accepted 与 sent 必须[分开]报: 判帧收下了 N 帧而
+                    # WS 一帧没发出去(payload 不在线), 与判帧一帧没收下,
+                    # 在只报 sent 的日志上完全一样 -- 而要找的人一个是
+                    # 甲方(流不对), 一个是现场(设备不在).
+                    _logger.info(
+                        "p2 B mode exit, accepted=%d sent=%d ws_err=%s "
+                        "dropped=%s",
+                        bcast_sess.accepted, bcast_sink.sent,
+                        bcast_sink.last_error, bcast_sess.drops)
+                    # 退出时回显刚结束的那一路: v2.0 S2.5 逐字"后端不得为
+                    # 退出请求分配新 ID". 回 None 会让 Qt 无法确认自己退的
+                    # 是不是刚才那一路.
+                    return {"stream_id": _ended}
             except Exception as exc:      # noqa: BLE001
                 _logger.error("p2 B mode transition side effect failed: %s",
                               exc)
+            return None
 
         mode_face = ModeFace(publish=_publish_mode_state,
                              on_transition=_on_mode_transition)
-        # p5 要把它回给云端(v2.0: start 的 ack 必须带 detail.stream_id).
-        mode_face.last_stream_id = None
 
         def _on_cloud_broadcast(sample) -> None:
             """云端 B 模式 PCM. RUST THREAD -- 判一帧, 放进队, 立刻返回.

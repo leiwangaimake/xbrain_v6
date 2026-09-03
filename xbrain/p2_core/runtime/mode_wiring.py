@@ -230,14 +230,23 @@ class ModeFace:
                  "blocked": [{"domain": d} for d in sorted(result.blocked)],
                  "self_held": sorted(result.self_held)})
         changed = result.from_state != result.to_state
+        extra: Dict[str, Any] = {}
         if changed and self._on_transition is not None:
             # NO 不吞异常后继续: 副作用失败时这条 ack 不该报 accepted.
             # 但也不能让它把 ModeFace 打挂 -- 记下来, 由调用方的回调自己
             # 决定要不要把状态回滚(本期回调只做起停, 失败即记日志).
-            self._on_transition(result.from_state, result.to_state)
+            # 回调可以回一个 dict, 并进 applied. B 模式用它把 stream_id
+            # 送出去: 分配方是 p2(会话的持有者), 而 v2.0 S2.5 要求 start 的
+            # ack 必须带上它 -- 不并进来的话, p5 拿不到, Qt 也就不知道该往
+            # 哪个会话推 PCM.
+            _ret = self._on_transition(result.from_state, result.to_state)
+            if isinstance(_ret, dict):
+                extra = _ret
         applied = {"mode": result.to_state.value,
                    "from_mode": result.from_state.value,
                    "changed": changed}
+        if extra:
+            applied.update(extra)
         if verdict.applied:
             applied.update(verdict.applied)
         # 重复 cmd_id 回放的是第一次的结果(模式机自己保证), 结果里如实标出来,

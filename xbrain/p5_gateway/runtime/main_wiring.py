@@ -452,6 +452,7 @@ def run_voice_loop_wiring(stop_flag: dict,
         "link": None,                # state/link  -> status + ESTOP arming
         "mode": None,                # state/mode  -> footer mode (W3)
         "pose": None,                # state/pose  -> coord panel + heading dial + RTK
+        "stream_id": None,           # B 模式会话 ID (p2 分配, 经 cmd/mode/ack)
         "audio": None,               # 11 S8.10 AudioState (p2 发)
         "audio_updated_ms": 0,       # last state/audio arrival (mono)
         "pose_updated_ms": 0,        # last state/pose arrival (mono) -> staleness gate
@@ -876,6 +877,19 @@ def run_voice_loop_wiring(stop_flag: dict,
                 body = json.loads(bytes(sample.payload).decode("utf-8"))
             except Exception:      # noqa: BLE001
                 return
+            # B 模式的 stream_id: p2 在 cmd/mode/ack 的 applied 里回来.
+            # v2.0 S4.3 要求 state/mode 在 voice_mode=broadcast 时必带它
+            # (Qt 靠它把 state/audio 的帧对上会话), 而 11 S4.3 的 ModeState
+            # [没有这个字段] -- 两册的这处差只能在网关这层补上.
+            # *** 退出时必须清掉. 不清的话下一次进 B 模式如果 ack 丢了,
+            # 投影会拿着上一路的 ID 继续发, 而那一路早已结束 --
+            # Qt 会把新会话的帧对到旧 ID 上.
+            _ap = (body.get("detail") or {}).get("applied") or {}
+            if isinstance(_ap, dict) and "mode" in _ap:
+                if _ap.get("mode") == "broadcast":
+                    hmi_state["stream_id"] = _ap.get("stream_id")
+                else:
+                    hmi_state["stream_id"] = None
             cmd_id = body.get("cmd_id")
             if not isinstance(cmd_id, str) or not cmd_id.startswith("h-"):
                 # Not ours: these keys also carry answers to cloud- and
