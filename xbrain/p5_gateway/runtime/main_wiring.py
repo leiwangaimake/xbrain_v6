@@ -910,7 +910,9 @@ def run_voice_loop_wiring(stop_flag: dict,
         # rtb_s(L3)就自动注入返航, 优先级 95, 把客户的任务抢占掉.
         cloud_bridge = maybe_wire(gen, os.environ.get("XBRAIN_ROBOT_ID", ""),
                                   on_cloud_rx=lambda: link_state.on_cloud_rx(
-                                      time.monotonic()))
+                                      time.monotonic()),
+                                  # HB-1: 心跳带 state="down" -> 立即断开.
+                                  on_cloud_down=link_state.on_cloud_explicit_down)
         if cloud_bridge is not None:
             from xbrain.p5_gateway.runtime.cloud_state import CloudProjector
             # The outbound face needs DRIVING, not just publishers: a declared

@@ -189,7 +189,8 @@ class CloudBridge:
                  dedup: Optional[DedupWindow] = None,
                  now_mono: Optional[Callable[[], float]] = None,
                  now_wall: Optional[Callable[[], float]] = None,
-                 on_cloud_rx: Optional[Callable[[], None]] = None) -> None:
+                 on_cloud_rx: Optional[Callable[[], None]] = None,
+                 on_cloud_down: Optional[Callable[[], None]] = None) -> None:
         if not rid:
             # 没有 rid 就构不出合法 key. 宁可不建桥也不建一条 "xbrain//cmd/task"
             # -- 后者会订到一个谁都不发的 key 上, 表现为"客户端连上了但没反应".
@@ -201,6 +202,10 @@ class CloudBridge:
         # LinkStateMachine 管, 桥只负责报告"听见了", 所以是个回调而不是
         # 在这里持有状态机 -- 桥不该知道 L2/L3 的阈值.
         self._on_cloud_rx = on_cloud_rx
+        # HB-1(11 S2.2.2A): 心跳带 state="down" 时通知链路状态机立即断开.
+        # 与 on_cloud_rx 同一范式 -- 桥只负责报告"听见了什么", 断开的判据与
+        # 阈值归 LinkStateMachine, 桥不该知道 L2/L3.
+        self._on_cloud_down = on_cloud_down
         self._subs: List[Any] = []          # 强引用容器, 见类文档
         self._pubs: Dict[str, Any] = {}
         self._seq = SeqCounter()
@@ -846,6 +851,16 @@ class CloudBridge:
                 _logger.error(
                     "p5 cloud heartbeat state=%r not in the 11 S2.2.2A closed "
                     "set (up|down); treated as a beat, nothing else", state)
+            elif state == "down" and self._on_cloud_down is not None:
+                # HB-1: 对方明确告知下线 -> 立即断开, 不等 degraded_s.
+                # *** 注意 _rx 包装[已经]先刷新过断线计时(它在本函数之前跑),
+                # 这里再置强制断开是[后写覆盖], 顺序不能反 -- 反了的话这一条
+                # down 自己会把自己刷成"在线".
+                _logger.info("p5 cloud heartbeat state=down -> link forced down")
+                try:
+                    self._on_cloud_down()
+                except Exception:      # noqa: BLE001
+                    _logger.exception("p5 cloud down notify failed")
             self._hb_beats = getattr(self, "_hb_beats", 0) + 1
         except Exception:                       # noqa: BLE001
             # 心跳解析失败不影响它已经刷新过的断线计时(那一步在 _rx 里, 先于
@@ -1004,7 +1019,8 @@ def _str_or_none(value: Any) -> Optional[str]:
 
 
 def maybe_wire(session: Any, rid: str,
-               on_cloud_rx: Optional[Callable[[], None]] = None
+               on_cloud_rx: Optional[Callable[[], None]] = None,
+               on_cloud_down: Optional[Callable[[], None]] = None
                ) -> Optional[CloudBridge]:
     """rid 存在才建桥, 否则返回 None.
 
@@ -1015,7 +1031,8 @@ def maybe_wire(session: Any, rid: str,
     if not rid:
         _logger.warning("p5 cloud bridge skipped: XBRAIN_ROBOT_ID unset")
         return None
-    bridge = CloudBridge(session, rid, on_cloud_rx=on_cloud_rx)
+    bridge = CloudBridge(session, rid, on_cloud_rx=on_cloud_rx,
+                         on_cloud_down=on_cloud_down)
     bridge.wire()
     return bridge
 

@@ -124,6 +124,9 @@ class LinkStateMachine:
         # reachable -- a just-booted P5 has a tiny gap but has heard nothing, and
         # reporting 'up' there would silently disable the L2/L3 limits.
         self._ever_rx = False
+        # HB-1(11 S4.6.3 步骤三): 云端明确告知下线(heartbeat/qt 的 state="down").
+        # 由下一次 on_cloud_rx 清除 -- 对方回来了就不再"被强制断开".
+        self._forced_down = False
 
     def on_cloud_rx(self, now_mono: float) -> None:
         """Any cloud message (heartbeat pong / cmd / event ack / recon rsp) refreshes
@@ -132,8 +135,37 @@ class LinkStateMachine:
         only after stable_s. A lone float write is safe under the GIL."""
         self._ever_rx = True
         self._last_rx_mono = now_mono
+        # 对方又出声了, 强制断开的理由随之消失. NO 不在这里直接置 up --
+        # LNK-3 的迟滞仍然要走(连续 stable_s 才算恢复).
+        self._forced_down = False
         if self._cloud_link != CLOUD_UP and self._reconnect_mono is None:
             self._reconnect_mono = now_mono
+
+    def on_cloud_explicit_down(self) -> None:
+        """HB-1(11 S4.6.3 步骤三): 云端明确告知它要下线.
+
+        *** 这是本状态机的[第二个输入].
+        在它之前只有"多久没听到"一条 gap 驱动的入口 -- 而对方明确说了要走, 还
+        要等 degraded_s(5 s)才认, 是把[已知]当[未知].
+
+        *** down_since_mono 仍从[最后一次听到]起算, NO 不是从现在.
+        与 evaluate 的 else 分支同一口径(11 S4.6.3 步骤二逐字"从最后一次听到起
+        算, 不是从判定时刻"). 从现在起算的话, disconnected_s 会比真实断开时长
+        短一截, 而它是 TSK-21 返航判据的输入.
+
+        *** 本函数 NO 不直接写 level / cloud_link / reason.
+        那三个由 evaluate 的下一拍统一算出 -- 两处都写的话, 1 Hz 评估与本函数
+        会在同一个字段上打架, 而谁最后写谁生效取决于时序.
+        *** 记一笔: 在这里写 self._level 是[死写], evaluate 每拍都会无条件重算,
+        所以"在这里加一句 self._level = 3"是等价变异, 没有任何测试能杀它.
+        真正守住"显式下线不得跳级"的是 evaluate 里那条按 disconnected_s 的
+        阈值梯度(test_an_explicit_down_does_not_skip_levels), 不是本函数.
+        """
+        if self._down_since_mono is None:
+            self._down_since_mono = self._last_rx_mono
+            self._link_epoch += 1
+        self._reconnect_mono = None
+        self._forced_down = True
 
     def evaluate(self, now_mono: float) -> LinkSnapshot:
         """1 Hz evaluation (11 S4.6.3 step 2). Recompute level / cloud_link /
@@ -144,7 +176,8 @@ class LinkStateMachine:
         reconnected = False
 
         # LNK-5: not reachable until the cloud has been heard from at least once.
-        if self._ever_rx and gap < th.degraded_s:
+        # HB-1: forced_down 让"刚刚还听得到"也算断开 -- 对方说了它要走.
+        if self._ever_rx and gap < th.degraded_s and not self._forced_down:
             # Reachable right now.
             in_window = (self._down_since_mono is not None
                          and self._reconnect_mono is not None
