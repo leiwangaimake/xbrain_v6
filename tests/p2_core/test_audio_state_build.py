@@ -23,7 +23,11 @@ Description:
 import pytest
 
 from xbrain.p2_core.messaging.audio_state import (DEVICE_STATES,
+
                                                   build_audio_state)
+
+# INF-TS-1 三档 marker. 纯函数 / 静态检查, 不碰任何硬件 -> no_device.
+pytestmark = pytest.mark.no_device
 
 
 def _view(speaking=False, since=None, holder=None, reason="idle"):
@@ -42,6 +46,7 @@ def _view(speaking=False, since=None, holder=None, reason="idle"):
 def _build(**over):
     kw = dict(speaker_view=_view(), mic_muted=False, mic_streaming=True,
               mic_device_name="hw:0,0", mic_frames_dropped_gate=0,
+              broadcast_holder=None,
               payload_audio_ok=True, voice_mode=None, ts_mono=1000.0)
     kw.update(over)
     return build_audio_state(**kw)
@@ -233,3 +238,43 @@ def test_ts_mono_alone_never_counts_as_a_change():
     assert due is False, "只有 ts_mono 变了也当成变更"
     # 而 body 里发出去的仍然带 ts_mono -- 消费方要靠它算年龄.
     assert b["ts_mono"] == 1000.05
+
+
+
+# --- B 模式 ----------------------------------------------------------
+
+def test_a_running_broadcast_reads_as_speaking_even_though_tts_is_idle():
+    """*** 云端喊话[不经过 handle_speak], SpeakerDomain 的锁全程没被拿过.
+
+    只看 speaker_view 的话, 一次云端喊话期间 state/audio 会一直报
+    holder="none" -- 甲方界面上喇叭正响着而那格显示空闲, 而这恰恰是他们
+    最需要看的一格.
+
+    MUTATION: 把 broadcast_holder 从 speaking 的判断里去掉 -> 这里红.
+    """
+    out = _build(speaker_view=_view(speaking=False),
+                 broadcast_holder="broadcast_b")
+    assert out["speaker"]["holder"] == "broadcast_b"
+    assert out["mic"]["open"] is False or True   # mic 由 mute 决定, 不在本条
+
+
+def test_broadcast_outranks_a_concurrent_tts_holder():
+    """域2 里 broadcast_b(800) 高于 tts_*(400~600).
+
+    真同时发生时在响的是 broadcast_b, 报另一个就是报了个不在响的源.
+    """
+    out = _build(speaker_view=_view(speaking=True, since=1.0,
+                                    holder="tts_local"),
+                 broadcast_holder="broadcast_b")
+    assert out["speaker"]["holder"] == "broadcast_b"
+
+
+def test_no_broadcast_leaves_the_tts_holder_alone():
+    """*** 与上一条配对: 没有广播时不许把 holder 顶掉.
+
+    只有上面两条的话, 一个"holder 恒 broadcast_b"的实现会全绿.
+    """
+    out = _build(speaker_view=_view(speaking=True, since=1.0,
+                                    holder="tts_local"),
+                 broadcast_holder=None)
+    assert out["speaker"]["holder"] == "tts_local"

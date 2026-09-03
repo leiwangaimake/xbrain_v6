@@ -21,7 +21,11 @@ import base64
 import pytest
 
 from xbrain.p2_core.audio.broadcast_rx import (DROP_REASONS, V2_FRAME_BYTES,
+
                                                BroadcastSession, accept_chunk)
+
+# INF-TS-1 三档 marker. 纯函数 / 静态检查, 不碰任何硬件 -> no_device.
+pytestmark = pytest.mark.no_device
 
 _PCM = b"\x11\x22" * (V2_FRAME_BYTES // 2)
 

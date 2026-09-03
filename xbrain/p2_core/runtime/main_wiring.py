@@ -59,6 +59,11 @@ _logger = logging.getLogger("xbrain.p2.wiring")
 # convention -- the rid prefix is the session's, not the caller's).
 HEALTH_SUMMARY_TOPIC = "health/summary"
 STATE_AUDIO_TOPIC = "state/audio"    # 11 S2.2.2, 内部总线裸键(rid 前缀由 p5 转云端时加)
+from xbrain.p2_core.audio.broadcast_rx import (BroadcastSession,
+                                              accept_chunk)
+from xbrain.p2_core.audio.broadcast_sink import BroadcastPlaySink
+from xbrain.p2_core.mode.b_mode_timer import BModeTimer
+from xbrain.p2_core.mode.state_machine import ModeState
 from xbrain.p2_core.messaging.audio_state import (audio_publish_due,
                                                   build_audio_state)
 
@@ -288,7 +293,87 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         def _publish_mode_state(key: str, data: bytes) -> None:
             mode_state_pub.put(data)
 
-        mode_face = ModeFace(publish=_publish_mode_state)
+        # 云端面 rid. NO 不兜 "unknown": 那会让本进程去订
+        # xbrain/unknown/audio/broadcast -- 一条永远收不到帧的 key, 现象与
+        # "云端没发"不可区分. 未设时下面整段跳过并记一条明确日志.
+        _bcast_rid = os.environ.get("XBRAIN_ROBOT_ID")
+        # T-BCAST-MAX(11 S1.5, 属 p2_core). 14 S11 把它钉在
+        # mode.b_cast_max_duration_s, 是[已定值]不是 null 占位.
+        b_cast_max_duration_s = float(cfg.get("mode.b_cast_max_duration_s"))
+
+        # --- B 模式(云端喊话)的收发端 -------------------------------
+        # 11 S2.2: audio/broadcast "仅 p2_core" 订阅(RT-A3). 三件东西跟着
+        # IDLE <-> BROADCAST 的跃迁起停:
+        #   bcast_sess  收帧判据(stream_id / seq / 格式)
+        #   bcast_sink  PCM -> payload WS /play
+        #   bcast_timer T-BCAST-MAX 强制收声(11 S1.5 T-BCAST-MAX, 属 p2_core)
+        bcast_sess = BroadcastSession()
+        bcast_sink = BroadcastPlaySink(payload_cfg.payload_base_url)
+        bcast_timer = BModeTimer(max_duration_s=b_cast_max_duration_s)
+        # stream_id 由[本进程]分配, 不是 p5.
+        # v2.0 S2.5 只要求"后端在 start 的 ack 里分配", 没规定是哪个进程.
+        # 放这里的理由: 会话的实际持有者是 p2(收帧判据与 WS 连接都在这),
+        # 由 p5 分配的话它得随 cmd/mode 传下来, 而 11 S7 的 ModeCommand
+        # 没有这个字段 -- 为它改契约不值. p5 从 cmd/mode/ack 的 applied
+        # 里取回来回给云端.
+        bcast_seq = {"n": 0}
+
+        def _alloc_stream_id() -> str:
+            # v2.0 的样例形状 audio-gj001-0001. rid 里的短横去掉 --
+            # 样例逐字是 gj001 而 rid 是 gj-001.
+            bcast_seq["n"] += 1
+            return "audio-%s-%04d" % (
+                (_bcast_rid or "unknown").replace("-", ""), bcast_seq["n"])
+
+        def _on_mode_transition(from_state, to_state) -> None:
+            """换态副作用. 只在真的换了态时被调(见 ModeFace)."""
+            try:
+                if to_state == ModeState.BROADCAST:
+                    sid = _alloc_stream_id()
+                    bcast_sess.begin(sid)
+                    bcast_sink.start_session()
+                    bcast_timer.start(int(time.monotonic() * 1000))
+                    mode_face.last_stream_id = sid
+                    _logger.info("p2 B mode enter, stream_id=%s", sid)
+                elif from_state == ModeState.BROADCAST:
+                    # 先停收帧再关连接: 反过来的话, 关连接与最后几帧
+                    # submit 会撞上, 那几帧进了队却永远发不出去.
+                    bcast_sess.end()
+                    bcast_timer.stop()
+                    bcast_sink.end_session()
+                    _logger.info("p2 B mode exit, sent=%d dropped=%s",
+                                 bcast_sink.sent, bcast_sess.drops)
+            except Exception as exc:      # noqa: BLE001
+                _logger.error("p2 B mode transition side effect failed: %s",
+                              exc)
+
+        mode_face = ModeFace(publish=_publish_mode_state,
+                             on_transition=_on_mode_transition)
+        # p5 要把它回给云端(v2.0: start 的 ack 必须带 detail.stream_id).
+        mode_face.last_stream_id = None
+
+        def _on_cloud_broadcast(sample) -> None:
+            """云端 B 模式 PCM. RUST THREAD -- 判一帧, 放进队, 立刻返回.
+
+            NO 这里不做任何 I/O: WS 发送在 bcast_sink 自己的线程里.
+            """
+            try:
+                env = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:             # noqa: BLE001
+                return
+            body = env.get("data") if isinstance(env, dict) else None
+            pcm, _reason = accept_chunk(bcast_sess, body)
+            if pcm is not None:
+                bcast_sink.submit(pcm)
+
+        if _bcast_rid:
+            _gen_subs.append(gen.declare_subscriber(
+                "xbrain/%s/audio/broadcast" % _bcast_rid, _on_cloud_broadcast))
+            _logger.info("p2 wiring: subscribed xbrain/%s/audio/broadcast",
+                         _bcast_rid)
+        else:
+            _logger.error("p2 B mode broadcast DISABLED: XBRAIN_ROBOT_ID unset")
+
 
         def _on_mode(sample) -> None:
             # RUST THREAD: copy the bytes and hand off. Nothing else.
@@ -528,6 +613,32 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p2 health publish failed: %s", exc)
                     last_health = now
+                # T-BCAST-MAX(11 S1.5): 到时强制收声并退出 B 模式.
+                # *** 立本条的理由(契约逐字): 甲方 AUDIO_CONTROL 只有
+                # start/stop, 没有"还在说"的心跳 -- 云端崩了或网断了之后,
+                # 喇叭会一直响下去, 现场没人能从机器人这边关掉.
+                # *** NO 不做 reset/续期(BCT-2): 心跳续期会让一次卡死的
+                # 广播永远跑下去, 正好绕开本条存在的理由.
+                if bcast_timer.expired(int(now * 1000)):
+                    _logger.warning(
+                        "p2 B mode auto-exit: T-BCAST-MAX %.0fs reached",
+                        b_cast_max_duration_s)
+                    # 走模式机而不是直接调收尾: 退出必须让 state/mode 跟着
+                    # 变, 否则 HMI 上还显示"喊话中"而喇叭已经停了.
+                    try:
+                        mode_face.handle_frame(
+                            json.dumps({"cmd_id": "auto-bcast-max",
+                                        "action": "exit_broadcast"}
+                                       ).encode("utf-8"),
+                            now_mono_ms=int(now * 1000))
+                    except Exception as exc:      # noqa: BLE001
+                        _logger.error("p2 B mode auto-exit failed: %s", exc)
+                        # 模式机没退成也要把声音停掉 -- 宁可状态与实际
+                        # 短暂不一致, 也不能让喇叭继续响.
+                        bcast_sess.end()
+                        bcast_timer.stop()
+                        bcast_sink.end_session()
+
                 # 11 S2.2.2: state/audio = 1 Hz 下限 + 变更即报.
                 # 每拍都求值(10 Hz, 几个 dict 读, 无 I/O), 变了立刻发, 没变
                 # 也至少 1 Hz 发一次.
@@ -556,6 +667,9 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         mic_frames_dropped_gate=(
                             getattr(mic_pub_thread, "frames_muted", None)
                             if _has_mic else None),
+                        # 广播会话在跑时, 域2 的持有者就是 broadcast_b.
+                        broadcast_holder=("broadcast_b"
+                                          if bcast_sess.active else None),
                         payload_audio_ok=last_payload_audio,
                         # voice_mode 的持有者[还不存在]: dispatch 的
                         # _handle_set_voice_mode 只把它放进 DispatchResult.applied,

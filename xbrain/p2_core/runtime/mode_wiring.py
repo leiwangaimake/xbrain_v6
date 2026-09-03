@@ -140,6 +140,8 @@ class ModeFace:
                  *, publish: Optional[Callable[[str, bytes], None]] = None,
                  arb_snapshot: Optional[Callable[[], Tuple[FrozenSet[str],
                                                            FrozenSet[str]]]] = None,
+                 on_transition: Optional[
+                     Callable[[ModeState, ModeState], None]] = None,
                  ) -> None:
         self._machine = machine or ModeStateMachine()
         self._publish = publish
@@ -152,6 +154,12 @@ class ModeFace:
         # 不拦截. 这是本模块唯一的宽松默认, 写在这里是因为它必须被看见: 仲裁器
         # 在 MVP 里不跑, 若改成"取不到快照就拒绝", 模式面会整个不可用.
         self._arb_snapshot = arb_snapshot
+        # 换态副作用的挂点(B 模式的收发端要跟着起停). 放回调而不是让
+        # ModeFace 自己去碰音频: 本类的边界是"一帧 cmd/mode 进, 一个 ack
+        # 出", 把 WS 连接管理塞进来会让它的单测需要一个 payload-service.
+        # *** 只在[真的换了态]时调, 见下面的 changed 判断 -- 同态重复下发
+        # (甲方连点 start)不该把已经在播的会话重开一次.
+        self._on_transition = on_transition
 
     @property
     def state(self) -> ModeState:
@@ -221,9 +229,15 @@ class ModeFace:
                  "to_mode": result.to_state.value,
                  "blocked": [{"domain": d} for d in sorted(result.blocked)],
                  "self_held": sorted(result.self_held)})
+        changed = result.from_state != result.to_state
+        if changed and self._on_transition is not None:
+            # NO 不吞异常后继续: 副作用失败时这条 ack 不该报 accepted.
+            # 但也不能让它把 ModeFace 打挂 -- 记下来, 由调用方的回调自己
+            # 决定要不要把状态回滚(本期回调只做起停, 失败即记日志).
+            self._on_transition(result.from_state, result.to_state)
         applied = {"mode": result.to_state.value,
                    "from_mode": result.from_state.value,
-                   "changed": result.from_state != result.to_state}
+                   "changed": changed}
         if verdict.applied:
             applied.update(verdict.applied)
         # 重复 cmd_id 回放的是第一次的结果(模式机自己保证), 结果里如实标出来,

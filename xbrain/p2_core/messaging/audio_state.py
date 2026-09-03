@@ -150,6 +150,7 @@ def build_audio_state(*, speaker_view: Dict[str, Any],
                       mic_streaming: Optional[bool],
                       mic_device_name: Optional[str],
                       mic_frames_dropped_gate: Optional[int],
+                      broadcast_holder: Optional[str],
                       payload_audio_ok: Optional[bool],
                       voice_mode: Optional[str],
                       ts_mono: float) -> Dict[str, Any]:
@@ -175,11 +176,18 @@ def build_audio_state(*, speaker_view: Dict[str, Any],
     把"问不到"报成 fail 会凭空造一条 FATAL 告警; 报 ok 则会盖掉真故障.
     字段缺失是这三者里唯一诚实的一个.
     """
-    speaking = bool(speaker_view.get("speaking"))
+    # B 模式的云端音频[不经过 handle_speak]: PCM 从 audio/broadcast 直接进
+    # WS /play, SpeakerDomain 的锁全程没被拿过. 只看 speaker_view 的话,
+    # 一次云端喊话期间 state/audio 会一直报 holder="none" -- 甲方界面上
+    # 喇叭正响着而那格显示空闲.
+    # broadcast_holder 非 None 时优先: 域2 里 broadcast_b(800) 高于所有
+    # tts_*(400~600), 真同时发生时也是它在响.
+    speaking = bool(speaker_view.get("speaking")) or broadcast_holder is not None
     since_mono = speaker_view.get("since_mono")
     speaker: Dict[str, Any] = {
         # S8.10 逐字 "none = 空闲". 说话中而发布方没填 source 时为 None.
-        "holder": speaker_view.get("holder") if speaking else "none",
+        "holder": (broadcast_holder if broadcast_holder is not None
+                   else (speaker_view.get("holder") if speaking else "none")),
         "since_mono": since_mono if speaking else None,
     }
     if speaking and isinstance(since_mono, (int, float)):

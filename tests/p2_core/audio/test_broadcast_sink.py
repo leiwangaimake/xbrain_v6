@@ -17,7 +17,13 @@ PCM, 随后服务端回 1011 -- 因为 GZH-2 设备链路当时不在线(audio_c
 为 false, 硬件送去做线缆). 这一层要等设备回来才能测完.
 """
 
+import pytest
+
 from xbrain.p2_core.audio.broadcast_sink import RING_DEPTH, BroadcastPlaySink
+
+# INF-TS-1 三档 marker. 纯函数 / 静态检查, 不碰任何硬件 -> no_device.
+pytestmark = pytest.mark.no_device
+
 
 
 def _sink():

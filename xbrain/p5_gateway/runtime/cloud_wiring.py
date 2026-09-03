@@ -289,8 +289,13 @@ class CloudBridge:
             CLOUD_CMD_MEDIA_SESSION % rid, self._rx(self._on_cloud_media_session)))
         self._subs.append(self._session.declare_subscriber(
             CLOUD_CMD_FILE_ACK % rid, self._rx(self._on_cloud_file_ack)))
-        self._subs.append(self._session.declare_subscriber(
-            CLOUD_AUDIO_BROADCAST % rid, self._rx(self._on_cloud_audio_broadcast)))
+        # NO 这里[不]订 audio/broadcast.
+        # 11 S2.2 逐字: 该 key 的订阅者是"仅 p2_core"(RT-A3 -- audio/broadcast
+        # 只被 p2_core 订阅, audio/voice_in 只被 p4_agent 订阅, 两条链路在
+        # 订阅关系上物理隔离, 不依赖任何运行时模式判定).
+        # 网关这边曾经订着它, 收到只累加一个字节数然后丢弃 -- 一条"有人在
+        # 处理"的假象: 云端看到订阅存在, 而 PCM 进了黑洞. 现由 p2 直接订,
+        # 见 p2_core/runtime/main_wiring 的 _on_cloud_broadcast.
         self._subs.append(self._session.declare_subscriber(
             CLOUD_HEARTBEAT % rid, self._rx(self._on_cloud_heartbeat)))
 
@@ -334,6 +339,10 @@ class CloudBridge:
             "cmd/task/ack", self._on_internal_ack))
         self._subs.append(self._session.declare_subscriber(
             "cmd/geo/ack", self._on_internal_ack))
+        # B 模式(云端喊话)走 cmd/mode, 所以它的 ack 也要进这条聚合路 --
+        # stream_id 是 p2 在 applied 里回来的, 不订这条就拿不到.
+        self._subs.append(self._session.declare_subscriber(
+            "cmd/mode/ack", self._on_internal_ack))
         # D: 订机内 state/fence(P1 F3 发)追踪 active.rev, 用于确认 SET_ALARM_CONFIG
         # 生效(v2.0 S3.4). 相对 key(p1 在本机发, 不带 rid 前缀).
         self._subs.append(self._session.declare_subscriber(
@@ -502,6 +511,21 @@ class CloudBridge:
             v2_ack = translate_ack(
                 agg, ref_msg_id=msg_id, task_id=task_id, task_type=task_type,
                 new_msg_id=_new_msg_id())
+            # v2.0 S2.5: AUDIO_CONTROL 的 ack 必须在 detail.stream_id 里
+            # 带上会话 ID -- start 是新分配的, exit_broadcast 是回显原值.
+            # 分配方是 p2(会话的实际持有者), 它放在 cmd/mode/ack 的
+            # applied 里回来; 这里原样搬过去.
+            # NO 不在网关另分配一个: 那样 Qt 拿到的 ID 与 p2 判帧用的
+            # 不是同一个, 每一帧都会因 stream_id 不符被丢, 而两边日志
+            # 各自都显示"正常".
+            if task_type == "AUDIO_CONTROL":
+                _sid = None
+                for _a in group["acks"]:
+                    _ap = (_a.get("detail") or {}).get("applied") or {}
+                    if _ap.get("stream_id"):
+                        _sid = _ap["stream_id"]
+                if _sid:
+                    v2_ack.setdefault("detail", {})["stream_id"] = _sid
             self._publish_ack("cmd/task/ack", v2_ack)
             self.stats["accepted" if v2_ack["accepted"] else "rejected"] += 1
             # E-1: 承接的 p3 业务拒绝也要有审计 event(p3 只在状态迁移时发
@@ -656,46 +680,49 @@ class CloudBridge:
     def _handle_audio(self, msg_id: Optional[str], task_id: Optional[str],
                       task_type: Optional[str], payload: Dict[str, Any],
                       raw: bytes = b"") -> None:
-        """AUDIO_CONTROL: 本期如实拒绝(E_NOT_IMPLEMENTED).
+        """AUDIO_CONTROL -> cmd/mode (B 模式进/出), ack 里回 stream_id.
 
-        *** 2026-09-03 实测后改为拒绝, 原实现是"分配 stream_id + 回 accepted".
+        *** 走 cmd/mode, NO 不走 cmd/audio/speak.
+        11 S8.7 的域2 源表逐字写着 broadcast_b(800) 的请求方是"p2_core 转发
+        (来自 audio/broadcast)" -- 云端喊话的请求方是 p2 自己, 不是网关.
+        网关的活只是把 AUDIO_CONTROL 翻成一次模式跃迁.
+        2026-09-03 之前的实现把 AUDIO_CONTROL 的[原信封]发到了
+        cmd/audio/speak 上, 而那条 key 的消费方要的是 SpeakRequest{text}
+        -- 每一次 start 都在 p2 日志里留一条 "has no text field", 时间戳与
+        网关回的 accepted 逐条对齐.
 
-        云端喊话(pc_to_dog)的完整链路是:
-          云端 PCM -> audio/broadcast -> p5 -> p2 的 b_mode_forward(gen 检查 +
-          模式退出守卫) -> payload_client -> payload-service WS /play -> 8519
-        其中[只有两端建好了]: payload 侧的 WS /play 是实现了的, b_mode_forward
-        这个决策模块也在, 但它[零调用方](BIZ-P2-2 的 payload_client 转发未建),
-        而 p5 这一侧的 audio/broadcast 入站只统计字节数然后丢弃.
+        *** ack 等 p2 的机内 ack, NO 不立刻回 accepted.
+        stream_id 由 p2 分配(会话的实际持有者是它: 收帧判据与 WS 连接都在
+        那边), 从 cmd/mode/ack 的 applied 里回来. 立刻回 accepted 就没有
+        stream_id 可带, 而 v2.0 S2.5 要求 start 的 ack 必须带 --
+        没有它, 云端不知道该往哪个会话推 PCM.
 
-        *** 原实现还把 AUDIO_CONTROL 的信封发到了 cmd/audio/speak 上.
-        那条 key 的消费方 (p2 的 parse_speak_payload) 要的是 {text: str} --
-        它是 TTS 文本通道, 不是喊话会话通道. 于是每一次 start 都在 p2 日志里
-        留一条 "cmd/audio/speak has no text field", 时间戳与网关的 accepted
-        逐条对齐. 即使将来喊话链路建好, 也不会走这条 key.
-
-        => 回 accepted 是 CLAUDE.md 3.2 的"能力不足时假装有保证": 甲方
-        2026-09-03 连点五次 start, 每次都拿到 accepted 与一个新 stream_id,
-        而声音不可能出来 -- 他们很可能正在排查自己的音频设备.
-        与 SET_ALARM_CONFIG 的规则半区同一处置(那条做对了): 如实拒绝, 让对方
-        一眼看出本期不支持.
-
-        NO 不按 action 分别处置: start 建不起来会话, exit_broadcast 也就没有
-        会话可退 -- 只拒一半会让 Qt 以为"退出成功了".
+        *** exit 也要过 p2, NO 不在网关自己了结.
+        网关不知道 p2 那边有没有会话在跑(超时自动退出 T-BCAST-MAX 是 p2
+        的动作, 网关看不见). 自己回 accepted 会让 Qt 以为退成功了, 而
+        喇叭可能还在响.
         """
-        from ..outbound.error_map import build_error_fields
-        from ...common import errors
-
-        self._reject_task(
-            raw,
-            build_error_fields(
-                errors.E_NOT_IMPLEMENTED,
-                "cloud broadcast is not wired: the PCM path from "
-                "audio/broadcast to payload WS /play has no forwarder yet "
-                "(BIZ-P2-2)"),
-            msg_id=msg_id, task_id=task_id,
-            task_type=task_type or "AUDIO_CONTROL")
-        _logger.info("p5 cloud audio %s rejected (not wired)",
-                     payload.get("action"))
+        action = payload.get("action")
+        stream_id = payload.get("stream_id")
+        cmd_id = payload.get("cmd_id") or ("c-" + (msg_id or ""))
+        if action == "start":
+            # 11 S7 ModeCommand: 进 B 模式 = set_voice_mode broadcast.
+            body = {"cmd_id": cmd_id, "action": "set_voice_mode",
+                    "voice_mode": "broadcast"}
+        else:
+            # exit_broadcast 回显请求里的 stream_id. p2 用它核对退的是不是
+            # 当前那一路 -- 对不上时由 p2 拒, 网关不代判.
+            body = {"cmd_id": cmd_id, "action": "exit_broadcast",
+                    "stream_id": stream_id}
+        group_id = msg_id or cmd_id
+        self._pending[cmd_id] = group_id
+        self._fanout[group_id] = {
+            "expected": 1, "acks": [], "msg_id": msg_id or "",
+            "task_id": task_id, "task_type": task_type,
+            "mono": self._now_mono()}
+        self._internal_put(
+            "cmd/mode",
+            json.dumps(body, ensure_ascii=False).encode("utf-8"))
 
     def _emit_task_reject_event(self, *, ref_msg_id: Optional[str],
                                 task_id: Optional[str],
@@ -902,19 +929,6 @@ class CloudBridge:
             # 心跳解析失败不影响它已经刷新过的断线计时(那一步在 _rx 里, 先于
             # 本函数) -- 一条坏报文同样证明云端在线.
             _logger.exception("p5 cloud heartbeat handler crashed")
-
-    def _on_cloud_audio_broadcast(self, sample: Any) -> None:
-        """云端喊话 PCM 帧. 机内 TTS 链路在, 云端 PCM 入站未接.
-
-        NO 这条同样不回 ack: v2.0 里 audio/broadcast 是连续帧流, 逐帧回 ack
-        会把 ack 的量做到与音频帧一样多. 它的答复走 state/audio(B-2).
-        """
-        try:
-            raw, _key = _sample_parts(sample)
-            self._audio_bytes = getattr(self, "_audio_bytes", 0) + len(raw)
-            self.stats["ignored"] += 1
-        except Exception:                       # noqa: BLE001
-            _logger.exception("p5 cloud audio/broadcast handler crashed")
 
     def _reject_unimplemented(self, sample: Any, ack_name: str,
                               reason: str) -> None:

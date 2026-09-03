@@ -52,8 +52,29 @@ P5_EXPECTED_SUBSCRIBERS = frozenset({
     "cmd/estop",
     "cmd/media/session",
     "cmd/file/ack",
-    "audio/broadcast",
+    # NO audio/broadcast [不在]本集合里.
+    # 11 S2.2 逐字规定它的订阅者是"仅 p2_core"(RT-A3: audio/broadcast 只被
+    # p2_core 订阅, audio/voice_in 只被 p4_agent 订阅, 两条链路在订阅关系上
+    # 物理隔离, 不依赖任何运行时模式判定). 网关订它是越界 --
+    # 2026-09-03 之前确实订着, 收到只累加字节数然后丢弃, 于是云端看到订阅
+    # 存在而 PCM 进了黑洞. 现由 p2 直接订(p2_core/runtime/main_wiring).
+    # *** 本集合是[p5 应订的]云端 key, 不是[云端全部]的 key -- 两者的差
+    # 登记在下面的 OWNED_BY_OTHER_PROCESS 里.
 })
+
+
+#: v2.0 的云端 key 里[不归 p5]的那些, 连同归谁.
+#:
+#: *** 为什么要单独登记而不是干脆不提.
+#: "登记表覆盖 v2.0 全部 key"是一条元判据: 客户契约新增 key 时登记表必须
+#: 跟着长, 否则新 key 连"未接线"都报不出来 -- 它根本不在被检查的集合里.
+#: 把 audio/broadcast 从视野里抹掉就正好制造了这个盲区: 哪天 p2 那侧的订阅
+#: 被误删, 没有任何判据会红.
+OWNED_BY_OTHER_PROCESS = {
+    # 11 S2.2 / RT-A3: audio/broadcast 只被 p2_core 订阅, audio/voice_in
+    # 只被 p4_agent 订阅. 两条链路在订阅关系上物理隔离.
+    "audio/broadcast": "p2_core",
+}
 
 
 @dataclass(frozen=True)

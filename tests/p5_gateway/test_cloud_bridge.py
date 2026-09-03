@@ -159,8 +159,10 @@ def test_six_inbound_and_three_ack_keys_are_declared():
 
     # 5 条云端入站 + 2 条机内 ack(承接 p3 业务 ack, A-1) + 1 条机内 state/fence
     # (D: 确认 SET_ALARM_CONFIG 生效, 追 active.rev). 后三条是相对 key.
+    # NO audio/broadcast [不]在这张表里: 11 S2.2 逐字"仅 p2_core"订阅
+    # (RT-A3 的物理隔离). 网关订它是越界 -- 2026-09-03 之前确实订着, 收到
+    # 只累加字节数然后丢弃, 云端看到订阅存在而 PCM 进了黑洞.
     assert sorted(session.subs) == sorted([
-        "xbrain/gj-001/audio/broadcast",
         "xbrain/gj-001/cmd/estop",
         "xbrain/gj-001/cmd/file/ack",
         "xbrain/gj-001/cmd/media/session",
@@ -169,7 +171,7 @@ def test_six_inbound_and_three_ack_keys_are_declared():
         # 一族 heartbeat/ -- 没有它, Qt 可以长时间只订阅不发布, 链路恒为
         # never_connected 直到 rtb_s 触发返航.
         "xbrain/gj-001/heartbeat/qt",
-        "cmd/task/ack", "cmd/geo/ack", "state/fence"])
+        "cmd/task/ack", "cmd/geo/ack", "cmd/mode/ack", "state/fence"])
     # 三条 ack + 八条出站状态面.
     # * state/link 起初以为"main_wiring 里已有发布者", 那是看错了: 那条
     # 发的是机内相对 key, 而 Qt 订的是带 rid 前缀的. 两条 key 都要有,
@@ -553,9 +555,13 @@ def test_file_ack_and_audio_frames_produce_no_ack():
     _feed(session, "cmd/file/ack",
           {"v": 1, "rid": RID, "ts": 1.0, "seq": 1, "src": "qt_hmi",
            "data": {"msg_id": "f-1"}})
-    _feed(session, "audio/broadcast", b"\x00\x01\x02\x03")
+    assert not session.puts, "cmd/file/ack 回了东西: %s" % session.puts
 
-    assert not session.puts, "这两条 key 回了东西: %s" % session.puts
+    # audio/broadcast 现在[根本不订]: 11 S2.2 逐字"仅 p2_core"(RT-A3).
+    # *** 判据从"喂进去不回东西"换成"压根没订", 因为前者对一条[没订的]
+    # key 恒真 -- 一个什么都不做的实现同样能通过它(CLAUDE.md 3.2 形态一).
+    assert not [k for k in session.subs if k.endswith("audio/broadcast")], (
+        "网关又订上了 audio/broadcast: %s" % session.subs)
 
 
 # --- 健壮性 -----------------------------------------------------------
@@ -703,7 +709,11 @@ def test_the_cloud_face_does_not_subscribe_a_command_key_p3_owns():
     assert not command_keys, (
         "云端桥订了机内命令 key: %s -- 语音任务会被处理两遍" % command_keys)
     # 订的相对 key: 两条 ack(承接)+ 一条 state/fence(D 确认生效), 不多不少.
-    assert sorted(relative) == ["cmd/geo/ack", "cmd/task/ack", "state/fence"], (
+    # cmd/mode/ack 是 B 模式(云端喊话)的答复路: AUDIO_CONTROL 翻成一次
+    # cmd/mode 跃迁, p2 在它的 applied 里回 stream_id, 网关取出来放进
+    # 云端 ack 的 detail.stream_id(v2.0 S2.5 要求).
+    assert sorted(relative) == ["cmd/geo/ack", "cmd/mode/ack",
+                                "cmd/task/ack", "state/fence"], (
         relative)
 
 
@@ -1316,48 +1326,77 @@ def test_the_key_severity_and_the_body_severity_agree():
 
 # --- AUDIO_CONTROL: 本期如实拒绝 --------------------------------------
 
-def test_audio_control_is_rejected_while_the_path_is_not_wired():
-    """*** 2026-09-03 由"分配 stream_id + accepted"改为如实拒绝.
+def test_audio_control_start_is_forwarded_to_the_mode_face():
+    """AUDIO_CONTROL start -> cmd/mode(set_voice_mode broadcast).
 
-    云端喊话(pc_to_dog)的完整链路是:
-      云端 PCM -> audio/broadcast -> p5 -> p2 的 b_mode_forward(gen 检查 +
-      模式退出守卫) -> payload_client -> payload-service WS /play -> 8519
-    只有两端建好了: payload 侧的 WS /play 实现了, b_mode_forward 也在, 但它
-    [零调用方](BIZ-P2-2 的 payload_client 转发未建), 而 p5 这侧的
-    audio/broadcast 入站只统计字节数然后丢弃.
+    *** 走 cmd/mode, NO 不走 cmd/audio/speak.
+    11 S8.7 的域2 源表逐字: broadcast_b(800) 的请求方是"p2_core 转发
+    (来自 audio/broadcast)" -- 云端喊话的请求方是 p2 自己, 网关的活只是
+    把 AUDIO_CONTROL 翻成一次模式跃迁.
 
-    v2.0 S2.5/S3.1 要求 start 的 ack 带新分配的 stream_id -- 那条要求只在我们
-    [接受]时才适用. 发一个 stream_id 出去, 等于请 Qt 往一个黑洞里推 PCM:
-    2026-09-03 甲方连点五次 start, 每次都拿到 accepted 与新 stream_id, 而声音
-    不可能出来, 他们很可能正在排查自己的音频设备.
+    *** 本条 2026-09-03 从"如实拒绝"换回受理.
+    那次改拒绝是因为链路中间是断的: b_mode_forward 零调用方, p5 这侧的
+    audio/broadcast 只统计字节数然后丢弃, 发 stream_id 出去等于请 Qt 往
+    黑洞里推 PCM(甲方当天连点五次 start, 每次都拿到 accepted 与新
+    stream_id, 而声音不可能出来). 现在中间两段建好了(broadcast_rx 判帧 +
+    broadcast_sink 送 WS /play, 且 p2 直接订 audio/broadcast), 所以换回来.
 
-    *** 链路建好后本条要换回"accepted + stream_id", 并把 _alloc_stream_id
-    加回来(本次按 9.3 删掉了, 留着会谎报系统有这个能力).
-
-    MUTATION: 改回 accepted -> 红.
+    MUTATION: 把 _handle_audio 改回立刻 reject -> 这里红.
     """
     _b, session = _bridge()
 
     _feed(session, "cmd/task", _audio("start"))
 
-    d = _puts_to(session, "cmd/task/ack")[0]["data"]
-    assert d["result"] == "rejected", d
-    assert d["accepted"] is False, d
-    assert d["error_code"] != 0, d
-    assert "not wired" in (d.get("reason") or ""), d
+    modes = _internal_puts(session, "cmd/mode")
+    assert len(modes) == 1, "没有发出 cmd/mode: %s" % session.puts
+    body = modes[0]
+    assert body["action"] == "set_voice_mode", body
+    assert body["voice_mode"] == "broadcast", body
+    # 还没收到 p2 的机内 ack, 所以此刻[不该]已经回了云端 ack --
+    # stream_id 要等 p2 分配, 提前回等于回一个没有 stream_id 的 accepted.
+    assert not _puts_to(session, "cmd/task/ack"), (
+        "没等机内 ack 就回了云端: %s" % session.puts)
 
 
-def test_both_audio_actions_are_rejected_consistently():
-    """NO 不按 action 分别处置: start 建不起来会话, exit_broadcast 也就没有会话
-    可退 -- 只拒一半会让 Qt 以为"退出成功了".
+def test_the_cloud_ack_carries_the_stream_id_p2_allocated():
+    """v2.0 S2.5: start 的 ack 必须在 detail.stream_id 带上会话 ID.
 
-    MUTATION: 只拒 start 而放行 exit -> 红.
+    *** 分配方是 p2, 网关只搬运.
+    在网关另分配一个的话, Qt 拿到的 ID 与 p2 判帧用的不是同一个, 每一帧
+    都会因 stream_id 不符被丢, 而两边日志各自都显示"正常" -- 这种对不上
+    的缺陷只有在真的推 PCM 时才暴露.
+
+    MUTATION: 把搬运那段删掉(detail 里没有 stream_id) -> 这里红.
     """
-    for action in ("start", "exit_broadcast"):
-        _b, session = _bridge()
-        _feed(session, "cmd/task", _audio(action))
-        d = _puts_to(session, "cmd/task/ack")[0]["data"]
-        assert d["result"] == "rejected", (action, d)
+    _b, session = _bridge()
+    _feed(session, "cmd/task", _audio("start"))
+    cmd_id = _internal_puts(session, "cmd/mode")[0]["cmd_id"]
+
+    # p2 的机内 ack: stream_id 在 detail.applied 里回来.
+    _feed_internal_ack(session, "cmd/mode/ack", cmd_id, "accepted",
+                       detail={"applied": {"mode": "broadcast",
+                                           "stream_id": "audio-gj001-0001"}})
+
+    acks = _puts_to(session, "cmd/task/ack")
+    assert acks, "机内 ack 到了却没回云端"
+    assert acks[0]["data"]["detail"]["stream_id"] == "audio-gj001-0001", acks[0]
+
+
+def test_exit_broadcast_also_goes_through_p2():
+    """*** 退出不在网关自己了结.
+
+    网关不知道 p2 那边有没有会话在跑 -- T-BCAST-MAX 超时自动退出是 p2 的
+    动作, 网关看不见. 自己回 accepted 会让 Qt 以为退成功了, 而喇叭可能
+    还在响.
+    """
+    _b, session = _bridge()
+    _feed(session, "cmd/task",
+          _audio("exit_broadcast", stream_id="audio-gj001-0001"))
+    modes = _internal_puts(session, "cmd/mode")
+    assert len(modes) == 1, session.puts
+    assert modes[0]["action"] == "exit_broadcast", modes[0]
+    # 回显请求里的 stream_id, NO 不新分配(v2.0 S2.5 逐字).
+    assert modes[0]["stream_id"] == "audio-gj001-0001", modes[0]
 
 
 def test_audio_control_is_not_posted_onto_the_tts_key():

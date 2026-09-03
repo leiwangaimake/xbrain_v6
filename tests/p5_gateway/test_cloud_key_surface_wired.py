@@ -215,7 +215,8 @@ def test_the_registry_covers_every_v2_key():
     import re
 
     from xbrain.p5_gateway.outbound.key_surface import (
-        P5_EXPECTED_PUBLISHERS, P5_EXPECTED_SUBSCRIBERS)
+        OWNED_BY_OTHER_PROCESS, P5_EXPECTED_PUBLISHERS,
+        P5_EXPECTED_SUBSCRIBERS)
 
     qt = (ROOT / "docs" / "MISSON" / "任务枚举_qt端v2.0.md").read_text(
         encoding="utf-8")
@@ -223,7 +224,11 @@ def test_the_registry_covers_every_v2_key():
     for m in re.finditer(r"^\|\s*`xbrain/\{rid\}/([^`]+)`", qt, re.M):
         v2_keys.add(m.group(1))
     assert len(v2_keys) >= 15, "只从 v2.0 解析到 %d 条 key" % len(v2_keys)
-    registered = set(P5_EXPECTED_PUBLISHERS) | set(P5_EXPECTED_SUBSCRIBERS)
+    # 三类都算"已登记": p5 发的 / p5 订的 / 明确归别的进程的.
+    # 第三类不能省 -- 省了就等于把那条 key 移出视野, 而本判据存在的理由
+    # 正是"不让任何 v2.0 的 key 掉出视野".
+    registered = (set(P5_EXPECTED_PUBLISHERS) | set(P5_EXPECTED_SUBSCRIBERS)
+                  | set(OWNED_BY_OTHER_PROCESS))
     missing = sorted(v2_keys - registered)
     assert not missing, (
         "v2.0 有这些 key 而登记表里没有 -- 它们连[未接线]都报不出来: %s"

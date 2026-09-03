@@ -45,3 +45,7 @@ aiosqlite==0.22.1
 fastapi==0.141.1
 starlette==1.4.1
 uvicorn==0.52.1
+# B mode cloud broadcast: p2_core streams PCM into payload-service WS /play.
+# Uses the SYNC client (websockets.sync.client, available since 12.0) --
+# p2_core has no asyncio loop and must not grow one for this.
+websockets==16.1.1

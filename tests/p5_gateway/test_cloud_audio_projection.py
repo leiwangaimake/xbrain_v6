@@ -24,7 +24,11 @@ speaker_state 恒 "idle" 且 microphone_state 恒 "idle" -- 一条 1 Hz 稳定
 import pytest
 
 from xbrain.p5_gateway.runtime.cloud_state import (AUDIO_STALE_MS,
+
                                                    CloudProjector)
+
+# INF-TS-1 三档 marker. 纯函数 / 静态检查, 不碰任何硬件 -> no_device.
+pytestmark = pytest.mark.no_device
 
 
 class _Clock:
