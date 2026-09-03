@@ -66,6 +66,8 @@ class _FakeDao:
             task_type = "goto"
             priority = r["priority"]
             mission_json = '{"source":"local","params":{}}'
+            # V-8 读它; 不在 rows 里给就当作"这条任务不引用路径".
+            route_geo_id = r.get("route_geo_id")
         return _Row()
 
     async def update_state(self, task_id, state, updated_ms):
@@ -578,3 +580,107 @@ def test_the_pairs_the_wiring_reports_are_all_known_to_the_event_table():
          "state": "pending"}])
     unknown = [(f, t) for _tid, f, t in seen if (f, t) not in _TRANSITION_EVENT]
     assert not unknown, "接线报出了事件表没表态的迁移: %r" % unknown
+
+
+# --- V-8: 引用的路径必须存在于当前 manifest (v2.0 S2.1) -------------------
+
+def _tick_routes(rows, route_ids, started_at="2026-09-02T08:00:00Z",
+                 boot_id="boot1"):
+    """跑一拍, 注入一个路径全集查询."""
+    from xbrain.p3_task.schedule.driver import scheduler_tick
+
+    async def _list():
+        return list(route_ids)
+
+    dao = _FakeDao(rows)
+    made = asyncio.run(scheduler_tick(_FakeConn(), dao, now_mono_ms=1000,
+                                      on_transition=_noop,
+                                      started_at=started_at, boot_id=boot_id,
+                                      list_route_ids=_list))
+    return dao, made
+
+
+def test_a_task_naming_a_missing_route_is_rejected_at_admission():
+    """*** v2.0 S2.1 逐字: recorded_path_id "必须存在于当前 manifest".
+
+    2026-09-03 实测: 发 r-does_not_exist, 任务被 accepted 并 started -- 机器人
+    接了一条它无从执行的任务, 而甲方界面显示"已开始".
+
+    MUTATION: 把 check_v8 从 validate_pending 拿掉 -> 红.
+    """
+    dao, made = _tick_routes(
+        [{"task_id": "t-bad", "priority": 50, "submit_seq": 1,
+          "state": "pending", "route_geo_id": "r-nope"}],
+        route_ids=["r-perimeter"])
+    assert dao.rows["t-bad"]["state"] == "failed", dao.rows["t-bad"]
+    assert ("t-bad", "pending", "failed") in made, made
+
+
+def test_a_task_naming_a_real_route_still_passes():
+    """反向: 恒拒的实现同样能通过上面那条.
+
+    MUTATION: 让 check_v8 无条件返回失败 -> 红.
+    """
+    dao, _made = _tick_routes(
+        [{"task_id": "t-ok", "priority": 50, "submit_seq": 1,
+          "state": "pending", "route_geo_id": "r-perimeter"}],
+        route_ids=["r-perimeter"])
+    # 同一拍里校验通过就会被派发, 所以终态是 running -- 本条要的是[没被拒].
+    assert dao.rows["t-ok"]["state"] != "failed", dao.rows["t-ok"]
+
+
+def test_a_task_without_a_route_is_not_rejected():
+    """纯航点 goto 不引用路径, V-8 不该管它.
+
+    MUTATION: 把"route_geo_id 为空则跳过"去掉 -> 红.
+    """
+    dao, _made = _tick_routes(
+        [{"task_id": "t-nr", "priority": 50, "submit_seq": 1,
+          "state": "pending", "route_geo_id": None}],
+        route_ids=[])
+    assert dao.rows["t-nr"]["state"] != "failed", dao.rows["t-nr"]
+
+
+def test_without_an_injected_lookup_v8_is_skipped_not_failed():
+    """没接线时跳过而不是拒: 否则任何没传 list_route_ids 的调用方(既有测试 .
+    别的入口)会把全部待校验任务判成失败.
+
+    MUTATION: 没有查询时返回失败 -> 红.
+    """
+    dao, _made = _tick([
+        {"task_id": "t-skip", "priority": 50, "submit_seq": 1,
+         "state": "pending", "route_geo_id": "r-whatever"}])
+    assert dao.rows["t-skip"]["state"] != "failed", dao.rows["t-skip"]
+
+
+def test_a_failing_route_snapshot_does_not_reject_everything():
+    """geo.db 短暂不可用时, 批量误拒合法任务比放过一条坏路径严重得多.
+
+    MUTATION: 去掉 except 分支(让异常冒上去) -> 红(整拍抛).
+    """
+    from xbrain.p3_task.schedule.driver import scheduler_tick
+
+    async def _boom():
+        raise RuntimeError("geo.db busy")
+
+    dao = _FakeDao([{"task_id": "t-e", "priority": 50, "submit_seq": 1,
+                     "state": "pending", "route_geo_id": "r-x"}])
+    asyncio.run(scheduler_tick(_FakeConn(), dao, now_mono_ms=1000,
+                               on_transition=_noop,
+                               started_at="2026-09-02T08:00:00Z",
+                               boot_id="b1", list_route_ids=_boom))
+    assert dao.rows["t-e"]["state"] != "failed", dao.rows["t-e"]
+
+
+def test_the_wiring_supplies_the_route_lookup():
+    """接线断了的话上面几条全部退化成"跳过" -- 而跳过是绿的.
+
+    MUTATION: p3 wiring 不传 list_route_ids -> 红.
+    """
+    import inspect
+
+    from xbrain.p3_task.runtime import main_wiring
+
+    src = inspect.getsource(main_wiring._amain)
+    assert "list_route_ids=_list_route_ids" in src, "调度器没拿到路径全集查询"
+    assert "tombstone=0" in src, "墓碑路径被当成存在的"

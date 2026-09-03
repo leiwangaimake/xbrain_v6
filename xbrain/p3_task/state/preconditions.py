@@ -86,6 +86,33 @@ def check_v5_mission_parses(mission_json: str):
     return None
 
 
+def check_v8_route_exists(route_geo_id, route_exists):
+    """V-8: 任务引用的路径必须存在.
+
+    v2.0 S2.1 逐字: recorded_path_id "必须存在于当前 manifest". 在此之前
+    2026-09-03 实测 r-does_not_exist 被 accepted 并 started -- 机器人接了一条
+    它根本无从执行的任务, 而甲方界面上看到的是"已开始".
+
+    放在 p3 而不是网关: geo.db 的唯一属主是 p3, 网关那份 manifest 是转发来的
+    副本, 拿副本判存在性会在副本迟到时误拒[合法]任务 -- 那比误收更糟(操作员
+    会以为自己的路径丢了).
+
+    route_exists 是注入的查询, 不是本模块自己开库: 本模块是纯函数层, 而且
+    driver 里不该有第二处数据源(与 CLK-C1 让时钟从外面传同一个理由).
+    route_geo_id 为空表示这条任务不引用路径(纯航点 goto), 跳过.
+    """
+    if not route_geo_id:
+        return None
+    if route_exists is None:
+        # 没有注入查询 = 调用方没接线. 跳过而不是拒 -- 但接线由
+        # test_route_precondition 的判据钉住, 生产路径上不会走到这里.
+        return None
+    if not route_exists(route_geo_id):
+        return PreconditionFailure(
+            "V-8", f"route {route_geo_id!r} is not in the current manifest")
+    return None
+
+
 def check_v6_step_count(task_type: str, total_steps: int):
     if task_type in ("patrol", "teach") and total_steps <= 0:
         return PreconditionFailure(

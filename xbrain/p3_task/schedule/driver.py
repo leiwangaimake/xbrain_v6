@@ -37,12 +37,15 @@ completion that a P1 status reports. A dispatched task correctly sits at
 """
 from __future__ import annotations
 
+import logging
+
 from typing import Awaitable, Callable, List, Tuple
 
 from xbrain.p3_task.state.machine import (apply_transition,
                                           validate_suspend_fields)
 from xbrain.p3_task.state.preconditions import (
     check_v1_type, check_v2_priority, check_v5_mission_parses,
+    check_v8_route_exists,
 )
 
 
@@ -54,7 +57,11 @@ from xbrain.p3_task.state.preconditions import (
 OnTransition = Callable[[str, str, str], Awaitable[None]]
 
 
-def validate_pending(row) -> Tuple[str, str]:
+#: V-8 取不到路径全集时要留声: 静默跳过一条准入校验, 与"校验通过"
+#: 在运行期不可区分.
+_logger = logging.getLogger("xbrain.p3.scheduler")
+
+def validate_pending(row, route_exists=None) -> Tuple[str, str]:
     """Run the pre-expansion preconditions on a pending task. Returns
     (event, reason): ('validate_ok', '') if all pass, else
     ('validate_fail', '<code>: <detail>')."""
@@ -62,6 +69,9 @@ def validate_pending(row) -> Tuple[str, str]:
         check_v1_type(row.task_type),
         check_v2_priority(row.priority),
         check_v5_mission_parses(row.mission_json),
+        # V-8: v2.0 S2.1 的"必须存在于当前 manifest". 查询由调用方注入 --
+        # 本函数是纯的, 而且 driver 里不该有第二处数据源.
+        check_v8_route_exists(getattr(row, "route_geo_id", None), route_exists),
     ):
         if check is not None:
             return "validate_fail", f"{check.code}: {check.detail}"
@@ -88,20 +98,33 @@ async def _dispatch(dao, task_id: str, now_mono_ms: int, started_at: str,
 async def scheduler_tick(conn, dao, *, now_mono_ms: int,
                          on_transition: OnTransition,
                          started_at: str = "",
-                         boot_id: str = "") -> List[Tuple[str, str, str]]:
+                         boot_id: str = "",
+                         list_route_ids=None) -> List[Tuple[str, str, str]]:
     """One scheduler pass. Returns the transitions made as
     (task_id, from_state, to_state). See module docstring."""
     made: List[Tuple[str, str, str]] = []
 
     # -- phase 1: validate every pending task --
     rows = await dao.list_by_priority()          # (task_id, priority, seq, state)
+    # V-8 的路径全集: [每拍取一次], 不是每条待校验任务查一次库. 校验函数是纯
+    # 同步的, 给它一个已在手的集合而不是一个要 await 的查询; 活跃路径是几十条
+    # 量级, 一次读进集合也比 N 次点查便宜.
+    known_routes = None
+    if list_route_ids is not None and any(r[3] == "pending" for r in rows):
+        try:
+            known_routes = set(await list_route_ids())
+        except Exception as exc:      # noqa: BLE001
+            # 查不到就跳过 V-8, NO 不能因此把待校验任务全判成失败 -- geo.db
+            # 短暂不可用时批量误拒合法任务, 比放过一条坏路径严重得多.
+            _logger.error("p3 route id snapshot failed, V-8 skipped: %s", exc)
+    route_exists = None if known_routes is None else known_routes.__contains__
     for task_id, _prio, _seq, state in rows:
         if state != "pending":
             continue
         full = await dao.fetch_by_id(task_id)
         if full is None:                          # vanished between calls
             continue
-        event, reason = validate_pending(full)
+        event, reason = validate_pending(full, route_exists)
         result = apply_transition("pending", event)
         await dao.update_state(task_id, result.to_state, now_mono_ms)
         made.append((task_id, "pending", result.to_state))

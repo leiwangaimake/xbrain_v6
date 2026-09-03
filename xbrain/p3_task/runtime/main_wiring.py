@@ -267,6 +267,18 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     "src": "p3_task", "ts": 0.0,
                 }, ensure_ascii=False).encode("utf-8"))
 
+            async def _list_route_ids():
+                """V-8 用的路径全集(当前 manifest).
+
+                墓碑不算存在 -- 一条被删的路径与从未存在过, 对"能不能执行这条
+                任务"是同一个答案.
+                调度器每拍取一次, 不是每条任务查一次: 活跃路径是几十条量级,
+                一次读进集合比 N 次点查便宜, 而且校验函数得以保持纯同步.
+                """
+                cur = await geo_conn.execute(
+                    "SELECT geo_id FROM routes WHERE tombstone=0")
+                return [r[0] for r in await cur.fetchall()]
+
             async def _fetch_terminal_facts(task_id: str) -> dict:
                 """终态那一刻的任务事实, 供事件带给云端.
 
@@ -644,7 +656,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 # 而不是 driver 自己取 -- driver 里不应有第二
                                 # 处时钟来源(CLK-C1 的同一理由: 时间从外面传).
                                 started_at=_now_utc_iso(),
-                                boot_id=_BOOT_ID)
+                                boot_id=_BOOT_ID,
+                                list_route_ids=_list_route_ids)
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p3 scheduler tick failed: %s", exc)
                     now = time.monotonic()
