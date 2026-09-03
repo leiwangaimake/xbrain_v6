@@ -57,7 +57,11 @@ def build_result(*, task_id: str, task_type: str, state: str,
                  result_code: int = 0, reason: str = "",
                  completed_count: int = 0, total_count: int = 0,
                  distance_m: Optional[float] = None,
-                 duration_sec: float = 0.0,
+                 # None = 未知. 15 S9.5 与 11 S4.4 逐字要求未知写 NULL,
+                 # 0.0 会在 Qt 上显示成"用时 0 秒"(CLAUDE.md 3.1 的
+                 # "0.0 冒充已赋值"). 默认值也改成 None: 默认 0.0 的话,
+                 # 调用方漏传就自动变成一个假的已知值.
+                 duration_sec: Optional[float] = None,
                  started_ts: Optional[float] = None,
                  ended_ts: Optional[float] = None,
                  route_id: Optional[str] = None,
@@ -101,7 +105,11 @@ def build_result(*, task_id: str, task_type: str, state: str,
             # distance_m 不适用时为 null(v2.0 逐字). 一个 SET_ALARM_CONFIG
             # 没有里程可言, 填 0 会让 Qt 显示"行进 0 米"而不是"不适用".
             "distance_m": distance_m,
-            "duration_sec": float(duration_sec),
+            # None 原样透传: v2.0 S3.3 允许 null, 而 float(None) 会抛,
+            # 把整条 result 吃掉 -- 那比少一个字段严重得多(云端就此
+            # 不知道任务结束了).
+            "duration_sec": (None if duration_sec is None
+                             else float(duration_sec)),
             "started_ts": started_ts,
             "ended_ts": ended_ts,
             # 导航任务必填, 其他可 null. NO 不用空字符串代替 null --

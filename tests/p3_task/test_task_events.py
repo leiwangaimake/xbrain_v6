@@ -186,7 +186,8 @@ async def test_the_publish_seam_decides_on_the_from_to_pair():
 
     emitted = []
 
-    def _emit(task_id, to_state, kind, sev):
+    def _emit(task_id, to_state, kind, sev, extra=None):
+        # extra 是终态事实(v2.0 S3.3 的 result 要它们); 非终态迁移传 None.
         emitted.append((task_id, to_state, kind, sev))
 
     pub = _Pub()

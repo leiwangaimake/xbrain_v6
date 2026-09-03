@@ -292,7 +292,10 @@ class CloudProjector:
             completed_count=int(task.get("completed_count") or 0),
             total_count=int(task.get("total_count") or 0),
             distance_m=task.get("distance_m"),
-            duration_sec=float(task.get("duration_sec") or 0.0),
+            # 未知就是 None. `or 0.0` 会把"跨重启导致时长不可知"(15 S9.5 要求
+            # 写 NULL 的那种)变成"用时 0 秒" -- 甲方 2026-09-03 收到的就是它.
+            duration_sec=(None if task.get("duration_sec") is None
+                          else float(task["duration_sec"])),
             started_ts=task.get("started_ts"),
             ended_ts=task.get("ended_ts"),
             route_id=task.get("route_id"),

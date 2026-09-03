@@ -749,9 +749,13 @@ def run_voice_loop_wiring(stop_flag: dict,
             if cloud_projector is not None and _cat == "task":
                 _det = d.get("detail")
                 if isinstance(_det, dict) and _det.get("task_id"):
-                    cloud_projector.observe_task(
-                        {"task_id": _det.get("task_id"),
-                         "state": _det.get("state")})
+                    # 整个 detail 交出去, NO 不只挑 task_id/state.
+                    # p3 在终态事件里带上了 task_type / route_id / started_ts /
+                    # ended_ts / duration_sec / reason -- v2.0 S3.3 的 result
+                    # 要这些, 而它们没有第二条通路: p5 不读 task.db(平面隔离),
+                    # 且 11 S4.4 的 TaskState 只列非终态任务, 任务一终结就从
+                    # 广播里消失. 只挑两个字段的话, result 里其余全是 null.
+                    cloud_projector.observe_task(dict(_det))
             # Cloud relay (v2.0 S2: the cloud event key is
             # xbrain/{rid}/event/{sev}/{cat}, NOT the bare key producers use).
             # Two reasons this must be a relay and not a producer-side key

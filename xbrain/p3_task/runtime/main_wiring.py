@@ -150,7 +150,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     from xbrain.p3_task.geo.objects import read_geo_objects
     from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
     from xbrain.p3_task.state.geo_events import render_geo_event
-    from xbrain.p3_task.state.task_state import read_task_state
+    from xbrain.p3_task.state.task_state import (
+        read_task_state, wall_iso_to_epoch,
+    )
     from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
     from xbrain.p3_task.ingest.geo_read import build_manifest
     from xbrain.p3_task.teach.runtime import TeachRuntime
@@ -246,14 +248,41 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             _task_evt_boot = _BOOT_ID
 
             def _emit_task_event(task_id: str, to_state: str,
-                                 kind: str, sev: str) -> None:
+                                 kind: str, sev: str,
+                                 extra: dict = None) -> None:
                 _task_evt_seq[0] += 1
+                detail = {"kind": kind, "task_id": task_id, "state": to_state}
+                # 终态事实随事件带出. 11 S6.1 的 detail 是[按类别自定义]的 JSON,
+                # 所以这不是扩协议. 必须走这条路的原因: v2.0 S3.3 的 result 要
+                # duration_sec / started_ts / route_id 等, 而 p5 不能读 task.db
+                # (平面隔离), 且 11 S4.4 的 TaskState [只列非终态任务] -- 任务
+                # 一终结就从广播里消失, 那些字段跟着一起消失. 事件是终态那一刻
+                # 唯一还带着任务的报文.
+                if extra:
+                    detail.update(extra)
                 gen.put("event/%s/task" % sev, json.dumps({
                     "eid": "task-%s-%d" % (_task_evt_boot, _task_evt_seq[0]),
                     "title": "task %s %s" % (task_id, kind),
-                    "detail": {"kind": kind, "task_id": task_id, "state": to_state},
+                    "detail": detail,
                     "src": "p3_task", "ts": 0.0,
-                }).encode("utf-8"))
+                }, ensure_ascii=False).encode("utf-8"))
+
+            async def _fetch_terminal_facts(task_id: str) -> dict:
+                """终态那一刻的任务事实, 供事件带给云端.
+
+                只在终态迁移上读一次库 -- 不是每条事件都读. 字段与 v2.0 S3.3 的
+                result.summary 对齐, 时间戳转 epoch(v2.0 要数字, 库里存 ISO).
+                """
+                cur = await conn.execute(
+                    "SELECT task_type, route_geo_id, started_at, finished_at, "
+                    "       duration_sec FROM tasks WHERE task_id=?", (task_id,))
+                row = await cur.fetchone()
+                if row is None:
+                    return {}
+                return {"task_type": row[0], "route_id": row[1],
+                        "started_ts": wall_iso_to_epoch(row[2]),
+                        "ended_ts": wall_iso_to_epoch(row[3]),
+                        "duration_sec": row[4]}
 
             # 11 S6.2 geo events: 地理要素 CRUD 审计. applier 已经把
             # (sev, detail.type, detail) 三元组放进 ApplyResult.events; 少的一直
@@ -462,7 +491,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 finished_at=_now_utc_iso(),
                                 boot_id=_BOOT_ID,
                                 on_transition=_make_publish(
-                                    state_pub, _emit_task_event))
+                                    state_pub, _emit_task_event,
+                                    fetch_terminal=_fetch_terminal_facts))
                             task_ack_pub.put(json.dumps(
                                 ack, ensure_ascii=False).encode("utf-8"))
                             if ack.get("result") == "accepted":
@@ -592,18 +622,23 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 _logger.warning(
                                     "p3 ES-2: suspended running task %s "
                                     "(reason=%s)", _tid, _reason)
+                                # ES-2 挂起的是[正在跑的]那条, 所以来源
+                                # 状态是 running -- 事件判别按 (from, to) 做,
+                                # 传错会查不到表而抛.
                                 await _make_publish(
-                                    state_pub, _emit_task_event)(
-                                        _tid, _to, _reason)
+                                    state_pub, _emit_task_event,
+                                    fetch_terminal=_fetch_terminal_facts)(
+                                        _tid, "running", _to, _reason)
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p3 ES-2 suspend failed: %s", exc)
                     else:
                         try:
                             await scheduler_tick(
                                 conn, dao, now_mono_ms=_now_mono_ms(),
-                                on_transition=_make_publish(state_pub,
-                                                            _emit_task_event,
-                                                            _publish_task_state),
+                                on_transition=_make_publish(
+                                    state_pub, _emit_task_event,
+                                    _publish_task_state,
+                                    fetch_terminal=_fetch_terminal_facts),
                                 # 与 created_at 同一口径的墙钟(15 S9.5):
                                 # started_at 是给人看的下发时间, 由调用方生成
                                 # 而不是 driver 自己取 -- driver 里不应有第二
@@ -711,7 +746,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     return 0
 
 
-def _make_publish(state_pub, emit_task_event=None, publish_state=None):
+def _make_publish(state_pub, emit_task_event=None, publish_state=None,
+                  fetch_terminal=None):
     """Build the scheduler on_transition callback: publish each task state change on
     state/task (event + 1 Hz, 11 S2.2.2) so p5/HMI/cloud can rebuild the machine, log
     it, AND emit the 11 S6.2 task event (accept/reject/start/complete/fail) via
@@ -745,9 +781,24 @@ def _make_publish(state_pub, emit_task_event=None, publish_state=None):
         if emit_task_event is not None:
             # 判别只看迁移. reason 仍然进日志(给人看), 但不再参与决定发什么
             # 事件 -- 那正是"暂停被报成 rejected"的来源.
+            # 局部导入: 本模块顶部只放 stdlib, 全部 xbrain 依赖都在函数内取
+            # (文件既有惯例, 避免加载期的循环).
+            from xbrain.p3_task.state.machine import TERMINAL_STATES
+
             ev = task_event_for_transition(from_state, to_state)
             if ev is not None:
-                emit_task_event(task_id, to_state, ev[0], ev[1])
+                extra = None
+                if to_state in TERMINAL_STATES and fetch_terminal is not None:
+                    try:
+                        extra = dict(await fetch_terminal(task_id))
+                    except Exception as exc:      # noqa: BLE001
+                        # 读不到就少几个字段, NO 不能因此丢掉整条终态事件 --
+                        # 那是云端唯一能知道任务结束了的报文.
+                        _logger.error("p3 terminal facts read failed: %s", exc)
+                    if extra is not None and reason:
+                        # 操作员填的原因: 它在参数里现成, 不必再查库.
+                        extra["reason"] = reason
+                emit_task_event(task_id, to_state, ev[0], ev[1], extra)
     return _publish
 
 
