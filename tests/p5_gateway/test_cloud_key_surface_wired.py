@@ -245,7 +245,7 @@ def test_no_cloud_key_is_silently_dropped_from_the_registry():
     # "新建+Qt->后端心跳+key.md" 的形式交付的, 内容逐字是"新增加: <表行>",
     # 而不是改主表.
     # NO 不把增量并进主表 -- 那是甲方的交付物, 我方改它等于替他们说话.
-    # ★ 等甲方发出合并后的 v2.1 主表, 这里的第二个来源可以去掉.
+    # *** 等甲方发出合并后的 v2.1 主表, 这里的第二个来源可以去掉.
     qt = "\n".join(
         f.read_text(encoding="utf-8")
         for f in sorted((ROOT / "docs" / "MISSON").glob("*.md")))

@@ -834,7 +834,7 @@ class CloudBridge:
         "大概是 up"处理, 等于用一个猜测去喂链路判据. 这里只记不抛 -- 回调在
         Rust 线程上, 抛出去会被 Zenoh 吞掉且没有日志, 记一条 error 更有用.
 
-        ★ session_id 与 state=down 的语义(HB-1 / HB-2)是后两批, 本批只落
+        *** session_id 与 state=down 的语义(HB-1 / HB-2)是后两批, 本批只落
         "心跳到达即算听见". 9.3: 不为将来留口子, 那两条各自到位时再接.
         """
         try:
