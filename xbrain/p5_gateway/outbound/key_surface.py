@@ -44,6 +44,10 @@ P5_EXPECTED_PUBLISHERS = frozenset({
 
 
 P5_EXPECTED_SUBSCRIBERS = frozenset({
+    # 11 S2.2.2A: Qt 的 1 Hz 在线心跳. 它是 S4.6 云端链路判定的输入 --
+    # 在它之前只能靠"有没有收到任何云端报文"间接推断, 而 Qt 可以长时间
+    # 只订阅不发布.
+    "heartbeat/qt",
     "cmd/task",           # cmd/task/ext -> normalised inbound
     "cmd/estop",
     "cmd/media/session",

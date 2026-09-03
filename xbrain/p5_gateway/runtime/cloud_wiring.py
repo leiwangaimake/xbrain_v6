@@ -74,6 +74,9 @@ CLOUD_CMD_TASK = "xbrain/%s/cmd/task"
 CLOUD_CMD_ESTOP = "xbrain/%s/cmd/estop"
 CLOUD_CMD_MEDIA_SESSION = "xbrain/%s/cmd/media/session"
 CLOUD_CMD_FILE_ACK = "xbrain/%s/cmd/file/ack"
+#: 11 S2.2.2A 控制端在线心跳(Qt -> 后端, 1 Hz). 它不是 cmd/ 也不是 state/,
+#: 单列一族 -- 见该节: 既不是状态上行也不是指令, 是一条独立的存活信号.
+CLOUD_HEARTBEAT = "xbrain/%s/heartbeat/qt"
 CLOUD_AUDIO_BROADCAST = "xbrain/%s/audio/broadcast"
 
 CLOUD_CMD_TASK_ACK = "xbrain/%s/cmd/task/ack"
@@ -157,7 +160,8 @@ OUTBOUND_PERIODS = {
 
 #: 入站五条. 顺序即 v2.0 S2 表的顺序.
 INBOUND_TEMPLATES = (CLOUD_CMD_TASK, CLOUD_CMD_ESTOP, CLOUD_CMD_MEDIA_SESSION,
-                     CLOUD_CMD_FILE_ACK, CLOUD_AUDIO_BROADCAST)
+                     CLOUD_CMD_FILE_ACK, CLOUD_AUDIO_BROADCAST,
+                     CLOUD_HEARTBEAT)
 
 
 def relative_key(template: str) -> str:
@@ -275,6 +279,8 @@ class CloudBridge:
             CLOUD_CMD_FILE_ACK % rid, self._rx(self._on_cloud_file_ack)))
         self._subs.append(self._session.declare_subscriber(
             CLOUD_AUDIO_BROADCAST % rid, self._rx(self._on_cloud_audio_broadcast)))
+        self._subs.append(self._session.declare_subscriber(
+            CLOUD_HEARTBEAT % rid, self._rx(self._on_cloud_heartbeat)))
 
         self._pubs["cmd/task/ack"] = self._session.declare_publisher(
             CLOUD_CMD_TASK_ACK % rid)
@@ -811,6 +817,41 @@ class CloudBridge:
         except Exception:                       # noqa: BLE001
             _logger.exception("p5 cloud cmd/file/ack handler crashed")
 
+    def _on_cloud_heartbeat(self, sample: Any) -> None:
+        """Qt 的 1 Hz 在线心跳(11 S2.2.2A).
+
+        *** 本函数[几乎不做事], 而这正是它的全部作用.
+        断线计时的刷新在 _rx 包装里已经完成 -- 心跳的价值就是"它到了". 在它
+        之前 Qt 可以长时间只订阅不发布, on_cloud_rx 根本不会被调用, 于是链路
+        恒为 never_connected, disconnected_s 一路累到 rtb_s 触发返航(TSK-21),
+        而甲方明明在线.
+
+        NO 这条不回 ack: 它是单向存活信号, 回 ack 会在两侧之间形成 1 Hz 的
+        来回流量, 而且 11 S2.2.2A 没有给它定义应答 key.
+
+        *** state 越界抛(3.5), 不静默当成 up.
+        闭集是 up|down. 收到别的值说明两侧对协议的理解已经不一致, 这时候按
+        "大概是 up"处理, 等于用一个猜测去喂链路判据. 这里只记不抛 -- 回调在
+        Rust 线程上, 抛出去会被 Zenoh 吞掉且没有日志, 记一条 error 更有用.
+
+        ★ session_id 与 state=down 的语义(HB-1 / HB-2)是后两批, 本批只落
+        "心跳到达即算听见". 9.3: 不为将来留口子, 那两条各自到位时再接.
+        """
+        try:
+            raw, _key = _sample_parts(sample)
+            body = json.loads(raw.decode("utf-8"))
+            data = body.get("data") or {}
+            state = data.get("state")
+            if state not in ("up", "down"):
+                _logger.error(
+                    "p5 cloud heartbeat state=%r not in the 11 S2.2.2A closed "
+                    "set (up|down); treated as a beat, nothing else", state)
+            self._hb_beats = getattr(self, "_hb_beats", 0) + 1
+        except Exception:                       # noqa: BLE001
+            # 心跳解析失败不影响它已经刷新过的断线计时(那一步在 _rx 里, 先于
+            # 本函数) -- 一条坏报文同样证明云端在线.
+            _logger.exception("p5 cloud heartbeat handler crashed")
+
     def _on_cloud_audio_broadcast(self, sample: Any) -> None:
         """云端喊话 PCM 帧. 机内 TTS 链路在, 云端 PCM 入站未接.
 
@@ -981,6 +1022,6 @@ def maybe_wire(session: Any, rid: str,
 
 __all__ = ["CloudBridge", "maybe_wire", "relative_key", "INBOUND_TEMPLATES",
            "CLOUD_CMD_TASK", "CLOUD_CMD_ESTOP", "CLOUD_CMD_MEDIA_SESSION",
-           "CLOUD_CMD_FILE_ACK", "CLOUD_AUDIO_BROADCAST",
+           "CLOUD_CMD_FILE_ACK", "CLOUD_AUDIO_BROADCAST", "CLOUD_HEARTBEAT",
            "CLOUD_CMD_TASK_ACK", "CLOUD_CMD_ESTOP_ACK",
            "CLOUD_CMD_MEDIA_SESSION_ACK", "SRC_QT", "OUTBOUND_PERIODS"]

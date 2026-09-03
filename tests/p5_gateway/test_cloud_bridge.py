@@ -153,7 +153,7 @@ def _feed_internal_ack(session, ack_key, cmd_id, result, code="OK",
 
 # --- 接线本身 ---------------------------------------------------------
 
-def test_five_inbound_and_three_ack_keys_are_declared():
+def test_six_inbound_and_three_ack_keys_are_declared():
     """基线. 没有它, 下面每条"报文没到"的断言都可能只是喂错了 key."""
     _bridge_, session = _bridge()
 
@@ -165,6 +165,10 @@ def test_five_inbound_and_three_ack_keys_are_declared():
         "xbrain/gj-001/cmd/file/ack",
         "xbrain/gj-001/cmd/media/session",
         "xbrain/gj-001/cmd/task",
+        # 11 S2.2.2A: Qt 的 1 Hz 在线心跳. 它不是 cmd/ 也不是 state/, 单列
+        # 一族 heartbeat/ -- 没有它, Qt 可以长时间只订阅不发布, 链路恒为
+        # never_connected 直到 rtb_s 触发返航.
+        "xbrain/gj-001/heartbeat/qt",
         "cmd/task/ack", "cmd/geo/ack", "state/fence"])
     # 三条 ack + 八条出站状态面.
     # * state/link 起初以为"main_wiring 里已有发布者", 那是看错了: 那条
@@ -195,8 +199,8 @@ def test_subscriber_handles_are_held():
     """
     bridge, _session = _bridge()
 
-    assert bridge.alive() == 8, (
-        "桥只接住了 %d 个订阅句柄, 其余会被 GC 掉(5 云端入站 + 2 机内 ack + "
+    assert bridge.alive() == 9, (
+        "桥只接住了 %d 个订阅句柄, 其余会被 GC 掉(6 云端入站 + 2 机内 ack + "
         "1 state/fence)" % bridge.alive())
 
 

@@ -165,6 +165,27 @@ def test_cloud_inbound_keys_are_actually_subscribed():
         % missing)
 
 
+def test_no_cloud_key_is_subscribed_without_being_registered():
+    """*** 反方向: 代码订了而登记表没登记.
+
+    key_surface 的模块说明写着"extra keys mean the code publishes something the
+    contract didn't sanction", 而此前只有[登记了没接线]那一个方向有判据 --
+    2026-09-03 加心跳订阅时, 把 heartbeat/qt 从登记表删掉, 全部测试照样绿.
+
+    登记表是 11 S2.2 的投影. 少登记一条的后果不是"少了一行字": 双向差集这个
+    机制的价值就在于[两边都不能单独动], 只守一个方向等于只守了一半.
+
+    MUTATION: 从 P5_EXPECTED_SUBSCRIBERS 删掉任意一条 -> 红.
+    """
+    from xbrain.p5_gateway.outbound.key_surface import P5_EXPECTED_SUBSCRIBERS
+
+    subs = _declared_keys({"declare_subscriber"})
+    extra = sorted(subs - set(P5_EXPECTED_SUBSCRIBERS))
+    assert not extra, (
+        "接线里订阅了这些云端 key, 而登记表(11 S2.2 的投影)没有它们: %s\n"
+        "  -> 要么补进登记表, 要么这条订阅本就不该存在." % extra)
+
+
 def test_cloud_outbound_keys_are_actually_published():
     """*** 云端出站面必须真的 declare_publisher.
 
@@ -220,8 +241,14 @@ def test_no_cloud_key_is_silently_dropped_from_the_registry():
     from xbrain.p5_gateway.outbound.key_surface import (
         P5_EXPECTED_PUBLISHERS, P5_EXPECTED_SUBSCRIBERS)
 
-    qt = (ROOT / "docs" / "MISSON" / "任务枚举_qt端v2.0.md").read_text(
-        encoding="utf-8")
+    # v2.0 的 key 面 = 主表 + 甲方后续发的增量件. 心跳(2026-09-03)是以
+    # "新建+Qt->后端心跳+key.md" 的形式交付的, 内容逐字是"新增加: <表行>",
+    # 而不是改主表.
+    # NO 不把增量并进主表 -- 那是甲方的交付物, 我方改它等于替他们说话.
+    # ★ 等甲方发出合并后的 v2.1 主表, 这里的第二个来源可以去掉.
+    qt = "\n".join(
+        f.read_text(encoding="utf-8")
+        for f in sorted((ROOT / "docs" / "MISSON").glob("*.md")))
     v2_keys = {m.group(1) for m in
                re.finditer(r"^\|\s*`xbrain/\{rid\}/([^`]+)`", qt, re.M)}
     registered = set(P5_EXPECTED_PUBLISHERS) | set(P5_EXPECTED_SUBSCRIBERS)

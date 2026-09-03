@@ -215,3 +215,64 @@ def test_p5_runtime_hands_the_bridge_the_real_link_state():
     assert "on_cloud_rx=" in call, "p5 wires the bridge without a rx notifier"
     assert "link_state.on_cloud_rx" in call, (
         "the notifier does not reach the LinkStateMachine")
+
+
+# --- 11 S2.2.2A: Qt 在线心跳 ------------------------------------------
+
+def test_the_qt_heartbeat_refreshes_the_outage_clock():
+    """*** 心跳存在的全部意义就是"它到了".
+
+    在它之前 Qt 可以长时间只订阅不发布, on_cloud_rx 根本不会被调用 -- 链路恒
+    为 never_connected, disconnected_s 一路累到 rtb_s(1800s)触发返航(TSK-21),
+    而甲方明明在线. 2026-09-02/03 连续发生了三次.
+
+    MUTATION: heartbeat 订阅不过 _rx 包装 -> 红.
+    """
+    seen = []
+    _b, s = _bridge(on_rx=lambda: seen.append(1))
+    assert "xbrain/gj-001/heartbeat/qt" in s.subs, sorted(s.subs)
+    s.subs["xbrain/gj-001/heartbeat/qt"](
+        _Sample("xbrain/gj-001/heartbeat/qt",
+                b'{"v":1,"rid":"gj-001","src":"qt_hmi",'
+                b'"data":{"session_id":"hmi-1","state":"up"}}'))
+    assert seen, "心跳没有刷新断线计时"
+
+
+def test_a_heartbeat_is_not_acked():
+    """单向存活信号. 回 ack 会在两侧之间形成 1 Hz 的来回, 而 11 S2.2.2A 也
+    没有给它定义应答 key.
+
+    MUTATION: 在处理器里 put 一条 ack -> 红.
+    """
+    _b, s = _bridge(on_rx=lambda: None)
+    s.subs["xbrain/gj-001/heartbeat/qt"](
+        _Sample("xbrain/gj-001/heartbeat/qt",
+                b'{"v":1,"rid":"gj-001","data":{"session_id":"h","state":"up"}}'))
+    assert not s.pubs.get("xbrain/gj-001/heartbeat/qt/ack"), s.pubs.keys()
+
+
+def test_an_out_of_set_state_is_reported_not_silently_taken_as_up(caplog):
+    """闭集是 up|down(11 S2.2.2A). 收到别的值说明两侧对协议的理解已经不一致,
+    这时按"大概是 up"处理等于拿一个猜测去喂链路判据.
+
+    MUTATION: 去掉 state 闭集检查 -> 红.
+    """
+    _b, s = _bridge(on_rx=lambda: None)
+    with caplog.at_level("ERROR"):
+        s.subs["xbrain/gj-001/heartbeat/qt"](
+            _Sample("xbrain/gj-001/heartbeat/qt",
+                    b'{"v":1,"rid":"gj-001","data":{"state":"paused"}}'))
+    assert any("closed set" in r.getMessage() for r in caplog.records), (
+        [r.getMessage() for r in caplog.records])
+
+
+def test_a_malformed_heartbeat_still_counted_as_contact():
+    """坏报文同样证明云端在线 -- 刷新在 _rx 里, 先于本处理器.
+
+    MUTATION: 把刷新挪进处理器的 try 里 -> 红.
+    """
+    seen = []
+    _b, s = _bridge(on_rx=lambda: seen.append(1))
+    s.subs["xbrain/gj-001/heartbeat/qt"](
+        _Sample("xbrain/gj-001/heartbeat/qt", b"not json"))
+    assert seen
