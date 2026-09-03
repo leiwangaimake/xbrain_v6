@@ -67,6 +67,7 @@ STATE_TEACH_TOPIC = "state/teach"
 CMD_FENCE_TOPIC = "cmd/fence"            # W1: fence geometry (17 S6.9, P5 consumes)
 STATE_GEO_OBJECTS_TOPIC = "state/geo/objects"  # 11 S7.10A: routes/keypoints/docks geometry
 STATE_MODE_TOPIC = "state/mode"          # W3: P2 usage mode (10 Hz)
+STATE_AUDIO_TOPIC = "state/audio"        # 11 S8.10: P2 audio state (1 Hz + on change)
 STATE_POSE_TOPIC = "state/pose"          # P1-1: pose + RTK heading (p1 bridge)
 STATE_CLOCK_TOPIC = "state/clock"        # P1-13: clock sync mirror (18-C G47)
 EVENT_WILDCARD_TOPIC = "event/**"        # W2: event/{severity}/{category} stream
@@ -451,6 +452,8 @@ def run_voice_loop_wiring(stop_flag: dict,
         "link": None,                # state/link  -> status + ESTOP arming
         "mode": None,                # state/mode  -> footer mode (W3)
         "pose": None,                # state/pose  -> coord panel + heading dial + RTK
+        "audio": None,               # 11 S8.10 AudioState (p2 发)
+        "audio_updated_ms": 0,       # last state/audio arrival (mono)
         "pose_updated_ms": 0,        # last state/pose arrival (mono) -> staleness gate
         "clock": None,               # state/clock -> RTK time-sync indicator
         "events": [],                # event/**    -> event stream ring (W2)
@@ -662,6 +665,24 @@ def run_voice_loop_wiring(stop_flag: dict,
             # 了, 谁也不会发现. 现按 S4.3 对齐.
             if d.get("voice_mode"):
                 hmi_state["mode"] = d["voice_mode"]
+
+        def _on_state_audio(sample) -> None:
+            # 11 S8.10 AudioState. p2_core 是契约指定的发布者.
+            # *** 整包存下, NO 不在这里摊平.
+            # 云端要的是 v2.0 S4.4 的扁平形状(speaker_state/microphone_state/
+            # playing/recording), 那个映射在 cloud_state._audio 里做 -- 回调跑
+            # 在 Rust 线程池上(CLAUDE.md 4.2), 只做一次 dict 赋值(原子), 不做
+            # 闭集校验: 校验会抛, 而在 Rust 线程上抛出去没人接得住.
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                return
+            if isinstance(d, dict):
+                hmi_state["audio"] = d
+                # 陈旧度判据的时基. p2 的下限是 1 Hz, 所以"很久没来"是可判的.
+                # 没有这个戳的话, p2 挂掉之后 hmi_state["audio"] 会一直停在
+                # 最后一帧, 云端看到的是一个[冻结但看起来正常]的音频状态.
+                hmi_state["audio_updated_ms"] = _now_mono_ms()
 
         def _on_state_pose(sample) -> None:
             # P1-1: p1 publishes state/pose (3.0 envelope) 10 Hz; the HMI reads the
@@ -878,6 +899,7 @@ def run_voice_loop_wiring(stop_flag: dict,
         fence_sub = gen.declare_subscriber(CMD_FENCE_TOPIC, _on_cmd_fence)
         geo_sub = gen.declare_subscriber(STATE_GEO_OBJECTS_TOPIC, _on_geo_objects)
         mode_sub = gen.declare_subscriber(STATE_MODE_TOPIC, _on_state_mode)
+        audio_sub = gen.declare_subscriber(STATE_AUDIO_TOPIC, _on_state_audio)
         pose_sub = gen.declare_subscriber(STATE_POSE_TOPIC, _on_state_pose)
         clock_sub = gen.declare_subscriber(STATE_CLOCK_TOPIC, _on_state_clock)
         event_sub = gen.declare_subscriber(EVENT_WILDCARD_TOPIC, _on_event)

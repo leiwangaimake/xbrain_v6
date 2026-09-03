@@ -65,8 +65,18 @@ def _proj(clock=None):
 
 
 def _state(**over):
+    # audio: 11 S8.10 的形状, p2_core 发. 夹具里必须有 -- state/audio 从
+    # 2026-09-03 起是[有上游依赖]的键: 没收到过 p2 的快照就不发这一轮
+    # (见 cloud_state._audio). 不给的话下面那些"首拍要发全"的断言会红,
+    # 而红的原因是夹具缺数据, 不是投影坏了.
+    # audio_updated_ms 用 0.0: FakeClock 的起点也是 0, 所以 age=0 不陈旧.
     st = {"tasks": None, "pose": POSE, "clock": {"ts_sync": True},
-          "health": None, "mode": "normal", "geo_cache": None}
+          "health": None, "mode": "normal", "geo_cache": None,
+          "audio": {"speaker": {"holder": "none"},
+                    "mic": {"open": False, "gate_reason": "idle"},
+                    "devices": {"mic": "ok"},
+                    "voice_mode": None, "ts_mono": 0.0},
+          "audio_updated_ms": 0.0}
     st.update(over)
     return st
 

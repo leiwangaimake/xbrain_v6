@@ -48,7 +48,7 @@ from xbrain.p2_core.health.aggregate import HealthAggregator, refresh_health
 from xbrain.p2_core.health.factor import FactorConfig
 from xbrain.p2_core.runtime.speaker_wiring import (
     SPEAK_TOPIC, SpeakerBusy, SpeakerDomain, SpeakerHwError,
-    SpeakerWiringConfig, parse_speak_payload,
+    SpeakerWiringConfig, parse_speak_payload, parse_speak_source,
 )
 
 
@@ -58,6 +58,16 @@ _logger = logging.getLogger("xbrain.p2.wiring")
 # sources it derives items from. All GEN-plane, all relative keys (bus
 # convention -- the rid prefix is the session's, not the caller's).
 HEALTH_SUMMARY_TOPIC = "health/summary"
+STATE_AUDIO_TOPIC = "state/audio"    # 11 S2.2.2, 内部总线裸键(rid 前缀由 p5 转云端时加)
+from xbrain.p2_core.messaging.audio_state import (audio_publish_due,
+                                                  build_audio_state)
+
+# 11 S2.2.2 逐字 "1 Hz + 变更即报": 1 Hz 是[下限](静止时也要有心跳),
+# 变更即报是[上限](主循环 10 Hz, 所以变更最迟 100ms 出去).
+# *** 两者不是二选一 -- 只做 1 Hz 会让"喇叭响了"这个瞬态被采样漏掉,
+#     只做变更即报会让消费方分不清"没变"与"p2 死了".
+AUDIO_STATE_PERIOD_S = 1.0
+
 HEALTH_PUBLISH_PERIOD_S = 1.0            # 11 S2.2 / 14 S2.3 P-2: 1 Hz stable
 STATE_POSE_TOPIC = "state/pose"          # -> rtk + heading (11 S3.2 / S3.3)
 STATE_CLOCK_TOPIC = "state/clock"        # -> clock (CLK-A2 mirror)
@@ -127,6 +137,11 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # callback only stores the decoded body (RUST THREAD, CLAUDE.md 4.2)
         # and the loop below does the derivation and the publish.
         health_pub = gen.declare_publisher(HEALTH_SUMMARY_TOPIC)
+        # 11 S2.2.2 逐字: state/audio 的发布者是 p2_core, "1 Hz + 变更即报".
+        # 在此之前全系统[没有任何进程发这条 key](2026-09-03 实测 8 秒 0 帧),
+        # 于是云端 state/audio 是 p5 投影出来的恒定 idle -- 喇叭真响的时候
+        # 甲方界面也不会变.
+        audio_state_pub = gen.declare_publisher(STATE_AUDIO_TOPIC)
         health_agg = HealthAggregator()
         # Read ONCE at startup, not per tick: the resolved snapshot does not
         # change while the process runs (a config change goes through the
@@ -173,7 +188,11 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             4.2). We hand off via speaker.handle_speak which
             manages its own lock + blocking."""
             try:
-                text = parse_speak_payload(bytes(sample.payload))
+                _raw = bytes(sample.payload)
+                text = parse_speak_payload(_raw)
+                # SpeakRequest.source(11 S8.8.1) -> state/audio 的
+                # speaker.holder. 解析失败不影响播出(见 parse_speak_source).
+                _src = parse_speak_source(_raw)
             except Exception as exc:      # noqa: BLE001
                 _logger.warning("cmd/audio/speak parse fail: %s", exc)
                 return
@@ -181,7 +200,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             # thread returns quickly.
             import threading
             threading.Thread(
-                target=lambda: _speak_and_log(speaker, text),
+                target=lambda: _speak_and_log(speaker, text, _src),
                 name="p2.speak_handler", daemon=True).start()
 
         _gen_subs.append(gen.declare_subscriber(SPEAK_TOPIC, _on_speak))
@@ -455,6 +474,9 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         try:
             last_hb = time.monotonic()
             last_health = 0.0        # 0 -> publish on the very first pass
+            last_audio = 0.0         # 上次[实际发出]的时刻, 非上次求值
+            last_audio_body = None   # 变更即报: 与上一条比对(去掉 ts_mono)
+            last_payload_audio = None   # 心跳块缓存的 GZH-2 音频链路连通性
             while not stop_flag.get("stop"):
                 now = time.monotonic()
                 # Drain cmd/mode on the MAIN thread (see the subscriber above
@@ -506,6 +528,55 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p2 health publish failed: %s", exc)
                     last_health = now
+                # 11 S2.2.2: state/audio = 1 Hz 下限 + 变更即报.
+                # 每拍都求值(10 Hz, 几个 dict 读, 无 I/O), 变了立刻发, 没变
+                # 也至少 1 Hz 发一次.
+                # *** 上一版把求值整个包在 "now - last_audio >= 1.0" 里, 于是
+                #     "变更即报"被降频成 1 Hz, 而里面那条 keepalive 分支
+                #     [永远进不去](last_audio 每次都刚被更新). 这就是 CLAUDE.md
+                #     3.2 形态一: 一条永远不执行的分支, 测试照样绿.
+                try:
+                    _has_mic = mic_pub_thread is not None
+                    # 存活判据与心跳块喂给 device_bridge 的[同一个表达式]
+                    # (bool(cap_streaming and pub_alive)). 两处若各写各的,
+                    # devices.mic 与健康度里的 mic 项迟早互相打架.
+                    # *** streaming 而不是 is_alive: 见 build_audio_state 的
+                    # 那段"重生循环让 is_alive() 恒 True".
+                    _streaming = (
+                        bool(getattr(mic_thread, "streaming", False)
+                             and mic_pub_thread.is_alive())
+                        if _has_mic else None)
+                    _body = build_audio_state(
+                        speaker_view=speaker.audio_view(),
+                        mic_muted=(mic_pub_thread.is_muted()
+                                   if _has_mic else None),
+                        mic_streaming=_streaming,
+                        mic_device_name=(mic_pub_thread.device_name()
+                                         if _has_mic else None),
+                        mic_frames_dropped_gate=(
+                            getattr(mic_pub_thread, "frames_muted", None)
+                            if _has_mic else None),
+                        payload_audio_ok=last_payload_audio,
+                        # voice_mode 的持有者[还不存在]: dispatch 的
+                        # _handle_set_voice_mode 只把它放进 DispatchResult.applied,
+                        # 而 mode_wiring._remember_profile 只回写 profile /
+                        # locked / max_profile 三个键, voice_mode 落地即丢.
+                        # 这里填 "normal" 就是拿一个没人维护的量冒充实测值
+                        # (CLAUDE.md 3.1). 等 BIZ-P2-11 SM 真正持有它再填.
+                        voice_mode=None,
+                        ts_mono=now)
+                    # 节律判据提在 audio_publish_due 里(纯函数, 可测).
+                    # 循环里内联过一版, 写错了没人发现 -- 见那个函数的注释.
+                    _due, _cmp = audio_publish_due(
+                        _body, last_audio_body, now, last_audio,
+                        AUDIO_STATE_PERIOD_S)
+                    if _due:
+                        audio_state_pub.put(json.dumps(
+                            _body, ensure_ascii=False).encode("utf-8"))
+                        last_audio_body = _cmp
+                        last_audio = now
+                except Exception as exc:      # noqa: BLE001
+                    _logger.error("p2 state/audio publish failed: %s", exc)
                 if now - last_hb >= heartbeat_period_s:
                     # Rich heartbeat: capture/publisher alive flags,
                     # capture/publish counters, and the bug-net
@@ -555,6 +626,11 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     _ps = payload.device_status()
                     _audio = _ps["audio"] if _ps else None
                     _lights = _ps["lights"] if _ps else None
+                    # state/audio 的 devices.speaker 复用这次轮询的结果.
+                    # *** NO 不在 10 Hz 的 state/audio 块里再调一次
+                    # device_status() -- 那是一次 urlopen(timeout=1.0),
+                    # 放进 10 Hz 路径会把整个 p2 主循环拖成 1 Hz.
+                    last_payload_audio = _audio
                     device_bridge.observe("payload_speaker", _audio)
                     device_bridge.observe("payload_siren", _audio)
                     device_bridge.observe("payload_strobe", _lights)
@@ -643,9 +719,10 @@ def _handle_motion_intent(raw, limits, state_cache, health_agg, factor_cfg,
                                  {"reason": str(exc)})
 
 
-def _speak_and_log(speaker: SpeakerDomain, text: str) -> None:
+def _speak_and_log(speaker: SpeakerDomain, text: str,
+                   source: Optional[str] = None) -> None:
     try:
-        ack = speaker.handle_speak(text)
+        ack = speaker.handle_speak(text, source)
     except SpeakerBusy:
         _logger.info("p2 speaker busy; skipping request")
         return

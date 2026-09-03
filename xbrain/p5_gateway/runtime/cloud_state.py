@@ -51,6 +51,14 @@ import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
+
+#: state/audio 判为陈旧的门限. p2 的发布下限是 1 Hz(11 S2.2.2), 取 5 拍 --
+#: 单拍抖动(GC / 一次慢的 payload 轮询)不该让界面闪一下 fault, 而连续 5 拍
+#: 没来已经不是抖动了.
+#: NO 不取 1000ms: 那等于要求零抖动, 判据会频繁误报, 而一条频繁误报的判据
+#: 最后一定被人放宽成永远不报(CLAUDE.md 3.2 形态二).
+AUDIO_STALE_MS = 5000.0
+
 from ..outbound.cloud_envelope import UnmappedLinkLevel
 from ..outbound.task_result import TaskResultTracker, build_result
 from ..outbound.state_projection import (ProjectionError, audio_payload,
@@ -356,22 +364,92 @@ class CloudProjector:
             entered_ts=state.get("mode_entered_ts"),
             exit_reason=state.get("mode_exit_reason"))
 
-    def _audio(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """喇叭/麦克风状态.
+    def _audio(self, state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """11 S8.10 AudioState(p2 发) -> v2.0 S4.4 的扁平形状.
 
         * speaker_holder 反映半双工门控的持有者. 本项目 AEC 结构上不可能
         (TTS 在 GZH-2 设备内合成, 上装侧拿不到播出波形), 所以喇叭与麦克风
         互斥是靠门控实现的 -- microphone_state 在放音时是 disabled 而不是
         idle, 这个差别对 Qt 的按钮显示有意义.
+
+        *** 本函数 2026-09-03 重写. 原版从 hmi_state 的[根上]读 speaking /
+        stream_id / speaker_holder / speaker_holder_type / last_frame_age_ms
+        五个扁平键, 而这五个键[全系统没有任何人写]: state/audio 在契约里的
+        发布者是 p2_core, 但 p2 从未发过这条 key(2026-09-03 实测 8 秒 0 帧),
+        p5 也从未订过. 于是 .get() 全部落 None => speaking=False =>
+        speaker_state 恒 "idle" / microphone_state 恒 "idle". 甲方界面上那
+        两格是[常量], 喇叭真响的时候也不会变 -- 而一条 1 Hz 稳定发出的
+        "idle" 与真的空闲完全不可区分(CLAUDE.md 3.2 形态一).
+
+        *** 没收到过就[不发], NO 不报 idle.
+        cloud publisher 对 None 是 continue(不发这一轮). Qt 分得清"没有
+        state/audio"与"网关挂了" -- 后者由 heartbeat / state/link 覆盖.
+        报一条 idle 则是拿"我不知道"冒充"一切正常".
+
+        *** 收到过但[太旧]报 fault, 不是继续报最后一帧.
+        p2 的发布下限是 1 Hz, 连续 5 拍没来说明音频面已经不在报了; 这时
+        喇叭能不能用是未知的, 而操作员按下"喊话"不会有任何反应. 继续把
+        最后一帧当现状会让界面停在一个冻结的正常态.
         """
-        playing = bool(state.get("speaking"))
+        a = state.get("audio")
+        if not isinstance(a, dict):
+            return None
+        # CLK-C1 + 可测性: 用注入的 self._now, NO 不读 time.monotonic().
+        # 读真钟的话, 无设备单测里 age 恒等于"进程已运行的秒数", 于是
+        # 任何夹具都落进下面的 fault 分支 -- 测试照样绿, 但绿的是 fault
+        # 那条路, 正常路径一次都没跑到(CLAUDE.md 3.2 形态一).
+        age_ms = (self._now() * 1000.0
+                  - float(state.get("audio_updated_ms") or 0.0))
+        if age_ms > AUDIO_STALE_MS:
+            return audio_payload(speaker_state="fault",
+                                 microphone_state="fault")
+
+        spk = a.get("speaker") or {}
+        mic = a.get("mic") or {}
+        dev = a.get("devices") or {}
+        holder = spk.get("holder")
+        # S8.10 逐字 "none = 空闲". 三种取值要分开读:
+        #   "none"  -> 确实空闲
+        #   None    -> 在说, 但发布方没填 SpeakRequest.source(持有者未知)
+        #   其他字串 -> 在说, 且知道是谁
+        # 把 None 当空闲是最容易踩的一脚: 那会让一次没填 source 的喊话在
+        # 界面上表现为"喇叭没响".
+        speaking = holder != "none"
+
+        # devices.speaker 缺失 = 问不到 payload-service(见 build_audio_state),
+        # NO 不当作 fault -- S8.10 说 speaker=fail 是 FATAL 级.
+        if dev.get("speaker") == "fail":
+            speaker_state = "fault"
+        else:
+            speaker_state = "playing" if speaking else "idle"
+
+        # absent 也报 fault: MIC_STATES 没有"没装麦"这个值, 而 disabled 在
+        # v2.0 里专指[被门控关掉], 拿它表示"没有麦"会让操作员以为放完音就
+        # 能录. 两者对操作员的后果一样(录不了), 报 fault 是其中诚实的那个.
+        if dev.get("mic") in ("fail", "absent"):
+            microphone_state = "fault"
+        elif mic.get("open"):
+            microphone_state = "recording"
+        elif speaking:
+            microphone_state = "disabled"
+        else:
+            microphone_state = "idle"
+
         return audio_payload(
-            speaker_state="playing" if playing else "idle",
-            microphone_state="disabled" if playing else "idle",
-            stream_id=state.get("stream_id"),
-            speaker_holder=state.get("speaker_holder"),
-            speaker_holder_type=state.get("speaker_holder_type"),
-            last_frame_age_ms=state.get("last_frame_age_ms"))
+            speaker_state=speaker_state,
+            microphone_state=microphone_state,
+            # stream_id 与 last_frame_age_ms 属云端喊话链路(audio/broadcast),
+            # 那条链路还没接(p5 收到 PCM 直接丢弃). 现在填任何值都是谎报
+            # 系统有这个能力 -- 链路接上时一并补.
+            stream_id=None,
+            last_frame_age_ms=None,
+            speaker_holder=(holder if speaking else None),
+            # v2.0 S4.4 只给了一个样例值 "cloud", [没有闭集]. 在网关按
+            # holder 前缀自建一张 cloud/local/wecom/alarm 的映射表就是造第
+            # 二份真源(同 _devices_from_health 那条"不建中文名表"). 猜错比
+            # 报 null 更坏: Qt 若按这个字段切界面, 一个自造的值会让它切错.
+            # 待甲方给出闭集后再填.
+            speaker_holder_type=None)
 
     def _media(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """动态 RTSP 端点.

@@ -383,6 +383,20 @@ class MicPublisherThread(threading.Thread):
         queue while muted are counted (frames_muted++) then discarded."""
         self._muted.set()
 
+    def device_name(self) -> str:
+        """ALSA 设备名, 进 state/audio 的 mic.device(11 S8.10).
+
+        S8.10 那一格的样例是 "usb_mic_0" -- 是[设备标识], 不是健康状态;
+        健康状态在同一条报文的 devices.mic 里(闭集 ok|degraded|fail|absent).
+        两格容易混, 混了的表现是 Qt 的设备名一栏显示 "ok".
+        """
+        return self._cfg.arecord_device
+
+    def is_muted(self) -> bool:
+        """state/audio 要的麦克风开合. Event.is_set() 是线程安全的读,
+        不需要额外的锁."""
+        return self._muted.is_set()
+
     def unmute(self) -> None:
         """Resume publish. Also drain any pending queued frames so the
         first post-mute frame is genuinely post-mute, not a stale one

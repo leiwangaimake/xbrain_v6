@@ -101,15 +101,28 @@ class SpeakerDomain:
         # the actual gating is done at the p2 publisher source -- p4
         # doesn't need to filter anything.
         self._mic_pub = mic_publisher
+        # state/audio(11 S8.10)要的三个量: 在不在说 . 从何时起 . 最后一次
+        # gate 的取值. 它们本来就在这个对象里(锁 + _publish_gate 的入参),
+        # 只是没有对外的读法 -- 外部去摸 self._lock 会把内部同步机制变成
+        # 公开接口, 那才是真正难改的耦合.
+        self._speaking_since_mono: "float | None" = None
+        self._gate_open = True
+        self._gate_reason = "idle"
+        self._speaking_source: Optional[str] = None
         # Announce idle-open initially.
         self._publish_gate(open_=True, reason="idle")
 
     def _publish_gate(self, open_: bool, reason: str) -> None:
+        # 记住最后一次的取值: state/audio 与 rt/audio/gate 必须一致
+        # (BIZ-P2-0 断言四), 而一致的前提是两边读同一个来源.
+        self._gate_open = open_
+        self._gate_reason = reason
         payload = GatePayload(open=open_, reason=reason,
                                 mono_ms=self._now())
         self._gate_pub.put(payload.to_bytes())
 
-    def handle_speak(self, text: str) -> dict:
+    def handle_speak(self, text: str,
+                     source: Optional[str] = None) -> dict:
         """Blocking. Returns an ack dict with {ok, actual_ms, code}.
 
         Half-duplex order:
@@ -129,6 +142,9 @@ class SpeakerDomain:
             if self._mic_pub is not None:
                 self._mic_pub.mute()
                 muted_here = True
+            self._speaking_since_mono = self._now() / 1000.0
+            # 域2 持有者. None = 发布方没填 source(见 parse_speak_source).
+            self._speaking_source = source
             self._publish_gate(open_=False, reason="tts_playback")
             try:
                 est_ms = self._invoke_tts(text)
@@ -170,6 +186,28 @@ class SpeakerDomain:
         except TtsClientError as exc:
             raise SpeakerHwError(str(exc)) from exc
 
+    def audio_view(self) -> dict:
+        """state/audio(11 S8.10)要的那几个量, 一次读出来.
+
+        *** 一次性快照, NO 不是几个独立的 getter.
+        speaker_state 与 gate_reason 必须自洽(BIZ-P2-0 断言四): 分成多次读的
+        话, 中间可能夹进一次 handle_speak 的状态跃迁, 于是同一条 state/audio
+        里"在说话"配着"gate 开着" -- 那正是该断言要抓的不一致.
+
+        speaking 用 locked() 判: 锁被 handle_speak 持有的整个区间就是"在说",
+        与 gate 的关闭区间同起同止(见 handle_speak 的半双工时序).
+        """
+        speaking = self._lock.locked()
+        return {
+            "speaking": speaking,
+            "since_mono": self._speaking_since_mono if speaking else None,
+            # S8.10 逐字 "none = 空闲". 说话中而 source 未知时给 None
+            # (字段在但为空), 与 "none"(确实空闲)是两件事.
+            "holder": (self._speaking_source if speaking else "none"),
+            "gate_open": self._gate_open,
+            "gate_reason": self._gate_reason,
+        }
+
     def shutdown(self) -> None:
         """Signal mic-open + drop the publisher on process exit."""
         try:
@@ -189,3 +227,28 @@ def parse_speak_payload(raw: bytes) -> str:
     if not isinstance(text, str) or not text.strip():
         raise SpeakerHwError("cmd/audio/speak has no text field")
     return text
+
+
+def parse_speak_source(raw: bytes) -> Optional[str]:
+    """SpeakRequest.source(11 S8.8.1) -- 域2 的持有者标识.
+
+    S8.8.1 里 source 是[必填], 取值须属 14 S4.1 注册表(alarm_d(900) /
+    broadcast_b(800) / tts_cloud(600) / tts_wecom(500) / tts_local(400)).
+    parse_speak_payload 至今只取 text, 把它丢了 -- 于是 state/audio 的
+    speaker.holder 无源可依.
+
+    *** 缺失时返回 None, NO 不兜一个 "tts_local".
+    兜底会把"发布方没按契约填"变成"本地 TTS 在说话", 而这两件事在报文上
+    完全一样. holder=None 让下游看得见"有人在说但不知是谁".
+    *** 本函数[不]校验闭集. S8.8.1 逐字要求 P2 "按发布进程校验" source,
+    那是一条[拒绝]路径(校验不过要回 ack 拒绝), 属 BIZ-P2-2 仲裁面; 在这里
+    抛会把一条本可播出的话变成异常. 已登记为债: 见模块头注.
+    """
+    try:
+        d = json.loads(raw.decode("utf-8"))
+    except Exception:      # noqa: BLE001
+        return None
+    if not isinstance(d, dict):
+        return None
+    src = d.get("source")
+    return src if isinstance(src, str) and src else None
