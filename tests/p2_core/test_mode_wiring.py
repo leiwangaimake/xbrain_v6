@@ -279,3 +279,105 @@ def test_voice_mode_table_covers_every_mode_state():
     """
     reachable = set(mode_wiring._VOICE_MODE_TO_STATE.values())
     assert reachable == set(ModeState)
+
+
+# --- 11 S4.3 stream_id (v1.1 新增, 99 U84) ----------------------------
+
+def _face_with_broadcast_id(sid="audio-gj001-0001"):
+    """一个进 BROADCAST 时回 stream_id 的 ModeFace, 外加它发出的报文."""
+    from xbrain.p2_core.mode.state_machine import ModeState
+    from xbrain.p2_core.runtime.mode_wiring import ModeFace
+
+    sent = []
+
+    def _pub(key, data):
+        sent.append((key, json.loads(data.decode("utf-8"))))
+
+    def _on_tr(from_state, to_state):
+        # *** 桩必须与 p2 的真回调一致: 退出时回显[刚结束那一路]的 ID,
+        # NO 不是 None.
+        # v2.0 S2.5 要求 exit 的 ack 回显原 ID, 所以真回调就是这么写的.
+        # 原来的桩在退出时回 None, 于是 mode_wiring 里"状态面该不该清"
+        # 那一步[一次都没被测到] -- 实测中退出后云端 state/mode 仍带着
+        # 旧 stream_id, 而单测全绿. 同 test_audio_state_build 那个 _view
+        # 桩的盲区: 桩越聪明, 断言越测不到真代码.
+        if to_state == ModeState.BROADCAST:
+            return {"stream_id": sid}
+        if from_state == ModeState.BROADCAST:
+            return {"stream_id": sid}
+        return None
+
+    return ModeFace(publish=_pub, on_transition=_on_tr), sent
+
+
+def _enter_broadcast(face):
+    return face.handle_frame(json.dumps(
+        {"cmd_id": "c-1", "action": "set_voice_mode",
+         "voice_mode": "broadcast"}).encode("utf-8"), now_mono_ms=1000)
+
+
+def test_state_mode_carries_the_stream_id_while_broadcasting():
+    """*** stream_id 要进[状态面], 不只是 ack.
+
+    v2.0 S4.3 要求云端的 state/mode 在 broadcast 时带它(Qt 靠它把
+    state/audio 的帧对上会话). 只走 cmd/mode/ack 的话, 消费方错过那一条
+    ack 就再也拿不到 -- ack 是事件, 掉一条就没了; 状态面是可重复读的.
+    实测里这条缺失的表现是: 一进 B 模式, 网关的 state/mode 投影就抛
+    ProjectionError 并整条 key 发不出去, 日志 10 Hz 刷同一条错误.
+
+    MUTATION: 把 body 里的 stream_id 那一行删掉 -> 这里红.
+    """
+    face, sent = _face_with_broadcast_id()
+    _enter_broadcast(face)
+
+    modes = [b for k, b in sent if k == "state/mode"]
+    assert modes, "换态后没发 state/mode"
+    assert modes[-1]["voice_mode"] == "broadcast", modes[-1]
+    assert modes[-1]["stream_id"] == "audio-gj001-0001", modes[-1]
+
+
+def test_the_ack_and_state_mode_cannot_disagree():
+    """*** 两面同源: 只有 on_transition 的返回值这一处赋值.
+
+    两个字段表达同一件事时它们迟早会不一致(同 outbound/task_ack.py 那条).
+    这里钉死"ack 里的 applied.stream_id 与 state/mode 里的是同一个值".
+    """
+    face, sent = _face_with_broadcast_id()
+    ack = _enter_broadcast(face)
+
+    applied = (ack.get("detail") or {}).get("applied") or {}
+    modes = [b for k, b in sent if k == "state/mode"]
+    assert applied["stream_id"] == modes[-1]["stream_id"] != None
+
+
+def test_leaving_broadcast_clears_the_stream_id():
+    """*** 退出必须清回 None, NO 不留上一路的值.
+
+    不清的话, 下一次会话若 ack 丢失, state/mode 会拿着旧 ID 继续发 --
+    Qt 就把新会话的帧对到上一次那一路上了.
+
+    MUTATION: 把 state/mode 的 stream_id 改成直接抄回调返回值(不按
+    结果态推导) -> 这里红.
+    """
+    face, sent = _face_with_broadcast_id()
+    _enter_broadcast(face)
+    face.handle_frame(json.dumps(
+        {"cmd_id": "c-2", "action": "exit_broadcast"}).encode("utf-8"),
+        now_mono_ms=2000)
+
+    modes = [b for k, b in sent if k == "state/mode"]
+    assert modes[-1]["voice_mode"] != "broadcast", modes[-1]
+    assert modes[-1]["stream_id"] is None, modes[-1]
+
+
+def test_a_mode_with_no_broadcast_reports_a_null_stream_id():
+    """*** 与上面配对: 没进过 B 模式时该字段是 null, 不是缺失.
+
+    只有上面三条的话, 一个"恒返回 audio-gj001-0001"的实现也能全绿.
+    """
+    face, sent = _face_with_broadcast_id()
+    face.handle_frame(json.dumps(
+        {"cmd_id": "c-3", "action": "set_voice_mode",
+         "voice_mode": "dialog"}).encode("utf-8"), now_mono_ms=1000)
+    modes = [b for k, b in sent if k == "state/mode"]
+    assert modes[-1]["stream_id"] is None, modes[-1]

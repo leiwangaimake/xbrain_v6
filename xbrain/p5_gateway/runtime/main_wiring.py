@@ -666,6 +666,15 @@ def run_voice_loop_wiring(stop_flag: dict,
             # 了, 谁也不会发现. 现按 S4.3 对齐.
             if d.get("voice_mode"):
                 hmi_state["mode"] = d["voice_mode"]
+            # 11 S4.3(v1.1, 99 U84): broadcast 时必填, 其余模式为 null.
+            # v2.0 S4.3 要求云端的 state/mode 带它 -- 没有它, mode_payload
+            # 会抛 ProjectionError 并让整条 key 发不出去(实测 10 Hz 刷错误).
+            # *** 读[状态面]而不是 cmd/mode/ack.
+            # ack 是事件, 掉一条就再也拿不到; state/mode 是可重复读的,
+            # 网关中途重启也能立刻补上. 且 p2 那边两面同源(见 mode_wiring
+            # 的 _stream_id), 不存在两个来源打架的问题.
+            if "stream_id" in d:
+                hmi_state["stream_id"] = d["stream_id"]
 
         def _on_state_audio(sample) -> None:
             # 11 S8.10 AudioState. p2_core 是契约指定的发布者.
@@ -877,19 +886,6 @@ def run_voice_loop_wiring(stop_flag: dict,
                 body = json.loads(bytes(sample.payload).decode("utf-8"))
             except Exception:      # noqa: BLE001
                 return
-            # B 模式的 stream_id: p2 在 cmd/mode/ack 的 applied 里回来.
-            # v2.0 S4.3 要求 state/mode 在 voice_mode=broadcast 时必带它
-            # (Qt 靠它把 state/audio 的帧对上会话), 而 11 S4.3 的 ModeState
-            # [没有这个字段] -- 两册的这处差只能在网关这层补上.
-            # *** 退出时必须清掉. 不清的话下一次进 B 模式如果 ack 丢了,
-            # 投影会拿着上一路的 ID 继续发, 而那一路早已结束 --
-            # Qt 会把新会话的帧对到旧 ID 上.
-            _ap = (body.get("detail") or {}).get("applied") or {}
-            if isinstance(_ap, dict) and "mode" in _ap:
-                if _ap.get("mode") == "broadcast":
-                    hmi_state["stream_id"] = _ap.get("stream_id")
-                else:
-                    hmi_state["stream_id"] = None
             cmd_id = body.get("cmd_id")
             if not isinstance(cmd_id, str) or not cmd_id.startswith("h-"):
                 # Not ours: these keys also carry answers to cloud- and

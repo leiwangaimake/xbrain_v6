@@ -160,6 +160,10 @@ class ModeFace:
         # *** 只在[真的换了态]时调, 见下面的 changed 判断 -- 同态重复下发
         # (甲方连点 start)不该把已经在播的会话重开一次.
         self._on_transition = on_transition
+        # 当前 B 模式会话 ID. 由 on_transition 的返回值填, 退出时清回 None.
+        # NO 不留上一路的值: 下一次会话若 ack 丢失, state/mode 会拿着旧 ID
+        # 继续发, Qt 就把新会话的帧对到旧会话上了.
+        self._stream_id: Optional[str] = None
 
     @property
     def state(self) -> ModeState:
@@ -242,6 +246,22 @@ class ModeFace:
             _ret = self._on_transition(result.from_state, result.to_state)
             if isinstance(_ret, dict):
                 extra = _ret
+            # *** ack 与 state/mode 要的[不是同一个语义], 不能共用一个值.
+            # ack(事件面): 退出时必须[回显]刚结束那一路的 ID --
+            #   v2.0 S2.5 逐字"后端不得为退出请求分配新 ID", Qt 靠它确认
+            #   自己退的是不是刚才那一路.
+            # state/mode(状态面): 退出后必须是 null --
+            #   11 S4.3 逐字"broadcast 时必填, 其余模式为 null". 留着旧值的话,
+            #   一条 voice_mode=normal 的报文会带着一个早已结束的会话 ID,
+            #   Qt 会把下一次会话的帧对到这一路上.
+            # => 状态面的值由[结果态]推导, 不抄回调的返回值. 这样它与
+            #   voice_mode 不可能打架 -- 两者读的是同一个 result.to_state.
+            # *** 2026-09-03 实测抓到: 原实现两面共用, 退出后云端 state/mode
+            #   仍带着 audio-gj001-0001. 单测没抓到, 因为测试桩在退出时回的
+            #   是 None, 而真回调回的是已结束的 ID -- 桩替被测代码做了事.
+            self._stream_id = (extra.get("stream_id")
+                               if result.to_state == ModeState.BROADCAST
+                               else None)
         applied = {"mode": result.to_state.value,
                    "from_mode": result.from_state.value,
                    "changed": changed}
@@ -287,8 +307,15 @@ class ModeFace:
         # * 未发 switch_id: 14 S12.1 的样例里有, 但 14 S13 CR-2 逐字记着
         # switching / switch_id "在 11 S4.3 ModeState 中尚不存在", 且当前无任何
         # 消费方读它 -- CLAUDE.md 9.3 禁为将来留口子.
+        # stream_id: 11 S4.3(v1.1 新增, 99 U84) -- voice_mode == "broadcast"
+        # 时必填, 其余模式为 None. 值由 on_transition 回调在进 B 模式时给出.
+        # *** 放在[状态]面而不是只放 ack 里.
+        # v2.0 S4.3 要求 state/mode 在 broadcast 时带它(Qt 靠它把 state/audio
+        # 的帧对上会话). 只走 cmd/mode/ack 的话, 消费方错过那一条 ack 就再也
+        # 拿不到 -- 而 ack 是[事件], 掉一条就没了; 状态面是可重复读的.
         body = {"schema": "state_mode_v1",
                 "voice_mode": self._machine.state.value,
+                "stream_id": self._stream_id,
                 "mono_ms": now_mono_ms}
         self._publish(STATE_MODE_TOPIC,
                       json.dumps(body, ensure_ascii=False).encode("utf-8"))
