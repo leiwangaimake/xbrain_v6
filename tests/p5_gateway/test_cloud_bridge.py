@@ -1376,7 +1376,7 @@ def test_the_alarm_and_fault_severities_reach_the_cloud_at_all():
     中间原本没有映射 -- 于是 alarm / fault 在投影处抛 ProjectionError, 入侵 .
     底盘故障 . 急停 . rtk_lost . 越界一条都到不了云端(2026-09-03 实测 9 次).
 
-    ★ 这个缺口是[修好上一层之后]才显形的: 在此之前中继门恒假(sev/cat 从报文
+    *** 这个缺口是[修好上一层之后]才显形的: 在此之前中继门恒假(sev/cat 从报文
     体取), 根本走不到投影这一步. 两个缺陷叠着时, 外层那个让内层完全观察不到.
 
     变异体: 去掉 to_v2_event_sev 映射 -> 本条红(抛 ProjectionError).
