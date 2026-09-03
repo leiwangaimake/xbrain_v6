@@ -887,17 +887,26 @@ class CloudBridge:
         * seq 仍按 key 分区: Qt 对可靠面按业务 ID(eid)去重, 但 seq 的连续性
         是它判丢包的依据, 混在一起会让每条 key 看起来一直在丢.
         """
-        key = "event/%s/%s" % (severity, category)
+        # v2.0 的 sev 闭集是 info|warn|error|fatal, 机内是 info|warn|alarm|fault
+        # (11 S6.2). 映射必须[同时]作用在 key 与正文上 -- v2.0 逐字要求 sev
+        # "与 key severity 一致", 只改一处会让 Qt 收到自相矛盾的一帧.
+        from ..outbound.state_projection import to_v2_event_sev
+        v2_sev = to_v2_event_sev(severity)
+        # 这一行只是 publisher 的[缓存键], 不是发布出去的 key(那个在下面用
+        # CLOUD_EVENT 拼). 用 v2_sev 还是 severity 做缓存键是等价的 -- 映射是
+        # 单射, 两种分区一模一样, 所以没有测试能区分, 也不该有. 记在这里,
+        # 免得后来者把它当成漏测的分支.
+        key = "event/%s/%s" % (v2_sev, category)
         pub = self._event_pubs.get(key)
         if pub is None:
             pub = self._session.declare_publisher(
-                CLOUD_EVENT % (self._rid, severity, category))
+                CLOUD_EVENT % (self._rid, v2_sev, category))
             self._event_pubs[key] = pub
         # D-2: 机内事件 -> v2.0 S5.1 字段集(字段名归一, sev/category 从 key
         # 取, 补齐缺失). 直接透传机内 data 的话 Qt 找 data.sev 会找不到
         # (机内 sev/category 在 key 上不在 data 里).
         from ..outbound.state_projection import event_payload
-        v2_data = event_payload(data, sev=severity, category=category)
+        v2_data = event_payload(data, sev=v2_sev, category=category)
         body = build_envelope(self._rid, key, v2_data,
                               ts=time.time(),   # WALL-CLOCK-OK(align)
                               seq=self._seq.next(self._rid, key))

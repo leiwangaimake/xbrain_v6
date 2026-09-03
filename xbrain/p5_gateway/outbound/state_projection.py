@@ -206,6 +206,43 @@ EXIT_REASONS = ("requested", "timeout", "preempted", "fault", "target_lost",
 
 #: v2.0 S5.1 事件 sev / state 闭集.
 EVENT_SEV = ("info", "warn", "error", "fatal")
+
+#: 机内 severity(11 S6.2: info|warn|alarm|fault) -> v2.0 的四值.
+#:
+#: *** 两套闭集不同名, 而且[中间原本没有映射]. 后果是每一条 alarm / fault
+#: 事件中继时抛 ProjectionError -- 也就是最要紧的那一批(入侵 . 底盘故障 .
+#: 急停 . rtk_lost . 越界)一条都到不了云端. 2026-09-03 实测 9 次.
+#: ★ 这个错今早才显形: 在此之前中继门恒假(sev/cat 取错), 根本走不到投影这一步,
+#: 所以修好中继反而把下一层的缺口露了出来 -- 两个缺陷叠在一起时, 外层那个
+#: 让内层完全观察不到.
+#:
+#: 对应关系不是我们挑的, 是甲方 v2.0 自己的例子写死的:
+#:   {"eid":"evt-alarm-001","sev":"error","category":"alarm"}
+#:   {"eid":"evt-fault-001","sev":"fatal","category":"fault"}
+INTERNAL_TO_V2_EVENT_SEV = {
+    "info":  "info",
+    "warn":  "warn",
+    "alarm": "error",
+    "fault": "fatal",
+}
+
+
+def to_v2_event_sev(value: Any) -> str:
+    """机内 event severity -> v2.0 的值. 表外的值抛.
+
+    抛而不兜底, 与 to_v2_task_state 同一取舍(CLAUDE.md 3.5): 一个"表外就当
+    info"的兜底会把新增的严重级别静默降成最低级, 而告警面恰恰是最不能降级
+    解释的地方 -- 宁可在这里响.
+
+    ★ v2.0 逐字要求 sev "与 key severity 一致", 所以调用方必须[同时]用映射后
+    的值构造云端 key, 不能只改正文字段.
+    """
+    mapped = INTERNAL_TO_V2_EVENT_SEV.get(value)
+    if mapped is None:
+        raise ProjectionError(
+            "event severity=%r not in the 11 S6.2 internal closed set %s"
+            % (value, sorted(INTERNAL_TO_V2_EVENT_SEV)))
+    return mapped
 EVENT_STATES = ("active", "cleared", "acknowledged", "occurred")
 
 #: 今天没有任何机内发布者的段. 见模块头.

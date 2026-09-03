@@ -805,10 +805,13 @@ def test_an_event_goes_out_on_the_prefixed_cloud_key():
     """
     bridge, session = _bridge()
 
-    bridge.publish_event("error", "alarm", {"eid": "e-1", "title": "x"})
+    # 入参是[机内] severity(11 S6.2 的 info|warn|alarm|fault) -- 真实调用方
+    # main_wiring._on_event 传的就是机内 key 上那一段. 云端 key 用映射后的
+    # v2.0 值(alarm -> error), 见 to_v2_event_sev.
+    bridge.publish_event("alarm", "intrusion", {"eid": "e-1", "title": "x"})
 
     keys = [k for k, _ in session.puts]
-    assert keys == ["xbrain/gj-001/event/error/alarm"], keys
+    assert keys == ["xbrain/gj-001/event/error/intrusion"], keys
     env = json.loads(session.puts[0][1].decode("utf-8"))
     assert set(env) == {"v", "rid", "ts", "seq", "src", "data"}
     assert env["data"]["eid"] == "e-1"
@@ -823,11 +826,11 @@ def test_event_publishers_are_cached_per_severity_and_category():
     bridge, session = _bridge()
 
     for _ in range(5):
-        bridge.publish_event("error", "alarm", {"eid": "e"})
+        bridge.publish_event("alarm", "intrusion", {"eid": "e"})
     bridge.publish_event("warn", "comm", {"eid": "e2"})
 
     event_pubs = [k for k in session.pubs if "/event/" in k]
-    assert sorted(event_pubs) == ["xbrain/gj-001/event/error/alarm",
+    assert sorted(event_pubs) == ["xbrain/gj-001/event/error/intrusion",
                                   "xbrain/gj-001/event/warn/comm"], event_pubs
 
 
@@ -836,14 +839,14 @@ def test_event_seq_is_per_category_not_shared():
     的依据 -- 混在一起会让每条 key 看起来一直在丢."""
     bridge, session = _bridge()
 
-    bridge.publish_event("error", "alarm", {"eid": "a"})
+    bridge.publish_event("alarm", "intrusion", {"eid": "a"})
     bridge.publish_event("warn", "comm", {"eid": "b"})
-    bridge.publish_event("error", "alarm", {"eid": "c"})
+    bridge.publish_event("alarm", "intrusion", {"eid": "c"})
 
     seqs = {}
     for k, p in session.puts:
         seqs.setdefault(k, []).append(json.loads(p.decode("utf-8"))["seq"])
-    assert seqs["xbrain/gj-001/event/error/alarm"] == [1, 2]
+    assert seqs["xbrain/gj-001/event/error/intrusion"] == [1, 2]
     assert seqs["xbrain/gj-001/event/warn/comm"] == [1]
 
 
@@ -1364,3 +1367,40 @@ def test_alarm_done_even_if_state_fence_beats_the_ack():
     res = _task_results(session)
     assert len(res) == 1 and res[0]["state"] == "done", (
         "state/fence 抢先到达时 D 没 done -- rev0 时机或立即查缺失(#1 竞态)")
+
+
+def test_the_alarm_and_fault_severities_reach_the_cloud_at_all():
+    """*** 最要紧的那一批事件曾经一条都发不出去.
+
+    机内闭集是 info|warn|alarm|fault(11 S6.2), v2.0 是 info|warn|error|fatal,
+    中间原本没有映射 -- 于是 alarm / fault 在投影处抛 ProjectionError, 入侵 .
+    底盘故障 . 急停 . rtk_lost . 越界一条都到不了云端(2026-09-03 实测 9 次).
+
+    ★ 这个缺口是[修好上一层之后]才显形的: 在此之前中继门恒假(sev/cat 从报文
+    体取), 根本走不到投影这一步. 两个缺陷叠着时, 外层那个让内层完全观察不到.
+
+    变异体: 去掉 to_v2_event_sev 映射 -> 本条红(抛 ProjectionError).
+    """
+    bridge, session = _bridge()
+
+    bridge.publish_event("alarm", "intrusion", {"eid": "a-1"})
+    bridge.publish_event("fault", "chassis", {"eid": "f-1"})
+
+    keys = [k for k, _ in session.puts]
+    assert keys == ["xbrain/gj-001/event/error/intrusion",
+                    "xbrain/gj-001/event/fatal/chassis"], keys
+
+
+def test_the_key_severity_and_the_body_severity_agree():
+    """v2.0 逐字: sev "与 key severity 一致". 只映射一处会让 Qt 收到自相
+    矛盾的一帧(key 说 error, 正文说 alarm), 而它按哪个走无法预料.
+
+    变异体: event_payload 仍传原始 severity -> 本条红.
+    """
+    bridge, session = _bridge()
+
+    bridge.publish_event("alarm", "intrusion", {"eid": "a-1"})
+
+    key, payload = session.puts[0]
+    body = json.loads(payload.decode("utf-8"))
+    assert key.split("/")[-2] == body["data"]["sev"] == "error", (key, body["data"]["sev"])

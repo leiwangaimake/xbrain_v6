@@ -745,3 +745,50 @@ def test_an_unknown_internal_state_raises_not_defaults():
 
     with _pytest.raises(ValueError):
         to_v2_task_state("some_future_state")
+
+
+def test_an_unknown_event_severity_throws_instead_of_downgrading():
+    """*** 告警面最不能做的就是"未知就当 info".
+
+    与 to_v2_task_state 同一取舍(CLAUDE.md 3.5 越界必抛): 一个"表外返回 info"
+    的兜底会把将来新增的严重级别静默降成最低级, 而这条链路上跑的是入侵 .
+    急停 . 底盘故障 -- 降级解释比抛出去危险得多.
+
+    MUTATION: 把 raise 换成 return "info" -> 本条红.
+    """
+    import pytest as _pytest
+
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError, to_v2_event_sev,
+    )
+
+    # 正向: 四个机内值都有像样的落点.
+    assert to_v2_event_sev("info") == "info"
+    assert to_v2_event_sev("warn") == "warn"
+    assert to_v2_event_sev("alarm") == "error"
+    assert to_v2_event_sev("fault") == "fatal"
+    # 反向: 表外必抛, 且说明白是哪个值.
+    with _pytest.raises(ProjectionError) as exc:
+        to_v2_event_sev("critical")
+    assert "critical" in str(exc.value)
+    # v2.0 那一侧的词也不该被当成合法输入 -- 入参是[机内]闭集.
+    with _pytest.raises(ProjectionError):
+        to_v2_event_sev("error")
+
+
+def test_the_two_severity_closed_sets_are_covered_both_ways():
+    """完备性双向差集: 机内四值全部有映射, 且映射值全部落在 v2.0 闭集内.
+
+    MUTATION: 从表里删掉 fault, 或把它映射成 v2.0 没有的词 -> 本条红.
+    """
+    from xbrain.common.enums import SEVERITY
+    from xbrain.p5_gateway.outbound.state_projection import (
+        EVENT_SEV, INTERNAL_TO_V2_EVENT_SEV,
+    )
+
+    missing = set(SEVERITY) - set(INTERNAL_TO_V2_EVENT_SEV)
+    assert not missing, "机内 severity 未映射: %r" % sorted(missing)
+    extra = set(INTERNAL_TO_V2_EVENT_SEV) - set(SEVERITY)
+    assert not extra, "映射表里有机内闭集外的键: %r" % sorted(extra)
+    bad = set(INTERNAL_TO_V2_EVENT_SEV.values()) - set(EVENT_SEV)
+    assert not bad, "映射到了 v2.0 闭集外的值: %r" % sorted(bad)
