@@ -431,10 +431,20 @@ def test_dedupe_default_window_at_least_60s():
 # ---------- CHK-0-40 estop ----------
 
 def _good_estop(**overrides):
+    """v2.0 S2.3 的真实信封形状.
+
+    *** action/reason 在 data.payload 里, msg_id/task_id 在 data 里.
+    本夹具原先把 action 放在 data 顶层, msg_id 放在信封顶层 -- 那是对着一个
+    想象的形状写的, 而 validate_and_forward 也照着同一个想象写, 于是两边
+    "对上了", 模块从没被真报文验证过. 2026-09-04 终测接线时, 拿甲方实发的
+    急停一比才发现: 真报文进来 action 恒为 None => 每一条合规急停都会被拒.
+    夹具与被测代码共享同一个错误假设时, 测试全绿而系统是坏的.
+    """
     base = {
-        "v": 1, "rid": "robot01", "ts": 1.0, "seq": 1,
-        "src": "qt-panel", "msg_id": "e-001",
-        "data": {"action": "stop", "reason": "operator"},
+        "v": 1, "rid": "robot01", "ts": 1.0, "seq": 1, "src": "qt-panel",
+        "data": {"msg_id": "e-001", "task_id": "task-e-001",
+                 "task_type": "ESTOP",
+                 "payload": {"action": "stop", "reason": "operator"}},
     }
     base.update(overrides)
     return base
@@ -454,7 +464,7 @@ def test_estop_rid_mismatch_raises():
 
 def test_estop_action_closed_set():
     m = _good_estop()
-    m["data"]["action"] = "pause"
+    m["data"]["payload"]["action"] = "pause"
     with pytest.raises(EstopSchemaError, match="closed set"):
         validate_and_forward(m, key_second_segment="robot01")
 
@@ -462,7 +472,7 @@ def test_estop_action_closed_set():
 def test_estop_ack_latency_positive():
     f = validate_and_forward(_good_estop(), key_second_segment="robot01")
     ack = build_ack(f, recv_mono_ms=1000, sent_mono_ms=1050,
-                     estop_epoch=7, applied=True, hes="engaged",
+                     estop_epoch=7, applied=("zero_vel",), hes="engaged",
                      timeout_lock=False)
     assert ack.latency_ms == 50
 
@@ -473,7 +483,7 @@ def test_estop_ack_negative_latency_raises():
     f = validate_and_forward(_good_estop(), key_second_segment="robot01")
     with pytest.raises(EstopSchemaError, match="latency_ms negative"):
         build_ack(f, recv_mono_ms=1000, sent_mono_ms=999,
-                    estop_epoch=1, applied=True, hes="engaged",
+                    estop_epoch=1, applied=("zero_vel",), hes="engaged",
                     timeout_lock=False)
 
 
@@ -530,3 +540,74 @@ def test_estop_path_health_ack_does_not_clear_down():
     assert h.state == "down"
     h.on_ack_received(latency_ms=50)
     assert h.state == "down"     # unchanged
+
+
+# --- v2.0 S2.3 ack detail 七项 (2026-09-04 接线) -----------------------
+
+def test_estop_ack_detail_carries_all_seven_fields():
+    """*** 七项缺一不可, 尤其 recv_mono_ms/latency_ms.
+
+    v2.0 逐字: 100ms 判定"由机器人端单调钟计算, Qt 不用两端 ts 相减推断
+    安全时延". 缺这两项 = Qt 根本做不了这个判定. 2026-09-04 终测实测: 云端
+    路径此前发的是通用任务 ack, 七项里只有 result.
+
+    MUTATION: to_detail 里删掉任意一项 -> 这里红.
+    """
+    from xbrain.p5_gateway.ext.estop import build_estop_ack_detail
+    d = build_estop_ack_detail(_good_estop(rid="gj-001"), "gj-001", 1000,
+                               sent_mono_ms=1006, estop_epoch=3)
+    assert set(d) == {"result", "estop_epoch", "applied", "recv_mono_ms",
+                      "latency_ms", "hes", "timeout_lock"}
+    assert d["latency_ms"] == 6
+    assert d["recv_mono_ms"] == 1000
+    assert d["estop_epoch"] == 3
+
+
+def test_applied_is_an_empty_array_not_a_bool_and_not_faith():
+    """v2.0 逐字 "applied 必须为字符串数组".
+
+    *** 现在必然为空: 确认通道 11 CR-12(chassis_relay 转发 quadruped 的
+    回执)未编译, 在 ack 时限内拿不到任何"已生效"的确认.
+    NO 不能因为"p1 几乎必定会锁存"就填 ["zero_vel"] -- 那是凭信心断言,
+    与 estop_path 曾被硬编码成 "ok" 是同一个错.
+
+    MUTATION: 把 applied 改成 True 或 ("zero_vel",) -> 这里红.
+    """
+    from xbrain.p5_gateway.ext.estop import build_estop_ack_detail
+    d = build_estop_ack_detail(_good_estop(rid="gj-001"), "gj-001", 10,
+                               sent_mono_ms=11, estop_epoch=1)
+    assert d["applied"] == []
+    assert isinstance(d["applied"], list), "必须是数组, 不是 bool"
+
+
+def test_hes_is_unknown_because_the_hardware_signal_has_no_reader():
+    """11 S538/S756 逐字: 硬件急停 HES "完全不经软件, 软件不可解除".
+
+    它的状态要由 chassis_relay 报上来, 而那个进程未编译 => 报 "ok"(v2.0
+    的样例值)就是断言一个我们读不到的硬件信号.
+    """
+    from xbrain.p5_gateway.ext.estop import build_estop_ack_detail
+    d = build_estop_ack_detail(_good_estop(rid="gj-001"), "gj-001", 10,
+                               sent_mono_ms=11, estop_epoch=1)
+    assert d["hes"] == "unknown"
+    assert d["hes"] != "ok", "读不到的硬件信号不得报 ok"
+
+
+def test_a_real_v2_envelope_validates(monkeypatch):
+    """*** 拿[甲方实发]的那条报文当夹具, 不是我们想象的形状.
+
+    2026-09-04 终测抓到的原文. 本条存在的理由: 上面那批测试与被测代码
+    曾共享同一个错误假设(action 在 data 顶层), 于是全绿而系统是坏的.
+    """
+    from xbrain.p5_gateway.ext.estop import validate_and_forward
+    real = {"v": 1, "rid": "gj-001", "ts": 1788498514.0, "seq": 1,
+            "src": "qt_hmi",
+            "data": {"msg_id": "msg-70896077-09f9-413e-9ce1-fa6d5f132016",
+                     "payload": {"action": "stop", "reason": "operator_estop"},
+                     "task_id": "task-de96db9b-7741-4ea6-9381-c926a2f7f005",
+                     "task_type": "ESTOP"}}
+    f = validate_and_forward(real, key_second_segment="gj-001")
+    assert f.action == "stop"
+    assert f.reason == "operator_estop"
+    assert f.msg_id == "msg-70896077-09f9-413e-9ce1-fa6d5f132016"
+    assert f.task_id == "task-de96db9b-7741-4ea6-9381-c926a2f7f005"

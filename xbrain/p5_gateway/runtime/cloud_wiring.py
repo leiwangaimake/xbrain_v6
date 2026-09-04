@@ -227,6 +227,8 @@ class CloudBridge:
         # 拒绝审计事件的 eid 源(审计 E-1). v2.0 S10: 每次任务拒绝必须产生
         # 一条可靠 event/{sev}/task. boot token 让 eid 跨网关重启不撞
         # (record.db 持久化, 重启后 seq 从 0 但 boot 不同).
+        # 急停 epoch(v2.0 S2.3 detail.estop_epoch). 见 _next_estop_epoch.
+        self._estop_epoch = 0
         self._reject_boot = uuid.uuid4().hex[:6]
         self._reject_seq = 0
         # A-1 承接: 转发给 p3 的 cmd/task/geo 登记在这, 等 p3 的机内 ack 回来
@@ -802,6 +804,9 @@ class CloudBridge:
         用户按了两次而第二次没有生效. 两个方向的代价不对称, 所以这里选
         "宁可多停一次".
         """
+        # 收到的第一时刻就取单调钟 -- 之后所有解析/校验的耗时都要算进
+        # latency 里, 那才是 v2.0 说的"机器人收到急停到回执转发"的时长.
+        _recv_mono_ms = int(self._now_mono() * 1000)
         try:
             raw, key = _sample_parts(sample)
             rid = rid_from_key(key)
@@ -831,10 +836,15 @@ class CloudBridge:
             self._internal_put("cmd/estop", json.dumps(
                 {"type": "estop", "action": action,
                  "origin": CLOUD_ORIGIN}, ensure_ascii=False).encode("utf-8"))
-            self._publish_ack("cmd/estop/ack", build_ack(
-                msg_id=_new_msg_id(), ref_msg_id=msg_id or "",
-                task_id=task_id or "", task_type="ESTOP",
-                result=RESULT_ACCEPTED))
+            # v2.0 S2.3: ack 的 detail 必须带七项
+            # result/estop_epoch/applied/recv_mono_ms/latency_ms/hes/
+            # timeout_lock. 构造在 ext/estop.py -- 那个模块连同 100ms/300ms
+            # 两条判据一直是[零调用]的, 云端路径此前发的是通用任务 ack,
+            # 七项里只有 result. 后果: v2.0 逐字要求 100ms 判定"由机器人端
+            # 单调钟计算, Qt 不用两端 ts 相减", 缺 recv_mono_ms/latency_ms
+            # 就等于 Qt 根本做不了这个判定(2026-09-04 终测实测确认).
+            self._publish_estop_ack(msg_id or "", task_id or "",
+                                    body, _recv_mono_ms)
             self.stats["accepted"] += 1
             _logger.warning("p5 cloud ESTOP %s -> cmd/estop", action)
         except Exception:                       # noqa: BLE001
@@ -929,6 +939,54 @@ class CloudBridge:
             # 心跳解析失败不影响它已经刷新过的断线计时(那一步在 _rx 里, 先于
             # 本函数) -- 一条坏报文同样证明云端在线.
             _logger.exception("p5 cloud heartbeat handler crashed")
+
+    def _publish_estop_ack(self, msg_id: str, task_id: str,
+                           body: Dict[str, Any], recv_mono_ms: int) -> None:
+        """按 v2.0 S2.3 发 cmd/estop/ack(七项在 detail 里).
+
+        *** latency 用[本机单调钟]差, NO 不用两端 ts 相减.
+        v2.0 逐字: "recv_mono_ms/latency_ms 由机器人端单调钟计算, Qt 不用
+        两端 ts 相减推断安全时延". 两端墙钟可能差几秒, 拿它算安全时延会
+        得出一个既可能过大也可能为负的数.
+
+        *** applied 现在必然是空数组.
+        v2.0 要求它列[实际采取]的措施(样例 ["zero_vel","charge_abort"]).
+        确认通道是 11 CR-12(cmd/chassis/ctrl/ack, 由 chassis_relay 转发
+        quadruped 的回执), 那个进程未编译 => 在 ack 的时限内我方拿不到
+        任何"已生效"的确认.
+        NO 不能因为"p1 几乎必定会锁存"就填 ["zero_vel"] -- 那是凭信心断言,
+        与 estop_path 曾被硬编码成 "ok" 是同一个错(见 hmi/estop_probe.py).
+        空数组配上非空的 latency 字段, 恰好告诉 Qt: 命令收到了, 转发了,
+        但没有任何一项被确认生效.
+        """
+        from ..ext.estop import (EstopSchemaError, build_estop_ack_detail)
+
+        detail = None
+        try:
+            detail = build_estop_ack_detail(
+                body, self._rid, recv_mono_ms,
+                sent_mono_ms=int(self._now_mono() * 1000),
+                estop_epoch=self._next_estop_epoch())
+        except EstopSchemaError as exc:
+            # 报文有毛病但已经转发了(fail-safe: 宁可多停一次). ack 仍要回,
+            # 只是带不出七项 -- 把原因写进 reason, 不静默降级成空 detail.
+            _logger.warning("p5 estop ack detail unavailable: %s", exc)
+        self._publish_ack("cmd/estop/ack", build_ack(
+            msg_id=_new_msg_id(), ref_msg_id=msg_id,
+            task_id=task_id, task_type="ESTOP",
+            result=RESULT_ACCEPTED,
+            reason="" if detail else "estop ack detail unavailable",
+            detail=detail))
+
+    def _next_estop_epoch(self) -> int:
+        """每次受理的急停 +1. Qt 用它关联重复按键.
+
+        从 1 起而不是 0: 0 在 v2.0 的整数字段里常被当"没有值".
+        NO 不跨进程持久化 -- 网关重启后 epoch 归零是可接受的(Qt 靠 eid 与
+        ref_msg_id 去重, epoch 只用于同一会话内的关联).
+        """
+        self._estop_epoch += 1
+        return self._estop_epoch
 
     def _reject_unimplemented(self, sample: Any, ack_name: str,
                               reason: str) -> None:
