@@ -151,6 +151,7 @@ def build_audio_state(*, speaker_view: Dict[str, Any],
                       mic_device_name: Optional[str],
                       mic_frames_dropped_gate: Optional[int],
                       broadcast_holder: Optional[str],
+                      broadcast_since_mono: Optional[float],
                       payload_audio_ok: Optional[bool],
                       voice_mode: Optional[str],
                       ts_mono: float) -> Dict[str, Any]:
@@ -188,12 +189,20 @@ def build_audio_state(*, speaker_view: Dict[str, Any],
         # S8.10 逐字 "none = 空闲". 说话中而发布方没填 source 时为 None.
         "holder": (broadcast_holder if broadcast_holder is not None
                    else (speaker_view.get("holder") if speaking else "none")),
-        "since_mono": since_mono if speaking else None,
+        # 广播时用广播会话的起点: SpeakerDomain 的锁全程没被拿过, 它那个
+        # since_mono 是上一次 TTS 的(或 None). 报错的起点会让操作员看到
+        # "已经喊了 3 小时".
+        "since_mono": (broadcast_since_mono if broadcast_holder is not None
+                       else (since_mono if speaking else None)),
     }
-    if speaking and isinstance(since_mono, (int, float)):
+    # elapsed 必须与上面那个 since_mono [同源], NO 不能再读一次局部变量.
+    # 分开读的话广播期间 elapsed 会按上一次 TTS 的起点算, 与同一条报文里
+    # 的 since_mono 自相矛盾.
+    _since = speaker["since_mono"]
+    if speaking and isinstance(_since, (int, float)):
         # 单调钟之差, 单位 ms(CLK-C1: ts_mono 由调用方传入, 本函数不读钟,
         # 无设备单测才能喂一个固定的 now).
-        speaker["elapsed_ms"] = int(max(0.0, ts_mono - since_mono) * 1000.0)
+        speaker["elapsed_ms"] = int(max(0.0, ts_mono - _since) * 1000.0)
 
     mic_present = mic_muted is not None
     mic: Dict[str, Any] = {

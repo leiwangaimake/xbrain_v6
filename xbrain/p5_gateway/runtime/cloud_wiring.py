@@ -432,8 +432,10 @@ class CloudBridge:
             self._reject_task(
                 raw, build_error_fields(
                     errors.E_NOT_IMPLEMENTED,
-                    "alarm config without regions needs the rules channel "
-                    "(not wired until batch B)"),
+                    "regions[] is empty; this phase implements only the "
+                    "incremental region geometry path. Changing rules[] or "
+                    "the siren/light scalars needs the cmd/config channel, "
+                    "which is not built yet"),
                 msg_id=msg_id, task_id=task_id, task_type=task_type)
             return
 

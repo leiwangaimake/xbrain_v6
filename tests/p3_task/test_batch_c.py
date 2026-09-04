@@ -295,3 +295,27 @@ def test_dispatcher_lookup_miss_raises():
     d = Dispatcher()
     with pytest.raises(UnknownDispatchTarget, match="no handler"):
         d.dispatch("patrol")
+
+
+def test_the_startup_guard_is_actually_called_by_production_code():
+    """*** 判据不是"Dispatcher 能用", 是"系统用了它".
+
+    2026-09-04 终测: assert_complete 的 8 处调用全在测试里, 生产代码从没
+    建过 Dispatcher. 上面那条 "must catch a missing type BEFORE runtime"
+    的用例证明了这个类能用, 没证明有人调它 -- 于是缺执行器时系统安静地
+    接受任务并向甲方报 running.
+
+    用源码扫描而不是起进程: 起 p3 要 Zenoh + 三个库 + 配置.
+
+    MUTATION: 把 p3 main_wiring 里那段 assert_complete 删掉 -> 这里红.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2] / "xbrain" / "p3_task" /
+           "runtime" / "main_wiring.py").read_text(encoding="utf-8")
+    assert "assert_complete()" in src, "p3 启动时没有调用执行器闸门"
+    assert "DispatcherIncomplete" in src, "闸门抛的异常没有被接住"
+    # 且必须[不]退出进程: EX-1/EX-4 是登记在案的 [GATED-HW] 欠账, 现在
+    # 拒绝启动会让 geo / 围栏 / 喊话 / 急停一起停摆.
+    guard = src[src.index("Dispatcher()"):src.index("Dispatcher()") + 900]
+    assert "SystemExit" not in guard and "sys.exit" not in guard, (
+        "闸门做成了 fatal -- 会让不依赖执行器的能力一起停摆")

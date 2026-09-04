@@ -84,10 +84,19 @@ def build_result(*, task_id: str, task_type: str, state: str,
     if state == "done" and result_code != 0:
         raise ProjectionError(
             "state=done implies result_code 0; got %d" % result_code)
-    if state != "done":
+    # *** cancelled 允许 result_code=0, 只有 failed 要求非零.
+    # v2.0 S3.3 逐字: result_code "成功 0; 失败见 S10". 操作员取消不是 S10
+    # 里的任何一种失败 -- S10 的十四个码全是拒绝/故障, 没有一个表示"取消".
+    # 语义由 state=cancelled 加上[必填的] reason 承载.
+    # 原规则"非 done 必须非零"是我们自造的, 它把 cancelled 推进失败码空间,
+    # 而那里没有正确答案; 于是兜底挑了 2001(机器人未就绪/授时未同步) --
+    # 2026-09-04 终测实测: 两条取消的终态全报 2001, 甲方看到的是一个
+    # 与真实原因无关的具体假原因. 报假原因比报 0 更坏.
+    if state == "failed":
         if result_code == 0:
             raise ProjectionError(
-                "state=%s requires a non-zero result_code" % state)
+                "state=failed requires a non-zero result_code")
+    if state != "done":
         if not reason:
             raise ProjectionError(
                 "state=%s requires a reason (v2.0 S3.3)" % state)

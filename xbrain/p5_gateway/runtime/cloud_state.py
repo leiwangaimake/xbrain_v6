@@ -249,6 +249,36 @@ class CloudProjector:
             alarm_window_active=ts_sync and bool(state.get("alarm_window")),
         )
 
+    @staticmethod
+    def _terminal_result_code_impl(result_state: str,
+                                   task: Dict[str, Any]) -> int:
+        """v2.0 S3.3 的 result_code: 成功 0, 失败见 S10.
+
+        *** cancelled 报 0, NO 不报 2001.
+        S10 的十四个码没有一个表示"操作员取消"; 原实现 `task.get(
+        "result_code") or 2001` 在 p3 [从不写 result_code]的现实下, 变成了
+        一个恒定值 -- 每一条非 done 的终态都告诉甲方"机器人未就绪/授时
+        未同步"(2026-09-04 终测实测两条, 全是它). 一个通用兜底因为主来源
+        不存在而退化成常量, 且断言了一个具体的假原因.
+        取消的语义由 state=cancelled 与必填的 reason 承载, code 用 0
+        (= 这次操作本身成功了).
+
+        *** failed 仍要求非零 -- 那是真失败, code=0 会让 Qt 走成功分支.
+        p3 记了码就用它; 没记时仍落 2001, 但那是[登记在案的欠账]:
+        S10 里没有"未指明的失败"这一档, 需要甲方给一个码. 落这条时记一条
+        警告, 免得它再一次悄悄变成常量.
+        """
+        if result_state != "failed":
+            return 0
+        recorded = task.get("result_code")
+        if recorded:
+            return int(recorded)
+        _logger.warning(
+            "p5 terminal result for %s has no recorded result_code; "
+            "falling back to 2001 (v2.0 S10 has no unspecified-failure code)",
+            task.get("task_id"))
+        return 2001
+
     def _task(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """v2.0 S3.2 全机快照. result 形态由任务终结时另行发布(R12.4)."""
         tasks = self._all_tasks(state)
@@ -315,8 +345,8 @@ class CloudProjector:
             # 失败码与原因必须来自任务记录. 没有的话给一个通用码而不是 0 --
             # 0 是"成功", 一条 state=failed 而 code=0 的 result 会让 Qt 走
             # 成功分支.
-            result_code=0 if not failed else int(
-                task.get("result_code") or 2001),
+            result_code=self._terminal_result_code_impl(
+                result_state, task),
             reason="" if not failed else (
                 task.get("reason") or "task ended without a recorded reason"),
             completed_count=int(task.get("completed_count") or 0),
@@ -438,10 +468,16 @@ class CloudProjector:
         return audio_payload(
             speaker_state=speaker_state,
             microphone_state=microphone_state,
-            # stream_id 与 last_frame_age_ms 属云端喊话链路(audio/broadcast),
-            # 那条链路还没接(p5 收到 PCM 直接丢弃). 现在填任何值都是谎报
-            # 系统有这个能力 -- 链路接上时一并补.
-            stream_id=None,
+            # v2.0 S4.4 字段表: stream_id "broadcast 时必填".
+            # 2026-09-04 接上云端喊话链路后补 -- 来源是 state/mode 的
+            # stream_id(p2 分配, 见 11 S4.3 与 99 U84), 与 state/mode 同源,
+            # 所以两条 key 上的会话 ID 不可能对不上.
+            # NO 不在这里另算一个: Qt 拿它把 audio/broadcast 的帧对上会话,
+            # 对不上就整条流白推.
+            stream_id=(state.get("stream_id") if speaking else None),
+            # last_frame_age_ms 仍为 None: 它要的是"最后一帧 PCM 距今多久",
+            # 而判帧在 p2(broadcast_rx), 网关这侧看不到那个计数 --
+            # 11 S8.10 也没有这一项, 补它要先给 AudioState 加字段.
             last_frame_age_ms=None,
             speaker_holder=(holder if speaking else None),
             # v2.0 S4.4 只给了一个样例值 "cloud", [没有闭集]. 在网关按

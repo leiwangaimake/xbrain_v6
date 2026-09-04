@@ -174,3 +174,49 @@ def test_chassis_stub_reads_apdu_and_logs(tmp_path):
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+def test_set_gate_actually_mutes_the_mic_not_just_announces_it():
+    """*** 关门要连真的静音一起做, NO 不能只发门控报文.
+
+    只发报文的话, state/audio 会显示 gate_reason=broadcast_active 而
+    mic.open 仍是 true -- 麦克风照常上行, 门"关了"只存在于报文里.
+    2026-09-04 终测接 B 模式关麦时实测到过这个半成品状态.
+
+    半双工是本项目唯一的回声抑制手段(AEC 结构上不可能), 所以这一半不能少.
+
+    MUTATION: 把 set_gate 里的 mute()/unmute() 删掉 -> 这里红.
+    """
+    class _Mic:
+        def __init__(self):
+            self.calls = []
+
+        def mute(self):
+            self.calls.append("mute")
+
+        def unmute(self):
+            self.calls.append("unmute")
+
+    class _Pub:
+        def put(self, *_a, **_k):
+            pass
+
+    class _Sess:
+        def declare_publisher(self, *_a, **_k):
+            return _Pub()
+
+    from xbrain.p2_core.runtime.speaker_wiring import SpeakerDomain
+    mic = _Mic()
+    dom = SpeakerDomain.__new__(SpeakerDomain)
+    dom._mic_pub = mic
+    dom._gate_pub = _Pub()
+    dom._now = lambda: 0
+    dom._gate_open = True
+    dom._gate_reason = "idle"
+
+    dom.set_gate(False, "broadcast_active")
+    assert mic.calls == ["mute"], "关门没有真的静音"
+    assert dom._gate_reason == "broadcast_active"
+
+    dom.set_gate(True, "idle")
+    assert mic.calls == ["mute", "unmute"], "开门没有解除静音"

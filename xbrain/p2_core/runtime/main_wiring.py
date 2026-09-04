@@ -326,6 +326,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # 没有这个字段 -- 为它改契约不值. p5 从 cmd/mode/ack 的 applied
         # 里取回来回给云端.
         bcast_seq = {"n": 0}
+        # 广播会话起点(单调钟). state/audio 的 speaker.since_mono 用它.
+        bcast_since = {"t": None}
 
         def _alloc_stream_id() -> str:
             # v2.0 的样例形状 audio-gj001-0001. rid 里的短横去掉 --
@@ -344,7 +346,16 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 if to_state == ModeState.BROADCAST:
                     sid = _alloc_stream_id()
                     bcast_sess.begin(sid)
+                    bcast_since["t"] = time.monotonic()
                     bcast_sink.start_session()
+                    # 11 S8.11.1 B 行逐字: rt/audio/mic 发布 = X, 理由
+                    # "喇叭在响". 半双工是本项目[唯一]的回声抑制手段 --
+                    # AEC 结构上不可能(TTS 在 GZH-2 设备内合成, 上装侧拿不到
+                    # 播出波形), 不关麦的话云端喊话会从本机麦克风再上行一遍.
+                    # *** 之前只有 handle_speak(TTS 路径)会关门, 云端广播这条
+                    # 路一次都没碰过麦克风门. 2026-09-04 终测没暴露, 只因为
+                    # 麦克风本来就没出帧(devices.mic=fail).
+                    speaker.set_gate(False, "broadcast_active")
                     bcast_timer.start(int(time.monotonic() * 1000))
                     _logger.info("p2 B mode enter, stream_id=%s", sid)
                     return {"stream_id": sid}
@@ -355,6 +366,11 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     bcast_sess.end()
                     bcast_timer.stop()
                     bcast_sink.end_session()
+                    bcast_since["t"] = None
+                    # 与进入时成对开回来. 不开的话下一次本地对话会以为
+                    # 麦克风坏了 -- 而门是关着的这件事只在 state/audio 的
+                    # gate_reason 里能看出来, 现场很难想到.
+                    speaker.set_gate(True, "idle")
                     # accepted 与 sent 必须[分开]报: 判帧收下了 N 帧而
                     # WS 一帧没发出去(payload 不在线), 与判帧一帧没收下,
                     # 在只报 sent 的日志上完全一样 -- 而要找的人一个是
@@ -500,7 +516,12 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 "eid": "estop-%s-%d" % (_estop_boot, _estop_seq_next()),
                 "title": ev.get("kind", "estop"),
                 "detail": ev.get("detail", {}),
-                "src": "p2_core", "ts": 0.0,
+                # WALL-CLOCK-OK(record): 事件的墙钟戳(11 S6.2), 只用于显示与
+                # 审计, 不参与排序或超时判定.
+                # *** 本行原写死 0.0. record 层(falsy -> now)与云端信封层
+                # (ts=time.time())各自兜底了, 所以一直没暴露 -- 但 HMI 事件环
+                # 是 "ts": d.get("ts") 直读, 本机界面上急停事件显示 1970 年.
+                "src": "p2_core", "ts": time.time(),
             }, ensure_ascii=False).encode("utf-8"))
 
         def _publish_arb_motion(now_mono_ms: int) -> None:
@@ -662,6 +683,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         bcast_sess.end()
                         bcast_timer.stop()
                         bcast_sink.end_session()
+                        bcast_since["t"] = None
+                        speaker.set_gate(True, "idle")
 
                 # 11 S2.2.2: state/audio = 1 Hz 下限 + 变更即报.
                 # 每拍都求值(10 Hz, 几个 dict 读, 无 I/O), 变了立刻发, 没变
@@ -694,6 +717,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         # 广播会话在跑时, 域2 的持有者就是 broadcast_b.
                         broadcast_holder=("broadcast_b"
                                           if bcast_sess.active else None),
+                        broadcast_since_mono=(bcast_since["t"]
+                                              if bcast_sess.active else None),
                         payload_audio_ok=last_payload_audio,
                         # voice_mode 的持有者[还不存在]: dispatch 的
                         # _handle_set_voice_mode 只把它放进 DispatchResult.applied,

@@ -112,6 +112,27 @@ class SpeakerDomain:
         # Announce idle-open initially.
         self._publish_gate(open_=True, reason="idle")
 
+    def set_gate(self, open_: bool, reason: str) -> None:
+        """外部驱动的门控(B 模式进出用). 与 handle_speak 内部那次走同一条路.
+
+        *** 公开这一个入口, NO 不让调用方直接碰 _publish_gate.
+        门的取值必须同时进 rt/audio/gate 与 state/audio(BIZ-P2-0 断言四),
+        而"同时"的唯一保证是只有一处赋值.
+
+        *** 关门要连[真的静音 MicPublisher]一起做, NO 不能只发门控报文.
+        handle_speak 那条路是 mute() 之后才 _publish_gate 的; 只发报文的话,
+        state/audio 会显示 gate_reason=broadcast_active 而 mic.open 仍是
+        true, 麦克风照常上行 -- 门"关了"只存在于报文里.
+        2026-09-04 终测接 B 模式关麦时先只写了 _publish_gate, 实测报文上
+        gate_reason 已变而 mic.open 没变, 才发现漏了这一半.
+        """
+        if self._mic_pub is not None:
+            if open_:
+                self._mic_pub.unmute()
+            else:
+                self._mic_pub.mute()
+        self._publish_gate(open_, reason)
+
     def _publish_gate(self, open_: bool, reason: str) -> None:
         # 记住最后一次的取值: state/audio 与 rt/audio/gate 必须一致
         # (BIZ-P2-0 断言四), 而一致的前提是两边读同一个来源.

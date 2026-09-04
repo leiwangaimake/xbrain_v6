@@ -150,7 +150,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     from xbrain.p3_task.geo.objects import read_geo_objects
     from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
     from xbrain.p3_task.state.geo_events import render_geo_event
-    from xbrain.p3_task.state.task_state import (
+    from xbrain.p3_task.state.task_state import (_waypoint_total,
         read_task_state, wall_iso_to_epoch,
     )
     from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
@@ -199,6 +199,34 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
 
         _logger.info("p3 wiring: opening GEN session")
         with open_planes(("gen",)) as gen:
+            # --- 执行器闸门(A3) -------------------------------------------------
+            # Dispatcher 的设计意图逐字是"缺执行器就拒绝启动"(assert_complete ->
+            # DispatcherIncomplete). 2026-09-04 终测发现它[零实例化] -- 生产代码
+            # 从没建过 Dispatcher, 也从没调过 assert_complete; 8 处调用全在测试里,
+            # 包括一条逐字写着 "must catch a missing type BEFORE runtime" 的用例.
+            # 于是本该是启动期硬失败的情况, 退化成"安静接受一个执行不了的任务,
+            # 并持续向甲方报 running"(终测实测: 一条 goto 报 running 四分钟, 而
+            # cmd/motion/intent 等 8 条运动 key 全是 0 帧).
+            #
+            # *** 这里[不]退出进程, NO 不把它做成 fatal.
+            # EX-1(路径展开) 与 EX-2..6 在 NEXT.md 里是登记在案的 [GATED-HW] 欠账,
+            # 卡在云深处底盘/RTK 硬件上. 现在拒绝启动会让 geo / 围栏 / 喊话 /
+            # 急停这些不依赖执行器的能力一起停摆 -- 代价远大于收益.
+            # 能做的是让它[每次开机都喊出来], 而不是像现在这样一声不响.
+            try:
+                from xbrain.p3_task.schedule.dispatcher import (
+                    Dispatcher, DispatcherIncomplete)
+                _dispatcher = Dispatcher()
+                # 还没有任何执行器可注册 -- EX-1/EX-4 未落地. 有了就在这里 register.
+                _dispatcher.assert_complete()
+            except DispatcherIncomplete as _exc:
+                _logger.error(
+                    "p3 NO TASK EXECUTOR IS WIRED: %s. Tasks will be admitted and "
+                    "reported running, but nothing will drive the motion plane "
+                    "(EX-1/EX-4, NEXT.md [GATED-HW]).", _exc)
+            except Exception as _exc:      # noqa: BLE001
+                _logger.error("p3 dispatcher self-check failed: %s", _exc)
+            
             state_pub = gen.declare_publisher(STATE_TASK_TOPIC)
             # 11 S4.4 TaskState, empty shape: the db is not open on this line yet,
             # and a subscriber that arrives before the first loop pass must still
@@ -287,14 +315,24 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 """
                 cur = await conn.execute(
                     "SELECT task_type, route_geo_id, started_at, finished_at, "
-                    "       duration_sec FROM tasks WHERE task_id=?", (task_id,))
+                    "       duration_sec, mission_json FROM tasks "
+                    "WHERE task_id=?", (task_id,))
                 row = await cur.fetchone()
                 if row is None:
                     return {}
-                return {"task_type": row[0], "route_id": row[1],
-                        "started_ts": wall_iso_to_epoch(row[2]),
-                        "ended_ts": wall_iso_to_epoch(row[3]),
-                        "duration_sec": row[4]}
+                out = {"task_type": row[0], "route_id": row[1],
+                       "started_ts": wall_iso_to_epoch(row[2]),
+                       "ended_ts": wall_iso_to_epoch(row[3]),
+                       "duration_sec": row[4]}
+                # v2.0 S3.3 逐字: summary.completed_count/total_count 是
+                # [权威计数]. 快照面(state/task)已经从 mission_json 报出真值,
+                # 终态面是[另一条路](p5 的 observe_task 读的是本 detail, 不是
+                # 快照) -- 只修一条的话, 运行中显示 2 个点而终态又变回 0.
+                # 2026-09-04 终测实测到这个不一致.
+                _total = _waypoint_total({"mission_json": row[5]})
+                if _total is not None:
+                    out["total_count"] = _total
+                return out
 
             # 11 S6.2 geo events: 地理要素 CRUD 审计. applier 已经把
             # (sev, detail.type, detail) 三元组放进 ApplyResult.events; 少的一直

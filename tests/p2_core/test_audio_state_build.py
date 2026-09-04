@@ -46,7 +46,7 @@ def _view(speaking=False, since=None, holder=None, reason="idle"):
 def _build(**over):
     kw = dict(speaker_view=_view(), mic_muted=False, mic_streaming=True,
               mic_device_name="hw:0,0", mic_frames_dropped_gate=0,
-              broadcast_holder=None,
+              broadcast_holder=None, broadcast_since_mono=None,
               payload_audio_ok=True, voice_mode=None, ts_mono=1000.0)
     kw.update(over)
     return build_audio_state(**kw)
@@ -278,3 +278,29 @@ def test_no_broadcast_leaves_the_tts_holder_alone():
                                     holder="tts_local"),
                  broadcast_holder=None)
     assert out["speaker"]["holder"] == "tts_local"
+
+
+
+def test_broadcast_reports_the_broadcast_session_start_not_the_last_tts():
+    """*** 广播的 since_mono 用广播会话的起点.
+
+    云端喊话不经 handle_speak, SpeakerDomain 的锁全程没被拿过 -- 它那个
+    since_mono 是[上一次 TTS]的(或 None). 拿它当广播起点, 操作员会看到
+    "已经喊了 3 小时".
+
+    MUTATION: since_mono 改回只看 speaker_view -> 这里红.
+    """
+    out = _build(speaker_view=_view(speaking=False, since=100.0),
+                 broadcast_holder="broadcast_b", broadcast_since_mono=990.0,
+                 ts_mono=1000.0)
+    assert out["speaker"]["since_mono"] == 990.0
+    assert out["speaker"]["elapsed_ms"] == 10000
+
+
+def test_without_a_broadcast_the_tts_start_still_wins():
+    """*** 与上一条配对: 没有广播时不许把 TTS 的起点顶掉."""
+    out = _build(speaker_view=_view(speaking=True, since=997.0,
+                                    holder="tts_local"),
+                 broadcast_holder=None, broadcast_since_mono=None,
+                 ts_mono=1000.0)
+    assert out["speaker"]["since_mono"] == 997.0

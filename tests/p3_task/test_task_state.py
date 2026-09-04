@@ -19,6 +19,7 @@ buckets while proving nothing about which rows the query actually selects.
 
 from __future__ import annotations
 
+import json
 import inspect
 
 import aiosqlite
@@ -187,21 +188,44 @@ def test_the_non_terminal_set_is_derived_from_the_state_closed_set():
 
 # ----------------------------------------------------------------- the real SQL
 
-_DDL = """
-CREATE TABLE tasks (
-  task_id TEXT PRIMARY KEY, task_type TEXT, state TEXT, priority INTEGER,
-  source TEXT, route_geo_id TEXT, resume_policy TEXT, started_at TEXT,
-  suspend_kind TEXT, suspend_reason TEXT, paused_at TEXT, submit_seq INTEGER)
-"""
+#: *** 直接用生产 DDL, NO 不在测试里手抄一份.
+#: 本行原先是一份手抄的 12 列副本, 上面还标着注释 "the real SQL" -- 它与
+#: 真 schema 已经漂移: 真表有 mission_json / total_steps / current_step /
+#: result_json 等十几列. 2026-09-04 给 TaskState 加 mission_json 时才撞上
+#: (夹具建的表里没有那一列, 测试报 no such column).
+#: 这正是 CLAUDE.md 3.7 那条"人抄的清单会过期": 抄的时候是对的, 之后真
+#: schema 每加一列, 这份副本就旧一分, 而没有任何判据会红.
+from xbrain.p3_task.persistence.schema_task import DDL_TASKS as _DDL
+
+
+#: 用例不关心但真表要求非空的列, 按类型给中性值.
+#: *** 由 PRAGMA table_info [现算], NO 不在这里手列一份.
+#: 手列过一版, 补完 mission_json 撞 total_steps, 补完又撞 created_ms --
+#: 每加一列就再漂一次(CLAUDE.md 3.7). 现算之后, 生产 schema 再加多少个
+#: NOT NULL 列, 这里都不用动.
+_NEUTRAL = {"INTEGER": 0, "REAL": 0.0, "TEXT": ""}
+
+#: 有闭集约束(CHECK)的列不能给空串, 单独指定. 值取自生产上真会出现的那个.
+_SEEDED = {"mission_json": "{}", "resume_policy": "continue",
+           "source": "cloud", "task_type": "goto", "state": "ready"}
 
 
 async def _seed(conn, rows):
     await conn.execute(_DDL)
+    cur = await conn.execute("PRAGMA table_info(tasks)")
+    cols = await cur.fetchall()
+    required = [(c[1], (c[2] or "TEXT").upper())
+                for c in cols if c[3] and c[4] is None]
     for r in rows:
-        cols = ", ".join(r)
+        for name, typ in required:
+            if name in r:
+                continue
+            r.setdefault(name, _SEEDED.get(
+                name, _NEUTRAL.get(typ.split("(")[0], "")))
+        cols_sql = ", ".join(r)
         marks = ", ".join("?" for _ in r)
-        await conn.execute("INSERT INTO tasks (%s) VALUES (%s)" % (cols, marks),
-                           tuple(r.values()))
+        await conn.execute("INSERT INTO tasks (%s) VALUES (%s)"
+                           % (cols_sql, marks), tuple(r.values()))
     await conn.commit()
 
 
@@ -294,3 +318,63 @@ def test_both_halves_publish_through_one_builder():
     src = inspect.getsource(main_wiring._amain)
     assert src.count("read_task_state(") == 1, (
         "state/task is being built in more than one place")
+
+
+# --- waypoint_total (2026-09-04 终测) ---------------------------------
+
+def test_waypoint_total_comes_from_the_frozen_mission_not_the_route_table():
+    """*** 航点数来自 mission_json, 与 EX-1 路径展开无关.
+
+    S4.4 对 waypoint_total 的措辞是"取自快照, 不是当前 route 表" --
+    GOTO_KEYPOINT 的航点随命令而来并冻结在 mission_json 里, 那就是这条
+    任务自己的快照, 拿得到.
+
+    实测背景: 终测里一条带 1 个航点的任务, 甲方界面显示 "0/0" --
+    p5 从 progress.waypoint_total 取 total_count, 而 progress 整块是 None,
+    于是落到 `or 0`. 编一个 0 与编一个 100 是同一类错(3.1).
+
+    MUTATION: _partial_progress 改回恒返回 None -> 这里红.
+    """
+    from xbrain.p3_task.state.task_state import current_item
+    row = {"task_id": "t1", "task_type": "goto", "state": "running",
+           "priority": 50, "source": "cloud", "route_geo_id": "r-charge",
+           "resume_policy": "continue", "started_at": None,
+           "mission_json": json.dumps({"params": {"waypoints": [
+               {"id": "w-a"}, {"id": "w-b"}, {"id": "w-c"}]}})}
+    item = current_item(row)
+    assert item["progress"]["waypoint_total"] == 3
+
+
+def test_route_rev_stays_absent_because_its_only_legal_source_is_the_snapshot():
+    """*** 与上一条配对: 能填的填, 不能填的一个都不许填.
+
+    S4.4 说 route_rev 是"任务开始时[锁定]的路径版本", 唯一合法来源是
+    task_route_snapshot(EX-1 未建). 去读 routes.rev 正是该条明令禁止的:
+    路径中途被人改过, 报出来的版本就与机器人正在走的不是同一份.
+
+    MUTATION: 在 _partial_progress 里补一个 route_rev -> 这里红.
+    """
+    from xbrain.p3_task.state.task_state import current_item
+    row = {"task_id": "t1", "task_type": "goto", "state": "running",
+           "priority": 50, "source": "cloud", "route_geo_id": "r-charge",
+           "resume_policy": "continue", "started_at": None,
+           "mission_json": json.dumps({"params": {"waypoints": [{"id": "w-a"}]}})}
+    prog = current_item(row)["progress"]
+    assert "route_rev" not in prog
+    for k in ("waypoint_index", "seg_done_m", "route_total_m",
+              "loop_index", "loop_total"):
+        assert k not in prog, k
+
+
+def test_a_task_with_no_waypoints_reports_no_progress_at_all():
+    """没有航点表述的任务(充电/返航)整块 progress 缺席, NO 不报 0 个航点.
+
+    0 的意思是"零个航点", 与"不知道"是两件事; v2.0 的 total_count 只作
+    数量显示, 一个假的 0 会让操作员以为任务是空的.
+    """
+    from xbrain.p3_task.state.task_state import current_item
+    row = {"task_id": "t1", "task_type": "return_home", "state": "running",
+           "priority": 95, "source": "charge", "route_geo_id": None,
+           "resume_policy": "continue", "started_at": None,
+           "mission_json": "{}"}
+    assert current_item(row)["progress"] is None

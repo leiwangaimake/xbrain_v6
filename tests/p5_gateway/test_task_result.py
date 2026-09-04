@@ -195,7 +195,40 @@ def test_result_code_and_state_cannot_disagree():
     with pytest.raises(ProjectionError):
         _result(state="done", result_code=2001)
     with pytest.raises(ProjectionError):
-        _result(state="cancelled", result_code=0, reason="用户取消")
+        _result(state="failed", result_code=0, reason="导航失败")
+
+
+def test_cancelled_may_carry_result_code_zero():
+    """*** 取消[不是] S10 意义上的失败, 允许 code=0.
+
+    v2.0 S3.3 逐字: result_code "成功 0; 失败见 S10". S10 的十四个码全是
+    拒绝/故障, 没有一个表示"操作员取消" -- 取消的语义由 state=cancelled
+    加上必填的 reason 承载.
+
+    本条 2026-09-04 从"cancelled+0 必须抛"改成"允许". 原规则是我方自造的
+    ("非 done 必须非零"), 它把 cancelled 推进失败码空间而那里没有正确
+    答案, 于是兜底挑了 2001(机器人未就绪/授时未同步). 终测实测两条取消
+    的终态全报 2001 -- 报一个具体的假原因, 比报 0 更坏.
+
+    MUTATION: 把 state == "failed" 改回 state != "done" -> 这里红.
+    """
+    d = _result(state="cancelled", result_code=0, reason="operator_stop")
+    assert d["result_code"] == 0
+    assert d["state"] == "cancelled"
+    assert d["reason"] == "operator_stop"
+
+
+def test_cancelled_still_requires_a_reason():
+    """*** 与上一条配对: 放宽的只有 code, reason 仍是必填.
+
+    v2.0: reason "成功可为空; 失败/取消必填". 只放宽 code 不放宽 reason --
+    否则一条 {state:cancelled, code:0, reason:""} 与"任务正常完成"在报文
+    上几乎没有差别.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import ProjectionError
+
+    with pytest.raises(ProjectionError):
+        _result(state="cancelled", result_code=0, reason="")
 
 
 def test_an_out_of_set_result_state_raises():

@@ -45,6 +45,7 @@ aiosqlite conn on P3's single db thread (15 S2.1), same contract as task_query.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from xbrain.common.enums import TASK_STATE
@@ -57,6 +58,9 @@ _STATE_COLUMNS = (
     "task_id", "task_type", "state", "priority", "source",
     "route_geo_id", "resume_policy", "started_at",
     "suspend_kind", "suspend_reason", "paused_at", "submit_seq",
+    # 只为 waypoint_total: 航点随命令而来, 冻结在 mission_json 里(见
+    # _waypoint_total). NO 不为此加 SELECT *.
+    "mission_json",
 )
 
 #: Non-terminal = every state that is not terminal. Derived, not listed: a state
@@ -131,12 +135,57 @@ def current_item(row: Mapping[str, Any]) -> Dict[str, Any]:
         # because it decides what a resume will DO, and the operator confirming a
         # resume needs to know that before pressing it.
         "resume_policy": row.get("resume_policy"),
-        # null until the route layer expands the task -- see the module docstring.
-        "progress": None,
+        # 部分 progress: 只有 waypoint_total 有真值, 执行面的量一律缺席.
+        # *** 为什么可以填 waypoint_total 而不能填 route_rev.
+        # S4.4 对两者的措辞不同: waypoint_total "取自快照, 不是当前 route 表",
+        # 而 GOTO_KEYPOINT 的航点[随命令而来]并冻结在 mission_json 里 --
+        # 那就是这条任务自己的快照, 与 route 表无关, EX-1 与否都拿得到.
+        # route_rev 则是"任务开始时[锁定]的路径版本", 唯一合法来源是
+        # task_route_snapshot(EX-1 未建). 去读 routes.rev 正是 S4.4 明令
+        # 禁止的那条路: 路径中途被人改过, 报出来的版本就与机器人正在走的
+        # 不是同一份.
+        # *** 为什么不整块留 None.
+        # v2.0 S3.2 的 total_count 是[必填的权威计数], 而 p5 的投影从
+        # progress.waypoint_total 取它 -- 整块 None 时它落到 `or 0`,
+        # 于是一条有 1 个航点的任务在甲方界面上显示 "0/0"(2026-09-04 终测
+        # 实测). 编一个 0 与编一个 100 是同一类错(3.1).
+        "progress": _partial_progress(row),
         # The other field this module exists for. Epoch, not the stored ISO
         # string: v2.0 S3.2 types it as a number.
         "started_ts": wall_iso_to_epoch(row.get("started_at")),
     }
+
+
+def _waypoint_total(row: Mapping[str, Any]) -> Optional[int]:
+    """这条任务提交时带了几个航点. None = 这条任务不是按航点表述的.
+
+    读 mission_json.params.waypoints 的长度. 解析不出来时返回 None 而不是
+    0 -- 0 的意思是"零个航点", 与"不知道"是两件事, 而 v2.0 的 total_count
+    只作数量显示, 一个假的 0 会让操作员以为任务是空的.
+    """
+    raw = row.get("mission_json")
+    if not raw:
+        return None
+    try:
+        mission = json.loads(raw) if isinstance(raw, str) else raw
+        wps = (mission or {}).get("params", {}).get("waypoints")
+    except Exception:      # noqa: BLE001
+        return None
+    return len(wps) if isinstance(wps, list) else None
+
+
+def _partial_progress(row: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    """S4.4 progress 里[现在拿得到的那部分]. 全拿不到时返回 None.
+
+    只放 waypoint_total. 执行面的六个量(waypoint_index / seg_done_m /
+    route_total_m / loop_index / loop_total / route_rev)一律不出现 --
+    缺席表示"未知", 而填 0 会被下游当成真值(p5 的 _completed_count 对
+    缺席的 waypoint_index 返回 0, 那是"零个已完成", 与任务没跑过一致).
+    """
+    total = _waypoint_total(row)
+    if total is None:
+        return None
+    return {"waypoint_total": total}
 
 
 def queue_item(row: Mapping[str, Any]) -> Dict[str, Any]:
