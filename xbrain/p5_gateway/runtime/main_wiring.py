@@ -75,7 +75,13 @@ EVENT_ACK_TOPIC = "event/ack"            # 17 S3.5.1: cloud ack -> mark delivere
 EVENT_RECON_RSP_TOPIC = "event/recon/rsp"  # 17 S3Y.3: cloud recon answer
 RECON_PERIOD_S = 300.0                    # 17 S3Y.3 recon.period_s (interim const)
 PROBE_ESTOP_PING_TOPIC = "probe/estop/ping"  # W5: P5 ping (11 CR-2, 17 S6.3)
-PROBE_ESTOP_PONG_TOPIC = "probe/estop/pong"  # W5: quadruped pong (11 CR-3, authoritative source)
+PROBE_ESTOP_PONG_TOPIC = "probe/estop/pong"
+# W5 的 pong 由 chassis_relay 发 -- 11 S2.2 那一行逐字: 发布者
+# chassis_relay(CR-3, 转发自 rt/safety/probe/pong), 消费者 p5_gateway, 1 Hz.
+# *** 本行原写 "quadruped pong", 是错的.
+# 两个进程都在急停链路上且都还没编出来, 所以现象一样(0 个 pong,
+# estop_path 恒 down), 错的注释不会被现象戳穿 -- 只会在有人去接这条线时
+# 让他找错进程. 2026-09-03 终测查 estop_path=down 的成因时发现.
 #: P2 的 1 Hz 健康度广播(11 S2.2 登记 p2_core 为唯一发布者, S5.1 定 schema).
 #:
 #: *** 本行原写 "health/factor" -- 那不是一个 key.
