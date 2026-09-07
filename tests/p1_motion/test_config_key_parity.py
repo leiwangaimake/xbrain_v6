@@ -186,7 +186,7 @@ def test_no_second_yaml_copy_of_the_three_keys_in_doc_20():
     同一组键有两份 YAML 定义时, 实现者照哪一份写取决于他先看到哪一册 --
     而两份迟早不一致.
     """
-    doc20 = ROOT / "docs" / "20-RNS反应式避障详细设计.md"
+    doc20 = ROOT / "docs" / "20-RNS反应式导航软件系统详细设计.md"
     if not doc20.is_file():
         pytest.skip("20 不存在")
     text = doc20.read_text(encoding="utf-8")
