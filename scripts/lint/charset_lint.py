@@ -130,6 +130,22 @@ def comment_lines_of(path):
     return out
 
 
+# Third-party frozen snapshots we did NOT write. CLAUDE.md 2.2 scopes the scan
+# to sources we write and maintain ("扫描面 = 我方书写并维护的源文件与配置");
+# these trees are another engineer's delivery, frozen for review (perception
+# README: copy differences are recorded in reports/SNAPSHOT_IDENTITY.json --
+# editing them breaks snapshot identity).
+# * Why exclusion and not FROZEN_STRING_TREES: that list marks OUR strings we
+# chose not to rewrite (declared debt); these files are not ours at all, so
+# reporting them as our debt would misstate ownership. The cleanup request is
+# on the delivering engineer (docs/perception-rns-interface-20260907.md item 9)
+# and this entry must be REMOVED when the tree is adopted into our maintenance.
+THIRD_PARTY_SNAPSHOTS = (
+    "ros2_ws/perception",
+    "ros2_ws/Perception_Gemini338Le_20260907",
+)
+
+
 def iter_sources():
     """Every source file we own, with docs/ and vendor trees excluded."""
     for top in SOURCE_DIRS:
@@ -137,6 +153,11 @@ def iter_sources():
         if not os.path.isdir(base):
             continue
         for dirpath, dirnames, filenames in os.walk(base):
+            rel_dir = os.path.relpath(dirpath, ROOT)
+            if any(rel_dir == t or rel_dir.startswith(t + os.sep)
+                   for t in THIRD_PARTY_SNAPSHOTS):
+                dirnames[:] = []
+                continue
             # Skip caches, generated build artifacts, and vendored payloads.
             # generated/ = materialised output (configs/generated/whitelist.yaml,
             # CLAUDE.md 2.2 exempts it, hand-editing forbidden). The model* skip
