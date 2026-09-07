@@ -39,9 +39,20 @@
 
 | key | 内容 | 频率 | QoS | RNS 拿它做什么 |
 |---|---|---|---|---|
-| `xbrain/{rid}/rt/perception/profile` | **几何三态剖面**（定长数组） | 与深度帧同频 | Q1 | ★★★ **缝宽 · 走廊 · 贴墙绕行的唯一来源** |
-| `xbrain/{rid}/rt/perception/objects` | 语义目标（变长） | 同上 | Q1 | ★★ **行为调制**：谁该让 · 谁能绕 · 谁必须硬禁 |
+| `xbrain/{rid}/rt/perception/profile` | **几何三态剖面**（定长数组） | **与深度帧同频（30 fps 目标），🚫 不等推理** | Q1 | ★★★ **缝宽 · 走廊 · 贴墙绕行的唯一来源** |
+| `xbrain/{rid}/rt/perception/objects` | 语义目标（变长） | 与**推理**同频（实测 ~18.7 Hz） | Q1 | ★★ **行为调制**：谁该让 · 谁能绕 · 谁必须硬禁 |
 | `xbrain/{rid}/rt/perception/status` | 健康心跳 | 1 Hz | Q2 | ★ 降级与限速判据 |
+
+### 2.0　时序契约（TIME-1 ~ TIME-3，最容易做错的一条先说）
+
+| # | 规则 | 为什么 |
+|---|---|---|
+| **TIME-1** | 单条报文内部**单帧一致**：一条 `profile` 全部数组出自同一深度帧；一条 `objects` 全部目标出自同一推理帧 | 混帧 ⇒ 物体边缘系统性假矛盾 |
+| **TIME-2** | ★★★ `profile` 与 `objects` **不要求同帧** —— 各带各的 `t_capture_mono_ms` | ★★★ **`profile` 若等推理，纯几何的 `d_block` 年龄 ≈ 200 ms（推理延迟）＋ 53 ms（周期）≈ 250 ms，贴死 RNS 侧 300 ms 的超时上限**。拆开后 `d_block` 端到端可压到 < 100 ms（采集 33 ＋ 传输 ~5 ＋ 几何 ~10 ＋ 发布） |
+| **TIME-3** | `profile` 里的 T 证据允许用**更早的分割帧**，但必须带 `t_seg_mono_ms`，且发布前按 PROF-5 腐蚀 | 机器人在动而 mask 是旧的 ⇒ 边界错位方向不保守，必须收缩补偿 |
+
+⇒ **实现形态**：几何路径（深度 → 剖面）是**独立的快线**，随每个深度帧走；推理路径（检测/分割）是**慢线**；
+慢线的最新分割结果以"最近可用 ＋ 腐蚀"的方式并入快线的 T 判定。🚫 不要让快线等慢线。
 
 ⚠️ **当前实现发的是 `perception/detections` / `perception/status` / `perception/pointcloud`（无 `rt/` 前缀）**，
 与契约注册的 key **零重合**。这不是本次新增的分歧 —— 它一直存在，只是此前没有消费方所以没暴露。
@@ -52,7 +63,7 @@
 
 - `angle_min_rad` / `angle_step_rad` / `n_bins` 描述扇区（本册示例 ±45°、0.5°、181 bin）
 - 七个等长数组：`d_free` · `d_block` · `h_block` · `src` · `conf` · `terrain` · `slope_deg`
-- 报文头带 `t_capture_mono_ms`（**曝光中点**）· `blind_near_m`（**逐帧给**）· `extrinsic_calibrated`
+- 报文头带 `t_capture_mono_ms`（**曝光中点**）· `t_seg_mono_ms`（T 证据的分割帧时戳，无则 `null`）· `z_pass_m`（过顶滤除高度，PROF-4）· `blind_near_m`（**逐帧给**）· `extrinsic_calibrated`
 
 **三条不变量**（`11` §3.1B.1，做错了 RNS 会在危险方向出错）：
 
@@ -61,6 +72,8 @@
 | **PROF-1** | `d_free[i] ≤ d_block[i]` 恒成立，中间那条带**就是 UNKNOWN** | 令二者相等把 UNKNOWN 消掉 = 宣称「没看见障碍就是没障碍」 |
 | **PROF-2** | 深度 invalid **保持 UNKNOWN**，🚫 不填 `0`、🚫 不填 `range_max` | 玻璃 / 水面 / 强反光 / 超量程处成片 invalid，填默认值会让机器人**全速冲进去** |
 | **PROF-3** | `d_block` 由**全分辨率深度的角度域 MIN 归约**得到，🚫 不得先空间降采样再归约 | 先降采样第一步就把**细障碍平均掉**（矿区钢筋 / 树林细枝 / 营地拉索）；MIN 是保守的 —— 细障碍只要 1 个有效像素就存活 |
+| **PROF-4** | **过顶滤除**：`h > z_pass_m` 的点不入 `d_block`，且 `z_pass_m` 随帧发布 | 不滤 ⇒ 1.8 m 的横杆/门楣把通道判死，机器人钻得过却永远不走；滤了不发 ⇒ RNS 不知道这层假设 |
+| **PROF-5** | 跨帧 T 证据按 `m = v_ego_max × (t_capture − t_seg) ＋ m_jitter` 在地面域**腐蚀**后才可支持 FREE | 旧 mask 的边界已随自车运动错位，不腐蚀则误差方向不保守 |
 
 ### 2.2 缺值一律 `null`，🚫 不用哨兵
 
@@ -69,7 +82,7 @@
 1. **JSON 没有 `+inf` / `NaN` 字面量** —— 写了就不是合法 JSON，各家解析器行为不一致
 2. ★★★ **哨兵会被下游当真值参与算术** —— `d_block = -1` 进 `min()` 就是「零距离有障碍」，`d_block = 0` 就是「贴脸障碍」，两种都在**错误方向**上出错
 
-带宽不是问题：7 × 181 个数约 10 KB/帧，18.7 Hz ⇒ **约 190 KB/s**，RT 面不出机。🚫 **不要为省这点带宽提前上 CBOR。**
+带宽不是问题：7 × 181 个数约 10 KB/帧，30 fps ⇒ **约 300 KB/s**，RT 面不出机。🚫 **不要为省这点带宽提前上 CBOR。**
 
 ### 2.3 融合请**留给 RNS**
 
@@ -96,41 +109,129 @@
 
 ---
 
-## 四、四个缺口
+## 四、四个缺口与实现方案（算法级）
 
-| # | 缺口 | 为什么现有的替代不了 |
-|---|---|---|
-| **G-1** | **没有几何三态剖面**（`ProfileMsg`） | ★★★ 现输出是**逐目标**的。目标列表里只有**被识别出来的**东西 —— 按目标间距算缝宽，会算出一条**穿过未识别电线杆的"缝"**。缝宽只能从空间几何算 |
-| **G-2** | **点云太稀**：`voxel_size: 0.10` · `max_points: 5000` | ★★ 这是**可视化/调试**的量级。判"这条 1.2 m 的缝能不能过"时，5000 点铺开在整个视场里不够 |
-| **G-3** | **可通行区域只在图像像素系**：代码逐字 `"coordinate_space":"image_pixels"` · `"navigation_authoritative":false` | ★ T 通道**没投到地面**。要用需 mask → 深度 → 地面投影，这一步现在没有。★★ 你们的 `navigation_authoritative:false` 标注是对的，本次设计按字面采信：现状确实不能当导航权威 |
-| **G-4** | ★★★ **速度用的是哪个坐标系，报文里看不出来** | 见下，这条最要紧 |
+> 每个缺口给到**公式与伪代码**级别。符号约定：
+> 内参 `K = [[fx,0,cx],[0,fy,cy],[0,0,1]]`；外参 `T_bc = (R_bc, t_bc)`（标定产物，`base_link ← camera`）；
+> 地面 = `base_link` 的 `z = 0` 平面；扇区参数 `angle_min / angle_step / n_bins`；径向格宽 `dr`（建议 0.25 m）。
 
-### G-4 展开：一个几乎免费就能补上的洞
+### 4.1　G-1 ＋ G-3：几何三态剖面（一遍循环，含可通行 mask 投地）
 
-代码内部**已经区分**了两个速度估计器：
+G-1（三态剖面）和 G-3（mask 投地面）**是同一个逐像素循环**，分开做会白遍历一次深度图。
 
-- `odom_velocity_estimator_`（`MotionDecisionAxes::XY`）—— TF 可用时走这条，**去掉了自车运动**
-- 相机系估计器（`XZ`，配置注释逐字「camera-XZ behavior」）—— **没有去自车运动**
+**第一遍：逐像素分类与归约**（全分辨率，PROF-3）
 
-切换时还打了日志（`"velocity frame switched to odom/camera"`），也存了标志位 `last_velocity_frame_has_odom_`。
-⚠️★★★ **但这个标志位没有发到线上** —— JSON 里只有 `velocity_3d` / `velocity_valid` / `velocity_status`，
-**消费方无从判断当前是哪一种**。
+```text
+预计算 (外参标定后一次):
+  ray[v][u]   = R_bc * K_inv * [u, v, 1]^T          # 每像素射线方向 (base_link 系, 未归一)
+  z_exp[v][u] = -t_bc.z / ray[v][u].z               # 该像素射线与地面相交的期望深度参数
+                                                    # (ray.z >= 0 即不指向地面 => 标记为无期望)
+  roi[v][u]   = (z_exp 有效 且 交点距离 <= range_max) # invalid_pixel_ratio 的分母掩膜
 
-而 TF 现在**必然拿不到**：`odom ← base_link` 的发布者是 `quadruped` 进程，**该进程尚未实现**。
-代码走的是这条分支，日志逐字：
+每帧:
+  for (u, v) 全分辨率:
+    z = depth(u, v)
+    if invalid(z):
+        if roi[v][u]: n_invalid += 1                # 只统计地面相关 ROI
+        continue                                    # PROF-2: invalid 不产生任何几何证据
+    p = z * ray[v][u] + t_bc                        # base_link 坐标 (x, y, h)
+    r = hypot(p.x, p.y)
+    if r < blind_near or r > range_max: continue
+    th = atan2(p.y, p.x)
+    i  = floor((th - angle_min) / angle_step)
+    if i < 0 or i >= n_bins: continue
 
-> `TF odom<-base_link unavailable: ...; using camera frame and retrying at 1Hz`
+    if p.h > z_pass:            continue            # PROF-4: 过顶, 机器人可从下方通过
+    elif p.h > h_tol:                               # 立体障碍点
+        d_blk[i] = min(d_blk[i], r)                 # PROF-3: 全分辨率角度域 MIN
+        obs[i].push(r, p.h)                         # 供 h_block 窗口统计
+    elif p.h >= -h_tol:                             # 地面证据点
+        k = floor((r - blind_near) / dr)
+        G[i][k] += 1;  Zs[i][k] += p.h;  Zq[i][k] += p.h * p.h
+        if seg_mask(u, v): T[i][k] += 1             # G-3: mask 最近邻查表, 同一遍完成
+    else:                                           # p.h < -h_tol: 实测低于地面
+        d_neg[i] = min(d_neg[i], r);  h_neg[i] = min(h_neg[i], p.h)
 
-⇒ **当前发出去的速度是相机系的，没有去自车运动。**
-现在没有暴露，只因为**测试时机器人是静止的**。一旦机器人以 1.5 m/s 前进，
-静止的树在相机系里就是 −1.5 m/s ⇒ **整个世界被判成运动的** ⇒ RNS 会停在原地不动。
+    if roi[v][u] and z > z_exp[v][u] * (1 + eps_neg):
+        pierce[i][floor((r_exp - blind_near)/dr)] = true
+        # 射线"穿过了地面本该在的位置" => 那里没有地面 => 负障碍的第二判据
+        # r_exp = 期望交点的地面距离(可与 z_exp 一并预计算)
+```
 
-**要求**：`11` §3.1B.2 的 `velocity_frame` 字段（闭集 `ego_removed` / `raw`）就是为这件事设的。
-★ 你们已有 `last_velocity_frame_has_odom_`，**把它序列化出来即可**，改动量极小。
-★★ 同理 `ground_footprint_odom` 的坐标系也请随帧标注 —— 字段名带 `_odom` 而实际回退到相机系时，
-**日志里看得见，报文里看不见**，而消费方只能看到报文。
+`seg_mask(u, v)`：分割输出分辨率与深度不同 ⇒ 最近邻缩放查表 `mask[v * sy][u * sx]`，O(1)。
 
----
+**第二遍：逐 bin 后处理**（181 × ~24 cell，微不足道）
+
+```text
+T 腐蚀 (PROF-5, 分割帧比深度帧旧时):
+  m = v_ego_max * (t_capture - t_seg) + m_jitter    # 地面域收缩余量, 单位 m
+  T_ok[i][k] = T[i][k]/G[i][k] >= tau_T  对 [i][k] 及其 m 半径内全部邻 cell 成立
+               (角向邻域半径 = m / (r_k * angle_step), 径向 = m / dr)
+
+for i in bins:
+  d_free = blind_near;  gap = 0;  zbar_prev = null
+  for k in cells:                                   # r_k = blind_near + (k + 0.5) * dr
+    if r_k >= d_blk[i]: break                       # PROF-1 由构造成立: d_free <= d_block
+    if pierce[i][k]:                                # 负障碍确认
+        d_blk[i] = min(d_blk[i], r_k); src[i] |= BIT_NEG
+        h_block[i] = h_neg[i] (若实测到坑内点) else null
+        break
+    if G[i][k] < g_min:                             # 无地面证据 (遮挡 / invalid / 未观测)
+        break                                       # 首版: 即停, d_free 停在缺口前 (保守)
+    zbar = Zs[i][k]/G[i][k];  var = Zq[i][k]/G[i][k] - zbar^2
+    if need_T and not T_ok[i][k]:            break  # T 通道: 分割说不可走
+    if zbar_prev != null and
+       |zbar - zbar_prev| / dr > tan(slope_max):    break  # 台阶 / 陡坡
+    if var > sigma_max^2:                           break  # 粗糙度
+    zbar_prev = zbar;  d_free = r_k + dr/2
+  d_free_out[i] = d_free
+  h_block[i] = max(h for (r, h) in obs[i] if r <= d_blk[i] + w_h)   # 障碍簇最大高度
+  conf[i] = clamp255(255 * valid_px[i] / expect_px[i])              # expect_px 由 roi 预计算
+  slope_deg[i] = atan(最大相邻 |zbar 差| / dr) over 已通过的 free 段
+  terrain[i] = 0                                    # 首版恒 unknown, 二期再分 hard/soft/rough
+```
+
+**阈值全部进感知侧配置**（`h_tol` / `z_pass` / `g_min` / `tau_T` / `slope_max` / `sigma_max` / `eps_neg` / `w_h` / `dr`），
+未标定写 `null` 拒绝启动 —— 与我方 `CLAUDE.md` §3.1 同一条纪律。
+
+**复杂度**：逐像素 O(1)，无排序无邻域搜索。640×400@30 ≈ 7.7M px/s；1280×800@30 ≈ 30.7M px/s ×
+约 30 flops ≈ **0.9 Gflops/s**，Orin CPU 单核 NEON 可承受，与 DLA 上的推理零竞争。
+第二遍 181×24 cell 可忽略。**帧内存**：`G/Zs/Zq/T` 各 181×24×4 B ≈ 70 KB。
+
+### 4.2　G-2：点云**不加密** —— profile 就是导航几何
+
+原判"点云太稀（0.1 m 体素 / 5000 点）"的修复**不是加密点云**，是**让 profile 取代点云成为导航几何**：
+
+- bin 的横向分辨率 = `r × angle_step`。0.5° 时 6 m 处 ≈ **5.2 cm**；
+- 1.2 m 的缝在 6 m 处横跨 ≈ 0.2 rad ≈ **23 个 bin** —— 缝宽判定裕量充足；
+- 直径 10 cm 的杆在 4 m 处 ≈ 1.4° ≈ **2.9 个 bin**，且 MIN 归约保证**只要 1 个有效像素就存活**（PROF-3）。
+
+⇒ `perception/pointcloud` 保持现状（调试/可视化），🚫 不为导航加密 —— 加密走网络的代价（§六）买不到 profile 之外的信息。
+
+### 4.3　G-4：`velocity_frame` 序列化 ＋ 去自车运动
+
+**第一步（本周可做，一行级改动）**：把已有的 `last_velocity_frame_has_odom_` 序列化：
+
+```text
+velocity_frame = has_odom ? "ego_removed" : "raw"
+```
+
+**第二步（odom 到位后）**：去自车运动的正式算法 ——
+
+```text
+T_wb(t): 从 OdomBuffer 取 t 前后两帧位姿插值 (平移 lerp, 旋转 slerp)
+         t 用目标质心所在帧的曝光中点 t_capture, 不是消息到达时刻
+q1 = T_wb(t1) * p1;  q2 = T_wb(t2) * p2            # 两帧质心变换到世界系
+v_w = (q2 - q1) / (t2 - t1)                        # 世界系速度 (自车运动已消)
+v_b = R_wb(t2)^T * v_w                             # 旋回当前 base_link (速度只旋转不平移)
+velocity_xy = (v_b.x, v_b.y);  velocity_frame = "ego_removed"
+```
+
+现有的窗口化 + 两窗确认抗抖直接套在 `q` 序列上，逻辑不变。
+
+**`r_near` 精确定义**（`11` §3.1B.2 v1.7 已收严）：`base_link` 原点到凸包的最小距离 =
+逐边取点到线段距离的最小值（🚫 不是只看顶点 —— 长边中段可能最近）；原点在多边形内 ⇒ `0`。
+机体半径由 RNS 侧扣，perception 🚫 不代扣。
 
 ## 五、三条实测约束（不是缺口，是必须纳入设计的事实）
 
@@ -138,7 +239,7 @@
 |---|---|---|
 | ★★★ **F-1** | **E2E P99 约 166–226 ms，结果年龄 P99 219.5 ms**（你们 README 亦自标"仍高于门限"） | ★★★ RNS 是 20 Hz（50 ms 一拍），而感知数据**平均已经 200 ms 旧**。2 m/s 下是 **0.44 m 位移，大于机体半径** ⇒ **运动补偿是必需项，不是优化项**；而补偿要 odom ⇒ 卡在 `quadruped` |
 | ★★ **F-2** | 深度采集 **640×400**（宽高比 1.6，**没有裁 FOV**，这点做对了） | 深度误差按 `dz = z^2 * dd / (f * b)` 约翻倍 ⇒ **远处 `d_free` 不可信**，速度门的输入精度受限 |
-| ★★ **F-3** | 输出约 **18.73 Hz** | 对 20 Hz 控制拍**每拍不一定有新帧** ⇒ RNS 侧按"每拍必须重跑，不得因没更新而跳过"处理，这一侧我们担了 |
+| ★★ **F-3** | 输出约 **18.73 Hz** —— **该数是推理频率**，时序拆分（TIME-2）后只约束 `objects`；`profile` 随深度帧 30 fps | `objects` 对 20 Hz 控制拍每拍不一定有新帧 ⇒ RNS 侧按"每拍必须重跑"处理，这一侧我们担了；几何侧压力已由拆分卸掉 |
 
 ★ 另：`range_max_m` **不得超过传感器推荐量程**。338Le 厂商推荐 0.25–6 m（精度 ≤0.8%@2 m / ≤1.6%@4 m），
 超出部分误差随 `z^2` 增长，写进 `d_free` 等于**把不可信的远处当成确认可通行**。有疑问就填小 —— 失效方向不对称。
@@ -179,7 +280,42 @@
 
 ---
 
-## 八、需要你方答复
+## 八、数据闭环对账单（perception → p1_motion → RNS）
+
+> RNS 是 `p1_motion` 的**进程内模块**（对外呈现为行为源 `rns_avoid`），订阅方就是 `p1_motion`。
+> 下表把 RNS 的**每一个消费点**对到字段 · key · 超时 · 降级 —— 一行对不上就是通路断点。
+> 双方联调时按此表逐行打勾。
+
+| RNS 消费点 | 用的字段 | key | 超时（`11` §1.6） | 断供时的行为 |
+|---|---|---|---|---|
+| 三态融合（FREE/BLOCKED/UNKNOWN） | `d_free` / `d_block` / `src` | `profile` | T-50 300 ms / T-51 1 s | 限速 → 零速（不锁定） |
+| 速度门 `f(d_free)` | 前向扇区 `min d_free[i]` | `profile` | 同上 | 同上 |
+| 缝宽 / 绕行候选 / 贴墙 | `d_free` / `d_block` 逐 bin | `profile` | 同上 | 同上 |
+| 可跨越判定 | `h_block` ＋ `z_pass_m` | `profile` | 同上 | 同上 |
+| 负障碍（坑/崖） | `src` bit3 ＋ `h_block < 0` | `profile` | 同上 | 同上 |
+| 记忆栅格（360° 补全） | 三态 ＋ `t_capture_mono_ms` | `profile` | 记忆 TTL 另计 | 栅格过期格转 UNKNOWN |
+| 行为分流（让/绕/穿/禁） | `class_name` → RNS 侧 `class_map` | `objects` | T-52 500 ms | **全部 BLOCKED 按禁止类**（不绕不穿） |
+| 运动/静止判据 | `velocity_xy` ＋ `velocity_frame` ＋ `velocity_status` ＋ `stable_frames` | `objects` | T-52 | `raw` ⇒ 拒用；断供 ⇒ 保守 |
+| 停车距离 | `r_near` | `objects` | T-52 | 保守（按 profile 几何距离） |
+| 健康限速 | `invalid_pixel_ratio` | `status` | T-53 3 s | 按最坏情况限速 |
+| T 通道降级 | `traversable_seg_available` ＋ `t_seg_mono_ms` | `status` ＋ `profile` | — | 限速通行 ＋ warn（`20` §3.1.11） |
+| 标定门 | `extrinsic_calibrated` | 三条皆有 | — | **拒绝自主导航**（`11` §3.1B.4） |
+
+**perception 之外的闭环项**（列全，防"只对了感知半边"）：
+
+| RNS 消费/产出点 | 通路 | 状态 |
+|---|---|---|
+| 定位 / 航向 | `rt/gnss/fix` / `heading`（`rtk_driver`） | 契约既有（T-09 / T-10） |
+| 急停 | `cmd/estop`（p1 白名单 P1-21，RNS 无条件停） | 契约既有 |
+| 路径下发 | `cmd/motion/route`（P1-11）→ RNS 折线 | 契约既有 |
+| 执行进度 | `state/motion/path_progress`（P1-12） | 契约既有 |
+| **RNS 输出 → 仲裁** | 行为源 `rns_avoid` 进 `12` 的优先级阶梯 | ⚠️ **已登记待办 #20-1**（`12` 需删 `path_follow` 重排；不阻塞感知侧） |
+| 旧几何链退场 | `rt/lidar/*` ＋ `rt/perception/targets` | ⚠️ **已登记待办 #20-10**（契约标注"以 `rt/perception/*` 为准"） |
+
+⇒ **结论**：感知侧 12 个消费点全部有字段、有 key、有超时、有降级；系统侧两个已知开口（#20-1 / #20-10）
+都已登记且不阻塞感知开发。**没有第三个开口。**
+
+## 九、需要你方答复
 
 | # | 问题 |
 |---|---|
@@ -189,10 +325,13 @@
 | **Q-4** | 可通行区域投影到地面（G-3）的工作量与排期 |
 | **Q-5** | 整机外参标定的时间点 —— 它是所有其他项的前置 |
 | **Q-6** | `config/perception.yaml` 里的 `lidar:` 块（`/livox/lidar`）是否可以删除？据核实无任何订阅点 |
+| **Q-7** | `z_pass_m` 的取值：M20S 站立高度 ＋ 载荷最高点 ＋ 余量 = ？（过顶滤除的安全前提，装云台后要复核） |
+| **Q-8** | 分割 mask 的输出分辨率与相对深度帧的典型年龄（决定 PROF-5 腐蚀参数 `v_ego_max × Δt` 的量级） |
+| **Q-9** | 深度 30 fps 下 `profile` 快线能否稳定 30 Hz 发布（TIME-2 的实现形态确认：快线不等慢线） |
 
 ---
 
-## 九、顺带一条：提交门禁
+## 十、顺带一条：提交门禁
 
 `config/` 下三个 yaml 有 **8 处全角标点与特殊符号**（`perception.yaml` 与 `perception.gemini338le_m2.yaml`
 各 3 处中文逗号句号，`extrinsic.yaml` 2 处 `✓`）。本项目 CI 门禁 `scripts/lint/charset_lint.py`
