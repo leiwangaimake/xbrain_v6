@@ -308,6 +308,9 @@ v0.1/v0.2 把 RNS 定位成**「在 `path_follow` 之上做反应式避障」的
 > ★ 本小节是**交付给感知实现方的对照表**，🚫 不是契约。★★ 现有实现的工程质量高（尤见深度诊断与速度抗抖），
 > 差量集中在**「面向导航的降维」这一层**，🚫 不是质量问题。
 > ⚠️ 该目录当前**未纳入版本控制**，本表是对 2026-09-07 工作区快照的实测。
+> ★ **交付给实现方的版本**：[perception-rns-interface-20260907](perception-rns-interface-20260907.md)（同一批实测，含需其答复的 Q-1 ~ Q-6）。
+> ★★ **一条已核实【不成立】的担心**：`config/perception.yaml` 有 `lidar: topic:"/livox/lidar"` 块、代码有 `lidar_velocity_estimator_` 之名 —— **均为历史命名**；
+> 全代码只有一个 `create_subscription`（`capture_cmd_sub_`，String），**无任何 `/livox/lidar` 订阅点**，该估计器实跑相机数据。⇒ 🚫 无需为「没有 LiDAR」做拆除。
 
 ##### ★ 已经有、且形态正确的
 
@@ -327,7 +330,7 @@ v0.1/v0.2 把 RNS 定位成**「在 `path_follow` 之上做反应式避障」的
 | ★★★ **G-1** | ★★★ **没有几何三态剖面**（`11` §3.1B.1 `ProfileMsg`） | ★★★ 现输出是**逐目标**的。缝宽/走廊/贴墙**只能从空间几何算** —— 见 §3.1.6 |
 | ★★★ **G-2** | ★★★ **`pointcloud` 太稀**：实测 `voxel_size: 0.10` · `max_points: 5000` | ★★ 这是**可视化/调试**的量级。判「这条 1.2 m 的缝能不能过」时，5000 点铺开在整个视场里不够 |
 | ★★★ **G-3** | ★★★ **可通行区域在图像像素系**：代码逐字 `"coordinate_space":"image_pixels"` · `"navigation_authoritative":false` | ★ T 通道**没投到地面**。要用需 mask → 深度 → 地面投影，这步现在没有<br>★★ **自标 `navigation_authoritative:false` 是对的** —— 本册按它的字面意思办：现状确实不能当导航权威 |
-| ★★★ **G-4** | ★★★ **`ground_footprint_odom` 与 `velocity_3d` 的坐标系名不副实** | ★★★ 字段名带 `_odom`，而配置 `odom.topic:"/odom"` 依赖的 `quadruped` **尚未实现**，且 `extrinsic_base_lidar` 为全零占位 ⇒ 实为**相机系**换名<br>⇒ ★★★ **`velocity_3d` 没有去自车运动**（§3.1.5 那条 ⚠️★★★）。现在没暴露只因**测试时机器人静止**；一旦行进，静止物体全部变成运动的 |
+| ★★★ **G-4** | ★★★ **速度用的是哪个坐标系，报文里看不出来** | ★★ 实现内部**已区分**两个估计器：`odom_velocity_estimator_`（`XY`，**去自车运动**）与相机系估计器（`XZ`，配置注释逐字「camera-XZ behavior」，**不去**）；切换时打日志、存标志位 `last_velocity_frame_has_odom_`。<br>⚠️★★★ **但该标志位未序列化** —— JSON 只有 `velocity_3d`/`velocity_valid`/`velocity_status`，消费方无从判断。<br>★★★ 而 TF `odom ← base_link` 的发布者是 `quadruped`，**该进程尚未实现** ⇒ 实测走相机系分支（日志逐字 `TF odom<-base_link unavailable: ...; using camera frame and retrying at 1Hz`）⇒ **当前速度没有去自车运动**（§3.1.5 那条 ⚠️★★★）。现在没暴露只因**测试时机器人静止**。<br>⇒ ★ `11` §3.1B.2 的 `velocity_frame` 就是为此而设；★★ 已有标志位，**序列化出来即可**，改动量极小 |
 
 ##### ⚠️ 三条实测约束（不是缺口，是必须纳入设计的事实）
 
