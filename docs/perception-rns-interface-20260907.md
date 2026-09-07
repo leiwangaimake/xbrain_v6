@@ -201,7 +201,9 @@ for i in bins:
     if G[i][k] < g_min:                             # 无地面证据 (遮挡 / invalid / 未观测)
         break                                       # 首版: 即停, d_free 停在缺口前 (保守)
     zbar = Zs[i][k]/G[i][k];  var = Zq[i][k]/G[i][k] - zbar^2
-    if need_T and not T_ok[i][k]:            break  # T 通道: 分割说不可走
+    if has_seg and not T_ok[i][k]:           break  # T 停止: 仅本帧有分割(t_seg 非 null)时生效
+                                                    # 无分割 => 不 break, 继续推进, 但该段 src 不置 bit0
+                                                    # (bit0 未置 = 仅几何可通行, RNS 侧按 20 3.1.11 限速消费)
     if zbar_prev != null and
        |zbar - zbar_prev| / dr > tan(slope_max):    break  # 台阶 / 陡坡
     if var > sigma_max^2:                           break  # 粗糙度
