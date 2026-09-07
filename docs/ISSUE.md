@@ -489,6 +489,31 @@ SIGINT 干净退出并还原 `func1→idle`。
 
 ---
 
+### D-CLOUD. 云端联调待甲方裁决（5 项）— **DECIDE**
+
+2026-09-04 首轮全类型终测后仍需甲方答复的事项。**明细见
+[cloud-debug](cloud-debug.md) §3.1**，此处只登记编号与状态，
+不复制内容 —— 两份台账各抄一遍必然互相漂移（3.7）。
+
+| 编号 | 内容 | 我方现状 | 状态 |
+|---|---|---|---|
+| D-1 | `cancelled` 的 `result_code` | 定为 `0` | DECIDE |
+| D-2 | 能力已开放、子通路未建时用什么码 | `1006` + `E_NOT_IMPLEMENTED` | DECIDE |
+| D-3 | 急停回执 `hes` 闭集 | 发 `unknown` | DECIDE |
+| D-4 | `state/audio.speaker_holder_type` 闭集 | 发 `null` | DECIDE |
+| F-1 | `base_rev` 位置（甲方侧需改） | 已发清单 | OPEN |
+
+★ **D-2 的风险最高**：`1006` 字面是"不支持的 task_type"，甲方可能据此判定
+整条 `SET_ALARM_CONFIG` 不受支持而放弃联调 —— 而带 `regions[]` 的路径是可用的。
+
+★ **F-1 现在不会报错**：本次因 `regions: []` 未引爆。甲方一旦带非空
+`regions[]` 且 `base_rev` 仍在 payload 顶层，**每个区域都会 rev 冲突**，
+现象是"区域更新莫名失败"而报文其余完全合规。
+
+发给甲方的清单原文：[qt-v2.0-open-items-20260904](qt-v2.0-open-items-20260904.md)
+
+---
+
 ## E. 环境 / 工程陷阱
 
 ### E1. 仓库打包方式：没有 `__init__.py`
