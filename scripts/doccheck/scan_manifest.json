@@ -102,7 +102,7 @@
       "self_test": "--self-test：从契约里删一条 key，必须变红"
     },
     "MUT-COVER": {
-      "what": "19 册每条 PRC-*/PSC-* 规则必须在 §11 变异体表内至少出现一次",
+      "what": "19 册每条 PSC-*/P19-* 规则必须在 §14 断言表内至少出现一次 (v1.0 重写后锚点已迁, 2026-09-08)",
       "criterion": "规则集合 A 减 表内集合 B == 空集",
       "script": "scripts/doccheck/perception_mutant_cover.py",
       "self_test": "--self-test：向规则区植入一个表内没有的编号，必须变红",

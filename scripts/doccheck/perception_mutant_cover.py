@@ -4,7 +4,7 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: perception_mutant_cover.py
-Brief: Assert every PRC-*/PSC-* rule in book 19 has at least one mutant row
+Brief: Assert every PSC-*/P19-* rule in book 19 has at least one mutant row
 
 Description:
 Book 19 (perception detailed design) states every rule it introduces must be
@@ -43,10 +43,16 @@ DOC = Path("/opt/xbrain_v6/docs/19-perception详细设计.md")
 # check reported PASS over a single rule. A checker whose scan surface is wrong
 # reports green for the same reason a do-nothing implementation does, so both
 # anchors are now line-anchored section headers and asserted unique.
-TABLE_START_ANCHOR = "\n## 11."
-TABLE_END_ANCHOR = "\n## 12."
+# Retargeted 2026-09-08: book 19 v1.0 (rewritten from zero) moved the mutant
+# table to section 14 and renamed rule families -- PSC-* (startup checks,
+# defined in section 11) and P19-* (process iron rules, section 1). Old
+# anchors would silently scan section 11..12 (now the PSC definitions with
+# zero mutant rows) -- caught live on the first post-rewrite run: FAIL with
+# covered=0, which is this script doing its job on ITSELF.
+TABLE_START_ANCHOR = "\n## 14."
+TABLE_END_ANCHOR = "\n## 15."
 
-RULE_RE = re.compile(r"P(?:RC|SC)-\d+")
+RULE_RE = re.compile(r"\bP(?:SC|19)-\d+")
 
 # Coverage counts ONLY real mutant rows, i.e. table lines whose first cell is a
 # PMT id. Counting the whole of section 11 would let its own prose grant
@@ -54,11 +60,12 @@ RULE_RE = re.compile(r"P(?:RC|SC)-\d+")
 # surface, so PRC-71 would stay "covered" even if its mutant row were deleted.
 # That is CLAUDE.md 3.2 form 3 -- a criterion sentence sitting inside the
 # surface it greps, which can never be violated by construction.
-MUTANT_ROW_RE = re.compile(r"^\|\s*\*\*PMT-\d+\*\*", re.MULTILINE)
+# v1.0 rows are "| **A19-<FAM>-<n>**"; guarded rule ids are cited inside the row.
+MUTANT_ROW_RE = re.compile(r"^\|\s*\*\*A19-", re.MULTILINE)
 
 
 def sort_key(rule_id: str):
-    prefix, num = rule_id.split("-")
+    prefix, num = rule_id.rsplit("-", 1)
     return (prefix, int(num))
 
 
@@ -110,7 +117,7 @@ def run(text: str, label: str) -> bool:
         for rule_id in missing:
             print(f"    {rule_id}")
         return False
-    print("MUT-COVER  PASS  every PRC-*/PSC-* has at least one mutant row")
+    print("MUT-COVER  PASS  every PSC-*/P19-* has at least one mutant row")
     return True
 
 
@@ -121,7 +128,7 @@ def self_test(text: str) -> bool:
     # the table -- it then counted as its own coverage and the self-test came
     # back MISSED. Keeping this note: the self-test caught a bug in the
     # self-test, which is the only evidence that it can go red at all.
-    planted = "PRC-9901"
+    planted = "PSC-9901"
     mutated = text.replace(
         TABLE_START_ANCHOR,
         f"\n| **{planted}** | planted rule with no mutant row |\n" + TABLE_START_ANCHOR,
