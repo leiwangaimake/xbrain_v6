@@ -72,7 +72,8 @@
   ├─ ① 采集线程        Orbbec SDK 回调: 深度帧 + 彩色帧 --> 各自 latest-wins 槽
   ├─ ② 快线 (几何)     每个深度帧: ProfileMsg 生产管线 (S3) --> RT put
   ├─ ③ 慢线 (推理)     检测 + 分割 + 跟踪 (基底既有) --> ObjectsMsg --> RT put
-  │                     └─ 分割 mask + t_seg --> 共享 latest-wins 槽 (快线消费)
+  │                     ├─ 分割 mask + t_seg --> latest-wins 槽 (快线消费, S3.3)
+  │                     └─ 语义 footprint + t_obj --> latest-wins 槽 (快线消费, S3.4A)
   ├─ ④ status 线程     1 Hz StatusMsg --> RT put; 事件边沿 --> GEN put
   └─ ⑤ ROS executor    TF 监听 (odom<-base_link, quadruped 到位后) + capture_cmd 订阅
   会话: RT session --> tcp/127.0.0.1:7449 (rt/perception/*)
@@ -140,7 +141,7 @@
 | 表 | 定义 | 用途 |
 |---|---|---|
 | `ray[v][u]` (float3) | `R_bc * K_inv * [u, v, 1]^T`（`base_link` 系，未归一） | 反投影：`p_b = z * ray + t_bc` |
-| `z_exp[v][u]` (float) | `-t_bc.z / ray[v][u].z`（`ray.z < 0` 才有效，否则标无效） | 负障碍穿地判据 ＋ ROI |
+| `z_exp[v][u]` (float) ＋ `r_exp[v][u]` | `z_exp = -t_bc.z / ray[v][u].z`（`ray.z < 0` 才有效，否则标无效）；`r_exp` = 该射线与地面交点的**地面距离**（§3.2 的 `cell_of(r_exp)` 用它） | 负障碍穿地判据 ＋ ROI |
 | `roi[v][u]` (bit) | `z_exp` 有效 且 交点地面距离 ≤ `range_max_m` | `invalid_pixel_ratio` 分母（`11` §3.1B.3） |
 | `bin_of[v][u]` (int16) | 由 `ray` 方位角预算出 bin 序号（扇区外 = −1，★ 仅内部用，🚫 上线） | 免逐帧 `atan2` |
 | `expect_px[i]` (int) | ROI 内落入 bin i 的像素配额 | `conf[i]` 分母 |
@@ -222,11 +223,45 @@ for i in bins:
 | **PROF-4** | `z_pass_m` 随帧发布（值出自配置，§8） |
 | **PROF-5** | §3.3 的 min 池化；腐蚀只会让 `T_ok` 变少 ⇒ 只会让 FREE 变小 |
 
+### 3.4A ★★ 语义证据注入（`src` bit2 的产生规则 —— v1.1 补，初版漏）
+
+> ★ `11` §3.1B.1 的 `src` bit2 = 语义目标；`20` §3.1.1 载体表明写 S 通道载体 = 「`ObjectsMsg` ＋ `src` 位」。
+> ⚠️ 初版管线只产 bit0/bit1/bit3，bit2 恒 0 —— 语义看见、几何看不见的场景（**玻璃门被检出而深度成片 invalid**）在 profile 里完全不可见。
+
+```text
+慢线每个推理帧: 把目标 footprint(base_link) + class + t_obj 写入 latest-wins 槽
+快线逐 bin 后处理末尾:
+  if now - t_obj > objects_stale_ms: 跳过 (与 T-52 同量级, 过期语义不注入)
+  for 每个目标:
+    对 footprint 覆盖到的 bin i: d_sem = 该 bin 方向到 footprint 的最近距离
+    if d_sem < d_blk[i]: d_blk[i] = d_sem; 重算 d_free 截断 (维持 PROF-1)
+    src[i] |= BIT_SEM
+```
+
+| 规则 | 内容 |
+|---|---|
+| ★ 方向保守性 | 注入只会让 `d_block` 变**近**（min 并集），符合 `RNS-N-5` BLOCKED 取并；🚫 不做反向（语义没看见 🚫 不能抹几何） |
+| ★ 陈旧上限 | `objects_stale_ms`（§8.2）：BLOCKED 方向留旧值是保守的，但无限留会把已离开的目标钉死 ⇒ 超龄不注入，靠几何与 RNS 侧 `ObjectsMsg` 自己的 T-52 定价 |
+| ★ 🚫 不是融合 | 只做证据注入并保留归属位，「让行/绕行/穿越」的策略判断仍全在 RNS（`20` §3.1.4） |
+
 ### 3.5 ★ 编码与发布
 
 - ★★★ 缺值一律 `null`（`11` §3.1B.1 编码约定）：`d_blk = +inf → null`，`h_out` 不可测 → `null`，`slope` 无数据 → `null`。🚫 序列器出现 `inf` / `nan` 字面量（A19-ENC-1）。
 - ★ JSON 组包进预分配缓冲；`put` 非阻塞 congestion=drop —— **宁丢旧帧不堵采集**（与 `11` §2.4.6 对 lidar points 的裁决同理）。
 - ★ 每帧一条，随深度帧节律 30 fps；🚫 攒批。
+- ★ `conf[i]`：`expect_px[i] == 0`（扇区边缘 ROI 外）⇒ `conf = 0`，🚫 除零。
+
+**报文头字段的产生（逐个，防「样例里有、没人产」）**
+
+| 字段 | 产生 |
+|---|---|
+| `schema` | 常量 `perception_profile_v1`；字段增删 ⇒ 版本号进位（定义处在 `11`，本进程只跟随） |
+| `t_capture_mono_ms` | §2.4 |
+| `t_publish_mono_ms` | `put` 前一刻取 `CLOCK_MONOTONIC` |
+| `frame` | 常量 `base_link`（§7.1 origin 代用注记） |
+| `extrinsic_calibrated` | §7.3 判定，三条报文同源同值 |
+| `pose_used` | TF 可得 ⇒ `lookupOdomPose(t_capture)` 的位姿（基底已有该函数）；不可得 ⇒ `null` |
+| `t_seg_mono_ms` / `z_pass_m` / `blind_near_m` | §3.3 槽 / §8.2 配置 / §3.2 本帧实测 |
 
 ### 3.6 ★ 复杂度与内存
 
@@ -388,6 +423,10 @@ perception:
     fps: 15
     bitrate_kbps: 2000
     gop: 30
+  objects_inject:
+    objects_stale_ms: null   # S3.4A 语义注入的陈旧上限 (与 T-52 同量级)
+  debug:
+    pointcloud_enable: false # 调试点云 (11 2.2.1 登记为 debug 默认关; PSC-5 按登记集比对)
   zenoh:
     rt_endpoint:      "tcp/127.0.0.1:7449"
     gen_endpoint:     "tcp/127.0.0.1:7447"
@@ -439,6 +478,7 @@ perception:
 | 面 | key | 状态 |
 |---|---|---|
 | RT（7449） | `rt/perception/profile` · `objects` · `status` | ★★★ 本期实现（`11` §2.2.1 已登记） |
+| RT | `rt/perception/pointcloud` | ★ **调试专用 · 默认关闭**（`11` §2.2.1 登记为 debug 行；G-2 裁定不为导航加密）。开启仅限 dev 配置 |
 | RT | `rt/perception/targets` · `rt/lidar/*` | 🚫 **不实现**（`20` #20-10 历史条目） |
 | GEN（7447） | `event/{severity}/perception`（PC-2） | 本期实现（§5.2） |
 | GEN | `state/targets`（PC-1，`PerceptionFrame` 族） | ⚠️ **停车场**（§16 PCC-9），本期不实现 |
@@ -474,13 +514,23 @@ v0.1 裁定**原样沿用**：环回 RTSP **18083**（`127.0.0.1` only，NET-C9�
 | **A19-PROF-5** | 旧 mask 平移边场景：腐蚀后边界 FREE 收缩 ≥ `m` | ★ 去掉 min 池化 ⇒ 未收缩 ⇒ 红 | 金标 |
 | **A19-NEG-1** | 坑场景：`d_block` 停坑沿 · `src` 含 BIT_NEG | ★ 关掉穿地判据 ⇒ 坑被判 UNKNOWN 缺口而 `d_free` 停得更远 ⇒ 红 | 金标 |
 | **A19-TIME-1** | 一条 profile 全数组同帧（生成器给每帧异色标记，混帧可检出） | ★ bin 后处理读上一帧 `G` ⇒ 红 | 单元 |
-| **A19-TIME-2** | 慢线人工卡死 5 s ⇒ 快线发布率不降 · bit0 转 0 | ★★★ 快线等 mask 槽更新才发 ⇒ 发布率跌 ⇒ 红 —— **这是 TIME-2 的直接护栏** | 注入 |
+| **A19-TIME-2** | 慢线人工卡死 5 s ⇒ 快线发布率不降 · bit0 转 0（守 **P19-1**） | ★★★ 快线等 mask 槽更新才发 ⇒ 发布率跌 ⇒ 红 —— **这是 TIME-2 的直接护栏** | 注入 |
 | **A19-ENC-1** | 序列化输出经严格 JSON 解析零失败 · 全文无 `inf`/`nan` 字面量 | ★ `d_block` 直接写 +inf ⇒ 解析失败 ⇒ 红 | 单元 |
 | **A19-RATE-1** | mock 推理压到 15 Hz ⇒ `degraded_reasons` 10 s 内出现 `infer_rate_low`；恢复 21 Hz ⇒ 移除 | ★ 恒不置 ⇒ 正向红；★ 恒置 ⇒ 恢复段红 —— 成对 | 注入 ×2 |
-| **A19-CFG-1** | 任一 §8.2 必填键置 `null` ⇒ 拒绝启动且报出该键路径 | ★★★ 给 `h_tol_m` 加代码默认值 ⇒ null 时照常启动 ⇒ 红 | 启动 |
+| **A19-CFG-1** | 任一 §8.2 必填键置 `null` ⇒ 拒绝启动且报出该键路径（守 **PSC-2**） | ★★★ 给 `h_tol_m` 加代码默认值 ⇒ null 时照常启动 ⇒ 红 | 启动 |
 | **A19-VEL-1** | 无 TF 场景 `velocity_frame == "raw"` | ★ 硬编码 `"ego_removed"` ⇒ 红 | 单元 |
 | **A19-CAL-1** | 占位外参（全零/记录缺失）⇒ `extrinsic_calibrated == false` | ★ 判定改「配置存在即 true」⇒ 红 | 单元 |
 | **A19-PERF-1** | 快线单帧处理 P99 ≤ §2.2 预算（合成帧回放） | ★ 遍历内插入 1 ms sleep ⇒ 红。⚠️ 实现前恒红：形制同 `20` #20-8，`xfail(strict=True)` 进 CI 🚫 摘除 | 性能 |
+| **A19-SEM-1**<br>**（v1.1 新增）** | 玻璃门场景（深度成片 invalid ＋ 语义 footprint 在洞区）⇒ 洞区 bin `src` 含 BIT_SEM 且 `d_block` 收到注入值；★ 目标超 `objects_stale_ms` ⇒ 不再注入（§3.4A） | ★ 关掉注入 ⇒ 正向红；★ 去掉陈旧上限 ⇒ 目标离开后 `d_block` 钉死 ⇒ 反向红 —— 成对 | 金标 ×2 |
+| **A19-BOOT-1** | 配置路径非 `/run/xbrain/resolved/` 前缀 ⇒ 拒启（**PSC-1**） | ★ 指向 `configs/` 源 ⇒ 照常启动 ⇒ 红 | 启动 |
+| **A19-BOOT-2** | mock SDK 返回不符 SN ⇒ 拒启（**PSC-3**） | ★ 跳过 SN 比对 ⇒ 红 | 启动 |
+| **A19-BOOT-3** | 金标输出被篡改 ⇒ 拒启（**PSC-4**） | ★ 比对结果不检查返回值 ⇒ 红 | 启动 |
+| **A19-BOOT-4** | 声明一条 `11` §2.2.1 未登记的 key ⇒ 拒启（**PSC-5**） | ★ 白名单比对改「前缀匹配」⇒ 未登记 key 混过 ⇒ 红 | 启动 |
+| **A19-BOOT-5** | `range_max_m = 6.5` ⇒ 拒启（**PSC-6**） | ★ 上限判断去掉 ⇒ 红 | 启动 |
+| **A19-BOOT-6** | 朝天外参（全像素 `ray.z ≥ 0`）⇒ 拒启（**PSC-7**） | ★ 预计算表空也放行 ⇒ 红 | 启动 |
+| **A19-SLOT-1** | 写侧高频覆盖下读侧永不读到撕裂帧（seq 一致性，守 **P19-2**） | ★ 去掉 seq 重读 ⇒ 并发注入下读出混帧 ⇒ 红 | 属性 |
+| **A19-ALLOC-1** | 快线稳态帧处理零动态分配（allocator hook 计数，守 **P19-3**） | ★ 遍历内加一次 `std::vector` 扩容 ⇒ 红。⚠️ 实现前恒红，同 A19-PERF-1 形制 | 性能 |
+| **A19-LINT-1** | 静态扫描：感知数据零 ROS topic 发布（守 **P19-4**）· 代码内零硬编码 endpoint 串（守 **P19-5**） | ★ 加一条 image publisher / 写死 `tcp/...` 字面量 ⇒ 红 | 静态 |
 
 ★ 七形态自检（`CLAUDE.md` §3.2）：上表每条先问过「有没有一个什么都不做的实现能通过它」——
 A19-PROF-4 / A19-RATE-1 因此成对；A19-TIME-2 专杀「快线偷偷等慢线」这个最顺手的错误实现。
@@ -494,7 +544,7 @@ A19-PROF-4 / A19-RATE-1 因此成对；A19-TIME-2 专杀「快线偷偷等慢线
 | **W-1** | 收编：纳版控 ＋ 清 8 处全角标点 ＋ 删 `THIRD_PARTY_SNAPSHOTS` 排除 ＋ 头注五字段 ＋ 删 `lidar:` 配置块 | §1.2 | `ros2_ws/perception` 全树 |
 | **W-2** | ★★★ 外参标定工装 ＋ `extrinsic_calibrated` 判定 | §7 / G-4 前提 | 新增 `tools/calib_extrinsic` ＋ `src/common/config.cpp` |
 | **W-3** | ★★★ 快线 `profile_builder`（§3 全部）＋ latest-wins mask 槽 | **G-1 ＋ G-3** | 新增 `src/profile/`；`src/supervisor/supervisor.cpp` 挂线程 |
-| **W-4** | key 迁移：`perception/detections|status|pointcloud` → `rt/perception/objects|status`（＋ `profile`）；RT/GEN 双会话 | 键零重合问题 | `include/output/zenoh_publisher.hpp` · `src/output/zenoh_publisher.cpp` · `src/common/config.cpp` |
+| **W-4** | key 迁移：`perception/detections|status` → `rt/perception/objects|status`（＋新增 `profile`）；`perception/pointcloud` → `rt/perception/pointcloud`（debug 默认关）；RT/GEN 双会话 | 键零重合问题 | `include/output/zenoh_publisher.hpp` · `src/output/zenoh_publisher.cpp` · `src/common/config.cpp` |
 | **W-5** | `velocity_frame` 序列化（一行级）＋ `footprint` 改名/抽稀 ＋ `r_near` ＋ `z_min/max` 区间化 | **G-4** ＋ §4.1 | `src/output/zenoh_publisher.cpp` · `src/supervisor/supervisor.cpp` |
 | **W-6** | `StatusMsg` 扩展（分位数 · ROI 比例 · 三个固定 reason）＋ PC-2 事件 | §5 | `src/output/zenoh_publisher.cpp` ＋ 新增 `src/status/` |
 | **W-7** | 推理 20 Hz（路线三选，§6） | **#20-11** | 引擎构建脚本 ＋ `dual_model_runtime_config.json` |
@@ -530,5 +580,6 @@ A19-PROF-4 / A19-RATE-1 因此成对；A19-TIME-2 专杀「快线偷偷等慢线
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| ★ **v1.1** | 2026-09-08 | ★★ **三遍核查轮（同日）**：① 补 **§3.4A** `src` bit2 语义注入产生规则（初版恒 0 ⇒「语义看见、几何瞎」的玻璃门场景在 profile 里不可见）＋ A19-SEM-1 正反对；② §3.5 补**报文头字段逐个产生表**（`pose_used`/`t_publish`/`schema` 初版无人产）；③ `rt/perception/pointcloud` 以 **debug 默认关**登记（同批 `11` §2.2.1）—— 否则基底既有通道撞 PSC-5 白名单精确比对；④ §14 补 **PSC-1~7 / P19-1~5 全员变异体覆盖**（A19-BOOT/SLOT/ALLOC/LINT 族）—— MUT-COVER 门禁同批改锚新结构；⑤ §3.1 预计算补 `r_exp`；`conf` 除零边界。 |
 | ★★★ **v1.0**<br>**从 0 重写 · 落地版** | 2026-09-08 | ★★★ **v0.1 整册作废**（LiDAR 前提崩塌，§0.2 三区处置表）。★ 接口真源移交 `11` §3.1B（v1.7），本册转纯实现侧：五执行体快慢线（§1/§2）· ProfileMsg 管线可编码规格（§3，PROF-1~5 逐条落点）· ObjectsMsg 字段映射（§4）· StatusMsg 与事件（§5）· 20 Hz 达标设计（§6）· 外参标定（§7）· 配置/自检/降级/单调钟（§8~§11）· 断言总表 A19-*（§14，含三对正反向）· 工作分解 W-1~W-10（§15）。★ v0.1 存活裁定收入 §13/§17 逐条注明沿用；停车场 PCC-9 一揽子登记（§16）。★ 跟随/re-ID 按 `20` #20-13 预留，不入本册范围（§0.3） |
 | ~~v0.1~~ | ~~2026-08-05~~ | ★ **已作废**，见 §0.2。其对抗验收方法论（变异体表 · PCC/PD 双清单 · 扫描面声明）本版保留并沿用 |
