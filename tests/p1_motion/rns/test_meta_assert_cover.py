@@ -50,8 +50,11 @@ _CITE_RE = re.compile(r"\bA-[A-Z]+-\d+[a-z]?\b")
 #: 2026-09-08 P3.1~P3.4: +A-CLS-1/2/3/4, A-DYN-1/2, A-FUS-7, A-CVG-3 -> 41.
 #: 2026-09-09 P4.1~P4.3: +A-GAP-1/2/3/4/5/6, A-HYS-1/2 -> 32.
 #: 2026-09-09 P5: +A-WF-1..7, A-CVG-1/2/4/5/6, A-ES-1/2, A-BK-1/2 -> 19. RNS-T-1
-#:   machinery complete. Ratchets down each phase; a regression reddens.
-OPEN_BASELINE = 19
+#:   machinery complete.
+#: 2026-09-09 P6: +A-FAIL-1/2/3, A-CLK-1, A-SCAN-1, A-PERF-1/2(xfail #20-8) -> 12.
+#:   Remaining 12: A-FT-1..6 (follow reserved #20-13), A-GEO-1/A-NET-1/A-MEM-1/2
+#:   (P7 integration), all outside P0..P6. Ratchets down; a regression reddens.
+OPEN_BASELINE = 12
 
 
 def _book_assertions():

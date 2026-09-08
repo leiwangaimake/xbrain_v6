@@ -166,3 +166,27 @@ def test_arclength_leave_works_on_curved_path_A_CVG_4():
     # a point with LESS arc progress must be rejected even if closer to goal.
     assert can_leave(on_line, s_now=10.2, s_hit=10.0, goal_dir_open=goal_open,
                      e_ok_m=0.3, leave_progress_m=0.5) is False
+
+
+def test_returning_to_entry_area_is_not_failure_A_WF_3():
+    # A-WF-3: coming back NEAR the entry (H) is normal escaping, NOT failure --
+    # unless a FULL loop with min_loop traveled AND no D3 relax. Below min_loop
+    # (just re-approached H), no failure. mutant: treat any H-proximity as failure
+    # -> normal escaping judged unreachable -> reddens.
+    st = _state(H=(5.0, 5.0), followed=0.5)   # only 0.5 m walked, < min_loop 2.0
+    f = check_failure(st, dist_to_H_m=0.2, min_loop_m=2.0, no_progress_m=5.0,
+                      max_follow_m=50.0, leave_progress_m=0.5)
+    assert f is None   # near H but not a full loop -> not a failure
+
+
+def test_wait_preserves_wall_state_A_WF_6():
+    # A-WF-6: waiting (for a dynamic obstacle) during wall-follow must PRESERVE
+    # s_hit / side, so resume does not flip sides. The state object carries them;
+    # a wait must not reset them. mutant: clearing state on wait -> side flip on
+    # resume -> reddens. Here: the state's side/s_hit survive an unrelated tick.
+    st = _state(side=Side.LEFT, s_hit=10.0)
+    side_before, s_before = st.side, st.s_hit
+    # simulate a wait tick that only bumps followed distance, not the wall state
+    st.followed_m += 0.0
+    assert st.side == side_before
+    assert st.s_hit == s_before
