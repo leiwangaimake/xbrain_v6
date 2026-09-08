@@ -389,10 +389,10 @@ v0.1/v0.2 把 RNS 定位成**「在 `path_follow` 之上做反应式避障」的
 | 项 | 现有字段 |
 |---|---|
 | 稳定跟踪 ID | `track_id` · `stable_frames` · `first_seen_ms`/`last_seen_ms` |
-| ★★ **地面凸包** | `ground_footprint_odom.polygon_xy` —— ★ 已是地面多边形而非图像框（正中 §3.1.5 的要求，仅坐标系名不副实，见 G-4） |
+| ~~地面凸包~~ ⚠️ **v1.7 改判为缺口** | `ground_footprint_odom.polygon_xy` **字段与序列化在，生产路径未填充**（正常链路无赋值点，已有赋值只在测试样例）—— ★★ 2026-09-08 **感知方自查纠正并承接**（其答复 §2.2；此前本表按「字段在=能力在」误判，正是 `CLAUDE.md` §3.2 形态①的读法错误） |
 | ★★ 深度质量 | `depth_confidence` · `depth_stat{min,median,max,stddev}` · `depth_diagnostics{valid_fraction, selection_status, ...}` ★ **细致程度超出本册要求** |
 | ★★ 速度抗抖 | `window_s: 0.30`（窗口而非相邻帧）· `motion_confirmation_windows: 2`（连续两窗同向才确认）· 分类 EMA ★ **正是 §5.5 要的「阈值 ＋ 驻留」** |
-| ★★ 自标不确定性 | `semantic_status: confirmed/proxy` · `velocity_valid` · `navigation_authoritative: false` ★ **诚实标注自己不可信之处，很少见** |
+| ★★ 自标不确定性 | `semantic_status: confirmed/proxy` · `velocity_valid` · `navigation_authoritative: false` ★ **诚实标注自己不可信之处，很少见**。★ v1.7 限定（感知方指正）：该标志只挂在 `safe_traversable` 图像轮廓对象上，🚫 不是整报文的统一授权门 —— 新接口的授权语义由 `11` §3.1B 逐字段定 |
 | 可通行分割 | ★ `traversable_area` 已输出（含孔洞 `is_hole` / 层级 `parent_index`） |
 
 ##### ★★★ 四个必须补的缺口
@@ -402,13 +402,13 @@ v0.1/v0.2 把 RNS 定位成**「在 `path_follow` 之上做反应式避障」的
 | ★★★ **G-1** | ★★★ **没有几何三态剖面**（`11` §3.1B.1 `ProfileMsg`） | ★★★ 现输出是**逐目标**的。缝宽/走廊/贴墙**只能从空间几何算** —— 见 §3.1.6 |
 | ★★★ **G-2** | ★★★ **`pointcloud` 太稀**：实测 `voxel_size: 0.10` · `max_points: 5000` | ★★ 这是**可视化/调试**的量级。判「这条 1.2 m 的缝能不能过」时，5000 点铺开在整个视场里不够 |
 | ★★★ **G-3** | ★★★ **可通行区域在图像像素系**：代码逐字 `"coordinate_space":"image_pixels"` · `"navigation_authoritative":false` | ★ T 通道**没投到地面**。要用需 mask → 深度 → 地面投影，这步现在没有<br>★★ **自标 `navigation_authoritative:false` 是对的** —— 本册按它的字面意思办：现状确实不能当导航权威 |
-| ★★★ **G-4** | ★★★ **速度用的是哪个坐标系，报文里看不出来** | ★★ 实现内部**已区分**两个估计器：`odom_velocity_estimator_`（`XY`，**去自车运动**）与相机系估计器（`XZ`，配置注释逐字「camera-XZ behavior」，**不去**）；切换时打日志、存标志位 `last_velocity_frame_has_odom_`。<br>⚠️★★★ **但该标志位未序列化** —— JSON 只有 `velocity_3d`/`velocity_valid`/`velocity_status`，消费方无从判断。<br>★★★ 而 TF `odom ← base_link` 的发布者是 `quadruped`，**该进程尚未实现** ⇒ 实测走相机系分支（日志逐字 `TF odom<-base_link unavailable: ...; using camera frame and retrying at 1Hz`）⇒ **当前速度没有去自车运动**（§3.1.5 那条 ⚠️★★★）。现在没暴露只因**测试时机器人静止**。<br>⇒ ★ `11` §3.1B.2 的 `velocity_frame` 就是为此而设；★★ 已有标志位，**序列化出来即可**，改动量极小 |
+| ★★★ **G-4** | ★★★ **速度用的是哪个坐标系，报文里看不出来** | ★★ 实现内部**已区分**两个估计器：`odom_velocity_estimator_`（`XY`，**去自车运动**）与相机系估计器（`XZ`，配置注释逐字「camera-XZ behavior」，**不去**）；切换时打日志、存标志位 `last_velocity_frame_has_odom_`。<br>⚠️★★★ **但该标志位未序列化** —— JSON 只有 `velocity_3d`/`velocity_valid`/`velocity_status`，消费方无从判断。<br>★★★ 而 TF `odom ← base_link` 的发布者是 `quadruped`，**该进程尚未实现** ⇒ 实测走相机系分支（日志逐字 `TF odom<-base_link unavailable: ...; using camera frame and retrying at 1Hz`）⇒ **当前速度没有去自车运动**（§3.1.5 那条 ⚠️★★★）。现在没暴露只因**测试时机器人静止**。<br>⇒ ★ `11` §3.1B.2 的 `velocity_frame` 就是为此而设。★★ **v1.7 收严（感知方指正「不是一行 has_odom」）**：`raw` 侧照实序列化仍是小改，但标 `ego_removed` 须四条件齐（精确时刻 TF 🚫 latest 回退 · 旋回当前 `base_link` 🚫 停在 odom 轴 · 外参非占位 · 同 odom 纪元），判定见 `19` §4.2 |
 
 ##### ⚠️ 三条实测约束（不是缺口，是必须纳入设计的事实）
 
 | # | 事实（README / config 实测） | ★ 对 RNS 的后果 |
 |---|---|---|
-| ⚠️★★★ **F-1** | ★★★ **E2E P99 ≈ 166–226 ms，结果年龄 P99 219.5 ms**（且实现方自标「仍高于门限」） | ★★★ RNS 是 20 Hz（50 ms 一拍），而感知数据**平均已 200 ms 旧**；2 m/s 下是 **0.44 m 位移**，**大于机体半径**<br>⇒ **运动补偿是必需项，不是优化项**；而补偿需要 odom ⇒ 卡 `quadruped` |
+| ⚠️★★★ **F-1**<br>**（v1.7 订正出处与口径）** | ★★★ 各次**实验探针**（🚫 非交付主线验收值）的结果年龄 **P99 约 204–220 ms**、E2E P99 约 152–226 ms（不同对照臂，🚫 合写成一个主线区间）；感知方自标「尾延迟尚未通过既定验收」 | ★★★ RNS 是 20 Hz（50 ms 一拍），而感知数据的**尾部年龄在 200 ms 量级**（P99，🚫 读作平均）；2 m/s 下是 **0.4 m 级位移**，与机体半径同量级<br>⇒ **运动补偿按尾部预算是必需项**；而补偿需要 odom ⇒ 卡 `quadruped`。★ 可承诺的 P99 待双方统一测量起止点与钟域后实测（感知方 Q-1 答复） |
 | ⚠️★★ **F-2** | ★ 深度采集 **640×400**（宽高比 1.6 ✓，**不裁 FOV**，这点做对了） | ★★ 深度误差按 `dz = z^2 * dd / (f * b)` 约翻倍 ⇒ **远处 `d_free` 不可信** ⇒ 速度门输入精度受限 |
 | ⚠️★★ **F-3** | ★ 输出 ≈ 18.73 Hz（且该数来自**未合入主线**的实验分支）。★ **v1.1 订正**：该数是**推理**频率 ⇒ 时序拆分（`11` TIME-2）后它只约束 `objects`；`profile` 随深度帧 30 fps，🚫 不受它拖累。★★★ **v1.2**：推理 **20 Hz 已定为硬性要求**（#20-11），本行的 18.73 从「约束」降级为**待关闭的现状** | ★ 抖动下 `objects` 对 20 Hz 控制拍**仍不保证每拍有新帧**（名义同频 ≠ 相位对齐）⇒ §4.1「每拍必须重跑」**照旧成立**；★★★ 且**吞吐 ≠ 延迟**：F-1 的 200 ms 年龄不因 20 Hz 达标而消失，运动补偿要求不撤 |
 
@@ -1107,6 +1107,7 @@ rns:
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| ★★ **v1.7** | 2026-09-08 | ★★★ **按感知方接口答复订正 §3.1.10 四处**：地面凸包由「已有」改判**缺口**（字段在≠能力在，形态①读法错误，感知方自查承接）；F-1 出处与口径订正（实验探针 🚫 主线、P99 🚫 平均、不同对照臂 🚫 合写区间）；`navigation_authoritative` 范围限定；G-4 的 `ego_removed` 四条件收严。★ 同批 `11` v1.9 / `19` v1.2（清单见各册变更记录）；答复文档 [perception-rns-reply-20260908](perception-rns-reply-20260908.md)。 |
 | ★ **v1.6** | 2026-09-08 | ★ 记录性更新：`19` v1.0 落地版发布 ⇒ **#20-2 文档侧闭环**（余下为 `19` §15 W-1~W-10 代码实现）；§11 接口清单行同步。 |
 | ★ **v1.5** | 2026-09-08 | ★★ **`follow_target` 标记为本期不实现**（用户令）：§2.10 加预留横幅（设计定档不作废 · 🚫 不写实现代码 · B11 按能力未开放拒绝 · A-FT-1~6 随实现期落地）；§12.2 `follow:` 段标预留；#20-12 随之后置；新增 **#20-13** 登记启动条件。 |
 | ★★★ **v1.4** | 2026-09-07 | ★★★ **新裁决 `RNS-N-14`（用户确认）：`target_oriented` 并入 RNS，第三任务形态 `follow_target` ＝ 终点每拍更新的退化折线**（§2.10，关闭 #20-9 的该支）。五条子裁决全部落档：① 豁免只在行为分流层 · 几何安全层不豁免 · 保距下限 `target_min_dist_m` **默认 1.0 m**（用户指定，`rns.yaml`）· 豁免绑 `track_id` 不绑 class；② 丢失 ＝ 外推 → 末位置 → `target_lost`（首版不依赖 re-ID）；③ **首版禁绕行**（目标移动不可预测，绕行计划建立在过时位置上）；④ 指令链 B11/B12 → P2 → `params{target_track_id, keep_dist_m, max_speed_mps}` 必填；⑤ 走近停不退 · 绕后转向经旋转许可 ＋ `RNS-I-6`。<br>★ 断言 **A-FT-1~6**（49 → 55，其中 FT-1/FT-2 是杀「整体豁免」空壳的正反对）；§9.1 补 `target_lost` 行；§12.2 增 `follow:` 段；§15 新增 **#20-12**（感知侧 re-ID，含调研结论指针）。 |

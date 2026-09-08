@@ -141,14 +141,24 @@
 | 表 | 定义 | 用途 |
 |---|---|---|
 | `ray[v][u]` (float3) | `R_bc * K_inv * [u, v, 1]^T`（`base_link` 系，未归一） | 反投影：`p_b = z * ray + t_bc` |
-| `z_exp[v][u]` (float) ＋ `r_exp[v][u]` | `z_exp = -t_bc.z / ray[v][u].z`（`ray.z < 0` 才有效，否则标无效）；`r_exp` = 该射线与地面交点的**地面距离**（§3.2 的 `cell_of(r_exp)` 用它） | 负障碍穿地判据 ＋ ROI |
+| ~~`z_exp` 静态表~~ → **逐帧闭式**（v1.2 改，见 §3.2A） | `z_exp(v,u) = −(n·t_bc ＋ d) / (n·ray[v][u])`，`(n, d)` 为**本帧拟合地面平面** —— 🚫 不再假设地面恒为 `base_link` z=0（感知方指正：升降/俯仰/侧倾/坡面都会破坏该假设）。每像素 1 点积 ＋ 1 除，~8 flops，进 §2.2 预算 | 负障碍穿地判据 |
+| `roi[v][u]` 的基准 | ★ ROI 掩膜仍按**外参先验平面**预计算（它只是统计分母，不参与安全判定，允许静态） | `invalid_pixel_ratio` 分母 |
+| `r_exp` / `bin_exp`（懒求值） | 穿地候选像素（少数）上按本帧平面求 `p_exp = z_exp·ray ＋ t_bc` ⇒ `r_exp = hypot(p_exp.x, p_exp.y)`、`bin_exp = bin(atan2(p_exp.y, p_exp.x))`。★★★ **穿地证据必须记在【期望交点】的 bin（`bin_exp`），🚫 不是实际远处回波的 bin** —— 相机相对机体有横向平移时两者不同（感知方给出反例：`t=(0,0.3,1)` 时期望点 16.7°、回波点 8.5°，差一个扇区） | 负障碍归属 |
 | `roi[v][u]` (bit) | `z_exp` 有效 且 交点地面距离 ≤ `range_max_m` | `invalid_pixel_ratio` 分母（`11` §3.1B.3） |
 | `bin_of[v][u]` (int16) | 由 `ray` 方位角预算出 bin 序号（扇区外 = −1，★ 仅内部用，🚫 上线） | 免逐帧 `atan2` |
 | `expect_px[i]` (int) | ROI 内落入 bin i 的像素配额 | `conf[i]` 分母 |
 
 ★ 内存：五表合计 ≈ 640×400 × 18 B ≈ **4.6 MB**，常驻。★ 外参未标定（占位）时表**照建**（几何仍自洽），只是 `extrinsic_calibrated = false` 随帧声明（`11` §3.1B.4 由消费方拒绝自主导航）。
 
-### 3.2 ★★★ 逐像素遍历（全分辨率单遍，PROF-3 / PROF-4）
+### 3.2A ★★ 每帧前置：取原生深度 ＋ 拟合地面平面（v1.2 新增）
+
+| 步 | 内容 |
+|---|---|
+| ★★★ 取流 | 快线消费 **D2C 之前的原生 640×400 深度帧**（PROF-3 v1.9 收窄定义）。⚠️ 现实现在 HW-D2C 之后取 1280×720 对齐帧再放大 1080p —— 那两级都不是原生样本，改造点见 §15 W-3 |
+| ★★ 地面拟合 | 以外参先验平面为种子，对近区候选地面点做稳健拟合（RANSAC / IRLS）得本帧 `(n, d)`；★ 拟合失败（内点不足 / 残差超限）⇒ **退回先验平面 ＋ `degraded_reasons: ground_fit_fallback`**（`11` §3.1B.3 已登记该值），🚫 静默 |
+| ★ 高度定义 | 逐点高度 `h = n·p ＋ d`（对本帧平面），后续分类全部用它；`slope` 停止条件负责平面之外的坡变 |
+
+### 3.2 ★★★ 逐像素遍历（原生全样本单遍，PROF-3 / PROF-4）
 
 ```text
 for (v, u) 全分辨率:                       # 640x400, 不降采样 (PROF-3)
@@ -156,8 +166,8 @@ for (v, u) 全分辨率:                       # 640x400, 不降采样 (PROF-3)
   if invalid(z):
       if roi[v][u]: n_invalid += 1         # 只计地面相关 ROI
       continue                             # PROF-2: 不产生任何几何证据
-  if roi[v][u] and z > z_exp[v][u] * (1 + eps_neg):
-      pierce[bin][cell_of(r_exp)] = true   # 射线穿过地面本该在的位置 => 负障碍证据
+  if roi[v][u] and z > z_exp(v, u) * (1 + eps_neg):     # z_exp 按本帧平面闭式求 (S3.2A)
+      pierce[bin_exp(v,u)][cell_of(r_exp(v,u))] = true  # 记在期望交点的 bin (S3.1 懒求值)
   p = z * ray[v][u] + t_bc                 # (x, y, h)
   r = hypot(p.x, p.y)
   i = bin_of[v][u]
@@ -176,9 +186,9 @@ for (v, u) 全分辨率:                       # 640x400, 不降采样 (PROF-3)
 
 | 边界 | 处置 |
 |---|---|
-| ★ `h_max` 的滞后 | `d_blk[i]` 在遍历中还会变小 ⇒ `h_max` 的径向窗判定在**逐 bin 后处理里重算一遍**（`obs` 紧凑表或二次窗过滤），🚫 不信遍历中的首值 |
+| ★ `h_max` 的滞后 | `d_blk[i]` 在遍历中还会变小 ⇒ 高度在**逐 bin 后处理重算**（`obs` 紧凑表二次窗过滤），且**负障碍优先于正障碍高度**（§3.4 v1.2），🚫 不信遍历中的首值 |
 | ★ `blind_lo` | 逐帧取 `max(blind_near 配置下限, 本帧实测最近有效地面距离)`；发布字段 `blind_near_m` 用**本帧实测值**（时变，`20` RNS-I-5） |
-| ★ `mask_lookup(u, v)` | 分割输出与深度不同分辨率 ⇒ 最近邻缩放查表，O(1)；mask 槽带 `t_seg` |
+| ★★ `mask_lookup(u, v)` | ★★ **v1.2 改为投影查表**：快线在原生深度系，mask 在彩色像面（实测最终二值 mask 1920×1080）⇒ 用出厂 depth↔color 内外参把该像素 3D 点投到彩色面取 mask 值（~15 flops，无遮挡 z-buffer，v1 接受 —— 误查风险被 `FREE = T ∧ G` 的 G 侧兜住并在此声明）。🚫 纯宽高比例缩放只在同一像面成立（感知方指正）。mask 取**原始可通行类分割**（`11` v1.9 T 通道取材行），槽带 `t_seg` |
 
 ### 3.3 ★★ T 证据与 PROF-5 腐蚀（在地面域做，🚫 不在像素域）
 
@@ -197,27 +207,34 @@ T_ok[i][k] = 对 [i][k] 及其邻域(径向 m/dr, 角向 m/(r_k*angle_step)) 全
 ```text
 for i in bins:
   d_free = blind_lo(i)
-  for k in cells:                          # r_k = 格中心
-    if r_k >= d_blk[i]:              break # 撞障碍 => PROF-1 构造性成立
-    if pierce[i][k] or neg_r[i] <= r_k:    # 负障碍确认 (穿地判据 或 实测坑内点)
-        d_blk[i] = min(d_blk[i], r_k); src[i] |= BIT_NEG
-        h_out[i] = 实测到坑内点 ? neg_h[i] : null
+  for k in cells:                          # 格覆盖 [near_k, far_k), r_k = 中心
+    if far_k > d_blk[i]:             break # 障碍落在本格内或更近 => 本格不许支持 FREE,
+                                           # d_free 停在 near_k (= 上一格 far)
+                                           # 感知方反例已证 "r_k < d_blk 即放行" 会推出
+                                           # d_free = r_k + dr/2 > d_blk, PROF-1 破 -- 按格远端判
+    if pierce[i][k] or neg_r[i] <= far_k:  # 负障碍确认 (穿地判据 或 实测坑内点)
+        d_blk[i] = min(d_blk[i], near_k); src[i] |= BIT_NEG; neg_flag[i] = true
         break
-    if G[i][k] < g_min:              break # 无地面证据 (遮挡/invalid) => UNKNOWN, 首版即停
+    if G[i][k] / expect_cell[i][k] < cover_min:   break
+        # 整格覆盖率判据 (v1.2, 感知方指正): 仅点数 g_min 不能排除
+        # "证据集中在格局部, 其余是 invalid/遮挡" -- 分母是该格 ROI 内期望样本数(预计算)
     zbar = Zs/G; var = Zq/G - zbar^2
     if seg_slot.valid and not T_ok[i][k]:      break   # T 停止 (仅有分割时生效, S3.3)
     if k > 0 and |zbar - zbar_prev|/dr > tan(slope_max): break  # 台阶/陡坡
     if var > sigma_max^2:                      break   # 粗糙度
-    zbar_prev = zbar; d_free = r_k + dr/2
+    zbar_prev = zbar; d_free = far_k           # 整格通过才推进到格远端
     src[i] |= (T_ok ? BIT_T : 0) | BIT_G
-  conf[i]  = clamp255(255 * valid_px[i] / expect_px[i])
+  # h_block 的选择优先级 (v1.2, 感知方指正: 初版会被正障碍最大高度无条件覆盖):
+  h_out[i] = neg_flag[i] ? (实测到坑内点 ? neg_h[i] : null)          # 负障碍优先
+                         : max(h for (r,h) in obs[i] if r <= d_blk[i] + w_h)
+  conf[i]  = clamp255(255 * valid_px[i] / expect_px[i])   # expect_px == 0 => conf = 0
   slope[i] = atan(free 段内最大相邻 |zbar 差| / dr)      # 无 free 段 => null
   terrain[i] = 0                                        # 首版恒 unknown; 分档是二期 (S17 PD-13)
 ```
 
 | 不变量 → 实现落点 | 说明 |
 |---|---|
-| **PROF-1** | 循环结构保证 `d_free < d_blk`；`d_blk` 无障碍时内部用 +inf，**上线转 `null`**（§3.5） |
+| **PROF-1** | ★★ v1.2 按感知方反例修正：以**格远端** `far_k > d_blk` 判停 ⇒ `d_free ≤ near_k < d_blk` 恒成立（原「格中心判停」可推出 `d_free > d_blk` 的越界 FREE）。`d_blk` 无障碍时内部用 +inf，**上线转 `null`**（§3.5） |
 | **PROF-2** | invalid 像素在 §3.2 第一分支就被排除，任何数组不落哨兵 |
 | **PROF-3** | 输入就是全分辨率流；🚫 管线内任何一处出现下采样即断言红（A19-PROF-3） |
 | **PROF-4** | `z_pass_m` 随帧发布（值出自配置，§8） |
@@ -294,7 +311,9 @@ q_i = T_wb(t_i) * p_i;  v_w = (q2 - q1)/(t2 - t1);  v_b = R_wb(t2)^T * v_w
 velocity_xy = (v_b.x, v_b.y);  velocity_frame = "ego_removed"
 ```
 ★ 现有窗口化 ＋ 两窗同向确认抗抖直接套在 `q` 序列上，逻辑不动。
-★★ TF 不可得（`quadruped` 未实现）⇒ 走基底既有相机系分支，**`velocity_frame = "raw"` 如实上线** —— 🚫 不因"显得没做完"而伪装。
+★★★ **`ego_removed` 的置位条件（v1.2 收严 —— 感知方指正「不是一行 has_odom 就能补齐」）**，四条同时成立才许标：
+① TF 命中为**精确时刻**查询（latest 回退 ⇒ 不算）且 `|pose 时刻 − t_capture| ≤ 阈值`；② 已完成**旋回当前 `base_link`**（现实现停在 odom 轴上）；③ 外参非占位（`extrinsic_calibrated == true`）；④ 两帧位姿来自同一 odom 纪元。
+★★ 任一不满足 ⇒ `velocity_frame = "raw"` 如实上线 —— 🚫 不因「显得没做完」而伪装。TF 不可得（`quadruped` 未实现）时天然落 raw。
 
 ### 4.3 ★ TIME-1（报文内单帧）
 
@@ -394,7 +413,8 @@ perception:
     blind_near_lo_m:  null   # 盲区下限 (发布值逐帧实测, S3.2)
     h_tol_m:          null   # 地面判定容差
     z_pass_m:         null   # 过顶滤除 (PROF-4); 待 Q-7 (载荷最高点 + 余量)
-    g_min:            null   # 每格最少地面证据像素
+    cover_min:        null   # 整格覆盖率下限 G/expect_cell (v1.2 取代单纯点数 g_min)
+    omega_max_rps:    null   # PROF-5 腐蚀的角速度上界 (11 v1.9 加旋转项)
     tau_T:            null   # T 证据比例阈值
     slope_max_deg:    null
     sigma_max_m:      null   # 粗糙度 (格内高度标准差)
@@ -427,6 +447,8 @@ perception:
     objects_stale_ms: null   # S3.4A 语义注入的陈旧上限 (与 T-52 同量级)
   debug:
     pointcloud_enable: false # 调试点云 (11 2.2.1 登记为 debug 默认关; PSC-5 按登记集比对)
+    legacy_keys_enable: false # 过渡期旧名 perception/detections|status (感知方 2.6 提议采纳):
+                             #   仅 dev 联调可开, 生产恒关; 新三 key 独立验收后旧名共同退场
   zenoh:
     rt_endpoint:      "tcp/127.0.0.1:7449"
     gen_endpoint:     "tcp/127.0.0.1:7447"
@@ -504,6 +526,7 @@ v0.1 裁定**原样沿用**：环回 RTSP **18083**（`127.0.0.1` only，NET-C9�
 > ★ 金标向量 = **合成深度场景**（测试内程序化生成 organized 深度阵 ＋ 期望 profile JSON）：
 > 平地 · 玻璃洞（成片 invalid）· 4 m 处单像素细杆 · 1.8 m 高横杆 · 台阶 · 坑（穿地）· 陡坡 · 粗糙带 · 旧 mask 平移边。
 > ★ 场景生成器是测试资产（`tests/perception/golden/`），🚫 依赖实机。
+> ⚠️★★ **合成金标的保证边界（v1.2）**：它验证的是**算法不丢/不错分已有样本**；「细杆/拉索是否产生有效回波」是传感器物理，🚫 合成场景无法代答 —— 实机细障碍验收（尺寸/材质/距离矩阵）登记 §17 **PD-16**。
 
 | # | 断言 | ★ 变异体（注入什么 ⇒ 必须红） | 类型 |
 |---|---|---|---|
@@ -520,7 +543,8 @@ v0.1 裁定**原样沿用**：环回 RTSP **18083**（`127.0.0.1` only，NET-C9�
 | **A19-CFG-1** | 任一 §8.2 必填键置 `null` ⇒ 拒绝启动且报出该键路径（守 **PSC-2**） | ★★★ 给 `h_tol_m` 加代码默认值 ⇒ null 时照常启动 ⇒ 红 | 启动 |
 | **A19-VEL-1** | 无 TF 场景 `velocity_frame == "raw"` | ★ 硬编码 `"ego_removed"` ⇒ 红 | 单元 |
 | **A19-CAL-1** | 占位外参（全零/记录缺失）⇒ `extrinsic_calibrated == false` | ★ 判定改「配置存在即 true」⇒ 红 | 单元 |
-| **A19-PERF-1** | 快线单帧处理 P99 ≤ §2.2 预算（合成帧回放） | ★ 遍历内插入 1 ms sleep ⇒ 红。⚠️ 实现前恒红：形制同 `20` #20-8，`xfail(strict=True)` 进 CI 🚫 摘除 | 性能 |
+| **A19-PERF-1** | 快线单帧处理 P99 ≤ §2.2 预算 —— ★★ **在目标机 · 双模型＋编码＋跟踪＋发布共载条件下实测**（v1.2 采纳感知方口径：🚫 由 FLOPs 推导代替） | ★ 遍历内插入 1 ms sleep ⇒ 红。⚠️ 实现前恒红：形制同 `20` #20-8，`xfail(strict=True)` 进 CI 🚫 摘除 | 性能 |
+| **A19-PROF-1b**<br>**（v1.2 新增）** | 感知方反例场景（`blind 0.60 / dr 0.25 / d_blk 0.80`，障碍落格中部）⇒ `d_free ≤ 0.60`，🚫 不得 0.85 | ★ 回退成「格中心判停」⇒ 复算出 0.85 ⇒ 红 —— **这条金标就是那个反例本身** | 金标 |
 | **A19-SEM-1**<br>**（v1.1 新增）** | 玻璃门场景（深度成片 invalid ＋ 语义 footprint 在洞区）⇒ 洞区 bin `src` 含 BIT_SEM 且 `d_block` 收到注入值；★ 目标超 `objects_stale_ms` ⇒ 不再注入（§3.4A） | ★ 关掉注入 ⇒ 正向红；★ 去掉陈旧上限 ⇒ 目标离开后 `d_block` 钉死 ⇒ 反向红 —— 成对 | 金标 ×2 |
 | **A19-BOOT-1** | 配置路径非 `/run/xbrain/resolved/` 前缀 ⇒ 拒启（**PSC-1**） | ★ 指向 `configs/` 源 ⇒ 照常启动 ⇒ 红 | 启动 |
 | **A19-BOOT-2** | mock SDK 返回不符 SN ⇒ 拒启（**PSC-3**） | ★ 跳过 SN 比对 ⇒ 红 | 启动 |
@@ -543,13 +567,14 @@ A19-PROF-4 / A19-RATE-1 因此成对；A19-TIME-2 专杀「快线偷偷等慢线
 |---|---|---|---|
 | **W-1** | 收编：纳版控 ＋ 清 8 处全角标点 ＋ 删 `THIRD_PARTY_SNAPSHOTS` 排除 ＋ 头注五字段 ＋ 删 `lidar:` 配置块 | §1.2 | `ros2_ws/perception` 全树 |
 | **W-2** | ★★★ 外参标定工装 ＋ `extrinsic_calibrated` 判定 | §7 / G-4 前提 | 新增 `tools/calib_extrinsic` ＋ `src/common/config.cpp` |
-| **W-3** | ★★★ 快线 `profile_builder`（§3 全部）＋ latest-wins mask 槽 | **G-1 ＋ G-3** | 新增 `src/profile/`；`src/supervisor/supervisor.cpp` 挂线程 |
+| **W-3** | ★★★ 快线 `profile_builder`（§3 全部）＋ latest-wins mask 槽；★★ **含取流改造**：快线接 **D2C 前原生深度**（现路径只有对齐/放大帧，§3.2A） | **G-1 ＋ G-3** ＋ PROF-3 v1.9 | 新增 `src/profile/`；`src/modules/orbbec_capture.cpp` 加原生分流；`src/supervisor/supervisor.cpp` 挂线程 |
 | **W-4** | key 迁移：`perception/detections|status` → `rt/perception/objects|status`（＋新增 `profile`）；`perception/pointcloud` → `rt/perception/pointcloud`（debug 默认关）；RT/GEN 双会话 | 键零重合问题 | `include/output/zenoh_publisher.hpp` · `src/output/zenoh_publisher.cpp` · `src/common/config.cpp` |
 | **W-5** | `velocity_frame` 序列化（一行级）＋ `footprint` 改名/抽稀 ＋ `r_near` ＋ `z_min/max` 区间化 | **G-4** ＋ §4.1 | `src/output/zenoh_publisher.cpp` · `src/supervisor/supervisor.cpp` |
 | **W-6** | `StatusMsg` 扩展（分位数 · ROI 比例 · 三个固定 reason）＋ PC-2 事件 | §5 | `src/output/zenoh_publisher.cpp` ＋ 新增 `src/status/` |
 | **W-7** | 推理 20 Hz（路线三选，§6） | **#20-11** | 引擎构建脚本 ＋ `dual_model_runtime_config.json` |
 | **W-8** | 配置迁 `configs/` ＋ resolved 读取 ＋ PSC-1~7 | §8 / §11 | `src/common/config.cpp` 重写读取层 |
 | **W-9** | 合成场景金标 ＋ A19-* 全表 | §14 | 新增 `tests/perception/` |
+| **W-11**<br>**（v1.2 新增）** | ★ 联调资产：三条 key 的**模拟消息样例集**（正常 / 全 UNKNOWN / 无分割 / 外参未标 / TF 过期 / 时钟重置 / 断供）＋ RNS 侧消费端 stub —— 感知方 §7「先闭合接口」阶段的对手件，**先于实机标定可做** | 双方接口骨架 | 新增 `scripts/dev/perception_sim.py` ＋ `tests/perception/samples/` |
 | **W-10** | systemd 单元（`Requires=xbrain-config-freeze`，入 15 进程栈启动序） | `10` §3.3 | `deploy/` |
 
 ★ 顺序约束：**W-2 先于 W-3/W-6 验收**（投影基准）；W-1 先于一切合入；其余可并行。🚫 点云 `pointcloud` 通道不动（保留调试用途，G-2 裁定「不加密」）。
@@ -575,11 +600,14 @@ A19-PROF-4 / A19-RATE-1 因此成对；A19-TIME-2 专杀「快线偷偷等慢线
 | **PD-13** | `terrain` 分档（hard/soft/rough）算法 | 二期能力，需实地数据 | 恒 0 = unknown（诚实 ✓） |
 | **PD-14** | 20 Hz 三路线的最终取舍 | 归感知实现方（交接文档 §一A「路线你方定」） | 验收只认 `fps_infer`（✓） |
 | **PD-15** | 标定残差阈值 `residual_max_m` | 首次标定实测给出 | `null` ⇒ `calibrated=false`（✓） |
+| **PD-16**<br>**（v1.2）** | 实机细障碍验收矩阵（尺寸 × 材质 × 距离）与误检约束 | 传感器物理，合成金标代答不了（§14 注） | 验收前细障碍能力**不写进任何承诺**（✓） |
+| **PD-17**<br>**（v1.2）** | `z_pass_m` 所需的**整机最大扫掠高度**（机体＋载荷＋云台＋步态起伏＋姿态余量，相对地面基准） | 整机侧实测/提供（感知方 Q-7 答复点名），🚫 单次静态站立高度冒充 | `null` ⇒ 拒启（✓） |
 
 ## 18. 变更记录
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| ★★★ **v1.2**<br>**（对账修正轮）** | 2026-09-08 | ★★★ **按感知方接口答复逐条修正**（该答复抓到本册/交接文档多处实错，全部采纳）：① §3.4 `d_free` 推进改**格远端判停 ＋ 整格覆盖率 `G/expect_cell ≥ cover_min`**（其反例可复算出 `d_free 0.85 > d_blk 0.80`，PROF-1「构造性成立」原不成立）＋ 金标 A19-PROF-1b 就用该反例；② 负障碍两处修正：穿地证据记**期望交点** `bin_exp`（横向平移反例：期望 16.7° vs 回波 8.5°）；`h_block` 负障碍**优先**，🚫 被正障碍最大高度覆盖；③ 新增 §3.2A **逐帧地面平面拟合**（🚫 恒 z=0；失败退先验 ＋ `ground_fit_fallback`），`z_exp` 由静态表改逐帧闭式；④ 快线取 **D2C 前原生深度**（PROF-3 v1.9），mask 改**投影查表**（跨像面比例缩放不成立）；⑤ §4.2 `ego_removed` 置位四条件（精确时刻 TF · 旋回 base_link · 外参非占位 · 同纪元）；⑥ A19-PERF-1 改共载实测口径；合成金标声明保证边界，实机细障碍验收登记 **PD-16**；`z_pass` 扫掠高度登记 **PD-17**；⑦ 过渡期旧 key 开关 `legacy_keys_enable`（默认关）；W-11 模拟消息样例集。★ 同批 `11` v1.9 八处（PROF-3 收窄 · PROF-5 加旋转项 · 角度/量纲/遮挡/分源约定 · 20 Hz 口径冻结 · `infer_gap_ms_p99` · 两个新 reason · 探针数据出处订正）。 |
 | ★ **v1.1** | 2026-09-08 | ★★ **三遍核查轮（同日）**：① 补 **§3.4A** `src` bit2 语义注入产生规则（初版恒 0 ⇒「语义看见、几何瞎」的玻璃门场景在 profile 里不可见）＋ A19-SEM-1 正反对；② §3.5 补**报文头字段逐个产生表**（`pose_used`/`t_publish`/`schema` 初版无人产）；③ `rt/perception/pointcloud` 以 **debug 默认关**登记（同批 `11` §2.2.1）—— 否则基底既有通道撞 PSC-5 白名单精确比对；④ §14 补 **PSC-1~7 / P19-1~5 全员变异体覆盖**（A19-BOOT/SLOT/ALLOC/LINT 族）—— MUT-COVER 门禁同批改锚新结构；⑤ §3.1 预计算补 `r_exp`；`conf` 除零边界。 |
 | ★★★ **v1.0**<br>**从 0 重写 · 落地版** | 2026-09-08 | ★★★ **v0.1 整册作废**（LiDAR 前提崩塌，§0.2 三区处置表）。★ 接口真源移交 `11` §3.1B（v1.7），本册转纯实现侧：五执行体快慢线（§1/§2）· ProfileMsg 管线可编码规格（§3，PROF-1~5 逐条落点）· ObjectsMsg 字段映射（§4）· StatusMsg 与事件（§5）· 20 Hz 达标设计（§6）· 外参标定（§7）· 配置/自检/降级/单调钟（§8~§11）· 断言总表 A19-*（§14，含三对正反向）· 工作分解 W-1~W-10（§15）。★ v0.1 存活裁定收入 §13/§17 逐条注明沿用；停车场 PCC-9 一揽子登记（§16）。★ 跟随/re-ID 按 `20` #20-13 预留，不入本册范围（§0.3） |
 | ~~v0.1~~ | ~~2026-08-05~~ | ★ **已作废**，见 §0.2。其对抗验收方法论（变异体表 · PCC/PD 双清单 · 扫描面声明）本版保留并沿用 |
