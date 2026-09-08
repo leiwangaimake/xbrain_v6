@@ -68,3 +68,45 @@ class RnsSource:
         SHELL: no-op; the real handling (which reason, which carrier) lands with
         inputs.py (P2) and the failure path (P6)."""
         return None
+
+
+class EstopSuspension:
+    """RNS-M-7 estop/preempt suspension logic (20 S1.1, A-ES-1/2). Separated from
+    the RnsSource shell so it is testable now while is_active stays inert until
+    P7 wiring.
+
+    Three obligations (RNS-M-7):
+      (a) while suspended, compute() emits ZERO output -- never a non-zero
+          candidate (A-ES-1).
+      (b) do not become active again before release.
+      (c) on release, RE-EVALUATE from FOLLOW -- never replay the frozen pre-
+          suspend intent (A-ES-2). The "release == recover last velocity" bug is
+          "let go of estop and it lurches"; (c) kills it.
+
+    The mission is KEPT across suspension (estop is not cancel); only the intent
+    is discarded on release, forcing a fresh compute."""
+
+    def __init__(self) -> None:
+        self._suspended = False
+
+    def on_estop_or_preempt(self) -> None:
+        """Enter suspension. Mission kept; SUSPENDED is non-terminal (S9.0.1)."""
+        self._suspended = True
+
+    def on_release(self) -> None:
+        """Leave suspension. The caller must RE-EVALUATE (fresh compute) -- this
+        method deliberately carries no cached velocity to replay (A-ES-2)."""
+        self._suspended = False
+
+    def suspended(self) -> bool:
+        return self._suspended
+
+    def gate_output(self, candidate: "Optional[VelocityCandidate]"
+                    ) -> "Optional[VelocityCandidate]":
+        """(a): while suspended, force zero output. Returns None (no output) when
+        suspended, regardless of what the tick computed -- the candidate the tick
+        produced is discarded, not scaled. mutant: pass the candidate through
+        while suspended -> non-zero output under estop -> A-ES-1 red."""
+        if self._suspended:
+            return None
+        return candidate
