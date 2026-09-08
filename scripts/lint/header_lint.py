@@ -71,6 +71,14 @@ HEADER_WINDOW = 12
 REQUIRED_FIELDS = ("Copyright", "Author", "File", "Brief", "Description")
 
 
+# Third-party frozen snapshots share one exclusion list with charset_lint --
+# import, do not copy: two hand-synced lists drift (CLAUDE.md 3.7). Rationale
+# and the removal-on-adoption requirement live next to the definition there;
+# header cleanup on adoption is work item W-1 in book 19 section 15.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from charset_lint import THIRD_PARTY_SNAPSHOTS  # noqa: E402
+
+
 def iter_sources():
     """Every source file we own, skipping caches and vendored payloads."""
     for top in SOURCE_DIRS:
@@ -78,6 +86,11 @@ def iter_sources():
         if not os.path.isdir(base):
             continue
         for dirpath, dirnames, filenames in os.walk(base):
+            rel_dir = os.path.relpath(dirpath, ROOT)
+            if any(rel_dir == t or rel_dir.startswith(t + os.sep)
+                   for t in THIRD_PARTY_SNAPSHOTS):
+                dirnames[:] = []
+                continue
             # generated/ holds build artifacts (configs/generated/whitelist.yaml
             # is materialised from 11 S1.1.6; CLAUDE.md 2.2 exempts generated
             # output, which must not be hand-edited). The model* skip targets
