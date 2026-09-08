@@ -46,6 +46,8 @@ import math
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
+from .types import NavFailReason, NavFailure
+
 Point = Tuple[float, float]
 
 
@@ -248,3 +250,91 @@ class Mission:
             arrived=arrived,
             deviation_exceeded=proj.deviation_m > self._max_deviation_m,
         )
+
+    def deviation_failure(self, fs: FollowState) -> Optional[NavFailure]:
+        """P1.5 (20 S2.7): e > max_deviation_m means "this path is not walkable"
+        -> a MAX_DEVIATION failure reported once (source.py routes it by origin).
+        Returns None when within limit. detail carries e and s (S9.0.2 detail
+        column) so the operator sees WHERE it drifted off."""
+        if not fs.deviation_exceeded:
+            return None
+        return NavFailure(
+            reason=NavFailReason.MAX_DEVIATION,
+            detail={"e_m": fs.projection.deviation_m,
+                    "s_arc_m": fs.projection.s_arc_m,
+                    "max_deviation_m": self._max_deviation_m},
+        )
+
+
+# ── progressive alignment (P1.4 -- 20 S2.5 / RNS-N-3) ─────────────────────────
+
+def wrap_angle(a: float) -> float:
+    """Wrap to (-pi, pi]. Used for every heading difference so a 359 deg error
+    reads as -1 deg, not 359 (20 S2.5 uses wrap on all heading deltas)."""
+    while a > math.pi:
+        a -= 2.0 * math.pi
+    while a <= -math.pi:
+        a += 2.0 * math.pi
+    return a
+
+
+def align_weight(d_remaining_m: float, align_dist_m: float) -> float:
+    """w(d) = clamp(1 - d/align_dist_m, 0, 1) (20 S2.5). 0 far out (heading = path
+    direction), 1 at the endpoint (heading = goal heading). Linear between: the
+    heading BLENDS in over the last align_dist_m, so the robot turns while moving,
+    never in place (RNS-N-3)."""
+    w = 1.0 - d_remaining_m / align_dist_m
+    return 0.0 if w < 0.0 else (1.0 if w > 1.0 else w)
+
+
+def desired_heading(theta_path: float, psi_goal: Optional[float],
+                    d_remaining_m: float, align_dist_m: float) -> float:
+    """theta_des = theta_path (+) w(d)*wrap(psi_goal - theta_path) (20 S2.5). With
+    no goal heading (psi_goal None), theta_des is just the path direction -- no
+    alignment demand (S2.4: intermediate points have no heading requirement)."""
+    if psi_goal is None:
+        return theta_path
+    w = align_weight(d_remaining_m, align_dist_m)
+    return theta_path + w * wrap_angle(psi_goal - theta_path)
+
+
+def align_omega(theta_des: float, psi_now: float, k_yaw: float,
+                wz_max: float) -> float:
+    """omega = clamp(k_yaw * wrap(theta_des - psi), +/- wz_max) (20 S2.5 P law)."""
+    raw = k_yaw * wrap_angle(theta_des - psi_now)
+    return wz_max if raw > wz_max else (-wz_max if raw < -wz_max else raw)
+
+
+def arrived_with_heading(
+    dist_to_endpoint_m: float, arrival_radius_m: float,
+    psi_goal: Optional[float], psi_now: float, yaw_tol_rad: float,
+) -> bool:
+    """Arrival DOUBLE condition (20 S2.5, A-ALN-3): radius AND heading tolerance
+    (when a goal heading exists). Judging radius only would report arrival with
+    the heading still 30 deg off -- the exact bug this eliminates. No goal heading
+    -> radius alone (S2.4)."""
+    if dist_to_endpoint_m >= arrival_radius_m:
+        return False
+    if psi_goal is None:
+        return True
+    return abs(wrap_angle(psi_goal - psi_now)) <= yaw_tol_rad
+
+
+# ── route pointer + route_rev cross-check (P1.8 -- 12 S3.5A / 11 S7.12.1) ─────
+
+class RouteRevMismatch(RuntimeError):
+    """A BehaviorCommand's route_rev does not match the loaded RouteGeometry's
+    (11 S7.12.1). P1 must refuse to act on a command aimed at a stale route --
+    executing it would follow the wrong geometry."""
+
+
+def check_route_rev(command_route_rev: int, loaded_route_rev: int) -> None:
+    """11 S7.12.1: cross-check the route_rev carried on a BehaviorCommand against
+    the route_rev of the currently loaded RouteGeometry. Mismatch -> refuse
+    (RouteRevMismatch), never silently follow the loaded one -- the command was
+    aimed at a different revision of the path."""
+    if command_route_rev != loaded_route_rev:
+        raise RouteRevMismatch(
+            "route_rev mismatch: command=%d loaded=%d (11 S7.12.1 -- refuse, do "
+            "not follow the wrong geometry)"
+            % (command_route_rev, loaded_route_rev))
