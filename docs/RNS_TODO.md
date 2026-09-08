@@ -48,7 +48,7 @@
 | **PM1.2** | ★★★ 旧 `rns/` 逐文件判决：`grid_motion.py`（`rt/lidar/grid` 补偿 —— 前提已死）· `corridor.py` · `targets_veto.py` · `inflate.py` · `candidate_gen.py` · `side_select.py` · `u54_semantic.py` · `audit_ring.py` · `module.py` · `shutdown.py` —— 每个标 复用/改造/作废；★ `tests/p1_motion/test_batch_d_rns.py` 30 条逐条：迁移 / 作废（作废留墓碑注释，🚫 静默删） | `xbrain/p1_motion/rns/` | 判决表 ＋ 测试迁移清单 |
 | **PM1.3** | ★★ `path_follow.py` / `target_oriented.py` / `nav2_proxy.py` / `relative_move.py` 的**代码侧**处置（删源 / 归并 / 优先级重排落 `sources/arbiter_p1.py`）—— 与 #20-1 **文档批同一个提交序列**，🚫 文档删了代码还在 | `xbrain/p1_motion/path/` · `sources/` | 与 #20-1 同批合入 |
 | **PM1.4** | `perception_src/` 改造设计：旧 `rt/perception/targets` 订阅 → 三新 key（保留 Replay 注入点形态 —— 那是测试的命根）；此项是 P0.2 的**改造蓝本** | `xbrain/p1_motion/perception_src/` | 设计段落入差量表 |
-| **PM1.5** | 命名冲突决：`20` §1.2 新 13 文件 vs 旧 `rns/` 11 文件（同目录混放会分不清代际）—— 建议旧件先迁 `rns/_legacy/`（不 import 即不 wired，`test_no_new_unwired_modules` 基线同步）再逐个消化 | 落点冲突面 | 迁移提交 |
+| **PM1.5** | 命名冲突决：`20` §1.2 新 13 文件 vs 旧 `rns/` 11 文件。★ **审计后修订（2026-09-08）**：旧件全部未接线（宿主零 import，实测），但**复用件的 9 条迁移测试**若先迁 `_legacy/` 会造出对过渡目录的依赖 ⇒ **迁移执行并入 P0.4 首提交**（复用件直接就位新名、作废件进 `_legacy/` 带墓碑、测试同批改址） | 落点冲突面 · [rns-legacy-audit](rns-legacy-audit.md) §6 | 随 P0.4 |
 
 ## Phase 0 · 前置与脚手架
 
@@ -158,7 +158,7 @@
 |---|---|---|
 | **M-1** | `scripts/doccheck/rns_assert_cover.py`：`20` §13 每个断言 ID ↔ `tests/p1_motion/rns/` 内同名测试标记，双向差集 = 空；`--self-test` 植入必红（仿 MUT-COVER 形制，独立脚本 🚫 扩其扫描面） | CI 门禁 |
 | **M-2** | `scripts/doccheck/rns_todo_cover.py`：本文附录 A ↔ `20` 全文 `RNS-[MNIT]-n` 与断言族全集，双向差集 = 空 —— **本文件"无遗漏"的机器证明** | CI 门禁 |
-| **M-3** | 金标场景库（P0.6 起建，随 phase 增量）：直线 · 多段折线 · 环形路径 · 玻璃洞 · 盲区转向 · 无分割 · 堵门 · 轮换堵门 · 起步车 · 双缝 · 斜窄缝 · 格中部障碍 · 假缝(未识别杆) · U 形 · 螺旋 · 擦边 · 环形贴墙 · 纯 UNKNOWN 停滞 · 曲率跟踪与渐进对准 · seg 断供后恢复迟滞 · 直墙保距 · 凹角（内角）· 凸角过冲 —— 每场景文件头注明它服务的断言 ID | 场景↔断言映射进 M-1 扫描 |
+| **M-3** | 金标场景库（P0.6 起建，随 phase 增量）：直线 · 多段折线 · 环形路径 · 玻璃洞 · 盲区转向 · 无分割 · 堵门 · 轮换堵门 · 起步车 · 双缝 · 斜窄缝 · 格中部障碍 · 假缝(未识别杆) · U 形 · 螺旋 · 擦边 · 环形贴墙 · 纯 UNKNOWN 停滞 · 曲率跟踪与渐进对准 · seg 断供后恢复迟滞 · 直墙保距 · 凹角（内角）· 凸角过冲 · **围栏截断前向**（v1.13 反哺景：无候选无墙 ⇒ 分支二上报） —— 每场景文件头注明它服务的断言 ID | 场景↔断言映射进 M-1 扫描 |
 
 ## 预留区（🚫 本编排不排期，触发条件明示）
 
