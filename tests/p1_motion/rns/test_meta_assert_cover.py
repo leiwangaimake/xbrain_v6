@@ -45,10 +45,11 @@ _CITE_RE = re.compile(r"\bA-[A-Z]+-\d+[a-z]?\b")
 # assertions; everything else is still open. This is a machine-enforced TODO.
 #: 2026-09-08 P0.2/P0.4: only types + config assertions have tests -> 68.
 #: 2026-09-08 P1.1/P1.2/P1.3: +A-RT-1/2/3/4 (route+mission) -> 62.
-#: 2026-09-08 P1.4/P1.5/P1.7: +A-ALN-1/2/3, A-DEV-1, A-SPD-1/2/3 -> 55. Ratchets
+#: 2026-09-08 P1.4/P1.5/P1.7: +A-ALN-1/2/3, A-DEV-1, A-SPD-1/2/3 -> 55.
+#: 2026-09-08 P2.1~P2.6: +A-FUS-1/2/3/4/5/6, A-MEM-3, A-RTK-1/2 -> 47. Ratchets
 #:   down each phase; a phase that implements assertions removes ids from the open
 #:   set and lowers this WITH a reason, so a regression (test deleted) reddens.
-OPEN_BASELINE = 55
+OPEN_BASELINE = 47
 
 
 def _book_assertions():
