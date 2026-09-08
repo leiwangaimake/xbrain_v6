@@ -2,7 +2,8 @@
 
 | 项 | 内容 |
 |---|---|
-| 依据 | `20-RNS反应式导航软件系统详细设计.md` **v1.9（已三遍审核 · 可开工）** · `11` §3.1B v1.9 · `CLAUDE.md` |
+| 依据 | `20-RNS反应式导航软件系统详细设计.md` **v1.11（已三遍审核 ＋ 量化收口 · 可开工）** · `11` §3.1B v1.9 · `CLAUDE.md` |
+| ★★★ 仓库前提 | **存量改造，🚫 不是绿地**：`xbrain/p1_motion/` 已有 66 文件 —— 含 **v0.2 时代的 `rns/`（11 文件 ＋ 30 条绿测试，建立在已作废的 `rt/lidar/grid` 设计上）**、待删改的 `path/path_follow.py`/`target_oriented.py`/`nav2_proxy.py`、订**旧 key** 的 `perception_src/`。⇒ 一切从 **Phase −1 存量处置**起步 |
 | 建档 | 2026-09-08 |
 | 性质 | ★ **执行编排**，🚫 不是设计文档 —— 任何设计疑问回 `20`，两处冲突以 `20` 为准 |
 | 完备性判据 | ★★★ 附录 A 覆盖对账表：`20` 的**每一个** `RNS-M/N/I/T` 号与断言族都映射到唯一任务；由元任务 **M-2** 的脚本现场求值，🚫 手数 |
@@ -19,6 +20,7 @@
 | G-6 | 配置零默认兜底：`null` ⇒ 拒启并报键路径；🚫 `0.0` 冒充 | `CLAUDE.md` §3.1 |
 | G-7 | 改签名逐调用点遍历并交代无覆盖点 | `CLAUDE.md` §9.1A |
 | G-8 | 循环内零阻塞 I/O、零 Zenoh、零线程（RNS-M-1/2/4/5 的日常形态） | `20` §1.1 |
+| ★★ G-9 | **编排与审查必须对仓库实况**，🚫 只对设计文档 —— 本文件初版按绿地编排、两轮三遍审查都没抓到，因为审的全是 TODO↔20 一致性，没人对过 TODO↔repo（2026-09-08 教训） | 本文件 v2 |
 
 ## 1. 阻塞依赖总表（开工前先看这张）
 
@@ -28,12 +30,25 @@
 | **#20-3** `12` §12 落 `rns.yaml` 全部键的定义处 | P0.5 | ⚠️ 交办 `12`，未落 |
 | **#20-14** `p3_task` 路网规划器（L3） | 仅 P7.3 | ⚠️ 交办 `15`，未落 |
 | perception 真数据（`19` §15 W-1~W-10） | 仅 P7.1（P0~P6 全用合成/模拟） | ⚠️ 感知方在办 |
+| Phase −1 处置表（PM1.1~PM1.5） | P0.2 / P0.4（改造蓝本与落点） | ★ 本编排内, 开工即做 |
 | **#20-4/#20-5** 相机安装几何 · `accel/wz_max` 标定 | 仅 P7 实机整定 | ⚠️ 整机侧 |
 | `12` §6A 旋转许可（已有设计） | P4.5 集成点 | ✅ 设计在册 |
 
 ★★★ **P0~P6 不被外部阻塞** —— 感知输入全程用合成 `ProfileMsg`/`ObjectsMsg`（P0.6 建，与 `19` W-11 样例集共源）。
 
 ---
+
+## Phase −1 · 存量审计与处置（v2 新增 —— 一切之前）
+
+> 出口 Gate：差量处置表落档（逐文件三选一：**复用 / 改造 / 作废**，作废必带测试墓碑策略）；`12` 侧 #20-1 的**代码半边**排进同一批。
+
+| # | 任务 | 对象（实测清单） | 验收 |
+|---|---|---|---|
+| **PM1.1** | 存量盘点：`xbrain/p1_motion/` 66 文件 ↔ `12`（现行）/`20` v1.11 逐目录差量表，产出 `docs/rns-legacy-audit.md` | 全目录（`arb/ gate/ path/ perception_src/ profile/ rns/ rotation/ route/ sources/ teleop/ runtime/ fence/ freshness/ config/ …`） | 差量表评审 |
+| **PM1.2** | ★★★ 旧 `rns/` 逐文件判决：`grid_motion.py`（`rt/lidar/grid` 补偿 —— 前提已死）· `corridor.py` · `targets_veto.py` · `inflate.py` · `candidate_gen.py` · `side_select.py` · `u54_semantic.py` · `audit_ring.py` · `module.py` · `shutdown.py` —— 每个标 复用/改造/作废；★ `tests/p1_motion/test_batch_d_rns.py` 30 条逐条：迁移 / 作废（作废留墓碑注释，🚫 静默删） | `xbrain/p1_motion/rns/` | 判决表 ＋ 测试迁移清单 |
+| **PM1.3** | ★★ `path_follow.py` / `target_oriented.py` / `nav2_proxy.py` / `relative_move.py` 的**代码侧**处置（删源 / 归并 / 优先级重排落 `sources/arbiter_p1.py`）—— 与 #20-1 **文档批同一个提交序列**，🚫 文档删了代码还在 | `xbrain/p1_motion/path/` · `sources/` | 与 #20-1 同批合入 |
+| **PM1.4** | `perception_src/` 改造设计：旧 `rt/perception/targets` 订阅 → 三新 key（保留 Replay 注入点形态 —— 那是测试的命根）；此项是 P0.2 的**改造蓝本** | `xbrain/p1_motion/perception_src/` | 设计段落入差量表 |
+| **PM1.5** | 命名冲突决：`20` §1.2 新 13 文件 vs 旧 `rns/` 11 文件（同目录混放会分不清代际）—— 建议旧件先迁 `rns/_legacy/`（不 import 即不 wired，`test_no_new_unwired_modules` 基线同步）再逐个消化 | 落点冲突面 | 迁移提交 |
 
 ## Phase 0 · 前置与脚手架
 
@@ -42,9 +57,9 @@
 | # | 任务 | 依据 | 验收 |
 |---|---|---|---|
 | **P0.1** | 催办 #20-1 / #20-3（`12` 侧两批修订）—— RNS 侧同步评审其产物 | `20` §15 | `12` 变更记录落档 |
-| **P0.2** | p1 数据层订阅 `rt/perception/profile\|objects\|status`：`SubscriberRegistry` 强引用 · `publish_threadsafe` 跨线程 · 进 `12` §2.2 步骤 1 本拍快照 | `11` §2.2.1 · `CLAUDE.md` §4.2/§4.3 | 快照含三键；T-50~T-53 计龄字段就位 |
+| **P0.2** | ★ **改造** `perception_src/`（按 PM1.4 蓝本）：旧 targets 订阅换三新 key，保留 Replay 注入点；`SubscriberRegistry` 强引用 · `publish_threadsafe` · 进 `12` §2.2 步骤 1 本拍快照 | `11` §2.2.1 · `CLAUDE.md` §4.2/§4.3 | 快照含三键；T-50~T-53 计龄字段就位；Replay 路径不破 |
 | **P0.3** | 快照白名单/启动自检对齐（p1 起来即校验声明 key 集） | `11` §1.1.3 v1.7 行 | 自检绿 |
-| **P0.4** | 模块骨架按 `20` §1.2（v1.10 扩充版）**建齐全部文件**；`source.py` 四接口空实现，`is_active()` 恒 `false`（🚫 未接线不冒烟）；`types.py` 落闭集与 mission 枚举（follow_target 仅预留值） | `20` §1.1/§1.2 | 结构在位；p1 行为不变 |
+| **P0.4** | 按 PM1.2/PM1.5 处置表**改造 ＋ 新建**至 `20` §1.2 全部文件形态（复用件就地归位、作废件已迁 `_legacy/`）；`source.py` 四接口空实现，`is_active()` 恒 `false`（🚫 未接线不冒烟）；`types.py` 落闭集与 mission 枚举（follow_target 仅预留值） | `20` §1.1/§1.2 ＋ PM1 处置表 | 结构在位；p1 行为不变；unwired 基线同步 |
 | **P0.5** | 配置消费：读 resolved 快照 · `null` 拒启报键路径 · **D2 启动断言**（`leave_progress_m < 2·r_eff`）· `class_map` person 锁死；`config.py` | `20` §12 · §7A.1 D2 · §5.1.1 | **A-CVG-5 · A-CLS-4** 先红后绿 |
 | **P0.6** | 测试脚手架：合成 `ProfileMsg`/`ObjectsMsg` 构造器（场景库骨架，见 §M-3）· mutation runner（含 G-3 清缓存）· CI 注册 | `20` §13 | 样例断言演示红→绿 |
 | **P0.7** | 元脚本落地：**M-1 / M-2**（见 §元任务） | `20` §13 · 本文附录 A | 两脚本自测（self-test 植入必红） |
@@ -143,7 +158,7 @@
 |---|---|---|
 | **M-1** | `scripts/doccheck/rns_assert_cover.py`：`20` §13 每个断言 ID ↔ `tests/p1_motion/rns/` 内同名测试标记，双向差集 = 空；`--self-test` 植入必红（仿 MUT-COVER 形制，独立脚本 🚫 扩其扫描面） | CI 门禁 |
 | **M-2** | `scripts/doccheck/rns_todo_cover.py`：本文附录 A ↔ `20` 全文 `RNS-[MNIT]-n` 与断言族全集，双向差集 = 空 —— **本文件"无遗漏"的机器证明** | CI 门禁 |
-| **M-3** | 金标场景库（P0.6 起建，随 phase 增量）：直线 · 多段折线 · 环形路径 · 玻璃洞 · 盲区转向 · 无分割 · 堵门 · 轮换堵门 · 起步车 · 双缝 · 斜窄缝 · 格中部障碍 · 假缝(未识别杆) · U 形 · 螺旋 · 擦边 · 环形贴墙 · 纯 UNKNOWN 停滞 · 曲率跟踪与渐进对准 · seg 断供后恢复迟滞 —— 每场景文件头注明它服务的断言 ID | 场景↔断言映射进 M-1 扫描 |
+| **M-3** | 金标场景库（P0.6 起建，随 phase 增量）：直线 · 多段折线 · 环形路径 · 玻璃洞 · 盲区转向 · 无分割 · 堵门 · 轮换堵门 · 起步车 · 双缝 · 斜窄缝 · 格中部障碍 · 假缝(未识别杆) · U 形 · 螺旋 · 擦边 · 环形贴墙 · 纯 UNKNOWN 停滞 · 曲率跟踪与渐进对准 · seg 断供后恢复迟滞 · 直墙保距 · 凹角（内角）· 凸角过冲 —— 每场景文件头注明它服务的断言 ID | 场景↔断言映射进 M-1 扫描 |
 
 ## 预留区（🚫 本编排不排期，触发条件明示）
 
