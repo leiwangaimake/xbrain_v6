@@ -21,9 +21,16 @@ Two invariants this file owns:
   - The lookahead L = clamp(k*v, L_min, L_max) (S2.2). L is arc-length, walked
     forward from F across as many segments as needed.
 
-This slice (P1.1/P1.2): projection + lookahead + monotone index. goto/path
-unification (P1.3), progressive align (P1.4), deviation-limit failure (P1.5) land
-next; the route-pointer consume with route_rev cross-check (P1.8) after that.
+This slice (P1.1/P1.2/P1.3): projection + lookahead + monotone index, and the
+Mission layer that unifies goto and path (RNS-N-1: one follow code path, not two).
+Progressive align (P1.4), deviation-limit failure (P1.5), and the route-pointer
+consume with route_rev cross-check (P1.8) land next.
+
+RNS-N-1 (S2.1): goto = a one-segment polyline, path = a dense polyline. Both run
+the SAME PolylineTracker; there is no separate goto branch (A-RT-1). Arrival is
+judged ONLY at the endpoint (A-RT-2 / S2.4): applying arrival_radius to an
+intermediate 0.5 m point would jump the index past several points and destroy the
+path shape.
 
 Frame: all math is in the local ENU/base metric frame. WGS84->ENU conversion
 happens upstream (S2.2); this file never sees lat/lon.
@@ -171,3 +178,73 @@ def lookahead_distance(v_mps: float, k: float, l_min: float, l_max: float) -> fl
     or refuse-to-start upstream)."""
     raw = k * v_mps
     return l_min if raw < l_min else (l_max if raw > l_max else raw)
+
+
+@dataclass(frozen=True)
+class FollowState:
+    """One tick's follow output: where the foot is, how far off the path, the
+    lookahead point R, and whether the endpoint is reached. This is what the
+    speed/heading layers (P1.4/P1.7) consume; it is NOT a velocity yet."""
+    projection: Projection
+    lookahead_point: Point
+    endpoint: Point
+    dist_to_endpoint_m: float
+    arrived: bool           # endpoint reached (radius only; heading is P1.4)
+    deviation_exceeded: bool  # e > max_deviation_m (P1.5 turns this into failure)
+
+
+class Mission:
+    """A navigation mission: goto or path, unified as a polyline (RNS-N-1).
+
+    Carries origin (route|relmove) so the failure/terminal report goes to the
+    right carrier (12 S4.2c.1): the Mission does not choose the channel itself,
+    but source.py reads mission.origin to pick it. Kind is goto|path (follow_target
+    is reserved, #20-13, and never constructed here this phase).
+
+    advance(x) runs one tick of follow: project, compute R, and judge arrival --
+    ONLY at the endpoint (A-RT-2). There is no per-intermediate-point arrival."""
+
+    def __init__(
+        self,
+        kind,            # MissionKind (typed in types.py; kept loose to avoid a
+        origin,          # Origin        cyclic import -- source.py passes enums)
+        points: Sequence[Point],
+        *,
+        search_window: int,
+        arrival_radius_m: float,
+        max_deviation_m: float,
+    ) -> None:
+        self.kind = kind
+        self.origin = origin
+        self._tracker = PolylineTracker(points, search_window)
+        self._arrival_radius_m = arrival_radius_m
+        self._max_deviation_m = max_deviation_m
+        self._endpoint: Point = tuple(points[-1])  # type: ignore[assignment]
+
+    @property
+    def tracker(self) -> PolylineTracker:
+        return self._tracker
+
+    @property
+    def endpoint(self) -> Point:
+        return self._endpoint
+
+    def advance(self, x: Point, lookahead_m: float) -> FollowState:
+        """One follow tick. Arrival is endpoint-only (S2.4): dist(X, P[n]) <
+        arrival_radius. Intermediate points never trigger arrival -- they only
+        shape F and R. deviation_exceeded flags e > max_deviation for P1.5."""
+        proj = self._tracker.project(x)
+        r = self._tracker.lookahead_point(proj, lookahead_m)
+        dist_end = math.hypot(x[0] - self._endpoint[0], x[1] - self._endpoint[1])
+        # A-RT-2: arrival is judged against the ENDPOINT only, never against the
+        # current segment's far vertex. On a 0.5 m path, an intermediate arrival
+        # radius (~1 m) would skip several points and break the shape.
+        arrived = dist_end < self._arrival_radius_m
+        return FollowState(
+            projection=proj,
+            lookahead_point=r,
+            endpoint=self._endpoint,
+            dist_to_endpoint_m=dist_end,
+            arrived=arrived,
+            deviation_exceeded=proj.deviation_m > self._max_deviation_m,
+        )
