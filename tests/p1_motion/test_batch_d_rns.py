@@ -12,33 +12,45 @@ veto no-reverse, grid motion compensation FC-12, candidate
 generator with wz clamp, shutdown 5 branches, monotonic ring
 buffer, U54 one-way safety semantics. Every test names the spec
 rule it enforces.
+
+LEGACY (2026-09-08, PM1.2): this file tests the v0.2 RNS implementation, now
+under rns/_legacy/. It is kept GREEN only to prove _legacy code is unchanged
+while the new module (20 v1.15) is built. Per rns-legacy-audit.md S3:
+  - 9 reuse/adapt tests (ring, u54, choose_side) get their real home when
+    audit.py/dynamic.py/wallfollow.py land (P5/P6) -- then their blocks migrate.
+  - 21 obsolete tests (inflate/corridor/veto/grid_motion/wz_clamp/shutdown/
+    snapshot) are tombstoned there: they pin superseded designs (e.g.
+    r_eff max() form, 12 v0.7 obsolete) -- deleted when their _legacy source is.
+This whole file is removed once _legacy/ is consumed. Do NOT add new tests here.
 """
+
+
 
 import pytest
 
-from xbrain.p1_motion.rns.audit_ring import RnsAuditRecord, RnsAuditRing
-from xbrain.p1_motion.rns.candidate_gen import r_eff, wz_clamp_geometric
-from xbrain.p1_motion.rns.corridor import (
+from xbrain.p1_motion.rns._legacy.audit_ring import RnsAuditRecord, RnsAuditRing
+from xbrain.p1_motion.rns._legacy.candidate_gen import r_eff, wz_clamp_geometric
+from xbrain.p1_motion.rns._legacy.corridor import (
     CorridorSample, find_widest_corridor, is_blocked,
 )
-from xbrain.p1_motion.rns.grid_motion import (
+from xbrain.p1_motion.rns._legacy.grid_motion import (
     OdomUnavailable, check_odom_available, transform_grid_to_robot,
 )
-from xbrain.p1_motion.rns.inflate import compute_r_inflate
-from xbrain.p1_motion.rns.module import (
+from xbrain.p1_motion.rns._legacy.inflate import compute_r_inflate
+from xbrain.p1_motion.rns._legacy.module import (
     RnsCandidate, RnsModuleUnavailable, RnsSnapshot,
 )
-from xbrain.p1_motion.rns.shutdown import (
+from xbrain.p1_motion.rns._legacy.shutdown import (
     RnsShutdownReason, ShutdownDecision, evaluate_shutdown,
 )
-from xbrain.p1_motion.rns.side_select import (
+from xbrain.p1_motion.rns._legacy.side_select import (
     Candidate, choose_side, cost_of,
 )
-from xbrain.p1_motion.rns.targets_veto import (
+from xbrain.p1_motion.rns._legacy.targets_veto import (
     ReverseNotAllowed,
     geometry_fallback_velocity, within_veto_distance,
 )
-from xbrain.p1_motion.rns.u54_semantic import (
+from xbrain.p1_motion.rns._legacy.u54_semantic import (
     is_within_safety, should_stop_but_not_retreat,
     type_b_slowdown_factor,
 )

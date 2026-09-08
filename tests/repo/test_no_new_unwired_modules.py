@@ -40,7 +40,11 @@ ROOT = Path(__file__).resolve().parents[2]
 #: 2026-09-04 实测值. 只允许下降.
 #: *** 降了要跟着改小, 否则本条会退化成"永远通不过的下限"从而被人放宽.
 #: 160 -> 159: 本轮删掉了被 broadcast_rx 取代的 b_mode_forward.
-UNWIRED_BASELINE = 159
+#: 159 -> 171 (2026-09-08, RNS_TODO P0.4): RNS 新骨架 13 文件建齐但未接线
+#:   (source.is_active 恒 false, 12 stub 待 P1~P6 填), + 旧 rns/ 10 文件迁
+#:   _legacy/ 改了模块名. 二者都是 P0.4 的预期中间态 -- 接线在 P7.2 仲裁集成,
+#:   _legacy 在 PM1.2 消化完即删. 届时本基线回落.
+UNWIRED_BASELINE = 171
 
 
 def _imports_of(root: Path):
