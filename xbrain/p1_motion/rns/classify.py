@@ -74,3 +74,59 @@ def health_speed_capped(invalid_pixel_ratio: float,
     if invalid_ratio_limit is None:
         return True
     return invalid_pixel_ratio > invalid_ratio_limit
+
+
+# ── obstacle dispatch (P3 -- 20 S5.1/S5.1.1/S5.5) ─────────────────────────────
+# The class_map maps the open perception vocabulary to a behavior class
+# (20 S5.1.1). person is NOT here -- it is locked to person_stop in code
+# (config.PERSON_BEHAVIOR); a config person mapping is a startup failure
+# (A-CLS-4, config.assert_person_locked). Unmapped classes -> block + slow.
+UNMAPPED_BEHAVIOR = "block"     # 20 S5.1.1: unmapped -> block+slow (never dropped)
+PERSON_BEHAVIOR = "person_stop"
+
+
+def behavior_class(class_name: str, class_map: dict) -> str:
+    """Map a perception class_name to its behavior class (20 S5.1.1). person is
+    locked in code (never read from class_map). Unmapped -> block (conservative,
+    never dropped, never traverse). A-CLS-4 reverse: unmapped MUST be block."""
+    if class_name == "person":
+        return PERSON_BEHAVIOR
+    mapped = class_map.get(class_name)
+    if mapped is None:
+        return UNMAPPED_BEHAVIOR
+    return mapped
+
+
+def is_static(velocity_mps: float, dwell_s: float,
+              v_static_thresh: float, t_static_dwell: float) -> bool:
+    """Static criterion = speed threshold AND dwell time (20 S5.5, A-CLS-2/3).
+    BOTH conditions: speed alone lets estimator noise read a parked car as
+    moving (robot waits forever); threshold alone lets a just-started car (still
+    slow) read as static (robot detours, car moves). velocity is the
+    ego-removed speed magnitude; dwell_s is how long it has held under threshold."""
+    return abs(velocity_mps) < v_static_thresh and dwell_s >= t_static_dwell
+
+
+def dispatch_dynamic(behavior: str, velocity_mps: float, dwell_s: float,
+                     v_static_thresh: float, t_static_dwell: float) -> bool:
+    """Is this obstacle in the DYNAMIC pile (20 S5.1)? person is ALWAYS dynamic
+    (person_stop, never threaded/detoured -- A-CLS-1). Every other class is
+    dynamic UNTIL it passes the static criterion. mutant: make a static person
+    join the static pile -> person enters candidate generation -> A-CLS-1 red."""
+    if behavior == PERSON_BEHAVIOR:
+        return True   # person is always dynamic; never a detour candidate
+    return not is_static(velocity_mps, dwell_s, v_static_thresh, t_static_dwell)
+
+
+def usable_velocity(velocity_frame: str, velocity_mps: float,
+                    raw_policy: str) -> Optional[float]:
+    """velocity_frame==raw refusal (20 S3.1.5, A-FUS-7). raw velocity has NOT had
+    ego motion removed, so a static tree reads as -v_ego and the whole world looks
+    moving. This phase's only legal raw_policy is 'reject' -> return None (motion
+    state unknown -> conservative). ego_removed -> the velocity is usable."""
+    if velocity_frame == "raw":
+        if raw_policy != "reject":
+            raise ValueError("raw_velocity_policy must be 'reject' this phase "
+                             "(20 S3.1.5); got %r" % raw_policy)
+        return None   # cannot judge motion from raw velocity
+    return velocity_mps
