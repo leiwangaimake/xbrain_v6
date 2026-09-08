@@ -101,6 +101,13 @@
       "script": "scripts/doccheck/hmi_dataset_check.py",
       "self_test": "--self-test：从契约里删一条 key，必须变红"
     },
+    "RNS-TODO-COVER": {
+      "what": "RNS_TODO.md 附录 A 覆盖 20 册每个 RNS-M/N/I/T 决策与断言族 (M-2)",
+      "criterion": "book - todo == 空集 (每决策映射任务) 且 todo - book == 空集 (无 typo)",
+      "script": "scripts/doccheck/rns_todo_cover.py",
+      "self_test": "--self-test: 从 TODO 移除一个单引用决策 id, 必须变红",
+      "note": "RNS_TODO 的无遗漏承诺的机器判据. 断言族只扫活断言表行 (^| **A-), 不扫作废段 (S0.4 提及 A-DIS-1 等死 id, 扫全文会强迫覆盖已删断言 -- 3.2 形态三)."
+    },
     "MUT-COVER": {
       "what": "19 册每条 PSC-*/P19-* 规则必须在 §14 断言表内至少出现一次 (v1.0 重写后锚点已迁, 2026-09-08)",
       "criterion": "规则集合 A 减 表内集合 B == 空集",

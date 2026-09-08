@@ -6,7 +6,13 @@ File: source.py
 Brief: MOT-PM-3 perception source abstraction
 
 Description:
-P1's 20 Hz loop consumes one perception frame per tick. Production wires a Zenoh subscriber to rt/perception/targets etc; tests wire a ReplayPerceptionSource that yields a deterministic frame list. The abstraction is the injection point that lets those two paths share the loop body untouched.
+P1's 20 Hz loop consumes one perception frame per tick.
+
+RETIRING (2026-09-08, PM1.4/P0.2): PerceptionFrame here models the v0.2 key set
+(rt/perception/targets + lidar/grid ages). The RNS consume face moved to
+rns/inputs.py (three keys rt/perception/{profile,objects,status}, 11 S3.1B).
+This abstraction stays for any non-RNS consumer during transition; its lidar_*
+/ grid_* fields are dead (no LiDAR). Removed when P2 wires rns/inputs fully.
 """
 
 
