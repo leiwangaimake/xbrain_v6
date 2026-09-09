@@ -605,3 +605,58 @@ def test_shield_vx_cap_slows_near_remembered_wall():
     rns3 = RnsSource(cfg=CFG, r_eff_m=0.5)
     rns3._grid.write(1.2, 0.0, Cell.BLOCKED, now)
     assert rns3._shield_vx_cap((0.0, 0.0), now) >= 0.5
+
+
+# ── the user's 2026-09-10 field map (8-car column + 14 m wall + corridor) ──
+# grabbed live from the SIL scene; the night-sweep batch harness ran 36
+# start x goal probes on it (15 base + 11 extended + 10 hot-memory chain).
+FIELD_CARS = [(-12.60, 2.37), (-12.73, 0.67), (-12.70, -0.87), (-12.70, -2.70),
+              (-12.83, -4.47), (-12.90, -6.10), (-13.00, -8.67), (-13.20, -10.63)]
+FIELD_WALL = (-7.77, 2.93, -8.30, -11.00, 0.50)
+
+
+def _field_world():
+    world = SilWorld()
+    for x, y in FIELD_CARS:
+        world.add_obstacle("car", x, y)
+    world.add_obstacle("wall", *FIELD_WALL)
+    return world
+
+
+def test_field_map_live_failure_order_now_arrives():
+    # THE live failure (user 2026-09-10 night): start sw of the car column,
+    # goal inside the corridor between column and wall. Live: entered wall-
+    # follow at the column's south corner, the corner-anchored diagonal end
+    # probe faked end_r=0.75, nearer-end-wins flipped the walk direction and
+    # a 45 m reverse lap burned the no_progress budget -> wall_no_progress.
+    # With the snake probe + conservative UNKNOWN side query the order must
+    # arrive without any wall failure. NOTE on mutants: the fake-end root
+    # cause needs the LIVE run's hot memory (an unknown prior order); this
+    # cold-start replay arrives even with the snake reverted, so the mutant
+    # that kills the root cause lives in test_grid_memory.py
+    # (test_diagonal_probe_snakes_along_wall_no_fake_end). This test pins
+    # the ARRIVAL of the user's exact order -- an any-cause regression trip.
+    world = _field_world()
+    world.rx, world.ry, world.ryaw = -16.55, -9.77, -2.4
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(-10.07, -7.17)]))
+    tick, states, min_clear = _tick_until(world, rns, 4800)
+    assert tick is not None, "the live wall_no_progress failure is back"
+    assert tick * 0.05 < 120.0, "arrived but pathologically slow"
+    assert min_clear > 0.10
+
+
+def test_field_map_corridor_to_east_no_collision():
+    # the -0.152 m body overlap found by the night batch (corr->east_mid):
+    # hugging the wall's never-observed (blind-zone) south segment, the side
+    # query read a stale far hit through UNKNOWN and the PD dragged the hull
+    # through the corner. The conservative side query + footprint stamp +
+    # shield vx cap keep the pass clear. mutant: let the side query read
+    # through UNKNOWN again -> reddens.
+    world = _field_world()
+    world.rx, world.ry, world.ryaw = -10.5, -2.0, -1.57
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(-5.0, -5.0)]))
+    tick, states, min_clear = _tick_until(world, rns, 4800)
+    assert tick is not None
+    assert min_clear > 0.10, "graze is back: %.3f" % min_clear
