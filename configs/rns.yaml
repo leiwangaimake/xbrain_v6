@@ -70,7 +70,7 @@ rns:
   wall_follow:
     d_wall_m: 0.8                  # [geo] 保距 = r_eff 0.5 + 0.3 余量 (20 S7.7)
     kp_wall: 1.2                   # [sim] 保距 PD
-    kd_wall: 0.3
+    kd_wall: 0.05                  # [sim] 栅格粒度 0.25m 下 rate 噪声大, kd 压低
     sector_lo_deg: 45.0            # [geo] 侧扇区界 (FOV 90deg 的侧半)
     sector_hi_deg: 135.0
     front_stop_m: 0.8              # [sim] 凹角前向停距 (20 S7.7-3)
@@ -78,15 +78,15 @@ rns:
     leave_progress_m: 0.4          # [geo] (2)' delta_s; < 2*r_eff=1.0 (D2/S-7 过)
     corner_overshoot_m: 0.5        # [geo] 凸角过冲 ~ r_eff
     min_loop_m: 3.0                # [sim] 失败判据(1) 防刚上墙误判
-    no_progress_m: 8.0             # [sim] 失败判据(2)
+    no_progress_m: 25.0            # [sim] 失败判据(2); 须 > 最大预期绕障周长(U 形 ~20m), 否则正常外侧绕行段(无离墙机会是常态)误报
     max_follow_m: 60.0             # [sim] 失败判据(3) 兜底
-    v_max_mps: 0.4                 # [sim] 贴墙限速
+    v_max_mps: 0.5                 # [sim] 贴墙限速
   backup:
     t_backup_memory_s: 3.0         # [sim] 记忆新鲜度上限 (20 S7.5 RNS-N-13)
     max_backup_m: 1.0              # [sim] 后退距离上限
     v_max_mps: 0.2                 # [sim] 后退限速
   memory:
-    ttl_static_s: 30.0             # [sim] 静态记忆 TTL (20 S4.2)
+    ttl_static_s: 60.0             # [sim] 静态记忆 TTL; U 形绕行 ~40s 需墙记忆存活 (20 S4.2)
     ttl_dynamic_s: 2.0             # [sim] 动态记忆 TTL (幽灵防护)
     cell_m: 0.25                   # [geo] 分辨率 = r_eff/2 (20 S4.2.1)
     radius_m: 8.0                  # [geo] 滑动窗 > range_max 6m

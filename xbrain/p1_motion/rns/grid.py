@@ -227,6 +227,53 @@ class MemoryGrid:
     def cell_count(self) -> int:
         return len(self._cells)
 
+    def ingest_profile(self, profile, pose_xy, yaw, now_ms: int,
+                       free_step_m: float = 0.5) -> None:
+        """S2b assembly: write one tick's profile into the grid (world frame).
+        Every blocked bin writes its hit point BLOCKED; the free run before it
+        (or the full free ray) writes sparse FREE samples. This is what makes
+        wall-follow possible at all on a 90 deg FOV: the wall being hugged sits
+        at ~90 deg to the side -- OUT of view -- and lives only here (RNS-I-7).
+        """
+        import math as _m
+        for i in range(profile.n_bins):
+            ang = yaw + profile.angle_min_rad + i * profile.angle_step_rad
+            c, si = _m.cos(ang), _m.sin(ang)
+            db = profile.d_block[i]
+            df = profile.d_free[i]
+            if df is not None:
+                r = free_step_m
+                while r < df:
+                    self.write(pose_xy[0] + r * c, pose_xy[1] + r * si,
+                               Cell.FREE, now_ms)
+                    r += free_step_m
+            if db is not None:
+                self.write(pose_xy[0] + db * c, pose_xy[1] + db * si,
+                           Cell.BLOCKED, now_ms)
+
+    def nearest_blocked_in_sector(self, pose_xy, yaw, ang_lo: float,
+                                  ang_hi: float, now_ms: int,
+                                  r_max_m: float = 4.0,
+                                  n_rays: int = 7) -> Optional[float]:
+        """Min distance to a remembered BLOCKED cell inside a body-frame angular
+        sector (the wall-follow d_side query, 20 S7.7: perception U memory --
+        here memory IS the union, since ingest_profile wrote perception in).
+        Returns None when the sector holds no remembered wall."""
+        import math as _m
+        best: Optional[float] = None
+        for k in range(n_rays):
+            ang = yaw + ang_lo + (ang_hi - ang_lo) * k / max(1, n_rays - 1)
+            c, si = _m.cos(ang), _m.sin(ang)
+            r = self._cell_m
+            while r <= r_max_m:
+                if self.read(pose_xy[0] + r * c, pose_xy[1] + r * si,
+                             now_ms) == Cell.BLOCKED:
+                    if best is None or r < best:
+                        best = r
+                    break
+                r += self._cell_m
+        return best
+
 
 # (the v1.15-era danger-rank merge -- _DANGER_RANK / _more_dangerous -- was
 # retired by the 2026-09-09 ruling: the latest classed observation wins, see

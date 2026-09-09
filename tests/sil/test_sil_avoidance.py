@@ -142,3 +142,42 @@ def test_person_never_leaves_blows_wait_budget():
     assert f.reason is NavFailReason.BLOCKED_BY_DYNAMIC
     assert f.detail["class_name"] == "person"
     assert rns.nav_state() is NavState.IDLE          # mission cleared (S9.0.3)
+
+
+def test_u_trap_escape_via_wall_follow():
+    # THE S2b acceptance (RNS-T-1 in the flesh): robot deep inside a U-shaped
+    # dead end, goal beyond the back wall. Candidates are all gated (three
+    # walls, no visible edge), so it must WALL_FOLLOW: hug a wall, round the
+    # arm's outer side (convex corners), come back to the line beyond the back
+    # wall, leave by the 2' arc condition, and arrive. A pure-reactive shell
+    # oscillates in the U forever -- the tick budget kills it.
+    world = SilWorld()
+    world.rx, world.ry, world.ryaw = 2.5, 0.0, 0.0     # inside the U
+    world.add_obstacle("wall", 4.0, -3.0, 4.0, 3.0)    # back wall
+    world.add_obstacle("wall", 1.0, 3.0, 4.0, 3.0)     # upper arm
+    world.add_obstacle("wall", 1.0, -3.0, 4.0, -3.0)   # lower arm
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(10.0, 0.0)]))
+    tick, states, _ = _tick_until(world, rns, 6000)     # 5 sim-min budget
+    assert NavState.WALL_FOLLOW in states, \
+        "never entered wall-follow inside the U"
+    assert tick is not None, \
+        "never escaped the U (stuck: state history %s)" % sorted(
+            s.value for s in states)
+    d = math.hypot(world.rx - 10.0, world.ry - 0.0)
+    assert d < 1.0
+
+
+def test_wall_follow_audit_trail():
+    # S9.3: the ring audit must hold the wall enter/exit records after a U run.
+    world = SilWorld()
+    world.rx, world.ry, world.ryaw = 2.5, 0.0, 0.0
+    world.add_obstacle("wall", 4.0, -3.0, 4.0, 3.0)
+    world.add_obstacle("wall", 1.0, 3.0, 4.0, 3.0)
+    world.add_obstacle("wall", 1.0, -3.0, 4.0, -3.0)
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(10.0, 0.0)]))
+    _tick_until(world, rns, 6000)
+    kinds = [r.kind for r in rns.audit.drain()]
+    assert "wall_enter" in kinds
+    assert "wall_exit" in kinds or "wall_fail" in kinds

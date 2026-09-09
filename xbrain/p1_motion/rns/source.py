@@ -40,8 +40,13 @@ from .candidate import (CandidateSelector, candidate_cost, candidates_from_profi
 from .classify import behavior_class, health_speed_capped, usable_velocity
 from .config import RnsConfigError, run_startup_assertions
 from .dynamic import DynamicAction, WaitBudget, distance_action, in_corridor
-from .grid import (profile_age_ms, profile_speed_limited, profile_zero_speed,
-                   seg_stale)
+from .grid import (MemoryGrid, profile_age_ms, profile_speed_limited,
+                   profile_zero_speed, seg_stale)
+from .wallfollow import (Side, WallFollowState, can_enter, can_leave,
+                         check_failure, inner_corner_stop, keep_distance_omega,
+                         record_crossing, select_side, wall_vanished)
+from .watchdog import ProgressWatchdog, WatchdogResult, no_progress_failure
+from .audit import AuditRecord, RingAudit
 from .route import Mission, align_omega, lookahead_distance, wrap_angle
 from .speed import SpeedCaps, cap_deviation
 from .types import (MissionKind, NavFailure, NavState, Origin,
@@ -96,10 +101,25 @@ class RnsSource:
         self._dyn_prev = DynamicAction.RUN
         self._pre_wait_state: NavState = NavState.FOLLOW
         self._slow_since: dict = {}         # track_id -> ms when speed dropped
+        self._grid: Optional[MemoryGrid] = None
+        self._watchdog: Optional[ProgressWatchdog] = None
+        self._wall: Optional[WallFollowState] = None
+        self._s_star = float("-inf")     # monotone best arc progress (RNS-N-15)
+        self._last_pose = None
+        self._last_now = None
+        self._last_d_side: Optional[float] = None
+        self._wall_corner = False        # concave-corner turn in progress
+        self.audit = RingAudit(capacity=256)
         if cfg is not None:
             c = cfg["rns"]
             self._selector = CandidateSelector(c["candidate"]["side_hold_ticks"])
             self._wait_budget = WaitBudget(c["dynamic"]["wait_budget_s"])
+            m = c["memory"]
+            self._grid = MemoryGrid(m["cell_m"], m["ttl_static_s"],
+                                    m["ttl_dynamic_s"], m["reset_jump_m"])
+            w = c["watchdog"]
+            self._watchdog = ProgressWatchdog(int(w["window_s"] * 1000),
+                                              w["min_progress_m"])
 
     def load_mission(self, mission: Mission) -> None:
         """P3/route pushes a mission (goto or path). Transitions IDLE -> FOLLOW.
@@ -109,6 +129,12 @@ class RnsSource:
         self._reporter.reset_for_new_mission()
         self._subgoal_world = None
         self._dyn_prev = DynamicAction.RUN
+        self._wall = None
+        self._s_star = float("-inf")
+        if self._cfg is not None:
+            w = self._cfg["rns"]["watchdog"]
+            self._watchdog = ProgressWatchdog(int(w["window_s"] * 1000),
+                                              w["min_progress_m"])
         if self._cfg is not None:
             c = self._cfg["rns"]
             self._selector = CandidateSelector(c["candidate"]["side_hold_ticks"])
@@ -229,6 +255,20 @@ class RnsSource:
             self._fail(dev_fail)
             return zero
 
+        # ── B2. memory grid + progress bookkeeping (S2b) ─────────────────────
+        if profile is not None and now is not None and self._grid is not None:
+            self._grid.on_pose(pose)
+            self._grid.ingest_profile(profile, pose, yaw, now)
+        self._s_star = max(self._s_star, fs.projection.s_arc_m)
+        step_m = 0.0
+        if self._last_pose is not None:
+            step_m = math.hypot(pose[0] - self._last_pose[0],
+                                pose[1] - self._last_pose[1])
+        dt_ms = (now - self._last_now) if (now is not None and
+                                           self._last_now is not None) else 50
+        self._last_pose = pose
+        self._last_now = now
+
         # target: the subgoal while detouring, else the lookahead R.
         if self._state == NavState.DETOUR and self._subgoal_world is not None:
             target = self._subgoal_world
@@ -298,6 +338,24 @@ class RnsSource:
             if slowed:
                 caps["dynamic"] = 0.5 * v_nom
 
+        # ── C2. wall-follow tick (S2b -- 20 S7) ──────────────────────────────
+        if self._state == NavState.WALL_FOLLOW:
+            return self._wall_tick(profile, pose, yaw, fs, now, wz_max, step_m)
+
+        # ── C3. progress watchdog (S2b -- 20 S7.3A, RNS-N-15) ────────────────
+        if self._watchdog is not None and profile is not None:
+            boundary = any(d is not None for d in profile.d_block)
+            wd = self._watchdog.tick(
+                self._s_star, dt_ms, self._state.value,
+                self._state == NavState.WAIT_DYNAMIC, None, boundary)
+            if wd == WatchdogResult.ESCALATE_WALL:
+                if self._enter_wall(profile, pose, yaw, fs, now):
+                    return self._wall_tick(profile, pose, yaw, fs, now,
+                                           wz_max, step_m)
+            elif wd == WatchdogResult.REPORT_NO_PROGRESS:
+                self._fail(no_progress_failure("geometry"))
+                return zero
+
         # ── D. static avoidance state machine (20 S6) ────────────────────────
         if profile is not None:
             margin = cfg["clearance"]["margin_by_class"]["structure"]
@@ -312,8 +370,15 @@ class RnsSource:
                         sel.subgoal, pose, yaw)
                     self._transition(NavState.DETOUR)
                     target = self._subgoal_world
+                    self.audit.append(AuditRecord(now or 0, "detour_enter",
+                                                  {"subgoal": target}))
                 else:
-                    return zero      # no feasible candidate: hold (wall S2b)
+                    # S2b: no feasible candidate -- the S7.2 entry: hug the wall
+                    # if there is one; else hold and let the watchdog decide.
+                    if self._enter_wall(profile, pose, yaw, fs, now):
+                        return self._wall_tick(profile, pose, yaw, fs, now,
+                                               wz_max, step_m)
+                    return zero
             elif self._state == NavState.DETOUR:
                 d_sub = math.hypot(pose[0] - self._subgoal_world[0],
                                    pose[1] - self._subgoal_world[1])
@@ -339,6 +404,9 @@ class RnsSource:
                         sel = self._selector.select(False, best, False)
                         if sel is None:
                             self._subgoal_world = None
+                            if self._enter_wall(profile, pose, yaw, fs, now):
+                                return self._wall_tick(profile, pose, yaw, fs,
+                                                       now, wz_max, step_m)
                             self._transition(NavState.FOLLOW)
                             return zero
                         self._subgoal_world = self._body_to_world(
@@ -390,6 +458,130 @@ class RnsSource:
             if db * math.sin(ang_off) < half_w:
                 return True
         return False
+
+    def _enter_wall(self, profile, pose, yaw, fs, now) -> bool:
+        """S7.2 entry: all candidates gated out AND a BLOCKED boundary exists
+        (perception or memory). Chooses the side (goal-side heuristic when
+        neither end is visible) and opens the WallFollowState with s_hit = the
+        monotone best progress s* (20 S7.3). Returns False -> caller holds."""
+        if profile is None:
+            return False
+        boundary = any(d is not None for d in profile.d_block)
+        if not boundary and self._grid is not None and now is not None:
+            boundary = self._grid.nearest_blocked_in_sector(
+                pose, yaw, -math.pi, math.pi, now, r_max_m=3.0,
+                n_rays=12) is not None
+        if not can_enter(True, boundary):
+            return False
+        r_body = self._world_to_body(fs.lookahead_point, pose, yaw)
+        goal_side = Side.LEFT if r_body[1] > 0 else Side.RIGHT
+        side = select_side(False, False, 0.0, 0.0, goal_side, False, False)
+        if side is None:
+            return False
+        self._wall = WallFollowState(side=side, s_hit=self._s_star,
+                                     hit_point=(pose[0], pose[1]))
+        self._last_d_side = None
+        self._wall_corner = False
+        self._transition(NavState.WALL_FOLLOW)
+        self.audit.append(AuditRecord(now or 0, "wall_enter",
+                                      {"side": side.value,
+                                       "s_hit": self._s_star}))
+        return True
+
+    def _wall_tick(self, profile, pose, yaw, fs, now, wz_max, step_m):
+        """One WALL_FOLLOW tick (20 S7): keep-distance PD against the memory
+        grid's side sector (the wall is OUT of the 90-deg FOV -- RNS-I-7),
+        corner rules, the 2' arc-length leave, D3 crossing records, and the
+        three failure criteria."""
+        cfg = self._cfg["rns"]
+        wf = cfg["wall_follow"]
+        w = self._wall
+        zero = VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0), wz=0.0)
+        w.followed_m += step_m
+        self._s_star = max(self._s_star, fs.projection.s_arc_m)
+
+        # D3 crossing record: near the line with positive arc gain (S7A.1).
+        s_gain = fs.projection.s_arc_m - w.s_hit
+        if fs.projection.deviation_m < wf["e_ok_m"] and s_gain > 0.0:
+            record_crossing(w, s_gain, fs.projection.s_arc_m)
+
+        # exit (S7.3): back on line AND 2' arc progress AND goal dir open.
+        goal_open = not self._ahead_blocked(
+            profile, pose, yaw, fs.lookahead_point,
+            cfg["dynamic"]["stop_dist_m"])
+        if can_leave(fs.projection.deviation_m, fs.projection.s_arc_m,
+                     w.s_hit, goal_open, wf["e_ok_m"], wf["leave_progress_m"]):
+            self.audit.append(AuditRecord(now or 0, "wall_exit",
+                                          {"s": fs.projection.s_arc_m,
+                                           "followed_m": w.followed_m}))
+            self._wall = None
+            self._transition(NavState.FOLLOW)
+            return zero    # next tick follows; this tick stops cleanly
+
+        # failure (S7.6, D3-checked closed loop / no-progress / budget).
+        dist_h = math.hypot(pose[0] - w.hit_point[0], pose[1] - w.hit_point[1])
+        f = check_failure(w, dist_h, wf["min_loop_m"], wf["no_progress_m"],
+                          wf["max_follow_m"], wf["leave_progress_m"])
+        if f is not None:
+            self.audit.append(AuditRecord(now or 0, "wall_fail",
+                                          {"reason": f.reason.value}))
+            self._wall = None
+            self._fail(f)
+            return zero
+
+        # side-sector wall distance from MEMORY (perception U memory, S7.7).
+        lo = math.radians(wf["sector_lo_deg"])
+        hi = math.radians(wf["sector_hi_deg"])
+        if w.side == Side.LEFT:
+            a_lo, a_hi = lo, hi
+        else:
+            a_lo, a_hi = -hi, -lo
+        d_side = None
+        if self._grid is not None and now is not None:
+            d_side = self._grid.nearest_blocked_in_sector(
+                pose, yaw, a_lo, a_hi, now, r_max_m=4.0)
+
+        # corners + PD law (S7.7).
+        sgn = 1.0 if w.side == Side.LEFT else -1.0
+        fwd = [d for i, d in enumerate(profile.d_free)
+               if abs(profile.angle_min_rad + i * profile.angle_step_rad) < 0.35
+               and d is not None]
+        front_min = min(fwd) if fwd else profile.range_max_m
+        # concave corner with ENTRY/EXIT hysteresis (debug-found limit cycle:
+        # enter at front_stop, spin away, exit the instant front clears, PD
+        # turns back in, re-enter -- forever. Exit only when the front is
+        # CLEARLY open (2.5x), so the turn commits past the corner).
+        if self._wall_corner:
+            if front_min > wf["front_stop_m"] * 2.5:
+                self._wall_corner = False
+            else:
+                return VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0),
+                                         wz=-sgn * 0.6 * wz_max)
+        if inner_corner_stop(front_min, wf["front_stop_m"]):
+            self._wall_corner = True     # S7.7-3, hysteresis above
+            return VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0),
+                                     wz=-sgn * 0.6 * wz_max)
+        if wall_vanished(side_sector_has_blocked=(d_side is not None)):
+            # convex corner (S7.7-2): the wall left the sector -- curve gently
+            # TOWARD the wall side to re-acquire it, slow.
+            return VelocityCandidate(vx=Mps(0.3 * wf["v_max_mps"]), vy=Mps(0.0),
+                                     wz=sgn * 0.5 * wz_max)
+        rate = 0.0
+        if self._last_d_side is not None:
+            rate = (d_side - self._last_d_side) / max(0.02, 0.05)
+        self._last_d_side = d_side
+        wz = keep_distance_omega(d_side, wf["d_wall_m"], rate, w.side,
+                                 wf["kp_wall"], wf["kd_wall"], wz_max)
+        # far from the wall: cap the turn-IN rate so approach is a forward
+        # spiral, not an in-place spin toward the wall (the other half of the
+        # limit cycle). Toward-wall for LEFT is wz>0; for RIGHT wz<0.
+        if d_side > 2.0 * wf["d_wall_m"]:
+            cap = 0.35 * wz_max
+            if sgn > 0:
+                wz = min(wz, cap)
+            else:
+                wz = max(wz, -cap)
+        return VelocityCandidate(vx=Mps(wf["v_max_mps"]), vy=Mps(0.0), wz=wz)
 
     def _pick_candidate(self, profile, pose, yaw, fs, cfg, margin):
         """Build candidates from the profile, gate them, score them, return the
