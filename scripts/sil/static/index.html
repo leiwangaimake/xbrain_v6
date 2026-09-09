@@ -91,9 +91,10 @@
     <div id="info">连接中...</div>
   </div>
   <div id="help">
-    选工具后左键放置 / 墙 = 两次左键 /
-    路径 = 连点 + 右键结束 / 双击人车切动态 /
-    选墙拖端点 + 滚轮调厚 / 无工具点地图即导航
+    选工具后左键放置(可连放) / 墙 = 两次左键 /
+    路径 = 连点 / 右键 = 结束放置回到导航 /
+    双击人车切动态 / 选墙拖端点 + 滚轮调厚 /
+    无工具时点地图任意处即导航
   </div>
 </div>
 <canvas id="cv"></canvas>
@@ -113,11 +114,16 @@ let state = null;                       // last websocket state
 
 const tools = {b_person:"person", b_car:"car", b_wall:"wall",
                b_rock:"rock", b_cone:"cone", b_path:"path", b_wp:"wp"};
+function clearSel(){
+  // BUGFIX (user 2026-09-10): the redesign renamed obstacle buttons to .obtn
+  // but this only cleared .btn -- obstacle highlights accumulated forever.
+  document.querySelectorAll(".btn, .obtn").forEach(b => b.classList.remove("sel"));
+}
 for (const [id, t] of Object.entries(tools)){
   document.getElementById(id).onclick = () => {
     tool = (tool === t) ? null : t;
     wallStart = null; if (t !== "path") pathPts = [];
-    document.querySelectorAll(".btn").forEach(b => b.classList.remove("sel"));
+    clearSel();
     if (tool) document.getElementById(id).classList.add("sel");
   };
 }
@@ -131,13 +137,16 @@ async function post(url, body){
                      body: JSON.stringify(body||{})});
 }
 
-cv.addEventListener("contextmenu", e => {           // right click: finish path
+cv.addEventListener("contextmenu", e => {
+  // right click EXITS whatever placement tool is active (user 2026-09-10):
+  // path commits first; every tool then drops back to navigate mode (no tool
+  // selected -> left click on the map is goto again).
   e.preventDefault();
   if (tool === "path" && pathPts.length >= 1){
     post("/api/path", {points: pathPts});
-    pathPts = []; tool = null;
-    document.querySelectorAll(".btn").forEach(b => b.classList.remove("sel"));
   }
+  pathPts = []; wallStart = null; tool = null;
+  clearSel();
 });
 
 cv.addEventListener("mousedown", e => {
