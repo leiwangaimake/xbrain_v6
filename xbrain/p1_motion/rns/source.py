@@ -110,6 +110,7 @@ class RnsSource:
         self._last_d_side: Optional[float] = None
         self._wall_corner = False        # concave-corner turn in progress
         self._wall_last_move_ms = None   # in-wall stall backstop clock
+        self._wall_goal_dist_at_hit = 0.0
         self.audit = RingAudit(capacity=256)
         if cfg is not None:
             c = cfg["rns"]
@@ -442,6 +443,24 @@ class RnsSource:
         err = abs(wrap_angle(theta_des - yaw))
         v = v * max(0.15, math.cos(min(err, math.pi / 2)))
 
+        # UNIVERSAL contact fuse (collision audit #2 cont.): the wall-state fuse
+        # alone still let the robot graze a car corner in FOLLOW right after
+        # leaving the wall (host f() gate covers only +/-10 deg; the corner sat
+        # off-axis). ANY live hit closer than 0.7 m inside the +/-60 deg drive
+        # cone zeroes v this tick (turn continues; upper layers re-plan). A
+        # normal detour never trips this -- its corridor gate guarantees
+        # >= 1.1 m -- only an abnormal approach does.
+        if profile is not None:
+            for i, db in enumerate(profile.d_block):
+                if db is None or db >= 0.7:
+                    continue
+                ang_off = abs(wrap_angle(profile.angle_min_rad
+                                         + i * profile.angle_step_rad
+                                         + yaw - theta_des))
+                if ang_off < math.pi / 3:
+                    v = 0.0
+                    break
+
         # ── progress watchdog (20 S7.3A, RNS-N-15) -- placed HERE, after the
         # heading error is known, because its timing domain EXCLUDES ticks
         # whose binding limiter is heading/rtk. FIELD BUG (user, 2026-09-10):
@@ -587,6 +606,8 @@ class RnsSource:
         self._last_d_side = None
         self._wall_corner = False
         self._wall_last_move_ms = None
+        g = self._mission.endpoint
+        self._wall_goal_dist_at_hit = math.hypot(pose[0] - g[0], pose[1] - g[1])
         self._transition(NavState.WALL_FOLLOW)
         self.audit.append(AuditRecord(now or 0, "wall_enter",
                                       {"side": side.value,
@@ -635,8 +656,26 @@ class RnsSource:
         goal_open = not self._ahead_blocked(
             profile, pose, yaw, fs.lookahead_point,
             cfg["dynamic"]["stop_dist_m"], unseen_is_blocked=True, now=now)
-        if can_leave(fs.projection.deviation_m, fs.projection.s_arc_m,
-                     w.s_hit, goal_open, wf["e_ok_m"], wf["leave_progress_m"]):
+        # GOTO leave rule (design ruling 2026-09-10, 20 S7.3 v1.19): a goto
+        # has no path shape worth returning to -- its reference line (anchor ->
+        # goal) may cut straight THROUGH the obstacle, and the back-on-line
+        # condition then drags the robot BACK along the wall to touch that dead
+        # line before it may leave (user-observed: rounded the car wall with
+        # the goal 7.6 m dead ahead, walked AWAY north to e<0.3, U-turned).
+        # Classic Bug2 goto criterion instead: strictly closer to the goal
+        # than at the hit point AND the goal direction confirmed open. PATH
+        # missions keep the full three-condition rule (the line IS the task).
+        g = self._mission.endpoint
+        d_goal = math.hypot(pose[0] - g[0], pose[1] - g[1])
+        if self._mission.kind == MissionKind.GOTO:
+            leave_now = (goal_open and
+                         d_goal < self._wall_goal_dist_at_hit
+                         - wf["leave_progress_m"])
+        else:
+            leave_now = can_leave(fs.projection.deviation_m,
+                                  fs.projection.s_arc_m, w.s_hit, goal_open,
+                                  wf["e_ok_m"], wf["leave_progress_m"])
+        if leave_now:
             self.audit.append(AuditRecord(now or 0, "wall_exit",
                                           {"s": fs.projection.s_arc_m,
                                            "followed_m": w.followed_m}))
@@ -694,6 +733,20 @@ class RnsSource:
             # TOWARD the wall side to re-acquire it, slow.
             return VelocityCandidate(vx=Mps(0.3 * wf["v_max_mps"]), vy=Mps(0.0),
                                      wz=sgn * 0.5 * wz_max)
+        # CONTACT FUSE (collision audit #2, 2026-09-10): the PD keeps distance
+        # off the MEMORY grid, whose 0.25 m cells read large at point-like car
+        # corners -- the robot grazed a corner to -0.10 m body overlap while
+        # d_side still read ~1.0. Do not bet the hull on the PD: any LIVE
+        # profile hit closer than 0.75 m in the forward hemisphere stops and
+        # turns away immediately.
+        near_hit = None
+        for i, db in enumerate(profile.d_block):
+            if db is not None and db < 0.75 and (near_hit is None
+                                                 or db < near_hit):
+                near_hit = db
+        if near_hit is not None:
+            return VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0),
+                                     wz=-sgn * 0.6 * wz_max)
         rate = 0.0
         if self._last_d_side is not None:
             rate = (d_side - self._last_d_side) / max(0.02, 0.05)

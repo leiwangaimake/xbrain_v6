@@ -68,7 +68,7 @@ rns:
     subgoal_extra_m: 0.3           # [sim] clear 富余项 (20 S6.1 v1.11)
     side_hold_ticks: 5             # [sim] 换候选迟滞 5 拍 = 0.25s (20 S6.6)
   wall_follow:
-    d_wall_m: 0.8                  # [geo] 保距 = r_eff 0.5 + 0.3 余量 (20 S7.7)
+    d_wall_m: 1.0                  # [geo] 保距 = r_eff 0.5 + 0.5 余量; 0.8 时体距墙 0.34 会被记忆栅格 0.25 粒度误差蚀穿(2026-09-10 车角擦碰实测), 余量须 > cell_m (20 S7.7)
     kp_wall: 1.2                   # [sim] 保距 PD
     kd_wall: 0.05                  # [sim] 栅格粒度 0.25m 下 rate 噪声大, kd 压低
     sector_lo_deg: 45.0            # [geo] 侧扇区界 (FOV 90deg 的侧半)
