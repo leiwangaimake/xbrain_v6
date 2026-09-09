@@ -477,3 +477,32 @@ def test_goal_behind_wall_arrives_after_deviation_removal():
     tick, states, min_clear = _tick_until(world, rns, 4800)
     assert tick is not None, "behind-wall goal failed again"
     assert min_clear > 0.15
+
+
+def test_reentry_keeps_the_near_end_side():
+    # field bug 2026-09-10 (user: "eyes on the south detour, suddenly turned
+    # back north -- awkward"): walking a 6-car wall south to 1 m short of its
+    # end, a momentary leave + re-entry re-picked the side by the goal-side
+    # heuristic alone (sees_end was hardwired False,False) -- the goal bore
+    # 0.2 rad NORTH of the tangent tie so the pick flipped and re-walked the
+    # whole 13 m wall. With the S7.2 rule-1/2 end probe (wall_end_dist), the
+    # confirmed 1 m south end must win every (re-)entry. Scene = the exact
+    # live coordinates. Assertions: arrives, never crosses into the wall's
+    # north half (a north flip would push y above the wall's midline), and
+    # clearance holds. mutant: revert select_side feed to False,False ->
+    # the north lap returns, max_y climbs past -2 -> reddens.
+    world = SilWorld()
+    for x, y in ((-11.97, -1.07), (-12.10, -2.73), (-12.33, -4.90),
+                 (-12.03, -6.70), (-12.13, -8.57), (-12.13, -10.50)):
+        world.add_obstacle("car", x, y)
+    world.rx, world.ry, world.ryaw = -27.0, -5.0, 0.0
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(9.87, -5.2)]))
+    max_y = -math.inf
+    def watch(t, world, rns):
+        nonlocal max_y
+        max_y = max(max_y, world.ry)
+    tick, states, min_clear = _tick_until(world, rns, 4800, on_tick=watch)
+    assert tick is not None, "west-to-east past-wall goal did not arrive"
+    assert max_y < -2.0, "flipped north around the wall (max_y=%.2f)" % max_y
+    assert min_clear > 0.15

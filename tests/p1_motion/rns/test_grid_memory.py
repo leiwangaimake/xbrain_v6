@@ -141,3 +141,84 @@ def test_expired_entry_does_not_block_unknown_write():
     # a fresh BLOCKED then starts CLEAN (no hazard class inherited):
     g.write(2.0, 0.0, Cell.BLOCKED, now_ms=3010, cls="traverse")
     assert g.read(2.0, 0.0, now_ms=3500) == Cell.BLOCKED
+
+
+# -- wall_end_dist (S7.2 rules 1/2 feed, v1.21) -------------------------------
+def _paint_wall(g, x, y0, y1, now_ms=1000):
+    # a vertical BLOCKED strip at column x, y in [y0, y1], grid-pitch steps
+    y = y0
+    while y <= y1 + 1e-9:
+        g.write(x, y, Cell.BLOCKED, now_ms)
+        y += 0.25
+
+
+def _paint_free_band(g, x, y0, y1, half_w=1.5, now_ms=1000):
+    y = y0
+    while y <= y1 + 1e-9:
+        xx = x - half_w
+        while xx <= x + half_w + 1e-9:
+            g.write(xx, y, Cell.FREE, now_ms)
+            xx += 0.25
+        y += 0.25
+
+
+def test_wall_end_confirmed_by_free_only():
+    # field bug 2026-09-10 (re-entry flipped away from a 1 m-close wall end):
+    # the probe must CONFIRM the end with FREE evidence. South of the wall was
+    # walked (FREE painted) -> end found; north of the wall was never observed
+    # -> None, even though there is no BLOCKED there either. mutant: drop the
+    # has_free check -> the north probe also returns a distance -> reddens.
+    import math
+    g = _grid(cell_m=0.25)
+    _paint_wall(g, 0.0, -4.0, 0.0)
+    _paint_free_band(g, 0.0, -6.0, -4.25)          # observed ground past south end
+    south = g.wall_end_dist((0.0, -4.0), -math.pi / 2, now_ms=1000)
+    north = g.wall_end_dist((0.0, -4.0), math.pi / 2, now_ms=1000)
+    assert south is not None and south < 2.0
+    assert north is None
+
+
+def test_wall_gap_is_bridged_not_an_end():
+    # parked-car walls have ~1 m gaps between bodies; a gap < gap_bridge_m must
+    # NOT read as the wall's end even when the gap itself was observed FREE.
+    # mutant: shrink gap_bridge_m to 0.4 -> the 0.75 m observed gap-run reaches
+    # the (mutated) threshold and reads as an end -> reddens. (n_perp=0 does
+    # NOT redden this one: the ALONG-walk run reset bridges a straight-line
+    # gap by itself -- the perpendicular band's job is anchor offset, see
+    # test_anchor_offset_tolerated_by_perp_band.)
+    import math
+    g = _grid(cell_m=0.25)
+    _paint_wall(g, 0.0, -4.0, -2.5)
+    _paint_wall(g, 0.0, -1.5, 0.0)                 # 1.0 m gap in between
+    _paint_free_band(g, 0.0, -2.25, -1.75)         # the gap WAS observed free
+    north = g.wall_end_dist((0.0, -4.0), math.pi / 2, now_ms=1000, r_max_m=3.5)
+    assert north is None                            # wall runs past r_max; no end
+
+
+def test_unobserved_ground_is_not_an_end():
+    # the wall stops at y=-2 but nobody ever looked past it: the probe must
+    # refuse to call that an end (un-observed side would ALWAYS win the side
+    # pick otherwise). mutant: treat all-UNKNOWN band as an end -> reddens.
+    import math
+    g = _grid(cell_m=0.25)
+    _paint_wall(g, 0.0, -2.0, 0.0)
+    south = g.wall_end_dist((0.0, -2.0), -math.pi / 2, now_ms=1000)
+    assert south is None
+
+
+def test_anchor_offset_tolerated_by_perp_band():
+    # the anchor comes from the nearest-blocked BEARING, quantized to the
+    # profile's angular step (~15 deg) -- at 2 m range that is ~0.5 m of
+    # lateral anchor error, and real car walls jitter laterally too (field
+    # scene 2026-09-10: car x from -11.97 to -12.33). The probe line then runs
+    # BESIDE the wall column through observed-FREE ground; only the
+    # perpendicular band still sees the wall. mutant: n_perp=0 -> the offset
+    # probe reads an immediate end at ~1.25 m -> reddens.
+    import math
+    g = _grid(cell_m=0.25)
+    _paint_free_band(g, 0.0, -4.0, 0.0)            # whole area observed
+    _paint_wall(g, 0.5, -4.0, 0.0)                 # wall column at x=0.5
+    _paint_wall(g, 0.75, -4.0, 0.0)                # (two cells thick)
+    # anchor laterally OFF the wall by 0.5 m, probing north along it:
+    north = g.wall_end_dist((0.0, -4.0), math.pi / 2, now_ms=1000, r_max_m=3.5)
+    assert north is None                            # wall continues past r_max

@@ -676,9 +676,34 @@ class RnsSource:
         t2 = best_bearing - math.pi / 2.0
         walk = t1 if abs(wrap_angle(to_goal - t1)) <= \
             abs(wrap_angle(to_goal - t2)) else t2
-        side = (Side.RIGHT if wrap_angle(best_bearing - walk) < 0
-                else Side.LEFT)
-        side = select_side(False, False, 0.0, 0.0, side, False, False)
+        goal_side = (Side.RIGHT if wrap_angle(best_bearing - walk) < 0
+                     else Side.LEFT)
+        # rules 1/2 of S7.2 (v1.21): probe BOTH tangents for the wall's end in
+        # the memory grid, nearer confirmed end wins. Before this the call
+        # passed sees_end=False,False and the goal-side heuristic alone chose
+        # -- field bug 2026-09-10: re-entering 1 m short of the SOUTH end of a
+        # 13 m car wall, the goal bore 0.2 rad north of the tangent tie-line,
+        # so the pick flipped NORTH and re-walked the entire wall. The end
+        # probe knows "south end 1 m, north end >8 m" and rule 1 keeps south.
+        end1 = end2 = None
+        if self._grid is not None and now is not None:
+            anchor = (pose[0] + best_db * math.cos(best_bearing),
+                      pose[1] + best_db * math.sin(best_bearing))
+            end1 = self._grid.wall_end_dist(anchor, t1, now)
+            end2 = self._grid.wall_end_dist(anchor, t2, now)
+        # map tangents to hands: walking t, the wall normal falls on one side
+        side1 = (Side.RIGHT if wrap_angle(best_bearing - t1) < 0
+                 else Side.LEFT)
+        if side1 == Side.LEFT:
+            left_end, right_end = end1, end2
+        else:
+            left_end, right_end = end2, end1
+        big = 1e9    # "no confirmed end" cost for rule-2 comparison
+        side = select_side(
+            left_end is not None, right_end is not None,
+            left_end if left_end is not None else big,
+            right_end if right_end is not None else big,
+            goal_side, False, False)
         if side is None:
             return False
         self._wall = WallFollowState(side=side, s_hit=self._s_star,
@@ -691,7 +716,8 @@ class RnsSource:
         self._transition(NavState.WALL_FOLLOW)
         self.audit.append(AuditRecord(now or 0, "wall_enter",
                                       {"side": side.value,
-                                       "s_hit": self._s_star}))
+                                       "s_hit": self._s_star,
+                                       "end_l": left_end, "end_r": right_end}))
         return True
 
     def _wall_tick(self, profile, pose, yaw, fs, now, wz_max, step_m):

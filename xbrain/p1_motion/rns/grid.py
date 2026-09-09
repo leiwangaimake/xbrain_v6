@@ -271,6 +271,53 @@ class MemoryGrid:
                 r += self._cell_m
         return best
 
+    def wall_end_dist(self, anchor_xy, walk_bear: float, now_ms: int,
+                      r_max_m: float = 8.0, gap_bridge_m: float = 1.25):
+        """Distance from anchor (a point ON the wall) to the wall's END along
+        walk_bear, or None if no end is CONFIRMED within r_max_m. Feeds the
+        side-pick rules 1/2 of 20 S7.2 ("the side that sees the wall's end";
+        both see -> nearer end) -- before this the assembly passed sees_end =
+        False,False and the goal-side heuristic could send the robot the LONG
+        way around (field bug 2026-09-10: 1 m short of the south end, re-entry
+        flipped north and re-walked the whole 13 m wall).
+
+        Method: step along walk_bear from the anchor; at each step probe the
+        PERPENDICULAR band +/- gap_bridge_m for BLOCKED (the wall continues --
+        the band bridges intra-wall gaps like parked-car spacing ~1 m). A run
+        of gap_bridge_m steps with no BLOCKED is the end -- but ONLY when the
+        run carries FREE evidence: a band that is all UNKNOWN means "never
+        looked there", and treating it as an end would pick a side on wishful
+        thinking (the un-observed side would ALWAYS win). No FREE evidence ->
+        None, and the caller falls back to the goal-side heuristic (rule 3)."""
+        import math as _m
+        c, s = _m.cos(walk_bear), _m.sin(walk_bear)
+        nc, ns = -s, c                        # perpendicular unit vector
+        step = self._cell_m
+        n_perp = int(gap_bridge_m / step)
+        gap_run = 0.0
+        for k in range(1, int(r_max_m / step) + 1):
+            px = anchor_xy[0] + c * step * k
+            py = anchor_xy[1] + s * step * k
+            has_blocked = False
+            has_free = False
+            for j in range(-n_perp, n_perp + 1):
+                st = self.read(px + nc * step * j, py + ns * step * j, now_ms)
+                if st == Cell.BLOCKED:
+                    has_blocked = True
+                    break
+                if st == Cell.FREE:
+                    has_free = True
+            if has_blocked:
+                gap_run = 0.0                 # wall continues; reset the run
+                continue
+            if not has_free:
+                return None                   # un-observed: cannot confirm end
+            gap_run += step
+            if gap_run >= gap_bridge_m:
+                # end sits where the confirmed-free run began
+                return step * k - gap_run + step
+        return None
+
     def nearest_blocked_in_sector(self, pose_xy, yaw, ang_lo: float,
                                   ang_hi: float, now_ms: int,
                                   r_max_m: float = 4.0,
