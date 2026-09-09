@@ -90,6 +90,11 @@ class GuidancePlanner:
         self._build_mode: str = "none"
         self._coarse_cache: Dict[Tuple[int, int], Cell] = {}
         self._last_build_start_ms: Optional[int] = None
+        # G2: consecutive attempt-mode builds that could NOT reach the robot
+        # (or its 8-neighborhood). Two in a row -- with a fresh grid read in
+        # between -- is the domain no-path proof (S4A.3).
+        self._unreachable_builds = 0
+        self._last_chain: List[Tuple[int, int]] = []
 
     # ── task lifecycle (S4A.4: task-scoped, never persisted) ─────────────────
     def set_task(self, start_xy, goal_xy) -> None:
@@ -207,6 +212,27 @@ class GuidancePlanner:
                 return 4.0
         return 1.0
 
+    def domain_no_path(self) -> bool:
+        """G2 (S4A.3): True when two consecutive ATTEMPT builds -- a grid
+        refresh apart -- failed to reach the robot('s neighborhood). The
+        remembered BLOCKED set provably separates robot from goal inside
+        the domain: report no_path_in_domain, do not keep circling. mutant:
+        always False -> the sealed-goal scene times out -> reddens."""
+        return self._unreachable_builds >= 2
+
+    def chain_cut(self, grid, now_ms: int) -> bool:
+        """G2 event trigger: a cell on the SERVED descent chain turned
+        BLOCKED (fresh grid read, bypassing the build-scoped cache). The
+        period gate alone leaves up to replan_period_s of steering into a
+        newly-seen wall."""
+        for cell in self._last_chain:
+            cx, cy = self._center_of(cell)
+            q = self._coarse_m / 4.0
+            for dx, dy in ((-q, -q), (-q, q), (q, -q), (q, q)):
+                if grid.read(cx + dx, cy + dy, now_ms) == Cell.BLOCKED:
+                    return True
+        return False
+
     def request_replan(self) -> None:
         """Force the next on_tick to start a fresh build (event-driven
         replan: wall entry, discovered blockage). Cheap -- just clears the
@@ -272,17 +298,46 @@ class GuidancePlanner:
                                      w * self._coarse_m)
                 if sc is None:
                     continue
+                if dx != 0 and dy != 0:
+                    # NO corner cutting: a diagonal step needs BOTH orthogonal
+                    # neighbors passable. Two BLOCKED cells touching at a
+                    # corner otherwise leak the wavefront through the seam --
+                    # the sealed-box no-path proof never completed because
+                    # the field escaped through every box corner (G2 debug).
+                    o1 = self._coarse_state((cell[0] + dx, cell[1]),
+                                            grid, now_ms)
+                    o2 = self._coarse_state((cell[0], cell[1] + dy),
+                                            grid, now_ms)
+                    if o1 == Cell.BLOCKED or o2 == Cell.BLOCKED:
+                        continue
                 nc = cost + sc * self._inflate(nb, grid, now_ms)
                 if nc < build.get(nb, math.inf):
                     build[nb] = nc
                     heapq.heappush(opened, (nc, nb))
         # build finished. known mode that cannot reach the robot escalates to
         # attempt (dual-mode, S4A.3); otherwise the build becomes the field.
+        # Reachability accepts the robot cell OR any 8-neighbor: a hugging
+        # robot can sit on a coarse cell quantized BLOCKED -- demanding the
+        # exact cell would false-prove no-path against a wall it is legally
+        # following at d_wall.
         robot_cell = self._cell_of(pose_xy)
-        if self._build_mode == "known" and (
-                robot_cell is None or robot_cell not in build):
+        reached = False
+        if robot_cell is not None:
+            if robot_cell in build:
+                reached = True
+            else:
+                for dx, dy, _ in _NBRS:
+                    if (robot_cell[0] + dx, robot_cell[1] + dy) in build:
+                        reached = True
+                        break
+        if self._build_mode == "known" and not reached:
             self._start_build("attempt", now_ms)
             return
+        if self._build_mode == "attempt":
+            self._unreachable_builds = 0 if reached \
+                else self._unreachable_builds + 1
+        else:
+            self._unreachable_builds = 0
         self._field = build
         self._field_mode = self._build_mode
         self._build = None
@@ -361,13 +416,16 @@ class GuidancePlanner:
             return None
         # descent polyline from the robot cell (bounded)
         pts: List[Tuple[float, float]] = []
+        chain: List[Tuple[int, int]] = []
         cur = cell
         for _ in range(int(8.0 / self._coarse_m)):
             nxt = self._descend(cur)
             if nxt is None:
                 break
             cur = nxt
+            chain.append(cur)
             pts.append(self._center_of(cur))
+        self._last_chain = chain
         if not pts:
             return None                      # no descent: at/around the goal
         # farthest sighted point (scan far -> near; first hit wins)

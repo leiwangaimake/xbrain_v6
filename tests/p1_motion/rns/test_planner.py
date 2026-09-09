@@ -117,3 +117,53 @@ def test_budget_is_deterministic_node_quota():
     a = ticks_to_field()
     b = ticks_to_field()
     assert a == b and a >= 0
+
+
+def test_sealed_memory_proves_domain_no_path():
+    # G2 core proof (S4A.3): the goal cell ringed by remembered BLOCKED on
+    # OBSERVED ground -- two consecutive attempt builds cannot reach the
+    # robot => domain_no_path. This is the mechanism test; the scene-level
+    # sealed-box test only asserts BOUNDED termination (whichever of
+    # no_path_in_domain / wall-family fires first -- equivalent verdicts,
+    # 20 S9.0.2 note). mutants: (a) allow corner cutting -> the field leaks
+    # through ring corners -> never proves -> reddens; (b) domain_no_path
+    # always False -> reddens.
+    g, p = _mk()
+    _paint(g, -3.0, 8.0, -4.0, 4.0, Cell.FREE)          # observed ground
+    _paint(g, 2.0, 6.0, 2.0, 2.5, Cell.BLOCKED)         # sealed ring walls
+    _paint(g, 2.0, 6.0, -2.5, -2.0, Cell.BLOCKED)
+    _paint(g, 2.0, 2.5, -2.5, 2.5, Cell.BLOCKED)
+    _paint(g, 5.5, 6.0, -2.5, 2.5, Cell.BLOCKED)
+    p.set_task((-2.0, 0.0), (4.0, 0.0))                 # goal inside
+    pose = (-2.0, 0.0)
+    for i in range(400):
+        p.on_tick(g, pose, 1000 + i * 50)
+        if p.domain_no_path():
+            break
+    assert p.domain_no_path(), "sealed ring never proved no-path"
+
+
+def test_diagonal_wall_seam_does_not_leak():
+    # corner-cutting pin (G2 debug): a 45-deg thin wall coarsens into a
+    # DIAGONAL chain of BLOCKED cells -- every link is a corner seam. With
+    # corner cutting allowed, the wavefront slips between diagonal
+    # neighbors and the no-path proof never completes. Domain shrunk so the
+    # wall spans it fully. mutant: drop the two-orthogonal-neighbors check
+    # on diagonal steps -> the field leaks across -> reddens.
+    g = MemoryGrid(0.25, 600.0, 2.0, 1.0)
+    cfg = copy.deepcopy(_CFG)
+    cfg["guidance"]["domain_margin_m"] = 3.0
+    p = GuidancePlanner(cfg)
+    _paint(g, -6.0, 8.0, -6.0, 8.0, Cell.FREE)          # observed everywhere
+    x = -5.0
+    while x <= 7.0:                                     # 45-deg wall line
+        g.write(x, x - 1.0, Cell.BLOCKED, 1000)
+        g.write(x + 0.125, x - 0.875, Cell.BLOCKED, 1000)
+        x += 0.25
+    p.set_task((0.0, 3.0), (3.0, -2.0))                 # opposite sides
+    pose = (0.0, 3.0)
+    for i in range(400):
+        p.on_tick(g, pose, 1000 + i * 50)
+        if p.domain_no_path():
+            break
+    assert p.domain_no_path(), "field leaked through the diagonal seam"

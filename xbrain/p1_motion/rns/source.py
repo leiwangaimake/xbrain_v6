@@ -292,12 +292,25 @@ class RnsSource:
         self._r_star = None
         self._r_steer = None
         if self._planner is not None and now is not None:
+            # G2 event trigger: the served descent chain crossing a freshly
+            # remembered BLOCKED forces a rebuild now, not at the period.
+            if self._planner.chain_cut(self._grid, now):
+                self._planner.request_replan()
             self._planner.on_tick(self._grid, pose, now)
             # two grades of guidance (S4A.5 note): guide_point serves the
             # discrete decisions whatever the mode; steering_guide pulls the
             # continuous heading only off a KNOWN (observed-FREE) field.
             self._r_star = self._planner.guide_point(pose)
             self._r_steer = self._planner.steering_guide(pose)
+            # G2 (S4A.3): a PROVEN in-domain no-path terminates the mission
+            # with its own reason -- circling until wall_no_progress would
+            # bury a provable verdict under a tired-of-trying heuristic.
+            if self._planner.domain_no_path():
+                self._fail(NavFailure(
+                    NavFailReason.NO_PATH_IN_DOMAIN,
+                    detail={"goal": list(self._mission.endpoint),
+                            "unreachable_builds": 2}))
+                return zero
         self._s_star = max(self._s_star, fs.projection.s_arc_m)
         step_m = 0.0
         if self._last_pose is not None:

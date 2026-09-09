@@ -35,7 +35,7 @@ def test_fail_reason_closed_set_exact():
     assert {r.value for r in NavFailReason} == {
         "max_deviation", "wall_closed_loop", "wall_no_progress", "wall_budget",
         "watchdog_no_progress", "blocked_by_dynamic", "rtk_unreliable",
-        "target_lost",
+        "target_lost", "no_path_in_domain",
     }
 
 

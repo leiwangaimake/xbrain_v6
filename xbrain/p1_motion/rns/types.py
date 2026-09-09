@@ -123,6 +123,10 @@ class NavFailReason(str, Enum):
     BLOCKED_BY_DYNAMIC = "blocked_by_dynamic"  # 20 S5.3A wait budget
     RTK_UNRELIABLE = "rtk_unreliable"          # 20 S3.2.1 SINGLE/no-fix
     TARGET_LOST = "target_lost"                # 20 S2.10.4 (reserved #20-13)
+    NO_PATH_IN_DOMAIN = "no_path_in_domain"    # 20 S4A.3 (G2): both search
+    #   modes exhausted -- the remembered BLOCKED set separates robot from
+    #   goal inside the planning domain. A PROVEN no-path, not a tired-of-
+    #   trying heuristic; retry only after the world (or the goal) changes.
 
 
 # ── Mission (20 S4.2c / S9.0.3) ───────────────────────────────────────────────
