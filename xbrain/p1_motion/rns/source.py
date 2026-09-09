@@ -42,6 +42,7 @@ from .config import RnsConfigError, run_startup_assertions
 from .dynamic import DynamicAction, WaitBudget, distance_action, in_corridor
 from .grid import (MemoryGrid, profile_age_ms, profile_speed_limited,
                    profile_zero_speed, seg_stale)
+from .planner import GuidancePlanner
 from .wallfollow import (Side, WallFollowState, can_enter, can_leave,
                          check_failure, inner_corner_stop, keep_distance_omega,
                          record_crossing, select_side, wall_vanished)
@@ -114,6 +115,10 @@ class RnsSource:
         self._wall_goal_dist_at_hit = 0.0
         self._holo = False
         self._last_R = None                  # lookahead point, for observability
+        self._r_star = None                  # guidance point (20 S4A), per tick
+        self._r_steer = None                 # known-field steering guide
+        self._wall_cooldown_until = None     # R* steering mute after wall_exit
+        self._wall_entry_dwell = 0           # exit-eval mute after wall_enter
         self.audit = RingAudit(capacity=256)
         if cfg is not None:
             c = cfg["rns"]
@@ -125,6 +130,12 @@ class RnsSource:
             w = c["watchdog"]
             self._watchdog = ProgressWatchdog(int(w["window_s"] * 1000),
                                               w["min_progress_m"])
+            # guidance layer (20 S4A): missing config key fails loud here --
+            # a silently-absent planner would demote every direction decision
+            # back to local heuristics with no error anywhere.
+            self._planner = GuidancePlanner(c)
+        else:
+            self._planner = None
 
     def load_mission(self, mission: Mission) -> None:
         """P3/route pushes a mission (goto or path). Transitions IDLE -> FOLLOW.
@@ -132,6 +143,10 @@ class RnsSource:
         self._mission = mission
         self._state = NavState.FOLLOW
         self._reporter.reset_for_new_mission()
+        if self._planner is not None:
+            # domain seeds at the goal; the first on_tick rebuilds it around
+            # (pose, goal) before any search step runs (S4A.5).
+            self._planner.set_task(mission.endpoint, mission.endpoint)
         self._subgoal_world = None
         self._dyn_prev = DynamicAction.RUN
         self._wall = None
@@ -150,6 +165,8 @@ class RnsSource:
         self._mission = None
         self._state = NavState.IDLE
         self._last_R = None
+        if self._planner is not None:
+            self._planner.clear()           # S4A.4: domain dies with the task
 
     def take_arrival(self) -> bool:
         """W2: one-shot arrival latch. True exactly once after a mission
@@ -270,6 +287,17 @@ class RnsSource:
         if profile is not None and now is not None and self._grid is not None:
             self._grid.on_pose(pose)
             self._grid.ingest_profile(profile, pose, yaw, now)
+        # guidance layer (20 S4A): advance the budgeted build, then take R*.
+        # None -> every consumer below falls back to its v1.0 target.
+        self._r_star = None
+        self._r_steer = None
+        if self._planner is not None and now is not None:
+            self._planner.on_tick(self._grid, pose, now)
+            # two grades of guidance (S4A.5 note): guide_point serves the
+            # discrete decisions whatever the mode; steering_guide pulls the
+            # continuous heading only off a KNOWN (observed-FREE) field.
+            self._r_star = self._planner.guide_point(pose)
+            self._r_steer = self._planner.steering_guide(pose)
         self._s_star = max(self._s_star, fs.projection.s_arc_m)
         step_m = 0.0
         if self._last_pose is not None:
@@ -280,9 +308,20 @@ class RnsSource:
         self._last_pose = pose
         self._last_now = now
 
-        # target: the subgoal while detouring, else the lookahead R.
+        # target: the subgoal while detouring, else R* under a WALL COOLDOWN
+        # (G1 sweeps g1a-g1e settled this): continuous R* pulling is the
+        # layer's core win (south->gap_mid 57.8 m -> ~16 m came from pure
+        # FOLLOW riding R* around the column -- no wall contact at all), but
+        # pulling DURING/RIGHT AFTER a wall walk tangles with the Bug2
+        # geometry (churn FAILs). So R* steers in open running only: never
+        # in WALL_FOLLOW (that branch has its own laws) and not within the
+        # post-leave cooldown, where the plain R lets the leave settle.
         if self._state == NavState.DETOUR and self._subgoal_world is not None:
             target = self._subgoal_world
+        elif self._r_steer is not None and (
+                self._wall_cooldown_until is None or now is None
+                or now >= self._wall_cooldown_until):
+            target = self._r_steer
         else:
             target = fs.lookahead_point
 
@@ -711,7 +750,10 @@ class RnsSource:
                     + i * profile.angle_step_rad
         if best_db is None:
             return False                    # no visible wall bearing to hug
-        goal = self._mission.endpoint
+        # side pick aims at R* when guidance serves (S4A.5): the field
+        # already encodes WHICH way around is globally shorter, which is
+        # exactly the question the tangent tie-break is trying to answer.
+        goal = self._r_star or self._mission.endpoint
         to_goal = math.atan2(goal[1] - pose[1], goal[0] - pose[0])
         t1 = best_bearing + math.pi / 2.0
         t2 = best_bearing - math.pi / 2.0
@@ -747,8 +789,14 @@ class RnsSource:
             goal_side, False, False)
         if side is None:
             return False
+        if self._planner is not None:
+            # event replan (S4A.5): hitting a wall IS new information; the
+            # next build folds it in so R* (and any re-entry side pick)
+            # reflects the wall rather than the pre-collision straight line.
+            self._planner.request_replan()
         self._wall = WallFollowState(side=side, s_hit=self._s_star,
                                      hit_point=(pose[0], pose[1]))
+        self._wall_entry_dwell = 0
         self._last_d_side = None
         self._wall_corner = False
         self._wall_last_move_ms = None
@@ -799,7 +847,22 @@ class RnsSource:
         if fs.projection.deviation_m < wf["e_ok_m"] and s_gain > 0.0:
             record_crossing(w, s_gain, fs.projection.s_arc_m)
 
+        # entry dwell (churn fix, g1g audit: 10 wall_enters at ONE s_hit):
+        # enter -> leave -> re-enter each ~2 ticks when the leave criterion
+        # sits on its edge. A 1-tick flip is never meaningful wall-following;
+        # same S6.6 hysteresis family as the DETOUR dwell. Failure checks
+        # below stay live -- the dwell only mutes the EXIT evaluation.
+        self._wall_entry_dwell += 1
+        dwell_ok = self._wall_entry_dwell >= \
+            cfg["candidate"]["side_hold_ticks"]
         # exit (S7.3): back on line AND 2' arc progress AND goal dir open.
+        # goal_open deliberately does NOT use R* (G1 sweep lesson): while
+        # hugging, R* runs ALONG the wall ahead, so an R*-aimed open check is
+        # almost always true and the leave rule fires every few steps -- the
+        # wall walk fragments into enter/leave churn (4 mini-laps, one
+        # wall_no_progress FAIL in the g1b sweep). Leaving means "I can head
+        # for the REAL objective now", so the check aims at the plain
+        # lookahead R on the reference line.
         goal_open = not self._ahead_blocked(
             profile, pose, yaw, fs.lookahead_point,
             cfg["dynamic"]["stop_dist_m"], unseen_is_blocked=True, now=now)
@@ -828,7 +891,13 @@ class RnsSource:
             leave_now = can_leave(fs.projection.deviation_m,
                                   fs.projection.s_arc_m, w.s_hit, goal_open,
                                   wf["e_ok_m"], wf["leave_progress_m"])
+        if leave_now and not dwell_ok:
+            leave_now = False
         if leave_now:
+            # mute R* steering for 2 s: the fresh leave must settle on the
+            # plain reference geometry before the global pull resumes, or
+            # the pull re-triggers the wall it just left (g1b churn).
+            self._wall_cooldown_until = (now or 0) + 2000
             self.audit.append(AuditRecord(now or 0, "wall_exit",
                                           {"s": fs.projection.s_arc_m,
                                            "followed_m": w.followed_m}))
@@ -1005,7 +1074,11 @@ class RnsSource:
             profile.d_block, profile.d_free, profile.angle_min_rad,
             profile.angle_step_rad, profile.range_max_m,
             cand_cfg["edge_jump_m"], clear_m)
-        r_body = self._world_to_body(fs.lookahead_point, pose, yaw)
+        # angle costs aim at R* when guidance serves (S4A.5), else at R --
+        # this is what makes candidate selection prefer the globally right
+        # detour side instead of the straight-at-goal cone.
+        aim = self._r_star or fs.lookahead_point
+        r_body = self._world_to_body(aim, pose, yaw)
         w = cfg["cost_weights"]
         best = None
         best_cost = math.inf

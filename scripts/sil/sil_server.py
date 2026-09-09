@@ -333,7 +333,13 @@ async def broadcast(snap, cmd):
                 "target": tgt, "dist_to_target": dist_tgt,
                 "rns_state": rns.nav_state().value,
                 "subgoal": rns._subgoal_world,
-                "lookahead": getattr(rns, "_last_R", None), "wall": wall},
+                "lookahead": getattr(rns, "_last_R", None), "wall": wall,
+                "guide_path": (rns._planner.path_points(
+                    (world.rx, world.ry))
+                    if getattr(rns, "_planner", None) is not None else []),
+                "guide_mode": (rns._planner._field_mode
+                               if getattr(rns, "_planner", None) is not None
+                               else "none")},
     }
     msg = json.dumps(state)
     dead = []

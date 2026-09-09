@@ -337,6 +337,24 @@ function draw(){
   // yaw arrow (black, along +x of body frame)
   arrow(0, 0, 1.4*SCALE, 0, "#000");
   ctx.restore();
+  // guidance field descent polyline (20 S4A): orange solid = known field
+  // (confirmed FREE ground, steering active), orange dashed = attempt field
+  // (optimistic through unknown, decisions only)
+  if (state.nav.guide_path && state.nav.guide_path.length > 1){
+    ctx.save();
+    ctx.strokeStyle = "#ff9f43";
+    ctx.lineWidth = 2;
+    if (state.nav.guide_mode !== "known") ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    const [sx0, sy0] = w2s(state.nav.guide_path[0][0], state.nav.guide_path[0][1]);
+    ctx.moveTo(sx0, sy0);
+    for (const p of state.nav.guide_path.slice(1)){
+      const [px, py] = w2s(p[0], p[1]);
+      ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
   // detour subgoal marker (purple diamond) + dashed robot->S line
   if (state.nav.subgoal){
     const [gx, gy] = w2s(state.nav.subgoal[0], state.nav.subgoal[1]);

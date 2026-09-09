@@ -498,13 +498,22 @@ def test_reentry_keeps_the_near_end_side():
     world.rx, world.ry, world.ryaw = -27.0, -5.0, 0.0
     rns = RnsSource(cfg=CFG, r_eff_m=0.5)
     rns.load_mission(_mission([(9.87, -5.2)]))
-    max_y = -math.inf
+    # ASSERTION UPDATE (G1 guidance, 20 S4A): the original pin required the
+    # SOUTH lap (max_y < -2) because the v1.21 bug was a mid-wall flip that
+    # re-walked the whole wall. With the guidance field the run legitimately
+    # picks the NORTH end -- which is geometrically NEARER from this start
+    # (4.5 m vs 6.1 m to the wall ends). The disease was never the side; it
+    # was the DOUBLE lap. So the pin is now on total path length: a flip
+    # that re-walks the 13 m wall cannot fit under the bound.
+    path_len = 0.0
+    last = [world.rx, world.ry]
     def watch(t, world, rns):
-        nonlocal max_y
-        max_y = max(max_y, world.ry)
+        nonlocal path_len
+        path_len += math.hypot(world.rx - last[0], world.ry - last[1])
+        last[0], last[1] = world.rx, world.ry
     tick, states, min_clear = _tick_until(world, rns, 4800, on_tick=watch)
     assert tick is not None, "west-to-east past-wall goal did not arrive"
-    assert max_y < -2.0, "flipped north around the wall (max_y=%.2f)" % max_y
+    assert path_len < 50.0, "double-lap regression: %.1f m" % path_len
     assert min_clear > 0.15
 
 
@@ -660,3 +669,51 @@ def test_field_map_corridor_to_east_no_collision():
     tick, states, min_clear = _tick_until(world, rns, 4800)
     assert tick is not None
     assert min_clear > 0.10, "graze is back: %.3f" % min_clear
+
+
+def test_guidance_rescues_gap_mid_from_the_long_lap():
+    # G1 flagship regression (20 S4A): goal beside the car-gap, 6.7 m away.
+    # v1.0 walked 57.8 m (110.9 s) -- the better direction sat outside the
+    # 90-deg FOV and the goal-side heuristic looped the whole map. With the
+    # guidance field the run rides R* straight up the corridor (~16 m, no
+    # wall contact). mutant: disable the planner (self._planner = None) ->
+    # the long lap returns -> path bound reddens.
+    world = _field_world()
+    world.rx, world.ry, world.ryaw = -10.5, -14.0, 1.57
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(-11.6, -7.4)]))
+    path_len = 0.0
+    px, py = world.rx, world.ry
+    arrived = None
+    min_clear = math.inf
+    for t in range(2400):
+        now = t * 50
+        snap = world.synth_snapshot(now)
+        cand = rns.compute(Ctx(world, snap, now))
+        if cand is not None:
+            world.step_robot(cand.vx.value, cand.vy.value, cand.wz, DT)
+        path_len += math.hypot(world.rx - px, world.ry - py)
+        px, py = world.rx, world.ry
+        for o in world.obstacles.values():
+            if o.kind == "wall":
+                ax, ay, bx, by = o.x, o.y, o.x2, o.y2
+                ddx, ddy = bx - ax, by - ay
+                l2 = ddx * ddx + ddy * ddy
+                tt = 0 if l2 < 1e-9 else max(0, min(1, ((world.rx - ax) * ddx
+                                                        + (world.ry - ay) * ddy) / l2))
+                d = math.hypot(world.rx - (ax + tt * ddx),
+                               world.ry - (ay + tt * ddy)) - o.thick_m / 2 - 0.46
+            else:
+                ca, sa = math.cos(-o.heading), math.sin(-o.heading)
+                lx = ca * (world.rx - o.x) - sa * (world.ry - o.y)
+                ly = sa * (world.rx - o.x) + ca * (world.ry - o.y)
+                d = math.hypot(max(abs(lx) - 1.0, 0), max(abs(ly) - 0.6, 0)) - 0.46
+            min_clear = min(min_clear, d)
+        if rns.take_arrival():
+            arrived = t
+            break
+        if rns.take_failure() is not None:
+            break
+    assert arrived is not None, "gap_mid did not arrive"
+    assert path_len < 30.0, "long-lap regression: %.1f m" % path_len
+    assert min_clear > 0.10

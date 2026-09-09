@@ -91,6 +91,14 @@ rns:
     cell_m: 0.25                   # [geo] 分辨率 = r_eff/2 (20 S4.2.1)
     radius_m: 8.0                  # [geo] 滑动窗 > range_max 6m
     reset_jump_m: 1.0              # [sim] 位姿跳变清空阈值 (A-MEM-3)
+  guidance:                        # 记忆引导规划层 (20 S4A, v1.24 立项)
+    coarse_cell_m: 0.5             # [geo] 规划格 = 2x 记忆格 0.25 (S4A.5)
+    domain_margin_m: 15.0          # [sim] 任务包围盒外扩裕量
+    domain_cap_m: 60.0             # [sim] 规划域边长上限
+    unknown_cost_factor: 2.5       # [sim] attempt 模 UNKNOWN 代价 kappa (S4A.3)
+    nodes_per_tick: 400            # [sim] 每拍搜索节点配额; 确定性(非墙钟, 负载无关可复现)
+    replan_period_s: 2.0           # [sim] 周期重规划兜底 (G2 改截断精确触发)
+    guide_lookahead_m: 4.0         # [sim] R* 前瞻距离 (S4A.5)
   health:
     invalid_ratio_limit: 0.35      # [sim] RNS-I-2 强制限速阈 (20 S3.1.8)
   perception:
