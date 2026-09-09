@@ -98,3 +98,31 @@ class WaitBudget:
 
     def waiting(self) -> bool:
         return self._waiting_since_ms is not None
+
+
+def in_corridor(
+    obs_x: float, obs_y: float, obs_radius_m: float,
+    x: float, y: float, tx: float, ty: float,
+    half_width_m: float,
+) -> bool:
+    """RNS-N-8 (20 S5.4): does this obstacle occupy the corridor the robot is
+    about to walk -- the segment from the robot (x,y) toward its current target
+    (tx,ty) (the lookahead R in FOLLOW, the subgoal in DETOUR), widened by
+    half_width (r_eff + margin) plus the obstacle's own radius?
+
+    A-DYN-1 lives on this: side traffic OUTSIDE the corridor must not stop the
+    robot, so the test is distance-to-SEGMENT (not distance-to-robot), and a
+    slight overshoot past the target (t up to 1.2) still counts -- an obstacle
+    sitting right on the target blocks it too."""
+    dx, dy = tx - x, ty - y
+    seg_len_sq = dx * dx + dy * dy
+    if seg_len_sq < 1e-12:
+        # degenerate: no motion intent; only an obstacle on top of us blocks.
+        d = ((obs_x - x) ** 2 + (obs_y - y) ** 2) ** 0.5
+        return d < half_width_m + obs_radius_m
+    t = ((obs_x - x) * dx + (obs_y - y) * dy) / seg_len_sq
+    if t < 0.0 or t > 1.2:
+        return False
+    px, py = x + t * dx, y + t * dy
+    d = ((obs_x - px) ** 2 + (obs_y - py) ** 2) ** 0.5
+    return d < half_width_m + obs_radius_m

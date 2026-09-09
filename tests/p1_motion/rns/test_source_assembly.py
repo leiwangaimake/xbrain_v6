@@ -32,21 +32,23 @@ class Ctx:
     wz_max_rps: Optional[float] = 1.0
 
 
+import copy
+from pathlib import Path as _Path
+
+import yaml as _yaml
+
+_ROOT = _Path(__file__).resolve().parents[3]
+_REAL_CFG = _yaml.safe_load((_ROOT / "configs" / "rns.yaml").read_text(
+    encoding="utf-8"))
+
+
 def _cfg():
-    # a minimal valid rns.yaml snapshot for the follow spine.
-    # a minimal snapshot that also PASSES the startup assertions (W1): the
-    # D2 keys and an empty class_map are now required at construction.
-    return {"rns": {
-        "route": {"lookahead_k": 1.0, "lookahead_min_m": 1.0,
-                  "lookahead_max_m": 4.0, "max_deviation_m": 10.0,
-                  "k_yaw": 1.5},
-        "speed": {"dev_e0_m": 0.5, "dev_g_min": 0.1},
-        "wall_follow": {"leave_progress_m": 0.4},
-        "class_map": {},
-    }}
+    # the ONE rns.yaml (user ruling 2026-09-10): tests consume the real file,
+    # so a broken configs/rns.yaml fails HERE before it fails in the field.
+    return copy.deepcopy(_REAL_CFG)
 
 
-R_EFF = 0.48  # D2 needs r_eff at construction (W1)
+R_EFF = 0.5  # SIL r_eff (M20S half-diagonal); D2: leave_progress 0.4 < 1.0
 
 
 def _mission():

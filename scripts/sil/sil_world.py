@@ -216,6 +216,7 @@ class SilWorld:
             d_free=tuple(d_free), d_block=tuple(d_block),
             h_block=tuple(h_block), src=tuple(src), conf=tuple(conf))
         objs: List[TrackedObject] = []
+        cy, sy = math.cos(-self.ryaw), math.sin(-self.ryaw)
         for o in self.obstacles.values():
             if o.kind not in ("person", "car"):
                 continue
@@ -223,13 +224,19 @@ class SilWorld:
             if r_near > RANGE_MAX_M * 1.5:
                 continue
             rad = RADIUS["person"] if o.kind == "person" else CAR_HALF_L
-            fp = tuple((o.x + rad * math.cos(a), o.y + rad * math.sin(a))
+            # CONTRACT FIX (2026-09-10): 11 S3.1B frame is base_link -- footprint
+            # and velocity are BODY-frame. First draft leaked world coords.
+            bx = cy * (o.x - self.rx) - sy * (o.y - self.ry)
+            by = sy * (o.x - self.rx) + cy * (o.y - self.ry)
+            fp = tuple((bx + rad * math.cos(a), by + rad * math.sin(a))
                        for a in (0.0, 2.1, 4.2))
+            bvx = cy * o.vx - sy * o.vy
+            bvy = sy * o.vx + cy * o.vy
             objs.append(TrackedObject(
                 track_id=o.oid, class_name=o.kind, class_id=0, confidence=0.92,
                 semantic_status="confirmed", footprint_xy=fp,
                 z_min=0.02, z_max=1.7, r_near=max(0.0, r_near - rad),
-                velocity_xy=(o.vx, o.vy), velocity_frame="ego_removed",
+                velocity_xy=(bvx, bvy), velocity_frame="ego_removed",
                 velocity_valid=True,
                 velocity_status="moving" if o.dynamic else "static",
                 stable_frames=50))

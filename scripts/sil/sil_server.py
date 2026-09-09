@@ -68,12 +68,27 @@ nav = {"state": "idle", "direction": 1, "target": None, "last_done": None}
 class Ctx:
     """The tick context handed to RnsSource.compute -- the SIL stand-in for the
     P7.1 production snapshot. Field names are the production contract."""
-    def __init__(self, pose, yaw, snapshot):
+    def __init__(self, pose, yaw, snapshot, now_ms):
         self.pose_xy = pose
         self.yaw_rad = yaw
         self.v_nom_mps = V_NOM_MPS
         self.wz_max_rps = WZ_MAX_RPS
         self.perception = snapshot
+        self.now_mono_ms = now_ms
+
+
+def speed_gate_f(d_free_fwd: float) -> float:
+    """The HOST's four-band speed gate f(d_free) -- 12 S6.2 verbatim bands
+    ([3,inf) 2.0 / [1.8,3) 0.5 / [1.25,1.8) 0.2 / [0,1.25) 0). This is p1
+    output-layer duty, NOT RNS's; the SIL server IS the sim host, so it clamps
+    here exactly where the real p1 would."""
+    if d_free_fwd >= 3.0:
+        return 2.0
+    if d_free_fwd >= 1.8:
+        return 0.5
+    if d_free_fwd >= 1.25:
+        return 0.2
+    return 0.0
 
 
 def _nearest_entry_index(pts, x, y):
@@ -194,17 +209,25 @@ async def tick_loop():
         now_ms = int(t0 * 1000)
         world.step_obstacles(DT)
         snap = world.synth_snapshot(now_ms)
-        ctx = Ctx((world.rx, world.ry), world.ryaw, snap)
+        ctx = Ctx((world.rx, world.ry), world.ryaw, snap, now_ms)
         cand = rns.compute(ctx)
         if cand is not None:
             vx, vy, wz = cand.vx.value, cand.vy.value, cand.wz
         else:
             vx = vy = wz = 0.0
+        # host speed gate (12 S6.2): forward-sector min d_free clamps vx.
+        fwd = [d for i, d in enumerate(snap.profile.d_free)
+               if abs(i - 90) <= 20 and d is not None]
+        if fwd and vx > 0.0:
+            vx = min(vx, speed_gate_f(min(fwd)))
         world.step_robot(vx, vy, wz, DT)
         last_cmd = (vx, vy, wz)
         if rns.take_arrival():
             nav["last_done"] = "path" if nav["state"] == "running_path" else "goto"
             nav["state"] = "arrived"
+        fail = rns.take_failure()
+        if fail is not None:
+            nav["state"] = "failed: %s" % fail.reason.value
         await broadcast(snap, last_cmd)
         el = time.monotonic() - t0
         await asyncio.sleep(max(0.0, DT - el))
@@ -231,7 +254,8 @@ async def broadcast(snap, cmd):
         "path": world.path,
         "waypoints": world.waypoints,
         "nav": {"state": nav["state"], "direction": nav["direction"],
-                "target": tgt},
+                "target": tgt, "rns_state": rns.nav_state().value,
+                "subgoal": rns._subgoal_world},
     }
     msg = json.dumps(state)
     dead = []

@@ -247,3 +247,91 @@ class CandidateSelector:
             self._challenger = None
             self._challenger_streak = 0
         return self._current
+
+
+# ── perception-side candidate construction (S2 assembly -- 20 S6.1/S6.2) ──────
+def _polar_to_xy(theta: float, d: float) -> Point:
+    return (d * math.cos(theta), d * math.sin(theta))
+
+
+def obstacle_points(d_block: Sequence[Optional[float]], angle_min: float,
+                    angle_step: float) -> List[Point]:
+    """Body-frame cartesian points of every blocked bin -- the geometry the
+    clearance and unknown checks measure against. Perception data only."""
+    pts: List[Point] = []
+    for i, db in enumerate(d_block):
+        if db is not None:
+            pts.append(_polar_to_xy(angle_min + i * angle_step, db))
+    return pts
+
+
+def clearance_at(p: Point, obs_pts: Sequence[Point], range_max_m: float) -> float:
+    """Clearance of a body-frame point = distance to the nearest sensed obstacle
+    point (profile-derived, NOT world truth -- RNS consumes perception only).
+    No obstacle in view -> the sensing range bounds what we can claim."""
+    if not obs_pts:
+        return range_max_m
+    return min(math.hypot(p[0] - ox, p[1] - oy) for ox, oy in obs_pts)
+
+
+def unknown_ratio_toward(p: Point, d_free: Sequence[Optional[float]],
+                         angle_min: float, angle_step: float,
+                         window_bins: int = 5) -> float:
+    """Fraction of bins around the subgoal's bearing whose confirmed-free
+    distance does NOT reach the subgoal (S6.4 w_unk input): free shorter than
+    |X->S| (or unobserved None) means part of that ray is UNKNOWN."""
+    theta = math.atan2(p[1], p[0])
+    dist = math.hypot(p[0], p[1])
+    n = len(d_free)
+    center = round((theta - angle_min) / angle_step)
+    lo, hi = max(0, center - window_bins), min(n - 1, center + window_bins)
+    if hi < lo:
+        return 1.0    # bearing outside the sector: nothing confirmed
+    bad = 0
+    for i in range(lo, hi + 1):
+        df = d_free[i]
+        if df is None or df < dist:
+            bad += 1
+    return bad / (hi - lo + 1)
+
+
+def candidates_from_profile(
+    d_block: Sequence[Optional[float]], d_free: Sequence[Optional[float]],
+    angle_min: float, angle_step: float, range_max_m: float,
+    edge_jump_m: float, clear_m: float,
+) -> List[Candidate]:
+    """Build the tick's candidate set from the profile (S6.1): edges -> detour
+    subgoals off each edge, thread subgoals in each gap between an obstacle's
+    right edge and the next obstacle's left edge. All body-frame; the caller
+    rotates to world. Gates/cost run on the returned Candidates as usual --
+    this function only CONSTRUCTS, it never filters (gates are the filter)."""
+    edges = find_edges(d_block, angle_min, angle_step, edge_jump_m)
+    obs = obstacle_points(d_block, angle_min, angle_step)
+    cands: List[Candidate] = []
+
+    def _mk(p: Point) -> Candidate:
+        clr = clearance_at(p, obs, range_max_m)
+        dist = math.hypot(p[0], p[1])
+        theta = math.atan2(p[1], p[0])
+        n = len(d_free)
+        bi = round((theta - angle_min) / angle_step)
+        # unobserved: bearing outside the sector, or the free ray does not
+        # confirm space out to the subgoal (RNS-I-6 / gate 4 input).
+        if bi < 0 or bi >= n:
+            unobs = True
+        else:
+            df = d_free[bi]
+            unobs = df is None or df + clear_m < dist
+        return Candidate(subgoal=p, clearance_m=clr, dynamic_blocked=False,
+                         in_unobserved=unobs, fence_hazard=False)
+
+    for e in edges:
+        cands.append(_mk(detour_subgoal(e, clear_m)))
+    # thread: a gap is a +1 edge (clear at higher bearing) followed by a -1
+    # edge (clear at lower bearing) -- open space between two obstacles.
+    for a, b in zip(edges, edges[1:]):
+        if a.clear_side == 1 and b.clear_side == -1:
+            e1 = _polar_to_xy(a.theta_rad, a.d_near_m)
+            e2 = _polar_to_xy(b.theta_rad, b.d_near_m)
+            cands.append(_mk(thread_subgoal(e1, e2, (0.0, 0.0), clear_m)))
+    return cands
