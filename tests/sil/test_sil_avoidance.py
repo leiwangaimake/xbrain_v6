@@ -255,3 +255,28 @@ def test_car_wall_detour_does_not_oscillate():
         "stuck at the car wall (detour_enters=%d)" % enters
     assert enters < 20, \
         "detour oscillation: %d enters (healthy runs use a handful)" % enters
+
+
+def test_long_car_wall_hand_on_wall_and_no_pin_stall():
+    # FIELD BUG regressions #3+#4 (user 2026-09-10, second stall): an 11-car
+    # 17 m wall, goal south-west behind it.
+    #  #3 pin-stall: host speed gate zeroes vx below 1.25 m while the concave-
+    #     corner line sat at 0.8 -- in [0.8,1.25) RNS kept PD-walking in place
+    #     forever (v=0, wz wiggling, distance-metered failure criteria blind).
+    #     Fixed: front_stop 1.35 > host zero-line + wall-clock stall backstop.
+    #  #4 hand-on-wall inversion: "goal left -> hug left" walked AWAY from the
+    #     goal along the wall (three replay starts all went north). Fixed: goal
+    #     side and wall hand are OPPOSITE (goal left = wall on right hand).
+    # mutant: revert either -> this reddens (stuck forever or walks north).
+    world = SilWorld()
+    for x, y in ((-7.33, 1.33), (-7.53, -0.77), (-7.47, -2.83), (-7.90, -4.80),
+                 (-7.70, -6.07), (-7.83, -7.57), (-8.07, -9.07), (-8.00, -10.83),
+                 (-8.20, -12.50), (-8.43, -13.83), (-7.97, -15.97)):
+        world.add_obstacle("car", x, y)
+    world.rx, world.ry, world.ryaw = -6.2, -12.0, math.pi   # the user's stall
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(-15.07, -19.8)]))
+    tick, states, _ = _tick_until(world, rns, 2400)          # 2 min budget
+    assert tick is not None, "stuck/failed at the long car wall again"
+    d = math.hypot(world.rx + 15.07, world.ry + 19.8)
+    assert d < 1.2

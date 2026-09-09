@@ -73,12 +73,12 @@ rns:
     kd_wall: 0.05                  # [sim] 栅格粒度 0.25m 下 rate 噪声大, kd 压低
     sector_lo_deg: 45.0            # [geo] 侧扇区界 (FOV 90deg 的侧半)
     sector_hi_deg: 135.0
-    front_stop_m: 0.8              # [sim] 凹角前向停距 (20 S7.7-3)
+    front_stop_m: 1.35             # [sim] 凹角前向停距 (20 S7.7-3); 约束: 必须 > 宿主速度门 f() 切零线 1.25(12 S6.2 第四段下界), 否则 front 在 [front_stop, 1.25) 死区里 RNS 继续 PD 而宿主钳零 => 贴墙原地摆头永卡(2026-09-10 记录仪实测)
     e_ok_m: 0.3                    # [sim] 回折线判据 (20 S7.3 (1))
     leave_progress_m: 0.4          # [geo] (2)' delta_s; < 2*r_eff=1.0 (D2/S-7 过)
     corner_overshoot_m: 0.5        # [geo] 凸角过冲 ~ r_eff
     min_loop_m: 3.0                # [sim] 失败判据(1) 防刚上墙误判
-    no_progress_m: 25.0            # [sim] 失败判据(2); 须 > 最大预期绕障周长(U 形 ~20m), 否则正常外侧绕行段(无离墙机会是常态)误报
+    no_progress_m: 40.0            # [sim] 失败判据(2); 须 > 最大预期绕障周长 -- U 形 ~20m 后又遇 17m 车墙绕行 ~30m(2026-09-10 实测 25 误报), 本质是场景尺度依赖的兜底, 上限由 max_follow 60 收口
     max_follow_m: 60.0             # [sim] 失败判据(3) 兜底
     v_max_mps: 0.5                 # [sim] 贴墙限速
   backup:

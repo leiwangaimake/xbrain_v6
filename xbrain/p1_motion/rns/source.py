@@ -49,7 +49,7 @@ from .watchdog import ProgressWatchdog, WatchdogResult, no_progress_failure
 from .audit import AuditRecord, RingAudit
 from .route import Mission, align_omega, lookahead_distance, wrap_angle
 from .speed import SpeedCaps, cap_deviation
-from .types import (Cell, MissionKind, NavFailure, NavState, Origin,
+from .types import (Cell, MissionKind, NavFailReason, NavFailure, NavState, Origin,
                     VelocityCandidate, is_legal_transition)
 from xbrain.common.types.units import Mps
 
@@ -109,6 +109,7 @@ class RnsSource:
         self._last_now = None
         self._last_d_side: Optional[float] = None
         self._wall_corner = False        # concave-corner turn in progress
+        self._wall_last_move_ms = None   # in-wall stall backstop clock
         self.audit = RingAudit(capacity=256)
         if cfg is not None:
             c = cfg["rns"]
@@ -518,7 +519,13 @@ class RnsSource:
         if not can_enter(True, boundary):
             return False
         r_body = self._world_to_body(fs.lookahead_point, pose, yaw)
-        goal_side = Side.LEFT if r_body[1] > 0 else Side.RIGHT
+        # HAND-ON-WALL semantics (field bug #4, 2026-09-10 replay: three starts
+        # all hugged NORTH along a 17 m car wall with the goal SOUTH): `side` is
+        # WHICH HAND touches the wall. Goal to the LEFT means walk leftward
+        # along the wall, i.e. wall on the RIGHT hand -- the naive "goal left ->
+        # hug left" walks AWAY from the goal (the U-trap passed by symmetry
+        # luck). Bug-algorithm convention: goal side and wall hand are opposite.
+        goal_side = Side.RIGHT if r_body[1] > 0 else Side.LEFT
         side = select_side(False, False, 0.0, 0.0, goal_side, False, False)
         if side is None:
             return False
@@ -526,6 +533,7 @@ class RnsSource:
                                      hit_point=(pose[0], pose[1]))
         self._last_d_side = None
         self._wall_corner = False
+        self._wall_last_move_ms = None
         self._transition(NavState.WALL_FOLLOW)
         self.audit.append(AuditRecord(now or 0, "wall_enter",
                                       {"side": side.value,
@@ -543,6 +551,27 @@ class RnsSource:
         zero = VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0), wz=0.0)
         w.followed_m += step_m
         self._s_star = max(self._s_star, fs.projection.s_arc_m)
+
+        # in-wall STALL backstop (field bug #3, 2026-09-10 recorder): the S7.6
+        # criteria are all DISTANCE-metered (followed_m); a robot pinned in
+        # place (e.g. by the host speed gate) walks zero meters, so none of
+        # them can ever fire -- a silent forever-stall. Track wall-clock in the
+        # wall state: no displacement progress for watchdog.window_s -> fail
+        # honestly (bounded failure over silent hang, S9.0 discipline).
+        if now is not None:
+            if step_m > 0.005:
+                self._wall_last_move_ms = now
+            elif self._wall_last_move_ms is None:
+                self._wall_last_move_ms = now
+            stall_ms = now - self._wall_last_move_ms
+            if stall_ms > int(cfg["watchdog"]["window_s"] * 1000):
+                self.audit.append(AuditRecord(now, "wall_fail",
+                                              {"reason": "stall_in_place"}))
+                self._wall = None
+                self._fail(NavFailure(NavFailReason.WALL_NO_PROGRESS,
+                                      detail={"stall_s": stall_ms / 1000.0,
+                                              "followed_m": w.followed_m}))
+                return zero
 
         # D3 crossing record: near the line with positive arc gain (S7A.1).
         s_gain = fs.projection.s_arc_m - w.s_hit
@@ -596,7 +625,9 @@ class RnsSource:
         # turns back in, re-enter -- forever. Exit only when the front is
         # CLEARLY open (2.5x), so the turn commits past the corner).
         if self._wall_corner:
-            if front_min > wf["front_stop_m"] * 2.5:
+            # exit factor 1.8 (was 2.5): with front_stop raised to 1.35 (host
+            # gate zero-line clearance) 2.5x = 3.4 m rarely clears in corridors.
+            if front_min > wf["front_stop_m"] * 1.8:
                 self._wall_corner = False
             else:
                 return VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0),
