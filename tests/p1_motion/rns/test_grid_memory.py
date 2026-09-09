@@ -222,3 +222,96 @@ def test_anchor_offset_tolerated_by_perp_band():
     # anchor laterally OFF the wall by 0.5 m, probing north along it:
     north = g.wall_end_dist((0.0, -4.0), math.pi / 2, now_ms=1000, r_max_m=3.5)
     assert north is None                            # wall continues past r_max
+
+
+def test_diagonal_probe_snakes_along_wall_no_fake_end():
+    # field bug 2026-09-10 (45 m reverse lap): entering wall-follow at a
+    # CORNER, the nearest-blocked bearing points at the corner cell and the
+    # perpendicular tangents cut the wall DIAGONALLY -- the straight-line v1
+    # probe stepped off the wall onto just-walked FREE ground and reported a
+    # tiny fake end (live audit end_r=0.75); nearer-end-wins then walked the
+    # wrong way for 45 m. The v2 snake probe re-centers on the blocked
+    # centroid each step and must FOLLOW the wall instead. mutant: drop the
+    # re-center/blend -> the diagonal probe exits the wall in ~1 step and
+    # returns < 1.5 -> reddens.
+    import math
+    g = _grid(cell_m=0.25)
+    _paint_free_band(g, 0.0, -5.0, 1.0, half_w=2.5)   # observed ground all over
+    _paint_wall(g, 0.0, -4.0, 0.0)                    # then the wall on top
+    _paint_wall(g, 0.25, -4.0, 0.0)                   # (two cells thick)
+    # anchored at the SOUTH CORNER, probing NE at 45 deg (the diagonal cut):
+    d = g.wall_end_dist((0.125, -4.0), math.pi / 4, now_ms=1000, r_max_m=8.0)
+    # the snake must ride the wall north ~4 m to the TRUE end; the fake end
+    # of the straight diagonal probe (< 1.5 m) is the bug signature.
+    assert d is not None and d > 3.0, "fake end at %.2f (snake failed)" % (
+        d if d is not None else -1.0)
+
+
+def test_side_query_stops_at_unobserved_run():
+    # RNS-I-1 at the side query (field collision 2026-09-10, -0.152 m at the
+    # wall's south corner): hugging a wall, the face sits ~90 deg -- outside
+    # the FOV -- and inside the 0.59 m blind zone once close, so it is NEVER
+    # written. The old query skipped through that UNKNOWN and returned a
+    # STALE far hit (d_side 2.0 with the true face 0.4 m away); the PD then
+    # steered toward the phantom and dragged the hull through the corner.
+    # A ray meeting >= 0.5 m of un-observed cells (no FREE between) must stop
+    # and report the run's START. mutant: read through UNKNOWN to the far
+    # BLOCKED -> returns ~3.0 -> reddens.
+    import math
+    g = _grid(cell_m=0.25)
+    g.write(3.0, 0.0, Cell.BLOCKED, 1000)     # far stale hit dead ahead
+    d = g.nearest_blocked_in_sector((0.0, 0.0), 0.0, 0.0, 0.0, 1000,
+                                    r_max_m=4.0, n_rays=1)
+    assert d is not None and d < 1.0, "read through UNKNOWN to %.2f" % d
+    # and the healthy case: sparse FREE paint (0.5 m spacing) up to the wall
+    # never trips the run -- the true hit distance comes back.
+    g2 = _grid(cell_m=0.25)
+    x = 0.5
+    while x < 3.0:
+        g2.write(x, 0.0, Cell.FREE, 1000)
+        x += 0.5
+    g2.write(3.0, 0.0, Cell.BLOCKED, 1000)
+    d2 = g2.nearest_blocked_in_sector((0.0, 0.0), 0.0, 0.0, 0.0, 1000,
+                                      r_max_m=4.0, n_rays=1)
+    assert d2 is not None and abs(d2 - 3.0) < 0.3, "sparse FREE tripped: %s" % d2
+
+
+def test_footprint_stamped_free_on_ingest():
+    # companion to the conservative side query: the sensor cannot see its own
+    # feet (blind zone), so the robot's footprint is stamped FREE each ingest
+    # -- the body standing there IS the observation. Without it every side
+    # ray starts in UNKNOWN and the conservative query reads a phantom wall
+    # at 0.25 m on open ground. mutant: drop the stamp -> reddens.
+    from xbrain.p1_motion.rns.inputs import ProfileMsg
+    g = _grid(cell_m=0.25)
+    prof = ProfileMsg(t_capture_mono_ms=0, t_publish_mono_ms=0,
+                      extrinsic_calibrated=True, angle_min_rad=-0.785,
+                      angle_step_rad=0.00872665, n_bins=181,
+                      range_max_m=6.0, blind_near_m=0.59, z_pass_m=0.3,
+                      t_seg_mono_ms=None,
+                      d_free=tuple([None] * 181),
+                      d_block=tuple([None] * 181),
+                      src=tuple([0] * 181))
+    g.ingest_profile(prof, (5.0, 5.0), 0.0, 1000)
+    assert g.read(5.0, 5.0, 1000) == Cell.FREE          # under the body
+    assert g.read(5.0, 5.25, 1000) == Cell.FREE         # within r_eff disc
+    assert g.read(5.0, 6.0, 1000) == Cell.UNKNOWN       # outside the disc
+
+
+def test_end_probe_center_band_free_only():
+    # the FREE evidence for an end must sit near the probe LINE: a walked
+    # corridor BESIDE the wall must not vouch for an un-written (blind-zone)
+    # wall segment (field collision 2026-09-10: fake end 0.8 m early, corner
+    # cut through the still-standing wall). Wall written y in [-4,-2], the
+    # y in (-2,0] segment un-written; corridor 1.25 m west all FREE. mutant:
+    # count wide-band FREE -> the probe calls an end at ~2 m -> reddens.
+    import math
+    g = _grid(cell_m=0.25)
+    _paint_wall(g, 0.0, -4.0, -2.0)                     # written wall segment
+    y = -4.0
+    while y <= 0.5:
+        g.write(-1.25, y, Cell.FREE, 1000)              # corridor beside
+        g.write(-1.0, y, Cell.FREE, 1000)
+        y += 0.25
+    d = g.wall_end_dist((0.0, -4.0), math.pi / 2, now_ms=1000, r_max_m=3.5)
+    assert d is None, "corridor FREE vouched for the blind segment: %s" % d

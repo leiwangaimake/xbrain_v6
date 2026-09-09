@@ -228,14 +228,30 @@ class MemoryGrid:
         return len(self._cells)
 
     def ingest_profile(self, profile, pose_xy, yaw, now_ms: int,
-                       free_step_m: float = 0.5) -> None:
+                       free_step_m: float = 0.5,
+                       foot_r_m: float = 0.5) -> None:
         """S2b assembly: write one tick's profile into the grid (world frame).
         Every blocked bin writes its hit point BLOCKED; the free run before it
         (or the full free ray) writes sparse FREE samples. This is what makes
         wall-follow possible at all on a 90 deg FOV: the wall being hugged sits
         at ~90 deg to the side -- OUT of view -- and lives only here (RNS-I-7).
+
+        The robot FOOTPRINT is stamped FREE too (v2, with the conservative
+        side query): the body standing there IS the traversability
+        observation -- the sensor cannot see its own feet (0.59 m blind
+        zone), so without the stamp the first cells of every side ray stay
+        UNKNOWN forever and the conservative d_side would read a phantom
+        wall at 0.25 m on open ground.
         """
         import math as _m
+        # footprint disc, foot_r_m around the pose
+        span = int(foot_r_m / self._cell_m)
+        for fi in range(-span, span + 1):
+            for fj in range(-span, span + 1):
+                fx = pose_xy[0] + fi * self._cell_m
+                fy = pose_xy[1] + fj * self._cell_m
+                if _m.hypot(fx - pose_xy[0], fy - pose_xy[1]) <= foot_r_m:
+                    self.write(fx, fy, Cell.FREE, now_ms)
         for i in range(profile.n_bins):
             ang = yaw + profile.angle_min_rad + i * profile.angle_step_rad
             c, si = _m.cos(ang), _m.sin(ang)
@@ -281,41 +297,86 @@ class MemoryGrid:
         way around (field bug 2026-09-10: 1 m short of the south end, re-entry
         flipped north and re-walked the whole 13 m wall).
 
-        Method: step along walk_bear from the anchor; at each step probe the
-        PERPENDICULAR band +/- gap_bridge_m for BLOCKED (the wall continues --
-        the band bridges intra-wall gaps like parked-car spacing ~1 m). A run
-        of gap_bridge_m steps with no BLOCKED is the end -- but ONLY when the
-        run carries FREE evidence: a band that is all UNKNOWN means "never
-        looked there", and treating it as an end would pick a side on wishful
-        thinking (the un-observed side would ALWAYS win). No FREE evidence ->
-        None, and the caller falls back to the goal-side heuristic (rule 3)."""
+        Method -- WALL-SNAKE probe (v2, field bug 2026-09-10 "45 m reverse
+        lap"): step along the probe heading; at each step scan the
+        PERPENDICULAR band +/- gap_bridge_m for BLOCKED cells (the band
+        bridges intra-wall gaps like parked-car spacing ~1 m). While BLOCKED
+        is present, RE-CENTER the probe onto the band's blocked centroid and
+        BLEND the heading toward the actual drift -- the probe line follows
+        the wall's true run even when walk_bear starts diagonal. This is the
+        v2 core: v1 probed a straight line, and entering at a wall CORNER the
+        nearest-blocked bearing points at the corner cell, so both
+        perpendicular tangents cut the wall diagonally -- one step walked off
+        the wall onto just-walked FREE ground and a tiny FAKE end (live
+        audit: end_r=0.75) flipped nearer-end-wins into a 45 m reverse lap.
+        A run of gap_bridge_m with no BLOCKED is the end -- but ONLY when the
+        run carries FREE evidence: an all-UNKNOWN band means "never looked",
+        and calling that an end would let the un-observed side always win.
+        Returns the ARC length walked to the end (real detour cost), else
+        None."""
         import math as _m
-        c, s = _m.cos(walk_bear), _m.sin(walk_bear)
-        nc, ns = -s, c                        # perpendicular unit vector
+        hx, hy = _m.cos(walk_bear), _m.sin(walk_bear)
+        px, py = anchor_xy
         step = self._cell_m
         n_perp = int(gap_bridge_m / step)
         gap_run = 0.0
-        for k in range(1, int(r_max_m / step) + 1):
-            px = anchor_xy[0] + c * step * k
-            py = anchor_xy[1] + s * step * k
-            has_blocked = False
+        walked = 0.0
+        while walked < r_max_m:
+            # advance one step along the current heading
+            px += hx * step
+            py += hy * step
+            walked += step
+            nc, ns = -hy, hx                 # perpendicular unit vector
+            hits = []
             has_free = False
             for j in range(-n_perp, n_perp + 1):
                 st = self.read(px + nc * step * j, py + ns * step * j, now_ms)
                 if st == Cell.BLOCKED:
-                    has_blocked = True
-                    break
-                if st == Cell.FREE:
+                    hits.append(j)
+                elif st == Cell.FREE and abs(j) <= 2:
+                    # FREE evidence counts only near the probe LINE (+/-0.5 m):
+                    # the band is gap_bridge wide to bridge wall gaps, but a
+                    # FREE corridor BESIDE the wall must not vouch for an
+                    # un-written wall segment (field collision 2026-09-10:
+                    # the blind-zone wall face stayed UNKNOWN while the
+                    # walked corridor 1 m west was all FREE -- the wide-band
+                    # evidence called a fake end 0.8 m early and the corner
+                    # cut went through the still-standing wall).
                     has_free = True
-            if has_blocked:
-                gap_run = 0.0                 # wall continues; reset the run
+            if hits:
+                gap_run = 0.0                # wall continues; keep following
+                # re-center onto the blocked centroid (capped to half the
+                # band) and blend the heading toward the observed drift --
+                # the snake part. Cap + blend keep one noisy cell from
+                # yanking the probe off line.
+                off = sum(hits) / len(hits) * step
+                off = max(-gap_bridge_m / 2, min(gap_bridge_m / 2, off))
+                px += nc * off * 0.5
+                py += ns * off * 0.5
+                if abs(off) > 1e-9:
+                    dhx = hx + nc * (off / step) * 0.3
+                    dhy = hy + ns * (off / step) * 0.3
+                    n = _m.hypot(dhx, dhy)
+                    hx, hy = dhx / n, dhy / n
                 continue
             if not has_free:
-                return None                   # un-observed: cannot confirm end
+                # un-observed inside the gap. If the confirmed-FREE run is
+                # already substantial (>= 0.6 * gap_bridge), the end IS
+                # confirmed -- the far side merely fades into unexplored
+                # ground. Field data 2026-09-10 (corr->east_mid): the probe
+                # rode the wall 4.5 m to its true south end, banked a 1.0 m
+                # FREE run past it, then hit one un-observed band 0.25 m
+                # short of gap_bridge and the whole probe was voided -- the
+                # side pick fell to the goal heuristic and walked a 19.4 m
+                # lap the wrong way. A thin run (< 0.6 * bridge) still
+                # returns None: never call an end on wishful thinking.
+                if gap_run >= 0.6 * gap_bridge_m:
+                    return walked - gap_run
+                return None
             gap_run += step
             if gap_run >= gap_bridge_m:
                 # end sits where the confirmed-free run began
-                return step * k - gap_run + step
+                return walked - gap_run + step
         return None
 
     def nearest_blocked_in_sector(self, pose_xy, yaw, ang_lo: float,
@@ -325,19 +386,50 @@ class MemoryGrid:
         """Min distance to a remembered BLOCKED cell inside a body-frame angular
         sector (the wall-follow d_side query, 20 S7.7: perception U memory --
         here memory IS the union, since ingest_profile wrote perception in).
-        Returns None when the sector holds no remembered wall."""
+        Returns None when the sector holds no remembered wall.
+
+        UNKNOWN is a WALL CANDIDATE, not vacuum (RNS-I-1; field collision
+        2026-09-10, corr->east_mid -0.152 m): hugging a wall, the wall face
+        sits at ~90 deg -- outside the FOV -- and once the robot drifts close
+        it falls inside the 0.59 m sensor blind zone, so the face is NEVER
+        written and stays UNKNOWN forever. The old query skipped through that
+        UNKNOWN and returned a STALE far hit (d_side 2.0 while the true face
+        was 0.4 m away); the PD then steered TOWARD the phantom and dragged
+        the hull through the wall's south corner. Rule: a ray that meets a
+        run of un-observed cells (>= unk_wall_m with no FREE in between)
+        stops there and reports the run's START as a conservative distance --
+        keep-distance then holds d_wall off the un-observed region, which
+        also brings the real face back out of the blind zone so the memory
+        heals itself. Sparse FREE paint (0.5 m spacing) never trips the
+        0.5 m run: every other cell reads FREE and resets it."""
         import math as _m
+        unk_wall_m = 0.5
         best: Optional[float] = None
         for k in range(n_rays):
             ang = yaw + ang_lo + (ang_hi - ang_lo) * k / max(1, n_rays - 1)
             c, si = _m.cos(ang), _m.sin(ang)
             r = self._cell_m
+            unk_run = 0.0
+            unk_start = None
             while r <= r_max_m:
-                if self.read(pose_xy[0] + r * c, pose_xy[1] + r * si,
-                             now_ms) == Cell.BLOCKED:
+                st = self.read(pose_xy[0] + r * c, pose_xy[1] + r * si, now_ms)
+                if st == Cell.BLOCKED:
                     if best is None or r < best:
                         best = r
                     break
+                if st == Cell.FREE:
+                    unk_run = 0.0
+                    unk_start = None
+                else:
+                    if unk_start is None:
+                        unk_start = r
+                    unk_run += self._cell_m
+                    if unk_run >= unk_wall_m:
+                        # un-observed run: conservative wall candidate at its
+                        # start. Do NOT read through it to a farther hit.
+                        if best is None or unk_start < best:
+                            best = unk_start
+                        break
                 r += self._cell_m
         return best
 
