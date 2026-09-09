@@ -123,7 +123,9 @@ def _load_goto(x: float, y: float) -> None:
 # ── REST ─────────────────────────────────────────────────────────────────────
 @app.get("/")
 async def index():
-    return FileResponse(str(ROOT / "scripts" / "sil" / "static" / "index.html"))
+    return FileResponse(
+        str(ROOT / "scripts" / "sil" / "static" / "index.html"),
+        headers={"Cache-Control": "no-store, must-revalidate"})
 
 
 @app.post("/api/obstacle")
@@ -237,8 +239,16 @@ async def broadcast(snap, cmd):
     if not clients:
         return
     tgt = None
+    dist_tgt = None
     if rns._mission is not None:
         tgt = rns._mission.endpoint
+        dist_tgt = math.hypot(world.rx - tgt[0], world.ry - tgt[1])
+    wall = None
+    if rns._wall is not None:
+        wall = {"side": rns._wall.side.value,
+                "followed_m": round(rns._wall.followed_m, 1),
+                "d_side": (round(rns._last_d_side, 2)
+                           if rns._last_d_side is not None else None)}
     state = {
         "robot": {"x": world.rx, "y": world.ry, "yaw": world.ryaw,
                   "vx": cmd[0], "vy": cmd[1], "wz": cmd[2],
@@ -254,8 +264,9 @@ async def broadcast(snap, cmd):
         "path": world.path,
         "waypoints": world.waypoints,
         "nav": {"state": nav["state"], "direction": nav["direction"],
-                "target": tgt, "rns_state": rns.nav_state().value,
-                "subgoal": rns._subgoal_world},
+                "target": tgt, "dist_to_target": dist_tgt,
+                "rns_state": rns.nav_state().value,
+                "subgoal": rns._subgoal_world, "wall": wall},
     }
     msg = json.dumps(state)
     dead = []

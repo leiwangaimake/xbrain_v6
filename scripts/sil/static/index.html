@@ -10,66 +10,90 @@
 <style>
   * { box-sizing: border-box; }
   body { margin:0; font-family:"Segoe UI",system-ui,sans-serif; display:flex;
-         height:100vh; background:#0f172a; }
-  #panel { width:230px; background:#1e293b; padding:14px 12px; overflow-y:auto;
-           border-right:1px solid #334155; }
-  #panel h3 { margin:2px 0 14px; color:#f1f5f9; font-size:17px;
-              letter-spacing:1px; }
-  .grp { background:#273548; border:1px solid #334155; border-radius:10px;
-         padding:10px; margin-bottom:12px; }
-  .grp .lbl { color:#94a3b8; font-size:11px; letter-spacing:2px;
-              margin-bottom:8px; text-transform:uppercase; }
-  .btn { display:block; width:100%; margin:6px 0; padding:9px 8px; border:none;
-         border-radius:8px; cursor:pointer; font-size:13px; color:#f8fafc;
-         text-align:left; transition:filter .12s, transform .05s; }
-  .btn:hover { filter:brightness(1.18); }
-  .btn:active { transform:scale(0.98); }
-  .btn.sel { outline:2px solid #fbbf24; outline-offset:1px; }
-  .btn .dot { display:inline-block; width:10px; height:10px; border-radius:50%;
-              margin-right:8px; vertical-align:middle; }
-  #b_person{background:#3f4b61} #b_person .dot{background:#eab308}
-  #b_car{background:#3f4b61}    #b_car .dot{background:#94a3b8;border-radius:2px}
-  #b_wall{background:#3f4b61}   #b_wall .dot{background:#e2e8f0;border-radius:1px;width:16px;height:5px}
-  #b_rock{background:#3f4b61}   #b_rock .dot{background:#ea8a3c}
-  #b_cone{background:#3f4b61}   #b_cone .dot{background:#ef4444;border-radius:1px}
-  #b_path{background:#1d4ed8}   #b_wp{background:#b91c1c}
-  #b_exec{background:linear-gradient(135deg,#059669,#10b981); font-weight:600;
-          text-align:center; font-size:14px; padding:12px 8px;}
-  #b_reset{background:#475569; text-align:center;}
-  #info { background:#0b1220; border:1px solid #334155; border-radius:10px;
-          padding:10px; font-size:12px; color:#7dd3fc; white-space:pre-line;
-          font-family:Consolas,monospace; line-height:1.7; }
-  #help { font-size:11px; color:#64748b; margin-top:10px; line-height:1.6; }
-  #cv { flex:1; background:#f8fafc; cursor:crosshair; }
+         height:100vh; background:#0b1120; }
+  #panel { width:250px; background:#111827; padding:14px 12px; overflow-y:auto;
+           border-right:1px solid #1f2937; }
+  #panel h3 { margin:2px 0 14px; color:#f9fafb; font-size:17px;
+              letter-spacing:2px; font-weight:600; }
+  .grp { background:#1a2332; border:1px solid #2a3648; border-radius:12px;
+         padding:12px 10px; margin-bottom:12px; }
+  .grp .lbl { color:#6b7f99; font-size:10px; letter-spacing:3px;
+              margin-bottom:10px; text-transform:uppercase; }
+  /* graphical obstacle buttons: the button IS the obstacle shape */
+  #obsgrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .obtn { position:relative; height:64px; border:none; border-radius:10px;
+          background:#232f42; cursor:pointer; display:flex; flex-direction:column;
+          align-items:center; justify-content:center; gap:5px;
+          transition:background .12s, transform .06s, box-shadow .12s; }
+  .obtn:hover { background:#2c3a52; box-shadow:0 0 0 1px #3b4d68 inset; }
+  .obtn:active { transform:scale(.96); }
+  .obtn.sel { box-shadow:0 0 0 2px #f59e0b inset, 0 0 12px rgba(245,158,11,.35); }
+  .obtn span { color:#cbd5e1; font-size:11px; }
+  .shape { display:block; }
+  .sh-person { width:26px; height:26px; border-radius:50%;
+               background:radial-gradient(circle at 35% 30%, #fbbf24, #d97706); }
+  .sh-car { width:34px; height:20px; border-radius:5px;
+            background:linear-gradient(160deg, #94a3b8, #475569); }
+  .sh-wall { width:40px; height:12px; border-radius:3px;
+             background:linear-gradient(90deg, #334155, #0f172a);
+             box-shadow:0 0 0 1px #475569 inset; }
+  .sh-rock { width:28px; height:25px; background:linear-gradient(160deg,#f59e0b,#b45309);
+             clip-path:polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+  .sh-cone { width:22px; height:26px; background:linear-gradient(180deg,#fb7185,#e11d48);
+             clip-path:polygon(50% 0, 90% 100%, 10% 100%); }
+  .btn { display:block; width:100%; margin:8px 0 0; padding:10px 8px; border:none;
+         border-radius:10px; cursor:pointer; font-size:13px; color:#f8fafc;
+         font-weight:500; transition:filter .12s, transform .05s; }
+  .btn:hover { filter:brightness(1.15); }
+  .btn:active { transform:scale(.98); }
+  .btn.sel { box-shadow:0 0 0 2px #f59e0b inset; }
+  #b_path { background:linear-gradient(135deg,#2563eb,#3b82f6); margin-top:0; }
+  #b_wp { background:linear-gradient(135deg,#dc2626,#ef4444); }
+  #b_exec { background:linear-gradient(135deg,#059669,#34d399); font-weight:700;
+            text-align:center; font-size:14px; padding:13px 8px;
+            letter-spacing:1px; }
+  #b_reset { background:#374151; text-align:center; }
+  /* telemetry */
+  #info { font-family:Consolas,Menlo,monospace; font-size:12px; color:#93c5fd; }
+  .tr { display:flex; justify-content:space-between; padding:2.5px 0;
+        border-bottom:1px solid #1e293b; }
+  .tr .k { color:#64748b; }
+  .tr .v { color:#e2e8f0; }
+  .tr .v.hl { color:#34d399; }
+  .tr .v.warn { color:#fbbf24; }
+  .tr .v.bad { color:#f87171; }
+  #help { font-size:11px; color:#4b5f78; margin-top:10px; line-height:1.7; }
+  #cv { flex:1; background:#f4f6fa; cursor:crosshair; }
 </style>
 </head>
 <body>
 <div id="panel">
-  <h3>RNS SIL 测试台</h3>
+  <h3>RNS SIL</h3>
   <div class="grp">
     <div class="lbl">障碍物</div>
-    <button class="btn" id="b_person"><span class="dot"></span>人</button>
-    <button class="btn" id="b_car"><span class="dot"></span>车</button>
-    <button class="btn" id="b_wall"><span class="dot"></span>墙 (两点)</button>
-    <button class="btn" id="b_rock"><span class="dot"></span>石头</button>
-    <button class="btn" id="b_cone"><span class="dot"></span>雪糕桶</button>
+    <div id="obsgrid">
+      <button class="obtn" id="b_person"><i class="shape sh-person"></i><span>人</span></button>
+      <button class="obtn" id="b_car"><i class="shape sh-car"></i><span>车</span></button>
+      <button class="obtn" id="b_wall"><i class="shape sh-wall"></i><span>墙 两点</span></button>
+      <button class="obtn" id="b_rock"><i class="shape sh-rock"></i><span>石头</span></button>
+      <button class="obtn" id="b_cone"><i class="shape sh-cone"></i><span>雪糕桶</span></button>
+    </div>
   </div>
   <div class="grp">
     <div class="lbl">任务</div>
     <button class="btn" id="b_path">放置路径 path</button>
-    <button class="btn" id="b_wp">放置位置点 wp</button>
+    <button class="btn" id="b_wp">放置位置点 waypoint</button>
   </div>
   <button class="btn" id="b_exec">执行导航测试</button>
   <button class="btn" id="b_reset">重置场景</button>
   <div class="grp" style="margin-top:12px">
-    <div class="lbl">导航参数</div>
-    <div id="info">等待连接...</div>
+    <div class="lbl">RNS 参数</div>
+    <div id="info">连接中...</div>
   </div>
   <div id="help">
-    选工具后左键放置 / 墙=两次左键 /
-    路径=连续左键+右键结束 /
-    双击人车切动态 / 选墙拖端点+滚轮调厚 /
-    无工具: 点地图任意处即导航
+    选工具后左键放置 / 墙 = 两次左键 /
+    路径 = 连点 + 右键结束 / 双击人车切动态 /
+    选墙拖端点 + 滚轮调厚 / 无工具点地图即导航
   </div>
 </div>
 <canvas id="cv"></canvas>
@@ -294,14 +318,34 @@ function draw(){
     arrowAt(rx, ry, rx + dx/n*1.4*SCALE, ry - dy/n*1.4*SCALE, "#06c");
   }
   // info panel
-  document.getElementById("info").textContent =
-    "机器人状态\n" +
-    `vx ${r.vx.toFixed(2)}  vy ${r.vy.toFixed(2)}  wz ${r.wz.toFixed(2)}\n` +
-    `速度 ${r.speed.toFixed(2)} m/s\n` +
-    `gnss E ${r.gnss[0]}  N ${r.gnss[1]}\n` +
-    `yaw ${(r.yaw*57.29).toFixed(1)} deg  fix ${r.fix}\n` +
-    `nav ${state.nav.state}  dir ${state.nav.direction > 0 ? "正向" : "反向"}\n` +
-    `rns ${state.nav.rns_state || "-"}`;
+  const rows = [
+    ["vx", r.vx.toFixed(2) + " m/s", ""],
+    ["vy", r.vy.toFixed(2) + " m/s", ""],
+    ["wz", r.wz.toFixed(2) + " rad/s", ""],
+    ["speed", r.speed.toFixed(2) + " m/s", r.speed > 0.05 ? "hl" : ""],
+    ["gnss E", r.gnss[0].toFixed(2), ""],
+    ["gnss N", r.gnss[1].toFixed(2), ""],
+    ["yaw", (r.yaw * 57.2958).toFixed(1) + " deg", ""],
+    ["fix", r.fix, "hl"],
+    ["nav", state.nav.state,
+      state.nav.state.startsWith("failed") ? "bad"
+        : state.nav.state === "arrived" ? "hl" : ""],
+    ["rns", state.nav.rns_state,
+      state.nav.rns_state === "wall_follow" ? "warn"
+        : state.nav.rns_state === "wait_dynamic" ? "warn" : ""],
+    ["dir", state.nav.direction > 0 ? "正向" : "反向", ""],
+  ];
+  if (state.nav.dist_to_target != null)
+    rows.push(["距目标", state.nav.dist_to_target.toFixed(2) + " m", ""]);
+  if (state.nav.wall){
+    rows.push(["贴墙侧", state.nav.wall.side, "warn"]);
+    rows.push(["贴墙距", (state.nav.wall.d_side == null ? "--"
+               : state.nav.wall.d_side + " m"), ""]);
+    rows.push(["贴墙程", state.nav.wall.followed_m + " m", ""]);
+  }
+  document.getElementById("info").innerHTML = rows.map(x =>
+    `<div class="tr"><span class="k">${x[0]}</span>` +
+    `<span class="v ${x[2]}">${x[1]}</span></div>`).join("");
 }
 function arrow(x1, y1, x2, y2, color){
   ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;
