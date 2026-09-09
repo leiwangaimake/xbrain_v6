@@ -285,10 +285,24 @@ class RnsSource:
         # ── C. dynamic obstacles (20 S5) ─────────────────────────────────────
         half_w = self._r_eff_m + 0.5    # corridor half-width: r_eff + margin
         blocking = None
+        dyn_objs = []                   # world (x, y, r) of DYNAMIC-pile objects
         if snap is not None and snap.objects is not None and now is not None:
             dyn_cfg = cfg["dynamic"]
             stopped = slowed = False
             cy, sy = math.cos(yaw), math.sin(yaw)
+            # corridor end: the stop rule speaks in stop/resume DISTANCES, so
+            # the checked segment must reach that far -- the lookahead R sits
+            # only 1-1.3 m out and TRUNCATED the rule (assembly hole #3: a
+            # person at 2.7 m was "not in the corridor" and got detoured
+            # instead of waited for, violating the S5.3 semantics).
+            tdx, tdy = target[0] - pose[0], target[1] - pose[1]
+            tlen = math.hypot(tdx, tdy)
+            ext = max(dyn_cfg["resume_dist_m"], tlen)
+            if tlen > 1e-6:
+                cor_end = (pose[0] + tdx / tlen * ext,
+                           pose[1] + tdy / tlen * ext)
+            else:
+                cor_end = target
             for obj in snap.objects.objects:
                 spd = usable_velocity(
                     obj.velocity_frame,
@@ -316,8 +330,9 @@ class RnsSource:
                 ox = pose[0] + bx * cy - by * sy
                 oy = pose[1] + bx * sy + by * cy
                 r_obs = max(math.hypot(q[0] - bx, q[1] - by) for q in fp)
+                dyn_objs.append((ox, oy, r_obs))
                 if in_corridor(ox, oy, r_obs, pose[0], pose[1],
-                               target[0], target[1], half_w):
+                               cor_end[0], cor_end[1], half_w):
                     act = distance_action(True, obj.r_near, self._dyn_prev,
                                           dyn_cfg["stop_dist_m"],
                                           dyn_cfg["resume_dist_m"])
@@ -351,12 +366,17 @@ class RnsSource:
 
         # ── D. static avoidance state machine (20 S6) ────────────────────────
         if profile is not None:
-            margin = cfg["clearance"]["margin_by_class"]["structure"]
+            # profile is class-blind geometry; 20 S6.2 says take the MAX margin
+            # of the gap's flanking classes -- unknowable here, so take the max
+            # of the table (collision fix #2: structure 0.3 under-margined cars,
+            # 195 ticks inside the U54 1 m keep-out on the user's audit).
+            margin = max(cfg["clearance"]["margin_by_class"].values())
             gate_base = self._r_eff_m + margin
             blocked = self._ahead_blocked(profile, pose, yaw, target,
                                           cfg["dynamic"]["stop_dist_m"])
             if self._state == NavState.FOLLOW and blocked:
-                best = self._pick_candidate(profile, pose, yaw, fs, cfg, margin)
+                best = self._pick_candidate(profile, pose, yaw, fs, cfg, margin,
+                                            dyn_objs)
                 sel = self._selector.select(False, best, best_is_current=False)
                 if sel is not None:
                     self._subgoal_world = self._body_to_world(
@@ -394,7 +414,7 @@ class RnsSource:
                                             profile.range_max_m) >= gate_base
                     if not feasible:                 # A-HYS-2: drop NOW
                         best = self._pick_candidate(profile, pose, yaw, fs,
-                                                    cfg, margin)
+                                                    cfg, margin, dyn_objs)
                         sel = self._selector.select(False, best, False)
                         if sel is None:
                             self._subgoal_world = None
@@ -495,17 +515,24 @@ class RnsSource:
                     return True
                 r += 0.5
             return False               # remembered FREE all the way: clear
+        # FULL forward hemisphere, no fixed window (assembly hole #5, user
+        # collision audit 2026-09-10): the old +/-15-bin window failed on a
+        # narrow slot -- up close, the slot's angular span EXCEEDS the window,
+        # so the window saw only through-the-slot rays and blocked never fired;
+        # the robot threaded a sub-body gap on pure FOLLOW, bypassing the
+        # (correct) candidate corridor gate entirely. The db <= trigger guard
+        # stays: distant walls trigger naturally as the robot closes in, and
+        # dropping it (an along/lateral decomposition over unlimited range)
+        # proved over-sensitive -- it froze ordinary rock detours too.
         half_w = self._r_eff_m + 0.3
-        n = profile.n_bins
-        center = round((theta_body - profile.angle_min_rad)
-                       / profile.angle_step_rad)
-        for i in range(max(0, center - 15), min(n, center + 16)):
+        for i in range(profile.n_bins):
             db = profile.d_block[i]
             if db is None or db > trigger_m:
                 continue
-            # lateral offset of that hit from the target bearing at range db
             ang_off = abs(wrap_angle(profile.angle_min_rad
                                      + i * profile.angle_step_rad - theta_body))
+            if ang_off > math.pi / 2:
+                continue                      # behind the walk direction
             if db * math.sin(ang_off) < half_w:
                 return True
         return False
@@ -684,9 +711,13 @@ class RnsSource:
                 wz = max(wz, -cap)
         return VelocityCandidate(vx=Mps(wf["v_max_mps"]), vy=Mps(0.0), wz=wz)
 
-    def _pick_candidate(self, profile, pose, yaw, fs, cfg, margin):
+    def _pick_candidate(self, profile, pose, yaw, fs, cfg, margin,
+                        dyn_objs=()):
         """Build candidates from the profile, gate them, score them, return the
-        best feasible (body frame) or None."""
+        best feasible (body frame) or None. dyn_objs: world (x, y, r) of the
+        DYNAMIC pile -- a candidate whose X->S corridor one of them occupies is
+        gated out (A-GAP-6; assembly hole #4: this field was hardwired False,
+        so detour candidates could aim AROUND a person -- A-CLS-1 forbids)."""
         cand_cfg = cfg["candidate"]
         clear_m = clear_extrapolation(self._r_eff_m, margin,
                                       cand_cfg["subgoal_extra_m"])
@@ -699,6 +730,13 @@ class RnsSource:
         best = None
         best_cost = math.inf
         for c in cands:
+            if dyn_objs:
+                s_world = self._body_to_world(c.subgoal, pose, yaw)
+                if any(in_corridor(ox, oy, orad, pose[0], pose[1],
+                                   s_world[0], s_world[1],
+                                   self._r_eff_m + margin)
+                       for ox, oy, orad in dyn_objs):
+                    continue            # A-GAP-6: dynamic-occupied candidate
             if not passes_hard_gates(c, self._r_eff_m, margin):
                 continue
             from .candidate import unknown_ratio_toward

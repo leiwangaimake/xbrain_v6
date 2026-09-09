@@ -68,12 +68,23 @@ def _tick_until(world, rns, max_ticks, on_tick=None):
         if cand is not None:
             world.step_robot(cand.vx.value, cand.vy.value, cand.wz, DT)
         world.step_obstacles(DT)
-        # collision monitor: distance to every obstacle centre minus its radius
+        # collision monitor -- EXACT body clearance (upgraded after the user's
+        # SIL audit caught a real drive-through): cars are OBBs (2.0 x 1.2),
+        # circles for the rest; subtract the 0.46 m body half-diagonal so
+        # min_clear < 0 means TRUE overlap.
         for o in world.obstacles.values():
             if o.kind == "wall":
                 continue
-            r = {"person": 0.3, "car": 1.0, "rock": 0.5, "cone": 0.25}[o.kind]
-            d = math.hypot(world.rx - o.x, world.ry - o.y) - r
+            if o.kind == "car":
+                ca, sa = math.cos(-o.heading), math.sin(-o.heading)
+                lx = ca * (world.rx - o.x) - sa * (world.ry - o.y)
+                ly = sa * (world.rx - o.x) + ca * (world.ry - o.y)
+                dx = max(abs(lx) - 1.0, 0.0)
+                dy = max(abs(ly) - 0.6, 0.0)
+                d = math.hypot(dx, dy) - 0.46
+            else:
+                r = {"person": 0.3, "rock": 0.5, "cone": 0.25}[o.kind]
+                d = math.hypot(world.rx - o.x, world.ry - o.y) - r - 0.46
             min_clear = min(min_clear, d)
         if on_tick:
             on_tick(t, world, rns)
@@ -342,6 +353,27 @@ def test_wall_follow_exempt_from_deviation_failure():
         "deviation fired inside WALL_FOLLOW despite the S2.7 v1.17 exemption"
 
 
+def test_user_full_run_never_touches_a_car():
+    # COLLISION regression (user SIL audit 2026-09-10): the exact run that
+    # drove THROUGH a 0.13 m car gap (min centre distance 0.267 m = 0.19 m body
+    # overlap; 195 ticks inside the U54 1 m keep-out). Root causes: the
+    # clearance gate probed the SUBGOAL POINT (past the gap) instead of
+    # sweeping the X->S corridor, and the class-blind margin used structure 0.3.
+    # mutant: revert corridor_clearance to the point probe -> min_clear goes
+    # negative -> reddens.
+    world = SilWorld()
+    for x, y in ((-7.33, 1.33), (-7.53, -0.77), (-7.47, -2.83), (-7.90, -4.80),
+                 (-7.70, -6.07), (-7.83, -7.57), (-8.07, -9.07), (-8.00, -10.83),
+                 (-8.20, -12.50), (-8.43, -13.83), (-7.97, -15.97)):
+        world.add_obstacle("car", x, y)
+    world.rx, world.ry, world.ryaw = 0.0, 0.0, 1.57
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(-14.47, -21.03)]))
+    tick, states, min_clear = _tick_until(world, rns, 2400)
+    assert tick is not None, "run failed outright"
+    assert min_clear > 0.0,         "BODY OVERLAP with a car: min clearance %.3f m" % min_clear
+
+
 def test_user_full_run_side_pick_at_oblique_entry():
     # the user's EXACT run (2026-09-10 trace): start (0,0), goal behind the
     # 17 m car wall. The wall entry happens at ~45 deg to the wall (post-DETOUR
@@ -364,3 +396,23 @@ def test_user_full_run_side_pick_at_oblique_entry():
             if r.kind == "wall_exit"]
     assert all(l < 20.0 for l in laps), \
         "oblique-entry side pick walked the long way: laps %s" % laps
+
+
+def test_narrow_gap_rejected_by_corridor_sweep():
+    # the mutant-killer for corridor_clearance (the margin fix alone masks the
+    # 0.13 m case): a 1.0 m slot between two cars. The POINT probe sees the
+    # extrapolated subgoal in open space (~1.5 m clear) and threads the slot --
+    # squeezing through with ~0.04 m of side clearance; the CORRIDOR sweep sees
+    # the 0.5 m throat < gate 1.1 and detours around instead (>=0.6 m). The
+    # margin assertion below separates the two. mutant: point probe -> reddens.
+    world = SilWorld()
+    world.add_obstacle("car", 4.0, 1.1)    # slot centre y=0, width 2.2-1.2=1.0
+    world.add_obstacle("car", 4.0, -1.1)
+    world.rx, world.ry, world.ryaw = 0.0, 0.0, 0.0
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(9.0, 0.0)]))
+    tick, states, min_clear = _tick_until(world, rns, 2400)
+    assert tick is not None, "narrow-gap scene failed outright"
+    assert min_clear > 0.3, \
+        "squeezed the sub-gate slot (min clearance %.3f m -- point-probe " \
+        "behavior)" % min_clear

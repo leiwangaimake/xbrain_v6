@@ -274,6 +274,32 @@ def clearance_at(p: Point, obs_pts: Sequence[Point], range_max_m: float) -> floa
     return min(math.hypot(p[0] - ox, p[1] - oy) for ox, oy in obs_pts)
 
 
+def corridor_clearance(s_pt: Point, obs_pts: Sequence[Point],
+                       range_max_m: float) -> float:
+    """COLLISION FIX (user SIL audit 2026-09-10): min clearance of the WHOLE
+    X->S walk (robot at body origin), i.e. min distance from the segment
+    (0,0)->S to every sensed obstacle point. The old gate tested only the
+    SUBGOAL point -- a thread subgoal extrapolates BEYOND the gap, so a 0.13 m
+    slot between two cars passed the gate (the endpoint sat in open space) and
+    the robot drove straight through the car bodies. 20 S6.2's clearance is the
+    PASSAGE clearance; the gate must sweep the corridor, not probe its end."""
+    if not obs_pts:
+        return range_max_m
+    sx, sy = s_pt
+    seg_len_sq = sx * sx + sy * sy
+    best = range_max_m
+    for ox, oy in obs_pts:
+        if seg_len_sq < 1e-12:
+            d = math.hypot(ox, oy)
+        else:
+            t = (ox * sx + oy * sy) / seg_len_sq
+            t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+            d = math.hypot(ox - t * sx, oy - t * sy)
+        if d < best:
+            best = d
+    return best
+
+
 def unknown_ratio_toward(p: Point, d_free: Sequence[Optional[float]],
                          angle_min: float, angle_step: float,
                          window_bins: int = 5) -> float:
@@ -310,7 +336,9 @@ def candidates_from_profile(
     cands: List[Candidate] = []
 
     def _mk(p: Point) -> Candidate:
-        clr = clearance_at(p, obs, range_max_m)
+        # PASSAGE clearance: sweep the X->S corridor (collision fix, see
+        # corridor_clearance) -- the subgoal-point probe let sub-body gaps pass.
+        clr = corridor_clearance(p, obs, range_max_m)
         dist = math.hypot(p[0], p[1])
         theta = math.atan2(p[1], p[0])
         n = len(d_free)

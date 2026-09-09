@@ -164,3 +164,37 @@ def test_detour_extrapolates_toward_clear_side():
     s2 = detour_subgoal(edges2[0], clear_m=0.6)
     ey2 = edges2[0].d_near_m * __import__("math").sin(edges2[0].theta_rad)
     assert s2[1] > ey2                      # moved toward clear (higher) side
+
+
+def test_thread_candidate_carries_throat_clearance():
+    # COLLISION FIX unit pin (user SIL audit 2026-09-10): the Candidate built
+    # for a gap must carry the CORRIDOR (throat) clearance, not the subgoal-
+    # point clearance. Slot walls at y=+/-0.5 around x=3; the thread subgoal
+    # extrapolates to ~(5,0) where the POINT clearance is ~2.1 -- but the walk
+    # passes the 0.5 m throat. mutant: build with clearance_at (point probe) ->
+    # clearance_m jumps to ~2.1 -> reddens (and the 1.1 m gate would pass a
+    # sub-body slot, which is how the robot drove through parked cars).
+    from xbrain.p1_motion.rns.candidate import candidates_from_profile
+    import math as _m
+    n = 181
+    amin, astep = -_m.pi / 4, (_m.pi / 2) / (n - 1)
+    d_block = [None] * n
+    d_free = [6.0] * n
+    # paint slot walls: bins whose ray hits y=+/-0.5 for x in [2.5, 3.5]
+    for i in range(n):
+        a = amin + i * astep
+        if abs(a) < 1e-6:
+            continue
+        t_wall = 0.5 / abs(_m.sin(a))          # range where |y| reaches 0.5
+        x_at = t_wall * _m.cos(a)
+        if 2.0 <= x_at <= 4.0:
+            d_block[i] = t_wall
+            d_free[i] = max(0.0, t_wall - 0.05)
+    cands = candidates_from_profile(d_block, d_free, amin, astep, 6.0,
+                                    edge_jump_m=1.0, clear_m=1.4)
+    threads = [c for c in cands if abs(c.subgoal[1]) < 0.3 and c.subgoal[0] > 3.0]
+    assert threads, "no thread candidate built for the slot"
+    for c in threads:
+        assert c.clearance_m < 0.8, (
+            "thread candidate carries POINT clearance %.2f (throat is ~0.5) -- "
+            "the sub-body slot would pass the 1.1 m gate" % c.clearance_m)
