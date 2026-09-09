@@ -192,7 +192,9 @@ class FollowState:
     endpoint: Point
     dist_to_endpoint_m: float
     arrived: bool           # endpoint reached (radius only; heading is P1.4)
-    deviation_exceeded: bool  # e > max_deviation_m (P1.5 turns this into failure)
+    # (deviation_exceeded removed with the deviation-failure mechanism,
+    # 20 S2.7 v1.20 user ruling; deviation_m in projection still feeds the
+    # speed cap.)
 
 
 class Mission:
@@ -239,12 +241,12 @@ class Mission:
     def advance(self, x: Point, lookahead_m: float) -> FollowState:
         """One follow tick. Arrival is endpoint-only (S2.4): dist(X, P[n]) <
         arrival_radius. Intermediate points never trigger arrival -- they only
-        shape F and R. deviation_exceeded flags e > max_deviation for P1.5."""
+        shape F and R."""
         # REVIEW-FIX B4 (2026-09-09): RNS-N-1 -- a single-point goto's polyline
         # starts at the CURRENT POSE. A raw one-point tracker has no line to
         # deviate from, so project() returned deviation = straight-line distance
         # to the goal; the deviation cap then crawled a far goto at dev_g_min and
-        # deviation_failure() false-failed MAX_DEVIATION on the first tick.
+        # the deviation cap crawled at dev_g_min on the first tick.
         # Prepend the first observed pose, making it a two-point polyline with
         # correct perpendicular-deviation semantics.
         if not self._goto_anchored:
@@ -264,21 +266,6 @@ class Mission:
             endpoint=self._endpoint,
             dist_to_endpoint_m=dist_end,
             arrived=arrived,
-            deviation_exceeded=proj.deviation_m > self._max_deviation_m,
-        )
-
-    def deviation_failure(self, fs: FollowState) -> Optional[NavFailure]:
-        """P1.5 (20 S2.7): e > max_deviation_m means "this path is not walkable"
-        -> a MAX_DEVIATION failure reported once (source.py routes it by origin).
-        Returns None when within limit. detail carries e and s (S9.0.2 detail
-        column) so the operator sees WHERE it drifted off."""
-        if not fs.deviation_exceeded:
-            return None
-        return NavFailure(
-            reason=NavFailReason.MAX_DEVIATION,
-            detail={"e_m": fs.projection.deviation_m,
-                    "s_arc_m": fs.projection.s_arc_m,
-                    "max_deviation_m": self._max_deviation_m},
         )
 
 

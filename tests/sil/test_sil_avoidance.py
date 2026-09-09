@@ -322,38 +322,32 @@ def test_wall_entry_side_pick_survives_swung_yaw():
     assert d < 1.2
 
 
-def test_wall_follow_exempt_from_deviation_failure():
-    # design-seam ruling (20 S2.7 v1.17): while WALL_FOLLOW, the 10 m deviation
-    # bound must NOT fire (S7.6 owns the excursion budget); it resumes on
-    # FOLLOW. Direct check: force the wall state with a far-off-line pose and
-    # tick once -- no failure latched. mutant: drop the state check -> red.
-    from xbrain.p1_motion.rns.source import RnsSource as _R
-    from xbrain.p1_motion.rns.wallfollow import Side, WallFollowState
-    from xbrain.p1_motion.rns.types import NavState
+def test_deviation_never_fails_in_any_state():
+    # 20 S2.7 v1.20 (user ruling): the deviation FAILURE mechanism is REMOVED.
+    # Two live runs to a behind-the-wall goal both died on max_deviation right
+    # as the long detour completed -- a legitimate detour necessarily runs a
+    # large e on the way home. Deviation now only SLOWS (dev cap); this pins
+    # that a grossly off-line FOLLOW tick produces NO failure. mutant: re-add
+    # the deviation_failure call in source -> reddens.
     world = SilWorld()
-    world.add_obstacle("car", -8.0, -12.0)
-    rns = _R(cfg=CFG, r_eff_m=0.5)
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
     rns.load_mission(_mission([(0.0, 0.0)]))
-    # anchor the goto line at (0,-1) then teleport 12 m off it in wall state.
-    snap = world.synth_snapshot(0)
-    rns.compute(Ctx(world, snap, 0).__class__(world, snap, 0)) if False else None
+
     class C:
         pose_xy = (0.0, -1.0); yaw_rad = 0.0
         v_nom_mps = 2.0; wz_max_rps = 1.2
         perception = world.synth_snapshot(0); now_mono_ms = 0
-    rns.compute(C())                          # anchors the line
-    rns._state = NavState.WALL_FOLLOW
-    rns._wall = WallFollowState(side=Side.RIGHT, s_hit=0.0, hit_point=(0.0, -1.0))
-    rns._wall_last_move_ms = None
+        holonomic = True
+    rns.compute(C())                        # anchors the goto line
+
     class C2:
-        pose_xy = (12.5, -1.0); yaw_rad = 0.0   # 12.5 m off the goto line
+        pose_xy = (14.0, -1.0); yaw_rad = 0.0   # 14 m off the anchored line
         v_nom_mps = 2.0; wz_max_rps = 1.2
         perception = world.synth_snapshot(50); now_mono_ms = 50
+        holonomic = True
     rns.compute(C2())
     assert rns.take_failure() is None, \
-        "deviation fired inside WALL_FOLLOW despite the S2.7 v1.17 exemption"
-
-
+        "deviation produced a failure despite the v1.20 removal"
 def test_user_full_run_never_touches_a_car():
     # COLLISION regression (user SIL audit 2026-09-10): the exact run that
     # drove THROUGH a 0.13 m car gap (min centre distance 0.267 m = 0.19 m body
@@ -465,3 +459,21 @@ def test_memory_appeal_layer_rehabilitates_walked_ground():
     assert normal is None, "normal contest must NOT see out-of-FOV candidates"
     assert appealed is not None, \
         "memory appeal failed to rehabilitate the walked side corridor"
+
+
+def test_goal_behind_wall_arrives_after_deviation_removal():
+    # the user scenario that forced the v1.20 ruling: goal dead behind the
+    # 11-car wall. Before: weave down the wall, spin at the corner, and (twice
+    # live) max_deviation right at detour completion. After: approach-phase
+    # steering (no weave), memory-guided corner rounding, no deviation death.
+    world = SilWorld()
+    for x, y in ((-7.33, 1.33), (-7.53, -0.77), (-7.47, -2.83), (-7.90, -4.80),
+                 (-7.70, -6.07), (-7.83, -7.57), (-8.07, -9.07), (-8.00, -10.83),
+                 (-8.20, -12.50), (-8.43, -13.83), (-7.97, -15.97)):
+        world.add_obstacle("car", x, y)
+    world.rx, world.ry, world.ryaw = 0.0, -8.0, math.pi
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(-11.0, -8.0)]))
+    tick, states, min_clear = _tick_until(world, rns, 4800)
+    assert tick is not None, "behind-wall goal failed again"
+    assert min_clear > 0.15

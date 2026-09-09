@@ -95,15 +95,6 @@ def test_endpoint_is_last_point():
     assert m.endpoint == (10.0, 0.0)
 
 
-def test_deviation_exceeded_flag():
-    # e > max_deviation_m sets the flag (P1.5 turns it into failure).
-    m = _mk(_dense_path(), max_deviation_m=2.0)
-    fs = m.advance((5.0, 5.0), lookahead_m=1.0)  # 5 m off the y=0 path
-    assert fs.deviation_exceeded is True
-    fs2 = m.advance((5.0, 1.0), lookahead_m=1.0)  # 1 m off, under limit
-    assert fs2.deviation_exceeded is False
-
-
 def test_single_point_goto_anchors_start_at_first_pose():
     # B4 (review fix): a single-point goto becomes [first_pose, goal] on the
     # first advance (RNS-N-1: the start vertex IS the current pose). Deviation
@@ -114,7 +105,6 @@ def test_single_point_goto_anchors_start_at_first_pose():
             max_deviation_m=2.0)
     fs = m.advance((0.0, 0.0), lookahead_m=2.0)   # far from goal, ON the line
     assert fs.projection.deviation_m < 1e-9        # no deviation: we ARE the line
-    assert fs.deviation_exceeded is False          # 8 m to goal is NOT deviation
     # off the line sideways: deviation is the perpendicular offset
     fs2 = m.advance((2.0, 1.5), lookahead_m=2.0)
     assert abs(fs2.projection.deviation_m - 1.5) < 1e-9

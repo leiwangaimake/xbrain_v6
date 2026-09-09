@@ -257,16 +257,13 @@ class RnsSource:
             self._arrived_pending = True
             self.clear_mission()
             return zero
-        dev_fail = self._mission.deviation_failure(fs)
-        # WALL_FOLLOW is EXEMPT from the deviation failure (design-seam ruling
-        # 2026-09-10, written back to 20 S2.7): S2.7's 10 m bound is follow-mode
-        # semantics, while wall-follow's own S7.6 criteria (no_progress 40 /
-        # max_follow 60) deliberately allow a wider excursion -- letting both
-        # run kills a deep wall detour "one breath short" of rounding the far
-        # end (user-observed). The bound resumes the tick FOLLOW returns.
-        if dev_fail is not None and self._state != NavState.WALL_FOLLOW:
-            self._fail(dev_fail)                     # P1.5 wired (A-DEV-1)
-            return zero
+        # deviation FAILURE removed (user ruling 2026-09-10, 20 S2.7 v1.20):
+        # two live runs to a goal BEHIND the car wall both died on max_deviation
+        # right as the detour completed -- a legitimate long detour necessarily
+        # runs a large e on the way home, and the v1.17 wall-state exemption
+        # missed the first FOLLOW tick after leaving the wall. Deviation now
+        # only SLOWS (the dev cap in E); boundedness belongs to the watchdog
+        # (S7.3A) and the wall criteria (S7.6).
 
         # ── B2. memory grid + progress bookkeeping (S2b) ─────────────────────
         if profile is not None and now is not None and self._grid is not None:
@@ -818,8 +815,19 @@ class RnsSource:
             return VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0),
                                      wz=-sgn * 0.6 * wz_max)
         if wall_vanished(side_sector_has_blocked=(d_side is not None)):
-            # convex corner (S7.7-2): the wall left the sector -- curve gently
-            # TOWARD the wall side to re-acquire it, slow.
+            # convex corner (S7.7-2): the wall left the side sector. Blind
+            # "curve toward the wall side" span in place forever once the wall
+            # also left the 4 m sector range (behind-the-wall goal debug,
+            # 2026-09-10: spun at the south end burning the whole no-progress
+            # budget). The MEMORY still knows where the wall is -- steer at its
+            # remembered bearing and ROUND the corner instead.
+            info = None
+            if self._grid is not None and now is not None:
+                info = self._grid.nearest_blocked_full(pose, now, r_max_m=6.0)
+            if info is not None:
+                wz = align_omega(info[1], yaw, cfg["route"]["k_yaw"], wz_max)
+                return VelocityCandidate(vx=Mps(0.5 * wf["v_max_mps"]),
+                                         vy=Mps(0.0), wz=wz)
             return VelocityCandidate(vx=Mps(0.3 * wf["v_max_mps"]), vy=Mps(0.0),
                                      wz=sgn * 0.5 * wz_max)
         # CONTACT FUSE (collision audit #2, 2026-09-10): the PD keeps distance
@@ -836,6 +844,25 @@ class RnsSource:
         if near_hit is not None:
             return VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0),
                                      wz=-sgn * 0.6 * wz_max)
+        # APPROACH phase (weave fix, user "not decisive, keeps circling"
+        # 2026-09-10 debug: entered wall-follow 3.5 m off the wall, then the
+        # keep-distance PD and the corner hysteresis fought each other all the
+        # way down the wall -- an S-weave that also burned the 40 m
+        # no-progress budget). Far off the wall, do NOT weave: steer straight
+        # AT the wall (P law on the nearest-hit bearing) and drive; switch to
+        # the PD only inside the keep-distance band.
+        if d_side > 1.8 * wf["d_wall_m"]:
+            best_db = None
+            best_bear = yaw
+            for i, db in enumerate(profile.d_block):
+                if db is not None and (best_db is None or db < best_db):
+                    best_db = db
+                    best_bear = yaw + profile.angle_min_rad \
+                        + i * profile.angle_step_rad
+            wz = align_omega(best_bear, yaw, cfg["route"]["k_yaw"], wz_max)
+            self._last_d_side = d_side
+            return VelocityCandidate(vx=Mps(wf["v_max_mps"]), vy=Mps(0.0),
+                                     wz=wz)
         rate = 0.0
         if self._last_d_side is not None:
             rate = (d_side - self._last_d_side) / max(0.02, 0.05)

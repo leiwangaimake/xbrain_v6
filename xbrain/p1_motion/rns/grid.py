@@ -251,6 +251,26 @@ class MemoryGrid:
                 self.write(pose_xy[0] + db * c, pose_xy[1] + db * si,
                            Cell.BLOCKED, now_ms)
 
+    def nearest_blocked_full(self, pose_xy, now_ms: int,
+                             r_max_m: float = 6.0):
+        """Omnidirectional nearest remembered BLOCKED: (dist, world bearing)
+        or None. The convex-corner re-acquire uses it -- past a wall's end the
+        wall leaves the side sector AND the robot's FOV, but not the memory."""
+        import math as _m
+        best = None
+        for k in range(24):
+            ang = k * _m.pi / 12.0
+            c, si = _m.cos(ang), _m.sin(ang)
+            r = self._cell_m
+            while r <= r_max_m:
+                if self.read(pose_xy[0] + r * c, pose_xy[1] + r * si,
+                             now_ms) == Cell.BLOCKED:
+                    if best is None or r < best[0]:
+                        best = (r, ang)
+                    break
+                r += self._cell_m
+        return best
+
     def nearest_blocked_in_sector(self, pose_xy, yaw, ang_lo: float,
                                   ang_hi: float, now_ms: int,
                                   r_max_m: float = 4.0,
