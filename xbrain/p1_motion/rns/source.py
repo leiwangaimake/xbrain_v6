@@ -387,12 +387,27 @@ class RnsSource:
                     self.audit.append(AuditRecord(now or 0, "detour_enter",
                                                   {"subgoal": target}))
                 else:
-                    # S2b: no feasible candidate -- the S7.2 entry: hug the wall
-                    # if there is one; else hold and let the watchdog decide.
-                    if self._enter_wall(profile, pose, yaw, fs, now):
+                    # hole #6 rescue layer: before falling to wall-follow, ask
+                    # once more WITH memory appeal (out-of-FOV subgoals whose
+                    # corridor the grid has walked). Inert on first encounter.
+                    best = self._pick_candidate(profile, pose, yaw, fs, cfg,
+                                                margin, dyn_objs,
+                                                memory_appeal=True)
+                    sel = self._selector.select(False, best,
+                                                best_is_current=False)
+                    if sel is not None:
+                        self._subgoal_world = self._body_to_world(
+                            sel.subgoal, pose, yaw)
+                        self._transition(NavState.DETOUR)
+                        target = self._subgoal_world
+                        self.audit.append(AuditRecord(
+                            now or 0, "detour_enter",
+                            {"subgoal": target, "via": "memory_appeal"}))
+                    elif self._enter_wall(profile, pose, yaw, fs, now):
                         return self._wall_tick(profile, pose, yaw, fs, now,
                                                wz_max, step_m)
-                    return zero
+                    else:
+                        return zero
             elif self._state == NavState.DETOUR:
                 d_sub = math.hypot(pose[0] - self._subgoal_world[0],
                                    pose[1] - self._subgoal_world[1])
@@ -417,6 +432,11 @@ class RnsSource:
                         best = self._pick_candidate(profile, pose, yaw, fs,
                                                     cfg, margin, dyn_objs)
                         sel = self._selector.select(False, best, False)
+                        if sel is None:
+                            best = self._pick_candidate(
+                                profile, pose, yaw, fs, cfg, margin, dyn_objs,
+                                memory_appeal=True)
+                            sel = self._selector.select(False, best, False)
                         if sel is None:
                             self._subgoal_world = None
                             if self._enter_wall(profile, pose, yaw, fs, now):
@@ -765,12 +785,23 @@ class RnsSource:
         return VelocityCandidate(vx=Mps(wf["v_max_mps"]), vy=Mps(0.0), wz=wz)
 
     def _pick_candidate(self, profile, pose, yaw, fs, cfg, margin,
-                        dyn_objs=()):
+                        dyn_objs=(), memory_appeal=False):
         """Build candidates from the profile, gate them, score them, return the
         best feasible (body frame) or None. dyn_objs: world (x, y, r) of the
         DYNAMIC pile -- a candidate whose X->S corridor one of them occupies is
         gated out (A-GAP-6; assembly hole #4: this field was hardwired False,
-        so detour candidates could aim AROUND a person -- A-CLS-1 forbids)."""
+        so detour candidates could aim AROUND a person -- A-CLS-1 forbids).
+
+        memory_appeal (hole #6, LAYERED design 2026-09-10): when True, a
+        candidate rejected only for being out-of-FOV (in_unobserved) may be
+        rehabilitated if the memory grid confirms the X->S corridor FREE
+        (RNS-I-6 is perception UNION memory). Kept OFF in the normal pick --
+        the first cut mixed appealed candidates into the regular contest and
+        the cost ordering went haywire (all car-wall regressions blew up:
+        walked-ground candidates outscored forward ones and the robot doubled
+        back). As a SEPARATE rescue layer between "all candidates gated" and
+        "enter wall-follow", the normal behavior is untouched by construction:
+        first-encounter ticks have no memory, so the layer is inert there."""
         cand_cfg = cfg["candidate"]
         clear_m = clear_extrapolation(self._r_eff_m, margin,
                                       cand_cfg["subgoal_extra_m"])
@@ -783,6 +814,19 @@ class RnsSource:
         best = None
         best_cost = math.inf
         for c in cands:
+            if memory_appeal and c.in_unobserved \
+                    and self._grid is not None:
+                sw = self._body_to_world(c.subgoal, pose, yaw)
+                dx, dy = sw[0] - pose[0], sw[1] - pose[1]
+                dist = math.hypot(dx, dy)
+                if dist > 1e-6 and self._last_now is not None:
+                    steps = max(2, int(dist / 0.3))
+                    if all(self._grid.read(pose[0] + dx * k / steps,
+                                           pose[1] + dy * k / steps,
+                                           self._last_now) == Cell.FREE
+                           for k in range(1, steps + 1)):
+                        import dataclasses
+                        c = dataclasses.replace(c, in_unobserved=False)
             if dyn_objs:
                 s_world = self._body_to_world(c.subgoal, pose, yaw)
                 if any(in_corridor(ox, oy, orad, pose[0], pose[1],

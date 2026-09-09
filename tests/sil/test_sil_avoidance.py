@@ -422,3 +422,46 @@ def test_narrow_gap_rejected_by_corridor_sweep():
     # patch for it destabilized all car-wall scenes and needs its own pass.
     assert min_clear > 0.0, \
         "BODY OVERLAP in the slot scene (min clearance %.3f m)" % min_clear
+
+
+def test_memory_appeal_layer_rehabilitates_walked_ground():
+    # hole #6 LAYERED rescue, unit-level: a candidate rejected only as
+    # out-of-FOV must be rehabilitated when memory_appeal=True AND the grid has
+    # walked its corridor FREE; with appeal off (the normal contest) it stays
+    # rejected -- that separation is exactly why the car-wall regressions
+    # survived this feature while the first (mixed-in) cut blew them all up.
+    # mutant: drop the appeal block -> appeal pick returns None too -> reddens.
+    from xbrain.p1_motion.rns.types import Cell, NavState
+    world = SilWorld()
+    world.add_obstacle("car", 4.0, 1.1)
+    world.add_obstacle("car", 4.0, -1.1)
+    world.ryaw = 0.0
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(9.0, 0.0)]))
+    snap = world.synth_snapshot(0)
+
+    class C:
+        pose_xy = (0.0, 0.0); yaw_rad = 0.0
+        v_nom_mps = 1.0; wz_max_rps = 1.2
+        perception = snap; now_mono_ms = 0
+    rns.compute(C())                      # anchors mission, sets _last_now
+    # paint the DIAGONAL X->S corridor FREE in memory (as a wall lap would
+    # have): the appeal walks the straight line to the subgoal (~(2.3, 2.9)),
+    # so the painted band must cover that line, not a horizontal strip.
+    for k in range(41):
+        t = k / 40.0
+        cx, cy = 3.0 * t, 3.6 * t
+        for off in (-0.2, 0.0, 0.2):
+            rns._grid.write(cx + off, cy + off, Cell.FREE, now_ms=0)
+            rns._grid.write(cx - off, cy + off, Cell.FREE, now_ms=0)
+    margin = max(CFG["rns"]["clearance"]["margin_by_class"].values())
+
+    class FS:                              # minimal FollowState stand-in
+        lookahead_point = (2.0, 0.0)
+    normal = rns._pick_candidate(snap.profile, (0.0, 0.0), 0.0, FS(),
+                                 CFG["rns"], margin)
+    appealed = rns._pick_candidate(snap.profile, (0.0, 0.0), 0.0, FS(),
+                                   CFG["rns"], margin, memory_appeal=True)
+    assert normal is None, "normal contest must NOT see out-of-FOV candidates"
+    assert appealed is not None, \
+        "memory appeal failed to rehabilitate the walked side corridor"
