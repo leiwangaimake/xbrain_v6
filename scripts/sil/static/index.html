@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<!--
+  Copyright (c) 2026 Hachist Robotics
+  File: index.html  Brief: RNS SIL frontend (canvas + websocket)
+  UI text is Chinese; punctuation ASCII per repo charset rule.
+-->
+<html>
+<head>
+<meta charset="utf-8"><title>RNS SIL</title>
+<style>
+  body { margin:0; font-family:sans-serif; display:flex; height:100vh; }
+  #panel { width:220px; background:#7aabce; padding:10px; overflow-y:auto; }
+  #panel h3 { margin:4px 0 10px; }
+  .grp { background:#5b93bd; border-radius:6px; padding:8px; margin-bottom:10px; }
+  .btn { display:block; width:100%; margin:6px 0; padding:8px 4px; border:none;
+         border-radius:4px; cursor:pointer; font-size:14px; color:#fff; }
+  .btn.sel { outline:3px solid #ffd700; }
+  #b_person{background:#e6c800;color:#333} #b_car{background:#666}
+  #b_wall{background:#000} #b_rock{background:#e07820} #b_cone{background:#d22}
+  #b_path{background:#3a78a8} #b_wp{background:#e00} #b_exec{background:#7b2fbe}
+  #b_reset{background:#333}
+  #info { background:#5b93bd; border-radius:6px; padding:8px; font-size:12px;
+          color:#fff; white-space:pre-line; }
+  #cv { flex:1; background:#fff; cursor:crosshair; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h3>RNS SIL 测试</h3>
+  <div class="grp">
+    <div style="color:#fff">放置障碍物类型</div>
+    <button class="btn" id="b_person">人</button>
+    <button class="btn" id="b_car">车</button>
+    <button class="btn" id="b_wall">墙 (两点)</button>
+    <button class="btn" id="b_rock">石头</button>
+    <button class="btn" id="b_cone">雪糕桶</button>
+  </div>
+  <button class="btn" id="b_path">放置路径 path</button>
+  <button class="btn" id="b_wp">放置位置点 waypoint</button>
+  <button class="btn" id="b_exec">执行导航测试</button>
+  <button class="btn" id="b_reset">重置场景</button>
+  <div id="info">等待连接...</div>
+  <div style="font-size:11px;color:#eef;margin-top:8px">
+    操作: 选工具后左键放置; 墙=两次左键; 路径=连续左键+右键结束;
+    双击人/车切换动态; 点选墙后拖端点调形, 滚轮调厚度;
+    无工具时: 左键点地图任意处 = 导航过去 (含 wp)
+  </div>
+</div>
+<canvas id="cv"></canvas>
+<script>
+"use strict";
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const SCALE = 30;                       // px per meter
+let W = 0, H = 0;
+function resize(){ W = cv.width = cv.clientWidth; H = cv.height = cv.clientHeight; }
+window.addEventListener("resize", resize);
+function w2s(x, y){ return [W/2 + x*SCALE, H/2 - y*SCALE]; }
+function s2w(px, py){ return [(px - W/2)/SCALE, (H/2 - py)/SCALE]; }
+
+let tool = null;                        // person|car|wall|rock|cone|path|wp
+let wallStart = null, pathPts = [], selWall = null, dragEnd = null;
+let state = null;                       // last websocket state
+
+const tools = {b_person:"person", b_car:"car", b_wall:"wall",
+               b_rock:"rock", b_cone:"cone", b_path:"path", b_wp:"wp"};
+for (const [id, t] of Object.entries(tools)){
+  document.getElementById(id).onclick = () => {
+    tool = (tool === t) ? null : t;
+    wallStart = null; if (t !== "path") pathPts = [];
+    document.querySelectorAll(".btn").forEach(b => b.classList.remove("sel"));
+    if (tool) document.getElementById(id).classList.add("sel");
+  };
+}
+document.getElementById("b_exec").onclick = () =>
+  fetch("/api/nav/execute", {method:"POST"});
+document.getElementById("b_reset").onclick = () =>
+  fetch("/api/reset", {method:"POST"});
+
+async function post(url, body){
+  return fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
+                     body: JSON.stringify(body||{})});
+}
+
+cv.addEventListener("contextmenu", e => {           // right click: finish path
+  e.preventDefault();
+  if (tool === "path" && pathPts.length >= 1){
+    post("/api/path", {points: pathPts});
+    pathPts = []; tool = null;
+    document.querySelectorAll(".btn").forEach(b => b.classList.remove("sel"));
+  }
+});
+
+cv.addEventListener("mousedown", e => {
+  if (e.button !== 0) return;
+  const [x, y] = s2w(e.offsetX, e.offsetY);
+  if (tool === "wall"){
+    if (!wallStart){ wallStart = [x, y]; return; }
+    post("/api/obstacle", {kind:"wall", x:wallStart[0], y:wallStart[1],
+                           x2:x, y2:y, thick_m:0.5});
+    wallStart = null; return;
+  }
+  if (tool === "path"){ pathPts.push([x, y]); return; }
+  if (tool === "wp"){ post("/api/waypoint", {x:x, y:y}); return; }
+  if (tool){ post("/api/obstacle", {kind:tool, x:x, y:y}); return; }
+  // no tool: wall endpoint drag? else goto
+  if (state){
+    for (const o of state.obstacles){
+      if (o.kind !== "wall") continue;
+      for (const [ex, ey, which] of [[o.x, o.y, "a"], [o.x2, o.y2, "b"]]){
+        const [sx, sy] = w2s(ex, ey);
+        if ((sx-e.offsetX)**2 + (sy-e.offsetY)**2 < 100){
+          selWall = o; dragEnd = which; return;
+        }
+      }
+    }
+  }
+  post("/api/nav/goto", {x:x, y:y});
+});
+cv.addEventListener("mousemove", e => {
+  if (selWall && dragEnd){
+    const [x, y] = s2w(e.offsetX, e.offsetY);
+    if (dragEnd === "a"){ selWall.x = x; selWall.y = y; }
+    else { selWall.x2 = x; selWall.y2 = y; }
+  }
+});
+cv.addEventListener("mouseup", () => {
+  if (selWall && dragEnd){
+    post(`/api/obstacle/${selWall.oid}/update_wall`,
+         {x:selWall.x, y:selWall.y, x2:selWall.x2, y2:selWall.y2,
+          thick_m:selWall.thick});
+  }
+  dragEnd = null;
+});
+cv.addEventListener("wheel", e => {                 // thickness on hovered wall
+  if (!state) return;
+  const [x, y] = s2w(e.offsetX, e.offsetY);
+  for (const o of state.obstacles){
+    if (o.kind !== "wall") continue;
+    const d = distToSeg(x, y, o.x, o.y, o.x2, o.y2);
+    if (d < o.thick){
+      o.thick = Math.max(0.2, o.thick + (e.deltaY < 0 ? 0.1 : -0.1));
+      post(`/api/obstacle/${o.oid}/update_wall`,
+           {x:o.x, y:o.y, x2:o.x2, y2:o.y2, thick_m:o.thick});
+      e.preventDefault(); return;
+    }
+  }
+});
+cv.addEventListener("dblclick", e => {              // toggle dynamic person/car
+  if (!state) return;
+  const [x, y] = s2w(e.offsetX, e.offsetY);
+  for (const o of state.obstacles){
+    if (o.kind !== "person" && o.kind !== "car") continue;
+    if ((o.x-x)**2 + (o.y-y)**2 < 1.0){
+      post(`/api/obstacle/${o.oid}/toggle_dynamic`); return;
+    }
+  }
+});
+function distToSeg(px, py, ax, ay, bx, by){
+  const dx = bx-ax, dy = by-ay, L2 = dx*dx+dy*dy;
+  let t = L2 ? ((px-ax)*dx + (py-ay)*dy)/L2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px-(ax+t*dx), py-(ay+t*dy));
+}
+
+// ── websocket ──
+const ws = new WebSocket(`ws://${location.host}/ws`);
+ws.onmessage = ev => { state = JSON.parse(ev.data); };
+setInterval(() => { if (ws.readyState === 1) ws.send("k"); }, 5000);
+
+// ── render loop ──
+function draw(){
+  requestAnimationFrame(draw);
+  if (!W) resize();
+  ctx.clearRect(0, 0, W, H);
+  // 5 m grid
+  ctx.strokeStyle = "#ddd"; ctx.lineWidth = 1;
+  const g = 5*SCALE;
+  for (let x = (W/2)%g; x < W; x += g){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y = (H/2)%g; y < H; y += g){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  if (!state){ return; }
+  // path
+  if (state.path.length){
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 1.5; ctx.beginPath();
+    state.path.forEach((p, i) => { const [sx, sy] = w2s(p[0], p[1]);
+      i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); });
+    ctx.stroke();
+    for (const p of state.path){ const [sx, sy] = w2s(p[0], p[1]);
+      ctx.fillStyle = "#8b0000"; ctx.beginPath();
+      ctx.arc(sx, sy, 4, 0, 7); ctx.fill(); }
+  }
+  // in-progress path preview
+  if (pathPts.length){
+    ctx.strokeStyle = "#888"; ctx.beginPath();
+    pathPts.forEach((p, i) => { const [sx, sy] = w2s(p[0], p[1]);
+      i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); });
+    ctx.stroke();
+  }
+  if (wallStart){ const [sx, sy] = w2s(wallStart[0], wallStart[1]);
+    ctx.fillStyle = "#000"; ctx.fillRect(sx-3, sy-3, 6, 6); }
+  // waypoints
+  for (const p of state.waypoints){ const [sx, sy] = w2s(p[0], p[1]);
+    ctx.fillStyle = "#ff5050"; ctx.beginPath(); ctx.arc(sx, sy, 8, 0, 7); ctx.fill(); }
+  // obstacles
+  for (const o of state.obstacles){
+    const [sx, sy] = w2s(o.x, o.y);
+    if (o.kind === "wall"){
+      const [ax, ay] = w2s(o.x, o.y), [bx, by] = w2s(o.x2, o.y2);
+      ctx.strokeStyle = "#000"; ctx.lineWidth = o.thick*SCALE;
+      ctx.lineCap = "butt";
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+      ctx.fillStyle = "#0a0";
+      ctx.fillRect(ax-3, ay-3, 6, 6); ctx.fillRect(bx-3, by-3, 6, 6);
+    } else if (o.kind === "person"){
+      ctx.fillStyle = "#f2e000"; ctx.beginPath();
+      ctx.arc(sx, sy, 0.3*SCALE, 0, 7); ctx.fill();
+      if (o.dynamic){ ctx.strokeStyle="#f00"; ctx.lineWidth=2; ctx.stroke(); }
+    } else if (o.kind === "car"){
+      ctx.fillStyle = "#666";
+      ctx.save(); ctx.translate(sx, sy);
+      ctx.fillRect(-1.0*SCALE, -0.6*SCALE, 2.0*SCALE, 1.2*SCALE);
+      if (o.dynamic){ ctx.strokeStyle="#f00"; ctx.lineWidth=2;
+        ctx.strokeRect(-1.0*SCALE, -0.6*SCALE, 2.0*SCALE, 1.2*SCALE); }
+      ctx.restore();
+    } else if (o.kind === "rock"){
+      ctx.fillStyle = "#e07820"; ctx.beginPath();
+      for (let i = 0; i < 6; i++){
+        const a = i*Math.PI/3, hx = sx + 0.5*SCALE*Math.cos(a),
+              hy = sy + 0.5*SCALE*Math.sin(a);
+        i ? ctx.lineTo(hx, hy) : ctx.moveTo(hx, hy);
+      }
+      ctx.closePath(); ctx.fill();
+    } else if (o.kind === "cone"){
+      ctx.fillStyle = "#d22"; ctx.beginPath();
+      ctx.moveTo(sx, sy - 0.5*SCALE);
+      ctx.lineTo(sx - 0.25*SCALE, sy + 0.15*SCALE);
+      ctx.lineTo(sx + 0.25*SCALE, sy + 0.15*SCALE);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  // robot
+  const r = state.robot, [rx, ry] = w2s(r.x, r.y);
+  // FOV sector, 50 percent alpha
+  ctx.save(); ctx.translate(rx, ry); ctx.rotate(-r.yaw);
+  ctx.fillStyle = "rgba(120,180,255,0.5)";
+  ctx.beginPath(); ctx.moveTo(0, 0);
+  ctx.arc(0, 0, state.fov.range_m*SCALE,
+          -state.fov.half_rad, state.fov.half_rad);
+  ctx.closePath(); ctx.fill();
+  // body
+  ctx.fillStyle = "#2a9d4a";
+  ctx.fillRect(-0.41*SCALE, -0.22*SCALE, 0.82*SCALE, 0.44*SCALE);
+  ctx.fillStyle = "#fff"; ctx.font = "11px sans-serif";
+  ctx.fillText("dog", -10, 4);
+  // yaw arrow (black, along +x of body frame)
+  arrow(0, 0, 1.4*SCALE, 0, "#000");
+  ctx.restore();
+  // target-direction arrow (blue, world frame)
+  if (state.nav.target){
+    const dx = state.nav.target[0] - r.x, dy = state.nav.target[1] - r.y;
+    const n = Math.hypot(dx, dy) || 1;
+    arrowAt(rx, ry, rx + dx/n*1.4*SCALE, ry - dy/n*1.4*SCALE, "#06c");
+  }
+  // info panel
+  document.getElementById("info").textContent =
+    "机器人状态\n" +
+    `vx ${r.vx.toFixed(2)}  vy ${r.vy.toFixed(2)}  wz ${r.wz.toFixed(2)}\n` +
+    `速度 ${r.speed.toFixed(2)} m/s\n` +
+    `gnss E ${r.gnss[0]}  N ${r.gnss[1]}\n` +
+    `yaw ${(r.yaw*57.29).toFixed(1)} deg  fix ${r.fix}\n` +
+    `nav ${state.nav.state}  dir ${state.nav.direction > 0 ? "正向" : "反向"}`;
+}
+function arrow(x1, y1, x2, y2, color){
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  const a = Math.atan2(y2-y1, x2-x1);
+  ctx.beginPath(); ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - 9*Math.cos(a-0.4), y2 - 9*Math.sin(a-0.4));
+  ctx.lineTo(x2 - 9*Math.cos(a+0.4), y2 - 9*Math.sin(a+0.4));
+  ctx.closePath(); ctx.fill();
+}
+function arrowAt(x1, y1, x2, y2, c){ arrow(x1, y1, x2, y2, c); }
+resize(); draw();
+</script>
+</body>
+</html>
