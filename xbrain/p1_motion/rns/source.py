@@ -555,6 +555,22 @@ class RnsSource:
         push = min(0.35, (r_scan - best_d) * 3.0)
         return -math.sin(rel) * push     # obstacle left -> push right, v.v.
 
+    def _shield_vx_cap(self, pose, now) -> float:
+        """Speed cap companion to the vy shield (batch probe 2026-09-10,
+        east->gap_s 0.113 m): rounding a corner at the full wall speed, the
+        keep-distance PD lags ~0.4 m through the turn and the corner ends up
+        BEHIND the body -- live fuses blind, the vy push alone out-muscled.
+        A remembered BLOCKED inside the ring caps vx so the turn tightens and
+        the push wins. Open ring -> no cap (returns +inf)."""
+        d = self._nearest_mem_blocked(pose, now, r_scan=0.85)
+        if d is None:
+            return float("inf")
+        # 0.60 datum + 1.5 slope: the memory dots sit ON the wall face but
+        # sparse/quantized, so the ring reads ~0.2 long -- at a read of 0.79
+        # (the graze tick) this caps to 0.29; a normal hug (read >= 1.0)
+        # caps to >= 0.6, above the wall v_max -- no drag on cruise.
+        return max(0.15, (d - 0.60) * 1.5)
+
     def _nearest_mem_blocked(self, pose, now, r_scan=0.85):
         """Distance to the nearest remembered BLOCKED cell within r_scan, or
         None. Shared by the vy shield and the goto leave-point cleanliness
@@ -875,11 +891,32 @@ class RnsSource:
             info = None
             if self._grid is not None and now is not None:
                 info = self._grid.nearest_blocked_full(pose, now, r_max_m=6.0)
+            # vy shield ON THE ROUNDING RETURNS too (batch probe 2026-09-10,
+            # corr->east_mid: -0.152 m overlap AT the wall's south end angle).
+            # Rounding steers TOWARD the remembered corner while the corner
+            # itself sits outside the +/-60 deg live fuse cone (left-rear at
+            # the moment of contact) -- the memory ring shield is the only
+            # layer that can see it. Same holo gating as the FOLLOW output.
+            vy_r = self._body_shield_vy(pose, yaw, now) if self._holo else 0.0
             if info is not None:
-                wz = align_omega(info[1], yaw, cfg["route"]["k_yaw"], wz_max)
-                return VelocityCandidate(vx=Mps(0.5 * wf["v_max_mps"]),
-                                         vy=Mps(0.0), wz=wz)
-            return VelocityCandidate(vx=Mps(0.3 * wf["v_max_mps"]), vy=Mps(0.0),
+                # steer at the TANGENT of the d_wall circle around the
+                # remembered corner, NOT at the corner itself (batch probe
+                # 2026-09-10: aiming at the corner cut inside the keep radius
+                # -- 0.113 m graze at the south-end angle with the vy shield
+                # already at full push). The tangent keeps the rounding
+                # radius; sgn picks the tangent that leaves the corner on
+                # the wall-hand side.
+                d_c, bear_c = info
+                off = math.asin(min(1.0, wf["d_wall_m"]
+                                    / max(d_c, wf["d_wall_m"])))
+                wz = align_omega(bear_c - sgn * off, yaw,
+                                 cfg["route"]["k_yaw"], wz_max)
+                v_c = min(0.5 * wf["v_max_mps"],
+                          self._shield_vx_cap(pose, now))
+                return VelocityCandidate(vx=Mps(v_c),
+                                         vy=Mps(vy_r), wz=wz)
+            v_c = min(0.3 * wf["v_max_mps"], self._shield_vx_cap(pose, now))
+            return VelocityCandidate(vx=Mps(v_c), vy=Mps(vy_r),
                                      wz=sgn * 0.5 * wz_max)
         # CONTACT FUSE (collision audit #2, 2026-09-10): the PD keeps distance
         # off the MEMORY grid, whose 0.25 m cells read large at point-like car
@@ -912,7 +949,8 @@ class RnsSource:
                         + i * profile.angle_step_rad
             wz = align_omega(best_bear, yaw, cfg["route"]["k_yaw"], wz_max)
             self._last_d_side = d_side
-            return VelocityCandidate(vx=Mps(wf["v_max_mps"]), vy=Mps(0.0),
+            v_a = min(wf["v_max_mps"], self._shield_vx_cap(pose, now))
+            return VelocityCandidate(vx=Mps(v_a), vy=Mps(0.0),
                                      wz=wz)
         rate = 0.0
         if self._last_d_side is not None:
@@ -935,7 +973,12 @@ class RnsSource:
         vy_w = 0.0
         if self._holo:
             vy_w = self._body_shield_vy(pose, yaw, now)
-        return VelocityCandidate(vx=Mps(wf["v_max_mps"]), vy=Mps(vy_w), wz=wz)
+        # shield vx cap (east->gap_s 0.113 m): full wall speed through a
+        # corner lets the PD lag eat the keep distance; a remembered BLOCKED
+        # inside the body ring slows the pass. Not holo-gated -- slowing
+        # helps a tracked chassis exactly the same.
+        v_w = min(wf["v_max_mps"], self._shield_vx_cap(pose, now))
+        return VelocityCandidate(vx=Mps(v_w), vy=Mps(vy_w), wz=wz)
 
     def _pick_candidate(self, profile, pose, yaw, fs, cfg, margin,
                         dyn_objs=(), memory_appeal=False):

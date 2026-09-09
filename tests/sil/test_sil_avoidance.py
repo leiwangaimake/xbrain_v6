@@ -584,3 +584,24 @@ def test_detour_opportunistic_exit_waits_out_dwell():
         "opportunistic exit fired inside the dwell window: %s" % states[:hold]
     assert NavState.FOLLOW in states, \
         "dwell held forever -- exit never fired after the window"
+
+
+def test_shield_vx_cap_slows_near_remembered_wall():
+    # batch probe 2026-09-10 (east->gap_s 0.113 m): rounding a corner at full
+    # wall speed, the PD lag eats the keep distance and the corner ends up
+    # behind the body -- live fuses blind. A remembered BLOCKED inside the
+    # 0.85 m ring must cap vx (not holo-gated: slowing helps tracked bases
+    # the same). mutant: drop the cap (return inf) -> reddens.
+    from xbrain.p1_motion.rns.types import Cell
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    now = 1000
+    rns._grid.write(0.7, 0.0, Cell.BLOCKED, now)      # wall dot 0.7 m ahead
+    cap = rns._shield_vx_cap((0.0, 0.0), now)
+    assert cap < 0.35, "cap %.2f too loose at 0.7 m" % cap
+    # open ring -> no cap
+    rns2 = RnsSource(cfg=CFG, r_eff_m=0.5)
+    assert rns2._shield_vx_cap((0.0, 0.0), now) == float("inf")
+    # normal hug distance (>= 1.0 m) stays above the wall v_max: no drag
+    rns3 = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns3._grid.write(1.2, 0.0, Cell.BLOCKED, now)
+    assert rns3._shield_vx_cap((0.0, 0.0), now) >= 0.5
