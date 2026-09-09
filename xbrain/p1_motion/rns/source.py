@@ -111,6 +111,7 @@ class RnsSource:
         self._wall_corner = False        # concave-corner turn in progress
         self._wall_last_move_ms = None   # in-wall stall backstop clock
         self._wall_goal_dist_at_hit = 0.0
+        self._holo = False
         self.audit = RingAudit(capacity=256)
         if cfg is not None:
             c = cfg["rns"]
@@ -221,6 +222,7 @@ class RnsSource:
             return None
         snap = getattr(ctx, "perception", None)
         now = getattr(ctx, "now_mono_ms", None)
+        self._holo = bool(getattr(ctx, "holonomic", False))
         cfg = self._cfg["rns"]
         route_cfg = cfg["route"]
         zero = VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0), wz=0.0)
@@ -501,9 +503,67 @@ class RnsSource:
             elif wd == WatchdogResult.REPORT_NO_PROGRESS:
                 self._fail(no_progress_failure(limiter))
                 return zero
-        return VelocityCandidate(vx=Mps(v), vy=Mps(0.0), wz=wz)
+        vy_cmd = 0.0
+        if self._holo:
+            vy_cmd = self._body_shield_vy(pose, yaw, now)
+        return VelocityCandidate(vx=Mps(v), vy=Mps(vy_cmd), wz=wz)
 
     # ── assembly helpers ─────────────────────────────────────────────────────
+    def _body_shield_vy(self, pose, yaw, now) -> float:
+        """vy side-shield (residual-graze fix, user-ordered 2026-09-10): the
+        0.073 m graze happened sliding past an already-rounded car corner
+        sitting BEHIND the robot -- outside the 90-deg FOV, invisible to every
+        profile-based fuse. The corner IS in the memory grid (just walked).
+        Scan the grid in a 0.60 m ring around the body; the nearest remembered
+        BLOCKED cell pushes a lateral vy AWAY from it, forward speed untouched
+        (sidestep, not stop -- M20S is holonomic; the host passes
+        ctx.holonomic from models/<chassis>.yaml spec, so a tracked chassis
+        disables this with zero code). 0.60 < the wall-follow centre distance
+        (d_wall 1.0), so normal wall hugging never trips it."""
+        if self._grid is None or now is None:
+            return 0.0
+        cell = self._grid._cell_m
+        # 0.85 not 0.60: the graze debug showed a corner at 0.585 m slipping
+        # under a 0.60 ring through the 0.25 m cell quantization; the wall-
+        # follow centre distance is 1.0 so hugging still never trips this.
+        r_scan = 0.85
+        steps = int(r_scan / cell) + 1
+        best_d = None
+        best_ang = 0.0
+        for ix in range(-steps, steps + 1):
+            for iy in range(-steps, steps + 1):
+                wx = pose[0] + ix * cell
+                wy = pose[1] + iy * cell
+                if self._grid.read(wx, wy, now) == Cell.BLOCKED:
+                    d = math.hypot(wx - pose[0], wy - pose[1])
+                    if d < r_scan and (best_d is None or d < best_d):
+                        best_d = d
+                        best_ang = math.atan2(wy - pose[1], wx - pose[0])
+        if best_d is None:
+            return 0.0
+        rel = wrap_angle(best_ang - yaw)
+        push = min(0.35, (r_scan - best_d) * 3.0)
+        return -math.sin(rel) * push     # obstacle left -> push right, v.v.
+
+    def _nearest_mem_blocked(self, pose, now, r_scan=0.85):
+        """Distance to the nearest remembered BLOCKED cell within r_scan, or
+        None. Shared by the vy shield and the goto leave-point cleanliness
+        check."""
+        if self._grid is None or now is None:
+            return None
+        cell = self._grid._cell_m
+        steps = int(r_scan / cell) + 1
+        best = None
+        for ix in range(-steps, steps + 1):
+            for iy in range(-steps, steps + 1):
+                wx = pose[0] + ix * cell
+                wy = pose[1] + iy * cell
+                if self._grid.read(wx, wy, now) == Cell.BLOCKED:
+                    d = math.hypot(wx - pose[0], wy - pose[1])
+                    if d < r_scan and (best is None or d < best):
+                        best = d
+        return best
+
     @staticmethod
     def _body_to_world(p, pose, yaw):
         c, s = math.cos(yaw), math.sin(yaw)
@@ -688,7 +748,13 @@ class RnsSource:
         g = self._mission.endpoint
         d_goal = math.hypot(pose[0] - g[0], pose[1] - g[1])
         if self._mission.kind == MissionKind.GOTO:
-            leave_now = (goal_open and
+            # leave-point cleanliness (graze fix, final cut): leaving while a
+            # remembered obstacle sits < 0.7 m off the hull hands FOLLOW a
+            # corner-cutting line past an invisible (behind-FOV) corner. Hug a
+            # little longer -- the in-wall vy shield walks the body off the
+            # corner first -- then release.
+            near = self._nearest_mem_blocked(pose, now, r_scan=0.7)
+            leave_now = (goal_open and near is None and
                          d_goal < self._wall_goal_dist_at_hit
                          - wf["leave_progress_m"])
         else:
@@ -782,7 +848,13 @@ class RnsSource:
                 wz = min(wz, cap)
             else:
                 wz = max(wz, -cap)
-        return VelocityCandidate(vx=Mps(wf["v_max_mps"]), vy=Mps(0.0), wz=wz)
+        # vy shield in-wall too: at point-like corners the sector read goes
+        # unstable and the PD grazes in; the memory ring-scan still sees the
+        # corner and side-steps off it (graze debug t902-914).
+        vy_w = 0.0
+        if self._holo:
+            vy_w = self._body_shield_vy(pose, yaw, now)
+        return VelocityCandidate(vx=Mps(wf["v_max_mps"]), vy=Mps(vy_w), wz=wz)
 
     def _pick_candidate(self, profile, pose, yaw, fs, cfg, margin,
                         dyn_objs=(), memory_appeal=False):

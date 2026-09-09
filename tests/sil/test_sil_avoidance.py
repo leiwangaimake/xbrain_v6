@@ -46,6 +46,7 @@ class Ctx:
         self.wz_max_rps = 1.2
         self.perception = snap
         self.now_mono_ms = now_ms
+        self.holonomic = True
 
 
 def _mission(points, kind=MissionKind.GOTO):
@@ -413,15 +414,14 @@ def test_narrow_gap_rejected_by_corridor_sweep():
     rns.load_mission(_mission([(9.0, 0.0)]))
     tick, states, min_clear = _tick_until(world, rns, 2400)
     assert tick is not None, "narrow-gap scene failed outright"
-    # HARD line: no body overlap, ever (was -0.099 before the fuses/d_wall).
-    # KNOWN RESIDUAL (recorded, not accepted-as-good): min_clear ~0.07 -- the
-    # robot grazes an already-rounded car corner sliding out, with the corner
-    # BEHIND it (outside the 90-deg FOV, invisible to every profile-based
-    # fuse). Root fix is assembly hole #6 (out-of-FOV subgoals permanently
-    # unobs-rejected force wall-follow laps past corners); the memory-appeal
-    # patch for it destabilized all car-wall scenes and needs its own pass.
-    assert min_clear > 0.0, \
-        "BODY OVERLAP in the slot scene (min clearance %.3f m)" % min_clear
+    # vy side-shield era (user-ordered special, 2026-09-10): the residual
+    # behind-FOV corner graze went 0.073 -> 0.186 via the memory ring-scan vy
+    # side-step (in FOLLOW and in-wall) plus the goto leave-point cleanliness
+    # check. mutant: pass holonomic=False in Ctx (shield off) -> back to
+    # ~0.07 -> reddens.
+    assert min_clear > 0.15, \
+        "corner graze regressed (min clearance %.3f m; shield should hold " \
+        ">= 0.186)" % min_clear
 
 
 def test_memory_appeal_layer_rehabilitates_walked_ground():

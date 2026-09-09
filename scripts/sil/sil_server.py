@@ -74,11 +74,14 @@ def load_v_nom() -> float:
         raise RuntimeError(
             "v_nom unconfigured: models/m20s.yaml common.spec.max_vx_mps and "
             "common.yaml common.motion.profiles.patrol.max_mps must be set")
+    global HOLONOMIC
+    HOLONOMIC = bool(model["common"]["spec"]["holonomic"])
     return min(float(patrol), float(ceiling))
 
 
 V_NOM_MPS = None         # resolved at startup from the config hierarchy
 WZ_MAX_RPS = 1.2         # [sim] spec.max_wz_radps is null (V-01: no basis yet)
+HOLONOMIC = None         # resolved at startup from models/<chassis>.yaml
 
 app = FastAPI()
 world = SilWorld()
@@ -106,6 +109,7 @@ class Ctx:
         self.wz_max_rps = WZ_MAX_RPS
         self.perception = snapshot
         self.now_mono_ms = now_ms
+        self.holonomic = HOLONOMIC
 
 
 def speed_gate_f(d_free_fwd: float) -> float:
