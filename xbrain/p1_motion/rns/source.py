@@ -97,6 +97,7 @@ class RnsSource:
         self._failed_pending: Optional[NavFailure] = None
         self._selector: Optional[CandidateSelector] = None
         self._subgoal_world = None          # DETOUR target (world frame)
+        self._detour_dwell = 0              # ticks since DETOUR entry (S6.6)
         self._wait_budget: Optional[WaitBudget] = None
         self._dyn_prev = DynamicAction.RUN
         self._pre_wait_state: NavState = NavState.FOLLOW
@@ -385,6 +386,7 @@ class RnsSource:
                     self._subgoal_world = self._body_to_world(
                         sel.subgoal, pose, yaw)
                     self._transition(NavState.DETOUR)
+                    self._detour_dwell = 0
                     target = self._subgoal_world
                     self.audit.append(AuditRecord(now or 0, "detour_enter",
                                                   {"subgoal": target}))
@@ -401,6 +403,7 @@ class RnsSource:
                         self._subgoal_world = self._body_to_world(
                             sel.subgoal, pose, yaw)
                         self._transition(NavState.DETOUR)
+                        self._detour_dwell = 0
                         target = self._subgoal_world
                         self.audit.append(AuditRecord(
                             now or 0, "detour_enter",
@@ -411,13 +414,20 @@ class RnsSource:
                     else:
                         return zero
             elif self._state == NavState.DETOUR:
+                self._detour_dwell += 1
                 d_sub = math.hypot(pose[0] - self._subgoal_world[0],
                                    pose[1] - self._subgoal_world[1])
                 r_clear = not self._ahead_blocked(
                     profile, pose, yaw, fs.lookahead_point,
                     cfg["dynamic"]["stop_dist_m"], unseen_is_blocked=True,
                     now=now)
-                if d_sub < 0.7 or r_clear:
+                # the OPPORTUNISTIC exit (r_clear) waits out a minimum dwell
+                # (side_hold_ticks, same S6.6 hysteresis family): a 1-tick
+                # enter/exit flip is never meaningful steering, only limit-
+                # cycle fuel. Arrival (d_sub) and the infeasible drop below
+                # (A-HYS-2) stay immediate -- safety exits take no dwell.
+                hold = cfg["candidate"]["side_hold_ticks"]
+                if d_sub < 0.7 or (r_clear and self._detour_dwell >= hold):
                     self._subgoal_world = None
                     self._selector.select(False, None, False)
                     self._transition(NavState.FOLLOW)
@@ -607,13 +617,28 @@ class RnsSource:
                 return True            # no memory -> cannot confirm -> blocked
             ang = yaw + theta_body
             c, si = math.cos(ang), math.sin(ang)
+            # CORRIDOR width, not a single ray (field bug 2026-09-10: 1-tick
+            # FOLLOW<->DETOUR limit cycle, 20 s head-shake). The robot's own
+            # walked trail reads FREE along the exact ray while the car wall
+            # sits 0.5 m beside it -- a 0-width ray "confirmed clear" through
+            # a corridor the BODY cannot fit, so DETOUR exited; one tick
+            # later the 0.06 rad turn put the same bearing back inside the
+            # FOV and the (corridor-width) perception branch said blocked ->
+            # DETOUR re-entered, forever. Same half-width as the in-FOV
+            # branch: any non-FREE cell inside the swept corridor refutes.
+            half_w = self._r_eff_m + 0.3
+            nc, ns = -si, c            # unit normal across the bearing
             r = 0.5
             while r <= trigger_m:
-                cell = self._grid.read(pose[0] + r * c, pose[1] + r * si, now)
-                if cell != Cell.FREE:  # BLOCKED or UNKNOWN: not confirmed
-                    return True
+                px, py = pose[0] + r * c, pose[1] + r * si
+                off = -half_w
+                while off <= half_w + 1e-9:
+                    cell = self._grid.read(px + nc * off, py + ns * off, now)
+                    if cell != Cell.FREE:   # BLOCKED or UNKNOWN: unconfirmed
+                        return True
+                    off += 0.25
                 r += 0.5
-            return False               # remembered FREE all the way: clear
+            return False               # remembered FREE corridor: clear
         # FULL forward hemisphere, no fixed window (assembly hole #5, user
         # collision audit 2026-09-10): the old +/-15-bin window failed on a
         # narrow slot -- up close, the slot's angular span EXCEEDS the window,

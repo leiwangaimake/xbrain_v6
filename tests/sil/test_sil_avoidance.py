@@ -506,3 +506,81 @@ def test_reentry_keeps_the_near_end_side():
     assert tick is not None, "west-to-east past-wall goal did not arrive"
     assert max_y < -2.0, "flipped north around the wall (max_y=%.2f)" % max_y
     assert min_clear > 0.15
+
+
+def test_confirmed_clear_needs_body_corridor_not_a_ray():
+    # FIELD BUG (user 2026-09-10, "stuck last run"): a 1-tick FOLLOW<->DETOUR
+    # limit cycle, 20 s of zero-speed head-shake at one spot. The DETOUR exit
+    # asked "confirmed clear toward R?" with R just OUTSIDE the FOV edge; the
+    # memory walk was a 0-WIDTH ray that ran exactly along the robot's own
+    # walked trail (FREE cells) while the car wall sat 0.5 m beside it. Exit
+    # fired, the 0.06 rad turn put R back in-FOV, the corridor-width
+    # perception branch said blocked, DETOUR re-entered -- every tick. The
+    # memory confirmation must sweep the BODY CORRIDOR (r_eff + 0.3), same
+    # width as the in-FOV branch. mutant: revert to the single ray -> the
+    # trail-line reads clear -> first assert reddens.
+    from xbrain.p1_motion.rns.types import Cell
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    now = 1000
+    y = -3.0
+    while y <= 3.0:                       # walked trail: a 1-cell FREE line
+        rns._grid.write(-11.9, y, Cell.FREE, now)
+        rns._grid.write(-11.4, y, Cell.BLOCKED, now)   # car wall 0.5 m beside
+        y += 0.25
+    profile = SilWorld().synth_snapshot(now).profile   # only FOV metadata used
+    pose, yaw = (-11.9, 2.0), 2.0
+    target = (-11.9, -1.0)                # due south: bearing well out of FOV
+    assert rns._ahead_blocked(profile, pose, yaw, target, 3.0,
+                              unseen_is_blocked=True, now=now) is True
+    # and the counter-case that keeps the U-trap escape alive: a WIDE walked
+    # corridor (open ground, no wall inside the body corridor) stays clear.
+    rns2 = RnsSource(cfg=CFG, r_eff_m=0.5)
+    y = -3.0
+    while y <= 3.0:
+        x = -13.4
+        while x <= -10.4:                 # 3 m wide FREE swath
+            rns2._grid.write(x, y, Cell.FREE, now)
+            x += 0.25
+        y += 0.25
+    assert rns2._ahead_blocked(profile, pose, yaw, target, 3.0,
+                               unseen_is_blocked=True, now=now) is False
+
+
+def test_detour_opportunistic_exit_waits_out_dwell():
+    # companion anti-flip guard: the OPPORTUNISTIC DETOUR exit (r_clear) must
+    # wait side_hold_ticks before acting -- a 1-tick enter/exit is limit-cycle
+    # fuel, never steering. Arrival/infeasible exits stay immediate. mutant:
+    # drop the dwell condition -> the exit fires on the first clear tick ->
+    # the "still DETOUR right after clearing" assert reddens.
+    world = SilWorld()
+    world.add_obstacle("rock", 2.5, 0.0)   # STATIC blocker (a car would route
+    world.rx, world.ry, world.ryaw = 0.0, 0.0, 0.0   # to the dynamic WAIT path)
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(8.0, 0.0)]))
+    entered = None
+    for t in range(200):
+        now = t * 50
+        snap = world.synth_snapshot(now)
+        cand = rns.compute(Ctx(world, snap, now))
+        if cand is not None:
+            world.step_robot(cand.vx.value, cand.vy.value, cand.wz, DT)
+        if rns.nav_state() is NavState.DETOUR:
+            entered = t
+            break
+    assert entered is not None, "never entered DETOUR at the blocking car"
+    # the way opens instantly: car gone, nose pointed straight at the goal
+    world.obstacles.clear()
+    world.ryaw = 0.0
+    states = []
+    for t in range(entered + 1, entered + 12):
+        now = t * 50
+        snap = world.synth_snapshot(now)
+        cand = rns.compute(Ctx(world, snap, now))
+        if cand is not None:
+            world.step_robot(cand.vx.value, cand.vy.value, cand.wz, DT)
+        states.append(rns.nav_state())
+    hold = CFG["rns"]["candidate"]["side_hold_ticks"]
+    assert all(s is NavState.DETOUR for s in states[:hold - 1]), \
+        "opportunistic exit fired inside the dwell window: %s" % states[:hold]
+    assert NavState.FOLLOW in states, \
+        "dwell held forever -- exit never fired after the window"
