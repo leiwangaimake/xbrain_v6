@@ -49,7 +49,7 @@ from .watchdog import ProgressWatchdog, WatchdogResult, no_progress_failure
 from .audit import AuditRecord, RingAudit
 from .route import Mission, align_omega, lookahead_distance, wrap_angle
 from .speed import SpeedCaps, cap_deviation
-from .types import (MissionKind, NavFailure, NavState, Origin,
+from .types import (Cell, MissionKind, NavFailure, NavState, Origin,
                     VelocityCandidate, is_legal_transition)
 from xbrain.common.types.units import Mps
 
@@ -370,7 +370,8 @@ class RnsSource:
                                    pose[1] - self._subgoal_world[1])
                 r_clear = not self._ahead_blocked(
                     profile, pose, yaw, fs.lookahead_point,
-                    cfg["dynamic"]["stop_dist_m"])
+                    cfg["dynamic"]["stop_dist_m"], unseen_is_blocked=True,
+                    now=now)
                 if d_sub < 0.7 or r_clear:
                     self._subgoal_world = None
                     self._selector.select(False, None, False)
@@ -448,11 +449,45 @@ class RnsSource:
         dx, dy = p[0] - pose[0], p[1] - pose[1]
         return (dx * c - dy * s, dx * s + dy * c)
 
-    def _ahead_blocked(self, profile, pose, yaw, target, trigger_m) -> bool:
+    def _ahead_blocked(self, profile, pose, yaw, target, trigger_m,
+                       unseen_is_blocked: bool = False, now=None) -> bool:
         """Is the bearing toward `target` blocked within trigger_m? Checks the
-        profile bins in a corridor-width angular window around that bearing."""
+        profile bins in a corridor-width angular window around that bearing.
+
+        unseen_is_blocked separates two DIFFERENT questions (field bug #2,
+        user trace 2026-09-10: 254 detour_enters at one spot):
+          False -> "do I SEE an obstacle there?" (DETOUR entry: only visible
+                   obstacles justify detouring; an out-of-FOV bearing must not
+                   trigger avoidance -- else a goal behind the robot deadlocks
+                   the start-up turn).
+          True  -> "is it CONFIRMED clear there?" (DETOUR exit / wall-follow
+                   goal_open). Confirmed = perception UNION memory: an
+                   out-of-FOV bearing consults the MEMORY GRID along the ray --
+                   a freshly-walked area reads FREE (wall-follow leave points
+                   stay reachable, the U-trap escape depends on this), while a
+                   never-seen area reads UNKNOWN and unknown is NOT clear
+                   (the car-wall DETOUR oscillation: turning toward the subgoal
+                   swung R out of the 90-deg FOV and the empty scan window
+                   counted as "clear" -- 254 re-entries at one spot)."""
         theta_body = wrap_angle(
             math.atan2(target[1] - pose[1], target[0] - pose[0]) - yaw)
+        fov_lo = profile.angle_min_rad
+        fov_hi = profile.angle_min_rad + (profile.n_bins - 1) * profile.angle_step_rad
+        if theta_body < fov_lo - 0.05 or theta_body > fov_hi + 0.05:
+            if not unseen_is_blocked:
+                return False           # entry semantics: only SEEN obstacles
+            # confirmed-clear semantics: walk the bearing through MEMORY.
+            if self._grid is None or now is None:
+                return True            # no memory -> cannot confirm -> blocked
+            ang = yaw + theta_body
+            c, si = math.cos(ang), math.sin(ang)
+            r = 0.5
+            while r <= trigger_m:
+                cell = self._grid.read(pose[0] + r * c, pose[1] + r * si, now)
+                if cell != Cell.FREE:  # BLOCKED or UNKNOWN: not confirmed
+                    return True
+                r += 0.5
+            return False               # remembered FREE all the way: clear
         half_w = self._r_eff_m + 0.3
         n = profile.n_bins
         center = round((theta_body - profile.angle_min_rad)
@@ -517,7 +552,7 @@ class RnsSource:
         # exit (S7.3): back on line AND 2' arc progress AND goal dir open.
         goal_open = not self._ahead_blocked(
             profile, pose, yaw, fs.lookahead_point,
-            cfg["dynamic"]["stop_dist_m"])
+            cfg["dynamic"]["stop_dist_m"], unseen_is_blocked=True, now=now)
         if can_leave(fs.projection.deviation_m, fs.projection.s_arc_m,
                      w.s_hit, goal_open, wf["e_ok_m"], wf["leave_progress_m"]):
             self.audit.append(AuditRecord(now or 0, "wall_exit",

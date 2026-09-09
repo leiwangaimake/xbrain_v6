@@ -231,3 +231,27 @@ def test_goto_behind_robot_does_not_false_fire_watchdog():
     assert fired is None, (
         "watchdog false-fired %s during the heading-limited turn phase"
         % fired.reason.value)
+
+
+def test_car_wall_detour_does_not_oscillate():
+    # FIELD BUG regression #2 (user 2026-09-10, flight-recorder trace): a row of
+    # 7 parked cars forms a wall; detouring around its south end, the robot spun
+    # toward the subgoal, which swung the lookahead R OUT of the 90-deg FOV --
+    # and _ahead_blocked treated out-of-view as "clear" (empty scan window ->
+    # False), so DETOUR exited, FOLLOW re-blocked, DETOUR re-entered... 254
+    # detour_enters at one spot, moving_ratio 0.117. Unseen is NOT clear
+    # (RNS-I-1 spirit): the DETOUR exit must require CONFIRMED-clear toward R.
+    # mutant: revert unseen_is_blocked at the exit call -> stuck again -> red.
+    world = SilWorld()
+    for y, x in ((0.00, -14.2), (-1.63, -14.1), (-3.27, -14.2), (-5.23, -14.5),
+                 (-7.17, -14.7), (-9.17, -14.5), (-11.27, -14.7)):
+        world.add_obstacle("car", x, y)
+    world.rx, world.ry, world.ryaw = -12.6, -8.0, math.pi   # the stuck pose
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(-20.07, -15.1)]))
+    tick, states, _ = _tick_until(world, rns, 3600)          # 3 min budget
+    enters = sum(1 for r in rns.audit.drain() if r.kind == "detour_enter")
+    assert tick is not None, \
+        "stuck at the car wall (detour_enters=%d)" % enters
+    assert enters < 20, \
+        "detour oscillation: %d enters (healthy runs use a handful)" % enters
