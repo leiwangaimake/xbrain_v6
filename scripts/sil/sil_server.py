@@ -89,6 +89,12 @@ rns = RnsSource(cfg=CFG, r_eff_m=R_EFF_M)   # startup assertions run HERE
 clients: list = []
 nav = {"state": "idle", "direction": 1, "target": None, "last_done": None}
 
+# flight recorder (user 2026-09-10: a long stall could not be diagnosed after
+# the fact -- the audit ring lived in-process with no REST). Ring of per-tick
+# records, 10 min at 20 Hz; /api/trace pulls it, /api/audit drains RNS events.
+from collections import deque
+TRACE = deque(maxlen=12000)
+
 
 class Ctx:
     """The tick context handed to RnsSource.compute -- the SIL stand-in for the
@@ -220,6 +226,27 @@ async def api_state():
             "mission_loaded": rns._mission is not None}
 
 
+@app.get("/api/trace")
+async def api_trace(n: int = 600, step: int = 1):
+    """Flight recorder pull: last n records, every step-th. Also a per-state
+    dwell summary over the WHOLE ring so a stall shows up without eyeballing."""
+    from collections import Counter
+    recs = list(TRACE)
+    dwell = Counter(r["st"] for r in recs)
+    moving = sum(1 for r in recs if abs(r["vx"]) > 0.05)
+    return {"n_total": len(recs),
+            "state_ticks": dict(dwell),
+            "moving_ratio": round(moving / len(recs), 3) if recs else None,
+            "tail": recs[-n::step]}
+
+
+@app.get("/api/audit")
+async def api_audit():
+    """Drain the RNS audit ring (detour/wall enters, exits, failures)."""
+    return {"events": [{"t_ms": r.t_mono_ms, "kind": r.kind, "detail": r.detail}
+                       for r in rns.audit.drain()]}
+
+
 @app.post("/api/reset")
 async def api_reset():
     world.reset()
@@ -255,6 +282,16 @@ async def tick_loop():
         fail = rns.take_failure()
         if fail is not None:
             nav["state"] = "failed: %s" % fail.reason.value
+        TRACE.append({
+            "t": round(now_ms / 1000.0, 2),
+            "x": round(world.rx, 2), "y": round(world.ry, 2),
+            "yaw": round(world.ryaw, 2),
+            "st": rns.nav_state().value,
+            "vx": round(vx, 2), "wz": round(wz, 2),
+            "dyn": rns._dyn_prev.value,
+            "wall_d": (round(rns._last_d_side, 2)
+                       if rns._last_d_side is not None else None),
+        })
         await broadcast(snap, last_cmd)
         el = time.monotonic() - t0
         await asyncio.sleep(max(0.0, DT - el))
