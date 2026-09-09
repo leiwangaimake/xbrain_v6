@@ -74,28 +74,33 @@ def test_freshness_ok_degraded_failed():
 # --- MOT-PM-5 arbiter ---
 
 def test_arbiter_priority_order():
-    """Higher priority source wins."""
+    """Higher priority source wins (12 S4.2 v0.8: rns_avoid 900 > hold 100)."""
     a = P1Arbiter(dwell_ms=1000)
     a.note(BehaviorSource.HOLD, now_mono_ms=0)
-    a.note(BehaviorSource.PATH_FOLLOW, now_mono_ms=0)
-    a.note(BehaviorSource.ESTOP_ECHO, now_mono_ms=0)
-    assert a.holder() == BehaviorSource.ESTOP_ECHO
+    a.note(BehaviorSource.NAV2_PROXY, now_mono_ms=0)
+    a.note(BehaviorSource.RNS_AVOID, now_mono_ms=0)
+    assert a.holder() == BehaviorSource.RNS_AVOID
 
 
 def test_arbiter_deactivates_stale_sources():
     a = P1Arbiter(dwell_ms=100)
-    a.note(BehaviorSource.PATH_FOLLOW, now_mono_ms=0)
+    a.note(BehaviorSource.RNS_AVOID, now_mono_ms=0)
     a.note(BehaviorSource.HOLD, now_mono_ms=0)
     a.tick(now_mono_ms=200)   # both stale
     assert a.holder() is None
 
 
 def test_arbiter_priority_table_matches_doc():
-    """12 S4.1 verbatim priorities."""
+    """12 S4.2 v0.8 priorities. rns_avoid is 900 (the single nav source, #20-1);
+    estop is not a source (cmd/estop P1-21 zeroes directly), removed in PM1.3."""
     assert priority_of(BehaviorSource.FENCE_GUARD) == 1000
-    assert priority_of(BehaviorSource.ESTOP_ECHO) == 900
+    assert priority_of(BehaviorSource.RNS_AVOID) == 900
     assert priority_of(BehaviorSource.TELEOP_CLOUD) == 550
     assert priority_of(BehaviorSource.HOLD) == 100
+    # removed sources are gone from the closed set:
+    assert not hasattr(BehaviorSource, "PATH_FOLLOW")
+    assert not hasattr(BehaviorSource, "TARGET_ORIENTED")
+    assert not hasattr(BehaviorSource, "ESTOP_ECHO")
 
 
 # --- MOT-PM-6/7 speed gate ---
