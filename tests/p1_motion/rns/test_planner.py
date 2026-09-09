@@ -167,3 +167,31 @@ def test_diagonal_wall_seam_does_not_leak():
         if p.domain_no_path():
             break
     assert p.domain_no_path(), "field leaked through the diagonal seam"
+
+
+def test_static_polygon_layer_blocks_planning():
+    # G3 (S4A.4): a keep-out polygon (fence/prior map, curated upstream)
+    # rasterizes into the static layer and the field routes AROUND it --
+    # while the layer survives set_task (static world does not die with a
+    # mission). mutant: skip the static check in _coarse_state -> the field
+    # crosses the polygon -> reddens.
+    g, p = _mk()
+    _paint(g, -1.0, 7.0, -4.0, 4.0, Cell.FREE)
+    p.set_static_polygons([[(2.0, -3.0), (4.0, -3.0), (4.0, 3.0), (2.0, 3.0)]])
+    p.set_task((0.0, 0.0), (6.0, 0.0))
+    assert _run_until_field(p, g, (0.0, 0.0))
+    chain_cells = []
+    cur = p._cell_of((0.0, 0.0))
+    for _ in range(60):
+        nxt = p._descend(cur)
+        if nxt is None:
+            break
+        cur = nxt
+        chain_cells.append(p._center_of(cur))
+    assert chain_cells, "no descent at all"
+    for (cx, cy) in chain_cells:
+        assert not (2.0 < cx < 4.0 and -3.0 < cy < 3.0), \
+            "path crossed the keep-out at (%.1f, %.1f)" % (cx, cy)
+    # static layer survives a new task (lifecycle: static != mission-scoped)
+    p.set_task((0.0, 0.0), (6.0, 2.0))
+    assert p._static_blocked, "static layer died with the task"

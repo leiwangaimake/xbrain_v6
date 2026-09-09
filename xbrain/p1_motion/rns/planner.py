@@ -95,6 +95,12 @@ class GuidancePlanner:
         # between -- is the domain no-path proof (S4A.3).
         self._unreachable_builds = 0
         self._last_chain: List[Tuple[int, int]] = []
+        # G3 static layer (S4A.4): fence/prior-map polygons rasterized to
+        # coarse WORLD cells (independent of the task domain). Consumed by
+        # _coarse_state as BLOCKED-dominant. RNS only CONSUMES this -- the
+        # polygons come from the curated map side (geo/fence.db, 20 S4A.4
+        # lifecycle table); nothing here persists anything.
+        self._static_blocked: set = set()
 
     # ── task lifecycle (S4A.4: task-scoped, never persisted) ─────────────────
     def set_task(self, start_xy, goal_xy) -> None:
@@ -106,6 +112,42 @@ class GuidancePlanner:
         self._open = []
         self._build_mode = "none"
         self._last_build_start_ms = None
+
+    def set_static_polygons(self, polygons) -> None:
+        """Rasterize keep-out polygons into the static BLOCKED layer
+        (world-anchored coarse cells; survives set_task/clear -- the static
+        world does not die with a mission). polygons: iterable of vertex
+        lists [(x, y), ...]. Point-in-polygon by ray casting at coarse-cell
+        centers over each polygon's bounding box."""
+        self._static_blocked = set()
+        for poly in polygons:
+            if len(poly) < 3:
+                continue
+            xs = [v[0] for v in poly]
+            ys = [v[1] for v in poly]
+            x = min(xs)
+            while x <= max(xs) + 1e-9:
+                y = min(ys)
+                while y <= max(ys) + 1e-9:
+                    if self._point_in_poly(x, y, poly):
+                        self._static_blocked.add(
+                            (int(x / self._coarse_m),
+                             int(y / self._coarse_m)))
+                    y += self._coarse_m
+                x += self._coarse_m
+
+    @staticmethod
+    def _point_in_poly(x, y, poly) -> bool:
+        inside = False
+        j = len(poly) - 1
+        for i in range(len(poly)):
+            xi, yi = poly[i]
+            xj, yj = poly[j]
+            if (yi > y) != (yj > y) and \
+                    x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+                inside = not inside
+            j = i
+        return inside
 
     def clear(self) -> None:
         self._goal = None
@@ -157,6 +199,11 @@ class GuidancePlanner:
         if hit is not None:
             return hit
         cx, cy = self._center_of(cell)
+        if self._static_blocked and (
+                int(cx / self._coarse_m),
+                int(cy / self._coarse_m)) in self._static_blocked:
+            self._coarse_cache[cell] = Cell.BLOCKED
+            return Cell.BLOCKED
         q = self._coarse_m / 4.0
         n_free = 0
         state = Cell.UNKNOWN

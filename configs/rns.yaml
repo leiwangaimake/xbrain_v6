@@ -86,7 +86,7 @@ rns:
     max_backup_m: 1.0              # [sim] 后退距离上限
     v_max_mps: 0.2                 # [sim] 后退限速
   memory:
-    ttl_static_s: 60.0             # [sim] 静态记忆 TTL; U 形绕行 ~40s 需墙记忆存活 (20 S4.2)
+    ttl_static_s: 300.0            # [sim] 静态记忆 TTL; 任务期量级(20 S4A.4): 一次出勤内连发点单共享记忆(G3), 远盖 U 形绕行 ~40s; 幽灵防护靠 A-MEM-3 跳变清空与动态短 TTL
     ttl_dynamic_s: 2.0             # [sim] 动态记忆 TTL (幽灵防护)
     cell_m: 0.25                   # [geo] 分辨率 = r_eff/2 (20 S4.2.1)
     radius_m: 8.0                  # [geo] 滑动窗 > range_max 6m
@@ -96,7 +96,7 @@ rns:
     domain_margin_m: 15.0          # [sim] 任务包围盒外扩裕量
     domain_cap_m: 60.0             # [sim] 规划域边长上限
     unknown_cost_factor: 2.5       # [sim] attempt 模 UNKNOWN 代价 kappa (S4A.3)
-    nodes_per_tick: 400            # [sim] 每拍搜索节点配额; 确定性(非墙钟, 负载无关可复现)
+    nodes_per_tick: 150            # [sim] 每拍搜索节点配额; 确定性(非墙钟). Jetson 实测: 400 时建场拍 P99 42ms 挤占 P1 循环 60ms 红线; 150 时 P99 ~17ms, 建场仍 <1s 远快于 replan_period
     replan_period_s: 2.0           # [sim] 周期重规划兜底 (G2 改截断精确触发)
     guide_lookahead_m: 4.0         # [sim] R* 前瞻距离 (S4A.5)
   health:
