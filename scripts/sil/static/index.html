@@ -337,12 +337,24 @@ function draw(){
   // yaw arrow (black, along +x of body frame)
   arrow(0, 0, 1.4*SCALE, 0, "#000");
   ctx.restore();
-  // detour subgoal marker (purple diamond)
+  // detour subgoal marker (purple diamond) + dashed robot->S line
   if (state.nav.subgoal){
     const [gx, gy] = w2s(state.nav.subgoal[0], state.nav.subgoal[1]);
+    ctx.strokeStyle = "#a855f7"; ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath(); ctx.moveTo(rx, ry); ctx.lineTo(gx, gy); ctx.stroke();
+    ctx.setLineDash([]);
     ctx.fillStyle = "#a855f7";
     ctx.save(); ctx.translate(gx, gy); ctx.rotate(Math.PI/4);
     ctx.fillRect(-6, -6, 12, 12); ctx.restore();
+  }
+  // lookahead point R (cyan dot): the pure-pursuit reference on the goto/path
+  // line -- what the robot steers toward when NOT detouring.
+  if (state.nav.lookahead){
+    const [lx, ly] = w2s(state.nav.lookahead[0], state.nav.lookahead[1]);
+    ctx.fillStyle = "#06b6d4";
+    ctx.beginPath(); ctx.arc(lx, ly, 5, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#0e7490"; ctx.lineWidth = 1.5; ctx.stroke();
   }
   // target-direction arrow (blue, world frame)
   if (state.nav.target){

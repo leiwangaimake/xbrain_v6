@@ -112,6 +112,7 @@ class RnsSource:
         self._wall_last_move_ms = None   # in-wall stall backstop clock
         self._wall_goal_dist_at_hit = 0.0
         self._holo = False
+        self._last_R = None                  # lookahead point, for observability
         self.audit = RingAudit(capacity=256)
         if cfg is not None:
             c = cfg["rns"]
@@ -147,6 +148,7 @@ class RnsSource:
         """Terminal (arrive/fail/cancel) -> back to IDLE, no mission."""
         self._mission = None
         self._state = NavState.IDLE
+        self._last_R = None
 
     def take_arrival(self) -> bool:
         """W2: one-shot arrival latch. True exactly once after a mission
@@ -250,6 +252,7 @@ class RnsSource:
                                  route_cfg["lookahead_min_m"],
                                  route_cfg["lookahead_max_m"])
         fs = self._mission.advance(pose, lka)
+        self._last_R = fs.lookahead_point    # observability: host/UI may draw it
         if fs.arrived:
             self._arrived_pending = True
             self.clear_mission()

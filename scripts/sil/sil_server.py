@@ -332,7 +332,8 @@ async def broadcast(snap, cmd):
         "nav": {"state": nav["state"], "direction": nav["direction"],
                 "target": tgt, "dist_to_target": dist_tgt,
                 "rns_state": rns.nav_state().value,
-                "subgoal": rns._subgoal_world, "wall": wall},
+                "subgoal": rns._subgoal_world,
+                "lookahead": getattr(rns, "_last_R", None), "wall": wall},
     }
     msg = json.dumps(state)
     dead = []
