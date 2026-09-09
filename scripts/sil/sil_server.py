@@ -52,13 +52,38 @@ from xbrain.p1_motion.rns.types import MissionKind, Origin
 
 TICK_HZ = 20.0
 DT = 1.0 / TICK_HZ
-V_NOM_MPS = 1.0          # sim mission nominal speed
-WZ_MAX_RPS = 1.2         # sim yaw-rate limit (stand-in for the calibrated key)
 R_EFF_M = 0.5            # M20S half-diagonal, the SIL r_eff (12 S6A consumer)
+
+
+def load_v_nom() -> float:
+    """The mission nominal speed, from the V6 config hierarchy -- NOT a SIL
+    constant (user 2026-09-10: M20S tops out at 2 m/s; a future UGV chassis
+    does 25 -- swapping chassis must be a config change, zero code):
+      L2 physical ceiling: models/m20s.yaml common.spec.max_vx_mps
+      L1 profile:          common.yaml common.motion.profiles.patrol.max_mps
+    v_nom = patrol profile (20 S8.1A: goto/path nominal = patrol tier), safety-
+    clamped by the physical ceiling (SP-2 direction). null anywhere -> refuse
+    with the key path (CLAUDE.md 3.1), never a silent default."""
+    model = yaml.safe_load((ROOT / "configs" / "models" / "m20s.yaml")
+                           .read_text(encoding="utf-8"))
+    common = yaml.safe_load((ROOT / "configs" / "common.yaml")
+                            .read_text(encoding="utf-8"))
+    ceiling = model["common"]["spec"]["max_vx_mps"]
+    patrol = common["common"]["motion"]["profiles"]["patrol"]["max_mps"]
+    if ceiling is None or patrol is None:
+        raise RuntimeError(
+            "v_nom unconfigured: models/m20s.yaml common.spec.max_vx_mps and "
+            "common.yaml common.motion.profiles.patrol.max_mps must be set")
+    return min(float(patrol), float(ceiling))
+
+
+V_NOM_MPS = None         # resolved at startup from the config hierarchy
+WZ_MAX_RPS = 1.2         # [sim] spec.max_wz_radps is null (V-01: no basis yet)
 
 app = FastAPI()
 world = SilWorld()
 CFG = yaml.safe_load((ROOT / "configs" / "rns.yaml").read_text(encoding="utf-8"))
+V_NOM_MPS = load_v_nom()                    # 2.0 for M20S; chassis-swappable
 rns = RnsSource(cfg=CFG, r_eff_m=R_EFF_M)   # startup assertions run HERE
 
 clients: list = []

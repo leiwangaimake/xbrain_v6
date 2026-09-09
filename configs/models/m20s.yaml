@@ -60,7 +60,10 @@ common:
     #   max_decel_mps2 = 2.5(工作假设,M-22 / T-DECEL)列为"已有依据的两项",
     #   而 `11` §9.6 现行 yaml 与本项判据都要求五项一律 null.
     #   => 本文件按判据留 null;落 2.0 / 2.5 属[取值落地],须主会话拍板.
-    max_vx_mps:     null    # Tier1 硬限幅依据;v_max = min(profile, f(), g(), 本键)
+    # [2026-09-10 主会话拍板落值] 依据三重: 99 U54 上限 + 云深处厂商答复
+    # "实际最大 2 m/s" + 用户 2026-09-10 确认"M20S 真实的最快速度是 2m/s".
+    # 换底盘(如在谈的 25 m/s 无人车)= 换本 model 文件, 别处零改动.
+    max_vx_mps:     2.0     # Tier1 硬限幅依据;v_max = min(profile, f(), g(), 本键)
     max_vy_mps:     null    # 横移上限;WARN: V-01 三项"仍无依据"之一(Q16b)
     max_wz_radps:   null    # 旋转上限;WARN: 同上
     max_accel_mps2: null    # 加速上限;WARN: 同上

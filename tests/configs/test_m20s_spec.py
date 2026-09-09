@@ -102,13 +102,28 @@ CONTRACT = os.path.join(ROOT, "docs", "11-接口契约.md")
 # The five whole-vehicle limits of 11 S9.6 SP-1, as leaf paths under the L2
 # namespace. Written as key paths, not as a nested shape, because that is what
 # assertion A prints and what a reader has to grep for.
+# 2026-09-10 user ruling: max_vx_mps LEFT this list -- the value 2.0 landed
+# (basis: 99 U54 + vendor's "actual max 2 m/s" + the user's explicit sign-off
+# in the main session, which is exactly the "主会话拍板" the m20s.yaml WARN
+# note reserved). The remaining four stay null-locked (V-01: still no basis).
 FIVE_LIMITS = (
-    "common.spec.max_vx_mps",
     "common.spec.max_vy_mps",
     "common.spec.max_wz_radps",
     "common.spec.max_accel_mps2",
     "common.spec.max_decel_mps2",
 )
+
+
+def test_max_vx_is_the_ruled_value():
+    """max_vx_mps is no longer null: it must be exactly the ruled 2.0 (U54 /
+    vendor / user 2026-09-10). Any other number is an unruled edit; null again
+    would silently re-open a settled ruling. Mutation: change m20s.yaml to 2.5
+    or back to null -> red."""
+    import yaml
+    with open(os.path.join(ROOT, "configs", "models", "m20s.yaml"),
+              encoding="utf-8") as f:
+        d = yaml.safe_load(f)
+    assert d["common"]["spec"]["max_vx_mps"] == 2.0
 
 # 11 S9.6 terrain block. Called out separately from the five because their reason
 # for being null is stronger, not weaker: zero slope and zero step height are

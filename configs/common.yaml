@@ -118,7 +118,9 @@ common:
   motion:
     profiles:
       obstacle_avoid:
-        max_mps: null
+        # [2026-09-10 落值] U54-b 重定标区间 0.2-0.5 取上限(14 S8.3);
+        # 本轮只落 max_mps(速度键), 其余键落值须同批复核 SP-6 段界, 另批.
+        max_mps: 0.5
         # up_enter_mps: 升入本档的门槛. 最低档无门槛, 落值时按 11 S9.6.1 处理.
         up_enter_mps: null
         # require_sense_m: f() 四段定标表的档位下沿, 是制动学推导量.
@@ -130,7 +132,9 @@ common:
         # sensors: 本档的传感器准入清单 (列表), 值为设备 ID.
         sensors: null
       patrol:
-        max_mps: null
+        # [2026-09-10 落值] U54-b 重定标区间 1.0-2.0 取上限 = 底盘物理极限
+        # (models/m20s.yaml spec.max_vx_mps, SP-2 约束 spec >= 本值).
+        max_mps: 2.0
         up_enter_mps: null
         require_sense_m: null
         sensors: null
