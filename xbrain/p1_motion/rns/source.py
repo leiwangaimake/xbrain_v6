@@ -342,20 +342,6 @@ class RnsSource:
         if self._state == NavState.WALL_FOLLOW:
             return self._wall_tick(profile, pose, yaw, fs, now, wz_max, step_m)
 
-        # ── C3. progress watchdog (S2b -- 20 S7.3A, RNS-N-15) ────────────────
-        if self._watchdog is not None and profile is not None:
-            boundary = any(d is not None for d in profile.d_block)
-            wd = self._watchdog.tick(
-                self._s_star, dt_ms, self._state.value,
-                self._state == NavState.WAIT_DYNAMIC, None, boundary)
-            if wd == WatchdogResult.ESCALATE_WALL:
-                if self._enter_wall(profile, pose, yaw, fs, now):
-                    return self._wall_tick(profile, pose, yaw, fs, now,
-                                           wz_max, step_m)
-            elif wd == WatchdogResult.REPORT_NO_PROGRESS:
-                self._fail(no_progress_failure("geometry"))
-                return zero
-
         # ── D. static avoidance state machine (20 S6) ────────────────────────
         if profile is not None:
             margin = cfg["clearance"]["margin_by_class"]["structure"]
@@ -427,6 +413,27 @@ class RnsSource:
         # full speed aligned, ~0 speed sideways, floor 0.15 keeps it creeping.
         err = abs(wrap_angle(theta_des - yaw))
         v = v * max(0.15, math.cos(min(err, math.pi / 2)))
+
+        # ── progress watchdog (20 S7.3A, RNS-N-15) -- placed HERE, after the
+        # heading error is known, because its timing domain EXCLUDES ticks
+        # whose binding limiter is heading/rtk. FIELD BUG (user, 2026-09-10):
+        # the first assembly passed limiter=None always, so the turn-toward-
+        # goal phase at mission start (big err, cos-tapered crawl, arc
+        # projection flat) COUNTED as lost and false-fired
+        # watchdog_no_progress ~8 s after a goto behind the robot.
+        if self._watchdog is not None and profile is not None:
+            limiter = "heading" if err > 0.9 else SpeedCaps(caps).binding_source()
+            boundary = any(d is not None for d in profile.d_block)
+            wd = self._watchdog.tick(
+                self._s_star, dt_ms, self._state.value,
+                self._state == NavState.WAIT_DYNAMIC, limiter, boundary)
+            if wd == WatchdogResult.ESCALATE_WALL:
+                if self._enter_wall(profile, pose, yaw, fs, now):
+                    return self._wall_tick(profile, pose, yaw, fs, now,
+                                           wz_max, step_m)
+            elif wd == WatchdogResult.REPORT_NO_PROGRESS:
+                self._fail(no_progress_failure(limiter))
+                return zero
         return VelocityCandidate(vx=Mps(v), vy=Mps(0.0), wz=wz)
 
     # ── assembly helpers ─────────────────────────────────────────────────────

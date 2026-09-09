@@ -181,3 +181,53 @@ def test_wall_follow_audit_trail():
     kinds = [r.kind for r in rns.audit.drain()]
     assert "wall_enter" in kinds
     assert "wall_exit" in kinds or "wall_fail" in kinds
+
+
+def test_goto_behind_robot_does_not_false_fire_watchdog():
+    # FIELD BUG regression (user, 2026-09-10): a goto BEHIND the robot spends
+    # its first seconds turning (big heading error, cos-tapered crawl, flat arc
+    # projection). That heading-limited phase must be EXEMPT from the watchdog
+    # timing domain (20 S7.3A: argmax limiter heading/rtk does not count as
+    # lost). The first assembly passed limiter=None always and false-fired.
+    #
+    # To make the exemption the ONLY thing that saves this scene (a bigger
+    # window would mask its absence -- the first version of this test did, and
+    # its mutant survived), inject a SHORT window (6 s) and a SLOW turn rate
+    # (wz_max 0.15 -> turning pi takes ~21 s >> window). With the exemption the
+    # whole turn is heading-limited and untimed; without it (mutant: limiter =
+    # None) the watchdog fires ~6 s in -> reddens.
+    import copy
+    cfg = copy.deepcopy(CFG)
+    cfg["rns"]["watchdog"]["window_s"] = 6.0
+    world = SilWorld()
+    world.rx, world.ry, world.ryaw = 0.0, 0.0, 0.0   # facing +x
+    rns = RnsSource(cfg=cfg, r_eff_m=0.5)
+    rc = cfg["rns"]["route"]
+    rns.load_mission(Mission(MissionKind.GOTO, Origin.ROUTE, [(-8.0, 0.0)],
+                     search_window=rc["search_window"],
+                     arrival_radius_m=rc["arrival_radius_m"],
+                     max_deviation_m=rc["max_deviation_m"]))
+
+    class SlowTurnCtx:
+        def __init__(self, w, snap, now):
+            self.pose_xy = (w.rx, w.ry)
+            self.yaw_rad = w.ryaw
+            self.v_nom_mps = 1.0
+            self.wz_max_rps = 0.15          # crawl turn: pi takes ~21 s
+            self.perception = snap
+            self.now_mono_ms = now
+
+    fired = None
+    for t in range(700):                     # 35 s: covers turn + fire window
+        now = t * 50
+        snap = world.synth_snapshot(now)
+        cand = rns.compute(SlowTurnCtx(world, snap, now))
+        if cand is not None:
+            world.step_robot(cand.vx.value, cand.vy.value, cand.wz, DT)
+        f = rns.take_failure()
+        if f is not None:
+            fired = f
+            break
+    assert fired is None, (
+        "watchdog false-fired %s during the heading-limited turn phase"
+        % fired.reason.value)

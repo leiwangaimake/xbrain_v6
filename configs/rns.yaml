@@ -47,7 +47,7 @@ rns:
     t_static_dwell_s: 2.0          # [sim] 静止判据驻留时长
     wait_budget_s: 20.0            # [sim] 停等预算 (20 S5.3A RNS-N-16)
   watchdog:
-    window_s: 8.0                  # [sim] T_w: 8s 无进展即升级 (20 S7.3A)
+    window_s: 20.0                 # [sim] T_w; 8s 对起步转向/绕行 s 停滞太短(实测误报), 20s 覆盖正常停滞段 (20 S7.3A)
     min_progress_m: 0.5            # [sim] delta_w: 一个点距量级
   clearance:
     margin_by_class:               # [geo] 分类型安全余量 (20 S5.6, U54 1m 单向折入)
