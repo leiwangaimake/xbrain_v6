@@ -214,7 +214,29 @@ function distToSeg(px, py, ax, ay, bx, by){
 
 // ── websocket ──
 const ws = new WebSocket(`ws://${location.host}/ws`);
-ws.onmessage = ev => { state = JSON.parse(ev.data); };
+// interpolation buffer: the server ticks at 20 Hz but we render at 60 fps --
+// without lerping the robot visibly jumps every 3rd frame ("stutter").
+let prevRobot = null, curRobot = null, curAt = 0;
+ws.onmessage = ev => {
+  state = JSON.parse(ev.data);
+  prevRobot = curRobot;
+  curRobot = {x: state.robot.x, y: state.robot.y, yaw: state.robot.yaw};
+  curAt = performance.now();
+};
+function lerpAngle(a, b, t){
+  let d = b - a;
+  while (d >  Math.PI) d -= 2*Math.PI;
+  while (d < -Math.PI) d += 2*Math.PI;
+  return a + d * t;
+}
+function robotNow(){
+  if (!curRobot) return null;
+  if (!prevRobot) return curRobot;
+  const t = Math.min(1, (performance.now() - curAt) / 50);
+  return {x: prevRobot.x + (curRobot.x - prevRobot.x) * t,
+          y: prevRobot.y + (curRobot.y - prevRobot.y) * t,
+          yaw: lerpAngle(prevRobot.yaw, curRobot.yaw, t)};
+}
 setInterval(() => { if (ws.readyState === 1) ws.send("k"); }, 5000);
 
 // ── render loop ──
@@ -287,10 +309,12 @@ function draw(){
       ctx.closePath(); ctx.fill();
     }
   }
-  // robot
-  const r = state.robot, [rx, ry] = w2s(r.x, r.y);
+  // robot (interpolated pose for smooth 60 fps rendering)
+  const r = state.robot;
+  const rp = robotNow() || r;
+  const [rx, ry] = w2s(rp.x, rp.y);
   // FOV sector, 50 percent alpha
-  ctx.save(); ctx.translate(rx, ry); ctx.rotate(-r.yaw);
+  ctx.save(); ctx.translate(rx, ry); ctx.rotate(-rp.yaw);
   ctx.fillStyle = "rgba(120,180,255,0.5)";
   ctx.beginPath(); ctx.moveTo(0, 0);
   ctx.arc(0, 0, state.fov.range_m*SCALE,
@@ -313,7 +337,7 @@ function draw(){
   }
   // target-direction arrow (blue, world frame)
   if (state.nav.target){
-    const dx = state.nav.target[0] - r.x, dy = state.nav.target[1] - r.y;
+    const dx = state.nav.target[0] - rp.x, dy = state.nav.target[1] - rp.y;
     const n = Math.hypot(dx, dy) || 1;
     arrowAt(rx, ry, rx + dx/n*1.4*SCALE, ry - dy/n*1.4*SCALE, "#06c");
   }

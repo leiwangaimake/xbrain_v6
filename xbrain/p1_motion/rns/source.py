@@ -420,11 +420,13 @@ class RnsSource:
         theta_des = math.atan2(target[1] - pose[1], target[0] - pose[0])
         wz = align_omega(theta_des, yaw, route_cfg["k_yaw"], wz_max)
         v = SpeedCaps(caps).limit()
-        # large heading error: turn before driving (keeps arcs off obstacles;
-        # the fine speed gate f(d_free) is the HOST's job, 12 S6.2).
+        # heading-error speed shaping: CONTINUOUS (cos taper), not a step.
+        # The first cut ("err > 1 rad -> clamp to 0.2") was a step function --
+        # every steering correction crossed it and the robot lurched
+        # (drive-stop-drive stutter, user-reported). cos(err) tapers smoothly:
+        # full speed aligned, ~0 speed sideways, floor 0.15 keeps it creeping.
         err = abs(wrap_angle(theta_des - yaw))
-        if err > 1.0:
-            v = min(v, 0.2 * v_nom)
+        v = v * max(0.15, math.cos(min(err, math.pi / 2)))
         return VelocityCandidate(vx=Mps(v), vy=Mps(0.0), wz=wz)
 
     # ── assembly helpers ─────────────────────────────────────────────────────
