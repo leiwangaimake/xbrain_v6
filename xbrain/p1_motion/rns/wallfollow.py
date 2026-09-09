@@ -136,12 +136,21 @@ def check_failure(
         return NavFailure(NavFailReason.WALL_CLOSED_LOOP,
                           detail={"H": state.hit_point,
                                   "loop_m": state.followed_m})
-    # criterion 2: no improvement in leave-eligible progress over no_progress_m.
-    if (state.followed_m - state.best_leave_m_at) > no_progress_m and \
-            state.best_leave_s == float("-inf"):
-        return NavFailure(NavFailReason.WALL_NO_PROGRESS,
-                          detail={"best_leave_s": None,
-                                  "followed_m": state.followed_m})
+    # criterion 2: no improvement in leave-eligible progress over no_progress_m
+    # of travel. REVIEW-FIX B2 (2026-09-09): the original had an extra conjunct
+    # `best_leave_s == -inf` -- which made the whole criterion DEAD once any
+    # crossing was ever recorded (best_leave_s goes finite, == -inf never true
+    # again), so a stalled wall-follow could only die at the max_follow backstop.
+    # The criterion is exactly S7.6-(2): "the sup of leave-eligible progress
+    # unimproved for no_progress_m of travel" -- regardless of whether that sup
+    # is -inf (never improved: best_leave_m_at stays 0, distance-since-improve
+    # is followed_m itself) or finite (improved once, then stalled).
+    if (state.followed_m - state.best_leave_m_at) > no_progress_m:
+        return NavFailure(
+            NavFailReason.WALL_NO_PROGRESS,
+            detail={"best_leave_s": (None if state.best_leave_s == float("-inf")
+                                     else state.best_leave_s),
+                    "followed_m": state.followed_m})
     return None
 
 

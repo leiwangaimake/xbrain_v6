@@ -190,3 +190,41 @@ def test_wait_preserves_wall_state_A_WF_6():
     st.followed_m += 0.0
     assert st.side == side_before
     assert st.s_hit == s_before
+
+
+def test_no_progress_fires_after_stall_with_prior_crossing():
+    # B2 (review fix): criterion 2 must fire when progress STALLS, even after a
+    # crossing was recorded earlier. The original `best_leave_s == -inf` conjunct
+    # made this dead the moment any crossing existed -- a stalled wall-follow
+    # could only die at the 50 m backstop. mutant: restore the conjunct -> this
+    # test reddens (that IS the shipped bug).
+    st = _state(s_hit=10.0, followed=1.0)
+    record_crossing(st, s_gain=0.3, s_at=10.3)   # improved once at 1.0 m
+    st.followed_m = 8.0                           # then 7 m with no improvement
+    f = check_failure(st, dist_to_H_m=99.0, min_loop_m=2.0, no_progress_m=5.0,
+                      max_follow_m=50.0, leave_progress_m=0.5)
+    assert f is not None
+    assert f.reason is NavFailReason.WALL_NO_PROGRESS
+    assert f.detail["best_leave_s"] == 10.3      # real value, not None
+
+
+def test_no_progress_fires_when_never_improved():
+    # criterion 2, never-improved branch: best_leave_m_at stays 0, so walking
+    # no_progress_m with no crossing at all also fires.
+    st = _state(s_hit=10.0, followed=6.0)         # 6 m, no crossings
+    f = check_failure(st, dist_to_H_m=99.0, min_loop_m=2.0, no_progress_m=5.0,
+                      max_follow_m=50.0, leave_progress_m=0.5)
+    assert f is not None
+    assert f.reason is NavFailReason.WALL_NO_PROGRESS
+    assert f.detail["best_leave_s"] is None
+
+
+def test_no_progress_quiet_while_improving():
+    # fresh improvement resets the stall clock: crossing at 7.5 m -> only 0.5 m
+    # since improvement -> no failure.
+    st = _state(s_hit=10.0, followed=7.5)
+    record_crossing(st, s_gain=0.3, s_at=10.3)   # improved at 7.5 m
+    st.followed_m = 8.0
+    f = check_failure(st, dist_to_H_m=99.0, min_loop_m=2.0, no_progress_m=5.0,
+                      max_follow_m=50.0, leave_progress_m=0.5)
+    assert f is None

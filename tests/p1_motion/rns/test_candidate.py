@@ -117,13 +117,18 @@ def test_cost_includes_s_to_r_length():
 
 def test_hysteresis_holds_until_streak():
     # A-HYS-1: switch only after side_hold_ticks consecutive wins.
+    # B3 (review fix): each tick passes a FRESH equal-value object, the way the
+    # real loop rebuilds candidates from the profile every tick. The old `is`
+    # comparison reset the streak on every rebuilt object and could never
+    # switch; == (value) must. mutant: restore `is` -> this reddens.
     sel = CandidateSelector(side_hold_ticks=3)
-    a, b = _cand(s=(3.0, 0.0)), _cand(s=(3.0, 1.0))
-    assert sel.select(True, a, best_is_current=False) is a   # nothing held -> take a
-    # b becomes best but must win 3 in a row:
-    assert sel.select(True, b, best_is_current=False) is a   # streak 1 -> hold a
-    assert sel.select(True, b, best_is_current=False) is a   # streak 2
-    assert sel.select(True, b, best_is_current=False) is b   # streak 3 -> switch
+    a = _cand(s=(3.0, 0.0))
+    assert sel.select(True, a, best_is_current=False) == a   # nothing held -> a
+    # b becomes best but must win 3 in a row -- as a NEW object each tick:
+    assert sel.select(True, _cand(s=(3.0, 1.0)), best_is_current=False) == a
+    assert sel.select(True, _cand(s=(3.0, 1.0)), best_is_current=False) == a
+    out = sel.select(True, _cand(s=(3.0, 1.0)), best_is_current=False)
+    assert out == _cand(s=(3.0, 1.0))    # streak 3 -> switched
 
 
 def test_hysteresis_does_not_cross_gate():
@@ -136,3 +141,26 @@ def test_hysteresis_does_not_cross_gate():
     # a fails its gate this tick -> drop immediately, take b (no 3-tick wait)
     out = sel.select(current_feasible=False, best=b, best_is_current=False)
     assert out is b
+
+
+def test_detour_extrapolates_toward_clear_side():
+    # B5 (review fix): the outward normal must point toward the CLEAR side.
+    # Obstacle at the HIGHER bearing (av=None/clear at bin i, bv=1.5 at bin
+    # i+1): clear_side=-1, subgoal offsets toward LOWER bearing (negative y for
+    # theta~0). The old fixed-CCW form pushed it to +y -- INTO the obstacle.
+    edges = find_edges([None, 1.5, 1.5], angle_min=-0.05, angle_step=0.05,
+                       edge_jump_m=1.0)
+    assert len(edges) == 1
+    e = edges[0]
+    assert e.clear_side == -1              # clear space at the lower bearing
+    s = detour_subgoal(e, clear_m=0.6)
+    # tangent at theta=-0.025, offset must go to lower bearing (more negative y)
+    ey = e.d_near_m * __import__("math").sin(e.theta_rad)
+    assert s[1] < ey                        # moved toward clear (lower) side
+    # mirror case: obstacle at the LOWER bearing -> clear_side=+1, offset up.
+    edges2 = find_edges([1.5, 1.5, None], angle_min=0.0, angle_step=0.05,
+                        edge_jump_m=1.0)
+    assert edges2[0].clear_side == 1
+    s2 = detour_subgoal(edges2[0], clear_m=0.6)
+    ey2 = edges2[0].d_near_m * __import__("math").sin(edges2[0].theta_rad)
+    assert s2[1] > ey2                      # moved toward clear (higher) side

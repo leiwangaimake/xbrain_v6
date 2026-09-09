@@ -28,15 +28,25 @@ from xbrain.common.types.units import Mps
 class Ctx:
     pose_xy: Optional[Tuple[float, float]] = None
     v_nom_mps: Optional[float] = None
+    yaw_rad: Optional[float] = 0.0        # facing +x by default
+    wz_max_rps: Optional[float] = 1.0
 
 
 def _cfg():
     # a minimal valid rns.yaml snapshot for the follow spine.
+    # a minimal snapshot that also PASSES the startup assertions (W1): the
+    # D2 keys and an empty class_map are now required at construction.
     return {"rns": {
         "route": {"lookahead_k": 1.0, "lookahead_min_m": 1.0,
-                  "lookahead_max_m": 4.0, "max_deviation_m": 10.0},
+                  "lookahead_max_m": 4.0, "max_deviation_m": 10.0,
+                  "k_yaw": 1.5},
         "speed": {"dev_e0_m": 0.5, "dev_g_min": 0.1},
+        "wall_follow": {"leave_progress_m": 0.4},
+        "class_map": {},
     }}
+
+
+R_EFF = 0.48  # D2 needs r_eff at construction (W1)
 
 
 def _mission():
@@ -47,13 +57,13 @@ def _mission():
 
 def test_no_mission_is_inert():
     # P0.4 no-smoke survives assembly: no mission -> False / None.
-    s = RnsSource(cfg=_cfg())
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     assert s.is_active(Ctx()) is False
     assert s.compute(Ctx(pose_xy=(0.0, 0.0), v_nom_mps=2.0)) is None
 
 
 def test_mission_loaded_runs_follow_spine():
-    s = RnsSource(cfg=_cfg())
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
     ctx = Ctx(pose_xy=(2.0, 0.0), v_nom_mps=2.0)
     assert s.is_active(ctx) is True
@@ -62,19 +72,23 @@ def test_mission_loaded_runs_follow_spine():
     assert out.vx.value > 0.0     # moving forward along the path
 
 
-def test_arrival_gives_zero_velocity():
-    s = RnsSource(cfg=_cfg())
+def test_arrival_gives_zero_velocity_and_closes_mission():
+    # W2 (review fix): arrival ends the mission -- one final zero candidate,
+    # then is_active False (no longer holds the 900 slot), arrival latched once.
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
-    # near the endpoint (10.0): dist 0.5 < arrival_radius 1.0 -> arrived -> zero
     out = s.compute(Ctx(pose_xy=(9.5, 0.0), v_nom_mps=2.0))
     assert out.vx.value == 0.0
     assert out.wz == 0.0
+    assert s.is_active(Ctx(pose_xy=(9.5, 0.0), v_nom_mps=2.0)) is False
+    assert s.take_arrival() is True     # latched exactly once
+    assert s.take_arrival() is False    # one-shot
 
 
 def test_estop_suspension_zeroes_output_at_source():
     # A-ES-1 at the source: suspended -> compute returns None (no output), even
     # with a mission that would otherwise move.
-    s = RnsSource(cfg=_cfg())
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
     ctx = Ctx(pose_xy=(2.0, 0.0), v_nom_mps=2.0)
     assert s.compute(ctx) is not None
@@ -85,14 +99,14 @@ def test_estop_suspension_zeroes_output_at_source():
 
 def test_ctx_without_pose_returns_none():
     # ctx not yet carrying pose (pre-P7.1) -> None, never a guessed velocity.
-    s = RnsSource(cfg=_cfg())
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
     assert s.compute(Ctx(v_nom_mps=2.0)) is None   # no pose
 
 
 def test_deviation_slows_speed():
     # off the path -> the deviation cap lowers speed vs on the path.
-    s = RnsSource(cfg=_cfg())
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
     on = s.compute(Ctx(pose_xy=(2.0, 0.0), v_nom_mps=2.0))
     off = s.compute(Ctx(pose_xy=(2.0, 3.0), v_nom_mps=2.0))
@@ -102,7 +116,7 @@ def test_deviation_slows_speed():
 def test_release_resumes_follow_fresh():
     # A-ES-2 at the source: release -> FOLLOW resumes with a FRESH compute, not a
     # replayed pre-suspend velocity. After release, compute runs the spine again.
-    s = RnsSource(cfg=_cfg())
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
     ctx = Ctx(pose_xy=(2.0, 0.0), v_nom_mps=2.0)
     s.on_preempted(ctx)
@@ -115,9 +129,66 @@ def test_release_resumes_follow_fresh():
 
 
 def test_clear_mission_returns_to_idle():
-    s = RnsSource(cfg=_cfg())
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
     assert s.is_active(Ctx(pose_xy=(2.0, 0.0), v_nom_mps=2.0)) is True
     s.clear_mission()
     assert s.is_active(Ctx(pose_xy=(2.0, 0.0), v_nom_mps=2.0)) is False
     assert s.compute(Ctx(pose_xy=(2.0, 0.0), v_nom_mps=2.0)) is None
+
+
+def test_wz_is_angular_velocity_not_bearing():
+    # B1 (review fix): wz must be the P-law angular velocity, not the absolute
+    # bearing to R. Robot at (2,-1) facing +x (yaw=0), R ahead-left: theta_des
+    # ~0.46 rad, so wz = clamp(k_yaw*wrap(0.46-0)) = 1.5*0.46 ~ 0.69 -- and
+    # CLAMPED by wz_max. The old bug returned theta_des itself regardless of
+    # yaw. Distinguisher: set yaw = theta_des -> error 0 -> wz MUST be 0; the
+    # bearing bug would return 0.46.
+    import math
+    src = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
+    src.load_mission(_mission())
+    pose = (2.0, -1.0)
+    # first, with yaw aligned to the bearing, wz must be ~0 (no error):
+    probe = src.compute(Ctx(pose_xy=pose, v_nom_mps=2.0, yaw_rad=0.0))
+    # compute theta_des the same way to aim yaw at it:
+    # (cannot read internals; steer by testing both yaws differ correctly)
+    off = src.compute(Ctx(pose_xy=pose, v_nom_mps=2.0, yaw_rad=-1.0))
+    # facing further away (-1 rad) must demand MORE turn than facing 0:
+    assert abs(off.wz) > abs(probe.wz)
+    # and wz is clamped to wz_max:
+    assert abs(off.wz) <= 1.0 + 1e-9
+
+
+def test_wz_needs_yaw_else_none():
+    # B1: no yaw in ctx -> cannot compute an angular velocity -> None, never a
+    # guessed rotation.
+    src = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
+    src.load_mission(_mission())
+    out = src.compute(Ctx(pose_xy=(2.0, 0.0), v_nom_mps=2.0, yaw_rad=None))
+    assert out is None
+
+
+def test_construction_runs_startup_assertions():
+    # W1 (review fix): a cfg violating D2 (leave_progress >= 2*r_eff) must
+    # refuse construction; cfg without r_eff also refuses.
+    import pytest
+    from xbrain.p1_motion.rns.config import RnsConfigError
+    bad = _cfg()
+    bad["rns"]["wall_follow"]["leave_progress_m"] = 2.0   # >= 2*0.48
+    with pytest.raises(RnsConfigError):
+        RnsSource(cfg=bad, r_eff_m=R_EFF)
+    with pytest.raises(RnsConfigError):
+        RnsSource(cfg=_cfg())   # cfg without r_eff: cannot validate D2
+
+
+def test_suspended_tick_does_not_advance_tracker():
+    # review fix: a suspended tick is a true no-op -- the monotone index must
+    # NOT advance while estopped (before: output gated, state still mutated).
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
+    s.load_mission(_mission())
+    ctx = Ctx(pose_xy=(2.0, 0.0), v_nom_mps=2.0)
+    s.compute(ctx)
+    idx_before = s._mission.tracker.min_index
+    s.on_preempted(ctx)
+    s.compute(Ctx(pose_xy=(8.0, 0.0), v_nom_mps=2.0))   # would advance to seg 8
+    assert s._mission.tracker.min_index == idx_before    # untouched

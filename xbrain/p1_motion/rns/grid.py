@@ -187,6 +187,18 @@ class MemoryGrid:
         does not overwrite a non-UNKNOWN older value."""
         key = self._key(x, y)
         old = self._cells.get(key)
+        # REVIEW-FIX B6 (2026-09-09): an entry past its TTL is already UNKNOWN
+        # on the read side; the write side must agree, or the expired entry (a)
+        # blocks a legitimate observed-UNKNOWN write and (b) pollutes the class
+        # merge with a class that has officially reverted. Treat expired as
+        # absent and drop the stale entry.
+        if old is not None:
+            _ostate, ocls, ot_seen = old
+            ottl = (self._ttl_dynamic_ms if _is_dynamic_class(ocls)
+                    else self._ttl_static_ms)
+            if now_ms - ot_seen > ottl:
+                del self._cells[key]
+                old = None
         if state == Cell.UNKNOWN and old is not None and old[0] != Cell.UNKNOWN:
             # observed-UNKNOWN must not erase a just-seen BLOCKED/FREE (S4.2.1).
             return

@@ -219,9 +219,14 @@ class Mission:
         self.kind = kind
         self.origin = origin
         self._tracker = PolylineTracker(points, search_window)
+        self._search_window = search_window
         self._arrival_radius_m = arrival_radius_m
         self._max_deviation_m = max_deviation_m
         self._endpoint: Point = tuple(points[-1])  # type: ignore[assignment]
+        # B4: a single-point mission anchors its start at the first observed
+        # pose (RNS-N-1: "the start vertex IS the current pose"); done lazily in
+        # advance() because the pose is not known at construction.
+        self._goto_anchored = len(points) > 1
 
     @property
     def tracker(self) -> PolylineTracker:
@@ -235,6 +240,17 @@ class Mission:
         """One follow tick. Arrival is endpoint-only (S2.4): dist(X, P[n]) <
         arrival_radius. Intermediate points never trigger arrival -- they only
         shape F and R. deviation_exceeded flags e > max_deviation for P1.5."""
+        # REVIEW-FIX B4 (2026-09-09): RNS-N-1 -- a single-point goto's polyline
+        # starts at the CURRENT POSE. A raw one-point tracker has no line to
+        # deviate from, so project() returned deviation = straight-line distance
+        # to the goal; the deviation cap then crawled a far goto at dev_g_min and
+        # deviation_failure() false-failed MAX_DEVIATION on the first tick.
+        # Prepend the first observed pose, making it a two-point polyline with
+        # correct perpendicular-deviation semantics.
+        if not self._goto_anchored:
+            self._tracker = PolylineTracker([x, self._endpoint],
+                                            self._search_window)
+            self._goto_anchored = True
         proj = self._tracker.project(x)
         r = self._tracker.lookahead_point(proj, lookahead_m)
         dist_end = math.hypot(x[0] - self._endpoint[0], x[1] - self._endpoint[1])

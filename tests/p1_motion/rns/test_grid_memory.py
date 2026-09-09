@@ -91,3 +91,33 @@ def test_small_pose_move_does_not_clear():
     cleared = g.on_pose((0.3, 0.0))   # 0.3 m < 1 m
     assert cleared is False
     assert g.read(2.0, 0.0, now_ms=1000) == Cell.BLOCKED
+
+
+def test_expired_class_does_not_pollute_fresh_dynamic_ttl():
+    # B6 (review fix): an entry past TTL is UNKNOWN on the read side; the write
+    # side must agree, or the expired entry's class pollutes the merge. The
+    # observable damage needs classes with DIFFERENT TTLs: an EXPIRED static
+    # hazard (long ttl) under a FRESH person (dynamic, short ttl). Before the
+    # fix, the merge kept hazard (higher rank), so the person cell read with
+    # the STATIC ttl and lingered as a phantom long after the person left.
+    # mutant: skip the expiry check on write -> the 13.5 s read below stays
+    # BLOCKED (hazard ttl holds it) -> reddens.
+    g = _grid(ttl_static_s=10.0, ttl_dynamic_s=1.0)
+    g.write(2.0, 0.0, Cell.BLOCKED, now_ms=1000, cls="hazard")
+    # 12 s later the hazard entry is EXPIRED (10 s ttl). A person arrives:
+    g.write(2.0, 0.0, Cell.BLOCKED, now_ms=12000, cls="person")
+    # fresh person -> DYNAMIC ttl (1 s): visible at 12.5 s, gone at 13.5 s.
+    assert g.read(2.0, 0.0, now_ms=12500) == Cell.BLOCKED
+    assert g.read(2.0, 0.0, now_ms=13500) == Cell.UNKNOWN
+
+
+def test_expired_entry_does_not_block_unknown_write():
+    # B6 companion: an observed-UNKNOWN write over an EXPIRED blocked entry must
+    # land (the entry is dropped); over a FRESH blocked entry it must still be
+    # refused (the S4.2.1 occlusion rule is about fresh memory, not corpses).
+    g = _grid(ttl_static_s=1.0)
+    g.write(2.0, 0.0, Cell.BLOCKED, now_ms=1000, cls="hazard")
+    g.write(2.0, 0.0, Cell.UNKNOWN, now_ms=3000)   # expired -> entry dropped
+    # a fresh BLOCKED then starts CLEAN (no hazard class inherited):
+    g.write(2.0, 0.0, Cell.BLOCKED, now_ms=3010, cls="traverse")
+    assert g.read(2.0, 0.0, now_ms=3500) == Cell.BLOCKED

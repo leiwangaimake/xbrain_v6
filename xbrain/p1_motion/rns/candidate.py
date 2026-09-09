@@ -57,10 +57,14 @@ class Candidate:
 class Edge:
     """A profile discontinuity: at bearing theta, d_block jumps between the near
     side (obstacle) and the far side (clear). The tangent point is on the near
-    side at d_near."""
+    side at d_near. clear_side records WHICH bearing side is clear (+1 = the
+    higher-bearing bin, -1 = the lower) -- REVIEW-FIX B5: without it the outward
+    normal was fixed CCW and extrapolated INTO the obstacle whenever the clear
+    space lay clockwise of the ray."""
     theta_rad: float
     d_near_m: float           # obstacle distance on the near side
     d_far_m: float            # clear distance on the far side
+    clear_side: int = 1       # +1 clear at higher bearing, -1 at lower (B5)
 
 
 def find_edges(d_block: Sequence[Optional[float]], angle_min: float,
@@ -77,9 +81,14 @@ def find_edges(d_block: Sequence[Optional[float]], angle_min: float,
         if abs(av - bv) > edge_jump_m and (av != math.inf or bv != math.inf):
             near = min(av, bv)
             far = max(av, bv)
+            # B5: which side is clear? av is bin i (lower bearing), bv is bin
+            # i+1 (higher). Obstacle on the lower side (av < bv) -> clear side
+            # is the higher bearing (+1); obstacle on the higher side -> -1.
+            side = 1 if av < bv else -1
             # the edge bearing is the boundary between the two bins.
             theta = angle_min + (i + 0.5) * angle_step
-            edges.append(Edge(theta_rad=theta, d_near_m=near, d_far_m=far))
+            edges.append(Edge(theta_rad=theta, d_near_m=near, d_far_m=far,
+                              clear_side=side))
     return edges
 
 
@@ -90,9 +99,12 @@ def detour_subgoal(edge: Edge, clear_m: float) -> Point:
     is approximated as the far-side bearing offset."""
     ex = edge.d_near_m * math.cos(edge.theta_rad)
     ey = edge.d_near_m * math.sin(edge.theta_rad)
-    # outward normal: perpendicular to the ray, toward the clear (far) side.
-    nx = -math.sin(edge.theta_rad)
-    ny = math.cos(edge.theta_rad)
+    # outward normal: perpendicular to the ray, toward the CLEAR side (B5).
+    # (+90 deg is the higher-bearing direction; clear_side flips it when the
+    # clear space lies clockwise. The old fixed-CCW form extrapolated into the
+    # obstacle for clockwise-clear edges and got the candidate gate-rejected.)
+    nx = -math.sin(edge.theta_rad) * edge.clear_side
+    ny = math.cos(edge.theta_rad) * edge.clear_side
     return (ex + clear_m * nx, ey + clear_m * ny)
 
 
@@ -220,7 +232,12 @@ class CandidateSelector:
             self._challenger_streak = 0
             return self._current
         # a different candidate is best: it must win side_hold_ticks in a row.
-        if self._challenger is best:
+        # REVIEW-FIX B3 (2026-09-09): compare by VALUE (==), not identity (is).
+        # The real loop rebuilds Candidate objects from the profile every tick;
+        # identical geometry is a NEW object each time, so `is` was always False,
+        # the streak reset to 1 every tick, and hysteresis switching could never
+        # happen (hold > 1). Candidate is a frozen dataclass -- == is well-defined.
+        if self._challenger == best:
             self._challenger_streak += 1
         else:
             self._challenger = best

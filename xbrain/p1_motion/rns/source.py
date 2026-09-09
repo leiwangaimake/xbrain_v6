@@ -33,7 +33,8 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from .route import Mission, lookahead_distance
+from .config import RnsConfigError, run_startup_assertions
+from .route import Mission, align_omega, lookahead_distance
 from .speed import SpeedCaps, cap_deviation
 from .types import MissionKind, NavState, Origin, VelocityCandidate
 from xbrain.common.types.units import Mps
@@ -55,13 +56,27 @@ class RnsSource:
     lands with P7.1 perception wiring. This assembly is the follow+speed spine;
     the avoidance stages plug into it as ctx is defined."""
 
-    def __init__(self, cfg: Optional[dict] = None) -> None:
+    def __init__(self, cfg: Optional[dict] = None,
+                 r_eff_m: Optional[float] = None) -> None:
         # cfg is the rns.yaml snapshot (12 S12.0A); None keeps the source inert
         # (no mission can be loaded without config, so is_active stays False).
+        # REVIEW-FIX W1 (2026-09-09): a non-None cfg MUST pass the startup
+        # assertions here (D2 + person lock, config.py). They were written and
+        # tested but never called from production -- the exact "built, tested,
+        # not wired" failure CLAUDE.md 3.2 warns about. r_eff_m is required
+        # alongside cfg because D2 compares against 2*r_eff; cfg without r_eff
+        # cannot be validated -> refuse (fail-loud, never skip).
+        if cfg is not None:
+            if r_eff_m is None:
+                raise RnsConfigError(
+                    "RnsSource(cfg=...) needs r_eff_m for the D2 startup "
+                    "assertion (20 S7A.1); refusing to construct unvalidated")
+            run_startup_assertions(cfg, r_eff_m)
         self._cfg = cfg
         self._state: NavState = NavState.IDLE
         self._mission: Optional[Mission] = None
         self._suspend = EstopSuspension()
+        self._arrived_pending = False   # W2: arrival latched for the host to take
 
     def load_mission(self, mission: Mission) -> None:
         """P3/route pushes a mission (goto or path). Transitions IDLE -> FOLLOW.
@@ -73,6 +88,16 @@ class RnsSource:
         """Terminal (arrive/fail/cancel) -> back to IDLE, no mission."""
         self._mission = None
         self._state = NavState.IDLE
+
+    def take_arrival(self) -> bool:
+        """W2: one-shot arrival latch. True exactly once after a mission
+        arrived; the host routes the report by the mission's origin (12 S4.2c.6)
+        and this resets. Latch (not callback) keeps RNS free of host callbacks
+        (RNS-M-5)."""
+        if self._arrived_pending:
+            self._arrived_pending = False
+            return True
+        return False
 
     def is_active(self, ctx) -> bool:
         """12 S4.1: active iff a navigation mission is in flight and not
@@ -89,8 +114,13 @@ class RnsSource:
         wall-follow) fold in as ctx gains their inputs (P7.1)."""
         if self._mission is None:
             return None
-        cand = self._suspend.gate_output(self._run_follow(ctx))
-        return cand
+        # REVIEW-FIX (2026-09-09): short-circuit while suspended BEFORE running
+        # the follow pipeline -- otherwise Mission.advance() keeps advancing the
+        # monotone index as a side effect during estop (output was gated, state
+        # was not). A suspended tick must be a true no-op.
+        if self._suspend.suspended():
+            return None
+        return self._run_follow(ctx)
 
     def _run_follow(self, ctx) -> Optional[VelocityCandidate]:
         """The follow spine (P1 modules). ctx must supply pose (x, y, yaw) and
@@ -108,6 +138,14 @@ class RnsSource:
                                  route_cfg["lookahead_max_m"])
         fs = self._mission.advance(pose, lka)
         if fs.arrived:
+            # REVIEW-FIX W2 (2026-09-09): arrival must END the mission, not just
+            # zero the velocity. Before this fix the mission stayed loaded, so
+            # is_active stayed True and the source held the 900 arbiter slot
+            # FOREVER after arriving (every tick a zero candidate). Now: latch
+            # the event for the host (take_arrival -> origin-routed report,
+            # 12 S4.2c.6), clear to IDLE, emit one final zero candidate.
+            self._arrived_pending = True
+            self.clear_mission()
             return VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0), wz=0.0)
         # deviation cap (the only cap wireable without perception ctx yet).
         speed_cfg = self._cfg["rns"]["speed"]
@@ -116,10 +154,22 @@ class RnsSource:
                             speed_cfg["dev_g_min"])
         caps = SpeedCaps({"deviation": cap})
         v = caps.limit()
-        # heading toward R (full align law folds in with P1.4 wiring here).
+        # REVIEW-FIX B1 (2026-09-09): wz is an angular VELOCITY (rad/s), not a
+        # bearing. The old placeholder returned atan2's absolute bearing to R --
+        # with R due north it commanded a constant 1.57 rad/s spin regardless of
+        # the robot's actual heading, never converging. Correct form: theta_des
+        # is the bearing to R, and wz comes from the P law align_omega(theta_des,
+        # psi_now, k_yaw, wz_max) (20 S2.5). That needs the CURRENT yaw and the
+        # wz limit from ctx; missing either -> None (no output), never a guessed
+        # rotation (RNS-M-3: None is the honest no-output value).
+        yaw = getattr(ctx, "yaw_rad", None)
+        wz_max = getattr(ctx, "wz_max_rps", None)
+        if yaw is None or wz_max is None:
+            return None
         r = fs.lookahead_point
-        heading = math.atan2(r[1] - pose[1], r[0] - pose[0])
-        return VelocityCandidate(vx=Mps(v), vy=Mps(0.0), wz=heading)
+        theta_des = math.atan2(r[1] - pose[1], r[0] - pose[0])
+        wz = align_omega(theta_des, yaw, route_cfg["k_yaw"], wz_max)
+        return VelocityCandidate(vx=Mps(v), vy=Mps(0.0), wz=wz)
 
     def on_preempted(self, ctx) -> None:
         """RNS-M-7: teleop/estop took the slot. Suspend, KEEP mission. The
