@@ -61,13 +61,33 @@ def test_dynamic_class_uses_short_ttl():
     assert g.read(2.0, 0.0, now_ms=2500) == Cell.UNKNOWN       # 1.5 s old > 1 s
 
 
-def test_class_conflict_takes_more_dangerous():
-    g = _grid()
-    g.write(2.0, 0.0, Cell.BLOCKED, now_ms=1000, cls="traverse")
-    g.write(2.0, 0.0, Cell.BLOCKED, now_ms=1010, cls="hazard")
-    # read is a state; danger ranking is internal, but hazard's short/long ttl
-    # follows. Assert via a fresh write keeping hazard: state stays BLOCKED.
-    assert g.read(2.0, 0.0, now_ms=1010) == Cell.BLOCKED
+def test_class_conflict_latest_observation_wins():
+    # 20 S4.2.1 v1.16 (user ruling 2026-09-09): the LATEST classed observation
+    # sets the cell's class -- and thus its TTL tier. A fresh person over an
+    # UNEXPIRED hazard must take the DYNAMIC short ttl; the old danger-rank
+    # merge kept hazard (higher rank) and the person cell lingered on the
+    # static long ttl (phantom wall). mutant: restore the danger-rank merge ->
+    # the 3.5 s read below stays BLOCKED -> reddens.
+    g = _grid(ttl_static_s=10.0, ttl_dynamic_s=1.0)
+    g.write(2.0, 0.0, Cell.BLOCKED, now_ms=1000, cls="hazard")
+    g.write(2.0, 0.0, Cell.BLOCKED, now_ms=2000, cls="person")  # hazard NOT expired
+    assert g.read(2.0, 0.0, now_ms=2500) == Cell.BLOCKED   # within dynamic 1 s
+    assert g.read(2.0, 0.0, now_ms=3500) == Cell.UNKNOWN   # person ttl expired
+    # and the mirror: latest hazard over person takes the static tier.
+    g2 = _grid(ttl_static_s=10.0, ttl_dynamic_s=1.0)
+    g2.write(4.0, 0.0, Cell.BLOCKED, now_ms=1000, cls="person")
+    g2.write(4.0, 0.0, Cell.BLOCKED, now_ms=1500, cls="hazard")
+    assert g2.read(4.0, 0.0, now_ms=4000) == Cell.BLOCKED  # static ttl holds
+
+
+def test_classless_write_keeps_known_class():
+    # a class-less write (pure geometry) keeps the known class: no semantic info
+    # this tick is not evidence the class changed.
+    g = _grid(ttl_static_s=10.0, ttl_dynamic_s=1.0)
+    g.write(2.0, 0.0, Cell.BLOCKED, now_ms=1000, cls="person")
+    g.write(2.0, 0.0, Cell.BLOCKED, now_ms=1200)            # no cls
+    assert g.read(2.0, 0.0, now_ms=1900) == Cell.BLOCKED    # dynamic ttl from 1200
+    assert g.read(2.0, 0.0, now_ms=2900) == Cell.UNKNOWN    # still person tier
 
 
 def test_pose_jump_clears_whole_grid():

@@ -202,11 +202,13 @@ class MemoryGrid:
         if state == Cell.UNKNOWN and old is not None and old[0] != Cell.UNKNOWN:
             # observed-UNKNOWN must not erase a just-seen BLOCKED/FREE (S4.2.1).
             return
-        new_cls = cls
-        if old is not None and old[1] is not None and cls is not None:
-            new_cls = _more_dangerous(old[1], cls)
-        elif cls is None and old is not None:
-            new_cls = old[1]
+        # class conflict: the LATEST observation with a class wins (user ruling
+        # 2026-09-09, 20 S4.2.1 v1.16). The old danger-rank merge let a fresh
+        # person inherit an unexpired hazard's STATIC ttl -> phantom wall after
+        # the person left. "What occupies this cell NOW" is the latest classed
+        # observation; a class-less write keeps the known class (this tick just
+        # had no semantic info, which is not evidence the class changed).
+        new_cls = cls if cls is not None else (old[1] if old is not None else None)
         self._cells[key] = (state, new_cls, now_ms)
 
     def read(self, x: float, y: float, now_ms: int) -> Cell:
@@ -226,13 +228,10 @@ class MemoryGrid:
         return len(self._cells)
 
 
-# class danger ordering for conflict resolution (S4.2.1). Not a closed set here
-# (class vocabulary is open, 11 S3.1B.2); only the ranked ones matter.
-_DANGER_RANK = {"hazard": 3, "block": 2, "traverse": 1}
-
-
-def _more_dangerous(a: str, b: str) -> str:
-    return a if _DANGER_RANK.get(a, 0) >= _DANGER_RANK.get(b, 0) else b
+# (the v1.15-era danger-rank merge -- _DANGER_RANK / _more_dangerous -- was
+# retired by the 2026-09-09 ruling: the latest classed observation wins, see
+# write(). Kept as a note so the next reader knows the merge was DELIBERATELY
+# removed, not forgotten.)
 
 
 def _is_dynamic_class(cls: Optional[str]) -> bool:
