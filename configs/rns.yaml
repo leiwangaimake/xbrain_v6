@@ -1,0 +1,108 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: rns.yaml
+# Brief: L6 per-process config for RNS module in xbrain_motion (12 S12.0A)
+#
+# Description:
+#   层:L6(进程私有) 归属进程:`xbrain_motion`(P1) 内的 RNS 模块
+#   * 权威定义处:`12` §12.0A(rns.yaml 唯一定义处, #20-3);逐键消费侧语义见 20 对应节
+#   * 运行期读解析产物 /run/xbrain/resolved/rns.yaml, 不读本源(10 §5.4.1)
+#
+#   除用户 2026-09-07 指定的四个默认值外全部 null:未标定即拒绝启动(3.1 纪律,
+#   config.py run_startup_assertions 报出键路径). 绝不写 0.0 冒充已赋值.
+#   L6 只取值不定义:不出现 common 顶层键;共享值写 ${common.xxx}.
+#
+#   启动断言(config.py):D2(leave_progress_m < 2*r_eff, A-CVG-5) + person 锁死
+#   在代码(A-CLS-4);person 不在 class_map(它锁死 person_stop, 改配置即拒启).
+# ===========================================================================
+
+rns:
+  route:
+    lookahead_k: null              # L = clamp(k*v, L_min, L_max)  (20 S2.2)
+    lookahead_min_m: null
+    lookahead_max_m: null
+    search_window: null            # 最近点搜索索引窗口半宽  (20 S2.6 RNS-N-4)
+    max_deviation_m: 10.0          # 用户 2026-09-07 指定默认值  (20 S2.7)
+    align_dist_m: 5.0              # 用户 2026-09-07 指定默认值  (20 S2.5)
+    arrival_radius_m: null         # 到达双条件之一  (20 S2.5 v1.11)
+    yaw_tol_deg: null              # 到点航向容差 (与 00 follow.yaw_tol_deg 分属两功能)
+    arrival_radius_float_scale: null  # RTK FLOAT 半径放大 (>1)  (20 S3.2.1)
+    k_yaw: null                    # 对准 P 增益  (20 S2.5)
+  speed:                           # 统一系数族 g(x; x0, x1, g_min)  (20 S8.1A)
+    dev_e0_m: null
+    dev_g_min: null
+    gap_g_min: null
+    unk_r0: null
+    unk_r1: null
+    unk_g_min: null
+    align_eta: null                # <1
+    rtk_float_g: null              # <1
+  dynamic:
+    stop_dist_m: 3.0               # 用户 2026-09-07 指定默认值  (20 S5.3)
+    resume_dist_m: null            # 必须 > stop_dist_m
+    v_static_thresh_mps: null      # 静止判据  (20 S5.5)
+    t_static_dwell_s: null
+    wait_budget_s: null            # 停等预算  (20 S5.3A RNS-N-16)
+  watchdog:
+    window_s: null                 # T_w  (20 S7.3A RNS-N-15)
+    min_progress_m: null           # delta_w
+  clearance:
+    margin_by_class:               # 分类型安全余量  (20 S5.6)
+      vehicle: null
+      hazard: null
+      unknown_geom: null
+      structure: null
+      small_object: null
+    gate_saturate_ratio: null      # 宽度饱和点  (20 S6.3 RNS-N-10)
+  cost_weights:                    # 候选代价五权重  (20 S6.4)
+    clearance: null
+    angle: null
+    length: null
+    unknown: null
+    hysteresis: null
+  candidate:
+    edge_jump_m: null              # 剖面跳变阈值  (20 S6.1)
+    subgoal_extra_m: null          # clear 富余项  (20 S6.1 v1.11)
+    side_hold_ticks: null          # 换候选迟滞  (20 S6.6)
+  wall_follow:
+    d_wall_m: null
+    kp_wall: null                  # 保距 PD  (20 S7.7)
+    kd_wall: null
+    sector_lo_deg: null            # 侧扇区界
+    sector_hi_deg: null
+    front_stop_m: null             # 凹角前向停距  (20 S7.7-3)
+    e_ok_m: null                   # 回折线判据  (20 S7.3 (1))
+    leave_progress_m: null         # (2)' 的 delta_s; 必须 < 2*r_eff (S-7 断言)
+    corner_overshoot_m: null       # 凸角过冲
+    min_loop_m: null               # 失败判据 (1)
+    no_progress_m: null            # 失败判据 (2)
+    max_follow_m: null             # 失败判据 (3) 兜底
+    v_max_mps: null
+  backup:
+    t_backup_memory_s: null        # 记忆新鲜度上限  (20 S7.5 RNS-N-13)
+    max_backup_m: null
+    v_max_mps: null
+  memory:
+    ttl_static_s: null             # 记忆栅格 TTL 分档  (20 S4.2)
+    ttl_dynamic_s: null
+    cell_m: null                   # 分辨率  (20 S4.2.1)
+    radius_m: null                 # 滑动窗半径
+    reset_jump_m: null             # 位姿跳变清空阈值 (A-MEM-3)
+  health:
+    invalid_ratio_limit: null      # RNS-I-2 强制限速  (20 S3.1.8)
+  perception:
+    seg_stale_ms: null             # T 证据超龄  (20 S3.1.11)
+    no_seg_speed_cap_mps: null
+    seg_recover_frames: null
+    raw_velocity_policy: null      # 本期唯一合法值 reject  (20 S3.1.5)
+  class_map:                       # class_name -> 行为类; person 锁死在代码 (20 S5.1.1)
+    car: null
+    truck: null
+    bus: null
+    motorcycle: null
+  follow:                          # 预留段, 本期无运行期消费者 (20 #20-13)
+    target_min_dist_m: 1.0         # 用户 2026-09-07 指定默认值
+    lost_extrapolate_s: null
+    lost_timeout_s: null
+    reacquire_min_frames: null

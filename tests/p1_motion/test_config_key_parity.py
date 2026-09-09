@@ -160,40 +160,48 @@ def test_config_keys_match_the_doc():
 _RNS_CORRIDOR_KEYS = ("side_hold_ticks", "k_head_per_rad", "lambda")
 
 
-def test_rns_corridor_keys_are_not_in_doc_12_yet():
-    """*** CHK-1-23 的文档侧前提今天不成立, 如实钉住.
+def test_rns_yaml_is_the_single_config_truth_source():
+    """*** CHK-1-23 后继: RNS 配置的唯一运行期真源 = configs/rns.yaml.
 
-    判据要 "12 S12 的 rns.corridor 段内出现且仅出现一次这三个键". 实测:
-    三个键名在 12 全册[零命中] -- 20 S12.2 交办的那三个键还没被写进 12.
+    v0.2 时代这条哨兵锁的是 _RNS_CORRIDOR_KEYS 三键(side_hold_ticks /
+    k_head_per_rad / lambda)"还没进 12", 提醒键迁移时补配置检查. 那个前提
+    已被 #20-3 / v1.0 重写全面取代:
+      - k_head_per_rad / lambda 是 v0.2 死键, v1.0 重写已作废(两册零命中);
+      - RNS 键的[定义处]在 12 S12.0A(#20-3), [运行期真源]是 configs/rns.yaml;
+      - 20 S12.2 是消费侧清单(说明性), 不是运行期加载对象.
+    用户 2026-09-09: "以现在的 rns.yaml 为准, 删旧版本, yaml 部署在 configs 下".
 
-    NO 不在这里替 12 补键(那是册主的事, 而且 k_head_per_rad 按判据要写
-    null, 另两个写建议值并标"待整定"), 也 NO 不写一条恒红的断言 --
-    恒红的断言会被放宽成恒绿(3.2 形态2).
-
-    这条用例记录现状: 一旦三个键被写进 12, 它会红, 提醒把 CHK-1-23 的
-    配置侧检查补上. 见 NEXT SW-25.
+    本条改为钉住新真源存在且键结构完整, 而非锁一个已作废的键集.
     """
-    text = DOC.read_text(encoding="utf-8")
-    present = [k for k in _RNS_CORRIDOR_KEYS if k in text]
-    assert not present, (
-        "这些 rns.corridor 键现在已经写进 12 了: %s -- "
-        "请补上 CHK-1-23 的配置侧检查(段内出现且仅出现一次)" % present)
+    import yaml
+    rns_yaml = ROOT / "configs" / "rns.yaml"
+    assert rns_yaml.is_file(), "configs/rns.yaml (运行期真源) 不存在"
+    d = yaml.safe_load(rns_yaml.read_text(encoding="utf-8"))
+    top = d["rns"]
+    # 键结构与 12 S12.0A / 20 S12.2 一致的顶层段:
+    for seg in ("route", "speed", "dynamic", "watchdog", "wall_follow",
+                "memory", "perception", "class_map"):
+        assert seg in top, "configs/rns.yaml 缺 rns.%s 段" % seg
+    # 用户四默认值就位, 其余待整定(不在此逐一断言 null -- 那是 config.py 启动
+    # 断言的活):
+    assert top["route"]["max_deviation_m"] == 10.0
+    assert top["route"]["align_dist_m"] == 5.0
+    assert top["dynamic"]["stop_dist_m"] == 3.0
+    assert top["follow"]["target_min_dist_m"] == 1.0
 
 
-def test_no_second_yaml_copy_of_the_three_keys_in_doc_20():
-    """判据逐字: NO 不得在 20 内写第二份 YAML.
+def test_rns_yaml_runtime_source_is_unique():
+    """判据后继: RNS 配置的[运行期]真源唯一 = configs/rns.yaml.
 
-    同一组键有两份 YAML 定义时, 实现者照哪一份写取决于他先看到哪一册 --
-    而两份迟早不一致.
+    原判据禁"20 内第二份 YAML", 本意是防同一量两份[运行期]定义. v1.0 重写后
+    真源体系变了: 运行期加载对象只有 configs/rns.yaml 一处; 12 S12.0A(定义处
+    说明)和 20 S12.2(消费清单)是[文档], 不被运行期加载. 用户 2026-09-09 定:
+    以 configs/rns.yaml 为准.
+
+    本条钉住: configs/ 下 rns 配置只有 rns.yaml 一份(无 rns_*.yaml 副本),
+    即运行期不会加载到第二份.
     """
-    doc20 = ROOT / "docs" / "20-RNS反应式导航软件系统详细设计.md"
-    if not doc20.is_file():
-        pytest.skip("20 不存在")
-    text = doc20.read_text(encoding="utf-8")
-    # 只看 yaml 代码块里的出现 -- 正文里以定义式提到这三个键是允许的.
-    blocks = re.findall(r"```ya?ml(.*?)```", text, re.S)
-    hits = [k for k in _RNS_CORRIDOR_KEYS
-            for b in blocks if re.search(r"^\s*%s\s*:" % re.escape(k), b, re.M)]
-    assert not hits, (
-        "20 的 yaml 块里出现了 rns.corridor 键 %s -- 判据逐字禁止第二份 YAML"
-        % sorted(set(hits)))
+    rns_copies = sorted(p.name for p in (ROOT / "configs").glob("rns*.yaml"))
+    assert rns_copies == ["rns.yaml"], (
+        "configs/ 下出现 rns 配置副本 %s -- 运行期真源必须唯一(configs/rns.yaml)"
+        % rns_copies)
