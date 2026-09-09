@@ -252,8 +252,14 @@ class RnsSource:
             self.clear_mission()
             return zero
         dev_fail = self._mission.deviation_failure(fs)
-        if dev_fail is not None:                     # P1.5 wired (A-DEV-1)
-            self._fail(dev_fail)
+        # WALL_FOLLOW is EXEMPT from the deviation failure (design-seam ruling
+        # 2026-09-10, written back to 20 S2.7): S2.7's 10 m bound is follow-mode
+        # semantics, while wall-follow's own S7.6 criteria (no_progress 40 /
+        # max_follow 60) deliberately allow a wider excursion -- letting both
+        # run kills a deep wall detour "one breath short" of rounding the far
+        # end (user-observed). The bound resumes the tick FOLLOW returns.
+        if dev_fail is not None and self._state != NavState.WALL_FOLLOW:
+            self._fail(dev_fail)                     # P1.5 wired (A-DEV-1)
             return zero
 
         # ── B2. memory grid + progress bookkeeping (S2b) ─────────────────────
@@ -518,15 +524,35 @@ class RnsSource:
                 n_rays=12) is not None
         if not can_enter(True, boundary):
             return False
-        r_body = self._world_to_body(fs.lookahead_point, pose, yaw)
-        # HAND-ON-WALL semantics (field bug #4, 2026-09-10 replay: three starts
-        # all hugged NORTH along a 17 m car wall with the goal SOUTH): `side` is
-        # WHICH HAND touches the wall. Goal to the LEFT means walk leftward
-        # along the wall, i.e. wall on the RIGHT hand -- the naive "goal left ->
-        # hug left" walks AWAY from the goal (the U-trap passed by symmetry
-        # luck). Bug-algorithm convention: goal side and wall hand are opposite.
-        goal_side = Side.RIGHT if r_body[1] > 0 else Side.LEFT
-        side = select_side(False, False, 0.0, 0.0, goal_side, False, False)
+        # HAND-ON-WALL side pick from the WALL TANGENT, not the body axes
+        # (field bug #5, 2026-09-10 spy-replay): "walking the wall = going
+        # body-left/right" only holds when FACING the wall square-on. Entering
+        # at 45 deg (post-DETOUR pose), the body-right bearing projected onto a
+        # north-south wall pointed NORTH while the goal lay SOUTH -- an 18 m
+        # reverse lap ending in max_deviation "one breath short" (user trace).
+        # Correct frame: wall normal = bearing of the nearest blocked bin; the
+        # two TANGENTS are normal +/- 90 deg; walk the tangent closer to the
+        # bearing of the mission ENDPOINT (not R: facing the wall, R sits on
+        # the normal and the two tangents tie), and the hand is which side the
+        # wall normal falls on relative to the walk direction.
+        best_db = None
+        best_bearing = 0.0
+        for i, db in enumerate(profile.d_block):
+            if db is not None and (best_db is None or db < best_db):
+                best_db = db
+                best_bearing = yaw + profile.angle_min_rad \
+                    + i * profile.angle_step_rad
+        if best_db is None:
+            return False                    # no visible wall bearing to hug
+        goal = self._mission.endpoint
+        to_goal = math.atan2(goal[1] - pose[1], goal[0] - pose[0])
+        t1 = best_bearing + math.pi / 2.0
+        t2 = best_bearing - math.pi / 2.0
+        walk = t1 if abs(wrap_angle(to_goal - t1)) <= \
+            abs(wrap_angle(to_goal - t2)) else t2
+        side = (Side.RIGHT if wrap_angle(best_bearing - walk) < 0
+                else Side.LEFT)
+        side = select_side(False, False, 0.0, 0.0, side, False, False)
         if side is None:
             return False
         self._wall = WallFollowState(side=side, s_hit=self._s_star,

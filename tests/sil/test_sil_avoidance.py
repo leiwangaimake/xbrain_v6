@@ -280,3 +280,87 @@ def test_long_car_wall_hand_on_wall_and_no_pin_stall():
     assert tick is not None, "stuck/failed at the long car wall again"
     d = math.hypot(world.rx + 15.07, world.ry + 19.8)
     assert d < 1.2
+    # field bug #5 (tangent side pick): entering 1.6 m from the SOUTH end, the
+    # wall lap must be short. The body-axis pick walked the wall 34.5 m the
+    # WRONG way (north) and only survived on the deviation exemption. mutant:
+    # revert to the body-axis pick -> lap > 20 m -> reddens.
+    laps = [r.detail.get("followed_m", 0.0) for r in rns.audit.drain()
+            if r.kind == "wall_exit"]
+    assert all(l < 20.0 for l in laps), "wall lap too long: %s" % laps
+
+
+def test_wall_entry_side_pick_survives_swung_yaw():
+    # field bug #5: entering wall-follow with the yaw already swung (post-DETOUR)
+    # toward NORTH while the goal is SOUTH used the unstable body-y sign and
+    # hugged the wrong way, then died on max_deviation. The robust pick compares
+    # wall-walk bearings against the goal bearing -- yaw-swing must not flip it.
+    # mutant: revert to the body-y sign pick -> hugs north -> reddens.
+    world = SilWorld()
+    for x, y in ((-7.33, 1.33), (-7.53, -0.77), (-7.47, -2.83), (-7.90, -4.80),
+                 (-7.70, -6.07), (-7.83, -7.57), (-8.07, -9.07), (-8.00, -10.83),
+                 (-8.20, -12.50), (-8.43, -13.83), (-7.97, -15.97)):
+        world.add_obstacle("car", x, y)
+    # yaw swung NORTH-WEST (2.6 rad) as if mid-DETOUR; goal is SOUTH-WEST.
+    world.rx, world.ry, world.ryaw = -6.0, -11.0, 2.6
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(-15.07, -19.8)]))
+    tick, states, _ = _tick_until(world, rns, 2400)
+    assert tick is not None, "swung-yaw entry hugged the wrong way again"
+    d = math.hypot(world.rx + 15.07, world.ry + 19.8)
+    assert d < 1.2
+
+
+def test_wall_follow_exempt_from_deviation_failure():
+    # design-seam ruling (20 S2.7 v1.17): while WALL_FOLLOW, the 10 m deviation
+    # bound must NOT fire (S7.6 owns the excursion budget); it resumes on
+    # FOLLOW. Direct check: force the wall state with a far-off-line pose and
+    # tick once -- no failure latched. mutant: drop the state check -> red.
+    from xbrain.p1_motion.rns.source import RnsSource as _R
+    from xbrain.p1_motion.rns.wallfollow import Side, WallFollowState
+    from xbrain.p1_motion.rns.types import NavState
+    world = SilWorld()
+    world.add_obstacle("car", -8.0, -12.0)
+    rns = _R(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(0.0, 0.0)]))
+    # anchor the goto line at (0,-1) then teleport 12 m off it in wall state.
+    snap = world.synth_snapshot(0)
+    rns.compute(Ctx(world, snap, 0).__class__(world, snap, 0)) if False else None
+    class C:
+        pose_xy = (0.0, -1.0); yaw_rad = 0.0
+        v_nom_mps = 2.0; wz_max_rps = 1.2
+        perception = world.synth_snapshot(0); now_mono_ms = 0
+    rns.compute(C())                          # anchors the line
+    rns._state = NavState.WALL_FOLLOW
+    rns._wall = WallFollowState(side=Side.RIGHT, s_hit=0.0, hit_point=(0.0, -1.0))
+    rns._wall_last_move_ms = None
+    class C2:
+        pose_xy = (12.5, -1.0); yaw_rad = 0.0   # 12.5 m off the goto line
+        v_nom_mps = 2.0; wz_max_rps = 1.2
+        perception = world.synth_snapshot(50); now_mono_ms = 50
+    rns.compute(C2())
+    assert rns.take_failure() is None, \
+        "deviation fired inside WALL_FOLLOW despite the S2.7 v1.17 exemption"
+
+
+def test_user_full_run_side_pick_at_oblique_entry():
+    # the user's EXACT run (2026-09-10 trace): start (0,0), goal behind the
+    # 17 m car wall. The wall entry happens at ~45 deg to the wall (post-DETOUR
+    # pose) -- the case where the body-axis pick and the tangent pick DIVERGE:
+    # body-right projected onto the wall pointed NORTH (18 m reverse lap, then
+    # max_deviation "one breath short"); the tangent pick walks SOUTH (~14 m
+    # lap). mutant: body-axis pick -> lap > 20 -> reddens; square-on entries
+    # cannot kill that mutant (the frames coincide there), only this one can.
+    world = SilWorld()
+    for x, y in ((-7.33, 1.33), (-7.53, -0.77), (-7.47, -2.83), (-7.90, -4.80),
+                 (-7.70, -6.07), (-7.83, -7.57), (-8.07, -9.07), (-8.00, -10.83),
+                 (-8.20, -12.50), (-8.43, -13.83), (-7.97, -15.97)):
+        world.add_obstacle("car", x, y)
+    world.rx, world.ry, world.ryaw = 0.0, 0.0, 1.57
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission([(-15.07, -19.8)]))
+    tick, states, _ = _tick_until(world, rns, 2400)
+    assert tick is not None, "user full run failed again"
+    laps = [r.detail.get("followed_m", 0.0) for r in rns.audit.drain()
+            if r.kind == "wall_exit"]
+    assert all(l < 20.0 for l in laps), \
+        "oblique-entry side pick walked the long way: laps %s" % laps
