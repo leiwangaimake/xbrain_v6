@@ -165,10 +165,48 @@ class SilWorld:
     def step_obstacles(self, dt: float) -> None:
         for o in self.obstacles.values():
             if o.dynamic:
-                o.x += o.vx * dt
-                o.y += o.vy * dt
+                nx = o.x + o.vx * dt
+                ny = o.y + o.vy * dt
+                # pedestrian bounce (user spec 2026-09-11): a walking person
+                # who runs into a wall/car turns 180 deg and walks back --
+                # forever. Cars keep the old fly-away behavior. The check
+                # predicts the NEXT position so the person never clips in.
+                if o.kind == "person" and (
+                        self._person_hits(o, nx, ny)
+                        or math.hypot(nx - self.rx, ny - self.ry) < 0.85):
+                    # the robot counts too: a real pedestrian does not walk
+                    # THROUGH a standing robot -- they turn around exactly
+                    # like at a wall (baseline ped test: the sim person
+                    # marched straight over the stopped robot, -0.031 m).
+                    o.vx, o.vy = -o.vx, -o.vy
+                    o.heading = math.atan2(o.vy, o.vx)
+                    continue        # turn this tick, walk next tick
+                o.x, o.y = nx, ny
                 if o.kind == "car":
                     o.heading = math.atan2(o.vy, o.vx)
+
+    def _person_hits(self, p, nx: float, ny: float) -> bool:
+        pr = RADIUS["person"]
+        for o in self.obstacles.values():
+            if o.oid == p.oid:
+                continue
+            if o.kind == "wall":
+                ax, ay, bx, by = o.x, o.y, o.x2, o.y2
+                dx, dy = bx - ax, by - ay
+                l2 = dx * dx + dy * dy
+                t = 0.0 if l2 < 1e-9 else max(0.0, min(1.0, ((nx - ax) * dx
+                                                             + (ny - ay) * dy) / l2))
+                d = math.hypot(nx - (ax + t * dx), ny - (ay + t * dy))
+                if d < o.thick_m / 2.0 + pr:
+                    return True
+            elif o.kind == "car":
+                ca, sa = math.cos(-o.heading), math.sin(-o.heading)
+                lx = ca * (nx - o.x) - sa * (ny - o.y)
+                ly = sa * (nx - o.x) + ca * (ny - o.y)
+                if max(abs(lx) - CAR_HALF_L, 0.0) < pr \
+                        and max(abs(ly) - CAR_HALF_W, 0.0) < pr:
+                    return True
+        return False
 
     # ── raycast one obstacle ─────────────────────────────────────────────────
     def _hit(self, o: Obstacle, ox, oy, dx, dy) -> Optional[float]:

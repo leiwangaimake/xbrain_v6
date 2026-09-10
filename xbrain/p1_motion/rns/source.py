@@ -159,9 +159,15 @@ class RnsSource:
             # starves every guidance consumer (R*/steer/chain/no-path) for
             # path missions; avoidance falls back to the v1.0 candidate/
             # wall machinery, whose leave rules RETURN to the line (S7.3).
+            # GUIDANCE IS GOTO-ONLY (field bug 2026-09-11 + acceptance
+            # sweep): an endpoint-rooted field serves a PATH badly twice
+            # over -- steering pulls off the ordered line, and even the
+            # detour-side aim drags toward "shortcut to the endpoint"
+            # instead of "rejoin the line" (path_rev regressed OK->FAIL
+            # when tried). PATH missions run pure line-following; their
+            # avoidance uses the candidate/wall machinery whose leave
+            # rules return to the line (S7.3).
             if mission.kind == MissionKind.GOTO:
-                # domain seeds at the goal; the first on_tick rebuilds it
-                # around (pose, goal) before any search step runs (S4A.5).
                 self._planner.set_task(mission.endpoint, mission.endpoint)
             else:
                 self._planner.clear()
@@ -373,7 +379,8 @@ class RnsSource:
         # post-leave cooldown, where the plain R lets the leave settle.
         if self._state == NavState.DETOUR and self._subgoal_world is not None:
             target = self._subgoal_world
-        elif self._r_steer is not None and (
+        elif self._mission.kind == MissionKind.GOTO \
+                and self._r_steer is not None and (
                 self._wall_cooldown_until is None or now is None
                 or now >= self._wall_cooldown_until):
             target = self._r_steer
@@ -481,7 +488,8 @@ class RnsSource:
                 # ON the plan instead of degrading into wall-follow (72.5%
                 # of ticks pre-fix). Short prefix -> the old path stands.
                 chain_ok = False
-                if self._chain_prefix_m >= 2.0:
+                if self._mission.kind == MissionKind.GOTO \
+                        and self._chain_prefix_m >= 2.0:
                     # the chain point passes the SAME clearance gate as any
                     # candidate subgoal (line1 sweep: skipping it let the
                     # chain ride obstacle edges to -0.012 m) -- one yard-
@@ -507,8 +515,8 @@ class RnsSource:
                         {"subgoal": target, "via": "guide_chain"}))
                 elif (sel := self._selector.select(
                         False,
-                        self._pick_candidate(profile, pose, yaw, fs, cfg,
-                                             margin, dyn_objs),
+                        self._pick_margin_ladder(profile, pose, yaw, fs, cfg,
+                                                 margin, dyn_objs),
                         best_is_current=False)) is not None:
                     self._subgoal_clearance_m = sel.clearance_m
                     self._subgoal_world = self._body_to_world(
@@ -525,6 +533,11 @@ class RnsSource:
                     best = self._pick_candidate(profile, pose, yaw, fs, cfg,
                                                 margin, dyn_objs,
                                                 memory_appeal=True)
+                    if best is None:
+                        best = self._pick_candidate(
+                            profile, pose, yaw, fs, cfg,
+                            cfg["clearance"]["margin_by_class"]["small_object"],
+                            dyn_objs, memory_appeal=True)
                     sel = self._selector.select(False, best,
                                                 best_is_current=False)
                     if sel is not None:
@@ -537,6 +550,16 @@ class RnsSource:
                         self.audit.append(AuditRecord(
                             now or 0, "detour_enter",
                             {"subgoal": target, "via": "memory_appeal"}))
+                    elif (esc := self._small_obstacle_escape(
+                            profile, pose, yaw, now)) is not None:
+                        self._subgoal_clearance_m = None
+                        self._subgoal_world = esc
+                        self._transition(NavState.DETOUR)
+                        self._detour_dwell = 0
+                        target = esc
+                        self.audit.append(AuditRecord(
+                            now or 0, "detour_enter",
+                            {"subgoal": esc, "via": "escape"}))
                     elif self._enter_wall(profile, pose, yaw, fs, now):
                         return self._wall_tick(profile, pose, yaw, fs, now,
                                                wz_max, step_m)
@@ -580,16 +603,30 @@ class RnsSource:
                                 memory_appeal=True)
                             sel = self._selector.select(False, best, False)
                         if sel is None:
-                            self._subgoal_world = None
-                            if self._enter_wall(profile, pose, yaw, fs, now):
-                                return self._wall_tick(profile, pose, yaw, fs,
-                                                       now, wz_max, step_m)
-                            self._transition(NavState.FOLLOW)
-                            return zero
-                        self._subgoal_clearance_m = sel.clearance_m
-                        self._subgoal_world = self._body_to_world(
-                            sel.subgoal, pose, yaw)
-                        target = self._subgoal_world
+                            esc = self._small_obstacle_escape(
+                                profile, pose, yaw, now)
+                            if esc is not None:
+                                self._subgoal_clearance_m = None
+                                self._subgoal_world = esc
+                                self._detour_dwell = 0
+                                target = esc
+                                self.audit.append(AuditRecord(
+                                    now or 0, "detour_enter",
+                                    {"subgoal": esc, "via": "escape"}))
+                            else:
+                                self._subgoal_world = None
+                                if self._enter_wall(profile, pose, yaw, fs,
+                                                    now):
+                                    return self._wall_tick(
+                                        profile, pose, yaw, fs, now,
+                                        wz_max, step_m)
+                                self._transition(NavState.FOLLOW)
+                                return zero
+                        if sel is not None:
+                            self._subgoal_clearance_m = sel.clearance_m
+                            self._subgoal_world = self._body_to_world(
+                                sel.subgoal, pose, yaw)
+                            target = self._subgoal_world
 
         # ── E. speed + heading toward target ─────────────────────────────────
         # REVIEW R2-3 (3-pass audit 2026-09-11): the S8.1A gap-tightness cap
@@ -849,6 +886,47 @@ class RnsSource:
                 return True
         return False
 
+    def _small_obstacle_escape(self, profile, pose, yaw, now):
+        """Dense-field fix (2026-09-11 acceptance, path_rev death lap): the
+        snake end probe said end_l=0.5 / end_r=1.0 -- BOTH ends of the
+        "wall" within a meter, i.e. an isolated rock -- and wall-follow
+        still hugged it, then drifted rock-to-rock through the field until
+        wall_budget burned (60 m of lapping pebbles). A boundary whose two
+        confirmed ends span < 3 m is NOT a wall: build a DETOUR subgoal
+        just past the NEARER end instead (out along the tangent, offset
+        away from the obstacle), and let the ordinary detour machinery
+        (A-HYS-2 guards included) walk around it. Returns the world subgoal
+        or None when this is not a small obstacle / geometry unknown."""
+        if self._grid is None or now is None or profile is None:
+            return None
+        best_db = None
+        best_bearing = 0.0
+        for i, db in enumerate(profile.d_block):
+            if db is not None and (best_db is None or db < best_db):
+                best_db = db
+                best_bearing = yaw + profile.angle_min_rad \
+                    + i * profile.angle_step_rad
+        if best_db is None:
+            return None
+        anchor = (pose[0] + best_db * math.cos(best_bearing),
+                  pose[1] + best_db * math.sin(best_bearing))
+        t1 = best_bearing + math.pi / 2.0
+        t2 = best_bearing - math.pi / 2.0
+        e1 = self._grid.wall_end_dist(anchor, t1, now, r_max_m=3.0)
+        e2 = self._grid.wall_end_dist(anchor, t2, now, r_max_m=3.0)
+        if e1 is None or e2 is None or e1 + e2 >= 3.0:
+            return None                     # a real wall (or unconfirmed)
+        tang = t1 if e1 <= e2 else t2
+        end = e1 if e1 <= e2 else e2
+        # subgoal: past the near end along the tangent, pushed AWAY from
+        # the obstacle by the keep distance so the corner is not clipped.
+        away = math.atan2(pose[1] - anchor[1], pose[0] - anchor[0])
+        gx = anchor[0] + math.cos(tang) * (end + 1.2) \
+            + math.cos(away) * 0.8
+        gy = anchor[1] + math.sin(tang) * (end + 1.2) \
+            + math.sin(away) * 0.8
+        return (gx, gy)
+
     def _enter_wall(self, profile, pose, yaw, fs, now) -> bool:
         """S7.2 entry: all candidates gated out AND a BLOCKED boundary exists
         (perception or memory). Chooses the side (goal-side heuristic when
@@ -886,7 +964,17 @@ class RnsSource:
         # side pick aims at R* when guidance serves (S4A.5): the field
         # already encodes WHICH way around is globally shorter, which is
         # exactly the question the tangent tie-break is trying to answer.
-        goal = self._r_star or self._mission.endpoint
+        # PATH missions aim at the LOOKAHEAD on the line instead (dense-
+        # field acceptance 2026-09-11): the endpoint sits tens of meters
+        # down the polyline and its bearing is locally meaningless -- the
+        # path_fwd run picked the 20 m south lap around a wall group
+        # because the ENDPOINT lay south-east, while the line's next leg
+        # was 8 m around the north end. Following the line means the side
+        # pick serves the LINE.
+        if self._mission.kind == MissionKind.PATH:
+            goal = fs.lookahead_point
+        else:
+            goal = self._r_star or self._mission.endpoint
         to_goal = math.atan2(goal[1] - pose[1], goal[0] - pose[0])
         t1 = best_bearing + math.pi / 2.0
         t2 = best_bearing - math.pi / 2.0
@@ -914,11 +1002,29 @@ class RnsSource:
             left_end, right_end = end1, end2
         else:
             left_end, right_end = end2, end1
+        # rule-2 cost is |X->E| + |E->R'| VERBATIM from 20 S7.2 -- the
+        # first cut used the end distance alone and the nearer end won even
+        # when rounding it led AWAY from the objective (path_fwd 2026-09-11:
+        # end_l=0.5 into a wall funnel beat end_r=5.5 toward the line; a
+        # 27 m south lap followed). E = the probe end point along its
+        # tangent; R' = `goal` chosen above (lookahead for PATH, R*/endpoint
+        # for goto), so the detour-cost comparison serves the mission's own
+        # objective.
         big = 1e9    # "no confirmed end" cost for rule-2 comparison
+        def _rule2_cost(end_m, tang):
+            if end_m is None:
+                return big
+            ex = anchor[0] + math.cos(tang) * end_m
+            ey = anchor[1] + math.sin(tang) * end_m
+            return end_m + math.hypot(goal[0] - ex, goal[1] - ey)
+        if side1 == Side.LEFT:
+            left_tang, right_tang = t1, t2
+        else:
+            left_tang, right_tang = t2, t1
         side = select_side(
             left_end is not None, right_end is not None,
-            left_end if left_end is not None else big,
-            right_end if right_end is not None else big,
+            _rule2_cost(left_end, left_tang),
+            _rule2_cost(right_end, right_tang),
             goal_side, False, False)
         if side is None:
             return False
@@ -1193,6 +1299,30 @@ class RnsSource:
         # helps a tracked chassis exactly the same.
         v_w = min(wf["v_max_mps"], self._shield_vx_cap(pose, now))
         return VelocityCandidate(vx=Mps(v_w), vy=Mps(vy_w), wz=wz)
+
+    def _pick_margin_ladder(self, profile, pose, yaw, fs, cfg, margin,
+                            dyn_objs=()):
+        """Margin DEGRADATION ladder (dense-field acceptance 2026-09-11):
+        the class-blind profile forces the max class margin (0.6, the car
+        fix) -- which walls off every 1.5-2 m gap in a rock field and
+        degrades the run into wall-hugging laps around pebbles (baseline:
+        both path missions FAILED with 50-60 percent off-line time; three
+        goto FAILs). 20 S5.6 margins ARE per-class; blindness argues for
+        trying conservative FIRST, then stepping down toward the small-
+        object floor (0.2) -- never below it, and U54's 1 m person keep-out
+        is untouched (persons ride the DYNAMIC pile, not this gate). The
+        gap-tightness cap (S8.1A, wired R2-3) slows the squeeze exactly as
+        designed: narrow gap => creep through, not lap around."""
+        floors = sorted({margin,
+                         cfg["clearance"]["margin_by_class"]["unknown_geom"],
+                         cfg["clearance"]["margin_by_class"]["small_object"]},
+                        reverse=True)
+        for m in floors:
+            best = self._pick_candidate(profile, pose, yaw, fs, cfg, m,
+                                        dyn_objs)
+            if best is not None:
+                return best
+        return None
 
     def _pick_candidate(self, profile, pose, yaw, fs, cfg, margin,
                         dyn_objs=(), memory_appeal=False):
