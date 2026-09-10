@@ -150,9 +150,21 @@ class RnsSource:
         self._state = NavState.FOLLOW
         self._reporter.reset_for_new_mission()
         if self._planner is not None:
-            # domain seeds at the goal; the first on_tick rebuilds it around
-            # (pose, goal) before any search step runs (S4A.5).
-            self._planner.set_task(mission.endpoint, mission.endpoint)
+            # GUIDANCE IS GOTO-ONLY (field bug 2026-09-11, user: "path run
+            # stopped following the path"): a goto's reference line is a
+            # direction hint and shortcutting it is the optimization; a
+            # PATH's polyline IS the task (patrol line, recorded-safe
+            # ground) -- R* pulling toward the globally shortest way lifted
+            # the robot OFF the line it was ordered to walk. One gate here
+            # starves every guidance consumer (R*/steer/chain/no-path) for
+            # path missions; avoidance falls back to the v1.0 candidate/
+            # wall machinery, whose leave rules RETURN to the line (S7.3).
+            if mission.kind == MissionKind.GOTO:
+                # domain seeds at the goal; the first on_tick rebuilds it
+                # around (pose, goal) before any search step runs (S4A.5).
+                self._planner.set_task(mission.endpoint, mission.endpoint)
+            else:
+                self._planner.clear()
         self._subgoal_world = None
         self._dyn_prev = DynamicAction.RUN
         self._wall = None

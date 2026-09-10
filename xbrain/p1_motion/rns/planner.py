@@ -96,6 +96,10 @@ class GuidancePlanner:
         self._build_mode: str = "none"
         self._coarse_cache: Dict[Tuple[int, int], Cell] = {}
         self._last_build_start_ms: Optional[int] = None
+        # task clock for the min-try window; ONLY set_task assigned it
+        # before (latent AttributeError on any query-before-task path --
+        # surfaced by the goto-only gate, where path missions clear()).
+        self._task_start_ms: Optional[int] = None
         # G2: consecutive attempt-mode builds that could NOT reach the robot
         # (or its 8-neighborhood). Two in a row -- with a fresh grid read in
         # between -- is the domain no-path proof (S4A.3).
@@ -165,6 +169,7 @@ class GuidancePlanner:
 
     def clear(self) -> None:
         self._goal = None
+        self._task_start_ms = None
         self._dom = None
         self._field = None
         self._field_mode = "none"

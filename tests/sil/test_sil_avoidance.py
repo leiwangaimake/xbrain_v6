@@ -792,3 +792,42 @@ def test_sealed_goal_proves_no_path_in_domain():
     assert reason in ("no_path_in_domain", "wall_no_progress",
                       "wall_closed_loop"), "wrong verdict: %s" % reason
     assert t * 0.05 < 120.0, "verdict too slow: %.1fs" % (t * 0.05)
+
+
+def test_path_mission_follows_the_line_not_the_shortcut():
+    # field bug 2026-09-11 (user: "path run stopped following the path"):
+    # guidance treated a PATH like a goto and R* pulled the robot off the
+    # ordered polyline toward the globally shortest way. A path's line IS
+    # the task. Scene: an L-shaped path whose two ends are also joined by
+    # a straight shortcut over open ground -- guidance would cut the
+    # corner; line-following must walk the L. mutant: drop the goto-only
+    # gate in load_mission -> the corner is cut, max deviation from the
+    # polyline blows past 2 m -> reddens.
+    world = SilWorld()
+    world.rx, world.ry, world.ryaw = 0.0, 0.0, 0.0
+    pts = [(float(x), 0.0) for x in range(1, 9)] \
+        + [(8.0, float(y)) for y in range(1, 7)]        # L: east then north
+    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    rns.load_mission(_mission(pts, kind=MissionKind.PATH))
+    assert rns._planner is not None and rns._planner._goal is None, \
+        "guidance domain must NOT start for a PATH mission"
+    max_dev = 0.0
+    arrived = None
+    for t in range(2400):
+        now = t * 50
+        snap = world.synth_snapshot(now)
+        cand = rns.compute(Ctx(world, snap, now))
+        if cand is not None:
+            world.step_robot(cand.vx.value, cand.vy.value, cand.wz, DT)
+        # deviation from the L-polyline (min distance to its two segments)
+        d1 = abs(world.ry) if world.rx < 8.0 else math.hypot(world.rx - 8.0,
+                                                             min(0.0, world.ry))
+        d2 = abs(world.rx - 8.0) if world.ry > 0.0 else 9e9
+        max_dev = max(max_dev, min(d1, d2))
+        if rns.take_arrival():
+            arrived = t
+            break
+        if rns.take_failure() is not None:
+            break
+    assert arrived is not None, "path mission did not arrive"
+    assert max_dev < 2.0, "left the ordered line by %.2f m" % max_dev
