@@ -85,6 +85,12 @@ class GuidancePlanner:
         # served (front) field: cell -> cost-to-goal; and the build (back) side
         self._field: Optional[Dict[Tuple[int, int], float]] = None
         self._field_mode: str = "none"          # "known" | "attempt" | "none"
+        # REVIEW R1-21 (3-pass audit 2026-09-11): the SERVED field must carry
+        # the domain it was built in. on_tick re-anchors self._dom around the
+        # moving pose at every rebuild, so cell ids from the NEW domain were
+        # used to index the OLD field -- a silent lattice shift that bent R*
+        # (masked by the reactive layer, but the guide was wrong).
+        self._field_dom: Optional[Tuple[float, float, int, int]] = None
         self._build: Optional[Dict[Tuple[int, int], float]] = None
         self._open: List[Tuple[float, Tuple[int, int]]] = []
         self._build_mode: str = "none"
@@ -184,18 +190,20 @@ class GuidancePlanner:
         self._dom = (lo_x, lo_y, nx, ny)
 
     # ── coarse view (2x2 aggregation, on demand) ─────────────────────────────
-    def _cell_of(self, xy) -> Optional[Tuple[int, int]]:
-        if self._dom is None:
+    def _cell_of(self, xy, dom=None) -> Optional[Tuple[int, int]]:
+        dom = dom if dom is not None else self._dom
+        if dom is None:
             return None
-        lo_x, lo_y, nx, ny = self._dom
+        lo_x, lo_y, nx, ny = dom
         ix = int((xy[0] - lo_x) / self._coarse_m)
         iy = int((xy[1] - lo_y) / self._coarse_m)
         if 0 <= ix < nx and 0 <= iy < ny:
             return (ix, iy)
         return None
 
-    def _center_of(self, cell) -> Tuple[float, float]:
-        lo_x, lo_y, _, _ = self._dom
+    def _center_of(self, cell, dom=None) -> Tuple[float, float]:
+        dom = dom if dom is not None else self._dom
+        lo_x, lo_y, _, _ = dom
         return (lo_x + (cell[0] + 0.5) * self._coarse_m,
                 lo_y + (cell[1] + 0.5) * self._coarse_m)
 
@@ -286,8 +294,10 @@ class GuidancePlanner:
         BLOCKED (fresh grid read, bypassing the build-scoped cache). The
         period gate alone leaves up to replan_period_s of steering into a
         newly-seen wall."""
+        if self._field_dom is None:
+            return False
         for cell in self._last_chain:
-            cx, cy = self._center_of(cell)
+            cx, cy = self._center_of(cell, self._field_dom)
             q = self._coarse_m / 4.0
             for dx, dy in ((-q, -q), (-q, q), (q, -q), (q, q)):
                 if grid.read(cx + dx, cy + dy, now_ms) == Cell.BLOCKED:
@@ -407,6 +417,7 @@ class GuidancePlanner:
             self._unreachable_builds = 0
         self._field = build
         self._field_mode = self._build_mode
+        self._field_dom = self._dom          # R1-21: field owns its lattice
         self._build = None
         self._open = []
         self._build_mode = "none"
@@ -416,13 +427,14 @@ class GuidancePlanner:
         self._coarse_cache.pop(cell, None)
         return self._coarse_state(cell, grid, now_ms)
 
-    def _coarse_read_only(self, cell, grid, now_ms) -> Cell:
+    def _coarse_read_only(self, cell, grid, now_ms, dom=None) -> Cell:
         """Fresh aggregate WITHOUT touching the build cache: per-tick
         consumers (chain prefix) must not poison the snapshot the build is
-        expanding on."""
-        if self._dom is None:
+        expanding on. dom selects the lattice (default: the build domain)."""
+        dom = dom if dom is not None else self._dom
+        if dom is None:
             return Cell.UNKNOWN
-        cx, cy = self._center_of(cell)
+        cx, cy = self._center_of(cell, dom)
         if self._static_blocked and (
                 int(cx / self._coarse_m),
                 int(cy / self._coarse_m)) in self._static_blocked:
@@ -445,12 +457,13 @@ class GuidancePlanner:
         -- steering/subgoals along it never violate "optimism decides,
         confirmation steers" even under an attempt-mode field. Returns
         (0.0, None) when no chain is served."""
-        if not self._last_chain:
+        if not self._last_chain or self._field_dom is None:
             return (0.0, None)
         length = 0.0
         end = None
         for cell in self._last_chain:
-            if self._coarse_read_only(cell, grid, now_ms) != Cell.FREE:
+            if self._coarse_read_only(cell, grid, now_ms,
+                                      self._field_dom) != Cell.FREE:
                 break
             # clearance leg (line1 sweep: -0.012 m body overlap): FREE alone
             # admits a cell BESIDE a wall -- the chain rode obstacle edges
@@ -460,13 +473,14 @@ class GuidancePlanner:
             beside_blocked = False
             for dx, dy, _ in _NBRS:
                 nb = (cell[0] + dx, cell[1] + dy)
-                if self._coarse_read_only(nb, grid, now_ms) == Cell.BLOCKED:
+                if self._coarse_read_only(nb, grid, now_ms,
+                                          self._field_dom) == Cell.BLOCKED:
                     beside_blocked = True
                     break
             if beside_blocked:
                 break
             length += self._coarse_m
-            end = self._center_of(cell)
+            end = self._center_of(cell, self._field_dom)
         return (length, end)
 
     # ── R* guide point + path (viz) ──────────────────────────────────────────
@@ -524,9 +538,9 @@ class GuidancePlanner:
         halves of the same dilemma). A sighted R* is straight-line clean by
         construction -- heading for it never re-triggers the wall.
         None when the field does not cover the robot -- caller falls back."""
-        if self._field is None or self._dom is None:
+        if self._field is None or self._field_dom is None:
             return None
-        cell = self._cell_of(pose_xy)
+        cell = self._cell_of(pose_xy, self._field_dom)
         if cell is None or cell not in self._field:
             # the robot moved OUT of the served field's coverage (a known-
             # mode field only spans observed FREE ground; a hugging robot
@@ -544,7 +558,7 @@ class GuidancePlanner:
                 break
             cur = nxt
             chain.append(cur)
-            pts.append(self._center_of(cur))
+            pts.append(self._center_of(cur, self._field_dom))
         self._last_chain = chain
         if not pts:
             return None                      # no descent: at/around the goal
@@ -558,9 +572,9 @@ class GuidancePlanner:
     def path_points(self, pose_xy, max_pts: int = 240) -> List[Tuple[float, float]]:
         """Full descent polyline for visualization (SIL). Not used for
         control -- R* is; keep it cheap and bounded."""
-        if self._field is None or self._dom is None:
+        if self._field is None or self._field_dom is None:
             return []
-        cell = self._cell_of(pose_xy)
+        cell = self._cell_of(pose_xy, self._field_dom)
         if cell is None or cell not in self._field:
             return []
         pts = []
@@ -570,5 +584,5 @@ class GuidancePlanner:
             if nxt is None:
                 break
             cur = nxt
-            pts.append(self._center_of(cur))
+            pts.append(self._center_of(cur, self._field_dom))
         return pts

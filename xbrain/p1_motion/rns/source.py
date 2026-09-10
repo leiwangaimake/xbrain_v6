@@ -37,7 +37,8 @@ from .audit import TerminalReporter
 from .candidate import (CandidateSelector, candidate_cost, candidates_from_profile,
                         clear_extrapolation, clearance_at, obstacle_points,
                         passes_hard_gates)
-from .classify import behavior_class, health_speed_capped, usable_velocity
+from .classify import (behavior_class, dispatch_dynamic, health_speed_capped,
+                       usable_velocity)
 from .config import RnsConfigError, run_startup_assertions
 from .dynamic import DynamicAction, WaitBudget, distance_action, in_corridor
 from .grid import (MemoryGrid, profile_age_ms, profile_speed_limited,
@@ -49,7 +50,7 @@ from .wallfollow import (Side, WallFollowState, can_enter, can_leave,
 from .watchdog import ProgressWatchdog, WatchdogResult, no_progress_failure
 from .audit import AuditRecord, RingAudit
 from .route import Mission, align_omega, lookahead_distance, wrap_angle
-from .speed import SpeedCaps, cap_deviation
+from .speed import SpeedCaps, cap_deviation, cap_gap_tightness
 from .types import (Cell, MissionKind, NavFailReason, NavFailure, NavState, Origin,
                     VelocityCandidate, is_legal_transition)
 from xbrain.common.types.units import Mps
@@ -98,6 +99,7 @@ class RnsSource:
         self._failed_pending: Optional[NavFailure] = None
         self._selector: Optional[CandidateSelector] = None
         self._subgoal_world = None          # DETOUR target (world frame)
+        self._subgoal_clearance_m = None    # adopted subgoal's gap clearance
         self._detour_dwell = 0              # ticks since DETOUR entry (S6.6)
         self._wait_budget: Optional[WaitBudget] = None
         self._dyn_prev = DynamicAction.RUN
@@ -111,7 +113,7 @@ class RnsSource:
         self._last_now = None
         self._last_d_side: Optional[float] = None
         self._wall_corner = False        # concave-corner turn in progress
-        self._wall_last_move_ms = None   # in-wall stall backstop clock
+        self._wall_stall_ticks = 0       # in-wall stall backstop (tick count)
         self._wall_goal_dist_at_hit = 0.0
         self._holo = False
         self._last_R = None                  # lookahead point, for observability
@@ -153,6 +155,16 @@ class RnsSource:
         self._dyn_prev = DynamicAction.RUN
         self._wall = None
         self._s_star = float("-inf")
+        # REVIEW R1-2 (3-pass audit): cross-order residue. The wall cooldown
+        # muted R* steering for the new order's first 2 s; dwell counters
+        # and per-track dwell clocks leaked the previous order's state.
+        self._wall_cooldown_until = None
+        self._wall_entry_dwell = 0
+        self._detour_dwell = 0
+        self._wall_stall_ticks = 0
+        self._last_d_side = None
+        self._wall_corner = False
+        self._slow_since = {}
         if self._cfg is not None:
             w = self._cfg["rns"]["watchdog"]
             self._watchdog = ProgressWatchdog(int(w["window_s"] * 1000),
@@ -293,6 +305,11 @@ class RnsSource:
         # None -> every consumer below falls back to its v1.0 target.
         self._r_star = None
         self._r_steer = None
+        # REVIEW R1-1: reset the chain prefix EVERY tick -- with planner or
+        # now absent the previous tick's prefix survived and the blocked
+        # branch could chase a stale chain point.
+        self._chain_prefix_m = 0.0
+        self._chain_prefix_end = None
         if self._planner is not None and now is not None:
             # G2 event trigger: the served descent chain crossing a freshly
             # remembered BLOCKED forces a rebuild now, not at the period.
@@ -384,13 +401,14 @@ class RnsSource:
                 else:
                     self._slow_since.pop(obj.track_id, None)
                     dwell_s = 0.0
-                from .classify import dispatch_dynamic as _dd
-                if not _dd(beh, eff_spd, dwell_s,
+                if not dispatch_dynamic(beh, eff_spd, dwell_s,
                            dyn_cfg["v_static_thresh_mps"],
                            dyn_cfg["t_static_dwell_s"]):
                     continue        # static pile: geometry (profile) covers it
                 # body-frame centroid -> world; corridor test against target.
                 fp = obj.footprint_xy
+                if not fp:
+                    continue    # REVIEW R1-11: malformed object, no geometry
                 bx = sum(q[0] for q in fp) / len(fp)
                 by = sum(q[1] for q in fp) / len(fp)
                 ox = pose[0] + bx * cy - by * sy
@@ -458,11 +476,13 @@ class RnsSource:
                                               profile.angle_step_rad)
                     sub_body = self._world_to_body(self._chain_prefix_end,
                                                    pose, yaw)
-                    chain_ok = clearance_at(sub_body, obs_pts,
-                                            profile.range_max_m) >= gate_base
+                    chain_clear = clearance_at(sub_body, obs_pts,
+                                               profile.range_max_m)
+                    chain_ok = chain_clear >= gate_base
                 if chain_ok:
                     # falls through to E (speed+heading toward the chain
                     # point), same as the candidate-subgoal branch below.
+                    self._subgoal_clearance_m = chain_clear
                     self._subgoal_world = self._chain_prefix_end
                     self._transition(NavState.DETOUR)
                     self._detour_dwell = 0
@@ -475,6 +495,7 @@ class RnsSource:
                         self._pick_candidate(profile, pose, yaw, fs, cfg,
                                              margin, dyn_objs),
                         best_is_current=False)) is not None:
+                    self._subgoal_clearance_m = sel.clearance_m
                     self._subgoal_world = self._body_to_world(
                         sel.subgoal, pose, yaw)
                     self._transition(NavState.DETOUR)
@@ -492,6 +513,7 @@ class RnsSource:
                     sel = self._selector.select(False, best,
                                                 best_is_current=False)
                     if sel is not None:
+                        self._subgoal_clearance_m = sel.clearance_m
                         self._subgoal_world = self._body_to_world(
                             sel.subgoal, pose, yaw)
                         self._transition(NavState.DETOUR)
@@ -521,6 +543,7 @@ class RnsSource:
                 hold = cfg["candidate"]["side_hold_ticks"]
                 if d_sub < 0.7 or (r_clear and self._detour_dwell >= hold):
                     self._subgoal_world = None
+                    self._subgoal_clearance_m = None
                     self._selector.select(False, None, False)
                     self._transition(NavState.FOLLOW)
                     target = fs.lookahead_point
@@ -548,11 +571,24 @@ class RnsSource:
                                                        now, wz_max, step_m)
                             self._transition(NavState.FOLLOW)
                             return zero
+                        self._subgoal_clearance_m = sel.clearance_m
                         self._subgoal_world = self._body_to_world(
                             sel.subgoal, pose, yaw)
                         target = self._subgoal_world
 
         # ── E. speed + heading toward target ─────────────────────────────────
+        # REVIEW R2-3 (3-pass audit 2026-09-11): the S8.1A gap-tightness cap
+        # (cap_gap_tightness + gap_g_min, on the books since P4) had NO
+        # consumer -- threading a tight gap ran at full detour speed. While
+        # DETOURING, rho = the adopted subgoal's clearance over the gate.
+        if self._state == NavState.DETOUR \
+                and self._subgoal_clearance_m is not None and profile is not None:
+            margin_e = max(cfg["clearance"]["margin_by_class"].values())
+            rho = self._subgoal_clearance_m / max(1e-6,
+                                                  self._r_eff_m + margin_e)
+            caps["gap"] = cap_gap_tightness(
+                rho, v_nom, cfg["clearance"]["gate_saturate_ratio"],
+                cfg["speed"]["gap_g_min"])
         caps["deviation"] = cap_deviation(
             fs.projection.deviation_m, v_nom, cfg["speed"]["dev_e0_m"],
             route_cfg["max_deviation_m"], cfg["speed"]["dev_g_min"])
@@ -862,7 +898,7 @@ class RnsSource:
         self._wall_entry_dwell = 0
         self._last_d_side = None
         self._wall_corner = False
-        self._wall_last_move_ms = None
+        self._wall_stall_ticks = 0
         g = self._mission.endpoint
         self._wall_goal_dist_at_hit = math.hypot(pose[0] - g[0], pose[1] - g[1])
         self._transition(NavState.WALL_FOLLOW)
@@ -881,6 +917,14 @@ class RnsSource:
         wf = cfg["wall_follow"]
         w = self._wall
         zero = VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0), wz=0.0)
+        # REVIEW R1-20 (3-pass audit 2026-09-11): perception dropout while
+        # hugging (snap/profile None) reached the d_free/d_block derefs
+        # below and CRASHED the tick. Hugging blind is undefined -- hold
+        # zero this tick; the T-51 age gate governs recovery when frames
+        # return, and the stall counter above stays honest because this
+        # early return never runs it.
+        if profile is None:
+            return zero
         w.followed_m += step_m
         self._s_star = max(self._s_star, fs.projection.s_arc_m)
 
@@ -890,20 +934,24 @@ class RnsSource:
         # them can ever fire -- a silent forever-stall. Track wall-clock in the
         # wall state: no displacement progress for watchdog.window_s -> fail
         # honestly (bounded failure over silent hang, S9.0 discipline).
-        if now is not None:
-            if step_m > 0.005:
-                self._wall_last_move_ms = now
-            elif self._wall_last_move_ms is None:
-                self._wall_last_move_ms = now
-            stall_ms = now - self._wall_last_move_ms
-            if stall_ms > int(cfg["watchdog"]["window_s"] * 1000):
-                self.audit.append(AuditRecord(now, "wall_fail",
-                                              {"reason": "stall_in_place"}))
-                self._wall = None
-                self._fail(NavFailure(NavFailReason.WALL_NO_PROGRESS,
-                                      detail={"stall_s": stall_ms / 1000.0,
-                                              "followed_m": w.followed_m}))
-                return zero
+        # REVIEW R1-12 (3-pass audit 2026-09-11): measured by TICK COUNT,
+        # not wall-clock spans. The clock version froze _wall_last_move_ms
+        # through WAIT_DYNAMIC / SUSPENDED (those ticks never reach here),
+        # so the first tick AFTER resume saw the whole suspension as stall
+        # and false-failed instantly (estop hold > 20 s made it certain).
+        # Suspended ticks do not run this body, so a counter cannot inflate.
+        if step_m > 0.005:
+            self._wall_stall_ticks = 0
+        else:
+            self._wall_stall_ticks += 1
+        if self._wall_stall_ticks > int(cfg["watchdog"]["window_s"] * 20):
+            self.audit.append(AuditRecord(now or 0, "wall_fail",
+                                          {"reason": "stall_in_place"}))
+            self._wall = None
+            self._fail(NavFailure(NavFailReason.WALL_NO_PROGRESS,
+                                  detail={"stall_ticks": self._wall_stall_ticks,
+                                          "followed_m": w.followed_m}))
+            return zero
 
         # D3 crossing record: near the line with positive arc gain (S7A.1).
         s_gain = fs.projection.s_arc_m - w.s_hit

@@ -194,3 +194,42 @@ def test_suspended_tick_does_not_advance_tracker():
     s.on_preempted(ctx)
     s.compute(Ctx(pose_xy=(8.0, 0.0), v_nom_mps=2.0))   # would advance to seg 8
     assert s._mission.tracker.min_index == idx_before    # untouched
+
+
+def test_wall_stall_counter_immune_to_suspension():
+    # REVIEW R1-12 (3-pass audit): the stall backstop must count IN-WALL
+    # TICKS, not wall-clock. The clock version froze through estop and the
+    # first resumed tick saw the whole hold as stall -> instant false
+    # WALL_NO_PROGRESS. Simulate: enter wall state, stall 100 ticks, hold
+    # suspended for a (virtual) minute, release -- the next wall tick must
+    # NOT fail. mutant: revert to wall-clock stall -> reddens.
+    from xbrain.p1_motion.rns.wallfollow import Side, WallFollowState
+    from xbrain.p1_motion.rns.types import NavState
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
+    s.load_mission(_mission())
+    s._state = NavState.WALL_FOLLOW
+    s._wall = WallFollowState(side=Side.LEFT, s_hit=0.0, hit_point=(0.0, 0.0))
+    s._wall_stall_ticks = 100                 # some prior stalling
+    s.on_preempted(None)                      # estop hold...
+    ctx = Ctx(pose_xy=(0.0, 0.0), v_nom_mps=1.0)
+    assert s.compute(ctx) is None             # suspended no-op ticks
+    s.on_release(None)                        # ...one minute later
+    # a resumed tick (no perception -> wall tick holds zero) must not fail
+    out = s.compute(Ctx(pose_xy=(0.0, 0.0), v_nom_mps=1.0))
+    assert s.take_failure() is None, "suspension counted as in-wall stall"
+    assert out is not None
+
+
+def test_wall_tick_survives_perception_dropout():
+    # REVIEW R1-20 (3-pass audit): hugging + perception dropout (snap None)
+    # dereferenced profile.d_free and CRASHED the tick. It must hold zero.
+    # mutant: drop the None guard -> AttributeError -> reddens.
+    from xbrain.p1_motion.rns.wallfollow import Side, WallFollowState
+    from xbrain.p1_motion.rns.types import NavState
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
+    s.load_mission(_mission())
+    s._state = NavState.WALL_FOLLOW
+    s._wall = WallFollowState(side=Side.LEFT, s_hit=0.0, hit_point=(0.0, 0.0))
+    out = s.compute(Ctx(pose_xy=(2.0, 0.0), v_nom_mps=1.0))   # no perception
+    assert out is not None and out.vx.value == 0.0
+    assert s.take_failure() is None
