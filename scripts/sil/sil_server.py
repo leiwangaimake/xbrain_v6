@@ -187,6 +187,35 @@ async def api_del(oid: int):
     return {"ok": world.remove_obstacle(oid)}
 
 
+def load_field_map() -> None:
+    """Seed the world from the FROZEN field map (user 2026-09-11: the
+    browser should open straight onto the captured test map -- no manual
+    obstacle placement). NOT persistence: this reads a static repo asset
+    at startup/reset only; nothing the user edits at runtime is ever
+    written back. Fly-away persons from the pre-bounce capture (|coord| >
+    100) are dropped; the placed patrol polyline is pre-loaded too so a
+    path run is one click away."""
+    fp = ROOT / "scripts" / "sil" / "field_map2.json"
+    if not fp.exists():
+        return
+    m = json.loads(fp.read_text(encoding="utf-8"))
+    for o in m.get("obstacles", []):
+        if abs(o["x"]) > 100 or abs(o["y"]) > 100:
+            continue
+        if o["kind"] == "wall":
+            world.add_obstacle("wall", o["x"], o["y"], o["x2"], o["y2"],
+                               o.get("thick_m", o.get("thick", 0.5)))
+        else:
+            oid = world.add_obstacle(o["kind"], o["x"], o["y"])
+            if o["kind"] == "car":
+                world.obstacles[oid].heading = o.get("heading", 0.0)
+    if m.get("path"):
+        world.path = [(p[0], p[1]) for p in m["path"]]
+
+
+load_field_map()
+
+
 @app.post("/api/path")
 async def api_path(body: dict):
     world.path = [(p[0], p[1]) for p in body["points"]]
@@ -254,6 +283,7 @@ async def api_audit():
 @app.post("/api/reset")
 async def api_reset():
     world.reset()
+    load_field_map()      # reset returns to the frozen map, not to emptiness
     rns.clear_mission()
     nav.update(state="idle", direction=1, target=None)
     return {"ok": True}
