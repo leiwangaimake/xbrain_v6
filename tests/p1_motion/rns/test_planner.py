@@ -209,3 +209,29 @@ def test_static_polygon_layer_blocks_planning():
     # static layer survives a new task (lifecycle: static != mission-scoped)
     p.set_task((0.0, 0.0), (6.0, 2.0))
     assert p._static_blocked, "static layer died with the task"
+
+
+def test_chain_free_prefix_requires_clearance():
+    # line-following safety leg (line1 sweep: -0.012 m): a prefix cell must
+    # be FREE *and* have no BLOCKED 8-neighbor -- FREE alone admits cells
+    # riding an obstacle edge and the prefix subgoal then led the hull onto
+    # corners. mutant: drop the neighbor check -> prefix runs the wall edge
+    # -> reddens.
+    g, p = _mk()
+    _paint(g, -1.0, 7.0, -3.0, 3.0, Cell.FREE)
+    _paint(g, 2.0, 6.0, 1.0, 1.5, Cell.BLOCKED)         # wall along the lane
+    p.set_task((0.0, 0.0), (6.0, 0.0))
+    assert _run_until_field(p, g, (0.0, 0.0))
+    p.guide_point((0.0, 0.0))                            # serves the chain
+    prefix_m, end = p.chain_free_prefix(g, 1000)
+    assert end is not None
+    # every prefix-covered chain cell must sit >= 1 coarse cell off the wall
+    from xbrain.p1_motion.rns.planner import _NBRS
+    n = int(prefix_m / 0.5)
+    assert n > 0
+    for cell in p._last_chain[:n]:
+        for dx, dy, _ in _NBRS:
+            nb = (cell[0] + dx, cell[1] + dy)
+            st = p._coarse_read_only(nb, g, 1000)
+            assert st != Cell.BLOCKED, \
+                "prefix cell %s touches BLOCKED neighbor %s" % (cell, nb)

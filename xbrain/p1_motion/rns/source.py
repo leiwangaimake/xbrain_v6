@@ -117,6 +117,8 @@ class RnsSource:
         self._last_R = None                  # lookahead point, for observability
         self._r_star = None                  # guidance point (20 S4A), per tick
         self._r_steer = None                 # known-field steering guide
+        self._chain_prefix_m = 0.0           # served chain: confirmed prefix
+        self._chain_prefix_end = None
         self._wall_cooldown_until = None     # R* steering mute after wall_exit
         self._wall_entry_dwell = 0           # exit-eval mute after wall_enter
         self.audit = RingAudit(capacity=256)
@@ -302,6 +304,14 @@ class RnsSource:
             # continuous heading only off a KNOWN (observed-FREE) field.
             self._r_star = self._planner.guide_point(pose)
             self._r_steer = self._planner.steering_guide(pose)
+            # line-following (user order 2026-09-11): under an ATTEMPT
+            # field, the chain's observed-FREE prefix IS confirmation --
+            # steer to its end (never past it). The 96%-unsteered audit
+            # showed the plan existed but the legs ignored it.
+            self._chain_prefix_m, self._chain_prefix_end = \
+                self._planner.chain_free_prefix(self._grid, now)
+            if self._r_steer is None and self._chain_prefix_m >= 1.0:
+                self._r_steer = self._chain_prefix_end
             # G2 (S4A.3): a PROVEN in-domain no-path terminates the mission
             # with its own reason -- circling until wall_no_progress would
             # bury a provable verdict under a tired-of-trying heuristic.
@@ -431,10 +441,40 @@ class RnsSource:
             blocked = self._ahead_blocked(profile, pose, yaw, target,
                                           cfg["dynamic"]["stop_dist_m"])
             if self._state == NavState.FOLLOW and blocked:
-                best = self._pick_candidate(profile, pose, yaw, fs, cfg, margin,
-                                            dyn_objs)
-                sel = self._selector.select(False, best, best_is_current=False)
-                if sel is not None:
+                # line-following first (user order 2026-09-11): a served
+                # chain with a long-enough CONFIRMED-FREE prefix beats the
+                # FOV candidate contest -- the guide already routed around
+                # the blockage; jumping to its prefix end keeps the robot
+                # ON the plan instead of degrading into wall-follow (72.5%
+                # of ticks pre-fix). Short prefix -> the old path stands.
+                chain_ok = False
+                if self._chain_prefix_m >= 2.0:
+                    # the chain point passes the SAME clearance gate as any
+                    # candidate subgoal (line1 sweep: skipping it let the
+                    # chain ride obstacle edges to -0.012 m) -- one yard-
+                    # stick for every subgoal, whatever proposed it.
+                    obs_pts = obstacle_points(profile.d_block,
+                                              profile.angle_min_rad,
+                                              profile.angle_step_rad)
+                    sub_body = self._world_to_body(self._chain_prefix_end,
+                                                   pose, yaw)
+                    chain_ok = clearance_at(sub_body, obs_pts,
+                                            profile.range_max_m) >= gate_base
+                if chain_ok:
+                    # falls through to E (speed+heading toward the chain
+                    # point), same as the candidate-subgoal branch below.
+                    self._subgoal_world = self._chain_prefix_end
+                    self._transition(NavState.DETOUR)
+                    self._detour_dwell = 0
+                    target = self._subgoal_world
+                    self.audit.append(AuditRecord(
+                        now or 0, "detour_enter",
+                        {"subgoal": target, "via": "guide_chain"}))
+                elif (sel := self._selector.select(
+                        False,
+                        self._pick_candidate(profile, pose, yaw, fs, cfg,
+                                             margin, dyn_objs),
+                        best_is_current=False)) is not None:
                     self._subgoal_world = self._body_to_world(
                         sel.subgoal, pose, yaw)
                     self._transition(NavState.DETOUR)
@@ -568,6 +608,16 @@ class RnsSource:
         vy_cmd = 0.0
         if self._holo:
             vy_cmd = self._body_shield_vy(pose, yaw, now)
+        # shield vx cap on the FOLLOW exit too (line2 sweep: -0.030 m at
+        # the wall's north corner -- FOLLOW rode the guide past the corner
+        # at 0.70 m/s with the corner behind the FOV; the wall-tick exits
+        # got this cap in the night batch, this exit was the gap). The
+        # final-approach is EXEMPT (line3 sweep: a goal parked 0.75 m off a
+        # car kept the ring permanently hot and the cap crawled the last
+        # meters at 0.15 m/s for 122 s) -- inside 2 m the arrival slowdown
+        # and the vy shield own the contact question.
+        if fs.dist_to_endpoint_m > 2.0:
+            v = min(v, self._shield_vx_cap(pose, now))
         return VelocityCandidate(vx=Mps(v), vy=Mps(vy_cmd), wz=wz)
 
     # ── assembly helpers ─────────────────────────────────────────────────────

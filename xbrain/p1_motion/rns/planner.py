@@ -416,6 +416,59 @@ class GuidancePlanner:
         self._coarse_cache.pop(cell, None)
         return self._coarse_state(cell, grid, now_ms)
 
+    def _coarse_read_only(self, cell, grid, now_ms) -> Cell:
+        """Fresh aggregate WITHOUT touching the build cache: per-tick
+        consumers (chain prefix) must not poison the snapshot the build is
+        expanding on."""
+        if self._dom is None:
+            return Cell.UNKNOWN
+        cx, cy = self._center_of(cell)
+        if self._static_blocked and (
+                int(cx / self._coarse_m),
+                int(cy / self._coarse_m)) in self._static_blocked:
+            return Cell.BLOCKED
+        q = self._coarse_m / 4.0
+        n_free = 0
+        for dx, dy in ((-q, -q), (-q, q), (q, -q), (q, q)):
+            st = grid.read(cx + dx, cy + dy, now_ms)
+            if st == Cell.BLOCKED:
+                return Cell.BLOCKED
+            if st == Cell.FREE:
+                n_free += 1
+        return Cell.FREE if n_free >= 3 else Cell.UNKNOWN
+
+    def chain_free_prefix(self, grid, now_ms: int):
+        """(prefix_m, end_xy) of the OBSERVED-FREE prefix of the served
+        descent chain (line-following iteration, user order 2026-09-11):
+        the chain from the robot outward, cut at the first cell that a
+        FRESH read does not confirm FREE. This prefix is CONFIRMED ground
+        -- steering/subgoals along it never violate "optimism decides,
+        confirmation steers" even under an attempt-mode field. Returns
+        (0.0, None) when no chain is served."""
+        if not self._last_chain:
+            return (0.0, None)
+        length = 0.0
+        end = None
+        for cell in self._last_chain:
+            if self._coarse_read_only(cell, grid, now_ms) != Cell.FREE:
+                break
+            # clearance leg (line1 sweep: -0.012 m body overlap): FREE alone
+            # admits a cell BESIDE a wall -- the chain rode obstacle edges
+            # and the prefix subgoal bypassed the candidate clearance gate.
+            # A prefix cell must also have NO BLOCKED 8-neighbor, keeping
+            # the confirmed line >= one coarse cell off every obstacle.
+            beside_blocked = False
+            for dx, dy, _ in _NBRS:
+                nb = (cell[0] + dx, cell[1] + dy)
+                if self._coarse_read_only(nb, grid, now_ms) == Cell.BLOCKED:
+                    beside_blocked = True
+                    break
+            if beside_blocked:
+                break
+            length += self._coarse_m
+            end = self._center_of(cell)
+        return (length, end)
+
     # ── R* guide point + path (viz) ──────────────────────────────────────────
     def _descend(self, cell) -> Optional[Tuple[int, int]]:
         field = self._field
