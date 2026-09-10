@@ -153,13 +153,15 @@ class MemoryGrid:
     """
 
     def __init__(self, cell_m: float, ttl_static_s: float, ttl_dynamic_s: float,
-                 reset_jump_m: float) -> None:
+                 reset_jump_m: float, radius_m: float = 8.0) -> None:
         if cell_m <= 0.0:
             raise ValueError("cell_m must be > 0 (20 S4.2.1)")
         self._cell_m = cell_m
         self._ttl_static_ms = int(ttl_static_s * 1000)
         self._ttl_dynamic_ms = int(ttl_dynamic_s * 1000)
         self._reset_jump_m = reset_jump_m
+        self._radius_m = radius_m
+        self._sweep_countdown = 200
         # cell key (ix, iy) in the localization frame -> (state, cls, t_seen_ms)
         self._cells: dict = {}
         self._last_pose: Optional[tuple] = None
@@ -167,6 +169,33 @@ class MemoryGrid:
 
     def _key(self, x: float, y: float) -> tuple:
         return (int(x // self._cell_m), int(y // self._cell_m))
+
+    def _sweep(self, pose_xy, now_ms: int) -> None:
+        """SYNC AUDIT S1 (2026-09-11): expired entries were read as UNKNOWN
+        but never physically deleted, and the S4.2 sliding window (radius_m,
+        a config key with NO consumer until now) was never enforced -- a
+        300 s-TTL sortie leaked cells without bound. Lazy sweep every ~200
+        writes: drop entries past TTL or outside radius_m of the pose."""
+        dead = []
+        for key, (state, cls, t_seen) in self._cells.items():
+            ttl = (self._ttl_dynamic_ms if _is_dynamic_class(cls)
+                   else self._ttl_static_ms)
+            if now_ms - t_seen > ttl:
+                dead.append(key)
+                continue
+            cx = (key[0] + 0.5) * self._cell_m
+            cy = (key[1] + 0.5) * self._cell_m
+            if abs(cx - pose_xy[0]) > self._radius_m \
+                    or abs(cy - pose_xy[1]) > self._radius_m:
+                dead.append(key)
+        for key in dead:
+            del self._cells[key]
+
+    def maybe_sweep(self, pose_xy, now_ms: int) -> None:
+        self._sweep_countdown -= 1
+        if self._sweep_countdown <= 0:
+            self._sweep_countdown = 200
+            self._sweep(pose_xy, now_ms)
 
     def on_pose(self, pose_xy: tuple) -> bool:
         """Call once per tick with the current localization pose. Returns True and

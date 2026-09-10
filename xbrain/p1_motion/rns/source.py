@@ -50,7 +50,8 @@ from .wallfollow import (Side, WallFollowState, can_enter, can_leave,
 from .watchdog import ProgressWatchdog, WatchdogResult, no_progress_failure
 from .audit import AuditRecord, RingAudit
 from .route import Mission, align_omega, lookahead_distance, wrap_angle
-from .speed import SpeedCaps, cap_deviation, cap_gap_tightness
+from .speed import (SpeedCaps, cap_deviation, cap_gap_tightness,
+                    cap_unknown_ratio)
 from .types import (Cell, MissionKind, NavFailReason, NavFailure, NavState, Origin,
                     VelocityCandidate, is_legal_transition)
 from xbrain.common.types.units import Mps
@@ -130,7 +131,8 @@ class RnsSource:
             self._wait_budget = WaitBudget(c["dynamic"]["wait_budget_s"])
             m = c["memory"]
             self._grid = MemoryGrid(m["cell_m"], m["ttl_static_s"],
-                                    m["ttl_dynamic_s"], m["reset_jump_m"])
+                                    m["ttl_dynamic_s"], m["reset_jump_m"],
+                                    m["radius_m"])
             w = c["watchdog"]
             self._watchdog = ProgressWatchdog(int(w["window_s"] * 1000),
                                               w["min_progress_m"])
@@ -301,6 +303,7 @@ class RnsSource:
         if profile is not None and now is not None and self._grid is not None:
             self._grid.on_pose(pose)
             self._grid.ingest_profile(profile, pose, yaw, now)
+            self._grid.maybe_sweep(pose, now)   # SYNC AUDIT S1: bounded memory
         # guidance layer (20 S4A): advance the budgeted build, then take R*.
         # None -> every consumer below falls back to its v1.0 target.
         self._r_star = None
@@ -589,6 +592,25 @@ class RnsSource:
             caps["gap"] = cap_gap_tightness(
                 rho, v_nom, cfg["clearance"]["gate_saturate_ratio"],
                 cfg["speed"]["gap_g_min"])
+        # SYNC AUDIT S2 (2026-09-11): the S8.1A UNKNOWN-share cap existed as
+        # three tuned keys with no consumer. Share = fraction of forward-
+        # sector bins (+-45 deg) with no FREE evidence; more unknown ahead
+        # -> slower, floor unk_g_min.
+        if profile is not None:
+            n_fwd = 0
+            n_unk = 0
+            for i in range(profile.n_bins):
+                ang = profile.angle_min_rad + i * profile.angle_step_rad
+                if abs(ang) > math.pi / 4:
+                    continue
+                n_fwd += 1
+                if profile.d_free[i] is None:
+                    n_unk += 1
+            if n_fwd:
+                sp = cfg["speed"]
+                caps["unknown"] = cap_unknown_ratio(
+                    n_unk / n_fwd, v_nom, sp["unk_r0"], sp["unk_r1"],
+                    sp["unk_g_min"])
         caps["deviation"] = cap_deviation(
             fs.projection.deviation_m, v_nom, cfg["speed"]["dev_e0_m"],
             route_cfg["max_deviation_m"], cfg["speed"]["dev_g_min"])
