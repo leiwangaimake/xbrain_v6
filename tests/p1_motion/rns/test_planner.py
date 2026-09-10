@@ -136,11 +136,23 @@ def test_sealed_memory_proves_domain_no_path():
     _paint(g, 5.5, 6.0, -2.5, 2.5, Cell.BLOCKED)
     p.set_task((-2.0, 0.0), (4.0, 0.0))                 # goal inside
     pose = (-2.0, 0.0)
+    now = 1000
     for i in range(400):
-        p.on_tick(g, pose, 1000 + i * 50)
-        if p.domain_no_path():
+        now = 1000 + i * 50
+        p.on_tick(g, pose, now)
+        if p.domain_no_path(now):
             break
-    assert p.domain_no_path(), "sealed ring never proved no-path"
+    assert p.domain_no_path(now), "sealed ring never proved no-path"
+    # PER-TASK verdict (user ruling 2026-09-11, the frozen-navigator bug):
+    # a new order must NOT inherit the old order's no-path -- it TRIES.
+    # NOTE on mutants: dropping the set_task counter reset alone is now an
+    # EQUIVALENT mutant -- the min-try window plus the on-success zeroing
+    # cover the leak's damage path (the original field bug predated both).
+    # The reset stays as stated intent (CLAUDE.md 7.2.1: equivalent mutants
+    # get a note, not a forced assertion); this assert pins the WINDOW leg.
+    p.set_task((-2.0, 0.0), (-5.0, 0.0))                # open-ground goal
+    assert not p.domain_no_path(now + 50), \
+        "no-path verdict leaked into the next order"
 
 
 def test_diagonal_wall_seam_does_not_leak():
@@ -162,11 +174,13 @@ def test_diagonal_wall_seam_does_not_leak():
         x += 0.25
     p.set_task((0.0, 3.0), (3.0, -2.0))                 # opposite sides
     pose = (0.0, 3.0)
+    now = 1000
     for i in range(400):
-        p.on_tick(g, pose, 1000 + i * 50)
-        if p.domain_no_path():
+        now = 1000 + i * 50
+        p.on_tick(g, pose, now)
+        if p.domain_no_path(now):
             break
-    assert p.domain_no_path(), "field leaked through the diagonal seam"
+    assert p.domain_no_path(now), "field leaked through the diagonal seam"
 
 
 def test_static_polygon_layer_blocks_planning():

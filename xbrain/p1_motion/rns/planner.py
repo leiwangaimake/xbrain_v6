@@ -112,6 +112,14 @@ class GuidancePlanner:
         self._open = []
         self._build_mode = "none"
         self._last_build_start_ms = None
+        # verdict state is STRICTLY per-task (user ruling 2026-09-11: every
+        # order must TRY; a failure belongs to its own order only). The
+        # field bug: these two survived set_task, so one no-path verdict
+        # made every later order fail AT TICK ONE -- "the navigator stopped
+        # working". Nothing of a past order's verdict may leak forward.
+        self._unreachable_builds = 0
+        self._last_chain = []
+        self._task_start_ms: Optional[int] = None
 
     def set_static_polygons(self, polygons) -> None:
         """Rasterize keep-out polygons into the static BLOCKED layer
@@ -259,12 +267,18 @@ class GuidancePlanner:
                 return 4.0
         return 1.0
 
-    def domain_no_path(self) -> bool:
+    def domain_no_path(self, now_ms: int) -> bool:
         """G2 (S4A.3): True when two consecutive ATTEMPT builds -- a grid
-        refresh apart -- failed to reach the robot('s neighborhood). The
-        remembered BLOCKED set provably separates robot from goal inside
-        the domain: report no_path_in_domain, do not keep circling. mutant:
+        refresh apart -- failed to reach the robot('s neighborhood), AND the
+        task has been TRYING for at least the min-try window (user ruling
+        2026-09-11: navigation always walks first; a verdict 2.2 s after
+        load -- before the memory had even warmed -- froze the whole
+        navigator). The remembered BLOCKED set provably separates robot
+        from goal: report no_path_in_domain, do not keep circling. mutant:
         always False -> the sealed-goal scene times out -> reddens."""
+        if self._task_start_ms is None \
+                or now_ms - self._task_start_ms < 10000:
+            return False
         return self._unreachable_builds >= 2
 
     def chain_cut(self, grid, now_ms: int) -> bool:
@@ -291,6 +305,8 @@ class GuidancePlanner:
         (guide_point) always uses the last COMPLETED field."""
         if self._goal is None or self._dom is None or grid is None:
             return
+        if self._task_start_ms is None:
+            self._task_start_ms = now_ms
         if self._build is None:
             due = (self._last_build_start_ms is None
                    or now_ms - self._last_build_start_ms
@@ -370,13 +386,17 @@ class GuidancePlanner:
         robot_cell = self._cell_of(pose_xy)
         reached = False
         if robot_cell is not None:
-            if robot_cell in build:
-                reached = True
-            else:
-                for dx, dy, _ in _NBRS:
+            # 5x5 neighborhood (1 m radius at 0.5 m cells): in a dense scene
+            # a hugging robot's own cell AND its 8-ring can all quantize
+            # BLOCKED from walked-past surfaces; demanding them would
+            # false-prove no-path mid-hug (106-obstacle field scene).
+            for dx in range(-2, 3):
+                for dy in range(-2, 3):
                     if (robot_cell[0] + dx, robot_cell[1] + dy) in build:
                         reached = True
                         break
+                if reached:
+                    break
         if self._build_mode == "known" and not reached:
             self._start_build("attempt", now_ms)
             return

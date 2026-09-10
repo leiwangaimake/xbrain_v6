@@ -305,7 +305,7 @@ class RnsSource:
             # G2 (S4A.3): a PROVEN in-domain no-path terminates the mission
             # with its own reason -- circling until wall_no_progress would
             # bury a provable verdict under a tired-of-trying heuristic.
-            if self._planner.domain_no_path():
+            if self._planner.domain_no_path(now):
                 self._fail(NavFailure(
                     NavFailReason.NO_PATH_IN_DOMAIN,
                     detail={"goal": list(self._mission.endpoint),
