@@ -106,6 +106,7 @@ rns:
     seg_recover_frames: 5          # [sim] T 通道恢复确认帧数
     raw_velocity_policy: reject    # [doc] 本期唯一合法值 (20 S3.1.5)
     min_confidence: 0.3            # [sim] 低于它按未知类 => block, person 不受影响 (20 S5.1.1 v1.35); 首窗实测后复核
+    objects_age_ok_ms: 200         # [doc] objects 年龄一档上限 (20 S3.1.8 v1.35 推导: 3.5 m/s 接近 x 0.2 s = 0.7 m < 1 m 迟滞带); 与 stop_dist_m 共同定值
   class_map:                       # class_name -> 行为类; person 锁死在代码 (20 S5.1.1)
     car: vehicle_dynamic
     truck: vehicle_dynamic

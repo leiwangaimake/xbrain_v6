@@ -34,6 +34,37 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
 
+# ── arrival acceptance (11 S3.1B.5 v2.1, #20-22) ──────────────────────────────
+ARRIVAL_ACCEPT = "accept"
+ARRIVAL_DUP = "dup"                    # same identity re-sent: never refreshes age
+ARRIVAL_OUT_OF_ORDER = "out_of_order"  # older than the last accepted (< 1 s back)
+ARRIVAL_FUTURE = "future"              # ahead of the tick clock: not this machine
+ARRIVAL_EPOCH_RESET = "epoch_reset"    # > 1 s backward: the clock epoch changed
+EPOCH_BACK_MS = 1000                    # 11 S3.1B.5 v2.1: backward jump > 1 s
+FUTURE_TOL_MS = 50                      # 11 S3.1B.5 v2.1: > now + 50 ms is bogus
+
+
+def classify_arrival(last_t: Optional[int], t: int, now_mono_ms: int) -> str:
+    """How RNS treats one incoming message given the identity timestamp of the
+    last ACCEPTED message on the same key (11 S3.1B.5 v2.1):
+      accept        t strictly newer than last (or first ever)
+      dup           t == last  -- a re-send; must NOT refresh the age (a
+                    producer replaying its last result would otherwise look
+                    fresh forever -- the exact hole the rule closes)
+      out_of_order  t < last by <= 1 s -- late/reordered; dropped, audited
+      epoch_reset   t < last by > 1 s -- the monotonic epoch changed (whole
+                    machine restart); accepted, memory cleared (A-ACC-2)
+      future        t > now + 50 ms -- not this machine's clock; dropped
+    Pure function; the caller owns the per-key state and the audit."""
+    if t > now_mono_ms + FUTURE_TOL_MS:
+        return ARRIVAL_FUTURE
+    if last_t is None or t > last_t:
+        return ARRIVAL_ACCEPT
+    if t == last_t:
+        return ARRIVAL_DUP
+    if last_t - t > EPOCH_BACK_MS:
+        return ARRIVAL_EPOCH_RESET
+    return ARRIVAL_OUT_OF_ORDER
 # ── profile (11 S3.1B.1) ──────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class ProfileMsg:

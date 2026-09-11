@@ -43,6 +43,8 @@ from .config import RnsConfigError, run_startup_assertions
 from .dynamic import DynamicAction, WaitBudget, distance_action, in_corridor
 from .grid import (MemoryGrid, profile_age_ms, profile_speed_limited,
                    profile_zero_speed, seg_stale)
+from .inputs import (ARRIVAL_ACCEPT, ARRIVAL_DUP, ARRIVAL_EPOCH_RESET,
+                     PerceptionSnapshot, classify_arrival)
 from .planner import GuidancePlanner
 from .wallfollow import (Side, WallFollowState, can_enter, can_leave,
                          check_failure, inner_corner_stop, keep_distance_omega,
@@ -55,6 +57,14 @@ from .speed import (SpeedCaps, cap_deviation, cap_gap_tightness,
 from .types import (Cell, MissionKind, NavFailReason, NavFailure, NavState, Origin,
                     VelocityCandidate, is_legal_transition)
 from xbrain.common.types.units import Mps
+
+# 11 S1.6.1 consumer timeouts on the three perception keys. T-50/T-51 are
+# the profile's two tiers (already literal at their use sites); these two
+# are the objects / status tiers wired in v1.37 (#20-22). Ages are computed
+# from the identity timestamp of the LAST ACCEPTED message (11 S3.1B.5 v2.1),
+# never from the arrival clock, so an unfinished gap counts by itself.
+T52_OBJECTS_MS = 500     # objects older -> all BLOCKED as the forbidden class
+T53_STATUS_MS = 3000     # status older -> worst-case invalid ratio (RNS-I-2)
 
 
 class RnsSource:
@@ -108,6 +118,15 @@ class RnsSource:
         self._dyn_prev = DynamicAction.RUN
         self._pre_wait_state: NavState = NavState.FOLLOW
         self._slow_since: dict = {}         # track_id -> ms when speed dropped
+        # acceptance state (11 S3.1B.5 v2.1): identity timestamp of the last
+        # ACCEPTED message per key and the message itself. A snapshot that
+        # re-carries an already-accepted frame (dup) keeps this, so the age
+        # keeps growing -- a replayed frame never looks fresh.
+        self._last_t: dict = {"profile": None, "objects": None, "status": None}
+        self._acc: dict = {"profile": None, "objects": None, "status": None}
+        self._dup_count: dict = {"profile": 0, "objects": 0, "status": 0}
+        self._extrinsic_ok = None           # None = no perception seen yet
+        self._objects_lost = False          # T-52 tier, edge-audited
         self._grid: Optional[MemoryGrid] = None
         self._watchdog: Optional[ProgressWatchdog] = None
         self._wall: Optional[WallFollowState] = None
@@ -167,6 +186,16 @@ class RnsSource:
         self._mission = mission
         self._state = NavState.FOLLOW
         self._reporter.reset_for_new_mission()
+        # 11 S3.1B.4 (A-CAL-1, #20-23): with the camera extrinsics declared
+        # uncalibrated by the last perception seen, ground projection, blind
+        # zone and footprints are all wrong -- refuse the autonomous task
+        # up front, reported on the mission's own origin channel. None
+        # (no perception yet) is not a refusal: a host without perception
+        # is already zero-speed via T-51 once it wires it.
+        if self._extrinsic_ok is False:
+            self._fail(NavFailure(NavFailReason.EXTRINSIC_UNCALIBRATED,
+                                  detail={"at": "load_mission"}))
+            return
         if self._planner is not None:
             # GUIDANCE IS GOTO-ONLY (field bug 2026-09-11, user: "path run
             # stopped following the path"): a goto's reference line is a
@@ -243,6 +272,64 @@ class RnsSource:
     def nav_state(self) -> NavState:
         return self._state
 
+    def _accept(self, snap, now):
+        """11 S3.1B.5 v2.1 consumer acceptance (A-ACC-1/2): per key, only a
+        message whose identity timestamp is strictly newer than the last
+        accepted one replaces it. Duplicates are counted (never refresh the
+        age), out-of-order and future stamps are dropped and audited, a
+        backward jump > 1 s is an epoch reset: memory is cleared and the
+        frame accepted. Returns the snapshot RNS consumes this tick -- the
+        last accepted message per key -- and folds the extrinsic flags."""
+        if snap is None or now is None:
+            return snap
+        incoming = (("profile", snap.profile,
+                     None if snap.profile is None else snap.profile.t_capture_mono_ms),
+                    ("objects", snap.objects,
+                     None if snap.objects is None else snap.objects.t_capture_mono_ms),
+                    ("status", snap.status,
+                     None if snap.status is None else snap.status.t_publish_mono_ms))
+        for key, msg, t in incoming:
+            if msg is None:
+                continue
+            verdict = classify_arrival(self._last_t[key], t, now)
+            if verdict == ARRIVAL_ACCEPT:
+                self._acc[key] = msg
+                self._last_t[key] = t
+            elif verdict == ARRIVAL_DUP:
+                self._dup_count[key] += 1
+                if self._dup_count[key] in (1, 200):   # first + a reminder
+                    self.audit.append(AuditRecord(now, "perception_dup",
+                                                  {"key": key, "t": t,
+                                                   "n": self._dup_count[key]}))
+            elif verdict == ARRIVAL_EPOCH_RESET:
+                # whole-machine restart: every remembered cell and every
+                # per-key baseline sits on a dead time base -> clear, then
+                # accept this frame as the first of the new epoch.
+                self.audit.append(AuditRecord(now, "perception_epoch_reset",
+                                              {"key": key, "t": t,
+                                               "last": self._last_t[key]}))
+                for k in self._last_t:
+                    self._last_t[k] = None
+                    self._acc[k] = None
+                if self._grid is not None:
+                    self._grid.clear_all()
+                if self._planner is not None:
+                    self._planner.request_replan()
+                self._acc[key] = msg
+                self._last_t[key] = t
+            else:   # out_of_order / future: dropped, never refreshes age
+                self.audit.append(AuditRecord(now, "perception_" + verdict,
+                                              {"key": key, "t": t,
+                                               "last": self._last_t[key]}))
+        flags = [m.extrinsic_calibrated for m in
+                 (self._acc["profile"], self._acc["objects"], self._acc["status"])
+                 if m is not None]
+        if flags:
+            self._extrinsic_ok = all(flags)
+        return PerceptionSnapshot(profile=self._acc["profile"],
+                                  objects=self._acc["objects"],
+                                  status=self._acc["status"])
+
     def _fail(self, failure: NavFailure) -> None:
         """Terminal failure: report once (A-FAIL-1 via TerminalReporter), latch
         for the host, clear to IDLE (S9.0.3). Never auto-retries (A-FAIL-2)."""
@@ -296,6 +383,12 @@ class RnsSource:
             return None
         snap = getattr(ctx, "perception", None)
         now = getattr(ctx, "now_mono_ms", None)
+        # ── A0. acceptance + extrinsic gate (11 S3.1B.5 v2.1 / S3.1B.4) ────
+        snap = self._accept(snap, now)
+        if self._extrinsic_ok is False:
+            self._fail(NavFailure(NavFailReason.EXTRINSIC_UNCALIBRATED,
+                                  detail={"at": "tick"}))
+            return VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0), wz=0.0)
         self._holo = bool(getattr(ctx, "holonomic", False))
         cfg = self._cfg["rns"]
         route_cfg = cfg["route"]
@@ -313,8 +406,14 @@ class RnsSource:
             if seg_stale(profile, cfg["perception"]["seg_stale_ms"]):
                 caps["no_seg"] = cfg["perception"]["no_seg_speed_cap_mps"]
         if snap is not None and snap.status is not None:
-            if health_speed_capped(snap.status.invalid_pixel_ratio,
-                                   cfg["health"]["invalid_ratio_limit"]):
+            # T-53 (11 S1.6.1, A-AGE-3): a status older than 3 s is a lost
+            # health channel -> assume the worst invalid ratio. The age is
+            # on the last ACCEPTED status, so a silent producer ages out.
+            status_lost = (now is not None and
+                           now - snap.status.t_publish_mono_ms > T53_STATUS_MS)
+            if status_lost or health_speed_capped(
+                    snap.status.invalid_pixel_ratio,
+                    cfg["health"]["invalid_ratio_limit"]):
                 # RNS-I-2: sensor-blind cover; cap value shares the no-seg key
                 # (a dedicated key is a calibration-time decision).
                 caps["health"] = cfg["perception"]["no_seg_speed_cap_mps"]
@@ -411,7 +510,26 @@ class RnsSource:
         half_w = self._r_eff_m + 0.5    # corridor half-width: r_eff + margin
         blocking = None
         dyn_objs = []                   # world (x, y, r) of DYNAMIC-pile objects
+        # objects age tiers (20 S3.1.8 v1.35, A-AGE-1/2): tier 1 full use;
+        # tier 2 (ok < age <= T-52) the velocity judgement is refused -- the
+        # object is handled as moving and can never enter the static pile;
+        # tier 3 (> T-52) the channel is lost: no yield rule can be trusted,
+        # every BLOCKED is the forbidden class, speed capped (11 S1.6.1).
+        velocity_ok = True
+        objects_lost = False
         if snap is not None and snap.objects is not None and now is not None:
+            o_age = now - snap.objects.t_capture_mono_ms
+            velocity_ok = o_age <= cfg["perception"]["objects_age_ok_ms"]
+            objects_lost = o_age > T52_OBJECTS_MS
+            if objects_lost:
+                caps["objects_lost"] = cfg["perception"]["no_seg_speed_cap_mps"]
+            if objects_lost != self._objects_lost:
+                self.audit.append(AuditRecord(now, "objects_lost",
+                                              {"lost": objects_lost,
+                                               "age_ms": o_age}))
+                self._objects_lost = objects_lost
+        if snap is not None and snap.objects is not None and now is not None \
+                and not objects_lost:
             dyn_cfg = cfg["dynamic"]
             stopped = slowed = False
             cy, sy = math.cos(yaw), math.sin(yaw)
@@ -461,6 +579,11 @@ class RnsSource:
                 # allow_static False (proxy / low confidence, 20 S5.1.1
                 # v1.35): never the static pile -- a maybe-car is not a
                 # thing to detour around; it stays under the dynamic rule.
+                # velocity_ok False (age tier 2, 20 S3.1.8): the velocity
+                # judgement is refused the same way (A-AGE-1).
+                if not velocity_ok:
+                    self._slow_since.pop(obj.track_id, None)
+                    allow_static = False
                 if allow_static and not dispatch_dynamic(
                         beh, eff_spd, dwell_s,
                         dyn_cfg["v_static_thresh_mps"],

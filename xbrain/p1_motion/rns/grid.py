@@ -210,6 +210,16 @@ class MemoryGrid:
         self._last_pose = pose_xy
         return self.cleared_by_jump
 
+    def clear_all(self) -> None:
+        """Epoch reset (11 S3.1B.5 v2.1, A-ACC-2): the perception clock jumped
+        backward by more than a second, so every remembered cell's t_seen is
+        on a dead time base -- an expired-looking FREE is a false path, a
+        BLOCKED that will never expire is a false wall. Same conservative
+        reasoning as the pose-jump clear (A-MEM-3); the pose baseline is
+        dropped too so the next on_pose() cannot fire a spurious jump."""
+        self._cells.clear()
+        self._last_pose = None
+
     def write(self, x: float, y: float, state: Cell, now_ms: int,
               cls: Optional[str] = None) -> None:
         """Write one observed cell (S4.2.1 covering rules). An observed UNKNOWN

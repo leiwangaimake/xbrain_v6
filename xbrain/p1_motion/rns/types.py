@@ -131,6 +131,10 @@ class NavFailReason(str, Enum):
     BLOCKED_BY_DYNAMIC = "blocked_by_dynamic"  # 20 S5.3A wait budget
     RTK_UNRELIABLE = "rtk_unreliable"          # 20 S3.2.1 SINGLE/no-fix
     TARGET_LOST = "target_lost"                # 20 S2.10.4 (reserved #20-13)
+    EXTRINSIC_UNCALIBRATED = "extrinsic_uncalibrated"  # 11 S3.1B.4: any
+    #   perception message with extrinsic_calibrated == false -> RNS refuses
+    #   autonomous navigation (mission refused at load, or terminated if the
+    #   flag flips mid-mission). Pre-rejection in 20 S9.0.2 (v1.37 row).
     NO_PATH_IN_DOMAIN = "no_path_in_domain"    # 20 S4A.3 (G2): both search
     #   modes exhausted -- the remembered BLOCKED set separates robot from
     #   goal inside the planning domain. A PROVEN no-path, not a tired-of-
