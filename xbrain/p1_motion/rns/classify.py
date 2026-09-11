@@ -27,7 +27,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from .types import NavFailReason, NavFailure
+from .types import T_CLASS_NAMES, NavFailReason, NavFailure
 
 
 class RtkTier(str, Enum):
@@ -83,6 +83,7 @@ def health_speed_capped(invalid_pixel_ratio: float,
 # (A-CLS-4, config.assert_person_locked). Unmapped classes -> block + slow.
 UNMAPPED_BEHAVIOR = "block"     # 20 S5.1.1: unmapped -> block+slow (never dropped)
 PERSON_BEHAVIOR = "person_stop"
+IGNORE_BEHAVIOR = "ignore"      # 20 S5.1.1 v1.35: airborne only, explicit rows
 
 
 def behavior_class(class_name: str, class_map: dict) -> str:
@@ -95,6 +96,44 @@ def behavior_class(class_name: str, class_map: dict) -> str:
     if mapped is None:
         return UNMAPPED_BEHAVIOR
     return mapped
+
+
+def effective_behavior(class_name: str, semantic_status: str,
+                       confidence: float, class_map: dict,
+                       min_confidence: float):
+    """The behavior class RNS actually acts on for one tracked object, plus
+    whether the object may ever join the STATIC pile (20 S5.1.1 v1.35).
+    Returns (behavior | None, allow_static):
+      - None: DROP. The traversable-segmentation class is the T channel, not
+        an object (11 S3.1B.2 v2.1, A-CLS-5). Folding it through the
+        unmapped->block default would turn the whole walkable area into a
+        wall.
+      - person: person_stop whatever the confidence or status -- any
+        detection that might be a person stops the robot (A-CLS-7 reverse).
+      - confidence < min_confidence: treated as an UNKNOWN class -> block
+        (A-CLS-7). A low-confidence 'bird' must not be ignored; block is
+        the fail-safe direction. proxy status additionally bars the static
+        pile.
+      - proxy (semantic_status): the MORE conservative of the mapping and
+        block -- ignore/traverse collapse to block, hazard stays hazard,
+        vehicle/animal keep the dynamic rule but never enter the static
+        pile (a maybe-car is not a thing to detour around).
+      - confirmed: the mapping as configured; unmapped -> block.
+    mutants: return block for the T class (A-CLS-5 red); skip the
+    confidence gate (A-CLS-7 red); return ignore for a proxy bird."""
+    if class_name in T_CLASS_NAMES:
+        return None, False
+    if class_name == "person":
+        return PERSON_BEHAVIOR, False
+    proxy = semantic_status == "proxy"
+    if confidence < min_confidence:
+        return UNMAPPED_BEHAVIOR, not proxy
+    beh = behavior_class(class_name, class_map)
+    if proxy:
+        if beh in (IGNORE_BEHAVIOR, "traverse"):
+            beh = UNMAPPED_BEHAVIOR
+        return beh, False
+    return beh, True
 
 
 def is_static(velocity_mps: float, dwell_s: float,

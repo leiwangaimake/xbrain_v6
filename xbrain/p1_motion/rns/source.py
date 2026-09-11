@@ -37,8 +37,8 @@ from .audit import TerminalReporter
 from .candidate import (CandidateSelector, candidate_cost, candidates_from_profile,
                         clear_extrapolation, clearance_at, obstacle_points,
                         passes_hard_gates)
-from .classify import (behavior_class, dispatch_dynamic, health_speed_capped,
-                       usable_velocity)
+from .classify import (IGNORE_BEHAVIOR, dispatch_dynamic, effective_behavior,
+                       health_speed_capped, usable_velocity)
 from .config import RnsConfigError, run_startup_assertions
 from .dynamic import DynamicAction, WaitBudget, distance_action, in_corridor
 from .grid import (MemoryGrid, profile_age_ms, profile_speed_limited,
@@ -428,12 +428,27 @@ class RnsSource:
                            pose[1] + tdy / tlen * ext)
             else:
                 cor_end = target
+            t_dropped = 0
             for obj in snap.objects.objects:
                 spd = usable_velocity(
                     obj.velocity_frame,
                     math.hypot(obj.velocity_xy[0], obj.velocity_xy[1]),
                     cfg["perception"]["raw_velocity_policy"])
-                beh = behavior_class(obj.class_name, cfg["class_map"])
+                beh, allow_static = effective_behavior(
+                    obj.class_name, obj.semantic_status, obj.confidence,
+                    cfg["class_map"], cfg["perception"]["min_confidence"])
+                if beh is None:
+                    # 11 S3.1B.2 v2.1 / 20 S5.1.1 v1.35 (A-CLS-5): the
+                    # traversable-segmentation class is the T channel
+                    # itself, never an object. Consumed as unmapped->block
+                    # it would make the whole walkable area a wall.
+                    t_dropped += 1
+                    continue
+                if beh == IGNORE_BEHAVIOR:
+                    # 20 S5.1.1 v1.35 (A-CLS-6): airborne target -- no
+                    # yield rule, no candidate; geometry (profile) still
+                    # owns any physical occupancy it may have.
+                    continue
                 # static-criterion dwell bookkeeping (20 S5.5): raw-refused
                 # speed (None) is conservatively treated as moving.
                 eff_spd = spd if spd is not None else 999.0
@@ -443,9 +458,13 @@ class RnsSource:
                 else:
                     self._slow_since.pop(obj.track_id, None)
                     dwell_s = 0.0
-                if not dispatch_dynamic(beh, eff_spd, dwell_s,
-                           dyn_cfg["v_static_thresh_mps"],
-                           dyn_cfg["t_static_dwell_s"]):
+                # allow_static False (proxy / low confidence, 20 S5.1.1
+                # v1.35): never the static pile -- a maybe-car is not a
+                # thing to detour around; it stays under the dynamic rule.
+                if allow_static and not dispatch_dynamic(
+                        beh, eff_spd, dwell_s,
+                        dyn_cfg["v_static_thresh_mps"],
+                        dyn_cfg["t_static_dwell_s"]):
                     continue        # static pile: geometry (profile) covers it
                 # body-frame centroid -> world; corridor test against target.
                 fp = obj.footprint_xy
@@ -467,6 +486,9 @@ class RnsSource:
                         blocking = obj
                     elif act == DynamicAction.SLOW:
                         slowed = True
+            if t_dropped:
+                self.audit.append(AuditRecord(now, "objects_t_class_dropped",
+                                              {"n": t_dropped}))
             self._dyn_prev = (DynamicAction.STOP if stopped else
                               DynamicAction.SLOW if slowed else
                               DynamicAction.RUN)

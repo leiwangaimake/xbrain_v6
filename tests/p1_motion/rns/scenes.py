@@ -115,14 +115,16 @@ def one_object(
     stable_frames: int = 30,
     t_capture_mono_ms: int = 1000,
     footprint: Optional[Sequence[Tuple[float, float]]] = None,
+    confidence: float = 0.9,
+    semantic_status: str = "confirmed",
 ) -> ObjectsMsg:
     """One tracked object. Defaults to a static person at 3 m (the stop-distance
     boundary). footprint defaults to a small triangle in front of the robot."""
     fp = tuple(footprint) if footprint is not None else (
         (r_near, -0.3), (r_near + 0.6, 0.0), (r_near, 0.3))
     obj = TrackedObject(
-        track_id=track_id, class_name=class_name, class_id=0, confidence=0.9,
-        semantic_status="confirmed", footprint_xy=fp,
+        track_id=track_id, class_name=class_name, class_id=0,
+        confidence=confidence, semantic_status=semantic_status, footprint_xy=fp,
         z_min=0.02, z_max=1.75, r_near=r_near, velocity_xy=velocity_xy,
         velocity_frame=velocity_frame, velocity_valid=True,
         velocity_status=velocity_status, stable_frames=stable_frames)

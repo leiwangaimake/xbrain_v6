@@ -105,11 +105,25 @@ rns:
     no_seg_speed_cap_mps: 0.5      # [sim] 仅几何 FREE 时限速
     seg_recover_frames: 5          # [sim] T 通道恢复确认帧数
     raw_velocity_policy: reject    # [doc] 本期唯一合法值 (20 S3.1.5)
+    min_confidence: 0.3            # [sim] 低于它按未知类 => block, person 不受影响 (20 S5.1.1 v1.35); 首窗实测后复核
   class_map:                       # class_name -> 行为类; person 锁死在代码 (20 S5.1.1)
     car: vehicle_dynamic
     truck: vehicle_dynamic
     bus: vehicle_dynamic
     motorcycle: vehicle_dynamic
+    bicycle: vehicle_dynamic       # [doc] 车辆族补全 (20 S5.1.1 v1.35)
+    heavy_machinery: vehicle_dynamic
+    dog: vehicle_dynamic           # [doc] 动物族: 同一条动态距离规则
+    cat: vehicle_dynamic
+    horse: vehicle_dynamic
+    sheep: vehicle_dynamic
+    cow: vehicle_dynamic
+    pit: hazard                    # [doc] 负障碍语义类: 硬禁止 + 额外膨胀
+    bird: ignore                   # [doc] 空中目标: 不礼让不注入, 几何仍管 (仅显式枚举, 默认仍 block)
+    kite: ignore
+    frisbee: ignore
+    "sports ball": ignore
+    airplane: ignore
   follow:                          # 预留段, 本期无运行期消费者 (20 #20-13)
     target_min_dist_m: 1.0         # [doc] 用户 2026-09-07 指定默认值
     lost_extrapolate_s: 1.0        # [sim] 预留

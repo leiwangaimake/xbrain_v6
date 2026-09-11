@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from .types import T_CLASS_NAMES
+
 
 class RnsConfigError(RuntimeError):
     """An rns.yaml key is null/missing/invalid, or a startup assertion failed.
@@ -49,6 +51,10 @@ PERSON_BEHAVIOR = "person_stop"
 # reserved for the code-locked person row.
 BEHAVIOR_CLASSES = frozenset({
     "person_stop", "vehicle_dynamic", "block", "traverse", "hazard",
+    # 20 S5.1.1 v1.35 (#20-25): sixth class, airborne targets ONLY (bird /
+    # kite / ball ...). Explicit rows, never the default -- the default
+    # stays block, so a typo cannot silently ignore a ground obstacle.
+    "ignore",
 })
 
 
@@ -102,9 +108,31 @@ def assert_person_locked(cfg: Dict[str, Any]) -> None:
             "(A-CLS-4)." % (mapped, PERSON_BEHAVIOR))
 
 
+def assert_class_map_values(cfg: Dict[str, Any]) -> None:
+    """class_map hygiene (20 S5.1.1 v1.35, A-CLS-8): every value must be a
+    behavior class of the closed set, and the T class (traversable_area)
+    must not appear as a row at all -- it is the T channel, not an object
+    (11 S3.1B.2 v2.1). An out-of-set value would be consumed as a string
+    nobody dispatches on, i.e. silently behave like block for the wrong
+    reason; a T-class row signals the contract was misread. Both refuse."""
+    class_map = cfg.get("rns", {}).get("class_map", {})
+    if not isinstance(class_map, dict):
+        return
+    for name, beh in class_map.items():
+        if name in T_CLASS_NAMES:
+            raise RnsConfigError(
+                "class_map row %r is the traversable-segmentation class, "
+                "not an object (11 S3.1B.2 v2.1); remove it (A-CLS-8)." % name)
+        if beh not in BEHAVIOR_CLASSES:
+            raise RnsConfigError(
+                "class_map %r -> %r is outside the behavior closed set %s "
+                "(20 S5.1.1, A-CLS-8)." % (name, beh, sorted(BEHAVIOR_CLASSES)))
+
+
 def run_startup_assertions(cfg: Dict[str, Any], r_eff_m: float) -> None:
     """All RNS startup assertions, in one call for the boot selfcheck. Raises
     RnsConfigError (fail-loud) on the first violation; the caller lets it
     propagate to refuse-to-start (never catches-and-continues, CLAUDE.md 3.6)."""
     assert_leave_progress_below_2r_eff(cfg, r_eff_m)
     assert_person_locked(cfg)
+    assert_class_map_values(cfg)

@@ -48,6 +48,14 @@ class Cell(str, Enum):
     UNKNOWN = "unknown"
 
 
+# 11 S3.1B.2 v2.1 / 20 S5.1.1 v1.35: the traversable-segmentation class is
+# the T channel ITSELF (carried by profile bit0 / d_free), never an object.
+# A tracked object bearing this class is a producer error; the consumer
+# drops it (A-CLS-5) rather than fold the whole walkable area into a wall
+# via the unmapped->block default. Closed set: one name today.
+T_CLASS_NAMES = frozenset({"traversable_area"})
+
+
 class SrcBit:
     """src bitmask bit positions (11 S3.1B.1). A cell records WHICH channel
     produced the BLOCKED/FREE decision; bit0 doubles as the FREE-completeness

@@ -73,3 +73,41 @@ def test_raw_velocity_refused_as_motion_cue():
 def test_raw_policy_other_than_reject_raises():
     with pytest.raises(ValueError):
         usable_velocity("raw", -1.5, raw_policy="compensate")
+
+
+# ── 20 S5.1.1 v1.35 (#20-25): effective_behavior ──────────────────────────────
+from xbrain.p1_motion.rns.classify import effective_behavior  # noqa: E402
+
+CM2 = {"car": "vehicle_dynamic", "bird": "ignore", "grass": "traverse",
+       "pit": "hazard"}
+
+
+def test_t_class_is_dropped_not_block():
+    # A-CLS-5: traversable_area is the T channel, not an object -> None (drop).
+    # mutant: fall through to behavior_class -> "block" -> reddens.
+    assert effective_behavior("traversable_area", "confirmed", 0.99, CM2, 0.3) == (None, False)
+
+
+def test_ignore_class_is_ignore_when_confirmed():
+    # A-CLS-6: a confirmed bird maps to ignore (explicit row).
+    assert effective_behavior("bird", "confirmed", 0.9, CM2, 0.3) == ("ignore", True)
+
+
+def test_low_confidence_collapses_to_block_person_immune():
+    # A-CLS-7: below min_confidence the class is unknown -> block; ignore must
+    # NOT apply. mutant: skip the gate -> ("ignore", True) -> reddens.
+    assert effective_behavior("bird", "confirmed", 0.1, CM2, 0.3) == ("block", True)
+    # A-CLS-7 reverse: person is immune -- any confidence stops the robot.
+    assert effective_behavior("person", "confirmed", 0.05, CM2, 0.3)[0] == "person_stop"
+    assert effective_behavior("person", "proxy", 0.05, CM2, 0.3)[0] == "person_stop"
+
+
+def test_proxy_takes_the_more_conservative_side():
+    # proxy vehicle: dynamic rule kept, static pile barred (allow_static False)
+    assert effective_behavior("car", "proxy", 0.9, CM2, 0.3) == ("vehicle_dynamic", False)
+    # proxy ignore/traverse collapse to block; proxy hazard stays hazard
+    assert effective_behavior("bird", "proxy", 0.9, CM2, 0.3) == ("block", False)
+    assert effective_behavior("grass", "proxy", 0.9, CM2, 0.3) == ("block", False)
+    assert effective_behavior("pit", "proxy", 0.9, CM2, 0.3) == ("hazard", False)
+    # confirmed unmapped -> block, static allowed
+    assert effective_behavior("forklift", "confirmed", 0.9, CM2, 0.3) == ("block", True)

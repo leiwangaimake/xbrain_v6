@@ -81,3 +81,40 @@ def test_run_startup_assertions_wires_both():
         run_startup_assertions(_cfg(delta_s=0.4, person="traverse"), r_eff_m=0.6)
     # clean config passes
     run_startup_assertions(_cfg(delta_s=0.4, person="person_stop"), r_eff_m=0.6)
+
+
+# ── 20 S5.1.1 v1.35 (#20-25): class_map value hygiene (A-CLS-8) ───────────────
+from xbrain.p1_motion.rns.config import assert_class_map_values  # noqa: E402
+
+
+def _cfg_cm(**rows):
+    return {"rns": {"wall_follow": {"leave_progress_m": 0.4},
+                    "class_map": dict(rows)}}
+
+
+def test_class_map_values_pass_when_in_closed_set():
+    assert_class_map_values(_cfg_cm(car="vehicle_dynamic", bird="ignore",
+                                    pit="hazard"))
+
+
+def test_class_map_out_of_set_value_refuses_start():
+    # A-CLS-8: a value outside the behavior closed set would be a string nobody
+    # dispatches on. mutant: drop the membership check -> passes -> reddens.
+    with pytest.raises(RnsConfigError) as ei:
+        assert_class_map_values(_cfg_cm(car="fly"))
+    assert "fly" in str(ei.value)
+
+
+def test_class_map_t_class_row_refuses_start():
+    # A-CLS-8: the T class is not an object (11 S3.1B.2 v2.1); a row for it
+    # means the contract was misread. mutant: drop the T-class check -> reddens.
+    with pytest.raises(RnsConfigError) as ei:
+        assert_class_map_values(_cfg_cm(traversable_area="traverse"))
+    assert "traversable_area" in str(ei.value)
+
+
+def test_run_startup_assertions_wires_class_map_values():
+    # mutant: remove assert_class_map_values from run_startup_assertions ->
+    # a bad value boots -> reddens.
+    with pytest.raises(RnsConfigError):
+        run_startup_assertions(_cfg_cm(car="fly"), r_eff_m=0.6)
