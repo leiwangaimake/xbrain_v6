@@ -278,7 +278,8 @@ class SilWorld:
                 velocity_valid=True,
                 velocity_status="moving" if o.dynamic else "static",
                 stable_frames=50))
-        objects = ObjectsMsg(t_capture_mono_ms=now_ms, extrinsic_calibrated=True,
+        objects = ObjectsMsg(t_capture_mono_ms=now_ms, t_publish_mono_ms=now_ms + 5,
+                             extrinsic_calibrated=True,
                              objects=tuple(objs))
         status = StatusMsg(
             t_publish_mono_ms=now_ms, fps_depth=30.0, fps_infer=20.0,

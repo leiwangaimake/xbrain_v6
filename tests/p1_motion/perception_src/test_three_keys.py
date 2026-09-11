@@ -65,6 +65,7 @@ def object_body(**over):
 
 def objects_body(objs=None, **over):
     b = {"schema": OBJECTS_SCHEMA, "t_capture_mono_ms": 1000,
+         "t_publish_mono_ms": 1030,       # 11 S3.1B.2 v2.2: the cadence stamp
          "frame": "base_link", "extrinsic_calibrated": True,
          "objects": [object_body()] if objs is None else objs}
     b.update(over)
@@ -139,6 +140,17 @@ def test_objects_parses_and_empty_list_is_legal():
     assert len(m.objects) == 1 and m.objects[0].class_name == "person"
     assert m.objects[0].footprint_xy[1] == (2.6, 0.0)
     assert parse_objects(objects_body(objs=[])).objects == ()
+
+
+def test_objects_without_publish_stamp_is_rejected():
+    # 11 S3.1B.2 v2.2: t_publish_mono_ms is the cadence measurement point and
+    # the ledger join field; a producer omitting it cannot be audited. mutant:
+    # default it in the parser -> parses -> reddens.
+    body = objects_body()
+    del body["t_publish_mono_ms"]
+    with pytest.raises(PerceptionSchemaError):
+        parse_objects(body)
+    assert parse_objects(objects_body()).t_publish_mono_ms == 1030
 
 
 def test_objects_undersized_footprint_rejects_whole_message():

@@ -10,7 +10,8 @@
           "frame": "base_link",
           "objects": [],
           "schema": "perception_objects_v1",
-          "t_capture_mono_ms": 99980
+          "t_capture_mono_ms": 99980,
+          "t_publish_mono_ms": 99995
         },
         "rid": "dev",
         "seq": 1,

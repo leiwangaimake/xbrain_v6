@@ -280,6 +280,7 @@ def parse_objects(body: Any) -> ObjectsMsg:
         raise PerceptionSchemaError("objects must be an array (empty is legal)")
     return ObjectsMsg(
         t_capture_mono_ms=_int(b, "t_capture_mono_ms"),
+        t_publish_mono_ms=_int(b, "t_publish_mono_ms"),   # 11 S3.1B.2 v2.2: required
         extrinsic_calibrated=_bool(b, "extrinsic_calibrated"),
         objects=tuple(_parse_object(o, i) for i, o in enumerate(objs)),
     )

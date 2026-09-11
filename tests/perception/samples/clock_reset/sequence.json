@@ -10,7 +10,8 @@
           "frame": "base_link",
           "objects": [],
           "schema": "perception_objects_v1",
-          "t_capture_mono_ms": 99980
+          "t_capture_mono_ms": 99980,
+          "t_publish_mono_ms": 99995
         },
         "rid": "dev",
         "seq": 1,
@@ -1355,7 +1356,8 @@
           "frame": "base_link",
           "objects": [],
           "schema": "perception_objects_v1",
-          "t_capture_mono_ms": 100030
+          "t_capture_mono_ms": 100030,
+          "t_publish_mono_ms": 100045
         },
         "rid": "dev",
         "seq": 2,
@@ -2700,7 +2702,8 @@
           "frame": "base_link",
           "objects": [],
           "schema": "perception_objects_v1",
-          "t_capture_mono_ms": 2980
+          "t_capture_mono_ms": 2980,
+          "t_publish_mono_ms": 2995
         },
         "rid": "dev",
         "seq": 1,

@@ -40,6 +40,10 @@ Scenarios (11 S3.1B / 20 S3.1 semantics the verdict comes from):
                   frame accepted (11 S3.1B.5 v2.1)
   dropout         objects 700 ms old while profile/status are fresh -> T-52
                   channel lost: objects_lost audited, speed capped
+  semantic_only   centre bins have NO depth (all null) but a semantic
+                  footprint 2.5 m ahead was injected: d_block 2.5, src 0b0100
+                  (11 S3.1B.1 v2.2) -> BLOCKED at 2.5 m, UNKNOWN before it,
+                  never FREE
 
 What this is NOT: a physics simulator (that is scripts/sil), and not a
 producer-side reference implementation -- the bodies are hand-built from the
@@ -68,17 +72,19 @@ Z_PASS = 0.75
 T0 = 100000                 # monotonic ms base of the static samples
 RT_ENDPOINT = "tcp/127.0.0.1:7449"
 SCENARIOS = ("normal", "all_unknown", "no_seg", "extrinsic_uncal",
-             "tf_stale", "clock_reset", "dropout")
+             "tf_stale", "clock_reset", "dropout", "semantic_only")
 # src bits (11 S3.1B.1 v2.1): bit0 T, bit1 G, bit2 S, bit3 NEG
 SRC_T = 1
 SRC_G = 2
+SRC_S = 4
 
 
 # ── body builders (11 S3.1B.1 / .2 / .3) ─────────────────────────────────────
 def profile_body(now: int, *, kind: str = "open", extrinsic: bool = True,
                  pose_used: Optional[dict] = None) -> Dict[str, Any]:
     """One ProfileMsg body. kind: open (box at 3 m in bins 130..134, ~+20 deg),
-    unknown (every bin null: nothing observed), noseg (open, no T evidence)."""
+    unknown (every bin null: nothing observed), noseg (open, no T evidence),
+    semantic_only (open, but bins 85..95 have no depth and a 2.5 m S block)."""
     seg = kind != "noseg"
     d_free: List[Optional[float]] = []
     d_block: List[Optional[float]] = []
@@ -91,6 +97,13 @@ def profile_body(now: int, *, kind: str = "open", extrinsic: bool = True,
             # geometry saw NOTHING in this bin (11 S3.1B.1 v2.1 bit1)
             d_free.append(None); d_block.append(None); h_block.append(None)
             src.append(0); conf.append(0)
+            continue
+        if kind == "semantic_only" and 85 <= i <= 95:
+            # 11 S3.1B.1 v2.2 (Q3 ruling): no geometry at all in this bin,
+            # but a semantic footprint injected a 2.5 m block: S only gives
+            # BLOCKED, never FREE -> d_free stays null, h_block null, bit1 0
+            d_free.append(None); d_block.append(2.5); h_block.append(None)
+            src.append(SRC_S); conf.append(0)
             continue
         if 130 <= i <= 134:
             # a 0.4 m box at 3.0 m: far-cell-end stop puts d_free at 2.75
@@ -141,6 +154,7 @@ def objects_body(now: int, objects: List[Dict[str, Any]], *,
     return {
         "schema": "perception_objects_v1",
         "t_capture_mono_ms": (now - 20) if t_capture is None else t_capture,
+        "t_publish_mono_ms": (now - 5) if t_capture is None else t_capture + 15,
         "frame": "base_link",
         "extrinsic_calibrated": extrinsic,
         "objects": objects,
@@ -233,6 +247,12 @@ def build_scenarios(rid: str = "dev") -> Dict[str, Dict[str, Any]]:
                        objects_body(T0 + k * 50, [], t_capture=T0 + k * 50 - 700),
                        status_body(T0 + k * 50, reasons=("infer_gap",), gap_max=700.0),
                        k + 1) for k in range(2)]}
+    barrier = obj(21, "barrier", 2.5, 0.0, r_near=2.5)
+    out["semantic_only"] = {
+        "expect": "S-only block: grid UNKNOWN at 1.5 m ahead (never FREE), BLOCKED at 2.5 m; no failure",
+        "ticks": [tick(T0 + k * 50, profile_body(T0 + k * 50, kind="semantic_only"),
+                       objects_body(T0 + k * 50, [barrier]),
+                       status_body(T0 + k * 50), k + 1) for k in range(2)]}
     return out
 
 

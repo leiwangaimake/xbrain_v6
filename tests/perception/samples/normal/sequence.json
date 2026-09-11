@@ -46,7 +46,8 @@
             }
           ],
           "schema": "perception_objects_v1",
-          "t_capture_mono_ms": 99980
+          "t_capture_mono_ms": 99980,
+          "t_publish_mono_ms": 99995
         },
         "rid": "dev",
         "seq": 1,
@@ -1427,7 +1428,8 @@
             }
           ],
           "schema": "perception_objects_v1",
-          "t_capture_mono_ms": 100030
+          "t_capture_mono_ms": 100030,
+          "t_publish_mono_ms": 100045
         },
         "rid": "dev",
         "seq": 2,
@@ -2808,7 +2810,8 @@
             }
           ],
           "schema": "perception_objects_v1",
-          "t_capture_mono_ms": 100080
+          "t_capture_mono_ms": 100080,
+          "t_publish_mono_ms": 100095
         },
         "rid": "dev",
         "seq": 3,

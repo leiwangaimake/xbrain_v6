@@ -23,6 +23,7 @@ Verdicts and their clauses:
   tf_stale        vx == 0, WAIT_DYNAMIC past the static dwell (20 S3.1.5 raw refused)
   clock_reset     perception_epoch_reset audited, then drives (11 S3.1B.5 v2.1)
   dropout         objects_lost audited, 0 < vx <= no_seg_speed_cap (T-52)
+  semantic_only   fuse_bin UNKNOWN before / BLOCKED at the S-only 2.5 m edge (11 v2.2)
 Each verdict is also the mutant list: the B1/B2 source mutants (T-52 cap off,
 extrinsic flag ignored, raw accepted) redden the matching scenario here too.
 """
@@ -175,6 +176,26 @@ def test_clock_reset_is_an_epoch_reset_not_a_drop():
     assert "perception_out_of_order" not in kinds
     assert out is not None and out.vx.value > 0.0
     assert s.take_failure() is None
+
+
+def test_semantic_only_edge_blocks_without_granting_free():
+    # 11 S3.1B.1 v2.2 (Q3 ruling): a bin with no depth but a semantic block at
+    # 2.5 m is BLOCKED there and UNKNOWN before it -- S never grants FREE. The
+    # assertion is on the accepted profile through fuse_bin (the tick's own
+    # consumption rule, 20 S3.1.2), not on the memory grid: a 0.25 m cell
+    # merges ~11 bins at 2.5 m, so a neighbouring open bin's FREE sample can
+    # land in the same cell (20 #20-27, out of this contract's scope).
+    # mutant: fuse_bin returning FREE for d_free None (RNS-I-1 broken) ->
+    # the 1.5 m query reads FREE -> reddens.
+    from xbrain.p1_motion.rns.grid import fuse_bin
+    from xbrain.p1_motion.rns.types import Cell
+    s, out = _run("semantic_only")
+    prof = s._acc["profile"]                      # the last ACCEPTED profile
+    i = 90                                        # dead ahead (angle 0)
+    assert prof.d_free[i] is None and prof.d_block[i] == 2.5 and prof.src[i] == 0b0100
+    assert fuse_bin(prof.d_free[i], prof.d_block[i], prof.src[i], 1.5) == Cell.UNKNOWN
+    assert fuse_bin(prof.d_free[i], prof.d_block[i], prof.src[i], 2.5) == Cell.BLOCKED
+    assert s.take_failure() is None and out is not None
 
 
 def test_dropout_of_objects_caps_speed_and_is_audited():

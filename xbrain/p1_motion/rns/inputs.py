@@ -115,6 +115,9 @@ class TrackedObject:
 @dataclass(frozen=True)
 class ObjectsMsg:
     t_capture_mono_ms: int                     # own timestamp (TIME-2)
+    t_publish_mono_ms: int                     # put-time stamp: the cadence
+    #   measurement point (11 S3.1B.3 v2.1) and the ledger join field; added
+    #   v2.2 after the producer side found it referenced but undefined.
     extrinsic_calibrated: bool
     objects: Tuple[TrackedObject, ...] = ()
 

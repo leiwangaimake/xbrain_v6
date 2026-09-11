@@ -5,5 +5,6 @@
   "extrinsic_uncal": "failure extrinsic_uncalibrated; mission refused (11 S3.1B.4)",
   "no_seg": "geometry-only FREE: 0 < vx <= no_seg_speed_cap_mps (S3.1.11)",
   "normal": "drives at nominal speed; no failure; cone off-corridor ignored",
+  "semantic_only": "S-only block: grid UNKNOWN at 1.5 m ahead (never FREE), BLOCKED at 2.5 m; no failure",
   "tf_stale": "raw velocity refused (S3.1.5): 'static' raw car stays dynamic past the dwell -> WAIT_DYNAMIC, vx == 0"
 }

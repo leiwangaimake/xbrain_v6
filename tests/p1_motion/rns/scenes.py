@@ -129,6 +129,7 @@ def one_object(
         velocity_frame=velocity_frame, velocity_valid=True,
         velocity_status=velocity_status, stable_frames=stable_frames)
     return ObjectsMsg(t_capture_mono_ms=t_capture_mono_ms,
+                      t_publish_mono_ms=t_capture_mono_ms + 10,
                       extrinsic_calibrated=True, objects=(obj,))
 
 

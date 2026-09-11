@@ -47,7 +47,8 @@ def test_has_seg_false_when_t_seg_none():
 def test_profile_and_objects_carry_own_timestamps():
     # TIME-2: not same-frame. Distinct t_capture fields prove they age apart.
     prof = _profile(t_cap=1000)
-    objs = ObjectsMsg(t_capture_mono_ms=850, extrinsic_calibrated=False)
+    objs = ObjectsMsg(t_capture_mono_ms=850, t_publish_mono_ms=860,
+                      extrinsic_calibrated=False)
     assert prof.t_capture_mono_ms != objs.t_capture_mono_ms
 
 
