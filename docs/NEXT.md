@@ -1,354 +1,48 @@
-# XBRAIN_V6 · NEXT（未完成清单与推进对账）
+# NEXT —— 实机到位后的待办清单(RNS 侧)
 
-> 用途：PB1-8（P3 任务链路接通）之后，把**还缺什么**逐条列清，供 phase 任务开发对账。
-> 本文件是**推进对账表**，不是正式设计册（正式真源仍是 00-21 十一册）。
-> 建立于 2026-08-12（P3 任务链路 PB1-8 收尾当日）；最近更新 2026-08-20（geo/teach 全链 + HMI 上行 W4/W2/W7 + P4 改发 §7.2 TaskCommand + 录制阻塞链定位）。
-> ★ 标注约定：`[GATED-HW]` 卡真硬件/云深处底盘 · `[GATED-DESIGN]` 卡设计未写 · `[SW-NOW]` 纯软件、现在可推 · `[DONE]` 已完成。
-
----
-
-## 0. 现状快照（已建成的）
-
-- **语音闭环**：MIC→ASR(paraformer)→P4 编排器→TTS，ORIN 实测通。`[DONE]`
-- **PTZ / payload 设备控制**：布控球 ONVIF、灯光/爆闪/音量，圆润理解(大类语义路由+前缀消解+后置精修)，ORIN 实测。`[DONE]`
-- **P3 任务链路 PB1-8**：语音→cmd/task→task.db(SQLite)落库→调度器 pending→ready→running，状态机对齐 11 S4.4，id 生成、幂等、事务、F 类录制写路径、running→done 完成逻辑。ORIN 实测真落库+真流转。`[DONE]`
-- **P2 仲裁 / 模式机 / BIT**、**P5 网关批次 A-E**、**配置冻结线(CFG-FZ)**、**甲方云端翻译/去重/Q0 急停**：主体已建。`[DONE]`
-- **LLM 服务**：llama-server + qwen2.5-3b-instruct 在 ORIN 上跑(端口 18082)。`[DONE]`
-- **地理要素 CRUD 全链**（2026-08-20）：`cmd/geo` 八 action（P3 单写者）+ `cmd/teach` 录制会话 + P4 的 F01–F15 发起方 + HMI 上行 W4 + HMI 录制显示。ORIN 实测。`[DONE]`（余下卡点见 §4.1 与 §7.0）
-- **`health/summary`（P2）与 `state/teleop`（P1）**（2026-08-20）：契约要求的发布者补齐；`state/robot`/`state/power` 归 `chassis_relay`，做不了。`[DONE]` / `[GATED-HW]`
+> **性质**:待办台账,🚫 不是设计真源 —— 每项的设计与判据以 `20` 对应节为准(NUM-4:册号+节号+逐字锚点)。
+> **创建**:2026-09-11,用户裁决「实机标定先跑,#20-15 专项以后再开」。
+> **维护**:完成一项删一项;新增实机依赖项时同步登记。
 
 ---
 
-## 1. 执行环剩余（PB8 未做完的部分）
+## 一、开工前置:实机标定(先跑)
 
-> P1 voice-loop 现为 ad-hoc 运动 MVP（单帧 cmd_vel，不执行路径、不报进度/完成）；geo.db 无航点；底盘等云深处。故下列多为 `[GATED-HW]`。
+- [ ] **[sim] 参数全量复核**(`20` §12 配置表逐键,流程 #20-4/#20-5):`rns.yaml` 现值为 SIL 整定,凡标 `[sim]` 者须按真机感知/底盘实测复标。重点:`d_wall_m` / `front_stop_m`(依赖真实剖面质量)、`no_progress_m` / `max_follow_m`(场景尺度)、盾系参数(0.85 环 / cap 斜率,依赖真实记忆撒点密度)。
+- [ ] **Jetson 真栈 P99 复测**(`20` §4A.6 G3):SIL 环境实测 compute P99 19.3 ms(节点配额 150);真栈叠加感知/仲裁后按 P1 循环 P99 ≤ 60 ms 红线验收。
+- [ ] **剖面质量标定**:`h_block` 真实高度剖面、体素化误差形态(地面分割/高度裁剪/噪声斑)—— SIL 在契约层合成跳过了该管线(`11` §3.1B / `19`),这是仿真与实机的第一差异面。
 
-| # | 缺什么 | 状态 | 依赖 |
-|---|---|---|---|
-| EX-1 | 路径展开：mission_json + 航点名 → geo.db 航点 → total_steps + V-3/V-6 校验 | 未做 | geo.db 有航点(录制或播种) + B 类槽位填充 |
-| EX-2 | 派发时发 `cmd/motion/route`+`cmd/motion/behavior` 给 P1 | 未做 `[GATED-HW]` | P1 真路径执行 |
-| EX-3 | live 订阅 `state/motion/path_progress` → patrol_progress 全列表 + 进度落盘 | 未做 `[GATED-HW]` | P1 发进度 |
-| EX-4 | live 订阅运动状态 → 调 `apply_motion_result`(逻辑已建) | 未做 `[GATED-HW]` | P1 发完成状态 |
-| EX-5 | live 录制会话：位姿流累积点 → stop 时调 PB7 的 commit 写路径(写路径已建) | 未做 `[GATED-HW]` | 定位/位姿流 |
-| EX-6 | patrol_progress 全列重建(~20 列+唯一 active 索引, 15 S9.5) | 未做 | 随 EX-3 一起(有驱动才建，避免 §9.3 空表) |
+## 二、#20-15 · 贴墙深陷与「折线穿墙群」家族专项(架构级,挂起至实机)
 
----
+**是什么**(`20` §4A.7 撤退记录 · §4A.9 余留 · §4A.10 八版否证实录):
 
-## 2. C++ / ROS2 机器人层（最大未建块）
+- 贴墙态占比过高(密集场 ~50-75%),深陷后跟线化链路不可达;
+- path 折线穿大型墙群(漏斗几何)时结构性长绕(path_fwd 离线 32.9%);
+- 热记忆连跑(正向完立即反向)可复现 `wall_closed_loop` / `wall_no_progress`(基线热三连 2/3)。
 
-| 进程 | 语言 | 状态 | 依赖 |
-|---|---|---|---|
-| **quadruped**（底盘控制 CHS-A 三通道，13 册） | C++17 | 未建 `[GATED-HW]` | 云深处 M20S 底盘 + 厂商 PDF 实测 |
-| **perception**（定位/位姿/障碍/目标，33ms/30fps） | C++ | ✅ **详设已写** / 实现未建 `[GATED-HW]` | ★★ **2026-08-21 订正**：本行原写「详细设计未写 `[GATED-DESIGN]`」是**过时记录**，`docs/19-perception详细设计.md` 已 996 行且章节完整（§2 33ms 预算 · §3 走廊几何 · §9 启动自检 · §11 变异体表 · §13 未定项 · §14 配置键）。⚠️ 这条过时记录**已真实误导过一次判断**（2026-08-20 我据它建议「先写 perception 设计」，当天被 `d2e9ab1` 订正）。<br>★ 接续项是 **SW-2b 实现**，卡相机硬件与 `19` §13 的 PD-3/4/5/10 标定值（按设计**拒绝启动**，🚫 不得为让它起来而实现绕过路径） |
-| **chassis_relay**（急停链路 CRL-1..5） | C++ | 未建 | common 地基库 + 底盘 |
-| **rtk_driver**（GPS/授时，唯一判 ClockStatus.sync） | **C++** | ★★ **已建**（`ros2_ws/sensor/`，19 个 `.cc`：NMEA 解析 / gnss_heading / clock_status / serial_reopen 全套测试） | ★★ **2026-08-21 订正**：本行原写「未建 `[GATED-HW]`」是**过时记录** —— RTK 链路 2026-08-14 已端到端跑通（`rtk_driver → p1 → state/pose` ORIN 实测）。语言事实上已定 C++ |
-| **teleop_input**（遥控 deadman） | 待定 | 未建 `[GATED-HW]` | 遥控器 |
-| **behavior_proxy** + **Nav2 behavior_server** + **zenoh-bridge-ros2dds** | C++/Rust | 未建 | ROS2 环境 + Nav2 |
+**为什么现在不做**(2026-09-11 夜实测,`20` §4A.10):八版判据修复全部否证 —— 贴墙层微调呈**全局混沌敏感**,冷验收(16 案)与热连跑互斥,微调空间无全绿点。正解在架构层:
 
----
+1. 贴墙对象判定(墙 vs 石群岛 vs 漏斗)要几何语义,不是端距阈值;
+2. 记忆分层使用(贴墙律吃什么记忆 · 引导/端探测吃什么记忆)要设计,不是新鲜度参数;
+3. 离墙判据对「折线不贴墙」场景要新语义(spine-flank 有效但与冷 rev 互斥,见否证表)。
 
-## 3. P1 完整运动执行 + RNS
+而这三者的参数靶心全部依赖**真实感知噪声形态**(撒点密度 / 盲区行为 / 误检),SIL 纯净剖面上定靶必然实机返工。
 
-| # | 缺什么 | 状态 |
-|---|---|---|
-| P1-1 | 真 20Hz 控制环（现仅 voice-loop MVP） | 部分件(gate/failsafe)已建，未接真感知/底盘 `[GATED-HW]` |
-| P1-2 | 速度门四段 f(d_free) + 迟滞、路径跟随、旋转门 RCG 全接 | 零散件已建，未串成环 |
-| P1-3 | **RNS 避障**（进程内模块，行为源 rns_avoid 900） | ✅ **详设已写** / 实现未建 —— `docs/20-RNS反应式导航软件系统详细设计.md` 1018 行（§10 单调钟 · §11 与 `12` 的接口清单 · §13 断言与变异体总表 · §14 实现要点与陷阱 · §15 待确认清单）。★★ **2026-08-21 订正**，原写「详细设计未写」过时。接续项 SW-3b 实现，输入是 `19` 产出的 `bands` |
-| ★ P1-4 | **航向丢失恢复：odom 桥接 + 视觉导向重捕 COG**（用户 2026-08-16 定方向） | ★ **设计意图已记，待 quadruped odom + perception + RNS 落地** `[GATED-DESIGN+HW]` |
+**实机后怎么开**:
 
-> ★★★ **P1-4 设计意图（用户 2026-08-16 · 航向恢复,不逼停）** —— 背景:双天线航向(L1,绝对,静止可用)突然丢时,现设计运动态已无缝切 COG(L2,`11` §3.3,不停车);但**静止 / 原地转向态**下 COG 物理上无解(无运动=无航迹),现状进 L2-blind(保持旧航向但 `heading_valid=false`)。用户方案分两级补:
-> - **① odom 桥接(治静止 + 转向)**:quadruped 的里程计 yaw **静止和原地转向都有效**(正是 COG 做不到的两工况),把丢失瞬间的 GNSS 绝对航向当锚点 + 叠加 odom yaw 增量 → 静止也有效、且**知道机器人转没转**(解掉"保持旧航向但机器人转了就错"的风险)。航向源链变为 `L1 双天线 → odom 桥接(相对锚定,慢漂,有界时间)→ L2 COG → L3`。
-> - ★★★ **这不是新设计 —— 契约 `11` §3.3.2a 已把它定为 `L1.5 odom_aligned` 级**(2026-07-30 裁决,夹在 L1↔L2,`yaw_capable=true`):`heading_enu = wrap(odom_yaw + north_offset)`,`north_offset = wrap(abs_heading − odom_yaw)` 由 L1/COG **持续 EMA 标定**(NO-1 `alpha=0.08`)、**静止时保持**、**转弯时冻结**(NO-3 用 1.5s 窗**最小二乘斜率** > 0.06 rad/s 判转弯,🚫 不用瞬时角速度 —— 四足每步左右晃 ±7° 会被误判);准入 `unc ≤ 0.30 rad`(≈17°)且 odom 新鲜。★ `11`:3823 明写它正好**接住"减速停稳 → COG 失效"那一下** —— 即前面聊的 L2-blind 停车态(也就是 HMI 现在会闪红 LOSS 的那个边界,L1.5 落地后自然消失)。
-> - ★★ **为什么 resolver 现在没实现它(我特意留空)**:两个硬缺口 —— (a) **G-15**(`11` §14.4):L1.5 的 `i_heading` 与**硬速度上限**两格**至今空白**,须与 `odom.yaw_drift_dps`(NAV-96/97)一起标定,§3.1 禁止代码编默认;(b) **Q-U34-1**(`11`:3843):`rtk_driver` 需订阅 odom(`rt/chassis/state` 的 `odom_yaw` + 机体 `vx`),而 quadruped 未建。★ resolver 已留干净缝:`heading_resolver.h` 头注逐字写明"不实现 L1.5,消费方只见 L1/L2/L3",两缺口一补即可接上,不推翻现状态机。
-> - **② 视觉导向重捕 COG**:odom 漂太多 / 需刷新绝对航向时,perception 找**无障碍方向**,P1/P3 控制机器人**朝该方向挪一小段** → 拿到 COG → 立刻回高精度航向、恢复任务("立刻开始任务")。
-> - **分工**:odom 数据归 `quadruped`(GATED-HW);无障碍方向归 `perception`(GATED-DESIGN);"要不要挪 + 挪哪"的决策与执行归 P1/P3;航向 resolver(rtk_driver)只**报状态**(L2-blind/L3),需给它**加一路 odom 输入** + 实现契约**已定义的** `11` §3.3.2a `L1.5`(🚫 不是"给契约加级",是填 G-15 两格 + 接 odom 输入)。
-> - **落地必带的护栏**:(a) odom 桥接**最长时长 / 最大累积 yaw 漂移上界**,超了强制去拿 COG 或退 L3,不可无限信 odom;(b) 桥接精度受**丢失瞬间锚点新鲜度**约束(锚点 cov 大则桥接也差);(c) odom 自身异常(打滑 / 腿部估计坏)要能识别并退 L3。
-> - **依赖顺序**:必须在 **quadruped(odom)+ perception(无障碍方向)+ RNS** 三者落地之后做;三者任一 GATED 时本项不可动。
+- [ ] 复现台架直接取用:`20` §4A.10 热连跑(fwd→rev→fwd2,同一 RnsSource)+ `scripts/sil/field_probe2.py` 16 案(95% 线);
+- [ ] 八版否证表为负知识边界 —— 🚫 不再重试表内九种判据补丁;
+- [ ] 验收:冷 16 案 ≥ 95% **且** 热三连 3/3,二者同时(否证史证明单边优化无意义)。
 
----
+## 三、其余实机依赖挂账(编号项,详见 `20` §15.1 台账)
 
-## 4. 真硬件集成
+- [ ] **#20-16** 有界后退行为接线(`backup_permitted` 判定就绪,`20` §7.5 RNS-N-13);
+- [ ] **#20-19** 对准段(`align_dist_m`/`align_eta`/`yaw_tol_deg` 三键悬空,需先裁决 goto 目标航向语义,`20` §2.5);
+- [ ] **#20-20** RTK 三级接线(`classify` 就绪,等 ctx 接真 RTK 数据源,归 P7.1,`20` §3.2.1);
+- [ ] **#20-21** `seg_recover_frames` 恢复迟滞(`20` §3.1.11);
+- [ ] **#20-22** 目标在障碍内的兜底判定(P3 下单校验为主,RNS no_path 增强为辅,`20` §4A.9);
+- [ ] **path_fwd 离线判据裁决**(占比 15% 线 vs「每次离线事件后回线」,`20` §4A.9 余留 —— 用户裁决项,可与 #20-15 合并处置)。
 
-- M20S 底盘（**等云深处**）、RTK、LiDAR、可见光/热成像相机、遥控器。`[GATED-HW]`
-- 集成测试三档（不需真设备 / 需 ORIN / 需真底盘）框架**未建立**。
+## 四、非 RNS 侧既有待办(占位提醒,详见各自真源)
 
-### 4.1 ★★★ 录制（示教）端到端的硬件阻塞链（2026-08-20 · ORIN 实测逐门定位）
-
-> ★★★ **软件侧已全部建完并实测**：`cmd/teach` 会话（§12A.3 状态机 + §12A.6 采点 + §12A.7 几何校验 + §12A.8 单点录制）、
-> P4 的 F01–F10 发起方、P5 的只读显示与 HMI 轨迹渲染，全部上线且有变异体守护。
-> ★ **卡的不是代码，是四样硬件/数据源**。本节把 ORIN 上实测出的**逐门拦截顺序**记下来，
-> 供硬件到位后逐条销账 —— 每解决一项，录制就往下推进一道门。
-
-**★ ORIN 实测（2026-08-20，发 `cmd/teach{action:"start"}` 逐次观察 ack）**
-
-| 序 | 拦在哪道门 | 实测 ack | 解锁需要 | 状态 |
-|:--:|---|---|---|---|
-| ① | §12A.3 **状态源缺失** | `E_TEACH_QUALITY` `state_unavailable` `missing:[state/robot, state/power]` | **`chassis_relay`（C++，CR-4/CR-5）+ 真底盘** | `[GATED-HW]` |
-| ② | §12A.3 **检查 3 定位质量** | `E_TEACH_QUALITY` `{fix_type:"single"}` | **RTK 基站 / NTRIP 改正**（现为单点 GPS，米级） | `[GATED-HW]` |
-| ③ | §12A.3 **检查 4 `allow_motion`** | `E_UNHEALTHY` `health forbids motion` | ★★★ **RGBD 相机 + `perception` 发 `cam_rgbd` 健康** ← **当前终点** | `[GATED-HW]` + `[GATED-DESIGN]` |
-| ④ | §12A.3 **检查 7 非语音急停通道** | 未到（③ 先拦） | `teleop_input`（手柄/键盘）—— 缺它判据①永假，只能靠判据②的 `cmd/estop` 链路 | `[GATED-HW]` |
-
-**★★★ ③ 为什么是硬拦，且【不能】用开关绕过**
-
-`14` §8.3：`cam_rgbd` 不正常时连 `obstacle_avoid` 档都不准入 ⇒ `allow_motion = false`。
-而 `cam_rgbd` 在本 build 里**没有生产者**（`perception` 详设未写、进程未建），按 §3.2 只能报 `unknown`，
-🚫 不得报 `ok`。⇒ 录制被拒是**正确行为**：录制期横向避障与语音急停都被抑制（§12A.3 / U45），
-**没有避障感知就不该被遥控着跑**。
-★ 🚫 **绝不为此加任何「跳过安全断言」的开关**（§3.6：那等于一条远程解除全部安全约束的通道）。
-★ 也 🚫 **不得让 `p2_core` 把 `cam_rgbd` 默认成 `ok`** —— 那是 §3.2 形态①「一条永远绿的断言」。
-
-**★ 已可验证到什么程度（不必等硬件）**
-
-| 层 | 手段 | 结论 |
-|---|---|---|
-| 会话逻辑 / 采点 / 几何校验 | 单元 + 变异体（`tests/p3_task/test_teach_core.py`、`test_teach_runtime.py`） | ✅ 含 start→采点→mark/undo→finish→save 端到端落库 |
-| P3→P5→浏览器 数据链 | `/tmp/teach_state_stub.py`（**只替代 P3 的 §12A.5 广播，🚫 不碰任何安全门**） | ✅ ORIN 实测每秒新 `seq` 到浏览器 |
-| HMI 渲染 | in-app 浏览器 `javascript_tool` 读 DOM | ✅ 徽标「录制中 / 96 点」+ `teachLayer` 46 图元；停桩后归 0 |
-| **真实录制** | — | ❌ **卡 ③**，桩只能证明显示层通 |
-
-> ⚠️★★★ **销账顺序 —— 2026-08-20 当日订正（原写法基于过时信息，已作废）**
->
-> ★ **原写什么** ＝ 「③ 前置 SW-2 perception **详细设计**（`[GATED-DESIGN]`），最短路径是先写详设」。
-> ★★★ **为何不成立** ＝ 实测 `docs/19-perception详细设计.md`（996 行）与 `docs/20-RNS反应式导航软件系统详细设计.md`（1018 行）
-> **都已写完**：章节完整，含 §11 变异体表、§9 启动自检、§14 配置键一览、§13「本册确实未定的」分类登记。
-> ⇒ SW-2 / SW-3 的「设计未写」状态是**过时的**（见下方订正），CLAUDE.md 里「perception ⚠️ 详细设计尚未编写」同样过时。
->
-> ★★ **现行结论**：③ 的前置是 perception 的 **C++ 实现**，不是设计。而该实现**自身还卡两层**：
-> · `19` §13 **PD-3 / PD-4 / PD-5 / PD-10** 的配置值未标定 ⇒ 按其设计 **perception 拒绝启动**（fail-loud，🚫 设计明写不实现绕过路径）；
-> · 这些值是**实测量**（T7 / 云深处），没有实机就没有数。
-> ⇒ ★★★ **写完 perception 代码，在没有相机与标定值的机器上它也起不来** —— 这不是缺陷，是 `19` 自己选的失效方向。
-> ★ 因此 ③ **确实是硬件闸**，🚫 没有「先写点什么就能解锁」的捷径。
-
----
-
-## 5. 纯软件、现在可推（不卡硬件）`[SW-NOW]`
-
-| # | 项 | 价值 | 备注 |
-|---|---|---|---|
-| ~~SW-1~~ | ~~LLM tier-2 接线~~ | **`[DONE]` 2026-08-12**（44c752b/cee733c）：mission_select 候选选择 + build_tier2_fn 组装 + 槽位回传契约 + grammar 收紧(slots 闭合对象)。ORIN 实证:`往前挪三米`->move_forward{distance_m:3}、`把当前位置记为集合点`->record_waypoint{name:集合点}、播报->speak_custom{text} | — |
-| ~~SW-2~~ | ~~**perception 详细设计编写**~~ | — | ✅★★★ **2026-08-20 订正：详设【已写完】** —— `docs/19-perception详细设计.md` 996 行，章节完整（§2 33ms 预算分解 · §3 走廊几何 · §11 变异体表 · §9 启动自检 · §14 配置键 · §13 未定项分类）。★ 本行原状态「未做」是**过时记录**；CLAUDE.md 的「perception ⚠️ 详细设计尚未编写」同样过时，⚠️ **归用户裁定是否同批订正**（本册不代改 CLAUDE.md）。<br>★ **接续项改为 `SW-2b` perception 的 C++ 实现**（见下行） |
-| **SW-2b** | **perception C++ 实现**（按 `19` 落码） | 高：`cam_rgbd` 的唯一生产者，是 §4.1 ③ 的总闸 | ★★ `[GATED-HW]` + ★ 卡标定：`19` §13 **PD-3/PD-4/PD-5/PD-10** 未标定 ⇒ 按设计**拒绝启动**（fail-loud），且都是实测量（T7/云深处）。⇒ **代码可以先写，但没有相机与标定值就起不来**，🚫 不得为「让它起来」而实现绕过路径 |
-| ~~SW-3~~ | ~~**RNS 详细设计编写**~~ | — | ✅ **2026-08-20 订正：详设【已写完】** —— `docs/20-RNS反应式导航软件系统详细设计.md` 1018 行（§10 单调钟 · §11 与 `12` 的接口清单 · §13 断言与变异体总表 · §14 实现要点与陷阱 · §15 待确认清单）。接续项为 **`SW-3b` RNS 实现**（在 `p1_motion` 进程内，`19` 产出的 `bands` 是其输入） |
-| SW-4 | 云端/HMI 完整上行（P5 端到端云协议） | 中 | 需甲方云端联调 |
-| SW-5 | 集成测试三档框架建立（docs + harness） | 中 | 现无落点 |
-| SW-6 | 配置落值：common.db.* 四库路径 + 其余 null 安全参数标定 | 低-中 | 按 §3.1，标定即启动断言放行 |
-| SW-7 | 字符集存量债清理（task #46，24 漏网符号 + charset_lint 完善） | 低 | housekeeping |
-| SW-8 | 充电/对接**执行**串联（状态机+仲裁器已建） | 中 `[部分 GATED-HW]` | 三级选桩逻辑可测，真对接需底盘 |
-| SW-9 | **全系统圆润扩展**（非设备类的同义说法加宽） | 中 | ★ 用户早先定「聚焦 PTZ/payload，后面慢慢扩展到整个系统」的那一批。2026-08-12 已收口薄意图（1词无兜底）：C08/G09/H07/H08/F13 加同义说法 + 18 对齐 + 变异守护。★ **剩 47 个恰 2 词且无 tier-2 的意图**（多为 G 类只读查询 L0），是下一批候选；现状不是缺陷（各有 2 说法 + §2.2 边界节 C 已载「贴 keywords 说」），扩不扩看优先级 |
-| SW-10 | **comment_ratio 注释债**（xbrain/ 约半数文件 < 70%） | 低-中 | ★★★ **2026-08-16 用户裁决：作为负债留到最后做【全系统语音集成测试】时一并完成，在此之前门禁 `test_lints::test_comment_ratio_holds` 保持红，是【已知已记的债】不是回归**。★ 规模（§3.7 不烤死数字，跑命令得准数）：门禁只算 `xbrain/`（`test_comment_ratio_holds` 断言 `LOW ... xbrain/` 零命中）；`python3 scripts/lint/comment_ratio.py \| grep -c 'LOW.*xbrain/'` → 2026-08-16 实测 **239** 个不达标（分布 p4_agent 57 · p2_core 50 · p1_motion 43 · p5_gateway 37 · p3_task 37 · boot 8 · common 7；旧记「498」是含 scripts/tests 的全仓数，已作废）。★ 成因：§2.4 阈值 08-06 从 25% 上调 70%（= 注释行 ≥ 2.33× 代码行）后，P1-P5 批量业务代码普遍在其下累积。★ 修法：按 §2.4「每块解释 why、不刷百分比」分批补真注释——★★ 这不是进度审计，是注释密度尺，别当「补完才算开发完成」。已开 chip（task_3e48348d）。★ 关联教训：yaml 头/字符集门禁盲区（configs/.yaml 从没被扫）已于 2026-08-12 关闭（ca08aaa/1bc9702） |
-| **SW-17** | **P1 的三项无产物缺口（2026-08-23 证据映射时查出）** | 低-中 | ★ 这三项在 `docs/TODO_EVIDENCE.tsv` 里**留空**——它们不是提取失败，是**确实没有产物**：<br>　· **`MOT-PM-33`** `configs/p1_motion.yaml` 落值 —— 标着「**⏸ 暂缓 0807**」，刻意不做。⚠️ 与 SW-6 是**同一件事的不同切片**（SW-6 管 `common.*` 与四库路径，本项管 P1 私有层），🚫 不要当成两条独立工作。<br>　· **`MOT-PM-34`** P1 启动包装脚本与周期计时工具（RTC-7/8/9 的进程外部分）—— `scripts/` 下**零产物**。<br>　· **`MOT-PM-35`** ★★ **拍内逐段时延预算的可执行门禁** —— `12` §2.2 逐字「**超预算源不许合入主干**」，而现在**没有任何东西在守这条**。`tests/p1_motion/` 下无对应用例。<br>★ 三项都不卡硬件。**35 的价值最高**：它是一条写进设计册、却从来没有实现体的门禁，属于 CLAUDE.md §3.2 那类「以为有人在守、其实没有」。 |
-| **SW-18** | **CHK-1-62 时区断言的两条缺口（2026-08-23 做判据①时暴露）** | 中 | ★ 判据① **已做**（`xbrain/boot/probe/checks.py::check_timezone` + Stage 0 接线 + `configs/probe/thresholds.yaml` 落 `timezone.expected` + `tests/deploy/test_timezone_probe.py` 10 条，四个变异体实测全红）。剩两条**都不是时区本身的活**，各卡一个还不存在的载体：<br>　· **判据②（正向对接）** —— 要「本地时区格式化的 `Time` 被 fake_chassis 接受、UTC 的回 `0xE002`」。`scripts/dev/chassis_stub.py` **完全不校验 `Time` 字段**（全文无 `Time`/`E002`），没有能回 `0xE002` 的载体。⇒ 先给 stub 补 CHS-A 的三件必填校验（`PatrolDevice` 包裹 · `Time` · hex32 十进制序列化，见 CLAUDE.md §5.5），②才有东西可测。<br>　· **判据③（时区真的进了判定）** —— 要「`time_window` 跨午夜在两个时区产出**不同**结果」。`xbrain/p2_core/suspicion/rules_loader.py` 只做了 `time_window` 的**加载与 RE-3a 过滤**（有 window 且 `ts_sync=false` 就丢弃），**没有跨午夜判定器**。⇒ 判定器是 SW-13 里 `health`/`bit` 那块 P2 未接线的一部分。<br>★★ **本条实测到一个真差异**：开发机 `/etc/localtime` → `Asia/Tokyo`，而 `configs/common.yaml` 的 `common.timezone` 是 `Asia/Shanghai`。⇒ **Stage 0 探针在本机会拒绝放行**，这是**设计行为**（§3.1 + 判据①逐字「不一致即整栈不起，🚫 不得 warn 放行」），🚫 不要为了让本机跑起来而放宽这条。真机部署前需把 ORIN 的系统时区对齐配置。 |
-| **SW-19** | **CHK-2-36 三条载荷未闭环默认行为：如实不做（2026-08-23 核查）** | 低 | ★ 判据要求落 `xbrain/p2_core/payload/failsafe_defaults.py`，实现 `21` §5.2 三条实测欠账的 fail-safe 默认分支。**三条当前都没有调用者**，逐条核过：<br>　· **M-PAY-6**（`payload_tilt_*` 全 null ⇒ 俯仰不启用）—— `11` §7.5A.9 逐字「**payload-service 未实现 12345 链路 → 本期是否实现待用户决策（D-PAY-9）**」。⇒ **没有俯仰指令路径**。<br>　· **M-PAY-4**（`speak.action="stop"` 单条一律 rejected）—— 全仓无 `speak.action` 的 stop 处理路径（P2 侧 `speak` 只走播报下发）。<br>　· **M-PAY-7**（设备 TTS deep 自检判 unknown）—— `xbrain/p2_core/bit/` 只有 `gpu_dla` / `network_links` / `report` 三项，**没有 TTS 自检项**。<br>★★ **为什么不先写**：一个没有调用者的 fail-safe 模块，它的每条断言都是 §3.2 形态① 的「永远绿」——只测这个模块自己就一定通过，而真正的失效（指令路径绕过它）测不出来。同时它属 §9.3 明禁的「为将来扩展留口子」。<br>⇒ **正确顺序**：先由 **D-PAY-9** 裁决俯仰是否本期实现 / 先接 `speak` 停止路径 / 先建 TTS 自检项，**各自那一条落地时同批写它的 fail-safe 分支**，断言才能打在真路径上。<br>★ 三条的逐字处置要求已在 `21` §5.2 表体里，落地时照抄即可，🚫 不要另起真源。 |
-| **SW-20** | ★★ **`10` §3.2 CPU 亲和表缺 `payload-service`（2026-08-23 CHK-1-03 做出来后暴露）** | 中 | ★ **门已建**：`scripts/ci/check_affinity.py` 从 `10` §3.2 表体**现场解析**「进程 → 核集合」，与 `deploy/systemd/*.service` 的 `CPUAffinity=` 求双向差集；14 个此前没绑核的单元已照表体补齐（每个单元的注释都指回 §3.2，不重述理由）。<br>★★★ **剩一条是文档缺口，不是代码缺口**：`payload-service` 是 `CLAUDE.md` §0.1 列的 15 个常驻进程之一，而 **`10` §3.2 的八核表里没有它**。`deploy/systemd/xbrain-payload.service` 已经写着 `CPUAffinity=7`（与 AI Runtime 同核，从进程性质看合理），但「它该在哪个核」是**设计裁决，不是 CI 门能替你决定的**。⇒ 现记在门的 `PENDING_DOC_DECISION` 里：**照常打印、不计入失败**，集合边界由 `tests/deploy/test_affinity_gate.py` 钉死（新增一条即红，文档补登后必须移除）。<br>★ **需要你裁的就一句**：`10` §3.2 表体核 7 那行是否补上 `payload-service`？补了这条门就全绿且待裁决清单清空。<br>⚠️ **另两处表体写法问题**（不阻塞，一并提）：① `Nav2` 在表体里**没加反引号**，所以解析不到它 —— 而 `xbrain-nav2-behavior.service` 存在；② `xbrain-probe` / `xbrain-config-freeze` 是 `Type=oneshot`，表体没写这类单元该不该绑核（现状是不绑，合理但没依据）。<br>★ **判据②③④卡真机**，已在测试里逐条标注：② `taskset -pc` 要整栈在跑；③ `chrt -p` 比优先级要 `quadruped` 存在（C++ 侧未建，见 §2）；④ `/proc/cmdline` 的 `isolcpus` 要目标机 —— 🚫 三条都没写恒真替身。 |
-| **SW-21** | ★★★ **`10` §9.2 降级矩阵：多数行【连实现都没有】（2026-08-23 CHK-1-04 逐行核实）** | 高 | ★ **元测试已建**：`tests/integration/test_degrade_matrix.py` 从 §9.2 表体现场解析行集合，与注入表双向差集 —— 表里加一行不加用例即红并打印首列（判据变异体① 实测红）。<br>★★★ **逐行核实的结果比判据设想的差一档**。判据把行分成「能真机注入」与「用桩注入」两类，实测还有第三类且是最多的一类：<br>　· **REAL（有实现且已接线）** —— `LinkState`(p5 main_wiring) · `HealthAggregator` + `state_from_pose/power/robot`(p2 main_wiring)。<br>　· **UNIT（有实现但零消费者）** —— `gate_rule` · `TimeoutLockGate` · `freshness.classify` · `single_battery`，四个都是纯函数，**全仓没有一处接线调用**。⚠️ 尤其 `ctrl_loop.py` 只有一百多行且**根本没有 `import freshness`** —— 它头注里写着 `freshness -> arbiter tick -> gate` 的步骤顺序，那只是注释。⇒ 「输入超时 → 降级」这条链**在 P1 里没有接起来**。<br>　· **MISSING（连实现都没有）** —— 帧率折减(`fps`/`frame_rate` 零命中) · P2 崩溃的 `factor` 断流 3s→0.3/10s→`allow_motion=false` · P3 崩溃的 `behavior` 锁存 · P4/P5 崩溃判定 · AI 服务回退规则模式 · 通用面整体失效 T-07/T-08 · **GPU OOM 卸载按需池**(`on_demand`/`gpu_oom` 零命中) · **热降频**(`tegrastats`/`thermal`/`throttle` **全仓零命中**)。<br>★★ **MISSING 档用 `xfail(strict=True)` 而不是 `skip`**：判据逐字禁 skip（"skip 会让矩阵看起来全绿"），而 stub 也不是出路 —— 我自己写的桩喂我自己写的桩，两边都通过，什么也没验证（§3.2 形态①自证）。`xfail(strict=True)` 两头都占：报告里是 xfail 不是 pass；且**实现一旦出现、用例意外通过就 XPASS 失败**，逼人回来写真断言。<br>★ **判据变异体④今天结构上不成立**：它要求「桩注入 `tegrastats` 报已热降频 ⇒ 观察到推理频率下降 + 一条告警事件；把实现删成空壳 ⇒ 该行变红」—— **没有实现可以删成空壳**。🚫 不为让变异体成立而先造一个假实现。<br>★ **判据③ 的完整形态也欠着**：原文要求注入前后采样 `state/gate.v_max`，那要 P1 的 20 Hz 环真在跑。现在只在 `gate_rule` 这一层验单调性（四个因子逐个打折都不得使 `v_max` 上升，实测红过）。 |
-| **SW-22** | **M5 出口标准五条里三条today做不到（2026-08-23 CHK-1-05）** | 中 | ★★★ **报告生成器已建且是本条最有价值的部分**：`scripts/ci/m5_acceptance.py` 从 pytest 的 junit-xml **执行结果**生成报告，`verify_report()` 双向校验 —— 判据变异体① 的四种伪造手法各配一条实测红：整份手写（证据用例不存在）· 把 `xfailed` 改写成 `passed`（证据在但状态不符）· **删掉不好看的那一行**（少写也是伪造，只做单向校验的实现会放过它）· 空执行结果 + 满页 pass。<br>★ **真跑的两条**：`G-5`（新指令源只需注册）· `G-6`（换机型只改配置）。⚠️ **检验方式与判据原文不同，理由已写进用例**：判据要求跑 `git diff --stat` 统计改动文件数，而**在 pytest 里 git diff 是恒空的**（测试不修改工作树），那样的断言无论实现对错都通过。改成两半：语义半（一个全仓从未出现过的 `source_id` 走完整个仲裁流程 / `holonomic=false` 被能力门 G-7 拒）+ 静态半（仲裁核心里不得有按具体 `source_id` 的分支、`xbrain/` 里不得有按机型名的分支）。<br>★★ **xfail(strict) 的三条，逐条卡在哪**：<br>　· **`G-1`**（AI 层全杀仍走完路径）—— 要 P1 的 20 Hz 环真跑，而 `ctrl_loop` 没有 `import freshness`（见 SW-21）。<br>　· **`G-1a`**（P2 缺失必须停车）—— `speed_factor` 3s→0.3 / 10s→`allow_motion=false` 的断流判定**根本没有实现**（CHK-1-04 逐行核实）。🚫 不写桩去扮演它：桩喂桩永远通过。<br>　· **`G-7`**（rosbag + 事件流复现）—— 复现工具与归档 rosbag 都不存在。<br>★ 判据里 `G-2 / G-2a / G-3 / G-4` 不属 CHK-1-05（另有归属），本条只做点名的五条。 |
-| **SW-23** | ★★★ **`18` 自身有三处触发词歧义 ＋ `cmdset_extractor` 今天提到 0 条（2026-08-23 CFG-BT-19 实测）** | 高 | ★★★ **三组触发词冲突，源头在 `18` 不在配置**：同一个词被两条意图各自列了，`configs/intents.yaml` 是如实照抄的。<br>　· **「停止喊话」** → C04 `exit_broadcast`（L0，退出喊话模式）与 D12 `speak_stop`（L0，只停当前这句）<br>　· **「待命」** → A04 `hold`（**L0**，旁路关键词 VD-6）与 C06 `standby`（**L1a**，P3 挂起任务 + P1 hold）—— ⚠️ **级别都不同**<br>　· **「开始工作」** → C05 `enter_patrol_mode`（L1b）与 H06 `wake`（L0）<br>★★ **后果不是报错，是随机**：匹配到哪条取决于遍历顺序，而遍历顺序随 yaml 行序变化。操作员说同一句话，今天停喊话明天停播报，**日志里两次都显示「匹配成功」**。⇒ 需要**语义裁决**（那个词到底该归谁），不是代码能定的，所以已进 `KNOWN_TRIGGER_CONFLICTS` 显式清单（新增第四组即红；每条都要能在 `18` 里查到两个出处；一旦裁决修掉必须移走）。<br>★★★ **另一处更要紧的**：`xbrain/p4_agent/registry/cmdset_extractor.py` 今天从 `18` 里**提到 0 条** —— 它的正则要求 ID 紧贴行首竖线，而 `18` 的表里多数行首列带着 `★★ D12` 这样的强调标记。⇒ **GWY-P4-08 建的 CS-A1/CS-A2 通路今天是空跑的**：拿到空集合，双向差集恒空，断言恒过。这正是 §3.2 形态① 的活例子，且它已经这样绿了一段时间。修法是把正则放宽到「行内任意位置的 ID」（本轮 `tests/p4_agent/registry/test_cmdset_conflicts.py` 自己那份解析器就是这么写的，实测能提到 61 条），但**改既有提取器要连带复核 CS-A1/A2 的结论**，不宜顺手做。<br>★ **编号语义分叉**：`16` §0.5 的 CS-A3/CS-A4 是「mission prompt alternation 约束」，而 CFG-BT-19 判据列的③④是「级别逐行一致」与「触发词冲突」—— 同一组编号下两套东西。本轮另起了函数名（`check_intent_levels_match` / `check_no_trigger_word_conflict`）没有硬塞，归属请册主裁。 |
-| **SW-24** | **`failure_class` 表里五行没有文档落点 ＋ mypy strict 存量债（2026-08-23 INF-BT-2 / CFG-DC-2）** | 中 | ★ **INF-BT-2 双向差集已建**：`tests/boot/test_failure_class_table.py` 从 `10` §3.3.6 逐条清单现场解析，与代码表两向比对，两个变异体实测红（删一行 / 改一行的类）。<br>★★ **实测查出：代码表里 `7e`/`7f`/`7g`/`7h`/`7i` 五行的 `ref` 写着 `10 S3.3.6.7e` 这样的小节号，而文档的逐条清单只到 `7d`** —— 这五行指向的小节不存在。五行本身不是编造的（assertion K/L、quadruped QC 都是真东西），但**缺一个文档落点**。⇒ 需册主定：补进 §3.3.6 清单，还是把 `ref` 改指到它们真正的出处。现进 `UNDOCUMENTED_ROWS` 显式清单（新增第六行即红；补进文档后必须移走）。<br>★ **mypy `--strict` 存量债**：CFG-DC-2 判据要「零 error」，实测 `xbrain/common/` 一棵树就不是零。配置已落（`pyproject.toml` strict=true），但**没有写一条今天必红的断言** —— 那种断言三天内会被放宽成「包含即可」（§3.2 形态②）。数字用 `python3 -m mypy xbrain/ common/` 现跑，🚫 不烤进任何文档（§3.7）。<br>★ `ruff` 本机未安装，配置已落但未实跑。 |
-| **SW-25** | **`12` 还没收下 `20` §12.2 交办的三个 `rns.corridor` 键（2026-08-23 CHK-1-23 实测）** | 中 | ★ 判据要「`12` §12 的 `rns.corridor` 段内出现且仅出现一次 `side_hold_ticks` / `k_head_per_rad` / `lambda`」。**实测：这三个键名在 `12` 全册零命中** —— `20` §12.2 交办的那三个键还没被写进 `12`。<br>★ 这是文档侧欠账不是代码问题。🚫 没有在测试里替 `12` 补键（那是册主的事，且判据要求 `k_head_per_rad` 写 `null`、另两个写建议值并标「待整定」），也🚫 没有写一条恒红的断言（恒红会被放宽成恒绿，§3.2 形态②）。<br>★ 已落两条**记录现状**的用例：三个键一旦被写进 `12` 就红，提醒补上 CHK-1-23 的配置侧检查；另一条守判据逐字的「🚫 不得在 `20` 内写第二份 YAML」（同一组键两份定义时，实现者照哪份写取决于先看到哪一册）。<br>★★ **`MOT-PM-33` 的双向差集执行体已建**（`tests/p1_motion/test_config_key_parity.py`），今天是 `xfail(strict)`：`configs/p1_motion.yaml` 是纯注释（TODO 标「⏸ 暂缓 0807」，按 §3.1 刻意不落值）。落值后摘标记即生效；另有一条用例在配置一旦开始落值时变红提醒摘。⚠️ 与 **SW-6** 是同一件事的两个切片，🚫 不要当成两条独立工作。<br>★ 一处解析细节值得记：`12` §12 那块 yaml 用了别名引用 `margin_rot_m: *d_safe`，而锚点 `&d_safe` 定义在**另一个代码块**里 —— 单独喂 `yaml.safe_load` 会抛 `ComposerError`。用按缩进提键路径绕开，🚫 没有为了能解析而在测试里补一个假锚点。 |
-| **SW-26** | ★★★ **本轮推不完的全部剩余项，逐条给出卡因（2026-08-23 收口）** | — | ★ 本行是**一次性台账**，🚫 不要在别处重复登记。分四组，每组的卡因是**逐条核实过的**（grep 过实现、读过判据），不是推测。<br><br>**① 卡真栈 / 需要整栈在跑（7 项）**<br>　· `INF-TS-06` 集成测试桩（双 router fixture ＋ `fake_chassis` ＋ `perception_stub`）—— 要起两个真 `zenohd` 并实现 CHS-A TLS 服务端（能回 `0xE002`）。`scripts/dev/chassis_stub.py` 在，但**不校验 `Time` 字段**（见 SW-18）。<br>　· `INF-TS-07` 故障注入测试集（`kill -9` 各进程 → 观察降级）—— 与 **SW-21** 是同一堵墙：多数降级判定**根本没有实现**。<br>　· `INF-TS-08` QoS-T1~T8 台架量测 —— 要真 Zenoh 双面 ＋ 满负载。<br>　· `INF-TS-09` 急停链路三平面穿越（G-2 / G-2a 分两列记）—— 要 `chassis_relay` ＋ `quadruped`（C++ 侧未建）。<br>　· `INF-OB-02` RT 录包器与复现工具 —— 要真 `rt/` 流；且判据要求「开启录制前后 P1 循环 P99 不劣化」，而 P1 环没接线。<br>　· `CFG-BT-06` 有序关机 S1~S9 ＋ PWR-S1~S6 —— 要整栈能起才能验「P1 最后退且退出前持续发零速」。<br>　· `CFG-BT-04` p5 最小模式观察窗 W-1/W-2/W-3 —— 判据要「freeze 失败时它仍起来并把失败断言显示在 HMI 上」，要真跑 freeze 失败路径。<br><br>**② 卡硬件（6 项）**<br>　· `CHK-1-02` RGBD 现场标定 ＋ `calib_verify` —— 要相机与标定场。<br>　· `CHK-1-06` T7 全链路四点时延夹具 —— 要相机 → perception → P1 → quadruped 全链。<br>　· `CHK-1-59` TRT engine 生产侧（onnx→engine ＋ `MODEL.json`）—— 要 ORIN ＋ 模型资产。<br>　· `CHK-1-60` udev 规则 ＋ `SupplementaryGroups` —— **要手柄与 USB MIC 的 vendor/product**，判据明确要求按 vendor/product 而非 event 号（event 号随插拔漂移）。🚫 没有编造 ID。<br>　· `CHK-2-34` PTZ 开机序列（每次上电重发 preset）—— 要球机。<br>　· `CHK-2-37` CHS-A 往返时延（N≥1000）—— 要底盘或能回 `0xE002` 的 stub。<br>　· `CHK-1-10` BIT 动作型自检（GPU/CUDA/DLA 真跑一帧 TRT）—— 要 ORIN。<br><br>**③ 卡上游未实现（4 项）**<br>　· `CFG-BT-15` Stage 5 AI Runtime 探活 —— `18082`/`ai_svc` 全仓零命中，探活逻辑不存在。<br>　· `BIZ-P2-21` 软急停/HES/指令超时统一处置（SE-1）—— `SE-1` 在代码里零命中；且判据要「注入 `cmd/estop` 后放任 10 s 逐条断言域②③④⑤」，要 P2 真跑。<br>　· `BIZ-P2-10` 布控球 LAPI 写权与幂等复位 —— `FocusMode`/`ShieldTrigger` 零命中，写权守卫不存在。<br>　· `CHK-2-46` `exit_reason` 四值闭集 ＋ `alarm_window_active` —— 两者全仓零命中，且 `exit_reason` 这个词在 `14` 里也查不到，**判据引用的 `14` §5.4.2 用的是别的措辞** ⇒ 需先确认闭集的四个值到底是什么（§9.1，不擅自定义）。<br><br>　· `INF-AI-01` AI Runtime 部署契约（AIR-P1 `ss -ltnp` 断言只绑 `127.0.0.1`、端口 18081/18082）—— 要两个 AI 服务真在跑才能验绑定；三个单元现为「草稿，不安装」。<br>　· `MOT-PM-34` P1 启动包装脚本与周期计时工具 —— `scripts/` 下零产物；判据要「启动前断言 `/run/xbrain/resolved/p1_motion.yaml` 存在且 MANIFEST 校验通过」，而那要 freeze 线先跑通（已在 SW-17 登记，此处不重复展开）。<br><br>**④ 配置落值类（3 项，是设计行为不是缺失）**<br>　· `CFG-CF-07` `sites/{site_id}.yaml` ＋ `calib/{robot_id}.yaml` —— 骨架已在，落值要现场标定，见 **SW-6**。<br>　· ~~`CFG-BT-05`~~ ✅ **2026-08-23 批45 完成**（`xbrain/boot/boot_fail.py`，三变异体红）。⚠️ **只做到「给 p5 一个待补发列表」** —— 真正的上行接线仍要 p5 事件管线调用 `read_pending` / `mark_uplinked`，那一步归 SW-13。<br>　· ~~`CFG-BT-09`~~ ✅ **2026-08-23 批44 完成**（`xbrain/persistence/migration.py`）。★ 写这条时**断言当场抓到一个真实现缺陷**：SQLite 对 DDL 隐式提交，`with conn:` 挡不住 —— 第一步 ALTER 成功、第二步抛异常，回滚后列仍在，库半新半旧而版本号看起来合法。已改 `isolation_level=None` + 显式 BEGIN/COMMIT/ROLLBACK。⚠️ **框架建好但没有任何一个库登记自己的迁移步骤** —— 四库各自的 `steps` 表要在各库 schema 变更时补。<br><br>★★ **C++ 侧 46 项（Phase 3）＋ AI 服务 13 项（Phase 4）＋ `MOT-PCP-*` 16 项**按你 2026-08-23 的裁定**不做映射**，不在本行统计内。 |
-| SW-11 | **`hmi.bind[0]` LAN2 地址落值**(现 null) | 低 | ★ full 启动 `check_p5_config` 因 LAN2 bind 为 null 而**拒启**(§3.1 设计行为, 报 `hmi.bind[0] unassigned`);voice-loop MVP 走宽松 `make_bound_sockets` 只绑非空口(wifi `192.168.1.7` + `127.0.0.1`)故能跑。等 U-15 部署分配 LAN2 网段地址即落值解除。★ `bind[1]` wifi 已填(2026-08-12 用户明令),`bind_guard` 测试已对齐(f7803c9) |
-| ~~SW-12~~ | **事件存证链路** | — | ✅★★★ **2026-08-17 落地上线(7 批, 287 测试, ORIN 实证)** —— commits `0881fc1`(批1 record.db DAO 按 17 §3.4 权威 schema, 两写一读三连接, ch_seq/dedup/need_ack/JSONL 降级)· `7f129b9`(批2 7 阶段 pipeline + §6.2 channel 推导, 替换错模型占位)· `03b2796`(批3 backfill: 令牌桶限速 20eps + 4:1 加权 + EventReplay 消息)· `887ac3a`(批4 uplink: DeliveryMarker + AckTracker + BackfillRunner)· `2e7f08e`(批5 EventSubsystem 同步/async 桥接进运行 p5, degrade-safe)· `8fcd255`(批6 device 掉线事件 build + debounce 监视器)· `9b46af9`(批7 ORIN 端到端: 真 p5 重启带 XBRAIN_RECORD_DB, 注入 live 事件正确落库 channel/ch_seq/delivered, e2e_check.py PASS). ★ **剩余(非本子系统, 各有卡因)**:① **3 个 device 产生方** —— ✅ **2026-08-17 接线** `DeviceHealthBridge`(p2, 复用 device_events)+ p2 事件发布器(gen.put event/{sev}/{cat}): **MIC 真+已端到端实证**(杀 arecord→cap_alive=False→debounce→`device mic offline`→p5 record.db 落 voice/device_offline); **payload 真**(轮询 payload-service `GET /status` 的 `device.{audio_connected,lights_connected}`=8519/8529 socket, 连通已验证无误报; 真掉线要 GZH-2 socket 断 `[GATED-HW]`); **ptz 真**(2026-08-17 `PtzLivenessProbe` 非阻塞 ONVIF 探测线程 commit `d41efbd`; 三态 up/down/auth, auth 首次即停防锁账户 per docs/PTZ 报告 §8; 真机 192.168.66.13 可达实测不误报);② **实时上云** `[Q-P5-8 ✅ 2026-08-17 决定 A]` —— 云端放宽实时订阅至 `event/{warn,fault}/**`(含设备掉线), 产生侧本就直发无改动, exact 通配甲方 SW-4 落定(commit `1e4abca`)。★★ **断连兜底已补**(批A `d635a70` + 批B `663b3c2`): 批A 重连触发补发(初版 LinkReconnectDetector, 已被批C 收编删除); 批B recon 对账协议(P5 周期发 `event/recon/req{my_max,my_min}`→云端 `rsp{their_max,missing_ranges}`→差集经 `event/replay/{channel}` 重发, `rc-` 批前缀 RC-2, 共享限速器 RC-4, my_min 钳制防无休止对账); **批C `e6e7934` 11 §4.6 LinkState 状态机**(P5 唯一权威 LNK-6): 单调钟 disconnected_s + L0/up→L1/degraded(≥5s)→L2/down(≥20s)→L3(≥rtb_s, rtb_s=None 停用返航 fail-safe)+ LNK-3 滞后(flap 不重置计时)+ LNK-5 冷启动 never_connected 不视为 up + link_epoch(返航幂等)。p5 发 state/link 全字段; snapshot.reconnected 边沿驱动 backfill(收编批A); 修 DeliveryMarker connected 读真 cloud_link。ORIN zenoh_echo 实测 cloud_link:down/level:2/disconnected_s 单调累加/reason:never_connected。**批D `d9ae9f3` P3 断链返航闭环(F-5 / 11 §4.6.4)**: P5 侧 `rtb_s` None→**1800s(30min, 契约建议值; 用户 2026-08-17 拍板临时值, 仍属 U-05 待甲方终确认)**解锁 L3; P3 订 state/link, level==3 按 (gw_start_mono,link_epoch) 幂等入队 return_home(source=charge/prio95, 15 §4.2.1), 实现 failure.py 早设计但未接线的 F-5 inject_return_home。ORIN live e2e: 发合成 state/link{level:3}→p3 注入 return_home t-...004 落 task.db(state=ready), 幂等只一条。★ **L2 按来源拒新任务**(TSK-22)未做(下游, 无真云时空转); reason gateway_restart(需重启持久标记)/transport_error/router_down(需底层 zenoh 信号)+ last_rx_ts 显示字段 deferred; 待真云 SW-4 端到端联调。★ **2026-08-17 架构一致性审计闭环**: U18b 落案(need_ack 并集 `8d0224d`)· F9 修 EventAck result 闭集 ok/duplicate(`2edf261`, 原误用命令 Ack 的 accepted 会让 need_ack 事件永远重发)· F3 device detail 补 reason/socket + F8 eid 防跨重启碰撞(`ad89df4`)· 死代码清理 chip(错模型 backpressure/recon orphan);③ **甲方真云端 endpoint** `[SW-4]` —— uplink/backfill P5 侧全建全测(对 loopback stub), 只剩指向甲方;④ **`common.db.record_db` 落值** `[SW-6]` —— 现走 XBRAIN_RECORD_DB dev 覆盖, 配置落值即转正 |
-| **SW-13** | **事件产生方补全（23 类 + 媒体 + 游标审计）** | 中 | ★★★ **2026-08-17 审计**：事件"管道"(SW-12)建完, 但 23 类事件产生方大多未接线.<br>✅ **已接并 live 实测(4)**：`voice`/`payload`/`ptz` 的 device_offline/online(SW-12)· **`comm`**(批E `7ef0612`: p5 LinkState level 转换→event/{sev}/comm §4.6.8, live cloud_up 实证)· **`task`**(批G `2818307`: p3 scheduler on_transition→event/{sev}/task §6.2, live return_home rh-1-1→ready→accepted 实证)· 批F `a806708` 修 return_home task_id 为 15 §4.2.1 `rh-{gw}-{epoch}`(持久幂等).<br>🔒 **卡"子系统没在 MVP 跑"**：<br>　★ **`rtk`**(2026-08-17 投查纠正: 原判"能做"是错的)—— §3.3.4 rtk 事件 `action_taken` 必填, 闭集只有 `stop_and_suspend`/`stop_and_hold`/`teleop_only` **全是"已停车"值无"未动作"**; 这些停车是 p1 RL-1..8 行为(停自主运动+任务 suspended+声光), 而 p1 MVP **只跑 gnss→pose 桥不跑 20Hz 控制环**(ctrl_loop/speed_gate 在模块里但 MVP 不跑). 现发 rtk 事件只能假填机器人没做的 action_taken -> 违反 §3.2. **需先接 p1 rtk-loss 行为(RL-1..8)才能诚实发 rtk_lost**; heading_degraded/recovered 共用"全停车"action_taken 闭集属契约歧义(§9.1 待澄清).<br>　`mode_change`/`arbitration`(p2 不跑 mode/arbiter, common/arbiter/audit.py 零调用)· `health`/`bit`(p2 health 不在 MVP)· `charging`/`geo`(p3 不跑)· `fence`/`speed_limit`(p1 不跑)· `system`(approval 需 p3 审批, negative-age common/envelope/age.py 零调用)· `teach`/`teleop`/`data`.<br>🚫 **卡硬件/未建**：`intrusion`+`perception`(perception ⚠️未写, cls_permissive.py 零调用)· `chassis`(真底盘等云深处).<br>📦 **基础设施缺口**：① 媒体事件 §3.6/EVT-15(media_json 列 + reference.py helper 在, 但零产生方设 ev["media"], §5.0.2 delivery 表 DDL 都没建)· ② confirmed_upto 游标推进(DAO 有 advance_confirmed_upto 但 runtime 零调用, ack 只翻 delivered 标志, 游标停在种子 0)· ③ deferred comm: link_timer_reset(需重启标记)/ rtb_triggered(需 P3 能量 action/reason_detail + task_id 协同).<br>★ **接线范式**: 纯 helper(cat→sev/detail)+ runtime gen.put event/{sev}/{cat}(eid boot-unique)+ p5 event/** 自动持久化. |
-| ~~**SW-14**~~ ✅ **2026-08-20 完成（批 14/15/16）** | ★★★ **P3 的 `cmd/task` 接收端对齐 `11` §7.2 `TaskCommand`** | 高（解锁 HMI W2/W7 + 云端转发任务） | ★★ **2026-08-20 查证的第五处「实现与契约分叉」**：P3 只认 P4 私有形状 `payload['task_request']`，不认契约 §7.2 的 `{action, task}`；control 类四动作（cancel/pause/resume/clear_queue）**零实现**；且 **P3 不发 `cmd/task/ack`**。<br>★ 三件一起做：① 认 §7.2 信封（五 action 闭集）② control 动作驱动 `machine.py` 已有的转换 ③ 发 `cmd/task/ack`。<br>⚠️ **连带待裁决**：P4 是否同步改发 `TaskCommand`（不改=两个真源；改=动已跑通的语音链路）。见 §7.0 |
-| **SW-16** | ★★★ **P2 的两个接收端接线 + P4 的 C/H 类路由订正** | 高（28% 的语音指令集靠它） | ★★ **2026-08-21 审计发现：128 条意图里 36 条是哑的**，根因是 P2 的接收面从未接线（`p2_subscriber.py` 里那句 `cmd/motion/intent` 订阅是**示例模块**，真跑的 `main_wiring.py` 只订 5 个 state 话题 + speak/payload/ptz）。<br>✅ **C 类模式已完成（批 17，ORIN 实测）**：P2 接 `cmd/mode`（`ModeFace` → 已有的 `dispatch()` 六动作闭集 → `ModeStateMachine` 真换态 → 发 `cmd/mode/ack` + `state/mode`），P4 逐 id 覆盖 C01/C02/C03/C04/C05/C07 → `cmd/mode` 并新建 `mode_request.py` 构建 ModeCommand。<br>⚠️ **本批【故意不接】两条，需你裁决**：<br>　· **C06 `standby`** —— `18` 效果列是「**P3 挂起任务 + P1 hold**」，效果在 P3/P1 不在 P2。它落在 C 类里但不是模式命令，走哪条 key 要定。<br>　· **C08 `query_mode_switch_ok`** —— `18` 标「**查询类(预检)**」L0，操作员问的是「现在能切到喊话吗」。**把提问翻成 ModeCommand 就是替他切了**，🚫 不能顺手接。需要的是一个「模式切换预检」查询通道（P2 侧答，不换态）。<br>✅ **A 类已完成（批 18，ORIN 实测）**：P2 接 `cmd/motion/intent`（G-1~G-11 十一道闸门 + S9.3.2A.4 轴符号换算 + MO-1 换新 `rm-` id + MO-2 参数一律 P2 填 → 发 `cmd/motion/relative_move`），P4 新建 `motion_intent_request.py` 构建 S9.3.2A.3 报文（含 S3.0 信封）。★ **A13 `set_speed_profile` 改走 `cmd/mode`** —— 它在 A 类里，但 §7.3 把它定为 ModeCommand action，§7.3.1（D-04）明确拒绝为它新开 MotionCommand。<br>⚠️ **A 类里另两条待裁决**：**A04 `hold`**（`18` 效果列「P1 `hold` 行为源」，不在 §9.3.2A.4 八值闭集内）· **A14 `set_gait`**（「P2 → quadruped 模式三元组」，也不在 §7.3 六动作闭集内）。两条现仍按前缀落 `cmd/motion/intent`，会被 G-2 拒 —— 是**如实拒绝**不是静默丢弃。<br>✅ **B 类与 H 类已完成（批 19）**：<br>　· **B05/B06/B07** → `cmd/task` 五动作，**task_id 在发起方解析**（读 `state/task.active_task`）。§7.2 禁的是【接收方猜】不是【发起方解析】——帧里写死具体 id，P3 若发现那条任务已变会回 `E_TASK_STATE` 而不是默默暂停另一条；拿不到活动任务就口头说「现在没有正在执行的任务」，🚫 不发 task_id 为空的帧。<br>　· **B12 `stop_follow`** → `cmd/mode` `set_behavior:normal`（`18` 效果列「退出目标导向行为」是运动**行为**不是任务动作；用 cancel 代替会结束操作员还在跑的整条巡逻）。<br>　· **H01/H02/H03/H05/H06/H07/H08** → **`cmd/system`**（`11` §7.15），原 `"H": CMD_TASK` 与 C 类同种错。<br>⚠️ **两条如实不接**：**B10 `skip_waypoint`**（§7.2 五动作里**没有 skip**，映射成 cancel 会结束整条任务）· **H04 `reload_config`**（`18` 逐字「🚫 不进 `cmd/system`」，走 `cmd/config` §7.6 的 ConfigCommand，是另一个消息体）。<br>★★★ **H 类接收端三处全缺**：`11` §2.2.3 按 action 把 `cmd/system` 拆给 `p5_gateway`(reboot/shutdown/time_sync/generate_report) · `p2_core`(sleep/wake) · `p2_core:bit`(run_bit)，全仓**零订阅者**。⇒ H 类改完路由后**仍不生效**，但已是「发在正确 key、形状正确、等订阅者」而非「发在错 key 被 P3 主动丢弃」——这两者对操作员一样，联调时完全不同。<br>★ **A 类端到端的下一道墙是硬件**：G-1~G-4 已在 ORIN 真总线上逐门实测（25 m 在 G-3 带 `limit` 拒、`L1b` 在 G-2 拒、无 `state/clock` 在 G-4 保守拒），G-5 正确点名 `battery`（fatal，因 `chassis_relay` 未接线无 `state/power`）。放行侧要 `allow_motion=true`，而 battery/chassis/cam_rgbd 三项都卡硬件 —— 🚫 不得为看到转发而伪造健康度。 |
-| **SW-15** | ~~W2 `goto`~~ ✅ / ~~W7 `task`~~ ✅ / **W3 `exit_broadcast` 仍未接** | 低（本身很小） | ★ W2/W7 已于 2026-08-20 接完并 ORIN 实测（见 §7.0）。**剩 W3**，仍等 P2 的 `cmd/mode{exit_broadcast}` 接收端 |
-
----
-
-> ★★★ **Phase 0 其余卡点【不在此处重复登记】** —— 2026-08-23 证据映射时逐条核对过，
-> 它们已有归属，重复写会造出第二个真源（`3.7` 要防的正是这个）：
-> · `CFG-CF-3/5/6/7/8`（`configs/` 落值）→ 见 **SW-6**；按 §3.1 未标定就该是 `null`，
->   **是设计行为不是缺失**。
-> · `CPP-CXX-*` / `CPP-BP-*` / `CPP-DP-*`（C++ 侧）→ 见 **§2 C++/ROS2 机器人层**。
-> · `MOT-PCP-15`（perception 配置与模型）→ 见 **SW-2b**。
-> ⇒ 本节只新增 **SW-17** 一条，因为那三项此前**任何地方都没有登记**。
-
----
-
-## 6. 建议推进顺序（软件侧）
-
-1. ⚠️★★★ **~~SW-2 / SW-3 详细设计~~ 已于 2026-08-20 查明【早已写完】**（19 / 20 各约 1000 行，含变异体表与启动自检）。本条原判「最高杠杆、纯设计活」**作废**。★ 接续项是 **SW-2b / SW-3b 的实现**，而 perception 实现卡 `19` §13 的 PD 标定值与相机硬件 ⇒ **不再是「不卡硬件」的那一类**。
-2. **SW-1 LLM tier-2** —— 让语音理解在非设备类也圆润，软件闭环、LLM 已就绪，是语音 UX 的自然增量。
-3. **SW-6 配置落值 / SW-5 测试框架 / SW-7 字符集债** —— housekeeping，随时可插。
-
-> 硬件/云深处到位后，再推第 1-4 节（执行环 + C++ 层 + P1 运动 + 硬件集成）。
-
----
-
-## 7. HMI web server 接线剩余（2026-08-12 · 17 §6.10）
-
-> ★ 已建成:HMI web server 骨架 + 数据读取方法(17 §6.8 A-F 投影)+ 客户样式前端(格栅 1m/字体/尺寸/滚轮/连线样式/标记形状全配置化)+ ESTOP 按钮,已接进 p5_gateway voice-loop 路径,绑 `192.168.1.7:18083` + `127.0.0.1:18083`(逐口, NET-C9)。浏览器 `192.168.1.7:18083` 可看外壳。
-> ★★ **已接**:state/task -> 计划、state/link -> 状态/ESTOP、ESTOP -> `cmd/estop`;**W1/W2/W3/W8(2026-08-12 · commit 见下)**:cmd/fence -> 围栏、event/** -> 事件流、state/mode -> 模式、`/api/fences/active` + `/api/events` 端点。**其余按下列待补**,现状源缺前端置灰(不造假, §3.1/3.2)。
-
-| # | 缺什么 | 状态 | 依赖 |
-|---|---|---|---|
-| HMI-W1 | 围栏/报警区几何:订阅 `cmd/fence` + `FenceCache` 喂 provider; `/api/fences[/active]` 接缓存 | ✅ **已接** | ★ 数据管路通(实测发 cmd/fence -> /api/fences/active 200); 上**地图落点**仍需 enu_origin(W4) |
-| HMI-W2 | 事件:订阅 `event/**` -> 近期环(EVENT_RING=50)喂 events_group + `/api/events` | ✅ **已接** | ★ 实测发 event -> /api/events 返真事件; 地图**红点落位**需 pose 打坐标(W4) |
-| HMI-W3 | 当前模式:订阅 P2 `state/mode` 喂 status.mode | ✅ **已接** | ★ 实测发 state/mode=patrol -> snapshot.status.mode=patrol |
-| HMI-W4 | **位姿/GPS/ENU/航向/速度/实时轨迹/RTK/精度; 且 W1 围栏/W2 事件的【地图坐标落点】依赖 enu_origin** | 未接 `[GATED-HW]` | perception(设计未写)+ rtk_driver(未建)+ quadruped(云深处) |
-| HMI-W5 | 真端到端 ESTOP:§6.3 estop 探活喂 estop_path;§6.4 专用 <=10ms 快路(P-1) | ✅ **探活已接** / 快路 `[GATED-HW]` | ★ **探活机制已落**:`EstopProbe` 状态机(estop_probe.py)+ 每拍 `probe/estop/ping` -> 收 `probe/estop/pong` -> RTT/连续无 pong -> ok/degraded/down(11 CR-2/CR-3 · T-23/T-24)。★★ **无底盘时诚实报 "down"**(按钮置灰),🚫 不再恒 "ok" 造假。★ 剩 §6.4 <=10ms 专用快路(P-1)与 pong 权威源都要 `quadruped`/`chassis_relay`(云深处) |
-| HMI-W6 | WS 推送 state_snapshot + state_delta 增量 | ✅ **完整** | ★ /ws 端点(push_hz 可配), 前端 WS 主、REST 轮询兜底。★ 依赖 **wsproto**(uvicorn 0.52 与 websockets 16.x 服务端不兼容, 用 wsproto 后端; 缺则回退 auto+REST)。★ 修了 `from __future__ annotations` 致 FastAPI 把 ws 参数误判查询参数的 403 坑。★★ **state_delta 已接**(2026-08-14):连接发全量 keyframe, 之后每拍只发变化的顶层组(geo/pose/plan/status/events), 静默拍发空 delta 作 keepalive, 每 30 拍周期 keyframe 自愈; 前端 group-level 合并。ORIN 实测:连接 keyframe -> 静默空 delta -> 注入 state/task 后单拍 `keys=['plan']` 只带变化组 |
-| HMI-W7 | 计划目标点有序表 + 逐点勾选 + 进度 2/N | ✅ **映射已接** / 数据 `[GATED-HW]` | ★ **映射已修**:`_extract_active_tasks` 从 P3 `{schema,active_task:{task_id,state}}` 抽取扁平 task 喂 `_plan`(旧 MVP 把整信封当计划 -> state/targets 全落 None 空白卡)。前端 `state==running` 驱动黄色实时轨迹显隐。兼容未来 1Hz 心跳列表(current_step/total_steps)。★ 剩目标点有序表 + 进度分数需路径展开(EX-1):geo.db 航点 + P1 真执行上报(云深处) |
-| HMI-W8 | 端点集对齐冻结契约(17 §6.5 == 11 §12.2) | ✅ **端点面已齐** | ★ **全部 §6.5 只读端点已上**:`/api/routes` `/api/docks` `/api/health` `/api/bit` `/api/metrics` `/api/approval/pending`(加上已有 fences/fences_active/events)。★★ **诚实可用性**(ORIN 实测六端点全 200):`/api/health`+`/api/bit` **订阅 P2 `health/factor`/`health/bit` 已接、中继链路已证**(注入 health/factor -> available:true 原样直透, G-2 同源),但 **P2 voice-loop MVP 尚不发 health/**(那是 P2 全设计行为), 故当前 available:false;routes/docks(geo.db 卡)/metrics(遥测聚合器未实例化)/approval(L3 队列无喂入)一律 available:false 不造假。★ 剩 `/api/geo/manifest`(§12.2 新规范式, routes/fences/docks 作兼容别名)与上述源真正产数 |
-
-> ★ **纯软件部分全部完成**:W1/W2/W3/W5(探活)/W6(含 state_delta)/W7(映射)/W8。剩余全部卡硬件(云深处底盘/rtk_driver/perception):W4 位姿全片(总闸,也解锁 W1/W2 地图落点)· W5 §6.4 <=10ms 快路 · W7 目标点表+进度(EX-1)。
-
-#### 7.0 ★ HMI 上行（`11` §12.1.1 的 W 表 —— 与上面的 `HMI-W*` 是【两套编号】）
-
-> ⚠️★★★ **先分清两套 W**：上表的 `HMI-W1..W8` 是**本册自造的接线进度编号**（W4=位姿、W6=WS 推送…）；
-> `11` §12.1.1 的 `W1..W8` 是**契约的上行可写类**（W1=estop、W4=geo、W7=task…）。**两者毫无对应关系**。
-> 本小节只讲契约那一套，逐条写 `11 W*` 以免再混。
-
-★ **背景**：HMI 的 WebSocket 此前**只下行**。2026-08-20 接上行半边（commit `26fdcb0` / `6db7041` / `adbd290`）。
-
-| `11` W# | 类 | 状态 | 说明 |
-|:--:|---|---|---|
-| **W1** `estop` | 急停 | ✅ **已接**（REST `POST /api/estop`） | ★ §12.1.1 明定它是全表唯一例外：**旁路 schema 校验、旁路限流、旁路降级**；WS 侧不再重复实现，避免两条 estop 路径 |
-| **W2** `goto` | 点击导航 | ✅★★ **P5 侧已接并 ORIN 实测** / 前端点图待接 | ★ `waypoint_id` 与 `lat`+`lon` 二选一（**两者同时给以 `waypoint_id` 为准**，§12.1.1 W2 明写的优先级，🚫 不是"拒绝歧义"）；落成 `cmd/task{submit, task.type:"goto"}`（🚫 **不发 `BehaviorCommand`** —— 发布者闭集只有 p2/p3，且会绕过 P3 围栏前置校验与 U07a 断点账本）。<br>★★ **退役的 `speed_profile` 一律拒不降级**：`cruise`/`transit` 已被 U33 删除，回 `E_SCHEMA`（§13.6 ③ 禁"就近解释"；降级成 `patrol` 会让停在旧词表的前端两侧都看不出错）。<br>★ **ORIN 实测**：WS → P5 → `cmd/task` → P3 `accepted`，`task.db` 落 `t-20260820-001/002`，`source=local`（§4.2 hmi→local）、`priority=40`（§4.2 起源表，🚫 不再是写死的 50）、`trace_id=h-<req_id>`。<br>✅ **前端地图点选已做（批20）**：点图落钉 → 横幅显示经纬度 → **再点「确认前往」才发**（两步，防触屏误触）。★ 反投影 `fromXY` 是 `toXY` 的**代数逆**（同 R、同 `cos(origin.lat)`、同北向取负）——两者若各写一套近似，操作员看到的钉与机器人去的点会不一致而屏幕上看不出来。★ 无 `enu_origin` 时**拒绝点选并说明**，🚫 不落到 0,0。<br>⚠️ 机器人仍不动（见下表） |
-| **W3** `exit_broadcast` | 退出喊话 | ✅★★ **已接并 ORIN 实测（批20）** | ★ 前置（P2 的 `cmd/mode` 接收端）已于批 17 建好。<br>★★ **无前置约束、无 L2 确认**，§12.1.1 逐字：不受任务状态/模式状态/L2 的任何约束，只做一件事——退出 B。**加确认反而有害**：它存在的场景正是本地麦被半双工门控关闭、云端对麦说「停止喊话」会触发自触发回路，此时它是**唯一不经语音的出口**。<br>★ 但**不旁路 `restricted`**（W1 是唯一旁路项）。<br>★ ORIN 实测：WS → `cmd/mode` → P2 ModeFace → `accepted`（`changed:false`，因当时已在 idle——诚实回答不是假成功） |
-| **W4** `geo` | 地理要素 CRUD | ✅★★★ **已接并 ORIN 实测** | ★ `rename`/`set_state`/`upsert`/`delete`/`refs` 五 op；`origin` 恒打 `hmi`（CH-2）；`cmd_id = "h-" + req_id`；限流 10 msg/s（超限回 **`E_BUSY`** + `detail.reason=rate_limited`）。<br>★★★ **W4-F 围栏一律不可写**（按 `geo.type` 判**不按 op 判**）：`upsert`/`delete`/`rename`/`set_state` 四写 op 全拒 `E_CHANNEL_DENIED{reason:"fence_not_writable_from_hmi"}`，`refs` 只读放行。依据 `00` HMI-03a + §12.1.1（**停用一个 `allow` 围栏与删除它等价**，故只拒 `delete` 不够）。<br>★ **ORIN 实测**：WS 帧 → `cmd/geo` → P3 `accepted` → `geo.db` 里 `updated_by="hmi"`、rev 1→2→3；围栏 `set_state` 被拒且 `fence.db` 四条 state/rev **全未变** |
-| **W5 / W6** | 墓碑 | — | ★ `W6` = `teleop` **整类移除**（`00` HMI-03a：持续驱动永不进 HMI 可写面）。号位保留不复用 |
-| **W7** `task` | 任务 pause/resume/cancel/clear_queue | ✅★★★ **已接并 ORIN 实测（含浏览器点击）** | ★ `task_id` **必填**（`clear_queue` 除外）—— §12.1.1 W7 与 §7.2 用同样的话禁止"省略=当前任务"：队列是活的，操作员看到"A 在跑"到帧到达之间 A 可能已结束而 B 开始。<br>★ `pause`/`resume` **L0**，`cancel`/`clear_queue` **L2**（`18` B07）。<br>★★ **前端按钮按 P3 转换图（§4.4）画**：`running`→暂停+取消 · `suspended`→继续+取消 · **排队态（pending/scheduled/ready/blocked）→取消**（★ 最初漏了排队态 —— 误提交的任务正停在那里，是最可能要撤的一条）· 终态无按钮。<br>★★★ **确认用"同一按钮两次点击"不用 `confirm()`/`alert()`** —— 原生模态会阻塞单线程，**地图在机器人移动时停止重绘**、WS 帧堆积；armed 态就地显示任务号与已完成进度（§12.1.1 要求弹窗显示这两项）。<br>★ **ORIN 实测**：浏览器点"暂停" → `rh-1-1` `running→suspended`（`suspend_kind=passive` / `operator_pause`，CR-8：人工暂停是 passive 不是 yielding）→ 点"继续" → `ready`；`task_cmd_log` 落 `h-<req_id>`。第一次点"取消"只 armed **不发帧**（实测状态与 cmd log 均未变） |
-| **W8** | PTZ 直控 | ⬜ **保留未开放** | 契约本身未开放，🚫 不得自行接线（冻结项 F-8） |
-| — | `teach`（录制） | ✅ **只读已接** | ★★★ **teach 不在白名单**（5 类闭集里没有它）。用户 2026-08-20 裁决：**HMI 只读**。P5 订 `state/teach`（§12A.5）→ 快照 `teach` 组 → 前端徽标 + `teachLayer` 轨迹；🚫 不发 `cmd/teach`。<br>★ 已就地订正 `11` §2.2 的 `cmd/teach` 发布者列（划去 `p5_gateway`）。<br>⚠️ **轨迹是【近似】**：§12A.5 故意不下发点序列（2000 点会撑爆 1 Hz 话题），前端按 `last_point.seq` 逐帧累积，丢一帧就少一个点；图例标「近似」，会话一结束即清空交给 `geo.db` 权威几何 |
-
-**★★★ W2 / W7 的真正前置 —— 缺口在 P3，不在 P5**（2026-08-20 查证 · ✅ **当日已全部做完，见批 14/15/16**）
-
-| # | 实测事实 | 后果 |
-|:--:|---|---|
-| ① ✅ | ★★ **P3 的 `cmd/task` 接收端只认 P4 的私有形状 `payload['task_request']`**（`task_recorder.py` 逐字：没有 `task_request` 的帧是 control 或 device 命令 → **skipped**） | ★★★ HMI 按契约 §7.2 发 `{action:"submit", task:{…}}` 会被 **静默丢掉**。★ 同样影响**云端经 P5 转发**的任务（§2.2 v0.7.8 起 P5 是云端任务唯一转发者） |
-| ② ✅ | ★★ **§7.2 的 control 类 action 零实现**：`cancel` / `pause` / `resume` / `clear_queue` 在 P3 侧没有任何接收与分派（状态机 `machine.py` 的转换图**有** `cancel`/`suspend`/`resume`，但没有从 `cmd/task` 驱动它的入口） | W7 的四个动作全部落空 |
-| ③ ✅ | ★ **P3 不发 `cmd/task/ack`**（全仓仅 `p5_gateway/outbound` 的 key 清单提及），而 §12.1.1 的 W2/W7 都要求 `ack ≤ 2s` | 浏览器点了没有任何回执 |
-
-⇒ **W2/W7 = 一个 P3 批次（§7.2 TaskCommand 接收端：认契约形状 + 五个 action + 发 ack）+ 一个很小的 P5 批次（`uplink.py` 加两个 builder）**。
-
-| 项 | 现在做的终局效果 | 卡硬件？ |
-|---|---|---|
-| **W7 `task`** | ✅★★ **已兑现** —— 浏览器点击真改任务状态机，卡片跟随刷新 | ★ **不卡**，纯状态操作 |
-| **W2 `goto`** | ★ **仍只有半个** —— 落库 → 进队列 → 卡片出现（已实测）；但 `allow_motion=false`（§4.1 ③）+ P1 不执行路径（EX-2）⇒ **机器人不动** | 后半段卡 |
-
-**★ 本批【未做】的三项（🚫 不要当成已完成）**
-
-| 项 | 事实 | 归属 |
-|---|---|---|
-| **语音 `pause`/`cancel` 仍然无效** | §7.2 要求 `task_id` 且禁止"省略=当前任务"，而语音说不出 `t-YYYYMMDD-NNN`。缺的是"我指哪条"→`task_id` 的解析，且要先让操作员知道那是哪条。⇒ P4 的这些 control 意图仍发 `p4_intent_v1`，P3 按**无顶层 `action`** 走旧 recorder 分支并 skip | 新工作，非本批遗漏 |
-| **W2 前端地图点选未接** | 后端已可用（实测），但浏览器没有"点图发 goto"的交互 | 小前端批次 |
-| **P3 遗留 ingest（`voice_task.py` / `task_recorder.py`）已成创建路径死代码** | 全仓已无发送方发 `task_request`；它现在只承担"无 `action` 帧 → skip"。删它是独立清理，🚫 本批不动（会连带动到 skip 分支） | 债，记此处 |
-
-> ✅★★★ **已裁决并做完（用户 2026-08-20：「P4 同步改发 TaskCommand」）**：P4 现发契约 §7.2 `TaskCommand`，私有 `task_request` 形状及其过渡垫片 `looks_like_p4_shape` **已删除**（§9.3：留着就是第二个可接受形状）。旧形状现被拒并回 schema 错误，有断言守着。
->
-> ★★★ **同批查出并修掉的两处更严重分叉（都不是原计划内的）**：
-> ① **上行帧嵌套 —— `cmd/task` / `cmd/geo` / `cmd/teach` 三个 key 全中**：P4 的 `build_payload` 把编排器构出的命令当作**槽位**并进 `p4_intent_v1` 信封，线上跑的是 `{schema, intent_id, text, geo_command:{…}}`，而 P3 三个解析器都读**顶层** `cmd_id`/`action`。⇒ **F 类语音（录制/保存/删除）在线上从未成立过**；两侧单测各自全绿也看不见——一侧断言构建器返回值，另一侧喂手写帧。
-> ② **L2 确认路径根本不构命令**：`_resolve_pending_confirm` 直接 `dispatch(entry.id, held_text)`，跳过槽位填充与命令构建。而 **L2 恰恰全是破坏性意图**（F11 删路径 / F13 删围栏 / F15 换启用围栏）—— 操作员被问"确认删除吗"、答"是"，P4 发出的是**不含目标也不含 action 的空信封**。
-> ⇒ 新增 `tests/integration/test_p4_p3_command_frames.py`：全仓**唯一**断言【发布帧】与【解析器】配对的地方，且刻意调 `decision_to_publishes` 而非构建器（断言构建器正是本次盲区的成因）。
-
----
-
-#### 7.1 REST 端点词表:死代码已删,全面对齐留给真实现 GWY-P5-13(2026-08-14 裁决)
-
-**背景**:`xbrain/p5_gateway/rest/endpoints.py` 原有 `READONLY_ENDPOINTS`(自称 GWY-P5-13 / 引"17 S12")是早期残留,与现行冻结契约不一致,且它的 `check_readonly()` 是**死代码**(全仓无 live 调用,只有 `test_batch_c.py` 测它;实际 HMI server 只用 `fences_endpoint`)。
-
-**已做(选项 A · 删死代码,不重写)**:删除 `READONLY_ENDPOINTS` + `EndpointNotAllowed` + `check_readonly` 及其 4 条元测试(`test_rest_get_ok`/`post_rejected`/`unknown_endpoint`/`len==8`),保留已接线且正确的 `fences_endpoint`(P5F-2 的 E_DEGRADED 前置)+ 其 2 条测试。理由:重写一个没人读的死常量只会造成"已对齐"假信号(§3.2);删掉即让全仓**只剩一份端点真源**(build_app 的 §6.5 live 面)。
-
-**契约调查结论(供真实现时用)**:
-- ★ REST 只读端点集**无 HW-1 式硬约束**(「单一常量生成+不一致拒启动」只管 WS 上行写白名单, 11 §12.1.4),只受 F-8 冻结评审门管;所以运行期"拒非白名单 REST 路径"守卫**并非契约要求**。
-- ★★ **11 §12.2 与 17 §6.5 两张权威表本身不一致**(实测逐字):§12.2 独有 `teach/session[/points]` `teleop/state` `arbitration[/{domain}]` `geo/manifest` `geo/{type}/{id}[/refs]` `geo/conflicts`;§6.5 独有 `metrics` `approval/pending`(后者带 G-2「与 state/approval 同队列」硬语义)。W8 现按 §6.5 落。
-- ★ 那 4 个旧端点(telemetry/tasks/dock/link)在 11/17/99 **零命中**——从未进过契约,非被删。归宿:telemetry 被 G-2 砍(留单个 metrics)、tasks 走 WS `state/task`、link 走 WS 下行 `link` 投影、dock 仅存 geo `/api/docks`。
-
-**留给真实现 GWY-P5-13 一并处理**(部分卡):
-1. ★★★ **先裁 REST 面以 11 §12.2 还是 17 §6.5 为准**(11 是契约唯一真源→§12.2,但 §6.5 的 metrics/approval 要有归宿);据此重建 build_app 端点集。
-2. GWY-P5-13 真验收:只读拒写守卫(按定案词表重新生成)、`/api/fences*` 的 E_DEGRADED 带 `(fence_set_id,rev,crc32)` 三元组、`/api/approval/pending` 与 `state/approval` 同队列、`/api/events` 排序键 `(channel,ch_seq)`、`test_rest.py` harness。
-3. ⚠️ `/api/events` 返回体 schema / since 语义 / 排序键 / 分页游标在契约里**本身仍"未定"**(17 §6.8.5 第 8 项),须 11 侧先落笔。
-
-#### 7.1A ⚠️★★★ 待裁决 · Zenoh gossip：RT-C2 平面隔离 vs 2026-08-10 实测（全库回归里长期红）
-
-> ★ 登记于 2026-08-23。`tests/deploy/test_zenoh_router_config.py` 两条用例
-> （`test_rt_config_disables_gossip` / `test_gen_config_disables_gossip`）**持续失败**，
-> 且**不是硬件阻塞** —— 是契约与实测正面冲突，必须人拍板。
-
-| 侧 | 逐字依据 | 后果 |
-|---|---|---|
-| **契约** | `11` §1.1.2 **RT-C2**：两个平面都必须显式 `scouting.gossip.enabled = false`。理由写得很硬：「gossip 会通过已建立的链路扩散节点信息，形成间接串接。★ V5 只有一个 router，gossip 未关无害；**V6 有两个 router，跨面进程的两条链路正好是 gossip 的扩散通道 —— V6 必须关**」 | 这是**平面隔离**约束，不是性能取舍 |
-| **实测** | `configs/zenoh/router_gen.json5` 现为 `gossip.enabled: true`（2026-08-10，标记 `V-ORIN-ZN-GOSSIP`），带 `multihop:false`。实测：peer 客户端经路由发布时 **`false` → 0 收包 / `true` → 160** | 关掉 gossip，peer 之间发现不了对方的订阅，总线不通 |
-
-**三条路，各自的代价**
-
-| # | 做法 | 代价 |
-|---|---|---|
-| ① | 客户端改 `mode=client` | 偏离 `11` §1.1.2 钉死的 `mode: peer`（`session_factory._MODE` 就是照它写的）；client 模式要求 router 先起，启动序变严 |
-| ② | 接受 `gossip=true` 并订正 RT-C2 | **削弱平面隔离约束本身**。⚠️ 需论证 `multihop:false` 是否足以堵住 RT-C2 点名的那条扩散通道（跨面进程同时直连两个 router） |
-| ③ | 另找发现机制（显式配置对端 / 静态订阅表） | 工作量最大，但两侧约束都不动 |
-
-★★ **在裁定前这两条用例会一直红。**🚫 不要为了让它绿而改测试 —— 它守的是 RT-C2，而 RT-C2 守的是隔离。
-
----
-
-#### 7.2 ⚠️ 待裁决 · 围栏 role 枚举 vs P3 zone_label(W1 附带发现)
-
-**现象**:契约围栏 role 是闭集 `allow/forbid/zone`(17 §6.8 / 11 §9A.2),映射到显示类型 `active/forbid/alarm`(活动/禁入/报警,决定连线样式着色 17 §6.10.2A)。但 **P3 的 `fences` 表(15 四库模型)只存自由文本 `zone_label`,没有 role 枚举列** —— 所以 `cmd/fence` 几何 P5 收到时可能不带 role。
-
-**现处理**(hmi.js `fenceType`):优先读 `role`;缺则按 `name`/`zone_label` 关键字回退(含"禁入"->forbid、"报警"->alarm、"活动"->active);**再缺默认 `active`(keep-in)**。⚠️ 即**未按这三个关键字命名的围栏会被误判为活动区**(亮蓝粗实线),而它可能实为禁入/报警。
-
-**待裁决**(归 P3 `15` / 契约 `11` §9A.2,本册不代改):P3 `fences` 表是否补 role 枚举列并在 `cmd/fence` 携带 role,还是契约正式承认"按名判型 + 默认 active"这套启发式?在裁定前,W1 围栏样式对**非常规命名**的围栏不可靠。
-
----
-
-## 8. 部署 / systemd 收尾（2026-08-16 · 批2-4 正规部署）
-
-> 批2-4 把 `deploy/systemd/` 的单元从「草稿 + 若干失效」硬化成「可一键安装、ORIN 实测通」。
-> 提交：`38ee531`(批2 硬化)· `6dba157`(批3 install 机制)· 本批(批4 验证 + uninstall 通配修复)。
-> ★ 安装**机制已成 + ORIN 实测 install / uninstall / gated-skip / mount 全绿**。**DEC-15 已于 2026-08-17 收口**(U83：命名 `xbrain-` + install root `/opt/xbrain_v6/data/install`)；剩下是**构建系统实现(DEP-5)+ 标定/回填**，enable 不再卡决策。
-
-### 8.1 已完成（DEC-15 无关的正确性 + 机制）`[DONE]`
-
-- **单元硬化**(批2 · `38ee531`)：删致命 `WatchdogSec` 重启环(★ 实测确认 systemd 会杀不发 `WATCHDOG=1` 的单元，6s 后 `Result=watchdog`)· 7 个未编译 C++/bridge 单元加 `ConditionPathExists`(缺二进制干净跳过)· `StartLimit*` 从 `[Service]` 移 `[Unit]`(v229 起放错被静默忽略，Restart 单元丢重启限流)· zenohd 路径 `services/zenoh/zenohd`→`/usr/local/bin/zenohd` · 新建 `run-xbrain.mount` · 修 `llm` 悬空 `After=perception.service`→`xbrain-perception.service` · 修 zenohd-gen 恒绿失效的占位符检查(`"\${"` 是 unknown escape → bash 报错 → `!` 吞错 → 检查永不 fail，§3.2)· `Documentation=` ASCII 化。`systemd-analyze verify` 仅剩 7 个 gated 二进制的预期告警。
-- **install 机制**(批3 · `6dba157`)：`scripts/install_units.sh`(install / dry-run / enable / uninstall；排除 3 个 AI 草稿；**默认不 enable**)· `deploy/etc-xbrain/{robot.env,network.env}` fail-safe 模板(rid 留空 → rtk 明确拒启；IP 用 127.0.0.1 → 绑回环不暴露)· `p1-motion` 补 `EnvironmentFile=-/etc/xbrain/robot.env` 接 `XBRAIN_ROBOT_ID`(缺则 gnss 桥 OFF、state/pose 断流)。
-- **ORIN 实测**(批4)：install 18 单元 dormant + 模板创建 → 单元状态 `disabled`(不 enable)· `xbrain-maxfan` 完好 · p1 依赖链带正确 `xbrain-` 前缀解析 · **gated 跳过实证**(perception 无二进制 → `ConditionResult=no` / `Result=success` / `inactive`，**不 fail 启动**)· **run-xbrain.mount 实测挂载** `/run/xbrain` tmpfs(size=64M / mode=755)· uninstall 只删已知集(★ 修了会误删 `xbrain-maxfan` 的宽通配 bug)· 验证后**完全还原基线**(dev 栈 5 进程未扰)。
-
-### 8.2 剩余卡点
-
-| # | 缺什么 | 卡因 |
-|---|---|---|
-| DEP-1 | **enable 到 boot + 3 个 AI 单元(ai-asr/llm/payload)安装** | ~~`[GATED-DECISION]` DEC-15~~ **已解**(U83, 2026-08-17)。enable 现只等：标定安全参数(§3.1，否则 freeze 拒 null)+ `/etc/xbrain` 真值；AI 三单元另等两处 `11` 回填(§11A.2.3 ai_asr 模型账按 AIR-M1、payload 的 §11A.6.3 OOM 行)。就绪即 `sudo install_units.sh --enable`。 |
-| DEP-2 | **chassis_relay 的 `10` §3.3.8 watchdog 重新加回**(Type=notify + WatchdogSec + sd_notify 三者同时) | `[GATED]` 卡 chassis_relay C++ 实现 `sd_notify(WATCHDOG=1)`；批2 已在单元内就地注明「延期非删除」。p1-p5 / 路由同理:实现心跳后可加。★ **单加 WatchdogSec 会重启环**(实测)，必须与 Type=notify + sd_notify 一起。 |
-| DEP-3 | **zenohd-gen 空变量守卫**：`LAN2_IP`/`WIFI_IP` 为空 → envsubst 写空串 → endpoint 变 `tcp/:7447` → zenohd 可能当 bind-all(触 NET-C9) | `[SW-NOW]` 现仅靠模板 127.0.0.1 占位兜底，**无单元级守卫**。需 `ExecStartPre` 校验两 env 非空再启。批2 已在 zenohd-gen 单元注释标记该 gap；现有 `grep '${'` 检查抓不到(envsubst 对未设变量写空、不留占位符)。 |
-| DEP-4 | **p2-p5 的 `common.robot_id` 来源确认**：config-freeze 必须**无** `XBRAIN_ROBOT_ID` 才能跑(否则 materialize abort，dev 实证)，那快照里 `common.robot_id` 从哪来? | `[SW-NOW 待核]` p1 / rtk 运行期直读 env 已解;p2-p5 走 freeze 快照的 `common.robot_id`(layers.py 在 freeze 期映射)。需确认**生产 freeze** 的 robot_id 流(configs/ 直填? 还是 freeze 另有取法)，避免快照 `common.robot_id` 为 null。 |
-| DEP-5 | **构建系统实现:C++ 装到 install root `/opt/xbrain_v6/data/install`**(DEC-15/U83 定的 root) | `[进行中]` ★ **rtk_driver 已完成(2026-08-17)**:CMakeLists 加 `install(TARGETS rtk_driver RUNTIME DESTINATION lib/${PROJECT_NAME})` + `CMAKE_INSTALL_RPATH=/usr/local/lib`(自解析 libzenohc,不靠 LD_LIBRARY_PATH);ORIN 实测 `cmake --install --prefix .../data/install/rtk_driver` 落 `data/install/rtk_driver/lib/rtk_driver/rtk_driver`,`ldd` 通,单元 ExecStart 已指向它,verify 无告警。**剩余**:① `chassis_relay`/`teleop_input` **尚未建**(未建/GATED),建时按同一 install 约定加规则;② ROS2 包(perception/quadruped)走 colcon,但 **ORIN 现无 colcon/ROS2**;③ 编译树(build/)按 §0.2 宜移出 `ros2_ws/`(dev 栈仍用 `ros2_ws/sensor/build/`,是 dev-vs-deploy 正常分叉)。感知/底盘本体仍 `[GATED-HW/DESIGN]`。 |
-
----
-
-## 10. 云端 Qt 联调 (2026-08-24 批54~59 落地后的剩余)
-
-> 网关这一侧**已全通**：v2.0 的 17 条 key 全部真接线，出入站都有内容与节律。
-> 断的是它**下游的两跳**。分清这一点很要紧 —— 联调当天若把「云端没反应」
-> 当成网关问题，会往错的方向查一整天。
->
-> ★★★ 判据是**可执行的**，不是本表：`tests/integration/test_cloud_acceptance_path.py`
-> 从真实 pub/sub 图算出每类指令的终点，与冻结的 `TERMINUS` 表对撞。
-> 链路补通它会红 —— 那是好事，它强制改表。本节只是给人看的索引。
-
-| # | 缺什么 | 影响 | 卡因 |
-|---|---|---|---|
-| ~~**CLD-1**~~ ✅ **CLD-1 已闭合（软件侧三订阅者全接）** | **`cmd/estop` 三个软件订阅者全接**：p2_core（域①缴械+`state/arb/motion`广播+域④爆闪，批62）· p1_motion（本拍零速+stop_reason latch+re-arm，批63）· p3_task（ES-1 freeze 冻结调度，批64）。契约（11 §1.4）第四个 chassis_relay 是 C++（CR-1 纯转发，真正执行路径 SE-1a）。判据 `test_estop_reaches_all_three_software_subscribers` | — | **剩余子项见 CLD-1b/1c** |
-| **CLD-1b** | p1 的**物理 20Hz cmd_vel 零速**待 ctrl_loop 在 `__main__` 激活（GATED-HW，整个控制循环的 gate，非 estop 引入）。订阅+latch+归因+ctrl_loop estop 逻辑均真实可测 | 真正的物理急停执行是 quadruped Tier1（SE-1a）；p1 是软件侧冗余记录+（未来）零速 | `[GATED-HW]` 随 20Hz 控制循环激活 |
-| ~~**CLD-1c**~~ ✅ **已完成（批65）** | p3 **ES-2**（挂起当前 running task，kind=`passive`+reason=`estop_soft`，新 `DAO.suspend_task`）+ **ES-3**（解冻）全接。★★★ **ES-3 通道认知修正**：批64 曾写"p2 unfreeze 信号通道"，实际契约（15 §11.1 终审 F5）逐字是"**一条人显式发起的 `cmd/task{submit\|resume}`——该指令本身即解冻信号并立即执行**"，不是 p2 专门信号。`is_human_resume_command` 判 source∈{cloud,wecom,local}，**auto/charge 系统任务不解冻**（return_home 低电自动注入不能解急停）。判据 `test_p3_estop_resume` | — | 已闭合 |
-| **CLD-2** | **`p3_task` 不发 `cmd/motion/intent`** —— 任务到运动执行那一跳未建（既有 PB8「执行接线」） | 云端 `GOTO_KEYPOINT` 会收到 `ack=accepted` 与 `state/task` 状态流转，而底盘那侧**一个 APDU 都不会出现** | `[SW-NOW]` 非本轮引入，但云端联调会第一次把它暴露在客户面前 |
-| **CLD-3** | `state/media` / `data/file/index` 无内容源 | 发空数组保活（不是不发），Qt 显示「无可用画面 / 无文件」 | `[GATED-HW]` 相机与文件面未建 |
-| **CLD-4** | `state/robot` 的 `battery` / `storage` 恒 `null`；`robot_state` 只报 `idle`/`running` | Qt 显示「未接入」而非编造值（§3.1 投到线上） | `[GATED-HW]` `state/power` 无发布者；充电态在 p3、急停接合态无发布者 |
-| ~~**CLD-5**~~ ✅ | **E-2 已裁决**（用户 2026-08-24）：L3 → `degraded`。批66 落地。「已触发返航」通过 `state/task` 的 return_home 任务体现（state/link 无返航字段）；越界 level 仍抛 | — | 已闭合 |
-| ~~**CLD-6**~~ ✅ | **E-3/E-4 已按原则解决**：E-3 取 5s（客户 v2.0 优先，批55 已实现）；E-4 不自造码用既有等价（批49）。见 `docs/MISSON/契约对撞_v2.0对11.md` E 节 | — | 已闭合 |
-| **CLD-8** | **`11` 契约文档回填债**（非阻塞联调）：① cmd/task/ext → 云端入站口改记 cmd/task（E-1）· ② 信封 v1.0 七字段 → v2.0 六字段 · ③ `state/media` 保活 10s → 5s（E-3）。实现已全按 v2.0，对撞脚本仍标 2 个 BLOCK 提醒回填 | 11 是 25000 行契约、需保留订正痕迹，回填是独立文档工作，**不阻断联调** | `[SW-NOW 文档]` 回填 `11` 三处 |
-| **CLD-7** | 事件转发与 `17` §3.5.0「P5 不是实时中继」的措辞冲突 | 已按用户 2026-08-24 明令（客户三份文档优先）实现为网关转发；**实质理由**：生产者发的是裸事件体没有六字段信封，即便改 key 也仍缺信封，加信封的点只能是网关 | `[待回填文档]` `17` §3.5.0 需补一句说明 |
-
----
-
-## 9. 汇总 · 剩余全部卡点(2026-08-14 核对)
-
-> 纯软件能推的都已推完(HMI W 系列 + SW-1)。以下是**现在推不动**的,按卡因归三类。已在上文各节详列,此处只作索引确认"全部有落点"。
-
-| 卡因 | 项(章节索引) |
-|---|---|
-| **[GATED-HW] 云深处底盘/RTK/相机/遥控** | EX-2..6(§1)· quadruped/chassis_relay/rtk_driver/teleop_input(§2)· P1-1(§3)· 硬件集成(§4)· ★★★ **录制端到端四道门(§4.1，当前终点=`cam_rgbd` 无生产者)** · HMI-W4 位姿全片 / W5 §6.4 快路 / W7 EX-1 数据(§7)· chassis_relay watchdog 待 sd_notify(§8/DEP-2) |
-| **[GATED-DESIGN] 设计未写** | ⚠️★★★ **2026-08-20 订正：perception / RNS 两份详设【已写完】**(19 · 20)，本类**不再含它们**；余 P1-4 航向丢失恢复 odom 桥接+视觉重捕(§3，依赖 quadruped odom + perception + RNS 三者的**实现**) |
-| **[GATED-DECISION] 待用户/契约裁决** | REST §12.2 vs §6.5 谁权威 + GWY-P5-13 真实现(§7.1)· 围栏 role 枚举 vs zone_label(§7.2)· ★ **P4 是否同步改发 §7.2 `TaskCommand`**(§7.0/SW-14)· rtk_driver 语言待定(§2；平台基线 D-45 本身已 U74 定 Humble/22.04)· ~~DEC-15~~ **已 U83 收口(§8)** |
-| **[SW-NOW] 纯软件可推(非卡,待排期)** | ★★ **SW-14 P3 `cmd/task` 对齐 §7.2(解锁 HMI W2/W7 + 云端转发)** · SW-15 W2/W3/W7 的 P5 builder · SW-2/3 设计 · SW-4 云上行 · SW-5 测试框架 · SW-6 配置落值 · SW-7 字符集债 · SW-8 充电执行 · SW-9 全系统圆润 · SW-10 comment_ratio · SW-11 LAN2 bind 落值 · ~~SW-12~~ **已上线** · DEP-3 zenohd-gen 空变量守卫 · DEP-4 robot_id 快照源核实 · DEP-5 构建系统装 data/install(§8) |
+- 真实感知接入 W-1~W-10(`19`);p3 路网 #20-14;`20` §15 待确认清单其余项。
