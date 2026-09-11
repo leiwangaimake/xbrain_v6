@@ -268,19 +268,19 @@
 
 | 项 | 内容 |
 |---|---|
-| 真源提交 | 提交号 **`2ea429a`**（四册 ＋ 本文首版同一提交；附录 C 回填为其后继提交，tag 指向回填提交），tag **`perception-r3-20260911`**；仓库 `https://github.com/leiwangaimake/xbrain_v6` |
+| 真源提交 | 提交号 **`7f67c72`**（四册 · `rns.yaml` · 代码批 #20-22～#20-25 之后的真源状态；附录 C 回填为其后继提交，tag 指向回填提交），tag **`perception-r3-20260911`**；仓库 `https://github.com/leiwangaimake/xbrain_v6` |
 | 离线包 | `perception_pack_20260911.tar.gz`：下表全部文件 ＋ `SHA256SUMS`（逐文件）＋ `COMMIT.txt`（提交号与 tag）。★ 每次真源变更重出一包，🚫 增量 |
 
 | 文件 | SHA256（真源提交下） |
 |---|---|
 | `docs/11-接口契约.md`（§1.6 · §2.4 · §3.1B） | `834f9b287fa66f9ed89c17a7267daa5ade7d227c1c8afcf61f6770625165b8ef` |
-| `docs/19-perception详细设计.md` | `110252850620f412f3c14b7a5529fa1585bb8fce32487b3f1f8ab2a423391e16` |
-| `docs/20-RNS反应式导航软件系统详细设计.md`（§3.1 · §5.1.1 · §12.2 · §15） | `199b1a29e444159ebbd2d7145dc5c0607b4a75b2d33e8b9bb1f144c47ce6ff3f` |
-| `docs/12-P1运动域详细设计.md`（§12.0A `rns.yaml` 定义处） | `3c5927b25178a81be0a3a7501514865819aa3f99fe4900a0b55c5531fd5b5312` |
+| `docs/19-perception详细设计.md` | `4cdc52aa008519facb17e3b6c3aef81e32b238d583f493c9d21180ac95db717b` |
+| `docs/20-RNS反应式导航软件系统详细设计.md`（§3.1 · §5.1.1 · §12.2 · §15） | `eea1aa49a12eb69b01f26806c2df8d21a84f21aab9c682012f705e6f7b0d293b` |
+| `docs/12-P1运动域详细设计.md`（§12.0A `rns.yaml` 定义处） | `1a98cad57ae09820813ef4cc972796216eeb5d5ec6b145fc480e7bfb85d29b1e` |
 | `docs/perception-rns-interface-20260907.md`（冻结） | `69116411375f18048a7c1c13e5d7668781d4d51321ec6e1b89b0003c9853ef94` |
 | `docs/perception-rns-reply-20260908.md` | `cce0f724f89b5ca9f3cd2f1bc12609f03895bbe944858b27c925313e950c2d61` |
-| `configs/rns.yaml`（消费侧配置，含 class_map） | `5ee9729129527deda448f0324b1756d6598ed9ca48626ea09dc6c3beca5e8977` |
-| `xbrain/p1_motion/rns/inputs.py` ＋ `types.py`（三条 DTO 与 `SrcBit` = 消费端 schema 的代码形态） | `1db8f0e870cfedbee3720bde4295134912a77f8293c0dd2d1b846a7ed96bb299` ＋ `5e4e4c9e8563c690ef47f037fb2fa11d48cb092a378552958ef11479c3242a83` |
+| `configs/rns.yaml`（消费侧配置，含 class_map） | `56d699e970a1ff4b8bdeb2143910cd1788bf90c1af556a123664de3736a57523` |
+| `xbrain/p1_motion/rns/inputs.py` ＋ `types.py`（三条 DTO 与 `SrcBit` = 消费端 schema 的代码形态） | `272edf59546e7e72cc23e9744c9405ff9315009095f4e8e30b328398bd71a4ee` ＋ `1bf9ddc744dd8332190e8e3055022bf19c2139aa06af6e534fba25b2633c9bbd` |
 | `common/include/xbrain/{config,clock,zenoh,envelope}/*.h` · `common/CMakeLists.txt` | 见包内 `SHA256SUMS` |
 | `deploy/systemd/xbrain-perception.service` · `scripts/lint/charset_lint.py` | 见包内 `SHA256SUMS` |
 | 本文 | 见包内 `SHA256SUMS`（本文 🚫 自引） |
