@@ -233,3 +233,24 @@ def test_wall_tick_survives_perception_dropout():
     out = s.compute(Ctx(pose_xy=(2.0, 0.0), v_nom_mps=1.0))   # no perception
     assert out is not None and out.vx.value == 0.0
     assert s.take_failure() is None
+
+
+def test_escape_probe_reach_exceeds_smallness_threshold():
+    # user live wall_closed_loop #3 lineage: the smallness verdict now
+    # lives INSIDE _enter_wall on its own end probe (a standalone helper
+    # probed with a SHORTER reach and disagreed -- rock groups slipped
+    # into hugging on paths the helper did not guard). Pin: the verdict
+    # threshold must stay below the probe's default reach, and the
+    # verdict must exist in _enter_wall at all. mutant: drop the verdict
+    # or shrink wall_end_dist's default reach under 4.0 -> reddens.
+    import inspect, re
+    from xbrain.p1_motion.rns import source as src_mod
+    from xbrain.p1_motion.rns import grid as grid_mod
+    body = inspect.getsource(src_mod.RnsSource._enter_wall)
+    m = re.search(r"left_end \+ right_end < ([0-9.]+)", body)
+    assert m, "smallness verdict missing from _enter_wall"
+    thresh = float(m.group(1))
+    sig = inspect.signature(grid_mod.MemoryGrid.wall_end_dist)
+    reach = sig.parameters["r_max_m"].default
+    assert reach > thresh, "probe reach %.1f <= threshold %.1f" % (reach,
+                                                                   thresh)

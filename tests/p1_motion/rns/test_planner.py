@@ -235,3 +235,34 @@ def test_chain_free_prefix_requires_clearance():
             st = p._coarse_read_only(nb, g, 1000)
             assert st != Cell.BLOCKED, \
                 "prefix cell %s touches BLOCKED neighbor %s" % (cell, nb)
+
+
+def test_escape_probe_reach_exceeds_threshold():
+    # user live wall_closed_loop #3 (2026-09-11): the small-obstacle escape
+    # probed with r_max=3.0 while judging smallness at end1+end2 < 4.0 --
+    # an end at exactly 3.0 m truncated to None and a 3.5 m rock cluster
+    # was ruled "a real wall", hugged and lapped to failure. The probe
+    # reach must exceed the threshold. mutant: r_max back to 3.0 -> the
+    # 3.4 m wall below reads one end None -> reddens.
+    g = MemoryGrid(0.25, 600.0, 2.0, 1.0)
+    # paint observed ground and a 3.4 m wall strip with both ends observed
+    y = -6.0
+    while y <= 2.0:
+        x = -3.0
+        while x <= 3.0:
+            g.write(x, y, Cell.FREE, 1000)
+            x += 0.25
+        y += 0.25
+    y = -3.2
+    while y <= 0.2:                                  # 3.4 m vertical wall
+        g.write(0.0, y, Cell.BLOCKED, 1000)
+        g.write(0.25, y, Cell.BLOCKED, 1000)
+        y += 0.25
+    # anchor near the SOUTH end: north end sits ~3.2 m up the tangent --
+    # inside a 4.5 m reach, OUTSIDE a 3.0 m one.
+    import math
+    up = g.wall_end_dist((0.125, -3.0), math.pi / 2, 1000, r_max_m=4.5)
+    down = g.wall_end_dist((0.125, -3.0), -math.pi / 2, 1000, r_max_m=4.5)
+    assert up is not None and down is not None, \
+        "both ends must be seen at 4.5 reach (up=%s down=%s)" % (up, down)
+    assert up + down < 4.6

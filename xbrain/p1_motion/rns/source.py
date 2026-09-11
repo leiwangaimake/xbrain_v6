@@ -115,6 +115,22 @@ class RnsSource:
         self._last_d_side: Optional[float] = None
         self._wall_corner = False        # concave-corner turn in progress
         self._wall_stall_ticks = 0       # in-wall stall backstop (tick count)
+        self._wall_reverdict_ticks = 0   # island re-verdict cadence
+        self._wall_winding = 0.0         # accumulated heading turn in-wall
+        self._wall_winding_peak = 0.0    # hand-signed peak (wobble-immune)
+        self._wall_yaw_prev = None
+        self._wall_cx = 0.0
+        self._wall_cy = 0.0
+        self._wall_cn = 0
+        self._island_center = None       # winding-proven island disc
+        self._island_r = 0.0
+        self._island_until = None
+        # misfire fuse: escape/island verdicts firing in a tight loop mean
+        # the geometry model is WRONG for this blocker (cold-rev funnel:
+        # island_cross fired 119x against a wall cluster) -- suppress both
+        # mechanisms for a while and let classic hugging own the blocker.
+        self._verdict_events = []        # recent (now_ms) firings
+        self._verdict_mute_until = None
         self._wall_goal_dist_at_hit = 0.0
         self._holo = False
         self._last_R = None                  # lookahead point, for observability
@@ -550,19 +566,13 @@ class RnsSource:
                         self.audit.append(AuditRecord(
                             now or 0, "detour_enter",
                             {"subgoal": target, "via": "memory_appeal"}))
-                    elif (esc := self._small_obstacle_escape(
-                            profile, pose, yaw, now)) is not None:
-                        self._subgoal_clearance_m = None
-                        self._subgoal_world = esc
-                        self._transition(NavState.DETOUR)
-                        self._detour_dwell = 0
-                        target = esc
-                        self.audit.append(AuditRecord(
-                            now or 0, "detour_enter",
-                            {"subgoal": esc, "via": "escape"}))
                     elif self._enter_wall(profile, pose, yaw, fs, now):
                         return self._wall_tick(profile, pose, yaw, fs, now,
                                                wz_max, step_m)
+                    elif self._state == NavState.DETOUR:
+                        # enter_wall refused as a small obstacle and set the
+                        # escape subgoal itself; ride it this tick.
+                        target = self._subgoal_world
                     else:
                         return zero
             elif self._state == NavState.DETOUR:
@@ -603,23 +613,18 @@ class RnsSource:
                                 memory_appeal=True)
                             sel = self._selector.select(False, best, False)
                         if sel is None:
-                            esc = self._small_obstacle_escape(
-                                profile, pose, yaw, now)
-                            if esc is not None:
-                                self._subgoal_clearance_m = None
-                                self._subgoal_world = esc
-                                self._detour_dwell = 0
-                                target = esc
-                                self.audit.append(AuditRecord(
-                                    now or 0, "detour_enter",
-                                    {"subgoal": esc, "via": "escape"}))
+                            if self._enter_wall(profile, pose, yaw, fs,
+                                                now):
+                                return self._wall_tick(
+                                    profile, pose, yaw, fs, now,
+                                    wz_max, step_m)
+                            if self._state == NavState.DETOUR \
+                                    and self._subgoal_world is not None:
+                                # refused as small obstacle: escape subgoal
+                                # set inside enter_wall; ride it.
+                                target = self._subgoal_world
                             else:
                                 self._subgoal_world = None
-                                if self._enter_wall(profile, pose, yaw, fs,
-                                                    now):
-                                    return self._wall_tick(
-                                        profile, pose, yaw, fs, now,
-                                        wz_max, step_m)
                                 self._transition(NavState.FOLLOW)
                                 return zero
                         if sel is not None:
@@ -709,6 +714,11 @@ class RnsSource:
                 if self._enter_wall(profile, pose, yaw, fs, now):
                     return self._wall_tick(profile, pose, yaw, fs, now,
                                            wz_max, step_m)
+                if self._state == NavState.DETOUR \
+                        and self._subgoal_world is not None:
+                    # refused as a small obstacle inside enter_wall: the
+                    # escape subgoal is set; steer at it this tick.
+                    target = self._subgoal_world
             elif wd == WatchdogResult.REPORT_NO_PROGRESS:
                 self._fail(no_progress_failure(limiter))
                 return zero
@@ -886,18 +896,34 @@ class RnsSource:
                 return True
         return False
 
-    def _small_obstacle_escape(self, profile, pose, yaw, now):
-        """Dense-field fix (2026-09-11 acceptance, path_rev death lap): the
-        snake end probe said end_l=0.5 / end_r=1.0 -- BOTH ends of the
-        "wall" within a meter, i.e. an isolated rock -- and wall-follow
-        still hugged it, then drifted rock-to-rock through the field until
-        wall_budget burned (60 m of lapping pebbles). A boundary whose two
-        confirmed ends span < 3 m is NOT a wall: build a DETOUR subgoal
-        just past the NEARER end instead (out along the tangent, offset
-        away from the obstacle), and let the ordinary detour machinery
-        (A-HYS-2 guards included) walk around it. Returns the world subgoal
-        or None when this is not a small obstacle / geometry unknown."""
-        if self._grid is None or now is None or profile is None:
+    def _verdict_fuse(self, now) -> bool:
+        """True while escape/island verdicts are MUTED. Each firing is
+        recorded; >10 firings inside 60 s trips a 300 s mute -- a verdict
+        loop is a wrong geometry model, and classic hugging (bounded by
+        S7.6) must own the blocker instead."""
+        if now is None:
+            return False
+        if self._verdict_mute_until is not None \
+                and now < self._verdict_mute_until:
+            return True
+        self._verdict_events = [t for t in self._verdict_events
+                                if now - t < 60000]
+        if len(self._verdict_events) > 10:
+            self._verdict_mute_until = now + 300000
+            self._verdict_events = []
+            self.audit.append(AuditRecord(now, "verdict_mute",
+                                          {"for_s": 300}))
+            return True
+        return False
+
+    def _wall_end_probe(self, profile, pose, yaw, now):
+        """Shared end probe: nearest-hit anchor, both tangents, snake end
+        distances (8 m reach). Returns (left_end, right_end, anchor, t1,
+        t2, side1, best_bearing) or None when no hit/grid. ONE probe
+        implementation on purpose -- the standalone escape helper kept its
+        own shorter-reach copy and the two verdicts disagreed (user
+        closed_loop #3 lineage)."""
+        if profile is None or self._grid is None or now is None:
             return None
         best_db = None
         best_bearing = 0.0
@@ -912,20 +938,15 @@ class RnsSource:
                   pose[1] + best_db * math.sin(best_bearing))
         t1 = best_bearing + math.pi / 2.0
         t2 = best_bearing - math.pi / 2.0
-        e1 = self._grid.wall_end_dist(anchor, t1, now, r_max_m=3.0)
-        e2 = self._grid.wall_end_dist(anchor, t2, now, r_max_m=3.0)
-        if e1 is None or e2 is None or e1 + e2 >= 3.0:
-            return None                     # a real wall (or unconfirmed)
-        tang = t1 if e1 <= e2 else t2
-        end = e1 if e1 <= e2 else e2
-        # subgoal: past the near end along the tangent, pushed AWAY from
-        # the obstacle by the keep distance so the corner is not clipped.
-        away = math.atan2(pose[1] - anchor[1], pose[0] - anchor[0])
-        gx = anchor[0] + math.cos(tang) * (end + 1.2) \
-            + math.cos(away) * 0.8
-        gy = anchor[1] + math.sin(tang) * (end + 1.2) \
-            + math.sin(away) * 0.8
-        return (gx, gy)
+        e1 = self._grid.wall_end_dist(anchor, t1, now)
+        e2 = self._grid.wall_end_dist(anchor, t2, now)
+        side1 = (Side.RIGHT if wrap_angle(best_bearing - t1) < 0
+                 else Side.LEFT)
+        if side1 == Side.LEFT:
+            left_end, right_end = e1, e2
+        else:
+            left_end, right_end = e2, e1
+        return (left_end, right_end, anchor, t1, t2, side1, best_bearing)
 
     def _enter_wall(self, profile, pose, yaw, fs, now) -> bool:
         """S7.2 entry: all candidates gated out AND a BLOCKED boundary exists
@@ -934,6 +955,35 @@ class RnsSource:
         monotone best progress s* (20 S7.3). Returns False -> caller holds."""
         if profile is None:
             return False
+        # island window (winding verdict above): for 3 s after proving the
+        # blocker is an island, do NOT hug it again -- build a crossing
+        # detour THROUGH its far side toward the objective instead.
+        if self._island_until is not None and now is not None \
+                and now < self._island_until and not self._verdict_fuse(now):
+            if self._mission.kind == MissionKind.PATH:
+                gx, gy = fs.lookahead_point
+            else:
+                gx, gy = self._r_star or self._mission.endpoint
+            icx, icy = self._island_center
+            bear = math.atan2(gy - icy, gx - icx)
+            esc = (icx + math.cos(bear) * (self._island_r + 1.5),
+                   icy + math.sin(bear) * (self._island_r + 1.5))
+            # landing must not sit in remembered BLOCKED: a wall cluster's
+            # centroid crossing lands inside more wall (cold-rev 119x loop)
+            if self._grid is not None \
+                    and self._grid.read(esc[0], esc[1], now) == Cell.BLOCKED:
+                self._island_until = None       # not an island: stand down
+            else:
+                self._verdict_events.append(now)
+                self._subgoal_clearance_m = None
+                self._subgoal_world = esc
+                if self._state != NavState.DETOUR:
+                    self._transition(NavState.DETOUR)
+                self._detour_dwell = 0
+                self.audit.append(AuditRecord(now, "detour_enter",
+                                              {"subgoal": list(esc),
+                                               "via": "island_cross"}))
+                return False
         boundary = any(d is not None for d in profile.d_block)
         if not boundary and self._grid is not None and now is not None:
             boundary = self._grid.nearest_blocked_in_sector(
@@ -989,19 +1039,15 @@ class RnsSource:
         # 13 m car wall, the goal bore 0.2 rad north of the tangent tie-line,
         # so the pick flipped NORTH and re-walked the entire wall. The end
         # probe knows "south end 1 m, north end >8 m" and rule 1 keeps south.
-        end1 = end2 = None
-        if self._grid is not None and now is not None:
+        probe = self._wall_end_probe(profile, pose, yaw, now)
+        if probe is not None:
+            left_end, right_end, anchor, t1, t2, side1, _ = probe
+        else:
+            left_end = right_end = None
             anchor = (pose[0] + best_db * math.cos(best_bearing),
                       pose[1] + best_db * math.sin(best_bearing))
-            end1 = self._grid.wall_end_dist(anchor, t1, now)
-            end2 = self._grid.wall_end_dist(anchor, t2, now)
-        # map tangents to hands: walking t, the wall normal falls on one side
-        side1 = (Side.RIGHT if wrap_angle(best_bearing - t1) < 0
-                 else Side.LEFT)
-        if side1 == Side.LEFT:
-            left_end, right_end = end1, end2
-        else:
-            left_end, right_end = end2, end1
+            side1 = (Side.RIGHT if wrap_angle(best_bearing - t1) < 0
+                     else Side.LEFT)
         # rule-2 cost is |X->E| + |E->R'| VERBATIM from 20 S7.2 -- the
         # first cut used the end distance alone and the nearer end won even
         # when rounding it led AWAY from the objective (path_fwd 2026-09-11:
@@ -1010,6 +1056,37 @@ class RnsSource:
         # tangent; R' = `goal` chosen above (lookahead for PATH, R*/endpoint
         # for goto), so the detour-cost comparison serves the mission's own
         # objective.
+        # SMALL-OBSTACLE verdict UNIFIED HERE (user closed_loop #3 and the
+        # hot-battery lap: the standalone escape helper probed with its own
+        # shorter reach and DISAGREED with this probe -- rock groups slipped
+        # into hugging on two of the three wall-entry paths). Every entry
+        # path funnels through this function, so the verdict lives on THIS
+        # probe: both ends confirmed and spanning < 4.0 m is not a wall --
+        # set an escape DETOUR past the nearer end and refuse the hug.
+        if left_end is not None and right_end is not None \
+                and left_end + right_end < 4.0 \
+                and not self._verdict_fuse(now):
+            if left_end <= right_end:
+                e_tang, e_end = (t1, left_end) if side1 == Side.LEFT \
+                    else (t2, left_end)
+            else:
+                e_tang, e_end = (t2, right_end) if side1 == Side.LEFT \
+                    else (t1, right_end)
+            away = math.atan2(pose[1] - anchor[1], pose[0] - anchor[0])
+            esc = (anchor[0] + math.cos(e_tang) * (e_end + 1.2)
+                   + math.cos(away) * 0.8,
+                   anchor[1] + math.sin(e_tang) * (e_end + 1.2)
+                   + math.sin(away) * 0.8)
+            self._subgoal_clearance_m = None
+            self._subgoal_world = esc
+            if self._state != NavState.DETOUR:
+                self._transition(NavState.DETOUR)
+            self._detour_dwell = 0
+            self._verdict_events.append(now or 0)
+            self.audit.append(AuditRecord(now or 0, "detour_enter",
+                                          {"subgoal": list(esc),
+                                           "via": "escape_wall"}))
+            return False
         big = 1e9    # "no confirmed end" cost for rule-2 comparison
         def _rule2_cost(end_m, tang):
             if end_m is None:
@@ -1039,6 +1116,13 @@ class RnsSource:
         self._last_d_side = None
         self._wall_corner = False
         self._wall_stall_ticks = 0
+        self._wall_reverdict_ticks = 0
+        self._wall_winding = 0.0
+        self._wall_winding_peak = 0.0
+        self._wall_yaw_prev = None
+        self._wall_cx = 0.0
+        self._wall_cy = 0.0
+        self._wall_cn = 0
         g = self._mission.endpoint
         self._wall_goal_dist_at_hit = math.hypot(pose[0] - g[0], pose[1] - g[1])
         self._transition(NavState.WALL_FOLLOW)
@@ -1066,6 +1150,18 @@ class RnsSource:
         if profile is None:
             return zero
         w.followed_m += step_m
+        # winding + centroid bookkeeping for the island topology verdict
+        # (below): accumulated heading turn tells OUTER loop (island) from
+        # INNER loop (sealed cavity) -- classic Bug-family topology.
+        if self._wall_yaw_prev is not None:
+            self._wall_winding += wrap_angle(yaw - self._wall_yaw_prev)
+        self._wall_yaw_prev = yaw
+        sgn_hand_w = 1.0 if w.side == Side.LEFT else -1.0
+        self._wall_winding_peak = max(self._wall_winding_peak,
+                                      self._wall_winding * sgn_hand_w)
+        self._wall_cx += pose[0]
+        self._wall_cy += pose[1]
+        self._wall_cn += 1
         self._s_star = max(self._s_star, fs.projection.s_arc_m)
 
         # in-wall STALL backstop (field bug #3, 2026-09-10 recorder): the S7.6
@@ -1156,10 +1252,64 @@ class RnsSource:
             self._transition(NavState.FOLLOW)
             return zero    # next tick follows; this tick stops cleanly
 
+        # ISLAND RE-VERDICT while hugging (fwd cold death t166: on ENTRY
+        # only one end of the rock island was remembered, so it passed as a
+        # wall; the lap itself then completed the memory of BOTH ends --
+        # but the verdict ran only at entry and the lap closed to failure.
+        # Re-run the shared probe every ~2 s: both ends confirmed and
+        # spanning < 4.0 means this "wall" is an island -- hand back to
+        # FOLLOW; the next blocked tick funnels through the entry gate,
+        # which converts it into the escape detour.
+        self._wall_reverdict_ticks += 1
+        if self._wall_reverdict_ticks >= 40 and w.followed_m > 3.0:
+            self._wall_reverdict_ticks = 0
+            probe = self._wall_end_probe(profile, pose, yaw, now)
+            if probe is not None and probe[0] is not None \
+                    and probe[1] is not None and probe[0] + probe[1] < 4.0:
+                self.audit.append(AuditRecord(now or 0, "wall_exit",
+                                              {"s": fs.projection.s_arc_m,
+                                               "followed_m": w.followed_m,
+                                               "via": "island_reverdict"}))
+                self._wall = None
+                self._wall_cooldown_until = (now or 0) + 2000
+                self._transition(NavState.FOLLOW)
+                return zero
         # failure (S7.6, D3-checked closed loop / no-progress / budget).
         dist_h = math.hypot(pose[0] - w.hit_point[0], pose[1] - w.hit_point[1])
         f = check_failure(w, dist_h, wf["min_loop_m"], wf["no_progress_m"],
                           wf["max_follow_m"], wf["leave_progress_m"])
+        # ISLAND TOPOLOGY verdict on a closed loop (rev battery: a 4.7 m
+        # rock group beat every size threshold -- there is ALWAYS an
+        # N+0.5 case). Topology cannot be cheated: hugging LEFT around an
+        # island's OUTSIDE turns clockwise (winding ~ -2pi); only inside a
+        # sealed cavity does it turn counter-clockwise (+2pi). RIGHT hand
+        # mirrors. An outer loop is an ISLAND -- it seals nothing: leave,
+        # remember its disc for 3 s, and let the entry gate convert the
+        # next blocked tick into a crossing detour past it.
+        if f is not None and f.reason is NavFailReason.WALL_CLOSED_LOOP:
+            # sign convention MEASURED, not assumed (first cut had it
+            # backwards): wall on the LEFT hand, island on the left ->
+            # the orbit is COUNTER-clockwise, winding ~ +2pi (live probe:
+            # +4.3..+6.8 through the closing lap). A sealed cavity mirrors.
+            # PEAK winding, not the instant value: the keep-distance PD
+            # wobbles yaw, and the loop-closing tick happened to catch a
+            # trough (+4.28 with a +6.79 peak two seconds earlier -- the
+            # verdict missed by 0.4 rad). The peak is wobble-immune.
+            if self._wall_winding_peak > 4.7:             # ~270 deg outer
+                cx = self._wall_cx / max(1, self._wall_cn)
+                cy = self._wall_cy / max(1, self._wall_cn)
+                self._island_center = (cx, cy)
+                self._island_r = w.followed_m / (2.0 * math.pi) + 1.0
+                self._island_until = (now or 0) + 3000
+                self.audit.append(AuditRecord(
+                    now or 0, "wall_exit",
+                    {"s": fs.projection.s_arc_m,
+                     "followed_m": w.followed_m,
+                     "via": "island_winding"}))
+                self._wall = None
+                self._wall_cooldown_until = (now or 0) + 2000
+                self._transition(NavState.FOLLOW)
+                return zero
         if f is not None:
             self.audit.append(AuditRecord(now or 0, "wall_fail",
                                           {"reason": f.reason.value}))
