@@ -139,11 +139,11 @@ stop_dist_m >= v^2 / (2a) + v * t_link + v_close * age_P99 + margin
 
 | 项 | 内容 |
 |---|---|
-| 真源提交 | **〈回填〉**（四册 ＋ 代码同批），tag **`perception-r4-20260911`** |
-| `docs/11-接口契约.md` | 〈回填〉 |
-| `docs/19-perception详细设计.md` | 〈回填〉 |
-| `docs/20-RNS反应式导航软件系统详细设计.md` | 〈回填〉 |
-| `xbrain/p1_motion/rns/inputs.py` ＋ `xbrain/p1_motion/perception_src/three_keys.py` | 〈回填〉 ＋ 〈回填〉 |
+| 真源提交 | **`7300fa4`**（四册 ＋ 代码同批），tag **`perception-r4-20260911`**（指向其后继的附录回填提交） |
+| `docs/11-接口契约.md` | `2b1106898f60d3bce3f59c748eebac670bad6f126b6b000787fcf9385a5edab7` |
+| `docs/19-perception详细设计.md` | `6516ca9d3c70d825c571f325f428f6a4261d596df5c53cf4ebc5a766ff224345` |
+| `docs/20-RNS反应式导航软件系统详细设计.md` | `0bb987851dc73f8f61825aafc06954b32c326b8285a945eba85c706f9f303df0` |
+| `xbrain/p1_motion/rns/inputs.py` ＋ `xbrain/p1_motion/perception_src/three_keys.py` | `aa712d6ce832f9a0a7c3a3c5f1db772dd708391f38b0eee7129605f91ca670f6` ＋ `c8ccefd9c6afe75a019fa79d87090d0ae68748bba928768227430dbb045450d6` |
 | 其余文件 | 见包内 `SHA256SUMS` |
 
 ---
