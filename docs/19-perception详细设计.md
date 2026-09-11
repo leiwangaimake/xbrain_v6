@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 文档 | **perception 详细设计（第 19 册）** |
-| 版本 | **v1.4**（v1.0 从 0 重写 · 落地版 → v1.1 三遍核查 → v1.2 感知方对账修正 → v1.3 第三轮对账 → **v1.4 W-8 骨架 / W-11 对手件落地**；封面与 §18 变更记录同步） |
+| 版本 | **v1.5**（v1.0 从 0 重写 · 落地版 → v1.1 三遍核查 → v1.2 感知方对账修正 → v1.3 第三轮对账 → v1.4 W-8 / W-11 落地 → **v1.5 第四轮：拟合回退有效条件 · 无深度 bin 语义注入**；封面与 §18 变更记录同步） |
 | 日期 | **2026-09-11** |
 | 状态 | ★★★ **可开工** —— 本版以「照此写代码」为验收标准 |
 | 进程 | `perception`（**C++17**，单进程；rclcpp 仅用于 TF / 命令订阅，感知数据链不经 ROS topic） |
@@ -155,7 +155,7 @@
 | 步 | 内容 |
 |---|---|
 | ★★★ 取流 | 快线消费 **D2C 之前的原生 640×400 深度帧**（PROF-3 v1.9 收窄定义）。⚠️ 交接快照在 HW-D2C 之后取 1280×720 对齐帧再放大 1080p —— 那两级都不是原生样本，改造点见 §15 W-3。★★ **2026-09-11 负责人裁定（用户书面确认）：图像 / 视频主输出维持 1280×800，🚫 再归一化 / 升采样到 1920×1080**（模型输入尺寸、原生深度 profile、帧率与精度门不因此改变；本册受影响的只有 mask 像面注记与 §13.1 MED-2 支路澄清） |
-| ★★ 地面拟合 | 以外参先验平面为种子，对近区候选地面点做稳健拟合（RANSAC / IRLS）得本帧 `(n, d)`；★ 拟合失败（内点不足 / 残差超限）⇒ **退回先验平面 ＋ `degraded_reasons: ground_fit_fallback`**（`11` §3.1B.3 已登记该值），🚫 静默。★★ **v1.3 退化动作**：回退帧的 `d_free` **封顶 `dfree_cap_fallback_m`**（§8.2 新键，建议 2.0 m）—— 平面误差 ∝ `r·tan(Δpitch)`，近场小远场大，封顶近场即保守；消费侧不加新逻辑，`d_free ≤ 2.0` 落入速度门 `[1.8, 3.0) → 0.5 m/s` 段自动限速（`11` §9.6.2）。「写了 reason」不等于 FREE 可信 —— 可信由封顶保证，reason 只是可见性（A19-FIT-1） |
+| ★★ 地面拟合 | 以外参先验平面为种子，对近区候选地面点做稳健拟合（RANSAC / IRLS）得本帧 `(n, d)`；★ 拟合失败（内点不足 / 残差超限）⇒ **退回先验平面 ＋ `degraded_reasons: ground_fit_fallback`**（`11` §3.1B.3 已登记该值），🚫 静默。★★ **v1.3 退化动作**：回退帧的 `d_free` **封顶 `dfree_cap_fallback_m`**（§8.2 新键，建议 2.0 m）—— 平面误差 ∝ `r·tan(Δpitch)`，近场小远场大，封顶近场即保守；消费侧不加新逻辑，`d_free ≤ 2.0` 落入速度门 `[1.8, 3.0) → 0.5 m/s` 段自动限速（`11` §9.6.2）。「写了 reason」不等于 FREE 可信 —— 可信由封顶保证，reason 只是可见性（A19-FIT-1）。★★★ **v1.5 补全（感知方 Q4：封顶只限制误差随距离增长，先验平面自身误差界必须可测）—— 先验平面继续支持 FREE 的有效条件，两条同时成立**：① 本帧失败原因是**内点不足**（`inlier_frac < plane_fit_min_inlier_frac`：地面被遮挡 / 成片 invalid），🚫 是**残差超限**（`resid > plane_fit_resid_max_m`：地面非平面 / 坡变，先验必错）；② IMU 重力向量相对**标定时姿态**的偏差 `‖Δtilt‖ ≤ fallback_tilt_tol_deg`（来源 PD-18 定；无 IMU ⇒ 视为不成立）。配对断言（启动）：`dfree_cap_fallback_m × tan(fallback_tilt_tol_deg) ≤ h_tol_m`（封顶处平面高度误差 🚫 超地面容差；例 2.0 m × tan 2° ≈ 7 cm ≤ 8 cm）。★★ **条件未知或不满足 ⇒ 只撤回依赖平面的 FREE，保留独立阻挡，照常发布**：全 bin `d_free = null`（本帧无法验证，🚫 写 `blind_near`），bit0 = 0；立体点高度阈提到 `h_tol_eff(r) = h_tol_m ＋ r·tan(fallback_tilt_err_max_deg)`（条件②不可测时的上界，建议 5°），低于它的点不判障；负障碍 🚫 判（穿地判据依赖平面）；`degraded_reasons` 同时含 `ground_fit_fallback` ＋ `ground_free_withdrawn`（`11` v2.2）。★ 例（拟合失败，1.5 m 处 0.12 m 路沿，同一 bin）：条件满足 ⇒ `d_free 1.25 · d_block 1.5 · h_block 0.12 · src 0b0011`；条件不满足 ⇒ `h_tol_eff(1.5) = 0.08 ＋ 1.5·tan 5° ≈ 0.21 > 0.12` 路沿不可判 ⇒ `null · null · null · 0b0010`（有样本、不可判）；RNS：前向 UNKNOWN ⇒ `20` §8.1A 压速，路沿由记忆栅格或减速后的新帧接管。失效方向：**宁可看不见路沿也不给假 FREE**（A19-FIT-2） |
 | ★ 高度定义 | 逐点高度 `h = n·p ＋ d`（对本帧平面），后续分类全部用它；`slope` 停止条件负责平面之外的坡变 |
 
 ### 3.2 ★★★ 逐像素遍历（原生全样本单遍，PROF-3 / PROF-4）
@@ -256,7 +256,10 @@ for i in bins:
     fp = footprint 按 m(r) = (v_ego_max + omega_max*r)*(t_capture - t_obj) + m_jitter 膨胀
                                              # v1.3: 无同步位姿时的保守变换 (PROF-5 同式, 方向相反: BLOCKED 只许变大)
     对 fp 覆盖到的 bin i: d_sem = 该 bin 方向到 fp 的最近距离
-    if d_sem < d_blk[i]: d_blk[i] = d_sem; 重算 d_free 截断 (维持 PROF-1); src[i] |= BIT_SEM
+    d_geom = d_blk[i] if 本 bin 有几何阻挡 else +inf   # v1.5: G=0 (无深度) 的 bin 同样注入, 缺席按 +inf (11 v2.2)
+    if d_sem < d_geom: d_blk[i] = d_sem; src[i] |= BIT_SEM
+                       if d_free[i] is not null: 重算 d_free 截断 (维持 PROF-1)   # 无 FREE 可截时保持 null
+                       # bit1 保持原值: G=0 的 bin 注入后为 null / d_sem / null / 0b0100 (A19-SEM-2)
                                              # v1.3: BIT_SEM 只在语义边界更近时置位 (11 v2.1 逐位定义)
 ```
 
@@ -423,6 +426,10 @@ perception:
     omega_max_rps:    null   # PROF-5 腐蚀的角速度上界 (11 v1.9 加旋转项)
     seg_max_age_ms:   null   # v1.3 帧级 mask 新鲜度上限 (S3.3); 建议与 RNS seg_stale_ms 同值 300
     dfree_cap_fallback_m: null # v1.3 地面拟合回退帧的 d_free 封顶 (S3.2A); 建议 2.0
+    plane_fit_min_inlier_frac: null # v1.5 拟合失败分类: 内点比例低于此 = 内点不足 (S3.2A 条件 1)
+    plane_fit_resid_max_m:  null # v1.5 拟合失败分类: 残差高于此 = 残差超限, 先验不可用
+    fallback_tilt_tol_deg:  null # v1.5 先验平面可用的 IMU 姿态偏差容差 (S3.2A 条件 2); 断言 cap*tan(tol) <= h_tol
+    fallback_tilt_err_max_deg: null # v1.5 条件不可测时的姿态误差上界 (h_tol_eff 用); 建议 5
     tau_T:            null   # T 证据比例阈值
     slope_max_deg:    null
     sigma_max_m:      null   # 粗糙度 (格内高度标准差)
@@ -551,6 +558,8 @@ v0.1 裁定**原样沿用**：环回 RTSP **18083**（`127.0.0.1` only，NET-C9�
 | **A19-SRC-1**<br>**（v1.3 新增）** | `11` §3.1B.1 v2.1 六个 `src` 样例场景逐位相等；bit1 在「贴脸障碍、地面被挡」bin 亦为 1 | ★ 把 BIT_G 挪回推进分支 ⇒ 贴脸场景 bit1 = 0 ⇒ 红；★ BIT_SEM 无条件 OR ⇒ 语义更远场景 bit2 = 1 ⇒ 红 | 金标 ×2 |
 | **A19-SEG-2**<br>**（v1.3 新增）** | mask 槽年龄 > `seg_max_age_ms` ⇒ 本帧 `t_seg = null`、bit0 全 0；≤ 上限 ⇒ 按 PROF-5 腐蚀 | ★ 去掉年龄判 ⇒ 5 s 旧 mask 仍产生 bit0 ⇒ 红 | 注入 |
 | **A19-FIT-1**<br>**（v1.3 新增）** | 地面拟合回退帧：`d_free ≤ dfree_cap_fallback_m` 且 reason 含 `ground_fit_fallback` | ★ 去掉封顶 ⇒ 回退帧 `d_free` 到量程 ⇒ 红；★ 只封顶不报 reason ⇒ 反向红 | 注入 ×2 |
+| **A19-FIT-2**<br>**（v1.5 新增）** | 拟合回退且有效条件不成立（残差超限 或 tilt 超差 / 无 IMU）⇒ 全 bin `d_free = null`、bit0 = 0、reason 含 `ground_free_withdrawn`；高于 `h_tol_eff(r)` 的立体点仍成 `d_block` | ★ 条件不成立仍给封顶 FREE ⇒ 正向红；★ 把独立阻挡也撤掉 ⇒ 1.5 m 处 0.6 m 箱体消失 ⇒ 反向红 —— 成对 | 注入 ×2 |
+| **A19-SEM-2**<br>**（v1.5 新增）** | 整 bin invalid ＋ 满足条件的语义 footprint 2.5 m ⇒ `null / 2.5 / null / 0b0100`（`11` v2.2 样例行） | ★ 注入前要求 G = 1 ⇒ 无框玻璃门场景无阻挡 ⇒ 红；★ 注入后给 `d_free = blind_near`（当作已验证空区间）⇒ 反向红 | 金标 ×2 |
 | **A19-CFG-1** | 任一 §8.2 必填键置 `null` ⇒ 拒绝启动且报出该键路径（守 **PSC-2**） | ★★★ 给 `h_tol_m` 加代码默认值 ⇒ null 时照常启动 ⇒ 红 | 启动 |
 | **A19-VEL-1** | 无 TF 场景 `velocity_frame == "raw"` | ★ 硬编码 `"ego_removed"` ⇒ 红 | 单元 |
 | **A19-CAL-1** | 占位外参（全零/记录缺失）⇒ `extrinsic_calibrated == false` | ★ 判定改「配置存在即 true」⇒ 红 | 单元 |
@@ -613,11 +622,13 @@ A19-PROF-4 / A19-RATE-1 因此成对；A19-TIME-2 专杀「快线偷偷等慢线
 | **PD-15** | 标定残差阈值 `residual_max_m` | 首次标定实测给出 | `null` ⇒ `calibrated=false`（✓） |
 | **PD-16**<br>**（v1.2）** | 实机细障碍验收矩阵（尺寸 × 材质 × 距离）与误检约束。★ v1.3 首版矩阵**提案**见 `perception-rns-reply-20260911.md` §Q5.3（承诺行：≥ 10 cm 杆 ≤ 4 m · ≥ 0.3 m 箱体/人/车 ≤ 6 m · ≥ 0.12 m 路沿 ≤ 3 m · ≥ 0.3 × 0.5 m 坑 ≤ 2 m，阴天/顺光；细线 · 玻璃 · 水面 🚫 承诺；逆光 / 夜间待实测） | 传感器物理，合成金标代答不了（§14 注） | 验收前细障碍能力**不写进任何承诺**（✓） |
 | **PD-17**<br>**（v1.2）** | `z_pass_m` 所需的**整机最大扫掠高度**（机体＋载荷＋云台＋步态起伏＋姿态余量，相对地面基准） | 整机侧实测/提供（感知方 Q-7 答复点名），🚫 单次静态站立高度冒充 | `null` ⇒ 拒启（✓） |
+| **PD-18**<br>**（v1.5）** | 回退有效条件②的 IMU 重力向量**来源**（338Le 内置 IMU vs 底盘 IMU 经 `quadruped`）与「标定时姿态」的基准记录方式 | 取决于哪路 IMU 先可用、时戳能否与深度帧对齐（PD-11 同型） | 无可用 IMU ⇒ 条件②视为不成立 ⇒ 回退帧只保留独立阻挡（保守 ✓） |
 
 ## 18. 变更记录
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| ★ **v1.5**<br>**（第四轮对账）** | 2026-09-11 | ★ 答复感知方《第三轮技术口径确认》（`perception-rns-reply-20260911-r4.md`）：① §3.2A 先验平面支持 FREE 的两条有效条件（失败原因 = 内点不足 🚫 残差超限；IMU 姿态在标定包络内）＋ 配对断言 `cap × tan(tol) ≤ h_tol` ＋ 不满足时只撤回依赖平面的 FREE（`d_free` 全 null · `h_tol_eff(r)` 独立阻挡 · `ground_free_withdrawn`）＋ 路沿例；② §3.4A G = 0 bin 同样注入（`d_geom` 缺席按 ＋∞，无 FREE 不截断）；③ §8.2 四新键；④ §14 A19-FIT-2 / A19-SEM-2；⑤ §17 PD-18。同批 `11` v2.2 / `20` v1.40。 |
 | ★ **v1.4**<br>**（W-8 / W-11 落地）** | 2026-09-11 | ★ W-11 对手件交付（`scripts/dev/perception_sim.py` 七场景样例集 ＋ `tests/perception/test_consumer_contract.py` 消费判决对表 ＋ `scripts/dev/perception_rx_audit.py` 接收端记账）；W-8 的 `configs/perception.yaml` 骨架（§8.2 全键）＋ 产物形态 dev 样例；冻结线纳入登记 `20` #20-26。 |
 | ★★ **v1.3**<br>**（第三轮对账）** | 2026-09-11 | ★ 答复感知方 09-11 来函（`perception-rns-reply-20260911.md`）：① §2.2 两道门命名 G-P1（处理 ≤ 14 ms，A19-PERF-1 锚）/ G-P2（发布时年龄 ≤ 60 ms，PD-11 后签）；② §3.2 遍历中按「有有效样本」置 BIT_G、§3.4 推进分支不再置、§3.4A BIT_SEM 只在更近时置 ＋ 无位姿时 footprint 按 PROF-5 同式膨胀 ＋ `objects_stale_ms` 改约两个推理周期（`11` §3.1B.1 v2.1 `src` 逐位定义）；③ §3.2A 拟合回退帧 `d_free` 封顶 `dfree_cap_fallback_m`；④ §3.3 帧级 `seg_max_age_ms` 与 10 s 能力标志分开；⑤ §5.1 / §6 节拍口径改逐次间隔**分级门**（用户 2026-09-11 选定：一级 `max ≤ 100 ms` · 二级 `>50 ms` 占比 ≤ 1%；`infer_gap` / `infer_gap_ms_max` / `infer_rate_low` 改写），A19-RATE-1 改写为间隙注入三件套；⑥ 1280×800 主输出（2026-09-11 负责人裁定）：§3.2 mask 像面、§3.2A 注记、§13.1 MED-2 独立支路；⑦ §6.1 生产机事实（Orin NX 16 GB）；⑧ §8.2 新键 `seg_max_age_ms` / `dfree_cap_fallback_m`；⑨ §14 增 A19-SRC-1 / A19-SEG-2 / A19-FIT-1；⑩ §17 PD-11 误差界、PD-16 矩阵提案。同批 `11` v2.1 / `20` v1.35。 |
 | ★★★ **v1.2**<br>**（对账修正轮）** | 2026-09-08 | ★★★ **按感知方接口答复逐条修正**（该答复抓到本册/交接文档多处实错，全部采纳）：① §3.4 `d_free` 推进改**格远端判停 ＋ 整格覆盖率 `G/expect_cell ≥ cover_min`**（其反例可复算出 `d_free 0.85 > d_blk 0.80`，PROF-1「构造性成立」原不成立）＋ 金标 A19-PROF-1b 就用该反例；② 负障碍两处修正：穿地证据记**期望交点** `bin_exp`（横向平移反例：期望 16.7° vs 回波 8.5°）；`h_block` 负障碍**优先**，🚫 被正障碍最大高度覆盖；③ 新增 §3.2A **逐帧地面平面拟合**（🚫 恒 z=0；失败退先验 ＋ `ground_fit_fallback`），`z_exp` 由静态表改逐帧闭式；④ 快线取 **D2C 前原生深度**（PROF-3 v1.9），mask 改**投影查表**（跨像面比例缩放不成立）；⑤ §4.2 `ego_removed` 置位四条件（精确时刻 TF · 旋回 base_link · 外参非占位 · 同纪元）；⑥ A19-PERF-1 改共载实测口径；合成金标声明保证边界，实机细障碍验收登记 **PD-16**；`z_pass` 扫掠高度登记 **PD-17**；⑦ 过渡期旧 key 开关 `legacy_keys_enable`（默认关）；W-11 模拟消息样例集。★ 同批 `11` v1.9 八处（PROF-3 收窄 · PROF-5 加旋转项 · 角度/量纲/遮挡/分源约定 · 20 Hz 口径冻结 · `infer_gap_ms_p99` · 两个新 reason · 探针数据出处订正）。 |
