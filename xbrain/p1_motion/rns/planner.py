@@ -292,6 +292,13 @@ class GuidancePlanner:
         if self._task_start_ms is None \
                 or now_ms - self._task_start_ms < 10000:
             return False
+        # a goal OUTSIDE the (capped) domain cannot be proven unreachable
+        # by this domain -- the field simply has no root (random sweep
+        # 2026-09-11: eight 60-80 m gotos across EMPTY ground reported
+        # no_path_in_domain). Beyond the cap the layer abstains (R* None,
+        # plain follow) until the robot closes in and the goal enters.
+        if self._cell_of(self._goal) is None:
+            return False
         return self._unreachable_builds >= 2
 
     def chain_cut(self, grid, now_ms: int) -> bool:

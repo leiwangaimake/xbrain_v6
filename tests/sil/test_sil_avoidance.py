@@ -789,8 +789,12 @@ def test_sealed_goal_proves_no_path_in_domain():
     # layer kept as the fallback). The no-path MECHANISM itself is pinned
     # deterministically in test_planner.test_sealed_memory_proves_domain_
     # no_path.
+    # v1.34: with the DETOUR stall drop the sealed goal now terminates
+    # through the progress watchdog (~20 s) before any wall criterion or
+    # the domain proof matures -- a faster, equally bounded verdict.
     assert reason in ("no_path_in_domain", "wall_no_progress",
-                      "wall_closed_loop"), "wrong verdict: %s" % reason
+                      "wall_closed_loop", "watchdog_no_progress"), \
+        "wrong verdict: %s" % reason
     assert t * 0.05 < 120.0, "verdict too slow: %.1fs" % (t * 0.05)
 
 

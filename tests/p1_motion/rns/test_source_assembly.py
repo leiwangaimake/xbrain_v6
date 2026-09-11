@@ -254,3 +254,65 @@ def test_escape_probe_reach_exceeds_smallness_threshold():
     reach = sig.parameters["r_max_m"].default
     assert reach > thresh, "probe reach %.1f <= threshold %.1f" % (reach,
                                                                    thresh)
+
+
+def test_verdict_fuse_counts_only_local_firings():
+    # r03 random-sweep case 2026-09-11: the escape/island mute counted
+    # EVERY firing in 60 s, so a rock field (one honest escape per rock)
+    # tripped the 300 s mute mid-mission and the robot hugged pebbles to
+    # timeout. The loop it must catch fires repeatedly at ONE spot, so
+    # only firings within 2 m of the current pose count. mutant: drop the
+    # distance filter -> the spread-out series below mutes -> reddens.
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
+    now = 100000
+    # 12 firings spread 3 m apart along x: a walked rock field
+    s._verdict_events = [(now - i * 1000, 3.0 * i, 0.0) for i in range(12)]
+    assert not s._verdict_fuse(now, (40.0, 0.0)), "spread firings muted"
+    # 12 firings at one spot: a genuine verdict loop -> mute
+    s._verdict_events = [(now - i * 1000, 5.0, 5.0) for i in range(12)]
+    assert s._verdict_fuse(now, (5.2, 5.1)), "local loop not muted"
+
+
+def test_subgoal_keep_gate_is_the_physical_floor():
+    # r03 2026-09-11: a subgoal adopted through a lenient gate (margin
+    # ladder / end-hop, r_eff + 0.2) was re-checked one tick later with
+    # the MAX gate (r_eff + 0.6) and dropped -> re-adopted -> dropped,
+    # every tick, until the verdict mute and a pebble hug to timeout.
+    # Keeping uses the physical floor whatever gate adopted. Source-level
+    # pin on the A-HYS-2 block. mutant: revert the check to gate_base ->
+    # reddens.
+    import inspect, re
+    from xbrain.p1_motion.rns import source as src_mod
+    body = inspect.getsource(src_mod.RnsSource._run_follow)
+    i = body.index("A-HYS-2: drop NOW")
+    block = body[i - 2400:i + 50]        # the keep block (gate + stall watch)
+    assert "keep_gate" in block and '"small_object"' in block, \
+        "A-HYS-2 keep check no longer uses the small_object floor"
+    assert ">= gate_base" not in block, "A-HYS-2 keep check reverted to max"
+
+
+def test_end_hop_present_with_lenient_ratio():
+    # funnel loop 2026-09-11 (path rev 3-4 laps of 52 s): near-end hop
+    # inside _enter_wall, ratio 0.7 (0.5 left the fwd entry unhopped).
+    # mutant: remove the branch or tighten below 0.6 -> reddens.
+    import inspect, re
+    from xbrain.p1_motion.rns import source as src_mod
+    body = inspect.getsource(src_mod.RnsSource._enter_wall)
+    m = re.search(r"w_end < 1\.0 and w_cost < ([0-9.]+) \* o_cost", body)
+    assert m, "end-hop branch missing"
+    assert float(m.group(1)) >= 0.6
+
+
+def test_detour_stall_drop_present():
+    # v1.34 keep-half two: a subgoal that passes the keep gate but is not
+    # getting NEARER for 3 s (60 ticks, 0.1 m stride) must be dropped via
+    # the infeasible path -- the lenient keep gate alone parked goto_02/11,
+    # wp_chain and the sealed box on watchdog_no_progress. mutant: delete
+    # the stall branch or raise the tick threshold past 200 -> reddens.
+    import inspect, re
+    from xbrain.p1_motion.rns import source as src_mod
+    body = inspect.getsource(src_mod.RnsSource._run_follow)
+    m = re.search(r"self\._detour_stall_ticks > (\d+)", body)
+    assert m, "detour stall drop missing"
+    assert int(m.group(1)) <= 200, "stall threshold too lax"
+    assert '"detour_stalled"' in body

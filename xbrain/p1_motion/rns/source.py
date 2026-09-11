@@ -102,6 +102,8 @@ class RnsSource:
         self._subgoal_world = None          # DETOUR target (world frame)
         self._subgoal_clearance_m = None    # adopted subgoal's gap clearance
         self._detour_dwell = 0              # ticks since DETOUR entry (S6.6)
+        self._detour_best_d = float("inf")  # closing-progress watch (DETOUR)
+        self._detour_stall_ticks = 0
         self._wait_budget: Optional[WaitBudget] = None
         self._dyn_prev = DynamicAction.RUN
         self._pre_wait_state: NavState = NavState.FOLLOW
@@ -129,7 +131,7 @@ class RnsSource:
         # the geometry model is WRONG for this blocker (cold-rev funnel:
         # island_cross fired 119x against a wall cluster) -- suppress both
         # mechanisms for a while and let classic hugging own the blocker.
-        self._verdict_events = []        # recent (now_ms) firings
+        self._verdict_events = []        # recent firings (now_ms, x, y)
         self._verdict_mute_until = None
         self._wall_goal_dist_at_hit = 0.0
         self._holo = False
@@ -197,6 +199,8 @@ class RnsSource:
         self._wall_cooldown_until = None
         self._wall_entry_dwell = 0
         self._detour_dwell = 0
+        self._detour_best_d = float('inf')
+        self._detour_stall_ticks = 0
         self._wall_stall_ticks = 0
         self._last_d_side = None
         self._wall_corner = False
@@ -525,6 +529,8 @@ class RnsSource:
                     self._subgoal_world = self._chain_prefix_end
                     self._transition(NavState.DETOUR)
                     self._detour_dwell = 0
+                    self._detour_best_d = float('inf')
+                    self._detour_stall_ticks = 0
                     target = self._subgoal_world
                     self.audit.append(AuditRecord(
                         now or 0, "detour_enter",
@@ -539,6 +545,8 @@ class RnsSource:
                         sel.subgoal, pose, yaw)
                     self._transition(NavState.DETOUR)
                     self._detour_dwell = 0
+                    self._detour_best_d = float('inf')
+                    self._detour_stall_ticks = 0
                     target = self._subgoal_world
                     self.audit.append(AuditRecord(now or 0, "detour_enter",
                                                   {"subgoal": target}))
@@ -562,6 +570,8 @@ class RnsSource:
                             sel.subgoal, pose, yaw)
                         self._transition(NavState.DETOUR)
                         self._detour_dwell = 0
+                        self._detour_best_d = float('inf')
+                        self._detour_stall_ticks = 0
                         target = self._subgoal_world
                         self.audit.append(AuditRecord(
                             now or 0, "detour_enter",
@@ -601,8 +611,37 @@ class RnsSource:
                                           profile.angle_step_rad)
                     sub_body = self._world_to_body(self._subgoal_world,
                                                    pose, yaw)
+                    # ONE yardstick for KEEPING a subgoal: the physical
+                    # floor (r_eff + small_object margin), whatever gate
+                    # ADOPTED it. Adoption is strict (max margin, then the
+                    # ladder), keeping is lenient -- that asymmetry IS the
+                    # hysteresis. Checking with the max gate here dropped
+                    # every ladder- or hop-adopted subgoal one tick later
+                    # (r03 2026-09-11: end_hop fired every tick, tripped
+                    # the verdict mute, then hugged a pebble to timeout).
+                    keep_gate = self._r_eff_m + \
+                        cfg["clearance"]["margin_by_class"]["small_object"]
                     feasible = clearance_at(sub_body, obs,
-                                            profile.range_max_m) >= gate_base
+                                            profile.range_max_m) >= keep_gate
+                    # ...and the other half of keeping: the subgoal must be
+                    # getting NEARER. The lenient keep gate alone let a
+                    # reachable-looking subgoal be held forever while the
+                    # robot could not actually close on it (goto_02/11,
+                    # wp_chain, sealed box: watchdog_no_progress after the
+                    # gate change). 3 s without a new distance low (0.1 m
+                    # stride) drops it through the same re-pick path as an
+                    # infeasible one -- the wall-follow stall counter's
+                    # twin (R1-12), tick-counted, suspension-immune.
+                    if d_sub < self._detour_best_d - 0.1:
+                        self._detour_best_d = d_sub
+                        self._detour_stall_ticks = 0
+                    else:
+                        self._detour_stall_ticks += 1
+                    if self._detour_stall_ticks > 60:
+                        feasible = False
+                        self.audit.append(AuditRecord(
+                            now or 0, "detour_stalled",
+                            {"d_sub": d_sub, "ticks": self._detour_stall_ticks}))
                     if not feasible:                 # A-HYS-2: drop NOW
                         best = self._pick_candidate(profile, pose, yaw, fs,
                                                     cfg, margin, dyn_objs)
@@ -896,19 +935,27 @@ class RnsSource:
                 return True
         return False
 
-    def _verdict_fuse(self, now) -> bool:
-        """True while escape/island verdicts are MUTED. Each firing is
-        recorded; >10 firings inside 60 s trips a 300 s mute -- a verdict
-        loop is a wrong geometry model, and classic hugging (bounded by
-        S7.6) must own the blocker instead."""
+    def _verdict_fuse(self, now, pose) -> bool:
+        """True while escape/island verdicts are MUTED. Firings are
+        recorded WITH position; >10 firings inside 60 s AND within 2 m of
+        the current pose trips a 300 s mute -- a verdict loop (the 119x
+        island_cross case) fires again and again at ONE spot, which is a
+        wrong geometry model that classic hugging (bounded by S7.6) must
+        own instead. Firings spread along a rock field are the layer
+        doing its job: counting those tripped the mute mid-field and the
+        robot degraded into hugging half-meter pebbles for the rest of
+        the mission (random sweep r03 2026-09-11: 300 s timeout, enter/
+        leave every tick on a 1.3 m island)."""
         if now is None:
             return False
         if self._verdict_mute_until is not None \
                 and now < self._verdict_mute_until:
             return True
-        self._verdict_events = [t for t in self._verdict_events
-                                if now - t < 60000]
-        if len(self._verdict_events) > 10:
+        self._verdict_events = [e for e in self._verdict_events
+                                if now - e[0] < 60000]
+        local = [e for e in self._verdict_events
+                 if math.hypot(e[1] - pose[0], e[2] - pose[1]) < 2.0]
+        if len(local) > 10:
             self._verdict_mute_until = now + 300000
             self._verdict_events = []
             self.audit.append(AuditRecord(now, "verdict_mute",
@@ -948,6 +995,24 @@ class RnsSource:
             left_end, right_end = e2, e1
         return (left_end, right_end, anchor, t1, t2, side1, best_bearing)
 
+    @staticmethod
+    def _polyline_point_ahead(pts, s_now: float, ahead_m: float):
+        """The point ahead_m of arc position s_now along pts (clamped to the
+        endpoint). Serves the PATH side-pick aim: the line's continuation
+        BEYOND a crossed wall is what the detour side should be chosen
+        against (funnel case 2026-09-11)."""
+        target_s = s_now + ahead_m
+        acc = 0.0
+        for i in range(len(pts) - 1):
+            ax, ay = pts[i]
+            bx, by = pts[i + 1]
+            seg = math.hypot(bx - ax, by - ay)
+            if acc + seg >= target_s and seg > 1e-9:
+                f = (target_s - acc) / seg
+                return (ax + (bx - ax) * f, ay + (by - ay) * f)
+            acc += seg
+        return tuple(pts[-1])
+
     def _enter_wall(self, profile, pose, yaw, fs, now) -> bool:
         """S7.2 entry: all candidates gated out AND a BLOCKED boundary exists
         (perception or memory). Chooses the side (goal-side heuristic when
@@ -959,7 +1024,7 @@ class RnsSource:
         # blocker is an island, do NOT hug it again -- build a crossing
         # detour THROUGH its far side toward the objective instead.
         if self._island_until is not None and now is not None \
-                and now < self._island_until and not self._verdict_fuse(now):
+                and now < self._island_until and not self._verdict_fuse(now, pose):
             if self._mission.kind == MissionKind.PATH:
                 gx, gy = fs.lookahead_point
             else:
@@ -974,12 +1039,14 @@ class RnsSource:
                     and self._grid.read(esc[0], esc[1], now) == Cell.BLOCKED:
                 self._island_until = None       # not an island: stand down
             else:
-                self._verdict_events.append(now)
+                self._verdict_events.append((now, pose[0], pose[1]))
                 self._subgoal_clearance_m = None
                 self._subgoal_world = esc
                 if self._state != NavState.DETOUR:
                     self._transition(NavState.DETOUR)
                 self._detour_dwell = 0
+                self._detour_best_d = float('inf')
+                self._detour_stall_ticks = 0
                 self.audit.append(AuditRecord(now, "detour_enter",
                                               {"subgoal": list(esc),
                                                "via": "island_cross"}))
@@ -1022,7 +1089,15 @@ class RnsSource:
         # was 8 m around the north end. Following the line means the side
         # pick serves the LINE.
         if self._mission.kind == MissionKind.PATH:
-            goal = fs.lookahead_point
+            # R' for the side pick = the polyline ~6 m AHEAD, not the 1-3 m
+            # lookahead (funnel case 2026-09-11: the user's line crosses
+            # the slanted wall; the lookahead sits at the crossing, both
+            # wall ends are equidistant to it and the pick lost all
+            # discrimination -- 61 s funnel laps fwd, three 52 s laps rev).
+            # 6 m ahead lies on the FAR side of the crossed wall, so the
+            # end that rounds toward the line's continuation wins.
+            goal = self._polyline_point_ahead(
+                self._mission.tracker._pts, fs.projection.s_arc_m, 6.0)
         else:
             goal = self._r_star or self._mission.endpoint
         to_goal = math.atan2(goal[1] - pose[1], goal[0] - pose[0])
@@ -1065,7 +1140,7 @@ class RnsSource:
         # set an escape DETOUR past the nearer end and refuse the hug.
         if left_end is not None and right_end is not None \
                 and left_end + right_end < 4.0 \
-                and not self._verdict_fuse(now):
+                and not self._verdict_fuse(now, pose):
             if left_end <= right_end:
                 e_tang, e_end = (t1, left_end) if side1 == Side.LEFT \
                     else (t2, left_end)
@@ -1082,7 +1157,9 @@ class RnsSource:
             if self._state != NavState.DETOUR:
                 self._transition(NavState.DETOUR)
             self._detour_dwell = 0
-            self._verdict_events.append(now or 0)
+            self._detour_best_d = float('inf')
+            self._detour_stall_ticks = 0
+            self._verdict_events.append((now or 0, pose[0], pose[1]))
             self.audit.append(AuditRecord(now or 0, "detour_enter",
                                           {"subgoal": list(esc),
                                            "via": "escape_wall"}))
@@ -1098,13 +1175,63 @@ class RnsSource:
             left_tang, right_tang = t1, t2
         else:
             left_tang, right_tang = t2, t1
+        l_cost = _rule2_cost(left_end, left_tang)
+        r_cost = _rule2_cost(right_end, right_tang)
         side = select_side(
             left_end is not None, right_end is not None,
-            _rule2_cost(left_end, left_tang),
-            _rule2_cost(right_end, right_tang),
-            goal_side, False, False)
+            l_cost, r_cost, goal_side, False, False)
         if side is None:
             return False
+        # END-HOP (funnel loop 2026-09-11, path rev 3-4 laps of 52 s): when
+        # the winning side's end is RIGHT THERE (< 1.0 m) and the detour
+        # cost is clearly one-sided (< 0.7 of the other; 0.5 left the fwd
+        # funnel entry -- 5.2 vs 8.6 -- unhopped), the detour is "step
+        # around that end". Hugging it instead handed the keep-distance
+        # law to whatever memory sat in the side sector two steps later --
+        # in the wall/car/wall pocket that was the car+wall-2 chain, and
+        # the robot lapped wall 2 (38 m) before winding proved the island.
+        # Jump straight to the point past the end, offset toward R': the
+        # ordinary DETOUR machinery (clearance gate, A-HYS-2) owns the
+        # rest, and a rejected hop falls through to the hug as before.
+        w_end = left_end if side == Side.LEFT else right_end
+        w_cost = l_cost if side == Side.LEFT else r_cost
+        o_cost = r_cost if side == Side.LEFT else l_cost
+        w_tang = left_tang if side == Side.LEFT else right_tang
+        self.audit.append(AuditRecord(now or 0, "side_pick",
+                                      {"side": side.value,
+                                       "w_end": w_end, "w_cost": w_cost,
+                                       "o_cost": o_cost,
+                                       "goal": [goal[0], goal[1]]}))
+        if w_end is not None and w_end < 1.0 and w_cost < 0.7 * o_cost:
+            to_r = math.atan2(goal[1] - anchor[1], goal[0] - anchor[0])
+            hop = (anchor[0] + math.cos(w_tang) * (w_end + 1.2)
+                   + math.cos(to_r) * 0.8,
+                   anchor[1] + math.sin(w_tang) * (w_end + 1.2)
+                   + math.sin(to_r) * 0.8)
+            obs_pts = obstacle_points(profile.d_block, profile.angle_min_rad,
+                                      profile.angle_step_rad)
+            hop_body = self._world_to_body(hop, pose, yaw)
+            margin_h = self._cfg["rns"]["clearance"]["margin_by_class"][
+                "small_object"]
+            hop_clear = clearance_at(hop_body, obs_pts, profile.range_max_m)
+            if hop_clear < self._r_eff_m + margin_h:
+                # observability: a rejected hop is the difference between
+                # "the rule never fired" and "the geometry refused it".
+                self.audit.append(AuditRecord(now or 0, "end_hop_rejected",
+                                              {"hop": list(hop),
+                                               "clear": hop_clear}))
+            else:
+                self._subgoal_clearance_m = None
+                self._subgoal_world = hop
+                if self._state != NavState.DETOUR:
+                    self._transition(NavState.DETOUR)
+                self._detour_dwell = 0
+                self._detour_best_d = float('inf')
+                self._detour_stall_ticks = 0
+                self.audit.append(AuditRecord(now or 0, "detour_enter",
+                                              {"subgoal": list(hop),
+                                               "via": "end_hop"}))
+                return False
         if self._planner is not None:
             # event replan (S4A.5): hitting a wall IS new information; the
             # next build folds it in so R* (and any re-entry side pick)

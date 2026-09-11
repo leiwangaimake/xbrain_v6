@@ -266,3 +266,24 @@ def test_escape_probe_reach_exceeds_threshold():
     assert up is not None and down is not None, \
         "both ends must be seen at 4.5 reach (up=%s down=%s)" % (up, down)
     assert up + down < 4.6
+
+
+def test_no_path_verdict_abstains_for_goal_outside_domain():
+    # random sweep 2026-09-11: eight 60-80 m gotos across EMPTY ground
+    # reported no_path_in_domain -- the goal lay beyond the 60 m domain
+    # cap, the field had no root, two empty attempt builds "proved" no
+    # path. A goal outside the domain is not provable by this domain:
+    # the verdict must abstain. mutant: drop the _cell_of(goal) guard ->
+    # reddens.
+    g = MemoryGrid(0.25, 600.0, 2.0, 1.0)
+    _paint(g, -5.0, 5.0, -5.0, 5.0, Cell.FREE)
+    p = GuidancePlanner(copy.deepcopy(_CFG))
+    p.set_task((0.0, 0.0), (200.0, 0.0))            # far beyond the cap
+    pose = (0.0, 0.0)
+    now = 1000
+    for i in range(400):
+        now = 1000 + i * 50
+        p.on_tick(g, pose, now)
+    assert p._unreachable_builds >= 2 or p._field is None
+    assert not p.domain_no_path(now + 20000), \
+        "verdict fired for a goal outside the domain"
