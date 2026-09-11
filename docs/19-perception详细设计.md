@@ -3,11 +3,11 @@
 | 项 | 内容 |
 |---|---|
 | 文档 | **perception 详细设计（第 19 册）** |
-| 版本 | **v1.2**（v1.0 从 0 重写 · 落地版 → v1.1 三遍核查 → v1.2 感知方对账修正；封面与 §18 变更记录同步） |
-| 日期 | **2026-09-08** |
+| 版本 | **v1.3**（v1.0 从 0 重写 · 落地版 → v1.1 三遍核查 → v1.2 感知方对账修正 → **v1.3 第三轮对账：节拍分级门 · `src` 逐位 · 退化规则 · 1280×800**；封面与 §18 变更记录同步） |
+| 日期 | **2026-09-11** |
 | 状态 | ★★★ **可开工** —— 本版以「照此写代码」为验收标准 |
 | 进程 | `perception`（**C++17**，单进程；rclcpp 仅用于 TF / 命令订阅，感知数据链不经 ROS topic） |
-| 上游 | [11-接口契约](11-接口契约.md) **§3.1B（v1.7）—— 唯一接口真源** · [20-RNS反应式导航软件系统详细设计](20-RNS反应式导航软件系统详细设计.md) **v1.5 §3.1（消费侧语义）** · [perception-rns-interface-20260907](perception-rns-interface-20260907.md)（交接快照 · 差量 G-1~G-4 · 约束 F-1~F-3 · Q 清单） · `00` NAV/VOI 相关条目 · `CLAUDE.md` §3 |
+| 上游 | [11-接口契约](11-接口契约.md) **§3.1B（v2.1）—— 唯一接口真源** · [20-RNS反应式导航软件系统详细设计](20-RNS反应式导航软件系统详细设计.md) **v1.35 §3.1（消费侧语义）** · [perception-rns-reply-20260911](perception-rns-reply-20260911.md)（第三轮对账答复 · 本版差量的依据） · [perception-rns-interface-20260907](perception-rns-interface-20260907.md)（交接快照 · 差量 G-1~G-4 · 约束 F-1~F-3 · Q 清单） · `00` NAV/VOI 相关条目 · `CLAUDE.md` §3 |
 | 下游 | 无（本册是**契约的实现侧**，🚫 不产生新契约） |
 | 基底代码 | `ros2_ws/perception`（2026-09-07 交接快照，Orbbec Gemini 338Le 工程） |
 
@@ -102,7 +102,7 @@
 
 ★ 规范与理由的定义处是 `11` §3.1B.0（吞吐 ≠ 延迟 · `d_block` 不得等推理），🚫 本节不复述。本节只给**实现侧预算**。
 
-### 2.2 ★★★ 快线预算（目标：`d_block` 发布时年龄 ≤ 60 ms）
+### 2.2 ★★★ 快线预算（两道门 · v1.3 命名：**G-P1** 处理时间 · **G-P2** 发布时年龄 ≤ 60 ms）
 
 | 段 | 预算 | 依据 |
 |---|---|---|
@@ -114,7 +114,7 @@
 | RT put | ≤ 1 ms | 环回，非阻塞（§3.5） |
 | **合计** | **≤ 35 ms** | ★ 对 T-50（300 ms）留 ~8 倍裕量 |
 
-★★ **预算是 CI 断言不是愿望**（A19-PERF-1，§14）：快线单帧处理耗时（不含曝光与传输）P99 超预算 ⇒ 红。
+★★ **预算是 CI 断言不是愿望**（A19-PERF-1，§14）。★ **v1.3 把两道门分开命名**（感知方 09-11 Q2 追问「处理 P99 硬门的准确数值与起止点」）：**G-P1 处理时间** = SDK 深度帧回调返回 → `put` 返回，**P99 ≤ 14 ms**（解包 2 ＋ 遍历 8 ＋ 后处理/序列化 3 ＋ put 1；A19-PERF-1 的锚；开发机现在可测、生产机共载复测）；**G-P2 发布时年龄** = `t_publish − t_capture`，**P99 ≤ 60 ms**（独立门，含曝光半周期与传输；⚠️ 只有 PD-11 闭合后才能签，此前按 `t_capture_estimated` 报数不签）。🚫 两者相加或混用。
 ★ 1280×800 升档：算力仍够（~1 Gflops/s），但受 **F-1 延迟 ＋ 带宽 492 Mbps** 制约 ⇒ 升档条件登记 §17 PD-12，🚫 本期不升。
 
 ### 2.3 ★ 慢线预算
@@ -154,8 +154,8 @@
 
 | 步 | 内容 |
 |---|---|
-| ★★★ 取流 | 快线消费 **D2C 之前的原生 640×400 深度帧**（PROF-3 v1.9 收窄定义）。⚠️ 现实现在 HW-D2C 之后取 1280×720 对齐帧再放大 1080p —— 那两级都不是原生样本，改造点见 §15 W-3 |
-| ★★ 地面拟合 | 以外参先验平面为种子，对近区候选地面点做稳健拟合（RANSAC / IRLS）得本帧 `(n, d)`；★ 拟合失败（内点不足 / 残差超限）⇒ **退回先验平面 ＋ `degraded_reasons: ground_fit_fallback`**（`11` §3.1B.3 已登记该值），🚫 静默 |
+| ★★★ 取流 | 快线消费 **D2C 之前的原生 640×400 深度帧**（PROF-3 v1.9 收窄定义）。⚠️ 交接快照在 HW-D2C 之后取 1280×720 对齐帧再放大 1080p —— 那两级都不是原生样本，改造点见 §15 W-3。★★ **2026-09-11 负责人裁定（用户书面确认）：图像 / 视频主输出维持 1280×800，🚫 再归一化 / 升采样到 1920×1080**（模型输入尺寸、原生深度 profile、帧率与精度门不因此改变；本册受影响的只有 mask 像面注记与 §13.1 MED-2 支路澄清） |
+| ★★ 地面拟合 | 以外参先验平面为种子，对近区候选地面点做稳健拟合（RANSAC / IRLS）得本帧 `(n, d)`；★ 拟合失败（内点不足 / 残差超限）⇒ **退回先验平面 ＋ `degraded_reasons: ground_fit_fallback`**（`11` §3.1B.3 已登记该值），🚫 静默。★★ **v1.3 退化动作**：回退帧的 `d_free` **封顶 `dfree_cap_fallback_m`**（§8.2 新键，建议 2.0 m）—— 平面误差 ∝ `r·tan(Δpitch)`，近场小远场大，封顶近场即保守；消费侧不加新逻辑，`d_free ≤ 2.0` 落入速度门 `[1.8, 3.0) → 0.5 m/s` 段自动限速（`11` §9.6.2）。「写了 reason」不等于 FREE 可信 —— 可信由封顶保证，reason 只是可见性（A19-FIT-1） |
 | ★ 高度定义 | 逐点高度 `h = n·p ＋ d`（对本帧平面），后续分类全部用它；`slope` 停止条件负责平面之外的坡变 |
 
 ### 3.2 ★★★ 逐像素遍历（原生全样本单遍，PROF-3 / PROF-4）
@@ -172,6 +172,7 @@ for (v, u) 全分辨率:                       # 640x400, 不降采样 (PROF-3)
   r = hypot(p.x, p.y)
   i = bin_of[v][u]
   if i < 0 or r < blind_lo or r > range_max_m: continue
+  src[i] |= BIT_G                          # 11 v2.1 逐位定义: 几何本帧对该 bin 有有效样本 (S3.4 不再在推进分支置位)
   if p.h > z_pass_m:            continue   # PROF-4: 过顶, 可从下方通过
   elif p.h > h_tol_m:                      # 立体障碍
       d_blk[i] = min(d_blk[i], r)          # 角度域 MIN, 1 个有效像素即存活
@@ -188,7 +189,7 @@ for (v, u) 全分辨率:                       # 640x400, 不降采样 (PROF-3)
 |---|---|
 | ★ `h_max` 的滞后 | `d_blk[i]` 在遍历中还会变小 ⇒ 高度在**逐 bin 后处理重算**（`obs` 紧凑表二次窗过滤），且**负障碍优先于正障碍高度**（§3.4 v1.2），🚫 不信遍历中的首值 |
 | ★ `blind_lo` | 逐帧取 `max(blind_near 配置下限, 本帧实测最近有效地面距离)`；发布字段 `blind_near_m` 用**本帧实测值**（时变，`20` RNS-I-5） |
-| ★★ `mask_lookup(u, v)` | ★★ **v1.2 改为投影查表**：快线在原生深度系，mask 在彩色像面（实测最终二值 mask 1920×1080）⇒ 用出厂 depth↔color 内外参把该像素 3D 点投到彩色面取 mask 值（~15 flops，无遮挡 z-buffer，v1 接受 —— 误查风险被 `FREE = T ∧ G` 的 G 侧兜住并在此声明）。🚫 纯宽高比例缩放只在同一像面成立（感知方指正）。mask 取**原始可通行类分割**（`11` v1.9 T 通道取材行），槽带 `t_seg` |
+| ★★ `mask_lookup(u, v)` | ★★ **v1.2 改为投影查表**：快线在原生深度系，mask 在彩色像面（交接快照实测二值 mask 1920×1080；★ **2026-09-11 起主输出 1280×800，mask 随之在 1280×800 像面**，投影查表只换该像面内参）⇒ 用出厂 depth↔color 内外参把该像素 3D 点投到彩色面取 mask 值（~15 flops，无遮挡 z-buffer，v1 接受 —— 误查风险被 `FREE = T ∧ G` 的 G 侧兜住并在此声明）。🚫 纯宽高比例缩放只在同一像面成立（感知方指正）。mask 取**原始可通行类分割**（`11` v1.9 T 通道取材行），槽带 `t_seg` |
 
 ### 3.3 ★★ T 证据与 PROF-5 腐蚀（在地面域做，🚫 不在像素域）
 
@@ -197,6 +198,8 @@ m  = v_ego_max * (t_capture - t_seg) + m_jitter          # 收缩余量, 米
 T_ok[i][k] = 对 [i][k] 及其邻域(径向 m/dr, 角向 m/(r_k*angle_step)) 全部成立:
              G > 0 且 T/G >= tau_T                        # min 池化实现
 ```
+
+★★ **帧级新鲜度（v1.3 —— 感知方 Q4 追问「10 s 曾更新」与「本帧可用」分开）**：快线取 mask 槽时先判 `t_capture − t_seg ≤ seg_max_age_ms`（§8.2 新键，建议 300 ms，与 RNS 侧 `seg_stale_ms` 同值）—— 否 ⇒ 本帧 `t_seg = null`、bit0 全 0；是 ⇒ 按上式腐蚀（年龄越大 FREE 越小，300 ms 内平滑过渡到 0）。`status.traversable_seg_available`（10 s 窗）**只是能力 / 事件标志，🚫 参与帧级判定**。期望结果（A19-TIME-2 场景，慢线卡死 5 s）：最后一张 mask 之后 ≤ 300 ms 起每帧 `t_seg = null` 且 bit0 = 0，快线发布率不降；第 10 s `traversable_seg_available` 翻 `false` ＋ `no_traversable_seg`（A19-SEG-2）。
 
 ★★★ **无分割（槽空 / `traversable_seg_available == false`）时**：`T_ok` 整体视为「无 T 证据」——
 **照常发布**，`t_seg_mono_ms = null`、全部 bin `src` bit0 = 0，`d_free` 的 T 停止条件跳过（`11` §3.1B.1 v1.7 逐字）。
@@ -223,7 +226,7 @@ for i in bins:
     if k > 0 and |zbar - zbar_prev|/dr > tan(slope_max): break  # 台阶/陡坡
     if var > sigma_max^2:                      break   # 粗糙度
     zbar_prev = zbar; d_free = far_k           # 整格通过才推进到格远端
-    src[i] |= (T_ok ? BIT_T : 0) | BIT_G
+    src[i] |= (T_ok ? BIT_T : 0)         # BIT_G 已在 S3.2 遍历中按「有有效样本」置位 (11 v2.1)
   # h_block 的选择优先级 (v1.2, 感知方指正: 初版会被正障碍最大高度无条件覆盖):
   h_out[i] = neg_flag[i] ? (实测到坑内点 ? neg_h[i] : null)          # 负障碍优先
                          : max(h for (r,h) in obs[i] if r <= d_blk[i] + w_h)
@@ -250,15 +253,17 @@ for i in bins:
 快线逐 bin 后处理末尾:
   if now - t_obj > objects_stale_ms: 跳过 (与 T-52 同量级, 过期语义不注入)
   for 每个目标:
-    对 footprint 覆盖到的 bin i: d_sem = 该 bin 方向到 footprint 的最近距离
-    if d_sem < d_blk[i]: d_blk[i] = d_sem; 重算 d_free 截断 (维持 PROF-1)
-    src[i] |= BIT_SEM
+    fp = footprint 按 m(r) = (v_ego_max + omega_max*r)*(t_capture - t_obj) + m_jitter 膨胀
+                                             # v1.3: 无同步位姿时的保守变换 (PROF-5 同式, 方向相反: BLOCKED 只许变大)
+    对 fp 覆盖到的 bin i: d_sem = 该 bin 方向到 fp 的最近距离
+    if d_sem < d_blk[i]: d_blk[i] = d_sem; 重算 d_free 截断 (维持 PROF-1); src[i] |= BIT_SEM
+                                             # v1.3: BIT_SEM 只在语义边界更近时置位 (11 v2.1 逐位定义)
 ```
 
 | 规则 | 内容 |
 |---|---|
 | ★ 方向保守性 | 注入只会让 `d_block` 变**近**（min 并集），符合 `RNS-N-5` BLOCKED 取并；🚫 不做反向（语义没看见 🚫 不能抹几何） |
-| ★ 陈旧上限 | `objects_stale_ms`（§8.2）：BLOCKED 方向留旧值是保守的，但无限留会把已离开的目标钉死 ⇒ 超龄不注入，靠几何与 RNS 侧 `ObjectsMsg` 自己的 T-52 定价 |
+| ★ 陈旧上限 | `objects_stale_ms`（§8.2；★ **v1.3 改为约两个推理周期，建议 100 ms ＋ 抖动，🚫 与 T-52 同量级** —— 注入是帧级证据，下一条 `objects` 就替换它，消费端超时值不是它的尺度）：BLOCKED 方向留旧值是保守的，但无限留会把已离开的目标钉死 ⇒ 超龄不注入，靠几何与 RNS 侧 `ObjectsMsg` 自己的 T-52 定价 |
 | ★ 🚫 不是融合 | 只做证据注入并保留归属位，「让行/绕行/穿越」的策略判断仍全在 RNS（`20` §3.1.4） |
 
 ### 3.5 ★ 编码与发布
@@ -327,13 +332,14 @@ velocity_xy = (v_b.x, v_b.y);  velocity_frame = "ego_removed"
 
 | 字段 | 算法 |
 |---|---|
-| `fps_depth` / `fps_infer` | 各自 10 s 滑窗帧计数 / 10（★ 窗口与 #20-11 验收口径同源，🚫 另设一套） |
+| `fps_depth` / `fps_infer` | 各自 10 s 滑窗帧计数 / 10（★ v1.3：`fps_infer` 退为**统计字段**，验收口径改为逐次间隔分级门，见下行） |
+| ★★ `infer_gap_ms_p99` / `infer_gap_ms_max`<br>**（v1.3）** | `objects` 相邻**唯一新结果**的 `t_publish_mono_ms` 间隔（含未结束间隙 `now − t_publish[last]`）入 10 s 环形缓冲：P99（**二级门读数 ≤ 50 ms**）与最大值（**一级门读数 ≤ 100 ms**）。★ 唯一性按推理帧 `t_capture` 去重，重发 / 插值 / 心跳不计（`11` §3.1B.3 v2.1） |
 | `latency_ms_p50` / `p99` | 每帧样本 `t_publish − t_capture` 入 10 s 环形缓冲，nearest-rank 分位；★ 分别对快线（profile）与慢线（objects）各算一组，上线取**慢线组**（保守，且与 F-1 实测口径一致） |
 | `invalid_pixel_ratio` | `n_invalid / roi 像素总数`（§3.1 / §3.2）。★ 外参未标定 ⇒ ROI 退化为下半幅 ＋ `degraded_reasons` 记 `roi_fallback`（`11` §3.1B.3） |
 | `ground_seg_level` | 沿用基底定义 |
 | `extrinsic_calibrated` | §7.3 的判定结果（🚫 不可手置） |
 | `traversable_seg_available` | 分割槽 10 s 内有有效更新 |
-| `degraded_reasons` | ★ 行为相关的三个值由 `11` 固定：`infer_rate_low`（§6.3）· `no_traversable_seg` · `roi_fallback`；其余为自由诊断串。★★ 🚫 用自由串顶替这三个固定值 —— 测试按字面 grep |
+| `degraded_reasons` | ★ 行为相关的固定值由 `11` 定：`infer_rate_low`（§6.3，v1.3 判据改写）· `no_traversable_seg` · `roi_fallback` · `ground_fit_fallback`（§3.2A）· `t_capture_estimated`（§2.4）· ★ v1.3 增 `infer_gap`（任一 `Δpub > 50 ms`，边沿 warn，10 s 去重）· `reconnecting` / `reconfiguring`（节拍要求的声明不计区间 —— **不声明就暂停 = 计超限**）；其余为自由诊断串。★★ 🚫 用自由串顶替固定值 —— 测试按字面 grep |
 
 ### 5.2 ★ 事件（跨面白名单 PC-2）
 
@@ -341,11 +347,11 @@ velocity_xy = (v_b.x, v_b.y);  velocity_frame = "ego_removed"
 
 ---
 
-## 6. ★★★ 推理 20 Hz 达标设计（`20` #20-11）
+## 6. ★★★ 推理节拍达标设计（`20` #20-11 · v1.3 改逐次间隔口径）
 
 ### 6.1 现状分解（基底 README 实测）
 
-输出 ≈ 18.73 Hz · E2E P99 166.5~225.9 ms。双模型：COCO80 640×640 → DLA0；Active12 896×896 **FP16** → DLA1；GPU 基本空闲。
+输出 ≈ 18.73 Hz · E2E P99 166.5~225.9 ms。双模型：COCO80 640×640 → DLA0；Active12 896×896 **FP16** → DLA1；GPU 基本空闲。★ **v1.3 事实（2026-09-11 实测）**：生产机是 **Jetson Orin NX 16 GB**（JetPack 6.2 · DLA ×2 · 同机 llama-server 占 GPU、sherpa-onnx 占 CPU），🚫 按 AGX Orin 或开发机 `.23` 的成绩外推；engine 在生产机构建（PSC-4）。感知方 09-10 开发机成绩：均值 25 Hz，**发布间隔 P99 59～68 ms · 最大 72～82 ms** —— 距 §6.3 二级门约 15～25% 尾部量，一级门已达。
 
 ### 6.2 ★ 三条路线（按性价比排序，具体取舍归实现方 —— §17 PD-14）
 
@@ -359,7 +365,7 @@ velocity_xy = (v_b.x, v_b.y);  velocity_frame = "ego_removed"
 
 ### 6.3 ★ 验收接线（长在报文里，🚫 不靠口头）
 
-`fps_infer` 10 s 均值 ≥ 20；持续低于 ⇒ `degraded_reasons` 必含 `infer_rate_low` ＋ 一条 `warn` 事件（§5.2）。断言 A19-RATE-1（§14）。
+★ **v1.3 口径（`11` §3.1B.3 v2.1 · 2026-09-11 负责人裁定，分级门由用户同日选定）**：目标每个 `Δpub ≤ 50 ms`；验收**一级硬门** `max Δpub ≤ 100 ms`（含未结束间隙）、**二级比例门** `>50 ms` 占比 ≤ 1%。运行期：任一 `Δpub > 50 ms` ⇒ `infer_gap`（边沿 warn）；`infer_rate_low` := 10 s 窗内 `>50 ms` 占比 > 1% **或** 出现 `>100 ms`（即时置位，连续 10 s 达标才清）。`fps_infer` 10 s 均值只作统计。断言 A19-RATE-1（§14，v1.3 改写为间隙注入三件套）。
 
 ---
 
@@ -415,6 +421,8 @@ perception:
     z_pass_m:         null   # 过顶滤除 (PROF-4); 待 Q-7 (载荷最高点 + 余量)
     cover_min:        null   # 整格覆盖率下限 G/expect_cell (v1.2 取代单纯点数 g_min)
     omega_max_rps:    null   # PROF-5 腐蚀的角速度上界 (11 v1.9 加旋转项)
+    seg_max_age_ms:   null   # v1.3 帧级 mask 新鲜度上限 (S3.3); 建议与 RNS seg_stale_ms 同值 300
+    dfree_cap_fallback_m: null # v1.3 地面拟合回退帧的 d_free 封顶 (S3.2A); 建议 2.0
     tau_T:            null   # T 证据比例阈值
     slope_max_deg:    null
     sigma_max_m:      null   # 粗糙度 (格内高度标准差)
@@ -435,7 +443,7 @@ perception:
     calib_record:     null   # 标定记录路径
     calib_sha256:     null
     residual_max_m:   null
-  med2:                      # v0.1 裁定沿用 (S13)
+  med2:                      # v0.1 裁定沿用 (S13); 独立预览支路, 主输出 1280x800 (2026-09-11 裁定) 不经此块
     rgbd_rtsp_port:   18083
     rgbd_pub_port:    null   # 甲方 U-15 (PD-2); null => 不推流 + warn
     width: 1280
@@ -444,7 +452,7 @@ perception:
     bitrate_kbps: 2000
     gop: 30
   objects_inject:
-    objects_stale_ms: null   # S3.4A 语义注入的陈旧上限 (与 T-52 同量级)
+    objects_stale_ms: null   # S3.4A 语义注入的陈旧上限 (v1.3: 约两个推理周期, 建议 100 + 抖动; 不是 T-52 量级)
   debug:
     pointcloud_enable: false # 调试点云 (11 2.2.1 登记为 debug 默认关; PSC-5 按登记集比对)
     legacy_keys_enable: false # 过渡期旧名 perception/detections|status (感知方 2.6 提议采纳):
@@ -513,7 +521,7 @@ perception:
 
 ### 13.1 MED-2 · NVENC 推流
 
-v0.1 裁定**原样沿用**：环回 RTSP **18083**（`127.0.0.1` only，NET-C9）；`rgbd_pub_port` 属甲方 `U-15`（PD-2），未配置 ⇒ 不推流 ＋ 一条 `warn`（`med2_not_configured`），其余功能照常；H.264 NVENC `zerolatency` B 帧 0，1280×720@15，2000 kbps CBR，GOP 30（码率/分辨率待现场实测，PD-8）。★ 与 §6 路线 3（GPU 分担模型）有资源交叠，选该路线时 NVENC 占用须一并实测。
+v0.1 裁定**原样沿用**：环回 RTSP **18083**（`127.0.0.1` only，NET-C9）；`rgbd_pub_port` 属甲方 `U-15`（PD-2），未配置 ⇒ 不推流 ＋ 一条 `warn`（`med2_not_configured`），其余功能照常；H.264 NVENC `zerolatency` B 帧 0，1280×720@15，2000 kbps CBR，GOP 30（码率/分辨率待现场实测，PD-8）。★ 与 §6 路线 3（GPU 分担模型）有资源交叠，选该路线时 NVENC 占用须一并实测。★★ **v1.3 澄清（感知方 Q3 追问）**：MED-2 是**独立的预览 / 上行编码支路**（HMI / 云端拉流），🚫 不是对分析管线帧输出的旧描述；分析 · 检测 · mask 走 **1280×800 主输出**（2026-09-11 负责人裁定，🚫 再生成 1080p 规范化流 —— XBRAIN 侧无任何 1080p 消费者）；联合验收时**两路同时运行**计入共载。若 PD-8 实测后 RTSP 改 800p，仍是两路。
 
 ### 13.2 TRT engine 纪律
 
@@ -539,7 +547,10 @@ v0.1 裁定**原样沿用**：环回 RTSP **18083**（`127.0.0.1` only，NET-C9�
 | **A19-TIME-1** | 一条 profile 全数组同帧（生成器给每帧异色标记，混帧可检出） | ★ bin 后处理读上一帧 `G` ⇒ 红 | 单元 |
 | **A19-TIME-2** | 慢线人工卡死 5 s ⇒ 快线发布率不降 · bit0 转 0（守 **P19-1**） | ★★★ 快线等 mask 槽更新才发 ⇒ 发布率跌 ⇒ 红 —— **这是 TIME-2 的直接护栏** | 注入 |
 | **A19-ENC-1** | 序列化输出经严格 JSON 解析零失败 · 全文无 `inf`/`nan` 字面量 | ★ `d_block` 直接写 +inf ⇒ 解析失败 ⇒ 红 | 单元 |
-| **A19-RATE-1** | mock 推理压到 15 Hz ⇒ `degraded_reasons` 10 s 内出现 `infer_rate_low`；恢复 21 Hz ⇒ 移除 | ★ 恒不置 ⇒ 正向红；★ 恒置 ⇒ 恢复段红 —— 成对 | 注入 ×2 |
+| **A19-RATE-1**<br>**（v1.3 改写）** | mock 推理注入单次 120 ms 间隙 ⇒ `infer_gap` 当拍出现、`infer_rate_low` 10 s 内置位、`infer_gap_ms_max ≥ 120`；随后连续 10 s 间隔 ≤ 50 ⇒ 两者清除。★ 反向：重发同一 `t_capture` 结果填补间隙 ⇒ **不得**缩短 `infer_gap_ms_max`（唯一性去重） | ★ 恒不置 ⇒ 正向红；★ 恒置 ⇒ 恢复段红；★ 去掉去重 ⇒ 重发把 max 压到 50 以下 ⇒ 反向红 —— 三件套 | 注入 ×3 |
+| **A19-SRC-1**<br>**（v1.3 新增）** | `11` §3.1B.1 v2.1 六个 `src` 样例场景逐位相等；bit1 在「贴脸障碍、地面被挡」bin 亦为 1 | ★ 把 BIT_G 挪回推进分支 ⇒ 贴脸场景 bit1 = 0 ⇒ 红；★ BIT_SEM 无条件 OR ⇒ 语义更远场景 bit2 = 1 ⇒ 红 | 金标 ×2 |
+| **A19-SEG-2**<br>**（v1.3 新增）** | mask 槽年龄 > `seg_max_age_ms` ⇒ 本帧 `t_seg = null`、bit0 全 0；≤ 上限 ⇒ 按 PROF-5 腐蚀 | ★ 去掉年龄判 ⇒ 5 s 旧 mask 仍产生 bit0 ⇒ 红 | 注入 |
+| **A19-FIT-1**<br>**（v1.3 新增）** | 地面拟合回退帧：`d_free ≤ dfree_cap_fallback_m` 且 reason 含 `ground_fit_fallback` | ★ 去掉封顶 ⇒ 回退帧 `d_free` 到量程 ⇒ 红；★ 只封顶不报 reason ⇒ 反向红 | 注入 ×2 |
 | **A19-CFG-1** | 任一 §8.2 必填键置 `null` ⇒ 拒绝启动且报出该键路径（守 **PSC-2**） | ★★★ 给 `h_tol_m` 加代码默认值 ⇒ null 时照常启动 ⇒ 红 | 启动 |
 | **A19-VEL-1** | 无 TF 场景 `velocity_frame == "raw"` | ★ 硬编码 `"ego_removed"` ⇒ 红 | 单元 |
 | **A19-CAL-1** | 占位外参（全零/记录缺失）⇒ `extrinsic_calibrated == false` | ★ 判定改「配置存在即 true」⇒ 红 | 单元 |
@@ -595,18 +606,19 @@ A19-PROF-4 / A19-RATE-1 因此成对；A19-TIME-2 专杀「快线偷偷等慢线
 |---|---|---|---|
 | **PD-2**（沿用） | `U-15` 对外媒体端口 | 甲方网络规划 | 不推流 ＋ warn（不阻塞出勤 ✓） |
 | **PD-8**（沿用） | MED-2 码率/分辨率/帧率 | 现场带宽实测 | 工程缺省值，不在安全链路 |
-| **PD-11** | Orbbec SDK 帧时戳语义（设备钟/主机钟/含否传输） | 第三方 SDK 事实，须实测 | host 收包 − 配置化链路估计（保守可审计 ✓） |
+| **PD-11** | Orbbec SDK 帧时戳语义（设备钟/主机钟/含否传输）。★ v1.3：`latency_fallback_ms` 须取**上界估计**（估得偏早 ⇒ 年龄偏大 ⇒ 保守）；**估计误差界 E 由感知方实测记录并随包报数**，E > 100 ms ⇒ 回到 `11` §3.1B.5 重议 | 第三方 SDK 事实，须实测 | host 收包 − 配置化链路估计（保守可审计 ✓）；G-P2 门在闭合前不签 |
 | **PD-12** | `range_max_m` 户外强光实测值 ＋ 1280×800 升档 | 实测量（前者同 v0.1 PD-10 的教训：🚫 硬编码上限） | `null` 拒启；升档不做（✓） |
 | **PD-13** | `terrain` 分档（hard/soft/rough）算法 | 二期能力，需实地数据 | 恒 0 = unknown（诚实 ✓） |
 | **PD-14** | 20 Hz 三路线的最终取舍 | 归感知实现方（交接文档 §一A「路线你方定」） | 验收只认 `fps_infer`（✓） |
 | **PD-15** | 标定残差阈值 `residual_max_m` | 首次标定实测给出 | `null` ⇒ `calibrated=false`（✓） |
-| **PD-16**<br>**（v1.2）** | 实机细障碍验收矩阵（尺寸 × 材质 × 距离）与误检约束 | 传感器物理，合成金标代答不了（§14 注） | 验收前细障碍能力**不写进任何承诺**（✓） |
+| **PD-16**<br>**（v1.2）** | 实机细障碍验收矩阵（尺寸 × 材质 × 距离）与误检约束。★ v1.3 首版矩阵**提案**见 `perception-rns-reply-20260911.md` §Q5.3（承诺行：≥ 10 cm 杆 ≤ 4 m · ≥ 0.3 m 箱体/人/车 ≤ 6 m · ≥ 0.12 m 路沿 ≤ 3 m · ≥ 0.3 × 0.5 m 坑 ≤ 2 m，阴天/顺光；细线 · 玻璃 · 水面 🚫 承诺；逆光 / 夜间待实测） | 传感器物理，合成金标代答不了（§14 注） | 验收前细障碍能力**不写进任何承诺**（✓） |
 | **PD-17**<br>**（v1.2）** | `z_pass_m` 所需的**整机最大扫掠高度**（机体＋载荷＋云台＋步态起伏＋姿态余量，相对地面基准） | 整机侧实测/提供（感知方 Q-7 答复点名），🚫 单次静态站立高度冒充 | `null` ⇒ 拒启（✓） |
 
 ## 18. 变更记录
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| ★★ **v1.3**<br>**（第三轮对账）** | 2026-09-11 | ★ 答复感知方 09-11 来函（`perception-rns-reply-20260911.md`）：① §2.2 两道门命名 G-P1（处理 ≤ 14 ms，A19-PERF-1 锚）/ G-P2（发布时年龄 ≤ 60 ms，PD-11 后签）；② §3.2 遍历中按「有有效样本」置 BIT_G、§3.4 推进分支不再置、§3.4A BIT_SEM 只在更近时置 ＋ 无位姿时 footprint 按 PROF-5 同式膨胀 ＋ `objects_stale_ms` 改约两个推理周期（`11` §3.1B.1 v2.1 `src` 逐位定义）；③ §3.2A 拟合回退帧 `d_free` 封顶 `dfree_cap_fallback_m`；④ §3.3 帧级 `seg_max_age_ms` 与 10 s 能力标志分开；⑤ §5.1 / §6 节拍口径改逐次间隔**分级门**（用户 2026-09-11 选定：一级 `max ≤ 100 ms` · 二级 `>50 ms` 占比 ≤ 1%；`infer_gap` / `infer_gap_ms_max` / `infer_rate_low` 改写），A19-RATE-1 改写为间隙注入三件套；⑥ 1280×800 主输出（2026-09-11 负责人裁定）：§3.2 mask 像面、§3.2A 注记、§13.1 MED-2 独立支路；⑦ §6.1 生产机事实（Orin NX 16 GB）；⑧ §8.2 新键 `seg_max_age_ms` / `dfree_cap_fallback_m`；⑨ §14 增 A19-SRC-1 / A19-SEG-2 / A19-FIT-1；⑩ §17 PD-11 误差界、PD-16 矩阵提案。同批 `11` v2.1 / `20` v1.35。 |
 | ★★★ **v1.2**<br>**（对账修正轮）** | 2026-09-08 | ★★★ **按感知方接口答复逐条修正**（该答复抓到本册/交接文档多处实错，全部采纳）：① §3.4 `d_free` 推进改**格远端判停 ＋ 整格覆盖率 `G/expect_cell ≥ cover_min`**（其反例可复算出 `d_free 0.85 > d_blk 0.80`，PROF-1「构造性成立」原不成立）＋ 金标 A19-PROF-1b 就用该反例；② 负障碍两处修正：穿地证据记**期望交点** `bin_exp`（横向平移反例：期望 16.7° vs 回波 8.5°）；`h_block` 负障碍**优先**，🚫 被正障碍最大高度覆盖；③ 新增 §3.2A **逐帧地面平面拟合**（🚫 恒 z=0；失败退先验 ＋ `ground_fit_fallback`），`z_exp` 由静态表改逐帧闭式；④ 快线取 **D2C 前原生深度**（PROF-3 v1.9），mask 改**投影查表**（跨像面比例缩放不成立）；⑤ §4.2 `ego_removed` 置位四条件（精确时刻 TF · 旋回 base_link · 外参非占位 · 同纪元）；⑥ A19-PERF-1 改共载实测口径；合成金标声明保证边界，实机细障碍验收登记 **PD-16**；`z_pass` 扫掠高度登记 **PD-17**；⑦ 过渡期旧 key 开关 `legacy_keys_enable`（默认关）；W-11 模拟消息样例集。★ 同批 `11` v1.9 八处（PROF-3 收窄 · PROF-5 加旋转项 · 角度/量纲/遮挡/分源约定 · 20 Hz 口径冻结 · `infer_gap_ms_p99` · 两个新 reason · 探针数据出处订正）。 |
 | ★ **v1.1** | 2026-09-08 | ★★ **三遍核查轮（同日）**：① 补 **§3.4A** `src` bit2 语义注入产生规则（初版恒 0 ⇒「语义看见、几何瞎」的玻璃门场景在 profile 里不可见）＋ A19-SEM-1 正反对；② §3.5 补**报文头字段逐个产生表**（`pose_used`/`t_publish`/`schema` 初版无人产）；③ `rt/perception/pointcloud` 以 **debug 默认关**登记（同批 `11` §2.2.1）—— 否则基底既有通道撞 PSC-5 白名单精确比对；④ §14 补 **PSC-1~7 / P19-1~5 全员变异体覆盖**（A19-BOOT/SLOT/ALLOC/LINT 族）—— MUT-COVER 门禁同批改锚新结构；⑤ §3.1 预计算补 `r_exp`；`conf` 除零边界。 |
 | ★★★ **v1.0**<br>**从 0 重写 · 落地版** | 2026-09-08 | ★★★ **v0.1 整册作废**（LiDAR 前提崩塌，§0.2 三区处置表）。★ 接口真源移交 `11` §3.1B（v1.7），本册转纯实现侧：五执行体快慢线（§1/§2）· ProfileMsg 管线可编码规格（§3，PROF-1~5 逐条落点）· ObjectsMsg 字段映射（§4）· StatusMsg 与事件（§5）· 20 Hz 达标设计（§6）· 外参标定（§7）· 配置/自检/降级/单调钟（§8~§11）· 断言总表 A19-*（§14，含三对正反向）· 工作分解 W-1~W-10（§15）。★ v0.1 存活裁定收入 §13/§17 逐条注明沿用；停车场 PCC-9 一揽子登记（§16）。★ 跟随/re-ID 按 `20` #20-13 预留，不入本册范围（§0.3） |
