@@ -49,6 +49,7 @@ rns:
   watchdog:
     window_s: 20.0                 # [sim] T_w; 8s 对起步转向/绕行 s 停滞太短(实测误报), 20s 覆盖正常停滞段 (20 S7.3A)
     min_progress_m: 0.5            # [sim] delta_w: 一个点距量级
+    report_after_windows: 6        # [doc] 分支三: 升级无效 6 个 T_w (120 s) 仍无进展 => 有界上报 watchdog_no_progress (20 S7.3A v1.41); 贴墙态不计时
   clearance:
     margin_by_class:               # [geo] 分类型安全余量 (20 S5.6, U54 1m 单向折入)
       vehicle: 0.5

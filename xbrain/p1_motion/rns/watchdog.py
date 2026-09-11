@@ -24,6 +24,14 @@ Two branches on trigger (S7.3A):
     obstacle -- UNKNOWN/fence/health capped v to zero; wall-follow has nothing to
     hug). This branch trades completeness for boundedness and is filed honestly
     in the S7A.4 weakening table.
+  - branch THREE (20 S7.3A v1.41, hot-battery leg04 record in S4A.12): the
+    escalation itself is not bounded -- _enter_wall may answer with a
+    small-obstacle DETOUR subgoal instead of hugging, the subgoal is adopted
+    and dropped every tick with the pose frozen, the timer never resets, and
+    the S7.6 wall criteria never get to run: 600 s hang, no report. So once
+    the timer exceeds report_after_windows * T_w the watchdog reports no
+    matter what boundary exists. Wall-follow ticks do not count, so a real
+    hug is never cut short by it.
 """
 
 from __future__ import annotations
@@ -49,11 +57,17 @@ class ProgressWatchdog:
     """Watches arc-length progress s* (RNS-N-15). Reset when s* rises by delta_w;
     trigger when the timer exceeds window_s without that rise."""
 
-    def __init__(self, window_ms: int, min_progress_m: float) -> None:
+    def __init__(self, window_ms: int, min_progress_m: float,
+                 report_after_windows: int) -> None:
+        # report_after_windows: branch three budget in T_w units (20 S7.3A
+        # v1.41); injected from rns.yaml like every other calibration value,
+        # never defaulted here (CLAUDE.md 3.1).
         self._window_ms = window_ms
         self._delta_w = min_progress_m
+        self._report_after_ms = window_ms * int(report_after_windows)
         self._anchor_s: Optional[float] = None
         self._timer_ms = 0
+        self.exhausted = False           # branch three fired (for the detail)
 
     def tick(
         self, s_star: float, dt_ms: int, mode: str, is_waiting: bool,
@@ -68,6 +82,7 @@ class ProgressWatchdog:
         if s_star - self._anchor_s >= self._delta_w:
             self._anchor_s = s_star
             self._timer_ms = 0
+            self.exhausted = False
             return WatchdogResult.OK
         # timer domain: only reactive modes, not waiting, not heading/RTK limited.
         counts = (mode in ("follow", "thread", "detour")
@@ -75,6 +90,11 @@ class ProgressWatchdog:
                   and argmax_limiter not in _NON_WATCHDOG_LIMITERS)
         if counts:
             self._timer_ms += dt_ms
+        if self._timer_ms > self._report_after_ms:
+            # branch three (A-CVG-7): escalation had its windows and the arc
+            # progress still did not rise -> bounded report, boundary or not.
+            self.exhausted = True
+            return WatchdogResult.REPORT_NO_PROGRESS
         if self._timer_ms > self._window_ms:
             # trigger: escalate if there's a wall to hug, else report (branch 2).
             return (WatchdogResult.ESCALATE_WALL if boundary_exists
@@ -82,9 +102,12 @@ class ProgressWatchdog:
         return WatchdogResult.OK
 
 
-def no_progress_failure(argmax_limiter: Optional[str]) -> NavFailure:
-    """The branch-two failure (S7.3A): stall with no boundary to hug. detail
-    carries the argmax limiter source so the operator sees WHY it stalled
-    (UNKNOWN / fence / health)."""
+def no_progress_failure(argmax_limiter: Optional[str],
+                        exhausted: bool = False) -> NavFailure:
+    """The branch-two / branch-three failure (S7.3A): stall with no boundary
+    to hug, or escalation exhausted. detail carries the argmax limiter source
+    so the operator sees WHY it stalled (UNKNOWN / fence / health) and whether
+    the escalation budget ran out (branch three, v1.41)."""
     return NavFailure(NavFailReason.WATCHDOG_NO_PROGRESS,
-                      detail={"limiter": argmax_limiter})
+                      detail={"limiter": argmax_limiter,
+                              "escalations_exhausted": bool(exhausted)})

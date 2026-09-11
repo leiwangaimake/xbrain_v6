@@ -172,7 +172,8 @@ class RnsSource:
                                     m["radius_m"])
             w = c["watchdog"]
             self._watchdog = ProgressWatchdog(int(w["window_s"] * 1000),
-                                              w["min_progress_m"])
+                                              w["min_progress_m"],
+                                              w["report_after_windows"])
             # guidance layer (20 S4A): missing config key fails loud here --
             # a silently-absent planner would demote every direction decision
             # back to local heuristics with no error anywhere.
@@ -237,7 +238,8 @@ class RnsSource:
         if self._cfg is not None:
             w = self._cfg["rns"]["watchdog"]
             self._watchdog = ProgressWatchdog(int(w["window_s"] * 1000),
-                                              w["min_progress_m"])
+                                              w["min_progress_m"],
+                                              w["report_after_windows"])
         if self._cfg is not None:
             c = self._cfg["rns"]
             self._selector = CandidateSelector(c["candidate"]["side_hold_ticks"])
@@ -904,7 +906,10 @@ class RnsSource:
                     # escape subgoal is set; steer at it this tick.
                     target = self._subgoal_world
             elif wd == WatchdogResult.REPORT_NO_PROGRESS:
-                self._fail(no_progress_failure(limiter))
+                # branch two (no boundary) or three (escalation exhausted,
+                # 20 S7.3A v1.41): bounded termination either way.
+                self._fail(no_progress_failure(limiter,
+                                               self._watchdog.exhausted))
                 return zero
         vy_cmd = 0.0
         if self._holo:

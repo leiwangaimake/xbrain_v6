@@ -22,8 +22,31 @@ from xbrain.common.types.units import Mps
 
 
 # ── watchdog (A-CVG-2) ────────────────────────────────────────────────────────
-def _wd(window_ms=1000, delta_w=0.5):
-    return ProgressWatchdog(window_ms, delta_w)
+def _wd(window_ms=1000, delta_w=0.5, report_after_windows=6):
+    return ProgressWatchdog(window_ms, delta_w, report_after_windows)
+
+
+def test_watchdog_reports_when_escalation_is_exhausted():
+    # A-CVG-7 (20 S7.3A v1.41 branch three): a boundary exists, escalation
+    # keeps firing, progress never rises -> after report_after_windows * T_w
+    # the watchdog REPORTS anyway (bounded termination, RNS-T-1). Hot leg04
+    # record: 400 s of every-tick escalation with the pose frozen. mutant:
+    # drop the third threshold -> ESCALATE forever -> reddens.
+    wd = _wd(window_ms=500, report_after_windows=3)
+    wd.tick(0.0, 100, "detour", False, None, True)
+    seen = []
+    for _ in range(20):                       # 2.0 s of stall
+        seen.append(wd.tick(0.0, 100, "detour", False, None, boundary_exists=True))
+    # windows 1..3 escalate (reverse: it does NOT report early) ...
+    assert seen[6] == WatchdogResult.ESCALATE_WALL
+    assert seen[13] == WatchdogResult.ESCALATE_WALL
+    # ... and past 3 windows it reports, flagged as exhausted.
+    assert seen[-1] == WatchdogResult.REPORT_NO_PROGRESS and wd.exhausted
+    f = no_progress_failure("unknown", wd.exhausted)
+    assert f.detail["escalations_exhausted"] is True
+    # progress resets the budget
+    assert wd.tick(5.0, 100, "detour", False, None, True) == WatchdogResult.OK
+    assert wd.exhausted is False
 
 
 def test_watchdog_ok_while_progressing():

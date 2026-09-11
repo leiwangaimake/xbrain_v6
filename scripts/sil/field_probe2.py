@@ -137,13 +137,19 @@ def mk_mission(pts, kind):
                    max_deviation_m=r["max_deviation_m"])
 
 
-def drive(world, rns, mission, max_ticks, watch=None):
+def drive(world, rns, mission, max_ticks, watch=None, t0_ms=0):
+    # t0_ms: clock offset so a HOT battery (one source, many missions) keeps a
+    # monotonic tick clock across legs -- RNS holds absolute-time state
+    # (verdict mute window, acceptance epoch) and production time never
+    # restarts; a per-leg restart to 0 would fake an epoch reset and mute
+    # verdicts for a whole leg (hot battery finding, 2026-09-11). Cold runs
+    # (fresh source per case) keep the default 0: byte-identical to before.
     rns.load_mission(mission)
     min_clear = math.inf
     fail = None
     arrived = None
     for t in range(max_ticks):
-        now = t * 50
+        now = t0_ms + t * 50
         snap = world.synth_snapshot(now)
         cand = rns.compute(Ctx(world, snap, now))
         if cand is not None:
