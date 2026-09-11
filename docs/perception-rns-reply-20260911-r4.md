@@ -69,7 +69,7 @@ src     = 0b0100    # S = 1, G = 0, T = 0
 | ★ 生产侧 | `19` §3.4A 注入循环对 G = 0 的 bin 同样执行；`d_free` 为 null 时**不做截断**（无 FREE 可截）；bit1 保持 0 |
 | ★★ RNS 消费 | `grid.fuse_bin`：`d_block ≤ r ⇒ BLOCKED`（任一通道，并集）；`d_free = null ⇒ 其前一律 UNKNOWN`（🚫 推 FREE）⇒ 接近时 UNKNOWN 占比压速（`20` §8.1A），到 2.5 m 处为墙；行为分流走 `ObjectsMsg`（该目标的 class）。★ 代码现状已如此（无需改 RNS） |
 | ★ 玻璃门样例 | 保留（门框有立体点，G = 1，`0b0110`）；**本场景另立一行**（G = 0，`0b0100`），🚫 互相代答 |
-| ★ 样例 | `11` §3.1B.1 样例表增行；样例集增第八场景 **`semantic_only`**（中央 bin 全 null ＋ 2.5 m 语义阻挡），消费对表断言：栅格 1.5 m 处 🚫 FREE、2.5 m 处 BLOCKED |
+| ★ 样例 | `11` §3.1B.1 样例表增行；样例集增第八场景 **`semantic_only`**（中央 bin 全 null ＋ 2.5 m 语义阻挡），消费对表对**被接受的剖面**按 `fuse_bin` 断言：1.5 m 处 UNKNOWN（🚫 FREE）、2.5 m 处 BLOCKED（记忆栅格因我方内部 #20-27 量化蚀穿不作断言面，与接口无关） |
 
 ---
 
