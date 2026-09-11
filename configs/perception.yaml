@@ -1,0 +1,70 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: perception.yaml
+# Brief: L6 per-process config for the perception process (19 S8.2)
+#
+# Description:
+#   层:L6(进程私有) 归属进程:`perception`(C++17, ros2_ws/perception)
+#   * 权威定义处:`19` §8.2 键表 (v1.3); 接口真源 `11` §3.1B. 本文件只登记键位.
+#   * 运行期读解析产物 /run/xbrain/resolved/perception.yaml (10 §5.4.1), 不读源;
+#     C++ 侧用 common/include/xbrain/config/yaml_lite.h 的 require_* 读, 缺键或
+#     null 即抛出并报键路径 (19 PSC-2). 本文件不是 C++ 的默认值来源.
+#   * 未标定/未裁定的键一律 null (CLAUDE.md §3.1), 绝不写 0.0 冒充已赋值 --
+#     在落值前本文件会让 perception 按设计拒绝启动, 这是预期行为.
+#   * 已有值的键逐个注明出处 ([doc] = 19/11 裁定值; [dev] 仅联调).
+#   * 冻结线 SNAPSHOT_PROCESSES 尚未纳入本文件 (20 #20-26), 纳入前解析产物
+#     样例见 tests/perception/samples/resolved_perception.dev.yaml (手工产物).
+#   * med2 是独立预览支路; 分析主输出 1280x800 (2026-09-11 裁定) 不经此块.
+#   * 不得出现 common.* 顶层键 (10 §5.4.3 R-6).
+
+perception:
+  profile:
+    angle_min_rad:    null   # 待 Q-2 (实测 FOV 覆盖); = 第 0 bin 中心角 (11 v1.9)
+    angle_step_rad:   null   # 待 Q-2
+    n_bins:           null   # 待 Q-2; 对称域要求 n 为奇数
+    range_max_m:      null   # 待标定; 上限 6.0 (338Le 推荐量程, 11 3.1B.1; PSC-6 拒 > 6.0)
+    dr_m:             null   # 径向格宽, 建议 0.25 起谈
+    blind_near_lo_m:  null   # 盲区下限 (发布值逐帧实测, 19 S3.2)
+    h_tol_m:          null   # 地面判定容差
+    z_pass_m:         null   # 过顶滤除 (PROF-4); 待 Q-7 / 19 PD-17 (整机最大扫掠高度 + 余量)
+    cover_min:        null   # 整格覆盖率下限 G/expect_cell (19 v1.2)
+    omega_max_rps:    null   # PROF-5 腐蚀的角速度上界 (11 v1.9 旋转项)
+    seg_max_age_ms:   null   # 帧级 mask 新鲜度上限 (19 S3.3 v1.3); 建议与 RNS seg_stale_ms 同值 300
+    dfree_cap_fallback_m: null # 地面拟合回退帧的 d_free 封顶 (19 S3.2A v1.3); 建议 2.0
+    tau_T:            null   # T 证据比例阈值
+    slope_max_deg:    null
+    sigma_max_m:      null   # 粗糙度 (格内高度标准差)
+    eps_neg:          null   # 穿地判据超差比例
+    w_h_m:            null   # h_block 径向窗
+    v_ego_max_mps:    null   # PROF-5 腐蚀用 (取整机 v_max)
+    m_jitter_m:       null   # PROF-5 固定余量
+  objects:
+    depth_quality_fair: null # good/fair 分界 (depth_confidence)
+    depth_quality_poor: null
+  status:
+    window_s:         10.0   # [doc] 19 裁定: fps 与分位数共用 10 s 窗 (11 3.1B.3)
+  capture:
+    latency_fallback_ms: null  # PD-11 兜底的固定链路估计 (19 S2.4); 须取上界估计
+  extrinsic_base_cam:
+    translation:      [null, null, null]
+    rotation_xyzw:    [null, null, null, null]
+    calib_record:     null   # 标定记录路径 (19 S7.3 判定输入)
+    calib_sha256:     null
+    residual_max_m:   null   # 19 PD-15
+  med2:                      # v0.1 裁定沿用 (19 S13.1); 独立预览支路
+    rgbd_rtsp_port:   18083  # [doc] 环回 RTSP (NET-C9)
+    rgbd_pub_port:    null   # 甲方 U-15 (PD-2); null => 不推流 + warn
+    width: 1280              # [doc] 19 S13.1 (PD-8 现场可调)
+    height: 720
+    fps: 15
+    bitrate_kbps: 2000
+    gop: 30
+  objects_inject:
+    objects_stale_ms: null   # 19 S3.4A 语义注入的陈旧上限 (v1.3: 约两个推理周期, 建议 100 + 抖动)
+  debug:
+    pointcloud_enable: false # [doc] 调试点云默认关 (11 2.2.1 debug 行)
+    legacy_keys_enable: false # [doc] 过渡期旧名 perception/detections|status, 仅 dev 可开
+  zenoh:
+    rt_endpoint:      "tcp/127.0.0.1:7449"   # [doc] RT 面 router (10 S3.1)
+    gen_endpoint:     "tcp/127.0.0.1:7447"   # [doc] 通用面 router

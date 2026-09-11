@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 文档 | **perception 详细设计（第 19 册）** |
-| 版本 | **v1.3**（v1.0 从 0 重写 · 落地版 → v1.1 三遍核查 → v1.2 感知方对账修正 → **v1.3 第三轮对账：节拍分级门 · `src` 逐位 · 退化规则 · 1280×800**；封面与 §18 变更记录同步） |
+| 版本 | **v1.4**（v1.0 从 0 重写 · 落地版 → v1.1 三遍核查 → v1.2 感知方对账修正 → v1.3 第三轮对账 → **v1.4 W-8 骨架 / W-11 对手件落地**；封面与 §18 变更记录同步） |
 | 日期 | **2026-09-11** |
 | 状态 | ★★★ **可开工** —— 本版以「照此写代码」为验收标准 |
 | 进程 | `perception`（**C++17**，单进程；rclcpp 仅用于 TF / 命令订阅，感知数据链不经 ROS topic） |
@@ -583,9 +583,9 @@ A19-PROF-4 / A19-RATE-1 因此成对；A19-TIME-2 专杀「快线偷偷等慢线
 | **W-5** | `velocity_frame` 序列化（一行级）＋ `footprint` 改名/抽稀 ＋ `r_near` ＋ `z_min/max` 区间化 | **G-4** ＋ §4.1 | `src/output/zenoh_publisher.cpp` · `src/supervisor/supervisor.cpp` |
 | **W-6** | `StatusMsg` 扩展（分位数 · ROI 比例 · 三个固定 reason）＋ PC-2 事件 | §5 | `src/output/zenoh_publisher.cpp` ＋ 新增 `src/status/` |
 | **W-7** | 推理 20 Hz（路线三选，§6） | **#20-11** | 引擎构建脚本 ＋ `dual_model_runtime_config.json` |
-| **W-8** | 配置迁 `configs/` ＋ resolved 读取 ＋ PSC-1~7 | §8 / §11 | `src/common/config.cpp` 重写读取层 |
+| **W-8** | 配置迁 `configs/` ＋ resolved 读取 ＋ PSC-1~7。★ v1.4：**`configs/perception.yaml` 骨架已建**（§8.2 全键 · null 纪律 · 头注五字段）；⚠️ 冻结线 `SNAPSHOT_PROCESSES` 尚未纳入（`20` #20-26），纳入前解析产物形态见 `tests/perception/samples/resolved_perception.dev.yaml` | §8 / §11 | `src/common/config.cpp` 重写读取层（感知方） |
 | **W-9** | 合成场景金标 ＋ A19-* 全表 | §14 | 新增 `tests/perception/` |
-| **W-11**<br>**（v1.2 新增）** | ★ 联调资产：三条 key 的**模拟消息样例集**（正常 / 全 UNKNOWN / 无分割 / 外参未标 / TF 过期 / 时钟重置 / 断供）＋ RNS 侧消费端 stub —— 感知方 §7「先闭合接口」阶段的对手件，**先于实机标定可做** | 双方接口骨架 | 新增 `scripts/dev/perception_sim.py` ＋ `tests/perception/samples/` |
+| ✅ **W-11**<br>**（v1.2 新增 · v1.4 落地）** | ✅ 联调资产已交付（2026-09-11）：`scripts/dev/perception_sim.py`（七场景 normal / all_unknown / no_seg / extrinsic_uncal / tf_stale / clock_reset / dropout，`--write` 生成、`--publish` 在 RT 面真发并把 `*_mono_ms` 重定到本机单调钟）＋ `tests/perception/samples/<场景>/sequence.json`（`11` §3.0 信封 ＋ §3.1B 体的逐字线上形态）＋ `tests/perception/test_consumer_contract.py`（消费端 stub 的机器形式：每个场景 → RNS 判决，样例 = 生成器）＋ `scripts/dev/perception_rx_audit.py`（接收端对表：帧身份 · L2 · Δpub 分级门读数 · 去重/乱序/纪元 · 拒收）—— 感知方 §7「先闭合接口」阶段的对手件，**先于实机标定可做** | 双方接口骨架 | `scripts/dev/perception_sim.py` · `scripts/dev/perception_rx_audit.py` · `tests/perception/` |
 | **W-10** | systemd 单元（`Requires=xbrain-config-freeze`，入 15 进程栈启动序） | `10` §3.3 | `deploy/` |
 
 ★ 顺序约束：**W-2 先于 W-3/W-6 验收**（投影基准）；W-1 先于一切合入；其余可并行。🚫 点云 `pointcloud` 通道不动（保留调试用途，G-2 裁定「不加密」）。
@@ -618,6 +618,7 @@ A19-PROF-4 / A19-RATE-1 因此成对；A19-TIME-2 专杀「快线偷偷等慢线
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| ★ **v1.4**<br>**（W-8 / W-11 落地）** | 2026-09-11 | ★ W-11 对手件交付（`scripts/dev/perception_sim.py` 七场景样例集 ＋ `tests/perception/test_consumer_contract.py` 消费判决对表 ＋ `scripts/dev/perception_rx_audit.py` 接收端记账）；W-8 的 `configs/perception.yaml` 骨架（§8.2 全键）＋ 产物形态 dev 样例；冻结线纳入登记 `20` #20-26。 |
 | ★★ **v1.3**<br>**（第三轮对账）** | 2026-09-11 | ★ 答复感知方 09-11 来函（`perception-rns-reply-20260911.md`）：① §2.2 两道门命名 G-P1（处理 ≤ 14 ms，A19-PERF-1 锚）/ G-P2（发布时年龄 ≤ 60 ms，PD-11 后签）；② §3.2 遍历中按「有有效样本」置 BIT_G、§3.4 推进分支不再置、§3.4A BIT_SEM 只在更近时置 ＋ 无位姿时 footprint 按 PROF-5 同式膨胀 ＋ `objects_stale_ms` 改约两个推理周期（`11` §3.1B.1 v2.1 `src` 逐位定义）；③ §3.2A 拟合回退帧 `d_free` 封顶 `dfree_cap_fallback_m`；④ §3.3 帧级 `seg_max_age_ms` 与 10 s 能力标志分开；⑤ §5.1 / §6 节拍口径改逐次间隔**分级门**（用户 2026-09-11 选定：一级 `max ≤ 100 ms` · 二级 `>50 ms` 占比 ≤ 1%；`infer_gap` / `infer_gap_ms_max` / `infer_rate_low` 改写），A19-RATE-1 改写为间隙注入三件套；⑥ 1280×800 主输出（2026-09-11 负责人裁定）：§3.2 mask 像面、§3.2A 注记、§13.1 MED-2 独立支路；⑦ §6.1 生产机事实（Orin NX 16 GB）；⑧ §8.2 新键 `seg_max_age_ms` / `dfree_cap_fallback_m`；⑨ §14 增 A19-SRC-1 / A19-SEG-2 / A19-FIT-1；⑩ §17 PD-11 误差界、PD-16 矩阵提案。同批 `11` v2.1 / `20` v1.35。 |
 | ★★★ **v1.2**<br>**（对账修正轮）** | 2026-09-08 | ★★★ **按感知方接口答复逐条修正**（该答复抓到本册/交接文档多处实错，全部采纳）：① §3.4 `d_free` 推进改**格远端判停 ＋ 整格覆盖率 `G/expect_cell ≥ cover_min`**（其反例可复算出 `d_free 0.85 > d_blk 0.80`，PROF-1「构造性成立」原不成立）＋ 金标 A19-PROF-1b 就用该反例；② 负障碍两处修正：穿地证据记**期望交点** `bin_exp`（横向平移反例：期望 16.7° vs 回波 8.5°）；`h_block` 负障碍**优先**，🚫 被正障碍最大高度覆盖；③ 新增 §3.2A **逐帧地面平面拟合**（🚫 恒 z=0；失败退先验 ＋ `ground_fit_fallback`），`z_exp` 由静态表改逐帧闭式；④ 快线取 **D2C 前原生深度**（PROF-3 v1.9），mask 改**投影查表**（跨像面比例缩放不成立）；⑤ §4.2 `ego_removed` 置位四条件（精确时刻 TF · 旋回 base_link · 外参非占位 · 同纪元）；⑥ A19-PERF-1 改共载实测口径；合成金标声明保证边界，实机细障碍验收登记 **PD-16**；`z_pass` 扫掠高度登记 **PD-17**；⑦ 过渡期旧 key 开关 `legacy_keys_enable`（默认关）；W-11 模拟消息样例集。★ 同批 `11` v1.9 八处（PROF-3 收窄 · PROF-5 加旋转项 · 角度/量纲/遮挡/分源约定 · 20 Hz 口径冻结 · `infer_gap_ms_p99` · 两个新 reason · 探针数据出处订正）。 |
 | ★ **v1.1** | 2026-09-08 | ★★ **三遍核查轮（同日）**：① 补 **§3.4A** `src` bit2 语义注入产生规则（初版恒 0 ⇒「语义看见、几何瞎」的玻璃门场景在 profile 里不可见）＋ A19-SEM-1 正反对；② §3.5 补**报文头字段逐个产生表**（`pose_used`/`t_publish`/`schema` 初版无人产）；③ `rt/perception/pointcloud` 以 **debug 默认关**登记（同批 `11` §2.2.1）—— 否则基底既有通道撞 PSC-5 白名单精确比对；④ §14 补 **PSC-1~7 / P19-1~5 全员变异体覆盖**（A19-BOOT/SLOT/ALLOC/LINT 族）—— MUT-COVER 门禁同批改锚新结构；⑤ §3.1 预计算补 `r_exp`；`conf` 除零边界。 |

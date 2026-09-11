@@ -1,0 +1,64 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: resolved_perception.dev.yaml
+# Brief: DEV-ONLY sample of the resolved product /run/xbrain/resolved/perception.yaml
+#
+# Description:
+#   W-11 联调资产 (19 S15): 展示解析产物的[形态] -- 与 configs/perception.yaml
+#   同键, 但每个键都有值 (19 PSC-2 要求启动时全部非 null). 值全部是 [dev]
+#   联调假定值, 不是标定结果, 不得部署到实机; 冻结线纳入 perception.yaml 前
+#   (20 #20-26) 由本文件代替产物给接收方看读取样例 (yaml_lite require_*).
+#   一切数值来源: 11 3.1B.1 示例扇区 (+-45 deg / 0.5 deg / 181 bin), 338Le
+#   推荐量程 6.0, 19 各节的"建议起谈值". 标定后以 configs/ 落值为准.
+
+perception:
+  profile:
+    angle_min_rad:    -0.785398
+    angle_step_rad:   0.008727
+    n_bins:           181
+    range_max_m:      6.0
+    dr_m:             0.25
+    blind_near_lo_m:  0.59
+    h_tol_m:          0.08
+    z_pass_m:         0.75
+    cover_min:        0.6
+    omega_max_rps:    1.2
+    seg_max_age_ms:   300
+    dfree_cap_fallback_m: 2.0
+    tau_T:            0.7
+    slope_max_deg:    25.0
+    sigma_max_m:      0.06
+    eps_neg:          0.15
+    w_h_m:            0.5
+    v_ego_max_mps:    2.0
+    m_jitter_m:       0.10
+  objects:
+    depth_quality_fair: 0.6
+    depth_quality_poor: 0.3
+  status:
+    window_s:         10.0
+  capture:
+    latency_fallback_ms: 60
+  extrinsic_base_cam:
+    translation:      [0.35, 0.0, 0.645]
+    rotation_xyzw:    [0.0, 0.130526, 0.0, 0.991445]
+    calib_record:     "docs/calib/extrinsic_dev_placeholder.md"
+    calib_sha256:     "0000000000000000000000000000000000000000000000000000000000000000"
+    residual_max_m:   0.02
+  med2:
+    rgbd_rtsp_port:   18083
+    rgbd_pub_port:    18084
+    width: 1280
+    height: 720
+    fps: 15
+    bitrate_kbps: 2000
+    gop: 30
+  objects_inject:
+    objects_stale_ms: 100
+  debug:
+    pointcloud_enable: false
+    legacy_keys_enable: true
+  zenoh:
+    rt_endpoint:      "tcp/127.0.0.1:7449"
+    gen_endpoint:     "tcp/127.0.0.1:7447"

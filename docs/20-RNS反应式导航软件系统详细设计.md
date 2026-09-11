@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 文档 | **RNS 反应式导航软件系统详细设计（20）** |
-| 版本 | **v1.38**（2026-09-07 v1.0 从 0 重写，v0.1/v0.2 作废见 §0.4；→ v1.14 开工序状态更新，全程见 §16 变更记录；封面随正文最高同步） |
+| 版本 | **v1.39**（2026-09-07 v1.0 从 0 重写，v0.1/v0.2 作废见 §0.4；→ v1.14 开工序状态更新，全程见 §16 变更记录；封面随正文最高同步） |
 | 日期 | **2026-09-07** |
 | 状态 | ★★★ **已三遍审核（2026-09-08 · v1.9 审查轮，记录见 §16）· 可开工** —— 🚫 不再是「待评审/未审核」 |
 | 形态 | ★★★ **`p1_motion` 的【进程内 Python 模块】** —— 🚫 不是独立进程（`10` §3.1 的 15 个常驻进程内没有 RNS）。对外只呈现为行为源 `rns` |
@@ -1651,7 +1651,7 @@ rns:
 | ★★★ **#20-11** | ★★★ **推理链路必须优化到 ≥ 20 Hz**（`fps_infer ≥ 20`，2026-09-07 用户硬性要求，🚫 不是建议）。★ 验收以 `status.fps_infer` 10 s 均值为准；低于必须报 `degraded_reasons: infer_rate_low`（`11` §3.1B.3）。★★ **达标不改变两件事**：TIME-2 拆分不回退（吞吐 ≠ 延迟，`11` §3.1B.0）；§4.1 每拍重跑不撤（名义同频 ≠ 相位对齐） | ★ 不阻塞 RNS 编码（T-52 已定价断供）；★★ **阻塞行为调制的最终验收** | ★ **交办感知实现方**（[perception-rns-interface-20260907](perception-rns-interface-20260907.md) §一A）。★★ **v1.35（2026-09-11 负责人裁定）**：验收口径改为**逐次发布间隔 ≤ 50 ms 的分级门**（一级 `max ≤ 100 ms` 含未结束间隙 · 二级 `>50 ms` 占比 ≤ 1%），定义处 `11` §3.1B.3 v2.1；10 s 均值退为统计量 |
 | ✅ **#20-22**<br>**（v1.35 新增 · v1.37 落地）** | ✅ `objects` 年龄三档（`objects_age_ok_ms` / T-52）与 `status` T-53 计龄 ＋ 接受规则（`inputs.classify_arrival` · `source._accept`：严格递增 · 重复不刷新 · 乱序/未来丢弃审计 · 纪元重置清栅格）—— **2026-09-11 代码落地**；断言 A-ACC-1/2 · A-AGE-1/2/3 | — | ✅ 我方 |
 | ✅ **#20-23**<br>**（v1.35 新增 · v1.37 落地）** | ✅ `extrinsic_calibrated == false` ⇒ 装载拒绝 / 任务中终止，reason `extrinsic_uncalibrated`（§9.0.2 v1.37 行；`12` §4.2c.6 v0.10 映射 `input_lost` / `extrinsic`）—— **2026-09-11 代码落地**；断言 A-CAL-1 | — | ✅ 我方 |
-| ★★ **#20-24**<br>**（v1.35 新增 · v1.38 部分落地）** | ★★ ✅ 三条 key 生产 Zenoh 订阅器 ＋ 严格解析器（`perception_src/three_keys.py`，§1.2 v1.38 登记；主接线 `rid` 分支声明）—— **2026-09-11 落地**；⏳ 余下 **W-11** 对手件（`scripts/dev/perception_sim.py` · 七场景样例 · 消费对表测试）＋ `scripts/dev/perception_rx_audit.py` ＋ `configs/perception.yaml` 骨架 | ★★ 阻塞第 ① 阶段 | ★ **我方 · 2026-09-16** |
+| ✅ **#20-24**<br>**（v1.35 新增 · v1.39 关闭）** | ✅ 三条 key 生产订阅器 ＋ 严格解析器（`perception_src/three_keys.py`，v1.38）；✅ **W-11**：`scripts/dev/perception_sim.py`（七场景 · `--write` 生成 `tests/perception/samples/` · `--publish` 真发 RT 面并重定时基）＋ `tests/perception/test_consumer_contract.py`（样例 = 生成器 · 逐场景 RNS 判决：normal 驶 / all_unknown UNKNOWN 压速 / no_seg 限速 / extrinsic_uncal 拒航 / tf_stale 停等 / clock_reset 纪元重置 / dropout T-52 限速）；✅ `scripts/dev/perception_rx_audit.py`（接收端按帧身份记账：L2 分位 · objects Δpub max/P99/超 50/超 100/未结束间隙 · 分级门读数 · 去重/乱序/纪元 · 拒收）；✅ `configs/perception.yaml` 骨架（`19` §8.2 全键，null 纪律）＋ `tests/perception/samples/resolved_perception.dev.yaml`（产物形态 dev 样例）—— **2026-09-11 全部落地，提前于承诺日** | — | ✅ 我方 |
 | ✅ **#20-25**<br>**（v1.35 新增 · v1.36 落地）** | ✅ `class_map` 扩展（车辆/动物/`pit`/空中 `ignore`）＋ T 类丢弃防御 ＋ `min_confidence`（§5.1.1 v1.35）—— **2026-09-11 代码落地**：`classify.effective_behavior` · `config.assert_class_map_values` · `rns.yaml` 扩行；断言 A-CLS-5～8 | — | ✅ 我方 |
 | ★ **#20-26**<br>**（v1.35 新增）** | ⚠️ 冻结线 `SNAPSHOT_PROCESSES` 只含六进程，`rns.yaml` 与 `perception.yaml` **均未进解析产物**（`12` §12.0A「同列解析」尚未落地）⇒ `/run/xbrain/resolved/perception.yaml` 样例暂由手工产物代替 | ★ 阻塞生产启动（PSC-1），不阻塞联调 | ★ **交办 `10` / 冻结线** |
 
@@ -1721,6 +1721,7 @@ rns:
 | ★ **v1.36**<br>**(#20-25 落地)** | 2026-09-11 | ★ §5.1.1 v1.35 的六项落代码:`classify.effective_behavior`(T 类丢弃 · ignore · 低置信度 => block 且 person 免疫 · proxy 取更保守者且不入静止堆)· `config.assert_class_map_values`(值闭集 + T 类禁入表)· `rns.yaml` class_map 扩 13 行 + `min_confidence`;§13 增 A-CLS-5~8(各配杀红变异体);#20-25 关闭。 |
 | ★ **v1.37**<br>**(#20-22 / #20-23 落地)** | 2026-09-11 | ★ `11` §3.1B.5 v2.1 接受规则进代码:`inputs.classify_arrival`(accept / dup / out_of_order / future / epoch_reset)+ `source._accept`(逐键最近被接受帧, 重复不刷新年龄, 纪元重置清栅格 + 请求重规划);§3.1.8 三档:`objects_age_ok_ms` 二档拒用速度判据且不入静止堆, T-52 断供限速 + 不据旧数据停等, T-53 status 断供最坏限速;`extrinsic_uncalibrated` 新 reason(§9.0.2 行, 装载拒绝 + 任务中终止);§13 增 A-ACC-1/2 · A-AGE-1/2/3 · A-CAL-1(各配杀红变异体);#20-22 / #20-23 关闭。同批 `12` v0.10(§4.2c.6 映射两行)。 |
 | ★ **v1.38**<br>**(#20-24 订阅器)** | 2026-09-11 | ★ §1.2 登记 `perception_src/three_keys.py`:三键生产订阅器 + 严格 JSON->DTO 解析(整条丢弃不修补, 计数可见)+ latest-wins 槽;主接线 `rid` 分支声明/心跳统计/退出 undeclare。RNS 模块零改动(RNS-M-4)。W-11 与对表脚本随后批。 |
+| ★ **v1.39**<br>**(#20-24 关闭)** | 2026-09-11 | ★ W-11 对手件落地:`scripts/dev/perception_sim.py`(七场景样例生成/RT 面真发)· `tests/perception/test_consumer_contract.py`(样例=生成器 + 逐场景 RNS 判决, 与 B1/B2 变异体交叉杀红)· `scripts/dev/perception_rx_audit.py`(接收端帧身份记账 + 分级门读数)· `configs/perception.yaml` 骨架 + dev 产物样例。#20-24 关闭;#20-26(冻结线纳入)仍开。同批 `19` v1.4。 |
 | ★ **v1.19** | 2026-09-10 | ★ 用户实测裁决:**goto 离墙特例**(§7.3)—— goto 参考线可能穿障,强制回线致「绕完反向走远再掉头」;goto 用 Bug2 判据 `dist(X,G) < dist(H,G) − δ_s` ∧ 目标向畅通,path 三条件不变。 |
 | ★ **v1.18** | 2026-09-10 | ★ 用户裁决:**贴墙态豁免 U54 1 m 保持距离**(§7.7)—— 贴墙语义即近贴(体距墙 ~0.34 m),边界由 `d_wall_m`/`front_stop_m` 自治;回 FOLLOW 恢复。与 v1.17 的 §2.7 豁免同构:贴墙常规边界由 §7 自治。 |
 | ★ **v1.17** | 2026-09-10 | ★ SIL 实测接缝裁决:§2.7 偏离失败**贴墙态豁免**(边界归 §7.6),回 FOLLOW 恢复 —— 双上限并行会杀掉深绕最后一段(实测「差一口气」)。 |

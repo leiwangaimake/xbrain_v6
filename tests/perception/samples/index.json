@@ -1,0 +1,9 @@
+{
+  "all_unknown": "UNKNOWN cap (S8.1A) + invalid-ratio cap (RNS-I-2): vx <= unk_g_min * v_nom",
+  "clock_reset": "third tick > 1 s behind -> perception_epoch_reset audited, memory cleared, drives",
+  "dropout": "objects 700 ms old (> T-52): objects_lost audited, 0 < vx <= no_seg_speed_cap_mps",
+  "extrinsic_uncal": "failure extrinsic_uncalibrated; mission refused (11 S3.1B.4)",
+  "no_seg": "geometry-only FREE: 0 < vx <= no_seg_speed_cap_mps (S3.1.11)",
+  "normal": "drives at nominal speed; no failure; cone off-corridor ignored",
+  "tf_stale": "raw velocity refused (S3.1.5): 'static' raw car stays dynamic past the dwell -> WAIT_DYNAMIC, vx == 0"
+}
