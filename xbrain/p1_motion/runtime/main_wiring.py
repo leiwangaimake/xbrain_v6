@@ -326,6 +326,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         # 那一拍戳(FS-4/S-6 生效唯一事实是 active.rev 换的那刻).
         fence_state = {"seq": 0, "rev": None, "pub_mono": 0.0, "applied": None}
         state_fence_pub = None
+        perception_in = None
         if rid:
             boot = read_local_boot_id()
 
@@ -363,6 +364,16 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
             state_fence_pub = gen.declare_publisher(STATE_FENCE_TOPIC)
             _logger.info("p1 gnss bridge on: rid=%s (rt/gnss/heading -> state/pose)",
                          rid)
+            # --- 11 S3.1B three perception keys (#20-24): the RNS consume face's
+            # production intake. Subscribed here (p1 IS the cross-plane point);
+            # the 20 Hz tick reads perception_in.latest(now) once RnsSource is
+            # wired into the arbiter (P7.2). Held for the loop's lifetime.
+            from xbrain.p1_motion.perception_src.three_keys import (
+                ZenohPerceptionInput)
+            perception_in = ZenohPerceptionInput(rid)
+            perception_in.declare(rt)
+            _logger.info("p1 perception intake on: rid=%s "
+                         "(rt/perception/{profile,objects,status})", rid)
         else:
             _logger.warning("p1 gnss bridge OFF: XBRAIN_ROBOT_ID unset")
 
@@ -442,6 +453,11 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                         "chassis_fails=%d pose_pub=%d",
                         client.frames_sent, client.connect_attempts,
                         client.connect_failures, pose_seq["n"])
+                    if perception_in is not None:
+                        # received/rejected per key: a bad producer shows as a
+                        # rising rejected count, not as silence (11 S3.1B).
+                        _logger.info("p1 perception intake: %s",
+                                     perception_in.stats())
                     last_hb = now
                 time.sleep(0.1)
         finally:
@@ -466,5 +482,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                     _s.undeclare()
                 except Exception:      # noqa: BLE001
                     pass
+            if perception_in is not None:
+                perception_in.undeclare()
             client.close()
     return 0
