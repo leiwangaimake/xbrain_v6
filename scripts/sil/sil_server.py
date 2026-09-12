@@ -205,7 +205,8 @@ def load_field_map() -> None:
     """Seed the world from the FROZEN field map (user 2026-09-11: the
     browser should open straight onto the captured test map -- no manual
     obstacle placement). NOT persistence: this reads a static repo asset
-    at startup/reset only; nothing the user edits at runtime is ever
+    at startup only (reset clears the map, user ruling 2026-09-12); nothing
+    the user edits at runtime is ever
     written back. Fly-away persons from the pre-bounce capture (|coord| >
     100) are dropped; the placed patrol polyline is pre-loaded too so a
     path run is one click away."""
@@ -337,8 +338,14 @@ async def api_audit():
 
 @app.post("/api/reset")
 async def api_reset():
+    """User ruling 2026-09-12: reset = a CLEAN map for manual obstacle placement
+    (obstacles + waypoints cleared, robot back at the start, mission cancelled).
+    The placed path is kept so a test can be re-run at once on the same line;
+    the frozen field map is loaded at STARTUP only -- restart the server to get
+    it back (the 2026-09-11 "reset reloads the map" rule is withdrawn)."""
+    path = list(world.path)
     world.reset()
-    load_field_map()      # reset returns to the frozen map, not to emptiness
+    world.path = path
     if MODE == "e2e":
         link.send_clear()     # 11 S3.5A op=clear -> p1 cancels (no failure report)
     else:
