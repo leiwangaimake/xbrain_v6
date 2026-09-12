@@ -37,6 +37,8 @@ polygons 重算, 与 wire["crc32"] 逐字比. 不一致即报文损坏, 拒绝(F
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
@@ -63,6 +65,9 @@ class HeldPolygon:
     name: str
     hard_enforce: bool
     vertices: Tuple[Tuple[float, float], ...]
+    # 11 S9A.2 polygons[].soft_margin_min_m: optional declared floor of the soft
+    # band for this polygon (clip.margin_soft_eff_m only ever widens by it).
+    soft_margin_min_m: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -73,6 +78,8 @@ class HeldFenceSet:
     rev: int
     crc32: str
     polygons: Tuple[HeldPolygon, ...]
+    # 11 S9A.2 FenceSet-level soft_margin_min_m default (a polygon may override).
+    soft_margin_min_m: Optional[float] = None
 
     def warning_polygons(self) -> Tuple[HeldPolygon, ...]:
         """报警区 = role==warning(11 S9A.2, 旧名 zone). F2 的 zone_enter 只在这些
@@ -115,7 +122,23 @@ def _parse_polygon(raw: Any, idx: int) -> HeldPolygon:
         role=role,
         name=str(raw.get("name") or ""),
         hard_enforce=hard_enforce,
-        vertices=tuple(verts))
+        vertices=tuple(verts),
+        soft_margin_min_m=_soft_margin(raw.get("soft_margin_min_m"),
+                                       "polygons[%d]" % idx))
+
+
+def _soft_margin(raw: Any, where: str) -> Optional[float]:
+    """11 S9A.2 soft_margin_min_m (set or polygon level): absent -> None, else a
+    finite non-negative number. A negative or NaN declared band would NARROW
+    the effective band below the brake distance if it were passed through
+    (clip.py takes max(config, declared, d_stop)), so it is rejected here."""
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) \
+            or not math.isfinite(raw) or raw < 0.0:
+        raise FenceSetError("%s soft_margin_min_m must be a finite non-negative "
+                            "number, got %r" % (where, raw))
+    return float(raw)
 
 
 def compile_fence_set(wire: Dict[str, Any]) -> HeldFenceSet:
@@ -168,7 +191,9 @@ def compile_fence_set(wire: Dict[str, Any]) -> HeldFenceSet:
             % (claimed, recomputed))
 
     return HeldFenceSet(fence_set_id=fence_set_id, rev=rev, crc32=claimed,
-                        polygons=held)
+                        polygons=held,
+                        soft_margin_min_m=_soft_margin(wire.get("soft_margin_min_m"),
+                                                       "FenceSet"))
 
 
 class FenceSetHolder:
