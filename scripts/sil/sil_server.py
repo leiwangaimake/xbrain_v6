@@ -338,14 +338,12 @@ async def api_audit():
 
 @app.post("/api/reset")
 async def api_reset():
-    """User ruling 2026-09-12: reset = a CLEAN map for manual obstacle placement
-    (obstacles + waypoints cleared, robot back at the start, mission cancelled).
-    The placed path is kept so a test can be re-run at once on the same line;
-    the frozen field map is loaded at STARTUP only -- restart the server to get
-    it back (the 2026-09-11 "reset reloads the map" rule is withdrawn)."""
-    path = list(world.path)
+    """User ruling 2026-09-12 (second reading): reset = an EMPTY map -- every
+    obstacle, the path and the waypoints cleared, robot back at the start,
+    mission cancelled. Nothing is kept. The frozen field map is loaded at
+    STARTUP only, so restarting the server is the way back to it (the
+    2026-09-11 "reset reloads the map" rule is withdrawn)."""
     world.reset()
-    world.path = path
     if MODE == "e2e":
         link.send_clear()     # 11 S3.5A op=clear -> p1 cancels (no failure report)
     else:
