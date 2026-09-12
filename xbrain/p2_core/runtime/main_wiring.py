@@ -45,6 +45,7 @@ from xbrain.p2_core.runtime.mic_capture import (
     MicCaptureConfig, spawn_mic_pipeline,
 )
 from xbrain.p2_core.health.aggregate import HealthAggregator, refresh_health
+from xbrain.p2_core.health.factor import build_health_factor
 from xbrain.p2_core.health.factor import FactorConfig
 from xbrain.p2_core.runtime.speaker_wiring import (
     SPEAK_TOPIC, SpeakerBusy, SpeakerDomain, SpeakerHwError,
@@ -58,6 +59,7 @@ _logger = logging.getLogger("xbrain.p2.wiring")
 # sources it derives items from. All GEN-plane, all relative keys (bus
 # convention -- the rid prefix is the session's, not the caller's).
 HEALTH_SUMMARY_TOPIC = "health/summary"
+CMD_MOTION_FACTOR_TOPIC = "cmd/motion/factor"   # 11 S3.6, P2 -> P1, 1 Hz (14 S2.3 P-2)
 STATE_AUDIO_TOPIC = "state/audio"    # 11 S2.2.2, 内部总线裸键(rid 前缀由 p5 转云端时加)
 from xbrain.p2_core.audio.broadcast_rx import (BroadcastSession,
                                               accept_chunk)
@@ -142,6 +144,16 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # callback only stores the decoded body (RUST THREAD, CLAUDE.md 4.2)
         # and the loop below does the derivation and the publish.
         health_pub = gen.declare_publisher(HEALTH_SUMMARY_TOPIC)
+        # 11 S3.6 / 14 S2.3 P-2: cmd/motion/factor is P2's grant to P1 -- the
+        # speed gate's h() input, allow_motion and the admissible profile. It is
+        # derived from the SAME aggregate as health/summary in the 1 Hz block
+        # below, so the two keys cannot disagree. Until this publisher existed
+        # (2026-09-12) P1's HealthFactorSlot stayed at 'never' = zero speed,
+        # which is the designed default (14 BIT-33: motion is granted, never
+        # assumed) -- and it still resolves to allow_motion=false while no
+        # camera-health source feeds cam_rgbd (14 S8.1 row; see NEXT.md).
+        factor_pub = gen.declare_publisher(CMD_MOTION_FACTOR_TOPIC)
+        last_factor: dict = {}
         # 11 S2.2.2 逐字: state/audio 的发布者是 p2_core, "1 Hz + 变更即报".
         # 在此之前全系统[没有任何进程发这条 key](2026-09-03 实测 8 秒 0 帧),
         # 于是云端 state/audio 是 p5 投影出来的恒定 idle -- 喇叭真响的时候
@@ -655,6 +667,17 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         health_pub.put(json.dumps(
                             health_agg.build_summary(factor_cfg),
                             ensure_ascii=False).encode("utf-8"))
+                        # the grant, from the same aggregate (11 S3.6 body).
+                        factor_body = build_health_factor(health_agg.states(), factor_cfg)
+                        factor_pub.put(json.dumps(
+                            factor_body, ensure_ascii=False).encode("utf-8"))
+                        if (factor_body["allow_motion"], factor_body["max_profile"]) != (
+                                last_factor.get("allow_motion"), last_factor.get("max_profile")):
+                            _logger.info("p2 cmd/motion/factor: allow_motion=%s "
+                                         "speed_factor=%s max_profile=%s reason=%s",
+                                         factor_body["allow_motion"], factor_body["speed_factor"],
+                                         factor_body["max_profile"], factor_body["reason"])
+                        last_factor = factor_body
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p2 health publish failed: %s", exc)
                     last_health = now

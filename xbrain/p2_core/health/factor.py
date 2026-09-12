@@ -139,3 +139,69 @@ def _all_items():
     place the membership is defined."""
     from xbrain.p2_core.health.items import ITEMS
     return ITEMS.keys()
+
+
+#: 11 S3.6 HealthFactor.detail_ref: where the per-item detail lives.
+DETAIL_REF = "health/summary"
+#: 11 S3.6 max_profile on the wire is a two-value closed set. compute_factor's
+#: internal "none" (14 S8.3: not even obstacle_avoid admissible) is NOT a wire
+#: value: P1's parser rejects any string outside this pair and KEEPS ITS
+#: PREVIOUS value (possibly allow_motion=true), so a FATAL failure published as
+#: "none" would stop the robot only through P1's 10 s dead-ladder instead of
+#: the next 1 Hz message. When allow_motion is false the profile is moot (P1
+#: outputs zero speed regardless); the lowest profile is the conservative fill.
+#: Found by test_health_factor_publish round-tripping through P1's parser.
+WIRE_PROFILES = ("obstacle_avoid", "patrol")
+WIRE_PROFILE_WHEN_BLOCKED = "obstacle_avoid"
+
+
+def dominant_reason(item_states: Mapping[str, HealthState], cfg: FactorConfig,
+                    out: FactorOutput) -> str:
+    """11 S3.6 `reason`: the item that dominates the degradation, for events
+    and the HMI, spelled <item>_<state> like the contract's own example
+    "lidar_fail". Deterministic (S5.1A table order breaks ties):
+      * allow_motion false -> the first allow_motion-driving item in FAIL, else
+        the camera (14 S8.3: no admissible profile because cam_rgbd is not
+        ok/warn/degraded)
+      * speed_factor < 1 -> the first participating item whose factor equals
+        the minimum (14 S8.2 step 2 is a min, so exactly that item cut it)
+      * otherwise "none"
+    mutant: always return "none" -> a stopped robot reports no cause ->
+    test_reason_names_the_blocking_item red."""
+    states: Dict[str, HealthState] = {}
+    for item in _all_items():
+        states[item] = item_states.get(item, HealthState.UNKNOWN)
+    if not out.allow_motion:
+        for item, st in states.items():
+            if st == HealthState.FAIL and drives_allow_motion(item):
+                return "%s_%s" % (item, st.value)
+        return "cam_rgbd_%s" % states["cam_rgbd"].value
+    if out.speed_factor < 1.0:
+        best = None
+        best_f = 1.0
+        for item, st in states.items():
+            if not counts_in_speed_factor(item):
+                continue
+            f = factor_for(item, st, cfg)
+            if f < best_f:
+                best, best_f = item, f
+        if best is not None:
+            return "%s_%s" % (best, states[best].value)
+    return "none"
+
+
+def build_health_factor(item_states: Mapping[str, HealthState],
+                        cfg: FactorConfig) -> Dict[str, object]:
+    """The 11 S3.6 HealthFactor body P1 consumes (cmd/motion/factor, P2 -> P1,
+    1 Hz): the compute_factor triple plus reason and detail_ref. One derivation
+    feeds both this and health/summary (the summary carries the per-item
+    detail this body points at), so the two keys can never disagree."""
+    out = compute_factor(item_states, cfg)
+    # the wire closed set (see WIRE_PROFILES): never let the internal "none"
+    # out, P1 would drop the whole message and keep driving on the old one.
+    mp = out.max_profile if out.max_profile in WIRE_PROFILES else WIRE_PROFILE_WHEN_BLOCKED
+    return {"speed_factor": round(out.speed_factor, 3),
+            "max_profile": mp,
+            "allow_motion": out.allow_motion,
+            "reason": dominant_reason(item_states, cfg, out),
+            "detail_ref": DETAIL_REF}

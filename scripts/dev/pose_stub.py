@@ -18,7 +18,10 @@ turns into its exit code.
 
 Options:
   --grant   publish cmd/motion/factor at 1 Hz (p2 Stage-D stand-in; without
-            it p1's HealthFactorSlot reports 'never' and correctly refuses)
+            it p1's HealthFactorSlot reports 'never' and correctly refuses).
+            Never alongside a running p2_core: since 2026-09-12 p2 publishes
+            this key itself (from its health aggregate), and two publishers
+            would alternate at p1 -- stop p2 or drop --grant, not both.
   --route   fwd | rev: the map's patrol polyline as cmd/motion/route after
             --route-delay-s; --goto X,Y: a single-point route instead
   --relmove DX,DY: a cmd/motion/relative_move (body frame) instead of a route,
