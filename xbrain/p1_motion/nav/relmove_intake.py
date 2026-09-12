@@ -21,6 +21,7 @@ imported from xbrain.common.errors (never literals, CLAUDE.md 3.5):
   * |dx_m| or |dy_m| > relative_move.max_distance_m, |dyaw_rad| >
     relative_move.max_yaw_rad -> E_SCHEMA with detail.field + detail.limit
   * dy_m != 0 and spec.holonomic == false -> E_CAPABILITY
+  * allow_motion == false (the health factor) -> E_UNHEALTHY (12 S4.5.2 row 3)
   * no usable position (pose None) -> E_DEGRADED, detail.item "no_fix"
     (11 S3.2.1: no_fix / single / dgps forbid every autonomous motion)
   * heading_valid == false -> E_NO_HEADING. 12 S4.5.2 states it for pure
@@ -30,6 +31,8 @@ imported from xbrain.common.errors (never literals, CLAUDE.md 3.5):
   * pure rotation (|(dx, dy)| <= pure_rotation_eps_m with dyaw or target_yaw)
     -> E_CAPABILITY, detail.item "nav2_spin": 12 S4.5.3 delegates spin to Nav2
     via behavior_proxy, which is not wired this phase. Refused, never faked.
+    A zero displacement WITHOUT rotation is accepted: the goto is the current
+    pose and RNS arrives at once (an honest 'done', not a reject).
   * a translation that ALSO asks for a rotation (dyaw != 0 or target_yaw set)
     -> E_CAPABILITY, detail.item "heading_goal": the RNS Mission this phase
     takes points only (route.Mission has no goal-heading input); 18's voice
@@ -52,7 +55,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-from xbrain.common.errors import E_CAPABILITY, E_DEGRADED, E_NO_HEADING, E_SCHEMA
+from xbrain.common.errors import (E_CAPABILITY, E_DEGRADED, E_NO_HEADING, E_SCHEMA,
+                                  E_UNHEALTHY)
 
 
 class RelMoveReject(Exception):
@@ -110,7 +114,8 @@ def _opt_num(body: Dict[str, Any], key: str) -> Optional[float]:
 
 def translate_relative_move(body: Any, *, pose_xy: Optional[Tuple[float, float]],
                             yaw_rad: Optional[float], heading_valid: bool,
-                            holonomic: bool, limits: RelMoveLimits) -> RelMoveGoal:
+                            holonomic: bool, limits: RelMoveLimits,
+                            allow_motion: bool = True) -> RelMoveGoal:
     """Body -> RelMoveGoal, or RelMoveReject. Check order follows 12 S4.5.2's
     table top-down: shape, TY-1, range, capability, position, heading, then
     the two this-phase boundaries.
@@ -135,16 +140,21 @@ def translate_relative_move(body: Any, *, pose_xy: Optional[Tuple[float, float]]
             raise RelMoveReject(E_SCHEMA, {"field": name, "limit": lim})
     if dy != 0.0 and not holonomic:
         raise RelMoveReject(E_CAPABILITY, {"item": "lateral"})
+    if not allow_motion:
+        raise RelMoveReject(E_UNHEALTHY, {"item": "allow_motion"})    # 12 S4.5.2 row 3
     if pose_xy is None:
         raise RelMoveReject(E_DEGRADED, {"item": "no_fix"})
     if not heading_valid or yaw_rad is None:
         raise RelMoveReject(E_NO_HEADING, {"item": "heading_invalid"})
     wants_rotation = dyaw != 0.0 or target_yaw is not None
-    if math.hypot(dx, dy) <= limits.pure_rotation_eps_m:
-        # a pure rotation (or a no-op) is the Nav2 spin path (12 S4.5.3).
-        raise RelMoveReject(E_CAPABILITY, {"item": "nav2_spin"})
     if wants_rotation:
-        raise RelMoveReject(E_CAPABILITY, {"item": "heading_goal"})
+        # below the displacement dead band it IS a pure rotation -> the Nav2
+        # spin path (12 S4.5.3, not wired); above it, a combined move.
+        item = ("nav2_spin" if math.hypot(dx, dy) <= limits.pure_rotation_eps_m
+                else "heading_goal")
+        raise RelMoveReject(E_CAPABILITY, {"item": item})
+    # a zero displacement without rotation is a legal no-op: the goto lands on
+    # the current pose and RNS reports arrival at once (12 S4.5.3 dead band).
     c, s = math.cos(yaw_rad), math.sin(yaw_rad)
     gx = pose_xy[0] + dx * c - dy * s
     gy = pose_xy[1] + dx * s + dy * c

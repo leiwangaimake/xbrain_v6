@@ -273,3 +273,23 @@ def test_abort_on_obstacle_false_lets_rns_handle_it():
     seen = sim.step(20)
     assert not [e for e in _ch(seen, CH_RELMOVE) if e.body["state"] == "aborted"]
     assert sim.src.nav_state() is NavState.WAIT_DYNAMIC and sim.host.goal is not None
+
+
+def test_timeout_abort_carries_e_timeout():
+    """RM-3: abort AND report E_TIMEOUT. mutant: drop the code -> red."""
+    from xbrain.common.errors import E_TIMEOUT
+    sim = Sim()
+    sim.relmove(dx=15.0, timeout_s=1.0)
+    seen = sim.run_until(lambda e: e.channel == CH_RELMOVE and e.body["state"] == "aborted",
+                         max_ticks=60)
+    ab = [e for e in _ch(seen, CH_RELMOVE) if e.body["state"] == "aborted"]
+    assert ab and ab[0].body["code"] == E_TIMEOUT
+
+
+def test_relmove_rejected_when_motion_not_allowed():
+    from xbrain.common.errors import E_UNHEALTHY
+    sim = Sim()
+    out = sim.host.on_relmove({"cmd_id": "rm-9", "dx_m": 1.0, "dy_m": 0.0, "dyaw_rad": 0.0},
+                              now=sim.now, pose=(0.0, 0.0), yaw_rad=0.0, heading_valid=True,
+                              allow_motion=False)
+    assert out[0].body["state"] == "rejected" and out[0].body["code"] == E_UNHEALTHY

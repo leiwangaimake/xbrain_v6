@@ -53,6 +53,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from xbrain.common.errors import E_TIMEOUT
 from xbrain.p1_motion.nav.nav_tick import NavInputs, NavOutput
 from xbrain.p1_motion.nav.progress import build_path_progress
 from xbrain.p1_motion.nav.relmove_intake import (RelMoveGoal, RelMoveLimits,
@@ -155,12 +156,12 @@ class MissionHost:
 
     # ---- relmove helpers -----------------------------------------------------
     def _end_relmove(self, state: str, pose, *, abort_reason=None,
-                     detail=None) -> Emit:
+                     detail=None, code=None) -> Emit:
         goal = self._goal
         assert goal is not None
         self._goal = None
         return self._relmove_body(goal, state, pose=pose,
-                                  abort_reason=abort_reason, detail=detail)
+                                  abort_reason=abort_reason, detail=detail, code=code)
 
     def _preempt_relmove(self, now: int, pose, why: str) -> List[Emit]:
         """A running relative_move loses to a newer command (12 S4.5.2)."""
@@ -192,14 +193,14 @@ class MissionHost:
 
     def on_relmove(self, body: Any, *, now: int,
                    pose: Optional[Tuple[float, float]], yaw_rad: Optional[float],
-                   heading_valid: bool) -> List[Emit]:
+                   heading_valid: bool, allow_motion: bool = True) -> List[Emit]:
         """cmd/motion/relative_move (P1-5): reject with a code, or accept and
         hand RNS the goto. A route in flight is superseded (state aborted:
         preempted by the displacement)."""
         try:
             goal = translate_relative_move(
                 body, pose_xy=pose, yaw_rad=yaw_rad, heading_valid=heading_valid,
-                holonomic=self._holo, limits=self._lim)
+                holonomic=self._holo, limits=self._lim, allow_motion=allow_motion)
         except RelMoveReject as rej:
             cmd_id = body.get("cmd_id") if isinstance(body, dict) else None
             return [Emit(CH_RELMOVE, {
@@ -264,7 +265,9 @@ class MissionHost:
                                                detail={"item": "teleop"}))
             elif now - self._goal_accepted_ms >= int(goal.timeout_s * 1000.0):
                 self._src.cancel(now)
-                emits.append(self._end_relmove("aborted", pose, abort_reason="timeout"))
+                # RM-3: abort AND report E_TIMEOUT; no auto-retry.
+                emits.append(self._end_relmove("aborted", pose, abort_reason="timeout",
+                                               code=E_TIMEOUT))
             elif goal.abort_on_obstacle and state in AVOIDANCE_STATES:
                 self._src.cancel(now)
                 emits.append(self._end_relmove("aborted", pose, abort_reason="obstacle",

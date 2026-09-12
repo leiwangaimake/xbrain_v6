@@ -67,7 +67,10 @@ fi
 sleep 2
 find xbrain -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null
 _start p1_motion python3 -m xbrain.p1_motion --voice-loop --resolved-root "$RESOLVED_DIR"
-sleep 3
+for _i in $(seq 1 30); do
+    grep -q "p1 nav loop wired" "$LOG_DIR/p1_motion.log" 2>/dev/null && break
+    sleep 0.5
+done
 if ! grep -q "p1 nav loop wired" "$LOG_DIR/p1_motion.log"; then
     echo "p1 nav loop did not come up; last log lines:" >&2
     tail -20 "$LOG_DIR/p1_motion.log" >&2

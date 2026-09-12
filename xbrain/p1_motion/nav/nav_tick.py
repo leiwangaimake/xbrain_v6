@@ -45,6 +45,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
+from xbrain.p1_motion.ctrl_loop import CtrlState
 from xbrain.p1_motion.freshness.degradation import CAM_THRESH, Freshness, classify
 from xbrain.p1_motion.nav.health_factor import HealthView
 from xbrain.p1_motion.nav.host_gate import (apply_gate, attribute, compute_gate,
@@ -202,7 +203,8 @@ class NavTick:
             i_heading=inp.i_heading, heading_valid=inp.heading_valid,
             estop=inp.estop, perception_dead=(fresh is Freshness.FAILED),
             profile_downgraded=downgraded)
-        vx, vy, wz = apply_gate(gate, raw[0], raw[1], raw[2], self._holo)
+        vx, vy, wz = apply_gate(gate, raw[0], raw[1], raw[2], self._holo,
+                                wz_max_radps=self._wz_max)
         limiter, limiter_all = attribute(gate, raw[0])
         return NavOutput(
             vx=vx, vy=vy, wz=wz, raw_vx=raw[0], raw_vy=raw[1], raw_wz=raw[2],
@@ -211,3 +213,28 @@ class NavTick:
             freshness=fresh.value, suspended=self._suspended,
             nav_state=self._src.nav_state().value,
             profile="obstacle_avoid" if downgraded else "patrol")
+
+
+def ctrl_state_for(inp: NavInputs, out: NavOutput, *, health_ever_ok: bool,
+                   inputs_ever_ready: bool) -> CtrlState:
+    """The 12 S11 P1 state word for this tick, derived from the same facts the
+    gate used -- the CtrlLoop then zeroes every non-ACTIVE state itself, a
+    second belt under the NavTick vetoes:
+      WAIT_GRANT  P2's factor never granted yet (11 S3.6 'never')
+      WAIT_INPUT  granted, but pose / heading / perception not yet ready
+      SAFE_STOP   was ready once, now allow_motion false or an input dead
+                  (12 S11: '任何状态 -> SAFE_STOP', back to READY on recovery)
+      READY       granted + inputs ok, no behaviour source active (hold)
+      ACTIVE      rns_avoid holds the slot and drives
+    mutant: report ACTIVE while the health veto is on -> the state word says
+    driving for a zero-velocity health stop -> test_ctrl_state_words red."""
+    inputs_ok = (inp.pose_xy is not None and inp.heading_valid
+                 and out.freshness != Freshness.FAILED.value
+                 and inp.i_fix is not None and inp.i_fix > 0.0)
+    if not inp.health.allow_motion:
+        return CtrlState.SAFE_STOP if health_ever_ok else CtrlState.WAIT_GRANT
+    if not inputs_ok:
+        return CtrlState.SAFE_STOP if inputs_ever_ready else CtrlState.WAIT_INPUT
+    if out.source == BehaviorSource.RNS_AVOID.value:
+        return CtrlState.ACTIVE
+    return CtrlState.READY

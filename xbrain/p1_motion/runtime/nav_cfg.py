@@ -48,7 +48,6 @@ class NavConfig:
     v_nom_mps: float
     v_obstacle_avoid_mps: float
     relmove: RelMoveLimits
-    perception_dead_ms: int
     gnss_dead_ms: int
     health_degrade_ms: int
     health_dead_ms: int
@@ -117,7 +116,6 @@ def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) ->
             pure_rotation_eps_m=_pos(p1_tree, "relative_move.pure_rotation_eps_m"),
             default_timeout_s=_pos(p1_tree, "relative_move.default_timeout_s"),
             abort_on_obstacle=_bool(p1_tree, "relative_move.abort_on_obstacle")),
-        perception_dead_ms=_pos_int(p1_tree, "timeouts_ms.perception"),
         gnss_dead_ms=_pos_int(p1_tree, "timeouts_ms.gnss"),
         health_degrade_ms=_pos_int(p1_tree, "timeouts_ms.health_degrade"),
         health_dead_ms=_pos_int(p1_tree, "timeouts_ms.health_dead"),

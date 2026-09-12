@@ -139,3 +139,20 @@ def test_rg2_cap_counts_across_chunks():
     with pytest.raises(RouteIntakeError):
         a.accept(_body([_pt(3000 + i, dlat=(3000 + i) * 1e-6) for i in range(2001)],
                        index=1, total=2))
+
+
+def test_malformed_frame_of_another_push_keeps_the_pending_set():
+    """mutant: reset pending on every rejection -> the valid half-route is
+    lost to a stray bad frame -> red."""
+    a = _asm()
+    a.accept(_body([_pt(0)], index=0, total=2, cmd_id="rg-1"))
+    with pytest.raises(RouteIntakeError):
+        a.accept(_body([_pt(0)], cmd_id="rg-other", frame="enu"))
+    assert a.pending
+    rs = a.accept(_body([_pt(1)], index=1, total=2, cmd_id="rg-1"))
+    assert isinstance(rs, RouteSet) and rs.waypoint_total == 2
+    # a bad frame of the SAME push does drop it
+    a.accept(_body([_pt(0)], index=0, total=2, cmd_id="rg-2"))
+    with pytest.raises(RouteIntakeError):
+        a.accept(_body([_pt(9)], index=1, total=2, cmd_id="rg-2"))
+    assert not a.pending

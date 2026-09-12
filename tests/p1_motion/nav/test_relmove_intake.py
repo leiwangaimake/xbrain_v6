@@ -107,3 +107,17 @@ def test_achieved_delta_in_start_body_frame():
     g = _go(_body(dx=2.0), pose=(1.0, 1.0), yaw=math.pi / 2)
     dx, dy = achieved_body_delta(g, (1.0, 2.5))
     assert dx == pytest.approx(1.5, abs=1e-9) and dy == pytest.approx(0.0, abs=1e-9)
+
+
+def test_zero_move_without_rotation_is_a_goto_to_the_current_pose():
+    g = _go(_body(dx=0.0, dy=0.0), pose=(3.0, 4.0), yaw=1.0)
+    assert g.endpoint_xy == pytest.approx((3.0, 4.0))
+
+
+def test_allow_motion_false_is_unhealthy():
+    """12 S4.5.2 row 3. mutant: drop the check -> accepted -> red."""
+    from xbrain.common.errors import E_UNHEALTHY
+    with pytest.raises(RelMoveReject) as ei:
+        translate_relative_move(_body(), pose_xy=(0.0, 0.0), yaw_rad=0.0, heading_valid=True,
+                                holonomic=True, limits=LIM, allow_motion=False)
+    assert ei.value.code == E_UNHEALTHY

@@ -40,6 +40,10 @@ def test_contract_keys():
         "cmd/motion/route", "cmd/motion/relative_move", "cmd/motion/factor")
     assert (STATE_PROGRESS_TOPIC, RELMOVE_STATUS_TOPIC) == (
         "state/motion/path_progress", "cmd/motion/relative_move/status")
+    from xbrain.p1_motion.runtime.nav_wiring import STATE_ARB_TOPIC
+    assert STATE_ARB_TOPIC == "state/arb/motion"
+    assert 'declare_publisher(STATE_ARB_TOPIC)' in _NAV
+    assert '"event/%s/arbitration"' in _NAV
     assert TICK_PERIOD_S == 0.05
 
 
@@ -82,3 +86,17 @@ def test_unwrap_body_accepts_bare_and_enveloped():
     env = {"v": 1, "rid": "dev", "ts": 1.0, "seq": 3, "src": "p2_core", "data": body}
     assert unwrap_body(env) is body
     assert unwrap_body(None) is None
+
+
+def test_envelopes_use_the_contract_encoder_not_millisecond_stamps():
+    """11 S3.0: ts / mono are seconds. gnss_pose.stamp_envelope stamps
+    milliseconds (a pre-existing deviation on state/pose); the P7.2 keys must
+    not inherit it. mutant: call stamp_envelope -> red."""
+    assert "from xbrain.common.envelope.envelope import Envelope, encode" in _NAV
+    assert "stamp_envelope(" not in _NAV          # mentioned in a docstring, never called
+    assert _NAV.count("encode(env)") == 1
+
+
+def test_stats_deque_is_locked_against_the_heartbeat_thread():
+    assert "with self._stats_lock:\n                self._periods.append" in _NAV
+    assert "with self._stats_lock:\n            p = sorted(self._periods)" in _NAV

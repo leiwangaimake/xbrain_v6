@@ -35,20 +35,17 @@ nav:
   holonomic: ${common.spec.holonomic}           # vy 通道能力位 (12 S4.7.3 TS-4)
   v_nom_mps: ${common.motion.profiles.patrol.max_mps}   # 任务标称速 = patrol 档 (20 S8.1A)
   v_obstacle_avoid_mps: ${common.motion.profiles.obstacle_avoid.max_mps}  # 11 S3.6 max_profile 降档上限
-relative_move:                        # 12 S12 逐字
+relative_move:                        # 12 S12 的五个有消费者的键 (nav/relmove_intake.py);
+                                      #   tolerance_* / a_dec_ratio 属 #20-9 已删的里程计执行器, 随其落地
   max_distance_m: 20.0
   max_yaw_rad: 6.2832
-  tolerance_m: 0.05
-  tolerance_rad: 0.02
   pure_rotation_eps_m: 0.02           # 12 S4.5.3 纯旋转判定位移阈值 (m)
-  a_dec_ratio: 0.5
   default_timeout_s: 20.0             # RM-3
   abort_on_obstacle: true             # 12 S4.5.6 缺省
-timeouts_ms:                          # 12 S12 逐字 (本批消费 perception/gnss/health_*)
-  perception: 200
-  lidar_degrade: 300
-  lidar_dead: 1000
-  gnss: 200
+timeouts_ms:                          # 12 S12 中本批有消费者的三键 (runtime/nav_wiring.py / nav/health_factor.py);
+                                      #   感知计龄按 11 S3.1B T-50/T-51 (freshness/degradation.CAM_THRESH), NO 不用本段
+                                      #   的 perception 键 (12 S12 的 200 与 11 的 300/1000 不一致, 契约为准; 待 12 收口);
+                                      #   lidar_* / robot_state / nav2_* / teleop_* 随各自消费者落地
+  gnss: 200                           # rt/gnss 缓存龄期 > 此值 = 无定位 / 无航向 (12 S3.3 gnss 行)
   health_degrade: 3000                # 11 S3.6: 3 s -> speed_factor 0.3 + warn
   health_dead: 10000                  # 11 S3.6: 10 s -> allow_motion false
-  robot_state: 500

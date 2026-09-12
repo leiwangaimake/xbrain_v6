@@ -183,10 +183,12 @@ def attribute(gate: GateResult, raw_vx: float) -> Tuple[str, Tuple[str, ...]]:
 
 
 def apply_gate(gate: GateResult, vx: float, vy: float, wz: float,
-               holonomic: bool) -> Tuple[float, float, float]:
+               holonomic: bool, wz_max_radps: Optional[float] = None) -> Tuple[float, float, float]:
     """Clip the candidate. Veto -> all zero. vx > 0 by the forward ceiling,
-    vx < 0 and |vy| by the f-less ceiling, wz untouched (see module note).
-    A non-holonomic chassis never gets vy (12 S4.7.3 TS-4)."""
+    vx < 0 and |vy| by the f-less ceiling; wz only by the chassis limit
+    spec.max_wz_radps when given (RNS already clamps to ctx.wz_max, this is
+    the host's own belt -- the rotation PERMIT is a separate stage, see the
+    module note). A non-holonomic chassis never gets vy (12 S4.7.3 TS-4)."""
     if gate.veto:
         return (0.0, 0.0, 0.0)
     if vx > 0.0:
@@ -197,4 +199,6 @@ def apply_gate(gate: GateResult, vx: float, vy: float, wz: float,
         vy = 0.0
     else:
         vy = max(-gate.v_max_free, min(vy, gate.v_max_free))
+    if wz_max_radps is not None:
+        wz = max(-wz_max_radps, min(wz, wz_max_radps))
     return (vx, vy, wz)

@@ -28,8 +28,7 @@ P1 = {
     "relative_move": {"max_distance_m": 20.0, "max_yaw_rad": 6.2832,
                       "pure_rotation_eps_m": 0.02, "default_timeout_s": 20.0,
                       "abort_on_obstacle": True},
-    "timeouts_ms": {"perception": 200, "gnss": 200, "health_degrade": 3000,
-                    "health_dead": 10000},
+    "timeouts_ms": {"gnss": 200, "health_degrade": 3000, "health_dead": 10000},
 }
 RNS = {"rns": {"route": {"search_window": 30}, "geometry": {"r_eff_m": 0.5}}}
 
@@ -44,7 +43,7 @@ def test_complete_tree_builds():
 @pytest.mark.parametrize("dotted", [
     "geo.enu_origin.lat", "nav.max_vx_mps", "nav.max_wz_radps", "nav.holonomic",
     "nav.v_nom_mps", "relative_move.max_distance_m", "relative_move.abort_on_obstacle",
-    "timeouts_ms.perception", "timeouts_ms.health_dead",
+    "timeouts_ms.gnss", "timeouts_ms.health_dead",
 ])
 def test_null_leaf_refused_by_name(dotted):
     """mutant: treat a missing leaf as None instead of raising -> red."""

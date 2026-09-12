@@ -164,7 +164,12 @@ class RouteAssembler:
             return self._accept(body)
         except (RouteIntakeError, LocalFrameError):
             self.rejected += 1
-            self._reset_pending()
+            # drop the pending set only when the bad frame belongs to it (or is
+            # too broken to say): a stray malformed frame from another push
+            # must not lose a half-assembled valid route.
+            bad_cmd = body.get("cmd_id") if isinstance(body, dict) else None
+            if self._pending_cmd is None or bad_cmd is None or bad_cmd == self._pending_cmd:
+                self._reset_pending()
             raise
 
     def _accept(self, body: Any) -> Optional[Union[RouteSet, RouteClear]]:

@@ -216,3 +216,53 @@ def test_max_profile_obstacle_avoid_caps_the_nominal():
     moving = [o for o in outs if o.vx > 0.0]
     assert moving and all(o.vx <= 0.5 + 1e-9 for o in moving)
     assert all(o.profile == "obstacle_avoid" and o.v_max == pytest.approx(0.5) for o in outs)
+
+
+def test_ctrl_state_words_follow_12_s11():
+    """WAIT_GRANT before the first grant, WAIT_INPUT before inputs, READY on
+    hold, ACTIVE with rns_avoid driving, SAFE_STOP once a granted/ready loop
+    loses the grant or an input. mutant: ACTIVE under the health veto -> red."""
+    from xbrain.p1_motion.ctrl_loop import CtrlState
+    from xbrain.p1_motion.nav.nav_tick import ctrl_state_for
+    src, tick = _stack()
+    inp = _inp(5000, health=NEVER)
+    out = tick.run(inp)
+    assert ctrl_state_for(inp, out, health_ever_ok=False, inputs_ever_ready=False) is CtrlState.WAIT_GRANT
+    assert ctrl_state_for(inp, out, health_ever_ok=True, inputs_ever_ready=True) is CtrlState.SAFE_STOP
+    inp = _inp(5050, perception=PerceptionSnapshot())
+    out = tick.run(inp)
+    assert ctrl_state_for(inp, out, health_ever_ok=True, inputs_ever_ready=False) is CtrlState.WAIT_INPUT
+    assert ctrl_state_for(inp, out, health_ever_ok=True, inputs_ever_ready=True) is CtrlState.SAFE_STOP
+    inp = _inp(5100)
+    out = tick.run(inp)
+    assert out.source == "hold"
+    assert ctrl_state_for(inp, out, health_ever_ok=True, inputs_ever_ready=True) is CtrlState.READY
+    _goto(src, 5100)
+    out = _drive_until_moving(tick, 5150)
+    inp = _inp(5150 + 50 * 9)
+    assert ctrl_state_for(inp, out, health_ever_ok=True, inputs_ever_ready=True) is CtrlState.ACTIVE
+
+
+def test_wz_never_exceeds_wz_max_on_the_wire():
+    src, tick = _stack()
+    _goto(src, 5000, endpoint=(0.0, 8.0))           # goal at +90 deg: a hard turn
+    outs = [tick.run(_inp(5000 + 50 * k)) for k in range(20)]
+    assert all(abs(o.wz) <= 1.2 + 1e-9 for o in outs)
+
+
+def test_estop_without_mission_is_not_loaded():
+    """RNS keeps a SUSPENDED word after on_preempted with no mission; the
+    adapter's own flag must still say 'nothing loaded'. mutant: derive
+    mission_loaded from nav_state -> red."""
+    src, tick = _stack()
+    tick.run(_inp(5000, estop=True))
+    tick.run(_inp(5050, estop=False))
+    assert not src.mission_loaded()
+    assert src.cancel(5100) is False
+    _goto(src, 5100)
+    assert src.mission_loaded()
+    outs = [tick.run(_inp(5100 + 50 * k)) for k in range(400)]
+    assert any(o.vx > 0.0 for o in outs)
+    # arrival is consumed through the adapter latch -> not loaded any more
+    if src.take_arrival():
+        assert not src.mission_loaded()

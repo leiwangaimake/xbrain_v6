@@ -51,3 +51,15 @@ def test_non_holonomic_keeps_two_arg_publish_and_drops_vy():
     loop.transition(CtrlState.ACTIVE)
     t = loop.run_one_tick(computed_vx=0.5, computed_wz=0.1, computed_vy=0.2)
     assert got == [(0.5, 0.1)] and t.vy == 0.0 and loop.vy_dropped == 1
+
+
+def test_history_is_bounded():
+    """The loop runs for the process lifetime at 20 Hz; an unbounded history
+    list grew without limit. mutant: plain list -> len == 1500 -> red."""
+    from xbrain.p1_motion.ctrl_loop import HISTORY_MAX
+    loop = CtrlLoop(lambda vx, wz: None)
+    loop.transition(CtrlState.ACTIVE)
+    for _ in range(HISTORY_MAX + 300):
+        loop.run_one_tick(computed_vx=0.1)
+    assert len(loop.history) == HISTORY_MAX
+    assert loop.history[-1].tick_no == HISTORY_MAX + 300

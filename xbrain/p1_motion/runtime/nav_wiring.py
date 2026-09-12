@@ -37,14 +37,15 @@ safe by itself.
 Keys (11 S1.1.6 whitelist, p1 rows): sub cmd/motion/route (P1-11),
 cmd/motion/relative_move (P1-5), cmd/motion/factor (P1-4) on the general
 plane; pub xbrain/{rid}/rt/motion/cmd_vel (RT), state/motion/path_progress
-(P1-12) and cmd/motion/relative_move/status (P1-6) on the general plane.
+(P1-12), cmd/motion/relative_move/status (P1-6), state/arb/motion (P1-22)
+and event/{sev}/arbitration (P1-23) on the general plane.
 Bodies on the general plane are accepted bare or inside the 11 S3.0 envelope
 (unwrap_body) because today's producers differ: p2 publishes relative_move
 bare while RT-plane producers envelope everything.
 
-What it does NOT do: no state/arb/motion (P1-22/23, separate subset), no
-rotation permit / fence clip / jerk limiter (not chained this phase, NEXT.md),
-no Nav2 spin delegate. It never reads the config source (NavConfig arrives
+What it does NOT do: no rotation permit / fence clip / jerk limiter (not
+chained this phase, NEXT.md), no Nav2 spin delegate, no RobotState estop
+back-check (11 S7A.6.5 E-2; quadruped not built). It never reads the config source (NavConfig arrives
 from the resolved snapshots via runtime/nav_cfg.py).
 
 Trap: publishing cmd_vel from the heartbeat loop "as well" to be safe. Two
@@ -63,12 +64,14 @@ import time
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from xbrain.common.envelope.envelope import Envelope, encode
 from xbrain.p1_motion.ctrl_loop import CtrlLoop, CtrlState
+from xbrain.p1_motion.nav.arb_state import SUSPENDED_SOFT_ESTOP, ArbVisibility
 from xbrain.p1_motion.nav.health_factor import (STATE_OK, HealthFactorError,
                                                 HealthFactorSlot, HealthView)
 from xbrain.p1_motion.nav.mission_host import (CH_EVENT, CH_PROGRESS,
                                                CH_RELMOVE, Emit, MissionHost)
-from xbrain.p1_motion.nav.nav_tick import NavInputs, NavOutput, NavTick
+from xbrain.p1_motion.nav.nav_tick import NavInputs, NavOutput, NavTick, ctrl_state_for
 from xbrain.p1_motion.nav.route_intake import RouteAssembler, RouteIntakeError
 from xbrain.p1_motion.path import gnss_pose
 from xbrain.p1_motion.path.local_frame import LocalFrameError
@@ -83,6 +86,7 @@ CMD_ROUTE_TOPIC = "cmd/motion/route"                      # P1-11
 CMD_RELMOVE_TOPIC = "cmd/motion/relative_move"            # P1-5
 CMD_FACTOR_TOPIC = "cmd/motion/factor"                    # P1-4
 STATE_PROGRESS_TOPIC = "state/motion/path_progress"       # P1-12
+STATE_ARB_TOPIC = "state/arb/motion"                      # P1-22 (11 S7A.8)
 RELMOVE_STATUS_TOPIC = "cmd/motion/relative_move/status"  # P1-6
 #: 12 S2.2: 20 Hz.
 TICK_PERIOD_S = 0.05
@@ -143,7 +147,9 @@ class NavRuntime:
         # / watchdog live in it); its startup assertions (20 S7A.1) run here.
         rns = RnsSource(cfg=cfg.rns, r_eff_m=cfg.r_eff_m)
         self._src = RnsAvoidSource(rns, cfg.rns["rns"])
-        self._tick = NavTick(self._src, P1Arbiter(), v_nom_mps=cfg.v_nom_mps,
+        self._arb = P1Arbiter()
+        self._arbvis = ArbVisibility()          # P1-22/23 (11 S7A.8)
+        self._tick = NavTick(self._src, self._arb, v_nom_mps=cfg.v_nom_mps,
                              wz_max_rps=cfg.max_wz_radps,
                              spec_max_vx_mps=cfg.max_vx_mps,
                              holonomic=cfg.holonomic,
@@ -159,10 +165,17 @@ class NavRuntime:
         self._cmd_pub: Any = None
         self._progress_pub: Any = None
         self._status_pub: Any = None
+        self._arb_pub: Any = None
         self._ctrl = CtrlLoop(self._publish_cmd_vel, holonomic=cfg.holonomic)
         self._cur: Optional[NavOutput] = None
-        self._seq = {"cmd_vel": 0, "progress": 0, "status": 0, "event": 0}
+        self._seq = {"cmd_vel": 0, "progress": 0, "status": 0, "event": 0, "arb": 0}
         self._periods: Deque[float] = collections.deque(maxlen=_STATS_WINDOW)
+        # the heartbeat thread reads _periods while this thread appends: a deque
+        # iterated during a concurrent append raises, so both sides lock.
+        self._stats_lock = threading.Lock()
+        self._health_ever_ok = False
+        self._inputs_ever_ready = False
+        self._fault_events = 0
         self._ticks = 0
         self._overruns = 0
         self._tick_errors = 0
@@ -182,6 +195,7 @@ class NavRuntime:
         self._cmd_pub = self._rt.declare_publisher("xbrain/%s/rt/motion/cmd_vel" % self._rid)
         self._progress_pub = self._gen.declare_publisher(STATE_PROGRESS_TOPIC)
         self._status_pub = self._gen.declare_publisher(RELMOVE_STATUS_TOPIC)
+        self._arb_pub = self._gen.declare_publisher(STATE_ARB_TOPIC)
         _logger.info("p1 nav loop wired: sub %s %s %s; pub rt/motion/cmd_vel %s %s "
                      "(rid=%s holonomic=%s v_nom=%.2f wz_max=%.2f)",
                      CMD_ROUTE_TOPIC, CMD_RELMOVE_TOPIC, CMD_FACTOR_TOPIC,
@@ -206,7 +220,8 @@ class NavRuntime:
     def stats(self) -> Dict[str, Any]:
         """Heartbeat line: period p99 / max (CLAUDE.md 4.4: P99 <= 60 ms, max
         <= 100 ms), overruns, holder, nav state, intake counts."""
-        p = sorted(self._periods)
+        with self._stats_lock:
+            p = sorted(self._periods)
         p99 = p[int(0.99 * (len(p) - 1))] * 1000.0 if p else None
         pmax = p[-1] * 1000.0 if p else None
         out = self._cur
@@ -218,6 +233,7 @@ class NavRuntime:
                 "nav_state": out.nav_state if out else None,
                 "limiter": out.limiter if out else None,
                 "route_state": self._host.route_state,
+                "ctrl_state": self._ctrl.state,
                 "health": self._health_state, **self._counts}
 
     # ---- Rust-thread callbacks (decode + store only, CLAUDE.md 4.2) ----------
@@ -254,13 +270,29 @@ class NavRuntime:
                 _logger.warning("p1 cmd/motion/factor rejected (n=%d): %s", n, exc)
 
     # ---- the loop ------------------------------------------------------------
+    def _fault_event(self, exc: BaseException) -> None:
+        """CLAUDE.md 4.4 '落 fault': event/fault/motion for a failed tick, the
+        first and then every 100th so a tight failure does not flood p5."""
+        self._fault_events += 1
+        if self._fault_events != 1 and self._fault_events % 100 != 0:
+            return
+        try:
+            self._publish_event(Emit(CH_EVENT, {
+                "title": "nav_tick_failed",
+                "dedup_key": "nav:tick_failed",
+                "detail": {"error": type(exc).__name__, "count": self._tick_errors}},
+                "fault"))
+        except Exception:      # noqa: BLE001 -- the fault path must not raise
+            pass
+
     def _loop(self) -> None:
-        self._ctrl.transition(CtrlState.ACTIVE)
+        self._ctrl.transition(CtrlState.WAIT_INPUT)
         next_t = time.monotonic()
         last = next_t
         while not self._stop.get("stop"):
             t0 = time.monotonic()
-            self._periods.append(t0 - last)
+            with self._stats_lock:
+                self._periods.append(t0 - last)
             last = t0
             try:
                 self._one_tick(t0)
@@ -268,7 +300,11 @@ class NavRuntime:
                 self._tick_errors += 1
                 _logger.exception("p1 nav tick failed (n=%d): %s", self._tick_errors, exc)
                 self._cur = None
-                self._ctrl.run_one_tick(estop=True)     # zero on every axis
+                # 12 S11: an abnormal tick is SAFE_STOP (zero); the next good
+                # tick moves the state word back through ctrl_state_for.
+                self._ctrl.transition(CtrlState.SAFE_STOP)
+                self._ctrl.run_one_tick()               # zero on every axis
+                self._fault_event(exc)
             self._ticks += 1
             next_t += TICK_PERIOD_S
             delay = next_t - time.monotonic()
@@ -321,10 +357,11 @@ class NavRuntime:
         emits: List[Emit] = []
         for r in routes:
             emits += self._host.on_route(r, now_ms, pose.xy)
+        health = self._health.view(now_ms)
         for b in relmoves:
             emits += self._host.on_relmove(b, now=now_ms, pose=pose.xy,
-                                           yaw_rad=pose.yaw, heading_valid=pose.heading_valid)
-        health = self._health.view(now_ms)
+                                           yaw_rad=pose.yaw, heading_valid=pose.heading_valid,
+                                           allow_motion=health.allow_motion)
         inp = NavInputs(now_mono_ms=now_ms, pose_xy=pose.xy, yaw_rad=pose.yaw,
                         heading_valid=pose.heading_valid, i_fix=pose.i_fix,
                         i_heading=pose.i_heading,
@@ -333,20 +370,36 @@ class NavRuntime:
                         teleop_active=self._teleop_active(now_ms), ts_wall_s=ts_wall)
         out = self._tick.run(inp)
         self._cur = out
+        # 12 S11 state word (WAIT_GRANT / WAIT_INPUT / SAFE_STOP / READY / ACTIVE):
+        # the CtrlLoop zeroes every non-ACTIVE state itself, under the vetoes.
+        if health.allow_motion:
+            self._health_ever_ok = True
+        state = ctrl_state_for(inp, out, health_ever_ok=self._health_ever_ok,
+                               inputs_ever_ready=self._inputs_ever_ready)
+        if state in (CtrlState.READY, CtrlState.ACTIVE):
+            self._inputs_ever_ready = True
+        self._ctrl.transition(state)
         # single sink (12 S2.2 step 10): the CtrlLoop callback publishes.
         self._ctrl.run_one_tick(computed_vx=out.vx, computed_wz=out.wz,
                                 computed_vy=out.vy, estop=inp.estop)
         emits += self._host.after_tick(inp, out)
         self._publish_emits(emits)
         self._health_edge(health)
+        self._publish_arb(inp, now_ms)
 
     # ---- publishing ----------------------------------------------------------
     def _envelope(self, data: Dict[str, Any], seq_key: str) -> bytes:
-        env = gnss_pose.stamp_envelope(data, rid=self._rid, boot=self._boot,
-                                       seq=self._seq[seq_key], src="p1_motion",
-                                       ts_sync=self._ts_sync())
+        """11 S3.0 envelope through the common encoder: ts / mono are SECONDS
+        (float), boot rides with mono (CLK-C4), seq per key. NOT
+        gnss_pose.stamp_envelope, which stamps milliseconds -- a C++ consumer
+        decoding rt/motion/cmd_vel per S3.0 would read those as seconds."""
+        env = Envelope(v=1, rid=self._rid,
+                       ts=time.time(),               # WALL-CLOCK-OK(align/log)
+                       mono=time.monotonic(), boot=self._boot or None,
+                       seq=self._seq[seq_key], src="p1_motion",
+                       ts_sync=self._ts_sync(), data=data)
         self._seq[seq_key] += 1
-        return json.dumps(env, ensure_ascii=False).encode("utf-8")
+        return json.dumps(encode(env), ensure_ascii=False).encode("utf-8")
 
     def _publish_cmd_vel(self, vx: float, wz: float, vy: float = 0.0) -> None:
         """CtrlLoop's sink: the 11 S3.4 CmdVel body + gate block. Called with
@@ -354,10 +407,10 @@ class NavRuntime:
         out = self._cur
         gate: Dict[str, Any]
         if out is None:
-            # the exception path: zero with the estop attribution the CtrlLoop
-            # applied; nothing else is known about this tick.
+            # the exception path (SAFE_STOP): a P1-internal fault is a health
+            # veto in 11 S9.6.5 terms (row 3, FATAL item), never an estop claim.
             gate = {"v_max": 0.0, "profile": PROFILE_REQ, "profile_req": PROFILE_REQ,
-                    "limiter": "estop", "limiter_all": ["estop"], "h_factor": 0.0,
+                    "limiter": "health", "limiter_all": ["health"], "h_factor": 0.0,
                     "i_factor": 0.0, "raw_vx": 0.0, "source": "hold"}
         else:
             gate = {"v_max": round(out.v_max, 4), "profile": out.profile,
@@ -400,6 +453,26 @@ class NavRuntime:
             "detail": e.body.get("detail", {}),
             "src": "p1_motion", "ts": 0.0,
         }, ensure_ascii=False).encode("utf-8"))
+
+    def _publish_arb(self, inp: NavInputs, now_ms: int) -> None:
+        """P1-22 state/arb/motion (change + 1 Hz) and P1-23
+        event/{sev}/arbitration (change only), 11 S7A.8 / S7A.5.1 / S7A.7."""
+        body, events = self._arbvis.observe(
+            holder=self._arb.holder(), snapshot=self._arb.snapshot(),
+            suspended=SUSPENDED_SOFT_ESTOP if inp.estop else None, now_mono_ms=now_ms)
+        try:
+            if body is not None:
+                self._arb_pub.put(self._envelope(body, "arb"))
+            for ev in events:
+                self._seq["event"] += 1
+                self._gen.put("event/%s/arbitration" % ev.severity, json.dumps({
+                    "eid": "arb-%s-%d" % (self._event_boot, self._seq["event"]),
+                    "title": ev.action, "dedup_key": ev.dedup_key,
+                    "detail": ev.detail, "src": "p1_motion", "ts": 0.0,
+                }, ensure_ascii=False).encode("utf-8"))
+        except Exception as exc:      # noqa: BLE001
+            self._counts["publish_fail"] += 1
+            _logger.error("p1 state/arb/motion publish failed: %s", exc)
 
     def _health_edge(self, view: HealthView) -> None:
         """11 S3.6: the degrade / dead transitions raise a warn event; logged

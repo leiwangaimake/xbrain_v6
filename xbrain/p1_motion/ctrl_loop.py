@@ -19,9 +19,14 @@ first job is 'always publish something'.
 
 from __future__ import annotations
 
+import collections
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, List, Optional
+from typing import Callable, Deque, List, Optional
+
+#: ticks kept for observability (60 s at 20 Hz). Bounded: the P7.2 loop runs
+#: for the process lifetime and an unbounded list grew by 20 records a second.
+HISTORY_MAX = 1200
 
 
 class CtrlState(str, Enum):
@@ -81,7 +86,7 @@ class CtrlLoop:
         self._holonomic = bool(holonomic)
         self.vy_dropped = 0
         self._tick_no = 0
-        self._history: List[CtrlTick] = []
+        self._history: Deque[CtrlTick] = collections.deque(maxlen=HISTORY_MAX)
 
     @property
     def state(self) -> str:

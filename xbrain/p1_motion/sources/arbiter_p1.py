@@ -87,6 +87,13 @@ class P1Arbiter:
             if st.active and (now_mono_ms - st.last_hit_mono_ms) > self._dwell_ms:
                 st.active = False
 
+    def snapshot(self) -> Dict[BehaviorSource, SourceState]:
+        """A copy of every source's (active, last_hit) for the 11 S7A.5.1
+        state/arb/motion body (sources[].alive). Copies, so a reader cannot
+        mutate the arbiter's own records."""
+        return {s: SourceState(st.active, st.last_hit_mono_ms)
+                for s, st in self._states.items()}
+
     def holder(self) -> Optional[BehaviorSource]:
         best: Optional[BehaviorSource] = None
         best_pri = -1

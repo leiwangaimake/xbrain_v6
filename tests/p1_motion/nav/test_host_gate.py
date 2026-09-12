@@ -125,3 +125,13 @@ def test_max_profile_downgrade_is_attributed_to_health():
     assert g.v_max_fwd == pytest.approx(0.5)
     limiter, all_ = attribute(g, 1.0)
     assert limiter == "health" and all_ == ("health",)
+
+
+def test_wz_is_clamped_to_the_chassis_limit():
+    """spec.max_wz_radps is the Tier-1-facing limit; a candidate above it is
+    clipped (RNS already respects ctx.wz_max, this is the host belt).
+    mutant: skip the clamp -> 2.0 rad/s passes -> red."""
+    g = _gate()
+    assert apply_gate(g, 0.5, 0.0, 2.0, True, wz_max_radps=1.2) == (0.5, 0.0, 1.2)
+    assert apply_gate(g, 0.5, 0.0, -2.0, True, wz_max_radps=1.2) == (0.5, 0.0, -1.2)
+    assert apply_gate(g, 0.5, 0.0, 0.7, True, wz_max_radps=1.2) == (0.5, 0.0, 0.7)

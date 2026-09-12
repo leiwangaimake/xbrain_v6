@@ -78,6 +78,12 @@ class RnsAvoidSource:
         # monotone index (RNS-N-4) between two callers would let the 2 Hz report
         # move the index the 20 Hz follow relies on.
         self._host_tracker: Optional[PolylineTracker] = None
+        # mission-in-flight flag owned HERE: RnsSource.nav_state() is not a
+        # substitute -- after on_preempted with no mission it reads SUSPENDED
+        # (20 S9.0.1 '任意 -> SUSPENDED') and on_release only returns to FOLLOW
+        # when a mission exists, so 'state != IDLE' would say loaded when nothing
+        # is. Set by the entries, cleared by cancel and by the terminal latches.
+        self._loaded = False
 
     # ---- observability -------------------------------------------------------
     @property
@@ -103,7 +109,10 @@ class RnsAvoidSource:
         return self._rns.nav_state()
 
     def mission_loaded(self) -> bool:
-        return self._rns.nav_state() != NavState.IDLE
+        """True from load_* until cancel or the host TAKES the terminal latch.
+        mutant: derive from nav_state() != IDLE -> true after an estop with no
+        mission -> test_estop_without_mission_is_not_loaded red."""
+        return self._loaded
 
     # ---- 12 S4.1 behaviour source interface ---------------------------------
     def is_active(self, ctx: Any) -> bool:
@@ -121,10 +130,16 @@ class RnsAvoidSource:
         self._rns.on_release(ctx)
 
     def take_arrival(self) -> bool:
-        return self._rns.take_arrival()
+        got = self._rns.take_arrival()
+        if got:
+            self._loaded = False
+        return got
 
     def take_failure(self) -> Optional[NavFailure]:
-        return self._rns.take_failure()
+        f = self._rns.take_failure()
+        if f is not None:
+            self._loaded = False
+        return f
 
     # ---- mission entries -----------------------------------------------------
     def _supersede_if_running(self, now_mono_ms: int, new_rev: int) -> None:
@@ -148,6 +163,7 @@ class RnsAvoidSource:
         self._route = route
         self._goal = None
         self._origin = Origin.ROUTE
+        self._loaded = True
         self._host_tracker = (PolylineTracker(list(route.points_xy), self._search_window)
                               if route.waypoint_total >= 2 else None)
 
@@ -163,6 +179,7 @@ class RnsAvoidSource:
         self._route = None
         self._origin = Origin.RELMOVE
         self._host_tracker = None
+        self._loaded = True
 
     def progress_projection(self, pose_xy) -> Optional[Projection]:
         """Where the robot is along the ROUTE polyline, for path_progress. None
@@ -180,4 +197,5 @@ class RnsAvoidSource:
                 now_mono_ms, Outcome.CANCELLED.value,
                 {"origin": self._origin.value if self._origin else None}))
         self._rns.clear_mission()
+        self._loaded = False
         return was
