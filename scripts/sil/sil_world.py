@@ -115,15 +115,30 @@ def _ray_obb(ox, oy, dx, dy, cx, cy, ax, hl, hw) -> Optional[float]:
     return tmin if tmin > 1e-9 else None
 
 
+FENCE_ROLES = ("allow", "forbid")
+
+
+@dataclass
+class Fence:
+    """A SIL fence polygon in site metres (11 S9A.2 role; hard_enforce on).
+    Display-only on the rns bench; on the e2e stack it goes to the real p1 as
+    cmd/fence and p1's clip (fence/clip.py) acts on it."""
+    fid: int
+    role: str
+    points: List[Tuple[float, float]]
+
+
 class SilWorld:
     """The SIL world: obstacle store + path/waypoints + robot pose + the 20 Hz
     perception/kinematics services the server tick calls."""
 
     def __init__(self) -> None:
         self._next_id = 1
+        self._next_fid = 1
         self.obstacles: Dict[int, Obstacle] = {}
         self.path: List[Tuple[float, float]] = []
         self.waypoints: List[Tuple[float, float]] = []
+        self.fences: Dict[int, Fence] = {}
         # robot starts at origin facing +x (matches the mock: green dog)
         self.rx, self.ry, self.ryaw = 0.0, 0.0, math.pi / 2
 
@@ -155,10 +170,31 @@ class SilWorld:
     def remove_obstacle(self, oid: int) -> bool:
         return self.obstacles.pop(oid, None) is not None
 
+    def add_fence(self, role: str, points: List[Tuple[float, float]]) -> int:
+        """role allow (keep-in) / forbid (keep-out), >= 3 vertices -- the same
+        two checks p1's compile_fence_set makes, so a bad polygon is refused
+        here with a reason instead of being rejected on the wire silently."""
+        if role not in FENCE_ROLES:
+            raise ValueError("fence role %r not in %s" % (role, FENCE_ROLES))
+        if len(points) < 3:
+            raise ValueError("a fence needs >= 3 vertices, got %d" % len(points))
+        fid = self._next_fid
+        self._next_fid += 1
+        self.fences[fid] = Fence(fid=fid, role=role,
+                                 points=[(float(x), float(y)) for x, y in points])
+        return fid
+
+    def remove_fence(self, fid: int) -> bool:
+        return self.fences.pop(fid, None) is not None
+
+    def clear_fences(self) -> None:
+        self.fences.clear()
+
     def reset(self) -> None:
         self.obstacles.clear()
         self.path.clear()
         self.waypoints.clear()
+        self.fences.clear()
         self.rx, self.ry, self.ryaw = 0.0, 0.0, math.pi / 2
 
     # ── dynamic obstacle motion (server tick) ────────────────────────────────

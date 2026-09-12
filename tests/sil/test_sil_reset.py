@@ -56,3 +56,23 @@ def test_reset_empties_the_map(srv):
     assert w.obstacles == {} and w.path == [] and w.waypoints == []
     assert (w.rx, w.ry) == (0.0, 0.0)
     assert sil_server.nav["state"] == "idle" and sil_server.rns._mission is None
+
+
+def test_fence_api_round_trip_and_reset_clears(srv):
+    """mutant: reset keeps the fences -> red."""
+    sil_server, c = srv
+    r = c.post("/api/fence", json={"role": "allow",
+                                   "points": [[-30, -20], [30, -20], [30, 5], [-30, 5]]})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    fid = r.json()["fid"]
+    st = c.get("/api/state").json()
+    assert [f["fid"] for f in st["fences"]] == [fid] and st["fences"][0]["role"] == "allow"
+    bad = c.post("/api/fence", json={"role": "zone", "points": [[0, 0], [1, 0], [1, 1]]})
+    assert bad.json()["ok"] is False and "role" in bad.json()["reason"]
+    two = c.post("/api/fence", json={"role": "forbid", "points": [[0, 0], [1, 0]]})
+    assert two.json()["ok"] is False and "vertices" in two.json()["reason"]
+    assert c.delete("/api/fence/%d" % fid).json() == {"ok": True}
+    assert c.get("/api/state").json()["fences"] == []
+    c.post("/api/fence", json={"role": "forbid", "points": [[0, 0], [4, 0], [4, 3]]})
+    c.post("/api/reset")
+    assert sil_server.world.fences == {} and c.get("/api/state").json()["fences"] == []

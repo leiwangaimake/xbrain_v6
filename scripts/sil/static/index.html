@@ -84,6 +84,12 @@
     <button class="btn" id="b_path">放置路径 path</button>
     <button class="btn" id="b_wp">放置位置点 waypoint</button>
   </div>
+  <div class="grp">
+    <div class="lbl">电子围栏 (E2E 真 p1 裁剪)</div>
+    <button class="btn" id="b_fence_allow">活动区 allow 连点</button>
+    <button class="btn" id="b_fence_forbid">禁入区 forbid 连点</button>
+    <button class="btn" id="b_fence_clear">清除围栏</button>
+  </div>
   <button class="btn" id="b_exec">执行导航测试</button>
   <button class="btn" id="b_reset">重置场景</button>
   <div class="grp" style="margin-top:12px">
@@ -93,6 +99,7 @@
   <div id="help">
     选工具后左键放置(可连放) / 墙 = 两次左键 /
     路径 = 连点 / 右键 = 结束放置回到导航 /
+    围栏 = 连点 3 个以上后右键闭合(仅 E2E 生效: 绿虚线名义边界 / 实线有效硬边界 / 点线软带起点) /
     双击人车切动态 / 选墙拖端点 + 滚轮调厚 /
     无工具时点地图任意处即导航
   </div>
@@ -109,11 +116,12 @@ function w2s(x, y){ return [W/2 + x*SCALE, H/2 - y*SCALE]; }
 function s2w(px, py){ return [(px - W/2)/SCALE, (H/2 - py)/SCALE]; }
 
 let tool = null;                        // person|car|wall|rock|cone|path|wp
-let wallStart = null, pathPts = [], selWall = null, dragEnd = null;
+let wallStart = null, pathPts = [], fencePts = [], selWall = null, dragEnd = null;
 let state = null;                       // last websocket state
 
 const tools = {b_person:"person", b_car:"car", b_wall:"wall",
-               b_rock:"rock", b_cone:"cone", b_path:"path", b_wp:"wp"};
+               b_rock:"rock", b_cone:"cone", b_path:"path", b_wp:"wp",
+               b_fence_allow:"fence_allow", b_fence_forbid:"fence_forbid"};
 function clearSel(){
   // BUGFIX (user 2026-09-10): the redesign renamed obstacle buttons to .obtn
   // but this only cleared .btn -- obstacle highlights accumulated forever.
@@ -123,6 +131,7 @@ for (const [id, t] of Object.entries(tools)){
   document.getElementById(id).onclick = () => {
     tool = (tool === t) ? null : t;
     wallStart = null; if (t !== "path") pathPts = [];
+    if (!t.startsWith("fence")) fencePts = [];
     clearSel();
     if (tool) document.getElementById(id).classList.add("sel");
   };
@@ -131,6 +140,8 @@ document.getElementById("b_exec").onclick = () =>
   fetch("/api/nav/execute", {method:"POST"});
 document.getElementById("b_reset").onclick = () =>
   fetch("/api/reset", {method:"POST"});
+document.getElementById("b_fence_clear").onclick = () =>
+  fetch("/api/fence", {method:"DELETE"});
 
 async function post(url, body){
   return fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
@@ -145,7 +156,11 @@ cv.addEventListener("contextmenu", e => {
   if (tool === "path" && pathPts.length >= 1){
     post("/api/path", {points: pathPts});
   }
-  pathPts = []; wallStart = null; tool = null;
+  // a fence closes on right click: >= 3 vertices (11 S9A.2 FV-1), role by tool
+  if (tool && tool.startsWith("fence") && fencePts.length >= 3){
+    post("/api/fence", {role: tool === "fence_allow" ? "allow" : "forbid", points: fencePts});
+  }
+  pathPts = []; fencePts = []; wallStart = null; tool = null;
   clearSel();
 });
 
@@ -159,6 +174,7 @@ cv.addEventListener("mousedown", e => {
     wallStart = null; return;
   }
   if (tool === "path"){ pathPts.push([x, y]); return; }
+  if (tool && tool.startsWith("fence")){ fencePts.push([x, y]); return; }
   if (tool === "wp"){ post("/api/waypoint", {x:x, y:y}); return; }
   if (tool){ post("/api/obstacle", {kind:tool, x:x, y:y}); return; }
   // no tool: wall endpoint drag? else goto
@@ -281,6 +297,32 @@ function draw(){
   // waypoints
   for (const p of state.waypoints){ const [sx, sy] = w2s(p[0], p[1]);
     ctx.fillStyle = "#ff5050"; ctx.beginPath(); ctx.arc(sx, sy, 8, 0, 7); ctx.fill(); }
+  // fences (11 S9A.6 HMI rule: nominal boundary + effective hard boundary
+  // (inset) + soft-band start, else the operator believes there is margin
+  // left while p1 is already slowing). Offsets are per-edge line shifts --
+  // exact for convex polygons, which is what the bench draws.
+  const fs = (state.nav && state.nav.fence) || null;
+  const geo = fs && fs.geo && fs.geo.inset_m != null ? fs.geo : null;
+  for (const f of (state.fences || [])){
+    const col = f.role === "allow" ? "#16a34a" : "#dc2626";
+    const fill = f.role === "allow" ? "rgba(22,163,74,0.06)" : "rgba(220,38,38,0.10)";
+    strokePoly(f.points, col, 2, [8, 6], fill);
+    if (geo){
+      const sgn = f.role === "allow" ? 1 : -1;      // allow shrinks inward, forbid grows outward
+      strokePoly(offsetPoly(f.points, sgn * geo.inset_m), col, 1.5, [], null);
+      strokePoly(offsetPoly(f.points, sgn * (geo.inset_m + geo.margin_soft_eff_m)), col, 1, [2, 4], null);
+    }
+    const [lx, ly] = w2s(f.points[0][0], f.points[0][1]);
+    ctx.fillStyle = col; ctx.font = "12px sans-serif"; ctx.fillText(f.role + " #" + f.fid, lx + 4, ly - 4);
+  }
+  if (fencePts.length){
+    const col = tool === "fence_allow" ? "#16a34a" : "#dc2626";
+    ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]); ctx.beginPath();
+    fencePts.forEach((p, i) => { const [sx, sy] = w2s(p[0], p[1]); i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); });
+    ctx.stroke(); ctx.setLineDash([]);
+    for (const p of fencePts){ const [sx, sy] = w2s(p[0], p[1]);
+      ctx.fillStyle = col; ctx.fillRect(sx-3, sy-3, 6, 6); }
+  }
   // obstacles
   for (const o of state.obstacles){
     const [sx, sy] = w2s(o.x, o.y);
@@ -415,6 +457,17 @@ function draw(){
   }
   if (state.nav.dist_to_target != null)
     rows.push(["距目标", state.nav.dist_to_target.toFixed(2) + " m", ""]);
+  if (state.nav.fence){
+    const f = state.nav.fence, g = f.geo || {};
+    rows.push(["围栏", f.enforcement + "/" + f.degrade_reason,
+               f.enforcement === "full" ? "hl" : f.enforcement === "disabled" ? "" : "warn"]);
+    if (g.d_eff_m != null){
+      rows.push(["围栏 d_eff", g.d_eff_m.toFixed(2) + " m (" + g.state + ")",
+                 g.state === "outside" ? "bad" : g.state === "soft" ? "warn" : ""]);
+      rows.push(["围栏 v_fence", g.v_fence_mps.toFixed(2) + " m/s" + (g.clipped ? " 裁剪中" : ""),
+                 g.clipped ? "warn" : ""]);
+    }
+  }
   if (state.nav.wall){
     rows.push(["贴墙侧", state.nav.wall.side, "warn"]);
     rows.push(["贴墙距", (state.nav.wall.d_side == null ? "--"
@@ -424,6 +477,36 @@ function draw(){
   document.getElementById("info").innerHTML = rows.map(x =>
     `<div class="tr"><span class="k">${x[0]}</span>` +
     `<span class="v ${x[2]}">${x[1]}</span></div>`).join("");
+}
+function strokePoly(pts, col, w, dash, fill){
+  if (!pts || pts.length < 3) return;
+  ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = w; ctx.setLineDash(dash);
+  ctx.beginPath();
+  pts.forEach((p, i) => { const [sx, sy] = w2s(p[0], p[1]); i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); });
+  ctx.closePath(); if (fill){ ctx.fillStyle = fill; ctx.fill(); } ctx.stroke(); ctx.restore();
+}
+function offsetPoly(pts, d){
+  // shift every edge by d toward the interior (d < 0: outward) and intersect
+  // consecutive shifted edges; orientation from the signed area.
+  const n = pts.length; let area = 0;
+  for (let i = 0; i < n; i++){ const a = pts[i], b = pts[(i+1)%n]; area += a[0]*b[1] - b[0]*a[1]; }
+  const s = area > 0 ? 1 : -1;                       // ccw: interior is to the left
+  const lines = [];
+  for (let i = 0; i < n; i++){
+    const a = pts[i], b = pts[(i+1)%n];
+    const ex = b[0]-a[0], ey = b[1]-a[1], L = Math.hypot(ex, ey) || 1;
+    const nx = -ey/L*s, ny = ex/L*s;                 // interior normal
+    lines.push([[a[0]+nx*d, a[1]+ny*d], [ex, ey]]);
+  }
+  const out = [];
+  for (let i = 0; i < n; i++){
+    const [p1, d1] = lines[(i+n-1)%n], [p2, d2] = lines[i];
+    const den = d1[0]*d2[1] - d1[1]*d2[0];
+    if (Math.abs(den) < 1e-9){ out.push(p2); continue; }
+    const t = ((p2[0]-p1[0])*d2[1] - (p2[1]-p1[1])*d2[0]) / den;
+    out.push([p1[0]+d1[0]*t, p1[1]+d1[1]*t]);
+  }
+  return out;
 }
 function arrow(x1, y1, x2, y2, color){
   ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;

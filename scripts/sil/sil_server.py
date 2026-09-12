@@ -231,6 +231,41 @@ def load_field_map() -> None:
 load_field_map()
 
 
+@app.post("/api/fence")
+async def api_fence(body: dict):
+    """A fence polygon (site metres). rns mode: display only (the bench has no
+    host layer); e2e: the whole set goes to the real p1 as cmd/fence and its
+    clip (12 S7) acts from the next tick."""
+    try:
+        fid = world.add_fence(body["role"], [(p[0], p[1]) for p in body["points"]])
+    except (ValueError, KeyError, TypeError, IndexError) as exc:
+        return {"ok": False, "reason": str(exc)}
+    if MODE == "e2e":
+        link.send_fence(list(world.fences.values()))
+    return {"ok": True, "fid": fid, "n": len(world.fences)}
+
+
+@app.delete("/api/fence")
+async def api_fence_clear():
+    world.clear_fences()
+    if MODE == "e2e":
+        link.send_fence_clear()
+    return {"ok": True}
+
+
+@app.delete("/api/fence/{fid}")
+async def api_fence_del(fid: int):
+    ok = world.remove_fence(fid)
+    if ok and MODE == "e2e":
+        link.send_fence(list(world.fences.values()))
+    return {"ok": ok}
+
+
+def _fences_view():
+    return [{"fid": f.fid, "role": f.role, "points": f.points}
+            for f in world.fences.values()]
+
+
 @app.post("/api/path")
 async def api_path(body: dict):
     world.path = [(p[0], p[1]) for p in body["points"]]
@@ -304,10 +339,12 @@ async def api_state():
         return {"robot": {"x": world.rx, "y": world.ry, "yaw": world.ryaw},
                 "nav": nav, "n_obstacles": len(world.obstacles),
                 "mission_loaded": loaded, "mode": MODE, "cmd": link.cmd_info(),
-                "progress": prog, "relmove": rm}
+                "progress": prog, "relmove": rm,
+                "fences": _fences_view(), "fence_state": link.fence_info()}
     return {"robot": {"x": world.rx, "y": world.ry, "yaw": world.ryaw},
             "nav": nav, "n_obstacles": len(world.obstacles),
-            "mission_loaded": rns._mission is not None, "mode": MODE}
+            "mission_loaded": rns._mission is not None, "mode": MODE,
+            "fences": _fences_view(), "fence_state": None}
 
 
 
@@ -346,6 +383,7 @@ async def api_reset():
     world.reset()
     if MODE == "e2e":
         link.send_clear()     # 11 S3.5A op=clear -> p1 cancels (no failure report)
+        link.send_fence_clear()   # an explicit empty FenceSet: p1 -> disabled/no_fence
     else:
         rns.clear_mission()
     nav.update(state="idle", direction=1, target=None, channel=None)
@@ -466,7 +504,8 @@ async def broadcast(snap, cmd):
                          "fresh": (time.monotonic() - info["rx"]) <= 0.2},
                 "progress": ({"state": prog.get("state"),
                               "wp": prog.get("waypoint_index"),
-                              "total": prog.get("waypoint_total")} if prog else None)}
+                              "total": prog.get("waypoint_total")} if prog else None),
+                "fence": link.fence_info()}
     else:
         tgt = None
         dist_tgt = None
@@ -504,6 +543,7 @@ async def broadcast(snap, cmd):
                       for o in world.obstacles.values()],
         "path": world.path,
         "waypoints": world.waypoints,
+        "fences": _fences_view(),
         "nav": navd,
     }
 

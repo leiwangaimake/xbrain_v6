@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "sil"))
 
 from sil_world import SilWorld  # noqa: E402
-from zenoh_world import (clear_body, factor_body, gnss_bodies,  # noqa: E402
+from zenoh_world import (clear_body, factor_body, fence_body, gnss_bodies,  # noqa: E402
                          perception_bodies, relmove_body, route_body,
                          world_to_body)
 from xbrain.p1_motion.nav.health_factor import parse_health_factor  # noqa: E402
@@ -96,3 +96,27 @@ def test_gnss_pair_gives_a_trusted_pose():
 
 def test_grant_body_parses():
     assert parse_health_factor(factor_body()) == (1.0, True, "patrol")
+
+
+def test_fence_body_compiles_in_p1_and_maps_back_to_site_metres():
+    """The bench's FenceSet must pass p1's own receiver (crc32 FV-8, role
+    closed set, >= 3 vertices) and come back to the same site metres through
+    p1's compile (LocalFrame round trip); an empty set is the legal way to
+    withdraw the fence. mutant: build crc32 from a different canonicalisation
+    -> p1 rejects the frame -> red."""
+    from xbrain.p1_motion.fence.clip import compile_fence
+    from xbrain.p1_motion.fence.fence_set import compile_fence_set
+    w = SilWorld()
+    fid = w.add_fence("allow", [(-30.0, -20.0), (30.0, -20.0), (30.0, 5.0), (-30.0, 5.0)])
+    w.add_fence("forbid", [(0.0, 0.0), (4.0, 0.0), (4.0, 3.0)])
+    body = json.loads(json.dumps(fence_body(FRAME, list(w.fences.values()),
+                                            fence_set_id="fs-sil", rev=3)))
+    held = compile_fence_set(body)
+    assert held.rev == 3 and [p.role for p in held.polygons] == ["allow", "forbid"]
+    assert held.polygons[0].poly_id == "sil-%d" % fid and held.polygons[0].hard_enforce
+    cf = compile_fence(held, FRAME)
+    for got, want in zip(cf.polygons[0].xy, w.fences[fid].points):
+        assert abs(got[0] - want[0]) < 1e-3 and abs(got[1] - want[1]) < 1e-3
+    assert cf.polygons[0].keep_in and not cf.polygons[1].keep_in
+    empty = compile_fence_set(json.loads(json.dumps(fence_body(FRAME, [], fence_set_id="fs-sil", rev=4))))
+    assert empty.polygons == () and compile_fence(empty, FRAME).polygons == ()

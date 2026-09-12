@@ -44,7 +44,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 
@@ -52,6 +52,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from xbrain.common.fence.geom import fence_set_crc32  # noqa: E402
 from xbrain.p1_motion.path.local_frame import LocalFrame  # noqa: E402
 
 RT_ENDPOINT = "tcp/127.0.0.1:7449"
@@ -160,6 +161,33 @@ def clear_body(cmd_id: str, route_id: str, route_rev: int) -> Dict[str, Any]:
             "route_rev": route_rev, "points": []}
 
 
+def fence_body(frame: LocalFrame, fences: Sequence[Any], *, fence_set_id: str,
+               rev: int, name: str = "sil") -> Dict[str, Any]:
+    """11 S9A.2 FenceSet from SIL fences (site metres -> WGS84 about the site
+    origin). crc32 comes from the shared canonicaliser, so p1's FV-8
+    self-check passes; winding is set by role (allow ccw / forbid cw -- the
+    receiver normalises by role anyway, 11 S9A.2). An empty list is a legal
+    set: p1 compiles zero constraint polygons and reports disabled/no_fence,
+    which is how the bench withdraws a fence."""
+    polys: List[Dict[str, Any]] = []
+    for f in fences:
+        verts = []
+        for x, y in f.points:
+            lat, lon = frame.to_latlon(x, y)
+            verts.append({"lat": lat, "lon": lon})
+        polys.append({"poly_id": "sil-%d" % f.fid, "role": f.role,
+                      "name": "%s-%d" % (f.role, f.fid),
+                      "winding": "ccw" if f.role == "allow" else "cw",
+                      "hard_enforce": True, "vertices": verts})
+    lat0, lon0 = frame.origin
+    return {"fence_set_id": fence_set_id, "rev": rev, "name": name,
+            "crc32": fence_set_crc32(fence_set_id, rev, polys),
+            "updated_ts": time.time(),          # WALL-CLOCK-OK(align/log)
+            "author": {"channel": "sil", "user": "bench", "confirm_level": "L0"},
+            "enu_origin": {"lat": lat0, "lon": lon0, "alt": 0.0},
+            "polygons": polys}
+
+
 def relmove_body(cmd_id: str, dx_m: float, dy_m: float) -> Dict[str, Any]:
     """11 S9.3.2 relative_move: a body-frame displacement, no rotation."""
     return {"cmd_id": cmd_id, "dx_m": dx_m, "dy_m": dy_m, "dyaw_rad": 0.0,
@@ -245,7 +273,10 @@ class ZenohWorldLink:
             "factor": self._gen.declare_publisher("cmd/motion/factor"),
             "route": self._gen.declare_publisher("cmd/motion/route"),
             "relmove": self._gen.declare_publisher("cmd/motion/relative_move"),
+            "fence": self._gen.declare_publisher("cmd/fence"),
         }
+        self.fence_state: Optional[Dict[str, Any]] = None
+        self._fence_rev = 0
         self._lock = threading.Lock()
         self.cmd: Dict[str, Any] = {"vx": 0.0, "vy": 0.0, "wz": 0.0, "rx": -1e9, "n": 0,
                                     "limiter": None, "source": None, "v_max": None,
@@ -261,7 +292,33 @@ class ZenohWorldLink:
             self._rt.declare_subscriber("xbrain/%s/rt/motion/cmd_vel" % rid, self._on_cmd),
             self._gen.declare_subscriber("state/motion/path_progress", self._on_progress),
             self._gen.declare_subscriber("cmd/motion/relative_move/status", self._on_relmove),
+            self._gen.declare_subscriber("state/fence", self._on_fence_state),
         ]
+
+    def _on_fence_state(self, sample: Any) -> None:
+        # p1's 11 S9A.5 FenceRuntimeState (1 Hz + on change): the UI mirrors
+        # enforcement / geo (d_eff, v_fence, inside|soft|outside) from it.
+        try:
+            d = unwrap(json.loads(bytes(sample.payload).decode("utf-8")))
+        except Exception:      # noqa: BLE001 -- a bad frame is dropped, never fatal
+            return
+        with self._lock:
+            self.fence_state = d
+
+    def fence_info(self) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            return None if self.fence_state is None else dict(self.fence_state)
+
+    def send_fence(self, fences: Sequence[Any]) -> int:
+        """cmd/fence: the whole SIL fence set as one 11 S9A.2 FenceSet (rev
+        bumped per change; p1 swaps geometry on the rev). Returns the rev."""
+        self._fence_rev += 1
+        self._pubs["fence"].put(json.dumps(fence_body(
+            self.frame, fences, fence_set_id="fs-sil", rev=self._fence_rev)).encode("utf-8"))
+        return self._fence_rev
+
+    def send_fence_clear(self) -> int:
+        return self.send_fence([])
 
     # ---- Rust-thread callbacks: decode + store only ----------------------------
     def _on_cmd(self, sample: Any) -> None:
