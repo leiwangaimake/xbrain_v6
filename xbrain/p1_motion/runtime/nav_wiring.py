@@ -43,7 +43,7 @@ Bodies on the general plane are accepted bare or inside the 11 S3.0 envelope
 (unwrap_body) because today's producers differ: p2 publishes relative_move
 bare while RT-plane producers envelope everything.
 
-What it does NOT do: no rotation permit / fence clip / jerk limiter (not
+What it does NOT do: no rotation permit / jerk limiter (fence clip IS in, 12 S2.2 step 7; not
 chained this phase, NEXT.md), no Nav2 spin delegate, no RobotState estop
 back-check (11 S7A.6.5 E-2; quadruped not built). It never reads the config source (NavConfig arrives
 from the resolved snapshots via runtime/nav_cfg.py).
@@ -67,6 +67,8 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 from xbrain.common.envelope.envelope import Envelope, encode
 from xbrain.p1_motion.ctrl_loop import CtrlLoop, CtrlState
 from xbrain.p1_motion.nav.arb_state import SUSPENDED_SOFT_ESTOP, ArbVisibility
+from xbrain.p1_motion.fence.clip import CompiledFence, FenceClipError, FenceEval, compile_fence
+from xbrain.p1_motion.fence.episodes import FenceEpisodeTracker
 from xbrain.p1_motion.nav.health_factor import (STATE_OK, HealthFactorError,
                                                 HealthFactorSlot, HealthView)
 from xbrain.p1_motion.nav.mission_host import (CH_EVENT, CH_PROGRESS,
@@ -119,6 +121,7 @@ class PoseView:
     heading_valid: bool
     i_fix: Optional[float]
     i_heading: Optional[float]
+    fix_type: Optional[str]        # 11 S3.2.1, the fence inset key (12 S7.4)
 
 
 class NavRuntime:
@@ -128,8 +131,19 @@ class NavRuntime:
                  perception_in: Any, estop_latch: Any, teleop_tracker: Any,
                  teleop_lock: threading.Lock, gnss_cache: Dict[str, Any],
                  fix_cache: Dict[str, Any], clock_cache: Dict[str, Any],
-                 stop_flag: Dict[str, Any]) -> None:
+                 stop_flag: Dict[str, Any], fence_holder: Any) -> None:
         self._cfg = cfg
+        # 12 S7: the FenceSetHolder main_wiring fills from cmd/fence; the tick
+        # compiles its active set about the site frame (cached per rev) and
+        # clips against it. FS-1 (compile off the tick) was written for the
+        # 0.3-1 s SDF rasterisation; FE-2 (analytic edges, no grid) made the
+        # compile O(vertices) -- a few hundred to_xy calls, inside the 12 S5
+        # budget -- so it runs here, and the swap is still one assignment.
+        self._fence_holder = fence_holder
+        self._fence_compiled: Optional[CompiledFence] = None
+        self._fence_key: Optional[Tuple[str, int]] = None
+        self._fence_latest: Optional[FenceEval] = None
+        self._episodes = FenceEpisodeTracker()
         self._rid = rid
         self._boot = boot
         self._rt = rt
@@ -153,7 +167,8 @@ class NavRuntime:
                              wz_max_rps=cfg.max_wz_radps,
                              spec_max_vx_mps=cfg.max_vx_mps,
                              holonomic=cfg.holonomic,
-                             v_obstacle_avoid_mps=cfg.v_obstacle_avoid_mps)
+                             v_obstacle_avoid_mps=cfg.v_obstacle_avoid_mps,
+                             fence_consts=cfg.fence)
         self._host = MissionHost(self._src, relmove_limits=cfg.relmove,
                                  holonomic=cfg.holonomic, now_mono_ms=now_ms)
         self._health = HealthFactorSlot(cfg.health_degrade_ms, cfg.health_dead_ms)
@@ -180,7 +195,7 @@ class NavRuntime:
         self._overruns = 0
         self._tick_errors = 0
         self._counts = {"route_rx": 0, "route_bad": 0, "relmove_rx": 0,
-                        "factor_bad": 0, "publish_fail": 0}
+                        "factor_bad": 0, "publish_fail": 0, "fence_bad": 0}
         self._health_state: Optional[str] = None
         self._event_boot = os.urandom(3).hex()
         self._thread: Optional[threading.Thread] = None
@@ -333,10 +348,39 @@ class NavRuntime:
         if yaw is not None and not isinstance(yaw, (int, float)):
             yaw, heading_valid = None, False
         i_heading = pose.get("i_heading") if heading_valid else None
+        fix_type = pose.get("fix_type")
         return PoseView(xy=xy, yaw=None if yaw is None else float(yaw),
                         heading_valid=heading_valid,
                         i_fix=None if xy is None else float(i_fix),
-                        i_heading=None if i_heading is None else float(i_heading))
+                        i_heading=None if i_heading is None else float(i_heading),
+                        fix_type=fix_type if isinstance(fix_type, str) else None)
+
+    def _fence_geometry(self) -> Optional[CompiledFence]:
+        """The active FenceSet compiled about the site frame, cached per
+        (fence_set_id, rev). A set the frame cannot place keeps the PREVIOUS
+        geometry and is not retried (FS-7: never step into no-fence over a
+        bad frame; the same bytes would fail the same way)."""
+        held = self._fence_holder.active
+        if held is None:
+            self._fence_compiled, self._fence_key = None, None
+            return None
+        key = (held.fence_set_id, held.rev)
+        if key != self._fence_key:
+            self._fence_key = key
+            try:
+                self._fence_compiled = compile_fence(held, self._cfg.frame)
+            except FenceClipError as exc:
+                self._counts["fence_bad"] += 1
+                _logger.error("p1 fence rev=%d not compiled, keeping previous geometry: %s",
+                              held.rev, exc)
+        return self._fence_compiled
+
+    def latest_fence(self) -> Optional[FenceEval]:
+        """The last tick's fence evaluation (state/fence, main loop thread)."""
+        return self._fence_latest
+
+    def fence_episode(self, poly_id: Optional[str]) -> int:
+        return self._episodes.episode_of(poly_id)
 
     def _teleop_active(self, now_ms: int) -> bool:
         with self._teleop_lock:
@@ -367,9 +411,16 @@ class NavRuntime:
                         i_heading=pose.i_heading,
                         perception=self._perception.latest(now_ms), health=health,
                         estop=bool(self._estop.is_active()),
-                        teleop_active=self._teleop_active(now_ms), ts_wall_s=ts_wall)
+                        teleop_active=self._teleop_active(now_ms), ts_wall_s=ts_wall,
+                        fix_type=pose.fix_type, fence=self._fence_geometry())
         out = self._tick.run(inp)
         self._cur = out
+        if out.fence is not None:
+            # 11 S9A.9: the transitions of this tick's geometry -> events.
+            self._fence_latest = out.fence
+            held = self._fence_holder.active
+            for fe in self._episodes.observe(out.fence, rev=None if held is None else held.rev):
+                self._publish_fence_event(fe, out, inp, held)
         # 12 S11 state word (WAIT_GRANT / WAIT_INPUT / SAFE_STOP / READY / ACTIVE):
         # the CtrlLoop zeroes every non-ACTIVE state itself, under the vetoes.
         if health.allow_motion:
@@ -440,6 +491,42 @@ class NavRuntime:
             except Exception as exc:      # noqa: BLE001
                 self._counts["publish_fail"] += 1
                 _logger.error("p1 nav publish %s failed: %s", e.channel, exc)
+
+    def _publish_fence_event(self, fe: Any, out: NavOutput, inp: NavInputs, held: Any) -> None:
+        """event/{sev}/fence in the 11 S9A.9 detail shape (kind / episode_id /
+        geometry / v_before / v_after / outward_normal / fix_type /
+        enforcement / active_source). Same envelope fields as the zone
+        events main_wiring sends, so the p5 pipeline takes both alike; the
+        channel is p5's to derive from the category (E-1)."""
+        fev = out.fence
+        self._seq["event"] += 1
+        detail = {
+            "kind": fe.kind, "episode_id": fe.episode_id,
+            "fence_set_id": None if held is None else held.fence_set_id,
+            "rev": None if held is None else held.rev,
+            "poly_id": fe.poly_id, "role": fe.role, "poly_name": fe.poly_name,
+            "d_nom_m": fe.d_nom_m, "d_eff_m": fe.d_eff_m,
+            "inset_m": None if fev is None else fev.inset_m,
+            "margin_soft_eff_m": None if fev is None else fev.margin_soft_eff_m,
+            "v_before": {"vx": fev.vx_in, "vy": fev.vy_in, "wz": out.wz} if fev else None,
+            "v_after": {"vx": out.vx, "vy": out.vy, "wz": out.wz},
+            "outward_normal": (None if fev is None or fev.outward_normal is None
+                               else [round(n, 4) for n in fev.outward_normal]),
+            "fix_type": inp.fix_type,
+            "enforcement": None if fev is None else fev.enforcement,
+            "active_source": out.source,
+        }
+        try:
+            self._gen.put("event/%s/fence" % fe.severity, json.dumps({
+                "eid": "fence-%s-%d" % (self._event_boot, self._seq["event"]),
+                "title": fe.kind,
+                "dedup_key": fe.dedup_key,
+                "detail": detail,
+                "src": "p1_motion", "ts": inp.ts_wall_s,
+            }, ensure_ascii=False).encode("utf-8"))
+        except Exception as exc:      # noqa: BLE001
+            self._counts["publish_fail"] += 1
+            _logger.error("p1 fence event publish failed: %s", exc)
 
     def _publish_event(self, e: Emit) -> None:
         """event/{sev}/motion in the shape the p5 pipeline already takes from

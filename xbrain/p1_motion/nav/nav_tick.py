@@ -32,7 +32,8 @@ chassis Tier 1 needs to stay out of timeout_lock.
 
 What it does NOT do: no publishing, no mission entry (route / relmove intake +
 the rns_avoid adapter), no path_progress (progress.py), no rotation permit /
-fence clip / jerk limiter (12 S2.2 6b / 7 / 8 -- not chained this phase,
+jerk limiter (12 S2.2 6b / 8 -- not chained this phase; step 7 fence clip IS
+chained since 2026-09-12, see fence/clip.py;
 NEXT.md).
 
 Trap: passing ctx.perception = None to RNS when the profile is merely OLD. RNS
@@ -48,8 +49,10 @@ from typing import Any, Optional, Tuple
 from xbrain.p1_motion.ctrl_loop import CtrlState
 from xbrain.p1_motion.freshness.degradation import CAM_THRESH, Freshness, classify
 from xbrain.p1_motion.nav.health_factor import HealthView
+from xbrain.p1_motion.fence.clip import (CompiledFence, FenceConstants, FenceEval,
+                                         evaluate)
 from xbrain.p1_motion.nav.host_gate import (apply_gate, attribute, compute_gate,
-                                            forward_d_free)
+                                            fence_attribution, forward_d_free)
 from xbrain.p1_motion.rns.inputs import PerceptionSnapshot
 from xbrain.p1_motion.sources.arbiter_p1 import BehaviorSource, P1Arbiter
 from xbrain.p1_motion.sources.rns_avoid import RnsAvoidSource
@@ -76,6 +79,8 @@ class NavInputs:
     # wall-clock seconds for the report envelopes' ts (align / log ONLY, never
     # a judgement input -- CLK-C1); the wiring reads it once per tick.
     ts_wall_s: float = 0.0    # WALL-CLOCK-OK(align/log)
+    fix_type: Optional[str] = None            # 11 S3.2.1 GnssFix.fix_type (fence inset)
+    fence: Optional[CompiledFence] = None     # the active FenceSet, compiled (12 S7)
 
 
 @dataclass(frozen=True)
@@ -97,6 +102,7 @@ class NavOutput:
     suspended: bool
     nav_state: str
     profile: str = "patrol"       # effective tier (11 S3.4 gate.profile)
+    fence: Optional[FenceEval] = None   # 12 S2.2 step 7 result (state/fence + events)
 
 
 class RnsCtx:
@@ -125,9 +131,15 @@ class NavTick:
 
     def __init__(self, source: RnsAvoidSource, arbiter: P1Arbiter, *,
                  v_nom_mps: Any, wz_max_rps: Any, spec_max_vx_mps: Any,
-                 holonomic: bool, v_obstacle_avoid_mps: Any = None) -> None:
+                 holonomic: bool, v_obstacle_avoid_mps: Any = None,
+                 fence_consts: Optional[FenceConstants] = None) -> None:
         self._src = source
         self._arb = arbiter
+        # 12 S2.2 step 7 runs only when the resolved fence constants exist
+        # (nav_cfg builds them, refusing on any null leaf); None is the
+        # unit-test stack, never a production shape (main_wiring always
+        # passes cfg.fence).
+        self._fence = fence_consts
         self._v_nom = _positive("v_nom_mps", v_nom_mps)
         # 11 S3.6 max_profile == obstacle_avoid caps the nominal at that tier's
         # max_mps (U54: 0.5). None = the caller has no tier table (tests of the
@@ -206,13 +218,35 @@ class NavTick:
         vx, vy, wz = apply_gate(gate, raw[0], raw[1], raw[2], self._holo,
                                 wz_max_radps=self._wz_max)
         limiter, limiter_all = attribute(gate, raw[0])
+        v_max = gate.v_max_fwd
+        fev: Optional[FenceEval] = None
+        if self._fence is not None:
+            # 12 S2.2 step 7 / 12 S7: the fence acts on the GATED candidate
+            # (after step 6), with the gate's h * i on the soft cap (11 S9A.6
+            # (5) multiplies the fence term by them too). It runs on a veto
+            # tick as well -- the vector is zero then, but state/fence still
+            # wants this tick's geometry (inside / soft / outside).
+            fev = evaluate(inp.fence, self._fence, xy=inp.pose_xy,
+                           yaw_rad=inp.yaw_rad, vx=vx, vy=vy,
+                           fix_type=inp.fix_type, heading_valid=inp.heading_valid,
+                           hi_factor=gate.h_factor * gate.i_factor)
+            vx, vy = fev.vx, fev.vy
+            if fev.clipped:
+                limiter, limiter_all = fence_attribution(limiter, limiter_all,
+                                                         gate, fev.cut_mps)
+            # 11 S3.4 gate.v_max: the scalar form of the fence term when the
+            # candidate approaches the boundary (the collinear case of the
+            # half-space cap, see clip.py).
+            if fev.outward and fev.v_fence_mps is not None and not gate.veto:
+                v_max = min(v_max, fev.v_fence_mps * gate.h_factor * gate.i_factor)
         return NavOutput(
             vx=vx, vy=vy, wz=wz, raw_vx=raw[0], raw_vy=raw[1], raw_wz=raw[2],
-            v_max=gate.v_max_fwd, limiter=limiter, limiter_all=limiter_all,
+            v_max=v_max, limiter=limiter, limiter_all=limiter_all,
             source=source, h_factor=gate.h_factor, i_factor=gate.i_factor,
             freshness=fresh.value, suspended=self._suspended,
             nav_state=self._src.nav_state().value,
-            profile="obstacle_avoid" if downgraded else "patrol")
+            profile="obstacle_avoid" if downgraded else "patrol",
+            fence=fev)
 
 
 def ctrl_state_for(inp: NavInputs, out: NavOutput, *, health_ever_ok: bool,

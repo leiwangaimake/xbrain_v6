@@ -195,6 +195,28 @@ def attribute(gate: GateResult, raw_vx: float) -> Tuple[str, Tuple[str, ...]]:
     return (limiter, tuple(all_))
 
 
+def fence_attribution(limiter: str, limiter_all: Tuple[str, ...],
+                      gate: GateResult, fence_cut_mps: float) -> Tuple[str, Tuple[str, ...]]:
+    """11 S9A.6 (5) 'gate.limiter = fence' after the fence stage (12 S2.2 step
+    7) clipped the gated candidate: the fence names the limiter when its cut
+    (|v| before minus after the projection) is the largest, ties by the
+    closed-set rank; otherwise it joins limiter_all (11 S9.6.5). A veto tick
+    is left alone -- the vector was already zero, nothing to attribute.
+    mutant: never let fence win -> a robot slowed to 0.3 m/s at a fence is
+    reported as free_space / none -> test_fence_names_the_limiter red."""
+    if gate.veto or fence_cut_mps <= 0.0:
+        return limiter, limiter_all
+    top = gate.cuts[0][1] if gate.cuts else 0.0
+    wins = (limiter == "none" or fence_cut_mps > top
+            or (fence_cut_mps == top and _rank("fence") < _rank(limiter)))
+    all_ = [k for k in limiter_all if k != "fence"]
+    if wins:
+        return "fence", tuple(["fence"] + all_)
+    if fence_cut_mps > LIMITER_ALL_DELTA_MPS:
+        all_.append("fence")
+    return limiter, tuple(all_)
+
+
 def apply_gate(gate: GateResult, vx: float, vy: float, wz: float,
                holonomic: bool, wz_max_radps: Optional[float] = None) -> Tuple[float, float, float]:
     """Clip the candidate. Veto -> all zero. vx > 0 by the forward ceiling,

@@ -223,7 +223,8 @@ class FenceSetHolder:
 
 def build_fence_runtime_state(held: Optional[HeldFenceSet], *,
                               now_mono_s: float,
-                              applied_mono_s: Optional[float]) -> Dict[str, Any]:
+                              applied_mono_s: Optional[float],
+                              clip: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """HeldFenceSet -> 11 S9A.5 FenceRuntimeState(state/fence 的 data), 报警 F3.
 
     *** 本子集[诚实]的 enforcement/degrade_reason.
@@ -231,6 +232,10 @@ def build_fence_runtime_state(held: Optional[HeldFenceSet], *,
     11 S9A.5 逐字 warn_only = "只报事件不裁剪" -- 正是本子集. degrade_reason 用
     2026-08-24 新增的 clip_deferred(裁剪执行器本期未建, 见 11 S9A.5 该值的注).
     NO 不谎报 full(那等于宣称在裁剪运动, 而根本没裁).
+    *** 2026-09-12 裁剪落地(fence/clip.py, nav 回路第 7 步): clip 参数是
+    clip.runtime_state_fields(最新求值) -- enforcement / degrade_reason / geo /
+    allow 四块由每拍求值填写. clip 为 None 只剩一种含义: nav 回路还没求过值
+    (有 active 但首拍未到), 此时仍报 warn_only/clip_deferred(11 S9A.5 该值注).
 
     *** allow{} 走[fail-safe 拒动] -- P1 无法执行围栏裁剪, 就不许自主运动/不接
     运动任务/teleop 上限置 0. 这是 S9A FS-2 的方向(不能保证围栏就拒绝放行), NO
@@ -254,7 +259,7 @@ def build_fence_runtime_state(held: Optional[HeldFenceSet], *,
         }
     # applied_mono_s 缺省(理论上有 held 就有 applied)时退化为 now, src_age 记 0.
     applied = applied_mono_s if applied_mono_s is not None else now_mono_s
-    return {
+    body: Dict[str, Any] = {
         "active": {
             "fence_set_id": held.fence_set_id,
             "rev": held.rev,
@@ -272,6 +277,10 @@ def build_fence_runtime_state(held: Optional[HeldFenceSet], *,
         "allow": {"autonomous": False, "accept_task": False,
                   "teleop_max_mps": 0.0},       # fail-safe 拒动(见 docstring)
     }
+    if clip is not None:
+        # the evaluated tick overrides the four honest defaults above.
+        body.update({k: clip[k] for k in ("enforcement", "degrade_reason", "geo", "allow")})
+    return body
 
 
 def _active_name(held: HeldFenceSet) -> str:

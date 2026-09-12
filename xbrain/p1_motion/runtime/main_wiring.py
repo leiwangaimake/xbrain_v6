@@ -200,9 +200,9 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
 
         # --- 11 S9A.3 P1-15 cmd/fence: FenceSet 接收 + 自算比对 + 持有 (报警 F1)
         # P1 是围栏唯一执行者(S9A.0). p3 在[通用面]cmd/fence 上广播 FenceSet, P1
-        # 自算 crc32 比对(S9A.2)后持有. 本子集只做接收/持有, 供 F2(zone_enter)与
-        # F3(state/fence.active.rev)取用; 不做几何裁剪(那是安全关键运动约束, 本
-        # 子集显式不建). 通用面订阅, 严禁转发回 RT 面(S9A.3).
+        # 自算 crc32 比对(S9A.2)后持有, 供 F2(zone_enter), F3(state/fence.active.rev)
+        # 与 nav 回路的几何裁剪(fence/clip.py, 12 S2.2 第 7 步, 2026-09-12 起)取用.
+        # 通用面订阅, 严禁转发回 RT 面(S9A.3).
         from xbrain.p1_motion.fence.fence_set import (FenceSetError,
                                                       FenceSetHolder)
         fence_holder = FenceSetHolder()
@@ -337,6 +337,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         # 那一拍戳(FS-4/S-6 生效唯一事实是 active.rev 换的那刻).
         fence_state = {"seq": 0, "rev": None, "pub_mono": 0.0, "applied": None}
         state_fence_pub = None
+        nav_rt = None          # set below when rid + NavConfig exist (the clip lives there)
         perception_in = None
         nav_rt = None
         if rid:
@@ -399,7 +400,8 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                     perception_in=perception_in, estop_latch=estop_latch,
                     teleop_tracker=teleop_tracker, teleop_lock=teleop_lock,
                     gnss_cache=gnss_cache, fix_cache=fix_cache,
-                    clock_cache=clock_cache, stop_flag=stop_flag)
+                    clock_cache=clock_cache, stop_flag=stop_flag,
+                    fence_holder=fence_holder)
                 nav_rt.declare()
                 nav_rt.start()
             else:
@@ -448,6 +450,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 # 11 S9A.5 state/fence 广播(F3): 1 Hz + rev 变更即发. 不依赖 GNSS
                 # 定位(围栏状态与 pose 无关), 但信封要 rid, 故与 pose 同在 rid 分支.
                 if state_fence_pub is not None:
+                    from xbrain.p1_motion.fence.clip import runtime_state_fields
                     from xbrain.p1_motion.fence.fence_set import (
                         build_fence_runtime_state)
                     _held = fence_holder.active
@@ -457,9 +460,15 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                         # rev 换的这一拍即"生效"(S-6): 戳 applied_mono, 立即发.
                         fence_state["applied"] = now if _held is not None else None
                     if _changed or now - fence_state["pub_mono"] >= 1.0:
+                        # 12 S7 clip: enforcement / geo / allow from the nav
+                        # loop's latest evaluation (None before its first tick).
+                        _fev = None if nav_rt is None else nav_rt.latest_fence()
                         _fst = build_fence_runtime_state(
                             _held, now_mono_s=now,
-                            applied_mono_s=fence_state["applied"])
+                            applied_mono_s=fence_state["applied"],
+                            clip=runtime_state_fields(
+                                _fev, episode_id=0 if nav_rt is None or _fev is None
+                                else nav_rt.fence_episode(_fev.poly_id)))
                         _fenv = gnss_pose.stamp_envelope(
                             _fst, rid=rid, boot=boot, seq=fence_state["seq"],
                             src="p1_motion",

@@ -42,6 +42,20 @@ relative_move:                        # 12 S12 的五个有消费者的键 (nav/
   pure_rotation_eps_m: 0.02           # 12 S4.5.3 纯旋转判定位移阈值 (m)
   default_timeout_s: 20.0             # RM-3
   abort_on_obstacle: true             # 12 S4.5.6 缺省
+fence:                                # 12 S7 clipping constants (fence/clip.py). Shared truth keys are
+                                      #   [referenced], never copied (11 S9A.6 M-01: the brake constants are
+                                      #   the speed gate's own; 12 S12 forbids a private margin_by_fix copy).
+                                      #   12 S12's stage_timeout_s / ping_period_s / snapshot_path /
+                                      #   compile_in_thread have no consumer yet (two-phase ack path).
+  brake_k: ${common.safety.brake.k}                       # 11 S9A.6 k (>= 1.0 by 12 S12.1 S-4)
+  brake_a_mps2: ${common.safety.brake.a_mps2}             # 11 S9A.6 a
+  t_lat_s: ${common.safety.t_lat_s}                       # 11 S9A.6 t_lat (U54 0.4 s)
+  soft_margin_min_m: ${common.fence.soft_margin_min_m}    # 11 S9A.6 (3) declared floor of the soft band
+  predict_dt_s: ${common.fence.predict_dt_s}              # 12 S7.3 predicted crossing (S-4a: >= t_lat + 1 tick)
+  margin_by_fix:                                          # 12 S7.4 / S6.6 table (1): inset by fix_type;
+    rtk_fixed: ${common.fence.margin_by_fix.rtk_fixed}    #   dgps / single are not referenced: B6 says no
+    rtk_float: ${common.fence.margin_by_fix.rtk_float}    #   inset there (fence_eval unavailable)
+  projection_iters: 3                                     # 11 S9A.8 POCS rounds (p1 private, 11 S9A.12)
 timeouts_ms:                          # 12 S12 中本批有消费者的三键 (runtime/nav_wiring.py / nav/health_factor.py);
                                       #   感知计龄按 11 S3.1B T-50/T-51 (freshness/degradation.CAM_THRESH), NO 不用本段
                                       #   的 perception 键 (12 S12 的 200 与 11 的 300/1000 不一致, 契约为准; 待 12 收口);

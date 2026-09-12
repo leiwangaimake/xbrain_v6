@@ -28,10 +28,13 @@ does, on construction), does not validate ranges beyond "positive number"
 """
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping
 
 from xbrain.p1_motion.nav.relmove_intake import RelMoveLimits
+from xbrain.p1_motion.fence.clip import FIX_WITH_FENCE, FenceClipError, FenceConstants
 from xbrain.p1_motion.path.local_frame import LocalFrame, LocalFrameError, frame_from_config
 
 
@@ -42,6 +45,7 @@ class NavConfigError(ValueError):
 @dataclass(frozen=True)
 class NavConfig:
     frame: LocalFrame
+    fence: FenceConstants          # 12 S7 clip constants (p1 fence.* refs, 11 S9A.6 M-01)
     max_vx_mps: float
     max_wz_radps: float
     holonomic: bool
@@ -69,6 +73,17 @@ def _walk(tree: Mapping[str, Any], dotted: str) -> Any:
             "p1_motion.yaml key %r is null -- uncalibrated, refusing the "
             "navigation loop (CLAUDE.md 3.1)" % dotted)
     return cur
+
+
+def _nonneg(tree: Mapping[str, Any], dotted: str) -> float:
+    """A finite number >= 0 (an inset of 0.0 is legal, a null leaf is not --
+    _walk already names a null leaf)."""
+    v = _walk(tree, dotted)
+    if isinstance(v, bool) or not isinstance(v, (int, float)) \
+            or not math.isfinite(v) or v < 0.0:
+        raise NavConfigError("p1_motion.yaml key %r must be a finite non-negative "
+                             "number, got %r" % (dotted, v))
+    return float(v)
 
 
 def _pos(tree: Mapping[str, Any], dotted: str) -> float:
@@ -103,13 +118,32 @@ def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) ->
         raise NavConfigError(str(exc)) from exc
     if not isinstance(rns_tree, Mapping) or not isinstance(rns_tree.get("rns"), Mapping):
         raise NavConfigError("resolved rns.yaml has no 'rns' section (12 S12.0A)")
+    v_nom = _pos(p1_tree, "nav.v_nom_mps")
+    v_oa = _pos(p1_tree, "nav.v_obstacle_avoid_mps")
+    try:
+        # v_profile_max = the patrol tier (11 S9A.6 (3) d_stop(v_profile_max));
+        # the degraded teleop cap = the obstacle_avoid tier (11 S3.2.1 0.5 m/s
+        # manual cap; U54 made the two rows one).
+        fence = FenceConstants(
+            brake_k=_pos(p1_tree, "fence.brake_k"),
+            brake_a_mps2=_pos(p1_tree, "fence.brake_a_mps2"),
+            t_lat_s=_pos(p1_tree, "fence.t_lat_s"),
+            soft_margin_min_m=_pos(p1_tree, "fence.soft_margin_min_m"),
+            predict_dt_s=_pos(p1_tree, "fence.predict_dt_s"),
+            margin_by_fix={fix: _nonneg(p1_tree, "fence.margin_by_fix.%s" % fix)
+                           for fix in FIX_WITH_FENCE},
+            projection_iters=_pos_int(p1_tree, "fence.projection_iters"),
+            v_profile_max_mps=v_nom, teleop_cap_degraded_mps=v_oa)
+    except FenceClipError as exc:
+        raise NavConfigError(str(exc)) from exc
     return NavConfig(
         frame=frame,
+        fence=fence,
         max_vx_mps=_pos(p1_tree, "nav.max_vx_mps"),
         max_wz_radps=_pos(p1_tree, "nav.max_wz_radps"),
         holonomic=_bool(p1_tree, "nav.holonomic"),
-        v_nom_mps=_pos(p1_tree, "nav.v_nom_mps"),
-        v_obstacle_avoid_mps=_pos(p1_tree, "nav.v_obstacle_avoid_mps"),
+        v_nom_mps=v_nom,
+        v_obstacle_avoid_mps=v_oa,
         relmove=RelMoveLimits(
             max_distance_m=_pos(p1_tree, "relative_move.max_distance_m"),
             max_yaw_rad=_pos(p1_tree, "relative_move.max_yaw_rad"),

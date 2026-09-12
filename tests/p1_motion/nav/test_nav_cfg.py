@@ -29,6 +29,10 @@ P1 = {
                       "pure_rotation_eps_m": 0.02, "default_timeout_s": 20.0,
                       "abort_on_obstacle": True},
     "timeouts_ms": {"gnss": 200, "health_degrade": 3000, "health_dead": 10000},
+    # 12 S7 clip constants (fence/clip.py): shared truth refs, resolved at freeze.
+    "fence": {"brake_k": 1.5, "brake_a_mps2": 2.5, "t_lat_s": 0.4, "soft_margin_min_m": 2.0,
+              "predict_dt_s": 0.45, "margin_by_fix": {"rtk_fixed": 0.3, "rtk_float": 1.0},
+              "projection_iters": 3},
 }
 RNS = {"rns": {"route": {"search_window": 30}, "geometry": {"r_eff_m": 0.5}}}
 
@@ -38,12 +42,17 @@ def test_complete_tree_builds():
     assert c.max_wz_radps == 1.2 and c.holonomic is True and c.v_nom_mps == 1.5
     assert c.relmove.default_timeout_s == 20.0 and c.health_dead_ms == 10000
     assert c.frame.origin == (31.2304, 121.4737) and c.rns["rns"]["route"]["search_window"] == 30
+    # the fence constants: patrol tier as v_profile_max, obstacle_avoid tier as
+    # the degraded teleop cap (11 S3.2.1 / U54), the table by fix type.
+    assert c.fence.brake_k == 1.5 and c.fence.v_profile_max_mps == 1.5
+    assert c.fence.teleop_cap_degraded_mps == 0.5 and c.fence.margin_by_fix["rtk_float"] == 1.0
 
 
 @pytest.mark.parametrize("dotted", [
     "geo.enu_origin.lat", "nav.max_vx_mps", "nav.max_wz_radps", "nav.holonomic",
     "nav.v_nom_mps", "relative_move.max_distance_m", "relative_move.abort_on_obstacle",
     "timeouts_ms.gnss", "timeouts_ms.health_dead",
+    "fence.brake_k", "fence.t_lat_s", "fence.margin_by_fix.rtk_fixed", "fence.projection_iters",
 ])
 def test_null_leaf_refused_by_name(dotted):
     """mutant: treat a missing leaf as None instead of raising -> red."""

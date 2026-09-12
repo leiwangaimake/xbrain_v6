@@ -68,7 +68,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from xbrain.common.fence.geom import Polygon, point_in_polygon
 from xbrain.p1_motion.fence.fence_set import HeldFenceSet
@@ -384,6 +384,8 @@ class FenceEval:
     degenerate: bool
     vx: float
     vy: float
+    vx_in: float              # the candidate as handed in (11 S9A.9 v_before)
+    vy_in: float
     cut_mps: float
     per_poly: Tuple[PolyDistance, ...]
     allow_autonomous: bool
@@ -405,7 +407,7 @@ def _unavailable(enforcement: str, reason: str, vx: float, vy: float,
         poly_id=None, role=None, poly_name="", d_nom_m=None, inset_m=None,
         d_eff_m=None, margin_soft_eff_m=None, v_fence_mps=None, outward=False,
         outward_normal=None, clipped=False, degenerate=False, vx=vx, vy=vy,
-        cut_mps=0.0, per_poly=(), allow_autonomous=False,
+        vx_in=vx, vy_in=vy, cut_mps=0.0, per_poly=(), allow_autonomous=False,
         allow_accept_task=False, teleop_max_mps=teleop_max)
 
 
@@ -494,15 +496,41 @@ def evaluate(fence: Optional[CompiledFence], c: FenceConstants, *,
         d_nom_m=nearest.d_nom_m, inset_m=inset, d_eff_m=nearest.d_eff_m,
         margin_soft_eff_m=msoft, v_fence_mps=vf, outward=outward,
         outward_normal=nearest.normal, clipped=clipped, degenerate=degenerate,
-        vx=bvx, vy=bvy,
+        vx=bvx, vy=bvy, vx_in=vx, vy_in=vy,
         cut_mps=max(0.0, math.hypot(vwx, vwy) - math.hypot(c1x, c1y)),
         per_poly=per, allow_autonomous=True, allow_accept_task=True,
         teleop_max_mps=c.v_profile_max_mps)
 
 
+def runtime_state_fields(ev: Optional[FenceEval], *, episode_id: int = 0) -> Optional[Dict[str, Any]]:
+    """The 11 S9A.5 enforcement / degrade_reason / geo / allow blocks from the
+    latest evaluation, for fence_set.build_fence_runtime_state. None when the
+    nav loop has not evaluated yet (the builder then keeps its honest
+    pre-first-tick shape). geo carries the numbers only under full
+    enforcement: a degraded tick judged nothing, so it prints nothing."""
+    if ev is None:
+        return None
+    geo: Dict[str, Any] = {"state": ev.state, "episode_id": episode_id}
+    if ev.enforcement == ENFORCEMENT_FULL and ev.d_nom_m is not None:
+        geo.update({
+            "poly_id": ev.poly_id, "role": ev.role,
+            "d_nom_m": round(ev.d_nom_m, 3), "inset_m": ev.inset_m,
+            "d_eff_m": round(ev.d_eff_m or 0.0, 3),
+            "margin_soft_eff_m": round(ev.margin_soft_eff_m or 0.0, 3),
+            "v_fence_mps": round(ev.v_fence_mps or 0.0, 3),
+            "clipped": ev.clipped,
+            "outward_normal": [round(n, 4) for n in (ev.outward_normal or ())]})
+    return {"enforcement": ev.enforcement, "degrade_reason": ev.degrade_reason,
+            "geo": geo,
+            "allow": {"autonomous": ev.allow_autonomous,
+                      "accept_task": ev.allow_accept_task,
+                      "teleop_max_mps": ev.teleop_max_mps}}
+
+
 __all__ = ["FenceClipError", "FenceConstants", "CompiledPolygon", "CompiledFence",
            "BoundaryHit", "PolyDistance", "FenceEval", "compile_fence",
            "boundary_hit", "project_halfspaces", "evaluate", "d_stop_m",
+           "runtime_state_fields",
            "v_fence_mps", "margin_soft_eff_m", "inset_for_fix",
            "FIX_WITH_FENCE", "CONSTRAINT_ROLES", "DEGENERATE_EPS_MPS",
            "ENFORCEMENT_FULL", "ENFORCEMENT_WARN_ONLY", "ENFORCEMENT_DISABLED",

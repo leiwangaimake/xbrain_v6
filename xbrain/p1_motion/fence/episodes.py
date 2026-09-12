@@ -71,6 +71,10 @@ class FenceEpisodeTracker:
         self._enforcement: Optional[str] = None
         self._degenerate = False
 
+    def episode_of(self, poly_id: Optional[str]) -> int:
+        """11 S9A.5 geo.episode_id: the current counter of that polygon."""
+        return self._episode.get(poly_id or "", 0)
+
     def _reset_polys(self) -> None:
         self._soft.clear()
         self._breach.clear()

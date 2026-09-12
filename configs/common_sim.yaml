@@ -52,8 +52,8 @@ common:
       rtk_fixed: 0.5
       rtk_float: 1.0
       single: 3.0
-    predict_dt_s: 0.4
-    soft_margin_min_m: 0.5
+    predict_dt_s: 0.45         # 12 S7.3: t_lat_s 0.4 + one 20 Hz tick (S-4a lower bound)
+    soft_margin_min_m: 2.0     # 11 S9A.6 declared floor of the soft band
   motion:
     profiles:
       obstacle_avoid:
