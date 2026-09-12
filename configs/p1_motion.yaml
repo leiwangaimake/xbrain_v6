@@ -17,3 +17,38 @@
 # ===========================================================================
 
 # TODO(`12` §12 配置):按该节逐键落值.本文件在落值前会让整栈按设计拒绝启动,这是预期行为.
+
+# ===========================================================================
+# P7.2 (2026-09-12) 导航宿主层取值 -- RNS 候选进仲裁 (12 S4.2c). 本段只[取值],
+# 共享量一律 ${common.*} 引用 (10 S5.4.2 R-6); 站点原点/整机限幅在 L4/L2 为 null
+# 时这里展开为 null, p1 启动即拒绝导航回路并打印键路径 (CLAUDE.md 3.1),
+# NO 不写数冒充已标定. relative_move / timeouts_ms 两段逐字抄 12 S12 (P1 私有).
+# ===========================================================================
+geo:
+  enu_origin:                         # 站点 ENU 锚点, 全系统唯一 (11 S9A / 10 S5.4.0 L4)
+    lat: ${common.geo.enu_origin.lat}
+    lon: ${common.geo.enu_origin.lon}
+    alt: ${common.geo.enu_origin.alt}
+nav:
+  max_vx_mps: ${common.spec.max_vx_mps}         # 速度门 spec 项 (11 S9.6.2)
+  max_wz_radps: ${common.spec.max_wz_radps}     # RNS ctx.wz_max (20 S2.5); V-01 未标定 = null
+  holonomic: ${common.spec.holonomic}           # vy 通道能力位 (12 S4.7.3 TS-4)
+  v_nom_mps: ${common.motion.profiles.patrol.max_mps}   # 任务标称速 = patrol 档 (20 S8.1A)
+  v_obstacle_avoid_mps: ${common.motion.profiles.obstacle_avoid.max_mps}  # 11 S3.6 max_profile 降档上限
+relative_move:                        # 12 S12 逐字
+  max_distance_m: 20.0
+  max_yaw_rad: 6.2832
+  tolerance_m: 0.05
+  tolerance_rad: 0.02
+  pure_rotation_eps_m: 0.02           # 12 S4.5.3 纯旋转判定位移阈值 (m)
+  a_dec_ratio: 0.5
+  default_timeout_s: 20.0             # RM-3
+  abort_on_obstacle: true             # 12 S4.5.6 缺省
+timeouts_ms:                          # 12 S12 逐字 (本批消费 perception/gnss/health_*)
+  perception: 200
+  lidar_degrade: 300
+  lidar_dead: 1000
+  gnss: 200
+  health_degrade: 3000                # 11 S3.6: 3 s -> speed_factor 0.3 + warn
+  health_dead: 10000                  # 11 S3.6: 10 s -> allow_motion false
+  robot_state: 500

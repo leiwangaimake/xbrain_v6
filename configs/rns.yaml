@@ -20,6 +20,9 @@
 # ===========================================================================
 
 rns:
+  geometry:
+    r_eff_m: 0.5                   # [geo] M20S 0.82x0.43 半对角 0.46 + 余量 (12 S6A r_eff; SIL/台架同值); D2 自检基线
+
   route:
     lookahead_k: 1.0               # [sim] L = clamp(k*v, min, max)  (20 S2.2)
     lookahead_min_m: 1.0           # [sim] 低速最小前视

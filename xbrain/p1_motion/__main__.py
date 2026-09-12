@@ -151,8 +151,24 @@ def main(argv: Optional[list] = None) -> int:
             port=args.chassis_port,
             connect_timeout_s=2.0,
             retry_delay_s=1.0)
+        # P7.2: the navigation loop's parameters come from the p1 snapshot
+        # (geo / nav / relative_move / timeouts_ms) and the rns snapshot
+        # (12 S12.0A). A null or missing key disables the loop LOUDLY --
+        # p1 still runs the voice-loop wiring but publishes no cmd_vel, so
+        # the chassis stays in timeout_lock (CLAUDE.md 3.1: never a default).
+        from xbrain.p1_motion.runtime.nav_cfg import (NavConfigError,
+                                                       build_nav_config)
+        nav_cfg = None
+        try:
+            _rns = load_resolved("rns", **_load_kwargs)
+            nav_cfg = build_nav_config(_cfg.tree, _rns.tree)
+            _logger.info("p1 nav loop config OK (P7.2)")
+        except (NavConfigError, FileNotFoundError) as exc:
+            _logger.error("p1 nav loop DISABLED: %s", exc)
+        except Exception as exc:      # noqa: BLE001 -- ResolvedConfigError et al.
+            _logger.error("p1 nav loop DISABLED: %s: %s", type(exc).__name__, exc)
         return run_voice_loop_wiring(
-            chassis_cfg=chassis_cfg, stop_flag=stop_flag)
+            chassis_cfg=chassis_cfg, stop_flag=stop_flag, nav_cfg=nav_cfg)
 
     return main_loop(tick_seconds=args.heartbeat_seconds, stop_flag=stop_flag)
 

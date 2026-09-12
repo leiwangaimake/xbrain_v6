@@ -116,27 +116,31 @@ def test_the_config_file_exists():
     assert CFG.is_file(), "configs/p1_motion.yaml 不存在"
 
 
-def test_config_is_intentionally_unvalued_for_now():
-    """*** 记录今天的状态, 并让它一旦改变就被发现.
+def test_landed_keys_are_all_defined_in_the_doc():
+    """*** 2026-09-12 P7.2: p1_motion.yaml 开始落值 -- 只落了 12 S12 的四段
+    (geo / nav 两段取值 + relative_move / timeouts_ms 两段逐字), 其余段
+    (control / realtime / speed_gate / ...) 仍未落.
 
-    p1_motion.yaml 现在是纯注释. 这不是遗漏 -- TODO 标着"暂缓 0807",
-    而 CLAUDE.md 3.1 说得很清楚: 未标定的值宁可缺席也不要填一个猜的数,
-    因为 0.0 会被判成"已赋值"而放行, 运行期 v_max = min(..., 0) = 0,
-    机器人不动且无任何报错.
+    双向差集里能立刻生效的是[正向]那一半: 配置里的每个键都必须在 12 S12
+    的 yaml 块里有定义, 否则它没有消费者, 改它不产生任何效果. [反向]那一半
+    (文档有而配置无 -> 回到代码默认值) 等全部段落落值后由下面那条 xfail
+    用例接管 -- 今天它必然非空, strict 保证一旦对上会 XPASS 提醒摘标记.
 
-    一旦有人开始落值, 这条会红, 提醒把下面那条 xfail 的标记摘掉.
+    mutant: 往 configs/p1_motion.yaml 加一个 12 S12 没有的键 -> 本条红.
     """
-    body = yaml.safe_load(CFG.read_text(encoding="utf-8"))
-    if body:
-        pytest.fail(
-            "configs/p1_motion.yaml 开始落值了(顶层键 %s) -- "
-            "请摘掉 test_config_keys_match_the_doc 的 xfail 标记, "
-            "让双向差集真正生效" % sorted(body))
+    have = _key_paths(yaml.safe_load(CFG.read_text(encoding="utf-8")) or {})
+    assert have, "configs/p1_motion.yaml 又变回纯注释了 -- P7.2 的取值段丢了"
+    want = _key_paths_from_text(_doc_yaml_text())
+    extra = sorted(have - want)
+    assert not extra, "配置里有 12 S12 未登记的键(没有消费者): %s" % extra[:8]
+    for section in ("geo", "nav", "relative_move", "timeouts_ms"):
+        assert section in have, "P7.2 取值段 %r 缺失" % section
 
 
 @pytest.mark.xfail(strict=True, reason=(
-    "configs/p1_motion.yaml 今天是纯注释(TODO 暂缓 0807), 双向差集必然非空. "
-    "落值后摘掉本标记; strict 保证一旦对上会 XPASS 提醒"))
+    "configs/p1_motion.yaml 只落了 P7.2 的四段(2026-09-12), control / realtime / "
+    "speed_gate 等仍未落, 反向差集必然非空. 全部落值后摘掉本标记; strict 保证一旦"
+    "对上会 XPASS 提醒"))
 def test_config_keys_match_the_doc():
     """*** MOT-PM-33 的双向差集本体.
 

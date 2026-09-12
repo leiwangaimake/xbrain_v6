@@ -140,8 +140,14 @@ def intent_to_apdu(intent_payload: dict) -> dict:
 
 def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                             stop_flag: dict,
-                            heartbeat_period_s: float = 5.0) -> int:
-    """Block until stop_flag truthy. Returns 0 on clean shutdown."""
+                            heartbeat_period_s: float = 5.0,
+                            nav_cfg: Optional[object] = None) -> int:
+    """Block until stop_flag truthy. Returns 0 on clean shutdown.
+
+    nav_cfg (runtime/nav_cfg.NavConfig) turns on the P7.2 20 Hz navigation
+    thread (runtime/nav_wiring.NavRuntime): RNS into the arbiter, cmd_vel on
+    the RT plane. None (no resolved nav keys, or XBRAIN_ROBOT_ID unset) keeps
+    the pre-P7.2 behaviour -- no cmd_vel at all, chassis in timeout_lock."""
     from xbrain.common.runtime.session_ctx import open_planes
 
     _logger.info("p1 wiring: opening RT + GEN sessions")
@@ -184,7 +190,8 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         _logger.info("p1 wiring: subscribed %s (P1-21 soft-estop latch)",
                      CMD_ESTOP_TOPIC)
 
-        # Also subscribe cmd/motion/factor (log only for MVP).
+        # cmd/motion/factor: consumed by the nav thread's HealthFactorSlot
+        # (P1-4) once it exists; this observer only keeps the debug trace.
         def _on_factor(sample) -> None:
             _logger.debug("p1 obs cmd/motion/factor (%d bytes)",
                           len(bytes(sample.payload)))
@@ -261,6 +268,9 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         from xbrain.p1_motion.teleop.state import TeleopTracker
 
         teleop_tracker = TeleopTracker()
+        # the nav thread arbitrates the same tracker at 20 Hz (TR-RNS-1); its
+        # hysteresis state is shared, so every arbitrate/build_state is locked.
+        teleop_lock = threading.Lock()
         teleop_pub = gen.declare_publisher(STATE_TELEOP_TOPIC)
 
         def _on_teleop(sample) -> None:
@@ -284,12 +294,13 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
             if device is None:
                 return
             try:
-                teleop_tracker.observe(
-                    device, now_mono_ms=int(time.monotonic() * 1000),
-                    deadman=bool(d.get("deadman", False)),
-                    axes=d.get("axes") if isinstance(d.get("axes"), dict)
-                    else None,
-                    mark_edge=bool(d.get("mark", False)))
+                with teleop_lock:
+                    teleop_tracker.observe(
+                        device, now_mono_ms=int(time.monotonic() * 1000),
+                        deadman=bool(d.get("deadman", False)),
+                        axes=d.get("axes") if isinstance(d.get("axes"), dict)
+                        else None,
+                        mark_edge=bool(d.get("mark", False)))
             except ValueError as exc:
                 # An off-set device name: refused rather than arbitrated (the
                 # S12A.9.7 set is closed and carries per-device timeouts).
@@ -327,6 +338,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         fence_state = {"seq": 0, "rev": None, "pub_mono": 0.0, "applied": None}
         state_fence_pub = None
         perception_in = None
+        nav_rt = None
         if rid:
             boot = read_local_boot_id()
 
@@ -334,6 +346,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 try:
                     msg = json.loads(bytes(sample.payload).decode("utf-8"))
                     gnss_cache["data"] = msg.get("data")
+                    gnss_cache["rx"] = time.monotonic()   # nav thread ages on this
                 except Exception:      # noqa: BLE001
                     _logger.warning("p1 malformed rt/gnss/heading")
 
@@ -341,6 +354,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 try:
                     msg = json.loads(bytes(sample.payload).decode("utf-8"))
                     fix_cache["data"] = msg.get("data")
+                    fix_cache["rx"] = time.monotonic()
                 except Exception:      # noqa: BLE001
                     _logger.warning("p1 malformed rt/gnss/fix")
 
@@ -374,8 +388,27 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
             perception_in.declare(rt)
             _logger.info("p1 perception intake on: rid=%s "
                          "(rt/perception/{profile,objects,status})", rid)
+            # --- P7.2: the 20 Hz navigation thread (12 S2.2 / S4.2c) ---------
+            # RNS into the arbiter, cmd_vel on the RT plane. Needs rid (RT key)
+            # and a complete NavConfig; without either p1 publishes no cmd_vel
+            # (chassis stays in timeout_lock -- the safe state).
+            if nav_cfg is not None:
+                from xbrain.p1_motion.runtime.nav_wiring import NavRuntime
+                nav_rt = NavRuntime(
+                    cfg=nav_cfg, rid=rid, boot=boot, rt=rt, gen=gen,
+                    perception_in=perception_in, estop_latch=estop_latch,
+                    teleop_tracker=teleop_tracker, teleop_lock=teleop_lock,
+                    gnss_cache=gnss_cache, fix_cache=fix_cache,
+                    clock_cache=clock_cache, stop_flag=stop_flag)
+                nav_rt.declare()
+                nav_rt.start()
+            else:
+                _logger.error("p1 nav loop OFF: no NavConfig (resolved nav keys "
+                              "missing or null) -- no cmd_vel will be published")
         else:
             _logger.warning("p1 gnss bridge OFF: XBRAIN_ROBOT_ID unset")
+            if nav_cfg is not None:
+                _logger.error("p1 nav loop OFF: XBRAIN_ROBOT_ID unset (no RT key)")
 
         try:
             last_hb = time.monotonic()
@@ -441,9 +474,10 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 # arbitration makes visible through active_source).
                 if now - last_teleop >= TELEOP_PUBLISH_PERIOD_S:
                     try:
+                        with teleop_lock:
+                            _tstate = teleop_tracker.build_state(int(now * 1000))
                         teleop_pub.put(json.dumps(
-                            teleop_tracker.build_state(int(now * 1000)),
-                            ensure_ascii=False).encode("utf-8"))
+                            _tstate, ensure_ascii=False).encode("utf-8"))
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p1 teleop state publish failed: %s", exc)
                     last_teleop = now
@@ -458,6 +492,9 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                         # rising rejected count, not as silence (11 S3.1B).
                         _logger.info("p1 perception intake: %s",
                                      perception_in.stats())
+                    if nav_rt is not None:
+                        # period p99/max against CLAUDE.md 4.4 (P99 <= 60 ms).
+                        _logger.info("p1 nav loop: %s", nav_rt.stats())
                     last_hb = now
                 time.sleep(0.1)
         finally:
@@ -482,6 +519,8 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                     _s.undeclare()
                 except Exception:      # noqa: BLE001
                     pass
+            if nav_rt is not None:
+                nav_rt.stop()
             if perception_in is not None:
                 perception_in.undeclare()
             client.close()

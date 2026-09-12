@@ -72,6 +72,9 @@ class NavInputs:
     health: HealthView
     estop: bool
     teleop_active: bool
+    # wall-clock seconds for the report envelopes' ts (align / log ONLY, never
+    # a judgement input -- CLK-C1); the wiring reads it once per tick.
+    ts_wall_s: float = 0.0    # WALL-CLOCK-OK(align/log)
 
 
 @dataclass(frozen=True)
@@ -92,6 +95,7 @@ class NavOutput:
     freshness: str
     suspended: bool
     nav_state: str
+    profile: str = "patrol"       # effective tier (11 S3.4 gate.profile)
 
 
 class RnsCtx:
@@ -120,10 +124,15 @@ class NavTick:
 
     def __init__(self, source: RnsAvoidSource, arbiter: P1Arbiter, *,
                  v_nom_mps: Any, wz_max_rps: Any, spec_max_vx_mps: Any,
-                 holonomic: bool) -> None:
+                 holonomic: bool, v_obstacle_avoid_mps: Any = None) -> None:
         self._src = source
         self._arb = arbiter
         self._v_nom = _positive("v_nom_mps", v_nom_mps)
+        # 11 S3.6 max_profile == obstacle_avoid caps the nominal at that tier's
+        # max_mps (U54: 0.5). None = the caller has no tier table (tests of the
+        # spine); then a downgrade request is honoured by the h factor alone.
+        self._v_oa = (None if v_obstacle_avoid_mps is None
+                      else _positive("v_obstacle_avoid_mps", v_obstacle_avoid_mps))
         self._wz_max = _positive("spec.max_wz_radps", wz_max_rps)
         self._spec_vx = _positive("spec.max_vx_mps", spec_max_vx_mps)
         self._holo = bool(holonomic)
@@ -158,7 +167,15 @@ class NavTick:
         drive. The RNS candidate is computed only when rns_avoid holds the
         slot, so a suspended / mission-less source is never asked."""
         now = inp.now_mono_ms
-        ctx = RnsCtx(inp, self._v_nom, self._wz_max, self._holo)
+        # 11 S3.6 max_profile: obstacle_avoid tier requested -> the mission
+        # nominal (and the RNS ctx nominal) drop to that tier's max_mps.
+        v_nom = self._v_nom
+        downgraded = False
+        if inp.health.max_profile == "obstacle_avoid" and self._v_oa is not None \
+                and self._v_oa < v_nom:
+            v_nom = self._v_oa
+            downgraded = True
+        ctx = RnsCtx(inp, v_nom, self._wz_max, self._holo)
         fresh = self._freshness(inp.perception, now)
         self._suspension_edge(inp, ctx)
         # arbitration (12 S5.1 A-1): note the sources that want the slot, hold
@@ -180,10 +197,11 @@ class NavTick:
         profile = inp.perception.profile if inp.perception is not None else None
         f_free = forward_d_free(profile.d_free) if profile is not None else None
         gate = compute_gate(
-            v_nom_mps=self._v_nom, spec_max_vx_mps=self._spec_vx,
+            v_nom_mps=v_nom, spec_max_vx_mps=self._spec_vx,
             f_free_mps=f_free, health=inp.health, i_fix=inp.i_fix,
             i_heading=inp.i_heading, heading_valid=inp.heading_valid,
-            estop=inp.estop, perception_dead=(fresh is Freshness.FAILED))
+            estop=inp.estop, perception_dead=(fresh is Freshness.FAILED),
+            profile_downgraded=downgraded)
         vx, vy, wz = apply_gate(gate, raw[0], raw[1], raw[2], self._holo)
         limiter, limiter_all = attribute(gate, raw[0])
         return NavOutput(
@@ -191,4 +209,5 @@ class NavTick:
             v_max=gate.v_max_fwd, limiter=limiter, limiter_all=limiter_all,
             source=source, h_factor=gate.h_factor, i_factor=gate.i_factor,
             freshness=fresh.value, suspended=self._suspended,
-            nav_state=self._src.nav_state().value)
+            nav_state=self._src.nav_state().value,
+            profile="obstacle_avoid" if downgraded else "patrol")

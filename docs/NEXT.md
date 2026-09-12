@@ -51,9 +51,9 @@
 
 | # | 缺什么 | 状态 |
 |---|---|---|
-| P1-1 | 真 20Hz 控制环（现仅 voice-loop MVP） | 部分件(gate/failsafe)已建，未接真感知/底盘 `[GATED-HW]` |
-| P1-2 | 速度门四段 f(d_free) + 迟滞、路径跟随、旋转门 RCG 全接 | 零散件已建，未串成环 |
-| P1-3 | **RNS 避障**（进程内模块，行为源 rns_avoid 900） | ✅ **详设已写** / 实现未建 —— `docs/20-RNS反应式导航软件系统详细设计.md` 1018 行（§10 单调钟 · §11 与 `12` 的接口清单 · §13 断言与变异体总表 · §14 实现要点与陷阱 · §15 待确认清单）。★★ **2026-08-21 订正**，原写「详细设计未写」过时。接续项 SW-3b 实现，输入是 `19` 产出的 `bands` |
+| P1-1 | 真 20Hz 控制环 | ✅ **2026-09-12 P7.2 已建**：`runtime/nav_wiring.py` 20 Hz 线程（RTC-6 单槽快照 → `nav/nav_tick.py` → `CtrlLoop` 单一出口发 `rt/motion/cmd_vel`，11 §3.4 gate 块），dev 栈实测周期 P99 50.0 ms / max 50.1 ms / 0 超时；★ 真底盘/RTK/感知接入 = 停桩起真单元，p1 零改动 `[GATED-HW]` |
+| P1-2 | 速度门四段 f(d_free) + 迟滞、路径跟随、旋转门 RCG 全接 | ◐ **P7.2 已链**：f(d_free 前向扇区) · h（11 §3.6 HealthFactor 含 max_profile 降档与 3 s/10 s 阶梯）· i（i_fix × i_heading）· spec 上限 · 五道否决（estop/health/rtk/heading/感知失效）；路径跟随归 RNS。**未链**：RCG 旋转许可 · 围栏裁剪 · 三级限幅/加加速度 · f 迟滞升档 —— 见 §8.4 P7.2 边界 |
+| P1-3 | **RNS 避障**（进程内模块，行为源 rns_avoid 900） | ✅ **已建并接入**（RNS v2.0 三台架零回归；2026-09-12 P7.2 经 `sources/rns_avoid.py` 进 P1 仲裁，`rt/perception/*` 快照喂 tick）—— 详设  `docs/20-RNS反应式导航软件系统详细设计.md` 1018 行（§10 单调钟 · §11 与 `12` 的接口清单 · §13 断言与变异体总表 · §14 实现要点与陷阱 · §15 待确认清单）。★★ **2026-08-21 订正**，原写「详细设计未写」过时。接续项 SW-3b 实现，输入是 `19` 产出的 `bands` |
 | ★ P1-4 | **航向丢失恢复：odom 桥接 + 视觉导向重捕 COG**（用户 2026-08-16 定方向） | ★ **设计意图已记，待 quadruped odom + perception + RNS 落地** `[GATED-DESIGN+HW]` |
 
 > ★★★ **P1-4 设计意图（用户 2026-08-16 · 航向恢复,不逼停）** —— 背景:双天线航向(L1,绝对,静止可用)突然丢时,现设计运动态已无缝切 COG(L2,`11` §3.3,不停车);但**静止 / 原地转向态**下 COG 物理上无解(无运动=无航迹),现状进 L2-blind(保持旧航向但 `heading_valid=false`)。用户方案分两级补:
@@ -395,7 +395,11 @@
 - [ ] **#20-27 · 记忆栅格同帧邻 bin 蚀穿** `[GATED-HW]`:修法(两遍写入,同帧 BLOCKED 优先)已在台架**否证**(`20` §4A.12 ①:冷 `path_rev` 191 s → 600 s 未到达 / 间距 0.023 m)—— 墙体在记忆里变实后 v2.0 的贴墙 / 离墙参数不再匹配。**须与贴墙参数重整定同批**(`d_wall_m` · `leave_progress_m` · 端探测),与 #20-28 合并到实机后的专项。
 - [ ] **热台架已知弱点(v2.0 固有,未动)**:`leg07_rev` 426 s / 离线 23.2%(冷 path_rev 191 s / 2.1%)—— 记忆跨任务携带后的反向腿变慢,归入上述专项一并看。
 - [x] **#20-26 · 冻结线纳入 `rns.yaml` / `perception.yaml`** ✅ 2026-09-12 P7.2 批已闭合（`_L6_FILES` / `SNAPSHOT_PROCESSES` + 注册表 + `10` §5.4.0 第 17/18 行）；原文 ⇒ `[SW-NOW]`(交办冻结线 / `10` 册主):`SNAPSHOT_PROCESSES` 现只含六进程,生产启动 PSC-1 过不去;纳入前解析产物形态样例在 `tests/perception/samples/resolved_perception.dev.yaml`。
-- [ ] **P7.2 · RNS 进仲裁 + 感知快照喂 tick** `[SW-NOW]`:`RnsSource` 接入 `p1_motion` 仲裁阶梯(行为源 `rns_avoid`,`12` §4.2c),`perception_in.latest(now)`(`perception_src/three_keys.py`,已在主接线声明)进 tick ctx —— 感知方「实机功能交付」阶段我方必须就位的对手件。
+- [x] **P7.2 · RNS 进仲裁 + 感知快照喂 tick** ✅ **2026-09-12 已落地**（提交 c91ad2c / b58e21e / 本批）：`nav/`（health_factor · route_intake · relmove_intake · host_gate · progress · report_map · mission_host · nav_tick）+ `sources/rns_avoid.py` + `runtime/nav_cfg.py`/`nav_wiring.py` + `configs/p1_motion.yaml` 四段取值 + 位姿桩 `scripts/dev/pose_stub.py`（sil_world 的 Zenoh 版：底盘/RTK/感知三合一）+ `scripts/dev/run_p72_e2e.sh`；RNS 包零改动。**边界（未做，登记于下）**：RCG/围栏/限幅未链、`state/arb/motion`（P1-22/23）未发、路径 loop/pingpong 单趟、纯旋转（Nav2 spin 委托）拒收 `E_CAPABILITY`、dev 栈 `cmd/motion/factor` 由位姿桩 `--grant` 代发（p2 Stage-D 发布器未建）、`path/relative_move.py` 旧六值 abort 集与 11 v2.0 七值不一致（P7.2 走 `nav/report_map.py`）。原文 ⇒ `[SW-NOW]`:`RnsSource` 接入 `p1_motion` 仲裁阶梯(行为源 `rns_avoid`,`12` §4.2c),`perception_in.latest(now)`(`perception_src/three_keys.py`,已在主接线声明)进 tick ctx —— 感知方「实机功能交付」阶段我方必须就位的对手件。
+- [ ] **P7.3 · P1 输出链补齐**（P7.2 边界，`[SW-NOW]` 但可分批）：① RCG-1~4 旋转许可（`rotation/rcg.py` 已建，需侧向清距来源 —— 338Le 90° FOV 下环形掩膜依赖记忆栅格，与 20 §4.2 记忆域接口待定）；② 围栏裁剪（`fence/geom.py` 向量投影，接 `FenceSetHolder.active` 编译几何）；③ 三级限幅 + 加加速度（12 §8；`common.spec.max_accel_mps2` null 待 V-01）；④ f 迟滞升档（`gate/speed_gate.GateHysteresis`）；⑤ `state/arb/motion` + `event/*/arbitration`（`arb/visibility.py` 已建）。
+- [ ] **p2 · `cmd/motion/factor` 发布器**（14 Stage D；`health/factor.py` 已有 compute_factor）：dev 栈现由 `pose_stub.py --grant` 代发；未建时 p1 `HealthFactorSlot` 报 never ⇒ 零速（正确的失效方向）。
+- [ ] **P1 · `path/relative_move.py` 收敛**：旧 MOT-PM-18 六值 abort 闭集（limit_exceeded/…）与 11 §9.3.2A.6 v2.0 七值（soft_estop/obstacle/fence/timeout/preempted/input_lost/deviation）不一致；P7.2 的 `nav/report_map.py` 用七值，旧模块只剩 `TrapezoidProfile` 有意义，待删或改写并同步 12 §4.5.1。
+- [ ] **RNS · 路径 loop_mode（closed / pingpong）**：`route_intake` 已透传 `loop_mode`，`mission_host` 单趟（loop_index 0 / loop_total 1 / dir_sign +1）；多圈与掉头（12 §4.3.1 LP-5 Nav2 spin）待 Nav2 委托。
 - [ ] **Orin NX 装机** `[SW-NOW]`:TensorRT 10.3(JetPack 6.2 配套)+ ROS 2 Humble,答复 r3 Q1.3 承诺 2026-09-18 前;engine 由感知方在生产机构建(PSC-4)。
 - [ ] **感知方交付追踪**(`perception-rns-reply-20260911.md` Q1.4 三阶段):① 接口联调交付 —— 验收 = W-11 七(八)场景消费对表全绿 + A19-ENC-1 / TIME-1 / TIME-2 / BOOT-4 / VEL-1 / CAL-1,接收人 RNS;② 实机功能交付 `[GATED-HW]`(W-2 标定前置);③ 生产联合验收(§Q3.2 工况,分级门 + 年龄门 + 接收端对表 `scripts/dev/perception_rx_audit.py`)。
 - [ ] **Q5 实机输入** `[GATED-HW]`(答复 r3 Q5 表,以实机到位日 D 为基准):安装位置与支架(D+3)· 标定窗口(安装后 2 天)· 扫掠高度 PD-17(D+1)· `wz_max`/加速度 #20-5(D+3)· PD-16 障碍能力矩阵实测定承诺。

@@ -202,3 +202,17 @@ def test_goto_uses_relmove_origin_and_config_radius():
     _goto(src, 5000)
     assert src.origin is Origin.RELMOVE and src.rns._mission.origin is Origin.RELMOVE
     assert src.goal is not None and src.route is None
+
+
+def test_max_profile_obstacle_avoid_caps_the_nominal():
+    """11 S3.6 max_profile: with the tier table the nominal drops to 0.5 and
+    the gate names health. mutant: ignore max_profile -> vx above 0.5 -> red."""
+    src, _ = _stack()
+    tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, wz_max_rps=1.2,
+                   spec_max_vx_mps=2.0, holonomic=True, v_obstacle_avoid_mps=0.5)
+    _goto(src, 5000)
+    oa = HealthView(1.0, True, "obstacle_avoid", "ok", 100)
+    outs = [tick.run(_inp(5000 + 50 * k, health=oa)) for k in range(10)]
+    moving = [o for o in outs if o.vx > 0.0]
+    assert moving and all(o.vx <= 0.5 + 1e-9 for o in moving)
+    assert all(o.profile == "obstacle_avoid" and o.v_max == pytest.approx(0.5) for o in outs)

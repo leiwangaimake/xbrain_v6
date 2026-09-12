@@ -105,7 +105,8 @@ def compute_gate(*, v_nom_mps: float, spec_max_vx_mps: float,
                  f_free_mps: Optional[float], health: HealthView,
                  i_fix: Optional[float], i_heading: Optional[float],
                  heading_valid: bool, estop: bool,
-                 perception_dead: bool) -> GateResult:
+                 perception_dead: bool,
+                 profile_downgraded: bool = False) -> GateResult:
     """The ceiling. Vetoes are checked in 11 S9.6.5 priority order and the
     first hit names the limiter; otherwise the four-in-min / two-multiplied
     formula with per-term deltas for attribution.
@@ -134,6 +135,11 @@ def compute_gate(*, v_nom_mps: float, spec_max_vx_mps: float,
     above = sorted(v for v in terms.values() if v > v_lin)
     second = above[0] if above else v_lin
     tied = tuple(sorted((k for k, v in terms.items() if v == v_lin), key=_rank))
+    # 11 S3.6 max_profile: a health-imposed tier cap is attributed to health
+    # (11 S9.6.5 row 3 "max_profile 导致降档"), not to profile.
+    if profile_downgraded:
+        tied = tuple("health" if k == "profile" else k for k in tied)
+        tied = tuple(sorted(tied, key=_rank))
     cuts: List[Tuple[str, float]] = []
     term_delta = second - v_lin
     if term_delta > 0.0 and len(tied) == 1:

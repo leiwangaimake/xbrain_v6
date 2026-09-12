@@ -113,3 +113,15 @@ def test_f_caps_forward_only_reverse_and_lateral_use_free_ceiling():
 def test_non_holonomic_never_emits_vy():
     g = _gate()
     assert apply_gate(g, 0.5, 0.3, 0.0, False) == (0.5, 0.0, 0.0)
+
+
+def test_max_profile_downgrade_is_attributed_to_health():
+    """11 S3.6 max_profile == obstacle_avoid: the tier cap is a HEALTH cut
+    (11 S9.6.5 row 3), not a profile cut. mutant: keep the tied term named
+    profile -> red."""
+    g = compute_gate(v_nom_mps=0.5, spec_max_vx_mps=2.0, f_free_mps=6.0, health=OK,
+                     i_fix=1.0, i_heading=1.0, heading_valid=True, estop=False,
+                     perception_dead=False, profile_downgraded=True)
+    assert g.v_max_fwd == pytest.approx(0.5)
+    limiter, all_ = attribute(g, 1.0)
+    assert limiter == "health" and all_ == ("health",)

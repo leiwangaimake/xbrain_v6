@@ -51,7 +51,7 @@ from typing import Any, Dict, Optional
 from xbrain.p1_motion.nav.relmove_intake import RelMoveGoal
 from xbrain.p1_motion.nav.route_intake import RouteSet
 from xbrain.p1_motion.rns.audit import AuditRecord, Outcome, on_route_superseded
-from xbrain.p1_motion.rns.route import Mission
+from xbrain.p1_motion.rns.route import Mission, PolylineTracker, Projection
 from xbrain.p1_motion.rns.source import RnsSource
 from xbrain.p1_motion.rns.types import MissionKind, NavFailure, NavState, Origin
 from xbrain.p1_motion.sources.arbiter_p1 import BehaviorSource, priority_of
@@ -72,6 +72,12 @@ class RnsAvoidSource:
         self._route: Optional[RouteSet] = None
         self._goal: Optional[RelMoveGoal] = None
         self._origin: Optional[Origin] = None
+        # host-owned projection for path_progress (11 S3.5B waypoint_index /
+        # seg_done / dist_done): its OWN PolylineTracker over the same points and
+        # window, advanced at the report cadence. Not RNS's tracker: sharing the
+        # monotone index (RNS-N-4) between two callers would let the 2 Hz report
+        # move the index the 20 Hz follow relies on.
+        self._host_tracker: Optional[PolylineTracker] = None
 
     # ---- observability -------------------------------------------------------
     @property
@@ -142,6 +148,8 @@ class RnsAvoidSource:
         self._route = route
         self._goal = None
         self._origin = Origin.ROUTE
+        self._host_tracker = (PolylineTracker(list(route.points_xy), self._search_window)
+                              if route.waypoint_total >= 2 else None)
 
     def load_goto(self, goal: RelMoveGoal, now_mono_ms: int) -> None:
         """cmd/motion/relative_move -> GOTO with origin RELMOVE."""
@@ -154,6 +162,14 @@ class RnsAvoidSource:
         self._goal = goal
         self._route = None
         self._origin = Origin.RELMOVE
+        self._host_tracker = None
+
+    def progress_projection(self, pose_xy) -> Optional[Projection]:
+        """Where the robot is along the ROUTE polyline, for path_progress. None
+        for a goto (no passed vertex until arrival) or with no pose."""
+        if self._host_tracker is None or pose_xy is None:
+            return None
+        return self._host_tracker.project(pose_xy)
 
     def cancel(self, now_mono_ms: int) -> bool:
         """op=clear (12 S4.2c.4 / 20 S9.0.3): IDLE, audit cancelled, NO failure
