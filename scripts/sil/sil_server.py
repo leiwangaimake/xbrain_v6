@@ -46,6 +46,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from sil_world import (BLIND_NEAR_M, FOV_HALF_RAD, RANGE_MAX_M, SilWorld)
+from zenoh_world import world_to_body
+from xbrain.p1_motion.path.local_frame import LocalFrame
 from xbrain.p1_motion.rns.route import Mission
 from xbrain.p1_motion.rns.source import RnsSource
 from xbrain.p1_motion.rns.types import MissionKind, Origin
@@ -82,6 +84,18 @@ def load_v_nom() -> float:
 V_NOM_MPS = None         # resolved at startup from the config hierarchy
 WZ_MAX_RPS = 1.2         # [sim] spec.max_wz_radps is null (V-01: no basis yet)
 HOLONOMIC = None         # resolved at startup from models/<chassis>.yaml
+
+# ── run mode (P7.2, 2026-09-12) ──────────────────────────────────────────────
+# rns : the algorithm bench -- RnsSource in THIS process, the host gate below.
+# e2e : the real p1_motion drives the robot over the production keys; this
+#       process plays quadruped + rtk_driver + perception (+ p2 grant) through
+#       scripts/sil/zenoh_world.ZenohWorldLink and only renders / kicks off
+#       missions. Nothing of RNS runs here in e2e mode.
+MODE = "rns"
+E2E_RID = "dev"
+E2E_RESOLVED = ROOT / "data" / "run" / "resolved"
+E2E_GRANT = True
+link = None                       # zenoh_world.ZenohWorldLink (e2e only)
 
 app = FastAPI()
 world = SilWorld()
@@ -237,26 +251,63 @@ async def api_execute():
         nav["direction"] = -nav["direction"]
     else:
         nav["direction"] = 1
+    if MODE == "e2e":
+        # the task-layer job stays here (nearest entry, direction); the mission
+        # goes to the real p1 as cmd/motion/route (11 S3.5A).
+        pts = list(world.path) if nav["direction"] > 0 else list(reversed(world.path))
+        if len(pts) < 1:
+            return {"ok": False, "reason": "no path placed"}
+        k = _nearest_entry_index(pts, world.rx, world.ry)
+        remaining = pts[k:] if k < len(pts) - 1 else [pts[-1]]
+        rev = link.send_route(remaining, arrive_radius_m=CFG["rns"]["route"]["arrival_radius_m"])
+        nav.update(state="running_path", target=remaining[-1], channel="route", route_rev=rev)
+        return {"ok": True, "direction": nav["direction"], "route_rev": rev}
     if _load_path_mission(nav["direction"]):
         nav["state"] = "running_path"
         return {"ok": True, "direction": nav["direction"]}
     return {"ok": False, "reason": "no path placed"}
 
 
+
 @app.post("/api/nav/goto")
 async def api_goto(body: dict):
+    if MODE == "e2e":
+        # a click goal -> cmd/motion/relative_move when it fits the P1 cap (the
+        # displacement is what the voice path sends), else a single-point route
+        # (11 S3.5A v2.0, RNS-N-1 goto). Both are real p1 entries.
+        dx, dy = world_to_body(world.rx, world.ry, world.ryaw, body["x"], body["y"])
+        if max(abs(dx), abs(dy)) <= link.relmove_max_m:
+            cid = link.send_relmove(dx, dy)
+            nav.update(state="running_goto", target=(body["x"], body["y"]),
+                       channel="relative_move", cmd_id=cid)
+        else:
+            rev = link.send_route([(body["x"], body["y"])],
+                                  arrive_radius_m=CFG["rns"]["route"]["arrival_radius_m"])
+            nav.update(state="running_goto", target=(body["x"], body["y"]),
+                       channel="route", route_rev=rev)
+        return {"ok": True, "channel": nav["channel"]}
     _load_goto(body["x"], body["y"])
     nav["state"] = "running_goto"
     nav["target"] = (body["x"], body["y"])
     return {"ok": True}
 
 
+
 @app.get("/api/state")
 async def api_state():
     # debug/test view of the tick state (the websocket carries the same data)
+    if MODE == "e2e":
+        prog, rm = link.snapshot()
+        loaded = bool(prog and prog.get("state") == "running") or \
+            bool(rm and rm.get("state") in ("accepted", "running"))
+        return {"robot": {"x": world.rx, "y": world.ry, "yaw": world.ryaw},
+                "nav": nav, "n_obstacles": len(world.obstacles),
+                "mission_loaded": loaded, "mode": MODE, "cmd": link.cmd_info(),
+                "progress": prog, "relmove": rm}
     return {"robot": {"x": world.rx, "y": world.ry, "yaw": world.ryaw},
             "nav": nav, "n_obstacles": len(world.obstacles),
-            "mission_loaded": rns._mission is not None}
+            "mission_loaded": rns._mission is not None, "mode": MODE}
+
 
 
 @app.get("/api/trace")
@@ -275,18 +326,26 @@ async def api_trace(n: int = 600, step: int = 1):
 
 @app.get("/api/audit")
 async def api_audit():
-    """Drain the RNS audit ring (detour/wall enters, exits, failures)."""
+    """Drain the RNS audit ring (detour/wall enters, exits, failures). In e2e
+    mode the ring lives inside p1_motion (its heartbeat log), not here."""
+    if MODE == "e2e":
+        return {"events": [], "note": "e2e: the RNS audit ring lives in p1_motion"}
     return {"events": [{"t_ms": r.t_mono_ms, "kind": r.kind, "detail": r.detail}
                        for r in rns.audit.drain()]}
+
 
 
 @app.post("/api/reset")
 async def api_reset():
     world.reset()
     load_field_map()      # reset returns to the frozen map, not to emptiness
-    rns.clear_mission()
-    nav.update(state="idle", direction=1, target=None)
+    if MODE == "e2e":
+        link.send_clear()     # 11 S3.5A op=clear -> p1 cancels (no failure report)
+    else:
+        rns.clear_mission()
+    nav.update(state="idle", direction=1, target=None, channel=None)
     return {"ok": True}
+
 
 
 # ── 20 Hz tick ───────────────────────────────────────────────────────────────
@@ -331,20 +390,101 @@ async def tick_loop():
         await asyncio.sleep(max(0.0, DT - el))
 
 
+def _e2e_apply_change(ch: str, st, why) -> None:
+    """A path_progress / relative_move status edge -> the UI's nav.state word
+    (the same words the rns mode uses, so the front-end needs no branch)."""
+    if ch == "progress":
+        if st == "arrived":
+            nav["last_done"] = "path" if nav["state"] == "running_path" else "goto"
+            nav["state"] = "arrived"
+        elif st == "failed":
+            nav["state"] = "failed: %s" % why
+        elif st == "aborted":
+            nav["state"] = "aborted"
+        elif st == "idle" and not nav["state"].startswith("running"):
+            nav["state"] = "idle"
+        elif st == "running" and nav["state"] == "aborted":
+            nav["state"] = "running_path"          # suspension released
+    elif ch == "relmove":
+        if st == "succeeded":
+            nav["last_done"] = "goto"
+            nav["state"] = "arrived"
+        elif st in ("aborted", "rejected"):
+            nav["state"] = "failed: %s %s" % (st, why)
+
+
+async def tick_loop_e2e():
+    """The e2e tick: integrate the REAL p1's cmd_vel, publish the three
+    simulated peripherals, mirror p1's reports into the UI words."""
+    last_cmd = (0.0, 0.0, 0.0)
+    while True:
+        t0 = time.monotonic()
+        now_ms = int(t0 * 1000)
+        world.step_obstacles(DT)
+        vx, vy, wz, _fresh = link.latest_cmd(t0)
+        world.step_robot(vx, vy, wz, DT)
+        snap = world.synth_snapshot(now_ms)
+        link.publish_world(world.rx, world.ry, world.ryaw, vx, vy, snap, t0)
+        last_cmd = (vx, vy, wz)
+        for ch, st, why in link.drain_changes():
+            _e2e_apply_change(ch, st, why)
+        TRACE.append({
+            "t": round(now_ms / 1000.0, 2),
+            "x": round(world.rx, 2), "y": round(world.ry, 2),
+            "yaw": round(world.ryaw, 2),
+            "st": nav["state"],
+            "vx": round(vx, 2), "wz": round(wz, 2),
+            "dyn": None, "wall_d": None,
+        })
+        await broadcast(snap, last_cmd)
+        el = time.monotonic() - t0
+        await asyncio.sleep(max(0.0, DT - el))
+
+
+
 async def broadcast(snap, cmd):
     if not clients:
         return
-    tgt = None
-    dist_tgt = None
-    if rns._mission is not None:
-        tgt = rns._mission.endpoint
-        dist_tgt = math.hypot(world.rx - tgt[0], world.ry - tgt[1])
-    wall = None
-    if rns._wall is not None:
-        wall = {"side": rns._wall.side.value,
-                "followed_m": round(rns._wall.followed_m, 1),
-                "d_side": (round(rns._last_d_side, 2)
-                           if rns._last_d_side is not None else None)}
+    if MODE == "e2e":
+        info = link.cmd_info()
+        prog, _rm = link.snapshot()
+        tgt = nav.get("target")
+        dist_tgt = (math.hypot(world.rx - tgt[0], world.ry - tgt[1]) if tgt else None)
+        navd = {"state": nav["state"], "direction": nav["direction"],
+                "target": tgt, "dist_to_target": dist_tgt,
+                "rns_state": info["source"] or "--",
+                "subgoal": None, "lookahead": None, "wall": None,
+                "guide_path": [], "guide_mode": "none", "mode": "e2e",
+                "channel": nav.get("channel"),
+                "gate": {"limiter": info["limiter"], "v_max": info["v_max"],
+                         "profile": info["profile"], "cmd_n": info["n"],
+                         "fresh": (time.monotonic() - info["rx"]) <= 0.2},
+                "progress": ({"state": prog.get("state"),
+                              "wp": prog.get("waypoint_index"),
+                              "total": prog.get("waypoint_total")} if prog else None)}
+    else:
+        tgt = None
+        dist_tgt = None
+        if rns._mission is not None:
+            tgt = rns._mission.endpoint
+            dist_tgt = math.hypot(world.rx - tgt[0], world.ry - tgt[1])
+        wall = None
+        if rns._wall is not None:
+            wall = {"side": rns._wall.side.value,
+                    "followed_m": round(rns._wall.followed_m, 1),
+                    "d_side": (round(rns._last_d_side, 2)
+                               if rns._last_d_side is not None else None)}
+        navd = {"state": nav["state"], "direction": nav["direction"],
+                "target": tgt, "dist_to_target": dist_tgt,
+                "rns_state": rns.nav_state().value,
+                "subgoal": rns._subgoal_world,
+                "lookahead": getattr(rns, "_last_R", None), "wall": wall,
+                "guide_path": (rns._planner.path_points(
+                    (world.rx, world.ry))
+                    if getattr(rns, "_planner", None) is not None else []),
+                "guide_mode": (rns._planner._field_mode
+                               if getattr(rns, "_planner", None) is not None
+                               else "none"), "mode": "rns"}
     state = {
         "robot": {"x": world.rx, "y": world.ry, "yaw": world.ryaw,
                   "vx": cmd[0], "vy": cmd[1], "wz": cmd[2],
@@ -359,18 +499,9 @@ async def broadcast(snap, cmd):
                       for o in world.obstacles.values()],
         "path": world.path,
         "waypoints": world.waypoints,
-        "nav": {"state": nav["state"], "direction": nav["direction"],
-                "target": tgt, "dist_to_target": dist_tgt,
-                "rns_state": rns.nav_state().value,
-                "subgoal": rns._subgoal_world,
-                "lookahead": getattr(rns, "_last_R", None), "wall": wall,
-                "guide_path": (rns._planner.path_points(
-                    (world.rx, world.ry))
-                    if getattr(rns, "_planner", None) is not None else []),
-                "guide_mode": (rns._planner._field_mode
-                               if getattr(rns, "_planner", None) is not None
-                               else "none")},
+        "nav": navd,
     }
+
     msg = json.dumps(state)
     dead = []
     for ws in clients:
@@ -396,9 +527,34 @@ async def ws_endpoint(ws: WebSocket):
 
 @app.on_event("startup")
 async def on_start():
-    asyncio.create_task(tick_loop())
+    global link
+    if MODE == "e2e":
+        from zenoh_world import ZenohWorldLink, read_resolved_p1
+        p1 = read_resolved_p1(E2E_RESOLVED)
+        link = ZenohWorldLink(E2E_RID, LocalFrame(p1["lat"], p1["lon"]), grant=E2E_GRANT,
+                              relmove_max_m=p1["relmove_max_m"])
+        print("sil_server e2e: rid=%s origin=(%.6f, %.6f) grant=%s -- the REAL p1 drives"
+              % (E2E_RID, p1["lat"], p1["lon"], E2E_GRANT), file=sys.stderr)
+        asyncio.create_task(tick_loop_e2e())
+    else:
+        asyncio.create_task(tick_loop())
 
 
 if __name__ == "__main__":
+    import argparse
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8890, log_level="warning")
+    ap = argparse.ArgumentParser(description="RNS SIL web server")
+    ap.add_argument("--mode", choices=("rns", "e2e"), default="rns",
+                    help="rns: in-process RnsSource bench (default); "
+                         "e2e: the real p1_motion drives over Zenoh")
+    ap.add_argument("--rid", default="dev")
+    ap.add_argument("--resolved", default=str(E2E_RESOLVED))
+    ap.add_argument("--no-grant", action="store_true",
+                    help="e2e: do not publish the cmd/motion/factor grant stand-in")
+    ap.add_argument("--port", type=int, default=8890)
+    args = ap.parse_args()
+    MODE = args.mode
+    E2E_RID = args.rid
+    E2E_RESOLVED = Path(args.resolved)
+    E2E_GRANT = not args.no_grant
+    uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning")

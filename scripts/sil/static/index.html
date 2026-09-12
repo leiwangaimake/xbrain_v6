@@ -6,7 +6,7 @@
 -->
 <html>
 <head>
-<meta charset="utf-8"><title>RNS SIL</title>
+<meta charset="utf-8"><title>RNS SIL / E2E</title>
 <style>
   * { box-sizing: border-box; }
   body { margin:0; font-family:"Segoe UI",system-ui,sans-serif; display:flex;
@@ -398,6 +398,21 @@ function draw(){
         : state.nav.rns_state === "wait_dynamic" ? "warn" : ""],
     ["dir", state.nav.direction > 0 ? "正向" : "反向", ""],
   ];
+  // run mode badge: e2e = the REAL p1_motion drives over Zenoh (P7.2); rns = the
+  // in-process algorithm bench. The rows below it only exist in e2e.
+  rows.unshift(["模式", state.nav.mode === "e2e" ? "E2E 真 p1" : "RNS 台架",
+                state.nav.mode === "e2e" ? "hl" : ""]);
+  if (state.nav.gate){
+    const g = state.nav.gate;
+    rows.push(["p1 限速项", g.limiter == null ? "--" : g.limiter,
+               g.limiter && g.limiter !== "none" ? "warn" : ""]);
+    rows.push(["p1 v_max", g.v_max == null ? "--" : g.v_max.toFixed(2) + " m/s", ""]);
+    rows.push(["cmd_vel", g.cmd_n + (g.fresh ? "" : " (stale)"), g.fresh ? "" : "bad"]);
+    if (state.nav.channel) rows.push(["通道", state.nav.channel, ""]);
+    if (state.nav.progress && state.nav.progress.state)
+      rows.push(["path_progress", state.nav.progress.state +
+                 (state.nav.progress.total ? ` ${state.nav.progress.wp}/${state.nav.progress.total}` : ""), ""]);
+  }
   if (state.nav.dist_to_target != null)
     rows.push(["距目标", state.nav.dist_to_target.toFixed(2) + " m", ""]);
   if (state.nav.wall){
