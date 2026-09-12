@@ -48,6 +48,7 @@ class CtrlTick:
     vx: float
     wz: float
     stop_reason: str = "none"
+    vy: float = 0.0          # lateral (holonomic only); zero on every stop
 
 
 class CtrlLoop:
@@ -68,9 +69,17 @@ class CtrlLoop:
     Every state emits cmd_vel EVERY TICK (chassis Tier 1 requires it).
     """
 
-    def __init__(self, publish_cmd_vel: Callable[[float, float], None]) -> None:
+    def __init__(self, publish_cmd_vel: Callable[..., None], *,
+                 holonomic: bool = False) -> None:
+        """publish_cmd_vel(vx, wz) on a non-holonomic chassis; (vx, wz, vy)
+        when holonomic=True (P7.2: M20S spec.holonomic is true and the RNS
+        candidate carries a body-shield vy). Default False is the conservative
+        direction: a caller that never asked for lateral never gets it, and
+        any computed_vy it passes is dropped and counted (12 S4.7.3 TS-4)."""
         self._state = CtrlState.INIT
         self._publish = publish_cmd_vel
+        self._holonomic = bool(holonomic)
+        self.vy_dropped = 0
         self._tick_no = 0
         self._history: List[CtrlTick] = []
 
@@ -85,7 +94,8 @@ class CtrlLoop:
     def run_one_tick(self,
                      computed_vx: float = 0.0,
                      computed_wz: float = 0.0,
-                     estop: bool = False) -> CtrlTick:
+                     estop: bool = False,
+                     computed_vy: float = 0.0) -> CtrlTick:
         """Execute one tick. In non-ACTIVE states vx/wz are zero;
         ACTIVE uses computed values. Always publishes.
 
@@ -105,19 +115,28 @@ class CtrlLoop:
         self._tick_no += 1
         if estop:
             # 本拍零速, 归因 soft_estop. Highest precedence, checked first.
-            vx, wz, reason = 0.0, 0.0, "soft_estop"
+            vx, vy, wz, reason = 0.0, 0.0, 0.0, "soft_estop"
         elif self._state == CtrlState.ACTIVE:
-            vx, wz, reason = computed_vx, computed_wz, "none"
+            vx, vy, wz, reason = computed_vx, computed_vy, computed_wz, "none"
         elif self._state == CtrlState.SAFE_STOP:
-            vx, wz, reason = 0.0, 0.0, "soft_estop"   # emergency zero-vel
+            vx, vy, wz, reason = 0.0, 0.0, 0.0, "soft_estop"   # emergency zero-vel
         else:
             # not yet driving; publish zero. no_source distinguishes "nothing
             # to drive" from "estop stopped me" -- both zero, different cause.
-            vx, wz, reason = 0.0, 0.0, "no_source"
+            vx, vy, wz, reason = 0.0, 0.0, 0.0, "no_source"
+        # vy rides the SAME branch as vx/wz above, so estop / SAFE_STOP /
+        # not-driving zero it too -- a lateral leak under estop would be the
+        # exact failure the estop-first ordering exists to prevent.
+        if vy != 0.0 and not self._holonomic:
+            vy = 0.0                    # 12 S4.7.3 TS-4: no lateral axis
+            self.vy_dropped += 1
         # ALWAYS publish -- chassis Tier 1 requires it.
         published = True
         try:
-            self._publish(vx, wz)
+            if self._holonomic:
+                self._publish(vx, wz, vy)
+            else:
+                self._publish(vx, wz)
         except Exception:
             # NEVER let a publish failure kill the loop; caller may
             # log the fault, but the tick still counts.
@@ -125,7 +144,7 @@ class CtrlLoop:
         report = CtrlTick(
             tick_no=self._tick_no, state=self._state.value,
             published_cmd_vel=published,
-            vx=vx, wz=wz, stop_reason=reason,
+            vx=vx, wz=wz, stop_reason=reason, vy=vy,
         )
         self._history.append(report)
         return report
