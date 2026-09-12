@@ -371,6 +371,12 @@ _DEFERRED: Dict[str, str] = {
     "p5_gateway.yaml": "17 S10 (P5 private config)",
     "quadruped.yaml": "13 S8.1 / S8.2 (quadruped private config)",
     "rtk_driver.yaml": "11 S3.2 / S3.11 (rtk_driver private config)",
+    # module / process configs that the freeze line materialises alongside the
+    # L6 files (20 #20-26, 2026-09-12): rns.yaml is the RNS module config
+    # (12 S12.0A, consumed by p1_motion), perception.yaml the perception
+    # process config (19 S8.2, all-null discipline until calibrated).
+    "rns.yaml": "12 S12.0A / 20 S7A (RNS module config, read by p1_motion)",
+    "perception.yaml": "19 S8.2 (perception process config, PSC-1)",
 }
 
 

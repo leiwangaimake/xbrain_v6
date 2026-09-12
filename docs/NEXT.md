@@ -394,7 +394,7 @@
   - 修法方向(🚫 现在动):同一子目标短时重复采纳 ⇒ 本次禁用端跳,改走贴墙 / 候选;属 `20` §4A.10 混沌敏感层,验收 = 三套台架零回归(老规矩:改动前基线 → 改 → 同图同码对照 → 回归即回退)。
 - [ ] **#20-27 · 记忆栅格同帧邻 bin 蚀穿** `[GATED-HW]`:修法(两遍写入,同帧 BLOCKED 优先)已在台架**否证**(`20` §4A.12 ①:冷 `path_rev` 191 s → 600 s 未到达 / 间距 0.023 m)—— 墙体在记忆里变实后 v2.0 的贴墙 / 离墙参数不再匹配。**须与贴墙参数重整定同批**(`d_wall_m` · `leave_progress_m` · 端探测),与 #20-28 合并到实机后的专项。
 - [ ] **热台架已知弱点(v2.0 固有,未动)**:`leg07_rev` 426 s / 离线 23.2%(冷 path_rev 191 s / 2.1%)—— 记忆跨任务携带后的反向腿变慢,归入上述专项一并看。
-- [ ] **#20-26 · 冻结线纳入 `rns.yaml` / `perception.yaml`** `[SW-NOW]`(交办冻结线 / `10` 册主):`SNAPSHOT_PROCESSES` 现只含六进程,生产启动 PSC-1 过不去;纳入前解析产物形态样例在 `tests/perception/samples/resolved_perception.dev.yaml`。
+- [x] **#20-26 · 冻结线纳入 `rns.yaml` / `perception.yaml`** ✅ 2026-09-12 P7.2 批已闭合（`_L6_FILES` / `SNAPSHOT_PROCESSES` + 注册表 + `10` §5.4.0 第 17/18 行）；原文 ⇒ `[SW-NOW]`(交办冻结线 / `10` 册主):`SNAPSHOT_PROCESSES` 现只含六进程,生产启动 PSC-1 过不去;纳入前解析产物形态样例在 `tests/perception/samples/resolved_perception.dev.yaml`。
 - [ ] **P7.2 · RNS 进仲裁 + 感知快照喂 tick** `[SW-NOW]`:`RnsSource` 接入 `p1_motion` 仲裁阶梯(行为源 `rns_avoid`,`12` §4.2c),`perception_in.latest(now)`(`perception_src/three_keys.py`,已在主接线声明)进 tick ctx —— 感知方「实机功能交付」阶段我方必须就位的对手件。
 - [ ] **Orin NX 装机** `[SW-NOW]`:TensorRT 10.3(JetPack 6.2 配套)+ ROS 2 Humble,答复 r3 Q1.3 承诺 2026-09-18 前;engine 由感知方在生产机构建(PSC-4)。
 - [ ] **感知方交付追踪**(`perception-rns-reply-20260911.md` Q1.4 三阶段):① 接口联调交付 —— 验收 = W-11 七(八)场景消费对表全绿 + A19-ENC-1 / TIME-1 / TIME-2 / BOOT-4 / VEL-1 / CAL-1,接收人 RNS;② 实机功能交付 `[GATED-HW]`(W-2 标定前置);③ 生产联合验收(§Q3.2 工况,分级门 + 年龄门 + 接收端对表 `scripts/dev/perception_rx_audit.py`)。

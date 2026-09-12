@@ -106,6 +106,11 @@ SNAPSHOT_PROCESSES = (
     # rtk_driver: C++ RT-plane GNSS process; reads a resolved snapshot for its
     # 11 S3.3.1/S3.3.3 resolver thresholds (like quadruped, config-in-register).
     "rtk_driver",
+    # rns: the RNS module config file (configs/rns.yaml, 12 S12.0A) -- not a
+    # process but a snapshot the p1_motion process reads via load_resolved
+    # ("rns"); perception: the C++ perception process (19 S8.2, PSC-1). Both
+    # added 2026-09-12 (20 #20-26); mirrored in resolved.SNAPSHOT_PROCESSES.
+    "rns", "perception",
 )
 
 

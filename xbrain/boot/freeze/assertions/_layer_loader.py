@@ -213,6 +213,14 @@ _L6_FILES: Tuple[str, ...] = (
     "p5_gateway.yaml",
     "quadruped.yaml",
     "rtk_driver.yaml",
+    # rns.yaml: the RNS module config (12 S12.0A verbatim "冻结线与各进程文件
+    # 同列解析, 运行期 p1_motion 读 /run/xbrain/resolved/rns.yaml"); consumed by
+    # xbrain/p1_motion/rns/config.py. perception.yaml: the perception process
+    # config (19 S8.2), PSC-1 reads its resolved snapshot. Both were on disk but
+    # never materialised (20 #20-26) -- p1 could only reach rns.yaml by reading
+    # the SOURCE, which 10 S5.4.1 forbids; closed 2026-09-12 (P7.2).
+    "rns.yaml",
+    "perception.yaml",
 )
 
 

@@ -555,3 +555,15 @@ def test_the_resolved_root_is_not_under_the_configuration_root():
     assert R.RESOLVED_ROOT == "/opt/xbrain_v6/data/run/resolved"
     assert "configs" not in R.RESOLVED_ROOT
     assert "/data/run/" in R.RESOLVED_ROOT
+
+
+def test_rns_and_perception_are_snapshot_processes(tmp_path):
+    """20 #20-26 (closed 2026-09-12): 12 S12.0A says p1_motion reads
+    /run/xbrain/resolved/rns.yaml, and PSC-1 says perception reads its own
+    snapshot. A reader whose process set omitted them would force both back to
+    reading the SOURCE, the exact thing 10 S5.4.1 forbids. mutant: drop "rns"
+    from SNAPSHOT_PROCESSES -> load_resolved("rns") refuses -> red."""
+    for proc in ("rns", "perception"):
+        assert proc in R.SNAPSHOT_PROCESSES
+        root, boot = build_root(tmp_path / proc, proc=proc)
+        assert load_resolved(proc, root=root, boot_id_path=boot).proc == proc

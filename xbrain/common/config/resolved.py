@@ -131,6 +131,11 @@ SNAPSHOT_PROCESSES = frozenset({
     # (10 S5.4.0 exhaustive table + 13-style private-config; freeze writes its
     # resolved snapshot so 11 S3.3 thresholds are not defaulted in code, 3.1).
     "rtk_driver",
+    # rns: RNS module config snapshot (12 S12.0A: p1_motion reads
+    # /run/xbrain/resolved/rns.yaml, never configs/rns.yaml); perception: the
+    # C++ perception process (19 S8.2 / PSC-1). Added 2026-09-12 (20 #20-26);
+    # mirrored in xbrain/boot/freeze/pipeline.SNAPSHOT_PROCESSES.
+    "rns", "perception",
 })
 
 #: MANIFEST fields this reader requires to be present. Absence is refused rather

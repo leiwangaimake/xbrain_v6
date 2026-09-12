@@ -62,7 +62,7 @@ def _brake_tree(t_lat_s=0.4, a_mps2=2.5, k=1.5):
 # ── coverage: the assets cover exactly the 20 files ──────────────────────────
 
 def test_registry_covers_exactly_the_on_disk_config_set():
-    """SCHEMAS must key exactly the 20 config files on disk.
+    """SCHEMAS must key exactly the 22 config files on disk.
 
     Mutation: drop one entry from SCHEMAS => the on-disk file has no schema and
     this set difference goes non-empty. The point is to catch a NEW config file
@@ -85,7 +85,8 @@ def test_registry_covers_exactly_the_on_disk_config_set():
             if name.endswith(".yaml"):
                 on_disk.add(os.path.relpath(os.path.join(dirpath, name), CONFIG_ROOT))
     assert set(CONFIG_FILES) == on_disk
-    assert len(CONFIG_FILES) == 20
+    # 22 since 2026-09-12: rns.yaml + perception.yaml registered (20 #20-26).
+    assert len(CONFIG_FILES) == 22
 
 
 @pytest.mark.parametrize("rel", CONFIG_FILES)
