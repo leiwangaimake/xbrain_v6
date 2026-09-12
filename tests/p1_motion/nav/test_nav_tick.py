@@ -266,3 +266,24 @@ def test_estop_without_mission_is_not_loaded():
     # arrival is consumed through the adapter latch -> not loaded any more
     if src.take_arrival():
         assert not src.mission_loaded()
+
+
+def test_fresh_all_null_profile_is_unknown_not_dead():
+    """A ground-fit withdrawal frame (19 S3.2A v1.6): fresh, every bin null,
+    src bit1 only. The host must not veto; the RNS UNKNOWN cap is the only
+    speed rule (r4 Q4.2 / 20 S4.1). mutant: veto on no forward bin -> red."""
+    import dataclasses
+    src, tick = _stack()
+    _goto(src, 5000)
+    base = uniform_free(6.0, t_capture_mono_ms=5000, t_seg_mono_ms=4990)
+    n = len(base.d_free)
+    withdrawn = dataclasses.replace(base, d_free=(None,) * n, d_block=(None,) * n,
+                                    h_block=(None,) * n, src=(2,) * n)
+    snap = snapshot(withdrawn, None, healthy_status(t_publish_mono_ms=5000))
+    outs = [tick.run(_inp(5000 + 50 * k, perception=snapshot(
+        dataclasses.replace(withdrawn, t_capture_mono_ms=5000 + 50 * k),
+        None, healthy_status(t_publish_mono_ms=5000 + 50 * k)))) for k in range(6)]
+    assert all(o.freshness == "ok" and o.limiter != "free_space" for o in outs)
+    assert all(o.v_max == pytest.approx(1.0) for o in outs)      # profile term (v_nom 1.0), no f term
+    assert all(o.vx <= 0.3 * 1.0 + 1e-9 for o in outs)      # unk_g_min x v_nom (rns.yaml 0.3)
+    assert snap.profile.d_free[0] is None

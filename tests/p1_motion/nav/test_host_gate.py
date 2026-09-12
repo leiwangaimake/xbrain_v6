@@ -51,7 +51,6 @@ def test_forward_sector_min_skips_unknown_bins():
     (dict(i_fix=0.0), "rtk"),
     (dict(heading_valid=False), "heading"),
     (dict(perception_dead=True), "free_space"),
-    (dict(f_free_mps=None), "free_space"),
 ])
 def test_vetoes_zero_everything_and_name_the_row(kw, limiter):
     """mutant: drop the perception_dead veto -> a robot with no perception
@@ -135,3 +134,15 @@ def test_wz_is_clamped_to_the_chassis_limit():
     assert apply_gate(g, 0.5, 0.0, 2.0, True, wz_max_radps=1.2) == (0.5, 0.0, 1.2)
     assert apply_gate(g, 0.5, 0.0, -2.0, True, wz_max_radps=1.2) == (0.5, 0.0, -1.2)
     assert apply_gate(g, 0.5, 0.0, 0.7, True, wz_max_radps=1.2) == (0.5, 0.0, 0.7)
+
+
+def test_fresh_unknown_forward_is_not_a_veto():
+    """19 S3.2A v1.6 withdrawal frame / blind sector: fresh profile, forward
+    all null -> UNKNOWN, not dead. No f term; the ceiling is profile/spec x h
+    x i and the RNS candidate's own UNKNOWN cap governs (20 S4.1 / S8.1A).
+    mutant: veto when f_free_mps is None -> red."""
+    g = _gate(f_free_mps=None)
+    assert not g.veto and g.v_max_fwd == pytest.approx(2.0) and g.v_max_free == pytest.approx(2.0)
+    assert attribute(g, 0.5) == ("none", ())
+    assert apply_gate(g, 0.5, 0.0, 0.2, True) == (0.5, 0.0, 0.2)
+    assert "free_space" not in g.tied_min

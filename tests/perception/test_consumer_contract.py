@@ -24,6 +24,8 @@ Verdicts and their clauses:
   clock_reset     perception_epoch_reset audited, then drives (11 S3.1B.5 v2.1)
   dropout         objects_lost audited, 0 < vx <= no_seg_speed_cap (T-52)
   semantic_only   fuse_bin UNKNOWN before / BLOCKED at the S-only 2.5 m edge (11 v2.2)
+  ground_withdrawn fit fallback withdrawn (19 S3.2A v1.6): vx <= unk_g_min * v_nom, no
+                  failure, both reasons parsed, the p1 host gate does NOT veto (fresh != dead)
 Each verdict is also the mutant list: the B1/B2 source mutants (T-52 cap off,
 extrinsic flag ignored, raw accepted) redden the matching scenario here too.
 """
@@ -204,3 +206,29 @@ def test_dropout_of_objects_caps_speed_and_is_audited():
     assert out is not None and 0.0 < out.vx.value <= cap + 1e-9
     assert "objects_lost" in [r.kind for r in s.audit.drain()]
     assert s.take_failure() is None
+
+
+def test_ground_withdrawn_is_unknown_not_a_stop():
+    """19 S3.2A v1.6 / r5: a withdrawal frame is UNKNOWN everywhere but the
+    independent S block. RNS: capped by the UNKNOWN share, no failure, the S
+    edge still BLOCKED. Host (p1 host_gate): fresh + no forward bin known is
+    NOT the dead veto -- the ceiling stays profile/spec. mutant: veto on
+    f_free None in host_gate -> red; mutant: drop the S block from the
+    scenario's fuse -> red."""
+    from xbrain.p1_motion.nav.health_factor import HealthView
+    from xbrain.p1_motion.nav.host_gate import compute_gate, forward_d_free
+    s, out = _run("ground_withdrawn")
+    cap = _cfg()["rns"]["speed"]["unk_g_min"] * V_NOM
+    assert out is not None and out.vx.value <= cap + 1e-9
+    assert s.take_failure() is None
+    last = _load("ground_withdrawn")["ticks"][-1]
+    snap = _snapshot(last)
+    assert set(snap.status.degraded_reasons) >= {"ground_fit_fallback", "ground_free_withdrawn"}
+    assert all(v is None for v in snap.profile.d_free)
+    assert snap.profile.src[90] & 0b0100 and snap.profile.d_block[90] == 2.5
+    assert forward_d_free(snap.profile.d_free) is None
+    g = compute_gate(v_nom_mps=2.0, spec_max_vx_mps=2.0,
+                     f_free_mps=forward_d_free(snap.profile.d_free),
+                     health=HealthView(1.0, True, "patrol", "ok", 100), i_fix=1.0,
+                     i_heading=1.0, heading_valid=True, estop=False, perception_dead=False)
+    assert not g.veto and g.v_max_fwd == 2.0

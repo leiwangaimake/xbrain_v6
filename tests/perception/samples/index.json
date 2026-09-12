@@ -3,6 +3,7 @@
   "clock_reset": "third tick > 1 s behind -> perception_epoch_reset audited, memory cleared, drives",
   "dropout": "objects 700 ms old (> T-52): objects_lost audited, 0 < vx <= no_seg_speed_cap_mps",
   "extrinsic_uncal": "failure extrinsic_uncalibrated; mission refused (11 S3.1B.4)",
+  "ground_withdrawn": "fit fallback withdrawn (19 S3.2A v1.6): all bins UNKNOWN except the S block; vx <= unk_g_min * v_nom, no failure, host gate not a veto (fresh)",
   "no_seg": "geometry-only FREE: 0 < vx <= no_seg_speed_cap_mps (S3.1.11)",
   "normal": "drives at nominal speed; no failure; cone off-corridor ignored",
   "semantic_only": "S-only block: grid UNKNOWN at 1.5 m ahead (never FREE), BLOCKED at 2.5 m; no failure",

@@ -72,7 +72,8 @@ Z_PASS = 0.75
 T0 = 100000                 # monotonic ms base of the static samples
 RT_ENDPOINT = "tcp/127.0.0.1:7449"
 SCENARIOS = ("normal", "all_unknown", "no_seg", "extrinsic_uncal",
-             "tf_stale", "clock_reset", "dropout", "semantic_only")
+             "tf_stale", "clock_reset", "dropout", "semantic_only",
+             "ground_withdrawn")
 # src bits (11 S3.1B.1 v2.1): bit0 T, bit1 G, bit2 S, bit3 NEG
 SRC_T = 1
 SRC_G = 2
@@ -84,7 +85,11 @@ def profile_body(now: int, *, kind: str = "open", extrinsic: bool = True,
                  pose_used: Optional[dict] = None) -> Dict[str, Any]:
     """One ProfileMsg body. kind: open (box at 3 m in bins 130..134, ~+20 deg),
     unknown (every bin null: nothing observed), noseg (open, no T evidence),
-    semantic_only (open, but bins 85..95 have no depth and a 2.5 m S block)."""
+    semantic_only (open, but bins 85..95 have no depth and a 2.5 m S block),
+    ground_withdrawn (19 S3.2A v1.6: fit failed with no error basis -> every
+    bin d_free/d_block/h_block null, geometry HAS samples (bit1) but backs
+    nothing, t_seg present yet bit0 = 0; one independent S block survives in
+    bins 85..95 at 2.5 m)."""
     seg = kind != "noseg"
     d_free: List[Optional[float]] = []
     d_block: List[Optional[float]] = []
@@ -97,6 +102,17 @@ def profile_body(now: int, *, kind: str = "open", extrinsic: bool = True,
             # geometry saw NOTHING in this bin (11 S3.1B.1 v2.1 bit1)
             d_free.append(None); d_block.append(None); h_block.append(None)
             src.append(0); conf.append(0)
+            continue
+        if kind == "ground_withdrawn":
+            # 19 S3.2A v1.6 withdrawal: samples exist (bit1) but back no FREE
+            # (bit0 = 0) and no plane-dependent block; the S block is the one
+            # piece of evidence that does not depend on the failed plane.
+            d_free.append(None); h_block.append(None)
+            if 85 <= i <= 95:
+                d_block.append(2.5); src.append(SRC_G | SRC_S)
+            else:
+                d_block.append(None); src.append(SRC_G)
+            conf.append(0)
             continue
         if kind == "semantic_only" and 85 <= i <= 95:
             # 11 S3.1B.1 v2.2 (Q3 ruling): no geometry at all in this bin,
@@ -248,6 +264,14 @@ def build_scenarios(rid: str = "dev") -> Dict[str, Dict[str, Any]]:
                        status_body(T0 + k * 50, reasons=("infer_gap",), gap_max=700.0),
                        k + 1) for k in range(2)]}
     barrier = obj(21, "barrier", 2.5, 0.0, r_near=2.5)
+    out["ground_withdrawn"] = {
+        "expect": "fit fallback withdrawn (19 S3.2A v1.6): all bins UNKNOWN except the S block; "
+                  "vx <= unk_g_min * v_nom, no failure, host gate not a veto (fresh)",
+        "ticks": [tick(T0 + k * 50, profile_body(T0 + k * 50, kind="ground_withdrawn"),
+                       objects_body(T0 + k * 50, [barrier]),
+                       status_body(T0 + k * 50, reasons=("ground_fit_fallback",
+                                                         "ground_free_withdrawn")),
+                       k + 1) for k in range(2)]}
     out["semantic_only"] = {
         "expect": "S-only block: grid UNKNOWN at 1.5 m ahead (never FREE), BLOCKED at 2.5 m; no failure",
         "ticks": [tick(T0 + k * 50, profile_body(T0 + k * 50, kind="semantic_only"),

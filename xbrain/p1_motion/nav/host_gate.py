@@ -29,6 +29,12 @@ Vetoes (11 S9.6.5 rows 1-5 and 8; all axes zero, limiter = the row):
 The free_space veto is the safety gate P7.2 adds over the pre-wiring behaviour:
 RnsSource._run_follow degrades to the bare follow spine when ctx.perception is
 None, which is right for a replay host but must never move a real robot.
+DEAD is not UNKNOWN: a fresh profile whose forward bins are all null (the
+19 S3.2A v1.6 ground-fit withdrawal, or a blind sector) carries no f term at
+all -- the RNS candidate's UNKNOWN-share cap governs (20 S4.1 limited entry,
+S8.1A unk_g_min x v_nom). Fifth perception round (r5) corrected this: the
+first P7.2 cut vetoed on "no forward bin known", which stopped the robot on
+every withdrawal frame against the r4 Q4.2 ruling.
 
 Which axes f gates. Exactly as the SIL host: f(d_free) is a FORWARD clearance,
 so it caps vx > 0 only. Reverse vx and lateral vy keep the ceiling without the
@@ -112,7 +118,8 @@ def compute_gate(*, v_nom_mps: float, spec_max_vx_mps: float,
     formula with per-term deltas for attribution.
     mutant: drop the perception_dead veto -> a robot with no perception frame
     ever drives on the bare follow spine -> test_perception_dead_is_a_veto
-    red."""
+    red. mutant: veto on f_free_mps is None as well -> a fresh withdrawal
+    frame stops the robot -> test_fresh_unknown_forward_is_not_a_veto red."""
     if estop:
         return _veto("estop")
     if not health.allow_motion:
@@ -121,14 +128,20 @@ def compute_gate(*, v_nom_mps: float, spec_max_vx_mps: float,
         return _veto("rtk")
     if not heading_valid or i_heading is None or i_heading <= 0.0:
         return _veto("heading")
-    if perception_dead or f_free_mps is None:
+    if perception_dead:
         return _veto("free_space")
     h = float(health.speed_factor)
     i = float(i_fix) * float(i_heading)
-    f = f_speed_gate(f_free_mps)
     terms: Dict[str, float] = {"profile": float(v_nom_mps),
-                               "free_space": f,
                                "spec": float(spec_max_vx_mps)}
+    # A FRESH profile whose forward sector is all null is UNKNOWN, not dead
+    # (20 S4.1: UNKNOWN is entered at limited speed, never forbidden; 12 S3.3's
+    # zero-speed row is for a DEAD input). No f term then: the RNS candidate
+    # already carries the UNKNOWN-share cap (unk_g_min x v_nom, 20 S8.1A) and
+    # the memory grid; vetoing here would turn every ground-fit fallback frame
+    # (19 S3.2A v1.6 withdrawal) into a stop, against the r4 Q4.2 ruling.
+    if f_free_mps is not None:
+        terms["free_space"] = f_speed_gate(f_free_mps)
     v_lin = min(terms.values())
     v_lin_free = min(terms["profile"], terms["spec"])
     # delta of the min term(s): what the next-larger term would have allowed.
