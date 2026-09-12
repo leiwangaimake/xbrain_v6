@@ -295,6 +295,8 @@
 
 ## 8. 部署 / systemd 收尾（2026-08-16 · 批2-4 正规部署）
 
+- ★ **Orbbec SDK 二进制不入库（用户 2026-09-12 裁定，选项 2）**：`common/lib/libobsensor/*.so`（v2.9.3，11 个文件 51 MB）沿用仓库 `.gitignore` 的 `*.so` / `*.so.*` 规则留在库外；部署时从 Orbbec 官方 SDK 包安装到 `common/lib/libobsensor/`（头文件与 `OrbbecSDKConfig*.cmake` 已入库，d9fe79a）。`ros2_ws/perception/` 按用户裁定不入库。
+
 > 批2-4 把 `deploy/systemd/` 的单元从「草稿 + 若干失效」硬化成「可一键安装、ORIN 实测通」。
 > 提交：`38ee531`(批2 硬化)· `6dba157`(批3 install 机制)· 本批(批4 验证 + uninstall 通配修复)。
 > ★ 安装**机制已成 + ORIN 实测 install / uninstall / gated-skip / mount 全绿**。**DEC-15 已于 2026-08-17 收口**(U83：命名 `xbrain-` + install root `/opt/xbrain_v6/data/install`)；剩下是**构建系统实现(DEP-5)+ 标定/回填**，enable 不再卡决策。
