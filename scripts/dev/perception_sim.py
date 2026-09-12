@@ -73,7 +73,8 @@ T0 = 100000                 # monotonic ms base of the static samples
 RT_ENDPOINT = "tcp/127.0.0.1:7449"
 SCENARIOS = ("normal", "all_unknown", "no_seg", "extrinsic_uncal",
              "tf_stale", "clock_reset", "dropout", "semantic_only",
-             "ground_withdrawn")
+             "ground_withdrawn", "velocity_unknown", "status_unknown",
+             "unlocalized_person")
 # src bits (11 S3.1B.1 v2.1): bit0 T, bit1 G, bit2 S, bit3 NEG
 SRC_T = 1
 SRC_G = 2
@@ -138,7 +139,10 @@ def profile_body(now: int, *, kind: str = "open", extrinsic: bool = True,
         "t_seg_mono_ms": (now - 30) if seg else None,   # TIME-3 / S3.1.11
         "z_pass_m": Z_PASS,
         "angle_min_rad": ANGLE_MIN, "angle_step_rad": ANGLE_STEP,
-        "n_bins": N_BINS, "range_max_m": RANGE_MAX, "blind_near_m": BLIND_NEAR,
+        "n_bins": N_BINS, "range_max_m": RANGE_MAX,
+        # 11 v2.3 row 1: a withdrawal frame has no verifiable ground, hence no
+        # measured near bound -- null, not the config floor nor last frame's.
+        "blind_near_m": None if kind == "ground_withdrawn" else BLIND_NEAR,
         "d_free": d_free, "d_block": d_block, "h_block": h_block,
         "src": src, "conf": conf,
         "terrain": [0] * N_BINS,                # v1: unknown (19 PD-13)
@@ -149,20 +153,31 @@ def profile_body(now: int, *, kind: str = "open", extrinsic: bool = True,
 def obj(track_id: int, class_name: str, cx: float, cy: float, *,
         r_near: float, velocity_xy=(0.0, 0.0), velocity_frame: str = "ego_removed",
         velocity_status: str = "static", confidence: float = 0.92,
-        semantic_status: str = "confirmed", now: int = T0) -> Dict[str, Any]:
+        semantic_status: str = "confirmed", now: int = T0,
+        unlocalized: bool = False) -> Dict[str, Any]:
+    """One 11 S3.1B.2 object. velocity_xy=None is the v2.3 row-2 shape (no
+    estimate: velocity_valid false, status warming_up/timestamp_gap);
+    unlocalized=True is the row-4 shape (four geometry fields AND velocity
+    null, class kept)."""
     """One tracked object: a small triangular ground hull around (cx, cy) in
     base_link (11 S3.1B.2: 3..12 CCW points, heights as an interval)."""
     hull = [[cx - 0.3, cy - 0.3], [cx + 0.3, cy - 0.3], [cx, cy + 0.3]]
-    return {
+    body = {
         "track_id": track_id, "class_name": class_name, "class_id": 0,
         "confidence": confidence, "semantic_status": semantic_status,
         "footprint_xy": hull, "z_min": 0.02, "z_max": 1.7, "r_near": r_near,
-        "velocity_xy": list(velocity_xy), "velocity_frame": velocity_frame,
-        "velocity_valid": velocity_frame == "ego_removed",
+        "velocity_xy": None if velocity_xy is None else list(velocity_xy),
+        "velocity_frame": velocity_frame,
+        "velocity_valid": velocity_frame == "ego_removed" and velocity_xy is not None,
         "velocity_status": velocity_status, "stable_frames": 40,
         "first_seen_mono_ms": now - 2000, "last_seen_mono_ms": now - 20,
         "depth_quality": "good",
     }
+    if unlocalized:
+        body.update({"footprint_xy": None, "z_min": None, "z_max": None, "r_near": None,
+                     "velocity_xy": None, "velocity_valid": False,
+                     "velocity_status": "warming_up"})
+    return body
 
 
 def objects_body(now: int, objects: List[Dict[str, Any]], *,
@@ -177,7 +192,7 @@ def objects_body(now: int, objects: List[Dict[str, Any]], *,
     }
 
 
-def status_body(now: int, *, extrinsic: bool = True, invalid_ratio: float = 0.05,
+def status_body(now: int, *, extrinsic: bool = True, invalid_ratio: Optional[float] = 0.05,
                 seg_available: bool = True, reasons=(), gap_max: float = 44.0,
                 t_publish: Optional[int] = None) -> Dict[str, Any]:
     return {
@@ -272,6 +287,27 @@ def build_scenarios(rid: str = "dev") -> Dict[str, Dict[str, Any]]:
                        status_body(T0 + k * 50, reasons=("ground_fit_fallback",
                                                          "ground_free_withdrawn")),
                        k + 1) for k in range(2)]}
+    out["velocity_unknown"] = {
+        "expect": "car at 2.5 m in the corridor with NO velocity estimate (v2.3 row 2): "
+                  "motion unknown -> never the static pile -> WAIT_DYNAMIC, vx == 0",
+        "ticks": [tick(T0 + k * 50, profile_body(T0 + k * 50),
+                       objects_body(T0 + k * 50, [obj(31, "car", 2.5, 0.0, r_near=2.3,
+                                                      velocity_xy=None,
+                                                      velocity_status="warming_up")]),
+                       status_body(T0 + k * 50), k + 1) for k in range(4)]}
+    out["status_unknown"] = {
+        "expect": "invalid_pixel_ratio null (v2.3 row 3): depth quality unknown -> "
+                  "RNS-I-2 cap, 0 < vx <= no_seg_speed_cap_mps, no failure",
+        "ticks": [tick(T0 + k * 50, profile_body(T0 + k * 50), objects_body(T0 + k * 50, []),
+                       status_body(T0 + k * 50, invalid_ratio=None), k + 1)
+                  for k in range(2)]}
+    out["unlocalized_person"] = {
+        "expect": "a person detected but not localizable (v2.3 row 4): not an empty scene -- "
+                  "objects_unlocalized audited, vx <= unlocalized_speed_cap_mps, no WAIT",
+        "ticks": [tick(T0 + k * 50, profile_body(T0 + k * 50),
+                       objects_body(T0 + k * 50, [obj(41, "person", 0.0, 0.0, r_near=0.0,
+                                                      unlocalized=True)]),
+                       status_body(T0 + k * 50), k + 1) for k in range(2)]}
     out["semantic_only"] = {
         "expect": "S-only block: grid UNKNOWN at 1.5 m ahead (never FREE), BLOCKED at 2.5 m; no failure",
         "ticks": [tick(T0 + k * 50, profile_body(T0 + k * 50, kind="semantic_only"),

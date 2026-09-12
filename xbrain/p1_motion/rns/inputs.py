@@ -78,7 +78,8 @@ class ProfileMsg:
     angle_step_rad: float
     n_bins: int
     range_max_m: float
-    blind_near_m: float
+    blind_near_m: Optional[float]   # None = no verifiable ground this frame (11 v2.3):
+                                    # then d_free is all None and no bin carries bit0
     z_pass_m: float
     t_seg_mono_ms: Optional[int]              # None = no T evidence this frame
     d_free: Tuple[Optional[float], ...] = ()  # per-bin; None = unobserved
@@ -101,15 +102,24 @@ class TrackedObject:
     class_id: int
     confidence: float
     semantic_status: str                       # confirmed | proxy
-    footprint_xy: Tuple[Tuple[float, float], ...]  # ground hull, CCW, 3<=N<=12
-    z_min: float
-    z_max: float
-    r_near: float
-    velocity_xy: Tuple[float, float]
+    # 11 v2.3: the four geometry fields are all present (localizable) or ALL
+    # None (detected but not localizable -- no depth, no independent geometry).
+    # An unlocalized object keeps class / confidence / status so the consumer
+    # can still say "something of that class is in view" (never an empty scene).
+    footprint_xy: Optional[Tuple[Tuple[float, float], ...]]  # ground hull, CCW, 3<=N<=12
+    z_min: Optional[float]
+    z_max: Optional[float]
+    r_near: Optional[float]
+    velocity_xy: Optional[Tuple[float, float]]  # None = no estimate (velocity_valid False)
     velocity_frame: str                        # ego_removed | raw
     velocity_valid: bool
     velocity_status: str
     stable_frames: int
+
+    @property
+    def localized(self) -> bool:
+        """Geometry present (11 v2.3 all-or-nothing rule)."""
+        return self.footprint_xy is not None
 
 
 @dataclass(frozen=True)
@@ -128,7 +138,8 @@ class StatusMsg:
     t_publish_mono_ms: int
     fps_depth: float
     fps_infer: float
-    invalid_pixel_ratio: float
+    invalid_pixel_ratio: Optional[float]      # None = no depth statistic this heartbeat
+                                              # (11 v2.3): depth quality UNKNOWN, RNS-I-2 caps
     extrinsic_calibrated: bool
     traversable_seg_available: bool
     degraded_reasons: Tuple[str, ...] = ()

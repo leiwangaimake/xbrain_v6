@@ -271,3 +271,52 @@ def test_intake_rejects_and_counts_bad_samples_keeping_last_good():
     st = inp.stats()
     assert st["profile"]["rejected"] == 2 and "PROF-1" in st["profile"]["last_error"]
     assert st["objects"]["rejected"] == 1
+
+
+# ---- 11 v2.3 legal nulls at the parser (r6) ---------------------------------------------
+
+def test_profile_blind_near_null_only_with_no_free_and_no_bit0():
+    """Row 1: blind_near_m null parses when every d_free is null and no bin has
+    bit0; a FREE bin or a bit0 under a null near bound is a fake -> reject.
+    mutant: drop the consistency check -> the fake parses -> red."""
+    body = profile_body(blind_near_m=None, d_free=[None] * N, src=[2] * N)
+    assert parse_profile(body).blind_near_m is None
+    with pytest.raises(PerceptionSchemaError):
+        parse_profile(profile_body(blind_near_m=None, src=[2] * N))          # d_free numbers
+    bad = profile_body(blind_near_m=None, d_free=[None] * N, src=[3] + [2] * (N - 1))
+    with pytest.raises(PerceptionSchemaError):
+        parse_profile(bad)
+
+
+def test_object_velocity_null_needs_invalid_flag_and_status():
+    """Row 2."""
+    ok = parse_objects(objects_body(objs=[object_body(
+        velocity_xy=None, velocity_valid=False, velocity_status="warming_up")]))
+    assert ok.objects[0].velocity_xy is None and ok.objects[0].localized
+    for kw in (dict(velocity_xy=None, velocity_valid=True, velocity_status="warming_up"),
+               dict(velocity_xy=None, velocity_valid=False, velocity_status="static")):
+        with pytest.raises(PerceptionSchemaError):
+            parse_objects(objects_body(objs=[object_body(**kw)]))
+    raw = parse_objects(objects_body(objs=[object_body(velocity_valid=False)]))
+    assert raw.objects[0].velocity_xy is not None and not raw.objects[0].velocity_valid
+
+
+def test_object_geometry_all_or_nothing():
+    """Row 4. mutant: accept a partial null set -> red."""
+    ok = parse_objects(objects_body(objs=[object_body(
+        footprint_xy=None, z_min=None, z_max=None, r_near=None, velocity_xy=None,
+        velocity_valid=False, velocity_status="timestamp_gap")]))
+    o = ok.objects[0]
+    assert not o.localized and o.r_near is None and o.class_name == "person"
+    with pytest.raises(PerceptionSchemaError):
+        parse_objects(objects_body(objs=[object_body(r_near=None)]))
+    with pytest.raises(PerceptionSchemaError):           # unlocalized with a velocity
+        parse_objects(objects_body(objs=[object_body(
+            footprint_xy=None, z_min=None, z_max=None, r_near=None)]))
+
+
+def test_status_invalid_ratio_null_is_legal():
+    """Row 3."""
+    assert parse_status(status_body(invalid_pixel_ratio=None)).invalid_pixel_ratio is None
+    with pytest.raises(PerceptionSchemaError):
+        parse_status(status_body(invalid_pixel_ratio="n/a"))

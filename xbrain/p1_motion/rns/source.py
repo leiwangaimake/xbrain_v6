@@ -127,6 +127,7 @@ class RnsSource:
         self._dup_count: dict = {"profile": 0, "objects": 0, "status": 0}
         self._extrinsic_ok = None           # None = no perception seen yet
         self._objects_lost = False          # T-52 tier, edge-audited
+        self._n_unlocalized = 0             # 11 v2.3 row 4, edge-audited
         self._grid: Optional[MemoryGrid] = None
         self._watchdog: Optional[ProgressWatchdog] = None
         self._wall: Optional[WallFollowState] = None
@@ -549,11 +550,9 @@ class RnsSource:
             else:
                 cor_end = target
             t_dropped = 0
+            n_unloc = 0
+            unloc_cap = False
             for obj in snap.objects.objects:
-                spd = usable_velocity(
-                    obj.velocity_frame,
-                    math.hypot(obj.velocity_xy[0], obj.velocity_xy[1]),
-                    cfg["perception"]["raw_velocity_policy"])
                 beh, allow_static = effective_behavior(
                     obj.class_name, obj.semantic_status, obj.confidence,
                     cfg["class_map"], cfg["perception"]["min_confidence"])
@@ -571,6 +570,25 @@ class RnsSource:
                     continue
                 # static-criterion dwell bookkeeping (20 S5.5): raw-refused
                 # speed (None) is conservatively treated as moving.
+                if not obj.localized:
+                    # 11 v2.3 row 4: detected but not localizable -- no geometry,
+                    # so no corridor / static-pile / stop-distance judgement is
+                    # possible. It is NOT an empty scene: something of a class we
+                    # would stop or avoid for is somewhere in view, so the tick is
+                    # capped (20 S5.1A v1.43) and the fact is audited on edge.
+                    n_unloc += 1
+                    unloc_cap = True
+                    continue
+                spd = None
+                if obj.velocity_valid and obj.velocity_xy is not None:
+                    spd = usable_velocity(
+                        obj.velocity_frame,
+                        math.hypot(obj.velocity_xy[0], obj.velocity_xy[1]),
+                        cfg["perception"]["raw_velocity_policy"])
+                # velocity_valid false / velocity_xy null (11 v2.3 row 2): the motion
+                # state is UNKNOWN -> spd None -> handled as moving below, never as
+                # the static pile. mutant: read velocity_xy regardless of
+                # velocity_valid -> a warming-up car parks itself -> red.
                 eff_spd = spd if spd is not None else 999.0
                 if eff_spd < dyn_cfg["v_static_thresh_mps"]:
                     t0 = self._slow_since.setdefault(obj.track_id, now)
@@ -614,6 +632,12 @@ class RnsSource:
             if t_dropped:
                 self.audit.append(AuditRecord(now, "objects_t_class_dropped",
                                               {"n": t_dropped}))
+            if n_unloc != self._n_unlocalized:
+                self.audit.append(AuditRecord(now, "objects_unlocalized",
+                                              {"n": n_unloc}))
+                self._n_unlocalized = n_unloc
+            if unloc_cap:
+                caps["unlocalized"] = cfg["perception"]["unlocalized_speed_cap_mps"]
             self._dyn_prev = (DynamicAction.STOP if stopped else
                               DynamicAction.SLOW if slowed else
                               DynamicAction.RUN)

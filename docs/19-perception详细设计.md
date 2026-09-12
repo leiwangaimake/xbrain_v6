@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 文档 | **perception 详细设计（第 19 册）** |
-| 版本 | **v1.6**（v1.0 从 0 重写 · 落地版 → v1.1 三遍核查 → v1.2 感知方对账修正 → v1.3 第三轮对账 → v1.4 W-8 / W-11 落地 → v1.5 第四轮：拟合回退有效条件 · 无深度 bin 语义注入 → **v1.6 第五轮：回退能力收窄为依据门控**；封面与 §18 变更记录同步） |
+| 版本 | **v1.7**（v1.0 从 0 重写 · 落地版 → v1.1 三遍核查 → v1.2 感知方对账修正 → v1.3 第三轮对账 → v1.4 W-8 / W-11 落地 → v1.5 第四轮：拟合回退有效条件 · 无深度 bin 语义注入 → v1.6 第五轮：回退能力收窄为依据门控 → **v1.7 第六轮：不可测数据的合法 `null` 生产规则**；封面与 §18 变更记录同步） |
 | 日期 | **2026-09-12** |
 | 状态 | ★★★ **可开工** —— 本版以「照此写代码」为验收标准 |
 | 进程 | `perception`（**C++17**，单进程；rclcpp 仅用于 TF / 命令订阅，感知数据链不经 ROS topic） |
@@ -188,7 +188,7 @@ for (v, u) 全分辨率:                       # 640x400, 不降采样 (PROF-3)
 | 边界 | 处置 |
 |---|---|
 | ★ `h_max` 的滞后 | `d_blk[i]` 在遍历中还会变小 ⇒ 高度在**逐 bin 后处理重算**（`obs` 紧凑表二次窗过滤），且**负障碍优先于正障碍高度**（§3.4 v1.2），🚫 不信遍历中的首值 |
-| ★ `blind_lo` | 逐帧取 `max(blind_near 配置下限, 本帧实测最近有效地面距离)`；发布字段 `blind_near_m` 用**本帧实测值**（时变，`20` RNS-I-5） |
+| ★ `blind_lo` | 逐帧取 `max(blind_near 配置下限, 本帧实测最近有效地面距离)`；发布字段 `blind_near_m` 用**本帧实测值**（时变，`20` RNS-I-5）。★★ **v1.7**：本帧**没有任何有效地面样本**（§3.2A 无依据撤回帧、成片 invalid）⇒ `blind_near_m = null`，全 bin `d_free = null`、bit0 全 0（`11` v2.3 行 Ⅰ）；🚫 发配置下限、🚫 发上一帧值 —— 二者都把「未观测」冒充「已观测到此处」 |
 | ★★ `mask_lookup(u, v)` | ★★ **v1.2 改为投影查表**：快线在原生深度系，mask 在彩色像面（交接快照实测二值 mask 1920×1080；★ **2026-09-11 起主输出 1280×800，mask 随之在 1280×800 像面**，投影查表只换该像面内参）⇒ 用出厂 depth↔color 内外参把该像素 3D 点投到彩色面取 mask 值（~15 flops，无遮挡 z-buffer，v1 接受 —— 误查风险被 `FREE = T ∧ G` 的 G 侧兜住并在此声明）。🚫 纯宽高比例缩放只在同一像面成立（感知方指正）。mask 取**原始可通行类分割**（`11` v1.9 T 通道取材行），槽带 `t_seg` |
 
 ### 3.3 ★★ T 证据与 PROF-5 腐蚀（在地面域做，🚫 不在像素域）
@@ -308,7 +308,8 @@ for i in bins:
 | `z_min` / `z_max` | 由 `size_3d` ＋ 质心换算 或 逐点统计 | ★ 必须是**区间实测**，🚫 质心 ± 半高冒充（横杆问题） |
 | `r_near` | 无（现只有中心距 `depth_m`） | ★★ **新增**：原点到凸包逐边最小距离，点在多边形内 = 0 |
 | `velocity_xy` ＋ `velocity_frame` | `velocity_3d` ＋ **未序列化的** `last_velocity_frame_has_odom_` | ★★★ 序列化该标志（G-4 第一步，一行级）；odom 到位后 ego 消除见 §4.2 |
-| `velocity_valid` / `velocity_status` | 同名（五值闭集，`11` v1.7 采纳） | 无 |
+| `velocity_valid` / `velocity_status` | 同名（五值闭集，`11` v1.7 采纳） | ★★ **v1.7**：估计器无估计（首次出现 / 窗口未满 / 时戳断档）⇒ `velocity_xy = null` ＋ `velocity_valid = false` ＋ status `warming_up` / `timestamp_gap`（`11` v2.3 行 Ⅱ）；有 raw 估计但不可用 ⇒ 数值 ＋ `velocity_valid = false`。🚫 用 `[0, 0]` 冒充实测零速 |
+| ★★★ 检出但不可定位（v1.7） | 无有效深度且无独立几何来源 | `footprint_xy / z_min / z_max / r_near` 四字段同时 `null`、`velocity_xy = null`、`velocity_valid = false`，目标**保留在列表内**（`11` v2.3 行 Ⅳ）；🚫 旧位置 / 失效平面图像框投影 / 假定尺寸补造距离；🚫 从列表删掉当作未检出（当帧列表含可定位与不可定位目标才是完整新结果） |
 | `depth_quality` | `depth_confidence` ＋ `depth_stat` 归档为 good/fair/poor | ★ 三档映射阈值进配置 |
 
 ### 4.2 ★ ego 消除（odom 到位后启用，之前恒 `raw`）
@@ -338,7 +339,8 @@ velocity_xy = (v_b.x, v_b.y);  velocity_frame = "ego_removed"
 | `fps_depth` / `fps_infer` | 各自 10 s 滑窗帧计数 / 10（★ v1.3：`fps_infer` 退为**统计字段**，验收口径改为逐次间隔分级门，见下行） |
 | ★★ `infer_gap_ms_p99` / `infer_gap_ms_max`<br>**（v1.3）** | `objects` 相邻**唯一新结果**的 `t_publish_mono_ms` 间隔（含未结束间隙 `now − t_publish[last]`）入 10 s 环形缓冲：P99（**二级门读数 ≤ 50 ms**）与最大值（**一级门读数 ≤ 100 ms**）。★ 唯一性按推理帧 `t_capture` 去重，重发 / 插值 / 心跳不计（`11` §3.1B.3 v2.1） |
 | `latency_ms_p50` / `p99` | 每帧样本 `t_publish − t_capture` 入 10 s 环形缓冲，nearest-rank 分位；★ 分别对快线（profile）与慢线（objects）各算一组，上线取**慢线组**（保守，且与 F-1 实测口径一致） |
-| `invalid_pixel_ratio` | `n_invalid / roi 像素总数`（§3.1 / §3.2）。★ 外参未标定 ⇒ ROI 退化为下半幅 ＋ `degraded_reasons` 记 `roi_fallback`（`11` §3.1B.3） |
+| `invalid_pixel_ratio` | `n_invalid / roi 像素总数`（§3.1 / §3.2）。★ 外参未标定 ⇒ ROI 退化为下半幅 ＋ `degraded_reasons` 记 `roi_fallback`（`11` §3.1B.3）。★★ **v1.7**：心跳窗（1 s）内**无已处理深度帧** ⇒ `null`（`11` v2.3 行 Ⅲ），🚫 沿用旧值 / 🚫 0 / 🚫 1；实收全 invalid 帧 ⇒ `1.0` 真值 |
+| ★ 分位数无样本（v1.7） | `latency_ms_p50/p99` · `infer_gap_ms_p99/max`：10 s 环形缓冲**无样本** ⇒ `null`（🚫 编造分位数）；有历史发布点时开放间隙 `now − t_publish[last]` 照算入 `infer_gap_ms_max`（🚫 借空窗隐藏断供） |
 | `ground_seg_level` | 沿用基底定义 |
 | `extrinsic_calibrated` | §7.3 的判定结果（🚫 不可手置） |
 | `traversable_seg_available` | 分割槽 10 s 内有有效更新 |
@@ -560,6 +562,10 @@ v0.1 裁定**原样沿用**：环回 RTSP **18083**（`127.0.0.1` only，NET-C9�
 | **A19-SEG-2**<br>**（v1.3 新增）** | mask 槽年龄 > `seg_max_age_ms` ⇒ 本帧 `t_seg = null`、bit0 全 0；≤ 上限 ⇒ 按 PROF-5 腐蚀 | ★ 去掉年龄判 ⇒ 5 s 旧 mask 仍产生 bit0 ⇒ 红 | 注入 |
 | **A19-FIT-1**<br>**（v1.3 新增）** | 地面拟合回退帧：`d_free ≤ dfree_cap_fallback_m` 且 reason 含 `ground_fit_fallback` | ★ 去掉封顶 ⇒ 回退帧 `d_free` 到量程 ⇒ 红；★ 只封顶不报 reason ⇒ 反向红 | 注入 ×2 |
 | **A19-FIT-2**<br>**（v1.6 改）** | 拟合回退 ＋ **依据齐全**（`Δh`、`Δtilt`、`e_align` 有效且 `e(cap) ≤ h_tol`）＋ 观测条件（箱体在 `dfree_cap` 内、在 FOV 内、有效像素 ≥ 阈）＋ 过顶条件（`h_est < z_pass_m`）⇒ 1.5 m 处 0.6 m 箱体 `d_block = 1.5`、`h_block ≈ 0.6`（真高只作真值比对）、`src` bit1 = 1；`d_free ≤ dfree_cap` | ★ 去掉 `e(r)` 进阈值 ⇒ 依据齐全时仍全撤 ⇒ 正向红；★ 依据齐全却把箱体撤掉 ⇒ 反向红 —— 成对 | 注入 ×2 |
+| **A19-NULL-1**<br>**（v1.7 新增）** | 无有效地面样本帧 ⇒ `blind_near_m = null`、全 bin `d_free = null`、bit0 全 0，S 阻挡仍在 | ★ 发配置下限 / 上一帧值 ⇒ 红；★ null 却留一格 FREE ⇒ 随包解析器拒收 ⇒ 红 | 注入 ×2 |
+| **A19-NULL-2**<br>**（v1.7 新增）** | 无速度估计目标 ⇒ `velocity_xy = null` ∧ `velocity_valid = false` ∧ status ∈ {`warming_up`, `timestamp_gap`} | ★ 发 `[0, 0]` ＋ `velocity_valid = true` ⇒ 红（消费侧会当静止） | 注入 ×1 |
+| **A19-NULL-3**<br>**（v1.7 新增）** | 心跳窗无深度帧 ⇒ `invalid_pixel_ratio = null`，心跳照发；无样本 ⇒ 分位数 null | ★ 沿用旧值 / 填 0 ⇒ 红；★ 停发心跳 ⇒ T-53 红 | 注入 ×2 |
+| **A19-NULL-4**<br>**（v1.7 新增）** | 检出但不可定位 ⇒ 目标保留、四几何字段 ＋ `velocity_xy` 全 null；随包消费断言：审计 `objects_unlocalized` ＋ 限速 | ★ 从列表删掉 ⇒ 消费侧当空场景全速 ⇒ 红；★ 只 null 掉 `r_near` ⇒ 拒收 ⇒ 红 | 注入 ×2 |
 | **A19-FIT-3**<br>**（v1.6 新增）** | 拟合回退 ＋ **依据缺失**（任一项 null / 过期）⇒ 全 bin `d_free = null`、bit0 = 0；箱体 `d_block / h_block = null`（🚫 伪造）；同帧一条独立有效的 S 阻挡（`0b0100`）仍在；reason 含 `ground_fit_fallback` ＋ `ground_free_withdrawn`；`src` bit1 按样本 | ★ 无依据仍给封顶 FREE ⇒ 红；★ 无依据仍给几何阻挡 ⇒ 红；★ 把 S 阻挡一并删掉 ⇒ 红 | 注入 ×3 |
 | **A19-SEM-2**<br>**（v1.5 新增）** | 整 bin invalid ＋ 满足条件的语义 footprint 2.5 m ⇒ `null / 2.5 / null / 0b0100`（`11` v2.2 样例行） | ★ 注入前要求 G = 1 ⇒ 无框玻璃门场景无阻挡 ⇒ 红；★ 注入后给 `d_free = blind_near`（当作已验证空区间）⇒ 反向红 | 金标 ×2 |
 | **A19-CFG-1** | 任一 §8.2 必填键置 `null` ⇒ 拒绝启动且报出该键路径（守 **PSC-2**） | ★★★ 给 `h_tol_m` 加代码默认值 ⇒ null 时照常启动 ⇒ 红 | 启动 |
@@ -631,6 +637,7 @@ A19-PROF-4 / A19-RATE-1 因此成对；A19-TIME-2 专杀「快线偷偷等慢线
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| ★ **v1.7**<br>**（第六轮对账）** | 2026-09-12 | ★ 答复感知方《r5 交付边界集中确认》（`perception-rns-reply-20260912-r6.md`）：四行合法 `null` 的生产规则 —— ① §3.2 `blind_lo`：无有效地面样本 ⇒ `blind_near_m = null`；② §4.1 无速度估计 ⇒ `velocity_xy = null` ＋ `velocity_valid = false`；检出但不可定位 ⇒ 四几何字段 ＋ 速度全 null、目标保留；③ §5.1 心跳窗无深度帧 ⇒ `invalid_pixel_ratio = null`，无样本 ⇒ 分位数 null；④ §14 A19-NULL-1～4。同批 `11` v2.3 / `20` v1.43 / 解析器与消费者 / W-11 三场景。 |
 | ★ **v1.6**<br>**（第五轮对账）** | 2026-09-12 | ★ 答复感知方《Q4 地面回退安全边界补充确认函》（`perception-rns-reply-20260912-r5.md`）：① §3.2A 回退分支改为**依据门控**（`e(r) = \|Δh\| + r·tan(Δtilt) + e_align`；放行 / 保留判据；任一依据缺失即整支收窄 = 感知方表逐行采纳；v1.5 的 5° 上界作废）；② §8.2 新键 `fallback_align_err_m`；③ §14 A19-FIT-2 改成对 ＋ A19-FIT-3；④ §17 PD-19（`state/chassis_motion.height_m` 白名单 ＋ `calib.body_height_m`）。同批 `20` v1.42 ＋ p1 宿主门改正（新鲜全 null 🚫 否决）。 |
 | ★ **v1.5**<br>**（第四轮对账）** | 2026-09-11 | ★ 答复感知方《第三轮技术口径确认》（`perception-rns-reply-20260911-r4.md`）：① §3.2A 先验平面支持 FREE 的两条有效条件（失败原因 = 内点不足 🚫 残差超限；IMU 姿态在标定包络内）＋ 配对断言 `cap × tan(tol) ≤ h_tol` ＋ 不满足时只撤回依赖平面的 FREE（`d_free` 全 null · `h_tol_eff(r)` 独立阻挡 · `ground_free_withdrawn`）＋ 路沿例；② §3.4A G = 0 bin 同样注入（`d_geom` 缺席按 ＋∞，无 FREE 不截断）；③ §8.2 四新键；④ §14 A19-FIT-2 / A19-SEM-2；⑤ §17 PD-18。同批 `11` v2.2 / `20` v1.40。 |
 | ★ **v1.4**<br>**（W-8 / W-11 落地）** | 2026-09-11 | ★ W-11 对手件交付（`scripts/dev/perception_sim.py` 七场景样例集 ＋ `tests/perception/test_consumer_contract.py` 消费判决对表 ＋ `scripts/dev/perception_rx_audit.py` 接收端记账）；W-8 的 `configs/perception.yaml` 骨架（§8.2 全键）＋ 产物形态 dev 样例；冻结线纳入登记 `20` #20-26。 |

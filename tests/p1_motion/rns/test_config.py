@@ -23,7 +23,9 @@ from xbrain.p1_motion.rns.config import (
 
 def _cfg(delta_s=0.4, person=None):
     m = {"rns": {"wall_follow": {"leave_progress_m": delta_s},
-                 "class_map": {}}}
+                 "class_map": {},
+                 # 11 v2.3 / 20 S5.1A: run_startup_assertions requires the cap key
+                 "perception": {"unlocalized_speed_cap_mps": 0.5}}}
     if person is not None:
         m["rns"]["class_map"]["person"] = person
     return m

@@ -65,13 +65,16 @@ def rtk_arrival_radius(tier: RtkTier, base_radius_m: float,
     return base_radius_m
 
 
-def health_speed_capped(invalid_pixel_ratio: float,
+def health_speed_capped(invalid_pixel_ratio: Optional[float],
                         invalid_ratio_limit: Optional[float]) -> bool:
     """RNS-I-2 / S3.1.8: invalid_pixel_ratio over the limit forces a speed cap --
     the only cover for "both semantic and geometry are blind" (glass/water where
     both channels say no obstacle). invalid_ratio_limit null -> conservatively
     capped (unusable threshold -> worst case, CLAUDE.md 3.1)."""
-    if invalid_ratio_limit is None:
+    # 11 v2.3 row 3: a null RATIO (no depth statistic this heartbeat) is the
+    # same direction -- quality unknown is capped, never read as healthy.
+    # mutant: return False on a null ratio -> a blind heartbeat drives -> red.
+    if invalid_ratio_limit is None or invalid_pixel_ratio is None:
         return True
     return invalid_pixel_ratio > invalid_ratio_limit
 

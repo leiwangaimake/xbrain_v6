@@ -136,3 +136,7 @@ def run_startup_assertions(cfg: Dict[str, Any], r_eff_m: float) -> None:
     assert_leave_progress_below_2r_eff(cfg, r_eff_m)
     assert_person_locked(cfg)
     assert_class_map_values(cfg)
+    # 11 v2.3 / 20 S5.1A v1.43: the cap for detected-but-unlocalizable objects
+    # is read on the first such object; refuse to start without it rather
+    # than KeyError on the first blind detection.
+    require(cfg, "rns.perception.unlocalized_speed_cap_mps")

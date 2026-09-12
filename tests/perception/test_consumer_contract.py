@@ -41,7 +41,8 @@ from typing import Optional, Tuple
 import pytest
 import yaml
 
-from xbrain.p1_motion.perception_src.three_keys import KEYS, parse_payload
+from xbrain.p1_motion.perception_src.three_keys import (KEYS, PerceptionSchemaError,
+                                                        parse_payload)
 from xbrain.p1_motion.rns.inputs import PerceptionSnapshot
 from xbrain.p1_motion.rns.route import Mission
 from xbrain.p1_motion.rns.source import RnsSource
@@ -232,3 +233,91 @@ def test_ground_withdrawn_is_unknown_not_a_stop():
                      health=HealthView(1.0, True, "patrol", "ok", 100), i_fix=1.0,
                      i_heading=1.0, heading_valid=True, estop=False, perception_dead=False)
     assert not g.veto and g.v_max_fwd == 2.0
+
+
+# ---- 11 v2.3 legal-null rows (r6): normal / legal unknown / fake, per row -------------
+
+def _obj_body(**kw):
+    """One wire object from the generator's helper, with overrides."""
+    sim = _sim()
+    body = sim.obj(51, kw.pop("class_name", "person"), 2.5, 0.0, r_near=kw.pop("r_near", 2.3), **kw)
+    return sim, body
+
+
+def test_velocity_unknown_is_not_the_static_pile():
+    """Row 2: a car with no estimate (velocity_xy null, valid false) must be
+    handled as motion-unknown -> dynamic rule -> STOP inside the corridor; a
+    consumer that reads [0, 0] would park it in the static pile and drive on.
+    mutant: use velocity_xy regardless of velocity_valid -> red."""
+    s, out = _run("velocity_unknown")
+    assert out is not None and out.vx.value == 0.0
+    assert s.nav_state() == NavState.WAIT_DYNAMIC and s.take_failure() is None
+    sim = _sim()
+    fake = sim.obj(52, "car", 2.5, 0.0, r_near=2.3, velocity_xy=None, velocity_status="warming_up")
+    fake["velocity_valid"] = True                      # null estimate claiming validity
+    with pytest.raises(PerceptionSchemaError):
+        parse_payload("objects", json.dumps(sim.wire("dev", 1, sim.objects_body(
+            sim.T0, [fake]))).encode())
+    fake2 = sim.obj(53, "car", 2.5, 0.0, r_near=2.3, velocity_xy=None, velocity_status="static")
+    with pytest.raises(PerceptionSchemaError):        # "static" is a verdict, not "no estimate"
+        parse_payload("objects", json.dumps(sim.wire("dev", 1, sim.objects_body(
+            sim.T0, [fake2]))).encode())
+
+
+def test_status_unknown_caps_speed_like_a_bad_ratio():
+    """Row 3: invalid_pixel_ratio null == depth quality unknown -> RNS-I-2 cap
+    (never read as healthy). mutant: health_speed_capped(None) -> False -> red."""
+    s, out = _run("status_unknown")
+    cap = _cfg()["rns"]["perception"]["no_seg_speed_cap_mps"]
+    assert out is not None and 0.0 < out.vx.value <= cap + 1e-9
+    assert s.take_failure() is None
+    sim = _sim()
+    for bad in ("unknown", 1.5, -0.1):
+        body = sim.status_body(sim.T0)
+        body["invalid_pixel_ratio"] = bad
+        with pytest.raises(PerceptionSchemaError):
+            parse_payload("status", json.dumps(sim.wire("dev", 1, body)).encode())
+
+
+def test_unlocalized_person_is_capped_and_audited_not_empty():
+    """Row 4: a detected-but-unlocalizable person keeps the scene non-empty:
+    audited, speed capped, no WAIT (no distance to wait on). mutant: skip
+    unlocalized objects silently -> vx like 'normal' and no audit -> red."""
+    s, out = _run("unlocalized_person")
+    cap = _cfg()["rns"]["perception"]["unlocalized_speed_cap_mps"]
+    assert out is not None and 0.0 < out.vx.value <= cap + 1e-9
+    assert s.nav_state() == NavState.FOLLOW and s.take_failure() is None
+    kinds = [r.kind for r in s.audit.drain()]
+    assert "objects_unlocalized" in kinds
+    _s2, normal = _run("normal")
+    assert normal.vx.value > out.vx.value              # not treated as an empty scene
+    sim = _sim()
+    partial = sim.obj(54, "person", 2.5, 0.0, r_near=2.3)
+    partial["r_near"] = None                            # geometry half-null = fabrication
+    with pytest.raises(PerceptionSchemaError):
+        parse_payload("objects", json.dumps(sim.wire("dev", 1, sim.objects_body(
+            sim.T0, [partial]))).encode())
+    velocitied = sim.obj(55, "person", 2.5, 0.0, r_near=2.3, unlocalized=True)
+    velocitied["velocity_xy"] = [0.3, 0.0]              # a velocity from nowhere
+    velocitied["velocity_valid"] = True
+    velocitied["velocity_status"] = "moving"
+    with pytest.raises(PerceptionSchemaError):
+        parse_payload("objects", json.dumps(sim.wire("dev", 1, sim.objects_body(
+            sim.T0, [velocitied]))).encode())
+
+
+def test_ground_withdrawn_carries_null_blind_near_and_rejects_fakes():
+    """Row 1: the withdrawal frame has no verifiable ground -> blind_near_m
+    null (not 0.59 / config floor / last frame). null is legal only with every
+    d_free null and no bit0. mutant: accept blind null with a FREE bin -> red."""
+    snap = _snapshot(_load("ground_withdrawn")["ticks"][-1])
+    assert snap.profile.blind_near_m is None
+    sim = _sim()
+    fake = sim.profile_body(sim.T0, kind="ground_withdrawn")
+    fake["d_free"][90] = 2.0                            # a FREE claim with no near bound
+    with pytest.raises(PerceptionSchemaError):
+        parse_payload("profile", json.dumps(sim.wire("dev", 1, fake)).encode())
+    fake2 = sim.profile_body(sim.T0, kind="ground_withdrawn")
+    fake2["src"][90] |= 0x1                             # bit0 without a verified interval
+    with pytest.raises(PerceptionSchemaError):
+        parse_payload("profile", json.dumps(sim.wire("dev", 1, fake2)).encode())

@@ -203,6 +203,7 @@ def parse_profile(body: Any) -> ProfileMsg:
     d_free = _num_or_null_array(b, "d_free", n)
     d_block = _num_or_null_array(b, "d_block", n)
     h_block = _num_or_null_array(b, "h_block", n)
+    src = _uint_array(b, "src", n, SRC_MAX)
     for i in range(n):
         df, db = d_free[i], d_block[i]
         if df is not None and df < 0:
@@ -210,6 +211,18 @@ def parse_profile(body: Any) -> ProfileMsg:
         if df is not None and db is not None and df > db:
             raise PerceptionSchemaError(
                 "PROF-1 violated at bin %d: d_free %.3f > d_block %.3f" % (i, df, db))
+    # 11 v2.3 row 1: blind_near_m null == "no verifiable ground this frame". It is
+    # legal ONLY with every d_free null and no bit0 anywhere -- a verified FREE
+    # interval needs its near bound; a number here (0.59, the config floor, last
+    # frame's value) would fake an observed range, so consistency is enforced.
+    blind = _num(b, "blind_near_m", allow_null=True, non_negative=True)
+    if blind is None:
+        if any(v is not None for v in d_free):
+            raise PerceptionSchemaError(
+                "blind_near_m null requires every d_free null (11 S3.1B.1 v2.3)")
+        if any(s & 0x1 for s in src):
+            raise PerceptionSchemaError(
+                "blind_near_m null with src bit0 set (no verified interval exists)")
     return ProfileMsg(
         t_capture_mono_ms=_int(b, "t_capture_mono_ms"),
         t_publish_mono_ms=_int(b, "t_publish_mono_ms"),
@@ -218,52 +231,93 @@ def parse_profile(body: Any) -> ProfileMsg:
         angle_step_rad=_num(b, "angle_step_rad"),
         n_bins=n,
         range_max_m=_num(b, "range_max_m", non_negative=True),
-        blind_near_m=_num(b, "blind_near_m", non_negative=True),
+        blind_near_m=blind,
         z_pass_m=_num(b, "z_pass_m", non_negative=True),
         t_seg_mono_ms=_int(b, "t_seg_mono_ms", allow_null=True),
         d_free=d_free, d_block=d_block, h_block=h_block,
-        src=_uint_array(b, "src", n, SRC_MAX),
+        src=src,
         conf=_uint_array(b, "conf", n, CONF_MAX),
     )
 
 
 def _parse_object(o: Any, idx: int) -> TrackedObject:
+    """One objects[] entry. 11 v2.3 nullability rules (r6):
+      * geometry (footprint_xy / z_min / z_max / r_near) is ALL present or ALL
+        null; all-null == detected but not localizable, kept on the wire so the
+        scene is never silently empty; a partial set is a fabrication candidate
+      * velocity_xy null == no estimate: it must SAY so (velocity_valid false,
+        status warming_up | timestamp_gap); null claiming validity is a fake
+      * an unlocalized object cannot carry a velocity (an estimate from nowhere)
+    mutant: accept a half-null geometry -> a fabricated r_near parses -> red."""
     if not isinstance(o, dict):
         raise PerceptionSchemaError("objects[%d] must be an object" % idx)
-    fp_raw = o.get("footprint_xy")
-    if not isinstance(fp_raw, list) or not FOOTPRINT_MIN <= len(fp_raw) <= FOOTPRINT_MAX:
-        # 11 S3.1B.2: a hull is 3..12 points; the producer must send the
-        # degenerate-case rectangle, never fewer points (nor an image box).
+    for k in ("footprint_xy", "z_min", "z_max", "r_near", "velocity_xy"):
+        if k not in o:
+            raise PerceptionSchemaError("objects[%d] missing field %r (11 S3.1B.2)" % (idx, k))
+    geo_null = [o[k] is None for k in ("footprint_xy", "z_min", "z_max", "r_near")]
+    # Fail-fast with the rule's own wording. Equivalent mutant (noted, not
+    # asserted): dropping this check changes nothing observable -- a partial
+    # null set still dies below in the per-field strict parse (_num / the
+    # footprint list check), only with a less helpful message.
+    if any(geo_null) and not all(geo_null):
         raise PerceptionSchemaError(
-            "objects[%d].footprint_xy must have %d..%d points"
-            % (idx, FOOTPRINT_MIN, FOOTPRINT_MAX))
-    fp: List[Tuple[float, float]] = []
-    for p in fp_raw:
-        if (not isinstance(p, (list, tuple)) or len(p) != 2
-                or not _is_num(p[0]) or not _is_num(p[1])):
-            raise PerceptionSchemaError("objects[%d].footprint_xy point malformed" % idx)
-        fp.append((float(p[0]), float(p[1])))
-    vel = o.get("velocity_xy")
-    if (not isinstance(vel, (list, tuple)) or len(vel) != 2
-            or not _is_num(vel[0]) or not _is_num(vel[1])):
-        raise PerceptionSchemaError("objects[%d].velocity_xy malformed" % idx)
-    z_min = _num(o, "z_min")
-    z_max = _num(o, "z_max")
-    if z_min is not None and z_max is not None and z_min > z_max:
-        raise PerceptionSchemaError("objects[%d]: z_min > z_max" % idx)
+            "objects[%d]: footprint_xy / z_min / z_max / r_near must be all present "
+            "or all null (11 S3.1B.2 v2.3)" % idx)
+    unlocalized = all(geo_null)
+    fp: Optional[Tuple[Tuple[float, float], ...]] = None
+    z_min: Optional[float] = None
+    z_max: Optional[float] = None
+    r_near: Optional[float] = None
+    if not unlocalized:
+        fp_raw = o["footprint_xy"]
+        if not isinstance(fp_raw, list) or not FOOTPRINT_MIN <= len(fp_raw) <= FOOTPRINT_MAX:
+            # 11 S3.1B.2: a hull is 3..12 points; the producer must send the
+            # degenerate-case rectangle, never fewer points (nor an image box).
+            raise PerceptionSchemaError(
+                "objects[%d].footprint_xy must have %d..%d points"
+                % (idx, FOOTPRINT_MIN, FOOTPRINT_MAX))
+        pts: List[Tuple[float, float]] = []
+        for pt in fp_raw:
+            if (not isinstance(pt, (list, tuple)) or len(pt) != 2
+                    or not _is_num(pt[0]) or not _is_num(pt[1])):
+                raise PerceptionSchemaError("objects[%d].footprint_xy point malformed" % idx)
+            pts.append((float(pt[0]), float(pt[1])))
+        fp = tuple(pts)
+        z_min = _num(o, "z_min")
+        z_max = _num(o, "z_max")
+        if z_min is not None and z_max is not None and z_min > z_max:
+            raise PerceptionSchemaError("objects[%d]: z_min > z_max" % idx)
+        r_near = _num(o, "r_near", non_negative=True)
+    valid = _bool(o, "velocity_valid")
+    status = _str_in(o, "velocity_status", VELOCITY_STATUS)
+    vel_raw = o["velocity_xy"]
+    vel: Optional[Tuple[float, float]] = None
+    if vel_raw is None:
+        if valid or status not in ("warming_up", "timestamp_gap"):
+            raise PerceptionSchemaError(
+                "objects[%d].velocity_xy null needs velocity_valid false and status "
+                "warming_up|timestamp_gap (11 S3.1B.2 v2.3)" % idx)
+    else:
+        if (not isinstance(vel_raw, (list, tuple)) or len(vel_raw) != 2
+                or not _is_num(vel_raw[0]) or not _is_num(vel_raw[1])):
+            raise PerceptionSchemaError("objects[%d].velocity_xy malformed" % idx)
+        if unlocalized:
+            raise PerceptionSchemaError(
+                "objects[%d]: unlocalized object cannot carry velocity_xy (11 v2.3)" % idx)
+        vel = (float(vel_raw[0]), float(vel_raw[1]))
     return TrackedObject(
         track_id=_int(o, "track_id"),
         class_name=_str_in(o, "class_name"),
         class_id=_int(o, "class_id"),
         confidence=_num(o, "confidence"),
         semantic_status=_str_in(o, "semantic_status", SEMANTIC_STATUS),
-        footprint_xy=tuple(fp),
+        footprint_xy=fp,
         z_min=z_min, z_max=z_max,
-        r_near=_num(o, "r_near", non_negative=True),
-        velocity_xy=(float(vel[0]), float(vel[1])),
+        r_near=r_near,
+        velocity_xy=vel,
         velocity_frame=_str_in(o, "velocity_frame", VELOCITY_FRAME),
-        velocity_valid=_bool(o, "velocity_valid"),
-        velocity_status=_str_in(o, "velocity_status", VELOCITY_STATUS),
+        velocity_valid=valid,
+        velocity_status=status,
         stable_frames=_int(o, "stable_frames"),
     )
 
@@ -293,7 +347,10 @@ def parse_status(body: Any) -> StatusMsg:
     reasons = b.get("degraded_reasons")
     if not isinstance(reasons, list) or not all(isinstance(r, str) for r in reasons):
         raise PerceptionSchemaError("degraded_reasons must be an array of strings")
-    ratio = _num(b, "invalid_pixel_ratio", non_negative=True)
+    # 11 v2.3 row 3: null == no depth statistic in this heartbeat window (not
+    # yet observed / stream broken). RNS treats it as quality UNKNOWN (capped),
+    # never as 0 (looks healthy) nor 1 (looks like a measured all-invalid frame).
+    ratio = _num(b, "invalid_pixel_ratio", allow_null=True, non_negative=True)
     if ratio is not None and ratio > 1.0:
         raise PerceptionSchemaError("invalid_pixel_ratio > 1.0")
     return StatusMsg(
