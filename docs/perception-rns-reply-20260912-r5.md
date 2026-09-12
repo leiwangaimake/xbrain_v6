@@ -107,9 +107,9 @@ FREE 回退放行     ⇔ 三项齐全 ∧ 各自新鲜 ∧ e(dfree_cap_fallback
 
 | 项 | 内容 |
 |---|---|
-| 真源提交 | 〈回填〉 |
-| `docs/19-perception详细设计.md` | 〈回填〉 |
-| `docs/20-RNS反应式导航软件系统详细设计.md` | 〈回填〉 |
-| `docs/11-接口契约.md`（本轮未改，随包） | 〈回填〉 |
-| `xbrain/p1_motion/nav/host_gate.py` | 〈回填〉 |
+| 真源提交 | **`64a6210`**（19 v1.6 ＋ 20 v1.42 ＋ 宿主门改正 ＋ 第九场景同批），tag **`perception-r5-20260912`**（指向其后继的附录回填提交） |
+| `docs/19-perception详细设计.md` | `e2cf1080d4222e66955fddadf90fcacf05a76c925423b72d261dc6a6c014cb06` |
+| `docs/20-RNS反应式导航软件系统详细设计.md` | `bda81369ee39c6482595bd4bd7b7b4085d75d4545494a91c404a124e1227b4d5` |
+| `docs/11-接口契约.md`（本轮未改，随包；与 r4 附录 B 同值） | `2b1106898f60d3bce3f59c748eebac670bad6f126b6b000787fcf9385a5edab7` |
+| `xbrain/p1_motion/nav/host_gate.py` | `dab42665f4a167e6112946ab6d95ef8d0e21248f394e9fff74da42e270b28e42` |
 | 其余文件 | 见包内 `SHA256SUMS` |
