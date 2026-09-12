@@ -194,7 +194,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
 
     Steps:
       1) Read resolved overlay from ctx (assertion A cached it) or fresh
-         via build_overlay(load_layers(config_root)) for isolated callers.
+         via build_overlay(load_layers(config_root, variant=ctx.get("config_variant"))) for isolated callers.
       2) Load L6 per-proc source trees via load_l6_files.
       3) For each proc in _L6_FILES:
            a) Compose {common: overlay.tree.common, **proc_source}
@@ -229,7 +229,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # constructing the full ctx-chain).
     overlay = ctx.get("overlay")
     if overlay is None:
-        overlay = build_overlay(load_layers(config_root))
+        overlay = build_overlay(load_layers(config_root, variant=ctx.get("config_variant")))
 
     # L4 (site) + L4b (calib) are picked by common.site_id + robot_id,
     # so they cannot be loaded by load_layers (chicken-and-egg -- the
@@ -273,7 +273,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # ---- Per-proc load ---------------------------------------------
     # load_l6_files silently skips missing files (assertion J vouches
     # for reachability; a proc without a yaml is 'not yet in tree').
-    l6_trees = load_l6_files(config_root)
+    l6_trees = load_l6_files(config_root, variant=ctx.get("config_variant"))
 
     processes: Dict[str, Dict[str, Any]] = {}
     written_names = []

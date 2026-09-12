@@ -203,7 +203,14 @@ common:
   # [不覆盖]下层, 所以这一行永远不会把现场标定结果洗掉.
   # TODO(11 U-01): 现场标定后在 sites/ 落值, 不在本文件落值.
   geo:
-    enu_origin: null
+    # 三个分量各自声明为 null 占位 (FV-ORG-3: L1 只许放三个 null 占位; 断言 A 对
+    # 这三条叶子路径豁免, 由 L4 sites/{site_id}.yaml 填值). NO 不能写成整节 null:
+    # 那时 A 报的键路径是 common.geo.enu_origin, 不在豁免表里, 即使站点文件齐全
+    # 也过不了冻结线 (2026-09-12 配置变体制落地时实测).
+    enu_origin:
+      lat: null
+      lon: null
+      alt: null
 
   # -- 标定 (10 S5.4.5 calib 行; 权威 11 S10.1.1 / S10.4) -------------------
   # 唯一定义处是 calib/{robot_id}.yaml (L4b), 每台车实测后填. 本文件只声明键位.

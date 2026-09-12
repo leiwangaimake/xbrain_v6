@@ -1,0 +1,146 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: common_sim.yaml
+# Brief: [sim] overlay for common.yaml -- dev / SIL stand-in values for the null leaves (10 S5.4.7)
+#
+# Description:
+#   [sim] variant of common.yaml (10 S5.4.7, user ruling 2026-09-12). An OVERLAY:
+#   only keys that are null in common.yaml may appear here, and only with values
+#   the simulation / dev stack needs to boot (they were the CHK-0-56 fixture's
+#   NULL_OVERRIDES until 2026-09-12). Applied by the freeze line ONLY with
+#   --variant sim; the production unit never selects it. A key that later lands a
+#   real value in common.yaml must be REMOVED here (tests/configs pins that),
+#   otherwise the stale sim value shadows the real one -- exactly how patrol
+#   1.5 m/s hid the landed 2.0 m/s on 2026-09-12.
+#   Layer rule: L1 may write any common.* except common.safety.* (ENV-2).
+#   motion.profiles.*.max_mps are NOT here: landed in common.yaml (2026-09-10).
+#   qos.bindings: the four-row dev set the CHK-0-56 fixture always used, NOT the
+#   25-row 11 S2.4.7 table -- that table's 'rt/** -> Q3_cmd' row is refused by
+#   freeze assertion F (a5_block_on_rt); the contract-vs-F conflict is a
+#   pre-existing item (tests/common/zenoh test_fixture_bindings_are_verbatim
+#   is red for the same reason), registered in NEXT.md, not settled here.
+#
+common:
+  audio:
+    bypass_keywords:
+    - 停止
+    - 急停
+    - 紧急停止
+  calib:
+    calib_rev: unspecified
+    frames: {}
+    gate: {}
+    lat_err_ref_m: 0.05
+  cmdset:
+    intents_file: /opt/xbrain_v6/configs/intents.yaml
+    missions_dir: /opt/xbrain_v6/configs/missions
+    query_templates: /opt/xbrain_v6/configs/query_templates.yaml
+    version: v1.0-sim
+  db:
+    fence_db: /opt/xbrain_v6/data/fence.db
+    geo_db: /opt/xbrain_v6/data/geo.db
+    pragma:
+      busy_timeout_ms: 5000
+      journal_mode: WAL
+      synchronous: FULL
+    record_db: /opt/xbrain_v6/data/record.db
+    task_db: /opt/xbrain_v6/data/task.db
+  fence:
+    margin_by_fix:
+      dgps: 1.5
+      rtk_fixed: 0.5
+      rtk_float: 1.0
+      single: 3.0
+    predict_dt_s: 0.4
+    soft_margin_min_m: 0.5
+  motion:
+    profiles:
+      obstacle_avoid:
+        require_sense_m: 0.3
+        sensors:
+        - lidar
+        - rgbd
+        up_enter_mps: 0.4
+      patrol:
+        require_sense_m: 1.0
+        sensors:
+        - lidar
+        - rgbd
+        - odom
+        up_enter_mps: 1.2
+  priority:
+    task:
+      auto: 30
+      charge: 80
+      cloud: 60
+      local: 40
+      wecom: 50
+  qos:
+    bindings:
+    - match: xbrain/*/cmd/estop
+      profile: Q0_safety
+    - match: xbrain/*/probe/estop/**
+      profile: Q0_safety
+    - match: xbrain/*/rt/**
+      profile: Q1_rt
+    - match: xbrain/*/**
+      profile: Q3_cmd
+    profiles:
+      Q0_safety:
+        congestion_control: drop
+        express: true
+        handler:
+          depth: 8
+          kind: ring
+        priority: real_time
+        reliability: reliable
+      Q1_rt:
+        congestion_control: drop
+        express: true
+        handler:
+          depth: 1
+          kind: ring
+        priority: real_time
+        reliability: best_effort
+      Q2_state:
+        congestion_control: drop
+        express: false
+        handler:
+          depth: 4
+          kind: ring
+        priority: data_high
+        reliability: reliable
+      Q3_cmd:
+        congestion_control: block
+        express: false
+        handler:
+          depth: 256
+          kind: fifo
+        priority: data
+        reliability: reliable
+      Q4_stream:
+        congestion_control: drop
+        express: false
+        handler:
+          depth: 0
+          kind: ring
+        priority: interactive_high
+        reliability: best_effort
+  recording:
+    fence_close_tol_m: 1.0
+    max_fences: 5
+    min_dist_m: 0.5
+    sample_hz: 1.0
+    session_timeout_s: 300.0
+  retention:
+    command_log_days: 180
+    event_days: 90
+    task_days: 30
+  robot_id: dev
+  site_id: sim
+  zenoh:
+    gen_connect: tcp/127.0.0.1:7447
+    gen_listen:
+    - tcp/127.0.0.1:7447
+    rt_endpoint: tcp/127.0.0.1:7449

@@ -105,31 +105,16 @@ def test_manifest_shape(resolved_configs):
 # ------------------------------------------------------------------
 
 def test_key_set_diff_empty(tmp_path):
-    """Build a fresh applied fixture, walk its yaml, walk prod yaml,
-    compare the leaf-key sets. Empty diff (both directions) required.
-
-    Rationale: the mutation (b) case (prod adds a new null key
-    without a fixture override) is caught by test_fixture_freeze_passes
-    -- unmapped nulls trip assertion A. This test additionally guards
-    against drift where a SHAPE mismatch (fixture has a key prod
-    lost) exists.
-
-    Test uses a fresh materialisation via the conftest helper's
-    private machinery to avoid coupling to the resolved_configs
-    fixture (which also runs freeze -- we only want the yaml copy)."""
-    from tests.fixtures.conftest import (
-        _copy_configs, _rewrite_yaml_with_overrides,
-    )
+    """The fixture tree IS the real tree (10 S5.4.7): nothing is synthesised
+    or rewritten any more, so the yaml file set and every file's leaf-key set
+    must be identical to configs/ (the two skeleton templates excepted).
+    mutant: write one extra key into a copied file -> red."""
+    from tests.fixtures.conftest import _copy_configs, _rewrite_yaml_with_overrides
     cfg_root = tmp_path / "configs"
     _copy_configs(cfg_root)
     _rewrite_yaml_with_overrides(cfg_root)
-
-    # Collect leaf keys per yaml file, in both trees, path-relative
-    # to the root so we compare per-file.
     def _collect(root: Path):
         keys = {}
-        # os.walk with followlinks=True so the safety/ symlink is
-        # descended into on the fixture side.
         for dirpath, _dirs, files in os.walk(root, followlinks=True):
             for name in files:
                 if not name.endswith(".yaml"):
@@ -138,46 +123,15 @@ def test_key_set_diff_empty(tmp_path):
                 rel = full.relative_to(root).as_posix()
                 keys[rel] = _load_yaml_key_set(full)
         return keys
-
     prod = _collect(Path(REAL_CONFIG_ROOT))
     fix = _collect(cfg_root)
-
     prod_files = set(prod) - {"sites/_skeleton.yaml", "calib/_skeleton.yaml"}
-    fix_files = set(fix)
-    assert prod_files == fix_files, (
+    assert prod_files == set(fix), (
         "yaml file set diverged: prod-only=%s, fix-only=%s"
-        % (sorted(prod_files - fix_files), sorted(fix_files - prod_files)))
-
-    # Coverage rule (CHK-0-56 ii-intent): every leaf key in prod must
-    # be COVERED by the fixture. A prod key foo.bar counts as covered
-    # if the fixture has that exact key OR any key foo.bar.* (the
-    # fixture filled a null placeholder with a sub-tree; that's the
-    # whole point of NULL_OVERRIDES). fixture-only keys are OK because
-    # they're the EXPANSION of prod's null placeholders.
-    #
-    # A future prod that adds a brand-new leaf without a matching
-    # override falls out this side of the check as an uncovered key.
-    def _covered(prod_key: str, fix_keys: set) -> bool:
-        if prod_key in fix_keys:
-            return True
-        prefix = prod_key + "."
-        return any(fk.startswith(prefix) for fk in fix_keys)
-
-    per_file_gaps = {}
+        % (sorted(prod_files - set(fix)), sorted(set(fix) - prod_files)))
     for rel in prod_files:
-        p = prod[rel]
-        f = fix[rel]
-        uncovered = sorted(k for k in p if not _covered(k, f))
-        if uncovered:
-            per_file_gaps[rel] = uncovered
-    assert not per_file_gaps, (
-        "prod leaf keys are not covered by fixture (mutation b):\n"
-        + "\n".join(f"  {rel}: {gaps}" for rel, gaps in per_file_gaps.items()))
+        assert prod[rel] == fix[rel], "fixture copy of %s differs from configs/" % rel
 
-
-# ------------------------------------------------------------------
-# Criterion iii -- real configs/ still refuses freeze
-# ------------------------------------------------------------------
 
 def test_real_configs_refuse_freeze(tmp_path):
     """CHK-0-56 (iii): the real /opt/xbrain_v6/configs/ MUST still

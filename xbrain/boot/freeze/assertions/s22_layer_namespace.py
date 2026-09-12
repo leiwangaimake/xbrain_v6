@@ -278,13 +278,13 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # first time it runs. Reusing it avoids a second disk read.
     layer_trees = ctx.get("layer_trees")
     if layer_trees is None:
-        layer_trees = load_layers(ctx["config_root"])
+        layer_trees = load_layers(ctx["config_root"], variant=ctx.get("config_variant"))
         # Cache back for later assertions to reuse.
         ctx["layer_trees"] = layer_trees
     # L6 trees: same override pattern.
     l6_trees = ctx.get("l6_trees")
     if l6_trees is None:
-        l6_trees = load_l6_files(ctx["config_root"])
+        l6_trees = load_l6_files(ctx["config_root"], variant=ctx.get("config_variant"))
         ctx["l6_trees"] = l6_trees
 
     # L1-L5 sweep. Every legitimate placement passes; every violation

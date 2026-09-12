@@ -274,8 +274,14 @@ def _write_l4b_lab_robot_calib(dst: Path) -> None:
 def _build_and_freeze(tmp_path: Path,
                         mutation_extras: Optional[Dict[str, Any]] = None,
                         safety_copy: bool = False,
-                        safety_mutations: Optional[Dict[str, Any]] = None
+                        safety_mutations: Optional[Dict[str, Any]] = None,
+                        variant: Optional[str] = "sim"
                         ) -> ResolvedConfigs:
+    """Copy the real tree and freeze it with the `sim` variant (10 S5.4.7):
+    the null leaves are filled by the committed configs/*_sim.yaml overlays,
+    sites/sim.yaml and calib/dev.yaml -- nothing is synthesised here any
+    more. mutation_extras still land on the copy so a mutation test can red
+    one leaf."""
     from xbrain.boot.freeze.pipeline import run_freeze
 
     cfg_root = tmp_path / "configs"
@@ -283,8 +289,6 @@ def _build_and_freeze(tmp_path: Path,
     resolved_root.mkdir(parents=True, exist_ok=True)
     _copy_configs(cfg_root, include_safety_as_copy=safety_copy)
     _rewrite_yaml_with_overrides(cfg_root, mutation_extras=mutation_extras)
-    _write_l4_lab_site(cfg_root)
-    _write_l4b_lab_robot_calib(cfg_root)
     if safety_copy and safety_mutations:
         _mutate_safety_file(cfg_root / "safety", safety_mutations)
 
@@ -297,6 +301,7 @@ def _build_and_freeze(tmp_path: Path,
             boot_id="fixture-boot-id",
             config_root=str(cfg_root),
             config_root_overridden=True,
+            config_variant=variant,
             common_digest="fixture-digest",
             config_rev="fixture-rev",
             resolved_root=str(resolved_root),

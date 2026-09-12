@@ -159,7 +159,7 @@ def _prepare(ctx: Dict[str, Any]):
         # -> N -> O so overlay is normally present already.
         # Local import matches the pattern in C/D/F/G -- avoids top-
         # level cycle risk if _layer_loader ever imports back through us.
-        layer_trees = load_layers(ctx["config_root"])
+        layer_trees = load_layers(ctx["config_root"], variant=ctx.get("config_variant"))
         overlay = build_overlay(layer_trees)
         # Populate ctx so a subsequent assertion (O after N) doesn't
         # re-load.
@@ -170,7 +170,7 @@ def _prepare(ctx: Dict[str, Any]):
     # We could cache under ctx['l6_trees'] to save the second read
     # between N and O runs; deferred until profiling shows it matters.
     # Two reads at ~1ms each is invisible next to the rest of freeze.
-    l6 = load_l6_files(ctx["config_root"])
+    l6 = load_l6_files(ctx["config_root"], variant=ctx.get("config_variant"))
     # Return both so callers pick what they need without another
     # helper call. run_n uses both; run_o uses only l6.
     return overlay.tree, l6

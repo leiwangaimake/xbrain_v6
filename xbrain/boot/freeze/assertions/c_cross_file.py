@@ -347,7 +347,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
         # config; layers imports assertions in some future refactor
         # could otherwise cycle back). Local scope keeps the risk low.
         from xbrain.boot.freeze.assertions._layer_loader import load_layers
-        layer_trees = load_layers(ctx["config_root"])
+        layer_trees = load_layers(ctx["config_root"], variant=ctx.get("config_variant"))
         overlay = build_overlay(layer_trees)
         # Populate ctx so a subsequent assertion in the same pass
         # doesn't re-load. Matches the pattern in A / M.
@@ -361,7 +361,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # We load fresh each time (cheap, and avoids stale-cache surprises
     # if a test tweaks L6 between run() calls). B loads L6 too but we
     # do not share -- B runs earlier and B's caching does not exist.
-    l6_trees = load_l6_files(ctx["config_root"])
+    l6_trees = load_l6_files(ctx["config_root"], variant=ctx.get("config_variant"))
 
     # Run every check. Each raises on first violation; order does not
     # affect correctness (checks are independent). Order is grouped

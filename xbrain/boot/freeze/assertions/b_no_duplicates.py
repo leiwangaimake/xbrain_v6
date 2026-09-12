@@ -100,7 +100,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # under root; missing ones are silently skipped (J already verified
     # reachability, so a missing L6 here means J passed a partial
     # tree, which is the caller's concern, not B's).
-    l6_trees = load_l6_files(root)
+    l6_trees = load_l6_files(root, variant=ctx.get("config_variant"))
 
     # Track files checked so success payload can name the count -- an
     # empty tree (no L6 files present, unusual but possible on a fresh

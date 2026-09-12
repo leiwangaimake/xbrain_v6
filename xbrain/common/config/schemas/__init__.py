@@ -51,7 +51,7 @@ artifacts only and holds no schema source.
 # star-safety __all__ below is explicit because a linter deletes an imported name
 # that is not used locally, and these are the package's public half, not dead
 # code -- the same argument the errors package makes for its __all__.
-from .registry import CONFIG_FILES, SCHEMAS, validate_config
+from .registry import CONFIG_FILES, SCHEMAS, validate_config, variant_base
 from .spec import (ANY, BOOLEAN, INTEGER, LIST, MAPPING, NUMBER, STRING,
                    TYPE_TOKENS, FieldSpec, Schema, SchemaError, anything,
                    boolean, integer, listof, mapping, num, text, validate_tree)
@@ -65,5 +65,5 @@ __all__ = [
     "NUMBER", "INTEGER", "STRING", "BOOLEAN", "MAPPING", "LIST", "ANY",
     "TYPE_TOKENS",
     # assets
-    "SCHEMAS", "CONFIG_FILES",
+    "SCHEMAS", "CONFIG_FILES", "variant_base",
 ]

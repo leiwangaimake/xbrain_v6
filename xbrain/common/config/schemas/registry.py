@@ -416,6 +416,22 @@ SCHEMAS: Dict[str, Schema] = _build_registry()
 #: self-test) read this rather than re-deriving the set.
 CONFIG_FILES: Tuple[str, ...] = tuple(sorted(SCHEMAS))
 
+#: 10 S5.4.7 variant suffixes (mirror of freeze _layer_loader.VARIANTS; kept
+#: a literal here so this package never imports the freeze line).
+VARIANT_SUFFIXES: Tuple[str, ...] = ("_sim",)
+
+
+def variant_base(rel_path: str) -> str:
+    """'models/m20s_sim.yaml' -> 'models/m20s.yaml'; a base path is returned
+    unchanged. The registry keys base paths only."""
+    stem, sep, ext = rel_path.rpartition(".yaml")
+    if sep != ".yaml" or ext:
+        return rel_path
+    for suf in VARIANT_SUFFIXES:
+        if stem.endswith(suf):
+            return stem[:-len(suf)] + ".yaml"
+    return rel_path
+
 
 def validate_config(rel_path: str, tree: Any) -> None:
     """Validate one parsed config file by its config-relative path.
@@ -431,7 +447,9 @@ def validate_config(rel_path: str, tree: Any) -> None:
     loader guards against. The coverage self-test keeps SCHEMAS and the on-disk
     file set in step so this raise does not fire in normal operation.
     """
-    schema = SCHEMAS.get(rel_path)
+    # 10 S5.4.7 variant overlays (X_sim.yaml) are validated by X.yaml's schema:
+    # same keys, same types, only the values differ.
+    schema = SCHEMAS.get(variant_base(rel_path))
     if schema is None:
         raise SchemaError(
             f"no CFG-10 schema registered for config file {rel_path!r}; "

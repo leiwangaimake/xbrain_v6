@@ -1,0 +1,46 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: dev.yaml
+# Brief: calibration file for robot_id 'dev' (L4b) -- synthetic, derivable numbers for the dev stack
+#
+# Description:
+#   L4b calibration for robot_id = dev (selected by common_sim.yaml, 10 S5.4.7).
+#   Every number is derivable arithmetic (sigma_trans 1 cm, sigma_rot 1 mrad,
+#   lat_err_ref_m = d_ref * sin(sigma_rot_max) + hypot(sigma_trans_xy) with
+#   d_ref = 10 m), NOT a bench measurement, so no operator mistakes it for a
+#   real calibration; complete enough for freeze assertions H-3 / H-4 and for
+#   p2_core.yaml's ${common.calib.frames.ptz_base.h_camera_m} to resolve.
+#   A real robot gets calib/<robot_id>.yaml from calib/_skeleton.yaml (CAL-13).
+#   L4b writes only common.calib.* (10 S5.4.3).
+#
+common:
+  calib:
+    calib_rev: 1
+    frames:
+      ptz_base:
+        accuracy:
+          method: fixture-synthetic
+          n_samples: 100
+          sigma_rot_rad:
+          - 0.001
+          - 0.001
+          - 0.001
+          sigma_trans_m:
+          - 0.01
+          - 0.01
+          - 0.01
+        h_camera_m: 0.42
+        rpy:
+        - 0.0
+        - 0.0
+        - 0.0
+        xyz:
+        - 0.0
+        - 0.0
+        - 0.42
+    gate:
+      reject_m: 0.35
+      warn_m: 0.17
+    lat_err_ref_m: 0.02414213395706437
+    robot_id: dev

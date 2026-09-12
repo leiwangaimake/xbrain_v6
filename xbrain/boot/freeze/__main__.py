@@ -43,6 +43,7 @@ import sys
 # pipeline.run_freeze is the framework entry; RESOLVED_ROOT_DEFAULT is the
 # tmpfs path CFG-BT-22 mounts. Importing them here keeps the wiring in
 # ONE place; a call site elsewhere would fork the arg-passing contract.
+from xbrain.boot.freeze.assertions._layer_loader import VARIANTS
 from xbrain.boot.freeze.pipeline import RESOLVED_ROOT_DEFAULT, run_freeze
 # boot_id read via the shared helper so the /proc path is the single source
 # of truth (also used by the resolved loader; two callers, one path).
@@ -81,6 +82,12 @@ def main() -> int:
     # --boot-id-path: exposed so tests can point at a fake proc entry
     # without touching /proc.
     ap.add_argument("--boot-id-path", default=BOOT_ID_PATH)
+    # 10 S5.4.7: an explicit variant overlays X_<variant>.yaml files. The
+    # production unit never sets it (SEC-11); the dev / sim materialiser does.
+    ap.add_argument("--variant", default=os.environ.get("XBRAIN_CONFIG_VARIANT"),
+                    choices=list(VARIANTS),
+                    help="config variant overlay (default: env XBRAIN_CONFIG_VARIANT "
+                         "or none = production)")
     args = ap.parse_args()   # exits nonzero on bad argv (argparse handles it)
 
     # Pre-check the config root even though this is J's territory. Two
@@ -115,6 +122,7 @@ def main() -> int:
             boot_id=boot_id,
             config_root=os.path.abspath(args.config_root),
             config_root_overridden=overridden,
+            config_variant=args.variant,
             common_digest="stub-not-yet-computed",   # CFG-CM-10 lands the real
             config_rev="stub-not-yet-computed",      # digest chain
             resolved_root=args.resolved_root,

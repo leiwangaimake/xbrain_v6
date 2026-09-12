@@ -181,7 +181,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     if overlay is None:
         # Fresh load path -- also populate ctx so a subsequent
         # assertion in the same pass doesn't re-read again.
-        layer_trees = load_layers(ctx["config_root"])
+        layer_trees = load_layers(ctx["config_root"], variant=ctx.get("config_variant"))
         overlay = build_overlay(layer_trees)
         ctx["overlay"] = overlay
         ctx["layer_trees"] = layer_trees

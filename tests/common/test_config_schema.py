@@ -37,7 +37,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, ROOT)
 
 from xbrain.common.config.schemas import (  # noqa: E402
-    ANY, BOOLEAN, INTEGER, NUMBER, STRING, TYPE_TOKENS, CONFIG_FILES, SCHEMAS,
+    ANY, BOOLEAN, INTEGER, NUMBER, STRING, TYPE_TOKENS, CONFIG_FILES, SCHEMAS, variant_base,
     Schema, SchemaError, anything, boolean, integer, listof, mapping, num,
     text, validate_config, validate_tree)
 from xbrain.common.config.schemas.spec import FieldSpec, _matches  # noqa: E402
@@ -83,7 +83,13 @@ def test_registry_covers_exactly_the_on_disk_config_set():
                                 "generated", "probe")]
         for name in files:
             if name.endswith(".yaml"):
-                on_disk.add(os.path.relpath(os.path.join(dirpath, name), CONFIG_ROOT))
+                rel = os.path.relpath(os.path.join(dirpath, name), CONFIG_ROOT)
+                # 10 S5.4.7: a variant overlay (X_sim.yaml) shares X.yaml's
+                # schema; it must have a registered base, and counts as it.
+                base = variant_base(rel)
+                if base != rel:
+                    assert base in SCHEMAS, "variant %s has no base schema %s" % (rel, base)
+                on_disk.add(base)
     assert set(CONFIG_FILES) == on_disk
     # 22 since 2026-09-12: rns.yaml + perception.yaml registered (20 #20-26).
     assert len(CONFIG_FILES) == 22
@@ -409,3 +415,12 @@ def test_schema_error_is_an_xbrain_error():
     """
     assert issubclass(SchemaError, XbrainError)   # one except clause covers both
     assert FieldSpec  # imported symbol is part of the asset surface, not dead
+
+
+def test_variant_base_maps_suffixed_files_to_their_schema():
+    """mutant: return rel_path unchanged -> m20s_sim.yaml has no schema and
+    the coverage set differs -> red."""
+    assert variant_base("models/m20s_sim.yaml") == "models/m20s.yaml"
+    assert variant_base("common_sim.yaml") == "common.yaml"
+    assert variant_base("p4_agent.yaml") == "p4_agent.yaml"
+    assert variant_base("sites/sim.yaml") == "sites/sim.yaml"

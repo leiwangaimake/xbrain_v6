@@ -1120,7 +1120,7 @@ def _load_quadruped(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # quadruped.yaml is L6 (per-process) and does not merge with the
     # common overlay tree. If the file is absent, load_l6_files
     # returns an empty dict and every _check_qcN skips its rule.
-    l6 = load_l6_files(ctx["config_root"])
+    l6 = load_l6_files(ctx["config_root"], variant=ctx.get("config_variant"))
     return l6.get("quadruped.yaml", {})
 
 

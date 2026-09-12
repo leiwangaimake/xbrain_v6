@@ -1,0 +1,30 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: p4_agent_sim.yaml
+# Brief: [sim] overlay for p4_agent.yaml -- placeholder gateway / grammar values so the dev stack boots (10 S5.4.7)
+#
+# Description:
+#   [sim] variant of p4_agent.yaml (10 S5.4.7): the L6 keys that are null in
+#   p4_agent.yaml, filled with values that are visibly NOT real (invalid hosts,
+#   'not-a-model') so nobody mistakes them for a deployment. Formerly the
+#   CHK-0-56 fixture's P4_L6_FILL. Selected with --variant sim only.
+#
+gateway:
+  asr:
+    model: fixture-not-a-model
+  gpu_token:
+    throttle_speed_mps: 0.987654
+  llm:
+    endpoint: http://not-a-real-host.invalid/v1/chat/completions
+  tts:
+    base_url: http://not-a-real-host.invalid
+    model: fixture-not-a-model
+    path: /fixture
+    response_format: fixture
+    speed: 0.987654
+    stream: false
+    timeout_s: 5.0
+    voice: fixture-not-a-voice
+grammar:
+  max_enum_items: 7

@@ -9,7 +9,7 @@ Description:
 Assertions A and M both need the same input: L1~L4b layer trees read
 from the config root, ready to feed build_overlay(). Rather than each
 assertion reimplement the read + parse, this module owns the read side
-once. Callers can either invoke load_layers(root) themselves, or read
+once. Callers can either invoke load_layers(root, variant=ctx.get("config_variant")) themselves, or read
 ctx["layer_trees"] (populated by assertion A the first time it runs).
 
 Scope for CFG-FZ-3 (assertions A + M):
@@ -69,7 +69,8 @@ per module, so a bug in one is localised.
 # missing PyYAML surfaces at import time (early in bring-up) rather
 # than inside load_layers where an unrelated read error would mask it.
 import os
-from typing import Any, Dict, List, Tuple
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -89,6 +90,52 @@ _LAYER_SOURCES = (
     ("L2", "dir", "models"),
     ("L3", "dir", "safety"),
 )
+
+# ---- config variants (10 S5.4.7, user ruling 2026-09-12) ---------------------
+#: Closed set of variant names. A file X_<variant>.yaml beside X.yaml is an
+#: OVERLAY on X.yaml, applied only when the freeze runs with that variant
+#: selected (--variant / XBRAIN_CONFIG_VARIANT); never in production. Only
+#: "sim" exists today ("test" is added the day a test needs values that
+#: differ from sim -- not before, CLAUDE.md 9.3).
+VARIANTS: Tuple[str, ...] = ("sim",)
+#: L3 safety never takes a variant (10 S5.4.6 ENV-2: the safety layer is
+#: same-source on every machine, in every run).
+_NO_VARIANT_LAYERS = frozenset({"L3"})
+_VARIANT_RE = re.compile(r"^(?P<base>.+)_(?P<variant>%s)\.yaml$" % "|".join(VARIANTS))
+
+
+def variant_of(filename: str) -> Optional[str]:
+    """'m20s_sim.yaml' -> 'sim'; 'm20s.yaml' -> None. Basename only."""
+    m = _VARIANT_RE.match(os.path.basename(filename))
+    return m.group("variant") if m else None
+
+
+def variant_sibling(path: str, variant: str) -> str:
+    """'.../m20s.yaml' + 'sim' -> '.../m20s_sim.yaml'. An unknown variant
+    name is a closed-set violation (CLAUDE.md 3.5), never a silent no-op."""
+    if variant not in VARIANTS:
+        raise XbrainError(E_CONFIG_INVALID,
+                          "config variant %r not in %s" % (variant, list(VARIANTS)),
+                          {"kind": "config_variant_unknown", "variant": variant})
+    if not path.endswith(".yaml"):
+        raise AssertionError("variant_sibling needs a .yaml path, got %r" % path)
+    return path[:-len(".yaml")] + "_%s.yaml" % variant
+
+
+def _with_variant(base_path: str, tree: Dict[str, Any],
+                  variant: Optional[str]) -> Dict[str, Any]:
+    """Overlay X_<variant>.yaml (if present) on the tree read from X.yaml.
+    deep_merge, the variant winning per leaf -- the same rule the layers use.
+    mutant: return `tree` untouched -> the sim overlay never applies and the
+    dev freeze refuses on the nulls -> tests/configs/test_config_variants red."""
+    if variant is None:
+        return tree
+    sib = variant_sibling(base_path, variant)
+    if not os.path.isfile(sib):
+        return tree
+    from xbrain.common.config.merge import deep_merge   # local to avoid cycle
+    return deep_merge(tree, _read_yaml(sib))
+
 
 
 def _read_yaml(path: str) -> Dict[str, Any]:
@@ -123,8 +170,12 @@ def _read_yaml(path: str) -> Dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def _read_dir(dir_path: str) -> Dict[str, Any]:
-    """Read every *.yaml in dir_path, deep-merge them in name order.
+def _read_dir(dir_path: str, variant: Optional[str] = None,
+              allow_variant: bool = True) -> Dict[str, Any]:
+    """Read every BASE *.yaml in dir_path, deep-merge them in name order.
+    Variant-suffixed files (X_sim.yaml) are never part of the plain walk;
+    with `variant` set they overlay their base X.yaml (10 S5.4.7), and
+    with allow_variant False (the safety layer) their presence is refused.
 
     Returns {} if the directory is missing or empty. Order is
     lexicographic on filename -- this is arbitrary but stable, and
@@ -148,13 +199,31 @@ def _read_dir(dir_path: str) -> Dict[str, Any]:
         # assertion by adding those nulls to the tree.
         if name.startswith("_"):
             continue
-        one = _read_yaml(os.path.join(dir_path, name))
+        if variant_of(name) is not None:
+            if not allow_variant:
+                # a variant file in safety/ is a defect, not a silent skip:
+                # someone tried to give the safety layer a sim face (ENV-2).
+                raise XbrainError(
+                    E_CONFIG_INVALID,
+                    "variant file %s is not allowed in %s (10 S5.4.7: the "
+                    "safety layer takes no variant)" % (name, dir_path),
+                    {"kind": "config_variant_in_safety",
+                     "path": os.path.join(dir_path, name)})
+            continue
+        full = os.path.join(dir_path, name)
+        one = _read_yaml(full)
+        if allow_variant:
+            one = _with_variant(full, one, variant)
         merged = deep_merge(merged, one)
     return merged
 
 
-def load_layers(config_root: str) -> Dict[str, Dict[str, Any]]:
+def load_layers(config_root: str,
+                variant: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
     """Read L1~L3 layer files from config_root; return {name: tree}.
+    `variant` (10 S5.4.7) overlays X_<variant>.yaml on each base file of L1
+    and L2; L3 (safety) never (ENV-2). None = production: variant files on
+    disk are ignored entirely.
 
     L4/L4b are NOT included -- they require site_id/robot_id which are
     values inside the tree we're loading, and picking them here would
@@ -182,12 +251,14 @@ def load_layers(config_root: str) -> Dict[str, Dict[str, Any]]:
         # config_root itself may be relative when called from a test
         # (tmp_path is absolute anyway, but keep the code shape general).
         full = os.path.join(config_root, frag)
+        allow = name not in _NO_VARIANT_LAYERS
         if kind == "file":
-            # File case: single YAML doc -> a top-level dict.
-            trees[name] = _read_yaml(full)
+            # File case: single YAML doc -> a top-level dict (+ variant overlay).
+            tree = _read_yaml(full)
+            trees[name] = _with_variant(full, tree, variant) if allow else tree
         elif kind == "dir":
-            # Dir case: multiple YAML files, deep-merged.
-            trees[name] = _read_dir(full)
+            # Dir case: multiple YAML files, deep-merged (variants per base file).
+            trees[name] = _read_dir(full, variant=variant, allow_variant=allow)
         else:
             # Defensive: unexpected kind = construction bug in this
             # module, not a runtime config issue -- so plain AssertionError.
@@ -224,8 +295,10 @@ _L6_FILES: Tuple[str, ...] = (
 )
 
 
-def load_l6_files(config_root: str) -> Dict[str, Dict[str, Any]]:
-    """Read each L6 process config; return {basename: tree}. Missing
+def load_l6_files(config_root: str,
+                  variant: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+    """Read each L6 process config (+ its X_<variant>.yaml overlay when a
+    variant is selected, 10 S5.4.7); return {basename: tree}. Missing
     files are silently skipped (assertion J already checked stat-able
     reachability, so a missing file here would mean J passed a partial
     tree -- caller decides how to handle that)."""
@@ -233,7 +306,7 @@ def load_l6_files(config_root: str) -> Dict[str, Dict[str, Any]]:
     for name in _L6_FILES:
         full = os.path.join(config_root, name)
         if os.path.isfile(full):
-            trees[name] = _read_yaml(full)
+            trees[name] = _with_variant(full, _read_yaml(full), variant)
     return trees
 
 

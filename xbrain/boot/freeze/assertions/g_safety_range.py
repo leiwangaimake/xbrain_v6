@@ -494,7 +494,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     overlay = ctx.get("overlay")
     if overlay is None:
         # Fresh load path -- for isolated unit tests that skip A.
-        layer_trees = load_layers(ctx["config_root"])
+        layer_trees = load_layers(ctx["config_root"], variant=ctx.get("config_variant"))
         overlay = build_overlay(layer_trees)
         # Populate ctx so downstream assertions in the same pass
         # do not re-load.

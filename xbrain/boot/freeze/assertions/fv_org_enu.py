@@ -247,7 +247,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     overlay = ctx.get("overlay")
     if overlay is None:
         # Fresh load path -- same pattern as C/D/F/G/N/O.
-        layer_trees = load_layers(root)
+        layer_trees = load_layers(root, variant=ctx.get("config_variant"))
         overlay = build_overlay(layer_trees)
         ctx["overlay"] = overlay
         ctx["layer_trees"] = layer_trees
@@ -297,7 +297,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # in one dict {basename: tree}.
     # Same reader B and other assertions use -- ensures consistent
     # missing-file behaviour.
-    l6_trees = load_l6_files(root)
+    l6_trees = load_l6_files(root, variant=ctx.get("config_variant"))
 
     # ---- FV-ORG-3: L1 shape + L2/L4b/L6 must-not-carry --------------
     # L1: enu_origin can only be null placeholders; ANY real value = red.

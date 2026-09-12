@@ -1,0 +1,27 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: m20s_sim.yaml
+# Brief: [sim] overlay for models/m20s.yaml -- stand-in chassis limits until V-01 lands (10 S5.4.7)
+#
+# Description:
+#   [sim] variant of models/m20s.yaml (10 S5.4.7). Fills ONLY the spec keys that
+#   are null in m20s.yaml (V-01: vendor has no measured max_vy / max_wz / accel /
+#   decel yet) with values the SIL and the dev stack run on. max_vx_mps is NOT
+#   here: landed 2.0 in m20s.yaml (2026-09-10) and the real value must never be
+#   shadowed by a sim one. Selected by the freeze line with --variant sim only;
+#   the real robot boots on m20s.yaml alone and refuses while these are null.
+#   Layer rule (10 S5.4.3): L2 may write common.spec.* and common.motion.* only.
+#
+common:
+  spec:
+    max_accel_mps2: 1.5
+    max_decel_mps2: 2.5
+    max_vy_mps: 0.5
+    max_wz_radps: 1.2
+    odom:
+      yaw_drift_dps: 0.1
+    terrain:
+      max_gap_m: 0.2
+      max_slope_deg: 30.0
+      max_step_height_m: 0.15

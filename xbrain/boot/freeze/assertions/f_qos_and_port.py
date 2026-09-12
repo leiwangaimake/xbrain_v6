@@ -328,7 +328,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
         # so downstream assertions in the same pass do not re-read.
         # Local import matches the pattern in C/D -- avoids potential
         # cycle if _layer_loader ever imports back through us.
-        layer_trees = load_layers(ctx["config_root"])
+        layer_trees = load_layers(ctx["config_root"], variant=ctx.get("config_variant"))
         overlay = build_overlay(layer_trees)
         ctx["overlay"] = overlay
         ctx["layer_trees"] = layer_trees

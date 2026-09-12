@@ -1,0 +1,20 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: sim.yaml
+# Brief: site file for the simulation site 'sim' (L4) -- the ENU origin the SIL and the dev stack share
+#
+# Description:
+#   L4 site layer for site_id = sim (selected by common_sim.yaml, 10 S5.4.7).
+#   The ENU origin is an arbitrary Shanghai point: the SIL world is metric
+#   about it and p1 projects routes / poses with the same origin, so the value
+#   itself only has to be shared, not surveyed. NOT a real site: a deployment
+#   creates sites/<site_id>.yaml from sites/_skeleton.yaml (11 U-01).
+#   Namespace allowed at L4: common.geo.*, common.site.*, common.retention.*.
+#
+common:
+  geo:
+    enu_origin:
+      alt: 4.0
+      lat: 31.2304
+      lon: 121.4737

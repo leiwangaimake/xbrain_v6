@@ -144,7 +144,7 @@ def _prepare(ctx: Dict[str, Any]):
     if overlay is None:
         # Fresh load path (unit-test convenience).
         # Local import matches C/D/F/G/N/O/FV-ORG pattern.
-        layer_trees = load_layers(ctx["config_root"])
+        layer_trees = load_layers(ctx["config_root"], variant=ctx.get("config_variant"))
         overlay = build_overlay(layer_trees)
         # Populate ctx for downstream assertions in the same pass.
         ctx["overlay"] = overlay
@@ -152,7 +152,7 @@ def _prepare(ctx: Dict[str, Any]):
     # L6 fresh -- both operands of C-6 live in p1_motion.yaml (L6).
     # Cheap read (~1ms); not cached in ctx because callers rarely
     # need it twice in the same pass.
-    l6 = load_l6_files(ctx["config_root"])
+    l6 = load_l6_files(ctx["config_root"], variant=ctx.get("config_variant"))
     return overlay.tree, l6
 
 

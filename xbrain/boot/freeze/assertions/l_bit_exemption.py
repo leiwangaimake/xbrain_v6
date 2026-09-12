@@ -290,7 +290,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # Both lists live in p2_core.yaml under bit.quick. Reading L6
     # raw (not the overlay) because p2_core.yaml is process-specific
     # (L6 layer per 10 S5.4) and never merged into the shared tree.
-    l6 = load_l6_files(root)
+    l6 = load_l6_files(root, variant=ctx.get("config_variant"))
     # p2 = {} default tolerates a truncated checkout without
     # p2_core.yaml; the two _get calls below then return the [] we
     # pass as default.

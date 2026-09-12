@@ -116,6 +116,7 @@ SNAPSHOT_PROCESSES = (
 
 def build_manifest(*, boot_id: str, config_root: str,
                    config_root_overridden: bool,
+                   config_variant: Optional[str] = None,
                    common_digest: str, config_rev: str,
                    calib_rev: str,
                    layers: list,
@@ -133,6 +134,9 @@ def build_manifest(*, boot_id: str, config_root: str,
         "boot_id": boot_id,                       # gate: matches /proc's boot_id
         "config_root": config_root,               # absolute path used
         "config_root_overridden": config_root_overridden,   # XBRAIN_CONFIG_DIR set
+        # 10 S5.4.7: which X_<variant>.yaml overlays fed this freeze; null in
+        # production (SEC-11 checks it, like config_root_overridden).
+        "config_variant": config_variant,
         "common_digest": common_digest,           # canonical hash of common.* leaves
         "config_rev": config_rev,                 # CFG-41 overall digest
         "calib_rev": calib_rev,                   # extrinsics rev (or unspecified)
@@ -181,6 +185,7 @@ def run_assertions(context: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[s
 def run_freeze(*, boot_id: str, config_root: str,
                config_root_overridden: bool,
                common_digest: str, config_rev: str,
+               config_variant: Optional[str] = None,
                calib_rev: str = "unspecified",
                layers: Optional[list] = None,
                processes: Optional[Mapping[str, Mapping[str, Any]]] = None,
@@ -213,6 +218,7 @@ def run_freeze(*, boot_id: str, config_root: str,
     ctx = dict(context) if context is not None else {}
     ctx.setdefault("config_root", config_root)
     ctx.setdefault("config_root_overridden", config_root_overridden)
+    ctx.setdefault("config_variant", config_variant)
     # CFG-FZ-18 (materialise) writes per-proc yamls to resolved_root and
     # populates ctx['processes'] so the entries land in MANIFEST.processes
     # below. resolved_root has to reach the runner via ctx because
@@ -232,6 +238,7 @@ def run_freeze(*, boot_id: str, config_root: str,
         boot_id=boot_id,
         config_root=config_root,
         config_root_overridden=config_root_overridden,
+        config_variant=config_variant,
         common_digest=common_digest,
         config_rev=config_rev,
         calib_rev=calib_rev,

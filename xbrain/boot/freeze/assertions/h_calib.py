@@ -605,7 +605,7 @@ def _load_calib_and_robot_id(ctx: Dict[str, Any]) -> tuple:
         return calib_raw, common_rid
     # Fresh-load path: read L1 for common.robot_id.
     root = ctx["config_root"]
-    layers = load_layers(root)
+    layers = load_layers(root, variant=ctx.get("config_variant"))
     l1 = layers.get("L1", {})
     if common_rid is None:
         common_rid = _get(l1, "common.robot_id")

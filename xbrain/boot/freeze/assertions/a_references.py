@@ -113,7 +113,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # load_layers itself may raise XbrainError(E_CONFIG_INVALID) on a
     # YAML parse failure -- propagate as-is; there's no better wrapping
     # we could do here.
-    layer_trees = load_layers(root)
+    layer_trees = load_layers(root, variant=ctx.get("config_variant"))
 
     # ---- Merge via build_overlay -------------------------------------
     # build_overlay runs namespace checks (L2 not writing common.safety,

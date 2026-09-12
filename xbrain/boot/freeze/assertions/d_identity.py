@@ -252,7 +252,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
         # Fresh load + build_overlay for the isolated call path;
         # the unit-test convenience path exercises this.
         from xbrain.boot.freeze.assertions._layer_loader import load_layers
-        layer_trees = load_layers(root)
+        layer_trees = load_layers(root, variant=ctx.get("config_variant"))
         overlay = build_overlay(layer_trees)
         # Populate ctx for downstream assertions in the same pass.
         ctx["overlay"] = overlay

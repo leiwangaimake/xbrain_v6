@@ -241,6 +241,10 @@ def _scan_configs(configs_root: Path, guarded: Dict[str, str]
     """Return list of (yaml_path, key_path, debt_id, value) hits."""
     hits: List[Tuple[str, str, str, object]] = []
     for yaml_path in sorted(configs_root.rglob("*.yaml")):
+        # 10 S5.4.7: X_sim.yaml is the SIM overlay, allowed to fill a guarded
+        # key; the guard is about the real-robot file X.yaml only.
+        if yaml_path.name.endswith("_sim.yaml"):
+            continue
         try:
             tree = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError):
