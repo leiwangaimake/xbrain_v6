@@ -3,13 +3,13 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_batch_b.py
-Brief: MOT-PM-16..25 batch B tests (odom + path + relative_move + nav2 + teleop + config)
+Brief: MOT-PM-16..25 batch B tests (odom + path + nav2 + teleop + config)
 
 Description:
 Ten modules landed as P1 batch B. Each covers a single MOT-PM item;
 tests focus on the spec's named variants: pose_assembly PS-4 byte-
 for-byte identity, path_follow LP-3a loops=0 no auto-arrive,
-relative_move wire enum vs internal enum split, nav2 double-gate
+nav2 double-gate (the MOT-PM-18 relative_move executor tests left with the module)
 PG-2, teleop TL-1/TL-2 estop-before-normalize, cloud teleop vy
 reject + link-down zero, target_oriented no-default schema,
 hello_ack version mismatch refusal, config forbidden alias.
@@ -35,10 +35,6 @@ from xbrain.p1_motion.path.path_follow import (
 )
 from xbrain.p1_motion.path.pose_assembly import (
     MotionSnapshot, to_cmd_vel_gate, to_pose_motion,
-)
-from xbrain.p1_motion.path.relative_move import (
-    ABORT_REASONS, RelativeMoveError, WIRE_STATE_MAP,
-    TrapezoidProfile, _InternalState, to_wire_state, validate_abort_reason,
 )
 from xbrain.p1_motion.path.target_oriented import (
     SchemaError, TargetOrientedParams, compute_face_target,
@@ -96,30 +92,9 @@ def test_target_none_when_arrived():
     assert pure_pursuit_target(st, cfg, 0, 0) is None
 
 
-# --- MOT-PM-18 relative_move enum split ---
-
-def test_wire_enum_is_lowercase():
-    """Serialised state names MUST be 5-value lowercase; UPPERCASE
-    internal names must never leak out."""
-    for s in _InternalState:
-        wire = to_wire_state(s)
-        assert wire.islower()
-        assert wire in {"accepted", "running", "arrived", "aborted", "timeout"}
-
-
-def test_abort_reason_closed_set_enforced():
-    for r in ABORT_REASONS:
-        validate_abort_reason(r)   # must not raise
-    with pytest.raises(RelativeMoveError):
-        validate_abort_reason("custom_reason_that_isnt_registered")
-
-
-def test_trapezoid_triangular_when_short():
-    p = TrapezoidProfile(v_max_mps=2.0, a_max_mps2=1.0, d_target_m=1.0)
-    t_accel, t_cruise, t_decel = p.phase_lengths()
-    # d_accel = 2 -> triangular; t_cruise == 0.
-    assert t_cruise == 0.0
-
+# --- MOT-PM-18 relative_move executor: removed 2026-09-13 (dead since #20-9; the
+# relmove path is nav/relmove_intake.py + RNS goto, abort_reason seven values in
+# nav/report_map.py, 11 S9.3.2A.6) ---
 
 # --- MOT-PM-19 nav2 double-gate PG-2 ---
 
