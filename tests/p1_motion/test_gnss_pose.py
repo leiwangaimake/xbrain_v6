@@ -16,6 +16,8 @@ fix_type is exactly the silent default 3.1 forbids.
 
 from __future__ import annotations
 
+import time
+
 from xbrain.p1_motion.path import gnss_pose
 
 
@@ -110,3 +112,12 @@ def test_stamp_envelope_shape():
     assert env["src"] == "p1_motion"
     assert env["ts_sync"] is False
     assert env["data"]["heading_valid"] is False
+    # 11 S3.0: ts / mono are seconds (float64), not the milliseconds this
+    # stamper wrote until 2026-09-13 -- a consumer ageing per S3.0 would have
+    # read a 5 s old pose as 5000 s old.
+    assert isinstance(env["mono"], float) and abs(env["mono"] - time.monotonic()) < 1.0
+    assert isinstance(env["ts"], float) and abs(env["ts"] - time.time()) < 1.0
+    assert env["boot"] == "abc12345"
+    bare = gnss_pose.stamp_envelope({"x": 1}, rid="m20s", boot="", seq=1,
+                                    src="p1_motion", ts_sync=True)
+    assert "boot" not in bare and "mono" not in bare       # CLK-C4: the pair rides together

@@ -32,6 +32,8 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, Optional
 
+from xbrain.common.envelope.envelope import Envelope, encode
+
 
 # i_fix by fix_type (11 S3.2.1 / S4.5): the speed-gate quality factor. rtk_fixed
 # full trust, rtk_float 0.4, everything else 0 (no autonomous motion). Derived
@@ -114,17 +116,18 @@ def mirror_clock(clock_status: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 def stamp_envelope(data: Dict[str, Any], *, rid: str, boot: str, seq: int,
                    src: str, ts_sync: bool) -> Dict[str, Any]:
-    """Wrap `data` in the 11 S3.0 envelope. ts is wall ms (align/log only); mono is
-    steady ms (CLK-C1). ts_sync is the copied ClockStatus.sync (CLK-A2), never a
-    local judgement."""
-    return {
-        "v": 1,
-        "rid": rid,
-        "ts": int(time.time() * 1000.0),          # WALL-CLOCK-OK(align/log)
-        "mono": int(time.monotonic() * 1000.0),   # CLK-C1 monotonic
-        "boot": boot,
-        "seq": seq,
-        "src": src,
-        "ts_sync": ts_sync,
-        "data": data,
-    }
+    """Wrap `data` in the 11 S3.0 envelope through the common encoder: ts and
+    mono are SECONDS (float64), as S3.0 says and as every P7.2 key already
+    does. Until 2026-09-13 this stamped milliseconds (integer) on state/pose /
+    state/clock / state/fence -- a consumer decoding per S3.0 would have aged
+    a 5 s old pose as 5000 s. boot rides with mono (CLK-C4; an empty boot is
+    omitted with it rather than written as ""). ts_sync is the copied
+    ClockStatus.sync (CLK-A2), never a local judgement.
+    mutant: stamp mono in milliseconds again -> test_stamp_envelope_shape red."""
+    env = Envelope(v=1, rid=rid,
+                   ts=time.time(),                    # WALL-CLOCK-OK(align/log)
+                   # CLK-C1 monotonic seconds; CLK-C4: without a boot id there is
+                   # no domain for mono, so the pair is omitted together.
+                   mono=time.monotonic() if boot else None,
+                   boot=boot or None, seq=seq, src=src, ts_sync=ts_sync, data=data)
+    return encode(env)
