@@ -19,16 +19,22 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p1_motion.nav.health_factor import HealthView
+from xbrain.p1_motion.gate.speed_gate import f_speed_gate
 from xbrain.p1_motion.nav.host_gate import (apply_gate, attribute, compute_gate,
                                             forward_d_free)
 
 pytestmark = pytest.mark.no_device
 
+
+def _fs(d):
+    """the tests still think in clearances: table lookup, None stays None."""
+    return None if d is None else f_speed_gate(d)
+
 OK = HealthView(1.0, True, "patrol", "ok", 100)
 
 
 def _gate(**kw):
-    args = dict(v_nom_mps=2.0, spec_max_vx_mps=2.0, f_free_mps=6.0, health=OK,
+    args = dict(v_nom_mps=2.0, spec_max_vx_mps=2.0, free_space_mps=_fs(6.0), health=OK,
                 i_fix=1.0, i_heading=1.0, heading_valid=True, estop=False,
                 perception_dead=False)
     args.update(kw)
@@ -80,7 +86,7 @@ def test_attribution_matches_11_s34_example():
 
 
 def test_free_space_dominates_when_f_cuts():
-    g = _gate(f_free_mps=2.0)          # f = 0.5 < profile/spec 2.0
+    g = _gate(free_space_mps=_fs(2.0))          # f = 0.5 < profile/spec 2.0
     assert g.v_max_fwd == pytest.approx(0.5)
     limiter, all_ = attribute(g, 1.0)
     assert limiter == "free_space" and all_ == ("free_space",)
@@ -102,7 +108,7 @@ def test_i_factor_attributes_to_smaller_of_fix_and_heading():
 def test_f_caps_forward_only_reverse_and_lateral_use_free_ceiling():
     """front blocked (f = 0) must not pin a backup or the body-shield vy.
     mutant: clamp vx < 0 with v_max_fwd -> the backup dies -> red."""
-    g = _gate(f_free_mps=1.0, v_nom_mps=1.0)
+    g = _gate(free_space_mps=_fs(1.0), v_nom_mps=1.0)
     assert g.v_max_fwd == 0.0 and g.v_max_free == 1.0
     assert apply_gate(g, 0.8, 0.0, 0.0, True) == (0.0, 0.0, 0.0)
     assert apply_gate(g, -0.3, 0.2, 0.4, True) == (-0.3, 0.2, 0.4)
@@ -118,7 +124,7 @@ def test_max_profile_downgrade_is_attributed_to_health():
     """11 S3.6 max_profile == obstacle_avoid: the tier cap is a HEALTH cut
     (11 S9.6.5 row 3), not a profile cut. mutant: keep the tied term named
     profile -> red."""
-    g = compute_gate(v_nom_mps=0.5, spec_max_vx_mps=2.0, f_free_mps=6.0, health=OK,
+    g = compute_gate(v_nom_mps=0.5, spec_max_vx_mps=2.0, free_space_mps=_fs(6.0), health=OK,
                      i_fix=1.0, i_heading=1.0, heading_valid=True, estop=False,
                      perception_dead=False, profile_downgraded=True)
     assert g.v_max_fwd == pytest.approx(0.5)
@@ -140,8 +146,8 @@ def test_fresh_unknown_forward_is_not_a_veto():
     """19 S3.2A v1.6 withdrawal frame / blind sector: fresh profile, forward
     all null -> UNKNOWN, not dead. No f term; the ceiling is profile/spec x h
     x i and the RNS candidate's own UNKNOWN cap governs (20 S4.1 / S8.1A).
-    mutant: veto when f_free_mps is None -> red."""
-    g = _gate(f_free_mps=None)
+    mutant: veto when free_space_mps is None -> red."""
+    g = _gate(free_space_mps=_fs(None))
     assert not g.veto and g.v_max_fwd == pytest.approx(2.0) and g.v_max_free == pytest.approx(2.0)
     assert attribute(g, 0.5) == ("none", ())
     assert apply_gate(g, 0.5, 0.0, 0.2, True) == (0.5, 0.0, 0.2)

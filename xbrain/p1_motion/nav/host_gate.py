@@ -61,7 +61,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from xbrain.common.enums import GATE_LIMITER
-from xbrain.p1_motion.gate.speed_gate import f_speed_gate
 from xbrain.p1_motion.nav.health_factor import HealthView
 
 #: forward sector for f(d_free): bins within this many of centre (SIL host:
@@ -108,7 +107,7 @@ def _veto(limiter: str) -> GateResult:
 
 
 def compute_gate(*, v_nom_mps: float, spec_max_vx_mps: float,
-                 f_free_mps: Optional[float], health: HealthView,
+                 free_space_mps: Optional[float], health: HealthView,
                  i_fix: Optional[float], i_heading: Optional[float],
                  heading_valid: bool, estop: bool,
                  perception_dead: bool,
@@ -118,8 +117,11 @@ def compute_gate(*, v_nom_mps: float, spec_max_vx_mps: float,
     formula with per-term deltas for attribution.
     mutant: drop the perception_dead veto -> a robot with no perception frame
     ever drives on the bare follow spine -> test_perception_dead_is_a_veto
-    red. mutant: veto on f_free_mps is None as well -> a fresh withdrawal
-    frame stops the robot -> test_fresh_unknown_forward_is_not_a_veto red."""
+    red. mutant: veto on free_space_mps is None as well -> a fresh withdrawal
+    frame stops the robot -> test_fresh_unknown_forward_is_not_a_veto red.
+    free_space_mps is the f term already passed through the 12 S6.2 band
+    hysteresis (gate/speed_gate.BandHysteresis, owned by NavTick), None when
+    the forward clearance is unknown this tick."""
     if estop:
         return _veto("estop")
     if not health.allow_motion:
@@ -140,8 +142,8 @@ def compute_gate(*, v_nom_mps: float, spec_max_vx_mps: float,
     # already carries the UNKNOWN-share cap (unk_g_min x v_nom, 20 S8.1A) and
     # the memory grid; vetoing here would turn every ground-fit fallback frame
     # (19 S3.2A v1.6 withdrawal) into a stop, against the r4 Q4.2 ruling.
-    if f_free_mps is not None:
-        terms["free_space"] = f_speed_gate(f_free_mps)
+    if free_space_mps is not None:
+        terms["free_space"] = float(free_space_mps)
     v_lin = min(terms.values())
     v_lin_free = min(terms["profile"], terms["spec"])
     # delta of the min term(s): what the next-larger term would have allowed.

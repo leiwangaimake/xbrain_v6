@@ -46,7 +46,7 @@ def _stack():
     cfg = copy.deepcopy(_CFG)
     rns = RnsSource(cfg=cfg, r_eff_m=0.5)
     src = RnsAvoidSource(rns, cfg["rns"])
-    tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, wz_max_rps=1.2,
+    tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=1.2,
                    spec_max_vx_mps=2.0, holonomic=True)
     return src, tick
 
@@ -160,7 +160,7 @@ def test_health_never_and_no_fix_are_vetoes():
 def test_ctor_refuses_unset_limits():
     src, _ = _stack()
     with pytest.raises(NavTickConfigError):
-        NavTick(src, P1Arbiter(), v_nom_mps=1.0, wz_max_rps=None,
+        NavTick(src, P1Arbiter(), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=None,
                 spec_max_vx_mps=2.0, holonomic=True)
 
 
@@ -208,7 +208,7 @@ def test_max_profile_obstacle_avoid_caps_the_nominal():
     """11 S3.6 max_profile: with the tier table the nominal drops to 0.5 and
     the gate names health. mutant: ignore max_profile -> vx above 0.5 -> red."""
     src, _ = _stack()
-    tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, wz_max_rps=1.2,
+    tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=1.2,
                    spec_max_vx_mps=2.0, holonomic=True, v_obstacle_avoid_mps=0.5)
     _goto(src, 5000)
     oa = HealthView(1.0, True, "obstacle_avoid", "ok", 100)

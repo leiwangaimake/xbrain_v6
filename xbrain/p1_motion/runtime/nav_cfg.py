@@ -46,6 +46,8 @@ class NavConfigError(ValueError):
 class NavConfig:
     frame: LocalFrame
     fence: FenceConstants          # 12 S7 clip constants (p1 fence.* refs, 11 S9A.6 M-01)
+    speed_up_hold_ms: int          # 12 S6.7 T_up (speed_gate.hysteresis.speed_up_hold_s, in ms)
+    d_up_margin_m: float           # 12 S6.2 rise margin (speed_gate.hysteresis.d_up_margin_m)
     max_vx_mps: float
     max_wz_radps: float
     holonomic: bool
@@ -136,9 +138,12 @@ def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) ->
             v_profile_max_mps=v_nom, teleop_cap_degraded_mps=v_oa)
     except FenceClipError as exc:
         raise NavConfigError(str(exc)) from exc
+    hold_s = _pos(p1_tree, "speed_gate.hysteresis.speed_up_hold_s")
     return NavConfig(
         frame=frame,
         fence=fence,
+        speed_up_hold_ms=int(round(hold_s * 1000.0)),
+        d_up_margin_m=_pos(p1_tree, "speed_gate.hysteresis.d_up_margin_m"),
         max_vx_mps=_pos(p1_tree, "nav.max_vx_mps"),
         max_wz_radps=_pos(p1_tree, "nav.max_wz_radps"),
         holonomic=_bool(p1_tree, "nav.holonomic"),

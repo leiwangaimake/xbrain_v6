@@ -54,7 +54,7 @@ def _stack(with_fence=True):
     cfg = copy.deepcopy(_CFG)
     rns = RnsSource(cfg=cfg, r_eff_m=0.5)
     src = RnsAvoidSource(rns, cfg["rns"])
-    tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, wz_max_rps=1.2,
+    tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=1.2,
                    spec_max_vx_mps=2.0, holonomic=True,
                    fence_consts=FC if with_fence else None)
     goal = translate_relative_move(

@@ -167,6 +167,8 @@ class NavRuntime:
                              wz_max_rps=cfg.max_wz_radps,
                              spec_max_vx_mps=cfg.max_vx_mps,
                              holonomic=cfg.holonomic,
+                             speed_up_hold_ms=cfg.speed_up_hold_ms,
+                             d_up_margin_m=cfg.d_up_margin_m,
                              v_obstacle_avoid_mps=cfg.v_obstacle_avoid_mps,
                              fence_consts=cfg.fence)
         self._host = MissionHost(self._src, relmove_limits=cfg.relmove,

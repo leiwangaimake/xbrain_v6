@@ -17,7 +17,8 @@ order:
   4  behaviour sources rns_avoid.compute(ctx) when it holds the slot
   5  arbitration       P1Arbiter: rns_avoid (900) vs hold (100); TR-RNS-1 and
                        estop are SUSPENSION edges on the source, not priorities
-  6  gate clip         host_gate.apply_gate (vx > 0 by f; vx < 0 / vy without f)
+  6  gate clip         host_gate.apply_gate (vx > 0 by f; vx < 0 / vy without f);
+                       f carries the 12 S6.2 band hysteresis (BandHysteresis)
   9  output            NavOutput; the wiring serialises 11 S3.4 and publishes
 
 Suspension (20 RNS-M-7 / 12 S4.2c.5 TR-RNS-1): estop latched OR a local teleop
@@ -48,6 +49,7 @@ from typing import Any, Optional, Tuple
 
 from xbrain.p1_motion.ctrl_loop import CtrlState
 from xbrain.p1_motion.freshness.degradation import CAM_THRESH, Freshness, classify
+from xbrain.p1_motion.gate.speed_gate import BandHysteresis, SpeedGateError
 from xbrain.p1_motion.nav.health_factor import HealthView
 from xbrain.p1_motion.fence.clip import (CompiledFence, FenceConstants, FenceEval,
                                          evaluate)
@@ -131,10 +133,18 @@ class NavTick:
 
     def __init__(self, source: RnsAvoidSource, arbiter: P1Arbiter, *,
                  v_nom_mps: Any, wz_max_rps: Any, spec_max_vx_mps: Any,
-                 holonomic: bool, v_obstacle_avoid_mps: Any = None,
+                 holonomic: bool, speed_up_hold_ms: Any, d_up_margin_m: Any,
+                 v_obstacle_avoid_mps: Any = None,
                  fence_consts: Optional[FenceConstants] = None) -> None:
         self._src = source
         self._arb = arbiter
+        # 12 S6.2 / S6.7 band hysteresis on the f term (U54: rise to 2.0 needs
+        # 3.5 m for 3 s, drop is instant). Both numbers come from the resolved
+        # snapshot (speed_gate.hysteresis.*); a null leaf refuses here.
+        try:
+            self._hyst = BandHysteresis(speed_up_hold_ms, d_up_margin_m)
+        except SpeedGateError as exc:
+            raise NavTickConfigError(str(exc)) from exc
         # 12 S2.2 step 7 runs only when the resolved fence constants exist
         # (nav_cfg builds them, refusing on any null leaf); None is the
         # unit-test stack, never a production shape (main_wiring always
@@ -209,9 +219,12 @@ class NavTick:
                 source = BehaviorSource.RNS_AVOID.value
         profile = inp.perception.profile if inp.perception is not None else None
         f_free = forward_d_free(profile.d_free) if profile is not None else None
+        # the f term with its rise hysteresis (12 S6.2 table): the clearance
+        # feeds the band memory every tick, the gate takes the band's speed.
+        f_mps = self._hyst.update(f_free, now)
         gate = compute_gate(
             v_nom_mps=v_nom, spec_max_vx_mps=self._spec_vx,
-            f_free_mps=f_free, health=inp.health, i_fix=inp.i_fix,
+            free_space_mps=f_mps, health=inp.health, i_fix=inp.i_fix,
             i_heading=inp.i_heading, heading_valid=inp.heading_valid,
             estop=inp.estop, perception_dead=(fresh is Freshness.FAILED),
             profile_downgraded=downgraded)

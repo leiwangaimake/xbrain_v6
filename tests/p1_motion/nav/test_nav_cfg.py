@@ -33,6 +33,7 @@ P1 = {
     "fence": {"brake_k": 1.5, "brake_a_mps2": 2.5, "t_lat_s": 0.4, "soft_margin_min_m": 2.0,
               "predict_dt_s": 0.45, "margin_by_fix": {"rtk_fixed": 0.3, "rtk_float": 1.0},
               "projection_iters": 3},
+    "speed_gate": {"hysteresis": {"speed_up_hold_s": 3.0, "d_up_margin_m": 0.5}},
 }
 RNS = {"rns": {"route": {"search_window": 30}, "geometry": {"r_eff_m": 0.5}}}
 
@@ -46,6 +47,7 @@ def test_complete_tree_builds():
     # the degraded teleop cap (11 S3.2.1 / U54), the table by fix type.
     assert c.fence.brake_k == 1.5 and c.fence.v_profile_max_mps == 1.5
     assert c.fence.teleop_cap_degraded_mps == 0.5 and c.fence.margin_by_fix["rtk_float"] == 1.0
+    assert c.speed_up_hold_ms == 3000 and c.d_up_margin_m == 0.5     # 12 S6.7 T_up in ms
 
 
 @pytest.mark.parametrize("dotted", [
@@ -53,6 +55,7 @@ def test_complete_tree_builds():
     "nav.v_nom_mps", "relative_move.max_distance_m", "relative_move.abort_on_obstacle",
     "timeouts_ms.gnss", "timeouts_ms.health_dead",
     "fence.brake_k", "fence.t_lat_s", "fence.margin_by_fix.rtk_fixed", "fence.projection_iters",
+    "speed_gate.hysteresis.speed_up_hold_s", "speed_gate.hysteresis.d_up_margin_m",
 ])
 def test_null_leaf_refused_by_name(dotted):
     """mutant: treat a missing leaf as None instead of raising -> red."""

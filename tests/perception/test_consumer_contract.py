@@ -229,7 +229,7 @@ def test_ground_withdrawn_is_unknown_not_a_stop():
     assert snap.profile.src[90] & 0b0100 and snap.profile.d_block[90] == 2.5
     assert forward_d_free(snap.profile.d_free) is None
     g = compute_gate(v_nom_mps=2.0, spec_max_vx_mps=2.0,
-                     f_free_mps=forward_d_free(snap.profile.d_free),
+                     free_space_mps=None,   # forward clearance unknown (asserted above): no f term
                      health=HealthView(1.0, True, "patrol", "ok", 100), i_fix=1.0,
                      i_heading=1.0, heading_valid=True, estop=False, perception_dead=False)
     assert not g.veto and g.v_max_fwd == 2.0

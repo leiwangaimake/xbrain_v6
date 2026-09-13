@@ -24,7 +24,7 @@ from xbrain.p1_motion.freshness.degradation import (
 from xbrain.p1_motion.gate.audit import limiter_all, limiter_argmax
 from xbrain.p1_motion.gate.g_targets import g_targets
 from xbrain.p1_motion.gate.speed_gate import (
-    GateHysteresis, f_speed_gate, gate_rule,
+    BandHysteresis, f_speed_gate, gate_rule,
 )
 from xbrain.p1_motion.perception_src.source import (
     PerceptionFrame, ReplayPerceptionSource,
@@ -128,14 +128,12 @@ def test_gate_rule_min_of_four():
 
 
 def test_hysteresis_upgrade_requires_sustained():
-    h = GateHysteresis()
-    # Starting from mono_ms=100 (not 0) to avoid the sentinel-collision
-    # in _above_since_mono_ms==0 that would treat first update as re-init.
-    h.update(3.6, now_mono_ms=100)
-    h.update(3.6, now_mono_ms=2100)      # 2 s later, < 3 s dwell
-    assert h._at_upper_band is False
-    h.update(3.6, now_mono_ms=3200)      # 3.1 s later, >= 3 s dwell
-    assert h._at_upper_band is True
+    """12 S6.7 U54: from the 0.5 band, 2.0 needs d_free >= 3.5 m for 3 s."""
+    h = BandHysteresis(3000, 0.5)
+    assert h.update(2.0, 100) == 0.5             # enter the 0.5 band
+    assert h.update(3.6, 200) == 0.5             # above 3.5, timer starts
+    assert h.update(3.6, 2100) == 0.5            # < 3 s dwell
+    assert h.update(3.6, 3300) == 2.0            # >= 3 s dwell
 
 
 # --- MOT-PM-8 g(targets) ---
