@@ -428,3 +428,25 @@
 | **R-5** | **f 四段表段界来源**：12 §6.2 说段界「就是 `common.motion.profiles[*].require_sense_m`」（+ `f_creep.d_enter_m`），而 sim 变体里 `require_sense_m` 是 patrol 1.0 / obstacle_avoid 0.3，与 U54 表的 3.0 / 1.8 不符 | 用户 2026-09-13 裁定：迟滞批段界仍按 11 §9.6.2 U54 常数（`gate/speed_gate.BANDS`），段界配置化另立项 | 是否把段界改为读 `${common.motion.profiles[*].require_sense_m}`，以及 sim 档位表 `require_sense_m` 该填 3.0 / 1.8 还是保持 |
 
 **下一步（顺序）**：~~P7.3 ④ f 迟滞升档~~ ✅ 2026-09-13 已接 → ① **RCG-1~4 旋转许可**（`rotation/rcg.py` 已建，需 `20` §4.2 记忆域接口裁决）→ ③ 三级限幅 / 加加速度（`common.spec.max_accel_mps2` 待 V-01）。
+
+### 8.6 ★★★ 卡点台账 · 现在做不了的 P 项（2026-09-13 用户令：卡点消失即做，🚫 不得因「忘了」搁置）
+
+> 每行写清「代码就绪到哪」「卡在什么」「谁/什么动作解卡」。解卡后从本表挑出来做，做完划掉。
+
+| 项 | 代码就绪度 | 卡点（逐字可查） | 解卡条件 / 责任方 |
+|---|---|---|---|
+| **P7.3 ①** RCG-1~4 旋转许可 | `rotation/rcg.py` 判定器已建，NavTick 步骤 6b 未接 | 侧向清距来源：338Le 90° FOV 下环形掩膜依赖**记忆栅格**，`20` §4.2 记忆域接口未定 | `20` §4.2 接口裁决（用户 / `20` 册主）→ 接 6b（`spin_like` 用 `r_eff`，12 §6A） |
+| **P7.3 ③** 三级限幅 + 加加速度 | 12 §8 三步中 ①（档位/spec 幅值）与 ③（轴有效性）已在速度门/CtrlLoop；② 未建 | (a) `common.spec.max_accel_mps2` 真机 null（V-01 云深处标定；sim 变体 1.5 可先做机制）；(b) **R-6**：12 §8.1 ② 对称斜坡若也限减速，与 `brake.a_mps2 = 2.5` 推导的 f 段界 / 围栏 `d_stop` 矛盾 | R-6 裁决（只限加速 / 减速按 `spec.max_decel_mps2` / f 降段与 v_fence 豁免）→ 可先做机制，真机值等 V-01 |
+| **P7.3 ⑥** `teleop_cloud`(550) 抢占 RNS | 本地 `teleop` 抢占已接（`teleop_active` → RNS SUSPENDED）；`_on_teleop` 忽略 `source=cloud` | 12 §12 `teleop.cloud.enabled = null`「本期是否放行云端遥控，待甲方接口评审纪要」；终审 S33「评审未过则该通路不存在」 | 甲方纪要 → 12 §12 落 `teleop.cloud.*` 值 → cloud 帧进抢占（TR-RNS-1 第二支，400 ms 超期解除） |
+| **P7.3 ⑦** E-2 急停反查 | `cmd/estop` 一支已接（`estop_latch`） | `state/robot.estop_epoch` 由 quadruped（C++）发布，`[GATED-HW]` | quadruped 发布该字段 → p1 订 `state/robot` 反查 epoch 变化即软急停 |
+| **P7.1 / #20-20** RTK 三级 | `rns/classify.py` + 单测就绪；`NavInputs` 已带 `fix_type`（围栏批）；`rtk_float_g` / `arrival_radius_float_scale` 键待消费 | 要改 `rns/source.py` 消费等级（RNS v2.0「不许改坏」纪律，需用户点头）；`20` §15 标「待实机」 | 用户点头改 `rns/` + 实机 RTK 数据；三套台架零回归（rtk_fixed 时行为不变）作准入 |
+| **P1-4** 航向丢失恢复 | 设计意图已记（§3 表下方） | quadruped odom（GATED-HW）+ perception 无障碍方向（GATED-DESIGN）+ `11` G-15 L1.5 两格空白 | 三者落地后做 `11` §3.3.2a L1.5 |
+| **P1 `stop_reason` 归因** | `CtrlLoop` 现把 SAFE_STOP 记 `soft_estop` | `11` STOP_REASON 八值无 `health`，随 PS-4（`state/pose.motion` 与 `cmd_vel.gate` 同构体）裁定 | PS-4 裁决 |
+| **R-2** 相机健康来源 | p2 factor 发布器已建（恒 `allow_motion=false`） | 见 §8.5 R-2 三选一 | 用户裁决 → 11 §1.1.6 / 新 key |
+| **R-3** 内缩量口径 | 查表实现（`clip.inset_for_fix`） | 见 §8.5 R-3 | 用户裁决 → 同步 11/12/configs |
+| **R-4** RNS 不知围栏 | 围栏裁剪已接，顶栏停滞实测 | 见 §8.5 R-4（须改 `rns/`） | 用户裁决 → `20` 定义节 → 候选级 `fence_hazard` |
+| **R-5** f 段界来源 | 段界为 U54 常数 | 见 §8.5 R-5（sim `require_sense_m` 与 U54 不符） | 用户裁决 → 段界配置化 + sim 档位表对齐 |
+| **配置** QoS 表 vs 断言 F | 4 行替代表在用 | 见 §8.4「11 §2.4.7 QoS 绑定表 vs 冻结线断言 F」 | 裁决后契约表与 F 同改 |
+| **感知** `depth_quality` 去留 · D1/D2 回退依据 | — | 见 §8.4 感知第五/六轮两条 | 感知方 / 用户裁定 |
+
+★ 已解卡即做的先例（本日）：④ f 迟滞升档、信封改秒、旧执行器删除 —— 三者都曾在本表同类位置，卡点消失当天完成。
