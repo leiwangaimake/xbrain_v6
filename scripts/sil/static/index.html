@@ -53,6 +53,11 @@
             text-align:center; font-size:14px; padding:13px 8px;
             letter-spacing:1px; }
   #b_reset { background:#374151; text-align:center; }
+  /* fence tools wear the HMI fence palette (17 S6.10.2A defaults): the same
+     role -> the same colour the operator sees on the HMI map. */
+  #b_fence_allow { background:#2f88ff; margin-top:0; }
+  #b_fence_forbid { background:#8b0000; }
+  #b_fence_clear { background:#374151; text-align:center; }
   /* telemetry */
   #info { font-family:Consolas,Menlo,monospace; font-size:12px; color:#93c5fd; }
   .tr { display:flex; justify-content:space-between; padding:2.5px 0;
@@ -99,7 +104,7 @@
   <div id="help">
     选工具后左键放置(可连放) / 墙 = 两次左键 /
     路径 = 连点 / 右键 = 结束放置回到导航 /
-    围栏 = 连点 3 个以上后右键闭合(仅 E2E 生效: 绿虚线名义边界 / 实线有效硬边界 / 点线软带起点) /
+    围栏 = 连点 3 个以上后右键闭合(颜色同 HMI: 活动区亮蓝 / 禁入区深红; 仅 E2E 生效: 虚线名义边界 / 实线有效硬边界 / 点线软带起点) /
     双击人车切动态 / 选墙拖端点 + 滚轮调厚 /
     无工具时点地图任意处即导航
   </div>
@@ -304,8 +309,8 @@ function draw(){
   const fs = (state.nav && state.nav.fence) || null;
   const geo = fs && fs.geo && fs.geo.inset_m != null ? fs.geo : null;
   for (const f of (state.fences || [])){
-    const col = f.role === "allow" ? "#16a34a" : "#dc2626";
-    const fill = f.role === "allow" ? "rgba(22,163,74,0.06)" : "rgba(220,38,38,0.10)";
+    const col = f.role === "allow" ? "#2f88ff" : "#8b0000";        // 17 S6.10.2A palette
+    const fill = f.role === "allow" ? "rgba(47,136,255,0.07)" : "rgba(139,0,0,0.12)";
     strokePoly(f.points, col, 2, [8, 6], fill);
     if (geo){
       const sgn = f.role === "allow" ? 1 : -1;      // allow shrinks inward, forbid grows outward
@@ -316,7 +321,7 @@ function draw(){
     ctx.fillStyle = col; ctx.font = "12px sans-serif"; ctx.fillText(f.role + " #" + f.fid, lx + 4, ly - 4);
   }
   if (fencePts.length){
-    const col = tool === "fence_allow" ? "#16a34a" : "#dc2626";
+    const col = tool === "fence_allow" ? "#2f88ff" : "#8b0000";
     ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]); ctx.beginPath();
     fencePts.forEach((p, i) => { const [sx, sy] = w2s(p[0], p[1]); i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); });
     ctx.stroke(); ctx.setLineDash([]);
