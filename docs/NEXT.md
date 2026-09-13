@@ -413,3 +413,16 @@
 - [ ] **Orin NX 装机** `[SW-NOW]`:TensorRT 10.3(JetPack 6.2 配套)+ ROS 2 Humble,答复 r3 Q1.3 承诺 2026-09-18 前;engine 由感知方在生产机构建(PSC-4)。
 - [ ] **感知方交付追踪**(`perception-rns-reply-20260911.md` Q1.4 三阶段):① 接口联调交付 —— 验收 = W-11 七(八)场景消费对表全绿 + A19-ENC-1 / TIME-1 / TIME-2 / BOOT-4 / VEL-1 / CAL-1,接收人 RNS;② 实机功能交付 `[GATED-HW]`(W-2 标定前置);③ 生产联合验收(§Q3.2 工况,分级门 + 年龄门 + 接收端对表 `scripts/dev/perception_rx_audit.py`)。
 - [ ] **Q5 实机输入** `[GATED-HW]`(答复 r3 Q5 表,以实机到位日 D 为基准):安装位置与支架(D+3)· 标定窗口(安装后 2 天)· 扫掠高度 PD-17(D+1)· `wz_max`/加速度 #20-5(D+3)· PD-16 障碍能力矩阵实测定承诺。
+
+### 8.5 ★★★ 待裁决清单 · P7.3 围栏 / p2 factor 批（2026-09-12 落地，2026-09-13 用户令登记，🚫 勿遗忘）
+
+> 四个提交：8e3db3c（p2 `cmd/motion/factor` 发布器）· a6fa03b（围栏几何核）· 7064430（围栏接入 20 Hz 第 7 步 + `state/fence`）· da5f6a0（浏览器 SIL 围栏场景）。
+
+| # | 事项 | 现状 / 代码落点 | 需要的裁决 |
+|---|---|---|---|
+| **R-1** | ✅ **已修** · p2 内部 `max_profile="none"` 越出 `11` §3.6 两值闭集：P1 解析器整条拒收并**滞留旧值**，一次 FATAL 失效要等 10 s 超时链才停车 | 线上改发 `obstacle_avoid`（`p2_core/health/factor.py` `build_health_factor`）；`14` §8.3 已登记；`tests/p2_core/health/test_health_factor_publish.py` 经 P1 解析器往返守住 | 无，登记备查 |
+| **R-2** | **相机健康来源**：`cam_rgbd` 项没有生产数据源 ⇒ p2 factor 在真机上**恒发 `allow_motion=false`** | `14` §8.1 指 `state/targets`（`19` §16 PCC-9 停车场）；`11` §1.1.6 不让 p2 订 `rt/perception/status` | 三选一：(a) 改 `11` §1.1.6 让 p2 订 `rt/perception/status`；(b) ★ **建议** p1 把感知 `StatusMsg` 摘要镜像到通用面新 key `state/perception`（同 `state/pose` 范式，`11` 新增 P1 发布行 + p2 订阅行）；(c) 感知方发 `state/targets`（与 PCC-9 冲突）。裁决前 dev/E2E 栈用位姿桩 `--grant` 代发，且🚫 不得与真 p2 同跑（两发布者在 p1 侧交替） |
+| **R-3** | **内缩量 `inset` 三处口径不一** | 代码按 `12` §7.4 / `12` §6.6 表① / `common.fence.margin_by_fix[fix_type]` **查表**（`p1_motion/fence/clip.py` `inset_for_fix` 是唯一改动点；rtk_fixed / rtk_float 内缩，dgps / single / no_fix 不判几何） | `11` §9A.6 ① 公式（`r_body + k_pos·cov_h + v·t_pos + e_sdf + v·σ_head·t_pred`，`11` §9A.12 的载体键 configs 里不存在）vs `11` §3.2.1 clamp 式（`margin_max` 需 `W_road`，`12` §7.4 终审 F8 判其兜底方向错、未裁）vs 查表。选定后同步 `11` / `12` / configs |
+| **R-4** | **RNS 不知道围栏**：顶栏时 RNS 候选正对栏外航点，朝外分量被裁后切向分量≈0，**停滞约 70 s** 才自行换招（SIL 实测，最终 ARRIVED，从未越栏） | `12` §7「作用于最终速度指令」本就如此；`rns/candidate.py` 的 `fence_hazard` 门只是占位（恒 False） | 是否把围栏几何喂给 RNS（候选级 `fence_hazard` / 记忆栅格标占），以及在 `20` 哪一节定义；🚫 未裁前不动 `rns/` |
+
+**下一步（顺序）**：P7.3 ④ **f 迟滞升档**（`gate/speed_gate.GateHysteresis` 接入 `nav/host_gate.py` 的 free_space 项，按 `12` §6.7 U54 重定标）→ ① **RCG-1~4 旋转许可**（`rotation/rcg.py` 已建，需 `20` §4.2 记忆域接口裁决）→ ③ 三级限幅 / 加加速度（`common.spec.max_accel_mps2` 待 V-01）。
