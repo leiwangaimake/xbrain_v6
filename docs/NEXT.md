@@ -460,7 +460,7 @@
 | # | 实测事实 | 对 13 册台账的意义 |
 |---|---|---|
 | 1 | **底盘网段 = `10.21.33.0/24`**（《软件开发指南》正确；附录 1 与旧手册的 `10.21.31.x` 整段无主机）。活主机：`.1` 网关（MAC 与 `.103` 相同）· `.103` AOS（ssh 22 · RTSP 8554 · TLS 30003）· `.104` NOS（ssh）· `.106` GOS（ssh）· `.11` / `.201` / `.202`（无常见 TCP 端口，疑为雷达/相机）；`SocId` 的 103/104/106 就是 IP 末段 | 集成方案「NOS=106」为误记；`quadruped.yaml` 端点候选只需 `10.21.33.103` |
-| 2 | **监控协议无明文通道**：UDP 30000 明文心跳无响应；TCP 30000 / 30001 关闭；**TCP 30003 = TLS 1.3**，服务器证书 `CN=server.local`（O=RobotServer，链 `TLS CA` ← `Project CA`，SAN 仅 `localhost` / `127.0.0.1`），握手后服务器发 CertificateRequest，无客户端证书即告警 116 `certificate required` 断开；**UDP 30004 = DTLS 1.2**，同样要求客户端证书（告警 40） | ★★★ **V-40 定案**：默认**双向** TLS/DTLS，「附录 1 明文」与「答复无加密」两说不成立。⇒ TLS-1 的「先明文」路径**不可用**，必须走 TLS-3 凭证路径（`configs/secrets/chassis_tls/`）；SAN 不含底盘 IP ⇒ **TLS-5 的 `verify_peer_cn_override` 必需**。V-41 / V-42 在拿到凭证前无法实测 |
+| 2 | **监控协议无明文通道**：UDP 30000 明文心跳无响应；TCP 30000 / 30001 关闭；**TCP 30003 = TLS 1.3**，服务器证书 `CN=server.local`（O=RobotServer，链 `TLS CA` ← `Project CA`，SAN 仅 `localhost` / `127.0.0.1`），握手后服务器发 CertificateRequest，无客户端证书即告警 116 `certificate required` 断开；**UDP 30004 = DTLS 1.2**，同样要求客户端证书（告警 40）；★ 用**自签**客户端证书再试：服务器回告警 48 `unknown CA` ⇒ 它按自己的 CA 链校验客户端证书，**只有云深处签发的证书才能通** | ★★★ **V-40 定案**：默认**双向** TLS/DTLS，「附录 1 明文」与「答复无加密」两说不成立。⇒ TLS-1 的「先明文」路径**不可用**，必须走 TLS-3 凭证路径（`configs/secrets/chassis_tls/`）；SAN 不含底盘 IP ⇒ **TLS-5 的 `verify_peer_cn_override` 必需**。V-41 / V-42 在拿到凭证前无法实测 |
 | 3 | **DDS 发现层直连可达**：域 0 SPDP 组播（239.255.0.1:7400）在第 ④ 口可见，8 s 内 30 个 eProsima FastDDS 参与者（AOS `.103` 为主，GOS `.106` 若干，RTPS 2.2 / 2.3） | V-43「仅机器人主机传输」至少对发现层不成立；`/IMU` 与 `/LIDAR/POINTS` 数据面待 Jetson 接线后用 CycloneDDS 实测（本机无 ROS2） |
 | 4 | Orin 侧 `enP7p1s0` / `enP8p1s0` 两个有线口空闲无载波 | 下一步接线到 Jetson，按 U51 LAN1 = 底盘网段 |
 
