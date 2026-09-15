@@ -279,6 +279,7 @@ inline constexpr std::string_view kStopReason[] = {
     "timeout",
     "soft_estop",
     "mode_switching",
+    "sleep",
     "mode_mismatch",
     "nan",
     "no_source",

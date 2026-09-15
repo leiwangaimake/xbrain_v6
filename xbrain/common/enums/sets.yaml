@@ -250,6 +250,8 @@ sets:
       - timeout
       - soft_estop
       - mode_switching
+      # sleep: 11 S4.1 / 13 F-21 (2026-09-15, D-48) -- chassis auto-sleep, motors off
+      - sleep
       - mode_mismatch
       - nan
       - no_source
