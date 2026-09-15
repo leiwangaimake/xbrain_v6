@@ -64,6 +64,8 @@ set(COMMON_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include)
 add_library(quadruped_core STATIC
   src/quadruped_config.cc
   src/tx_owner.cc
+  src/chs_a_codec.cc
+  src/chs_a_framer.cc
 )
 target_include_directories(quadruped_core PUBLIC include ${COMMON_INCLUDE})
 target_link_libraries(quadruped_core PUBLIC pthread)
@@ -128,3 +130,19 @@ add_test(NAME test_quadruped_config
 add_executable(test_tx_owner test/test_tx_owner.cc)
 target_link_libraries(test_tx_owner PRIVATE quadruped_core)
 add_test(NAME test_tx_owner COMMAND test_tx_owner)
+
+# The two CHS-A tests read frames captured off the real chassis. The path is
+# passed as argv[1] rather than resolved relative to the working directory:
+# ctest runs from the build tree, and a relative path would silently find
+# nothing -- which, for a file-driven test, means every case passes on an empty
+# input. Both tests fail loudly when the file is missing or parses to zero
+# vectors, for the same reason.
+set(CHS_A_GOLDEN ${CMAKE_CURRENT_SOURCE_DIR}/test/golden/chs_a_frames.txt)
+
+add_executable(test_chs_a_codec test/test_chs_a_codec.cc)
+target_link_libraries(test_chs_a_codec PRIVATE quadruped_core)
+add_test(NAME test_chs_a_codec COMMAND test_chs_a_codec ${CHS_A_GOLDEN})
+
+add_executable(test_chs_a_framer test/test_chs_a_framer.cc)
+target_link_libraries(test_chs_a_framer PRIVATE quadruped_core)
+add_test(NAME test_chs_a_framer COMMAND test_chs_a_framer ${CHS_A_GOLDEN})
