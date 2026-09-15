@@ -101,6 +101,17 @@ inline void CpuRelax() noexcept {
 
 class TxGuard {
  public:
+  // What this guard is built on, published so a CONSUMER can assert it at
+  // compile time (13 CPP-4). Without the alias the only way to check is to
+  // read the private member, so a rewrite of this class onto std::mutex would
+  // compile everywhere and silently put the realtime thread on a blocking
+  // lock -- the one outcome CPP-4 exists to prevent, and one that shows up as
+  // a 100 Hz loop missing its deadline under estop load, not as an error.
+  // * A rewrite that kept the alias pointing at std::atomic_flag while using
+  //   a mutex underneath would be a deliberate lie, which is a different
+  //   failure mode from the accidental one this guards against.
+  using FlagType = std::atomic_flag;
+
   // ATOMIC_FLAG_INIT is CPP-4's wording. In C++17 an atomic_flag that has not
   // been initialised with it is in an unspecified state until clear() is
   // called, so this is not decoration -- constructing without it and relying on

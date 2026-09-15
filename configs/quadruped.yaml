@@ -2,20 +2,169 @@
 # Author: wanglei@hachist.com
 # 上海哈船智能船舶技术有限公司
 # File: quadruped.yaml
-# Brief: L6 per-process config for the quadruped C++ process (13 S8.1/S8.2)
+# Brief: L6 per-process config for the quadruped C++ process (13 S8.1/S8.2 v1.4)
 #
 # Description:
-#   层:L6(进程私有) 归属进程:`quadruped`(C++ 常驻进程,10 §3.1)
-#   * 权威定义处:`13` §8.1 . §8.2
+#   层:L6(进程私有) 归属进程:`quadruped`(C++ 常驻进程,10 S3.1)
+#   * 权威定义处:`13` S8.1 . S8.2(v1.4, 2026-09-15);启动断言 QC-1~QC-17 = `10` S5.4.4 断言 K
+#   * 运行期读[解析产物] /run/xbrain/resolved/quadruped.yaml, NO 不读本文件(10 S5.4.1)
 #
-#   本文件当前是[空骨架]---- 一个键都没有, 本轮未凭空填任何配置值.
-#   * 落值时逐键去权威节抄, 不得从本文件或任何别处推断默认值:
-#     10 §5.4.2 R-3 逐字"不提供默认值语法......解析不到即 E_CONFIG_INVALID 拒绝启动".
-#   未标定的参数留 null(="声明键位但未赋值"), 绝不写 0.0 冒充已赋值.
-#   L6 只[取值]不[定义]: 不得出现 common 顶层键,共享值一律写 ${common.xxx}
-#     (10 §5.4.2 R-6 / R-1;违反即被 §5.4.4 断言 B 判"疑似复制"而拒绝启动).
-#   禁止定义 `spec.*`(11 §9.6 SP-3),只许 `${common.spec.*}` 引用(13 QC-1).
-#   * 其配置断言 QC-1 ~ QC-17 由 10 §5.4.4 断言 K 求值.
+#   本轮(B0)由[空骨架]改为[落值]:逐键抄 `13` S8.2, NO 未从别处推断任何默认值.
+#   * 三类值的来源必须分清,否则会写出一份"看起来完整 / 实际上错"的配置:
+#     (1) `13` S8.2 明确给出的进程私有取值 ---- 逐字抄该节(如 cmd_timeout_ms: 200);
+#     (2) 2026-09-15 实机实测定案的值 ---- 端点候选与 verify_peer_cn_override,
+#         证据在 docs/QUADRUPED/M20S_底盘接入与探测实录_2026-09-15.md S4.4;
+#     (3) 共享量(整机限幅 . 制动 . 步态可信度 . 车号) ---- 一律 ${common.*} [引用],
+#         NO 绝不在本文件[定义]:`11` S9.6 SP-3 规定 spec.* 只能来自 L2 models/m20s.yaml,
+#         本文件出现 spec. 前缀的[定义]即被 QC-1 拒绝启动.
+#   * 引用为什么必须真的写出来(而不是只在注释里说"引用 common.spec.*"):
+#     冻结线 materialise 把 {common: overlay.common, **本文件} 展开引用后[丢弃 common 子树]
+#     再写 resolved/quadruped.yaml ---- 文件里没有引用键,进程就永远读不到那个值.
+#     `13` v1.4 已就地订正 S8.2(tier1.limits . odom.a_max_mps2 . odom.trust_by_gait . robot_id).
+#   * L2 未标定时(common.spec.max_* 现为 null)引用展开为 null ---- 进程按 CLAUDE.md 3.1
+#     拒绝启动并打印键路径.这是[预期行为], NO 不许为"让它跑起来"填 0.0 冒充已赋值.
 # ===========================================================================
 
-# TODO(`13` §8.1 . §8.2):按该节逐键落值.本文件在落值前会让整栈按设计拒绝启动,这是预期行为.
+quadruped:
+  robot_id: ${common.robot_id}          # {rid} 进全部 key(FLT-02);唯一定义处 = L1 common.yaml
+
+  # ── 通道一 . 监控协议 CHS-A (13 S2.2) ────────────────────────────────
+  chassis_link:
+    # 候选端点按序探测,首个收到状态上报的生效(13 S2.2 . QC-6).
+    # WARN: 2026-09-15 实测定案(13 S2.2 v1.3, V-40 关闭):
+    #   * 明文端口 30000/30001 在本固件[编译期不存在](日志 ENABLE_PLAIN_TCP_UDP 未定义),
+    #     故 `13` v0.2 的第三候选 10.21.31.103:30000 已[删除], NO 不得写回;
+    #   * 明文 = 同一对端口 30003/30004, 前提是机器 user_conf.toml 内 enableTls=false
+    #     ---- 这是[非出厂配置], 还原台账在实录 S8 C-4/C-5;
+    #   * TLS/DTLS 是[双向]认证,需云深处 Project CA 签发的客户端证书(V-64)=> 两个加密候选
+    #     保持 enabled:false(TLS-1), 证书到位后只改这两个布尔, NO 不改代码.
+    endpoint_candidates:
+      - { proto: "tcp", host: "10.21.33.103", port: 30003, tls: false, enabled: true  }
+      - { proto: "udp", host: "10.21.33.103", port: 30004, tls: false, enabled: true  }
+      - { proto: "tcp", host: "10.21.33.103", port: 30003, tls: true,  enabled: false }
+      - { proto: "udp", host: "10.21.33.103", port: 30004, tls: true,  enabled: false }
+    tls:                                # 仅当某候选 tls:true 且 enabled:true 时才读(TLS-2~TLS-6)
+      lib: "mbedtls"                    # mbedtls | openssl(选型 D-46,本期不启用故不阻塞)
+      cred_dir: "/opt/xbrain_v6/configs/secrets/chassis_tls"
+      verify_peer: true                 # TLS-5, NO 不提供关闭开关
+      verify_peer_cn_override: "server.local"   # 实测证书 CN=server.local 且 SAN 无 IP
+    probe_timeout_ms: 2000              # 单个候选的等待时长
+    heartbeat_hz: 2.0                   # >=1 Hz(指南 1.2.1),取 2 留余量;QC-11
+    codebook: "hex32"                   # CB-1 唯一合法值(V-41 实测 hex32 直接生效)
+    codebook_table:
+      legacy_decimal: {}                # CB-3 空 = 未启用;填齐五条才允许切换(QC-13)
+    asdu_format: "json"                 # 指南 1.1.6 推荐
+    proto_version_byte: 0x01            # 指南 1.1.5 的 header[10](0 基偏移)
+    resync_max_bytes: 4096              # FR-2 滑窗找同步字上限
+    frame_assembly_timeout_ms: 500      # FR-3 半包超时丢弃
+    partial_send_retry: 3               # FR-4 TCP 短写的有界补齐次数
+    tcp_nodelay: true                   # FR-5 / SD-3 禁 Nagle 合并
+    axis_cmd_hz: 20.0                   # 与 P1 的 20 Hz 同拍
+    axis_cmd_socket_fixed: true         # CA-1 不可关(QC-12)
+    single_tx_owner: true               # CA-4 全部出向报文经唯一 chs_a_send()(QC-16)
+    cmd_fail_threshold: 3               # 连续发送失败次数 -> conn=degraded
+                                        # WARN: 实测轴指令[无应答无日志](CA-7)=> 本阈值对轴指令
+                                        #   只计 send() 错误, NO 不得把"等不到 ack"当失败(T-CHS-4)
+    state_timeout_degraded_s: 1.0       # 11 S9.1.3
+    state_timeout_lost_s: 3.0
+    reconnect_backoff_s: [0.5, 1.0, 2.0, 5.0, 5.0]
+
+  # ── 设备状态解码 (13 S7.2) ───────────────────────────────────────────
+  device:
+    battery_index_map: null             # BAT-2/BAT-3 null = 映射未知 => left/right 填 null
+                                        # WARN: 实测 BatteryList[].serial 为[空串]=> BAT-3 的
+                                        #   "按 serial 前缀匹配"不可用,闭合 V-55 只能靠下标
+    services_probe:
+      method: "none"                    # none | nodectl_dds | systemd_local
+                                        # WARN: nodectl_dds 实测可用(V-57 机理已闭合),但
+                                        #   quadruped 能否在域 0 建查询客户端归 D-47(未裁)=> 本期 none
+      deploy_verified_stopped: []       # SVC-3 部署期人工核验为 stopped 的服务名(本期空 = 未核验)
+      nodectl:                          # D-47 裁决后启用;本期只是键位,method=none 时不读
+        query_service_prefix: "/NODECTL_QUERY_"
+        soc_ids: [103, 104, 106]
+        must_be_stopped: ["planner.service", "global_planner.service",
+                          "localization.service", "charge_manager.service"]
+
+  # ── 通道二 . 底盘 DDS 域 0 (13 S2.3 / S2.4) ──────────────────────────
+  chassis_dds:
+    backend: "cyclone_raw"              # cyclone_raw | fastdds_vendored(编译期开关的运行时校验)
+    domain_id: 0                        # DDS-1 显式传域号, NO 不读环境变量
+    imu_topic: "/IMU"                   # 答复建议;实测 201 Hz, frame_id 为空
+    imu_expect_hz: 200.0
+    imu_age_warn_ms: 50                 # 13 S4.5
+    imu_frame_id: "imu_link"            # TF-1 底盘不给 frame_id,我方赋值
+    drdds:
+      enable: true                      # 官方包已在机器上(13 S7.4 v1.3);缺失时自动降级
+      motion_info_topic: "/MOTION_INFO"
+      fault_aggregator_topic: "/fault_aggregator"
+    forward_imu_to_rt: false            # D-44 RT 面 key 是封闭集,11 S2.2.1 未登记 IMU key
+    imu_rt_key: ""                      # 11 补登记后填入并置 true(QC-14 强制两者同步)
+
+  # ── 通道三 . 对上 (13 S2.1) ──────────────────────────────────────────
+  uplink:
+    zenoh_rt_endpoint: "tcp/127.0.0.1:7449"      # 11 S2.2.1
+    ros_domain_id: 42                            # 上装 ROS 2 域;QC-4 要求 != chassis_dds.domain_id
+    rmw: "rmw_cyclonedds_cpp"                    # 99 U74 定案 Humble + CycloneDDS
+    odom_topic: "/odom_quadruped"                # 话题名的权威在 13 S4.8(11 不登记 ROS 话题名)
+    odom_frame: "odom"
+    base_frame: "base_link"
+    publish_odom_tf: true                        # 11 S10.1 odom->base_link 的唯一发布者
+
+  # ── 里程计 (13 S4) ───────────────────────────────────────────────────
+  odom:
+    publish_hz: 100.0                   # ODO-1 这是[发布]频率;线速度信息更新率仍是 10 Hz
+    vel_source_priority: ["motion_info_20hz", "monitor_10hz"]
+    vel_deadzone_mps: 0.05              # V5 实测
+    gyro_deadzone_radps: 0.01           # V5 实测最优;WARN: 放大会更差(7.75 -> 16.4 度/圈)
+    sigma_v0_mps: 0.05                  # WARN: M-28 待实测
+    gyro_bias_radps: 0.008              # WARN: M-29 待实测(V5 量级)
+    arw_rad_sqrt_s: 0.002               # WARN: M-29 待实测
+    a_max_mps2: ${common.spec.max_decel_mps2}    # 13 v1.4:引用键必须写出来(materialise 丢 common)
+    trust_by_gait:                      # S4.4 步态折减 P * (1 / trust_by_gait[gait])
+      flat:  ${common.spec.odom.trust_by_gait.flat}
+      stair: ${common.spec.odom.trust_by_gait.stair}
+    stale_warn_ms: 150                  # S4.4 第二段
+    stale_invalid_ms: 300               # S4.4 第三段(twist 置零 valid=false)
+    stale_stop_publish_ms: 1000         # S4.4 第四段(停止发布 odom 与 TF);QC-7 要求三者单调
+
+  # ── 模式与运动功能 (13 S5 / S6) ──────────────────────────────────────
+  motion:
+    default_triplet: { usage_mode: "navigation", motion_state: "rl_control", gait: "flat" }
+    mode_switch_timeout_s: 5.0          # MS-2 覆盖最慢的 2-3 s
+                                        # WARN: 实测 stand 后固件[自动]进 rl_control(17/0x1001),
+                                        #   prone 后 4 s 自动回 idle(0)=> 读回比对按整体三元组(T-MODE-4)
+    prone_forbidden_gaits: ["stair_agile", "stair_standard"]   # PR-1;QC-9 允许改宽不许改窄
+    axes:
+      always_active: ["vx", "vy", "wz"]
+      special_gaits: []                 # V-51 "特殊步态"未定义 => 空 = vz/roll/pitch 恒置零
+    not_implemented:                    # 要求 e:显式列出,收到即 E_NOT_IMPLEMENTED
+      motion_states: ["zero_cal", "cart_move", "damped_prone"]   # M-07 / M-08 / M-10
+      gaits: ["stair_standard"]                                  # GS-1;QC-17 不许改窄
+      commands: ["normalized_axis", "illumination"]              # C-05 / V-47
+    action_param_send: false            # V-45 取值表未给 => 默认不携带
+    external_transition_hold_s: 3.5     # TR-1 外部触发的起立/趴下过渡期兜底零速
+
+  # ── Tier 1 (13 S3, 数值受 11 S9.12.6 约束) ───────────────────────────
+  tier1:
+    # 13 v1.4 新增:S3.2 的 clamp(cmd, spec.max_*) 需要这些值,而 materialise 丢 common 子树
+    # => 只有写成引用键,硬限幅才真的到得了进程. NO 只许引用不许定义(SP-3 / QC-1).
+    # WARN: common.spec.max_* 现为 null(V-01 未标定)=> 展开后为 null,进程拒绝启动并打印键路径.
+    limits:
+      max_vx_mps:     ${common.spec.max_vx_mps}
+      max_vy_mps:     ${common.spec.max_vy_mps}
+      max_wz_radps:   ${common.spec.max_wz_radps}
+      max_accel_mps2: ${common.spec.max_accel_mps2}
+      max_decel_mps2: ${common.spec.max_decel_mps2}
+      holonomic:      ${common.spec.holonomic}
+    cmd_timeout_ms: 200                 # QC-2 下限锁死 200,配置不得更小
+    estop_ack_ms: 100                   # 11 S9.12.6
+    estop_dedup_ms: 50
+    control_loop_hz: 100.0              # QC-3 >= 100 Hz
+    safety_probe_stale_s: 3.0           # 11 S2.2.1 注:>3 s 无 ping -> E_SAFETY_LINK_LOST
+
+  # ── 实时化 (13 S9) ───────────────────────────────────────────────────
+  realtime:
+    mlockall: true
+    cpu_affinity: { ctrl: 5, chs_b: 5, io: 6, rt_safety: 6 }   # WARN: 与 10 S3.2 一并确认(D-42)
+    sched_fifo_priority: { ctrl: 80, chs_b: 70, io: 10 }       # rt_safety 不用 FIFO(PB-Q2)
+    log_ring_bytes: 1048576

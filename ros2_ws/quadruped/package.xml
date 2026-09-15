@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<!--
+ Copyright (c) 2026 Hachist Robotics
+ Author: wanglei@hachist.com
+ 上海哈船智能船舶技术有限公司
+ File: package.xml
+ Brief: Manifest for quadruped -- plain-CMake package (build_type cmake)
+
+ Description:
+ quadruped is the single process that touches the M20S chassis (13 S1.1). It
+ will link rclcpp for one edge only -- the ROS 2 uplink of channel three -- and
+ that edge does not exist yet, so the package declares build_type cmake and no
+ ROS dependency today. When batch B8 adds the uplink the dependency is added
+ here as an <exec_depend>, and the CMakeLists already guards it with
+ find_package so a host without ROS keeps building the core and its tests.
+
+ Why not ament_cmake now, given the package will end up using rclcpp: an ament
+ package cannot be configured at all without a ROS environment, which would
+ make the ROS-free core untestable on any machine that lacks one. The core is
+ where every unit test lives, so it must stay independently buildable.
+-->
+<package format="3">
+  <name>quadruped</name>
+  <version>0.1.0</version>
+  <description>M20S chassis interface and Tier 1 safety backstop (13)</description>
+  <maintainer email="wanglei@hachist.com">wanglei</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>cmake</buildtool_depend>
+
+  <export>
+    <build_type>cmake</build_type>
+  </export>
+</package>
