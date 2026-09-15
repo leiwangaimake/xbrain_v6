@@ -147,6 +147,13 @@ inline constexpr std::string_view kEventCategory[] = {
     "voice",
 };
 
+// fault_level -- 11 S4.1   anchor: | `faults[].level` |
+inline constexpr std::string_view kFaultLevel[] = {
+    "warn",
+    "degraded",
+    "fatal",
+};
+
 // fence_role -- 11 S9A.2   anchor: `polygons[].role` | string
 inline constexpr std::string_view kFenceRole[] = {
     "allow",

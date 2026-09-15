@@ -429,6 +429,16 @@ SEVERITY = _SETS["severity"]
 #   (the SQL CHECK, commit_fence's guard, fence_set's winding map) collapse to one
 #   authority -- CLAUDE.md 3.5.
 FENCE_ROLE = _SETS["fence_role"]
+# fault_level -- RobotState.faults[].level and ChassisFault.faults[].level
+#   (11 S4.1). Ordered warn < degraded < fatal, so index() answers "is this
+#   worse than that" for a merge of two reports of the same fault.
+#   13 S7.3 derives it from the chassis Severities[] field, and the mapping is
+#   deliberately lopsided: 3/4/5 map to warn/degraded/fatal, and ANYTHING ELSE
+#   maps to degraded rather than warn. The chassis fault table is an open set
+#   (its own manual says the file on the robot is authoritative), so an
+#   unrecognised severity is a normal event, and treating it as the mildest
+#   level would report a machine in trouble as merely noisy.
+FAULT_LEVEL = _SETS["fault_level"]
 # geo_action / geo_origin / geo_type / geo_state -- the four cmd/geo closed sets
 #   (11 S7.9.1 / S7.9.5 / S7.8.2). GEO_ORIGIN is the one that carries weight: it
 #   is CH-1's SOLE permission discriminant, so an origin the S7.9.5 matrix has no
@@ -736,7 +746,8 @@ __all__ = ["ClosedSet", "ClosedSetViolation", "SET_NAMES", "get", "parse_enum",
            # so the omission surfaces at a consumer's import line, not here.
            "FENCE_ROLE", "HEADING_SOURCE",
            "GEO_ACTION", "GEO_ORIGIN", "GEO_CREATED_BY", "GEO_TYPE",
-           "GEO_STATE", "TEACH_ACTION", "TEACH_STATE", "TASK_ACTION"]
+           "GEO_STATE", "TEACH_ACTION", "TEACH_STATE", "TASK_ACTION",
+           "FAULT_LEVEL"]
 
 
 # get -- look a set up by name, raising on an unknown NAME and not only on an

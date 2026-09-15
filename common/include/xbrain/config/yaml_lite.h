@@ -139,42 +139,81 @@ class YamlNode {
     return *cur;
   }
 
-  // Typed accessors -- each THROWS with the key path on missing / null /
-  // parse-failure (CLAUDE.md 3.1). None of them has a default branch.
-  double require_double(const std::string& p) const {
-    const std::string& s = require_scalar(p);
+  // ---- reading THIS node -------------------------------------------------
+  //
+  // Why these exist alongside the path forms. A sequence entry has no key, so
+  // no dotted path reaches it: `at("")` walks into the scalar and throws. The
+  // endpoint list gets away with the path form only because its entries are
+  // maps (`at_index(i).require_string("proto")`). A list of bare scalars --
+  // reconnect_backoff_s is one -- was unreadable from C++ until these landed,
+  // and the shape of that gap is worth naming: the key was present in the
+  // config, the loader never read it, and nothing failed. The value simply
+  // never reached the process (the same defect class as 13 S8.2 v1.4).
+  //
+  // `label` names the node in the error message. Pass something a person can
+  // find in the file, e.g. "chassis_link.reconnect_backoff_s[2]" -- a throw
+  // that says only "not a number" costs the reader the whole file.
+  const std::string& as_scalar(const std::string& label) const {
+    if (is_map_) {
+      throw std::runtime_error("config node is a map, not a scalar: " + label);
+    }
+    if (is_seq_) {
+      throw std::runtime_error("config node is a sequence, not a scalar: " + label);
+    }
+    if (is_null()) {
+      throw std::runtime_error(
+          "config node is null (uncalibrated per CLAUDE.md 3.1): " + label);
+    }
+    return scalar_;
+  }
+  double as_double(const std::string& label) const {
+    const std::string& s = as_scalar(label);
     std::size_t pos = 0;
     double v = 0.0;
     try {
       v = std::stod(s, &pos);
     } catch (const std::exception&) {
-      throw std::runtime_error("config key not a number: " + p + " = '" + s + "'");
+      throw std::runtime_error("config key not a number: " + label + " = '" + s + "'");
     }
+    // stod stops at the first character it cannot use, so "1.0abc" would parse
+    // as 1.0 without this. A trailing-garbage value is a typo, and a typo that
+    // silently becomes a valid number is the kind that survives review.
     if (pos != s.size()) {
-      throw std::runtime_error("config key not a number: " + p + " = '" + s + "'");
+      throw std::runtime_error("config key not a number: " + label + " = '" + s + "'");
     }
     return v;
   }
-  long require_int(const std::string& p) const {
-    const std::string& s = require_scalar(p);
+  long as_int(const std::string& label) const {
+    const std::string& s = as_scalar(label);
     std::size_t pos = 0;
     long v = 0;
     try {
       v = std::stol(s, &pos, 10);
     } catch (const std::exception&) {
-      throw std::runtime_error("config key not an int: " + p + " = '" + s + "'");
+      throw std::runtime_error("config key not an int: " + label + " = '" + s + "'");
     }
     if (pos != s.size()) {
-      throw std::runtime_error("config key not an int: " + p + " = '" + s + "'");
+      throw std::runtime_error("config key not an int: " + label + " = '" + s + "'");
     }
     return v;
   }
-  bool require_bool(const std::string& p) const {
-    const std::string& s = require_scalar(p);
+  bool as_bool(const std::string& label) const {
+    const std::string& s = as_scalar(label);
     if (s == "true" || s == "True" || s == "yes") return true;
     if (s == "false" || s == "False" || s == "no") return false;
-    throw std::runtime_error("config key not a bool: " + p + " = '" + s + "'");
+    throw std::runtime_error("config key not a bool: " + label + " = '" + s + "'");
   }
+
+  // ---- reading a node at a dotted path -----------------------------------
+  //
+  // Each THROWS with the key path on missing / null / parse-failure
+  // (CLAUDE.md 3.1). None of them has a default branch. All of them delegate
+  // to the node forms above so there is exactly ONE parse per type: two
+  // implementations of "is this a number" drift, and the one that drifts is
+  // whichever has fewer tests.
+  double require_double(const std::string& p) const { return at(p).as_double(p); }
+  long require_int(const std::string& p) const { return at(p).as_int(p); }
+  bool require_bool(const std::string& p) const { return at(p).as_bool(p); }
   std::string require_string(const std::string& p) const { return require_scalar(p); }
 
  private:
@@ -182,6 +221,8 @@ class YamlNode {
   // "missing key" and "null (uncalibrated)" into the two 3.1 failure messages.
   const std::string& require_scalar(const std::string& p) const {
     const YamlNode& n = at(p);
+    // The wording differs from as_scalar ("key" vs "node") on purpose: the
+    // path form can name the key, and operators grep the config for that text.
     if (n.is_map_) {
       throw std::runtime_error("config key is a map, not a scalar: " + p);
     }

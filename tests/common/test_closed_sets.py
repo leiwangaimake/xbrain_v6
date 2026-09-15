@@ -306,6 +306,7 @@ SET_DOC = {
     "geo_action": "11", "geo_origin": "11", "geo_type": "11", "geo_state": "11",
     "geo_created_by": "11",
     "teach_action": "11", "teach_state": "11", "task_action": "11",
+    "fault_level": "11",
     # The one set defined outside the contract. See the module docstring.
     "charge_stage": "15",
 }
@@ -422,6 +423,14 @@ EXTRACTORS.update({
     "heading_source": lambda: _row_backticked(
         _DOCS["11"], "| `heading_source` | string |",
         "heading_source", exclude=("heading_source",)),
+    # fault_level is the RobotState.faults[].level cell of 11 S4.1, stated
+    # inline as `warn` \| `degraded` \| `fatal`. The anchor carries the field
+    # name with its [] subscript, which appears on exactly one row; anchoring on
+    # the bare word "level" would match the health-item rows a few tables away,
+    # whose level column lists a DIFFERENT three values and would produce a
+    # plausible set that nothing else here would question.
+    "fault_level": lambda: _inline_enum(
+        _DOCS["11"], "| `faults[].level` |", 1, "fault_level"),
     # severity is the {severity} key segment of event/{severity}/{category}
     # (S2.2.11 W-5), stated inline in one cell as info / warn / alarm / fault.
     # The anchor carries the value column too (`{severity}` | `info`):

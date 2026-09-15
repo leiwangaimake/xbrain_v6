@@ -3,12 +3,12 @@
 Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
-File: quadruped_mutants.py
-Brief: Mutation runner for the quadruped CHS-A codec and framer (batch B1)
+File: cxx_mutants.py
+Brief: Mutation runner for the C++ offline tests, one suite per module
 
 Description:
 CLAUDE.md 3.3 says an assertion is not finished until something has made it
-turn red. This script is how that is checked for the CHS-A layer, and it is a
+turn red. This script is how that is checked for the C++ side, and it is a
 committed artifact rather than a scratch file for one reason: the mutants ARE
 the specification of what the tests are supposed to catch. Kept out of the
 repo, the next person to touch chs_a_codec.cc has no way to tell which of its
@@ -42,8 +42,13 @@ text there says the ratio is a means and the real gate is that every block
 explains why. Recorded here as declared debt with a reason rather than left to
 be discovered and waved through.
 
+Suites, each a (sources, tests, mutants) triple:
+  quadruped  the CHS-A codec and framer (batch B1)
+  yaml_lite  the shared config reader in common/, whose tests live with the
+             sensor package -- it is header-only, so the header IS the source
+
 No counts are written into any document (CLAUDE.md 3.7). Run it:
-  python3 scripts/ci/quadruped_mutants.py
+  python3 scripts/ci/cxx_mutants.py [suite ...]     (no args = every suite)
 Exit status is 0 only when every mutant compiled and was killed.
 """
 
@@ -62,23 +67,37 @@ CODEC = os.path.join(QUAD, "src", "chs_a_codec.cc")
 FRAMER = os.path.join(QUAD, "src", "chs_a_framer.cc")
 GOLDEN = os.path.join(QUAD, "test", "golden", "chs_a_frames.txt")
 
-# Both offline tests are run for every mutant. A change in the codec can be
-# caught by the framer's cases and the other way round, and running only the
-# "obviously related" test is how a cross-file assertion gets credited to
+# Both quadruped tests run for every quadruped mutant. A change in the codec
+# can be caught by the framer's cases and the other way round, and running only
+# the "obviously related" test is how a cross-file assertion gets credited to
 # nobody and then deleted.
-TESTS = ["test_chs_a_codec", "test_chs_a_framer"]
-
-SOURCES = [
+QUAD_TESTS = [os.path.join(QUAD, "test", "test_chs_a_codec.cc"),
+              os.path.join(QUAD, "test", "test_chs_a_framer.cc")]
+QUAD_SOURCES = [
     os.path.join(QUAD, "src", "chs_a_codec.cc"),
     os.path.join(QUAD, "src", "chs_a_framer.cc"),
 ]
 
-# (description, file, verbatim fragment to replace, replacement)
+# yaml_lite is header-only, so the header is both the source and the thing
+# mutated; its test lives with the sensor package for historical reasons.
+YAML_LITE_H = os.path.join(ROOT, "common", "include", "xbrain", "config", "yaml_lite.h")
+YAML_TESTS = [os.path.join(ROOT, "ros2_ws", "sensor", "test", "test_yaml_lite.cc")]
+
+# (description, file, verbatim fragment to replace, replacement[, expect])
 #
 # The fragment must occur EXACTLY once. That is asserted rather than assumed:
 # an anchor that no longer matches after a refactor would otherwise silently
 # turn into a mutant that was never applied and is reported as killed.
-MUTANTS = [
+#
+# `expect` defaults to "killed". The other value is "equivalent": a mutant that
+# provably CANNOT be caught, because the public behaviour is identical. Those
+# are not holes and CLAUDE.md 7.2.1 says to note them in the code rather than
+# invent an assertion for them -- but the claim that a mutant is equivalent is
+# itself a claim, and it rots. Declaring it here turns it into something the
+# runner checks: an "equivalent" mutant that starts being KILLED means the code
+# changed so that the line now carries weight, and the run fails until the note
+# in the source is corrected.
+QUAD_MUTANTS = [
     # ---- codec: the wire format -------------------------------------------
     # The peer waits for 16 bytes that already arrived and never answers again.
     # Reads on the link as "the chassis stopped responding", not as a framing
@@ -238,32 +257,101 @@ MUTANTS = [
 ]
 
 
-def build_and_run(workdir, quiet=True):
-    """Compile both offline tests and run them.
+# yaml_lite mutants. The accessors these defend were added because a list of
+# bare scalars (reconnect_backoff_s) could not be read from C++ at all: the key
+# sat in the config, the loader never read it, and nothing failed.
+YAML_MUTANTS = [
+    ("yaml_lite: sequence entry read as a map is coerced, not refused",
+     YAML_LITE_H,
+     '    if (is_map_) {\n'
+     '      throw std::runtime_error("config node is a map, not a scalar: " + label);\n'
+     '    }',
+     "    if (false) { (void)label; }"),
+    # A null rung in the backoff ladder would become 0.0 s, turning a reconnect
+    # into a busy loop against the chassis -- CLAUDE.md 3.1 at element level.
+    ("yaml_lite: null sequence entry treated as a value",
+     YAML_LITE_H,
+     '    if (is_null()) {\n'
+     '      throw std::runtime_error(\n'
+     '          "config node is null (uncalibrated per CLAUDE.md 3.1): " + label);\n'
+     '    }',
+     "    if (false) { (void)label; }"),
+    # stod stops at the first unusable character, so without the length check
+    # "1.0abc" parses as 1.0 and a typo survives review.
+    ("yaml_lite: trailing garbage after a number accepted",
+     YAML_LITE_H,
+     '    if (pos != s.size()) {\n'
+     '      throw std::runtime_error("config key not a number: " + label + " = \'" + s + "\'");\n'
+     '    }\n'
+     "    return v;\n"
+     "  }\n"
+     "  long as_int(",
+     "    (void)pos;\n"
+     "    return v;\n"
+     "  }\n"
+     "  long as_int("),
+    ("yaml_lite: trailing garbage after an int accepted",
+     YAML_LITE_H,
+     '    if (pos != s.size()) {\n'
+     '      throw std::runtime_error("config key not an int: " + label + " = \'" + s + "\'");\n'
+     "    }\n"
+     "    return v;\n"
+     "  }\n"
+     "  bool as_bool(",
+     "    (void)pos;\n"
+     "    return v;\n"
+     "  }\n"
+     "  bool as_bool("),
+    # A sequence read as a scalar would hand back the empty string, which then
+    # parses as whatever the caller's type defaults to.
+    ("yaml_lite: sequence node answers the scalar accessors",
+     YAML_LITE_H,
+     '    if (is_seq_) {\n'
+     '      throw std::runtime_error("config node is a sequence, not a scalar: " + label);\n'
+     '    }',
+     "    if (false) { (void)label; }"),
+]
+
+# name -> (sources, test files, mutants, argv[1] passed to each test).
+# `sources` are compiled into every test of the suite; a header-only module
+# lists none. The argument differs per suite because the tests need different
+# things: the CHS-A tests read the golden capture, the config test needs a
+# WRITABLE DIRECTORY for its fixtures. Passing one to the other is not a
+# no-op -- the config test would try to write fixtures inside a file path.
+SUITES = {
+    "quadruped": (QUAD_SOURCES, QUAD_TESTS, QUAD_MUTANTS, GOLDEN),
+    "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
+}
+
+
+def build_and_run(sources, tests, workdir, arg, quiet=True):
+    """Compile and run every test of one suite.
 
     Returns (compiled, passed). The two are separate because a mutant that does
     not compile has NOT been caught by any assertion, and reporting it as a
     kill would credit the tests with work they did not do.
     """
-    for test in TESTS:
-        exe = os.path.join(workdir, test)
+    for test_src in tests:
+        exe = os.path.join(workdir, os.path.basename(test_src)[:-3])
         cmd = [
             "g++", "-std=c++17", "-w",
             "-I", os.path.join(ROOT, "common", "include"),
+            "-I", os.path.join(ROOT, "common", "third_party"),
             "-I", os.path.join(QUAD, "include"),
-            "-o", exe,
-            os.path.join(QUAD, "test", test + ".cc"),
-        ] + SOURCES
+            "-o", exe, test_src,
+        ] + sources
         cc = subprocess.run(cmd, capture_output=True, text=True)
         if cc.returncode != 0:
             if not quiet:
                 sys.stderr.write(cc.stderr)
             return (False, False)
-        # A hung framer (a resync that fails to advance, say) must not hang the
-        # run: without the timeout it is indistinguishable from a slow pass.
+        # argv[1] is the suite's own: the golden capture, or the work
+        # directory for a suite whose tests write fixtures. A hung framer (a
+        # resync that fails to advance, say) must not hang the run: without the
+        # timeout it is indistinguishable from a slow pass.
         try:
-            run = subprocess.run([exe, GOLDEN], capture_output=True, text=True,
-                                 timeout=60)
+            run = subprocess.run([exe, arg if arg else workdir],
+                                 capture_output=True, text=True, timeout=60)
         except subprocess.TimeoutExpired:
             return (True, False)
         if run.returncode != 0:
@@ -273,36 +361,42 @@ def build_and_run(workdir, quiet=True):
     return (True, True)
 
 
-def main():
+def run_suite(name, workdir):
+    """Run one suite. Returns (killed, survived[], broken[]) or None if the
+    baseline is red -- in which case nothing below it means anything."""
+    sources, tests, mutants, arg = SUITES[name]
+    # Every file a mutant may touch is backed up, sources and headers alike.
+    paths = sorted({m[1] for m in mutants})
     backups = {}
-    for path in SOURCES:
+    for path in paths:
         with open(path, "r", encoding="utf-8") as f:
             backups[path] = f.read()
 
     def restore():
-        for p, text in backups.items():
-            with open(p, "r", encoding="utf-8") as f:
+        for pth, text in backups.items():
+            with open(pth, "r", encoding="utf-8") as f:
                 if f.read() == text:
                     continue
-            with open(p, "w", encoding="utf-8") as f:
+            with open(pth, "w", encoding="utf-8") as f:
                 f.write(text)
 
+    # Registered as well as called in the finally below: an interrupt between
+    # writing a mutant and restoring it would otherwise leave a mutated file in
+    # the working tree, a silent candidate for the next commit.
     atexit.register(restore)
-    workdir = tempfile.mkdtemp(prefix="quadruped_mut_")
 
-    survived = []
-    broken = []
-    killed = 0
+    survived, broken, killed = [], [], 0
     try:
-        ok, passed = build_and_run(workdir, quiet=False)
+        ok, passed = build_and_run(sources, tests, workdir, arg, quiet=False)
         if not ok or not passed:
-            print("BASELINE IS NOT GREEN -- every mutant below would be "
-                  "reported killed for the wrong reason. Fix the build or the "
-                  "tests first.")
-            return 2
-        print("baseline: builds and passes")
+            print("  BASELINE IS NOT GREEN -- every mutant below would be "
+                  "reported killed for the wrong reason.")
+            return None
+        print("  baseline: builds and passes")
 
-        for desc, path, old, new in MUTANTS:
+        for entry in mutants:
+            desc, path, old, new = entry[0], entry[1], entry[2], entry[3]
+            expect = entry[4] if len(entry) > 4 else "killed"
             text = backups[path]
             hits = text.count(old)
             if hits != 1:
@@ -310,39 +404,77 @@ def main():
                 # broken mutant that is silently skipped reads exactly like a
                 # mutant that was killed.
                 broken.append((desc, "anchor matched %d times, need 1" % hits))
-                print("  ANCHOR   %s" % desc)
+                print("    ANCHOR   %s" % desc)
                 continue
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text.replace(old, new))
             try:
-                compiled, still_passes = build_and_run(workdir)
+                compiled, still_passes = build_and_run(sources, tests, workdir, arg)
             finally:
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(text)
             if not compiled:
                 broken.append((desc, "does not compile"))
-                print("  NOBUILD  %s" % desc)
+                print("    NOBUILD  %s" % desc)
             elif still_passes:
-                survived.append(desc)
-                print("  SURVIVED %s" % desc)
+                if expect == "equivalent":
+                    killed += 1  # behaved as declared
+                    print("    equiv.   %s" % desc)
+                else:
+                    survived.append(desc)
+                    print("    SURVIVED %s" % desc)
+            elif expect == "equivalent":
+                # The note in the source says nothing can catch this line, and
+                # something just did. Either the note is wrong or the code
+                # changed underneath it; both need a human.
+                broken.append((desc, "declared equivalent but was KILLED -- "
+                                     "the note in the source is now wrong"))
+                print("    UNEXPECTED-KILL %s" % desc)
             else:
                 killed += 1
-                print("  killed   %s" % desc)
+                print("    killed   %s" % desc)
+    finally:
+        restore()
+    return (killed, survived, broken)
+
+
+def main(argv):
+    names = argv[1:] if len(argv) > 1 else sorted(SUITES)
+    for name in names:
+        if name not in SUITES:
+            print("unknown suite: %s (have: %s)" % (name, ", ".join(sorted(SUITES))))
+            return 2
+
+    workdir = tempfile.mkdtemp(prefix="cxx_mut_")
+    killed_all, survived_all, broken_all = 0, [], []
+    baseline_red = []
+    try:
+        for name in names:
+            print("suite %s" % name)
+            result = run_suite(name, workdir)
+            if result is None:
+                baseline_red.append(name)
+                continue
+            killed, survived, broken = result
+            killed_all += killed
+            survived_all += [(name, d) for d in survived]
+            broken_all += [(name, d, w) for d, w in broken]
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
-        restore()
 
     print("")
     print("mutants: %d killed, %d survived, %d unusable"
-          % (killed, len(survived), len(broken)))
-    for desc in survived:
-        print("  SURVIVED: %s" % desc)
+          % (killed_all, len(survived_all), len(broken_all)))
+    for name, desc in survived_all:
+        print("  SURVIVED: [%s] %s" % (name, desc))
         print("    -> either an assertion is missing, or this is an equivalent")
         print("       mutant, in which case say so in the code (CLAUDE.md 7.2.1)")
-    for desc, why in broken:
-        print("  UNUSABLE: %s (%s)" % (desc, why))
-    return 0 if (not survived and not broken) else 1
+    for name, desc, why in broken_all:
+        print("  UNUSABLE: [%s] %s (%s)" % (name, desc, why))
+    for name in baseline_red:
+        print("  BASELINE RED: %s -- fix the build or the tests first" % name)
+    return 0 if (not survived_all and not broken_all and not baseline_red) else 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv))

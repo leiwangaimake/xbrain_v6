@@ -239,6 +239,15 @@ sets:
       - profile
       - spec
       - none
+  fault_level:
+    source: "11 S4.1"
+    anchor: "| `faults[].level` |"
+    note: "13 S7.3 derives it from the chassis Severities[] (3=WARN 4=ERROR 5=FATAL); anything else maps to degraded NOT warn -- an unknown severity affects operation until proven otherwise"
+    ordered: true
+    values:
+      - warn
+      - degraded
+      - fatal
   stop_reason:
     source: "11 S4.1"
     anchor: "| `stop_reason` |"        # the table header / row the parser keys off

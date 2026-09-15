@@ -125,6 +125,65 @@ int main() {
   CHECK(seq.require_seq("motion.prone_forbidden_gaits").at_index(1).is_scalar());
   CHECK(seq.require_seq("motion.axes.special_gaits").size() == 0);
   CHECK(seq.at("chassis_link.codebook_table.legacy_decimal").is_map());
+  // The VALUE of a scalar sequence entry, which no dotted path can reach: an
+  // entry has no key, so at("") walks into the scalar and throws. Until the
+  // node-level accessors landed, a list of bare numbers was present in the
+  // config, never read by the loader, and nothing failed -- the value simply
+  // never reached the process. Asserting only size() (as this test used to)
+  // cannot tell that apart from a list that is read correctly.
+  {
+    const YamlNode& backoff = seq.require_seq("chassis_link.reconnect_backoff_s");
+    CHECK(backoff.at_index(0).as_double("backoff[0]") == 0.5);
+    CHECK(backoff.at_index(1).as_double("backoff[1]") == 5.0);
+    const YamlNode& gaits = seq.require_seq("motion.prone_forbidden_gaits");
+    CHECK(gaits.at_index(0).as_scalar("gaits[0]") == "stair_agile");
+    // A number read as an int, and the trailing-garbage rejection: stod and
+    // stol both stop at the first unusable character, so "0.5" as an int must
+    // throw rather than quietly become 0.
+    CHECK(Throws([&] { backoff.at_index(0).as_int("backoff[0]"); }));
+    CHECK(Throws([&] { gaits.at_index(0).as_double("gaits[0]"); }));
+    CHECK(Throws([&] { gaits.at_index(0).as_bool("gaits[0]"); }));
+    // *** The values above are refused by stod/stol themselves -- "stair_agile"
+    // has no leading number at all. That is NOT the same as the length check,
+    // and a mutant that deleted the length check survived the suite until this
+    // case existed: a value that PARSES and then has garbage after it.
+    // "0.5s" becomes 0.5, "10 Hz" becomes 10, and the unit the author thought
+    // they were declaring is silently dropped.
+    {
+      const YamlNode g = ParseYaml("k:\n- 0.5s\n- 10 Hz\n");
+      const YamlNode& l = g.require_seq("k");
+      CHECK(Throws([&] { l.at_index(0).as_double("k[0]"); }));
+      CHECK(Throws([&] { l.at_index(1).as_int("k[1]"); }));
+    }
+    // A node of the wrong SHAPE must throw rather than be coerced, and the
+    // assertion has to be on as_scalar: every typed accessor would throw here
+    // anyway because the empty string is not a number, which hides whether the
+    // shape check exists at all.
+    CHECK(Throws([&] { eps.at_index(0).as_scalar("eps[0]"); }));
+    CHECK(Throws([&] { gaits.as_scalar("gaits"); }));
+    CHECK(Throws([&] { seq.require_seq("motion.axes.special_gaits").as_scalar("x"); }));
+  }
+  // A null entry inside a list is an UNCALIBRATED value, not a zero. This is
+  // CLAUDE.md 3.1 at the element level: a backoff ladder with a null rung must
+  // stop the process, because the alternative is a 0.0 s rung that turns a
+  // reconnect into a busy loop against the chassis.
+  {
+    const YamlNode n = ParseYaml("k:\n- 1.0\n- null\n- ~\n");
+    const YamlNode& l = n.require_seq("k");
+    CHECK(l.size() == 3);
+    CHECK(l.at_index(0).as_double("k[0]") == 1.0);
+    // as_scalar, not as_double: stod("null") throws on its own, so asserting
+    // through a typed accessor cannot tell "the null check fired" from "the
+    // number parse failed". Only the scalar form isolates the null branch --
+    // the mutant that deleted it survived every typed assertion.
+    CHECK(Throws([&] { l.at_index(1).as_scalar("k[1]"); }));  // literal null
+    CHECK(Throws([&] { l.at_index(2).as_scalar("k[2]"); }));  // tilde
+    CHECK(Throws([&] { l.at_index(1).as_double("k[1]"); }));
+    CHECK(Throws([&] { l.at_index(2).as_double("k[2]"); }));
+    // A bare dash is rejected by the PARSER (a nested collection is outside the
+    // modelled subset), so there is no "empty entry" node to read -- that case
+    // is asserted at parse time further down, not here.
+  }
   // A sequence node must not answer to the scalar accessors: reading a list as
   // a string is how "the list is empty" and "the key holds one value" get
   // confused, and both of those are silent.
