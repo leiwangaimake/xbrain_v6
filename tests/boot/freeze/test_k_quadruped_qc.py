@@ -41,7 +41,7 @@ from xbrain.common.errors.exceptions import XbrainError
 def _green_quadruped() -> Dict[str, Any]:
     """Return a healthy quadruped tree; every QC-N passes."""
     return {"quadruped": {
-        "robot_id": "xb-001",
+        "robot_id": "gj-001",
         "chassis_link": {
             "endpoint_candidates": [
                 {"proto": "udp", "host": "10.21.31.103", "port": 30000,

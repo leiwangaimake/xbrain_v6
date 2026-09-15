@@ -13,7 +13,7 @@ from xbrain.common.errors.exceptions import XbrainError
 def _green_calib() -> Dict[str, Any]:
     return {"common": {"calib": {
         "schema": "xbrain.calib/1",
-        "robot_id": "xb-001",
+        "robot_id": "gj-001",
         "calib_rev": "2026-08-08+gtest",
         "d_ref_m": 10.0,
         "gate": {"warn_m": 0.17, "reject_m": 0.35},
@@ -51,7 +51,7 @@ def _finalize(tree):
     return tree
 
 
-def _ctx(tree=None, rid="xb-001"):
+def _ctx(tree=None, rid="gj-001"):
     return {"config_root": "/tmp",
             "calib_raw": _finalize(tree or _green_calib()),
             "common_robot_id": rid}
@@ -69,9 +69,9 @@ def test_green_scaffold_passes():
 # Variant 1: robot_id mismatch
 def test_variant_1_robot_id_mismatch_h1_red():
     tree = _green_calib()
-    tree["common"]["calib"]["robot_id"] = "xb-999"
+    tree["common"]["calib"]["robot_id"] = "gj-999"
     with pytest.raises(XbrainError) as ei:
-        run(_ctx(tree, rid="xb-001"))
+        run(_ctx(tree, rid="gj-001"))
     assert ei.value.detail["kind"] == "calib_robot_id_mismatch"
 
 
@@ -130,7 +130,7 @@ def test_variant_4_tampered_lat_err_h4_red():
     tree = _finalize(_green_calib())
     tree["common"]["calib"]["lat_err_ref_m"] = 0.001  # deliberately wrong
     ctx = {"config_root": "/tmp", "calib_raw": tree,
-           "common_robot_id": "xb-001"}
+           "common_robot_id": "gj-001"}
     with pytest.raises(XbrainError) as ei:
         run(ctx)
     assert ei.value.detail["kind"] == "lat_err_recompute_mismatch"
@@ -141,7 +141,7 @@ def test_h4_within_tolerance_passes():
     # nudge by 1e-8 -- well below 1e-6 tolerance
     tree["common"]["calib"]["lat_err_ref_m"] += 1e-8
     ctx = {"config_root": "/tmp", "calib_raw": tree,
-           "common_robot_id": "xb-001"}
+           "common_robot_id": "gj-001"}
     result = run(ctx)
     assert result["status"] == "pass"
 
@@ -192,7 +192,7 @@ def test_multi_frame_max_wins():
     }
     tree = _finalize(tree)
     result = run({"config_root": "/tmp", "calib_raw": tree,
-                  "common_robot_id": "xb-001"})
+                  "common_robot_id": "gj-001"})
     # Bigger sigma from rslidar dominates cam_rgbd.
     assert result["lat_err_ref_m"] > 0.2
 

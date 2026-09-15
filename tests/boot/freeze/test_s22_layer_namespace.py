@@ -10,7 +10,7 @@ from xbrain.common.errors.exceptions import XbrainError
 
 def _green_layers():
     return {
-        "L1": {"common": {"robot_id": "xb-001", "site_id": "site-a"}},
+        "L1": {"common": {"robot_id": "gj-001", "site_id": "site-a"}},
         "L2": {"common": {"spec": {"max_vx_mps": 2.0}}},
         "L3": {"common": {"safety": {"d_safe_m": 1.0, "t_lat_s": 0.4}}},
     }
