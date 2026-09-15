@@ -42,6 +42,29 @@ Environment="PYTHONUNBUFFERED=1"
 # line without editing the table is caught at CI time.
 CPUAffinity=5
 
+# ---- the two limits the realtime design cannot work without -------------
+#
+# Measured on the ORIN 2026-09-15: DefaultLimitMEMLOCK=65536 (64 KB) and
+# DefaultLimitRTPRIO=0. Under those defaults BOTH realtime requirements of
+# 13 S9 fail, and each fails in a way that is easy to miss:
+#
+#   mlockall(MCL_CURRENT|MCL_FUTURE)   returns ENOMEM (13 S9.2 RTC-7). The
+#       process keeps running, with its pages pageable -- so the 20 Hz control
+#       loop meets its deadline until the first time the kernel decides to
+#       reclaim, and then misses it by however long the fault takes.
+#   sched_setscheduler(SCHED_FIFO, 80) returns EPERM (13 S9.1, the ctrl
+#       thread). The thread keeps running at ordinary priority, which is
+#       invisible until something else on core 5 gets busy.
+#
+# Neither produces a log line by itself. common/include/xbrain/rtcomm/
+# rt_thread.h returns the errno rather than a bool precisely so the caller can
+# say WHICH of these two it was -- but it can only say so if somebody asks.
+#
+# RTPRIO is 80 and not 99: 13 S9.1 assigns ctrl 80 and chs_b 70, and a ceiling
+# above what the design uses grants a privilege nothing needs.
+LimitMEMLOCK=infinity
+LimitRTPRIO=80
+
 ExecStart=/opt/xbrain_v6/data/install/quadruped/lib/quadruped/quadruped_m20
 
 [Install]
