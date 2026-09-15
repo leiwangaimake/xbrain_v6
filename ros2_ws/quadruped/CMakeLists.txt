@@ -80,6 +80,7 @@ add_library(quadruped_core STATIC
   src/chs_a_reports.cc
   src/chs_a_session.cc
   src/tier1.cc
+  src/rt_keys.cc
 )
 target_include_directories(quadruped_core PUBLIC include ${COMMON_INCLUDE})
 target_include_directories(quadruped_core PRIVATE ${THIRD_PARTY_INCLUDE})
@@ -183,3 +184,13 @@ add_test(NAME test_chs_a_session COMMAND test_chs_a_session)
 add_executable(test_tier1 test/test_tier1.cc)
 target_link_libraries(test_tier1 PRIVATE quadruped_core)
 add_test(NAME test_tier1 COMMAND test_tier1)
+
+# The key table is checked against the CONTRACT ITSELF: every suffix must appear
+# verbatim in docs/11. That is the only assertion that catches a mistyped key,
+# which otherwise produces a process that publishes happily and is heard by
+# nobody. The path is passed in rather than derived, and a missing file FAILS
+# rather than skipping -- a comparison that cannot run is not a comparison.
+set(CONTRACT_MD ${CMAKE_CURRENT_SOURCE_DIR}/../../docs/11-接口契约.md)
+add_executable(test_rt_keys test/test_rt_keys.cc)
+target_link_libraries(test_rt_keys PRIVATE quadruped_core)
+add_test(NAME test_rt_keys COMMAND test_rt_keys ${CONTRACT_MD})

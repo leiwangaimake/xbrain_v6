@@ -655,6 +655,52 @@ UNITS_MUTANTS = [
      "  if (!(limit.value > 0.0)) return Mps{0.0};"),
 ]
 
+# RT key-table mutants. The failure a mistyped key produces is a process that
+# starts, publishes without error, and is heard by nobody -- 13 DDS-9 calls it
+# indistinguishable from a dead network, and neither side logs anything.
+RT_KEYS_CC = os.path.join(QUAD, "src", "rt_keys.cc")
+RT_KEYS_SOURCES = [RT_KEYS_CC]
+RT_KEYS_TESTS = [os.path.join(QUAD, "test", "test_rt_keys.cc")]
+CONTRACT_MD = os.path.join(ROOT, "docs", "11-接口契约.md")
+
+RT_KEYS_MUTANTS = [
+    # A key that is not in the contract. One character, and nothing hears it.
+    ("rt_keys: one key suffix mistyped",
+     RT_KEYS_CC, '{"rt/chassis/state", KeyRole::kPublish',
+     '{"rt/chassis/stat", KeyRole::kPublish'),
+    # Truncation is the same failure reached a different way: the result is a
+    # well-formed key that matches nothing.
+    ("rt_keys: a truncated key is returned instead of refused",
+     RT_KEYS_CC, "  if (n < 0 || static_cast<std::size_t>(n) >= cap) return 0;",
+     "  if (n < 0) return 0;"),
+    ("rt_keys: the root segment is dropped",
+     RT_KEYS_CC, '  const int n = std::snprintf(out, cap, "%s/%s/%s", kKeyRoot, rid, suffix);',
+     '  const int n = std::snprintf(out, cap, "%s/%s", rid, suffix);\n  (void)kKeyRoot;'),
+    # 11 F-1: one publisher per key. A role flip makes this process subscribe to
+    # something it is supposed to produce, and the aggregate simply stops.
+    ("rt_keys: a published key flipped to subscribe",
+     RT_KEYS_CC, '{"rt/chassis/power", KeyRole::kPublish',
+     '{"rt/chassis/power", KeyRole::kSubscribe'),
+    # A safety key on the command profile loses the express budget 11 CRL-6
+    # reserves for the stop path.
+    ("rt_keys: an emergency-stop key demoted to the command profile",
+     RT_KEYS_CC, '{"rt/safety/estop/ack", KeyRole::kPublish, "Q0_safety"',
+     '{"rt/safety/estop/ack", KeyRole::kPublish, "Q3_cmd"'),
+    # ...and the other direction: ordinary traffic promoted onto the express
+    # budget, which is what PB-Q1 forbids on the rt_safety thread.
+    ("rt_keys: cmd_vel promoted onto the safety profile",
+     RT_KEYS_CC, '{"rt/motion/cmd_vel", KeyRole::kSubscribe, "Q1_rt"',
+     '{"rt/motion/cmd_vel", KeyRole::kSubscribe, "Q0_safety"'),
+    # A lookup that matches a prefix would let one key resolve to another's row.
+    ("rt_keys: lookup matches on a prefix",
+     RT_KEYS_CC, "    if (std::strcmp(kKeys[i].suffix, suffix) == 0) return &kKeys[i];",
+     "    if (std::strncmp(kKeys[i].suffix, suffix, 12) == 0) return &kKeys[i];"),
+    # Two rows for one key: the second silently shadows the first at lookup.
+    ("rt_keys: a key declared twice",
+     RT_KEYS_CC, '{"rt/chassis/basic", KeyRole::kPublish, "Q2_state",',
+     '{"rt/chassis/motion", KeyRole::kPublish, "Q2_state",'),
+]
+
 # Envelope mutants. The unit was wrong here for two days and no test turned
 # red, because the existing case asserted only ts_sync semantics: the unit was
 # an assumption, not an assertion. These are what make it an assertion.
@@ -705,6 +751,7 @@ SUITES = {
     "tier1": (TIER1_SOURCES, TIER1_TESTS, TIER1_MUTANTS, None),
     "units": ([], UNITS_TESTS, UNITS_MUTANTS, None),
     "envelope": ([], ENVELOPE_TESTS, ENVELOPE_MUTANTS, None),
+    "rt_keys": (RT_KEYS_SOURCES, RT_KEYS_TESTS, RT_KEYS_MUTANTS, CONTRACT_MD),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
 }
 
