@@ -193,6 +193,21 @@ MIN_REASON_CHARS = 12
 #: Directories never worth scanning.
 SKIP_DIRS = {"__pycache__", ".git", "node_modules", "build", "install", "log"}
 
+# Vendored / third-party trees share ONE exclusion list with charset_lint --
+# import, do not copy (CLAUDE.md 3.7: two hand-synced lists drift). Read at
+# call time through the module attribute, so a test that mutates the list sees
+# the walker follow it (the positive control in
+# tests/common/test_third_party_exclusion.py).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import charset_lint  # noqa: E402
+
+
+def _is_vendored(dirpath):
+    """True when dirpath sits inside a tree the repository did not write."""
+    rel = os.path.relpath(dirpath, ROOT)
+    return any(rel == t or rel.startswith(t + os.sep)
+               for t in charset_lint.THIRD_PARTY_SNAPSHOTS)
+
 
 def _files_under(base):
     """Scannable files below one directory.
@@ -203,6 +218,9 @@ def _files_under(base):
     without measuring anything.
     """
     for dirpath, dirnames, filenames in os.walk(base):
+        if _is_vendored(dirpath):
+            dirnames[:] = []
+            continue
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for name in filenames:
             if name.endswith(SOURCE_EXT):

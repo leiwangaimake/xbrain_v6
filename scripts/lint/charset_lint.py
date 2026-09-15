@@ -143,6 +143,14 @@ def comment_lines_of(path):
 THIRD_PARTY_SNAPSHOTS = (
     "ros2_ws/perception",
     "ros2_ws/Perception_Gemini338Le_20260907",
+    # Vendored third-party dependencies we did NOT write (99 U85 item 6,
+    # 2026-09-15): common/third_party/<name>/ holds an unmodified upstream
+    # copy plus its LICENSE (today: nlohmann/json v3.11.3, MIT). It is not
+    # ours to re-punctuate or to give a Hachist header, and a hand edit
+    # would break the upstream identity; the sha256 lives in the package
+    # README that consumes it. Consumers must keep it OUT of realtime
+    # threads (13 QD-7): JSON parsing belongs to chs_a_rx, never ctrl.
+    "common/third_party",
 )
 
 

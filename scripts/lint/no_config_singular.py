@@ -94,11 +94,31 @@ def _scan_file(path: str) -> List[Tuple[int, str]]:
     return hits
 
 
+# Third-party frozen snapshots and vendored trees share ONE exclusion list with
+# charset_lint -- import, do not copy (CLAUDE.md 3.7). The list is read at call
+# time through the module attribute so tests/common/test_third_party_exclusion.py
+# can mutate it and watch this walker follow.
+_LINT_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(os.path.dirname(_LINT_DIR))
+sys.path.insert(0, _LINT_DIR)
+import charset_lint  # noqa: E402
+
+
+def _is_vendored(dirpath: str) -> bool:
+    """True when dirpath lies inside a tree this repository did not write."""
+    rel = os.path.relpath(dirpath, _REPO_ROOT)
+    return any(rel == t or rel.startswith(t + os.sep)
+               for t in charset_lint.THIRD_PARTY_SNAPSHOTS)
+
+
 def _walk(root: str) -> List[str]:
     out: List[str] = []
     skip_dirs = {"__pycache__", ".git", ".pytest_cache", "docs",
                  "node_modules", "build", "lib"}
     for dirpath, dirnames, filenames in os.walk(root):
+        if _is_vendored(dirpath):
+            dirnames[:] = []
+            continue
         dirnames[:] = [d for d in dirnames
                        if d not in skip_dirs and not d.startswith(".")]
         for name in filenames:

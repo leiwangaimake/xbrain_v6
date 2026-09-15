@@ -234,6 +234,20 @@ def code_lines(text, is_cmake):
     return out
 
 
+# 第三方 vendored 树(common/third_party/...)与冻结快照共用 charset_lint 的同一份
+# 排除表 -- 只 import 不复制(CLAUDE.md 3.7). 它们不是我方写的 C++, 例如 nlohmann
+# json.hpp 里的 <=> 与 concept 都在版本宏保护下, 按本表规则扫会误报.
+sys.path.insert(0, os.path.join(ROOT, "scripts", "lint"))
+import charset_lint  # noqa: E402
+
+
+def _is_vendored(dirpath):
+    """dirpath 是否落在仓库没写过的树里(排除表在 charset_lint, 调用时读取)."""
+    rel = os.path.relpath(dirpath, ROOT)
+    return any(rel == t or rel.startswith(t + os.sep)
+               for t in charset_lint.THIRD_PARTY_SNAPSHOTS)
+
+
 def _files_for(rule):
     """规则的实际扫描对象. 目录不存在就返回空 -- 由调用方报 NO-TARGET."""
     out = []
@@ -241,7 +255,10 @@ def _files_for(rule):
         base = os.path.join(ROOT, rel)
         if not os.path.isdir(base):
             continue
-        for dirpath, _dirnames, filenames in os.walk(base):
+        for dirpath, dirnames, filenames in os.walk(base):
+            if _is_vendored(dirpath):
+                dirnames[:] = []
+                continue
             for name in sorted(filenames):
                 if name.endswith(rule.suffixes):
                     out.append(os.path.join(dirpath, name))
