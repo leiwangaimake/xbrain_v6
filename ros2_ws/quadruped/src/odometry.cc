@@ -171,4 +171,29 @@ OdomSample Odometry::Tick(double now_mono_s, double dt_s) {
   return s;
 }
 
+Quaternion YawToQuaternion(double yaw_rad) {
+  Quaternion q;
+  // *** The HALF angle. sin(yaw) instead of sin(yaw/2) is right at 0 and at
+  // pi and wrong at every angle between, which is the shape that survives a
+  // test written with the two obvious values in it.
+  q.z = std::sin(yaw_rad * 0.5);
+  q.w = std::cos(yaw_rad * 0.5);
+  return q;
+}
+
+void FillCovariance36(double var_x, double var_y, double var_yaw,
+                      double* out36) {
+  if (out36 == nullptr) return;
+  for (int i = 0; i < 36; ++i) out36[i] = 0.0;
+  out36[kCovIndexX] = var_x;
+  out36[kCovIndexY] = var_y;
+  out36[kCovIndexYaw] = var_yaw;
+  // REP-105: a negative variance means "not provided". Zero would claim exact
+  // knowledge of a height and two tilts this process never estimates, and a
+  // fuser that trusted it would weight them infinitely.
+  out36[kCovIndexZ] = -1.0;
+  out36[kCovIndexRoll] = -1.0;
+  out36[kCovIndexPitch] = -1.0;
+}
+
 }  // namespace quadruped

@@ -154,6 +154,41 @@ class Odometry {
   double p_yaw_ = 0.0;
 };
 
+// A yaw-only orientation as a quaternion (x, y, z, w). Kept HERE, in the
+// ROS-free core, rather than in the uplink: it is pure arithmetic, it is a
+// classic place for a half-angle to go missing, and putting it here means it is
+// tested on a machine with no ROS at all.
+//
+// The half angle is the whole content. Writing sin(yaw) instead of sin(yaw/2)
+// produces a quaternion that is correct at 0 and at 180 degrees and wrong
+// everywhere in between -- which is exactly the shape that survives a casual
+// test and fails in the field.
+struct Quaternion {
+  double x = 0.0;
+  double y = 0.0;
+  double z = 0.0;
+  double w = 1.0;
+};
+
+Quaternion YawToQuaternion(double yaw_rad);
+
+// Where each variance lands in the 6x6 row-major covariance array that
+// nav_msgs/Odometry carries. Named because the numbers are the bug: [35] is
+// yaw, not [5], and an implementation that used the latter writes the yaw
+// variance into the x-row's yaw CORRELATION and leaves the yaw variance at
+// zero -- a planner then treats the heading as exact.
+inline constexpr int kCovIndexX = 0;      // row 0, col 0
+inline constexpr int kCovIndexY = 7;      // row 1, col 1
+inline constexpr int kCovIndexZ = 14;     // row 2, col 2
+inline constexpr int kCovIndexRoll = 21;  // row 3, col 3
+inline constexpr int kCovIndexPitch = 28; // row 4, col 4
+inline constexpr int kCovIndexYaw = 35;   // row 5, col 5
+
+// Fill a 36-element row-major covariance from the three estimated diagonal
+// terms. The three unestimated axes get -1, the REP-105 convention for "not
+// provided" -- zero would claim perfect knowledge of something never measured.
+void FillCovariance36(double var_x, double var_y, double var_yaw, double* out36);
+
 }  // namespace quadruped
 
 #endif  // HACHIST_XBRAIN_V6_QUADRUPED_ODOMETRY_H_

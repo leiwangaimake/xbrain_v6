@@ -374,6 +374,63 @@ int main() {
     CHECK(Near(s.y, 1.0, 0.03));
   }
 
+  // ---- yaw to quaternion: the half angle ---------------------------------
+  {
+    // *** Checked at angles where a MISSING half would show. At 0 and at pi
+    // the two forms agree, so a test written with only those two values passes
+    // on sin(yaw) -- and sin(yaw) is wrong everywhere else.
+    const Quaternion q0 = YawToQuaternion(0.0);
+    CHECK(Near(q0.z, 0.0, 1e-12) && Near(q0.w, 1.0, 1e-12));
+
+    const Quaternion q90 = YawToQuaternion(M_PI / 2.0);
+    // Half of 90 degrees is 45, so both components are sqrt(2)/2. Under
+    // sin(yaw) they would be 1.0 and 0.0.
+    CHECK(Near(q90.z, std::sqrt(2.0) / 2.0, 1e-9));
+    CHECK(Near(q90.w, std::sqrt(2.0) / 2.0, 1e-9));
+
+    const Quaternion q180 = YawToQuaternion(M_PI);
+    CHECK(Near(q180.z, 1.0, 1e-9));
+    CHECK(Near(q180.w, 0.0, 1e-9));
+
+    const Quaternion qm90 = YawToQuaternion(-M_PI / 2.0);
+    CHECK(Near(qm90.z, -std::sqrt(2.0) / 2.0, 1e-9));
+    CHECK(Near(qm90.w, std::sqrt(2.0) / 2.0, 1e-9));
+
+    // Unit norm at a handful of angles: a quaternion that is not unit is
+    // rejected by tf2 with a message that names neither this file nor yaw.
+    for (double a2 = -3.0; a2 <= 3.0; a2 += 0.37) {
+      const Quaternion q = YawToQuaternion(a2);
+      CHECK(Near(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w, 1.0, 1e-12));
+      CHECK(q.x == 0.0 && q.y == 0.0);   // yaw only
+    }
+  }
+
+  // ---- the 6x6 covariance indices ---------------------------------------
+  {
+    // The numbers ARE the bug. Yaw lives at [35], not [5]: writing it to [5]
+    // fills the x-row's yaw CORRELATION and leaves the yaw variance zero, and
+    // a planner then treats the heading as exact.
+    double cov[36];
+    FillCovariance36(0.25, 0.36, 0.01, cov);
+    CHECK(cov[0] == 0.25);
+    CHECK(cov[7] == 0.36);
+    CHECK(cov[35] == 0.01);
+    // REP-105: the three unestimated axes say "not provided", not "exact".
+    CHECK(cov[14] == -1.0);
+    CHECK(cov[21] == -1.0);
+    CHECK(cov[28] == -1.0);
+    // Everything else is zero -- including [5], which is where a wrong yaw
+    // index would have landed.
+    CHECK(cov[5] == 0.0);
+    int nonzero = 0;
+    for (int i = 0; i < 36; ++i) {
+      if (cov[i] != 0.0) ++nonzero;
+    }
+    CHECK(nonzero == 6);
+    // A null buffer is ignored rather than crashing the publish path.
+    FillCovariance36(1.0, 1.0, 1.0, nullptr);
+  }
+
   // ---- the band names are distinct --------------------------------------
   {
     const std::string names[] = {

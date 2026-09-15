@@ -112,9 +112,36 @@ install(TARGETS quadruped_m20 RUNTIME DESTINATION lib/${PROJECT_NAME})
 find_package(rclcpp QUIET)
 find_package(nav_msgs QUIET)
 find_package(tf2_ros QUIET)
-if(rclcpp_FOUND AND nav_msgs_FOUND AND tf2_ros_FOUND)
-  message(STATUS "quadruped: rclcpp/nav_msgs/tf2_ros found -- uplink target will "
-                 "be built when batch B8 adds its sources")
+find_package(geometry_msgs QUIET)
+if(rclcpp_FOUND AND nav_msgs_FOUND AND tf2_ros_FOUND AND geometry_msgs_FOUND)
+  message(STATUS "quadruped: rclcpp/nav_msgs/tf2_ros found -- building the B8 "
+                 "uplink target")
+  # A SEPARATE library, so the ROS dependency stops here. quadruped_core, its
+  # tests and every other consumer keep building on a machine with no ROS --
+  # 13 S5.3 requires that, because chassis_relay is on the emergency-stop path
+  # and must never pull rclcpp in.
+  add_library(quadruped_uplink STATIC src/uplink.cc)
+  target_include_directories(quadruped_uplink PUBLIC include ${COMMON_INCLUDE})
+  # The PLAIN signature on both calls. ament_target_dependencies uses the
+  # non-keyword form internally, and CMake refuses to mix the two on one
+  # target -- the error names the target but not the cause, so it is worth
+  # saying here rather than rediscovering it.
+  ament_target_dependencies(quadruped_uplink rclcpp nav_msgs tf2_ros geometry_msgs)
+  target_link_libraries(quadruped_uplink quadruped_core)
+
+  # Registered only when ROS is present, so a machine without it still runs the
+  # whole offline suite. The test brings the context up on the CONFIGURED
+  # domain (42) rather than a test-only one: a test that quietly used a
+  # different domain would pass on an implementation that reads ROS_DOMAIN_ID
+  # from the environment, which is the mistake DDS-1 cares about most.
+  #
+  # It proves the publish call returned. It does NOT prove a packet left the
+  # machine -- that is T-ODOM-1 and needs a second process.
+  enable_testing()
+  add_executable(test_uplink test/test_uplink.cc)
+  ament_target_dependencies(test_uplink rclcpp nav_msgs tf2_ros geometry_msgs)
+  target_link_libraries(test_uplink quadruped_uplink)
+  add_test(NAME test_uplink COMMAND test_uplink)
 else()
   message(STATUS "quadruped: rclcpp/nav_msgs/tf2_ros NOT found -- skipping the "
                  "ROS 2 uplink target; core and tests still build")
