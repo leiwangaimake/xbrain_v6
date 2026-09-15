@@ -3393,14 +3393,12 @@ class AIServiceGateway:
     async def transcribe(self, audio: bytes, *, hotwords: list[str] | None = None,
                          timeout_s: float = 5.0) -> AsrResult
     # ★ v0.3：stream=True 走 11 §8.13.4 的 chunked；stream=False 走 AS-6 离线批量
-    async def synthesize(self, text: str, *, voice: str | None = None, speed: float = 1.0,
-                         stream: bool = True, timeout_s: float = 5.0) -> AsyncIterator[bytes] | bytes
     async def acquire_gpu(self, *, priority: str, timeout_s: float)   # 上下文管理器
 ```
 
 ★ `AsrResult` 必须含：`text` · `conf` · `conf_estimated` · `audio_duration_ms` · `rtf` · `rtf_wallclock`（AS-4 + `11` §8.13.3 映射表）。
 
-★ **`preset` 参数已删除**（v0.2 的 `synthesize(..., preset=...)`）—— ★ `kind=preset` 是**本地预合成 WAV 的放音路径**，由 P2 直接播（`11` §8.8.2），**不经 AI 网关**；把它混进 `synthesize()` 会让「TTS 熔断时 preset 仍可用」这条降级路径失效。
+★★★ **`synthesize()` 方法已整体删除**（2026-09-15 · `99` **U86**）—— ★ TTS 不是 AI 网关调用：文本经 `tts_client.speak()` -> payload-service `POST /tts` -> GZH-2 `[31]` 设备内合成（GWY-P4-01 · `11` §7.5A.5）。★ 机上无 TTS 服务 / 无 TTS 模型 / 不占 GPU / 不申请域6 令牌。★ `kind=preset` 的本地预合成 WAV 仍由 P2 直接播（`11` §8.8.2），与网关无关。
 
 ### 9.2 ★ GPU 准入令牌【域6】
 
@@ -4242,7 +4240,7 @@ timezone: ${common.timezone}
 | ✅ | | ★★★ **v0.8 关闭** —— PATCH C 正文已按其逐字锚点（§6.6「按类分布」表之后、「完整的 109 行判定表见 …」之前）**合入 §6.6**，并加了「✅ 已合入（v0.8）」块首标记。★ `TR-1c` 的 `abs_angle_unsupported` 已同步进 §8.0.3 的 `detail` 闭集。<br>★ **v0.9 注**：该锚点行现已改为「128 行」，★★ **锚点作为合入记录保持原文不动**（§6.6 已注明） | — |
 | ✅ | | ★★★ **2026-07-31 关闭** —— ★ 两条**原文本来就是对的**：MIC 是 **ORIN 上的 USB 扩展 MIC**（`hw:0,0`），它就是 ALSA 声卡。★ `00` 已复原 VOI-10 并新增 VOI-10a/VOI-10b，`11` 已于 **v0.6.1** 撤销 `RT-A1'`；★★ `16` 侧的对齐见 **§3.0.1** | — |
 | ⚠️ **Q-P4-16** | ⚠️ **`00` §4.10.6 环节 ③「ASR 识别 350 ms」未复核** —— ★ 该估值是**在没有 48 k→16 k 重采样这一步**的前提下给出的；★★ 抗混叠低通跑在 CPU 上，与 zipformer int8 抢同一批线程。★ 环节 ② 已由 `00` 侧补入抽取步骤并标待实测（✅ 已对齐） | ★ 需 **T-MIC-2**（§15.0）实测抽取链路 CPU 占用后回填；★★ 归 `00` 侧，`16` 不代改 | **P1**（新增，本轮） |
-| ⚠️ **Q-P4-17** | ⚠️ **本期 TTS 到底走哪条路** —— ★ §14 `gateway.tts.response_format: "pcm"`（16 k/mono/s16le）假定网关**产出音频**；★★ 而真机链路是 **`[31]` 设备内合成**（只发「性别字节 + UTF-8 文本」，**不传波形**）⇒ 那条 PCM 在本期**可能根本没有落点**。★★★ 这条同时是「AEC 无参考信号」论证的物理前提（§3.0.4） | ★ 归 `11` §8.13.4 / D-AI-3 裁决；★★ 未裁决前**不擅改 §14**，`synthesize()` 签名保持不变。<br>★★★ **v0.8 补：不阻塞编码的默认行为** —— ★ P4 侧**两条路的接口是同一个**：无论设备内合成还是网关 PCM，★★ P4 发出去的都是 **`cmd/audio/speak`（`SpeakRequest`，含 `est_duration_ms` ＋ 必填 `max_duration_ms`）**，★★★ **波形从不经过 P4**（§3.0.1 硬约束 2）。⇒ ★ 差异**全部落在 P2 的 audio_io 内部**。★ 因此 P4 按 `SpeakRequest` 一条路实现即可；★★ `AIServiceGateway.synthesize()` 在本期**可以没有调用点**（保留签名，标 ⚠️ 本期可能不用），★ 这不影响任何 P4 功能 | ★ **P2**（★ v0.8 由 P1 降级：P4 侧接口与该裁决**无关**） |
+| ✅ **Q-P4-17**（2026-09-15 · U86 关闭） | ⚠️ **本期 TTS 到底走哪条路** —— ★ §14 `gateway.tts.response_format: "pcm"`（16 k/mono/s16le）假定网关**产出音频**；★★ 而真机链路是 **`[31]` 设备内合成**（只发「性别字节 + UTF-8 文本」，**不传波形**）⇒ 那条 PCM 在本期**可能根本没有落点**。★★★ 这条同时是「AEC 无参考信号」论证的物理前提（§3.0.4） | ★★★ **2026-09-15 · U86 已裁**：TTS 只走 GZH-2 `[31]` 设备内合成，`synthesize()` 方法**已删除**（16 §9.1 · 11 §11.3 同步删除）。<br>★★★ **v0.8 补：不阻塞编码的默认行为** —— ★ P4 侧**两条路的接口是同一个**：无论设备内合成还是网关 PCM，★★ P4 发出去的都是 **`cmd/audio/speak`（`SpeakRequest`，含 `est_duration_ms` ＋ 必填 `max_duration_ms`）**，★★★ **波形从不经过 P4**（§3.0.1 硬约束 2）。⇒ ★ 差异**全部落在 P2 的 audio_io 内部**。★ 因此 P4 按 `SpeakRequest` 一条路实现即可；★★ `synthesize()` 已删（U86），P4 的 TTS 出口是 `tts_client.speak()`（`SpeakRequest`），与本裁决一致 | ★ **P2**（★ v0.8 由 P1 降级：P4 侧接口与该裁决**无关**） |
 | ✅ | | ★★★ **2026-07-31 关闭** —— `00` §4.9 已定案：**升为正式需求**，「改做 AEC 全双工」标为「不是权衡而是不可能」。★ 论证见本文 **§3.0.4**（TTS 设备内合成 ⇒ 上装侧无播出波形 ⇒ **AEC 没有输入**） | — |
 | ⚠️ **Q-P4-19** | ⚠️ **语音云台点动（E01/E06）是否应作为主控手段** —— ★ `T2` 上装侧 0.85–1.32 s 对「人看着画面说往左一点」的目视闭环已是感知上限（§6.6.5 第 9 组） | ★ **不阻塞**：未确认前**按现状 `fastpath` / `T2` 实现**，不做免解析直通通路（★ 直通会绕开 ⑤ 位定向性判定与 U45 录制态抑制 —— 慢一点是体验损失，绕开是安全损失）。★★ **不新增 `T1` 档**（符号撞车 ＋ 破坏 §6.6.6 双射） | P2（新增，v0.8） |
 | ⚠️ **Q-P4-20** | ⚠️ **`_prompt_work/_triage.json` 的 `groups[key=M6].members` 仍是 5 条**（F03 F06 F09 F10 F14），与 §6.7.6 拆组后的 3 条不一致；★ 新组 `M6b_mark` 亦未登记 | ★ **不阻塞**：★★ **`16` §6.7 组表是 mission 分组的唯一真源**（`_triage.json` 的 `groups` 段是它的镜像）。⚠️ 归工作文件侧同步，`16` 不代改 | P1（新增，v0.8） |
