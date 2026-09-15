@@ -934,6 +934,37 @@ ODOM_MUTANTS = [
      "    x_ += vx_ * dt_s;\n    y_ += vy_ * dt_s;"),
 ]
 
+# Name-mapping mutants. A wrong mapping produces a participant that comes up, a
+# topic that exists and not one sample -- 13 DDS-9 records that as
+# indistinguishable from a dead network, so there is nothing to observe at run
+# time and the assertion has to live here.
+NAMES_CC = os.path.join(QUAD, "src", "dds_names.cc")
+NAMES_SOURCES = [NAMES_CC]
+NAMES_TESTS = [os.path.join(QUAD, "test", "test_dds_names.cc")]
+
+NAMES_MUTANTS = [
+    ("dds_names: the rt/ prefix dropped",
+     NAMES_CC, '  return std::string(kRosTopicPrefix) + ros_topic.substr(1);',
+     '  return ros_topic.substr(1);'),
+    ("dds_names: the leading slash kept as well as the prefix",
+     NAMES_CC, '  return std::string(kRosTopicPrefix) + ros_topic.substr(1);',
+     '  return std::string(kRosTopicPrefix) + ros_topic;'),
+    # An empty or relative name maps to a valid topic nothing publishes, so the
+    # operator is told nothing at all.
+    ("dds_names: a relative topic accepted",
+     NAMES_CC, "  if (ros_topic.size() < 2 || ros_topic[0] != '/') {",
+     "  if (false) {"),
+    ("dds_names: a trailing slash accepted",
+     NAMES_CC, "  if (ros_topic[ros_topic.size() - 1] == '/') {", "  if (false) {"),
+    # never-seen and stale have different causes and different remedies.
+    ("dds_names: never-seen folded into stale",
+     NAMES_CC, "  if (age_s < 0.0) return ImuFreshness::kNeverSeen;",
+     "  if (age_s < 0.0) return ImuFreshness::kStale;"),
+    ("dds_names: the freshness boundary is off by one",
+     NAMES_CC, "  if (age_s * 1000.0 > static_cast<double>(warn_ms)) return ImuFreshness::kStale;",
+     "  if (age_s * 1000.0 >= static_cast<double>(warn_ms)) return ImuFreshness::kStale;"),
+]
+
 # Envelope mutants. The unit was wrong here for two days and no test turned
 # red, because the existing case asserted only ts_sync semantics: the unit was
 # an assumption, not an assertion. These are what make it an assertion.
@@ -988,6 +1019,7 @@ SUITES = {
     "payloads": (PAYLOADS_SOURCES, PAYLOADS_TESTS, PAYLOADS_MUTANTS, None),
     "mode": (MODE_SOURCES, MODE_TESTS, MODE_MUTANTS, None),
     "odom": (ODOM_SOURCES, ODOM_TESTS, ODOM_MUTANTS, None),
+    "dds_names": (NAMES_SOURCES, NAMES_TESTS, NAMES_MUTANTS, None),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
 }
 

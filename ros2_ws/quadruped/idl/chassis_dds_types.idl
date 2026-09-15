@@ -1,0 +1,139 @@
+// Copyright (c) 2026 Hachist Robotics
+// Author: wanglei@hachist.com
+// 上海哈船智能船舶技术有限公司
+// File: chassis_dds_types.idl
+// Brief: Wire-compatible IDL for the chassis domain-0 topics (13 DDS-1, S5.4)
+//
+// Description:
+// Why this file exists instead of just running idlc over the IDL that ships
+// with sensor_msgs.
+//
+// Running idlc on /opt/ros/humble/share/sensor_msgs/msg/Imu.idl succeeds, and
+// produces a descriptor whose type name is "sensor_msgs::msg::Imu". The name
+// ROS 2 actually puts on the wire is "sensor_msgs::msg::dds_::Imu_" -- an extra
+// module and a trailing underscore. A reader built from the stock IDL therefore
+// matches NOTHING: the participant comes up, the topic exists, and not one
+// sample ever arrives.
+//
+// CLAUDE.md 5.4 names this as the easiest trap in the whole package and records
+// that 13 does not mention it anywhere. The symptom is indistinguishable from a
+// network that is down, which is why it is worth a file of its own rather than
+// a comment somewhere: the mapping is now something a reviewer can read.
+//
+// Measured on 2026-09-15: idlc over the stock IDL emits
+//   .m_typename = "sensor_msgs::msg::Imu"
+// and the ROS 2 convention needs
+//   .m_typename = "sensor_msgs::msg::dds_::Imu_"
+//
+// The TOPIC name has the same shape of trap: ROS 2 topic /IMU is DDS topic
+// "rt/IMU". That one lives in the reader, not here.
+//
+// The field layout below is transcribed from the stock IDLs, field for field
+// and in order -- a reordering would still connect and would then decode
+// garbage, which is worse than not connecting at all.
+
+module builtin_interfaces {
+  module msg {
+    module dds_ {
+      struct Time_ {
+        long sec;
+        unsigned long nanosec;
+      };
+    };
+  };
+};
+
+module std_msgs {
+  module msg {
+    module dds_ {
+      struct Header_ {
+        builtin_interfaces::msg::dds_::Time_ stamp;
+        string frame_id;
+      };
+    };
+  };
+};
+
+module geometry_msgs {
+  module msg {
+    module dds_ {
+      struct Vector3_ {
+        double x;
+        double y;
+        double z;
+      };
+
+      struct Quaternion_ {
+        double x;
+        double y;
+        double z;
+        double w;
+      };
+    };
+  };
+};
+
+module sensor_msgs {
+  module msg {
+    module dds_ {
+      typedef double double__9[9];
+
+      struct Imu_ {
+        std_msgs::msg::dds_::Header_ header;
+        geometry_msgs::msg::dds_::Quaternion_ orientation;
+        double__9 orientation_covariance;
+        geometry_msgs::msg::dds_::Vector3_ angular_velocity;
+        double__9 angular_velocity_covariance;
+        geometry_msgs::msg::dds_::Vector3_ linear_acceleration;
+        double__9 linear_acceleration_covariance;
+      };
+    };
+  };
+};
+
+// ---- the vendor's own messages (drdds), same dds_ convention ------------
+//
+// Transcribed from data/run/chassis/drdds/msg/*.idl, which the vendor supplied
+// on 2026-09-15. The chassis publishes them from its own ROS 2, so the on-wire
+// names carry the same extra module and trailing underscore as the standard
+// messages above -- and the same failure if they are omitted.
+//
+// 13 DDS-4 / 11 RT-C5: these are READ ONLY. This process creates no writer on
+// domain 0, and /NAV_CMD is deliberately absent from this file -- 13 S2.3 calls
+// it out as NOT a backup velocity channel, and a type that does not exist here
+// cannot be written by accident.
+
+module drdds {
+  module msg {
+    module dds_ {
+      struct MetaType_ {
+        unsigned long long frame_id;
+        builtin_interfaces::msg::dds_::Time_ stamp;
+      };
+
+      struct GaitValue_ {
+        unsigned long gait;
+      };
+
+      struct MotionStateValue_ {
+        long state;
+      };
+
+      struct MotionInfoValue_ {
+        float vel_x;
+        float vel_y;
+        float vel_yaw;
+        float height;
+        drdds::msg::dds_::MotionStateValue_ motion_state;
+        drdds::msg::dds_::GaitValue_ gait_state;
+        float payload;
+        float remain_mile;
+      };
+
+      struct MotionInfo_ {
+        drdds::msg::dds_::MetaType_ header;
+        drdds::msg::dds_::MotionInfoValue_ data;
+      };
+    };
+  };
+};

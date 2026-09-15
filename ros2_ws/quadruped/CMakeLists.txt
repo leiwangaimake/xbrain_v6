@@ -37,7 +37,15 @@
 # bump to 20 fails CI rather than surprising the platform decision.
 
 cmake_minimum_required(VERSION 3.16)
-project(quadruped LANGUAGES CXX)
+# C is enabled alongside C++ for ONE reason: idlc emits C, and the generated
+# type support has to be compiled. Without it CMake has no language for a .c
+# file and drops it SILENTLY -- the library builds, and the link of anything
+# that uses a descriptor fails with an undefined reference that names the
+# symbol and not the cause.
+#
+# This does not relax CPP-1: the C++ standard below is still exactly 17, and no
+# hand-written C is added to this package.
+project(quadruped LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)          # 13 CPP-1: exactly 17, not "at least"
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -84,6 +92,7 @@ add_library(quadruped_core STATIC
   src/rt_payloads.cc
   src/mode_machine.cc
   src/odometry.cc
+  src/dds_names.cc
 )
 target_include_directories(quadruped_core PUBLIC include ${COMMON_INCLUDE})
 target_include_directories(quadruped_core PRIVATE ${THIRD_PARTY_INCLUDE})
@@ -154,12 +163,45 @@ endif()
 # environment variable.
 # ---------------------------------------------------------------------------
 find_package(CycloneDDS QUIET)
-if(CycloneDDS_FOUND)
-  message(STATUS "quadruped: CycloneDDS found -- domain-0 reader target will be "
-                 "built when batch B7 adds its sources")
+find_program(IDLC_EXECUTABLE idlc)
+if(CycloneDDS_FOUND AND IDLC_EXECUTABLE)
+  message(STATUS "quadruped: CycloneDDS + idlc found -- building the B7 "
+                 "domain-0 reader")
+  # The type support is GENERATED, from an IDL this package owns rather than
+  # from the one that ships with sensor_msgs. The stock IDL produces the type
+  # name "sensor_msgs::msg::Imu", while ROS 2 puts "sensor_msgs::msg::dds_::Imu_"
+  # on the wire -- a reader built from the stock name matches nothing, and the
+  # symptom is silence (CLAUDE.md 5.4, measured 2026-09-15). The IDL carries the
+  # full reasoning.
+  set(CHS_B_IDL ${CMAKE_CURRENT_SOURCE_DIR}/idl/chassis_dds_types.idl)
+  set(CHS_B_GEN_C ${CMAKE_CURRENT_BINARY_DIR}/chassis_dds_types.c)
+  set(CHS_B_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/chassis_dds_types.h)
+  add_custom_command(
+    OUTPUT ${CHS_B_GEN_C} ${CHS_B_GEN_H}
+    COMMAND ${IDLC_EXECUTABLE} ${CHS_B_IDL}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS ${CHS_B_IDL}
+    COMMENT "idlc: generating the domain-0 type support")
+
+  add_library(quadruped_chs_b STATIC src/chs_b.cc ${CHS_B_GEN_C})
+  target_include_directories(quadruped_chs_b PUBLIC include ${COMMON_INCLUDE}
+                             ${CMAKE_CURRENT_BINARY_DIR})
+  target_link_libraries(quadruped_chs_b PUBLIC quadruped_core CycloneDDS::ddsc)
+  # The generated C is not ours to hold to our warning settings.
+  set_source_files_properties(${CHS_B_GEN_C} PROPERTIES COMPILE_OPTIONS "-w")
+
+  # The one test that can verify DDS-1: it sets ROS_DOMAIN_ID to the WRONG
+  # value and requires the participant to have joined the configured one
+  # anyway. An implementation that read the environment would put this
+  # participant on the same domain as the uplink, and the result is a reader
+  # that never receives anything with no error anywhere.
+  enable_testing()
+  add_executable(test_chs_b test/test_chs_b.cc)
+  target_link_libraries(test_chs_b quadruped_chs_b)
+  add_test(NAME test_chs_b COMMAND test_chs_b)
 else()
-  message(STATUS "quadruped: CycloneDDS NOT found -- skipping the domain-0 "
-                 "reader; core and tests still build")
+  message(STATUS "quadruped: CycloneDDS or idlc NOT found -- skipping the "
+                 "domain-0 reader; core and tests still build")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -246,3 +288,10 @@ add_test(NAME test_mode_machine COMMAND test_mode_machine)
 add_executable(test_odometry test/test_odometry.cc)
 target_link_libraries(test_odometry PRIVATE quadruped_core)
 add_test(NAME test_odometry COMMAND test_odometry)
+
+# The ROS-to-DDS name mapping. Tested WITHOUT a DDS stack on purpose: a wrong
+# mapping produces a participant that comes up, a topic that exists and not one
+# sample, so there is nothing to observe at run time.
+add_executable(test_dds_names test/test_dds_names.cc)
+target_link_libraries(test_dds_names PRIVATE quadruped_core)
+add_test(NAME test_dds_names COMMAND test_dds_names)
