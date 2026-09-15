@@ -131,6 +131,49 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
         root.at(K("chassis_link.codebook_table.legacy_decimal"));
     cfg.link.legacy_decimal_entries = legacy.is_map() ? legacy.items().size() : 0;
 
+    // ---- motion axes: declared here, FIXED by the contract ------------
+    //
+    // Neither list is loaded as data. Both describe behaviour 11 S9.3.1 and
+    // 13 S5.4 fix, and Tier 1 implements it directly -- so the only honest
+    // thing to do with them is CHECK them. A key an operator can set and that
+    // changes nothing is worse than no key, because the operator who set it
+    // believes something changed. That exact defect has already been found
+    // twice in this package (13 S8.2 v1.4, and the six link keys of B2).
+    {
+      const YamlNode& active = root.require_seq(K("motion.axes.always_active"));
+      const char* kExpected[] = {"vx", "vy", "wz"};
+      bool matches = active.size() == 3;
+      for (std::size_t i = 0; matches && i < 3; ++i) {
+        const std::string label =
+            K("motion.axes.always_active") + "[" + std::to_string(i) + "]";
+        matches = active.at_index(i).as_scalar(label) == kExpected[i];
+      }
+      if (!matches) {
+        throw ConfigError(
+            "quadruped config: motion.axes.always_active must be exactly "
+            "[vx, vy, wz] (11 S9.3.1 / 13 S5.4). Tier 1 implements that axis "
+            "set directly, so a different list here would change nothing and "
+            "leave whoever edited it believing it had");
+      }
+      // 13 V-51 leaves "special gait" undefined, and there is a second gap it
+      // does not mention: spec.* defines max_vx_mps / max_vy_mps /
+      // max_wz_radps and NOTHING for vz / v_roll / v_pitch. Tier 1 exists to
+      // hold a command inside a limit, so an axis with no limit cannot be let
+      // through -- it zeroes all three unconditionally. Enabling a gait here
+      // would therefore do nothing at all, which this refuses rather than
+      // performs.
+      const YamlNode& special = root.require_seq(K("motion.axes.special_gaits"));
+      if (special.size() != 0) {
+        throw ConfigError(
+            "quadruped config: motion.axes.special_gaits must be empty. "
+            "13 V-51 does not define which gaits are 'special', and spec.* "
+            "defines no limit for vz / v_roll / v_pitch at all -- Tier 1 zeroes "
+            "those three unconditionally because it has nothing to clamp them "
+            "against. Filling this list would change no behaviour; the limits "
+            "have to exist in spec.* first");
+      }
+    }
+
     // ---- channel two: chassis DDS domain 0 ---------------------------
     cfg.dds.backend = root.require_string(K("chassis_dds.backend"));
     cfg.dds.domain_id =

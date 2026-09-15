@@ -79,6 +79,7 @@ add_library(quadruped_core STATIC
   src/chs_a_framer.cc
   src/chs_a_reports.cc
   src/chs_a_session.cc
+  src/tier1.cc
 )
 target_include_directories(quadruped_core PUBLIC include ${COMMON_INCLUDE})
 target_include_directories(quadruped_core PRIVATE ${THIRD_PARTY_INCLUDE})
@@ -174,3 +175,11 @@ add_test(NAME test_chs_a_reports COMMAND test_chs_a_reports ${CHS_A_GOLDEN})
 add_executable(test_chs_a_session test/test_chs_a_session.cc)
 target_link_libraries(test_chs_a_session PRIVATE quadruped_core)
 add_test(NAME test_chs_a_session COMMAND test_chs_a_session)
+
+# Tier 1. Needs no fixture and no golden file: the clock is injected, so the
+# 200 ms command timeout is exercised in microseconds. This is the one test in
+# the package that must never be quarantined for flakiness, which is why it is
+# built not to be flaky rather than trusted not to be.
+add_executable(test_tier1 test/test_tier1.cc)
+target_link_libraries(test_tier1 PRIVATE quadruped_core)
+add_test(NAME test_tier1 COMMAND test_tier1)

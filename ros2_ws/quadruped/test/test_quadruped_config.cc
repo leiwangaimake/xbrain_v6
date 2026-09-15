@@ -100,6 +100,13 @@ const char* kGood =
     "    imu_frame_id: imu_link\n"
     "    imu_rt_key: ''\n"
     "    imu_topic: /IMU\n"
+    "  motion:\n"
+    "    axes:\n"
+    "      always_active:\n"
+    "      - vx\n"
+    "      - vy\n"
+    "      - wz\n"
+    "      special_gaits: []\n"
     "  odom:\n"
     "    a_max_mps2: 2.5\n"
     "    arw_rad_sqrt_s: 0.002\n"
@@ -252,6 +259,31 @@ int main(int argc, char** argv) {
   {
     const std::string p = WriteTemp(
         "q_hz.yaml", Mutate("    control_loop_hz: 100.0\n", "    control_loop_hz: 0.0\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // A whitelist that would enable axes Tier 1 cannot clamp. Refused rather
+    // than ignored: spec.* defines no limit for vz / v_roll / v_pitch, so
+    // filling this list changes nothing and the operator believes otherwise.
+    const std::string p = WriteTemp(
+        "q_special.yaml",
+        Mutate("      special_gaits: []\n",
+               "      special_gaits:\n      - flat\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // An axis list that disagrees with 11 S9.3.1. Tier 1 implements that set
+    // directly, so a different list here would silently do nothing.
+    const std::string p = WriteTemp(
+        "q_axes.yaml", Mutate("      - wz\n", "      - wz\n      - vz\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // ...including a REORDERING, which a set-membership check would miss.
+    const std::string p = WriteTemp(
+        "q_axesorder.yaml",
+        Mutate("      - vx\n      - vy\n      - wz\n",
+               "      - wz\n      - vy\n      - vx\n"));
     CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
   }
   {

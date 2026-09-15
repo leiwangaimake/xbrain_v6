@@ -364,6 +364,17 @@ CONFIG_MUTANTS = [
      "  if (cfg.link.legacy_decimal_entries != 0 &&\n"
      "      cfg.link.legacy_decimal_entries != kLegacyCodebookEntries) {",
      "  if (cfg.link.legacy_decimal_entries != 0) {"),
+    # A key an operator can set that changes nothing is worse than no key.
+    ("config: a special-gait whitelist is accepted and then ignored",
+     CONFIG_CC, "      if (special.size() != 0) {", "      if (false) {"),
+    ("config: the axis list is not checked against 11 S9.3.1",
+     CONFIG_CC, "      if (!matches) {", "      if (false) {"),
+    # Order matters: [wz, vy, vx] is not [vx, vy, wz], and a membership test
+    # would call them the same.
+    ("config: the axis list is checked as a SET, losing the order",
+     CONFIG_CC,
+     "        matches = active.at_index(i).as_scalar(label) == kExpected[i];",
+     "        matches = active.at_index(i).as_scalar(label).size() == 2;"),
 ]
 
 # Report-parsing mutants. The two bans of 13 S6.5 are the ones with teeth: a
@@ -527,6 +538,89 @@ SESSION_MUTANTS = [
      "    if (last_report_s_ >= 0.0) {"),
 ]
 
+# Tier 1 mutants. This is the last thing between a command and the legs, so the
+# list is longer than the others and every entry names what reaches the robot.
+TIER1_CC = os.path.join(QUAD, "src", "tier1.cc")
+TIER1_SOURCES = [TIER1_CC, os.path.join(QUAD, "src", "quadruped_config.cc"),
+                 os.path.join(QUAD, "src", "chs_a_codec.cc")]
+TIER1_TESTS = [os.path.join(QUAD, "test", "test_tier1.cc")]
+
+TIER1_MUTANTS = [
+    # ---- the precedence ladder (11 S4.1: the closed set order IS the order) --
+    # Each swap changes what a robot reports when two things are wrong at once,
+    # which is the situation an engineer is actually looking at.
+    ("tier1: hardware stop checked AFTER the timeout",
+     TIER1_CC, "  if (in.hes_raw) {\n    hes_lock_ = true;\n  }",
+     "  if (false) {\n    hes_lock_ = true;\n  }"),
+    ("tier1: soft stop checked before the timeout lock",
+     TIER1_CC, "  if (timeout_lock_) {\n    // Reached only once the command is fresh",
+     "  if (false) {\n    // Reached only once the command is fresh"),
+    ("tier1: sleep checked before the mode switch",
+     TIER1_CC, "  if (in.mode_switching) {", "  if (false) {"),
+    ("tier1: the mode mismatch branch never fires",
+     TIER1_CC, "  if (in.usage_mode_raw != kUsageModeNavigation) {",
+     "  if (false) {"),
+    ("tier1: a poisoned payload is executed",
+     TIER1_CC, "  if (!AllFinite(in)) {", "  if (false) {"),
+    # ---- the locks, from the direction that matters ------------------------
+    ("tier1: hardware stop released by the signal alone",
+     TIER1_CC, "    if (!in.hes_raw && in.enable_requested) {",
+     "    if (!in.hes_raw) {"),
+    ("tier1: hardware stop released by the request alone",
+     TIER1_CC, "    if (!in.hes_raw && in.enable_requested) {",
+     "    if (in.enable_requested) {"),
+    ("tier1: timeout lock clears itself when the upstream returns",
+     TIER1_CC, "    Tier1Output o = Stop(StopReason::kTimeout);\n"
+               "    if (in.enable_requested) {\n      timeout_lock_ = false;",
+     "    Tier1Output o = Stop(StopReason::kTimeout);\n"
+     "    if (true) {\n      timeout_lock_ = false;"),
+    ("tier1: no command ever received looks FRESH",
+     TIER1_CC, "  if (!in.has_cmd || cmd_age_s > cmd_timeout_s_) {",
+     "  if (cmd_age_s > cmd_timeout_s_) {"),
+    ("tier1: the timeout boundary is off by one",
+     TIER1_CC, "  if (!in.has_cmd || cmd_age_s > cmd_timeout_s_) {",
+     "  if (!in.has_cmd || cmd_age_s >= cmd_timeout_s_) {"),
+    ("tier1: timeout read as milliseconds against a seconds clock",
+     TIER1_CC, "      cmd_timeout_s_(static_cast<double>(cfg.cmd_timeout_ms) / 1000.0) {}",
+     "      cmd_timeout_s_(static_cast<double>(cfg.cmd_timeout_ms)) {}"),
+    # ---- the soft stop ------------------------------------------------------
+    ("tier1: epoch compared with < instead of !=",
+     TIER1_CC, "  if (in.cmd_estop_epoch != in.local_estop_epoch) {",
+     "  if (in.cmd_estop_epoch < in.local_estop_epoch) {"),
+    # ---- events -------------------------------------------------------------
+    ("tier1: the timeout fault repeats every period (100 Hz storm)",
+     TIER1_CC, "    if (!timeout_lock_) {\n      timeout_lock_ = true;\n"
+               "      o.event_timeout_lock = true;\n    }",
+     "    timeout_lock_ = true;\n    o.event_timeout_lock = true;"),
+    ("tier1: the mode-mismatch event repeats every period",
+     TIER1_CC, "    if (!mode_mismatch_seen_) {", "    if (true) {"),
+    ("tier1: the mode-mismatch latch never resets, so only the first is seen",
+     TIER1_CC, "  mode_mismatch_seen_ = false;\n\n  if (!AllFinite(in)) {",
+     "  if (!AllFinite(in)) {"),
+    ("tier1: the actual mode is not reported with the event",
+     TIER1_CC, "      o.mode_mismatch_actual = in.usage_mode_raw;",
+     "      o.mode_mismatch_actual = 0;"),
+    # ---- clamp and trim -----------------------------------------------------
+    ("tier1: yaw clamped against the LINEAR limit",
+     TIER1_CC, "  o.wz = Clamp(Radps{in.wz}, Radps{limits_.max_wz_radps}).value;",
+     "  o.wz = Clamp(Radps{in.wz}, Radps{limits_.max_vx_mps}).value;"),
+    ("tier1: lateral axis not clamped",
+     TIER1_CC, "  o.vy = Clamp(Mps{in.vy}, Mps{limits_.max_vy_mps}).value;",
+     "  o.vy = in.vy;"),
+    ("tier1: a non-holonomic chassis still gets a lateral command",
+     TIER1_CC, "  if (!limits_.holonomic) {\n    o.vy = 0.0;\n  }",
+     "  if (false) {\n    o.vy = 0.0;\n  }"),
+    ("tier1: the unlimited axes are passed through",
+     TIER1_CC, "  o.hes_lock = hes_lock_;\n  o.timeout_lock = timeout_lock_;\n"
+               "  return o;\n}\n\n}  // namespace quadruped",
+     "  o.vz = in.vz;\n  o.v_roll = in.v_roll;\n  o.v_pitch = in.v_pitch;\n"
+     "  o.hes_lock = hes_lock_;\n  o.timeout_lock = timeout_lock_;\n"
+     "  return o;\n}\n\n}  // namespace quadruped"),
+    # ---- the closed-set table ----------------------------------------------
+    ("tier1: stop reasons read from the table off by one",
+     TIER1_CC, "  return sets::kStopReason[i];", "  return sets::kStopReason[i + 1];"),
+]
+
 # The units probe is where Clamp itself is exercised. The three mutants below
 # lived briefly in the tier1 suite and all three SURVIVED there -- not because
 # the assertions were missing, but because that suite compiles only
@@ -559,6 +653,7 @@ SUITES = {
     "quadruped_config": (CONFIG_SOURCES, CONFIG_TESTS, CONFIG_MUTANTS, None),
     "reports": (REPORTS_SOURCES, REPORTS_TESTS, REPORTS_MUTANTS, GOLDEN),
     "session": (SESSION_SOURCES, SESSION_TESTS, SESSION_MUTANTS, None),
+    "tier1": (TIER1_SOURCES, TIER1_TESTS, TIER1_MUTANTS, None),
     "units": ([], UNITS_TESTS, UNITS_MUTANTS, None),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
 }
