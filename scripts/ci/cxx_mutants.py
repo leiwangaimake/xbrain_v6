@@ -862,6 +862,78 @@ MODE_MUTANTS = [
      MODE_CC, "  external_change_s_ = -1.0;\n  return r;", "  return r;"),
 ]
 
+# Odometry mutants. A covariance that is too small is a robot that believes it
+# knows where it is, so most of these push in the optimistic direction -- the
+# one 13 S4.4's own superseded formula went in.
+ODOM_CC = os.path.join(QUAD, "src", "odometry.cc")
+ODOM_SOURCES = [ODOM_CC, os.path.join(QUAD, "src", "quadruped_config.cc"),
+                os.path.join(QUAD, "src", "chs_a_codec.cc")]
+ODOM_TESTS = [os.path.join(QUAD, "test", "test_odometry.cc")]
+
+ODOM_MUTANTS = [
+    # The a_max term is the whole quantitative argument behind ODO-1: without
+    # it, a sample a tenth of a second old looks as good as a fresh one.
+    ("odom: sigma_v loses its a_max term",
+     ODOM_CC, "  return std::sqrt(cfg_.sigma_v0_mps * cfg_.sigma_v0_mps + at * at);",
+     "  (void)at;\n  return cfg_.sigma_v0_mps;"),
+    # The per-tick form the document used to carry: 2.45x optimistic.
+    ("odom: the open interval term dropped from the published variance",
+     ODOM_CC, "  s.var_x = (p_xx_committed_ + open * open) / divisor;",
+     "  s.var_x = p_xx_committed_ / divisor;"),
+    ("odom: the closed interval accounted with dt instead of the whole tau",
+     ODOM_CC, "      const double inc = SigmaV(tau_used) * tau_used;",
+     "      const double inc = SigmaV(tau_used) * 0.01;"),
+    # The yaw correlation factor, mistaken for a unit conversion.
+    ("odom: the yaw correlation factor removed",
+     ODOM_CC, "                  kYawCorrelationFactor;", "                  1.0;"),
+    ("odom: the angle random walk term dropped",
+     ODOM_CC, "    p_yaw_ += (cfg_.arw_rad_sqrt_s * cfg_.arw_rad_sqrt_s * dt_s) +",
+     "    p_yaw_ += (0.0 * dt_s) +"),
+    # ODO-4: the yaw model must not inherit the linear sample's age.
+    ("odom: the yaw-rate variance grows with the LINEAR sample age",
+     ODOM_CC, "  s.var_wz = (cfg_.gyro_bias_radps * cfg_.gyro_bias_radps) / divisor;",
+     "  s.var_wz = (sv * sv) / divisor;"),
+    # The bands.
+    ("odom: the stop band never reached, so a dead TF keeps being published",
+     ODOM_CC, "  if (tau_ms > cfg_.stale_stop_publish_ms) {", "  if (false) {"),
+    ("odom: the twist-zero band still publishes the held velocity",
+     ODOM_CC, "  if (s.band == OdomBand::kFresh || s.band == OdomBand::kWarn) {\n"
+              "    const double c = std::cos(yaw_);",
+     "  if (s.band != OdomBand::kStop) {\n    const double c = std::cos(yaw_);"),
+    ("odom: a band boundary is off by one",
+     ODOM_CC, "  } else if (tau_ms > cfg_.stale_invalid_ms) {",
+     "  } else if (tau_ms >= cfg_.stale_invalid_ms) {"),
+    ("odom: yaw stops integrating when the LINEAR sample goes stale",
+     ODOM_CC, "  if (s.band != OdomBand::kStop) {\n    yaw_ += wz_ * dt_s;",
+     "  if (s.band == OdomBand::kFresh) {\n    yaw_ += wz_ * dt_s;"),
+    # Never sampled must be the stop band, not a fresh standstill.
+    ("odom: a never-sampled velocity reads as fresh",
+     ODOM_CC, "                         : 1.0e9;  // never sampled: unboundedly stale",
+     "                         : 0.0;  // never sampled: unboundedly stale"),
+    # The stair gait: 11 S9.9 wants both the inflation and the invalidation.
+    ("odom: a stair gait inflates but stays valid",
+     ODOM_CC, "  s.valid = s.publish && !is_stair_gait_ &&",
+     "  s.valid = s.publish &&"),
+    ("odom: the gait trust factor is not applied",
+     ODOM_CC, "  const double t = is_stair_gait_ ? cfg_.trust_stair : cfg_.trust_flat;",
+     "  const double t = cfg_.trust_flat;"),
+    # REP-105: a negative variance means "not provided"; zero claims certainty.
+    ("odom: an unestimated axis reports variance 0 instead of -1",
+     ODOM_CC, "  s.var_y = holonomic_ ? s.var_x : -1.0;",
+     "  s.var_y = holonomic_ ? s.var_x : 0.0;"),
+    # The dead zones.
+    ("odom: the velocity dead zone removed, so a standing robot drifts",
+     ODOM_CC, "  vx_ = (std::fabs(vx) < cfg_.vel_deadzone_mps) ? 0.0 : vx;",
+     "  vx_ = vx;"),
+    ("odom: the gyro dead zone removed",
+     ODOM_CC, "  wz_ = (std::fabs(wz) < cfg_.gyro_deadzone_radps) ? 0.0 : wz;",
+     "  wz_ = wz;"),
+    # The pose is integrated in the odom frame.
+    ("odom: the body-to-odom rotation dropped",
+     ODOM_CC, "    x_ += (c * vx_ - sn * vy_) * dt_s;\n    y_ += (sn * vx_ + c * vy_) * dt_s;",
+     "    x_ += vx_ * dt_s;\n    y_ += vy_ * dt_s;"),
+]
+
 # Envelope mutants. The unit was wrong here for two days and no test turned
 # red, because the existing case asserted only ts_sync semantics: the unit was
 # an assumption, not an assertion. These are what make it an assertion.
@@ -915,6 +987,7 @@ SUITES = {
     "rt_keys": (RT_KEYS_SOURCES, RT_KEYS_TESTS, RT_KEYS_MUTANTS, CONTRACT_MD),
     "payloads": (PAYLOADS_SOURCES, PAYLOADS_TESTS, PAYLOADS_MUTANTS, None),
     "mode": (MODE_SOURCES, MODE_TESTS, MODE_MUTANTS, None),
+    "odom": (ODOM_SOURCES, ODOM_TESTS, ODOM_MUTANTS, None),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
 }
 

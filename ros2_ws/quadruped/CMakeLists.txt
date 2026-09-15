@@ -83,6 +83,7 @@ add_library(quadruped_core STATIC
   src/rt_keys.cc
   src/rt_payloads.cc
   src/mode_machine.cc
+  src/odometry.cc
 )
 target_include_directories(quadruped_core PUBLIC include ${COMMON_INCLUDE})
 target_include_directories(quadruped_core PRIVATE ${THIRD_PARTY_INCLUDE})
@@ -210,3 +211,11 @@ add_test(NAME test_rt_payloads COMMAND test_rt_payloads)
 add_executable(test_mode_machine test/test_mode_machine.cc)
 target_link_libraries(test_mode_machine PRIVATE quadruped_core)
 add_test(NAME test_mode_machine COMMAND test_mode_machine)
+
+# Dead reckoning. The headline cases assert 13 S4.4's four baseline rows as
+# NUMBERS -- that table is T-ODOM-2's acceptance basis, and "it grows" is
+# satisfied by any rate at all including the 2.45x-optimistic one the document
+# used to carry.
+add_executable(test_odometry test/test_odometry.cc)
+target_link_libraries(test_odometry PRIVATE quadruped_core)
+add_test(NAME test_odometry COMMAND test_odometry)
