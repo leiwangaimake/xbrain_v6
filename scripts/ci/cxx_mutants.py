@@ -450,6 +450,17 @@ REPORTS_MUTANTS = [
      "  return it->get<std::int64_t>();",
      "  if (it == j.end()) return dflt;\n"
      "  return it->get<std::int64_t>();"),
+    # An empty slot and a flat pack both report level 0. Confusing them makes a
+    # single-battery robot read 0% forever, or hides a genuinely empty one.
+    ("reports: an empty slot counted as a present pack",
+     REPORTS_CC, "    b.present = b.voltage > 0.0;", "    b.present = true;"),
+    ("reports: a pack discharged to 0% counted as absent",
+     REPORTS_CC, "    b.present = b.voltage > 0.0;",
+     "    b.present = b.voltage > 0.0 && b.level > 0;"),
+    ("reports: absent packs silently excluded from the SOC minimum",
+     REPORTS_CC, "    if (first || b.level < s.min_level) {",
+     "    if (!b.present) { s.batteries.push_back(b); continue; }\n"
+     "    if (first || b.level < s.min_level) {"),
     # HES and Sleep arrive as 0/1 integers, `charge` as a real bool.
     ("reports: integer booleans no longer accepted",
      REPORTS_CC, "  if (it->is_number()) return it->get<std::int64_t>() != 0;",

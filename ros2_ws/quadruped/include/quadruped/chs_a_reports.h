@@ -141,6 +141,17 @@ struct BatteryEntry {
   double temperature_c = 0.0;
   bool charging = false;
   std::string serial;     // empty on the measured machine
+  // Whether a pack is physically there. An EMPTY SLOT reports level 0,
+  // voltage 0.0 and temperature -273.0 -- the absolute-zero sentinel for "no
+  // sensor" -- which is indistinguishable from a flat battery if only the
+  // level is read. Measured on 2026-09-15 18:4x with one pack removed, while
+  // the chassis simultaneously reported PowerManagement 1 (single_battery).
+  //
+  // The flag exists so the two cases can be told apart upstream. It does NOT
+  // change min_level: 13 BAT-1 says every SOC judgement uses the list and
+  // min(level) is unchanged, and quietly excluding a slot would be this file
+  // deciding a question 13 V-68 raises for the vendor.
+  bool present = false;
 };
 
 // The device status report (Type 0x00100002 / Command 0x00f00000), 2 Hz.
@@ -150,10 +161,20 @@ struct BatteryEntry {
 // and 9.3 forbids writing the consumer before there is something to consume.
 struct DeviceStatus {
   std::vector<BatteryEntry> batteries;
-  // 11 S9.8.3 keeps the SOC judgement on the MINIMUM: a pack that is nearly
-  // empty decides when the robot must return, regardless of the other one.
+  // 11 S9.8.3 / 13 BAT-1 keep the SOC judgement on the MINIMUM: a pack that is
+  // nearly empty decides when the robot must return, regardless of the other.
+  //
+  // *** With a slot EMPTY this reads 0, because an absent pack reports level 0.
+  // That is the contract's arithmetic, implemented literally and deliberately
+  // not "fixed" here -- see 13 V-68. The consumer needs present_count to tell
+  // "one pack removed" from "both packs flat", and 11's own battery health item
+  // already requires both packs online, so the two facts belong together.
   int min_level = 0;
   bool any_charging = false;
+  // How many slots hold a pack. Compared against batteries.size() by the
+  // consumer: fewer means a slot is empty, which 11 S4.2 models as
+  // power_management "single_battery" rather than as a fault.
+  std::size_t present_count = 0;
 };
 
 // One fault, 13 S7.3. `code` already carries its namespace prefix.

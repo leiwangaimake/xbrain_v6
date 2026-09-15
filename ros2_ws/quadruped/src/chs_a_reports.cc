@@ -342,6 +342,13 @@ bool ParseDeviceStatus(const std::uint8_t* asdu, std::size_t len, DeviceStatus* 
     b.temperature_c = GetDouble(e, "battery_temperature", 0.0);
     b.charging = GetBool(e, "charge", false);
     b.serial = GetString(e, "serial");
+    // An empty slot reports 0 V. A pack that can deliver anything cannot, so
+    // voltage is the discriminator; the -273 temperature (the absolute-zero
+    // "no sensor" sentinel) and level 0 corroborate it but are not the test --
+    // a genuinely flat pack also reads level 0, and telling those two apart is
+    // the whole point of this flag.
+    b.present = b.voltage > 0.0;
+    if (b.present) ++s.present_count;
     if (b.charging) s.any_charging = true;
     // The minimum over the packs, per 11 S9.8.3. Seeded from the first entry
     // rather than from 0 or 100: seeding from 0 would report a full robot as

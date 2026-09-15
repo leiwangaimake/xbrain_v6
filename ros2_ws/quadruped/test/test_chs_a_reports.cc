@@ -182,6 +182,57 @@ int main(int argc, char** argv) {
     // right mapping (V-55) cannot be resolved by serial prefix. Asserted so
     // that a future firmware which starts populating it shows up here.
     CHECK(s.batteries[0].serial.empty());
+    // Both packs were in on 2026-09-15 14:55, so both read present.
+    CHECK(s.present_count == 2);
+    CHECK(s.batteries[0].present == true);
+    CHECK(s.batteries[1].present == true);
+  }
+
+  // ---- an EMPTY SLOT is not a flat battery -------------------------------
+  {
+    // Measured at 18:4x with one pack removed: the vacant slot reports level 0,
+    // voltage 0.0 and temperature -273.0 (the absolute-zero "no sensor"
+    // sentinel), and the chassis simultaneously went to PowerManagement 1
+    // (single_battery). Read by level alone, that is indistinguishable from a
+    // pack discharged to nothing -- and 11 S4.2 puts soc_pct on the MINIMUM, so
+    // the aggregate reads 0% and the robot would head for the dock forever.
+    //
+    // min_level stays 0 here on purpose: 13 BAT-1 says every SOC judgement uses
+    // the list and min(level) is unchanged. What this pins is that the ABSENCE
+    // is visible alongside it, so the consumer can tell the two apart rather
+    // than this file deciding a question 13 V-68 raises.
+    const Bytes p = Wrap(
+        "{\"BatteryList\":["
+        "{\"BatteryLevel\":0,\"Voltage\":0.0,\"battery_temperature\":-273.0,"
+        " \"charge\":false,\"serial\":\"\"},"
+        "{\"BatteryLevel\":26,\"Voltage\":69.28,\"battery_temperature\":38.2,"
+        " \"charge\":false,\"serial\":\"\"}]}");
+    DeviceStatus s;
+    CHECK(ParseDeviceStatus(p.data(), p.size(), &s));
+    CHECK(s.batteries.size() == 2);
+    CHECK(s.batteries[0].present == false);
+    CHECK(s.batteries[1].present == true);
+    CHECK(s.present_count == 1);
+    CHECK(s.min_level == 0);          // contract-literal, and not "fixed" here
+    CHECK(s.batteries[1].level == 26);
+  }
+
+  // ---- a pack discharged to nothing is still PRESENT ---------------------
+  {
+    // The other side of the same discriminator. A real pack at 0% still holds
+    // a voltage and still reports a temperature; calling it absent would hide a
+    // genuinely empty battery, which is the more dangerous mistake of the two.
+    const Bytes p = Wrap(
+        "{\"BatteryList\":["
+        "{\"BatteryLevel\":0,\"Voltage\":58.4,\"battery_temperature\":22.0,"
+        " \"charge\":true,\"serial\":\"\"}]}");
+    DeviceStatus s;
+    CHECK(ParseDeviceStatus(p.data(), p.size(), &s));
+    CHECK(s.batteries.size() == 1);
+    CHECK(s.batteries[0].present == true);
+    CHECK(s.present_count == 1);
+    CHECK(s.min_level == 0);
+    CHECK(s.any_charging == true);
   }
 
   // ---- fault report: the healthy case is an EMPTY list, and it must parse --
