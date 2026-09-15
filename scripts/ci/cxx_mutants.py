@@ -712,6 +712,85 @@ RT_KEYS_MUTANTS = [
      '{"rt/chassis/motion", KeyRole::kPublish, "Q2_state",'),
 ]
 
+# Payload mutants. These messages are what an operator watches, so the failures
+# below are the ones that make a screen lie rather than go blank.
+PAYLOADS_CC = os.path.join(QUAD, "src", "rt_payloads.cc")
+PAYLOADS_SOURCES = [PAYLOADS_CC,
+                    os.path.join(QUAD, "src", "chs_a_reports.cc"),
+                    os.path.join(QUAD, "src", "chs_a_session.cc"),
+                    os.path.join(QUAD, "src", "tier1.cc"),
+                    os.path.join(QUAD, "src", "quadruped_config.cc"),
+                    os.path.join(QUAD, "src", "chs_a_codec.cc")]
+PAYLOADS_TESTS = [os.path.join(QUAD, "test", "test_rt_payloads.cc")]
+
+PAYLOADS_MUTANTS = [
+    # 11 D-08: four fields, four meanings. Deriving locked from one latch hides
+    # the other, and an operator reads "not locked" on a robot that cannot move.
+    ("payloads: locked derived from the HES latch alone",
+     PAYLOADS_CC, "  a.Bool(in.tier1.hes_lock || in.tier1.timeout_lock);",
+     "  a.Bool(in.tier1.hes_lock);"),
+    ("payloads: locked derived from the timeout latch alone",
+     PAYLOADS_CC, "  a.Bool(in.tier1.hes_lock || in.tier1.timeout_lock);",
+     "  a.Bool(in.tier1.timeout_lock);"),
+    # An absent report rendered as a zeroed struct reads as a healthy robot
+    # standing still, which is the worst default for the message a human watches.
+    ("payloads: an absent BasicStatus rendered as zeros instead of null",
+     PAYLOADS_CC,
+     '    a.Raw(",\\"usage_mode\\":null,\\"motion_state\\":null,\\"gait\\":null");',
+     '    a.Raw(",\\"usage_mode\\":\\"normal\\",\\"motion_state\\":\\"idle\\",\\"gait\\":\\"basic\\"");'),
+    # "Never received a command" is a different fact from "the command is old".
+    ("payloads: a never-received command reported as an age",
+     PAYLOADS_CC, "  if (in.cmd_age_ms < 0.0) {", "  if (false) {"),
+    # 13 S6.5 ban 3: the raw value is what a field engineer matches to the
+    # manual, and an unregistered value has no other handle at all.
+    ("payloads: open-set raw value dropped, label only",
+     PAYLOADS_CC, '  a->Int(static_cast<long long>(v.raw));', '  a->Int(0);'),
+    # 11 S4.2 / 13 BAT-1: the MINIMUM. A maximum reports a robot as fuller than
+    # its emptiest pack, which is the direction that strands it.
+    ("payloads: SOC published from present_count instead of the minimum",
+     PAYLOADS_CC, "  a.Int(in.device->min_level);",
+     "  a.Int(static_cast<long long>(in.device->present_count));"),
+    # 13 BAT-2: array order is not a measurement. Filling left/right from it is
+    # the failure CLAUDE.md 3.2 calls a guess presented as a measurement, and
+    # BAT-4 forbids even saying "left" in that state.
+    ("payloads: left/right filled from array order while the mapping is unknown",
+     PAYLOADS_CC, "  if (!in.index_map_known) {\n    a.Raw(\"null\");",
+     "  if (false) {\n    a.Raw(\"null\");"),
+    ("payloads: a mapping pointing outside the array is used anyway",
+     PAYLOADS_CC,
+     "    if (!ok) {\n      // A configured mapping that points outside the array is a configuration",
+     "    if (false) {\n      // A configured mapping that points outside the array is a configuration"),
+    # An unregistered power_management mapped onto one of the two known values
+    # is the same fail-open the mode fields refuse.
+    ("payloads: an unregistered power_management mapped to normal",
+     PAYLOADS_CC, '  } else if (in.basic->power_management == 1) {',
+     '  } else if (in.basic->power_management >= 1) {'),
+    # CF-5: the prefix travels with the code. Without it the two overlapping
+    # code spaces cannot be told apart at all.
+    ("payloads: fault code published without its namespace prefix",
+     PAYLOADS_CC, "      a.Str(f.code.c_str());",
+     "      a.Str(f.code.size() > 4 ? f.code.c_str() + 4 : f.code.c_str());"),
+    # Truncation: half an object decodes to the wrong thing, or to nothing.
+    ("payloads: a truncated object is returned instead of refused",
+     PAYLOADS_CC, "    if (overflow_) return 0;", "    if (false) return 0;"),
+    ("payloads: overflow not sticky, so later fields hide an earlier loss",
+     PAYLOADS_CC, "    if (len_ + n + 1 > cap_) {\n      overflow_ = true;\n      return;\n    }",
+     "    if (len_ + n + 1 > cap_) {\n      return;\n    }"),
+    # An unescaped quote produces text no decoder accepts, and the symptom is
+    # state/robot going silent -- which reads as the robot having died.
+    ("payloads: JSON string escaping removed",
+     PAYLOADS_CC, '        case \'"\': Raw("\\\\\\""); break;',
+     '        case \'"\': Raw("\\""); break;'),
+    # The pong seq is ECHOED; a self-counted one answers a question nobody asked.
+    ("payloads: pong seq replaced by a constant",
+     PAYLOADS_CC, '  a.Raw("{\\"type\\":\\"pong\\",\\"seq\\":");\n  a.UInt(in.seq);',
+     '  a.Raw("{\\"type\\":\\"pong\\",\\"seq\\":");\n  a.UInt(0);'),
+    # 13 Q-2 makes detail.action required; without it an ack cannot be matched
+    # to the command it answers.
+    ("payloads: ctrl ack drops detail.action",
+     PAYLOADS_CC, '  a.Str(in.action);', '  a.Str("");'),
+]
+
 # Envelope mutants. The unit was wrong here for two days and no test turned
 # red, because the existing case asserted only ts_sync semantics: the unit was
 # an assumption, not an assertion. These are what make it an assertion.
@@ -763,6 +842,7 @@ SUITES = {
     "units": ([], UNITS_TESTS, UNITS_MUTANTS, None),
     "envelope": ([], ENVELOPE_TESTS, ENVELOPE_MUTANTS, None),
     "rt_keys": (RT_KEYS_SOURCES, RT_KEYS_TESTS, RT_KEYS_MUTANTS, CONTRACT_MD),
+    "payloads": (PAYLOADS_SOURCES, PAYLOADS_TESTS, PAYLOADS_MUTANTS, None),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
 }
 

@@ -81,6 +81,7 @@ add_library(quadruped_core STATIC
   src/chs_a_session.cc
   src/tier1.cc
   src/rt_keys.cc
+  src/rt_payloads.cc
 )
 target_include_directories(quadruped_core PUBLIC include ${COMMON_INCLUDE})
 target_include_directories(quadruped_core PRIVATE ${THIRD_PARTY_INCLUDE})
@@ -194,3 +195,11 @@ set(CONTRACT_MD ${CMAKE_CURRENT_SOURCE_DIR}/../../docs/11-接口契约.md)
 add_executable(test_rt_keys test/test_rt_keys.cc)
 target_link_libraries(test_rt_keys PRIVATE quadruped_core)
 add_test(NAME test_rt_keys COMMAND test_rt_keys ${CONTRACT_MD})
+
+# The published data objects. Every case PARSES the produced text rather than
+# substring-matching it: invalid JSON on state/robot makes the consumer see
+# nothing at all, which reads as the robot having stopped reporting.
+add_executable(test_rt_payloads test/test_rt_payloads.cc)
+target_link_libraries(test_rt_payloads PRIVATE quadruped_core)
+target_include_directories(test_rt_payloads PRIVATE ${THIRD_PARTY_INCLUDE})
+add_test(NAME test_rt_payloads COMMAND test_rt_payloads)
