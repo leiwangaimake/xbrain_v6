@@ -57,7 +57,7 @@ namespace {
 // exactly one thing.
 const char* kGood =
     "quadruped:\n"
-    "  robot_id: xb-001\n"
+    "  robot_id: gj-001\n"
     "  chassis_link:\n"
     "    asdu_format: json\n"
     "    axis_cmd_hz: 20.0\n"
@@ -190,7 +190,7 @@ int main(int argc, char** argv) {
   {
     const std::string p = WriteTemp("q_good.yaml", kGood);
     const QuadrupedConfig c = LoadQuadrupedConfig(p);
-    CHECK(c.robot_id == "xb-001");
+    CHECK(c.robot_id == "gj-001");
     // Count before fields: a merged-entry parser bug would pass every field
     // assertion below on the single surviving entry.
     CHECK(c.link.endpoints.size() == 2);
@@ -260,6 +260,44 @@ int main(int argc, char** argv) {
     const std::string p = WriteTemp(
         "q_hz.yaml", Mutate("    control_loop_hz: 100.0\n", "    control_loop_hz: 0.0\n"));
     CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // robot_id is the {rid} segment of every key (11 S2.2.11 / FLT-02). A
+    // malformed one produces keys that are well-formed and match nothing: the
+    // process starts, publishes happily, and every subscriber stays silent.
+    // Each case below is a character class the contract excludes.
+    const char* bad[][2] = {
+        {"gj-001", "GJ-001"},        // upper case, the likeliest slip
+        {"gj-001", "gj 001"},        // a space, which survives a naive check
+        {"gj-001", "gj.001"},        // a dot: legal in a hostname, not here
+        {"gj-001", "gj/001"},        // a slash, which would split the key
+        {"gj-001", "gj+001"},
+    };
+    for (const auto& pair : bad) {
+      const std::string p = WriteTemp(
+          "q_rid.yaml",
+          Mutate(std::string("  robot_id: ") + pair[0] + "\n",
+                 std::string("  robot_id: ") + pair[1] + "\n"));
+      CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    }
+    // Empty, and one character past the 32 the contract allows. The length
+    // bound is checked from BOTH sides: a check that only refused the empty
+    // string would pass a rid long enough to be truncated downstream.
+    const std::string empty = WriteTemp(
+        "q_rid_empty.yaml", Mutate("  robot_id: gj-001\n", "  robot_id: ''\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(empty); }));
+    const std::string long33(33, 'a');
+    const std::string too_long = WriteTemp(
+        "q_rid_long.yaml",
+        Mutate("  robot_id: gj-001\n", "  robot_id: " + long33 + "\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(too_long); }));
+    // ...and exactly 32 is accepted, so the bound is the contract's and not
+    // one the implementation invented.
+    const std::string long32(32, 'a');
+    const std::string ok = WriteTemp(
+        "q_rid_32.yaml",
+        Mutate("  robot_id: gj-001\n", "  robot_id: " + long32 + "\n"));
+    CHECK(LoadQuadrupedConfig(ok).robot_id == long32);
   }
   {
     // A whitelist that would enable axes Tier 1 cannot clamp. Refused rather

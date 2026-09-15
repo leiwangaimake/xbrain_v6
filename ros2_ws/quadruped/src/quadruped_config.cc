@@ -58,6 +58,20 @@ std::string K(const std::string& rest) { return std::string(kNs) + rest; }
 // One endpoint row. Reads through require_* so a malformed row names its field;
 // the row index is added by the caller because yaml_lite has no notion of where
 // a node came from.
+// 11 S2.2.11: [a-z0-9_-]{1,32}. Hand-checked rather than <regex>, which pulls
+// in a large amount of code and can throw -- this runs once at load, and the
+// pattern is four character classes wide. Written as the shape it accepts so a
+// reader can compare it with the contract line directly.
+bool IsValidRobotId(const std::string& id) {
+  if (id.empty() || id.size() > 32) return false;
+  for (char c : id) {
+    const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                    c == '_' || c == '-';
+    if (!ok) return false;
+  }
+  return true;
+}
+
 EndpointCandidate ReadEndpoint(const YamlNode& row) {
   EndpointCandidate ep;
   ep.proto = row.require_string("proto");
@@ -83,6 +97,25 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
     const YamlNode root = xbrain::config::LoadYamlFile(path);
 
     cfg.robot_id = root.require_string(K("robot_id"));
+    // 11 S2.2.11 / FLT-02: this value is the {rid} segment of EVERY Zenoh key
+    // this process publishes or subscribes. The freeze line already enforces
+    // the charset (assertion D-1 in xbrain/boot/freeze/assertions/d_identity.py)
+    // and remains the authority; this is a second gate at the point of USE.
+    //
+    // It earns its place because of how the failure looks. A rid with a stray
+    // character produces key names that are perfectly well-formed and simply
+    // match nothing: the process starts, publishes happily, and every
+    // subscriber stays silent -- the same picture as an unplugged cable, and
+    // the same class of failure 13 DDS-9 exists to make distinguishable.
+    // Catching it here names the one key path instead.
+    if (!IsValidRobotId(cfg.robot_id)) {
+      throw ConfigError(
+          "quadruped config: robot_id \"" + cfg.robot_id + "\" does not match "
+          "[a-z0-9_-]{1,32} (11 S2.2.11 FLT-02, freeze assertion D-1). It is "
+          "the {rid} segment of every key this process uses, and a malformed "
+          "one produces keys that match nothing while the process reports "
+          "itself healthy");
+    }
 
     // ---- channel one -------------------------------------------------
     const YamlNode& eps = root.require_seq(K("chassis_link.endpoint_candidates"));

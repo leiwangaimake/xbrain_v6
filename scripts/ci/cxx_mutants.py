@@ -364,6 +364,19 @@ CONFIG_MUTANTS = [
      "  if (cfg.link.legacy_decimal_entries != 0 &&\n"
      "      cfg.link.legacy_decimal_entries != kLegacyCodebookEntries) {",
      "  if (cfg.link.legacy_decimal_entries != 0) {"),
+    # robot_id is the {rid} of every key. A malformed one yields keys that are
+    # well-formed and match nothing, which looks exactly like a dead network.
+    ("config: robot_id charset not checked",
+     CONFIG_CC, "    if (!IsValidRobotId(cfg.robot_id)) {", "    if (false) {"),
+    ("config: robot_id upper case accepted",
+     CONFIG_CC, "    const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||",
+     "    const bool ok = (c >= 'A' && c <= 'z') || (c >= '0' && c <= '9') ||"),
+    ("config: robot_id length bound only refuses the empty string",
+     CONFIG_CC, "  if (id.empty() || id.size() > 32) return false;",
+     "  if (id.empty()) return false;"),
+    ("config: robot_id length bound is off by one",
+     CONFIG_CC, "  if (id.empty() || id.size() > 32) return false;",
+     "  if (id.empty() || id.size() >= 32) return false;"),
     # A key an operator can set that changes nothing is worse than no key.
     ("config: a special-gait whitelist is accepted and then ignored",
      CONFIG_CC, "      if (special.size() != 0) {", "      if (false) {"),
