@@ -112,6 +112,13 @@
 > · **B3 已落**（2026-09-15）：Tier 1 单函数（`11` §9.12.2 逐字，八条分支按闭集顺序）· 两把锁与代际收敛 · `clamp` 走 `units.h` 新增的 `Radps`（避免 yaw 被线速度限幅夹）· 六种 `stop_reason` 注入测试 ＋ 优先级阶梯用例 · `motion.axes.*` 加载期断言。
 > · ★★★ **B3 期间发现的设计缺口（已登记 `13` V-67，P1）**：`spec.*` 对 `vz` / `v_roll` / `v_pitch` **没有定义任何限幅值**。★ 与 V-51（「特殊步态」未定义）不是一回事，V-51 闭合也解不开。⇒ 本期三轴无条件置零，`motion.axes.special_gaits` 断言为空。**解卡顺序**：先补 `spec.*` 三轴限幅 → 再定步态白名单 → 才谈得上启用。
 > · ★ **`no_source` 本实现不产生**：它在 `stop_reason` 闭集里却无任何产生者（`11` 自查表已登记该矛盾），「一条指令都没收到过」按伪代码走 `timeout` 分支。
+> · **B4 已落**（2026-09-15，两块）：RT 面 key 表（18 条与 `11` 逐字比对）· RobotState / PowerState / EstopAck / CtrlAck / Pong 装配。
+> · **B5 已落**：模式三元组状态机（MS-1～6、TR-1～4、PR-1、GS-1）。★ 实现中自查出一个真 BUG：`external_transition_hold_s` 原本永不过期，一次手柄按下会把机器人零速锁死到会话结束。
+> · **B6 已落**：里程计核心，复现 `13` §4.4 的四行验收基线（T-ODOM-2）。
+> · **B7 已落**：裸 CycloneDDS 订域 0，自带线兼容 IDL。★★★ 实测确认 `13` 全册未写的那个坑：`idlc` 跑 ROS 自带 IDL 生成的类型名是 `sensor_msgs::msg::Imu`，而线上要 `sensor_msgs::msg::dds_::Imu_`。
+> · **B8 已落**：rclcpp odom + TF，域 42，耦合面限三处（PB-5）。
+> · **B9 部分**：单元补 `LimitMEMLOCK=infinity` 与 `LimitRTPRIO=80`。★★ 实测 systemd 默认 `MEMLOCK=64 KB`／`RTPRIO=0`，而 `deploy/systemd/` 下**原本没有任何单元**抬过这两项 ⇒ `mlockall` ENOMEM、`SCHED_FIFO` EPERM，两者都不留痕迹。
+> · ⚠️ **仍缺**：① **进程装配** —— 没有 `main` 把各层接成四个线程、真套接字与 zenoh 会话，每批提交都写明「无生产调用点」；② **台架实测**（B9 后半：站立/趴下/三元组/导航模式低速轴指令、T-DECEL、T-TIER1-2、T-CHS-1a/b、T-ODOM-1），要真机。
 
 ## 7. 需用户裁决（开工前）
 

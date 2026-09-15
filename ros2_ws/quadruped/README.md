@@ -5,7 +5,7 @@ M20S 底盘接口与 **Tier 1 安全兜底**进程（设计真源：`docs/13-qua
 > 参考：`docs/QUADRUPED/quadruped_开发前评审_2026-09-15.md`（批次计划与实测回填清单）·
 > `docs/QUADRUPED/M20S_底盘接入与探测实录_2026-09-15.md`（协议实测、上报频率、变更台账）。
 
-## 本包现在是什么（B0 + B1 + B2 + B3，2026-09-15）
+## 本包现在是什么（B0～B9，2026-09-15）
 
 **它还不能控制底盘，也不假装能。** 已落的都是能离线测试的东西：
 
@@ -19,9 +19,16 @@ M20S 底盘接口与 **Tier 1 安全兜底**进程（设计真源：`docs/13-qua
 | 上报解析（B2） | `include/quadruped/chs_a_reports.h` · `src/chs_a_reports.cc` | `13` §6.5 开放集三条禁令 · §7.3 `chs:` 前缀 CF-1～CF-5 · §7.2 电池 · F-21 `Sleep` |
 | 会话状态机（B2） | `include/quadruped/chs_a_session.h` · `src/chs_a_session.cc` | `13` §2.2 端点探测 ＋ TLS-4 · §2.5 上下行失效 · §7.5 响应码 · TX-5 心跳搭车 · CON-05 |
 | **Tier 1 安全兜底（B3）** | `include/quadruped/tier1.h` · `src/tier1.cc` | `11` §9.12.2 / `13` §3.2 **逐字**；八条分支按闭集顺序判定 |
+| RT 面 key 表（B4） | `include/quadruped/rt_keys.h` · `src/rt_keys.cc` | `11` §2.2.1；18 条 key 与契约**逐字比对** |
+| RT 面载荷装配（B4） | `include/quadruped/rt_payloads.h` · `src/rt_payloads.cc` | `11` §4.1 §4.2 §7.1.1 §7.7 §8.5 |
+| 模式三元组（B5） | `include/quadruped/mode_machine.h` · `src/mode_machine.cc` | `13` §6.2～§6.6 MS-1～6 · TR-1～4 · PR-1 · GS-1 |
+| 里程计核心（B6） | `include/quadruped/odometry.h` · `src/odometry.cc` | `13` §4.3 §4.4 ODO-1～5 · CV-1～5；复现 T-ODOM-2 基线 |
+| 通道二 域 0（B7） | `include/quadruped/chs_b.h` · `src/chs_b.cc` · `idl/chassis_dds_types.idl` | `13` DDS-1～9；**可选目标**，需 CycloneDDS ＋ idlc |
+| 通道三 上行（B8） | `include/quadruped/uplink.h` · `src/uplink.cc` | `13` §4.8 PB-5；**可选目标**，需 rclcpp |
 
-**通道仍然一条都没有起来**：RT 面（B4）、
-域 0 DDS（B7）、rclcpp odom/TF（B8）。批次表见评审文档 §6。
+**★★★ 还没有 `main`。** 各层都在、都测过，但**没有一个进程把它们接起来**：没有四个线程、
+没有真的套接字、没有 zenoh 会话。每个批次的提交信息里都写着「无生产调用点」，那不是
+免责声明，是如实状态。★ 台架实测（B9 后半）要真机。
 ★★★ **B2 交付的是【策略】，不是套接字** —— 会话把 `dial` / `hangup` / `credentials`
 三个可调用对象注入进来，所以 3 秒超时和 5 秒退避档在测试里是**微秒级**跑完的，
 没有任何一条用例 sleep。真的 POSIX 套接字、`TCP_NODELAY`、非阻塞 connect 仍未写。
@@ -121,6 +128,19 @@ python3 scripts/ci/cxx_mutants.py session reports # 只跑某几个
 ★ 首轮跑出两个**存活**，两个都是真洞：编码器从未被检查过 `PatrolDevice` 包裹
 （只有从抓包读回的帧被检查了），而"保留字节为零"那条跑在一个恰好为零的栈缓冲上。
 现在编码前会先用 `0xAA` 填满缓冲区——**局部数组恰好为零会让这条断言永远绿**。
+
+## 最容易踩的两处名字
+
+★ 两处都不是"写错会报错"，而是**写错会安静**。
+
+1. **DDS 话题名有两个**。`/IMU` 是 `ros2 topic list` 打印的那个；DDS 线上叫 `rt/IMU`。
+   用 `/IMU` 建 reader 完全合法，且匹配不到任何东西。
+2. **DDS 类型名也有两个**。拿 ROS 自带的 `sensor_msgs/msg/Imu.idl` 跑 `idlc` 会成功，
+   生成的类型名是 `sensor_msgs::msg::Imu`；而线上是 `sensor_msgs::msg::dds_::Imu_`
+   （多一层模块、多一个尾下划线）。所以本包自带 `idl/chassis_dds_types.idl`。
+
+两者错任一半，现象都是「participant 起来了、一个包收不到」，`13` DDS-9 记为与网线
+没插不可区分。映射那一半在 `dds_names.cc`，**不依赖 DDS 即可测**。
 
 ## 四条容易踩的
 
