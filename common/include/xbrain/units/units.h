@@ -53,6 +53,16 @@ struct Seconds {
   double value;
 };
 
+// Angular rate, radians per second. Added for Tier 1 (13 S3.2), which clamps
+// wz against spec.max_wz_radps in the same expression that clamps vx and vy
+// against their own limits. Without a distinct type that expression compiles
+// with the arguments swapped: a yaw rate held to a LINEAR limit reads as a
+// perfectly ordinary line of code and is wrong by a factor of whatever the two
+// numbers happen to be.
+struct Radps {
+  double value;
+};
+
 // Same-type ordering only. std::min / std::max resolve through operator<, so
 // providing it per type makes std::min(Mps, Mps) compile. There is
 // deliberately NO cross-type operator<: std::min(Mps, Factor) then has no
@@ -61,6 +71,35 @@ inline bool operator<(Mps a, Mps b) { return a.value < b.value; }
 inline bool operator<(Factor a, Factor b) { return a.value < b.value; }
 inline bool operator<(Mps2 a, Mps2 b) { return a.value < b.value; }
 inline bool operator<(Seconds a, Seconds b) { return a.value < b.value; }
+inline bool operator<(Radps a, Radps b) { return a.value < b.value; }
+
+// Symmetric clamp to [-limit, +limit], per type. Two things it deliberately
+// does NOT do:
+//
+//   * it does not take a lo and a hi. Every limit in this system is a magnitude
+//     (spec.max_vx_mps and friends), and a two-sided form invites the call
+//     Clamp(v, 0, max) -- which silently forbids reversing.
+//   * it does not accept a negative limit. A negative magnitude cannot be
+//     satisfied by any value, so the result would be arbitrary; returning zero
+//     is the only answer that is safe in the direction that matters, and it is
+//     what a caller reading an uncalibrated limit should get.
+//
+// NaN: a comparison with NaN is false, so the branches below fall through and
+// NaN is returned unchanged. That is deliberate -- Tier 1 REJECTS a non-finite
+// command in its own branch (13 S3.2) with stop_reason "nan", and silently
+// turning it into a limit here would hide the fault instead of reporting it.
+inline Mps Clamp(Mps v, Mps limit) {
+  if (!(limit.value > 0.0)) return Mps{0.0};
+  if (v.value > limit.value) return limit;
+  if (v.value < -limit.value) return Mps{-limit.value};
+  return v;
+}
+inline Radps Clamp(Radps v, Radps limit) {
+  if (!(limit.value > 0.0)) return Radps{0.0};
+  if (v.value > limit.value) return limit;
+  if (v.value < -limit.value) return Radps{-limit.value};
+  return v;
+}
 
 }  // namespace units
 }  // namespace xbrain

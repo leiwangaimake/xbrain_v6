@@ -527,6 +527,27 @@ SESSION_MUTANTS = [
      "    if (last_report_s_ >= 0.0) {"),
 ]
 
+# The units probe is where Clamp itself is exercised. The three mutants below
+# lived briefly in the tier1 suite and all three SURVIVED there -- not because
+# the assertions were missing, but because that suite compiles only
+# test_tier1.cc, and Tier 1 refuses a non-finite command before Clamp ever sees
+# one. A mutant is only as good as the test it is run against.
+UNITS_H = os.path.join(ROOT, "common", "include", "xbrain", "units", "units.h")
+UNITS_TESTS = [os.path.join(ROOT, "tests", "common", "units_cxx", "units_probe.cc")]
+
+UNITS_MUTANTS = [
+    ("units: clamp is one-sided, so the robot cannot reverse",
+     UNITS_H, "  if (v.value < -limit.value) return Mps{-limit.value};\n  return v;\n}",
+     "  return v;\n}"),
+    ("units: a non-positive limit passes the value through",
+     UNITS_H, "inline Mps Clamp(Mps v, Mps limit) {\n  if (!(limit.value > 0.0)) return Mps{0.0};",
+     "inline Mps Clamp(Mps v, Mps limit) {\n  if (false) return Mps{0.0};"),
+    ("units: NaN silently becomes the limit, hiding Tier 1's own branch",
+     UNITS_H, "inline Mps Clamp(Mps v, Mps limit) {\n  if (!(limit.value > 0.0)) return Mps{0.0};",
+     "inline Mps Clamp(Mps v, Mps limit) {\n  if (v.value != v.value) return limit;\n"
+     "  if (!(limit.value > 0.0)) return Mps{0.0};"),
+]
+
 # name -> (sources, test files, mutants, argv[1] passed to each test).
 # `sources` are compiled into every test of the suite; a header-only module
 # lists none. The argument differs per suite because the tests need different
@@ -538,6 +559,7 @@ SUITES = {
     "quadruped_config": (CONFIG_SOURCES, CONFIG_TESTS, CONFIG_MUTANTS, None),
     "reports": (REPORTS_SOURCES, REPORTS_TESTS, REPORTS_MUTANTS, GOLDEN),
     "session": (SESSION_SOURCES, SESSION_TESTS, SESSION_MUTANTS, None),
+    "units": ([], UNITS_TESTS, UNITS_MUTANTS, None),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
 }
 
