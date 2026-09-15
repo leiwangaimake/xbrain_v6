@@ -655,6 +655,42 @@ UNITS_MUTANTS = [
      "  if (!(limit.value > 0.0)) return Mps{0.0};"),
 ]
 
+# Envelope mutants. The unit was wrong here for two days and no test turned
+# red, because the existing case asserted only ts_sync semantics: the unit was
+# an assumption, not an assertion. These are what make it an assertion.
+ENVELOPE_H = os.path.join(ROOT, "common", "include", "xbrain", "envelope",
+                          "envelope_writer.h")
+ENVELOPE_TESTS = [os.path.join(ROOT, "tests", "common", "envelope",
+                               "envelope_units_probe.cc")]
+
+ENVELOPE_MUTANTS = [
+    # The defect itself, both halves. 11 S3.0 calls mono the ONLY basis for
+    # every timeout and age judgement, so a thousandfold error there is not a
+    # cosmetic one.
+    ("envelope: ts stamped in milliseconds again",
+     ENVELOPE_H, "    env.ts = wall_ts_s;", "    env.ts = wall_ts_s * 1000.0;"),
+    ("envelope: mono stamped in milliseconds again",
+     ENVELOPE_H, "    env.mono = now_mono_s;", "    env.mono = now_mono_s * 1000.0;"),
+    # Rendering. An integer format loses the sub-second part the Qt spec freezes.
+    ("envelope: ts rendered as an integer",
+     ENVELOPE_H, '\\"ts\\":%.6f', '\\"ts\\":%.0f'),
+    ("envelope: ts rendered as a quoted string",
+     ENVELOPE_H, '\\"ts\\":%.6f', '\\"ts\\":\\"%.6f\\"'),
+    # Truncation. Half an envelope is valid-looking JSON that decodes wrong.
+    ("envelope: a truncated object is returned instead of refused",
+     ENVELOPE_H, "  if (n < 0 || static_cast<std::size_t>(n) >= cap) return 0;",
+     "  if (n < 0) return 0;"),
+    # CLK-A3 and its boundary.
+    ("envelope: the sync window is off by one at the boundary",
+     ENVELOPE_H, "    if (age_s >= sync_timeout_s_) {", "    if (age_s > sync_timeout_s_) {"),
+    ("envelope: ts_sync defaults true before any ClockStatus",
+     ENVELOPE_H, "    if (!clock_received_) {\n      return false;",
+     "    if (!clock_received_) {\n      return true;"),
+    # PB-Q3: one seq source per producer.
+    ("envelope: seq does not advance",
+     ENVELOPE_H, "    env.seq = ++seq_;", "    env.seq = seq_;"),
+]
+
 # name -> (sources, test files, mutants, argv[1] passed to each test).
 # `sources` are compiled into every test of the suite; a header-only module
 # lists none. The argument differs per suite because the tests need different
@@ -668,6 +704,7 @@ SUITES = {
     "session": (SESSION_SOURCES, SESSION_TESTS, SESSION_MUTANTS, None),
     "tier1": (TIER1_SOURCES, TIER1_TESTS, TIER1_MUTANTS, None),
     "units": ([], UNITS_TESTS, UNITS_MUTANTS, None),
+    "envelope": ([], ENVELOPE_TESTS, ENVELOPE_MUTANTS, None),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
 }
 

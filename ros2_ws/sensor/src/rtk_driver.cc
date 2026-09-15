@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace sensor {
 
@@ -65,9 +66,15 @@ RtkDriver::RtkDriver(DriverConfig cfg, PublishSink* sink)
     : cfg_(cfg),
       sink_(sink),
       resolver_(cfg.resolver),
-      envelope_(cfg.rid, cfg.src, cfg.boot, cfg.sync_timeout_ms),
-      envelope_fix_(cfg.rid, cfg.src, cfg.boot, cfg.sync_timeout_ms),
-      envelope_clock_(cfg.rid, cfg.src, cfg.boot, cfg.sync_timeout_ms),
+      // The config carries the CLK-A3 window in milliseconds; EnvelopeWriter
+      // works in seconds like every other time it touches. Converting once, at
+      // this boundary, is the alternative to a class with mixed units.
+      envelope_(cfg.rid, cfg.src, cfg.boot,
+                static_cast<double>(cfg.sync_timeout_ms) / 1000.0),
+      envelope_fix_(cfg.rid, cfg.src, cfg.boot,
+                    static_cast<double>(cfg.sync_timeout_ms) / 1000.0),
+      envelope_clock_(cfg.rid, cfg.src, cfg.boot,
+                      static_cast<double>(cfg.sync_timeout_ms) / 1000.0),
       heading_key_("xbrain/" + cfg.rid + "/rt/gnss/heading"),
       fix_key_("xbrain/" + cfg.rid + "/rt/gnss/fix"),
       clock_key_("xbrain/" + cfg.rid + "/rt/clock/status") {}
@@ -162,17 +169,19 @@ GnssFix RtkDriver::buildFix(double now_mono_s) const {
 
 void RtkDriver::tick(double now_mono_s, int64_t wall_ms) {
   // Envelope: mono/ts in ms (11 S3.0). ts is wall (align/log only, CLK-C1).
-  const int64_t mono_ms = static_cast<int64_t>(now_mono_s * 1000.0);
+  // 11 S3.0 stamps both envelope times in SECONDS. The millisecond conversion
+  // that used to happen here is what made them integers on the wire.
+  const double wall_s = static_cast<double>(wall_ms) / 1000.0;
   // rt/gnss/heading (11 S3.3).
   const HeadingInputs in = buildInputs(now_mono_s);
   const ResolveResult r = resolver_.update(in, now_mono_s);
   const hachist::xbrain::envelope::StampedEnvelope env_h =
-      envelope_.stamp(wall_ms, mono_ms);
+      envelope_.stamp(wall_s, now_mono_s);
   const std::string hpayload = WrapEnvelope(env_h, ToJsonData(r.heading));
   // rt/gnss/fix (11 S3.2). Own envelope writer -> its own seq for gap detection.
   const GnssFix fix = buildFix(now_mono_s);
   const hachist::xbrain::envelope::StampedEnvelope env_f =
-      envelope_fix_.stamp(wall_ms, mono_ms);
+      envelope_fix_.stamp(wall_s, now_mono_s);
   const std::string fpayload = WrapEnvelope(env_f, ToJsonData(fix));
   if (sink_ != nullptr) {
     sink_->publish(heading_key_, hpayload);
@@ -198,9 +207,11 @@ void RtkDriver::tickClock(const ChronyReading& r, double now_mono_s,
   last_clock_wall_ms_ = wall_ms;
 
   const ClockStatus cs = JudgeClock(r, cfg_.clock, step_count_, now_mono_s, cfg_.boot);
-  const int64_t mono_ms = static_cast<int64_t>(now_mono_s * 1000.0);
+  // 11 S3.0 stamps both envelope times in SECONDS. The millisecond conversion
+  // that used to happen here is what made them integers on the wire.
+  const double wall_s = static_cast<double>(wall_ms) / 1000.0;
   const hachist::xbrain::envelope::StampedEnvelope env =
-      envelope_clock_.stamp(wall_ms, mono_ms);
+      envelope_clock_.stamp(wall_s, now_mono_s);
   const std::string payload = WrapEnvelope(env, ToJsonData(cs));
   if (sink_ != nullptr) {
     sink_->publish(clock_key_, payload);
