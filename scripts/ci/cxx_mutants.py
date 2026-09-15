@@ -312,6 +312,221 @@ YAML_MUTANTS = [
      "    if (false) { (void)label; }"),
 ]
 
+# Config-layer mutants. These defend the data path itself: a key that is
+# present in the file but never read by the loader fails nothing, and the value
+# simply never reaches the process (13 S8.2 v1.4 is the same defect on the
+# tier1 limits).
+CONFIG_SOURCES = [
+    os.path.join(QUAD, "src", "quadruped_config.cc"),
+    os.path.join(QUAD, "src", "chs_a_codec.cc"),
+    os.path.join(QUAD, "src", "chs_a_framer.cc"),
+]
+CONFIG_TESTS = [os.path.join(QUAD, "test", "test_quadruped_config.cc")]
+CONFIG_CC = os.path.join(QUAD, "src", "quadruped_config.cc")
+
+CONFIG_MUTANTS = [
+    # Without the loop, a zero or negative rung passes and the reconnect turns
+    # into a busy loop -- audible, because the chassis greets every connect.
+    ("config: reconnect ladder rungs not checked for positivity",
+     CONFIG_CC,
+     "    if (!(cfg.link.reconnect_backoff_s[i] > 0.0)) {",
+     "    if (false) {"),
+    ("config: empty reconnect ladder accepted",
+     CONFIG_CC,
+     "  if (cfg.link.reconnect_backoff_s.empty()) {",
+     "  if (false) {"),
+    # The ladder read as a list of zeros would satisfy a size-only assertion.
+    ("config: ladder read but values discarded",
+     CONFIG_CC,
+     "      cfg.link.reconnect_backoff_s.push_back(backoff.at_index(i).as_double(label));",
+     "      (void)label;\n      cfg.link.reconnect_backoff_s.push_back(0.5);"),
+    ("config: axis_cmd_socket_fixed=false accepted (13 CA-1)",
+     CONFIG_CC, "  if (!cfg.link.axis_cmd_socket_fixed) {", "  if (false) {"),
+    ("config: single_tx_owner=false accepted (13 CA-4 / QC-16)",
+     CONFIG_CC, "  if (!cfg.link.single_tx_owner) {", "  if (false) {"),
+    ("config: version byte may disagree with the codec",
+     CONFIG_CC,
+     "  if (cfg.link.proto_version_byte != static_cast<int>(chs_a::kProtoVersion)) {",
+     "  if (false) {"),
+    ("config: asdu_format not checked",
+     CONFIG_CC, '  if (cfg.link.asdu_format != "json") {', "  if (false) {"),
+    ("config: codebook not checked (CB-1)",
+     CONFIG_CC, '  if (cfg.link.codebook != "hex32") {', "  if (false) {"),
+    # QC-13 is all-or-nothing. "Any non-empty table is refused" is a DIFFERENT
+    # and wrong rule, which is why the suite also loads a complete table.
+    ("config: half-filled legacy codebook accepted (QC-13)",
+     CONFIG_CC,
+     "  if (cfg.link.legacy_decimal_entries != 0 &&\n"
+     "      cfg.link.legacy_decimal_entries != kLegacyCodebookEntries) {",
+     "  if (false) {"),
+    ("config: complete legacy codebook wrongly refused",
+     CONFIG_CC,
+     "  if (cfg.link.legacy_decimal_entries != 0 &&\n"
+     "      cfg.link.legacy_decimal_entries != kLegacyCodebookEntries) {",
+     "  if (cfg.link.legacy_decimal_entries != 0) {"),
+]
+
+# Report-parsing mutants. The two bans of 13 S6.5 are the ones with teeth: a
+# parser that maps an unregistered value onto a known one invents chassis state,
+# and one that rejects the report over a strange field throws away HES, which
+# travels in the same message.
+REPORTS_CC = os.path.join(QUAD, "src", "chs_a_reports.cc")
+REPORTS_SOURCES = [REPORTS_CC, os.path.join(QUAD, "src", "chs_a_codec.cc")]
+REPORTS_TESTS = [os.path.join(QUAD, "test", "test_chs_a_reports.cc")]
+
+REPORTS_MUTANTS = [
+    # Ban 1. Nearest-match is the plausible wrong answer: it produces a
+    # readable label for every value and invents state that was never reported.
+    ("reports: unregistered value falls back to the first table entry",
+     REPORTS_CC,
+     "  v.known = false;\n  v.label = UnknownLabel(raw);\n  return v;",
+     "  v.known = true;\n  v.label = table[0].name;\n  return v;"),
+    # Ban 3. The label alone is not actionable in the field.
+    ("reports: raw value dropped once a label is found",
+     REPORTS_CC, "  v.raw = raw;", "  v.raw = 0;"),
+    # The 11-vs-13 trap: reading an emergency stop as a damping state.
+    ("reports: soft_estop taken from the OLD manual (2, not -2)",
+     REPORTS_CC, '    {-2, "soft_estop"},', '    {2, "soft_estop"},'),
+    # 13 S7.3's asymmetric default. "warn" reads as merely noisy.
+    ("reports: unknown severity mapped to warn instead of degraded",
+     REPORTS_CC,
+     "  return std::string(sets::kFaultLevel[1]);\n}",
+     "  return std::string(sets::kFaultLevel[0]);\n}"),
+    ("reports: a missing Severities field treated as present",
+     REPORTS_CC, "  if (present) {", "  if (true) {"),
+    # 11 S9.8.3 puts the SOC judgement on the minimum: the emptier pack decides
+    # when the robot must come home.
+    ("reports: battery SOC taken from the fuller pack",
+     REPORTS_CC, "    if (first || b.level < s.min_level) {",
+     "    if (first || b.level > s.min_level) {"),
+    ("reports: SOC seeded from zero instead of the first pack",
+     REPORTS_CC, "    if (first || b.level < s.min_level) {",
+     "    if (b.level < s.min_level) {"),
+    # CF-3 / 11 S9.8.4: raised and cleared are two lists, and merging them
+    # reports a fault that has already gone away as still active.
+    ("reports: cleared faults filed as active",
+     REPORTS_CC, "    if (f.type == 2) {", "    if (false) {"),
+    # CF-1 / CF-2: a bare code cannot be interpreted -- the two spaces overlap.
+    ("reports: fault code emitted without its namespace prefix",
+     REPORTS_CC, '  std::snprintf(buf, sizeof(buf), "%s:0x%04X", prefix,',
+     '  (void)prefix;\n  std::snprintf(buf, sizeof(buf), "0x%04X",'),
+    # CF-4's dedup key IS the formatted string, so two spellings are two faults.
+    ("reports: hex body rendered lower case",
+     REPORTS_CC, '"%s:0x%04X", prefix,', '"%s:0x%04x", prefix,'),
+    # The healthy case, twice a second.
+    ("reports: an empty ErrorList treated as a parse failure",
+     REPORTS_CC,
+     "  if (el == items->end() || !el->is_array()) return false;",
+     "  if (el == items->end() || !el->is_array() || el->empty()) return false;"),
+    # Ban 2 through a type error: a firmware that changed a field's type would
+    # otherwise throw out of the parse and cost the whole report.
+    ("reports: wrong-typed number field no longer falls back",
+     REPORTS_CC,
+     "  if (it == j.end() || !it->is_number()) return dflt;\n"
+     "  return it->get<std::int64_t>();",
+     "  if (it == j.end()) return dflt;\n"
+     "  return it->get<std::int64_t>();"),
+    # HES and Sleep arrive as 0/1 integers, `charge` as a real bool.
+    ("reports: integer booleans no longer accepted",
+     REPORTS_CC, "  if (it->is_number()) return it->get<std::int64_t>() != 0;",
+     "  (void)0;"),
+    # The envelope IS a real failure: a zeroed struct reads as "idle and fine".
+    ("reports: a payload without the PatrolDevice wrapper accepted",
+     REPORTS_CC,
+     "  if (pd == root.end() || !pd->is_object()) return nullptr;",
+     "  if (false) return nullptr;"),
+    # Declared EQUIVALENT, with the reasoning in chs_a_reports.cc: every parse
+    # function calls ItemsOf immediately after this, and find() on a discarded
+    # or non-object value returns end() without throwing, so the report is
+    # refused one step later with the same answer. Kept as a mutant so that the
+    # day the line becomes load-bearing, the runner says so.
+    ("reports: malformed JSON accepted",
+     REPORTS_CC,
+     "  return !out->is_discarded() && out->is_object();",
+     "  return out->is_object() || true;",
+     "equivalent"),
+]
+
+# Session-policy mutants. Each one is a rule that reads the same forwards and
+# backwards until you ask what it costs in the field.
+SESSION_CC = os.path.join(QUAD, "src", "chs_a_session.cc")
+SESSION_SOURCES = [SESSION_CC, os.path.join(QUAD, "src", "quadruped_config.cc"),
+                   os.path.join(QUAD, "src", "chs_a_codec.cc")]
+SESSION_TESTS = [os.path.join(QUAD, "test", "test_chs_a_session.cc")]
+
+SESSION_MUTANTS = [
+    # 13 TLS-4. Dialling anyway turns "no certificate installed" into a probe
+    # window of silence, which is what an unplugged cable looks like.
+    ("session: TLS candidate dialled without credentials",
+     SESSION_CC, "    if (ep.tls && creds_ && !creds_(ep)) {", "    if (false) {"),
+    ("session: disabled candidate dialled anyway",
+     SESSION_CC, "    if (!ep.enabled) {", "    if (false) {"),
+    # 13 CA-1: two live sockets read to the chassis as two CLIENTS, and axis
+    # commands come back 0xE006 for two seconds -- accepted, and no motion.
+    ("session: previous socket left open while the next is dialled",
+     SESSION_CC,
+     "  if (socket_open_) {\n    hangup_();\n    socket_open_ = false;\n"
+     "    out->disconnected = true;\n  }\n  while (candidate_ < cfg_.endpoints.size()) {",
+     "  while (candidate_ < cfg_.endpoints.size()) {"),
+    ("session: probe window never expires",
+     SESSION_CC,
+     "    } else if (now_mono_s - probe_started_s_ > cfg_.probe_timeout_s) {",
+     "    } else if (false) {"),
+    # A robot that has been up for hours and drops once must wait the FIRST
+    # rung, not the last: otherwise it is out of contact ten times too long.
+    ("session: backoff ladder not reset by a good connection",
+     SESSION_CC, "      backoff_attempt_ = 0;\n      send_failures_ = 0;",
+     "      send_failures_ = 0;"),
+    ("session: backoff always uses the first rung",
+     SESSION_CC,
+     "  return cfg_.reconnect_backoff_s[attempt < n ? attempt : n - 1];",
+     "  (void)attempt;\n  return cfg_.reconnect_backoff_s[0];"),
+    # 13 S2.5 thresholds. Swapping them makes "degraded" unreachable, so the
+    # link goes from fine to gone with no warning in between.
+    ("session: degraded judged against the lost threshold",
+     SESSION_CC, "    if (age > cfg_.state_timeout_degraded_s) {",
+     "    if (age > cfg_.state_timeout_lost_s) {"),
+    ("session: lost never declared, the link just stays degraded",
+     SESSION_CC,
+     "    if (last_report_s_ < 0.0 || age > cfg_.state_timeout_lost_s) {",
+     "    if (false) {"),
+    # CONSECUTIVE, not cumulative.
+    ("session: send-failure run not cleared by a success",
+     SESSION_CC,
+     "  // cumulative counter would eventually degrade a link that has been healthy\n"
+     "  // for hours with a handful of transient failures spread across them.\n"
+     "  send_failures_ = 0;",
+     "  // cumulative counter would eventually degrade a link that has been healthy\n"
+     "  // for hours with a handful of transient failures spread across them.\n"
+     "  (void)0;"),
+    ("session: E001..E005 no longer count toward cmd_fail",
+     SESSION_CC, "  if (d.counts_toward_cmd_fail) ++send_failures_;", "  (void)0;"),
+    ("session: 0xE00B run not broken by another code",
+     SESSION_CC, "    internal_errors_ = 0;\n  }\n}\n\nvoid Session::OnSleep",
+     "    (void)0;\n  }\n}\n\nvoid Session::OnSleep"),
+    # 13 F-21. There is no wake command in the protocol, and each attempt is
+    # five seconds of believing we are driving.
+    ("session: motion sent while the chassis reports Sleep",
+     SESSION_CC, "  if (asleep_) return false;", "  if (false) return false;"),
+    ("session: motion allowed on a degraded link",
+     SESSION_CC, "  if (state_ != ConnState::kOk) return false;",
+     "  if (state_ == ConnState::kLost) return false;"),
+    # The chassis reports only to an address already sending heartbeats, so a
+    # probe that waits a period first spends it guaranteed to hear nothing.
+    ("session: no heartbeat forced on the dialling tick",
+     SESSION_CC, "    last_heartbeat_s_ = -1.0;\n    return;",
+     "    last_heartbeat_s_ = now_mono_s;\n    return;"),
+    # CON-05: the epoch is how the layer above learns it must handshake again.
+    ("session: link epoch never advances",
+     SESSION_CC, "      ++link_epoch_;", "      (void)0;"),
+    # A report that arrived BEFORE this candidate was dialled is evidence about
+    # the previous one, and accepting it declares a silent endpoint live.
+    ("session: a stale report counts as this candidate answering",
+     SESSION_CC,
+     "    if (last_report_s_ >= probe_started_s_ && last_report_s_ >= 0.0) {",
+     "    if (last_report_s_ >= 0.0) {"),
+]
+
 # name -> (sources, test files, mutants, argv[1] passed to each test).
 # `sources` are compiled into every test of the suite; a header-only module
 # lists none. The argument differs per suite because the tests need different
@@ -320,6 +535,9 @@ YAML_MUTANTS = [
 # no-op -- the config test would try to write fixtures inside a file path.
 SUITES = {
     "quadruped": (QUAD_SOURCES, QUAD_TESTS, QUAD_MUTANTS, GOLDEN),
+    "quadruped_config": (CONFIG_SOURCES, CONFIG_TESTS, CONFIG_MUTANTS, None),
+    "reports": (REPORTS_SOURCES, REPORTS_TESTS, REPORTS_MUTANTS, GOLDEN),
+    "session": (SESSION_SOURCES, SESSION_TESTS, SESSION_MUTANTS, None),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
 }
 

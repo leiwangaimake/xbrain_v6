@@ -59,9 +59,13 @@ const char* kGood =
     "quadruped:\n"
     "  robot_id: xb-001\n"
     "  chassis_link:\n"
+    "    asdu_format: json\n"
     "    axis_cmd_hz: 20.0\n"
+    "    axis_cmd_socket_fixed: true\n"
     "    cmd_fail_threshold: 3\n"
     "    codebook: hex32\n"
+    "    codebook_table:\n"
+    "      legacy_decimal: {}\n"
     "    endpoint_candidates:\n"
     "    - enabled: true\n"
     "      host: 10.21.33.103\n"
@@ -77,7 +81,13 @@ const char* kGood =
     "    heartbeat_hz: 2.0\n"
     "    partial_send_retry: 3\n"
     "    probe_timeout_ms: 2000\n"
+    "    proto_version_byte: 1\n"
+    "    reconnect_backoff_s:\n"
+    "    - 0.5\n"
+    "    - 1.0\n"
+    "    - 5.0\n"
     "    resync_max_bytes: 4096\n"
+    "    single_tx_owner: true\n"
     "    state_timeout_degraded_s: 1.0\n"
     "    state_timeout_lost_s: 3.0\n"
     "    tcp_nodelay: true\n"
@@ -186,6 +196,17 @@ int main(int argc, char** argv) {
     CHECK(c.link.endpoints[1].enabled == false);
     CHECK(c.link.codebook == "hex32");
     CHECK(c.link.partial_send_retry == 3);
+    // The ladder arrives with its VALUES, not just its length. Asserting only
+    // size() cannot tell a correctly read list from one whose entries all came
+    // back as zero, and a zero rung is the failure this list guards against.
+    CHECK(c.link.reconnect_backoff_s.size() == 3);
+    CHECK(c.link.reconnect_backoff_s[0] == 0.5);
+    CHECK(c.link.reconnect_backoff_s[2] == 5.0);
+    CHECK(c.link.axis_cmd_socket_fixed == true);
+    CHECK(c.link.single_tx_owner == true);
+    CHECK(c.link.proto_version_byte == 1);
+    CHECK(c.link.asdu_format == "json");
+    CHECK(c.link.legacy_decimal_entries == 0);
     CHECK(c.dds.domain_id == 0);
     CHECK(c.uplink.ros_domain_id == 42);
     // The two domains must not be the same number; QC-4 owns the assertion at
@@ -232,6 +253,97 @@ int main(int argc, char** argv) {
     const std::string p = WriteTemp(
         "q_hz.yaml", Mutate("    control_loop_hz: 100.0\n", "    control_loop_hz: 0.0\n"));
     CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // A zero rung in the reconnect ladder: the reconnect becomes a busy loop
+    // against a chassis that is already in trouble, and 13 CA-6 means every
+    // attempt plays a voice prompt and switches the LEDs.
+    const std::string p = WriteTemp(
+        "q_backoff0.yaml", Mutate("    - 0.5\n", "    - 0.0\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // A negative rung, which a formula-derived ladder could produce and which
+    // "> 0" catches but "!= 0" would not.
+    const std::string p = WriteTemp(
+        "q_backoffneg.yaml", Mutate("    - 1.0\n", "    - -1.0\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // An empty ladder. The list is still PRESENT, so a loader that only
+    // required the key would accept it and leave the session with no delay.
+    const std::string p = WriteTemp(
+        "q_backoffnone.yaml",
+        Mutate("    reconnect_backoff_s:\n    - 0.5\n    - 1.0\n    - 5.0\n",
+               "    reconnect_backoff_s: []\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // 13 CA-1: a per-command socket reads to the chassis as a new client and
+    // axis commands come back 0xE006 -- accepted, and the robot does not move.
+    const std::string p = WriteTemp(
+        "q_sockfix.yaml",
+        Mutate("    axis_cmd_socket_fixed: true\n",
+               "    axis_cmd_socket_fixed: false\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // 13 CA-4 / QC-16: two writers on one TCP socket interleave two frames.
+    const std::string p = WriteTemp(
+        "q_txowner.yaml",
+        Mutate("    single_tx_owner: true\n", "    single_tx_owner: false\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // The config and the codec must agree on the header version byte. This is
+    // the case that makes the check worth having: 2 is a perfectly valid
+    // integer, so nothing but the comparison rejects it.
+    const std::string p = WriteTemp(
+        "q_ver.yaml",
+        Mutate("    proto_version_byte: 1\n", "    proto_version_byte: 2\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // XML is a documented ASDU format (format byte 0x00) with no encoder here.
+    const std::string p = WriteTemp(
+        "q_fmt.yaml", Mutate("    asdu_format: json\n", "    asdu_format: xml\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // CB-1: the only codebook the code implements.
+    const std::string p = WriteTemp(
+        "q_cb.yaml", Mutate("    codebook: hex32\n", "    codebook: legacy_decimal\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // QC-13: all-or-nothing. Four of the five codes is the dangerous shape --
+    // selectable, and failing on the first command it does not cover.
+    const std::string p = WriteTemp(
+        "q_legacy4.yaml",
+        Mutate("      legacy_decimal: {}\n",
+               "      legacy_decimal:\n"
+               "        axis: 4\n"
+               "        gait: 3\n"
+               "        heartbeat: 1\n"
+               "        motion_state: 2\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // ...and the complete table is accepted (still with codebook hex32, which
+    // CB-3 describes as the one-switch-to-flip state). Without this case the
+    // rule above could be "any non-empty table is refused", which is a
+    // different and wrong rule.
+    const std::string p = WriteTemp(
+        "q_legacy5.yaml",
+        Mutate("      legacy_decimal: {}\n",
+               "      legacy_decimal:\n"
+               "        axis: 5\n"
+               "        gait: 4\n"
+               "        heartbeat: 1\n"
+               "        motion_state: 3\n"
+               "        usage_mode: 2\n"));
+    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    CHECK(c.link.legacy_decimal_entries == 5);
   }
   {
     // Every candidate disabled: the probe would contact nothing.

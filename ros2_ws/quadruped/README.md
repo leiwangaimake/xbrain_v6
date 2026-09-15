@@ -5,7 +5,7 @@ M20S 底盘接口与 **Tier 1 安全兜底**进程（设计真源：`docs/13-qua
 > 参考：`docs/QUADRUPED/quadruped_开发前评审_2026-09-15.md`（批次计划与实测回填清单）·
 > `docs/QUADRUPED/M20S_底盘接入与探测实录_2026-09-15.md`（协议实测、上报频率、变更台账）。
 
-## 本包现在是什么（B0 + B1，2026-09-15）
+## 本包现在是什么（B0 + B1 + B2，2026-09-15）
 
 **它还不能控制底盘，也不假装能。** 已落的都是能离线测试的东西：
 
@@ -15,11 +15,15 @@ M20S 底盘接口与 **Tier 1 安全兜底**进程（设计真源：`docs/13-qua
 | 单一出向 seam | `include/quadruped/tx_owner.h` · `src/tx_owner.cc` | `13` CA-4 / TX-4～TX-7；实时侧 try-and-skip，非实时侧有界自旋（CPP-3 / CPP-4） |
 | 启动自证 | `src/main.cc` | `13` DDS-9 / CB-4：打印两个域号、探测顺序、生效码表 |
 | CHS-A 编解码（B1） | `include/quadruped/chs_a_codec.h` · `src/chs_a_codec.cc` | `13` §2.2 · CLAUDE.md §5.5；16 B APDU 头、ASDU JSON、hex32 码表按**十进制**序列化 |
-| CHS-A 分帧重组（B1） | `include/quadruped/chs_a_framer.h` · `src/chs_a_framer.cc` | `13` §2.2 **FR-1 / FR-2 / FR-3 / FR-5**（FR-4 是发送侧，在 `tx_owner`；FR-5 的 `TCP_NODELAY` 是套接字选项，归 B2） |
+| CHS-A 分帧重组（B1） | `include/quadruped/chs_a_framer.h` · `src/chs_a_framer.cc` | `13` §2.2 **FR-1 / FR-2 / FR-3 / FR-5**（FR-4 是发送侧，在 `tx_owner`；FR-5 的 `TCP_NODELAY` 是套接字选项，归 B2 的套接字侧） |
+| 上报解析（B2） | `include/quadruped/chs_a_reports.h` · `src/chs_a_reports.cc` | `13` §6.5 开放集三条禁令 · §7.3 `chs:` 前缀 CF-1～CF-5 · §7.2 电池 · F-21 `Sleep` |
+| 会话状态机（B2） | `include/quadruped/chs_a_session.h` · `src/chs_a_session.cc` | `13` §2.2 端点探测 ＋ TLS-4 · §2.5 上下行失效 · §7.5 响应码 · TX-5 心跳搭车 · CON-05 |
 
-**通道仍然一条都没有起来**：链路与四路上报（B2）、Tier 1 单函数（B3）、
-RT 面（B4）、域 0 DDS（B7）、rclcpp odom/TF（B8）。批次表见评审文档 §6。
-B1 交付的是**纯函数层**——它能把字节变成结构、把结构变成字节，但它不持有任何套接字。
+**通道仍然一条都没有起来**：Tier 1 单函数（B3）、RT 面（B4）、
+域 0 DDS（B7）、rclcpp odom/TF（B8）。批次表见评审文档 §6。
+★★★ **B2 交付的是【策略】，不是套接字** —— 会话把 `dial` / `hangup` / `credentials`
+三个可调用对象注入进来，所以 3 秒超时和 5 秒退避档在测试里是**微秒级**跑完的，
+没有任何一条用例 sleep。真的 POSIX 套接字、`TCP_NODELAY`、非阻塞 connect 仍未写。
 
 ★ **无参数运行会退出 78 并说明原因**，这是有意的：systemd 单元正是这样调用它的，
 若它改成「起来、打日志、空转」，`10` §3.3 的 Stage 1 就会显示成功，而 p1_motion 会一直
@@ -56,6 +60,19 @@ data/install/quadruped/lib/quadruped/quadruped_m20 --selfcheck \
 它也回答「我的配置到底展开了没有」：未经冻结线的源文件里 `${common.spec.*}` 仍是字面量，
 自检会当场报 `config key not a number: quadruped.odom.a_max_mps2 = '${common...}'`。
 
+## B2 的四条容易实现反的规则
+
+| 规则 | 出处 | 实现反了会怎样 |
+|---|---|---|
+| 凭证缺失的候选**立即跳过**，不占探测窗口 | `13` TLS-4 | 三个候选各等 2 s，「没装证书」与「网线没插」是**六秒一模一样的沉默** |
+| 同一时刻**只能有一个套接字** | `13` CA-1 | 第二个活套接字在底盘看来是**第二个客户端** ⇒ 轴指令回 `0xE006` 两秒 ⇒ 收得下、不动 |
+| **缺应答不算失败** | `13` CA-7 实测 | 底盘对轴指令既不应答也不记日志；数缺应答的话，健康链路在**第三条指令后**就被判 degraded |
+| 退避档在连上后**清零** | `13` §8.2 | 否则跑了一小时后掉一次线，等的是**最后一档 5 s** 而不是 0.5 s |
+
+★ 还有两条不在表里但同样关键：**重连 ≠ 恢复运动**（`13` CON-05，会话只递增 `link_epoch()`，
+不提供任何 resume）；**`Sleep` 为真时一条运动指令都不发**（`13` F-21，底盘要 5 s 才回
+`0xE008`，而协议里**根本没有唤醒指令**）。
+
 ## 金标向量与变异体
 
 `test/golden/chs_a_frames.txt` 里的 7 个向量**是 2026-09-15 从真实链路上抓下来的**，
@@ -64,8 +81,13 @@ data/install/quadruped/lib/quadruped/quadruped_m20 --selfcheck \
 每一条的来源与重抓命令。
 
 ```bash
-python3 scripts/ci/quadruped_mutants.py     # 判据: 每个变异体都必须被杀
+python3 scripts/ci/cxx_mutants.py                 # 全部套件
+python3 scripts/ci/cxx_mutants.py session reports # 只跑某几个
 ```
+
+判据：**每个变异体都必须被杀**。套件五个：`quadruped`（编解码与分帧）·
+`quadruped_config`（配置数据路径）· `reports`（上报解析）· `session`（会话策略）·
+`yaml_lite`（共享配置读取器）。
 
 这个脚本是 B1 的验收方式，也是**「哪几行是真的被守住了」的清单**。它先建并跑基线，
 基线不绿就直接退出——否则每个变异体都会因为无关原因显示被杀，整轮读起来像满分。
@@ -76,7 +98,7 @@ python3 scripts/ci/quadruped_mutants.py     # 判据: 每个变异体都必须�
 （只有从抓包读回的帧被检查了），而"保留字节为零"那条跑在一个恰好为零的栈缓冲上。
 现在编码前会先用 `0xAA` 填满缓冲区——**局部数组恰好为零会让这条断言永远绿**。
 
-## 三条容易踩的
+## 四条容易踩的
 
 1. **不要读 `configs/quadruped.yaml`**。运行期只读 `/run/xbrain/resolved/quadruped.yaml`
    （`10` §5.4.1）。冻结线把 `${common.*}` 一次性展开后**丢弃 `common` 子树**，所以
@@ -89,6 +111,10 @@ python3 scripts/ci/quadruped_mutants.py     # 判据: 每个变异体都必须�
    最大的一路上报 2.4 KB，每帧复制一份会在 10 Hz 上白白搬数据。缓冲的回收是
    **延迟到下一次进入时**做的，所以「拿到帧 → 立刻再调一次 Next → 再读上一帧」
    读到的是已经被搬走的字节。要留就自己拷。
+4. **`chs_a_reports` 只许在 `chs_a_rx` 线程上调**（`13` §9.1）。它用的是 vendored
+   nlohmann/json，**会分配内存**；在 `ctrl` 或 `rt_safety` 上调它就违反 QD-7 / RTC-5。
+   CMake 里 third_party 的 include 路径是 `PRIVATE`，就是为了不让第三方类型漏进
+   任何公开头的签名——第一个这么用的人会让 vendoring 这个决定变得不可逆。
 
 ## 布局
 

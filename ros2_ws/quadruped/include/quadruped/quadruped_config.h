@@ -43,6 +43,7 @@
 #ifndef HACHIST_XBRAIN_V6_QUADRUPED_QUADRUPED_CONFIG_H_
 #define HACHIST_XBRAIN_V6_QUADRUPED_QUADRUPED_CONFIG_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -103,6 +104,12 @@ struct Tier1Config {
   double safety_probe_stale_s = 0.0;  // s  no ping for this long -> E_SAFETY_LINK_LOST
 };
 
+// QC-13: the legacy decimal codebook is all-or-nothing. Five commands need a
+// code -- heartbeat, usage mode switch, motion state switch, gait switch, real
+// axis -- and a table holding four of them would still be selectable, failing
+// on the first command it does not cover.
+inline constexpr std::size_t kLegacyCodebookEntries = 5;
+
 // Channel one link parameters (13 S2.2). Framing and send discipline live
 // here because they are read by the codec in B1 and by the single tx owner.
 struct ChassisLinkConfig {
@@ -125,6 +132,29 @@ struct ChassisLinkConfig {
   int cmd_fail_threshold = 0;
   double state_timeout_degraded_s = 0.0;  // s  uplink gap -> degraded (11 S9.1.3)
   double state_timeout_lost_s = 0.0;      // s  ...then lost, then backoff reconnect
+  // Reconnect ladder (13 S8.2). Indexed by attempt, the last rung repeating
+  // forever. A LIST and not a formula because the file is where an operator
+  // tunes it, and because "0.5, 1, 2, 5, 5" says its intent better than a base
+  // and a cap do. Every rung must be > 0: a 0 s rung is a busy loop against a
+  // chassis that is already in trouble.
+  std::vector<double> reconnect_backoff_s;
+  // Two switches the design marks as NOT switchable (CA-1 / QC-16). They are
+  // still read, and a false value REFUSES to start, rather than being ignored:
+  // a key that can be set and has no effect is worse than no key, because the
+  // operator who set it believes something changed.
+  bool axis_cmd_socket_fixed = false;
+  bool single_tx_owner = false;
+  // Header bytes the codec compiles in (13 S2.2 field table). Read back from
+  // the config so that a file which disagrees with the code fails at load,
+  // in one place with a clear message -- rather than on the wire, where the
+  // chassis answers 0xE002 and 13 S7.5 sends the reader to the encoder.
+  int proto_version_byte = 0;
+  std::string asdu_format;
+  // CB-3: the legacy decimal table, empty until the vendor supplies the five
+  // codes. QC-13 makes it all-or-nothing, so a half-filled table cannot be
+  // selected. Stored as a count because nothing reads its contents yet, and
+  // 9.3 forbids writing the consumer before there is something to consume.
+  std::size_t legacy_decimal_entries = 0;
 };
 
 // Odometry model inputs (13 S4.4). a_max and trust_by_gait are references into

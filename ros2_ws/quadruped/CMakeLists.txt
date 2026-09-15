@@ -55,6 +55,17 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 # guard, envelope, units): consumed by include path, nothing to link.
 set(COMMON_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/include)
 
+# The vendored JSON reader (99 U85 (6)). Header-only, and PRIVATE on purpose:
+# it is an implementation detail of the report parser and no public header of
+# this package includes it. Making it PUBLIC would put a third-party type in
+# the include path of every consumer, and the first one to use it in a
+# signature would make the vendoring decision irreversible.
+#
+# It is used ONLY on the chs_a_rx thread (13 S9.1). Nothing it touches may be
+# reached from ctrl or rt_safety: it allocates, and QD-7 forbids allocation on
+# the realtime path.
+set(THIRD_PARTY_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/third_party)
+
 # ---------------------------------------------------------------------------
 # Core: no ROS, no DDS, no socket. Everything that can be tested without a
 # chassis lives here, and that is deliberate -- the parts that need hardware
@@ -66,8 +77,11 @@ add_library(quadruped_core STATIC
   src/tx_owner.cc
   src/chs_a_codec.cc
   src/chs_a_framer.cc
+  src/chs_a_reports.cc
+  src/chs_a_session.cc
 )
 target_include_directories(quadruped_core PUBLIC include ${COMMON_INCLUDE})
+target_include_directories(quadruped_core PRIVATE ${THIRD_PARTY_INCLUDE})
 target_link_libraries(quadruped_core PUBLIC pthread)
 
 # ---------------------------------------------------------------------------
@@ -146,3 +160,17 @@ add_test(NAME test_chs_a_codec COMMAND test_chs_a_codec ${CHS_A_GOLDEN})
 add_executable(test_chs_a_framer test/test_chs_a_framer.cc)
 target_link_libraries(test_chs_a_framer PRIVATE quadruped_core)
 add_test(NAME test_chs_a_framer COMMAND test_chs_a_framer ${CHS_A_GOLDEN})
+
+# The report parser is checked against the same capture: the four payloads it
+# reads are what the machine actually sent on 2026-09-15, including the Gait 0
+# that 13 S5.3's table does not contain.
+add_executable(test_chs_a_reports test/test_chs_a_reports.cc)
+target_link_libraries(test_chs_a_reports PRIVATE quadruped_core)
+add_test(NAME test_chs_a_reports COMMAND test_chs_a_reports ${CHS_A_GOLDEN})
+
+# The session test needs no fixture at all: it injects its dialler and its
+# clock, so a three-second timeout and a five-second backoff rung are exercised
+# in microseconds. Nothing in it sleeps.
+add_executable(test_chs_a_session test/test_chs_a_session.cc)
+target_link_libraries(test_chs_a_session PRIVATE quadruped_core)
+add_test(NAME test_chs_a_session COMMAND test_chs_a_session)

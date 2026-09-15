@@ -38,6 +38,7 @@
 
 #include <sstream>
 
+#include "quadruped/chs_a_codec.h"
 #include "xbrain/config/yaml_lite.h"
 
 namespace quadruped {
@@ -106,6 +107,29 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
         root.require_double(K("chassis_link.state_timeout_degraded_s"));
     cfg.link.state_timeout_lost_s =
         root.require_double(K("chassis_link.state_timeout_lost_s"));
+    // The reconnect ladder. Read through the node-level accessor because a
+    // sequence entry has no key of its own; before that accessor existed this
+    // list sat in the config unread, which is the quiet half of the same
+    // defect 13 S8.2 v1.4 fixed on the tier1 limits.
+    const YamlNode& backoff = root.require_seq(K("chassis_link.reconnect_backoff_s"));
+    for (std::size_t i = 0; i < backoff.size(); ++i) {
+      const std::string label =
+          K("chassis_link.reconnect_backoff_s") + "[" + std::to_string(i) + "]";
+      cfg.link.reconnect_backoff_s.push_back(backoff.at_index(i).as_double(label));
+    }
+    cfg.link.axis_cmd_socket_fixed =
+        root.require_bool(K("chassis_link.axis_cmd_socket_fixed"));
+    cfg.link.single_tx_owner =
+        root.require_bool(K("chassis_link.single_tx_owner"));
+    cfg.link.proto_version_byte =
+        static_cast<int>(root.require_int(K("chassis_link.proto_version_byte")));
+    cfg.link.asdu_format = root.require_string(K("chassis_link.asdu_format"));
+    // Counted, not copied: nothing consumes the legacy table yet, and 9.3
+    // forbids writing the consumer before there is something to consume. The
+    // count is what QC-13 needs.
+    const YamlNode& legacy =
+        root.at(K("chassis_link.codebook_table.legacy_decimal"));
+    cfg.link.legacy_decimal_entries = legacy.is_map() ? legacy.items().size() : 0;
 
     // ---- channel two: chassis DDS domain 0 ---------------------------
     cfg.dds.backend = root.require_string(K("chassis_dds.backend"));
@@ -215,6 +239,82 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
         "quadruped config: no enabled endpoint candidate in "
         "chassis_link.endpoint_candidates (the probe would contact nothing and "
         "report conn=lost forever with a config that looks complete)");
+  }
+  // The reconnect ladder must exist and every rung must be positive. An empty
+  // ladder leaves the session with no delay to apply after a drop; a zero rung
+  // reconnects as fast as the CPU allows, against a chassis that is already
+  // failing -- and the chassis plays a voice prompt and switches its LEDs on
+  // every connect (13 CA-6), so the failure is audible in the room.
+  if (cfg.link.reconnect_backoff_s.empty()) {
+    throw ConfigError(
+        "quadruped config: chassis_link.reconnect_backoff_s is empty "
+        "(13 S8.2 requires a ladder; with none there is no delay to apply "
+        "after a drop and the reconnect becomes a busy loop)");
+  }
+  for (std::size_t i = 0; i < cfg.link.reconnect_backoff_s.size(); ++i) {
+    if (!(cfg.link.reconnect_backoff_s[i] > 0.0)) {
+      std::ostringstream m;
+      m << "quadruped config: chassis_link.reconnect_backoff_s[" << i
+        << "] must be > 0, got " << cfg.link.reconnect_backoff_s[i]
+        << " (a zero rung is a busy reconnect loop, and 13 CA-6 makes every "
+        << "reconnect play a voice prompt on the chassis)";
+      throw ConfigError(m.str());
+    }
+  }
+  // 13 CA-1 and QC-16 both say these are not switchable. Reading them and
+  // refusing a false value is the difference between a documented constraint
+  // and an enforced one: a key that accepts false and changes nothing tells
+  // the operator who set it that something changed.
+  if (!cfg.link.axis_cmd_socket_fixed) {
+    throw ConfigError(
+        "quadruped config: chassis_link.axis_cmd_socket_fixed must be true "
+        "(13 CA-1: a new socket reads to the chassis as a NEW CLIENT and axis "
+        "commands come back 0xE006 -- the robot accepts commands and does not "
+        "move, which looks like a mechanical fault)");
+  }
+  if (!cfg.link.single_tx_owner) {
+    throw ConfigError(
+        "quadruped config: chassis_link.single_tx_owner must be true "
+        "(13 CA-4 / QC-16: two threads writing the same TCP socket interleave "
+        "two APDU frames into one illegal message, seen as random 0xE001)");
+  }
+  // The header bytes the codec compiles in. Catching a disagreement here costs
+  // one clear message at startup; catching it on the wire costs a 0xE002 that
+  // 13 S7.5 attributes to the encoder.
+  if (cfg.link.proto_version_byte != static_cast<int>(chs_a::kProtoVersion)) {
+    std::ostringstream m;
+    m << "quadruped config: chassis_link.proto_version_byte = "
+      << cfg.link.proto_version_byte << " but the codec writes "
+      << static_cast<int>(chs_a::kProtoVersion)
+      << " (13 S2.2 header[10]; the two must agree or every frame carries a "
+      << "version the chassis did not sanction)";
+    throw ConfigError(m.str());
+  }
+  if (cfg.link.asdu_format != "json") {
+    throw ConfigError(
+        "quadruped config: chassis_link.asdu_format must be \"json\" "
+        "(13 S2.2: the codec writes format byte 0x01 and renders JSON; "
+        "\"xml\" would need an encoder that does not exist)");
+  }
+  // CB-1 / QC-13. Two rules, and they are NOT the same rule: the codebook must
+  // be the one the code implements, and the legacy table must be all-or-
+  // nothing so a half-filled table can never be selected.
+  if (cfg.link.codebook != "hex32") {
+    throw ConfigError(
+        "quadruped config: chassis_link.codebook must be \"hex32\" "
+        "(13 CB-1: it is the only table the vendor documents, and the legacy "
+        "decimal codes for the five commands do not exist in any manual)");
+  }
+  if (cfg.link.legacy_decimal_entries != 0 &&
+      cfg.link.legacy_decimal_entries != kLegacyCodebookEntries) {
+    std::ostringstream m;
+    m << "quadruped config: chassis_link.codebook_table.legacy_decimal holds "
+      << cfg.link.legacy_decimal_entries << " entries; it must be empty or "
+      << "hold all " << kLegacyCodebookEntries
+      << " (13 QC-13: heartbeat, usage mode, motion state, gait, axis -- a "
+      << "half-filled table would be selectable and fail on the first command "
+      << "it does not cover)";
+    throw ConfigError(m.str());
   }
   return cfg;
 }
