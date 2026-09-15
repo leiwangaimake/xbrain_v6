@@ -265,12 +265,12 @@
 
 | 项 | 值 |
 |---|---|
-| 设备 | `USB PnP Audio Device` —— **JMTek, LLC.** `0c76:161f` |
-| ALSA | **card 0, device 0**（`hw:0,0`） |
-| USB 路径 | `usb-3610000.usb-2.1`，★ **full speed**（USB 1.1，12 Mbps） |
+| 设备 | ★★ **HK-MIC**（`CF-IC HK-MIC`，USB **`ff00:0001`**；★ 2026-09-15 换下旧 **JMTek `0c76:161f`**） |
+| ALSA | **card HKMIC**（`plughw:CARD=HKMIC,DEV=0`；★ 按卡名寻址，卡号不稳） |
+| USB 路径 | `usb-3610000.usb-2.2`，★ **full speed**（USB 1.1，12 Mbps） |
 | 格式 | **S16_LE**（★ 仅此一种） |
-| 声道 | **1（单声道）** |
-| ★★★ 采样率 | **48000 Hz —— 只有这一个值，硬件不支持 16 kHz 直采** |
+| 声道 | ★★★ **2（立体声 FL FR，硬件仅支持 2ch）** —— ★ `-c 1` 直采会 `Channels count non available`；由 `plughw` 的 plug 插件**降混 2->1** 得 mono（P2 侧帧数学不变） |
+| ★★★ 采样率 | **44100 / 48000 Hz**（取 **48000**；仍不支持 16 kHz 直采，48/16=3 的 3:1 抽取不变） |
 | PERIOD_SIZE | `[48, 48000]` · PERIOD_TIME `[1000, 1000000]` µs |
 | BUFFER_SIZE | `[96, 96000]` · PERIODS `[2, 1024]` |
 | 访问 | `MMAP_INTERLEAVED` / `RW_INTERLEAVED` |
@@ -282,8 +282,8 @@
 **★ 订正后的链路**
 
 ```text
-  ★ ORIN 本地 USB 扩展 MIC（JMTek 0c76:161f · ALSA hw:0,0）
-      │  S16_LE · mono · ★★★ 48000 Hz（硬件唯一采样率）；20 ms = 960 样本
+  ★ ORIN 本地 USB 扩展 MIC（HK-MIC ff00:0001 · ALSA plughw:CARD=HKMIC,DEV=0；2026-09-15 换下 JMTek 0c76:161f）
+      │  S16_LE · ★ 硬件 2ch/48000（plug 降混 2->1）· 48000 Hz；20 ms = 960 样本
       v
   p2_core · audio_io（★ 声卡独占者）
       │  ★★ 48 k → 16 k：3:1 整数抽取 ＋ 抗混叠低通（§3.0.2）

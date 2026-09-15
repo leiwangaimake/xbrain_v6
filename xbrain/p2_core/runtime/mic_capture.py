@@ -6,7 +6,8 @@ File: mic_capture.py
 Brief: p2_core USB MIC capture thread + Zenoh rt/audio/mic publisher
 
 Description:
-Owns the USB MIC (JMTek 0c76:161f, ALSA hw:0,0). Spawns arecord
+Owns the USB MIC (HK-MIC, USB ff00:0001, ALSA plughw:CARD=HKMIC;
+was JMTek 0c76:161f mono before 2026-09-15). Spawns arecord
 as a subprocess for 48 kHz s16le mono capture, chunks stdout into
 960-sample frames, decimates 3:1 to 320-sample frames, publishes
 each as an AudioFrame on rt/audio/mic (RT plane, Q1_rt profile).
@@ -49,7 +50,16 @@ from xbrain.p2_core.audio.audio_io import (
 )
 
 
-DEFAULT_ARECORD_DEVICE = "hw:0,0"
+# HK-MIC (USB ff00:0001) replaced the old JMTek 0c76:161f mono mic on
+# 2026-09-15. Two hardware differences drive this device string:
+#   1. HK-MIC is STEREO-ONLY (2ch FL FR; -c 1 on a hw: device fails with
+#      "Channels count non available"). A plughw device lets the ALSA plug
+#      plugin downmix 2 -> 1 in software, so -c 1 still yields mono.
+#   2. It is addressed by CARD NAME (HKMIC), not index, because the USB
+#      enumeration order (card 0 vs 1) is not stable across boots.
+# Rate 48000 is native (44100/48000 supported), so plug does NO resample,
+# only the channel downmix -- the 48k -> 16k 3:1 decimation below is intact.
+DEFAULT_ARECORD_DEVICE = "plughw:CARD=HKMIC,DEV=0"
 DEFAULT_MIC_TOPIC = "rt/audio/mic"
 
 #: USB 热插拔重连的退避. 无上限重试 -- 现场把 MIC 拔下来可能隔很久才插回,
@@ -179,6 +189,8 @@ class MicCaptureThread(threading.Thread):
             "-q",                              # quiet
             "-f", "S16_LE",
             "-r", str(CAPTURE_RATE_HZ),
+            # HK-MIC HW is stereo-only; a plughw device downmixes 2 -> 1 so
+            # requesting one channel yields mono (see DEFAULT_ARECORD_DEVICE).
             "-c", "1",
             "-D", self._cfg.arecord_device,
         ]

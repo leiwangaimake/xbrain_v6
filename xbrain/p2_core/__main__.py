@@ -106,8 +106,8 @@ def main(argv: Optional[list] = None) -> int:
                          "half-duplex gate) instead of pure heartbeat")
     ap.add_argument("--payload-base-url", default="http://127.0.0.1:18080",
                     help="payload-service base URL (voice-loop only)")
-    ap.add_argument("--arecord-device", default="hw:0,0",
-                    help="ALSA device (voice-loop only)")
+    ap.add_argument("--arecord-device", default="plughw:CARD=HKMIC,DEV=0",
+                    help="ALSA device (voice-loop only); HK-MIC by card name, plug 2->1 downmix")
     ap.add_argument("--tts-http-timeout-s", type=float, default=5.0,
                     help="TTS HTTP timeout in seconds (voice-loop only)")
     args = ap.parse_args(argv)

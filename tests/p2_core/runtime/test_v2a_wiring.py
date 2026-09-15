@@ -64,7 +64,7 @@ def test_frame_codec_wrong_schema_raises():
 def test_default_config_uses_expected_topic():
     cfg = default_config()
     assert cfg.zenoh_topic == DEFAULT_MIC_TOPIC
-    assert cfg.arecord_device.startswith("hw:")
+    assert cfg.arecord_device.startswith("plughw:CARD=HKMIC")
     assert cfg.max_queue_frames > 0
 
 

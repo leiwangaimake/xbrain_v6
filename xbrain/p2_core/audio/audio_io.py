@@ -7,10 +7,12 @@ Brief: BIZ-P2-3 -- audio_io: ORIN USB MIC exclusive capture + 3:1 decimation
 
 Description:
 14 S4.1.1 + RT-A1 declare p2_core.audio_io the SOLE OWNER of the
-USB MIC (JMTek 0c76:161f, ALSA hw:0,0, 48 kHz mono s16le).
+USB MIC (HK-MIC, USB ff00:0001, ALSA plughw:CARD=HKMIC; was JMTek
+0c76:161f before 2026-09-15). HW is 2ch stereo 44100/48000; plughw
+downmixes 2 -> 1 to 48 kHz mono s16le.
 
 Chain:
-  arecord -f S16_LE -r 48000 -c 1 -D hw:0,0
+  arecord -f S16_LE -r 48000 -c 1 -D plughw:CARD=HKMIC,DEV=0   # plug 2ch->1ch
     -> 960-sample frames (20 ms @ 48 kHz)
     -> decimate 3:1 with antialias low-pass
     -> 320-sample frames (20 ms @ 16 kHz)
@@ -23,7 +25,7 @@ tests here (would need a live USB MIC on the CI host).
 
 * RT-A1: this module is the ONLY place in p2_core that opens the
 ALSA device. All other modules subscribe to rt/audio/mic (Zenoh) --
-they must NOT directly open hw:0,0 (verifiable by CI grep, already
+they must NOT directly open the mic device (verifiable by CI grep, already
 enforced by scripts/lint/no_business_imports.py or similar).
 """
 
@@ -122,7 +124,7 @@ class AlsaCaptureUnavailable(RuntimeError):
     this into mic=device_fault (via audio_state.py)."""
 
 
-def open_capture(device: str = "hw:0,0",
+def open_capture(device: str = "plughw:CARD=HKMIC,DEV=0",
                   rate_hz: int = CAPTURE_RATE_HZ,
                   channels: int = 1) -> object:
     """Open arecord subprocess capturing the USB MIC.
@@ -135,7 +137,7 @@ def open_capture(device: str = "hw:0,0",
     audio_state.py device_fault path can fire coherently.
 
     * RT-A1: this is the SINGLE call site that opens the ALSA
-    device. A CI grep of `hw:0,0` outside this file catches
+    device. A CI grep of the mic device outside this file catches
     double-open regressions.
     """
     import shutil

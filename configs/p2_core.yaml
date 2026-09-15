@@ -106,10 +106,10 @@ arbiter:
         asr_local: { priority: 400, policy: immediate }
       # Local mic: ORIN USB device, audio_io RT-A1 exclusive owner.
       local_mic:
-        device: "hw:0,0"                # JMTek 0c76:161f USB PnP audio
+        device: "plughw:CARD=HKMIC,DEV=0"   # HK-MIC (USB ff00:0001, ALSA card HKMIC); was JMTek 0c76:161f before 2026-09-15
         capture_rate_hz: 48000          # hardware-only rate; no direct 16k
         asr_rate_hz:     16000          # 48/16 = 3 -> integer 3:1 downsample
-        channels: 1                     # S16_LE mono only
+        channels: 1                     # ASR frame mono; HK-MIC HW is 2ch stereo, plughw downmixes 2->1
         frame_ms: 20                    # 960 samples @48k -> 320 @16k
 
     # domain 4 (14 S4.3) -- payload light.
