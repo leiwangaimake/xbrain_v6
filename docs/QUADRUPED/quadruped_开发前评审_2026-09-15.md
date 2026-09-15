@@ -102,6 +102,11 @@
 | B8 | 通道三：rclcpp Humble `/odom_quadruped` + TF，T-ODOM-1 | 同上 | DEP-5 |
 | B9 | 实时化（FIFO/亲和/mlockall）、systemd 单元、台架实测：站立/趴下/模式三元组/导航模式低速轴指令、T-DECEL、T-TIER1-2 | B3～B8 | 现场 |
 
+> ★★ **进度（随批次追加，🚫 不在此处抄任何计数）**
+> · **B0 已落**（2026-09-15）：包骨架、`configs/quadruped.yaml` 落值、构建/安装脚本、`tx_owner`（含 FR-4 短写有界补齐）、启动自证。
+> · **B1 已落**（2026-09-15）：CHS-A 编解码与分帧（FR-1/2/3/5），金标取自实录抓包，变异体清单固化在 `scripts/ci/quadruped_mutants.py`。
+> · ⚠️ **B1 不含 socket** —— `TCP_NODELAY`（FR-5 前半）、端点探测、心跳搭车都在 B2；`13` §11.1 `T-CHS-3` 只做了**离线预验**，未满足。
+
 ## 7. 需用户裁决（开工前）
 
 > ✅ **2026-09-15 用户已逐条裁决（`99` U85）**：① ORIN 装 Humble（U74 不变；Humble/Jazzy 跨版本结论见 U85）；② `13` 已回填为 **v1.3**（提交 90f7465）；③ 契约五条已一并改 `11`（5de80e0），`stop_reason` 闭集加 `sleep`（da6be1e），`00`/`21`/`99` 回填（26da564）；④ 完全不用底盘导航栈，回充段 2 用底盘对接能力；⑤ 维持明文；⑥ JSON 解析器 vendored 单头。★ 尚未做：ORIN 实际安装 ROS 2（网络待通）；§3 第 11 项的部署期停用脚本；D-47（nodectl 查询 writer 例外）待评审。
