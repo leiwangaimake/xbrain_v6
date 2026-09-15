@@ -17,9 +17,29 @@
  * yaml.dump: 2-space block style, `key: value` scalars, nested maps by
  * indentation, sorted keys, no anchors/flow/multiline. This reader covers
  * exactly that: nested maps + scalar leaves (+ inline `#` comments, quoted
- * scalars, null/~). It does NOT support sequences (`- item`) -- it THROWS on
- * them rather than silently mis-parsing, because rtk_driver.yaml has none and a
- * silent wrong parse of a safety threshold is the fail-silent 3.1 rules out.
+ * scalars, null/~) AND block sequences of scalars or of maps.
+ *
+ * Sequences (added 2026-09-15 for quadruped, 13 S8.2). The first version threw
+ * on any `- item`: rtk_driver.yaml had none, and refusing was better than
+ * guessing. quadruped.yaml has six (endpoint_candidates, the gait lists, the
+ * backoff table), so "throw on sequences" stopped being caution and became
+ * "the C++ side cannot read its own config at all". What is modelled is
+ * exactly what yaml.safe_dump(default_flow_style=False) emits:
+ *
+ *     key:            |  key:               |  key: []
+ *     - a             |  - port: 30003      |  key: {}
+ *     - b             |    proto: tcp       |
+ *
+ * i.e. a dash at the key's own indent or deeper, holding either a scalar or a
+ * map whose first pair sits on the dash line. Anything else -- nested
+ * sequences, a dash inside flow context, a sequence entry that is itself a
+ * sequence -- still THROWS. The rule did not change, only its reach: model
+ * what the materialiser actually writes, refuse the rest, never guess.
+ *
+ * Why entries are addressed by index rather than iterated. A safety list read
+ * with a for-each and an early `break` loses the "how many did I actually
+ * read" answer; size() + at(i) keeps the count explicit at the call site, so a
+ * loader that silently processed 1 of 4 endpoints cannot look like success.
  *
  * The 3.1 contract lives in the require_* accessors: a missing key, a null
  * (`null`/`~`/empty -- how 10 S5.4.5 writes an uncalibrated value), or a value
@@ -46,14 +66,55 @@ namespace config {
 // indentation stack in ParseYaml relies on to hold pointers to open maps.
 class YamlNode {
  public:
+  // Three shapes, checked in this order everywhere: map, sequence, scalar.
+  // * is_scalar() stays "neither of the other two" so existing callers keep
+  //   their meaning: a node that became a sequence must NOT answer true to
+  //   is_scalar(), or require_scalar would try to read scalar_ off it.
   bool is_map() const { return is_map_; }
-  bool is_scalar() const { return !is_map_; }
+  bool is_seq() const { return is_seq_; }
+  bool is_scalar() const { return !is_map_ && !is_seq_; }
   // A scalar is "null" when it is the literal null / ~ / empty. This is the
   // 10 S5.4.5 shape for an uncalibrated value, treated as absent by require_*.
   bool is_null() const {
-    return !is_map_ && (scalar_.empty() || scalar_ == "null" || scalar_ == "~");
+    return !is_map_ && !is_seq_ &&
+           (scalar_.empty() || scalar_ == "null" || scalar_ == "~");
   }
   const std::map<std::string, YamlNode>& items() const { return map_; }
+
+  // Sequence length. Zero for a non-sequence node, which is deliberate: the
+  // empty-list shape `key: []` and "key is not a list" must both mean "no
+  // entries to process", and every call site that cares about the difference
+  // asks is_seq() first.
+  std::size_t size() const { return seq_.size(); }
+
+  // Entry i of a sequence. Throws on a non-sequence node or an out-of-range
+  // index rather than returning a default-constructed node -- an empty node
+  // would read back as null and be reported as "uncalibrated", which would
+  // send the operator hunting through the config for a value that is not
+  // missing at all.
+  const YamlNode& at_index(std::size_t i) const {
+    if (!is_seq_) {
+      throw std::runtime_error("config node is not a sequence");
+    }
+    if (i >= seq_.size()) {
+      throw std::runtime_error("config sequence index out of range: " +
+                               std::to_string(i) + " of " +
+                               std::to_string(seq_.size()));
+    }
+    return seq_[i];
+  }
+
+  // Sequence at a dotted path, validated. Throws with the path when the key is
+  // missing (at() does it) or when it is present but not a sequence -- the
+  // second case is the realistic defect: an edit that turns a list into a
+  // scalar would otherwise be read as an empty list and quietly do nothing.
+  const YamlNode& require_seq(const std::string& p) const {
+    const YamlNode& n = at(p);
+    if (!n.is_seq_) {
+      throw std::runtime_error("config key is not a sequence: " + p);
+    }
+    return n;
+  }
 
   // Walk a dotted path ("resolver.cov_thresh_rad"). Throws with the full path
   // at the first missing segment -- never returns a placeholder node.
@@ -124,6 +185,9 @@ class YamlNode {
     if (n.is_map_) {
       throw std::runtime_error("config key is a map, not a scalar: " + p);
     }
+    if (n.is_seq_) {
+      throw std::runtime_error("config key is a sequence, not a scalar: " + p);
+    }
     if (n.is_null()) {
       throw std::runtime_error("config key is null (uncalibrated per CLAUDE.md 3.1): " + p);
     }
@@ -131,8 +195,10 @@ class YamlNode {
   }
 
   bool is_map_ = false;
+  bool is_seq_ = false;
   std::string scalar_;
   std::map<std::string, YamlNode> map_;
+  std::vector<YamlNode> seq_;
 
   friend YamlNode ParseYaml(const std::string& text);
 };
@@ -183,15 +249,32 @@ inline std::string Unquote(const std::string& s) {
 }  // namespace detail
 
 // Parse yaml.dump block-style text into a tree. Throws std::runtime_error on any
-// shape it does not model (sequences, tabs-as-indent, a colon-less line) rather
-// than guessing -- a wrong guess on a safety threshold is exactly the failure
-// mode CLAUDE.md 3.2 warns about.
+// shape it does not model (nested sequences, tabs-as-indent, a colon-less line)
+// rather than guessing -- a wrong guess on a safety threshold is exactly the
+// failure mode CLAUDE.md 3.2 warns about.
+//
+// *** The parse state, written down because the indent arithmetic is the part
+// that goes wrong silently. Two stacks would drift, so there is ONE: each frame
+// remembers the indent that OPENED it plus what it opens onto. A sequence entry
+// pushes TWO frames (the entry map, then nothing else) only when the dash line
+// carries a `key: value`, because in yaml.dump output the rest of that map is
+// indented to the column after the dash, not to the dash itself:
+//
+//     endpoint_candidates:      <- map frame at indent 4
+//     - enabled: true           <- dash at indent 4, entry map opens at 6
+//       host: 10.21.33.103      <- indent 6, belongs to the entry
+//     - enabled: false          <- dash at indent 4 again: new entry
+//
+// So an entry map's indent is "dash column + 2", and a following dash at the
+// dash column pops it. Getting this wrong merges two entries into one, which
+// for endpoint_candidates would silently drop a probe target -- hence the
+// explicit unit test over exactly this shape.
 inline YamlNode ParseYaml(const std::string& text) {
   YamlNode root;
   root.is_map_ = true;
   struct Frame {
-    int indent;
-    YamlNode* node;
+    int indent;      // Indent of the line that opened this frame.
+    YamlNode* node;  // Map or sequence being filled.
   };
   std::vector<Frame> stack{{-1, &root}};
   std::istringstream in(text);
@@ -204,12 +287,86 @@ inline YamlNode ParseYaml(const std::string& text) {
     std::string trimmed = detail::Trim(content);
     if (trimmed.empty()) continue;
     if (trimmed == "---" || trimmed == "...") continue;
-    if (trimmed[0] == '-') {
-      throw std::runtime_error("yaml_lite: sequences unsupported, line " +
-                               std::to_string(lineno));
+
+    // ---- sequence entry -------------------------------------------------
+    // A dash starts an entry of the nearest enclosing sequence. The sequence
+    // node itself was created by the `key:` line above it (see below), so an
+    // unattached dash means the document starts with a list -- a shape the
+    // materialiser never writes, and one this reader refuses rather than
+    // inventing a root list.
+    if (trimmed[0] == '-' && (trimmed.size() == 1 || trimmed[1] == ' ')) {
+      while (stack.size() > 1 && stack.back().indent > indent) stack.pop_back();
+      // `key:` opened the frame as an empty map because a map and a sequence
+      // look identical until this line. An EMPTY map at exactly this indent is
+      // that pending node: convert it. A non-empty one is a real map and the
+      // dash is then a shape error, caught by the check below.
+      if (stack.back().node->is_map_ && stack.back().node->map_.empty() &&
+          stack.back().node->seq_.empty() && stack.back().indent == indent) {
+        stack.back().node->is_map_ = false;
+        stack.back().node->is_seq_ = true;
+      }
+      // The frame at this indent must be the pending sequence. Anything else
+      // (a map, or the root) is a dash in a place yaml.dump would not put one.
+      if (!stack.back().node->is_seq_ || stack.back().indent != indent) {
+        throw std::runtime_error("yaml_lite: unexpected sequence entry at line " +
+                                 std::to_string(lineno));
+      }
+      YamlNode* seq = stack.back().node;
+      std::string rest = detail::Trim(trimmed.substr(1));
+      seq->seq_.push_back(YamlNode());
+      YamlNode& entry = seq->seq_.back();
+      if (rest.empty()) {
+        // `-` alone: yaml.dump writes this only for a nested collection, which
+        // is outside the modelled subset.
+        throw std::runtime_error("yaml_lite: empty sequence entry at line " +
+                                 std::to_string(lineno));
+      }
+      std::size_t colon = rest.find(':');
+      // A scalar entry ("- stair_agile") has no colon; a map entry
+      // ("- port: 30003") opens a map that continues on the following lines.
+      if (colon == std::string::npos) {
+        entry.is_map_ = false;
+        entry.scalar_ = detail::Unquote(rest);
+        continue;
+      }
+      entry.is_map_ = true;
+      std::string key = detail::Unquote(detail::Trim(rest.substr(0, colon)));
+      std::string val = detail::Trim(rest.substr(colon + 1));
+      // *** The one number in this parser worth explaining: the entry frame is
+      // recorded at dash column + 1, which is a column no line can occupy.
+      // It has to sit STRICTLY between the dash column and the member column
+      // so that both pops come out right with the one comparison each branch
+      // already makes:
+      //   - a member line ("      host: ...", column dash+2) must NOT pop it:
+      //     the key branch pops while frame.indent >= line indent, and
+      //     dash+1 < dash+2, so the frame survives;
+      //   - the NEXT dash (column dash) MUST pop it: the dash branch pops
+      //     while frame.indent > line indent, and dash+1 > dash.
+      // Recording it at dash+2 pops the entry on its own second member and
+      // merges every entry into one -- for endpoint_candidates that silently
+      // drops probe targets, which is why this is a named test case.
+      stack.push_back({indent + 1, &entry});
+      YamlNode& child = entry.map_[key];
+      if (val.empty()) {
+        child.is_map_ = true;
+        stack.push_back({indent + 2, &child});
+      } else {
+        child.is_map_ = false;
+        child.scalar_ = detail::Unquote(val);
+      }
+      continue;
     }
+
+    // ---- key line -------------------------------------------------------
     while (stack.size() > 1 && stack.back().indent >= indent) stack.pop_back();
     YamlNode* parent = stack.back().node;
+    if (parent->is_seq_) {
+      // A bare key at the sequence's own indent means the sequence ended
+      // without the enclosing map being popped -- structurally impossible in
+      // yaml.dump output, so refuse instead of attaching a key to a list.
+      throw std::runtime_error("yaml_lite: key inside a sequence at line " +
+                               std::to_string(lineno));
+    }
     std::size_t colon = trimmed.find(':');
     if (colon == std::string::npos) {
       throw std::runtime_error("yaml_lite: expected 'key:' at line " +
@@ -218,9 +375,24 @@ inline YamlNode ParseYaml(const std::string& text) {
     std::string key = detail::Unquote(detail::Trim(trimmed.substr(0, colon)));
     std::string val = detail::Trim(trimmed.substr(colon + 1));
     if (val.empty()) {
+      // Ambiguous until the NEXT line: `key:` opens either a map or a
+      // sequence. Open it as a map and let a following dash convert it --
+      // conversion is safe because nothing can have been stored yet.
       YamlNode& child = parent->map_[key];
       child.is_map_ = true;
       stack.push_back({indent, &child});
+    } else if (val == "[]") {
+      // Explicit empty list. yaml.dump writes `key: []`, and reading it as the
+      // scalar "[]" would make a later size() call answer 0 for the right
+      // reason by accident -- but require_seq would then throw on a perfectly
+      // valid empty list, so model it properly.
+      YamlNode& child = parent->map_[key];
+      child.is_map_ = false;
+      child.is_seq_ = true;
+    } else if (val == "{}") {
+      // Explicit empty map (codebook_table.legacy_decimal today).
+      YamlNode& child = parent->map_[key];
+      child.is_map_ = true;
     } else {
       YamlNode& child = parent->map_[key];
       child.is_map_ = false;

@@ -13,6 +13,16 @@
  * silently returned a number, an uncalibrated safety threshold would sail
  * through as 0 and limit the machine to a stop with no error (the 3.1 fail-
  * silent). A sequence must also throw rather than be mis-parsed.
+ *
+ * 2026-09-15: block sequences became part of the modelled subset (quadruped.yaml
+ * has six of them, 13 S8.2), so the "sequence throws" case narrowed to the
+ * shapes still outside it. The sequence cases below are written against the
+ * EXACT bytes yaml.safe_dump emits -- a dash at the parent key column with the
+ * entry map indented two further -- because the realistic parser defect is an
+ * off-by-one in that indent that merges consecutive entries into one. Merging
+ * endpoint_candidates would silently drop probe targets and present as "the
+ * chassis is unreachable", indistinguishable from a cable fault, so the entry
+ * COUNT is asserted before any field value.
  */
 
 #include "xbrain/config/yaml_lite.h"
@@ -72,8 +82,69 @@ int main() {
   CHECK(Throws([&] { cfg.require_int("serial.port"); }));           // not an int -> throw
   CHECK(Throws([&] { cfg.require_double("serial"); }));             // map, not scalar -> throw
 
-  // A sequence is not modelled: it must throw, not mis-parse.
-  CHECK(Throws([&] { ParseYaml("items:\n  - a\n  - b\n"); }));
+  // ---- block sequences (2026-09-15) ---------------------------------------
+  // The materialiser shape, verbatim: dash at the key column, entry members two
+  // columns further, sibling entries separated only by the next dash.
+  static const char* kSeq =
+      "chassis_link:\n"
+      "  endpoint_candidates:\n"
+      "  - enabled: true\n"
+      "    host: 10.21.33.103\n"
+      "    port: 30003\n"
+      "    tls: false\n"
+      "  - enabled: false\n"
+      "    host: 10.21.33.103\n"
+      "    port: 30004\n"
+      "    tls: true\n"
+      "  reconnect_backoff_s:\n"
+      "  - 0.5\n"
+      "  - 5.0\n"
+      "  codebook_table:\n"
+      "    legacy_decimal: {}\n"
+      "motion:\n"
+      "  prone_forbidden_gaits:\n"
+      "  - stair_agile\n"
+      "  - stair_standard\n"
+      "  axes:\n"
+      "    special_gaits: []\n";
+  const YamlNode seq = ParseYaml(kSeq);
+  const YamlNode& eps = seq.require_seq("chassis_link.endpoint_candidates");
+  // Count first: an off-by-one in the entry indent yields 1 here, and every
+  // field assertion below would still pass on that single merged entry.
+  CHECK(eps.size() == 2);
+  CHECK(eps.at_index(0).require_int("port") == 30003);
+  CHECK(eps.at_index(0).require_bool("enabled") == true);
+  CHECK(eps.at_index(0).require_bool("tls") == false);
+  // The SECOND entry is what a merge destroys: same keys, different values.
+  CHECK(eps.at_index(1).require_int("port") == 30004);
+  CHECK(eps.at_index(1).require_bool("enabled") == false);
+  CHECK(eps.at_index(1).require_bool("tls") == true);
+  // Scalar sequences, and the two empty-collection spellings.
+  CHECK(seq.require_seq("chassis_link.reconnect_backoff_s").size() == 2);
+  CHECK(seq.require_seq("motion.prone_forbidden_gaits").size() == 2);
+  CHECK(seq.require_seq("motion.prone_forbidden_gaits").at_index(1).is_scalar());
+  CHECK(seq.require_seq("motion.axes.special_gaits").size() == 0);
+  CHECK(seq.at("chassis_link.codebook_table.legacy_decimal").is_map());
+  // A sequence node must not answer to the scalar accessors: reading a list as
+  // a string is how "the list is empty" and "the key holds one value" get
+  // confused, and both of those are silent.
+  CHECK(Throws([&] { seq.require_string("motion.prone_forbidden_gaits"); }));
+  // ...and a scalar must not answer to require_seq, so an edit that replaces a
+  // list with a single value fails loudly instead of iterating zero times.
+  CHECK(Throws([&] { seq.require_seq("chassis_link.endpoint_candidates.0"); }));
+  CHECK(Throws([&] { eps.at_index(0).require_seq("port"); }));
+  CHECK(Throws([&] { eps.at_index(2); }));  // out of range, not a null node
+
+  // Shapes still OUTSIDE the modelled subset must throw, not be guessed.
+  CHECK(Throws([&] { ParseYaml("- a\n- b\n"); }));           // document-level list
+  CHECK(Throws([&] { ParseYaml("k:\n  a: 1\n  - x\n"); }));  // dash inside a map
+  CHECK(Throws([&] { ParseYaml("k:\n  -\n"); }));             // bare dash (nested coll.)
+  // A key line whose nearest open frame is the SEQUENCE itself -- reachable
+  // only through a malformed file (a mapping key indented under a scalar
+  // entry). Without this case the guard that rejects it is dead code that no
+  // mutant can kill, and the parser would attach the key to the list and lose
+  // it. Found by mutation, not by reading (CLAUDE.md 3.3 / 7.2.1).
+  CHECK(Throws([&] { ParseYaml("k:\n- a\n  x: 1\n"); }));
 
   if (g_failures == 0) {
     std::printf("ALL YAML_LITE TESTS PASSED\n");
