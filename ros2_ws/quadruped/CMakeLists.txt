@@ -82,6 +82,7 @@ add_library(quadruped_core STATIC
   src/tier1.cc
   src/rt_keys.cc
   src/rt_payloads.cc
+  src/mode_machine.cc
 )
 target_include_directories(quadruped_core PUBLIC include ${COMMON_INCLUDE})
 target_include_directories(quadruped_core PRIVATE ${THIRD_PARTY_INCLUDE})
@@ -203,3 +204,9 @@ add_executable(test_rt_payloads test/test_rt_payloads.cc)
 target_link_libraries(test_rt_payloads PRIVATE quadruped_core)
 target_include_directories(test_rt_payloads PRIVATE ${THIRD_PARTY_INCLUDE})
 add_test(NAME test_rt_payloads COMMAND test_rt_payloads)
+
+# The mode triple. Clock injected, so the 5 s switch timeout and the 3.5 s
+# external-transition hold are exercised in microseconds.
+add_executable(test_mode_machine test/test_mode_machine.cc)
+target_link_libraries(test_mode_machine PRIVATE quadruped_core)
+add_test(NAME test_mode_machine COMMAND test_mode_machine)

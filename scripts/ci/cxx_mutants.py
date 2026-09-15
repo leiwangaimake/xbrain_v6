@@ -791,6 +791,77 @@ PAYLOADS_MUTANTS = [
      PAYLOADS_CC, '  a.Str(in.action);', '  a.Str("");'),
 ]
 
+# Mode-machine mutants. Three of the rules below are the opposite of the
+# obvious implementation, and each mutant is that obvious implementation.
+MODE_CC = os.path.join(QUAD, "src", "mode_machine.cc")
+MODE_SOURCES = [MODE_CC, os.path.join(QUAD, "src", "chs_a_reports.cc"),
+                os.path.join(QUAD, "src", "chs_a_codec.cc")]
+MODE_TESTS = [os.path.join(QUAD, "test", "test_mode_machine.cc")]
+
+MODE_MUTANTS = [
+    # The two measured surprises. Expecting 1 after a stand times out on every
+    # SUCCESSFUL stand, and the fault it raises points at the chassis.
+    ("mode: a stand expects motion_state 1 instead of 17",
+     MODE_CC, "      e.motion_state = kMotionStateStandSteady;",
+     "      e.motion_state = 1;"),
+    ("mode: a prone expects 4, which is only a waypoint",
+     MODE_CC, "      e.motion_state = kMotionStateProneSteady;",
+     "      e.motion_state = 4;"),
+    # MS-5: a gait switch moves the motion mode too.
+    ("mode: only the commanded field is compared",
+     MODE_CC, "    if (t == expect_) {", "    if (t.gait == expect_.gait) {"),
+    # MS-6 / TR-3: an unchanged read-back is expected, not a failure.
+    ("mode: an unchanged read-back judged as a failed switch",
+     MODE_CC, "    // MS-6 / TR-3: a read-back still holding the old value is expected during",
+     "    if (t != expect_) { switching_ = false; ++switch_failures_; }\n"
+     "    // MS-6 / TR-3: a read-back still holding the old value is expected during"),
+    # MS-2 and its boundary.
+    ("mode: the switch timeout never fires",
+     MODE_CC, "  if (now_mono_s - switch_started_s_ <= cfg_.switch_timeout_s) return false;",
+     "  return false;\n  if (now_mono_s - switch_started_s_ <= cfg_.switch_timeout_s) return false;"),
+    ("mode: the failure is reported on every tick, not once",
+     MODE_CC, "  switching_ = false;\n  switch_started_s_ = -1.0;\n  ++switch_failures_;\n  return true;",
+     "  ++switch_failures_;\n  return true;"),
+    # MS-1: the window opens at SEND time.
+    ("mode: the switch window opens on the first read-back instead",
+     MODE_CC, "  switch_started_s_ = now_mono_s;\n  // Our own switch supersedes",
+     "  switch_started_s_ = now_mono_s + cfg_.switch_timeout_s;\n  // Our own switch supersedes"),
+    # MS-3.
+    ("mode: a second switch accepted while one is in flight",
+     MODE_CC, "  if (switching_) {\n    // MS-3: a second switch", "  if (false) {\n    // MS-3: a second switch"),
+    # PR-1, both directions.
+    ("mode: prone allowed on a stair gait",
+     MODE_CC, "  return !Contains(cfg_.prone_forbidden_gaits, steady_.gait);",
+     "  return true;"),
+    ("mode: prone allowed before any read-back",
+     MODE_CC, "  if (!has_readback_) {\n    // Nothing has been read back yet",
+     "  if (false) {\n    // Nothing has been read back yet"),
+    # TR-2: the pre-check judges the STEADY value.
+    ("mode: the prone pre-check judges the instantaneous read-back",
+     MODE_CC, "  return !Contains(cfg_.prone_forbidden_gaits, steady_.gait);",
+     "  return !Contains(cfg_.prone_forbidden_gaits, last_.gait);"),
+    # GS-1.
+    ("mode: the uncommandable gait is sent anyway",
+     MODE_CC, "  return !Contains(cfg_.command_forbidden_gaits, gait);",
+     "  return true;"),
+    # TR-1 and its hold.
+    ("mode: an external transition is not noticed",
+     MODE_CC, "  if (changed) {\n    external_change_s_ = now_mono_s;\n  }",
+     "  (void)changed;"),
+    ("mode: the external hold never expires",
+     MODE_CC,
+     "  if (external_change_s_ >= 0.0 &&\n"
+     "      now_mono_s - external_change_s_ > cfg_.external_transition_hold_s) {",
+     "  if (false) {"),
+    ("mode: the FIRST read-back treated as an external transition",
+     MODE_CC, "  const bool changed = !first && t != last_;",
+     "  const bool changed = t != last_;"),
+    # Our own switch supersedes the hold; otherwise the hold outlives a switch
+    # we CAN see finish.
+    ("mode: an external hold survives our own switch",
+     MODE_CC, "  external_change_s_ = -1.0;\n  return r;", "  return r;"),
+]
+
 # Envelope mutants. The unit was wrong here for two days and no test turned
 # red, because the existing case asserted only ts_sync semantics: the unit was
 # an assumption, not an assertion. These are what make it an assertion.
@@ -843,6 +914,7 @@ SUITES = {
     "envelope": ([], ENVELOPE_TESTS, ENVELOPE_MUTANTS, None),
     "rt_keys": (RT_KEYS_SOURCES, RT_KEYS_TESTS, RT_KEYS_MUTANTS, CONTRACT_MD),
     "payloads": (PAYLOADS_SOURCES, PAYLOADS_TESTS, PAYLOADS_MUTANTS, None),
+    "mode": (MODE_SOURCES, MODE_TESTS, MODE_MUTANTS, None),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
 }
 
