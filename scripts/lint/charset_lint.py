@@ -147,8 +147,8 @@ THIRD_PARTY_SNAPSHOTS = (
     # 2026-09-15): common/third_party/<name>/ holds an unmodified upstream
     # copy plus its LICENSE (today: nlohmann/json v3.11.3, MIT). It is not
     # ours to re-punctuate or to give a Hachist header, and a hand edit
-    # would break the upstream identity; the sha256 lives in the package
-    # README that consumes it. Consumers must keep it OUT of realtime
+    # would break the upstream identity; the sha256 lives in the README
+    # beside the vendored file (common/third_party/<name>/README.md). Consumers must keep it OUT of realtime
     # threads (13 QD-7): JSON parsing belongs to chs_a_rx, never ctrl.
     "common/third_party",
 )

@@ -46,7 +46,7 @@
 | 2 | §2.2 V-41 CB-1～4 | 码表待实测 | `hex32` 直接生效，`legacy_decimal` 无需 | CB-1 成立，V-41 关闭 |
 | 3 | §2.2 V-42 | 头字段/版本字节是否校验 | 16 B 头按指南填、版本 0x01 全零预留，底盘接受 | V-42 关闭 |
 | 4 | §6.2/§6.3 MS-5 | 站立后需**我方**下发 `MotionParam=17` | 固件收 `1` 后**自动**切 RL 模式，稳态 `17 / Gait 0x1001`，约 3 s；趴下 `4` 后约 4 s 自动回 `0` | ★★★ `stand` 的读回期望三元组是 `{…,17,0x1001}`，`prone` 终态 `0`；否则 MS-2 必判超时。§6.2 状态链与 §6.5 读回表要改 |
-| 5 | §7.2 V-52 | 现行指南设备状态**无 GPS 组** | 0x00100002 上报含 `GPS` 项（AOS gnss_node 接 NMEA GPS，室内 sats 0） | V-52 关闭为「存在」，字段原样上行 |
+| 5 | §7.2 V-52 / V-56 / §14 第 8 条 | 现行指南设备状态**无 GPS 组**；`DevEnable` 只有 `Lidar` 与 `Video`；`load_power` 无数据源 | ★★★ 整帧实测（2026-09-15）：`GPS` 组存在；`DevEnable` **有 11 键**含 `LoadPower` / `FanSpeed` / `GPSMode` / `LED` / `VoiceControl`；`Lidar`/`Video` 是扁平整数不是 `{front,back}` | V-52 与 **V-56 双双关闭**；`11` §9.8.3 的 `dev_enable` 清单基本正确、指南漏列 ⇒ 已改 `11` json 与两行；§9.14 健康度项**有数据源** |
 | 6 | §12.1 V-57 SVC-1～4 | 服务状态查询方式未知，`services_ok` 只能 `false` | 底盘 `nodectl` 提供 DDS 服务 `/NODECTL_QUERY_{103,104,106}`（`drdds/srv/NodeCtlQuery`，返回 state/pid），已实测可用 | `services_probe.method` 新增 `nodectl_dds`，`services_ok` 可为真值；V-57 关闭 |
 | 7 | §7.4 drdds | 等官方 msg 包 | `/opt/ros/jazzy/share/drdds/msg` 60 余型（.msg/.idl）已拷回 `data/run/chassis/drdds/`；`/MOTION_INFO` 实测 20 Hz | `XBRAIN_HAVE_DRDDS` 可在编译期打开；T-DRDDS-1 偏移对比可做 |
 | 8 | §7.3 | 44 码 + 开放集 | `fault_rules_CA9C.toml` 387 条已拿到 | 码表作为数据文件，开放集设计不变；V-08 可关 |

@@ -79,6 +79,9 @@
 │                     #      xbrain/common/errors/codes.yaml 生成（U66，单一真源在 xbrain/）
 │                     #    ★★★ 消费者含 chassis_relay(急停链路) ⇒ 🚫 绝不引 rclcpp 或任何 ROS 类型 (§5.3)
 │                     #    🚫 Python 源码不放 common/（放 xbrain/）；🚫 C++ 源码不放 xbrain/（放 common/）
+│                     #    ★ common/third_party/<name>/   第三方 vendored 依赖（零修改上游副本 ＋ LICENSE ＋ README 记 tag/sha256；
+│                     #      2026-09-15 `99` U85 ⑥ 首例 nlohmann/json）。🚫 不改标点、不加 Hachist 头注；在 charset_lint 的
+│                     #      THIRD_PARTY_SNAPSHOTS 排除表内（五个源码 lint 共用）；★ 只许非实时线程使用（13 QD-7）
 ├── configs/          # ★★★ 唯一配置根（绝对路径 · 复数 · 不接受符号链接）
 │                     #    V6 系统【所有模块】的配置文件都在这里
 │                     #    ★ 运行期读【解析产物】/run/xbrain/resolved/，🚫 不读源
@@ -184,6 +187,7 @@ log.info("计算走廊内最近障碍距离, 数量=%d", len(bands))   # X 中�
       —— 那是要识别 / 比对的**输入数据**，清标点会破坏金标真实性。★ 与本节话术裁决
       不同：话术是我方书写的【输出内容】（转 ASCII），golden 是【被测输入】（保留原样）。
     - 工具 / IDE 配置 `.vscode/**` · `**/.claude/**` · `docs/temp/_` 待迁移素材（§0.2）
+    - ★ 第三方 vendored 依赖 `common/third_party/**`（§0.2，2026-09-15 U85 ⑥）—— 不是我方书写，排除表在 `scripts/lint/charset_lint.py` `THIRD_PARTY_SNAPSHOTS`
   ★ `.json` / `.json5` 加入 `scripts/lint/charset_lint.py` 扫描面（带上述排除清单）。
 
 ### 2.3 命名规范
