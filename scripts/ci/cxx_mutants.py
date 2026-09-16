@@ -30,9 +30,17 @@ Three properties this runner has that an ad-hoc loop usually lacks:
   * a mutant that fails to COMPILE is reported separately and fails the run.
     A compiler error is not an assertion; counting it as a kill would credit
     the test suite with catching something it never saw.
-  * the source is restored through a try/finally AND an atexit hook, so an
-    interrupted run cannot leave a mutated file in the working tree. That file
-    would otherwise be a silent candidate for the next commit.
+  * the source is restored through a try/finally, an atexit hook AND a SIGTERM
+    handler, so a killed run cannot leave a mutated file in the working tree.
+    The signal handler is not belt-and-braces: atexit does NOT run on SIGTERM,
+    which is what pkill and every job supervisor send, and a run killed that
+    way on 2026-09-16 left one mutant behind in a file that was still untracked
+    -- so `git status` showed nothing, the next build compiled the mutation,
+    and the test that went red pointed at the test rather than at the cause.
+  * --verify answers "is there a mutant in the tree right now" WITHOUT git,
+    by requiring every mutant's original text to be present exactly once. That
+    is the check git cannot do: an untracked file shows no diff whatever was
+    written into it, and every new module is untracked for one batch.
 
 One declared gap. This file sits below the CLAUDE.md 2.4 comment ratio and
 cannot reasonably reach it: most of its length is the mutant TABLE, and a table
@@ -49,12 +57,14 @@ Suites, each a (sources, tests, mutants) triple:
 
 No counts are written into any document (CLAUDE.md 3.7). Run it:
   python3 scripts/ci/cxx_mutants.py [suite ...]     (no args = every suite)
+  python3 scripts/ci/cxx_mutants.py --verify        (tree clean? no builds)
 Exit status is 0 only when every mutant compiled and was killed.
 """
 
 import atexit
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -1057,6 +1067,114 @@ ENVELOPE_MUTANTS = [
      ENVELOPE_H, "    env.seq = ++seq_;", "    env.seq = seq_;"),
 ]
 
+# Assembly mutants. These are the ones that matter most and the ones a unit
+# test of any single layer cannot reach: every layer below is already covered,
+# and each of these breaks the WIRING between two correct layers. The defect
+# that was actually found while writing this suite's test -- the session ticked
+# before the arriving report was taken, so the link could never come up -- was
+# exactly that shape, and no test of the session or the framer could have seen
+# it.
+PROCESS_CC = os.path.join(QUAD, "src", "process.cc")
+PROCESS_SOURCES = [
+    PROCESS_CC,
+    os.path.join(QUAD, "src", "chassis_socket.cc"),
+    os.path.join(QUAD, "src", "chs_a_codec.cc"),
+    os.path.join(QUAD, "src", "chs_a_framer.cc"),
+    os.path.join(QUAD, "src", "chs_a_reports.cc"),
+    os.path.join(QUAD, "src", "chs_a_session.cc"),
+    os.path.join(QUAD, "src", "mode_machine.cc"),
+    os.path.join(QUAD, "src", "odometry.cc"),
+    os.path.join(QUAD, "src", "quadruped_config.cc"),
+    os.path.join(QUAD, "src", "tier1.cc"),
+    os.path.join(QUAD, "src", "tx_owner.cc"),
+]
+PROCESS_TESTS = [os.path.join(QUAD, "test", "test_process.cc")]
+
+PROCESS_MUTANTS = [
+    # 13 CA-7: an arriving report is the ONLY evidence the link is alive,
+    # because axis commands are never acknowledged. Drop the call and the
+    # session never learns it has a peer -- the socket is open, frames are
+    # being parsed, and the link is declared lost anyway.
+    ("process: the arriving report never reaches the session (CA-7)",
+     PROCESS_CC, "    session_.OnReport(fresh.rx_mono_s);", "    (void)0;"),
+    # The defect this suite's test found. Ticking the session first makes every
+    # report one period late, and a report landing just inside the lost timeout
+    # is ignored with the evidence sitting unread in the slot.
+    ("process: the session is ticked before the snapshot is taken",
+     PROCESS_CC,
+     "  ChassisSnapshot fresh;\n  if (snapshot_slot_.TakeFresh(&fresh)) {",
+     "  const chs_a::TickResult early = session_.Tick(now_mono_s);\n"
+     "  (void)early;\n"
+     "  ChassisSnapshot fresh;\n  if (snapshot_slot_.TakeFresh(&fresh)) {"),
+    # 13 F-21. The sleep flag is the chassis saying it will ignore motion; a
+    # process that reports it as awake commands a robot that is not listening,
+    # and the symptom is a command stream with no movement.
+    ("process: the sleep readback is reported as awake (F-21)",
+     PROCESS_CC, "      session_.OnSleep(fresh.sleep);",
+     "      session_.OnSleep(false);"),
+    # The HES bit travels in the basic report. Losing it between the parser and
+    # Tier 1 removes the one stop that software cannot clear.
+    ("process: HES dropped between the report and Tier 1",
+     PROCESS_CC, "    in.hes_raw = latest_.hes;", "    in.hes_raw = false;"),
+    # 13 S9.12.2 (3): the hold is a GENERATION comparison. Feeding Tier 1 the
+    # upstream's own generation as our own makes them equal by construction,
+    # and the soft stop releases itself on the next period.
+    ("process: the estop generation compared against itself",
+     PROCESS_CC, "  in.local_estop_epoch = estop_epoch_;",
+     "  in.local_estop_epoch = cmd_estop_epoch_;"),
+    # T-1 budgets 5 ms. Advancing the generation without sending leaves the
+    # robot travelling until the next period -- up to 10 ms at whatever speed
+    # it had, and nothing in the process reports the difference.
+    ("process: the soft stop waits for the next control period (T-1)",
+     PROCESS_CC,
+     "    const TxResult r = tx_.Send(TxCaller::kNonRealtime, buf, n);\n"
+     "    if (r == TxResult::kSent) ++axis_frames_sent_;",
+     "    (void)buf; (void)n;"),
+    ("process: the soft stop does not advance the generation",
+     PROCESS_CC, "  ++estop_epoch_;", "  /* not advanced */"),
+    # 13 S2.2 / CA-2: the chassis reports only to an address that keeps sending
+    # heartbeats. Without them the link comes up once and goes quiet, which
+    # reads as a chassis that stopped reporting.
+    ("process: the heartbeat is never sent (CA-2)",
+     PROCESS_CC, "  if (link.send_heartbeat) {", "  if (false) {"),
+    # The two gates of step 4, taken apart one at a time. Tier 1 answers "is
+    # this command safe"; the session answers "is there a link to put it on".
+    ("process: the axis command skips the Tier 1 gate",
+     PROCESS_CC,
+     "  if (last_tier1_.stop_reason == StopReason::kNone && session_.motion_allowed()) {",
+     "  if (session_.motion_allowed()) {"),
+    ("process: the axis command skips the session gate",
+     PROCESS_CC,
+     "  if (last_tier1_.stop_reason == StopReason::kNone && session_.motion_allowed()) {",
+     "  if (last_tier1_.stop_reason == StopReason::kNone) {"),
+    # A Tier 1 verdict that is computed and then not used. The frame carries
+    # the RAW command, so every limit and every clamp is bypassed while the
+    # stop reasons still read correctly from outside.
+    ("process: the raw command is sent instead of the Tier 1 output",
+     PROCESS_CC,
+     "    axis.vx = last_tier1_.vx;\n    axis.vy = last_tier1_.vy;\n"
+     "    axis.yaw = last_tier1_.wz;",
+     "    axis.vx = cmd_vx_;\n    axis.vy = cmd_vy_;\n    axis.yaw = cmd_wz_;"),
+    # 11 S9.12.1: the enable is an EVENT. Latching it re-clears the lock on
+    # every period that follows, so the lock holds exactly once and never
+    # again -- and nothing about the first unlock looks different.
+    ("process: the operator enable is latched instead of consumed",
+     PROCESS_CC, "  enable_pending_ = false;", "  /* left set */"),
+    ("process: the operator enable never reaches Tier 1",
+     PROCESS_CC, "  in.enable_requested = enable_pending_;",
+     "  in.enable_requested = false;"),
+    # The motion report is the odometry's only linear source until the domain-0
+    # reader is wired. Losing it leaves dead reckoning integrating zeros, and
+    # the pose stays put while the robot walks away.
+    ("process: the velocity sample never reaches the odometry",
+     PROCESS_CC,
+     "      odom_.OnVelocitySample(fresh.rx_mono_s, fresh.linear_x, fresh.linear_y);",
+     "      (void)0;"),
+    # The counter the whole receive path is judged by.
+    ("process: received frames are not counted",
+     PROCESS_CC, "    ++frames_received_;", "    /* not counted */"),
+]
+
 # name -> (sources, test files, mutants, argv[1] passed to each test).
 # `sources` are compiled into every test of the suite; a header-only module
 # lists none. The argument differs per suite because the tests need different
@@ -1077,6 +1195,7 @@ SUITES = {
     "odom": (ODOM_SOURCES, ODOM_TESTS, ODOM_MUTANTS, None),
     "dds_names": (NAMES_SOURCES, NAMES_TESTS, NAMES_MUTANTS, None),
     "socket": (SOCKET_SOURCES, SOCKET_TESTS, SOCKET_MUTANTS, None),
+    "process": (PROCESS_SOURCES, PROCESS_TESTS, PROCESS_MUTANTS, GOLDEN),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
 }
 
@@ -1140,6 +1259,14 @@ def run_suite(name, workdir):
     # Registered as well as called in the finally below: an interrupt between
     # writing a mutant and restoring it would otherwise leave a mutated file in
     # the working tree, a silent candidate for the next commit.
+    #
+    # atexit alone is NOT enough, measured 2026-09-16: it runs on a normal exit
+    # and on KeyboardInterrupt, and NOT on SIGTERM -- which is what pkill and
+    # every job supervisor send. A run killed that way left the HES mutant in
+    # process.cc, and because that file was still untracked `git status` had
+    # nothing to say about it. The next build compiled the mutant, one test went
+    # red, and the cause looked like anything but a mutation. install_guards()
+    # turns the signal into a normal exit so this restore runs.
     atexit.register(restore)
 
     survived, broken, killed = [], [], 0
@@ -1195,7 +1322,58 @@ def run_suite(name, workdir):
     return (killed, survived, broken)
 
 
+def install_guards():
+    """Make SIGTERM and SIGHUP exit the way SIGINT does, so atexit runs.
+
+    Without this a killed run leaves whatever mutant was on disk at that moment
+    in the working tree. That is worse than a crash: the file still compiles,
+    and the failure it produces points at the test rather than at the mutation.
+    """
+    def die(signum, _frame):
+        # SystemExit rather than os._exit: it unwinds, which is what runs the
+        # finally blocks and the atexit handlers that put the sources back.
+        raise SystemExit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, die)
+
+
+def verify_clean():
+    """Check that no mutant is left in the tree. Returns the number found.
+
+    This exists because `git status` cannot answer the question: a file that is
+    not tracked yet -- every new module is, for one batch -- shows no diff no
+    matter what was written into it. The anchors are the check that works
+    regardless: every mutant's ORIGINAL text must be present exactly once, and
+    a missing one means either a leftover mutation or an anchor that has rotted
+    (the two need different fixes, so they are reported apart).
+    """
+    leftovers, rotted = [], []
+    for name in sorted(SUITES):
+        for entry in SUITES[name][2]:
+            desc, path, old, new = entry[0], entry[1], entry[2], entry[3]
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            if text.count(old) == 1:
+                continue
+            if new in text:
+                leftovers.append((name, desc, path))
+            else:
+                rotted.append((name, desc, path))
+    for name, desc, path in leftovers:
+        print("  MUTANT LEFT IN TREE  [%s] %s\n    -> %s" % (name, desc, path))
+    for name, desc, path in rotted:
+        print("  ANCHOR NO LONGER MATCHES  [%s] %s\n    -> %s" % (name, desc, path))
+    print("criterion: every mutant's original text present exactly once")
+    print("anchors: %d checked, %d left mutated, %d rotted"
+          % (sum(len(SUITES[n][2]) for n in SUITES), len(leftovers), len(rotted)))
+    return len(leftovers) + len(rotted)
+
+
 def main(argv):
+    install_guards()
+    if len(argv) > 1 and argv[1] == "--verify":
+        return 1 if verify_clean() else 0
     names = argv[1:] if len(argv) > 1 else sorted(SUITES)
     for name in names:
         if name not in SUITES:
