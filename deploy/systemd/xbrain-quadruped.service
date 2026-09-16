@@ -23,15 +23,21 @@ StartLimitIntervalSec=60s
 Type=simple
 Restart=always
 RestartSec=2s
-# B0 (2026-09-15) only. The installed binary is the skeleton: config loader +
-# single-tx-owner seam + self-check, with no chassis link yet (13 S2.2 lands in
-# batch B1/B2). It exits 78 (EX_CONFIG) when invoked with no argument -- which
-# is how this unit invokes it -- so that "Stage 1 is up" cannot be true while
-# nothing is talking to the chassis. Without the line below, Restart=always
-# would turn that one honest refusal into a restart loop that fills the journal
-# and hides the message. REMOVE THIS LINE together with the refusal branch in
-# src/main.cc when the process becomes real; leaving it in would mask a genuine
-# config failure at exactly the moment it starts to matter.
+# 13 S9.4 ASM-5.
+# Exit 78 (EX_CONFIG) now means one thing only: the resolved config could not be
+# loaded -- a missing key, or a safety value still null because it has not been
+# calibrated (CLAUDE.md 3.1). Restarting cannot fix either. Without the line
+# below, Restart=always would retry every RestartSec forever and the one message
+# that says WHICH key is wrong would scroll out of the journal; with it, the
+# unit lands in failed state with that message as the last thing in it.
+#
+# History, because the earlier text here said the opposite. Through B0 this
+# binary exited 78 unconditionally (it had no chassis link, and idling would
+# have made "Stage 1 is up" true while nothing was talking to the chassis), and
+# the comment said to remove this line when the process became real. The process
+# is real as of the assembly batch and the refusal branch is gone -- but the line
+# stays, because the exit code it guards now names a real and unrecoverable
+# condition rather than a placeholder.
 RestartPreventExitStatus=78
 OOMScoreAdjust=-1000
 Environment="PYTHONUNBUFFERED=1"

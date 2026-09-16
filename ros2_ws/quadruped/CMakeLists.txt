@@ -94,15 +94,18 @@ add_library(quadruped_core STATIC
   src/odometry.cc
   src/dds_names.cc
   src/chassis_socket.cc
+  src/process.cc
 )
 target_include_directories(quadruped_core PUBLIC include ${COMMON_INCLUDE})
 target_include_directories(quadruped_core PRIVATE ${THIRD_PARTY_INCLUDE})
 target_link_libraries(quadruped_core PUBLIC pthread)
 
 # ---------------------------------------------------------------------------
-# The process binary. Today it is the B0 self-check (see src/main.cc for why it
-# refuses to run as a service); the channels land in later batches and attach
-# here without changing the layout.
+# The process binary. It now RUNS: main.cc loads the resolved snapshot, builds
+# the assembly in process.h and starts the two threads. What it still does not
+# start is the two OPTIONAL targets below (the domain-0 reader and the rclcpp
+# uplink) -- they are separate libraries precisely so the core stays buildable
+# without ROS, and linking them in unconditionally would undo that.
 # ---------------------------------------------------------------------------
 add_executable(quadruped_m20 src/main.cc)
 target_link_libraries(quadruped_m20 PRIVATE quadruped_core)
@@ -303,3 +306,16 @@ add_test(NAME test_dds_names COMMAND test_dds_names)
 add_executable(test_chassis_socket test/test_chassis_socket.cc)
 target_link_libraries(test_chassis_socket PRIVATE quadruped_core)
 add_test(NAME test_chassis_socket COMMAND test_chassis_socket)
+
+# The assembly. It drives CtrlTick and RxPump DIRECTLY, with no threads running
+# and the clock supplied per call, and it feeds RxPump the frames captured off
+# the real chassis on 2026-09-15 rather than frames this repository invented.
+#
+# Both choices are load-bearing. Without the first, a 200 ms Tier 1 timeout
+# would take 200 ms of wall time and the ordering inside one control period --
+# which is where the defect found while writing this test actually was -- would
+# be unobservable. Without the second, the test would agree with the parser
+# about a report format that the chassis does not send.
+add_executable(test_process test/test_process.cc)
+target_link_libraries(test_process PRIVATE quadruped_core)
+add_test(NAME test_process COMMAND test_process ${CHS_A_GOLDEN})
