@@ -110,8 +110,21 @@ RULES = (
          "forbid",
          "环境变量是进程级的, 用它传配置等于把域 0 与域 42 的配置绑死. "
          "改用 dds_create_domain(0, config_xml) 在进程内注入"),
+    # *** 扫描面是 src/ 与 include/, NO 不含 test/. 这不是放宽, 是对齐规则本身:
+    # 13 DDS-4 的约束对象逐字是"本进程", 11 RT-C5 是"CHS-B/C 只读" -- 说的都是
+    # 发布出去的那个进程, 不是测试二进制.
+    #
+    # 而测试里确实需要一个 writer: 没有它, 通道二的取样路径一条样本都到不了,
+    # 于是那条路径上的每个变异体按构造存活(2026-09-16 实测, 三个全活). 拿掉 writer
+    # 等于让通道二没有任何能红的断言.
+    #
+    # 代价是测试自己必须保证隔离, 这一条比本规则更要紧:
+    # kDomainConfig 开着 AllowMulticast 且不限接口, 所以一个建在域 0 上的 writer,
+    # 在与底盘对接的机器上会把伪造的 rt/IMU 发进厂商的域. 所以
+    # test_chs_b.cc 的回环跑在一个隔离域号上, 域 0 那半只建 reader -- 与生产
+    # 进程同形. 改那个测试的人必须先读懂这一段.
     Rule("DDS-4", "13 DDS-4 / 11 RT-C5",
-         ("ros2_ws/quadruped",),
+         ("ros2_ws/quadruped/src", "ros2_ws/quadruped/include"),
          r"dds_create_writer",
          "forbid",
          "域 0 侧只创建 reader. 向厂商域写入 = 违反冻结的厂商契约; "

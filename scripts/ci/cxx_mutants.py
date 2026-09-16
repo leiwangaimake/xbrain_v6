@@ -50,10 +50,20 @@ text there says the ratio is a means and the real gate is that every block
 explains why. Recorded here as declared debt with a reason rather than left to
 be discovered and waved through.
 
-Suites, each a (sources, tests, mutants) triple:
+Suites, each a (sources, tests, mutants, test argv[1], extra compiler args):
   quadruped  the CHS-A codec and framer (batch B1)
   yaml_lite  the shared config reader in common/, whose tests live with the
              sensor package -- it is header-only, so the header IS the source
+  chs_b      channel two, the domain-0 DDS reader
+  uplink     channel three, the rclcpp publisher
+
+The last two are the only ones that can be SKIPPED: they need CycloneDDS and
+rclcpp, which are not in this repository. A skip prints what is missing and
+says so again in the summary -- a suite that quietly vanishes with its
+dependency is indistinguishable from one that passed. Their flags come from the
+cmake build tree rather than being written out here, for the same reason: a
+transcribed list of eighty ROS libraries drifts from the build it mirrors, and
+then the suite exercises a configuration nobody ships.
 
 No counts are written into any document (CLAUDE.md 3.7). Run it:
   python3 scripts/ci/cxx_mutants.py [suite ...]     (no args = every suite)
@@ -1175,32 +1185,286 @@ PROCESS_MUTANTS = [
      PROCESS_CC, "    ++frames_received_;", "    /* not counted */"),
 ]
 
+# Channel-two mutants. This suite is the only one that needs something outside
+# the repository -- CycloneDDS and the type support idlc generates from the
+# package's own IDL -- so it is the only one that can be skipped. It says so
+# when it skips: a suite that quietly vanishes when a dependency is missing is
+# indistinguishable from one that passed (CLAUDE.md 3.2, form 1).
+#
+# What makes these killable at all is the loopback WRITER added to
+# test_chs_b.cc. Before it, nothing ever arrived in the test, so every mutant in
+# the sample-copy path survived by construction -- which would have read as
+# "channel two has no assertions worth the name", and it did.
+CHS_B_CC = os.path.join(QUAD, "src", "chs_b.cc")
+CHS_B_SOURCES = [CHS_B_CC,
+                 os.path.join(QUAD, "src", "dds_names.cc"),
+                 os.path.join(QUAD, "src", "quadruped_config.cc"),
+                 os.path.join(QUAD, "src", "chs_a_codec.cc")]
+CHS_B_TESTS = [os.path.join(QUAD, "test", "test_chs_b.cc")]
+
+# The generated type support and the library, found the way the CMake build
+# finds them. ROS's own tree is where CycloneDDS lives on this machine; the
+# generated .c comes from the cmake build directory rather than being
+# regenerated, so the suite tests the SAME descriptors the package ships.
+CHS_B_BUILD = os.path.join(QUAD, "build")
+CHS_B_EXTRA = [
+    "-I", CHS_B_BUILD,
+    "-I", "/opt/ros/humble/include",
+    os.path.join(CHS_B_BUILD, "chassis_dds_types.c"),
+    "-L", "/opt/ros/humble/lib/aarch64-linux-gnu",
+    "-Wl,-rpath,/opt/ros/humble/lib/aarch64-linux-gnu",
+    "-lddsc",
+]
+
+CHS_B_MUTANTS = [
+    # CLAUDE.md 5.4 calls this the easiest trap in the package: ROS topic /IMU
+    # is "rt/IMU" on the wire. A reader created with the ROS spelling matches
+    # nothing, and the symptom is silence -- identical to a dead network.
+    ("chs_b: the reader uses the ROS topic name instead of the DDS one",
+     CHS_B_CC, "  const std::string imu_topic = RosTopicToDdsTopic(cfg.imu_topic);",
+     "  const std::string imu_topic = cfg.imu_topic;"),
+    ("chs_b: /MOTION_INFO uses the ROS topic name",
+     CHS_B_CC, '  const std::string mi_topic = RosTopicToDdsTopic("/MOTION_INFO");',
+     '  const std::string mi_topic = "/MOTION_INFO";'),
+    # 13 DDS-1. The environment is process-wide and this process also holds an
+    # rclcpp context on domain 42; reading it collapses the two domains.
+    ("chs_b: the participant takes the domain from the environment (DDS-1)",
+     CHS_B_CC,
+     "  impl_->participant = dds_create_participant(\n"
+     "      static_cast<dds_domainid_t>(cfg.domain_id), nullptr, nullptr);",
+     "  const char* env_dom = ::getenv(\"ROS_DOMAIN_ID\");\n"
+     "  impl_->participant = dds_create_participant(\n"
+     "      static_cast<dds_domainid_t>(env_dom ? (env_dom[0] - '0')\n"
+     "                                          : cfg.domain_id),\n"
+     "      nullptr, nullptr);"),
+    # The IMU is BEST_EFFORT on the chassis (measured 2026-09-15 at 201 Hz).
+    # A RELIABLE reader does not match a BEST_EFFORT writer, and neither side
+    # reports anything about it.
+    ("chs_b: the IMU reader asks for RELIABLE and matches nothing",
+     CHS_B_CC,
+     "  dds_qset_reliability(qos, DDS_RELIABILITY_BEST_EFFORT, 0);",
+     "  dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));"),
+    # DDS-5: the sample is value-copied. Dropping the validity check publishes
+    # an invalid-data sample, which is a disposal notice rather than a reading.
+    ("chs_b: an invalid-data sample is taken as a reading (DDS-5)",
+     CHS_B_CC, "    if (rc > 0 && info[0].valid_data) {\n      const sensor_msgs_msg_dds__Imu_* m =",
+     "    if (rc > 0) {\n      const sensor_msgs_msg_dds__Imu_* m ="),
+    # The transcription the IDL comment warns about: a swap that still connects
+    # and then decodes garbage. Angular velocity and linear acceleration are
+    # the same type, so nothing but a value assertion can see this.
+    ("chs_b: angular velocity read from the linear acceleration field",
+     CHS_B_CC,
+     "      s.wx = m->angular_velocity.x;\n      s.wy = m->angular_velocity.y;\n"
+     "      s.wz = m->angular_velocity.z;",
+     "      s.wx = m->linear_acceleration.x;\n      s.wy = m->linear_acceleration.y;\n"
+     "      s.wz = m->linear_acceleration.z;"),
+    # wz is the yaw rate the odometry integrates. Taking the roll rate instead
+    # produces a pose that drifts in a way no test of the odometry can see.
+    ("chs_b: the yaw rate comes from the roll axis",
+     CHS_B_CC, "      s.wz = m->angular_velocity.z;", "      s.wz = m->angular_velocity.x;"),
+    # CLK-C4: the publisher's stamp is another machine's wall clock. Using it
+    # makes every age and every timeout in this process meaningless, and the
+    # numbers still look like plausible timestamps.
+    ("chs_b: the sample is stamped with the publisher's clock (CLK-C4)",
+     CHS_B_CC,
+     "      s.rx_mono_s = now_mono_s;\n      impl_->imu = s;",
+     "      s.rx_mono_s = static_cast<double>(m->header.stamp.sec) +\n"
+     "                    static_cast<double>(m->header.stamp.nanosec) * 1e-9;\n"
+     "      impl_->imu = s;"),
+    # "Never seen" and "seen and zero" are different findings: a zeroed IMU
+    # reads as a level robot at rest, and an engineer shown that looks at the
+    # chassis rather than at the topic name.
+    ("chs_b: a reader that has seen nothing reports a sample anyway",
+     CHS_B_CC, "  if (!impl_ || !impl_->has_imu || out == nullptr) return false;",
+     "  if (!impl_ || out == nullptr) return false;"),
+    # The vendor's motion fields, same swap hazard as the IMU.
+    ("chs_b: the drdds velocity axes are swapped",
+     CHS_B_CC, "      s.vel_x = m->data.vel_x;\n      s.vel_y = m->data.vel_y;",
+     "      s.vel_x = m->data.vel_y;\n      s.vel_y = m->data.vel_x;"),
+    ("chs_b: the drdds gait and motion state are crossed",
+     CHS_B_CC,
+     "      s.motion_state = m->data.motion_state.state;\n"
+     "      s.gait = m->data.gait_state.gait;",
+     "      s.motion_state = static_cast<std::int32_t>(m->data.gait_state.gait);\n"
+     "      s.gait = static_cast<std::uint32_t>(m->data.motion_state.state);"),
+    # The loan MUST go back. Without it the reader's history fills and it stops
+    # receiving -- after some minutes, which is the worst possible timing.
+    # DECLARED EQUIVALENT. Not returning the loan leaks, and the leak has no
+    # behavioural signature a test can reach: with KEEP_LAST(1) the reader goes
+    # on delivering, and what degrades is memory over hours. The note is in
+    # chs_b.cc at the call, per CLAUDE.md 7.2.1 -- writing an assertion that
+    # cannot fail would be worse than saying nothing can catch it.
+    ("chs_b: the DDS loan is never returned",
+     CHS_B_CC, "    if (rc > 0) dds_return_loan(impl_->imu_reader, raw, rc);",
+     "    (void)rc;", "equivalent"),
+]
+
+# Uplink mutants (channel three). Same shape of dependency as chs_b, and the
+# flag list is not written out here: it is READ from the cmake build tree,
+# because a transcribed list of eighty ROS libraries is a list that drifts from
+# the build it is supposed to mirror, silently, and then this suite tests
+# something the package does not ship.
+#
+# These became killable the same way chs_b's did -- by giving the test a
+# SUBSCRIBER. Before it every assertion counted publishes, and a publisher
+# sending an all-zero Odometry satisfied all of them.
+UPLINK_CC = os.path.join(QUAD, "src", "uplink.cc")
+UPLINK_SOURCES = [UPLINK_CC,
+                  os.path.join(QUAD, "src", "odometry.cc"),
+                  os.path.join(QUAD, "src", "quadruped_config.cc"),
+                  os.path.join(QUAD, "src", "chs_a_codec.cc")]
+UPLINK_TESTS = [os.path.join(QUAD, "test", "test_uplink.cc")]
+
+
+def cmake_flags(target):
+    """Compile and link flags for one cmake target, read from its build tree.
+
+    Returns [] when the build tree is not there, which the caller turns into a
+    SKIP rather than into a pass. Mirroring the real build is the point: a
+    hand-copied flag list stops matching the moment a dependency is added, and
+    the suite then exercises a configuration nobody ships.
+    """
+    d = os.path.join(QUAD, "build", "CMakeFiles", target + ".dir")
+    flags_make = os.path.join(d, "flags.make")
+    link_txt = os.path.join(d, "link.txt")
+    if not (os.path.exists(flags_make) and os.path.exists(link_txt)):
+        return []
+    out = []
+    with open(flags_make, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("CXX_INCLUDES"):
+                out += line.split("=", 1)[1].split()
+                break
+    with open(link_txt, "r", encoding="utf-8") as f:
+        parts = f.read().split()
+    # Everything after -o <exe>: the libraries and the rpath. The compiler, the
+    # optimisation flags and the target's own objects are dropped -- this suite
+    # compiles its own.
+    keep = False
+    for i, tok in enumerate(parts):
+        if tok == "-o":
+            keep = True
+            continue
+        if not keep or i == parts.index("-o") + 1:
+            continue
+        if tok.endswith(".o") or tok.endswith(".a"):
+            continue
+        out.append(tok)
+    return out
+
+
+UPLINK_MUTANTS = [
+    # 13 DDS-1 / PB-5 call site 1. The environment is process-wide and this
+    # process also holds a bare domain-0 participant; one read collapses them.
+    ("uplink: the context takes the domain from ROS_DOMAIN_ID (DDS-1)",
+     UPLINK_CC,
+     "  init_options.set_domain_id(static_cast<std::size_t>(cfg.ros_domain_id));",
+     "  (void)cfg;"),
+    # The plausible wrong version of starting rclcpp: rclcpp::init() is the
+    # documented way, and it installs process-wide SIGINT and SIGTERM handlers.
+    # Those signals have to reach main.cc, which is where the control thread is
+    # stopped and joined; taken by rclcpp, a SIGTERM shuts the ROS context down
+    # and leaves the chassis link and the control loop running until systemd
+    # SIGKILLs a process still holding a socket to a robot.
+    ("uplink: the context is created the documented way, stealing SIGTERM",
+     UPLINK_CC, "  impl_->context->init(0, nullptr, init_options);",
+     "  impl_->context->init(0, nullptr, init_options);\n"
+     "  rclcpp::install_signal_handlers();"),
+    # DECLARED EQUIVALENT. shutdown_on_signal does not install anything: the
+    # handlers come from rclcpp::init() or install_signal_handlers(), and this
+    # file calls neither (checked against the humble headers, 2026-09-16). The
+    # flag only decides whether THIS context is shut down by a handler that
+    # something else installed -- which no unit test can reach without
+    # installing one, at which point it is testing that instead. The note is in
+    # uplink.cc at the line.
+    ("uplink: shutdown_on_signal left at its default",
+     UPLINK_CC, "  init_options.shutdown_on_signal = false;",
+     "  init_options.shutdown_on_signal = true;", "equivalent"),
+    # 13 S4.4 (4): past one second of staleness NOTHING goes out, TF included.
+    # A frozen TF makes Nav2 believe the robot is stationary and keep
+    # commanding rotation.
+    ("uplink: a stale sample is published anyway (13 S4.4 (4))",
+     UPLINK_CC, "  if (!s.publish) {", "  if (false) {"),
+    ("uplink: the TF keeps going when the odometry stops",
+     UPLINK_CC,
+     "    ++impl_->suppressed_count;\n    return;",
+     "    ++impl_->suppressed_count;"),
+    # publish_odom_tf exists so a deployment where something else owns
+    # odom->base_link does not end up with two publishers for one edge.
+    ("uplink: publish_odom_tf is ignored and the TF always goes out",
+     UPLINK_CC, "  if (impl_->cfg.publish_odom_tf) {", "  if (true) {"),
+    # The pose. x and y are the same type and the same units, so nothing but a
+    # value assertion on the received message can see this.
+    ("uplink: the pose x and y are swapped",
+     UPLINK_CC,
+     "  msg.pose.pose.position.x = s.x;\n  msg.pose.pose.position.y = s.y;",
+     "  msg.pose.pose.position.x = s.y;\n  msg.pose.pose.position.y = s.x;"),
+    # The covariance INDICES. [35] is yaw-yaw; an implementation using [5]
+    # leaves the yaw variance zero, which downstream reads as a perfectly known
+    # heading -- the most dangerous wrong answer this file can produce.
+    ("uplink: the pose covariance is filled with the twist variances",
+     UPLINK_CC,
+     "  FillCovariance36(s.var_x, s.var_y, s.var_yaw, msg.pose.covariance.data());",
+     "  FillCovariance36(s.var_vx, s.var_vy, s.var_wz, msg.pose.covariance.data());"),
+    ("uplink: the twist covariance is filled with the pose variances",
+     UPLINK_CC,
+     "  FillCovariance36(s.var_vx, s.var_vy, s.var_wz, msg.twist.covariance.data());",
+     "  FillCovariance36(s.var_x, s.var_y, s.var_yaw, msg.twist.covariance.data());"),
+    # A half-angle error in the quaternion is invisible in every count and
+    # makes the heading wrong by a factor of two.
+    ("uplink: the orientation is built from the yaw without halving it",
+     UPLINK_CC, "  const Quaternion q = YawToQuaternion(s.yaw);",
+     "  const Quaternion q = YawToQuaternion(s.yaw * 2.0);"),
+    # The stamp is the wall time passed IN. Splitting it wrongly produces a
+    # header that is plausible and an ordering that is not.
+    ("uplink: the stamp nanoseconds are scaled wrongly",
+     UPLINK_CC,
+     "      (wall_ts_s - static_cast<double>(stamp.sec)) * 1e9);",
+     "      (wall_ts_s - static_cast<double>(stamp.sec)) * 1e6);"),
+    # The frames. odom->base_link is the edge Nav2 looks up by name; publishing
+    # it under another name leaves the lookup failing with a message about a
+    # frame nobody configured.
+    ("uplink: the odometry carries the child frame as its header frame",
+     UPLINK_CC, "  msg.header.frame_id = impl_->cfg.odom_frame;",
+     "  msg.header.frame_id = impl_->cfg.base_frame;"),
+]
+
 # name -> (sources, test files, mutants, argv[1] passed to each test).
 # `sources` are compiled into every test of the suite; a header-only module
 # lists none. The argument differs per suite because the tests need different
 # things: the CHS-A tests read the golden capture, the config test needs a
 # WRITABLE DIRECTORY for its fixtures. Passing one to the other is not a
 # no-op -- the config test would try to write fixtures inside a file path.
+#
+# A fifth element carries extra compiler arguments. Only chs_b has any: it is
+# the one module that needs a dependency outside this repository, and giving
+# every suite an empty list rather than making the field optional keeps the
+# unpack in run_suite a single shape.
 SUITES = {
-    "quadruped": (QUAD_SOURCES, QUAD_TESTS, QUAD_MUTANTS, GOLDEN),
-    "quadruped_config": (CONFIG_SOURCES, CONFIG_TESTS, CONFIG_MUTANTS, None),
-    "reports": (REPORTS_SOURCES, REPORTS_TESTS, REPORTS_MUTANTS, GOLDEN),
-    "session": (SESSION_SOURCES, SESSION_TESTS, SESSION_MUTANTS, None),
-    "tier1": (TIER1_SOURCES, TIER1_TESTS, TIER1_MUTANTS, None),
-    "units": ([], UNITS_TESTS, UNITS_MUTANTS, None),
-    "envelope": ([], ENVELOPE_TESTS, ENVELOPE_MUTANTS, None),
-    "rt_keys": (RT_KEYS_SOURCES, RT_KEYS_TESTS, RT_KEYS_MUTANTS, CONTRACT_MD),
-    "payloads": (PAYLOADS_SOURCES, PAYLOADS_TESTS, PAYLOADS_MUTANTS, None),
-    "mode": (MODE_SOURCES, MODE_TESTS, MODE_MUTANTS, None),
-    "odom": (ODOM_SOURCES, ODOM_TESTS, ODOM_MUTANTS, None),
-    "dds_names": (NAMES_SOURCES, NAMES_TESTS, NAMES_MUTANTS, None),
-    "socket": (SOCKET_SOURCES, SOCKET_TESTS, SOCKET_MUTANTS, None),
-    "process": (PROCESS_SOURCES, PROCESS_TESTS, PROCESS_MUTANTS, GOLDEN),
-    "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
+    "quadruped": (QUAD_SOURCES, QUAD_TESTS, QUAD_MUTANTS, GOLDEN, []),
+    "quadruped_config": (CONFIG_SOURCES, CONFIG_TESTS, CONFIG_MUTANTS, None, []),
+    "reports": (REPORTS_SOURCES, REPORTS_TESTS, REPORTS_MUTANTS, GOLDEN, []),
+    "session": (SESSION_SOURCES, SESSION_TESTS, SESSION_MUTANTS, None, []),
+    "tier1": (TIER1_SOURCES, TIER1_TESTS, TIER1_MUTANTS, None, []),
+    "units": ([], UNITS_TESTS, UNITS_MUTANTS, None, []),
+    "envelope": ([], ENVELOPE_TESTS, ENVELOPE_MUTANTS, None, []),
+    "rt_keys": (RT_KEYS_SOURCES, RT_KEYS_TESTS, RT_KEYS_MUTANTS, CONTRACT_MD, []),
+    "payloads": (PAYLOADS_SOURCES, PAYLOADS_TESTS, PAYLOADS_MUTANTS, None, []),
+    "mode": (MODE_SOURCES, MODE_TESTS, MODE_MUTANTS, None, []),
+    "odom": (ODOM_SOURCES, ODOM_TESTS, ODOM_MUTANTS, None, []),
+    "dds_names": (NAMES_SOURCES, NAMES_TESTS, NAMES_MUTANTS, None, []),
+    "socket": (SOCKET_SOURCES, SOCKET_TESTS, SOCKET_MUTANTS, None, []),
+    "process": (PROCESS_SOURCES, PROCESS_TESTS, PROCESS_MUTANTS, GOLDEN, []),
+    "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None, []),
+    "chs_b": (CHS_B_SOURCES, CHS_B_TESTS, CHS_B_MUTANTS, None, CHS_B_EXTRA),
+    # The flags are computed at import time from the build tree; an empty list
+    # means the tree is not there, and run_suite turns that into a loud skip.
+    "uplink": (UPLINK_SOURCES, UPLINK_TESTS, UPLINK_MUTANTS, None,
+               cmake_flags("test_uplink") or ["--no-cmake-build-tree"]),
 }
 
 
-def build_and_run(sources, tests, workdir, arg, quiet=True):
+def build_and_run(sources, tests, workdir, arg, quiet=True, extra=()):
     """Compile and run every test of one suite.
 
     Returns (compiled, passed). The two are separate because a mutant that does
@@ -1215,7 +1479,7 @@ def build_and_run(sources, tests, workdir, arg, quiet=True):
             "-I", os.path.join(ROOT, "common", "third_party"),
             "-I", os.path.join(QUAD, "include"),
             "-o", exe, test_src,
-        ] + sources
+        ] + sources + list(extra)
         cc = subprocess.run(cmd, capture_output=True, text=True)
         if cc.returncode != 0:
             if not quiet:
@@ -1240,7 +1504,46 @@ def build_and_run(sources, tests, workdir, arg, quiet=True):
 def run_suite(name, workdir):
     """Run one suite. Returns (killed, survived[], broken[]) or None if the
     baseline is red -- in which case nothing below it means anything."""
-    sources, tests, mutants, arg = SUITES[name]
+    sources, tests, mutants, arg, extra = SUITES[name]
+    if "--no-cmake-build-tree" in extra:
+        print("  SKIPPED: this suite mirrors the cmake build's flags and the "
+              "build tree is not here.")
+        print("    -> run: cmake --build %s" % os.path.join(QUAD, "build"))
+        return "skipped"
+    missing = [a for a in extra
+               if a.endswith(".c") and not os.path.exists(a)]
+    if missing:
+        # Said out loud, and the run is NOT reported green because of it. A
+        # suite that disappears with its dependency looks exactly like one that
+        # passed, which is the failure mode CLAUDE.md 3.2 puts first.
+        print("  SKIPPED: this suite needs generated type support that is not "
+              "here yet:")
+        for a in missing:
+            print("    missing: %s" % a)
+        print("    -> run: cmake --build %s" % os.path.join(QUAD, "build"))
+        return "skipped"
+
+    # Any C source in the extras is compiled BY A C COMPILER, once, and the
+    # object is linked instead. g++ would treat the .c as C++ and fail on
+    # _Alignof, which is a C11 keyword -- the same reason the package's
+    # CMakeLists declares LANGUAGES C CXX rather than CXX alone.
+    extra = list(extra)
+    for i, arg in enumerate(extra):
+        if not arg.endswith(".c"):
+            continue
+        obj = os.path.join(workdir, os.path.basename(arg)[:-2] + ".o")
+        if not os.path.exists(obj):
+            # -w: the generated file is not ours to hold to our warnings, same
+            # as the COMPILE_OPTIONS the CMakeLists sets on it.
+            cc = subprocess.run(
+                ["cc", "-std=c11", "-w", "-c", "-o", obj, arg,
+                 "-I", os.path.dirname(arg), "-I", "/opt/ros/humble/include"],
+                capture_output=True, text=True)
+            if cc.returncode != 0:
+                sys.stderr.write(cc.stderr)
+                print("  SKIPPED: the generated type support does not compile")
+                return "skipped"
+        extra[i] = obj
     # Every file a mutant may touch is backed up, sources and headers alike.
     paths = sorted({m[1] for m in mutants})
     backups = {}
@@ -1271,7 +1574,8 @@ def run_suite(name, workdir):
 
     survived, broken, killed = [], [], 0
     try:
-        ok, passed = build_and_run(sources, tests, workdir, arg, quiet=False)
+        ok, passed = build_and_run(sources, tests, workdir, arg, quiet=False,
+                                   extra=extra)
         if not ok or not passed:
             print("  BASELINE IS NOT GREEN -- every mutant below would be "
                   "reported killed for the wrong reason.")
@@ -1293,7 +1597,8 @@ def run_suite(name, workdir):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text.replace(old, new))
             try:
-                compiled, still_passes = build_and_run(sources, tests, workdir, arg)
+                compiled, still_passes = build_and_run(sources, tests, workdir,
+                                                      arg, extra=extra)
             finally:
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(text)
@@ -1383,10 +1688,14 @@ def main(argv):
     workdir = tempfile.mkdtemp(prefix="cxx_mut_")
     killed_all, survived_all, broken_all = 0, [], []
     baseline_red = []
+    skipped = []
     try:
         for name in names:
             print("suite %s" % name)
             result = run_suite(name, workdir)
+            if result == "skipped":
+                skipped.append(name)
+                continue
             if result is None:
                 baseline_red.append(name)
                 continue
@@ -1408,6 +1717,12 @@ def main(argv):
         print("  UNUSABLE: [%s] %s (%s)" % (name, desc, why))
     for name in baseline_red:
         print("  BASELINE RED: %s -- fix the build or the tests first" % name)
+    # Printed in the summary too, not only where it happened: the per-suite
+    # line scrolls past, and "198 killed, 0 survived" with a suite missing
+    # underneath it is the kind of green that gets quoted later.
+    for name in skipped:
+        print("  SKIPPED: %s -- its dependency was not present, so NOTHING in "
+              "it was checked" % name)
     return 0 if (not survived_all and not broken_all and not baseline_red) else 1
 
 

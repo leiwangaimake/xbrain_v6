@@ -29,6 +29,7 @@
 
 #include "quadruped/chs_b.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -183,6 +184,12 @@ int ChassisDds::Poll(double now_mono_s) {
       ++impl_->imu_count;
       ++n;
     }
+    // NOTHING CAN TEST THIS LINE, and it still has to be here (CLAUDE.md
+    // 7.2.1). Dropping it leaks the loan; with KEEP_LAST(1) the reader keeps
+    // delivering and what degrades is memory over hours, so there is no
+    // behavioural signature for an assertion to catch. It is registered in
+    // scripts/ci/cxx_mutants.py as a declared-equivalent mutant rather than
+    // defended by a test that could not fail.
     if (rc > 0) dds_return_loan(impl_->imu_reader, raw, rc);
   }
 

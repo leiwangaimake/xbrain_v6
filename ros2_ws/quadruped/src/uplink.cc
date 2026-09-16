@@ -65,7 +65,17 @@ Uplink::Uplink(const UplinkConfig& cfg, const std::string& rid)
   // read collapses the two domains with no error anywhere.
   init_options.set_domain_id(static_cast<std::size_t>(cfg.ros_domain_id));
   // Leave signal handling to the process: a library that installs handlers
-  // takes the shutdown path away from the owner.
+  // takes the shutdown path away from the owner, and main.cc needs SIGTERM to
+  // reach it so the control thread is stopped and joined.
+  //
+  // NO TEST CAN DISTINGUISH THIS VALUE (CLAUDE.md 7.2.1), and it is still the
+  // right one. The handlers are installed by rclcpp::init() or
+  // install_signal_handlers(), and this file calls neither; the flag only
+  // decides whether THIS context is shut down by a handler something else
+  // installed. What IS defended, by an assertion in test_uplink.cc, is the
+  // thing that would actually go wrong here: building an Uplink must not
+  // replace the process's SIGTERM disposition -- which the documented way of
+  // starting rclcpp would do. Registered as a declared-equivalent mutant.
   init_options.shutdown_on_signal = false;
   impl_->context->init(0, nullptr, init_options);
 
@@ -150,6 +160,20 @@ void Uplink::Publish(const OdomSample& s, double wall_ts_s) {
     impl_->tf_bc->sendTransform(tf);
     ++impl_->tf_count;
   }
+}
+
+int Uplink::actual_domain_id() const {
+  if (!impl_ || !impl_->context) return -1;
+  // Through the rcl context, which is the entity that actually joined. The
+  // rclcpp::Context object only remembers what it was asked for, so reading
+  // that would pass on the broken implementation too.
+  std::size_t id = 0;
+  const rcl_context_t* ctx = impl_->context->get_rcl_context().get();
+  if (rcl_context_get_domain_id(const_cast<rcl_context_t*>(ctx), &id) !=
+      RCL_RET_OK) {
+    return -1;
+  }
+  return static_cast<int>(id);
 }
 
 std::uint64_t Uplink::odom_published() const {

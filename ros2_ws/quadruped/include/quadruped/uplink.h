@@ -64,6 +64,13 @@ class Uplink {
   // Publishes nothing at all when the sample says not to.
   void Publish(const OdomSample& s, double wall_ts_s);
 
+  // The domain the context actually joined, READ BACK from it rather than
+  // echoed from the config. Echoing would report 42 on an implementation that
+  // took the domain from ROS_DOMAIN_ID -- which is the one failure 13 DDS-1 is
+  // written to prevent, and the one whose symptom (a publisher that is up and
+  // heard by nobody) is indistinguishable from a dead network.
+  int actual_domain_id() const;
+
   // Counters, so "it is publishing" is a number rather than an impression.
   std::uint64_t odom_published() const;
   std::uint64_t tf_published() const;
