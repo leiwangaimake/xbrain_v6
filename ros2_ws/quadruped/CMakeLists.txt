@@ -155,6 +155,15 @@ if(rclcpp_FOUND AND nav_msgs_FOUND AND tf2_ros_FOUND AND geometry_msgs_FOUND)
   ament_target_dependencies(test_uplink rclcpp nav_msgs tf2_ros geometry_msgs)
   target_link_libraries(test_uplink quadruped_uplink)
   add_test(NAME test_uplink COMMAND test_uplink)
+
+  # The allocation measurement behind 13 V-69. It replaces the global operator
+  # new, which is why it is a SEPARATE binary: linked into test_uplink it would
+  # count that test's own allocations as well, and the number would stop
+  # meaning "the cost of one control period".
+  add_executable(test_uplink_alloc test/test_uplink_alloc.cc)
+  ament_target_dependencies(test_uplink_alloc rclcpp nav_msgs tf2_ros geometry_msgs)
+  target_link_libraries(test_uplink_alloc quadruped_uplink)
+  add_test(NAME test_uplink_alloc COMMAND test_uplink_alloc)
 else()
   message(STATUS "quadruped: rclcpp/nav_msgs/tf2_ros NOT found -- skipping the "
                  "ROS 2 uplink target; core and tests still build")
