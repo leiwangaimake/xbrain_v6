@@ -93,6 +93,7 @@ add_library(quadruped_core STATIC
   src/mode_machine.cc
   src/odometry.cc
   src/dds_names.cc
+  src/chassis_socket.cc
 )
 target_include_directories(quadruped_core PUBLIC include ${COMMON_INCLUDE})
 target_include_directories(quadruped_core PRIVATE ${THIRD_PARTY_INCLUDE})
@@ -295,3 +296,10 @@ add_test(NAME test_odometry COMMAND test_odometry)
 add_executable(test_dds_names test/test_dds_names.cc)
 target_link_libraries(test_dds_names PRIVATE quadruped_core)
 add_test(NAME test_dds_names COMMAND test_dds_names)
+
+# Real sockets against an in-process loopback listener, not a mock. EAGAIN,
+# EINPROGRESS and the two different meanings of a zero-length read are kernel
+# behaviour; a test double would encode what the author believed instead.
+add_executable(test_chassis_socket test/test_chassis_socket.cc)
+target_link_libraries(test_chassis_socket PRIVATE quadruped_core)
+add_test(NAME test_chassis_socket COMMAND test_chassis_socket)

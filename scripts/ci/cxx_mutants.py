@@ -965,6 +965,62 @@ NAMES_MUTANTS = [
      "  if (age_s * 1000.0 >= static_cast<double>(warn_ms)) return ImuFreshness::kStale;"),
 ]
 
+# Socket mutants. Every one of these compiles, connects, and then behaves
+# wrongly in a way that reads as a chassis problem rather than a code problem.
+SOCKET_CC = os.path.join(QUAD, "src", "chassis_socket.cc")
+SOCKET_SOURCES = [SOCKET_CC, os.path.join(QUAD, "src", "quadruped_config.cc"),
+                  os.path.join(QUAD, "src", "chs_a_codec.cc")]
+SOCKET_TESTS = [os.path.join(QUAD, "test", "test_chassis_socket.cc")]
+
+SOCKET_MUTANTS = [
+    # EINPROGRESS is the NORMAL answer for a non-blocking TCP connect. Treating
+    # it as failure rejects every TCP candidate on a healthy network, and the
+    # operator is told the chassis is not answering.
+    ("socket: EINPROGRESS treated as a connect failure",
+     SOCKET_CC, "    if (errno != EINPROGRESS) {", "    if (true) {"),
+    # 13 TLS-5: a downgrade that happens by itself can be forced.
+    ("socket: a TLS candidate silently dialled in plaintext",
+     SOCKET_CC, "  if (ep.tls) {", "  if (false) {"),
+    # CA-1: two live sockets are two clients, and axis commands come back
+    # 0xE006 for two seconds -- accepted, and the robot does not move.
+    ("socket: the previous socket left open when redialling",
+     SOCKET_CC, "  Close();\n  last_error_ = DialError::kNone;",
+     "  last_error_ = DialError::kNone;"),
+    # EAGAIN is a short write, not a broken link.
+    ("socket: EAGAIN on send reported as an error",
+     SOCKET_CC, "  if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;\n  return -1;\n}\n\nlong ChassisSocket::Recv",
+     "  return -1;\n}\n\nlong ChassisSocket::Recv"),
+    # ...and on the read side, EAGAIN as -1 turns every idle moment into a
+    # reconnect. 13 CA-6 makes each reconnect play a voice prompt on the robot.
+    ("socket: nothing-to-read reported as a dead link",
+     SOCKET_CC, "  if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;\n  return -1;\n}\n\nbool ChassisSocket::nodelay_enabled",
+     "  return -1;\n}\n\nbool ChassisSocket::nodelay_enabled"),
+    # The option is READ BACK, not remembered: setsockopt can be refused, and a
+    # remembered flag records what was asked for rather than what is in force.
+    ("socket: nodelay_enabled reports the request instead of the socket",
+     SOCKET_CC, "  if (::getsockopt(fd_, IPPROTO_TCP, TCP_NODELAY, &v, &len) != 0) return false;\n  return v != 0;",
+     "  (void)v; (void)len;\n  return true;"),
+    # A TCP zero-length read means the peer closed; a UDP one does not.
+    ("socket: a TCP peer closing reported as nothing-to-read",
+     SOCKET_CC, "    return is_udp_ ? 0 : -1;", "    return 0;"),
+    # FR-5 / SD-3: with Nagle on, "when did the last frame leave" has no answer.
+    ("socket: TCP_NODELAY not set",
+     SOCKET_CC, "    ::setsockopt(fd_, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));",
+     "    (void)one;"),
+    # Without MSG_NOSIGNAL a write to a closed socket ENDS THE PROCESS, and a
+    # test would not report a failure -- it would vanish.
+    ("socket: MSG_NOSIGNAL dropped, so a closed peer kills the process",
+     SOCKET_CC, "  const ssize_t n = ::send(fd_, data, len, MSG_NOSIGNAL);",
+     "  const ssize_t n = ::send(fd_, data, len, 0);"),
+    # An unparseable host must be refused, not turned into a connect to 0.0.0.0.
+    ("socket: an invalid address accepted",
+     SOCKET_CC, '  if (::inet_pton(AF_INET, ep.host.c_str(), &addr.sin_addr) != 1) {',
+     "  if (false) {"),
+    ("socket: an unknown protocol treated as TCP",
+     SOCKET_CC, "    last_error_ = DialError::kUnsupportedProto;\n    return false;",
+     "    is_udp_ = false;"),
+]
+
 # Envelope mutants. The unit was wrong here for two days and no test turned
 # red, because the existing case asserted only ts_sync semantics: the unit was
 # an assumption, not an assertion. These are what make it an assertion.
@@ -1020,6 +1076,7 @@ SUITES = {
     "mode": (MODE_SOURCES, MODE_TESTS, MODE_MUTANTS, None),
     "odom": (ODOM_SOURCES, ODOM_TESTS, ODOM_MUTANTS, None),
     "dds_names": (NAMES_SOURCES, NAMES_TESTS, NAMES_MUTANTS, None),
+    "socket": (SOCKET_SOURCES, SOCKET_TESTS, SOCKET_MUTANTS, None),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None),
 }
 
