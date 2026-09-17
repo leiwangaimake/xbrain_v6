@@ -96,6 +96,7 @@ add_library(quadruped_core STATIC
   src/chassis_socket.cc
   src/process.cc
   src/rt_parse.cc
+  src/rt_bridge.cc
 )
 target_include_directories(quadruped_core PUBLIC include ${COMMON_INCLUDE})
 target_include_directories(quadruped_core PRIVATE ${THIRD_PARTY_INCLUDE})
@@ -361,6 +362,15 @@ set(SESSION_FACTORY_PY
 add_executable(test_rt_session test/test_rt_session.cc src/rt_session_config.cc)
 target_include_directories(test_rt_session PRIVATE include ${COMMON_INCLUDE})
 add_test(NAME test_rt_session COMMAND test_rt_session ${SESSION_FACTORY_PY})
+
+# The routing: which message causes which call, and what gets acked. No router,
+# no chassis, no threads -- the handlers are called with bytes and the acks are
+# captured, so "a truncated estop still stops AND is still acked" is a case
+# rather than an intention.
+add_executable(test_rt_bridge test/test_rt_bridge.cc)
+target_link_libraries(test_rt_bridge PRIVATE quadruped_core)
+target_include_directories(test_rt_bridge PRIVATE ${THIRD_PARTY_INCLUDE})
+add_test(NAME test_rt_bridge COMMAND test_rt_bridge)
 
 add_executable(test_rt_parse test/test_rt_parse.cc)
 target_link_libraries(test_rt_parse PRIVATE quadruped_core)

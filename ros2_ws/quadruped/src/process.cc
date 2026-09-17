@@ -115,6 +115,16 @@ void QuadrupedProcess::OnCmdVel(double now_mono_s, double vx, double vy,
 
 void QuadrupedProcess::OnEnable() { enable_pending_ = true; }
 
+ModeRequestResult QuadrupedProcess::OnChassisAction(double now_mono_s,
+                                                    ModeAction action,
+                                                    std::int64_t param) {
+  // Straight through to the machine. There is deliberately no pre-filtering
+  // here: the stair precondition (13 PR-1 / D-40), the switch window (MS-1) and
+  // the read-back expectation all live in one place, and a second opinion at
+  // this level is how the two drift apart.
+  return mode_.Request(now_mono_s, action, param);
+}
+
 void QuadrupedProcess::OnSoftEstop(double now_mono_s) {
   // 13 S9.12.2 (3) and T-1: the generation advances HERE and a zero frame goes
   // out NOW. Setting a flag for the next control period would be up to 10 ms of

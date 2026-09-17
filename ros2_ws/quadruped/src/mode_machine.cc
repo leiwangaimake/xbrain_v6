@@ -22,6 +22,8 @@
 
 #include "quadruped/mode_machine.h"
 
+#include "xbrain/errors/errors.h"
+
 #include <algorithm>
 
 namespace quadruped {
@@ -42,6 +44,27 @@ const char* ModeRejectItem(ModeReject r) {
     case ModeReject::kUnknownGait: return "unknown_gait";
   }
   return "invalid";
+}
+
+const char* ModeRejectCode(ModeReject r) {
+  // The codes come from the generated closed-set export, never from literals
+  // (CLAUDE.md 3.5). The mapping itself is the contract's:
+  //   PR-1  prone on a stair gait      -> a capability limit (11 S9.3.3)
+  //   GS-1  gait with no read-back     -> not implemented, deliberately
+  //   MS-3  a switch already in flight -> busy, retry after the window
+  switch (r) {
+    case ModeReject::kNone:
+      return "";
+    case ModeReject::kProneOnStair:
+      return hachist::xbrain::errors::kECapability.data();
+    case ModeReject::kGaitReadbackGap:
+      return hachist::xbrain::errors::kENotImplemented.data();
+    case ModeReject::kSwitchInFlight:
+      return hachist::xbrain::errors::kEBusy.data();
+    case ModeReject::kUnknownGait:
+      return hachist::xbrain::errors::kESchema.data();
+  }
+  return hachist::xbrain::errors::kESchema.data();
 }
 
 namespace {

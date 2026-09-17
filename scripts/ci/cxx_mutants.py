@@ -1204,6 +1204,97 @@ PROCESS_MUTANTS = [
      "  *out = last_odom_;\n  return true;"),
 ]
 
+# RT-plane ROUTING. The suite that matters most for the control path: every
+# mutant here is a message going to the wrong place, or a stop that did not
+# happen, and none of them changes anything a reviewer would notice by reading.
+RT_BRIDGE_CC = os.path.join(QUAD, "src", "rt_bridge.cc")
+RT_BRIDGE_SOURCES = [
+    RT_BRIDGE_CC,
+    os.path.join(QUAD, "src", "rt_parse.cc"),
+    os.path.join(QUAD, "src", "rt_keys.cc"),
+    os.path.join(QUAD, "src", "rt_payloads.cc"),
+    os.path.join(QUAD, "src", "process.cc"),
+    os.path.join(QUAD, "src", "chassis_socket.cc"),
+    os.path.join(QUAD, "src", "chs_a_codec.cc"),
+    os.path.join(QUAD, "src", "chs_a_framer.cc"),
+    os.path.join(QUAD, "src", "chs_a_reports.cc"),
+    os.path.join(QUAD, "src", "chs_a_session.cc"),
+    os.path.join(QUAD, "src", "mode_machine.cc"),
+    os.path.join(QUAD, "src", "odometry.cc"),
+    os.path.join(QUAD, "src", "quadruped_config.cc"),
+    os.path.join(QUAD, "src", "tier1.cc"),
+    os.path.join(QUAD, "src", "tx_owner.cc"),
+]
+RT_BRIDGE_TESTS = [os.path.join(QUAD, "test", "test_rt_bridge.cc")]
+
+RT_BRIDGE_MUTANTS = [
+    # *** THE ONE THIS FILE'S ORDERING EXISTS FOR. Stopping only when the
+    # payload parsed is the natural-looking version, and it silently removes
+    # the waiver of 11 S3.0.1: a truncated or hostile estop then does nothing.
+    ("rt_bridge: the estop stops only when the payload parsed",
+     RT_BRIDGE_CC,
+     "  if (!duplicate) {\n    proc_->OnSoftEstop(now_mono_s);",
+     "  EstopMsg pre;\n  ParseEstop(data, len, rid_, boot_, &pre);\n"
+     "  if (!duplicate && pre.envelope_ok) {\n    proc_->OnSoftEstop(now_mono_s);"),
+    # 11 S9.12.6: a duplicate is swallowed AND still acked. Dropping the ack
+    # makes the sender retry, which is the event storm the window prevents.
+    ("rt_bridge: a deduped estop is not acked",
+     RT_BRIDGE_CC, "  } else {\n    ++estop_deduped_;\n  }",
+     "  } else {\n    ++estop_deduped_;\n    return;\n  }"),
+    # ...and it must NOT advance the generation: a generation that moves on
+    # every repeat makes the upstream's echo permanently one behind.
+    ("rt_bridge: a duplicate advances the generation anyway",
+     RT_BRIDGE_CC,
+     "  const bool duplicate =\n      (last_estop_mono_s_ >= 0.0) &&\n"
+     "      (now_mono_s - last_estop_mono_s_) < kEstopDedupS;",
+     "  const bool duplicate = false;"),
+    ("rt_bridge: the dedup window swallows everything",
+     RT_BRIDGE_CC,
+     "      (now_mono_s - last_estop_mono_s_) < kEstopDedupS;",
+     "      (now_mono_s - last_estop_mono_s_) < 1.0e9;"),
+    # A refused command that is acted on anyway is the whole loosening rule,
+    # undone at the routing layer instead of at the parser.
+    ("rt_bridge: a refused cmd_vel is passed to the process anyway",
+     RT_BRIDGE_CC,
+     "    if (first_refusal_ == RtParse::kOk) first_refusal_ = r;\n    return;",
+     "    if (first_refusal_ == RtParse::kOk) first_refusal_ = r;"),
+    # At 20 Hz a refused stream and an absent one are the same observation.
+    # Losing the first reason removes the only thing that tells them apart.
+    ("rt_bridge: the first refusal reason is not remembered",
+     RT_BRIDGE_CC,
+     "    if (first_refusal_ == RtParse::kOk) first_refusal_ = r;",
+     "    /* not remembered */"),
+    ("rt_bridge: refusals are counted as acceptances",
+     RT_BRIDGE_CC, "    ++cmd_refused_;", "    ++cmd_ok_;"),
+    # 11 S9.3.3: a DELETED action answers E_CAPABILITY. E_SCHEMA sends the
+    # operator hunting a typo in a word that was valid last release.
+    ("rt_bridge: a deleted action is acked as malformed",
+     RT_BRIDGE_CC,
+     "    ack.code = (r == RtParse::kUnsupportedAction) ? err::kECapability.data()\n"
+     "                                                  : err::kESchema.data();",
+     "    ack.code = err::kESchema.data();"),
+    # An ack that only appears on success leaves the sender unable to tell
+    # "refused" from "lost", and it will retry a command that was refused.
+    ("rt_bridge: a refused ctrl command is not acked",
+     RT_BRIDGE_CC,
+     "    const std::size_t n = WriteCtrlAck(ack, out, sizeof(out));\n"
+     "    Publish(kCtrlAckSuffix, out, n);\n    return;",
+     "    return;"),
+    # 11 CR-12: the locks in an ack are READ-BACK values. Echoing "unlocked"
+    # because the request was accepted is the exact mistake the contract names.
+    ("rt_bridge: the ack reports the locks as already cleared",
+     RT_BRIDGE_CC,
+     "  ack.hes_lock = proc_->last_tier1().hes_lock;\n"
+     "  ack.timeout_lock = proc_->last_tier1().timeout_lock;",
+     "  ack.hes_lock = false;\n  ack.timeout_lock = false;"),
+    # 13 F-15: the far end reads silence as "the estop chain is dead" and
+    # degrades to hold. A publisher's bad field must not become a stopped robot.
+    ("rt_bridge: a malformed ping goes unanswered",
+     RT_BRIDGE_CC,
+     "  PongInput pong;\n  pong.seq = (r == RtParse::kOk || probe.env.seq != 0) ? probe.env.seq : 0;",
+     "  if (r != RtParse::kOk) return;\n  PongInput pong;\n  pong.seq = probe.env.seq;"),
+]
+
 # The RT-plane session CONFIG. Small suite, and the one that guards a failure
 # with no symptom: a wrong value here produces a session that connects, reports
 # no error and receives nothing (11 RT-C2, measured 2026-08-23).
@@ -1630,6 +1721,8 @@ SUITES = {
     "socket": (SOCKET_SOURCES, SOCKET_TESTS, SOCKET_MUTANTS, None, []),
     "process": (PROCESS_SOURCES, PROCESS_TESTS, PROCESS_MUTANTS, GOLDEN, []),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None, []),
+    "rt_bridge": (RT_BRIDGE_SOURCES, RT_BRIDGE_TESTS, RT_BRIDGE_MUTANTS, None,
+                  ["-I", os.path.join(ROOT, "common", "third_party")]),
     "rt_cfg": (RT_CFG_SOURCES, RT_CFG_TESTS, RT_CFG_MUTANTS,
                SESSION_FACTORY_PY, []),
     "rt_parse": (RT_PARSE_SOURCES, RT_PARSE_TESTS, RT_PARSE_MUTANTS, None,

@@ -70,6 +70,16 @@ enum class ModeReject {
 
 const char* ModeRejectItem(ModeReject r);
 
+// The closed-set error code that goes with a rejection. Here rather than at the
+// ack site because the MEANING of each rejection is this machine's -- PR-1 is a
+// capability limit, GS-1 is an unimplemented read-back, MS-3 is "busy" -- and a
+// caller picking codes would be a second copy of that judgement.
+//
+// Returns the exported constant from common/errors (CLAUDE.md 3.5), never a
+// literal: a hardcoded "E_CAPABILITY" here and an "E_Capability" there is the
+// kind of divergence that only surfaces during integration.
+const char* ModeRejectCode(ModeReject r);
+
 // The three read-back values, raw. Compared as a triple (MS-5).
 struct ModeTriple {
   std::int64_t usage_mode = 0;

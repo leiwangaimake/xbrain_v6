@@ -193,6 +193,18 @@ class QuadrupedProcess {
   // Tier 1 locks on the opening silence and nothing could ever unlock it.
   void OnEnable();
 
+  // A discrete chassis action from rt/chassis/ctrl (11 S9.3.3): stand, prone,
+  // a gait or a usage mode. Routed through the mode machine, which owns the
+  // read-back window (MS-1/MS-2) and the stair precondition of 13 PR-1 --
+  // none of which the caller should be re-deciding.
+  //
+  // Returns the machine's verdict so the ack can carry it. An ack that said
+  // "accepted" for a request the machine refused would be worse than no ack:
+  // 11 CR-12 is explicit that "ack = accepted" does not mean the lock cleared,
+  // and an operator who cannot trust the refusal either has nothing left.
+  ModeRequestResult OnChassisAction(double now_mono_s, ModeAction action,
+                                    std::int64_t param);
+
   // A soft stop. 13 S9.12.2 (3) and T-1: the generation advances HERE, in the
   // callback, and a zero frame goes out immediately rather than next period --
   // the next period is up to 10 ms away and the budget is 5 ms.
