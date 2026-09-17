@@ -88,6 +88,19 @@ class RtBridge {
   // subscription died, which is the one thing this probe exists to detect.
   void HandlePing(double now_mono_s, const char* data, std::size_t len);
 
+  // ---- outbound ----------------------------------------------------------
+  //
+  // One state publish, from a snapshot ctrl produced. Returns false when there
+  // was nothing new to send, which is the ordinary case for a publisher running
+  // faster than the producer -- not an error.
+  //
+  // *** It carries estop_epoch, and that is the point of this function today.
+  // 11:1722 makes the field mandatory on rt/motion/cmd_vel, and p1_motion
+  // cannot echo a generation it has never been told; 13 RX-3 and NEXT.md
+  // P7.3 (7) both record the dependency as "quadruped publishes it first".
+  // This is that publish.
+  bool PublishState(const QuadrupedProcess::StateSnapshot& snap);
+
   // ---- observables -------------------------------------------------------
   std::uint64_t cmd_vel_accepted() const { return cmd_ok_; }
   std::uint64_t cmd_vel_refused() const { return cmd_refused_; }
@@ -97,6 +110,7 @@ class RtBridge {
   std::uint64_t estops_deduped() const { return estop_deduped_; }
   std::uint64_t pongs_sent() const { return pongs_; }
   std::uint64_t acks_sent() const { return acks_; }
+  std::uint64_t states_published() const { return states_; }
 
   // Why the FIRST refused cmd_vel was refused, kOk while none has been. See the
   // file comment: at 20 Hz the difference between "refused" and "nobody is
@@ -121,6 +135,7 @@ class RtBridge {
   std::uint64_t estop_deduped_ = 0;
   std::uint64_t pongs_ = 0;
   std::uint64_t acks_ = 0;
+  std::uint64_t states_ = 0;
   RtParse first_refusal_ = RtParse::kOk;
 };
 

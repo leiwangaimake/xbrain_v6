@@ -112,6 +112,11 @@ target_link_libraries(quadruped_core PUBLIC pthread)
 add_executable(quadruped_m20 src/main.cc)
 target_link_libraries(quadruped_m20 PRIVATE quadruped_core)
 
+# The RT plane is linked in when zenoh-c is present. The guard is deferred to
+# the bottom of this file, after quadruped_rt is defined -- CMake needs the
+# target to exist before it can be linked, and defining it earlier would put
+# the optional dependency ahead of the core it depends on.
+
 # DEC-15 (99 U83): install root = /opt/xbrain_v6/data/install, supplied as the
 # per-package prefix. DESTINATION lib/${PROJECT_NAME} mirrors the layout every
 # other C++ unit already expects (<pkg>/lib/<pkg>/<exe>), which is the path in
@@ -184,7 +189,8 @@ find_library(ZENOHC_LIBRARY NAMES zenohc HINTS /usr/local/lib)
 find_path(ZENOHC_INCLUDE_DIR NAMES zenoh.h HINTS /usr/local/include)
 if(ZENOHC_LIBRARY AND ZENOHC_INCLUDE_DIR)
   message(STATUS "quadruped: zenoh-c found -- building the RT-plane session")
-  add_library(quadruped_rt STATIC src/rt_session.cc src/rt_session_config.cc)
+  add_library(quadruped_rt STATIC src/rt_session.cc src/rt_session_config.cc
+                                  src/rt_runtime.cc)
   target_include_directories(quadruped_rt PUBLIC include ${COMMON_INCLUDE}
                              ${ZENOHC_INCLUDE_DIR})
   target_link_libraries(quadruped_rt PUBLIC quadruped_core ${ZENOHC_LIBRARY})
@@ -239,6 +245,30 @@ if(CycloneDDS_FOUND AND IDLC_EXECUTABLE)
 else()
   message(STATUS "quadruped: CycloneDDS or idlc NOT found -- skipping the "
                  "domain-0 reader; core and tests still build")
+endif()
+
+# ---------------------------------------------------------------------------
+# The binary's RT plane, attached now that quadruped_rt exists.
+#
+# *** QUADRUPED_HAVE_RT IS NOT A DISTRIBUTION MACRO, and 13 PB-5 is about those.
+# PB-5 forbids branching on humble-vs-jazzy because D-45 is undecided and a
+# macro written today would have to be torn out when it lands. This one asks a
+# different question -- "is the optional dependency present in THIS build" --
+# which is the same question the find_package guards above already ask, and it
+# has an answer that does not depend on any pending decision.
+#
+# The binary is still built without zenoh, and it SAYS SO at startup rather than
+# coming up quietly with no way to receive a command. A process that looks alive
+# while nothing can reach it is the failure CLAUDE.md 3.2 puts first.
+if(TARGET quadruped_rt)
+  target_link_libraries(quadruped_m20 PRIVATE quadruped_rt)
+  target_compile_definitions(quadruped_m20 PRIVATE QUADRUPED_HAVE_RT=1)
+  message(STATUS "quadruped: quadruped_m20 links the RT plane")
+else()
+  message(WARNING "quadruped: quadruped_m20 is being built WITHOUT the RT "
+                  "plane -- it will run, drive the chassis and hold it safe, "
+                  "and it will not be able to RECEIVE a velocity command. "
+                  "Install zenoh-c to get a complete binary.")
 endif()
 
 # ---------------------------------------------------------------------------

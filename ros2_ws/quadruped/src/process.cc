@@ -45,6 +45,7 @@
 #include <ctime>
 
 #include "quadruped/chs_a_codec.h"
+#include "quadruped/mono_clock.h"
 #include "xbrain/rtcomm/rt_thread.h"
 
 namespace quadruped {
@@ -52,15 +53,6 @@ namespace {
 
 namespace rt = hachist::xbrain::rtcomm;
 
-// The monotonic clock, in seconds. Every deadline in this process is measured
-// on it (CLK-C1); the wall clock appears exactly once, in the ASDU Time field,
-// because the protocol asks for a local timestamp there.
-double MonoNow() {
-  timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return static_cast<double>(ts.tv_sec) +
-         static_cast<double>(ts.tv_nsec) * 1e-9;
-}
 
 std::int64_t WallNow() { return static_cast<std::int64_t>(::time(nullptr)); }
 
@@ -264,6 +256,22 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   // rotation.
   odom_slot_.Publish(last_odom_);
   ++odom_offered_;
+
+  // The state rt_pub publishes from. Built here, on the thread that owns every
+  // field in it, rather than read piecemeal from another thread -- the members
+  // below are plain and written every period, so a second reader would be a
+  // data race whose usual symptom is a correct-looking answer.
+  StateSnapshot snap;
+  snap.conn = session_.state();
+  snap.tier1 = last_tier1_;
+  snap.estop_epoch = estop_epoch_;
+  snap.cmd_age_ms =
+      have_cmd_ ? (now_mono_s - cmd_rx_mono_s_) * 1000.0 : -1.0;
+  snap.soft_estop_active = have_cmd_ && (cmd_estop_epoch_ != estop_epoch_);
+  snap.mode_switching = mode_.mode_switching();
+  snap.motion_allowed = session_.motion_allowed();
+  state_slot_.Publish(snap);
+
   last_ctrl_s_ = now_mono_s;
   mode_.Tick(now_mono_s);
 
@@ -279,6 +287,11 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
 bool QuadrupedProcess::TakeOdomForPublish(OdomSample* out) {
   if (out == nullptr) return false;
   return odom_slot_.TakeFresh(out);
+}
+
+bool QuadrupedProcess::TakeStateForPublish(StateSnapshot* out) {
+  if (out == nullptr) return false;
+  return state_slot_.TakeFresh(out);
 }
 
 QuadrupedProcess::LinkStatus QuadrupedProcess::link_status() const {
@@ -396,7 +409,7 @@ void QuadrupedProcess::CtrlLoop() {
   const auto period = std::chrono::duration<double>(period_s);
   auto next = std::chrono::steady_clock::now();
   while (running_.load(std::memory_order_acquire)) {
-    CtrlTick(MonoNow());
+    CtrlTick(MonoNowSeconds());
     // Absolute deadlines, not sleep-for. Sleeping for a period after the work
     // makes the loop drift by however long the work took, every period, and at
     // 100 Hz that drift is what the jitter budget is made of.
@@ -409,7 +422,7 @@ void QuadrupedProcess::RxLoop() {
   // Ordinary priority by design: the JSON parse lives here precisely so it is
   // NOT on a realtime thread.
   while (running_.load(std::memory_order_acquire)) {
-    const int n = RxPump(MonoNow());
+    const int n = RxPump(MonoNowSeconds());
     if (n == 0) {
       // Nothing waiting. A short sleep rather than a spin: this thread has no
       // deadline, and a spin would take a core away from one that does.

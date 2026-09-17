@@ -49,6 +49,7 @@ namespace err = hachist::xbrain::errors;
 constexpr const char* kCtrlAckSuffix = "rt/chassis/ctrl/ack";
 constexpr const char* kEstopAckSuffix = "rt/safety/estop/ack";
 constexpr const char* kPongSuffix = "rt/safety/probe/pong";
+constexpr const char* kStateSuffix = "rt/chassis/state";
 
 std::uint64_t ToMs(double s) {
   return s < 0.0 ? 0 : static_cast<std::uint64_t>(s * 1000.0 + 0.5);
@@ -67,7 +68,8 @@ RtBridge::RtBridge(QuadrupedProcess* proc, std::string rid, std::string boot,
   // suffix that is not there is a key nobody reviewed. Checked once here, at
   // construction, so the failure is a startup abort rather than a message that
   // goes somewhere nobody is listening.
-  for (const char* k : {kCtrlAckSuffix, kEstopAckSuffix, kPongSuffix}) {
+  for (const char* k : {kCtrlAckSuffix, kEstopAckSuffix, kPongSuffix,
+                        kStateSuffix}) {
     if (FindKey(k) == nullptr) {
       std::fprintf(stderr,
                    "rt_bridge: key %s is not declared in rt_keys.cc -- it is "
@@ -82,6 +84,29 @@ bool RtBridge::Publish(const std::string& suffix, const char* data,
   if (!publish_ || len == 0) return false;
   ++acks_;
   return publish_(suffix, data, len);
+}
+
+bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
+  RobotStateInput in;
+  in.conn = snap.conn;
+  // basic / motion / faults stay null. They hold std::string and therefore
+  // cannot cross the lock-free slot from ctrl (see StateSnapshot's comment);
+  // forwarding those four report streams belongs to the rx thread and is not
+  // in this batch. WriteRobotState emits the block as absent rather than as
+  // zeros -- "not reported yet" and "reported as zero" are different claims,
+  // and a zeroed chassis reads as a level robot at rest.
+  in.tier1 = snap.tier1;
+  in.estop_epoch = snap.estop_epoch;
+  in.soft_estop_active = snap.soft_estop_active;
+  in.cmd_age_ms = snap.cmd_age_ms;
+  in.mode_switching = snap.mode_switching;
+
+  char out[kOutCap];
+  const std::size_t n = WriteRobotState(in, out, sizeof(out));
+  if (n == 0) return false;
+  if (!Publish(kStateSuffix, out, n)) return false;
+  ++states_;
+  return true;
 }
 
 void RtBridge::HandleCmdVel(double now_mono_s, const char* data,

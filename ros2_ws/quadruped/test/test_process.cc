@@ -625,6 +625,61 @@ int main(int argc, char** argv) {
     CHECK(got.publish == false);           // the DECISION reached the publisher
   }
 
+  // ---- the state snapshot ctrl hands to rt_pub --------------------------
+  //
+  // Same slot discipline as the odometry, and asserted HERE rather than only in
+  // the bridge's tests: building it is the process's behaviour, and a mutant
+  // that stops offering it has to be caught by the process's own suite.
+  {
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+
+    QuadrupedProcess::StateSnapshot snap;
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    // Taken once, gone -- a publisher must not resend one period's state as if
+    // it were the next.
+    QuadrupedProcess::StateSnapshot again;
+    CHECK(p.TakeStateForPublish(&again) == false);
+
+    // The connection is the REAL one, not a constant. Before any report has
+    // arrived the session is still probing, and a snapshot that reported "ok"
+    // here would be the process claiming a link it does not have.
+    CHECK(snap.conn == p.conn_state());
+    CHECK(snap.conn != chs_a::ConnState::kOk);
+
+    chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
+    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
+    p.CtrlTick(0.6);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(snap.conn == chs_a::ConnState::kOk);     // ...and it followed
+    CHECK(snap.estop_epoch == p.estop_epoch());
+    CHECK(snap.tier1.stop_reason == p.last_tier1().stop_reason);
+    CHECK(snap.cmd_age_ms < 0.0);                  // nothing commanded yet
+
+    // *** The generation disagreement, which is what holds zero (13 S9.12.2
+    // (3)). A stop advances ours; a command still echoing the old one must show
+    // up here, or an operator looking at state/robot sees a stopped robot with
+    // no reason attached.
+    const std::uint64_t before = p.estop_epoch();
+    p.OnSoftEstop(0.61);
+    CHECK(p.estop_epoch() == before + 1);
+    p.OnCmdVel(0.62, 0.2, 0.0, 0.0, before);       // the OLD generation
+    p.CtrlTick(0.63);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(snap.soft_estop_active == true);
+    CHECK(snap.estop_epoch == before + 1);
+    CHECK(snap.cmd_age_ms > 0.0);
+
+    // ...and it clears by itself once the upstream catches up. It is not a
+    // lock, and reporting it as one would send someone looking for an unlock.
+    p.OnCmdVel(0.64, 0.2, 0.0, 0.0, p.estop_epoch());
+    p.CtrlTick(0.65);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(snap.soft_estop_active == false);
+  }
+
   // ---- many periods without a chassis: no crash, no motion --------------
   {
     // Nothing is listening. The process must survive the whole probe and

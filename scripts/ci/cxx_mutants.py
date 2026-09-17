@@ -1183,6 +1183,20 @@ PROCESS_MUTANTS = [
     # The counter the whole receive path is judged by.
     ("process: received frames are not counted",
      PROCESS_CC, "    ++frames_received_;", "    /* not counted */"),
+    # The state snapshot is built on the thread that owns every field in it.
+    # Reporting a constant instead is the mutant a reader cannot see: every
+    # message stays well formed and the robot's reported state stops moving.
+    ("process: the published state reports a stale connection",
+     PROCESS_CC, "  snap.conn = session_.state();",
+     "  snap.conn = chs_a::ConnState::kOk;"),
+    ("process: the state snapshot is never offered to rt_pub",
+     PROCESS_CC, "  state_slot_.Publish(snap);", "  /* not offered */"),
+    # 13 S9.12.2 (3): the disagreement is what holds zero. Reporting it as
+    # absent makes an operator look for a different cause.
+    ("process: the soft-estop disagreement is never reported",
+     PROCESS_CC,
+     "  snap.soft_estop_active = have_cmd_ && (cmd_estop_epoch_ != estop_epoch_);",
+     "  snap.soft_estop_active = false;"),
     # 13 S9.1 v1.11 / V-69: ctrl integrates and hands the sample to rt_pub.
     # Dropping the hand-off leaves the publisher with nothing while the process
     # looks entirely healthy from the chassis side.
@@ -1287,6 +1301,17 @@ RT_BRIDGE_MUTANTS = [
      "  ack.hes_lock = proc_->last_tier1().hes_lock;\n"
      "  ack.timeout_lock = proc_->last_tier1().timeout_lock;",
      "  ack.hes_lock = false;\n  ack.timeout_lock = false;"),
+    # *** The field p1_motion is waiting on. A state that reports a stale
+    # generation keeps p1 echoing the old one, and Tier 1 then holds zero
+    # forever waiting for a number that never arrives (11:1722, 13 RX-3).
+    ("rt_bridge: the published state reports a stale estop generation",
+     RT_BRIDGE_CC, "  in.estop_epoch = snap.estop_epoch;", "  in.estop_epoch = 0;"),
+    # 11 S4.1: "never commanded" and "commanded very long ago" are different
+    # facts. Reporting a huge age for the first makes a fresh boot look like a
+    # dropped link.
+    ("rt_bridge: a never-commanded age is published as a number",
+     RT_BRIDGE_CC, "  in.cmd_age_ms = snap.cmd_age_ms;",
+     "  in.cmd_age_ms = snap.cmd_age_ms < 0.0 ? 1.0e9 : snap.cmd_age_ms;"),
     # 13 F-15: the far end reads silence as "the estop chain is dead" and
     # degrades to hold. A publisher's bad field must not become a stopped robot.
     ("rt_bridge: a malformed ping goes unanswered",

@@ -48,8 +48,13 @@
 #include <string>
 #include <thread>
 
+#include <fstream>
+
 #include "quadruped/process.h"
 #include "quadruped/quadruped_config.h"
+#if QUADRUPED_HAVE_RT
+#include "quadruped/rt_runtime.h"
+#endif
 
 namespace {
 
@@ -83,6 +88,25 @@ void PrintUsage(const char* argv0) {
 volatile std::sig_atomic_t g_stop = 0;
 
 void OnSignal(int) { g_stop = 1; }
+
+// The first 8 hex of /proc/sys/kernel/random/boot_id, which is what 11 S3.0
+// puts in the envelope's `boot` field. It rides with `mono` so a receiver can
+// tell a monotonic reading from THIS boot from one that is not comparable with
+// its own clock (CLK-C4) -- a foreign mono produces an age wrong by however
+// long the two machines have been up, which looks like anything but a clock
+// problem.
+//
+// An unreadable boot id yields an empty string, and an empty one never matches,
+// so every `mono` we receive falls back to the receive-time age. That is the
+// safe direction: the fallback is merely less precise, while a wrong match is
+// an age that is wrong by hours.
+std::string ReadBootId() {
+  std::ifstream f("/proc/sys/kernel/random/boot_id");
+  std::string id;
+  if (!f || !(f >> id)) return std::string();
+  // "a1b2c3d4-...." -> "a1b2c3d4"
+  return id.substr(0, 8);
+}
 
 int Run(const std::string& path) {
   const quadruped::QuadrupedConfig cfg = quadruped::LoadQuadrupedConfig(path);
@@ -125,6 +149,41 @@ int Run(const std::string& path) {
                  proc.mlock_error());
   }
 
+#if QUADRUPED_HAVE_RT
+  // The RT plane. Started AFTER the process so a command arriving on the first
+  // millisecond has somewhere to go.
+  const std::string boot = ReadBootId();
+  if (boot.empty()) {
+    std::fprintf(stderr,
+                 "quadruped_m20: cannot read /proc/sys/kernel/random/boot_id "
+                 "-- every inbound `mono` will fall back to receive-time age "
+                 "(11 S3.0). Less precise, never wrong.\n");
+  }
+  quadruped::rt::RtRuntime rt(&proc, cfg, boot);
+  std::string rt_err;
+  const bool rt_up = rt.Start(&rt_err);
+  if (!rt_up) {
+    // Reported, and the process keeps running. Without the RT plane it cannot
+    // receive a command -- but it still holds the chassis safe, and Tier 1
+    // still stops it, which is the half that matters when the upstream is gone.
+    std::fprintf(stderr,
+                 "quadruped_m20: RT plane did NOT come up (%s). The chassis "
+                 "link and Tier 1 are running; no velocity command can be "
+                 "received until this is fixed.\n",
+                 rt_err.c_str());
+  } else {
+    std::printf("rt plane: connected to %s, %zu publishers, %zu subscribers\n",
+                cfg.uplink.zenoh_rt_endpoint.c_str(),
+                rt.session().publisher_count(), rt.session().subscriber_count());
+    std::fflush(stdout);
+  }
+#else
+  std::fprintf(stderr,
+               "quadruped_m20: built WITHOUT the RT plane -- this binary "
+               "cannot receive a velocity command. Install zenoh-c and "
+               "rebuild.\n");
+#endif
+
   // The link state as of the last line printed. Transitions are logged, steady
   // state is not: a line a second saying "still probing" is how a journal stops
   // being read. The FIRST comparison is against kProbing, which is the state
@@ -148,6 +207,38 @@ int Run(const std::string& path) {
                    proc.ctrl_priority_error());
     }
 
+#if QUADRUPED_HAVE_RT
+    // The RT plane, reported on the same transition-only basis as the chassis
+    // link. The refusal REASON is the important half (13 RX-9): a publisher
+    // that gets one field wrong produces a robot that never moves and a process
+    // that looks healthy, and without this line that is indistinguishable from
+    // nobody publishing at all.
+    if (rt_up) {
+      static std::uint64_t said_refused = 0;
+      const std::uint64_t refused = rt.bridge().cmd_vel_refused();
+      if (refused > 0 && said_refused == 0) {
+        said_refused = refused;
+        std::fprintf(stderr,
+                     "quadruped_m20: cmd_vel REFUSED (%llu so far, first "
+                     "reason: %s). The robot will not move until the publisher "
+                     "is fixed -- 11 S3.0.1 refuses a loosening command that is "
+                     "missing a mandatory field, and 11:1722 makes estop_epoch "
+                     "mandatory on this key.\n",
+                     static_cast<unsigned long long>(refused),
+                     quadruped::rt::RtParseName(rt.bridge().first_refusal()));
+      }
+      static bool said_accepted = false;
+      if (!said_accepted && rt.bridge().cmd_vel_accepted() > 0) {
+        said_accepted = true;
+        std::printf("quadruped_m20: cmd_vel accepted -- the RT plane path is "
+                    "live (accepted=%llu)\n",
+                    static_cast<unsigned long long>(
+                        rt.bridge().cmd_vel_accepted()));
+        std::fflush(stdout);
+      }
+    }
+#endif
+
     // The link. Without this the process is silent while it cannot reach the
     // chassis, which is indistinguishable from working -- CLAUDE.md 3.2 calls
     // that "assuming a guarantee you do not have", and it is the reason a dead
@@ -164,9 +255,25 @@ int Run(const std::string& path) {
                    static_cast<unsigned long long>(st.frames));
     }
   }
+#if QUADRUPED_HAVE_RT
+  // The RT plane goes down first: its subscriptions call into the process, and
+  // stopping the process while a callback is inside one is a use-after-free
+  // waiting for the right timing.
+  if (rt_up) rt.Stop();
+#endif
   proc.Stop();
-  std::printf("quadruped_m20: stopped after %llu control periods\n",
-              static_cast<unsigned long long>(proc.ctrl_ticks()));
+  // The axis count is printed because "the robot did not move" needs to be a
+  // NUMBER, not an inference from "we did not send an enable". Tier 1 holding
+  // zero and Tier 1 having been unlocked without anyone noticing look the same
+  // from outside the process; this is the line that tells them apart.
+  std::printf("quadruped_m20: stopped after %llu control periods "
+              "(axis frames sent=%llu, heartbeats=%llu, tx skipped=%llu, "
+              "stop_reason=%s)\n",
+              static_cast<unsigned long long>(proc.ctrl_ticks()),
+              static_cast<unsigned long long>(proc.axis_frames_sent()),
+              static_cast<unsigned long long>(proc.heartbeats_sent()),
+              static_cast<unsigned long long>(proc.tx_skipped()),
+              std::string(StopReasonName(proc.last_tier1().stop_reason)).c_str());
   return kExitOk;
 }
 

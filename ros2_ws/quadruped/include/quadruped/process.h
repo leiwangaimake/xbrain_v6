@@ -170,6 +170,37 @@ class QuadrupedProcess {
   // pose, not work through a backlog of stale ones. That is RTC-6, and for an
   // odometry a stale sample is a QD-5 violation rather than a latency figure.
   bool TakeOdomForPublish(OdomSample* out);
+
+  // What rt_pub needs to build a RobotState, as a POD.
+  //
+  // It carries only the fields CTRL owns. The chassis's own reports are NOT
+  // here and cannot be: BasicStatus and MotionStatus hold std::string (model,
+  // version, serial), so they are not trivially copyable and LockfreeSlot
+  // refuses them -- which is the compiler enforcing 12 RTC-6 rather than a
+  // preference. Forwarding those four report streams is the rx thread's job,
+  // on its own ordinary-priority thread where allocating is allowed.
+  //
+  // Consequence, stated rather than discovered: rt/chassis/state published from
+  // this snapshot carries NO basic/motion block yet (WriteRobotState accepts
+  // null for both). What it does carry is estop_epoch, which is the field
+  // p1_motion is waiting on (11:1722 / 13 RX-3).
+  struct StateSnapshot {
+    chs_a::ConnState conn = chs_a::ConnState::kProbing;
+    Tier1Output tier1;
+    std::uint64_t estop_epoch = 0;
+    // Milliseconds, as 11 S4.1 names the field. Negative means no command has
+    // arrived, which is reported as null rather than as a very large age.
+    double cmd_age_ms = -1.0;
+    // 13 S9.12.2 (3): the last command echoed a generation other than ours.
+    // NOT a lock -- it clears by itself when the upstream catches up.
+    bool soft_estop_active = false;
+    bool mode_switching = false;
+    bool motion_allowed = false;
+  };
+
+  // The newest snapshot, or false when ctrl has not produced one since the last
+  // call. Same slot discipline as the odometry: newest wins, no backlog.
+  bool TakeStateForPublish(StateSnapshot* out);
   // How many integrated samples ctrl has offered. Compared against what the
   // publisher actually sent, the difference is the overrun rate -- the number
   // T-ODOM-1 is about, and the one V-69 put on the table.
@@ -244,6 +275,7 @@ class QuadrupedProcess {
   // reason (RTC-6): it is the only cross-thread hand-off that cannot block the
   // realtime side and cannot accumulate stale samples.
   hachist::xbrain::rtcomm::LockfreeSlot<OdomSample> odom_slot_;
+  hachist::xbrain::rtcomm::LockfreeSlot<StateSnapshot> state_slot_;
   std::uint64_t odom_offered_ = 0;
   ChassisSnapshot latest_;
   bool have_snapshot_ = false;

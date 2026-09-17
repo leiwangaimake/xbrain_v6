@@ -328,6 +328,76 @@ int main() {
     CHECK(b.pongs_sent() == 2);   // *** answered anyway
   }
 
+  // ---- *** rt/chassis/state carries estop_epoch ---------------------------
+  //
+  // This is the field p1_motion is waiting on. 11:1722 makes it mandatory on
+  // rt/motion/cmd_vel, and p1 cannot echo a generation nobody has told it;
+  // 13 RX-3 and NEXT.md P7.3 (7) both record the order as "quadruped publishes
+  // it first". So what is asserted is not that a state message went out -- it
+  // is that the epoch in it TRACKS the process, including across a stop.
+  {
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+
+    p.CtrlTick(0.0);
+    QuadrupedProcess::StateSnapshot snap;
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(snap.estop_epoch == p.estop_epoch());
+    CHECK(b.PublishState(snap) == true);
+    CHECK(sent.back().key == "rt/chassis/state");
+    CHECK(b.states_published() == 1);
+    // No command yet, so the age is reported as null rather than as a huge
+    // number -- "never" and "very old" are different facts (11 S4.1).
+    CHECK(Has(sent.back().body, "\"cmd_age_ms\": null") ||
+          Has(sent.back().body, "\"cmd_age_ms\":null"));
+
+    // A stop advances the generation, and the NEXT published state must show
+    // it. A state that lagged here would keep p1 echoing the old generation,
+    // and Tier 1 would hold zero forever waiting for a number that never comes.
+    const std::string stop = Wrap("{\"cmd_id\":\"e-9\",\"action\":\"stop\"}");
+    b.HandleEstop(1.0, stop.c_str(), stop.size());
+    const std::uint64_t after = p.estop_epoch();
+    CHECK(after >= 1);
+    p.CtrlTick(1.01);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(snap.estop_epoch == after);
+    CHECK(b.PublishState(snap) == true);
+    {
+      char want[64];
+      std::snprintf(want, sizeof(want), "\"estop_epoch\": %llu",
+                    static_cast<unsigned long long>(after));
+      char want2[64];
+      std::snprintf(want2, sizeof(want2), "\"estop_epoch\":%llu",
+                    static_cast<unsigned long long>(after));
+      CHECK(Has(sent.back().body, want) || Has(sent.back().body, want2));
+    }
+
+    // The slot is a slot: taken once, and the newest wins.
+    QuadrupedProcess::StateSnapshot again;
+    CHECK(p.TakeStateForPublish(&again) == false);
+    for (int i = 0; i < 5; ++i) p.CtrlTick(1.02 + 0.01 * i);
+    CHECK(p.TakeStateForPublish(&again) == true);
+    CHECK(p.TakeStateForPublish(&snap) == false);
+
+    // With a command in hand the age becomes a number.
+    const std::string good = Wrap(
+        "{\"vx\":0.1,\"vy\":0.0,\"wz\":0.0,\"vz\":0.0,\"v_roll\":0.0,"
+        "\"v_pitch\":0.0,\"estop_epoch\":0}");
+    b.HandleCmdVel(2.0, good.c_str(), good.size());
+    p.CtrlTick(2.05);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(snap.cmd_age_ms > 40.0);
+    CHECK(snap.cmd_age_ms < 60.0);
+    // ...and the generation disagreement is visible while it lasts: the command
+    // echoed 0 and the process now holds `after`.
+    CHECK(snap.soft_estop_active == (after != 0));
+  }
+
   if (g_failures == 0) {
     std::printf("ALL RT BRIDGE TESTS PASSED\n");
     return 0;
