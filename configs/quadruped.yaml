@@ -91,6 +91,11 @@ quadruped:
     domain_id: 0                        # DDS-1 显式传域号, NO 不读环境变量
     imu_topic: "/IMU"                   # 答复建议;实测 201 Hz, frame_id 为空
     imu_expect_hz: 200.0
+    # 13 DDS-9 / 2026-09-17 实测: 不指定网口时 CycloneDDS 自己挑一个,
+    # 本机 wifi 在 192.168.1.8 而底盘在 10.21.33.200, 它挑了前者 ->
+    # participant 起来, topic 存在, 零个样本, 与网络不通不可区分.
+    # NO 不得留空, 也不得写默认值(CLAUDE.md 3.1).
+    network_interface: "enx00e04c3600fb"
     imu_age_warn_ms: 50                 # 13 S4.5
     imu_frame_id: "imu_link"            # TF-1 底盘不给 frame_id,我方赋值
     drdds:

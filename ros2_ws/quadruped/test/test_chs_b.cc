@@ -116,6 +116,14 @@ ChassisDdsConfig Cfg() {
   ChassisDdsConfig c;
   c.backend = "cyclone_raw";
   c.domain_id = 0;               // 13 DDS-1: the chassis domain
+  // *** Loopback, and that is a second isolation on top of kTestDomain.
+  //
+  // The chassis link is a real NIC on this machine, and a test that bound it
+  // would put its writer's frames on the wire beside a live robot. Binding lo
+  // keeps every frame this test produces inside the host, whatever domain it
+  // ends up on -- belt as well as braces, because the domain number is one
+  // edit away from being wrong and the interface is not.
+  c.network_interface = "lo";
   c.imu_topic = "/IMU";
   c.imu_expect_hz = 200.0;
   c.imu_age_warn_ms = 50;

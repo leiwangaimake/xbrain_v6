@@ -226,7 +226,8 @@ if(CycloneDDS_FOUND AND IDLC_EXECUTABLE)
     DEPENDS ${CHS_B_IDL}
     COMMENT "idlc: generating the domain-0 type support")
 
-  add_library(quadruped_chs_b STATIC src/chs_b.cc ${CHS_B_GEN_C})
+  add_library(quadruped_chs_b STATIC src/chs_b.cc src/chs_b_runtime.cc
+                                     ${CHS_B_GEN_C})
   target_include_directories(quadruped_chs_b PUBLIC include ${COMMON_INCLUDE}
                              ${CMAKE_CURRENT_BINARY_DIR})
   target_link_libraries(quadruped_chs_b PUBLIC quadruped_core CycloneDDS::ddsc)
@@ -260,6 +261,18 @@ endif()
 # The binary is still built without zenoh, and it SAYS SO at startup rather than
 # coming up quietly with no way to receive a command. A process that looks alive
 # while nothing can reach it is the failure CLAUDE.md 3.2 puts first.
+# Channel two, same optional-dependency shape as the RT plane above.
+if(TARGET quadruped_chs_b)
+  target_link_libraries(quadruped_m20 PRIVATE quadruped_chs_b)
+  target_compile_definitions(quadruped_m20 PRIVATE QUADRUPED_HAVE_CHS_B=1)
+  message(STATUS "quadruped: quadruped_m20 links channel two (domain-0 IMU)")
+else()
+  message(WARNING "quadruped: quadruped_m20 is being built WITHOUT channel "
+                  "two -- the odometry will run on the monitor protocol's "
+                  "10 Hz velocity and yaw (13 S4.2 row 2), which is the "
+                  "DEGRADED source. Install CycloneDDS to get the 200 Hz one.")
+endif()
+
 if(TARGET quadruped_rt)
   target_link_libraries(quadruped_m20 PRIVATE quadruped_rt)
   target_compile_definitions(quadruped_m20 PRIVATE QUADRUPED_HAVE_RT=1)

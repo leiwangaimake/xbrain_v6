@@ -221,6 +221,51 @@ class QuadrupedProcess {
                                         const chs_a::DeviceStatus*,
                                         const chs_a::FaultReport*)>;
   void SetReportSink(ReportSink sink);
+
+  // ---- channel two, the domain-0 sources (13 S4.2) ----------------------
+  //
+  // Called from the chs_b thread (SCHED_FIFO 70), so both go through a
+  // lock-free slot exactly as chs_a_rx's snapshot does -- same thread boundary,
+  // same rule (12 RTC-6).
+  //
+  // 13 S4.2's priority tables, and how each half is decided:
+  //
+  //   ANGULAR  1) /IMU 200 Hz  2) the monitor protocol's OmegaZ, 10 Hz, "IMU
+  //            失效时降级". The threshold is CONFIGURED -- chassis_dds
+  //            .imu_age_warn_ms, whose own comment reads "older than this ->
+  //            yaw falls back to the 10 Hz source" -- so it is read, not
+  //            invented.
+  //   LINEAR   1) /MOTION_INFO 20 Hz  2) the monitor protocol's LinearX/Y,
+  //            10 Hz. There is NO configured threshold for this one, and
+  //            CLAUDE.md 3.1 forbids inventing a safety parameter here, so the
+  //            rule is "the NEWER sample wins": at 20 Hz against 10 Hz the
+  //            drdds source wins nearly every period (which is the priority the
+  //            table asks for), and if it dies the monitor reports start
+  //            winning by themselves. No constant, no silent default.
+  //
+  // 13 S4.2 also bans a third source outright: the axis command read back as
+  // velocity. Using a commanded value as feedback is open loop pretending to be
+  // closed loop, and there is deliberately no entry point for it here.
+  void OnImu(double now_mono_s, double wz);
+  void OnMotionInfo(double now_mono_s, double vx, double vy);
+
+  // Which source fed the odometry on the last control period. Published so the
+  // degradation is VISIBLE: the covariance model does not know the difference
+  // between a 200 Hz yaw and a 10 Hz one, so nothing downstream would show it.
+  enum class OdomSource { kNone, kMonitor, kDrdds };
+  OdomSource linear_source() const { return linear_src_; }
+  OdomSource angular_source() const { return angular_src_; }
+
+  // How many control periods each source fed. Reported instead of the
+  // instantaneous winner because the two linear sources run at 20 Hz and 10 Hz
+  // and the winner alternates -- measured on the chassis 2026-09-17 -- so a
+  // line that printed the winner would flap, and a diagnostic that flaps is a
+  // diagnostic that gets ignored. The counts do not flap and they answer the
+  // question that matters: is the 20 Hz source contributing at all.
+  std::uint64_t linear_from_drdds() const { return lin_drdds_; }
+  std::uint64_t linear_from_monitor() const { return lin_monitor_; }
+  std::uint64_t angular_from_drdds() const { return ang_drdds_; }
+  std::uint64_t angular_from_monitor() const { return ang_monitor_; }
   std::uint64_t reports_forwarded() const { return reports_forwarded_; }
   // How many integrated samples ctrl has offered. Compared against what the
   // publisher actually sent, the difference is the overrun rate -- the number
@@ -297,6 +342,29 @@ class QuadrupedProcess {
   // realtime side and cannot accumulate stale samples.
   hachist::xbrain::rtcomm::LockfreeSlot<OdomSample> odom_slot_;
   hachist::xbrain::rtcomm::LockfreeSlot<StateSnapshot> state_slot_;
+
+  // chs_b -> ctrl. Trivially copyable by requirement, like every other slot
+  // payload in this class.
+  struct ImuTick {
+    double wz = 0.0;
+    double rx_mono_s = -1.0;
+  };
+  struct MotionInfoTick {
+    double vx = 0.0;
+    double vy = 0.0;
+    double rx_mono_s = -1.0;
+  };
+  hachist::xbrain::rtcomm::LockfreeSlot<ImuTick> imu_slot_;
+  hachist::xbrain::rtcomm::LockfreeSlot<MotionInfoTick> mi_slot_;
+  ImuTick last_imu_;
+  MotionInfoTick last_mi_;
+  // When the MONITOR velocity last arrived. Distinct from the snapshot's
+  // rx_mono_s, which every report refreshes whether or not it carries one.
+  double last_monitor_vel_s_ = -1.0;
+  OdomSource linear_src_ = OdomSource::kNone;
+  OdomSource angular_src_ = OdomSource::kNone;
+  std::uint64_t lin_drdds_ = 0, lin_monitor_ = 0;
+  std::uint64_t ang_drdds_ = 0, ang_monitor_ = 0;
   std::uint64_t odom_offered_ = 0;
   ReportSink report_sink_;
   std::uint64_t reports_forwarded_ = 0;

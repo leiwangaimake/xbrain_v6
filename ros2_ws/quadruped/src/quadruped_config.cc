@@ -211,6 +211,20 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
     cfg.dds.backend = root.require_string(K("chassis_dds.backend"));
     cfg.dds.domain_id =
         static_cast<int>(root.require_int(K("chassis_dds.domain_id")));
+    // require_string, not an optional read: see the field's comment. A missing
+    // NIC name is a config error that fails at startup with the key path, and
+    // the alternative is a participant that binds the wrong interface and is
+    // silent forever.
+    //
+    // There is deliberately NO extra empty-string check here. yaml_lite maps an
+    // empty scalar to null, so `network_interface: ""` is refused by
+    // require_string with the CLAUDE.md 3.1 message that names the key path --
+    // a better message than one written here, and one behaviour instead of two.
+    // A hand-written check was tried and removed: it was unreachable through
+    // YAML, which the mutant run showed by surviving. ChassisDds keeps its own
+    // guard, because that class can be constructed without this loader.
+    cfg.dds.network_interface =
+        root.require_string(K("chassis_dds.network_interface"));
     cfg.dds.imu_topic = root.require_string(K("chassis_dds.imu_topic"));
     cfg.dds.imu_expect_hz = root.require_double(K("chassis_dds.imu_expect_hz"));
     cfg.dds.imu_age_warn_ms =

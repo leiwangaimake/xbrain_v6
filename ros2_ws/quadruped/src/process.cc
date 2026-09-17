@@ -45,6 +45,7 @@
 #include <ctime>
 
 #include "quadruped/chs_a_codec.h"
+#include "quadruped/dds_names.h"
 #include "quadruped/mono_clock.h"
 #include "xbrain/rtcomm/rt_thread.h"
 
@@ -160,6 +161,15 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
     }
     if (fresh.from_motion) {
       odom_.OnVelocitySample(fresh.rx_mono_s, fresh.linear_x, fresh.linear_y);
+      // When the MONITOR velocity last arrived -- not when any report did. The
+      // linear source choice below compares against this, and the two are not
+      // the same thing: basic, device and fault reports all refresh
+      // latest_.rx_mono_s without carrying a velocity, so comparing against
+      // that made a 20 Hz drdds source lose to a 2 Hz fault report. Found on
+      // the real chassis (2026-09-17: angular=drdds while linear fell back to
+      // monitor_10hz with drdds publishing at 19 Hz); the offline test missed
+      // it because it only ever sent motion reports.
+      last_monitor_vel_s_ = fresh.rx_mono_s;
       // Until the domain-0 IMU reader is wired, the yaw rate comes from the
       // 10 Hz monitor protocol. 13 S4.2 names this the DEGRADED source, and the
       // covariance model does not know the difference -- which is a gap worth
@@ -244,6 +254,48 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
     }
   }
 
+  // ---- 4b. channel two, and the source choice (13 S4.2) -----------------
+  {
+    ImuTick imu;
+    if (imu_slot_.TakeFresh(&imu)) last_imu_ = imu;
+    MotionInfoTick mi;
+    if (mi_slot_.TakeFresh(&mi)) last_mi_ = mi;
+
+    // ANGULAR. The threshold is the configured one, whose own comment says what
+    // it is for. ClassifyImuAge draws the "never seen" case apart from "stale"
+    // -- they call for the same fallback but a different message, and merging
+    // them is how "the IMU was never wired" gets reported as "the IMU is late".
+    const double imu_age =
+        (last_imu_.rx_mono_s < 0.0) ? -1.0 : (now_mono_s - last_imu_.rx_mono_s);
+    const ImuFreshness imu_fresh =
+        ClassifyImuAge(imu_age, cfg_.dds.imu_age_warn_ms);
+    if (imu_fresh == ImuFreshness::kFresh) {
+      odom_.OnYawRate(last_imu_.wz);
+      angular_src_ = OdomSource::kDrdds;
+      ++ang_drdds_;
+    } else if (have_snapshot_ && latest_.from_motion) {
+      // Degraded, per the table's second row. The monitor value was already
+      // handed to the odometry in step 1; recording the source here is what
+      // makes the degradation visible at all.
+      angular_src_ = OdomSource::kMonitor;
+      ++ang_monitor_;
+    } else {
+      angular_src_ = OdomSource::kNone;
+    }
+
+    // LINEAR. Newest wins -- see the header for why there is no threshold here.
+    const bool mi_newer = last_mi_.rx_mono_s >= 0.0 &&
+                          last_mi_.rx_mono_s > last_monitor_vel_s_;
+    if (mi_newer) {
+      odom_.OnVelocitySample(last_mi_.rx_mono_s, last_mi_.vx, last_mi_.vy);
+      linear_src_ = OdomSource::kDrdds;
+      ++lin_drdds_;
+    } else if (last_monitor_vel_s_ >= 0.0) {
+      linear_src_ = OdomSource::kMonitor;
+      ++lin_monitor_;
+    }
+  }
+
   // ---- 5. the odometry --------------------------------------------------
   const double dt = (last_ctrl_s_ < 0.0) ? (1.0 / cfg_.tier1.control_loop_hz)
                                          : (now_mono_s - last_ctrl_s_);
@@ -287,6 +339,21 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
 bool QuadrupedProcess::TakeOdomForPublish(OdomSample* out) {
   if (out == nullptr) return false;
   return odom_slot_.TakeFresh(out);
+}
+
+void QuadrupedProcess::OnImu(double now_mono_s, double wz) {
+  ImuTick t;
+  t.wz = wz;
+  t.rx_mono_s = now_mono_s;
+  imu_slot_.Publish(t);
+}
+
+void QuadrupedProcess::OnMotionInfo(double now_mono_s, double vx, double vy) {
+  MotionInfoTick t;
+  t.vx = vx;
+  t.vy = vy;
+  t.rx_mono_s = now_mono_s;
+  mi_slot_.Publish(t);
 }
 
 void QuadrupedProcess::SetReportSink(ReportSink sink) {

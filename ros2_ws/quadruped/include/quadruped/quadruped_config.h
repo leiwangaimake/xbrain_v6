@@ -199,6 +199,20 @@ struct ChassisDdsConfig {
   std::string backend;     // "cyclone_raw" | "fastdds_vendored" (the fallback if
                            // the cross-vendor RTPS test T-CHS-1 fails)
   int domain_id = 0;       // DDS-1: passed explicitly, never from the environment
+  // *** The NIC the domain-0 participant binds to. REQUIRED, no default.
+  //
+  // CycloneDDS picks one interface by itself when none is named, and on this
+  // machine it picks the wrong one: the ORIN has wifi on 192.168.1.8 and the
+  // chassis link on 10.21.33.200, and a participant bound to the first comes up
+  // clean, reports no error and receives nothing -- which 13 DDS-9 records as
+  // indistinguishable from a dead network. Measured 2026-09-17: with no
+  // interface named, imu_samples stayed at 0 against a chassis that was
+  // publishing /IMU the whole time.
+  //
+  // It has no default for the same reason spec.* has none (CLAUDE.md 3.1): a
+  // guess that is wrong fails silently, and this one fails silently in the
+  // direction of "the better odometry source simply never arrives".
+  std::string network_interface;
   std::string imu_topic;   // /IMU (measured 201 Hz, frame_id empty)
   double imu_expect_hz = 0.0;
   int imu_age_warn_ms = 0; // ms  older than this -> yaw falls back to the 10 Hz source

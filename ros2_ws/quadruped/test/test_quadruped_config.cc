@@ -96,6 +96,7 @@ const char* kGood =
     "    domain_id: 0\n"
     "    forward_imu_to_rt: false\n"
     "    imu_age_warn_ms: 50\n"
+    "    network_interface: \"lo\"\n"
     "    imu_expect_hz: 200.0\n"
     "    imu_frame_id: imu_link\n"
     "    imu_rt_key: ''\n"
@@ -435,6 +436,38 @@ int main(int argc, char** argv) {
 
   // ---- a missing file is an error, never an empty config ------------------
   CHECK(Throws([&] { LoadQuadrupedConfig(g_dir + "/does_not_exist.yaml"); }));
+
+  // ---- an EMPTY domain-0 interface is refused (13 DDS-9) -----------------
+  //
+  // The key being present is not enough. CycloneDDS takes an empty name as
+  // "no interface given" and picks one itself; on this host that is the wifi
+  // NIC while the chassis is on another, and the participant then comes up
+  // clean and receives nothing. Measured 2026-09-17 -- imu_samples stayed at 0
+  // against a chassis that was publishing /IMU throughout.
+  {
+    std::string text = kGood;
+    const std::string from = "network_interface: \"lo\"";
+    const std::string to = "network_interface: \"\"";
+    const std::size_t at = text.find(from);
+    CHECK(at != std::string::npos);
+    text.replace(at, from.size(), to);
+    const std::string path = WriteTemp("q_empty_iface.yaml", text);
+    // The message is asserted, not just the throw. yaml_lite could reject an
+    // empty quoted scalar for its own reasons, and then this case would pass
+    // against a loader that had no interface check at all -- which is exactly
+    // what the mutant run showed before this line was added.
+    std::string what;
+    try {
+      LoadQuadrupedConfig(path);
+    } catch (const ConfigError& e) {
+      what = e.what();
+    }
+    CHECK(what.find("network_interface") != std::string::npos);
+    // yaml_lite maps an empty scalar to NULL, so this lands on the CLAUDE.md
+    // 3.1 uncalibrated-key path rather than on any check written by hand -- the
+    // same treatment spec.* gets, and the message names the key.
+    CHECK(what.find("null") != std::string::npos);
+  }
 
   if (g_failures == 0) {
     std::printf("ALL QUADRUPED_CONFIG TESTS PASSED\n");

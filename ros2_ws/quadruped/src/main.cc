@@ -52,6 +52,9 @@
 
 #include "quadruped/process.h"
 #include "quadruped/quadruped_config.h"
+#if QUADRUPED_HAVE_CHS_B
+#include "quadruped/chs_b_runtime.h"
+#endif
 #if QUADRUPED_HAVE_RT
 #include "quadruped/rt_runtime.h"
 #endif
@@ -149,6 +152,32 @@ int Run(const std::string& path) {
                  proc.mlock_error());
   }
 
+#if QUADRUPED_HAVE_CHS_B
+  // Channel two. A failure here does NOT stop the process: 13 S4.2's second row
+  // is the whole point of having a priority table, and a robot that refuses to
+  // run because the better odometry source is missing is worse than one that
+  // runs on the 10 Hz source and says which one it is using.
+  quadruped::ChsBRuntime chs_b(&proc, cfg);
+  std::string chs_b_err;
+  const bool chs_b_up = chs_b.Start(&chs_b_err);
+  if (!chs_b_up) {
+    std::fprintf(stderr,
+                 "quadruped_m20: channel two did NOT come up (%s) -- the "
+                 "odometry runs on the monitor protocol's 10 Hz velocity and "
+                 "yaw (13 S4.2 row 2), which is the DEGRADED source.\n",
+                 chs_b_err.c_str());
+  } else {
+    std::printf("chs_b: domain %d, %s at %.0f Hz expected\n",
+                chs_b.actual_domain_id(), cfg.dds.imu_topic.c_str(),
+                cfg.dds.imu_expect_hz);
+    std::fflush(stdout);
+  }
+#else
+  std::fprintf(stderr,
+               "quadruped_m20: built WITHOUT channel two -- the odometry runs "
+               "on the 10 Hz DEGRADED source (13 S4.2 row 2).\n");
+#endif
+
 #if QUADRUPED_HAVE_RT
   // The RT plane. Started AFTER the process so a command arriving on the first
   // millisecond has somewhere to go.
@@ -239,6 +268,37 @@ int Run(const std::string& path) {
     }
 #endif
 
+#if QUADRUPED_HAVE_CHS_B
+    // *** The odometry sources, as COUNTS rather than as this tick's winner.
+    //
+    // Both linear sources are real measurements of the same body, so the pose
+    // is right either way and the winner alternates: drdds runs at 20 Hz and
+    // the monitor at 10, and on the chassis they trade periods (measured
+    // 2026-09-17). A line that printed the winner would flap, and a diagnostic
+    // that flaps is one people learn to ignore. The counts answer the question
+    // that actually matters -- is the 200 Hz / 20 Hz source contributing --
+    // and 13 S4.2 calls the other row the DEGRADED source, which nothing
+    // downstream can see: both produce a pose, and the covariance model does
+    // not know the difference.
+    {
+      static std::uint64_t said_at = 0;
+      if (proc.ctrl_ticks() - said_at >= 500) {     // ~5 s at 100 Hz
+        said_at = proc.ctrl_ticks();
+        std::fprintf(stderr,
+                     "quadruped_m20: odom periods -- angular drdds=%llu "
+                     "monitor=%llu | linear drdds=%llu monitor=%llu "
+                     "(imu rx=%llu, motion_info rx=%llu)\n",
+                     static_cast<unsigned long long>(proc.angular_from_drdds()),
+                     static_cast<unsigned long long>(proc.angular_from_monitor()),
+                     static_cast<unsigned long long>(proc.linear_from_drdds()),
+                     static_cast<unsigned long long>(proc.linear_from_monitor()),
+                     static_cast<unsigned long long>(chs_b_up ? chs_b.imu_samples() : 0),
+                     static_cast<unsigned long long>(
+                         chs_b_up ? chs_b.motion_info_samples() : 0));
+      }
+    }
+#endif
+
     // The link. Without this the process is silent while it cannot reach the
     // chassis, which is indistinguishable from working -- CLAUDE.md 3.2 calls
     // that "assuming a guarantee you do not have", and it is the reason a dead
@@ -260,6 +320,10 @@ int Run(const std::string& path) {
   // stopping the process while a callback is inside one is a use-after-free
   // waiting for the right timing.
   if (rt_up) rt.Stop();
+#endif
+#if QUADRUPED_HAVE_CHS_B
+  // Same reason, same order.
+  if (chs_b_up) chs_b.Stop();
 #endif
   proc.Stop();
   // The axis count is printed because "the robot did not move" needs to be a

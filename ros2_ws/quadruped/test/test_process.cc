@@ -253,6 +253,17 @@ QuadrupedConfig Cfg(int port) {
   c.odom.stale_warn_ms = 150;
   c.odom.stale_invalid_ms = 300;
   c.odom.stale_stop_publish_ms = 1000;
+  // Channel two. imu_age_warn_ms is the ONE number that decides the yaw
+  // fallback of 13 S4.2, and it is set here rather than left at the struct's
+  // zero: a zero threshold classifies every sample as stale, so the IMU branch
+  // would never be taken and the fallback cases below would pass against an
+  // implementation that had no IMU path at all.
+  c.dds.domain_id = 0;
+  c.dds.imu_topic = "/IMU";
+  c.dds.imu_expect_hz = 200.0;
+  c.dds.imu_age_warn_ms = 50;
+  c.dds.imu_frame_id = "imu_link";
+  c.dds.forward_imu_to_rt = false;
   return c;
 }
 
@@ -844,6 +855,89 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
     CHECK(p.frames_received() >= 1);
     CHECK(p.reports_forwarded() == 0);
+  }
+
+  // ---- 13 S4.2's two priority tables, including the fall BACK ------------
+  //
+  // The fallback is the half worth testing. Both sources feed the same
+  // odometry, so a wrong choice produces a pose that is merely less accurate --
+  // no error, no warning, and a covariance that does not know the difference.
+  // The only way it becomes visible is by being reported, so it is reported and
+  // that report is what these cases assert.
+  {
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    // Nothing from either source yet.
+    CHECK(p.angular_source() == QuadrupedProcess::OdomSource::kNone);
+
+    // The monitor report arrives: the 10 Hz source, priority 2 on both tables.
+    chassis.Send(golden.at("RX_00100001_00f00000"));
+    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
+    p.CtrlTick(0.60);
+    CHECK(p.angular_source() == QuadrupedProcess::OdomSource::kMonitor);
+    CHECK(p.linear_source() == QuadrupedProcess::OdomSource::kMonitor);
+
+    // *** /IMU arrives. Priority 1 on the angular table, and it takes over.
+    p.OnImu(0.61, 0.25);
+    p.CtrlTick(0.62);
+    CHECK(p.angular_source() == QuadrupedProcess::OdomSource::kDrdds);
+
+    // *** and now it stops. imu_age_warn_ms is 50 in the fixture, so by +0.2 s
+    // the IMU is stale and 13 S4.2 says fall back to the 10 Hz source. A
+    // process that kept integrating the last IMU sample would produce a yaw
+    // that is smooth, plausible, and frozen.
+    p.CtrlTick(0.85);
+    CHECK(p.angular_source() == QuadrupedProcess::OdomSource::kMonitor);
+
+    // ...and it comes back when the IMU does. The fallback is a state, not a
+    // latch: a degradation that never clears means one dropped packet costs the
+    // good source until a restart.
+    p.OnImu(0.86, 0.25);
+    p.CtrlTick(0.87);
+    CHECK(p.angular_source() == QuadrupedProcess::OdomSource::kDrdds);
+
+    // *** /MOTION_INFO: priority 1 on the LINEAR table, chosen by being newer.
+    p.OnMotionInfo(0.88, 0.4, 0.0);
+    p.CtrlTick(0.89);
+    CHECK(p.linear_source() == QuadrupedProcess::OdomSource::kDrdds);
+    CHECK(p.last_odom().publish == true);
+
+    // ...and a NEWER monitor report wins it back, with no threshold anywhere:
+    // that is the whole point of choosing by arrival time rather than by a
+    // constant CLAUDE.md 3.1 would not let us invent.
+    chassis.Send(golden.at("RX_00100001_00f00000"));
+    for (int i = 0; i < 50; ++i) p.RxPump(1.0 + 0.01 * i);
+    p.CtrlTick(1.6);
+    CHECK(p.linear_source() == QuadrupedProcess::OdomSource::kMonitor);
+  }
+
+  // ---- the IMU yaw really reaches the integration ------------------------
+  //
+  // Asserting the SOURCE alone would pass on an implementation that recorded
+  // the choice and integrated the other value.
+  {
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    chassis.Send(golden.at("RX_00100001_00f00000"));   // captured AT REST: wz = 0
+    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
+    p.CtrlTick(0.60);
+    const double yaw_at_rest = p.last_odom().yaw;
+
+    // A real turn rate from the IMU, integrated over ten periods.
+    for (int i = 0; i < 10; ++i) {
+      p.OnImu(0.61 + 0.01 * i, 0.5);
+      p.CtrlTick(0.615 + 0.01 * i);
+    }
+    // 0.5 rad/s over ~0.1 s. The bound is loose on purpose -- what is asserted
+    // is that the IMU value was INTEGRATED, not that the integrator is exact
+    // (13 S4.4's numbers are T-ODOM-2's job).
+    const double turned = p.last_odom().yaw - yaw_at_rest;
+    CHECK(turned > 0.02);
+    CHECK(turned < 0.12);
   }
 
   // ---- many periods without a chassis: no crash, no motion --------------

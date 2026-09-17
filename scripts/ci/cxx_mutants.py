@@ -368,6 +368,14 @@ CONFIG_MUTANTS = [
      CONFIG_CC,
      "  if (cfg.link.proto_version_byte != static_cast<int>(chs_a::kProtoVersion)) {",
      "  if (false) {"),
+    # 13 DDS-9: an unnamed interface makes CycloneDDS choose one, and on a
+    # multi-homed host it chooses wrong -- participant up, topic present, zero
+    # samples, indistinguishable from a dead network. Measured 2026-09-17.
+    ("config: the domain-0 network interface is optional",
+     CONFIG_CC,
+     '    cfg.dds.network_interface =\n'
+     '        root.require_string(K("chassis_dds.network_interface"));',
+     '    cfg.dds.network_interface = "";'),
     ("config: asdu_format not checked",
      CONFIG_CC, '  if (cfg.link.asdu_format != "json") {', "  if (false) {"),
     ("config: codebook not checked (CB-1)",
@@ -1138,6 +1146,7 @@ PROCESS_SOURCES = [
     os.path.join(QUAD, "src", "quadruped_config.cc"),
     os.path.join(QUAD, "src", "tier1.cc"),
     os.path.join(QUAD, "src", "tx_owner.cc"),
+    os.path.join(QUAD, "src", "dds_names.cc"),
 ]
 PROCESS_TESTS = [os.path.join(QUAD, "test", "test_process.cc")]
 
@@ -1263,6 +1272,39 @@ PROCESS_MUTANTS = [
      "      if (report_sink_) { report_sink_(now_mono_s, nullptr, nullptr, nullptr, nullptr);\n"
      "                          ++reports_forwarded_; }\n"
      "      // Location and anything else this build does not model. They still count"),
+    # 13 S4.2's two priority tables. Every one of these produces a pose that is
+    # merely less accurate -- no error, no warning, and a covariance model that
+    # does not know the difference.
+    ("process: the IMU yaw is used however stale it is",
+     PROCESS_CC, "    if (imu_fresh == ImuFreshness::kFresh) {",
+     "    if (last_imu_.rx_mono_s >= 0.0) {"),
+    ("process: the IMU is never used, the 10 Hz source always wins",
+     PROCESS_CC, "    if (imu_fresh == ImuFreshness::kFresh) {", "    if (false) {"),
+    # A degradation that never clears means one dropped packet costs the good
+    # source until a restart.
+    ("process: the yaw fallback latches instead of clearing",
+     PROCESS_CC,
+     "      angular_src_ = OdomSource::kDrdds;\n      ++ang_drdds_;",
+     "      if (angular_src_ != OdomSource::kMonitor) angular_src_ = OdomSource::kDrdds;\n"
+     "      ++ang_drdds_;"),
+    # Recording the choice while integrating the other value: the report says
+    # drdds and the pose is built from the 10 Hz samples.
+    ("process: the source is recorded but the IMU value is not integrated",
+     PROCESS_CC, "      odom_.OnYawRate(last_imu_.wz);", "      (void)0;"),
+    # 13 S4.2 linear table: the drdds source is priority 1. Never taking it
+    # leaves the odometry on 10 Hz forever while drdds is publishing at 20.
+    ("process: the drdds velocity is never preferred",
+     PROCESS_CC,
+     "    const bool mi_newer = last_mi_.rx_mono_s >= 0.0 &&\n"
+     "                          last_mi_.rx_mono_s > last_monitor_vel_s_;",
+     "    const bool mi_newer = false;"),
+    # ...and the other direction: pinning it to drdds means a dead drdds is
+    # never noticed, because the monitor reports keep arriving and are ignored.
+    ("process: the drdds velocity wins even when it is older",
+     PROCESS_CC,
+     "    const bool mi_newer = last_mi_.rx_mono_s >= 0.0 &&\n"
+     "                          last_mi_.rx_mono_s > last_monitor_vel_s_;",
+     "    const bool mi_newer = last_mi_.rx_mono_s >= 0.0;"),
     # 13 S9.1 v1.11 / V-69: ctrl integrates and hands the sample to rt_pub.
     # Dropping the hand-off leaves the publisher with nothing while the process
     # looks entirely healthy from the chassis side.
@@ -1304,6 +1346,7 @@ RT_BRIDGE_SOURCES = [
     os.path.join(QUAD, "src", "quadruped_config.cc"),
     os.path.join(QUAD, "src", "tier1.cc"),
     os.path.join(QUAD, "src", "tx_owner.cc"),
+    os.path.join(QUAD, "src", "dds_names.cc"),
 ]
 RT_BRIDGE_TESTS = [os.path.join(QUAD, "test", "test_rt_bridge.cc")]
 

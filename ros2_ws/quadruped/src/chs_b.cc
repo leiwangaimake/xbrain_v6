@@ -50,10 +50,22 @@ namespace {
 //
 // Multicast stays on here even when the ROS side is confined to localhost
 // (DDS-7): the chassis is another machine, and discovery has to leave this one.
-const char* kDomainConfig =
-    "<CycloneDDS><Domain><General>"
-    "<AllowMulticast>true</AllowMulticast>"
-    "</General></Domain></CycloneDDS>";
+// Built per-instance because the interface comes from the config. 13 DDS-3
+// keeps it INJECTED rather than taken from CYCLONEDDS_URI: that variable is
+// process-wide, and this process also holds an rclcpp context on domain 42.
+//
+// *** The <Interfaces> block is the part that was missing until 2026-09-17, and
+// its absence produced exactly the failure DDS-9 names. CycloneDDS chooses an
+// interface on its own when none is given; this machine has wifi on
+// 192.168.1.8 and the chassis on 10.21.33.200, it chose the first, and the
+// reader sat at zero samples while the chassis published /IMU throughout. The
+// participant was up, the topic existed, no call returned an error.
+std::string DomainConfig(const std::string& iface) {
+  return std::string("<CycloneDDS><Domain><General>") +
+         "<Interfaces><NetworkInterface name=\"" + iface + "\"/></Interfaces>" +
+         "<AllowMulticast>true</AllowMulticast>"
+         "</General></Domain></CycloneDDS>";
+}
 
 }  // namespace
 
@@ -76,8 +88,20 @@ ChassisDds::ChassisDds(const ChassisDdsConfig& cfg) : impl_(new Impl()) {
   impl_->cfg = cfg;
 
   // ---- DDS-3: the configuration is injected, not read from the environment.
+  if (cfg.network_interface.empty()) {
+    // Refused HERE as well as in the config loader, because this class can be
+    // constructed directly (the tests do). An empty name reaches CycloneDDS as
+    // <NetworkInterface name=""/> and comes back as "Nameless and address-less
+    // interface listed in interfaces" -- true, and not a sentence that leads
+    // anyone to the config key that is missing.
+    throw std::runtime_error(
+        "chassis DDS: chassis_dds.network_interface is empty -- CycloneDDS "
+        "would otherwise pick an interface itself, and on a multi-homed host "
+        "the participant comes up clean and receives nothing (13 DDS-9)");
+  }
+  const std::string domain_xml = DomainConfig(cfg.network_interface);
   impl_->domain = dds_create_domain(static_cast<dds_domainid_t>(cfg.domain_id),
-                                    kDomainConfig);
+                                    domain_xml.c_str());
   // DDS_RETCODE_PRECONDITION_NOT_MET means the domain already exists in this
   // process, which is fine: the participant below joins it either way.
   if (impl_->domain < 0 && impl_->domain != DDS_RETCODE_PRECONDITION_NOT_MET) {
