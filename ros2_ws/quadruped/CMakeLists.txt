@@ -171,6 +171,28 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# Optional: the RT-plane Zenoh session (11 S1.1.2). Guarded like the other two
+# so the core and its offline tests still build on a host without zenoh-c.
+#
+# The CONFIG test is registered unconditionally below, outside this guard: it
+# compares this package's config string with session_factory.py's validator and
+# needs neither zenoh nor a router. That separation is the point -- the half
+# that fails silently is the half that must be checkable everywhere.
+# ---------------------------------------------------------------------------
+find_library(ZENOHC_LIBRARY NAMES zenohc HINTS /usr/local/lib)
+find_path(ZENOHC_INCLUDE_DIR NAMES zenoh.h HINTS /usr/local/include)
+if(ZENOHC_LIBRARY AND ZENOHC_INCLUDE_DIR)
+  message(STATUS "quadruped: zenoh-c found -- building the RT-plane session")
+  add_library(quadruped_rt STATIC src/rt_session.cc src/rt_session_config.cc)
+  target_include_directories(quadruped_rt PUBLIC include ${COMMON_INCLUDE}
+                             ${ZENOHC_INCLUDE_DIR})
+  target_link_libraries(quadruped_rt PUBLIC quadruped_core ${ZENOHC_LIBRARY})
+else()
+  message(STATUS "quadruped: zenoh-c NOT found -- skipping the RT-plane "
+                 "session; core and tests still build")
+endif()
+
+# ---------------------------------------------------------------------------
 # Optional: chassis DDS domain 0 (channel two -- batch B7). CycloneDDS is used
 # through its bare C API, never through rclcpp (13 DDS-1/PB-6): the domain id is
 # passed explicitly so the two domains cannot collapse into one via an
@@ -329,6 +351,17 @@ add_test(NAME test_chassis_socket COMMAND test_chassis_socket)
 # The RT plane's inbound parsing. No zenoh, no router, no robot: the safety
 # rule of 11 S3.0.1 lives in the decoder, and keeping it testable without a
 # transport is what lets "a truncated estop still stops" be a case at all.
+# The RT-plane session CONFIG, compared against the other implementation of it.
+# No zenoh and no router: the assertions are about the bytes handed to zenoh,
+# and 11 S1.1.2's json5 block disagrees with them (see the test's header). The
+# python path is passed in rather than derived, and a missing file FAILS rather
+# than skipping -- a comparison that cannot run is not a comparison.
+set(SESSION_FACTORY_PY
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../xbrain/common/zenoh/session_factory.py)
+add_executable(test_rt_session test/test_rt_session.cc src/rt_session_config.cc)
+target_include_directories(test_rt_session PRIVATE include ${COMMON_INCLUDE})
+add_test(NAME test_rt_session COMMAND test_rt_session ${SESSION_FACTORY_PY})
+
 add_executable(test_rt_parse test/test_rt_parse.cc)
 target_link_libraries(test_rt_parse PRIVATE quadruped_core)
 target_include_directories(test_rt_parse PRIVATE ${THIRD_PARTY_INCLUDE})

@@ -138,8 +138,16 @@ RULES = (
          "require",
          "启动时打印三个实体的实际域号与端点, 是双域配错的唯一低成本自证手段. "
          "配错的现象是 participant 起来了一个包收不到, 与网络不通不可区分"),
+    # *** 扫描面是 src/ 与 include/, NO 不含 test/ -- 与 DDS-4 同一理由, 但这里
+    # 还多一层: 本规则曾对一条[断言它不成立]的测试行报违规
+    #     CHECK(!Contains(cfg, "7447"));      // 断言通用面端口不得出现
+    # 这正是 CLAUDE.md 3.2 形态三"判据自伤": 判据句自身含它要 grep 的字串,
+    # 于是命中数永不可能为 0. 3.2 给的解法就是"判据句必须在自己的扫描面之外".
+    #
+    # NO 不要改成"把那一行加进 allow 标记": 那会让[真的]在测试里建通用面
+    # session 的代码也一并放行, 而规则的对象本来就是发布出去的那个进程.
     Rule("RT-C4", "11 S1.1.5 RT-C4",
-         ("ros2_ws/quadruped",),
+         ("ros2_ws/quadruped/src", "ros2_ws/quadruped/include"),
          r"7447|zenohd-gen|plane\s*=\s*\"?gen",
          "forbid",
          "quadruped 不持通用面 session. 通用面绑 0.0.0.0 且无鉴权, 营区网内"

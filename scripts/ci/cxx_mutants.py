@@ -1204,6 +1204,57 @@ PROCESS_MUTANTS = [
      "  *out = last_odom_;\n  return true;"),
 ]
 
+# The RT-plane session CONFIG. Small suite, and the one that guards a failure
+# with no symptom: a wrong value here produces a session that connects, reports
+# no error and receives nothing (11 RT-C2, measured 2026-08-23).
+#
+# The last mutant edits the PYTHON side. That is the only way to show the
+# cross-language guard actually guards: the C++ test reads session_factory.py
+# as source, so reverting that file to the superseded gossip setting must turn
+# the C++ test red. Mutating only C++ would prove half of a two-sided check.
+RT_CFG_CC = os.path.join(QUAD, "src", "rt_session_config.cc")
+SESSION_FACTORY_PY = os.path.join(ROOT, "xbrain", "common", "zenoh",
+                                  "session_factory.py")
+RT_CFG_SOURCES = [RT_CFG_CC]
+RT_CFG_TESTS = [os.path.join(QUAD, "test", "test_rt_session.cc")]
+
+RT_CFG_MUTANTS = [
+    # *** THE TRAP. 11 S1.1.2's json5 block and S1.1.3 RT-C3.a both still read
+    # gossip enabled:false. A participant built from them connects and receives
+    # nothing, because in the hub-and-spoke topology a subscription table
+    # reaches a remote publisher only by gossip through the router.
+    ("rt_cfg: gossip disabled, the superseded form from 11 S1.1.2's code block",
+     RT_CFG_CC, '"gossip:{enabled:true,multihop:false}"',
+     '"gossip:{enabled:false,multihop:false}"'),
+    # multihop is the condition the whole 2026-08-23 correction rests on: it is
+    # what keeps RT gossip out of the general plane's gossip domain.
+    ("rt_cfg: gossip multihop enabled, leaking RT gossip across planes",
+     RT_CFG_CC, '"gossip:{enabled:true,multihop:false}"',
+     '"gossip:{enabled:true,multihop:true}"'),
+    # RT-C1. Zenoh's default is multicast discovery plus peer autoconnect over
+    # "router" and "peer" -- left on, the two planes find each other.
+    ("rt_cfg: multicast scouting left enabled (RT-C1)",
+     RT_CFG_CC, '"multicast:{enabled:false},"', '"multicast:{enabled:true},"'),
+    # RT-C3.d. A listening participant is reachable from outside the router's
+    # peer set, which is what the plane isolation rests on.
+    ("rt_cfg: the session listens, making it reachable off the router",
+     RT_CFG_CC, '"listen:{endpoints:[]},"',
+     '"listen:{endpoints:[\\"tcp/0.0.0.0:7450\\"]},"'),
+    # RT-C3.d forbids mode router outright; client would need the router to
+    # proxy every declaration and is not what the other participants use.
+    ("rt_cfg: mode client instead of peer",
+     RT_CFG_CC, '"mode:\\"peer\\","', '"mode:\\"client\\","'),
+    # An endpoint parameter that is ignored passes every field assertion.
+    ("rt_cfg: the endpoint argument is ignored",
+     RT_CFG_CC, '"connect:{endpoints:[\\"" + endpoint + "\\"]},"',
+     '"connect:{endpoints:[\\"tcp/127.0.0.1:7449\\"]},"'),
+    # *** The PYTHON side. Reverting it to the superseded form must turn the
+    # C++ test red -- that is what "the two implementations cannot drift" means.
+    ("rt_cfg: session_factory.py reverted to the superseded gossip rule",
+     SESSION_FACTORY_PY, 'gossip_cfg.get("enabled") is not True',
+     'gossip_cfg.get("enabled") is not False'),
+]
+
 # RT-plane inbound parsing. The safety rule of 11 S3.0.1 lives here -- a
 # loosening command gets full validation, a tightening one gets none -- so this
 # is the suite where a survivor means the rule is decorative.
@@ -1579,6 +1630,8 @@ SUITES = {
     "socket": (SOCKET_SOURCES, SOCKET_TESTS, SOCKET_MUTANTS, None, []),
     "process": (PROCESS_SOURCES, PROCESS_TESTS, PROCESS_MUTANTS, GOLDEN, []),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None, []),
+    "rt_cfg": (RT_CFG_SOURCES, RT_CFG_TESTS, RT_CFG_MUTANTS,
+               SESSION_FACTORY_PY, []),
     "rt_parse": (RT_PARSE_SOURCES, RT_PARSE_TESTS, RT_PARSE_MUTANTS, None,
                  ["-I", os.path.join(ROOT, "common", "third_party")]),
     "chs_b": (CHS_B_SOURCES, CHS_B_TESTS, CHS_B_MUTANTS, None, CHS_B_EXTRA),
