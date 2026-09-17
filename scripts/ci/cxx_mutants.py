@@ -1183,6 +1183,25 @@ PROCESS_MUTANTS = [
     # The counter the whole receive path is judged by.
     ("process: received frames are not counted",
      PROCESS_CC, "    ++frames_received_;", "    /* not counted */"),
+    # 13 S9.1 v1.11 / V-69: ctrl integrates and hands the sample to rt_pub.
+    # Dropping the hand-off leaves the publisher with nothing while the process
+    # looks entirely healthy from the chassis side.
+    ("process: the integrated sample never reaches rt_pub",
+     PROCESS_CC, "  odom_slot_.Publish(last_odom_);", "  /* not offered */"),
+    # The ticks that say "do not publish" are part of the hand-off. Filtering
+    # them here leaves rt_pub holding the last good pose forever, and 13 S4.4
+    # (4) requires the TF to stop with the odometry -- a frozen TF makes Nav2
+    # believe the robot is stationary and keep commanding rotation.
+    ("process: only publishable samples are offered to rt_pub",
+     PROCESS_CC, "  odom_slot_.Publish(last_odom_);",
+     "  if (last_odom_.publish) odom_slot_.Publish(last_odom_);"),
+    # A slot, not a latch: taking the same integration twice makes a stalled
+    # robot read downstream as a moving one whose pose happens not to change.
+    ("process: the odom slot re-serves the sample it already gave out",
+     PROCESS_CC,
+     "  if (out == nullptr) return false;\n  return odom_slot_.TakeFresh(out);",
+     "  if (out == nullptr) return false;\n  if (odom_slot_.TakeFresh(out)) last_odom_ = *out;\n"
+     "  *out = last_odom_;\n  return true;"),
 ]
 
 # Channel-two mutants. This suite is the only one that needs something outside

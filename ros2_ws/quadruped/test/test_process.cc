@@ -573,6 +573,58 @@ int main(int argc, char** argv) {
     CHECK(p.axis_frames_sent() == sent_at_loss);
   }
 
+  // ---- ctrl offers every tick to rt_pub, and offers the STOPS too -------
+  //
+  // 13 S9.1 v1.11 / V-69: ctrl integrates and hands over, rt_pub publishes.
+  // The hand-off is a slot, so what is asserted is "the newest one is there",
+  // never "all of them arrived" -- a publisher that falls behind must send the
+  // current pose, not work through a backlog (RTC-6).
+  {
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    chassis.Send(golden.at("RX_00100001_00f00000"));   // the captured motion report
+    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
+
+    p.CtrlTick(0.6);
+    CHECK(p.odom_offered() == 2);          // the dial tick and this one
+    OdomSample got;
+    CHECK(p.TakeOdomForPublish(&got) == true);
+    // The SAME sample ctrl computed, not a default-constructed one.
+    CHECK(got.x == p.last_odom().x);
+    CHECK(got.y == p.last_odom().y);
+    CHECK(got.yaw == p.last_odom().yaw);
+    CHECK(got.var_x == p.last_odom().var_x);
+    CHECK(got.publish == p.last_odom().publish);
+
+    // Taken once, gone. A publisher must not resend the same integration as if
+    // it were a new one -- downstream would read a stalled robot as a moving
+    // one whose pose happens not to change.
+    OdomSample again;
+    CHECK(p.TakeOdomForPublish(&again) == false);
+
+    // Falling behind costs the intermediate samples, not the current one.
+    for (int i = 0; i < 10; ++i) p.CtrlTick(0.61 + 0.01 * i);
+    CHECK(p.odom_offered() == 12);
+    CHECK(p.TakeOdomForPublish(&got) == true);
+    CHECK(got.x == p.last_odom().x);       // the NEWEST, not the oldest
+    CHECK(p.TakeOdomForPublish(&again) == false);
+
+    // *** The ticks that say "do not publish" are offered too. Skipping them
+    // would leave rt_pub holding the last good pose forever, and 13 S4.4 (4)
+    // requires the TF to stop with the odometry -- a frozen TF makes Nav2
+    // believe the robot is stationary and keep commanding rotation.
+    //
+    // No reports for well past stale_stop_publish_ms, so the band reaches kStop.
+    const std::uint64_t before = p.odom_offered();
+    for (double t = 0.8; t < 3.0; t += 0.01) p.CtrlTick(t);
+    CHECK(p.odom_offered() > before);
+    CHECK(p.last_odom().publish == false);
+    CHECK(p.TakeOdomForPublish(&got) == true);
+    CHECK(got.publish == false);           // the DECISION reached the publisher
+  }
+
   // ---- many periods without a chassis: no crash, no motion --------------
   {
     // Nothing is listening. The process must survive the whole probe and

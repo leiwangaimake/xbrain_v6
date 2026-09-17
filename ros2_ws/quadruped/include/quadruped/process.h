@@ -19,8 +19,18 @@
  * Two threads, from the table in 13 S9.1:
  *
  *   ctrl        SCHED_FIFO 80, 100 Hz. Tier 1, the axis command, the heartbeat
- *               riding along (TX-5), and the odometry integration. Everything
+ *               riding along (TX-5), and the odometry INTEGRATION. Everything
  *               with a deadline.
+ *
+ *               It does NOT publish the odometry (13 S9.1 ctrl row, v1.11, and
+ *               13 V-69). Publishing a nav_msgs/Odometry through rclcpp
+ *               allocates -- measured, see test_uplink_alloc.cc -- and QD-7
+ *               forbids allocation here. A malloc on this thread can queue
+ *               behind an ordinary-priority thread holding the glibc arena
+ *               lock, which is priority inversion on the thread carrying the
+ *               200 ms Tier 1 deadline. The integration stays because it is a
+ *               time accumulation tied to the control period; only the publish
+ *               leaves, through the slot below.
  *   chs_a_rx    ordinary priority, event driven. Reads the socket, reassembles
  *               frames, parses JSON. The parse is HERE and not in ctrl, which
  *               is the whole reason the split exists: JSON parsing allocates,
@@ -149,6 +159,22 @@ class QuadrupedProcess {
   std::uint64_t tx_skipped() const { return tx_skipped_; }
   const OdomSample& last_odom() const { return last_odom_; }
 
+  // ---- what rt_pub takes (13 S9.1 rt_pub row, v1.11 / V-69) -------------
+  //
+  // The newest integrated sample, or false when ctrl has not produced a new
+  // one since the last call. The publisher thread lives outside this class --
+  // it needs rclcpp, and quadruped_core must stay ROS-free (CLAUDE.md 5.3,
+  // because chassis_relay is on the emergency-stop path and consumes it).
+  //
+  // A slot and not a queue: a publisher that fell behind must send the CURRENT
+  // pose, not work through a backlog of stale ones. That is RTC-6, and for an
+  // odometry a stale sample is a QD-5 violation rather than a latency figure.
+  bool TakeOdomForPublish(OdomSample* out);
+  // How many integrated samples ctrl has offered. Compared against what the
+  // publisher actually sent, the difference is the overrun rate -- the number
+  // T-ODOM-1 is about, and the one V-69 put on the table.
+  std::uint64_t odom_offered() const { return odom_offered_; }
+
   // A cmd_vel arrived from the RT plane. Called by the publisher thread once it
   // exists; a test calls it directly. Taking the values rather than a message
   // keeps this class free of any transport type.
@@ -202,6 +228,11 @@ class QuadrupedProcess {
   ModeMachine mode_;
 
   hachist::xbrain::rtcomm::LockfreeSlot<ChassisSnapshot> snapshot_slot_;
+  // ctrl -> rt_pub. The same mechanism as chs_a_rx -> ctrl above, for the same
+  // reason (RTC-6): it is the only cross-thread hand-off that cannot block the
+  // realtime side and cannot accumulate stale samples.
+  hachist::xbrain::rtcomm::LockfreeSlot<OdomSample> odom_slot_;
+  std::uint64_t odom_offered_ = 0;
   ChassisSnapshot latest_;
   bool have_snapshot_ = false;
 

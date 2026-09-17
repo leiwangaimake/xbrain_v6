@@ -22,7 +22,10 @@
  *      session allows it. Two gates and not one: Tier 1 answers "is this
  *      command safe", the session answers "is there a link to put it on", and
  *      collapsing them would send into a socket that is reconnecting.
- *   5. the odometry integrates last, on the snapshot taken in step 1.
+ *   5. the odometry INTEGRATES last, on the snapshot taken in step 1, and the
+ *      result goes into a slot for rt_pub to publish. 13 S9.1 (v1.11) moved the
+ *      publish off this thread because it allocates and this thread is QD-7;
+ *      13 V-69 carries the decision and what it cost.
  *
  * The heartbeat rides on this thread rather than a timer of its own (TX-5).
  * CA-2 requires it on the same socket as the axis command, and being on the
@@ -243,6 +246,14 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   const double dt = (last_ctrl_s_ < 0.0) ? (1.0 / cfg_.tier1.control_loop_hz)
                                          : (now_mono_s - last_ctrl_s_);
   last_odom_ = odom_.Tick(now_mono_s, dt);
+  // Offered to rt_pub, every tick, including the ticks whose sample says not to
+  // publish: the DECISION not to publish is itself something the publisher has
+  // to see. Dropping those here would leave rt_pub sending the last good pose
+  // forever, and 13 S4.4 (4) requires the TF to stop with the odometry -- a
+  // frozen TF makes Nav2 believe the robot is stationary and keep commanding
+  // rotation.
+  odom_slot_.Publish(last_odom_);
+  ++odom_offered_;
   last_ctrl_s_ = now_mono_s;
   mode_.Tick(now_mono_s);
 
@@ -253,6 +264,11 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   pub_conn_.store(static_cast<int>(session_.state()), std::memory_order_relaxed);
   pub_active_ep_.store(session_.active_endpoint(), std::memory_order_relaxed);
   pub_probe_cycles_.store(session_.probe_cycles(), std::memory_order_relaxed);
+}
+
+bool QuadrupedProcess::TakeOdomForPublish(OdomSample* out) {
+  if (out == nullptr) return false;
+  return odom_slot_.TakeFresh(out);
 }
 
 QuadrupedProcess::LinkStatus QuadrupedProcess::link_status() const {
