@@ -8,9 +8,15 @@
 //     explicit-per-port bind after the LAN/host allocation freezes;
 //     until then loopback prevents an unauthenticated participant
 //     from joining over the network)
-//   * scouting: multicast + gossip DISABLED (RT-C1 / RT-C2)
-//     -- the RT plane must NOT be discoverable via multicast; both
-//     planes disable both mechanisms to keep the topology explicit.
+//   * scouting: multicast OFF (RT-C1); gossip ON with multihop OFF
+//     (RT-C2 as corrected 2026-08-23) -- the RT plane must NOT be
+//     discoverable via multicast, and the topology stays explicit
+//     because multicast is off and multihop is false, NOT because
+//     gossip is off.
+//
+//     Corrected 2026-09-17 (CLAUDE.md iron rule 1). These lines used
+//     to read "both planes disable both mechanisms", which contradicts
+//     the body of this file a few lines below.
 //
 // This config is loaded by scripts/dev/start_voice_loop.sh via
 //   zenohd --config configs/zenoh/router_gen.json5

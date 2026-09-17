@@ -3,9 +3,18 @@
 // See 11 S1.1.2:
 //   * mode: router
 //   * realtime-plane endpoint: tcp/127.0.0.1:7449 (loopback ONLY)
-//   * scouting: multicast + gossip DISABLED (RT-C1 / RT-C2)
-//     -- the RT plane MUST NOT auto-discover with the general plane;
-//     both scouting mechanisms are hard-off.
+//   * scouting: multicast OFF (RT-C1); gossip ON with multihop OFF
+//     (RT-C2 as corrected 2026-08-23) -- the RT plane MUST NOT
+//     auto-discover the general plane, and what guarantees that is
+//     MULTICAST being off plus multihop being false, NOT gossip
+//     being off.
+//
+//     Corrected 2026-09-17 (CLAUDE.md iron rule 1). These three lines
+//     used to read "multicast + gossip DISABLED ... both scouting
+//     mechanisms are hard-off", which CONTRADICTED THE BODY OF THIS
+//     VERY FILE a few lines below, where gossip is enabled with the
+//     measurement that forced it. A header that disagrees with its own
+//     config is worse than no header: it is the part people read.
 //
 // The RT plane is a 20 Hz safety-critical control loop and MUST stay
 // on-host. The tcp/127.0.0.1 bind guarantees no packet leaves the
@@ -31,7 +40,15 @@
 //     not connect to any other router, so its gossip domain is
 //     exactly the RT-plane processes and nothing else.
 //
-// Sessions themselves keep gossip disabled (session_factory.py).
+// Sessions themselves ALSO enable gossip, for the same reason
+// (xbrain/common/zenoh/session_factory.py REQUIRES enabled=True;
+// grep 'gossip_cfg.get("enabled") is not True').
+//
+// Corrected 2026-09-17 (CLAUDE.md iron rule 1). This line used to say
+// "Sessions themselves keep gossip disabled", which was simply false
+// and pointed at the file that proves it false. Both ends of the link
+// need gossip on: the router forwards declarations, and a session with
+// gossip off never sends its own subscription table to be forwarded.
 {
   mode: "router",
   listen: {

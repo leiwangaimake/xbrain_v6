@@ -268,7 +268,7 @@
 
 | 侧 | 逐字依据 | 后果 |
 |---|---|---|
-| **契约** | `11` §1.1.2 **RT-C2**：两个平面都必须显式 `scouting.gossip.enabled = false`。理由写得很硬：「gossip 会通过已建立的链路扩散节点信息，形成间接串接。★ V5 只有一个 router，gossip 未关无害；**V6 有两个 router，跨面进程的两条链路正好是 gossip 的扩散通道 —— V6 必须关**」 | 这是**平面隔离**约束，不是性能取舍 |
+| **契约** | ~~`11` §1.1.2 **RT-C2**：两个平面都必须显式 `scouting.gossip.enabled = false`~~ ⇒ ★★★ **该表述已于 2026-08-23 被 `RT-C2` 自身订正**：**`scouting.gossip.multihop` 必须 `false`；在此前提下 `enabled` 允许 `true`**。★ 原理由（「gossip 会通过已建立的链路扩散节点信息，形成间接串接；V6 有两个 router，跨面进程的两条链路正好是扩散通道」）**仍然成立**，但它由 **`multihop = false`** 挡住，不由 `enabled = false` 挡住。<br>⚠️ **2026-09-17 订正**（`CLAUDE.md` 铁律 1）：本行原把已作废的表述当作现行契约引用。★ 实测：`gossip=off ⇒ peer 经 router 收 0 帧`；`on ⇒ 收到`（hub-and-spoke 下 peer 之间从不直连，订阅表只能靠 gossip 经 router 传播）。★ 依据与复现见 `11` §1.1.2 订正框 | 这是**平面隔离**约束，不是性能取舍 —— ★ 但**抓手是 `multihop` 与 `multicast`，不是 `enabled`** |
 | **实测** | `configs/zenoh/router_gen.json5` 现为 `gossip.enabled: true`（2026-08-10，标记 `V-ORIN-ZN-GOSSIP`），带 `multihop:false`。实测：peer 客户端经路由发布时 **`false` → 0 收包 / `true` → 160** | 关掉 gossip，peer 之间发现不了对方的订阅，总线不通 |
 
 **三条路，各自的代价**
