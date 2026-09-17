@@ -1204,6 +1204,110 @@ PROCESS_MUTANTS = [
      "  *out = last_odom_;\n  return true;"),
 ]
 
+# RT-plane inbound parsing. The safety rule of 11 S3.0.1 lives here -- a
+# loosening command gets full validation, a tightening one gets none -- so this
+# is the suite where a survivor means the rule is decorative.
+RT_PARSE_CC = os.path.join(QUAD, "src", "rt_parse.cc")
+RT_PARSE_SOURCES = [RT_PARSE_CC]
+RT_PARSE_TESTS = [os.path.join(QUAD, "test", "test_rt_parse.cc")]
+
+RT_PARSE_MUTANTS = [
+    # 11:1722 marks estop_epoch MANDATORY on this key. Defaulting it to zero
+    # locks the robot at standstill after the first soft stop and never
+    # releases; and it is exactly what a lenient parser would do to "fix" the
+    # fact that p1_motion does not send the field yet.
+    ("rt_parse: cmd_vel accepts a missing estop_epoch",
+     RT_PARSE_CC,
+     '  const auto ep = data.find("estop_epoch");\n'
+     '  if (ep == data.end() || !ep->is_number_unsigned()) return RtParse::kMissingField;\n'
+     "  out->estop_epoch = ep->get<std::uint64_t>();",
+     '  const auto ep = data.find("estop_epoch");\n'
+     "  out->estop_epoch = (ep != data.end() && ep->is_number_unsigned())\n"
+     "                         ? ep->get<std::uint64_t>() : 0;"),
+    # 11 S3.0: an unknown version must be REFUSED, never guessed at -- a guess
+    # decodes a future schema's fields by position and acts on them.
+    ("rt_parse: an unknown envelope version is accepted",
+     RT_PARSE_CC, "  if (out->v != kEnvelopeVersion) return RtParse::kBadVersion;",
+     "  if (false) return RtParse::kBadVersion;"),
+    # Another robot's command. On a shared RT plane this is how one robot drives
+    # another, and nothing about the message looks wrong.
+    ("rt_parse: a command addressed to another robot is accepted",
+     RT_PARSE_CC, "  if (out->rid != our_rid) return RtParse::kWrongRobot;",
+     "  if (false) return RtParse::kWrongRobot;"),
+    # 11 S3.0: absent ts_sync means FALSE. Defaulting to true lets a publisher
+    # that never had a synchronised clock be believed by saying nothing.
+    ("rt_parse: a missing ts_sync defaults to true",
+     RT_PARSE_CC,
+     "  out->ts_sync = (sync_it != j.end() && sync_it->is_boolean())\n"
+     "                     ? sync_it->get<bool>()\n"
+     "                     : false;",
+     "  out->ts_sync = (sync_it != j.end() && sync_it->is_boolean())\n"
+     "                     ? sync_it->get<bool>()\n"
+     "                     : true;"),
+    ("rt_parse: ts_sync is treated as optional",
+     RT_PARSE_CC,
+     "  if (sync_it == j.end() || !sync_it->is_boolean()) return RtParse::kMissingField;",
+     "  if (false) return RtParse::kMissingField;"),
+    # 11 S3.0: a foreign boot id means mono MUST be ignored. Trusting it yields
+    # an age wrong by however long the two machines have been up -- so large the
+    # command reads as ancient, or so negative it reads as from the future.
+    ("rt_parse: mono is trusted across a boot-id mismatch",
+     RT_PARSE_CC,
+     "    out->mono_usable = has_boot && !our_boot.empty() && out->boot == our_boot;",
+     "    out->mono_usable = true;"),
+    # Each axis is mandatory (11 S3.4). A default of zero turns "the publisher
+    # does not know this schema" into "the publisher commanded a stop on that
+    # axis", which is a different and unearned statement.
+    ("rt_parse: a missing axis defaults to zero",
+     RT_PARSE_CC, '  if (!GetFinite(data, "wz", &out->wz)) return RtParse::kMissingField;',
+     '  GetFinite(data, "wz", &out->wz);'),
+    ("rt_parse: the unused axes are not required",
+     RT_PARSE_CC, '  if (!GetFinite(data, "v_roll", &out->v_roll)) return RtParse::kMissingField;',
+     '  GetFinite(data, "v_roll", &out->v_roll);'),
+    # The defect this suite's test actually found. ReadEnvelope returns early on
+    # a bad version or a foreign rid, so taking `data` from it made the cmd_id
+    # vanish on exactly the malformed messages the estop path exists to survive.
+    ("rt_parse: the estop reads cmd_id only when the envelope is valid",
+     RT_PARSE_CC,
+     '  const auto d_it = j.find("data");\n'
+     "  if (d_it == j.end() || !d_it->is_object()) return;\n"
+     '  out->cmd_id_present = GetString(*d_it, "cmd_id", &out->cmd_id);',
+     "  if (!out->envelope_ok) return;\n"
+     '  const auto d_it = j.find("data");\n'
+     "  if (d_it == j.end() || !d_it->is_object()) return;\n"
+     '  out->cmd_id_present = GetString(*d_it, "cmd_id", &out->cmd_id);'),
+    # 11 S9.3.3 v0.3: the three deleted actions answer E_CAPABILITY, not
+    # E_SCHEMA. Telling an operator "malformed" about a word that used to be
+    # valid sends them hunting a typo instead of reading the release notes.
+    ("rt_parse: a deleted action is reported as merely unknown",
+     RT_PARSE_CC,
+     '  if (a == "soft_estop" || a == "estop_release" || a == "idle") {\n'
+     "    return RtParse::kUnsupportedAction;\n  }",
+     "  /* folded into the unknown bucket */"),
+    # A loosening command without a cmd_id cannot be acked or de-duplicated,
+    # and Q-3's idempotency rule has nothing to key on.
+    ("rt_parse: a ctrl command without cmd_id is accepted",
+     RT_PARSE_CC,
+     '  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {\n'
+     "    return RtParse::kMissingField;\n  }",
+     '  GetString(data, "cmd_id", &out->cmd_id);'),
+    # A joint rate that does not divide 1000 gives a period the chassis cannot
+    # hold, and the symptom is jitter rather than a refusal.
+    ("rt_parse: joint_rate_hz is range-checked but not divisibility-checked",
+     RT_PARSE_CC,
+     "    if (out->joint_rate_hz < 1 || out->joint_rate_hz > 200 ||\n"
+     "        (1000 % out->joint_rate_hz) != 0) {",
+     "    if (out->joint_rate_hz < 1 || out->joint_rate_hz > 200) {"),
+    # DECLARED EQUIVALENT. See the note at GetFinite: JSON has no NaN literal
+    # and nlohmann discards a document containing an overflowing one, so a
+    # non-finite value is refused a layer earlier and never reaches this branch.
+    # The guard stays because that is a property of the READER, not of this
+    # function, and the next person to swap the reader inherits the assumption.
+    ("rt_parse: the finiteness guard is dropped",
+     RT_PARSE_CC, "  if (!std::isfinite(v)) return false;", "  (void)0;",
+     "equivalent"),
+]
+
 # Channel-two mutants. This suite is the only one that needs something outside
 # the repository -- CycloneDDS and the type support idlc generates from the
 # package's own IDL -- so it is the only one that can be skipped. It says so
@@ -1475,6 +1579,8 @@ SUITES = {
     "socket": (SOCKET_SOURCES, SOCKET_TESTS, SOCKET_MUTANTS, None, []),
     "process": (PROCESS_SOURCES, PROCESS_TESTS, PROCESS_MUTANTS, GOLDEN, []),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None, []),
+    "rt_parse": (RT_PARSE_SOURCES, RT_PARSE_TESTS, RT_PARSE_MUTANTS, None,
+                 ["-I", os.path.join(ROOT, "common", "third_party")]),
     "chs_b": (CHS_B_SOURCES, CHS_B_TESTS, CHS_B_MUTANTS, None, CHS_B_EXTRA),
     # The flags are computed at import time from the build tree; an empty list
     # means the tree is not there, and run_suite turns that into a loud skip.

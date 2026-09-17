@@ -95,6 +95,7 @@ add_library(quadruped_core STATIC
   src/dds_names.cc
   src/chassis_socket.cc
   src/process.cc
+  src/rt_parse.cc
 )
 target_include_directories(quadruped_core PUBLIC include ${COMMON_INCLUDE})
 target_include_directories(quadruped_core PRIVATE ${THIRD_PARTY_INCLUDE})
@@ -325,6 +326,14 @@ add_test(NAME test_chassis_socket COMMAND test_chassis_socket)
 # which is where the defect found while writing this test actually was -- would
 # be unobservable. Without the second, the test would agree with the parser
 # about a report format that the chassis does not send.
+# The RT plane's inbound parsing. No zenoh, no router, no robot: the safety
+# rule of 11 S3.0.1 lives in the decoder, and keeping it testable without a
+# transport is what lets "a truncated estop still stops" be a case at all.
+add_executable(test_rt_parse test/test_rt_parse.cc)
+target_link_libraries(test_rt_parse PRIVATE quadruped_core)
+target_include_directories(test_rt_parse PRIVATE ${THIRD_PARTY_INCLUDE})
+add_test(NAME test_rt_parse COMMAND test_rt_parse)
+
 add_executable(test_process test/test_process.cc)
 target_link_libraries(test_process PRIVATE quadruped_core)
 add_test(NAME test_process COMMAND test_process ${CHS_A_GOLDEN})
