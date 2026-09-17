@@ -179,6 +179,30 @@ class NavRuntime:
         self._route_q: Deque[Any] = collections.deque()
         self._relmove_q: Deque[Any] = collections.deque()
         self._subs: List[Any] = []                 # strong refs (CLAUDE.md 4.3)
+        # The generation quadruped currently holds, learned from
+        # rt/chassis/state and echoed back on every cmd_vel (11:1722 makes the
+        # field mandatory on that key, and 13 S9.12.2 (3) makes the comparison
+        # the thing that holds zero after a soft stop).
+        #
+        # It starts at 0 and 0 is NOT a guess: quadruped's own generation starts
+        # at 0 too, so on a fresh boot the two agree. After a stop we are behind
+        # until the next state message (10 Hz, so about 100 ms), and being
+        # behind means Tier 1 holds zero -- which is the correct answer while we
+        # do not know what generation the robot is on.
+        #
+        # mutant: drop the assignment in _on_chassis_state so the learned value
+        # never lands -> every cmd_vel echoes 0 forever and a robot that has
+        # stopped once never moves again -> test_estop_epoch_is_echoed_not
+        # _invented red (verified 2026-09-17).
+        #
+        # NOT a mutant here, recorded so nobody goes looking for it: "echo a
+        # value chosen to agree" cannot be written on this side, because this
+        # loop has no generation of its own -- it has only the one it was told.
+        # That defect lives in quadruped, where the comparison happens, and is
+        # covered there by the cxx_mutants entry "process: the estop generation
+        # compared against itself".
+        self._estop_epoch = 0
+        self._counts_state_bad = 0
         self._cmd_pub: Any = None
         self._progress_pub: Any = None
         self._status_pub: Any = None
@@ -209,6 +233,15 @@ class NavRuntime:
         self._subs.append(self._gen.declare_subscriber(CMD_ROUTE_TOPIC, self._on_route))
         self._subs.append(self._gen.declare_subscriber(CMD_RELMOVE_TOPIC, self._on_relmove))
         self._subs.append(self._gen.declare_subscriber(CMD_FACTOR_TOPIC, self._on_factor))
+        # *** RT plane, not the general plane (11 S1.1.6 P1-20, added 2026-09-17).
+        #
+        # estop_epoch is produced on the RT plane by quadruped and consumed on
+        # the RT plane by this loop's cmd_vel. Routing it out to state/robot and
+        # back would add a hop and a process that can die -- 11:641 records that
+        # exact failure ("chassis_relay 崩溃 -> state/robot 停发") -- for a value
+        # that never needed to leave the plane both ends are already on.
+        self._subs.append(self._rt.declare_subscriber(
+            "xbrain/%s/rt/chassis/state" % self._rid, self._on_chassis_state))
         self._cmd_pub = self._rt.declare_publisher("xbrain/%s/rt/motion/cmd_vel" % self._rid)
         self._progress_pub = self._gen.declare_publisher(STATE_PROGRESS_TOPIC)
         self._status_pub = self._gen.declare_publisher(RELMOVE_STATUS_TOPIC)
@@ -275,6 +308,36 @@ class NavRuntime:
         with self._lock:
             self._counts["relmove_rx"] += 1
             self._relmove_q.append(unwrap_body(doc))
+
+    def _on_chassis_state(self, sample: Any) -> None:
+        """rt/chassis/state -> the estop generation we echo (11 S4.1).
+
+        Only estop_epoch is taken. Everything else in RobotState is somebody
+        else's business, and reading more would make this loop depend on fields
+        it does not need -- which is how a schema change somewhere else stops
+        the robot.
+
+        mutant: drop the int() / presence check and store whatever is there ->
+        a malformed state message poisons the generation and every later
+        cmd_vel disagrees forever -> test_bad_chassis_state_keeps_last_epoch red.
+        """
+        try:
+            body = unwrap_body(_load_json(sample))
+            epoch = body["estop_epoch"]
+            if not isinstance(epoch, int) or isinstance(epoch, bool) or epoch < 0:
+                raise ValueError("estop_epoch must be a non-negative int")
+        except Exception as exc:      # noqa: BLE001 -- one bad message, keep the last
+            # The LAST KNOWN value is kept, deliberately. Falling back to 0 on a
+            # bad message would make us disagree with a robot that has stopped,
+            # which is safe, and then AGREE again by accident the moment it
+            # stops once more -- a hold that releases itself on the next stop is
+            # worse than one that never releases.
+            self._counts_state_bad += 1
+            n = self._counts_state_bad
+            if n == 1 or n % 100 == 0:
+                _logger.warning("p1 rt/chassis/state rejected (n=%d): %s", n, exc)
+            return
+        self._estop_epoch = epoch
 
     def _on_factor(self, sample: Any) -> None:
         doc = _load_json(sample)
@@ -472,7 +535,16 @@ class NavRuntime:
                     "h_factor": round(out.h_factor, 4), "i_factor": round(out.i_factor, 4),
                     "raw_vx": round(out.raw_vx, 4), "source": out.source}
         body = {"vx": round(vx, 4), "vy": round(vy, 4), "wz": round(wz, 4),
-                "vz": 0.0, "v_roll": 0.0, "v_pitch": 0.0, "gate": gate}
+                "vz": 0.0, "v_roll": 0.0, "v_pitch": 0.0,
+                # 11:1722 marks it MANDATORY on this key (and the row below it
+                # marks it ABSENT on rt/nav2/cmd_vel -- the distinction is
+                # deliberate, because only this key reaches Tier 1). quadruped
+                # refuses a cmd_vel without it (13 RX-3), so until this line
+                # existed every command from this loop was dropped and the
+                # symptom was a robot that would not move with nothing in any
+                # log to say why.
+                "estop_epoch": self._estop_epoch,
+                "gate": gate}
         try:
             self._cmd_pub.put(self._envelope(body, "cmd_vel"))
         except Exception as exc:      # noqa: BLE001 -- the tick still counts

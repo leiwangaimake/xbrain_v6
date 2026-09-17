@@ -32,6 +32,7 @@ processes:
     - cmd/motion/route
     - cmd/teleop
     - rt/chassis/fault
+    - rt/chassis/state
   chassis_relay:
     pub:
     - rt/chassis/basic
