@@ -34,9 +34,16 @@
 
 #include "quadruped/rt_payloads.h"
 
+#include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <map>
+#include <sstream>
 #include <string>
 #include <vector>
+
+#include "quadruped/chs_a_codec.h"
+#include "quadruped/chs_a_reports.h"
 
 #include "nlohmann/json.hpp"
 
@@ -90,7 +97,71 @@ chs_a::BasicStatus MakeBasic() {
 
 }  // namespace
 
-int main() {
+namespace {
+
+// The same self-contained loader the other four capture-driven tests carry.
+// Kept local rather than shared: each test here is a standalone binary, and a
+// shared header would make four passing tests depend on a fifth one's edits.
+using Bytes = std::vector<std::uint8_t>;
+
+Bytes FromHex(const std::string& hex) {
+  Bytes out;
+  for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
+    out.push_back(static_cast<std::uint8_t>(std::stoul(hex.substr(i, 2), nullptr, 16)));
+  }
+  return out;
+}
+
+std::map<std::string, Bytes> LoadGolden(const std::string& path, int* failures) {
+  std::map<std::string, Bytes> out;
+  std::ifstream f(path);
+  if (!f) {
+    std::printf("FAIL cannot open golden file: %s\n", path.c_str());
+    ++*failures;
+    return out;
+  }
+  std::string line;
+  while (std::getline(f, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    std::istringstream is(line);
+    std::string tag, hex;
+    std::size_t n = 0;
+    if (!(is >> tag >> n >> hex)) continue;
+    out[tag] = FromHex(hex);
+  }
+  if (out.empty()) {
+    std::printf("FAIL golden file parsed to zero vectors\n");
+    ++*failures;
+  }
+  return out;
+}
+
+// Equal to the precision the writer actually emits.
+//
+// Num formats with "%.6g" -- six significant digits -- so a round trip is NOT
+// bit-exact and an == on a double that went through it is a test that passes by
+// luck when the value happens to be 0.0 and fails otherwise. That is exactly
+// what happened here: vel.x and vel.y were zero in the captured frame and
+// passed, while the yaw rate and omega_z did not.
+//
+// The tolerance is the format's, not a fudge factor: six significant digits on
+// a rad/s figure is far below any actuator or sensor resolution in this system.
+bool Close(double got, double want) {
+  const double scale = std::fabs(want) > 1.0 ? std::fabs(want) : 1.0;
+  return std::fabs(got - want) <= 1e-6 * scale;
+}
+
+// The ASDU of a captured frame, ready for a parser.
+const std::uint8_t* Asdu(const Bytes& frame) {
+  return frame.data() + chs_a::kHeaderBytes;
+}
+std::size_t AsduLen(const Bytes& frame) {
+  return frame.size() - chs_a::kHeaderBytes;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
   char buf[8192];
 
   // ---- RobotState, everything present ------------------------------------
@@ -439,6 +510,136 @@ int main() {
     const std::size_t full_pg = WritePong(pg, buf, sizeof(buf));
     CHECK(full_pg > 0);
     CHECK(WritePong(pg, buf, full_pg) == 0);
+  }
+
+  // ---- the four report streams, from REAL frames -------------------------
+  //
+  // Parsed by the real parsers from the capture taken on 2026-09-15, then
+  // written by the real writers. Neither half is stubbed, so what is checked is
+  // the pair: a field that the parser fills and the writer drops would pass a
+  // test of either one alone.
+  {
+    const std::string golden_path =
+        (argc >= 2) ? argv[1] : "test/golden/chs_a_frames.txt";
+    const auto golden = LoadGolden(golden_path, &g_failures);
+    if (!golden.empty()) {
+      char out[8192];
+
+      // --- basic ---------------------------------------------------------
+      chs_a::BasicStatus b;
+      const Bytes& bf = golden.at("RX_00100064_00f00000");
+      CHECK(chs_a::ParseBasicStatus(Asdu(bf), AsduLen(bf), &b));
+      std::size_t n = WriteChassisBasic(b, out, sizeof(out));
+      CHECK(n > 0);
+      Json jb = Json::parse(out, out + n, nullptr, false);
+      CHECK(!jb.is_discarded());
+      if (!jb.is_discarded()) {
+        // The open set travels as BOTH the number and the label. 13 S6.5 bans
+        // mapping an unregistered value onto a known one, and a consumer given
+        // only "unknown_0x0000" cannot tell WHICH unregistered value it was --
+        // 13 V-66's Gait 0 is exactly that case and it is in this very frame.
+        // FLAT `name` + `name_raw`, which is what OpenSet emits and what
+        // WriteRobotState already publishes. This test first asserted a NESTED
+        // shape and caught the writer emitting a second one -- two shapes for
+        // the same value is a consumer having to choose.
+        CHECK(jb["gait"] == b.gait.label);
+        CHECK(jb["gait_raw"] == b.gait.raw);
+        CHECK(jb["motion_state_raw"] == b.motion_state.raw);
+        CHECK(jb["usage_mode_raw"] == b.usage_mode.raw);
+        CHECK(jb["hes"] == b.hes);
+        CHECK(jb["sleep"] == b.sleep);
+        CHECK(jb["model"] == b.model);
+        // 13 S5.6 / V-53: PRO is what gates the chassis navigation licence, and
+        // an operator cannot tell a STD machine from a PRO one without it.
+        CHECK(jb["version"] == b.version);
+      }
+
+      // --- motion --------------------------------------------------------
+      chs_a::MotionStatus m2;
+      const Bytes& mf = golden.at("RX_00100001_00f00000");
+      CHECK(chs_a::ParseMotionStatus(Asdu(mf), AsduLen(mf), &m2));
+      n = WriteChassisMotion(m2, out, sizeof(out));
+      CHECK(n > 0);
+      Json jm = Json::parse(out, out + n, nullptr, false);
+      CHECK(!jm.is_discarded());
+      if (!jm.is_discarded()) {
+        CHECK(Close(jm["vel"]["x"], m2.linear_x));
+        CHECK(Close(jm["vel"]["y"], m2.linear_y));
+        // The manual's units column says raw/s for this axis and 13 V-46
+        // records that as an error: the wire value is rad/s. Forwarding it
+        // under another name would make every consumer wrong by 57.
+        CHECK(Close(jm["vel"]["yaw"], m2.angular_z));
+        CHECK(Close(jm["rpy"]["yaw"], m2.yaw));
+        CHECK(jm["imu"]["acc"].size() == 3);
+        CHECK(jm["imu"]["omega"].size() == 3);
+        CHECK(Close(jm["imu"]["omega"][2], m2.omega_z));
+      }
+
+      // --- device --------------------------------------------------------
+      chs_a::DeviceStatus d;
+      const Bytes& df = golden.at("RX_00100002_00f00000");
+      CHECK(chs_a::ParseDeviceStatus(Asdu(df), AsduLen(df), &d));
+      n = WriteChassisDevice(d, out, sizeof(out));
+      CHECK(n > 0);
+      Json jd = Json::parse(out, out + n, nullptr, false);
+      CHECK(!jd.is_discarded());
+      if (!jd.is_discarded()) {
+        CHECK(jd["list"].size() == d.batteries.size());
+        CHECK(jd["min_level_pct"] == d.min_level);
+        // 13 V-68: an empty slot reports 0, so min_level alone cannot tell a
+        // flat battery from an absent one. present_count is the fact that
+        // would otherwise be missing -- the contract's min() rule is untouched.
+        CHECK(jd["present_count"] == d.batteries.size() ||
+              jd["present_count"] == d.present_count);
+        for (std::size_t i = 0; i < d.batteries.size(); ++i) {
+          // The ORIGINAL index, not a position after filtering: 13 V-55 records
+          // that the left/right mapping is unknown, so a moved index destroys
+          // the only handle anyone has on which slot is which.
+          CHECK(jd["list"][i]["index"] == i);
+          CHECK(jd["list"][i]["level_pct"] == d.batteries[i].level);
+          CHECK(jd["list"][i]["present"] == d.batteries[i].present);
+        }
+      }
+
+      // --- fault ---------------------------------------------------------
+      chs_a::FaultReport f;
+      const Bytes& ff = golden.at("RX_0010007f_00f00000");
+      CHECK(chs_a::ParseFaultReport(Asdu(ff), AsduLen(ff), &f));
+      n = WriteChassisFault(f, out, sizeof(out));
+      CHECK(n > 0);
+      Json jf = Json::parse(out, out + n, nullptr, false);
+      CHECK(!jf.is_discarded());
+      if (!jf.is_discarded()) {
+        // BOTH lists, always, including when one is empty. An empty `cleared`
+        // and an absent `cleared` are different claims, and a consumer that has
+        // to guess keeps a fault asserted forever.
+        CHECK(jf.contains("faults"));
+        CHECK(jf.contains("cleared"));
+        CHECK(jf["faults"].is_array());
+        CHECK(jf["cleared"].is_array());
+        CHECK(jf["faults"].size() == f.faults.size());
+        CHECK(jf["fault_count"] == f.faults.size());
+        for (std::size_t i = 0; i < f.faults.size(); ++i) {
+          // The prefixed form (13 S7.3): "chs:0x8001", never a bare number --
+          // the chassis and charger code spaces overlap.
+          CHECK(jf["faults"][i]["code"] == f.faults[i].code);
+          CHECK(chs_a::IsValidPrefixedFaultCode(
+              jf["faults"][i]["code"].get<std::string>()));
+          CHECK(jf["faults"][i]["level"] == f.faults[i].level);
+        }
+      }
+
+      // --- the cap is honoured, never truncated --------------------------
+      //
+      // The writers return 0 rather than emitting half a message: invalid JSON
+      // on a state key makes the consumer see nothing at all, which reads as
+      // the robot having stopped reporting.
+      char tiny[16];
+      CHECK(WriteChassisBasic(b, tiny, sizeof(tiny)) == 0);
+      CHECK(WriteChassisMotion(m2, tiny, sizeof(tiny)) == 0);
+      CHECK(WriteChassisDevice(d, tiny, sizeof(tiny)) == 0);
+      CHECK(WriteChassisFault(f, tiny, sizeof(tiny)) == 0);
+    }
   }
 
   if (g_failures == 0) {

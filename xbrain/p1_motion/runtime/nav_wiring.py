@@ -190,6 +190,37 @@ class NavRuntime:
         # behind means Tier 1 holds zero -- which is the correct answer while we
         # do not know what generation the robot is on.
         #
+        # *** WHY THIS ONE IS NOT LOCKED, when _periods and the intake queues are.
+        #
+        # It is a plain int, written by a Zenoh callback thread and read by the
+        # 20 Hz control thread. Under CPython an attribute store of an int is a
+        # single bytecode and so is the load, so a reader sees either the old
+        # value or the new one and never a torn one. The deque needs a lock for
+        # a different reason -- iterating it while another thread appends
+        # RAISES -- and a scalar has no such hazard. Said out loud because the
+        # rest of this file locks its cross-thread state, and a reader who finds
+        # one that does not will otherwise assume it was an oversight.
+        #
+        # There is no ordering requirement either: being one message behind is
+        # already the designed behaviour (see below), so "the reader got the
+        # previous value" is indistinguishable from "the message had not
+        # arrived yet", which the design already handles.
+        #
+        # Cost, measured 2026-09-17 rather than assumed: decoding one
+        # rt/chassis/state and taking the field is ~6 us mean / 7.7 us p99 on a
+        # 325-byte payload, at 10 Hz. That is 0.006% of a core, and the p99 is
+        # 0.015% of this loop's 50 ms period -- the GIL contention it adds is
+        # below the measurement noise of CLAUDE.md 4.4's P99 <= 60 ms budget.
+        #
+        # LATENCY, and why the 10 Hz rate is not a problem. After a soft stop
+        # quadruped's generation advances at once and we are behind until the
+        # next state message -- up to ~100 ms -- during which Tier 1 holds zero
+        # (13 S9.12.2 (3)). That window costs nothing, because P1-21 has ALREADY
+        # latched the same cmd/estop and this loop is commanding zero anyway
+        # (main_wiring: "estop -> zero cmd_vel + stop_reason=soft_estop"). The
+        # two mechanisms cover the same event, and the slower one is the one
+        # that releases last -- which is the safe direction.
+        #
         # mutant: drop the assignment in _on_chassis_state so the learned value
         # never lands -> every cmd_vel echoes 0 forever and a robot that has
         # stopped once never moves again -> test_estop_epoch_is_echoed_not

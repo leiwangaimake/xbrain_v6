@@ -340,7 +340,7 @@ add_test(NAME test_rt_keys COMMAND test_rt_keys ${CONTRACT_MD})
 add_executable(test_rt_payloads test/test_rt_payloads.cc)
 target_link_libraries(test_rt_payloads PRIVATE quadruped_core)
 target_include_directories(test_rt_payloads PRIVATE ${THIRD_PARTY_INCLUDE})
-add_test(NAME test_rt_payloads COMMAND test_rt_payloads)
+add_test(NAME test_rt_payloads COMMAND test_rt_payloads ${CHS_A_GOLDEN})
 
 # The mode triple. Clock injected, so the 5 s switch timeout and the 3.5 s
 # external-transition hold are exercised in microseconds.

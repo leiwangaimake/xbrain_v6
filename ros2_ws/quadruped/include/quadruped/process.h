@@ -66,6 +66,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
@@ -201,6 +202,26 @@ class QuadrupedProcess {
   // The newest snapshot, or false when ctrl has not produced one since the last
   // call. Same slot discipline as the odometry: newest wins, no backlog.
   bool TakeStateForPublish(StateSnapshot* out);
+
+  // ---- the four report streams (13 S7.1) --------------------------------
+  //
+  // Called from RxPump, on the chs_a_rx thread, with the report that was just
+  // parsed and nullptr for the others. It is a callback rather than a slot
+  // because these structs hold std::string and cannot cross a LockfreeSlot --
+  // and because there is nothing to hand to ctrl anyway: forwarding a report is
+  // not realtime work, and it belongs on the thread that already did the
+  // allocating parse (QD-7's whole reason for that thread existing).
+  //
+  // It runs INSIDE RxPump, so a sink that blocks stalls report reception, and a
+  // stalled reception is what the session reads as a dead link (13 CA-7). The
+  // sink in production is one zenoh put.
+  using ReportSink = std::function<void(double now_mono_s,
+                                        const chs_a::BasicStatus*,
+                                        const chs_a::MotionStatus*,
+                                        const chs_a::DeviceStatus*,
+                                        const chs_a::FaultReport*)>;
+  void SetReportSink(ReportSink sink);
+  std::uint64_t reports_forwarded() const { return reports_forwarded_; }
   // How many integrated samples ctrl has offered. Compared against what the
   // publisher actually sent, the difference is the overrun rate -- the number
   // T-ODOM-1 is about, and the one V-69 put on the table.
@@ -277,6 +298,8 @@ class QuadrupedProcess {
   hachist::xbrain::rtcomm::LockfreeSlot<OdomSample> odom_slot_;
   hachist::xbrain::rtcomm::LockfreeSlot<StateSnapshot> state_slot_;
   std::uint64_t odom_offered_ = 0;
+  ReportSink report_sink_;
+  std::uint64_t reports_forwarded_ = 0;
   ChassisSnapshot latest_;
   bool have_snapshot_ = false;
 

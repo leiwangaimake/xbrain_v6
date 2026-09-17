@@ -435,5 +435,205 @@ std::size_t WritePong(const PongInput& in, char* out, std::size_t cap) {
   return a.Finish();
 }
 
+// ---------------------------------------------------------------------------
+// The four report streams. See rt_payloads.h for why they take the parsed
+// struct and why open-set values carry the raw number as well as the label.
+// ---------------------------------------------------------------------------
+
+std::size_t WriteChassisBasic(const chs_a::BasicStatus& in, char* out,
+                              std::size_t cap) {
+  Appender a(out, cap);
+  // HES first, and not only because it is the field a reader looks for: OpenSet
+  // emits its OWN leading comma (it is written for use after an existing
+  // field), so something has to precede the first one or the object opens with
+  // "{,". Found by parsing the output rather than reading it -- the writer
+  // produced text that looked right and was not JSON.
+  //
+  // Tier 1 latches on HES independently (13 S3.2); this field is the REPORT,
+  // never the decision.
+  a.Raw("{\"hes\":");
+  a.Bool(in.hes);
+  // Flat `name` + `name_raw`, which is what OpenSet does and what
+  // WriteRobotState already publishes. A second, nested shape for the same
+  // values would make every consumer choose which one to read.
+  OpenSet(&a, "usage_mode", in.usage_mode);
+  OpenSet(&a, "motion_state", in.motion_state);
+  OpenSet(&a, "gait", in.gait);
+  a.Raw(",\"sleep\":");
+  a.Bool(in.sleep);
+  a.Raw(",\"charge\":");
+  a.Int(in.charge);
+  a.Raw(",\"status_code\":");
+  a.Int(in.status_code);
+  a.Raw(",\"power_management\":");
+  a.Int(in.power_management);
+  a.Raw(",\"ota_status\":");
+  a.Int(in.ota_status);
+  a.Raw(",\"direction\":");
+  a.Int(in.direction);
+  a.Raw(",\"ooa\":");
+  a.Int(in.ooa);
+  a.Raw(",\"model\":");
+  a.Str(in.model.c_str());
+  a.Raw(",\"device_num\":");
+  a.Str(in.device_num.c_str());
+  a.Raw(",\"sn\":");
+  a.Str(in.sn.c_str());
+  // 13 S5.6 / V-53: "PRO" is what gates the chassis's built-in navigation
+  // licence. Forwarded because an operator cannot otherwise tell a STD machine
+  // from a PRO one, and the two answer some commands differently.
+  a.Raw(",\"version\":");
+  a.Str(in.version.c_str());
+  a.Raw("}");
+  return a.Finish();
+}
+
+std::size_t WriteChassisMotion(const chs_a::MotionStatus& in, char* out,
+                               std::size_t cap) {
+  Appender a(out, cap);
+  // The velocity block leads so OpenSet's own leading comma is valid -- see
+  // WriteChassisBasic for the same point.
+  a.Raw("{\"vel\":{\"x\":");
+  a.Num(in.linear_x);
+  a.Raw(",\"y\":");
+  a.Num(in.linear_y);
+  a.Raw(",\"yaw\":");
+  a.Num(in.angular_z);
+  a.Raw("}");
+  OpenSet(&a, "motion_state", in.motion_state);
+  OpenSet(&a, "gait", in.gait);
+  // Body frame, m/s and rad/s. 13 S5.4 records that the manual's units column
+  // says "raw/s" for the angular axis and that this is an error (V-46) -- the
+  // value on the wire is rad/s, and forwarding it under any other name would
+  // make every downstream consumer wrong by 57.
+  a.Raw(",\"rpy\":{\"roll\":");
+  a.Num(in.roll);
+  a.Raw(",\"pitch\":");
+  a.Num(in.pitch);
+  a.Raw(",\"yaw\":");
+  a.Num(in.yaw);
+  a.Raw("},\"imu\":{\"acc\":[");
+  a.Num(in.acc_x);
+  a.Raw(",");
+  a.Num(in.acc_y);
+  a.Raw(",");
+  a.Num(in.acc_z);
+  a.Raw("],\"omega\":[");
+  a.Num(in.omega_x);
+  a.Raw(",");
+  a.Num(in.omega_y);
+  a.Raw(",");
+  a.Num(in.omega_z);
+  a.Raw("]},\"height_m\":");
+  a.Num(in.height);
+  a.Raw(",\"payload_kg\":");
+  a.Num(in.payload);
+  a.Raw(",\"remain_mile_km\":");
+  a.Num(in.remain_mile);
+  a.Raw("}");
+  return a.Finish();
+}
+
+std::size_t WriteChassisDevice(const chs_a::DeviceStatus& in, char* out,
+                               std::size_t cap) {
+  Appender a(out, cap);
+  a.Raw("{\"min_level_pct\":");
+  a.Int(in.min_level);
+  // 13 V-68: an empty slot reports 0, so min_level alone cannot tell a flat
+  // battery from an absent one. present_count travels beside it for exactly
+  // that reason -- the contract's min() rule is left alone and the FACT that
+  // would otherwise be missing is supplied.
+  a.Raw(",\"present_count\":");
+  a.UInt(in.present_count);
+  a.Raw(",\"any_charging\":");
+  a.Bool(in.any_charging);
+  a.Raw(",\"list\":[");
+  for (std::size_t i = 0; i < in.batteries.size(); ++i) {
+    const chs_a::BatteryEntry& b = in.batteries[i];
+    if (i != 0) a.Raw(",");
+    // The original index is carried, not the position after any filtering:
+    // 13 V-55 records that the left/right mapping is unknown, so an index that
+    // moved would destroy the only handle anyone has on which slot is which.
+    a.Raw("{\"index\":");
+    a.UInt(i);
+    a.Raw(",\"level_pct\":");
+    a.Int(b.level);
+    a.Raw(",\"voltage_v\":");
+    a.Num(b.voltage);
+    a.Raw(",\"temp_c\":");
+    a.Num(b.temperature_c);
+    a.Raw(",\"charging\":");
+    a.Bool(b.charging);
+    a.Raw(",\"present\":");
+    a.Bool(b.present);
+    a.Raw(",\"serial\":");
+    a.Str(b.serial.c_str());
+    a.Raw("}");
+  }
+  a.Raw("]}");
+  return a.Finish();
+}
+
+namespace {
+
+void WriteFaultList(Appender* a, const std::vector<chs_a::FaultEntry>& list) {
+  a->Raw("[");
+  for (std::size_t i = 0; i < list.size(); ++i) {
+    const chs_a::FaultEntry& f = list[i];
+    if (i != 0) a->Raw(",");
+    a->Raw("{\"code\":");
+    a->Str(f.code.c_str());
+    a->Raw(",\"name\":");
+    a->Str(f.name.c_str());
+    a->Raw(",\"level\":");
+    a->Str(f.level.c_str());
+    // Free-form and NOT parsed: 13 S7.3 records that the vendor gives no schema
+    // for it. Forwarded verbatim because the string is often the only clue an
+    // engineer has, and inventing a structure for it would be inventing a
+    // contract the vendor has not agreed to.
+    a->Raw(",\"details\":");
+    a->Str(f.details.c_str());
+    a->Raw(",\"grouped\":");
+    a->Bool(f.grouped);
+    a->Raw(",\"since\":{\"sec\":");
+    a->Int(f.since_sec);
+    a->Raw(",\"nanosec\":");
+    a->Int(f.since_nanosec);
+    a->Raw("},\"resources\":[");
+    for (std::size_t k = 0; k < f.resources.size(); ++k) {
+      if (k != 0) a->Raw(",");
+      a->Str(f.resources[k].c_str());
+    }
+    a->Raw("],\"source\":[");
+    for (std::size_t k = 0; k < f.source.size(); ++k) {
+      if (k != 0) a->Raw(",");
+      a->Str(f.source[k].c_str());
+    }
+    a->Raw("]}");
+  }
+  a->Raw("]");
+}
+
+}  // namespace
+
+std::size_t WriteChassisFault(const chs_a::FaultReport& in, char* out,
+                              std::size_t cap) {
+  Appender a(out, cap);
+  // BOTH lists, always, including when one is empty. An empty `cleared` and an
+  // absent `cleared` are different claims: the first says nothing was cleared
+  // this report, the second says nothing was said -- and a consumer that has to
+  // guess will keep a fault asserted forever.
+  a.Raw("{\"faults\":");
+  WriteFaultList(&a, in.faults);
+  a.Raw(",\"cleared\":");
+  WriteFaultList(&a, in.cleared);
+  a.Raw(",\"fault_count\":");
+  a.UInt(in.faults.size());
+  a.Raw(",\"cleared_count\":");
+  a.UInt(in.cleared.size());
+  a.Raw("}");
+  return a.Finish();
+}
+
 }  // namespace rt
 }  // namespace quadruped

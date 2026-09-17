@@ -39,6 +39,7 @@
 #include <unistd.h>
 
 #include <cstdio>
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <map>
@@ -253,6 +254,60 @@ QuadrupedConfig Cfg(int port) {
   c.odom.stale_invalid_ms = 300;
   c.odom.stale_stop_publish_ms = 1000;
   return c;
+}
+
+// A report frame of an arbitrary Type, carrying no ErrorCode.
+//
+// It exists because the capture has no such frame: the two non-modelled frames
+// in it (the location report and the heartbeat response) BOTH carry an
+// ErrorCode and are therefore consumed by the error branch of RxPump, never
+// reaching the "unmodelled report" path. Without this builder that path has no
+// input at all, and a mutant that forwards unparsed bytes onto a schema'd key
+// survives for lack of a test case rather than for lack of a defect.
+Bytes TypedReportFrame(std::uint32_t type, std::uint32_t command) {
+  char items[256];
+  std::snprintf(items, sizeof(items),
+                "{\"PatrolDevice\":{\"Command\":%u,\"Items\":{},"
+                "\"Time\":\"2026-09-15 14:55:55.457\",\"Type\":%u}}",
+                command, type);
+  const std::size_t asdu_len = std::strlen(items);
+  Bytes out(chs_a::kHeaderBytes + asdu_len);
+  chs_a::Header h;
+  h.asdu_len = static_cast<std::uint16_t>(asdu_len);
+  h.msg_id = 0;
+  chs_a::WriteHeader(h, out.data(), out.size());
+  std::memcpy(out.data() + chs_a::kHeaderBytes, items, asdu_len);
+  return out;
+}
+
+// A captured frame with ONLY its Command field rewritten, header length fixed.
+//
+// Used instead of a hand-built frame wherever the payload has to be real: a
+// synthetic fault frame with an empty Items block does not parse, so it would
+// test nothing. This keeps the vendor's own bytes and changes exactly the field
+// under test.
+Bytes WithCommand(const Bytes& frame, std::uint32_t command) {
+  const std::string asdu(reinterpret_cast<const char*>(frame.data() + chs_a::kHeaderBytes),
+                         frame.size() - chs_a::kHeaderBytes);
+  const std::string needle = "\"Command\":";
+  const std::size_t at = asdu.find(needle);
+  if (at == std::string::npos) return frame;
+  std::size_t end = at + needle.size();
+  while (end < asdu.size() && (asdu[end] == ' ' || std::isdigit(
+             static_cast<unsigned char>(asdu[end])))) {
+    ++end;
+  }
+  // hex32 codes are serialised as DECIMAL integers (13 S5.5 / CB-1): JSON has
+  // no hex literal, and writing one is how the first frame gets 0xE002.
+  const std::string out_asdu = asdu.substr(0, at + needle.size()) +
+                               std::to_string(command) + asdu.substr(end);
+  Bytes out(chs_a::kHeaderBytes + out_asdu.size());
+  chs_a::Header h;
+  h.asdu_len = static_cast<std::uint16_t>(out_asdu.size());
+  h.msg_id = 0;
+  chs_a::WriteHeader(h, out.data(), out.size());
+  std::memcpy(out.data() + chs_a::kHeaderBytes, out_asdu.data(), out_asdu.size());
+  return out;
 }
 
 // A BasicStatus frame with chosen fields, built the way the chassis builds one.
@@ -678,6 +733,117 @@ int main(int argc, char** argv) {
     p.CtrlTick(0.65);
     CHECK(p.TakeStateForPublish(&snap) == true);
     CHECK(snap.soft_estop_active == false);
+  }
+
+  // ---- the four report streams reach the sink, the fifth does not -------
+  //
+  // Every frame here came off the chassis on 2026-09-15. That matters more than
+  // usual for this case: the routing is by Type code, and a frame this
+  // repository invented would be routed by the same constant the code uses --
+  // which proves the constant matches itself and nothing else.
+  {
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+
+    struct Seen {
+      std::uint64_t basic = 0, motion = 0, device = 0, fault = 0;
+      int both = 0;
+      double last_now = -1.0;
+      std::string model, version;
+      std::size_t battery_count = 0;
+      std::size_t fault_count = 0;
+    } seen;
+
+    p.SetReportSink([&seen](double now, const chs_a::BasicStatus* b,
+                            const chs_a::MotionStatus* m,
+                            const chs_a::DeviceStatus* d,
+                            const chs_a::FaultReport* f) {
+      seen.last_now = now;
+      int n = 0;
+      if (b != nullptr) { ++seen.basic; ++n; seen.model = b->model; seen.version = b->version; }
+      if (m != nullptr) { ++seen.motion; ++n; }
+      if (d != nullptr) { ++seen.device; ++n; seen.battery_count = d->batteries.size(); }
+      if (f != nullptr) { ++seen.fault; ++n; seen.fault_count = f->faults.size(); }
+      // Exactly one report per call. A sink that had to guess which pointer is
+      // live would eventually read the wrong one, and the bug would look like
+      // a chassis that reports the wrong thing.
+      if (n != 1) ++seen.both;
+    });
+
+    chassis.Send(golden.at("RX_00100064_00f00000"));   // basic
+    chassis.Send(golden.at("RX_00100001_00f00000"));   // motion
+    chassis.Send(golden.at("RX_00100002_00f00000"));   // device
+    chassis.Send(golden.at("RX_0010007f_00f00000"));   // fault
+    // *** A type this build does not model, and with NO ErrorCode.
+    //
+    // The capture's location report cannot serve here: it carries an ErrorCode
+    // (measured 2026-09-17) and is consumed by RxPump's error branch, so it
+    // never reaches the unmodelled-report path at all. This frame does.
+    chassis.Send(TypedReportFrame(0x00100099u, chs_a::kReportCommand));
+    // Pumped from a NON-ZERO time on purpose. All five frames are already in
+    // the socket buffer, so they come out on the first call -- starting at 0.0
+    // would make the clock assertion below pass against a sink that invented
+    // its own timestamp, which is the thing it is there to catch.
+    for (int i = 0; i < 200; ++i) p.RxPump(5.0 + 0.01 * i);
+
+    CHECK(seen.basic == 1);
+    CHECK(seen.motion == 1);
+    CHECK(seen.device == 1);
+    CHECK(seen.fault == 1);
+    CHECK(seen.both == 0);
+    // Four forwarded, five received: the unmodelled report counts as liveness
+    // and is NOT forwarded, because putting bytes nobody parsed onto a key with
+    // a schema is how a consumer starts seeing fields that were never there.
+    CHECK(p.reports_forwarded() == 4);
+    CHECK(p.frames_received() >= 5);
+    // The sink is handed the CALLER's clock, not one it read itself: every
+    // age in this process is measured on one monotonic reading per tick
+    // (CLK-C1, mono_clock.h), and a layer that reads its own would be a second
+    // time base inside one program.
+    CHECK(seen.last_now == 5.0);
+
+    // The strings really came through -- this is the half a POD snapshot cannot
+    // carry, and the reason the sink exists at all.
+    CHECK(seen.model == "CA9C");
+    CHECK(!seen.version.empty());
+    CHECK(seen.battery_count > 0);
+
+    // ...and the link is up, because an arriving report is the evidence
+    // (13 CA-7) no matter which kind it was.
+    p.CtrlTick(2.5);
+    CHECK(p.conn_state() == chs_a::ConnState::kOk);
+
+    // *** A fault frame is forwarded whatever its Command field says.
+    //
+    // 13 S7.3 makes the fault stream "2 Hz PLUS on change", and the
+    // change-driven frame is the one an operator is waiting for. We do NOT know
+    // what Command the vendor puts on it -- the capture contains only the
+    // periodic form -- so the code does not gate on Command at all, and this
+    // case pins that choice. See the note in process.cc: forwarding a frame
+    // whose Command we did not expect is recoverable; dropping the frame that
+    // reports a new fault is not.
+    const std::uint64_t before_fault = seen.fault;
+    chassis.Send(WithCommand(golden.at("RX_0010007f_00f00000"), 1u));
+    for (int i = 0; i < 100; ++i) p.RxPump(7.0 + 0.01 * i);
+    CHECK(seen.fault == before_fault + 1);
+  }
+
+  // ---- no sink installed: nothing crashes, nothing is counted -----------
+  //
+  // The production binary installs one, but the offline tests and any future
+  // consumer that only wants control do not. An unset std::function called is
+  // undefined behaviour, so the guard is asserted rather than assumed.
+  {
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    chassis.Send(golden.at("RX_00100064_00f00000"));
+    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
+    CHECK(p.frames_received() >= 1);
+    CHECK(p.reports_forwarded() == 0);
   }
 
   // ---- many periods without a chassis: no crash, no motion --------------

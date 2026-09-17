@@ -289,6 +289,14 @@ bool QuadrupedProcess::TakeOdomForPublish(OdomSample* out) {
   return odom_slot_.TakeFresh(out);
 }
 
+void QuadrupedProcess::SetReportSink(ReportSink sink) {
+  // Installed before the threads start. There is no lock: the only writer is
+  // the setup path and the only reader is chs_a_rx, and they do not overlap in
+  // time. Calling this on a running process would be a defect, which is why it
+  // is not guarded -- a guard would make it look supported.
+  report_sink_ = std::move(sink);
+}
+
 bool QuadrupedProcess::TakeStateForPublish(StateSnapshot* out) {
   if (out == nullptr) return false;
   return state_slot_.TakeFresh(out);
@@ -353,6 +361,13 @@ int QuadrupedProcess::RxPump(double now_mono_s) {
         snap.gait_raw = b.gait.raw;
         mode_.OnReadback(now_mono_s, b);
         snapshot_slot_.Publish(snap);
+        // Forwarded from HERE, with the full report including its strings.
+        // What went into the slot above is the trimmed POD ctrl acts on; this
+        // is the report itself, and the two are not interchangeable.
+        if (report_sink_) {
+          report_sink_(now_mono_s, &b, nullptr, nullptr, nullptr);
+          ++reports_forwarded_;
+        }
       }
     } else if (route.type == chs_a::kTypeMotion &&
                route.command == chs_a::kReportCommand) {
@@ -365,12 +380,41 @@ int QuadrupedProcess::RxPump(double now_mono_s) {
         snap.motion_state_raw = m.motion_state.raw;
         snap.gait_raw = m.gait.raw;
         snapshot_slot_.Publish(snap);
+        if (report_sink_) {
+          report_sink_(now_mono_s, nullptr, &m, nullptr, nullptr);
+          ++reports_forwarded_;
+        }
+      }
+    } else if (route.type == chs_a::kTypeDevice &&
+               route.command == chs_a::kReportCommand) {
+      chs_a::DeviceStatus d;
+      if (chs_a::ParseDeviceStatus(framer_.asdu(), framer_.asdu_len(), &d)) {
+        snapshot_slot_.Publish(snap);
+        if (report_sink_) {
+          report_sink_(now_mono_s, nullptr, nullptr, &d, nullptr);
+          ++reports_forwarded_;
+        }
+      }
+    } else if (route.type == chs_a::kTypeFault) {
+      // *** NOT gated on kReportCommand. 13 S7.3 makes the fault stream "2 Hz
+      // PLUS on change", and the change-driven frame does not carry the
+      // periodic report command. Requiring it would drop exactly the frames
+      // that matter -- a new fault is reported the moment it appears, and that
+      // is the one an operator is waiting for.
+      chs_a::FaultReport f;
+      if (chs_a::ParseFaultReport(framer_.asdu(), framer_.asdu_len(), &f)) {
+        snapshot_slot_.Publish(snap);
+        if (report_sink_) {
+          report_sink_(now_mono_s, nullptr, nullptr, nullptr, &f);
+          ++reports_forwarded_;
+        }
       }
     } else {
-      // The device, fault and location reports are parsed by the publisher once
-      // it exists. They still count as liveness, which is what OnReport below
-      // records -- 13 CA-7 makes an arriving report the ONLY evidence the link
-      // is alive, whatever kind of report it is.
+      // Location and anything else this build does not model. They still count
+      // as liveness -- 13 CA-7 makes an arriving report the ONLY evidence the
+      // link is alive, whatever kind of report it is -- and they are NOT
+      // forwarded, because forwarding a frame nobody parsed would put bytes of
+      // unknown shape onto a key with a schema.
       snapshot_slot_.Publish(snap);
     }
   }

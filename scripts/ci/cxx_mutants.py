@@ -744,6 +744,47 @@ PAYLOADS_SOURCES = [PAYLOADS_CC,
 PAYLOADS_TESTS = [os.path.join(QUAD, "test", "test_rt_payloads.cc")]
 
 PAYLOADS_MUTANTS = [
+    # 13 S6.5: an open-set value travels as BOTH the number and the label.
+    # Dropping the raw leaves a consumer who sees "unknown_0x0000" unable to say
+    # WHICH unregistered value it was -- and V-66's Gait 0 arrives on every boot.
+    ("payloads: an open-set value loses its raw number",
+     PAYLOADS_CC,
+     '  a->Raw(",\\"");\n  a->Raw(name);\n  a->Raw("_raw\\":");\n'
+     "  a->Int(static_cast<long long>(v.raw));",
+     "  (void)0;"),
+    # 13 S7.3: both fault lists travel. An empty `cleared` and an absent one are
+    # different claims, and a consumer that has to guess keeps a fault asserted.
+    ("payloads: the cleared-fault list is omitted",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"cleared\\":");\n  WriteFaultList(&a, in.cleared);',
+     "  (void)0;"),
+    # 13 V-68: an empty slot reports 0, so min_level alone cannot tell a flat
+    # battery from an absent one. present_count is the fact that supplies it.
+    ("payloads: present_count is dropped from the device report",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"present_count\\":");\n  a.UInt(in.present_count);\n'
+     '  a.Raw(",\\"any_charging\\":");',
+     '  a.Raw(",\\"any_charging\\":");'),
+    # 13 V-55: the left/right mapping is unknown, so the ORIGINAL index is the
+    # only handle anyone has on which slot is which. Renumbering destroys it.
+    ("payloads: every battery entry reports slot 0's values",
+     PAYLOADS_CC,
+     '    const chs_a::BatteryEntry& b = in.batteries[i];\n'
+     '    if (i != 0) a.Raw(",");',
+     '    const chs_a::BatteryEntry& b = in.batteries[0];\n'
+     '    if (i != 0) a.Raw(",");'),
+    # 13 V-46: the manual's units column says raw/s for the angular axis and is
+    # wrong; the wire value is rad/s. Swapping the axes here is invisible in a
+    # capture at rest and wrong by 57 the moment the robot turns.
+    ("payloads: the motion report swaps yaw rate and roll",
+     PAYLOADS_CC, '  a.Raw(",\\"yaw\\":");\n  a.Num(in.angular_z);',
+     '  a.Raw(",\\"yaw\\":");\n  a.Num(in.omega_x);'),
+    # 13 S5.6 / V-53: PRO gates the chassis navigation licence, and an operator
+    # cannot tell a STD machine from a PRO one without it.
+    ("payloads: the basic report drops the firmware version",
+     PAYLOADS_CC, '  a.Raw(",\\"version\\":");\n  a.Str(in.version.c_str());',
+     "  (void)0;"),
+
     # 11 D-08: four fields, four meanings. Deriving locked from one latch hides
     # the other, and an operator reads "not locked" on a robot that cannot move.
     ("payloads: locked derived from the HES latch alone",
@@ -1197,6 +1238,31 @@ PROCESS_MUTANTS = [
      PROCESS_CC,
      "  snap.soft_estop_active = have_cmd_ && (cmd_estop_epoch_ != estop_epoch_);",
      "  snap.soft_estop_active = false;"),
+    # The four report streams. Each of these keeps the link alive and the
+    # process healthy while silently delivering the wrong thing upward.
+    ("process: the fault report is gated on the periodic report command",
+     PROCESS_CC, "    } else if (route.type == chs_a::kTypeFault) {",
+     "    } else if (route.type == chs_a::kTypeFault &&\n"
+     "               route.command == chs_a::kReportCommand) {"),
+    ("process: the device report is never forwarded",
+     PROCESS_CC,
+     "          report_sink_(now_mono_s, nullptr, nullptr, &d, nullptr);\n"
+     "          ++reports_forwarded_;",
+     "          (void)0;"),
+    # A sink handed two live pointers cannot tell which report it got, and the
+    # one it picks will eventually be the wrong one.
+    ("process: the basic report is forwarded as a motion report",
+     PROCESS_CC, "          report_sink_(now_mono_s, &b, nullptr, nullptr, nullptr);",
+     "          report_sink_(now_mono_s, &b, nullptr, nullptr, nullptr);\n"
+     "          report_sink_(now_mono_s, nullptr, nullptr, nullptr, nullptr);"),
+    # Location frames are not modelled. Forwarding one would put bytes of
+    # unknown shape onto a key that has a schema.
+    ("process: an unparsed report is forwarded anyway",
+     PROCESS_CC,
+     "      // Location and anything else this build does not model. They still count",
+     "      if (report_sink_) { report_sink_(now_mono_s, nullptr, nullptr, nullptr, nullptr);\n"
+     "                          ++reports_forwarded_; }\n"
+     "      // Location and anything else this build does not model. They still count"),
     # 13 S9.1 v1.11 / V-69: ctrl integrates and hands the sample to rt_pub.
     # Dropping the hand-off leaves the publisher with nothing while the process
     # looks entirely healthy from the chassis side.
@@ -1739,7 +1805,7 @@ SUITES = {
     "units": ([], UNITS_TESTS, UNITS_MUTANTS, None, []),
     "envelope": ([], ENVELOPE_TESTS, ENVELOPE_MUTANTS, None, []),
     "rt_keys": (RT_KEYS_SOURCES, RT_KEYS_TESTS, RT_KEYS_MUTANTS, CONTRACT_MD, []),
-    "payloads": (PAYLOADS_SOURCES, PAYLOADS_TESTS, PAYLOADS_MUTANTS, None, []),
+    "payloads": (PAYLOADS_SOURCES, PAYLOADS_TESTS, PAYLOADS_MUTANTS, GOLDEN, []),
     "mode": (MODE_SOURCES, MODE_TESTS, MODE_MUTANTS, None, []),
     "odom": (ODOM_SOURCES, ODOM_TESTS, ODOM_MUTANTS, None, []),
     "dds_names": (NAMES_SOURCES, NAMES_TESTS, NAMES_MUTANTS, None, []),

@@ -160,6 +160,34 @@ struct PongInput {
 
 std::size_t WritePong(const PongInput& in, char* out, std::size_t cap);
 
+// ---------------------------------------------------------------------------
+// The four chassis report streams (13 S7.1). Each is the parsed report
+// forwarded onto its own RT key, and each is written by the chs_a_rx thread --
+// which is why these take the parsed struct rather than a snapshot: the reports
+// hold std::string (model, serial, fault names) and cannot cross the lock-free
+// slot to ctrl (12 RTC-6). Publishing them from the thread that parsed them is
+// not a shortcut; it is the only place they exist.
+//
+// Open-set values go out as BOTH the raw number and the resolved label, never
+// as the label alone: 13 S6.5 forbids mapping an unregistered value onto a
+// known one, and a consumer that sees only "unknown_0x0000" cannot tell which
+// unregistered value it was. 13 V-66's Gait 0 is exactly that case and it
+// appears on every boot.
+// ---------------------------------------------------------------------------
+
+std::size_t WriteChassisBasic(const chs_a::BasicStatus& in, char* out,
+                              std::size_t cap);
+std::size_t WriteChassisMotion(const chs_a::MotionStatus& in, char* out,
+                               std::size_t cap);
+std::size_t WriteChassisDevice(const chs_a::DeviceStatus& in, char* out,
+                               std::size_t cap);
+// Both lists travel (13 S7.3): `faults` is what is asserted now and `cleared`
+// is what just stopped. Sending only the first leaves a consumer unable to tell
+// "still broken" from "was broken, now fine" without keeping its own history --
+// and a consumer's history is the thing that goes stale across a restart.
+std::size_t WriteChassisFault(const chs_a::FaultReport& in, char* out,
+                              std::size_t cap);
+
 }  // namespace rt
 }  // namespace quadruped
 
