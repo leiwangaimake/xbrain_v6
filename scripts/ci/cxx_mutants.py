@@ -2236,10 +2236,24 @@ def build_and_run(sources, tests, workdir, arg, quiet=True, extra=()):
             run = subprocess.run([exe, arg if arg else workdir],
                                  capture_output=True, text=True, timeout=60)
         except subprocess.TimeoutExpired:
+            if not quiet:
+                sys.stderr.write("  %s: TIMED OUT after 60 s\n"
+                                 % os.path.basename(test_src))
             return (True, False)
         if run.returncode != 0:
             if not quiet:
                 sys.stdout.write(run.stdout)
+                # STDERR TOO, and this is not cosmetic. A suite that links
+                # against ROS compiles fine and then fails to LOAD when the
+                # run has no ROS environment:
+                #   error while loading shared libraries: librosidl_...so
+                # That message is the whole diagnosis, and it goes to stderr.
+                # Discarding it left the caller with "BASELINE RED -- fix the
+                # build or the tests first", which points at the code while the
+                # cause is the shell. Measured 2026-09-18: a full sweep reported
+                # chs_b and uplink red with no other output, and both were green
+                # the moment /opt/ros/humble/setup.bash was sourced.
+                sys.stderr.write(run.stderr)
             return (True, False)
     return (True, True)
 
@@ -2459,7 +2473,15 @@ def main(argv):
     for name, desc, why in broken_all:
         print("  UNUSABLE: [%s] %s (%s)" % (name, desc, why))
     for name in baseline_red:
-        print("  BASELINE RED: %s -- fix the build or the tests first" % name)
+        # The cause is printed above, by build_and_run. It is NOT always
+        # the code: a suite that links against ROS loads no shared
+        # library without the ROS environment, and this line used to
+        # send the reader to the source for what a `source setup.bash`
+        # fixes.
+        print("  BASELINE RED: %s -- read the failure printed above; "
+              "a suite that links ROS needs the ROS environment "
+              "(source /opt/ros/<distro>/setup.bash) before the code "
+              "is suspect" % name)
     # Printed in the summary too, not only where it happened: the per-suite
     # line scrolls past, and "198 killed, 0 survived" with a suite missing
     # underneath it is the kind of green that gets quoted later.
