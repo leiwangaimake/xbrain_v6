@@ -405,6 +405,31 @@ int Run(const std::string& path) {
                    static_cast<unsigned long long>(st.probe_cycles),
                    static_cast<unsigned long long>(st.frames));
     }
+    // Refused frames. FR-5 asks for a `warn` on a length mismatch and this
+    // process cannot emit events (11 RT-C4), so the honest substitute is to
+    // make the count visible -- the framer had kept it since day one and
+    // nothing read it.
+    //
+    // Only when it MOVES, and only every few seconds: a rate is the signal,
+    // and a line per bad frame is how a noisy link drowns the thread that was
+    // meant to report it. Silent on a healthy link, by construction.
+    {
+      static std::uint64_t said_dropped = 0;
+      static std::uint64_t dropped_said_at = 0;
+      if (st.dropped != said_dropped &&
+          proc.ctrl_ticks() - dropped_said_at >= 500) {   // ~5 s at 100 Hz
+        dropped_said_at = proc.ctrl_ticks();
+        std::fprintf(stderr,
+                     "quadruped_m20: framer REFUSED %llu frame(s) so far "
+                     "(+%llu since last report) -- a rising rate means the "
+                     "peer and we disagree about the frame format, not that "
+                     "the link is slow (13 FR-5)\n",
+                     static_cast<unsigned long long>(st.dropped),
+                     static_cast<unsigned long long>(st.dropped -
+                                                     said_dropped));
+        said_dropped = st.dropped;
+      }
+    }
   }
 #if QUADRUPED_HAVE_RT
   // The RT plane goes down first: its subscriptions call into the process, and

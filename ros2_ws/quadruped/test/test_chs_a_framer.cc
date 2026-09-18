@@ -385,6 +385,30 @@ int main(int argc, char** argv) {
     CHECK(fr.dropped_frames() == 3);
   }
 
+  // ---- PushDatagram clears whatever the stream path left behind ----------
+  {
+    // The header says one Framer serves one transport, and PushDatagram opens
+    // by clearing the stream state to say the same thing in code. That line
+    // matters on ONE path: 13 S8.2's endpoint failover walks the candidate
+    // list, so a tcp:30003 attempt that half-delivered a frame can be followed
+    // by the udp:30004 candidate on the same instance.
+    //
+    // Without the clear, the leftover bytes stay in buf_ and the NEXT Next()
+    // parses them -- i.e. bytes from a dead TCP connection surface as a frame
+    // after the process has moved to UDP. Reset() on disconnect normally gets
+    // there first; this is the second lock on the same door, and it is only a
+    // lock if something proves it turns.
+    Framer fr(kResyncMax, kAssemblyTimeoutMs);
+    CHECK(fr.Push(basic.data(), 40));          // a partial stream frame
+    CHECK(fr.PushDatagram(fault.data(), fault.size()) == FrameStatus::kFrame);
+    // The datagram's own frame is the one on offer.
+    CHECK(fr.frame_len() == fault.size());
+    // And the stream leftovers are gone: completing that partial frame must
+    // now produce nothing, because its first 40 bytes no longer exist.
+    CHECK(fr.Push(basic.data() + 40, basic.size() - 40));
+    CHECK(fr.Next(0.0) != FrameStatus::kFrame);
+  }
+
   if (g_failures == 0) {
     std::printf("ALL CHS_A_FRAMER TESTS PASSED\n");
     return 0;

@@ -598,7 +598,96 @@ QuadrupedProcess::LinkStatus QuadrupedProcess::link_status() const {
   s.active_endpoint = pub_active_ep_.load(std::memory_order_relaxed);
   s.probe_cycles = pub_probe_cycles_.load(std::memory_order_relaxed);
   s.frames = pub_frames_.load(std::memory_order_relaxed);
+  s.dropped = pub_dropped_.load(std::memory_order_relaxed);
   return s;
+}
+
+// One decoded frame, whatever transport carried it. Extracted so the two
+// framing paths below share it verbatim: a stream path and a datagram path
+// that each grew their own copy would drift, and the drift would show up as
+// "the UDP endpoint reports a different set of things".
+void QuadrupedProcess::HandleFrame(double now_mono_s) {
+  chs_a::AsduRouting route;
+  if (!chs_a::ParseAsduRouting(framer_.asdu(), framer_.asdu_len(), &route)) {
+    return;
+  }
+  if (route.has_error_code) {
+    session_.OnErrorCode(now_mono_s, route.error_code);
+    return;
+  }
+
+  // The JSON parse happens HERE, on the ordinary-priority thread. That is the
+  // entire reason this thread exists (13 S9.1): parsing allocates, and QD-7
+  // forbids allocation in ctrl.
+  ChassisSnapshot snap;
+  snap.rx_mono_s = now_mono_s;
+  if (route.type == chs_a::kTypeBasic && route.command == chs_a::kReportCommand) {
+    chs_a::BasicStatus b;
+    if (chs_a::ParseBasicStatus(framer_.asdu(), framer_.asdu_len(), &b)) {
+      snap.from_basic = true;
+      snap.hes = b.hes;
+      snap.sleep = b.sleep;
+      snap.usage_mode_raw = b.usage_mode.raw;
+      snap.motion_state_raw = b.motion_state.raw;
+      snap.gait_raw = b.gait.raw;
+      mode_.OnReadback(now_mono_s, b);
+      snapshot_slot_.Publish(snap);
+      // Forwarded from HERE, with the full report including its strings.
+      // What went into the slot above is the trimmed POD ctrl acts on; this
+      // is the report itself, and the two are not interchangeable.
+      if (report_sink_) {
+        report_sink_(now_mono_s, &b, nullptr, nullptr, nullptr);
+        ++reports_forwarded_;
+      }
+    }
+  } else if (route.type == chs_a::kTypeMotion &&
+             route.command == chs_a::kReportCommand) {
+    chs_a::MotionStatus m;
+    if (chs_a::ParseMotionStatus(framer_.asdu(), framer_.asdu_len(), &m)) {
+      snap.from_motion = true;
+      snap.linear_x = m.linear_x;
+      snap.linear_y = m.linear_y;
+      snap.angular_z = m.angular_z;
+      snap.motion_state_raw = m.motion_state.raw;
+      snap.gait_raw = m.gait.raw;
+      snapshot_slot_.Publish(snap);
+      if (report_sink_) {
+        report_sink_(now_mono_s, nullptr, &m, nullptr, nullptr);
+        ++reports_forwarded_;
+      }
+    }
+  } else if (route.type == chs_a::kTypeDevice &&
+             route.command == chs_a::kReportCommand) {
+    chs_a::DeviceStatus d;
+    if (chs_a::ParseDeviceStatus(framer_.asdu(), framer_.asdu_len(), &d)) {
+      snapshot_slot_.Publish(snap);
+      if (report_sink_) {
+        report_sink_(now_mono_s, nullptr, nullptr, &d, nullptr);
+        ++reports_forwarded_;
+      }
+    }
+  } else if (route.type == chs_a::kTypeFault) {
+    // *** NOT gated on kReportCommand. 13 S7.3 makes the fault stream "2 Hz
+    // PLUS on change", and the change-driven frame does not carry the
+    // periodic report command. Requiring it would drop exactly the frames
+    // that matter -- a new fault is reported the moment it appears, and that
+    // is the one an operator is waiting for.
+    chs_a::FaultReport f;
+    if (chs_a::ParseFaultReport(framer_.asdu(), framer_.asdu_len(), &f)) {
+      snapshot_slot_.Publish(snap);
+      if (report_sink_) {
+        report_sink_(now_mono_s, nullptr, nullptr, nullptr, &f);
+        ++reports_forwarded_;
+      }
+    }
+  } else {
+    // Location and anything else this build does not model. They still count
+    // as liveness -- 13 CA-7 makes an arriving report the ONLY evidence the
+    // link is alive, whatever kind of report it is -- and they are NOT
+    // forwarded, because forwarding a frame nobody parsed would put bytes of
+    // unknown shape onto a key with a schema.
+    snapshot_slot_.Publish(snap);
+  }
 }
 
 int QuadrupedProcess::RxPump(double now_mono_s) {
@@ -611,10 +700,46 @@ int QuadrupedProcess::RxPump(double now_mono_s) {
     session_.OnSendFailure(now_mono_s);
     return 0;
   }
+
+  // *** Which framing. 13 S2.2 gives channel one TWO endpoint candidates --
+  // tcp:30003 and udp:30004 -- and BOTH are enabled in the resolved config,
+  // with S8.2 picking "the first one that delivers a status report". Before
+  // this branch every byte went through Push(), the STREAM entry point, and
+  // Framer::PushDatagram had ZERO production call sites.
+  //
+  // What that would have cost on the UDP candidate: the stream framer resyncs
+  // on the sync word and carries leftover bytes into the next push, so a
+  // truncated datagram is silently CONCATENATED with the next unrelated one
+  // and can pass the header check as a frame. FR-5 exists to make that
+  // impossible -- one datagram is one frame, anything else is dropped -- and
+  // its comment says so in as many words. UDP has no ordering guarantee that
+  // would make a continuation meaningful in the first place.
+  //
+  // Not reachable today (tcp:30003 answers first, measured 2026-09-18), which
+  // is exactly why it would have stayed broken until the day TCP failed.
+  if (socket_.is_udp()) {
+    if (n == 0) return 0;
+    if (framer_.PushDatagram(rx, static_cast<std::size_t>(n)) !=
+        chs_a::FrameStatus::kFrame) {
+      // Counted, not logged: FR-5's `warn` needs an event path this process
+      // does not have (11 RT-C4), and a log line per bad datagram is how a
+      // merely noisy link takes down the thread meant to report it. The count
+      // reaches the supervisor through link_status().
+      pub_dropped_.store(framer_.dropped_frames(), std::memory_order_relaxed);
+      return 0;
+    }
+    ++frames_received_;
+    HandleFrame(now_mono_s);
+    pub_frames_.store(frames_received_, std::memory_order_relaxed);
+    pub_dropped_.store(framer_.dropped_frames(), std::memory_order_relaxed);
+    // One frame per datagram, by FR-5. Next() would not find it anyway: it
+    // reads the stream buffer, which PushDatagram deliberately leaves empty.
+    return 1;
+  }
+
   if (n > 0) {
     framer_.Push(rx, static_cast<std::size_t>(n));
   }
-
 
   int frames = 0;
   for (;;) {
@@ -625,91 +750,11 @@ int QuadrupedProcess::RxPump(double now_mono_s) {
     }
     ++frames;
     ++frames_received_;
-
-    chs_a::AsduRouting route;
-    if (!chs_a::ParseAsduRouting(framer_.asdu(), framer_.asdu_len(), &route)) {
-      continue;
-    }
-    if (route.has_error_code) {
-      session_.OnErrorCode(now_mono_s, route.error_code);
-      continue;
-    }
-
-    // The JSON parse happens HERE, on the ordinary-priority thread. That is the
-    // entire reason this thread exists (13 S9.1): parsing allocates, and QD-7
-    // forbids allocation in ctrl.
-    ChassisSnapshot snap;
-    snap.rx_mono_s = now_mono_s;
-    if (route.type == chs_a::kTypeBasic && route.command == chs_a::kReportCommand) {
-      chs_a::BasicStatus b;
-      if (chs_a::ParseBasicStatus(framer_.asdu(), framer_.asdu_len(), &b)) {
-        snap.from_basic = true;
-        snap.hes = b.hes;
-        snap.sleep = b.sleep;
-        snap.usage_mode_raw = b.usage_mode.raw;
-        snap.motion_state_raw = b.motion_state.raw;
-        snap.gait_raw = b.gait.raw;
-        mode_.OnReadback(now_mono_s, b);
-        snapshot_slot_.Publish(snap);
-        // Forwarded from HERE, with the full report including its strings.
-        // What went into the slot above is the trimmed POD ctrl acts on; this
-        // is the report itself, and the two are not interchangeable.
-        if (report_sink_) {
-          report_sink_(now_mono_s, &b, nullptr, nullptr, nullptr);
-          ++reports_forwarded_;
-        }
-      }
-    } else if (route.type == chs_a::kTypeMotion &&
-               route.command == chs_a::kReportCommand) {
-      chs_a::MotionStatus m;
-      if (chs_a::ParseMotionStatus(framer_.asdu(), framer_.asdu_len(), &m)) {
-        snap.from_motion = true;
-        snap.linear_x = m.linear_x;
-        snap.linear_y = m.linear_y;
-        snap.angular_z = m.angular_z;
-        snap.motion_state_raw = m.motion_state.raw;
-        snap.gait_raw = m.gait.raw;
-        snapshot_slot_.Publish(snap);
-        if (report_sink_) {
-          report_sink_(now_mono_s, nullptr, &m, nullptr, nullptr);
-          ++reports_forwarded_;
-        }
-      }
-    } else if (route.type == chs_a::kTypeDevice &&
-               route.command == chs_a::kReportCommand) {
-      chs_a::DeviceStatus d;
-      if (chs_a::ParseDeviceStatus(framer_.asdu(), framer_.asdu_len(), &d)) {
-        snapshot_slot_.Publish(snap);
-        if (report_sink_) {
-          report_sink_(now_mono_s, nullptr, nullptr, &d, nullptr);
-          ++reports_forwarded_;
-        }
-      }
-    } else if (route.type == chs_a::kTypeFault) {
-      // *** NOT gated on kReportCommand. 13 S7.3 makes the fault stream "2 Hz
-      // PLUS on change", and the change-driven frame does not carry the
-      // periodic report command. Requiring it would drop exactly the frames
-      // that matter -- a new fault is reported the moment it appears, and that
-      // is the one an operator is waiting for.
-      chs_a::FaultReport f;
-      if (chs_a::ParseFaultReport(framer_.asdu(), framer_.asdu_len(), &f)) {
-        snapshot_slot_.Publish(snap);
-        if (report_sink_) {
-          report_sink_(now_mono_s, nullptr, nullptr, nullptr, &f);
-          ++reports_forwarded_;
-        }
-      }
-    } else {
-      // Location and anything else this build does not model. They still count
-      // as liveness -- 13 CA-7 makes an arriving report the ONLY evidence the
-      // link is alive, whatever kind of report it is -- and they are NOT
-      // forwarded, because forwarding a frame nobody parsed would put bytes of
-      // unknown shape onto a key with a schema.
-      snapshot_slot_.Publish(snap);
-    }
+    HandleFrame(now_mono_s);
   }
-  // Published from THIS thread, which is the one that owns the counter.
+  // Published from THIS thread, which is the one that owns the counters.
   pub_frames_.store(frames_received_, std::memory_order_relaxed);
+  pub_dropped_.store(framer_.dropped_frames(), std::memory_order_relaxed);
   return frames;
 }
 

@@ -376,12 +376,22 @@ class QuadrupedProcess {
     int active_endpoint = -1;       // index into the candidate list, -1 = none
     std::uint64_t probe_cycles = 0; // full walks of the list that found nothing
     std::uint64_t frames = 0;       // reports received since start
+    // Frames the framer refused. FR-5 asks for a `warn` on a length mismatch,
+    // and quadruped cannot emit events (11 RT-C4 -- event/* is the general
+    // plane, which this process is forbidden to join). Surfacing the COUNT is
+    // the part that is ours: the framer had kept it since day one and nothing
+    // in production ever read it, which makes it a number rather than a
+    // diagnostic. The rate is the signal -- one drop after a reconnect is
+    // normal, one per second means the peer and we disagree about the format.
+    std::uint64_t dropped = 0;
   };
   LinkStatus link_status() const;
 
  private:
   void CtrlLoop();
   void RxLoop();
+  // One decoded frame, shared by the stream and datagram framing paths.
+  void HandleFrame(double now_mono_s);
 
   QuadrupedConfig cfg_;
   ChassisSocket socket_;
@@ -466,6 +476,7 @@ class QuadrupedProcess {
   std::atomic<int> pub_active_ep_{-1};
   std::atomic<std::uint64_t> pub_probe_cycles_{0};
   std::atomic<std::uint64_t> pub_frames_{0};
+  std::atomic<std::uint64_t> pub_dropped_{0};
 
   std::atomic<bool> running_{false};
   std::thread ctrl_thread_;

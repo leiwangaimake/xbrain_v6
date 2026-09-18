@@ -118,6 +118,20 @@ YAML_TESTS = [os.path.join(ROOT, "ros2_ws", "sensor", "test", "test_yaml_lite.cc
 # changed so that the line now carries weight, and the run fails until the note
 # in the source is corrected.
 QUAD_MUTANTS = [
+    # A dropped datagram must leave no state behind. Keeping the stream buffer
+    # across PushDatagram is how a bad datagram poisons the next good one.
+    #
+    # Anchored on the COMMENT above it: Framer::Reset clears the same five
+    # fields in the same order. That is the third collision in one day (the
+    # rt_parse cmd_id guard, the payloads null triple, this), and all three had
+    # the same cause -- a function written later copying the shape of one
+    # written earlier. The runner reports anchor counts rather than taking the
+    # first match precisely so these surface as UNUSABLE instead of as a mutant
+    # that quietly tests the wrong function.
+    ("framer: PushDatagram leaves the stream buffer behind",
+     FRAMER,
+     "  // not supported, made loudly in code rather than only in the header.\n  used_ = 0;",
+     "  // not supported, made loudly in code rather than only in the header.\n  /* stream state kept */;"),
     # ---- codec: the wire format -------------------------------------------
     # The peer waits for 16 bytes that already arrived and never answers again.
     # Reads on the link as "the chassis stopped responding", not as a framing
@@ -1242,6 +1256,32 @@ PROCESS_SOURCES = [
 PROCESS_TESTS = [os.path.join(QUAD, "test", "test_process.cc")]
 
 PROCESS_MUTANTS = [
+    # FR-5 / 13 S2.2. THE defect: Framer::PushDatagram had zero production call
+    # sites, so the udp:30004 candidate (enabled in the resolved config) was
+    # framed as a STREAM. The stream framer carries leftovers across pushes, so
+    # two halves of two unrelated datagrams can be concatenated into something
+    # that passes the header check. This mutant restores exactly that.
+    ("process: the UDP endpoint is framed as a stream",
+     PROCESS_CC,
+     "  if (socket_.is_udp()) {\n    if (n == 0) return 0;",
+     "  if (false) {\n    if (n == 0) return 0;"),
+    # FR-5 asks for a `warn` on a refused frame. This process cannot emit
+    # events (11 RT-C4), so the count is the part that IS ours -- and the
+    # framer had kept it since day one with no production reader, which makes
+    # it a number rather than a diagnostic.
+    ("process: refused frames are counted but never published",
+     PROCESS_CC,
+     "      pub_dropped_.store(framer_.dropped_frames(), std::memory_order_relaxed);\n"
+     "      return 0;",
+     "      return 0;"),
+    # FR-5's length equality: one datagram is one frame, and a datagram holding
+    # two is dropped WHOLE rather than partially consumed. Accepting the first
+    # frame and discarding the rest is the tempting relaxation, and UDP gives
+    # no ordering that would make the remainder meaningful.
+    ("process: a datagram holding two frames yields the first",
+     os.path.join(QUAD, "src", "chs_a_framer.cc"),
+     "  if (kHeaderBytes + static_cast<std::size_t>(h.asdu_len) != len) {",
+     "  if (kHeaderBytes + static_cast<std::size_t>(h.asdu_len) > len) {"),
     # 13 S4.4 (4) / 11 S9.9. THE defect: Odometry::OnGait had zero production
     # call sites, so a robot on a staircase published wheel odometry with
     # flat-ground trust and valid = true. test_odometry.cc calls OnGait(true)
@@ -1419,7 +1459,9 @@ PROCESS_MUTANTS = [
      "      (void)0;"),
     # The counter the whole receive path is judged by.
     ("process: received frames are not counted",
-     PROCESS_CC, "    ++frames_received_;", "    /* not counted */"),
+     PROCESS_CC,
+     "    ++frames;\n    ++frames_received_;",
+     "    ++frames;\n    /* not counted */"),
     # The state snapshot is built on the thread that owns every field in it.
     # Reporting a constant instead is the mutant a reader cannot see: every
     # message stays well formed and the robot's reported state stops moving.
@@ -1437,28 +1479,28 @@ PROCESS_MUTANTS = [
     # The four report streams. Each of these keeps the link alive and the
     # process healthy while silently delivering the wrong thing upward.
     ("process: the fault report is gated on the periodic report command",
-     PROCESS_CC, "    } else if (route.type == chs_a::kTypeFault) {",
-     "    } else if (route.type == chs_a::kTypeFault &&\n"
-     "               route.command == chs_a::kReportCommand) {"),
+     PROCESS_CC, "  } else if (route.type == chs_a::kTypeFault) {",
+     "  } else if (route.type == chs_a::kTypeFault &&\n"
+     "             route.command == chs_a::kReportCommand) {"),
     ("process: the device report is never forwarded",
      PROCESS_CC,
-     "          report_sink_(now_mono_s, nullptr, nullptr, &d, nullptr);\n"
-     "          ++reports_forwarded_;",
-     "          (void)0;"),
+     "        report_sink_(now_mono_s, nullptr, nullptr, &d, nullptr);\n"
+     "        ++reports_forwarded_;",
+     "        (void)0;"),
     # A sink handed two live pointers cannot tell which report it got, and the
     # one it picks will eventually be the wrong one.
     ("process: the basic report is forwarded as a motion report",
-     PROCESS_CC, "          report_sink_(now_mono_s, &b, nullptr, nullptr, nullptr);",
-     "          report_sink_(now_mono_s, &b, nullptr, nullptr, nullptr);\n"
-     "          report_sink_(now_mono_s, nullptr, nullptr, nullptr, nullptr);"),
+     PROCESS_CC, "        report_sink_(now_mono_s, &b, nullptr, nullptr, nullptr);",
+     "        report_sink_(now_mono_s, &b, nullptr, nullptr, nullptr);\n"
+     "        report_sink_(now_mono_s, nullptr, nullptr, nullptr, nullptr);"),
     # Location frames are not modelled. Forwarding one would put bytes of
     # unknown shape onto a key that has a schema.
     ("process: an unparsed report is forwarded anyway",
      PROCESS_CC,
-     "      // Location and anything else this build does not model. They still count",
-     "      if (report_sink_) { report_sink_(now_mono_s, nullptr, nullptr, nullptr, nullptr);\n"
-     "                          ++reports_forwarded_; }\n"
-     "      // Location and anything else this build does not model. They still count"),
+     "    // Location and anything else this build does not model. They still count",
+     "    if (report_sink_) { report_sink_(now_mono_s, nullptr, nullptr, nullptr, nullptr);\n"
+     "                        ++reports_forwarded_; }\n"
+     "    // Location and anything else this build does not model. They still count"),
     # 13 S4.2's two priority tables. Every one of these produces a pose that is
     # merely less accurate -- no error, no warning, and a covariance model that
     # does not know the difference.

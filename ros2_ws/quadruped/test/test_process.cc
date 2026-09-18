@@ -215,6 +215,58 @@ class FakeChassis {
   Bytes sent_;
 };
 
+// The UDP side of channel one. 13 S2.2 lists udp:30004 alongside tcp:30003 and
+// the resolved config enables BOTH, so this is a real endpoint the process can
+// land on -- not a hypothetical.
+//
+// It binds and then waits for the process's first datagram so it learns the
+// peer address; the process connect()s its own socket, so a plain sendto back
+// to that address is delivered.
+class FakeUdpChassis {
+ public:
+  FakeUdpChassis() {
+    fd_ = ::socket(AF_INET, SOCK_DGRAM, 0);
+    sockaddr_in a;
+    std::memset(&a, 0, sizeof(a));
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ::bind(fd_, reinterpret_cast<sockaddr*>(&a), sizeof(a));
+    socklen_t len = sizeof(a);
+    ::getsockname(fd_, reinterpret_cast<sockaddr*>(&a), &len);
+    port_ = ntohs(a.sin_port);
+  }
+  ~FakeUdpChassis() {
+    if (fd_ >= 0) ::close(fd_);
+  }
+  int port() const { return port_; }
+
+  // Read whatever the process has sent, and remember where it came from.
+  bool LearnPeer() {
+    std::uint8_t buf[8192];
+    socklen_t len = sizeof(peer_);
+    const long n = ::recvfrom(fd_, buf, sizeof(buf), MSG_DONTWAIT,
+                              reinterpret_cast<sockaddr*>(&peer_), &len);
+    if (n <= 0) return have_peer_;
+    have_peer_ = true;
+    return true;
+  }
+  // Send EXACTLY these bytes as one datagram. Callers use it to send a whole
+  // frame, half a frame, or two frames at once -- FR-5 says only the first is
+  // a frame, and the other two are what this endpoint must refuse.
+  void SendRaw(const std::uint8_t* d, std::size_t n) {
+    if (!have_peer_) return;
+    ::sendto(fd_, d, n, MSG_NOSIGNAL, reinterpret_cast<sockaddr*>(&peer_),
+             sizeof(peer_));
+  }
+  void SendRaw(const Bytes& b) { SendRaw(b.data(), b.size()); }
+
+ private:
+  int fd_ = -1;
+  int port_ = 0;
+  sockaddr_in peer_{};
+  bool have_peer_ = false;
+};
+
 QuadrupedConfig Cfg(int port) {
   QuadrupedConfig c;
   c.robot_id = "gj-001";
@@ -264,6 +316,14 @@ QuadrupedConfig Cfg(int port) {
   c.dds.imu_age_warn_ms = 50;
   c.dds.imu_frame_id = "imu_link";
   c.dds.forward_imu_to_rt = false;
+  return c;
+}
+
+// The same config with its one endpoint switched to UDP. Same shape as the real
+// resolved file, whose second candidate is udp:30004 with enabled: true.
+QuadrupedConfig UdpCfg(int port) {
+  QuadrupedConfig c = Cfg(port);
+  c.link.endpoints[0].proto = "udp";
   return c;
 }
 
@@ -1073,6 +1133,86 @@ int main(int argc, char** argv) {
     p.CtrlTick(0.11);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
     CHECK(p.axis_frames_sent() > before);
+  }
+
+  // ---- the UDP endpoint frames by DATAGRAM, not by stream (FR-5) --------
+  {
+    // The gap this closes: Framer::PushDatagram had ZERO production call
+    // sites. Every byte went through Push(), the STREAM entry point, on both
+    // endpoint candidates -- and 13 S2.2 gives channel one a udp:30004
+    // candidate that the resolved config has enabled.
+    //
+    // *** Why that is not merely untidy. The stream framer keeps leftover
+    // bytes across pushes, so a TRUNCATED datagram is concatenated with the
+    // next, unrelated one. Two halves of two different reports can then pass
+    // the header check together and be handed upward as one frame. FR-5 exists
+    // to make that impossible -- one datagram is one frame, anything else is
+    // dropped -- because UDP has no ordering that would make a continuation
+    // meaningful.
+    FakeUdpChassis chassis;
+    QuadrupedProcess p(UdpCfg(chassis.port()));
+    // A tick so the process connects and sends its first frame, which is what
+    // teaches the peer where to reply.
+    p.CtrlTick(0.0);
+    for (int i = 0; i < 20 && !chassis.LearnPeer(); ++i) p.CtrlTick(0.01 * i);
+    CHECK(chassis.LearnPeer());
+
+    // A whole frame in one datagram: accepted.
+    const Bytes good = BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+                                  /*gait=*/0x3002, /*hes=*/false,
+                                  /*sleep=*/false);
+    chassis.SendRaw(good);
+    p.RxPump(0.30);
+    CHECK(p.frames_received() == 1);
+
+    // *** The assertion the defect fails. Two halves of that frame, sent as
+    // two datagrams. Under FR-5 both are dropped and the counter does not
+    // move; under the stream framer the second push completes the first and
+    // yields a frame -- which is the concatenation this endpoint must never
+    // perform. mutant: route UDP through Push() -> frames_received becomes 2.
+    const std::size_t half = good.size() / 2;
+    chassis.SendRaw(good.data(), half);
+    p.RxPump(0.31);
+    chassis.SendRaw(good.data() + half, good.size() - half);
+    p.RxPump(0.32);
+    CHECK(p.frames_received() == 1);
+
+    // And a datagram carrying TWO frames is one frame too many, not one frame
+    // plus a remainder: FR-5 drops it whole.
+    Bytes two = good;
+    two.insert(two.end(), good.begin(), good.end());
+    chassis.SendRaw(two);
+    p.RxPump(0.33);
+    CHECK(p.frames_received() == 1);
+
+    // Asserted HERE, before any further good frame arrives. FR-5 asks for a
+    // `warn` on a refused frame; this process cannot emit events (11 RT-C4),
+    // so the count is the part that is ours -- and it has to be visible WHEN
+    // THE DROP HAPPENS. On the link FR-5 is actually about, the peer and we
+    // disagree about the format and there IS no next good frame; a count
+    // published only alongside a successful frame would then read 0 forever,
+    // which is the same picture as a silent link.
+    //
+    // THREE, enumerated so the number is a derivation rather than whatever the
+    // first run printed: the truncated first half (header parses, length
+    // disagrees), the second half (no sync word at all), and the two-frame
+    // datagram. The two whole frames are not refusals.
+    // mutant: publish the count only on the success path -> reads 0 here.
+    CHECK(p.link_status().dropped == 3);
+
+    // The link still works afterwards -- a dropped datagram must not leave
+    // state that poisons the next good one. A framer that kept the leftovers
+    // would parse this one against them.
+    chassis.SendRaw(good);
+    p.RxPump(0.34);
+    CHECK(p.frames_received() == 2);
+
+    // And the refusals are VISIBLE. FR-5 asks for a `warn`, which this process
+    // cannot emit (11 RT-C4); the count is the part that is ours, and until
+    // now nothing in production read it -- the framer had kept the number
+    // since day one with no reader, which makes it a number, not a diagnostic.
+    // and a good frame afterwards must not disturb the refusal count.
+    CHECK(p.link_status().dropped == 3);
   }
 
   // ---- a stair gait REACHES the odometry (13 S4.4 (4) / 11 S9.9) ---------
