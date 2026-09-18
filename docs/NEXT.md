@@ -410,7 +410,7 @@
 
 - [x] **P1 · `path/relative_move.py` 收敛** ✅ 2026-09-13 已删（旧 MOT-PM-18 执行器与其 batch-B 三条测试；relmove 路径 = `nav/relmove_intake.py` + RNS goto，七值在 `nav/report_map.py`）；12 §4.5.1 同步为七值（加 `deviation` 分支/行，行号引用改为 `11` §9.3.2A.6 锚点）。原文 ⇒ 旧 MOT-PM-18 六值 abort 闭集（limit_exceeded/…）与 11 §9.3.2A.6 v2.0 七值（soft_estop/obstacle/fence/timeout/preempted/input_lost/deviation）不一致；P7.2 的 `nav/report_map.py` 用七值，旧模块只剩 `TrapezoidProfile` 有意义，待删或改写并同步 12 §4.5.1。
 - [ ] **RNS · 路径 loop_mode（closed / pingpong）**：`route_intake` 已透传 `loop_mode`，`mission_host` 单趟（loop_index 0 / loop_total 1 / dir_sign +1）；多圈与掉头（12 §4.3.1 LP-5 Nav2 spin）待 Nav2 委托。
-- [ ] **Orin NX 装机** `[SW-NOW]`:TensorRT 10.3(JetPack 6.2 配套)+ ROS 2 Humble,答复 r3 Q1.3 承诺 2026-09-18 前;engine 由感知方在生产机构建(PSC-4)。
+- [x] **Orin NX 装机** `[上装侧了结]`:★ ROS 2 Humble **已装**(2026-09-15,见 §8 DEP-5 行);★ **2026-09-18 用户确认:TensorRT 由感知工程师在生产机自行安装**,不再计上装侧欠账(engine 亦由感知方在生产机构建,PSC-4)。原答复 r3 Q1.3 承诺 2026-09-18 前装机 —— ROS2 侧已兑现;TRT 状态跟踪转感知侧(是 r7「两核 vs 三核」诊断的前置,几何走 TRT/GPU)。
 - [ ] **感知方交付追踪**(`perception-rns-reply-20260911.md` Q1.4 三阶段):① 接口联调交付 —— 验收 = W-11 七(八)场景消费对表全绿 + A19-ENC-1 / TIME-1 / TIME-2 / BOOT-4 / VEL-1 / CAL-1,接收人 RNS;② 实机功能交付 `[GATED-HW]`(W-2 标定前置);③ 生产联合验收(§Q3.2 工况,分级门 + 年龄门 + 接收端对表 `scripts/dev/perception_rx_audit.py`)。
 - [ ] **Q5 实机输入** `[GATED-HW]`(答复 r3 Q5 表,以实机到位日 D 为基准):安装位置与支架(D+3)· 标定窗口(安装后 2 天)· 扫掠高度 PD-17(D+1)· `wz_max`/加速度 #20-5(D+3)· PD-16 障碍能力矩阵实测定承诺。
 
