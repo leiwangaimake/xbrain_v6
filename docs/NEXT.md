@@ -453,6 +453,21 @@
 
 ★ 已解卡即做的先例（本日）：④ f 迟滞升档、信封改秒、旧执行器删除 —— 三者都曾在本表同类位置，卡点消失当天完成。
 
+
+### 8.8 ★★★ 冻结线摘要链落地后的挂账（2026-09-18 · CFG-CM-10 / `--check` / P2 Stage C-D 三批落地当日登记）
+
+> ★ 三批已落地：① 冻结线真正算出 `common_digest` / `config_rev` / `layers[]`（此前是字面量 `"stub-not-yet-computed"`，测试夹具更传 `"fixture-digest"`）；② `python3 -m xbrain.boot.freeze --check` 只报不写地比对源与产物；③ P2 在 Stage A 缓存摘要、放行前比对、不一致保持禁止运动并发 `event/fault/bit`。
+> ★ 下面四条是**在此过程中查出、但本轮没有擅自改**的东西 —— 三条是「文档与实现不一致且无法靠一个经验证的事实判定谁对谁错」（铁律 1 的边界：这种要停下问用户），一条是实现缺口。
+
+| # | 事项 | 现状 | 谁来定 / 关闭条件 |
+|---|---|---|---|
+| ① | **断言执行链与 `registry.py` 不一致** | `10` §5.4.4「执行顺序（唯一权威行）」写 `J → A → M → B → C → D → E → F → F' → G → N → O → H → I → L → K`（16 项）；实现 `ordered_assertion_names()` 实跑 20 项，为 `J → A → M → B → C → D → E → F → G → N → O → H → I → K → L → FV-ORG → C-6+MR-1 → S10 → S22 → materialise`。**三处差**：(a) 文档有 `F′`、实现**没有**；(b) `K` 与 `L` 次序相反；(c) 实现多五项。★★ **没有任何测试在守这条链** —— `tests/boot/freeze/test_meta_diff.py` 的双向差集比的是 `SP`/`S`/`QC`/`AS` 四族，不含它 | ★ (a) 是**实现缺口还是文档遗留**、(b) 谁对，都无法靠代码自证 ⇒ **用户裁决**。(c) 可随裁决一并补进唯一权威行。★ 关闭后应同时补一条把该链与 `ordered_assertion_names()` 做双向差集的元测试，否则下次还会漂 |
+| ② | **`MANIFEST` 字段：文档有而实现不产出** | 样例块里的 `gen_ts` · `robot_id` · `site_id` · `processes[*].refs` 四个字段，`build_manifest()` 都不写；实现另有 `config_variant`（§5.4.7 引入）样例块未列 | ★ `refs`（每个进程展开了几处 `${common.*}`）有审计价值且可算 ⇒ 倾向**补实现**；另三个倾向**补实现或删样例**。🚫 本轮不擅自增删字段 |
+| ③ | **`ENV-2` 在冻结线读取侧不成立** | `xbrain/common/config/layers.py::safety_root()` 实现了「safety 层永不跟随 `XBRAIN_CONFIG_DIR`」并有测试；但冻结线实际读取走的是 `assertions/_layer_loader.py::load_layers()`，它用的是 `os.path.join(config_root, "safety")` ⇒ **设了 `XBRAIN_CONFIG_DIR` 时 safety 跟着覆盖根走了**。测试夹具用软链回真 `configs/safety` 绕过了这一点 | ★ 改动会影响整条冻结线在覆盖根下的行为（含现有夹具），属设计层面 ⇒ **停下问用户**（CLAUDE.md §9.1） |
+| ④ | **`configs/common.yaml` 已落一个值** | `common.motion.profiles.obstacle_avoid.max_mps = 0.5`。`tests/configs/test_common_skeleton.py::test_every_declared_leaf_is_null` 因此**恒红**（该用例的判据是「CFG-CF-2 是键位骨架，任何落值都要有 `10` §5.4.5 的授权行」） | ★ 要么给它补一条 §5.4.5 授权行并登记进该用例的 `_LANDED` 表，要么退回 `null` ⇒ **用户裁决**（铁律 3 只禁「为让冻结线跑通而填」，不禁有授权的落值） |
+
+★ **本批同时产生的一条运维结论（已写进 `10` §10.3）**：「改了 `configs/` 但没重启」这件事，三道结构性门（`Requires=` / tmpfs / `boot_id`）**一道都不碰**，因为它们全部以重启为支点。核对入口是 `python3 -m xbrain.boot.freeze --check`，🚫 它绝不写 `resolved/`。
+
 ### 8.7 ★★★ M20S 底盘首次探测实录（2026-09-14，调试 PC USB 网卡 ↔ 底盘第 ④ 口「24V + 网口」；只读探测，未发任何控制帧）
 
 > ★ 探针脚本在 `data/run/chassis/`（gitignored）：`chs_probe.py`（UDP/TCP 心跳 + 上报解析，hex32 码按十进制序列化）· `chs_tls_probe.py`（TLS 握手 + 证书 + 心跳）· `spdp_listen.py`（域 0 SPDP 被动监听）。★ 本机网卡配 `10.21.33.200/24` 与 `10.21.31.200/24`（nmcli 连接 `m20s-chassis`，不设默认路由）。
