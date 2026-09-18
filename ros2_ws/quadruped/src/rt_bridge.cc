@@ -174,6 +174,10 @@ bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
   in.usage_mode_raw = snap.usage_mode_raw;
   in.motion_state_raw = snap.motion_state_raw;
   in.gait_raw = snap.gait_raw;
+  // 11 S9.9's third output. The sample rides in the snapshot rather than being
+  // taken from the odom slot here: that slot is consuming (12 RTC-6), and a
+  // second consumer would steal every other pose from the uplink.
+  in.odom = &snap.odom;
   in.soft_estop_active = snap.soft_estop_active;
   in.cmd_age_ms = snap.cmd_age_ms;
   in.mode_switching = snap.mode_switching;

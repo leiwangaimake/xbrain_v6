@@ -78,6 +78,14 @@ constexpr CodeName kGaits[] = {
     {0x3003, "stair_agile"},
 };
 
+// The stair members of the table above, kept ADJACENT to it: 13 S4.4 (4) makes
+// the odometry's valid flag turn on this membership, so a gait added to kGaits
+// without a look at this list would silently publish wheel odometry as valid
+// on a staircase. Both are listed even though GS-1 forbids US from commanding
+// 0x1003 -- GS-3 says it verbatim: "我方不发" 不等于 "它不会出现" (the factory
+// handset can set it, and the read-back path still resolves it).
+constexpr std::int64_t kStairGaits[] = {0x1003, 0x3003};
+
 // 11 S9.2.4 / 13 C-02.
 constexpr CodeName kUsageModes[] = {
     {0, "normal"},
@@ -205,6 +213,20 @@ bool ParseRoot(const std::uint8_t* asdu, std::size_t len, Json* out) {
 
 OpenSetValue ResolveMotionState(std::int64_t raw) { return Resolve(kMotionStates, raw); }
 OpenSetValue ResolveGait(std::int64_t raw) { return Resolve(kGaits, raw); }
+
+bool IsStairGait(std::int64_t raw) {
+  for (const std::int64_t g : kStairGaits) {
+    if (g == raw) return true;
+  }
+  // An UNREGISTERED value answers false, and that is deliberate rather than
+  // careless. The conservative-looking alternative -- treat anything unknown as
+  // a staircase -- would fire on the most ordinary report there is: 13 V-66
+  // measured the chassis reporting Gait 0 at rest, a value kGaits does not
+  // contain, on every boot before RL control. Inflating covariance and clearing
+  // valid on a standing robot teaches the consumer to ignore the flag, which
+  // costs more than it buys on the one gait it was built for.
+  return false;
+}
 OpenSetValue ResolveUsageMode(std::int64_t raw) { return Resolve(kUsageModes, raw); }
 
 std::string SeverityToLevel(bool present, std::int64_t severity) {

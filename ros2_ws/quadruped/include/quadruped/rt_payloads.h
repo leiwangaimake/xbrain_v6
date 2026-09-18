@@ -48,6 +48,7 @@
 
 #include "quadruped/chs_a_reports.h"
 #include "quadruped/chs_a_session.h"
+#include "quadruped/odometry.h"
 #include "quadruped/tier1.h"
 
 namespace quadruped {
@@ -138,6 +139,12 @@ struct RobotStateInput {
   // which one to read.
   // Derived here rather than passed, so it cannot disagree with the two fields
   // it summarises.
+
+  // 11 S4.1 RobotState.odom, and 11 S9.9's output table which names
+  // RobotState.odom.* as one of this process's three outputs. Null until the
+  // first control period has run: an all-zero pose reads as a robot at the
+  // origin, which is a claim rather than an absence.
+  const OdomSample* odom = nullptr;
 };
 
 // 11 S4.1. Returns bytes written, or 0 if the buffer is too small.

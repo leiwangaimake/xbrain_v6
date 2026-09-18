@@ -288,6 +288,27 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
       latest_.gait_raw = fresh.gait_raw;
       latest_.from_motion = true;
     }
+    // 13 S4.4 (4) / 11 S9.9: the gait decides whether wheel odometry may be
+    // called valid AT ALL. On a stair gait 13 takes both measures -- covariance
+    // inflated 3.33x AND valid = false -- and says in so many words that the
+    // inflation alone is not enough there.
+    //
+    // *** Before this line, Odometry::OnGait had ZERO production call sites.
+    // is_stair_gait_ therefore sat at its initialiser forever, so a robot on a
+    // staircase published odometry with FLAT-ground trust and valid = true.
+    // Everything else was in place: the trust divisor, the valid expression,
+    // the config keys, and a unit test that calls OnGait(true) directly and
+    // passes. The fifth instance of the same shape in this process, after
+    // Uplink::Publish, the rt/chassis/mode subscription, the three mode-frame
+    // encoders, and SetReportSink -- capability present, compiles, tests green,
+    // last segment not connected.
+    //
+    // Placed after BOTH branches because both reports carry Gait. That caps the
+    // update rate at the 10 Hz MotionStatus; the drdds /MOTION_INFO does carry
+    // gait_state but this process does not read it (MotionInfoTick carries
+    // velocity only). Not a safety gap: entering a stair gait is a commanded
+    // transition that takes seconds, not one period.
+    odom_.OnGait(chs_a::IsStairGait(latest_.gait_raw));
     // Receive time always: it is a property of the ARRIVAL, not of the report
     // kind, and the session's liveness judgement is about arrivals.
     latest_.rx_mono_s = fresh.rx_mono_s;
@@ -520,6 +541,10 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   snap.usage_mode_raw = latest_.usage_mode_raw;
   snap.motion_state_raw = latest_.motion_state_raw;
   snap.gait_raw = latest_.gait_raw;
+  // Set from last_odom_ above, on the same tick that produced it, so the pose
+  // in the state message and the pose in /odom_quadruped are the same sample
+  // rather than two samples that happen to be close.
+  snap.odom = last_odom_;
   state_slot_.Publish(snap);
 
   last_ctrl_s_ = now_mono_s;

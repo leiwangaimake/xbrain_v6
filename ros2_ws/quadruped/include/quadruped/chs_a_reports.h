@@ -81,6 +81,16 @@ OpenSetValue ResolveMotionState(std::int64_t raw);
 OpenSetValue ResolveGait(std::int64_t raw);
 OpenSetValue ResolveUsageMode(std::int64_t raw);
 
+// Whether a RAW gait value is one of the two stair gaits (0x1003 / 0x3003).
+// 13 S4.4 (4) and 11 S9.9 both hang on this: on a stair gait the wheel odometry
+// is published with covariance inflated 3.33x AND with valid = false -- 13 took
+// both, saying in so many words that the inflation alone is not enough there.
+//
+// It takes the RAW value, not an OpenSetValue: the label of an unregistered
+// code is unknown_0xNNNN, and matching on labels would make the safety
+// behaviour depend on a rendering choice.
+bool IsStairGait(std::int64_t raw);
+
 // The basic status report (Type 0x00100064 / Command 0x00f00000), 2 Hz.
 struct BasicStatus {
   OpenSetValue motion_state;

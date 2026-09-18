@@ -317,6 +317,42 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
     a.Raw(",\"motion\":null");
   }
 
+  // 11 S4.1 RobotState.odom. This block is the ONLY carrier of `valid`: a ROS
+  // nav_msgs/Odometry has no field for it, so /odom_quadruped cannot say the
+  // pose is untrustworthy. 11 CD-6 and N-2 both refuse relative-displacement
+  // delegation on odom.valid == false, and 13 S4.4 (4) clears it on a stair
+  // gait -- a rule with no reader until this block exists.
+  //
+  // cov_xy_m and cov_yaw_rad are SIGMA, not variance: the schema's only
+  // definition of them is the unit in the name (_m, _rad), and 13 S4.4's
+  // numeric table speaks in sigma throughout (sigma_x(1 s) = 0.081 m, which is
+  // also T-ODOM-2's acceptance baseline). Publishing m^2 under a name ending
+  // in _m would be off by a square in the safe-looking direction below 1 m and
+  // the unsafe direction above it.
+  if (in.odom != nullptr) {
+    a.Raw(",\"odom\":{\"x\":");
+    a.Num(in.odom->x);
+    a.Raw(",\"y\":");
+    a.Num(in.odom->y);
+    a.Raw(",\"yaw_rad\":");
+    a.Num(in.odom->yaw);
+    a.Raw(",\"vx\":");
+    a.Num(in.odom->vx);
+    a.Raw(",\"vy\":");
+    a.Num(in.odom->vy);
+    a.Raw(",\"wz\":");
+    a.Num(in.odom->wz);
+    a.Raw(",\"cov_xy_m\":");
+    a.Num(std::sqrt(in.odom->var_x));
+    a.Raw(",\"cov_yaw_rad\":");
+    a.Num(std::sqrt(in.odom->var_yaw));
+    a.Raw(",\"valid\":");
+    a.Bool(in.odom->valid);
+    a.Raw("}");
+  } else {
+    a.Raw(",\"odom\":null");
+  }
+
   a.Raw(",\"faults\":[");
   if (in.faults != nullptr) {
     for (std::size_t i = 0; i < in.faults->faults.size(); ++i) {

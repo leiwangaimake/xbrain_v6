@@ -752,6 +752,30 @@ PAYLOADS_SOURCES = [PAYLOADS_CC,
 PAYLOADS_TESTS = [os.path.join(QUAD, "test", "test_rt_payloads.cc")]
 
 PAYLOADS_MUTANTS = [
+    # 11 S4.1 / S9.9 / 13 S4.4 (4). The odom block is the ONLY carrier of
+    # `valid`: a ROS nav_msgs/Odometry has no field for it, so dropping this
+    # block leaves the stair-gait rule with no reader anywhere in the system,
+    # while 11 CD-6 and N-2 both gate delegation on odom.valid.
+    ("payloads: RobotState drops the odom block",
+     PAYLOADS_CC,
+     '    a.Raw(",\\"odom\\":{\\"x\\":");',
+     '    a.Raw(",\\"_odom\\":{\\"x\\":");'),
+    # Variance published under a name whose unit is metres. Wrong by a square:
+    # SAFE-looking below 1 m (0.04 reads tighter than the true 0.2) and unsafe
+    # above it, so a bench test at short range would never show it.
+    ("payloads: odom publishes variance under the _m / _rad names",
+     PAYLOADS_CC,
+     "    a.Num(std::sqrt(in.odom->var_x));",
+     "    a.Num(in.odom->var_x);"),
+    # A zeroed odom object where there is none. An origin pose is a CLAIM;
+    # "nothing integrated yet" is an absence, and a consumer cannot tell a
+    # robot at the origin from a robot that has never run.
+    ("payloads: an absent odom rendered as an origin pose",
+     PAYLOADS_CC,
+     '    a.Raw(",\\"odom\\":null");',
+     '    a.Raw(",\\"odom\\":{\\"x\\":0,\\"y\\":0,\\"yaw_rad\\":0,'
+     '\\"vx\\":0,\\"vy\\":0,\\"wz\\":0,\\"cov_xy_m\\":0,'
+     '\\"cov_yaw_rad\\":0,\\"valid\\":true}");'),
     # 11 S9.1.4 / 13 ASM-4 (2). 10 S3.3 Stage 1 does not complete without the
     # answer, and 13 CB-4 / DDS-9 / TF-1 each require an EFFECTIVE transport
     # value in it -- each for the same reason: the failure they catch presents
@@ -1218,6 +1242,44 @@ PROCESS_SOURCES = [
 PROCESS_TESTS = [os.path.join(QUAD, "test", "test_process.cc")]
 
 PROCESS_MUTANTS = [
+    # 13 S4.4 (4) / 11 S9.9. THE defect: Odometry::OnGait had zero production
+    # call sites, so a robot on a staircase published wheel odometry with
+    # flat-ground trust and valid = true. test_odometry.cc calls OnGait(true)
+    # directly and stays green under this mutant -- which is the whole reason
+    # the case lives in test_process.cc instead.
+    ("process: a stair gait never reaches the odometry",
+     PROCESS_CC,
+     "    odom_.OnGait(chs_a::IsStairGait(latest_.gait_raw));",
+     "    (void)0;"),
+    # Only the navigation stair gait listed. GS-3 verbatim: 我方不发 is not
+    # 它不会出现 -- the factory handset can set 0x1003 and the read-back path
+    # resolves it.
+    ("process: only the navigation stair gait counts as stairs",
+     REPORTS_CC,
+     "constexpr std::int64_t kStairGaits[] = {0x1003, 0x3003};",
+     "constexpr std::int64_t kStairGaits[] = {0x3003};"),
+    # The flag latches. Safe-looking and wrong: after one staircase the robot
+    # reports invalid odometry for the rest of the sortie, and a consumer made
+    # to choose between "always invalid" and "ignore the flag" picks the second.
+    ("process: the stair-gait flag latches once set",
+     os.path.join(QUAD, "src", "odometry.cc"),
+     "void Odometry::OnGait(bool is_stair_gait) { is_stair_gait_ = is_stair_gait; }",
+     "void Odometry::OnGait(bool is_stair_gait) {\n"
+     "  if (is_stair_gait) is_stair_gait_ = true;\n}"),
+    # Unknown code treated as a staircase. Looks conservative; fires on the
+    # most ordinary report there is -- 13 V-66 measured Gait 0 at rest, which
+    # kGaits does not contain, on every boot before RL control.
+    ("process: an unregistered gait is read as a staircase",
+     REPORTS_CC,
+     "  // An UNREGISTERED value answers false, and that is deliberate rather than",
+     "  return true;\n"
+     "  // An UNREGISTERED value answers false, and that is deliberate rather than"),
+    # 13 S4.4 takes BOTH measures on the stair row. Clearing the flag without
+    # inflating still hands a downstream filter a flat-ground covariance.
+    ("process: a stair gait clears valid but does not inflate covariance",
+     os.path.join(QUAD, "src", "odometry.cc"),
+     "  const double t = is_stair_gait_ ? cfg_.trust_stair : cfg_.trust_flat;",
+     "  const double t = cfg_.trust_flat;"),
     # 13 ASM-6: the mode sequence accepted steps and sent nothing. Measured on
     # the bench -- stand acked "accepted" while the chassis reported
     # MotionState 0 throughout.

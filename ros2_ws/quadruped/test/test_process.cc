@@ -1075,6 +1075,98 @@ int main(int argc, char** argv) {
     CHECK(p.axis_frames_sent() > before);
   }
 
+  // ---- a stair gait REACHES the odometry (13 S4.4 (4) / 11 S9.9) ---------
+  {
+    // The gap this closes: Odometry::OnGait had ZERO production call sites, so
+    // is_stair_gait_ stayed at its initialiser for the life of the process. A
+    // robot on a staircase therefore published wheel odometry with FLAT-ground
+    // trust and valid = true, which is the one thing 11 S9.9 names outright.
+    //
+    // *** Why the existing unit test did not catch it. test_odometry.cc calls
+    // stair.OnGait(true) DIRECTLY and asserts the divisor and the flag, and it
+    // passes either way -- it tests the setter, not the wiring. A defect that
+    // lives in "nobody calls this" is invisible to every test that calls it.
+    // So this case drives the PROCESS with a chassis frame and reads what the
+    // process publishes. mutant: drop the odom_.OnGait line -> both stair
+    // assertions below go red while test_odometry stays green.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    chassis.Drain();
+
+    // Flat gait first, and a velocity sample so the band is fresh and the
+    // sample is actually published -- valid is false on a STALE sample too, so
+    // asserting it on a robot that never reported a velocity would pass on an
+    // unwired implementation.
+    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0x3002));
+    p.RxPump(0.05);
+    p.CtrlTick(0.06);
+    const OdomSample flat = p.last_odom();
+    CHECK(flat.publish);
+    CHECK(flat.valid);
+    CHECK(flat.var_wz > 0.0);
+
+    // 0x3003, the navigation stair gait. This is the one the robot reaches by
+    // itself (G-05, 自主上下楼梯).
+    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0x3003));
+    p.RxPump(0.10);
+    p.CtrlTick(0.11);
+    const OdomSample stair = p.last_odom();
+    // Still PUBLISHED -- 13 S4.4's table says 发布 for the stair row. Dropping
+    // the message would leave the consumer with no pose at all, which is a
+    // different failure from an untrustworthy one.
+    CHECK(stair.publish);
+    CHECK(!stair.valid);
+    // And inflated. 13 takes BOTH measures; an implementation that only cleared
+    // the flag would pass the line above and still hand a downstream filter a
+    // flat-ground covariance to fuse.
+    //
+    // *** Asserted on var_wz, which is (gyro_bias^2) / divisor -- a pure
+    // function of the trust divisor, with no tau term and no accumulated
+    // history. The first draft of this line used var_x, and a mutant that
+    // dropped the inflation entirely SURVIVED it: p_xx_committed_ grows tick to
+    // tick, so "the later sample has a larger var_x" is true whether or not
+    // anything inflates. An assertion a do-nothing implementation passes
+    // (CLAUDE.md S3.2 form 1), caught only because the mutant was run.
+    //
+    // 3.0 rather than the exact 3.333 (trust_flat 1.0 / trust_stair 0.3 in the
+    // fixture above): the ratio is a CONFIGURED quantity, and pinning the
+    // fixture's arithmetic here would make this case fail when someone retunes
+    // the config rather than when the inflation breaks.
+    CHECK(stair.var_wz > flat.var_wz * 3.0);
+
+    // 0x1003, the standard-mode stair gait. GS-1 forbids US from commanding it;
+    // GS-3 says verbatim that "我方不发" is not "它不会出现" -- the factory
+    // handset can set it and the read-back path resolves it. An implementation
+    // that only listed 0x3003 passes every test above and fails here.
+    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0x1003));
+    p.RxPump(0.15);
+    p.CtrlTick(0.16);
+    CHECK(!p.last_odom().valid);
+
+    // Back to flat: the flag must CLEAR, not latch. A latching implementation
+    // is safe-looking and wrong -- after one staircase the robot would report
+    // invalid odometry for the rest of the sortie, and the consumer that has to
+    // choose between "always invalid" and "ignore the flag" chooses the second.
+    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0x3002));
+    p.RxPump(0.20);
+    p.CtrlTick(0.21);
+    CHECK(p.last_odom().valid);
+    // The INFLATION must clear too, not just the flag -- same reason, and the
+    // same var_wz for the same reason.
+    CHECK(p.last_odom().var_wz < flat.var_wz * 1.5);
+
+    // Gait 0 at rest is a MEASURED value (13 V-66) that kGaits does not
+    // contain, so it resolves to unknown_0x0000. It must NOT be read as a
+    // staircase: treating every unregistered code as one would clear valid on
+    // every boot before RL control, on the most ordinary report there is.
+    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0));
+    p.RxPump(0.25);
+    p.CtrlTick(0.26);
+    CHECK(p.last_odom().valid);
+  }
+
   // ---- the mode sequence actually puts FRAMES on the wire (13 ASM-6) ------
   {
     // The gap this closes, measured on the bench 2026-09-18: Request returned

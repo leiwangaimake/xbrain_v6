@@ -690,6 +690,50 @@ int main(int argc, char** argv) {
     CHECK(j["gait"].is_null());
   }
 
+  // ---- RobotState.odom (11 S4.1 / S9.9 / 13 S4.4 (4)) --------------------
+  {
+    // The gap this closes: WriteRobotState emitted no odom block at all, while
+    // 11 S9.9's output table names RobotState.odom.* as one of this process's
+    // three outputs and 11 CD-6 / N-2 gate relative-displacement delegation on
+    // odom.valid. A ROS nav_msgs/Odometry has no valid field, so before this
+    // block the stair-gait rule 13 S4.4 (4) had NO reader anywhere.
+    char buf[8192];
+    RobotStateInput in;
+    OdomSample od;
+    od.x = 1.5;
+    od.y = -2.5;
+    od.yaw = 0.25;
+    od.vx = 0.4;
+    od.var_x = 0.04;    // sigma 0.2 m
+    od.var_yaw = 0.01;  // sigma 0.1 rad
+    od.valid = true;
+    in.odom = &od;
+    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("robot state odom", buf, n);
+    CHECK(j["odom"]["x"] == 1.5);
+    CHECK(j["odom"]["yaw_rad"] == 0.25);
+    CHECK(j["odom"]["valid"] == true);
+    // SIGMA, not variance. The schema defines the unit only through the field
+    // name (_m, _rad), and 13 S4.4's numeric table is in sigma throughout.
+    // mutant: publish var_x directly -> 0.04 instead of 0.2, which is wrong in
+    // the SAFE-looking direction below 1 m and the unsafe one above it.
+    CHECK(j["odom"]["cov_xy_m"] == 0.2);
+    CHECK(j["odom"]["cov_yaw_rad"] == 0.1);
+  }
+
+  // ---- no control period yet: odom is null, not an origin pose -----------
+  {
+    // An all-zero pose reads as a robot sitting at the origin -- a claim.
+    // "We have not integrated anything yet" is an absence. Same distinction
+    // the basic/motion blocks make, and for the same reason.
+    // mutant: emit a zeroed odom object -> red.
+    char buf[8192];
+    RobotStateInput in;  // odom left null
+    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("robot state no odom", buf, n);
+    CHECK(j["odom"].is_null());
+  }
+
   // ---- hello_ack (11 S9.1.4 / 13 ASM-4 (2)) ------------------------------
   {
     // 10 S3.3 Stage 1 does not complete without this answer, and 13 ASM-4 (2)

@@ -46,14 +46,19 @@
  * allocate inside the producer, which is the thing the split was arranged to
  * prevent. The compiler enforces it; this comment only explains it.
  *
- * WHAT IS NOT WIRED HERE (13 S9.4 ASM-4), stated so the shape of the process
- * is not overstated:
- * the domain-0 DDS reader (chs_b) and the RT-plane publisher (rt_pub) are built
- * as OPTIONAL targets because they need CycloneDDS and rclcpp, and this class
- * does not start them. The IMU therefore has no source yet and the odometry
- * runs on the monitor protocol's 10 Hz velocity alone. That is a real gap, not
- * a design decision, and it is named rather than hidden behind a stub that
- * would make the process look complete.
+ * WHAT IS NOT WIRED HERE, stated so the shape of this class is not overstated:
+ * the domain-0 DDS reader (chs_b), the RT-plane publisher (rt_pub) and the ROS
+ * uplink are built as OPTIONAL targets because they need CycloneDDS and
+ * rclcpp, and THIS CLASS does not start them -- main.cc does, and it is the one
+ * place that knows whether they are present. What this class exposes to them is
+ * the two lock-free slots below plus SetReportSink.
+ *
+ * *** This paragraph used to end "The IMU therefore has no source yet and the
+ * odometry runs on the monitor protocol's 10 Hz velocity alone", which stopped
+ * being true when chs_b was wired (13 v1.16, 200 Hz measured on the bench).
+ * A file header describing the state of the system has no test watching it, so
+ * it decays silently and is then read as current. Kept as narrow as it can be
+ * for that reason: what this CLASS does, not what the process happens to have.
  *
  * Testability. CtrlTick and RxPump are public and take the clock as an
  * argument, so a test drives the whole assembly with no threads and no waiting:
@@ -217,6 +222,18 @@ class QuadrupedProcess {
     std::int64_t usage_mode_raw = 0;
     std::int64_t motion_state_raw = 0;
     std::int64_t gait_raw = 0;
+    // The same sample rt_pub publishes as /odom_quadruped, carried so it can
+    // ALSO go out as RobotState.odom. 11 S9.9's output table names three
+    // outputs for this process -- TF, /odom_quadruped and RobotState.odom.* --
+    // and the third is the only one carrying `valid`: a ROS Odometry message
+    // has no field for it. 11 CD-6 and N-2 both gate relative-displacement
+    // delegation on odom.valid, so without this block the stair-gait rule has
+    // no reader at all.
+    //
+    // Copied rather than re-taken from odom_slot_: that slot is consuming
+    // (12 RTC-6), and a second consumer would steal every other sample from
+    // the uplink.
+    OdomSample odom;
   };
 
   // The newest snapshot, or false when ctrl has not produced one since the last
