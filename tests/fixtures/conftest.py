@@ -302,8 +302,6 @@ def _build_and_freeze(tmp_path: Path,
             config_root=str(cfg_root),
             config_root_overridden=True,
             config_variant=variant,
-            common_digest="fixture-digest",
-            config_rev="fixture-rev",
             resolved_root=str(resolved_root),
         )
     except Exception as e:

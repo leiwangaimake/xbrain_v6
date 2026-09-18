@@ -7,10 +7,13 @@ Brief: xbrain-config-freeze entrypoint -- systemd calls `python -m
        xbrain.boot.freeze`
 
 Description:
-Runs a full freeze pass with values read from environment (config root) or
-common facilities (boot_id, common_digest). Exit code is 0 on green, 1 on
-any assertion failure or missing resource -- Type=oneshot units treat the
-exit code as the whole verdict.
+Runs a full freeze pass with values read from the environment (config root)
+or from /proc (boot_id). The two CFG-41 identities -- common_digest and
+config_rev -- are NOT read here: the materialise runner computes them from
+the tree it resolves and publishes them through ctx, so this entrypoint has
+no way to supply one. Exit code is 0 on green, 1 on any assertion failure or
+missing resource -- Type=oneshot units treat the exit code as the whole
+verdict.
 
 NOTE CFG-FZ-1 scope: this entrypoint wires the FRAMEWORK together. The
 individual assertion bodies are still stubs (they will land per CFG-FZ-N);
@@ -111,20 +114,20 @@ def main() -> int:
     # incident can name which set of yaml was frozen (a test rig vs prod).
     overridden = "XBRAIN_CONFIG_DIR" in os.environ
 
-    # CFG-FZ-9 (materialiser) fills layers/processes; empty here is fine
-    # for CFG-FZ-1 -- MANIFEST is well-formed with empty layers / processes
-    # and the bidirectional-diff test targets ASSERTIONS, not those fields.
-    # common_digest / config_rev: placeholders until CFG-CM-10 wires the
-    # real digest chain (currently a visible "stub-not-yet-computed" token,
-    # not a plausible-looking hash string -- silence-is-not-success).
+    # layers / processes / common_digest / config_rev are all filled by the
+    # materialise runner from the tree it resolved, and reach run_freeze
+    # through ctx -- there is deliberately no way to pass a digest in from
+    # here (see run_freeze's docstring). Until CFG-CM-10 this call passed the
+    # literal "stub-not-yet-computed" for both digests; the value was at least
+    # visibly not a hash, but MANIFEST.common_digest was still a field that
+    # answered nothing, and 10 S5.4.4's Stage C/D comparison had nothing real
+    # to compare.
     try:
         manifest = run_freeze(
             boot_id=boot_id,
             config_root=os.path.abspath(args.config_root),
             config_root_overridden=overridden,
             config_variant=args.variant,
-            common_digest="stub-not-yet-computed",   # CFG-CM-10 lands the real
-            config_rev="stub-not-yet-computed",      # digest chain
             resolved_root=args.resolved_root,
         )
     except FileNotFoundError as exc:

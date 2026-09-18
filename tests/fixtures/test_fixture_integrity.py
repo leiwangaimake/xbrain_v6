@@ -146,8 +146,6 @@ def test_real_configs_refuse_freeze(tmp_path):
             boot_id="prod-check",
             config_root=REAL_CONFIG_ROOT,
             config_root_overridden=False,
-            common_digest="x",
-            config_rev="y",
             resolved_root=str(resolved),
         )
     err = excinfo.value

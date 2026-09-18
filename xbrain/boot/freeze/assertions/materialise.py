@@ -118,9 +118,11 @@ from xbrain.boot.freeze.assertions._layer_loader import (
 from xbrain.boot.freeze.assertions.fv_org_enu import (
     _load_l4_tree, _load_l4b_tree,
 )
+from xbrain.boot.freeze.inventory import config_rev_of, layer_rows
 from xbrain.common.config import build_overlay
 from xbrain.common.config.merge import deep_merge
 from xbrain.common.config.refs import ReferenceError_, resolve
+from xbrain.common.digest.digest import UnresolvedTree, common_digest
 from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
 
@@ -204,6 +206,14 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
            e) sha256 the written bytes; record path + sha256 + size
       4) Populate ctx['processes'] so run_freeze picks it up for
          MANIFEST.processes.
+      5) Compute the two CFG-41 identities from the SAME tree and
+         publish them the same way: ctx['common_digest'] (over the
+         resolved common.* subtree, 10 S5.4.4) and ctx['layers'] +
+         ctx['config_rev'] (over the layer source files on disk,
+         10 S5.4.6). run_freeze reads all three from ctx; there is no
+         parameter for a caller to inject a digest through, because a
+         fabricated digest would make every downstream comparison
+         agree with itself and nothing else.
     """
     # ---- ctx sanity -------------------------------------------------
     # Both are populated by run_freeze BEFORE run_assertions is called;
@@ -269,6 +279,50 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # may point at (R-2). Wrapping in a dict keeps a fresh reference so
     # deep_merge below does not mutate the resolved_overlay we cached.
     common_only = {"common": resolved_overlay_tree.get("common", {})}
+
+    # ---- CFG-41 identities -----------------------------------------
+    # Computed HERE, on the tree this runner just built, and nowhere
+    # else. The alternative -- letting the entrypoint load the layers
+    # a second time and digest that -- creates two load paths for one
+    # configuration, which is the exact failure 10 S5.4.1 calls "最关键
+    # 的一条结构性决定" ("各进程解析出不同结果"). A digest taken from a
+    # second load would agree with the snapshots only by luck.
+    #
+    # The tree passed in is the WHOLE resolved tree; common_digest()
+    # extracts common.* itself (see its docstring on why the signature
+    # refuses to take a pre-extracted subtree).
+    try:
+        ctx["common_digest"] = common_digest(resolved_overlay_tree)
+    except UnresolvedTree as exc:
+        # resolve() above should have raised on any surviving ${...},
+        # so reaching here means the resolver let one through. That is
+        # a code defect rather than a config one, but it still has to
+        # leave the operator a key path instead of a traceback, and it
+        # must NOT be swallowed: a digest over an unresolved tree would
+        # be stable, plausible, and meaningless.
+        raise XbrainError(
+            E_CONFIG_INVALID,
+            "materialise: common.* still holds an unexpanded reference "
+            "after resolve(); %s" % exc,
+            {"kind": "common_digest_unresolved", "reason": str(exc)},
+        )
+    # layers[] + config_rev: the audit trail (10 S5.4.6 CFG-41). site_id
+    # and robot_id are the RESOLVED values read above, so the rows name
+    # the L4 / L4b files the merge actually consumed rather than the
+    # ones an unoverridden L1 would have pointed at.
+    # config_root here is the EFFECTIVE root (run_freeze already applied
+    # XBRAIN_CONFIG_DIR before putting it in ctx), so the rows name the files
+    # this run actually opened rather than the deploy default. A MANIFEST
+    # that named the default while a test rig's tree had been frozen would
+    # send an incident investigation to the wrong files.
+    layers = layer_rows(config_root,
+                        variant=ctx.get("config_variant"),
+                        site_id=site_id, robot_id=robot_id)
+    ctx["layers"] = layers
+    # config_rev is derived from the rows rather than recomputed from disk:
+    # one walk, one answer. A second walk could see a file change between the
+    # two passes and produce a rev that matches no row in the list.
+    ctx["config_rev"] = config_rev_of(layers)
 
     # ---- Per-proc load ---------------------------------------------
     # load_l6_files silently skips missing files (assertion J vouches

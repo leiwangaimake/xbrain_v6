@@ -184,20 +184,30 @@ def run_assertions(context: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[s
 
 def run_freeze(*, boot_id: str, config_root: str,
                config_root_overridden: bool,
-               common_digest: str, config_rev: str,
                config_variant: Optional[str] = None,
                calib_rev: str = "unspecified",
-               layers: Optional[list] = None,
                processes: Optional[Mapping[str, Mapping[str, Any]]] = None,
                resolved_root: str = RESOLVED_ROOT_DEFAULT,
                context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """End-to-end freeze pass: run assertions, build manifest, write to
     resolved_root/MANIFEST.json, return the manifest dict.
 
-    processes / layers default to empty rather than to a scan of disk --
-    CFG-FZ-1 is the FRAMEWORK; the individual materialiser item (CFG-FZ-9)
-    fills them from the six per-process YAML snapshots. Callers that pass
-    them in early can start using MANIFEST fields their assertion needs.
+    processes defaults to empty rather than to a scan of disk -- CFG-FZ-1 is
+    the FRAMEWORK; the materialiser (CFG-FZ-18) fills it from the per-process
+    YAML snapshots. A caller that passes it in overrides the materialiser,
+    which a unit test occasionally wants.
+
+    IMPORTANT: common_digest / config_rev / layers are NOT parameters, and that
+    asymmetry with `processes` is the design. They are computed by the
+    materialiser from the tree it actually resolved (CFG-CM-10) and travel
+    here through ctx. A caller-supplied digest is the failure this shape
+    removes: 10 S5.4.4 has P2 hold "禁止运动" when its cached digest and
+    MANIFEST disagree, so a MANIFEST carrying an injected constant would make
+    that comparison agree with itself forever while saying nothing about the
+    configuration -- CLAUDE.md S3.2 form 1, an assertion that cannot go red.
+    Before CFG-CM-10 the entrypoint passed the literal "stub-not-yet-computed"
+    for both, which was at least visible; a test fixture passing
+    "fixture-digest" was not.
     """
     # Pre-flight: resolved_root exists and is a directory. CFG-BT-22 owns
     # the tmpfs mount; refusing here surfaces a missing mount as a config
@@ -234,15 +244,30 @@ def run_freeze(*, boot_id: str, config_root: str,
     _processes = processes
     if _processes is None:
         _processes = ctx.get("processes", {})
+    # The three CFG-41 identities come from the materialiser via ctx. Absent
+    # means the materialiser row did not run (a registry built without it, or
+    # a caller that assembled its own ASSERT_REGISTRY). That is a wiring bug,
+    # not a config problem, so it gets an AssertionError naming the runner --
+    # the same shape materialise uses for its own missing-ctx keys. It must
+    # not fall back to a placeholder: a MANIFEST whose digest says nothing
+    # about the configuration is worse than no MANIFEST, because every reader
+    # downstream treats the field as an answer.
+    for _key in ("common_digest", "config_rev", "layers"):
+        if _key not in ctx:
+            raise AssertionError(
+                "run_freeze: ctx[%r] not populated; the materialise runner "
+                "computes it (see xbrain.boot.freeze.assertions.materialise) "
+                "and must be present in ASSERT_REGISTRY" % _key
+            )
     manifest = build_manifest(
         boot_id=boot_id,
         config_root=config_root,
         config_root_overridden=config_root_overridden,
         config_variant=config_variant,
-        common_digest=common_digest,
-        config_rev=config_rev,
+        common_digest=ctx["common_digest"],
+        config_rev=ctx["config_rev"],
         calib_rev=calib_rev,
-        layers=layers or [],
+        layers=ctx["layers"],
         processes=_processes,
         assertions=assertions,
     )

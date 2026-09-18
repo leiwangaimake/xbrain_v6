@@ -250,8 +250,6 @@ def test_run_freeze_writes_manifest_json_and_returns_it(tmp_path):
         boot_id="be",
         config_root=ctx_seed["config_root"],
         config_root_overridden=False,
-        common_digest="cd",
-        config_rev="cr",
         resolved_root=str(resolved),
         context={"skip_files": ctx_seed.get("skip_files", [])},
     )
@@ -269,7 +267,6 @@ def test_run_freeze_refuses_missing_resolved_root(tmp_path):
         run_freeze(
             boot_id="be", config_root="/tmp/x",
             config_root_overridden=False,
-            common_digest="cd", config_rev="cr",
             resolved_root=str(nonexistent),
         )
 
