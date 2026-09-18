@@ -173,6 +173,7 @@ class QuadrupedProcess {
   bool TakeOdomForPublish(OdomSample* out);
   // Diagnostics for the mode sequence; see OnChassisMode.
   std::uint64_t mode_steps() const { return mode_steps_; }
+  std::uint64_t mode_frames_sent() const { return mode_frames_sent_; }
   bool mode_sequence_pending() const {
     return mode_want_state_ || mode_want_gait_ || mode_want_usage_;
   }
@@ -316,6 +317,13 @@ class QuadrupedProcess {
                      bool has_motion_state, std::int64_t motion_state,
                      bool has_gait, std::int64_t gait);
 
+  // Encode one mode action and put it on the wire. Shared by the
+  // rt/chassis/mode sequencer (ctrl thread, kRealtime) and the
+  // rt/chassis/ctrl stand/prone path (zenoh callback, kNonRealtime).
+  // Returns false when nothing reached the socket -- see 13 ASM-6 on why
+  // "accepted" and "sent" must stay distinguishable.
+  bool SendModeFrame(ModeAction action, std::int64_t param, TxCaller caller);
+
   ModeRequestResult OnChassisAction(double now_mono_s, ModeAction action,
                                     std::int64_t param);
 
@@ -412,6 +420,10 @@ class QuadrupedProcess {
   std::int64_t mode_gait_ = 0;
   // Counts steps actually dispatched, so "the sequence ran" is a number.
   std::uint64_t mode_steps_ = 0;
+  // Frames that actually reached the socket. Separate from mode_steps_ so
+  // "the machine accepted a step" and "a frame went out" stay distinguishable
+  // -- 13 ASM-6 was precisely the gap between those two.
+  std::uint64_t mode_frames_sent_ = 0;
 
   std::uint16_t msg_id_ = 0;
   double last_ctrl_s_ = -1.0;

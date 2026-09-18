@@ -144,6 +144,59 @@ bool QuadrupedProcess::OnChassisMode(bool has_usage_mode,
   return true;
 }
 
+bool QuadrupedProcess::SendModeFrame(ModeAction action, std::int64_t param,
+                                     TxCaller caller) {
+  // *** THE FRAME. Before this existed (13 ASM-6) ModeMachine::Request
+  // returned accepted, switching_ went true, the read-back was waited for --
+  // and nothing was ever sent to the chassis. Measured on the bench:
+  // `stand` acked "accepted" while the chassis reported MotionState 0
+  // throughout, so the robot could not be made to move and every layer looked
+  // healthy.
+  //
+  // ONE function for BOTH paths (the rt/chassis/mode sequencer and the
+  // rt/chassis/ctrl stand/prone). The first fix wired only the sequencer, and
+  // the ctrl path stayed silent -- the robot stood up and then would not lie
+  // down, which is the same defect a second time in the same hour.
+  //
+  // Through tx_, the same send seam as the axis command, so TX-2 / TX-3 hold
+  // for mode frames too: a mode switch must not interleave with the zero frame
+  // the estop callback sends.
+  std::uint8_t buf[512];
+  std::size_t n = 0;
+  switch (action) {
+    case ModeAction::kStand:
+      n = chs_a::EncodeMotionState(buf, sizeof(buf), msg_id_++, WallNow(),
+                                   static_cast<int>(kCommandMotionStateStand));
+      break;
+    case ModeAction::kProne:
+      n = chs_a::EncodeMotionState(buf, sizeof(buf), msg_id_++, WallNow(),
+                                   static_cast<int>(kCommandMotionStateProne));
+      break;
+    case ModeAction::kRlControl:
+      n = chs_a::EncodeMotionState(
+          buf, sizeof(buf), msg_id_++, WallNow(),
+          static_cast<int>(kCommandMotionStateRlControl));
+      break;
+    case ModeAction::kSetGait:
+      n = chs_a::EncodeGait(buf, sizeof(buf), msg_id_++, WallNow(),
+                            static_cast<std::uint32_t>(param));
+      break;
+    case ModeAction::kSetUsageMode:
+      n = chs_a::EncodeUsageMode(buf, sizeof(buf), msg_id_++, WallNow(),
+                                 static_cast<int>(param));
+      break;
+  }
+  // A zero-length encode is a defect in the value, not a transient: the
+  // encoders return 0 only for a buffer too small or a value that would make
+  // invalid JSON. Sending nothing while still waiting for the read-back
+  // reproduces ASM-6 exactly, so the caller is told and mode_switching times
+  // out through MS-2 -- the path that reports a failed switch.
+  if (n == 0) return false;
+  if (tx_.Send(caller, buf, n) != TxResult::kSent) return false;
+  ++mode_frames_sent_;
+  return true;
+}
+
 ModeRequestResult QuadrupedProcess::OnChassisAction(double now_mono_s,
                                                     ModeAction action,
                                                     std::int64_t param) {
@@ -151,7 +204,15 @@ ModeRequestResult QuadrupedProcess::OnChassisAction(double now_mono_s,
   // here: the stair precondition (13 PR-1 / D-40), the switch window (MS-1) and
   // the read-back expectation all live in one place, and a second opinion at
   // this level is how the two drift apart.
-  return mode_.Request(now_mono_s, action, param);
+  const ModeRequestResult r = mode_.Request(now_mono_s, action, param);
+  if (r.accepted) {
+    // kNonRealtime: this runs on the zenoh callback thread, not on ctrl. TX-2
+    // makes that caller spin for the send guard rather than skip, which is
+    // right here -- a stand or a prone the operator asked for must not be
+    // dropped because ctrl happened to hold the section.
+    SendModeFrame(action, param, TxCaller::kNonRealtime);
+  }
+  return r;
 }
 
 void QuadrupedProcess::OnSoftEstop(double now_mono_s) {
@@ -408,6 +469,7 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
     }
     const ModeRequestResult r = mode_.Request(now_mono_s, action, param);
     if (r.accepted) {
+      SendModeFrame(action, param, TxCaller::kRealtime);
       ++mode_steps_;
     } else {
       // A refused step abandons the REST of the triple. Carrying on would

@@ -1075,6 +1075,112 @@ int main(int argc, char** argv) {
     CHECK(p.axis_frames_sent() > before);
   }
 
+  // ---- the mode sequence actually puts FRAMES on the wire (13 ASM-6) ------
+  {
+    // The gap this closes, measured on the bench 2026-09-18: Request returned
+    // accepted, switching_ went true, the read-back was waited for -- and
+    // NOTHING was sent. stand acked "accepted" while the chassis reported
+    // MotionState 0 throughout, so the robot could not be made to move and
+    // every layer looked healthy.
+    //
+    // Asserted on the WIRE, not on a counter alone: a counter that increments
+    // beside a send that failed is the same defect wearing a number.
+    // mutant: drop the tx_.Send call -> the frame checks below go red.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    // Read back a posture so the machine has a steady triple to reason from
+    // (prone is refused without one, and the sequence would stall).
+    chassis.Send(BasicFrame(/*usage_mode=*/0, /*motion_state=*/0, /*gait=*/0,
+                            /*hes=*/false, /*sleep=*/false));
+    p.RxPump(0.01);
+    p.CtrlTick(0.02);
+    chassis.Drain();
+
+    // The whole triple in one message, as 11 S9.2.4 sends it.
+    CHECK(p.OnChassisMode(/*has_usage=*/true, /*usage=*/1,
+                          /*has_state=*/true, /*state=*/kCommandMotionStateStand,
+                          /*has_gait=*/true, /*gait=*/0x3002));
+    CHECK(p.mode_sequence_pending());
+
+    // Step 1 is motion_state -- the order is fixed (13 MS-5), and usage_mode
+    // goes last because it is the gate Tier 1 opens on.
+    p.CtrlTick(0.03);
+    std::uint32_t type = 0, cmd = 0;
+    chassis.Drain();
+    CHECK(chassis.CountFrames(&type, &cmd) >= 1);
+    CHECK(type == chs_a::kMotionStateSwitch.type);
+    CHECK(cmd == chs_a::kMotionStateSwitch.command);
+    CHECK(p.mode_frames_sent() == 1);
+
+    // The next step waits for the read-back: MS-3 forbids a second switch in
+    // flight, so no further frame goes out until the chassis confirms.
+    // mutant: dispatch regardless of mode_switching -> this goes red, and two
+    // expectations would be outstanding with no way to say which read-back
+    // belongs to which.
+    chassis.ClearSent();
+    p.CtrlTick(0.04);
+    chassis.Drain();
+    CHECK(chassis.CountFrames(&type, &cmd) == 0);
+    CHECK(p.mode_frames_sent() == 1);
+
+    // Confirm the posture; the gait step then goes out.
+    chassis.Send(BasicFrame(/*usage_mode=*/0, /*motion_state=*/17,
+                            /*gait=*/0x1001, /*hes=*/false, /*sleep=*/false));
+    p.RxPump(0.05);
+    chassis.ClearSent();
+    p.CtrlTick(0.06);
+    chassis.Drain();
+    CHECK(chassis.CountFrames(&type, &cmd) >= 1);
+    CHECK(type == chs_a::kGaitSwitch.type);
+    CHECK(cmd == chs_a::kGaitSwitch.command);
+    CHECK(p.mode_frames_sent() == 2);
+
+    // Confirm the gait; usage_mode is LAST -- the permissive step.
+    chassis.Send(BasicFrame(/*usage_mode=*/0, /*motion_state=*/17,
+                            /*gait=*/0x3002, /*hes=*/false, /*sleep=*/false));
+    p.RxPump(0.07);
+    chassis.ClearSent();
+    p.CtrlTick(0.08);
+    chassis.Drain();
+    CHECK(chassis.CountFrames(&type, &cmd) >= 1);
+    CHECK(type == chs_a::kUsageModeSwitch.type);
+    CHECK(cmd == chs_a::kUsageModeSwitch.command);
+    CHECK(p.mode_frames_sent() == 3);
+    CHECK(!p.mode_sequence_pending());
+  }
+
+  // ---- the ctrl path sends its frame too (13 ASM-6, second half) ---------
+  {
+    // The first ASM-6 fix wired only the rt/chassis/mode sequencer. The
+    // rt/chassis/ctrl stand/prone path still returned accepted and sent
+    // nothing -- measured on the bench within the same hour: the robot stood
+    // up through the sequencer and then would NOT lie down, because prone
+    // came in on the ctrl key. An operator's stop-what-you-are-doing command
+    // silently doing nothing is the worst shape this defect can take.
+    // mutant: drop the SendModeFrame call in OnChassisAction -> red.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    // A steady read-back, so prone is not refused for an unknown gait (PR-1).
+    chassis.Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+                            /*gait=*/0x3002, /*hes=*/false, /*sleep=*/false));
+    p.RxPump(0.01);
+    p.CtrlTick(0.02);
+    chassis.ClearSent();
+
+    const ModeRequestResult r = p.OnChassisAction(0.03, ModeAction::kProne, 0);
+    CHECK(r.accepted);
+    std::uint32_t type = 0, cmd = 0;
+    chassis.Drain();
+    CHECK(chassis.CountFrames(&type, &cmd) >= 1);
+    CHECK(type == chs_a::kMotionStateSwitch.type);
+    CHECK(cmd == chs_a::kMotionStateSwitch.command);
+    CHECK(p.mode_frames_sent() == 1);
+  }
+
   if (g_failures == 0) {
     std::printf("ALL PROCESS TESTS PASSED\n");
     return 0;

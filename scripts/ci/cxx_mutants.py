@@ -1151,6 +1151,31 @@ PROCESS_SOURCES = [
 PROCESS_TESTS = [os.path.join(QUAD, "test", "test_process.cc")]
 
 PROCESS_MUTANTS = [
+    # 13 ASM-6: the mode sequence accepted steps and sent nothing. Measured on
+    # the bench -- stand acked "accepted" while the chassis reported
+    # MotionState 0 throughout.
+    ("process: the mode step is accepted but no frame is sent (ASM-6)",
+     PROCESS_CC,
+     "  if (tx_.Send(caller, buf, n) != TxResult::kSent) return false;",
+     "  if (true) return false;"),
+    # ASM-6's second half: the ctrl key's stand/prone returned accepted and
+    # sent nothing. Measured -- the robot stood up and would not lie down.
+    ("process: the ctrl path accepts stand/prone but sends no frame",
+     PROCESS_CC,
+     "    SendModeFrame(action, param, TxCaller::kNonRealtime);",
+     "    (void)0;"),
+    # A second switch dispatched while one is in flight. 13 MS-3: two
+    # expectations with no way to say which read-back belongs to which.
+    ("process: a mode step is dispatched while a switch is in flight",
+     PROCESS_CC,
+     "  if (mode_sequence_pending() && !mode_.mode_switching()) {",
+     "  if (mode_sequence_pending()) {"),
+    # The order. usage_mode first would open Tier 1's gate before the posture
+    # and gait have read back.
+    ("process: the mode sequence sends usage_mode first",
+     PROCESS_CC,
+     "    if (mode_want_state_) {",
+     "    if (false) {"),
     # The snapshot merge. Found on the bench 2026-09-18: BasicStatus (2 Hz) is
     # the only report carrying ControlUsageMode, and a wholesale assignment let
     # MotionStatus (10 Hz) reset it to the struct default. Tier 1 then never
