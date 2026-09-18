@@ -642,6 +642,54 @@ int main(int argc, char** argv) {
     }
   }
 
+  // ---- the triple without a full BasicStatus (13 ASM-4 boundary) ---------
+  {
+    // Tier 1 gates every axis command on usage_mode (NAV-111), so a consumer
+    // that cannot see it cannot tell "the chassis is in the wrong mode" from
+    // "we never learned what mode it is in". On the bench those two looked
+    // identical: usage_mode came out null for an hour while the robot sat in
+    // normal mode, and the state key gave no way to notice.
+    //
+    // The STRINGS still stay out (model / version hold std::string and cannot
+    // cross the lock-free slot, 13 ASM-4) -- only the three numbers travel.
+    char buf[4096];
+    RobotStateInput in;
+    in.conn = chs_a::ConnState::kOk;
+    in.basic = nullptr;            // no full BasicStatus available
+    in.has_triple = true;
+    in.usage_mode_raw = 1;
+    in.motion_state_raw = 17;
+    in.gait_raw = 0x3002;
+    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("RobotState triple", buf, n);
+    // mutant: drop the has_triple branch -> these go null -> red.
+    CHECK(j["usage_mode"] == "navigation");
+    CHECK(j["usage_mode_raw"] == 1);
+    CHECK(j["motion_state"] == "rl_control");
+    CHECK(j["gait_raw"] == 0x3002);
+    // The strings stay absent, deliberately.
+    CHECK(j["model"].is_null());
+    CHECK(j["version"].is_null());
+  }
+
+  // ---- never read back is NOT "read back as zero" ------------------------
+  {
+    // Zero is a real value on all three (normal mode / idle / no gait), so a
+    // bare 0 reads as a healthy idle robot on a link that has said nothing.
+    // mutant: emit the triple whenever basic is null, ignoring has_triple ->
+    // red, and a silent chassis would report itself as idle-and-fine.
+    char buf[4096];
+    RobotStateInput in;
+    in.conn = chs_a::ConnState::kProbing;
+    in.basic = nullptr;
+    in.has_triple = false;
+    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("RobotState no readback", buf, n);
+    CHECK(j["usage_mode"].is_null());
+    CHECK(j["motion_state"].is_null());
+    CHECK(j["gait"].is_null());
+  }
+
   if (g_failures == 0) {
     std::printf("ALL RT_PAYLOADS TESTS PASSED\n");
     return 0;

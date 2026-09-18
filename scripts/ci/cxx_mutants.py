@@ -752,6 +752,21 @@ PAYLOADS_SOURCES = [PAYLOADS_CC,
 PAYLOADS_TESTS = [os.path.join(QUAD, "test", "test_rt_payloads.cc")]
 
 PAYLOADS_MUTANTS = [
+    # 13 ASM-4 boundary: the mode TRIPLE travels in rt/chassis/state even
+    # though the full BasicStatus does not. Tier 1 gates on usage_mode
+    # (NAV-111), and on the bench it read null for an hour while the chassis
+    # sat in normal mode -- indistinguishable from "never heard from it".
+    ("payloads: the triple is dropped when there is no full BasicStatus",
+     PAYLOADS_CC,
+     "  } else if (in.has_triple) {",
+     "  } else if (false) {"),
+    # has_triple ignored: a silent chassis then reports itself as
+    # normal-mode / idle / no-gait, which is what a healthy idle robot looks
+    # like. Zero is a real value on all three.
+    ("payloads: never-read-back is emitted as a zeroed triple",
+     PAYLOADS_CC,
+     "  } else if (in.has_triple) {",
+     "  } else if (true) {"),
     # 13 S6.5: an open-set value travels as BOTH the number and the label.
     # Dropping the raw leaves a consumer who sees "unknown_0x0000" unable to say
     # WHICH unregistered value it was -- and V-66's Gait 0 arrives on every boot.

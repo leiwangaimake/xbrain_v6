@@ -163,6 +163,17 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
     a.Bool(in.basic->hes);
     a.Raw(",\"sleep\":");
     a.Bool(in.basic->sleep);
+  } else if (in.has_triple) {
+    // The triple without the strings. 13 ASM-4 keeps model / version / the
+    // full BasicStatus out of this key on purpose (they hold std::string and
+    // cannot cross the lock-free slot), but the three NUMBERS are Tier 1's
+    // input -- usage_mode is what NAV-111 gates every axis command on -- and a
+    // consumer that cannot see them cannot tell "the chassis is in the wrong
+    // mode" from "we never learned what mode it is in".
+    OpenSet(&a, "usage_mode", chs_a::ResolveUsageMode(in.usage_mode_raw));
+    OpenSet(&a, "motion_state", chs_a::ResolveMotionState(in.motion_state_raw));
+    OpenSet(&a, "gait", chs_a::ResolveGait(in.gait_raw));
+    a.Raw(",\"model\":null,\"version\":null,\"hes\":null,\"sleep\":null");
   } else {
     // Nothing has been heard from the chassis yet. null, not a zeroed struct:
     // a zeroed one reads as "idle, awake, no emergency stop", which is exactly

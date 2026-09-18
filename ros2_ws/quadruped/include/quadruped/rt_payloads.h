@@ -73,6 +73,19 @@ struct RobotStateInput {
   // D-08 ruling keeps it separate from stop_reason for exactly that reason.
   bool soft_estop_active = false;
 
+  // 13 S6.2 mode triple, as raw chassis numbers. Used ONLY when `basic` is
+  // null: the full BasicStatus carries the same three plus the strings, and
+  // emitting both would put one fact in two places in one message.
+  //
+  // has_triple distinguishes "read back as 0" from "never read back". Zero is
+  // a real value on every one of the three (normal mode / idle / no gait), so
+  // a bare 0 would read as a healthy idle robot on a link that has said
+  // nothing at all.
+  bool has_triple = false;
+  std::int64_t usage_mode_raw = 0;
+  std::int64_t motion_state_raw = 0;
+  std::int64_t gait_raw = 0;
+
   // Age of the last cmd_vel, in MILLISECONDS -- 11 S4.1 names the field
   // cmd_age_ms. Negative means no command has arrived yet, which is reported as
   // null rather than as a very large age.

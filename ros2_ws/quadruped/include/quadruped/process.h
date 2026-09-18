@@ -203,6 +203,20 @@ class QuadrupedProcess {
     bool soft_estop_active = false;
     bool mode_switching = false;
     bool motion_allowed = false;
+    // 13 S6.2 / MS-5: the mode TRIPLE as last read back from the chassis.
+    // Plain integers, so unlike the full BasicStatus (which holds model and
+    // version strings and cannot cross a LockfreeSlot, 13 ASM-4) these travel
+    // with the rest of the snapshot.
+    //
+    // They are here because they are Tier 1's INPUT: usage_mode decides
+    // whether any axis command is allowed at all (NAV-111), and a reader who
+    // cannot see it cannot tell "the chassis is in the wrong mode" from "we
+    // never learned what mode it is in" -- which is exactly the confusion
+    // 13 ASM-6 produced on the bench.
+    bool has_readback = false;
+    std::int64_t usage_mode_raw = 0;
+    std::int64_t motion_state_raw = 0;
+    std::int64_t gait_raw = 0;
   };
 
   // The newest snapshot, or false when ctrl has not produced one since the last

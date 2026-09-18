@@ -97,6 +97,10 @@ bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
   // and a zeroed chassis reads as a level robot at rest.
   in.tier1 = snap.tier1;
   in.estop_epoch = snap.estop_epoch;
+  in.has_triple = snap.has_readback;
+  in.usage_mode_raw = snap.usage_mode_raw;
+  in.motion_state_raw = snap.motion_state_raw;
+  in.gait_raw = snap.gait_raw;
   in.soft_estop_active = snap.soft_estop_active;
   in.cmd_age_ms = snap.cmd_age_ms;
   in.mode_switching = snap.mode_switching;

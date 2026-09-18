@@ -513,6 +513,13 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   snap.soft_estop_active = have_cmd_ && (cmd_estop_epoch_ != estop_epoch_);
   snap.mode_switching = mode_.mode_switching();
   snap.motion_allowed = session_.motion_allowed();
+  // From latest_, which is merged by source (see the merge note above) -- so
+  // the usage_mode here is the one BasicStatus delivered, not a value some
+  // faster report happened to leave behind.
+  snap.has_readback = have_snapshot_ && latest_.from_basic;
+  snap.usage_mode_raw = latest_.usage_mode_raw;
+  snap.motion_state_raw = latest_.motion_state_raw;
+  snap.gait_raw = latest_.gait_raw;
   state_slot_.Publish(snap);
 
   last_ctrl_s_ = now_mono_s;
