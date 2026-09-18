@@ -44,9 +44,11 @@ from typing import Optional
 from xbrain.p2_core.runtime.mic_capture import (
     MicCaptureConfig, spawn_mic_pipeline,
 )
+from xbrain.p2_core.boot.config_digest import (ConfigDigestGuard,
+                                               digest_fault_event)
 from xbrain.p2_core.health.aggregate import HealthAggregator, refresh_health
 from xbrain.p2_core.health.factor import build_health_factor
-from xbrain.p2_core.health.factor import FactorConfig
+from xbrain.p2_core.health.factor import FactorConfig, hold_grant
 from xbrain.p2_core.runtime.speaker_wiring import (
     SPEAK_TOPIC, SpeakerBusy, SpeakerDomain, SpeakerHwError,
     SpeakerWiringConfig, parse_speak_payload, parse_speak_source,
@@ -85,22 +87,35 @@ CMD_ESTOP_TOPIC = "cmd/estop"            # CLD-1: soft-estop disarm (14 S3.7)
 STATE_ARB_MOTION_TOPIC = "state/arb/motion"  # 11 S7A.5.1: suspended broadcast
 
 
-def _factor_cfg() -> FactorConfig:
-    """The 14 S8.2 step-1 factor table from the resolved p2_core config.
+def _stage_a_config() -> "tuple":
+    """10 S3.3.3 Stage A: load the resolved snapshot ONCE and take both things
+    this process needs from it -- the factor table and the config digest guard.
 
-    Read through the config layer rather than defaulted here: these four values
-    decide how much a degraded item slows the robot, and a default in code
-    would keep the machine moving at a speed nobody configured. A missing key
-    raises, which is what the startup assertions are for.
+    (FactorConfig, ConfigDigestGuard).
+
+    One load, deliberately. A second load_resolved() for the guard could see a
+    DIFFERENT MANIFEST than the one the factor table came from, and since a
+    second freeze pass is precisely what the guard exists to detect, the guard
+    would then be attesting a snapshot P2 is not running on. That failure would
+    be invisible: both loads succeed, both objects look healthy.
+
+    The factor table is read through the config layer rather than defaulted
+    here: these four values decide how much a degraded item slows the robot,
+    and a default in code would keep the machine moving at a speed nobody
+    configured. A missing key raises, which is what the startup assertions
+    are for.
     """
     from xbrain.common.config.resolved import load_resolved
 
     cfg = load_resolved("p2_core")
-    return FactorConfig(
+    factor = FactorConfig(
         fatal_degraded=cfg.get("health.factors.fatal_degraded"),
         degraded_fail=cfg.get("health.factors.degraded_fail"),
         degraded_degraded=cfg.get("health.factors.degraded_degraded"),
         unknown=cfg.get("health.factors.unknown"))
+    # Built from the ResolvedConfig object, not from a fresh MANIFEST read --
+    # see ConfigDigestGuard.at_stage_a on why that distinction is the point.
+    return factor, ConfigDigestGuard.at_stage_a(cfg)
 
 
 def _now_mono_ms() -> int:
@@ -164,7 +179,12 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # change while the process runs (a config change goes through the
         # freeze line and a restart), and re-reading it at 1 Hz would put a
         # file read plus a sha256 verification in the publish path.
-        factor_cfg = _factor_cfg()
+        factor_cfg, digest_guard = _stage_a_config()
+        _logger.info("p2 stage A: common_digest=%s", digest_guard.cached_digest)
+        # Edge-triggered fault sequence for event/fault/bit. Same boot-token
+        # rationale as _estop_boot below: record.db persists across restarts
+        # while a bare seq resets, so two boots would collide on eid.
+        _cfg_evt = {"boot": os.urandom(3).hex(), "seq": 0}
         state_cache: dict = {}
         # Boot-unique estop event token + seq (same rationale as _dev_eid: seq
         # resets per boot but record.db persists, so a bare seq re-collides).
@@ -669,8 +689,41 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                             ensure_ascii=False).encode("utf-8"))
                         # the grant, from the same aggregate (11 S3.6 body).
                         factor_body = build_health_factor(health_agg.states(), factor_cfg)
+                        # 10 S3.3.3 Stage C criterion 3 / 10 S5.4.4 failure row:
+                        # P2's cached common_digest against the MANIFEST on
+                        # disk. A mismatch means the freeze line produced a
+                        # pass this process never read, so the values behind
+                        # this grant are not the ones the MANIFEST describes.
+                        # Severity B: hold motion and report, do not exit.
+                        _verdict = digest_guard.check(now)
+                        if _verdict.blocked:
+                            # hold_grant forces allow_motion / speed_factor /
+                            # max_profile together; see its docstring on why
+                            # forcing only the flag is not enough.
+                            hold_grant(factor_body, _verdict.detail["kind"])
                         factor_pub.put(json.dumps(
                             factor_body, ensure_ascii=False).encode("utf-8"))
+                        if _verdict.edge:
+                            # 10 S5.4.4 verbatim: event/fault/bit with
+                            # detail.kind = "config_digest_mismatch". On the
+                            # EDGE only -- blocked is true every tick until an
+                            # operator restarts the stack, and a fault per
+                            # second would bury every other event in record.db.
+                            _cfg_evt["seq"] += 1
+                            gen.put("event/fault/bit", json.dumps(
+                                digest_fault_event(
+                                    _verdict,
+                                    "cfgdigest-%s-%d" % (_cfg_evt["boot"],
+                                                         _cfg_evt["seq"]),
+                                    # WALL-CLOCK-OK(record): 11 S6.2 display
+                                    # stamp, never a timeout or ordering key.
+                                    time.time()),
+                                ensure_ascii=False).encode("utf-8"))
+                            _logger.error(
+                                "p2 stage C/D: config digest %s -- %s",
+                                "MISMATCH (motion held)" if _verdict.blocked
+                                else "consistent again",
+                                _verdict.detail)
                         if (factor_body["allow_motion"], factor_body["max_profile"]) != (
                                 last_factor.get("allow_motion"), last_factor.get("max_profile")):
                             _logger.info("p2 cmd/motion/factor: allow_motion=%s "

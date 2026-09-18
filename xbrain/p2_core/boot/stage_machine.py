@@ -120,7 +120,24 @@ class BootStageMachine:
                               common_digest_mismatch: bool,
                               failures: Optional[List[BootFailure]] = None,
                               ) -> None:
-        """Three exits from Stage C: any triggers BLOCKED."""
+        """Three exits from Stage C: any triggers BLOCKED.
+
+        NOTE on what is and is not wired. This class models the 14 S9 six-state
+        machine and is exercised by tests only -- xbrain/p2_core/runtime/
+        main_wiring.py does not run a staged boot; it derives the grant from
+        the health aggregate every tick. So `common_digest_mismatch` here is a
+        PARAMETER a test supplies, not a condition production evaluates.
+
+        The production form of this third criterion lives in
+        xbrain/p2_core/boot/config_digest.py (CFG-CM-10): P2 caches the digest
+        from the ResolvedConfig it loaded at Stage A and, before every grant,
+        compares it with the MANIFEST -- holding motion and emitting
+        event/fault/bit on a mismatch, which is the same outcome 10 S5.4.4
+        specifies for Stage C/D. Wiring the full A/B/C/D machine into
+        main_wiring is CFG-BT-10 and is still open; until it lands, do NOT
+        read a green test on this method as evidence that the digest criterion
+        is enforced at runtime -- the guard is what enforces it.
+        """
         reasons: List[BootFailure] = list(failures or [])
         if any_fatal_fail:
             reasons.append(BootFailure(item="bit", reason="fatal_fail"))

@@ -190,6 +190,38 @@ def dominant_reason(item_states: Mapping[str, HealthState], cfg: FactorConfig,
     return "none"
 
 
+def hold_grant(body: Dict[str, object], reason: str) -> Dict[str, object]:
+    """Force an 11 S3.6 grant body to the "no motion" state, in place.
+
+    For the callers that must veto a grant the health aggregate would have
+    allowed -- today that is the 10 S5.4.4 config-digest check, which is a
+    B-level fault: hold motion and report, do not exit.
+
+    BOTH allow_motion and speed_factor are forced, and that is not redundancy.
+    P1's HealthFactorSlot stores the pair and applies the ladder to it, so a
+    body with allow_motion=false and a non-zero speed_factor leaves P1 holding
+    a speed for a motion it is not allowed; the next message that flips
+    allow_motion back resumes at that speed instead of ramping from a stop.
+
+    max_profile goes to WIRE_PROFILE_WHEN_BLOCKED rather than to the internal
+    "none": P1 rejects a body whose profile is off the wire closed set and
+    keeps driving on the PREVIOUS grant, which would turn a veto into a no-op.
+
+    Returns the same dict it was given, so a caller can write it inline; it is
+    mutated rather than copied because the body has already been built for this
+    tick and a copy would leave two objects one of which is wrong.
+    """
+    body["allow_motion"] = False
+    body["speed_factor"] = 0.0
+    body["max_profile"] = WIRE_PROFILE_WHEN_BLOCKED
+    # 11 S3.6 `reason` is free text for events and the HMI -- P1 parses only
+    # the three fields above (see parse_health_factor). Naming the real cause
+    # here is what puts it on the operator's screen instead of an unrelated
+    # health item that happened to be the dominant one.
+    body["reason"] = reason
+    return body
+
+
 def build_health_factor(item_states: Mapping[str, HealthState],
                         cfg: FactorConfig) -> Dict[str, object]:
     """The 11 S3.6 HealthFactor body P1 consumes (cmd/motion/factor, P2 -> P1,
