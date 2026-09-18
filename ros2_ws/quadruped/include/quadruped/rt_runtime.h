@@ -33,6 +33,7 @@
 #define HACHIST_XBRAIN_V6_QUADRUPED_RT_RUNTIME_H_
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
@@ -41,9 +42,21 @@
 #include "quadruped/quadruped_config.h"
 #include "quadruped/rt_bridge.h"
 #include "quadruped/rt_session.h"
+#include "quadruped/tick_stats.h"
 
 namespace quadruped {
 namespace rt {
+
+// Where an OdomSample goes when this loop publishes one. 13 V-69 moved
+// odom/TF publishing here from the SCHED_FIFO ctrl thread; the SINK is
+// injected rather than called directly because the implementation lives in
+// quadruped_uplink, which links rclcpp. This library must not: 13 S5.3 keeps
+// the ROS dependency out of everything chassis_relay could ever share, and a
+// direct call here would drag rclcpp into the RT-plane library for one
+// function. main.cc owns the binding, and a build without ROS simply leaves
+// the sink unset -- the loop then publishes rt/chassis/state and nothing else,
+// which is what it did before V-69's wiring landed.
+using OdomSink = std::function<void(const OdomSample&, double wall_ts_s)>;
 
 class RtRuntime {
  public:
@@ -65,6 +78,18 @@ class RtRuntime {
   const RtBridge& bridge() const { return *bridge_; }
   const RtSession& session() const { return session_; }
   std::uint64_t ticks() const { return ticks_; }
+  // Must be called BEFORE Start(). Setting it while the loop runs would be a
+  // data race on a std::function, and there is no case for changing where odom
+  // goes mid-flight -- the destination is a property of the build.
+  void SetOdomSink(OdomSink sink) { odom_sink_ = std::move(sink); }
+  // T-ODOM-1's evidence (13 S11.1): the measured period of THIS loop.
+  // Read after Stop(); reading it while the loop runs gives a torn value, and
+  // the item asks about a completed 10-minute run, not a live number.
+  const TickStats& tick_stats() const { return tick_stats_; }
+  // How many samples the loop actually handed to the sink. Separate from
+  // ticks(): TakeFresh returns nothing when ctrl has not produced a new
+  // sample since the last read, and "the loop ran" is not "odom went out".
+  std::uint64_t odom_sent() const { return odom_sent_; }
 
  private:
   void PubLoop();
@@ -80,6 +105,9 @@ class RtRuntime {
   std::atomic<bool> running_{false};
   std::thread thread_;
   std::uint64_t ticks_ = 0;
+  OdomSink odom_sink_;
+  TickStats tick_stats_;
+  std::uint64_t odom_sent_ = 0;
 };
 
 }  // namespace rt

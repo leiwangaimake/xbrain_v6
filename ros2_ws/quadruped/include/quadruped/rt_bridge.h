@@ -78,6 +78,10 @@ class RtBridge {
   // LOOSENING. Every outcome is acked, including refusals -- an ack that only
   // appears on success leaves the sender unable to tell "refused" from "lost".
   void HandleChassisCtrl(double now_mono_s, const char* data, std::size_t len);
+  // 11 S9.2.4 rt/chassis/mode. No ack key exists for this one (the contract
+  // registers rt/chassis/mode alone); the result is observable as the triple
+  // in rt/chassis/state, which is what 13 MS-1 compares against anyway.
+  void HandleChassisMode(double now_mono_s, const char* data, std::size_t len);
 
   // TIGHTENING. Always stops. Returns void because there is no outcome a caller
   // could act on differently (11 S3.0.1).
@@ -105,6 +109,10 @@ class RtBridge {
   std::uint64_t cmd_vel_accepted() const { return cmd_ok_; }
   std::uint64_t cmd_vel_refused() const { return cmd_refused_; }
   std::uint64_t ctrl_accepted() const { return ctrl_ok_; }
+  // Mode-triple counters. Separate from the ctrl ones because a refused mode
+  // switch and a refused stand have different causes and different fixes.
+  std::uint64_t mode_accepted() const { return mode_ok_; }
+  std::uint64_t mode_refused() const { return mode_refused_; }
   std::uint64_t ctrl_refused() const { return ctrl_refused_; }
   std::uint64_t estops_applied() const { return estop_applied_; }
   std::uint64_t estops_deduped() const { return estop_deduped_; }
@@ -130,6 +138,8 @@ class RtBridge {
   std::uint64_t cmd_ok_ = 0;
   std::uint64_t cmd_refused_ = 0;
   std::uint64_t ctrl_ok_ = 0;
+  std::uint64_t mode_ok_ = 0;
+  std::uint64_t mode_refused_ = 0;
   std::uint64_t ctrl_refused_ = 0;
   std::uint64_t estop_applied_ = 0;
   std::uint64_t estop_deduped_ = 0;

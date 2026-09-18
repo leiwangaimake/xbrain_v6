@@ -341,6 +341,28 @@ Bytes BasicFrame(int usage_mode, int motion_state, int gait, bool hes,
   return out;
 }
 
+
+// A MotionStatus frame. It carries motion_state and gait -- but NOT
+// ControlUsageMode, which is the asymmetry the snapshot merge bug turned on:
+// BasicStatus is the only report that mentions the usage mode.
+Bytes MotionFrame(int motion_state, int gait) {
+  char items[512];
+  std::snprintf(items, sizeof(items),
+                "{\"PatrolDevice\":{\"Command\":15728640,\"Items\":"
+                "{\"MotionStatus\":{\"MotionState\":%d,\"Gait\":%d,"
+                "\"LinearX\":0.0,\"LinearY\":0.0,\"AngularZ\":0.0}},"
+                "\"Time\":\"2026-09-15 14:55:55.457\",\"Type\":1048577}}",
+                motion_state, gait);
+  const std::size_t asdu_len = std::strlen(items);
+  Bytes out(chs_a::kHeaderBytes + asdu_len);
+  chs_a::Header h;
+  h.asdu_len = static_cast<std::uint16_t>(asdu_len);
+  h.msg_id = 0;
+  chs_a::WriteHeader(h, out.data(), out.size());
+  std::memcpy(out.data() + chs_a::kHeaderBytes, items, asdu_len);
+  return out;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -953,6 +975,104 @@ int main(int argc, char** argv) {
     CHECK(p.axis_frames_sent() == 0);
     CHECK(p.last_tier1().stop_reason == StopReason::kTimeout);
     CHECK(p.conn_state() != chs_a::ConnState::kOk);
+  }
+
+  // ---- the odom sample carries its OWN stamp (13 S9.1 rt_pub row) --------
+  {
+    // 13 S9.1 verbatim: "时间戳取自样本, 不取自发布时刻 => 发布晚了是到得晚,
+    // 不是数据错". ctrl stamps at integration time and the value rides the
+    // lock-free slot; rt_pub hands THAT to the ROS header rather than reading
+    // a clock of its own.
+    //
+    // Why it matters and why it is invisible without a case like this: a
+    // publish loop that lost its slot to the scheduler would re-label a 40 ms
+    // old pose as current, and the very jitter V-69 traded away would stop
+    // being observable downstream. The measurement would look BETTER the worse
+    // the scheduling got.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    OdomSample first;
+    // mutant: leave stamp_wall_s at its 0.0 default -> red. A zero stamp
+    // reaches ROS as 1970 and every consumer that filters on age drops it.
+    CHECK(p.TakeOdomForPublish(&first));
+    CHECK(first.stamp_wall_s > 1.0e9);        // a real epoch, not the default
+
+    // Sub-second resolution. WallNow() elsewhere in this file is ::time(),
+    // i.e. WHOLE SECONDS -- reusing it here would give all hundred samples in
+    // a second the same stamp, and downstream would see a 100 Hz stream whose
+    // timestamps advance in 1 Hz steps. That reads as a stalled publisher, so
+    // the defect would be reported as the opposite of what it is.
+    // mutant: stamp with WallNow() instead of WallNowSeconds() -> the two
+    // stamps below become equal -> red.
+    p.CtrlTick(0.01);
+    OdomSample second;
+    CHECK(p.TakeOdomForPublish(&second));
+    CHECK(second.stamp_wall_s > first.stamp_wall_s);
+
+    // The stamp travels WITH the sample through the slot. A stamp written
+    // beside the slot rather than inside the payload would be read by rt_pub
+    // at a different moment than the pose it labels.
+    // mutant: stamp after the Publish call -> the sample taken here carries
+    // the PREVIOUS tick's stamp -> the monotonic check above goes red.
+    CHECK(second.stamp_wall_s - first.stamp_wall_s < 5.0);
+  }
+
+  // ---- a 10 Hz report must not erase what the 2 Hz one delivered ---------
+  {
+    // Found on the bench 2026-09-18. BasicStatus (2 Hz) is the ONLY report
+    // carrying ControlUsageMode; MotionStatus (10 Hz) does not mention it.
+    // `latest_ = fresh` therefore reset usage_mode to the struct default five
+    // times out of six.
+    //
+    // *** What it cost: Tier 1 holds every axis command at zero unless
+    // usage_mode equals navigation (NAV-111). Reset at 10 Hz it could never
+    // equal navigation, so the robot could not be commanded to move AT ALL --
+    // and it reported mode_mismatch, which reads as "the chassis is in the
+    // wrong mode" rather than "we are dropping the field on the floor".
+    //
+    // Asserted through STOP_REASON rather than through the snapshot, because
+    // the stop reason is the consequence an operator sees and the snapshot is
+    // an implementation detail. mutant: restore `latest_ = fresh` -> the
+    // second stop_reason check goes red.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    chassis.Drain();
+
+    // Navigation mode, standing, navigation gait -- everything Tier 1 needs.
+    chassis.Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+                            /*gait=*/0x3002, /*hes=*/false, /*sleep=*/false));
+    p.RxPump(0.05);
+    // enable clears the boot-time timeout_lock. WITHOUT it the stop reason is
+    // kTimeout in every implementation, and an assertion phrased as
+    // "not kModeMismatch" is then true whatever the merge does -- which is
+    // exactly how the first draft of this case passed the mutant it was
+    // written to catch (CLAUDE.md S3.2 form 1).
+    p.OnEnable();
+    p.OnCmdVel(0.06, 0.1, 0.0, 0.0, p.estop_epoch());
+    // Two periods, not one: the enable CLEARS the lock on the period that
+    // consumes it but that period still stops (tier1.cc "the upstream came
+    // back is not the same event as the upstream is trusted", 11 S9.12.1).
+    // Asserting after one period would fail on a correct implementation.
+    p.CtrlTick(0.06);
+    p.OnCmdVel(0.07, 0.1, 0.0, 0.0, p.estop_epoch());
+    p.CtrlTick(0.07);
+    // kNone, not "not kModeMismatch": the gate is either fully open or it is
+    // not, and the weaker phrasing cannot tell the two implementations apart.
+    CHECK(p.last_tier1().stop_reason == StopReason::kNone);
+    CHECK(p.axis_frames_sent() >= 1);
+
+    // Now a MotionStatus, which says nothing about usage_mode. The gate must
+    // stay open -- this is the assertion the bug broke.
+    const std::uint64_t before = p.axis_frames_sent();
+    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0x3002));
+    p.RxPump(0.10);
+    p.OnCmdVel(0.11, 0.1, 0.0, 0.0, p.estop_epoch());
+    p.CtrlTick(0.11);
+    CHECK(p.last_tier1().stop_reason == StopReason::kNone);
+    CHECK(p.axis_frames_sent() > before);
   }
 
   if (g_failures == 0) {

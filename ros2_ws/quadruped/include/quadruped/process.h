@@ -171,6 +171,11 @@ class QuadrupedProcess {
   // pose, not work through a backlog of stale ones. That is RTC-6, and for an
   // odometry a stale sample is a QD-5 violation rather than a latency figure.
   bool TakeOdomForPublish(OdomSample* out);
+  // Diagnostics for the mode sequence; see OnChassisMode.
+  std::uint64_t mode_steps() const { return mode_steps_; }
+  bool mode_sequence_pending() const {
+    return mode_want_state_ || mode_want_gait_ || mode_want_usage_;
+  }
 
   // What rt_pub needs to build a RobotState, as a POD.
   //
@@ -299,6 +304,18 @@ class QuadrupedProcess {
   // "accepted" for a request the machine refused would be worse than no ack:
   // 11 CR-12 is explicit that "ack = accepted" does not mean the lock cleared,
   // and an operator who cannot trust the refusal either has nothing left.
+  // 11 S9.2.4: a whole mode triple, applied as a SEQUENCE. Returns false when
+  // a switch is already in flight (13 MS-3), which the caller reports rather
+  // than queueing -- two pending triples have no defined read-back expectation.
+  //
+  // Why a sequence and not one Request: 13 MS-5 records that the chassis
+  // couples the three (a gait switch moves the motion mode, and the reverse),
+  // and MS-3 refuses a second switch while one is in flight. So the triple has
+  // to be walked one step at a time, each step waiting for its read-back.
+  bool OnChassisMode(bool has_usage_mode, std::int64_t usage_mode,
+                     bool has_motion_state, std::int64_t motion_state,
+                     bool has_gait, std::int64_t gait);
+
   ModeRequestResult OnChassisAction(double now_mono_s, ModeAction action,
                                     std::int64_t param);
 
@@ -382,6 +399,19 @@ class QuadrupedProcess {
 
   Tier1Output last_tier1_;
   OdomSample last_odom_;
+  // 11 S9.2.4 pending mode triple, walked one step per control period.
+  // ORDER (see StepModeSequence): motion_state, then gait, then usage_mode.
+  // 13 MS-5 fixes the first two; usage_mode goes LAST on purpose -- it is the
+  // gate Tier 1 opens on (NAV-111), so opening it only after the posture and
+  // gait have read back keeps the permissive step behind the others.
+  bool mode_want_usage_ = false;
+  std::int64_t mode_usage_ = 0;
+  bool mode_want_state_ = false;
+  std::int64_t mode_state_ = 0;
+  bool mode_want_gait_ = false;
+  std::int64_t mode_gait_ = 0;
+  // Counts steps actually dispatched, so "the sequence ran" is a number.
+  std::uint64_t mode_steps_ = 0;
 
   std::uint16_t msg_id_ = 0;
   double last_ctrl_s_ = -1.0;

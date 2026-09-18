@@ -184,6 +184,24 @@ inline constexpr std::int64_t kGaitStandSteady = 0x1001;
 inline constexpr std::int64_t kMotionStateProneSteady = 0;       // NOT 4
 inline constexpr std::int64_t kMotionStateRlControl = 17;
 
+// The values that go OUT on motion_state, per 11 S9.2.4's commandable row.
+//
+// These are NOT the steady read-back values in mode_machine.h, and the two
+// differ exactly where it is easiest to get wrong: `stand` is COMMANDED as 1
+// and READS BACK as 17 (the firmware auto-enters RL control), `prone` is
+// commanded as 4 and reads back as 0. mode_machine.h names its constants
+// ...Steady and says "NOT 1" / "NOT 4" for the same reason. Using a steady
+// constant here would command the chassis with a number the contract's
+// commandable row does not contain.
+inline constexpr std::int64_t kCommandMotionStateStand = 1;
+inline constexpr std::int64_t kCommandMotionStateProne = 4;
+inline constexpr std::int64_t kCommandMotionStateRlControl = 17;
+
+// Lives HERE, next to the steady values, rather than in the RT-plane parser
+// that first needed it: the pair is the whole point. Split across two headers
+// a reader sees one of them, and the one they are most likely to reach for is
+// the wrong one.
+
 }  // namespace quadruped
 
 #endif  // HACHIST_XBRAIN_V6_QUADRUPED_MODE_MACHINE_H_

@@ -285,6 +285,28 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# Channel three into the binary. 13 V-69 puts odom/TF publishing on the rt_pub
+# loop, so m20 needs quadruped_uplink linked in and a macro to guard the
+# binding. Conditional on the TARGET, not on find_package: the library above is
+# only created when all four ROS packages were found, and testing the target is
+# the one form that cannot disagree with whether it exists.
+#
+# A build WITHOUT it is legal and stays legal -- the loop then publishes
+# rt/chassis/state and nothing else, which is what it did before this landed.
+# The warning is not decoration: a missing odom stream and a deliberately
+# ROS-free build look identical at runtime unless the build says which it was.
+# ---------------------------------------------------------------------------
+if(TARGET quadruped_uplink)
+  target_link_libraries(quadruped_m20 PRIVATE quadruped_uplink)
+  target_compile_definitions(quadruped_m20 PRIVATE QUADRUPED_HAVE_UPLINK=1)
+  message(STATUS "quadruped: quadruped_m20 links channel three (odom + TF)")
+else()
+  message(WARNING "quadruped: quadruped_m20 is being built WITHOUT channel "
+                  "three -- no odom and no TF will reach the upper stack, and "
+                  "T-ODOM-1 has nothing to measure")
+endif()
+
+# ---------------------------------------------------------------------------
 # Offline tests: plain executables, no ROS, no hardware, registered with CTest.
 # The config test needs a writable directory for its fixtures, so it gets the
 # build dir as argv[1] rather than writing next to the source.
@@ -365,6 +387,14 @@ add_test(NAME test_mode_machine COMMAND test_mode_machine)
 # NUMBERS -- that table is T-ODOM-2's acceptance basis, and "it grows" is
 # satisfied by any rate at all including the 2.45x-optimistic one the document
 # used to carry.
+# The T-ODOM-1 instrument. Tested on its own, with no loop and no clock: the
+# class takes deltas as arguments precisely so its behaviour can be pinned
+# without waiting ten minutes for real elapsed time. A defect here does not
+# produce a wrong number, it produces a wrong VERDICT on 13 V-69.
+add_executable(test_tick_stats test/test_tick_stats.cc)
+target_link_libraries(test_tick_stats PRIVATE quadruped_core)
+add_test(NAME test_tick_stats COMMAND test_tick_stats)
+
 add_executable(test_odometry test/test_odometry.cc)
 target_link_libraries(test_odometry PRIVATE quadruped_core)
 add_test(NAME test_odometry COMMAND test_odometry)

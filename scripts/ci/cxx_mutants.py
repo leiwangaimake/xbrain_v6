@@ -1151,6 +1151,39 @@ PROCESS_SOURCES = [
 PROCESS_TESTS = [os.path.join(QUAD, "test", "test_process.cc")]
 
 PROCESS_MUTANTS = [
+    # The snapshot merge. Found on the bench 2026-09-18: BasicStatus (2 Hz) is
+    # the only report carrying ControlUsageMode, and a wholesale assignment let
+    # MotionStatus (10 Hz) reset it to the struct default. Tier 1 then never
+    # saw navigation mode and the robot could not be commanded to move at all.
+    ("process: the chassis snapshot is assigned wholesale, not merged",
+     PROCESS_CC,
+     "    if (fresh.from_basic) {\n      latest_.hes = fresh.hes;",
+     "    latest_ = fresh;\n    if (false) {\n      latest_.hes = fresh.hes;"),
+    # The other half: usage_mode written from a report that never carried it.
+    ("process: usage_mode is written from the motion report too",
+     PROCESS_CC,
+     "      latest_.motion_state_raw = fresh.motion_state_raw;\n"
+     "      latest_.gait_raw = fresh.gait_raw;\n"
+     "      latest_.from_motion = true;",
+     "      latest_.motion_state_raw = fresh.motion_state_raw;\n"
+     "      latest_.gait_raw = fresh.gait_raw;\n"
+     "      latest_.usage_mode_raw = fresh.usage_mode_raw;\n"
+     "      latest_.from_motion = true;"),
+    # 13 S9.1 rt_pub row: "时间戳取自样本, 不取自发布时刻". The stamp is
+    # written by ctrl at integration time; these two are the ways it stops
+    # meaning that, and both are silent at runtime.
+    ("process: the odom sample is never stamped (stays at the 0.0 default)",
+     PROCESS_CC,
+     "  last_odom_.stamp_wall_s = WallNowSeconds();",
+     "  (void)0;"),
+    # ::time() resolution. All hundred samples in a second then share one
+    # stamp, and downstream sees a 100 Hz stream whose timestamps advance in
+    # 1 Hz steps -- which reads as a STALLED publisher, i.e. the defect gets
+    # reported as the opposite of what it is.
+    ("process: the odom stamp drops to whole-second resolution",
+     PROCESS_CC,
+     "  last_odom_.stamp_wall_s = WallNowSeconds();",
+     "  last_odom_.stamp_wall_s = static_cast<double>(WallNow());"),
     # 13 CA-7: an arriving report is the ONLY evidence the link is alive,
     # because axis commands are never acknowledged. Drop the call and the
     # session never learns it has a peer -- the socket is open, frames are
@@ -1839,12 +1872,92 @@ UPLINK_MUTANTS = [
 # the one module that needs a dependency outside this repository, and giving
 # every suite an empty list rather than making the field optional keeps the
 # unpack in run_suite a single shape.
+# --------------------------------------------------------------------------
+# tick_stats -- the instrument T-ODOM-1 is measured with (13 S11.1).
+#
+# A defect here does not produce a wrong number, it produces a wrong VERDICT on
+# 13 V-69: the decision to move odom/TF publishing off the SCHED_FIFO ctrl
+# thread is accepted or rejected on what this class reports. So the mutants
+# aim at the two ways a histogram reports a pass it did not earn -- quantising
+# the maximum, and rounding a percentile toward the fast samples.
+# --------------------------------------------------------------------------
+TICK_STATS_H = os.path.join(QUAD, "include", "quadruped", "tick_stats.h")
+TICK_STATS_SOURCES = [TICK_STATS_H]
+TICK_STATS_TESTS = [os.path.join(QUAD, "test", "test_tick_stats.cc")]
+
+TICK_STATS_MUTANTS = [
+    # The percentile rounds toward the fast samples. A run whose P99 sits in
+    # the [11.9, 12.0) bucket would then report 11.9 and PASS a 12 ms
+    # criterion it is actually sitting on.
+    ("tick_stats: the percentile reports the bucket's LOWER edge",
+     TICK_STATS_H,
+     "const double edge = static_cast<double>(i + 1) * kTickBucketMs;",
+     "const double edge = static_cast<double>(i) * kTickBucketMs;"),
+    # The clamp. Without it a run of identical 10.06 ms ticks prints
+    # "p99=10.10 max=10.06" -- a percentile above the maximum, which is
+    # arithmetically impossible and was the first thing the live bench run
+    # produced.
+    ("tick_stats: the percentile is not clamped to the true maximum",
+     TICK_STATS_H,
+     "return edge < max_ms_ ? edge : max_ms_;",
+     "return edge;"),
+    # Truncation instead of ceiling: the rank lands one sample early, which on
+    # a distribution whose tail is about 1% of samples is the difference
+    # between seeing the tail and not seeing it.
+    ("tick_stats: the percentile rank truncates instead of ceiling",
+     TICK_STATS_H,
+     "if (static_cast<double>(want) < exact) ++want;",
+     "if (false) ++want;"),
+    # max read off the histogram. The criterion tests max DIRECTLY against
+    # 20 ms, so a quantised max reports a value that never occurred.
+    ("tick_stats: max is quantised to the bucket instead of kept exact",
+     TICK_STATS_H,
+     "if (dt_ms > max_ms_) max_ms_ = dt_ms;",
+     "if (dt_ms > max_ms_) max_ms_ = static_cast<double>("
+     "static_cast<std::size_t>(dt_ms / kTickBucketMs)) * kTickBucketMs;"),
+    # A negative delta clamped to zero instead of dropped: a caller that
+    # subtracted in the wrong order gets an improbably perfect result rather
+    # than a visible anomaly.
+    ("tick_stats: a negative delta is clamped to zero and counted",
+     TICK_STATS_H,
+     "if (dt_ms < 0.0) return;",
+     "if (dt_ms < 0.0) dt_ms = 0.0;"),
+    # Zero dropped along with the negatives. Two ticks inside one clock granule
+    # is real data -- it means the loop ran twice without sleeping.
+    ("tick_stats: a zero-length tick is dropped as if invalid",
+     TICK_STATS_H,
+     "if (dt_ms < 0.0) return;",
+     "if (dt_ms <= 0.0) return;"),
+    # An empty histogram answering with a number. A publish loop that never
+    # started would then be indistinguishable from one holding its period.
+    ("tick_stats: an empty histogram reports a passing percentile",
+     TICK_STATS_H,
+     "if (count_ == 0) return 0.0;",
+     "if (count_ == 0) return 10.0;"),
+    # Overflow answered with the histogram ceiling. A five-second stall would
+    # be reported as 30 ms -- a pass.
+    ("tick_stats: overflow reports the ceiling instead of the true max",
+     TICK_STATS_H,
+     "    return max_ms_;\n  }\n\n  double max_ms() const",
+     "    return static_cast<double>(kTickBuckets) * kTickBucketMs;\n  }\n\n"
+     "  double max_ms() const"),
+    # The sample is never binned: every percentile collapses to the first
+    # bucket and every run passes.
+    ("tick_stats: Add ignores its argument when binning",
+     TICK_STATS_H,
+     "const std::size_t idx = static_cast<std::size_t>(dt_ms / kTickBucketMs);",
+     "const std::size_t idx = 0;"),
+]
+
+
 SUITES = {
     "quadruped": (QUAD_SOURCES, QUAD_TESTS, QUAD_MUTANTS, GOLDEN, []),
     "quadruped_config": (CONFIG_SOURCES, CONFIG_TESTS, CONFIG_MUTANTS, None, []),
     "reports": (REPORTS_SOURCES, REPORTS_TESTS, REPORTS_MUTANTS, GOLDEN, []),
     "session": (SESSION_SOURCES, SESSION_TESTS, SESSION_MUTANTS, None, []),
     "tier1": (TIER1_SOURCES, TIER1_TESTS, TIER1_MUTANTS, None, []),
+    "tick_stats": (TICK_STATS_SOURCES, TICK_STATS_TESTS, TICK_STATS_MUTANTS,
+                   None, []),
     "units": ([], UNITS_TESTS, UNITS_MUTANTS, None, []),
     "envelope": ([], ENVELOPE_TESTS, ENVELOPE_MUTANTS, None, []),
     "rt_keys": (RT_KEYS_SOURCES, RT_KEYS_TESTS, RT_KEYS_MUTANTS, CONTRACT_MD, []),

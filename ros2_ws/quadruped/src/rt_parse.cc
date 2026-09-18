@@ -181,6 +181,117 @@ RtParse ParseCmdVel(const char* json, std::size_t len, const std::string& our_ri
   return RtParse::kOk;
 }
 
+namespace {
+
+// One row of a semantic-name table. 11 S9.2.4 keeps the wire semantic and
+// hides the chassis numbers here, so this file is the single place a firmware
+// enum change would land.
+struct NameValue {
+  const char* name;
+  std::int64_t value;
+};
+
+bool LookupName(const NameValue* table, std::size_t n, const std::string& name,
+                std::int64_t* out) {
+  for (std::size_t i = 0; i < n; ++i) {
+    if (name == table[i].name) {
+      *out = table[i].value;
+      return true;
+    }
+  }
+  return false;
+}
+
+// 11 S9.2.4: normal / navigation / assist -> 0 / 1 / 2.
+constexpr NameValue kUsageModes[] = {
+    {"normal", 0}, {"navigation", 1}, {"assist", 2},
+};
+
+// 11 S9.2.4 COMMANDABLE motion states only. The read-only ones (soft_estop -2,
+// idle 0, joint_damp 2, boot_damp 3, zero_cal 5, cart_move 16, damped_prone)
+// are deliberately ABSENT rather than present-and-rejected: a table that
+// listed them would invite the next reader to "just allow this one", and the
+// contract's line is that they only ever come back, never go out.
+constexpr NameValue kMotionStates[] = {
+    {"stand", kCommandMotionStateStand},
+    {"prone", kCommandMotionStateProne},
+    {"rl_control", kCommandMotionStateRlControl},
+};
+
+// 11 S9.2.4 gaits. platform (0x1002) is read-only and absent for the same
+// reason. stair_standard (0x1003) IS listed: it is write-only in the contract
+// and 13 GS-1 refuses it for a DIFFERENT reason (the read-back enum has no
+// 0x1003, so MS-2 would time out on every switch). That refusal belongs to
+// mode_machine's command_forbidden_gaits, which is configured -- keeping it
+// out of this table would hard-code a config decision into the parser and
+// make the two disagree the day the firmware gains the read-back value.
+constexpr NameValue kGaits[] = {
+    {"basic", 0x1001}, {"stair_standard", 0x1003},
+    {"flat", 0x3002}, {"stair_agile", 0x3003},
+};
+
+}  // namespace
+
+bool UsageModeValue(const std::string& name, std::int64_t* out) {
+  return LookupName(kUsageModes, sizeof(kUsageModes) / sizeof(kUsageModes[0]),
+                    name, out);
+}
+
+bool MotionStateValue(const std::string& name, std::int64_t* out) {
+  return LookupName(kMotionStates,
+                    sizeof(kMotionStates) / sizeof(kMotionStates[0]), name, out);
+}
+
+bool GaitValue(const std::string& name, std::int64_t* out) {
+  return LookupName(kGaits, sizeof(kGaits) / sizeof(kGaits[0]), name, out);
+}
+
+RtParse ParseChassisMode(const char* json, std::size_t len,
+                         const std::string& our_rid, const std::string& our_boot,
+                         ChassisModeMsg* out) {
+  if (json == nullptr || out == nullptr) return RtParse::kBadJson;
+  const Json j = Json::parse(json, json + len, nullptr, /*allow_exceptions=*/false);
+  if (j.is_discarded()) return RtParse::kBadJson;
+  Json data;
+  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &data);
+  if (env != RtParse::kOk) return env;
+  // cmd_id is mandatory: this is a loosening command in the 11 S3.0.1 sense
+  // (it can end at usage_mode = navigation, which is what Tier 1 waits for),
+  // and without a cmd_id the switch cannot be correlated with its read-back.
+  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {
+    return RtParse::kMissingField;
+  }
+  // Each field optional, each validated when present. A name outside the
+  // commandable set refuses the WHOLE message: 13 MS-5 compares the triple as
+  // a unit, so applying the fields that parsed would leave the machine waiting
+  // on an expectation nobody can satisfy.
+  std::string name;
+  if (GetString(data, "usage_mode", &name)) {
+    if (!UsageModeValue(name, &out->usage_mode)) {
+      return RtParse::kUnsupportedAction;
+    }
+    out->has_usage_mode = true;
+  }
+  if (GetString(data, "motion_state", &name)) {
+    if (!MotionStateValue(name, &out->motion_state)) {
+      return RtParse::kUnsupportedAction;
+    }
+    out->has_motion_state = true;
+  }
+  if (GetString(data, "gait", &name)) {
+    if (!GaitValue(name, &out->gait)) return RtParse::kUnsupportedAction;
+    out->has_gait = true;
+  }
+  // A message that changes nothing is a defect in the sender, not a no-op to
+  // absorb quietly: it means a field name was misspelled (the envelope parsed,
+  // so the message LOOKED fine) and the switch the operator asked for never
+  // happened. Refusing makes that visible at the source.
+  if (!out->has_usage_mode && !out->has_motion_state && !out->has_gait) {
+    return RtParse::kMissingField;
+  }
+  return RtParse::kOk;
+}
+
 RtParse ParseChassisCtrl(const char* json, std::size_t len,
                          const std::string& our_rid, const std::string& our_boot,
                          ChassisCtrlMsg* out) {

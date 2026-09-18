@@ -52,6 +52,11 @@
 #include <cstdint>
 #include <string>
 
+// For the commandable motion_state values (11 S9.2.4). They live in the core
+// header beside the steady read-back values on purpose -- see the note there
+// on why the pair must not be split.
+#include "quadruped/mode_machine.h"
+
 namespace quadruped {
 namespace rt {
 
@@ -125,6 +130,44 @@ RtParse ParseCmdVel(const char* json, std::size_t len, const std::string& our_ri
 // rt/chassis/ctrl -- LOOSENING, full validation (11 S9.3.3 / S9.3.4)
 // ---------------------------------------------------------------------------
 enum class CtrlAction { kStand, kProne, kEnable, kSetSdkMode };
+
+// 11 S9.2.4 rt/chassis/mode: the mode TRIPLE. Every field is optional on the
+// wire -- a caller that wants to change one thing sends one thing -- so each
+// carries its own presence flag. Absent and "set it to zero" are different
+// requests, and a struct that could not tell them apart would turn an omitted
+// usage_mode into a command to leave navigation mode.
+//
+// Values are the CHASSIS numbers, mapped from the contract's semantic strings
+// at parse time. 11 S9.2.4 is explicit that the strings are the contract and
+// "数值映射封装在 quadruped 内部, 底盘枚举变更不外溢" -- so the mapping lives
+// here and nowhere upstream.
+struct ChassisModeMsg {
+  Envelope env;
+  std::string cmd_id;
+  bool has_usage_mode = false;
+  std::int64_t usage_mode = 0;
+  bool has_motion_state = false;
+  std::int64_t motion_state = 0;
+  bool has_gait = false;
+  std::int64_t gait = 0;
+};
+
+// Semantic string -> chassis number, per the 11 S9.2.4 tables. Return false
+// for a name outside the set AND for the read-only names: 11 S9.2.4 marks
+// soft_estop / idle / joint_damp / boot_damp / zero_cal / cart_move /
+// damped_prone as read-only ("只读, 禁止下发"), and accepting one would send
+// the chassis a value the contract says only ever comes back.
+bool UsageModeValue(const std::string& name, std::int64_t* out);
+bool MotionStateValue(const std::string& name, std::int64_t* out);
+bool GaitValue(const std::string& name, std::int64_t* out);
+
+// 11 S9.2.4. Every present field must be a KNOWN, COMMANDABLE name; an
+// unknown or read-only one refuses the whole message rather than applying the
+// fields that happened to parse -- a half-applied mode triple is a state no
+// read-back expectation describes (13 MS-5 compares all three).
+RtParse ParseChassisMode(const char* json, std::size_t len,
+                         const std::string& our_rid, const std::string& our_boot,
+                         ChassisModeMsg* out);
 
 const char* CtrlActionName(CtrlAction a);
 

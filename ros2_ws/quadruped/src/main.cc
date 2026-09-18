@@ -58,6 +58,9 @@
 #if QUADRUPED_HAVE_RT
 #include "quadruped/rt_runtime.h"
 #endif
+#if QUADRUPED_HAVE_UPLINK
+#include "quadruped/uplink.h"
+#endif
 
 namespace {
 
@@ -189,6 +192,39 @@ int Run(const std::string& path) {
                  "(11 S3.0). Less precise, never wrong.\n");
   }
   quadruped::rt::RtRuntime rt(&proc, cfg, boot);
+#if QUADRUPED_HAVE_UPLINK
+  // 13 V-69: odom + TF publish on rt_pub, integration stays in ctrl. This is
+  // the binding that makes that true -- before it, Uplink::Publish had no call
+  // site anywhere in the process and the whole of channel three was a library
+  // nobody invoked. The sink is injected (rather than rt_runtime calling
+  // Uplink directly) so quadruped_rt keeps its zero-rclcpp dependency; see
+  // OdomSink in rt_runtime.h.
+  //
+  // Constructed BEFORE rt.Start(): the loop reads odom_sink_ without a lock
+  // (see SetOdomSink), so binding it after the thread exists would be a race.
+  std::unique_ptr<quadruped::Uplink> uplink;
+  try {
+    uplink.reset(new quadruped::Uplink(cfg.uplink, cfg.robot_id));
+    // Read BACK from the context, never echoed from the config -- an
+    // implementation that took the domain from ROS_DOMAIN_ID would print 42
+    // here while publishing somewhere nobody listens (13 DDS-1).
+    std::printf("uplink: ROS 2 domain %d, odom on %s\n",
+                uplink->actual_domain_id(), cfg.uplink.odom_topic.c_str());
+    quadruped::Uplink* up = uplink.get();
+    rt.SetOdomSink([up](const quadruped::OdomSample& s, double wall_ts_s) {
+      up->Publish(s, wall_ts_s);
+    });
+  } catch (const std::exception& e) {
+    // Reported and the process continues. Channel three is the way the upper
+    // stack SEES the robot; losing it is serious, but it does not make the
+    // chassis less safe, and refusing to start here would take Tier 1 down
+    // with it. Same reasoning as the RT-plane branch below.
+    std::fprintf(stderr,
+                 "quadruped_m20: uplink (channel three) did NOT come up (%s). "
+                 "No odom and no TF will be published; the chassis link and "
+                 "Tier 1 are unaffected.\n", e.what());
+  }
+#endif
   std::string rt_err;
   const bool rt_up = rt.Start(&rt_err);
   if (!rt_up) {
@@ -330,6 +366,23 @@ int Run(const std::string& path) {
   // NUMBER, not an inference from "we did not send an enable". Tier 1 holding
   // zero and Tier 1 having been unlocked without anyone noticing look the same
   // from outside the process; this is the line that tells them apart.
+#if QUADRUPED_HAVE_RT
+  // T-ODOM-1's evidence (13 S11.1), printed after the loop has stopped so the
+  // histogram is not read while it is being written. The criterion is
+  // P99 <= 12 ms and max <= 20 ms over ten minutes UNDER LOAD; this line is
+  // what a bench run reads off. overflow is printed alongside because a
+  // non-zero count means the P99 figure fell back to the exact max rather
+  // than naming a bucket -- a reader has to be able to see that happened.
+  {
+    const quadruped::TickStats& ts = rt.tick_stats();
+    std::printf("quadruped_m20: rt_pub period -- samples=%llu p99=%.2f ms "
+                "max=%.2f ms overflow=%llu (odom sent=%llu)\n",
+                static_cast<unsigned long long>(ts.count()),
+                ts.PercentileMs(0.99), ts.max_ms(),
+                static_cast<unsigned long long>(ts.overflow()),
+                static_cast<unsigned long long>(rt.odom_sent()));
+  }
+#endif
   std::printf("quadruped_m20: stopped after %llu control periods "
               "(axis frames sent=%llu, heartbeats=%llu, tx skipped=%llu, "
               "stop_reason=%s)\n",

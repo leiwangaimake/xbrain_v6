@@ -80,7 +80,7 @@ const KeySpec kKeys[] = {
      "20 Hz from p1_motion; its age drives the Tier 1 timeout lock"},
     // ---- 11 S9.2.2 / S9.4: mode and light, both commanded from above ------
     {"rt/chassis/mode", KeyRole::kSubscribe, "Q3_cmd",
-     "the mode triple; read-back comparison is B5's"},
+     "the mode triple; the ONLY path to usage_mode = navigation (NAV-111)"},
     {"rt/chassis/light", KeyRole::kSubscribe, "Q3_cmd",
      "light and voice, non-periodic, sent on the chs_a_tx thread"},
 };

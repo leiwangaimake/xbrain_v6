@@ -130,6 +130,34 @@ void RtBridge::HandleCmdVel(double now_mono_s, const char* data,
   proc_->OnCmdVel(now_mono_s, m.vx, m.vy, m.wz, m.estop_epoch);
 }
 
+void RtBridge::HandleChassisMode(double now_mono_s, const char* data,
+                                std::size_t len) {
+  // now_mono_s is unused: the sequence is dispatched from the control period,
+  // not from this callback (see QuadrupedProcess::OnChassisMode on why). Kept
+  // in the signature so every subscriber handler has the same shape and the
+  // subscription table needs no special case.
+  (void)now_mono_s;
+  ChassisModeMsg m;
+  const RtParse r = ParseChassisMode(data, len, rid_, boot_, &m);
+  if (r != RtParse::kOk) {
+    // No ack key for this one (11 registers rt/chassis/mode alone), so a
+    // refusal is a COUNTER, not a message. main.cc's supervisor prints it --
+    // a refused mode switch is otherwise indistinguishable from one that was
+    // never sent, and the symptom of both is a robot that will not move.
+    ++mode_refused_;
+    return;
+  }
+  if (proc_->OnChassisMode(m.has_usage_mode, m.usage_mode,
+                           m.has_motion_state, m.motion_state,
+                           m.has_gait, m.gait)) {
+    ++mode_ok_;
+  } else {
+    // 13 MS-3: a switch is already in flight. Counted as refused rather than
+    // queued -- see OnChassisMode.
+    ++mode_refused_;
+  }
+}
+
 void RtBridge::HandleChassisCtrl(double now_mono_s, const char* data,
                                  std::size_t len) {
   ChassisCtrlMsg m;

@@ -99,6 +99,18 @@ struct OdomSample {
   // stationary and keep commanding rotation, which is the worst direction.
   bool publish = false;
   double tau_s = 0.0;    // the velocity sample's age, for detail.tau_ms
+  // 13 S9.1 rt_pub row, verbatim: "时间戳取自样本, 不取自发布时刻 => 发布晚了
+  // 是到得晚, 不是数据错". Stamped by ctrl at integration time and carried
+  // across the lock-free slot, so a publish that loses its slot to the
+  // scheduler ships a LATE message, not a message that misdescribes when the
+  // pose was true. Reading a clock at publish time instead would silently
+  // re-label every delayed sample as current -- and the delay is precisely
+  // what V-69 traded away, so it must stay visible downstream.
+  //
+  // Wall clock, because it lands in a ROS header.stamp (CLK-C3 / the align
+  // exemption). Every AGE and PERIOD in this process stays on steady_clock;
+  // this field is a label, never an input to a decision.
+  double stamp_wall_s = 0.0;
 };
 
 class Odometry {

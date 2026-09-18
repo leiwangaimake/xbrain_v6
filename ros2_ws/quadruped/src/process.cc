@@ -57,6 +57,20 @@ namespace rt = hachist::xbrain::rtcomm;
 
 std::int64_t WallNow() { return static_cast<std::int64_t>(::time(nullptr)); }
 
+// Sub-second wall clock, for the ROS header stamp carried on OdomSample.
+// WallNow above is SECOND resolution (CHS-A's "Time" field is a formatted
+// second string, 13 S2.2), and reusing it here would give all hundred samples
+// in a second the same stamp -- downstream would see a 100 Hz stream whose
+// timestamps advance in 1 Hz steps, which reads as a stalled publisher.
+//
+double WallNowSeconds() {
+  // WALL-CLOCK-OK(align): a ROS header.stamp, required on every locally
+  // produced message by CLK-C3 for cross-host alignment. It labels the sample
+  // and decides nothing; every age, period and timeout here is steady_clock.
+  const auto d = std::chrono::system_clock::now().time_since_epoch();
+  return std::chrono::duration<double>(d).count();
+}
+
 // 13 S9.1: ctrl is SCHED_FIFO 80, chs_b is 70, everything else ordinary.
 constexpr int kCtrlFifoPriority = 80;
 
@@ -108,6 +122,28 @@ void QuadrupedProcess::OnCmdVel(double now_mono_s, double vx, double vy,
 
 void QuadrupedProcess::OnEnable() { enable_pending_ = true; }
 
+bool QuadrupedProcess::OnChassisMode(bool has_usage_mode,
+                                     std::int64_t usage_mode,
+                                     bool has_motion_state,
+                                     std::int64_t motion_state, bool has_gait,
+                                     std::int64_t gait) {
+  // 13 MS-3: one switch in flight at a time. Refusing a second triple rather
+  // than overwriting the pending one -- overwriting would abandon a read-back
+  // expectation the machine is still waiting on, and MS-2 would then time out
+  // on a switch nobody is waiting for any more.
+  if (mode_sequence_pending() || mode_.mode_switching()) return false;
+  mode_want_usage_ = has_usage_mode;
+  mode_usage_ = usage_mode;
+  mode_want_state_ = has_motion_state;
+  mode_state_ = motion_state;
+  mode_want_gait_ = has_gait;
+  mode_gait_ = gait;
+  // Nothing is dispatched here. The steps go out from the control period, on
+  // the thread that owns the mode machine and the chassis socket -- dispatching
+  // from the zenoh callback thread would be a data race on both.
+  return true;
+}
+
 ModeRequestResult QuadrupedProcess::OnChassisAction(double now_mono_s,
                                                     ModeAction action,
                                                     std::int64_t param) {
@@ -151,7 +187,49 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   // bring the link up at all.
   ChassisSnapshot fresh;
   if (snapshot_slot_.TakeFresh(&fresh)) {
-    latest_ = fresh;
+    // MERGED BY SOURCE, never assigned whole. Each report fills only its own
+    // fields and leaves the rest at the struct's defaults, so `latest_ = fresh`
+    // let the 10 Hz MotionStatus overwrite everything the 2 Hz BasicStatus had
+    // just delivered -- usage_mode, motion_state, gait and the HES all fell
+    // back to 0 five times out of six.
+    //
+    // *** What that cost, measured on the bench 2026-09-18: Tier 1 reads
+    // usage_mode_raw and holds every axis command at zero unless it equals
+    // navigation (NAV-111). With the value being reset to 0 at 10 Hz it could
+    // never equal navigation, so the robot could not be commanded to move AT
+    // ALL -- and the symptom was stop_reason = mode_mismatch, which reads as
+    // "the chassis is in the wrong mode" rather than "we are losing the field".
+    //
+    // The from_basic / from_motion flags existed for exactly this distinction
+    // (see their comment in process.h: "the basic status said the robot is
+    // awake" vs "the motion status happened not to mention it") and the
+    // consumer simply did not use them.
+    if (fresh.from_basic) {
+      latest_.hes = fresh.hes;
+      latest_.sleep = fresh.sleep;
+      latest_.usage_mode_raw = fresh.usage_mode_raw;
+      latest_.motion_state_raw = fresh.motion_state_raw;
+      latest_.gait_raw = fresh.gait_raw;
+      latest_.from_basic = true;
+    }
+    if (fresh.from_motion) {
+      latest_.linear_x = fresh.linear_x;
+      latest_.linear_y = fresh.linear_y;
+      latest_.angular_z = fresh.angular_z;
+      // MotionStatus carries motion_state and gait too, at 10 Hz against
+      // BasicStatus's 2 Hz, so the faster source wins for those two.
+      // *** It does NOT carry ControlUsageMode -- that field appears only in
+      // BasicStatus (see ParseMotionStatus), which is the whole reason the
+      // wholesale assignment erased it. usage_mode_raw is updated in the
+      // from_basic branch and NOWHERE else; adding it here would be writing a
+      // field this report never mentioned.
+      latest_.motion_state_raw = fresh.motion_state_raw;
+      latest_.gait_raw = fresh.gait_raw;
+      latest_.from_motion = true;
+    }
+    // Receive time always: it is a property of the ARRIVAL, not of the report
+    // kind, and the session's liveness judgement is about arrivals.
+    latest_.rx_mono_s = fresh.rx_mono_s;
     have_snapshot_ = true;
     session_.OnReport(fresh.rx_mono_s);
     if (fresh.from_basic) {
@@ -296,10 +374,61 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
     }
   }
 
+  // ---- 4c. the mode sequence, one step per period (11 S9.2.4) -----------
+  // AFTER the axis command above, never before: 11 S9.2.2 requires zero speed
+  // across a switch, and Tier 1 already holds zero while mode_switching is
+  // true. Dispatching first would put the switch and this period's axis frame
+  // in the same period with the frame decided before the switch was known.
+  if (mode_sequence_pending() && !mode_.mode_switching()) {
+    // Fixed order: motion_state, then gait, then usage_mode. 13 MS-5 fixes the
+    // first two (the chassis couples them, and the posture has to settle
+    // before the gait means anything). usage_mode goes LAST because it is the
+    // gate Tier 1 opens on -- the permissive step belongs behind the others,
+    // so a sequence that fails halfway leaves the robot unable to move rather
+    // than able to move in a posture nobody confirmed.
+    ModeAction action = ModeAction::kSetUsageMode;
+    std::int64_t param = 0;
+    if (mode_want_state_) {
+      // stand / prone have their own actions; rl_control is the third
+      // commandable value and maps to kRlControl. Anything else never reaches
+      // here -- rt_parse's table only admits the three (11 S9.2.4).
+      action = (mode_state_ == kCommandMotionStateStand) ? ModeAction::kStand
+             : (mode_state_ == kCommandMotionStateProne) ? ModeAction::kProne
+                                                         : ModeAction::kRlControl;
+      param = 0;
+      mode_want_state_ = false;
+    } else if (mode_want_gait_) {
+      action = ModeAction::kSetGait;
+      param = mode_gait_;
+      mode_want_gait_ = false;
+    } else {
+      action = ModeAction::kSetUsageMode;
+      param = mode_usage_;
+      mode_want_usage_ = false;
+    }
+    const ModeRequestResult r = mode_.Request(now_mono_s, action, param);
+    if (r.accepted) {
+      ++mode_steps_;
+    } else {
+      // A refused step abandons the REST of the triple. Carrying on would
+      // apply a partial triple, and 13 MS-5 compares all three -- a partial
+      // application is a state no expectation describes.
+      mode_want_state_ = false;
+      mode_want_gait_ = false;
+      mode_want_usage_ = false;
+    }
+  }
+
   // ---- 5. the odometry --------------------------------------------------
   const double dt = (last_ctrl_s_ < 0.0) ? (1.0 / cfg_.tier1.control_loop_hz)
                                          : (now_mono_s - last_ctrl_s_);
   last_odom_ = odom_.Tick(now_mono_s, dt);
+  // WALL-CLOCK-OK(align): stamps the sample for the ROS header downstream
+  // (13 S9.1 "时间戳取自样本, 不取自发布时刻"). Read HERE, on the thread that
+  // produced the pose, so the label says when the pose was true rather than
+  // when someone got around to sending it. It decides nothing -- dt above and
+  // every Tier 1 age are steady_clock.
+  last_odom_.stamp_wall_s = WallNowSeconds();
   // Offered to rt_pub, every tick, including the ticks whose sample says not to
   // publish: the DECISION not to publish is itself something the publisher has
   // to see. Dropping those here would leave rt_pub sending the last good pose
