@@ -13,10 +13,12 @@
 # stop_voice_loop.sh can clean up. V6 rule: all runtime files under
 # /opt/xbrain_v6/ -- never /tmp, never /run outside boot-critical paths.
 #
-# Startup order (no waits, just ordering):
+# Startup order (routers + P-processes are ordered only; AI services are
+# additionally gated on /healthz + /health readiness before the turn loop):
 #   1. zenohd-gen (tcp/7447)
 #   2. zenohd-rt  (tcp/lo:7449)
-#   3. services/asr (127.0.0.1:18081)
+#   3. services/asr (127.0.0.1:18081) -- started fresh; skipped only if a
+#      process is already listening on 18081
 #   4. services/llm (127.0.0.1:18082)
 #   5. services/payload (127.0.0.1:18080) -- forwards to GZH-2
 #   6. chassis_stub (0.0.0.0:30004) -- CHS-A frame receiver
@@ -54,7 +56,14 @@ LLM_URL="${LLM_URL:-http://127.0.0.1:18082}"
 PAYLOAD_URL="${PAYLOAD_URL:-http://127.0.0.1:18080}"
 CHASSIS_HOST="${CHASSIS_HOST:-127.0.0.1}"
 CHASSIS_PORT="${CHASSIS_PORT:-30004}"
-ARECORD_DEVICE="${ARECORD_DEVICE:-hw:0,0}"
+# MIC device for p2's arecord capture. Default is the HK-MIC (USB ff00:0001,
+# ALSA card 'HKMIC'), addressed BY NAME through the ALSA 'plug' plugin so its
+# stereo-only capture (2ch FL/FR at 48000) is downmixed 2->1 into the mono
+# frame p2 expects. A raw 'hw:CARD=HKMIC' rejects -c 1 with 'Channels count
+# non available'; the 'plughw:' form is what makes -c 1 work. This must match
+# configs/p2_core.yaml local_mic.device and mic_capture.DEFAULT_ARECORD_DEVICE.
+# Override only for a different capture device.
+ARECORD_DEVICE="${ARECORD_DEVICE:-plughw:CARD=HKMIC,DEV=0}"
 
 ZENOHD_BIN="${ZENOHD_BIN:-zenohd}"
 ZENOHD_GEN_CONFIG="${ZENOHD_GEN_CONFIG:-${REPO_ROOT}/configs/zenoh/router_gen.json5}"
@@ -132,6 +141,38 @@ else
     echo "[start_voice_loop] payload already on :18080, skipping"
 fi
 
+# 5.5. Gate on AI-service readiness before starting the turn loop. ASR and
+# LLM are model-loaders: a fresh start needs 10-30 s to memory-map + warm the
+# model, during which /healthz (asr) and /health (llama-server) return non-2xx.
+# If p4 starts talking to them before then, the first few utterances fail
+# (transcribe error / tier-2 timeout) and the operator wrongly blames the MIC.
+# Non-fatal by design: on timeout we WARN and proceed, because a degraded loop
+# is more useful to debug than a hard abort. Uses a whole-second poll; the run
+# never depends on this clock for anything safety-related.
+_wait_ready() {
+    local url="$1" name="$2" timeout_s="$3"
+    local waited=0
+    while (( waited < timeout_s )); do
+        # curl -sf: silent, and FAIL (non-zero) on any non-2xx so a 503
+        # 'still loading' does not count as ready. --max-time bounds a hung
+        # socket so the poll cannot wedge the whole launcher.
+        if curl -sf --max-time 1 "${url}" >/dev/null 2>&1; then
+            echo "[start_voice_loop] ${name} ready (${url})"
+            return 0
+        fi
+        sleep 1
+        waited=$(( waited + 1 ))
+    done
+    echo "[start_voice_loop] WARN ${name} not ready after ${timeout_s}s at ${url}" \
+         "-- continuing; first turns may fail while it finishes loading"
+    return 0
+}
+# ASR gates every turn (no transcription, no dialogue); LLM gates only the
+# free-form tier-2 replies, but we wait for both so the first spoken turn is
+# a clean end-to-end test rather than a warm-up throwaway.
+_wait_ready "${ASR_URL}/healthz" asr-service 60
+_wait_ready "${LLM_URL}/health" llm-service 60
+
 # 6. chassis_stub (offline-chassis fallback receiver).
 _spawn chassis_stub python3 "${REPO_ROOT}/scripts/dev/chassis_stub.py" \
     --port "${CHASSIS_PORT}" --host 0.0.0.0
@@ -149,9 +190,15 @@ _spawn p3_task python3 -m xbrain.p3_task --voice-loop \
 _spawn p5_gateway python3 -m xbrain.p5_gateway --voice-loop \
     --resolved-root "${RESOLVED_ROOT}"
 
+# p4_agent is the turn loop: rt/audio/mic -> ASR -> intent/LLM -> cmd/*.
+# --llm-base-url is passed EXPLICITLY (not left to the p4 default) so the
+# LLM_URL knob above actually reaches tier-2; without it the free-form chat
+# replies (the ones that exercise naturalness/fluency) never engage if LLM
+# moves off 18082. Empty LLM_URL would disable tier-2 (null_tier2).
 _spawn p4_agent python3 -m xbrain.p4_agent --voice-loop \
     --resolved-root "${RESOLVED_ROOT}" \
-    --asr-base-url "${ASR_URL}"
+    --asr-base-url "${ASR_URL}" \
+    --llm-base-url "${LLM_URL}"
 
 _spawn p1_motion python3 -m xbrain.p1_motion --voice-loop \
     --resolved-root "${RESOLVED_ROOT}" \
@@ -161,5 +208,6 @@ _spawn p1_motion python3 -m xbrain.p1_motion --voice-loop \
 echo ""
 echo "[start_voice_loop] all processes launched. Log dir: ${LOG_DIR}"
 echo "[start_voice_loop] PID file: ${PID_FILE}"
-echo "[start_voice_loop] Tail one:  tail -f ${LOG_DIR}/p4_agent.log"
-echo "[start_voice_loop] Stop all:  bash ${SCRIPT_DIR}/stop_voice_loop.sh"
+echo "[start_voice_loop] Watch dialogue:  python3 ${REPO_ROOT}/tests/p4_agent/dialog_probe.py"
+echo "[start_voice_loop] Tail p4 log:     tail -f ${LOG_DIR}/p4_agent.log"
+echo "[start_voice_loop] Stop all:        bash ${SCRIPT_DIR}/stop_voice_loop.sh"
