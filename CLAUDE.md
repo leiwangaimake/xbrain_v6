@@ -590,7 +590,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)      # 防 GNU 扩展悄悄引入 C++20 特性
 | 通道 | 技术 | 对谁 |
 |---|---|---|
 | 通道一 | POSIX socket，UDP/DTLS:30004 + TCP/TLS:30003，APDU/ASDU JSON | 底盘**全部控制 + 状态 + 故障**（与 ROS2 无关） |
-| 通道二 | **裸 `dds_create_participant(0, ...)`**（FastDDS 域 0） | 底盘 `/IMU` 200Hz + `/LIDAR/POINTS` 10Hz |
+| 通道二 | **裸 `dds_create_participant(0, ...)`**（FastDDS 域 0） | 底盘 `/IMU` 200Hz ＋ `/MOTION_INFO` 20Hz ＋ `/fault_aggregator`<br>⚠️★★ **2026-09-18 订正**：本格原写「`/IMU` 200Hz + **`/LIDAR/POINTS` 10Hz**」。★ **为何不再成立** —— `11` §9.5 逐字把点云的消费者列为 **`perception`（只读）**，`11` §10.2.1 表逐字「★ **由 perception 直接订阅，不经 quadruped**」，`13` §4 表亦逐字「归 `perception` 直订；quadruped **不订**」。★ **实测依据**（2026-09-18，底盘上电后现场核）：`configs/quadruped.yaml` 的 `chassis_dds` 段无任何点云键；quadruped 源码 `grep -E "LIDAR\|PointCloud\|lidar"` **零命中**（唯一命中是 `test_dds_names.cc` 的名字映射向量，不是订阅）。⇒ ★★★ 照原表述去实现或去验收，会把 **`T-CHS-1c`（`PointCloud2` 的 `std::bad_alloc`）误挂到 quadruped 头上** —— 那一项的订阅方是 perception |
 | 通道三 | `rclcpp`（humble / CycloneDDS / **域 42**） | 朝上装 |
 
 ★★ 关键：**`rclcpp` 的域限制是 context 级，裸 participant 不受约束** ⇒ 一个进程可以同时在两个域上。

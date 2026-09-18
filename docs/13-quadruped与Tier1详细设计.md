@@ -245,7 +245,7 @@
 │   ╚══════════╤═══════════════════════════════════════════════════════╤═══════════════╝   │
 └──────────────┼───────────────────────────────────────────────────────┼───────────────────┘
                │ 通道二 · DDS 域 0 · FastDDS                            │ 通道一 · 监控协议
-               │ /IMU 200 Hz · /LIDAR/POINTS 10 Hz                     │ 全部控制 ＋ 全部状态 ＋ 故障
+               │ /IMU 200 Hz · /MOTION_INFO 20 Hz · /fault_aggregator   │ 全部控制 ＋ 全部状态 ＋ 故障
                ▼                                                       ▼
 ┌──────────────────────────── M20 S 底盘（ROS 2 jazzy · FastDDS · 域 0）────────────────────┐
 │   AOS(103 运动主机) · GOS(104 通用主机) · NOS(106 导航主机)  ★ v1.3 实测（指南 SocId 表反）│
@@ -487,6 +487,21 @@
 | **T-CHS-1a** | RTPS 发现（SPDP/SEDP） | 两边都是 RTPS 2.x，多播/单播发现参数不同会直接看不见对端 | 域 0 下 `ros2 topic list` / `cyclonedds ls`，能否列出 `/IMU` 与 `/LIDAR/POINTS` |
 | **T-CHS-1b** | ★★ **数据表示（XCDR1 vs XCDR2）与类型扩展性** | ★ jazzy 与 humble 的 `rosidl` 默认数据表示与 `TypeObject` 协商策略**不能假定相同**；不匹配的表现是**连上了但解不出来**或直接 `std::bad_alloc` | ★ 一条 `ros2 topic echo /IMU`（域 0，CycloneDDS，humble）能否**连续 60 s 打印出物理合理的四元数与角速度**；★ 同时监视 RSS 是否单调上涨 |
 | **T-CHS-1c** | ★★★ **`PointCloud2` 单独验** | ★★ `11` §1.3 已记录一次真实故障：**humble 订阅 jazzy 的大消息触发 `std::bad_alloc on deserializeROSmessage`，根因是 type hash 与类型处理不兼容，而点云正好命中** | ★ 域 0 下 `ros2 topic hz /LIDAR/POINTS` 与 `echo --once`，观察 `width × height × point_step` 与 `data.size()` 是否自洽；★ 连续跑 10 min 看 RSS |
+
+**★★★ 2026-09-18 台架实测回填（底盘上电，ORIN ↔ 底盘第 ④ 口，`enx00e04c3600fb` = `10.21.33.200/24`）**
+
+> ★ 环境：`RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`、`ROS_DOMAIN_ID=0`、`CYCLONEDDS_URI` 显式绑 `enx00e04c3600fb`（🚫 不绑网口会挑到 wifi，见 `DDS-9` 与 §8.2 `network_interface` 那条注）。★ 全程 `axis frames sent=0`，🚫 未发任何轴指令，机器人未动。
+
+| 项 | 结论 | 实测 |
+|---|---|---|
+| **`T-CHS-1a`** | ✅ **通过** | 域 0 `ros2 topic list` 列出 `/IMU` 与 `/LIDAR/POINTS`（本项判定方法逐字）。★ quadruped 进程侧同时验到：`chs_b` 起在域 0，75 s 收 15080 条 `/IMU` |
+| **`T-CHS-1b`** | ✅ **通过** | 连续 60 s、12000 样本、**200.0 Hz**；★★★ **四元数模严格落在 [1.000000, 1.000000]，`\|q\|-1 > 1e-3` 违规 0 次** —— 这是本项真正要的证据：XCDR1/XCDR2 不匹配时解出来的是垃圾数，模不会是 1；★ 物理合理性：趴卧静止时 `max \|ω\| = 0.0163 rad/s`、`mean a_z = +9.843 m/s²`（重力）；★ RSS 48968 → 50700 kB 且**区间内有回落**（50808 → 50156），**非单调上涨**，无 `bad_alloc` |
+| **`T-CHS-1c`** | ⛔ **不属于本册批次**（2026-09-18 订正） | ★★★ **订阅方是 `perception`，不是 quadruped** —— `11` §9.5 把点云消费者列为 `perception`（只读），`11` §10.2.1 逐字「由 perception 直接订阅，不经 quadruped」，本册 §4 表亦逐字「quadruped **不订**」。★ **实测佐证**：`configs/quadruped.yaml` 的 `chassis_dds` 段无任何点云键；quadruped 源码 `LIDAR\|PointCloud\|lidar` 零命中。⇒ 本项**归 perception 方**，🚫 不得记在 quadruped 的验收账上。★ 另记环境事实：本次底盘上电后 `/LIDAR/POINTS` 与 `/LIDAR/STATUS` 的 **Publisher count 均为 0**（雷达未出流），所以即使归属在此也做不了 |
+
+> ⚠️★ **一条与判定无关但影响解释口径的观察**：直接命令行跑时进程报
+> `ctrl thread is NOT SCHED_FIFO (errno 1)` —— 普通用户拿不到实时优先级。
+> ★ 走 systemd 单元（带 `LimitRTPRIO`）才有。⇒ **`T-ODOM-1` 必须在单元下跑**，
+> 命令行跑出来的定拍数据不能代表部署形态。
 
 > ★★ **为什么裸 participant 有理由绕过 `11` §1.3 记录的那次故障，但仍必须实测**：
 > 那次 `bad_alloc` 发生在 **rmw / rosidl 反序列化路径**上（type hash 协商 + 生成代码）；
