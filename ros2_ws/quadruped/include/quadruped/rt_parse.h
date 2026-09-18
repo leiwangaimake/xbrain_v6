@@ -161,6 +161,23 @@ bool UsageModeValue(const std::string& name, std::int64_t* out);
 bool MotionStateValue(const std::string& name, std::int64_t* out);
 bool GaitValue(const std::string& name, std::int64_t* out);
 
+// 11 S9.1.4 hello: { "type", "proto_version", "client" }. This message has NO
+// envelope -- it is the handshake, sent before the two sides have agreed on
+// anything, so requiring rid/seq/ts (which the envelope parser enforces) would
+// make the handshake depend on the agreement it exists to establish.
+struct HelloMsg {
+  std::string client;
+  int proto_major = 0;
+  int proto_minor = 0;
+};
+
+// Parses and splits proto_version on the dot. A version that is not
+// major.minor is a refusal, not a default: 11 S9.1.4 makes major the
+// compatibility decision, and a missing major would have to be guessed.
+RtParse ParseHello(const char* json, std::size_t len,
+                   const std::string& our_rid, const std::string& our_boot,
+                   HelloMsg* out);
+
 // 11 S9.2.4. Every present field must be a KNOWN, COMMANDABLE name; an
 // unknown or read-only one refuses the whole message rather than applying the
 // fields that happened to parse -- a half-applied mode triple is a state no

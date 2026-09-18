@@ -246,6 +246,42 @@ bool GaitValue(const std::string& name, std::int64_t* out) {
   return LookupName(kGaits, sizeof(kGaits) / sizeof(kGaits[0]), name, out);
 }
 
+RtParse ParseHello(const char* json, std::size_t len,
+                   const std::string& our_rid, const std::string& our_boot,
+                   HelloMsg* out) {
+  // rid / boot are accepted and unused: the handshake carries no envelope
+  // (11 S9.1.4 shows the whole message, and it has none), so there is nothing
+  // to check them against. They stay in the signature so every parser in this
+  // file has the same shape and the subscription table needs no special case.
+  (void)our_rid;
+  (void)our_boot;
+  if (json == nullptr || out == nullptr) return RtParse::kBadJson;
+  const Json j = Json::parse(json, json + len, nullptr, /*allow_exceptions=*/false);
+  if (j.is_discarded()) return RtParse::kBadJson;
+  std::string type;
+  if (!GetString(j, "type", &type) || type != "hello") {
+    return RtParse::kUnsupportedAction;
+  }
+  GetString(j, "client", &out->client);   // informational, not required
+  std::string ver;
+  if (!GetString(j, "proto_version", &ver)) return RtParse::kMissingField;
+  // major.minor, split on the FIRST dot. A version that does not parse is a
+  // refusal rather than a default: 11 S9.1.4 makes major the compatibility
+  // decision, and defaulting it to 1 would make an unreadable version
+  // compatible with us -- which is the one answer it must never produce.
+  const std::size_t dot = ver.find('.');
+  if (dot == std::string::npos || dot == 0 || dot + 1 >= ver.size()) {
+    return RtParse::kMissingField;
+  }
+  try {
+    out->proto_major = std::stoi(ver.substr(0, dot));
+    out->proto_minor = std::stoi(ver.substr(dot + 1));
+  } catch (const std::exception&) {
+    return RtParse::kMissingField;
+  }
+  return RtParse::kOk;
+}
+
 RtParse ParseChassisMode(const char* json, std::size_t len,
                          const std::string& our_rid, const std::string& our_boot,
                          ChassisModeMsg* out) {

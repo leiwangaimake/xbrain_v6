@@ -28,6 +28,7 @@
 #include "quadruped/rt_parse.h"
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 using namespace quadruped;       // NOLINT: test-local
@@ -313,6 +314,47 @@ int main() {
     CHECK(e.envelope_ok == false);
     ParseEstop(nullptr, 0, kRid, kBoot, &e);
     CHECK(e.envelope_ok == false);
+  }
+
+  // ---- hello: no envelope, and major decides compatibility (11 S9.1.4) ----
+  {
+    // The handshake carries NO envelope. It is sent before the two sides have
+    // agreed on anything, so requiring rid/seq/ts would make the handshake
+    // depend on the agreement it exists to establish.
+    HelloMsg m;
+    const char* ok = "{\"type\":\"hello\",\"proto_version\":\"1.0\","
+                     "\"client\":\"p1_motion\"}";
+    CHECK(ParseHello(ok, std::strlen(ok), "dev", "boot", &m) == RtParse::kOk);
+    CHECK(m.proto_major == 1);
+    CHECK(m.proto_minor == 0);
+    CHECK(m.client == "p1_motion");
+
+    // major.minor split. 11 S9.1.4: major differing means incompatible.
+    HelloMsg m2;
+    const char* v2 = "{\"type\":\"hello\",\"proto_version\":\"2.3\"}";
+    CHECK(ParseHello(v2, std::strlen(v2), "dev", "boot", &m2) == RtParse::kOk);
+    CHECK(m2.proto_major == 2);
+    CHECK(m2.proto_minor == 3);
+
+    // A version that is not major.minor REFUSES rather than defaulting.
+    // mutant: default major to 1 on a parse failure -> an unreadable version
+    // becomes compatible with us, which is the one answer it must never give.
+    for (const char* bad : {
+             "{\"type\":\"hello\",\"proto_version\":\"1\"}",
+             "{\"type\":\"hello\",\"proto_version\":\"\"}",
+             "{\"type\":\"hello\",\"proto_version\":\".5\"}",
+             "{\"type\":\"hello\",\"proto_version\":\"x.y\"}",
+             "{\"type\":\"hello\"}"}) {
+      HelloMsg bm;
+      CHECK(ParseHello(bad, std::strlen(bad), "dev", "boot", &bm)
+            != RtParse::kOk);
+    }
+
+    // Wrong type on the hello key is refused, not silently accepted.
+    HelloMsg m3;
+    const char* wrong = "{\"type\":\"goodbye\",\"proto_version\":\"1.0\"}";
+    CHECK(ParseHello(wrong, std::strlen(wrong), "dev", "boot", &m3)
+          == RtParse::kUnsupportedAction);
   }
 
   if (g_failures == 0) {

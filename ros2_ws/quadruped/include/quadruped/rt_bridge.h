@@ -40,6 +40,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <string>
 
 #include "quadruped/process.h"
@@ -82,6 +83,19 @@ class RtBridge {
                       const chs_a::DeviceStatus* device,
                       const chs_a::FaultReport* fault);
 
+  // 11 S9.1.4 / 13 ASM-4 (2): answer the upstream's handshake. Without it
+  // 10 S3.3 Stage 1 never completes at this process.
+  void HandleHello(double now_mono_s, const char* data, std::size_t len);
+
+  // The transport facts 13 CB-4 / DDS-9 / TF-1 require in hello_ack.runtime.
+  // Set once from main after the config is loaded; strings are copied because
+  // the handshake can be answered long after the caller's buffers are gone.
+  void SetTransport(const std::string& endpoint, const std::string& codebook,
+                    int chassis_dds_domain, int uplink_ros_domain,
+                    const std::string& imu_frame_id, bool drdds_available);
+  // 11 S9.6 spec block, from the resolved config.
+  void SetSpec(bool holonomic, double max_vx, double max_vy, double max_wz);
+
   void HandleCmdVel(double now_mono_s, const char* data, std::size_t len);
 
   // LOOSENING. Every outcome is acked, including refusals -- an ack that only
@@ -122,6 +136,8 @@ class RtBridge {
   // switch and a refused stand have different causes and different fixes.
   std::uint64_t mode_accepted() const { return mode_ok_; }
   std::uint64_t mode_refused() const { return mode_refused_; }
+  std::uint64_t hello_answered() const { return hello_ok_; }
+  std::uint64_t hello_refused() const { return hello_refused_; }
   std::uint64_t ctrl_refused() const { return ctrl_refused_; }
   std::uint64_t estops_applied() const { return estop_applied_; }
   std::uint64_t estops_deduped() const { return estop_deduped_; }
@@ -148,6 +164,33 @@ class RtBridge {
   std::uint64_t cmd_refused_ = 0;
   std::uint64_t ctrl_ok_ = 0;
   std::uint64_t mode_ok_ = 0;
+  std::uint64_t hello_ok_ = 0;
+  std::uint64_t hello_refused_ = 0;
+  // model / version arrive on the chs_a_rx thread (PublishReports) and are
+  // read on the zenoh subscription thread (HandleHello). std::string, so a
+  // lock-free slot is not available (12 RTC-6) -- a mutex is correct here:
+  // neither thread is realtime, and the critical section is two string
+  // assignments.
+  mutable std::mutex chassis_id_mu_;
+  std::string chassis_model_;
+  std::string chassis_version_;
+  // The last triple this bridge published, remembered for hello_ack (answered
+  // on the subscription thread, which cannot consume from the state slot).
+  bool last_has_triple_ = false;
+  std::int64_t last_usage_mode_ = 0;
+  std::int64_t last_motion_state_ = 0;
+  std::int64_t last_gait_ = 0;
+  // Transport / spec: written once before Start, read in HandleHello.
+  std::string tp_endpoint_;
+  std::string tp_codebook_;
+  std::string tp_imu_frame_;
+  int tp_chs_b_domain_ = -1;
+  int tp_uplink_domain_ = -1;
+  bool tp_drdds_ = false;
+  bool spec_holonomic_ = false;
+  double spec_max_vx_ = 0.0;
+  double spec_max_vy_ = 0.0;
+  double spec_max_wz_ = 0.0;
   std::uint64_t mode_refused_ = 0;
   std::uint64_t ctrl_refused_ = 0;
   std::uint64_t estop_applied_ = 0;

@@ -58,6 +58,48 @@ namespace rt {
 // the assembler writes JSON null rather than a zeroed struct that would read as
 // "idle, stopped, no faults" -- a picture indistinguishable from a healthy
 // robot standing still.
+// 11 S9.1.4 hello_ack. Answered once per hello, on the rt_pub subscription
+// thread. 13 ASM-4 (2) recorded "the process does not answer hello_ack" as an
+// open gap, and 10 S3.3 Stage 1 does not complete without it.
+//
+// The blocks come from three different places on purpose:
+//   runtime.*           what the CHASSIS reports (BasicStatus + the triple)
+//   runtime.transport   what THIS PROCESS actually bound to -- 13 CB-4 /
+//                       DDS-9 / TF-1 all require the EFFECTIVE values here,
+//                       because a misconfigured domain or codebook has no
+//                       other low-cost way to announce itself
+//   spec.*              static limits from configs/models/m20s.yaml (11 S9.6)
+//
+// `services` from 11 S9.7 is deliberately NOT emitted: the contract marks its
+// query method "待确认 (Q20)". An absent field says "we do not know"; a
+// fabricated one would be read as fact by whoever consumes the handshake.
+struct HelloAckInput {
+  const char* proto_version = "1.0";
+  // Null until the first BasicStatus arrives. Absent rather than zeroed --
+  // a zeroed model/version reads as a real chassis that answered.
+  const char* model = nullptr;
+  const char* version = nullptr;
+  // The mode triple, same source and same has_ flag discipline as RobotState.
+  bool has_triple = false;
+  std::int64_t usage_mode_raw = 0;
+  std::int64_t motion_state_raw = 0;
+  std::int64_t gait_raw = 0;
+  // 13 S8.2 / CB-4 / DDS-9 / TF-1: the transport block.
+  const char* endpoint = nullptr;      // effective endpoint, "tcp://ip:port"
+  const char* codebook = nullptr;      // effective codebook name
+  int chassis_dds_domain = -1;         // channel two, as CONFIGURED
+  int uplink_ros_domain = -1;          // channel three
+  const char* imu_frame_id = nullptr;  // TF-1: the frame WE assign
+  bool drdds_available = false;
+  // 11 S9.6 spec, from the resolved config.
+  bool holonomic = false;
+  double max_vx_mps = 0.0;
+  double max_vy_mps = 0.0;
+  double max_wz_radps = 0.0;
+};
+
+std::size_t WriteHelloAck(const HelloAckInput& in, char* out, std::size_t cap);
+
 struct RobotStateInput {
   chs_a::ConnState conn = chs_a::ConnState::kProbing;
   const chs_a::BasicStatus* basic = nullptr;

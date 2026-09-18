@@ -690,6 +690,80 @@ int main(int argc, char** argv) {
     CHECK(j["gait"].is_null());
   }
 
+  // ---- hello_ack (11 S9.1.4 / 13 ASM-4 (2)) ------------------------------
+  {
+    // 10 S3.3 Stage 1 does not complete without this answer, and 13 ASM-4 (2)
+    // carried it as an open gap. The transport block is the part 13 cares
+    // about most: CB-4, DDS-9 and TF-1 each require an EFFECTIVE value here,
+    // and each names the same reason -- a wrong codebook, a wrong domain or an
+    // unannounced frame assignment all fail as "connected, receiving nothing",
+    // which is indistinguishable from a dead network.
+    char buf[4096];
+    HelloAckInput in;
+    in.model = "CA9C";
+    in.version = "PRO";
+    in.has_triple = true;
+    in.usage_mode_raw = 1;
+    in.motion_state_raw = 17;
+    in.gait_raw = 0x3002;
+    in.endpoint = "tcp://10.21.33.103:30003";
+    in.codebook = "hex32";
+    in.chassis_dds_domain = 0;
+    in.uplink_ros_domain = 42;
+    in.imu_frame_id = "imu_link";
+    in.drdds_available = true;
+    in.holonomic = true;
+    in.max_vx_mps = 2.0;
+    const std::size_t n = WriteHelloAck(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("hello_ack", buf, n);
+    CHECK(j["type"] == "hello_ack");
+    CHECK(j["proto_version"] == "1.0");
+    CHECK(j["runtime"]["model"] == "CA9C");
+    CHECK(j["runtime"]["usage_mode"] == "navigation");
+    // mutant: drop the transport block -> red. DDS-9 calls it the only
+    // low-cost way to catch a two-domain misconfiguration.
+    CHECK(j["runtime"]["transport"]["codebook"] == "hex32");
+    CHECK(j["runtime"]["transport"]["chassis_dds_domain"] == 0);
+    CHECK(j["runtime"]["transport"]["uplink_ros_domain"] == 42);
+    CHECK(j["runtime"]["transport"]["imu_frame_id"] == "imu_link");
+    // The two domains must NOT be equal -- DDS-7 keeps them opposite, and an
+    // implementation that echoed one value into both would still satisfy a
+    // test that only checked "the field is present".
+    CHECK(j["runtime"]["transport"]["chassis_dds_domain"]
+          != j["runtime"]["transport"]["uplink_ros_domain"]);
+    // Both polarities are asserted (the cold case below checks false), so an
+    // implementation that hardcodes either one is red. 11 S9.7 has this field
+    // mean "the caller has the drdds package with its reader up" -- with only
+    // the false case covered, a constant false would pass while telling the
+    // upstream the better odometry source does not exist.
+    CHECK(j["runtime"]["drdds_available"] == true);
+    // 11 S9.6: spec comes from config, never from the chassis.
+    CHECK(j["spec"]["holonomic"] == true);
+    CHECK(j["spec"]["max_vx_mps"] == 2.0);
+    // 21 V-14: `services` is 恒填 [不可查] for this period, because the query
+    // method itself is unanswered (Q20). Present AND null -- an omitted key
+    // reads as an older ack, an object of guesses reads as six queried states.
+    // mutant: emit a services object, or omit the key -> red.
+    CHECK(j["runtime"].contains("services"));
+    CHECK(j["runtime"]["services"].is_null());
+  }
+
+  // ---- no chassis yet: identity is null, not empty string ----------------
+  {
+    // An empty model reads as a chassis that answered with a blank name; null
+    // says nothing has answered. The upstream cannot check this for itself --
+    // hello_ack is the first thing it sees.
+    // mutant: emit "" instead of null -> red.
+    char buf[4096];
+    HelloAckInput in;                 // model / version left null
+    const std::size_t n = WriteHelloAck(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("hello_ack cold", buf, n);
+    CHECK(j["runtime"]["model"].is_null());
+    CHECK(j["runtime"]["version"].is_null());
+    CHECK(j["runtime"]["usage_mode"].is_null());
+    CHECK(j["runtime"]["drdds_available"] == false);
+  }
+
   if (g_failures == 0) {
     std::printf("ALL RT_PAYLOADS TESTS PASSED\n");
     return 0;

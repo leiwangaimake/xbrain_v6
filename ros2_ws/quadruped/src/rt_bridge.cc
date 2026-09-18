@@ -58,6 +58,12 @@ constexpr const char* kBasicSuffix = "rt/chassis/basic";
 constexpr const char* kMotionSuffix = "rt/chassis/motion";
 constexpr const char* kDeviceSuffix = "rt/chassis/device";
 constexpr const char* kFaultSuffix = "rt/chassis/fault";
+constexpr const char* kHelloAckSuffix = "rt/chassis/hello_ack";
+// 11 S9.1.4: major.minor, major mismatch is incompatible. Ours is the JSON
+// contract's version, NOT the chassis monitor protocol's APDU version byte --
+// 11 S9.1.4 says in so many words the two evolve independently and must not
+// be mixed.
+constexpr const char* kProtoVersion = "1.0";
 
 std::uint64_t ToMs(double s) {
   return s < 0.0 ? 0 : static_cast<std::uint64_t>(s * 1000.0 + 0.5);
@@ -78,7 +84,7 @@ RtBridge::RtBridge(QuadrupedProcess* proc, std::string rid, std::string boot,
   // goes somewhere nobody is listening.
   for (const char* k : {kCtrlAckSuffix, kEstopAckSuffix, kPongSuffix,
                         kStateSuffix, kBasicSuffix, kMotionSuffix,
-                        kDeviceSuffix, kFaultSuffix}) {
+                        kDeviceSuffix, kFaultSuffix, kHelloAckSuffix}) {
     if (FindKey(k) == nullptr) {
       std::fprintf(stderr,
                    "rt_bridge: key %s is not declared in rt_keys.cc -- it is "
@@ -114,6 +120,15 @@ void RtBridge::PublishReports(double now_mono_s,
   (void)now_mono_s;
   char out[8192];
   if (basic != nullptr) {
+    // Cache the two identity strings for hello_ack (11 S9.7 sources both from
+    // the chassis). Done HERE because this is the only place the full
+    // BasicStatus is available -- the state snapshot carries the numeric
+    // triple but not the strings (12 RTC-6).
+    {
+      std::lock_guard<std::mutex> lk(chassis_id_mu_);
+      chassis_model_ = basic->model;
+      chassis_version_ = basic->version;
+    }
     const std::size_t n = WriteChassisBasic(*basic, out, sizeof(out));
     if (n > 0) Publish(kBasicSuffix, out, n);
   }
@@ -147,6 +162,15 @@ bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
   in.tier1 = snap.tier1;
   in.estop_epoch = snap.estop_epoch;
   in.has_triple = snap.has_readback;
+  // Remembered for hello_ack, which is answered on another thread and cannot
+  // consume from the slot.
+  {
+    std::lock_guard<std::mutex> lk(chassis_id_mu_);
+    last_has_triple_ = snap.has_readback;
+    last_usage_mode_ = snap.usage_mode_raw;
+    last_motion_state_ = snap.motion_state_raw;
+    last_gait_ = snap.gait_raw;
+  }
   in.usage_mode_raw = snap.usage_mode_raw;
   in.motion_state_raw = snap.motion_state_raw;
   in.gait_raw = snap.gait_raw;
@@ -181,6 +205,89 @@ void RtBridge::HandleCmdVel(double now_mono_s, const char* data,
   // Tier 1, and 11 S3.0 forbids trusting a foreign mono anyway when the boot
   // ids differ (rt_parse reports that as mono_usable == false).
   proc_->OnCmdVel(now_mono_s, m.vx, m.vy, m.wz, m.estop_epoch);
+}
+
+void RtBridge::SetTransport(const std::string& endpoint,
+                            const std::string& codebook,
+                            int chassis_dds_domain, int uplink_ros_domain,
+                            const std::string& imu_frame_id,
+                            bool drdds_available) {
+  tp_endpoint_ = endpoint;
+  tp_codebook_ = codebook;
+  tp_chs_b_domain_ = chassis_dds_domain;
+  tp_uplink_domain_ = uplink_ros_domain;
+  tp_imu_frame_ = imu_frame_id;
+  tp_drdds_ = drdds_available;
+}
+
+void RtBridge::SetSpec(bool holonomic, double max_vx, double max_vy,
+                       double max_wz) {
+  spec_holonomic_ = holonomic;
+  spec_max_vx_ = max_vx;
+  spec_max_vy_ = max_vy;
+  spec_max_wz_ = max_wz;
+}
+
+void RtBridge::HandleHello(double now_mono_s, const char* data,
+                           std::size_t len) {
+  (void)now_mono_s;
+  HelloMsg m;
+  const RtParse r = ParseHello(data, len, rid_, boot_, &m);
+  if (r != RtParse::kOk) {
+    ++hello_refused_;
+    return;
+  }
+  // 11 S9.1.4: major.minor, "major 不同即不兼容, quadruped 拒绝进入可运动
+  // 状态并上报 E_PROTO_VERSION". Refusing to ANSWER is not the same as
+  // refusing to move -- an unanswered hello looks like a dead process, so the
+  // mismatch is reported through the counter and the upstream's own timeout
+  // rather than by silence. Entering the non-movable state is Tier 1's job and
+  // is not reachable from this thread.
+  if (m.proto_major != 1) {
+    ++hello_refused_;
+    return;
+  }
+  HelloAckInput in;
+  in.proto_version = kProtoVersion;
+  std::string model, version;
+  {
+    std::lock_guard<std::mutex> lk(chassis_id_mu_);
+    model = chassis_model_;
+    version = chassis_version_;
+  }
+  // Empty means no BasicStatus has arrived yet -> emitted as null, not as "".
+  // An empty string reads as a chassis that answered with a blank model.
+  if (!model.empty()) in.model = model.c_str();
+  if (!version.empty()) in.version = version.c_str();
+  // The triple, from the last state this bridge PUBLISHED -- not from the
+  // process. The snapshot slot is consume-only by design (LockfreeSlot has no
+  // Read(), and its header explains why: a non-consuming read cannot say
+  // whether the value is new), so peeking would have meant stealing the sample
+  // rt_pub is about to publish and dropping a state frame per handshake.
+  {
+    std::lock_guard<std::mutex> lk(chassis_id_mu_);
+    in.has_triple = last_has_triple_;
+    in.usage_mode_raw = last_usage_mode_;
+    in.motion_state_raw = last_motion_state_;
+    in.gait_raw = last_gait_;
+  }
+  if (!tp_endpoint_.empty()) in.endpoint = tp_endpoint_.c_str();
+  if (!tp_codebook_.empty()) in.codebook = tp_codebook_.c_str();
+  if (!tp_imu_frame_.empty()) in.imu_frame_id = tp_imu_frame_.c_str();
+  in.chassis_dds_domain = tp_chs_b_domain_;
+  in.uplink_ros_domain = tp_uplink_domain_;
+  in.drdds_available = tp_drdds_;
+  in.holonomic = spec_holonomic_;
+  in.max_vx_mps = spec_max_vx_;
+  in.max_vy_mps = spec_max_vy_;
+  in.max_wz_radps = spec_max_wz_;
+  char out[4096];
+  const std::size_t n = WriteHelloAck(in, out, sizeof(out));
+  if (n == 0) {
+    ++hello_refused_;
+    return;
+  }
+  if (Publish(kHelloAckSuffix, out, n)) ++hello_ok_;
 }
 
 void RtBridge::HandleChassisMode(double now_mono_s, const char* data,

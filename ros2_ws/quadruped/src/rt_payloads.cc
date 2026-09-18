@@ -145,6 +145,81 @@ void OpenSet(Appender* a, const char* name, const chs_a::OpenSetValue& v) {
 
 }  // namespace
 
+std::size_t WriteHelloAck(const HelloAckInput& in, char* out,
+                          std::size_t cap) {
+  Appender a(out, cap);
+  a.Raw("{\"type\":\"hello_ack\",\"proto_version\":");
+  a.Str(in.proto_version);
+  a.Raw(",\"runtime\":{");
+  // model / version: absent when no BasicStatus has arrived. 11 S9.7 sources
+  // both from the chassis, so a value here means the chassis answered -- which
+  // is the one thing the upstream cannot check for itself.
+  a.Raw("\"model\":");
+  if (in.model != nullptr) { a.Str(in.model); } else { a.Raw("null"); }
+  a.Raw(",\"version\":");
+  if (in.version != nullptr) { a.Str(in.version); } else { a.Raw("null"); }
+  if (in.has_triple) {
+    OpenSet(&a, "usage_mode", chs_a::ResolveUsageMode(in.usage_mode_raw));
+    OpenSet(&a, "motion_state", chs_a::ResolveMotionState(in.motion_state_raw));
+    OpenSet(&a, "gait", chs_a::ResolveGait(in.gait_raw));
+  } else {
+    a.Raw(",\"usage_mode\":null,\"motion_state\":null,\"gait\":null");
+  }
+  // 11 S9.7 lists `services`, and 21 V-14 rules its value for this period
+  // verbatim: "握手 runtime.services 恒填 [不可查]" -- because the query method
+  // itself is unanswered (Q20), which also makes S9.10.1's charge_manager
+  // check unimplementable, so that check drops to warn plus a manual entry in
+  // the deployment checklist.
+  //
+  // null, not an omitted key and not an object of guesses. An omitted key
+  // reads as an older ack that predates the field; an object would state six
+  // service states nobody queried. null says "we cannot see this", which is
+  // the true statement.
+  a.Raw(",\"services\":null");
+  // Same three axes RobotState reports, and for the same reason (13 V-67:
+  // spec.* defines no limit for vz / v_roll / v_pitch, so Tier 1 zeroes them
+  // unconditionally). Listing an axis as active while it is forced to zero
+  // would tell the upstream it can command one.
+  a.Raw(",\"active_axes\":[\"vx\",\"vy\",\"wz\"]");
+  // 11 S9.7 sources this from S9.11, whose S9.11.3 covers the drdds package.
+  // The writer takes it as a parameter and emits what it is given; what the
+  // CALLER may pass is settled by 21 V-20 ("恒 false"), and main.cc carries
+  // the reasoning. Both polarities are covered by tests so that a writer which
+  // hardcoded either one would be red -- the constant belongs at the call
+  // site, where the ruling can be cited, not buried in the encoder.
+  a.Raw(",\"drdds_available\":");
+  a.Bool(in.drdds_available);
+  // 13 CB-4 / DDS-9 / TF-1: the EFFECTIVE transport. All three rules give the
+  // same reason -- a wrong domain, a wrong codebook or an unannounced frame
+  // assignment have no other low-cost way to be noticed, and each of them
+  // fails as "connected, no data" rather than as an error.
+  a.Raw(",\"transport\":{\"endpoint\":");
+  if (in.endpoint != nullptr) { a.Str(in.endpoint); } else { a.Raw("null"); }
+  a.Raw(",\"codebook\":");
+  if (in.codebook != nullptr) { a.Str(in.codebook); } else { a.Raw("null"); }
+  a.Raw(",\"chassis_dds_domain\":");
+  a.Int(in.chassis_dds_domain);
+  a.Raw(",\"uplink_ros_domain\":");
+  a.Int(in.uplink_ros_domain);
+  a.Raw(",\"imu_frame_id\":");
+  if (in.imu_frame_id != nullptr) { a.Str(in.imu_frame_id); } else { a.Raw("null"); }
+  a.Raw("}}");
+  // 11 S9.6: static limits, from configs/models/m20s.yaml via the resolved
+  // snapshot. They are NOT read from the chassis -- the contract is explicit
+  // that the chassis does not provide them, and v0.1's mistake was putting
+  // them in the handshake's caps as if it did.
+  a.Raw(",\"spec\":{\"holonomic\":");
+  a.Bool(in.holonomic);
+  a.Raw(",\"max_vx_mps\":");
+  a.Num(in.max_vx_mps);
+  a.Raw(",\"max_vy_mps\":");
+  a.Num(in.max_vy_mps);
+  a.Raw(",\"max_wz_radps\":");
+  a.Num(in.max_wz_radps);
+  a.Raw("}}");
+  return a.Finish();
+}
+
 std::size_t WriteRobotState(const RobotStateInput& in, char* out,
                             std::size_t cap) {
   Appender a(out, cap);

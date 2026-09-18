@@ -80,9 +80,11 @@ void PrintUsage(const char* argv0) {
       "With no argument the process RUNS: it loads %s, connects to the\n"
       "chassis and starts the control and receive threads.\n"
       "\n"
-      "Not yet started from here: the domain-0 DDS reader and the RT-plane\n"
-      "publisher. The process drives and protects the chassis; it does not\n"
-      "publish state upward yet.\n",
+      "All four links start from here: channel one to the chassis, channel\n"
+      "two on domain 0 (/IMU + /MOTION_INFO), the RT plane, and the ROS 2\n"
+      "uplink (odom + TF). A link that fails to come up is reported and the\n"
+      "process continues -- 13 S4.2 row 2 exists so that losing the better\n"
+      "odometry source degrades rather than refuses.\n",
       argv0, quadruped::DefaultResolvedPath(),
       quadruped::DefaultResolvedPath());
 }
@@ -238,6 +240,40 @@ int Run(const std::string& path) {
     // ever went out: subscribing to xbrain/dev/rt/chassis/** for 12 s on
     // 2026-09-18 returned only rt/chassis/state.
     quadruped::rt::RtBridge* bridge = rt.bridge_mut();
+    // 13 CB-4 / DDS-9 / TF-1 all require the EFFECTIVE transport values in
+    // hello_ack.runtime, and they give the same reason: a wrong domain, a
+    // wrong codebook, or an unannounced frame assignment each fail as
+    // "connected, receiving nothing" -- indistinguishable from a dead network
+    // unless the process says what it actually bound to.
+    //
+    // The endpoint here is the FIRST enabled candidate, i.e. what will be
+    // probed first, not what is live -- the handshake can arrive before any
+    // link is up. 13 S8.2's "首个能收到状态上报的即为生效端点" is about the
+    // session's choice, which the state key reports separately.
+    std::string ep;
+    for (const auto& c : cfg.link.endpoints) {
+      if (!c.enabled) continue;
+      ep = c.proto + "://" + c.host + ":" + std::to_string(c.port);
+      break;
+    }
+    // drdds_available is a CONSTANT false, and the authority is 21 V-20
+    // verbatim: "drdds_available 恒 false, 三项底盘能力只走主通道; 不得实现
+    // 主通道失败自动切 drdds 的备选路径". The flag is what keeps those
+    // fallback paths off, so a live value here would switch them on.
+    //
+    // It would also over-claim. chs_b reads /IMU and /MOTION_INFO through the
+    // self-built package (13 v1.16), but the three capabilities V-20 names --
+    // /NAV_CMD, /fault_aggregator, /GAIT -- are NOT built: 21 V-12 forbids
+    // building /GAIT at all while its type name is unconfirmed. "The package
+    // is available" would therefore be read as more than we have.
+    bridge->SetTransport(ep, cfg.link.codebook, cfg.dds.domain_id,
+                         cfg.uplink.ros_domain_id, cfg.dds.imu_frame_id,
+                         /*drdds_available=*/false);
+    // 11 S9.6: the static limits come from the RESOLVED config, never from the
+    // chassis -- the contract is explicit that the chassis does not provide
+    // them, and v0.1's mistake was putting them in the handshake as if it did.
+    bridge->SetSpec(cfg.tier1.limits.holonomic, cfg.tier1.limits.max_vx_mps,
+                    cfg.tier1.limits.max_vy_mps, cfg.tier1.limits.max_wz_radps);
     proc.SetReportSink([bridge](double now_mono_s,
                                 const quadruped::chs_a::BasicStatus* b,
                                 const quadruped::chs_a::MotionStatus* m,

@@ -752,6 +752,40 @@ PAYLOADS_SOURCES = [PAYLOADS_CC,
 PAYLOADS_TESTS = [os.path.join(QUAD, "test", "test_rt_payloads.cc")]
 
 PAYLOADS_MUTANTS = [
+    # 11 S9.1.4 / 13 ASM-4 (2). 10 S3.3 Stage 1 does not complete without the
+    # answer, and 13 CB-4 / DDS-9 / TF-1 each require an EFFECTIVE transport
+    # value in it -- each for the same reason: the failure they catch presents
+    # as "connected, receiving nothing".
+    ("payloads: hello_ack drops the transport block (CB-4 / DDS-9 / TF-1)",
+     PAYLOADS_CC,
+     'a.Raw(",\\"transport\\":{\\"endpoint\\":");',
+     'a.Raw(",\\"_transport\\":{\\"endpoint\\":");'),
+    # One domain echoed into both. DDS-7 keeps them opposite; an echo would
+    # report a correct-looking pair on a process bound to one domain twice.
+    ("payloads: hello_ack echoes one domain into both fields",
+     PAYLOADS_CC,
+     "  a.Int(in.uplink_ros_domain);",
+     "  a.Int(in.chassis_dds_domain);"),
+    # drdds_available is a constant at the CALL SITE (21 V-20), not in the
+    # encoder. An encoder that hardcoded it would make the call site's ruling
+    # unenforceable -- and unnoticeable the day V-20 closes.
+    ("payloads: hello_ack reports drdds_available as a constant",
+     PAYLOADS_CC,
+     "  a.Bool(in.drdds_available);",
+     "  a.Bool(false);"),
+    # 21 V-14: services is 恒填 [不可查]. Omitting the key reads as an older
+    # ack that predates the field, which is a different claim from "we cannot
+    # query this" -- and it is the one an upstream would retry on.
+    ("payloads: hello_ack omits services instead of filling it null",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"services\\":null");',
+     "  /* services omitted */"),
+    # Empty identity as "" rather than null: reads as a chassis that answered
+    # with a blank model.
+    ("payloads: hello_ack emits an empty model instead of null",
+     PAYLOADS_CC,
+     '  if (in.model != nullptr) { a.Str(in.model); } else { a.Raw("null"); }',
+     '  a.Str(in.model == nullptr ? "" : in.model);'),
     # 13 ASM-4 boundary: the mode TRIPLE travels in rt/chassis/state even
     # though the full BasicStatus does not. Tier 1 gates on usage_mode
     # (NAV-111), and on the bench it read null for an hour while the chassis
@@ -818,10 +852,28 @@ PAYLOADS_MUTANTS = [
      "  a.Bool(in.tier1.timeout_lock);"),
     # An absent report rendered as a zeroed struct reads as a healthy robot
     # standing still, which is the worst default for the message a human watches.
+    # The anchor carries the comment line ABOVE it. WriteHelloAck (added
+    # 2026-09-18) emits the same null triple verbatim, so the bare line now
+    # matches twice -- the second time this has happened, and both times the
+    # collision came from a NEW function copying an existing shape. See the
+    # rt_parse cmd_id mutant for the first.
     ("payloads: an absent BasicStatus rendered as zeros instead of null",
      PAYLOADS_CC,
+     '    // what a healthy standing robot looks like.\n'
      '    a.Raw(",\\"usage_mode\\":null,\\"motion_state\\":null,\\"gait\\":null");',
+     '    // what a healthy standing robot looks like.\n'
      '    a.Raw(",\\"usage_mode\\":\\"normal\\",\\"motion_state\\":\\"idle\\",\\"gait\\":\\"basic\\"");'),
+    # Same shape one function up: hello_ack is the FIRST thing the upstream
+    # sees, so a fabricated triple there is believed before any state key
+    # arrives to contradict it.
+    ("payloads: hello_ack invents a triple before any chassis answered",
+     PAYLOADS_CC,
+     '    a.Raw(",\\"usage_mode\\":null,\\"motion_state\\":null,\\"gait\\":null");\n'
+     '  }\n'
+     '  // 11 S9.7 lists `services`',
+     '    a.Raw(",\\"usage_mode\\":\\"navigation\\",\\"motion_state\\":null,\\"gait\\":null");\n'
+     '  }\n'
+     '  // 11 S9.7 lists `services`'),
     # "Never received a command" is a different fact from "the command is old".
     ("payloads: a never-received command reported as an age",
      PAYLOADS_CC, "  if (in.cmd_age_ms < 0.0) {", "  if (false) {"),
@@ -1572,6 +1624,19 @@ RT_PARSE_SOURCES = [RT_PARSE_CC]
 RT_PARSE_TESTS = [os.path.join(QUAD, "test", "test_rt_parse.cc")]
 
 RT_PARSE_MUTANTS = [
+    # 11 S9.1.4: an unparsable proto_version must REFUSE. Defaulting major to
+    # ours makes an unreadable version compatible with us -- the one answer it
+    # must never give.
+    ("rt_parse: an unparsable proto_version defaults to compatible",
+     RT_PARSE_CC,
+     "  if (dot == std::string::npos || dot == 0 || dot + 1 >= ver.size()) {\n"
+     "    return RtParse::kMissingField;\n  }",
+     "  if (dot == std::string::npos) { out->proto_major = 1; return RtParse::kOk; }"),
+    # The hello key accepting any type.
+    ("rt_parse: hello accepts a message whose type is not hello",
+     RT_PARSE_CC,
+     '  if (!GetString(j, "type", &type) || type != "hello") {',
+     '  if (false) {'),
     # 11:1722 marks estop_epoch MANDATORY on this key. Defaulting it to zero
     # locks the robot at standstill after the first soft stop and never
     # releases; and it is exactly what a lenient parser would do to "fix" the
@@ -1646,11 +1711,16 @@ RT_PARSE_MUTANTS = [
      "  /* folded into the unknown bucket */"),
     # A loosening command without a cmd_id cannot be acked or de-duplicated,
     # and Q-3's idempotency rule has nothing to key on.
+    # The anchor carries the line ABOVE it. ParseChassisMode (added 2026-09-18)
+    # repeats the same cmd_id guard verbatim, so the bare guard now matches
+    # twice and the mutant became unusable -- silently, which is why the runner
+    # reports anchor counts rather than picking the first match.
     ("rt_parse: a ctrl command without cmd_id is accepted",
      RT_PARSE_CC,
-     '  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {\n'
-     "    return RtParse::kMissingField;\n  }",
-     '  GetString(data, "cmd_id", &out->cmd_id);'),
+     '  // ("same cmd_id re-sent => duplicate, epoch unchanged") has nothing to key on.\n'
+     '  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {',
+     '  // ("same cmd_id re-sent => duplicate, epoch unchanged") has nothing to key on.\n'
+     '  if (false) {'),
     # A joint rate that does not divide 1000 gives a period the chassis cannot
     # hold, and the symptom is jitter rather than a refusal.
     ("rt_parse: joint_rate_hz is range-checked but not divisibility-checked",

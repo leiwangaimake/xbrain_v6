@@ -87,6 +87,7 @@ bool RtRuntime::Start(std::string* err) {
       {"rt/motion/cmd_vel", &RtBridge::HandleCmdVel},
       {"rt/chassis/ctrl", &RtBridge::HandleChassisCtrl},
       {"rt/chassis/mode", &RtBridge::HandleChassisMode},
+      {"rt/chassis/hello", &RtBridge::HandleHello},
       {"rt/safety/estop", &RtBridge::HandleEstop},
       {"rt/safety/probe/ping", &RtBridge::HandlePing},
   };
