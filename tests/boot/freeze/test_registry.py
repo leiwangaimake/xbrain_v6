@@ -219,6 +219,9 @@ def test_build_manifest_populates_every_required_field():
         boot_id="deadbeef",
         config_root="/tmp/x",
         config_root_overridden=False,
+        gen_ts=1753660000.0,
+        robot_id="xbrain-01",
+        site_id="site_hq_north",
         common_digest="cd",
         config_rev="cr",
         calib_rev="unspecified",
@@ -226,10 +229,19 @@ def test_build_manifest_populates_every_required_field():
         processes={},
         assertions={"J": {"status": "stub"}},
     )
-    for field in ("schema", "boot_id", "config_root",
-                  "config_root_overridden", "common_digest", "config_rev",
+    # The field list is the 10 S5.4.4 MANIFEST block, top level, in full.
+    # gen_ts / robot_id / site_id were in that block from the start and were
+    # simply not produced until 2026-09-18; a reader of the old MANIFEST had
+    # no way to tell whose machine it described.
+    for field in ("schema", "gen_ts", "boot_id", "config_root",
+                  "config_root_overridden", "robot_id", "site_id",
+                  "common_digest", "config_rev",
                   "calib_rev", "layers", "processes", "assertions"):
         assert field in m, field
+    # gen_ts is passed in, never read inside: a build_manifest that reached for
+    # a clock could not be pinned by a test and would put a wall-clock read in
+    # a pure assembler (CLAUDE.md 3.4).
+    assert m["gen_ts"] == 1753660000.0
     assert m["schema"] == MANIFEST_SCHEMA
 
 

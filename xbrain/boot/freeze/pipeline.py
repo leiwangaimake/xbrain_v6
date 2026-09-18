@@ -60,6 +60,7 @@ Design constants:
 # imports here would extend the "must be installed by bring-up" surface.
 import json
 import os
+import time
 from typing import Any, Dict, Mapping, Optional
 
 # Registry primitives imported through the package boundary, not the module,
@@ -117,6 +118,8 @@ SNAPSHOT_PROCESSES = (
 def build_manifest(*, boot_id: str, config_root: str,
                    config_root_overridden: bool,
                    config_variant: Optional[str] = None,
+                   gen_ts: float,
+                   robot_id: Optional[str], site_id: Optional[str],
                    common_digest: str, config_rev: str,
                    calib_rev: str,
                    layers: list,
@@ -128,15 +131,38 @@ def build_manifest(*, boot_id: str, config_root: str,
     would emit a MANIFEST short of a field a consumer reads (assertion I
     walks `processes[...]`, U18 walks `layers[]`, CFG-41 walks
     `config_rev`, etc.). No defaults: the framework is loud on missing.
+
+    gen_ts is PASSED IN rather than read here. It is a wall clock, and the one
+    place in this repository allowed to reach for one has to be a place that
+    can justify it (CLAUDE.md 3.4 / the clock_scan exemption marker). Taking it
+    as an argument also makes this function a pure assembler, so a test can pin
+    the whole MANIFEST byte for byte.
+
+    robot_id / site_id are Optional because they legitimately are: a dev
+    checkout whose common.yaml has not been filled has neither, and the tree
+    still freezes far enough to produce a MANIFEST that names what is missing.
+    Defaulting them to a string would put a fabricated identity in the file an
+    incident report quotes -- worse than a null that says "not set".
     """
     return {
         "schema": MANIFEST_SCHEMA,               # 10 S5.4.6 required
+        # Wall clock, for humans only (10 S5.4.4 verbatim "墙钟, 仅供人看").
+        # Never compared, never used for ordering or age -- freeze --check
+        # skips it on purpose, because it moves on every run and comparing it
+        # would report drift on an unchanged tree.
+        "gen_ts": gen_ts,
         "boot_id": boot_id,                       # gate: matches /proc's boot_id
         "config_root": config_root,               # absolute path used
         "config_root_overridden": config_root_overridden,   # XBRAIN_CONFIG_DIR set
         # 10 S5.4.7: which X_<variant>.yaml overlays fed this freeze; null in
         # production (SEC-11 checks it, like config_root_overridden).
         "config_variant": config_variant,
+        # Which machine and which site this snapshot belongs to. Both are also
+        # inside common_digest (they are common.* leaves); they are lifted to
+        # the top level so a reader can answer "whose MANIFEST is this" without
+        # opening a snapshot, which is what an incident starts with.
+        "robot_id": robot_id,
+        "site_id": site_id,
         "common_digest": common_digest,           # canonical hash of common.* leaves
         "config_rev": config_rev,                 # CFG-41 overall digest
         "calib_rev": calib_rev,                   # extrinsics rev (or unspecified)
@@ -252,7 +278,7 @@ def run_freeze(*, boot_id: str, config_root: str,
     # not fall back to a placeholder: a MANIFEST whose digest says nothing
     # about the configuration is worse than no MANIFEST, because every reader
     # downstream treats the field as an answer.
-    for _key in ("common_digest", "config_rev", "layers"):
+    for _key in ("common_digest", "config_rev", "layers", "robot_id", "site_id"):
         if _key not in ctx:
             raise AssertionError(
                 "run_freeze: ctx[%r] not populated; the materialise runner "
@@ -264,6 +290,14 @@ def run_freeze(*, boot_id: str, config_root: str,
         config_root=config_root,
         config_root_overridden=config_root_overridden,
         config_variant=config_variant,
+        # WALL-CLOCK-OK(record): MANIFEST.gen_ts is the freeze line's own
+        # record of when it ran (10 S5.4.4 verbatim "墙钟, 仅供人看"). It is
+        # displayed and archived, never compared, never an age or a timeout --
+        # the boot_id gate is what decides whether a snapshot is current, and
+        # it is an identity, not a time.
+        gen_ts=time.time(),
+        robot_id=ctx["robot_id"],
+        site_id=ctx["site_id"],
         common_digest=ctx["common_digest"],
         config_rev=ctx["config_rev"],
         calib_rev=calib_rev,

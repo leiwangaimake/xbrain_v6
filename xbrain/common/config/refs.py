@@ -435,6 +435,43 @@ def check_no_anchors(raw_text: str, where: str = "<config>") -> None:
                                "express sharing with ${common.*}")
 
 
+def count_refs(tree: Dict[str, Any]) -> int:
+    """How many leaves in `tree` are ${common.*} references.
+
+    This is MANIFEST.processes[proc].refs (10 S5.4.4, CFG-41): the audit answer
+    to "how much of this process's configuration comes from the shared layer".
+    A snapshot whose refs count changes between two freezes had its coupling to
+    common.* changed, which is a different event from a value having moved and
+    is not visible in the sha256 alone.
+
+    Counts LEAVES, and leaves and occurrences are the same number here -- not by
+    luck, by rule. _WHOLE_NODE is anchored (^...$), so R-1 admits only whole-node
+    replacement: "${common.a}" is a reference, "x${common.a}" is a shape
+    violation that classify() raises on. There is no string interpolation in
+    this axis, so a leaf can never hold two references.
+
+    flatten() is the same traversal resolve() uses, which makes a list a LEAF
+    (R-5, whole-table replacement). Walking into list elements here would count
+    references resolve() never expands, and the audit number would describe a
+    resolution that does not happen.
+
+    Call this only AFTER resolve() has accepted the same tree: classify() raises
+    on a malformed reference, and a count that could raise would turn an audit
+    field into a second, differently-worded rejection path for a defect resolve()
+    already reports with a rule id.
+    """
+    total = 0
+    for _key, value in flatten(tree).items():
+        # Same "${" prefilter as resolve() and find_violations, so all three
+        # agree on what is worth inspecting; classify() rather than a local
+        # regex so the definition of "is a reference" has exactly one spelling.
+        if not isinstance(value, str) or "${" not in value:
+            continue
+        if classify(value) is not None:
+            total += 1
+    return total
+
+
 def find_violations(tree: Dict[str, Any]) -> List[Tuple[str, str]]:
     """Collect (key, rule) for every shape violation instead of stopping at the first.
 

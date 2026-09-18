@@ -121,7 +121,7 @@ from xbrain.boot.freeze.assertions.fv_org_enu import (
 from xbrain.boot.freeze.inventory import config_rev_of, layer_rows
 from xbrain.common.config import build_overlay
 from xbrain.common.config.merge import deep_merge
-from xbrain.common.config.refs import ReferenceError_, resolve
+from xbrain.common.config.refs import ReferenceError_, count_refs, resolve
 from xbrain.common.digest.digest import UnresolvedTree, common_digest
 from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.common.errors.exceptions import XbrainError
@@ -204,13 +204,15 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
            c) Drop the 'common' subtree; keep the proc-scoped values
            d) yaml.safe_dump + atomic write to resolved_root/{proc}.yaml
            e) sha256 the written bytes; record path + sha256 + size
+              + refs (count of ${common.*} leaves in the SOURCE)
       4) Populate ctx['processes'] so run_freeze picks it up for
          MANIFEST.processes.
       5) Compute the two CFG-41 identities from the SAME tree and
          publish them the same way: ctx['common_digest'] (over the
          resolved common.* subtree, 10 S5.4.4) and ctx['layers'] +
          ctx['config_rev'] (over the layer source files on disk,
-         10 S5.4.6). run_freeze reads all three from ctx; there is no
+         10 S5.4.6), plus ctx['robot_id'] / ctx['site_id'] for the
+         MANIFEST top level. run_freeze reads all three from ctx; there is no
          parameter for a caller to inject a digest through, because a
          fabricated digest would make every downstream comparison
          agree with itself and nothing else.
@@ -319,6 +321,15 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
                         variant=ctx.get("config_variant"),
                         site_id=site_id, robot_id=robot_id)
     ctx["layers"] = layers
+    # robot_id / site_id for the MANIFEST top level (10 S5.4.4). Taken from the
+    # RESOLVED tree, not from the raw L1 file: L5 may override either, and the
+    # MANIFEST has to name the identity the freeze actually ran under -- it is
+    # what an incident report quotes to say WHICH machine and WHICH site this
+    # snapshot belongs to. A raw-L1 value would disagree with the L4 file the
+    # merge actually consumed (the layer rows above pick that file by the same
+    # resolved values, so the two would contradict each other inside one file).
+    ctx["robot_id"] = robot_id
+    ctx["site_id"] = site_id
     # config_rev is derived from the rows rather than recomputed from disk:
     # one walk, one answer. A second walk could see a file change between the
     # two passes and produce a rev that matches no row in the list.
@@ -393,10 +404,26 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
         # is what a downstream reader (P-process at startup) can
         # recompute against the file on disk to verify integrity.
         sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        # refs: how many ${common.*} leaves this proc's SOURCE carried
+        # (10 S5.4.4 MANIFEST.processes[*].refs, CFG-41). Counted on
+        # proc_source -- the tree BEFORE expansion -- because after resolve()
+        # the references are gone; counting the expanded tree would give the
+        # number of leaves, which is a different and useless number.
+        #
+        # Counted AFTER resolve() succeeded, though, not before: count_refs
+        # goes through classify(), which raises on a malformed reference, and
+        # resolve() has just validated every shape in this same tree. Counting
+        # first would give a defect two different rejection paths -- one with a
+        # rule id, one from an audit field.
+        #
+        # It answers an audit question the sha256 cannot: a snapshot whose
+        # refs count moved had its COUPLING to the shared layer changed, which
+        # is a different event from a value having moved.
         processes[proc] = {
             "path": out_path,
             "sha256": sha,
             "size_bytes": len(text.encode("utf-8")),
+            "refs": count_refs(proc_source),
         }
         written_names.append(proc)
 

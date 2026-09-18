@@ -213,3 +213,62 @@ def test_reference_axis_sees_the_merged_value_not_the_lower_layer():
     assert resolved["common"]["derived"] == "field-origin", (
         "引用轴必须看到 L4 覆盖后的值，🚫 不是 L1 的占位"
     )
+
+
+# -- count_refs: MANIFEST.processes[*].refs (10 S5.4.4, CFG-41) --------------
+
+def test_count_refs_counts_reference_leaves_not_all_leaves():
+    """The audit number is "how much of this comes from common.*", not "how
+    big is this file".
+
+    Mutant: count every leaf -> red. Mutant: return 0 -> red (and CFG-41's
+    coupling record becomes a constant, which is the shape of a field nobody
+    can use).
+    """
+    tree = {"p2_core": {
+        "a_max": "${common.spec.max_decel_mps2}",
+        "d_safe": "${common.safety.d_safe_m}",
+        "tick_hz": 20,
+        "name": "p2",
+    }}
+    assert refs.count_refs(tree) == 2
+
+
+def test_count_refs_is_zero_for_a_tree_with_no_references():
+    """A process with no shared values is a real state, not an error. Mutant:
+    return len(leaves) when there are no refs -> red."""
+    assert refs.count_refs({"p2_core": {"tick_hz": 20, "name": "p2"}}) == 0
+    assert refs.count_refs({}) == 0
+
+
+def test_count_refs_treats_a_list_as_one_leaf():
+    """R-5: a list is replaced whole, so resolve() never descends into its
+    elements. Counting inside one would report references that are never
+    expanded -- an audit number describing a resolution that does not happen.
+
+    Mutant: walk list elements -> this returns 3 instead of 0 -> red.
+    """
+    tree = {"p4_agent": {"keywords": ["${common.a}", "${common.b}", "plain"]}}
+    assert refs.count_refs(tree) == 0
+
+
+def test_count_refs_counts_nested_leaves():
+    """Nesting depth is not part of the question. Mutant: only walk the top
+    level -> red."""
+    tree = {"p1_motion": {"corridor": {"margin_base_m": "${common.safety.d_safe_m}"},
+                          "gate": {"limits": {"v": "${common.spec.max_vx_mps}"}}}}
+    assert refs.count_refs(tree) == 2
+
+
+def test_count_refs_rejects_a_malformed_reference():
+    """count_refs goes through classify(), so a shape violation raises here
+    exactly as it would in resolve().
+
+    That is why the materialiser counts AFTER resolve() has accepted the tree:
+    if it counted first, the same defect would be reported twice with two
+    different messages, and the one an operator saw would depend on which call
+    happened to run first. Mutant: swallow the exception and return a count ->
+    red, and a malformed reference would reach the MANIFEST as a number.
+    """
+    with pytest.raises(refs.ReferenceError_):
+        refs.count_refs({"p2_core": {"a": "prefix${common.spec.max_vx_mps}"}})

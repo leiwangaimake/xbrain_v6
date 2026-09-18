@@ -399,6 +399,55 @@ def test_run_freeze_refuses_when_the_materialiser_did_not_publish(tmp_path):
         pipeline_mod.ASSERT_REGISTRY = real_registry
 
 
+@pytest.mark.parametrize("dropped", ["common_digest", "config_rev", "layers",
+                                     "robot_id", "site_id"])
+def test_run_freeze_refuses_on_each_missing_identity(tmp_path, dropped):
+    """The guard is per-key, and each key needs its own case.
+
+    A single case that drops the whole ctx only exercises whichever key the
+    loop checks first -- the other four could be removed from the guard and
+    nothing would go red. That is exactly what a mutant run showed: deleting
+    robot_id / site_id from the guard left the suite green, because
+    materialise always publishes them and no case looked at that half.
+
+    Mutant: shorten the guard tuple by any one key -> the matching parameter
+    goes red, and only that one, which also proves the case is testing the key
+    it names.
+    """
+    from xbrain.boot.freeze import pipeline as pipeline_mod
+    from xbrain.boot.freeze.registry import AssertSpec
+
+    published = {"common_digest": "0" * DIGEST_HEX_LEN,
+                 "config_rev": "layers-" + "0" * DIGEST_HEX_LEN,
+                 "layers": [], "robot_id": "gj-001", "site_id": "site_x",
+                 "processes": {}}
+
+    def _partial_materialiser(runner_ctx):
+        # Publishes everything a real materialiser publishes EXCEPT one key --
+        # the shape a partial implementation has. Patching the real runner
+        # would not work: registry.py binds materialise.run into a frozen
+        # AssertSpec at import, so rebinding the module attribute afterwards
+        # changes nothing the pipeline calls.
+        for key, value in published.items():
+            if key != dropped:
+                runner_ctx[key] = value
+        return {"status": "pass", "assertion": "partial"}
+
+    resolved = tmp_path / "resolved"
+    resolved.mkdir()
+    real_registry = pipeline_mod.ASSERT_REGISTRY
+    pipeline_mod.ASSERT_REGISTRY = (
+        AssertSpec("partial", "publishes all identities but one",
+                   runner=_partial_materialiser),)
+    try:
+        with pytest.raises(AssertionError, match=dropped):
+            run_freeze(boot_id="partial", config_root=str(tmp_path),
+                       config_root_overridden=False,
+                       resolved_root=str(resolved))
+    finally:
+        pipeline_mod.ASSERT_REGISTRY = real_registry
+
+
 def test_run_freeze_has_no_digest_parameter(tmp_path):
     """A caller cannot hand in a digest. Stated as a signature case because
     the parameter is what would come back in a careless merge -- and it would
@@ -409,3 +458,81 @@ def test_run_freeze_has_no_digest_parameter(tmp_path):
         assert name not in params, (
             "run_freeze must not accept %r: a caller-supplied identity makes "
             "10 S5.4.4's Stage C/D comparison agree with itself" % name)
+
+
+# --------------------------------------------------------------------------
+# The MANIFEST top-level fields 10 S5.4.4 lists (landed 2026-09-18)
+# --------------------------------------------------------------------------
+
+def test_the_manifest_names_the_robot_and_the_site(tmp_path):
+    """"Whose MANIFEST is this" is where an incident starts, and it must be
+    answerable without opening a snapshot.
+
+    Both values are also inside common_digest (they are common.* leaves), so
+    this is a readability lift, not a second source -- which is why they are
+    taken from the RESOLVED tree, the same place the digest hashes and the same
+    place the L4 row's filename comes from. Mutant: read them from the raw L1
+    file -> an L5 override makes the MANIFEST name a different site than the
+    L4 row it also carries, and the file contradicts itself.
+    """
+    ctx = _scaffold_config_ctx(tmp_path)
+    manifest = _freeze(ctx)
+    assert manifest["robot_id"] == "gj-001"
+    assert manifest["site_id"] == "site_scaffold"
+    # The L4 row was picked BY site_id, so the two must agree inside one file.
+    assert [os.path.basename(p) for p in _paths_at(manifest["layers"], "L4")] \
+        == ["%s.yaml" % manifest["site_id"]]
+
+
+def test_gen_ts_is_present_and_is_not_compared_by_check(tmp_path):
+    """10 S5.4.4 verbatim: gen_ts is 墙钟, 仅供人看.
+
+    So it must be IN the file (an archived MANIFEST with no idea when it was
+    produced is much less useful) and must NOT be part of any comparison --
+    it moves on every run, and comparing it would make freeze --check report
+    drift on a tree nobody touched.
+
+    Mutant: compare gen_ts in check_freeze -> the no-drift case in
+    test_check.py goes red. Mutant: drop the field -> red here.
+    """
+    ctx = _scaffold_config_ctx(tmp_path)
+    first = _freeze(ctx)
+    second = _freeze(ctx)
+    assert isinstance(first["gen_ts"], float)
+    assert first["gen_ts"] > 0.0
+    # Two freezes of one tree: gen_ts is the ONLY top-level field allowed to
+    # differ. Asserted as a set difference rather than field by field, so a
+    # future field that wrongly carries a clock is caught by this case too.
+    differing = {k for k in first
+                 if k != "assertions" and first[k] != second.get(k)}
+    assert differing <= {"gen_ts"}, differing
+
+
+def test_each_process_row_records_how_many_shared_values_it_pulls(tmp_path):
+    """MANIFEST.processes[*].refs (10 S5.4.4, CFG-41).
+
+    It answers what the sha256 cannot: a snapshot whose refs count moved had
+    its COUPLING to the shared layer changed -- someone replaced a
+    ${common.*} with a hardcoded number, or the reverse. The bytes moving says
+    only that something moved.
+
+    Mutant: count on the EXPANDED tree -> refs becomes the leaf count (2 here,
+    then 2 again after the ref is inlined) -> red. Mutant: omit the field ->
+    red.
+    """
+    ctx = _scaffold_config_ctx(tmp_path)
+    proc_path = os.path.join(ctx["config_root"], "p2_core.yaml")
+    open(proc_path, "w", encoding="utf-8").write(yaml.safe_dump(
+        {"p2_core": {"a_max": "${common.spec.max_decel_mps2}", "tick_hz": 20}},
+        allow_unicode=True))
+    before = _freeze(ctx)
+    assert before["processes"]["p2_core"]["refs"] == 1
+    # Inline the shared value: same key count, same kind of snapshot, but the
+    # process no longer follows common.*. refs is the field that notices.
+    open(proc_path, "w", encoding="utf-8").write(yaml.safe_dump(
+        {"p2_core": {"a_max": 2.5, "tick_hz": 20}}, allow_unicode=True))
+    after = _freeze(ctx)
+    assert after["processes"]["p2_core"]["refs"] == 0
+    assert after["common_digest"] == before["common_digest"], (
+        "inlining a shared value into a per-proc file must not move the "
+        "shared digest (10 S5.4.4: 私有段变更不应阻塞放行)")
