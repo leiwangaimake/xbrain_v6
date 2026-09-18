@@ -227,6 +227,25 @@ int Run(const std::string& path) {
 #endif
   std::string rt_err;
   const bool rt_up = rt.Start(&rt_err);
+  if (rt_up) {
+    // 13 S7.1 Q-5 / ASM-4 (3): the four chassis report streams onto their own
+    // keys. Bound AFTER Start so the bridge exists and its publishers are
+    // declared -- binding earlier would hand the rx thread a null bridge.
+    //
+    // *** This binding is what ASM-4 (3) recorded as "v1.15 已做" while
+    // SetReportSink had ZERO production call sites. All four keys were
+    // declared, all four writers implemented and tested, and not one frame
+    // ever went out: subscribing to xbrain/dev/rt/chassis/** for 12 s on
+    // 2026-09-18 returned only rt/chassis/state.
+    quadruped::rt::RtBridge* bridge = rt.bridge_mut();
+    proc.SetReportSink([bridge](double now_mono_s,
+                                const quadruped::chs_a::BasicStatus* b,
+                                const quadruped::chs_a::MotionStatus* m,
+                                const quadruped::chs_a::DeviceStatus* d,
+                                const quadruped::chs_a::FaultReport* f) {
+      bridge->PublishReports(now_mono_s, b, m, d, f);
+    });
+  }
   if (!rt_up) {
     // Reported, and the process keeps running. Without the RT plane it cannot
     // receive a command -- but it still holds the chassis safe, and Tier 1

@@ -76,6 +76,10 @@ class RtRuntime {
   bool running() const { return running_.load(std::memory_order_acquire); }
 
   const RtBridge& bridge() const { return *bridge_; }
+  // Non-const, for the report sink: the chs_a_rx thread publishes through the
+  // bridge, and a const handle cannot. Valid only between Start() and Stop();
+  // null before Start, which the caller must not dereference.
+  RtBridge* bridge_mut() { return bridge_.get(); }
   const RtSession& session() const { return session_; }
   std::uint64_t ticks() const { return ticks_; }
   // Must be called BEFORE Start(). Setting it while the loop runs would be a

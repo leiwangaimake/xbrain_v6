@@ -50,6 +50,14 @@ constexpr const char* kCtrlAckSuffix = "rt/chassis/ctrl/ack";
 constexpr const char* kEstopAckSuffix = "rt/safety/estop/ack";
 constexpr const char* kPongSuffix = "rt/safety/probe/pong";
 constexpr const char* kStateSuffix = "rt/chassis/state";
+// 13 S7.1 Q-5: the four report streams, each on its own key. They are NOT
+// folded into rt/chassis/state -- that would put one fact in two places, and
+// the state key is built on the ctrl thread where these cannot go (they hold
+// std::string, 12 RTC-6).
+constexpr const char* kBasicSuffix = "rt/chassis/basic";
+constexpr const char* kMotionSuffix = "rt/chassis/motion";
+constexpr const char* kDeviceSuffix = "rt/chassis/device";
+constexpr const char* kFaultSuffix = "rt/chassis/fault";
 
 std::uint64_t ToMs(double s) {
   return s < 0.0 ? 0 : static_cast<std::uint64_t>(s * 1000.0 + 0.5);
@@ -69,7 +77,8 @@ RtBridge::RtBridge(QuadrupedProcess* proc, std::string rid, std::string boot,
   // construction, so the failure is a startup abort rather than a message that
   // goes somewhere nobody is listening.
   for (const char* k : {kCtrlAckSuffix, kEstopAckSuffix, kPongSuffix,
-                        kStateSuffix}) {
+                        kStateSuffix, kBasicSuffix, kMotionSuffix,
+                        kDeviceSuffix, kFaultSuffix}) {
     if (FindKey(k) == nullptr) {
       std::fprintf(stderr,
                    "rt_bridge: key %s is not declared in rt_keys.cc -- it is "
@@ -84,6 +93,46 @@ bool RtBridge::Publish(const std::string& suffix, const char* data,
   if (!publish_ || len == 0) return false;
   ++acks_;
   return publish_(suffix, data, len);
+}
+
+void RtBridge::PublishReports(double now_mono_s,
+                             const chs_a::BasicStatus* basic,
+                             const chs_a::MotionStatus* motion,
+                             const chs_a::DeviceStatus* device,
+                             const chs_a::FaultReport* fault) {
+  // *** Called from the chs_a_rx thread, NOT from rt_pub. That is the whole
+  // reason this is a callback instead of a slot: these four structs hold
+  // std::string and cannot cross a LockfreeSlot (12 RTC-6), while forwarding
+  // them is not realtime work -- which is exactly what the rx thread is for
+  // (13 S9.1).
+  //
+  // Before this existed, 13 ASM-4 (3) recorded the forwarding as "v1.15 已做"
+  // while SetReportSink had ZERO production call sites: all four keys were
+  // declared, all four writers were implemented and tested, and not one frame
+  // ever went out. Measured 2026-09-18 -- subscribing to xbrain/dev/rt/chassis/**
+  // for 12 s returned only rt/chassis/state.
+  (void)now_mono_s;
+  char out[8192];
+  if (basic != nullptr) {
+    const std::size_t n = WriteChassisBasic(*basic, out, sizeof(out));
+    if (n > 0) Publish(kBasicSuffix, out, n);
+  }
+  if (motion != nullptr) {
+    const std::size_t n = WriteChassisMotion(*motion, out, sizeof(out));
+    if (n > 0) Publish(kMotionSuffix, out, n);
+  }
+  if (device != nullptr) {
+    const std::size_t n = WriteChassisDevice(*device, out, sizeof(out));
+    if (n > 0) Publish(kDeviceSuffix, out, n);
+  }
+  if (fault != nullptr) {
+    const std::size_t n = WriteChassisFault(*fault, out, sizeof(out));
+    if (n > 0) Publish(kFaultSuffix, out, n);
+  }
+  // A zero-length write is dropped rather than published: the writers return 0
+  // only when the buffer was too small, and a truncated JSON on the wire is
+  // worse than a missing message -- the consumer cannot tell it from a
+  // malformed sender.
 }
 
 bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {

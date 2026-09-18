@@ -398,6 +398,52 @@ int main() {
     CHECK(snap.soft_estop_active == (after != 0));
   }
 
+  // ---- the four report streams reach their own keys (13 S7.1 Q-5) --------
+  {
+    // 13 ASM-4 (3) recorded this forwarding as "v1.15 已做" while
+    // SetReportSink had ZERO production call sites: all four keys declared,
+    // all four writers implemented and tested, and not one frame ever sent.
+    // Measured 2026-09-18 -- subscribing to xbrain/dev/rt/chassis/** for 12 s
+    // returned ONLY rt/chassis/state.
+    //
+    // The case asserts the KEY each report lands on, because that is what was
+    // missing. A test that only checked "the writer produces JSON" passed
+    // throughout the whole period the feature did not exist.
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+    chs_a::BasicStatus basic;
+    basic.model = "CA9C";
+    b.PublishReports(0.0, &basic, nullptr, nullptr, nullptr);
+    CHECK(sent.size() == 1);
+    CHECK(sent.back().key == "rt/chassis/basic");
+
+    chs_a::MotionStatus motion;
+    b.PublishReports(0.1, nullptr, &motion, nullptr, nullptr);
+    CHECK(sent.back().key == "rt/chassis/motion");
+
+    chs_a::DeviceStatus device;
+    b.PublishReports(0.2, nullptr, nullptr, &device, nullptr);
+    CHECK(sent.back().key == "rt/chassis/device");
+
+    chs_a::FaultReport fault;
+    b.PublishReports(0.3, nullptr, nullptr, nullptr, &fault);
+    CHECK(sent.back().key == "rt/chassis/fault");
+    CHECK(sent.size() == 4);
+
+    // A null report publishes NOTHING. The rx thread hands one struct and
+    // four nulls per frame; publishing empties for the other three would put
+    // three fabricated messages on the bus for every real one.
+    // mutant: drop the null guards -> sent.size() jumps -> red.
+    const std::size_t before = sent.size();
+    b.PublishReports(0.4, nullptr, nullptr, nullptr, nullptr);
+    CHECK(sent.size() == before);
+  }
+
   if (g_failures == 0) {
     std::printf("ALL RT BRIDGE TESTS PASSED\n");
     return 0;

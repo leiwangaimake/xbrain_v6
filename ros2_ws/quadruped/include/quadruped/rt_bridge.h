@@ -73,6 +73,15 @@ class RtBridge {
   // window is then exercised in microseconds.
 
   // LOOSENING. Refused messages change nothing and are counted.
+  // 13 S7.1 Q-5: the four chassis report streams, each onto its own key.
+  // Called from the chs_a_rx thread via QuadrupedProcess::SetReportSink --
+  // these structs hold std::string and cannot cross a lock-free slot, and
+  // forwarding them is not realtime work.
+  void PublishReports(double now_mono_s, const chs_a::BasicStatus* basic,
+                      const chs_a::MotionStatus* motion,
+                      const chs_a::DeviceStatus* device,
+                      const chs_a::FaultReport* fault);
+
   void HandleCmdVel(double now_mono_s, const char* data, std::size_t len);
 
   // LOOSENING. Every outcome is acked, including refusals -- an ack that only

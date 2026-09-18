@@ -1424,6 +1424,17 @@ RT_BRIDGE_SOURCES = [
 RT_BRIDGE_TESTS = [os.path.join(QUAD, "test", "test_rt_bridge.cc")]
 
 RT_BRIDGE_MUTANTS = [
+    # 13 ASM-4 (3) / S7.1 Q-5. Recorded as "v1.15 已做" while SetReportSink
+    # had zero production call sites -- four keys declared, four writers
+    # implemented and tested, not one frame sent.
+    ("bridge: the basic report goes to the wrong key",
+     RT_BRIDGE_CC,
+     'if (n > 0) Publish(kBasicSuffix, out, n);',
+     'if (n > 0) Publish(kStateSuffix, out, n);'),
+    ("bridge: a null report is published as an empty message",
+     RT_BRIDGE_CC,
+     "  if (motion != nullptr) {",
+     "  if (true) {"),
     # *** THE ONE THIS FILE'S ORDERING EXISTS FOR. Stopping only when the
     # payload parsed is the natural-looking version, and it silently removes
     # the waiver of 11 S3.0.1: a truncated or hostile estop then does nothing.
