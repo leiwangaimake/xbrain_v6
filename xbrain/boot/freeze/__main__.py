@@ -30,10 +30,24 @@ Argument-parse discipline:
   temp overrides, so no path is untested and no path is opinionated at
   the test-vs-deploy boundary.
 
+Two modes, and they must not share a write path:
+  * default    -- run the freeze, write MANIFEST.json + the per-process
+                  snapshots into --resolved-root. This is what the systemd
+                  unit runs at Stage 0c.
+  * --check    -- compare the RECORDED freeze against the sources as they are
+                  now, print what differs, write nothing, exit 1 on drift.
+                  Nobody runs this at boot; it is for the operator who edited
+                  a yaml on a running machine and wants to know whether the
+                  running processes are using it. (They are not: common.* has
+                  no hot-update semantics, 10 S10.3. --check is how that fact
+                  becomes visible instead of being discovered later.)
+
 Failure modes worth spelling out (each maps to a distinct exit code path):
   * --config-root does not exist         -> J-style, printed loud, exit 1
   * resolved_root not a directory        -> CFG-BT-22 mount fail,   exit 1
   * an assertion runner raises           -> propagates, exit 1
+  * --check finds any drift              -> findings on stderr,    exit 1
+  * --check finds none                   -> one line on stdout,    exit 0
   * any assertion returns status != pass -> currently NOT checked (all
     stubs return 'stub' at CFG-FZ-1; CFG-FZ-2..15 will add pass/fail
     reading and this file will grow the exit-nonzero branch then)
@@ -47,10 +61,49 @@ import sys
 # tmpfs path CFG-BT-22 mounts. Importing them here keeps the wiring in
 # ONE place; a call site elsewhere would fork the arg-passing contract.
 from xbrain.boot.freeze.assertions._layer_loader import VARIANTS
+from xbrain.boot.freeze.check import check_freeze
 from xbrain.boot.freeze.pipeline import RESOLVED_ROOT_DEFAULT, run_freeze
 # boot_id read via the shared helper so the /proc path is the single source
 # of truth (also used by the resolved loader; two callers, one path).
 from xbrain.common.config.resolved import BOOT_ID_PATH, read_boot_id
+
+
+def _run_check(args: argparse.Namespace, boot_id: str,
+               overridden: bool) -> int:
+    """--check: report drift between the recorded freeze and the sources.
+
+    Separate function rather than a branch inside main() because the two have
+    opposite obligations -- main() writes the snapshot, this one must not --
+    and a shared body with an `if not check:` around each write is how one of
+    those writes eventually escapes the guard.
+
+    Exit code is the whole verdict for a script that calls this, so it is
+    derived from the finding list and nothing else: 0 means the snapshot on
+    disk is what a freeze of the current sources would produce.
+    """
+    findings = check_freeze(
+        config_root=os.path.abspath(args.config_root),
+        resolved_root=args.resolved_root,
+        boot_id=boot_id,
+        config_root_overridden=overridden,
+        config_variant=args.variant,
+    )
+    if not findings:
+        # Names both roots: a clean result is only meaningful if the operator
+        # can see WHICH tree was compared against WHICH snapshot -- a --check
+        # run against the wrong root would also print "no drift".
+        print("freeze --check: no drift (%s -> %s)"
+              % (os.path.abspath(args.config_root), args.resolved_root))
+        return 0
+    # stderr, so a wrapper script that captures stdout for the clean line
+    # still shows the problems, and journalctl tags them at error priority.
+    for finding in findings:
+        print(finding.line(), file=sys.stderr)
+    print("freeze --check: %d finding(s); the running system does NOT match "
+          "the sources. common.* has no hot-update semantics (10 S10.3) -- "
+          "the fix is a full restart, never an edit under data/run/resolved/"
+          % len(findings), file=sys.stderr)
+    return 1
 
 
 def main() -> int:
@@ -91,6 +144,16 @@ def main() -> int:
                     choices=list(VARIANTS),
                     help="config variant overlay (default: env XBRAIN_CONFIG_VARIANT "
                          "or none = production)")
+    # --check: compare the recorded freeze against the sources as they are NOW
+    # and report, writing nothing. Exists because the structural guarantees
+    # (Requires= on the unit, tmpfs, the boot_id gate) all key on a REBOOT, and
+    # the case with no reboot in it -- edit a yaml on a running machine -- is
+    # invisible to every one of them: the processes keep the values they
+    # loaded, correctly, and the operator has no way to see that their edit is
+    # inert. See xbrain/boot/freeze/check.py for what is compared.
+    ap.add_argument("--check", action="store_true",
+                    help="report whether the recorded snapshot still matches "
+                         "the config sources; write nothing, exit 1 on drift")
     args = ap.parse_args()   # exits nonzero on bad argv (argparse handles it)
 
     # Pre-check the config root even though this is J's territory. Two
@@ -113,6 +176,13 @@ def main() -> int:
     # "operator set XBRAIN_CONFIG_DIR" -- MANIFEST records the fact so an
     # incident can name which set of yaml was frozen (a test rig vs prod).
     overridden = "XBRAIN_CONFIG_DIR" in os.environ
+
+    if args.check:
+        # Branches BEFORE the freeze call, not after it: --check must never
+        # reach run_freeze against the real resolved_root. A flag consulted
+        # only when deciding whether to print would still have written the
+        # snapshot, which is the one thing this mode promises not to do.
+        return _run_check(args, boot_id, overridden)
 
     # layers / processes / common_digest / config_rev are all filled by the
     # materialise runner from the tree it resolved, and reach run_freeze
