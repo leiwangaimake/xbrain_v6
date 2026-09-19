@@ -355,6 +355,17 @@ class QuadrupedProcess {
   // "accepted" and "sent" must stay distinguishable.
   bool SendModeFrame(ModeAction action, std::int64_t param, TxCaller caller);
 
+  // C-07, the custom light command (11 S9.4.1 / 13 S5.1). Sits beside
+  // SendModeFrame because it is the same kind of thing: a non-periodic frame
+  // the RT bridge asks for, with no state kept here.
+  //
+  // Goes out through tx_ like every other non-periodic frame (13 CA-4): a
+  // light frame must not interleave with the zero-velocity frame the estop
+  // callback sends, and tx_ is the seam that guarantees it.
+  bool SendLightFrame(bool custom_mode, const chs_a::LedSetting& head,
+                      const chs_a::LedSetting& tail);
+  std::uint64_t light_frames_sent() const { return light_frames_sent_; }
+
   ModeRequestResult OnChassisAction(double now_mono_s, ModeAction action,
                                     std::int64_t param);
 
@@ -489,6 +500,7 @@ class QuadrupedProcess {
   std::uint64_t axis_frames_sent_ = 0;
   std::uint64_t frames_received_ = 0;
   std::uint64_t tx_skipped_ = 0;
+  std::uint64_t light_frames_sent_ = 0;
 };
 
 }  // namespace quadruped

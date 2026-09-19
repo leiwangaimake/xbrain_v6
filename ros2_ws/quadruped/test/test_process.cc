@@ -1215,6 +1215,44 @@ int main(int argc, char** argv) {
     CHECK(p.link_status().dropped == 3);
   }
 
+  // ---- the light command puts a FRAME on the wire (C-07 / 11 S9.4.1) -----
+  {
+    // Asserted on the WIRE, not on a counter. 13 ASM-6 is the reason: the mode
+    // path incremented its counter beside a send that never happened, and
+    // every layer looked healthy. A counter that moves next to a frame nobody
+    // sent is the same defect wearing a number.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    chassis.Drain();
+    chassis.ClearSent();
+
+    chs_a::LedSetting head;
+    head.pattern = 5;            // blink
+    head.color = 1;              // white
+    head.cycle_s = 1;
+    chs_a::LedSetting tail;
+    tail.pattern = 4;            // breath
+    tail.color = 2;              // green
+    tail.cycle_s = 2;
+    CHECK(p.SendLightFrame(true, head, tail));
+    CHECK(p.light_frames_sent() == 1);
+    chassis.Drain();
+
+    std::uint32_t type = 0, cmd = 0;
+    CHECK(chassis.CountFrames(&type, &cmd) == 1);
+    // C-07: Type 0x00100005 / Command 0x00200002 (13 S5.1, vendor guide 1.2.7).
+    CHECK(type == 0x00100005u);
+    CHECK(cmd == 0x00200002u);
+    const std::string wire(reinterpret_cast<const char*>(chassis.sent().data()),
+                           chassis.sent().size());
+    CHECK(wire.find("\"CustomMode\": true") != std::string::npos);
+    // Led is positional -- [0] head, [1] tail. Different colours on the two
+    // lamps so a swapped encoder fails here rather than passing on symmetry.
+    CHECK(wire.find("\"Color\": [1]") < wire.find("\"Color\": [2]"));
+  }
+
   // ---- a stair gait REACHES the odometry (13 S4.4 (4) / 11 S9.9) ---------
   {
     // The gap this closes: Odometry::OnGait had ZERO production call sites, so

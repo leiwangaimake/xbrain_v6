@@ -216,6 +216,32 @@ std::size_t EncodeMotionState(std::uint8_t* buf, std::size_t cap,
              : 0;
 }
 
+std::size_t EncodeCustomLight(std::uint8_t* buf, std::size_t cap,
+                              std::uint16_t msg_id, std::int64_t now_wall,
+                              bool custom_mode, const LedSetting& head,
+                              const LedSetting& tail) {
+  if (buf == nullptr) return 0;
+  char ts[kTimeBufBytes];
+  FormatTime(now_wall, ts, sizeof(ts));
+  // Led is positional: [0] head, [1] tail (vendor guide 1.2.7). Swapping them
+  // is the one mistake this message can make that still looks correct on the
+  // wire, so the order is written once, here, and the test asserts it by
+  // giving the two lamps different colours.
+  const int n = std::snprintf(
+      AsduStart(buf), AsduCap(cap),
+      "{\"PatrolDevice\": {\"Type\": %u, \"Command\": %u, \"Time\": \"%s\", "
+      "\"Items\": {\"CustomMode\": %s, \"Led\": ["
+      "{\"Type\": %d, \"Color\": [%d], \"Cycle\": %d}, "
+      "{\"Type\": %d, \"Color\": [%d], \"Cycle\": %d}]}}}",
+      kCustomLight.type, kCustomLight.command, ts,
+      custom_mode ? "true" : "false",
+      head.pattern, head.color, head.cycle_s,
+      tail.pattern, tail.color, tail.cycle_s);
+  return (n > 0 && static_cast<std::size_t>(n) < AsduCap(cap))
+             ? Finish(buf, cap, msg_id, n)
+             : 0;
+}
+
 std::size_t EncodeGait(std::uint8_t* buf, std::size_t cap, std::uint16_t msg_id,
                        std::int64_t now_wall, std::uint32_t gait_param) {
   if (buf == nullptr) return 0;

@@ -282,6 +282,122 @@ RtParse ParseHello(const char* json, std::size_t len,
   return RtParse::kOk;
 }
 
+namespace {
+
+// 11 S9.4.1's two name tables, in the vendor's numbering (guide 1.2.7).
+// Written as tables rather than if-chains so the mapping can be read against
+// the manual in one glance -- and so a name that is NOT here has exactly one
+// outcome: refusal.
+struct NamedInt {
+  const char* name;
+  int value;
+};
+
+constexpr NamedInt kLightPatterns[] = {
+    {"solid", 0}, {"fill_flow", 1}, {"move_flow", 2},
+    {"grad_flow", 3}, {"breath", 4}, {"blink", 5},
+};
+
+// *** NO RED. 11 S9.4.1 states it outright: the chassis lamps have no red, and
+// the deterrent flash is our own payload's job (PAY-02). A request for red
+// therefore falls through to refusal rather than being mapped onto, say, white
+// -- which would be a warning that does not warn.
+constexpr NamedInt kLightColors[] = {
+    {"black", 0}, {"white", 1}, {"green", 2}, {"blue", 3},
+};
+
+bool LookupNamed(const NamedInt* table, std::size_t n, const std::string& name,
+                 int* out) {
+  for (std::size_t i = 0; i < n; ++i) {
+    if (name == table[i].name) {
+      *out = table[i].value;
+      return true;
+    }
+  }
+  return false;
+}
+
+// One lamp object. Every field is mandatory once the lamp is named: a partial
+// lamp would leave the encoder to invent the rest, and the chassis takes both
+// lamps positionally in one message (guide 1.2.7) -- there is no "leave this
+// one as it was".
+bool ReadLamp(const Json& parent, const char* key, int* pattern, int* color,
+              int* cycle_s) {
+  const auto it = parent.find(key);
+  if (it == parent.end() || !it->is_object()) return false;
+  std::string name;
+  if (!GetString(*it, "pattern", &name) ||
+      !LookupNamed(kLightPatterns,
+                   sizeof(kLightPatterns) / sizeof(kLightPatterns[0]), name,
+                   pattern)) {
+    return false;
+  }
+  if (!GetString(*it, "color", &name) ||
+      !LookupNamed(kLightColors, sizeof(kLightColors) / sizeof(kLightColors[0]),
+                   name, color)) {
+    return false;
+  }
+  // cycle_s is the duty cycle in seconds. 11 S9.4.1 says it only takes effect
+  // for breath and blink, and it is still required here: the chassis field is
+  // not optional, and "the chassis ignores it" is the chassis's rule, not a
+  // licence for us to guess a value for the other four patterns.
+  const auto c = parent[key].find("cycle_s");
+  if (c == parent[key].end() || !c->is_number_integer()) return false;
+  const std::int64_t v = c->get<std::int64_t>();
+  // A negative or absurd duty cycle is refused rather than clamped. The
+  // chassis takes an int of seconds and nothing in the guide bounds it, so the
+  // bound here is only against values that cannot be meant.
+  if (v < 0 || v > 3600) return false;
+  *cycle_s = static_cast<int>(v);
+  return true;
+}
+
+}  // namespace
+
+RtParse ParseLight(const char* json, std::size_t len, const std::string& our_rid,
+                   const std::string& our_boot, LightMsg* out) {
+  if (json == nullptr || out == nullptr) return RtParse::kBadJson;
+  const Json j = Json::parse(json, json + len, nullptr, /*allow_exceptions=*/false);
+  if (j.is_discarded()) return RtParse::kBadJson;
+  Json data;
+  // LOOSENING (11 S3.0.1): a light command asks the robot to do something, so
+  // a malformed one is refused outright. The asymmetry matters -- the estop
+  // path stops FIRST and parses after, and this one must not copy that shape.
+  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &data);
+  if (env != RtParse::kOk) return env;
+  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {
+    return RtParse::kMissingField;
+  }
+  // 13 V-47: presence is what the caller needs. The value is deliberately not
+  // read -- there is nothing we could do with it, and reading it would invite
+  // a later edit to "just handle the simple case".
+  out->has_illumination = data.find("illumination") != data.end();
+
+  const auto custom = data.find("custom");
+  if (custom != data.end() && custom->is_object()) {
+    const auto en = custom->find("enable");
+    if (en == custom->end() || !en->is_boolean()) return RtParse::kMissingField;
+    out->custom_enable = en->get<bool>();
+    // Both lamps, always. The chassis message is positional over a two-element
+    // array; a message naming only the head has no representation on the wire
+    // that does not also say something about the tail.
+    if (!ReadLamp(*custom, "head", &out->head_pattern, &out->head_color,
+                  &out->head_cycle_s) ||
+        !ReadLamp(*custom, "tail", &out->tail_pattern, &out->tail_color,
+                  &out->tail_cycle_s)) {
+      return RtParse::kUnsupportedAction;
+    }
+    out->has_custom = true;
+  }
+  // Neither half present is a refusal, not a no-op. An empty light command is
+  // far more likely a schema mistake at the sender than an intention, and
+  // answering "accepted" to it would hide that mistake for good.
+  if (!out->has_custom && !out->has_illumination) {
+    return RtParse::kMissingField;
+  }
+  return RtParse::kOk;
+}
+
 RtParse ParseChassisMode(const char* json, std::size_t len,
                          const std::string& our_rid, const std::string& our_boot,
                          ChassisModeMsg* out) {

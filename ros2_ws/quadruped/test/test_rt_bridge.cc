@@ -542,6 +542,62 @@ int main() {
           std::string::npos);
   }
 
+  // ---- rt/chassis/light: accepted, and 13 V-47 refused -------------------
+  {
+    // The gap this closes: rt/chassis/light was declared in rt_keys.cc and
+    // NOTHING subscribed to it -- quadruped has no light code at all, so the
+    // chassis lamps and 13 C-07's custom patterns were unreachable from the
+    // upper stack (11 P1-8 forwards this key from cmd/chassis/light).
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+    const std::string ok = Wrap(
+        "{\"cmd_id\":\"l-01\",\"custom\":{\"enable\":true,"
+        "\"head\":{\"pattern\":\"blink\",\"color\":\"white\",\"cycle_s\":1},"
+        "\"tail\":{\"pattern\":\"breath\",\"color\":\"green\",\"cycle_s\":2}}}");
+    b.HandleLight(0.0, ok.data(), ok.size());
+    // ACCEPTED, counted before the send and separately from it. There is no
+    // chassis behind this fixture, so the send fails -- and that is precisely
+    // the case 13 ASM-6 shows must stay distinguishable: a single counter
+    // standing for both would report "accepted" for a frame nobody sent.
+    CHECK(b.lights_accepted() == 1);
+    CHECK(b.lights_refused() == 0);
+    CHECK(b.light_send_failures() == 1);
+
+    // 13 V-47: illumination is REFUSED. Not accepted, not silently dropped.
+    const std::string illum = Wrap(
+        "{\"cmd_id\":\"l-02\",\"illumination\":{\"front\":1,\"back\":0}}");
+    b.HandleLight(0.1, illum.data(), illum.size());
+    CHECK(b.lights_accepted() == 1);          // unchanged
+    CHECK(b.lights_refused() == 1);
+
+    // *** And a message carrying BOTH halves applies NEITHER. A sender that
+    // asked for two things and got one has no way to learn which took effect,
+    // which is worse than a refusal it can see.
+    // mutant: apply custom anyway when illumination is present -> accepted
+    // goes to 2.
+    const std::string both = Wrap(
+        "{\"cmd_id\":\"l-03\",\"illumination\":{\"front\":1},"
+        "\"custom\":{\"enable\":true,"
+        "\"head\":{\"pattern\":\"solid\",\"color\":\"white\",\"cycle_s\":0},"
+        "\"tail\":{\"pattern\":\"solid\",\"color\":\"white\",\"cycle_s\":0}}}");
+    b.HandleLight(0.2, both.data(), both.size());
+    CHECK(b.lights_accepted() == 1);          // still unchanged
+    CHECK(b.lights_refused() == 2);
+
+    // A malformed one is refused too, and nothing is published either way:
+    // this key has no ack (11 S2.2.1 declares none), so the bridge must not
+    // invent one.
+    const std::string bad = Wrap("{\"cmd_id\":\"l-04\"}");
+    b.HandleLight(0.3, bad.data(), bad.size());
+    CHECK(b.lights_refused() == 3);
+    CHECK(sent.empty());
+  }
+
   if (g_failures == 0) {
     std::printf("ALL RT BRIDGE TESTS PASSED\n");
     return 0;

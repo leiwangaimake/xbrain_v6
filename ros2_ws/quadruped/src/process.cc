@@ -197,6 +197,22 @@ bool QuadrupedProcess::SendModeFrame(ModeAction action, std::int64_t param,
   return true;
 }
 
+bool QuadrupedProcess::SendLightFrame(bool custom_mode,
+                                     const chs_a::LedSetting& head,
+                                     const chs_a::LedSetting& tail) {
+  std::uint8_t buf[512];
+  const std::size_t n = chs_a::EncodeCustomLight(
+      buf, sizeof(buf), msg_id_++, WallNow(), custom_mode, head, tail);
+  // A zero-length encode means the buffer was too small for this message --
+  // a defect, not a transient. Reporting false lets the caller count it
+  // instead of incrementing a "sent" counter for a frame nobody sent, which
+  // is the shape 13 ASM-6 recorded.
+  if (n == 0) return false;
+  if (tx_.Send(TxCaller::kNonRealtime, buf, n) != TxResult::kSent) return false;
+  ++light_frames_sent_;
+  return true;
+}
+
 ModeRequestResult QuadrupedProcess::OnChassisAction(double now_mono_s,
                                                     ModeAction action,
                                                     std::int64_t param) {

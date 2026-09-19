@@ -353,6 +353,53 @@ void RtBridge::HandleHello(double now_mono_s, const char* data,
   if (Publish(kHelloAckSuffix, out, n)) ++hello_ok_;
 }
 
+void RtBridge::HandleLight(double now_mono_s, const char* data,
+                           std::size_t len) {
+  (void)now_mono_s;
+  LightMsg m;
+  if (ParseLight(data, len, rid_, boot_, &m) != RtParse::kOk) {
+    ++light_refused_;
+    return;
+  }
+  // 13 V-47, verbatim: the front/back illumination switch 11 S9.4 lists comes
+  // from the OLD manual and does not exist in the current guide, so until the
+  // vendor answers it is refused -- "不静默丢弃, 也不假装设置成功".
+  //
+  // *** The refusal has NOWHERE TO GO. 11 S2.2.1 declares no
+  // rt/chassis/light/ack, so E_CAPABILITY cannot be answered on any key this
+  // process may publish (RT-C4 forbids the general plane, where the cmd acks
+  // live). This is the same shape 13 MS-3a records for rt/chassis/mode: the
+  // refusal is real, and the only witnesses are this counter and the log.
+  // Registered in 13 rather than papered over with a key we invented.
+  if (m.has_illumination) {
+    ++light_refused_;
+    std::fprintf(stderr,
+                 "rt_bridge: light cmd_id=%s carries `illumination`, which is "
+                 "REFUSED (13 V-47: the 1.2.6 lamp switch is absent from the "
+                 "current vendor guide). E_CAPABILITY has no ack key on this "
+                 "plane, so this line is the only report.\n",
+                 m.cmd_id.c_str());
+    // The custom half is NOT applied either. A message asking for two things
+    // and getting one is worse than a refusal: the sender has no way to learn
+    // which half took effect.
+    return;
+  }
+  chs_a::LedSetting head;
+  head.pattern = m.head_pattern;
+  head.color = m.head_color;
+  head.cycle_s = m.head_cycle_s;
+  chs_a::LedSetting tail;
+  tail.pattern = m.tail_pattern;
+  tail.color = m.tail_color;
+  tail.cycle_s = m.tail_cycle_s;
+  // ACCEPTED is counted before the send, and separately from it. "The message
+  // was accepted" and "the frame reached the chassis" are two facts, and 13
+  // ASM-6 is exactly what happens when one counter stands for both: the mode
+  // path reported accepted while nothing went out.
+  ++light_accepted_;
+  if (!proc_->SendLightFrame(m.custom_enable, head, tail)) ++light_send_failed_;
+}
+
 void RtBridge::HandleChassisMode(double now_mono_s, const char* data,
                                 std::size_t len) {
   // now_mono_s is unused: the sequence is dispatched from the control period,

@@ -118,6 +118,21 @@ YAML_TESTS = [os.path.join(ROOT, "ros2_ws", "sensor", "test", "test_yaml_lite.cc
 # changed so that the line now carries weight, and the run fails until the note
 # in the source is corrected.
 QUAD_MUTANTS = [
+    # C-07 / vendor guide 1.2.7. Led is POSITIONAL: [0] head, [1] tail.
+    # A swap produces a frame the chassis accepts and acts on backwards, so
+    # the test gives the two lamps different values in every field.
+    ("codec: the light command swaps head and tail",
+     CODEC,
+     "      head.pattern, head.color, head.cycle_s,\n"
+     "      tail.pattern, tail.color, tail.cycle_s);",
+     "      tail.pattern, tail.color, tail.cycle_s,\n"
+     "      head.pattern, head.color, head.cycle_s);"),
+    # Color is an array on the wire (guide 1.2.7), even though 11 S9.4.1 names
+    # one colour. A scalar is a different shape and the chassis answers 0xE002.
+    ("codec: the light colour is sent as a scalar, not an array",
+     CODEC,
+     '"{\\"Type\\": %d, \\"Color\\": [%d], \\"Cycle\\": %d}, "',
+     '"{\\"Type\\": %d, \\"Color\\": %d, \\"Cycle\\": %d}, "'),
     # A dropped datagram must leave no state behind. Keeping the stream buffer
     # across PushDatagram is how a bad datagram poisons the next good one.
     #
@@ -1585,6 +1600,28 @@ RT_BRIDGE_SOURCES = [
 RT_BRIDGE_TESTS = [os.path.join(QUAD, "test", "test_rt_bridge.cc")]
 
 RT_BRIDGE_MUTANTS = [
+    # 13 V-47, verbatim: illumination is refused, "不静默丢弃, 也不假装设置
+    # 成功". Accepting it silently is the fail-silent half of that sentence.
+    ("bridge: an illumination light command is accepted",
+     RT_BRIDGE_CC,
+     "  if (m.has_illumination) {",
+     "  if (false) {"),
+    # A message carrying both halves must apply NEITHER. Applying the custom
+    # half leaves the sender unable to learn which of its two requests took
+    # effect -- worse than a refusal it can see.
+    ("bridge: a refused illumination still applies the custom half",
+     RT_BRIDGE_CC,
+     "    // which half took effect.\n"
+     "    return;",
+     "    // which half took effect.\n"
+     "    /* fall through */;"),
+    # 13 ASM-6's lesson as a counter: accepted and sent are two facts. Counting
+    # the send as an acceptance reports success for a frame nobody sent.
+    ("bridge: a failed light send is counted as accepted",
+     RT_BRIDGE_CC,
+     "  ++light_accepted_;\n"
+     "  if (!proc_->SendLightFrame(m.custom_enable, head, tail)) ++light_send_failed_;",
+     "  if (proc_->SendLightFrame(m.custom_enable, head, tail)) ++light_accepted_;"),
     # 11 S4.2 / 13 S7.1. rt/chassis/power was declared in rt_keys.cc and
     # WritePowerState was fully implemented WITH tests, and nothing ever called
     # it -- so CHG-10's low-battery return, which reads soc_pct off state/power
@@ -1780,6 +1817,47 @@ RT_PARSE_SOURCES = [RT_PARSE_CC]
 RT_PARSE_TESTS = [os.path.join(QUAD, "test", "test_rt_parse.cc")]
 
 RT_PARSE_MUTANTS = [
+    # 11 S9.4.1 states the chassis lamps have NO RED and puts the deterrent
+    # flash on our own payload (PAY-02). Mapping an unknown colour onto a
+    # member turns a refused command into a warning that does not warn.
+    ("rt_parse: an unknown light colour falls back to a member",
+     RT_PARSE_CC,
+     "  if (!GetString(*it, \"color\", &name) ||\n"
+     "      !LookupNamed(kLightColors, sizeof(kLightColors) / sizeof(kLightColors[0]),\n"
+     "                   name, color)) {\n"
+     "    return false;\n  }",
+     "  if (!GetString(*it, \"color\", &name)) return false;\n"
+     "  if (!LookupNamed(kLightColors, sizeof(kLightColors) / sizeof(kLightColors[0]),\n"
+     "                   name, color)) { *color = 1; }"),
+    # 13 V-47 needs the PRESENCE of illumination to reach the caller. A parser
+    # that drops it leaves nothing to refuse.
+    ("rt_parse: the light parser drops the illumination key",
+     RT_PARSE_CC,
+     '  out->has_illumination = data.find("illumination") != data.end();',
+     "  out->has_illumination = false;"),
+    # Both lamps are mandatory: the chassis takes them as a positional pair, so
+    # a message naming one has no representation on the wire.
+    ("rt_parse: a light command with only one lamp is accepted",
+     RT_PARSE_CC,
+     '        !ReadLamp(*custom, "tail", &out->tail_pattern, &out->tail_color,\n'
+     "                  &out->tail_cycle_s)) {",
+     "        false) {"),
+    # LOOSENING (11 S3.0.1): a light command that fails the envelope check is
+    # refused. Copying the estop path's stop-first shape here would accept
+    # anything that looked roughly right.
+    ("rt_parse: the light command skips the envelope check",
+     RT_PARSE_CC,
+     "  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &data);\n"
+     "  if (env != RtParse::kOk) return env;\n"
+     '  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {\n'
+     "    return RtParse::kMissingField;\n"
+     "  }\n"
+     "  // 13 V-47: presence is what the caller needs.",
+     "  ReadEnvelope(j, our_rid, our_boot, &out->env, &data);\n"
+     '  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {\n'
+     "    return RtParse::kMissingField;\n"
+     "  }\n"
+     "  // 13 V-47: presence is what the caller needs."),
     # 11 S9.1.4: an unparsable proto_version must REFUSE. Defaulting major to
     # ours makes an unreadable version compatible with us -- the one answer it
     # must never give.

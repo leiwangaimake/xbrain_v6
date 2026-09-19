@@ -503,6 +503,64 @@ int main(int argc, char** argv) {
                             std::strlen(obj), &r));
   }
 
+  // ---- C-07 custom light (13 S5.1 / vendor guide 1.2.7) ------------------
+  {
+    // The two lamps are POSITIONAL: Led[0] head, Led[1] tail. Swapping them
+    // produces a frame the chassis accepts and acts on backwards, which is
+    // why the two are given different values in every field -- a test with
+    // matching lamps passes on a swapped encoder.
+    std::uint8_t buf[512];
+    LedSetting head;
+    head.pattern = 5;          // blink
+    head.color = 1;            // white
+    head.cycle_s = 1;
+    LedSetting tail;
+    tail.pattern = 4;          // breath
+    tail.color = 2;            // green
+    tail.cycle_s = 2;
+    const std::size_t n = EncodeCustomLight(buf, sizeof(buf), 0x1234,
+                                                   kFixedWall, true, head, tail);
+    CHECK(n > kHeaderBytes);
+    Header h;
+    CHECK(ReadHeader(buf, n, &h));
+    const std::string asdu(reinterpret_cast<const char*>(buf) +
+                               kHeaderBytes,
+                           n - kHeaderBytes);
+    // CLAUDE.md 5.5: hex32 codes go out as DECIMAL integers -- JSON has no
+    // hexadecimal literal, and a frame that spells them in hex comes back
+    // 0xE002 on the first try.
+    CHECK(asdu.find("\"Type\": 1048581") != std::string::npos);    // 0x00100005
+    CHECK(asdu.find("\"Command\": 2097154") != std::string::npos); // 0x00200002
+    CHECK(asdu.find("\"PatrolDevice\"") != std::string::npos);
+    CHECK(asdu.find("\"Time\"") != std::string::npos);
+    CHECK(asdu.find("\"CustomMode\": true") != std::string::npos);
+    // Color is an ARRAY on the wire even though 11 S9.4.1 names one colour;
+    // the vendor's own example sends a single-element array.
+    const std::size_t head_at = asdu.find("\"Color\": [1]");
+    const std::size_t tail_at = asdu.find("\"Color\": [2]");
+    CHECK(head_at != std::string::npos);
+    CHECK(tail_at != std::string::npos);
+    // ORDER. mutant: swap head and tail in the encoder -> this goes red while
+    // every "the field is present" check above stays green.
+    CHECK(head_at < tail_at);
+    CHECK(asdu.find("\"Type\": 5") < asdu.find("\"Type\": 4"));
+    CHECK(asdu.find("\"Cycle\": 1") < asdu.find("\"Cycle\": 2"));
+  }
+  {
+    // CustomMode false still sends both lamps: the message has no form that
+    // omits them, and leaving them out would let the chassis decide.
+    std::uint8_t buf[512];
+    LedSetting off;
+    const std::size_t n = EncodeCustomLight(buf, sizeof(buf), 1, kFixedWall,
+                                                   false, off, off);
+    CHECK(n > kHeaderBytes);
+    const std::string asdu(reinterpret_cast<const char*>(buf) +
+                               kHeaderBytes,
+                           n - kHeaderBytes);
+    CHECK(asdu.find("\"CustomMode\": false") != std::string::npos);
+    CHECK(asdu.find("\"Led\": [") != std::string::npos);
+  }
+
   if (g_failures == 0) {
     std::printf("ALL CHS_A_CODEC TESTS PASSED\n");
     return 0;

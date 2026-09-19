@@ -81,12 +81,34 @@ struct Code {
   std::uint32_t command;
 };
 
+// One lamp's setting for C-07. The chassis takes Led as a TWO-element array,
+// [0] the head lamp and [1] the tail lamp (vendor guide 1.2.7), so both are
+// always sent -- there is no "change only the tail" form of this command, and
+// omitting one would leave the chassis to decide what the missing element
+// means.
+struct LedSetting {
+  // 0 solid / 1 fill_flow / 2 move_flow / 3 grad_flow / 4 breath / 5 blink,
+  // the vendor's own numbering (guide 1.2.7), which 11 S9.4.1 names.
+  int pattern = 0;
+  // 0 black / 1 white / 2 green / 3 blue. *** There is NO RED -- 11 S9.4.1
+  // states it outright and puts the deterrent flash on our own payload
+  // (PAY-02). A caller asking for red is refused upstream rather than mapped
+  // onto a nearby colour.
+  int color = 0;
+  // Duty cycle in SECONDS, used by the chassis only for breath and blink
+  // (guide 1.2.7). Sent regardless: the field is not optional in the message,
+  // and the chassis ignoring it for the other four patterns is its own rule,
+  // not something to encode by leaving the key out.
+  int cycle_s = 0;
+};
+
 inline constexpr Code kHeartbeat{0x00100064u, 0x00000005u};       // C-01
 inline constexpr Code kUsageModeSwitch{0x00100002u, 0x00500002u}; // C-02
 inline constexpr Code kMotionStateSwitch{0x00100001u, 0x00200002u};  // C-03
 inline constexpr Code kGaitSwitch{0x00100001u, 0x00300002u};      // C-04
 inline constexpr Code kNormalizedAxis{0x00100001u, 0x00100002u};  // C-05 decode only
 inline constexpr Code kRealAxis{0x00100001u, 0x00110002u};        // C-06 the one we drive with
+inline constexpr Code kCustomLight{0x00100005u, 0x00200002u};     // C-07
 inline constexpr Code kSdkMode{0x00100005u, 0x00300002u};         // C-08
 
 // Report codes, for dispatch on the receive side. The command is the same for
@@ -151,6 +173,19 @@ std::size_t EncodeMotionState(std::uint8_t* buf, std::size_t cap,
 // its value table does not exist anywhere (13 V-45), so sending a guessed value
 // is worse than sending none. If the chassis ever rejects the frame for a
 // missing ActionParam, that is the moment to add it -- with a measured value.
+// C-07, the custom light command (13 S5.1 / vendor guide 1.2.7). Items is
+// {"CustomMode": bool, "Led": [head, tail]} and each element is
+// {"Type", "Color": [int], "Cycle"}.
+//
+// *** Color is an ARRAY in the chassis message while 11 S9.4.1 names a single
+// `color`. The vendor's own example sends a one-element array, so that is what
+// this writes -- the array is the wire shape, not a per-segment list we have
+// any way to fill.
+std::size_t EncodeCustomLight(std::uint8_t* buf, std::size_t cap,
+                              std::uint16_t msg_id, std::int64_t now_wall,
+                              bool custom_mode, const LedSetting& head,
+                              const LedSetting& tail);
+
 std::size_t EncodeGait(std::uint8_t* buf, std::size_t cap, std::uint16_t msg_id,
                        std::int64_t now_wall, std::uint32_t gait_param);
 

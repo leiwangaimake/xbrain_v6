@@ -357,6 +357,118 @@ int main() {
           == RtParse::kUnsupportedAction);
   }
 
+  // ---- ParseLight (11 S9.4.1 / 13 V-47) ----------------------------------
+  {
+    // A well-formed custom light command. The names map to the vendor's
+    // integers (guide 1.2.7) and BOTH lamps are mandatory -- the chassis takes
+    // them as a positional two-element array, so a message naming only one has
+    // no representation on the wire.
+    const std::string ok = Wrap(
+        "{\"cmd_id\":\"l-01\",\"custom\":{\"enable\":true,"
+        "\"head\":{\"pattern\":\"blink\",\"color\":\"white\",\"cycle_s\":1},"
+        "\"tail\":{\"pattern\":\"breath\",\"color\":\"green\",\"cycle_s\":2}}}");
+    LightMsg m;
+    CHECK(ParseLight(ok.data(), ok.size(), kRid, kBoot, &m) == RtParse::kOk);
+    CHECK(m.cmd_id == "l-01");
+    CHECK(m.has_custom);
+    CHECK(m.custom_enable);
+    CHECK(!m.has_illumination);
+    CHECK(m.head_pattern == 5);        // blink
+    CHECK(m.head_color == 1);          // white
+    CHECK(m.head_cycle_s == 1);
+    CHECK(m.tail_pattern == 4);        // breath
+    CHECK(m.tail_color == 2);          // green
+    CHECK(m.tail_cycle_s == 2);
+    // head and tail must NOT be the same values: a parser that filled both
+    // from one object would pass every check above if they matched.
+    CHECK(m.head_pattern != m.tail_pattern);
+    CHECK(m.head_color != m.tail_color);
+  }
+  {
+    // *** RED. 11 S9.4.1 states the chassis lamps have no red and puts the
+    // deterrent flash on our own payload (PAY-02). A request for it is
+    // REFUSED, never mapped onto white -- a warning that does not warn is
+    // worse than a refused command.
+    const std::string red = Wrap(
+        "{\"cmd_id\":\"l-02\",\"custom\":{\"enable\":true,"
+        "\"head\":{\"pattern\":\"blink\",\"color\":\"red\",\"cycle_s\":1},"
+        "\"tail\":{\"pattern\":\"solid\",\"color\":\"black\",\"cycle_s\":0}}}");
+    LightMsg m;
+    CHECK(ParseLight(red.data(), red.size(), kRid, kBoot, &m) ==
+          RtParse::kUnsupportedAction);
+  }
+  {
+    // A pattern outside the six. Same rule, same outcome.
+    const std::string bad = Wrap(
+        "{\"cmd_id\":\"l-03\",\"custom\":{\"enable\":true,"
+        "\"head\":{\"pattern\":\"strobe\",\"color\":\"white\",\"cycle_s\":1},"
+        "\"tail\":{\"pattern\":\"solid\",\"color\":\"black\",\"cycle_s\":0}}}");
+    LightMsg m;
+    CHECK(ParseLight(bad.data(), bad.size(), kRid, kBoot, &m) ==
+          RtParse::kUnsupportedAction);
+  }
+  {
+    // Only one lamp named. Refused: the wire form is positional over two.
+    const std::string half = Wrap(
+        "{\"cmd_id\":\"l-04\",\"custom\":{\"enable\":true,"
+        "\"head\":{\"pattern\":\"solid\",\"color\":\"white\",\"cycle_s\":0}}}");
+    LightMsg m;
+    CHECK(ParseLight(half.data(), half.size(), kRid, kBoot, &m) ==
+          RtParse::kUnsupportedAction);
+  }
+  {
+    // 13 V-47: illumination is REPORTED, not dropped. The caller has to refuse
+    // it, and it cannot refuse what the parser silently discarded.
+    const std::string illum = Wrap(
+        "{\"cmd_id\":\"l-05\",\"illumination\":{\"front\":1,\"back\":0}}");
+    LightMsg m;
+    CHECK(ParseLight(illum.data(), illum.size(), kRid, kBoot, &m) ==
+          RtParse::kOk);
+    CHECK(m.has_illumination);
+    CHECK(!m.has_custom);
+  }
+  {
+    // Neither half. Refused rather than treated as a no-op: an empty light
+    // command is a schema mistake at the sender, and "accepted" would hide it.
+    const std::string empty = Wrap("{\"cmd_id\":\"l-06\"}");
+    LightMsg m;
+    CHECK(ParseLight(empty.data(), empty.size(), kRid, kBoot, &m) ==
+          RtParse::kMissingField);
+  }
+  {
+    // LOOSENING (11 S3.0.1): no envelope, no command. The estop path parses
+    // after it stops; this one must not copy that shape.
+    const std::string bare =
+        "{\"cmd_id\":\"l-07\",\"custom\":{\"enable\":false,"
+        "\"head\":{\"pattern\":\"solid\",\"color\":\"black\",\"cycle_s\":0},"
+        "\"tail\":{\"pattern\":\"solid\",\"color\":\"black\",\"cycle_s\":0}}}";
+    LightMsg m;
+    CHECK(ParseLight(bare.data(), bare.size(), kRid, kBoot, &m) !=
+          RtParse::kOk);
+  }
+  {
+    // *** The case that actually pins the envelope CHECK rather than the
+    // envelope's side effects. ReadEnvelope fills `data` before it validates
+    // ts_sync, so a body that parses fine reaches the rest of the function
+    // even when the envelope was rejected -- an implementation that ignored
+    // ReadEnvelope's return value passes every other envelope case here and
+    // fails only this one. Found by a surviving mutant, not by reading.
+    //
+    // 11 S3.0 makes ts_sync mandatory; its absence is a malformed envelope for
+    // a loosening command.
+    const std::string no_sync =
+        std::string("{\"v\":1,\"rid\":\"") + kRid +
+        "\",\"ts\":1789455340.125,\"mono\":812.5,\"boot\":\"" + kBoot +
+        "\",\"seq\":7,\"src\":\"p1_motion\",\"data\":"
+        "{\"cmd_id\":\"l-08\",\"custom\":{\"enable\":true,"
+        "\"head\":{\"pattern\":\"solid\",\"color\":\"white\",\"cycle_s\":0},"
+        "\"tail\":{\"pattern\":\"solid\",\"color\":\"white\",\"cycle_s\":0}}}}";
+    LightMsg m;
+    CHECK(ParseLight(no_sync.data(), no_sync.size(), kRid, kBoot, &m) ==
+          RtParse::kMissingField);
+    CHECK(!m.has_custom);
+  }
+
   if (g_failures == 0) {
     std::printf("ALL RT PARSE TESTS PASSED\n");
     return 0;

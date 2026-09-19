@@ -96,6 +96,10 @@ class RtBridge {
   // 11 S9.6 spec block, from the resolved config.
   void SetSpec(bool holonomic, double max_vx, double max_vy, double max_wz);
 
+  // 11 S9.4.1 rt/chassis/light. Subscribed, never published: p1_motion
+  // forwards it from cmd/chassis/light (11 P1-8).
+  void HandleLight(double now_mono_s, const char* data, std::size_t len);
+
   void HandleCmdVel(double now_mono_s, const char* data, std::size_t len);
 
   // LOOSENING. Every outcome is acked, including refusals -- an ack that only
@@ -136,6 +140,15 @@ class RtBridge {
   // switch and a refused stand have different causes and different fixes.
   std::uint64_t mode_accepted() const { return mode_ok_; }
   std::uint64_t mode_refused() const { return mode_refused_; }
+  // Accepted: parsed, and past 13 V-47. Counted BEFORE the send and separately
+  // from it -- 13 ASM-6 is what happens when one counter stands for both
+  // "accepted" and "went out".
+  std::uint64_t lights_accepted() const { return light_accepted_; }
+  // Refused: malformed, or carrying `illumination` (13 V-47). Distinct from a
+  // send failure, because an operator watching a lamp that stayed dark needs
+  // to know whether the message was rejected or the link was.
+  std::uint64_t lights_refused() const { return light_refused_; }
+  std::uint64_t light_send_failures() const { return light_send_failed_; }
   std::uint64_t hello_answered() const { return hello_ok_; }
   std::uint64_t hello_refused() const { return hello_refused_; }
   std::uint64_t ctrl_refused() const { return ctrl_refused_; }
@@ -164,6 +177,9 @@ class RtBridge {
   std::uint64_t cmd_refused_ = 0;
   std::uint64_t ctrl_ok_ = 0;
   std::uint64_t mode_ok_ = 0;
+  std::uint64_t light_accepted_ = 0;
+  std::uint64_t light_refused_ = 0;
+  std::uint64_t light_send_failed_ = 0;
   std::uint64_t hello_ok_ = 0;
   std::uint64_t hello_refused_ = 0;
   // model / version arrive on the chs_a_rx thread (PublishReports) and are

@@ -182,6 +182,38 @@ RtParse ParseHello(const char* json, std::size_t len,
 // unknown or read-only one refuses the whole message rather than applying the
 // fields that happened to parse -- a half-applied mode triple is a state no
 // read-back expectation describes (13 MS-5 compares all three).
+// 11 S9.4.1 rt/chassis/light. Two halves with very different fates:
+//
+//   custom.*       C-07, implemented. Names map to the vendor's integers.
+//   illumination.* 13 V-47: the front/back lamp switch 11 S9.4 lists comes
+//                  from the OLD manual (1.2.6) and does not exist in the
+//                  current guide. Until the vendor answers, receiving it is
+//                  refused with E_CAPABILITY -- 13 says in as many words
+//                  "不静默丢弃, 也不假装设置成功".
+//
+// So the parser reports illumination's PRESENCE rather than its value: the
+// caller has to refuse, and it cannot refuse what the parser silently dropped.
+struct LightMsg {
+  Envelope env;
+  std::string cmd_id;
+  // 13 V-47. True when the key was present at all, whatever it held.
+  bool has_illumination = false;
+  // custom.enable, and the two lamps. Absent custom means "nothing to do" --
+  // a message with neither half is refused, because an empty light command is
+  // more likely a schema mistake than an intention.
+  bool has_custom = false;
+  bool custom_enable = false;
+  int head_pattern = 0;
+  int head_color = 0;
+  int head_cycle_s = 0;
+  int tail_pattern = 0;
+  int tail_color = 0;
+  int tail_cycle_s = 0;
+};
+
+RtParse ParseLight(const char* json, std::size_t len, const std::string& our_rid,
+                   const std::string& our_boot, LightMsg* out);
+
 RtParse ParseChassisMode(const char* json, std::size_t len,
                          const std::string& our_rid, const std::string& our_boot,
                          ChassisModeMsg* out);
