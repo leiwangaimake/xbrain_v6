@@ -174,6 +174,17 @@ class RtBridge {
   mutable std::mutex chassis_id_mu_;
   std::string chassis_model_;
   std::string chassis_version_;
+  // 11 S4.2 PowerState is assembled from three different reports, so the two
+  // that are not the trigger are cached here. Same mutex and the same reason:
+  // BasicStatus holds std::string and cannot cross a lock-free slot (12 RTC-6),
+  // and neither thread touching this is realtime.
+  chs_a::BasicStatus last_basic_;
+  bool have_basic_ = false;
+  double last_remain_mile_km_ = 0.0;
+  // Monotonic deadline for the next PowerState. Negative means none has been
+  // published yet, so the first device report publishes immediately rather
+  // than waiting out a period the process has not lived through.
+  double power_next_s_ = -1.0;
   // The last triple this bridge published, remembered for hello_ack (answered
   // on the subscription thread, which cannot consume from the state slot).
   bool last_has_triple_ = false;

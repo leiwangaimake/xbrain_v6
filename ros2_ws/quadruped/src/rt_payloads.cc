@@ -31,10 +31,23 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string_view>
+
+#include "xbrain/enums/closed_sets.h"
 
 namespace quadruped {
 namespace rt {
 namespace {
+
+namespace sets = hachist::xbrain::enums;
+
+// Lengths taken from the generated tables rather than written out: a value
+// added to sets.yaml changes these with no edit here, and 11 S13.6's ban on
+// substituting a nearby member is only enforceable if the bound is the real one.
+constexpr std::size_t kChargeCount =
+    sizeof(sets::kCharge) / sizeof(sets::kCharge[0]);
+constexpr std::size_t kPowerManagementCount =
+    sizeof(sets::kPowerManagement) / sizeof(sets::kPowerManagement[0]);
 
 // Bounded appender. Once it has overflowed it stays overflowed, so a caller can
 // write the whole object and check once at the end rather than after every
@@ -114,6 +127,21 @@ class Appender {
   }
 
   void Bool(bool v) { Raw(v ? "true" : "false"); }
+
+  // A JSON string from a string_view. Closed-set members arrive this way (the
+  // generated tables are string_view, not NUL-terminated char*), and they need
+  // no escaping: every member is [a-z_]+ by the generator's own rule. Escaping
+  // is still cheap to keep, so this routes through Str's rules rather than
+  // growing a second, laxer path that a non-member string could later reach.
+  void StrView(std::string_view v) {
+    Raw("\"");
+    for (const char c : v) {
+      const char one[2] = {c, '\0'};
+      Raw(one);
+      if (overflow_) return;
+    }
+    Raw("\"");
+  }
 
   // Finish. Returns 0 on any overflow that happened anywhere along the way.
   std::size_t Finish() {
@@ -381,7 +409,7 @@ std::size_t WritePowerState(const PowerStateInput& in, char* out,
   if (in.device == nullptr) {
     a.Raw("\"soc_pct\":null,\"batteries\":null,\"battery_mapping\":\"unknown\"");
     a.Raw(",\"present_count\":0,\"remain_mile_km\":null");
-    a.Raw(",\"power_management\":null,\"list\":[]}");
+    a.Raw(",\"power_management\":null,\"charge\":null,\"list\":[]}");
     return a.Finish();
   }
 
@@ -452,20 +480,38 @@ std::size_t WritePowerState(const PowerStateInput& in, char* out,
     }
   }
 
-  // 11 S9.8.3: 0 normal / 1 single_battery. An unregistered value is reported
-  // as itself rather than mapped to either, the same open-set discipline the
-  // mode fields follow.
+  // 11 S9.8.1: 0 normal / 1 single_battery. The two names come from the SHARED
+  // closed set, never from literals here (CLAUDE.md S3.5) -- they are the same
+  // strings the Python side branches on, and a copy is how the two spellings
+  // drift apart until integration. An unregistered value is reported as itself,
+  // the same open-set discipline the mode fields follow.
   a.Raw(",\"power_management\":");
   if (in.basic == nullptr) {
     a.Raw("null");
-  } else if (in.basic->power_management == 0) {
-    a.Str("normal");
-  } else if (in.basic->power_management == 1) {
-    a.Str("single_battery");
+  } else if (in.basic->power_management >= 0 &&
+             static_cast<std::size_t>(in.basic->power_management) <
+                 kPowerManagementCount) {
+    a.StrView(sets::kPowerManagement[
+        static_cast<std::size_t>(in.basic->power_management)]);
   } else {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "unknown_%d", in.basic->power_management);
     a.Str(buf);
+  }
+  // 11 S4.2 lists `charge` in PowerState and S9.8.1 gives the mapping
+  // (idle 0 ... on_dock_no_current 5). It was absent from this object, which
+  // left state/power unable to say whether the robot is on a dock at all --
+  // and CHG's whole flow keys off it.
+  //
+  // An out-of-range value is NULL, not a nearby member: 11 S13.6 forbids
+  // degrading to something close, and publishing `idle` for a state we do not
+  // recognise would tell the upper stack the robot is free to drive away.
+  a.Raw(",\"charge\":");
+  if (in.basic == nullptr || in.basic->charge < 0 ||
+      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {
+    a.Raw("null");
+  } else {
+    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);
   }
   a.Raw("}");
   return a.Finish();

@@ -108,6 +108,16 @@ bool Has(const std::string& hay, const std::string& needle) {
 
 }  // namespace
 
+// The payload of the LAST message sent on one key, or empty when the key never
+// appeared. Reading the last rather than scanning for any is deliberate: a case
+// that publishes twice must be checked against what a subscriber would hold.
+std::string FindLast(const std::vector<Sent>& sent, const std::string& key) {
+  for (std::size_t i = sent.size(); i > 0; --i) {
+    if (sent[i - 1].key == key) return sent[i - 1].body;
+  }
+  return std::string();
+}
+
 int main() {
   // ---- a conformant cmd_vel reaches the process --------------------------
   {
@@ -426,14 +436,18 @@ int main() {
     b.PublishReports(0.1, nullptr, &motion, nullptr, nullptr);
     CHECK(sent.back().key == "rt/chassis/motion");
 
+    // The device report carries the batteries, so it ALSO triggers PowerState
+    // (11 S4.2, 1 Hz). Two messages land here, not one.
     chs_a::DeviceStatus device;
     b.PublishReports(0.2, nullptr, nullptr, &device, nullptr);
-    CHECK(sent.back().key == "rt/chassis/device");
+    CHECK(sent.size() == 4);
+    CHECK(sent[2].key == "rt/chassis/device");
+    CHECK(sent[3].key == "rt/chassis/power");
 
     chs_a::FaultReport fault;
     b.PublishReports(0.3, nullptr, nullptr, nullptr, &fault);
     CHECK(sent.back().key == "rt/chassis/fault");
-    CHECK(sent.size() == 4);
+    CHECK(sent.size() == 5);
 
     // A null report publishes NOTHING. The rx thread hands one struct and
     // four nulls per frame; publishing empties for the other three would put
@@ -442,6 +456,90 @@ int main() {
     const std::size_t before = sent.size();
     b.PublishReports(0.4, nullptr, nullptr, nullptr, nullptr);
     CHECK(sent.size() == before);
+  }
+
+  // ---- PowerState reaches rt/chassis/power at 1 Hz (11 S4.2 / 13 S7.1) ----
+  {
+    // The gap this closes: rt/chassis/power was declared in rt_keys.cc and
+    // WritePowerState was fully implemented WITH tests, and nothing ever
+    // called it. CHG-10's low-battery return reads soc_pct off state/power
+    // (CR-5 relays this key), so the rule had no data source at all.
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+    // The three pieces arrive on three DIFFERENT reports. Basic and motion
+    // first, so the assembled message can be checked for their fields --
+    // publishing only what the triggering report carries is the failure this
+    // ordering is chosen to expose.
+    chs_a::BasicStatus basic;
+    basic.power_management = 1;          // single_battery (11 S9.8.1)
+    basic.charge = 2;                    // charging
+    b.PublishReports(0.0, &basic, nullptr, nullptr, nullptr);
+    chs_a::MotionStatus motion;
+    motion.remain_mile = 4.2;
+    b.PublishReports(0.05, nullptr, &motion, nullptr, nullptr);
+
+    chs_a::DeviceStatus device;
+    chs_a::BatteryEntry b0;
+    b0.level = 47;
+    b0.voltage = 51.2;
+    b0.present = true;
+    device.batteries.push_back(b0);
+    device.min_level = 47;
+    device.present_count = 1;
+    b.PublishReports(0.1, nullptr, nullptr, &device, nullptr);
+
+    const std::string power = FindLast(sent, "rt/chassis/power");
+    CHECK(!power.empty());
+    // Fields from all three reports, which is the point of caching them.
+    CHECK(power.find("\"soc_pct\":47") != std::string::npos);
+    CHECK(power.find("\"remain_mile_km\":4.2") != std::string::npos);
+    // From the SHARED closed set, not a literal in the writer (CLAUDE.md 3.5).
+    CHECK(power.find("\"power_management\":\"single_battery\"") !=
+          std::string::npos);
+    // 11 S4.2 lists `charge`; it used to be absent from this object entirely.
+    CHECK(power.find("\"charge\":\"charging\"") != std::string::npos);
+    // 13 BAT-2: left/right stay null while the mapping is unknown (V-55).
+    CHECK(power.find("\"battery_mapping\":\"unknown\"") != std::string::npos);
+    CHECK(power.find("\"batteries\":null") != std::string::npos);
+
+    // 1 Hz, on the CLOCK. A second device report 0.2 s later must NOT publish
+    // again -- 13 S7.1 gives PowerState 1 Hz while the device stream runs at
+    // 2 Hz, so a rate enforced by counting reports would double the moment the
+    // chassis changed that cadence.
+    // mutant: drop the deadline check -> a second power message appears.
+    const std::size_t before = sent.size();
+    b.PublishReports(0.2, nullptr, nullptr, &device, nullptr);
+    CHECK(sent.size() == before + 1);          // the device report itself
+    CHECK(sent.back().key == "rt/chassis/device");
+
+    // And it DOES publish again once the period has passed. Without this the
+    // assertion above is satisfied by an implementation that publishes once
+    // and never again.
+    b.PublishReports(1.3, nullptr, nullptr, &device, nullptr);
+    CHECK(sent.back().key == "rt/chassis/power");
+
+    // A charge value outside the closed set is NULL, never a nearby member.
+    // 11 S13.6 bans degrading to something close, and `idle` in particular
+    // tells the upper stack the robot is free to drive away from a dock.
+    // mutant: answer kCharge[0] instead of null -> red.
+    chs_a::BasicStatus odd;
+    odd.charge = 9;                      // outside idle..on_dock_no_current
+    odd.power_management = 7;            // outside normal / single_battery
+    b.PublishReports(2.4, &odd, nullptr, nullptr, nullptr);
+    b.PublishReports(2.5, nullptr, nullptr, &device, nullptr);
+    const std::string odd_power = FindLast(sent, "rt/chassis/power");
+    CHECK(odd_power.find("\"charge\":null") != std::string::npos);
+    // power_management keeps the open-set form the writer already used for it
+    // -- the raw value is preserved rather than dropped, which is the 13 S6.5
+    // discipline, and the two fields differ deliberately: `charge` has no
+    // unknown_ form in 11 S4.2's schema.
+    CHECK(odd_power.find("\"power_management\":\"unknown_7\"") !=
+          std::string::npos);
   }
 
   if (g_failures == 0) {

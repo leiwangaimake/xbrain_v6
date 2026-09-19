@@ -936,9 +936,14 @@ PAYLOADS_MUTANTS = [
      "    if (false) {\n      // A configured mapping that points outside the array is a configuration"),
     # An unregistered power_management mapped onto one of the two known values
     # is the same fail-open the mode fields refuse.
-    ("payloads: an unregistered power_management mapped to normal",
-     PAYLOADS_CC, '  } else if (in.basic->power_management == 1) {',
-     '  } else if (in.basic->power_management >= 1) {'),
+    # The bound moved when power_management started reading its names from the
+    # shared closed set (CLAUDE.md 3.5) instead of two literals. Widening it
+    # past the table length is the same defect in the new shape: an
+    # unregistered value would index past kPowerManagement.
+    ("payloads: an unregistered power_management mapped to a member",
+     PAYLOADS_CC,
+     "                 kPowerManagementCount) {",
+     "                 kPowerManagementCount + 8) {"),
     # CF-5: the prefix travels with the code. Without it the two overlapping
     # code spaces cannot be told apart at all.
     ("payloads: fault code published without its namespace prefix",
@@ -1580,6 +1585,51 @@ RT_BRIDGE_SOURCES = [
 RT_BRIDGE_TESTS = [os.path.join(QUAD, "test", "test_rt_bridge.cc")]
 
 RT_BRIDGE_MUTANTS = [
+    # 11 S4.2 / 13 S7.1. rt/chassis/power was declared in rt_keys.cc and
+    # WritePowerState was fully implemented WITH tests, and nothing ever called
+    # it -- so CHG-10's low-battery return, which reads soc_pct off state/power
+    # (CR-5 relays this key), had no data source at all.
+    ("bridge: PowerState is never published",
+     RT_BRIDGE_CC,
+     "      if (n > 0) Publish(kPowerSuffix, out, n);",
+     "      (void)n;"),
+    # 13 S7.1 gives PowerState 1 Hz while the device stream that triggers it
+    # runs at 2 Hz. Publishing on every device report doubles the rate, and a
+    # rate enforced by counting reports would break again the day the chassis
+    # changes that cadence -- which is why the deadline is on the clock.
+    ("bridge: PowerState publishes on every device report",
+     RT_BRIDGE_CC,
+     "    if (power_next_s_ < 0.0 || now_mono_s >= power_next_s_) {",
+     "    if (true) {"),
+    # The three sources are three different reports. Using only what the
+    # triggering report carries drops remain_mile and power_management from
+    # every message.
+    ("bridge: PowerState forgets the cached basic report",
+     RT_BRIDGE_CC,
+     "      if (have_basic) p.basic = &basic_copy;",
+     "      /* basic dropped */;"),
+    ("bridge: PowerState forgets the cached remain_mile",
+     RT_BRIDGE_CC,
+     "      p.remain_mile_km = remain_mile;",
+     "      p.remain_mile_km = 0.0;"),
+    # 11 S4.2 lists `charge`, and it was absent from the object entirely --
+    # state/power could not say whether the robot was on a dock.
+    ("payloads: PowerState drops the charge field",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"charge\\":");\n'
+     "  if (in.basic == nullptr || in.basic->charge < 0 ||",
+     '  a.Raw(",\\"_charge\\":");\n'
+     "  if (in.basic == nullptr || in.basic->charge < 0 ||"),
+    # 11 S13.6 forbids degrading to a nearby member. Publishing `idle` for a
+    # charge state we do not recognise tells the upper stack the robot is free
+    # to drive away.
+    ("payloads: an unrecognised charge state is reported as idle",
+     PAYLOADS_CC,
+     "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
+     '    a.Raw("null");',
+     "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
+     '    a.StrView(sets::kCharge[0]);',
+     ),
     # 13 ASM-4 (3) / S7.1 Q-5. Recorded as "v1.15 已做" while SetReportSink
     # had zero production call sites -- four keys declared, four writers
     # implemented and tested, not one frame sent.
@@ -1589,8 +1639,10 @@ RT_BRIDGE_MUTANTS = [
      'if (n > 0) Publish(kStateSuffix, out, n);'),
     ("bridge: a null report is published as an empty message",
      RT_BRIDGE_CC,
-     "  if (motion != nullptr) {",
-     "  if (true) {"),
+     "  if (motion != nullptr) {\n"
+     "    const std::size_t n = WriteChassisMotion",
+     "  if (true) {\n"
+     "    const std::size_t n = WriteChassisMotion"),
     # *** THE ONE THIS FILE'S ORDERING EXISTS FOR. Stopping only when the
     # payload parsed is the natural-looking version, and it silently removes
     # the waiver of 11 S3.0.1: a truncated or hostile estop then does nothing.

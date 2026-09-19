@@ -58,6 +58,12 @@ constexpr const char* kBasicSuffix = "rt/chassis/basic";
 constexpr const char* kMotionSuffix = "rt/chassis/motion";
 constexpr const char* kDeviceSuffix = "rt/chassis/device";
 constexpr const char* kFaultSuffix = "rt/chassis/fault";
+constexpr const char* kPowerSuffix = "rt/chassis/power";
+// 13 S7.1 gives PowerState 1 Hz. The device report that carries the
+// batteries arrives at 2 Hz (S7.2), so the rate is enforced on the clock
+// rather than by counting reports -- a divider would silently double the
+// rate the day the chassis speeds that stream up.
+constexpr double kPowerPeriodS = 1.0;
 constexpr const char* kHelloAckSuffix = "rt/chassis/hello_ack";
 // 11 S9.1.4: major.minor, major mismatch is incompatible. Ours is the JSON
 // contract's version, NOT the chassis monitor protocol's APDU version byte --
@@ -84,7 +90,8 @@ RtBridge::RtBridge(QuadrupedProcess* proc, std::string rid, std::string boot,
   // goes somewhere nobody is listening.
   for (const char* k : {kCtrlAckSuffix, kEstopAckSuffix, kPongSuffix,
                         kStateSuffix, kBasicSuffix, kMotionSuffix,
-                        kDeviceSuffix, kFaultSuffix, kHelloAckSuffix}) {
+                        kDeviceSuffix, kFaultSuffix, kHelloAckSuffix,
+                        kPowerSuffix}) {
     if (FindKey(k) == nullptr) {
       std::fprintf(stderr,
                    "rt_bridge: key %s is not declared in rt_keys.cc -- it is "
@@ -117,7 +124,6 @@ void RtBridge::PublishReports(double now_mono_s,
   // declared, all four writers were implemented and tested, and not one frame
   // ever went out. Measured 2026-09-18 -- subscribing to xbrain/dev/rt/chassis/**
   // for 12 s returned only rt/chassis/state.
-  (void)now_mono_s;
   char out[8192];
   if (basic != nullptr) {
     // Cache the two identity strings for hello_ack (11 S9.7 sources both from
@@ -143,6 +149,59 @@ void RtBridge::PublishReports(double now_mono_s,
   if (fault != nullptr) {
     const std::size_t n = WriteChassisFault(*fault, out, sizeof(out));
     if (n > 0) Publish(kFaultSuffix, out, n);
+  }
+
+  // 11 S4.2 PowerState on rt/chassis/power, 1 Hz (13 S7.1), relayed to
+  // state/power by CR-5.
+  //
+  // *** Before this, the key was declared in rt_keys.cc and WritePowerState was
+  // fully implemented WITH tests -- and nothing ever called it. CHG-10's
+  // low-battery return reads soc_pct from state/power and the HMI battery
+  // display reads the same message, so both had no data source at all. The
+  // eighth instance of this shape in this process.
+  //
+  // Assembled from THREE reports, which is why the three pieces are cached:
+  // the batteries come with ChassisDevice, power_management and charge with
+  // ChassisBasic, remain_mile with ChassisMotion. Publishing only on the report
+  // that happens to be in hand would emit a PowerState missing whichever
+  // fields the other two carry.
+  if (basic != nullptr) {
+    std::lock_guard<std::mutex> lk(chassis_id_mu_);
+    last_basic_ = *basic;
+    have_basic_ = true;
+  }
+  if (motion != nullptr) {
+    std::lock_guard<std::mutex> lk(chassis_id_mu_);
+    last_remain_mile_km_ = motion->remain_mile;
+  }
+  if (device != nullptr) {
+    // The device report is the trigger: it is the one carrying the batteries,
+    // and a PowerState without them is the message's whole point missing.
+    if (power_next_s_ < 0.0 || now_mono_s >= power_next_s_) {
+      power_next_s_ = now_mono_s + kPowerPeriodS;
+      // Copied out UNDER the lock, then released before writing and
+      // publishing. Holding it across a zenoh put would stall HandleHello on
+      // the subscription thread for the length of a network call, and the two
+      // have nothing to do with each other.
+      chs_a::BasicStatus basic_copy;
+      bool have_basic = false;
+      double remain_mile = 0.0;
+      {
+        std::lock_guard<std::mutex> lk(chassis_id_mu_);
+        have_basic = have_basic_;
+        if (have_basic) basic_copy = last_basic_;
+        remain_mile = last_remain_mile_km_;
+      }
+      PowerStateInput p;
+      p.device = device;
+      if (have_basic) p.basic = &basic_copy;
+      p.remain_mile_km = remain_mile;
+      // index_map_known stays false: 13 BAT-2 keeps left/right null until
+      // V-55 closes, and 13 BAT-3's config switch is deliberately not wired
+      // while the key can only be null (CLAUDE.md S9.3, no reserved hooks).
+      const std::size_t n = WritePowerState(p, out, sizeof(out));
+      if (n > 0) Publish(kPowerSuffix, out, n);
+    }
   }
   // A zero-length write is dropped rather than published: the writers return 0
   // only when the buffer was too small, and a truncated JSON on the wire is
