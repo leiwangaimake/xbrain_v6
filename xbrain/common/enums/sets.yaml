@@ -460,6 +460,43 @@ sets:
       - cog
       - none
 
+  charge:
+    # The ROBOT's charge state (RobotState.charge / PowerState.charge), NOT
+    # charge_stage below. They are two different sets and the names are one
+    # character apart: this one is what the chassis reports through
+    # BasicStatus.Charge and what 11 S4.1 / S4.2 publish; charge_stage is P3's
+    # own progress through a charging task (15 S8.5) and carries values this
+    # one does not have (to_handover, waiting_plug).
+    source: "11 S4.1"
+    anchor: "`charge` | 六态"
+    # Membership only. The six values are states the chassis moves between in
+    # both directions (charging -> leaving_dock, but also robot_fault from any
+    # of them), so an index would hand out a rank that does not exist.
+    note: "RobotState.charge and PowerState.charge. 11 S9.8.1 maps the chassis integer: idle 0 / going_to_dock 1 / charging 2 / leaving_dock 3 / robot_fault 4 / on_dock_no_current 5"
+    ordered: false
+    values:
+      - idle
+      - going_to_dock
+      - charging
+      - leaving_dock
+      - robot_fault
+      - on_dock_no_current
+
+  power_management:
+    # PowerState.power_management (11 S4.2), from BasicStatus.PowerManagement.
+    # 11 S9.8.1 maps the chassis integer: normal 0 / single_battery 1.
+    #
+    # single_battery is a LEGAL state, not a fault -- 13 V-68 records the
+    # tension it creates (an empty slot reports level 0, so soc_pct reads 0 on
+    # a perfectly serviceable one-pack machine) and that tension is why the
+    # value must travel as itself rather than be folded into a health verdict.
+    source: "11 S4.2"
+    anchor: "`power_management` | `normal`"
+    ordered: false
+    values:
+      - normal
+      - single_battery
+
   charge_stage:
     # *** 15, not 11. See the note at the top of this file: 11 defers the
     # criteria to 15 S8.5 and its own synchronisation column omits to_handover,

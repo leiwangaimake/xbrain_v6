@@ -718,6 +718,20 @@ SUSPEND_REASON = _SETS["suspend_reason"]
 #   like a sequence: an unplug confirmation sends charging BACK to waiting_plug,
 #   so a rank derived from position would run backwards.
 CHARGE_STAGE = _SETS["charge_stage"]
+# charge -- the ROBOT's charge state (11 S4.1 RobotState.charge, S4.2
+#   PowerState.charge), reported by the chassis as an integer that 11 S9.8.1
+#   maps: idle 0 / going_to_dock 1 / charging 2 / leaving_dock 3 /
+#   robot_fault 4 / on_dock_no_current 5.
+#   *** NOT CHARGE_STAGE above. The names are one character apart and the sets
+#   are different: charge_stage is P3's progress through a charging TASK and
+#   carries to_handover / waiting_plug, which the chassis never reports.
+#   Picking the wrong one compiles and then rejects a legal state.
+CHARGE = _SETS["charge"]
+# power_management -- PowerState.power_management (11 S4.2), from
+#   BasicStatus.PowerManagement (normal 0 / single_battery 1).
+#   single_battery is LEGAL, not a fault; 13 V-68 records why that
+#   distinction has to survive as a value rather than be folded away.
+POWER_MANAGEMENT = _SETS["power_management"]
 
 # ClosedSetViolation is re-exported so a caller catches the failure without also
 # importing common.errors. get and parse_enum are exported for the by-name path
@@ -738,7 +752,8 @@ __all__ = ["ClosedSet", "ClosedSetViolation", "SET_NAMES", "get", "parse_enum",
            "LIMITER_CN", "assert_limiter_cn_matches_gate_limiter",
            "TASK_STATE", "CLS", "DEVICE",
            "RELEASE_REASON", "ARB_SUSPENDED", "GATE_REASON", "SUSPEND_KIND",
-           "SUSPEND_REASON", "CHARGE_STAGE",
+           "SUSPEND_REASON", "CHARGE_STAGE", "CHARGE",
+           "POWER_MANAGEMENT",
            # Kept in step with SET_NAMES by test_every_set_is_exported_by_name.
            # fence_role and heading_source were both absent until that metatest
            # was written: a set reachable only through get("...") looks exported

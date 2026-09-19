@@ -297,6 +297,7 @@ def _row_backticked(lines, anchor, what, exclude=()):
 #: still produces a plausible set -- 11 has a charge_stage column of its own --
 #: and nothing else here would notice.
 SET_DOC = {
+    "charge": "11", "power_management": "11",
     "plane": "11", "domain": "11", "event_category": "11", "gate_limiter": "11",
     "stop_reason": "11", "task_state": "11", "cls": "11", "device": "11",
     "release_reason": "11", "arb_suspended": "11", "gate_reason": "11",
@@ -420,6 +421,23 @@ EXTRACTORS.update({
     # writes `source` as the field name and lists motion_derived as retired; that
     # OTHER row would drag the retired value in, so we anchor the clean row and
     # exclude the set's own backticked name).
+    # charge (RobotState.charge / PowerState.charge, 11 S4.1) is stated inline
+    # in one field cell. The anchor deliberately does NOT include the row's
+    # leading star -- CLAUDE.md 2.2 keeps decorative symbols out of source --
+    # and the set's own backticked name is excluded so only the six states
+    # survive. It must not be confused with charge_stage (15 S8.5): the two
+    # names are one character apart and 11 has a charge_stage column of its
+    # own, which is the collision SET_DOC below exists to catch.
+    "charge": lambda: _row_backticked(
+        _DOCS["11"], "`charge` | 六态", "charge", exclude=("charge",)),
+    # power_management (PowerState, 11 S4.2) is stated inline in one field cell
+    # alongside its chassis source. The source is written `BasicStatus.
+    # PowerManagement` -- VALUE_RE requires the whole backtick content to be
+    # [a-z_]+, so the dot keeps it out without an explicit exclusion; only the
+    # set's own name has to be dropped.
+    "power_management": lambda: _row_backticked(
+        _DOCS["11"], "`power_management` | `normal`", "power_management",
+        exclude=("power_management",)),
     "heading_source": lambda: _row_backticked(
         _DOCS["11"], "| `heading_source` | string |",
         "heading_source", exclude=("heading_source",)),

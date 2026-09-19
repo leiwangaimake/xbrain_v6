@@ -72,6 +72,16 @@ inline constexpr std::string_view kArbSuspended[] = {
     "cmd_timeout",
 };
 
+// charge -- 11 S4.1   anchor: `charge` | 六态
+inline constexpr std::string_view kCharge[] = {
+    "idle",
+    "going_to_dock",
+    "charging",
+    "leaving_dock",
+    "robot_fault",
+    "on_dock_no_current",
+};
+
 // charge_stage -- 15 S8.5   anchor: | 取值 | 含义 | 退出条件 |
 inline constexpr std::string_view kChargeStage[] = {
     "to_handover",
@@ -253,6 +263,12 @@ inline constexpr std::string_view kPlane[] = {
     "data",
     "health",
     "probe",
+};
+
+// power_management -- 11 S4.2   anchor: `power_management` | `normal`
+inline constexpr std::string_view kPowerManagement[] = {
+    "normal",
+    "single_battery",
 };
 
 // reason -- 11 S R2.6-e   anchor: task/progress 的 reason 闭集
