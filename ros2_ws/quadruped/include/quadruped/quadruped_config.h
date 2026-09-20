@@ -247,6 +247,16 @@ struct MotionConfig {
   // 13 TR-1: how long an externally-caused triple change holds the robot at
   // zero. Same story, literal 3.5.
   double external_transition_hold_s = 0.0;
+  // 13 GS-1: gait raw values this build refuses to COMMAND, from
+  // motion.not_implemented.gaits. Distinct from prone_forbidden_gaits above
+  // and NOT interchangeable -- GS-3 keeps stair_standard on BOTH lists for
+  // opposite reasons: we never send it, and it can still arrive.
+  //
+  // *** This was the second list in ModeConfig and it was missed when the
+  // first one was wired, which is how GS-1 stayed dead one batch longer. The
+  // ModeConfig-wiring test asserts every field of that struct for exactly this
+  // reason.
+  std::vector<std::int64_t> command_forbidden_gaits;
 };
 
 struct QuadrupedConfig {

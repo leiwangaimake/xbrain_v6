@@ -320,6 +320,10 @@ QuadrupedConfig Cfg(int port) {
   // actually built from -- test_mode_machine.cc builds its own ModeConfig and
   // therefore could not see the process discarding this block entirely.
   c.motion.prone_forbidden_gaits = {0x3003, 0x1003};
+  // 13 GS-1. The SECOND gait list, and a different rule from the one above:
+  // stair_standard is on both, because we never command it (GS-1) and it can
+  // still arrive from the handset (GS-3).
+  c.motion.command_forbidden_gaits = {0x1003};
   // *** Deliberately NOT 5.0. A fixture that matches the literal the code used
   // to hardcode makes "hardcode it again" an equivalent mutation -- nothing
   // could tell the two apart. Measured: that mutant survived until this value
@@ -1252,6 +1256,65 @@ int main(int argc, char** argv) {
     // since day one with no reader, which makes it a number, not a diagnostic.
     // and a good frame afterwards must not disturb the refusal count.
     CHECK(p.link_status().dropped == 3);
+  }
+
+  // ---- 13 GS-1: stair_standard is REFUSED, not commanded -----------------
+  {
+    // ModeConfig has TWO gait lists, and the second one was missed when the
+    // first was wired -- GS-1 stayed dead a batch longer for exactly that
+    // reason. Without command_forbidden_gaits, GaitCommandable returns true
+    // for everything and 0x1003 goes out to a chassis that can never read it
+    // back (13 G-02, "读回枚举中无此值") -- so the read-back check has nothing
+    // to match and MS-2 turns the request into a five-second timeout instead
+    // of an immediate, honest refusal.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
+    p.RxPump(0.05);
+    p.CtrlTick(0.06);
+    chassis.Drain();
+    chassis.ClearSent();
+
+    const ModeRequestResult r = p.OnChassisAction(0.1, ModeAction::kSetGait, 0x1003);
+    CHECK(!r.accepted);
+    // The REASON. A refusal for "a switch is in flight" would satisfy
+    // !accepted and mean something else entirely.
+    CHECK(std::string(ModeRejectItem(r.reject)) == "gait_readback_gap");
+    // And NOTHING went on the wire. 13 GS-1: 不静默丢弃, 不假装成功 -- but
+    // also not sent. A counter-only check would pass on an implementation
+    // that refused upward while still writing the frame.
+    p.CtrlTick(0.11);
+    chassis.Drain();
+    CHECK(chassis.CountFrames(nullptr, nullptr) == 0);
+
+    // A commandable gait still goes through, so the assertions above are not
+    // satisfied by a build that refuses every gait.
+    CHECK(p.OnChassisAction(0.2, ModeAction::kSetGait, 0x3002).accepted);
+  }
+
+  // ---- every ModeConfig field is actually wired --------------------------
+  {
+    // *** This case exists because of HOW the last two defects were found.
+    // The process built its ModeConfig from a lambda that discarded cfg, and
+    // the four fields were fixed in two batches -- the second gait list looked
+    // done because the first one had been. Asserting the struct field by field
+    // is the only thing that makes "a field nobody wired" visible without a
+    // chassis and without waiting for the behaviour to be noticed.
+    QuadrupedConfig c = Cfg(1);
+    c.motion.mode_switch_timeout_s = 7.5;
+    c.motion.external_transition_hold_s = 1.25;
+    c.motion.prone_forbidden_gaits = {0x3003, 0x1003};
+    c.motion.command_forbidden_gaits = {0x1003};
+    QuadrupedProcess p(c);
+    // Distinctive values throughout: a field wired to the WRONG source, or
+    // left at a literal, cannot coincide with all of these.
+    CHECK(p.mode_switch_timeout_s_for_test() == 7.5);
+    CHECK(p.external_transition_hold_s_for_test() == 1.25);
+    CHECK(p.prone_forbidden_gaits_for_test().size() == 2);
+    CHECK(p.command_forbidden_gaits_for_test().size() == 1);
+    CHECK(p.command_forbidden_gaits_for_test()[0] == 0x1003);
   }
 
   // ---- 13 TR-1: an EXTERNAL transition holds the robot at zero -----------

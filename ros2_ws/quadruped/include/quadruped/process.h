@@ -191,6 +191,23 @@ class QuadrupedProcess {
   bool motion_state_transitioning() const {
     return mode_.motion_state_transitioning();
   }
+  // The ModeConfig this process was built with, field by field. FOR TESTS: the
+  // guard against a ModeConfig member nobody assigned, which happened twice --
+  // the struct has two gait lists and wiring one makes the other look done.
+  // Nothing in production reads these; they exist so "a field is not wired" is
+  // a red assertion rather than a behaviour someone notices months later.
+  double mode_switch_timeout_s_for_test() const {
+    return mode_.config().switch_timeout_s;
+  }
+  double external_transition_hold_s_for_test() const {
+    return mode_.config().external_transition_hold_s;
+  }
+  const std::vector<std::int64_t>& prone_forbidden_gaits_for_test() const {
+    return mode_.config().prone_forbidden_gaits;
+  }
+  const std::vector<std::int64_t>& command_forbidden_gaits_for_test() const {
+    return mode_.config().command_forbidden_gaits;
+  }
   std::uint64_t mode_switch_failures() const { return mode_.switch_failures(); }
   bool mode_sequence_pending() const {
     return mode_want_state_ || mode_want_gait_ || mode_want_usage_;

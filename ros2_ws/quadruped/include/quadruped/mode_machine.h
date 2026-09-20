@@ -110,6 +110,14 @@ struct ModeConfig {
   std::vector<std::int64_t> command_forbidden_gaits;
 };
 
+// *** EVERY field above must be set where a ModeConfig is built from a
+// QuadrupedConfig. Two of them were missed in two separate batches -- the
+// struct has two gait lists, and wiring one makes the other look done. The
+// guard is a test that asserts the built struct field by field
+// (test_process.cc, "every ModeConfig field is actually wired"); there is no
+// compiler check for "a member nobody assigned".
+
+
 struct ModeRequestResult {
   bool accepted = false;
   ModeReject reject = ModeReject::kNone;
@@ -139,6 +147,10 @@ class ModeMachine {
 
   // MS-3: true while a switch is in flight. Tier 1 reads this and outputs zero.
   bool mode_switching() const { return switching_; }
+
+  // The configuration this machine was built with. Exposed so a caller can
+  // assert every field arrived -- see the note under ModeConfig.
+  const ModeConfig& config() const { return cfg_; }
 
   // TR-4: our INFERENCE that the machine is mid-transition, published beside
   // the steady value and marked as computed rather than reported. It is true

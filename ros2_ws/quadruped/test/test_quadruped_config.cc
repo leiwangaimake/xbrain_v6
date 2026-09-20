@@ -111,6 +111,9 @@ const char* kGood =
     "    prone_forbidden_gaits:\n"
     "    - stair_agile\n"
     "    - stair_standard\n"
+    "    not_implemented:\n"
+    "      gaits:\n"
+    "      - stair_standard\n"
     "    mode_switch_timeout_s: 5.0\n"
     "    external_transition_hold_s: 3.5\n"
     "  odom:\n"
@@ -325,6 +328,28 @@ int main(int argc, char** argv) {
     const std::string p = WriteTemp(
         "q_hold0.yaml", Mutate("    external_transition_hold_s: 3.5\n",
                                "    external_transition_hold_s: 0.0\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+
+  // ---- 13 GS-1: not_implemented.gaits must keep stair_standard -----------
+  {
+    const std::string p = WriteTemp("q_gs1_ok.yaml", kGood);
+    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    CHECK(c.motion.command_forbidden_gaits.size() == 1);
+    CHECK(c.motion.command_forbidden_gaits[0] == 0x1003);
+    // The two lists are DIFFERENT. GS-3 keeps stair_standard on both for
+    // opposite reasons -- we never send it, and it can still arrive -- which
+    // is exactly what makes "use the other list" look harmless.
+    CHECK(c.motion.prone_forbidden_gaits.size() == 2);
+  }
+  {
+    // Removing it does not enable the gait; it replaces an immediate
+    // E_NOT_IMPLEMENTED with a five-second MS-2 timeout on every request,
+    // because 13 G-02 records that 0x1003 can never be read back.
+    const std::string p = WriteTemp(
+        "q_gs1_drop.yaml",
+        Mutate("    not_implemented:\n      gaits:\n      - stair_standard\n",
+               "    not_implemented:\n      gaits: []\n"));
     CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
   }
 

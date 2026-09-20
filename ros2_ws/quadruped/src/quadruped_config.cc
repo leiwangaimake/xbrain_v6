@@ -262,6 +262,43 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
         }
       }
     }
+    // 13 GS-1: the gaits this build refuses to COMMAND. Same name resolution
+    // and the same refuse-do-not-skip rule as the prone list above.
+    {
+      const YamlNode& ni = root.require_seq(K("motion.not_implemented.gaits"));
+      for (std::size_t i = 0; i < ni.size(); ++i) {
+        const std::string label =
+            K("motion.not_implemented.gaits") + "[" + std::to_string(i) + "]";
+        const std::string name = ni.at_index(i).as_scalar(label);
+        std::int64_t value = 0;
+        if (!chs_a::GaitValueByName(name, &value)) {
+          throw ConfigError(label + " = \"" + name +
+                            "\" is not one of the gaits in 13 S5.3. A name "
+                            "that resolves to nothing would leave that gait "
+                            "COMMANDABLE while the config says it is not");
+        }
+        cfg.motion.command_forbidden_gaits.push_back(value);
+      }
+      // GS-1 is a v0.2 定案, not a preference: 0x1003 can be commanded and can
+      // NEVER be read back (13 G-02, "读回枚举中无此值"), so commanding it
+      // means the read-back check can only time out -- MS-2 必然判超时. A
+      // config that removed it would make every stair_standard request end in
+      // a five-second failure instead of an immediate, honest refusal.
+      bool has_standard = false;
+      for (const std::int64_t g : cfg.motion.command_forbidden_gaits) {
+        if (g == 0x1003) has_standard = true;
+      }
+      if (!has_standard) {
+        throw ConfigError(
+            K("motion.not_implemented.gaits") +
+            " must contain stair_standard (0x1003). 13 GS-1 refuses to command "
+            "it because 13 G-02 records that it can never be read back: "
+            "commanding it leaves the read-back check with nothing to match, "
+            "so MS-2 turns every such request into a timeout. Removing it here "
+            "does not enable the gait, it only replaces an immediate "
+            "E_NOT_IMPLEMENTED with a five-second failure");
+      }
+    }
     cfg.motion.mode_switch_timeout_s =
         root.require_double(K("motion.mode_switch_timeout_s"));
     cfg.motion.external_transition_hold_s =

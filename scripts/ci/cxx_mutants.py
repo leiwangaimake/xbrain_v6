@@ -379,6 +379,13 @@ CONFIG_TESTS = [os.path.join(QUAD, "test", "test_quadruped_config.cc")]
 CONFIG_CC = os.path.join(QUAD, "src", "quadruped_config.cc")
 
 CONFIG_MUTANTS = [
+    # 13 GS-1 is a v0.2 定案, not a preference: removing stair_standard here
+    # does not enable the gait, it replaces an immediate E_NOT_IMPLEMENTED
+    # with a five-second MS-2 timeout on every request.
+    ("config: not_implemented.gaits may drop stair_standard",
+     CONFIG_CC,
+     "      if (!has_standard) {",
+     "      if (false) {"),
     # 13 QC-9, verbatim: the prone-forbidden list may be WIDENED, never
     # narrowed, and narrowing refuses startup. Dropping the check lets a
     # config ship with one stair gait missing -- and 13 GS-3 is why the
@@ -390,10 +397,18 @@ CONFIG_MUTANTS = [
      "        if (false) {"),
     # A gait NAME that resolves to nothing is refused, not skipped. A skipped
     # entry is a gait the operator believes is forbidden and is not.
+    # The anchor carries the line BELOW it. The GS-1 loader repeats the same
+    # guard verbatim (both lists resolve gait NAMES), so the bare guard matches
+    # twice -- the fourth such collision in this file, and every one came from
+    # a later block copying the shape of an earlier one.
     ("config: an unresolvable gait name is skipped instead of refused",
      CONFIG_CC,
-     "        if (!chs_a::GaitValueByName(name, &value)) {",
-     "        if (false) {"),
+     "        if (!chs_a::GaitValueByName(name, &value)) {\n"
+     "          throw ConfigError(\n"
+     '              label + " = \\"" + name +',
+     "        if (false) {\n"
+     "          throw ConfigError(\n"
+     '              label + " = \\"" + name +'),
     # Without the loop, a zero or negative rung passes and the reconnect turns
     # into a busy loop -- audible, because the chassis greets every connect.
     ("config: reconnect ladder rungs not checked for positivity",
@@ -1296,6 +1311,21 @@ PROCESS_SOURCES = [
 PROCESS_TESTS = [os.path.join(QUAD, "test", "test_process.cc")]
 
 PROCESS_MUTANTS = [
+    # 13 GS-1. The SECOND gait list in ModeConfig, missed when the first was
+    # wired. Without it GaitCommandable returns true for everything and 0x1003
+    # goes out to a chassis that can never read it back (13 G-02) -- so the
+    # read-back check has nothing to match and MS-2 turns the request into a
+    # five-second timeout instead of an immediate refusal.
+    ("process: the command-forbidden gait list never reaches the mode machine",
+     PROCESS_CC,
+     "        m.command_forbidden_gaits = cfg.motion.command_forbidden_gaits;",
+     "        m.command_forbidden_gaits.clear();"),
+    # The two lists are NOT interchangeable. GS-3 keeps stair_standard on both
+    # for opposite reasons, which makes "just use the other one" look harmless.
+    ("process: the two gait lists are swapped",
+     PROCESS_CC,
+     "        m.command_forbidden_gaits = cfg.motion.command_forbidden_gaits;",
+     "        m.command_forbidden_gaits = cfg.motion.prone_forbidden_gaits;"),
     # *** 13 TR-1. Tier 1 was handed mode_switching(), which is only OUR OWN
     # commanded switch. TR-1 names the other case in as many words: a
     # MotionState that changes without our having commanded it must "置

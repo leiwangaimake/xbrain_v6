@@ -111,6 +111,12 @@ QuadrupedProcess::QuadrupedProcess(const QuadrupedConfig& cfg)
         m.switch_timeout_s = cfg.motion.mode_switch_timeout_s;
         m.external_transition_hold_s = cfg.motion.external_transition_hold_s;
         m.prone_forbidden_gaits = cfg.motion.prone_forbidden_gaits;
+        // *** The FOURTH field, and it was missed when the other three were
+        // wired -- ModeConfig has two gait lists and fixing one of them looks
+        // finished. GS-1 stayed dead a batch longer because of it: without
+        // this line GaitCommandable returns true for everything and 0x1003
+        // goes out to a chassis that can never read it back.
+        m.command_forbidden_gaits = cfg.motion.command_forbidden_gaits;
         return m;
       }()) {}
 
