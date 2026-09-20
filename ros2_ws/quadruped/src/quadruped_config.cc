@@ -209,6 +209,39 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
       }
     }
 
+    // 13 S4.2's linear source table, VALIDATED rather than consumed -- the
+    // same treatment motion.axes.always_active gets above, and for the same
+    // reason.
+    //
+    // There are exactly two linear sources and the code does not rank them: 13
+    // v1.16 chose "the newer sample wins" because S4.2's enabling condition
+    // ("drdds 消息包可用") has no TIME criterion anywhere in the book, and
+    // inventing a staleness threshold was refused (CLAUDE.md S3.1). A
+    // reordered list therefore cannot be honoured by anything this process
+    // does -- so it is refused at load instead of silently meaning nothing.
+    // "填了不生效 = 让设置的人以为改了什么", 13 v1.7's sentence for
+    // special_gaits.
+    {
+      const YamlNode& prio = root.require_seq(K("odom.vel_source_priority"));
+      const char* kExpected[] = {"motion_info_20hz", "monitor_10hz"};
+      bool matches = prio.size() == 2;
+      for (std::size_t i = 0; matches && i < 2; ++i) {
+        const std::string label =
+            K("odom.vel_source_priority") + "[" + std::to_string(i) + "]";
+        matches = prio.at_index(i).as_scalar(label) == kExpected[i];
+      }
+      if (!matches) {
+        throw ConfigError(
+            "quadruped config: odom.vel_source_priority must be exactly "
+            "[motion_info_20hz, monitor_10hz] (13 S4.2). The process does not "
+            "rank the two sources -- 13 v1.16 takes the newer sample, because "
+            "S4.2's enabling condition has no time criterion in the book and "
+            "one was not invented. A different order here would change no "
+            "behaviour, and a key that changes nothing is worse than an "
+            "absent one: somebody will set it and believe it took effect");
+      }
+    }
+
     // ---- 13 PR-1 / QC-9 / MS-2 / TR-1: the motion block --------------
     //
     // *** prone_forbidden_gaits was NEVER READ. The process built its
@@ -338,6 +371,8 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
         root.require_string(K("chassis_dds.network_interface"));
     cfg.dds.imu_topic = root.require_string(K("chassis_dds.imu_topic"));
     cfg.dds.imu_expect_hz = root.require_double(K("chassis_dds.imu_expect_hz"));
+    cfg.dds.motion_info_topic =
+        root.require_string(K("chassis_dds.drdds.motion_info_topic"));
     cfg.dds.imu_age_warn_ms =
         static_cast<int>(root.require_int(K("chassis_dds.imu_age_warn_ms")));
     cfg.dds.imu_frame_id = root.require_string(K("chassis_dds.imu_frame_id"));

@@ -214,6 +214,12 @@ struct ChassisDdsConfig {
   // direction of "the better odometry source simply never arrives".
   std::string network_interface;
   std::string imu_topic;   // /IMU (measured 201 Hz, frame_id empty)
+  // 13 S8.2 chassis_dds.drdds.motion_info_topic. Configured for the same
+  // reason imu_topic is: a topic name that is hardcoded while its config key
+  // sits next to a configured one is a key that changes nothing, and the
+  // symptom of getting the name wrong is DDS-9's -- "participant up, zero
+  // samples", indistinguishable from a dead network.
+  std::string motion_info_topic;
   double imu_expect_hz = 0.0;
   int imu_age_warn_ms = 0; // ms  older than this -> yaw falls back to the 10 Hz source
   // The chassis sends no frame_id, so we assign one. That assignment must be

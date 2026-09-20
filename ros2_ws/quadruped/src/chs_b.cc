@@ -154,7 +154,11 @@ ChassisDds::ChassisDds(const ChassisDdsConfig& cfg) : impl_(new Impl()) {
   dds_qos_t* rqos = dds_create_qos();
   dds_qset_reliability(rqos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
   dds_qset_history(rqos, DDS_HISTORY_KEEP_LAST, 1);
-  const std::string mi_topic = RosTopicToDdsTopic("/MOTION_INFO");
+  // From CONFIG, like imu_topic above. It was a literal while the key
+  // chassis_dds.drdds.motion_info_topic sat in the file doing nothing --
+  // and the symptom of a wrong topic name is DDS-9's: participant up,
+  // topic present, zero samples, indistinguishable from a dead network.
+  const std::string mi_topic = RosTopicToDdsTopic(cfg.motion_info_topic);
   const dds_entity_t mi_t = dds_create_topic(
       impl_->participant, &drdds_msg_dds__MotionInfo__desc, mi_topic.c_str(),
       nullptr, nullptr);

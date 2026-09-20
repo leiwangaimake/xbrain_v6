@@ -101,6 +101,8 @@ const char* kGood =
     "    imu_frame_id: imu_link\n"
     "    imu_rt_key: ''\n"
     "    imu_topic: /IMU\n"
+    "    drdds:\n"
+    "      motion_info_topic: /MOTION_INFO\n"
     "  motion:\n"
     "    axes:\n"
     "      always_active:\n"
@@ -125,6 +127,9 @@ const char* kGood =
     "    sigma_v0_mps: 0.05\n"
     "    stale_invalid_ms: 300\n"
     "    stale_stop_publish_ms: 1000\n"
+    "    vel_source_priority:\n"
+    "    - motion_info_20hz\n"
+    "    - monitor_10hz\n"
     "    stale_warn_ms: 150\n"
     "    trust_by_gait:\n"
     "      flat: 1.0\n"
@@ -255,6 +260,60 @@ int main(int argc, char** argv) {
   {
     const std::string p =
         WriteTemp("q_missing.yaml", Mutate("    cmd_timeout_ms: 200\n", ""));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+
+  // ---- 13 S4.2: the source list is VALIDATED, not silently ignored -------
+  {
+    // Two sources, and the process does not rank them -- 13 v1.16 takes the
+    // newer sample because S4.2's enabling condition has no time criterion in
+    // the book. A reordered list therefore cannot be honoured by anything, so
+    // it is refused at load rather than left to mean nothing.
+    const std::string p = WriteTemp(
+        "q_prio.yaml",
+        Mutate("    - motion_info_20hz\n    - monitor_10hz\n",
+               "    - monitor_10hz\n    - motion_info_20hz\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // A dropped entry too: a one-element list reads as "only drdds", which the
+    // process does not implement either.
+    const std::string p = WriteTemp(
+        "q_prio2.yaml",
+        Mutate("    - motion_info_20hz\n    - monitor_10hz\n",
+               "    - motion_info_20hz\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+
+  // ---- channel two takes BOTH topic names from config --------------------
+  {
+    // motion_info_topic was a literal in chs_b while its key sat in the file
+    // doing nothing, right beside imu_topic which WAS configured. The symptom
+    // of a wrong topic name is DDS-9's: participant up, topic present, zero
+    // samples -- indistinguishable from a dead network, and the one failure
+    // mode an offline test can never reproduce.
+    const std::string p = WriteTemp("q_topics.yaml", kGood);
+    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    CHECK(c.dds.imu_topic == "/IMU");
+    CHECK(c.dds.motion_info_topic == "/MOTION_INFO");
+  }
+  {
+    // A changed name must ARRIVE, not be ignored. Asserting the value came
+    // from the file rather than from a default is the whole point: a loader
+    // that returned a literal would satisfy the case above.
+    const std::string p = WriteTemp(
+        "q_topics2.yaml",
+        Mutate("      motion_info_topic: /MOTION_INFO\n",
+               "      motion_info_topic: /MOTION_INFO_V2\n"));
+    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    CHECK(c.dds.motion_info_topic == "/MOTION_INFO_V2");
+  }
+  {
+    // Missing stops the process. Same rule as every other required key: an
+    // absent topic name is a config error with a key path, not a default.
+    const std::string p = WriteTemp(
+        "q_topics3.yaml",
+        Mutate("    drdds:\n      motion_info_topic: /MOTION_INFO\n", ""));
     CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
   }
 

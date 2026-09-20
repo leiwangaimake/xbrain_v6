@@ -379,6 +379,26 @@ CONFIG_TESTS = [os.path.join(QUAD, "test", "test_quadruped_config.cc")]
 CONFIG_CC = os.path.join(QUAD, "src", "quadruped_config.cc")
 
 CONFIG_MUTANTS = [
+    # 13 S8.2 chassis_dds.drdds.motion_info_topic was a literal in chs_b while
+    # the key sat in the file doing nothing, right beside imu_topic which WAS
+    # configured. A wrong topic name fails as DDS-9 describes: participant up,
+    # topic present, zero samples -- indistinguishable from a dead network.
+    ("config: motion_info_topic is defaulted instead of read",
+     CONFIG_CC,
+     "    cfg.dds.motion_info_topic =\n"
+     '        root.require_string(K("chassis_dds.drdds.motion_info_topic"));',
+     '    cfg.dds.motion_info_topic = "/MOTION_INFO";'),
+    # 13 S4.2. Two sources and no ranking in the code (v1.16 takes the newer
+    # sample), so a reordered list cannot be honoured -- refusing it at load is
+    # what keeps it from silently meaning nothing.
+    ("config: a reordered vel_source_priority is accepted",
+     CONFIG_CC,
+     "      if (!matches) {\n"
+     "        throw ConfigError(\n"
+     '            "quadruped config: odom.vel_source_priority must be exactly "',
+     "      if (false) {\n"
+     "        throw ConfigError(\n"
+     '            "quadruped config: odom.vel_source_priority must be exactly "'),
     # 13 GS-1 is a v0.2 定案, not a preference: removing stair_standard here
     # does not enable the gait, it replaces an immediate E_NOT_IMPLEMENTED
     # with a five-second MS-2 timeout on every request.
@@ -472,8 +492,19 @@ CONFIG_MUTANTS = [
     # A key an operator can set that changes nothing is worse than no key.
     ("config: a special-gait whitelist is accepted and then ignored",
      CONFIG_CC, "      if (special.size() != 0) {", "      if (false) {"),
+    # The anchor carries the line BELOW it. The S4.2 source-list check repeats
+    # the same `matches` guard verbatim (both are "this list must be exactly
+    # these values"), so the bare guard now matches twice -- the fifth such
+    # collision in this file, every one from a later block copying an earlier
+    # block's shape.
     ("config: the axis list is not checked against 11 S9.3.1",
-     CONFIG_CC, "      if (!matches) {", "      if (false) {"),
+     CONFIG_CC,
+     "      if (!matches) {\n"
+     "        throw ConfigError(\n"
+     '            "quadruped config: motion.axes.always_active must be exactly "',
+     "      if (false) {\n"
+     "        throw ConfigError(\n"
+     '            "quadruped config: motion.axes.always_active must be exactly "'),
     # Order matters: [wz, vy, vx] is not [vx, vy, wz], and a membership test
     # would call them the same.
     ("config: the axis list is checked as a SET, losing the order",
