@@ -318,6 +318,26 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
   a.Raw(",\"mode_switching\":");
   a.Bool(in.mode_switching);
 
+  // 11 S4.1 `charge`, six states, and S9.8.1's integer mapping. It was absent
+  // from RobotState entirely -- state/robot (CR-4 relays this key) therefore
+  // could not say whether the robot is on a dock, and 11 S9.11's flow keys off
+  // exactly that. Same closed set and the same out-of-range rule as PowerState:
+  // null, never a nearby member (11 S13.6), because `idle` for a state we do
+  // not recognise tells the upper stack the robot is free to drive away.
+  a.Raw(",\"charge\":");
+  if (in.basic == nullptr || in.basic->charge < 0 ||
+      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {
+    a.Raw("null");
+  } else {
+    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);
+  }
+  // 11 S4.1 `services_ok`. NULL, and that is the honest answer rather than a
+  // missing field: 21 V-14 rules that runtime.services is 恒填 [不可查] this
+  // period because the query method itself is unanswered (Q20), and S9.10.2's
+  // check is therefore unimplementable. A `true` here would assert that every
+  // required chassis service is healthy on the strength of never having looked.
+  a.Raw(",\"services_ok\":null");
+
   a.Raw(",\"cmd_age_ms\":");
   if (in.cmd_age_ms < 0.0) {
     // No command has ever arrived. null rather than a huge number: a large age

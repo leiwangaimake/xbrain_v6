@@ -849,6 +849,33 @@ PAYLOADS_SOURCES = [PAYLOADS_CC,
 PAYLOADS_TESTS = [os.path.join(QUAD, "test", "test_rt_payloads.cc")]
 
 PAYLOADS_MUTANTS = [
+    # 11 S4.1 `charge` was absent from RobotState entirely -- state/robot
+    # (CR-4 relays this key) could not say whether the robot is on a dock, and
+    # 11 S9.11's flow keys off exactly that.
+    ("payloads: RobotState drops the charge field",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"charge\\":");\n'
+     "  if (in.basic == nullptr || in.basic->charge < 0 ||\n"
+     "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
+     '    a.Raw("null");\n'
+     "  } else {\n"
+     "    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);\n"
+     "  }\n"
+     '  // 11 S4.1 `services_ok`.',
+     '  a.Raw(",\\"_charge\\":");\n'
+     "  if (in.basic == nullptr || in.basic->charge < 0 ||\n"
+     "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
+     '    a.Raw("null");\n'
+     "  } else {\n"
+     "    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);\n"
+     "  }\n"
+     '  // 11 S4.1 `services_ok`.'),
+    # 21 V-14: null is the ANSWER. A `true` asserts every required chassis
+    # service is healthy on the strength of never having looked.
+    ("payloads: services_ok claims healthy without looking",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"services_ok\\":null");',
+     '  a.Raw(",\\"services_ok\\":true");'),
     # 11 S4.1 / S9.9 / 13 S4.4 (4). The odom block is the ONLY carrier of
     # `valid`: a ROS nav_msgs/Odometry has no field for it, so dropping this
     # block leaves the stair-gait rule with no reader anywhere in the system,
@@ -1812,18 +1839,38 @@ RT_BRIDGE_MUTANTS = [
     ("payloads: PowerState drops the charge field",
      PAYLOADS_CC,
      '  a.Raw(",\\"charge\\":");\n'
-     "  if (in.basic == nullptr || in.basic->charge < 0 ||",
+     "  if (in.basic == nullptr || in.basic->charge < 0 ||\n"
+     "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
+     '    a.Raw("null");\n'
+     "  } else {\n"
+     "    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);\n"
+     "  }\n"
+     '  a.Raw("}");',
      '  a.Raw(",\\"_charge\\":");\n'
-     "  if (in.basic == nullptr || in.basic->charge < 0 ||"),
+     "  if (in.basic == nullptr || in.basic->charge < 0 ||\n"
+     "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
+     '    a.Raw("null");\n'
+     "  } else {\n"
+     "    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);\n"
+     "  }\n"
+     '  a.Raw("}");'),
     # 11 S13.6 forbids degrading to a nearby member. Publishing `idle` for a
     # charge state we do not recognise tells the upper stack the robot is free
     # to drive away.
     ("payloads: an unrecognised charge state is reported as idle",
      PAYLOADS_CC,
      "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
-     '    a.Raw("null");',
+     '    a.Raw("null");\n'
+     "  } else {\n"
+     "    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);\n"
+     "  }\n"
+     '  a.Raw("}");',
      "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
-     '    a.StrView(sets::kCharge[0]);',
+     '    a.StrView(sets::kCharge[0]);\n'
+     "  } else {\n"
+     "    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);\n"
+     "  }\n"
+     '  a.Raw("}");',
      ),
     # 13 ASM-4 (3) / S7.1 Q-5. Recorded as "v1.15 已做" while SetReportSink
     # had zero production call sites -- four keys declared, four writers

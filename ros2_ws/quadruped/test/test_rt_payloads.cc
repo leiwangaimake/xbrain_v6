@@ -690,6 +690,49 @@ int main(int argc, char** argv) {
     CHECK(j["gait"].is_null());
   }
 
+  // ---- RobotState.charge / services_ok (11 S4.1) -------------------------
+  {
+    // Both were absent from RobotState entirely. `charge` is what tells the
+    // upper stack whether the robot is on a dock, and 11 S9.11's whole flow
+    // keys off it; state/robot (CR-4 relays this key) could not say.
+    char buf[8192];
+    chs_a::BasicStatus basic;
+    basic.charge = 2;                      // charging (11 S9.8.1)
+    RobotStateInput in;
+    in.basic = &basic;
+    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("robot state charge", buf, n);
+    CHECK(j["charge"] == "charging");
+    // 21 V-14: services_ok is null, and null is the ANSWER -- the query method
+    // itself is unanswered (Q20), so S9.10.2's check cannot be run. A `true`
+    // would assert every required chassis service is healthy on the strength
+    // of never having looked.
+    CHECK(j.contains("services_ok"));
+    CHECK(j["services_ok"].is_null());
+  }
+  {
+    // Out of the closed set -> null, never a nearby member (11 S13.6).
+    // `idle` in particular would tell the upper stack the robot is free to
+    // drive away from a dock.
+    char buf[8192];
+    chs_a::BasicStatus basic;
+    basic.charge = 9;
+    RobotStateInput in;
+    in.basic = &basic;
+    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("robot state charge odd", buf, n);
+    CHECK(j["charge"].is_null());
+  }
+  {
+    // No chassis at all -> also null, for the same reason every other
+    // chassis-sourced field is null here.
+    char buf[8192];
+    RobotStateInput in;                    // basic left null
+    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("robot state charge cold", buf, n);
+    CHECK(j["charge"].is_null());
+  }
+
   // ---- RobotState.odom (11 S4.1 / S9.9 / 13 S4.4 (4)) --------------------
   {
     // The gap this closes: WriteRobotState emitted no odom block at all, while
