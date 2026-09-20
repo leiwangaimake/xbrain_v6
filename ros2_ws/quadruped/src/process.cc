@@ -394,7 +394,17 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   in.wz = cmd_wz_;
   in.cmd_estop_epoch = cmd_estop_epoch_;
   in.local_estop_epoch = estop_epoch_;
-  in.mode_switching = mode_.mode_switching();
+  // *** motion_state_transitioning(), NOT mode_switching(). 13 TR-1 is
+  // explicit about which one Tier 1 gets: a MotionState that changes WITHOUT
+  // our having commanded it (the factory handset, a second client) must "置
+  // mode_switching = true 并保持 external_transition_hold_s, 期间零速".
+  //
+  // mode_switching() is only OUR OWN switch. Feeding it here meant an external
+  // transition produced no zero-speed hold at all: the handset put the robot
+  // into a 2-3 s stand-up while we kept sending axis commands into it. TR-1
+  // calls the alternative "believing a moving robot is stationary", and 13
+  // V-61 is why we cannot see the transition end any other way.
+  in.mode_switching = mode_.motion_state_transitioning();
   // Consumed here, on the period that reads it (13 S9.4 ASM-2). A held flag
   // would re-unlock the lock on every period after the first -- see OnEnable.
   in.enable_requested = enable_pending_;
@@ -554,7 +564,11 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   snap.cmd_age_ms =
       have_cmd_ ? (now_mono_s - cmd_rx_mono_s_) * 1000.0 : -1.0;
   snap.soft_estop_active = have_cmd_ && (cmd_estop_epoch_ != estop_epoch_);
-  snap.mode_switching = mode_.mode_switching();
+  // Same predicate Tier 1 was given, for the same reason: 13 TR-1 says an
+  // external change sets mode_switching, and a state key that disagreed with
+  // the gate would have an operator watching `false` while the robot is held
+  // at zero.
+  snap.mode_switching = mode_.motion_state_transitioning();
   snap.motion_allowed = session_.motion_allowed();
   // From latest_, which is merged by source (see the merge note above) -- so
   // the usage_mode here is the one BasicStatus delivered, not a value some

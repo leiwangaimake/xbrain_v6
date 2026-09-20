@@ -1254,6 +1254,88 @@ int main(int argc, char** argv) {
     CHECK(p.link_status().dropped == 3);
   }
 
+  // ---- 13 TR-1: an EXTERNAL transition holds the robot at zero -----------
+  {
+    // The gap this closes: Tier 1 was handed mode_switching(), which is only
+    // OUR OWN commanded switch. TR-1 says the other case in as many words --
+    // a MotionState that changes without our having commanded it must "置
+    // mode_switching = true 并保持 external_transition_hold_s, 期间零速".
+    //
+    // So the factory handset could put the robot into a 2-3 s stand-up while
+    // we kept feeding axis commands into it. 13 V-61 is why we cannot see the
+    // transition end any other way, and TR-1 calls the alternative "believing
+    // a moving robot is stationary".
+    //
+    // *** Every existing test stayed green when this was fixed, which is the
+    // whole reason this case exists: nothing covered it at all.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    // Standing, navigation, flat. First read-back of the process's life, so it
+    // is NOT an external transition (there was no previous value to differ
+    // from) -- the machine treats it as the steady baseline.
+    chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
+    p.RxPump(0.05);
+    p.CtrlTick(0.06);
+    CHECK(!p.motion_state_transitioning());
+
+    // Unlock and prove the robot CAN move here. Without this half, every
+    // assertion below is satisfied by a robot that never moves at all.
+    p.OnCmdVel(0.07, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.OnEnable();
+    p.CtrlTick(0.08);
+    p.OnCmdVel(0.09, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.CtrlTick(0.10);
+    CHECK(p.last_tier1().stop_reason == StopReason::kNone);
+    CHECK(p.last_tier1().vx > 0.0);
+
+    // Now the handset lies the robot down: MotionState 17 -> 0, and WE never
+    // commanded it.
+    chassis.Send(BasicFrame(1, 0, 0x3002, false, false));
+    p.RxPump(0.15);
+    p.OnCmdVel(0.16, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.CtrlTick(0.17);
+    CHECK(p.motion_state_transitioning());
+    CHECK(p.last_tier1().stop_reason == StopReason::kModeSwitching);
+    // ZERO, on the axis that was moving a moment ago.
+    CHECK(p.last_tier1().vx == 0.0);
+    // *** And the PUBLISHED field says so too. 13 TR-1 requires the external
+    // change to set mode_switching, and a state key reading false while the
+    // robot is held at zero leaves the operator with no explanation for a
+    // robot that stopped. Read from the snapshot rt_pub actually publishes,
+    // not from the accessor above -- nothing covered the published field, and
+    // a mutant that reverted only that line survived until this assertion.
+    {
+      QuadrupedProcess::StateSnapshot snap;
+      CHECK(p.TakeStateForPublish(&snap));
+      CHECK(snap.mode_switching);
+    }
+
+    // Still held most of the way through the window. Without this, an
+    // implementation that released on the next period passes the check above.
+    for (double t = 0.2; t < 3.5; t += 0.1) {
+      if (t > 3.0 && t < 3.1) chassis.Send(BasicFrame(1, 0, 0x3002, false, false));
+      p.RxPump(t);
+      p.OnCmdVel(t, 0.5, 0.0, 0.1, p.estop_epoch());
+      p.CtrlTick(t);
+    }
+    CHECK(p.motion_state_transitioning());
+    CHECK(p.last_tier1().vx == 0.0);
+
+    // And released after it. A hold that never expired would leave the robot
+    // at zero for the rest of the session after one handset press -- and the
+    // configured external_transition_hold_s would be a key that changed
+    // nothing, which is the defect this package keeps finding.
+    for (double t = 3.5; t < 4.3; t += 0.1) {
+      if (t > 3.9 && t < 4.0) chassis.Send(BasicFrame(1, 0, 0x3002, false, false));
+      p.RxPump(t);
+      p.OnCmdVel(t, 0.5, 0.0, 0.1, p.estop_epoch());
+      p.CtrlTick(t);
+    }
+    CHECK(!p.motion_state_transitioning());
+  }
+
   // ---- 13 MS-2: the switch window comes from CONFIG, not a literal -------
   {
     // The window was a literal 5.0 in the process constructor while

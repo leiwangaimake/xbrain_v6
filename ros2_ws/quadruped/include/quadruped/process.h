@@ -182,7 +182,15 @@ class QuadrupedProcess {
   // 13 MS-2 / MS-3, for the self-report and for tests. Reads the mode machine
   // DIRECTLY, so like the neighbours above it is only safe from the thread
   // that drives CtrlTick -- which means from a test, or from the ctrl thread.
+  // OUR OWN switch is in flight (13 MS-3). NOT what Tier 1 is gated on and
+  // NOT what RobotState publishes -- both of those use the predicate below,
+  // because 13 TR-1 puts an EXTERNAL transition in the same bucket.
   bool mode_switching() const { return mode_.mode_switching(); }
+  // 13 TR-1 / TR-4: our own switch OR an external transition still inside its
+  // hold. This is the one that holds the robot at zero.
+  bool motion_state_transitioning() const {
+    return mode_.motion_state_transitioning();
+  }
   std::uint64_t mode_switch_failures() const { return mode_.switch_failures(); }
   bool mode_sequence_pending() const {
     return mode_want_state_ || mode_want_gait_ || mode_want_usage_;

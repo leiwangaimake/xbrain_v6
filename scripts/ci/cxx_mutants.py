@@ -1296,6 +1296,23 @@ PROCESS_SOURCES = [
 PROCESS_TESTS = [os.path.join(QUAD, "test", "test_process.cc")]
 
 PROCESS_MUTANTS = [
+    # *** 13 TR-1. Tier 1 was handed mode_switching(), which is only OUR OWN
+    # commanded switch. TR-1 names the other case in as many words: a
+    # MotionState that changes without our having commanded it must "置
+    # mode_switching = true 并保持 external_transition_hold_s, 期间零速".
+    # With the wrong predicate the factory handset could start a 2-3 s stand-up
+    # while we kept feeding axis commands into it -- TR-1 calls that
+    # "believing a moving robot is stationary".
+    ("process: an external transition does not hold the robot at zero",
+     PROCESS_CC,
+     "  in.mode_switching = mode_.motion_state_transitioning();",
+     "  in.mode_switching = mode_.mode_switching();"),
+    # The published field must agree with the gate. A state key saying false
+    # while the robot is held at zero leaves the operator with no explanation.
+    ("process: RobotState.mode_switching disagrees with the Tier 1 gate",
+     PROCESS_CC,
+     "  snap.mode_switching = mode_.motion_state_transitioning();",
+     "  snap.mode_switching = mode_.mode_switching();"),
     # *** 13 PR-1 / QC-9 / V-54 (P0). THE defect: the ModeConfig lambda took
     # cfg and discarded it, so prone_forbidden_gaits was empty and
     # ProneAllowed -- which answers !Contains(list, gait) -- was true for every
