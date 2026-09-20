@@ -425,6 +425,23 @@ class QuadrupedProcess {
     // diagnostic. The rate is the signal -- one drop after a reconnect is
     // normal, one per second means the peer and we disagree about the format.
     std::uint64_t dropped = 0;
+    // FR-5 / SD-3, as TWO FACTS rather than one verdict.
+    //
+    // nodelay_active is TCP_NODELAY read BACK from the kernel on the live
+    // socket -- not the setsockopt return, which can succeed on a socket where
+    // the option does not take effect. nodelay_expected says whether we had
+    // any business asking (the config wanted it AND this is not a datagram
+    // endpoint, where the option is meaningless).
+    //
+    // Split because the combined verdict is true in every configuration a test
+    // can construct, so a mutant replacing it with `true` was unkillable --
+    // and that mutant is exactly the defect the check exists to prevent. Each
+    // half on its own differs between configurations, so each is assertable.
+    //
+    // Both false before the first connection: nothing has been asked of any
+    // socket yet, and `expected` false keeps the supervisor quiet.
+    bool nodelay_active = false;
+    bool nodelay_expected = false;
   };
   LinkStatus link_status() const;
 
@@ -518,6 +535,8 @@ class QuadrupedProcess {
   std::atomic<std::uint64_t> pub_probe_cycles_{0};
   std::atomic<std::uint64_t> pub_frames_{0};
   std::atomic<std::uint64_t> pub_dropped_{0};
+  std::atomic<bool> pub_nodelay_active_{false};
+  std::atomic<bool> pub_nodelay_expected_{false};
 
   std::atomic<bool> running_{false};
   std::thread ctrl_thread_;

@@ -117,7 +117,18 @@ bool ChassisSocket::Dial(const EndpointCandidate& ep, bool tcp_nodelay) {
     // then "when did the last frame leave" has no answer -- which is the
     // question every latency figure in 13 S3.6 rests on.
     int one = 1;
-    ::setsockopt(fd_, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    // *** The return value was DISCARDED, and nothing else checked the
+    // result either -- so FR-5 / SD-3's "TCP_NODELAY = 1" was a guarantee
+    // nobody held (CLAUDE.md S3.2: "assuming a guarantee you do not have").
+    // A silent failure here does not break the link; it makes Nagle batch the
+    // heartbeat with whatever follows, and every latency figure in 13 S3.6
+    // then measures something else.
+    //
+    // Recorded rather than fatal: the link still works, badly, and refusing to
+    // connect over a timing degradation would take Tier 1 down with it.
+    nodelay_requested_ = true;
+    nodelay_ok_ =
+        ::setsockopt(fd_, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == 0;
   }
 
   if (::connect(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {

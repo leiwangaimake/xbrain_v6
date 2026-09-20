@@ -1258,6 +1258,83 @@ int main(int argc, char** argv) {
     CHECK(p.link_status().dropped == 3);
   }
 
+  // ---- FR-5 / SD-3: TCP_NODELAY is VERIFIED, not assumed -----------------
+  {
+    // The gap this closes: Dial called setsockopt and threw the return away,
+    // and ChassisSocket::nodelay_enabled() -- which reads the option BACK from
+    // the kernel -- had no caller anywhere in production. So "Nagle is off"
+    // was a guarantee nobody held (CLAUDE.md S3.2), while every latency figure
+    // in 13 S3.6 rests on it.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    // Before any connection the verdict is optimistic on purpose: there is
+    // nothing to complain about yet, and a false here would have the
+    // supervisor report a timing fault on a process that has not dialled.
+    CHECK(!p.link_status().nodelay_expected);
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    // *** Drive until the session actually reports a connection, and ASSERT
+    // that it did. The first draft ticked twice and moved on -- the connect
+    // event had not fired, so nodelay_ok was still its initial true and the
+    // case passed without exercising anything. Found by a surviving mutant.
+    for (int i = 0; i < 40; ++i) {
+      chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
+      p.RxPump(0.01 * i);
+      p.CtrlTick(0.01 * i);
+    }
+    CHECK(p.conn_state() == chs_a::ConnState::kOk);
+    // The config asked, so we had business asking; the kernel says it is on.
+    CHECK(p.link_status().nodelay_expected);
+    CHECK(p.link_status().nodelay_active);
+  }
+  {
+    // A DATAGRAM endpoint. TCP_NODELAY is meaningless on one, and
+    // nodelay_enabled() answers false for it by construction -- so a check
+    // that only asked "did the kernel say yes" would report a timing fault on
+    // every connection to the udp:30004 candidate 13 S8.2 has enabled.
+    //
+    // This is also what makes "assume true instead of reading back"
+    // observable: on TCP both answers agree, and only here do they part.
+    FakeUdpChassis chassis;
+    QuadrupedProcess p(UdpCfg(chassis.port()));
+    p.CtrlTick(0.0);
+    for (int i = 0; i < 20 && !chassis.LearnPeer(); ++i) p.CtrlTick(0.01 * i);
+    CHECK(chassis.LearnPeer());
+    for (int i = 0; i < 40; ++i) {
+      chassis.SendRaw(BasicFrame(1, 17, 0x3002, false, false));
+      p.RxPump(0.01 * i);
+      p.CtrlTick(0.01 * i);
+    }
+    CHECK(p.conn_state() == chs_a::ConnState::kOk);
+    // mutant: drop the is_udp term -> expected goes true on a socket the
+    // option does not apply to, and the supervisor reports a timing fault.
+    CHECK(!p.link_status().nodelay_expected);
+  }
+  {
+    // With the config NOT asking for it, the verdict stays true -- the check
+    // is "did we get what we asked for", not "is Nagle off unconditionally".
+    // mutant: demand it regardless of the config -> red, because nothing ever
+    // called setsockopt on this socket.
+    FakeChassis chassis;
+    QuadrupedConfig c = Cfg(chassis.port());
+    c.link.tcp_nodelay = false;
+    QuadrupedProcess p(c);
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    for (int i = 0; i < 40; ++i) {
+      chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
+      p.RxPump(0.01 * i);
+      p.CtrlTick(0.01 * i);
+    }
+    CHECK(p.conn_state() == chs_a::ConnState::kOk);
+    CHECK(!p.link_status().nodelay_expected);
+    // *** And ACTIVE is false -- nobody called setsockopt on this socket.
+    // This is the assertion that makes the read-back observable at all: on a
+    // socket where it WAS set the two are both true, so only here can a
+    // hardcoded `true` be told apart from asking the kernel.
+    CHECK(!p.link_status().nodelay_active);
+  }
+
   // ---- 13 GS-1: stair_standard is REFUSED, not commanded -----------------
   {
     // ModeConfig has TWO gait lists, and the second one was missed when the

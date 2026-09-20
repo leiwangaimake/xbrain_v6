@@ -578,6 +578,7 @@ REPORTS_MUTANTS = [
 # backwards until you ask what it costs in the field.
 SESSION_CC = os.path.join(QUAD, "src", "chs_a_session.cc")
 SESSION_SOURCES = [SESSION_CC, os.path.join(QUAD, "src", "quadruped_config.cc"),
+os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through GaitValueByName, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
                    os.path.join(QUAD, "src", "chs_a_codec.cc")]
 SESSION_TESTS = [os.path.join(QUAD, "test", "test_chs_a_session.cc")]
 
@@ -658,6 +659,7 @@ SESSION_MUTANTS = [
 # list is longer than the others and every entry names what reaches the robot.
 TIER1_CC = os.path.join(QUAD, "src", "tier1.cc")
 TIER1_SOURCES = [TIER1_CC, os.path.join(QUAD, "src", "quadruped_config.cc"),
+os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through GaitValueByName, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
                  os.path.join(QUAD, "src", "chs_a_codec.cc")]
 TIER1_TESTS = [os.path.join(QUAD, "test", "test_tier1.cc")]
 
@@ -1096,6 +1098,7 @@ MODE_MUTANTS = [
 # one 13 S4.4's own superseded formula went in.
 ODOM_CC = os.path.join(QUAD, "src", "odometry.cc")
 ODOM_SOURCES = [ODOM_CC, os.path.join(QUAD, "src", "quadruped_config.cc"),
+os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through GaitValueByName, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
                 os.path.join(QUAD, "src", "chs_a_codec.cc")]
 ODOM_TESTS = [os.path.join(QUAD, "test", "test_odometry.cc")]
 
@@ -1198,6 +1201,7 @@ NAMES_MUTANTS = [
 # wrongly in a way that reads as a chassis problem rather than a code problem.
 SOCKET_CC = os.path.join(QUAD, "src", "chassis_socket.cc")
 SOCKET_SOURCES = [SOCKET_CC, os.path.join(QUAD, "src", "quadruped_config.cc"),
+os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through GaitValueByName, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
                   os.path.join(QUAD, "src", "chs_a_codec.cc")]
 SOCKET_TESTS = [os.path.join(QUAD, "test", "test_chassis_socket.cc")]
 
@@ -1233,9 +1237,14 @@ SOCKET_MUTANTS = [
     ("socket: a TCP peer closing reported as nothing-to-read",
      SOCKET_CC, "    return is_udp_ ? 0 : -1;", "    return 0;"),
     # FR-5 / SD-3: with Nagle on, "when did the last frame leave" has no answer.
+    # The call now keeps its result (nodelay_ok_), because FR-5 / SD-3's
+    # guarantee was previously held by nobody: the return was discarded and
+    # the read-back accessor had no caller.
     ("socket: TCP_NODELAY not set",
-     SOCKET_CC, "    ::setsockopt(fd_, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));",
-     "    (void)one;"),
+     SOCKET_CC,
+     "    nodelay_ok_ =\n"
+     "        ::setsockopt(fd_, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == 0;",
+     "    nodelay_ok_ = true;\n    (void)one;"),
     # Without MSG_NOSIGNAL a write to a closed socket ENDS THE PROCESS, and a
     # test would not report a failure -- it would vanish.
     ("socket: MSG_NOSIGNAL dropped, so a closed peer kills the process",
@@ -1311,11 +1320,37 @@ PROCESS_SOURCES = [
 PROCESS_TESTS = [os.path.join(QUAD, "test", "test_process.cc")]
 
 PROCESS_MUTANTS = [
-    # 13 GS-1. The SECOND gait list in ModeConfig, missed when the first was
-    # wired. Without it GaitCommandable returns true for everything and 0x1003
-    # goes out to a chassis that can never read it back (13 G-02) -- so the
-    # read-back check has nothing to match and MS-2 turns the request into a
-    # five-second timeout instead of an immediate refusal.
+    # FR-5 / SD-3. Dial threw the setsockopt return away and nothing read the
+    # option back, so "Nagle is off" was a guarantee nobody held -- while every
+    # latency figure in 13 S3.6 rests on it.
+    #
+    # *** Published as TWO FACTS, not one verdict, and that shape is what makes
+    # this killable. The combined verdict is true in every configuration a test
+    # can build (TCP with nodelay, TCP without, UDP), so a mutant replacing it
+    # with `true` was indistinguishable -- and that mutant IS the defect. Each
+    # fact on its own differs between configurations.
+    ("process: TCP_NODELAY is assumed rather than read back",
+     PROCESS_CC,
+     "    pub_nodelay_active_.store(socket_.nodelay_enabled(),\n"
+     "                              std::memory_order_relaxed);",
+     "    pub_nodelay_active_.store(true, std::memory_order_relaxed);"),
+    # The check is "did we get what we asked for", not "is Nagle off".
+    ("process: TCP_NODELAY is demanded even when the config declines it",
+     PROCESS_CC,
+     "    pub_nodelay_expected_.store(cfg_.link.tcp_nodelay && !socket_.is_udp(),\n"
+     "                                std::memory_order_relaxed);",
+     "    pub_nodelay_expected_.store(!socket_.is_udp(),\n"
+     "                                std::memory_order_relaxed);"),
+    # TCP_NODELAY is meaningless on a datagram socket and nodelay_enabled()
+    # answers false for one by construction -- dropping this term makes the
+    # process report a timing fault on every connection to the udp:30004
+    # candidate that 13 S8.2 has enabled.
+    ("process: a datagram endpoint is reported as missing TCP_NODELAY",
+     PROCESS_CC,
+     "    pub_nodelay_expected_.store(cfg_.link.tcp_nodelay && !socket_.is_udp(),\n"
+     "                                std::memory_order_relaxed);",
+     "    pub_nodelay_expected_.store(cfg_.link.tcp_nodelay,\n"
+     "                                std::memory_order_relaxed);"),
     ("process: the command-forbidden gait list never reaches the mode machine",
      PROCESS_CC,
      "        m.command_forbidden_gaits = cfg.motion.command_forbidden_gaits;",
@@ -2078,6 +2113,7 @@ CHS_B_CC = os.path.join(QUAD, "src", "chs_b.cc")
 CHS_B_SOURCES = [CHS_B_CC,
                  os.path.join(QUAD, "src", "dds_names.cc"),
                  os.path.join(QUAD, "src", "quadruped_config.cc"),
+                 os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through GaitValueByName, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
                  os.path.join(QUAD, "src", "chs_a_codec.cc")]
 CHS_B_TESTS = [os.path.join(QUAD, "test", "test_chs_b.cc")]
 
@@ -2191,6 +2227,7 @@ UPLINK_CC = os.path.join(QUAD, "src", "uplink.cc")
 UPLINK_SOURCES = [UPLINK_CC,
                   os.path.join(QUAD, "src", "odometry.cc"),
                   os.path.join(QUAD, "src", "quadruped_config.cc"),
+                  os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through GaitValueByName, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
                   os.path.join(QUAD, "src", "chs_a_codec.cc")]
 UPLINK_TESTS = [os.path.join(QUAD, "test", "test_uplink.cc")]
 

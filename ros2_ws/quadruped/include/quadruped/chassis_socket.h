@@ -109,10 +109,18 @@ class ChassisSocket {
   // reasoning as 13 DDS-9's startup self-report: the interesting value is the
   // one the kernel has, not the one the code believes it set.
   bool nodelay_enabled() const;
+  // Whether TCP_NODELAY was ASKED FOR on this connection, and whether the
+  // setsockopt succeeded. Kept apart from nodelay_enabled() above, which reads
+  // the option BACK from the kernel: "we asked and it said yes" and "the
+  // kernel reports it on" are two claims, and FR-5 / SD-3 needs the second.
+  bool nodelay_requested() const { return nodelay_requested_; }
+  bool nodelay_setopt_ok() const { return nodelay_ok_; }
 
  private:
   int fd_ = -1;
   bool is_udp_ = false;
+  bool nodelay_requested_ = false;
+  bool nodelay_ok_ = false;
   DialError last_error_ = DialError::kNone;
   int last_errno_ = 0;
 };

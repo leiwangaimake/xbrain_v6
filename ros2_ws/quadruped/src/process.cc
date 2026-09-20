@@ -368,6 +368,35 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
 
   // ---- 2. the link ------------------------------------------------------
   const chs_a::TickResult link = session_.Tick(now_mono_s);
+  if (link.connected) {
+    // FR-5 / SD-3 verified HERE, once per connection, and read BACK from the
+    // kernel rather than trusted from the setsockopt return. The two are
+    // different claims: the call can succeed on a socket where the option does
+    // not take effect, and 13 S3.6's latency budget rests on the second one.
+    //
+    // Nothing was checking either. Reported, not fatal -- Nagle degrades the
+    // timing, it does not break the link, and refusing the connection would
+    // take Tier 1 down over a latency problem.
+    // *** Publish the two FACTS, not the verdict. The verdict is one boolean
+    // that happens to be true in every configuration a test can build -- so a
+    // mutant replacing the whole expression with `true` was indistinguishable,
+    // and that mutant is precisely the defect this check exists to prevent.
+    //
+    // Split, each half is observable: nodelay_active is read BACK from the
+    // kernel and is false on a socket nobody set it on, and nodelay_expected
+    // says whether we had any business asking. The supervisor combines them.
+    // Same principle as 13 S4.4's event column: publish the quantity the
+    // judgement is made from, and let the consumer make it.
+    //
+    // is_udp is part of `expected` rather than of `active`: TCP_NODELAY is
+    // meaningless on a datagram socket and nodelay_enabled() answers false for
+    // one by construction, so without it the process would report a timing
+    // fault on every connection to the udp:30004 candidate 13 S8.2 enables.
+    pub_nodelay_active_.store(socket_.nodelay_enabled(),
+                              std::memory_order_relaxed);
+    pub_nodelay_expected_.store(cfg_.link.tcp_nodelay && !socket_.is_udp(),
+                                std::memory_order_relaxed);
+  }
   if (link.disconnected) {
     // Bytes from the old connection must never be read as the start of the new
     // one, so the reassembly buffer is dropped with the socket.
@@ -641,6 +670,8 @@ QuadrupedProcess::LinkStatus QuadrupedProcess::link_status() const {
   s.probe_cycles = pub_probe_cycles_.load(std::memory_order_relaxed);
   s.frames = pub_frames_.load(std::memory_order_relaxed);
   s.dropped = pub_dropped_.load(std::memory_order_relaxed);
+  s.nodelay_active = pub_nodelay_active_.load(std::memory_order_relaxed);
+  s.nodelay_expected = pub_nodelay_expected_.load(std::memory_order_relaxed);
   return s;
 }
 

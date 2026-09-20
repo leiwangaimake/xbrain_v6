@@ -334,6 +334,35 @@ int Run(const std::string& path) {
     // that looks healthy, and without this line that is indistinguishable from
     // nobody publishing at all.
     if (rt_up) {
+      // *** RT-plane PUT failures. The session has counted them since it was
+      // written and nothing ever read the counter -- a counter with no reader
+      // is a number, not a diagnostic.
+      //
+      // What it costs when it is invisible: every state key this process
+      // publishes goes out through one put. If those are failing, the upper
+      // stack sees a robot that reports nothing, and the process itself looks
+      // perfectly healthy from the inside -- the same "connected, receiving
+      // nothing" shape 13 DDS-9 names, one layer up. Reported only when the
+      // count MOVES, and at most every few seconds, because a rate is the
+      // signal and a line per failed put would bury it.
+      {
+        static std::uint64_t said_puts = 0;
+        static std::uint64_t puts_said_at = 0;
+        const std::uint64_t failed = rt.session().put_failures();
+        if (failed != said_puts && proc.ctrl_ticks() - puts_said_at >= 500) {
+          puts_said_at = proc.ctrl_ticks();
+          std::fprintf(stderr,
+                       "quadruped_m20: RT plane PUT FAILED %llu time(s) so far "
+                       "(+%llu since last report, %llu succeeded). Every state "
+                       "key leaves through one put -- while these fail the "
+                       "upper stack sees a silent robot and this process looks "
+                       "healthy from the inside.\n",
+                       static_cast<unsigned long long>(failed),
+                       static_cast<unsigned long long>(failed - said_puts),
+                       static_cast<unsigned long long>(rt.session().puts_sent()));
+          said_puts = failed;
+        }
+      }
       static std::uint64_t said_refused = 0;
       const std::uint64_t refused = rt.bridge().cmd_vel_refused();
       if (refused > 0 && said_refused == 0) {
@@ -390,6 +419,32 @@ int Run(const std::string& path) {
     }
 #endif
 
+#if QUADRUPED_HAVE_UPLINK
+    // 13 S4.4 (4): past one second of staleness the odometry AND the TF stop
+    // going out. That is the intended fail-safe -- a frozen TF makes Nav2
+    // believe the robot is stationary and keep commanding rotation -- but it
+    // is also invisible from outside, because the symptom IS silence. The
+    // counter existed and nothing read it.
+    if (uplink) {
+      static std::uint64_t said_suppressed = 0;
+      static std::uint64_t supp_said_at = 0;
+      const std::uint64_t supp = uplink->suppressed();
+      if (supp != said_suppressed && proc.ctrl_ticks() - supp_said_at >= 500) {
+        supp_said_at = proc.ctrl_ticks();
+        std::fprintf(stderr,
+                     "quadruped_m20: odom/TF WITHHELD %llu tick(s) so far "
+                     "(+%llu since last report) -- 13 S4.4 (4) stops both past "
+                     "one second of staleness. Nav2 will abort its behaviours "
+                     "on the missing TF, which is the intended direction; the "
+                     "cause is upstream of here (the velocity source), not in "
+                     "the publisher.\n",
+                     static_cast<unsigned long long>(supp),
+                     static_cast<unsigned long long>(supp - said_suppressed));
+        said_suppressed = supp;
+      }
+    }
+#endif
+
     // The link. Without this the process is silent while it cannot reach the
     // chassis, which is indistinguishable from working -- CLAUDE.md 3.2 calls
     // that "assuming a guarantee you do not have", and it is the reason a dead
@@ -404,6 +459,23 @@ int Run(const std::string& path) {
                    quadruped::chs_a::ConnStateName(st.conn), st.active_endpoint,
                    static_cast<unsigned long long>(st.probe_cycles),
                    static_cast<unsigned long long>(st.frames));
+    }
+    // FR-5 / SD-3: TCP_NODELAY, read back from the kernel on the live socket.
+    // Said ONCE, because it is a property of the connection rather than a
+    // rate. Before this nothing checked it at all -- the setsockopt return was
+    // discarded and the read-back accessor had no caller, so "Nagle is off"
+    // was a guarantee the process did not hold.
+    {
+      static bool said_nodelay = false;
+      if (st.nodelay_expected && !st.nodelay_active && !said_nodelay) {
+        said_nodelay = true;
+        std::fprintf(stderr,
+                     "quadruped_m20: TCP_NODELAY is NOT set on the chassis "
+                     "socket although the config asks for it. Nagle will batch "
+                     "the heartbeat with whatever follows it, and every latency "
+                     "figure in 13 S3.6 then measures something else (FR-5 / "
+                     "SD-3). The link works; its timing does not.\n");
+      }
     }
     // Refused frames. FR-5 asks for a `warn` on a length mismatch and this
     // process cannot emit events (11 RT-C4), so the honest substitute is to
