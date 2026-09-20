@@ -316,6 +316,16 @@ QuadrupedConfig Cfg(int port) {
   c.dds.imu_age_warn_ms = 50;
   c.dds.imu_frame_id = "imu_link";
   c.dds.forward_imu_to_rt = false;
+  // 13 PR-1 / QC-9 / MS-2 / TR-1. Set HERE, in the fixture the process is
+  // actually built from -- test_mode_machine.cc builds its own ModeConfig and
+  // therefore could not see the process discarding this block entirely.
+  c.motion.prone_forbidden_gaits = {0x3003, 0x1003};
+  // *** Deliberately NOT 5.0. A fixture that matches the literal the code used
+  // to hardcode makes "hardcode it again" an equivalent mutation -- nothing
+  // could tell the two apart. Measured: that mutant survived until this value
+  // changed.
+  c.motion.mode_switch_timeout_s = 2.0;
+  c.motion.external_transition_hold_s = 3.5;
   return c;
 }
 
@@ -422,6 +432,35 @@ Bytes MotionFrame(int motion_state, int gait) {
   std::memcpy(out.data() + chs_a::kHeaderBytes, items, asdu_len);
   return out;
 }
+
+// Run the process from `from` to `to` while the chassis keeps REPORTING the
+// given gait at 2 Hz, the way a real one does.
+//
+// The reporting is not decoration. 13 CA-7 makes an arriving report the only
+// evidence the link is alive, so a loop that merely ticks for four seconds
+// takes the session through degraded to lost and every later request is
+// refused for a link reason -- which looks exactly like the refusal under
+// test. Measured: the first draft did that and the final assertion failed for
+// a reason that had nothing to do with PR-1.
+//
+// Used where 13 TR-1's external-transition hold has to expire before PR-1's
+// verdict means anything: during the hold the STEADY triple is still the old
+// one (TR-2), so an assertion made too early is answered by the previous gait.
+void Settle(QuadrupedProcess* p, FakeChassis* chassis, double from, double to,
+            int gait) {
+  double next_report = from;
+  for (double t = from; t < to; t += 0.1) {
+    if (t >= next_report) {
+      chassis->Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17, gait,
+                               /*hes=*/false, /*sleep=*/false));
+      next_report = t + 0.5;      // 2 Hz, 13 S7.1
+    }
+    p->RxPump(t);
+    p->CtrlTick(t);
+  }
+  chassis->Drain();
+}
+
 
 }  // namespace
 
@@ -1213,6 +1252,118 @@ int main(int argc, char** argv) {
     // since day one with no reader, which makes it a number, not a diagnostic.
     // and a good frame afterwards must not disturb the refusal count.
     CHECK(p.link_status().dropped == 3);
+  }
+
+  // ---- 13 MS-2: the switch window comes from CONFIG, not a literal -------
+  {
+    // The window was a literal 5.0 in the process constructor while
+    // motion.mode_switch_timeout_s sat in the config doing nothing -- 13 v1.7's
+    // sentence for special_gaits applies verbatim: 填了不生效 = 让设置的人
+    // 以为改了什么.
+    //
+    // *** The fixture uses 2.0 on purpose. With 5.0 there, "hardcode it back
+    // to 5.0" is an EQUIVALENT mutation and no assertion could tell the two
+    // apart -- measured, that mutant survived until the fixture changed.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    // A steady read-back first, so the request is not refused for having no
+    // triple to reason from.
+    chassis.Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+                            /*gait=*/0x3002, /*hes=*/false, /*sleep=*/false));
+    p.RxPump(0.05);
+    p.CtrlTick(0.06);
+
+    // Ask for a gait the chassis will never confirm -- no read-back is sent
+    // after this point, which is exactly the case MS-2 exists for.
+    CHECK(p.OnChassisAction(0.1, ModeAction::kSetGait, 0x3003).accepted);
+    p.CtrlTick(0.11);
+    CHECK(p.mode_switching());
+
+    // Still in flight just before the configured window closes. Without this
+    // half, an implementation that gave up immediately would pass the check
+    // below.
+    for (double t = 0.2; t < 1.9; t += 0.1) p.CtrlTick(t);
+    CHECK(p.mode_switching());
+    CHECK(p.mode_switch_failures() == 0);
+
+    // And failed just after it. A hardcoded 5.0 is still waiting here.
+    for (double t = 1.9; t < 2.6; t += 0.1) p.CtrlTick(t);
+    CHECK(!p.mode_switching());
+    CHECK(p.mode_switch_failures() == 1);
+  }
+
+  // ---- PR-1 reaches the process: prone REFUSED on a staircase ------------
+  {
+    // *** THE DEFECT THIS CLOSES, and it is the worst one in this file.
+    // QuadrupedProcess built its ModeConfig from a lambda that took cfg and
+    // threw it away with (void)cfg. prone_forbidden_gaits was therefore EMPTY,
+    // and ProneAllowed answers !Contains(list, gait) -- true for every gait.
+    // PR-1 never fired: `prone` was accepted on a staircase, and 13 V-54 calls
+    // that a safety incident outright ("楼梯上不防侧翻 = 安全事故", P0).
+    //
+    // Everything else was in place: the predicate, the refusal code, the
+    // config key with both stair gaits in it, and test_mode_machine.cc, which
+    // builds its OWN list and passes either way. That last part is the lesson
+    // -- a unit test that supplies the configuration cannot see a process that
+    // never reads it. So this case drives the PROCESS with chassis frames.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+
+    // *** ORDER MATTERS, and it is not cosmetic. An ACCEPTED prone starts a
+    // mode switch, and 13 MS-3 then refuses the next request with
+    // mode_switch_in_flight -- which satisfies `!accepted` for the wrong
+    // reason and would make the two stair cases below pass on an
+    // implementation where PR-1 does nothing. The refusals come FIRST because
+    // a refusal starts no switch; the "flat is allowed" half is last.
+    //
+    // The navigation stair gait, which is the one the robot reaches by itself
+    // (13 G-05, 自主上下楼梯).
+    chassis.Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+                            /*gait=*/0x3003, /*hes=*/false, /*sleep=*/false));
+    Settle(&p, &chassis, 0.2, 4.2, 0x3003);
+    const ModeRequestResult on_stair = p.OnChassisAction(4.3, ModeAction::kProne, 0);
+    CHECK(!on_stair.accepted);
+    // The REASON, not just the refusal: a prone refused for "a switch is
+    // already in flight" would satisfy `!accepted` and mean something else
+    // entirely -- and it would clear by itself a second later.
+    CHECK(std::string(ModeRejectItem(on_stair.reject)) == "prone_on_stair");
+
+    // 13 GS-3: "我方不发" is not "它不会出现". The factory handset can set
+    // stair_standard, and PR-1 refuses prone on whatever the chassis REPORTS.
+    // An implementation listing only 0x3003 passes every check above.
+    // *** Settled FIRST, and that is the whole point of this step. The first
+    // draft asserted right after the frame arrived and passed with the list
+    // narrowed to {0x3003} -- because TR-1 still held the STEADY gait at the
+    // previous staircase, so the refusal came from the stale value, not from
+    // 0x1003 being on the list. An assertion a wrong implementation passes
+    // (CLAUDE.md S3.2 form 1), caught by running the mutant.
+    chassis.Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+                            /*gait=*/0x1003, /*hes=*/false, /*sleep=*/false));
+    Settle(&p, &chassis, 4.4, 8.4, 0x1003);
+    const ModeRequestResult standard = p.OnChassisAction(8.5, ModeAction::kProne, 0);
+    CHECK(!standard.accepted);
+    CHECK(std::string(ModeRejectItem(standard.reject)) == "prone_on_stair");
+
+    // And back to flat: prone is ALLOWED again. Two things at once -- the
+    // refusal does not latch (a latching one would leave the robot unable to
+    // lie down for the rest of the sortie after one staircase), and PR-1 is
+    // not simply refusing prone unconditionally, which every assertion above
+    // would tolerate.
+    // *** NOT immediately. The first draft asserted this right after the frame
+    // and got prone_on_stair -- and the CODE was right, the test was wrong.
+    // 13 TR-2: PR-1 judges on the last STEADY read-back, not on the value seen
+    // during a transition, and every gait change here is EXTERNAL (we never
+    // commanded one), so TR-1 holds the machine in transition for
+    // external_transition_hold_s. During that hold the steady value is still
+    // the staircase, and refusing is "正是我们要的方向" in TR-2's own words.
+    chassis.Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+                            /*gait=*/0x3002, /*hes=*/false, /*sleep=*/false));
+    Settle(&p, &chassis, 8.6, 12.6, 0x3002);
+    CHECK(p.OnChassisAction(12.7, ModeAction::kProne, 0).accepted);
   }
 
   // ---- the light command puts a FRAME on the wire (C-07 / 11 S9.4.1) -----

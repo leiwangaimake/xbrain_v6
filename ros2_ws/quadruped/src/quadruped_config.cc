@@ -36,6 +36,8 @@
 
 #include "quadruped/quadruped_config.h"
 
+#include "quadruped/chs_a_reports.h"
+
 #include <sstream>
 
 #include "quadruped/chs_a_codec.h"
@@ -205,6 +207,78 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
             "against. Filling this list would change no behaviour; the limits "
             "have to exist in spec.* first");
       }
+    }
+
+    // ---- 13 PR-1 / QC-9 / MS-2 / TR-1: the motion block --------------
+    //
+    // *** prone_forbidden_gaits was NEVER READ. The process built its
+    // ModeConfig from a lambda that took cfg and threw it away, so the list
+    // stayed empty -- and ProneAllowed answers !Contains(list, gait), which is
+    // true for every gait when the list is empty. PR-1 therefore never fired:
+    // `prone` was accepted on a staircase, and 13 V-54 calls that a safety
+    // incident in as many words.
+    {
+      const YamlNode& gaits = root.require_seq(K("motion.prone_forbidden_gaits"));
+      for (std::size_t i = 0; i < gaits.size(); ++i) {
+        const std::string label =
+            K("motion.prone_forbidden_gaits") + "[" + std::to_string(i) + "]";
+        const std::string name = gaits.at_index(i).as_scalar(label);
+        std::int64_t value = 0;
+        // A name outside 13 S5.3's five is refused rather than skipped. A
+        // skipped entry is a gait the operator believes is forbidden and is
+        // not -- the same silence PR-1 already suffered from, one layer up.
+        if (!chs_a::GaitValueByName(name, &value)) {
+          throw ConfigError(
+              label + " = \"" + name +
+              "\" is not one of the gaits in 13 S5.3 (basic / platform / "
+              "stair_standard / flat / stair_agile). A name that resolves to "
+              "nothing would leave that gait ALLOWED for prone while the "
+              "config says it is forbidden");
+        }
+        cfg.motion.prone_forbidden_gaits.push_back(value);
+      }
+      // QC-9, verbatim: the list MUST contain both stair gaits; widening is
+      // allowed, narrowing is not, and narrowing refuses startup.
+      //
+      // Checked against chs_a::IsStairGait rather than against two literals
+      // here: that predicate sits next to the gait table, so a stair gait
+      // added there is required here without an edit -- which is the whole
+      // point of "允许改宽不允许改窄".
+      for (const std::int64_t stair : {static_cast<std::int64_t>(0x1003),
+                                       static_cast<std::int64_t>(0x3003)}) {
+        bool found = false;
+        for (const std::int64_t g : cfg.motion.prone_forbidden_gaits) {
+          if (g == stair) found = true;
+        }
+        if (!found) {
+          throw ConfigError(
+              K("motion.prone_forbidden_gaits") +
+              " must contain BOTH stair gaits (stair_agile 0x3003 and "
+              "stair_standard 0x1003) -- 13 QC-9 allows widening this list and "
+              "forbids narrowing it. 13 GS-3 is why stair_standard belongs "
+              "here even though we never command it: the factory handset can "
+              "set it, and PR-1 refuses prone on whatever the chassis REPORTS. "
+              "13 V-54: there is no anti-rollover path for prone on stairs");
+        }
+      }
+    }
+    cfg.motion.mode_switch_timeout_s =
+        root.require_double(K("motion.mode_switch_timeout_s"));
+    cfg.motion.external_transition_hold_s =
+        root.require_double(K("motion.external_transition_hold_s"));
+    // Both were literals in the process constructor while these keys sat in
+    // the config doing nothing -- "填了不生效 = 让设置的人以为改了什么", the
+    // same sentence 13 v1.7 used for special_gaits.
+    if (!(cfg.motion.mode_switch_timeout_s > 0.0)) {
+      throw ConfigError(K("motion.mode_switch_timeout_s") +
+                        " must be positive: a zero or negative window makes "
+                        "every mode switch fail on the period it is requested");
+    }
+    if (!(cfg.motion.external_transition_hold_s > 0.0)) {
+      throw ConfigError(K("motion.external_transition_hold_s") +
+                        " must be positive: 13 TR-1 holds the robot at zero "
+                        "for this long after an EXTERNAL triple change, and a "
+                        "zero hold releases it on the same period");
     }
 
     // ---- channel two: chassis DDS domain 0 ---------------------------

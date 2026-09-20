@@ -102,9 +102,15 @@ QuadrupedProcess::QuadrupedProcess(const QuadrupedConfig& cfg)
       odom_(cfg.odom, cfg.tier1.limits.holonomic),
       mode_([&cfg] {
         ModeConfig m;
-        m.switch_timeout_s = 5.0;
-        m.external_transition_hold_s = 3.5;
-        (void)cfg;
+        // *** This lambda used to take cfg and discard it with (void)cfg,
+        // hardcoding two numbers and leaving prone_forbidden_gaits EMPTY.
+        // ProneAllowed answers !Contains(list, gait), so an empty list made it
+        // true for every gait: PR-1 never fired and `prone` was accepted on a
+        // staircase. 13 V-54 calls that a safety incident. The config carried
+        // the right two gaits the whole time.
+        m.switch_timeout_s = cfg.motion.mode_switch_timeout_s;
+        m.external_transition_hold_s = cfg.motion.external_transition_hold_s;
+        m.prone_forbidden_gaits = cfg.motion.prone_forbidden_gaits;
         return m;
       }()) {}
 

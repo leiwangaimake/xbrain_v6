@@ -179,6 +179,11 @@ class QuadrupedProcess {
   // Diagnostics for the mode sequence; see OnChassisMode.
   std::uint64_t mode_steps() const { return mode_steps_; }
   std::uint64_t mode_frames_sent() const { return mode_frames_sent_; }
+  // 13 MS-2 / MS-3, for the self-report and for tests. Reads the mode machine
+  // DIRECTLY, so like the neighbours above it is only safe from the thread
+  // that drives CtrlTick -- which means from a test, or from the ctrl thread.
+  bool mode_switching() const { return mode_.mode_switching(); }
+  std::uint64_t mode_switch_failures() const { return mode_.switch_failures(); }
   bool mode_sequence_pending() const {
     return mode_want_state_ || mode_want_gait_ || mode_want_usage_;
   }

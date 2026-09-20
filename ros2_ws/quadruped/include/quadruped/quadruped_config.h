@@ -225,12 +225,37 @@ struct ChassisDdsConfig {
 };
 
 // Everything the process needs from the file, in one value.
+// The `motion` block (13 S8.2). Small, and every field in it is a rule that
+// was previously hardcoded or -- in the case of the first one -- not applied at
+// all.
+struct MotionConfig {
+  // 13 PR-1 / QC-9: the gaits on which `prone` is REFUSED, as raw read-back
+  // values. Configured by NAME and resolved here, because the chassis reports
+  // values and 13 S5.3 is the one place the two are tied together.
+  //
+  // *** This list was never populated in production. ModeMachine::ProneAllowed
+  // answers `!Contains(list, steady_gait)`, so an empty list makes it return
+  // true for every gait and PR-1 never fires. 13 V-54 is a P0 for exactly this
+  // reason: "楼梯上不防侧翻 = 安全事故". Everything else was in place -- the
+  // predicate, the refusal code, the config key with both stair gaits in it,
+  // and a unit test that builds its OWN list and passes.
+  std::vector<std::int64_t> prone_forbidden_gaits;
+  // 13 MS-2: how long a mode switch may wait for its read-back before it is
+  // called failed. Was a literal 5.0 in the process constructor while the key
+  // sat in the config doing nothing.
+  double mode_switch_timeout_s = 0.0;
+  // 13 TR-1: how long an externally-caused triple change holds the robot at
+  // zero. Same story, literal 3.5.
+  double external_transition_hold_s = 0.0;
+};
+
 struct QuadrupedConfig {
   std::string robot_id;
   ChassisLinkConfig link;
   ChassisDdsConfig dds;
   UplinkConfig uplink;
   OdomConfig odom;
+  MotionConfig motion;
   Tier1Config tier1;
 };
 

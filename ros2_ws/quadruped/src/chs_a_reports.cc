@@ -214,6 +214,20 @@ bool ParseRoot(const std::uint8_t* asdu, std::size_t len, Json* out) {
 OpenSetValue ResolveMotionState(std::int64_t raw) { return Resolve(kMotionStates, raw); }
 OpenSetValue ResolveGait(std::int64_t raw) { return Resolve(kGaits, raw); }
 
+bool GaitValueByName(const std::string& name, std::int64_t* out) {
+  // The SAME table ResolveGait reads, walked the other way. A second name
+  // table would be a second place for a gait to be spelled, and the two only
+  // have to disagree once -- 13 QC-9's list is configured by name and compared
+  // against read-back VALUES, so a mismatch there disarms PR-1 silently.
+  for (const CodeName& g : kGaits) {
+    if (name == g.name) {
+      *out = g.value;
+      return true;
+    }
+  }
+  return false;
+}
+
 bool IsStairGait(std::int64_t raw) {
   for (const std::int64_t g : kStairGaits) {
     if (g == raw) return true;

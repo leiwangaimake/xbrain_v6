@@ -89,6 +89,11 @@ OpenSetValue ResolveUsageMode(std::int64_t raw);
 // It takes the RAW value, not an OpenSetValue: the label of an unregistered
 // code is unknown_0xNNNN, and matching on labels would make the safety
 // behaviour depend on a rendering choice.
+// A gait's raw value from its contract name, or false when the name is not one
+// of 13 S5.3's five. Used by the config loader, which takes NAMES and has to
+// compare them against the read-back VALUES the chassis reports.
+bool GaitValueByName(const std::string& name, std::int64_t* out);
+
 bool IsStairGait(std::int64_t raw);
 
 // The basic status report (Type 0x00100064 / Command 0x00f00000), 2 Hz.

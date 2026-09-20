@@ -369,11 +369,31 @@ CONFIG_SOURCES = [
     os.path.join(QUAD, "src", "quadruped_config.cc"),
     os.path.join(QUAD, "src", "chs_a_codec.cc"),
     os.path.join(QUAD, "src", "chs_a_framer.cc"),
+    # 13 QC-9 resolves the prone-forbidden gait NAMES against the read-back
+    # table, which lives here. The loader needs GaitValueByName, and without
+    # this entry the suite fails to LINK -- reported as a red baseline, which
+    # points at the code rather than at the source list.
+    os.path.join(QUAD, "src", "chs_a_reports.cc"),
 ]
 CONFIG_TESTS = [os.path.join(QUAD, "test", "test_quadruped_config.cc")]
 CONFIG_CC = os.path.join(QUAD, "src", "quadruped_config.cc")
 
 CONFIG_MUTANTS = [
+    # 13 QC-9, verbatim: the prone-forbidden list may be WIDENED, never
+    # narrowed, and narrowing refuses startup. Dropping the check lets a
+    # config ship with one stair gait missing -- and 13 GS-3 is why the
+    # missing one is usually stair_standard: we never command it, so it looks
+    # removable, while the factory handset can still set it.
+    ("config: a narrowed prone-forbidden list is accepted",
+     CONFIG_CC,
+     "        if (!found) {",
+     "        if (false) {"),
+    # A gait NAME that resolves to nothing is refused, not skipped. A skipped
+    # entry is a gait the operator believes is forbidden and is not.
+    ("config: an unresolvable gait name is skipped instead of refused",
+     CONFIG_CC,
+     "        if (!chs_a::GaitValueByName(name, &value)) {",
+     "        if (false) {"),
     # Without the loop, a zero or negative rung passes and the reconnect turns
     # into a busy loop -- audible, because the chassis greets every connect.
     ("config: reconnect ladder rungs not checked for positivity",
@@ -1276,6 +1296,31 @@ PROCESS_SOURCES = [
 PROCESS_TESTS = [os.path.join(QUAD, "test", "test_process.cc")]
 
 PROCESS_MUTANTS = [
+    # *** 13 PR-1 / QC-9 / V-54 (P0). THE defect: the ModeConfig lambda took
+    # cfg and discarded it, so prone_forbidden_gaits was empty and
+    # ProneAllowed -- which answers !Contains(list, gait) -- was true for every
+    # gait. `prone` was accepted on a staircase, and 13 V-54 calls that a
+    # safety incident outright. test_mode_machine.cc builds its OWN list and
+    # stays green under this mutant, which is why the case lives in
+    # test_process.cc.
+    ("process: the prone-forbidden gait list never reaches the mode machine",
+     PROCESS_CC,
+     "        m.prone_forbidden_gaits = cfg.motion.prone_forbidden_gaits;",
+     "        m.prone_forbidden_gaits.clear();"),
+    # Only the navigation stair gait listed. 13 GS-3: 我方不发 is not
+    # 它不会出现 -- the factory handset can set stair_standard, and PR-1
+    # refuses prone on whatever the chassis REPORTS.
+    ("process: only the navigation stair gait forbids prone",
+     PROCESS_CC,
+     "        m.prone_forbidden_gaits = cfg.motion.prone_forbidden_gaits;",
+     "        m.prone_forbidden_gaits = {0x3003};"),
+    # The two windows came from literals while the config keys sat unread.
+    # 13 v1.7's sentence for special_gaits applies verbatim: 填了不生效 =
+    # 让设置的人以为改了什么.
+    ("process: the mode-switch window is hardcoded, not configured",
+     PROCESS_CC,
+     "        m.switch_timeout_s = cfg.motion.mode_switch_timeout_s;",
+     "        m.switch_timeout_s = 5.0;"),
     # FR-5 / 13 S2.2. THE defect: Framer::PushDatagram had zero production call
     # sites, so the udp:30004 candidate (enabled in the resolved config) was
     # framed as a STREAM. The stream framer carries leftovers across pushes, so

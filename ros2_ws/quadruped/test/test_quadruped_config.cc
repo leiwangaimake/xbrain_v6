@@ -108,6 +108,11 @@ const char* kGood =
     "      - vy\n"
     "      - wz\n"
     "      special_gaits: []\n"
+    "    prone_forbidden_gaits:\n"
+    "    - stair_agile\n"
+    "    - stair_standard\n"
+    "    mode_switch_timeout_s: 5.0\n"
+    "    external_transition_hold_s: 3.5\n"
     "  odom:\n"
     "    a_max_mps2: 2.5\n"
     "    arw_rad_sqrt_s: 0.002\n"
@@ -247,6 +252,79 @@ int main(int argc, char** argv) {
   {
     const std::string p =
         WriteTemp("q_missing.yaml", Mutate("    cmd_timeout_ms: 200\n", ""));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+
+  // ---- 13 QC-9: the prone-forbidden list may widen, never narrow ---------
+  {
+    // The positive half first: the two stair gaits arrive as VALUES, resolved
+    // from the names the config spells. Without this, an empty list would
+    // satisfy every negative case below by throwing for the wrong reason.
+    const std::string p = WriteTemp("q_prone_ok.yaml", kGood);
+    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    CHECK(c.motion.prone_forbidden_gaits.size() == 2);
+    bool has_agile = false, has_standard = false;
+    for (const std::int64_t g : c.motion.prone_forbidden_gaits) {
+      if (g == 0x3003) has_agile = true;
+      if (g == 0x1003) has_standard = true;
+    }
+    CHECK(has_agile);
+    CHECK(has_standard);
+  }
+  {
+    // NARROWING: stair_standard removed. 13 QC-9 refuses startup, and 13 GS-3
+    // says why it belongs there even though we never command it -- the factory
+    // handset can set it, and PR-1 refuses prone on whatever the chassis
+    // REPORTS.
+    const std::string p = WriteTemp(
+        "q_prone_narrow.yaml",
+        Mutate("    - stair_agile\n    - stair_standard\n", "    - stair_agile\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // The other stair gait removed. Both directions, because a check written
+    // against one of them passes on a list missing the other.
+    const std::string p = WriteTemp(
+        "q_prone_narrow2.yaml",
+        Mutate("    - stair_agile\n    - stair_standard\n", "    - stair_standard\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // WIDENING is allowed: an extra gait on the list loads.
+    const std::string p = WriteTemp(
+        "q_prone_wide.yaml",
+        Mutate("    - stair_agile\n    - stair_standard\n",
+               "    - stair_agile\n    - stair_standard\n    - platform\n"));
+    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    CHECK(c.motion.prone_forbidden_gaits.size() == 3);
+  }
+  {
+    // A name that is not one of 13 S5.3's five is REFUSED, not skipped. A
+    // skipped entry is a gait the operator believes is forbidden and is not --
+    // the same silence PR-1 already suffered from, one layer up.
+    const std::string p = WriteTemp(
+        "q_prone_name.yaml", Mutate("    - stair_agile\n", "    - stairs\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // 13 MS-2 / TR-1: both windows come from config now, and neither may be
+    // zero. They were literals in the process constructor while these keys sat
+    // in the config doing nothing.
+    const std::string p = WriteTemp("q_win.yaml", kGood);
+    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    CHECK(c.motion.mode_switch_timeout_s == 5.0);
+    CHECK(c.motion.external_transition_hold_s == 3.5);
+  }
+  {
+    const std::string p = WriteTemp(
+        "q_win0.yaml",
+        Mutate("    mode_switch_timeout_s: 5.0\n", "    mode_switch_timeout_s: 0.0\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    const std::string p = WriteTemp(
+        "q_hold0.yaml", Mutate("    external_transition_hold_s: 3.5\n",
+                               "    external_transition_hold_s: 0.0\n"));
     CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
   }
 
