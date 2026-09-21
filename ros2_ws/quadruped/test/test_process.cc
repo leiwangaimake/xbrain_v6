@@ -135,7 +135,15 @@ class FakeChassis {
     }
     return total;
   }
-  void Send(const Bytes& b) { ::send(conn_, b.data(), b.size(), MSG_NOSIGNAL); }
+  void Send(const Bytes& b) {
+    // A short write here would fail the case somewhere far away with no clue;
+    // print loudly instead of silently losing bytes.
+    const long r = ::send(conn_, b.data(), b.size(), MSG_NOSIGNAL);
+    if (r != static_cast<long>(b.size())) {
+      std::fprintf(stderr, "FakeChassis::Send short write r=%ld errno=%d\n",
+                   r, errno);
+    }
+  }
   const Bytes& sent() const { return sent_; }
   void ClearSent() { sent_.clear(); }
 
@@ -1260,6 +1268,79 @@ int main(int argc, char** argv) {
     p.OnCmdVel(3.85, 0.5, 0.0, 0.1, p.estop_epoch());
     p.CtrlTick(3.9);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
+  }
+
+  // ---- 13 F-21 / T-SLEEP-1: sleep refuses to SEND, process level ---------
+  {
+    // The tier1 half (stop_reason = sleep, not a lock, self-clearing) is
+    // covered in test_tier1.cc. THIS case is the process half the criterion
+    // actually names: no axis frame leaves while the chassis reports Sleep=1,
+    // the published RobotState says sleep, and Sleep=0 recovers on the next
+    // period with no enable ceremony -- the motors were unpowered, not locked.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    // Awake and moving first: without this half, "no frames during sleep" is
+    // satisfied by a process that never sends frames at all.
+    chassis.Send(BasicFrame(1, 17, 0x3002, /*hes=*/false, /*sleep=*/false));
+    p.RxPump(0.05);
+    p.OnCmdVel(0.06, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.OnEnable();
+    p.CtrlTick(0.07);
+    p.OnCmdVel(0.08, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.CtrlTick(0.09);
+    CHECK(p.last_tier1().stop_reason == StopReason::kNone);
+    CHECK(p.axis_frames_sent() >= 1);
+
+    // The chassis goes to sleep. Next period: sleep reason, zero frames.
+    chassis.Send(BasicFrame(1, 17, 0x3002, /*hes=*/false, /*sleep=*/true));
+    p.RxPump(0.15);
+    const std::uint64_t frames_at_sleep = p.axis_frames_sent();
+    p.OnCmdVel(0.16, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.CtrlTick(0.17);
+    CHECK(p.last_tier1().stop_reason == StopReason::kSleep);
+    // NO axis frame went out -- not a zero-velocity frame either. F-21: the
+    // motors are unpowered; a frame of any content is a frame the criterion
+    // forbids ("无任何轴指令 / 运动状态帧发出").
+    CHECK(p.axis_frames_sent() == frames_at_sleep);
+    // And several more periods, so a one-period suppression cannot pass.
+    for (double t = 0.18; t < 0.40; t += 0.01) {
+      p.OnCmdVel(t, 0.5, 0.0, 0.1, p.estop_epoch());
+      p.CtrlTick(t);
+    }
+    CHECK(p.axis_frames_sent() == frames_at_sleep);
+    // The published state says so -- read from the snapshot rt_pub publishes.
+    {
+      QuadrupedProcess::StateSnapshot snap;
+      CHECK(p.TakeStateForPublish(&snap));
+      CHECK(snap.sleep);
+      CHECK(!snap.motion_allowed);
+    }
+
+    // Sleep=0: recovery on the NEXT period, no enable ceremony. The read-back
+    // clears the reason and frames flow again -- 13 F-21 verbatim, "不是锁,
+    // 人把机器唤醒, 读回自己清".
+    // Drain what the process sent while asleep (heartbeats -- F-21 stops
+    // MOTION frames, not the link), then wake it. *** The polled settle is
+    // load-bearing: this is the one scenario in the file where the stub sat
+    // NOT reading while the process kept sending, and with the socket in
+    // that state loopback TCP was measured delivering the stub's next frame
+    // tens of milliseconds late -- a bare Send-then-pump read zero bytes and
+    // this case spent an afternoon looking like a process bug. Poll with an
+    // injected-time axis; 50 ms sufficed on the bench, the cap is 200.
+    chassis.Drain();
+    chassis.Send(BasicFrame(1, 17, 0x3002, /*hes=*/false, /*sleep=*/false));
+    int woke = 0;
+    for (int i = 0; i < 100 && woke == 0; ++i) {
+      ::usleep(2000);
+      woke = p.RxPump(0.451 + i * 1e-4);
+    }
+    CHECK(woke >= 1);
+    p.OnCmdVel(0.46, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.CtrlTick(0.47);
+    CHECK(p.last_tier1().stop_reason == StopReason::kNone);
+    CHECK(p.axis_frames_sent() > frames_at_sleep);
   }
 
   // ---- the UDP endpoint frames by DATAGRAM, not by stream (FR-5) --------

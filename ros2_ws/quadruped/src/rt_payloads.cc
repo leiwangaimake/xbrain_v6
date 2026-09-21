@@ -307,7 +307,18 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
     OpenSet(&a, "usage_mode", chs_a::ResolveUsageMode(in.usage_mode_raw));
     OpenSet(&a, "motion_state", chs_a::ResolveMotionState(in.motion_state_raw));
     OpenSet(&a, "gait", chs_a::ResolveGait(in.gait_raw));
-    a.Raw(",\"model\":null,\"version\":null,\"hes\":null,\"sleep\":null");
+    a.Raw(",\"model\":null,\"version\":null");
+    // Same two-source rule as charge below, same reason, same day found: the
+    // state path never has `basic`, so sourcing these from it alone published
+    // null on every state message while the report path carried them fine.
+    if (in.has_charge) {
+      a.Raw(",\"hes\":");
+      a.Bool(in.hes);
+      a.Raw(",\"sleep\":");
+      a.Bool(in.sleep);
+    } else {
+      a.Raw(",\"hes\":null,\"sleep\":null");
+    }
   } else {
     // Nothing has been heard from the chassis yet. null, not a zeroed struct:
     // a zeroed one reads as "idle, awake, no emergency stop", which is exactly

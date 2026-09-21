@@ -958,6 +958,30 @@ PAYLOADS_MUTANTS = [
      "  a.Bool(in.ts_sync);",
      "  a.Raw(\",\\\"ts_sync\\\":\");\n"
      "  a.Bool(true);"),
+    # Same day, same writer line as the charge fix, walked past twice: the
+    # state path has no `basic`, so hes and sleep stayed null on every state
+    # message. hes is the HES emergency-stop read-back.
+    ("payloads: state-path hes and sleep stay null",
+     PAYLOADS_CC,
+     "    if (in.has_charge) {\n"
+     '      a.Raw(",\\"hes\\":");\n'
+     "      a.Bool(in.hes);",
+     "    if (false) {\n"
+     '      a.Raw(",\\"hes\\":");\n'
+     "      a.Bool(in.hes);"),
+    # The pair swapped: both booleans, both valid JSON, nothing but a reader
+    # of the VALUES catches it -- and "hes":false on a robot whose HES is
+    # pressed is the unsafe direction.
+    ("payloads: hes and sleep swapped",
+     PAYLOADS_CC,
+     '      a.Raw(",\\"hes\\":");\n'
+     "      a.Bool(in.hes);\n"
+     '      a.Raw(",\\"sleep\\":");\n'
+     "      a.Bool(in.sleep);",
+     '      a.Raw(",\\"hes\\":");\n'
+     "      a.Bool(in.sleep);\n"
+     '      a.Raw(",\\"sleep\\":");\n'
+     "      a.Bool(in.hes);"),
     # 11 S13.9 draws detail.item from a closed set WHEN PRESENT. Writing it
     # unconditionally puts "" on the wire for every accepted ack, and "" is
     # not in that set -- a consumer switching on item then has to special-case

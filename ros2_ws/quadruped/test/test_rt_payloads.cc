@@ -827,6 +827,41 @@ int main(int argc, char** argv) {
     CHECK(j["charge"].is_null());
   }
 
+  // ---- hes / sleep ride the same flag as charge (found 2026-09-21) -------
+  {
+    // The charge fix above walked PAST these two on the same writer line:
+    // state-path RobotState said "hes":null, "sleep":null forever, while the
+    // 2 Hz report stream carried both. hes is the HES emergency-stop
+    // read-back -- a consumer watching state/robot could not see it at all.
+    // Requires has_triple: without the triple the whole block is the cold
+    // "never heard from the chassis" nulls, which is a different claim.
+    char buf[8192];
+    RobotStateInput in;
+    in.has_triple = true;
+    in.usage_mode_raw = 1;
+    in.motion_state_raw = 17;
+    in.gait_raw = 0x3002;
+    in.has_charge = true;
+    in.hes = true;
+    in.sleep = false;
+    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("robot state hes/sleep raw", buf, n);
+    CHECK(j["hes"] == true);
+    CHECK(j["sleep"] == false);
+    // And the flag off: null, not false -- "never reported" and "reported
+    // as awake, no HES" are different claims, and the second one is exactly
+    // what a healthy robot looks like.
+    RobotStateInput cold;
+    cold.has_triple = true;
+    cold.usage_mode_raw = 1;
+    cold.motion_state_raw = 17;
+    cold.gait_raw = 0x3002;
+    const std::size_t m = WriteRobotState(cold, buf, sizeof(buf));
+    const Json jc = ParseOrFail("robot state hes/sleep none", buf, m);
+    CHECK(jc["hes"].is_null());
+    CHECK(jc["sleep"].is_null());
+  }
+
   // ---- RobotState.odom (11 S4.1 / S9.9 / 13 S4.4 (4)) --------------------
   {
     // The gap this closes: WriteRobotState emitted no odom block at all, while

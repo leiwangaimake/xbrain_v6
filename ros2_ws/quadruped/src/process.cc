@@ -640,6 +640,8 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   // rather than two samples that happen to be close.
   snap.has_charge = have_snapshot_ && latest_.from_basic;
   snap.charge_raw = latest_.charge_raw;
+  snap.hes = latest_.hes;
+  snap.sleep = latest_.sleep;
   snap.odom = last_odom_;
   pub_switch_fail_.store(mode_.switch_failures(), std::memory_order_relaxed);
   pub_mode_frames_.store(mode_frames_sent_, std::memory_order_relaxed);

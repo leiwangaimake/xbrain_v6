@@ -342,6 +342,8 @@ bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
   // on every state message until the int was carried across.
   in.has_charge = snap.has_charge;
   in.charge_raw = snap.charge_raw;
+  in.hes = snap.hes;
+  in.sleep = snap.sleep;
   in.odom = &snap.odom;
   in.soft_estop_active = snap.soft_estop_active;
   in.cmd_age_ms = snap.cmd_age_ms;

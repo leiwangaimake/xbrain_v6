@@ -289,6 +289,9 @@ class QuadrupedProcess {
     // the report path. The writer was right; the state path had no input.
     bool has_charge = false;
     int charge_raw = 0;
+    // Ride the same flag: the trio arrives on the same BasicStatus.
+    bool hes = false;
+    bool sleep = false;
     // The same sample rt_pub publishes as /odom_quadruped, carried so it can
     // ALSO go out as RobotState.odom. 11 S9.9's output table names three
     // outputs for this process -- TF, /odom_quadruped and RobotState.odom.* --

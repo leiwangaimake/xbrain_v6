@@ -148,8 +148,17 @@ struct RobotStateInput {
   // the state path has no BasicStatus to offer (it cannot cross the
   // lock-free slot), and sourcing it from `basic` made the field null on
   // every message the process actually published.
+  // The basic-report trio: charge, hes, sleep all ride the same 2 Hz
+  // BasicStatus and cross the slot as PODs, so one presence flag covers all
+  // three. hes and sleep were added 2026-09-21 -- the charge fix earlier the
+  // same day walked past them on the SAME writer line: state-path RobotState
+  // said "hes":null, "sleep":null forever while rt/chassis/basic carried
+  // both correctly. hes is the HES emergency-stop read-back; a consumer
+  // watching state/robot could not see it at all.
   bool has_charge = false;
   int charge_raw = 0;
+  bool hes = false;
+  bool sleep = false;
   const OdomSample* odom = nullptr;
   // 11 S4.1 after the 2026-09-21 F-5 unfreeze (S14.3 entry): TR-4's computed
   // bit, beside mode_switching rather than replacing it. mode_switching is
