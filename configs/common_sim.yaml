@@ -23,10 +23,9 @@
 #
 common:
   audio:
-    bypass_keywords:
-    - 停止
-    - 急停
-    - 紧急停止
+    # bypass_keywords: 已从本变体移除 (2026-09-21). 真机文件已落值 (三组并集,
+    #   用户裁决), 而变体只许填真机文件里为 null 的键 (10 S5.4.7) -- 且此前这里
+    #   的形状 (扁平三词) 与 16 S4 的三组形状不一致, 本就不该被任何测试消费.
   calib:
     calib_rev: unspecified
     frames: {}
