@@ -459,6 +459,8 @@ class QuadrupedProcess {
     //
     // Both false before the first connection: nothing has been asked of any
     // socket yet, and `expected` false keeps the supervisor quiet.
+    bool nodelay_active = false;
+    bool nodelay_expected = false;
     // 13 S7.5: the last non-success response code from the chassis, and how
     // many have arrived. Discarded until 2026-09-21, when a navigation-mode
     // switch went out, did not take, and nothing could say why.
@@ -467,8 +469,6 @@ class QuadrupedProcess {
     // 13 MS-2: switches that never got their read-back.
     std::uint64_t switch_failures = 0;
     std::uint64_t mode_frames_sent = 0;
-    bool nodelay_active = false;
-    bool nodelay_expected = false;
   };
   LinkStatus link_status() const;
 

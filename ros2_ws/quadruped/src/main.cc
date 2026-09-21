@@ -521,16 +521,32 @@ int Run(const std::string& path) {
     // rate. Before this nothing checked it at all -- the setsockopt return was
     // discarded and the read-back accessor had no caller, so "Nagle is off"
     // was a guarantee the process did not hold.
+    //
+    // *** Said UNCONDITIONALLY, both facts, once per connection -- not only
+    // when they disagree. A line that appears only on failure cannot be used
+    // to verify the check itself: silence means "compliant" and "this code
+    // never ran" equally well, and on the bench 2026-09-21 there was no way
+    // to tell the two apart from outside the process. That is the same defect
+    // v1.25 fixed one layer down, where the single boolean verdict was split
+    // into two facts precisely because no mutant could kill the verdict.
+    // Splitting it in LinkStatus and then collapsing it again at the log
+    // leaves the reporting end exactly where it started.
     {
       static bool said_nodelay = false;
-      if (st.nodelay_expected && !st.nodelay_active && !said_nodelay) {
+      // Any state past probing means a socket is open and the read-back
+      // is meaningful. kDegraded counts: the socket is up, the reports
+      // are merely late, and the option is a property of the socket.
+      if (st.active_endpoint >= 0 &&
+          st.conn != quadruped::chs_a::ConnState::kProbing && !said_nodelay) {
         said_nodelay = true;
         std::fprintf(stderr,
-                     "quadruped_m20: TCP_NODELAY is NOT set on the chassis "
-                     "socket although the config asks for it. Nagle will batch "
-                     "the heartbeat with whatever follows it, and every latency "
-                     "figure in 13 S3.6 then measures something else (FR-5 / "
-                     "SD-3). The link works; its timing does not.\n");
+                     "quadruped_m20: TCP_NODELAY read back from the kernel: "
+                     "active=%s expected=%s (FR-5 / SD-3). A mismatch means "
+                     "Nagle batches the heartbeat with whatever follows it and "
+                     "every latency figure in 13 S3.6 measures something else "
+                     "-- the link works, its timing does not.\n",
+                     st.nodelay_active ? "true" : "false",
+                     st.nodelay_expected ? "true" : "false");
       }
     }
     // Refused frames. FR-5 asks for a `warn` on a length mismatch and this
