@@ -134,7 +134,13 @@ quadruped:
 
   # ── 模式与运动功能 (13 S5 / S6) ──────────────────────────────────────
   motion:
-    default_triplet: { usage_mode: "navigation", motion_state: "rl_control", gait: "flat" }
+    # default_triplet was DELETED here on 2026-09-21 (user ruling). It had no
+    # reader and no rule anywhere -- 13 S8.2 carried the line, 11 never
+    # mentions the key, and 11 S9.2.3's "default combination" points at
+    # configs/models/m20s.yaml which does not carry it either. A key nobody
+    # reads makes whoever edits it believe they changed something (the same
+    # sentence 13 v1.7 wrote for special_gaits). Startup mode is commanded by
+    # the upper stack when it wants one, not preset here.
     mode_switch_timeout_s: 5.0          # MS-2 覆盖最慢的 2-3 s
                                         # WARN: 实测 stand 后固件[自动]进 rl_control(17/0x1001),
                                         #   prone 后 4 s 自动回 idle(0)=> 读回比对按整体三元组(T-MODE-4)
