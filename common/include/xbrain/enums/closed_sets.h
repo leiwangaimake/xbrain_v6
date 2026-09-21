@@ -230,7 +230,7 @@ inline constexpr std::string_view kGeoOrigin[] = {
     "voice",
 };
 
-// geo_state -- 11 S7.8.2   anchor: | `state` | string |
+// geo_state -- 11 S7.8.2   anchor: 录制中/未启用
 inline constexpr std::string_view kGeoState[] = {
     "draft",
     "active",

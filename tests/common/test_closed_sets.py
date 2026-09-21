@@ -513,8 +513,18 @@ EXTRACTORS.update({
         0, "teach_state", VALUE_RE, False),
     "geo_type": lambda: _row_backticked(
         _DOCS["11"], "| `type` | string |", "geo_type", exclude=("type",)),
+    # *** The anchor carries the row's FOURTH column. "| `state` | string |"
+    # alone matches TWO rows of 11: the heartbeat state field (a closed set of
+    # `up` / `down`) comes first in the file, so _row_backticked returned that
+    # one and geo_state's symmetric difference had been red since this
+    # extractor was written -- against a library and a contract that agree.
+    #
+    # The anchor is a phrase from the lifecycle row's own prose -- the only
+    # ASCII-punctuation-free token unique to it (CLAUDE.md 2.2 keeps the
+    # markers and the middle dots out of source, so the obvious column shapes
+    # were unavailable).
     "geo_state": lambda: _row_backticked(
-        _DOCS["11"], "| `state` | string |", "geo_state", exclude=("state",)),
+        _DOCS["11"], "录制中/未启用", "geo_state", exclude=("state",)),
 })
 
 

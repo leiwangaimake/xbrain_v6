@@ -154,7 +154,11 @@ sets:
       - dock
   geo_state:
     source: "11 S7.8.2"
-    anchor: "| `state` | string |"        # the S7.8.2 lifecycle field row
+    # NOT "| `state` | string |": that also matches the heartbeat row in
+    # 11, whose closed set is up / down, and it comes first in the file --
+    # so the extractor read THAT row and geo_state had been red since it
+    # was written, against a library and a contract that agree.
+    anchor: "录制中/未启用"
     note: "地理要素生命周期(S7.8.2). deleted 是墓碑不物理删(S7.11.4) => 库里 state=deleted 与 tombstone=1 同义, 单写者两列一起改. F15 启用围栏 = set_state -> active"
     ordered: false
     values:
