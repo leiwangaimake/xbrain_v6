@@ -348,6 +348,12 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
   }
   a.Raw(",\"mode_switching\":");
   a.Bool(in.mode_switching);
+  // TR-4's computed bit, beside mode_switching (11 S4.1, 2026-09-21 unfreeze).
+  // Two fields because they answer different questions -- MS-3's "may I send
+  // another command" vs "is the machine mid-transition (ours or external)" --
+  // and they differ exactly when the factory handset moves the robot.
+  a.Raw(",\"motion_state_transitioning\":");
+  a.Bool(in.motion_state_transitioning);
 
   // 11 S4.1 `charge`, six states, and S9.8.1's integer mapping. It was absent
   // from RobotState entirely -- state/robot (CR-4 relays this key) therefore
@@ -435,6 +441,29 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
     a.Num(std::sqrt(in.odom->var_yaw));
     a.Raw(",\"valid\":");
     a.Bool(in.odom->valid);
+    // 13 S4.4's detail pair, unfrozen into the contract 2026-09-21 (11 S14.3):
+    // the velocity sample's AGE at integration time -- the sample's, not the
+    // publish instant's, or the fourth band's whole point (how stale is what
+    // we integrated) is lost -- and WHICH source fed it, by the table's own
+    // names. Only quadruped knows either value; the P1-derived odom_stale
+    // event could not fill its detail until they were carried here.
+    a.Raw(",\"tau_ms\":");
+    a.Num(in.odom->tau_s * 1000.0);
+    a.Raw(",\"source\":");
+    switch (in.odom_source) {
+      case RobotStateInput::OdomSrc::kDrdds:
+        a.Raw("\"motion_info_20hz\"");
+        break;
+      case RobotStateInput::OdomSrc::kMonitor:
+        a.Raw("\"monitor_10hz\"");
+        break;
+      case RobotStateInput::OdomSrc::kNone:
+        // An absence, not a third source name: nothing has fed the linear
+        // integration yet (13 S6.5 ban 1 -- never map an unknown to a near
+        // neighbour).
+        a.Raw("null");
+        break;
+    }
     a.Raw("}");
   } else {
     a.Raw(",\"odom\":null");

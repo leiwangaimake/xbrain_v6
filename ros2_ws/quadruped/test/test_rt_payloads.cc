@@ -856,6 +856,46 @@ int main(int argc, char** argv) {
     // the SAFE-looking direction below 1 m and the unsafe one above it.
     CHECK(j["odom"]["cov_xy_m"] == 0.2);
     CHECK(j["odom"]["cov_yaw_rad"] == 0.1);
+
+    // 13 S4.4's detail pair (11 S4.1, 2026-09-21 unfreeze). tau_ms is the
+    // SAMPLE's age at integration -- in.odom->tau_s scaled -- not anything
+    // measured at publish time; the fourth band's question is "how stale is
+    // what we integrated", and a publish-time age answers a different one.
+    // The source arrives under the table's own closed names.
+    od.tau_s = 0.123;
+    in.odom_source = RobotStateInput::OdomSrc::kDrdds;
+    const std::size_t n2 = WriteRobotState(in, buf, sizeof(buf));
+    const Json j2 = ParseOrFail("robot state odom tau", buf, n2);
+    CHECK(j2["odom"]["tau_ms"] == 123.0);
+    CHECK(j2["odom"]["source"] == "motion_info_20hz");
+
+    in.odom_source = RobotStateInput::OdomSrc::kMonitor;
+    const std::size_t n3 = WriteRobotState(in, buf, sizeof(buf));
+    const Json j3 = ParseOrFail("robot state odom src", buf, n3);
+    CHECK(j3["odom"]["source"] == "monitor_10hz");
+
+    // No source yet: null, never a third name and never a near neighbour
+    // (13 S6.5 ban 1).
+    in.odom_source = RobotStateInput::OdomSrc::kNone;
+    const std::size_t n4 = WriteRobotState(in, buf, sizeof(buf));
+    const Json j4 = ParseOrFail("robot state odom nosrc", buf, n4);
+    CHECK(j4["odom"]["source"].is_null());
+  }
+
+  // ---- TR-4's computed bit is its own field (11 S4.1 unfreeze) ----------
+  {
+    // The pair diverges: mode_switching answers MS-3 (our own switch in
+    // flight), the TR-4 bit also covers an external transition. A writer
+    // that copies one into the other passes any test that sets them equal,
+    // so the case sets them APART.
+    char buf[8192];
+    RobotStateInput in;
+    in.mode_switching = false;
+    in.motion_state_transitioning = true;
+    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("robot state transitioning", buf, n);
+    CHECK(j["mode_switching"] == false);
+    CHECK(j["motion_state_transitioning"] == true);
   }
 
   // ---- no control period yet: odom is null, not an origin pose -----------

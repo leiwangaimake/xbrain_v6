@@ -621,7 +621,12 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   // external change sets mode_switching, and a state key that disagreed with
   // the gate would have an operator watching `false` while the robot is held
   // at zero.
-  snap.mode_switching = mode_.motion_state_transitioning();
+  // Two fields, two questions -- see StateSnapshot. v1.23 shipped the
+  // transitioning meaning under the mode_switching name because there was
+  // only one field; the 2026-09-21 F-5 unfreeze gave each its own.
+  snap.mode_switching = mode_.mode_switching();
+  snap.motion_state_transitioning = mode_.motion_state_transitioning();
+  snap.odom_source = linear_src_;
   snap.motion_allowed = session_.motion_allowed();
   // From latest_, which is merged by source (see the merge note above) -- so
   // the usage_mode here is the one BasicStatus delivered, not a value some

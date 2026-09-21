@@ -1233,7 +1233,13 @@ int main(int argc, char** argv) {
     {
       QuadrupedProcess::StateSnapshot snap;
       CHECK(p.TakeStateForPublish(&snap));
-      CHECK(snap.mode_switching);
+      // *** The two fields DIVERGE here, and that is the point of having two
+      // (11 S4.1, 2026-09-21 unfreeze): nothing of ours is in flight, so
+      // mode_switching -- the MS-3 "may I send another command" answer -- is
+      // false, while TR-4's computed bit says the machine is moving. One
+      // field copied into the other, in either direction, fails this pair.
+      CHECK(snap.motion_state_transitioning);
+      CHECK(!snap.mode_switching);
       CHECK(snap.motion_state_raw == 0);
     }
     // The hold expires on the configured clock, exactly as the BasicStatus-
@@ -1527,7 +1533,11 @@ int main(int argc, char** argv) {
     {
       QuadrupedProcess::StateSnapshot snap;
       CHECK(p.TakeStateForPublish(&snap));
-      CHECK(snap.mode_switching);
+      // Externally caused, nothing of ours outstanding: the TR-4 bit is the
+      // one that says so, and mode_switching stays false (see the stream
+      // case above for why the divergence is the assertion).
+      CHECK(snap.motion_state_transitioning);
+      CHECK(!snap.mode_switching);
     }
 
     // Still held most of the way through the window. Without this, an

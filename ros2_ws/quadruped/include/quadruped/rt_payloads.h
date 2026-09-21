@@ -151,6 +151,18 @@ struct RobotStateInput {
   bool has_charge = false;
   int charge_raw = 0;
   const OdomSample* odom = nullptr;
+  // 11 S4.1 after the 2026-09-21 F-5 unfreeze (S14.3 entry): TR-4's computed
+  // bit, beside mode_switching rather than replacing it. mode_switching is
+  // the MS-3 answer (our own switch in flight); this one is "the machine is
+  // mid-transition, ours or the handset's" -- the bit Tier 1 zeroes on and
+  // the one HMI's "正在起立..." must come from (TR-4: never fabricate an
+  // enum value for it).
+  bool motion_state_transitioning = false;
+  // 13 S4.4's detail.{tau_ms, source} for the odom block, same unfreeze.
+  // The names are the table's own: motion_info_20hz / monitor_10hz. kNone
+  // writes null -- "no source yet" is an absence, not a third source.
+  enum class OdomSrc { kNone, kMonitor, kDrdds };
+  OdomSrc odom_source = OdomSrc::kNone;
 };
 
 // 11 S4.1. Returns bytes written, or 0 if the buffer is too small.

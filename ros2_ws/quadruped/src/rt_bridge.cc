@@ -302,6 +302,21 @@ bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
   in.soft_estop_active = snap.soft_estop_active;
   in.cmd_age_ms = snap.cmd_age_ms;
   in.mode_switching = snap.mode_switching;
+  in.motion_state_transitioning = snap.motion_state_transitioning;
+  // The enum crosses one struct boundary here; the writer maps it to the
+  // closed names. A static_cast between the two enums would compile today
+  // and silently misalign the day someone reorders one of them.
+  switch (snap.odom_source) {
+    case QuadrupedProcess::OdomSource::kDrdds:
+      in.odom_source = RobotStateInput::OdomSrc::kDrdds;
+      break;
+    case QuadrupedProcess::OdomSource::kMonitor:
+      in.odom_source = RobotStateInput::OdomSrc::kMonitor;
+      break;
+    case QuadrupedProcess::OdomSource::kNone:
+      in.odom_source = RobotStateInput::OdomSrc::kNone;
+      break;
+  }
 
   char out[kOutCap];
   const std::size_t n = WriteRobotState(in, out, sizeof(out));

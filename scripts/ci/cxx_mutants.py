@@ -884,6 +884,49 @@ PAYLOADS_SOURCES = [PAYLOADS_CC,
 PAYLOADS_TESTS = [os.path.join(QUAD, "test", "test_rt_payloads.cc")]
 
 PAYLOADS_MUTANTS = [
+    # 11 S4.1 (2026-09-21 unfreeze). tau_ms is the SAMPLE's age at
+    # integration; publishing the variance-side value or dropping the scale
+    # ships a number in the wrong unit under a name ending in _ms.
+    ("payloads: tau published in seconds under a _ms name",
+     PAYLOADS_CC,
+     '    a.Num(in.odom->tau_s * 1000.0);',
+     '    a.Num(in.odom->tau_s);'),
+    # The source names are the table's own closed pair. Swapping them is the
+    # kind of defect no type system sees -- both are valid strings.
+    ("payloads: the two odom source names are swapped",
+     PAYLOADS_CC,
+     '''      case RobotStateInput::OdomSrc::kDrdds:
+        a.Raw("\\"motion_info_20hz\\"");
+        break;
+      case RobotStateInput::OdomSrc::kMonitor:
+        a.Raw("\\"monitor_10hz\\"");
+        break;''',
+     '''      case RobotStateInput::OdomSrc::kDrdds:
+        a.Raw("\\"monitor_10hz\\"");
+        break;
+      case RobotStateInput::OdomSrc::kMonitor:
+        a.Raw("\\"motion_info_20hz\\"");
+        break;'''),
+    # No source is an absence. Mapping it to the nearer name is 13 S6.5 ban 1.
+    ("payloads: an absent odom source mapped to a neighbour",
+     PAYLOADS_CC,
+     '''      case RobotStateInput::OdomSrc::kNone:
+        // An absence, not a third source name: nothing has fed the linear
+        // integration yet (13 S6.5 ban 1 -- never map an unknown to a near
+        // neighbour).
+        a.Raw("null");
+        break;''',
+     '''      case RobotStateInput::OdomSrc::kNone:
+        a.Raw("\\"monitor_10hz\\"");
+        break;'''),
+    # TR-4's bit copied from mode_switching: every test that sets the pair
+    # equal stays green, which is why the writer test sets them apart.
+    ("payloads: transitioning copied from mode_switching",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"motion_state_transitioning\\":");\n'
+     '  a.Bool(in.motion_state_transitioning);',
+     '  a.Raw(",\\"motion_state_transitioning\\":");\n'
+     '  a.Bool(in.mode_switching);'),
     # 11 S3.0 makes the envelope mandatory on every locally produced message.
     # Dropping a field is the state this process shipped in for its whole life
     # -- bare payloads, measured on the chassis 2026-09-21.
@@ -1500,6 +1543,18 @@ PROCESS_SOURCES = [
 PROCESS_TESTS = [os.path.join(QUAD, "test", "test_process.cc")]
 
 PROCESS_MUTANTS = [
+    # 11 S4.1 unfreeze: the snapshot carries BOTH bits from their own
+    # accessors. Feeding transitioning into mode_switching (or the reverse)
+    # survives every scenario where the two agree -- the process test drives
+    # the one scenario where they diverge (an external transition).
+    ("process: the published mode_switching is the transitioning bit",
+     PROCESS_CC,
+     "  snap.mode_switching = mode_.mode_switching();",
+     "  snap.mode_switching = mode_.motion_state_transitioning();"),
+    ("process: the published transitioning bit is only our own switch",
+     PROCESS_CC,
+     "  snap.motion_state_transitioning = mode_.motion_state_transitioning();",
+     "  snap.motion_state_transitioning = mode_.mode_switching();"),
     # 13 TR-1, user ruling 2026-09-21. The call is the wiring; without it the
     # unit tests on ModeMachine::OnMotionSample all still pass (they call it
     # themselves), which is v1.22's lesson verbatim -- this mutant is the
@@ -1560,12 +1615,6 @@ PROCESS_MUTANTS = [
      PROCESS_CC,
      "  in.mode_switching = mode_.motion_state_transitioning();",
      "  in.mode_switching = mode_.mode_switching();"),
-    # The published field must agree with the gate. A state key saying false
-    # while the robot is held at zero leaves the operator with no explanation.
-    ("process: RobotState.mode_switching disagrees with the Tier 1 gate",
-     PROCESS_CC,
-     "  snap.mode_switching = mode_.motion_state_transitioning();",
-     "  snap.mode_switching = mode_.mode_switching();"),
     # *** 13 PR-1 / QC-9 / V-54 (P0). THE defect: the ModeConfig lambda took
     # cfg and discarded it, so prone_forbidden_gaits was empty and
     # ProneAllowed -- which answers !Contains(list, gait) -- was true for every

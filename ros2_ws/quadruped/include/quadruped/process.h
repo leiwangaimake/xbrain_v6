@@ -235,6 +235,10 @@ class QuadrupedProcess {
   // this snapshot carries NO basic/motion block yet (WriteRobotState accepts
   // null for both). What it does carry is estop_epoch, which is the field
   // p1_motion is waiting on (11:1722 / 13 RX-3).
+  // 13 S4.2's two linear-velocity sources. Declared before StateSnapshot
+  // because the snapshot now carries one (S4.4's detail.source).
+  enum class OdomSource { kNone, kMonitor, kDrdds };
+
   struct StateSnapshot {
     chs_a::ConnState conn = chs_a::ConnState::kProbing;
     Tier1Output tier1;
@@ -245,7 +249,21 @@ class QuadrupedProcess {
     // 13 S9.12.2 (3): the last command echoed a generation other than ours.
     // NOT a lock -- it clears by itself when the upstream catches up.
     bool soft_estop_active = false;
+    // 11 S4.1 after the 2026-09-21 F-5 unfreeze: TWO fields, different
+    // questions. mode_switching is OUR OWN commanded switch (the MS-3 answer:
+    // "may I send another mode command"), motion_state_transitioning is the
+    // TR-4 computed bit (ours OR an external one -- "is the machine mid-
+    // transition", the thing Tier 1 zeroes on). v1.23 published the second
+    // meaning under the first name because there was only one field; with
+    // both fields on the wire each returns to its own contract row. They
+    // differ exactly when the factory handset moves the robot, which is the
+    // scenario the process test asserts.
     bool mode_switching = false;
+    bool motion_state_transitioning = false;
+    // 13 S4.4's detail.source, the linear velocity source that fed this
+    // period's integration. Carried as the enum; the writer maps it to the
+    // closed names motion_info_20hz / monitor_10hz and NULL for none.
+    OdomSource odom_source = OdomSource::kNone;
     bool motion_allowed = false;
     // 13 S6.2 / MS-5: the mode TRIPLE as last read back from the chassis.
     // Plain integers, so unlike the full BasicStatus (which holds model and
@@ -338,7 +356,6 @@ class QuadrupedProcess {
   // Which source fed the odometry on the last control period. Published so the
   // degradation is VISIBLE: the covariance model does not know the difference
   // between a 200 Hz yaw and a 10 Hz one, so nothing downstream would show it.
-  enum class OdomSource { kNone, kMonitor, kDrdds };
   OdomSource linear_source() const { return linear_src_; }
   OdomSource angular_source() const { return angular_src_; }
 
