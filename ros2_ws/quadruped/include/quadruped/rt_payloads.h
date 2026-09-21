@@ -197,6 +197,45 @@ struct EstopAckInput {
 std::size_t WriteEstopAck(const EstopAckInput& in, char* out, std::size_t cap);
 
 // 11 S7.7 Ack, used for rt/chassis/ctrl/ack (13 Q-2).
+// 11 S3.0's common envelope, the outer object EVERY Zenoh JSON payload this
+// process publishes must carry. 13 PB-Q3 requires one writer for all eight
+// fields and only one -- eight fields written at eleven call sites is eight
+// chances for one of them to drift, and the symptom of a wrong `mono` is an
+// age computed against the wrong epoch rather than an error.
+//
+// *** Until this existed, quadruped published BARE payloads: no v, no rid, no
+// mono, no boot, no seq, no ts_sync. Measured on the live chassis 2026-09-21
+// by subscribing to rt/chassis/state and printing the top-level keys. Nothing
+// downstream noticed because chassis_relay (the CR-4 consumer) is not built
+// yet -- which is exactly why it had to be fixed before it is.
+struct EnvelopeInput {
+  const char* rid = "";
+  const char* boot = "";
+  // 11 S3.0: the producing PROCESS name, not the key or the thread.
+  const char* src = "quadruped";
+  // Wall clock, seconds. S3.0 confines it to cross-host alignment, recording
+  // and latency statistics -- never an age or a timeout (CLK-C1).
+  double ts = 0.0;
+  // CLOCK_MONOTONIC seconds. S3.0: "一切超时与年龄判定的唯一依据".
+  double mono = 0.0;
+  // Per-KEY, monotonically increasing, from 0 at process start (S3.0). Per
+  // key rather than per process because it is what a subscriber uses to
+  // detect a gap on the key it subscribed to; one shared counter would show
+  // a gap on every key whenever any other key published.
+  std::uint64_t seq = 0;
+  // 13 PB-Q3: "禁止在任何分支填 true 兜底". The only thing that may set this
+  // true is a fresh ClockStatus from rt/clock/status (13 Q-5), and until that
+  // subscription exists the honest value is false -- which is also what
+  // S3.0 says a MISSING field means, so the wire meaning does not change.
+  bool ts_sync = false;
+};
+
+// Wraps `data` (which must already be a complete JSON object) in the envelope.
+// Returns 0 if it does not fit -- callers publish nothing rather than a
+// truncated object, same rule as every other writer here.
+std::size_t WriteEnvelope(const EnvelopeInput& in, const char* data,
+                          std::size_t dlen, char* out, std::size_t cap);
+
 struct CtrlAckInput {
   const char* cmd_id = "anonymous";
   const char* result = "accepted";

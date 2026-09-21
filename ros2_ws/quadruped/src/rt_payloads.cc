@@ -114,6 +114,37 @@ class Appender {
     Raw(buf);
   }
 
+  // Bytes that are ALREADY JSON, embedded verbatim. Raw() takes a C string
+  // and the payloads this wraps come as (pointer, length) from a writer that
+  // does not NUL-terminate, so passing them through Raw would read past the
+  // end or stop at the first zero byte.
+  void RawN(const char* s, std::size_t n) {
+    if (overflow_ || s == nullptr) return;
+    if (len_ + n + 1 > cap_) {
+      overflow_ = true;
+      return;
+    }
+    std::memcpy(out_ + len_, s, n);
+    len_ += n;
+  }
+
+  // A Unix or monotonic timestamp in seconds. NOT Num(): that formats with
+  // "%.6g", which is six SIGNIFICANT digits -- a wall clock near 1.79e9 comes
+  // out as "1.78996e+09" and a monotonic reading near 9.4e5 loses every
+  // fractional digit. 11 S3.0 makes `mono` "一切超时与年龄判定的唯一依据",
+  // so a one-second resolution there would silently coarsen every age in the
+  // system. Fixed six decimals is microseconds, which is what S3.0's own
+  // example carries.
+  void TimeSec(double v) {
+    if (!std::isfinite(v) || v < 0.0) {
+      Raw("null");
+      return;
+    }
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.6f", v);
+    Raw(buf);
+  }
+
   void Int(long long v) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%lld", v);
@@ -578,6 +609,36 @@ std::size_t WriteEstopAck(const EstopAckInput& in, char* out, std::size_t cap) {
   a.Bool(in.hes);
   a.Raw(",\"timeout_lock\":");
   a.Bool(in.timeout_lock);
+  a.Raw("}");
+  return a.Finish();
+}
+
+std::size_t WriteEnvelope(const EnvelopeInput& in, const char* data,
+                          std::size_t dlen, char* out, std::size_t cap) {
+  if (data == nullptr || dlen == 0) return 0;
+  Appender a(out, cap);
+  // Field order follows 11 S3.0's own listing. It carries no meaning for a
+  // JSON decoder, but a human diffing a capture against the contract reads
+  // top to bottom and an arbitrary order costs them a second every time.
+  a.Raw("{\"v\":1,\"rid\":");
+  a.Str(in.rid);
+  a.Raw(",\"ts\":");
+  a.TimeSec(in.ts);
+  a.Raw(",\"mono\":");
+  a.TimeSec(in.mono);
+  a.Raw(",\"boot\":");
+  a.Str(in.boot);
+  a.Raw(",\"seq\":");
+  a.UInt(in.seq);
+  a.Raw(",\"src\":");
+  a.Str(in.src);
+  a.Raw(",\"ts_sync\":");
+  a.Bool(in.ts_sync);
+  a.Raw(",\"data\":");
+  // Verbatim: it is already a complete object written by one of the writers
+  // above. Re-encoding it would mean parsing it first, and this runs on the
+  // publish path.
+  a.RawN(data, dlen);
   a.Raw("}");
   return a.Finish();
 }

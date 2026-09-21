@@ -40,6 +40,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <string>
 
@@ -156,6 +157,7 @@ class RtBridge {
   std::uint64_t estops_deduped() const { return estop_deduped_; }
   std::uint64_t pongs_sent() const { return pongs_; }
   std::uint64_t acks_sent() const { return acks_; }
+  std::uint64_t envelope_overflows() const { return envelope_overflows_; }
   std::uint64_t states_published() const { return states_; }
 
   // Why the FIRST refused cmd_vel was refused, kOk while none has been. See the
@@ -165,6 +167,7 @@ class RtBridge {
 
  private:
   bool Publish(const std::string& suffix, const char* data, std::size_t len);
+  std::uint64_t NextSeq(const std::string& suffix);
 
   QuadrupedProcess* proc_;
   std::string rid_;
@@ -224,6 +227,13 @@ class RtBridge {
   std::uint64_t estop_deduped_ = 0;
   std::uint64_t pongs_ = 0;
   std::uint64_t acks_ = 0;
+  // 11 S3.0's per-key sequence, and the count of payloads too big to wrap.
+  // The latter is published rather than swallowed for the reason every other
+  // counter here exists: a message that never went out and a message nobody
+  // subscribed to look identical from outside.
+  std::map<std::string, std::uint64_t> seq_;
+  mutable std::mutex seq_mu_;
+  std::uint64_t envelope_overflows_ = 0;
   std::uint64_t states_ = 0;
   RtParse first_refusal_ = RtParse::kOk;
 };

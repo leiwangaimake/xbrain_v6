@@ -457,6 +457,57 @@ int main(int argc, char** argv) {
     CHECK(jn.find("item") == jn.end());
   }
 
+  // ---- Envelope: 11 S3.0's eight fields, and the payload under `data` ----
+  {
+    EnvelopeInput env;
+    env.rid = "gj-001";
+    env.boot = "a1b2c3d4";
+    env.src = "quadruped";
+    // A real wall clock and a real monotonic reading, both with a fractional
+    // part -- see the TimeSec assertions below for why these values matter.
+    env.ts = 1789455340.125;
+    env.mono = 940821.337215;
+    env.seq = 7;
+    const char kPayload[] = "{\"hello\":1}";
+    // NOT strlen at the call site: the writer takes a length because the
+    // payloads it wraps are not NUL-terminated.
+    const std::size_t n =
+        WriteEnvelope(env, kPayload, sizeof(kPayload) - 1, buf, sizeof(buf));
+    const Json j = ParseOrFail("Envelope", buf, n);
+    CHECK(j["v"] == 1);
+    CHECK(j["rid"] == "gj-001");
+    CHECK(j["boot"] == "a1b2c3d4");
+    CHECK(j["src"] == "quadruped");
+    CHECK(j["seq"] == 7);
+    // 13 PB-Q3 forbids a true fallback, and 11 S3.0 gives a missing field the
+    // same meaning as false. Until 13 Q-5's rt/clock/status subscription
+    // exists, false is the only value this may carry.
+    CHECK(j["ts_sync"] == false);
+    // The payload arrives intact and NESTED, not merged into the envelope.
+    CHECK(j["data"]["hello"] == 1);
+    CHECK(j.find("hello") == j.end());
+    // All eight, and nothing else: a ninth field means something leaked out
+    // of data into the envelope.
+    CHECK(j.size() == 9);   // the eight + data
+
+    // *** The timestamps, to the microsecond. This is the assertion that
+    // catches Num()'s "%.6g": it would render ts as 1.78996e+09 (six
+    // SIGNIFICANT digits) and mono as 940821, losing every fractional digit.
+    // 11 S3.0 makes mono "一切超时与年龄判定的唯一依据", so a one-second
+    // resolution there coarsens every age in the system -- and it would do it
+    // silently, because 940821 is still a valid JSON number.
+    CHECK(j["ts"].get<double>() > 1789455340.0);
+    CHECK(j["ts"].get<double>() < 1789455340.5);
+    CHECK(j["mono"].get<double>() > 940821.3);
+    CHECK(j["mono"].get<double>() < 940821.4);
+
+    // Too small to hold the wrapped object: nothing, never a truncated one.
+    CHECK(WriteEnvelope(env, kPayload, sizeof(kPayload) - 1, buf, n) == 0);
+    // An empty payload is refused rather than wrapped as `"data":`, which
+    // would not be parseable.
+    CHECK(WriteEnvelope(env, kPayload, 0, buf, sizeof(buf)) == 0);
+  }
+
   // ---- Pong --------------------------------------------------------------
   {
     PongInput in;

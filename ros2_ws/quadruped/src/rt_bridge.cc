@@ -23,10 +23,13 @@
 
 #include "quadruped/rt_bridge.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
+#include "quadruped/mono_clock.h"
 #include "quadruped/rt_keys.h"
 #include "quadruped/rt_payloads.h"
 #include "xbrain/errors/errors.h"
@@ -39,6 +42,9 @@ namespace {
 // return 0 rather than truncating, so a buffer that is too small fails loudly
 // instead of emitting half a message.
 constexpr std::size_t kOutCap = 2048;
+// The same payload plus 11 S3.0's envelope. The envelope is bounded:
+// eight fields, the two variable ones being rid and boot, both short.
+constexpr std::size_t kEnvCap = kOutCap + 512;
 
 namespace err = hachist::xbrain::errors;
 
@@ -101,11 +107,62 @@ RtBridge::RtBridge(QuadrupedProcess* proc, std::string rid, std::string boot,
   }
 }
 
+// Wall clock, seconds, for the envelope's `ts` only.
+//
+// WALL-CLOCK-OK(align): 11 S3.0 makes this field mandatory on every locally
+// produced message and confines it to cross-host alignment, recording and
+// latency statistics. Every age, period and timeout in this process is
+// steady_clock -- the envelope's `mono` next to it is what those use.
+double WallNowSeconds() {
+  const auto d = std::chrono::system_clock::now().time_since_epoch();
+  return std::chrono::duration<double>(d).count();
+}
+
+std::uint64_t RtBridge::NextSeq(const std::string& suffix) {
+  // Per key (11 S3.0), and under a lock because Publish is reached from two
+  // threads: rt_pub for the state stream, chs_a_rx for the four report keys
+  // (see PublishReports). A racing ++ would hand two messages the same seq,
+  // and a subscriber reads a repeated seq as a replay rather than a race.
+  std::lock_guard<std::mutex> lk(seq_mu_);
+  return seq_[suffix]++;
+}
+
 bool RtBridge::Publish(const std::string& suffix, const char* data,
                        std::size_t len) {
   if (!publish_ || len == 0) return false;
+  // 11 S3.0 / 13 PB-Q3: the envelope goes on HERE, at the one exit every
+  // publish passes through, rather than at the eleven call sites. Eight
+  // fields written eleven times is eight chances for one to drift, and a
+  // wrong `mono` does not fail -- it produces an age against the wrong epoch.
+  EnvelopeInput env;
+  env.rid = rid_.c_str();
+  env.boot = boot_.c_str();
+  env.ts = WallNowSeconds();
+  env.mono = MonoNowSeconds();
+  env.seq = NextSeq(suffix);
+  // ts_sync stays false: 13 Q-5's rt/clock/status subscription is not built,
+  // and PB-Q3 forbids filling true as a fallback. S3.0 gives a missing field
+  // the same meaning, so this does not change what the wire says -- it makes
+  // the message a conformant one that says it.
+  char wrapped[kEnvCap];
+  const std::size_t n = WriteEnvelope(env, data, len, wrapped, sizeof(wrapped));
+  // Nothing rather than a truncated object, same rule as the writers.
+  //
+  // Unreachable by construction today, and deliberately kept: every payload
+  // is written into a kOutCap buffer by a writer that returns 0 rather than
+  // truncating, so len < 2048; the envelope's own cost is bounded (~190
+  // bytes: eight fixed names, rid capped at 32 by IsValidRobotId, boot at 8,
+  // src fixed) and kEnvCap leaves 512. A mutant forcing this branch cannot be
+  // killed by any test that goes through the writers, which is the CLAUDE.md
+  // 7.2.1 definition of an equivalent mutant -- noted here instead of assert-
+  // ed. The guard stays because the arithmetic above lives in two constants
+  // someone can change independently.
+  if (n == 0) {
+    ++envelope_overflows_;
+    return false;
+  }
   ++acks_;
-  return publish_(suffix, data, len);
+  return publish_(suffix, wrapped, n);
 }
 
 void RtBridge::PublishReports(double now_mono_s,

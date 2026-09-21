@@ -270,6 +270,22 @@ int main() {
     CHECK(b.ctrl_accepted() == 1);
     CHECK(sent.size() == 1);
     CHECK(sent.back().key == "rt/chassis/ctrl/ack");
+    // *** 11 S3.0: what goes on the wire is the ENVELOPE, with the payload
+    // under `data`. Every other assertion in this file uses Has() -- a
+    // substring search, which cannot tell a wrapped payload from a bare one,
+    // so all of them stayed green while this process published bare payloads
+    // for its whole life. Measured on the live chassis 2026-09-21 by printing
+    // the top-level keys of rt/chassis/state: not one of the eight was there.
+    CHECK(sent.back().body.compare(0, 7, "{\"v\":1,") == 0);
+    for (const char* f : {"\"rid\":", "\"ts\":", "\"mono\":", "\"boot\":",
+                          "\"seq\":", "\"src\":", "\"ts_sync\":", "\"data\":"}) {
+      CHECK(Has(sent.back().body, f));
+    }
+    // The payload is INSIDE data, not merged next to the envelope fields.
+    CHECK(Has(sent.back().body, "\"data\":{\"cmd_id\""));
+    // 13 PB-Q3: never true without a ClockStatus (13 Q-5, not built yet).
+    CHECK(Has(sent.back().body, "\"ts_sync\":false"));
+    CHECK(!Has(sent.back().body, "\"ts_sync\":true"));
     CHECK(Has(sent.back().body, "accepted"));
     CHECK(Has(sent.back().body, "enable"));
     // *** 11 CR-12: the ack carries the READ-BACK locks. At this instant the
@@ -371,6 +387,36 @@ int main() {
     CHECK(Has(sent.back().body, "E_CAPABILITY"));
     CHECK(Has(sent.back().body, "rejected"));
     CHECK(!Has(sent.back().body, "item"));
+  }
+
+  // ---- 11 S3.0: seq is PER KEY, and it starts at 0 -----------------------
+  {
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+
+    // Two publishes on the ctrl ack key, with a publish on a DIFFERENT key
+    // in between. A single process-wide counter passes "seq increases" and
+    // fails here: the second ack would read 2 rather than 1, and a subscriber
+    // on that key would see a gap and report a lost message that never
+    // existed. That is the mutant this case exists for.
+    const std::string en = Wrap("{\"cmd_id\":\"s-1\",\"action\":\"enable\"}");
+    b.HandleChassisCtrl(1.0, en.c_str(), en.size());
+    CHECK(Has(FindLast(sent, "rt/chassis/ctrl/ack"), "\"seq\":0"));
+
+    const std::string es = Wrap("{\"reason\":\"test\"}");
+    b.HandleEstop(1.1, es.c_str(), es.size());
+    // A different key, so IT starts at 0 too.
+    CHECK(Has(FindLast(sent, "rt/safety/estop/ack"), "\"seq\":0"));
+
+    const std::string en2 = Wrap("{\"cmd_id\":\"s-2\",\"action\":\"enable\"}");
+    b.HandleChassisCtrl(1.2, en2.c_str(), en2.size());
+    CHECK(Has(FindLast(sent, "rt/chassis/ctrl/ack"), "\"seq\":1"));
+    CHECK(!Has(FindLast(sent, "rt/chassis/ctrl/ack"), "\"seq\":2"));
   }
 
   // ---- ping answers pong, and a malformed ping answers too ---------------

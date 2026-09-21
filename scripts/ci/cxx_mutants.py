@@ -884,6 +884,37 @@ PAYLOADS_SOURCES = [PAYLOADS_CC,
 PAYLOADS_TESTS = [os.path.join(QUAD, "test", "test_rt_payloads.cc")]
 
 PAYLOADS_MUTANTS = [
+    # 11 S3.0 makes the envelope mandatory on every locally produced message.
+    # Dropping a field is the state this process shipped in for its whole life
+    # -- bare payloads, measured on the chassis 2026-09-21.
+    ("payloads: the envelope omits mono",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"mono\\":");\n'
+     "  a.TimeSec(in.mono);",
+     '  a.Raw(",\\"_mono\\":");\n'
+     "  a.TimeSec(in.mono);"),
+    # *** The one that motivated TimeSec. Num() is "%.6g": six SIGNIFICANT
+    # digits, so a monotonic reading near 9.4e5 loses every fractional digit
+    # and a wall clock near 1.79e9 comes out in exponent form. 11 S3.0 makes
+    # mono the sole basis for every age and timeout in the system, so this
+    # coarsens all of them -- silently, because the result is still valid JSON.
+    ("payloads: envelope timestamps written with %.6g",
+     PAYLOADS_CC,
+     "  a.TimeSec(in.mono);",
+     "  a.Num(in.mono);"),
+    # The payload merged into the envelope instead of nested under data. A
+    # subscriber reading msg["data"] then finds nothing.
+    ("payloads: the payload is not nested under data",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"data\\":");',
+     '  a.Raw(",\\"data\\":null,\\"x\\":");'),
+    # 13 PB-Q3 verbatim: "禁止在任何分支填 true 兜底".
+    ("payloads: ts_sync filled true as a fallback",
+     PAYLOADS_CC,
+     "  a.Raw(\",\\\"ts_sync\\\":\");\n"
+     "  a.Bool(in.ts_sync);",
+     "  a.Raw(\",\\\"ts_sync\\\":\");\n"
+     "  a.Bool(true);"),
     # 11 S13.9 draws detail.item from a closed set WHEN PRESENT. Writing it
     # unconditionally puts "" on the wire for every accepted ack, and "" is
     # not in that set -- a consumer switching on item then has to special-case
@@ -1110,7 +1141,14 @@ PAYLOADS_MUTANTS = [
     ("payloads: a truncated object is returned instead of refused",
      PAYLOADS_CC, "    if (overflow_) return 0;", "    if (false) return 0;"),
     ("payloads: overflow not sticky, so later fields hide an earlier loss",
-     PAYLOADS_CC, "    if (len_ + n + 1 > cap_) {\n      overflow_ = true;\n      return;\n    }",
+     # The anchor includes Raw's strlen line: RawN (added for the envelope)
+     # copied the same overflow shape three lines down, and the bare guard
+     # matched both -- the seventh anchor collision this package has had,
+     # every one of them a later block copying an earlier block's shape.
+     PAYLOADS_CC,
+     "    const std::size_t n = std::strlen(s);\n"
+     "    if (len_ + n + 1 > cap_) {\n      overflow_ = true;\n      return;\n    }",
+     "    const std::size_t n = std::strlen(s);\n"
      "    if (len_ + n + 1 > cap_) {\n      return;\n    }"),
     # An unescaped quote produces text no decoder accepts, and the symptom is
     # state/robot going silent -- which reads as the robot having died.
@@ -1832,6 +1870,23 @@ RT_BRIDGE_SOURCES = [
 RT_BRIDGE_TESTS = [os.path.join(QUAD, "test", "test_rt_bridge.cc")]
 
 RT_BRIDGE_MUTANTS = [
+    # 11 S3.0 / 13 PB-Q3. Publishing the bare payload is what this process did
+    # until 2026-09-21, and every existing assertion in the suite passed --
+    # they use a substring search, which cannot tell the two apart.
+    ("bridge: payloads are published without the envelope",
+     RT_BRIDGE_CC,
+     "  ++acks_;\n"
+     "  return publish_(suffix, wrapped, n);",
+     "  ++acks_;\n"
+     "  return publish_(suffix, data, len);"),
+    # 11 S3.0: seq is per KEY. One shared counter still increases, so an
+    # assertion that only checks "it went up" cannot kill this -- but a
+    # subscriber on one key sees a gap every time any OTHER key publishes and
+    # reports a message lost that never existed.
+    ("bridge: one seq counter shared by every key",
+     RT_BRIDGE_CC,
+     "  return seq_[suffix]++;",
+     "  (void)suffix;\n  return seq_[\"\"]++;"),
     # 11 S9.3.3. The whole point of the item is that E_CAPABILITY alone does
     # not say WHICH refusal happened -- a prone on a staircase, a deleted
     # action and set_sdk_mode all answer that code. Dropping the assignment is
