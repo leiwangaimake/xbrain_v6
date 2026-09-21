@@ -1178,6 +1178,84 @@ int main(int argc, char** argv) {
     CHECK(p.axis_frames_sent() > before);
   }
 
+  // ---- 13 TR-1 from the 10 Hz stream (user ruling 2026-09-21) ------------
+  {
+    // The gap this closes: HandleFrame's MotionStatus branch updated the
+    // snapshot's motion_state/gait and published it -- and never told the
+    // mode machine. Only BasicStatus (measured 1.99 Hz) fed TR-1, while the
+    // stream that actually reports the field five times as often (9.94 Hz)
+    // was ignored, so the external-transition hold started up to 0.5 s late
+    // and the state message carried a moved triple beside mode_switching ==
+    // false. Both were observed on the chassis with the factory handset.
+    //
+    // Driven with chassis FRAMES, whole process: the unit tests above cannot
+    // see a process that never calls OnMotionSample -- v1.22's lesson.
+    FakeChassis chassis;
+    QuadrupedProcess p(Cfg(chassis.port()));
+    p.CtrlTick(0.0);
+    CHECK(chassis.Accept());
+    // Baselines on BOTH streams, then prove the robot can move (without this
+    // half, everything below is satisfied by a robot that never moves).
+    //
+    // *** One frame per pump, a tick between them. The snapshot slot holds
+    // ONE entry, so two frames pumped in the same pass leave only the second
+    // -- and a Motion-built snapshot carries usage_mode_raw's default (0),
+    // which beside a 0x3xxx gait reads as normal-mode-with-navigation-gait
+    // and trips the mode_mismatch gate. The first draft of this case did
+    // exactly that and spent its time debugging the wrong thing.
+    chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
+    p.RxPump(0.04);
+    p.CtrlTick(0.05);
+    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0x3002));
+    p.RxPump(0.055);
+    p.OnCmdVel(0.06, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.OnEnable();
+    p.CtrlTick(0.07);
+    p.OnCmdVel(0.08, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.CtrlTick(0.09);
+    CHECK(p.last_tier1().stop_reason == StopReason::kNone);
+    CHECK(p.last_tier1().vx > 0.0);
+
+    // The handset lies the robot down. ONLY the 10 Hz stream has reported it
+    // so far -- the next BasicStatus is up to half a second away, and this
+    // case deliberately never sends it.
+    chassis.Send(MotionFrame(/*motion_state=*/0, /*gait=*/0x3002));
+    p.RxPump(0.15);
+    p.OnCmdVel(0.16, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.CtrlTick(0.17);
+    // Held at zero NOW, not when BasicStatus catches up.
+    CHECK(p.motion_state_transitioning());
+    CHECK(p.last_tier1().stop_reason == StopReason::kModeSwitching);
+    CHECK(p.last_tier1().vx == 0.0);
+    // And the published snapshot agrees with itself: the moved triple and the
+    // flag now come from the same event, so the combination "triple moved,
+    // mode_switching false" that the bench kept showing cannot appear.
+    {
+      QuadrupedProcess::StateSnapshot snap;
+      CHECK(p.TakeStateForPublish(&snap));
+      CHECK(snap.mode_switching);
+      CHECK(snap.motion_state_raw == 0);
+    }
+    // The hold expires on the configured clock, exactly as the BasicStatus-
+    // detected one does -- same key, same duration, one clock.
+    for (double t = 0.2; t < 3.6; t += 0.1) {
+      p.RxPump(t);
+      p.OnCmdVel(t, 0.5, 0.0, 0.1, p.estop_epoch());
+      p.CtrlTick(t);
+    }
+    CHECK(p.motion_state_transitioning());
+    p.OnCmdVel(3.75, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.CtrlTick(3.8);
+    CHECK(!p.motion_state_transitioning());
+    // One more period: CtrlTick reads Tier 1's inputs BEFORE it ticks the
+    // mode machine, so the period on which the hold expires still stops with
+    // kModeSwitching and the NEXT one releases. A one-period (10 ms) lag on
+    // the release side, and the conservative direction.
+    p.OnCmdVel(3.85, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.CtrlTick(3.9);
+    CHECK(p.last_tier1().stop_reason == StopReason::kNone);
+  }
+
   // ---- the UDP endpoint frames by DATAGRAM, not by stream (FR-5) --------
   {
     // The gap this closes: Framer::PushDatagram had ZERO production call

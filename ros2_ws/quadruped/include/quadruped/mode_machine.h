@@ -140,6 +140,20 @@ class ModeMachine {
   // TR-1's external-transition detection.
   void OnReadback(double now_mono_s, const chs_a::BasicStatus& b);
 
+  // A MotionStatus sample's (motion_state, gait) pair -- the 10 Hz stream.
+  //
+  // 13 TR-1 (user ruling 2026-09-21): its trigger is verbatim "读回的
+  // MotionState 在未经我方下发的情况下发生变化", with no restriction on
+  // which report carries it -- and MotionStatus reports it five times as
+  // often as BasicStatus (measured 9.94 Hz vs 1.99 Hz on the chassis), so
+  // watching only BasicStatus detects an external transition up to 0.5 s
+  // late. This feeds ONLY the hold: the triple, the steady value and MS-1's
+  // whole-triple match stay driven by OnReadback, because MotionStatus has
+  // no usage_mode and a partial read-back would re-open MS-5's problem --
+  // each source with its own idea of the fields it cannot see.
+  void OnMotionSample(double now_mono_s, std::int64_t motion_state,
+                      std::int64_t gait);
+
   // Called every control period so the timeout can fire even when the chassis
   // has gone quiet. Returns true on the tick a switch is declared FAILED
   // (MS-2), so the caller raises the fault exactly once.
@@ -166,6 +180,12 @@ class ModeMachine {
   bool has_readback() const { return has_readback_; }
 
   std::uint64_t switch_failures() const { return switch_failures_; }
+  // How many external transitions the 10 Hz stream detected FIRST. Not a
+  // debug toy: it is the measurable difference between this path existing
+  // and not, which is what its process-level test asserts.
+  std::uint64_t motion_first_detections() const {
+    return motion_first_detections_;
+  }
   std::uint64_t switches_completed() const { return switches_completed_; }
 
  private:
@@ -183,6 +203,15 @@ class ModeMachine {
   ModeTriple last_;
   ModeTriple steady_;
   bool has_readback_ = false;
+  // The last (motion_state, gait) pair seen on the 10 Hz stream, and whether
+  // one has been seen at all. Separate from last_: the two streams may
+  // disagree for a beat and the pair here must only ever be compared with
+  // its own predecessor -- comparing it against BasicStatus's triple would
+  // read every inter-stream skew as an external transition.
+  std::int64_t motion_ms_ = 0;
+  std::int64_t motion_gait_ = 0;
+  bool has_motion_ = false;
+  std::uint64_t motion_first_detections_ = 0;
 
   std::uint64_t switch_failures_ = 0;
   std::uint64_t switches_completed_ = 0;

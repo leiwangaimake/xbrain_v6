@@ -274,6 +274,73 @@ int main() {
     CHECK(m.Request(5.1, ModeAction::kProne, 0).accepted);
   }
 
+  // ---- TR-1 from the 10 Hz stream (user ruling 2026-09-21) -------------
+  {
+    // MotionStatus reports motion_state five times as often as BasicStatus
+    // (measured 9.94 vs 1.99 Hz), and TR-1's trigger names the FIELD, not the
+    // report. Watching only BasicStatus was up to 0.5 s late, and on the bench
+    // the state message carried a moved triple while mode_switching still
+    // read false.
+    ModeMachine m(Cfg());
+    m.OnReadback(0.0, Readback(0, 17, 0x1001));     // BasicStatus baseline
+    m.OnMotionSample(0.1, 17, 0x1001);              // stream baseline, no change
+    CHECK(m.motion_state_transitioning() == false);
+    CHECK(m.motion_first_detections() == 0);
+    m.OnMotionSample(0.2, 4, 0x1001);               // handset prone, seen HERE
+    CHECK(m.motion_state_transitioning() == true);  // 0.1 s, not 0.5 s
+    CHECK(m.mode_switching() == false);             // still not OUR switch
+    CHECK(m.motion_first_detections() == 1);
+    // The hold expires on the same clock as the BasicStatus-detected one.
+    m.Tick(3.6);
+    CHECK(m.motion_state_transitioning() == true);
+    m.Tick(3.8);
+    CHECK(m.motion_state_transitioning() == false);
+    // *** The triple is NOT touched from this path: MotionStatus has no
+    // usage_mode, and a partial read-back would re-open MS-5. The steady and
+    // last values still say what BasicStatus last said.
+    CHECK(m.last().motion_state == 17);
+    CHECK(m.steady().motion_state == 17);
+  }
+
+  // ---- the stream's FIRST sample is not an external transition ---------
+  {
+    // Same rule as the first read-back: no predecessor, no change. Without
+    // this, every process start would hold the robot at zero for 3.5 s as
+    // soon as the 10 Hz stream comes up.
+    ModeMachine m(Cfg());
+    m.OnReadback(0.0, Readback(0, 17, 0x1001));
+    m.OnMotionSample(0.1, 4, 0x1001);   // differs from the TRIPLE, but it is
+                                        // the stream's own first sample
+    CHECK(m.motion_state_transitioning() == false);
+  }
+
+  // ---- a gait-only change on the stream also triggers ------------------
+  {
+    // The handset can switch gaits without touching motion_state (basic ->
+    // stair on the spot). TR-1's reasoning covers it: the machine is moving
+    // through a transition we cannot otherwise see.
+    ModeMachine m(Cfg());
+    m.OnReadback(0.0, Readback(1, 17, 0x3002));
+    m.OnMotionSample(0.1, 17, 0x3002);
+    m.OnMotionSample(0.2, 17, 0x3003);              // gait moved, state same
+    CHECK(m.motion_state_transitioning() == true);
+  }
+
+  // ---- our own switch: the stream's echo of it is NOT external ---------
+  {
+    // During our switch the 10 Hz stream shows the machine moving -- that IS
+    // the switch. Counting it as external would extend a hold past MS-1's
+    // completion and zero the robot after every commanded stand.
+    ModeMachine m(Cfg());
+    m.OnReadback(0.0, Readback(0, 4, 0x1001));      // prone at rest
+    m.OnMotionSample(0.1, 4, 0x1001);
+    m.Request(1.0, ModeAction::kStand, 0);
+    m.OnMotionSample(1.2, 17, 0x1001);              // the stand, mid-flight
+    m.OnReadback(1.4, Readback(0, 17, 0x1001));     // MS-1 completes
+    CHECK(m.mode_switching() == false);
+    CHECK(m.motion_state_transitioning() == false); // no leftover hold
+  }
+
   // ---- our own switch supersedes an external hold ----------------------
   {
     ModeMachine m(Cfg());

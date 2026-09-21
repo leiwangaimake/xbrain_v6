@@ -207,6 +207,34 @@ void ModeMachine::OnReadback(double now_mono_s, const chs_a::BasicStatus& b) {
   }
 }
 
+void ModeMachine::OnMotionSample(double now_mono_s,
+                                 std::int64_t motion_state,
+                                 std::int64_t gait) {
+  // See the header. Only the HOLD is driven from here; everything that needs
+  // the whole triple keeps its single source in OnReadback.
+  const bool first = !has_motion_;
+  const bool changed =
+      !first && (motion_state != motion_ms_ || gait != motion_gait_);
+  motion_ms_ = motion_state;
+  motion_gait_ = gait;
+  has_motion_ = true;
+  if (switching_) {
+    // Our own switch is in flight: the movement this stream is about to show
+    // IS that switch. Same reasoning as OnReadback's switching_ branch --
+    // treating it as external would extend a hold past MS-1's completion.
+    return;
+  }
+  // The first sample of the stream's life has no predecessor to differ from,
+  // the same rule OnReadback applies to its first read-back.
+  if (!changed) return;
+  // TR-1: somebody else moved the machine. Refresh (or start) the hold. If
+  // the 2 Hz BasicStatus has not reported this change yet, this path is what
+  // makes the detection ~0.1 s instead of up to 0.5 s late -- counted, so a
+  // test can tell this wiring exists without racing the two streams.
+  if (external_change_s_ < 0.0) ++motion_first_detections_;
+  external_change_s_ = now_mono_s;
+}
+
 bool ModeMachine::Tick(double now_mono_s) {
   // TR-1's hold expires here, on the control tick, because there is nothing to
   // observe that would end it: 13 V-61 records that the "standing up" and

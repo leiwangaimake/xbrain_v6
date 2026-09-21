@@ -750,6 +750,12 @@ void QuadrupedProcess::HandleFrame(double now_mono_s) {
       snap.angular_z = m.angular_z;
       snap.motion_state_raw = m.motion_state.raw;
       snap.gait_raw = m.gait.raw;
+      // 13 TR-1 (2026-09-21 ruling): this stream also feeds the external-
+      // transition hold -- it reports motion_state five times as often as
+      // BasicStatus, and before this line the state message could carry a
+      // moved triple while mode_switching still read false for up to 0.5 s
+      // (measured on the chassis with the factory handset).
+      mode_.OnMotionSample(now_mono_s, m.motion_state.raw, m.gait.raw);
       snapshot_slot_.Publish(snap);
       if (report_sink_) {
         report_sink_(now_mono_s, nullptr, &m, nullptr, nullptr);

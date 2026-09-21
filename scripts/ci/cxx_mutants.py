@@ -1173,6 +1173,43 @@ MODE_SOURCES = [MODE_CC, os.path.join(QUAD, "src", "chs_a_reports.cc"),
 MODE_TESTS = [os.path.join(QUAD, "test", "test_mode_machine.cc")]
 
 MODE_MUTANTS = [
+    # 13 TR-1, user ruling 2026-09-21: the 10 Hz stream feeds the hold. This
+    # is the wiring the ruling added; dropping the call is the state the code
+    # shipped in, measured on the chassis as a hold that started up to 0.5 s
+    # after the handset moved the machine.
+    ("mode: a stream-reported change never starts the hold",
+     MODE_CC,
+     "  if (external_change_s_ < 0.0) ++motion_first_detections_;\n"
+     "  external_change_s_ = now_mono_s;",
+     "  if (external_change_s_ < 0.0) ++motion_first_detections_;"),
+    # The gait half of the pair. The handset can switch gaits on the spot
+    # without touching motion_state, and a comparison of motion_state alone
+    # calls that stationary.
+    ("mode: a gait-only stream change is not a change",
+     MODE_CC,
+     "      !first && (motion_state != motion_ms_ || gait != motion_gait_);",
+     "      !first && (motion_state != motion_ms_);"),
+    # The stream's first sample has no predecessor. Treating it as a change
+    # zeroes the robot for 3.5 s on every process start.
+    ("mode: the stream's first sample counts as a change",
+     MODE_CC,
+     "  const bool changed =\n"
+     "      !first && (motion_state != motion_ms_ || gait != motion_gait_);",
+     "  const bool changed =\n"
+     "      (motion_state != motion_ms_ || gait != motion_gait_);"),
+    # During our own switch the stream shows exactly that switch. Counting it
+    # as external extends a hold past MS-1's completion.
+    ("mode: our own switch echoed by the stream is external",
+     MODE_CC,
+     "  if (switching_) {\n"
+     "    // Our own switch is in flight: the movement this stream is about to show\n"
+     "    // IS that switch. Same reasoning as OnReadback's switching_ branch --\n"
+     "    // treating it as external would extend a hold past MS-1's completion.\n"
+     "    return;\n"
+     "  }",
+     "  if (false) {\n"
+     "    return;\n"
+     "  }"),
     # The two measured surprises. Expecting 1 after a stand times out on every
     # SUCCESSFUL stand, and the fault it raises points at the chassis.
     ("mode: a stand expects motion_state 1 instead of 17",
@@ -1463,6 +1500,14 @@ PROCESS_SOURCES = [
 PROCESS_TESTS = [os.path.join(QUAD, "test", "test_process.cc")]
 
 PROCESS_MUTANTS = [
+    # 13 TR-1, user ruling 2026-09-21. The call is the wiring; without it the
+    # unit tests on ModeMachine::OnMotionSample all still pass (they call it
+    # themselves), which is v1.22's lesson verbatim -- this mutant is the
+    # process-level test's reason to exist.
+    ("process: the 10 Hz stream never reaches the mode machine",
+     PROCESS_CC,
+     "      mode_.OnMotionSample(now_mono_s, m.motion_state.raw, m.gait.raw);",
+     "      (void)0;"),
     # FR-5 / SD-3. Dial threw the setsockopt return away and nothing read the
     # option back, so "Nagle is off" was a guarantee nobody held -- while every
     # latency figure in 13 S3.6 rests on it.
