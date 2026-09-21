@@ -91,6 +91,10 @@ bool RtRuntime::Start(std::string* err) {
       {"rt/chassis/light", &RtBridge::HandleLight},
       {"rt/safety/estop", &RtBridge::HandleEstop},
       {"rt/safety/probe/ping", &RtBridge::HandlePing},
+      // 13 Q-5 / A2: declared in the key table from the start, handled
+      // only now. Without this row every envelope's ts_sync stayed at
+      // the PB-Q3 default forever -- correctly false, silently unfed.
+      {"rt/clock/status", &RtBridge::HandleClockStatus},
   };
   for (const Sub& s : subs) {
     if (FindKey(s.suffix) == nullptr) {

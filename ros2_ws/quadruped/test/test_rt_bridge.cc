@@ -28,6 +28,8 @@
 
 #include "quadruped/rt_bridge.h"
 
+#include "quadruped/mono_clock.h"
+
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -417,6 +419,63 @@ int main() {
     b.HandleChassisCtrl(1.2, en2.c_str(), en2.size());
     CHECK(Has(FindLast(sent, "rt/chassis/ctrl/ack"), "\"seq\":1"));
     CHECK(!Has(FindLast(sent, "rt/chassis/ctrl/ack"), "\"seq\":2"));
+  }
+
+  // ---- 13 Q-5 / A2: ts_sync is fed by rt/clock/status --------------------
+  {
+    // The envelope case above already pins the OTHER half: before any
+    // ClockStatus ever arrives, every published envelope says ts_sync:false
+    // (PB-Q3's default, which is also what a missing report means). This
+    // case is the half that never existed -- the subscription actually
+    // FEEDING the field.
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+
+    // A synced verdict arrives, and the NEXT publish carries it. The
+    // arrival is stamped with the REAL clock here, deliberately: Publish
+    // judges ts_sync at the envelope's own mono, which is a real reading --
+    // an injected 100.0 would be "aged out" against it before it was ever
+    // fresh. (The first draft did exactly that and asserted on a red herring.)
+    const std::string cs = Wrap("{\"sync\":true}");
+    b.HandleClockStatus(MonoNowSeconds(), cs.c_str(), cs.size());
+    const std::string en = Wrap("{\"cmd_id\":\"k-1\",\"action\":\"enable\"}");
+    b.HandleChassisCtrl(100.1, en.c_str(), en.size());
+    CHECK(Has(sent.back().body, "\"ts_sync\":true"));
+
+    // *** The aging, on an injected axis -- this is why TsSyncAt exists as
+    // a time-injected predicate while Publish reads the real clock.
+    // CLK-A3 is "≥ 5 s 未收到 -> false", monotonic:
+    const std::string cs1 = Wrap("{\"sync\":true}");
+    b.HandleClockStatus(100.0, cs1.c_str(), cs1.size());
+    CHECK(b.TsSyncAt(104.9) == true);
+    CHECK(b.TsSyncAt(105.0) == true);    // 5.0 s since arrival is not yet ">= 5 s unheard"
+    CHECK(b.TsSyncAt(105.1) == false);   // aged out
+    // Aging is not latching: the next report starts a fresh window.
+    const std::string cs2 = Wrap("{\"sync\":true}");
+    b.HandleClockStatus(200.0, cs2.c_str(), cs2.size());
+    CHECK(b.TsSyncAt(200.1) == true);
+
+    // sync:false is a VALID report and must be carried, not confused with
+    // absence -- rtk_driver saying "not synced" is information.
+    const std::string cs3 = Wrap("{\"sync\":false}");
+    b.HandleClockStatus(200.2, cs3.c_str(), cs3.size());
+    CHECK(b.TsSyncAt(200.3) == false);
+
+    // A malformed report refreshes NOTHING: inject good-true, then garbage;
+    // the verdict and its window are still the good report's. Refusing to
+    // default in the false direction matters here too -- a schema drift
+    // would otherwise read as "not synced" instead of being counted.
+    const std::string cs4 = Wrap("{\"sync\":true}");
+    b.HandleClockStatus(300.0, cs4.c_str(), cs4.size());
+    const std::string junk = Wrap("{\"source\":\"rtk\"}");
+    b.HandleClockStatus(300.5, junk.c_str(), junk.size());
+    CHECK(b.TsSyncAt(300.6) == true);          // still the good report
+    CHECK(b.TsSyncAt(305.2) == false);         // aged from 300.0, not 300.5
   }
 
   // ---- ping answers pong, and a malformed ping answers too ---------------

@@ -205,6 +205,38 @@ int main() {
     CHECK(Cmd(empty, &m) == RtParse::kBadJson);
   }
 
+  // ---- rt/clock/status: the one consumed field, refused both ways --------
+  {
+    // 13 Q-5 / CLK-A2: sync is the single system-wide verdict and the ONLY
+    // field this process reads. Mandatory boolean -- a missing or mistyped
+    // one is a refusal, never a default: defaulting true is CLK-A3's exact
+    // failure, defaulting false silently discards a valid report.
+    ClockStatusMsg m;
+    CHECK(ParseClockStatus(Wrap("{\"sync\":true}").c_str(),
+                           Wrap("{\"sync\":true}").size(), kRid, kBoot,
+                           &m) == RtParse::kOk);
+    CHECK(m.sync == true);
+    ClockStatusMsg f;
+    CHECK(ParseClockStatus(Wrap("{\"sync\":false}").c_str(),
+                           Wrap("{\"sync\":false}").size(), kRid, kBoot,
+                           &f) == RtParse::kOk);
+    CHECK(f.sync == false);
+    ClockStatusMsg bad;
+    const std::string none = Wrap("{\"source\":\"rtk\"}");
+    CHECK(ParseClockStatus(none.c_str(), none.size(), kRid, kBoot, &bad) ==
+          RtParse::kMissingField);
+    const std::string typed = Wrap("{\"sync\":1}");
+    CHECK(ParseClockStatus(typed.c_str(), typed.size(), kRid, kBoot, &bad) ==
+          RtParse::kMissingField);
+    // The envelope rules hold here as everywhere: another robot's report is
+    // not our clock verdict.
+    std::string other = Wrap("{\"sync\":true}");
+    const std::size_t at = other.find(kRid);
+    other = other.substr(0, at) + "gj-002" + other.substr(at + std::string(kRid).size());
+    CHECK(ParseClockStatus(other.c_str(), other.size(), kRid, kBoot, &bad) ==
+          RtParse::kWrongRobot);
+  }
+
   // ---- rt/chassis/ctrl: the closed set -----------------------------------
   {
     ChassisCtrlMsg c;

@@ -240,6 +240,26 @@ RtParse ParseChassisCtrl(const char* json, std::size_t len,
 // ---------------------------------------------------------------------------
 // rt/safety/estop -- TIGHTENING, validation WAIVED (11 S3.0.1, S7.1)
 // ---------------------------------------------------------------------------
+// 11 S3.11 ClockStatus, reduced to the one field this process consumes.
+// 13 Q-5: every message we publish copies its envelope ts_sync from the most
+// recent ClockStatus.sync, and CLK-A2 forbids judging sync any other way --
+// no chronyc, no clock comparison, nothing. The rest of the message (source,
+// offset_ms, ...) is the general plane's business (P1-13 mirrors it there);
+// parsing fields nobody here reads would be surface for no consumer.
+struct ClockStatusMsg {
+  Envelope env;
+  bool sync = false;
+};
+
+// Envelope rules as everywhere else. `sync` is MANDATORY and boolean: 11
+// S3.11 marks it the single system-wide truth, and a message without it is a
+// publisher speaking a different schema -- refused, never defaulted, in
+// either direction (a default true is CLK-A3's exact failure, a default
+// false would silently discard a valid report).
+RtParse ParseClockStatus(const char* json, std::size_t len,
+                         const std::string& our_rid,
+                         const std::string& our_boot, ClockStatusMsg* out);
+
 struct EstopMsg {
   Envelope env;
   std::string cmd_id;

@@ -1964,6 +1964,39 @@ RT_BRIDGE_SOURCES = [
 RT_BRIDGE_TESTS = [os.path.join(QUAD, "test", "test_rt_bridge.cc")]
 
 RT_BRIDGE_MUTANTS = [
+    # 13 Q-5 / A2. The feed itself: without the store, ts_sync is the PB-Q3
+    # default forever -- which is the state the process shipped in, with the
+    # subscription declared in rt_keys.cc and handled by nothing.
+    ("bridge: a ClockStatus report never reaches ts_sync",
+     RT_BRIDGE_CC,
+     "  clock_sync_.store(m.sync, std::memory_order_relaxed);\n"
+     "  clock_rx_mono_.store(now_mono_s, std::memory_order_release);",
+     "  (void)m;"),
+    # CLK-A3's aging removed: a verdict from a dead rtk_driver is trusted
+    # forever. CLK-A5 names the consequence -- crash, silence, and the whole
+    # system keeps claiming sync.
+    ("bridge: a stale clock verdict is trusted forever",
+     RT_BRIDGE_CC,
+     "  if (now_mono_s - rx > kClockSyncTimeoutS) return false;",
+     "  (void)now_mono_s;"),
+    # PB-Q3 verbatim: no true fallback on any branch. Before the first
+    # report there is nothing to copy, and false is the only honest value.
+    ("bridge: ts_sync true before any report arrived",
+     RT_BRIDGE_CC,
+     "  if (rx < 0.0) return false;",
+     "  if (rx < 0.0) return true;"),
+    # A malformed report treated as \"not synced\" instead of refused: the
+    # good verdict it failed to replace is thrown away, and a schema drift
+    # between rtk_driver and us becomes indistinguishable from rtk_driver
+    # being down.
+    ("bridge: a malformed clock report clears the verdict",
+     RT_BRIDGE_CC,
+     "    ++clock_refused_;\n"
+     "    return;",
+     "    ++clock_refused_;\n"
+     "    clock_sync_.store(false, std::memory_order_relaxed);\n"
+     "    clock_rx_mono_.store(now_mono_s, std::memory_order_release);\n"
+     "    return;"),
     # 11 S3.0 / 13 PB-Q3. Publishing the bare payload is what this process did
     # until 2026-09-21, and every existing assertion in the suite passed --
     # they use a substring search, which cannot tell the two apart.

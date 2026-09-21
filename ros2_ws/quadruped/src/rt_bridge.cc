@@ -48,6 +48,16 @@ constexpr std::size_t kEnvCap = kOutCap + 512;
 
 namespace err = hachist::xbrain::errors;
 
+// 11 CLK-A3 / T-11, verbatim: a process that has not received ClockStatus
+// for >= 5 s fills ts_sync = false, on the monotonic clock. A CONTRACT
+// constant, not a config key -- same standing as kEstopDedupS below: 11
+// S14.2 lists this class of value on F-5's unfrozen side, T-11 names the 5
+// for every local publisher at once, and a per-process config for a
+// system-wide protocol number would be sixty-two chances to disagree.
+// (configs/safety/clock.yaml carries the same 5.0 for the Python-side
+// readers; neither is derived from the other -- both cite T-11.)
+constexpr double kClockSyncTimeoutS = 5.0;
+
 // The three keys this file publishes on, by SUFFIX. They are looked up in the
 // table at construction (see the constructor): publishing on an undeclared key
 // is how a key escapes the set 11 S2.2.1 is checked against, and the lookup is
@@ -127,6 +137,40 @@ std::uint64_t RtBridge::NextSeq(const std::string& suffix) {
   return seq_[suffix]++;
 }
 
+void RtBridge::HandleClockStatus(double now_mono_s, const char* data,
+                                 std::size_t len) {
+  ClockStatusMsg m;
+  if (ParseClockStatus(data, len, rid_, boot_, &m) != RtParse::kOk) {
+    // Refused, not defaulted -- in either direction. A malformed report
+    // simply fails to refresh the age, and CLK-A3's aging does the safe
+    // thing on its own. Counted because a schema drift between rtk_driver
+    // and us would otherwise look exactly like rtk_driver being down.
+    ++clock_refused_;
+    return;
+  }
+  ++clock_accepted_;
+  // Store order: verdict first, then the arrival time that VALIDATES it.
+  // A reader interleaving between the two sees the new verdict beside the
+  // OLD time -- which is aged out or about to be, the conservative side.
+  // The reverse order would validate a stale verdict with a fresh time.
+  clock_sync_.store(m.sync, std::memory_order_relaxed);
+  clock_rx_mono_.store(now_mono_s, std::memory_order_release);
+}
+
+bool RtBridge::TsSyncAt(double now_mono_s) const {
+  const double rx = clock_rx_mono_.load(std::memory_order_acquire);
+  // Never received: false. 13 PB-Q3 forbids a true fallback on any branch,
+  // and 11 S3.0 gives a missing report the same meaning.
+  if (rx < 0.0) return false;
+  // CLK-A5: rtk_driver down -> silence -> false within the window, system
+  // wide. The comparison is strict-greater so a report exactly at the edge
+  // still counts -- the failure direction of the boundary is the safe one
+  // either way at 1 Hz, but the contract says "≥ 5 s 未收到", and 4.999 s
+  // since the last arrival is not yet that.
+  if (now_mono_s - rx > kClockSyncTimeoutS) return false;
+  return clock_sync_.load(std::memory_order_relaxed);
+}
+
 bool RtBridge::Publish(const std::string& suffix, const char* data,
                        std::size_t len) {
   if (!publish_ || len == 0) return false;
@@ -140,10 +184,10 @@ bool RtBridge::Publish(const std::string& suffix, const char* data,
   env.ts = WallNowSeconds();
   env.mono = MonoNowSeconds();
   env.seq = NextSeq(suffix);
-  // ts_sync stays false: 13 Q-5's rt/clock/status subscription is not built,
-  // and PB-Q3 forbids filling true as a fallback. S3.0 gives a missing field
-  // the same meaning, so this does not change what the wire says -- it makes
-  // the message a conformant one that says it.
+  // 13 Q-5: ts_sync copies the latest ClockStatus.sync, aged out by CLK-A3.
+  // Judged at the envelope's own mono -- the same instant the message claims
+  // to have been produced -- rather than at a second clock read.
+  env.ts_sync = TsSyncAt(env.mono);
   char wrapped[kEnvCap];
   const std::size_t n = WriteEnvelope(env, data, len, wrapped, sizeof(wrapped));
   // Nothing rather than a truncated object, same rule as the writers.

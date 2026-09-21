@@ -38,6 +38,7 @@
 #define HACHIST_XBRAIN_V6_QUADRUPED_RT_BRIDGE_H_
 
 #include <cstddef>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -119,6 +120,18 @@ class RtBridge {
   // never by a timer of our own -- a timer would keep answering after the
   // subscription died, which is the one thing this probe exists to detect.
   void HandlePing(double now_mono_s, const char* data, std::size_t len);
+  // 13 Q-5 / A2: rt/clock/status, the subscription that was declared in
+  // rt_keys.cc from the start and never handled -- every envelope's ts_sync
+  // was the PB-Q3 default (false) because nothing ever fed it. Stores the
+  // latest sync verdict and its arrival time; produces no reply.
+  void HandleClockStatus(double now_mono_s, const char* data, std::size_t len);
+
+  // The envelope's ts_sync as of `now_mono_s`: the last received
+  // ClockStatus.sync, aged out to false after kClockSyncTimeoutS (11 CLK-A3,
+  // monotonic), false before the first message ever arrives. Public and
+  // time-injected so the aging half is assertable without sleeping --
+  // Publish itself reads the real clock.
+  bool TsSyncAt(double now_mono_s) const;
 
   // ---- outbound ----------------------------------------------------------
   //
@@ -227,6 +240,16 @@ class RtBridge {
   std::uint64_t estop_deduped_ = 0;
   std::uint64_t pongs_ = 0;
   std::uint64_t acks_ = 0;
+  // ClockStatus intake (13 Q-5). Two atomics rather than one struct under a
+  // mutex: written on the zenoh thread, read on every publish from rt_pub
+  // and chs_a_rx, and the worst interleaving -- a fresh flag read beside the
+  // previous arrival time, or the reverse -- lasts one publish and errs
+  // toward false (the aged-out side) or extends a 1 Hz verdict by
+  // microseconds. Neither is worth a lock on the publish path.
+  std::atomic<double> clock_rx_mono_{-1.0};
+  std::atomic<bool> clock_sync_{false};
+  std::uint64_t clock_accepted_ = 0;
+  std::uint64_t clock_refused_ = 0;
   // 11 S3.0's per-key sequence, and the count of payloads too big to wrap.
   // The latter is published rather than swallowed for the reason every other
   // counter here exists: a message that never went out and a message nobody

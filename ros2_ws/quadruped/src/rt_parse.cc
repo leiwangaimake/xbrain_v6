@@ -444,6 +444,26 @@ RtParse ParseChassisMode(const char* json, std::size_t len,
   return RtParse::kOk;
 }
 
+RtParse ParseClockStatus(const char* json, std::size_t len,
+                         const std::string& our_rid,
+                         const std::string& our_boot, ClockStatusMsg* out) {
+  if (json == nullptr || out == nullptr) return RtParse::kBadJson;
+  const Json j = Json::parse(json, json + len, nullptr, /*allow_exceptions=*/false);
+  if (j.is_discarded()) return RtParse::kBadJson;
+
+  Json data;
+  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &data);
+  if (env != RtParse::kOk) return env;
+
+  // The one consumed field. Mandatory boolean -- see the header for why a
+  // missing or mistyped sync is a refusal in BOTH directions rather than a
+  // default in either.
+  const auto it = data.find("sync");
+  if (it == data.end() || !it->is_boolean()) return RtParse::kMissingField;
+  out->sync = it->get<bool>();
+  return RtParse::kOk;
+}
+
 RtParse ParseChassisCtrl(const char* json, std::size_t len,
                          const std::string& our_rid, const std::string& our_boot,
                          ChassisCtrlMsg* out) {
