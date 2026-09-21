@@ -126,6 +126,7 @@ const char* kGood =
     "    mode_switch_timeout_s: 5.0\n"
     "    external_transition_hold_s: 3.5\n"
     "  realtime:\n"
+    "    mlockall: true\n"
     "    sched_fifo_priority:\n"
     "      ctrl: 80\n"
     "      chs_b: 70\n"
@@ -399,6 +400,17 @@ int main(int argc, char** argv) {
     const std::string p = WriteTemp(
         "q_hold0.yaml", Mutate("    external_transition_hold_s: 3.5\n",
                                "    external_transition_hold_s: 0.0\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+
+  // ---- 13 QD-7: mlockall is read and required ---------------------------
+  {
+    // The process locks pages regardless, so a `false` here changed nothing --
+    // the safe direction, and exactly the silent-no-op shape this package keeps
+    // finding. QD-7 lists mlockall as a property of the realtime path: a page
+    // fault on ctrl is a missed deadline with no other symptom.
+    const std::string p = WriteTemp(
+        "q_mlock.yaml", Mutate("    mlockall: true\n", "    mlockall: false\n"));
     CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
   }
 

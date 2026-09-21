@@ -379,6 +379,13 @@ CONFIG_TESTS = [os.path.join(QUAD, "test", "test_quadruped_config.cc")]
 CONFIG_CC = os.path.join(QUAD, "src", "quadruped_config.cc")
 
 CONFIG_MUTANTS = [
+    # 13 QD-7 / RTC-7. The process locks pages regardless, so a `false` here
+    # changed nothing -- the safe direction, and the silent-no-op shape this
+    # package keeps finding.
+    ("config: mlockall may be turned off",
+     CONFIG_CC,
+     '    if (!root.require_bool(K("realtime.mlockall"))) {',
+     "    if (false) {"),
     # 13 S9.1. ctrl carries the 200 ms Tier 1 deadline; chs_b only writes a
     # lock-free slot. Inverted, a 200 Hz DDS reader can preempt the thread that
     # stops the robot -- and the two numbers were literals in the source while

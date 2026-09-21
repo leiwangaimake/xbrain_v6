@@ -405,6 +405,23 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
                         "zero hold releases it on the same period");
     }
 
+    // ---- 13 QD-7 / RTC-7: mlockall ----------------------------------
+    //
+    // Read and required true. The process calls LockAllMemory()
+    // unconditionally, so a `false` here changed nothing -- the safe direction,
+    // but a key that silently refuses to do what it says is the shape this
+    // package keeps finding. QD-7 lists mlockall beside "no dynamic
+    // allocation" and "no blocking logging" as a property of the realtime
+    // path, not a preference: a page fault on ctrl is a missed deadline with
+    // no other symptom.
+    if (!root.require_bool(K("realtime.mlockall"))) {
+      throw ConfigError(
+          K("realtime.mlockall") +
+          " must be true. 13 QD-7 / RTC-7 require locked pages on the realtime "
+          "path; the process locks them regardless, so a false here is a "
+          "request it cannot honour rather than a setting");
+    }
+
     // ---- 13 S9.1: the two SCHED_FIFO priorities ----------------------
     cfg.realtime.ctrl_priority = static_cast<int>(
         root.require_int(K("realtime.sched_fifo_priority.ctrl")));
