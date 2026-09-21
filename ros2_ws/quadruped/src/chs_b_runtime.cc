@@ -37,7 +37,10 @@ namespace rt = hachist::xbrain::rtcomm;
 
 // 13 S9.1: chs_b is SCHED_FIFO 70 -- below ctrl's 80. Missing a control period
 // costs a command; missing an IMU sample costs a fraction of a degree.
-constexpr int kChsBFifoPriority = 70;
+// *** No longer a literal -- see the note beside ctrl's in process.cc. 13 S9.1
+// gives 70 and the config key carried it while this constant was what the
+// thread used.
+
 
 // Twice the 200 Hz source rate. See the file comment: polling AT the source
 // rate aliases into "the IMU keeps going stale".
@@ -78,7 +81,8 @@ void ChsBRuntime::Stop() {
 }
 
 void ChsBRuntime::Loop() {
-  priority_error_ = rt::ApplyFifoPriority(pthread_self(), kChsBFifoPriority);
+  priority_error_ =
+      rt::ApplyFifoPriority(pthread_self(), cfg_.realtime.chs_b_priority);
 
   ImuSample imu;
   MotionInfoSample mi;

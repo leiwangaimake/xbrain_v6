@@ -265,6 +265,20 @@ struct MotionConfig {
   std::vector<std::int64_t> command_forbidden_gaits;
 };
 
+// 13 S9.1's realtime block. Only the two threads that table gives a FIFO
+// priority to -- everything else in it is 普通 by design, and the reason is
+// written there (JSON parsing lives on chs_a_rx precisely so it is NOT on a
+// realtime thread).
+struct RealtimeConfig {
+  // SCHED_FIFO priorities, 1..99. ctrl MUST outrank chs_b: the control loop
+  // carries the 200 ms Tier 1 deadline while chs_b only fills a slot, and an
+  // inversion there lets a 200 Hz DDS reader preempt the thing that stops the
+  // robot. Both were literals in the source while these keys sat in the config
+  // doing nothing.
+  int ctrl_priority = 0;
+  int chs_b_priority = 0;
+};
+
 struct QuadrupedConfig {
   std::string robot_id;
   ChassisLinkConfig link;
@@ -272,6 +286,7 @@ struct QuadrupedConfig {
   UplinkConfig uplink;
   OdomConfig odom;
   MotionConfig motion;
+  RealtimeConfig realtime;
   Tier1Config tier1;
 };
 

@@ -379,6 +379,34 @@ CONFIG_TESTS = [os.path.join(QUAD, "test", "test_quadruped_config.cc")]
 CONFIG_CC = os.path.join(QUAD, "src", "quadruped_config.cc")
 
 CONFIG_MUTANTS = [
+    # 13 S9.1. ctrl carries the 200 ms Tier 1 deadline; chs_b only writes a
+    # lock-free slot. Inverted, a 200 Hz DDS reader can preempt the thread that
+    # stops the robot -- and the two numbers were literals in the source while
+    # these keys sat in the config doing nothing.
+    ("config: the FIFO priority ordering is not enforced",
+     CONFIG_CC,
+     "    if (cfg.realtime.ctrl_priority <= cfg.realtime.chs_b_priority) {",
+     "    if (false) {"),
+    # Outside 1..99 the priority call fails and the thread runs at ordinary
+    # priority with nothing to show for it.
+    ("config: a FIFO priority outside the valid range is accepted",
+     CONFIG_CC,
+     "      if (prio < 1 || prio > 99) {",
+     "      if (false) {"),
+    # 13 要求 e. Both not_implemented lists are refused structurally elsewhere,
+    # so an unread list here lets somebody delete an entry and believe they
+    # enabled the feature.
+    ("config: a shortened not_implemented list is accepted",
+     CONFIG_CC,
+     "        if (!matches) {\n"
+     "          std::string want;",
+     "        if (false) {\n"
+     "          std::string want;"),
+    # Order matters in the message, which names positions.
+    ("config: the not_implemented lists are checked as SETS",
+     CONFIG_CC,
+     "          matches = got.at_index(i).as_scalar(label) == f.expected[i];",
+     "          matches = got.size() == f.count;"),
     # 13 S8.2 chassis_dds.drdds.motion_info_topic was a literal in chs_b while
     # the key sat in the file doing nothing, right beside imu_topic which WAS
     # configured. A wrong topic name fails as DDS-9 describes: participant up,
@@ -2217,8 +2245,16 @@ CHS_B_MUTANTS = [
      CHS_B_CC, "  const std::string imu_topic = RosTopicToDdsTopic(cfg.imu_topic);",
      "  const std::string imu_topic = cfg.imu_topic;"),
     ("chs_b: /MOTION_INFO uses the ROS topic name",
-     CHS_B_CC, '  const std::string mi_topic = RosTopicToDdsTopic("/MOTION_INFO");',
-     '  const std::string mi_topic = "/MOTION_INFO";'),
+     CHS_B_CC,
+     "  const std::string mi_topic = RosTopicToDdsTopic(cfg.motion_info_topic);",
+     "  const std::string mi_topic = cfg.motion_info_topic;"),
+    # 13 S8.2: the topic name comes from config, like imu_topic beside it. A
+    # literal here is a key that changes nothing, and the symptom of a wrong
+    # name is DDS-9's -- participant up, topic present, zero samples.
+    ("chs_b: the /MOTION_INFO topic name is hardcoded",
+     CHS_B_CC,
+     "  const std::string mi_topic = RosTopicToDdsTopic(cfg.motion_info_topic);",
+     '  const std::string mi_topic = RosTopicToDdsTopic("/MOTION_INFO");'),
     # 13 DDS-1. The environment is process-wide and this process also holds an
     # rclcpp context on domain 42; reading it collapses the two domains.
     ("chs_b: the participant takes the domain from the environment (DDS-1)",

@@ -332,6 +332,60 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
             "E_NOT_IMPLEMENTED with a five-second failure");
       }
     }
+    // 13 要求 e's other two not_implemented lists, VALIDATED rather than
+    // consumed -- the same treatment always_active and vel_source_priority get.
+    //
+    // Both refusals are STRUCTURAL: rt_parse's kMotionStates admits only
+    // stand / prone / rl_control, so zero_cal / cart_move / damped_prone never
+    // reach a dispatch at all, and normalized_axis (C-05) is decode-only while
+    // illumination is refused in HandleLight (13 V-47). A config-driven list
+    // would add a second place for the same rule to live, and 11 S2.2.1
+    // declares no ack key for rt/chassis/mode (13 MS-3a), so the refusal REASON
+    // is not observable from outside either way.
+    //
+    // What a bare, unread list WOULD do is let somebody delete an entry and
+    // believe they enabled the feature. So the list is pinned to the code.
+    {
+      struct FixedList {
+        const char* key;
+        const char* expected[3];
+        std::size_t count;
+        const char* why;
+      };
+      const FixedList kFixed[] = {
+          {"motion.not_implemented.motion_states",
+           {"zero_cal", "cart_move", "damped_prone"}, 3,
+           "13 M-07 / M-08 / M-10. rt_parse's commandable motion-state table "
+           "admits only stand / prone / rl_control, so these three are refused "
+           "before any dispatch -- editing this list does not change that"},
+          {"motion.not_implemented.commands",
+           {"normalized_axis", "illumination", nullptr}, 2,
+           "13 C-05 is decode-only (we drive with the real-axis command) and "
+           "13 V-47 refuses illumination in the light handler -- editing this "
+           "list does not enable either"},
+      };
+      for (const FixedList& f : kFixed) {
+        const YamlNode& got = root.require_seq(K(f.key));
+        bool matches = got.size() == f.count;
+        for (std::size_t i = 0; matches && i < f.count; ++i) {
+          const std::string label =
+              K(f.key) + "[" + std::to_string(i) + "]";
+          matches = got.at_index(i).as_scalar(label) == f.expected[i];
+        }
+        if (!matches) {
+          std::string want;
+          for (std::size_t i = 0; i < f.count; ++i) {
+            if (i != 0) want += ", ";
+            want += f.expected[i];
+          }
+          throw ConfigError(std::string("quadruped config: ") + K(f.key) +
+                            " must be exactly [" + want + "]. " + f.why +
+                            ". A list that changes nothing is worse than an "
+                            "absent one: somebody will edit it and believe the "
+                            "behaviour followed");
+        }
+      }
+    }
     cfg.motion.mode_switch_timeout_s =
         root.require_double(K("motion.mode_switch_timeout_s"));
     cfg.motion.external_transition_hold_s =
@@ -350,6 +404,49 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
                         "for this long after an EXTERNAL triple change, and a "
                         "zero hold releases it on the same period");
     }
+
+    // ---- 13 S9.1: the two SCHED_FIFO priorities ----------------------
+    cfg.realtime.ctrl_priority = static_cast<int>(
+        root.require_int(K("realtime.sched_fifo_priority.ctrl")));
+    cfg.realtime.chs_b_priority = static_cast<int>(
+        root.require_int(K("realtime.sched_fifo_priority.chs_b")));
+    for (const int prio : {cfg.realtime.ctrl_priority,
+                           cfg.realtime.chs_b_priority}) {
+      if (prio < 1 || prio > 99) {
+        throw ConfigError(
+            K("realtime.sched_fifo_priority") +
+            " values must be in 1..99 (the SCHED_FIFO range). A value outside "
+            "it makes the priority call fail and the thread runs at ordinary "
+            "priority with nothing to show for it");
+      }
+    }
+    // The ORDERING is the part that matters, and it is not a preference:
+    // ctrl carries the 200 ms Tier 1 deadline while chs_b only fills a
+    // lock-free slot, so an inversion lets a 200 Hz DDS reader preempt the
+    // thread that stops the robot.
+    if (cfg.realtime.ctrl_priority <= cfg.realtime.chs_b_priority) {
+      throw ConfigError(
+          K("realtime.sched_fifo_priority") +
+          ": ctrl must outrank chs_b (13 S9.1 gives 80 and 70). ctrl carries "
+          "the 200 ms Tier 1 deadline; chs_b only writes a lock-free slot. "
+          "Inverted, a 200 Hz DDS reader can preempt the thread that stops the "
+          "robot");
+    }
+    // *** realtime.sched_fifo_priority.io and realtime.cpu_affinity are
+    // deliberately NOT read, and each for its own reason:
+    //
+    //   io          13 S9.1's thread table has NO `io` thread. chs_a_rx and
+    //               chs_a_tx are 普通 there, with the reason written beside
+    //               them (the JSON parse lives on chs_a_rx precisely so it is
+    //               not on a realtime thread), and PB-Q2 puts rt_safety at
+    //               ordinary priority too. A FIFO priority for `io` would
+    //               contradict the table rather than configure anything.
+    //               Registered in 13; the key is removed from configs/ but the
+    //               resolved snapshot keeps it until the freeze line can run.
+    //   cpu_affinity  blocked on D-42 (13 S12.4): the core assignment has to
+    //               be settled together with 10 S3.2, and the config comment
+    //               says so. Consuming it now would be a reserved hook
+    //               (CLAUDE.md S9.3).
 
     // ---- channel two: chassis DDS domain 0 ---------------------------
     cfg.dds.backend = root.require_string(K("chassis_dds.backend"));

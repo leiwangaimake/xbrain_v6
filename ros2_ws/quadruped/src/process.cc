@@ -72,7 +72,12 @@ double WallNowSeconds() {
 }
 
 // 13 S9.1: ctrl is SCHED_FIFO 80, chs_b is 70, everything else ordinary.
-constexpr int kCtrlFifoPriority = 80;
+// *** No longer a literal. 13 S9.1's table gives 80, and the config key
+// realtime.sched_fifo_priority.ctrl carried that number while this constant
+// was what the thread actually used -- "填了不生效 = 让设置的人以为改了
+// 什么". Kept only as the value the fixture-free unit tests would see if they
+// ever built a process without a config, which none do.
+
 
 }  // namespace
 
@@ -855,7 +860,8 @@ void QuadrupedProcess::CtrlLoop() {
   // 13 S9.1: SCHED_FIFO 80. The errno is kept rather than discarded -- EPERM
   // here means the unit did not raise LimitRTPRIO, and the loop then runs at
   // ordinary priority with nothing to show for it.
-  ctrl_priority_error_ = rt::ApplyFifoPriority(pthread_self(), kCtrlFifoPriority);
+  ctrl_priority_error_ =
+      rt::ApplyFifoPriority(pthread_self(), cfg_.realtime.ctrl_priority);
 
   const double period_s = 1.0 / cfg_.tier1.control_loop_hz;
   const auto period = std::chrono::duration<double>(period_s);

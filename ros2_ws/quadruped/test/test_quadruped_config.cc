@@ -116,8 +116,20 @@ const char* kGood =
     "    not_implemented:\n"
     "      gaits:\n"
     "      - stair_standard\n"
+    "      motion_states:\n"
+    "      - zero_cal\n"
+    "      - cart_move\n"
+    "      - damped_prone\n"
+    "      commands:\n"
+    "      - normalized_axis\n"
+    "      - illumination\n"
     "    mode_switch_timeout_s: 5.0\n"
     "    external_transition_hold_s: 3.5\n"
+    "  realtime:\n"
+    "    sched_fifo_priority:\n"
+    "      ctrl: 80\n"
+    "      chs_b: 70\n"
+    "      io: 10\n"
     "  odom:\n"
     "    a_max_mps2: 2.5\n"
     "    arw_rad_sqrt_s: 0.002\n"
@@ -387,6 +399,73 @@ int main(int argc, char** argv) {
     const std::string p = WriteTemp(
         "q_hold0.yaml", Mutate("    external_transition_hold_s: 3.5\n",
                                "    external_transition_hold_s: 0.0\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+
+  // ---- 13 S9.1: the two FIFO priorities come from config ----------------
+  {
+    const std::string p = WriteTemp("q_rt.yaml", kGood);
+    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    CHECK(c.realtime.ctrl_priority == 80);
+    CHECK(c.realtime.chs_b_priority == 70);
+  }
+  {
+    // *** The ORDERING, and it is not a preference. ctrl carries the 200 ms
+    // Tier 1 deadline while chs_b only writes a lock-free slot -- inverted, a
+    // 200 Hz DDS reader can preempt the thread that stops the robot.
+    const std::string p = WriteTemp(
+        "q_rt_inv.yaml",
+        Mutate("      ctrl: 80\n      chs_b: 70\n",
+               "      ctrl: 60\n      chs_b: 70\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // Equal is also refused: two realtime threads at the same priority give
+    // the scheduler no answer, which is the ambiguity the rule exists to
+    // remove.
+    const std::string p = WriteTemp(
+        "q_rt_eq.yaml",
+        Mutate("      ctrl: 80\n      chs_b: 70\n",
+               "      ctrl: 70\n      chs_b: 70\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // Outside the SCHED_FIFO range the priority call fails and the thread runs
+    // at ordinary priority with nothing to show for it -- the silent failure
+    // 13 S9.1's mlock/priority reporting exists to prevent.
+    const std::string p = WriteTemp(
+        "q_rt_range.yaml",
+        Mutate("      ctrl: 80\n", "      ctrl: 120\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+
+  // ---- 13 要求 e: the other two not_implemented lists are pinned ---------
+  {
+    // Both refusals are STRUCTURAL -- rt_parse admits only three commandable
+    // motion states, and normalized_axis / illumination are refused elsewhere
+    // -- so editing these lists changes nothing. Pinned to the code precisely
+    // because of that: an unread list lets somebody delete an entry and
+    // believe they enabled the feature.
+    const std::string p = WriteTemp(
+        "q_ni_ms.yaml",
+        Mutate("      - zero_cal\n      - cart_move\n      - damped_prone\n",
+               "      - zero_cal\n      - cart_move\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    const std::string p = WriteTemp(
+        "q_ni_cmd.yaml",
+        Mutate("      - normalized_axis\n      - illumination\n",
+               "      - normalized_axis\n"));
+    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+  }
+  {
+    // Order too: a membership test would call [illumination, normalized_axis]
+    // the same list, and the message it produces names positions.
+    const std::string p = WriteTemp(
+        "q_ni_order.yaml",
+        Mutate("      - normalized_axis\n      - illumination\n",
+               "      - illumination\n      - normalized_axis\n"));
     CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
   }
 

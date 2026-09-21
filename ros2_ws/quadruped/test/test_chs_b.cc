@@ -125,6 +125,15 @@ ChassisDdsConfig Cfg() {
   // edit away from being wrong and the interface is not.
   c.network_interface = "lo";
   c.imu_topic = "/IMU";
+  // Required since the topic name stopped being a literal in chs_b.cc.
+  // An empty one throws from RosTopicToDdsTopic -- which is the right
+  // answer (an empty ROS topic is not a topic), and the reason the
+  // config loader require_string()s it rather than defaulting.
+  // *** Deliberately NOT "/MOTION_INFO". A fixture that matches the literal
+  // chs_b used to hardcode makes "hardcode it back" an EQUIVALENT mutation --
+  // nothing could tell the two apart, and that mutant is the defect the config
+  // key exists to prevent. Measured: it survived until this name changed.
+  c.motion_info_topic = "/MOTION_INFO_FIXTURE";
   c.imu_expect_hz = 200.0;
   c.imu_age_warn_ms = 50;
   c.imu_frame_id = "imu_link";
@@ -276,8 +285,11 @@ int main() {
   dds_qos_t* rwqos = dds_create_qos();
   dds_qset_reliability(rwqos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
   dds_qset_history(rwqos, DDS_HISTORY_KEEP_LAST, 1);
-  const std::string mi_topic = RosTopicToDdsTopic("/MOTION_INFO");
-  CHECK(mi_topic == "rt/MOTION_INFO");
+  // The writer publishes on the name the CONFIG names, so a reader that
+  // subscribed to a hardcoded /MOTION_INFO instead receives nothing and the
+  // reception assertions below go red.
+  const std::string mi_topic = RosTopicToDdsTopic(Cfg().motion_info_topic);
+  CHECK(mi_topic == "rt/MOTION_INFO_FIXTURE");
   const dds_entity_t mi_t = dds_create_topic(
       pub_dp, &drdds_msg_dds__MotionInfo__desc, mi_topic.c_str(), nullptr,
       nullptr);

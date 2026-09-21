@@ -171,5 +171,10 @@ quadruped:
   realtime:
     mlockall: true
     cpu_affinity: { ctrl: 5, chs_b: 5, io: 6, rt_safety: 6 }   # WARN: 与 10 S3.2 一并确认(D-42)
-    sched_fifo_priority: { ctrl: 80, chs_b: 70, io: 10 }       # rt_safety 不用 FIFO(PB-Q2)
+    # 2026-09-21 订正: 原写 { ctrl: 80, chs_b: 70, io: 10 }, 删掉 io.
+    #   13 S9.1 线程表没有 io 线程: chs_a_rx 与 chs_a_tx 在那里都是
+    #   普通/非实时, 理由就写在表里(JSON 解析放在 chs_a_rx 正是为了
+    #   不在实时线程上), PB-Q2 也把 rt_safety 放在普通优先级.
+    #   给 io 一个 FIFO 优先级不是配置, 是与表相矛盾.
+    sched_fifo_priority: { ctrl: 80, chs_b: 70 }        # rt_safety 不用 FIFO(PB-Q2)
     log_ring_bytes: 1048576
