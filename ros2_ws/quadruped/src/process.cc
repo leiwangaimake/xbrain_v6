@@ -402,6 +402,10 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
                               std::memory_order_relaxed);
     pub_nodelay_expected_.store(cfg_.link.tcp_nodelay && !socket_.is_udp(),
                                 std::memory_order_relaxed);
+    pub_nodelay_requested_.store(socket_.nodelay_requested() != 0,
+                                 std::memory_order_relaxed);
+    pub_nodelay_setopt_ok_.store(socket_.nodelay_setopt_ok() != 0,
+                                 std::memory_order_relaxed);
   }
   if (link.disconnected) {
     // Bytes from the old connection must never be read as the start of the new
@@ -645,6 +649,10 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   snap.odom = last_odom_;
   pub_switch_fail_.store(mode_.switch_failures(), std::memory_order_relaxed);
   pub_mode_frames_.store(mode_frames_sent_, std::memory_order_relaxed);
+  // The tx-guard triple, from the thread that owns the realtime send path.
+  pub_tx_skips_.store(tx_.tx_skip_count(), std::memory_order_relaxed);
+  pub_tx_acquires_.store(tx_.rt_acquire_count(), std::memory_order_relaxed);
+  pub_tx_sent_.store(tx_.sent_count(), std::memory_order_relaxed);
   state_slot_.Publish(snap);
 
   last_ctrl_s_ = now_mono_s;
@@ -705,6 +713,12 @@ QuadrupedProcess::LinkStatus QuadrupedProcess::link_status() const {
   s.mode_frames_sent = pub_mode_frames_.load(std::memory_order_relaxed);
   s.nodelay_active = pub_nodelay_active_.load(std::memory_order_relaxed);
   s.nodelay_expected = pub_nodelay_expected_.load(std::memory_order_relaxed);
+  s.nodelay_requested = pub_nodelay_requested_.load(std::memory_order_relaxed);
+  s.nodelay_setopt_ok = pub_nodelay_setopt_ok_.load(std::memory_order_relaxed);
+  s.resync_bytes = pub_resync_bytes_.load(std::memory_order_relaxed);
+  s.tx_skips = pub_tx_skips_.load(std::memory_order_relaxed);
+  s.tx_acquires = pub_tx_acquires_.load(std::memory_order_relaxed);
+  s.tx_sent = pub_tx_sent_.load(std::memory_order_relaxed);
   return s;
 }
 
@@ -870,6 +884,8 @@ int QuadrupedProcess::RxPump(double now_mono_s) {
   pub_dropped_.store(framer_.dropped_frames(), std::memory_order_relaxed);
   pub_err_code_.store(session_.last_error_code(), std::memory_order_relaxed);
   pub_err_seen_.store(session_.error_codes_seen(), std::memory_order_relaxed);
+  pub_resync_bytes_.store(framer_.resync_bytes_total(),
+                          std::memory_order_relaxed);
   return frames;
 }
 

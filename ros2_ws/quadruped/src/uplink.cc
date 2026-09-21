@@ -31,6 +31,7 @@
 
 #include "quadruped/uplink.h"
 
+#include <atomic>
 #include <stdexcept>
 
 #include "geometry_msgs/msg/transform_stamped.hpp"
@@ -47,9 +48,11 @@ struct Uplink::Impl {
   rclcpp::Node::SharedPtr node;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_bc;
-  std::uint64_t odom_count = 0;
-  std::uint64_t tf_count = 0;
-  std::uint64_t suppressed_count = 0;
+  // Written on the publish thread, read by the supervisor loop in main --
+  // atomics for the same reason the bridge's counters are (this batch).
+  std::atomic<std::uint64_t> odom_count{0};
+  std::atomic<std::uint64_t> tf_count{0};
+  std::atomic<std::uint64_t> suppressed_count{0};
 };
 
 Uplink::Uplink(const UplinkConfig& cfg, const std::string& rid)
@@ -177,11 +180,11 @@ int Uplink::actual_domain_id() const {
 }
 
 std::uint64_t Uplink::odom_published() const {
-  return impl_ ? impl_->odom_count : 0;
+  return impl_ ? impl_->odom_count.load() : 0;
 }
-std::uint64_t Uplink::tf_published() const { return impl_ ? impl_->tf_count : 0; }
+std::uint64_t Uplink::tf_published() const { return impl_ ? impl_->tf_count.load() : 0; }
 std::uint64_t Uplink::suppressed() const {
-  return impl_ ? impl_->suppressed_count : 0;
+  return impl_ ? impl_->suppressed_count.load() : 0;
 }
 
 }  // namespace quadruped

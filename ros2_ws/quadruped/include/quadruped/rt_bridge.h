@@ -169,8 +169,18 @@ class RtBridge {
   std::uint64_t estops_applied() const { return estop_applied_; }
   std::uint64_t estops_deduped() const { return estop_deduped_; }
   std::uint64_t pongs_sent() const { return pongs_; }
+  // All counters below are written on the zenoh callback thread and read by
+  // the supervisor loop in main (this batch); atomics with the default load
+  // on read. Before this they were plain integers with no reader at all --
+  // 15 of the 18 observables here had none, five of them incrementing the
+  // whole time. Same closing argument as put_failures: a counter with no
+  // reader is a number, not a diagnostic.
   std::uint64_t acks_sent() const { return acks_; }
   std::uint64_t envelope_overflows() const { return envelope_overflows_; }
+  // 13 Q-5's intake, the accepted/refused pair -- refused counts a schema
+  // drift that would otherwise be indistinguishable from rtk_driver down.
+  std::uint64_t clock_accepted() const { return clock_accepted_; }
+  std::uint64_t clock_refused() const { return clock_refused_; }
   std::uint64_t states_published() const { return states_; }
 
   // Why the FIRST refused cmd_vel was refused, kOk while none has been. See the
@@ -189,15 +199,15 @@ class RtBridge {
 
   double last_estop_mono_s_ = -1.0;
 
-  std::uint64_t cmd_ok_ = 0;
-  std::uint64_t cmd_refused_ = 0;
-  std::uint64_t ctrl_ok_ = 0;
-  std::uint64_t mode_ok_ = 0;
-  std::uint64_t light_accepted_ = 0;
-  std::uint64_t light_refused_ = 0;
-  std::uint64_t light_send_failed_ = 0;
-  std::uint64_t hello_ok_ = 0;
-  std::uint64_t hello_refused_ = 0;
+  std::atomic<std::uint64_t> cmd_ok_{0};
+  std::atomic<std::uint64_t> cmd_refused_{0};
+  std::atomic<std::uint64_t> ctrl_ok_{0};
+  std::atomic<std::uint64_t> mode_ok_{0};
+  std::atomic<std::uint64_t> light_accepted_{0};
+  std::atomic<std::uint64_t> light_refused_{0};
+  std::atomic<std::uint64_t> light_send_failed_{0};
+  std::atomic<std::uint64_t> hello_ok_{0};
+  std::atomic<std::uint64_t> hello_refused_{0};
   // model / version arrive on the chs_a_rx thread (PublishReports) and are
   // read on the zenoh subscription thread (HandleHello). std::string, so a
   // lock-free slot is not available (12 RTC-6) -- a mutex is correct here:
@@ -234,12 +244,12 @@ class RtBridge {
   double spec_max_vx_ = 0.0;
   double spec_max_vy_ = 0.0;
   double spec_max_wz_ = 0.0;
-  std::uint64_t mode_refused_ = 0;
-  std::uint64_t ctrl_refused_ = 0;
-  std::uint64_t estop_applied_ = 0;
-  std::uint64_t estop_deduped_ = 0;
-  std::uint64_t pongs_ = 0;
-  std::uint64_t acks_ = 0;
+  std::atomic<std::uint64_t> mode_refused_{0};
+  std::atomic<std::uint64_t> ctrl_refused_{0};
+  std::atomic<std::uint64_t> estop_applied_{0};
+  std::atomic<std::uint64_t> estop_deduped_{0};
+  std::atomic<std::uint64_t> pongs_{0};
+  std::atomic<std::uint64_t> acks_{0};
   // ClockStatus intake (13 Q-5). Two atomics rather than one struct under a
   // mutex: written on the zenoh thread, read on every publish from rt_pub
   // and chs_a_rx, and the worst interleaving -- a fresh flag read beside the
@@ -248,16 +258,16 @@ class RtBridge {
   // microseconds. Neither is worth a lock on the publish path.
   std::atomic<double> clock_rx_mono_{-1.0};
   std::atomic<bool> clock_sync_{false};
-  std::uint64_t clock_accepted_ = 0;
-  std::uint64_t clock_refused_ = 0;
+  std::atomic<std::uint64_t> clock_accepted_{0};
+  std::atomic<std::uint64_t> clock_refused_{0};
   // 11 S3.0's per-key sequence, and the count of payloads too big to wrap.
   // The latter is published rather than swallowed for the reason every other
   // counter here exists: a message that never went out and a message nobody
   // subscribed to look identical from outside.
   std::map<std::string, std::uint64_t> seq_;
   mutable std::mutex seq_mu_;
-  std::uint64_t envelope_overflows_ = 0;
-  std::uint64_t states_ = 0;
+  std::atomic<std::uint64_t> envelope_overflows_{0};
+  std::atomic<std::uint64_t> states_{0};
   RtParse first_refusal_ = RtParse::kOk;
 };
 

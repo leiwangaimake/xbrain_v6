@@ -489,6 +489,21 @@ class QuadrupedProcess {
     // 13 MS-2: switches that never got their read-back.
     std::uint64_t switch_failures = 0;
     std::uint64_t mode_frames_sent = 0;
+    // The other nodelay pair, deliberately separate from the read-back pair
+    // above: "we asked" and "setsockopt said yes" are claims about the
+    // REQUEST; nodelay_active is the kernel's answer. All four in one log
+    // line shows which link of that chain broke.
+    bool nodelay_requested = false;
+    bool nodelay_setopt_ok = false;
+    // FR-2: bytes discarded hunting for a sync word -- resync_max_bytes'
+    // only observable. A nonzero RATE means the peer and we disagree about
+    // the framing.
+    std::uint64_t resync_bytes = 0;
+    // TX-3 / CPP-4, the tx-guard triple: realtime path found the line busy
+    // and skipped / acquired / frames actually sent.
+    std::uint64_t tx_skips = 0;
+    std::uint64_t tx_acquires = 0;
+    std::uint64_t tx_sent = 0;
   };
   LinkStatus link_status() const;
 
@@ -588,6 +603,12 @@ class QuadrupedProcess {
   std::atomic<std::uint64_t> pub_mode_frames_{0};
   std::atomic<bool> pub_nodelay_active_{false};
   std::atomic<bool> pub_nodelay_expected_{false};
+  std::atomic<bool> pub_nodelay_requested_{false};
+  std::atomic<bool> pub_nodelay_setopt_ok_{false};
+  std::atomic<std::uint64_t> pub_resync_bytes_{0};
+  std::atomic<std::uint64_t> pub_tx_skips_{0};
+  std::atomic<std::uint64_t> pub_tx_acquires_{0};
+  std::atomic<std::uint64_t> pub_tx_sent_{0};
 
   std::atomic<bool> running_{false};
   std::thread ctrl_thread_;

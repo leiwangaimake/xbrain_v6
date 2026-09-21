@@ -326,6 +326,19 @@ int Run(const std::string& path) {
                    "under load (13 S9.1). Check LimitRTPRIO on the unit.\n",
                    proc.ctrl_priority_error());
     }
+    // chs_b's twin of the block above. Its accessor's comment has promised
+    // this report since the day it was written ("Reported for the same
+    // reason ctrl's is") -- and nothing ever read it: the one place in the
+    // package where a comment claimed behaviour the code did not have.
+    static bool said_chs_b_priority = false;
+    if (chs_b_up && chs_b.priority_error() != 0 && !said_chs_b_priority) {
+      said_chs_b_priority = true;
+      std::fprintf(stderr,
+                   "quadruped_m20: chs_b thread is NOT SCHED_FIFO (errno %d) "
+                   "-- the 200 Hz DDS reader runs at ordinary priority "
+                   "(13 S9.1). Check LimitRTPRIO on the unit.\n",
+                   chs_b.priority_error());
+    }
 
 #if QUADRUPED_HAVE_RT
     // The RT plane, reported on the same transition-only basis as the chassis
@@ -385,6 +398,66 @@ int Run(const std::string& path) {
                        quadruped::ModeRejectItem(proc.last_mode_reject()));
         }
       }
+      // *** The RT plane's PARSE-layer refusals, aggregated. Five of these
+      // counters had been incrementing since the day they were written with
+      // no reader anywhere -- a publisher with a wrong envelope field saw
+      // its commands vanish and this process looked healthy from inside
+      // (the same closing argument as put_failures above). One line, on
+      // change only, all six: which stream is being refused is the half a
+      // bench engineer actually needs.
+      {
+        static std::uint64_t said_refuse_sum = 0;
+        const std::uint64_t refuse_sum =
+            rt.bridge().ctrl_refused() + rt.bridge().mode_refused() +
+            rt.bridge().hello_refused() + rt.bridge().lights_refused() +
+            rt.bridge().clock_refused() + rt.bridge().estops_deduped();
+        if (refuse_sum != said_refuse_sum) {
+          said_refuse_sum = refuse_sum;
+          std::fprintf(stderr,
+                       "quadruped_m20: rt refusals -- ctrl=%llu mode=%llu "
+                       "hello=%llu light=%llu clock=%llu estop_dedup=%llu "
+                       "(dedup is not an error: 11 S9.12.6 swallows repeats "
+                       "inside 50 ms and still acks)\n",
+                       static_cast<unsigned long long>(rt.bridge().ctrl_refused()),
+                       static_cast<unsigned long long>(rt.bridge().mode_refused()),
+                       static_cast<unsigned long long>(rt.bridge().hello_refused()),
+                       static_cast<unsigned long long>(rt.bridge().lights_refused()),
+                       static_cast<unsigned long long>(rt.bridge().clock_refused()),
+                       static_cast<unsigned long long>(rt.bridge().estops_deduped()));
+        }
+      }
+      // Soft estops, the moment they land: 11 S3.0.1 makes this the one
+      // command a hostile payload may legally deliver, so every application
+      // is worth a line of its own.
+      {
+        static std::uint64_t said_estops = 0;
+        if (rt.bridge().estops_applied() != said_estops) {
+          said_estops = rt.bridge().estops_applied();
+          std::fprintf(stderr,
+                       "quadruped_m20: SOFT ESTOP applied (%llu so far, "
+                       "epoch=%llu). Zero velocity until a fresh cmd_vel "
+                       "carries the new epoch (11 S9.12.2).\n",
+                       static_cast<unsigned long long>(said_estops),
+                       static_cast<unsigned long long>(proc.estop_epoch()));
+        }
+      }
+      // The envelope that did not fit. Unreachable by construction today
+      // (see Publish) -- which is exactly why a nonzero here must be loud:
+      // it means one of the two capacity constants was changed without the
+      // other.
+      {
+        static bool said_env_overflow = false;
+        if (rt.bridge().envelope_overflows() > 0 && !said_env_overflow) {
+          said_env_overflow = true;
+          std::fprintf(stderr,
+                       "quadruped_m20: %llu payload(s) TOO BIG to wrap in the "
+                       "11 S3.0 envelope and dropped. kOutCap grew past "
+                       "kEnvCap's slack; nothing on this key reached the "
+                       "wire.\n",
+                       static_cast<unsigned long long>(
+                           rt.bridge().envelope_overflows()));
+        }
+      }
       static std::uint64_t said_refused = 0;
       const std::uint64_t refused = rt.bridge().cmd_vel_refused();
       if (refused > 0 && said_refused == 0) {
@@ -437,6 +510,52 @@ int Run(const std::string& path) {
                      static_cast<unsigned long long>(chs_b_up ? chs_b.imu_samples() : 0),
                      static_cast<unsigned long long>(
                          chs_b_up ? chs_b.motion_info_samples() : 0));
+      }
+    }
+#endif
+
+#if QUADRUPED_HAVE_RT
+    // Once a minute, the RT plane's throughput in one line -- the accepted
+    // side of every stream, plus the three transport counters that only
+    // matter as RATES: resync bytes (FR-2 -- a nonzero rate means we and the
+    // peer disagree about the framing), and the tx-guard triple (TX-3 --
+    // skips are safe by design, but a skip RATE near the send rate means the
+    // realtime path almost never gets the line). "It is publishing" becomes
+    // a number rather than an impression, which is the same sentence
+    // uplink.h wrote about its own counters.
+    if (rt_up) {
+      static std::uint64_t stats_said_at = 0;
+      if (proc.ctrl_ticks() - stats_said_at >= 6000) {   // ~60 s at 100 Hz
+        stats_said_at = proc.ctrl_ticks();
+        const quadruped::QuadrupedProcess::LinkStatus st = proc.link_status();
+        std::fprintf(stderr,
+                     "quadruped_m20: rt stats -- states=%llu acks=%llu "
+                     "pongs=%llu hello=%llu ctrl=%llu mode=%llu light=%llu "
+                     "light_send_fail=%llu clock=%llu | resync_bytes=%llu "
+                     "tx skip/acq/sent=%llu/%llu/%llu\n",
+                     static_cast<unsigned long long>(rt.bridge().states_published()),
+                     static_cast<unsigned long long>(rt.bridge().acks_sent()),
+                     static_cast<unsigned long long>(rt.bridge().pongs_sent()),
+                     static_cast<unsigned long long>(rt.bridge().hello_answered()),
+                     static_cast<unsigned long long>(rt.bridge().ctrl_accepted()),
+                     static_cast<unsigned long long>(rt.bridge().mode_accepted()),
+                     static_cast<unsigned long long>(rt.bridge().lights_accepted()),
+                     static_cast<unsigned long long>(rt.bridge().light_send_failures()),
+                     static_cast<unsigned long long>(rt.bridge().clock_accepted()),
+                     static_cast<unsigned long long>(st.resync_bytes),
+                     static_cast<unsigned long long>(st.tx_skips),
+                     static_cast<unsigned long long>(st.tx_acquires),
+                     static_cast<unsigned long long>(st.tx_sent));
+#if QUADRUPED_HAVE_UPLINK
+        if (uplink) {
+          std::fprintf(stderr,
+                       "quadruped_m20: uplink stats -- odom=%llu tf=%llu "
+                       "withheld=%llu\n",
+                       static_cast<unsigned long long>(uplink->odom_published()),
+                       static_cast<unsigned long long>(uplink->tf_published()),
+                       static_cast<unsigned long long>(uplink->suppressed()));
+        }
+#endif
       }
     }
 #endif
