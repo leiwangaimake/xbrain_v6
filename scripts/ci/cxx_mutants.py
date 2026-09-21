@@ -884,27 +884,39 @@ PAYLOADS_SOURCES = [PAYLOADS_CC,
 PAYLOADS_TESTS = [os.path.join(QUAD, "test", "test_rt_payloads.cc")]
 
 PAYLOADS_MUTANTS = [
+    # 11 S13.9 draws detail.item from a closed set WHEN PRESENT. Writing it
+    # unconditionally puts "" on the wire for every accepted ack, and "" is
+    # not in that set -- a consumer switching on item then has to special-case
+    # the empty string, which is how a closed set stops being closed.
+    ("payloads: an unnamed ctrl ack still emits an empty item",
+     PAYLOADS_CC,
+     "  if (in.item != nullptr && in.item[0] != '\\0') {",
+     "  if (true) {"),
+    # And the other way: the key never appears, which is the shape the ack had
+    # on the chassis on 2026-09-21 -- refusal correct, name missing.
+    ("payloads: the ctrl ack never emits an item",
+     PAYLOADS_CC,
+     "  if (in.item != nullptr && in.item[0] != '\\0') {",
+     "  if (false) {"),
     # 11 S4.1 `charge` was absent from RobotState entirely -- state/robot
     # (CR-4 relays this key) could not say whether the robot is on a dock, and
     # 11 S9.11's flow keys off exactly that.
     ("payloads: RobotState drops the charge field",
      PAYLOADS_CC,
      '  a.Raw(",\\"charge\\":");\n'
-     "  if (in.basic == nullptr || in.basic->charge < 0 ||\n"
-     "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
-     '    a.Raw("null");\n'
-     "  } else {\n"
-     "    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);\n"
-     "  }\n"
-     '  // 11 S4.1 `services_ok`.',
+     "  {\n"
+     "    // Either source: `basic` when the full report is in hand, the raw int",
      '  a.Raw(",\\"_charge\\":");\n'
-     "  if (in.basic == nullptr || in.basic->charge < 0 ||\n"
-     "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
-     '    a.Raw("null");\n'
-     "  } else {\n"
-     "    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);\n"
-     "  }\n"
-     '  // 11 S4.1 `services_ok`.'),
+     "  {\n"
+     "    // Either source: `basic` when the full report is in hand, the raw int"),
+    # The state path only ever has the raw int; reading `basic` alone made the
+    # field null on every state message while the same value went out fine on
+    # rt/chassis/power. Measured on the live chassis 2026-09-21.
+    ("payloads: RobotState.charge reads only the full report",
+     PAYLOADS_CC,
+     "    const int raw = (in.basic != nullptr) ? in.basic->charge\n"
+     "                                          : (in.has_charge ? in.charge_raw : -1);",
+     "    const int raw = (in.basic != nullptr) ? in.basic->charge : -1;"),
     # 21 V-14: null is the ANSWER. A `true` asserts every required chassis
     # service is healthy on the strength of never having looked.
     ("payloads: services_ok claims healthy without looking",
@@ -1820,6 +1832,22 @@ RT_BRIDGE_SOURCES = [
 RT_BRIDGE_TESTS = [os.path.join(QUAD, "test", "test_rt_bridge.cc")]
 
 RT_BRIDGE_MUTANTS = [
+    # 11 S9.3.3. The whole point of the item is that E_CAPABILITY alone does
+    # not say WHICH refusal happened -- a prone on a staircase, a deleted
+    # action and set_sdk_mode all answer that code. Dropping the assignment is
+    # exactly the state the code shipped in until the bench run on 2026-09-21.
+    ("bridge: a refused ctrl ack carries no item name",
+     RT_BRIDGE_CC,
+     "    ack.item = ModeRejectItem(verdict.reject);",
+     "    ack.item = \"\";"),
+    # And the other direction: an item that is always the same string satisfies
+    # "prone_on_stair appears" and tells a reader nothing. This is the mutant
+    # the single positive assertion could not kill, which is why the deleted-
+    # action case sits next to it in the test.
+    ("bridge: every refusal is named prone_on_stair",
+     RT_BRIDGE_CC,
+     "    ack.item = ModeRejectItem(verdict.reject);",
+     "    ack.item = \"prone_on_stair\";"),
     # 13 V-47, verbatim: illumination is refused, "不静默丢弃, 也不假装设置
     # 成功". Accepting it silently is the fail-silent half of that sentence.
     ("bridge: an illumination light command is accepted",

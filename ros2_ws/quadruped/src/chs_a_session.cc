@@ -289,6 +289,20 @@ void Session::OnSendSuccess() {
 void Session::OnErrorCode(double now_mono_s, std::uint32_t code) {
   (void)now_mono_s;
   const ErrorDisposition d = ClassifyErrorCode(code);
+  // *** KEPT, not just classified. The code was consumed here and discarded,
+  // so a chassis that refused a command left no trace anywhere: measured on
+  // the live machine 2026-09-21, a usage_mode switch to navigation was
+  // dispatched, the chassis did not change mode, and nothing in the process
+  // could say whether a frame had gone out, whether the chassis had answered,
+  // or what it had answered.
+  //
+  // 13 S7.5 gives each code a disposition; the code ITSELF is what names the
+  // problem -- E_BUSY for a refused navigation mode (11 S9.10.1, charge_manager
+  // still running) reads nothing like a framing error.
+  if (!d.success) {
+    last_error_code_ = code;
+    ++error_codes_seen_;
+  }
   if (d.success) {
     send_failures_ = 0;
     internal_errors_ = 0;

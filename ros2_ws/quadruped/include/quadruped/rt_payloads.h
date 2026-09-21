@@ -144,6 +144,12 @@ struct RobotStateInput {
   // RobotState.odom.* as one of this process's three outputs. Null until the
   // first control period has run: an all-zero pose reads as a robot at the
   // origin, which is a claim rather than an absence.
+  // 11 S4.1 charge. As a raw int plus a flag rather than through `basic`:
+  // the state path has no BasicStatus to offer (it cannot cross the
+  // lock-free slot), and sourcing it from `basic` made the field null on
+  // every message the process actually published.
+  bool has_charge = false;
+  int charge_raw = 0;
   const OdomSample* odom = nullptr;
 };
 
@@ -203,6 +209,14 @@ struct CtrlAckInput {
   // difference without a second round trip.
   bool hes_lock = false;
   bool timeout_lock = false;
+  // 11 S9.3.3 names this for the one refusal that has a name: a prone refused
+  // on a stair gait answers E_CAPABILITY with detail.item = "prone_on_stair".
+  // The code alone is not enough -- E_CAPABILITY is also what a deleted action
+  // and set_sdk_mode answer, so a caller that saw only the code would have to
+  // guess which of the three happened. Empty means "no named item", and the
+  // key is then OMITTED rather than written as "": an empty string is a value,
+  // and 11 S13.9 requires item to be drawn from a closed set when present.
+  const char* item = "";
 };
 
 std::size_t WriteCtrlAck(const CtrlAckInput& in, char* out, std::size_t cap);

@@ -236,6 +236,11 @@ bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
   // 11 S9.9's third output. The sample rides in the snapshot rather than being
   // taken from the odom slot here: that slot is consuming (12 RTC-6), and a
   // second consumer would steal every other pose from the uplink.
+  // 11 S4.1 charge, from the snapshot's raw int. The full BasicStatus
+  // cannot cross the slot (12 RTC-6), which is why this field was null
+  // on every state message until the int was carried across.
+  in.has_charge = snap.has_charge;
+  in.charge_raw = snap.charge_raw;
   in.odom = &snap.odom;
   in.soft_estop_active = snap.soft_estop_active;
   in.cmd_age_ms = snap.cmd_age_ms;
@@ -492,6 +497,12 @@ void RtBridge::HandleChassisCtrl(double now_mono_s, const char* data,
     ack.code = (m.action == CtrlAction::kSetSdkMode)
                    ? err::kECapability.data()
                    : ModeRejectCode(verdict.reject);
+    // 11 S9.3.3 wants the NAME of the refusal alongside the code. The mapping
+    // already existed in ModeRejectItem and was reached only by tests: the ack
+    // on the wire never carried it, so a bench run saw E_CAPABILITY and had no
+    // way to tell a stair refusal from set_sdk_mode. Measured 2026-09-21 on the
+    // chassis -- the refusal was correct, the ack was not.
+    ack.item = ModeRejectItem(verdict.reject);
   }
   const std::size_t n = WriteCtrlAck(ack, out, sizeof(out));
   Publish(kCtrlAckSuffix, out, n);

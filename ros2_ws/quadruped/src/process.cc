@@ -304,6 +304,7 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
       latest_.usage_mode_raw = fresh.usage_mode_raw;
       latest_.motion_state_raw = fresh.motion_state_raw;
       latest_.gait_raw = fresh.gait_raw;
+      latest_.charge_raw = fresh.charge_raw;
       latest_.from_basic = true;
     }
     if (fresh.from_motion) {
@@ -571,6 +572,18 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
       mode_want_state_ = false;
       mode_want_gait_ = false;
       mode_want_usage_ = false;
+      // *** The REASON, kept rather than dropped. 13 MS-3a records that this
+      // refusal is silent -- rt/chassis/mode has no ack key and RT-C4 keeps
+      // this process off the plane where the cmd acks live -- so the log is
+      // the only place it can surface, and until now it did not reach there
+      // either: GS-1 refusing stair_standard and MS-3 refusing a second switch
+      // produced the same nothing.
+      //
+      // 13 RX-9's argument applied one key over: a refusal counted without its
+      // reason is indistinguishable from a command nobody sent, and both look
+      // like a robot that will not change mode.
+      last_mode_reject_ = r.reject;
+      ++mode_steps_refused_;
     }
   }
 
@@ -620,7 +633,11 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   // Set from last_odom_ above, on the same tick that produced it, so the pose
   // in the state message and the pose in /odom_quadruped are the same sample
   // rather than two samples that happen to be close.
+  snap.has_charge = have_snapshot_ && latest_.from_basic;
+  snap.charge_raw = latest_.charge_raw;
   snap.odom = last_odom_;
+  pub_switch_fail_.store(mode_.switch_failures(), std::memory_order_relaxed);
+  pub_mode_frames_.store(mode_frames_sent_, std::memory_order_relaxed);
   state_slot_.Publish(snap);
 
   last_ctrl_s_ = now_mono_s;
@@ -675,6 +692,10 @@ QuadrupedProcess::LinkStatus QuadrupedProcess::link_status() const {
   s.probe_cycles = pub_probe_cycles_.load(std::memory_order_relaxed);
   s.frames = pub_frames_.load(std::memory_order_relaxed);
   s.dropped = pub_dropped_.load(std::memory_order_relaxed);
+  s.last_error_code = pub_err_code_.load(std::memory_order_relaxed);
+  s.error_codes_seen = pub_err_seen_.load(std::memory_order_relaxed);
+  s.switch_failures = pub_switch_fail_.load(std::memory_order_relaxed);
+  s.mode_frames_sent = pub_mode_frames_.load(std::memory_order_relaxed);
   s.nodelay_active = pub_nodelay_active_.load(std::memory_order_relaxed);
   s.nodelay_expected = pub_nodelay_expected_.load(std::memory_order_relaxed);
   return s;
@@ -708,6 +729,7 @@ void QuadrupedProcess::HandleFrame(double now_mono_s) {
       snap.usage_mode_raw = b.usage_mode.raw;
       snap.motion_state_raw = b.motion_state.raw;
       snap.gait_raw = b.gait.raw;
+      snap.charge_raw = b.charge;
       mode_.OnReadback(now_mono_s, b);
       snapshot_slot_.Publish(snap);
       // Forwarded from HERE, with the full report including its strings.
@@ -833,6 +855,8 @@ int QuadrupedProcess::RxPump(double now_mono_s) {
   // Published from THIS thread, which is the one that owns the counters.
   pub_frames_.store(frames_received_, std::memory_order_relaxed);
   pub_dropped_.store(framer_.dropped_frames(), std::memory_order_relaxed);
+  pub_err_code_.store(session_.last_error_code(), std::memory_order_relaxed);
+  pub_err_seen_.store(session_.error_codes_seen(), std::memory_order_relaxed);
   return frames;
 }
 

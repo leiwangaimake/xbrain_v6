@@ -325,11 +325,19 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
   // null, never a nearby member (11 S13.6), because `idle` for a state we do
   // not recognise tells the upper stack the robot is free to drive away.
   a.Raw(",\"charge\":");
-  if (in.basic == nullptr || in.basic->charge < 0 ||
-      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {
-    a.Raw("null");
-  } else {
-    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);
+  {
+    // Either source: `basic` when the full report is in hand, the raw int when
+    // it is not. The state path only ever has the int -- BasicStatus holds
+    // std::string and cannot cross the lock-free slot (12 RTC-6) -- and
+    // reading `basic` alone made this field null on every state message while
+    // the same value went out correctly on rt/chassis/power.
+    const int raw = (in.basic != nullptr) ? in.basic->charge
+                                          : (in.has_charge ? in.charge_raw : -1);
+    if (raw < 0 || static_cast<std::size_t>(raw) >= kChargeCount) {
+      a.Raw("null");
+    } else {
+      a.StrView(sets::kCharge[static_cast<std::size_t>(raw)]);
+    }
   }
   // 11 S4.1 `services_ok`. NULL, and that is the honest answer rather than a
   // missing field: 21 V-14 rules that runtime.services is 恒填 [不可查] this
@@ -591,6 +599,13 @@ std::size_t WriteCtrlAck(const CtrlAckInput& in, char* out, std::size_t cap) {
   a.Bool(in.hes_lock);
   a.Raw(",\"timeout_lock\":");
   a.Bool(in.timeout_lock);
+  // 11 S9.3.3: the named item for a refusal that has one. Written only when
+  // there IS one -- see CtrlAckInput::item for why the empty case omits the
+  // key instead of emitting "".
+  if (in.item != nullptr && in.item[0] != '\0') {
+    a.Raw(",\"item\":");
+    a.Str(in.item);
+  }
   a.Raw("}}");
   return a.Finish();
 }

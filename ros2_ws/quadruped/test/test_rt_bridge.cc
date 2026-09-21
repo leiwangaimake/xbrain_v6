@@ -93,6 +93,15 @@ QuadrupedConfig Cfg() {
   c.odom.stale_warn_ms = 150;
   c.odom.stale_invalid_ms = 300;
   c.odom.stale_stop_publish_ms = 1000;
+  // The mode section is filled even though most cases here never reach the mode
+  // machine: PR-1's refusal is one of the acks asserted below, and leaving the
+  // section at its zero value would make that case pass for the wrong reason
+  // (an empty forbidden list refuses nothing, and the refusal would then be
+  // coming from somewhere else).
+  c.motion.prone_forbidden_gaits = {0x1003, 0x3003};
+  c.motion.command_forbidden_gaits = {0x1003};
+  c.motion.mode_switch_timeout_s = 5.0;
+  c.motion.external_transition_hold_s = 3.5;
   return c;
 }
 
@@ -269,6 +278,11 @@ int main() {
     // mistake the contract calls out by name.
     CHECK(Has(sent.back().body, "\"timeout_lock\": true") ||
           Has(sent.back().body, "\"timeout_lock\":true"));
+    // An ACCEPTED ack names no item, and the key is absent rather than empty:
+    // 11 S13.9 draws item from a closed set when it is present, and "" is not
+    // in that set. A consumer that switches on item would have to special-case
+    // the empty string, which is how a closed set stops being closed.
+    CHECK(!Has(sent.back().body, "item"));
 
     // The next period consumes it, with a fresh command, and the lock goes.
     const std::string good = Wrap(
@@ -312,6 +326,51 @@ int main() {
     CHECK(Has(sent.back().body, "E_SCHEMA"));
     CHECK(Has(sent.back().body, "anonymous"));
     CHECK(b.ctrl_accepted() == 0);
+
+    // *** 11 S9.3.3: the refusal's NAME, on the wire. Measured on the chassis
+    // 2026-09-21: a prone on a stair gait was correctly refused with
+    // E_CAPABILITY and the ack carried detail = {action, hes_lock,
+    // timeout_lock} and nothing else. ModeRejectItem existed, had both names
+    // in it, and was reached only from tests -- so every unit test asserting
+    // the item passed while no ack ever carried one.
+    //
+    // No read-back has arrived on this process, so ProneAllowed answers false
+    // (the gait is unknown and a staircase has no anti-roll path). That is the
+    // PR-1 refusal, and the ack must name it.
+    const std::string prone = Wrap("{\"cmd_id\":\"c-pr1\",\"action\":\"prone\"}");
+    b.HandleChassisCtrl(1.0, prone.c_str(), prone.size());
+    CHECK(Has(sent.back().body, "E_CAPABILITY"));
+    CHECK(Has(sent.back().body, "\"item\":\"prone_on_stair\"") ||
+          Has(sent.back().body, "\"item\": \"prone_on_stair\""));
+
+    // *** And the two halves that keep the one above from being satisfied by a
+    // constant. A deleted action answers the SAME code from a DIFFERENT place
+    // -- which is precisely the confusion the item exists to resolve -- so it
+    // must NOT be named prone_on_stair. This is the pair that a hard-coded
+    // item would fail: the assertion above alone cannot tell "the mapping is
+    // wired" from "the writer always emits prone_on_stair".
+    const std::string deleted = Wrap("{\"cmd_id\":\"c-9\",\"action\":\"idle\"}");
+    b.HandleChassisCtrl(1.0, deleted.c_str(), deleted.size());
+    CHECK(Has(sent.back().body, "E_CAPABILITY"));
+    CHECK(!Has(sent.back().body, "prone_on_stair"));
+
+    // *** set_sdk_mode is the case that does the killing, and the difference
+    // from the one above is the point. A deleted action never reaches the mode
+    // machine -- it is refused during parsing, before any item is assigned --
+    // so a writer that hard-codes prone_on_stair survives that check. This one
+    // PARSES, is refused by capability (11 S9.3.4 keeps it off this plane),
+    // and has no named item. Same code as the two cases above it, three
+    // different reasons: exactly the ambiguity 11 S9.3.3's item resolves.
+    // Both required fields, and a rate that divides 1000 -- otherwise this
+    // stops at the parser with E_SCHEMA and never reaches the branch under
+    // test, which is how the first draft of this case failed.
+    const std::string sdk = Wrap(
+        "{\"cmd_id\":\"c-sdk\",\"action\":\"set_sdk_mode\","
+        "\"enable\":true,\"joint_rate_hz\":100}");
+    b.HandleChassisCtrl(1.0, sdk.c_str(), sdk.size());
+    CHECK(Has(sent.back().body, "E_CAPABILITY"));
+    CHECK(Has(sent.back().body, "rejected"));
+    CHECK(!Has(sent.back().body, "item"));
   }
 
   // ---- ping answers pong, and a malformed ping answers too ---------------

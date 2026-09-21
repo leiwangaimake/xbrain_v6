@@ -437,6 +437,24 @@ int main(int argc, char** argv) {
     CHECK(j["detail"]["action"] == "enable");
     CHECK(j["detail"]["hes_lock"] == true);
     CHECK(j["detail"]["timeout_lock"] == false);
+    // Nothing named it, so the key is ABSENT -- not present-and-empty. See the
+    // next case for why the writer distinguishes the two.
+    CHECK(j["detail"].find("item") == j["detail"].end());
+
+    // 11 S9.3.3: the refusal that HAS a name carries it. Checked here on the
+    // bytes, because the mapping function on its own was already covered by a
+    // test and was still unreachable from any ack for a whole batch.
+    CtrlAckInput named = in;
+    named.result = "rejected";
+    named.action = "prone";
+    named.item = "prone_on_stair";
+    const std::size_t m = WriteCtrlAck(named, buf, sizeof(buf));
+    const Json jn = ParseOrFail("CtrlAck/item", buf, m);
+    CHECK(jn["detail"]["item"] == "prone_on_stair");
+    // The item lives under detail, next to action -- not at the top level.
+    // 11 S13.9's shape is {code, detail:{item, ...}}, and a consumer reading
+    // detail.item finds nothing if it is hoisted.
+    CHECK(jn.find("item") == jn.end());
   }
 
   // ---- Pong --------------------------------------------------------------
@@ -730,6 +748,31 @@ int main(int argc, char** argv) {
     RobotStateInput in;                    // basic left null
     const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
     const Json j = ParseOrFail("robot state charge cold", buf, n);
+    CHECK(j["charge"].is_null());
+  }
+
+  // ---- RobotState.charge from the RAW int, not from `basic` --------------
+  {
+    // The state path has no BasicStatus to offer: it holds std::string and
+    // cannot cross the lock-free slot (12 RTC-6). Sourcing charge from `basic`
+    // alone therefore made the field null on EVERY state message the process
+    // published, while the identical value went out correctly on
+    // rt/chassis/power -- measured on the live chassis 2026-09-21.
+    char buf[8192];
+    RobotStateInput in;
+    in.has_charge = true;
+    in.charge_raw = 1;                     // going_to_dock (11 S9.8.1)
+    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("robot state charge raw", buf, n);
+    CHECK(j["charge"] == "going_to_dock");
+  }
+  {
+    // has_charge false -> null. "Never reported" is not "idle", and idle in
+    // particular tells the upper stack the robot is free to drive away.
+    char buf[8192];
+    RobotStateInput in;                    // has_charge stays false
+    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("robot state charge none", buf, n);
     CHECK(j["charge"].is_null());
   }
 

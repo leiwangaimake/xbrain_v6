@@ -363,6 +363,28 @@ int Run(const std::string& path) {
           said_puts = failed;
         }
       }
+      // *** Mode-step refusals, with their REASON. 13 MS-3a: rt/chassis/mode
+      // has no ack key and RT-C4 keeps this process off the plane where the
+      // cmd acks live, so this line is the only place a refusal surfaces --
+      // and until it existed, GS-1 refusing stair_standard and MS-3 refusing
+      // a second switch produced exactly the same nothing.
+      //
+      // Measured 2026-09-21 on the live chassis: a stair_standard request was
+      // correctly refused and NOTHING said so anywhere.
+      {
+        static std::uint64_t said_mode = 0;
+        const std::uint64_t refused = proc.mode_steps_refused();
+        if (refused != said_mode) {
+          said_mode = refused;
+          std::fprintf(stderr,
+                       "quadruped_m20: mode step REFUSED (%llu so far, last "
+                       "reason: %s). This key has no ack (13 MS-3a), so the "
+                       "requester sees nothing -- a refused switch and a switch "
+                       "nobody sent look identical from there.\n",
+                       static_cast<unsigned long long>(refused),
+                       quadruped::ModeRejectItem(proc.last_mode_reject()));
+        }
+      }
       static std::uint64_t said_refused = 0;
       const std::uint64_t refused = rt.bridge().cmd_vel_refused();
       if (refused > 0 && said_refused == 0) {
@@ -460,6 +482,40 @@ int Run(const std::string& path) {
                    static_cast<unsigned long long>(st.probe_cycles),
                    static_cast<unsigned long long>(st.frames));
     }
+    // *** Chassis response codes and failed mode switches. 13 S7.5 gives each
+    // code a disposition and the session acted on it, then DISCARDED the code
+    // -- so a chassis that refused a command left no trace at all.
+    //
+    // Measured 2026-09-21: a usage_mode switch to navigation was dispatched,
+    // the chassis did not change mode, and nothing in the process could say
+    // whether a frame had gone out, whether the chassis had answered, or what
+    // it answered. 11 S9.10.1 has a specific candidate for that case (E_BUSY,
+    // charge_manager still running) and it was unreachable from here.
+    {
+      static std::uint64_t said_err = 0;
+      if (st.error_codes_seen != said_err) {
+        said_err = st.error_codes_seen;
+        std::fprintf(stderr,
+                     "quadruped_m20: chassis answered 0x%04X (%llu non-success "
+                     "code(s) so far). 13 S7.5 names the disposition; the code "
+                     "names the problem -- E_BUSY on a mode switch is 11 "
+                     "S9.10.1's charge_manager, not a framing fault.\n",
+                     st.last_error_code,
+                     static_cast<unsigned long long>(st.error_codes_seen));
+      }
+      static std::uint64_t said_sw = 0;
+      if (st.switch_failures != said_sw) {
+        said_sw = st.switch_failures;
+        std::fprintf(stderr,
+                     "quadruped_m20: mode switch TIMED OUT %llu time(s) -- the "
+                     "read-back never matched inside the configured window "
+                     "(13 MS-2). %llu mode frame(s) have been sent, so the "
+                     "chassis heard us and did not follow.\n",
+                     static_cast<unsigned long long>(st.switch_failures),
+                     static_cast<unsigned long long>(st.mode_frames_sent));
+      }
+    }
+
     // FR-5 / SD-3: TCP_NODELAY, read back from the kernel on the live socket.
     // Said ONCE, because it is a property of the connection rather than a
     // rate. Before this nothing checked it at all -- the setsockopt return was

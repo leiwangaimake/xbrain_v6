@@ -166,6 +166,12 @@ class Session {
   // A generic response arrived with this code (13 S7.5).
   void OnErrorCode(double now_mono_s, std::uint32_t code);
 
+  // The last NON-success response code, and how many have arrived. 13 S7.5
+  // classifies each one; the CODE ITSELF is what names the problem, and it was
+  // being discarded -- so a chassis that refused a command left no trace.
+  std::uint32_t last_error_code() const { return last_error_code_; }
+  std::uint64_t error_codes_seen() const { return error_codes_seen_; }
+
   // The chassis said it is asleep or awake (BasicStatus.Sleep, 13 F-21).
   void OnSleep(bool sleeping);
 
@@ -223,6 +229,8 @@ class Session {
   std::size_t backoff_attempt_ = 0;
   int send_failures_ = 0;
   int internal_errors_ = 0;
+  std::uint32_t last_error_code_ = 0;
+  std::uint64_t error_codes_seen_ = 0;
   bool asleep_ = false;
 
   SkipReason last_skip_ = SkipReason::kNone;

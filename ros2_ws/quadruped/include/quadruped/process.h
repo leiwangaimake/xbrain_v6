@@ -103,6 +103,9 @@ struct ChassisSnapshot {
   std::int64_t usage_mode_raw = 0;
   std::int64_t motion_state_raw = 0;
   std::int64_t gait_raw = 0;
+  // BasicStatus.Charge, the one more field RobotState needs and the
+  // report path already parses. An int, so it crosses the slot.
+  int charge_raw = 0;
   // The odometry's linear source (13 S4.2, the 10 Hz monitor-protocol velocity
   // until the domain-0 reader is wired).
   double linear_x = 0.0;
@@ -186,6 +189,12 @@ class QuadrupedProcess {
   // NOT what RobotState publishes -- both of those use the predicate below,
   // because 13 TR-1 puts an EXTERNAL transition in the same bucket.
   bool mode_switching() const { return mode_.mode_switching(); }
+  // 13 MS-3a: the mode refusal has no ack key, so the counter and the reason
+  // are the only witnesses. GS-1 (stair_standard) and MS-3 (a switch already
+  // in flight) are different problems with different fixes, and without the
+  // reason they produce the same nothing.
+  std::uint64_t mode_steps_refused() const { return mode_steps_refused_; }
+  ModeReject last_mode_reject() const { return last_mode_reject_; }
   // 13 TR-1 / TR-4: our own switch OR an external transition still inside its
   // hold. This is the one that holds the robot at zero.
   bool motion_state_transitioning() const {
@@ -252,6 +261,16 @@ class QuadrupedProcess {
     std::int64_t usage_mode_raw = 0;
     std::int64_t motion_state_raw = 0;
     std::int64_t gait_raw = 0;
+    // 11 S4.1 RobotState.charge, as the chassis integer (S9.8.1 maps it).
+    //
+    // *** Carried HERE for the same reason the triple is: the full BasicStatus
+    // holds std::string and cannot cross a LockfreeSlot (12 RTC-6), so
+    // PublishState never had a `basic` to read and the charge field it emits
+    // was null on every message -- measured on the live chassis 2026-09-21,
+    // while rt/chassis/power on the same run reported `idle` correctly from
+    // the report path. The writer was right; the state path had no input.
+    bool has_charge = false;
+    int charge_raw = 0;
     // The same sample rt_pub publishes as /odom_quadruped, carried so it can
     // ALSO go out as RobotState.odom. 11 S9.9's output table names three
     // outputs for this process -- TF, /odom_quadruped and RobotState.odom.* --
@@ -440,6 +459,14 @@ class QuadrupedProcess {
     //
     // Both false before the first connection: nothing has been asked of any
     // socket yet, and `expected` false keeps the supervisor quiet.
+    // 13 S7.5: the last non-success response code from the chassis, and how
+    // many have arrived. Discarded until 2026-09-21, when a navigation-mode
+    // switch went out, did not take, and nothing could say why.
+    std::uint32_t last_error_code = 0;
+    std::uint64_t error_codes_seen = 0;
+    // 13 MS-2: switches that never got their read-back.
+    std::uint64_t switch_failures = 0;
+    std::uint64_t mode_frames_sent = 0;
     bool nodelay_active = false;
     bool nodelay_expected = false;
   };
@@ -535,6 +562,10 @@ class QuadrupedProcess {
   std::atomic<std::uint64_t> pub_probe_cycles_{0};
   std::atomic<std::uint64_t> pub_frames_{0};
   std::atomic<std::uint64_t> pub_dropped_{0};
+  std::atomic<std::uint32_t> pub_err_code_{0};
+  std::atomic<std::uint64_t> pub_err_seen_{0};
+  std::atomic<std::uint64_t> pub_switch_fail_{0};
+  std::atomic<std::uint64_t> pub_mode_frames_{0};
   std::atomic<bool> pub_nodelay_active_{false};
   std::atomic<bool> pub_nodelay_expected_{false};
 
@@ -550,6 +581,8 @@ class QuadrupedProcess {
   std::uint64_t frames_received_ = 0;
   std::uint64_t tx_skipped_ = 0;
   std::uint64_t light_frames_sent_ = 0;
+  std::uint64_t mode_steps_refused_ = 0;
+  ModeReject last_mode_reject_ = ModeReject::kNone;
 };
 
 }  // namespace quadruped
