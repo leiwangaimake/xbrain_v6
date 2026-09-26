@@ -7,8 +7,8 @@
  *
  * Description:
  * Everything arriving on the RT plane is decoded here, and the decoding is
- * asymmetric ON PURPOSE. 11 S3.0.1 splits inbound commands by which direction
- * they push the robot:
+ * asymmetric ON PURPOSE. 11 S3.0.1 / 13 RX-1 split inbound commands by which
+ * direction they push the robot:
  *
  *   TIGHTENING (makes the robot LESS likely to move) -- cmd/estop action stop.
  *     Validation is WAIVED. An unknown v, a missing field, truncated JSON, a
@@ -20,10 +20,11 @@
  *
  * The contract says it in one line: "stop" may fire by mistake, "go" must not.
  *
- * That asymmetry is expressed in the SIGNATURES, not in comments. ParseCmdVel
- * and ParseChassisCtrl return a verdict the caller has to inspect; ParseEstop
- * returns void, because there is no answer it could give that would let a
- * caller skip the stop. A reviewer can see the rule without reading the bodies.
+ * That asymmetry is expressed in the SIGNATURES, not in comments (13 RX-2).
+ * ParseCmdVel and ParseChassisCtrl return a verdict the caller has to inspect;
+ * ParseEstop returns void, because there is no answer it could give that would
+ * let a caller skip the stop. A reviewer can see the rule without reading the
+ * bodies.
  *
  * WHY THIS FILE HAS NO ZENOH IN IT. Parsing is where the safety rule lives and
  * transport is where the dependency lives; keeping them apart is what lets the
@@ -36,14 +37,14 @@
  *
  * TWO ENVELOPE RULES THAT LOOK LIKE DETAILS AND ARE NOT:
  *
- *   * `boot` mismatch means `mono` MUST be ignored (11 S3.0). Another host's
+ *   * `boot` mismatch means `mono` MUST be ignored (11 S3.0, 13 RX-4). Another host's
  *     monotonic clock counts from ITS boot; comparing it with ours produces an
  *     age that is wrong by however long the two machines have been up --
  *     typically a number so large the command reads as ancient, or so negative
  *     it reads as arriving from the future. Neither looks like a clock bug.
- *   * `ts_sync` absent means FALSE, never true (11 S3.0, "缺省 / 缺失一律视为
- *     false"). Defaulting to true would let a publisher that never had a
- *     synchronised clock be believed by claiming nothing.
+ *   * `ts_sync` absent means FALSE, never true (11 S3.0, 13 RX-5, "缺省 /
+ *     缺失一律视为 false"). Defaulting to true would let a publisher that
+ *     never had a synchronised clock be believed by claiming nothing.
  */
 #ifndef HACHIST_XBRAIN_V6_QUADRUPED_RT_PARSE_H_
 #define HACHIST_XBRAIN_V6_QUADRUPED_RT_PARSE_H_
@@ -277,6 +278,13 @@ RtParse ParseClockStatus(const char* json, std::size_t len,
 struct EstopMsg {
   Envelope env;
   std::string cmd_id;
+  // 11 S9.12's audit pair, best-effort like everything else on this key:
+  // reason is free text, src_role is the five-name audit set (hmi/cloud/
+  // voice/agent/test, no authentication -- U23). Both may be empty and the
+  // stop happens anyway; they exist so RobotState.last_soft_estop can say
+  // "3.2 s ago, by the HMI" (11 S4.1).
+  std::string reason;
+  std::string src_role;
   // What could be read out. Both may be false and the stop still happens: they
   // exist so the ACK can say what was understood, never so a caller can decide
   // whether to stop.

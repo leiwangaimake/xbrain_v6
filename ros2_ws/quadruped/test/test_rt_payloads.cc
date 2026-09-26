@@ -172,25 +172,30 @@ int main(int argc, char** argv) {
     motion.angular_z = -0.1;
     motion.yaw = 1.5;
 
-    chs_a::FaultReport faults;
-    chs_a::FaultEntry f;
-    f.code = chs_a::FormatChassisFaultCode(0x8001);
-    f.level = "fatal";
-    f.name = "motor_over_temperature";
-    faults.faults.push_back(f);
+    // The fault entries arrive as the VIEW rt_bridge builds from its cache --
+    // already prefixed, already levelled (CF-5's "same converter", satisfied
+    // by copying the fault stream's own values).
+    const std::string fcode = chs_a::FormatChassisFaultCode(0x8001);
+    const RobotStateFault fview[] = {
+        {fcode.c_str(), "fatal", "motor_over_temperature"},
+    };
 
     RobotStateInput in;
-    in.conn = chs_a::ConnState::kOk;
+    // Wire vocabulary, as the bridge maps it -- the writer echoes it.
+    in.conn_wire = "connected";
+    in.proto_version = "1.0";
     in.basic = &basic;
     in.motion = &motion;
-    in.faults = &faults;
+    in.faults = fview;
+    in.fault_count = 1;
     in.tier1.stop_reason = StopReason::kNone;
     in.estop_epoch = 42;
     in.cmd_age_ms = 12.0;
 
     const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
     const Json j = ParseOrFail("RobotState", buf, n);
-    CHECK(j["conn"] == "ok");
+    CHECK(j["conn"] == "connected");
+    CHECK(j["proto_version"] == "1.0");
     // The open-set fields go out as LABEL plus RAW (13 S6.5 ban 3): a label
     // alone is not something a field engineer can match to the manual.
     CHECK(j["usage_mode"] == "navigation");
@@ -207,10 +212,14 @@ int main(int argc, char** argv) {
     // *** CF-5: the same prefixed code the fault stream carries. The 11 S4.1
     // example shows a bare 0x1007, and copying it makes the two sides disagree
     // about which of the two overlapping code spaces a number belongs to.
+    // The third key is `desc` -- the contract example's own spelling; this
+    // writer said "name" until 2026-09-26 and a consumer coded against the
+    // contract found nothing.
     CHECK(j["faults"].size() == 1);
     CHECK(j["faults"][0]["code"] == "chs:0x8001");
     CHECK(j["faults"][0]["level"] == "fatal");
-    CHECK(j["faults"][0]["name"] == "motor_over_temperature");
+    CHECK(j["faults"][0]["desc"] == "motor_over_temperature");
+    CHECK(!j["faults"][0].contains("name"));
   }
 
   // ---- the four stop-related fields are four fields ----------------------
@@ -234,7 +243,7 @@ int main(int argc, char** argv) {
       chs_a::BasicStatus basic = MakeBasic();
       basic.hes = c.hes;
       RobotStateInput in;
-      in.conn = chs_a::ConnState::kOk;
+      in.conn_wire = "connected";
       in.basic = &basic;
       in.tier1.hes_lock = c.hes_lock;
       in.tier1.timeout_lock = c.timeout_lock;
@@ -268,11 +277,19 @@ int main(int argc, char** argv) {
   // ---- before the first report, null -- never a zeroed struct ------------
   {
     RobotStateInput in;
-    in.conn = chs_a::ConnState::kProbing;
+    in.conn_wire = "connecting";
     in.cmd_age_ms = -1.0;
     const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
     const Json j = ParseOrFail("RobotState/empty", buf, n);
-    CHECK(j["conn"] == "probing");
+    CHECK(j["conn"] == "connecting");
+    // The contract fields whose data has not happened yet are null, with one
+    // exception: mode_mismatch is OMITTED (当且仅当 in 11 S4.1 -- an absent
+    // condition is an absent key, not a null).
+    CHECK(j["proto_version"].is_null());
+    CHECK(j["last_soft_estop"].is_null());
+    CHECK(!j.contains("mode_mismatch"));
+    CHECK(j["model"].is_null());
+    CHECK(j["version"].is_null());
     // *** A zeroed BasicStatus would read as usage_mode "normal",
     // motion_state "idle", hes false, sleep false -- which is what a healthy
     // robot standing still looks like. null is the only honest answer before
@@ -286,6 +303,120 @@ int main(int argc, char** argv) {
     // old", so it is null rather than a large number.
     CHECK(j["cmd_age_ms"].is_null());
     CHECK(j["faults"].is_array() && j["faults"].empty());
+  }
+
+  // ---- conn is the writer's most defensive field --------------------------
+  {
+    // A nullptr conn_wire is a caller defect (the bridge always fills it);
+    // the writer answers null rather than inventing a member (11 S13.6).
+    // mutant: fall back to any fixed member here -> red.
+    RobotStateInput in;
+    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("RobotState/conn-null", buf, n);
+    CHECK(j["conn"].is_null());
+  }
+
+  // ---- 11 S4.1 last_soft_estop: the object, and its two null spellings ----
+  {
+    // Fully attributed stop: all four fields as given.
+    RobotStateInput in;
+    in.has_last_estop = true;
+    in.last_estop_epoch = 42;
+    in.last_estop_reason = "operator_hmi";
+    in.last_estop_src_role = "hmi";
+    in.last_estop_age_ms = 3200.0;
+    std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    Json j = ParseOrFail("RobotState/last_estop", buf, n);
+    CHECK(j["last_soft_estop"]["epoch"] == 42);
+    CHECK(j["last_soft_estop"]["reason"] == "operator_hmi");
+    CHECK(j["last_soft_estop"]["src_role"] == "hmi");
+    CHECK(j["last_soft_estop"]["age_ms"] == 3200.0);
+
+    // A stop that arrived WITHOUT the audit pair (best-effort on that key,
+    // 11 S9.12) still has an epoch and an age; the two strings are null, not
+    // "" -- an empty string reads as a sender that supplied a blank reason.
+    // mutant: emit "" for an absent reason -> red.
+    RobotStateInput bare;
+    bare.has_last_estop = true;
+    bare.last_estop_epoch = 7;
+    bare.last_estop_age_ms = 15.5;
+    n = WriteRobotState(bare, buf, sizeof(buf));
+    j = ParseOrFail("RobotState/last_estop-bare", buf, n);
+    CHECK(j["last_soft_estop"]["epoch"] == 7);
+    CHECK(j["last_soft_estop"]["reason"].is_null());
+    CHECK(j["last_soft_estop"]["src_role"].is_null());
+    CHECK(j["last_soft_estop"]["age_ms"] == 15.5);
+    // And the age is the caller's number, not something re-derived: the two
+    // cases above already pin two different values on the same field, which
+    // is what kills a writer that stamps its own clock here.
+  }
+
+  // ---- 11 S4.1 mode_mismatch: 当且仅当 stop_reason == mode_mismatch --------
+  {
+    // Present, with the read-back actual, exactly when the reason says so.
+    RobotStateInput in;
+    in.tier1.stop_reason = StopReason::kModeMismatch;
+    in.has_triple = true;
+    in.usage_mode_raw = 0;                    // read back "normal"
+    in.motion_state_raw = 17;
+    in.gait_raw = 0x3002;
+    std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    Json j = ParseOrFail("RobotState/mode_mismatch", buf, n);
+    CHECK(j.contains("mode_mismatch"));
+    CHECK(j["mode_mismatch"]["expect"] == "navigation");
+    CHECK(j["mode_mismatch"]["actual"] == "normal");
+
+    // No read-back yet IS one of the ways a mismatch happens: the object is
+    // present and actual is null, never a guessed member (11 S13.6).
+    RobotStateInput cold;
+    cold.tier1.stop_reason = StopReason::kModeMismatch;
+    n = WriteRobotState(cold, buf, sizeof(buf));
+    j = ParseOrFail("RobotState/mode_mismatch-cold", buf, n);
+    CHECK(j.contains("mode_mismatch"));
+    CHECK(j["mode_mismatch"]["expect"] == "navigation");
+    CHECK(j["mode_mismatch"]["actual"].is_null());
+
+    // *** The other half of 当且仅当: ANY other stop_reason omits the key --
+    // not null, absent. Driven across every member so a writer gating on the
+    // wrong reason (or on none) is red, not merely the none case.
+    const StopReason others[] = {
+        StopReason::kNone,      StopReason::kHes,
+        StopReason::kTimeout,   StopReason::kSoftEstop,
+        StopReason::kModeSwitching, StopReason::kSleep,
+        StopReason::kNan,       StopReason::kNoSource};
+    for (StopReason r : others) {
+      RobotStateInput o;
+      o.tier1.stop_reason = r;
+      o.has_triple = true;
+      o.usage_mode_raw = 0;
+      n = WriteRobotState(o, buf, sizeof(buf));
+      j = ParseOrFail("RobotState/mode_mismatch-absent", buf, n);
+      CHECK(!j.contains("mode_mismatch"));
+    }
+  }
+
+  // ---- model/version travel on the state path once cached -----------------
+  {
+    // The report-side cache can be filled while the triple has not yet come
+    // through the ctrl slot -- the two ride different threads. Both branches
+    // of the writer must pass the strings through.
+    RobotStateInput in;                      // no basic, no triple
+    in.model = "CA9C";
+    in.version = "PRO";
+    std::size_t n = WriteRobotState(in, buf, sizeof(buf));
+    Json j = ParseOrFail("RobotState/model-cold", buf, n);
+    CHECK(j["model"] == "CA9C");
+    CHECK(j["version"] == "PRO");
+
+    RobotStateInput tr;                      // triple present, same strings
+    tr.has_triple = true;
+    tr.usage_mode_raw = 1;
+    tr.model = "CA9C";
+    tr.version = "PRO";
+    n = WriteRobotState(tr, buf, sizeof(buf));
+    j = ParseOrFail("RobotState/model-triple", buf, n);
+    CHECK(j["model"] == "CA9C");
+    CHECK(j["version"] == "PRO");
   }
 
   // ---- PowerState: the minimum, and the absent slot beside it ------------
@@ -533,17 +664,16 @@ int main(int argc, char** argv) {
     // The names come from a vendor firmware, not from an operator, so this is
     // unlikely rather than impossible. The symptom if it happened would be
     // state/robot going silent, which reads as the robot having died.
-    chs_a::FaultReport faults;
-    chs_a::FaultEntry f;
-    f.code = chs_a::FormatChassisFaultCode(0x8001);
-    f.level = "warn";
-    f.name = "joint \"11\" \\ over\nlimit";
-    faults.faults.push_back(f);
+    const std::string fcode = chs_a::FormatChassisFaultCode(0x8001);
+    const RobotStateFault fview[] = {
+        {fcode.c_str(), "warn", "joint \"11\" \\ over\nlimit"},
+    };
     RobotStateInput in;
-    in.faults = &faults;
+    in.faults = fview;
+    in.fault_count = 1;
     const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
     const Json j = ParseOrFail("RobotState/escape", buf, n);
-    CHECK(j["faults"][0]["name"] == "joint \"11\" \\ over\nlimit");
+    CHECK(j["faults"][0]["desc"] == "joint \"11\" \\ over\nlimit");
   }
 
   // ---- every writer refuses a short buffer ------------------------------
@@ -719,11 +849,12 @@ int main(int argc, char** argv) {
     // identical: usage_mode came out null for an hour while the robot sat in
     // normal mode, and the state key gave no way to notice.
     //
-    // The STRINGS still stay out (model / version hold std::string and cannot
-    // cross the lock-free slot, 13 ASM-4) -- only the three numbers travel.
+    // The STRINGS cannot cross the lock-free slot (13 ASM-4); they travel via
+    // the bridge's report-side cache instead, so HERE -- caller passing none
+    // -- they must come out null rather than zeroed.
     char buf[4096];
     RobotStateInput in;
-    in.conn = chs_a::ConnState::kOk;
+    in.conn_wire = "connected";
     in.basic = nullptr;            // no full BasicStatus available
     in.has_triple = true;
     in.usage_mode_raw = 1;
@@ -749,7 +880,7 @@ int main(int argc, char** argv) {
     // red, and a silent chassis would report itself as idle-and-fine.
     char buf[4096];
     RobotStateInput in;
-    in.conn = chs_a::ConnState::kProbing;
+    in.conn_wire = "connecting";
     in.basic = nullptr;
     in.has_triple = false;
     const std::size_t n = WriteRobotState(in, buf, sizeof(buf));

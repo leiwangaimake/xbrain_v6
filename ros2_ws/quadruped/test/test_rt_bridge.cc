@@ -31,6 +31,7 @@
 #include "quadruped/mono_clock.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -570,6 +571,198 @@ int main() {
     // ...and the generation disagreement is visible while it lasts: the command
     // echoed 0 and the process now holds `after`.
     CHECK(snap.soft_estop_active == (after != 0));
+  }
+
+  // ---- 11 S4.1: conn speaks the WIRE vocabulary, incompatible included ----
+  {
+    // The mapping lives in PublishState (writer echoes what it is given), so
+    // it is asserted THROUGH PublishState. Until 2026-09-26 the wire carried
+    // the session's internal names -- "probing"/"ok" -- which are outside the
+    // contract's closed set.
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+
+    // No chassis behind this fixture: the session is probing, the wire says
+    // "connecting". mutant: fall back to ConnStateName -> "probing" -> red.
+    QuadrupedProcess::StateSnapshot snap;
+    p.CtrlTick(0.0);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(b.PublishState(snap) == true);
+    CHECK(Has(sent.back().body, "\"conn\":\"connecting\""));
+    CHECK(!Has(sent.back().body, "probing"));
+    // And no handshake yet: proto_version is null, not an invented "1.0".
+    CHECK(Has(sent.back().body, "\"proto_version\":null"));
+
+    // A hello whose major we do not speak. The refusal is already counted;
+    // the NEW half is that conn latches to "incompatible" (11 S9.1.3) --
+    // "connected" beside a version mismatch invites commands the robot will
+    // refuse. mutant: drop the override -> "connecting" -> red.
+    const std::string bad =
+        "{\"type\":\"hello\",\"proto_version\":\"2.0\",\"client\":\"p1\"}";
+    b.HandleHello(1.0, bad.c_str(), bad.size());
+    CHECK(b.hello_answered() == 0);
+    p.CtrlTick(0.1);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(b.PublishState(snap) == true);
+    CHECK(Has(sent.back().body, "\"conn\":\"incompatible\""));
+
+    // A matching hello CLEARS the verdict: conn describes the newest
+    // handshake, and the fix for an incompatible upstream arrives exactly as
+    // a fresh hello. The validated version is now on the state key.
+    const std::string good =
+        "{\"type\":\"hello\",\"proto_version\":\"1.4\",\"client\":\"p1\"}";
+    b.HandleHello(2.0, good.c_str(), good.size());
+    CHECK(b.hello_answered() == 1);
+    CHECK(FindLast(sent, "rt/chassis/hello_ack") != "");
+    p.CtrlTick(0.2);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(b.PublishState(snap) == true);
+    CHECK(Has(sent.back().body, "\"conn\":\"connecting\""));
+    CHECK(Has(sent.back().body, "\"proto_version\":\"1.4\""));
+  }
+
+  // ---- 11 S4.1 last_soft_estop reaches the state key ----------------------
+  {
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+
+    // Before any stop: the key is null (11 S4.1's "none this boot" spelling).
+    QuadrupedProcess::StateSnapshot snap;
+    p.CtrlTick(0.0);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(b.PublishState(snap) == true);
+    CHECK(Has(sent.back().body, "\"last_soft_estop\":null"));
+
+    // A stop with the audit pair. The receipt is stamped ~2 s in the past on
+    // the REAL clock: PublishState computes the age at publish time from its
+    // own clock read, so the published number must land near 2000 ms.
+    // mutant: stamp the publish instant plus a constant instead -> the age is
+    // the machine's uptime in ms, far outside the window -> red.
+    const double rx = MonoNowSeconds() - 2.0;
+    const std::string stop = Wrap(
+        "{\"cmd_id\":\"e-a1\",\"action\":\"stop\","
+        "\"reason\":\"operator_hmi\",\"src_role\":\"hmi\"}");
+    b.HandleEstop(rx, stop.c_str(), stop.size());
+    const std::uint64_t epoch = p.estop_epoch();
+    CHECK(epoch >= 1);
+    p.CtrlTick(0.1);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(b.PublishState(snap) == true);
+    const std::string& body = sent.back().body;
+    {
+      char want[64];
+      std::snprintf(want, sizeof(want), "\"last_soft_estop\":{\"epoch\":%llu",
+                    static_cast<unsigned long long>(epoch));
+      CHECK(Has(body, want));
+    }
+    CHECK(Has(body, "\"reason\":\"operator_hmi\""));
+    CHECK(Has(body, "\"src_role\":\"hmi\""));
+    {
+      const std::size_t at = body.find("\"age_ms\":");
+      CHECK(at != std::string::npos);
+      const double age = std::strtod(body.c_str() + at + 9, nullptr);
+      CHECK(age >= 1900.0);
+      CHECK(age <= 15000.0);   // generous CI slack; uptime-in-ms is >> this
+    }
+
+    // A duplicate inside the window must not LOSE the record (the guard
+    // inverted stores on duplicates only -- that mutant leaves the block null
+    // after every real stop and dies on the assertions above; this block
+    // additionally pins that a duplicate keeps the record intact). A restamp
+    // BY the duplicate is unobservable by construction: the window is 50 ms,
+    // so the age can shift by at most 50 ms -- noted here so nobody writes a
+    // mutant for it and calls the survivor a hole (CLAUDE.md 7.2.1).
+    b.HandleEstop(rx + 0.020, stop.c_str(), stop.size());
+    CHECK(b.estops_deduped() == 1);
+    p.CtrlTick(0.2);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(b.PublishState(snap) == true);
+    {
+      const std::string& b2 = sent.back().body;
+      const std::size_t at = b2.find("\"age_ms\":");
+      CHECK(at != std::string::npos);
+      const double age = std::strtod(b2.c_str() + at + 9, nullptr);
+      CHECK(age >= 1900.0);
+    }
+
+    // A stop WITHOUT the pair (best-effort on this key): the block exists,
+    // the strings are null. 200 ms later so the dedup window is closed.
+    const std::string bare = Wrap("{\"cmd_id\":\"e-a2\",\"action\":\"stop\"}");
+    b.HandleEstop(rx + 0.3, bare.c_str(), bare.size());
+    p.CtrlTick(0.3);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(b.PublishState(snap) == true);
+    CHECK(Has(sent.back().body, "\"reason\":null"));
+    CHECK(Has(sent.back().body, "\"src_role\":null"));
+  }
+
+  // ---- 11 S4.1 model/version/faults ride the report-side cache ------------
+  {
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+
+    // Cold: all three are their null shapes (asserted through the writer test
+    // too; HERE the claim is that PublishState wires the cache, not zeros).
+    QuadrupedProcess::StateSnapshot snap;
+    p.CtrlTick(0.0);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(b.PublishState(snap) == true);
+    CHECK(Has(sent.back().body, "\"model\":null"));
+    CHECK(Has(sent.back().body, "\"faults\":[]"));
+
+    // A BasicStatus fills the identity cache; the NEXT state carries it.
+    // mutant: never cache model -> stays null -> red.
+    chs_a::BasicStatus basic;
+    basic.model = "CA9C";
+    basic.version = "PRO";
+    b.PublishReports(0.05, &basic, nullptr, nullptr, nullptr);
+    p.CtrlTick(0.1);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(b.PublishState(snap) == true);
+    CHECK(Has(sent.back().body, "\"model\":\"CA9C\""));
+    CHECK(Has(sent.back().body, "\"version\":\"PRO\""));
+
+    // A fault report fills the fault cache -- the state key then carries the
+    // asserted set, values verbatim from the stream (CF-5: same converter,
+    // by copying). Note the key inside the state entry is `desc`.
+    chs_a::FaultReport fr;
+    chs_a::FaultEntry fe;
+    fe.code = chs_a::FormatChassisFaultCode(0x1007);
+    fe.level = "degraded";
+    fe.name = "dock_no_current";
+    fr.faults.push_back(fe);
+    b.PublishReports(0.15, nullptr, nullptr, nullptr, &fr);
+    p.CtrlTick(0.2);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(b.PublishState(snap) == true);
+    CHECK(Has(sent.back().body,
+              "\"faults\":[{\"code\":\"chs:0x1007\",\"level\":\"degraded\","
+              "\"desc\":\"dock_no_current\"}]"));
+
+    // The cache is REBUILT per report, not merged: an all-clear report (empty
+    // asserted set) empties the state key's list. mutant: skip the rebuild
+    // (or merge) -> the cleared fault stays asserted forever -> red.
+    chs_a::FaultReport clear;
+    b.PublishReports(0.25, nullptr, nullptr, nullptr, &clear);
+    p.CtrlTick(0.3);
+    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(b.PublishState(snap) == true);
+    CHECK(Has(sent.back().body, "\"faults\":[]"));
   }
 
   // ---- the four report streams reach their own keys (13 S7.1 Q-5) --------

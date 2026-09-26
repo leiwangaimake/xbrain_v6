@@ -32,6 +32,7 @@
 #include "quadruped/mono_clock.h"
 #include "quadruped/rt_keys.h"
 #include "quadruped/rt_payloads.h"
+#include "xbrain/enums/closed_sets.h"
 #include "xbrain/errors/errors.h"
 
 namespace quadruped {
@@ -47,6 +48,38 @@ constexpr std::size_t kOutCap = 2048;
 constexpr std::size_t kEnvCap = kOutCap + 512;
 
 namespace err = hachist::xbrain::errors;
+namespace enums = hachist::xbrain::enums;
+
+// Internal session state -> the 11 S4.1 wire name, drawn from the SHARED
+// closed set (kChassisConn), never a literal (CLAUDE.md 3.5). This mapping
+// lives HERE, at the one PublishState call site, and not in the writer: the
+// writer spells what it is given, so there is exactly one place the two
+// vocabularies meet. Until 2026-09-26 no mapping existed at all and the wire
+// carried the internal names ("probing"/"ok") -- values outside the contract's
+// closed set, which every 11 S13.6-conformant consumer must refuse.
+//
+// The indices are pinned below; "disconnected" ([0]) is deliberately not
+// produced this batch -- the session has no matching state (its life starts at
+// probing), and inventing a mapping would claim a distinction the process
+// cannot observe. Registered in 13 v1.35. ConnStateName stays what the LOGS
+// print (the internal vocabulary is the truer statement about the session).
+static_assert(enums::kChassisConn[1] == "connecting", "table order changed");
+static_assert(enums::kChassisConn[2] == "connected", "table order changed");
+static_assert(enums::kChassisConn[3] == "degraded", "table order changed");
+static_assert(enums::kChassisConn[4] == "lost", "table order changed");
+static_assert(enums::kChassisConn[5] == "incompatible", "table order changed");
+
+const char* ConnWireName(chs_a::ConnState s) {
+  switch (s) {
+    case chs_a::ConnState::kProbing: return enums::kChassisConn[1].data();
+    case chs_a::ConnState::kOk: return enums::kChassisConn[2].data();
+    case chs_a::ConnState::kDegraded: return enums::kChassisConn[3].data();
+    case chs_a::ConnState::kLost: return enums::kChassisConn[4].data();
+  }
+  // Unreachable for a value of the enum; null keeps the writer honest (it
+  // emits JSON null) instead of borrowing a nearby member (11 S13.6).
+  return nullptr;
+}
 
 // 11 CLK-A3 / T-11, verbatim: a process that has not received ClockStatus
 // for >= 5 s fills ts_sync = false, on the monotonic clock. A CONTRACT
@@ -250,6 +283,22 @@ void RtBridge::PublishReports(double now_mono_s,
   if (fault != nullptr) {
     const std::size_t n = WriteChassisFault(*fault, out, sizeof(out));
     if (n > 0) Publish(kFaultSuffix, out, n);
+    // 11 S4.1 faults[] rides the state key too, and the state path cannot
+    // carry the report (std::string, 12 RTC-6) -- so the currently-asserted
+    // set is cached here for PublishState. REBUILT per report, never merged:
+    // `faults` is the complete asserted set each time, so an empty list is a
+    // real all-clear, and merging would keep a cleared fault on the state key
+    // forever. The values are the fault stream's own (code already prefixed,
+    // level already mapped by SeverityToLevel at parse time) -- CF-5's "same
+    // converter" requirement, satisfied by copying rather than reconverting.
+    {
+      std::lock_guard<std::mutex> lk(report_cache_mu_);
+      cached_faults_.clear();
+      cached_faults_.reserve(fault->faults.size());
+      for (const chs_a::FaultEntry& f : fault->faults) {
+        cached_faults_.push_back(CachedFault{f.code, f.level, f.name});
+      }
+    }
   }
 
   // 11 S4.2 PowerState on rt/chassis/power, 1 Hz (13 S7.1), relayed to
@@ -312,24 +361,83 @@ void RtBridge::PublishReports(double now_mono_s,
 
 bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
   RobotStateInput in;
-  in.conn = snap.conn;
-  // basic / motion / faults stay null. They hold std::string and therefore
-  // cannot cross the lock-free slot from ctrl (see StateSnapshot's comment);
-  // forwarding those four report streams belongs to the rx thread and is not
-  // in this batch. WriteRobotState emits the block as absent rather than as
-  // zeros -- "not reported yet" and "reported as zero" are different claims,
-  // and a zeroed chassis reads as a level robot at rest.
+  // basic / motion stay null. They hold std::string and therefore cannot
+  // cross the lock-free slot from ctrl (see StateSnapshot's comment);
+  // forwarding those four report streams belongs to the rx thread. What the
+  // state key DOES carry of them -- model/version, the fault list -- comes
+  // from this class's report-side caches below, filled on the rx thread.
+  // WriteRobotState emits the rest as absent rather than as zeros -- "not
+  // reported yet" and "reported as zero" are different claims, and a zeroed
+  // chassis reads as a level robot at rest.
   in.tier1 = snap.tier1;
   in.estop_epoch = snap.estop_epoch;
   in.has_triple = snap.has_readback;
   // Remembered for hello_ack, which is answered on another thread and cannot
-  // consume from the slot.
+  // consume from the slot. The same critical section copies OUT the identity
+  // strings and the handshake verdict -- one acquisition, both directions.
+  std::string model, version, proto;
+  bool incompatible = false;
   {
     std::lock_guard<std::mutex> lk(chassis_id_mu_);
     last_has_triple_ = snap.has_readback;
     last_usage_mode_ = snap.usage_mode_raw;
     last_motion_state_ = snap.motion_state_raw;
     last_gait_ = snap.gait_raw;
+    model = chassis_model_;
+    version = chassis_version_;
+    proto = peer_proto_;
+    incompatible = proto_incompatible_;
+  }
+  // 11 S4.1 conn, on the WIRE vocabulary (see ConnWireName). The handshake
+  // verdict OVERRIDES the link state: 11 S9.1.3's INCOMPATIBLE is terminal
+  // until a compatible hello arrives, and a consumer reading "connected"
+  // beside a version it cannot speak would proceed to command a robot that
+  // refuses to move (E_PROTO_VERSION).
+  in.conn_wire =
+      incompatible ? enums::kChassisConn[5].data() : ConnWireName(snap.conn);
+  // Null until a handshake validated a version -- see RobotStateInput.
+  if (!proto.empty()) in.proto_version = proto.c_str();
+  if (!model.empty()) in.model = model.c_str();
+  if (!version.empty()) in.version = version.c_str();
+  // The fault view. Copied out under the lock, then handed to the writer as
+  // pointers into the LOCALS -- local_faults must outlive WriteRobotState,
+  // which is why both vectors live at function scope (RobotStateFault is a
+  // view, rt_payloads.h says so in as many words).
+  std::vector<CachedFault> local_faults;
+  {
+    std::lock_guard<std::mutex> lk(report_cache_mu_);
+    local_faults = cached_faults_;
+  }
+  std::vector<RobotStateFault> fault_view;
+  fault_view.reserve(local_faults.size());
+  for (const CachedFault& f : local_faults) {
+    fault_view.push_back(
+        RobotStateFault{f.code.c_str(), f.level.c_str(), f.desc.c_str()});
+  }
+  if (!fault_view.empty()) {
+    in.faults = fault_view.data();
+    in.fault_count = fault_view.size();
+  }
+  // 11 S4.1 last_soft_estop. Copied under its own mutex (HandleEstop writes
+  // it on the zenoh thread); the age is computed HERE, at publish time, from
+  // the arrival stamp -- the writer takes a finished number. PublishState has
+  // no clock parameter (the snapshot is the input), so this is one of the two
+  // real clock reads in this class, beside Publish's envelope stamp.
+  std::string estop_reason, estop_src_role;
+  {
+    std::lock_guard<std::mutex> lk(estop_info_mu_);
+    if (last_estop_rx_mono_ >= 0.0) {
+      in.has_last_estop = true;
+      in.last_estop_epoch = last_estop_epoch_;
+      estop_reason = last_estop_reason_;
+      estop_src_role = last_estop_src_role_;
+      in.last_estop_age_ms =
+          (MonoNowSeconds() - last_estop_rx_mono_) * 1000.0;
+    }
+  }
+  if (!estop_reason.empty()) in.last_estop_reason = estop_reason.c_str();
+  if (!estop_src_role.empty()) {
+    in.last_estop_src_role = estop_src_role.c_str();
   }
   in.usage_mode_raw = snap.usage_mode_raw;
   in.motion_state_raw = snap.motion_state_raw;
@@ -430,8 +538,26 @@ void RtBridge::HandleHello(double now_mono_s, const char* data,
   // rather than by silence. Entering the non-movable state is Tier 1's job and
   // is not reachable from this thread.
   if (m.proto_major != 1) {
+    // The mismatch is also the "incompatible" half of RobotState.conn
+    // (11 S9.1.3 INCOMPATIBLE): latched here, published by PublishState,
+    // cleared only by a hello whose major does match (see rt_bridge.h).
+    {
+      std::lock_guard<std::mutex> lk(chassis_id_mu_);
+      proto_incompatible_ = true;
+    }
     ++hello_refused_;
     return;
+  }
+  // A compatible handshake: remember the validated version for RobotState.
+  // proto_version (null until this line has run once), and clear a previous
+  // incompatible verdict -- conn describes the NEWEST handshake, and the fix
+  // for an incompatible upstream arrives exactly as a fresh, matching hello.
+  {
+    char ver[32];
+    std::snprintf(ver, sizeof(ver), "%d.%d", m.proto_major, m.proto_minor);
+    std::lock_guard<std::mutex> lk(chassis_id_mu_);
+    peer_proto_ = ver;
+    proto_incompatible_ = false;
   }
   HelloAckInput in;
   in.proto_version = kProtoVersion;
@@ -569,9 +695,10 @@ void RtBridge::HandleChassisCtrl(double now_mono_s, const char* data,
   if (r != RtParse::kOk) {
     ++ctrl_refused_;
     ack.result = "rejected";
-    // 11 S9.3.3: an action the contract DELETED answers E_CAPABILITY, not
-    // E_SCHEMA. Telling an operator "malformed" about a word that was valid
-    // last release sends them hunting a typo instead of reading release notes.
+    // 11 S9.3.3 / 13 RX-8: an action the contract DELETED answers
+    // E_CAPABILITY, not E_SCHEMA. Telling an operator "malformed" about a word
+    // that was valid last release sends them hunting a typo instead of
+    // reading release notes.
     ack.code = (r == RtParse::kUnsupportedAction) ? err::kECapability.data()
                                                   : err::kESchema.data();
     const std::size_t n = WriteCtrlAck(ack, out, sizeof(out));
@@ -628,13 +755,13 @@ void RtBridge::HandleChassisCtrl(double now_mono_s, const char* data,
 
 void RtBridge::HandleEstop(double now_mono_s, const char* data,
                            std::size_t len) {
-  // *** THE STOP IS FIRST. See the file comment: anything above it can be
-  // reached by an edit to the parsing, and nothing below it can.
+  // *** THE STOP IS FIRST (13 RX-6). See the file comment: anything above it
+  // can be reached by an edit to the parsing, and nothing below it can.
   //
   // The dedup window is the one exception, and it is not a refusal: 11 S9.12.6
-  // says a repeat inside 50 ms is swallowed -- generation NOT advanced, no
-  // event -- and is STILL ACKED. A sender that gets no answer retries, which is
-  // the storm the window exists to prevent.
+  // / 13 RX-7 say a repeat inside 50 ms is swallowed -- generation NOT
+  // advanced, no event -- and is STILL ACKED. A sender that gets no answer
+  // retries, which is the storm the window exists to prevent.
   const bool duplicate =
       (last_estop_mono_s_ >= 0.0) &&
       (now_mono_s - last_estop_mono_s_) < kEstopDedupS;
@@ -650,6 +777,21 @@ void RtBridge::HandleEstop(double now_mono_s, const char* data,
   // branch below that can undo the stop above.
   EstopMsg m;
   ParseEstop(data, len, rid_, boot_, &m);
+
+  // 11 S4.1 last_soft_estop's four facts, for PublishState. BELOW the stop
+  // and the parse on purpose (the stop must stay unreachable from any edit
+  // here), and only for a REAL stop: a swallowed duplicate is not a new stop,
+  // and restamping it would make the age lie about when the stop happened.
+  // The epoch is read back from the process AFTER OnSoftEstop, so it is the
+  // advanced generation this stop produced. reason/src_role may be empty
+  // (best-effort on this key) -- stored as-is, published as null.
+  if (!duplicate) {
+    std::lock_guard<std::mutex> lk(estop_info_mu_);
+    last_estop_epoch_ = proc_->estop_epoch();
+    last_estop_reason_ = m.reason;
+    last_estop_src_role_ = m.src_role;
+    last_estop_rx_mono_ = now_mono_s;
+  }
 
   EstopAckInput ack;
   ack.cmd_id = m.cmd_id_present ? m.cmd_id.c_str() : "anonymous";

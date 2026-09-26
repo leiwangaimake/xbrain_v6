@@ -1075,25 +1075,33 @@ PAYLOADS_MUTANTS = [
      "  /* services omitted */"),
     # Empty identity as "" rather than null: reads as a chassis that answered
     # with a blank model.
+    # Anchor carries the un-comma'd key line: WriteRobotState now emits the
+    # SAME conditional for its own model field (2026-09-26), and the bare
+    # guard would match three places.
     ("payloads: hello_ack emits an empty model instead of null",
      PAYLOADS_CC,
+     '  a.Raw("\\"model\\":");\n'
      '  if (in.model != nullptr) { a.Str(in.model); } else { a.Raw("null"); }',
+     '  a.Raw("\\"model\\":");\n'
      '  a.Str(in.model == nullptr ? "" : in.model);'),
     # 13 ASM-4 boundary: the mode TRIPLE travels in rt/chassis/state even
     # though the full BasicStatus does not. Tier 1 gates on usage_mode
     # (NAV-111), and on the bench it read null for an hour while the chassis
     # sat in normal mode -- indistinguishable from "never heard from it".
+    # Anchor includes the sleep line above: the mode_mismatch block added a
+    # second `else if (in.has_triple)` (2026-09-26), and the bare guard is a
+    # substring of both.
     ("payloads: the triple is dropped when there is no full BasicStatus",
      PAYLOADS_CC,
-     "  } else if (in.has_triple) {",
-     "  } else if (false) {"),
+     "    a.Bool(in.basic->sleep);\n  } else if (in.has_triple) {",
+     "    a.Bool(in.basic->sleep);\n  } else if (false) {"),
     # has_triple ignored: a silent chassis then reports itself as
     # normal-mode / idle / no-gait, which is what a healthy idle robot looks
     # like. Zero is a real value on all three.
     ("payloads: never-read-back is emitted as a zeroed triple",
      PAYLOADS_CC,
-     "  } else if (in.has_triple) {",
-     "  } else if (true) {"),
+     "    a.Bool(in.basic->sleep);\n  } else if (in.has_triple) {",
+     "    a.Bool(in.basic->sleep);\n  } else if (true) {"),
     # 13 S6.5: an open-set value travels as BOTH the number and the label.
     # Dropping the raw leaves a consumer who sees "unknown_0x0000" unable to say
     # WHICH unregistered value it was -- and V-66's Gait 0 arrives on every boot.
@@ -1150,12 +1158,15 @@ PAYLOADS_MUTANTS = [
     # matches twice -- the second time this has happened, and both times the
     # collision came from a NEW function copying an existing shape. See the
     # rt_parse cmd_id mutant for the first.
+    # Anchored by the model line BELOW it since 2026-09-26 (the comment above
+    # was rewritten); hello_ack's copy of the null triple is followed by a
+    # closing brace instead, so the pair stays unique.
     ("payloads: an absent BasicStatus rendered as zeros instead of null",
      PAYLOADS_CC,
-     '    // what a healthy standing robot looks like.\n'
-     '    a.Raw(",\\"usage_mode\\":null,\\"motion_state\\":null,\\"gait\\":null");',
-     '    // what a healthy standing robot looks like.\n'
-     '    a.Raw(",\\"usage_mode\\":\\"normal\\",\\"motion_state\\":\\"idle\\",\\"gait\\":\\"basic\\"");'),
+     '    a.Raw(",\\"usage_mode\\":null,\\"motion_state\\":null,\\"gait\\":null");\n'
+     '    a.Raw(",\\"model\\":");',
+     '    a.Raw(",\\"usage_mode\\":\\"normal\\",\\"motion_state\\":\\"idle\\",\\"gait\\":\\"basic\\"");\n'
+     '    a.Raw(",\\"model\\":");'),
     # Same shape one function up: hello_ack is the FIRST thing the upstream
     # sees, so a fabricated triple there is believed before any state key
     # arrives to contradict it.
@@ -1201,9 +1212,11 @@ PAYLOADS_MUTANTS = [
      "                 kPowerManagementCount + 8) {"),
     # CF-5: the prefix travels with the code. Without it the two overlapping
     # code spaces cannot be told apart at all.
+    # The entries are a const char* view since 2026-09-26 (the cached-fault
+    # batch); the mutant still strips the four prefix bytes CF-5 requires.
     ("payloads: fault code published without its namespace prefix",
-     PAYLOADS_CC, "      a.Str(f.code.c_str());",
-     "      a.Str(f.code.size() > 4 ? f.code.c_str() + 4 : f.code.c_str());"),
+     PAYLOADS_CC, "      a.Str(f.code);",
+     "      a.Str(std::strlen(f.code) > 4 ? f.code + 4 : f.code);"),
     # Truncation: half an object decodes to the wrong thing, or to nothing.
     ("payloads: a truncated object is returned instead of refused",
      PAYLOADS_CC, "    if (overflow_) return 0;", "    if (false) return 0;"),
@@ -1230,6 +1243,51 @@ PAYLOADS_MUTANTS = [
     # to the command it answers.
     ("payloads: ctrl ack drops detail.action",
      PAYLOADS_CC, '  a.Str(in.action);', '  a.Str("");'),
+    # 11 S4.1 mode_mismatch is 当且仅当: dropping the branch is the shape the
+    # writer shipped in until 2026-09-26 -- the field simply never existed.
+    ("payloads: mode_mismatch is always omitted",
+     PAYLOADS_CC,
+     "  if (in.tier1.stop_reason == StopReason::kModeMismatch) {",
+     "  if (false) {"),
+    # ...and the other half of 当且仅当: emitted on every message, a consumer
+    # keying on the field's presence reads a permanent mode fault.
+    ("payloads: mode_mismatch is emitted unconditionally",
+     PAYLOADS_CC,
+     "  if (in.tier1.stop_reason == StopReason::kModeMismatch) {",
+     "  if (true) {"),
+    # A nullptr conn is a caller defect; answering a member instead of null
+    # hides the missing wiring forever (11 S13.6).
+    ("payloads: a null conn falls back to a member",
+     PAYLOADS_CC,
+     '  if (in.conn_wire != nullptr) { a.Str(in.conn_wire); } else { a.Raw("null"); }',
+     '  if (in.conn_wire != nullptr) { a.Str(in.conn_wire); } else { a.Str("connecting"); }'),
+    # last_soft_estop exists the moment a stop happened; ignoring the flag is
+    # the pre-2026-09-26 wire shape (the key did not exist -- null forever).
+    ("payloads: last_soft_estop is always null",
+     PAYLOADS_CC,
+     "  if (!in.has_last_estop) {\n    a.Raw(\"null\");",
+     "  if (true) {\n    a.Raw(\"null\");"),
+    # An absent reason is null, not "": an empty string reads as a sender that
+    # supplied a blank reason, and HMI would render it as one.
+    ("payloads: an absent estop reason goes out as an empty string",
+     PAYLOADS_CC,
+     '    if (in.last_estop_reason != nullptr) {\n'
+     '      a.Str(in.last_estop_reason);\n'
+     '    } else {\n'
+     '      a.Raw("null");\n'
+     '    }',
+     '    if (in.last_estop_reason != nullptr) {\n'
+     '      a.Str(in.last_estop_reason);\n'
+     '    } else {\n'
+     '      a.Str("");\n'
+     '    }'),
+    # The 11 S4.1 example's key is `desc`; "name" is what this writer said
+    # until 2026-09-26, and a consumer coded against the contract found
+    # nothing where the fault text should be.
+    ("payloads: the fault desc key is spelled name again",
+     PAYLOADS_CC,
+     '      a.Raw(",\\"desc\\":");',
+     '      a.Raw(",\\"name\\":");'),
 ]
 
 # Mode-machine mutants. Three of the rules below are the opposite of the
@@ -1961,6 +2019,13 @@ PROCESS_MUTANTS = [
      "  if (out == nullptr) return false;\n  return odom_slot_.TakeFresh(out);",
      "  if (out == nullptr) return false;\n  if (odom_slot_.TakeFresh(out)) last_odom_ = *out;\n"
      "  *out = last_odom_;\n  return true;"),
+    # 13 SD-1: the mirror is the ONLY witness that nothing enlarged the axis
+    # socket's send buffer. A mirror that reports 0 reads as "not connected
+    # yet" forever, and the bench ledger loses the one number SD-1 is about.
+    ("process: the SO_SNDBUF mirror always reports zero",
+     PROCESS_CC,
+     "    pub_sndbuf_bytes_.store(socket_.sndbuf_bytes(), std::memory_order_relaxed);",
+     "    pub_sndbuf_bytes_.store(0, std::memory_order_relaxed);"),
 ]
 
 # RT-plane ROUTING. The suite that matters most for the control path: every
@@ -2230,6 +2295,84 @@ RT_BRIDGE_MUTANTS = [
      RT_BRIDGE_CC,
      "  PongInput pong;\n  pong.seq = (r == RtParse::kOk || probe.env.seq != 0) ? probe.env.seq : 0;",
      "  if (r != RtParse::kOk) return;\n  PongInput pong;\n  pong.seq = probe.env.seq;"),
+    # 11 S4.1 conn is a closed set; the internal names are what the wire
+    # carried until 2026-09-26 ("probing"/"ok"), values every conformant
+    # consumer must refuse (11 S13.6).
+    ("rt_bridge: conn falls back to the internal session names",
+     RT_BRIDGE_CC,
+     "  in.conn_wire =\n"
+     "      incompatible ? enums::kChassisConn[5].data() : ConnWireName(snap.conn);",
+     "  in.conn_wire =\n"
+     "      incompatible ? enums::kChassisConn[5].data()\n"
+     "                   : chs_a::ConnStateName(snap.conn);"),
+    # 11 S9.1.3 INCOMPATIBLE: without the override a consumer reads
+    # "connected" beside a version it cannot speak and proceeds to command a
+    # robot that refuses to move (E_PROTO_VERSION).
+    ("rt_bridge: the incompatible verdict never overrides conn",
+     RT_BRIDGE_CC,
+     "  in.conn_wire =\n"
+     "      incompatible ? enums::kChassisConn[5].data() : ConnWireName(snap.conn);",
+     "  in.conn_wire = ConnWireName(snap.conn);"),
+    # The verdict describes the NEWEST handshake; a latch that never clears
+    # turns one wrong publisher restart into a permanent red flag.
+    ("rt_bridge: a matching hello does not clear the incompatible latch",
+     RT_BRIDGE_CC,
+     "    proto_incompatible_ = false;",
+     "    proto_incompatible_ = proto_incompatible_;"),
+    # ...and the latch never SET is the other direction: the mismatch is
+    # counted and then invisible on the state key.
+    ("rt_bridge: the incompatible latch is never set",
+     RT_BRIDGE_CC,
+     "      std::lock_guard<std::mutex> lk(chassis_id_mu_);\n"
+     "      proto_incompatible_ = true;",
+     "      std::lock_guard<std::mutex> lk(chassis_id_mu_);"),
+    # proto_version is the handshake's validated version; never storing it is
+    # the pre-2026-09-26 wire (the field did not exist -- null forever).
+    ("rt_bridge: the validated peer version is never stored",
+     RT_BRIDGE_CC,
+     "    peer_proto_ = ver;",
+     "    peer_proto_.clear();"),
+    # 11 S4.1 last_soft_estop.age_ms is the age of the stop's ARRIVAL. The
+    # publish instant dressed up as an age is the plausible wrong answer --
+    # it is a number, it is milliseconds, and it is monotonic uptime, so it
+    # only looks wrong once someone compares it against the real stop.
+    ("rt_bridge: the estop age is the publish instant, not an age",
+     RT_BRIDGE_CC,
+     "      in.last_estop_age_ms =\n"
+     "          (MonoNowSeconds() - last_estop_rx_mono_) * 1000.0;",
+     "      in.last_estop_age_ms = MonoNowSeconds() * 1000.0;"),
+    # The four facts are stored on the REAL-stop branch; inverting the guard
+    # leaves last_soft_estop null after every genuine stop.
+    ("rt_bridge: the estop record is stored on the duplicate branch only",
+     RT_BRIDGE_CC,
+     "  if (!duplicate) {\n    std::lock_guard<std::mutex> lk(estop_info_mu_);",
+     "  if (duplicate) {\n    std::lock_guard<std::mutex> lk(estop_info_mu_);"),
+    # The audit pair is the only source RobotState.last_soft_estop has.
+    ("rt_bridge: the estop reason is dropped on store",
+     RT_BRIDGE_CC,
+     "    last_estop_reason_ = m.reason;",
+     "    last_estop_reason_.clear();"),
+    # 11 S4.1 model rides the state key from the report-side cache; never
+    # caching it is the pre-2026-09-26 state (null on every message while
+    # rt/chassis/basic carried it fine).
+    ("rt_bridge: the chassis model is never cached",
+     RT_BRIDGE_CC,
+     "      chassis_model_ = basic->model;\n      chassis_version_ = basic->version;",
+     "      chassis_version_ = basic->version;"),
+    # The fault cache is REBUILT per report. Never filling it leaves the
+    # state key's faults[] empty while rt/chassis/fault carries the entries.
+    ("rt_bridge: the fault cache is never filled",
+     RT_BRIDGE_CC,
+     "      for (const chs_a::FaultEntry& f : fault->faults) {\n"
+     "        cached_faults_.push_back(CachedFault{f.code, f.level, f.name});\n"
+     "      }",
+     "      (void)fault;"),
+    # ...and dropping only the clear() turns rebuild into merge: a cleared
+    # fault stays asserted on the state key forever.
+    ("rt_bridge: the fault cache merges instead of rebuilding",
+     RT_BRIDGE_CC,
+     "      cached_faults_.clear();\n      cached_faults_.reserve(fault->faults.size());",
+     "      cached_faults_.reserve(fault->faults.size());"),
 ]
 
 # The RT-plane session CONFIG. Small suite, and the one that guards a failure
@@ -2287,7 +2430,10 @@ RT_CFG_MUTANTS = [
 # loosening command gets full validation, a tightening one gets none -- so this
 # is the suite where a survivor means the rule is decorative.
 RT_PARSE_CC = os.path.join(QUAD, "src", "rt_parse.cc")
-RT_PARSE_SOURCES = [RT_PARSE_CC]
+RT_PARSE_SOURCES = [
+    RT_PARSE_CC,
+    os.path.join(QUAD, "src", "chs_a_reports.cc"),  # GaitValue delegates to GaitValueByName there (13 QD-3, 2026-09-26 merge); without it the suite fails to LINK
+]
 RT_PARSE_TESTS = [os.path.join(QUAD, "test", "test_rt_parse.cc")]
 
 RT_PARSE_MUTANTS = [
@@ -2444,6 +2590,35 @@ RT_PARSE_MUTANTS = [
     ("rt_parse: the finiteness guard is dropped",
      RT_PARSE_CC, "  if (!std::isfinite(v)) return false;", "  (void)0;",
      "equivalent"),
+    # 13 QD-3 (2026-09-26): the gait mapping lives in ONE unit. Severing the
+    # delegation is the parse direction losing its table entirely -- every
+    # named gait switch is then refused, which the parity case sees at once.
+    ("rt_parse: the gait delegation to the read-back table is severed",
+     RT_PARSE_CC,
+     "  if (!chs_a::GaitValueByName(name, out)) return false;",
+     "  (void)name;\n  (void)out;\n  return false;"),
+    # ...and the directional half: dropping the exclusion makes platform
+    # (0x1002, absent from the guide's COMMAND enumeration, 13 S5.3 G-03)
+    # commandable -- the exact widening the merge must not smuggle in, and
+    # what T-COV-1's COV-4 checks on the doc side.
+    ("rt_parse: the read-only gait exclusion is dropped",
+     RT_PARSE_CC,
+     "  for (const std::int64_t g : kReadOnlyGaits) {\n"
+     "    if (*out == g) return false;\n"
+     "  }\n"
+     "  return true;",
+     "  (void)kReadOnlyGaits;\n"
+     "  return true;"),
+    # 11 S9.12's audit pair is the ONLY source RobotState.last_soft_estop has
+    # for reason/src_role; dropping either read makes every stop anonymous.
+    ("rt_parse: the estop reason is never read",
+     RT_PARSE_CC,
+     '  GetString(*d_it, "reason", &out->reason);',
+     '  (void)0;'),
+    ("rt_parse: the estop src_role is never read",
+     RT_PARSE_CC,
+     '  GetString(*d_it, "src_role", &out->src_role);',
+     '  (void)0;'),
 ]
 
 # Channel-two mutants. This suite is the only one that needs something outside

@@ -47,7 +47,6 @@
 #include <cstdint>
 
 #include "quadruped/chs_a_reports.h"
-#include "quadruped/chs_a_session.h"
 #include "quadruped/odometry.h"
 #include "quadruped/tier1.h"
 
@@ -101,11 +100,48 @@ struct HelloAckInput {
 
 std::size_t WriteHelloAck(const HelloAckInput& in, char* out, std::size_t cap);
 
+// One row of RobotState.faults[], as the writer consumes it. A VIEW, not an
+// owner: the three pointers must outlive the WriteRobotState call, and the
+// caller (rt_bridge's PublishState) copies the cached entries into locals
+// first for exactly that reason. `desc` is the human-readable fault name --
+// the 11 S4.1 example's key is `desc`, and FaultEntry.name is the only field
+// carrying that content (details is free-form vendor text with no schema).
+struct RobotStateFault {
+  const char* code;   // prefixed, "chs:0x1007" -- CF-5, same converter as
+                      // the fault stream, never the bare example form
+  const char* level;  // from the closed kFaultLevel set (SeverityToLevel)
+  const char* desc;
+};
+
 struct RobotStateInput {
-  chs_a::ConnState conn = chs_a::ConnState::kProbing;
+  // 11 S4.1 `conn`, already mapped to the WIRE closed set (kChassisConn:
+  // connecting/connected/degraded/lost/incompatible...). The mapping from the
+  // session's internal states lives in rt_bridge's PublishState, NOT here --
+  // the writer only spells what it is given, so the one mapping cannot fork.
+  // nullptr is a caller defect (conn always has a value) and is emitted as
+  // JSON null rather than as a guessed member (11 S13.6): a fabricated
+  // "connecting" would hide the missing wiring forever.
+  const char* conn_wire = nullptr;
+  // 11 S4.1 `proto_version`: the upstream's contract version as validated by
+  // the hello handshake (11 S9.1.4). Null until a handshake has happened --
+  // an invented "1.0" would claim a handshake nobody performed.
+  const char* proto_version = nullptr;
   const chs_a::BasicStatus* basic = nullptr;
   const chs_a::MotionStatus* motion = nullptr;
-  const chs_a::FaultReport* faults = nullptr;
+  // 11 S4.1 model / version on the STATE path. The full BasicStatus cannot
+  // cross the lock-free slot (12 RTC-6), so these come from rt_bridge's
+  // report-side cache (chassis_id_mu_), same source hello_ack uses. Null
+  // until the first BasicStatus -- a zeroed model reads as a chassis that
+  // answered with a blank name.
+  const char* model = nullptr;
+  const char* version = nullptr;
+  // 11 S4.1 faults[]. Same cache batch as model/version: the FaultReport
+  // holds std::string and cannot cross the slot, so PublishReports rebuilds
+  // a cached copy per fault report and PublishState hands a VIEW of it here.
+  // fault_count == 0 emits the empty array -- "no faults asserted" is a
+  // claim, not an absence, and the contract example always carries the key.
+  const RobotStateFault* faults = nullptr;
+  std::size_t fault_count = 0;
 
   // Tier 1's verdict for the period being reported, and the generation the
   // process currently holds.
@@ -115,6 +151,22 @@ struct RobotStateInput {
   // it clears by itself when the upstream echoes the new generation, and 11's
   // D-08 ruling keeps it separate from stop_reason for exactly that reason.
   bool soft_estop_active = false;
+
+  // 11 S4.1 last_soft_estop: {epoch, reason, src_role, age_ms}, "3.2 s ago,
+  // by the HMI". has_last_estop false emits the whole key as null -- the
+  // contract example always carries the key, and null is the one honest
+  // spelling of "no soft estop since this process started". reason/src_role
+  // may be nullptr even when the block exists: 11 S9.12's audit pair is
+  // best-effort on this key (nothing on it may gate the stop), so a stop
+  // that arrived without them still has an epoch and an age.
+  bool has_last_estop = false;
+  std::uint64_t last_estop_epoch = 0;
+  const char* last_estop_reason = nullptr;
+  const char* last_estop_src_role = nullptr;
+  // Age of the stop's ARRIVAL at publish time, milliseconds, monotonic
+  // (CLK-C1). Computed by the caller from its own clock reads -- the writer
+  // takes the finished number so a test can state any age without sleeping.
+  double last_estop_age_ms = 0.0;
 
   // 13 S6.2 mode triple, as raw chassis numbers. Used ONLY when `basic` is
   // null: the full BasicStatus carries the same three plus the strings, and

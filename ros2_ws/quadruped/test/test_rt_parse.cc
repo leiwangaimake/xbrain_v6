@@ -307,6 +307,32 @@ int main() {
     CHECK(e.envelope_ok == true);
     CHECK(e.cmd_id_present == true);
     CHECK(e.cmd_id == "e-1");
+    // The audit pair is absent here, and absent means EMPTY -- never a
+    // refusal (nothing on this key may gate the stop) and never a filler
+    // value (RobotState.last_soft_estop publishes empty as null, and a
+    // fabricated role would put a name on an anonymous stop).
+    CHECK(e.reason.empty());
+    CHECK(e.src_role.empty());
+
+    // With the pair present (11 S9.12), both are carried through -- this is
+    // the only source RobotState.last_soft_estop has for them.
+    EstopMsg tagged;
+    const std::string full = Wrap(
+        "{\"cmd_id\":\"e-2\",\"action\":\"stop\","
+        "\"reason\":\"operator_hmi\",\"src_role\":\"hmi\"}");
+    ParseEstop(full.c_str(), full.size(), kRid, kBoot, &tagged);
+    CHECK(tagged.reason == "operator_hmi");
+    CHECK(tagged.src_role == "hmi");
+    // Mistyped values follow the same best-effort rule as everything else on
+    // this key: ignored, empty, and the stop is unaffected.
+    EstopMsg mistyped;
+    const std::string odd = Wrap(
+        "{\"cmd_id\":\"e-3\",\"action\":\"stop\",\"reason\":7,"
+        "\"src_role\":[\"hmi\"]}");
+    ParseEstop(odd.c_str(), odd.size(), kRid, kBoot, &mistyped);
+    CHECK(mistyped.cmd_id_present == true);
+    CHECK(mistyped.reason.empty());
+    CHECK(mistyped.src_role.empty());
 
     // Truncated mid-object.
     const std::string trunc = good.substr(0, good.size() / 2);

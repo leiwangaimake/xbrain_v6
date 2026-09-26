@@ -571,6 +571,11 @@ void ParseEstop(const char* json, std::size_t len, const std::string& our_rid,
   const auto d_it = j.find("data");
   if (d_it == j.end() || !d_it->is_object()) return;
   out->cmd_id_present = GetString(*d_it, "cmd_id", &out->cmd_id);
+  // The audit pair (11 S9.12), same best-effort discipline as everything on
+  // this key: absent or mistyped means empty, never a refusal -- nothing
+  // here may gate the stop. Feeds RobotState.last_soft_estop (11 S4.1).
+  GetString(*d_it, "reason", &out->reason);
+  GetString(*d_it, "src_role", &out->src_role);
 }
 
 }  // namespace rt

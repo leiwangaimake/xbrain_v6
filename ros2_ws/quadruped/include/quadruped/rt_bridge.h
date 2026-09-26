@@ -44,6 +44,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "quadruped/process.h"
 #include "quadruped/rt_parse.h"
@@ -198,6 +199,16 @@ class RtBridge {
   PublishFn publish_;
 
   double last_estop_mono_s_ = -1.0;
+  // 11 S4.1 last_soft_estop, the four facts behind it. Written by HandleEstop
+  // (zenoh thread, non-duplicate branch only -- a swallowed repeat is not a
+  // new stop), read by PublishState (rt_pub thread); a mutex because reason
+  // and src_role are std::string (12 RTC-6 rules out a lock-free slot) and
+  // neither thread is realtime. last_estop_rx_mono_ < 0 means none yet.
+  mutable std::mutex estop_info_mu_;
+  std::uint64_t last_estop_epoch_ = 0;
+  std::string last_estop_reason_;
+  std::string last_estop_src_role_;
+  double last_estop_rx_mono_ = -1.0;
 
   std::atomic<std::uint64_t> cmd_ok_{0};
   std::atomic<std::uint64_t> cmd_refused_{0};
@@ -216,6 +227,19 @@ class RtBridge {
   mutable std::mutex chassis_id_mu_;
   std::string chassis_model_;
   std::string chassis_version_;
+  // 11 S4.1 proto_version + the "incompatible" half of conn. Written by
+  // HandleHello (zenoh thread), read by PublishState (rt_pub thread) -- same
+  // mutex as the identity strings because it is the same producer/consumer
+  // pair and the critical section is one string and one bool.
+  //
+  // peer_proto_ is the upstream's version as VALIDATED by the handshake
+  // ("1.0"); empty until one succeeds, published as null. proto_incompatible_
+  // latches conn to "incompatible" (11 S9.1.3's INCOMPATIBLE state) and is
+  // cleared by a later hello whose major DOES match: the verdict describes
+  // the newest handshake, and 9.1.3's "人工介入" arrives exactly as a fresh
+  // hello from the restarted/fixed upstream.
+  std::string peer_proto_;
+  bool proto_incompatible_ = false;
   // 11 S4.2 PowerState is assembled from three different reports, so the two
   // that are not the trigger are cached here. Same mutex and the same reason:
   // BasicStatus holds std::string and cannot cross a lock-free slot (12 RTC-6),
@@ -223,6 +247,22 @@ class RtBridge {
   chs_a::BasicStatus last_basic_;
   bool have_basic_ = false;
   double last_remain_mile_km_ = 0.0;
+  // 11 S4.1 faults[] on the STATE path. The FaultReport holds std::string and
+  // cannot cross the lock-free slot (12 RTC-6), so PublishReports (chs_a_rx
+  // thread) rebuilds this cache from every fault report -- REBUILDS, not
+  // appends: each report's `faults` list is the complete currently-asserted
+  // set, so an empty list legitimately clears the cache. PublishState
+  // (rt_pub thread) copies it out under the lock and publishes a view. Its
+  // own mutex rather than chassis_id_mu_: the fault list can be long, and a
+  // long copy under the identity mutex would stall HandleHello for its
+  // duration over data the handshake never reads.
+  struct CachedFault {
+    std::string code;   // prefixed, as the fault stream carries it (CF-5)
+    std::string level;
+    std::string desc;   // FaultEntry.name -- see RobotStateFault::desc
+  };
+  mutable std::mutex report_cache_mu_;
+  std::vector<CachedFault> cached_faults_;
   // Monotonic deadline for the next PowerState. Negative means none has been
   // published yet, so the first device report publishes immediately rather
   // than waiting out a period the process has not lived through.

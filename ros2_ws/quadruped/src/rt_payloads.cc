@@ -239,6 +239,12 @@ std::size_t WriteHelloAck(const HelloAckInput& in, char* out,
   // spec.* defines no limit for vz / v_roll / v_pitch, so Tier 1 zeroes them
   // unconditionally). Listing an axis as active while it is forced to zero
   // would tell the upstream it can command one.
+  //
+  // The literal is NOT dead config: quadruped_config.cc requires
+  // motion.axes.always_active to be EXACTLY this triple (13 S5.4) and refuses
+  // startup otherwise -- the config key is a checked restatement, and this
+  // line is the single wire spelling. (A 2026-09-22 review first read the
+  // key as "filled but ignored"; the loader check is why that was wrong.)
   a.Raw(",\"active_axes\":[\"vx\",\"vy\",\"wz\"]");
   // 11 S9.7 sources this from S9.11, whose S9.11.3 covers the drdds package.
   // The writer takes it as a parameter and emits what it is given; what the
@@ -282,8 +288,23 @@ std::size_t WriteHelloAck(const HelloAckInput& in, char* out,
 std::size_t WriteRobotState(const RobotStateInput& in, char* out,
                             std::size_t cap) {
   Appender a(out, cap);
+  // Already the WIRE name (kChassisConn): the internal->wire mapping lives in
+  // rt_bridge's PublishState, the one caller, so it cannot fork. nullptr is a
+  // caller defect and goes out as null rather than as a guessed member --
+  // the internal names ("probing"/"ok") were what this line published until
+  // 2026-09-26, and every consumer of 11 S4.1's closed set had to special-case
+  // or drop them.
   a.Raw("{\"conn\":");
-  a.Str(chs_a::ConnStateName(in.conn));
+  if (in.conn_wire != nullptr) { a.Str(in.conn_wire); } else { a.Raw("null"); }
+  // 11 S4.1 proto_version: the handshake's validated peer version. Null until
+  // a hello has been answered -- fabricating "1.0" would claim a handshake
+  // nobody performed (the same reasoning as the null blocks below).
+  a.Raw(",\"proto_version\":");
+  if (in.proto_version != nullptr) {
+    a.Str(in.proto_version);
+  } else {
+    a.Raw("null");
+  }
 
   if (in.basic != nullptr) {
     OpenSet(&a, "usage_mode", in.basic->usage_mode);
@@ -307,7 +328,14 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
     OpenSet(&a, "usage_mode", chs_a::ResolveUsageMode(in.usage_mode_raw));
     OpenSet(&a, "motion_state", chs_a::ResolveMotionState(in.motion_state_raw));
     OpenSet(&a, "gait", chs_a::ResolveGait(in.gait_raw));
-    a.Raw(",\"model\":null,\"version\":null");
+    // The identity strings travel through rt_bridge's report-side cache (they
+    // hold std::string and cannot cross the slot, 12 RTC-6) -- the same
+    // source hello_ack reads. Until the first BasicStatus both are null: a
+    // blank model reads as a chassis that answered with an empty name.
+    a.Raw(",\"model\":");
+    if (in.model != nullptr) { a.Str(in.model); } else { a.Raw("null"); }
+    a.Raw(",\"version\":");
+    if (in.version != nullptr) { a.Str(in.version); } else { a.Raw("null"); }
     // Same two-source rule as charge below, same reason, same day found: the
     // state path never has `basic`, so sourcing these from it alone published
     // null on every state message while the report path carried them fine.
@@ -320,11 +348,18 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
       a.Raw(",\"hes\":null,\"sleep\":null");
     }
   } else {
-    // Nothing has been heard from the chassis yet. null, not a zeroed struct:
-    // a zeroed one reads as "idle, awake, no emergency stop", which is exactly
-    // what a healthy standing robot looks like.
+    // Nothing has been read back from the chassis yet. null, not a zeroed
+    // struct: a zeroed one reads as "idle, awake, no emergency stop", which is
+    // exactly what a healthy standing robot looks like. model/version come
+    // from the report-side cache and may already be present here -- the cache
+    // fills on the rx thread while the triple waits for the ctrl slot, and
+    // suppressing a fact the process holds would not make the null "cleaner".
     a.Raw(",\"usage_mode\":null,\"motion_state\":null,\"gait\":null");
-    a.Raw(",\"model\":null,\"version\":null,\"hes\":null,\"sleep\":null");
+    a.Raw(",\"model\":");
+    if (in.model != nullptr) { a.Str(in.model); } else { a.Raw("null"); }
+    a.Raw(",\"version\":");
+    if (in.version != nullptr) { a.Str(in.version); } else { a.Raw("null"); }
+    a.Raw(",\"hes\":null,\"sleep\":null");
   }
 
   // 11 S9.3.1 / 13 S5.4: the three axes that are always active. vz, v_roll and
@@ -346,6 +381,34 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
   a.UInt(in.estop_epoch);
   a.Raw(",\"soft_estop_active\":");
   a.Bool(in.soft_estop_active);
+  // 11 S4.1 last_soft_estop. The KEY is always present: null before the first
+  // soft estop of this boot, the object afterwards -- the contract example
+  // carries it, and omitting it would read as an older message shape. Inside
+  // the object, reason/src_role are null when the stop arrived without them
+  // (they are best-effort on that key, 11 S9.12): an empty string would read
+  // as a sender that supplied a blank reason.
+  a.Raw(",\"last_soft_estop\":");
+  if (!in.has_last_estop) {
+    a.Raw("null");
+  } else {
+    a.Raw("{\"epoch\":");
+    a.UInt(in.last_estop_epoch);
+    a.Raw(",\"reason\":");
+    if (in.last_estop_reason != nullptr) {
+      a.Str(in.last_estop_reason);
+    } else {
+      a.Raw("null");
+    }
+    a.Raw(",\"src_role\":");
+    if (in.last_estop_src_role != nullptr) {
+      a.Str(in.last_estop_src_role);
+    } else {
+      a.Raw("null");
+    }
+    a.Raw(",\"age_ms\":");
+    a.Num(in.last_estop_age_ms);
+    a.Raw("}");
+  }
   a.Raw(",\"stop_reason\":");
   {
     // From the shared closed set, never a literal (CLAUDE.md 3.5).
@@ -356,6 +419,28 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
       a.Raw(one);
     }
     a.Raw("\"");
+  }
+  // 11 S4.1 mode_mismatch: present IF AND ONLY IF stop_reason is
+  // "mode_mismatch" (the contract says 当且仅当 -- absent is OMITTED, never
+  // null), structure {expect, actual}. UM-4's derived event takes its
+  // detail.actual from here; without the field, "wrong mode" is known to have
+  // happened without knowing what mode the machine is actually in.
+  if (in.tier1.stop_reason == StopReason::kModeMismatch) {
+    // expect: from the same table Tier 1 compares against (NAV-111 gates on
+    // kUsageModeNavigation), not a literal -- one source, or the two drift.
+    a.Raw(",\"mode_mismatch\":{\"expect\":");
+    a.Str(chs_a::ResolveUsageMode(kUsageModeNavigation).label.c_str());
+    a.Raw(",\"actual\":");
+    if (in.basic != nullptr) {
+      a.Str(in.basic->usage_mode.label.c_str());
+    } else if (in.has_triple) {
+      a.Str(chs_a::ResolveUsageMode(in.usage_mode_raw).label.c_str());
+    } else {
+      // No mode has ever been read back -- which is itself one of the ways a
+      // mismatch happens. null, not a guessed member (11 S13.6).
+      a.Raw("null");
+    }
+    a.Raw("}");
   }
   a.Raw(",\"mode_switching\":");
   a.Bool(in.mode_switching);
@@ -482,18 +567,24 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
 
   a.Raw(",\"faults\":[");
   if (in.faults != nullptr) {
-    for (std::size_t i = 0; i < in.faults->faults.size(); ++i) {
-      const chs_a::FaultEntry& f = in.faults->faults[i];
+    for (std::size_t i = 0; i < in.fault_count; ++i) {
+      const RobotStateFault& f = in.faults[i];
       if (i != 0) a.Raw(",");
       // CF-5: the SAME prefixed code the fault stream carries. The 11 S4.1
       // example still shows a bare "0x1007"; copying it is how the two sides
-      // stop agreeing about what a code means.
+      // stop agreeing about what a code means. The entries arrive already
+      // formatted because they are CACHED copies of the fault stream's own
+      // values (rt_bridge rebuilds the cache per fault report) -- reformatting
+      // here would be a second converter, which is exactly what CF-5 forbids.
       a.Raw("{\"code\":");
-      a.Str(f.code.c_str());
+      a.Str(f.code);
       a.Raw(",\"level\":");
-      a.Str(f.level.c_str());
-      a.Raw(",\"name\":");
-      a.Str(f.name.c_str());
+      a.Str(f.level);
+      // `desc` is the key the 11 S4.1 example uses (this writer said "name"
+      // until 2026-09-26 -- a consumer coded against the contract found
+      // nothing). Content is FaultEntry.name, the human-readable fault name.
+      a.Raw(",\"desc\":");
+      a.Str(f.desc);
       a.Raw("}");
     }
   }
