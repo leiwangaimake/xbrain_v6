@@ -15,7 +15,7 @@
 - **P2 仲裁 / 模式机 / BIT**、**P5 网关批次 A-E**、**配置冻结线(CFG-FZ)**、**甲方云端翻译/去重/Q0 急停**：主体已建。`[DONE]`
 - **LLM 服务**：llama-server + qwen2.5-3b-instruct 在 ORIN 上跑(端口 18082)。`[DONE]`
 - **地理要素 CRUD 全链**（2026-08-20）：`cmd/geo` 八 action（P3 单写者）+ `cmd/teach` 录制会话 + P4 的 F01–F15 发起方 + HMI 上行 W4 + HMI 录制显示。ORIN 实测。`[DONE]`（余下卡点见 §4.1 与 §7.0）
-- **`health/summary`（P2）与 `state/teleop`（P1）**（2026-08-20）：契约要求的发布者补齐；`state/robot`/`state/power` 归 `chassis_relay`，做不了。`[DONE]` / `[GATED-HW]`
+- **`health/summary`（P2）与 `state/teleop`（P1）**（2026-08-20）：契约要求的发布者补齐；`state/robot`/`state/power` 归 `chassis_relay`，做不了。`[DONE]` / `[GATED-HW]` ★ **2026-09-26 订正**：`chassis_relay` 已建（§2 表该行），`state/robot` 已通（quadruped 自产 10 Hz → CR-4 转发，ORIN 实测，P2 chassis 健康项转 ok "linked"）；`state/power` 仍无 RT 面源（真底盘），该半保持 `[GATED-HW]`
 
 ---
 
@@ -40,7 +40,7 @@
 |---|---|---|---|
 | **quadruped**（底盘控制 CHS-A 三通道，13 册） | C++17 | ✅★★ **已建并深度收口（2026-09-21 订正；原「未建」写于建包前，长期未跟）**：三通道全通（CHS-A socket ＋ 裸 DDS 域 0 ＋ rclcpp 域 42）· Tier1/模式机/里程计/信封/clock 订阅在位 · 单测 21 个二进制全绿 · 变异体五套件 0 存活 · 2026-09-21 底盘上电台架六项全过（`13` v1.22~v1.31 台账）。剩余见 `13` §11.1 判据表（台架尾项）与 §12.1（待厂商） | 云深处 M20S 底盘 + 厂商 PDF 实测 |
 | **perception**（定位/位姿/障碍/目标，33ms/30fps） | C++ | ✅ **详设已写** / 实现未建 `[GATED-HW]` | ★★ **2026-08-21 订正**：本行原写「详细设计未写 `[GATED-DESIGN]`」是**过时记录**，`docs/19-perception详细设计.md` 已 996 行且章节完整（§2 33ms 预算 · §3 走廊几何 · §9 启动自检 · §11 变异体表 · §13 未定项 · §14 配置键）。⚠️ 这条过时记录**已真实误导过一次判断**（2026-08-20 我据它建议「先写 perception 设计」，当天被 `d2e9ab1` 订正）。<br>★ 接续项是 **SW-2b 实现**，卡相机硬件与 `19` §13 的 PD-3/4/5/10 标定值（按设计**拒绝启动**，🚫 不得为让它起来而实现绕过路径） |
-| **chassis_relay**（急停链路 CRL-1..5） | C++ | 未建 | common 地基库 + 底盘 |
+| **chassis_relay**（急停链路 CRL-1..6） | C++17 | ✅★★ **已建（2026-09-26）**：双面 session（GEN :7447 / RT :7449，peer + connect + 不 listen，gossip multihop=false）· CR-1~CR-12 全 12 条硬编码表（CRL-3，启动与 `configs/generated/whitelist.yaml` 逐条比对，不一致拒启）· RT-C3.e 信封重建（`data` 按字节区间原样拷贝；原 ts/src 入 `orig_ts`/`orig_src`）· §3.0.1 estop 例外（坏帧原字节转，永不因格式挡停车；裸载荷 wrap-if-bare）· CRL-4 转发路径零动态分配零阻塞日志 · CRL-6 唯一 Q3 发布（CR-9）走独立事件线程 · sd_notify watchdog（DEP-2 已解）· 单测四件全绿 + `cxx_mutants.py` `relay`/`relay_keys` 两套件 0 存活 · ORIN 端到端冒烟（`state/robot` 10 Hz 双面 data 一致；estop 注入 → `rt/safety/estop` → quadruped ack（epoch 递增）→ `cmd/estop/ack` 往返实测）。★ 原「未建」写于建包前。⚠️ GEN 面裸 key 拼法分叉已登记 `11` §1.1.6 ③ 落地注记，待裁 | ~~common 地基库 + 底盘~~ ★ 上行 4 流（power/basic/motion/device）与 fault 流的数据源仍卡真底盘（CR-5~CR-9 转发已就位，RT 侧无源） |
 | **rtk_driver**（GPS/授时，唯一判 ClockStatus.sync） | **C++** | ★★ **已建**（`ros2_ws/sensor/`，19 个 `.cc`：NMEA 解析 / gnss_heading / clock_status / serial_reopen 全套测试） | ★★ **2026-08-21 订正**：本行原写「未建 `[GATED-HW]`」是**过时记录** —— RTK 链路 2026-08-14 已端到端跑通（`rtk_driver → p1 → state/pose` ORIN 实测）。语言事实上已定 C++ |
 | **teleop_input**（遥控 deadman） | 待定 | 未建 `[GATED-HW]` | 遥控器 |
 | **behavior_proxy** + **Nav2 behavior_server** + **zenoh-bridge-ros2dds** | C++/Rust | 未建 | ROS2 环境 + Nav2 |
@@ -83,7 +83,7 @@
 
 | 序 | 拦在哪道门 | 实测 ack | 解锁需要 | 状态 |
 |:--:|---|---|---|---|
-| ① | §12A.3 **状态源缺失** | `E_TEACH_QUALITY` `state_unavailable` `missing:[state/robot, state/power]` | **`chassis_relay`（C++，CR-4/CR-5）+ 真底盘** | `[GATED-HW]` |
+| ① | §12A.3 **状态源缺失** | `E_TEACH_QUALITY` `state_unavailable` `missing:[state/robot, state/power]` | ~~`chassis_relay`（C++，CR-4/CR-5）~~（✅ 2026-09-26 已建，`state/robot` 已通）**+ 真底盘**（`state/power` 的 RT 面源 `rt/chassis/power` 仍无发布） | `[GATED-HW]` |
 | ② | §12A.3 **检查 3 定位质量** | `E_TEACH_QUALITY` `{fix_type:"single"}` | **RTK 基站 / NTRIP 改正**（现为单点 GPS，米级） | `[GATED-HW]` |
 | ③ | §12A.3 **检查 4 `allow_motion`** | `E_UNHEALTHY` `health forbids motion` | ★★★ **RGBD 相机 + `perception` 发 `cam_rgbd` 健康** ← **当前终点** | `[GATED-HW]` + `[GATED-DESIGN]` |
 | ④ | §12A.3 **检查 7 非语音急停通道** | 未到（③ 先拦） | `teleop_input`（手柄/键盘）—— 缺它判据①永假，只能靠判据②的 `cmd/estop` 链路 | `[GATED-HW]` |
@@ -312,10 +312,10 @@
 | # | 缺什么 | 卡因 |
 |---|---|---|
 | DEP-1 | **enable 到 boot + 3 个 AI 单元(ai-asr/llm/payload)安装** | ~~`[GATED-DECISION]` DEC-15~~ **已解**(U83, 2026-08-17)。enable 现只等：标定安全参数(§3.1，否则 freeze 拒 null)+ `/etc/xbrain` 真值；AI 三单元另等两处 `11` 回填(§11A.2.3 ai_asr 模型账按 AIR-M1、payload 的 §11A.6.3 OOM 行)。就绪即 `sudo install_units.sh --enable`。 |
-| DEP-2 | **chassis_relay 的 `10` §3.3.8 watchdog 重新加回**(Type=notify + WatchdogSec + sd_notify 三者同时) | `[GATED]` 卡 chassis_relay C++ 实现 `sd_notify(WATCHDOG=1)`；批2 已在单元内就地注明「延期非删除」。p1-p5 / 路由同理:实现心跳后可加。★ **单加 WatchdogSec 会重启环**(实测)，必须与 Type=notify + sd_notify 一起。 |
+| DEP-2 | **chassis_relay 的 `10` §3.3.8 watchdog 重新加回**(Type=notify + WatchdogSec + sd_notify 三者同时) | ✅ **chassis_relay 半已解(2026-09-26)**：二进制自实现 NOTIFY_SOCKET datagram(`sd_notify.h`，READY=1 + 每 1 s WATCHDOG=1，housekeeping 线程不触 zenoh)，单元同批恢复 Type=notify + WatchdogSec=5s(三者同时，提交 2db563f)。★ 原文如实留：~~`[GATED]` 卡 chassis_relay C++ 实现 `sd_notify(WATCHDOG=1)`；批2 已在单元内就地注明「延期非删除」~~。p1-p5 / 路由**仍未实现心跳**，那一半照旧 GATED。★ **单加 WatchdogSec 会重启环**(实测)，必须与 Type=notify + sd_notify 一起。 |
 | DEP-3 | **zenohd-gen 空变量守卫**：`LAN2_IP`/`WIFI_IP` 为空 → envsubst 写空串 → endpoint 变 `tcp/:7447` → zenohd 可能当 bind-all(触 NET-C9) | `[SW-NOW]` 现仅靠模板 127.0.0.1 占位兜底，**无单元级守卫**。需 `ExecStartPre` 校验两 env 非空再启。批2 已在 zenohd-gen 单元注释标记该 gap；现有 `grep '${'` 检查抓不到(envsubst 对未设变量写空、不留占位符)。 |
 | DEP-4 | **p2-p5 的 `common.robot_id` 来源确认**：config-freeze 必须**无** `XBRAIN_ROBOT_ID` 才能跑(否则 materialize abort，dev 实证)，那快照里 `common.robot_id` 从哪来? | `[SW-NOW 待核]` p1 / rtk 运行期直读 env 已解;p2-p5 走 freeze 快照的 `common.robot_id`(layers.py 在 freeze 期映射)。需确认**生产 freeze** 的 robot_id 流(configs/ 直填? 还是 freeze 另有取法)，避免快照 `common.robot_id` 为 null。 |
-| DEP-5 | **构建系统实现:C++ 装到 install root `/opt/xbrain_v6/data/install`**(DEC-15/U83 定的 root) | `[进行中]` ★ **rtk_driver 已完成(2026-08-17)**:CMakeLists 加 `install(TARGETS rtk_driver RUNTIME DESTINATION lib/${PROJECT_NAME})` + `CMAKE_INSTALL_RPATH=/usr/local/lib`(自解析 libzenohc,不靠 LD_LIBRARY_PATH);ORIN 实测 `cmake --install --prefix .../data/install/rtk_driver` 落 `data/install/rtk_driver/lib/rtk_driver/rtk_driver`,`ldd` 通,单元 ExecStart 已指向它,verify 无告警。**剩余**:① `chassis_relay`/`teleop_input` **尚未建**(未建/GATED),建时按同一 install 约定加规则;② ROS2 包(perception/quadruped)走 colcon,但 **ORIN 现无 colcon/ROS2**;③ 编译树(build/)按 §0.2 宜移出 `ros2_ws/`(dev 栈仍用 `ros2_ws/sensor/build/`,是 dev-vs-deploy 正常分叉)。感知/底盘本体仍 `[GATED-HW/DESIGN]`。 ★★ **2026-09-15：ORIN 已装 ROS 2 Humble**（清华镜像 apt 源；`ros-base` + `rmw-cyclonedds-cpp` + `cyclonedds`/`idlc` + `tf2-ros` + `nav-msgs` + `sensor-msgs` + `nav2-behaviors` + `nav2-lifecycle-manager` + colcon，209 包，`99` U85 ①；日志 `data/run/ros_install/`）⇒ quadruped / perception 的 ament 构建不再被环境卡住；vendored JSON 单头已入 `common/third_party/`（U85 ⑥） |
+| DEP-5 | **构建系统实现:C++ 装到 install root `/opt/xbrain_v6/data/install`**(DEC-15/U83 定的 root) | `[进行中]` ★ **rtk_driver 已完成(2026-08-17)**:CMakeLists 加 `install(TARGETS rtk_driver RUNTIME DESTINATION lib/${PROJECT_NAME})` + `CMAKE_INSTALL_RPATH=/usr/local/lib`(自解析 libzenohc,不靠 LD_LIBRARY_PATH);ORIN 实测 `cmake --install --prefix .../data/install/rtk_driver` 落 `data/install/rtk_driver/lib/rtk_driver/rtk_driver`,`ldd` 通,单元 ExecStart 已指向它,verify 无告警。**剩余**:① ~~`chassis_relay`/~~`teleop_input` **尚未建**(未建/GATED),建时按同一 install 约定加规则(★ **2026-09-26 订正**:`chassis_relay` 已建并按同一约定装 `data/install/chassis_relay/lib/chassis_relay/`,单元 ExecStart 既有路径,ConditionPathExists 门自动放行;`teleop_input` 仍未建);② ROS2 包(perception/quadruped)走 colcon,但 **ORIN 现无 colcon/ROS2**;③ 编译树(build/)按 §0.2 宜移出 `ros2_ws/`(dev 栈仍用 `ros2_ws/sensor/build/`,是 dev-vs-deploy 正常分叉)。感知/底盘本体仍 `[GATED-HW/DESIGN]`。 ★★ **2026-09-15：ORIN 已装 ROS 2 Humble**（清华镜像 apt 源；`ros-base` + `rmw-cyclonedds-cpp` + `cyclonedds`/`idlc` + `tf2-ros` + `nav-msgs` + `sensor-msgs` + `nav2-behaviors` + `nav2-lifecycle-manager` + colcon，209 包，`99` U85 ①；日志 `data/run/ros_install/`）⇒ quadruped / perception 的 ament 构建不再被环境卡住；vendored JSON 单头已入 `common/third_party/`（U85 ⑥） |
 
 ---
 
@@ -350,7 +350,7 @@
 
 | 卡因 | 项(章节索引) |
 |---|---|
-| **[GATED-HW] 云深处底盘/RTK/相机/遥控** | EX-2..6(§1)· quadruped/chassis_relay/rtk_driver/teleop_input(§2)· P1-1(§3)· 硬件集成(§4)· ★★★ **录制端到端四道门(§4.1，当前终点=`cam_rgbd` 无生产者)** · HMI-W4 位姿全片 / W5 §6.4 快路 / W7 EX-1 数据(§7)· chassis_relay watchdog 待 sd_notify(§8/DEP-2) |
+| **[GATED-HW] 云深处底盘/RTK/相机/遥控** | EX-2..6(§1)· quadruped/chassis_relay/rtk_driver/teleop_input(§2)· P1-1(§3)· 硬件集成(§4)· ★★★ **录制端到端四道门(§4.1，当前终点=`cam_rgbd` 无生产者)** · HMI-W4 位姿全片 / W5 §6.4 快路 / W7 EX-1 数据(§7)· ~~chassis_relay watchdog 待 sd_notify(§8/DEP-2)~~(✅ 2026-09-26 已解,见 DEP-2) |
 | **[GATED-DESIGN] 设计未写** | ⚠️★★★ **2026-08-20 订正：perception / RNS 两份详设【已写完】**(19 · 20)，本类**不再含它们**；余 P1-4 航向丢失恢复 odom 桥接+视觉重捕(§3，依赖 quadruped odom + perception + RNS 三者的**实现**) |
 | **[GATED-DECISION] 待用户/契约裁决** | REST §12.2 vs §6.5 谁权威 + GWY-P5-13 真实现(§7.1)· 围栏 role 枚举 vs zone_label(§7.2)· ★ **P4 是否同步改发 §7.2 `TaskCommand`**(§7.0/SW-14)· rtk_driver 语言待定(§2；平台基线 D-45 本身已 U74 定 Humble/22.04)· ~~DEC-15~~ **已 U83 收口(§8)** |
 | **[SW-NOW] 纯软件可推(非卡,待排期)** | ★★ **SW-14 P3 `cmd/task` 对齐 §7.2(解锁 HMI W2/W7 + 云端转发)** · SW-15 W2/W3/W7 的 P5 builder · SW-2/3 设计 · SW-4 云上行 · SW-5 测试框架 · SW-6 配置落值 · SW-7 字符集债 · SW-8 充电执行 · SW-9 全系统圆润 · SW-10 comment_ratio · SW-11 LAN2 bind 落值 · ~~SW-12~~ **已上线** · DEP-3 zenohd-gen 空变量守卫 · DEP-4 robot_id 快照源核实 · DEP-5 构建系统装 data/install(§8) |
