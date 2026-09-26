@@ -33,6 +33,7 @@
 #include "quadruped/quadruped_config.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 
@@ -211,7 +212,20 @@ bool Throws(F f) {
 
 int main(int argc, char** argv) {
   // A writable directory for the fixtures; ctest passes the build dir.
-  g_dir = (argc >= 2) ? argv[1] : ".";
+  // Fixture files go to an explicit directory when the harness gives one
+  // (cxx_mutants.py can pass its scratch dir), and to a fresh mkdtemp under
+  // /tmp otherwise. The old default was "." -- and a bare run from the
+  // package root therefore littered it with 48 q_*.yaml, twice (2026-09-21
+  // and again by the bench-day reruns). A test that dirties the tree it is
+  // supposed to protect gets its droppings mistaken for real assets; the
+  // few kilobytes left under /tmp per run are the system's to reap.
+  if (argc >= 2) {
+    g_dir = argv[1];
+  } else {
+    char tmpl[] = "/tmp/qcfg_XXXXXX";
+    const char* d = ::mkdtemp(tmpl);
+    g_dir = (d != nullptr) ? d : ".";
+  }
 
   // ---- positive: the full snapshot loads and every field lands ----------
   {
