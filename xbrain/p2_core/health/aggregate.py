@@ -189,13 +189,23 @@ def state_from_robot(robot: Optional[Mapping[str, Any]]
     """chassis item from state/robot (published by chassis_relay, CR-4).
 
     Absent is UNKNOWN rather than FAIL, and the asymmetry with pose above is
-    deliberate: chassis_relay is a C++ process that does not exist in this
-    build, so its silence means "not wired", not "the chassis dropped". Calling
-    it FAIL would be equally wrong in the other direction -- it would forbid
-    motion for a reason that is not evidence.
+    deliberate: silence on this key does not distinguish "nobody is forwarding
+    it" from "the chassis dropped", and calling it FAIL would forbid motion for
+    a reason that is not evidence.
+
+    *** 2026-09-27: the DETAIL text was corrected, the verdict was not.
+    It used to read "chassis_relay not wired", written when chassis_relay was a
+    C++ process that did not exist yet. It landed and has been running since
+    2026-09-26 (11 S1.1.6 CR-4, 12 rows implemented in ros2_ws/chassis_relay/),
+    so that text now sends whoever reads it looking for a process that is up.
+    What silence actually means today is one of: the chassis is offline, so
+    quadruped has nothing to publish on rt/chassis/state; or the relay is not
+    forwarding. Those are the two the operator has to tell apart, so they are
+    the two the detail names -- UNKNOWN precisely because this function cannot
+    pick between them.
     """
     if not robot:
-        return HealthState.UNKNOWN, "no state/robot (chassis_relay not wired)"
+        return HealthState.UNKNOWN, "no state/robot (chassis offline or relay not forwarding)"
     if robot.get("hes"):
         return HealthState.FAIL, "hardware e-stop engaged"
     # conn, by the contract's six wire names (11 S4.1, sets chassis_conn).
@@ -240,6 +250,12 @@ def state_from_power(power: Optional[Mapping[str, Any]], *,
                      ) -> Tuple[HealthState, str]:
     """battery item from state/power (chassis_relay, CR-5).
 
+    *** 2026-09-27: same detail-text correction as state_from_robot above --
+    "chassis_relay not wired" stopped being true when the relay went up on
+    2026-09-26. state/power is the CR-5 forward of rt/chassis/power, which
+    quadruped only produces once the chassis answers, so today's silence is
+    the chassis being offline far more often than the relay being down.
+
     critical_soc_pct has NO default here. 11 S5.1A marks it U-BIT-1, awaiting
     the operator, and a guessed threshold on the item that forbids motion is
     precisely what CLAUDE.md 3.1 forbids: too low and the robot strands itself,
@@ -247,7 +263,7 @@ def state_from_power(power: Optional[Mapping[str, Any]], *,
     and the state stays degraded-not-failed -- visible, and not acted on.
     """
     if not power:
-        return HealthState.UNKNOWN, "no state/power (chassis_relay not wired)"
+        return HealthState.UNKNOWN, "no state/power (chassis offline or relay not forwarding)"
     soc = power.get("soc_pct")
     if not isinstance(soc, (int, float)):
         return HealthState.UNKNOWN, "no soc_pct in state/power"

@@ -137,12 +137,25 @@ def test_absent_pose_is_fail_not_unknown():
 
 
 def test_absent_chassis_is_unknown_not_fail():
-    """The asymmetry with pose is deliberate: chassis_relay is a C++ process
-    that does not exist in this build, so silence means "not wired", not "the
-    chassis dropped". MUTATION: return FAIL and the summary asserts a chassis
-    failure it has no evidence for -- and being a fatal item, it would report
-    overall=fatal on every machine."""
-    assert state_from_robot(None)[0] == HealthState.UNKNOWN
+    """The asymmetry with pose is deliberate: silence on state/robot does not
+    say WHICH link is missing -- the chassis may be offline (quadruped then has
+    nothing to publish on rt/chassis/state) or chassis_relay may not be
+    forwarding. MUTATION: return FAIL and the summary asserts a chassis failure
+    it has no evidence for -- and being a fatal item, it would report
+    overall=fatal on every machine.
+
+    *** 2026-09-27: the docstring used to justify UNKNOWN with "chassis_relay
+    is a C++ process that does not exist in this build". The relay went up on
+    2026-09-26, so that reason is gone while the VERDICT still holds for the
+    other reason above. The detail string moved with it; asserted below so the
+    text and the justification cannot drift apart again."""
+    st, why = state_from_robot(None)
+    assert st == HealthState.UNKNOWN
+    # The operator reads this string while deciding where to look. It must not
+    # name a process that is running -- that is a wrong-direction diagnosis,
+    # not merely stale prose.
+    assert "chassis_relay not wired" not in why
+    assert "chassis offline or relay not forwarding" in why
     assert state_from_robot({"hes": True})[0] == HealthState.FAIL
 
     # conn, by the six contract wire names (11 S4.1). The first draft read a
@@ -202,7 +215,14 @@ def test_battery_without_a_calibrated_threshold_is_not_failed():
         HealthState.FAIL
     assert state_from_power({"soc_pct": 80.0}, critical_soc_pct=15.0)[0] == \
         HealthState.OK
-    assert state_from_power(None)[0] == HealthState.UNKNOWN
+    no_power_st, no_power_why = state_from_power(None)
+    assert no_power_st == HealthState.UNKNOWN
+    # Same 2026-09-27 correction as the chassis item: the detail must not send
+    # the operator hunting for a chassis_relay that is running (up since
+    # 2026-09-26). state/power is CR-5's forward of rt/chassis/power, which
+    # quadruped only produces once the chassis answers.
+    assert "chassis_relay not wired" not in no_power_why
+    assert "chassis offline or relay not forwarding" in no_power_why
 
 
 def test_network_degrades_without_blocking():
