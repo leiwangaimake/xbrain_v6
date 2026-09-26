@@ -1,6 +1,8 @@
 schema_version: 1
-source_note: generated from 11 S1.1.6 hand tables (perception/p1_motion/chassis_relay) + WL-G1 auto extract from S2.2 (p2_core/p4_agent).
-  CFG-BT-17.
+# source_note single-line on purpose: the C++ audit reader (chassis_relay,
+# yaml_lite) parses nested maps + scalar leaves only -- a folded multi-line
+# scalar here refused its startup gate on 2026-09-26.
+source_note: generated from 11 S1.1.6 hand tables (perception/p1_motion/chassis_relay) + WL-G1 auto extract from S2.2 (p2_core/p4_agent). CFG-BT-17.
 processes:
   perception:
     pub:
