@@ -1451,6 +1451,13 @@ int main(int argc, char** argv) {
     // The config asked, so we had business asking; the kernel says it is on.
     CHECK(p.link_status().nodelay_expected);
     CHECK(p.link_status().nodelay_active);
+    // 13 SD-1: the send-buffer size is read back and MIRRORED on the same
+    // connect event. Any live socket has a nonzero kernel buffer, so > 0 is
+    // the wiring assertion (the exact value is the platform's default and is
+    // deliberately not judged -- SD-1 forbids us enlarging it, and nothing in
+    // this package calls setsockopt(SO_SNDBUF); the report is the evidence).
+    // mutant: mirror stores 0 -> red.
+    CHECK(p.link_status().sndbuf_bytes > 0);
   }
   {
     // A DATAGRAM endpoint. TCP_NODELAY is meaningless on one, and

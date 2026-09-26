@@ -182,6 +182,18 @@ bool ChassisSocket::nodelay_enabled() const {
   return v != 0;
 }
 
+int ChassisSocket::sndbuf_bytes() const {
+  // 13 SD-1. Unlike TCP_NODELAY this option exists on datagram sockets too --
+  // SD-1's UDP clause is precisely "SO_SNDBUF stays at the default" -- so
+  // there is no is_udp_ guard here. -1 says "no socket", which a caller must
+  // not confuse with a zero-byte buffer (the kernel never reports 0).
+  if (fd_ < 0) return -1;
+  int v = 0;
+  socklen_t len = sizeof(v);
+  if (::getsockopt(fd_, SOL_SOCKET, SO_SNDBUF, &v, &len) != 0) return -1;
+  return v;
+}
+
 int ChassisSocket::local_port() const {
   if (fd_ < 0) return -1;
   sockaddr_in addr;

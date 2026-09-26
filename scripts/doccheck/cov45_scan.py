@@ -32,8 +32,13 @@ What each check answers, and why it can fail:
 
   COV-4  The same for gaits (S5.3). Both mechanisms are in play here: G-02
          (stair_standard) is listed in not_implemented.gaits while G-03
-         (platform) is simply absent from the commandable table, and 13 GS-3
-         keeps stair_standard recognisable on the READ-BACK side regardless.
+         (platform) is excluded structurally, and 13 GS-3 keeps
+         stair_standard recognisable on the READ-BACK side regardless.
+         Since the 13 QD-3 merge (2026-09-26) the commandable gait set is no
+         longer a table of its own: it is chs_a_reports' read-back table
+         MINUS rt_parse's kReadOnlyGaits value exclusion, and this script
+         derives it the same way -- re-authoring the set here would be the
+         second copy the merge deleted.
 
   COV-5  S5.1's forbidden control ASDU is in not_implemented.commands.
          illumination is deliberately NOT expected in the 45: 13 S5's boundary
@@ -57,6 +62,9 @@ for name in os.listdir(os.path.join(ROOT, "docs")):
         DOC = os.path.join(ROOT, "docs", name)
 CFG = os.path.join(ROOT, "configs", "quadruped.yaml")
 RT_PARSE = os.path.join(ROOT, "ros2_ws", "quadruped", "src", "rt_parse.cc")
+# The gait name<->value table's ONE home since the 13 QD-3 merge; rt_parse
+# keeps only the directional kReadOnlyGaits exclusion.
+REPORTS = os.path.join(ROOT, "ros2_ws", "quadruped", "src", "chs_a_reports.cc")
 
 # Escaped, not literal: CLAUDE.md 2.2 keeps these symbols out of source, and
 # the doc they match is markdown where 2.2 explicitly allows them. The escape
@@ -187,14 +195,36 @@ def our_column(block, want):
     return None
 
 
-def parser_table(text, name):
-    """The names in one rt_parse NameValue table."""
-    i = text.index("constexpr NameValue %s[] = {" % name)
+def reports_table(text, name):
+    """One chs_a_reports CodeName table, as {name: value} (value first there)."""
+    i = text.index("constexpr CodeName %s[] = {" % name)
     j = text.index("};", i)
-    return re.findall(r'\{"([a-z_0-9]+)"', text[i:j])
+    out = {}
+    for val, nm in re.findall(r'\{\s*(-?\d+|0x[0-9a-fA-F]+),\s*"([a-z_0-9]+)"',
+                              text[i:j]):
+        out[nm] = int(val, 0)
+    return out
 
 
-def run(doc, cfg, parse, mm, quiet=False):
+def readonly_gaits(parse):
+    """rt_parse's directional exclusion (13 QD-3 merge leaves only this)."""
+    i = parse.index("constexpr std::int64_t kReadOnlyGaits[] = {")
+    j = parse.index("};", i)
+    return {int(v, 0) for v in
+            re.findall(r"(0x[0-9a-fA-F]+|\d+)", parse[i + 43:j])}
+
+
+def commandable_gait_map(parse, reports):
+    """The commandable gait set, derived the way GaitValue computes it:
+    the read-back table minus the read-only values. Deriving rather than
+    re-authoring keeps this script from becoming the second copy the QD-3
+    merge deleted."""
+    ro = readonly_gaits(parse)
+    return {nm: v for nm, v in reports_table(reports, "kGaits").items()
+            if v not in ro}
+
+
+def run(doc, cfg, parse, mm, reports, quiet=False):
     """Every check against four texts. Taking them as ARGUMENTS rather than
     reading them here is what lets --self-test inject a mutant without touching
     the repository: the previous shape copied the real files aside, mutated
@@ -286,8 +316,6 @@ def run(doc, cfg, parse, mm, quiet=False):
     ni_states = yaml_flow_list(cfg, "motion_states") or []
     ni_gaits = yaml_flow_list(cfg, "gaits") or []
     ni_cmds = yaml_flow_list(cfg, "commands") or []
-    commandable_states = parser_table(parse, "kMotionStates")
-    commandable_gaits = parser_table(parse, "kGaits")
 
     # Which doc rows are forbidden, and whether the CODE can refuse them.
     #
@@ -337,7 +365,10 @@ def run(doc, cfg, parse, mm, quiet=False):
         return out
 
     cmd_states = resolve("kMotionStates")
-    cmd_gaits = resolve("kGaits")
+    # Gaits: derived, not resolved from a local table -- see COV-4 in the
+    # module docstring. The reports table carries literal values, so the
+    # mode_machine constant indirection above is not needed for it.
+    cmd_gaits = commandable_gait_map(parse, reports)
 
     for rid, val in forbidden("S5.2"):
         if val is None:
@@ -412,39 +443,47 @@ CHECKS = ("COV-1", "COV-2", "COV-3", "COV-4", "COV-5")
 # nothing else would have said so.
 MUTANTS = {
     # A row vanishes from the matrix.
-    "COV-1": lambda d, c, p, m: (
-        d[:d.index("| P-04")] + d[d.index("\n", d.index("| P-04")) + 1:], c, p, m),
+    "COV-1": lambda d, c, p, m, r: (
+        d[:d.index("| P-04")] + d[d.index("\n", d.index("| P-04")) + 1:],
+        c, p, m, r),
     # S5.7 claims a total the rows do not support.
-    "COV-2": lambda d, c, p, m: (
+    "COV-2": lambda d, c, p, m, r: (
         d.replace("| **合计** | **45** | \u2605 **23** |",
-                  "| **合计** | **45** | \u2605 **24** |", 1), c, p, m),
+                  "| **合计** | **45** | \u2605 **24** |", 1), c, p, m, r),
     # A state 13 S5.2 forbids becomes commandable again.
-    "COV-3": lambda d, c, p, m: (
+    "COV-3": lambda d, c, p, m, r: (
         d, c,
         p.replace('    {"rl_control", kCommandMotionStateRlControl},',
                   '    {"rl_control", kCommandMotionStateRlControl},\n'
-                  '    {"zero_cal", 5},', 1), m),
-    # not_implemented.gaits loses the gait S5.3 forbids.
-    "COV-4": lambda d, c, p, m: (
-        d, c.replace('gaits: ["stair_standard"]', "gaits: []", 1), p, m),
+                  '    {"zero_cal", 5},', 1), m, r),
+    # The directional exclusion is emptied: platform (G-03, no) becomes
+    # commandable with nothing in not_implemented.gaits to refuse it. The
+    # post-QD-3 shape of "a gait S5.3 forbids becomes commandable again";
+    # the config half (stair_standard leaving not_implemented.gaits) is
+    # still caught by the same check through by_name, it is just no longer
+    # the mutant of record here.
+    "COV-4": lambda d, c, p, m, r: (
+        d, c,
+        p.replace("constexpr std::int64_t kReadOnlyGaits[] = {0x1002};",
+                  "constexpr std::int64_t kReadOnlyGaits[] = {};", 1), m, r),
     # not_implemented.commands loses C-05.
-    "COV-5": lambda d, c, p, m: (
+    "COV-5": lambda d, c, p, m, r: (
         d, c.replace('commands: ["normalized_axis", "illumination"]',
-                     'commands: ["illumination"]', 1), p, m),
+                     'commands: ["illumination"]', 1), p, m, r),
 }
 
 
-def self_test(doc, cfg, parse, mm):
+def self_test(doc, cfg, parse, mm, reports):
     ok = True
-    base = run(doc, cfg, parse, mm, quiet=True)
+    base = run(doc, cfg, parse, mm, reports, quiet=True)
     for k in CHECKS:
         if [f for f in base if f[0] == k]:
             print("%-6s BASELINE ALREADY RED -- mutant proves nothing" % k)
             ok = False
     print("")
     for k in CHECKS:
-        d2, c2, p2, m2 = MUTANTS[k](doc, cfg, parse, mm)
-        res = run(d2, c2, p2, m2, quiet=True)
+        d2, c2, p2, m2, r2 = MUTANTS[k](doc, cfg, parse, mm, reports)
+        res = run(d2, c2, p2, m2, r2, quiet=True)
         before = len([f for f in base if f[0] == k])
         after = len([f for f in res if f[0] == k])
         red = after > before
@@ -467,9 +506,10 @@ def main():
     parse = read(RT_PARSE)
     mm = read(os.path.join(ROOT, "ros2_ws", "quadruped", "include",
                            "quadruped", "mode_machine.h"))
+    reports = read(REPORTS)
     if args.self_test:
-        return 0 if self_test(doc, cfg, parse, mm) else 1
-    return 1 if run(doc, cfg, parse, mm) else 0
+        return 0 if self_test(doc, cfg, parse, mm, reports) else 1
+    return 1 if run(doc, cfg, parse, mm, reports) else 0
 
 
 if __name__ == "__main__":

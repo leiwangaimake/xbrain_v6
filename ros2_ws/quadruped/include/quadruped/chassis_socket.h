@@ -116,6 +116,17 @@ class ChassisSocket {
   bool nodelay_requested() const { return nodelay_requested_; }
   bool nodelay_setopt_ok() const { return nodelay_ok_; }
 
+  // SO_SNDBUF as the kernel holds it, or -1 on a closed socket. 13 SD-1: the
+  // axis-command socket must NOT be given a large send buffer -- a dead
+  // process with five full-speed frames queued in the kernel is a robot that
+  // keeps driving for another 100 ms. This code never CALLS setsockopt for
+  // it (grep: there is no SO_SNDBUF store anywhere), so the value is
+  // REPORTED, not judged: the kernel default differs per platform, SD-1
+  // forbids us enlarging it, and the read-back is what puts the actual
+  // number in the bench ledger. Same read-back-not-remembered reasoning as
+  // nodelay_enabled() above.
+  int sndbuf_bytes() const;
+
  private:
   int fd_ = -1;
   bool is_udp_ = false;

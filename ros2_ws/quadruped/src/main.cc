@@ -658,14 +658,20 @@ int Run(const std::string& path) {
       if (st.active_endpoint >= 0 &&
           st.conn != quadruped::chs_a::ConnState::kProbing && !said_nodelay) {
         said_nodelay = true;
+        // sndbuf rides the same once-per-connection line (13 SD-1). The value
+        // is only REPORTED: the kernel default differs per platform, SD-1
+        // forbids US enlarging it (and no setsockopt for it exists in this
+        // package), so the number is for the bench ledger, not a verdict.
         std::fprintf(stderr,
                      "quadruped_m20: TCP_NODELAY read back from the kernel: "
-                     "active=%s expected=%s (FR-5 / SD-3). A mismatch means "
+                     "active=%s expected=%s sndbuf=%d (FR-5 / SD-3 / SD-1). "
+                     "A mismatch means "
                      "Nagle batches the heartbeat with whatever follows it and "
                      "every latency figure in 13 S3.6 measures something else "
                      "-- the link works, its timing does not.\n",
                      st.nodelay_active ? "true" : "false",
-                     st.nodelay_expected ? "true" : "false");
+                     st.nodelay_expected ? "true" : "false",
+                     st.sndbuf_bytes);
       }
     }
     // Refused frames. FR-5 asks for a `warn` on a length mismatch and this

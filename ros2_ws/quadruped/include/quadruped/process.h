@@ -11,7 +11,7 @@
  * is where the socket, the framer, the codec, the session, Tier 1, the mode
  * machine and the odometry become one running process.
  *
- * The assembly rules are 13 S9.4 ASM-1..ASM-5, which were written FROM this
+ * The assembly rules are 13 S9.4 ASM-1..ASM-6, which were written FROM this
  * file rather than before it: S9.1 gave the thread table, S3 gave Tier 1 and
  * S2.2 gave channel one, and nothing said how the layers join. The defect that
  * gap produced is recorded in ASM-1.
@@ -495,6 +495,13 @@ class QuadrupedProcess {
     // line shows which link of that chain broke.
     bool nodelay_requested = false;
     bool nodelay_setopt_ok = false;
+    // 13 SD-1: SO_SNDBUF read back from the live socket at connect time.
+    // REPORTED, never judged -- the kernel default differs per platform, and
+    // what SD-1 forbids is US enlarging it (no setsockopt for it exists in
+    // this package); the read-back is what makes that claim checkable from
+    // outside and puts the actual number in the bench ledger. 0 before the
+    // first connection, -1 would mean the read itself failed.
+    int sndbuf_bytes = 0;
     // FR-2: bytes discarded hunting for a sync word -- resync_max_bytes'
     // only observable. A nonzero RATE means the peer and we disagree about
     // the framing.
@@ -605,6 +612,7 @@ class QuadrupedProcess {
   std::atomic<bool> pub_nodelay_expected_{false};
   std::atomic<bool> pub_nodelay_requested_{false};
   std::atomic<bool> pub_nodelay_setopt_ok_{false};
+  std::atomic<int> pub_sndbuf_bytes_{0};
   std::atomic<std::uint64_t> pub_resync_bytes_{0};
   std::atomic<std::uint64_t> pub_tx_skips_{0};
   std::atomic<std::uint64_t> pub_tx_acquires_{0};

@@ -152,11 +152,25 @@ struct ChassisModeMsg {
   std::int64_t gait = 0;
 };
 
-// Semantic string -> chassis number, per the 11 S9.2.4 tables. Return false
-// for a name outside the set AND for the read-only names: 11 S9.2.4 marks
-// soft_estop / idle / joint_damp / boot_damp / zero_cal / cart_move /
-// damped_prone as read-only ("只读, 禁止下发"), and accepting one would send
-// the chassis a value the contract says only ever comes back.
+// Semantic string -> chassis number, per the 11 S9.2.4 tables.
+//
+// The three differ in where their table lives, and that is 13 QD-3's line:
+//   * MotionStateValue keeps a LOCAL table that is deliberately a SUBSET of
+//     the read-back set -- only stand/prone/rl_control may be commanded;
+//     11 S9.2.4 marks soft_estop / idle / joint_damp / boot_damp / zero_cal /
+//     cart_move / damped_prone read-only ("只读, 禁止下发"), and accepting one
+//     would send a value the contract says only ever comes back.
+//   * GaitValue owns NO name table: it delegates to chs_a_reports'
+//     GaitValueByName (merged 2026-09-26 -- the two copies had already
+//     drifted by one member, platform), then applies a local DIRECTIONAL
+//     value exclusion: platform (0x1002) is absent from the guide's command
+//     enumeration altogether (13 S5.3 G-03), so it still refuses here.
+//     stair_standard stays commandable at this layer -- its refusal is the
+//     configured not_implemented.gaits (GS-1), not the parser's.
+//   * UsageModeValue keeps a local table whose CONTENT coincides with the
+//     read-back set (all three usage modes are commandable) -- a candidate
+//     for the same merge, left as-is pending a ruling because unlike gait no
+//     reverse lookup exists in chs_a_reports for it yet.
 bool UsageModeValue(const std::string& name, std::int64_t* out);
 bool MotionStateValue(const std::string& name, std::int64_t* out);
 bool GaitValue(const std::string& name, std::int64_t* out);

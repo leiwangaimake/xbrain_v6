@@ -27,9 +27,15 @@
 
 #include "quadruped/rt_parse.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
+
+// For GaitValueByName: the gait parity case below asserts the mode parse
+// resolves through the read-back unit's table (13 QD-3), so the expectation
+// is read from that table rather than restated as numbers here.
+#include "quadruped/chs_a_reports.h"
 
 using namespace quadruped;       // NOLINT: test-local
 using namespace quadruped::rt;   // NOLINT: test-local
@@ -346,6 +352,66 @@ int main() {
     CHECK(e.envelope_ok == false);
     ParseEstop(nullptr, 0, kRid, kBoot, &e);
     CHECK(e.envelope_ok == false);
+  }
+
+  // ---- rt/chassis/mode: gait names resolve through the ONE table ----------
+  {
+    // 13 QD-3 (2026-09-26 merge): the parse direction owns no gait NAME table
+    // any more -- GaitValue delegates to chs_a_reports' GaitValueByName, the
+    // same table ResolveGait and the config loader read. The assertion is
+    // PARITY on the commandable members: whatever the read-back unit
+    // resolves, the mode parse resolves to the same number, so the two
+    // directions cannot drift by a member again (they had -- the parse copy
+    // lacked platform).
+    for (const char* name : {"basic", "stair_standard", "flat",
+                             "stair_agile"}) {
+      std::int64_t expect = 0;
+      CHECK(chs_a::GaitValueByName(name, &expect) == true);
+      ChassisModeMsg m;
+      const std::string body = Wrap(
+          std::string("{\"cmd_id\":\"g-1\",\"gait\":\"") + name + "\"}");
+      CHECK(ParseChassisMode(body.c_str(), body.size(), kRid, kBoot, &m)
+            == RtParse::kOk);
+      CHECK(m.has_gait == true);
+      CHECK(m.gait == expect);
+    }
+
+    // *** platform is the DIRECTIONAL exception: the read-back unit resolves
+    // it (it arrives in reports), and the command direction still refuses it
+    // -- 13 S5.3 G-03, the guide's command enumeration has no 0x1002 at all,
+    // and T-COV-1's COV-4 holds this line against the matrix. This is the
+    // case that separates "one name table" (QD-3, wanted) from "one
+    // permission set" (wrong: read-only members would become commandable).
+    {
+      std::int64_t v = 0;
+      CHECK(chs_a::GaitValueByName("platform", &v) == true);   // read-back: yes
+      CHECK(v == 0x1002);
+      ChassisModeMsg m;
+      const std::string body =
+          Wrap("{\"cmd_id\":\"g-p\",\"gait\":\"platform\"}");
+      CHECK(ParseChassisMode(body.c_str(), body.size(), kRid, kBoot, &m)
+            == RtParse::kUnsupportedAction);                   // command: no
+    }
+
+    // A name outside the table still refuses the whole message (13 MS-5
+    // compares the triple as a unit).
+    ChassisModeMsg bad;
+    const std::string unknown =
+        Wrap("{\"cmd_id\":\"g-2\",\"gait\":\"trot\"}");
+    CHECK(ParseChassisMode(unknown.c_str(), unknown.size(), kRid, kBoot, &bad)
+          == RtParse::kUnsupportedAction);
+
+    // And the motion_state direction stays the commandable SUBSET -- the
+    // read-only members are refusals here even though the read-back unit
+    // resolves them (this is the asymmetry the header documents; a merge of
+    // THAT table would be a contract violation, not a cleanup).
+    for (const char* ro : {"idle", "joint_damp", "cart_move", "soft_estop"}) {
+      ChassisModeMsg m;
+      const std::string body = Wrap(
+          std::string("{\"cmd_id\":\"g-3\",\"motion_state\":\"") + ro + "\"}");
+      CHECK(ParseChassisMode(body.c_str(), body.size(), kRid, kBoot, &m)
+            == RtParse::kUnsupportedAction);
+    }
   }
 
   // ---- hello: no envelope, and major decides compatibility (11 S9.1.4) ----

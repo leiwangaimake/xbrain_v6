@@ -406,6 +406,10 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
                                  std::memory_order_relaxed);
     pub_nodelay_setopt_ok_.store(socket_.nodelay_setopt_ok() != 0,
                                  std::memory_order_relaxed);
+    // 13 SD-1, same shape as the nodelay mirrors: the kernel's SO_SNDBUF on
+    // the socket that carries axis commands, read once at connect time.
+    // Only reported -- see LinkStatus.sndbuf_bytes for why no verdict.
+    pub_sndbuf_bytes_.store(socket_.sndbuf_bytes(), std::memory_order_relaxed);
   }
   if (link.disconnected) {
     // Bytes from the old connection must never be read as the start of the new
@@ -413,6 +417,11 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
     framer_.Reset();
   }
   if (link.send_heartbeat) {
+    // 13 HB-1..HB-3: the heartbeat is NOT a safety mechanism -- it is the
+    // subscription ticket for the status uplink (the chassis reports to
+    // whoever keeps sending it), and the safety fallback is the AXIS stream
+    // stopping, never this. Its interruption still matters (conn degrades,
+    // because the uplink it rents is where Tier 1 reads HES from).
     std::uint8_t buf[256];
     const std::size_t n =
         chs_a::EncodeHeartbeat(buf, sizeof(buf), msg_id_++, WallNow());
@@ -715,6 +724,7 @@ QuadrupedProcess::LinkStatus QuadrupedProcess::link_status() const {
   s.nodelay_expected = pub_nodelay_expected_.load(std::memory_order_relaxed);
   s.nodelay_requested = pub_nodelay_requested_.load(std::memory_order_relaxed);
   s.nodelay_setopt_ok = pub_nodelay_setopt_ok_.load(std::memory_order_relaxed);
+  s.sndbuf_bytes = pub_sndbuf_bytes_.load(std::memory_order_relaxed);
   s.resync_bytes = pub_resync_bytes_.load(std::memory_order_relaxed);
   s.tx_skips = pub_tx_skips_.load(std::memory_order_relaxed);
   s.tx_acquires = pub_tx_acquires_.load(std::memory_order_relaxed);

@@ -25,6 +25,9 @@
 #include <cmath>
 
 #include "nlohmann/json.hpp"
+// For GaitValueByName: the gait name table lives in the read-back unit and
+// ONLY there (13 QD-3) -- see the note where this file's copy used to be.
+#include "quadruped/chs_a_reports.h"
 
 namespace quadruped {
 namespace rt {
@@ -218,17 +221,25 @@ constexpr NameValue kMotionStates[] = {
     {"rl_control", kCommandMotionStateRlControl},
 };
 
-// 11 S9.2.4 gaits. platform (0x1002) is read-only and absent for the same
-// reason. stair_standard (0x1003) IS listed: it is write-only in the contract
-// and 13 GS-1 refuses it for a DIFFERENT reason (the read-back enum has no
-// 0x1003, so MS-2 would time out on every switch). That refusal belongs to
-// mode_machine's command_forbidden_gaits, which is configured -- keeping it
-// out of this table would hard-code a config decision into the parser and
-// make the two disagree the day the firmware gains the read-back value.
-constexpr NameValue kGaits[] = {
-    {"basic", 0x1001}, {"stair_standard", 0x1003},
-    {"flat", 0x3002}, {"stair_agile", 0x3003},
-};
+// NO gait name table here. 13 QD-3 requires the chassis value mapping to
+// live in ONE translation unit, and that table's home is chs_a_reports.cc
+// (the read-back direction) -- the config loader already resolves gait NAMES
+// through its GaitValueByName (13 QC-9 / GS-3: "配置按名解析走的就是它"), so
+// a second name table here was a second place for a gait to be spelled, and
+// the two had in fact already drifted by one member when they were merged
+// (2026-09-26): this file's copy omitted platform.
+//
+// What stays local is DIRECTIONAL, not a mapping: the values below exist in
+// the read-back enumeration only. 13 S5.3 G-03 -- the guide's COMMAND
+// enumeration has no 0x1002 at all ("下发枚举中无此值"), so commanding it is
+// undefined protocol input, and 13 S11.1 T-COV-1's COV-4 checks exactly this
+// set against the S5.3 matrix. It is the same role the commandable
+// kMotionStates subset plays above, spelled as a value blacklist because
+// here the read-only members are one value rather than seven names.
+// stair_standard is DIFFERENT on purpose: it IS in the command enumeration,
+// and its refusal stays a config decision (GS-1, not_implemented.gaits) --
+// hard-coding that one would put a config decision in the parser.
+constexpr std::int64_t kReadOnlyGaits[] = {0x1002};
 
 }  // namespace
 
@@ -243,7 +254,14 @@ bool MotionStateValue(const std::string& name, std::int64_t* out) {
 }
 
 bool GaitValue(const std::string& name, std::int64_t* out) {
-  return LookupName(kGaits, sizeof(kGaits) / sizeof(kGaits[0]), name, out);
+  // Name -> value through the ONE table (13 QD-3, merged 2026-09-26), then
+  // the directional exclusion -- see kReadOnlyGaits above for why the second
+  // step is not a second table.
+  if (!chs_a::GaitValueByName(name, out)) return false;
+  for (const std::int64_t g : kReadOnlyGaits) {
+    if (*out == g) return false;
+  }
+  return true;
 }
 
 RtParse ParseHello(const char* json, std::size_t len,
