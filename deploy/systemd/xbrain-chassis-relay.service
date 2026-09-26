@@ -19,7 +19,19 @@ StartLimitBurst=5
 StartLimitIntervalSec=60s
 
 [Service]
-Type=simple
+# 2026-09-26: Type=notify + WatchdogSec RESTORED together with the binary --
+# the deferral note below this block used to say "re-add BOTH together when
+# the binary implements sd_notify", and it now does: a hand-rolled
+# NOTIFY_SOCKET datagram sender (ros2_ws/chassis_relay/include/chassis_relay/
+# sd_notify.h) sends READY=1 once the forwarding is wired and WATCHDOG=1
+# every 1 s from the housekeeping thread. That thread never touches zenoh,
+# so no blocked put can starve the ping (the CRL-6 thread split in
+# relay_core.h); a missed ping means the process is genuinely wedged and a
+# restart is the CRL-4 supervised recovery.
+# WatchdogSec=5s: five missed 1 s pings. Deployment parameter, not contract
+# (10 S3.3.8 mandates the watchdog's existence, not its period).
+Type=notify
+WatchdogSec=5s
 Restart=always
 RestartSec=1s
 OOMScoreAdjust=-1000
@@ -32,13 +44,6 @@ Environment="PYTHONUNBUFFERED=1"
 CPUAffinity=6
 
 ExecStart=/opt/xbrain_v6/data/install/chassis_relay/lib/chassis_relay/chassis_relay
-# WatchdogSec DEFERRED, not dropped: 10 S3.3.8 mandates a watchdog on THIS
-# unit (the emergency-stop relay is the one place S3.3.8 names besides P1).
-# It was removed because a watchdog without sd_notify kills the process at
-# the timeout (empirically confirmed 2026-08-16) and chassis_relay does not
-# yet emit WATCHDOG=1. Re-add BOTH together when the binary implements
-# sd_notify: Type=notify + WatchdogSec=<T>. Adding WatchdogSec alone brings
-# back the restart loop; see docs/NEXT.md.
 
 [Install]
 WantedBy=multi-user.target
