@@ -29,6 +29,11 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
+#: 11 S3.0 信封的共享编解码器. 探活 ping 走它而不是手拼一个 dict --
+#: 八字段手写一次就是一次拼错的机会, 而拼错的表现是对端 ReadEnvelope
+#: 在某个字段上静默退出, 不报错也不回内容(13 DDS-9 的形状).
+from xbrain.common.envelope import Envelope, encode, read_local_boot_id
+
 
 _logger = logging.getLogger("xbrain.p5.wiring")
 
@@ -426,7 +431,8 @@ def run_voice_loop_wiring(stop_flag: dict,
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p5_gateway.fence.cache import FenceCache
     from xbrain.p5_gateway.geo.cache import GeoCache
-    from xbrain.p5_gateway.hmi.estop_probe import EstopProbe
+    from xbrain.p5_gateway.hmi.estop_probe import (EstopProbe, build_ping_data,
+                                                   pong_seq)
 
     # W5: estop-path probe (17 S6.3). Thresholds ride on the hmi subtree
     # (link_rtt_degrade_ms / link_down_misses); the fallbacks are probe tuning,
@@ -553,17 +559,44 @@ def run_voice_loop_wiring(stop_flag: dict,
 
         speak_acks_seen = 0
         state_task_updates = 0
+        #: 11 S8.5 的端到端关联号, 放在信封的 data 里(见下方发布处的长注).
         probe_seq = 0
+        #: 探活 ping 自己的信封 seq. 与上面那个是两个数, 不许合并 --
+        #: 合并就等于把一个 RT-C3.e 允许转发者改写的字段当成关联号用.
+        probe_env_seq = 0
+        #: 信封的 rid / boot 读一次就够: read_local_boot_id 是文件 IO,
+        #: 放进 1 Hz 心跳里是白白的系统调用.
+        probe_rid = os.environ.get("XBRAIN_ROBOT_ID", "")
+        probe_boot = read_local_boot_id()
+        if not probe_rid:
+            # 11 S3.0 的 rid 必填, 而 quadruped 对 rid 不符的 ping 只回一条
+            # seq=0 的 pong(不静默丢, 13 F-15). 现象是 estop_path 恒 down 而
+            # 总线上 pong 照流 -- 不说一声的话, 这与"链路真断"分不清.
+            _logger.warning(
+                "p5 estop probe: XBRAIN_ROBOT_ID unset, ping envelope carries "
+                "an empty rid; quadruped will refuse it and estop_path stays down")
 
         def _on_estop_pong(sample) -> None:
-            # W5: a quadruped reply. Match by seq so a late pong for an older
-            # ping cannot mask a current outage (EstopProbe ignores the mismatch).
+            # W5: 一条 pong. 按 data.seq 匹配, 迟到的旧 pong 对不上号会被
+            # EstopProbe 忽略(不得让晚到的应答掩盖当前的中断).
+            #
+            # *** 关联号取 data.seq, NO 不取信封 seq(11 S8.5, 2026-09-27 裁决).
+            # chassis_relay 在两条腿上都转发本探活(CR-2/CR-3), 而 RT-C3.e
+            # [要求]它用自己的计数改写信封 seq. 拿信封 seq 匹配 = 拿 relay 的
+            # 计数去对我们自己的计数, 永远对不上, RTT(T-23/T-24)就永远测不出来
+            # -- 而 pong 以 1 Hz 照流, 两侧进程都健康, 只有按钮一直是灰的.
+            #
+            # *** 拿不到 data.seq 时 NO 不回落到顶层 seq.
+            # 顶层 seq 是 relay 的计数器, 1 Hz 自增, 与 probe_seq 同频同量级 --
+            # 它迟早会[偶然相等], 那一拍就是一次假匹配, 把一条实际对不上的
+            # 应答记成一次成功 RTT. 一个偶尔为真的匹配比永远不匹配更坏:
+            # 后者是 down(fail-safe), 前者是间歇性 ok(fail-silent).
             try:
                 d = json.loads(bytes(sample.payload).decode("utf-8"))
             except Exception:      # noqa: BLE001
                 d = {}
-            seq = d.get("seq")
-            if isinstance(seq, int):
+            seq = pong_seq(d)
+            if seq is not None:
                 estop_probe.on_pong(seq, _now_mono_ms())
 
         def _on_speak_ack(sample) -> None:
@@ -997,12 +1030,38 @@ def run_voice_loop_wiring(stop_flag: dict,
                     # tick; without a chassis no pong ever arrives -> "down", and
                     # the HMI greys the button honestly (17 S6.3).
                     probe_seq += 1
+                    probe_env_seq += 1
                     ping_mono = _now_mono_ms()
                     estop_probe.on_ping_sent(probe_seq, ping_mono)
-                    # ping payload per 11 S8.5: {type:"ping", seq, t_mono_ms}.
-                    estop_ping_pub.put(json.dumps(
-                        {"type": "ping", "seq": probe_seq,
-                         "t_mono_ms": ping_mono}).encode("utf-8"))
+                    # 11 S8.5 的 ping 体 {type, seq, t_mono_ms}, 装进 S3.0 信封.
+                    #
+                    # *** 信封是必须的, 不是装饰(11 S3.0 逐字: "所有 Zenoh JSON
+                    # 载荷共用此外层结构"). 本行在 2026-09-27 之前发的是裸对象,
+                    # 于是 chassis_relay 走 wrap-if-bare 兜底转发, 而那条兜底
+                    # [写不出 rid](它没有原信封可抄) => quadruped 的 ReadEnvelope
+                    # 在 rid 那一步就退出, data 根本没被填, 回显恒 0.
+                    #
+                    # *** 关联号 seq 放在 data 里, 信封 seq 是另一个数.
+                    # RT-C3.e 要求转发者重建信封并换上自己的 seq, relay 就在这
+                    # 两条腿中间 => 信封 seq 到不了对端. data 是唯一被逐字节
+                    # 搬运的部分, 端到端关联字段只能放那里(见 _on_estop_pong).
+                    ts_sync = bool((hmi_state.get("clock") or {}).get("sync") is True)
+                    estop_ping_pub.put(json.dumps(encode(Envelope(
+                        v=1, rid=probe_rid,
+                        # WALL-CLOCK-OK(align): 11 S3.0 envelope ts, cross-host
+                        # alignment and recording only; the RTT that drives
+                        # estop_path is computed from t_mono_ms, never from this
+                        ts=time.time(),
+                        # CLK-C1 单调秒; CLK-C4: 同机才带 mono, 且 mono 与 boot
+                        # 成对出现 -- 没有 boot 就没有 mono 的定义域.
+                        mono=time.monotonic() if probe_boot else None,
+                        boot=probe_boot or None,
+                        seq=probe_env_seq, src="p5_gateway",
+                        # CLK-A2: ts_sync 抄 ClockStatus.sync(P1-13 镜像过来的),
+                        # NO 本进程不自行判定授时状态; 无来源一律 false(CLK-A3).
+                        ts_sync=ts_sync,
+                        data=build_ping_data(probe_seq, ping_mono),
+                    ))).encode("utf-8"))
                     # 11 S4.6 cloud-link state (P5 is the sole authority, LNK-6).
                     st = link_state.evaluate(now)
                     link_payload = {

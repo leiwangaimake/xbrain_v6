@@ -93,3 +93,56 @@ class EstopProbe:
         """Last measured round-trip, or None before the first pong (for the HMI
         latency readout / state/link.latency_ms)."""
         return self._rtt_ms
+
+
+# --- 11 S8.5 报文形状 (2026-09-27 seq 口径收口) -------------------------
+#
+# *** 为什么这两个函数在这里而不是留在 runtime/main_wiring.py 的闭包里.
+# 它们承载的是本轮修掉的那个缺陷的全部内容 -- "关联号放哪, 从哪读" --
+# 而闭包里的代码没有任何单测够得着. 缺陷本身正是因为没人能对着它写一条
+# 断言才活了这么久. 提出来之后, 下面两条判据都能在无 zenoh 无钟的条件下跑.
+#
+# *** 缺陷的形状(实测 2026-09-27, chassis_relay 上机之后):
+# p5 发 ping 时 seq 写在[顶层], 收 pong 时也按[顶层] seq 匹配; quadruped 的
+# HandlePing 回显的是[信封] seq. 三方看起来一致 -- 直到 chassis_relay 进链:
+# RT-C3.e [要求]转发者重建信封并换上自己的计数, 而 relay 在 CR-2/CR-3 两条腿
+# 上都要转发本探活. 于是 p5 发出去的号在 RT 侧已经被换掉, 回来的是 relay 的
+# 计数, 匹配永远不成立. 现象: pong 以 1 Hz 稳定流动, 两侧进程都健康,
+# estop_path 却恒为 down, HMI 的急停按钮永远置灰.
+#
+# *** 裁决: 三方统一用 data.seq. data 是转发者[逐字节搬运]的部分,
+# 唯一能让端到端关联号活着穿过 relay 的地方.
+
+PING_TYPE = "ping"
+
+
+def build_ping_data(seq: int, mono_ms: int) -> dict:
+    """11 S8.5 的 ping 体 -- 放进 S3.0 信封的 data 里的那一层.
+
+    seq 在这里(data 内), NO 不在信封里. 信封 seq 属传输层, RT-C3.e 允许并
+    要求转发者改写它; 拿它做端到端关联号, 等于把关联号交给中间人重新编号.
+    """
+    return {"type": PING_TYPE, "seq": int(seq), "t_mono_ms": int(mono_ms)}
+
+
+def pong_seq(payload: dict) -> Optional[int]:
+    """从一条 pong 里取端到端关联号, 取不到返回 None(调用方按未匹配处理).
+
+    *** 只读 data.seq, NO 不回落到顶层 seq.
+    顶层 seq 是最后一跳转发者的计数器, 1 Hz 自增, 与 p5 的 probe_seq 同频
+    同量级 -- 它迟早会[偶然相等]. 那一拍会被记成一次成功 RTT, 于是
+    estop_path 间歇性地跳成 ok. 一个偶尔为真的匹配比永远不匹配更坏:
+    永不匹配是 down(fail-safe, 按钮置灰, 提示用遥控器急停), 偶尔匹配是
+    "链路时好时坏"的假象(fail-silent), 而按下去不会停.
+
+    bool 显式排掉: 它是 int 的子类, {"seq": true} 会被当成 1.
+    """
+    if not isinstance(payload, dict):
+        return None
+    body = payload.get("data")
+    if not isinstance(body, dict):
+        return None
+    seq = body.get("seq")
+    if isinstance(seq, bool) or not isinstance(seq, int):
+        return None
+    return seq

@@ -32,9 +32,14 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import time
 
 import zenoh
+
+#: 与 p5 用同一个信封编码器. stub 手拼一份的话, 两边会在某个字段上分叉,
+#: 而分叉的表现是 p5 静默收不到 -- 那正是本 stub 要消除的现象.
+from xbrain.common.envelope import Envelope, encode, read_local_boot_id
 
 _logger = logging.getLogger("xbrain.dev.estop_pong")
 
@@ -45,6 +50,9 @@ PONG_TOPIC = "probe/estop/pong"
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--endpoint", default="tcp/127.0.0.1:7447")
+    #: 信封的 rid(11 S3.0 必填). 缺省取 XBRAIN_ROBOT_ID -- p5 的 ping 用的是
+    #: 同一个来源, 两边不一致的话 pong 看起来像是别的机器人发的.
+    ap.add_argument("--rid", default="")
     args = ap.parse_args()
     logging.basicConfig(
         level=logging.INFO,
@@ -56,21 +64,44 @@ def main() -> int:
     session = zenoh.open(cfg)
     pong_pub = session.declare_publisher(PONG_TOPIC)
     seen = {"n": 0}
+    #: 本 stub 自己的信封计数(替身版的 RT-C3.e 重建). 与回显的 data.seq
+    #: 分开自增, 见 on_ping.
+    env_seq = {"n": 0}
+    rid = args.rid or os.environ.get("XBRAIN_ROBOT_ID", "")
+    boot = read_local_boot_id()
 
     def on_ping(sample) -> None:
-        # seq 必须原样回 -- p5 的 _on_estop_pong 按 seq 匹配, 一条对不上号的
-        # pong 会被 EstopProbe 忽略(晚到的旧 pong 不得掩盖当前的中断).
+        # *** 回显的是 data.seq, NO 不是信封 seq(11 S8.5, 2026-09-27 裁决).
+        # 真身 chassis_relay 按 RT-C3.e 必须用自己的计数改写信封 seq, 所以
+        # 端到端关联号只能在 data 里活下来. 本 stub 若照信封回, 它就会在
+        # [没有 relay 的开发机上]恰好跑通, 一上真链路就全对不上 --
+        # 一个只在替身在场时成立的判据, 正是本 stub 最不该制造的东西.
         try:
             d = json.loads(bytes(sample.payload).decode("utf-8"))
         except Exception:      # noqa: BLE001
             return
-        seq = d.get("seq")
-        if not isinstance(seq, int):
+        body = d.get("data")
+        if not isinstance(body, dict):
+            # 裸报文(2026-09-27 之前 p5 的形态). 不猜, 记一条就走 --
+            # 猜的话本 stub 会替一个违约的发布者把链路撑成 ok.
+            _logger.warning("estop pong stub: ping has no S3.0 data object, "
+                            "cannot correlate; not answering")
             return
-        pong_pub.put(json.dumps(
-            {"type": "pong", "seq": seq,
-             "t_mono_ms": int(time.monotonic() * 1000),
-             "src": "estop_pong_stub"}).encode("utf-8"))
+        seq = body.get("seq")
+        if not isinstance(seq, int) or isinstance(seq, bool):
+            return
+        env_seq["n"] += 1
+        pong_pub.put(json.dumps(encode(Envelope(
+            v=1, rid=rid,
+            ts=time.time(),          # WALL-CLOCK-OK(align): S3.0 envelope ts, alignment only
+            mono=time.monotonic() if boot else None,
+            boot=boot or None,
+            # 自己的计数, 与回显的 data.seq 是两个数 -- 这正是真链路上
+            # relay 干的事, stub 照做才能暴露"拿信封 seq 匹配"的错.
+            seq=env_seq["n"], src="estop_pong_stub", ts_sync=False,
+            data={"type": "pong", "seq": seq,
+                  "t_mono_ms": int(time.monotonic() * 1000)},
+        ))).encode("utf-8"))
         seen["n"] += 1
         if seen["n"] % 60 == 1:
             _logger.info("estop pong stub alive; answered %d pings",
