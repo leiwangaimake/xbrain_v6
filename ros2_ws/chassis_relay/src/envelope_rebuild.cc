@@ -286,9 +286,22 @@ void EmitRebuiltSeqSrc(Out* o, std::uint64_t fwd_seq, const char* fwd_src) {
 
 // The wrap half of the rebuild: an input with NO data field is a BARE
 // payload (the deployed general plane carries them -- p5_gateway's 1 Hz
-// probe/estop/ping is `{"seq":N,"t_mono_ms":M,"type":"ping"}`, no envelope
+// probe/estop/ping was `{"seq":N,"t_mono_ms":M,"type":"ping"}`, no envelope
 // at all), and the S3.0-faithful forward is to AUTHOR a fresh envelope with
-// the whole original object as data. What is deliberately NOT written:
+// the whole original object as data.
+//
+// *** 2026-09-27: p5_gateway now sends a full S3.0 envelope on that key, so
+// THIS PATH IS NOW PURELY DEFENSIVE -- it is no longer the one the estop
+// probe takes. Kept, and kept exactly as it is, because CRL-1 is what it
+// implements: a bare payload is still a payload, and refusing to carry one
+// would make the relay decide what a message MEANS. Worth knowing why the
+// probe stopped using it: the wrap path cannot write `rid` (it has no
+// original envelope to copy one from, see below), and quadruped's envelope
+// reader rejects a ping whose rid is absent -- so a bare ping was answered
+// with seq 0 forever. 11 S8.5 PRB-1..3 and the ruling there fixed the seq
+// half; p5 sending the envelope fixes this half.
+//
+// What is deliberately NOT written:
 //   * rid / mono / boot / ts_sync / orig_* -- there is no original envelope
 //     to copy them from, and fabricating provenance or a production time
 //     would let a message that sat somewhere look fresh (receivers fall
