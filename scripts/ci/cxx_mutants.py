@@ -3074,16 +3074,22 @@ def run_suite(name, workdir):
     # _Alignof, which is a C11 keyword -- the same reason the package's
     # CMakeLists declares LANGUAGES C CXX rather than CXX alone.
     extra = list(extra)
-    for i, arg in enumerate(extra):
-        if not arg.endswith(".c"):
+    # extra_arg, NOT arg: this loop used to shadow the suite's own `arg`
+    # (the test argv[1]), leaving it set to the LAST extra element. No suite
+    # carried both a non-None arg and non-empty extras until relay_keys
+    # (2026-09-26), whose baseline then read its include DIRECTORY as the
+    # contract file and went red with every key "missing".
+    for i, extra_arg in enumerate(extra):
+        if not extra_arg.endswith(".c"):
             continue
-        obj = os.path.join(workdir, os.path.basename(arg)[:-2] + ".o")
+        obj = os.path.join(workdir, os.path.basename(extra_arg)[:-2] + ".o")
         if not os.path.exists(obj):
             # -w: the generated file is not ours to hold to our warnings, same
             # as the COMPILE_OPTIONS the CMakeLists sets on it.
             cc = subprocess.run(
-                ["cc", "-std=c11", "-w", "-c", "-o", obj, arg,
-                 "-I", os.path.dirname(arg), "-I", "/opt/ros/humble/include"],
+                ["cc", "-std=c11", "-w", "-c", "-o", obj, extra_arg,
+                 "-I", os.path.dirname(extra_arg),
+                 "-I", "/opt/ros/humble/include"],
                 capture_output=True, text=True)
             if cc.returncode != 0:
                 sys.stderr.write(cc.stderr)
