@@ -1,0 +1,61 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: chassis_relay.yaml
+# Brief: L6 per-process config for the chassis_relay C++ process (11 S1.1.6)
+#
+# Description:
+#   Layer: L6 (process private). Owner process: chassis_relay (C++, 10 S3.1,
+#   the cross-plane emergency-stop relay of 11 S1.1.4).
+#
+#   TRANSITIONAL DIRECT-READ FILE -- read this note before editing anything:
+#   * The V6 rule (10 S5.4.1) is that processes read the RESOLVED product
+#     under data/run/resolved/, never a configs/ source. chassis_relay does
+#     not yet have a product: the freeze line is currently blocked on
+#     unrelated uncalibrated keys (that blockage is DESIGNED behaviour,
+#     CLAUDE.md iron rule 3 -- do not fill values to push it through), so
+#     this file is read DIRECTLY by the binary for now.
+#   * To keep that safe, this file must carry LITERALS ONLY -- the binary
+#     does not expand ${common.*} references and REFUSES to start when it
+#     finds one here (relay_config.cc). A literal-only file cannot resolve
+#     differently per process, which is the failure S5.4.1 exists to prevent.
+#   * robot_id therefore DUPLICATES common.robot_id for the duration of the
+#     transition. The value matches the running dev stack (the materialised
+#     products under data/run/resolved/ carry robot_id: dev). The env var
+#     XBRAIN_ROBOT_ID overrides it, the same L5 mechanism the Python
+#     processes honour.
+#   * When chassis_relay joins the freeze line: change robot_id back to
+#     ${common.robot_id}, and point the binary at the resolved product
+#     (src/main.cc kDefaultConfigPath carries the twin note).
+#
+#   What is deliberately NOT here: the forwarding whitelist. CRL-3 hardcodes
+#   the twelve CR rows in the binary (relay_keys.cc); a configurable
+#   whitelist would be a general-purpose bridge between the planes. The
+#   whitelist_audit_path below points at the GENERATED registry the binary
+#   compares itself against at startup -- comparison only, mismatch refuses
+#   to start, the file can never widen what is forwarded.
+#
+#   No key in this file is a safety parameter; all four are deployment
+#   endpoints/identity. They are still null-free REQUIRED keys: a missing
+#   one aborts startup with the dotted key path (CLAUDE.md 3.1 posture kept
+#   uniform even where the parameter class does not demand it).
+
+chassis_relay:
+  # {rid} segment of every RT-plane key this process composes
+  # (xbrain/{rid}/rt/..., 11 S2.1). See the transition note above.
+  robot_id: dev
+
+  # General-plane router (plane 1). 11 S1.1.4: on-board participants connect
+  # tcp/127.0.0.1:7447; loopback only, matching configs/zenoh/router_gen.json5.
+  zenoh_gen_endpoint: "tcp/127.0.0.1:7447"
+
+  # RT-plane router (plane 2). 11 S1.1.2: tcp/127.0.0.1:7449, multicast and
+  # gossip constraints are baked into the binary's session document
+  # (relay_session_config.cc), not configurable here.
+  zenoh_rt_endpoint: "tcp/127.0.0.1:7449"
+
+  # The generated whitelist registry (scripts/doccheck/whitelist_gen.py output)
+  # the binary AUDITS itself against at startup: any difference from the
+  # hardcoded CR table refuses to start (CRL-3 double insurance). Absolute
+  # path -- CFG-03 fixes the config root, and this file lives inside it.
+  whitelist_audit_path: "/opt/xbrain_v6/configs/generated/whitelist.yaml"
