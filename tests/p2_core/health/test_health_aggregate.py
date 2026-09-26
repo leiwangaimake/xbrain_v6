@@ -143,9 +143,40 @@ def test_absent_chassis_is_unknown_not_fail():
     failure it has no evidence for -- and being a fatal item, it would report
     overall=fatal on every machine."""
     assert state_from_robot(None)[0] == HealthState.UNKNOWN
-    assert state_from_robot({"hes": False, "chassis_link": True})[0] == \
-        HealthState.OK
     assert state_from_robot({"hes": True})[0] == HealthState.FAIL
+
+    # conn, by the six contract wire names (11 S4.1). The first draft read a
+    # field called chassis_link as a boolean; RobotState never carried it, so
+    # the link-down branch could never fire -- the 2026-09-26 audit's
+    # always-green find. Every branch below went red once against the old
+    # body, which is the point of listing them one by one.
+    assert state_from_robot({"conn": "connected"})[0] == HealthState.OK
+    for bad in ("disconnected", "lost", "incompatible"):
+        st, why = state_from_robot({"conn": bad})
+        assert st == HealthState.FAIL and bad in why
+    assert state_from_robot({"conn": "degraded"})[0] == HealthState.DEGRADED
+    # A value outside the closed set must throw, never slide through as
+    # "linked" (CLAUDE.md 3.5: no silent pass-through).
+    import pytest as _pytest
+    from xbrain.common.enums import ClosedSetViolation as _CSV
+    with _pytest.raises(_CSV):
+        state_from_robot({"conn": "ok"})   # quadruped's INTERNAL name, not wire
+
+    # faults[]: the third leg of 11 S5.1C's criterion. fatal fails, degraded
+    # degrades, warn alone stays OK; E_SAFETY_LINK_LOST fails regardless of
+    # level because 11 S13.15 routes the estop-probe watchdog through it and
+    # names the consequence ("P2 降级 hold").
+    ok_w = {"conn": "connected", "faults": [{"code": "chs:0x1", "level": "warn"}]}
+    assert state_from_robot(ok_w)[0] == HealthState.OK
+    deg = {"conn": "connected",
+           "faults": [{"code": "chs:0x2", "level": "degraded"}]}
+    assert state_from_robot(deg)[0] == HealthState.DEGRADED
+    fat = {"conn": "connected", "faults": [{"code": "chs:0x3", "level": "fatal"}]}
+    assert state_from_robot(fat)[0] == HealthState.FAIL
+    sll = {"conn": "connected",
+           "faults": [{"code": "E_SAFETY_LINK_LOST", "level": "warn"}]}
+    st, why = state_from_robot(sll)
+    assert st == HealthState.FAIL and "safety link" in why
 
 
 def test_clock_absent_is_fail_per_clk_a3():

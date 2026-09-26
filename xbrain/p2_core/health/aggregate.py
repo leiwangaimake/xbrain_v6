@@ -38,6 +38,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional, Tuple
 
+from xbrain.common import enums, errors
+from xbrain.common.enums import ClosedSetViolation
 from xbrain.p2_core.health.factor import FactorConfig, compute_factor
 from xbrain.p2_core.health.items import ITEMS, HealthState, kind_of, level_of
 
@@ -196,9 +198,40 @@ def state_from_robot(robot: Optional[Mapping[str, Any]]
         return HealthState.UNKNOWN, "no state/robot (chassis_relay not wired)"
     if robot.get("hes"):
         return HealthState.FAIL, "hardware e-stop engaged"
-    link = robot.get("chassis_link")
-    if link is False:
-        return HealthState.FAIL, "chassis link down"
+    # conn, by the contract's six wire names (11 S4.1, sets chassis_conn).
+    # The first draft read a field called chassis_link that RobotState never
+    # carried, and read it as a boolean when conn is a string -- get() gave
+    # None, None is not False, and the link-down branch could never fire
+    # (CLAUDE.md 3.2, the always-green form). Found by the 2026-09-26
+    # contract-vs-wire audit; membership is asserted so a renamed or novel
+    # value fails loudly instead of sliding through as "linked".
+    conn = robot.get("conn")
+    if conn is not None:
+        if conn not in enums.CHASSIS_CONN:
+            raise ClosedSetViolation("chassis_conn", str(conn))
+        if conn in ("disconnected", "lost", "incompatible"):
+            return HealthState.FAIL, "chassis conn %s" % conn
+    # faults[], the third leg of 11 S5.1C's chassis criterion ("hello_ack +
+    # conn + faults[] 为空"). E_SAFETY_LINK_LOST rides this array (11
+    # S13.15: the estop-probe watchdog fault, "P2 降级 hold, 拒接新任务") --
+    # a FAIL here is what makes allow_motion false, which IS the hold.
+    faults = robot.get("faults") or []
+    worst = ""
+    for f in faults:
+        if not isinstance(f, Mapping):
+            continue
+        if errors.E_SAFETY_LINK_LOST in str(f.get("code") or ""):
+            return HealthState.FAIL, "safety link lost (estop probe silent)"
+        level = f.get("level")
+        if level == "fatal":
+            worst = "fatal"
+        elif level == "degraded" and worst != "fatal":
+            worst = "degraded"
+    if worst == "fatal":
+        return HealthState.FAIL, "chassis fault fatal (%d fault(s))" % len(faults)
+    if conn == "degraded" or worst == "degraded":
+        return HealthState.DEGRADED, "chassis degraded (conn=%s, faults=%d)" % (
+            conn, len(faults))
     return HealthState.OK, "linked"
 
 
