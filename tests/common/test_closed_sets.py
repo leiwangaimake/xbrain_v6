@@ -297,7 +297,7 @@ def _row_backticked(lines, anchor, what, exclude=()):
 #: still produces a plausible set -- 11 has a charge_stage column of its own --
 #: and nothing else here would notice.
 SET_DOC = {
-    "charge": "11", "power_management": "11",
+    "charge": "11", "power_management": "11", "chassis_conn": "11",
     "plane": "11", "domain": "11", "event_category": "11", "gate_limiter": "11",
     "stop_reason": "11", "task_state": "11", "cls": "11", "device": "11",
     "release_reason": "11", "arb_suspended": "11", "gate_reason": "11",
@@ -430,6 +430,10 @@ EXTRACTORS.update({
     # own, which is the collision SET_DOC below exists to catch.
     "charge": lambda: _row_backticked(
         _DOCS["11"], "`charge` | 六态", "charge", exclude=("charge",)),
+    # RobotState.conn (11 S4.1). The row is the six wire names; "conn" itself
+    # is the field name, not a member.
+    "chassis_conn": lambda: _row_backticked(
+        _DOCS["11"], "`conn` | `disconnected`", "conn", exclude=("conn",)),
     # power_management (PowerState, 11 S4.2) is stated inline in one field cell
     # alongside its chassis source. The source is written `BasicStatus.
     # PowerManagement` -- VALUE_RE requires the whole backtick content to be

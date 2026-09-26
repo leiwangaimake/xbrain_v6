@@ -726,6 +726,12 @@ CHARGE_STAGE = _SETS["charge_stage"]
 #   are different: charge_stage is P3's progress through a charging TASK and
 #   carries to_handover / waiting_plug, which the chassis never reports.
 #   Picking the wrong one compiles and then rejects a legal state.
+# chassis_conn -- RobotState.conn (11 S4.1), the RT-plane composite
+#   availability of the quadruped node. Wire names, not quadruped's internal
+#   session names ("connecting"/"connected" on the wire vs "probing"/"ok"
+#   inside) -- publishing the internal ones was the 2026-09-22 audit finding
+#   that created this set.
+CHASSIS_CONN = _SETS["chassis_conn"]
 CHARGE = _SETS["charge"]
 # power_management -- PowerState.power_management (11 S4.2), from
 #   BasicStatus.PowerManagement (normal 0 / single_battery 1).
@@ -752,7 +758,7 @@ __all__ = ["ClosedSet", "ClosedSetViolation", "SET_NAMES", "get", "parse_enum",
            "LIMITER_CN", "assert_limiter_cn_matches_gate_limiter",
            "TASK_STATE", "CLS", "DEVICE",
            "RELEASE_REASON", "ARB_SUSPENDED", "GATE_REASON", "SUSPEND_KIND",
-           "SUSPEND_REASON", "CHARGE_STAGE", "CHARGE",
+           "SUSPEND_REASON", "CHARGE_STAGE", "CHASSIS_CONN", "CHARGE",
            "POWER_MANAGEMENT",
            # Kept in step with SET_NAMES by test_every_set_is_exported_by_name.
            # fence_role and heading_source were both absent until that metatest

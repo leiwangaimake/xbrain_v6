@@ -464,6 +464,32 @@ sets:
       - cog
       - none
 
+  chassis_conn:
+    # RobotState.conn (11 S4.1): the RT-plane composite availability of the
+    # quadruped node as seen by a consumer. Composite, because it folds two
+    # facts a reader cannot combine on its own: the CHS-A link state (probing/
+    # ok/degraded/lost inside quadruped) and the hello handshake verdict
+    # (incompatible when the peer's proto_version major does not match, 11
+    # S9.1.4). The wire names are the contract's, not the internal ones --
+    # quadruped's session says "probing"/"ok", the wire says "connecting"/
+    # "connected"; publishing the internal names was the defect that put this
+    # set here (found 2026-09-22, contract-vs-wire audit).
+    #
+    # `disconnected` is in the contract's set and deliberately not produced
+    # this batch: the session has no matching state (its life starts at
+    # probing), and inventing a mapping would claim a distinction the process
+    # cannot observe. Registered in 13 v1.35.
+    source: "11 S4.1"
+    anchor: "`conn` | `disconnected`"
+    ordered: false
+    values:
+      - disconnected
+      - connecting
+      - connected
+      - degraded
+      - lost
+      - incompatible
+
   charge:
     # The ROBOT's charge state (RobotState.charge / PowerState.charge), NOT
     # charge_stage below. They are two different sets and the names are one

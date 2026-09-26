@@ -90,6 +90,16 @@ inline constexpr std::string_view kChargeStage[] = {
     "complete",
 };
 
+// chassis_conn -- 11 S4.1   anchor: `conn` | `disconnected`
+inline constexpr std::string_view kChassisConn[] = {
+    "disconnected",
+    "connecting",
+    "connected",
+    "degraded",
+    "lost",
+    "incompatible",
+};
+
 // cls -- 11 S3.1.1   anchor: 3.1.1 目标类别取值
 inline constexpr std::string_view kCls[] = {
     "person",
