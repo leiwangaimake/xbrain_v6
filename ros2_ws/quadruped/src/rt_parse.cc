@@ -482,6 +482,32 @@ RtParse ParseClockStatus(const char* json, std::size_t len,
   return RtParse::kOk;
 }
 
+RtParse ParseProbePing(const char* json, std::size_t len,
+                       const std::string& our_rid, const std::string& our_boot,
+                       ProbePingMsg* out) {
+  if (json == nullptr || out == nullptr) return RtParse::kBadJson;
+  const Json j = Json::parse(json, json + len, nullptr, /*allow_exceptions=*/false);
+  if (j.is_discarded()) return RtParse::kBadJson;
+
+  Json data;
+  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &data);
+  // Envelope first, and a failure stops here with has_seq still false. See the
+  // header: reading a seq out of a message addressed to another robot would
+  // answer that robot's probe with our estop state.
+  if (env != RtParse::kOk) return env;
+
+  // 11 S8.5: the correlation key, and the only field of the ping body this
+  // process reads. UNSIGNED, not merely numeric -- a negative seq read through
+  // get<uint64_t>() wraps to an enormous positive one WITHOUT throwing, so a
+  // plain is_number() check would echo a number that came from nowhere and
+  // looks like a legitimate counter on the wire.
+  const auto it = data.find("seq");
+  if (it == data.end() || !it->is_number_unsigned()) return RtParse::kMissingField;
+  out->has_seq = true;
+  out->seq = it->get<std::uint64_t>();
+  return RtParse::kOk;
+}
+
 RtParse ParseChassisCtrl(const char* json, std::size_t len,
                          const std::string& our_rid, const std::string& our_boot,
                          ChassisCtrlMsg* out) {

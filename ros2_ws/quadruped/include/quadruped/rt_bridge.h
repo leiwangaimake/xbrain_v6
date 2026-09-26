@@ -170,6 +170,12 @@ class RtBridge {
   std::uint64_t estops_applied() const { return estop_applied_; }
   std::uint64_t estops_deduped() const { return estop_deduped_; }
   std::uint64_t pongs_sent() const { return pongs_; }
+  // Pings answered with seq 0 because data.seq was absent or unusable (11
+  // S8.5). Non-zero here and a p5_gateway stuck at estop_path=down mean the
+  // SAME thing, which is the point: without it the two sides only know that
+  // nothing matched, and "the publisher omits the field" is indistinguishable
+  // from "the link is dead" -- 13 DDS-9's failure shape one layer up.
+  std::uint64_t pings_without_seq() const { return pings_no_seq_; }
   // All counters below are written on the zenoh callback thread and read by
   // the supervisor loop in main (this batch); atomics with the default load
   // on read. Before this they were plain integers with no reader at all --
@@ -289,6 +295,7 @@ class RtBridge {
   std::atomic<std::uint64_t> estop_applied_{0};
   std::atomic<std::uint64_t> estop_deduped_{0};
   std::atomic<std::uint64_t> pongs_{0};
+  std::atomic<std::uint64_t> pings_no_seq_{0};
   std::atomic<std::uint64_t> acks_{0};
   // ClockStatus intake (13 Q-5). Two atomics rather than one struct under a
   // mutex: written on the zenoh thread, read on every publish from rt_pub

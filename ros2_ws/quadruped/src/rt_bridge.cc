@@ -815,14 +815,38 @@ void RtBridge::HandlePing(double now_mono_s, const char* data,
   // on answering after the subscription died, which is precisely the failure
   // this probe exists to detect -- and a probe that cannot fail is decoration.
   //
-  // The envelope is parsed only for the seq to echo. A malformed ping still
+  // The message is parsed only for the seq to echo. A malformed ping still
   // gets a pong: the far end treats silence as "the estop chain is dead" and
   // degrades the whole system to hold (13 F-15), so withholding the answer over
-  // a bad field would turn a publisher's bug into a stopped robot.
-  CmdVelMsg probe;   // reused only for its envelope
-  const RtParse r = ParseCmdVel(data, len, rid_, boot_, &probe);
+  // a bad field would turn a publisher's bug into a stopped robot. That is why
+  // the parse verdict is deliberately NOT captured -- there is no value it
+  // could take that would license silence, so a variable holding it would only
+  // invite a future reader to branch on it.
+  //
+  // *** THE ECHO IS data.seq, NOT the envelope seq (11 S8.5; user ruling of
+  // 2026-09-27; 13 Q-4). chassis_relay forwards this key both ways (CR-2 /
+  // CR-3) and RT-C3.e makes it REWRITE the envelope seq with its own counter.
+  // Echoing the envelope therefore returns the RELAY's number to a p5_gateway
+  // waiting for its own: nothing ever matches, the RTT behind estop_path
+  // (11 T-23 / T-24) is never measured, and the failure is invisible from
+  // every side -- pongs flow at 1 Hz, both processes are healthy, and the HMI
+  // just greys its estop button forever. `data` is the only part a forwarder
+  // copies byte for byte, so it is the only place a correlation key survives.
+  ProbePingMsg probe;
+  ParseProbePing(data, len, rid_, boot_, &probe);
   PongInput pong;
-  pong.seq = (r == RtParse::kOk || probe.env.seq != 0) ? probe.env.seq : 0;
+  // No usable data.seq -> echo 0 and COUNT it; still never withhold the pong
+  // (13 F-15 again). Zero is not a value p5_gateway ever sends (it counts from
+  // 1), so the far end scores the reply as unmatched and estop_path degrades
+  // -- the fail-safe direction -- while pings_no_seq_ records WHY on this
+  // side, which an unmatched-reply count on the far end cannot distinguish
+  // from a dead link.
+  if (probe.has_seq) {
+    pong.seq = probe.seq;
+  } else {
+    pong.seq = 0;
+    ++pings_no_seq_;
+  }
   pong.t_mono_ms = ToMs(now_mono_s);
   pong.estop_epoch = proc_->estop_epoch();
   pong.hes = proc_->last_tier1().hes_lock;

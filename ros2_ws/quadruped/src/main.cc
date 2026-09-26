@@ -530,12 +530,16 @@ int Run(const std::string& path) {
         const quadruped::QuadrupedProcess::LinkStatus st = proc.link_status();
         std::fprintf(stderr,
                      "quadruped_m20: rt stats -- states=%llu acks=%llu "
-                     "pongs=%llu hello=%llu ctrl=%llu mode=%llu light=%llu "
+                     "pongs=%llu ping_no_seq=%llu hello=%llu ctrl=%llu mode=%llu light=%llu "
                      "light_send_fail=%llu clock=%llu | resync_bytes=%llu "
                      "tx skip/acq/sent=%llu/%llu/%llu\n",
                      static_cast<unsigned long long>(rt.bridge().states_published()),
                      static_cast<unsigned long long>(rt.bridge().acks_sent()),
                      static_cast<unsigned long long>(rt.bridge().pongs_sent()),
+                     // 11 S8.5: non-zero means a publisher is omitting
+                     // data.seq, which reads on the p5 side exactly like a
+                     // dead link. Printed so the two are separable at a glance.
+                     static_cast<unsigned long long>(rt.bridge().pings_without_seq()),
                      static_cast<unsigned long long>(rt.bridge().hello_answered()),
                      static_cast<unsigned long long>(rt.bridge().ctrl_accepted()),
                      static_cast<unsigned long long>(rt.bridge().mode_accepted()),

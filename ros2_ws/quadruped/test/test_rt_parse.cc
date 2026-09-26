@@ -593,6 +593,83 @@ int main() {
     CHECK(!m.has_custom);
   }
 
+  // ---- 11 S8.5: the probe ping's seq lives in data, not the envelope ------
+  //
+  // The whole point of this parser is that the two numbers are DIFFERENT on
+  // the deployed bus: chassis_relay rewrites the envelope seq (RT-C3.e) on
+  // both legs of the probe, so only data.seq gets from p5_gateway to here
+  // intact. Every case below therefore uses an envelope seq (7, from Wrap)
+  // that is not the data seq -- a parser reading the wrong one cannot pass by
+  // accident.
+  {
+    // The shape the relay actually delivers: envelope seq 7, data.seq 12345.
+    const std::string ping = Wrap("{\"type\":\"ping\",\"seq\":12345}");
+    ProbePingMsg m;
+    CHECK(ParseProbePing(ping.data(), ping.size(), kRid, kBoot, &m) ==
+          RtParse::kOk);
+    CHECK(m.has_seq);
+    CHECK(m.seq == 12345u);
+    // Pinned so a "read the envelope seq" implementation is red on the VALUE
+    // and not only on the envelope field being present.
+    CHECK(m.env.seq == 7u);
+    CHECK(m.seq != m.env.seq);
+  }
+  {
+    // No data.seq at all. kMissingField like every other absent body field,
+    // and has_seq false -- the caller must be able to tell "absent" from
+    // "present and zero", because 13 F-15 makes it answer either way.
+    const std::string ping = Wrap("{\"type\":\"ping\"}");
+    ProbePingMsg m;
+    CHECK(ParseProbePing(ping.data(), ping.size(), kRid, kBoot, &m) ==
+          RtParse::kMissingField);
+    CHECK(!m.has_seq);
+    CHECK(m.seq == 0u);
+  }
+  {
+    // A NEGATIVE seq. This is the case an is_number() check would let through:
+    // get<uint64_t>() on -5 wraps to 18446744073709551611 without throwing, so
+    // the pong would carry a number nobody sent and it would look like a
+    // perfectly ordinary counter on the wire.
+    const std::string ping = Wrap("{\"type\":\"ping\",\"seq\":-5}");
+    ProbePingMsg m;
+    CHECK(ParseProbePing(ping.data(), ping.size(), kRid, kBoot, &m) ==
+          RtParse::kMissingField);
+    CHECK(!m.has_seq);
+  }
+  {
+    // A string seq. Same refusal; separate case because it fails a different
+    // half of the guard (is_number_unsigned is false for a different reason).
+    const std::string ping = Wrap("{\"type\":\"ping\",\"seq\":\"12345\"}");
+    ProbePingMsg m;
+    CHECK(ParseProbePing(ping.data(), ping.size(), kRid, kBoot, &m) ==
+          RtParse::kMissingField);
+    CHECK(!m.has_seq);
+  }
+  {
+    // *** A ping addressed to ANOTHER robot. The envelope verdict must win and
+    // data.seq must stay unread: echoing it would answer someone else's probe
+    // with this robot's estop state, and the operator on the other end would
+    // read our hes/stop_reason as theirs. This is the case that pins "envelope
+    // first" rather than "grab the seq wherever it is".
+    const std::string ping =
+        std::string("{\"v\":1,\"rid\":\"other\",\"ts\":1789455340.125,"
+                    "\"mono\":812.5,\"boot\":\"") + kBoot +
+        "\",\"seq\":7,\"src\":\"chassis_relay\",\"ts_sync\":true,"
+        "\"data\":{\"type\":\"ping\",\"seq\":12345}}";
+    ProbePingMsg m;
+    CHECK(ParseProbePing(ping.data(), ping.size(), kRid, kBoot, &m) ==
+          RtParse::kWrongRobot);
+    CHECK(!m.has_seq);
+    CHECK(m.seq == 0u);
+  }
+  {
+    // Not JSON at all. Still no crash, still no seq.
+    ProbePingMsg m;
+    CHECK(ParseProbePing("not json at all", 15, kRid, kBoot, &m) ==
+          RtParse::kBadJson);
+    CHECK(!m.has_seq);
+  }
+
   if (g_failures == 0) {
     std::printf("ALL RT PARSE TESTS PASSED\n");
     return 0;

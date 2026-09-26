@@ -503,6 +503,72 @@ int main() {
     CHECK(b.pongs_sent() == 2);   // *** answered anyway
   }
 
+  // ---- *** the pong echoes data.seq, NOT the envelope seq ----------------
+  //
+  // 11 S8.5 + the 2026-09-27 ruling. This is the shape the bus actually has:
+  // chassis_relay forwards probe/estop/ping -> rt/safety/probe/ping and
+  // RT-C3.e REQUIRES it to stamp its own envelope seq on the way through, so
+  // by the time a ping reaches this process the envelope seq is the relay's
+  // counter and only data.seq still carries p5_gateway's.
+  //
+  // Wrap() puts 7 in the envelope; the body carries 12345. An implementation
+  // echoing the envelope is red on the second CHECK -- and NOTHING ELSE in
+  // this file would catch it, because on a bus with no relay the two numbers
+  // are equal and every other ping assertion passes either way. That is why
+  // the case is written with the two deliberately different.
+  {
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+
+    const std::string ping = Wrap("{\"type\":\"ping\",\"seq\":12345}");
+    b.HandlePing(5.0, ping.c_str(), ping.size());
+    CHECK(b.pongs_sent() == 1);
+    CHECK(b.pings_without_seq() == 0);
+    const std::string body = FindLast(sent, "rt/safety/probe/pong");
+    // The pong's OWN envelope seq is this process's counter, so the assertion
+    // has to look inside data -- where WritePong put the echo.
+    CHECK(Has(body, "\"data\":{\"type\":\"pong\",\"seq\":12345"));
+    // And the relay's number must not appear as the echo.
+    CHECK(!Has(body, "\"data\":{\"type\":\"pong\",\"seq\":7"));
+
+    // A ping with no data.seq: still answered (13 F-15), echoes 0, and SAYS SO
+    // through the counter. Zero is not a seq p5_gateway sends, so the far end
+    // scores it unmatched and estop_path degrades -- fail-safe -- while this
+    // counter is what tells an operator the link is fine and the PUBLISHER is
+    // wrong. Without it the two are indistinguishable from either end.
+    const std::string bare = Wrap("{\"type\":\"ping\"}");
+    b.HandlePing(6.0, bare.c_str(), bare.size());
+    CHECK(b.pongs_sent() == 2);
+    CHECK(b.pings_without_seq() == 1);
+    CHECK(Has(FindLast(sent, "rt/safety/probe/pong"),
+              "\"data\":{\"type\":\"pong\",\"seq\":0"));
+
+    // A ping for another robot: refused envelope -> no echo of its seq, and
+    // the pong still goes out. Pins that the 0 above comes from "not readable"
+    // rather than from the parser having grabbed 12345 out of a rejected
+    // message.
+    const std::string other =
+        std::string("{\"v\":1,\"rid\":\"other\",\"ts\":1789455340.125,"
+                    "\"mono\":812.5,\"boot\":\"") + kBoot +
+        "\",\"seq\":9,\"src\":\"chassis_relay\",\"ts_sync\":true,"
+        "\"data\":{\"type\":\"ping\",\"seq\":777}}";
+    b.HandlePing(7.0, other.c_str(), other.size());
+    CHECK(b.pongs_sent() == 3);
+    CHECK(b.pings_without_seq() == 2);
+    // Asserted on the echo POSITION, not by scanning the body for "777".
+    // A bare substring scan is red for the wrong reason: the pong's envelope
+    // carries a wall-clock ts and a monotonic mono, and three digits match one
+    // of them often enough to look like a real regression. Measured here on
+    // 2026-09-27 -- the first version of this line failed on a timestamp.
+    CHECK(Has(FindLast(sent, "rt/safety/probe/pong"),
+              "\"data\":{\"type\":\"pong\",\"seq\":0"));
+  }
+
   // ---- *** rt/chassis/state carries estop_epoch ---------------------------
   //
   // This is the field p1_motion is waiting on. 11:1722 makes it mandatory on

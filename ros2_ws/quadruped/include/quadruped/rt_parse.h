@@ -253,6 +253,48 @@ RtParse ParseChassisCtrl(const char* json, std::size_t len,
                          ChassisCtrlMsg* out);
 
 // ---------------------------------------------------------------------------
+// rt/safety/probe/ping -- the estop liveness probe (11 S8.5)
+// ---------------------------------------------------------------------------
+// NEITHER tightening nor loosening: a ping moves nothing, so the 11 S3.0.1
+// asymmetry has no side to put it on, and no verdict this parser could return
+// would justify staying silent. The caller answers whatever arrives (13 F-15);
+// this parser only reports how much of it could be trusted.
+//
+// *** THE SEQ TO ECHO IS data.seq, NOT the envelope seq (11 S8.5; user ruling
+// of 2026-09-27). The envelope seq belongs to the TRANSPORT and RT-C3.e
+// REQUIRES every forwarder to overwrite it with its own counter. chassis_relay
+// sits between p5_gateway and this process on both legs (CR-2 / CR-3), so an
+// envelope echo hands p5_gateway the relay's number instead of the one it
+// sent: no reply ever matches, and the RTT that drives estop_path (11 T-23 /
+// T-24) is never measured -- while every process involved looks healthy and
+// the pongs keep flowing. An end-to-end correlation key survives only inside
+// `data`, which forwarders copy byte for byte.
+struct ProbePingMsg {
+  Envelope env;
+  // data.seq. `has_seq` is carried separately because absence is NOT a
+  // refusal here: the caller still answers, it simply has nothing
+  // trustworthy to echo. Folding the two into "seq == 0 means absent" would
+  // work only until a publisher legitimately counts from zero.
+  bool has_seq = false;
+  std::uint64_t seq = 0;
+};
+
+// Returns kOk only when the envelope AND data.seq were both usable; a readable
+// envelope with no usable data.seq is kMissingField, same as every other body
+// field in this file. `has_seq` is what the caller branches on.
+//
+// data.seq is read ONLY when the envelope is whole, and that is deliberate
+// rather than strict-for-its-own-sake: kWrongRobot means the ping is addressed
+// to ANOTHER robot, and lifting a seq out of a message we just refused would
+// answer someone else's probe with this robot's estop state.
+//
+// 13 F-15 applies to the CALLER, not here: whatever this returns, the pong
+// still goes out. See RtBridge::HandlePing.
+RtParse ParseProbePing(const char* json, std::size_t len,
+                       const std::string& our_rid, const std::string& our_boot,
+                       ProbePingMsg* out);
+
+// ---------------------------------------------------------------------------
 // rt/safety/estop -- TIGHTENING, validation WAIVED (11 S3.0.1, S7.1)
 // ---------------------------------------------------------------------------
 // 11 S3.11 ClockStatus, reduced to the one field this process consumes.

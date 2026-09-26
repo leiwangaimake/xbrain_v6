@@ -2296,8 +2296,30 @@ RT_BRIDGE_MUTANTS = [
     # degrades to hold. A publisher's bad field must not become a stopped robot.
     ("rt_bridge: a malformed ping goes unanswered",
      RT_BRIDGE_CC,
-     "  PongInput pong;\n  pong.seq = (r == RtParse::kOk || probe.env.seq != 0) ? probe.env.seq : 0;",
-     "  if (r != RtParse::kOk) return;\n  PongInput pong;\n  pong.seq = probe.env.seq;"),
+     "  ProbePingMsg probe;\n  ParseProbePing(data, len, rid_, boot_, &probe);",
+     "  ProbePingMsg probe;\n"
+     "  if (ParseProbePing(data, len, rid_, boot_, &probe) != RtParse::kOk) return;"),
+    # 11 S8.5 + the 2026-09-27 ruling: the echo is data.seq. RT-C3.e makes
+    # chassis_relay REWRITE the envelope seq on both legs of the probe, so an
+    # envelope echo hands p5_gateway the relay's counter -- no reply ever
+    # matches, estop_path stays down, and every process looks healthy.
+    ("rt_bridge: the pong echoes the transport seq instead of data.seq",
+     RT_BRIDGE_CC,
+     "  if (probe.has_seq) {\n    pong.seq = probe.seq;",
+     "  if (probe.has_seq) {\n    pong.seq = probe.env.seq;"),
+    # The same bug confined to the degraded branch: a ping whose data.seq was
+    # unreadable must echo 0, not the forwarder's number. Echoing the envelope
+    # there makes an unusable ping look correlated.
+    ("rt_bridge: a ping with no data.seq echoes the transport seq anyway",
+     RT_BRIDGE_CC,
+     "    pong.seq = 0;\n    ++pings_no_seq_;",
+     "    pong.seq = probe.env.seq;\n    ++pings_no_seq_;"),
+    # Without the counter, "the publisher omits data.seq" and "the link is
+    # dead" look identical from both ends (13 DDS-9's shape one layer up).
+    ("rt_bridge: pings with no data.seq are not counted",
+     RT_BRIDGE_CC,
+     "    pong.seq = 0;\n    ++pings_no_seq_;",
+     "    pong.seq = 0;"),
     # 11 S4.1 conn is a closed set; the internal names are what the wire
     # carried until 2026-09-26 ("probing"/"ok"), values every conformant
     # consumer must refuse (11 S13.6).
@@ -2440,6 +2462,34 @@ RT_PARSE_SOURCES = [
 RT_PARSE_TESTS = [os.path.join(QUAD, "test", "test_rt_parse.cc")]
 
 RT_PARSE_MUTANTS = [
+    # 11 S8.5: the probe's seq is read ONLY out of a whole envelope. Lifting it
+    # from a rejected one means a ping addressed to ANOTHER robot gets answered
+    # with this robot's estop state, and the far operator reads our hes and
+    # stop_reason as theirs.
+    ("rt_parse: the probe seq is read out of a rejected envelope",
+     RT_PARSE_CC,
+     "  // header: reading a seq out of a message addressed to another robot would\n"
+     "  // answer that robot's probe with our estop state.\n"
+     "  if (env != RtParse::kOk) return env;",
+     "  // header: reading a seq out of a message addressed to another robot would\n"
+     "  // answer that robot's probe with our estop state.\n"
+     "  if (env == RtParse::kBadJson) return env;"),
+    # is_number() instead of is_number_unsigned(): get<uint64_t>() on -5 wraps
+    # to 18446744073709551611 WITHOUT throwing, so the pong would carry a
+    # counter nobody sent and it would look entirely ordinary on the wire.
+    ("rt_parse: the probe seq accepts any number, wrapping a negative one",
+     RT_PARSE_CC,
+     '  const auto it = data.find("seq");\n'
+     "  if (it == data.end() || !it->is_number_unsigned()) return RtParse::kMissingField;",
+     '  const auto it = data.find("seq");\n'
+     "  if (it == data.end() || !it->is_number()) return RtParse::kMissingField;"),
+    # Reporting presence without the value: the pong then echoes 0 for every
+    # ping while claiming it read one, which is the "always green" shape --
+    # a p5_gateway counting from 1 never matches and never learns why.
+    ("rt_parse: the probe reports a seq it never read",
+     RT_PARSE_CC,
+     "  out->has_seq = true;\n  out->seq = it->get<std::uint64_t>();",
+     "  out->has_seq = true;\n  out->seq = 0;"),
     # 11 S9.4.1 states the chassis lamps have NO RED and puts the deterrent
     # flash on our own payload (PAY-02). Mapping an unknown colour onto a
     # member turns a refused command into a warning that does not warn.
