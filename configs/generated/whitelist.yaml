@@ -34,16 +34,21 @@ processes:
     - rt/chassis/fault
     - rt/chassis/state
   chassis_relay:
+    # 2026-09-26 corrected: these are the GENERAL-plane keys the relay
+    # PUBLISHES (RT->GEN forwarding, 11 S1.1.6 CR-3..CR-10/CR-12). The nine
+    # rt/* keys that sat here came from the doc table's swapped columns --
+    # the relay SUBSCRIBES those on the RT plane (registered in 11 S2.2.1),
+    # they were never its general-plane pub set.
     pub:
-    - rt/chassis/basic
-    - rt/chassis/ctrl/ack
-    - rt/chassis/device
-    - rt/chassis/fault
-    - rt/chassis/motion
-    - rt/chassis/power
-    - rt/chassis/state
-    - rt/safety/estop/ack
-    - rt/safety/probe/pong
+    - cmd/chassis/ctrl/ack
+    - cmd/estop/ack
+    - event/fault/chassis
+    - probe/estop/pong
+    - state/chassis_basic
+    - state/chassis_device
+    - state/chassis_motion
+    - state/power
+    - state/robot
     sub:
     - cmd/chassis/ctrl
     - cmd/estop
