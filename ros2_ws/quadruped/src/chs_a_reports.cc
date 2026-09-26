@@ -120,8 +120,9 @@ OpenSetValue Resolve(const CodeName (&table)[N], std::int64_t raw) {
       return v;
     }
   }
-  // Ban 1: no nearest-match, no default member. The caller is told plainly
-  // that this value is not modelled, and the raw number rides along.
+  // Ban 1 (13 QD-6): no nearest-match, no default member, and no E_SCHEMA
+  // discard either. The caller is told plainly that this value is not
+  // modelled, and the raw number rides along.
   v.known = false;
   v.label = UnknownLabel(raw);
   return v;

@@ -311,9 +311,10 @@ int main() {
     s.OnReport(4.7);
     s.Tick(4.8);
     CHECK(s.state() == ConnState::kOk);
-    // *** CON-05 / BIT-33: the link is back and that is NOT permission to
-    // resume. The epoch moving is what tells the layer above to handshake
-    // again -- the session offers no "resume" of its own.
+    // *** CON-07 / BIT-33 (mis-cited CON-05 until 2026-09-26): the link is
+    // back and that is NOT permission to resume. The epoch moving is what
+    // tells the layer above to handshake again -- the session offers no
+    // "resume" of its own.
     CHECK(s.link_epoch() == 2);
     // The ladder is back at rung 0, so the NEXT drop waits half a second and
     // not five. Without the reset a robot that has been up for hours goes out

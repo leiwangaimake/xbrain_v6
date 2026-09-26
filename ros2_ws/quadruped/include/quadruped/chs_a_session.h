@@ -25,12 +25,15 @@
  *     the difference between "no certificate installed" and "the cable is out"
  *     is otherwise six seconds of identical silence, and 13 S2.2 spends a
  *     paragraph on exactly that confusion.
- *   * reconnecting is NOT resuming. 13 CON-05 / BIT-33: the link coming back
+ *   * reconnecting is NOT resuming. CON-07 / BIT-33: the link coming back
  *     must never by itself restore motion, because the robot may have been
  *     moved, switched to another mode with the factory handset, or put to sleep
  *     while we were away. The session exposes a reconnect counter so the layer
  *     above can require a fresh handshake, and deliberately has no "resume" of
- *     its own.
+ *     its own. (This cited CON-05 until 2026-09-26 -- a propagated mis-cite
+ *     from 11:11841; 00 S19 has CON-05 = interface abstraction and CON-07 =
+ *     failure direction, and "reconnect must not speed the system up" is the
+ *     second.)
  *   * a send failure is counted, an ABSENT ACK is not. The chassis never
  *     acknowledges an axis command (13 CA-7, measured) -- it neither replies
  *     nor logs. Counting missing acks as failures would report a perfectly
@@ -126,7 +129,7 @@ struct SessionConfig {
 struct TickResult {
   bool send_heartbeat = false;
   // The link just came up on `active_endpoint()`. NOT a licence to move:
-  // see CON-05 in the file comment.
+  // see CON-07 in the file comment (mis-cited CON-05 until 2026-09-26).
   bool connected = false;
   // The link just went down. The caller drops any half-assembled frame
   // (chs_a_framer::Reset) so bytes from the old connection are never read as
@@ -187,7 +190,7 @@ class Session {
 
   // Increments on every transition INTO a live link. The layer above compares
   // it with the epoch it last handshook on; a change means "re-handshake",
-  // never "carry on" (CON-05).
+  // never "carry on" (CON-07; mis-cited CON-05 until 2026-09-26).
   std::uint64_t link_epoch() const { return link_epoch_; }
 
   // Diagnostics. Counters rather than log lines: one probe failure at startup

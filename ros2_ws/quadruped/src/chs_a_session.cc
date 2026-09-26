@@ -27,6 +27,12 @@
  * reads a clock: a state machine that reads its own clock cannot be tested for
  * a five-second timeout in less than five seconds, and a test that sleeps is
  * flaky on a loaded machine.
+ *
+ * 13 S10 F-01..F-20: the degradation matrix rows that land in this file are
+ * tagged inline (F-06 uplink aging, F-07 downlink failure run, F-08 second
+ * client). Spelled "13 S10 F-xx" on purpose: bare F-13/F-21 collide with 11
+ * S14's freeze-item family, and 13 v1.35 rules that an unqualified F-number
+ * in code refers to THAT family.
  */
 
 #include "quadruped/chs_a_session.h"
@@ -70,8 +76,8 @@ ErrorDisposition ClassifyErrorCode(std::uint32_t code) {
       d.counts_toward_cmd_fail = true;
       return d;
     // A second client talked to the chassis within the 2 s affinity window
-    // (13 CA-1 / CA-3). Not retried: the window has to pass, and re-sending
-    // inside it re-arms it.
+    // (13 CA-1 / CA-3, matrix row 13 S10 F-08). Not retried: the window has
+    // to pass, and re-sending inside it re-arms it.
     case 0xE006:
       d.second_client = true;
       return d;
@@ -240,9 +246,10 @@ TickResult Session::Tick(double now_mono_s) {
       if (!socket_open_) return out;
     }
   } else {
-    // Live link: age the uplink. 13 S2.5 -- late reports degrade, absent ones
-    // are lost. The order matters: lost is checked first so a long gap does not
-    // spend a tick in degraded on its way past the lost threshold.
+    // Live link: age the uplink. 13 S2.5, matrix row 13 S10 F-06 -- late
+    // reports degrade, absent ones are lost. The order matters: lost is
+    // checked first so a long gap does not spend a tick in degraded on its
+    // way past the lost threshold.
     const double age = now_mono_s - last_report_s_;
     if (last_report_s_ < 0.0 || age > cfg_.state_timeout_lost_s) {
       EnterLost(now_mono_s, &out);
@@ -252,9 +259,10 @@ TickResult Session::Tick(double now_mono_s) {
       state_ = ConnState::kDegraded;
     } else if (send_failures_ < cfg_.cmd_fail_threshold &&
                internal_errors_ < 3) {
-      // Reports are current AND the downlink is healthy. Both halves are
-      // required: a link whose writes keep failing is degraded even while the
-      // chassis is still talking, because the robot is not being driven.
+      // Reports are current AND the downlink is healthy (13 S10 F-07: a
+      // failure run on the downlink degrades). Both halves are required: a
+      // link whose writes keep failing is degraded even while the chassis is
+      // still talking, because the robot is not being driven.
       state_ = ConnState::kOk;
     } else {
       state_ = ConnState::kDegraded;

@@ -96,6 +96,9 @@ Tier1Output Tier1::Stop(StopReason r) noexcept {
 }
 
 Tier1Output Tier1::Step(const Tier1Input& in) noexcept {
+  // 13 QD-2: the stop verdicts live in this ONE function, in the order 11
+  // S9.12.2 lists them -- split implementations are how two locks end up
+  // releasing each other.
   // ---- (1) hardware emergency stop -- LOCKS, software cannot clear it -----
   if (in.hes_raw) {
     hes_lock_ = true;
@@ -118,6 +121,10 @@ Tier1Output Tier1::Step(const Tier1Input& in) noexcept {
   // A command that never arrived has unbounded age, so has_cmd == false lands
   // here. That is the contract's answer, not an omission: see the note about
   // no_source in the header.
+  // 13 TB-1..TB-3: the chassis's own "no axis commands -> decelerate" path
+  // does not loosen this one -- its deceleration is unspecified, and the lock
+  // answers a different question ("may motion resume by itself") than the
+  // chassis path ("will the machine stop").
   const double cmd_age_s = in.now_mono_s - in.last_cmd_rx_mono_s;
   if (!in.has_cmd || cmd_age_s > cmd_timeout_s_) {
     Tier1Output o = Stop(StopReason::kTimeout);

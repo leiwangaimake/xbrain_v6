@@ -7,7 +7,8 @@
  *
  * Description:
  * One function, and it exists to be the ONLY one. Every deadline, age and
- * timeout in this process is measured on CLOCK_MONOTONIC in seconds (CLK-C1),
+ * timeout in this process is measured on CLOCK_MONOTONIC in seconds (CLK-C1,
+ * 13 QD-4),
  * and a second reader is how two time bases appear in one program: they agree
  * for as long as anyone tests them and diverge under a condition nobody
  * reproduced -- a suspend, a leap second reaching the wrong clock, or simply
