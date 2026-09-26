@@ -65,13 +65,27 @@ def test_p1_motion_direction_dash_row_not_counted(extracted):
 
 
 def test_chassis_relay_direction_arrow_mapping(extracted):
-    """GEN -> RT rows land in SUB, RT -> GEN rows land in PUB."""
-    # CR-1 (cmd/estop) is GEN -> RT.
+    """GEN -> RT rows land in SUB, RT -> GEN rows land in PUB.
+
+    2026-09-26 correction (iron rule 1): this case used to assert
+    "rt/chassis/state" in PUB -- the value the SWAPPED doc columns produced.
+    The S1.1.6 (3) table put the RT key in the general-key column for the
+    nine RT->GEN rows; the same-day doc correction ("表体列错位订正") fixed
+    the columns and regenerated configs/generated/whitelist.yaml, and this
+    assertion is now pinned to the corrected mapping: chassis_relay's
+    general-plane PUB side carries the GENERAL keys (state/robot etc.),
+    never rt/* -- an rt/* key here is exactly the defect the correction
+    removed, so its absence is asserted too. Verified against the C++
+    process's own hardcoded table (ros2_ws/chassis_relay, test_relay_keys
+    pins the 12 pairs against the doc; relay/relay_keys mutant suites red
+    on any drift).
+    """
+    # CR-1 (cmd/estop) is GEN -> RT: the relay SUBSCRIBES it.
     assert "cmd/estop" in extracted["chassis_relay"]["sub"]
-    # CR-4 (state/robot proxied to state/robot on general plane) is RT -> GEN.
-    # The general-plane key is state/robot? No -- chassis_relay's general side
-    # for CR-4 is state/robot. Confirmed by _clean_direction mapping.
-    assert "rt/chassis/state" in extracted["chassis_relay"]["pub"]
+    # CR-4 is RT -> GEN: the relay PUBLISHES the general-plane key.
+    assert "state/robot" in extracted["chassis_relay"]["pub"]
+    # The superseded (swapped-column) reading must never come back.
+    assert "rt/chassis/state" not in extracted["chassis_relay"]["pub"]
 
 
 def test_no_wildcard_in_any_whitelist(extracted):
