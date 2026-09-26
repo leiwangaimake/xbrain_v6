@@ -56,6 +56,9 @@ Suites, each a (sources, tests, mutants, test argv[1], extra compiler args):
              sensor package -- it is header-only, so the header IS the source
   chs_b      channel two, the domain-0 DDS reader
   uplink     channel three, the rclcpp publisher
+  relay      chassis_relay forwarding: the S3.0.1 estop fork, the RT-C3.e
+             rebuild, the CRL-3 audit gate, the session config document
+  relay_keys chassis_relay's hardcoded CR table against the contract
 
 The last two are the only ones that can be SKIPPED: they need CycloneDDS and
 rclcpp, which are not in this repository. A skip prints what is missing and
@@ -2964,6 +2967,178 @@ TICK_STATS_MUTANTS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# chassis_relay: the cross-plane emergency-stop relay (11 S1.1.6 (3),
+# CRL-1..CRL-6). Two suites because the runner passes ONE argv[1] per suite
+# and the tests disagree about it: the key-table test needs the contract path
+# (a missing file must FAIL, same rule as rt_keys), the config test needs a
+# writable directory for its fixtures. Same split reason as rt_keys vs
+# quadruped_config above.
+#
+# What a survivor would mean here, by group:
+#   * relay_core mutants -- the S3.0.1 fork is decorative: either a malformed
+#     stop can be dropped (fail-safe inverted) or a malformed enable can be
+#     raw-forwarded (the payload tunnel RT-C3.e closes).
+#   * envelope mutants -- RT-C3.e is decorative: byte relays, stale ts,
+#     leaked seq spaces or lost orig_* would pass.
+#   * session-config mutants -- the silent-merge/silent-deafness values
+#     (multicast, gossip, multihop, listen) are unguarded; the failure has no
+#     runtime symptom at all (11 RT-C2, measured 2026-08-23).
+#   * relay_keys mutants -- the hardcoded whitelist (CRL-3) could drift from
+#     the contract pairing without any test noticing, which is exactly the
+#     defect the 2026-09-26 column-swap correction documents.
+# ---------------------------------------------------------------------------
+RELAY = os.path.join(ROOT, "ros2_ws", "chassis_relay")
+RELAY_CORE_CC = os.path.join(RELAY, "src", "relay_core.cc")
+RELAY_ENV_CC = os.path.join(RELAY, "src", "envelope_rebuild.cc")
+RELAY_CFG_CC = os.path.join(RELAY, "src", "relay_config.cc")
+RELAY_SESSION_CFG_CC = os.path.join(RELAY, "src", "relay_session_config.cc")
+RELAY_KEYS_CC = os.path.join(RELAY, "src", "relay_keys.cc")
+RELAY_INCLUDE = ["-I", os.path.join(RELAY, "include")]
+
+RELAY_SOURCES = [
+    RELAY_KEYS_CC,          # the core links the table (estop_exempt lookups)
+    RELAY_ENV_CC,
+    RELAY_CORE_CC,
+    RELAY_CFG_CC,
+    RELAY_SESSION_CFG_CC,
+]
+RELAY_TESTS = [
+    os.path.join(RELAY, "test", "test_envelope_rebuild.cc"),
+    os.path.join(RELAY, "test", "test_relay_core.cc"),
+    os.path.join(RELAY, "test", "test_relay_config.cc"),
+]
+
+RELAY_MUTANTS = [
+    # *** THE safety property. A relay that drops a truncated stop because it
+    # could not re-envelope it has inverted 11 S3.0.1's fail-safe direction:
+    # the malformed shapes are exactly the ones the exemption exists for.
+    ("relay: the estop exemption is gone -- malformed stops are dropped",
+     RELAY_CORE_CC,
+     "  if (!kRelayTable[index].estop_exempt) {",
+     "  if (true) {"),
+    # RT-C3.e's whole point. Forwarding the ORIGINAL bytes on the success
+    # path is the verbatim byte relay the sub-condition bans; src stays the
+    # producer's and both planes' loss statistics pollute each other.
+    ("relay: the rebuilt envelope is computed and then not sent",
+     RELAY_CORE_CC,
+     "  if (!put_(index, out, out_len)) {",
+     "  if (!put_(index, bytes, len)) {"),
+    # One process-wide counter instead of one per key: every key's stream
+    # shows gaps to its consumer's per-key gap detection (11 S3.0 seq).
+    ("relay: seq shared across keys",
+     RELAY_CORE_CC,
+     "        st.seq.fetch_add(1, std::memory_order_relaxed) + 1;",
+     "        stats_[0].seq.fetch_add(1, std::memory_order_relaxed) + 1;"),
+    # The forward-counter never moves: the stats line reads zero forever and
+    # the 60 s liveness figure cannot distinguish a dead relay from this.
+    ("relay: forwards are not counted",
+     RELAY_CORE_CC,
+     "  st.forwarded.fetch_add(1, std::memory_order_relaxed);\n"
+     "  return ForwardOutcome::kForwarded;",
+     "  return ForwardOutcome::kForwarded;"),
+    # The size gate is gone: an over-cap frame reaches the scanner and, on
+    # the exempt row, goes out raw -- the bounded-refusal boundary
+    # relay_core.h argues is replaced by silent acceptance.
+    ("relay: the oversize gate accepts any length",
+     RELAY_CORE_CC,
+     "  if (len > kMaxForwardBytes || len == 0) {",
+     "  if (len == 0) {"),
+    # data decoded-and-re-encoded stands in for many real re-encoders; the
+    # observable is the same: the bytes differ. Shifting the span by one is
+    # the smallest such difference and must already go red.
+    ("relay: the data span is not copied verbatim",
+     RELAY_ENV_CC,
+     "  o.Lit(\",\\\"data\\\":\");\n  o.SpanOf(in, scan.data);",
+     "  o.Lit(\",\\\"data\\\":\");\n"
+     "  Span shifted = scan.data;\n"
+     "  shifted.off += 1;\n"
+     "  shifted.len -= 1;\n"
+     "  o.SpanOf(in, shifted);"),
+    # orig_src dropped: the audit trail RT-C3.e requires ends at the relay,
+    # and a capture can no longer say who produced the frame.
+    ("relay: orig_src is not preserved",
+     RELAY_ENV_CC,
+     "  EmitCopied(&o, &first, in, \"orig_src\", scan.src);",
+     "  ;"),
+    # ts left as the producer's: latency statistics across the hop collapse
+    # to zero and a message that sat in the relay looks like it never did.
+    ("relay: ts is copied from the producer instead of restamped",
+     RELAY_ENV_CC,
+     "  std::snprintf(num, sizeof(num), \"%s\\\"ts\\\":%.6f\", *first ? \"\" : \",\",\n"
+     "                fwd_ts_s);",
+     "  std::snprintf(num, sizeof(num), \"%s\\\"ts\\\":%.6f\", *first ? \"\" : \",\",\n"
+     "                0.0);"),
+    # Trailing garbage accepted: a rebuild from the object-shaped PREFIX of
+    # garbage launders that garbage into a well-formed envelope.
+    ("relay: the scanner accepts trailing garbage after the object",
+     RELAY_ENV_CC,
+     "  SkipWs(in, len, &i);\n  return i == len;",
+     "  SkipWs(in, len, &i);\n  return true;"),
+    # The audit gate answers "consistent" unconditionally: deleting a key
+    # from the generated registry (or the generator regressing to the
+    # swapped columns) would no longer refuse startup -- CRL-3's double
+    # insurance reduced to a log line.
+    ("relay: the whitelist audit comparison always passes",
+     RELAY_CFG_CC,
+     "  std::string report;",
+     "  std::string report;\n  return report;"),
+    # The four session-config mutants mirror the rt_cfg suite: each value's
+    # failure is SILENCE on the robot (11 RT-C2 measurement, 2026-08-23).
+    ("relay: gossip disabled, the superseded 11 S1.1.2 form",
+     RELAY_SESSION_CFG_CC,
+     "\"gossip:{enabled:true,multihop:false}\"",
+     "\"gossip:{enabled:false,multihop:false}\""),
+    ("relay: gossip multihop enabled, leaking RT gossip across planes",
+     RELAY_SESSION_CFG_CC,
+     "\"gossip:{enabled:true,multihop:false}\"",
+     "\"gossip:{enabled:true,multihop:true}\""),
+    ("relay: the session listens, reachable from off the router (RT-C3.d)",
+     RELAY_SESSION_CFG_CC,
+     "\"listen:{endpoints:[]},\"",
+     "\"listen:{endpoints:[\\\"tcp/0.0.0.0:7450\\\"]},\""),
+    ("relay: the endpoint argument is ignored",
+     RELAY_SESSION_CFG_CC,
+     "\"connect:{endpoints:[\\\"\" + endpoint + \"\\\"]},\"",
+     "\"connect:{endpoints:[\\\"tcp/127.0.0.1:7449\\\"]},\""),
+]
+
+RELAY_KEYS_TESTS = [os.path.join(RELAY, "test", "test_relay_keys.cc")]
+
+RELAY_KEYS_MUTANTS = [
+    # Two rows swap their RT sources: state/robot silently carries the power
+    # aggregate. Every per-key existence check passes; only the PAIRING
+    # assertion can go red, which is why the test pins pairs one by one.
+    ("relay_keys: CR-4 retargeted at the power stream",
+     RELAY_KEYS_CC,
+     "    {\"CR-4\", Direction::kRtToGen, \"state/robot\", \"rt/chassis/state\",",
+     "    {\"CR-4\", Direction::kRtToGen, \"state/robot\", \"rt/chassis/power\","),
+    # The general key grows the contract-text prefix: correct per the doc
+    # tables, heard by NOBODY in the deployed bare-key general plane -- the
+    # exact doc-vs-stack trap relay_keys.h documents.
+    ("relay_keys: CR-1 general key spelled with the doc prefix",
+     RELAY_KEYS_CC,
+     "    {\"CR-1\", Direction::kGenToRt, \"cmd/estop\", \"rt/safety/estop\",",
+     "    {\"CR-1\", Direction::kGenToRt, \"xbrain/dev/cmd/estop\", \"rt/safety/estop\","),
+    # The exemption widened to the relaxing command: a malformed "enable"
+    # would raw-forward into the RT plane -- the one direction 11 S3.0.1
+    # forbids exempting.
+    ("relay_keys: the estop exemption widened to cmd/chassis/ctrl",
+     RELAY_KEYS_CC,
+     "    {\"CR-11\", Direction::kGenToRt, \"cmd/chassis/ctrl\", \"rt/chassis/ctrl\",\n"
+     "     \"Q0_safety\", false,",
+     "    {\"CR-11\", Direction::kGenToRt, \"cmd/chassis/ctrl\", \"rt/chassis/ctrl\",\n"
+     "     \"Q0_safety\", true,"),
+    # A direction flip: the pong would be SUBSCRIBED on the general plane and
+    # published into the RT plane, the reverse of 11 CR-3, and the 3/9 split
+    # the contract freezes breaks with it.
+    ("relay_keys: CR-3 direction inverted",
+     RELAY_KEYS_CC,
+     "    {\"CR-3\", Direction::kRtToGen, \"probe/estop/pong\", \"rt/safety/probe/pong\",",
+     "    {\"CR-3\", Direction::kGenToRt, \"probe/estop/pong\", \"rt/safety/probe/pong\","),
+]
+
+
 SUITES = {
     "quadruped": (QUAD_SOURCES, QUAD_TESTS, QUAD_MUTANTS, GOLDEN, []),
     "quadruped_config": (CONFIG_SOURCES, CONFIG_TESTS, CONFIG_MUTANTS, None, []),
@@ -2988,6 +3163,9 @@ SUITES = {
                SESSION_FACTORY_PY, []),
     "rt_parse": (RT_PARSE_SOURCES, RT_PARSE_TESTS, RT_PARSE_MUTANTS, None,
                  ["-I", os.path.join(ROOT, "common", "third_party")]),
+    "relay": (RELAY_SOURCES, RELAY_TESTS, RELAY_MUTANTS, None, RELAY_INCLUDE),
+    "relay_keys": ([RELAY_KEYS_CC], RELAY_KEYS_TESTS, RELAY_KEYS_MUTANTS,
+                   CONTRACT_MD, RELAY_INCLUDE),
     "chs_b": (CHS_B_SOURCES, CHS_B_TESTS, CHS_B_MUTANTS, None, CHS_B_EXTRA),
     # The flags are computed at import time from the build tree; an empty list
     # means the tree is not there, and run_suite turns that into a loud skip.
