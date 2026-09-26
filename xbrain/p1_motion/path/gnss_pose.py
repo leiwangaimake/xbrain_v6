@@ -125,7 +125,9 @@ def stamp_envelope(data: Dict[str, Any], *, rid: str, boot: str, seq: int,
     ClockStatus.sync (CLK-A2), never a local judgement.
     mutant: stamp mono in milliseconds again -> test_stamp_envelope_shape red."""
     env = Envelope(v=1, rid=rid,
-                   ts=time.time(),                    # WALL-CLOCK-OK(align/log)
+                   # WALL-CLOCK-OK(align): envelope ts per 11 S3.0 -- cross-host
+                   # alignment only; every age and timeout here is mono below.
+                   ts=time.time(),
                    # CLK-C1 monotonic seconds; CLK-C4: without a boot id there is
                    # no domain for mono, so the pair is omitted together.
                    mono=time.monotonic() if boot else None,

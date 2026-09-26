@@ -241,6 +241,8 @@ EXEMPT_TAGS: Dict[str, str] = {
 #: with different syntax means one of them gets written wrong, and a marker
 #: written wrong is a violation the author believes is exempt.
 MARKER_RE = re.compile(r"WALL-CLOCK-OK\(([A-Za-z]+)\)\s*:\s*(\S.*)")
+#: The keyword alone, to tell "no marker" from "a marker written wrong".
+MARKER_WORD = "WALL-CLOCK-OK"
 
 #: How short a reason may be before it stops being one. Twelve characters rules
 #: out "ok" and "needed" without demanding an essay on the same line as the
@@ -323,6 +325,24 @@ def comment_lines_of(path: str) -> Set[int]:
     return set()
 
 
+def marker_text_near(lines: Sequence[str], idx: int) -> bool:
+    """True when the marker KEYWORD appears in marker_for's window.
+
+    Separate from marker_for on purpose: that one answers "is there a valid
+    exemption here", this one answers "did somebody try to write one". The
+    difference is the whole point -- a malformed attempt must not be read as
+    an absence (see the caller).
+    """
+    if idx < len(lines) and MARKER_WORD in lines[idx]:
+        return True
+    j = idx - 1
+    while j >= 0 and lines[j].lstrip().startswith(("#", "*", "//", "/*")):
+        if MARKER_WORD in lines[j]:
+            return True
+        j -= 1
+    return False
+
+
 def marker_for(lines: Sequence[str], idx: int) -> Optional[Tuple[str, str]]:
     """(tag, reason) from a marker on this line or in the comment block above it.
 
@@ -393,6 +413,21 @@ def scan_file(path: str, rel_path: Optional[str] = None):
         # appear in the exemption list where it can be reviewed; silently
         # reclassifying it as prose would hide a declaration somebody made.
         marker = marker_for(lines, i)
+        if marker is None and marker_text_near(lines, i):
+            # The author WROTE a marker and it does not parse -- a slash in the
+            # tag, a missing ": reason", a typo in the keyword. Silently letting
+            # it fall through to the prose branch below is this script's own
+            # stated failure mode ("a marker written wrong is a violation the
+            # author believes is exempt"), and the script had it: a real
+            # time.time() in p1_motion sat exempt-by-typo until the 2026-09-27
+            # audit. An unparseable marker is louder than no marker, because
+            # somebody is relying on it.
+            violations.append((shown, lineno,
+                               "%s carries a WALL-CLOCK-OK marker that does "
+                               "not parse -- required form is "
+                               "WALL-CLOCK-OK(<tag>): <reason>, tag one of %s"
+                               % (hit.name, sorted(EXEMPT_TAGS))))
+            continue
         if marker:
             tag, reason = marker
             if tag not in EXEMPT_TAGS:

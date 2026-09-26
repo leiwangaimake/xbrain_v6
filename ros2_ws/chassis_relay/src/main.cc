@@ -102,11 +102,18 @@ using FaultSlot = hachist::xbrain::rtcomm::LockfreeSlot<FaultFrame>;
 volatile std::sig_atomic_t g_stop = 0;
 void OnSignal(int) { g_stop = 1; }
 
-// ts for rebuilt envelopes: 11 S3.0 defines the field as the WALL clock
-// (Unix seconds UTC); this is one of the wall clock's three legitimate uses
-// (cross-machine alignment). Every interval below uses steady_clock (CLK-C1).
+// WALL-CLOCK-OK(align): ts for rebuilt envelopes. 11 S3.0 defines the field as
+// the WALL clock (Unix seconds UTC) and confines it to cross-machine alignment,
+// recording and latency statistics. Every interval in this process uses
+// steady_clock (CLK-C1); the marker is machine-readable so clock_scan.py counts
+// this as a reviewed decision rather than an unexplained CLOCK_REALTIME on the
+// e-stop path.
 double WallNowS() {
   timespec ts;
+  // WALL-CLOCK-OK(align): see the block above. The marker sits HERE, not only
+  // on the function, because clock_scan.py attaches a marker to the contiguous
+  // comment run directly above the CALL -- a function-level comment is
+  // separated from it by the signature and does not cover the call.
   clock_gettime(CLOCK_REALTIME, &ts);
   return static_cast<double>(ts.tv_sec) +
          static_cast<double>(ts.tv_nsec) * 1e-9;
