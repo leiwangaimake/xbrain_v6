@@ -184,22 +184,61 @@ void ScanRejections() {
   CHECK(s.data.present);
 }
 
+void BarePayloadWraps() {
+  // The deployed general plane carries envelope-less payloads; the probe
+  // ping is the live 1 Hz case (measured 2026-09-26). Data absent => the
+  // WHOLE object becomes data under a fresh relay-authored envelope.
+  const char* ping = "{\"seq\":969863,\"t_mono_ms\":1409403071,"
+                     "\"type\":\"ping\"}";
+  const std::string out = Rebuild(ping, 55.5, 7);
+  CHECK(!out.empty());
+  json j = json::parse(out, nullptr, false);
+  CHECK(!j.is_discarded());
+  // The fresh envelope: authored version, forward ts, per-key seq, the
+  // relay's own name.
+  CHECK(j["v"] == 1);
+  CHECK(out.find("\"ts\":55.500000") != std::string::npos);
+  CHECK(j["seq"] == 7);
+  CHECK(j["src"] == "chassis_relay");
+  // The payload rides whole and byte-verbatim -- the top-level "seq":969863
+  // of the ORIGINAL is inside data now, not fused with the envelope's.
+  CHECK(out.find("{\"seq\":969863,\"t_mono_ms\":1409403071,\"type\":\"ping\"}")
+        != std::string::npos);
+  CHECK(j["data"]["seq"] == 969863);
+  CHECK(j["data"]["type"] == "ping");
+  // Nothing fabricated: no provenance, no production-time claim, no sync
+  // claim -- the receivers' fallbacks are the fail-safe directions.
+  CHECK(!j.contains("rid"));
+  CHECK(!j.contains("mono"));
+  CHECK(!j.contains("boot"));
+  CHECK(!j.contains("ts_sync"));
+  CHECK(!j.contains("orig_ts"));
+  CHECK(!j.contains("orig_src"));
+
+  // A broken envelope (some S3.0 fields, still no data) wraps the same way:
+  // deciding it was "an envelope missing data" rather than "a payload"
+  // would be the semantic judgement CRL-1 forbids.
+  const char* half = "{\"v\":9,\"ts\":2.0,\"src\":\"y\"}";
+  const std::string wrapped = Rebuild(half, 1.0, 1);
+  CHECK(!wrapped.empty());
+  json h = json::parse(wrapped, nullptr, false);
+  CHECK(h["data"]["v"] == 9);
+  CHECK(h["src"] == "chassis_relay");
+}
+
 void RebuildRejections() {
-  // Scans, but carries no data: nothing to forward (S3.0 makes data
-  // required), so the rebuild answers 0 and the caller's per-key policy
-  // decides what that means.
-  const char* no_data = "{\"v\":1,\"ts\":2.0,\"src\":\"y\"}";
-  EnvelopeScan s;
-  CHECK(ScanEnvelope(no_data, std::strlen(no_data), &s));
-  char out[256];
-  CHECK(RebuildEnvelope(no_data, s, 1.0, 1, "chassis_relay", out,
-                        sizeof(out)) == 0);
   // A buffer too small answers 0, never a prefix: half an envelope is
-  // valid-looking JSON that decodes to the wrong thing.
+  // valid-looking JSON that decodes to the wrong thing. Both forms.
+  EnvelopeScan s;
   CHECK(ScanEnvelope(kFull, std::strlen(kFull), &s));
   char tiny[64];
   CHECK(RebuildEnvelope(kFull, s, 1.0, 1, "chassis_relay", tiny,
                         sizeof(tiny)) == 0);
+  const char* bare = "{\"type\":\"ping\",\"pad\":\"0123456789abcdef\"}";
+  CHECK(ScanEnvelope(bare, std::strlen(bare), &s));
+  char tiny2[40];
+  CHECK(RebuildEnvelope(bare, s, 1.0, 1, "chassis_relay", tiny2,
+                        sizeof(tiny2)) == 0);
 }
 
 void DeepNesting() {
@@ -227,6 +266,7 @@ int main() {
   MissingOriginalsOmitted();
   DuplicateKeyLastWins();
   ScanRejections();
+  BarePayloadWraps();
   RebuildRejections();
   DeepNesting();
 

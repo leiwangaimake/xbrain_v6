@@ -81,6 +81,10 @@ struct EnvelopeScan {
   Span src;
   Span ts_sync;
   Span data;
+  // The scanned input's length, recorded so the wrap path (a bare payload,
+  // data absent) can embed the WHOLE object without the caller re-supplying
+  // len -- a second len parameter is a second chance for the two to disagree.
+  std::size_t input_len = 0;
 };
 
 // Scan the top-level JSON object in [in, in+len). Returns true when the input
@@ -92,8 +96,16 @@ bool ScanEnvelope(const char* in, std::size_t len, EnvelopeScan* out);
 // Serialise the rebuilt envelope into [out, out+cap):
 //   { v?, rid?, ts = fwd_ts_s, mono?, boot?, seq = fwd_seq, src = fwd_src,
 //     ts_sync?, orig_ts = old ts?, orig_src = old src?, data }
-// where ? marks fields emitted only when present in the scan. Returns bytes
-// written, or 0 when data is absent or the buffer is too small -- never a
+// where ? marks fields emitted only when present in the scan.
+//
+// A scan with NO data field is a BARE payload (the deployed general plane
+// carries them; p5_gateway's probe ping is one) and takes the WRAP form
+// instead: { v:1, ts, seq, src, data = the whole original object } -- no
+// copied fields, no orig_*, no fabricated rid/mono/boot/ts_sync (the
+// receivers' fallbacks for those are the fail-safe directions). See the
+// WrapBare note in the .cc for the full argument.
+//
+// Returns bytes written, or 0 when the buffer is too small -- never a
 // partial object (half an envelope is valid-looking JSON that decodes to the
 // wrong thing). fwd_ts_s is rendered with six decimals, the precision S3.0's
 // own example carries. Allocation-free.

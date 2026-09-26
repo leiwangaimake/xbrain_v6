@@ -3075,6 +3075,16 @@ RELAY_MUTANTS = [
      RELAY_ENV_CC,
      "  SkipWs(in, len, &i);\n  return i == len;",
      "  SkipWs(in, len, &i);\n  return true;"),
+    # The wrap path gone: bare payloads (the live 1 Hz probe ping among
+    # them) return to being dropped, and the relay black-holes the estop
+    # probe it is itself supervised by.
+    ("relay: bare payloads are dropped instead of wrapped",
+     RELAY_ENV_CC,
+     "  if (!scan.data.present) {\n"
+     "    return WrapBare(in, scan.input_len, fwd_ts_s, fwd_seq, fwd_src, "
+     "out, cap);\n"
+     "  }",
+     "  if (!scan.data.present) {\n    return 0;\n  }"),
     # The audit gate answers "consistent" unconditionally: deleting a key
     # from the generated registry (or the generator regressing to the
     # swapped columns) would no longer refuse startup -- CRL-3's double

@@ -16,8 +16,8 @@
  *
  * The one behavioural fork, and its exact boundary (11 S3.0.1):
  *   * cmd/estop (the single estop_exempt row): a frame that cannot be
- *     re-enveloped -- scan failure, missing data, rebuild overflow -- is
- *     forwarded VERBATIM and counted as raw. "停" may misfire, "放行" must
+ *     re-enveloped -- scan failure or rebuild overflow -- is forwarded
+ *     VERBATIM and counted as raw. "停" may misfire, "放行" must
  *     not (the S3.0.1 one-liner): the collapse
  *     direction of every misreading is the safe one, so formatting must never
  *     block it. This is the relay-side twin of quadruped's rule that every
@@ -27,6 +27,10 @@
  *     RT-C3.e closes -- worst on cmd/chassis/ctrl, whose "enable" is the one
  *     action that makes the machine MORE able to move (放松型: a malformed
  *     frame is rejected, never guessed at).
+ *   * a frame that scans but has NO data field is neither of the above: it
+ *     is a BARE payload (the deployed plane has legitimate ones -- p5's
+ *     probe ping) and is WRAPPED whole into a fresh envelope's data,
+ *     counted as an ordinary forward (envelope_rebuild.h).
  *
  * Threading and CRL-6, argued once here because this class is where the hot
  * path lives (main.cc wires it, relay_session.cc carries the same argument in

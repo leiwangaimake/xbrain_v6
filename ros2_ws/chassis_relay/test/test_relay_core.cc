@@ -125,13 +125,13 @@ void SeqIsPerKey() {
 void MalformedEstopStillForwards() {
   Harness h;
   const std::size_t estop = RowOf("CR-1");
-  // Each shape separately: truncated JSON, non-JSON text, an envelope with
-  // no data. 11 S3.0.1 names truncation and field absence outright; every
-  // one must go through VERBATIM.
+  // Each shape separately: truncated JSON and non-JSON text cannot be
+  // re-enveloped at all; 11 S3.0.1 says they go through anyway, VERBATIM.
+  // (An object that scans but lacks data is NOT in this list any more: it
+  // wraps -- see BareObjectWrapsEverywhere below.)
   const char* shapes[] = {
       "{\"v\":1,\"data\":{\"action\":\"stop\"",  // truncated
       "STOP",                                    // not JSON at all
-      "{\"v\":9,\"ts\":1.0,\"src\":\"hmi\"}",    // scans, no data
   };
   std::size_t expected_raw = 0;
   for (const char* s : shapes) {
@@ -145,6 +145,28 @@ void MalformedEstopStillForwards() {
   }
   CHECK(h.core.stats(estop).forwarded_raw.load() == expected_raw);
   CHECK(h.core.stats(estop).dropped_malformed.load() == 0);
+}
+
+void BareObjectWrapsEverywhere() {
+  Harness h;
+  // The live case this exists for: p5_gateway's probe ping is a BARE object
+  // (no S3.0 envelope; measured on the deployed plane 2026-09-26). It must
+  // FORWARD -- wrapped, not raw and not dropped -- on its non-exempt row,
+  // or the relay black-holes the estop probe it is itself supervised by.
+  const char* ping = "{\"seq\":42,\"t_mono_ms\":9,\"type\":\"ping\"}";
+  const std::size_t row = RowOf("CR-2");
+  CHECK(h.core.OnSample(row, ping, std::strlen(ping), 3.5) ==
+        ForwardOutcome::kForwarded);
+  CHECK(h.sent.size() == 1);
+  json j = json::parse(h.sent[0].body, nullptr, false);
+  CHECK(!j.is_discarded());
+  CHECK(j["src"] == "chassis_relay");
+  CHECK(j["data"]["type"] == "ping");
+  CHECK(j["data"]["seq"] == 42);
+  // The estop row wraps the same shape too (still a forward, not raw).
+  CHECK(h.core.OnSample(RowOf("CR-1"), ping, std::strlen(ping), 3.6) ==
+        ForwardOutcome::kForwarded);
+  CHECK(h.core.stats(RowOf("CR-1")).forwarded_raw.load() == 0);
 }
 
 void WellFormedEstopIsRebuilt() {
@@ -228,6 +250,7 @@ int main() {
   SeqIsPerKey();
   MalformedEstopStillForwards();
   WellFormedEstopIsRebuilt();
+  BareObjectWrapsEverywhere();
   MalformedNonExemptDrops();
   OversizeDropsEverywhere();
   PutRefusalIsCounted();

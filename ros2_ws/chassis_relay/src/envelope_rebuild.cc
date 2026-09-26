@@ -225,6 +225,7 @@ bool WalkPairs(const char* in, std::size_t len, std::size_t* i,
 bool ScanEnvelope(const char* in, std::size_t len, EnvelopeScan* out) {
   if (in == nullptr || out == nullptr || len == 0) return false;
   *out = EnvelopeScan{};
+  out->input_len = len;
   std::size_t i = 0;
   SkipWs(in, len, &i);
   if (i >= len || in[i] != '{') return false;
@@ -283,16 +284,52 @@ void EmitRebuiltSeqSrc(Out* o, std::uint64_t fwd_seq, const char* fwd_src) {
 
 }  // namespace
 
+// The wrap half of the rebuild: an input with NO data field is a BARE
+// payload (the deployed general plane carries them -- p5_gateway's 1 Hz
+// probe/estop/ping is `{"seq":N,"t_mono_ms":M,"type":"ping"}`, no envelope
+// at all), and the S3.0-faithful forward is to AUTHOR a fresh envelope with
+// the whole original object as data. What is deliberately NOT written:
+//   * rid / mono / boot / ts_sync / orig_* -- there is no original envelope
+//     to copy them from, and fabricating provenance or a production time
+//     would let a message that sat somewhere look fresh (receivers fall
+//     back to receive-time age and to ts_sync=false, both the fail-safe
+//     directions of S3.0/S3.0.1);
+//   * any interpretation of the object -- an input that has SOME envelope
+//     fields but no data ({"v":9,"ts":..}) wraps the same way; deciding it
+//     was "a broken envelope" rather than "a payload" would be the payload
+//     judgement CRL-1 forbids, and the consumer's schema rejects it either
+//     way.
+// v IS written: it versions THIS envelope, which the relay is the author of.
+static std::size_t WrapBare(const char* in, std::size_t len, double fwd_ts_s,
+                            std::uint64_t fwd_seq, const char* fwd_src,
+                            char* out, std::size_t cap) {
+  Out o{out, cap};
+  char num[48];
+  std::snprintf(num, sizeof(num), "{\"v\":1,\"ts\":%.6f", fwd_ts_s);
+  o.Lit(num);
+  EmitRebuiltSeqSrc(&o, fwd_seq, fwd_src);
+  o.Lit(",\"data\":");
+  // The whole input, verbatim -- ScanEnvelope already proved it is exactly
+  // one object in optional whitespace, and surrounding whitespace is legal
+  // inside a JSON value position.
+  o.Bytes(in, len);
+  o.Lit("}");
+  if (o.overflow) return 0;
+  return o.n;
+}
+
 std::size_t RebuildEnvelope(const char* in, const EnvelopeScan& scan,
                             double fwd_ts_s, std::uint64_t fwd_seq,
                             const char* fwd_src, char* out, std::size_t cap) {
   if (in == nullptr || fwd_src == nullptr || out == nullptr || cap == 0) {
     return 0;
   }
-  // No data, no message: the envelope exists to carry it (11 S3.0 makes data
-  // required), and an envelope around nothing would be a heartbeat nobody
-  // registered.
-  if (!scan.data.present) return 0;
+  // No data field = a bare payload: wrap it whole (see WrapBare above).
+  // scan.data carries no offsets to recover the input length from, so the
+  // caller-visible contract stays "the scan plus the same in/len".
+  if (!scan.data.present) {
+    return WrapBare(in, scan.input_len, fwd_ts_s, fwd_seq, fwd_src, out, cap);
+  }
 
   Out o{out, cap};
   o.Lit("{");
