@@ -951,11 +951,18 @@ class CloudBridge:
         两端 ts 相减推断安全时延". 两端墙钟可能差几秒, 拿它算安全时延会
         得出一个既可能过大也可能为负的数.
 
-        *** applied 现在必然是空数组.
+        *** applied 现在必然是空数组 -- 2026-09-27 理由换了, 结论没换.
         v2.0 要求它列[实际采取]的措施(样例 ["zero_vel","charge_abort"]).
-        确认通道是 11 CR-12(cmd/chassis/ctrl/ack, 由 chassis_relay 转发
-        quadruped 的回执), 那个进程未编译 => 在 ack 的时限内我方拿不到
-        任何"已生效"的确认.
+        ! 原文写的理由是"确认通道是 11 CR-12, 那个进程未编译". 两处都要改:
+          (1) 确认通道是 CR-10(cmd/estop/ack <- rt/safety/estop/ack, 载荷
+              11 S7.1.1 EstopAck, 带 applied_zero_vel), NO 不是 CR-12
+              (那是 cmd/chassis/ctrl/ack, 解锁指令的回执, 另一件事);
+          (2) chassis_relay 已于 2026-09-26 上机并在跑, "未编译"不再成立.
+        * 现在真正挡着的是[次序], 不是缺进程: 本函数在收到云端指令的那一拍
+        就要把 ack 发出去, 而 quadruped 的 EstopAck 按 ESTOP_ACK_MS 最多
+        100 ms 后才到 -- 本函数落笔时它还没来.
+        => 要填 applied 就得二选一: 等最多 100 ms 再 ack, 或者先 ack 再补发
+        一条. 两者 v2.0 都没规定, 属未裁, 故本轮不做.
         NO 不能因为"p1 几乎必定会锁存"就填 ["zero_vel"] -- 那是凭信心断言,
         与 estop_path 曾被硬编码成 "ok" 是同一个错(见 hmi/estop_probe.py).
         空数组配上非空的 latency 字段, 恰好告诉 Qt: 命令收到了, 转发了,

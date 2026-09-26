@@ -50,11 +50,16 @@ def _robot(**over):
 def test_battery_and_storage_are_null_not_invented():
     """*** 本文件最重要的一条.
 
-    state/power 今天没有任何机内发布者. 三种做法:
+    底盘离线时 state/power 上没有内容(quadruped 无可发, relay 无可转).
+    三种做法:
       soc: 0    -> Qt 显示电量耗尽, 操作员中止出勤
       soc: 100  -> Qt 显示满电, 操作员派长任务, 半路没电
       soc: null -> Qt 显示"未接入", 联调当天一眼看出哪一侧没做完
 前两种是 fail-silent 且看起来正常. 第三种难看但真实.
+
+    *** 2026-09-27: battery 已接上 state/power(CR-5), 但[本条判据不变].
+    源接上不等于源一定有内容 -- 这条测的是"没有内容时不许编", 而那正是
+    真机上底盘没上电的每一分钟.
 
     MUTATION: 把 battery 换成 {"soc": 0, ...} -> 这里红.
     """
@@ -63,6 +68,28 @@ def test_battery_and_storage_are_null_not_invented():
     assert d["battery"] is None, (
         "battery 被编了一个值: %r -- 操作员会据此做出错误决定" % d["battery"])
     assert d["storage"] is None
+
+
+def test_battery_soc_comes_through_when_power_is_present():
+    """源在且有内容时, soc 必须真的出来 -- 否则上一条会退化成"永远绿".
+
+    *** 这一条与上一条是一对, 缺了它上一条就不可证伪:
+    一个"battery 恒 null"的实现能通过上一条的每一个字. 3.2 形态一.
+    """
+    d = _robot(power={"soc_pct": 46.8, "remain_mile_km": 4.2})
+    assert d["battery"]["soc"] == 46.8
+    # 另外三个仍无来源 -- 见 _battery 的 docstring(双电池塌缩规则未裁,
+    # 且 PowerState 根本没有电流字段). NO 不许为了填满而挑一块电池的值.
+    assert d["battery"]["voltage_v"] is None
+    assert d["battery"]["current_a"] is None
+    assert d["battery"]["temperature_c"] is None
+
+
+def test_a_non_numeric_soc_does_not_become_a_reading():
+    """坏报文不得变成一个电量读数. bool 显式排掉(True 会算成 1%)."""
+    for bad in (None, "46.8", True, [46.8], {}):
+        d = _robot(power={"soc_pct": bad})
+        assert d["battery"]["soc"] is None, "soc=%r 被当成了读数" % (bad,)
 
 
 def test_the_unsourced_list_matches_what_is_actually_null():
@@ -74,11 +101,20 @@ def test_the_unsourced_list_matches_what_is_actually_null():
 
     这条也是为了将来: 源接上以后要删 UNSOURCED_ROBOT_SECTIONS 里的对应项,
     忘了删的话本条会红, 提醒投影还在发 null.
+
+    *** 2026-09-27 判据的[口径]改了, 不只是清单少了一项.
+    原来拿一个[什么都不供]的调用去比对, 那种调用分不清两件事:
+      (a) 这段机内根本没人采     -> 永远 null;
+      (b) 这段有来源, 只是此刻静默 -> 这一拍 null.
+    battery 从 (a) 变成 (b)(state/power 的发布者 chassis_relay 2026-09-26
+    上机), 而在"什么都不供"的调用下它和 storage 长得一模一样 -- 也就是说
+    原判据[测不出这次变化], 它只会红一次然后被人把 battery 划掉了事.
+    现在改成[每个来源都供上]再比对: 剩下还是 null 的, 才是真的没有采集点.
     """
     from xbrain.p5_gateway.outbound.state_projection import (
         UNSOURCED_ROBOT_SECTIONS, robot_payload)
 
-    d = _robot()
+    d = _robot(power={"soc_pct": 46.8}, devices=[], motion_speed_mps=0.6)
     actually_null = {k for k, v in d.items() if v is None}
 
     assert set(UNSOURCED_ROBOT_SECTIONS) == actually_null, (
@@ -792,3 +828,75 @@ def test_the_two_severity_closed_sets_are_covered_both_ways():
     assert not extra, "映射表里有机内闭集外的键: %r" % sorted(extra)
     bad = set(INTERNAL_TO_V2_EVENT_SEV.values()) - set(EVENT_SEV)
     assert not bad, "映射到了 v2.0 闭集外的值: %r" % sorted(bad)
+
+
+# --- robot_state 的 fault / emergency_stop (2026-09-27, CR-4 接线) ------
+
+def _rs(robot, running=False):
+    from xbrain.p5_gateway.outbound.state_projection import robot_state_from
+    return robot_state_from(robot, running=running)
+
+
+def test_robot_state_without_state_robot_is_the_task_verdict():
+    # 底盘离线/relay 未转发 -> 没有 hes 也没有 faults 可读.
+    # NO 不报 fault: "读不到" 不是 "有故障" 的证据, 那会让每台没接底盘的
+    # 机器在 Qt 上显示故障, 而真出故障时没人再看那一栏.
+    assert _rs(None) == "idle"
+    assert _rs(None, running=True) == "running"
+    assert _rs({}, running=True) == "running"
+
+
+def test_hes_engaged_outranks_running():
+    # RED MUTANT: 把 hes 判定放到 running 之后 -> 急停接合时报 running.
+    # 那是告诉操作员"它在跑", 而它一步都动不了.
+    assert _rs({"hes": True}, running=True) == "emergency_stop"
+
+
+def test_hes_lock_alone_is_still_emergency_stop():
+    # *** 这一格最容易漏: hes 已经落回 false 而 hes_lock 还在.
+    # 11 S4.1 逐字: hes_lock "hes 上跳即置位, 软件不可解除, 须 hes == 0 +
+    # 现场人工 enable 才清除" -> 这段时间机器人[仍然动不了].
+    # 只看 hes 会让它显示成 idle, 恰好是操作员刚松开急停, 界面说就绪, 
+    # 而机器人不动的那一段.
+    # RED MUTANT: 去掉 hes_lock 那半 -> 这里红.
+    assert _rs({"hes": False, "hes_lock": True}) == "emergency_stop"
+
+
+def test_a_fatal_fault_is_fault_and_outranks_running():
+    # RED MUTANT: 不读 faults[] -> 带着致命故障报 running.
+    assert _rs({"faults": [{"code": "chs:0x8001", "level": "fatal"}]},
+               running=True) == "fault"
+
+
+def test_warn_and_degraded_faults_do_not_make_the_robot_faulted():
+    # v2.0 的 robot_state 里没有 degraded 这一档. 把 degraded 报成 fault,
+    # 一条"充电桩无电流"就会让整机显示故障; 而它走 devices 与 event 两条
+    # 路上报, 不归本字段.
+    # RED MUTANT: 判据放宽成 level != "warn" -> degraded 用例红.
+    assert _rs({"faults": [{"code": "chg:0x1007", "level": "degraded"}]}) == "idle"
+    assert _rs({"faults": [{"code": "chg:0x1005", "level": "warn"}]},
+               running=True) == "running"
+
+
+def test_emergency_stop_outranks_a_fatal_fault():
+    # 急停是比故障更硬的事实: 前者说"现在动不了", 后者说"有东西坏了".
+    assert _rs({"hes": True,
+                "faults": [{"code": "chs:0x8001", "level": "fatal"}]}) == \
+        "emergency_stop"
+
+
+def test_a_level_outside_the_closed_set_throws():
+    # CLAUDE.md 3.5: 闭集外的值必抛, NO 不静默透传也不"未知值降级解释".
+    # 一个被静默丢掉的未知 level, 表现是"新故障等级上线后整机永远不报故障".
+    import pytest as _pytest
+
+    from xbrain.p5_gateway.outbound.state_projection import ProjectionError
+    with _pytest.raises(ProjectionError):
+        _rs({"faults": [{"code": "chs:0x8001", "level": "fail"}]})
+
+
+def test_hes_must_be_a_real_true_not_a_truthy_value():
+    # `is True` 而不是真值判断: 一条 {"hes": "false"} 的坏报文在真值判断下
+    # 是 True -> 整机被一条字符串打成急停态. 反方向也一样要守.
+    assert _rs({"hes": "false"}) == "idle"
+    assert _rs({"hes": 1}) == "idle"

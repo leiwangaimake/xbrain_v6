@@ -79,6 +79,17 @@ EVENT_WILDCARD_TOPIC = "event/**"        # W2: event/{severity}/{category} strea
 EVENT_ACK_TOPIC = "event/ack"            # 17 S3.5.1: cloud ack -> mark delivered
 EVENT_RECON_RSP_TOPIC = "event/recon/rsp"  # 17 S3Y.3: cloud recon answer
 RECON_PERIOD_S = 300.0                    # 17 S3Y.3 recon.period_s (interim const)
+#: 11 S2.2.2 的机内裸 key. 两条都由 chassis_relay 转发上来(CR-4 / CR-5),
+#: 2026-09-26 relay 上机后才第一次真的有内容 -- 在那之前 p5 订了也只会
+#: 收到 0 条, 所以直到本轮才接.
+#:
+#: state/robot: S2.2.2 该行的消费者列逐字含 p5_gateway.
+#: state/power: 同表该行的消费者列写的是 "p3_task . p2_core . HMI . 云端" --
+#:   而 HMI 后端与云端面[都在 p5 进程内](CLAUDE.md S0.1: 系统无独立 HMI
+#:   进程; 11:1671 逐字: 云端面 p5_gateway 是唯一发布/订阅方). 换句话说
+#:   那两个消费者除了在这里订, 没有别的地方可以存在.
+STATE_ROBOT_TOPIC = "state/robot"        # CR-4: RobotState 10 Hz (11 S4.1)
+STATE_POWER_TOPIC = "state/power"        # CR-5: PowerState 1 Hz (11 S4.2)
 PROBE_ESTOP_PING_TOPIC = "probe/estop/ping"  # W5: P5 ping (11 CR-2, 17 S6.3)
 PROBE_ESTOP_PONG_TOPIC = "probe/estop/pong"
 # W5 的 pong 由 chassis_relay 发 -- 11 S2.2 那一行逐字: 发布者
@@ -469,6 +480,8 @@ def run_voice_loop_wiring(stop_flag: dict,
         "audio_updated_ms": 0,       # last state/audio arrival (mono)
         "pose_updated_ms": 0,        # last state/pose arrival (mono) -> staleness gate
         "clock": None,               # state/clock -> RTK time-sync indicator
+        "robot": None,               # state/robot -> hes / faults[] / conn (CR-4)
+        "power": None,               # state/power -> soc_pct / batteries (CR-5)
         "events": [],                # event/**    -> event stream ring (W2)
         "health": None,              # health/factor -> /api/health (W8)
         "bit": None,                 # health/bit  -> /api/bit (W8)
@@ -769,6 +782,32 @@ def run_voice_loop_wiring(stop_flag: dict,
                 return
             hmi_state["clock"] = d.get("data")
 
+        def _on_state_robot(sample) -> None:
+            # CR-4: chassis_relay 把 rt/chassis/state 转上来. 取 data 那一层
+            # (relay 按 RT-C3.e 重建过信封, 内容原样在 data 里).
+            #
+            # *** 解析失败时 NO 不清缓存.
+            # 一条坏报文不是"底盘没了"的证据; 清掉会让 robot_state 在坏报文
+            # 那一拍跳回 idle, 而 idle 是[比真相更乐观]的那个方向 --
+            # 急停接合着却报 idle, 正是 3.2 要挡的 fail-silent.
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                return
+            body = d.get("data")
+            if isinstance(body, dict):
+                hmi_state["robot"] = body
+
+        def _on_state_power(sample) -> None:
+            # CR-5. 同上: 坏报文不清缓存.
+            try:
+                d = json.loads(bytes(sample.payload).decode("utf-8"))
+            except Exception:      # noqa: BLE001
+                return
+            body = d.get("data")
+            if isinstance(body, dict):
+                hmi_state["power"] = body
+
         def _on_event(sample) -> None:
             # R-2: "event/**" also matches our OWN event/replay/** (backfill),
             # event/ack, and event/recon/{req,rsp} -- all handled by dedicated
@@ -951,6 +990,8 @@ def run_voice_loop_wiring(stop_flag: dict,
         audio_sub = gen.declare_subscriber(STATE_AUDIO_TOPIC, _on_state_audio)
         pose_sub = gen.declare_subscriber(STATE_POSE_TOPIC, _on_state_pose)
         clock_sub = gen.declare_subscriber(STATE_CLOCK_TOPIC, _on_state_clock)
+        robot_sub = gen.declare_subscriber(STATE_ROBOT_TOPIC, _on_state_robot)
+        power_sub = gen.declare_subscriber(STATE_POWER_TOPIC, _on_state_power)
         event_sub = gen.declare_subscriber(EVENT_WILDCARD_TOPIC, _on_event)
         event_ack_sub = gen.declare_subscriber(EVENT_ACK_TOPIC, _on_event_ack)
         recon_rsp_sub = gen.declare_subscriber(

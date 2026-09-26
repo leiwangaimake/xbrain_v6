@@ -37,7 +37,7 @@ Boundaries: 只做形状换算与闭集校验. 不发布(那是 runtime/cloud_wi
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from .cloud_envelope import normalise_progress
 
@@ -48,6 +48,11 @@ from .cloud_envelope import normalise_progress
 
 ROBOT_STATES = ("offline", "idle", "running", "charging", "fault",
                 "emergency_stop")
+
+#: 11 S4.1 RobotState.faults[].level 的闭集. NO 与 S9.8.4 ChassisFault 的
+#: level(warn|degraded|fail) 不是同一个集合 -- 两处形近而 fail/fatal 不同名,
+#: 抄错一个字整条 state/robot 就会因闭集越界被打掉.
+FAULT_LEVELS = ("warn", "degraded", "fatal")
 TASK_STATES = ("idle", "queued", "running", "paused", "completed", "failed",
                "cancelled")
 
@@ -245,8 +250,17 @@ def to_v2_event_sev(value: Any) -> str:
     return mapped
 EVENT_STATES = ("active", "cleared", "acknowledged", "occurred")
 
-#: 今天没有任何机内发布者的段. 见模块头.
-UNSOURCED_ROBOT_SECTIONS = ("battery", "storage")
+#: 即便[每一个来源都供上]仍然为 null 的段 -- 也就是机内根本没有采集点的那些.
+#:
+#: *** 2026-09-27 口径变了, 不只是删了一项.
+#: 原定义是"今天没有发布者的段", 清单 = (battery, storage), 而判据是拿一个
+#: [什么都不供]的调用去比对. 那个判据分不清两件事:
+#:   (a) 这段机内根本没人采 -> 永远 null;
+#:   (b) 这段有来源, 只是此刻源静默(底盘离线) -> 这一拍 null.
+#: 两者在"什么都不供"的调用下长得一模一样. battery 正是 (b): state/power
+#: 的发布者 chassis_relay 已于 2026-09-26 上机(CR-5), 源是有的.
+#: 现清单只留 (a), 判据改为拿[全供]的调用比对 -- 见 tests 里那条.
+UNSOURCED_ROBOT_SECTIONS = ("storage",)
 
 
 class ProjectionError(ValueError):
@@ -318,13 +332,17 @@ def robot_payload(*, robot_state: str, task_state: str,
                   clock: Optional[Dict[str, Any]],
                   devices: Optional[Sequence[Dict[str, Any]]],
                   alarm_window_active: bool,
-                  motion_speed_mps: Optional[float] = None
+                  motion_speed_mps: Optional[float] = None,
+                  power: Optional[Dict[str, Any]] = None
                   ) -> Dict[str, Any]:
     """v2.0 S4.2 的八段.
 
-    *** battery 与 storage 恒为 null, 且这是有意的.
-    它们今天没有任何机内发布者. 见模块头对三种做法的比较 -- 编一个数会让
-    操作员据此做出错误决定, 而 null 只是难看.
+    *** storage 恒为 null: 机内没有采集点. 见模块头对三种做法的比较 --
+    编一个数会让操作员据此做出错误决定, 而 null 只是难看.
+
+    *** battery 从 2026-09-27 起有源了(state/power, CR-5), 但[底盘离线时
+    仍然整段 null]. 这不是退步, 是同一条规矩: 源在而此刻没有内容, 与源
+    根本不存在, 对 Qt 是同一个意思 -- "这个数我给不出". 两者都不得填 0.
 
     * alarm_window_active 必须[反映实际生效状态], 不是配置里写没写.
     v2.0 S3.5 逐字: 授时未同步时带时间窗的规则不命中. 所以调用方在
@@ -335,12 +353,90 @@ def robot_payload(*, robot_state: str, task_state: str,
         "robot_state": _closed(robot_state, ROBOT_STATES, "robot_state"),
         "task_state": _closed(task_state, TASK_STATES, "task_state"),
         "gps": _gps(pose),
-        "battery": None,        # UNSOURCED: state/power 无发布者
+        "battery": _battery(power),
         "motion": _motion(pose, motion_speed_mps),
         "devices": _devices(devices),
         "storage": None,        # UNSOURCED: 无采集点
         "clock": _clock(clock),
         "alarm_window_active": bool(alarm_window_active),
+    }
+
+
+def robot_state_from(robot: Optional[Dict[str, Any]], *, running: bool) -> str:
+    """11 S4.1 RobotState -> v2.0 S4.2 robot_state 的一个闭集值.
+
+    *** 2026-09-27 接线: 在这之前 robot_state 只能取 idle / running,
+    因为 state/robot 在机内没有发布者. chassis_relay 上机(CR-4)之后
+    hes / faults[] 是[真数据]了, fault 与 emergency_stop 才第一次有来源.
+
+    *** 取值优先级 emergency_stop > fault > running > idle.
+    v2.0 只给了闭集, [没有给优先级] -- 这一条是按 11 S3.0.1 的 fail-safe
+    方向定的, 理由逐条:
+      * hes 接合时报 running/idle, 等于告诉操作员"机器人可以动"而它动不了.
+        两个方向的错不对称: 报 emergency_stop 而其实能动, 操作员会去现场
+        看一眼(代价: 一趟); 报 idle 而其实锁着, 他会派任务然后等一个永远
+        不出发的机器人(代价: 一次出勤 + 查不出原因).
+      * fatal 故障同理, 只是低一级 -- 急停是比故障更硬的事实.
+    ! 这条优先级是本文件[唯一]的自定项, 若要改只需改本函数的顺序.
+
+    *** hes 与 hes_lock 都算 emergency_stop.
+    S4.1 逐字: hes_lock"hes 上跳即置位, 软件不可解除, 须 hes == 0 + 现场
+    人工 enable 才清除". 也就是说 hes 已经落了但 lock 还在的那段时间,
+    机器人[仍然动不了]. 只看 hes 会让这段显示成 idle -- 恰好是操作员最
+    可能误判的那一段(他刚松开急停, 界面说就绪, 而它不动).
+
+    *** faults[].level 只认 fatal.
+    S4.1 的闭集是 warn | degraded | fatal, 而 v2.0 的 robot_state 里
+    [没有 degraded 这一档]. 把 degraded 也报成 fault 会让一条"充电桩无
+    电流"的提示把整机显示成故障; 把它悄悄丢掉也不对 -- 它走 devices 与
+    event 两条路上报, 不归本字段.
+    NO 不接受 fatal 之外的值静默透传(CLAUDE.md 3.5).
+    """
+    if isinstance(robot, dict):
+        if robot.get("hes") is True or robot.get("hes_lock") is True:
+            return "emergency_stop"
+        for f in robot.get("faults") or ():
+            if not isinstance(f, Mapping):
+                continue
+            level = f.get("level")
+            if level is not None and level not in FAULT_LEVELS:
+                raise ProjectionError(
+                    "faults[].level=%r not in the 11 S4.1 closed set %s"
+                    % (level, list(FAULT_LEVELS)))
+            if level == "fatal":
+                return "fault"
+    return "running" if running else "idle"
+
+
+def _battery(power: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """11 S4.2 PowerState -> v2.0 S4.2 battery 四字段.
+
+    *** 无 state/power -> 整段 null, 与 _gps 同一条.
+    底盘离线时 quadruped 在 rt/chassis/power 上没有内容可发, relay 也就
+    转不上来. 那时报 soc: 0 会让操作员中止出勤, 报 100 会让他派长任务.
+
+    *** 四个字段里只有 soc 有来源, 另外三个保持 null, 且[不是偷懒].
+      current_a      -- PowerState 里根本没有电流字段, 无从取.
+      voltage_v      -- S4.2 是[双电池](batteries.left/right 各有 voltage_v),
+      temperature_c     契约没有说这两块怎么塌缩成一个数. soc_pct 有规矩
+                        (S4.2 逐字: 取两块 level_pct 的较小值, CHG-10),
+                        电压与温度[没有] -- 自己挑 min/max/平均就是在契约层
+                        发明一条规则, 而三种挑法给操作员的结论各不相同.
+      => 补这三个需要一条裁决, 不是补一行代码. 在那之前 null 是真话.
+    * 另注: 13 BAT-2 / V-55 记着 left/right 的物理对应[尚未确定], 所以今天
+      即便取了也不知道取的是哪一块 -- 这是同一件事的下一层.
+    """
+    if not power:
+        return None
+    soc = power.get("soc_pct")
+    return {
+        # S4.2: soc_pct 已经是两块电池的较小值(CHG-10), 直接过.
+        # 非数值一律 null -- 一条坏报文不该变成一个电量读数.
+        "soc": soc if isinstance(soc, (int, float)) and not isinstance(soc, bool)
+               else None,
+        "voltage_v": None,      # UNSOURCED: 双电池塌缩规则未裁, 见上
+        "current_a": None,      # UNSOURCED: PowerState 无该字段
+        "temperature_c": None,  # UNSOURCED: 双电池塌缩规则未裁, 见上
     }
 
 

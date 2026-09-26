@@ -32,9 +32,19 @@ B-2 建好了 publish_state 与七条 publisher, 但[没有人调它]. 这是本
 会让每条 key 在同一拍全部触发, 往后跳会让它们静默一小时.
 
 ! 已知无源, 写在这里而不是文档里(它会变):
-  robot_state 只能取 idle / running -- charging / fault / emergency_stop /
-  offline 都没有机内来源(充电态在 p3, 急停接合态没有发布者; estop_probe
-  给的是[通路健康]不是[是否已接合], 两者不可互推).
+  robot_state 还缺 charging 与 offline.
+    charging -- 充电态在 p3; p5 手上的 state/task 只带 active_task 的
+      state, 不带"这是不是一条充电任务", 所以认不出来. 补它要先定从哪个
+      字段认充电任务(属未裁), 不是补一行代码.
+    offline  -- 机内不存在"我离线了"这条消息. 它是 Qt 按 state/link 连续
+      3 秒断流自行判的; 我方自报 offline 等于用一条发得出去的消息声明
+      自己发不出消息.
+  *** 2026-09-27: fault 与 emergency_stop 已接上(见下).
+  原文这里写着它们"没有发布者" -- 那句话在 chassis_relay 上机(2026-09-26,
+  11 CR-4)之前是对的, 之后不再成立. 现在 hes / faults[] 走 state/robot 上来,
+  是真数据. * 原文同时警告"estop_probe 给的是[通路健康]不是[是否已接合],
+  两者不可互推" -- 这半句[仍然成立且仍然要守]: emergency_stop 取的是
+  state/robot.hes, NO 不是 estop_path.
   state/media 与 data/file/index 今天无内容, 发空集合而不是不发 --
   见 _media / _file_index 各自的说明.
 
@@ -63,14 +73,18 @@ from ..outbound.cloud_envelope import UnmappedLinkLevel
 from ..outbound.task_result import TaskResultTracker, build_result
 from ..outbound.state_projection import (ProjectionError, audio_payload,
                                          geo_manifest_payload, mode_payload,
-                                         robot_payload, task_item,
-                                         to_v2_device_status,
+                                         robot_payload, robot_state_from,
+                                         task_item, to_v2_device_status,
                                          to_v2_task_state)
 
 _logger = logging.getLogger(__name__)
 
-#: robot_state 今天能诚实给出的两个值. 见模块头的无源清单.
-SOURCED_ROBOT_STATES = ("idle", "running")
+#: robot_state 今天能诚实给出的值. 见模块头的无源清单.
+#: *** 2026-09-27 由两个增至四个: chassis_relay 上机(CR-4)之后 state/robot
+#: 的 hes / faults[] 是真数据, fault 与 emergency_stop 才第一次有来源.
+#: 仍然缺 charging(充电态在 p3, 认定字段未裁)与 offline(机内没有"我离线了"
+#: 这条消息 -- 那是 Qt 侧按 state/link 断流判的, 不该由我方自报).
+SOURCED_ROBOT_STATES = ("idle", "running", "fault", "emergency_stop")
 
 #: 每条消息都不同的字段. 变化比对时必须摘掉, 见 _due 的说明.
 VOLATILE_FIELDS = ("msg_id",)
@@ -233,13 +247,22 @@ class CloudProjector:
                       if isinstance(t, dict))
         clock = state.get("clock")
         ts_sync = bool(clock and clock.get("ts_sync") is True)
+        robot = state.get("robot")
         return robot_payload(
-            # 只有 idle / running 有来源. 见模块头 -- charging 与
-            # emergency_stop 报出来就是编的.
-            robot_state="running" if running else "idle",
+            # 2026-09-27: fault / emergency_stop 从 state/robot 取(CR-4).
+            # 在 chassis_relay 上机之前这两个值没有任何机内来源, 报出来就是
+            # 编的; 现在 hes / faults[] 是真数据. 优先级与两条映射规则写在
+            # state_projection.robot_state_from 的 docstring 里(那里是唯一
+            # 说得清"为什么是这个顺序"的地方).
+            # ! charging 仍无来源: 充电态在 p3, 而 p5 手上的 state/task 只带
+            # active_task 的 state, 不带"这是不是一条充电任务". 要它得先定
+            # 从哪个字段认充电任务 -- 属未裁, 故不填, 见模块头的无源清单.
+            robot_state=robot_state_from(robot, running=running),
             task_state="running" if running else "idle",
             pose=state.get("pose"),
             clock=clock,
+            # CR-5: 底盘离线时仍为 None -> battery 整段 null, NO 不伪造 0.
+            power=state.get("power"),
             # CLK-C1: 单调钟从这里传进去, 投影函数自己不取时间
             # (无设备单测才能喂一个固定的 now).
             devices=_devices_from_health(state.get("health"),
