@@ -264,7 +264,14 @@ class NavRuntime:
         self._subs.append(self._gen.declare_subscriber(CMD_ROUTE_TOPIC, self._on_route))
         self._subs.append(self._gen.declare_subscriber(CMD_RELMOVE_TOPIC, self._on_relmove))
         self._subs.append(self._gen.declare_subscriber(CMD_FACTOR_TOPIC, self._on_factor))
-        # *** RT plane, not the general plane (11 S1.1.6 P1-20, added 2026-09-17).
+        # *** RT plane, not the general plane (11 S1.1.6 P1-24, added 2026-09-17).
+        #
+        # ! The anchor used to read P1-20. That row is rt/chassis/fault (the
+        # fault-forward path); the key declared below is rt/chassis/state, and
+        # its whitelist row is P1-24 -- the one whose text is "2026-09-17 新增
+        # 用户裁决 ... 只取 estop_epoch, 不转发". A back-link that names the
+        # wrong row sends the next reader to a rule about a different key and
+        # a different obligation (forward vs consume).
         #
         # estop_epoch is produced on the RT plane by quadruped and consumed on
         # the RT plane by this loop's cmd_vel. Routing it out to state/robot and
