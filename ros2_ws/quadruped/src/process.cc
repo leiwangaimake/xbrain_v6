@@ -630,13 +630,20 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   snap.cmd_age_ms =
       have_cmd_ ? (now_mono_s - cmd_rx_mono_s_) * 1000.0 : -1.0;
   snap.soft_estop_active = have_cmd_ && (cmd_estop_epoch_ != estop_epoch_);
-  // Same predicate Tier 1 was given, for the same reason: 13 TR-1 says an
-  // external change sets mode_switching, and a state key that disagreed with
-  // the gate would have an operator watching `false` while the robot is held
-  // at zero.
-  // Two fields, two questions -- see StateSnapshot. v1.23 shipped the
-  // transitioning meaning under the mode_switching name because there was
-  // only one field; the 2026-09-21 F-5 unfreeze gave each its own.
+  // NOT the predicate Tier 1 was given -- read the two lines below as a pair.
+  // Until the 2026-09-21 F-5 unfreeze there was ONE field, and this line
+  // carried the same motion_state_transitioning() the gate gets so that the
+  // state key could not read `false` while the robot was held at zero. With
+  // two fields on the wire each goes back to its own contract row (11 S4.1):
+  //   mode_switching  = OUR OWN commanded switch in flight. This is the MS-3
+  //     answer a consumer reads to decide "may I send the next mode command",
+  //     and widening it to external transitions would make that consumer
+  //     refuse to command anything while the factory handset is in use.
+  //   motion_state_transitioning = the TR-4 computed bit, ours OR external.
+  //     This is the one Tier 1 zeroes on, and the one an operator display
+  //     must use -- it is still true during an external stand-up.
+  // They differ exactly when something other than us moves the robot, so a
+  // test that never touches the handset cannot tell the two lines apart.
   snap.mode_switching = mode_.mode_switching();
   snap.motion_state_transitioning = mode_.motion_state_transitioning();
   snap.odom_source = linear_src_;
