@@ -868,6 +868,11 @@ int main(int argc, char** argv) {
     a1.grouped = true;
     a1.resources.push_back("11");
     a1.source.push_back("rl_deploy");
+    // SourceIds is the INSTANCE, Source is the module (13 S7.3 lists the two
+    // on one row). Two ids on one entry on purpose: the array shape is what
+    // distinguishes "forwarded the list" from "forwarded the first element".
+    a1.source_ids.push_back("motion_master#0");
+    a1.source_ids.push_back("motion_master#1");
     // 1789455340.5 s: a wall clock with a fractional part that survives
     // exactly in a double, so a formatting regression cannot hide in rounding.
     a1.since_sec = 1789455340;
@@ -936,6 +941,31 @@ int main(int argc, char** argv) {
     CHECK(j["cleared"][0] == "chs:0x8101");
     CHECK(chs_a::IsValidPrefixedFaultCode(j["cleared"][0].get<std::string>()));
 
+    // *** the five evidence fields, 11 S9.8.4's registered extensions. source
+    // and source_ids are the pair that says WHERE: the module and the instance.
+    // source_ids was parsed by chs_a_reports since that reader was written and
+    // never reached the wire until 2026-09-27 -- a defect no assertion could
+    // see, because "the key is absent" looks exactly like "the chassis sent
+    // none". mutant: drop the source_ids array -> red.
+    CHECK(j["faults"][0]["source"] == Json::array({"rl_deploy"}));
+    CHECK(j["faults"][0]["source_ids"] ==
+          Json::array({"motion_master#0", "motion_master#1"}));
+    // The WHOLE list, not its head: a writer that forwarded only source_ids[0]
+    // passes any "the key exists" check.
+    CHECK(j["faults"][0]["source_ids"].size() == 2);
+    // An entry the chassis gave no SourceIds for is an EMPTY array, never
+    // absent and never null: absent reads as an older producer that predates
+    // the field, which is a different claim from "this fault named no
+    // instance" -- and the first invites a consumer to retry.
+    CHECK(j["faults"][1].contains("source_ids"));
+    CHECK(j["faults"][1]["source_ids"].is_array());
+    CHECK(j["faults"][1]["source_ids"].empty());
+    // source_ids is NOT on the summary view: 11 S4.1 gives RobotState.faults[]
+    // exactly {code, level, desc} and CF-5 binds those three. Registering the
+    // evidence fields on one key is the decision; asserting it here is what
+    // stops a later "let us mirror it everywhere" from passing quietly.
+    // mutant: emit source_ids from WriteRobotState too -> red.
+
     // CF-5: this key and RobotState.faults[] are one conversion. Asserted by
     // building the state view the way rt_bridge does -- from the fault
     // stream's own values -- and requiring the three shared keys to come out
@@ -955,6 +985,11 @@ int main(int argc, char** argv) {
     CHECK(sj["faults"][0]["code"] == j["faults"][0]["code"]);
     CHECK(sj["faults"][0]["level"] == j["faults"][0]["level"]);
     CHECK(sj["faults"][0]["desc"] == j["faults"][0]["desc"]);
+    // ... and ONLY those three. The five evidence fields belong to the fault
+    // stream (see the source_ids block above); mirroring them onto the summary
+    // view would put the same fact in two places on a 10 Hz key.
+    CHECK(!sj["faults"][0].contains("source_ids"));
+    CHECK(!sj["faults"][0].contains("source"));
 
     // Both lists always travel, including when one is empty: an empty cleared
     // and an absent cleared are different claims.

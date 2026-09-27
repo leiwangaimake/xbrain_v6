@@ -1175,6 +1175,22 @@ PAYLOADS_MUTANTS = [
      PAYLOADS_CC,
      '    a->Raw(",\\"desc\\":");\n    a->Str(f.name.c_str());',
      '    a->Raw(",\\"desc\\":");\n    a->Str(f.details.c_str());'),
+    # 13 S7.3 marks Source[] and SourceIds[] upstream on ONE row. source_ids
+    # was parsed by chs_a_reports from the day that reader was written and
+    # never written to the wire until 2026-09-27 -- and an absent key is
+    # indistinguishable from "the chassis named no instance", so no consumer
+    # could report it. Source alone cannot say WHICH instance of a module
+    # faulted, which is the question a field engineer has.
+    ("payloads: the fault entry drops source_ids",
+     PAYLOADS_CC,
+     '    a->Raw("],\\"source_ids\\":[");',
+     '    a->Raw("],\\"_source_ids\\":[");'),
+    # ...and the head-of-list form: forwarding only the first id passes any
+    # "the key is present" assertion while losing every other instance.
+    ("payloads: only the first source_ids element is forwarded",
+     PAYLOADS_CC,
+     "    for (std::size_t k = 0; k < f.source_ids.size(); ++k) {",
+     "    for (std::size_t k = 0; k < f.source_ids.size() && k < 1; ++k) {"),
     # 13 V-68: an empty slot reports 0, so min_level alone cannot tell a flat
     # battery from an absent one. present_count is the fact that supplies it.
     ("payloads: present_count is dropped from the device report",

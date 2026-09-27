@@ -1028,6 +1028,26 @@ void WriteFaultArray(Appender* a, const std::vector<chs_a::FaultEntry>& list) {
       if (k != 0) a->Raw(",");
       a->Str(f.source[k].c_str());
     }
+    // 13 S7.3 lists Source[] and SourceIds[] on ONE row, both marked upstream
+    // ("现场定位靠它"). They are not the same fact: Source is the module
+    // ("rl_deploy") and SourceIds is the INSTANCE ("motion_master#0"), so on a
+    // chassis running several instances of one module Source alone cannot say
+    // which one faulted -- and that is the question a field engineer actually
+    // has. Parsed since the ErrorList reader was written (chs_a_reports.cc
+    // GetStringArray(e, "SourceIds")) and dropped on the floor here until
+    // 2026-09-27; nothing else on the wire carries it. Registered as our
+    // extension in 11 S9.8.4 alongside the other four, and as an F-5 unfreeze
+    // in 11 S14.3 because it adds a field to a frozen schema.
+    //
+    // NOT added to RobotState.faults[]: 11 S4.1 gives that list exactly
+    // {code, level, desc} and CF-5 makes those three one conversion. The five
+    // evidence fields are registered on this key only -- the summary view is
+    // for "is the machine faulted", the fault stream is for "what and where".
+    a->Raw("],\"source_ids\":[");
+    for (std::size_t k = 0; k < f.source_ids.size(); ++k) {
+      if (k != 0) a->Raw(",");
+      a->Str(f.source_ids[k].c_str());
+    }
     a->Raw("]}");
   }
   a->Raw("]");
@@ -1069,9 +1089,10 @@ std::size_t WriteChassisFault(const chs_a::FaultReport& in, char* out,
   // No fault_count / cleared_count. They were derivable from the two arrays'
   // own lengths, 11 S9.8.4 does not define them, and nothing ever read them;
   // a redundant copy of a fact is a second place for it to disagree. The
-  // details / grouped / resources / source fields above are the opposite case
-  // and stay: 13 S7.3's disposition table requires each of them be forwarded
-  // upstream ("现场定位靠它"), and nothing else on the wire carries them.
+  // details / grouped / resources / source / source_ids fields above are the
+  // opposite case and stay: 13 S7.3's disposition table requires each of them
+  // be forwarded upstream ("现场定位靠它"), and nothing else on the wire
+  // carries them.
   a.Raw("}");
   return a.Finish();
 }
