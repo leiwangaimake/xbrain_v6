@@ -373,6 +373,13 @@ std::size_t WriteChassisDevice(const chs_a::DeviceStatus& in, char* out,
 // is what just stopped. Sending only the first leaves a consumer unable to tell
 // "still broken" from "was broken, now fine" without keeping its own history --
 // and a consumer's history is the thing that goes stale across a restart.
+//
+// The two lists do NOT have the same element type. 11 S9.8.4:
+//   faults:  [ {code, level, desc, since_ts, ...} ]   objects
+//   cleared: [ "chs:0x8001" ]                         code STRINGS (CF-1)
+// Writing both with one routine is the defect this key carried until
+// 2026-09-27, together with `name` for `desc` and a nested since:{sec,nanosec}
+// where the contract wants float seconds.
 std::size_t WriteChassisFault(const chs_a::FaultReport& in, char* out,
                               std::size_t cap);
 

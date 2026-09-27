@@ -971,17 +971,45 @@ std::size_t WriteChassisDevice(const chs_a::DeviceStatus& in, char* out,
 
 namespace {
 
-void WriteFaultList(Appender* a, const std::vector<chs_a::FaultEntry>& list) {
+// 11 S9.8.4 `faults[]`: one OBJECT per asserted fault. The contract's four
+// keys come first and in its own order (code / level / desc / since_ts); the
+// vendor evidence 13 S7.3 requires be forwarded follows. See WriteChassisFault
+// for why those extras are here and the two counts are not.
+void WriteFaultArray(Appender* a, const std::vector<chs_a::FaultEntry>& list) {
   a->Raw("[");
   for (std::size_t i = 0; i < list.size(); ++i) {
     const chs_a::FaultEntry& f = list[i];
     if (i != 0) a->Raw(",");
     a->Raw("{\"code\":");
     a->Str(f.code.c_str());
-    a->Raw(",\"name\":");
-    a->Str(f.name.c_str());
     a->Raw(",\"level\":");
     a->Str(f.level.c_str());
+    // `desc`, not `name`: this writer spelled it `name` until 2026-09-27 and a
+    // consumer coded against the contract found nothing there. 13 v1.35 had
+    // already made the same correction one key over (RobotState.faults[]);
+    // CF-5 makes the two keys one conversion, so the CONTENT is the same thing
+    // rt_bridge caches for the state side -- FaultEntry.name, the vendor's
+    // human-readable fault name, which 13 S7.3 calls the only readable clue an
+    // unregistered code has.
+    a->Raw(",\"desc\":");
+    a->Str(f.name.c_str());
+    // 13 S7.3 verbatim: Timestamp{Sec,Nanosec} -> since_ts. FLOAT SECONDS, via
+    // TimeSec (fixed six decimals) and never Num: %.6g renders a wall clock
+    // near 1.79e9 as "1.78996e+09", which is a different instant by minutes.
+    // The clock is the CHASSIS WALL clock, which is what since_ts must be --
+    // p5 takes it as detected_at, the occurrence time, and a monotonic reading
+    // has no meaning in another process's boot domain (CLK-C3 / CLK-C4). No
+    // conversion happens here for exactly that reason.
+    a->Raw(",\"since_ts\":");
+    if (f.since_valid) {
+      a->TimeSec(static_cast<double>(f.since_sec) +
+                 static_cast<double>(f.since_nanosec) * 1e-9);
+    } else {
+      // The chassis sent no Timestamp. null is the honest spelling; 0.0 is a
+      // number the consumer believes, and it dates the fault to 1970.
+      a->Raw("null");
+    }
+    // -- beyond 11 S9.8.4's four keys, registered there as our extension.
     // Free-form and NOT parsed: 13 S7.3 records that the vendor gives no schema
     // for it. Forwarded verbatim because the string is often the only clue an
     // engineer has, and inventing a structure for it would be inventing a
@@ -990,11 +1018,7 @@ void WriteFaultList(Appender* a, const std::vector<chs_a::FaultEntry>& list) {
     a->Str(f.details.c_str());
     a->Raw(",\"grouped\":");
     a->Bool(f.grouped);
-    a->Raw(",\"since\":{\"sec\":");
-    a->Int(f.since_sec);
-    a->Raw(",\"nanosec\":");
-    a->Int(f.since_nanosec);
-    a->Raw("},\"resources\":[");
+    a->Raw(",\"resources\":[");
     for (std::size_t k = 0; k < f.resources.size(); ++k) {
       if (k != 0) a->Raw(",");
       a->Str(f.resources[k].c_str());
@@ -1009,6 +1033,22 @@ void WriteFaultList(Appender* a, const std::vector<chs_a::FaultEntry>& list) {
   a->Raw("]");
 }
 
+// 11 S9.8.4 `cleared[]`: bare code STRINGS, not objects. CF-1 puts the regex
+// on "每一个元素" of this list, so the element IS the code; CF-3 requires the
+// byte-identical spelling the raise used, which is why f.code is forwarded and
+// not re-formatted. The rest of the entry is deliberately dropped: a clear
+// says one thing ("this code is no longer asserted") and the evidence fields
+// were already delivered with the raise.
+void WriteClearedArray(Appender* a,
+                       const std::vector<chs_a::FaultEntry>& list) {
+  a->Raw("[");
+  for (std::size_t i = 0; i < list.size(); ++i) {
+    if (i != 0) a->Raw(",");
+    a->Str(list[i].code.c_str());
+  }
+  a->Raw("]");
+}
+
 }  // namespace
 
 std::size_t WriteChassisFault(const chs_a::FaultReport& in, char* out,
@@ -1019,13 +1059,19 @@ std::size_t WriteChassisFault(const chs_a::FaultReport& in, char* out,
   // this report, the second says nothing was said -- and a consumer that has to
   // guess will keep a fault asserted forever.
   a.Raw("{\"faults\":");
-  WriteFaultList(&a, in.faults);
+  WriteFaultArray(&a, in.faults);
+  // NOT the same writer as faults[]. The two lists have different element
+  // types in 11 S9.8.4 -- objects here, code strings there -- and calling one
+  // routine for both is precisely how this key shipped object-valued cleared[]
+  // until 2026-09-27.
   a.Raw(",\"cleared\":");
-  WriteFaultList(&a, in.cleared);
-  a.Raw(",\"fault_count\":");
-  a.UInt(in.faults.size());
-  a.Raw(",\"cleared_count\":");
-  a.UInt(in.cleared.size());
+  WriteClearedArray(&a, in.cleared);
+  // No fault_count / cleared_count. They were derivable from the two arrays'
+  // own lengths, 11 S9.8.4 does not define them, and nothing ever read them;
+  // a redundant copy of a fact is a second place for it to disagree. The
+  // details / grouped / resources / source fields above are the opposite case
+  // and stay: 13 S7.3's disposition table requires each of them be forwarded
+  // upstream ("现场定位靠它"), and nothing else on the wire carries them.
   a.Raw("}");
   return a.Finish();
 }

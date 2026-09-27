@@ -434,6 +434,10 @@ bool ParseFaultReport(const std::uint8_t* asdu, std::size_t len, FaultReport* ou
     if (ts != e.end() && ts->is_object()) {
       f.since_sec = GetInt(*ts, "Sec", 0);
       f.since_nanosec = GetInt(*ts, "Nanosec", 0);
+      // Presence is recorded, not inferred from the values: a fault whose
+      // Timestamp the chassis omitted must reach the wire as since_ts = null,
+      // never as the epoch (see FaultEntry::since_valid).
+      f.since_valid = true;
     }
     f.type = static_cast<int>(GetInt(e, "Type", 0));
     // Severities is per-fault and travels with the report. Presence matters:

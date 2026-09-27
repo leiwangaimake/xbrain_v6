@@ -589,6 +589,14 @@ REPORTS_MUTANTS = [
      "    if (b.level < s.min_level) {"),
     # CF-3 / 11 S9.8.4: raised and cleared are two lists, and merging them
     # reports a fault that has already gone away as still active.
+    # A fault whose Timestamp the chassis omitted must be distinguishable from
+    # one whose clock read 0: the wire writer turns the first into since_ts =
+    # null and the second into 0.0, and p5 dates the event from that number.
+    ("reports: a Timestamp is reported as present whether or not it came",
+     REPORTS_CC, '    auto ts = e.find("Timestamp");',
+     '    auto ts = e.find("Timestamp");\n    f.since_valid = true;'),
+    ("reports: the Timestamp presence flag is never set",
+     REPORTS_CC, "      f.since_valid = true;", "      f.since_valid = false;"),
     ("reports: cleared faults filed as active",
      REPORTS_CC, "    if (f.type == 2) {", "    if (false) {"),
     # CF-1 / CF-2: a bare code cannot be interpreted -- the two spaces overlap.
@@ -1117,8 +1125,56 @@ PAYLOADS_MUTANTS = [
     # different claims, and a consumer that has to guess keeps a fault asserted.
     ("payloads: the cleared-fault list is omitted",
      PAYLOADS_CC,
-     '  a.Raw(",\\"cleared\\":");\n  WriteFaultList(&a, in.cleared);',
+     '  a.Raw(",\\"cleared\\":");\n  WriteClearedArray(&a, in.cleared);',
      "  (void)0;"),
+
+    # -- 11 S9.8.4 ChassisFault wire shape (the three violations audited on
+    # 2026-09-27). Each of these is what the writer actually shipped, so a
+    # mutant that survives means the fix is not pinned and can rot back.
+    #
+    # `desc` spelled `name`. 13 v1.35 corrected the same field on the STATE key
+    # and this one was missed; a consumer coded against the contract reads desc
+    # and finds nothing, so a real fault reaches the cloud with no text at all.
+    ("payloads: the fault entry spells desc as name again",
+     PAYLOADS_CC,
+     '    a->Raw(",\\"desc\\":");\n    a->Str(f.name.c_str());',
+     '    a->Raw(",\\"name\\":");\n    a->Str(f.name.c_str());'),
+    # cleared[] back to objects -- one routine serving both lists, which is how
+    # the violation arose. CF-1 puts the regex on each ELEMENT of this list.
+    ("payloads: cleared[] written as objects instead of code strings",
+     PAYLOADS_CC,
+     '  WriteClearedArray(&a, in.cleared);',
+     '  WriteFaultArray(&a, in.cleared);'),
+    # since_ts truncated to whole seconds. The value stays a plausible wall
+    # clock, so only an assertion on the FRACTION catches it.
+    ("payloads: since_ts truncated to whole seconds",
+     PAYLOADS_CC,
+     '      a->TimeSec(static_cast<double>(f.since_sec) +\n'
+     '                 static_cast<double>(f.since_nanosec) * 1e-9);',
+     '      a->TimeSec(static_cast<double>(f.since_sec));'),
+    # ...and the %.6g form of the same regression (11 S3.0's own lesson): six
+    # SIGNIFICANT digits render 1.789e9 as "1.78946e+09", off by minutes.
+    ("payloads: since_ts formatted with %.6g",
+     PAYLOADS_CC,
+     '      a->TimeSec(static_cast<double>(f.since_sec) +\n'
+     '                 static_cast<double>(f.since_nanosec) * 1e-9);',
+     '      a->Num(static_cast<double>(f.since_sec) +\n'
+     '             static_cast<double>(f.since_nanosec) * 1e-9);'),
+    # A fault the chassis sent no Timestamp with must be null, not the epoch:
+    # p5 takes since_ts as detected_at and 0.0 files the fault under 1970.
+    ("payloads: a missing chassis Timestamp published as 0.0",
+     PAYLOADS_CC, "    if (f.since_valid) {", "    if (true) {"),
+    # CF-5's other half: the state key and the fault key are ONE conversion, so
+    # the two must carry the same text for the same fault. Here the fault side
+    # fills desc from `details` (the free-form vendor blob) while rt_bridge's
+    # state cache keeps `name`. Both outputs are well-formed and each side is
+    # internally consistent -- only comparing the two is red.
+    # (The state side's own desc/name spelling has its own mutant further down,
+    # added 2026-09-26 with the v1.35 correction.)
+    ("payloads: the fault desc filled from details, not the fault name",
+     PAYLOADS_CC,
+     '    a->Raw(",\\"desc\\":");\n    a->Str(f.name.c_str());',
+     '    a->Raw(",\\"desc\\":");\n    a->Str(f.details.c_str());'),
     # 13 V-68: an empty slot reports 0, so min_level alone cannot tell a flat
     # battery from an absent one. present_count is the fact that supplies it.
     ("payloads: present_count is dropped from the device report",

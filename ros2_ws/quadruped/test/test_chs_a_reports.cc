@@ -405,6 +405,11 @@ int main(int argc, char** argv) {
       CHECK(r.faults[0].since_sec == 1789455340);
       CHECK(r.faults[0].since_nanosec == 500);
       CHECK(r.faults[0].details == "motor 11 at 97C");
+      // *** PRESENCE of the Timestamp, kept apart from its value. The wire
+      // writer publishes since_ts = null when the chassis sent no time, and
+      // without this flag it cannot tell that from a clock reading 0 -- it
+      // would then publish 0.0, which p5 believes and files under 1970.
+      CHECK(r.faults[0].since_valid == true);
       // *** 0x800F is the code the vendor's own EXAMPLE uses while the table
       // lists 0x8014 for the same fault name (13 S7.3 reason 3). It is the
       // proof that the code space is open, and it must arrive with its name --
@@ -412,6 +417,11 @@ int main(int argc, char** argv) {
       CHECK(r.faults[1].code == "chs:0x800F");
       CHECK(r.faults[1].name == "joint_position_over_limit");
       CHECK(r.faults[1].level == "degraded");  // no Severities -> not warn
+      // ...and this entry carries no Timestamp at all, so the flag is false
+      // while the two integers sit at their documented default of 0. Asserting
+      // both polarities is what stops "always true" from passing.
+      CHECK(r.faults[1].since_valid == false);
+      CHECK(r.faults[1].since_sec == 0);
       // CF-3: a cleared fault keeps the identical spelling it was raised with.
       CHECK(r.cleared[0].code == "chs:0x8101");
       CHECK(r.cleared[0].level == "warn");

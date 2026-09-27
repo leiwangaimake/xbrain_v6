@@ -23,6 +23,12 @@
  *     11 S4.1 still shows a bare "0x1007", so an implementer copying the
  *     example produces something that disagrees with the fault stream about
  *     what a code means.
+ *   * ChassisFault is checked against 11 S9.8.4 element by element, from a
+ *     HAND-BUILT report. The golden capture's ErrorList is empty (the measured
+ *     machine is healthy), so every loop over the entries runs zero times --
+ *     which is how three wire-shape violations (name for desc, a nested
+ *     since:{sec,nanosec} for since_ts, objects in cleared[]) survived in a
+ *     file whose fault case looked covered.
  *   * batteries.left/right are null while the mapping is unknown (13 BAT-2).
  *     Filling them from array order is a guess presented as a measurement.
  *   * an absent report is null, not a zeroed struct. A zeroed BasicStatus reads
@@ -817,7 +823,12 @@ int main(int argc, char** argv) {
         CHECK(jf["faults"].is_array());
         CHECK(jf["cleared"].is_array());
         CHECK(jf["faults"].size() == f.faults.size());
-        CHECK(jf["fault_count"] == f.faults.size());
+        // 11 S9.8.4 defines two keys at this level and no others. The counts
+        // this writer used to add were derivable from the arrays themselves,
+        // so they could only ever be a second place for the same fact to be
+        // stated -- and wrongly.
+        CHECK(!jf.contains("fault_count"));
+        CHECK(!jf.contains("cleared_count"));
         for (std::size_t i = 0; i < f.faults.size(); ++i) {
           // The prefixed form (13 S7.3): "chs:0x8001", never a bare number --
           // the chassis and charger code spaces overlap.
@@ -839,6 +850,119 @@ int main(int argc, char** argv) {
       CHECK(WriteChassisDevice(d, tiny, sizeof(tiny)) == 0);
       CHECK(WriteChassisFault(f, tiny, sizeof(tiny)) == 0);
     }
+  }
+
+  // ---- ChassisFault, 11 S9.8.4 verbatim ----------------------------------
+  //
+  // The golden capture's ErrorList is EMPTY (the measured machine is healthy),
+  // so every per-entry check above iterates zero times. This block builds the
+  // entries by hand; without it the whole element shape -- the part that was
+  // wrong on the wire until 2026-09-27 -- is unasserted.
+  {
+    chs_a::FaultReport f;
+    chs_a::FaultEntry a1;
+    a1.code = chs_a::FormatChassisFaultCode(0x8001);
+    a1.name = "joint_position_over_limit";
+    a1.level = "fatal";
+    a1.details = "joint 11";
+    a1.grouped = true;
+    a1.resources.push_back("11");
+    a1.source.push_back("rl_deploy");
+    // 1789455340.5 s: a wall clock with a fractional part that survives
+    // exactly in a double, so a formatting regression cannot hide in rounding.
+    a1.since_sec = 1789455340;
+    a1.since_nanosec = 500000000;
+    a1.since_valid = true;
+    f.faults.push_back(a1);
+
+    chs_a::FaultEntry a2;              // no Timestamp from the chassis
+    a2.code = chs_a::FormatChassisFaultCode(0x9409);
+    a2.name = "batt_low";
+    a2.level = "warn";
+    f.faults.push_back(a2);
+
+    chs_a::FaultEntry c1;
+    c1.code = chs_a::FormatChassisFaultCode(0x8101);
+    c1.name = "was_broken_now_fine";
+    c1.level = "warn";
+    f.cleared.push_back(c1);
+
+    char buf[4096];
+    const std::size_t n = WriteChassisFault(f, buf, sizeof(buf));
+    const std::string text(buf, n);
+    const Json j = ParseOrFail("chassis fault", buf, n);
+
+    // *** the key name. This writer emitted `name` here until 2026-09-27 while
+    // 13 v1.35 had already corrected the same field on rt/chassis/state; a
+    // consumer coded against 11 S9.8.4 read desc and got nothing, so every
+    // fault reached the cloud with no text at all.
+    // mutant: write the entry under "name" again -> red.
+    CHECK(j["faults"][0]["desc"] == "joint_position_over_limit");
+    CHECK(!j["faults"][0].contains("name"));
+    CHECK(j["faults"][0]["code"] == "chs:0x8001");
+    CHECK(chs_a::IsValidPrefixedFaultCode(
+        j["faults"][0]["code"].get<std::string>()));
+    CHECK(j["faults"][0]["level"] == "fatal");
+
+    // *** since_ts: float SECONDS, not the nested since:{sec,nanosec} this
+    // writer used to emit (13 S7.3 verbatim: Timestamp{Sec,Nanosec} -> 转
+    // since_ts). Three separate claims, because each fails on its own:
+    //   (1) the key exists and the legacy object does not;
+    //   (2) the VALUE is right to the microsecond -- %.6g would render
+    //       1789455340.5 as "1.78946e+09", a different instant by ~5 minutes,
+    //       and a loose epsilon would accept it;
+    //   (3) the TEXT carries a decimal point and no exponent, so a formatter
+    //       that happens to round to the same double still shows up.
+    CHECK(j["faults"][0].contains("since_ts"));
+    CHECK(!j["faults"][0].contains("since"));
+    CHECK(j["faults"][0]["since_ts"].is_number());
+    CHECK(j["faults"][0]["since_ts"].get<double>() == 1789455340.5);
+    CHECK(text.find("\"since_ts\":1789455340.500000") != std::string::npos);
+    CHECK(text.find("e+0") == std::string::npos);
+
+    // A fault the chassis sent no Timestamp with is null, never 0.0. p5 takes
+    // since_ts as detected_at, so a zero would file the fault under 1970
+    // rather than counting it as having no occurrence time.
+    // mutant: emit the epoch instead of null -> red.
+    CHECK(j["faults"][1]["since_ts"].is_null());
+    CHECK(j["faults"][1]["desc"] == "batt_low");
+
+    // *** cleared[] elements are code STRINGS. CF-1 puts the regex on "每一个
+    // 元素" of this list, and this writer shipped objects (one routine served
+    // both lists). mutant: write the objects back -> red.
+    CHECK(j["cleared"].size() == 1);
+    CHECK(j["cleared"][0].is_string());
+    CHECK(!j["cleared"][0].is_object());
+    CHECK(j["cleared"][0] == "chs:0x8101");
+    CHECK(chs_a::IsValidPrefixedFaultCode(j["cleared"][0].get<std::string>()));
+
+    // CF-5: this key and RobotState.faults[] are one conversion. Asserted by
+    // building the state view the way rt_bridge does -- from the fault
+    // stream's own values -- and requiring the three shared keys to come out
+    // byte-identical on both. A second converter on either side is red here
+    // even when each side is internally consistent.
+    RobotStateFault sv[1];
+    sv[0].code = a1.code.c_str();
+    sv[0].level = a1.level.c_str();
+    sv[0].desc = a1.name.c_str();
+    RobotStateInput st;
+    st.conn_wire = "connected";
+    st.faults = sv;
+    st.fault_count = 1;
+    char sbuf[8192];
+    const std::size_t sn = WriteRobotState(st, sbuf, sizeof(sbuf));
+    const Json sj = ParseOrFail("state faults", sbuf, sn);
+    CHECK(sj["faults"][0]["code"] == j["faults"][0]["code"]);
+    CHECK(sj["faults"][0]["level"] == j["faults"][0]["level"]);
+    CHECK(sj["faults"][0]["desc"] == j["faults"][0]["desc"]);
+
+    // Both lists always travel, including when one is empty: an empty cleared
+    // and an absent cleared are different claims.
+    chs_a::FaultReport empty;
+    const std::size_t en = WriteChassisFault(empty, buf, sizeof(buf));
+    const Json ej = ParseOrFail("chassis fault empty", buf, en);
+    CHECK(ej["faults"].is_array() && ej["faults"].empty());
+    CHECK(ej["cleared"].is_array() && ej["cleared"].empty());
   }
 
   // ---- the triple without a full BasicStatus (13 ASM-4 boundary) ---------

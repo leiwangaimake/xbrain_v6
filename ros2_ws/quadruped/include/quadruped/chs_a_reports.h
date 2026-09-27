@@ -207,6 +207,13 @@ struct FaultEntry {
   // converting either one into the other.
   std::int64_t since_sec = 0;
   std::int64_t since_nanosec = 0;
+  // True only when the report actually carried a Timestamp object. Without
+  // this flag "the chassis sent no time" and "the chassis clock read 0" are
+  // the same two integers, and the wire writer would publish since_ts = 0.0 --
+  // a NUMBER, which p5 believes, dating the event 1970-01-01 instead of
+  // counting it as a fault with no occurrence time (11 S9.8.4 allows the
+  // field to be null; p5's no_since_ts counter is that case's own spelling).
+  bool since_valid = false;
   // 1 = START (first occurrence, or the severity changed), 2 = STOP (cleared).
   int type = 0;
   // From the closed set kFaultLevel. Derived from the chassis Severities field,
