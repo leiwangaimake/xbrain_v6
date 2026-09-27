@@ -141,25 +141,63 @@ class MemoryDAO:
 
 
 class SnapshotDAO:
+    """15 S9.3A task_route_snapshot: ONE row per task, WGS84 points as JSON.
+
+    *** Rewritten 2026-09-28 with the table (docs/NEXT.md EX-2). The previous
+    version wrote one row per point as (seq, x_m, y_m, heading_rad) -- ENU
+    metres, which is the wrong frame (cmd/motion/route is frame "wgs84" and
+    P1 projects it itself) and had nowhere to keep route_id / rev / loop_mode
+    / total_len_m / arclen, i.e. everything S7.3A's remap reads.
+    """
+
     def __init__(self, conn) -> None:
         self._conn = conn
 
-    async def replace(self, task_id: str, waypoints) -> None:
-        """Replace snapshot atomically: clear then append.
-        Called inside an outer BEGIN IMMEDIATE by the caller."""
+    async def replace(self, snapshot, *, now_iso: str) -> None:
+        """Write the snapshot for a task, replacing any previous one.
+
+        One statement, so SN-2 holds structurally: points_json and
+        arclen_json cannot land in different transactions. If they disagree,
+        S7.3A step 1 computes a wrong L0 and nothing reports an error.
+
+        The CALLER is responsible for SN-1: this must be committed BEFORE the
+        first cmd/motion/route frame goes out. Reversed, a power cut leaves
+        P1 holding geometry P3 has no snapshot of, and the remap then uses
+        the wrong T0.
+        """
         await self._conn.execute(
-            "DELETE FROM task_route_snapshot WHERE task_id=?", (task_id,))
-        for seq, (x, y, heading) in enumerate(waypoints):
-            await self._conn.execute(
-                "INSERT INTO task_route_snapshot (task_id, seq, x_m, y_m, "
-                " heading_rad) VALUES (?, ?, ?, ?, ?)",
-                (task_id, seq, x, y, heading))
+            "INSERT INTO task_route_snapshot ("
+            " task_id, route_id, rev, loop_mode, point_count, total_len_m,"
+            " points_json, arclen_json, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(task_id) DO UPDATE SET"
+            "  route_id=excluded.route_id, rev=excluded.rev,"
+            "  loop_mode=excluded.loop_mode,"
+            "  point_count=excluded.point_count,"
+            "  total_len_m=excluded.total_len_m,"
+            "  points_json=excluded.points_json,"
+            "  arclen_json=excluded.arclen_json,"
+            "  created_at=excluded.created_at",
+            (snapshot.task_id, snapshot.route_id, snapshot.rev,
+             snapshot.loop_mode, snapshot.point_count, snapshot.total_len_m,
+             snapshot.points_json(), snapshot.arclen_json(), now_iso))
 
     async def fetch(self, task_id: str):
+        """Raw row in declared order: (route_id, rev, loop_mode, point_count,
+        total_len_m, points_json, arclen_json)."""
         cur = await self._conn.execute(
-            "SELECT seq, x_m, y_m, heading_rad FROM task_route_snapshot "
-            "WHERE task_id=? ORDER BY seq ASC", (task_id,))
-        return await cur.fetchall()
+            "SELECT route_id, rev, loop_mode, point_count, total_len_m,"
+            " points_json, arclen_json FROM task_route_snapshot"
+            " WHERE task_id=?", (task_id,))
+        return await cur.fetchone()
+
+    async def delete(self, task_id: str) -> int:
+        """SN-4 retention / an explicit discard. NOT called on suspend: SN-3
+        forbids cleaning up a suspended task's snapshot, because losing it
+        means 11 S7.12.3 step 1 and the task can only go to needs_review."""
+        cur = await self._conn.execute(
+            "DELETE FROM task_route_snapshot WHERE task_id=?", (task_id,))
+        return cur.rowcount
 
 
 class PendingPushDAO:

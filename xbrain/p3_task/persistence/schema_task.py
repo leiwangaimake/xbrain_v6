@@ -345,16 +345,87 @@ CREATE TABLE IF NOT EXISTS memory (
 """.strip()
 
 
+# 15 S9.3A task_route_snapshot, rebuilt 2026-09-28 (docs/NEXT.md EX-2).
+#
+# *** What was here before. Five columns, task_id/seq/x_m/y_m/heading_rad --
+# one row per point, in ENU metres, with a heading. 15 S9.3A defines one row
+# per TASK carrying WGS84 points as JSON. The old shape could not hold what
+# S7.3A reads (route_id, rev, loop_mode, total_len_m = the remap's T0, and the
+# precomputed arclen array), and metres are the wrong frame: cmd/motion/route
+# is frame "wgs84" (11 S3.5A) and P1 does the projection itself
+# (nav/route_intake.py), so storing metres here would mean projecting twice
+# against two different site origins.
+#
+# 11 S7.12.1 R1: "运行中的任务跑的是快照, 不是活对象". This row IS the thing
+# pushed to P1 (11 S3.5A reason 3), which is why SN-1 orders the write before
+# the push: reversed, a power cut leaves P1 holding geometry P3 has no
+# snapshot of, and the remap then uses the wrong T0.
+#
+# *** point_count floor is 1, NOT the 2 that 15 S9.3A's CHECK says
+# (CLAUDE.md IRON RULE 1 -- 15 S9.3A has been corrected to match).
+# 11 S3.5A is the contract single source of truth (CLAUDE.md 1) and its v2.0
+# block (2026-09-08, #20-1) reads "v2.0 起最少 1 点 -- 单点 = goto 退化折线
+# (20 RNS-N-1)". xbrain/p1_motion/nav/route_intake.py already implements the
+# 1-point floor and its tests are green, so a `>= 2` here would refuse to
+# snapshot exactly the case P1 accepts: a one-waypoint goto.
 DDL_TASK_ROUTE_SNAPSHOT = """
 CREATE TABLE IF NOT EXISTS task_route_snapshot (
-  task_id    TEXT NOT NULL REFERENCES tasks(task_id),
-  seq        INTEGER NOT NULL,
-  x_m        REAL NOT NULL,
-  y_m        REAL NOT NULL,
-  heading_rad REAL,
-  PRIMARY KEY (task_id, seq)
+  task_id      TEXT    PRIMARY KEY REFERENCES tasks(task_id),
+  route_id     TEXT    NOT NULL,
+  rev          INTEGER NOT NULL,
+  loop_mode    TEXT    NOT NULL,
+  point_count  INTEGER NOT NULL,
+  total_len_m  REAL    NOT NULL,
+  points_json  TEXT    NOT NULL,
+  arclen_json  TEXT    NOT NULL,
+  created_at   TEXT    NOT NULL,
+  CHECK (loop_mode IN ('oneway','pingpong','closed')),
+  CHECK (point_count >= 1 AND point_count <= 5000),
+  CHECK (total_len_m > 0.0)
 );
 """.strip()
+
+DDL_TASK_ROUTE_SNAPSHOT_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_snapshot_route "
+    "ON task_route_snapshot(route_id, rev);",
+)
+
+#: Marks the 15 S9.3A shape apart from the pre-2026-09-28 per-point one.
+_SNAPSHOT_SHAPE_MARKER = "points_json"
+
+
+async def ensure_task_route_snapshot_shape(conn) -> bool:
+    """Replace a pre-2026-09-28 per-point task_route_snapshot with the
+    15 S9.3A shape. Returns True if it reshaped. MUST run BEFORE the DDL
+    burst, for the same reason as ensure_patrol_progress_shape.
+
+    SN-3 says a suspended task's snapshot must never be cleaned up, so the
+    non-empty case RAISES here too: a dropped snapshot means 11 S7.12.3 step 1
+    ("快照丢失则无法重映射") and the task can only go to needs_review. The
+    live data/run/task.db on the ORIN held zero rows on 2026-09-28 -- the old
+    SnapshotDAO.replace had no caller outside one unit test.
+    """
+    cur = await conn.execute("PRAGMA table_info(task_route_snapshot)")
+    cols = [row[1] for row in await cur.fetchall()]
+    if not cols:
+        return False
+    if _SNAPSHOT_SHAPE_MARKER in cols:
+        return False
+    cur = await conn.execute("SELECT COUNT(*) FROM task_route_snapshot")
+    row = await cur.fetchone()
+    n_rows = int(row[0]) if row else 0
+    if n_rows:
+        raise TaskRouteSnapshotShapeConflict(
+            "task_route_snapshot carries the pre-2026-09-28 per-point shape "
+            "AND %d row(s); refusing to drop it -- SN-3 forbids losing a "
+            "suspended task's snapshot. Columns found: %s." % (n_rows, cols))
+    await conn.execute("DROP TABLE task_route_snapshot")
+    await conn.commit()
+    return True
+
+
+class TaskRouteSnapshotShapeConflict(Exception):
+    """A legacy task_route_snapshot that still holds rows (see above)."""
 
 
 DDL_GEO_PENDING_PUSH = """
@@ -396,5 +467,6 @@ ALL_DDL_STATEMENTS = (
     *DDL_PATROL_PROGRESS_INDEXES,
     DDL_MEMORY,
     DDL_TASK_ROUTE_SNAPSHOT,
+    *DDL_TASK_ROUTE_SNAPSHOT_INDEXES,
     DDL_GEO_PENDING_PUSH,
 )

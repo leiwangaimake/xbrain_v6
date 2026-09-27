@@ -18,10 +18,6 @@ import math
 
 import pytest
 
-from xbrain.p3_task.route.push import (
-    AckContractViolation, CHUNK_SIZE, RouteAck, RoutePushTrigger,
-    build_route_push, chunk_waypoints, classify_ack,
-)
 from xbrain.p3_task.route.remap import (
     RemapTooFar, cumulative_arc_lengths, remap,
 )
@@ -36,41 +32,18 @@ pytestmark = pytest.mark.no_device
 
 
 # --- BIZ-P3-11 route push ---
-
-def test_chunking_below_size_single_chunk():
-    parts = chunk_waypoints(list(range(10)))
-    assert len(parts) == 1 and parts[0] == tuple(range(10))
-
-
-def test_chunking_at_boundary():
-    wp = list(range(CHUNK_SIZE * 2 + 3))
-    parts = chunk_waypoints(wp)
-    assert len(parts) == 3
-    assert len(parts[0]) == CHUNK_SIZE
-    assert len(parts[2]) == 3
-
-
-def test_chunking_empty_yields_zero_chunks():
-    """No waypoints -> caller should not push."""
-    assert chunk_waypoints([]) == ()
-
-
-def test_build_route_push_sets_chunk_ix_and_total():
-    wp = [(x, 0.0, 0.0) for x in range(CHUNK_SIZE + 5)]
-    parts = build_route_push("t1", 3, wp, RoutePushTrigger.RP1_DISPATCH.value)
-    assert len(parts) == 2
-    assert parts[0].chunk_ix == 0 and parts[0].total_chunks == 2
-    assert parts[1].chunk_ix == 1 and parts[1].total_chunks == 2
-
-
-def test_classify_ack_ra1():
-    assert classify_ack("RA-1") == RouteAck.RA1_ACCEPTED
-
-
-def test_classify_ack_unknown_raises():
-    """Any ack code outside RA-1/2/3 -> abort the task (CLAUDE.md 3.5)."""
-    with pytest.raises(AckContractViolation, match="unknown ack code"):
-        classify_ack("RA-99")
+#
+# *** The six tests that lived here were DELETED on 2026-09-28, not moved.
+# They exercised chunk_waypoints / build_route_push / classify_ack, an API
+# that did not implement 15 S2.4: 32-point chunks instead of 1000, a
+# RouteChunk whose fields matched none of 11 S3.5A's RouteGeometry, and a
+# classify_ack() parsing an ack code off a key that does not exist (15 S2.4.4
+# opens by saying cmd/motion/route has NO ack). They were green throughout,
+# which is the point worth keeping: a full set of passing tests over an API
+# nobody called said nothing about whether P3 could push a route, and for
+# months it could not. See xbrain/p3_task/route/push.py's header for the
+# field-by-field comparison, and tests/p3_task/test_route_push.py for the
+# tests of the protocol that is actually specified.
 
 
 # --- BIZ-P3-12 suspend/resume ---

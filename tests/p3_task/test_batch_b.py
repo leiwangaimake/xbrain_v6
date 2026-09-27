@@ -254,7 +254,23 @@ async def test_memory_upsert_get(task_conn):
 
 
 @pytest.mark.asyncio
-async def test_snapshot_replace_is_atomic_looking(task_conn):
+async def test_snapshot_replace_writes_one_row_per_task(task_conn):
+    """15 S9.3A: ONE row per task, WGS84 points as JSON.
+
+    *** Rewritten 2026-09-28 with the table (docs/NEXT.md EX-2). The old body
+    wrote (x_m, y_m, heading_rad) triples -- ENU metres, one row per point.
+    cmd/motion/route is frame "wgs84" and P1 projects it itself, and the
+    per-point shape had nowhere to keep route_id / rev / loop_mode /
+    total_len_m / arclen, i.e. everything S7.3A's remap reads.
+
+    MUTATION: split the INSERT so points_json and arclen_json are written by
+    two statements -- SN-2 then no longer holds structurally, and a crash
+    between them leaves a snapshot whose arc lengths belong to another route.
+    That mismatch produces a WRONG L0 with no error at all, which is why
+    S9.3A calls out the same-transaction requirement by name.
+    """
+    from xbrain.p3_task.route.snapshot_build import build_snapshot
+
     dao = TasksDAO(task_conn)
     await dao.insert(TaskRow(
         task_id="t9", task_type="patrol", state="pending",
@@ -262,12 +278,24 @@ async def test_snapshot_replace_is_atomic_looking(task_conn):
         current_step=0, step_status_json="[]", created_ms=0, updated_ms=0,
         source="local", trace_id="tr", resume_policy="continue"))
     snap = SnapshotDAO(task_conn)
-    await snap.replace("t9", [(1.0, 2.0, 0.0), (3.0, 4.0, 1.5)])
-    rows = await snap.fetch("t9")
-    assert [r[1] for r in rows] == [1.0, 3.0]
-    await snap.replace("t9", [(9.0, 9.0, 9.0)])
-    rows = await snap.fetch("t9")
-    assert [r[1] for r in rows] == [9.0]
+    built = build_snapshot(
+        task_id="t9", route_id="r-gate", rev=4, loop_mode="closed",
+        path_points=[[35.0, 135.0], [35.001, 135.0]],
+        recorded_arrive_radius_m=1.0)
+    await snap.replace(built, now_iso="2026-09-28T00:00:00.000Z")
+    row = await snap.fetch("t9")
+    assert row[0] == "r-gate" and row[1] == 4 and row[3] == 2
+    # Replacing keeps it at one row -- the task_id PRIMARY KEY is what makes
+    # "the snapshot" singular (11 S7.12.1 R1: the task runs the snapshot).
+    built2 = build_snapshot(
+        task_id="t9", route_id="r-gate", rev=5, loop_mode="closed",
+        path_points=[[35.0, 135.0], [35.002, 135.0], [35.003, 135.0]],
+        recorded_arrive_radius_m=1.0)
+    await snap.replace(built2, now_iso="2026-09-28T00:01:00.000Z")
+    cur = await task_conn.execute(
+        "SELECT COUNT(*) FROM task_route_snapshot WHERE task_id='t9'")
+    assert (await cur.fetchone())[0] == 1
+    assert (await snap.fetch("t9"))[1] == 5
 
 
 @pytest.mark.asyncio

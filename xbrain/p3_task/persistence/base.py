@@ -110,12 +110,16 @@ async def open_configured(path: str, ddl_statements=()):
     # rebuild what it removes. No-op on a fresh database and on the three DBs
     # that do not carry the table (15 S9.5 patrol_progress lives in task.db).
     from xbrain.p3_task.persistence.schema_task import (
-        ensure_patrol_progress_shape)
+        ensure_patrol_progress_shape, ensure_task_route_snapshot_shape)
 
     if await ensure_patrol_progress_shape(conn):
         _logger.warning(
             "db %s: dropped the pre-2026-09-28 four-column patrol_progress; "
             "rebuilding at the 15 S9.5 shape", path)
+    if await ensure_task_route_snapshot_shape(conn):
+        _logger.warning(
+            "db %s: dropped the pre-2026-09-28 per-point task_route_snapshot; "
+            "rebuilding at the 15 S9.3A shape", path)
     for stmt in ddl_statements:
         await conn.execute(stmt)
     await conn.commit()

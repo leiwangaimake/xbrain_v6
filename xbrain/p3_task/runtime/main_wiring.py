@@ -152,11 +152,18 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  task_db_path: str, geo_db_path: str = DEFAULT_GEO_DB,
                  fence_db_path: str = DEFAULT_FENCE_DB,
                  enu_origin: Optional[Dict[str, float]] = None) -> int:
+    from xbrain.common.errors import E_GEO_INCOMPLETE
     from xbrain.common.runtime.session_ctx import open_planes
-    from xbrain.p3_task.dao.simple_daos import FencesDAO, PatrolProgressDAO
+    from xbrain.p3_task.dao.simple_daos import (FencesDAO, PatrolProgressDAO,
+                                                SnapshotDAO)
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
+    from xbrain.p3_task.route.push import RoutePushTrigger
     from xbrain.p3_task.runtime.progress_sink import apply_path_progress
-    from xbrain.p3_task.state.path_progress import ProgressTracker
+    from xbrain.p3_task.runtime.route_push_runtime import (
+        CMD_ROUTE_TOPIC, ack_outcome_is_fatal, make_ack_window,
+        push_route_for_task)
+    from xbrain.p3_task.state.path_progress import (ProgressTracker,
+                                                    parse_path_progress)
     from xbrain.p3_task.fence.fence_set import build_fence_set
     from xbrain.p3_task.fence.geom import InvalidFenceSet
     from xbrain.p3_task.geo.objects import read_geo_objects
@@ -217,6 +224,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
         progress_queue: asyncio.Queue = asyncio.Queue(maxsize=PROGRESS_QUEUE_MAX)
         progress_tracker = ProgressTracker()
         progress_dao = PatrolProgressDAO(conn)
+        snapshot_dao = SnapshotDAO(conn)
+        # EX-2: one ack window for the process -- 15 S6.1 allows one running
+        # task at a time, so there is never a second push in flight.
+        ack_window = make_ack_window()
         progress_dropped = [0]
         recorded = 0
 
@@ -279,6 +290,11 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # and publishes its state on state/teach at 1 Hz plus on change.
             teach_ack_pub = gen.declare_publisher(CMD_TEACH_ACK_TOPIC)
             teach_state_pub = gen.declare_publisher(STATE_TEACH_TOPIC)
+            # EX-2 (11 S3.5A / P1-11). P3 is the only publisher of the route
+            # geometry: P1 never opens geo.db, so without this key patrol has
+            # no geometry at all and path_follow has nothing to follow
+            # (15 S2.4 opening paragraph).
+            route_pub = gen.declare_publisher(CMD_ROUTE_TOPIC)
 
             # F-5 (11 S4.6.4): watch P5's cloud-link level and inject one
             # return_home at L3 (cloud down past rtb_s). The subscriber only STORES
@@ -577,6 +593,109 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # an HMI cancel serialises with the tick rather than racing it.
             task_ctx = TaskContext(task_conn=conn, dao=dao)
 
+            #: task_id of the push the ack window is currently waiting on, so
+            #: a retry knows what to re-push and a failure knows what to fail.
+            pushing = {"task_id": None, "route_geo_id": None}
+
+            async def _push_route_on_dispatch(task_id: str) -> None:
+                """EX-2 RP-1. A task with no route_geo_id pushes nothing --
+                standby / teach / follow have no geometry, and 15 S2.4.1
+                lists only patrol and goto."""
+                full = await dao.fetch_by_id(task_id)
+                route_geo_id = getattr(full, "route_geo_id", None) if full else None
+                if not route_geo_id:
+                    return
+                pushing["task_id"] = task_id
+                pushing["route_geo_id"] = route_geo_id
+                res = await push_route_for_task(
+                    task_id=task_id, route_geo_id=route_geo_id,
+                    task_conn=conn, geo_conn=geo_conn,
+                    snapshot_dao=snapshot_dao, progress_dao=progress_dao,
+                    route_pub=route_pub, ack_window=ack_window,
+                    trigger=RoutePushTrigger.RP1_DISPATCH,
+                    now_mono_ms=_now_mono_ms(), now_wall_ms=_now_wall_ms(),
+                    # 15 S2.4.3 sends mode B's arrive radius to
+                    # common.recording, where the key does not exist and the
+                    # value is undecided (NAV-12 / T7). Passed as None on
+                    # purpose: build_snapshot then REFUSES and names the key,
+                    # rather than a plausible number entering the code where
+                    # it becomes indistinguishable from a calibrated one
+                    # (CLAUDE.md 3.1 / IRON RULE 3).
+                    recorded_arrive_radius_m=None)
+                if not res.pushed:
+                    pushing["task_id"] = None
+                    await _fail_task_for_geometry(task_id, res.reason)
+
+            async def _fail_task_for_geometry(task_id: str, why: str) -> None:
+                """15 S2.4.2 / S11.2: a task whose geometry could not be
+                delivered goes to `failed` with E_GEO_INCOMPLETE -- NOT
+                suspended (11 S4.4's suspend_reason closed set has no entry
+                for it and 15 does not invent enum values, Q-P3-24).
+
+                The alternative, leaving it `running`, is the failure this
+                whole batch exists to remove: a task reported running with
+                nothing moving."""
+                _logger.error("p3 route push failed for task %s: %s",
+                              task_id, why)
+                try:
+                    full = await dao.fetch_by_id(task_id)
+                    if full is None or full.state != "running":
+                        return
+                    await dao.finish_task(
+                        task_id, "failed", _now_mono_ms(),
+                        finished_at=_now_utc_iso(), duration_sec=None)
+                    await conn.execute(
+                        "UPDATE tasks SET error_context_json=? "
+                        "WHERE task_id=?",
+                        (json.dumps({"code": E_GEO_INCOMPLETE,
+                                     "detail": why}, ensure_ascii=False),
+                         task_id))
+                    await conn.commit()
+                    await _make_publish(
+                        state_pub, _emit_task_event, _publish_task_state,
+                        fetch_terminal=_fetch_terminal_facts)(
+                            task_id, "running", "failed", "geo_push_failed")
+                except Exception as exc:      # noqa: BLE001
+                    _logger.error("p3 geo-push failure handling failed: %s",
+                                  exc)
+
+            async def _on_ack_outcome(outcome) -> None:
+                """RA-1 / RA-2 / RA-3 (15 S2.4.4)."""
+                task_id = pushing["task_id"]
+                route_geo_id = pushing["route_geo_id"]
+                if outcome.ack.value == "RA-1":
+                    _logger.info("p3 route push confirmed (RA-1) for task %s "
+                                 "after %d attempt(s)", task_id,
+                                 outcome.attempts)
+                    pushing["task_id"] = None
+                    return
+                if not task_id or not route_geo_id:
+                    return
+                if ack_outcome_is_fatal(outcome):
+                    pushing["task_id"] = None
+                    ack_window.reset()
+                    await _fail_task_for_geometry(
+                        task_id, "%s after %d attempt(s)"
+                        % (outcome.ack.value, outcome.attempts))
+                    return
+                # Retry: the WHOLE route again, not the missing chunks --
+                # 11 S3.5A discards the whole set on a gap, so P1 holds no
+                # partial copy to complete (15 S2.4.2 retry row, Q-P3-26).
+                _logger.warning("p3 route push %s for task %s, re-pushing "
+                                "(attempt %d)", outcome.ack.value, task_id,
+                                outcome.attempts + 1)
+                res = await push_route_for_task(
+                    task_id=task_id, route_geo_id=route_geo_id,
+                    task_conn=conn, geo_conn=geo_conn,
+                    snapshot_dao=snapshot_dao, progress_dao=progress_dao,
+                    route_pub=route_pub, ack_window=ack_window,
+                    trigger=RoutePushTrigger.RP2_REMAP,
+                    now_mono_ms=_now_mono_ms(), now_wall_ms=_now_wall_ms(),
+                    recorded_arrive_radius_m=None)
+                if not res.pushed:
+                    pushing["task_id"] = None
+                    await _fail_task_for_geometry(task_id, res.reason)
+
             last_hb = time.monotonic()
             last_geo = 0.0            # 0 -> publish geo on the very first pass
             last_fence = 0.0          # 0 -> publish fence on the very first pass
@@ -751,7 +870,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             _logger.error("p3 ES-2 suspend failed: %s", exc)
                     else:
                         try:
-                            await scheduler_tick(
+                            _made = await scheduler_tick(
                                 conn, dao, now_mono_ms=_now_mono_ms(),
                                 on_transition=_make_publish(
                                     state_pub, _emit_task_event,
@@ -764,8 +883,26 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 started_at=_now_utc_iso(),
                                 boot_id=_BOOT_ID,
                                 list_route_ids=_list_route_ids)
+                            # EX-2 RP-1 (15 S2.4.1): every ready -> running
+                            # this tick made gets its geometry pushed. Driven
+                            # off the tick's RETURN VALUE rather than from
+                            # inside on_transition, because the push must not
+                            # run inside the tick's single transaction -- SN-1
+                            # requires the snapshot COMMITTED before the first
+                            # frame leaves, and committing mid-tick would
+                            # publish half a scheduling pass.
+                            for _tid, _from, _to in _made:
+                                if (_from, _to) != ("ready", "running"):
+                                    continue
+                                await _push_route_on_dispatch(_tid)
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p3 scheduler tick failed: %s", exc)
+                    # EX-2 RA-2/RA-3 (15 S2.4.4): the ack window is a timeout,
+                    # so it has to be ticked by something. Done every pass
+                    # (0.5 s) against a 3 s window.
+                    _ack = ack_window.tick(now_mono_ms=_now_mono_ms())
+                    if _ack is not None:
+                        await _on_ack_outcome(_ack)
                     # EX-3 / EX-4: drain the P1-12 backlog. AFTER the
                     # scheduler tick, so a task the tick has just dispatched
                     # already exists as `running` when the first frame for it
@@ -781,6 +918,25 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             _pbody = progress_queue.get_nowait()
                         except asyncio.QueueEmpty:
                             break
+                        # EX-2 RA-1 BEFORE the persistence half: the very
+                        # frame that confirms the push is also the first one
+                        # that describes the new route, so feeding the window
+                        # after would leave the window open for one extra
+                        # pass on every dispatch. Parse failures are the
+                        # persistence half's to report -- this one stays
+                        # silent so a bad frame is not logged twice.
+                        if ack_window.is_open:
+                            try:
+                                _pp = parse_path_progress(_pbody)
+                            except Exception:      # noqa: BLE001
+                                _pp = None
+                            if _pp is not None:
+                                _ack = ack_window.observe(
+                                    loading=_pp.loading,
+                                    route_id=_pp.route_id,
+                                    route_rev=_pp.route_rev)
+                                if _ack is not None:
+                                    await _on_ack_outcome(_ack)
                         try:
                             await apply_path_progress(
                                 _pbody, conn=conn, dao=dao,
