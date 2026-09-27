@@ -69,6 +69,15 @@ Traps that look right and are not:
      behind us, (ts_clear - ts_raise) came out negative, the merge test
      (ts - last_ts) > window was false for every window, and each real
      recurrence was folded into the old row and vanished -- see DEDUP_WINDOW_S.
+  5. Deriving only the four keys 11 S9.8.4's derivation rules name. The wire
+     carries five MORE -- details / grouped / resources / source / source_ids
+     -- which 13 S7.3 marks upstream with one reason for the whole group:
+     field localisation depends on them. Reading past them (this module did
+     until 2026-09-27) leaves the fault chain complete and the evidence
+     stranded at p5: record.db, the cloud and the HMI get a code and no
+     locator, and nothing reports a problem, because a detail that was never
+     written and a chassis that named nothing look identical. See
+     _evidence_of, which also keeps absent and empty apart for that reason.
 """
 
 from __future__ import annotations
@@ -187,6 +196,7 @@ class ChassisFaultDeriver:
             "bad_level": 0,      # level outside 11 S4.1 -> rejected entry
             "bad_shape": 0,      # entry that is not an object / has no code
             "no_since_ts": 0,    # entry without a usable since_ts
+            "bad_evidence": 0,   # 13 S7.3 evidence field present but mistyped
         }
 
     @property
@@ -255,6 +265,10 @@ class ChassisFaultDeriver:
             out.append(self._event(
                 code=code, cleared=False, rid=rid, level=level,
                 desc=self._desc_of(entry), since_ts=since_ts,
+                # The 13 S7.3 evidence fields, forwarded whole. Extracted here
+                # rather than inside _event so the clear half cannot reach them
+                # by accident -- see _clears.
+                evidence=self._evidence_of(entry),
                 # detected_at is dated from the OCCURRENCE (rule 4). Only when
                 # the producer supplied no usable since_ts does it fall back to
                 # now -- and detail.since_ts stays null there, so the two are
@@ -291,6 +305,17 @@ class ChassisFaultDeriver:
                 # (CF-1). The text was delivered with the raise, and the
                 # recovery names the same code, so nothing is lost.
                 desc=None, since_ts=since_ts,
+                # No evidence either, and NOT a copy of the raise's. 11 S9.8.4
+                # gives cleared[] bare code STRINGS: the chassis says nothing
+                # about resources or sources at recovery time, so there is
+                # nothing here to forward. Re-emitting what the raise carried
+                # would read as "these resources were still implicated when it
+                # cleared", which is a claim no message on this key makes; the
+                # raise already delivered that evidence under the same
+                # dedup_key, so nothing is lost by leaving it out. The recovery
+                # detail therefore holds only what a recovery can know: type,
+                # code, and the since_ts of the occurrence it ends.
+                evidence=None,
                 # A clear has no occurrence time of its own -- cleared[] carries
                 # only the code (CF-1/CF-3) -- so the recovery is dated NOW, the
                 # moment the chassis told us. detail.since_ts still names when the
@@ -404,12 +429,93 @@ class ChassisFaultDeriver:
         value = entry.get("desc")
         return value if isinstance(value, str) and value else None
 
+    def _evidence_of(self, entry: Any) -> Dict[str, Any]:
+        """The five 13 S7.3 evidence fields of one faults[] entry.
+
+        13 S7.3's disposition table marks details / grouped / resources /
+        source / source_ids upstream with one reason written against the whole
+        group -- "xian chang ding wei kao ta", field localisation depends on
+        them. quadruped forwards all five on event/fault/chassis
+        (rt_payloads.cc WriteFaultArray) and 11 S9.8.4 registers them there as
+        our extension; until 2026-09-27 this deriver read only the four keys
+        the derivation rules name, so the chain was complete and the evidence
+        still stopped at p5: record.db, the cloud and the HMI saw a code with
+        no locator. A fault chain whose purpose is field localisation that
+        drops the localisation is the 3.2 failure mode -- the link is up and
+        the payload is not there to tell you.
+
+        ABSENT AND EMPTY ARE DIFFERENT ANSWERS, and this method keeps them so.
+        A key the producer did not send is left OUT of detail entirely; an
+        empty array the producer DID send lands as []. The first says "the
+        chassis was not asked / this producer does not carry the field", the
+        second says "the chassis was asked and named nothing". Collapsing them
+        (defaulting the absent key to [] here) would let a reader conclude the
+        chassis reported no resources when in fact nobody ever looked, and the
+        conclusion would be indistinguishable from the true one -- the same
+        shape 11 S14.3's source_ids row records for that field's own absence.
+
+        A key that IS present but has the wrong type is dropped and counted.
+        The entry itself survives: these five are evidence, not identity, and
+        13 S6.5 forbid #2 (one bad member must not cost the others) applies
+        with more force here than it does to a malformed code -- the fault is
+        real and the operator still needs to hear about it.
+
+        Sizing: no contract anywhere bounds Event.detail. 11 S6.1 gives the
+        field no length rule, 17 BL-3 only ESTIMATES an average event at
+        backfill.avg_event_bytes for a backlog gauge and explicitly refuses to
+        measure the column. So `details` -- free-form vendor text with no
+        schema (13 S7.3 says so in as many words) -- is forwarded verbatim and
+        NOT truncated: a truncation rule invented here would be a number
+        nothing licenses, and a silently clipped diagnostic string is worse
+        than a long one. If a bound is ever contracted, it belongs in 11 S6.1
+        for every producer at once, not in this one deriver.
+        """
+        out: Dict[str, Any] = {}
+        if not isinstance(entry, dict):
+            # Unreachable from _raises (the code reader already rejected a
+            # non-object), kept so the method is total on its own input.
+            return out
+        if "details" in entry:
+            value = entry["details"]
+            if isinstance(value, str):
+                # Empty string included on purpose: the chassis sent the field
+                # and it was blank, which is not the same as not sending it.
+                out["details"] = value
+            else:
+                self.stats["bad_evidence"] += 1
+        if "grouped" in entry:
+            value = entry["grouped"]
+            # bool first and bool only: 1 / 0 would satisfy an int test and
+            # land a number in a field a reader branches on as a flag.
+            if isinstance(value, bool):
+                out["grouped"] = value
+            else:
+                self.stats["bad_evidence"] += 1
+        # Three string arrays, same rule for each. source is the MODULE and
+        # source_ids the INSTANCE (11 S14.3, 2026-09-27): on a chassis running
+        # several instances of one module, source alone cannot say which one
+        # faulted, which is the question the field engineer actually has.
+        for key in ("resources", "source", "source_ids"):
+            if key not in entry:
+                continue
+            value = entry[key]
+            if isinstance(value, list) and all(
+                    isinstance(item, str) for item in value):
+                # list() and not the reference: detail is handed to the
+                # pipeline, record_dao and the cloud relay, and a caller's
+                # list aliased into three of them is one mutation away from
+                # three disagreeing copies of one report.
+                out[key] = list(value)
+            else:
+                self.stats["bad_evidence"] += 1
+        return out
+
     # -- assembly -------------------------------------------------------------
 
     def _event(self, *, code: str, cleared: bool, rid: str,
                level: Optional[str], desc: Optional[str],
-               since_ts: Optional[float], detected_ts: float,
-               now_wall: float) -> Dict[str, Any]:
+               since_ts: Optional[float], evidence: Optional[Dict[str, Any]],
+               detected_ts: float, now_wall: float) -> Dict[str, Any]:
         """One 11 S6.1 Event in the record.db dict shape the pipeline validates.
 
         channel is deliberately absent: step 3 derives it from cat and OVERWRITES
@@ -432,6 +538,13 @@ class ChassisFaultDeriver:
             detail["level"] = level
         if desc:
             detail["desc"] = desc
+        if evidence:
+            # The five 13 S7.3 locator fields, already filtered by
+            # _evidence_of: every key in here was present on the wire and well
+            # typed, so update() cannot introduce a default. None (the clear
+            # half) and {} (a producer that sent none of the five) both leave
+            # detail exactly as it was -- absence stays absence.
+            detail.update(evidence)
         return {
             "eid": self._eid_gen(code, cleared),
             "rid": rid,

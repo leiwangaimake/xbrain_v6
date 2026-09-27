@@ -32,6 +32,14 @@ What these pin, and why each one is here rather than being implied by the others
     producer and reader were fixed together, so both wrong-type directions are
     now asserted -- a sniffing reader leaves two wire shapes legal with nothing
     left to choose between them.
+  * the five 13 S7.3 evidence fields (details / grouped / resources / source /
+    source_ids) reach detail, and ABSENT stays apart from EMPTY. Both halves
+    need their own test: an implementation that defaults the absent keys to
+    [] / false / "" passes every "the field is there" assertion while telling
+    every reader the chassis was asked and named nothing. The forwarding half
+    had no assertion at all until 2026-09-27 and the fields were silently
+    dropped -- nothing could go red, because a detail that was never written
+    and a chassis with nothing to say look identical.
   * the pipeline accepts what comes out. The derivation's whole purpose is that
     EventPipeline._validate stops dropping these, so one test runs a derived
     event through the real _REQUIRED_FIELDS check instead of restating the list.
@@ -459,3 +467,158 @@ def test_both_halves_ride_the_alarm_channel():
     clear_ev = d.observe(_report(cleared=["chs:0x8001"]), now_wall=NOW + 1)[0]
     for ev in (raise_ev, clear_ev):
         assert derive_channel(ev["cat"], ev["detail"]) == "alarm"
+
+
+# -- the five 13 S7.3 evidence fields -----------------------------------------
+#
+# quadruped forwards details / grouped / resources / source / source_ids on
+# event/fault/chassis (11 S9.8.4 registers them there as our extension) and
+# 13 S7.3 marks the whole group upstream with one reason: field localisation
+# depends on them. The deriver read past all five until 2026-09-27, so the
+# chain was complete and the evidence stopped at p5. These pin the forwarding
+# AND the absent/empty distinction, which is the half an implementation gets
+# wrong while passing every "the field is there" assertion.
+
+
+# One faults[] entry as WriteFaultArray actually writes it: the four derivation
+# keys plus the five evidence keys, every one non-empty so a test can tell a
+# forwarded value from a default.
+EVIDENCE = {
+    "details": "motor temp 91C, derating",
+    "grouped": True,
+    "resources": ["leg_fl", "leg_fr"],
+    "source": ["rl_deploy"],
+    "source_ids": ["motion_master#0"],
+}
+
+
+def _fault_with(**over):
+    """A well-formed faults[] entry carrying the five evidence fields."""
+    entry = dict(_fault())
+    entry.update(EVIDENCE)
+    entry.update(over)
+    return entry
+
+
+def test_all_five_evidence_fields_reach_detail():
+    # The point of the whole fault chain is field localisation (13 S7.3
+    # verbatim, one reason written against the whole group), and detail is the
+    # only thing that reaches record.db, the cloud and the HMI. Asserted field
+    # by field rather than by dict equality: a subset assertion would keep
+    # passing if four of the five were dropped.
+    # MUTATION: delete the `detail.update(evidence)` call in _event -> all five
+    # assertions red. Dropping any single key from _evidence_of -> that one red.
+    d = _deriver()
+    ev = d.observe(_report([_fault_with()]), now_wall=NOW)[0]
+    detail = ev["detail"]
+    assert detail["details"] == "motor temp 91C, derating"
+    assert detail["grouped"] is True
+    assert detail["resources"] == ["leg_fl", "leg_fr"]
+    assert detail["source"] == ["rl_deploy"]
+    assert detail["source_ids"] == ["motion_master#0"]
+    # The four derivation keys are untouched by the addition.
+    assert detail["code"] == "chs:0x8001"
+    assert detail["level"] == "fatal"
+    assert d.stats["bad_evidence"] == 0
+
+
+def test_an_empty_value_the_chassis_sent_is_forwarded_as_empty():
+    # "The chassis named no resources" is a real answer and it is NOT the same
+    # answer as "this producer does not carry the field". A reader that cannot
+    # tell them apart concludes the chassis was asked when nobody looked.
+    # MUTATION: make _evidence_of skip falsy values (`if value:` instead of the
+    # type test) -> every assertion below red, and the wire's empty arrays
+    # become indistinguishable from an absent key.
+    d = _deriver()
+    ev = d.observe(_report([_fault_with(
+        details="", grouped=False, resources=[], source=[],
+        source_ids=[])]), now_wall=NOW)[0]
+    detail = ev["detail"]
+    assert detail["details"] == ""
+    assert detail["grouped"] is False
+    assert detail["resources"] == []
+    assert detail["source"] == []
+    assert detail["source_ids"] == []
+
+
+def test_an_absent_evidence_field_is_absent_from_detail():
+    # The other half of the same distinction: nothing is invented. A default of
+    # [] / false / "" here would be a measurement the producer never made, and
+    # it is exactly the shape 11 S14.3's source_ids row records -- "key missing"
+    # and "chassis gave no instance name" are indistinguishable to a consumer,
+    # so no assertion anywhere would ever go red over it.
+    # MUTATION: default any of the five in _evidence_of (e.g.
+    # out["resources"] = entry.get("resources", [])) -> that key red here.
+    d = _deriver()
+    ev = d.observe(_report([_fault()]), now_wall=NOW)[0]
+    for key in ("details", "grouped", "resources", "source", "source_ids"):
+        assert key not in ev["detail"], "invented %s out of nothing" % key
+    # The event itself is unharmed: evidence is not identity.
+    assert ev["detail"]["code"] == "chs:0x8001"
+    assert d.stats["raised"] == 1
+
+
+def test_a_recovery_carries_no_fabricated_evidence():
+    # 11 S9.8.4 gives cleared[] bare code STRINGS: at recovery the chassis says
+    # nothing about resources or sources, so there is nothing to forward.
+    # Copying the raise's evidence onto the clear would read as "these
+    # resources were still implicated when it cleared" -- a claim no message on
+    # this key makes.
+    # MUTATION: remember the raise's evidence and pass it to the clear's
+    # _event(...) -> red on the loop below.
+    d = _deriver()
+    d.observe(_report([_fault_with()]), now_wall=NOW)
+    clear_ev = d.observe(_report(cleared=["chs:0x8001"]), now_wall=NOW + 60.0)[0]
+    detail = clear_ev["detail"]
+    assert detail["type"] == "chassis_fault_cleared"
+    for key in ("details", "grouped", "resources", "source", "source_ids"):
+        assert key not in detail, "recovery fabricated %s" % key
+    # What a recovery CAN know is still there: the code it ends and when that
+    # occurrence had started.
+    assert detail["code"] == "chs:0x8001"
+    assert detail["since_ts"] == SINCE
+
+
+def test_a_mistyped_evidence_field_is_dropped_counted_and_costs_nothing_else():
+    # 13 S6.5 forbid #2 applies with more force to evidence than to a code: the
+    # fault is real and the operator still needs to hear about it, so a wrongly
+    # typed locator loses itself and nothing more. Passing it through instead
+    # would put a string where a consumer branches on an array.
+    # MUTATION: pass the value through unchecked -> the two `not in` assertions
+    # red. Drop the counter increment -> the stats assertion red.
+    d = _deriver()
+    ev = d.observe(_report([_fault_with(
+        resources="leg_fl", grouped=1)]), now_wall=NOW)[0]
+    detail = ev["detail"]
+    assert "resources" not in detail
+    # 1 is not True: an int test would land a number in a flag field.
+    assert "grouped" not in detail
+    # The well-typed neighbours in the same entry survive.
+    assert detail["source"] == ["rl_deploy"]
+    assert detail["source_ids"] == ["motion_master#0"]
+    assert d.stats["bad_evidence"] == 2
+    assert d.stats["raised"] == 1
+
+
+def test_an_array_with_a_non_string_member_is_rejected_whole():
+    # Half an array is worse than none: a reader counting resources would get a
+    # number that is right often enough to be trusted.
+    # MUTATION: filter the members instead of rejecting the array -> red.
+    d = _deriver()
+    ev = d.observe(_report([_fault_with(source_ids=["motion_master#0", 7])]),
+                   now_wall=NOW)[0]
+    assert "source_ids" not in ev["detail"]
+    assert d.stats["bad_evidence"] == 1
+
+
+def test_the_forwarded_arrays_are_copies_not_the_caller_s_lists():
+    # detail is handed on to the pipeline, record_dao and the cloud relay. An
+    # aliased list is one mutation away from three disagreeing copies of one
+    # report, and the disagreement would surface as a cloud/record.db mismatch
+    # nobody could reproduce.
+    # MUTATION: out[key] = value (no list() copy) -> red.
+    d = _deriver()
+    incoming = ["leg_fl"]
+    ev = d.observe(_report([_fault_with(resources=incoming)]), now_wall=NOW)[0]
+    incoming.append("leg_rr")
+    assert ev["detail"]["resources"] == ["leg_fl"]
