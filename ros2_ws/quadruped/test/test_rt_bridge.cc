@@ -253,6 +253,109 @@ int main() {
     CHECK(sent.size() == 3);
   }
 
+  // ---- EstopAck.latency_ms is MEASURED, not a constant ------------------
+  //
+  // 11 S7.1.1 defines it "收到消息 -> 首个零速帧下发", float ms, and the 时限
+  // row measures the 100 ms budget from quadruped's receipt. It was hardcoded 0
+  // until 2026-09-27 -- and 0 is the worst constant available: p5 relays the
+  // field verbatim to the cloud (S7.1.1's 透传口径 forbids substituting the
+  // gateway's own forwarding time), the far end checks it against 100 ms, and
+  // 0 ms passes. "The chain stopped measuring" and "the chain was instant" were
+  // the same observation.
+  //
+  // The clock is injected because the measurement needs a SECOND reading, taken
+  // after the stop went out, which no caller can pass in advance -- and the
+  // handler is driven here with synthetic receipt times (1.0, 10.0), so a real
+  // uptime reading inside would compute a latency of nine hundred million ms.
+  // The fake advances by a known amount per call, which is what lets the VALUE
+  // be asserted rather than just its sign.
+  {
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    // 1.25 ms between the entry reading and the closing one.
+    //
+    // The base is 5000 s, deliberately NOT a value ToMs(now_mono_s) could
+    // produce: the recv_mono_ms assertion below is a substring search, and with
+    // a base of 1000.0 the mutant "recv_mono_ms filled from the latency clock"
+    // wrote 1000000 -- which CONTAINS the expected "1000" and survived. The
+    // trailing comma in the assertion is the other half of that fix.
+    double fake = 5000.0;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               },
+               [&fake]() { const double v = fake; fake += 0.00125; return v; });
+
+    const std::string stop = Wrap("{\"cmd_id\":\"e-lat\",\"action\":\"stop\"}");
+    b.HandleEstop(1.0, stop.c_str(), stop.size());
+    const std::string ack = FindLast(sent, "rt/safety/estop/ack");
+    // mutant: ack.latency_ms = 0 (the old line) -> red on all three.
+    CHECK(Has(ack, "\"latency_ms\":1.250000"));
+    CHECK(!Has(ack, "\"latency_ms\":0"));
+    // recv_mono_ms stays the SESSION's receipt reading, in ms, not the injected
+    // clock: they are two different facts and 11 lists them on adjacent rows.
+    // ToMs(1.0) = 1000, and the trailing comma makes this an exact field match
+    // -- without it the mutant's 5000000 matched as a prefix and survived.
+    // mutant: fill recv_mono_ms from mono_now_ too -> red.
+    CHECK(Has(ack, "\"recv_mono_ms\":1000,"));
+
+    // A SWALLOWED duplicate (inside the 50 ms window) still reports a latency.
+    // No zero frame goes out for it, so the "first zero frame" reading does not
+    // apply -- but the field table's own words ("quadruped 内部处理时延") do,
+    // and result="duplicate" in the same message is what tells the two apart.
+    // Publishing 0 or null here would make a non-error case look unmeasured.
+    // mutant: skip the measurement on the duplicate branch -> red.
+    b.HandleEstop(1.020, stop.c_str(), stop.size());
+    const std::string dup_ack = FindLast(sent, "rt/safety/estop/ack");
+    CHECK(Has(dup_ack, "\"result\":\"duplicate\"") ||
+          Has(dup_ack, "\"result\": \"duplicate\""));
+    CHECK(Has(dup_ack, "\"latency_ms\":1.250000"));
+    CHECK(b.estops_deduped() == 1);
+  }
+
+  // ---- latency_ms measured on the REAL clock is positive and small -------
+  //
+  // The injected-clock case above proves the arithmetic; this one proves the
+  // production wiring reads a clock at all. Without it, a bridge whose default
+  // MonoFn was left empty (or bound to a constant) would pass everything above
+  // and publish 0 on the robot -- the defect being fixed, back again, with the
+  // whole test suite green.
+  {
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    // No clock argument: the constructor must substitute MonoNowSeconds.
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+    const std::string stop = Wrap("{\"cmd_id\":\"e-real\",\"action\":\"stop\"}");
+    const double t0 = MonoNowSeconds();
+    b.HandleEstop(1.0, stop.c_str(), stop.size());
+    const double elapsed_ms = (MonoNowSeconds() - t0) * 1000.0;
+
+    const std::string ack = FindLast(sent, "rt/safety/estop/ack");
+    // Parsed rather than string-matched: the value is not predictable, only its
+    // range is. std::stod stops at the first non-numeric character.
+    const std::size_t at = ack.find("\"latency_ms\":");
+    CHECK(at != std::string::npos);
+    const double got = at == std::string::npos
+                           ? -1.0
+                           : std::stod(ack.substr(at + 13));
+    // STRICTLY positive: the encode-and-send inside OnSoftEstop cannot take
+    // zero time, and 0 is exactly what the hardcoded field published.
+    // mutant: bind the default MonoFn to a constant -> red.
+    CHECK(got > 0.0);
+    // Bounded by the whole call measured from outside, so a measurement that
+    // accidentally spans something larger (a wall clock, the wrong subtraction,
+    // seconds read as ms) is red rather than "big but plausible".
+    CHECK(got <= elapsed_ms);
+    // And inside the contract's own budget by a wide margin: 11 S7.1.1 时限 is
+    // 100 ms for the whole ack, and T-1 gives the zero frame 5 ms.
+    CHECK(got < 5.0);
+  }
+
   // ---- rt/chassis/ctrl: enable clears the lock, and the ack reads back ---
   {
     QuadrupedProcess p(Cfg());

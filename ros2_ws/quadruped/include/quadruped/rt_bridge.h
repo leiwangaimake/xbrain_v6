@@ -67,8 +67,18 @@ class RtBridge {
       std::function<bool(const std::string& key_suffix, const char* data,
                          std::size_t len)>;
 
+  // Reads CLOCK_MONOTONIC in seconds. Injected for the same reason the handlers
+  // take `now_mono_s` as an argument (see rt_runtime: "the clock is read at the
+  // edge and passed inward so a test can drive it") -- but HandleEstop needs a
+  // SECOND reading, taken after the stop has gone out, which no caller can
+  // supply in advance. A test that drove the handler with 1.0 / 1.2 / 10.0 and
+  // then met a real uptime reading inside would compute a latency of nine
+  // hundred million milliseconds, so the choice is between injecting this and
+  // having no assertion on latency_ms at all.
+  using MonoFn = std::function<double()>;
+
   RtBridge(QuadrupedProcess* proc, std::string rid, std::string boot,
-           PublishFn publish);
+           PublishFn publish, MonoFn mono_now = MonoFn());
 
   // ---- the four inbound handlers ---------------------------------------
   //
@@ -203,6 +213,9 @@ class RtBridge {
   std::string rid_;
   std::string boot_;
   PublishFn publish_;
+  // Never empty: the constructor substitutes MonoNowSeconds when the caller
+  // passes nothing, so no call site needs a null check on the estop path.
+  MonoFn mono_now_;
 
   double last_estop_mono_s_ = -1.0;
   // 11 S4.1 last_soft_estop, the four facts behind it. Written by HandleEstop

@@ -145,6 +145,28 @@ class Appender {
     Raw(buf);
   }
 
+  // A DURATION in milliseconds. Fixed six decimals for the same reason TimeSec
+  // uses them and Num() must not be used here: "%.6g" is six SIGNIFICANT digits,
+  // so it is lossy at both ends of this field's range -- and the low end is the
+  // real one. EstopAck.latency_ms measures an interval that is a fraction of a
+  // millisecond on this machine (11 S7.1.1 records 0.293 ms for the relay's own
+  // single hop), so anything that rounds toward whole milliseconds publishes 0,
+  // which is the value the field carried while it was a hardcoded constant and
+  // which passes the contract's 100 ms criterion perfectly.
+  void MilliSec(double v) {
+    // Unreachable from a monotonic difference, and null rather than a number
+    // if it ever happens: a required field reading null is a visible defect,
+    // while a negative or NaN duration silently poisons whatever the far end
+    // computes from it.
+    if (!std::isfinite(v) || v < 0.0) {
+      Raw("null");
+      return;
+    }
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%.6f", v);
+    Raw(buf);
+  }
+
   void Int(long long v) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%lld", v);
@@ -732,10 +754,13 @@ std::size_t WriteEstopAck(const EstopAckInput& in, char* out, std::size_t cap) {
   a.Raw("]");
   // MILLISECONDS, both of them. The envelope around this message carries mono
   // in SECONDS; the two are different fields and 11 names each with its unit.
+  // Two WRITERS though: 11 S7.1.1 types recv_mono_ms uint64 (an instant) and
+  // latency_ms float (an interval, measured sub-millisecond here), and UInt on
+  // the second one truncated every real measurement to 0.
   a.Raw(",\"recv_mono_ms\":");
   a.UInt(in.recv_mono_ms);
   a.Raw(",\"latency_ms\":");
-  a.UInt(in.latency_ms);
+  a.MilliSec(in.latency_ms);
   a.Raw(",\"hes\":");
   a.Bool(in.hes);
   a.Raw(",\"timeout_lock\":");

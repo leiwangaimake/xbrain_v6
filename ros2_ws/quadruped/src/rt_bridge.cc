@@ -127,11 +127,15 @@ std::uint64_t ToMs(double s) {
 }  // namespace
 
 RtBridge::RtBridge(QuadrupedProcess* proc, std::string rid, std::string boot,
-                   PublishFn publish)
+                   PublishFn publish, MonoFn mono_now)
     : proc_(proc),
       rid_(std::move(rid)),
       boot_(std::move(boot)),
-      publish_(std::move(publish)) {
+      publish_(std::move(publish)),
+      // Bound once, here, so the estop path never branches on emptiness and
+      // production gets the one reader mono_clock.h exists to be (CLK-C1).
+      mono_now_(mono_now ? std::move(mono_now)
+                         : MonoFn(&MonoNowSeconds)) {
   // *** Every key this class publishes on must be IN THE TABLE. 11 S2.2.1 is
   // the closed set of RT-plane keys, rt_keys.cc is its transcription, and a
   // suffix that is not there is a key nobody reviewed. Checked once here, at
@@ -765,6 +769,12 @@ void RtBridge::HandleEstop(double now_mono_s, const char* data,
   const bool duplicate =
       (last_estop_mono_s_ >= 0.0) &&
       (now_mono_s - last_estop_mono_s_) < kEstopDedupS;
+  // The entry reading for latency_ms, taken BEFORE the stop and on the same
+  // clock as the closing one below. It is not now_mono_s: that value comes from
+  // the session (rt_runtime reads the clock at the edge and passes it inward),
+  // and a test drives it with 1.0 / 10.0 while this reader returns real uptime
+  // -- subtracting one from the other is nine hundred million milliseconds.
+  const double t_enter = mono_now_();
   if (!duplicate) {
     proc_->OnSoftEstop(now_mono_s);
     last_estop_mono_s_ = now_mono_s;
@@ -772,6 +782,27 @@ void RtBridge::HandleEstop(double now_mono_s, const char* data,
   } else {
     ++estop_deduped_;
   }
+  // 11 S7.1.1 latency_ms, verbatim "收到消息 -> 首个零速帧下发", float ms, and
+  // the S7.1.1 时限 row measures the 100 ms budget from quadruped's receipt.
+  // Read HERE and not after the parse: OnSoftEstop encodes and sends the zero
+  // frame synchronously (process.cc, T-1: "a zero frame goes out NOW"), so this
+  // instant IS "the first zero-velocity frame dispatched". Everything below is
+  // for the ack, and charging the ack's own parse to the stop's latency would
+  // report a number the stop did not take.
+  //
+  // *** This field was hardcoded 0 until 2026-09-27, and 0 is the worst possible
+  // constant for it: p5 relays it verbatim to the cloud (S7.1.1 透传口径,
+  // "不换成网关自己的转发耗时"), the far end reads it against the 100 ms
+  // criterion, and 0 ms passes that criterion perfectly. A chain that had
+  // stopped measuring and a chain that was instant were the same observation.
+  //
+  // For a SWALLOWED duplicate no zero frame goes out, so the first reading of
+  // the contract does not apply; the field table's own words -- "quadruped 内部
+  // 处理时延" -- still do, and that is what this measures. result="duplicate"
+  // is what tells a reader which of the two it is, and it travels in the same
+  // message. Publishing null instead would make the required field absent for
+  // a case that is not an error.
+  const double latency_ms = (mono_now_() - t_enter) * 1000.0;
 
   // Only now is the payload looked at, and only to fill the ack. There is no
   // branch below that can undo the stop above.
@@ -800,7 +831,7 @@ void RtBridge::HandleEstop(double now_mono_s, const char* data,
   ack.estop_epoch = proc_->estop_epoch();
   ack.applied_zero_vel = !duplicate;
   ack.recv_mono_ms = ToMs(now_mono_s);
-  ack.latency_ms = 0;
+  ack.latency_ms = latency_ms;
   ack.hes = proc_->last_tier1().hes_lock;
   ack.timeout_lock = proc_->last_tier1().timeout_lock;
 

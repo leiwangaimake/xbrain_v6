@@ -262,7 +262,15 @@ struct EstopAckInput {
   // MILLISECONDS on the monotonic clock. See the file comment: the envelope's
   // mono is seconds, and these are two different fields of the same message.
   std::uint64_t recv_mono_ms = 0;
-  std::uint64_t latency_ms = 0;
+  // ...but latency_ms is a DOUBLE, and the contract says so: 11 S7.1.1's field
+  // table types recv_mono_ms uint64 and latency_ms float, on adjacent rows.
+  // The difference is not cosmetic. This is an interval, not an instant, and the
+  // interval it measures ("收到消息 -> 首个零速帧下发") is sub-millisecond on
+  // this machine -- the relay's own single hop measured 0.293 ms. An integer
+  // field would publish every real measurement as 0, which is exactly the value
+  // the field carried while it was hardcoded, and a 0 passes the 100 ms
+  // criterion the far end checks it against.
+  double latency_ms = 0.0;
   bool hes = false;
   bool timeout_lock = false;
 };

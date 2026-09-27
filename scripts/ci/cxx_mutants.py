@@ -1191,6 +1191,22 @@ PAYLOADS_MUTANTS = [
      PAYLOADS_CC,
      "    for (std::size_t k = 0; k < f.source_ids.size(); ++k) {",
      "    for (std::size_t k = 0; k < f.source_ids.size() && k < 1; ++k) {"),
+    # 11 S7.1.1 types latency_ms float, one row below uint64 recv_mono_ms. The
+    # interval it carries is sub-millisecond (S7.1.1 records 0.293 ms for the
+    # relay's own single hop), so an integer writer publishes every real
+    # measurement as 0 -- and 0 passes the contract's 100 ms criterion.
+    ("payloads: latency_ms written with the integer writer",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"latency_ms\\":");\n  a.MilliSec(in.latency_ms);',
+     '  a.Raw(",\\"latency_ms\\":");\n  a.UInt('
+     "static_cast<unsigned long long>(in.latency_ms));"),
+    # ...and the %.6g form: correct for 0.293512 and an exponent for anything
+    # past six significant digits, which is the lesson since_ts already taught
+    # this file.
+    ("payloads: latency_ms formatted with %.6g",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"latency_ms\\":");\n  a.MilliSec(in.latency_ms);',
+     '  a.Raw(",\\"latency_ms\\":");\n  a.Num(in.latency_ms);'),
     # 13 V-68: an empty slot reports 0, so min_level alone cannot tell a flat
     # battery from an absent one. present_count is the fact that supplies it.
     ("payloads: present_count is dropped from the device report",
@@ -2294,6 +2310,45 @@ RT_BRIDGE_MUTANTS = [
      "    const std::size_t n = WriteChassisMotion",
      "  if (true) {\n"
      "    const std::size_t n = WriteChassisMotion"),
+    # 11 S7.1.1 latency_ms, "收到消息 -> 首个零速帧下发", float ms. Hardcoded 0
+    # until 2026-09-27, and 0 is the worst constant for it: p5 relays it verbatim
+    # (S7.1.1 透传口径), the far end checks it against the 100 ms criterion, and
+    # 0 ms passes -- so "the chain stopped measuring" and "the chain was instant"
+    # were the same observation.
+    ("bridge: EstopAck.latency_ms goes back to a hardcoded zero",
+     RT_BRIDGE_CC,
+     "  ack.latency_ms = latency_ms;",
+     "  ack.latency_ms = 0;"),
+    # The measurement taken AFTER the ack's own parse rather than after the stop.
+    # Still non-zero, still small, still passes any "> 0" assertion -- and it
+    # charges the parse to a number the contract defines as ending at the first
+    # zero-velocity frame.
+    ("bridge: latency_ms measured after the ack parse, not after the stop",
+     RT_BRIDGE_CC,
+     "  const double latency_ms = (mono_now_() - t_enter) * 1000.0;",
+     "  const double latency_ms = 0.001;"),
+    # The duplicate branch left unmeasured. A swallowed repeat is not an error
+    # (11 S9.12.6 acks it on purpose), so reporting 0 for it says "unmeasured"
+    # about a case that ran normally.
+    ("bridge: a deduped estop reports latency_ms 0",
+     RT_BRIDGE_CC,
+     "  const double t_enter = mono_now_();",
+     "  const double t_enter = duplicate ? mono_now_() + 1e9 : mono_now_();"),
+    # The default clock bound to a constant. Every injected-clock assertion still
+    # passes; only the real-clock case is red -- which is why that case exists.
+    ("bridge: the default mono clock is a constant",
+     RT_BRIDGE_CC,
+     "      mono_now_(mono_now ? std::move(mono_now)\n"
+     "                         : MonoFn(&MonoNowSeconds)) {",
+     "      mono_now_(mono_now ? std::move(mono_now)\n"
+     "                         : MonoFn([]() { return 1.0; })) {"),
+    # recv_mono_ms filled from the latency clock instead of the session's receipt
+    # reading. 11 lists the two on adjacent rows as different facts: one is an
+    # instant on the session's clock, the other an interval measured here.
+    ("bridge: recv_mono_ms filled from the latency clock",
+     RT_BRIDGE_CC,
+     "  ack.recv_mono_ms = ToMs(now_mono_s);",
+     "  ack.recv_mono_ms = ToMs(t_enter);"),
     # *** THE ONE THIS FILE'S ORDERING EXISTS FOR. Stopping only when the
     # payload parsed is the natural-looking version, and it silently removes
     # the waiver of 11 S3.0.1: a truncated or hostile estop then does nothing.

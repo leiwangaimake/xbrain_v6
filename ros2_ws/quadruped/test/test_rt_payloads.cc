@@ -520,8 +520,15 @@ int main(int argc, char** argv) {
     in.estop_epoch = 42;
     in.applied_zero_vel = true;
     in.recv_mono_ms = 918273645;
-    in.latency_ms = 7;
+    // A SUB-millisecond interval, on purpose: 11 S7.1.1 types latency_ms float
+    // (recv_mono_ms, one row above, is uint64), and the interval it measures is
+    // a fraction of a millisecond on this machine -- 0.293 ms for the relay's
+    // own single hop, per S7.1.1's own note. An integer field or an integer
+    // writer publishes this as 0, which is what the field carried while it was
+    // hardcoded AND a value that passes the contract's 100 ms criterion.
+    in.latency_ms = 0.293512;
     const std::size_t n = WriteEstopAck(in, buf, sizeof(buf));
+    const std::string ack_text(buf, n);
     const Json j = ParseOrFail("EstopAck", buf, n);
     CHECK(j["cmd_id"] == "e-3d91");
     CHECK(j["result"] == "accepted");
@@ -531,7 +538,32 @@ int main(int argc, char** argv) {
     // mono in SECONDS. Two units for one clock in one message is the contract's
     // own shape, and this case exists so nobody "fixes" one to match the other.
     CHECK(j["recv_mono_ms"] == 918273645);
-    CHECK(j["latency_ms"] == 7);
+    // Three claims, because each fails on its own:
+    //   (1) the fraction SURVIVES -- an integer writer gives 0 and a truncating
+    //       one gives 0, and both parse as a perfectly valid latency;
+    //   (2) it is not merely non-zero: the exact value comes back, so a writer
+    //       that rounded to 0.3 or to 1 is red;
+    //   (3) the TEXT carries a decimal point and no exponent, so a formatter
+    //       that happens to round to the same double still shows up (the %.6g
+    //       lesson this file already learned on since_ts).
+    CHECK(j["latency_ms"].is_number());
+    CHECK(j["latency_ms"].get<double>() == 0.293512);
+    // The exact text also rules out the exponent form on its own: an "%.6g"
+    // writer renders this as 0.293512 too, but a larger one renders 1234567 ms
+    // as "1.23457e+06" -- so the next case covers that end.
+    CHECK(ack_text.find("\"latency_ms\":0.293512") != std::string::npos);
+
+    // A value past six significant digits. %.6g turns it into an exponent form
+    // and loses the decimals; %.6f keeps both. Not a realistic latency (the
+    // budget is 100 ms), and that is the point: the writer must not be the
+    // thing that decides which magnitudes are representable.
+    EstopAckInput big = in;
+    big.latency_ms = 1234567.5;
+    const std::size_t bn = WriteEstopAck(big, buf, sizeof(buf));
+    const std::string big_text(buf, bn);
+    const Json bj = ParseOrFail("EstopAck/big-latency", buf, bn);
+    CHECK(bj["latency_ms"].get<double>() == 1234567.5);
+    CHECK(big_text.find("\"latency_ms\":1234567.500000") != std::string::npos);
 
     // A repeat of the same cmd_id is `duplicate` with the SAME epoch: 11 makes
     // the stop idempotent, and a new epoch would make the upstream believe a
