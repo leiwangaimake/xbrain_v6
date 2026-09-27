@@ -17,6 +17,11 @@ What these pin, and why each one is here rather than being implied by the others
     a fault that started long ago; an implementation that stamps now passes every
     shape assertion and silently backdates nothing, so this needs its own check
     with the two times deliberately far apart.
+  * ts from the DERIVATION moment and never from since_ts (11 S9.8.4 rule 6),
+    driven through the real RecordDao: with the two clocks mixed a raise ->
+    clear -> re-raise sequence lost its third row to the dedup merge whenever
+    the chassis clock ran behind ours. No assertion on a ts VALUE can see that,
+    so the sequence is persisted and the rows are counted.
   * dedup_key is the COMPLETE prefixed code (CF-4) and the two vendor spaces do
     not merge -- chs:0x1007 and chg:0x1007 must be two independent faults.
   * a CF-1 malformed code is rejected and COUNTED, and the rest of the report
@@ -161,8 +166,10 @@ def test_a_cleared_code_can_raise_again():
                       now_wall=NOW + 120.0)
     assert len(again) == 1 and again[0]["detail"]["type"] == "chassis_fault"
     # Two raises of the same code carry DIFFERENT ts, so record_dao's
-    # (ts - last_ts) > 0 test refuses to merge them.
-    assert again[0]["ts"] == SINCE + 500.0
+    # (ts - last_ts) > 0 test refuses to merge them. The ts is the DERIVATION
+    # moment (11 S9.8.4 rule 6), not since_ts -- see the three-row test below
+    # for what dating it from the chassis clock costs.
+    assert again[0]["ts"] == NOW + 120.0
 
 
 # -- timestamps ---------------------------------------------------------------
@@ -170,12 +177,17 @@ def test_a_cleared_code_can_raise_again():
 
 def test_detected_at_comes_from_since_ts_not_from_observation_time():
     # The snapshot property: this fault started ~2.5 h before we looked at it.
-    # mutant: stamp detected_at (or ts) from now_wall -> both asserts red.
+    # mutant: stamp detected_at from now_wall -> the second assert red.
     d = _deriver()
     ev = d.observe(_report([_fault()]), now_wall=NOW)[0]
-    assert ev["ts"] == SINCE
     assert ev["detected_at"] == "2025-07-28 00:00:12"
-    # created_at is the WRITE time and is a different instant on purpose.
+    # ... and ts is the OTHER clock: the derivation moment on this machine
+    # (11 S9.8.4 rule 6). The two are deliberately far apart here, so an
+    # implementation that stamps either one from the other is red.
+    # mutant: ts = since_ts -> red (and see the three-row test below).
+    assert ev["ts"] == NOW
+    assert ev["ts"] != SINCE
+    # created_at is the WRITE time, same clock as ts and the same instant here.
     assert ev["created_at"].startswith("2025-07-28T02:33:19")
 
 
@@ -188,6 +200,85 @@ def test_a_missing_since_ts_is_not_fabricated_into_detail():
     assert ev["ts"] == NOW                  # dated from now, so the row sorts
     assert ev["detail"]["since_ts"] is None  # ... but detail does not claim it
     assert d.stats["no_since_ts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_recurrence_survives_record_dao_when_the_chassis_clock_is_behind(
+        tmp_path):
+    """raise -> clear -> same code raises again: THREE rows in record.db.
+
+    This is the whole reason 11 S9.8.4 grew rule 6. The deriver's ts is the
+    record_dao merge comparison value ((ts - last_ts) > dedup_window_s) and the
+    dedup_key is the same prefixed code for all three events, so the three ts
+    values have to be strictly increasing or a row is silently absorbed.
+
+    Dating a raise from since_ts broke that, and the clock offset decided the
+    outcome rather than the ordering:
+      1. raise  ts = since_ts  = CHASSIS clock  (small)
+      2. clear  ts = now_wall  = OUR clock      (large) -> inserted, last_ts big
+      3. raise  ts = since_ts  = CHASSIS clock  (small) -> ts - last_ts < 0,
+         which is <= any window, so it MERGED into row 2 and never existed.
+    The operator saw one fault row whose dedup_count went up, i.e. the second
+    occurrence of a real chassis fault was not in record.db at all -- and with
+    a chassis clock AHEAD of ours the same code would have passed, which is the
+    kind of test-passes-on-my-bench that this one exists to remove.
+
+    It is driven through the REAL RecordDao rather than by comparing ts values,
+    because the defect is not in a ts value on its own: it is in what the DAO
+    does with three of them. An assertion on ts alone cannot see a merge.
+    mutant: put back ts = since_ts in _raises -> the row count is 2, not 3.
+    """
+    import aiosqlite
+    from xbrain.p5_gateway.persistence.base import RecordConn
+    from xbrain.p5_gateway.persistence.record_dao import RecordDao
+    from xbrain.p5_gateway.persistence.schema_record import ALL_RECORD_STATEMENTS
+
+    d = _deriver()
+    # The chassis is ~2.5 h BEHIND this machine (SINCE vs NOW): the sign that
+    # used to decide whether a recurrence was kept.
+    assert SINCE < NOW
+    events = []
+    events += d.observe(_report([_fault()]), now_wall=NOW)
+    events += d.observe(_report(cleared=["chs:0x8001"]), now_wall=NOW + 60.0)
+    events += d.observe(_report([_fault(since_ts=SINCE + 500.0)]),
+                        now_wall=NOW + 120.0)
+    assert len(events) == 3            # the deriver's own edges are unchanged
+
+    async with aiosqlite.connect(":memory:", isolation_level=None) as c:
+        for stmt in ALL_RECORD_STATEMENTS:
+            await c.execute(stmt)
+        # One connection in all three roles: this asserts DAO LOGIC, and
+        # :memory: is per-connection so three would be three databases (same
+        # arrangement as tests/p5_gateway/persistence/test_record_dao.py).
+        dao = RecordDao(RecordConn(role="writer_normal", path=":memory:", conn=c),
+                        RecordConn(role="writer_full", path=":memory:", conn=c),
+                        RecordConn(role="reader", path=":memory:", conn=c),
+                        jsonl_path=str(tmp_path / "degrade.jsonl"))
+        results = []
+        for ev in events:
+            # channel is derived by the pipeline, not by the deriver (17 S3.3);
+            # supplied here exactly the way the pipeline supplies it.
+            ev = dict(ev, channel=derive_channel(ev["cat"], ev["detail"]))
+            results.append(await dao.insert_event(ev))
+
+        # *** the load-bearing assertion. "merged" for any of the three is the
+        # bug: a merge writes no row and the occurrence is gone.
+        assert [r.status for r in results] == ["inserted"] * 3
+        cur = await c.execute("SELECT COUNT(*) FROM events WHERE dedup_key = ?",
+                              ("chs:0x8001",))
+        assert (await cur.fetchone())[0] == 3
+        # And no row absorbed a sibling: three rows each counted once.
+        cur = await c.execute(
+            "SELECT dedup_count FROM events WHERE dedup_key = ? ORDER BY id",
+            ("chs:0x8001",))
+        assert [row[0] for row in await cur.fetchall()] == [1, 1, 1]
+
+    # detected_at still comes from the CHASSIS clock (rule 4 is untouched) while
+    # ts comes from ours -- the two clocks coexist, they just stop being
+    # compared with each other.
+    assert events[0]["detected_at"] == "2025-07-28 00:00:12"      # SINCE
+    assert events[2]["detail"]["since_ts"] == SINCE + 500.0
+    assert [ev["ts"] for ev in events] == [NOW, NOW + 60.0, NOW + 120.0]
 
 
 # -- CF-1 / CF-4 --------------------------------------------------------------

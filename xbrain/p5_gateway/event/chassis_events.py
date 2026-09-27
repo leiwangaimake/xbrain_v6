@@ -62,6 +62,13 @@ Traps that look right and are not:
      words. A malformed entry is rejected and counted; the REPORT is not dropped,
      because the other entries in it are real faults (the same discipline
      read_fault_report implements one layer down).
+  4. Stamping Event.ts with since_ts as well. detected_at takes since_ts (rule
+     4) and ts does NOT (rule 6): ts is the record_dao merge comparison value
+     and since_ts is the CHASSIS wall clock, so a raise dated from it and a
+     clear dated from our own clock are two different clocks. With the chassis
+     behind us, (ts_clear - ts_raise) came out negative, the merge test
+     (ts - last_ts) > window was false for every window, and each real
+     recurrence was folded into the old row and vanished -- see DEDUP_WINDOW_S.
 """
 
 from __future__ import annotations
@@ -123,9 +130,22 @@ TYPE_CLEARED = "chassis_fault_cleared"
 #
 # 0 means "carry the key, coalesce nothing". The merge test is
 # (ts - last_ts) > window, so a strictly later event never merges and an event
-# with the IDENTICAL ts does -- which is precisely the duplicate we want folded
-# (the same occurrence arriving twice, e.g. over the relay path and the P1-20
-# path), because ts is since_ts, the occurrence's own time.
+# with the IDENTICAL ts does.
+#
+# *** The window only works because every event on this key carries a ts from
+# ONE clock -- the derivation moment on this machine (11 S9.8.4 rule 6). It did
+# not: raises were dated from since_ts, the CHASSIS wall clock, while clears
+# were dated from ours. Measured 2026-09-27: with the chassis clock behind us,
+# raise(ts = chassis) -> clear(ts = ours, larger) -> raise(ts = chassis again,
+# SMALLER than last_ts) made (ts - last_ts) negative, so no window could be
+# exceeded and the third row was merged into the first and disappeared. A
+# sequence of real recurrences persisted as one row whose dedup_count grew.
+# One clock plus a monotone reading makes a recurrence strictly later, always.
+#
+# The duplicate the identical-ts fold would catch (the same report arriving over
+# the relay path and the P1-20 path) is not reached here anyway: the second
+# copy's code is already in the active set, so it is not an edge and produces no
+# event at all. Edge triggering is what absorbs that pair, not the window.
 #
 # This is not the "0 pretending to be a calibrated value" of CLAUDE.md 3.1: it is
 # not a safety parameter and it is not a stand-in for an unknown number. The
@@ -185,10 +205,12 @@ class ChassisFaultDeriver:
         the two are told apart by the presence of a data object.
 
         now_wall is injected (wall-clock seconds) rather than read here, so a
-        test can assert exactly which timestamp landed in which field. It is used
-        ONLY for created_at and for a clear's detected_at; every raise dates
-        itself from since_ts. No monotonic decision is made in this module, so
-        CLK-C1 has nothing to say about the wall clock here.
+        test can assert exactly which timestamp landed in which field. It is the
+        derivation moment on THIS machine and it is what every emitted event
+        carries as ts (rule 6) and as created_at; only a raise's detected_at
+        comes from the producer's since_ts (rule 4). No monotonic decision is
+        made in this module, so CLK-C1 has nothing to say about the wall clock
+        here.
         """
         self.stats["reports"] += 1
         body = envelope.get("data")
@@ -233,10 +255,11 @@ class ChassisFaultDeriver:
             out.append(self._event(
                 code=code, cleared=False, rid=rid, level=level,
                 desc=self._desc_of(entry), since_ts=since_ts,
-                # The raise is dated from the occurrence. Only when the producer
-                # supplied no usable since_ts does it fall back to now -- and
-                # detail.since_ts stays null there, so the two are tellable apart.
-                ts=since_ts if since_ts is not None else now_wall,
+                # detected_at is dated from the OCCURRENCE (rule 4). Only when
+                # the producer supplied no usable since_ts does it fall back to
+                # now -- and detail.since_ts stays null there, so the two are
+                # tellable apart. ts is NOT this value: see DEDUP_WINDOW_S.
+                detected_ts=since_ts if since_ts is not None else now_wall,
                 now_wall=now_wall))
         return out
 
@@ -272,7 +295,7 @@ class ChassisFaultDeriver:
                 # only the code (CF-1/CF-3) -- so the recovery is dated NOW, the
                 # moment the chassis told us. detail.since_ts still names when the
                 # fault it ends had started, so the duration stays recoverable.
-                ts=now_wall, now_wall=now_wall))
+                detected_ts=now_wall, now_wall=now_wall))
         return out
 
     # -- field extraction -----------------------------------------------------
@@ -385,7 +408,7 @@ class ChassisFaultDeriver:
 
     def _event(self, *, code: str, cleared: bool, rid: str,
                level: Optional[str], desc: Optional[str],
-               since_ts: Optional[float], ts: float,
+               since_ts: Optional[float], detected_ts: float,
                now_wall: float) -> Dict[str, Any]:
         """One 11 S6.1 Event in the record.db dict shape the pipeline validates.
 
@@ -418,19 +441,27 @@ class ChassisFaultDeriver:
                       else "chassis fault %s") % code,
             "detail": detail,
             "src": self._src,
-            # The event's wall-clock stamp: the occurrence time for a raise, the
-            # observation time for a clear. It is also the dedup comparison value
-            # (record_dao: ts - last_ts), which is why the same occurrence
-            # arriving twice folds and a new occurrence does not.
-            "ts": ts,
+            # 11 S9.8.4 rule 6: the DERIVATION moment, on this machine's wall
+            # clock -- the same clock every other event p5 emits is stamped from
+            # (_normalise_event's `now`), and never since_ts. It is also the
+            # dedup comparison value (record_dao: ts - last_ts), and that is the
+            # whole reason: comparing a chassis-clock raise against an
+            # upper-stack clear compares two clocks, and the sign of the
+            # difference is then the clock offset rather than the ordering. See
+            # DEDUP_WINDOW_S for what that cost. The occurrence time is not
+            # lost -- it is detected_at, and detail.since_ts verbatim.
+            "ts": now_wall,
             # 11 CLK-A2: ts_sync is copied from the producer or false, never
             # judged here. The derived event carries no sync claim of its own.
             "ts_sync": 0,
             # Evidence time (the record.db column's own words) -- WHEN THE FAULT
             # HAPPENED, from since_ts, not when p5 read the snapshot. A snapshot
             # re-announces a 40 s old fault in every report, so "now" would
-            # backdate nothing and mislabel everything.
-            "detected_at": _fmt_wall(ts),
+            # backdate nothing and mislabel everything. This is the ONE field
+            # 11 S9.8.4 rule 4 binds to since_ts; it is a display/audit string
+            # and nothing compares it, which is why the chassis clock is safe
+            # here and not in ts.
+            "detected_at": _fmt_wall(detected_ts),
             # Write time, UTC, ISO. WALL-CLOCK-OK(record): display and audit only.
             "created_at": datetime.fromtimestamp(
                 now_wall, timezone.utc).isoformat(),
