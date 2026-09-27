@@ -203,6 +203,52 @@ def _pose_if_fresh(pose, updated_ms: int, now_ms: int,
     return pose if (now_ms - updated_ms) <= stale_after_ms else None
 
 
+def hmi_estop_cmd_id(boot: str, seq: int) -> str:
+    """The cmd_id the HMI button puts on cmd/estop (11 S7.1 EstopCommand).
+
+    boot + seq, not a bare counter: record-keeping aside, a counter restarts at
+    0 on every p5 restart, so two boots would hand the SAME cmd_id to two
+    different presses and quadruped's echo could not tell them apart.
+
+    The h- prefix is the HMI namespace 11 S12.1.1 W1 already uses for req_id
+    ("h-91c1"), the way the cloud path uses c- (cloud_wiring CLOUD_CMD_PREFIX).
+    All four initiators in 11 S7.1 share ONE ack key, so the prefix is what lets
+    a reader of cmd/estop/ack say which one an ack answers.
+    """
+    return "h-estop-%s-%d" % (boot, seq)
+
+
+def hmi_estop_frame(cmd_id: str) -> dict:
+    """The W1 cmd/estop frame for the HMI button (11 S7.1 + S12.1.1 W1).
+
+    A module-level builder rather than a dict literal inside the closure, so the
+    three audit fields can be asserted without standing up the web server.
+
+    Why each field is here -- none of them is decoration:
+      * cmd_id   11 S7.1's first field, the idempotency key. quadruped echoes it
+                 verbatim and falls back to "anonymous" when the request carried
+                 none (rt_bridge HandleEstop). With four initiators on one ack
+                 key, no cmd_id means every real ack is called "anonymous" and
+                 nobody can say whose it is. 11 S7.1.1's 2026-09-27 note
+                 registered the HMI button as the half still missing one.
+      * reason   free text, lands in 11 S4.1 last_soft_estop.reason.
+                 operator_hmi is the spelling S4.1 and S6.2 use in their own
+                 examples, so the HMI and the cloud agree on one vocabulary.
+      * src_role from 11 S7.1's five-value set; S12.1.1 W1 names this one
+                 verbatim ("P5 补填 src_role: hmi"). HW-5 forbids P5 relabelling
+                 an HMI action as cloud, which is why each publishing point
+                 states its OWN role instead of one helper guessing it.
+    last_soft_estop is {epoch, reason, src_role, age_ms} and quadruped stores
+    what arrives, publishing null for what does not -- so an unfilled pair is
+    not cosmetic: the object the HMI reads to say "3.2 s ago, by the HMI" stays
+    permanently half empty, and an HMI stop is indistinguishable from a voice one.
+
+    action is "stop": 11 S7.1 makes it the only legal value since v0.3.
+    """
+    return {"type": "estop", "action": "stop", "cmd_id": cmd_id,
+            "reason": "operator_hmi", "src_role": "hmi"}
+
+
 def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                site_timezone: Optional[str] = None):
     """Wire + start the HMI web server against what P5 can serve TODAY.
@@ -228,11 +274,22 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
     # ESTOP button -> W1 (17 S6.2). MVP sends the frame on cmd/estop; the
     # dedicated <=10 ms fast path (17 S6.4 / P-1) is a follow-up (NEXT.md).
     estop_pub = gen.declare_publisher(CMD_ESTOP_TOPIC)
+    # Boot token + seq for the cmd_id, same construction as _comm_boot below:
+    # the id must be unique across restarts, and a bare counter restarts at 0
+    # so two boots would hand the same cmd_id to two different presses.
+    _hmi_estop_boot = os.urandom(3).hex()
+    _hmi_estop_seq = [0]
 
     def _estop_sender() -> None:
-        estop_pub.put(json.dumps({"type": "estop", "action": "stop"})
-                      .encode("utf-8"))
-        _logger.warning("p5 HMI ESTOP pressed -> cmd/estop published")
+        # Three lines on purpose: the frame's content is hmi_estop_frame's job
+        # (see there for why each audit field is required), so this stays a
+        # publish and nothing a reader has to check for correctness sits on the
+        # <=10 ms W1 path.
+        _hmi_estop_seq[0] += 1
+        cmd_id = hmi_estop_cmd_id(_hmi_estop_boot, _hmi_estop_seq[0])
+        estop_pub.put(json.dumps(hmi_estop_frame(cmd_id)).encode("utf-8"))
+        _logger.warning("p5 HMI ESTOP pressed -> cmd/estop published "
+                        "(cmd_id=%s, src_role=hmi)", cmd_id)
 
     # 11 S12.1.1 W4: the browser's geo edits go out on cmd/geo with
     # origin="hmi" (stamped in hmi/uplink.py, never here -- CH-2 makes that one

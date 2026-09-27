@@ -526,6 +526,17 @@ def test_estop_reaches_the_internal_key_in_the_hmi_shape():
     # 是回应云端那次"的唯一依据 -- 没有它每条真 ack 都叫 anonymous, 而 HMI
     # 按钮与 p4_agent 的急停也在同一条 key 上回执.
     assert p["cmd_id"].startswith("c-estop-")
+    # 2026-09-27 同批加的另两项: reason / src_role. 11 S4.1 的
+    # last_soft_estop = {epoch, reason, src_role, age_ms}, quadruped 只存收到
+    # 的, 没收到的发 null(rt_bridge HandleEstop) -- 不填这两项, 那个"3.2 秒前
+    # 由谁触发"的审计对象就永久半空, HMI 分不出云端急停与自己按钮的急停.
+    # MUTATION: 删掉 reason 或 src_role -> 红.
+    assert p["reason"] == "cloud_command"
+    # src_role 必须是 cloud 且在 11 S7.1 五值闭集内. HW-5 禁止反向(P5 不得把
+    # HMI 的动作伪装成 cloud), 所以每个发布点各报自己的角色.
+    # MUTATION: src_role = "hmi" -> 红(那正是 HW-5 反过来禁的那件事).
+    assert p["src_role"] == "cloud"
+    assert p["src_role"] in ("hmi", "cloud", "voice", "agent", "test")
     # *** 此刻[还不发]云端 ack -- 真 ack 还没到(用户裁决 2026-09-27).
     # 原实现在这一拍就回一条 applied=[] 的, 于是 Qt 永远看不出急停生效没有.
     assert _puts_to(session, "cmd/estop/ack") == []

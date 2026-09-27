@@ -890,8 +890,18 @@ class CloudBridge:
             # "anonymous", 三个并行发起方(HMI / 云端 / p4_agent)的 ack 在总线
             # 上无法区分. 带上它, 云端这条就能被精确认出来.
             cmd_id = self._next_estop_cmd_id()
+            # reason / src_role: 11 S4.1 last_soft_estop is {epoch, reason,
+            # src_role, age_ms} and quadruped stores whatever arrives, null
+            # otherwise (rt_bridge HandleEstop). Unfilled, the audit object is
+            # permanently half empty and the HMI cannot say whether a stop came
+            # from the cloud or from its own button. src_role is from S7.1's
+            # five-value set; HW-5 forbids the reverse direction (P5 must never
+            # relabel an HMI stop as cloud), which is exactly why each
+            # publishing point states its OWN role rather than one shared
+            # helper guessing it.
             self._internal_put("cmd/estop", json.dumps(
                 {"type": "estop", "action": action, "cmd_id": cmd_id,
+                 "reason": "cloud_command", "src_role": "cloud",
                  "origin": CLOUD_ORIGIN}, ensure_ascii=False).encode("utf-8"))
             # v2.0 S2.3: ack 的 detail 必须带七项
             # result/estop_epoch/applied/recv_mono_ms/latency_ms/hes/
