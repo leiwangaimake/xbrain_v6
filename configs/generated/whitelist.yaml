@@ -10,10 +10,21 @@ processes:
     - state/targets
     sub: []
   p1_motion:
+    # 2026-09-27 corrected, same defect as chassis_relay below: 11 S1.1.6 (2)
+    # put the RT key in the general-key column on P1-20 and P1-24. These lists
+    # are the GENERAL-plane surface only (S1.1.6 verbatim: the cross-plane
+    # processes may show only these keys ON THE GENERAL PLANE), so:
+    #   * P1-20 is RT->GEN forwarding -> pub event/fault/chassis (was missing,
+    #     while the sub set carried rt/chassis/fault instead);
+    #   * P1-24 is self-consumed on the RT plane with NO general-plane
+    #     operation -> it leaves this file entirely.
+    # Both rt/* subscriptions stay registered as subscribers on their own rows
+    # in 11 S2.2.1, which is the RT-plane half of S1.1.6 rule b.
     pub:
     - cmd/config/ack
     - cmd/fence/ack
     - cmd/motion/relative_move/status
+    - event/fault/chassis
     - event/{severity}/arbitration
     - event/{severity}/motion
     - state/arb/{domain}
@@ -33,8 +44,6 @@ processes:
     - cmd/motion/relative_move
     - cmd/motion/route
     - cmd/teleop
-    - rt/chassis/fault
-    - rt/chassis/state
   chassis_relay:
     # 2026-09-26 corrected: these are the GENERAL-plane keys the relay
     # PUBLISHES (RT->GEN forwarding, 11 S1.1.6 CR-3..CR-10/CR-12). The nine
