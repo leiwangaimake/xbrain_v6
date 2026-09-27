@@ -39,11 +39,11 @@
 | # | 缺什么 | 状态 | 依赖 |
 |---|---|---|---|
 | EX-1 | 路径展开：mission_json + 航点名 → geo.db 航点 → total_steps + V-3/V-6 校验 | 未做 | geo.db 有航点(录制或播种) + B 类槽位填充 |
-| EX-2 | 派发时发 `cmd/motion/route`+`cmd/motion/behavior` 给 P1 | 未做 ~~`[GATED-HW]`~~ ⇒ ★ **`[SW-NOW]`**（见下方订正 ①） | ~~P1 真路径执行~~ ⇒ ★ **已解**（P7.2）。★ 余一处小缺：`cmd/motion/behavior` 在 p1 侧**无订阅者** |
-| EX-3 | live 订阅 `state/motion/path_progress` → patrol_progress 全列表 + 进度落盘 | 未做 ~~`[GATED-HW]`~~ ⇒ ★ **`[SW-NOW]`**（见下方订正 ①） | ~~P1 发进度~~ ⇒ ★ **已解**（P1-12） |
-| EX-4 | live 订阅运动状态 → 调 `apply_motion_result`(逻辑已建) | 未做 ~~`[GATED-HW]`~~ ⇒ ★ **`[SW-NOW]`**（见下方订正 ①） | ~~P1 发完成状态~~ ⇒ ★ **已解**（`path_progress` 的终态 ＋ `nav/report_map.py` 七值 abort_reason） |
+| EX-2 | 派发时发 `cmd/motion/route`+`cmd/motion/behavior` 给 P1 | ~~未做~~ ⇒ ✅★★ **`cmd/motion/route` 已建（2026-09-28）**；⚠️ `cmd/motion/behavior` **仍未发**（见订正 ②） | ~~P1 真路径执行~~ ⇒ ★ **已解**（P7.2）。★ 余一处小缺：`cmd/motion/behavior` 在 p1 侧**无订阅者** —— 2026-09-28 复核**仍然如此**，见订正 ② |
+| EX-3 | live 订阅 `state/motion/path_progress` → patrol_progress 全列表 + 进度落盘 | ~~未做~~ ⇒ ✅★★ **已建（2026-09-28）**：`runtime/progress_sink.py` ＋ `state/path_progress.py`（PP-1 二者取先 ＋ 3 s 陈旧位） | ~~P1 发进度~~ ⇒ ★ **已解**（P1-12） |
+| EX-4 | live 订阅运动状态 → 调 `apply_motion_result`(逻辑已建) | ~~未做~~ ⇒ ✅★★ **已建（2026-09-28）**：`driver.apply_path_progress_terminal` 翻译后调 `apply_motion_result`；`arrived -> done`（`12` §4.3.1 LP-3）· `failed -> failed`；★★ `aborted` **故意不映射**（见订正 ②） | ~~P1 发完成状态~~ ⇒ ★ **已解**（`path_progress` 的终态 ＋ `nav/report_map.py` 七值 abort_reason） |
 | EX-5 | live 录制会话：位姿流累积点 → stop 时调 PB7 的 commit 写路径(写路径已建) | 未做 ~~`[GATED-HW]`~~ ⇒ ⚠️ **代码可推 `[SW-NOW]`，端到端仍卡 §4.1 ②③** | ~~定位/位姿流~~ ⇒ ★ **已解**（`state/pose` 由 p1 的 gnss 桥发，2026-08-14 ORIN 实测）；⚠️ 录制门 ②（RTK 单点）与 ③（`cam_rgbd`）仍拦 |
-| EX-6 | patrol_progress 全列重建(~20 列+唯一 active 索引, 15 S9.5) | 未做（**核实属实**：`persistence/schema_task.py` `DDL_PATROL_PROGRESS` 现为 4 列 `task_id/waypoint_ix/progress/updated_ms`，无 active 索引） | 随 EX-3 一起(有驱动才建，避免 §9.3 空表) |
+| EX-6 | patrol_progress 全列重建(~20 列+唯一 active 索引, 15 S9.5) | ~~未做~~ ⇒ ✅★★ **已建（2026-09-28）**：20 列 ＋ `idx_patrol_active`（partial）＋ `idx_patrol_route_time`；★ 连带 `task_route_snapshot` 也按 `15` §9.3A 重建（原 5 列 `seq/x_m/y_m/heading_rad` 是 ENU 米，而下发帧是 `wgs84`） | 随 EX-3 一起(有驱动才建，避免 §9.3 空表) |
 
 > ⚠️★★★ **订正 ① · 2026-09-27（`CLAUDE.md` 铁律 1）—— EX-2/3/4/5 的 `[GATED-HW]` 标记全部过时**
 >
@@ -57,6 +57,54 @@
 > `grep -rn "path_progress\|state/motion" xbrain/p3_task/` 只命中 driver.py 的一条注释（零订阅者）。
 > ★★ **与 CLD-2 是同一堵墙的两侧** —— CLD-2 记的是 `cmd/motion/intent` 那一跳，本节记 `route` 那一跳；
 > 🚫 不要当成两批工作，排期时合成一个 P3 批次。
+
+> ✅★★★ **订正 ② · 2026-09-28 —— EX-2 / EX-3 / EX-4 / EX-6 落地结账**（`CLAUDE.md` 铁律 1）
+>
+> ★ **提交**：`p3_task:` 三笔（EX-6 表重建 / EX-3＋EX-4 进度订阅 / EX-2 route 推送）＋ 本条 `docs:`。
+> ★ **现在这条链是通的**：任务 `ready -> running` ⇒ 建 `task_route_snapshot`（SN-1 先写后推）
+> ⇒ 分片发 `cmd/motion/route` ⇒ P1 的 `RouteAssembler` 收齐换指针 ⇒ `MissionHost.on_route` 起任务
+> ⇒ P1 2 Hz 发 `state/motion/path_progress` ⇒ P3 按 PP-1 落 `patrol_progress` ⇒ 终态 `arrived` 关任务为 `done`。
+> ★★ **判据不是「单测全绿」**：新增两条**接线级**用例（驱动真 `_amain` ＋ 假 session），
+> 一条断言 `cmd/motion/route` 上真的出现了帧、一条断言帧真的写进了 `task.db`；
+> 把订阅行 / 推送调用删掉，**只有这两条**会红，其余全部照绿 —— 这正是本仓反复吃过的那种亏。
+> ★ 还有一条断言把 P3 造的帧直接喂给 **P1 自己的 `route_intake.py`**：跨进程报文只有让**真消费方**解析才算验过，
+> 逐字抄一遍契约只是第二份转写（`push.py` 旧版就是那么漂走的）。
+>
+> ⚠️★★★ **现场发现：`route/push.py` 旧版【与契约完全不是一回事】，且零调用者、测试全绿。**
+> ★ 逐条：`CHUNK_SIZE = 32`（`15` §2.4.2 是 **>1000 点才分片**，TC-36 要求 2400 点分 **3** 片，按 32 会分 75 片）·
+> `RouteChunk(task_id, route_seq, chunk_ix, total_chunks, waypoints=((x,y,heading),...))`
+> **没有一个字段**对得上 `11` §3.5A 的 `RouteGeometry`（P1 的解析器会直接 `RouteIntakeError`）·
+> `RP-2/3/4` 各是另一套含义 · `classify_ack()` 在**解析一个不存在的 ack key**
+> （`15` §2.4.4 开篇就是「`cmd/motion/route` **没有** ack key」）。
+> ★★★ **教训**：`tests/p3_task/test_batch_d.py` 里有 **6 条**针对它的用例，**一直全绿**。
+> 一套绿测试盖在一个**没有调用者**的 API 上，对「P3 能不能推路径」**一个字都没说**，而那几个月它不能。
+> ⇒ 那 6 条已**删除**（不是搬迁），删除处留了说明；新用例在 `tests/p3_task/test_route_push.py`。
+>
+> ⚠️★★★ **仍未做的那一半：`cmd/motion/behavior{path_follow}` 【本批没发】** —— 不是漏了，是**故意不发**。
+> ★ `15` §2.4.1 写「收齐 ack 后才发 `BehaviorCommand{path_follow}`」，`11` §2.2.3 也把 `p3_task` 列进该 key 的发布者、
+> `p1_motion` 列为订阅者（**P1-3**）。★ 但 **2026-09-28 复核：P1 侧没有这个订阅者** ——
+> `grep -n "cmd/motion/behavior" xbrain/p1_motion/runtime/nav_wiring.py` **零命中**
+> （该文件只订 `cmd/motion/route` · `/relative_move` · `/factor`）。
+> ★★ 往一条没人读的 key 上发，是一行**看起来像把任务启动了、实际什么也没启动**的代码（§3.2 形态①）；
+> 而本期**运动并不需要它**：`MissionHost.on_route` 收到 `RouteSet` 就起任务，机器人会走。
+> ⇒ **要补的是 P1-3 订阅者**，那是 `12` 域的活（`route_rev` 交叉校验 → `E_GEO_CONFLICT`、LP-1..LP-8 圈次状态机），
+> 不是 P3 这边加一行 `put`。**单列为下一批**。
+>
+> ⚠️★★★ **卡住的一格（需用户裁决，🚫 我未擅自填）：模式 B 路径的 `arrive_radius_m` 没有配置源。**
+> ★ `15` §2.4.3 写「模式 A 取 `waypoints.arrival_radius`；**模式 B 取 `common.recording` 侧的全局缺省**（⚠️ 待 T7，NAV-12）」，
+> 而 `configs/common.yaml` 的 `recording` 段只有五个键（`min_dist_m` / `session_timeout_s` / `sample_hz` /
+> `max_fences` / `fence_close_tol_m`）且**全为 null**，**根本没有到达半径这个键**。
+> ⇒ 按 §3.1 与铁律 3，`build_snapshot` 对模式 B **拒绝并点名那个键**，不编一个数。
+> ★★ **后果要说清**：**命名锚点路径（模式 A）现在能推、能跑**；**语音录制出来的密集折线（模式 B）推不了**，
+> 报错逐字含 `common.recording` 与 `NAV-12`。★ 解卡 = 用户定这个值 ＋ 落键 ＋ 进冻结线。
+>
+> ★ **另外两处按现状实现、已在代码里写明依据，若判断有误请指出**：
+> ① `path_progress.state == "aborted"` **不驱动任何任务迁移** —— `15` 没有给 `aborted`/`failed` 写 P3 侧的处置行，
+> 这一条是从 `11` §3.5B 加 `failed` 时自己给的理由推出来的（逐字「`state` 只有 `aborted`(=被抢占/estop) …
+> p3 无从与抢占区分」）：抢占与急停已由 §7.2 / ES-2 把任务置为可恢复的 `suspended`，
+> 在这里再判一次失败会**把那个断点抹掉**，正好抹掉这个区分被加进来的理由。取保守方向。
+> ② `patrol_progress.loop_total` 建行时**用 DDL 缺省 1**，没有从 `mission_json` 的 `loops` 取 —— 任务展开是 **EX-1**，未建。
+> 🚫 没有瞎猜一个圈数：`loop_total` 错了会让 LP-3 在**错误的一圈**上判完成。
 
 ---
 
