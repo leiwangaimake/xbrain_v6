@@ -550,3 +550,26 @@
 | 15 | `.11` 是 DTLS 客户端（疑手柄接收端）：明文模式下每 2 s 一次 ClientHello 被拒，日志 `TLS udp dataLen error` 持续增长（5.5 min 227 条） | ⚠️ 明文期间 `.11` 不可用；正式部署前恢复 TLS（要证书）或让云深处确认 `.11` 身份 |
 
 **★ 解卡状态**：(b) 已执行（本轮，可逆）；(a) 证书仍未拿到 —— **正式部署前二选一必须闭合**（恢复 `enableTls = true` 后没有证书就又通不了信）。
+
+---
+
+### 8.10 ★★★ 2026-09-27 · 底盘故障链 / estop 真回执 / 信封 / 双电池 / P1-20 五项（用户裁决后落地）
+
+> ★ 五项都已裁决并落地，本节记**决定**与**新发现（未修）**，判据与变异体数字在各自提交信息里（`CLAUDE.md` §3.7：数不抄进文档）。
+
+| # | 项 | 结论 | 落点 |
+|---|---|---|---|
+| 1 | **fault 链在消费端断了** | `event/fault/chassis` 的载荷是 `ChassisFault` 不是 `Event`，`p5` 事件管线首步按 `missing_field:eid` 整条丢弃 ⇒ 接真底盘后每条故障都没了。**派生方 = `p5`**（`UM-4` 同构：消费方派生），**边沿触发**（首次进 `faults[]` / 进 `cleared[]` 各一条） | `xbrain/p5_gateway/event/chassis_events.py`；契约登记 `11` §9.8.4 |
+| 2 | **estop ack 自造** | `p5` 停止自造，改订机内 `cmd/estop/ack`（CR-10 的真 `EstopAck`）并逐字段透传（`R3.4`）；预算 = `ESTOP_ACK_MS` 100 ms，超时回 `applied=[]` **并计数**（fail-visible） | `runtime/cloud_wiring.py` ＋ `ext/estop.translate_real_ack`；契约登记 `11` §7.1.1 |
+| 3 | **两处裸报文** | 机内 `state/link` 与 `event/{sev}/comm` 补 `11` §3.0 信封（走共享编码器）；云端两条 key 仍各走 v2.0 六字段，**不共用信封**（CLK-C4 禁跨主机带 `mono`/`boot`） | `p5 runtime/main_wiring.stamp_internal`；消费侧 `p3 _on_link` 同批加解包 |
+| 4 | **双电池塌缩** | 电压 `min` / 温度 `max`（受限侧），空槽按 `present` 排除；**展示用，不做安全门**；待 `13` **V-55** 后复核 | `outbound/state_projection._battery`；契约登记 `11` §4.2 |
+| 5 | **P1-20 常态双发** | `p1` 转发 `rt/chassis/fault` → `event/fault/chassis`，信封按 **RT-C3.e** 重建；🚫 **不做 relay 存活门**；去重靠项 1 的边沿触发 ＋ **CF-4** 带前缀 code | `p1_motion/runtime/fault_forward.py`；契约登记 `11` §1.1.6 `P1-20` |
+
+**★★★ 新发现（本批未修，逐条待处置）**
+
+| # | 发现 | 证据 | 为什么本批不改 |
+|---|---|---|---|
+| A | ★★★ **`quadruped` 的 `ChassisFault` 线形与 `11` §9.8.4 有三处不符**：① `cleared[]` 发**对象数组**，而 **CF-1** 逐字要求「每一个元素」匹配 `^(chs\|chg):0x…$`（元素即 code **串**），`13` §7.3 CF-3 落地亦逐字「用与发生时逐字相同的带前缀**串**」；② 无 `since_ts`，发的是 `since:{sec,nanosec}`，而 `13` §7.3 逐字「`Timestamp{Sec,Nanosec}` **转 `since_ts`**」；③ 无 `desc`，发 `name` ＋ `details` —— 而 `13` v1.35 已就**同一个字段**在 `rt/chassis/state` 侧订正过（逐字「faults 条目第三键按契约示例是 `desc`，writer 此前写 `name`，照契约编码的消费方取不到内容」），故障侧漏改 | `ros2_ws/quadruped/src/rt_payloads.cc` `WriteFaultList` / `WriteChassisFault` | ★ 属 C++ 侧改动（需重编 ＋ 变异体），不在本批五项内。★ **p5 侧已按契约为主、对这三种写法各留一条兼容读法并计 `legacy_shape` ＋ 告警** —— 拒收会把每一条真实故障/恢复吞掉（`13` §7.3 的「HMI 全绿而机器有故障」）。修好 quadruped 后应删除这三条兼容读法 |
+| B | ★★ **`11` §1.1.6 ② 表的 `P1-20` / `P1-24` 两行把 RT 面 key 填在「通用面 key」列**，于是生成物 `configs/generated/whitelist.yaml` 的 `p1_motion.pub` **没有 `event/fault/chassis`** | 表头逐字「\| # \| 通用面 key \| 方向 \| 类型 \| 频率 \| 对应 RT 面 key \|」；`scripts/doccheck/whitelist_gen.py` 按表头取列 | ★ 今天不阻塞（p1 的 Python 侧无读该生成物的启动自检）；★ 改法（拆两行 / 方向列表达双向 / 改生成器）属**表体结构选择**，与 2026-09-26 那次「列错位」是笔误不同，**须裁决** |
+| C | ★ **`quadruped` 的 `EstopAck.latency_ms` 恒 0**（`rt_bridge.cc` `HandleEstop` 逐字 `ack.latency_ms = 0`），而 `11` §7.1.1 定义它是「收到消息 → 首个零速帧下发」的实测时延 | `ros2_ws/quadruped/src/rt_bridge.cc` | ★ 网关按 `R3.4` **逐字段透传**，🚫 不拿网关自己的转发耗时顶替（那会让字段名与含义脱节）。属 quadruped 侧欠测量，C++ 改动 |
+| D | ★ **机内 `cmd/estop` 仍是裸对象且只有云端那一路带 `cmd_id`**：HMI 按钮（`p5 _estop_sender`）与 `p4_agent` 发的仍无 `cmd_id`，其真 ack 回来一律 `cmd_id="anonymous"`，在总线上分不出是谁的 | `11` §7.1 `EstopCommand` 四字段（`cmd_id`/`action`/`reason`/`src_role`）；`p5 main_wiring._estop_sender` | ★ 本批只补了云端那一路（项 2 的关联号必需）。另两路 ＋ `reason`/`src_role`（`RobotState.last_soft_estop` 的审计对现在恒空）是独立改动 |
