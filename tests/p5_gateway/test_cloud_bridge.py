@@ -171,7 +171,11 @@ def test_six_inbound_and_three_ack_keys_are_declared():
         # 一族 heartbeat/ -- 没有它, Qt 可以长时间只订阅不发布, 链路恒为
         # never_connected 直到 rtb_s 触发返航.
         "xbrain/gj-001/heartbeat/qt",
-        "cmd/task/ack", "cmd/geo/ack", "cmd/mode/ack", "state/fence"])
+        # cmd/estop/ack 是 CR-10 把 quadruped 的真 EstopAck 转上来的那条
+        # (2026-09-27 起网关不再自造 ack). 它是机内相对 key: 我方发的云端
+        # ack 用绝对 key xbrain/{rid}/cmd/estop/ack, 两者不是同一条.
+        "cmd/task/ack", "cmd/geo/ack", "cmd/mode/ack", "cmd/estop/ack",
+        "state/fence"])
     # 三条 ack + 八条出站状态面.
     # * state/link 起初以为"main_wiring 里已有发布者", 那是看错了: 那条
     # 发的是机内相对 key, 而 Qt 订的是带 rid 前缀的. 两条 key 都要有,
@@ -201,8 +205,8 @@ def test_subscriber_handles_are_held():
     """
     bridge, _session = _bridge()
 
-    assert bridge.alive() == 9, (
-        "桥只接住了 %d 个订阅句柄, 其余会被 GC 掉(6 云端入站 + 2 机内 ack + "
+    assert bridge.alive() == 10, (
+        "桥只接住了 %d 个订阅句柄, 其余会被 GC 掉(5 云端入站 + 4 机内 ack + "
         "1 state/fence)" % bridge.alive())
 
 
@@ -517,8 +521,161 @@ def test_estop_reaches_the_internal_key_in_the_hmi_shape():
     p = _internal_puts(session, "cmd/estop")[0]
     assert p["type"] == "estop" and p["action"] == "stop"
     assert p["origin"] == "cloud"
+    # 2026-09-27 加的一项: cmd_id(11 S7.1 EstopCommand 的幂等键). quadruped 的
+    # HandleEstop 原样回显它, 所以它是网关在机内 cmd/estop/ack 上认出"这条
+    # 是回应云端那次"的唯一依据 -- 没有它每条真 ack 都叫 anonymous, 而 HMI
+    # 按钮与 p4_agent 的急停也在同一条 key 上回执.
+    assert p["cmd_id"].startswith("c-estop-")
+    # *** 此刻[还不发]云端 ack -- 真 ack 还没到(用户裁决 2026-09-27).
+    # 原实现在这一拍就回一条 applied=[] 的, 于是 Qt 永远看不出急停生效没有.
+    assert _puts_to(session, "cmd/estop/ack") == []
+
+
+def _real_estop_ack(cmd_id, *, result="accepted", applied=("zero_vel",),
+                    epoch=42, hes=False, timeout_lock=False,
+                    recv_mono_ms=918273645, latency_ms=7):
+    """quadruped 的 EstopAck(11 S7.1.1), 外面套 chassis_relay 按 RT-C3.e 重建
+    的信封 -- 这正是 CR-10 转到通用面 cmd/estop/ack 上的那个形状."""
+    return {"v": 1, "rid": RID, "ts": 2.0, "seq": 9, "src": "chassis_relay",
+            "ts_sync": False, "orig_src": "quadruped", "orig_ts": 1.9,
+            "data": {"cmd_id": cmd_id, "result": result, "code": "OK",
+                     "estop_epoch": epoch, "applied": list(applied),
+                     "recv_mono_ms": recv_mono_ms, "latency_ms": latency_ms,
+                     "hes": hes, "timeout_lock": timeout_lock}}
+
+
+def _feed_estop(session, msg_id="e-1"):
+    _feed(session, "cmd/estop",
+          {"v": 1, "rid": RID, "ts": 1.0, "seq": 1, "src": "qt_hmi",
+           "data": {"msg_id": msg_id, "task_id": "", "task_type": "ESTOP",
+                    "payload": {"action": "stop"}}})
+    return _internal_puts(session, "cmd/estop")[-1]["cmd_id"]
+
+
+def test_the_real_estop_ack_is_what_reaches_the_cloud():
+    """*** 项 2 的全部: applied 不再恒空.
+
+    11 S7.1.1 的发布者是 quadruped, RT-C4 禁它持通用面 session, 所以
+    CR-10 (rt/safety/estop/ack -> cmd/estop/ack) 是这条回执唯一的合法出口.
+    七项逐字段透传(11 S15.6A R3.4 逐字"不做有损压缩"), 网关不重算其中任何
+    一项 -- applied/epoch/hes/timeout_lock 只有 quadruped 知道.
+
+    MUTATION: 让 _on_internal_estop_ack 仍走 _publish_estop_ack(自造) ->
+    applied 变回 [] 且 estop_epoch 变成网关自增的 1 -> 红.
+    """
+    _b, session = _bridge()
+    cmd_id = _feed_estop(session)
+
+    session.subs["cmd/estop/ack"](_Sample(
+        "cmd/estop/ack",
+        _real_estop_ack(cmd_id, applied=["zero_vel", "charge_abort"],
+                        epoch=42, hes=True, timeout_lock=True)))
+
     d = _puts_to(session, "cmd/estop/ack")[0]["data"]
-    assert d["result"] == "accepted" and d["task_type"] == "ESTOP"
+    assert d["result"] == "accepted" and d["accepted"] is True
+    assert d["task_type"] == "ESTOP" and d["ref_msg_id"] == "e-1"
+    det = d["detail"]
+    assert det["applied"] == ["zero_vel", "charge_abort"]
+    # estop_epoch 取 quadruped 的实测代际(11 S9.12 逐字它是唯一权威),
+    # NO 不是网关那个从 1 起的自增数.
+    assert det["estop_epoch"] == 42
+    # 11 S7.1.1 的 hes 是 bool, v2.0 S3.4 的样例是字符串 -- 网关是唯一的
+    # 翻译点. true -> engaged, NO 不是 cleared(那是相反的意思).
+    assert det["hes"] == "engaged"
+    assert det["timeout_lock"] is True
+    # recv_mono_ms / latency_ms 照搬 quadruped 的(v2.0 逐字"由机器人端单调钟
+    # 计算"), NO 不换成网关自己的转发耗时.
+    assert det["recv_mono_ms"] == 918273645 and det["latency_ms"] == 7
+
+
+def test_a_duplicate_real_ack_keeps_accepted_true():
+    """v2.0 S3.4 逐字: duplicate 时 accepted=true 且 detail.result=duplicate.
+    quadruped 的 50 ms 去重窗(11 S9.12.6)产生它, applied 那时是空的 --
+    这是[空 applied 的一个合法来源], 与真 ack 缺席的兜底不是一回事."""
+    _b, session = _bridge()
+    cmd_id = _feed_estop(session)
+
+    session.subs["cmd/estop/ack"](_Sample(
+        "cmd/estop/ack",
+        _real_estop_ack(cmd_id, result="duplicate", applied=[])))
+
+    d = _puts_to(session, "cmd/estop/ack")[0]["data"]
+    assert d["result"] == "duplicate" and d["accepted"] is True
+    assert d["detail"]["result"] == "duplicate"
+    assert d["detail"]["applied"] == []
+
+
+def test_hes_false_translates_to_ok():
+    _b, session = _bridge()
+    cmd_id = _feed_estop(session)
+    session.subs["cmd/estop/ack"](_Sample(
+        "cmd/estop/ack", _real_estop_ack(cmd_id, hes=False)))
+    assert _puts_to(session, "cmd/estop/ack")[0]["data"]["detail"]["hes"] == "ok"
+
+
+def test_an_ack_for_someone_elses_estop_is_not_forwarded():
+    """HMI 按钮与 p4_agent 的急停在同一条 key 上回执(11 S7.1 四个并行订阅
+    者). 按 cmd_id 认领, 认不出的不往云端发 -- 否则 Qt 会收到一条它没发过
+    的命令的回执, 且 ref_msg_id 指向别人的请求.
+
+    MUTATION: 去掉 pend is None 的早退 -> 这里会出现一条 ack -> 红."""
+    _b, session = _bridge()
+    _feed_estop(session)
+
+    session.subs["cmd/estop/ack"](_Sample(
+        "cmd/estop/ack", _real_estop_ack("anonymous")))
+
+    assert _puts_to(session, "cmd/estop/ack") == []
+    assert _b.stats["estop_ack_unmatched"] == 1
+
+
+def test_no_real_ack_inside_the_budget_falls_back_and_counts():
+    """fail-visible, NO 不静默.
+
+    v2.0 S1.4 要求必回 ack, 而急停端到端目标是 300 ms. 预算内没等到真 ack
+    就回一条 applied=[] 的并计数 -- 空 applied 配非空 latency 恰好是"命令
+    到了机器人, 生效与否没有确认", 而计数让这件事可数.
+
+    MUTATION: 让 tick 只 pop 不回 ack -> Qt 永远等不到回执 -> 红.
+    """
+    mono = [100.0]
+    from xbrain.p5_gateway.runtime.cloud_wiring import CloudBridge
+    session = _FakeSession()
+    bridge = CloudBridge(session, RID, now_mono=lambda: mono[0])
+    bridge.wire()
+
+    _feed_estop(session)
+    assert _puts_to(session, "cmd/estop/ack") == []
+    bridge.tick()                      # 还在预算内
+    assert _puts_to(session, "cmd/estop/ack") == []
+
+    mono[0] += 0.2                     # 超过 ESTOP_ACK_BUDGET_S
+    bridge.tick()
+    d = _puts_to(session, "cmd/estop/ack")[0]["data"]
+    assert d["result"] == "accepted"
+    assert d["detail"]["applied"] == []
+    assert d["detail"]["hes"] == "unknown"
+    assert bridge.stats["estop_ack_timeout"] == 1
+    # 超时之后迟到的真 ack 不再发第二条 -- pending 已经取走了.
+    session.subs["cmd/estop/ack"](_Sample(
+        "cmd/estop/ack", _real_estop_ack("c-estop-x-1")))
+    assert len(_puts_to(session, "cmd/estop/ack")) == 1
+
+
+def test_a_malformed_real_ack_falls_back_rather_than_half_filling():
+    """真 ack 形状不对 = 两侧对 S7.1.1 的理解不一致(CLAUDE.md 3.5 必抛).
+    仍要回一条(Qt 在等), 但回兜底那条, NO 不把能读到的几项拼一个像样的
+    detail 出去 -- 那会让一条坏 ack 看起来像一条好 ack."""
+    _b, session = _bridge()
+    cmd_id = _feed_estop(session)
+
+    bad = _real_estop_ack(cmd_id)
+    bad["data"]["applied"] = "zero_vel"        # 不是字符串数组
+    session.subs["cmd/estop/ack"](_Sample("cmd/estop/ack", bad))
+
+    d = _puts_to(session, "cmd/estop/ack")[0]["data"]
+    assert d["detail"]["applied"] == []
+    assert _b.stats["estop_ack_bad"] == 1
 
 
 # --- 尚未建成的下游 ---------------------------------------------------
@@ -712,8 +869,9 @@ def test_the_cloud_face_does_not_subscribe_a_command_key_p3_owns():
     # cmd/mode/ack 是 B 模式(云端喊话)的答复路: AUDIO_CONTROL 翻成一次
     # cmd/mode 跃迁, p2 在它的 applied 里回 stream_id, 网关取出来放进
     # 云端 ack 的 detail.stream_id(v2.0 S2.5 要求).
-    assert sorted(relative) == ["cmd/geo/ack", "cmd/mode/ack",
-                                "cmd/task/ack", "state/fence"], (
+    assert sorted(relative) == ["cmd/estop/ack", "cmd/geo/ack",
+                                "cmd/mode/ack", "cmd/task/ack",
+                                "state/fence"], (
         relative)
 
 

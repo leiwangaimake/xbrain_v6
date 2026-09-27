@@ -220,6 +220,96 @@ class EstopPathHealth:
         _ = latency_ms
 
 
+#: 11 S7.1.1 result 闭集. 真 ack 里出现闭集外的值 = 两侧对契约的理解已经
+#: 不一致, 按 CLAUDE.md 3.5 必抛, NO 不猜一个"大概是 accepted".
+REAL_ACK_RESULTS = ("accepted", "duplicate", "rejected")
+
+#: hes 的跨面翻译. 11 S7.1.1 的样例是 bool(false), quadruped 实发也是 bool
+#: (rt_payloads.cc WriteEstopAck: a.Bool(in.hes)); 而 v2.0 S3.4 的样例是字符串
+#: "ok". 两份文档对同一个字段给了两种类型, 网关是它们之间唯一的翻译点, 所以
+#: 这里必须有一张表.
+#:
+#: *** 取值来自本模块既有的那个并集(见 build_ack 的注释: ok/engaged/cleared/
+#: unknown, "待甲方给出闭集后收窄"), NO 不新造词:
+#:   false -> "ok"       没有硬件急停接合, 正是 v2.0 样例给的那个值;
+#:   true  -> "engaged"  接合中. NO 不写 "cleared" -- 那是"曾接合现已解除",
+#:                       与"正接合"相反, 写反了会让操作员以为可以复位.
+#: NOTE 甲方尚未给出 hes 的闭集(本模块原注已登记), 这张表是在两份样例之间做
+#: 的最小翻译, 不是在发明第三套取值.
+_HES_WORD = {False: "ok", True: "engaged"}
+
+
+class EstopAckTranslateError(Exception):
+    """真 ack 的形状不满足 11 S7.1.1, 翻不成 v2.0 的七项."""
+
+
+def translate_real_ack(ack: Dict[str, Any]) -> Dict[str, Any]:
+    """quadruped 的 EstopAck(11 S7.1.1) -> v2.0 S2.3/S3.4 的 detail 七项.
+
+    *** 逐字段透传, NO 不做有损压缩(11 S15.6A R3.4 逐字).
+    七项里有五项只有 quadruped 知道 -- applied 是它[实际执行]的动作,
+    estop_epoch 是它递增的代际(S9.12 逐字"唯一权威"), hes / timeout_lock 是
+    Tier 1 的实测锁位, result 里的 duplicate 出自它 50 ms 的去重窗(S9.12.6).
+    网关重算其中任何一项都是拿一个猜测替换一个测量值.
+
+    *** recv_mono_ms / latency_ms 也照搬, NO 不换成网关自己的数.
+    v2.0 逐字"由机器人端单调钟计算", S7.1.1 把 latency_ms 定义为 quadruped
+    内部处理时延. 换成网关的转发耗时会让这两个字段变成另一个量, 而字段名
+    不变 -- Qt 按 100 ms 判据读它, 读到的却是别的东西.
+
+    缺字段即抛: 这七项 S7.1.1 全部必填, 缺了说明对端不是我们认识的那个
+    发布者, 补一个默认值就是替它作答.
+    """
+    if not isinstance(ack, dict):
+        raise EstopAckTranslateError("estop ack payload is not an object")
+    result = ack.get("result")
+    if result not in REAL_ACK_RESULTS:
+        raise EstopAckTranslateError(
+            "estop ack result %r not in the 11 S7.1.1 closed set %s"
+            % (result, list(REAL_ACK_RESULTS)))
+    applied = ack.get("applied")
+    if not isinstance(applied, list) or not all(
+            isinstance(a, str) for a in applied):
+        # v2.0 S3.4 逐字"applied 必须为字符串数组". 空数组是合法的(duplicate
+        # 时 quadruped 就发空), 但缺失或非数组不是.
+        raise EstopAckTranslateError(
+            "estop ack applied must be a string array; got %r" % (applied,))
+    hes = ack.get("hes")
+    if not isinstance(hes, bool):
+        # 已经是字符串的话说明对端换了类型, 那是另一件要对齐的事, 不在这里
+        # 悄悄接受 -- 接受了就没人知道两侧类型变过.
+        raise EstopAckTranslateError(
+            "estop ack hes must be a boolean (11 S7.1.1); got %r" % (hes,))
+    out = {
+        "result": result,
+        "estop_epoch": _require_int(ack, "estop_epoch"),
+        "applied": list(applied),
+        "recv_mono_ms": _require_int(ack, "recv_mono_ms"),
+        "latency_ms": _require_int(ack, "latency_ms"),
+        "hes": _HES_WORD[hes],
+        "timeout_lock": _require_bool(ack, "timeout_lock"),
+    }
+    return out
+
+
+def _require_int(ack: Dict[str, Any], field: str) -> int:
+    value = ack.get(field)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise EstopAckTranslateError(
+            "estop ack %s must be a number (11 S7.1.1); got %r"
+            % (field, value))
+    return int(value)
+
+
+def _require_bool(ack: Dict[str, Any], field: str) -> bool:
+    value = ack.get(field)
+    if not isinstance(value, bool):
+        raise EstopAckTranslateError(
+            "estop ack %s must be a boolean (11 S7.1.1); got %r"
+            % (field, value))
+    return value
+
+
 def build_estop_ack_detail(msg: dict, rid: str, recv_mono_ms: int, *,
                            sent_mono_ms: int,
                            estop_epoch: int) -> Dict[str, Any]:
@@ -229,11 +319,18 @@ def build_estop_ack_detail(msg: dict, rid: str, recv_mono_ms: int, *,
     不必知道三者的顺序. 校验不过抛 EstopSchemaError -- 调用方[已经转发过
     急停了](fail-safe: 宁可多停一次), 这里抛只影响 detail 能不能带出来.
 
-    applied 恒为空: 见 cloud_wiring._publish_estop_ack 的注释.
-    hes 恒为 unknown: 11 S538/S756 逐字"硬件急停 HES 完全不经软件", 它的
-    状态要由 chassis_relay 报上来, 而那个进程未编译.
-    timeout_lock 恒为 False: 超时锁属 quadruped 的急停状态机(同样未建);
-    报 True 会让 Qt 以为机器人被锁在急停里需要人工解除.
+    *** 2026-09-27 起本函数只走[兜底]那一路.
+    正常路是 translate_real_ack: CR-10 把 quadruped 的真 EstopAck 转上来,
+    七项全是实测值. 本函数只在真 ack 在 ESTOP_ACK_BUDGET_S 内没到时使用 --
+    那时七项里只有网关自己能证的那几项是真的:
+      applied 恒为空数组: 我们确实不知道哪一项生效了(空 != "什么都没做").
+      hes 恒为 unknown: 11 逐字"硬件急停 HES 完全不经软件", 它的状态只能由
+        真 ack 带上来, 而这一路的前提就是真 ack 没来.
+      timeout_lock 恒为 False: 同上; 报 True 会让 Qt 以为机器人被锁在急停里
+        需要人工解除.
+    NO 这不是"保守地填一份数据", 是 fail-visible: 空 applied 配上非空的
+    latency_ms 恰好告诉 Qt"命令收到了, 转发了, 但没有任何一项被确认生效",
+    而调用方同时把它计进 estop_ack_timeout, 于是这件事是可数的.
     """
     frame = validate_and_forward(msg, rid)
     ack = build_ack(frame,

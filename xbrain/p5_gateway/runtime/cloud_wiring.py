@@ -105,6 +105,13 @@ PENDING_ACK_TIMEOUT_S = 2.0
 #: active.rev 没越过受理时的值就发 failed("生效未确认"). 用单调钟判.
 ALARM_RESULT_TIMEOUT_S = 6.0
 
+#: 等机内真 ack 的预算. 11 S13.x 的 ESTOP_ACK_MS = 100 就是契约给这条 ack 的
+#: 时限(quadruped 收到起算), v2.0 S2.3 同样逐字"机器人收到急停到回执转发不超过
+#: 100 ms". 所以这不是我方挑的一个数, 是把已有的契约上界当作等待上界用 --
+#: 超过它还没来, 按定义就是这条链路没在预算内回话.
+#: NO 不另设"再等一会"的逻辑: 那会把 300 ms 的端到端目标吃掉.
+ESTOP_ACK_BUDGET_S = 0.100
+
 #: 事件面. v2.0 的 key 是 xbrain/{rid}/event/{severity}/{category}, 而机内
 #: 生产者(p2_core / p3_task / p5 自己)一律发在相对 event/{sev}/{cat} 上.
 #: 两者不是同一条 key, 所以[Qt 今天一条事件都收不到].
@@ -228,7 +235,15 @@ class CloudBridge:
         # 一条可靠 event/{sev}/task. boot token 让 eid 跨网关重启不撞
         # (record.db 持久化, 重启后 seq 从 0 但 boot 不同).
         # 急停 epoch(v2.0 S2.3 detail.estop_epoch). 见 _next_estop_epoch.
+        # *** 只在真 ack 缺席的兜底路上用. 真 ack 到达时 estop_epoch 取
+        # quadruped 的实测值 -- 11 S9.12 逐字它是 estop_epoch 的[唯一权威].
         self._estop_epoch = 0
+        # 项 2: 在途的云端急停, 等机内真 ack(CR-10 从 rt/safety/estop/ack 转来).
+        # cmd_id -> {msg_id, task_id, recv_mono_ms, deadline}. cmd_id 是我方
+        # 在转发的 cmd/estop 里放进去的幂等键(11 S7.1 EstopCommand.cmd_id),
+        # quadruped 在 ack 里原样回显(S7.1.1), 所以它就是关联号.
+        self._estop_pending: Dict[str, Dict[str, Any]] = {}
+        self._estop_seq = 0
         self._reject_boot = uuid.uuid4().hex[:6]
         self._reject_seq = 0
         # A-1 承接: 转发给 p3 的 cmd/task/geo 登记在这, 等 p3 的机内 ack 回来
@@ -341,6 +356,14 @@ class CloudBridge:
             "cmd/task/ack", self._on_internal_ack))
         self._subs.append(self._session.declare_subscriber(
             "cmd/geo/ack", self._on_internal_ack))
+        # 项 2: 机内 cmd/estop/ack 是[真] EstopAck -- quadruped 发在 RT 面的
+        # rt/safety/estop/ack 上, chassis_relay 按 CR-10 转到通用面的这条相对
+        # key(11 S1.1.6 CR-10 逐字"安全关键, 纯转发不判断"). 网关订它, 把
+        # quadruped 实测的 applied/hes/timeout_lock/epoch 翻到云端面.
+        # NO 这条订阅不会自环: 我方发的是绝对 key xbrain/{rid}/cmd/estop/ack,
+        # 与这条相对 key 不是同一条 key expression.
+        self._subs.append(self._session.declare_subscriber(
+            "cmd/estop/ack", self._on_internal_estop_ack))
         # B 模式(云端喊话)走 cmd/mode, 所以它的 ack 也要进这条聚合路 --
         # stream_id 是 p2 在 applied 里回来的, 不订这条就拿不到.
         self._subs.append(self._session.declare_subscriber(
@@ -665,6 +688,30 @@ class CloudBridge:
             _logger.warning("p5 cloud task %s timed out (no p3 ack in %.0fs)",
                             group["task_type"], PENDING_ACK_TIMEOUT_S)
 
+        # 项 2: 真 EstopAck(CR-10)在预算内没到 -> 回兜底那条并计数.
+        #
+        # *** 为什么是"仍然回一条", 而不是继续等或什么都不回.
+        # v2.0 S1.4 要求必回 ack, 而 Qt 对急停的端到端目标是 300 ms -- 不回
+        # 就是让操作员盯着一个没有回执的急停按钮, 他会再按一次(无害)然后打
+        # 电话. 回一条 applied=[] 的, 他至少知道"命令到了机器人, 生效与否没
+        # 有确认". 这是 fail-visible: 同一件事在 estop_ack_timeout 上是可数
+        # 的, 而"什么都不回"在任何计数器上都看不出来.
+        #
+        # * 判定粒度 = 主循环的 tick 周期(现 100 ms), 所以兜底最晚在收到指令
+        # 后约 2 x ESTOP_ACK_BUDGET_S 发出. 仍在 300 ms 端到端目标内, 且实测
+        # 真 ack 往返只有 +293 us(2026-09-26 relay 上机实测), 这一路正常不走.
+        estop_expired = [cid for cid, p in self._estop_pending.items()
+                         if now >= p["deadline"]]
+        for cid in estop_expired:
+            p = self._estop_pending.pop(cid)
+            self.stats["estop_ack_timeout"] = (
+                self.stats.get("estop_ack_timeout", 0) + 1)
+            _logger.error(
+                "p5 estop %s: no real ack within %.0f ms (CR-10 path silent) "
+                "-- answering with applied=[]", cid, ESTOP_ACK_BUDGET_S * 1000)
+            self._publish_estop_ack(p["msg_id"], p["task_id"], p["body"],
+                                    p["recv_mono_ms"])
+
         # D(v2.0 S3.4): 6s 内 state/fence.active.rev 没确认生效 -> 发 failed 终态
         # ("生效未确认"). NO 不把 accepted 补解释为成功(S3.4 逐字禁止).
         alarm_expired = [tid for tid, p in self._alarm_pending.items()
@@ -835,20 +882,38 @@ class CloudBridge:
             # 机内 cmd/estop 的形状与 HMI 按钮发的完全一致(见 main_wiring
             # _estop_sender), 于是下游 quadruped 侧不需要分辨来源.
             action = data.get("payload", {}).get("action", "stop")
+            # *** cmd_id 是[关联号], 不是装饰.
+            # 11 S7.1 EstopCommand 的第一个字段就是它("幂等键; 重发同 cmd_id
+            # 不再递增 estop_epoch"), 而 quadruped 的 HandleEstop 逐字
+            # ack.cmd_id = m.cmd_id_present ? m.cmd_id : "anonymous" -- 原样
+            # 回显. 本行之前我方转发的帧里没有它, 于是每一条真 ack 回来都叫
+            # "anonymous", 三个并行发起方(HMI / 云端 / p4_agent)的 ack 在总线
+            # 上无法区分. 带上它, 云端这条就能被精确认出来.
+            cmd_id = self._next_estop_cmd_id()
             self._internal_put("cmd/estop", json.dumps(
-                {"type": "estop", "action": action,
+                {"type": "estop", "action": action, "cmd_id": cmd_id,
                  "origin": CLOUD_ORIGIN}, ensure_ascii=False).encode("utf-8"))
             # v2.0 S2.3: ack 的 detail 必须带七项
             # result/estop_epoch/applied/recv_mono_ms/latency_ms/hes/
-            # timeout_lock. 构造在 ext/estop.py -- 那个模块连同 100ms/300ms
-            # 两条判据一直是[零调用]的, 云端路径此前发的是通用任务 ack,
-            # 七项里只有 result. 后果: v2.0 逐字要求 100ms 判定"由机器人端
-            # 单调钟计算, Qt 不用两端 ts 相减", 缺 recv_mono_ms/latency_ms
-            # 就等于 Qt 根本做不了这个判定(2026-09-04 终测实测确认).
-            self._publish_estop_ack(msg_id or "", task_id or "",
-                                    body, _recv_mono_ms)
+            # timeout_lock.
+            #
+            # *** 本处[不再]当场自造 ack(用户裁决 2026-09-27).
+            # 原实现在收到云端指令的同一拍就回一条 applied=[] 的 ack, 理由是
+            # "确认通道那个进程未编译". 那条理由已不成立: chassis_relay 已于
+            # 2026-09-26 上机, CR-10 的真 ack 实测往返 +293 us. 自造的那条把
+            # applied/hes/timeout_lock 三项恒填成空/unknown/false, 而 v2.0
+            # 要求它们是[实际采取的措施]与实测锁位 -- 恒空不是"保守", 是让
+            # Qt 永远看不出急停到底生效没有.
+            # 改为: 挂 pending, 等 CR-10 的真 ack(预算 ESTOP_ACK_BUDGET_S);
+            # 预算内没到才回兜底那条并计数(见 tick).
+            self._estop_pending[cmd_id] = {
+                "msg_id": msg_id or "", "task_id": task_id or "",
+                "recv_mono_ms": _recv_mono_ms, "body": body,
+                "deadline": self._now_mono() + ESTOP_ACK_BUDGET_S,
+            }
             self.stats["accepted"] += 1
-            _logger.warning("p5 cloud ESTOP %s -> cmd/estop", action)
+            _logger.warning("p5 cloud ESTOP %s -> cmd/estop (cmd_id=%s, "
+                            "awaiting the real ack)", action, cmd_id)
         except Exception:                       # noqa: BLE001
             _logger.exception("p5 cloud cmd/estop handler crashed")
 
@@ -942,31 +1007,116 @@ class CloudBridge:
             # 本函数) -- 一条坏报文同样证明云端在线.
             _logger.exception("p5 cloud heartbeat handler crashed")
 
+    def _next_estop_cmd_id(self) -> str:
+        """转发给机内的那条 cmd/estop 的幂等键(11 S7.1 EstopCommand.cmd_id).
+
+        带 CLOUD_CMD_PREFIX, 与 cmd/task 的做法同一条: 机内 cmd/estop/ack 上
+        同时载着 HMI 按钮与 p4_agent 发起的回执, 前缀让网关一眼认出哪条是
+        回应云端的. NO 不复用 msg_id 本身 -- msg_id 是 Qt 给的, 两次不同的
+        云端命令用同一个 msg_id 重发时(v2.0 允许)会撞在一起.
+        """
+        self._estop_seq += 1
+        return "%sestop-%s-%d" % (CLOUD_CMD_PREFIX, self._reject_boot,
+                                  self._estop_seq)
+
+    def _on_internal_estop_ack(self, sample: Any) -> None:
+        """机内 cmd/estop/ack(CR-10 的真 EstopAck) -> 云端面.
+
+        *** 这是 applied 的[唯一]真源.
+        11 S7.1.1 定 EstopAck 的发布者是 quadruped, 而 RT-C4 禁它持通用面
+        session, 所以 CR-10 是它唯一合法的出口. 网关此前自造 ack 并把
+        applied 恒填空数组, 理由写的是"那个进程未编译" -- relay 已于
+        2026-09-26 上机, 该理由不再成立(用户裁决 2026-09-27: 停止自造).
+
+        本回调在 Zenoh 的 Rust 线程上跑: 只做解析 + 一次 put, 无 await 无
+        队列(CLAUDE.md 4.2).
+        """
+        from ..ext.estop import EstopAckTranslateError, translate_real_ack
+
+        try:
+            raw, _key = _sample_parts(sample)
+            body = json.loads(raw.decode("utf-8"))
+        except Exception:                       # noqa: BLE001
+            _logger.exception("p5 internal cmd/estop/ack parse failed")
+            return
+        if not isinstance(body, dict):
+            _logger.error("p5 internal cmd/estop/ack payload is not an object")
+            return
+        # relay 按 RT-C3.e 重建信封, 所以 EstopAck 在 data 里; 裸载荷也收下
+        # (机内总线上仍有 key 发裸对象).
+        inner = body.get("data")
+        ack = inner if isinstance(inner, dict) else body
+        cmd_id = ack.get("cmd_id")
+        pend = (self._estop_pending.pop(cmd_id, None)
+                if isinstance(cmd_id, str) else None)
+        if pend is None:
+            # 不是回应云端的那条: HMI 按钮 / p4_agent 发起的急停同样在这条
+            # key 上回执(11 S7.1 四个并行订阅者), 或者我方那条已经超时兜底
+            # 过了. 两种都不该再往云端发一条 -- 前者不是云端的命令, 后者会
+            # 变成同一条命令的第二份 ack.
+            self.stats["estop_ack_unmatched"] = (
+                self.stats.get("estop_ack_unmatched", 0) + 1)
+            return
+        try:
+            detail = translate_real_ack(ack)
+        except EstopAckTranslateError as exc:
+            # 真 ack 形状不对 = 两侧对 S7.1.1 的理解不一致. 仍要回一条(Qt 在
+            # 等), 但回的是兜底那条并如实写明原因, NO 不把坏 ack 里能读到的
+            # 几项拼一个像样的 detail 出去.
+            _logger.error("p5 estop real ack unusable: %s", exc)
+            self.stats["estop_ack_bad"] = self.stats.get("estop_ack_bad", 0) + 1
+            self._publish_estop_ack(pend["msg_id"], pend["task_id"],
+                                    pend["body"], pend["recv_mono_ms"])
+            return
+        # 网关自己的转发耗时: 只记日志, NO 不塞进 detail -- R3.4 要求七项
+        # 逐字段透传 quadruped 的值, 换成网关的数会让字段名与含义脱节.
+        fwd_ms = int(self._now_mono() * 1000) - pend["recv_mono_ms"]
+        if fwd_ms > int(ESTOP_ACK_BUDGET_S * 1000):
+            _logger.warning(
+                "p5 estop real ack arrived in %d ms, over the %d ms budget",
+                fwd_ms, int(ESTOP_ACK_BUDGET_S * 1000))
+        result = detail["result"]
+        if result == "rejected":
+            # 11 S7.1.2: quadruped 只在 action 不是 stop 时回 rejected, 那一
+            # 行同时定死了码是 E_CAPABILITY. build_ack 要求 rejected 必须带
+            # 非零码与一句人话, 所以这里必须给, 不能沿用 accepted 的分支.
+            from ..outbound.error_map import build_error_fields
+            fields = build_error_fields(
+                errors.E_CAPABILITY,
+                "chassis refused the estop action (11 S7.1.2)")
+            v2_result, error_code = RESULT_REJECTED, fields["error_code"]
+            reason = fields["reason"]
+        else:
+            # accepted / duplicate 都是 accepted=true(v2.0 S3.4 逐字), 且
+            # duplicate 时 detail.result 保持 duplicate -- 它已经在 detail 里.
+            v2_result, error_code, reason = result, 0, ""
+        self._publish_ack("cmd/estop/ack", build_ack(
+            msg_id=_new_msg_id(), ref_msg_id=pend["msg_id"],
+            task_id=pend["task_id"], task_type="ESTOP",
+            result=v2_result, error_code=error_code, reason=reason,
+            detail=detail))
+        self.stats["estop_ack_real"] = self.stats.get("estop_ack_real", 0) + 1
+        _logger.warning("p5 cloud ESTOP ack (real): result=%s applied=%s "
+                        "epoch=%s hes=%s", result, detail["applied"],
+                        detail["estop_epoch"], detail["hes"])
+
     def _publish_estop_ack(self, msg_id: str, task_id: str,
                            body: Dict[str, Any], recv_mono_ms: int) -> None:
-        """按 v2.0 S2.3 发 cmd/estop/ack(七项在 detail 里).
+        """兜底: 真 ack 在预算内没到时, 按 v2.0 S2.3 回一条 detail 七项.
 
         *** latency 用[本机单调钟]差, NO 不用两端 ts 相减.
         v2.0 逐字: "recv_mono_ms/latency_ms 由机器人端单调钟计算, Qt 不用
         两端 ts 相减推断安全时延". 两端墙钟可能差几秒, 拿它算安全时延会
         得出一个既可能过大也可能为负的数.
 
-        *** applied 现在必然是空数组 -- 2026-09-27 理由换了, 结论没换.
-        v2.0 要求它列[实际采取]的措施(样例 ["zero_vel","charge_abort"]).
-        ! 原文写的理由是"确认通道是 11 CR-12, 那个进程未编译". 两处都要改:
-          (1) 确认通道是 CR-10(cmd/estop/ack <- rt/safety/estop/ack, 载荷
-              11 S7.1.1 EstopAck, 带 applied_zero_vel), NO 不是 CR-12
-              (那是 cmd/chassis/ctrl/ack, 解锁指令的回执, 另一件事);
-          (2) chassis_relay 已于 2026-09-26 上机并在跑, "未编译"不再成立.
-        * 现在真正挡着的是[次序], 不是缺进程: 本函数在收到云端指令的那一拍
-        就要把 ack 发出去, 而 quadruped 的 EstopAck 按 ESTOP_ACK_MS 最多
-        100 ms 后才到 -- 本函数落笔时它还没来.
-        => 要填 applied 就得二选一: 等最多 100 ms 再 ack, 或者先 ack 再补发
-        一条. 两者 v2.0 都没规定, 属未裁, 故本轮不做.
+        *** 这一路的 applied 必然是空数组, 且[这正是它要说的事].
+        正常路见 _on_internal_estop_ack: CR-10 的真 ack 带回 quadruped 实际
+        执行的动作. 走到本函数说明那条 ack 在 ESTOP_ACK_BUDGET_S 内没来,
+        此刻我方确实不知道哪一项生效了. 空数组配上非空的 latency_ms 恰好
+        告诉 Qt: 命令收到了, 转发了, 但没有任何一项被确认生效 -- 再配上
+        estop_ack_timeout 计数, 这件事是可数的(fail-visible), 不是静默降级.
         NO 不能因为"p1 几乎必定会锁存"就填 ["zero_vel"] -- 那是凭信心断言,
         与 estop_path 曾被硬编码成 "ok" 是同一个错(见 hmi/estop_probe.py).
-        空数组配上非空的 latency 字段, 恰好告诉 Qt: 命令收到了, 转发了,
-        但没有任何一项被确认生效.
         """
         from ..ext.estop import (EstopSchemaError, build_estop_ack_detail)
 
