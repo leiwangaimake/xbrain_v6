@@ -121,6 +121,50 @@ def test_the_comm_seq_is_per_key_not_shared():
     assert "_comm_env_seq.setdefault(_ckey, [0])" in src
 
 
+# -- the regression the envelope itself caused --------------------------------
+
+
+def test_the_cloud_projector_needs_the_BODY_not_the_envelope():
+    """Why the unwrap below is not cosmetic.
+
+    event_payload reads eid at the TOP level. Hand it an 11 S3.0 envelope and it
+    raises "event missing eid (v2.0 S5.1)" -- which is exactly what p5 logged on
+    the ORIN on 2026-09-27, once per comm event, the same day the envelope was
+    added to that key. The event never reached the cloud.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import (ProjectionError,
+                                                             event_payload)
+
+    body = {"eid": "comm-1", "title": "cloud link cloud_down",
+            "detail": {"kind": "cloud_down"}, "src": "p5_gateway", "ts": 1.0}
+    assert event_payload(body, sev="warn", category="comm")["eid"] == "comm-1"
+    enveloped = {"v": 1, "rid": "dev", "ts": 1.0, "seq": 1,
+                 "src": "p5_gateway", "ts_sync": False, "data": body}
+    with pytest.raises(ProjectionError):
+        event_payload(enveloped, sev="warn", category="comm")
+
+
+def test_on_event_reads_the_body_out_of_the_envelope():
+    """The fix for the above, pinned where it lives.
+
+    Producers differ today (p2/p1/p3 bare, p5's comm enveloped) and S3.0 says
+    every payload will eventually be enveloped, so the callback must take
+    eid / title / detail / pos from the BODY and relay the BODY.
+    MUTATION: pass d instead of _body to _relay_to_cloud -> the ProjectionError
+    above returns for every enveloped producer, and this goes red.
+    """
+    src = inspect.getsource(run_voice_loop_wiring)
+    body = src[src.index("def _on_event("):]
+    assert '_body = d["data"] if isinstance(d.get("data"), dict) else d' in body
+    assert '"eid": _body.get("eid")' in body
+    assert '"title": _body.get("title")' in body
+    assert '_det = _body.get("detail")' in body
+    assert "_relay_to_cloud(ev[\"sev\"], ev[\"cat\"], _body)" in body
+    # And the old top-level reads are gone, or the unwrap would be decorative.
+    head = body[:body.index("_relay_to_cloud(ev[")]
+    assert '"eid": d.get(' not in head and '"title": d.get(' not in head
+
+
 # -- the consumers ------------------------------------------------------------
 
 

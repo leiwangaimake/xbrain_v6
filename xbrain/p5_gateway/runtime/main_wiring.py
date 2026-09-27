@@ -989,13 +989,29 @@ def run_voice_loop_wiring(stop_flag: dict,
             if _cat == "chassis" and _sev == "fault":
                 _on_chassis_fault(key, d)
                 return
+            # *** The Event body, which is NOT always the message.
+            # Producers differ: p2 / p1 / p3 publish the bare Event, while p5's
+            # own event/{sev}/comm rides inside the 11 S3.0 envelope (and every
+            # producer eventually will -- S3.0 verbatim: all Zenoh JSON payloads
+            # share that outer structure). Reading the top level unconditionally
+            # takes eid / title / detail off the ENVELOPE, where they are not:
+            # the HMI ring gets a nameless row and, worse, the cloud relay's
+            # event_payload raises "event missing eid (v2.0 S5.1)" and the event
+            # never reaches the cloud. Measured on the ORIN 2026-09-27, one
+            # traceback per comm event, the same day the envelope was added.
+            # _normalise_event below has always unwrapped the same way.
+            _body = d["data"] if isinstance(d.get("data"), dict) else d
             ev = {
-                "eid": d.get("eid") or d.get("event_id"),
-                "title": d.get("title") or d.get("message"),
+                "eid": _body.get("eid") or _body.get("event_id"),
+                "title": _body.get("title") or _body.get("message"),
                 "sev": _sev,
                 "cat": _cat,
-                "ts": d.get("ts"),
-                "pos": d.get("pos"),   # None until pose stamps it (W4)
+                # Body ts first, envelope ts as the fallback: for a bare
+                # producer they are the same field, and for an enveloped one the
+                # body's is the event's own stamp (11 S6.2) while the envelope's
+                # is the publish instant.
+                "ts": _body.get("ts") or d.get("ts"),
+                "pos": _body.get("pos"),   # None until pose stamps it (W4)
             }
             hmi_state["events"] = (hmi_state["events"] + [ev])[-EVENT_RING:]
             # Cloud result face (v2.0 R12.4): the TERMINAL half of the task
@@ -1008,7 +1024,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             # inside one tick would only ever be sampled terminal, and the
             # transition rule would never fire.
             if cloud_projector is not None and _cat == "task":
-                _det = d.get("detail")
+                _det = _body.get("detail")
                 if isinstance(_det, dict) and _det.get("task_id"):
                     # 整个 detail 交出去, NO 不只挑 task_id/state.
                     # p3 在终态事件里带上了 task_type / route_id / started_ts /
@@ -1023,7 +1039,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             # change -- see CLOUD_EVENT in cloud_wiring.py. The call itself sits
             # in _relay_to_cloud so this module keeps exactly one publish_event
             # call site with the chassis path sharing it.
-            _relay_to_cloud(ev["sev"], ev["cat"], d)
+            _relay_to_cloud(ev["sev"], ev["cat"], _body)
             # Persist + deliver via the event subsystem (fire-and-forget, no-op
             # when disabled). A malformed event normalises to None and is skipped;
             # the HMI ring above is unaffected either way.
