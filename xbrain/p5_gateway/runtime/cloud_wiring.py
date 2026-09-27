@@ -881,7 +881,24 @@ class CloudBridge:
             data = body["data"]
             # 机内 cmd/estop 的形状与 HMI 按钮发的完全一致(见 main_wiring
             # _estop_sender), 于是下游 quadruped 侧不需要分辨来源.
-            action = data.get("payload", {}).get("action", "stop")
+            #
+            # *** action 恒写 "stop", 不转发云端给的值(2026-09-27 改).
+            # 11 S7.1 字段表逐字"只有 stop", S7.1.2 逐字"缺失, 拼错,
+            # 无法解析 -> 按 stop 处理". 本行此前原样透传 payload.action,
+            # 于是云端拼错一次, 机内 RT 面上就出现一个闭集外的取值, 而上面
+            # 那句"形状完全一致"当场不成立.
+            # 这不是把一次拒绝改成放行: 转发 "release" 与转发 "stop" 的
+            # 下游行为本来就一样 -- quadruped 的 ParseEstop 根本不读这个
+            # 字段(S3.0.1: 不存在一个取值可以让它不停), 所以透传既拦不住
+            # 任何东西, 又把一个非法值写进录包. 翻译成闭集里唯一那个值,
+            # 正是 S7.1.2 对网关这一侧的规定.
+            # 也不在这里拒: 拒一条急停是朝 [不停] 的方向失效, 与 S3.0.1
+            # 相反; task_router 的 ESTOP 走任务管线(有 ack 通道可回
+            # E_SCHEMA), 本路径是直订的 cmd/estop, 不同性质.
+            # 云端原值只进日志(下面那行), 不进线上载荷 -- 转换掉一个违约
+            # 取值而不留痕, 对端就永远不知道自己发错了. 不给默认值: None
+            # 与 "stop" 在日志里必须分得开.
+            action_in = data.get("payload", {}).get("action")
             # *** cmd_id 是[关联号], 不是装饰.
             # 11 S7.1 EstopCommand 的第一个字段就是它("幂等键; 重发同 cmd_id
             # 不再递增 estop_epoch"), 而 quadruped 的 HandleEstop 逐字
@@ -900,7 +917,7 @@ class CloudBridge:
             # publishing point states its OWN role rather than one shared
             # helper guessing it.
             self._internal_put("cmd/estop", json.dumps(
-                {"type": "estop", "action": action, "cmd_id": cmd_id,
+                {"type": "estop", "action": "stop", "cmd_id": cmd_id,
                  "reason": "cloud_command", "src_role": "cloud",
                  "origin": CLOUD_ORIGIN}, ensure_ascii=False).encode("utf-8"))
             # v2.0 S2.3: ack 的 detail 必须带七项
@@ -922,8 +939,9 @@ class CloudBridge:
                 "deadline": self._now_mono() + ESTOP_ACK_BUDGET_S,
             }
             self.stats["accepted"] += 1
-            _logger.warning("p5 cloud ESTOP %s -> cmd/estop (cmd_id=%s, "
-                            "awaiting the real ack)", action, cmd_id)
+            _logger.warning("p5 cloud ESTOP action=%r -> cmd/estop "
+                            "action=stop (cmd_id=%s, awaiting the real ack)",
+                            action_in, cmd_id)
         except Exception:                       # noqa: BLE001
             _logger.exception("p5 cloud cmd/estop handler crashed")
 

@@ -542,6 +542,59 @@ def test_estop_reaches_the_internal_key_in_the_hmi_shape():
     assert _puts_to(session, "cmd/estop/ack") == []
 
 
+def test_a_wrong_cloud_action_still_lands_on_the_internal_key_as_stop():
+    """11 S7.1 给 action 的合法取值只有 stop, 网关是唯一翻译点.
+
+    本行此前原样透传 payload.action, 于是云端拼错一次, 机内 RT 面上就出现
+    一个闭集外的取值, 而上一条用例的标题("形状与 HMI 按钮发的一致")当场
+    不成立. S7.1.2 逐字"缺失, 拼错, 无法解析 -> 按 stop 处理", 说的正是
+    网关这一侧该做的事.
+
+    *** 为什么这个缺陷在机器人上看不见: quadruped 的 ParseEstop 根本不读
+    action(S3.0.1 不存在一个取值可以让它不停), 所以透传 "release" 和透传
+    "stop" 停得一模一样 -- 差别只在录包里那个非法值, 而没有任何断言在看它.
+
+    MUTATION: 改回 "action": action 透传 -> 两条断言均红.
+    """
+    _b, session = _bridge()
+
+    for wrong in ("release", "ESTOP"):
+        _feed(session, "cmd/estop",
+              {"v": 1, "rid": RID, "ts": 1.0, "seq": 1, "src": "qt_hmi",
+               "data": {"msg_id": "e-w", "task_id": "", "task_type": "ESTOP",
+                        "payload": {"action": wrong}}})
+    puts = _internal_puts(session, "cmd/estop")
+    assert [p["action"] for p in puts] == ["stop", "stop"]
+    # 急停照样转发 -- 不是把一次拒绝改成放行, 也不是把一条急停拒掉:
+    # 拒掉才是朝 [不停] 的方向失效, 与 S3.0.1 相反.
+    assert len(puts) == 2
+
+
+def test_a_cloud_estop_with_no_action_at_all_is_still_forwarded_as_stop(caplog):
+    """S7.1.2 的"缺失"那一支. 三个取值(对/错/缺)必须落到同一个 stop 上.
+
+    *** 第二半是日志: 把一个违约取值悄悄翻译掉, 对端就永远不知道自己发错
+    了. 所以日志必须记云端的原值, 且"云端没填"与"云端填了 stop"在日志里
+    要分得开 -- 这正是 action_in 不给默认值的理由.
+
+    MUTATION: 对缺失分支补一个默认值("stop") -> 载荷断言仍绿(它只喂日志),
+    日志断言红. 没有这一条的话那个变异是[看起来存活]的等价变异.
+    MUTATION: 日志里改打转发值而不是原值 -> 红.
+    """
+    _b, session = _bridge()
+    with caplog.at_level("WARNING"):
+        _feed(session, "cmd/estop",
+              {"v": 1, "rid": RID, "ts": 1.0, "seq": 1, "src": "qt_hmi",
+               "data": {"msg_id": "e-n", "task_id": "", "task_type": "ESTOP",
+                        "payload": {}}})
+    puts = _internal_puts(session, "cmd/estop")
+    assert len(puts) == 1 and puts[0]["action"] == "stop"
+    lines = [r.getMessage() for r in caplog.records if "ESTOP" in r.getMessage()]
+    assert lines, "cloud ESTOP 没有留下任何一行日志"
+    assert "action=None" in lines[0], lines[0]
+    assert "action=stop" in lines[0], lines[0]
+
+
 def _real_estop_ack(cmd_id, *, result="accepted", applied=("zero_vel",),
                     epoch=42, hes=False, timeout_lock=False,
                     recv_mono_ms=918273645, latency_ms=7):
