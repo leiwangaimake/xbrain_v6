@@ -101,10 +101,15 @@ def test_the_hmi_stream_and_the_relay_gate_read_the_key_not_the_body():
     """Both consumers must use the shared parse. _on_event is a closure inside
     the wiring, so this reads p5's real source: a fake callback would just do
     the right thing and prove nothing (3.2 form 1).
-    MUTATION: restore "sev": d.get("severity") or d.get("sev") -> red."""
+    MUTATION: restore "sev": d.get("severity") or d.get("sev") -> red.
+
+    The slice ends at the relay call. That used to be cloud_bridge.publish_event
+    itself; since 2026-09-27 the single call site lives in _relay_to_cloud (the
+    ChassisFault path shares it, and one call site is what keeps the cloud face
+    from double-publishing), so the delimiter is the call TO that helper."""
     src = inspect.getsource(run_voice_loop_wiring)
     body = src[src.index("def _on_event("):]
-    body = body[:body.index("cloud_bridge.publish_event")]
+    body = body[:body.index("_relay_to_cloud(ev[")]
     assert "_event_sev_cat(key, d)" in body, (
         "the event callback does not derive sev/cat from the key")
     assert '"sev": d.get(' not in body and '"cat": d.get(' not in body, (
@@ -114,12 +119,19 @@ def test_the_hmi_stream_and_the_relay_gate_read_the_key_not_the_body():
 def test_the_relay_gate_is_fed_by_what_the_key_parse_produced():
     """The gate itself is what silently disabled the relay. It must test the
     values the shared parse produced, not fields of the raw message.
-    MUTATION: gate on d.get("sev") and d.get("cat") -> red."""
+    MUTATION: gate on d.get("sev") and d.get("cat") -> red.
+
+    The gate moved into _relay_to_cloud on 2026-09-27 (one call site, shared
+    with the ChassisFault path), so what this now pins is the pair of VALUES
+    _on_event hands it -- which is the same property: the relay must be fed the
+    key parse, not fields of the raw body. The helper's own "cloud_bridge is
+    None or not sev or not cat" early return is the other half and cannot be
+    fed the wrong thing without this line changing."""
     src = inspect.getsource(run_voice_loop_wiring)
-    gate = src[src.index("def _on_event("):]
-    gate = gate[gate.index("cloud_bridge is not None"):]
-    gate = gate[:gate.index("\n")]
-    assert 'ev["sev"]' in gate and 'ev["cat"]' in gate, gate
+    call = src[src.index("def _on_event("):]
+    call = call[call.index("_relay_to_cloud("):]
+    call = call[:call.index("\n")]
+    assert 'ev["sev"]' in call and 'ev["cat"]' in call, call
 
 
 def test_the_two_parses_are_one_implementation():

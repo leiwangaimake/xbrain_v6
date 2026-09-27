@@ -1,0 +1,324 @@
+"""
+Copyright (c) 2026 Hachist Robotics
+Author: wanglei@hachist.com
+上海哈船智能船舶技术有限公司
+File: test_chassis_events.py
+Brief: 11 S9.8.4 ChassisFault -> 11 S6.1 Event derivation (edge trigger + CF-1 + CF-4)
+
+Description:
+What these pin, and why each one is here rather than being implied by the others:
+
+  * the EDGE, in both directions -- a new code produces exactly one Event, the
+    same code repeating in the 2 Hz snapshot produces none, and the code landing
+    in cleared[] produces exactly one recovery. The repeat case is the one that
+    a "just forward every report" implementation passes every other test with,
+    so it is asserted by count, not by "an event came out".
+  * detected_at from since_ts, NOT from observation time. A snapshot re-announces
+    a fault that started long ago; an implementation that stamps now passes every
+    shape assertion and silently backdates nothing, so this needs its own check
+    with the two times deliberately far apart.
+  * dedup_key is the COMPLETE prefixed code (CF-4) and the two vendor spaces do
+    not merge -- chs:0x1007 and chg:0x1007 must be two independent faults.
+  * a CF-1 malformed code is rejected and COUNTED, and the rest of the report
+    survives it (13 S6.5 forbid #2: one bad entry must not cost the others).
+  * the pipeline accepts what comes out. The derivation's whole purpose is that
+    EventPipeline._validate stops dropping these, so one test runs a derived
+    event through the real _REQUIRED_FIELDS check instead of restating the list.
+
+Mutations verified red on 2026-09-27 (3.3), each named at its assertion.
+"""
+
+import pytest
+
+from xbrain.p5_gateway.event.chassis_events import ChassisFaultDeriver
+from xbrain.p5_gateway.event.channel_map import derive_channel
+from xbrain.p5_gateway.event.pipeline import _REQUIRED_FIELDS
+
+
+pytestmark = pytest.mark.no_device
+
+
+# A fault that started well before any observation time used below, so a
+# detected_at taken from "now" cannot accidentally equal the one from since_ts.
+SINCE = 1753660812.0
+NOW = 1753669999.0
+
+
+def _deriver():
+    """A deriver whose eid is a pure function of (code, cleared) so a test can
+    predict it; the real one carries a boot token + seq (record.db outlives the
+    process, so a bare seq would collide across restarts)."""
+    seq = [0]
+
+    def eid(code, cleared):
+        seq[0] += 1
+        return "e-%s-%s-%d" % (code, "clr" if cleared else "set", seq[0])
+
+    return ChassisFaultDeriver(rid="m20s", eid_gen=eid)
+
+
+def _report(faults=(), cleared=()):
+    """One 11 S3.0 envelope carrying a ChassisFault, as chassis_relay CR-9
+    rebuilds it (src is the forwarder, data is byte-identical)."""
+    return {"v": 1, "rid": "m20s", "ts": NOW, "seq": 7,
+            "src": "chassis_relay", "ts_sync": False,
+            "data": {"faults": list(faults), "cleared": list(cleared)}}
+
+
+def _fault(code="chs:0x8001", level="fatal", desc="joint over limit",
+           since_ts=SINCE):
+    return {"code": code, "level": level, "desc": desc, "since_ts": since_ts}
+
+
+# -- the edge, both directions ------------------------------------------------
+
+
+def test_a_new_code_raises_exactly_one_event():
+    d = _deriver()
+    out = d.observe(_report([_fault()]), now_wall=NOW)
+    assert len(out) == 1
+    ev = out[0]
+    assert ev["cat"] == "chassis"
+    # fatal -> fault (LEVEL_TO_SEV). mutant: map fatal to warn -> red.
+    assert ev["sev"] == "fault"
+    assert ev["detail"]["type"] == "chassis_fault"
+    assert ev["detail"]["code"] == "chs:0x8001"
+    # The level survives the collapse into the 4-value severity set.
+    assert ev["detail"]["level"] == "fatal"
+    assert ev["detail"]["desc"] == "joint over limit"
+    assert ev["src"] == "p5_gateway"
+    assert ev["rid"] == "m20s"
+    assert d.stats["raised"] == 1
+
+
+def test_the_same_code_repeating_in_the_snapshot_produces_nothing():
+    # ChassisFault is LEVEL triggered: at 2 Hz the same code arrives again and
+    # again while the fault persists. mutant: drop the `code in self._active`
+    # guard in _raises -> this goes from 0 to 3 events and record.db takes two
+    # rows per second per fault.
+    d = _deriver()
+    assert len(d.observe(_report([_fault()]), now_wall=NOW)) == 1
+    assert d.observe(_report([_fault()]), now_wall=NOW + 0.5) == []
+    assert d.observe(_report([_fault()]), now_wall=NOW + 1.0) == []
+    assert d.stats["raised"] == 1 and d.stats["repeat"] == 2
+
+
+def test_a_second_copy_of_one_report_is_not_a_second_event():
+    # 11 S2.2.1 registers TWO subscribers of rt/chassis/fault on purpose
+    # (chassis_relay normally, p1_motion P1-20 when the relay is dead), so p5
+    # sees each report twice in normal operation. The edge absorbs it.
+    d = _deriver()
+    report = _report([_fault()])
+    assert len(d.observe(report, now_wall=NOW)) == 1
+    assert d.observe(report, now_wall=NOW) == []
+
+
+def test_cleared_raises_exactly_one_recovery_event():
+    d = _deriver()
+    d.observe(_report([_fault()]), now_wall=NOW)
+    out = d.observe(_report(cleared=["chs:0x8001"]), now_wall=NOW + 60.0)
+    assert len(out) == 1
+    ev = out[0]
+    assert ev["detail"]["type"] == "chassis_fault_cleared"
+    # A recovery is not a fault. mutant: emit sev=fault for the clear -> red
+    # (and the cloud would show a machine that just recovered as faulted).
+    assert ev["sev"] == "info"
+    # It still names when the fault it ends had started, so the duration is
+    # recoverable from the pair.
+    assert ev["detail"]["since_ts"] == SINCE
+    # ... but the recovery itself is dated when the chassis said so: cleared[]
+    # carries only a code (CF-1/CF-3), there is no clear-time on the wire.
+    assert ev["ts"] == NOW + 60.0
+    assert d.stats["cleared"] == 1
+    # The code left the active set, so the same fault can raise again later.
+    assert d.active_codes == frozenset()
+
+
+def test_clearing_a_code_never_reported_emits_nothing_but_counts():
+    # After a p5 restart the raise belonged to the previous instance. A recovery
+    # for an event the cloud has no record of is noise, and cleared[] repeating
+    # across snapshots would make it a flood.
+    d = _deriver()
+    assert d.observe(_report(cleared=["chs:0x8001"]), now_wall=NOW) == []
+    assert d.stats["clear_unknown"] == 1
+
+
+def test_a_cleared_code_can_raise_again():
+    # The failure this guards: a dedup_key with an open-ended window merges the
+    # re-raise into the original row, so the cloud is left believing the fault
+    # is still cleared. DEDUP_WINDOW_S = 0 plus the edge reset is what prevents
+    # it. mutant: leave the code in _active on clear -> the second raise is 0.
+    d = _deriver()
+    d.observe(_report([_fault()]), now_wall=NOW)
+    d.observe(_report(cleared=["chs:0x8001"]), now_wall=NOW + 60.0)
+    again = d.observe(_report([_fault(since_ts=SINCE + 500.0)]),
+                      now_wall=NOW + 120.0)
+    assert len(again) == 1 and again[0]["detail"]["type"] == "chassis_fault"
+    # Two raises of the same code carry DIFFERENT ts, so record_dao's
+    # (ts - last_ts) > 0 test refuses to merge them.
+    assert again[0]["ts"] == SINCE + 500.0
+
+
+# -- timestamps ---------------------------------------------------------------
+
+
+def test_detected_at_comes_from_since_ts_not_from_observation_time():
+    # The snapshot property: this fault started ~2.5 h before we looked at it.
+    # mutant: stamp detected_at (or ts) from now_wall -> both asserts red.
+    d = _deriver()
+    ev = d.observe(_report([_fault()]), now_wall=NOW)[0]
+    assert ev["ts"] == SINCE
+    assert ev["detected_at"] == "2025-07-28 00:00:12"
+    # created_at is the WRITE time and is a different instant on purpose.
+    assert ev["created_at"].startswith("2025-07-28T02:33:19")
+
+
+def test_a_missing_since_ts_is_not_fabricated_into_detail():
+    # QD-6: a real fault is never swallowed over a missing timestamp, but the
+    # fallback must not present itself as measured.
+    d = _deriver()
+    entry = {"code": "chs:0x8001", "level": "warn"}
+    ev = d.observe(_report([entry]), now_wall=NOW)[0]
+    assert ev["ts"] == NOW                  # dated from now, so the row sorts
+    assert ev["detail"]["since_ts"] is None  # ... but detail does not claim it
+    assert d.stats["no_since_ts"] == 1
+
+
+# -- CF-1 / CF-4 --------------------------------------------------------------
+
+
+def test_dedup_key_is_the_complete_prefixed_code():
+    d = _deriver()
+    ev = d.observe(_report([_fault()]), now_wall=NOW)[0]
+    # CF-4 verbatim: dedup_key 用完整带前缀的 code. mutant: strip the prefix
+    # (code.split(":")[1]) -> red here and the two spaces would merge below.
+    assert ev["dedup_key"] == "chs:0x8001"
+
+
+def test_the_two_vendor_spaces_are_two_independent_faults():
+    # CF-4: same number, different space, must not merge. 0x1007 means
+    # "充电桩无电流" in the chg space and is undefined in the chs space.
+    d = _deriver()
+    out = d.observe(_report([_fault(code="chs:0x1007", level="degraded"),
+                             _fault(code="chg:0x1007", level="degraded")]),
+                    now_wall=NOW)
+    assert len(out) == 2
+    assert {e["dedup_key"] for e in out} == {"chs:0x1007", "chg:0x1007"}
+    # degraded -> fault: 13 S7.3 defines degraded as affecting operation, and
+    # SEVERITY has no degraded of its own. mutant: map degraded to warn -> red.
+    assert {e["sev"] for e in out} == {"fault"}
+
+
+@pytest.mark.parametrize("bad", ["0x8001", "CHS:0x8001", "chs:0x80012",
+                                 "xchs:0x8001y", "chs:8001", ""])
+def test_a_malformed_code_is_rejected_and_counted(bad):
+    # CF-1: no prefix / prefix outside {chs, chg} / mixed case -> E_SCHEMA, and
+    # explicitly NOT "assume one of the two spaces".
+    d = _deriver()
+    assert d.observe(_report([_fault(code=bad)]), now_wall=NOW) == []
+    assert d.stats["bad_code"] == 1
+    assert d.stats["raised"] == 0
+
+
+def test_a_malformed_code_does_not_cost_the_other_entries():
+    # 13 S6.5 forbid #2 one layer up: a bad entry must not abort the report.
+    # mutant: return [] from _raises on the first bad code -> the good fault
+    # disappears and HMI shows all-green while the machine is faulted.
+    d = _deriver()
+    out = d.observe(_report([_fault(code="0x8001"), _fault(code="chs:0x8002")]),
+                    now_wall=NOW)
+    assert [e["detail"]["code"] for e in out] == ["chs:0x8002"]
+    assert d.stats["bad_code"] == 1 and d.stats["raised"] == 1
+
+
+def test_a_level_outside_the_closed_set_is_rejected_and_counted():
+    # CLAUDE.md 3.5: no silent pass-through, no "interpret the unknown value as
+    # something known". level is a CLOSED set that quadruped itself derives
+    # (13 S7.3), unlike the code, which is open.
+    d = _deriver()
+    assert d.observe(_report([_fault(level="fail")]), now_wall=NOW) == []
+    assert d.stats["bad_level"] == 1
+
+
+# -- the producer spellings 11 S9.8.4 does not define -------------------------
+
+
+def test_cleared_as_objects_is_read_and_counted_as_legacy():
+    # quadruped writes cleared[] as OBJECTS (rt_payloads.cc calls WriteFaultList
+    # for both lists) while CF-1 makes each element the code STRING. Refusing
+    # the object form would swallow every real recovery, so it is read -- and
+    # counted, so the divergence stays visible.
+    d = _deriver()
+    d.observe(_report([_fault()]), now_wall=NOW)
+    out = d.observe(_report(cleared=[{"code": "chs:0x8001", "level": "fatal"}]),
+                    now_wall=NOW + 1.0)
+    assert len(out) == 1 and out[0]["detail"]["type"] == "chassis_fault_cleared"
+
+
+def test_since_sec_nanosec_is_converted_and_counted_as_legacy():
+    # 13 S7.3 verbatim: Timestamp{Sec,Nanosec} -> 转 since_ts. quadruped still
+    # ships the pair. mutant: ignore the pair -> since_ts falls back to now and
+    # test_detected_at... style backdating returns.
+    d = _deriver()
+    entry = {"code": "chs:0x8001", "level": "warn", "name": "batt low",
+             "since": {"sec": 1753660812, "nanosec": 500000000}}
+    ev = d.observe(_report([entry]), now_wall=NOW)[0]
+    assert ev["detail"]["since_ts"] == pytest.approx(SINCE + 0.5)
+    assert ev["detail"]["desc"] == "batt low"     # name is the desc fallback
+    assert d.stats["legacy_shape"] >= 1
+    assert d.stats["no_since_ts"] == 0
+
+
+# -- the point of the whole module -------------------------------------------
+
+
+def test_a_derived_event_satisfies_the_pipeline_required_fields():
+    # This is the defect being fixed: before the derivation the ChassisFault
+    # reached EventPipeline._validate with no eid and came back
+    # dropped: missing_field:eid, i.e. every chassis fault was discarded.
+    d = _deriver()
+    for ev in (d.observe(_report([_fault()]), now_wall=NOW)
+               + d.observe(_report(cleared=["chs:0x8001"]), now_wall=NOW + 1)):
+        missing = [f for f in _REQUIRED_FIELDS if ev.get(f) is None]
+        assert missing == [], "derived event is missing %s" % missing
+
+
+def test_the_wiring_routes_the_chassis_key_into_the_deriver():
+    """The derivation is worthless if _on_event never calls it.
+
+    _on_event is a closure inside run_voice_loop_wiring, so this reads p5's real
+    source -- a fake callback would just do the right thing and prove nothing
+    (3.2 form 1). Two properties, both load-bearing:
+      * the route exists and fires BEFORE the generic body, which would put an
+        eid-less row in the HMI ring and relay a payload the cloud projector
+        rejects for that same missing eid;
+      * it returns, so the snapshot does not also fall through.
+    MUTATION: delete the two routing lines -> red, and every chassis fault goes
+    back to being dropped as missing_field:eid.
+    """
+    import inspect
+
+    from xbrain.p5_gateway.runtime.main_wiring import run_voice_loop_wiring
+
+    src = inspect.getsource(run_voice_loop_wiring)
+    body = src[src.index("def _on_event("):]
+    route = body[:body.index("_relay_to_cloud(ev[")]
+    assert '_cat == "chassis" and _sev == "fault"' in route
+    assert "_on_chassis_fault(key, d)" in route
+    # There must be exactly ONE subscriber feeding it: event/** already matches
+    # event/fault/chassis, so a dedicated subscriber would double every derived
+    # event. MUTATION: add declare_subscriber("event/fault/chassis", ...) -> red.
+    assert src.count('declare_subscriber("event/fault/chassis"') == 0
+    assert src.count("_on_chassis_fault(key, d)") == 1
+
+
+def test_both_halves_ride_the_alarm_channel():
+    # 11 S9A.9 E-1: a breach and its recovery must share a backfill cursor, or
+    # the cloud stays stuck in alarm forever. channel is derived from cat by the
+    # pipeline; this asserts the derived detail.type does not accidentally hit a
+    # channel_map override that would split the pair.
+    d = _deriver()
+    raise_ev = d.observe(_report([_fault()]), now_wall=NOW)[0]
+    clear_ev = d.observe(_report(cleared=["chs:0x8001"]), now_wall=NOW + 1)[0]
+    for ev in (raise_ev, clear_ev):
+        assert derive_channel(ev["cat"], ev["detail"]) == "alarm"

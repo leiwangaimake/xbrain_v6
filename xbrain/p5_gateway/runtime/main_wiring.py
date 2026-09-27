@@ -570,6 +570,34 @@ def run_voice_loop_wiring(stop_flag: dict,
         _comm_seq = [0]
         _comm_boot = os.urandom(3).hex()
 
+        # 11 S9.8.4 ChassisFault -> 11 S6.1 Event (user ruling 2026-09-27; the
+        # UM-4 precedent is verbatim "事件由 P1 依 state/robot 派生 ... 不由
+        # quadruped 发" -- the CONSUMER derives). Until this existed the
+        # event/fault/chassis payload reached _normalise_event with no eid and
+        # was dropped as missing_field:eid, i.e. with a real chassis attached
+        # every fault report died here. Edge-triggered inside the deriver, which
+        # is what keeps a 2 Hz level snapshot from becoming an event flood and
+        # what makes the intentional P1-20 double delivery cost nothing.
+        from xbrain.p5_gateway.event.chassis_events import ChassisFaultDeriver
+        _chs_seq = [0]
+        # Boot-unique token, same reason as _comm_boot / p2's _dev_eid_boot:
+        # record.db outlives the process, a bare seq restarts at 0, and a
+        # repeated eid makes the DAO degrade the row to JSONL instead of
+        # persisting it (found in the SW-12 audit).
+        _chs_boot = os.urandom(3).hex()
+
+        def _chs_eid(code: str, cleared: bool) -> str:
+            _chs_seq[0] += 1
+            # The code goes in the eid so a human reading record.db can see
+            # which fault a row is about without opening detail.
+            return "chs-%s-%s-%s-%d" % (
+                code.replace(":", "_"), "clr" if cleared else "set",
+                _chs_boot, _chs_seq[0])
+
+        chassis_deriver = ChassisFaultDeriver(
+            rid=os.environ.get("XBRAIN_ROBOT_ID", "unknown"),
+            eid_gen=_chs_eid)
+
         speak_acks_seen = 0
         state_task_updates = 0
         #: 11 S8.5 的端到端关联号, 放在信封的 data 里(见下方发布处的长注).
@@ -808,6 +836,69 @@ def run_voice_loop_wiring(stop_flag: dict,
             if isinstance(body, dict):
                 hmi_state["power"] = body
 
+        def _relay_to_cloud(sev, cat, body: dict) -> None:
+            """The ONE cloud_bridge.publish_event call site in this module.
+
+            Both event producers here route through it -- the generic event/**
+            body and the Events derived from a ChassisFault. A second call site
+            is what would double every event on the cloud face, which is why
+            test_cloud_bridge counts them in the AST and requires exactly one.
+
+            Best-effort by design: a relay failure must never touch the HMI ring
+            or the record.db write, both of which are the caller's own steps.
+            """
+            if cloud_bridge is None or not sev or not cat:
+                return
+            try:
+                cloud_bridge.publish_event(sev, cat, body)
+            except Exception:      # noqa: BLE001
+                _logger.exception("p5 cloud event relay failed")
+
+        def _ingest_derived_event(ev: dict) -> None:
+            """One already-assembled 11 S6.1 Event -> HMI ring + cloud + record.
+
+            The same three destinations _on_event gives a normal event, in the
+            same order. Factored out because the ChassisFault path arrives as a
+            SNAPSHOT and produces zero or more Events, so it cannot reuse the
+            one-message-one-event body above it.
+            """
+            hmi_state["events"] = (hmi_state["events"] + [{
+                "eid": ev["eid"], "title": ev["title"], "sev": ev["sev"],
+                "cat": ev["cat"], "ts": ev["ts"], "pos": None,
+            }])[-EVENT_RING:]
+            _relay_to_cloud(ev["sev"], ev["cat"], ev)
+            if event_subsystem is not None and event_subsystem.enabled:
+                link = hmi_state.get("link") or {}
+                # Same S3.5.1 delivery signal as the generic path: only an
+                # authoritative cloud_link == up marks a need_ack=0 event
+                # delivered; anything else queues it for backfill.
+                event_subsystem.submit_event(
+                    ev, link.get("cloud_link") == "up")
+
+        def _on_chassis_fault(key: str, d: dict) -> None:
+            """event/fault/chassis carries a ChassisFault, NOT an Event.
+
+            11 S9.8.4's payload has no eid/cat/sev/title, so the generic path
+            would drop it at the pipeline's first step. Derive here instead
+            (user ruling; UM-4 is the same shape one key over) and feed each
+            derived Event through the normal three destinations.
+
+            *** Handled INSIDE _on_event rather than by a second subscriber.
+            The wiring already subscribes event/** and that expression matches
+            event/fault/chassis; declaring a dedicated subscriber for the same
+            key would make BOTH callbacks fire and double every derived event.
+            """
+            try:
+                derived = chassis_deriver.observe(d, now_wall=time.time())  # WALL-CLOCK-OK(record): the event record stamp, 11 S6.2; no age or timeout is computed from it
+            except Exception:      # noqa: BLE001
+                # A malformed snapshot must not kill the subscriber thread; the
+                # deriver already swallows per-entry defects, so reaching here
+                # means something structural. Counted by the logger, not lost.
+                _logger.exception("p5 chassis fault derive failed on %s", key)
+                return
+            for ev in derived:
+                _ingest_derived_event(ev)
+
         def _on_event(sample) -> None:
             # R-2: "event/**" also matches our OWN event/replay/** (backfill),
             # event/ack, and event/recon/{req,rsp} -- all handled by dedicated
@@ -837,6 +928,14 @@ def run_voice_loop_wiring(stop_flag: dict,
             # stream and, because the relay below gates on them, meant not one
             # event ever reached the cloud.
             _sev, _cat = _event_sev_cat(key, d)
+            # The ONE key on this stream whose payload is not an Event: CR-9
+            # forwards the raw ChassisFault onto event/fault/chassis (11 S9.8.4).
+            # Routed before the generic body, which would otherwise put an
+            # eid-less row in the HMI ring and relay a payload the cloud's S5.1
+            # projector rejects for the same missing eid.
+            if _cat == "chassis" and _sev == "fault":
+                _on_chassis_fault(key, d)
+                return
             ev = {
                 "eid": d.get("eid") or d.get("event_id"),
                 "title": d.get("title") or d.get("message"),
@@ -868,14 +967,10 @@ def run_voice_loop_wiring(stop_flag: dict,
             # Cloud relay (v2.0 S2: the cloud event key is
             # xbrain/{rid}/event/{sev}/{cat}, NOT the bare key producers use).
             # Two reasons this must be a relay and not a producer-side key
-            # change -- see CLOUD_EVENT in cloud_wiring.py. Best-effort: a
-            # relay failure must never touch the HMI ring or the persistence
-            # path above, both of which are already done by this point.
-            if cloud_bridge is not None and ev["sev"] and ev["cat"]:
-                try:
-                    cloud_bridge.publish_event(ev["sev"], ev["cat"], d)
-                except Exception:      # noqa: BLE001
-                    _logger.exception("p5 cloud event relay failed")
+            # change -- see CLOUD_EVENT in cloud_wiring.py. The call itself sits
+            # in _relay_to_cloud so this module keeps exactly one publish_event
+            # call site with the chassis path sharing it.
+            _relay_to_cloud(ev["sev"], ev["cat"], d)
             # Persist + deliver via the event subsystem (fire-and-forget, no-op
             # when disabled). A malformed event normalises to None and is skipped;
             # the HMI ring above is unaffected either way.
