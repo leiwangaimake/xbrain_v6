@@ -198,8 +198,16 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
             #         处境, 那里也是只做 DB 写. 不假装做到了(CLAUDE.md 3.2):
             #         链路建好后这里要补上, 且必须在状态写之前.
             #   2. 采样进度并同步落盘
-            #      -- NO 本期无进度可采: 进度来自 state/motion/path_progress
-            #         (NEXT.md EX-3, 未建), current_step 恒 0.
+            #      -- 2026-09-28 订正: 原写"NO 本期无进度可采: 进度来自
+            #         state/motion/path_progress (NEXT.md EX-3, 未建)".
+            #         EX-3 已建(runtime/progress_sink.py 订 P1-12 并按 PP-1
+            #         落 patrol_progress), 所以那句不再成立.
+            #      -- 这里[仍然不做单独采样], 但理由变了, 不是"没有进度":
+            #         PP-1 已在持续落盘, 落后量上界 = 一个 waypoint 或
+            #         progress_flush_s 二者取先, 而 15 S9.5B PP-2 + U38/PWR-4
+            #         逐字接受"最坏损失一个 waypoint". 抢占那一刻再写一次,
+            #         省下的正好是那个已被接受的量, 却要把 tracker 传进
+            #         调度器 -- 多一条从循环到 tick 的依赖, 换不到东西.
             #   3. status -> suspended, 同时写 suspend_kind/reason  <-- 做这步
             #   4. 发 event/info/task                                <-- 做这步
             # 3 与 4 是本期能做且必须做的部分: 少了 3, 抢占根本没发生; 少了 4,
@@ -250,6 +258,41 @@ def compute_duration_sec(started_mono: "float | None",
     return max(0.0, now_mono_ms / 1000.0 - float(started_mono))
 
 
+async def apply_path_progress_terminal(conn, dao, task_id: str,
+                                       path_state: str, *,
+                                       now_mono_ms: int,
+                                       on_transition: OnTransition,
+                                       finished_at: str = "",
+                                       boot_id: str = "") -> bool:
+    """Close a running task on a TERMINAL state/motion/path_progress frame
+    (docs/NEXT.md EX-4). Returns True if a transition was made.
+
+    This is the caller apply_motion_result never had. 12 S4.3.1 LP-3 is
+    explicit that P1 only publishes path_progress.state == "arrived" and that
+    "把它映射成任务 done 的是 P3"; before 2026-09-28 nothing in p3_task
+    subscribed to that key, so a patrol that finished stayed `running`
+    forever and the operator could not tell it apart from a hung P1.
+
+    The translation lives in state/path_progress.MOTION_RESULT_FOR_PATH_STATE
+    because the two vocabularies are different closed sets that share a word:
+    path_progress.state (11 S3.5B) and relative_move status (11 S3.5) both
+    contain "aborted" and it means different things in each. Read that table
+    before touching this -- in particular, path_progress "aborted" maps to
+    nothing on purpose (it is preemption or e-stop, which P3 has already
+    turned into a resumable `suspended`).
+    """
+    from xbrain.p3_task.state.path_progress import (
+        MOTION_RESULT_FOR_PATH_STATE)
+
+    result = MOTION_RESULT_FOR_PATH_STATE.get(path_state)
+    if result is None:
+        return False
+    return await apply_motion_result(
+        conn, dao, task_id, result, now_mono_ms=now_mono_ms,
+        on_transition=on_transition, finished_at=finished_at,
+        boot_id=boot_id)
+
+
 async def apply_motion_result(conn, dao, task_id: str, result: str, *,
                               now_mono_ms: int,
                               on_transition: OnTransition,
@@ -259,12 +302,21 @@ async def apply_motion_result(conn, dao, task_id: str, result: str, *,
     running -> done; 'aborted'/'rejected' -> running -> failed. Returns True if
     a transition was made.
 
-    This is the lifecycle-closing half of execution. It is a pure step the
-    (future) motion-status subscriber calls; it does NOT subscribe or emit
-    cmd/motion -- P1 executing a real path + reporting this status is the
-    execution-wiring milestone (P1 today is an ad-hoc-motion MVP). An in-flight
-    'accepted'/'running', or a result for a task that is not running, is a
-    no-op (not an error: a late status after cancel is legal)."""
+    This is the lifecycle-closing half of execution. Since 2026-09-28 it is
+    reached through apply_path_progress_terminal above, which translates a
+    terminal state/motion/path_progress frame into this vocabulary; it does
+    not subscribe or emit cmd/motion itself. An in-flight 'accepted'/'running',
+    or a result for a task that is not running, is a no-op (not an error: a
+    late status after cancel is legal).
+
+    *** 2026-09-28: the paragraph here used to read "It is a pure step the
+    (future) motion-status subscriber calls ... P1 executing a real path +
+    reporting this status is the execution-wiring milestone (P1 today is an
+    ad-hoc-motion MVP)." That stopped being true at P7.2: P1 runs a real 20 Hz
+    path and publishes state/motion/path_progress (P1-12,
+    xbrain/p1_motion/runtime/nav_wiring.py STATE_PROGRESS_TOPIC), so the
+    milestone was already reached and the missing piece was this side's
+    subscriber, not P1's publisher."""
     event = _MOTION_TERMINAL.get(result)
     if event is None:
         return False                              # accepted/running: in-flight

@@ -57,6 +57,16 @@ CMD_TEACH_TOPIC = "cmd/teach"            # 11 S12A.4: P3 owns the recording sess
 CMD_TEACH_ACK_TOPIC = "cmd/teach/ack"
 STATE_TEACH_TOPIC = "state/teach"        # 11 S12A.5, event + 1 Hz
 STATE_POSE_TOPIC = "state/pose"          # 11 S3.3, the sampling source
+# P1-12 (11 S3.5B): 2 Hz + one extra frame at every waypoint. 15 S2.1 calls it
+# "断点的唯一来源" and it is also the confirmation channel for a route push
+# (15 S2.4.4 RA-1 -- cmd/motion/route has no ack key). Subscribed since
+# 2026-09-28; before that p3_task matched it in one comment and nowhere else,
+# so patrol_progress had no writer and a finished patrol stayed `running`.
+STATE_PATH_PROGRESS_TOPIC = "state/motion/path_progress"
+#: Bound on the progress backlog. 2 Hz * 16 = 8 s of history, which is longer
+#: than the 3 s staleness window (11 S3.5B) -- past that the frames are stale
+#: anyway and keeping them would only delay the fresh one behind them.
+PROGRESS_QUEUE_MAX = 16
 # The three state sources the S12A.3 arming checks read. None of them has a
 # publisher in this build; the runtime refuses to arm and NAMES what is missing
 # rather than defaulting the gate to pass (see teach/runtime.py design point 2).
@@ -143,8 +153,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  fence_db_path: str = DEFAULT_FENCE_DB,
                  enu_origin: Optional[Dict[str, float]] = None) -> int:
     from xbrain.common.runtime.session_ctx import open_planes
-    from xbrain.p3_task.dao.simple_daos import FencesDAO
+    from xbrain.p3_task.dao.simple_daos import FencesDAO, PatrolProgressDAO
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
+    from xbrain.p3_task.runtime.progress_sink import apply_path_progress
+    from xbrain.p3_task.state.path_progress import ProgressTracker
     from xbrain.p3_task.fence.fence_set import build_fence_set
     from xbrain.p3_task.fence.geom import InvalidFenceSet
     from xbrain.p3_task.geo.objects import read_geo_objects
@@ -195,6 +207,17 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
         # 11 S12A: cmd/teach gets its own queue for the same reason cmd/geo does
         # -- a different key, a different answer topic, different code.
         teach_queue: asyncio.Queue = asyncio.Queue()
+        # P1-12 progress rides its own queue too, and it is the one that must
+        # never block behind a command: it arrives at 2 Hz forever, whereas the
+        # other three are event-driven. Bounded, and dropping the OLDEST on
+        # overflow, because the newest position is the only one that matters --
+        # an unbounded queue here turns a stalled loop into a memory leak, and
+        # dropping the newest would freeze the reported position at the moment
+        # of the stall (which reads as a stopped robot).
+        progress_queue: asyncio.Queue = asyncio.Queue(maxsize=PROGRESS_QUEUE_MAX)
+        progress_tracker = ProgressTracker()
+        progress_dao = PatrolProgressDAO(conn)
+        progress_dropped = [0]
         recorded = 0
 
         _logger.info("p3 wiring: opening GEN session")
@@ -445,6 +468,36 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     return
                 loop.call_soon_threadsafe(teach_queue.put_nowait, payload)
 
+            def _offer_progress(body) -> None:
+                # LOOP THREAD (reached via call_soon_threadsafe below). Bounded
+                # put with an oldest-first drop; put_nowait alone would raise
+                # QueueFull inside a call_soon callback, where the exception
+                # goes to the loop's exception handler and the frame is lost
+                # with a traceback instead of a counter.
+                if progress_queue.full():
+                    try:
+                        progress_queue.get_nowait()
+                        progress_dropped[0] += 1
+                    except asyncio.QueueEmpty:      # drained between the two
+                        pass
+                progress_queue.put_nowait(body)
+
+            def _on_path_progress(sample) -> None:
+                # RUST THREAD: decode and hand off only (CLAUDE.md 4.2). This
+                # callback runs at 2 Hz forever, so it must stay the cheapest
+                # of the five -- no db, no publish, no await.
+                try:
+                    payload = json.loads(bytes(sample.payload).decode("utf-8"))
+                except Exception:      # noqa: BLE001
+                    _logger.warning("p3 malformed path_progress payload")
+                    return
+                # p1 enveloped (11 S3.0) or bare -- accept both, the same way
+                # the state sinks above do, so a stub publisher works.
+                data = payload.get("data") if isinstance(payload, dict) else None
+                loop.call_soon_threadsafe(
+                    _offer_progress,
+                    data if isinstance(data, dict) else payload)
+
             # The state caches the S12A.3 arming checks read. Each callback only
             # stores the decoded body; the loop thread hands it to the runtime,
             # so nothing touches the session from a Zenoh thread.
@@ -490,6 +543,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                      gen.declare_subscriber(STATE_LINK_TOPIC, _on_link),
                      gen.declare_subscriber(CMD_GEO_TOPIC, _on_geo),
                      gen.declare_subscriber(CMD_TEACH_TOPIC, _on_teach),
+                     gen.declare_subscriber(STATE_PATH_PROGRESS_TOPIC,
+                                            _on_path_progress),
                      gen.declare_queryable(QUERY_TASKS_TOPIC, _on_query)]
             # Held in the same strong-ref list (CLAUDE.md 4.3).
             for _topic, _name in ((STATE_POSE_TOPIC, "pose"),
@@ -505,11 +560,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             teach = TeachRuntime(conn, geo_conn, fence_conn,
                                  boot_id=_BOOT_ID)
             _logger.info(
-                "p3 wiring: subscribed %s + %s + %s + %s (+ %d state sources), "
-                "queryable %s (task.db + geo single writer + teach session "
-                "+ F-5 return_home)",
+                "p3 wiring: subscribed %s + %s + %s + %s + %s "
+                "(+ %d state sources), queryable %s (task.db + geo single "
+                "writer + teach session + F-5 return_home + path progress)",
                 CMD_TASK_TOPIC, STATE_LINK_TOPIC, CMD_GEO_TOPIC,
-                CMD_TEACH_TOPIC, 5, QUERY_TASKS_TOPIC)
+                CMD_TEACH_TOPIC, STATE_PATH_PROGRESS_TOPIC, 5,
+                QUERY_TASKS_TOPIC)
             # 11 S7.9: the single-writer context. task_conn is the SAME handle
             # the scheduler uses -- P3 has one db thread (15 S2.1), so a geo
             # applier reaching into task.db (GC-1..7 linkage, refs) serialises
@@ -710,10 +766,46 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 list_route_ids=_list_route_ids)
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p3 scheduler tick failed: %s", exc)
+                    # EX-3 / EX-4: drain the P1-12 backlog. AFTER the
+                    # scheduler tick, so a task the tick has just dispatched
+                    # already exists as `running` when the first frame for it
+                    # is applied; before it, the first frame or two of every
+                    # run would be dropped as "no running task".
+                    #
+                    # Drained to EMPTY each pass rather than one per pass: at
+                    # 2 Hz against this loop's 0.5 s cadence the two rates are
+                    # equal, so a one-per-pass drain has no margin at all and
+                    # any hiccup becomes a permanent backlog.
+                    while True:
+                        try:
+                            _pbody = progress_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        try:
+                            await apply_path_progress(
+                                _pbody, conn=conn, dao=dao,
+                                progress_dao=progress_dao,
+                                tracker=progress_tracker,
+                                now_mono_ms=_now_mono_ms(),
+                                now_wall_ms=_now_wall_ms(),
+                                on_transition=_make_publish(
+                                    state_pub, _emit_task_event,
+                                    _publish_task_state,
+                                    fetch_terminal=_fetch_terminal_facts),
+                                boot_id=_BOOT_ID)
+                        except Exception as exc:      # noqa: BLE001
+                            # A progress frame must never take down the loop
+                            # that also runs task scheduling and the geo
+                            # single-writer.
+                            _logger.error("p3 path_progress apply failed: %s",
+                                          exc)
                     now = time.monotonic()
                     if now - last_hb >= heartbeat_period_s:
-                        _logger.info("p3 alive; recorded=%d qdepth=%d",
-                                     recorded, queue.qsize())
+                        _logger.info(
+                            "p3 alive; recorded=%d qdepth=%d progress_q=%d "
+                            "progress_dropped=%d",
+                            recorded, queue.qsize(), progress_queue.qsize(),
+                            progress_dropped[0])
                         last_hb = now
                     # 11 S7.10A: re-broadcast geo geometry every
                     # GEO_PUBLISH_PERIOD_S (>= 0.1 Hz keepalive). Full payload each
