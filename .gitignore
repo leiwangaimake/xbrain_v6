@@ -101,3 +101,9 @@ docs/temp/
 # C++ 编译产物不入 git（保留 common/lib/.gitkeep）
 common/lib/*.so
 common/lib/*.a
+
+# ── 桌面环境回收站（f1566ee 误入库，用户 2026-09-27 批准清出）
+# ★ 起因：在 sshfs 挂载的仓库根上用桌面端删文件，GIO/Nautilus 会在【挂载点根】
+#   建 .Trash-1000/，于是一次 `git add -A` 把它连同 files/ 与 info/ 一起提交。
+# ★ 通配 `.Trash-*` 而不是写死 1000：目录名带的是 uid，换个账号登录就是另一个数。
+.Trash-*/
