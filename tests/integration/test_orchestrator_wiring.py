@@ -84,6 +84,48 @@ def test_estop_path_publishes_cmd_estop():
     assert _texts(h("急停")) == [("cmd/estop", "estop")]
 
 
+def test_the_voice_estop_frame_carries_the_audit_triple():
+    """11 S7.1's three audit fields on the frame p4 actually publishes.
+
+    Why this needed its own test rather than being implied by the one above:
+    all three fields are OPTIONAL on the wire (S7.1 says so, because S3.0.1
+    makes cmd/estop execute even when it cannot be parsed), so their absence
+    breaks nothing here and shows up two layers away --
+      * no cmd_id => quadruped answers "anonymous" (rt_bridge HandleEstop), and
+        S7.1's four initiators share ONE ack key, so p4's ack becomes
+        indistinguishable from the HMI's and the cloud's;
+      * no reason / src_role => 11 S4.1 last_soft_estop = {epoch, reason,
+        src_role, age_ms} is permanently half empty, and the object that exists
+        to say "3.2 s ago, by voice" cannot name the source at all.
+    Asserted on the published BYTES, not on decision_to_publishes' return, so a
+    wiring layer that dropped the fields on the way out is red too.
+
+    mutant: delete any of the three keys in orchestrator_turn's bypass branch
+    -> red. mutant: src_role = "agent" -> red (see below).
+    """
+    _, h = _handler()
+    pairs = h("急停")
+    assert [k for k, _ in pairs] == ["cmd/estop"]
+    frame = json.loads(pairs[0][1])
+    # The idempotency key, with p4's own prefix so a reader of cmd/estop/ack
+    # can tell a voice ack from the HMI's (h-) and the cloud's (c-).
+    assert frame["cmd_id"].startswith("es-")
+    assert frame["reason"] == "voice_command"
+    # *** voice, NOT agent. 11 S7.1's set is hmi|cloud|voice|agent|test, and
+    # 16 S4.2 / 18 S2495 both call this path 语音急停 verbatim: an operator spoke
+    # it. "agent" would claim the robot stopped ITSELF, which is a different
+    # event for whoever reads last_soft_estop after the fact -- and the same
+    # payload's own `source` field has said "voice" since it was written.
+    assert frame["src_role"] == "voice"
+    assert frame["src_role"] in ("hmi", "cloud", "voice", "agent", "test")
+    # Two presses get two ids: a repeated cmd_id is answered "duplicate" by
+    # 11 S7.1.1's idempotency rule, so a constant id would report an operator's
+    # second shout as a repeat of the first.
+    # mutant: a module constant instead of uuid4 -> red.
+    again = json.loads(h("急停")[0][1])
+    assert again["cmd_id"] != frame["cmd_id"]
+
+
 def test_action_path_publishes_cmd_motion():
     _, h = _handler()
     pairs = _texts(h("原地待命"))

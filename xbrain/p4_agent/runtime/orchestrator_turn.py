@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
@@ -244,8 +245,30 @@ def decision_to_publishes(decision: TurnDecision) -> List[Tuple[str, dict]]:
     if kind == "bypass":
         action = decision.bypass_action
         if action == "estop":
+            # *** The three 11 S7.1 audit fields, filled here.
+            #
+            # cmd_id is S7.1's idempotency key and quadruped echoes it verbatim
+            # into EstopAck, falling back to "anonymous" when the request
+            # carried none (rt_bridge HandleEstop). S7.1's four parallel
+            # initiators share ONE ack key, so with no cmd_id p4's ack is
+            # indistinguishable on the bus from the HMI's and the cloud's. The
+            # es- prefix plus a uuid4 is how this file's siblings already build
+            # ids (turn_orchestrator: "c-", "mi-").
+            #
+            # src_role = voice, not agent. S7.1's set is hmi|cloud|voice|agent|
+            # test and this branch is the VOICE bypass: 16 S4.2 and 18 S2495
+            # both call it "语音急停" verbatim, the operator spoke it, and the
+            # same payload's own `source` field has said "voice" since it was
+            # written. agent would claim the robot stopped itself, which is a
+            # different event for an operator reading last_soft_estop.
+            #
+            # reason is free text and feeds 11 S4.1 last_soft_estop.reason;
+            # unfilled, that audit object is permanently half empty.
             return [(CMD_ESTOP, {"schema": "p4_estop_v1",
                                  "action": "estop", "source": "voice",
+                                 "cmd_id": "es-" + uuid.uuid4().hex[:12],
+                                 "reason": "voice_command",
+                                 "src_role": "voice",
                                  "mono_ms": int(time.monotonic() * 1000)})]
         # prone / stand -> posture motion.
         return [(CMD_MOTION_INTENT, {"schema": "p4_intent_v1",
