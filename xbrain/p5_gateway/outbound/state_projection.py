@@ -49,9 +49,17 @@ from .cloud_envelope import normalise_progress
 ROBOT_STATES = ("offline", "idle", "running", "charging", "fault",
                 "emergency_stop")
 
-#: 11 S4.1 RobotState.faults[].level 的闭集. NO 与 S9.8.4 ChassisFault 的
-#: level(warn|degraded|fail) 不是同一个集合 -- 两处形近而 fail/fatal 不同名,
-#: 抄错一个字整条 state/robot 就会因闭集越界被打掉.
+#: 11 S4.1 RobotState.faults[].level 的闭集.
+#:
+#: *** 2026-09-27 订正: 本注原写"与 S9.8.4 ChassisFault 的 level(warn|
+#: degraded|fail)不是同一个集合 -- 两处形近而 fail/fatal 不同名". 那句话不
+#: 成立, 它是照 S9.8.4 json5 示例里的 "fail" 写的, 而那个示例值本身是错的:
+#: S4.1 本行的闭集是 warn|degraded|fatal, 13 S7.3 的 Severities 映射表给的是
+#: 3->warn / 4->degraded / 5->fatal, quadruped 的 SeverityToLevel 与其单测逐
+#: 字发 fatal(test_chs_a_reports.cc). 两者是[同一个]集合, 且 13 S7.3 CF-5 的
+#: 落地逐字要求汇总侧与故障侧"用同一个转换函数". S9.8.4 的示例已按铁律 1 同
+#: 批订正. 抄错一个字仍然会让整条 state/robot 因闭集越界被打掉 -- 那一句是
+#: 对的, 错的只是它举的例.
 FAULT_LEVELS = ("warn", "degraded", "fatal")
 TASK_STATES = ("idle", "queued", "running", "paused", "completed", "failed",
                "cancelled")
@@ -415,29 +423,89 @@ def _battery(power: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     底盘离线时 quadruped 在 rt/chassis/power 上没有内容可发, relay 也就
     转不上来. 那时报 soc: 0 会让操作员中止出勤, 报 100 会让他派长任务.
 
-    *** 四个字段里只有 soc 有来源, 另外三个保持 null, 且[不是偷懒].
-      current_a      -- PowerState 里根本没有电流字段, 无从取.
-      voltage_v      -- S4.2 是[双电池](batteries.left/right 各有 voltage_v),
-      temperature_c     契约没有说这两块怎么塌缩成一个数. soc_pct 有规矩
-                        (S4.2 逐字: 取两块 level_pct 的较小值, CHG-10),
-                        电压与温度[没有] -- 自己挑 min/max/平均就是在契约层
-                        发明一条规则, 而三种挑法给操作员的结论各不相同.
-      => 补这三个需要一条裁决, 不是补一行代码. 在那之前 null 是真话.
-    * 另注: 13 BAT-2 / V-55 记着 left/right 的物理对应[尚未确定], 所以今天
-      即便取了也不知道取的是哪一块 -- 这是同一件事的下一层.
+    *** current_a 仍是 null 且[不是偷懒]: PowerState 里根本没有电流字段.
+
+    *** voltage_v / temperature_c 的双电池塌缩(2026-09-27 用户裁决).
+    S4.2 是双电池, 而 v2.0 的 battery 段只有一个数. 契约给了 soc_pct 的规矩
+    (逐字: 取两块 level_pct 的[较小]值, CHG-10)却没给这两个 -- 裁决是[沿用
+    设计自己的先例], 取保守侧 / 受限侧:
+      voltage_v     -> min. 电压低的那块先到截止电压, 整机可用能量由它封顶;
+                       报高的那块等于宣称一个更好的余量.
+      temperature_c -> max. 温度高的那块先触发热保护, 风险由它决定; 报低的
+                       那块等于把一块正在过热的电池藏起来.
+    两个方向不同但同一条理由: 报出[先出问题的那一块].
+    ! 登记: 这是本地决定, 不是契约条文. 待 13 V-55 给出 left/right 的物理
+      对应后复核(那时才知道取的是哪一块, 现在只知道是"更受限的那一块").
+    ! 边界: 这两个值是[展示用], NO 不做安全门 -- 充电触发仍只看 soc_pct
+      (CHG-10), 热保护在底盘侧.
+
+    *** 空槽必须排除在 min/max 之外, 否则这两个数恒错(13 V-68 实测).
+    空槽上报 BatteryLevel 0 / Voltage 0.0 / battery_temperature -273.0
+    (绝对零度 = 无读数哨兵). 不排除的话 min(voltage) 恒为 0.0, max(temp) 被
+    -273 拉偏 -- 而 single_battery 是 S4.2 列明的[合法]状态, 所以这不是异常
+    分支, 是常态. 判据用 quadruped 已经算好的 present(13 V-68: Voltage > 0.0,
+    真电池即使 0% 也仍有电压), 缺该字段时按同一条自行判.
+    ! NO 不顺手把 soc_pct 也排除空槽 -- 13 V-68 逐字"本期实现按契约字面:
+      min_level 仍取全表最小值, 不自行把空槽排除在外(那是替云深处裁决)".
+      塌缩规则本文件可以定(契约没写), soc 的规则契约写了, 两者不同性质.
     """
     if not power:
         return None
     soc = power.get("soc_pct")
+    cells = _present_cells(power)
     return {
         # S4.2: soc_pct 已经是两块电池的较小值(CHG-10), 直接过.
         # 非数值一律 null -- 一条坏报文不该变成一个电量读数.
         "soc": soc if isinstance(soc, (int, float)) and not isinstance(soc, bool)
                else None,
-        "voltage_v": None,      # UNSOURCED: 双电池塌缩规则未裁, 见上
+        # 一块在位电池都没有(底盘离线 / 两槽全空) -> null, NO 不报 0.
+        "voltage_v": _reduce_cells(cells, "voltage_v", min),
         "current_a": None,      # UNSOURCED: PowerState 无该字段
-        "temperature_c": None,  # UNSOURCED: 双电池塌缩规则未裁, 见上
+        "temperature_c": _reduce_cells(cells, "temp_c", max),
     }
+
+
+def _present_cells(power: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """PowerState 里[在位]的电池条目.
+
+    源用 list[]: 13 BAT-1 逐字"数组是权威的, 原下标保留". batteries.left/right
+    是命名视图, 而 13 BAT-2 在 left/right 物理对应未定前把它整个发 null, 所以
+    它今天取不到东西 -- 仍作为兜底读一次, 免得将来 mapping 已知时这里反而瞎.
+    """
+    raw: List[Any] = []
+    lst = power.get("list")
+    if isinstance(lst, list):
+        raw.extend(lst)
+    if not raw:
+        named = power.get("batteries")
+        if isinstance(named, dict):
+            raw.extend(named.get(side) for side in ("left", "right"))
+    out: List[Dict[str, Any]] = []
+    for cell in raw:
+        if not isinstance(cell, dict):
+            continue
+        present = cell.get("present")
+        if present is None:
+            # 发布者没算 present(命名视图 / 桩) -> 按 13 V-68 的同一条判据
+            # 自己判: Voltage > 0.0. NO 不默认在位 -- 那正好把空槽放进来.
+            volt = cell.get("voltage_v")
+            present = (isinstance(volt, (int, float))
+                       and not isinstance(volt, bool) and volt > 0.0)
+        if present:
+            out.append(cell)
+    return out
+
+
+def _reduce_cells(cells: List[Dict[str, Any]], field: str, pick):
+    """在位电池的某个字段上取 min / max; 一个可用读数都没有 -> None.
+
+    非数值的读数直接跳过, NO 不当成 0 -- 0 V 与"读不到电压"在 Qt 上是两件
+    完全不同的事(前者是一块坏电池, 后者是一条断掉的链路).
+    """
+    values = [c.get(field) for c in cells]
+    nums = [v for v in values
+            if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    return pick(nums) if nums else None
 
 
 def _gps(pose: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

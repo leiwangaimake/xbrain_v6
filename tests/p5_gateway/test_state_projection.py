@@ -78,11 +78,118 @@ def test_battery_soc_comes_through_when_power_is_present():
     """
     d = _robot(power={"soc_pct": 46.8, "remain_mile_km": 4.2})
     assert d["battery"]["soc"] == 46.8
-    # 另外三个仍无来源 -- 见 _battery 的 docstring(双电池塌缩规则未裁,
-    # 且 PowerState 根本没有电流字段). NO 不许为了填满而挑一块电池的值.
+    # current_a 仍无来源: PowerState 根本没有电流字段. NO 不许为了填满而
+    # 挑一个数. voltage_v / temperature_c 在这份[没有 list]的报文里同样是
+    # null -- 塌缩要有电池条目才能做, 见下面那组.
     assert d["battery"]["voltage_v"] is None
     assert d["battery"]["current_a"] is None
     assert d["battery"]["temperature_c"] is None
+
+
+#: 一份带两块在位电池的 state/power(形状按 quadruped 的 WritePowerState:
+#: list[] 权威, batteries 在 left/right 物理对应未定前为 null, 13 BAT-1/2).
+_TWO_CELLS = {
+    "soc_pct": 46, "present_count": 2, "battery_mapping": "unknown",
+    "batteries": None,
+    "list": [
+        {"index": 0, "level_pct": 47, "voltage_v": 51.2, "temp_c": 32.1,
+         "charging": False, "present": True, "serial": "a"},
+        {"index": 1, "level_pct": 46, "voltage_v": 51.0, "temp_c": 35.4,
+         "charging": False, "present": True, "serial": "b"},
+    ],
+}
+
+#: 13 V-68 的实测形态: 只装了一块, 空槽上报全零 + -273.0(绝对零度哨兵).
+#: 2026-09-15 现场换电池后抓到的就是这个, 底盘同时报 PowerManagement 1
+#: (single_battery), 而 11 S4.2 把 single_battery 列为[合法]状态.
+_EMPTY_SLOT = {
+    "soc_pct": 0, "present_count": 1, "battery_mapping": "unknown",
+    "batteries": None,
+    "list": [
+        {"index": 0, "level_pct": 0, "voltage_v": 0.0, "temp_c": -273.0,
+         "charging": False, "present": False, "serial": ""},
+        {"index": 1, "level_pct": 26, "voltage_v": 50.4, "temp_c": 30.2,
+         "charging": False, "present": True, "serial": "b"},
+    ],
+}
+
+
+def test_voltage_takes_the_lower_cell_and_temperature_the_higher():
+    """双电池塌缩(2026-09-27 用户裁决): 电压 min, 温度 max.
+
+    两个方向不同而理由同一条 -- 报出[先出问题的那一块]: 电压低的先到截止
+    电压, 温度高的先触发热保护.
+    MUTATION: 两者都取 min -> 温度红; 都取 max -> 电压红. 取平均 -> 两条都红.
+    """
+    d = _robot(power=_TWO_CELLS)
+    assert d["battery"]["voltage_v"] == 51.0     # min(51.2, 51.0)
+    assert d["battery"]["temperature_c"] == 35.4  # max(32.1, 35.4)
+    # soc 仍走契约自己的规矩(CHG-10 取 level_pct 较小值, 由 quadruped 算好).
+    assert d["battery"]["soc"] == 46
+
+
+def test_an_empty_slot_is_excluded_from_both_reductions():
+    """13 V-68: 空槽报 0 V / -273 C, 而 single_battery 是合法状态.
+
+    不排除的话 min(voltage) 恒为 0.0 而 max(temp) 被 -273 拉偏 -- 前者让
+    操作员以为电池坏了, 后者只在两块都空时才看得出来. 这不是异常分支, 是
+    只装一块电池时的常态.
+    MUTATION: 去掉 present 过滤 -> voltage 变 0.0, 本条红.
+    """
+    d = _robot(power=_EMPTY_SLOT)
+    assert d["battery"]["voltage_v"] == 50.4
+    assert d["battery"]["temperature_c"] == 30.2
+    # NO 不顺手把 soc 也排除空槽: 13 V-68 逐字"本期按契约字面, min_level 仍
+    # 取全表最小值, 不自行排除(那是替云深处裁决)". soc 由 quadruped 算, 这里
+    # 只是照传 -- 0 原样出去.
+    assert d["battery"]["soc"] == 0
+
+
+def test_a_cell_without_the_present_flag_falls_back_to_the_voltage_test():
+    """命名视图 / 桩发布者不带 present. 判据与 13 V-68 同一条: Voltage > 0.0
+    (真电池即使 0% 也仍有电压). NO 不默认在位 -- 那正好把空槽放进来."""
+    power = {"soc_pct": 0, "list": [
+        {"voltage_v": 0.0, "temp_c": -273.0},
+        {"voltage_v": 49.8, "temp_c": 31.0},
+    ]}
+    d = _robot(power=power)
+    assert d["battery"]["voltage_v"] == 49.8
+    assert d["battery"]["temperature_c"] == 31.0
+
+
+def test_both_slots_empty_gives_null_not_zero():
+    """两块都空 -> 报不出电压与温度. null, NO 不是 0 -- 0 V 是一块坏电池,
+    读不到是一条断掉的链路, Qt 上这是两件事."""
+    power = {"soc_pct": 0, "list": [
+        {"voltage_v": 0.0, "temp_c": -273.0, "present": False},
+        {"voltage_v": 0.0, "temp_c": -273.0, "present": False},
+    ]}
+    d = _robot(power=power)
+    assert d["battery"]["voltage_v"] is None
+    assert d["battery"]["temperature_c"] is None
+
+
+def test_the_named_view_is_read_when_the_list_is_absent():
+    """13 BAT-1 逐字"数组是权威的", 所以 list 优先; batteries.left/right 是
+    命名视图, 今天恒 null(BAT-2, left/right 物理对应未定 V-55). 仍读一次,
+    免得将来 mapping 已知时这里反而瞎."""
+    power = {"soc_pct": 46, "batteries": {
+        "left": {"voltage_v": 51.2, "temp_c": 32.1, "level_pct": 47},
+        "right": {"voltage_v": 51.0, "temp_c": 35.4, "level_pct": 46}}}
+    d = _robot(power=power)
+    assert d["battery"]["voltage_v"] == 51.0
+    assert d["battery"]["temperature_c"] == 35.4
+
+
+def test_a_non_numeric_cell_reading_is_skipped_not_zeroed():
+    """坏读数跳过, NO 不当 0 参与 min -- 那会让一条坏报文压出一个 0 V."""
+    power = {"soc_pct": 46, "list": [
+        {"voltage_v": "51.2", "temp_c": None, "present": True},
+        {"voltage_v": 51.0, "temp_c": 35.4, "present": True},
+    ]}
+    d = _robot(power=power)
+    assert d["battery"]["voltage_v"] == 51.0
+    assert d["battery"]["temperature_c"] == 35.4
 
 
 def test_a_non_numeric_soc_does_not_become_a_reading():
