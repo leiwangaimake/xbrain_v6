@@ -370,6 +370,18 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     p = json.loads(bytes(sample.payload).decode("utf-8"))
                 except Exception:      # noqa: BLE001
                     return
+                # p5 wraps state/link in the 11 S3.0 envelope (since 2026-09-27
+                # -- S3.0 verbatim: every Zenoh JSON payload shares that outer
+                # structure). Read the body out of data, keeping the bare form
+                # as the fallback so a stub publisher still works and so this
+                # does not have to land in the same deploy as the producer.
+                #
+                # Reading the top level unconditionally is what would break:
+                # every field below would come back None and F-5's return_home
+                # judgement would silently stop seeing the cloud link -- no
+                # error, no log, just a robot that never returns home.
+                if isinstance(p, dict) and isinstance(p.get("data"), dict):
+                    p = p["data"]
                 # Hand the fields to the loop thread; never touch the db here.
                 loop.call_soon_threadsafe(link_holder.update, {
                     "level": p.get("level"),

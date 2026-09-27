@@ -362,6 +362,38 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
         return None, None
 
 
+def stamp_internal(data: dict, *, rid: str, boot: str, seq: int,
+                   ts_sync: bool) -> bytes:
+    """一段机内载荷 -> 11 S3.0 信封的 JSON 字节.
+
+    S3.0 逐字"所有 Zenoh JSON 载荷共用此外层结构". p5 的 state/link 与
+    event/{sev}/comm 在 2026-09-27 之前发的是裸 dict, 与 estop ping 那条是
+    同一个缺陷: 消费方按 S3.0 解码会在必填字段那一步退出, 而 state/link 正
+    是[云端判在线]的那条 key.
+
+    *** 走共享编码器 xbrain.common.envelope.encode, NO 不手写八个键.
+    手写过的地方(p1 的 stamp_envelope)把 ts/mono 戳成了毫秒整数, 而 S3.0 是
+    秒 float64 -- 按 S3.0 计龄的消费方会把 5 s 前的消息读成 5000 s 前的.
+    一个编码器意味着这类单位错只可能犯一次.
+
+    *** 模块级函数而不是闭包内联: 闭包只能靠读源码断言, 而信封是逐字段的
+    契约, 要能逐字段断言(八个键 / ts 与 mono 都是秒 / 无 boot 则 mono 一并
+    省略). 接线那一层再把 rid/boot/seq/ts_sync 喂进来.
+
+    boot 为空时 mono 一并省略(CLK-C4: 没有 boot 就没有 mono 的定义域),
+    NO 不写一个裸 mono -- 那会让对端拿自己的 boot 域去解释别人的读数.
+    """
+    return json.dumps(encode(Envelope(
+        v=1, rid=rid,
+        # WALL-CLOCK-OK(align): S3.0 的信封 ts 只做跨机对齐 / 录包 / 延迟
+        # 统计. 超时与年龄判定一律走 mono(CLK-C1).
+        ts=time.time(),
+        mono=time.monotonic() if boot else None,
+        boot=boot or None,
+        seq=seq, src="p5_gateway", ts_sync=ts_sync, data=data,
+    )), ensure_ascii=False).encode("utf-8")
+
+
 def _event_seg_index(segs: list) -> int:
     """Index of the 'event' segment, or -1. Works for BOTH the absolute contract
     key (xbrain/{rid}/event/{sev}/{cat}) and the relative dev-bus key
@@ -616,6 +648,27 @@ def run_voice_loop_wiring(stop_flag: dict,
             _logger.warning(
                 "p5 estop probe: XBRAIN_ROBOT_ID unset, ping envelope carries "
                 "an empty rid; quadruped will refuse it and estop_path stays down")
+
+        # 11 S3.0 信封的 seq: 按 key 各自递增(进程重启从 0 起). 一个全局计数
+        # 器会让每条 key 在消费方看来一直在跳号, 而 seq 正是 U18 补发游标与
+        # 缺口判定的依据. state/link 只有一条 key 所以是标量; comm 事件的 key
+        # 带 {sev} 段, 所以按实际 key 分桶.
+        _link_env_seq = [0]
+        _comm_env_seq: dict = {}
+
+        def _stamp(data: dict, seq_slot) -> bytes:
+            """把一段机内载荷包进 11 S3.0 的信封并序列化.
+
+            seq_slot 是一个单元素 list(按 key 各自递增, 见上); 其余四项从本
+            闭包取: rid/boot 开机读一次, ts_sync 抄 P1-13 镜像来的
+            ClockStatus.sync(CLK-A2, NO 本进程不自行判定授时状态).
+            """
+            seq_slot[0] += 1
+            return stamp_internal(
+                data, rid=probe_rid, boot=probe_boot, seq=seq_slot[0],
+                ts_sync=bool(
+                    (hmi_state.get("clock") or {}).get("sync") is True))
+
 
         def _on_estop_pong(sample) -> None:
             # W5: 一条 pong. 按 data.seq 匹配, 迟到的旧 pong 对不上号会被
@@ -1233,7 +1286,17 @@ def run_voice_loop_wiring(stop_flag: dict,
                         "task_updates": state_task_updates,
                     }
                     hmi_state["link"] = link_payload   # feed HMI status/ESTOP
-                    link_pub.put(json.dumps(link_payload).encode("utf-8"))
+                    # 11 S3.0 逐字"所有 Zenoh JSON 载荷共用此外层结构".
+                    # 本条在 2026-09-27 之前发的是裸 dict -- 与 ping 那条同一个
+                    # 缺陷(见上方 estop_ping_pub 处的长注): 消费方按 S3.0 解码
+                    # 会在必填字段那一步退出, 而它是[云端判在线]的那条 key.
+                    # * 云端形态另发(cloud_wiring publish_state -> v2.0 S1.1 的
+                    #   六字段信封, 无 mono/boot), 两层各自对各自的契约, NO 不
+                    #   共用一个信封 -- CLK-C4 逐字禁止跨主机消息带 mono/boot.
+                    # * 机内消费方(p2 _make_state_sink / p3 _on_link)都已能读
+                    #   data 嵌套形, 且两者都保留了裸形兜底, 所以本改动不需要
+                    #   两侧同时上线.
+                    link_pub.put(_stamp(link_payload, _link_env_seq))
                     # Reconnect -> backfill (17 S3.5.2): the state machine flags the
                     # once-per-outage down->up edge. No-op while the cloud has never
                     # been heard from (dev has no cloud) -> dormant until real uplink.
@@ -1252,12 +1315,22 @@ def run_voice_loop_wiring(stop_flag: dict,
                     if _ce is not None:
                         _ckind, _csev, _cdetail = _ce
                         _comm_seq[0] += 1
-                        gen.put("event/%s/comm" % _csev, json.dumps({
+                        _ckey = "event/%s/comm" % _csev
+                        # 同 state/link: 本条此前也是裸 dict, 违 11 S3.0.
+                        # 信封的 seq 按 key 分桶 -- {sev} 段会变, 共用一个计数
+                        # 器会让每条 key 在消费方看来一直跳号.
+                        #
+                        # * 内层的 ts 原写死 0.0. 信封补上以后 p5 自己的
+                        #   _normalise_event 会优先取信封 ts, 但 HMI 事件环
+                        #   与别的消费方仍可能直读内层 -- p2 踩过同一个坑
+                        #   (急停事件在本机界面上显示 1970 年), 所以一并填真.
+                        _cwall = time.time()  # WALL-CLOCK-OK(record): 11 S6.2 的事件墙钟戳, 只用于显示与审计
+                        gen.put(_ckey, _stamp({
                             "eid": "comm-%s-%d" % (_comm_boot, _comm_seq[0]),
                             "title": "cloud link %s" % _ckind,
                             "detail": _cdetail,
-                            "src": "p5_gateway", "ts": 0.0,
-                        }).encode("utf-8"))
+                            "src": "p5_gateway", "ts": _cwall,
+                        }, _comm_env_seq.setdefault(_ckey, [0])))
                         _logger.info("p5 comm event: %s (sev=%s level=%d)",
                                      _ckind, _csev, st.level)
                     _prev_link_level = st.level
