@@ -593,8 +593,12 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
       const RobotStateFault& f = in.faults[i];
       if (i != 0) a.Raw(",");
       // CF-5: the SAME prefixed code the fault stream carries. The 11 S4.1
-      // example still shows a bare "0x1007"; copying it is how the two sides
-      // stop agreeing about what a code means. The entries arrive already
+      // example carried a bare "0x1007" until 2026-09-27 and now reads
+      // "chg:0x1007" -- the correction cites this writer and its test as the
+      // evidence, so the two no longer disagree. The rule is unchanged and
+      // still the reason this code is not re-derived here: copying a bare
+      // number is how the two sides stop agreeing about what a code means,
+      // the two vendor spaces overlapping numerically. The entries arrive already
       // formatted because they are CACHED copies of the fault stream's own
       // values (rt_bridge rebuilds the cache per fault report) -- reformatting
       // here would be a second converter, which is exactly what CF-5 forbids.

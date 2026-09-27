@@ -20,9 +20,12 @@
  *     The case drives them to four different combinations rather than checking
  *     that the keys exist.
  *   * faults[].code carries the chs: prefix here as well (CF-5). The example in
- *     11 S4.1 still shows a bare "0x1007", so an implementer copying the
- *     example produces something that disagrees with the fault stream about
- *     what a code means.
+ *     11 S4.1 showed a bare "0x1007" until 2026-09-27, so an implementer
+ *     copying the example produced something that disagreed with the fault
+ *     stream about what a code means. That example now reads "chg:0x1007";
+ *     11 S4.1's correction box quotes THIS note (in its pre-correction
+ *     wording) as the evidence the writer was already right. The case stays
+ *     because the rule it guards did not change.
  *   * ChassisFault is checked against 11 S9.8.4 element by element, from a
  *     HAND-BUILT report. The golden capture's ErrorList is empty (the measured
  *     machine is healthy), so every loop over the entries runs zero times --
@@ -216,8 +219,11 @@ int main(int argc, char** argv) {
     CHECK(j["cmd_age_ms"] == 12.0);
     CHECK(j["motion"]["vx"] == 0.25);
     // *** CF-5: the same prefixed code the fault stream carries. The 11 S4.1
-    // example shows a bare 0x1007, and copying it makes the two sides disagree
-    // about which of the two overlapping code spaces a number belongs to.
+    // example showed a bare 0x1007 until 2026-09-27 (corrected to chg:0x1007
+    // on the strength of this assertion), and copying a bare number makes the
+    // two sides disagree about which of the two overlapping code spaces it
+    // belongs to. The assertion is on the PREFIX being present, not on the
+    // example, so the correction does not weaken it.
     // The third key is `desc` -- the contract example's own spelling; this
     // writer said "name" until 2026-09-26 and a consumer coded against the
     // contract found nothing.
