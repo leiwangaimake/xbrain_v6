@@ -19,6 +19,29 @@
 # are listed explicitly below with a follow-up, rather than the whole gate
 # being weakened. The list is the debt; the setting is not.
 #
+# *** 2026-09-28 correction (CLAUDE.md IRON RULE 1). The paragraph above says
+# the non-passing modules "are listed explicitly below". THERE IS NO SUCH
+# LIST in this file, and there never was. Evidence: this file is 64 lines and
+# carries exactly two tables, [tool.ruff] and [tool.mypy]; no [[tool.mypy.
+# overrides]] block exists. The sentence is therefore CLAUDE.md 3.2 form 4
+# (citing wording that is not actually in the text) -- a reader who trusts it
+# concludes the debt is enumerated somewhere and stops looking.
+# What is true instead: strict IS global and unscoped, and the debt was
+# unmeasured until 2026-09-28 because mypy had never run here (see the next
+# note). The number now lives in docs/NEXT.md SW-27, not in this comment
+# (CLAUDE.md 3.7: a measured count copied into a file goes stale).
+#
+# *** 2026-09-28: this table had NEVER been executed. mypy was not installed on
+# the machine that runs the tests (ORIN), so nothing here had been exercised
+# even once -- and the first run did not type-check anything at all: it aborted
+# on "Duplicate module named 'rest'" (services/asr/api/rest.py vs
+# services/payload/api/rest.py; neither tree carries __init__.py, so mypy
+# derived the SAME module name for both and refused to continue). That abort
+# exits 2 and prints one line, which is why it reads as a tooling hiccup rather
+# than as "the type gate checked zero files". explicit_package_bases +
+# namespace_packages below is the fix: module names are then derived from the
+# repo root (services.asr.api.rest), and the collision is gone.
+#
 # Boundaries: no rule here overrides CLAUDE.md. Where the two differ,
 # CLAUDE.md wins and this file is wrong.
 
@@ -27,12 +50,28 @@ line-length = 88
 target-version = "py310"
 # Directories that are not ours to restyle: vendored model metadata and
 # generated artifacts (see CLAUDE.md 2.2 exclusion list).
+#
+# The exclusion surface is stated HERE and nowhere else, because a lint whose
+# scan surface is undeclared reports a number nobody can interpret (CLAUDE.md
+# 3.2 form 6). scripts/run_ci_gates.sh prints this list before it runs.
 exclude = [
     "data",
     "services/*/models",
     "services/llm/model",
     ".git",
     "**/__pycache__",
+    # NOT our code. The perception implementation is a delivered copy from the
+    # perception vendor and is untracked by user ruling (docs/NEXT.md 2, the
+    # 2026-09-27 correction: "不审查, 不作任何判据的依据"). Linting it would
+    # put ~66 findings we may not touch into every gate run.
+    "ros2_ws/perception",
+    # Vendored upstream snapshots, zero local modification by rule (CLAUDE.md
+    # 0.2 third_party). Same exclusion the five source linters already carry
+    # as THIRD_PARTY_SNAPSHOTS in scripts/lint/charset_lint.py.
+    "common/third_party",
+    # Migration material, never a runtime or truth dependency (CLAUDE.md 0.2
+    # underscore-directory rule).
+    "docs/temp",
 ]
 
 [tool.ruff.lint]
@@ -56,8 +95,26 @@ strict = true
 ignore_missing_imports = true
 # Show the error code so a suppression can name exactly what it suppresses.
 show_error_codes = true
+# Derive module names from the repo root instead of from the nearest directory
+# without __init__.py. Without these two, services/asr/api/rest.py and
+# services/payload/api/rest.py both become the module "rest", mypy reports
+# "Duplicate module named 'rest'" and STOPS -- it type-checks nothing at all
+# while exiting with a status that looks like ordinary findings. See the
+# header note; this is the line that makes the gate have an execution body.
+explicit_package_bases = true
+namespace_packages = true
+# Same surface as [tool.ruff].exclude above, in mypy's regex form. Keep the
+# two lists in step: a file one tool skips and the other checks makes "the
+# Python gate is green" mean two different things depending on which tool the
+# reader happened to run.
 exclude = [
     "^data/",
     "^services/.*/models/",
     "^build/",
+    # NOT our code (see the ruff note above for the ruling and the anchor).
+    "^ros2_ws/perception/",
+    # Vendored upstream snapshot (CLAUDE.md 0.2).
+    "^common/third_party/",
+    # Migration material (CLAUDE.md 0.2).
+    "^docs/temp/",
 ]
