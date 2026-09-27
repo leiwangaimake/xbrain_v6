@@ -48,6 +48,7 @@ from xbrain.common.errors import E_NOT_FOUND
 from xbrain.p3_task.ingest.geo_apply import ApplyResult, GeoContext, register_applier
 from xbrain.p3_task.ingest.geo_command import GeoCommand, GeoCommandError
 from xbrain.p3_task.ingest.geo_object import TABLE_FOR_TYPE
+from xbrain.p3_task.persistence.schema_task import iso_from_wall_ms
 from xbrain.p3_task.ingest.geo_write import (
     conflict_error, conn_for, lookup_cmd_log, provenance_for, replay_duplicate,
     write_cmd_log,
@@ -216,22 +217,26 @@ async def _fail_task(task_conn, task_id: str, reason: str, err_json,
 
 
 async def _clamp_laps(task_conn, task_id: str, now_ms: int) -> bool:
-    """Clamp loop_total to the lap in progress (15 S7.6 GC-3). True if a
-    progress row existed to clamp."""
+    """Clamp loop_total to the lap in progress (15 S7.6 GC-3). True if an
+    active progress row existed to clamp.
+
+    *** Rewritten 2026-09-28 with the EX-6 table. The previous body read
+    `SELECT waypoint_ix FROM patrol_progress` and, finding no lap counter in
+    the four-column table, recorded the clamp as a `$.laps_clamped` marker
+    inside tasks.error_context_json with the comment "patrol_progress in this
+    build carries waypoint_ix / progress, not a lap counter". Both halves of
+    that stopped being true: waypoint_ix no longer exists (the SELECT would
+    now raise "no such column" inside a geo delete), and loop_index /
+    loop_total do. The marker also had no reader anywhere in the tree, so
+    GC-3's "finish this lap, drop the rest" was recorded and never acted on.
+    Now it is the clamp 15 S7.6 asks for: loop_total := loop_index + 1.
+    """
     cur = await task_conn.execute(
-        "SELECT waypoint_ix FROM patrol_progress WHERE task_id=?", (task_id,))
-    row = await cur.fetchone()
-    if row is None:
+        "UPDATE patrol_progress SET loop_total = loop_index + 1,"
+        " updated_at=? WHERE task_id=? AND status='active'",
+        (iso_from_wall_ms(now_ms), task_id))
+    if not cur.rowcount:
         return False
-    # patrol_progress in this build carries waypoint_ix / progress, not a lap
-    # counter; the lap clamp is recorded on the task instead so the dispatcher
-    # ends the task after the current pass. Written as a first-class marker in
-    # error_context_json rather than a new column, because it is transient.
-    await task_conn.execute(
-        "UPDATE tasks SET error_context_json=json_set("
-        "  COALESCE(NULLIF(error_context_json,''), '{}'), "
-        "  '$.laps_clamped', 1), updated_ms=? WHERE task_id=?",
-        (now_ms, task_id))
     await task_conn.commit()
     return True
 

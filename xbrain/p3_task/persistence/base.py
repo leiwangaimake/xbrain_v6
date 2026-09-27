@@ -104,6 +104,18 @@ async def open_configured(path: str, ddl_statements=()):
     conn = await aiosqlite.connect(path)
     for stmt in format_pragma_statements():
         await conn.execute(stmt)
+    # BEFORE the DDL, not after. Every statement below is CREATE ... IF NOT
+    # EXISTS, so a table that exists in an obsolete shape is silently left
+    # alone by the burst; the reshape has to happen while the burst can still
+    # rebuild what it removes. No-op on a fresh database and on the three DBs
+    # that do not carry the table (15 S9.5 patrol_progress lives in task.db).
+    from xbrain.p3_task.persistence.schema_task import (
+        ensure_patrol_progress_shape)
+
+    if await ensure_patrol_progress_shape(conn):
+        _logger.warning(
+            "db %s: dropped the pre-2026-09-28 four-column patrol_progress; "
+            "rebuilding at the 15 S9.5 shape", path)
     for stmt in ddl_statements:
         await conn.execute(stmt)
     await conn.commit()

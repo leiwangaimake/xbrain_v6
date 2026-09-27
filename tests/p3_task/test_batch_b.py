@@ -25,7 +25,10 @@ from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO
 from xbrain.p3_task.persistence.schema_geo import (
     FENCE_DB_STATEMENTS, GEO_DB_STATEMENTS, RECORD_DB_STATEMENTS,
 )
-from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
+from xbrain.p3_task.persistence.schema_task import (
+    ALL_DDL_STATEMENTS, PatrolProgressShapeConflict,
+    ensure_patrol_progress_shape,
+)
 
 
 pytestmark = pytest.mark.no_device
@@ -279,8 +282,70 @@ async def test_pending_push_fifo(task_conn):
     assert [r[2] for r in remaining] == ["b", "c"]
 
 
+_LEGACY_PATROL_DDL = (
+    "CREATE TABLE patrol_progress ("
+    " task_id TEXT PRIMARY KEY, waypoint_ix INTEGER NOT NULL,"
+    " progress REAL NOT NULL, updated_ms INTEGER NOT NULL)")
+
+
 @pytest.mark.asyncio
-async def test_patrol_progress_upsert(task_conn):
+async def test_legacy_patrol_progress_is_reshaped_when_empty():
+    """An existing database keeps its old table through the DDL burst, because
+    every statement is CREATE ... IF NOT EXISTS. ensure_patrol_progress_shape
+    is what makes the EX-6 rebuild actually reach data/run/task.db.
+
+    MUTATION: make ensure_patrol_progress_shape return False unconditionally
+    (or run it AFTER the DDL) and this goes red on the missing route_rev --
+    which, unguarded, is what the robot would hit at its first waypoint.
+    """
+    async with aiosqlite.connect(":memory:") as c:
+        await c.execute(_LEGACY_PATROL_DDL)
+        await c.commit()
+        assert await ensure_patrol_progress_shape(c) is True
+        await _apply(c, ALL_DDL_STATEMENTS)
+        cur = await c.execute("PRAGMA table_info(patrol_progress)")
+        cols = {r[1] for r in await cur.fetchall()}
+        assert {"route_rev", "seg_done_m", "dist_done_m", "dir_sign"} <= cols
+        assert "waypoint_ix" not in cols
+        # Idempotent: a second open must not drop the table it just built.
+        assert await ensure_patrol_progress_shape(c) is False
+
+
+@pytest.mark.asyncio
+async def test_legacy_patrol_progress_with_rows_raises_instead_of_dropping():
+    """The drop is justified by "the legacy table had no writer, so it is
+    empty". Where that reasoning does not hold, the code must stop rather than
+    act on it -- losing a breakpoint silently is the failure U07a exists to
+    prevent.
+
+    MUTATION: drop the row count and DROP unconditionally; this goes red, and
+    in the field it would delete a resume point with no trace.
+    """
+    async with aiosqlite.connect(":memory:") as c:
+        await c.execute(_LEGACY_PATROL_DDL)
+        await c.execute("INSERT INTO patrol_progress VALUES ('t1', 3, 0.5, 0)")
+        await c.commit()
+        with pytest.raises(PatrolProgressShapeConflict) as exc:
+            await ensure_patrol_progress_shape(c)
+        # The message must carry the row count and the columns found: "refusing
+        # to drop it" without saying what is there is not actionable at 2am.
+        assert "1 row" in str(exc.value) and "waypoint_ix" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_patrol_progress_start_then_update(task_conn):
+    """15 S9.5 shape: open the active row, then flush progress onto it.
+
+    *** Rewritten 2026-09-28 with the table (docs/NEXT.md EX-6). The old body
+    called pp.upsert("t3", 2, 0.4, 0) -- waypoint_ix plus a derived 0..1
+    `progress` fraction, two columns 15 S9.5 does not have and PP-3 forbids
+    storing.
+
+    MUTATION: drop the `AND status='active'` from update_progress and the
+    UPDATE also rewrites completed historical runs, so a task that ran the
+    same route twice reports the second run's position under the first run's
+    row -- no error anywhere, just a wrong history.
+    """
     dao = TasksDAO(task_conn)
     await dao.insert(TaskRow(
         task_id="t3", task_type="patrol", state="pending",
@@ -288,10 +353,126 @@ async def test_patrol_progress_upsert(task_conn):
         current_step=0, step_status_json="[]", created_ms=0, updated_ms=0,
         source="local", trace_id="tr", resume_policy="continue"))
     pp = PatrolProgressDAO(task_conn)
-    await pp.upsert("t3", 2, 0.4, 0)
-    await pp.upsert("t3", 3, 0.7, 1)   # overwrite
-    got = await pp.fetch("t3")
-    assert got == (3, 0.7, 1)
+    await pp.start_run(task_id="t3", route_name="east gate",
+                       route_geo_id="r-east_gate", route_rev=7,
+                       direction="forward", loop_mode="closed",
+                       waypoint_total=64, route_total_m=1620.0, loop_total=2,
+                       now_iso="2026-09-28T00:00:00.000Z")
+    # A fresh row is at the breakpoint "no waypoint passed yet" (-1), not 0.
+    assert (await pp.fetch_active("t3"))[4] == -1
+    n = await pp.update_progress(
+        "t3", waypoint_index=17, waypoint_total=64, seg_done_m=12.4,
+        dist_done_m=431.8, odom_dist_m=440.0, loop_index=0, loop_total=2,
+        skipped_m=0.0, dir_sign=1, now_iso="2026-09-28T00:00:05.000Z")
+    assert n == 1
+    got = await pp.fetch_active("t3")
+    assert got == ("r-east_gate", 7, "forward", "closed", 17, 64, 12.4,
+                   431.8, 440.0, 1620.0, 0, 2, 0.0, 1)
+
+
+@pytest.mark.asyncio
+async def test_patrol_progress_second_active_row_is_refused(task_conn):
+    """idx_patrol_active (15 S9.5) is what makes "where is this task" have one
+    answer. Two active rows would be resolved by whichever the query returned
+    first, and U07a would resume from that one.
+
+    MUTATION: drop the WHERE clause from idx_patrol_active (making it a plain
+    unique index on task_id) and this raises on the SECOND run of any task
+    instead -- the opposite failure, and equally silent to a reader who only
+    runs one patrol.
+    """
+    dao = TasksDAO(task_conn)
+    await dao.insert(TaskRow(
+        task_id="t4", task_type="patrol", state="pending",
+        priority=1, submit_seq=1, mission_json="{}", total_steps=1,
+        current_step=0, step_status_json="[]", created_ms=0, updated_ms=0,
+        source="local", trace_id="tr", resume_policy="continue"))
+    pp = PatrolProgressDAO(task_conn)
+    kw = dict(task_id="t4", route_name="r", route_geo_id="r-x", route_rev=1,
+              direction="forward", loop_mode="oneway", waypoint_total=4,
+              route_total_m=10.0, loop_total=1,
+              now_iso="2026-09-28T00:00:00.000Z")
+    await pp.start_run(**kw)
+    # Commit before provoking the violation: the rollback below has to undo
+    # the FAILED insert only. Without the commit it also undoes the first
+    # row, and the test then passes for the wrong reason (there is no active
+    # row left to conflict with, so close_run finds nothing).
+    await task_conn.commit()
+    with pytest.raises(aiosqlite.IntegrityError):
+        await pp.start_run(**kw)
+    await task_conn.rollback()
+    # After the first run closes, a second run of the same task is legal --
+    # that is why the index is partial.
+    assert await pp.close_run("t4", "completed",
+                              "2026-09-28T00:01:00.000Z") == 1
+    await pp.start_run(**kw)
+
+
+@pytest.mark.asyncio
+async def test_patrol_progress_update_leaves_the_closed_run_alone(task_conn):
+    """A flush must reach the ACTIVE row only. Written because the obvious
+    `WHERE task_id=?` is wrong in a way nothing else here notices: with one
+    run per task every assertion above still passes, and the damage only
+    appears the second time a task runs the same route -- the historical row
+    silently takes the new run's position.
+
+    MUTATION: drop `AND status='active'` from update_progress and this goes
+    red on the closed row's waypoint_index (5 -> 9).
+    """
+    dao = TasksDAO(task_conn)
+    await dao.insert(TaskRow(
+        task_id="t6", task_type="patrol", state="pending",
+        priority=1, submit_seq=1, mission_json="{}", total_steps=1,
+        current_step=0, step_status_json="[]", created_ms=0, updated_ms=0,
+        source="local", trace_id="tr", resume_policy="continue"))
+    pp = PatrolProgressDAO(task_conn)
+    kw = dict(task_id="t6", route_name="r", route_geo_id="r-x", route_rev=1,
+              direction="forward", loop_mode="oneway", waypoint_total=12,
+              route_total_m=10.0, loop_total=1,
+              now_iso="2026-09-28T00:00:00.000Z")
+    await pp.start_run(**kw)
+    await pp.update_progress(
+        "t6", waypoint_index=5, waypoint_total=12, seg_done_m=1.0,
+        dist_done_m=2.0, odom_dist_m=2.0, loop_index=0, loop_total=1,
+        skipped_m=0.0, dir_sign=1, now_iso="2026-09-28T00:00:01.000Z")
+    await pp.close_run("t6", "completed", "2026-09-28T00:00:02.000Z")
+    # Second run of the same task, further along the same route.
+    await pp.start_run(**kw)
+    await pp.update_progress(
+        "t6", waypoint_index=9, waypoint_total=12, seg_done_m=3.0,
+        dist_done_m=8.0, odom_dist_m=8.0, loop_index=0, loop_total=1,
+        skipped_m=0.0, dir_sign=1, now_iso="2026-09-28T00:00:03.000Z")
+    cur = await task_conn.execute(
+        "SELECT status, waypoint_index FROM patrol_progress"
+        " WHERE task_id='t6' ORDER BY id")
+    assert await cur.fetchall() == [("completed", 5), ("active", 9)]
+
+
+@pytest.mark.asyncio
+async def test_patrol_progress_unbounded_laps_survive_the_second_lap(task_conn):
+    """loops = 0 is a standing patrol (11 S7.8.3 LM-4). The CHECK must bound
+    loop_index only when loop_total != 0.
+
+    MUTATION: write the CHECK as the naive `loop_index <= loop_total` and this
+    raises when the standing patrol starts its second lap -- i.e. the robot
+    stops being able to record progress about 20 minutes in, on the robot.
+    """
+    dao = TasksDAO(task_conn)
+    await dao.insert(TaskRow(
+        task_id="t5", task_type="patrol", state="pending",
+        priority=1, submit_seq=1, mission_json="{}", total_steps=1,
+        current_step=0, step_status_json="[]", created_ms=0, updated_ms=0,
+        source="local", trace_id="tr", resume_policy="continue"))
+    pp = PatrolProgressDAO(task_conn)
+    await pp.start_run(task_id="t5", route_name="r", route_geo_id="r-x",
+                       route_rev=1, direction="forward", loop_mode="closed",
+                       waypoint_total=4, route_total_m=10.0, loop_total=0,
+                       now_iso="2026-09-28T00:00:00.000Z")
+    assert await pp.update_progress(
+        "t5", waypoint_index=1, waypoint_total=4, seg_done_m=0.0,
+        dist_done_m=12.0, odom_dist_m=12.0, loop_index=3, loop_total=0,
+        skipped_m=0.0, dir_sign=1,
+        now_iso="2026-09-28T00:05:00.000Z") == 1
 
 
 @pytest.mark.asyncio

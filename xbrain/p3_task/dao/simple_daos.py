@@ -21,22 +21,105 @@ from __future__ import annotations
 
 
 class PatrolProgressDAO:
+    """15 S9.5 patrol_progress. One `active` row per task (idx_patrol_active).
+
+    *** Rewritten 2026-09-28 with the table (docs/NEXT.md EX-6). The previous
+    version wrote waypoint_ix / progress, two names that exist nowhere in
+    15 S9.5 or in the PathProgress wire message (11 S3.5B); `progress` was a
+    derived 0..1 fraction, which PP-3 forbids storing at all. See
+    schema_task.DDL_PATROL_PROGRESS for the full reasoning.
+
+    Boundary: this DAO decides nothing. WHEN to write is PP-1 (waypoint change
+    or progress_flush_s, whichever comes first) and lives in
+    state/path_progress.py; this only performs the write it is told to.
+    """
+
     def __init__(self, conn) -> None:
         self._conn = conn
 
-    async def upsert(self, task_id: str, waypoint_ix: int,
-                      progress: float, updated_ms: int) -> None:
-        await self._conn.execute(
-            "INSERT INTO patrol_progress (task_id, waypoint_ix, progress, "
-            " updated_ms) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(task_id) DO UPDATE SET waypoint_ix=excluded.waypoint_ix, "
-            " progress=excluded.progress, updated_ms=excluded.updated_ms",
-            (task_id, waypoint_ix, progress, updated_ms))
+    async def start_run(self, *, task_id: str, route_name: str,
+                        route_geo_id, route_rev: int, direction: str,
+                        loop_mode: str, waypoint_total: int,
+                        route_total_m: float, loop_total: int,
+                        now_iso: str) -> None:
+        """Open the `active` row for a dispatch (15 S9.3 ready -> running).
 
-    async def fetch(self, task_id: str):
+        Not an upsert: idx_patrol_active makes a second active row for the
+        same task an INTEGRITY ERROR rather than a silent overwrite, and that
+        is the point -- two active rows means two readings of "where is this
+        task", and U07a would resume from whichever one the query returned.
+        """
+        await self._conn.execute(
+            "INSERT INTO patrol_progress ("
+            " task_id, route_name, route_geo_id, route_rev, direction,"
+            " loop_mode, waypoint_total, route_total_m, loop_total,"
+            " created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, route_name, route_geo_id, route_rev, direction,
+             loop_mode, waypoint_total, route_total_m, loop_total,
+             now_iso, now_iso))
+
+    async def update_progress(self, task_id: str, *, waypoint_index: int,
+                              waypoint_total: int, seg_done_m: float,
+                              dist_done_m: float, odom_dist_m: float,
+                              loop_index: int, loop_total: int,
+                              skipped_m: float, dir_sign: int,
+                              now_iso: str) -> int:
+        """PP-1 flush of the active row. Returns rows affected (0 = no active
+        row, which the caller must NOT read as success).
+
+        `AND status='active'` is load-bearing and not defensive: without it a
+        task that runs the same route twice has its FIRST, already-closed row
+        overwritten by the second run's position. Nothing errors; the history
+        is just wrong.
+        """
         cur = await self._conn.execute(
-            "SELECT waypoint_ix, progress, updated_ms FROM patrol_progress "
-            "WHERE task_id=?", (task_id,))
+            "UPDATE patrol_progress SET"
+            " waypoint_index=?, waypoint_total=?, seg_done_m=?, dist_done_m=?,"
+            " odom_dist_m=?, loop_index=?, loop_total=?, skipped_m=?,"
+            " dir_sign=?, updated_at=?"
+            " WHERE task_id=? AND status='active'",
+            (waypoint_index, waypoint_total, seg_done_m, dist_done_m,
+             odom_dist_m, loop_index, loop_total, skipped_m, dir_sign,
+             now_iso, task_id))
+        return cur.rowcount
+
+    async def close_run(self, task_id: str, status: str,
+                        now_iso: str) -> int:
+        """Move the active row to a terminal status. `status` is checked here
+        as well as by the DDL CHECK so the caller gets a Python error naming
+        the closed set, not an opaque sqlite IntegrityError."""
+        if status not in ("completed", "aborted"):
+            raise ValueError(
+                "patrol_progress status must be completed|aborted, got %r"
+                % (status,))
+        cur = await self._conn.execute(
+            "UPDATE patrol_progress SET status=?, updated_at=?"
+            " WHERE task_id=? AND status='active'",
+            (status, now_iso, task_id))
+        return cur.rowcount
+
+    async def clamp_laps(self, task_id: str, now_iso: str) -> int:
+        """15 S7.6 GC-3: the route was deleted under a running patrol -- finish
+        the lap in progress and drop the rest, rather than stopping in the
+        roadway. loop_total := loop_index + 1, which also terminates a
+        loop_total = 0 standing patrol (the only clean way to end one that is
+        not a cancel)."""
+        cur = await self._conn.execute(
+            "UPDATE patrol_progress SET loop_total = loop_index + 1,"
+            " updated_at=? WHERE task_id=? AND status='active'",
+            (now_iso, task_id))
+        return cur.rowcount
+
+    async def fetch_active(self, task_id: str):
+        """The U07a breakpoint plus the S7.3A remap inputs, as a raw tuple in
+        the declared order (15 S9 forbids the DAO reshaping rows)."""
+        cur = await self._conn.execute(
+            "SELECT route_geo_id, route_rev, direction, loop_mode,"
+            " waypoint_index, waypoint_total, seg_done_m, dist_done_m,"
+            " odom_dist_m, route_total_m, loop_index, loop_total, skipped_m,"
+            " dir_sign FROM patrol_progress"
+            " WHERE task_id=? AND status='active'", (task_id,))
         return await cur.fetchone()
 
 

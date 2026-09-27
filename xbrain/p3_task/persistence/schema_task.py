@@ -19,8 +19,30 @@ git history and reviewable one table at a time.
 
 from __future__ import annotations
 
+import time
+
 from xbrain.common.enums import SUSPEND_KIND, TASK_STATE
 from xbrain.p3_task.state.machine import SUSPEND_REASONS, TERMINAL_STATES
+
+
+def iso_from_wall_ms(wall_ms: int) -> str:
+    """Render a wall-clock epoch-ms into the created_at / updated_at text the
+    15 S9 tables store.
+
+    It lives beside the DDL because the DDL is what fixes the format: the
+    15 S9.5 columns default to strftime('%Y-%m-%dT%H:%M:%fZ','now'), so a
+    caller that hand-rolls a different spelling produces rows that sort
+    against the defaults incorrectly -- and sorting is how
+    idx_patrol_route_time answers "the latest run of this route".
+
+    WALL-CLOCK-OK(record): these two columns are an audit timeline an operator
+    reads, not an age or a timeout. Every interval decision in P3 (PP-1's
+    progress_flush_s, the 3 s path_progress staleness) is computed on
+    CLOCK_MONOTONIC and never touches this (CLK-C1).
+    """
+    whole, frac_ms = divmod(int(wall_ms), 1000)
+    return "%s.%03dZ" % (time.strftime("%Y-%m-%dT%H:%M:%S",
+                                       time.gmtime(whole)), frac_ms)
 
 # Terminal states, for the duration_sec CHECK (duration is written only at a
 # terminal). Imported from the machine so the DDL and the graph agree on which
@@ -189,14 +211,129 @@ DDL_TASKS_INDEXES = (
 )
 
 
+# 15 S9.5 patrol_progress, rebuilt 2026-09-28 (docs/NEXT.md EX-6).
+#
+# *** What was here before and why it had to go. The previous shape was four
+# columns -- task_id / waypoint_ix / progress / updated_ms -- and none of the
+# four names appears in 15 S9.5 or in the PathProgress wire message (11 S3.5B).
+# 15 S9.5 states the rule in as many words: "字段名与 PathProgress 报文逐字一致,
+# 禁止在此处另起别名 (CFG-40)". The old `progress REAL 0..1` in particular was
+# a DERIVED percentage, which PP-3 forbids storing at all (a derived column is
+# a second truth), and it could not express the breakpoint U07a is defined on:
+# the breakpoint is the PAIR (waypoint_index, seg_done_m) and seg_done_m had no
+# column. So every downstream mechanism that reads this table -- U07a resume,
+# S7.3A remap (needs route_rev / route_total_m / dist_done_m), the pingpong
+# direction rule of S9.5B, the GC-3 lap clamp (needs loop_index / loop_total)
+# -- had no input. Rebuilding is not a schema preference; those features cannot
+# be written against the old shape.
+#
+# The 20 columns and both indexes below are transcribed from 15 S9.5. Two
+# CHECKs are worth reading before "simplifying" them:
+#
+#   * loop_index is bounded ONLY when loop_total != 0. loops = 0 means an
+#     unbounded standing patrol (11 S7.8.3 LM-4), and the naive
+#     `loop_index <= loop_total` breaks on the SECOND lap of such a task.
+#   * waypoint_index starts at -1, not 0: it means "the last waypoint passed",
+#     and before the first one is reached there is none. A 0-based floor would
+#     make a task that has not reached its first point indistinguishable from
+#     one that has passed point 0.
+#
+# NOT here: `persisted` and any monotonic timestamp. `persisted` is a RUNTIME
+# derived bit of TaskState (path_progress older than 3 s -> false, 11 S3.5B)
+# and every interval/age decision is computed in memory off CLOCK_MONOTONIC
+# (DBF-3 / CLK-C1). Persisting a monotonic value would make it meaningless
+# across the next boot while still looking like a timestamp.
 DDL_PATROL_PROGRESS = """
 CREATE TABLE IF NOT EXISTS patrol_progress (
-  task_id    TEXT PRIMARY KEY REFERENCES tasks(task_id),
-  waypoint_ix INTEGER NOT NULL,
-  progress   REAL NOT NULL CHECK (progress BETWEEN 0.0 AND 1.0),
-  updated_ms INTEGER NOT NULL
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id         TEXT    NOT NULL,
+  route_name      TEXT    NOT NULL,
+  route_geo_id    TEXT,
+  route_rev       INTEGER NOT NULL,
+  direction       TEXT    NOT NULL,
+  loop_mode       TEXT    NOT NULL DEFAULT 'oneway',
+  waypoint_index  INTEGER NOT NULL DEFAULT -1,
+  waypoint_total  INTEGER NOT NULL,
+  seg_done_m      REAL    NOT NULL DEFAULT 0.0,
+  dist_done_m     REAL    NOT NULL DEFAULT 0.0,
+  odom_dist_m     REAL    NOT NULL DEFAULT 0.0,
+  route_total_m   REAL    NOT NULL,
+  loop_index      INTEGER NOT NULL DEFAULT 0,
+  loop_total      INTEGER NOT NULL DEFAULT 1,
+  skipped_m       REAL    NOT NULL DEFAULT 0.0,
+  dir_sign        INTEGER NOT NULL DEFAULT 1,
+  status          TEXT    NOT NULL DEFAULT 'active',
+  created_at      TEXT    NOT NULL,
+  updated_at      TEXT    NOT NULL,
+  CHECK (direction IN ('forward','reverse')),
+  CHECK (loop_mode IN ('oneway','pingpong','closed')),
+  CHECK (dir_sign IN (-1, 1)),
+  CHECK (status IN ('active','completed','aborted')),
+  CHECK (waypoint_index >= -1 AND waypoint_index < waypoint_total),
+  CHECK (loop_index >= 0 AND (loop_total = 0 OR loop_index <= loop_total))
 );
 """.strip()
+
+
+DDL_PATROL_PROGRESS_INDEXES = (
+    # 15 S9.5: at most one active row per task. This is the index that makes
+    # "which run is the current one" answerable without a timestamp race -- a
+    # second active row for the same task is rejected by the database rather
+    # than resolved by whichever query happens to ORDER BY first.
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_patrol_active "
+    "ON patrol_progress(task_id) WHERE status = 'active';",
+    "CREATE INDEX IF NOT EXISTS idx_patrol_route_time "
+    "ON patrol_progress(route_name, created_at DESC);",
+)
+
+
+#: The column whose presence distinguishes the 15 S9.5 shape from the
+#: pre-2026-09-28 four-column one. Any contract column would do; route_rev is
+#: named because it is the one S7.3A remap cannot run without.
+_PATROL_SHAPE_MARKER = "route_rev"
+
+
+async def ensure_patrol_progress_shape(conn) -> bool:
+    """Replace a pre-2026-09-28 four-column `patrol_progress` with the 15 S9.5
+    shape. Returns True if it reshaped. MUST run BEFORE the DDL burst.
+
+    *** Why this exists at all: every statement in ALL_DDL_STATEMENTS is
+    CREATE ... IF NOT EXISTS, so on a database that already carries the legacy
+    table the new DDL is a silent no-op. The process then starts normally and
+    fails on the FIRST progress write with "no such column: route_rev" -- at
+    the moment a patrol reaches its first waypoint, on the robot, which is the
+    worst possible place to discover a schema mismatch.
+
+    *** Why a DROP is acceptable here and would not be in general: the legacy
+    table had no writer. The only caller of PatrolProgressDAO.upsert in the
+    whole tree was one unit test, EX-3 (the path_progress subscriber that would
+    have populated it) did not exist, and the live data/run/task.db on the ORIN
+    held zero rows on 2026-09-28. A non-empty legacy table therefore means
+    something happened that this reasoning did not cover, so it RAISES instead
+    of dropping: losing a breakpoint silently is exactly the failure U07a
+    exists to prevent.
+    """
+    cur = await conn.execute("PRAGMA table_info(patrol_progress)")
+    cols = [row[1] for row in await cur.fetchall()]
+    if not cols:
+        return False                       # no table yet; the DDL will build it
+    if _PATROL_SHAPE_MARKER in cols:
+        return False                       # already the contract shape
+    cur = await conn.execute("SELECT COUNT(*) FROM patrol_progress")
+    row = await cur.fetchone()
+    n_rows = int(row[0]) if row else 0
+    if n_rows:
+        raise PatrolProgressShapeConflict(
+            "patrol_progress carries the pre-2026-09-28 four-column shape AND "
+            "%d row(s); refusing to drop it. Columns found: %s. Export the "
+            "rows, then delete the table by hand." % (n_rows, cols))
+    await conn.execute("DROP TABLE patrol_progress")
+    await conn.commit()
+    return True
+
+
+class PatrolProgressShapeConflict(Exception):
+    """A legacy patrol_progress table that still holds rows (see above)."""
 
 
 DDL_MEMORY = """
@@ -256,6 +393,7 @@ ALL_DDL_STATEMENTS = (
     DDL_TASKS,
     *DDL_TASKS_INDEXES,
     DDL_PATROL_PROGRESS,
+    *DDL_PATROL_PROGRESS_INDEXES,
     DDL_MEMORY,
     DDL_TASK_ROUTE_SNAPSHOT,
     DDL_GEO_PENDING_PUSH,
