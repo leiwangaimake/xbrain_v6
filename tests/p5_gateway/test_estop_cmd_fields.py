@@ -159,9 +159,110 @@ def test_the_sender_publishes_the_builder_and_builds_nothing_itself():
     assert "hmi_estop_frame(cmd_id)" in body
     assert "hmi_estop_cmd_id(" in body
     # No second place that BUILDS the audit fields: one writer, one vocabulary.
+    # (see test_start_hmi_wires_the_sender_without_raising for why the closure
+    # is also exercised, not only read)
     # The quoted forms are what a dict literal / json key would look like; the
     # bare word still appears in the log line, which is a report, not a second
     # source of the value.
     assert '"src_role"' not in body
     assert "operator_hmi" not in body
     assert '"type": "estop"' not in body
+
+
+def test_start_hmi_wires_the_sender_without_raising():
+    """_start_hmi runs far enough to build the closure, with no real socket.
+
+    *** This case exists because of a defect that shipped past everything
+    above. _start_hmi carried a redundant local `import os` further down its
+    body, which makes `os` a LOCAL name for the whole function -- so the boot
+    token added at the top (textually earlier, executed first) raised
+    UnboundLocalError and p5 refused to start. Every assertion above still
+    passed: they exercise the builders, and the builders were fine.
+
+    What was missing was any test that RAN _start_hmi. It is awkward to reach
+    (it binds sockets and starts a web server) but not unreachable: the bind is
+    inside a try/except that logs and returns (None, None), and everything this
+    file cares about -- the publisher declaration, the boot token, the closure
+    -- happens BEFORE that try. So a fake `gen` plus a bind that cannot succeed
+    exercises exactly the part that broke, and nothing else.
+
+    mutant: put `import os` back inside _start_hmi -> UnboundLocalError, red.
+    """
+    from xbrain.p5_gateway.runtime.main_wiring import _start_hmi
+
+    sent = []
+
+    class _Pub:
+        def put(self, data):
+            sent.append(data)
+
+    class _Gen:
+        def declare_publisher(self, key):
+            return _Pub()
+
+    # A bind the OS cannot honour, so the web server never starts and the
+    # function returns (None, None) through its own error path.
+    # `web` must be NON-EMPTY: _start_hmi returns early on a falsy
+    # bind/web, which is before everything this case exists to reach --
+    # an empty dict here would make the test pass without running a line
+    # of the code that broke.
+    cfg = {"bind": [{"host": "203.0.113.1", "port": 9}],
+           "web": {"static_dir": "hmi/static"}}
+    server, thread = _start_hmi(_Gen(), cfg, {})
+    assert (server, thread) == (None, None)
+
+
+def test_the_estop_closure_publishes_a_complete_frame():
+    """The closure itself, driven -- not its source text.
+
+    build_app receives _estop_sender and POST /api/estop calls it with no
+    arguments, so this reproduces that call and reads what went on the wire.
+    Everything the button actually sends is asserted here in one place; the
+    source-text case above only guards against a SECOND copy of the frame
+    appearing.
+    mutant: any missing audit field, or a cmd_id that does not advance -> red.
+    """
+    import json as _json
+
+    from xbrain.p5_gateway.runtime.main_wiring import _start_hmi
+
+    sent = []
+
+    class _Pub:
+        def put(self, data):
+            sent.append(_json.loads(data.decode("utf-8")))
+
+    class _Gen:
+        def declare_publisher(self, key):
+            return _Pub()
+
+    captured = {}
+
+    def _capture(web, provider, estop_sender, static_root, **kwargs):
+        captured["send"] = estop_sender
+        raise RuntimeError("stop here: the web server is not the subject")
+
+    # build_app is imported inside _start_hmi, so it is patched on its own
+    # module rather than on main_wiring.
+    from xbrain.p5_gateway.hmi import web_server as ws
+    real_build, real_bind = ws.build_app, ws.make_bound_sockets
+    ws.build_app = _capture
+    ws.make_bound_sockets = lambda bind: []
+    try:
+        _start_hmi(_Gen(), {"bind": [{"host": "127.0.0.1", "port": 0}],
+                            "web": {"static_dir": "hmi/static"}}, {})
+    finally:
+        ws.build_app, ws.make_bound_sockets = real_build, real_bind
+
+    assert "send" in captured, "_start_hmi never handed over an estop sender"
+    captured["send"]()
+    captured["send"]()
+    assert len(sent) == 2
+    for frame in sent:
+        assert frame["type"] == "estop" and frame["action"] == "stop"
+        assert frame["reason"] == "operator_hmi"
+        assert frame["src_role"] == "hmi" and frame["src_role"] in SRC_ROLES
+        assert frame["cmd_id"].startswith("h-estop-")
+    # Two presses, two ids: a constant would be answered "duplicate" by the
+    # 11 S7.1.1 idempotency rule from the second press onward.
+    assert sent[0]["cmd_id"] != sent[1]["cmd_id"]

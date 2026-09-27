@@ -399,7 +399,12 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
 
     try:
         socks = make_bound_sockets(bind)
-        import os                                    # noqa: PLC0415
+        # `os` is the MODULE-level import (line 27). The redundant local
+        # `import os` that used to sit here made `os` a local name for the
+        # WHOLE function, so the boot token above -- textually earlier, but
+        # executed before this line -- raised UnboundLocalError and p5 could
+        # not start. Caught on the robot, not by a test: nothing exercised
+        # _start_hmi, which is why one now does.
         here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         static_root = os.path.join(here, web.get("static_dir", "hmi/static"))
         app = build_app(web, _Provider(), _estop_sender, static_root,
