@@ -81,7 +81,12 @@ def _handler(query_fn=None):
 
 def test_estop_path_publishes_cmd_estop():
     _, h = _handler()
-    assert _texts(h("急停")) == [("cmd/estop", "estop")]
+    # The action is "stop" -- 11 S7.1's field table gives this key exactly one
+    # legal value. p4 published "estop" here until 2026-09-27; the robot still
+    # stopped (S7.1.2 exempts this key from validation and quadruped never
+    # reads the field), so nothing but a recorded frame could show it.
+    # mutant: action = "estop" again -> red.
+    assert _texts(h("急停")) == [("cmd/estop", "stop")]
 
 
 def test_the_voice_estop_frame_carries_the_audit_triple():
@@ -107,6 +112,10 @@ def test_the_voice_estop_frame_carries_the_audit_triple():
     pairs = h("急停")
     assert [k for k, _ in pairs] == ["cmd/estop"]
     frame = json.loads(pairs[0][1])
+    # 11 S7.1: the only legal action. Asserted on the published bytes here as
+    # well as through _texts above, because this is the frame a recording
+    # keeps and the contract's closed set has exactly one member.
+    assert frame["action"] == "stop"
     # The idempotency key, with p4's own prefix so a reader of cmd/estop/ack
     # can tell a voice ack from the HMI's (h-) and the cloud's (c-).
     assert frame["cmd_id"].startswith("es-")

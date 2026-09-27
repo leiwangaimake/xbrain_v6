@@ -264,8 +264,24 @@ def decision_to_publishes(decision: TurnDecision) -> List[Tuple[str, dict]]:
             #
             # reason is free text and feeds 11 S4.1 last_soft_estop.reason;
             # unfilled, that audit object is permanently half empty.
+            # *** action is "stop", not "estop". 11 S7.1's field table gives
+            # this key exactly ONE legal value ("action: string -- only
+            # `stop`"), and the json5 example spells it the same. The other
+            # two initiators already do (p5 main_wiring _estop_sender and the
+            # cloud bridge both publish "stop").
+            #
+            # The wrong value could never be caught by watching the robot:
+            # S7.1.2 makes cmd/estop the one key that is NOT validated --
+            # anything unparsable is executed as a stop (S3.0.1) -- and
+            # quadruped's ParseEstop does not even read the field, because
+            # there is no reading of it that could license NOT stopping. So a
+            # voice estop with action="estop" stopped the machine exactly like
+            # a correct one, and the only place the defect was visible was a
+            # recorded frame that disagrees with the contract. Fixed on those
+            # grounds alone -- a key nothing validates is precisely the one
+            # that needs the value to be right in the source.
             return [(CMD_ESTOP, {"schema": "p4_estop_v1",
-                                 "action": "estop", "source": "voice",
+                                 "action": "stop", "source": "voice",
                                  "cmd_id": "es-" + uuid.uuid4().hex[:12],
                                  "reason": "voice_command",
                                  "src_role": "voice",
