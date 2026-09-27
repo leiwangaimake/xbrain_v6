@@ -174,8 +174,14 @@ _EXTRA_KEYS: Dict[str, Tuple[str, str]] = {
     # them backtick-wrapped; kept here as belt-and-braces because the
     # doc's default-behaviour column varies per row (some list all
     # five, some just "五项 spec 全为 null").
-    "common.spec.max_vx_mps":
-        ("V-01", "vendor written max_v/wz/accel/decel spec pending"),
+    # max_vx_mps is NOT here, and that is a ruling rather than an omission:
+    # the user landed 2.0 on 2026-09-10 on a three-fold basis (99 U54's
+    # ceiling + the vendor's answer "actual maximum 2 m/s" + the user's own
+    # confirmation), recorded verbatim at the value in configs/models/
+    # m20s.yaml and in 21's V-01 row. V-01 itself stays OPEN -- we still want
+    # the written spec and the bench cross-check -- so the other four remain
+    # guarded below. Guarding max_vx too made this script report a permanent
+    # red against a standing ruling, which is how a gate stops being read.
     "common.spec.max_vy_mps":
         ("V-01", "vendor written max_v/wz/accel/decel spec pending"),
     "common.spec.max_wz_radps":
