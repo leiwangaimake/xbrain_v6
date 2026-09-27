@@ -56,6 +56,14 @@ namespace rt {
 // They do NOT advance the generation and do NOT raise an event -- and they are
 // still ACKED, because a sender that gets no answer retries, which is the event
 // storm the window exists to prevent.
+//
+// *** THE WINDOW IS HALF THE TEST, NOT THE WHOLE TEST. What may be swallowed
+// is a REPEAT OF ONE COMMAND, not any two commands that happen to be close
+// together: 11 S7.1 calls cmd_id the idempotency key ("重发同 cmd_id 不再递增
+// estop_epoch") and S7.1.1 spells result=duplicate as "同 cmd_id 重发". The
+// full condition is therefore `same cmd_id AND inside this window`; see
+// HandleEstop, which also states what happens when a message carries no
+// cmd_id at all.
 inline constexpr double kEstopDedupS = 0.050;
 
 class RtBridge {
@@ -218,6 +226,20 @@ class RtBridge {
   MonoFn mono_now_;
 
   double last_estop_mono_s_ = -1.0;
+  // The idempotency key of the stop that armed last_estop_mono_s_, and
+  // whether that stop carried one. Touched only by HandleEstop on the zenoh
+  // thread -- like last_estop_mono_s_ above and UNLIKE the four fields below,
+  // which PublishState reads from another thread and which therefore need the
+  // mutex. Nothing outside the dedup test reads these two, so adding them to
+  // the locked group would buy a lock on the estop path for nothing.
+  //
+  // std::string, so the assignment allocates. That is already true of
+  // last_estop_reason_ one field down and it is allowed here: QD-7 bars
+  // allocation on the REALTIME path, and this handler runs on rt_safety /
+  // rt_sub (rt_parse.h says so in as many words -- ParseEstop itself
+  // allocates, via nlohmann and std::string).
+  std::string last_estop_cmd_id_;
+  bool last_estop_cmd_id_present_ = false;
   // 11 S4.1 last_soft_estop, the four facts behind it. Written by HandleEstop
   // (zenoh thread, non-duplicate branch only -- a swallowed repeat is not a
   // new stop), read by PublishState (rt_pub thread); a mutex because reason

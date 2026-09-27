@@ -23,7 +23,12 @@
  *     hostile payload can stop this robot.
  *   * "a duplicate inside 50 ms does NOT advance the generation and IS still
  *     acked". Both halves. Swallowing the ack too would make the sender retry,
- *     which is the storm the window exists to prevent (11 S9.12.6).
+ *     which is the storm the window exists to prevent (11 S9.12.6). And the
+ *     other side of the same rule, which had no test at all until 2026-09-27:
+ *     two DIFFERENT cmd_ids inside one window are two commands and both must
+ *     execute. Sending the same bytes twice -- what the duplicate case does
+ *     -- is a repeat under the window-only rule and under the correct one, so
+ *     it could never have caught the missing cmd_id comparison.
  */
 
 #include "quadruped/rt_bridge.h"
@@ -251,6 +256,110 @@ int main() {
     CHECK(p.estop_epoch() == after_first + 1);
     CHECK(b.estops_applied() == 2);
     CHECK(sent.size() == 3);
+  }
+
+  // ---- the window damps ONE COMMAND's repeats, not two commands ----------
+  //
+  // 11 S7.1 calls cmd_id the idempotency key ("重发同 cmd_id 不再递增
+  // estop_epoch") and S7.1.1 spells result=duplicate as "同 cmd_id 重发".
+  // S9.12.6's 50 ms window is the debounce for THAT repeat, not a merge of
+  // any two stops that land close together.
+  //
+  // The test was the window alone until 2026-09-27, so two genuinely
+  // different stops 20 ms apart -- an HMI press and a voice estop, the cloud
+  // and the handle -- lost the second one: swallowed, generation unchanged,
+  // and the ack said "duplicate" about a command nobody had sent before. The
+  // block above cannot see that: it sends the same bytes twice, which is a
+  // repeat under both the old rule and the new one.
+  {
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+    const std::string one = Wrap("{\"cmd_id\":\"e-hmi\",\"action\":\"stop\"}");
+    const std::string two = Wrap("{\"cmd_id\":\"e-voice\",\"action\":\"stop\"}");
+    const std::uint64_t before = p.estop_epoch();
+
+    b.HandleEstop(20.0, one.c_str(), one.size());
+    // 20 ms later, INSIDE the window, but a different command.
+    b.HandleEstop(20.020, two.c_str(), two.size());
+
+    // *** +2, not +1. The old implementation produced +1 here.
+    // mutant: drop the cmd_id conjunct (back to the pure window) -> red.
+    CHECK(p.estop_epoch() == before + 2);
+    CHECK(b.estops_applied() == 2);
+    CHECK(b.estops_deduped() == 0);
+    CHECK(sent.size() == 2);
+    // The second one is ACCEPTED, and its ack names its own cmd_id -- the
+    // sender has to be able to tell "yours was executed" from "yours was
+    // treated as someone else's repeat".
+    CHECK(Has(sent.back().body, "\"result\":\"accepted\"") ||
+          Has(sent.back().body, "\"result\": \"accepted\""));
+    CHECK(Has(sent.back().body, "e-voice"));
+
+    // And the tightening did not cost the original behaviour: e-voice
+    // repeated inside ITS window is still a duplicate.
+    // mutant: compare cmd_id but ignore the window -> this stays green while
+    // the >window case below goes red, which is why both are here.
+    b.HandleEstop(20.030, two.c_str(), two.size());
+    CHECK(p.estop_epoch() == before + 2);
+    CHECK(b.estops_deduped() == 1);
+    CHECK(Has(sent.back().body, "duplicate"));
+
+    // Same cmd_id but OUTSIDE the window -> a new stop. An operator pressing
+    // the same HMI button again 100 ms later means it again; the idempotency
+    // rule is about a retransmission, and S7.1.1's retry budget is 200 ms.
+    // mutant: compare cmd_id only, ignore the window -> red here.
+    b.HandleEstop(20.200, two.c_str(), two.size());
+    CHECK(p.estop_epoch() == before + 3);
+    CHECK(b.estops_applied() == 3);
+  }
+
+  // ---- no cmd_id -> no idempotency key -> the pure window, as before -----
+  //
+  // 11 S7.1's field table: "缺失也照常执行(fail-safe), 仅失去去重能力". With
+  // no key there is nothing to tell a repeat from a new command, so the
+  // window is the only debounce left and the behaviour is exactly what it was
+  // before the tightening. S9.12.6's own row names no cmd_id either.
+  {
+    QuadrupedProcess p(Cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+    const std::string anon = Wrap("{\"action\":\"stop\"}");
+    const std::uint64_t before = p.estop_epoch();
+
+    b.HandleEstop(30.0, anon.c_str(), anon.size());
+    b.HandleEstop(30.020, anon.c_str(), anon.size());
+    // mutant: treat a missing cmd_id as "never a duplicate" (drop the
+    // !m.cmd_id_present arm) -> +2 here, red. That mutant is the tempting
+    // one: it reads as the safer direction, and it turns the 10 Hz resend of
+    // 11 S2.2.3 into an event storm, which is the thing the window exists
+    // for.
+    CHECK(p.estop_epoch() == before + 1);
+    CHECK(b.estops_deduped() == 1);
+    CHECK(sent.size() == 2);                 // still acked
+    CHECK(Has(sent.back().body, "duplicate"));
+    // The ack for a key-less command is "anonymous" (11 S7.1.1 field table),
+    // which is exactly why it cannot be de-duplicated by key.
+    CHECK(Has(sent.back().body, "anonymous"));
+
+    // A message that DOES carry a key, inside the same window, after a
+    // key-less one: it cannot be proved a repeat of anything, so it executes.
+    // The rule only swallows what it can positively identify as the same
+    // command, and every other reading fails toward NOT stopping.
+    // mutant: fall back to the pure window whenever either side lacks a key
+    // -> red.
+    const std::string keyed = Wrap("{\"cmd_id\":\"e-k\",\"action\":\"stop\"}");
+    b.HandleEstop(30.030, keyed.c_str(), keyed.size());
+    CHECK(p.estop_epoch() == before + 2);
+    CHECK(b.estops_applied() == 2);
   }
 
   // ---- EstopAck.latency_ms is MEASURED, not a constant ------------------

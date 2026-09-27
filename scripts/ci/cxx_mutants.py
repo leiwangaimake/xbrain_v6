@@ -2330,10 +2330,18 @@ RT_BRIDGE_MUTANTS = [
     # The duplicate branch left unmeasured. A swallowed repeat is not an error
     # (11 S9.12.6 acks it on purpose), so reporting 0 for it says "unmeasured"
     # about a case that ran normally.
+    # 2026-09-27: this mutated t_enter until the cmd_id dedup moved `duplicate`
+    # BELOW it (the test needs the parse to decide, and t_enter must precede
+    # the parse), at which point the replacement named an undeclared variable
+    # and the mutant stopped compiling -- reported UNUSABLE, which is the one
+    # reading this runner refuses to score as a kill. Re-anchored onto the
+    # latency line, where `duplicate` is in scope; the failure it stands for is
+    # unchanged.
     ("bridge: a deduped estop reports latency_ms 0",
      RT_BRIDGE_CC,
-     "  const double t_enter = mono_now_();",
-     "  const double t_enter = duplicate ? mono_now_() + 1e9 : mono_now_();"),
+     "  const double latency_ms = (mono_now_() - t_enter) * 1000.0;",
+     "  const double latency_ms =\n"
+     "      duplicate ? 0.0 : (mono_now_() - t_enter) * 1000.0;"),
     # The default clock bound to a constant. Every injected-clock assertion still
     # passes; only the real-clock case is red -- which is why that case exists.
     ("bridge: the default mono clock is a constant",
@@ -2366,13 +2374,64 @@ RT_BRIDGE_MUTANTS = [
     # every repeat makes the upstream's echo permanently one behind.
     ("rt_bridge: a duplicate advances the generation anyway",
      RT_BRIDGE_CC,
-     "  const bool duplicate =\n      (last_estop_mono_s_ >= 0.0) &&\n"
-     "      (now_mono_s - last_estop_mono_s_) < kEstopDedupS;",
+     "  const bool duplicate = in_window && (!m.cmd_id_present"
+     " || same_cmd_id);",
      "  const bool duplicate = false;"),
     ("rt_bridge: the dedup window swallows everything",
      RT_BRIDGE_CC,
      "      (now_mono_s - last_estop_mono_s_) < kEstopDedupS;",
      "      (now_mono_s - last_estop_mono_s_) < 1.0e9;"),
+    # The 2026-09-27 tightening, both directions. 11 S7.1 makes cmd_id the
+    # idempotency key and S7.1.1 spells duplicate as "同 cmd_id 重发", so the
+    # window damps a repeat of ONE command, not any two stops that land close
+    # together. Dropping either conjunct is a real failure mode:
+    #   pure window  -- two different real stops 20 ms apart (an HMI press and
+    #     a voice estop) lose the second one, with the ack calling it a
+    #     duplicate of a command nobody sent. This is what shipped until
+    #     2026-09-27 and no test could see it: the dedup test sent the same
+    #     bytes twice, which is a repeat under both readings.
+    #   cmd_id only  -- the window stops existing, so the 10 Hz resend of
+    #     11 S2.2.3 with fresh ids becomes the event storm S9.12.6 prevents,
+    #     and an operator's deliberate second press of the same button 100 ms
+    #     later is swallowed forever.
+    ("rt_bridge: the estop dedup ignores cmd_id (back to the pure window)",
+     RT_BRIDGE_CC,
+     "  const bool duplicate = in_window && (!m.cmd_id_present"
+     " || same_cmd_id);",
+     "  const bool duplicate = in_window;"),
+    ("rt_bridge: the estop dedup ignores the window (cmd_id only)",
+     RT_BRIDGE_CC,
+     "  const bool duplicate = in_window && (!m.cmd_id_present"
+     " || same_cmd_id);",
+     "  const bool duplicate = same_cmd_id;"),
+    # 11 S7.1: "缺失也照常执行(fail-safe), 仅失去去重能力". With no key there
+    # is nothing to identify a repeat by, so the window is the only debounce
+    # left. Treating a key-less stop as never-duplicate reads like the safer
+    # direction and is the one that reopens the storm.
+    ("rt_bridge: a key-less estop is never a duplicate",
+     RT_BRIDGE_CC,
+     "  const bool duplicate = in_window && (!m.cmd_id_present"
+     " || same_cmd_id);",
+     "  const bool duplicate = in_window && same_cmd_id;"),
+    # The remembered key never updates -> same_cmd_id is permanently false ->
+    # a genuine retransmission of one command is executed twice.
+    ("rt_bridge: the remembered estop cmd_id is never stored",
+     RT_BRIDGE_CC,
+     "    last_estop_cmd_id_present_ = m.cmd_id_present;\n"
+     "    last_estop_cmd_id_ = m.cmd_id_present ? m.cmd_id : std::string();",
+     "    last_estop_cmd_id_present_ = false;"),
+    # The conditional parse, both halves. Inside the window the parse is what
+    # supplies cmd_id; outside it the parse is what supplies the ack's cmd_id,
+    # and without it every ack on the first stop of a burst says "anonymous"
+    # -- 11 S7.1.1's four initiators then share one indistinguishable key.
+    ("rt_bridge: the in-window estop parse is skipped",
+     RT_BRIDGE_CC,
+     "  if (in_window) ParseEstop(data, len, rid_, boot_, &m);",
+     "  if (false) ParseEstop(data, len, rid_, boot_, &m);"),
+    ("rt_bridge: the window-closed estop parse is skipped",
+     RT_BRIDGE_CC,
+     "  if (!in_window) ParseEstop(data, len, rid_, boot_, &m);",
+     "  if (false) ParseEstop(data, len, rid_, boot_, &m);"),
     # A refused command that is acted on anyway is the whole loosening rule,
     # undone at the routing layer instead of at the parser.
     ("rt_bridge: a refused cmd_vel is passed to the process anyway",
@@ -2495,10 +2554,17 @@ RT_BRIDGE_MUTANTS = [
      "      in.last_estop_age_ms = MonoNowSeconds() * 1000.0;"),
     # The four facts are stored on the REAL-stop branch; inverting the guard
     # leaves last_soft_estop null after every genuine stop.
+    # 2026-09-27: re-anchored. The cmd_id dedup put the remembered-key store
+    # at the head of this same block, so the old two-line anchor (the `if`
+    # immediately followed by the lock_guard) stopped matching and the mutant
+    # reported UNUSABLE. The comment line is the anchor now because
+    # `if (!duplicate) {` alone occurs twice in the handler.
     ("rt_bridge: the estop record is stored on the duplicate branch only",
      RT_BRIDGE_CC,
-     "  if (!duplicate) {\n    std::lock_guard<std::mutex> lk(estop_info_mu_);",
-     "  if (duplicate) {\n    std::lock_guard<std::mutex> lk(estop_info_mu_);"),
+     "  if (!duplicate) {\n    // The idempotency key the NEXT message inside"
+     " the window is compared",
+     "  if (duplicate) {\n    // The idempotency key the NEXT message inside"
+     " the window is compared"),
     # The audit pair is the only source RobotState.last_soft_estop has.
     ("rt_bridge: the estop reason is dropped on store",
      RT_BRIDGE_CC,

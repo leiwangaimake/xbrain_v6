@@ -7,12 +7,20 @@
  *
  * Description:
  * The order inside HandleEstop is the only thing in this file that is not
- * obvious, and it is the most important: the STOP IS ISSUED FIRST, before the
- * payload is looked at for the ack. Parsing first and stopping afterwards reads
- * identically and behaves identically right up until the parse throws, hangs,
- * or an early return is added by someone "cleaning up" -- and then the stop is
- * gone. Putting the stop above the parse means no edit to the parsing can reach
- * it (11 S3.0.1, 99 U75).
+ * obvious, and it is the most important: ON A NEW STOP the stop is issued
+ * FIRST, before the payload is looked at for the ack. Parsing first and
+ * stopping afterwards reads identically and behaves identically right up until
+ * the parse throws, hangs, or an early return is added by someone "cleaning
+ * up" -- and then the stop is gone. Putting the stop above the parse means no
+ * edit to the parsing can reach it (11 S3.0.1, 99 U75, 13 RX-6).
+ *
+ * The one place the parse runs first is inside the 50 ms dedup window, where
+ * the dedup test needs cmd_id (11 S7.1's idempotency key) to tell a repeat of
+ * one command from a second, different one. RX-6's guarantee is not lost
+ * there: being inside the window MEANS a real stop went out less than 50 ms
+ * ago, so the machine is already at zero and the parse sits in front of a
+ * possible second stop, never the first. HandleEstop carries the full
+ * argument at the branch.
  *
  * Everything else here is routing, and the routing is deliberately dull: one
  * message in, one parse, one call, one ack. No decision that belongs to a lower
@@ -766,15 +774,70 @@ void RtBridge::HandleEstop(double now_mono_s, const char* data,
   // / 13 RX-7 say a repeat inside 50 ms is swallowed -- generation NOT
   // advanced, no event -- and is STILL ACKED. A sender that gets no answer
   // retries, which is the storm the window exists to prevent.
-  const bool duplicate =
-      (last_estop_mono_s_ >= 0.0) &&
-      (now_mono_s - last_estop_mono_s_) < kEstopDedupS;
-  // The entry reading for latency_ms, taken BEFORE the stop and on the same
-  // clock as the closing one below. It is not now_mono_s: that value comes from
-  // the session (rt_runtime reads the clock at the edge and passes it inward),
+  //
+  // The entry reading for latency_ms, on the same clock as the closing one
+  // below and FIRST in the function, because the window-open branch below
+  // parses ahead of the stop. It is not now_mono_s: that value comes from the
+  // session (rt_runtime reads the clock at the edge and passes it inward),
   // and a test drives it with 1.0 / 10.0 while this reader returns real uptime
   // -- subtracting one from the other is nine hundred million milliseconds.
   const double t_enter = mono_now_();
+  const bool in_window =
+      (last_estop_mono_s_ >= 0.0) &&
+      (now_mono_s - last_estop_mono_s_) < kEstopDedupS;
+
+  // *** WHERE THE PARSE SITS, AND WHY IT IS CONDITIONAL.
+  //
+  // RX-6 puts the stop above the parse so that no edit to the parsing can
+  // reach it. Comparing cmd_id needs the parse, so one of the two rules has
+  // to give -- and neither has to give on the path that matters:
+  //
+  //   window CLOSED -- this is a new stop whatever the payload says, so no
+  //     cmd_id is needed and NOTHING runs before OnSoftEstop. RX-6 holds
+  //     exactly as written, on the path that every first stop takes.
+  //   window OPEN -- a real stop went out less than 50 ms ago, so the machine
+  //     is ALREADY at zero velocity. The parse here is not in front of the
+  //     first stop; it is in front of a possible SECOND one, and its worst
+  //     case (ParseEstop hangs) leaves a robot that is already stopped and
+  //     latched at the current generation. That is the bound RX-6 is really
+  //     about, and it still holds.
+  //
+  // ParseEstop cannot throw (rt_parse.cc: Json::parse with
+  // allow_exceptions=false) and returns void on purpose, so the one edit RX-6
+  // fears most -- `if (parse failed) return;` -- has no verdict to be built
+  // from. rt_parse.h states the intended call shape in as many words:
+  // "ParseEstop(...); Stop(); -- with no `if`".
+  EstopMsg m;
+  if (in_window) ParseEstop(data, len, rid_, boot_, &m);
+
+  // *** THE DEDUP TEST: SAME cmd_id AND INSIDE THE WINDOW.
+  //
+  // 11 S7.1 calls cmd_id the idempotency key, verbatim "重发同 cmd_id 不再
+  // 递增 estop_epoch", and S7.1.1 spells the ack value out as duplicate =
+  // "同 cmd_id 重发". Read together with S9.12.6's window, the two say the
+  // window damps A REPEAT OF ONE COMMAND, not any two commands that arrive
+  // close together. This test was the window ALONE until 2026-09-27, so two
+  // genuinely different stops 20 ms apart -- an operator's HMI press and a
+  // voice estop, say, or the cloud and the handle -- lost the second one:
+  // swallowed, no new generation, and the ack said "duplicate" about a
+  // command that had never been sent before.
+  const bool same_cmd_id = m.cmd_id_present && last_estop_cmd_id_present_ &&
+                           m.cmd_id == last_estop_cmd_id_;
+  // No cmd_id on THIS message -> no idempotency key exists -> the window is
+  // all there is, which is the behaviour that was here before. 11 S7.1's
+  // field table licenses exactly this: "缺失也照常执行(fail-safe), 仅失去去重
+  // 能力" -- without the key we cannot tell a repeat from a new command, and
+  // the window is the only debounce left. It is also the reading S9.12.6's
+  // own row takes, which names no cmd_id at all.
+  const bool duplicate = in_window && (!m.cmd_id_present || same_cmd_id);
+
+  // *** FAILURE DIRECTION, CHECKED: the new test can only swallow FEWER
+  // messages than the old one (it adds a conjunct to `duplicate`), never
+  // more. Every behaviour change is therefore "a stop that used to be
+  // swallowed now executes" -- the 收紧型 direction 11 S3.0.1 / 99 U75
+  // require of this key. The cost of the change is at most one redundant
+  // zero-velocity frame and one extra generation; the cost of the old
+  // behaviour was a real estop that never happened.
   if (!duplicate) {
     proc_->OnSoftEstop(now_mono_s);
     last_estop_mono_s_ = now_mono_s;
@@ -804,10 +867,13 @@ void RtBridge::HandleEstop(double now_mono_s, const char* data,
   // a case that is not an error.
   const double latency_ms = (mono_now_() - t_enter) * 1000.0;
 
-  // Only now is the payload looked at, and only to fill the ack. There is no
-  // branch below that can undo the stop above.
-  EstopMsg m;
-  ParseEstop(data, len, rid_, boot_, &m);
+  // The other half of the conditional parse above: on the window-CLOSED path
+  // the payload is looked at only now, and only to fill the ack, so there is
+  // no branch below that can undo the stop. Exactly one of the two calls runs
+  // -- they are guarded by complementary readings of the same variable, which
+  // is deliberately not a `bool parsed` flag that a later edit could leave
+  // out of step with the condition that set it.
+  if (!in_window) ParseEstop(data, len, rid_, boot_, &m);
 
   // 11 S4.1 last_soft_estop's four facts, for PublishState. BELOW the stop
   // and the parse on purpose (the stop must stay unreachable from any edit
@@ -817,6 +883,14 @@ void RtBridge::HandleEstop(double now_mono_s, const char* data,
   // advanced generation this stop produced. reason/src_role may be empty
   // (best-effort on this key) -- stored as-is, published as null.
   if (!duplicate) {
+    // The idempotency key the NEXT message inside the window is compared
+    // against. Stored here and not beside last_estop_mono_s_ above because
+    // the window-closed path has not parsed yet at that point; the two are
+    // set without anything in between that can return or throw, and if they
+    // ever did diverge the stale-key reading is "not a duplicate", which
+    // executes the stop -- the safe side.
+    last_estop_cmd_id_present_ = m.cmd_id_present;
+    last_estop_cmd_id_ = m.cmd_id_present ? m.cmd_id : std::string();
     std::lock_guard<std::mutex> lk(estop_info_mu_);
     last_estop_epoch_ = proc_->estop_epoch();
     last_estop_reason_ = m.reason;
