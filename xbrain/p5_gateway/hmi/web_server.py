@@ -236,9 +236,22 @@ async def _uplink_reader(websocket, provider, bucket, pending) -> None:
             await websocket.send_json(uplink.ack_frame(
                 req_id, req_type, "rejected", ref.code, ref.detail))
             continue
-        # The three classes this build serves. estop is handled above (its own
-        # REST path), and exit_broadcast is still unwired -- not_implemented
-        # names it, so "not built yet" never reads as "your frame was wrong".
+        # The four classes this build serves, per _UPLINK_BUILDERS above:
+        # geo (W4), task (W7), goto (W2), exit_broadcast (W3). estop (W1) is
+        # handled above and never reaches here -- it has its own <=10 ms REST
+        # path -- which closes the whole S12.1.1 whitelist.
+        #
+        # ! This comment used to read "the three classes ... exit_broadcast is
+        # still unwired". W3 was wired in batch 20 (uplink.
+        # build_exit_broadcast_command, and the P2 cmd/mode receiver in batch
+        # 17) and the map four lines up has carried it since; the comment was
+        # simply not updated. Corrected 2026-09-27 (CLAUDE.md iron rule 1).
+        # A stale "not built yet" right next to the dispatch table is worse
+        # than no comment: the next reader trusts the sentence over the dict
+        # and goes looking for a gap that closed a month ago.
+        #
+        # Anything NOT in the map still gets not_implemented, so "not built
+        # yet" never reads as "your frame was wrong".
         builder = _UPLINK_BUILDERS.get(req_type)
         if builder is None:
             ref = uplink.not_implemented(req_type)

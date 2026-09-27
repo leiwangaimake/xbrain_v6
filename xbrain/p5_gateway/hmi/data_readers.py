@@ -24,13 +24,28 @@ state from state/task, pose from state/pose, and events from P5's OWN record.db
 cache / last-seen state / events source), never a P3 DB handle.
 
 What it does NOT do, and why. It does NOT fabricate pose. 17 S6.10.4: the pose/
-GPS/ENU/heading/speed/RTK/precision fields all depend on perception (design not
-written, GATED-DESIGN) + rtk_driver (not built, GATED-HW) + quadruped (awaiting
-chassis). Until those exist, pose_group() returns a null pose with
+GPS/ENU/heading/speed/RTK/precision fields come from state/pose. Whenever that
+key is absent or stale, pose_group() returns a null pose with
 `available: false`, and the frontend renders a "no fix" state. Drawing a robot
 arrow at (0,0) or an RTK "Float" badge from a constant would be exactly the
 fail-silent 3.1/3.2 forbids -- a reviewer (and the operator) could not tell the
 map position was fake.
+
+! The sentence above used to read "depend on perception (design not written,
+GATED-DESIGN) + rtk_driver (not built, GATED-HW) + quadruped (awaiting
+chassis)". All three clauses are now false: 19-perception detailed design was
+written (corrected 2026-08-20), rtk_driver is built and state/pose has run
+end-to-end since 2026-08-14 (rtk_driver -> p1 -> state/pose, measured on the
+ORIN), and quadruped was built and bench-tested 2026-09-21. Corrected
+2026-09-27 (CLAUDE.md iron rule 1); see docs/NEXT.md S7 HMI-W4.
+
+Keeping the null-pose branch is NOT a leftover of that blockage -- it is the
+permanent no-fix path. state/pose can stop at any moment (RTK dropout, p1
+restart), and main_wiring stops handing us the cached pose once it is older
+than POSE_STALE_AFTER_MS, precisely so a frozen arrow cannot sit on the map
+looking live. What the map still lacks is common.geo.enu_origin (unlanded,
+awaiting site calibration): without an origin there is no XY projection, so
+fence/event map placement stays greyed even while the pose readout works.
 
 Traps already hit / to avoid:
   * progress_percent MUST be None when route_total_m is unknown, never 0 or 100
@@ -87,9 +102,10 @@ def _layer(items: Optional[Sequence[Dict[str, Any]]]) -> Dict[str, Any]:
 def pose_group(pose: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """17 S6.8 group B/C: pose + localisation quality.
 
-    `pose` is the last state/pose payload, or None. Until perception + rtk_driver
-    + chassis exist (17 S6.10.4, GATED), pose is None and this returns an
-    explicit no-fix shell -- NOT a zeroed pose. The frontend must read
+    `pose` is the last state/pose payload, or None. When it is None -- no
+    publisher yet, or the last frame went stale past POSE_STALE_AFTER_MS and
+    main_wiring stopped handing it over (17 S6.10.4) -- this returns an
+    explicit no-fix shell, NOT a zeroed pose. The frontend must read
     `available` and render "no fix" (hide the robot arrow, blank the GPS/ENU/RTK
     readouts) rather than plot (0,0). Fields mirror 17 S6.8: lat/lon/alt,
     heading_rad + heading_valid, speed_mps, fix_type, cov_h_m, yaw_capable.
