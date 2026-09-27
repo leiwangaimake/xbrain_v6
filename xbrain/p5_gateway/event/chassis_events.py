@@ -167,7 +167,6 @@ class ChassisFaultDeriver:
             "bad_level": 0,      # level outside 11 S4.1 -> rejected entry
             "bad_shape": 0,      # entry that is not an object / has no code
             "no_since_ts": 0,    # entry without a usable since_ts
-            "legacy_shape": 0,   # producer spelling that 11 S9.8.4 does not define
         }
 
     @property
@@ -217,7 +216,7 @@ class ChassisFaultDeriver:
                 self.stats["bad_shape"] += 1
             return out
         for entry in faults:
-            code = self._code_of(entry)
+            code = self._code_of(entry, as_object=True)
             if code is None:
                 continue
             level = self._level_of(entry)
@@ -250,7 +249,7 @@ class ChassisFaultDeriver:
                 self.stats["bad_shape"] += 1
             return out
         for entry in cleared:
-            code = self._code_of(entry)
+            code = self._code_of(entry, as_object=False)
             if code is None:
                 continue
             if code not in self._active:
@@ -265,7 +264,10 @@ class ChassisFaultDeriver:
             self.stats["cleared"] += 1
             out.append(self._event(
                 code=code, cleared=True, rid=rid, level=None,
-                desc=self._desc_of(entry), since_ts=since_ts,
+                # No desc: a cleared[] element is the code and nothing else
+                # (CF-1). The text was delivered with the raise, and the
+                # recovery names the same code, so nothing is lost.
+                desc=None, since_ts=since_ts,
                 # A clear has no occurrence time of its own -- cleared[] carries
                 # only the code (CF-1/CF-3) -- so the recovery is dated NOW, the
                 # moment the chassis told us. detail.since_ts still names when the
@@ -275,32 +277,38 @@ class ChassisFaultDeriver:
 
     # -- field extraction -----------------------------------------------------
 
-    def _code_of(self, entry: Any) -> Optional[str]:
-        """The CF-1 well-formed code of one entry, or None (entry rejected).
+    def _code_of(self, entry: Any, *, as_object: bool) -> Optional[str]:
+        """The CF-1 well-formed code of one list element, or None (rejected).
 
-        11 S9.8.4 gives faults[] entries as objects with a code field and
-        cleared[] entries as bare code strings (CF-1: "cleared[] 的每一个元素
-        都必须形如 ^(chs|chg):0x[0-9A-Fa-f]{4}$", i.e. the element IS the code).
-        Both are accepted here.
+        11 S9.8.4 gives the two lists DIFFERENT element types, and which one is
+        expected is passed in rather than sniffed from the value:
+          faults[]  -- objects carrying the code in a `code` field;
+          cleared[] -- bare code strings. CF-1 puts the regex on "cleared[] 的
+                       每一个元素", i.e. the element IS the code, and 13 S7.3
+                       CF-3 says the same ("用与发生时逐字相同的带前缀串").
 
-        ! quadruped currently writes cleared[] as OBJECTS (rt_payloads.cc
-        WriteFaultList is called for both lists), which CF-1 does not allow. The
-        object form is read rather than rejected -- refusing it would swallow
-        every real recovery, the exact all-green-while-faulted outcome 13 S7.3
-        warns about -- but it is counted as legacy_shape and logged, because a
-        divergence nobody can see is one nobody fixes.
+        quadruped shipped cleared[] as objects until 2026-09-27 (one writer
+        served both lists) and this method read that form too. The producer is
+        fixed (rt_payloads.cc WriteClearedArray) and the reader went with it: a
+        sniffing reader leaves two wire shapes legal with nothing left to
+        decide between them, and the next divergence has nowhere to show up.
+        An element of the wrong type is counted as bad_shape, and the rest of
+        the report still goes through.
         """
-        if isinstance(entry, str):
-            code = entry
-        elif isinstance(entry, dict):
+        if as_object:
+            if not isinstance(entry, dict):
+                self.stats["bad_shape"] += 1
+                return None
             raw = entry.get("code")
             if not isinstance(raw, str):
                 self.stats["bad_shape"] += 1
                 return None
             code = raw
         else:
-            self.stats["bad_shape"] += 1
-            return None
+            if not isinstance(entry, str):
+                self.stats["bad_shape"] += 1
+                return None
+            code = entry
         if not is_wellformed_fault_code(code):
             # CF-1 -> E_SCHEMA for THIS entry. Counted, logged, and the rest of
             # the report continues (13 S6.5 forbid #2: one bad code must not cost
@@ -349,41 +357,29 @@ class ChassisFaultDeriver:
             raw = entry.get("since_ts")
             if isinstance(raw, (int, float)) and not isinstance(raw, bool):
                 return float(raw)
-            # ! quadruped writes since:{sec,nanosec} instead of the since_ts
-            # 13 S7.3 requires ("Timestamp{Sec,Nanosec} -> 转 since_ts").
-            # Converted rather than ignored, for the same reason as the cleared[]
-            # shape above, and counted the same way.
-            since = entry.get("since")
-            if isinstance(since, dict):
-                sec = since.get("sec")
-                nsec = since.get("nanosec")
-                if isinstance(sec, (int, float)) and not isinstance(sec, bool):
-                    self.stats["legacy_shape"] += 1
-                    extra = (float(nsec) / 1e9
-                             if isinstance(nsec, (int, float))
-                             and not isinstance(nsec, bool) else 0.0)
-                    return float(sec) + extra
+        # null is a shape the producer emits on purpose: quadruped publishes
+        # since_ts = null for a fault the chassis sent no Timestamp with, so
+        # that this counter -- and not a 1970 detected_at -- is what a reader
+        # sees. Until 2026-09-27 quadruped sent since:{sec,nanosec} here and
+        # this method converted it; that reader went out with the producer fix
+        # (rt_payloads.cc WriteFaultArray now writes float seconds).
         self.stats["no_since_ts"] += 1
         return None
 
     def _desc_of(self, entry: Any) -> Optional[str]:
         """faults[].desc, the human-readable line. None when absent.
 
-        ! quadruped writes name + details and no desc on this key, although
-        13 v1.35 already corrected the SAME field one key over (rt/chassis/state:
-        "faults 条目第三键按契约示例是 desc"). name is read as the fallback
-        because 13 S7.3 calls it "未登记码唯一的可读线索" -- losing it would
-        leave an unregistered code with nothing but a number.
+        One field, no fallbacks. quadruped wrote `name` here until 2026-09-27
+        while 13 v1.35 had already corrected the same field one key over
+        (rt/chassis/state: "faults 条目第三键按契约示例是 desc"); the producer
+        now spells desc on both keys from the same value (CF-5), so reading
+        `name` or `details` as alternatives would only keep a second wire
+        shape alive with nothing left to produce it.
         """
         if not isinstance(entry, dict):
             return None
-        for field in ("desc", "name", "details"):
-            value = entry.get(field)
-            if isinstance(value, str) and value:
-                if field != "desc":
-                    self.stats["legacy_shape"] += 1
-                return value
-        return None
+        value = entry.get("desc")
+        return value if isinstance(value, str) and value else None
 
     # -- assembly -------------------------------------------------------------
 

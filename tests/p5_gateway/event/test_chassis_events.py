@@ -21,6 +21,12 @@ What these pin, and why each one is here rather than being implied by the others
     not merge -- chs:0x1007 and chg:0x1007 must be two independent faults.
   * a CF-1 malformed code is rejected and COUNTED, and the rest of the report
     survives it (13 S6.5 forbid #2: one bad entry must not cost the others).
+  * the two lists have DIFFERENT element types and each is required, not
+    sniffed: faults[] objects, cleared[] bare code strings. quadruped served
+    both with one writer until 2026-09-27 and this module read whatever came;
+    producer and reader were fixed together, so both wrong-type directions are
+    now asserted -- a sniffing reader leaves two wire shapes legal with nothing
+    left to choose between them.
   * the pipeline accepts what comes out. The derivation's whole purpose is that
     EventPipeline._validate stops dropping these, so one test runs a derived
     event through the real _REQUIRED_FIELDS check instead of restating the list.
@@ -240,33 +246,73 @@ def test_a_level_outside_the_closed_set_is_rejected_and_counted():
     assert d.stats["bad_level"] == 1
 
 
-# -- the producer spellings 11 S9.8.4 does not define -------------------------
+# -- the two element types of 11 S9.8.4, each required ------------------------
 
 
-def test_cleared_as_objects_is_read_and_counted_as_legacy():
-    # quadruped writes cleared[] as OBJECTS (rt_payloads.cc calls WriteFaultList
-    # for both lists) while CF-1 makes each element the code STRING. Refusing
-    # the object form would swallow every real recovery, so it is read -- and
-    # counted, so the divergence stays visible.
+def test_cleared_entries_are_code_strings_and_objects_are_rejected():
+    # The two lists have DIFFERENT element types: faults[] objects, cleared[]
+    # bare code strings (CF-1 puts the regex on "每一个元素"). quadruped served
+    # both lists with one writer until 2026-09-27 and p5 read the object form;
+    # both sides were fixed together, so the object form is now a divergence and
+    # is counted rather than read.
+    # mutant: sniff the type again (accept a dict here) -> red.
     d = _deriver()
     d.observe(_report([_fault()]), now_wall=NOW)
     out = d.observe(_report(cleared=[{"code": "chs:0x8001", "level": "fatal"}]),
                     now_wall=NOW + 1.0)
-    assert len(out) == 1 and out[0]["detail"]["type"] == "chassis_fault_cleared"
+    assert out == []
+    assert d.stats["bad_shape"] == 1
+    # ...and the fault is still held open, because nothing said it cleared.
+    assert d.active_codes == frozenset({"chs:0x8001"})
+    # The contract form does clear it, from the same deriver.
+    assert len(d.observe(_report(cleared=["chs:0x8001"]), now_wall=NOW + 2)) == 1
 
 
-def test_since_sec_nanosec_is_converted_and_counted_as_legacy():
-    # 13 S7.3 verbatim: Timestamp{Sec,Nanosec} -> 转 since_ts. quadruped still
-    # ships the pair. mutant: ignore the pair -> since_ts falls back to now and
-    # test_detected_at... style backdating returns.
+def test_faults_entries_must_be_objects():
+    # The other direction: a bare string in faults[] has no level and no
+    # since_ts, so reading it as a code would raise an event with neither.
+    d = _deriver()
+    assert d.observe(_report(["chs:0x8001"]), now_wall=NOW) == []
+    assert d.stats["bad_shape"] == 1
+    # WHICH counter moves is the assertion, not just that the entry is lost. A
+    # reader that sniffed the element type would take this malformed string as
+    # a code and file it under bad_code -- and bad_code means "the producer
+    # built a code wrong", while bad_shape means "the producer put the wrong
+    # KIND of thing in this list". Those point at different bugs, and with the
+    # sniffing reader the second one can never be reported at all.
+    assert d.observe(_report(["0x8001"]), now_wall=NOW) == []
+    assert d.stats["bad_shape"] == 2 and d.stats["bad_code"] == 0
+
+
+def test_since_ts_is_read_as_float_seconds_only():
+    # 13 S7.3 verbatim: Timestamp{Sec,Nanosec} -> 转 since_ts, and the producer
+    # now does that conversion (rt_payloads.cc WriteFaultArray). The nested pair
+    # is no longer produced and no longer read: an entry carrying it has no
+    # usable occurrence time, which is the no_since_ts case.
+    # mutant: restore the since:{sec,nanosec} reader -> red.
     d = _deriver()
     entry = {"code": "chs:0x8001", "level": "warn", "name": "batt low",
              "since": {"sec": 1753660812, "nanosec": 500000000}}
     ev = d.observe(_report([entry]), now_wall=NOW)[0]
-    assert ev["detail"]["since_ts"] == pytest.approx(SINCE + 0.5)
-    assert ev["detail"]["desc"] == "batt low"     # name is the desc fallback
-    assert d.stats["legacy_shape"] >= 1
-    assert d.stats["no_since_ts"] == 0
+    assert ev["detail"]["since_ts"] is None
+    assert d.stats["no_since_ts"] == 1
+    # `name` is not a desc either -- one field, no fallbacks (the producer
+    # spells desc on both keys from the same value, CF-5).
+    assert "desc" not in ev["detail"]
+
+
+def test_since_ts_null_is_a_shape_the_producer_emits_on_purpose():
+    # quadruped publishes since_ts = null for a fault the chassis sent no
+    # Timestamp with. The fault is NOT dropped over it (the code is the
+    # load-bearing part) and detail.since_ts stays null, so a reader can tell a
+    # measured occurrence time from the fallback to observation time.
+    d = _deriver()
+    entry = {"code": "chs:0x8001", "level": "fatal", "desc": "no clock",
+             "since_ts": None}
+    ev = d.observe(_report([entry]), now_wall=NOW)[0]
+    assert ev["detail"]["since_ts"] is None
+    assert ev["ts"] == NOW
+    assert d.stats["no_since_ts"] == 1 and d.stats["raised"] == 1
 
 
 # -- the point of the whole module -------------------------------------------
