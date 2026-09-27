@@ -38,7 +38,12 @@ Keys (11 S1.1.6 whitelist, p1 rows): sub cmd/motion/route (P1-11),
 cmd/motion/relative_move (P1-5), cmd/motion/factor (P1-4) on the general
 plane; pub xbrain/{rid}/rt/motion/cmd_vel (RT), state/motion/path_progress
 (P1-12), cmd/motion/relative_move/status (P1-6), state/arb/motion (P1-22)
-and event/{sev}/arbitration (P1-23) on the general plane.
+and event/{sev}/arbitration (P1-23) on the general plane. Also sub
+xbrain/{rid}/rt/chassis/state (P1-24, estop_epoch only) and
+xbrain/{rid}/rt/chassis/fault (P1-20) on the RT plane, the latter forwarded to
+event/fault/chassis with the envelope rebuilt per RT-C3.e (see
+runtime/fault_forward.py for why the double delivery with chassis_relay CR-9 is
+the design and not a defect).
 Bodies on the general plane are accepted bare or inside the 11 S3.0 envelope
 (unwrap_body) because today's producers differ: p2 publishes relative_move
 bare while RT-plane producers envelope everything.
@@ -78,6 +83,7 @@ from xbrain.p1_motion.nav.route_intake import RouteAssembler, RouteIntakeError
 from xbrain.p1_motion.path import gnss_pose
 from xbrain.p1_motion.path.local_frame import LocalFrameError
 from xbrain.p1_motion.rns.source import RnsSource
+from xbrain.p1_motion.runtime.fault_forward import now_wall, rebuild_forward
 from xbrain.p1_motion.runtime.nav_cfg import NavConfig
 from xbrain.p1_motion.sources.arbiter_p1 import P1Arbiter
 from xbrain.p1_motion.sources.rns_avoid import RnsAvoidSource
@@ -90,6 +96,10 @@ CMD_FACTOR_TOPIC = "cmd/motion/factor"                    # P1-4
 STATE_PROGRESS_TOPIC = "state/motion/path_progress"       # P1-12
 STATE_ARB_TOPIC = "state/arb/motion"                      # P1-22 (11 S7A.8)
 RELMOVE_STATUS_TOPIC = "cmd/motion/relative_move/status"  # P1-6
+#: P1-20 (11 S1.1.6): the general-plane destination of the rt/chassis/fault
+#: forward. Same key chassis_relay publishes on via CR-9 -- that is the point,
+#: the two paths are redundant on purpose and p5 takes both.
+EVENT_CHASSIS_FAULT_TOPIC = "event/fault/chassis"
 #: 12 S2.2: 20 Hz.
 TICK_PERIOD_S = 0.05
 #: periods kept for the heartbeat's p99 / max (20 s at 20 Hz).
@@ -235,12 +245,18 @@ class NavRuntime:
         self._estop_epoch = 0
         self._counts_state_bad = 0
         self._cmd_pub: Any = None
+        self._fault_pub: Any = None        # P1-20 event/fault/chassis
         self._progress_pub: Any = None
         self._status_pub: Any = None
         self._arb_pub: Any = None
         self._ctrl = CtrlLoop(self._publish_cmd_vel, holonomic=cfg.holonomic)
         self._cur: Optional[NavOutput] = None
-        self._seq = {"cmd_vel": 0, "progress": 0, "status": 0, "event": 0, "arb": 0}
+        # "fault_fwd" is the P1-20 forward's own envelope seq. RT-C3.e wants
+        # the FORWARDER's counter on the destination plane, and per key: sharing
+        # one counter with cmd_vel would make the p5 side see a stream that
+        # jumps by hundreds between two 2 Hz frames.
+        self._seq = {"cmd_vel": 0, "progress": 0, "status": 0, "event": 0,
+                     "arb": 0, "fault_fwd": 0}
         self._periods: Deque[float] = collections.deque(maxlen=_STATS_WINDOW)
         # the heartbeat thread reads _periods while this thread appends: a deque
         # iterated during a concurrent append raises, so both sides lock.
@@ -252,7 +268,8 @@ class NavRuntime:
         self._overruns = 0
         self._tick_errors = 0
         self._counts = {"route_rx": 0, "route_bad": 0, "relmove_rx": 0,
-                        "factor_bad": 0, "publish_fail": 0, "fence_bad": 0}
+                        "factor_bad": 0, "publish_fail": 0, "fence_bad": 0,
+                        "fault_fwd_bad": 0}
         self._health_state: Optional[str] = None
         self._event_boot = os.urandom(3).hex()
         self._thread: Optional[threading.Thread] = None
@@ -280,7 +297,23 @@ class NavRuntime:
         # that never needed to leave the plane both ends are already on.
         self._subs.append(self._rt.declare_subscriber(
             "xbrain/%s/rt/chassis/state" % self._rid, self._on_chassis_state))
+        # *** P1-20: the SECOND path for rt/chassis/fault, and the contract is
+        # explicit that two subscribers are deliberate (11 S2.2.1 verbatim:
+        # chassis_relay is the normal path, p1_motion is the path for when the
+        # relay is dead -- and E_SAFETY_LINK_LOST, which rides this key, has
+        # exactly that scenario as its trigger). Steady-state double delivery
+        # is the ruling (2026-09-27 option (a)); p5 absorbs the duplicate by
+        # CF-4's prefixed code plus edge-triggered derivation.
+        #
+        # NO liveness gate on the relay. Deciding "the relay looks dead, start
+        # forwarding" would put a judgement about another process on the safety
+        # path and would run for the first time on the day it is needed.
+        self._subs.append(self._rt.declare_subscriber(
+            "xbrain/%s/rt/chassis/fault" % self._rid, self._on_chassis_fault))
         self._cmd_pub = self._rt.declare_publisher("xbrain/%s/rt/motion/cmd_vel" % self._rid)
+        # General plane, relative key -- same form every other p5-facing
+        # producer uses (p2's device events, p1's own fence/motion events).
+        self._fault_pub = self._gen.declare_publisher(EVENT_CHASSIS_FAULT_TOPIC)
         self._progress_pub = self._gen.declare_publisher(STATE_PROGRESS_TOPIC)
         self._status_pub = self._gen.declare_publisher(RELMOVE_STATUS_TOPIC)
         self._arb_pub = self._gen.declare_publisher(STATE_ARB_TOPIC)
@@ -376,6 +409,47 @@ class NavRuntime:
                 _logger.warning("p1 rt/chassis/state rejected (n=%d): %s", n, exc)
             return
         self._estop_epoch = epoch
+
+    def _on_chassis_fault(self, sample: Any) -> None:
+        """P1-20: rt/chassis/fault -> event/fault/chassis, envelope rebuilt.
+
+        RUST THREAD (CLAUDE.md 4.2): one parse and one put, no await, no queue.
+        The 20 Hz loop is not touched -- this key is 2 Hz + on change, and
+        nothing here shares state with the tick.
+
+        NO the payload is not parsed. Deriving Events from a ChassisFault is
+        p5's job (11 UM-4 shape: the consumer derives), and a forwarder that
+        understood it would be a second home for the fault schema.
+
+        A message with no data object is REFUSED, not wrapped. Wrapping a bare
+        payload is chassis_relay's defensive branch and it cannot write a rid it
+        never received -- the result is a frame the far side rejects at the rid
+        step, which is indistinguishable from a dead link.
+
+        mutant: forward src_env unchanged (skip rebuild_forward) -> the p5 side
+        sees quadruped's seq/src on the general plane and gap detection counts
+        two interleaved producers -> test_p1_fault_forward red.
+        """
+        try:
+            src_env = _load_json(sample)
+            if not isinstance(src_env, dict) or not isinstance(
+                    src_env.get("data"), dict):
+                raise ValueError("rt/chassis/fault carries no data object")
+            self._seq["fault_fwd"] += 1
+            out = rebuild_forward(src_env, seq=self._seq["fault_fwd"],
+                                  src="p1_motion", ts=now_wall())
+            self._fault_pub.put(
+                json.dumps(out, ensure_ascii=False).encode("utf-8"))
+        except Exception as exc:      # noqa: BLE001 -- one bad frame, keep going
+            # Counted and logged on the first and every 100th: a chassis that
+            # keeps emitting a malformed report must not turn this into a 2 Hz
+            # log flood, but it must not be silent either -- this is the path
+            # that exists for the case where the other one is already dead.
+            self._counts["fault_fwd_bad"] += 1
+            n = self._counts["fault_fwd_bad"]
+            if n == 1 or n % 100 == 0:
+                _logger.warning(
+                    "p1 rt/chassis/fault forward failed (n=%d): %s", n, exc)
 
     def _on_factor(self, sample: Any) -> None:
         doc = _load_json(sample)

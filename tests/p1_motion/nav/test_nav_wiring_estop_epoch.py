@@ -128,4 +128,9 @@ def test_cmd_vel_body_carries_the_field_and_the_rt_key_is_subscribed():
     assert '"xbrain/%s/rt/chassis/state" % self._rid' in _NAV
     # Held in the strong-reference list like every other subscription, or
     # zenoh-python's GC silently unsubscribes it (CLAUDE.md 4.3).
-    assert _NAV.count("self._subs.append(self._rt.declare_subscriber(") == 1
+    # TWO RT-plane subscriptions since 2026-09-27: this one (P1-24,
+    # rt/chassis/state, estop_epoch only) and P1-20 (rt/chassis/fault, the
+    # forward to event/fault/chassis). Counting them is what pins the
+    # strong-reference discipline, so the number moves with the count rather
+    # than the assertion being dropped.
+    assert _NAV.count("self._subs.append(self._rt.declare_subscriber(") == 2
