@@ -790,6 +790,28 @@
 | 🔴 **A** | ★★★ **`RobotState` 在线多发一个 `motion` 字段，而 `11` §4.1 【没有这个字段】，且它恒为 `null`** —— JSON 示例与字段表**两处都查不到** `motion`；`rt_payloads.cc` 有完整的写出分支（`vx/vy/wz/roll/pitch/yaw`），但 `rt_bridge.cc::PublishState` **从不给 `in.motion` 赋值** ⇒ 走的永远是 `a.Raw(",\"motion\":null")` 那一支 | ★ 线上载荷逐字含 `"motion": null`；★ `grep -n '"motion"' ros2_ws/quadruped/src/rt_payloads.cc` 两处（写出分支 ＋ null 分支）；★ `grep -n 'in.motion' ros2_ws/quadruped/src/rt_bridge.cc` **零命中** | ★★★ **两条出路是【取舍】不是对错** ——（a）删掉该字段（它是 `CLAUDE.md` §9.3「不为将来留口子」的标准形态：schema 里留了字段、业务从不消费）；（b）在 `11` §4.1 登记它并接上数据源（要走 **F-5** 冻结面登记）。⇒ **停下问用户**（§9.1 / 铁律 1 的边界：没有经验证的事实能判定谁对谁错） |
 | ⚠️ **B** | ★★ **`state/chassis_basic` / `state/chassis_motion` / `state/chassis_device` 三条在真机上 2/10/2 Hz 稳定转发，而【全仓零订阅者】** —— `11` §2.2.2 把消费者登记为 `p2_core · HMI · 云端`，`configs/generated/whitelist.yaml` 的 `p2_core.sub` 里三条也都在，**代码里一个都没订** | ★ `grep -rn "chassis_basic\|chassis_motion\|chassis_device" xbrain/ --include=*.py` 只命中 `configs/generated/whitelist.yaml`；★ `p2_core` 实际订阅只有 `cmd/estop` · `cmd/motion/intent` · `state/arb/motion` · `state/mode` ＋ 主接线里的 `state/robot` / `state/power`；★ relay 统计行 `CR-6=4235 CR-7=21179 CR-8=4235`（60 s 窗口，持续增长） | ★ **不是 bug，是【登记与实现的差】**：`11` §4.1 逐字说 `RobotState` 就是 quadruped 由 §9.8 四路原始状态**聚合**出来的汇总视图，`p2_core` 用汇总视图就够。⇒ 要么把契约的消费者列收窄到「云端/HMI 可选」，要么给 p5 云端投影接上 —— **属设计取舍，问用户**。🚫 本批不擅自删 CR 行（CR 白名单是 `11` §1.1.6 冻结面） |
 | ⚠️ **C** | ★ **`health/summary` 看不见「通道二降级」** —— `chassis` 项全程 `ok` / `linked`，而 quadruped 的 drdds 源整整两天 `imu rx=0 motion_info rx=0` | ★ `13` v1.39 ③；★ `health/summary.items.chassis` 线上取值 | ★ 加不加健康项属**新增判据**，⇒ 问用户（已在 `13` v1.39 行同步登记） |
+| 🔴🔴 **D** | ★★★ **三条链的【线形】与 `11` §9.8.1 / §9.8.2 / §9.8.3 大面积不符 —— 与 2026-09-27 那次 `ChassisFault` 是【同一个失效模式】，而这次没人发现的原因就是发现 B（零消费者）**。逐条见下表 | ★ 本轮真机三条载荷（原样）＋ `ros2_ws/quadruped/src/rt_payloads.cc` 的 `WriteChassisBasic` / `WriteChassisMotion` / `WriteChassisDevice` 三个写者 | ★ 分两类，**处置不同**（见下表「判定」列）：闭集那两格有客观对错，其余是取舍 ⇒ **整体停下问用户**，🚫 本批未改一行代码 |
+
+**★★★ 发现 D 展开 —— 逐字段（左＝契约，右＝真机线上）**
+
+| 键 | 契约（`11`） | 真机线上 | 判定 |
+|---|---|---|---|
+| `state/chassis_basic`.`charge` | §9.8.1 字段表：**闭集串** `idle`/`going_to_dock`/`charging`/`leaving_dock`/`robot_fault`/`on_dock_no_current` | **`0`（裸整数）** | 🔴 **有客观对错** —— `a.Int(in.charge)`。★★ **同一个进程、同一个底盘字段，在 `state/robot` 上发的是 `"idle"`（串）** ⇒ 一份值两种线形，消费方必须二选一。`CLAUDE.md` §3.5：闭集值由共享库导出，🚫 不静默透传原值 |
+| `state/chassis_basic`.`power_management` | §9.8.1：`normal` / `single_battery` | **`1`（裸整数）** | 🔴 **同上**。★ 讽刺的是 `state/power.power_management` **发的是 `"single_battery"`（串，对的）** —— 两条键对同一个底盘字段给出两种线形 |
+| `state/chassis_basic` 多出 | §9.8.1 无 | `status_code` · `ota_status` · **`direction`** · **`ooa`** · `device_num` · `sn` | ★★★ **`direction` / `ooa` 正是 §9.8.1 「⚠️ 待确认 Q21」问的那两个字段** —— 契约逐字「旧版手册另有 `Direction` 与 `OOA`，新版指南中未见」「**`Direction` 若存在会翻转整个机体坐标系语义，必须确认**」。★ **本轮实测：两个字段【都存在】，静止时 `direction: 0` / `ooa: 0`** ⇒ **Q21 拿到了一半答案**（存在性），另一半（`0` 是不是「前进正方向」）仍要云深处确认。★ 其余四个是有用信息但未登记 |
+| `state/chassis_motion`.`velocity` / `attitude` | §9.8.2：`velocity{vx_mps,vy_mps,wz_radps}` · `attitude{roll_rad,pitch_rad,yaw_rad}` | **`vel{x,y,yaw}`** · **`rpy{roll,pitch,yaw}`** | ⚠️ **取舍** —— 值与单位都对（写者注里逐字记了 `V-46` 的 rad/s 订正），**只有名字不一致**。改哪边都行，但**必须改一边** |
+| `state/chassis_motion`.`joints` | §9.8.2：`joints{lf,rf,lb,rb}`，`MotorStatus` 16 项 ＋ 命名映射表 | **整块缺失** | ⚠️ **取舍 / 可能是欠账** —— 契约连命名映射表都给了（左＝电池仓侧、后＝硬急停按钮侧），线上一个关节都没有 |
+| `state/chassis_motion`.`payload_kg` | §9.8.2 表下逐字：「`Payload` 字段底盘明确标注为**无效参数**，v0.1 曾误映射为负载，**v0.2 删除**」 | **`payload_kg: 0` 在发** | 🔴 **方向相反的一处** —— 契约**显式删掉**的字段又出现在线上，且值恒 0。★ 危险在于下游会把它当真负载读 |
+| `state/chassis_motion` 多出 | §9.8.2 无 | `imu{acc,omega}` · `motion_state` · `gait` | ⚠️ 未登记（`imu` 这块是真数据，静止时 `acc≈[0.17,-0.007,9.85]`，有用） |
+| `state/chassis_device` | §9.8.3：`battery{left,right}` · `motor_temp_c` · `led` · `gps` … | **`list[] + present_count + min_level_pct + any_charging`**，其余**整块缺失** | ⚠️ **`list[]` 这一半有【好理由】**（`V-55` 左右映射未知 ⇒ 用下标数组而不是猜 left/right；`V-68` 的 `present` 也在里面），**但契约侧没登记** ⇒ 该补的是 `11` §9.8.3；★ `motor_temp_c` / `led` / `gps` 三块缺失是另一回事，要单独判 |
+
+> ★★★ **为什么这条值得单独记**：2026-09-27 的 `ChassisFault` 那次，本表自己写下的判词是
+> 「三处**都不报错** —— 照契约编码的消费方读到的是**空**，不是异常」。★ 这次是**同一句话的第二次应验**，
+> 而且规模更大。⇒ 真正的结构性缺口不是这几个字段，是 **发现 B**：
+> **一条没有消费者的 key，它的线形【没有任何东西会说出来】** —— 单测断的是写者自己的输出，
+> 契约在另一个文件里，中间没有一道门。
+> ★ **可做的一般性修法（本批未做，登记）**：给「契约示例 JSON ↔ 真机/金标载荷」加一条**键集合差集**的元测试，
+> 形态同 `scripts/doccheck/` 既有脚本（差集非空即红，正反两向）。🚫 不要靠人再读一遍表。
 
 **★★★ 「还需要底盘在场」清单（按可做性排序，供排期占用底盘时间）**
 
