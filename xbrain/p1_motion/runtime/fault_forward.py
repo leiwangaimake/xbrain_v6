@@ -80,7 +80,7 @@ def rebuild_forward(src_env: Dict[str, Any], *, seq: int, src: str,
     A src_env that is not an object, or carries no data, is returned as None by
     the caller's guard rather than wrapped here: wrapping a bare payload is the
     relay's defensive branch and it cannot write a rid it never received, which
-    produced a message quadruped's ReadEnvelope rejected at the rid step. This
+    produced a message quadruped's read_envelope rejected at the rid step. This
     module refuses instead of producing that shape.
     """
     out: Dict[str, Any] = {}
