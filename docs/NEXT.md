@@ -899,3 +899,39 @@
 | ⚠️ **G** | ★ **失效切到 UDP 候选后不会自己切回 TCP** | ★ 2026-09-28 实测两次：整网卡阻断 4.5 s 后恢复，仍停在 `endpoint=1` | ★ `13` §8.2 逐字只说「首个收到状态上报的生效」，**没有**优先级恢复 ⇒ 现行行为不违约；加不加属**新增判据** ⇒ 问用户（已在 `13` §11.1 `T-CHS-3` 行同步登记） |
 | ⚠️ **H** | ★ **`13` §4.4 的数值表是按 `T_s = 0.1 s` 算的，而线上 `T_s` 不是它** | ★ 2026-09-28 实测静息 `P_xx` 增长率 **5.7e-4 m²/s**，表里是 `6.50e-3 m²/s`（约一个数量级） | ★ **不是缺陷** —— 线上线性源是 `motion_info_20hz` 与 `monitor_10hz` 交替（约 30 次/s），间隔越短总入账越小，正是 `CV-2` 要的行为。★ 已在 `13` §11.1 `T-ODOM-2` 行登记：该表是**模型预测**，🚫 不得拿它当「真机应当读到的绝对值」去验收 |
 | ⚠️ **I** | ★ **机上故障规则表里存在 44 码表之外的码** | ★ `data/run/chassis/fault_rules_CA9C.toml` 有 `0x831A net_err_high` / `0x831B net_drop_high`，而 `13` §7.3 的 44 码表无此二者 | ★ **不用改** —— 它正是 §7.3「开放集设计理由 4：码段有空洞 ⇒ 未登记码一定会出现」的**实物证据**，已就地登记 |
+
+### 8.12 ★★★ 2026-09-28 · 「零生产调用者」42 条收口后的挂账（批 D 第二段）
+
+> ★ 本节是 `tests/meta/test_unwired_modules.py` 里 **tag = `registered`** 那些条目的落点。
+> 门只登记「**没有任何生产文件提到它**」这个事实；**处置**在这里，每条写清**卡点**或**裁决选项**。
+> ★★ 门的 `untriaged` 在 2026-09-28 **归零**；本节之外的条目都是 `no-surface`（它服务的那个接口在生产里不存在），
+> 处置写在门的表体注释里，不在本节重复。
+> ★ 判定量（条数 / 覆盖率）🚫 不抄进本节（`CLAUDE.md` §3.7）；现数由门自己求值。
+
+**★★★ 一、需要【裁决】才能动的（🚫 不得自行拍板）**
+
+| 项 | 模块 | 卡点 / 裁决选项 |
+|---|---|---|
+| **R-D1** | `xbrain/boot/failure_class.py` | ★★★ **两件事同时卡着**。① **无消费者**：会用到「这次启动失败属 R/B/D/T 哪一类」的那两个东西 —— 观察窗（`CFG-BT-4`）与 P1 的 `allow_motion` 闸（`CFG-BT-11`）—— 都在 Phase 2、都没建；`boot_fail.py` 虽已接线（`p5_gateway/__main__.py`）但只落盘不分类。② ★★★ **29 行里有 3 行是它无权做的决定**：`10` §3.3.6 的「类」列对第 27 行（RTK 尚未固定解）逐字是「**不属失败**」，对 28/29 行（perception / RNS 内部启动失败）逐字是「**指针**」，三者都不在 R/B/D/T 内；而 `_CLASSIFIER_TABLE` 把三行**都给了 `CLASS_D`**，并且就在上一行自己写着 `# Non-failure: RTK not fixed`。`requires_hmi_marker(CLASS_D)` 为真 ⇒ 一旦有消费者，**每次冷启动 RTK 未固定前都会挂一个常驻降级标记**，而文档说那根本不是失败。元测试只比 ID 集合、**不比类列**，所以这条红不了。★ `docs/PHASE0_待裁决清单.md` 的 `CFG-BT-14` 第 (3) 点早已逐字登记同一问题。<br>★★ **裁决三选一**：**(a)** 三行从表里删掉，`classify()` 对它们抛；**(b)** 给 27 一个「非失败」类、给 28/29 一个「指针」类，即 `10` §3.3.6 扩类；**(c)** 维持 `D` 并把理由写进 `10` §3.3.6。⚠️ 三选一都改契约，`CLAUDE.md` §9.1 ⇒ **问用户**。 |
+| **R-D2** | `xbrain/p1_motion/gate/negative_vx.py` | ★★ **规则本身是真缺口**：生产的 `nav/host_gate.apply_gate` 对 `vx < 0` 只夹到 `-gate.v_max_free`（＝ `v_lin_free * h * i`，**可以大于 0.5 m/s**），而 `CHK-1-45` **R2.3-b** 要的是一条**绝对后退上限**，理由是没有后向感知（`11` §15.6 **D-33**）。<br>⚠️★★★ **但它现在接不上**：模块里写 `NEGATIVE_VX_CAP_LIMITER = "negative_vx_cap"` 并注「closed-set enum value」，而 `11` §9.6.5 的 `gate.limiter` 闭集（落在 `xbrain/common/enums/sets.yaml`）**没有这个值**；模块自己的头注还逐字要求「imported from the closed-set enum … **NEVER** a bare string literal」。接上去就是往线上发一个**闭集外的 `gate.limiter`**（`CLAUDE.md` §3.5「越界必抛」）。<br>★ **裁决**：R2.3-b 归因到**哪个已有 limiter**（`free_space`? `spec`?），还是 `11` §9.6.5 **新增一个值**（新增即动冻结面，走评审）。 |
+| **R-D3** | `xbrain/p1_motion/teleop/four_source.py` | ★★ **一半是过期的重复，一半卡在已登记的裁决**。① **仲裁那一半已被替代**：在跑的是 `teleop/state.py`（`runtime/main_wiring.py` 里的 `TeleopTracker`），它按 `11` §12A.9.7 的闭集 `gamepad / keyboard_local / keyboard_hmi / virtual_stick` 实现 T-1~T-5；本模块的 `TeleopSource` 是 `keyboard / joystick / hmi / cloud` —— **四个值没有一个在契约闭集里**，且它给 cloud 的时限 1000 ms 而 §12A.9.6 是 500 ms。**它的测试把这套全钉住了**（与 `behavior_goto` 同型：绿的，而且照着做是错的）。② **TL-1/TL-2 那一半没有第二实现**（急停键必须在归一化之前解析），但它的输入 `rt/teleop/input` **没有订阅者**，而**谁来中转**正是 `11` §12A.9.4 **2026-08-05 终审 F3** 登记的三候选裁决（(a) 交 p1 中转 / (b) 给 `teleop_input` 开通用面 session / (c) 新开一条 RT 面 key 交 `chassis_relay`）。<br>⇒ ★★★ **删文件会把 TL-1/TL-2 一起删掉**，所以等 F3 那条裁决；裁完要么删、要么把 TL 两条搬进中转方。 |
+
+**★★★ 二、可以接、但【必须先上台架跑一次】才敢接的（🚫 不是桌面上能验的）**
+
+> ★ 共同点：它们要接的那个生产路径**确实存在且在跑**，接上去会**当场改变整机的可观察行为**（少听见 / 多说话 / 多要一次确认 / 恢复点变了）。
+> ★★ 本段不写「以后做」，写的是**接之前必须先跑什么**。
+
+| 项 | 模块 | 现状（逐字证据） | 接之前必须先跑 |
+|---|---|---|---|
+| **B-D1** | `xbrain/p4_agent/audio_rx/gate_observer.py` | ★★★ **p4 从不订阅 `rt/audio/gate`** —— `runtime/main_wiring.py` 只订了 `rt/audio/mic`；而 p2 **在发**（`runtime/speaker_wiring.py` 的 `GATE_TOPIC`），`p4_agent/__main__.py` 自己的头注也把「subscribe `rt/audio/gate`」列在「**What this file does NOT do yet**」里。连带 `failure/handlers.py` 的 **GATE-1**（「gate 静默 > 1 s ⇒ 视为关闭、丢 ASR」）**没有输入** | ★★★ 它的 fail-safe 方向是**丢 ASR**：只要 p2 的 speaker wiring 没起来（SIL / 单进程调试 / 台架半栈），接上之后**麦克风回路会直接变聋**，而且日志上看是「正常按规则丢弃」。⇒ 先在**整栈都起**的台架上验一遍「gate 在发 ⇒ 语音仍通；gate 停 ⇒ 1 s 后丢」两个方向 |
+| **B-D2** | `xbrain/p4_agent/asr_post/three_layer.py` | ★ 在跑的语音回路 `runtime/turn_loop.py` 是 `transcribe_utterance -> classify`，**中间没有后处理**，原始 ASR 文本直接进分类器（`GWY-P4-03` 的 L1/L2/L3 没有落点） | ★ L2 是**模糊匹配**，接上会改变「说了什么被听成什么」。⇒ 先用真 ASR 输出（而不是构造串）跑一遍金标，确认 L2 不会把一条安全类指令改写成别的 |
+| **B-D3** | `xbrain/p4_agent/templates/restate_engine.py` | ★★ **运行期自己点名了这个缺口**：`runtime/turn_orchestrator.py` 两处逐字写着「the authoritative restate with slot values is **GWY-P4-35 (`render_restate`), wired separately**」「Full L1a/L1b restate with slot values is GWY-P4-35 wiring」—— 而它从来没被接 | ★ 接上会改变**每一条 L1a/L1b 指令播出去的话**。⇒ 台架上听一遍（半双工窗口、话术长度、`RS-4` 纠正分支），🚫 不要靠读模板判定 |
+| **B-D4** | `xbrain/p4_agent/session/level_routing.py` | ★ 一半重复一半独有：`turn_orchestrator` **内联**实现了 CL-2（`estop_path == down` 把 L1b 升 L2）与 L0/L1a/L1b 派发；而 **CL-1 / CL-3 / LB-1 / LB-2 全仓再无第二处** | ★★★ 换掉编排器的内联确认闸 ＝ **改哪些指令要人确认**。⇒ 台架上把五个级别各走一遍，🚫 不允许「测试全绿就换」（§9.1A：内联那条路径的调用点只有一个，覆盖说明不了升级后的行为） |
+| **B-D5** | `xbrain/p3_task/route/suspend_resume.py` | ★ P3 的**挂起**那一半已接（`lifecycle/estop_suspend.py` ES-2、`lifecycle/estop.py` ES-3「不自动恢复」、`state/machine.py` 的 `suspended -> ready`），但**没有任何东西算「从哪一个点续跑」** —— `schedule/driver.py` 只做状态迁移 | ★ 接上会改变**恢复后机器人从哪儿开始走**。⇒ 先在台架上跑「挂起 → 人工 resume → 续跑点」，并核 §7.5 `resume_policy` 与方向一致性两条 |
+
+**★ 三、沿用旧登记的两条（不在本节重复处置）**
+
+| 项 | 模块 | 落点 |
+|---|---|---|
+| — | `xbrain/p4_agent/registry/cmdset_extractor.py` | ★ 本册 §5 **SW-23**：它的正则从 `18` 抽出 0 行 ⇒ `configs/cmdset_18.json` 造不出来 ⇒ 连带 `CS-A1` 在启动期以 `cmdset_names=None` 跑（**装了但没上膛**）、`CFG-BT-19` 判据(3) 也接不上 |
+| — | `xbrain/p2_core/health/restrict_matrix.py` | ★ 本册 §5 **SW-21** UNIT 类 |
