@@ -137,14 +137,23 @@ _KNOWN_UNWIRED = {
     # NEXT S5 SW-21 UNIT class: implementation exists, zero consumers.
     "xbrain/p2_core/health/restrict_matrix.py": "registered: NEXT S5 SW-21 UNIT class",
 
+    # ---- untriaged, HIGHEST PRIORITY TRANCHE ----
+    # These five all name themselves a STARTUP GATE -- "refuse startup",
+    # "refuse to boot", "runs at P4 startup, every one refuses process
+    # start if it fails". None of them is called. A gate nobody invokes
+    # and a gate that always passes are indistinguishable from the
+    # outside, which is precisely CLAUDE.md S3.2 form 1 at process scale.
+    # Triage each by asking what ACTUALLY refuses startup today, not
+    # whether the module exists: for some the behaviour lives elsewhere
+    # (a duplicate to delete), for others nothing does it at all.
+    "xbrain/boot/failure_class.py": "untriaged: CFG-BT-14 startup failure classifier, never invoked",
+    "xbrain/boot/freeze/refuse_to_boot.py": "untriaged: CFG-CF-9 'refuse to boot', freeze refuses via the assertion chain instead -- likely a duplicate",
+    "xbrain/common/zenoh/startup_selfcheck.py": "untriaged: INF-ZN-5 'refuse startup on unregistered keys' -- 11 S2.2 makes this mandatory and nothing runs it",
+    "xbrain/common/zenoh/cross_plane_compliance.py": "untriaged: INF-ZN-9 cross-plane forwarding compliance, never invoked",
     # ---- untriaged (2026-09-28 batch D did not reach these) ----
-    "xbrain/boot/failure_class.py": "untriaged",
-    "xbrain/boot/freeze/refuse_to_boot.py": "untriaged",
     "xbrain/common/checks/scan_surface.py": "untriaged",
     "xbrain/common/config/locked_keys.py": "untriaged",
     "xbrain/common/enums/cls_permissive.py": "untriaged",
-    "xbrain/common/zenoh/cross_plane_compliance.py": "untriaged",
-    "xbrain/common/zenoh/startup_selfcheck.py": "untriaged",
     "xbrain/p1_motion/config/hot_update.py": "untriaged",
     "xbrain/p1_motion/config/zenoh_planes.py": "untriaged",
     "xbrain/p1_motion/gate/negative_vx.py": "untriaged",
@@ -169,7 +178,12 @@ _KNOWN_UNWIRED = {
     "xbrain/p4_agent/registry/d_class.py": "untriaged",
     "xbrain/p4_agent/registry/intents_check.py": "untriaged",
     "xbrain/p4_agent/registry/rulings_18b.py": "untriaged",
-    "xbrain/p4_agent/registry/startup_assertions.py": "untriaged",
+    # GWY-P4-08 CS-A1..A4: header says "every one refuses process start
+    # if it fails", yet P4 never calls it. registry/intents.py has its OWN
+    # CS-A1 implementation (check_intents_in_closed_set) -- so there are
+    # TWO sources for the same assertion and only one runs. Triage = find
+    # which is authoritative, delete the other.
+    "xbrain/p4_agent/registry/startup_assertions.py": "untriaged: GWY-P4-08 CS-A* duplicate of registry/intents.py, neither wired from P4 startup",
     "xbrain/p4_agent/registry/time_expr.py": "untriaged",
     "xbrain/p4_agent/registry/tools_projection.py": "untriaged",
     "xbrain/p4_agent/session/level_routing.py": "untriaged",
