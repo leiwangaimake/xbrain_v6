@@ -32,7 +32,7 @@
 
 using hachist::xbrain::envelope::EnvelopeWriter;
 using hachist::xbrain::envelope::StampedEnvelope;
-using hachist::xbrain::envelope::WriteEnvelopeJson;
+using hachist::xbrain::envelope::write_envelope_json;
 
 static int g_failures = 0;
 
@@ -85,7 +85,7 @@ int main() {
     w.note_clock_status(true, kMono);
     const StampedEnvelope e = w.stamp(kWall, kMono);
     char buf[512];
-    const std::size_t n = WriteEnvelopeJson(e, "{\"probe\":1}", buf, sizeof(buf));
+    const std::size_t n = write_envelope_json(e, "{\"probe\":1}", buf, sizeof(buf));
     CHECK(n > 0);
     const std::string s(buf, n);
     CHECK(s.find("\"ts\":1789455340.123456") != std::string::npos);
@@ -106,15 +106,15 @@ int main() {
     EnvelopeWriter w("gj-001", "quadruped", "9f2c1a44", 5.0);
     const StampedEnvelope e = w.stamp(kWall, kMono);
     char big[512];
-    const std::size_t full = WriteEnvelopeJson(e, "{\"probe\":1}", big, sizeof(big));
+    const std::size_t full = write_envelope_json(e, "{\"probe\":1}", big, sizeof(big));
     CHECK(full > 0);
     char small[512];
-    CHECK(WriteEnvelopeJson(e, "{\"probe\":1}", small, full) == 0);
+    CHECK(write_envelope_json(e, "{\"probe\":1}", small, full) == 0);
     // ...and the degenerate arguments, which a caller can reach by passing a
     // buffer it has not sized yet.
-    CHECK(WriteEnvelopeJson(e, "{\"probe\":1}", small, 0) == 0);
-    CHECK(WriteEnvelopeJson(e, nullptr, small, sizeof(small)) == 0);
-    CHECK(WriteEnvelopeJson(e, "{\"probe\":1}", nullptr, 16) == 0);
+    CHECK(write_envelope_json(e, "{\"probe\":1}", small, 0) == 0);
+    CHECK(write_envelope_json(e, nullptr, small, sizeof(small)) == 0);
+    CHECK(write_envelope_json(e, "{\"probe\":1}", nullptr, 16) == 0);
   }
 
   {

@@ -19,8 +19,8 @@
  * Why it CALLS the header instead of only including it. An empty main() links
  * cleanly no matter what the include directory contains, so a translation unit
  * that only includes would be the empty-shell implementation CLAUDE.md S3.2
- * warns about: green whether or not the library works. Calling CommonDigest and
- * FenceCrc32 forces both templates and both inline definitions to be
+ * warns about: green whether or not the library works. Calling common_digest and
+ * fence_crc32 forces both templates and both inline definitions to be
  * instantiated and emitted, so the compile and the link both have something to
  * do. The values are printed and not checked -- correctness of the digest is
  * CFG-CM-10's job, and duplicating its golden vectors here would create a second
@@ -78,17 +78,17 @@ const char kOkToken[] = "link_no_ros ok";
 /* Exercise the config-side fingerprint. A two key map rather than an empty one:
  * an empty map serialises to "{}" and would not reach the key ordering or the
  * quoting paths, so a header broken in either place would still link and run. */
-std::string ExerciseCommonDigest() {
+std::string exercise_common_digest() {
   using hachist::xbrain::digest::Value;
-  hachist::xbrain::digest::ValuePtr root = Value::Map();
-  root->Set("plane", Value::Str("rt"));
-  root->Set("rate_hz", Value::Int(20));
-  return hachist::xbrain::digest::CommonDigest(root);
+  hachist::xbrain::digest::ValuePtr root = Value::make_map();
+  root->set("plane", Value::make_str("rt"));
+  root->set("rate_hz", Value::make_int(20));
+  return hachist::xbrain::digest::common_digest(root);
 }
 
 /* Exercise the fence-side fingerprint, for the same reason: one polygon with one
  * vertex touches the number rendering and the field separators. */
-std::string ExerciseFenceCrc32() {
+std::string exercise_fence_crc32() {
   hachist::xbrain::digest::FenceSet fence;
   fence.fence_set_id = "link-no-ros";
   fence.rev = 1u;
@@ -102,7 +102,7 @@ std::string ExerciseFenceCrc32() {
   poly.vertices.push_back(hachist::xbrain::digest::Vertex{31.0, 121.0});
   fence.polygons.push_back(poly);
 
-  return hachist::xbrain::digest::FenceCrc32(fence);
+  return hachist::xbrain::digest::fence_crc32(fence);
 }
 
 /* Deliberate out-of-range access, reached only through the explicit argument.
@@ -111,7 +111,7 @@ std::string ExerciseFenceCrc32() {
  * away and turn the probe into a no-op; that would leave the driver asserting
  * against a program that never misbehaves, which is an always-green assertion.
  * With -D_GLIBCXX_ASSERTIONS libstdc++ checks operator[] and aborts here. */
-int RunGlibcxxAssertProbe(int argc) {
+int run_glibcxx_assert_probe(int argc) {
   std::vector<int> values;
   values.push_back(7);
   const std::size_t index = static_cast<std::size_t>(argc) + 40u;
@@ -125,11 +125,11 @@ int main(int argc, char** argv) {
   /* Compared with std::strcmp rather than by constructing a std::string, so the
    * argument handling itself cannot throw before the probe is reached. */
   if (argc > 1 && std::strcmp(argv[1], "glibcxx-assert-probe") == 0) {
-    return RunGlibcxxAssertProbe(argc);
+    return run_glibcxx_assert_probe(argc);
   }
 
-  const std::string digest = ExerciseCommonDigest();
-  const std::string crc = ExerciseFenceCrc32();
+  const std::string digest = exercise_common_digest();
+  const std::string crc = exercise_fence_crc32();
 
   /* English output, per CLAUDE.md S2.1. The two fingerprints are printed so a
    * failure that somehow produced an empty string is visible in the driver's

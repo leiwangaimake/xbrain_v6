@@ -166,7 +166,7 @@ def render():
     with open(TEMPLATE_PATH, encoding="utf-8") as handle:
         template = handle.read()
     # Assert rather than tolerate. A template that lost its placeholder would
-    # render a header with no arrays at all, and every Contains() call against it
+    # render a header with no arrays at all, and every contains() call against it
     # would answer false -- a closed set that rejects everything, arriving
     # without a word.
     if PLACEHOLDER not in template:

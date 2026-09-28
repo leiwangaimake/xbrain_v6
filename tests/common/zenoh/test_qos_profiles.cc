@@ -48,9 +48,9 @@ namespace qos = hachist::xbrain::qos;
 // depending on whether the build merged identical literals, which is the worst
 // kind of test -- one that passes on the machine it was written on.
 TEST(QosProfiles, FrozenTableMatchesTheContract) {
-  ASSERT_EQ(qos::ProfileCount(), 5u);
+  ASSERT_EQ(qos::profile_count(), 5u);
 
-  const qos::QosProfile* q0 = qos::FindProfile("Q0_safety");
+  const qos::QosProfile* q0 = qos::find_profile("Q0_safety");
   ASSERT_NE(q0, nullptr);
   EXPECT_STREQ(q0->congestion_control, "drop");
   EXPECT_STREQ(q0->priority, "real_time");
@@ -59,7 +59,7 @@ TEST(QosProfiles, FrozenTableMatchesTheContract) {
   EXPECT_STREQ(q0->handler.kind, "ring");
   EXPECT_EQ(q0->handler.depth, 8);
 
-  const qos::QosProfile* q1 = qos::FindProfile("Q1_rt");
+  const qos::QosProfile* q1 = qos::find_profile("Q1_rt");
   ASSERT_NE(q1, nullptr);
   EXPECT_STREQ(q1->reliability, "best_effort");
   EXPECT_TRUE(q1->express);
@@ -69,13 +69,13 @@ TEST(QosProfiles, FrozenTableMatchesTheContract) {
   EXPECT_STREQ(q1->handler.kind, "ring");
   EXPECT_EQ(q1->handler.depth, 1);
 
-  const qos::QosProfile* q2 = qos::FindProfile("Q2_state");
+  const qos::QosProfile* q2 = qos::find_profile("Q2_state");
   ASSERT_NE(q2, nullptr);
   EXPECT_STREQ(q2->priority, "data_high");
   EXPECT_FALSE(q2->express);
   EXPECT_EQ(q2->handler.depth, 4);
 
-  const qos::QosProfile* q3 = qos::FindProfile("Q3_cmd");
+  const qos::QosProfile* q3 = qos::find_profile("Q3_cmd");
   ASSERT_NE(q3, nullptr);
   // The only profile carrying block, and the only one where block is right --
   // 11 S2.4.5 第 6 条 shows that dropping an event advances the replay cursor
@@ -89,47 +89,47 @@ TEST(QosProfiles, FrozenTableMatchesTheContract) {
 // so. A consumer that read the field directly would build a ring buffer of zero
 // chunks, drop every one of them, and log nothing.
 TEST(QosProfiles, Q4DepthIsNotSupplied) {
-  const qos::QosProfile* q4 = qos::FindProfile("Q4_stream");
+  const qos::QosProfile* q4 = qos::find_profile("Q4_stream");
   ASSERT_NE(q4, nullptr);
   EXPECT_STREQ(q4->congestion_control, "drop");
   EXPECT_STREQ(q4->priority, "interactive_high");
   EXPECT_EQ(q4->handler.depth, qos::kDepthNotSupplied);
-  EXPECT_FALSE(qos::HasSuppliedDepth(q4->handler));
+  EXPECT_FALSE(qos::has_supplied_depth(q4->handler));
   // And every other profile does have one, so the guard is not vacuously true
   // for the whole table.
-  EXPECT_TRUE(qos::HasSuppliedDepth(qos::FindProfile("Q0_safety")->handler));
+  EXPECT_TRUE(qos::has_supplied_depth(qos::find_profile("Q0_safety")->handler));
 }
 
 // QOS-C1. The override applies on the rt plane to a profile whose congestion
 // control would be block, and nowhere else.
 TEST(QosProfiles, RtOverrideAppliesOnlyToBlockOnTheRtPlane) {
-  const qos::RtOverrideSpec spec = qos::RtOverride();
+  const qos::RtOverrideSpec spec = qos::rt_override();
   EXPECT_STREQ(spec.congestion_control, "drop");
   EXPECT_STREQ(spec.priority, "interactive_high");
   EXPECT_STREQ(spec.handler.kind, "fifo");
   EXPECT_EQ(spec.handler.depth, 32);
 
-  const qos::QosProfile* q3 = qos::FindProfile("Q3_cmd");
-  const qos::QosProfile* q1 = qos::FindProfile("Q1_rt");
+  const qos::QosProfile* q3 = qos::find_profile("Q3_cmd");
+  const qos::QosProfile* q1 = qos::find_profile("Q1_rt");
   ASSERT_NE(q3, nullptr);
   ASSERT_NE(q1, nullptr);
   // Q3 on rt: overridden. This is rt/behavior/request in the Python vectors.
-  EXPECT_TRUE(qos::RequiresRtOverride("rt", *q3));
+  EXPECT_TRUE(qos::requires_rt_override("rt", *q3));
   // Q3 on the general plane: not overridden. cmd/** and event/** keep block,
   // which is the back-pressure S2.4.5 第 6 条 requires there.
-  EXPECT_FALSE(qos::RequiresRtOverride("cmd", *q3));
+  EXPECT_FALSE(qos::requires_rt_override("cmd", *q3));
   // Q1 on rt: nothing to override, it never carried block.
-  EXPECT_FALSE(qos::RequiresRtOverride("rt", *q1));
+  EXPECT_FALSE(qos::requires_rt_override("rt", *q1));
 }
 
 // Lookups must fail as a null pointer, never as a plausible profile. 13 CPP-2
 // forbids throwing from here, and returning any row for an unknown name would
 // let a publisher come up with QoS nobody chose -- 11 S2.4.8 A-7.
 TEST(QosProfiles, UnknownNamesAndIndicesReturnNull) {
-  EXPECT_EQ(qos::FindProfile("Q5_custom"), nullptr);
-  EXPECT_EQ(qos::FindProfile(nullptr), nullptr);
-  EXPECT_EQ(qos::ProfileAt(qos::ProfileCount()), nullptr);
-  EXPECT_NE(qos::ProfileAt(0), nullptr);
+  EXPECT_EQ(qos::find_profile("Q5_custom"), nullptr);
+  EXPECT_EQ(qos::find_profile(nullptr), nullptr);
+  EXPECT_EQ(qos::profile_at(qos::profile_count()), nullptr);
+  EXPECT_NE(qos::profile_at(0), nullptr);
 }
 
 }  // namespace
@@ -139,7 +139,7 @@ TEST(QosProfiles, UnknownNamesAndIndicesReturnNull) {
 // two definitions of main and fail at link.
 int main(int argc, char** argv) {
   if (argc >= 2 && std::strcmp(argv[1], "--emit") == 0) {
-    std::cout << hachist::xbrain::qos::TableToJson();
+    std::cout << hachist::xbrain::qos::table_to_json();
     return 0;
   }
   ::testing::InitGoogleTest(&argc, argv);

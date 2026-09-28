@@ -78,7 +78,7 @@ inline bool operator<(Radps a, Radps b) { return a.value < b.value; }
 //
 //   * it does not take a lo and a hi. Every limit in this system is a magnitude
 //     (spec.max_vx_mps and friends), and a two-sided form invites the call
-//     Clamp(v, 0, max) -- which silently forbids reversing.
+//     clamp(v, 0, max) -- which silently forbids reversing.
 //   * it does not accept a negative limit. A negative magnitude cannot be
 //     satisfied by any value, so the result would be arbitrary; returning zero
 //     is the only answer that is safe in the direction that matters, and it is
@@ -88,13 +88,13 @@ inline bool operator<(Radps a, Radps b) { return a.value < b.value; }
 // NaN is returned unchanged. That is deliberate -- Tier 1 REJECTS a non-finite
 // command in its own branch (13 S3.2) with stop_reason "nan", and silently
 // turning it into a limit here would hide the fault instead of reporting it.
-inline Mps Clamp(Mps v, Mps limit) {
+inline Mps clamp(Mps v, Mps limit) {
   if (!(limit.value > 0.0)) return Mps{0.0};
   if (v.value > limit.value) return limit;
   if (v.value < -limit.value) return Mps{-limit.value};
   return v;
 }
-inline Radps Clamp(Radps v, Radps limit) {
+inline Radps clamp(Radps v, Radps limit) {
   if (!(limit.value > 0.0)) return Radps{0.0};
   if (v.value > limit.value) return limit;
   if (v.value < -limit.value) return Radps{-limit.value};

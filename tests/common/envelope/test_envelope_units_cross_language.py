@@ -68,14 +68,14 @@ PROBE = r"""
 int main() {
   using hachist::xbrain::envelope::EnvelopeWriter;
   using hachist::xbrain::envelope::StampedEnvelope;
-  using hachist::xbrain::envelope::WriteEnvelopeJson;
+  using hachist::xbrain::envelope::write_envelope_json;
 
   EnvelopeWriter w("gj-001", "quadruped", "9f2c1a44", %(sync)r);
   w.note_clock_status(true, %(mono)r);
   const StampedEnvelope e = w.stamp(%(wall)r, %(mono)r);
 
   char buf[1024];
-  const std::size_t n = WriteEnvelopeJson(e, "{\"probe\":1}", buf, sizeof(buf));
+  const std::size_t n = write_envelope_json(e, "{\"probe\":1}", buf, sizeof(buf));
   if (n == 0) {
     std::printf("SERIALISE_FAILED\n");
     return 1;
@@ -173,11 +173,11 @@ int main() {
   EnvelopeWriter w("gj-001", "quadruped", "9f2c1a44", 5.0);
   const StampedEnvelope e = w.stamp(1789455340.123456, 12.5);
   char big[1024];
-  const std::size_t full = WriteEnvelopeJson(e, "{\"probe\":1}", big, sizeof(big));
+  const std::size_t full = write_envelope_json(e, "{\"probe\":1}", big, sizeof(big));
   if (full == 0) { std::printf("UNEXPECTED_ZERO\n"); return 1; }
   // One byte short of what it needs, counting the terminator.
   char small[1024];
-  const std::size_t n = WriteEnvelopeJson(e, "{\"probe\":1}", small, full);
+  const std::size_t n = write_envelope_json(e, "{\"probe\":1}", small, full);
   std::printf("%zu\n", n);
   return 0;
 }

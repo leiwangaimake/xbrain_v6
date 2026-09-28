@@ -29,7 +29,7 @@
  * What this header does NOT do:
  *   * it does not throw. The Python side raises ClosedSetViolation. Here the
  *     nearest consumer runs under CRL-4, which forbids dynamic allocation, and
- *     throwing allocates -- so Contains() answers a question and IndexOf()
+ *     throwing allocates -- so contains() answers a question and index_of()
  *     returns kNotAMember. A caller MUST branch on that answer. Substituting a
  *     nearby value instead is the degrade-to-something-close path 11 S13.6
  *     forbids, and it is forbidden here for the same reason as in Python: it
@@ -59,7 +59,7 @@ namespace hachist {
 namespace xbrain {
 namespace enums {
 
-/* Returned by IndexOf when the value is not in the set. It is NOT a member and
+/* Returned by index_of when the value is not in the set. It is NOT a member and
  * must never be used as one. Deliberately not zero: zero is a real position, and
  * for the ordered sets it is the STRONGEST one -- gate_limiter holds estop
  * there. A miss reported as zero would read as the highest-priority limiter. */
@@ -73,7 +73,7 @@ inline constexpr std::size_t kNotAMember = static_cast<std::size_t>(-1);
  * passing the length separately is how a caller ends up scanning one element
  * past the end of a set that was shortened by a regeneration. */
 template <std::size_t N>
-constexpr bool Contains(const std::string_view (&values)[N],
+constexpr bool contains(const std::string_view (&values)[N],
                         std::string_view value) {
   for (std::size_t i = 0; i < N; ++i) {
     if (values[i] == value) {
@@ -89,7 +89,7 @@ constexpr bool Contains(const std::string_view (&values)[N],
  * index measured against a stop_reason index is meaningless, and nothing here
  * can catch it, because both are plain size_t. */
 template <std::size_t N>
-constexpr std::size_t IndexOf(const std::string_view (&values)[N],
+constexpr std::size_t index_of(const std::string_view (&values)[N],
                               std::string_view value) {
   for (std::size_t i = 0; i < N; ++i) {
     if (values[i] == value) {

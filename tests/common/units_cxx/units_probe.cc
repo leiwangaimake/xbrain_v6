@@ -27,7 +27,7 @@
  *     that branch would never fire and a poisoned payload would be executed as
  *     a legal top-speed command.
  *   * Mps and Radps do not mix. The whole reason Radps exists is that
- *     Clamp(wz_as_Mps, max_vx) compiles and is wrong by whatever the two
+ *     clamp(wz_as_Mps, max_vx) compiles and is wrong by whatever the two
  *     numbers happen to be. That guarantee is the ABSENCE of an overload, so it
  *     cannot be asserted from inside a program that must compile -- the
  *     negative case is compiled separately by the Python driver and is expected
@@ -39,7 +39,7 @@
 #include <cmath>
 #include <cstdio>
 
-using xbrain::units::Clamp;
+using xbrain::units::clamp;
 using xbrain::units::Mps;
 using xbrain::units::Radps;
 
@@ -59,38 +59,38 @@ int main() {
   // Inside the band, untouched. Asserting equality and not "close to" because
   // a clamp that returns the limit whenever it is asked anything would pass a
   // tolerance-based check on a value near the limit.
-  CHECK(Clamp(Mps{0.0}, limit).value == 0.0);
-  CHECK(Clamp(Mps{1.5}, limit).value == 1.5);
-  CHECK(Clamp(Mps{-1.5}, limit).value == -1.5);
+  CHECK(clamp(Mps{0.0}, limit).value == 0.0);
+  CHECK(clamp(Mps{1.5}, limit).value == 1.5);
+  CHECK(clamp(Mps{-1.5}, limit).value == -1.5);
   // On the boundary, both signs: a strict-versus-non-strict slip shows here and
   // nowhere else.
-  CHECK(Clamp(Mps{2.0}, limit).value == 2.0);
-  CHECK(Clamp(Mps{-2.0}, limit).value == -2.0);
+  CHECK(clamp(Mps{2.0}, limit).value == 2.0);
+  CHECK(clamp(Mps{-2.0}, limit).value == -2.0);
   // Outside, both signs. The NEGATIVE case is the one a one-sided clamp gets
   // wrong, and a robot that cannot reverse is the visible symptom.
-  CHECK(Clamp(Mps{5.0}, limit).value == 2.0);
-  CHECK(Clamp(Mps{-5.0}, limit).value == -2.0);
+  CHECK(clamp(Mps{5.0}, limit).value == 2.0);
+  CHECK(clamp(Mps{-5.0}, limit).value == -2.0);
 
   // A non-positive limit clamps to zero rather than passing the value.
-  CHECK(Clamp(Mps{5.0}, Mps{0.0}).value == 0.0);
-  CHECK(Clamp(Mps{-5.0}, Mps{0.0}).value == 0.0);
-  CHECK(Clamp(Mps{5.0}, Mps{-1.0}).value == 0.0);
+  CHECK(clamp(Mps{5.0}, Mps{0.0}).value == 0.0);
+  CHECK(clamp(Mps{-5.0}, Mps{0.0}).value == 0.0);
+  CHECK(clamp(Mps{5.0}, Mps{-1.0}).value == 0.0);
 
   // NaN survives, so Tier 1's own refusal branch is the thing that sees it.
-  CHECK(std::isnan(Clamp(Mps{std::nan("")}, limit).value));
+  CHECK(std::isnan(clamp(Mps{std::nan("")}, limit).value));
   // ...and an infinite command IS clamped, because infinity is comparable and
   // the limit is the correct answer for it. The two non-finite cases differ,
   // and Tier 1 rejects both -- this pins that Clamp does not accidentally make
   // them behave alike.
-  CHECK(Clamp(Mps{INFINITY}, limit).value == 2.0);
-  CHECK(Clamp(Mps{-INFINITY}, limit).value == -2.0);
+  CHECK(clamp(Mps{INFINITY}, limit).value == 2.0);
+  CHECK(clamp(Mps{-INFINITY}, limit).value == -2.0);
 
   // The angular overload is the same shape, on its own type.
   const Radps wz_limit{1.0};
-  CHECK(Clamp(Radps{0.4}, wz_limit).value == 0.4);
-  CHECK(Clamp(Radps{3.0}, wz_limit).value == 1.0);
-  CHECK(Clamp(Radps{-3.0}, wz_limit).value == -1.0);
-  CHECK(Clamp(Radps{3.0}, Radps{0.0}).value == 0.0);
+  CHECK(clamp(Radps{0.4}, wz_limit).value == 0.4);
+  CHECK(clamp(Radps{3.0}, wz_limit).value == 1.0);
+  CHECK(clamp(Radps{-3.0}, wz_limit).value == -1.0);
+  CHECK(clamp(Radps{3.0}, Radps{0.0}).value == 0.0);
 
   // Same-type ordering exists for every unit (std::min resolves through it),
   // and Radps was added to that list rather than left out -- an omission that
@@ -102,8 +102,8 @@ int main() {
   // assigning one to the other is a compile error rather than a conversion.
   // The negative half cannot live in a program that must compile; the Python
   // driver compiles it separately and requires the compile to fail.
-  const Mps a = Clamp(Mps{1.0}, limit);
-  const Radps b = Clamp(Radps{1.0}, wz_limit);
+  const Mps a = clamp(Mps{1.0}, limit);
+  const Radps b = clamp(Radps{1.0}, wz_limit);
   CHECK(a.value == 1.0 && b.value == 1.0);
 
   if (g_failures == 0) {

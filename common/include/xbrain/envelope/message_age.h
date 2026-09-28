@@ -32,7 +32,7 @@
  * The one trap worth stating up front. The produced-age branch subtracts `mono`,
  * the MONOTONIC field, never `ts`. ts is the wall clock (S3.0), and a subtraction
  * against it goes wrong by seconds at the exact moment RTK first locks and steps
- * the clock. There is no `ts` parameter on ComputeAge at all, so that mistake
+ * the clock. There is no `ts` parameter on compute_age at all, so that mistake
  * cannot be made on this side -- the Python side, where the whole Envelope is in
  * scope, is where INF-CM-2 mutation one lives.
  *
@@ -74,7 +74,7 @@ struct AgeResult {
   bool was_negative;    // true iff raw_age_s < 0
 };
 
-// ComputeAge -- the pure S3.0.1 branch/clamp, the C++ twin of age.py compute_age.
+// compute_age -- the pure S3.0.1 branch/clamp, the C++ twin of age.py compute_age.
 //
 // has_mono models the Optional[float] mono field: false is the cloud case
 // (CLK-C4 requires cross-host publishers to omit mono), and when it is false the
@@ -87,7 +87,7 @@ struct AgeResult {
 // age.py does not: an age must be a pure function of its inputs to be comparable
 // across languages, and reading a clock here would also be a place a wall clock
 // could slip in against S3.0.1.
-inline AgeResult ComputeAge(bool has_mono, double mono,
+inline AgeResult compute_age(bool has_mono, double mono,
                             const std::string& boot, double rx_mono,
                             double now_mono, const std::string& local_boot_id) {
   double raw_age;
@@ -114,7 +114,7 @@ inline AgeResult ComputeAge(bool has_mono, double mono,
   return AgeResult{raw_age, raw_age, branch, false};
 }
 
-// FormatAge -- render a double the way the cross-language harness compares it.
+// format_age -- render a double the way the cross-language harness compares it.
 //
 // "%.17g" is the shortest format that round-trips every IEEE 754 double, and it
 // is the SAME rule canonical.py's format_number uses, so the Python side ("%.17g"
@@ -123,7 +123,7 @@ inline AgeResult ComputeAge(bool has_mono, double mono,
 // the two languages are printing the same bits under the same rule. %g already
 // strips trailing zeros (C99 7.21.6.1), so no extra stripping is needed to match
 // Python's %.17g.
-inline std::string FormatAge(double v) {
+inline std::string format_age(double v) {
   char buf[64];
   // snprintf, not std::to_string: to_string is fixed at 6 decimals and locale
   // sensitive, either of which would break the byte-for-byte match. The buffer is

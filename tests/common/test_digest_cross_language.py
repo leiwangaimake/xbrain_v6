@@ -20,7 +20,7 @@ constructor calls, so the only C++ code under test is the header itself.
 *** What this cannot check, stated so the pass is not read as more than it is.
 The transcription is written by this file, in Python. It faithfully reproduces
 the vector's VALUES, but it chooses the C++ types: an integer vector becomes
-Value::Int and a float one becomes Value::Double. A C++ consumer that receives
+Value::make_int and a float one becomes Value::make_double. A C++ consumer that receives
 the same configuration through a different YAML reader might choose differently,
 and this test would not see it. What it does establish is that given the same
 values in the same types, the two serialisers and the two hashes agree.
@@ -88,36 +88,36 @@ def _cxx_string(text):
 def _emit_value(node, var, lines, counter):
     """Emit constructor calls building `node` into a C++ variable named `var`."""
     if node is None:
-        lines.append("  auto %s = Value::Null();" % var)
+        lines.append("  auto %s = Value::make_null();" % var)
     elif isinstance(node, bool):
         # Before the int branch, exactly as in the implementations. A
         # transcription that got this wrong would hand C++ an Int and the
         # comparison would fail for a reason that has nothing to do with the
         # header.
-        lines.append("  auto %s = Value::Bool(%s);" % (var, "true" if node else "false"))
+        lines.append("  auto %s = Value::make_bool(%s);" % (var, "true" if node else "false"))
     elif isinstance(node, int):
-        lines.append("  auto %s = Value::Int(%dLL);" % (var, node))
+        lines.append("  auto %s = Value::make_int(%dLL);" % (var, node))
     elif isinstance(node, float):
         # repr() round-trips the double exactly in Python, and the C++ compiler
         # parses it back to the same bits. Passing "%.17g" text would work too;
         # repr is shorter and provably lossless.
-        lines.append("  auto %s = Value::Double(%r);" % (var, node))
+        lines.append("  auto %s = Value::make_double(%r);" % (var, node))
     elif isinstance(node, str):
-        lines.append("  auto %s = Value::Str(%s);" % (var, _cxx_string(node)))
+        lines.append("  auto %s = Value::make_str(%s);" % (var, _cxx_string(node)))
     elif isinstance(node, list):
-        lines.append("  auto %s = Value::List();" % var)
+        lines.append("  auto %s = Value::make_list();" % var)
         for item in node:
             counter[0] += 1
             child = "v%d" % counter[0]
             _emit_value(item, child, lines, counter)
-            lines.append("  %s->Append(%s);" % (var, child))
+            lines.append("  %s->append(%s);" % (var, child))
     elif isinstance(node, dict):
-        lines.append("  auto %s = Value::Map();" % var)
+        lines.append("  auto %s = Value::make_map();" % var)
         for key, value in node.items():
             counter[0] += 1
             child = "v%d" % counter[0]
             _emit_value(value, child, lines, counter)
-            lines.append("  %s->Set(%s, %s);" % (var, _cxx_string(key), child))
+            lines.append("  %s->set(%s, %s);" % (var, _cxx_string(key), child))
     else:
         raise AssertionError("cannot transcribe %r" % (node,))
 
@@ -134,13 +134,13 @@ def _generate_program():
         "#include <cstdio>",
         "#include <string>",
         "using hachist::xbrain::digest::Value;",
-        "using hachist::xbrain::digest::CommonDigest;",
-        "using hachist::xbrain::digest::CanonicalJson;",
+        "using hachist::xbrain::digest::common_digest;",
+        "using hachist::xbrain::digest::canonical_json;",
         "using hachist::xbrain::digest::FenceSet;",
         "using hachist::xbrain::digest::Polygon;",
         "using hachist::xbrain::digest::Vertex;",
-        "using hachist::xbrain::digest::FenceCrc32;",
-        "using hachist::xbrain::digest::CanonicalFenceString;",
+        "using hachist::xbrain::digest::fence_crc32;",
+        "using hachist::xbrain::digest::canonical_fence_string;",
         "",
         "int main() {",
     ]
@@ -157,7 +157,7 @@ def _generate_program():
         # languages disagree, knowing whether they disagreed on the bytes or on
         # the sha256 is the whole of the diagnosis.
         lines.append('    std::printf("D\\t%s\\t%s\\t%s\\n", %s, '
-                     'CommonDigest(%s).c_str(), CanonicalJson(%s).c_str());'
+                     'common_digest(%s).c_str(), canonical_json(%s).c_str());'
                      % ("%s", "%s", "%s", _cxx_string(vec["name"]), var, var))
         lines.append("  }")
 
@@ -184,7 +184,7 @@ def _generate_program():
             lines.append("      f.polygons.push_back(p);")
             lines.append("    }")
         lines.append('    std::printf("F\\t%s\\t%s\\t%s\\n", %s, '
-                     'FenceCrc32(f).c_str(), CanonicalFenceString(f).c_str());'
+                     'fence_crc32(f).c_str(), canonical_fence_string(f).c_str());'
                      % ("%s", "%s", "%s", _cxx_string(vec["name"])))
         lines.append("  }")
 

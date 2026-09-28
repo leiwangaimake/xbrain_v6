@@ -44,17 +44,17 @@
  *
  * What this does NOT do:
  *   * it does not open, own or close a session;
- *   * it does not parse json -- ToJson5 writes, nothing here reads;
+ *   * it does not parse json -- to_json5 writes, nothing here reads;
  *   * it does not know which planes a process may hold. That is RT-C3.b's
  *     per-key whitelist in 11 S1.1.6, and RT-C4 for quadruped.
  *
  * Traps that look correct and are not:
- *   * Returning a reference to a static SessionConfig from PlaneConfig. It
+ *   * Returning a reference to a static SessionConfig from plane_config. It
  *     compiles, it is faster, and it hands both planes one object -- which is
  *     what RT-C3.a forbids (grep "两个独立的 Zenoh runtime"). Return by value.
  *   * Omitting a scouting field on the assumption that the binding defaults it
  *     off. RT-C1 and RT-C2 both say 显式设置, and the multicast default is on.
- *   * Calling ToJson5 on the control path. It allocates through std::string.
+ *   * Calling to_json5 on the control path. It allocates through std::string.
  *     Session configuration is built once at startup, never inside the 20 Hz
  *     loop and never inside the relay hop CRL-5 budgets at 200 microseconds.
  */
@@ -85,7 +85,7 @@ enum class Plane { kRt, kGen };
 // One plane's session config, as values.
 //
 // A struct of plain members and not a class with accessors, because it carries
-// no invariant of its own -- IsContractCompliant below is what states the
+// no invariant of its own -- is_contract_compliant below is what states the
 // invariant, and it is a free function so a document assembled by any other
 // route can be handed to it too.
 //
@@ -110,15 +110,15 @@ struct SessionConfig {
 // The literal RT-C3.d forbids. Named so the check below reads as the
 // prohibition it implements, and so grepping this header for "router" finds the
 // rule rather than only the word.
-inline const char* ForbiddenMode() { return "router"; }
+inline const char* forbidden_mode() { return "router"; }
 
-// PlaneConfig -- the table, one row per plane.
+// plane_config -- the table, one row per plane.
 //
 // Returned BY VALUE. See the first trap in the header: a static instance handed
 // out by reference gives both planes one object, and the day one consumer edits
 // its copy the other plane changes with it. By value, sharing is not reachable
 // by accident.
-inline SessionConfig PlaneConfig(Plane plane) {
+inline SessionConfig plane_config(Plane plane) {
   SessionConfig cfg;
   // mode is identical on both planes and is peer, never router (RT-C3.d).
   cfg.mode = "peer";
@@ -151,12 +151,12 @@ inline SessionConfig PlaneConfig(Plane plane) {
   return cfg;
 }
 
-// PlaneName -- the plane's spelling, for messages and for the emitter.
+// plane_name -- the plane's spelling, for messages and for the emitter.
 //
-// Kept separate from PlaneConfig because a name is not configuration: putting it
+// Kept separate from plane_config because a name is not configuration: putting it
 // in the struct would invite a consumer to compare names where it should be
 // comparing endpoints.
-inline const char* PlaneName(Plane plane) {
+inline const char* plane_name(Plane plane) {
   switch (plane) {
     case Plane::kRt:
       return "rt";
@@ -171,7 +171,7 @@ inline const char* PlaneName(Plane plane) {
   return "invalid";
 }
 
-// IsContractCompliant -- the three constraints, checked against a document.
+// is_contract_compliant -- the three constraints, checked against a document.
 //
 // Why this is not a tautology. It does not compare the document against the
 // table that built it; that comparison could never fail. It states the four
@@ -183,13 +183,13 @@ inline const char* PlaneName(Plane plane) {
 // It takes the document rather than a plane, so a consumer that assembled a
 // config some other way -- from a file, from a vendor sample -- can be held to
 // the same rule.
-inline bool IsContractCompliant(const SessionConfig& cfg) {
+inline bool is_contract_compliant(const SessionConfig& cfg) {
   // Null checks first: std::strcmp on a null pointer is undefined, and a config
-  // built by a consumer rather than by PlaneConfig may well carry one.
+  // built by a consumer rather than by plane_config may well carry one.
   if (cfg.mode == nullptr || cfg.connect_endpoint == nullptr) {
     return false;
   }
-  if (std::strcmp(cfg.mode, ForbiddenMode()) == 0) {
+  if (std::strcmp(cfg.mode, forbidden_mode()) == 0) {
     return false;
   }
   if (cfg.listen_endpoint_count != 0) {
@@ -212,7 +212,7 @@ inline bool IsContractCompliant(const SessionConfig& cfg) {
   return cfg.connect_endpoint[0] != '\0';
 }
 
-// ToJson5 -- the document as text, byte-identical to the Python emitter.
+// to_json5 -- the document as text, byte-identical to the Python emitter.
 //
 // Byte-identical is the point: tests/common/zenoh/test_session_config_cxx.py
 // parses this output and compares it with session_config_document() field by
@@ -224,7 +224,7 @@ inline bool IsContractCompliant(const SessionConfig& cfg) {
 // json is accepted wherever json5 is.
 //
 // Allocates. Startup only -- see the last trap in the header.
-inline std::string ToJson5(const SessionConfig& cfg) {
+inline std::string to_json5(const SessionConfig& cfg) {
   std::string out;
   out += "{\"mode\":\"";
   out += cfg.mode;

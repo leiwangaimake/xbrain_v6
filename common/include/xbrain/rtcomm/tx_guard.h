@@ -46,13 +46,13 @@
  *
  * The three ways to get this wrong that all look reasonable:
  *
- * 1. Calling AcquireNonRealtime from the ctrl thread "because it is only a few
+ * 1. Calling acquire_non_realtime from the ctrl thread "because it is only a few
  *    microseconds". That is a realtime thread waiting on a lock a non-realtime
  *    thread holds, which is the exact wording of what CPP-3 forbids; the
  *    latency does not show up in testing because the non-realtime holder is
  *    usually fast, and it shows up on the robot when the machine is loaded.
  *
- * 2. Retrying TryAcquireRealtime in a loop until it succeeds. Same defect,
+ * 2. Retrying try_acquire_realtime in a loop until it succeeds. Same defect,
  *    dressed as a retry policy. TX-6 says failure means the tick is skipped,
  *    and skipping one 10 ms axis command is harmless -- missing the tick
  *    deadline is not.
@@ -87,7 +87,7 @@ namespace rtcomm {
 // intrinsic simply does not exist on the other one. The final branch compiles
 // to nothing, which costs correctness nothing -- the spin is still correct, it
 // merely burns more power.
-inline void CpuRelax() noexcept {
+inline void cpu_relax() noexcept {
 #if defined(__x86_64__) || defined(__i386__)
   __builtin_ia32_pause();
 #elif defined(__aarch64__) || defined(__arm__)
@@ -132,7 +132,7 @@ class TxGuard {
   // the successful path: everything the previous holder did before its Release
   // (which is a release store) is visible to this thread before it starts
   // writing the socket.
-  bool TryAcquireRealtime() noexcept {
+  bool try_acquire_realtime() noexcept {
     if (flag_.test_and_set(std::memory_order_acquire)) {
       // Counting the skip is not optional bookkeeping. Without it a guard held
       // by a stuck non-realtime thread stops every axis command and the only
@@ -155,13 +155,13 @@ class TxGuard {
   // line exclusively on every iteration, so a plain spin on test_and_set slows
   // down the holder it is waiting for -- measurably, and worst when contention
   // is highest.
-  void AcquireNonRealtime() noexcept {
+  void acquire_non_realtime() noexcept {
     while (flag_.test_and_set(std::memory_order_acquire)) {
       // std::atomic_flag has no load() in C++17 (test() arrived in C++20, and
       // CPP-1 pins the standard at exactly 17), so the read-only part of the
       // test-and-test-and-set is not expressible. The pause hint is what keeps
       // the contended loop from starving the holder.
-      CpuRelax();
+      cpu_relax();
     }
   }
 
@@ -171,7 +171,7 @@ class TxGuard {
   // memory_order_release pairs with the acquire in both acquire paths, so the
   // bytes this holder wrote to the socket are ordered before the next holder's
   // first write.
-  void Release() noexcept { flag_.clear(std::memory_order_release); }
+  void release() noexcept { flag_.clear(std::memory_order_release); }
 
   // CPP-4: this count goes into hello_ack.runtime and the periodic log, and a
   // value above zero is meant to be seen. Reading it is racy by nature and that
@@ -204,11 +204,11 @@ class TxGuard {
 class RealtimeTxScope {
  public:
   explicit RealtimeTxScope(TxGuard* guard) noexcept
-      : guard_(guard), acquired_(guard->TryAcquireRealtime()) {}
+      : guard_(guard), acquired_(guard->try_acquire_realtime()) {}
 
   ~RealtimeTxScope() noexcept {
     if (acquired_) {
-      guard_->Release();
+      guard_->release();
     }
   }
 
@@ -229,10 +229,10 @@ class RealtimeTxScope {
 class NonRealtimeTxScope {
  public:
   explicit NonRealtimeTxScope(TxGuard* guard) noexcept : guard_(guard) {
-    guard_->AcquireNonRealtime();
+    guard_->acquire_non_realtime();
   }
 
-  ~NonRealtimeTxScope() noexcept { guard_->Release(); }
+  ~NonRealtimeTxScope() noexcept { guard_->release(); }
 
   NonRealtimeTxScope(const NonRealtimeTxScope&) = delete;
   NonRealtimeTxScope& operator=(const NonRealtimeTxScope&) = delete;

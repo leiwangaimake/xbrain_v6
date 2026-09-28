@@ -9,14 +9,14 @@ Description:
 Criterion four requires that Python and C++ compute a byte-identical age and
 decision for the same envelope. Asserting that in prose is worth nothing, so this
 compiles common/include/xbrain/envelope/message_age.h with the flags CLAUDE.md
-5.6 mandates, runs ComputeAge over the same golden vectors test_age.py uses, and
+5.6 mandates, runs compute_age over the same golden vectors test_age.py uses, and
 compares the C++ output to BOTH the golden oracle and the Python result.
 
 Why the vectors are transcribed into C++ source rather than parsed at run time --
 identical reasoning to test_digest_cross_language.py. A C++ JSON reader would sit
 between the header and the comparison, and a bug in it could mask a disagreement
 or invent one. The generator emits each vector's scalar fields as a direct
-ComputeAge call, so the only C++ code under test is the header's arithmetic and
+compute_age call, so the only C++ code under test is the header's arithmetic and
 its boot comparison.
 
 *** What this cannot check, so the pass is not read as more than it is. The
@@ -98,9 +98,9 @@ def _generate_program():
         '#include "xbrain/envelope/message_age.h"',
         "#include <cstdio>",
         "#include <string>",
-        "using hachist::xbrain::envelope::ComputeAge;",
+        "using hachist::xbrain::envelope::compute_age;",
         "using hachist::xbrain::envelope::AgeResult;",
-        "using hachist::xbrain::envelope::FormatAge;",
+        "using hachist::xbrain::envelope::format_age;",
         "",
         "int main() {",
     ]
@@ -115,7 +115,7 @@ def _generate_program():
         lines.append("  {")
         # repr() round-trips a Python float to the exact same double the C++
         # compiler parses back, so the two languages subtract identical bits.
-        lines.append("    AgeResult r = ComputeAge(%s, %r, %s, %r, %r, %s);"
+        lines.append("    AgeResult r = compute_age(%s, %r, %s, %r, %r, %s);"
                      % ("true" if has_mono else "false", float(mono),
                         _cxx_string(boot), float(vec["rx_mono"]),
                         float(vec["now_mono"]), _cxx_string(vec["local_boot_id"])))
@@ -123,10 +123,10 @@ def _generate_program():
         # Python's % operator never tries to interpret the C++ "%d" itself (it
         # would demand an int). The C++ format ends up name / branch / flag / raw
         # / age = %s %s %d %s %s; the numbers go through the header's own renderer
-        # so the test exercises FormatAge too, not just ComputeAge.
+        # so the test exercises format_age too, not just compute_age.
         lines.append('    std::printf("%s\\t%s\\t%s\\t%s\\t%s\\n", %s, r.branch, '
-                     'r.was_negative ? 1 : 0, FormatAge(r.raw_age_s).c_str(), '
-                     'FormatAge(r.age_s).c_str());'
+                     'r.was_negative ? 1 : 0, format_age(r.raw_age_s).c_str(), '
+                     'format_age(r.age_s).c_str());'
                      % ("%s", "%s", "%d", "%s", "%s", _cxx_string(vec["name"])))
         lines.append("  }")
     lines.append("  return 0;")
@@ -187,7 +187,7 @@ def test_cxx_and_python_agree_byte_for_byte(vec, cxx_results):
     branch, negative, raw, age = cxx_results[vec["name"]]
     assert branch == py.branch
     assert negative is py.was_negative
-    # %.17g on both sides: Python via the % operator, C++ via FormatAge. Equal
+    # %.17g on both sides: Python via the % operator, C++ via format_age. Equal
     # strings mean equal bits under one rule, which is the whole cross-language
     # guarantee.
     assert raw == "%.17g" % py.raw_age_s

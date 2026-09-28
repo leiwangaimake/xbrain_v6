@@ -63,7 +63,7 @@ struct Sample {
   int64_t checksum;
 };
 
-void FillSample(Sample* s, int32_t seq) {
+void fill_sample(Sample* s, int32_t seq) {
   s->seq = seq;
   int64_t sum = 0;
   for (int i = 0; i < 8; ++i) {
@@ -76,7 +76,7 @@ void FillSample(Sample* s, int32_t seq) {
   s->checksum = sum;
 }
 
-bool SampleIsConsistent(const Sample& s) {
+bool sample_is_consistent(const Sample& s) {
   int64_t sum = 0;
   for (int i = 0; i < 8; ++i) {
     if (s.repeat[i] != s.seq * (i + 1)) {
@@ -99,12 +99,12 @@ int g_last_taken_seq = 0;
 int g_torn_count = 0;
 int g_backwards_count = 0;
 
-void ConsumerLoop() {
+void consumer_loop() {
   Sample got;
   while (g_producer_running.load(std::memory_order_acquire)) {
-    if (g_slot.TakeFresh(&got)) {
+    if (g_slot.take_fresh(&got)) {
       ++g_taken_total;
-      if (!SampleIsConsistent(got)) {
+      if (!sample_is_consistent(got)) {
         ++g_torn_count;
       }
       if (got.seq <= g_last_taken_seq) {
@@ -121,9 +121,9 @@ void ConsumerLoop() {
   // One last take after the producer has stopped. On a slot this returns the
   // final published value regardless of how far behind the consumer was; on a
   // queue it returns whatever is next in the backlog.
-  if (g_slot.TakeFresh(&got)) {
+  if (g_slot.take_fresh(&got)) {
     ++g_taken_total;
-    if (!SampleIsConsistent(got)) {
+    if (!sample_is_consistent(got)) {
       ++g_torn_count;
     }
     g_last_taken_seq = got.seq;
@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  std::thread consumer(ConsumerLoop);
+  std::thread consumer(consumer_loop);
 
   // steady_clock, not system_clock: CLAUDE.md 3.4 and 11 CLK-C1 put every
   // duration and every deadline on the monotonic clock. A wall-clock step from
@@ -156,8 +156,8 @@ int main(int argc, char** argv) {
   while (std::chrono::steady_clock::now() < deadline) {
     ++seq;
     Sample s;
-    FillSample(&s, seq);
-    g_slot.Publish(s);
+    fill_sample(&s, seq);
+    g_slot.publish(s);
     g_published_total.store(seq, std::memory_order_relaxed);
     std::this_thread::sleep_for(std::chrono::microseconds(100));
   }

@@ -63,7 +63,7 @@ namespace config {
 
 // One node of the parsed tree: either a map (named children) or a scalar leaf.
 // std::map keeps references stable across inserts (node-based), which the
-// indentation stack in ParseYaml relies on to hold pointers to open maps.
+// indentation stack in parse_yaml relies on to hold pointers to open maps.
 class YamlNode {
  public:
   // Three shapes, checked in this order everywhere: map, sequence, scalar.
@@ -241,12 +241,12 @@ class YamlNode {
   std::map<std::string, YamlNode> map_;
   std::vector<YamlNode> seq_;
 
-  friend YamlNode ParseYaml(const std::string& text);
+  friend YamlNode parse_yaml(const std::string& text);
 };
 
 namespace detail {
 
-inline int CountIndent(const std::string& s) {
+inline int count_indent(const std::string& s) {
   int n = 0;
   while (n < static_cast<int>(s.size()) && s[n] == ' ') ++n;
   return n;
@@ -255,7 +255,7 @@ inline int CountIndent(const std::string& s) {
 // Drop an inline `#` comment. A `#` only starts a comment at line start or when
 // preceded by whitespace (YAML rule), and never inside a quoted scalar -- so a
 // port value or a quoted string with a `#` survives.
-inline std::string StripComment(const std::string& s) {
+inline std::string strip_comment(const std::string& s) {
   char quote = 0;
   for (std::size_t i = 0; i < s.size(); ++i) {
     char c = s[i];
@@ -270,7 +270,7 @@ inline std::string StripComment(const std::string& s) {
   return s;
 }
 
-inline std::string Trim(const std::string& s) {
+inline std::string trim(const std::string& s) {
   std::size_t a = s.find_first_not_of(" \t\r\n");
   if (a == std::string::npos) return "";
   std::size_t b = s.find_last_not_of(" \t\r\n");
@@ -279,7 +279,7 @@ inline std::string Trim(const std::string& s) {
 
 // Strip a single matched pair of surrounding quotes. No escape processing is
 // needed for the materialised configs (yaml.dump quotes plainly).
-inline std::string Unquote(const std::string& s) {
+inline std::string unquote(const std::string& s) {
   if (s.size() >= 2 && ((s.front() == '"' && s.back() == '"') ||
                         (s.front() == '\'' && s.back() == '\''))) {
     return s.substr(1, s.size() - 2);
@@ -310,7 +310,7 @@ inline std::string Unquote(const std::string& s) {
 // dash column pops it. Getting this wrong merges two entries into one, which
 // for endpoint_candidates would silently drop a probe target -- hence the
 // explicit unit test over exactly this shape.
-inline YamlNode ParseYaml(const std::string& text) {
+inline YamlNode parse_yaml(const std::string& text) {
   YamlNode root;
   root.is_map_ = true;
   struct Frame {
@@ -323,9 +323,9 @@ inline YamlNode ParseYaml(const std::string& text) {
   int lineno = 0;
   while (std::getline(in, line)) {
     ++lineno;
-    std::string content = detail::StripComment(line);
-    int indent = detail::CountIndent(content);
-    std::string trimmed = detail::Trim(content);
+    std::string content = detail::strip_comment(line);
+    int indent = detail::count_indent(content);
+    std::string trimmed = detail::trim(content);
     if (trimmed.empty()) continue;
     if (trimmed == "---" || trimmed == "...") continue;
 
@@ -353,7 +353,7 @@ inline YamlNode ParseYaml(const std::string& text) {
                                  std::to_string(lineno));
       }
       YamlNode* seq = stack.back().node;
-      std::string rest = detail::Trim(trimmed.substr(1));
+      std::string rest = detail::trim(trimmed.substr(1));
       seq->seq_.push_back(YamlNode());
       YamlNode& entry = seq->seq_.back();
       if (rest.empty()) {
@@ -367,12 +367,12 @@ inline YamlNode ParseYaml(const std::string& text) {
       // ("- port: 30003") opens a map that continues on the following lines.
       if (colon == std::string::npos) {
         entry.is_map_ = false;
-        entry.scalar_ = detail::Unquote(rest);
+        entry.scalar_ = detail::unquote(rest);
         continue;
       }
       entry.is_map_ = true;
-      std::string key = detail::Unquote(detail::Trim(rest.substr(0, colon)));
-      std::string val = detail::Trim(rest.substr(colon + 1));
+      std::string key = detail::unquote(detail::trim(rest.substr(0, colon)));
+      std::string val = detail::trim(rest.substr(colon + 1));
       // *** The one number in this parser worth explaining: the entry frame is
       // recorded at dash column + 1, which is a column no line can occupy.
       // It has to sit STRICTLY between the dash column and the member column
@@ -393,7 +393,7 @@ inline YamlNode ParseYaml(const std::string& text) {
         stack.push_back({indent + 2, &child});
       } else {
         child.is_map_ = false;
-        child.scalar_ = detail::Unquote(val);
+        child.scalar_ = detail::unquote(val);
       }
       continue;
     }
@@ -413,8 +413,8 @@ inline YamlNode ParseYaml(const std::string& text) {
       throw std::runtime_error("yaml_lite: expected 'key:' at line " +
                                std::to_string(lineno) + ": " + trimmed);
     }
-    std::string key = detail::Unquote(detail::Trim(trimmed.substr(0, colon)));
-    std::string val = detail::Trim(trimmed.substr(colon + 1));
+    std::string key = detail::unquote(detail::trim(trimmed.substr(0, colon)));
+    std::string val = detail::trim(trimmed.substr(colon + 1));
     if (val.empty()) {
       // Ambiguous until the NEXT line: `key:` opens either a map or a
       // sequence. Open it as a map and let a following dash convert it --
@@ -437,7 +437,7 @@ inline YamlNode ParseYaml(const std::string& text) {
     } else {
       YamlNode& child = parent->map_[key];
       child.is_map_ = false;
-      child.scalar_ = detail::Unquote(val);
+      child.scalar_ = detail::unquote(val);
     }
   }
   return root;
@@ -445,14 +445,14 @@ inline YamlNode ParseYaml(const std::string& text) {
 
 // Read a file whole and parse it. Throws if the file cannot be opened -- a
 // missing resolved product must stop startup, not default (3.1 / 3.6).
-inline YamlNode LoadYamlFile(const std::string& path) {
+inline YamlNode load_yaml_file(const std::string& path) {
   std::ifstream f(path, std::ios::binary);
   if (!f) {
     throw std::runtime_error("cannot open config file: " + path);
   }
   std::ostringstream ss;
   ss << f.rdbuf();
-  return ParseYaml(ss.str());
+  return parse_yaml(ss.str());
 }
 
 }  // namespace config

@@ -22,7 +22,7 @@
  *
  * The second phase inverts the roles and times the non-realtime acquire while
  * the realtime side holds. It exists because the first phase alone is passed by
- * a guard that never acquires at all: if TryAcquireRealtime simply returned
+ * a guard that never acquires at all: if try_acquire_realtime simply returned
  * false forever, phase one would look perfect. Phase two requires the
  * non-realtime path to actually wait and actually get in, which that shell
  * implementation cannot do.
@@ -68,7 +68,7 @@ std::atomic<bool> g_contender_holds(false);
 // should say so rather than hang.
 const int kSetupTimeoutMs = 5000;
 
-int64_t ElapsedUs(std::chrono::steady_clock::time_point start,
+int64_t elapsed_us(std::chrono::steady_clock::time_point start,
                   std::chrono::steady_clock::time_point end) {
   // steady_clock throughout, per CLAUDE.md 3.4 and 11 CLK-C1: this is a
   // duration measurement, and a wall clock adjusted mid-measurement produces a
@@ -95,10 +95,10 @@ int main(int argc, char** argv) {
   // Phase 1. Non-realtime side holds; the realtime side must skip at once.
   // ---------------------------------------------------------------------
   std::thread contender([hold_ms]() {
-    g_guard.AcquireNonRealtime();
+    g_guard.acquire_non_realtime();
     g_contender_holds.store(true, std::memory_order_release);
     std::this_thread::sleep_for(std::chrono::milliseconds(hold_ms));
-    g_guard.Release();
+    g_guard.release();
   });
 
   const std::chrono::steady_clock::time_point setup_deadline =
@@ -115,28 +115,28 @@ int main(int argc, char** argv) {
   const uint64_t skips_before = g_guard.tx_skip_count();
   const std::chrono::steady_clock::time_point t0 =
       std::chrono::steady_clock::now();
-  const bool rt_got_it = g_guard.TryAcquireRealtime();
+  const bool rt_got_it = g_guard.try_acquire_realtime();
   const std::chrono::steady_clock::time_point t1 =
       std::chrono::steady_clock::now();
   const uint64_t skips_after = g_guard.tx_skip_count();
 
   std::printf("phase1_rt_acquired=%d\n", rt_got_it ? 1 : 0);
   std::printf("phase1_rt_try_us=%lld\n",
-              static_cast<long long>(ElapsedUs(t0, t1)));
+              static_cast<long long>(elapsed_us(t0, t1)));
   std::printf("phase1_skip_delta=%llu\n",
               static_cast<unsigned long long>(skips_after - skips_before));
 
   // See the file comment: this keeps a spinning mutant from deadlocking the
   // next phase instead of failing the assertions above.
   if (rt_got_it) {
-    g_guard.Release();
+    g_guard.release();
   }
   contender.join();
 
   // ---------------------------------------------------------------------
   // Phase 2. Realtime side holds; the non-realtime side must wait it out.
   // ---------------------------------------------------------------------
-  const bool rt_owns = g_guard.TryAcquireRealtime();
+  const bool rt_owns = g_guard.try_acquire_realtime();
   std::printf("phase2_rt_acquired=%d\n", rt_owns ? 1 : 0);
   if (!rt_owns) {
     std::fprintf(stderr, "guard was still held after phase 1\n");
@@ -149,15 +149,15 @@ int main(int argc, char** argv) {
   std::thread waiter([&wait_us]() {
     const std::chrono::steady_clock::time_point w0 =
         std::chrono::steady_clock::now();
-    g_guard.AcquireNonRealtime();
+    g_guard.acquire_non_realtime();
     const std::chrono::steady_clock::time_point w1 =
         std::chrono::steady_clock::now();
-    wait_us.store(ElapsedUs(w0, w1), std::memory_order_release);
-    g_guard.Release();
+    wait_us.store(elapsed_us(w0, w1), std::memory_order_release);
+    g_guard.release();
   });
 
   std::this_thread::sleep_for(std::chrono::milliseconds(hold_ms));
-  g_guard.Release();
+  g_guard.release();
   waiter.join();
 
   std::printf("phase2_nonrt_wait_us=%lld\n",

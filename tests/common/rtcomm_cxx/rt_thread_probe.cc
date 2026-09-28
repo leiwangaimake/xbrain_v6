@@ -25,7 +25,7 @@
  * the runner announce what went unverified. What it can check regardless of
  * privilege is the wrapper's own contract: an out-of-range priority is rejected
  * with EINVAL before any syscall, a null output pointer is rejected, and a
- * failed StartFifoThread creates no thread. Those are the parts that would
+ * failed start_fifo_thread creates no thread. Those are the parts that would
  * silently rot if nobody exercised them until the day the robot boots.
  *
  * What this does NOT establish. That the ORIN will grant realtime -- that
@@ -64,7 +64,7 @@ const size_t kProbeMapBytes = 8u * 1024u * 1024u;
 // /proc/self/status because there is no portable syscall that answers "how much
 // of this process is locked", and the whole point is to check the kernel's
 // opinion rather than the wrapper's return value.
-long ReadVmLckKb() {
+long read_vm_lck_kb() {
   std::FILE* fh = std::fopen("/proc/self/status", "r");
   if (fh == nullptr) {
     return -1;
@@ -87,10 +87,10 @@ int g_thread_policy = -1;
 int g_thread_priority = -1;
 int g_thread_read_rc = -1;
 
-void* InspectSelf(void*) {
+void* inspect_self(void*) {
   // Read from inside the thread: pthread_getschedparam on a thread that has
   // already exited is undefined, and doing it here removes the race entirely.
-  g_thread_read_rc = hachist::xbrain::rtcomm::ReadSchedule(
+  g_thread_read_rc = hachist::xbrain::rtcomm::read_schedule(
       pthread_self(), &g_thread_policy, &g_thread_priority);
   return nullptr;
 }
@@ -108,10 +108,10 @@ int main() {
   // ---------------------------------------------------------------------
   // RTC-7. mlockall, and then the evidence that it took effect.
   // ---------------------------------------------------------------------
-  std::printf("vmlck_before_kb=%ld\n", ReadVmLckKb());
-  const int lock_rc = hachist::xbrain::rtcomm::LockAllMemory();
+  std::printf("vmlck_before_kb=%ld\n", read_vm_lck_kb());
+  const int lock_rc = hachist::xbrain::rtcomm::lock_all_memory();
   std::printf("lockall_rc=%d\n", lock_rc);
-  const long after_lock_kb = ReadVmLckKb();
+  const long after_lock_kb = read_vm_lck_kb();
   std::printf("vmlck_after_lock_kb=%ld\n", after_lock_kb);
 
   void* probe = mmap(nullptr, kProbeMapBytes, PROT_READ | PROT_WRITE,
@@ -119,7 +119,7 @@ int main() {
   std::printf("probe_mapped=%d\n", probe != MAP_FAILED ? 1 : 0);
   long after_map_kb = -1;
   if (probe != MAP_FAILED) {
-    after_map_kb = ReadVmLckKb();
+    after_map_kb = read_vm_lck_kb();
     munmap(probe, kProbeMapBytes);
   }
   std::printf("vmlck_after_map_kb=%ld\n", after_map_kb);
@@ -132,41 +132,41 @@ int main() {
   // ---------------------------------------------------------------------
   // The wrapper's own contract, checkable without any privilege.
   // ---------------------------------------------------------------------
-  const int prio_min = hachist::xbrain::rtcomm::FifoPriorityMin();
-  const int prio_max = hachist::xbrain::rtcomm::FifoPriorityMax();
+  const int prio_min = hachist::xbrain::rtcomm::fifo_priority_min();
+  const int prio_max = hachist::xbrain::rtcomm::fifo_priority_max();
   std::printf("prio_min=%d\n", prio_min);
   std::printf("prio_max=%d\n", prio_max);
 
   std::printf("rc_priority_too_high=%d\n",
-              hachist::xbrain::rtcomm::ApplyFifoPriority(pthread_self(),
+              hachist::xbrain::rtcomm::apply_fifo_priority(pthread_self(),
                                                          prio_max + 1));
   std::printf("rc_priority_too_low=%d\n",
-              hachist::xbrain::rtcomm::ApplyFifoPriority(pthread_self(),
+              hachist::xbrain::rtcomm::apply_fifo_priority(pthread_self(),
                                                          prio_min - 1));
 
   int policy = -1;
   std::printf("rc_null_priority_out=%d\n",
-              hachist::xbrain::rtcomm::ReadSchedule(pthread_self(), &policy,
+              hachist::xbrain::rtcomm::read_schedule(pthread_self(), &policy,
                                                     nullptr));
 
   pthread_t unused_thread;
   std::printf("rc_start_bad_priority=%d\n",
-              hachist::xbrain::rtcomm::StartFifoThread(
-                  &unused_thread, prio_max + 1, InspectSelf, nullptr));
+              hachist::xbrain::rtcomm::start_fifo_thread(
+                  &unused_thread, prio_max + 1, inspect_self, nullptr));
   std::printf("rc_start_null_entry=%d\n",
-              hachist::xbrain::rtcomm::StartFifoThread(&unused_thread, prio_min,
+              hachist::xbrain::rtcomm::start_fifo_thread(&unused_thread, prio_min,
                                                        nullptr, nullptr));
 
   // ---------------------------------------------------------------------
   // The part that needs privilege. Reported, not required.
   // ---------------------------------------------------------------------
   const int apply_rc =
-      hachist::xbrain::rtcomm::ApplyFifoPriority(pthread_self(), prio_min);
+      hachist::xbrain::rtcomm::apply_fifo_priority(pthread_self(), prio_min);
   std::printf("rc_apply_self=%d\n", apply_rc);
 
   pthread_t fifo_thread;
-  const int start_rc = hachist::xbrain::rtcomm::StartFifoThread(
-      &fifo_thread, prio_min, InspectSelf, nullptr);
+  const int start_rc = hachist::xbrain::rtcomm::start_fifo_thread(
+      &fifo_thread, prio_min, inspect_self, nullptr);
   std::printf("rc_start_fifo=%d\n", start_rc);
   if (start_rc == 0) {
     pthread_join(fifo_thread, nullptr);

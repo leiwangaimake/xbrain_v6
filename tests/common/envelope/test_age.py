@@ -53,7 +53,7 @@ def _vectors():
 def _fmt(value):
     """Render a computed age the way the golden pins it: %.17g.
 
-    The same rule canonical.py uses and the C++ FormatAge mirrors, so a Python
+    The same rule canonical.py uses and the C++ format_age mirrors, so a Python
     age and a golden string compare as text without a tolerance -- the point being
     that the value is exact under the chosen dyadic inputs.
     """

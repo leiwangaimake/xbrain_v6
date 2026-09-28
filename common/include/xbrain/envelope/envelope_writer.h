@@ -182,7 +182,7 @@ class EnvelopeWriter {
 // own example shows (1753660800.123456). snprintf with an explicit format
 // rather than std::to_string: the latter is locale-sensitive in principle, and
 // a decimal comma would produce JSON that no decoder accepts.
-inline std::size_t WriteEnvelopeJson(const StampedEnvelope& e,
+inline std::size_t write_envelope_json(const StampedEnvelope& e,
                                      const char* data_json, char* out,
                                      std::size_t cap) {
   if (out == nullptr || data_json == nullptr || cap == 0) return 0;

@@ -28,20 +28,20 @@ The criterion has two halves and this file holds both, on each language side:
 
   C++. The deployed header cannot throw -- its nearest consumer chassis_relay
   runs under CRL-4, where a throw would allocate -- so it answers with a bool
-  from Contains() and the sentinel kNotAMember from IndexOf(), and a caller MUST
+  from contains() and the sentinel kNotAMember from index_of(), and a caller MUST
   branch on that. Two mutations are compiled against a COPY of the header and
-  run: Contains()'s miss branch rewritten to return true (silent pass-through),
-  and IndexOf()'s miss branch rewritten to return 0 (degrade to the strongest
+  run: contains()'s miss branch rewritten to return true (silent pass-through),
+  and index_of()'s miss branch rewritten to return 0 (degrade to the strongest
   member -- gate_limiter holds estop at 0, so a miss read as 0 becomes the
   highest-priority limiter). The probe reports each break; the tracked header is
   never touched, so an interrupted run cannot leave the tree edited.
 
 The positive assertions, and why the negative ones are not enough. An
-implementation that raised on EVERYTHING -- or a Contains() that always returned
+implementation that raised on EVERYTHING -- or a contains() that always returned
 false -- would satisfy every rejection case above while rejecting legal values
 too. That is the empty-shell pass CLAUDE.md 3.2 form 1 warns about and this
 project has caught live. So each side asserts a legal value survives unchanged:
-parse_enum("event_category", "system") == "system", and Contains/IndexOf still
+parse_enum("event_category", "system") == "system", and contains/index_of still
 find their real members. On the C++ side those positives double as the control
 for the mutation runs -- the miss-branch edits leave them at 1, so a red
 rejection fact is the mutation rather than a broken build.
@@ -186,10 +186,10 @@ def test_the_downgrade_to_system_mutation_is_caught():
 
 
 # ---------------------------------------------------------------------------
-# C++ side: the deployed header's Contains/IndexOf rejection semantics
+# C++ side: the deployed header's contains/index_of rejection semantics
 #
 # The header does not throw (CRL-4 forbids the allocation a throw needs), so
-# rejection is a bool from Contains() and the sentinel kNotAMember from IndexOf().
+# rejection is a bool from contains() and the sentinel kNotAMember from index_of().
 # That is runtime behaviour, so the header text is not evidence it holds: the
 # probe in tests/common/enums_cxx exercises it, and the two mutations below are
 # compiled against a COPY of the header and run, so the break is observed rather
@@ -223,7 +223,7 @@ CXX = shutil.which("g++") or shutil.which("clang++")
 #: runtime behaviour reads as a pass to anyone skimming the summary line.
 requires_cxx = pytest.mark.skipif(
     CXX is None,
-    reason="no C++ compiler on PATH; the Contains/IndexOf rejection semantics of "
+    reason="no C++ compiler on PATH; the contains/index_of rejection semantics of "
            "common/include/xbrain/enums/closed_sets.h were NOT verified in this run",
 )
 
@@ -295,11 +295,11 @@ def test_cxx_contains_and_indexof_reject_out_of_set_values(tmp_path):
 
     This is the behaviour the two mutation cases below break one at a time.
     Reading it as the baseline: an off-contract value is rejected by both
-    Contains and IndexOf, a miss never collides with the strongest position, the
+    contains and index_of, a miss never collides with the strongest position, the
     sentinel is not itself a position, and the real members are still found.
     """
     facts = _run(_build(INCLUDE_ROOT, tmp_path))  # real header: the baseline the mutations break
-    # Rejection: Contains says false, IndexOf says kNotAMember, for a value in no
+    # Rejection: contains says false, index_of says kNotAMember, for a value in no
     # set. These are the two forbidden repairs from 11 S13.6, refused.
     assert facts["contains_rejects_foo"] == 1
     assert facts["indexof_rejects_foo"] == 1
@@ -307,7 +307,7 @@ def test_cxx_contains_and_indexof_reject_out_of_set_values(tmp_path):
     # gate_limiter is estop, the strongest limiter of all.
     assert facts["miss_not_read_as_strongest"] == 1
     assert facts["not_a_member_sentinel_nonzero"] == 1
-    # Positives, so an all-false Contains or an all-sentinel IndexOf cannot pass
+    # Positives, so an all-false contains or an all-sentinel index_of cannot pass
     # the rejection facts by refusing everything.
     assert facts["contains_accepts_system"] == 1
     assert facts["indexof_finds_estop"] == 1
@@ -315,10 +315,10 @@ def test_cxx_contains_and_indexof_reject_out_of_set_values(tmp_path):
 
 @requires_cxx
 def test_cxx_silent_passthrough_mutation_is_caught(tmp_path):
-    """*** Mutation: Contains()'s miss branch returns true (silent pass-through).
+    """*** Mutation: contains()'s miss branch returns true (silent pass-through).
 
-    This is the header analogue of the Python downgrade -- a Contains that answers
-    true for a value it never held, so a caller writing "if Contains(v): use(v)"
+    This is the header analogue of the Python downgrade -- a contains that answers
+    true for a value it never held, so a caller writing "if contains(v): use(v)"
     would use an off-contract value as though the contract allowed it. The probe
     must report the rejection broken. contains_accepts_system stays 1 because the
     hit branch is untouched, which is the control proving the red is the mutation
@@ -326,23 +326,23 @@ def test_cxx_silent_passthrough_mutation_is_caught(tmp_path):
     """
     root = _mutated_include_root(tmp_path,
                                  "\n  return false;\n", "\n  return true;\n")
-    facts = _run(_build(root, tmp_path))  # same probe, header with the Contains miss flipped
-    # Caught: Contains no longer rejects the off-set value.
+    facts = _run(_build(root, tmp_path))  # same probe, header with the contains miss flipped
+    # Caught: contains no longer rejects the off-set value.
     assert facts["contains_rejects_foo"] == 0
     # Control: the legal member is still found, so the case above is a genuine
     # rejection failure and not a header that rejects and accepts nothing.
     assert facts["contains_accepts_system"] == 1
-    # Untouched: the IndexOf side is a different function, so it stays correct --
-    # evidence the edit was surgical and this red is about Contains alone.
+    # Untouched: the index_of side is a different function, so it stays correct --
+    # evidence the edit was surgical and this red is about contains alone.
     assert facts["indexof_rejects_foo"] == 1
 
 
 @requires_cxx
 def test_cxx_degrade_to_strongest_mutation_is_caught(tmp_path):
-    """*** Mutation: IndexOf()'s miss branch returns 0 (degrade to the strongest).
+    """*** Mutation: index_of()'s miss branch returns 0 (degrade to the strongest).
 
     The most dangerous of the three. gate_limiter is ordered with estop at
-    position 0, so an IndexOf that answered 0 for a miss would report an
+    position 0, so an index_of that answered 0 for a miss would report an
     off-contract value as the highest-priority limiter -- a fail-silent worse than
     a fail-safe, which is exactly why kNotAMember is deliberately not zero. The
     probe must report both the plain rejection and the strongest-position guard
@@ -350,7 +350,7 @@ def test_cxx_degrade_to_strongest_mutation_is_caught(tmp_path):
     """
     root = _mutated_include_root(tmp_path,
                                  "\n  return kNotAMember;\n", "\n  return 0;\n")
-    facts = _run(_build(root, tmp_path))  # same probe, header with the IndexOf miss flipped
+    facts = _run(_build(root, tmp_path))  # same probe, header with the index_of miss flipped
     # Caught: a miss now returns a real position instead of the sentinel.
     assert facts["indexof_rejects_foo"] == 0
     # Caught, and this is the one that matters: the miss now reads as position 0,
@@ -358,5 +358,5 @@ def test_cxx_degrade_to_strongest_mutation_is_caught(tmp_path):
     # worst form.
     assert facts["miss_not_read_as_strongest"] == 0
     # Control: estop is still found at 0, so the reds above are the mutation and
-    # not an IndexOf that lost track of every value.
+    # not an index_of that lost track of every value.
     assert facts["indexof_finds_estop"] == 1

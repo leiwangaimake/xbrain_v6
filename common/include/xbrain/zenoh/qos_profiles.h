@@ -29,7 +29,7 @@
  * *** handler.depth 0 means NOT SUPPLIED, never "a queue of length zero". The
  * S2.4.7 field table gives it that meaning verbatim (0 = 无默认值, 必须由部署
  * 配置显式给出, 否则拒绝启动) and 11 S13.15 lists the condition under
- * E_QOS_VIOLATION. Q4_stream carries it today. HasSuppliedDepth exists so a
+ * E_QOS_VIOLATION. Q4_stream carries it today. has_supplied_depth exists so a
  * consumer cannot pass the 0 straight into a ring-buffer size: that would size
  * the buffer to nothing, drop every chunk, and log not one word about it.
  * S2.4.2 does now compute N = 10 for Q4 from a 200 ms jitter buffer over 20 ms
@@ -69,7 +69,7 @@
  *     == compares addresses. Two identical string literals may or may not share
  *     storage, so the comparison is right on some builds and wrong on others.
  *     Use std::strcmp, as the functions below do.
- *   * Calling TableToJson on a control path. It allocates through std::string.
+ *   * Calling table_to_json on a control path. It allocates through std::string.
  *     It exists for the cross-language comparison and for startup dumps, never
  *     for the 20 Hz loop and never inside the CRL-5 relay hop.
  *   * Applying the override on the strength of the profile NAME. It is written
@@ -137,12 +137,12 @@ struct RtOverrideSpec {
 
 // The two congestion-control values of 11 S2.4.1, named so the QOS-C1 check
 // below reads as the rule it implements rather than as a string comparison.
-inline const char* CongestionBlock() { return "block"; }
-inline const char* CongestionDrop() { return "drop"; }
+inline const char* congestion_block() { return "block"; }
+inline const char* congestion_drop() { return "drop"; }
 
 // The plane whose keys QOS-C1 governs. It is the third chunk of
 // xbrain/{robot_id}/{plane}/{domain}/{name} (11 S2.1).
-inline const char* RtPlane() { return "rt"; }
+inline const char* rt_plane() { return "rt"; }
 
 // kProfiles -- the frozen table, one row per profile, in contract order.
 //
@@ -175,33 +175,33 @@ inline constexpr std::size_t kProfileCount =
 
 // Accessors, so consumers name the table through one pair of functions and a
 // later change of storage does not reach them.
-inline const QosProfile* ProfileTable() { return kProfiles; }
-inline std::size_t ProfileCount() { return kProfileCount; }
+inline const QosProfile* profile_table() { return kProfiles; }
+inline std::size_t profile_count() { return kProfileCount; }
 
-// ProfileAt -- row by index, or nullptr past the end.
+// profile_at -- row by index, or nullptr past the end.
 //
 // Returns a pointer and not a reference so that an out-of-range index has an
 // answer that is not undefined behaviour. 13 CPP-2 forbids throwing here, and
 // clamping the index would be worse than either: it would hand back a real
 // profile for a request that was already wrong.
-inline const QosProfile* ProfileAt(std::size_t index) {
-  if (index >= ProfileCount()) {
+inline const QosProfile* profile_at(std::size_t index) {
+  if (index >= profile_count()) {
     return nullptr;
   }
-  return ProfileTable() + index;
+  return profile_table() + index;
 }
 
-// FindProfile -- row by name, or nullptr.
+// find_profile -- row by name, or nullptr.
 //
 // std::strcmp and not ==. See the first trap in the header: == on const char*
 // compares addresses, and whether two identical literals share storage is up to
 // the build.
-inline const QosProfile* FindProfile(const char* name) {
+inline const QosProfile* find_profile(const char* name) {
   if (name == nullptr) {
     return nullptr;
   }
-  for (std::size_t i = 0; i < ProfileCount(); ++i) {
-    const QosProfile* profile = ProfileTable() + i;
+  for (std::size_t i = 0; i < profile_count(); ++i) {
+    const QosProfile* profile = profile_table() + i;
     if (std::strcmp(profile->name, name) == 0) {
       return profile;
     }
@@ -212,14 +212,14 @@ inline const QosProfile* FindProfile(const char* name) {
   return nullptr;
 }
 
-// RtOverride -- QOS-C1, hard-coded.
+// rt_override -- QOS-C1, hard-coded.
 //
 // 11 S2.4.7's field table says so in as many words: 硬编码在实现中, 配置文件里
 // 的值仅供审计比对. That is the whole point of the row. A deployment that could
 // switch it off would restore block on the RT plane, and S2.4.3 gives block's
 // blocking time no upper bound at all -- one blocked put swallows a whole 50 ms
 // control period.
-inline RtOverrideSpec RtOverride() {
+inline RtOverrideSpec rt_override() {
   RtOverrideSpec spec;
   spec.congestion_control = "drop";
   spec.priority = "interactive_high";
@@ -228,7 +228,7 @@ inline RtOverrideSpec RtOverride() {
   return spec;
 }
 
-// RequiresRtOverride -- does QOS-C1 apply to this key's profile.
+// requires_rt_override -- does QOS-C1 apply to this key's profile.
 //
 // Written as the rule 11 S2.4.3 states -- a key on the rt/ plane whose
 // congestion control would be block -- rather than as "the profile is called
@@ -236,36 +236,36 @@ inline RtOverrideSpec RtOverride() {
 // the only one carrying block; expressing it as the rule leaves no branch that
 // can never be reached, and no way for a future block-carrying profile to reach
 // the RT plane by not having that name.
-inline bool RequiresRtOverride(const char* plane, const QosProfile& profile) {
+inline bool requires_rt_override(const char* plane, const QosProfile& profile) {
   if (plane == nullptr || profile.congestion_control == nullptr) {
     return false;
   }
-  return std::strcmp(plane, RtPlane()) == 0 &&
-         std::strcmp(profile.congestion_control, CongestionBlock()) == 0;
+  return std::strcmp(plane, rt_plane()) == 0 &&
+         std::strcmp(profile.congestion_control, congestion_block()) == 0;
 }
 
-// HasSuppliedDepth -- has deployment given this handler a depth.
+// has_supplied_depth -- has deployment given this handler a depth.
 //
 // The guard that stops the sentinel from becoming a queue size. A consumer that
 // reads handler.depth without asking this first sizes a Q4 ring buffer to zero,
 // which drops every audio chunk and reports nothing -- the fail-silent direction
 // CLAUDE.md 3.1 exists to close.
-inline bool HasSuppliedDepth(const HandlerSpec& handler) {
+inline bool has_supplied_depth(const HandlerSpec& handler) {
   return handler.depth != kDepthNotSupplied;
 }
 
-// AppendJsonHandler -- one handler block, as text.
+// append_json_handler -- one handler block, as text.
 //
-// Split out of TableToJson so that function stays under the 40-line limit of
+// Split out of table_to_json so that function stays under the 40-line limit of
 // CLAUDE.md 5.1 and so the depth sentinel is rendered in exactly one place.
-inline void AppendJsonHandler(const HandlerSpec& handler, std::string* out) {
+inline void append_json_handler(const HandlerSpec& handler, std::string* out) {
   *out += "{\"kind\":\"";
   *out += handler.kind;
   *out += "\",\"depth\":";
   // null, not 0. The Python half holds this as MISSING, and emitting 0 would
   // make the two sides compare unequal for the right reason but describe the
   // state wrongly for anyone reading the dump: 0 reads as a size.
-  if (HasSuppliedDepth(handler)) {
+  if (has_supplied_depth(handler)) {
     *out += std::to_string(handler.depth);
   } else {
     *out += "null";
@@ -273,7 +273,7 @@ inline void AppendJsonHandler(const HandlerSpec& handler, std::string* out) {
   *out += "}";
 }
 
-// TableToJson -- the whole frozen table plus the override, as text.
+// table_to_json -- the whole frozen table plus the override, as text.
 //
 // Exists for one purpose: tests/common/zenoh/test_qos_profiles_cxx.py parses it
 // and compares it with the Python table. That comparison is the only thing that
@@ -281,10 +281,10 @@ inline void AppendJsonHandler(const HandlerSpec& handler, std::string* out) {
 // same section of 11 and both stay green while one of them is stale.
 //
 // Allocates. Startup and tooling only -- see the second trap in the header.
-inline std::string TableToJson() {
+inline std::string table_to_json() {
   std::string out = "{\"profiles\":{";
-  for (std::size_t i = 0; i < ProfileCount(); ++i) {
-    const QosProfile& profile = *(ProfileTable() + i);
+  for (std::size_t i = 0; i < profile_count(); ++i) {
+    const QosProfile& profile = *(profile_table() + i);
     if (i != 0) {
       out += ",";
     }
@@ -299,16 +299,16 @@ inline std::string TableToJson() {
     out += "\",\"express\":";
     out += profile.express ? "true" : "false";
     out += ",\"handler\":";
-    AppendJsonHandler(profile.handler, &out);
+    append_json_handler(profile.handler, &out);
     out += "}";
   }
-  const RtOverrideSpec override_spec = RtOverride();
+  const RtOverrideSpec override_spec = rt_override();
   out += "},\"rt_override\":{\"congestion_control\":\"";
   out += override_spec.congestion_control;
   out += "\",\"priority\":\"";
   out += override_spec.priority;
   out += "\",\"handler\":";
-  AppendJsonHandler(override_spec.handler, &out);
+  append_json_handler(override_spec.handler, &out);
   out += "}}";
   return out;
 }

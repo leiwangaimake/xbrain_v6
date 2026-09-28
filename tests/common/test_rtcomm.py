@@ -57,7 +57,7 @@ restored and re-checked against its original digest afterwards.
      both acquire paths with try_lock. The static scans report it -- this is the
      substitution CPP-4 forbids by name, and the point of the scan is that the
      resulting guard still WORKS, so no behavioural test would object.
-  B. In tx_guard.h, turn TryAcquireRealtime's single test_and_set into the same
+  B. In tx_guard.h, turn try_acquire_realtime's single test_and_set into the same
      spin the non-realtime path uses. Only the asymmetry probe notices, because
      under light contention a spinning realtime side still gets its work done.
   C. In lockfree_slot.h, replace the triple buffer with a fixed-capacity ring
@@ -324,7 +324,7 @@ def test_an_empty_slot_reports_nothing_and_writes_nothing(slot_semantics):
     # about: a value that passes every "is it set" check and is fiction. The
     # probe seeds a sentinel before the call and checks it survived untouched.
     #
-    # Red under: any TakeFresh that writes through the pointer on the empty
+    # Red under: any take_fresh that writes through the pointer on the empty
     # path, including the tidy-looking "*out = T();" that a reviewer would read
     # straight past.
     assert probe["sentinel_intact"] == 1
@@ -457,7 +457,7 @@ def test_the_realtime_side_skips_instead_of_waiting(guard_asymmetry):
     # thread is not SCHED_FIFO on this machine and can be preempted in the
     # middle of the measurement.
     #
-    # Red under: mutation B of the criterion, TryAcquireRealtime turned into a
+    # Red under: mutation B of the criterion, try_acquire_realtime turned into a
     # spin -- run, and the attempt took the whole 200 ms hold.
     assert probe["phase1_rt_try_us"] < 5000, (
         "the realtime attempt took %d us while the guard was held for %d ms: "
@@ -476,8 +476,8 @@ def test_the_realtime_side_skips_instead_of_waiting(guard_asymmetry):
 def test_the_non_realtime_side_really_waits(guard_asymmetry):
     """The other half of the asymmetry, and what keeps the first half honest."""
     probe = guard_asymmetry
-    # A guard whose TryAcquireRealtime always returned false and whose
-    # AcquireNonRealtime returned immediately would sail through the test above
+    # A guard whose try_acquire_realtime always returned false and whose
+    # acquire_non_realtime returned immediately would sail through the test above
     # while providing no mutual exclusion whatsoever. TX-6 says the non-realtime
     # side spins until it gets in, so with the realtime side holding for 200 ms
     # the measured wait must be of that order.
@@ -489,7 +489,7 @@ def test_the_non_realtime_side_really_waits(guard_asymmetry):
     # critical section interleaving the bytes of two APDU frames -- 13 S9.1's
     # random 0xE001/0xE002, which S7.5 then blames on us and does not retry.
     #
-    # Red under: replacing the spin in AcquireNonRealtime with a single
+    # Red under: replacing the spin in acquire_non_realtime with a single
     # test_and_set that gives up; the wait collapses to microseconds.
     assert probe["phase2_nonrt_wait_us"] >= probe["hold_ms"] * 500
 
@@ -912,7 +912,7 @@ def test_the_headers_declare_no_distribution_macros():
     # decided, and until then it makes the header behave differently on the two
     # platforms while both claim to pass this suite.
     #
-    # The CPU-architecture test inside CpuRelax is a different thing and is
+    # The CPU-architecture test inside cpu_relax is a different thing and is
     # allowed: x86_64 and aarch64 are both real targets today and the pause
     # intrinsic does not exist on the other one, whereas D-45 is a decision
     # nobody has made yet.
@@ -939,7 +939,7 @@ def test_no_scheduling_parameter_carries_a_default():
     # off; CLAUDE.md 3.2 lists the permanently red criterion as its own failure
     # mode precisely because of what happens next.
     #
-    # Red under: giving ApplyFifoPriority a default argument, or writing one of
+    # Red under: giving apply_fifo_priority a default argument, or writing one of
     # 13 S9.1's per-thread priorities into the header as a constant.
     hits = []
     for name, code in _header_code().items():

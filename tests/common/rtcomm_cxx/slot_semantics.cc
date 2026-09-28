@@ -16,7 +16,7 @@
  * distinguished by the numbers printed here, with no timing involved.
  *
  * It also pins the two properties that keep an absent sample from turning into
- * a plausible one: before anything is published, TakeFresh must return false
+ * a plausible one: before anything is published, take_fresh must return false
  * AND must leave the caller's variable untouched. The second half of that is
  * the fail-silent guard from CLAUDE.md 3.1 -- an implementation that helpfully
  * zero-fills the output hands its caller a perfectly believable "not moving,
@@ -61,7 +61,7 @@ int main() {
   Sample out;
   out.seq = kSentinelSeq;
   out.value = -1.0;
-  const bool empty_take = slot.TakeFresh(&out);
+  const bool empty_take = slot.take_fresh(&out);
   std::printf("empty_take=%d\n", empty_take ? 1 : 0);
   std::printf("sentinel_intact=%d\n", out.seq == kSentinelSeq ? 1 : 0);
 
@@ -74,11 +74,11 @@ int main() {
     Sample s;
     s.seq = i;
     s.value = static_cast<double>(i) * 0.5;
-    slot.Publish(s);
+    slot.publish(s);
   }
 
   // 3. One take. A slot yields the newest; a queue yields the oldest.
-  const bool first_take = slot.TakeFresh(&out);
+  const bool first_take = slot.take_fresh(&out);
   std::printf("first_take=%d\n", first_take ? 1 : 0);
   std::printf("first_seq=%d\n", static_cast<int>(out.seq));
   // The payload must be internally consistent: value is a fixed function of
@@ -93,7 +93,7 @@ int main() {
   Sample second;
   second.seq = kSentinelSeq;
   second.value = -1.0;
-  const bool second_take = slot.TakeFresh(&second);
+  const bool second_take = slot.take_fresh(&second);
   std::printf("second_take=%d\n", second_take ? 1 : 0);
   std::printf("second_seq=%d\n", static_cast<int>(second.seq));
 

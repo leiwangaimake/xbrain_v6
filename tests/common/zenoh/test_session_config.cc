@@ -39,7 +39,7 @@
 #include "xbrain/zenoh/session_config.h"
 
 // Shorthand for the namespace under test. Deliberately a namespace alias and not
-// a using-directive: a using-directive would pull PlaneConfig and ToJson5 into
+// a using-directive: a using-directive would pull plane_config and to_json5 into
 // this file's lookup, and the whole point of the file is to be explicit about
 // which implementation each name comes from.
 //
@@ -77,13 +77,13 @@ const char* const kGenJson5 =
 // rather than copied, because a copied second case is how one plane keeps a
 // setting the other had fixed -- and RT-C1 and RT-C2 both say 两个 Zenoh 平面
 // 都必须, which is exactly that failure stated as a rule.
-void ExpectContractFields(const zc::SessionConfig& cfg, const char* connect) {
+void expect_contract_fields(const zc::SessionConfig& cfg, const char* connect) {
   // RT-C3.d. Both directions asserted: equality alone would still pass if the
   // value were later changed to something that is neither peer nor router, and
   // the router case is the one with a stated consequence -- a router propagates
   // subscription declarations between the planes.
   EXPECT_STREQ("peer", cfg.mode);
-  EXPECT_STRNE(zc::ForbiddenMode(), cfg.mode);
+  EXPECT_STRNE(zc::forbidden_mode(), cfg.mode);
   // RT-C3.d, empty listen.
   EXPECT_EQ(0u, cfg.listen_endpoint_count);
   // RT-C1 and RT-C2.
@@ -95,23 +95,23 @@ void ExpectContractFields(const zc::SessionConfig& cfg, const char* connect) {
   // pointer, so "unique" cannot be violated by appending. What can go wrong is
   // the value, and that is what is checked.
   EXPECT_STREQ(connect, cfg.connect_endpoint);
-  EXPECT_TRUE(zc::IsContractCompliant(cfg));
+  EXPECT_TRUE(zc::is_contract_compliant(cfg));
 }
 
 TEST(SessionConfig, RtPlaneFields) {
-  ExpectContractFields(zc::PlaneConfig(zc::Plane::kRt), kRtConnect);
+  expect_contract_fields(zc::plane_config(zc::Plane::kRt), kRtConnect);
 }
 
 TEST(SessionConfig, GenPlaneFields) {
-  ExpectContractFields(zc::PlaneConfig(zc::Plane::kGen), kGenConnect);
+  expect_contract_fields(zc::plane_config(zc::Plane::kGen), kGenConnect);
 }
 
 // The two planes must reach different routers. Asserted on its own so a table
 // where both rows carry 7449 fails here, naming the cause, rather than failing a
 // per-plane case with a confusing expected-value message.
 TEST(SessionConfig, PlanesUseDifferentEndpoints) {
-  const zc::SessionConfig rt = zc::PlaneConfig(zc::Plane::kRt);
-  const zc::SessionConfig gen = zc::PlaneConfig(zc::Plane::kGen);
+  const zc::SessionConfig rt = zc::plane_config(zc::Plane::kRt);
+  const zc::SessionConfig gen = zc::plane_config(zc::Plane::kGen);
   EXPECT_STRNE(rt.connect_endpoint, gen.connect_endpoint);
 }
 
@@ -119,17 +119,17 @@ TEST(SessionConfig, PlanesUseDifferentEndpoints) {
 // handing out a reference to one static instance fails here.
 TEST(SessionConfig, ConfigsAreDistinctObjects) {
   // decltype(auto), not a value binding. This is the whole case: a value
-  // binding COPIES whatever PlaneConfig returns, so an implementation handing
+  // binding COPIES whatever plane_config returns, so an implementation handing
   // out a reference to one static would still produce distinct addresses here
   // and the case would pass with the defect it exists to catch fully present.
   // decltype(auto) keeps the reference when there is one.
-  decltype(auto) rt = zc::PlaneConfig(zc::Plane::kRt);
-  decltype(auto) gen = zc::PlaneConfig(zc::Plane::kGen);
+  decltype(auto) rt = zc::plane_config(zc::Plane::kRt);
+  decltype(auto) gen = zc::plane_config(zc::Plane::kGen);
   EXPECT_NE(&rt, &gen);
   // Two calls for the same plane must also be two objects. Without this, a
   // per-plane static passes the cross-plane assertion above while still handing
   // two threads one shared object.
-  decltype(auto) rt_again = zc::PlaneConfig(zc::Plane::kRt);
+  decltype(auto) rt_again = zc::plane_config(zc::Plane::kRt);
   EXPECT_NE(&rt, &rt_again);
 }
 
@@ -137,8 +137,8 @@ TEST(SessionConfig, ConfigsAreDistinctObjects) {
 // that only holds while the values are copied, which is what returning by value
 // buys and what a reference return would take away.
 TEST(SessionConfig, ConfigsDoNotShareState) {
-  zc::SessionConfig rt = zc::PlaneConfig(zc::Plane::kRt);
-  zc::SessionConfig gen = zc::PlaneConfig(zc::Plane::kGen);
+  zc::SessionConfig rt = zc::plane_config(zc::Plane::kRt);
+  zc::SessionConfig gen = zc::plane_config(zc::Plane::kGen);
   // V-ORIN-ZN-GOSSIP: default is now true; mutate to false to prove
   // independence. Same property (no shared state), inverted probe.
   rt.scouting_gossip_enabled = false;
@@ -147,7 +147,7 @@ TEST(SessionConfig, ConfigsDoNotShareState) {
   EXPECT_EQ(1u, rt.listen_endpoint_count);
   EXPECT_TRUE(gen.scouting_gossip_enabled);
   EXPECT_EQ(0u, gen.listen_endpoint_count);
-  const zc::SessionConfig rt_again = zc::PlaneConfig(zc::Plane::kRt);
+  const zc::SessionConfig rt_again = zc::plane_config(zc::Plane::kRt);
   EXPECT_TRUE(rt_again.scouting_gossip_enabled);
   EXPECT_EQ(0u, rt_again.listen_endpoint_count);
 }
@@ -157,50 +157,50 @@ TEST(SessionConfig, ConfigsDoNotShareState) {
 // this is the mutation CLAUDE.md 3.3 asks for, written as a case rather than
 // left to a manual edit.
 TEST(SessionConfig, ContractCheckRejectsEachViolation) {
-  const zc::SessionConfig good = zc::PlaneConfig(zc::Plane::kRt);
-  ASSERT_TRUE(zc::IsContractCompliant(good));
+  const zc::SessionConfig good = zc::plane_config(zc::Plane::kRt);
+  ASSERT_TRUE(zc::is_contract_compliant(good));
 
   zc::SessionConfig as_router = good;
   as_router.mode = "router";
-  EXPECT_FALSE(zc::IsContractCompliant(as_router));
+  EXPECT_FALSE(zc::is_contract_compliant(as_router));
 
   zc::SessionConfig listening = good;
   listening.listen_endpoint_count = 1;
-  EXPECT_FALSE(zc::IsContractCompliant(listening));
+  EXPECT_FALSE(zc::is_contract_compliant(listening));
 
   zc::SessionConfig multicast_on = good;
   multicast_on.scouting_multicast_enabled = true;
-  EXPECT_FALSE(zc::IsContractCompliant(multicast_on));
+  EXPECT_FALSE(zc::is_contract_compliant(multicast_on));
 
   // V-ORIN-ZN-GOSSIP: the compliance check inverted for gossip.
   // Turning gossip OFF is now the violation (required-on for
   // router-brokered subscription discovery).
   zc::SessionConfig gossip_off = good;
   gossip_off.scouting_gossip_enabled = false;
-  EXPECT_FALSE(zc::IsContractCompliant(gossip_off));
+  EXPECT_FALSE(zc::is_contract_compliant(gossip_off));
 
   // An empty endpoint string is not the same as no endpoint: the binding would
   // accept the document and fail at session-open with a message naming the empty
   // string rather than the config that produced it.
   zc::SessionConfig no_endpoint = good;
   no_endpoint.connect_endpoint = "";
-  EXPECT_FALSE(zc::IsContractCompliant(no_endpoint));
+  EXPECT_FALSE(zc::is_contract_compliant(no_endpoint));
 }
 
 // The emitted text, pinned. See kRtJson5 above for why the whole document is
 // compared rather than a set of substrings.
 TEST(SessionConfig, Json5MatchesTheContractDocument) {
-  EXPECT_EQ(std::string(kRtJson5), zc::ToJson5(zc::PlaneConfig(zc::Plane::kRt)));
-  EXPECT_EQ(std::string(kGenJson5), zc::ToJson5(zc::PlaneConfig(zc::Plane::kGen)));
+  EXPECT_EQ(std::string(kRtJson5), zc::to_json5(zc::plane_config(zc::Plane::kRt)));
+  EXPECT_EQ(std::string(kGenJson5), zc::to_json5(zc::plane_config(zc::Plane::kGen)));
 }
 
 // A document that breaks RT-C3.d must not serialise as though it did not. This
 // is the emitter's own always-green risk: writing "[]" unconditionally would
 // make every config look compliant no matter what it carries.
 TEST(SessionConfig, Json5DoesNotHideAListenEndpoint) {
-  zc::SessionConfig listening = zc::PlaneConfig(zc::Plane::kRt);
+  zc::SessionConfig listening = zc::plane_config(zc::Plane::kRt);
   listening.listen_endpoint_count = 1;
-  const std::string text = zc::ToJson5(listening);
+  const std::string text = zc::to_json5(listening);
   EXPECT_EQ(std::string::npos, text.find("\"listen\":{\"endpoints\":[]}"));
 }
 
@@ -208,8 +208,8 @@ TEST(SessionConfig, PlaneNames) {
   // The names are what the --emit mode selects on and what a log line carries,
   // so a silent rename would break the cross-language driver in a way that reads
   // as a missing plane rather than a renamed one.
-  EXPECT_STREQ("rt", zc::PlaneName(zc::Plane::kRt));
-  EXPECT_STREQ("gen", zc::PlaneName(zc::Plane::kGen));
+  EXPECT_STREQ("rt", zc::plane_name(zc::Plane::kRt));
+  EXPECT_STREQ("gen", zc::plane_name(zc::Plane::kGen));
 }
 
 }  // namespace
@@ -224,11 +224,11 @@ TEST(SessionConfig, PlaneNames) {
 int main(int argc, char** argv) {
   if (argc == 3 && std::strcmp(argv[1], "--emit") == 0) {
     if (std::strcmp(argv[2], "rt") == 0) {
-      std::printf("%s", zc::ToJson5(zc::PlaneConfig(zc::Plane::kRt)).c_str());
+      std::printf("%s", zc::to_json5(zc::plane_config(zc::Plane::kRt)).c_str());
       return 0;
     }
     if (std::strcmp(argv[2], "gen") == 0) {
-      std::printf("%s", zc::ToJson5(zc::PlaneConfig(zc::Plane::kGen)).c_str());
+      std::printf("%s", zc::to_json5(zc::plane_config(zc::Plane::kGen)).c_str());
       return 0;
     }
     // An unknown plane is an error, never a default. A default would hand the

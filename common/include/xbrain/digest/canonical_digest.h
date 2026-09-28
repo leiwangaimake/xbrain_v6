@@ -65,12 +65,12 @@ namespace digest {
 
 namespace detail {
 
-inline uint32_t Rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
+inline uint32_t rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
 
 // The first thirty-two bits of the fractional parts of the cube roots of the
 // first sixty-four primes. Constant, so a typo here is caught by the very first
 // golden vector rather than by inspection.
-inline const uint32_t* Sha256K() {
+inline const uint32_t* sha256_k() {
   static const uint32_t k[64] = {
       0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u, 0x3956c25bu,
       0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u, 0xd807aa98u, 0x12835b01u,
@@ -91,7 +91,7 @@ inline const uint32_t* Sha256K() {
 }  // namespace detail
 
 /* Hexadecimal SHA-256 of an arbitrary byte string, lower case. */
-inline std::string Sha256Hex(const std::string& data) {
+inline std::string sha256_hex(const std::string& data) {
   uint32_t h[8] = {0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
                    0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u};
 
@@ -117,10 +117,10 @@ inline std::string Sha256Hex(const std::string& data) {
              static_cast<uint32_t>(block[i * 4 + 3]);
     }
     for (int i = 16; i < 64; ++i) {
-      const uint32_t s0 = detail::Rotr(w[i - 15], 7) ^
-                          detail::Rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
-      const uint32_t s1 = detail::Rotr(w[i - 2], 17) ^
-                          detail::Rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+      const uint32_t s0 = detail::rotr(w[i - 15], 7) ^
+                          detail::rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+      const uint32_t s1 = detail::rotr(w[i - 2], 17) ^
+                          detail::rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
       w[i] = w[i - 16] + s0 + w[i - 7] + s1;
     }
 
@@ -128,11 +128,11 @@ inline std::string Sha256Hex(const std::string& data) {
     uint32_t e = h[4], f = h[5], g = h[6], hh = h[7];
     for (int i = 0; i < 64; ++i) {
       const uint32_t s1 =
-          detail::Rotr(e, 6) ^ detail::Rotr(e, 11) ^ detail::Rotr(e, 25);
+          detail::rotr(e, 6) ^ detail::rotr(e, 11) ^ detail::rotr(e, 25);
       const uint32_t ch = (e & f) ^ ((~e) & g);
-      const uint32_t t1 = hh + s1 + ch + detail::Sha256K()[i] + w[i];
+      const uint32_t t1 = hh + s1 + ch + detail::sha256_k()[i] + w[i];
       const uint32_t s0 =
-          detail::Rotr(a, 2) ^ detail::Rotr(a, 13) ^ detail::Rotr(a, 22);
+          detail::rotr(a, 2) ^ detail::rotr(a, 13) ^ detail::rotr(a, 22);
       const uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
       const uint32_t t2 = s0 + maj;
       hh = g; g = f; f = e; e = d + t1;
@@ -155,7 +155,7 @@ inline std::string Sha256Hex(const std::string& data) {
 // reasonable and never matches.
 // ---------------------------------------------------------------------------
 
-inline uint32_t Crc32(const std::string& data) {
+inline uint32_t crc32(const std::string& data) {
   uint32_t crc = 0xFFFFFFFFu;
   for (unsigned char byte : data) {
     crc ^= byte;
@@ -167,9 +167,9 @@ inline uint32_t Crc32(const std::string& data) {
 }
 
 /* Eight lower-case hexadecimal characters, the form 11 S9A.2 transmits. */
-inline std::string Crc32Hex(const std::string& data) {
+inline std::string crc32_hex(const std::string& data) {
   char out[9];
-  std::snprintf(out, sizeof(out), "%08x", Crc32(data));
+  std::snprintf(out, sizeof(out), "%08x", crc32(data));
   return std::string(out);
 }
 
@@ -189,20 +189,20 @@ class Value {
  public:
   enum class Kind { kNull, kBool, kInt, kDouble, kString, kList, kMap };
 
-  static ValuePtr Null() { return Make(Kind::kNull); }
-  static ValuePtr Bool(bool v) { auto p = Make(Kind::kBool); p->b_ = v; return p; }
-  static ValuePtr Int(int64_t v) { auto p = Make(Kind::kInt); p->i_ = v; return p; }
-  static ValuePtr Double(double v) {
-    auto p = Make(Kind::kDouble); p->d_ = v; return p;
+  static ValuePtr make_null() { return make(Kind::kNull); }
+  static ValuePtr make_bool(bool v) { auto p = make(Kind::kBool); p->b_ = v; return p; }
+  static ValuePtr make_int(int64_t v) { auto p = make(Kind::kInt); p->i_ = v; return p; }
+  static ValuePtr make_double(double v) {
+    auto p = make(Kind::kDouble); p->d_ = v; return p;
   }
-  static ValuePtr Str(const std::string& v) {
-    auto p = Make(Kind::kString); p->s_ = v; return p;
+  static ValuePtr make_str(const std::string& v) {
+    auto p = make(Kind::kString); p->s_ = v; return p;
   }
-  static ValuePtr List() { return Make(Kind::kList); }
-  static ValuePtr Map() { return Make(Kind::kMap); }
+  static ValuePtr make_list() { return make(Kind::kList); }
+  static ValuePtr make_map() { return make(Kind::kMap); }
 
-  void Append(const ValuePtr& v) { list_.push_back(v); }
-  void Set(const std::string& key, const ValuePtr& v) { map_[key] = v; }
+  void append(const ValuePtr& v) { list_.push_back(v); }
+  void set(const std::string& key, const ValuePtr& v) { map_[key] = v; }
 
   Kind kind() const { return kind_; }
   bool b() const { return b_; }
@@ -213,7 +213,7 @@ class Value {
   const std::map<std::string, ValuePtr>& map() const { return map_; }
 
  private:
-  static ValuePtr Make(Kind k) {
+  static ValuePtr make(Kind k) {
     auto p = std::make_shared<Value>();
     p->kind_ = k;
     return p;
@@ -240,7 +240,7 @@ class Value {
 };
 
 /* One number, canonically. */
-inline std::string FormatDouble(double value) {
+inline std::string format_double(double value) {
   // %.17g is the shortest form that round-trips every IEEE 754 double, so both
   // languages are printing the same bits under the same rule rather than each
   // choosing something readable. It also renders an integral double as "1" with
@@ -266,7 +266,7 @@ inline std::string FormatDouble(double value) {
 }
 
 /* A JSON string with the minimum escaping the rules allow. */
-inline std::string Quote(const std::string& text) {
+inline std::string quote(const std::string& text) {
   std::string out = "\"";
   for (unsigned char ch : text) {
     switch (ch) {
@@ -294,7 +294,7 @@ inline std::string Quote(const std::string& text) {
   return out;
 }
 
-inline std::string CanonicalJson(const ValuePtr& node) {
+inline std::string canonical_json(const ValuePtr& node) {
   if (!node) return "null";
   switch (node->kind()) {
     case Value::Kind::kNull:
@@ -305,9 +305,9 @@ inline std::string CanonicalJson(const ValuePtr& node) {
       return std::to_string(node->i());
     }
     case Value::Kind::kDouble:
-      return FormatDouble(node->d());
+      return format_double(node->d());
     case Value::Kind::kString:
-      return Quote(node->s());
+      return quote(node->s());
     case Value::Kind::kList: {
       // Order preserved: R-5 makes a list a unit replaced whole, and
       // qos.bindings is first-match-wins, so a reordering changes behaviour and
@@ -317,7 +317,7 @@ inline std::string CanonicalJson(const ValuePtr& node) {
       for (const auto& item : node->list()) {
         if (!first) out += ",";
         first = false;
-        out += CanonicalJson(item);
+        out += canonical_json(item);
       }
       return out + "]";
     }
@@ -327,7 +327,7 @@ inline std::string CanonicalJson(const ValuePtr& node) {
       for (const auto& kv : node->map()) {
         if (!first) out += ",";
         first = false;
-        out += Quote(kv.first) + ":" + CanonicalJson(kv.second);
+        out += quote(kv.first) + ":" + canonical_json(kv.second);
       }
       return out + "}";
     }
@@ -336,8 +336,8 @@ inline std::string CanonicalJson(const ValuePtr& node) {
 }
 
 /* 10 S5.4.4: the first sixteen hexadecimal characters of the sha256. */
-inline std::string CommonDigest(const ValuePtr& common_subtree) {
-  return Sha256Hex(CanonicalJson(common_subtree)).substr(0, 16);
+inline std::string common_digest(const ValuePtr& common_subtree) {
+  return sha256_hex(canonical_json(common_subtree)).substr(0, 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +373,7 @@ struct FenceSet {
   std::vector<Polygon> polygons;
 };
 
-inline std::string CanonicalFenceString(const FenceSet& fence) {
+inline std::string canonical_fence_string(const FenceSet& fence) {
   std::string out = fence.fence_set_id + "|" + std::to_string(fence.rev) + "|";
   for (const Polygon& poly : fence.polygons) {
     out += poly.poly_id + "|" + poly.role + "|" + poly.winding + "|";
@@ -405,8 +405,8 @@ inline std::string CanonicalFenceString(const FenceSet& fence) {
   return out;
 }
 
-inline std::string FenceCrc32(const FenceSet& fence) {
-  return Crc32Hex(CanonicalFenceString(fence));
+inline std::string fence_crc32(const FenceSet& fence) {
+  return crc32_hex(canonical_fence_string(fence));
 }
 
 }  // namespace digest

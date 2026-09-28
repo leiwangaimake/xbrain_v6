@@ -37,21 +37,21 @@ using hachist::xbrain::envelope::StampedEnvelope;
 // compile quietly.
 constexpr double kSyncTimeoutS = 5.0;
 
-EnvelopeWriter MakeWriter() {
+EnvelopeWriter make_writer() {
   return EnvelopeWriter("r-1", "quadruped", "0a1b2c3d", kSyncTimeoutS);
 }
 
 // *** Mutation 1: ts_sync must be false before any ClockStatus arrives.
 // A "default true until we hear otherwise" implementation fails here.
 TEST(EnvelopeWriter, TsSyncIsFalseBeforeAnyClockStatus) {
-  EnvelopeWriter w = MakeWriter();
+  EnvelopeWriter w = make_writer();
   StampedEnvelope env = w.stamp(/*wall=*/1700000000.0, /*mono=*/1.0);
   EXPECT_FALSE(env.ts_sync);
 }
 
 // A fresh ClockStatus with sync=true makes ts_sync true...
 TEST(EnvelopeWriter, TsSyncCopiesAFreshTrueStatus) {
-  EnvelopeWriter w = MakeWriter();
+  EnvelopeWriter w = make_writer();
   w.note_clock_status(/*sync=*/true, /*mono=*/1.0);
   EXPECT_TRUE(w.ts_sync_at(/*mono=*/1.0 + 4.999));   // within the 5 s window
 }
@@ -59,14 +59,14 @@ TEST(EnvelopeWriter, TsSyncCopiesAFreshTrueStatus) {
 // ...and a fresh ClockStatus with sync=false is copied as false (CLK-A2: copy,
 // never optimistically upgrade).
 TEST(EnvelopeWriter, TsSyncCopiesAFreshFalseStatus) {
-  EnvelopeWriter w = MakeWriter();
+  EnvelopeWriter w = make_writer();
   w.note_clock_status(/*sync=*/false, /*mono=*/1.0);
   EXPECT_FALSE(w.ts_sync_at(/*mono=*/1.0 + 0.010));
 }
 
 // *** Mutation 2: at/after the 5 s window ts_sync flips false, measured on mono.
 TEST(EnvelopeWriter, TsSyncFlipsFalseAtTheMonotonicWindow) {
-  EnvelopeWriter w = MakeWriter();
+  EnvelopeWriter w = make_writer();
   w.note_clock_status(/*sync=*/true, /*mono=*/1.0);
   EXPECT_TRUE(w.ts_sync_at(/*mono=*/1.0 + 4.999));    // still fresh
   EXPECT_FALSE(w.ts_sync_at(/*mono=*/1.0 + 5.0));   // exactly 5 s -> stale
@@ -77,7 +77,7 @@ TEST(EnvelopeWriter, TsSyncFlipsFalseAtTheMonotonicWindow) {
 // change ts_sync: only the monotonic age governs it. An implementation that
 // measured staleness on the wall field would flip here and fail.
 TEST(EnvelopeWriter, WallClockStepDoesNotAffectTsSync) {
-  EnvelopeWriter w = MakeWriter();
+  EnvelopeWriter w = make_writer();
   w.note_clock_status(/*sync=*/true, /*mono=*/1.0);
   // mono says fresh (age 0.1 s); wall jumps BACKWARDS by an hour.
   StampedEnvelope env = w.stamp(/*wall=*/1700000000.0 - 3600.0, /*mono=*/1.1);
@@ -89,7 +89,7 @@ TEST(EnvelopeWriter, WallClockStepDoesNotAffectTsSync) {
 
 // *** Mutation 3 (half): seq comes from one source and strictly increases.
 TEST(EnvelopeWriter, SeqStartsAtOneAndIncrementsMonotonically) {
-  EnvelopeWriter w = MakeWriter();
+  EnvelopeWriter w = make_writer();
   EXPECT_EQ(w.stamp(1.0, 1.0).seq, 1u);
   EXPECT_EQ(w.stamp(1.0, 2.0).seq, 2u);
   EXPECT_EQ(w.stamp(1.0, 3.0).seq, 3u);
@@ -98,7 +98,7 @@ TEST(EnvelopeWriter, SeqStartsAtOneAndIncrementsMonotonically) {
 // The wall and mono fields land where they belong -- ts is the wall reading,
 // mono is the monotonic one -- so a downstream age computation reads mono.
 TEST(EnvelopeWriter, TsHoldsWallAndMonoHoldsMonotonic) {
-  EnvelopeWriter w = MakeWriter();
+  EnvelopeWriter w = make_writer();
   // Sub-second digits on both, so a field that rounded or rescaled shows here.
   StampedEnvelope env = w.stamp(/*wall=*/1700000000.125, /*mono=*/42.5);
   EXPECT_DOUBLE_EQ(env.ts, 1700000000.125);

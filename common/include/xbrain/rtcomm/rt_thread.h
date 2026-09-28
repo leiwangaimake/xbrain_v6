@@ -81,7 +81,7 @@ namespace rtcomm {
 // Call this before starting any thread. MCL_FUTURE covers mappings made after
 // the call, so the stacks of threads created later are locked as they appear;
 // the reverse order leaves those stacks pageable and the flag only looks right.
-inline int LockAllMemory() noexcept {
+inline int lock_all_memory() noexcept {
   // errno is only meaningful after a failing call, so it is read only then --
   // reading it unconditionally would report a stale value from some earlier
   // library call and send the caller chasing a failure that did not happen.
@@ -96,11 +96,11 @@ inline int LockAllMemory() noexcept {
 // instead of turning a configuration mistake into an opaque EINVAL at startup.
 // These are queried, never hardcoded: POSIX only guarantees a range of at least
 // 32 levels, and the numbers differ between kernels.
-inline int FifoPriorityMin() noexcept {
+inline int fifo_priority_min() noexcept {
   return sched_get_priority_min(SCHED_FIFO);
 }
 
-inline int FifoPriorityMax() noexcept {
+inline int fifo_priority_max() noexcept {
   return sched_get_priority_max(SCHED_FIFO);
 }
 
@@ -112,8 +112,8 @@ inline int FifoPriorityMax() noexcept {
 // caller can distinguish "your configured priority is out of range" from "you
 // are not allowed to ask for realtime at all". Both come back as an int, but
 // only one of them is fixed by editing the systemd unit.
-inline int ApplyFifoPriority(pthread_t thread, int priority) noexcept {
-  if (priority < FifoPriorityMin() || priority > FifoPriorityMax()) {
+inline int apply_fifo_priority(pthread_t thread, int priority) noexcept {
+  if (priority < fifo_priority_min() || priority > fifo_priority_max()) {
     return EINVAL;
   }
 
@@ -136,7 +136,7 @@ inline int ApplyFifoPriority(pthread_t thread, int priority) noexcept {
 // claim as "the thread is running SCHED_FIFO", and a startup self-check that
 // cannot tell the two apart is a check that passes on a machine where realtime
 // was never granted.
-inline int ReadSchedule(pthread_t thread, int* policy, int* priority) noexcept {
+inline int read_schedule(pthread_t thread, int* policy, int* priority) noexcept {
   if (policy == nullptr || priority == nullptr) {
     return EINVAL;
   }
@@ -154,7 +154,7 @@ inline int ReadSchedule(pthread_t thread, int* policy, int* priority) noexcept {
 // an errno; on failure no thread was created and *thread is untouched.
 //
 // Why the attribute route rather than pthread_create followed by
-// ApplyFifoPriority. The second form runs the thread's first instructions under
+// apply_fifo_priority. The second form runs the thread's first instructions under
 // the parent's policy, so a loop that starts by taking its first deadline gets
 // scheduled as an ordinary task for that window. On a busy machine that is
 // where the first missed tick comes from, and it is not reproducible.
@@ -164,12 +164,12 @@ inline int ReadSchedule(pthread_t thread, int* policy, int* priority) noexcept {
 // policy and the priority set below. The call still returns 0. That is the
 // single most common way this wrapper gets written wrong, and the only symptom
 // is jitter.
-inline int StartFifoThread(pthread_t* thread, int priority,
+inline int start_fifo_thread(pthread_t* thread, int priority,
                            void* (*entry)(void*), void* arg) noexcept {
   if (thread == nullptr || entry == nullptr) {
     return EINVAL;
   }
-  if (priority < FifoPriorityMin() || priority > FifoPriorityMax()) {
+  if (priority < fifo_priority_min() || priority > fifo_priority_max()) {
     return EINVAL;
   }
 

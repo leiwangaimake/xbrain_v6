@@ -87,7 +87,7 @@ const long kTickNs = 10L * 1000L * 1000L;
 const int64_t kRealtimeHoldUs = 20;
 const int64_t kNonRealtimeHoldUs = 10;
 
-void BusyMicros(int64_t micros) {
+void busy_micros(int64_t micros) {
   // A spin, not a sleep: a sleep would hand the CPU back and the guard would be
   // held across a scheduling gap, which is exactly the situation TX-7 forbids
   // in the real sender and would flatter the contention numbers here.
@@ -97,7 +97,7 @@ void BusyMicros(int64_t micros) {
   }
 }
 
-void AddNs(struct timespec* ts, long ns) {
+void add_ns(struct timespec* ts, long ns) {
   ts->tv_nsec += ns;
   while (ts->tv_nsec >= 1000L * 1000L * 1000L) {
     ts->tv_nsec -= 1000L * 1000L * 1000L;
@@ -110,7 +110,7 @@ void AddNs(struct timespec* ts, long ns) {
 // would fall short of the expected one for a reason that has nothing to do with
 // the guard. CLOCK_MONOTONIC and not CLOCK_REALTIME, per CLAUDE.md 3.4 and
 // 11 CLK-C1 -- a wall-clock step would move every remaining deadline at once.
-void* RealtimeLoop(void* arg) {
+void* realtime_loop(void* arg) {
   const int duration_s = *static_cast<const int*>(arg);
 
   struct timespec next;
@@ -124,7 +124,7 @@ void* RealtimeLoop(void* arg) {
   bool half_recorded = false;
 
   while (std::chrono::steady_clock::now() < finish) {
-    AddNs(&next, kTickNs);
+    add_ns(&next, kTickNs);
     clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, nullptr);
 
     ++g_ticks;
@@ -143,7 +143,7 @@ void* RealtimeLoop(void* arg) {
       }
       if (scope.acquired()) {
         ++g_acquires;
-        BusyMicros(kRealtimeHoldUs);
+        busy_micros(kRealtimeHoldUs);
       }
       // No log, no allocation and no branch on failure beyond the counter:
       // QD-7 forbids blocking work here, and a skipped tick is normal.
@@ -160,11 +160,11 @@ void* RealtimeLoop(void* arg) {
   return nullptr;
 }
 
-void ContenderLoop() {
+void contender_loop() {
   while (g_running.load(std::memory_order_acquire)) {
     {
       hachist::xbrain::rtcomm::NonRealtimeTxScope scope(&g_guard);
-      BusyMicros(kNonRealtimeHoldUs);
+      busy_micros(kNonRealtimeHoldUs);
     }
     g_nonrt_iters.fetch_add(1, std::memory_order_relaxed);
     // Roughly 5 kHz per contender, fifty times the realtime rate. High enough
@@ -190,16 +190,16 @@ int main(int argc, char** argv) {
   }
   std::printf("duration_s=%d\n", duration_s);
 
-  std::thread contender_a(ContenderLoop);
-  std::thread contender_b(ContenderLoop);
+  std::thread contender_a(contender_loop);
+  std::thread contender_b(contender_loop);
 
   // The priority is queried from the kernel rather than written down. Any legal
   // value exercises the wrapper equally, and naming a number here would put a
   // priority into the repository that D-42 has not decided -- see rt_thread.h.
-  const int priority = hachist::xbrain::rtcomm::FifoPriorityMin();
+  const int priority = hachist::xbrain::rtcomm::fifo_priority_min();
   pthread_t rt_thread;
-  const int fifo_rc = hachist::xbrain::rtcomm::StartFifoThread(
-      &rt_thread, priority, RealtimeLoop, &duration_s);
+  const int fifo_rc = hachist::xbrain::rtcomm::start_fifo_thread(
+      &rt_thread, priority, realtime_loop, &duration_s);
   std::printf("fifo_rc=%d\n", fifo_rc);
 
   if (fifo_rc != 0) {
@@ -207,7 +207,7 @@ int main(int argc, char** argv) {
     // because the guard's properties do not depend on the policy, but the
     // runner has to be able to say which claim went unverified.
     std::printf("fifo_applied=0\n");
-    const int rc = pthread_create(&rt_thread, nullptr, RealtimeLoop, &duration_s);
+    const int rc = pthread_create(&rt_thread, nullptr, realtime_loop, &duration_s);
     if (rc != 0) {
       std::fprintf(stderr, "could not start the realtime loop at all\n");
       return 3;

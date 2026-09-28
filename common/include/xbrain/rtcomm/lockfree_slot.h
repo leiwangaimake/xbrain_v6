@@ -36,7 +36,7 @@
  *              old = latest_.exchange(write_index_ | kFreshBit)
  *              write_index_ = old & kIndexMask
  *
- *   TakeFresh: if fresh bit is clear -> report "nothing new", touch nothing
+ *   take_fresh: if fresh bit is clear -> report "nothing new", touch nothing
  *              old = latest_.exchange(read_index_)
  *              read_index_ = old & kIndexMask
  *              copy out of buffer_[read_index_]        (consumer owns it alone)
@@ -61,15 +61,15 @@
  *     fresh" as "the datum is recent", which are different claims
  *   * it does not carry a default or zero value
  *
- * The trap that looks right and is not. The obvious API is `T Read()` returning
+ * The trap that looks right and is not. The obvious API is `T read()` returning
  * the last value, with a zero-initialised T before the first publish. That
  * turns "no data has ever arrived" into a fully plausible reading -- zero
  * velocity, zero range, identity attitude -- which is the exact fail-silent
- * shape CLAUDE.md 3.1 was written about. So TakeFresh returns false and does
+ * shape CLAUDE.md 3.1 was written about. So take_fresh returns false and does
  * not write through the out pointer at all: a caller that ignores the return
  * value gets whatever it already had, never a fabricated zero.
  *
- * Second trap: calling TakeFresh twice per control tick. The second call
+ * Second trap: calling take_fresh twice per control tick. The second call
  * reports "nothing new" and the caller that treats that as an error will drop
  * a perfectly good sample. One take per tick, keep the value.
  */
@@ -129,7 +129,7 @@ class LockfreeSlot {
 
   // Producer side. Callable from a realtime thread: one memory copy plus one
   // atomic exchange, no loop, no syscall, no allocation, no failure mode.
-  void Publish(const T& value) noexcept {
+  void publish(const T& value) noexcept {
     // The producer owns buffer_[write_index_] outright. The consumer cannot be
     // reading it because the three indices are a permutation.
     buffer_[write_index_] = value;
@@ -157,7 +157,7 @@ class LockfreeSlot {
   // "is there something new", which QD-5 requires the caller to be able to ask.
   // The alternative -- returning the previous value again -- is what makes
   // stale data indistinguishable from fresh data downstream.
-  bool TakeFresh(T* out) noexcept {
+  bool take_fresh(T* out) noexcept {
     // Reading the flag before exchanging costs one load and avoids churning the
     // indices when nothing was published; more importantly it means a consumer
     // polling faster than the producer does not keep swapping buffers under a
@@ -215,7 +215,7 @@ class LockfreeSlot {
   static constexpr unsigned kIndexMask = 0x3u;
   static constexpr unsigned kFreshBit = 0x4u;
 
-  // The initial permutation. No fresh bit is set, so the first TakeFresh
+  // The initial permutation. No fresh bit is set, so the first take_fresh
   // reports "nothing new" as it must.
   static constexpr unsigned kInitialWriteIndex = 0u;
   static constexpr unsigned kInitialReadIndex = 1u;
