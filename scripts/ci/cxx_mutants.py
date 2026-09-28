@@ -1253,9 +1253,10 @@ PAYLOADS_MUTANTS = [
     # 13 V-46: the manual's units column says raw/s for the angular axis and is
     # wrong; the wire value is rad/s. Swapping the axes here is invisible in a
     # capture at rest and wrong by 57 the moment the robot turns.
+    # 2026-09-28: re-anchored onto 11 S9.8.2's own key name (was ",\"yaw\"").
     ("payloads: the motion report swaps yaw rate and roll",
-     PAYLOADS_CC, '  a.Raw(",\\"yaw\\":");\n  a.Num(in.angular_z);',
-     '  a.Raw(",\\"yaw\\":");\n  a.Num(in.omega_x);'),
+     PAYLOADS_CC, '  a.Raw(",\\"wz_radps\\":");\n  a.Num(in.angular_z);',
+     '  a.Raw(",\\"wz_radps\\":");\n  a.Num(in.omega_x);'),
     # 13 S5.6 / V-53: PRO gates the chassis navigation licence, and an operator
     # cannot tell a STD machine from a PRO one without it.
     ("payloads: the basic report drops the firmware version",
@@ -1346,10 +1347,46 @@ PAYLOADS_MUTANTS = [
     # shared closed set (CLAUDE.md 3.5) instead of two literals. Widening it
     # past the table length is the same defect in the new shape: an
     # unregistered value would index past kPowerManagement.
+    # 2026-09-28: re-anchored again -- the bound now lives in the ONE converter
+    # PowerManagementName, which ChassisBasic shares with PowerState.
     ("payloads: an unregistered power_management mapped to a member",
      PAYLOADS_CC,
-     "                 kPowerManagementCount) {",
-     "                 kPowerManagementCount + 8) {"),
+     "  if (raw >= 0 && static_cast<std::size_t>(raw) < kPowerManagementCount) {",
+     "  if (raw >= 0 && static_cast<std::size_t>(raw) < kPowerManagementCount + 8) {"),
+    # 11 S9.8.1 gives charge and power_management as closed-set NAMES on
+    # ChassisBasic too. Publishing the integers is what this writer did until
+    # 2026-09-28, while the same process published the names on state/robot and
+    # state/power -- one chassis field, two line shapes, and a consumer that had
+    # to know which key it was reading to know what a value meant.
+    ("payloads: chassis_basic publishes charge as a raw integer again",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"charge\\":");\n  ChargeName(&a, in.charge);',
+     '  a.Raw(",\\"charge\\":");\n  a.Int(in.charge);'),
+    ("payloads: chassis_basic publishes power_management as a raw integer again",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"power_management\\":");\n'
+     "  PowerManagementName(&a, in.power_management);",
+     '  a.Raw(",\\"power_management\\":");\n  a.Int(in.power_management);'),
+    # 11 S9.8.2's own names. The old ones carried the right values under keys
+    # the contract does not have, so a consumer coded against 11 found nothing
+    # and reported no error.
+    ("payloads: the motion report goes back to vel{x,y,yaw}",
+     PAYLOADS_CC,
+     '  a.Raw("{\\"velocity\\":{\\"vx_mps\\":");',
+     '  a.Raw("{\\"vel\\":{\\"x\\":");'),
+    ("payloads: the motion report goes back to rpy{roll,pitch,yaw}",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"attitude\\":{\\"roll_rad\\":");',
+     '  a.Raw(",\\"rpy\\":{\\"roll\\":");'),
+    # 11 S9.8.2 v0.2 deleted payload_kg -- the chassis marks Payload an INVALID
+    # parameter. Putting it back publishes a constant 0.0 that reads as a load
+    # measurement. The mutant re-adds it as a literal, since the struct member
+    # is gone too.
+    ("payloads: the motion report grows payload_kg back",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"remain_mile_km\\":");\n  a.Num(in.remain_mile);',
+     '  a.Raw(",\\"payload_kg\\":0,\\"remain_mile_km\\":");\n'
+     "  a.Num(in.remain_mile);"),
     # CF-5: the prefix travels with the code. Without it the two overlapping
     # code spaces cannot be told apart at all.
     # The entries are a const char* view since 2026-09-26 (the cached-fault
@@ -2310,42 +2347,42 @@ RT_BRIDGE_MUTANTS = [
      "      p.remain_mile_km = 0.0;"),
     # 11 S4.2 lists `charge`, and it was absent from the object entirely --
     # state/power could not say whether the robot was on a dock.
+    # 2026-09-28: re-anchored. The body moved into the shared ChargeName
+    # converter (11 S9.8.1 gives the same field on ChassisBasic, and the two
+    # were publishing different line shapes), so what is left at this call
+    # site is the key plus the call.
     ("payloads: PowerState drops the charge field",
      PAYLOADS_CC,
      '  a.Raw(",\\"charge\\":");\n'
-     "  if (in.basic == nullptr || in.basic->charge < 0 ||\n"
-     "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
+     "  if (in.basic == nullptr) {\n"
      '    a.Raw("null");\n'
      "  } else {\n"
-     "    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);\n"
+     "    ChargeName(&a, in.basic->charge);\n"
      "  }\n"
      '  a.Raw("}");',
      '  a.Raw(",\\"_charge\\":");\n'
-     "  if (in.basic == nullptr || in.basic->charge < 0 ||\n"
-     "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
+     "  if (in.basic == nullptr) {\n"
      '    a.Raw("null");\n'
      "  } else {\n"
-     "    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);\n"
+     "    ChargeName(&a, in.basic->charge);\n"
      "  }\n"
      '  a.Raw("}");'),
     # 11 S13.6 forbids degrading to a nearby member. Publishing `idle` for a
     # charge state we do not recognise tells the upper stack the robot is free
     # to drive away.
+    # 2026-09-28: re-anchored onto the shared converter. It now guards THREE
+    # keys at once (RobotState.charge, PowerState.charge, ChassisBasic.charge),
+    # which is the point of there being one of it.
     ("payloads: an unrecognised charge state is reported as idle",
      PAYLOADS_CC,
-     "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
-     '    a.Raw("null");\n'
-     "  } else {\n"
-     "    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);\n"
-     "  }\n"
-     '  a.Raw("}");',
-     "      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {\n"
-     '    a.StrView(sets::kCharge[0]);\n'
-     "  } else {\n"
-     "    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);\n"
-     "  }\n"
-     '  a.Raw("}");',
-     ),
+     "  if (raw < 0 || static_cast<std::size_t>(raw) >= kChargeCount) {\n"
+     '    a->Raw("null");\n'
+     "    return;\n"
+     "  }",
+     "  if (raw < 0 || static_cast<std::size_t>(raw) >= kChargeCount) {\n"
+     "    a->StrView(sets::kCharge[0]);\n"
+     "    return;\n"
+     "  }"),
     # 13 ASM-4 (3) / S7.1 Q-5. Recorded as "v1.15 已做" while SetReportSink
     # had zero production call sites -- four keys declared, four writers
     # implemented and tested, not one frame sent.

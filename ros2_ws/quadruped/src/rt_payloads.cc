@@ -224,6 +224,46 @@ void OpenSet(Appender* a, const char* name, const chs_a::OpenSetValue& v) {
   a->Int(static_cast<long long>(v.raw));
 }
 
+// `charge`, as 11 S9.8.1 maps it (idle 0 ... on_dock_no_current 5). ONE
+// converter, called from all three places that publish this field --
+// RobotState (S4.1), PowerState (S4.2) and ChassisBasic (S9.8.1).
+//
+// *** Why it is a function and not three copies. Until 2026-09-28 the first
+// two emitted the member name while ChassisBasic emitted the raw integer, so
+// the SAME chassis field went out in two different shapes from one process and
+// a consumer had to pick a side. CF-5 already spells the rule for fault codes
+// -- one converter, two sinks -- and this is the same failure one key over.
+//
+// Out of range is null, never a nearby member (11 S13.6): publishing `idle`
+// for a state we do not recognise tells the upper stack the robot is free to
+// drive away.
+void ChargeName(Appender* a, int raw) {
+  if (raw < 0 || static_cast<std::size_t>(raw) >= kChargeCount) {
+    a->Raw("null");
+    return;
+  }
+  a->StrView(sets::kCharge[static_cast<std::size_t>(raw)]);
+}
+
+// `power_management`, 11 S9.8.1: normal 0 / single_battery 1. Same "one
+// converter" reason as ChargeName -- PowerState published the member name
+// while ChassisBasic published the integer.
+//
+// An unregistered value is reported AS ITSELF (unknown_%d), which differs from
+// ChargeName's null on purpose: this field has no consumer that acts on it,
+// so the open-set discipline the mode fields follow keeps the raw number
+// visible, whereas `charge` gates CHG's whole flow and a made-up member there
+// is a motion decision.
+void PowerManagementName(Appender* a, int raw) {
+  if (raw >= 0 && static_cast<std::size_t>(raw) < kPowerManagementCount) {
+    a->StrView(sets::kPowerManagement[static_cast<std::size_t>(raw)]);
+    return;
+  }
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "unknown_%d", raw);
+  a->Str(buf);
+}
+
 }  // namespace
 
 std::size_t WriteHelloAck(const HelloAckInput& in, char* out,
@@ -488,11 +528,7 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
     // the same value went out correctly on rt/chassis/power.
     const int raw = (in.basic != nullptr) ? in.basic->charge
                                           : (in.has_charge ? in.charge_raw : -1);
-    if (raw < 0 || static_cast<std::size_t>(raw) >= kChargeCount) {
-      a.Raw("null");
-    } else {
-      a.StrView(sets::kCharge[static_cast<std::size_t>(raw)]);
-    }
+    ChargeName(&a, raw);
   }
   // 11 S4.1 `services_ok`. NULL, and that is the honest answer rather than a
   // missing field: 21 V-14 rules that runtime.services is 恒填 [不可查] this
@@ -716,15 +752,8 @@ std::size_t WritePowerState(const PowerStateInput& in, char* out,
   a.Raw(",\"power_management\":");
   if (in.basic == nullptr) {
     a.Raw("null");
-  } else if (in.basic->power_management >= 0 &&
-             static_cast<std::size_t>(in.basic->power_management) <
-                 kPowerManagementCount) {
-    a.StrView(sets::kPowerManagement[
-        static_cast<std::size_t>(in.basic->power_management)]);
   } else {
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "unknown_%d", in.basic->power_management);
-    a.Str(buf);
+    PowerManagementName(&a, in.basic->power_management);
   }
   // 11 S4.2 lists `charge` in PowerState and S9.8.1 gives the mapping
   // (idle 0 ... on_dock_no_current 5). It was absent from this object, which
@@ -735,11 +764,10 @@ std::size_t WritePowerState(const PowerStateInput& in, char* out,
   // degrading to something close, and publishing `idle` for a state we do not
   // recognise would tell the upper stack the robot is free to drive away.
   a.Raw(",\"charge\":");
-  if (in.basic == nullptr || in.basic->charge < 0 ||
-      static_cast<std::size_t>(in.basic->charge) >= kChargeCount) {
+  if (in.basic == nullptr) {
     a.Raw("null");
   } else {
-    a.StrView(sets::kCharge[static_cast<std::size_t>(in.basic->charge)]);
+    ChargeName(&a, in.basic->charge);
   }
   a.Raw("}");
   return a.Finish();
@@ -897,12 +925,19 @@ std::size_t WriteChassisBasic(const chs_a::BasicStatus& in, char* out,
   OpenSet(&a, "gait", in.gait);
   a.Raw(",\"sleep\":");
   a.Bool(in.sleep);
+  // 11 S9.8.1's field table gives BOTH of these as closed-set NAMES, and until
+  // 2026-09-28 this writer put the raw integers on the wire while the very
+  // same process published the names on state/robot ("idle") and state/power
+  // ("single_battery"). One chassis field, two line shapes, one process --
+  // a consumer had to know which key it was reading to know what a value
+  // meant. Both now go through one converter each (ChargeName /
+  // PowerManagementName above), so the shapes cannot diverge again.
   a.Raw(",\"charge\":");
-  a.Int(in.charge);
+  ChargeName(&a, in.charge);
   a.Raw(",\"status_code\":");
   a.Int(in.status_code);
   a.Raw(",\"power_management\":");
-  a.Int(in.power_management);
+  PowerManagementName(&a, in.power_management);
   a.Raw(",\"ota_status\":");
   a.Int(in.ota_status);
   a.Raw(",\"direction\":");
@@ -929,11 +964,16 @@ std::size_t WriteChassisMotion(const chs_a::MotionStatus& in, char* out,
   Appender a(out, cap);
   // The velocity block leads so OpenSet's own leading comma is valid -- see
   // WriteChassisBasic for the same point.
-  a.Raw("{\"vel\":{\"x\":");
+  // 11 S9.8.2 spells this block `velocity` with unit-suffixed members. It was
+  // `vel{x,y,yaw}` until 2026-09-28: the VALUES were right (13 V-46's rad/s
+  // correction is recorded below) and only the names were wrong, which is the
+  // shape a consumer coded against the contract cannot work around -- it finds
+  // nothing and reports no error.
+  a.Raw("{\"velocity\":{\"vx_mps\":");
   a.Num(in.linear_x);
-  a.Raw(",\"y\":");
+  a.Raw(",\"vy_mps\":");
   a.Num(in.linear_y);
-  a.Raw(",\"yaw\":");
+  a.Raw(",\"wz_radps\":");
   a.Num(in.angular_z);
   a.Raw("}");
   OpenSet(&a, "motion_state", in.motion_state);
@@ -942,11 +982,13 @@ std::size_t WriteChassisMotion(const chs_a::MotionStatus& in, char* out,
   // says "raw/s" for the angular axis and that this is an error (V-46) -- the
   // value on the wire is rad/s, and forwarding it under any other name would
   // make every downstream consumer wrong by 57.
-  a.Raw(",\"rpy\":{\"roll\":");
+  // 11 S9.8.2 `attitude`, same story as `velocity` above: was
+  // `rpy{roll,pitch,yaw}`.
+  a.Raw(",\"attitude\":{\"roll_rad\":");
   a.Num(in.roll);
-  a.Raw(",\"pitch\":");
+  a.Raw(",\"pitch_rad\":");
   a.Num(in.pitch);
-  a.Raw(",\"yaw\":");
+  a.Raw(",\"yaw_rad\":");
   a.Num(in.yaw);
   a.Raw("},\"imu\":{\"acc\":[");
   a.Num(in.acc_x);
@@ -962,8 +1004,12 @@ std::size_t WriteChassisMotion(const chs_a::MotionStatus& in, char* out,
   a.Num(in.omega_z);
   a.Raw("]},\"height_m\":");
   a.Num(in.height);
-  a.Raw(",\"payload_kg\":");
-  a.Num(in.payload);
+  // *** No payload_kg. 11 S9.8.2 deleted it in v0.2 with the reason attached:
+  // the chassis marks `Payload` an INVALID parameter, and v0.1 had mis-mapped
+  // it as a load reading. This writer kept publishing it (always 0.0) until
+  // 2026-09-28 -- a field the contract removed on purpose, sitting on the wire
+  // looking like a measurement. Deleted here and in chs_a::MotionStatus, so
+  // there is nothing left to publish by accident.
   a.Raw(",\"remain_mile_km\":");
   a.Num(in.remain_mile);
   a.Raw("}");

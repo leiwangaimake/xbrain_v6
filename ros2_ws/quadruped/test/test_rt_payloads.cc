@@ -838,6 +838,26 @@ int main(int argc, char** argv) {
         CHECK(jb["hes"] == b.hes);
         CHECK(jb["sleep"] == b.sleep);
         CHECK(jb["model"] == b.model);
+        // *** 11 S9.8.1's field table gives charge and power_management as
+        // closed-set NAMES. This writer published the raw integers until
+        // 2026-09-28 while the SAME process published the names on
+        // state/robot and state/power -- one chassis field, two line shapes.
+        // Asserted against the OTHER writers' output, not against a literal:
+        // the point is that the two agree, and a literal here would still
+        // pass if one of them drifted. MUTATION: put a.Int back -> red.
+        {
+          char other[512];
+          rt::PowerStateInput pin;
+          chs_a::DeviceStatus empty_dev;
+          pin.device = &empty_dev;
+          pin.basic = &b;
+          const std::size_t pn = WritePowerState(pin, other, sizeof(other));
+          const Json jp = ParseOrFail("PowerState/agrees", other, pn);
+          CHECK(jb["charge"] == jp["charge"]);
+          CHECK(jb["power_management"] == jp["power_management"]);
+          CHECK(jb["charge"].is_string());
+          CHECK(jb["power_management"].is_string());
+        }
         // 13 S5.6 / V-53: PRO is what gates the chassis navigation licence, and
         // an operator cannot tell a STD machine from a PRO one without it.
         CHECK(jb["version"] == b.version);
@@ -852,13 +872,27 @@ int main(int argc, char** argv) {
       Json jm = Json::parse(out, out + n, nullptr, false);
       CHECK(!jm.is_discarded());
       if (!jm.is_discarded()) {
-        CHECK(Close(jm["vel"]["x"], m2.linear_x));
-        CHECK(Close(jm["vel"]["y"], m2.linear_y));
+        // 11 S9.8.2's own names. Were vel{x,y,yaw} / rpy{roll,pitch,yaw}
+        // until 2026-09-28: right values under wrong keys, which is the
+        // shape a consumer coded against the contract cannot work around --
+        // it finds nothing and reports no error.
+        CHECK(Close(jm["velocity"]["vx_mps"], m2.linear_x));
+        CHECK(Close(jm["velocity"]["vy_mps"], m2.linear_y));
         // The manual's units column says raw/s for this axis and 13 V-46
         // records that as an error: the wire value is rad/s. Forwarding it
         // under another name would make every consumer wrong by 57.
-        CHECK(Close(jm["vel"]["yaw"], m2.angular_z));
-        CHECK(Close(jm["rpy"]["yaw"], m2.yaw));
+        CHECK(Close(jm["velocity"]["wz_radps"], m2.angular_z));
+        CHECK(Close(jm["attitude"]["yaw_rad"], m2.yaw));
+        CHECK(Close(jm["attitude"]["roll_rad"], m2.roll));
+        CHECK(Close(jm["attitude"]["pitch_rad"], m2.pitch));
+        CHECK(!jm.contains("vel"));
+        CHECK(!jm.contains("rpy"));
+        // *** 11 S9.8.2 v0.2 DELETED payload_kg: the chassis marks Payload an
+        // invalid parameter. It was on the wire (always 0.0) until
+        // 2026-09-28, where a consumer would read it as a load measurement.
+        // The key must be ABSENT, not null -- null still reads as "the field
+        // exists and we have no value".
+        CHECK(!jm.contains("payload_kg"));
         CHECK(jm["imu"]["acc"].size() == 3);
         CHECK(jm["imu"]["omega"].size() == 3);
         CHECK(Close(jm["imu"]["omega"][2], m2.omega_z));

@@ -348,7 +348,7 @@ bool ParseMotionStatus(const std::uint8_t* asdu, std::size_t len, MotionStatus* 
   s.pitch = GetDouble(*ms, "Pitch", 0.0);
   s.yaw = GetDouble(*ms, "Yaw", 0.0);
   s.height = GetDouble(*ms, "Height", 0.0);
-  s.payload = GetDouble(*ms, "Payload", 0.0);
+  // Payload is deliberately NOT read -- see MotionStatus in the header.
   s.remain_mile = GetDouble(*ms, "RemainMile", 0.0);
   s.acc_x = GetDouble(*ms, "AccX", 0.0);
   s.acc_y = GetDouble(*ms, "AccY", 0.0);

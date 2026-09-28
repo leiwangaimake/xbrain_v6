@@ -136,7 +136,11 @@ struct MotionStatus {
   double pitch = 0.0;      // rad
   double yaw = 0.0;        // rad
   double height = 0.0;     // m, body height above ground
-  double payload = 0.0;    // kg
+  // *** No `payload`. The chassis marks MotionStatus.Payload an INVALID
+  // parameter and 11 S9.8.2 deleted the field in v0.2 for exactly that
+  // reason (v0.1 had mis-mapped it as a load reading). Parsed and
+  // published as payload_kg: 0.0 until 2026-09-28. Not kept as an unread
+  // member: a number sitting in a struct is how it gets published again.
   double remain_mile = 0.0;  // km, chassis estimate
   double acc_x = 0.0;
   double acc_y = 0.0;
