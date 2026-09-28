@@ -6,11 +6,17 @@ File: test_d2_batch.py
 Brief: D-2 batch CFG-CF-9 + INF-DP-8 + INF-DP-10 tests
 
 Description:
-Refuse-to-boot milestone (variant-a: no code default fallback;
-variant-b: safety=0.0 still fails G); observation window minimal
-publisher discipline + boot_fail JSONL append + three-state BIT;
-orderly shutdown SYS-G gates + P1-last discipline + steady-sync
+Refuse-to-boot milestone (CFG-CF-9): the three-section listing and,
+since 2026-09-28, the conversion of a real assertion failure into it
+plus the freeze entry point that prints it. Also: observation window
+minimal publisher discipline + boot_fail JSONL append + three-state
+BIT; orderly shutdown SYS-G gates + P1-last discipline + steady-sync
 mode + PWR-S2 banner.
+
+The two "variant guard" helpers this file used to cover
+(refuse_code_default / safety_zero_still_fails_g) were deleted with
+their tests -- see the comment mid-file for why each was a duplicate
+of a check that already runs.
 """
 
 from __future__ import annotations
@@ -20,13 +26,12 @@ import json
 import pytest
 
 from xbrain.boot.freeze.refuse_to_boot import (
-    DefaultFallbackForbidden,
     compose_stdout_lines,
-    refuse_code_default,
-    safety_zero_still_fails_g,
     verdict,
+    verdict_from_error,
 )
-from xbrain.common.errors import E_BUSY
+from xbrain.common.errors import E_BUSY, E_CONFIG_INVALID, E_QOS_VIOLATION
+from xbrain.common.errors.exceptions import XbrainError
 from xbrain.p2_core.shutdown.orderly import (
     CLOUD_ACK_MAX_MS,
     DB_STEADY_SYNC_MODE,
@@ -98,27 +103,131 @@ def test_compose_stdout_lines_sorted_stable():
     assert a_idx < z_idx
 
 
-def test_refuse_code_default_variant_a():
-    """CFG-CF-9 variant 1: cannot fall back to a code default."""
-    with pytest.raises(DefaultFallbackForbidden, match="unassigned"):
-        refuse_code_default("common.spec.max_vx_mps")
+# The two CFG-CF-9 "variant guard" helpers this file used to exercise
+# (refuse_code_default / safety_zero_still_fails_g) were deleted on
+# 2026-09-28 together with their tests. Both were runtime functions with
+# zero callers that duplicated a check which already runs:
+#   * "do not fall back to a code default" is a SOURCE rule, enforced by
+#     scripts/lint/no_safety_default.py over the tree, not by a function
+#     a freeze-time code path was supposed to remember to call;
+#   * "safety filled with 0.0 must still redden" IS assertion G (SP-1 /
+#     SP-5, xbrain/boot/freeze/assertions/g_safety_range.py), which is in
+#     ASSERT_REGISTRY and therefore actually runs. The deleted helper
+#     tested `value == 0.0` on any common.safety.* key, which is neither
+#     SP-1 nor SP-5 -- a second, weaker opinion about the same rule.
+# CLAUDE.md S9.3: a reserved hook nobody calls is removed at review.
 
 
-def test_safety_zero_still_fails_g_variant_b():
-    """CFG-CF-9 variant 2: setting safety=0.0 to bypass assertion A
-    doesn't work -- SP-5 still refuses."""
-    with pytest.raises(DefaultFallbackForbidden, match="0.0 refused"):
-        safety_zero_still_fails_g("common.safety.brake.a_mps2", 0.0)
+def test_verdict_from_error_assertion_a_key_is_listed():
+    """The wiring shape: an assertion A failure must come out of
+    verdict_from_error as the 'unassigned key' section, exit 1.
+
+    This is the half that makes the module's other tests mean something.
+    compose_stdout_lines() was always green; what was missing until
+    2026-09-28 was anything converting a real XbrainError into its
+    arguments, so freeze printed a traceback instead of the listing."""
+    exc = XbrainError(E_CONFIG_INVALID, "assertion A failed",
+                      {"kind": "null_unassigned",
+                       "key": "common.safety.t_lat_s"})
+    v = verdict_from_error(exc)
+    assert v.exit_code == 1
+    # The ROW PREFIX, not the word "assertion A": the unclassified branch
+    # echoes exc.args[0], which for this exception happens to contain the
+    # words "assertion A" too. A mutant that dropped null_unassigned from
+    # the A bucket survived the looser wording (measured 2026-09-28), so
+    # the assertion pins what only the A bucket emits.
+    assert "assertion A: keys unassigned (null placeholder)" in v.stdout_lines
+    assert "  unassigned_key: common.safety.t_lat_s" in v.stdout_lines
 
 
-def test_safety_nonzero_ok():
-    """Positive safety value is fine; the guard only fires on 0.0."""
-    safety_zero_still_fails_g("common.safety.brake.a_mps2", 2.5)
+def test_verdict_from_error_assertion_j_uses_absolute_path():
+    """A J failure lands in the missing-files section and carries
+    detail.path (absolute, because J makes it absolute at raise time)."""
+    exc = XbrainError(E_CONFIG_INVALID, "config root check failed",
+                      {"kind": "config_file_missing",
+                       "path": "/opt/xbrain_v6/configs/p1_motion.yaml"})
+    v = verdict_from_error(exc)
+    assert v.exit_code == 1
+    # Row prefix again, for the reason spelled out on the A test above.
+    assert "assertion J: config files missing" in v.stdout_lines
+    assert ("  missing_file: /opt/xbrain_v6/configs/p1_motion.yaml"
+            in v.stdout_lines)
 
 
-def test_non_safety_zero_untouched():
-    """Non-safety zero values are legal (e.g. count = 0)."""
-    safety_zero_still_fails_g("common.priority.task.auto", 0.0)
+def test_verdict_from_error_assertion_m_names_the_layer():
+    """M rows must name BOTH key and layer -- "which key" without
+    "which layer should have supplied it" is not actionable when six
+    layers can legally carry it (10 S5.4.3)."""
+    exc = XbrainError(E_CONFIG_INVALID, "assertion M failed",
+                      {"kind": "required_key_missing",
+                       "key": "common.motion.profiles.patrol",
+                       "layer": "L1"})
+    v = verdict_from_error(exc)
+    assert v.exit_code == 1
+    assert "assertion M: keys missing from required layer" in v.stdout_lines
+    assert ("  missing_layer_key: common.motion.profiles.patrol (layer: L1)"
+            in v.stdout_lines)
+
+
+def test_verdict_from_error_unknown_kind_still_refuses_loudly():
+    """The trap the module docstring names: a kind outside the three
+    CFG-CF-9 buckets must NOT compose to an empty listing.
+
+    Assertions B..S raise kinds that are deliberately not J/A/M shapes.
+    If the bucket dispatch fell through to verdict([], [], []) the
+    process would exit 0 -- a refusal that boots -- which is the exact
+    fail-silent this whole module exists to prevent."""
+    exc = XbrainError(E_QOS_VIOLATION, "assertion F failed",
+                      {"kind": "qos_block_on_rt", "key": "rt/motion/cmd_vel"})
+    v = verdict_from_error(exc)
+    assert v.exit_code == 1
+    assert v.stdout_lines, "an unmapped assertion must still print something"
+    joined = "\n".join(v.stdout_lines)
+    assert E_QOS_VIOLATION in joined
+    assert "rt/motion/cmd_vel" in joined
+
+
+def test_freeze_entrypoint_never_leaks_a_traceback(monkeypatch):
+    """CFG-CF-9 (1)+(2) on the REAL tree, stated so it cannot rot.
+
+    Deliberately NOT "exit code is 1": that assertion would go red the
+    day configs/ is fully calibrated, and a door that reddens on success
+    gets relaxed (CLAUDE.md S3.2 form 2). What must hold in BOTH worlds:
+    main() returns an int rather than letting an XbrainError escape, and
+    when it returns nonzero the operator got a listing on stdout.
+
+    Red proof: delete the `except XbrainError` block in
+    xbrain/boot/freeze/__main__.py and this raises instead of returning,
+    which is exactly the behaviour that shipped before 2026-09-28.
+
+    argv is patched rather than passed because main() takes no argv
+    parameter -- it is a systemd entry point and argparse reads sys.argv
+    directly. Adding a parameter for the test's benefit would put a
+    second, test-only way to reach the parser."""
+    import io
+    import os
+    import sys
+    import tempfile
+    from contextlib import redirect_stdout
+
+    from xbrain.boot.freeze.__main__ import main
+
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
+    with tempfile.TemporaryDirectory() as resolved_root:
+        monkeypatch.setattr(sys, "argv", [
+            "xbrain.boot.freeze",
+            "--config-root", os.path.join(repo, "configs"),
+            "--resolved-root", resolved_root,
+        ])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = main()
+    assert isinstance(rc, int)
+    if rc != 0:
+        assert buf.getvalue().strip(), (
+            "freeze refused but printed nothing on stdout; 10 S5.4.5 "
+            "requires the failing paths/keys to be listed")
 
 
 # ---------- INF-DP-8 minimal-mode publisher discipline ----------

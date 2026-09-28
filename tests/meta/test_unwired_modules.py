@@ -147,7 +147,10 @@ _KNOWN_UNWIRED = {
     # whether the module exists: for some the behaviour lives elsewhere
     # (a duplicate to delete), for others nothing does it at all.
     "xbrain/boot/failure_class.py": "untriaged: CFG-BT-14 startup failure classifier, never invoked",
-    "xbrain/boot/freeze/refuse_to_boot.py": "untriaged: CFG-CF-9 'refuse to boot', freeze refuses via the assertion chain instead -- likely a duplicate",
+    # refuse_to_boot.py left this registry on 2026-09-28: it is now called
+    # from xbrain/boot/freeze/__main__.py, which catches the XbrainError an
+    # assertion runner raises and renders the 10 S5.4.5 three-section
+    # listing instead of letting a traceback out.
     "xbrain/common/zenoh/startup_selfcheck.py": "untriaged: INF-ZN-5 'refuse startup on unregistered keys' -- 11 S2.2 makes this mandatory and nothing runs it",
     "xbrain/common/zenoh/cross_plane_compliance.py": "untriaged: INF-ZN-9 cross-plane forwarding compliance, never invoked",
     # ---- untriaged (2026-09-28 batch D did not reach these) ----

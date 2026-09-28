@@ -45,7 +45,13 @@ Two modes, and they must not share a write path:
 Failure modes worth spelling out (each maps to a distinct exit code path):
   * --config-root does not exist         -> J-style, printed loud, exit 1
   * resolved_root not a directory        -> CFG-BT-22 mount fail,   exit 1
-  * an assertion runner raises           -> propagates, exit 1
+  * an assertion runner raises XbrainError-> CFG-CF-9 listing on stdout via
+    refuse_to_boot.verdict_from_error, one FAIL line on stderr, exit 1.
+    Until 2026-09-28 this case propagated as a raw traceback: exit code 1
+    by accident, and nothing an operator could act on. An AssertionError
+    (a WIRING defect, e.g. a runner missing from ASSERT_REGISTRY) still
+    propagates with its stack on purpose -- that one is ours, not the
+    configuration's, and a tidy one-liner would hide where it came from.
   * --check finds any drift              -> findings on stderr,    exit 1
   * --check finds none                   -> one line on stdout,    exit 0
   * any assertion returns status != pass -> currently NOT checked (all
@@ -64,9 +70,17 @@ from xbrain.boot.freeze.assertions._layer_loader import VARIANTS
 from xbrain.boot.freeze.check import check_freeze
 from xbrain.boot.freeze.pipeline import RESOLVED_ROOT_DEFAULT, run_freeze
 
+# CFG-CF-9 renderer. Every deliberate assertion failure in this system is an
+# XbrainError, so catching that one type below is what turns "traceback on
+# stderr" into "the three-section listing 10 S5.4.5 asks for". Imported at the
+# top rather than inside the except block: an ImportError discovered only while
+# already handling a failure would replace the config error with a second one.
+from xbrain.boot.freeze.refuse_to_boot import verdict_from_error
+
 # boot_id read via the shared helper so the /proc path is the single source
 # of truth (also used by the resolved loader; two callers, one path).
 from xbrain.common.config.resolved import BOOT_ID_PATH, read_boot_id
+from xbrain.common.errors.exceptions import XbrainError
 
 
 def _run_check(args: argparse.Namespace, boot_id: str,
@@ -208,6 +222,30 @@ def main() -> int:
         # rather than a Python stack the operator has to squint at.
         print("FAIL: %s" % exc, file=sys.stderr)
         return 1
+    except XbrainError as exc:
+        # CFG-CF-9 (2): an assertion refused the tree. 10 S5.4.5 wants the
+        # missing file paths / unassigned key paths / missing-layer keys
+        # LISTED, and a Python traceback is not that listing -- it names the
+        # raise site in this repository instead of the file the operator has
+        # to edit, and it leaves p5_gateway minimal mode nothing structured
+        # to display in the observation window.
+        #
+        # STDOUT, not stderr, and on purpose: the criterion says "stdout
+        # prints the key paths", and an operator who pipes stdout to a file
+        # to mail it must get the actionable half, not an empty file.
+        #
+        # This branch NEVER softens the refusal. The exit code comes from the
+        # verdict and is 1 for every failure shape (CLAUDE.md iron rule 3:
+        # an uncalibrated key must keep the whole stack down).
+        refusal = verdict_from_error(exc)
+        for line in refusal.stdout_lines:
+            print(line)
+        # One stderr line so a journal grep on FAIL still finds the run, and
+        # so the reader knows the listing above is the whole verdict rather
+        # than the first of several.
+        print("FAIL: freeze refused the configuration (%s); see the listing "
+              "on stdout" % exc.code, file=sys.stderr)
+        return refusal.exit_code
 
     # Loud summary so an operator watching journalctl sees which rows are
     # still stubs (the ones each CFG-FZ-N will replace). Print to stdout

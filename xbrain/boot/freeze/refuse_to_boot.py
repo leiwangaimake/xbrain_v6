@@ -13,18 +13,83 @@ freeze refuse to boot, listing:
   * unassigned key paths          (assertion A)
   * layers where a required key is missing (assertion M)
 
-Any 'default-values-in-code as fallback' pattern falsifies this
-rule and is refused by the CLAUDE.md 3.1 lint (no_safety_default.py).
+WHERE THIS IS WIRED, and what it replaced
+  xbrain/boot/freeze/__main__.py catches the XbrainError an assertion
+  runner raises out of run_freeze and renders it through
+  verdict_from_error() below. Before that wiring existed the module had
+  NO caller at all, and the observable behaviour of `python -m
+  xbrain.boot.freeze` on the current tree was a raw Python traceback on
+  stderr ending in
 
-Even in the refuse-to-boot state, p5_gateway MINIMAL MODE still
-starts (see xbrain/p5_gateway/minimal/observation_window.py) so
-the HMI can display the failing assertion letter + key paths.
+    xbrain.common.errors.exceptions.XbrainError: E_CONFIG_INVALID:
+    assertion A failed at key 'common.calib.calib_rev': null_unassigned
+
+  -- exit code 1, so CFG-CF-9 criterion (1) was met by accident, while
+  criterion (2) "stdout lists the key paths" was met by nothing. A
+  traceback is not the listing: it names the raise site in this
+  repository rather than the file an operator has to edit, and the
+  p5_gateway minimal-mode observation window (which renders the failing
+  assertion letter + key paths, see
+  xbrain/p5_gateway/minimal/observation_window.py) had no structured
+  input to render at all.
+
+WHAT THIS MODULE IS NOT
+  It does not decide whether the freeze fails -- the assertion runners
+  in xbrain/boot/freeze/assertions/ do that, and they are the ONLY
+  place a config verdict is reached. This module turns one already
+  raised failure into operator-visible text. Putting any judgement here
+  would create a second opinion about whether a config is startable.
+
+  It also does not fill, default, or soften anything. CLAUDE.md iron
+  rule 3: an uncalibrated key stays null and the whole stack refuses to
+  start; that refusal is the designed behaviour, and this module exists
+  to make it READABLE, never to get past it.
+
+A TRAP WORTH NAMING
+  Bucketing by detail.kind means a kind this module does not know about
+  would compose to an EMPTY listing -- a refusal that prints nothing,
+  which is strictly worse than the traceback it replaced. So the
+  fallback branch in verdict_from_error is not defensive padding: it is
+  the half that keeps an unmapped assertion visible. Do not delete it
+  because "every kind is covered" -- assertions B/C/D/E/F/G/H/I/K/L/N/O/S
+  all raise kinds that are deliberately NOT in the three CFG-CF-9
+  buckets.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import List
+
+from xbrain.common.errors.exceptions import XbrainError
+
+# detail.kind values assertion J raises (xbrain/boot/freeze/assertions/
+# j_config_root.py _fail sites). All of them are about a FILE, so all of
+# them land in the missing-files section and carry detail.path.
+_J_KINDS = frozenset({
+    "config_root_missing",
+    "config_file_missing",
+    "config_file_obsolete",
+    "config_path_escape",
+    "config_perm_bad",
+})
+
+# detail.kind values assertion A raises (a_references.py _fail). These are
+# about a KEY whose value is absent or unresolvable, so they are the
+# "unassigned key path" section.
+_A_KINDS = frozenset({
+    "null_unassigned",
+    "unresolved_ref",
+    "layer_load_failed",
+})
+
+# detail.kind values assertion M raises (m_required.py _fail). A required
+# key that no layer supplies; the row names key AND layer, which is why
+# it is its own section rather than folded into A's.
+_M_KINDS = frozenset({
+    "required_key_missing",
+    "required_key_only_l0",
+})
 
 
 @dataclass(frozen=True)
@@ -60,8 +125,8 @@ def compose_stdout_lines(
 
 
 def verdict(missing_files: List[str],
-             unassigned_keys: List[str],
-             missing_layer_keys: List[str]) -> FreezeVerdict:
+            unassigned_keys: List[str],
+            missing_layer_keys: List[str]) -> FreezeVerdict:
     """Produce a FreezeVerdict. Exit code:
        0 -> nothing failed
        1 -> at least one assertion failed
@@ -73,25 +138,49 @@ def verdict(missing_files: List[str],
     return FreezeVerdict(exit_code=0, stdout_lines=[])
 
 
-class DefaultFallbackForbidden(Exception):
-    """CFG-CF-9 variant 1 guard: a fallback that uses code
-    defaults 'as a backup' when a key is missing is refused."""
+def _layer_suffix(detail: dict) -> str:
+    """Render the ' (layer: Lx)' tail for an M row, or empty.
+
+    Kept separate so the caller reads as a bucket dispatch rather than
+    as string assembly, and so a detail dict WITHOUT a layer field still
+    produces a usable row instead of a KeyError at the exact moment the
+    operator needs the message.
+    """
+    layer = detail.get("layer")
+    return "" if layer is None else " (layer: %s)" % layer
 
 
-def refuse_code_default(key_path: str) -> None:
-    """Called from any freeze-time code path that would otherwise
-    reach for a hardcoded fallback."""
-    raise DefaultFallbackForbidden(
-        f"key {key_path!r} unassigned; refusing to fall back to a "
-        f"code default (CLAUDE.md 3.1, CFG-CF-9)")
+def verdict_from_error(exc: XbrainError) -> FreezeVerdict:
+    """Turn ONE assertion failure into the CFG-CF-9 listing.
 
+    The freeze chain is fail-fast by construction -- every runner in
+    assertions/ raises at its first violation rather than collecting --
+    so this receives one failure per run, and the listing has one row.
+    That is the honest shape: the operator fixes that key, re-runs, and
+    gets the next one. A collector here would have to re-implement every
+    runner's walk to find the rest, and the second implementation would
+    be the one that drifts.
 
-def safety_zero_still_fails_g(key_path: str, value) -> None:
-    """CFG-CF-9 variant 2 guard: even if a safety parameter is
-    filled with 0.0 (passing assertion A), assertion G still
-    reddens on the SP-5 rule. Filling with 0.0 -- classic
-    fail-silent -- must not bypass the entire freeze chain."""
-    if key_path.startswith("common.safety.") and value == 0.0:
-        raise DefaultFallbackForbidden(
-            f"safety key {key_path!r} = 0.0 refused; SP-5 requires "
-            f"positive value (CLAUDE.md 3.1 zero-mask guard)")
+    An exception whose detail.kind is not one of the three CFG-CF-9
+    buckets is NOT dropped: it gets an 'assertion (unclassified)' block
+    carrying the code, the message and the raw detail. Printing an empty
+    listing for it would be a refusal that says nothing at all.
+    """
+    detail = exc.detail or {}
+    kind = detail.get("kind")
+    if kind in _J_KINDS:
+        return verdict([str(detail.get("path", exc))], [], [])
+    if kind in _A_KINDS:
+        return verdict([], [str(detail.get("key", exc))], [])
+    if kind in _M_KINDS:
+        row = "%s%s" % (detail.get("key", exc), _layer_suffix(detail))
+        return verdict([], [], [row])
+    # Unclassified: still a refusal, still exit 1, and the operator still
+    # gets the code plus whatever structure the raiser attached.
+    lines = [
+        "assertion (unclassified): %s" % exc.code,
+        "  message: %s" % (exc.args[0] if exc.args else ""),
+    ]
+    for name in sorted(detail):
+        lines.append("  %s: %s" % (name, detail[name]))
+    return FreezeVerdict(exit_code=1, stdout_lines=lines)
