@@ -523,6 +523,16 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 fence_sub.undeclare()
             except Exception:      # noqa: BLE001
                 pass
+            try:
+                # *** teleop_sub 原本不在本块内 (ruff F841 把它报成 "赋值了
+                # 从不使用" -- 那不是死代码, 是[声明了却忘了拆]). 它是唯一
+                # 一个漏掉的 GEN 面订阅, 于是遥控指令的回调会活过这里对
+                # intent/estop/factor/fence 的拆除, 一直到 with 退出关会话
+                # 为止. 那个窗口里到达的一帧 cmd/teleop 仍会被 _on_teleop
+                # 收下并写进共享状态, 而它的同伴都已经下线.
+                teleop_sub.undeclare()
+            except Exception:      # noqa: BLE001
+                pass
             for _s in gnss_subs:
                 try:
                     _s.undeclare()

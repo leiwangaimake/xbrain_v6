@@ -1483,7 +1483,20 @@ def run_voice_loop_wiring(stop_flag: dict,
                 hmi_server.should_exit = True
             if event_subsystem is not None:
                 event_subsystem.stop()
-            for entity in (ack_sub, task_sub, fence_sub, geo_sub, mode_sub,
+            # *** 这个元组原本漏了九个订阅: teach / geo_ack / task_ack /
+            # mode_ack / audio / pose / clock / robot / power. ruff F841 把
+            # 它们报成 "赋值了从不使用" -- 那不是死代码, 是[声明了却忘了拆]:
+            # 局部名字只出现一次, 恰恰说明它没有进过这条拆除路径.
+            # 后果是这九个订阅活过 hmi_server.should_exit 与
+            # event_subsystem.stop(), 它们的回调继续往 hmi_state 里写, 直到
+            # with 退出关会话为止.
+            # NO 这里仍然是一张手写名单, 所以它会再漂 -- 守它的是
+            # tests/p_processes/test_wiring_teardown_covers_subs.py:
+            # 那条判据用 AST 数[本函数里 X = ....declare_subscriber(...) 的
+            # X] 与[本元组里的名字], 要求前者被后者全覆盖.
+            for entity in (teach_sub, geo_ack_sub, task_ack_sub, mode_ack_sub,
+                           ack_sub, task_sub, fence_sub, geo_sub, mode_sub,
+                           audio_sub, pose_sub, clock_sub, robot_sub, power_sub,
                            event_sub, event_ack_sub, recon_rsp_sub, estop_pong_sub,
                            health_sub, bit_sub, estop_ping_pub, link_pub,
                            replay_pub_normal, replay_pub_alarm, recon_req_pub):
