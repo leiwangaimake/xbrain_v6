@@ -3,93 +3,75 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: startup_assertions.py
-Brief: GWY-P4-08 -- CS-A1..CS-A4 startup consistency assertions
+Brief: GWY-P4-08 / CFG-BT-19 (3)(4) -- the two load-time refusals that are NOT
+       already implemented in registry/intents.py
 
 Description:
-16 S0.5 CS-A* four assertions run at P4 startup after intents.yaml,
-cmdset_18.json, mission prompts are loaded. Every one refuses
-process start if it fails.
+CFG-BT-19 lists four load-time refusals for the command set. Two of them
+had a second, weaker implementation here and were deleted on 2026-09-28
+because the authoritative one is in xbrain/p4_agent/registry/intents.py
+and that one actually runs (xbrain/p4_agent/__main__.py ->
+load_intent_registry_from_yaml):
 
-  CS-A1  every intent NAME in intents.yaml MUST appear in
-         cmdset_18.json's 128-intent closed set (no extra intent
-         invented in registry)
-  CS-A2  count(intents.yaml rows) == count(cmdset_18.json intents)
-  CS-A3  each mission prompt's `intent ::= ...` alternation is a
-         SUBSET of the intent closed set
-  CS-A4  each mission prompt's alternation size + 1 (unknown) <= 5
-         (AI-36 hard limit); one break allowed: M4_follow at 6
+  CFG-BT-19 (1) closed-set diff  -> intents.check_intents_in_closed_set,
+      which is BIDIRECTIONAL. The check_cs_a1 that used to live here only
+      reported registry-minus-cmdset, so a name 18 has and the registry
+      dropped passed it. Keeping the weaker one next to the stronger one
+      is how a reader ends up calling the wrong one.
+  CFG-BT-19 (2) count equality   -> implied by that two-way equality; a
+      set equality that holds cannot have unequal counts. A separate
+      count check can only ever fire together with (1), never alone.
+  16 S0.5 CS-A3 / CS-A4 (mission alternation subset + the AI-36 cap with
+      M4_follow's documented break) -> registry/missions.py, which raises
+      MissionError at load_missions() time and IS called from P4 startup.
 
-* CS-A3 has a 3-step transitional implementation (spec verbatim):
-    if a prompt references an intent NOT in the closed set, run in
-    'warn'-forced mode instead of refuse: log the mismatch, load the
-    prompt with the unknown intent DROPPED from the alternation.
-    (This is the transitional path while 18 gets updated.)
+What is left here, and the status of each:
+
+  check_no_trigger_word_conflict  CFG-BT-19 (4). WIRED 2026-09-28 -- called
+      from intents.load_intent_registry, so a new shared trigger word now
+      refuses the registry instead of being resolved first-wins by
+      classifier/keyword_matcher.py on yaml line order.
+      KNOWN_TRIGGER_CONFLICTS carries the three conflicts 18 itself has;
+      they are exempt BY PROVENANCE, not as an escape hatch, and the
+      exemption goes away when the naming is ruled on (NEXT SW-23).
+
+  check_intent_levels_match       CFG-BT-19 (3). NOT wired, and cannot be:
+      it needs the per-row auth levels from the machine-readable 18 table
+      (configs/cmdset_18.json), which does not exist -- the GWY-P4-09
+      extractor in this package is what would produce it, and its regex
+      pulls zero rows out of 18 today (NEXT SW-23). Its module name is
+      deliberately NOT spelled here: tests/meta/test_unwired_modules.py
+      matches on name MENTIONS, so naming it in a comment would flip its
+      registry entry to "wired" without a single caller existing. The
+      same missing oracle is
+      why intents.check_intents_in_closed_set runs with cmdset_names=None
+      at startup, i.e. CFG-BT-19 (1) is loaded but disarmed. Wiring this
+      one is blocked on SW-23, not on a decision.
+
+Trap: do NOT "fix" the disarmed (1)/(3) by deriving the closed set or the
+level table from intents.yaml itself. A rule checked against a set derived
+from the thing it checks cannot be falsified (CLAUDE.md S3.2 form 7) -- see
+the long note on check_intents_in_closed_set for the same argument.
 """
 
 from __future__ import annotations
-
-from typing import FrozenSet, Iterable, List
 
 
 class CsAssertionError(RuntimeError):
     """A CS-A* assertion failed. Rule name in message."""
 
 
-def check_cs_a1(intent_names: Iterable[str],
-                cmdset_closed_set: FrozenSet[str]) -> None:
-    """CS-A1: every intent name in intents.yaml must be in cmdset_18."""
-    extras = set(intent_names) - cmdset_closed_set
-    if extras:
-        raise CsAssertionError(
-            "CS-A1: intents.yaml contains name(s) NOT in cmdset_18.json: %s "
-            "(closed set has %d entries)"
-            % (sorted(extras), len(cmdset_closed_set)))
-
-
-def check_cs_a2(intents_yaml_count: int,
-                cmdset_json_count: int) -> None:
-    """CS-A2: count equality."""
-    if intents_yaml_count != cmdset_json_count:
-        raise CsAssertionError(
-            "CS-A2: intents.yaml has %d entries, cmdset_18.json has %d "
-            "(counts must match)"
-            % (intents_yaml_count, cmdset_json_count))
-
-
-def check_cs_a3(mission_alternation: List[str],
-                cmdset_closed_set: FrozenSet[str],
-                mission_name: str = "") -> List[str]:
-    """CS-A3: alternation MUST be a subset of the closed set.
-
-    Returns the list of dropped intents (transitional warn mode).
-    In strict mode a caller would raise on non-empty return."""
-    return [i for i in mission_alternation if i not in cmdset_closed_set]
-
-
-def check_cs_a4(mission_name: str,
-                alternation_size: int) -> None:
-    """CS-A4: alternation_size + 1 (unknown) <= 5, with one
-    documented break: M4_follow = 6."""
-    limit = 5
-    if mission_name == "M4_follow":
-        limit = 6
-    if alternation_size + 1 > limit:
-        raise CsAssertionError(
-            "CS-A4: mission %s alternation=%d + 1 (unknown) > %d "
-            "(AI-36 limit; only M4_follow allowed to break at 6)"
-            % (mission_name, alternation_size, limit))
-
-
 # --- CFG-BT-19 判据(3)(4): 级别逐行一致 + 触发词冲突 ------------------
 #
 # *** 一处必须写明的语义分叉.
-# 16 S0.5 定义的 CS-A3/CS-A4 是[mission prompt 的 alternation 约束](上面那
-# 两个函数); 而 CFG-BT-19 判据列里的(3)(4)写的是[级别逐行一致]与[触发词
-# 冲突]. 两套东西共用同一组编号, 内容不同.
+# 16 S0.5 定义的 CS-A3/CS-A4 是[mission prompt 的 alternation 约束](其实现
+# 在 registry/missions.py, 加载期 raise MissionError); 而 CFG-BT-19 判据列里
+# 的(3)(4)写的是[级别逐行一致]与[触发词冲突]. 两套东西共用同一组编号, 内容
+# 不同.
 #
-# NO 不把新的两条硬塞进 check_cs_a3 / check_cs_a4 -- 那会让同一个名字下
-# 有两种语义, 下一个人读 16 S0.5 会以为它在做别的事. 另起两个名字, 并在
-# 这里把分叉记下来. 归属问题(是 16 该改还是 TODO 该改)记 NEXT, 由册主裁.
+# NO 不把这两条塞回 CS-A3 / CS-A4 这两个名字 -- 那会让同一个名字下有两种
+# 语义, 下一个人读 16 S0.5 会以为它在做别的事. 另起两个名字, 并在这里把
+# 分叉记下来. 归属问题(是 16 该改还是 TODO 该改)记 NEXT, 由册主裁.
 
 
 def check_intent_levels_match(yaml_rows, cmdset_rows) -> None:

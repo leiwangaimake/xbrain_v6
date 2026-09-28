@@ -593,6 +593,33 @@ def load_intent_registry(mapping: Mapping[str, Any],
     problems += check_fields_present(raw)     # ID-1
     problems += check_closed_sets(raw)        # route / auth / id / auth_by_slot
     problems += check_no_name_encoded_slot(raw)  # ID-3
+    # CFG-BT-19 (4): one trigger word must not map to two intents. Wired
+    # 2026-09-28; until then startup_assertions.py held the only
+    # implementation and NOTHING called it, so the rule was assumed rather
+    # than enforced. What that assumption costs is visible one layer down:
+    # classifier/keyword_matcher.py resolves a duplicate keyword first-wins
+    # "so a stray duplicate is a visible (deterministic) choice" -- but the
+    # winner depends on registry entry order, i.e. on the line order of a
+    # yaml file, and both the match and the log line look successful either
+    # way. The refusal belongs at LOAD time, which is here.
+    #
+    # Imported at call scope, not module top: the two modules would
+    # otherwise import each other (startup_assertions is the GWY-P4-08
+    # home and cites this module), and this loader must stay importable
+    # during the 10 S3.3.7 W-1 window with as little import surface as
+    # the rest of the file already takes care to keep.
+    from xbrain.p4_agent.registry.startup_assertions import (  # noqa: PLC0415
+        CsAssertionError,
+        check_no_trigger_word_conflict,
+    )
+    try:
+        check_no_trigger_word_conflict(raw)
+    except CsAssertionError as exc:
+        # Converted to a problem STRING rather than propagated: this loader's
+        # contract is that one restart shows every defect at once (see the
+        # comment above the aggregate). A raise here would hide ID-1/ID-3
+        # findings behind whichever check happened to run first.
+        problems.append(str(exc))
     # CS-A1 only when an oracle was supplied; None is an explicit deferral.
     if cmdset_names is not None:
         problems += check_intents_in_closed_set(raw.keys(), cmdset_names)

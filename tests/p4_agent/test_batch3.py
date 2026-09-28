@@ -26,112 +26,27 @@ from xbrain.p4_agent.registry.cmdset_extractor import (
     build_cmdset_json,
     extract_rows,
 )
-from xbrain.p4_agent.registry.intents_check import (
-    MI1_MOTION_INTENTS,
-    IntentsSchemaError,
-    check_all,
-    check_id1_required_fields,
-    check_id2_geo_ids,
-    check_id3_no_direction_on_mi1,
-)
-from xbrain.p4_agent.registry.startup_assertions import (
-    CsAssertionError,
-    check_cs_a1,
-    check_cs_a2,
-    check_cs_a3,
-    check_cs_a4,
-)
 
 pytestmark = pytest.mark.no_device
 
 
-# --- P4-07 ID-1/2/3 ---
-
-def test_id1_missing_route_raises():
-    with pytest.raises(IntentsSchemaError) as ei:
-        check_id1_required_fields("move_forward",
-                                    {"id": "A05", "auth": "L1a", "slots": []})
-    assert "route" in str(ei.value)
-
-
-def test_id1_bad_route_raises():
-    with pytest.raises(IntentsSchemaError):
-        check_id1_required_fields("x", {
-            "id": "A05", "route": "magic", "auth": "L1a", "slots": [],
-        })
-
-
-def test_id1_bad_auth_raises():
-    with pytest.raises(IntentsSchemaError):
-        check_id1_required_fields("x", {
-            "id": "A05", "route": "fastpath", "auth": "L4", "slots": [],
-        })
-
-
-def test_id2_geo_id_pattern():
-    check_id2_geo_ids("goto", ["r-east", "w-p03", "f-fence1"])
-    with pytest.raises(IntentsSchemaError):
-        check_id2_geo_ids("goto", ["route_1"])
-    with pytest.raises(IntentsSchemaError):
-        check_id2_geo_ids("goto", ["route_east_gate"])
-
-
-def test_id3_direction_on_mi1_rejected():
-    """VARIANT (spec): reintroducing the deleted relative_move
-    with direction slot -> refuse."""
-    for intent in MI1_MOTION_INTENTS:
-        with pytest.raises(IntentsSchemaError):
-            check_id3_no_direction_on_mi1(intent, ["direction", "amount", "unit"])
-
-
-def test_id3_direction_ok_on_ptz_intents():
-    """E01 ptz_move / E06 ptz_zoom legitimately have direction."""
-    check_id3_no_direction_on_mi1("ptz_move", ["direction", "amount"])
-    check_id3_no_direction_on_mi1("ptz_zoom", ["direction"])
-
-
-def test_check_all_flags_first_bad_intent():
-    reg = {
-        "move_forward": {"id": "A05", "route": "fastpath",
-                          "auth": "L1a",
-                          "slots": ["direction"]},   # bad -- MI1 + direction
-    }
-    with pytest.raises(IntentsSchemaError):
-        check_all(reg)
-
-
-# --- P4-08 CS-A* ---
-
-def test_cs_a1_extras_raise():
-    cs = frozenset({"move_forward", "stop"})
-    with pytest.raises(CsAssertionError) as ei:
-        check_cs_a1(["move_forward", "stop", "invented"], cs)
-    assert "invented" in str(ei.value)
-
-
-def test_cs_a2_count_mismatch_raises():
-    with pytest.raises(CsAssertionError):
-        check_cs_a2(intents_yaml_count=100, cmdset_json_count=128)
-
-
-def test_cs_a3_returns_dropped_in_transitional_mode():
-    """CS-A3: instead of raising, returns dropped list (warn mode)."""
-    dropped = check_cs_a3(
-        mission_alternation=["move_forward", "ghost_intent"],
-        cmdset_closed_set=frozenset({"move_forward"}),
-    )
-    assert dropped == ["ghost_intent"]
-
-
-def test_cs_a4_alternation_over_limit_raises():
-    """Non-M4 mission with 5 intents + unknown = 6 > 5 -> raise."""
-    with pytest.raises(CsAssertionError):
-        check_cs_a4("M3_nav", alternation_size=5)
-
-
-def test_cs_a4_m4_follow_allowed_up_to_6():
-    """M4_follow break: 5 intents + unknown = 6 is OK (limit = 6)."""
-    check_cs_a4("M4_follow", alternation_size=5)
+# GWY-P4-07 (ID-1/ID-2/ID-3) and GWY-P4-08 (CS-A1..CS-A4) used to be
+# exercised here against xbrain/p4_agent/registry/intents_check.py and
+# startup_assertions.py. Both implementations were deleted on 2026-09-28
+# as weaker second opinions about rules that the WIRED loader already
+# enforces, so the tests went with them:
+#   ID-1 / closed sets / ID-3 -> registry/intents.py, covered (with
+#       mutation tests) by tests/p4_agent/registry/test_intents.py;
+#   ID-2                      -> registry/geo_id.py, covered by
+#       tests/p4_agent/registry/test_geo_id.py;
+#   CS-A1 + CS-A2             -> intents.check_intents_in_closed_set,
+#       which is BIDIRECTIONAL (the deleted check_cs_a1 was one-way and
+#       would pass a name 18 has that the registry dropped);
+#   CS-A3 / CS-A4             -> registry/missions.py, which raises at
+#       load_missions() and is called from p4_agent/__main__.py.
+# The one CFG-BT-19 rule that had NO other implementation, the
+# trigger-word conflict check, is now wired into load_intent_registry and
+# is tested at tests/p4_agent/registry/test_intents.py.
 
 
 # --- P4-09 cmdset extractor ---

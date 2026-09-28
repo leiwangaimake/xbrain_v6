@@ -411,6 +411,44 @@ def test_cs_a1_not_enforced_without_an_oracle():
     assert "fly_to_moon" in reg.names                    # so it loads
 
 
+# --- CFG-BT-19 (4): one trigger word, one intent -----------------------------
+
+def test_real_registry_has_no_fresh_trigger_word_conflict():
+    """The rule as it stands on the committed file.
+
+    Not "no conflict at all": 18 itself lists three words twice
+    (stop-broadcast, standby, start-work), and the registry copies 18
+    faithfully, so those three are carried as named exemptions in
+    startup_assertions.KNOWN_TRIGGER_CONFLICTS until the naming is ruled
+    on. What must hold is that no FOURTH one has appeared."""
+    load_intent_registry(real_mapping(), cmdset_names=None)
+
+
+def test_mutation_shared_trigger_word_refuses_the_registry():
+    """CFG-BT-19 (4) variant: two intents claiming one word must refuse.
+
+    Before this was wired (2026-09-28) the file loaded and
+    classifier/keyword_matcher.py resolved the clash first-wins on
+    registry entry order, i.e. on the line order of a yaml file. The
+    operator says one sentence and gets whichever intent happens to sit
+    higher; both the match and the log line look successful.
+
+    The word is taken from an existing entry rather than invented, so the
+    ONLY thing wrong with the mutated file is the duplication."""
+    victim = "stand"                                     # A03, keywords include a real word
+    word = real_mapping()["intents"][victim]["keywords"][0]
+
+    def _steal(it):
+        # prone (A02) claims a word that already belongs to stand (A03).
+        it["prone"] = dict(it["prone"])
+        it["prone"]["keywords"] = list(it["prone"]["keywords"]) + [word]
+
+    with pytest.raises(IntentRegistryError) as ei:
+        load_intent_registry(mutate(_steal), cmdset_names=None)
+    assert "CS-TRIGGER" in str(ei.value)
+    assert word in str(ei.value)
+
+
 # --- closed-set robustness (route / auth / auth_by_slot) ---------------------
 
 def test_bad_route_value_is_refused():

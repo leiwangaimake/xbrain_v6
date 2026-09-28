@@ -179,14 +179,15 @@ _KNOWN_UNWIRED = {
     "xbrain/p4_agent/failsafe/rotation_reject.py": "untriaged",
     "xbrain/p4_agent/intents_expand/d01_d10.py": "untriaged",
     "xbrain/p4_agent/registry/d_class.py": "untriaged",
-    "xbrain/p4_agent/registry/intents_check.py": "untriaged",
     "xbrain/p4_agent/registry/rulings_18b.py": "untriaged",
-    # GWY-P4-08 CS-A1..A4: header says "every one refuses process start
-    # if it fails", yet P4 never calls it. registry/intents.py has its OWN
-    # CS-A1 implementation (check_intents_in_closed_set) -- so there are
-    # TWO sources for the same assertion and only one runs. Triage = find
-    # which is authoritative, delete the other.
-    "xbrain/p4_agent/registry/startup_assertions.py": "untriaged: GWY-P4-08 CS-A* duplicate of registry/intents.py, neither wired from P4 startup",
+    # startup_assertions.py left this registry on 2026-09-28. Its CS-A1..A4
+    # bodies were the weaker second opinion and were deleted (the wired
+    # ones are intents.check_intents_in_closed_set, which is two-way, and
+    # missions.py); its CFG-BT-19 (4) trigger-word check had NO other
+    # implementation and is now called from load_intent_registry.
+    # intents_check.py (GWY-P4-07 ID-1/2/3) was deleted outright the same
+    # day -- registry/intents.py + registry/geo_id.py implement all three
+    # and both run at P4 startup.
     "xbrain/p4_agent/registry/time_expr.py": "untriaged",
     "xbrain/p4_agent/registry/tools_projection.py": "untriaged",
     "xbrain/p4_agent/session/level_routing.py": "untriaged",
