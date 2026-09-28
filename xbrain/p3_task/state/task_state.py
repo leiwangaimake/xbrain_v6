@@ -282,4 +282,7 @@ async def read_task_state(conn, *, limit: int = 512) -> Dict[str, Any]:
            % (", ".join(_STATE_COLUMNS), _IN_NON_TERMINAL, _QUEUE_ORDER))
     cur = await conn.execute(sql, (int(limit),))
     fetched = await cur.fetchall()
-    return build_task_state(dict(zip(_STATE_COLUMNS, r)) for r in fetched)
+    # strict=True: r comes from SELECT <_STATE_COLUMNS>. A short row would
+    # otherwise produce a TaskState item missing its tail fields and publish it.
+    return build_task_state(
+        dict(zip(_STATE_COLUMNS, r, strict=True)) for r in fetched)

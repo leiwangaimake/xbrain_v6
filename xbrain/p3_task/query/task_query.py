@@ -124,7 +124,10 @@ async def query_task_cards(conn, *, scope: str, limit: int,
     fetched = await cur.fetchall()
     has_more = len(fetched) > limit
     kept = fetched[:limit]
-    dicts = [dict(zip(_CARD_COLUMNS, r)) for r in kept]
+    # strict=True: r comes from SELECT <_CARD_COLUMNS>, same length by
+    # construction. A silent truncation here would hand task_card_from_row a
+    # dict with the tail keys missing -- a card short a field, not an error.
+    dicts = [dict(zip(_CARD_COLUMNS, r, strict=True)) for r in kept]
     cards = [task_card_from_row(d) for d in dicts]
     # Cursor for the next page = the last kept row's submit_seq, only when there
     # IS a next page (else None so the client stops paging).

@@ -240,7 +240,11 @@ class TasksDAO:
         # NULL -> '' for TEXT so the Python side never sees None on a str field;
         # numbers keep None. Build kwargs by column name (order-independent).
         kw = {}
-        for c, v in zip(_COLUMNS, row):
+        # strict=True: row came from SELECT <_COLUMNS>, so the two MUST be the
+        # same length. Without it a shorter row silently drops the trailing
+        # columns and TaskRow(**kw) fails later with a missing-argument
+        # TypeError that names the field, not the SELECT that lost it.
+        for c, v in zip(_COLUMNS, row, strict=True):
             if c in _NULLABLE_TEXT and v is None:
                 v = ""
             kw[c] = v
