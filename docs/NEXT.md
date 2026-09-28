@@ -788,9 +788,9 @@
 | # | 发现 | 证据 | 为什么本批不改 |
 |---|---|---|---|
 | 🔴 **A** | ★★★ **`RobotState` 在线多发一个 `motion` 字段，而 `11` §4.1 【没有这个字段】，且它恒为 `null`** —— JSON 示例与字段表**两处都查不到** `motion`；`rt_payloads.cc` 有完整的写出分支（`vx/vy/wz/roll/pitch/yaw`），但 `rt_bridge.cc::PublishState` **从不给 `in.motion` 赋值** ⇒ 走的永远是 `a.Raw(",\"motion\":null")` 那一支 | ★ 线上载荷逐字含 `"motion": null`；★ `grep -n '"motion"' ros2_ws/quadruped/src/rt_payloads.cc` 两处（写出分支 ＋ null 分支）；★ `grep -n 'in.motion' ros2_ws/quadruped/src/rt_bridge.cc` **零命中** | ★★★ **两条出路是【取舍】不是对错** ——（a）删掉该字段（它是 `CLAUDE.md` §9.3「不为将来留口子」的标准形态：schema 里留了字段、业务从不消费）；（b）在 `11` §4.1 登记它并接上数据源（要走 **F-5** 冻结面登记）。⇒ **停下问用户**（§9.1 / 铁律 1 的边界：没有经验证的事实能判定谁对谁错） |
-| ⚠️ **B** | ★★ **`state/chassis_basic` / `state/chassis_motion` / `state/chassis_device` 三条在真机上 2/10/2 Hz 稳定转发，而【全仓零订阅者】** —— `11` §2.2.2 把消费者登记为 `p2_core · HMI · 云端`，`configs/generated/whitelist.yaml` 的 `p2_core.sub` 里三条也都在，**代码里一个都没订** | ★ `grep -rn "chassis_basic\|chassis_motion\|chassis_device" xbrain/ --include=*.py` 只命中 `configs/generated/whitelist.yaml`；★ `p2_core` 实际订阅只有 `cmd/estop` · `cmd/motion/intent` · `state/arb/motion` · `state/mode` ＋ 主接线里的 `state/robot` / `state/power`；★ relay 统计行 `CR-6=4235 CR-7=21179 CR-8=4235`（60 s 窗口，持续增长） | ★ **不是 bug，是【登记与实现的差】**：`11` §4.1 逐字说 `RobotState` 就是 quadruped 由 §9.8 四路原始状态**聚合**出来的汇总视图，`p2_core` 用汇总视图就够。⇒ 要么把契约的消费者列收窄到「云端/HMI 可选」，要么给 p5 云端投影接上 —— **属设计取舍，问用户**。🚫 本批不擅自删 CR 行（CR 白名单是 `11` §1.1.6 冻结面） |
+| ⚠️ **B** | ★★ **`state/chassis_basic` / `state/chassis_motion` / `state/chassis_device` 三条在真机上 2/10/2 Hz 稳定转发，而【全仓零订阅者】** —— `11` §2.2.2 把消费者登记为 `p2_core · HMI · 云端`，`configs/generated/whitelist.yaml` 的 `p2_core.sub` 里三条也都在，**代码里一个都没订** | ★ `grep -rn "chassis_basic\|chassis_motion\|chassis_device" xbrain/ --include=*.py` 只命中 `configs/generated/whitelist.yaml`；★ `p2_core` 实际订阅只有 `cmd/estop` · `cmd/motion/intent` · `state/arb/motion` · `state/mode` ＋ 主接线里的 `state/robot` / `state/power`；★ relay 统计行 `CR-6=4235 CR-7=21179 CR-8=4235`（60 s 窗口，持续增长） | ★ **不是 bug，是【登记与实现的差】**：`11` §4.1 逐字说 `RobotState` 就是 quadruped 由 §9.8 四路原始状态**聚合**出来的汇总视图，`p2_core` 用汇总视图就够。⇒ 要么把契约的消费者列收窄到「云端/HMI 可选」，要么给 p5 云端投影接上 —— **属设计取舍，问用户**。🚫 本批不擅自删 CR 行（CR 白名单是 `11` §1.1.6 冻结面）。<br>⚠️★★★ **2026-09-28 复核：仍然零订阅者**，且本批修完线形后**依旧**如此 —— 登记于此是为了让下一个人知道 **D 的线形是靠单测与契约对账保住的，不是靠有人在读**。★ 用户本批明令：**🚫 不要顺手加订阅者**，那是另一批的活 |
 | ⚠️ **C** | ★ **`health/summary` 看不见「通道二降级」** —— `chassis` 项全程 `ok` / `linked`，而 quadruped 的 drdds 源整整两天 `imu rx=0 motion_info rx=0` | ★ `13` v1.39 ③；★ `health/summary.items.chassis` 线上取值 | ★ 加不加健康项属**新增判据**，⇒ 问用户（已在 `13` v1.39 行同步登记） |
-| 🔴🔴 **D** | ★★★ **三条链的【线形】与 `11` §9.8.1 / §9.8.2 / §9.8.3 大面积不符 —— 与 2026-09-27 那次 `ChassisFault` 是【同一个失效模式】，而这次没人发现的原因就是发现 B（零消费者）**。逐条见下表 | ★ 本轮真机三条载荷（原样）＋ `ros2_ws/quadruped/src/rt_payloads.cc` 的 `WriteChassisBasic` / `WriteChassisMotion` / `WriteChassisDevice` 三个写者 | ★ 分两类，**处置不同**（见下表「判定」列）：闭集那两格有客观对错，其余是取舍 ⇒ **整体停下问用户**，🚫 本批未改一行代码 |
+| 🔴🔴 **D** | ★★★ **三条链的【线形】与 `11` §9.8.1 / §9.8.2 / §9.8.3 大面积不符 —— 与 2026-09-27 那次 `ChassisFault` 是【同一个失效模式】，而这次没人发现的原因就是发现 B（零消费者）**。逐条见下表 | ★ 本轮真机三条载荷（原样）＋ `ros2_ws/quadruped/src/rt_payloads.cc` 的 `WriteChassisBasic` / `WriteChassisMotion` / `WriteChassisDevice` 三个写者 | ✅★★★ **2026-09-28 批 A 已处置**（用户授权）：有客观对错的几格已改（见下表「判定」列的逐条回填），无源的几块按铁律 1 就地登记「本期无源」。🚫 **仍未做、也不要顺手做的是加订阅者** —— 那是发现 B，属另一批 |
 
 **★★★ 发现 D 展开 —— 逐字段（左＝契约，右＝真机线上）**
 
@@ -817,15 +817,28 @@
 
 | # | 项 | 还缺什么 | 要不要机器人动 |
 |---|---|---|---|
-| 1 | ★ **重启 `quadruped` 让通道二起来** | ★ USB 网卡 `enx00e04c3600fb` 现已在位，重启即可；★★ 它在急停链路上，**要用户点头**。做完才能验 drdds 20 Hz / IMU 200 Hz 的**在线**里程计源 | 🚫 不需要 |
+| ✅ 1 | ~~重启 `quadruped` 让通道二起来~~ | **2026-09-28 已做**：通道二恢复（`imu rx` 在涨，`odom.source=motion_info_20hz`） | 🚫 不需要 |
 | 2 | ★ **`T-DRDDS-1` 的五个零值格** | ★ 走行时再取一次 hex（`vel_x/vel_y/vel_yaw/payload/remain_mile`） | ✅ **需要走行** |
-| 3 | ★ **`T-CHS-1c`** `PointCloud2` | ★ 底盘侧雷达节点要发 —— 现场实测 `/LIDAR/POINTS` **publisher=0**；★ 订阅方是 `perception` | 🚫 不需要 |
-| 4 | ★ **`T-CHS-3` ④ 真机那一半** | ★ 要让 `tcp:30003` 失败以逼出 `udp:30004` 候选 | 🚫 不需要（但要断链路） |
-| 5 | ★ **`T-CHS-4` 后半**（断 socket → `conn=degraded` 且停发） | ★ 同 4，要一次真断链 | 🚫 不需要 |
-| 6 | ★ **`T-ODOM-2` / `T-ODOM-3`** | ★ 要人为把运控上报堵住 200 ms / 350 ms / 1.2 s | 🚫 不需要 |
-| 7 | ★ **真故障端到端** | ★ 见 `13` §11.1 表后的覆盖边界注；诱发方式要用户裁决 | 🚫 不需要 |
+| 3 | ★ **`T-CHS-1c`** `PointCloud2` | ★ 底盘侧雷达节点要发 —— **2026-09-28 复核仍是 `Publisher count: 0` / `Subscription count: 6`**（六个订阅者在等，没有发布者）；★ 订阅方是 `perception` 不是 quadruped，🚫 不要为做这项给 quadruped 加点云订阅 | 🚫 不需要 |
+| ✅ 4 | ~~`T-CHS-3` ④ 真机那一半~~ | **2026-09-28 已验**（`13` §11.1 该行有实测回填）：双向丢 `tcp:30003` ⇒ `ok (endpoint=1)` 且 `reports` 继续增长，`dropped` 零变动 | 🚫 不需要 |
+| ✅ 5 | ~~`T-CHS-4` 后半~~ | **2026-09-28 已验**：`conn=degraded` 在 +1.600 s（2 Hz 心跳第 3 次连续失败），而 `rt/chassis/motion` 全程 10.3 Hz ⇒ 可归因到 `cmd_fail_threshold` 而非上报年龄。⚠️ **「且停发」那半仍缺** —— 机器当时 `stop_reason=timeout`，轴帧本来就不发 | 🚫 不需要 |
+| ✅ 6 | ~~`T-ODOM-2` / `T-ODOM-3`~~ | **2026-09-28 已验**（同上行）。⚠️ **各剩一条【静止时无判别力】**：`T-ODOM-2` ③「pose 不外推」与 `T-ODOM-3`「twist 全零」 | ✅ **剩下的两条需要走行** |
+| 7 | ★ **真故障端到端** | ★ **2026-09-28 评估完毕**：44 码表里**没有**纯软件可诱发的码；`0x83xx` 主机资源度量的是底盘自己三台 SoC，诱发＝给运控主机加载 ⇒ **不是 fail-safe 方向，未执行**。要做须用户裁决诱发方式 | 🚫 不需要 |
 | 8 | ★ **`T-DECEL` · `T-ODOM-4` · `M-28`** | ★★ 要场地 ＋ 监护人 | ✅ **需要走行** |
+| 9 | ★ **`T-CHS-3` ① 的桩服务端 / `T-CHS-4` 前半** | ★ 需要一个「收帧但不回应答」的桩，**真底盘做不到** ⇒ 归桩侧，不占底盘时间 | 🚫 不需要底盘 |
+| 10 | ★ **A-4b 的真机对账** | ★ `state/chassis_motion.joints` 与 `state/chassis_device` 的 `motor_temp_c` / `gps` / `dev_enable` / `cpu` 补发后，要在真机上核一遍取值（关节角与姿态自洽、温度量级、`LoadPower` 与实机一致） | 🚫 不需要 |
 
 > ⚠️★★ **一句话订正预期**：此前以为「只剩标定三项（`T-DECEL` / `T-ODOM-4` / `M-28`）要底盘」——
-> **不成立**。上表 1~7 都还要底盘在场，其中 **1 / 3 / 4 / 5 / 6 / 7 六项不需要机器人移动**，
-> 只有 **2 与 8 要真走行**。⇒ 排期时「要不要清场」和「要不要底盘」是两件事。
+> **不成立**。上表 2~10 都还要底盘在场，其中 **3 / 7 / 10 三项不需要机器人移动**，
+> **2 与 8 要真走行**，★ 而 **6 的剩余两条也转成了「要走行」**（静止时那两条判据无判别力）。
+> ⇒ 排期时「要不要清场」和「要不要底盘」是两件事。
+
+**★★★ 2026-09-28 批 A 新发现（本批未修，逐条待处置）**
+
+| # | 发现 | 证据 | 为什么本批不改 |
+|---|---|---|---|
+| 🔴 **E** | ★★★ **p2 的 G-4 时钟门恒判「未同步」** —— `motion_intent_wiring.py` 逐字 `if not (clock or {}).get("ts_sync")`，而 `state/clock` 的 **data 里字段名是 `sync`**（`p1_motion/path/gnss_pose.py` 逐字 `{"sync": ..., "source": ...}`）；`ts_sync` **只存在于 11 §3.0 的信封层**，而 p2 的 `_make_state_sink` 已经把信封解掉了 ⇒ 恒取 `None` ⇒ **每一次相对位移意图都被 `E_UNHEALTHY {item:"clock"}` 拒掉** | ★ `grep -n 'get("ts_sync")' xbrain/p2_core/runtime/motion_intent_wiring.py`；★ `grep -n '"sync"' xbrain/p1_motion/path/gnss_pose.py` | ★ 方向是 fail-safe（拒绝而非放行），但它是 `CLAUDE.md` §3.2 形态二「一条永远红的断言」—— 下一个人会把它改成「包含即可」而变成永远绿。★ 改它要同时确认「`ts_sync` 到底该从信封取还是从 body 取」，**属契约读法的裁决** ⇒ 问用户 |
+| ⚠️ **F** | ★★ **`cmd/motion/factor` 与 `state/audio` 也是裸报文** —— 与本批修掉的 `health/summary` 同一个缺陷，同一个发布者(p2) | ★ 2026-09-28 总线实测：两条 key 顶层直接是业务字段，无 `v/rid/ts/mono/boot/seq/src/ts_sync` | ★ 本批 scope 是 `health/summary`（用户点名）。★★ 两条各有**消费方**（`cmd/motion/factor` → p1 的 `HealthFactorSlot`；`state/audio` → p5 投影），**必须同批改消费侧**，否则就是 `5d6981a` 那次回归的第三遍 ⇒ 单独一批 |
+| ⚠️ **G** | ★ **失效切到 UDP 候选后不会自己切回 TCP** | ★ 2026-09-28 实测两次：整网卡阻断 4.5 s 后恢复，仍停在 `endpoint=1` | ★ `13` §8.2 逐字只说「首个收到状态上报的生效」，**没有**优先级恢复 ⇒ 现行行为不违约；加不加属**新增判据** ⇒ 问用户（已在 `13` §11.1 `T-CHS-3` 行同步登记） |
+| ⚠️ **H** | ★ **`13` §4.4 的数值表是按 `T_s = 0.1 s` 算的，而线上 `T_s` 不是它** | ★ 2026-09-28 实测静息 `P_xx` 增长率 **5.7e-4 m²/s**，表里是 `6.50e-3 m²/s`（约一个数量级） | ★ **不是缺陷** —— 线上线性源是 `motion_info_20hz` 与 `monitor_10hz` 交替（约 30 次/s），间隔越短总入账越小，正是 `CV-2` 要的行为。★ 已在 `13` §11.1 `T-ODOM-2` 行登记：该表是**模型预测**，🚫 不得拿它当「真机应当读到的绝对值」去验收 |
+| ⚠️ **I** | ★ **机上故障规则表里存在 44 码表之外的码** | ★ `data/run/chassis/fault_rules_CA9C.toml` 有 `0x831A net_err_high` / `0x831B net_drop_high`，而 `13` §7.3 的 44 码表无此二者 | ★ **不用改** —— 它正是 §7.3「开放集设计理由 4：码段有空洞 ⇒ 未登记码一定会出现」的**实物证据**，已就地登记 |
