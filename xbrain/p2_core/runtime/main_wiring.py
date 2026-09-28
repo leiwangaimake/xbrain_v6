@@ -989,10 +989,26 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     ptz_probe.stop()
             except Exception:      # noqa: BLE001
                 pass
-            try:
-                speak_sub.undeclare()
-            except Exception:      # noqa: BLE001
-                pass
+            # 头注 shutdown order 第 2 步: Unsubscribe cmd/audio/speak.
+            #
+            # *** 这里原本是 `speak_sub.undeclare()`, 而 speak_sub 这个名字
+            # 在本函数里从未存在过 -- 订阅句柄自始至终存在 _gen_subs 里
+            # (见上面 200 行的强引用容器, CLAUDE.md 4.3). NameError 是
+            # Exception 的子类, 于是下面的 except 每次关机都把它咽掉:
+            # 第 2 步一次都没有真正执行过, 九个 cmd/* 订阅一直活到
+            # open_planes.__exit__ 才被会话关闭顺带撤销 -- 也就是活过了
+            # speaker.shutdown() 与 mic 线程停车. 那个窗口里到达的一帧
+            # cmd/audio/speak 仍会在 Rust 线程上起一个 p2.speak_handler,
+            # 去调一个已经发完最后一帧 gate 的 SpeakerDomain.
+            #
+            # LIFO: 与 startup 顺序相反, 与头注的 shutdown order 一致.
+            # 每个句柄各自 try -- 一个句柄撤销失败不得让其余八个继续在线.
+            for _sub in reversed(_gen_subs):
+                try:
+                    _sub.undeclare()
+                except Exception:      # noqa: BLE001
+                    pass
+            _gen_subs.clear()
             try:
                 speaker.shutdown()
             except Exception:      # noqa: BLE001
