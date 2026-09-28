@@ -17,24 +17,40 @@ enforced with a paired negative case per CLAUDE.md 3.3).
 import pytest
 
 from xbrain.p3_task.fence.geom import (
-    Circle, InvalidPolygon, Polygon,
-    point_in_circle, point_in_composite, point_in_polygon,
-    polygon_area, validate_polygon,
+    Circle,
+    InvalidPolygon,
+    Polygon,
+    point_in_circle,
+    point_in_composite,
+    point_in_polygon,
+    polygon_area,
+    validate_polygon,
 )
 from xbrain.p3_task.state.geo_rev import (
-    PushOrderViolation, content_hash, is_same_content,
-    push_order_key, tombstone_delete_row, validate_push_batch,
+    PushOrderViolation,
+    content_hash,
+    is_same_content,
+    push_order_key,
+    tombstone_delete_row,
+    validate_push_batch,
 )
 from xbrain.p3_task.state.mission_json import (
-    MissionJsonInvariantViolation, assert_current_in_range,
-    assert_monotone, assert_ss3_terminal, parse_step_status,
+    MissionJsonInvariantViolation,
+    assert_current_in_range,
+    assert_monotone,
+    assert_ss3_terminal,
+    parse_step_status,
 )
 from xbrain.p3_task.state.progress import (
-    HeartbeatState, UnknownProgressKind, VALID_PROGRESS_KINDS,
-    build_route_event, build_state_event, build_step_event,
-    build_waypoint_event, heartbeat_snapshot,
+    VALID_PROGRESS_KINDS,
+    HeartbeatState,
+    UnknownProgressKind,
+    build_route_event,
+    build_state_event,
+    build_step_event,
+    build_waypoint_event,
+    heartbeat_snapshot,
 )
-
 
 pytestmark = pytest.mark.no_device
 

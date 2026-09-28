@@ -43,20 +43,35 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from xbrain.common.errors import (
-    E_NAME_CONFLICT, E_TEACH_GEOMETRY, E_TEACH_QUALITY, E_TEACH_STATE,
+    E_NAME_CONFLICT,
+    E_TEACH_GEOMETRY,
+    E_TEACH_QUALITY,
+    E_TEACH_STATE,
 )
 from xbrain.p3_task.ingest.geo_commit import (
-    GeoCommitError, commit_fence, commit_route, commit_waypoint,
+    GeoCommitError,
+    commit_fence,
+    commit_route,
+    commit_waypoint,
 )
 from xbrain.p3_task.teach.command import (
-    TeachCommand, TeachCommandError, parse_teach_command, teach_ack,
+    TeachCommand,
+    TeachCommandError,
+    parse_teach_command,
+    teach_ack,
 )
 from xbrain.p3_task.teach.sampling import PoseSample, Recorder
 from xbrain.p3_task.teach.session import (
-    ArmingInputs, TeachSession, TeachStateError, check_arming, clamp_limits,
+    ArmingInputs,
+    TeachSession,
+    TeachStateError,
+    check_arming,
+    clamp_limits,
 )
 from xbrain.p3_task.teach.validate import (
-    merge_degenerate, validate_fence, validate_route,
+    merge_degenerate,
+    validate_fence,
+    validate_route,
 )
 
 _logger = logging.getLogger("xbrain.p3.teach")

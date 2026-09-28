@@ -16,9 +16,9 @@ per outage. Mutations paired per 3.3.
 import pytest
 
 from xbrain.p5_gateway.uplink.link_state import (
-    LinkStateMachine, LinkThresholds,
+    LinkStateMachine,
+    LinkThresholds,
 )
-
 
 pytestmark = pytest.mark.no_device
 

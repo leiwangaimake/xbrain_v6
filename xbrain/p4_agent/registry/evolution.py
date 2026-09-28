@@ -34,7 +34,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import FrozenSet, List
 
-
 HOT_UPDATABLE_FILES: FrozenSet[str] = frozenset({
     "suspicion_rules.yaml",
     "speech_presets.yaml",

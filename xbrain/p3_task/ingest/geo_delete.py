@@ -48,11 +48,15 @@ from xbrain.common.errors import E_NOT_FOUND
 from xbrain.p3_task.ingest.geo_apply import ApplyResult, GeoContext, register_applier
 from xbrain.p3_task.ingest.geo_command import GeoCommand, GeoCommandError
 from xbrain.p3_task.ingest.geo_object import TABLE_FOR_TYPE
-from xbrain.p3_task.persistence.schema_task import iso_from_wall_ms
 from xbrain.p3_task.ingest.geo_write import (
-    conflict_error, conn_for, lookup_cmd_log, provenance_for, replay_duplicate,
+    conflict_error,
+    conn_for,
+    lookup_cmd_log,
+    provenance_for,
+    replay_duplicate,
     write_cmd_log,
 )
+from xbrain.p3_task.persistence.schema_task import iso_from_wall_ms
 from xbrain.p3_task.route.geo_linkage import GeoChange, classify
 from xbrain.p3_task.route.geo_refs import compute_refs
 

@@ -62,7 +62,11 @@ from typing import Any, Dict, Optional
 
 from xbrain.common.enums import GEO_TYPE
 from xbrain.common.errors import (
-    E_BUSY, E_CHANNEL_DENIED, E_CONFIRM_REQUIRED, E_NOT_IMPLEMENTED, E_SCHEMA,
+    E_BUSY,
+    E_CHANNEL_DENIED,
+    E_CONFIRM_REQUIRED,
+    E_NOT_IMPLEMENTED,
+    E_SCHEMA,
 )
 
 #: 11 S12.1.1 upstream `type` closed set. Five values; W5/W6 are tombstones and

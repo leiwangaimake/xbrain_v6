@@ -34,7 +34,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
-
 # 14 S4.2 local_mic block values (from p2_core.yaml, mirrored here
 # for the pure-math decimator; production reads them from config).
 CAPTURE_RATE_HZ = 48_000

@@ -27,7 +27,6 @@ import yaml
 from xbrain.boot.freeze.assertions.c6_mr1_margins import run
 from xbrain.common.errors.exceptions import XbrainError
 
-
 # ---------------------------------------------------------------------------
 # Scaffolding
 # ---------------------------------------------------------------------------

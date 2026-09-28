@@ -14,7 +14,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 BUNDLE = Path(__file__).parent.parent.parent / "scripts" / "ci" / "static_rules.py"
 
 

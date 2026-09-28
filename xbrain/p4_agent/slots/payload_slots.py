@@ -31,7 +31,6 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-
 # --- D17 brightness level (closed set, 18-A S1.1) -----------------------
 # Keyword substrings -> level enum. Ordered LONGEST-FIRST at match time so
 # '亮一点点' (high) beats '亮一点' (up), '调到最暗' (min) beats '暗' (down).

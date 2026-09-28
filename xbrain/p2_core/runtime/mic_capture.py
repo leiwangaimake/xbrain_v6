@@ -44,11 +44,14 @@ from dataclasses import dataclass
 from typing import Optional
 
 from xbrain.p2_core.audio.audio_io import (
-    AudioFrame, ASR_RATE_HZ, ASR_SAMPLES_PER_FRAME,
-    CAPTURE_RATE_HZ, CAPTURE_SAMPLES_PER_FRAME, FRAME_MS,
+    ASR_RATE_HZ,
+    ASR_SAMPLES_PER_FRAME,
+    CAPTURE_RATE_HZ,
+    CAPTURE_SAMPLES_PER_FRAME,
+    FRAME_MS,
+    AudioFrame,
     decimate_3to1,
 )
-
 
 # HK-MIC (USB ff00:0001) replaced the old JMTek 0c76:161f mono mic on
 # 2026-09-15. Two hardware differences drive this device string:

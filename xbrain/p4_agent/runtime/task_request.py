@@ -59,7 +59,6 @@ from typing import Any, Dict, Mapping, Optional
 
 from xbrain.p4_agent.registry.intents import IntentRegistry
 
-
 # Intent NAME -> task.db task_type (15 S12 TASK_TYPES 7-value closed set).
 # ONLY the intents that CREATE a task are here. Task-CONTROL intents
 # (pause/resume/cancel/skip/stop_follow) act on an EXISTING task via a

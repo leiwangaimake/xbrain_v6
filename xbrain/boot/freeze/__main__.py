@@ -63,6 +63,7 @@ import sys
 from xbrain.boot.freeze.assertions._layer_loader import VARIANTS
 from xbrain.boot.freeze.check import check_freeze
 from xbrain.boot.freeze.pipeline import RESOLVED_ROOT_DEFAULT, run_freeze
+
 # boot_id read via the shared helper so the /proc path is the single source
 # of truth (also used by the resolved loader; two callers, one path).
 from xbrain.common.config.resolved import BOOT_ID_PATH, read_boot_id

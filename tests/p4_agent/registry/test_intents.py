@@ -33,11 +33,11 @@ Expected counts are DERIVED from those oracles, never written as literals here
 cannot hide in this file either.
 """
 
-import copy      # deep copy so one mutation cannot leak into another test
-import json      # only the bonus triage cross-check parses json
-import os        # path joins and the gitignore-aware skip
-import re        # the two doc tables are parsed by regex
-import sys       # to put ROOT on the import path
+import copy  # deep copy so one mutation cannot leak into another test
+import json  # only the bonus triage cross-check parses json
+import os  # path joins and the gitignore-aware skip
+import re  # the two doc tables are parsed by regex
+import sys  # to put ROOT on the import path
 
 # ROOT is four levels up: tests/p4_agent/registry/<this file>.
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
@@ -45,15 +45,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
 sys.path.insert(0, ROOT)                              # so `import xbrain...` resolves
 
 import pytest  # noqa: E402
-import yaml    # noqa: E402   # the registry source is yaml
+import yaml  # noqa: E402   # the registry source is yaml
 
 # The public surface under test, plus the closed sets the assertions compare to.
-from xbrain.p4_agent.registry import (CONFIRM_LEVELS, MI1_MOTION_INTENTS,  # noqa: E402
-                                      REQUIRED_FIELDS, ROUTES,
-                                      IntentRegistryError,
-                                      check_intents_in_closed_set,
-                                      check_no_name_encoded_slot,
-                                      load_intent_registry)
+from xbrain.p4_agent.registry import (  # noqa: E402
+    CONFIRM_LEVELS,
+    MI1_MOTION_INTENTS,
+    REQUIRED_FIELDS,
+    ROUTES,
+    IntentRegistryError,
+    check_intents_in_closed_set,
+    check_no_name_encoded_slot,
+    load_intent_registry,
+)
 
 # The three on-disk artifacts this test reasons over. Reading configs/ and docs/
 # directly is allowed in tests (no_config_source_read.py exempts tests/).

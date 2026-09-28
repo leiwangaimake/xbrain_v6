@@ -38,7 +38,9 @@ from xbrain.p3_task.ingest.voice_task import VoiceTaskIngestError
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 from xbrain.p4_agent.registry.intents import load_intent_registry
 from xbrain.p4_agent.runtime.task_request import (
-    assert_mapping_covered_by_registry, is_task_create_intent, to_task_command,
+    assert_mapping_covered_by_registry,
+    is_task_create_intent,
+    to_task_command,
 )
 
 pytestmark = pytest.mark.no_device

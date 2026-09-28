@@ -372,6 +372,8 @@ def test_the_cloud_face_itself_is_complete():
     重要 -- 联调当天若把"云端没反应"当成网关问题, 会往错的方向查一整天.
     """
     from xbrain.p5_gateway.outbound.key_surface import (
-        P5_EXPECTED_PUBLISHERS, P5_EXPECTED_SUBSCRIBERS)
+        P5_EXPECTED_PUBLISHERS,
+        P5_EXPECTED_SUBSCRIBERS,
+    )
 
     assert len(set(P5_EXPECTED_PUBLISHERS) | set(P5_EXPECTED_SUBSCRIBERS)) >= 17

@@ -25,7 +25,8 @@ import sys
 sys.path.insert(0, "/opt/xbrain_v6")
 sys.path.insert(0, "/opt/xbrain_v6/scripts/sil")
 
-from field_probe2 import CFG, Ctx, DT, MAP, build_world, clearance, mk_mission
+from field_probe2 import CFG, DT, MAP, Ctx, build_world, clearance, mk_mission
+
 from xbrain.p1_motion.rns.source import RnsSource
 from xbrain.p1_motion.rns.types import MissionKind
 

@@ -14,7 +14,9 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p4_agent.slots.ptz_slots import (
-    parse_ptz_amount, parse_ptz_direction, parse_ptz_speed_level,
+    parse_ptz_amount,
+    parse_ptz_direction,
+    parse_ptz_speed_level,
     parse_zoom_direction,
 )
 

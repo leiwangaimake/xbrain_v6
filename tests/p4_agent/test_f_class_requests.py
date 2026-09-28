@@ -22,14 +22,22 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p4_agent.runtime.geo_request import (
-    GeoRequestError, is_geo_intent, resolve_geo_id, to_geo_command,
+    GeoRequestError,
+    is_geo_intent,
+    resolve_geo_id,
+    to_geo_command,
 )
 from xbrain.p4_agent.runtime.intent_dispatch import (
-    CMD_GEO, CMD_TASK, CMD_TEACH, choose_key,
+    CMD_GEO,
+    CMD_TASK,
+    CMD_TEACH,
+    choose_key,
 )
 from xbrain.p4_agent.runtime.task_request import is_task_create_intent
 from xbrain.p4_agent.runtime.teach_request import (
-    TeachRequestError, is_teach_intent, session_id_from_state,
+    TeachRequestError,
+    is_teach_intent,
+    session_id_from_state,
     to_teach_command,
 )
 

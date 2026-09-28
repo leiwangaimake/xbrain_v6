@@ -84,7 +84,10 @@ from typing import Iterable, Optional, Set, Tuple
 from xbrain.common import errors
 from xbrain.common.errors import XbrainError
 from xbrain.common.zenoh.qos import (
-    FROZEN_PROFILES, HandlerSpec, QosProfile, key_expr_matches,
+    FROZEN_PROFILES,
+    HandlerSpec,
+    QosProfile,
+    key_expr_matches,
 )
 
 __all__ = ["Declaration", "SelfcheckError", "selfcheck",

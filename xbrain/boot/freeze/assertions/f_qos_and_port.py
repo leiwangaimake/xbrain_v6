@@ -49,11 +49,15 @@ from xbrain.boot.freeze.assertions._layer_loader import load_layers
 from xbrain.common.config import build_overlay
 from xbrain.common.errors import E_CONFIG_INVALID, E_QOS_VIOLATION
 from xbrain.common.errors.exceptions import XbrainError
+
 # BLOCK constant + loader/exception types from the QoS module. Importing
 # both exception types so F can catch either without over-catching
 # unrelated XbrainError subclasses (which would swallow bugs).
 from xbrain.common.zenoh.qos import (
-    BLOCK, QosConfigError, QosViolation, load_qos_table,
+    BLOCK,
+    QosConfigError,
+    QosViolation,
+    load_qos_table,
 )
 
 # Fallback binding pattern -- the last-resort match that catches every

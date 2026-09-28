@@ -79,8 +79,12 @@ from typing import Any, Dict, List, Optional
 # directory count, and in what order) is re-implemented below on purpose --
 # see the module docstring on why that duplication is the point.
 from xbrain.boot.freeze.assertions._layer_loader import (
-    _LAYER_SOURCES, _NO_VARIANT_LAYERS, variant_of, variant_sibling,
+    _LAYER_SOURCES,
+    _NO_VARIANT_LAYERS,
+    variant_of,
+    variant_sibling,
 )
+
 # ENV_WHITELIST is the L5 closed set (10 S5.4.3). Reading it here rather than
 # listing three variable names keeps the L5 row honest if the whitelist ever
 # changes -- though 10 S5.4.3 forbids extending it, so in practice this is a

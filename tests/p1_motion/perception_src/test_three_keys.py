@@ -20,8 +20,15 @@ import json
 import pytest
 
 from xbrain.p1_motion.perception_src.three_keys import (
-    OBJECTS_SCHEMA, PROFILE_SCHEMA, STATUS_SCHEMA, PerceptionSchemaError,
-    ZenohPerceptionInput, key_expr, parse_objects, parse_payload, parse_profile,
+    OBJECTS_SCHEMA,
+    PROFILE_SCHEMA,
+    STATUS_SCHEMA,
+    PerceptionSchemaError,
+    ZenohPerceptionInput,
+    key_expr,
+    parse_objects,
+    parse_payload,
+    parse_profile,
     parse_status,
 )
 

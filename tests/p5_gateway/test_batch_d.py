@@ -16,23 +16,36 @@ bandwidth ledger REFUSES boost + borrow (UG-1/UG-2 non-negotiable).
 import pytest
 
 from xbrain.p5_gateway.bandwidth.ledger import (
-    BandwidthBoostForbidden, Ledger, PLANES, UnknownPlane,
+    PLANES,
+    BandwidthBoostForbidden,
+    Ledger,
+    UnknownPlane,
 )
 from xbrain.p5_gateway.fence.cache import (
-    DirectDbAccessForbidden, FenceCache, refuse_direct_db_read,
+    DirectDbAccessForbidden,
+    FenceCache,
+    refuse_direct_db_read,
 )
 from xbrain.p5_gateway.hmi.deadman import (
-    DeadmanTracker, build_deadman_payload, within_response_window,
+    DeadmanTracker,
+    build_deadman_payload,
+    within_response_window,
 )
 from xbrain.p5_gateway.link.probe import (
-    LinkProbeMissed, MISSED_THRESHOLD, PROBE_BUDGET_MS, ProbeStats,
-    record_miss, record_receive, record_send,
+    MISSED_THRESHOLD,
+    PROBE_BUDGET_MS,
+    LinkProbeMissed,
+    ProbeStats,
+    record_miss,
+    record_receive,
+    record_send,
 )
 from xbrain.p5_gateway.link.state_link import (
-    LINK_REASONS, LinkStatus,
-    apply_down_debounce, apply_up_debounce,
+    LINK_REASONS,
+    LinkStatus,
+    apply_down_debounce,
+    apply_up_debounce,
 )
-
 
 pytestmark = pytest.mark.no_device
 

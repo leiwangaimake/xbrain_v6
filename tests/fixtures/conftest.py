@@ -44,7 +44,6 @@ import yaml
 
 from tests.fixtures.overrides import apply_overrides
 
-
 REAL_CONFIG_ROOT = "/opt/xbrain_v6/configs"
 
 

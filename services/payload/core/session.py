@@ -64,8 +64,8 @@ from enum import Enum
 from typing import Callable, Optional, Set
 
 from ..config import PayloadConfig
-from ..core.device_link import DeviceLink, DeviceLinkError
 from ..core.deter import DeterController, DeterParams
+from ..core.device_link import DeviceLink, DeviceLinkError
 
 # Namespaced under "payload." like the rest of the service so mode transitions and audio
 # gate refusals can be tuned in the log independently of the transport and device layers.

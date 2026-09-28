@@ -42,10 +42,17 @@ sys.path.insert(0, ROOT)
 
 from xbrain.common import errors  # noqa: E402
 from xbrain.common.config import MISSING  # noqa: E402
-from xbrain.common.errors.exceptions import ClosedSetViolation, XbrainError  # noqa: E402
+from xbrain.common.errors.exceptions import (  # noqa: E402
+    ClosedSetViolation,
+    XbrainError,
+)
+
 # Imported from the submodules directly: the package __init__ is docstring-only
 # (it does not re-export), the same convention as xbrain/common/__init__.py.
-from xbrain.common.failsafe.outcome import STATUS_ACCEPTED, STATUS_REJECTED  # noqa: E402
+from xbrain.common.failsafe.outcome import (  # noqa: E402
+    STATUS_ACCEPTED,
+    STATUS_REJECTED,
+)
 from xbrain.common.failsafe.ptz import (  # noqa: E402
     GUIDE_USE_E01,
     PRESET_EFFECTIVE_KEY,

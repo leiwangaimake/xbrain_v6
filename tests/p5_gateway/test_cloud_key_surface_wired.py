@@ -215,8 +215,10 @@ def test_the_registry_covers_every_v2_key():
     import re
 
     from xbrain.p5_gateway.outbound.key_surface import (
-        OWNED_BY_OTHER_PROCESS, P5_EXPECTED_PUBLISHERS,
-        P5_EXPECTED_SUBSCRIBERS)
+        OWNED_BY_OTHER_PROCESS,
+        P5_EXPECTED_PUBLISHERS,
+        P5_EXPECTED_SUBSCRIBERS,
+    )
 
     qt = (ROOT / "docs" / "MISSON" / "任务枚举_qt端v2.0.md").read_text(
         encoding="utf-8")
@@ -244,7 +246,9 @@ def test_no_cloud_key_is_silently_dropped_from_the_registry():
     import re
 
     from xbrain.p5_gateway.outbound.key_surface import (
-        P5_EXPECTED_PUBLISHERS, P5_EXPECTED_SUBSCRIBERS)
+        P5_EXPECTED_PUBLISHERS,
+        P5_EXPECTED_SUBSCRIBERS,
+    )
 
     # v2.0 的 key 面 = 主表 + 甲方后续发的增量件. 心跳(2026-09-03)是以
     # "新建+Qt->后端心跳+key.md" 的形式交付的, 内容逐字是"新增加: <表行>",

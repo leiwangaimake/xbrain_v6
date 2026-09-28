@@ -21,17 +21,17 @@ The read half against real databases. What each case is for:
 """
 from __future__ import annotations
 
+import aiosqlite
 import pytest
+import pytest_asyncio
 
 from xbrain.common.errors import E_NOT_FOUND, E_NOT_IMPLEMENTED, E_SCHEMA
 from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
 from xbrain.p3_task.persistence.schema_geo import (
-    FENCE_DB_STATEMENTS, GEO_DB_STATEMENTS,
+    FENCE_DB_STATEMENTS,
+    GEO_DB_STATEMENTS,
 )
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
-
-import aiosqlite
-import pytest_asyncio
 
 pytestmark = pytest.mark.no_device
 

@@ -16,21 +16,31 @@ GWY-P4-07/08/09/10 batch 3 tests.
 import pytest
 
 from xbrain.p4_agent.prompt.assembler import (
-    PromptLayers, PromptSchemaError,
-    assemble, check_history_enable_on, trim_to_budget,
+    PromptLayers,
+    PromptSchemaError,
+    assemble,
+    check_history_enable_on,
+    trim_to_budget,
 )
 from xbrain.p4_agent.registry.cmdset_extractor import (
-    build_cmdset_json, extract_rows,
+    build_cmdset_json,
+    extract_rows,
 )
 from xbrain.p4_agent.registry.intents_check import (
-    IntentsSchemaError, MI1_MOTION_INTENTS,
-    check_all, check_id1_required_fields, check_id2_geo_ids,
+    MI1_MOTION_INTENTS,
+    IntentsSchemaError,
+    check_all,
+    check_id1_required_fields,
+    check_id2_geo_ids,
     check_id3_no_direction_on_mi1,
 )
 from xbrain.p4_agent.registry.startup_assertions import (
-    CsAssertionError, check_cs_a1, check_cs_a2, check_cs_a3, check_cs_a4,
+    CsAssertionError,
+    check_cs_a1,
+    check_cs_a2,
+    check_cs_a3,
+    check_cs_a4,
 )
-
 
 pytestmark = pytest.mark.no_device
 

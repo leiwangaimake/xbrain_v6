@@ -29,10 +29,19 @@ from typing import Dict, Optional
 
 import xbrain.common.errors as _errors_pkg
 from xbrain.common.errors import (
-    E_BUSY, E_CAPABILITY, E_CONFIG_INVALID, E_DEGRADED,
-    E_GEO_CONFLICT, E_GEO_INVALID, E_QOS_VIOLATION,
-    E_STATUS, E_STORAGE_CORRUPT, E_TASK_STATE,
-    E_TEACH_GEOMETRY, E_TEACH_QUALITY, E_TEACH_STATE,
+    E_BUSY,
+    E_CAPABILITY,
+    E_CONFIG_INVALID,
+    E_DEGRADED,
+    E_GEO_CONFLICT,
+    E_GEO_INVALID,
+    E_QOS_VIOLATION,
+    E_STATUS,
+    E_STORAGE_CORRUPT,
+    E_TASK_STATE,
+    E_TEACH_GEOMETRY,
+    E_TEACH_QUALITY,
+    E_TEACH_STATE,
     E_UNHEALTHY,
 )
 

@@ -48,7 +48,6 @@ from typing import Optional
 
 import requests  # BUSINESS-IMPORT-OK(ai-client): CLAUDE.md 4.1 sanctions requests only inside ai_client/
 
-
 # --- Audio format constants (VOI-10a) --------------------------------
 # The mic plane pins 16 kHz s16le mono AFTER downsample from USB MIC's
 # native 48 kHz. If any of these three change, asr-service's `-r 16000`

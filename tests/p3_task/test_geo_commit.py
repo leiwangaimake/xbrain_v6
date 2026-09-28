@@ -20,15 +20,20 @@ import pytest
 import pytest_asyncio
 
 from xbrain.p3_task.fence.geom import (
-    InvalidPolygon, assert_perimeter_closed, close_ring,
+    InvalidPolygon,
+    assert_perimeter_closed,
+    close_ring,
 )
 from xbrain.p3_task.ingest.geo_commit import (
-    GeoCommitError, commit_fence, commit_route, commit_waypoint,
+    GeoCommitError,
+    commit_fence,
+    commit_route,
+    commit_waypoint,
 )
 from xbrain.p3_task.persistence.schema_geo import (
-    FENCE_DB_STATEMENTS, GEO_DB_STATEMENTS,
+    FENCE_DB_STATEMENTS,
+    GEO_DB_STATEMENTS,
 )
-
 
 pytestmark = pytest.mark.no_device
 

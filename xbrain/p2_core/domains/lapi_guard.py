@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from typing import FrozenSet, Iterable, List
 
-
 # The 14 S11 authorised LAPI WRITE set. Adding a third key requires a
 # doc change; this constant IS the guard.
 ALLOWED_WRITE_KEYS: FrozenSet[str] = frozenset({

@@ -23,7 +23,10 @@ from enum import Enum
 from typing import Dict, FrozenSet, Iterable, List
 
 from xbrain.p2_core.health.items import (
-    HealthLevel, HealthState, ITEM_LEVELS, is_fatal,
+    ITEM_LEVELS,
+    HealthLevel,
+    HealthState,
+    is_fatal,
 )
 
 

@@ -27,14 +27,13 @@ import pytest
 from xbrain.common import errors
 from xbrain.common.arbiter.core import Arbiter
 from xbrain.common.arbiter.model import (
-    ArbAction,
     FORCED_PREEMPT_MAX,
+    ArbAction,
     GrantResult,
     PreemptPolicy,
     Request,
     SourceSpec,
 )
-
 
 pytestmark = pytest.mark.no_device
 

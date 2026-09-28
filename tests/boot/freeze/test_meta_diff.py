@@ -3,10 +3,20 @@
 import pytest
 
 from xbrain.boot.freeze.meta import (
-    DOC_QC, DOC_SP, DOC_S, DOC_AS,
-    DEFERRED_SP, DEFERRED_S, DEFERRED_QC, DEFERRED_AS,
+    DEFERRED_AS,
+    DEFERRED_QC,
+    DEFERRED_S,
+    DEFERRED_SP,
+    DOC_AS,
+    DOC_QC,
+    DOC_S,
+    DOC_SP,
     EXEMPT_SP,
-    bidirectional_diff, impl_sp, impl_s, impl_qc, impl_as,
+    bidirectional_diff,
+    impl_as,
+    impl_qc,
+    impl_s,
+    impl_sp,
 )
 
 

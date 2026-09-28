@@ -26,13 +26,18 @@ import yaml
 
 from xbrain.boot.freeze.assertions.j_config_root import _REQUIRED_FILES
 from xbrain.boot.freeze.pipeline import (
-    MANIFEST_SCHEMA, build_manifest, run_assertions, run_freeze,
+    MANIFEST_SCHEMA,
+    build_manifest,
+    run_assertions,
+    run_freeze,
 )
 from xbrain.boot.freeze.registry import (
-    ASSERT_REGISTRY, AssertSpec, ordered_assertion_names, registry_names,
+    ASSERT_REGISTRY,
+    AssertSpec,
+    ordered_assertion_names,
+    registry_names,
     validate_topology,
 )
-
 
 # Extended for CFG-FZ-3 (A/M real bodies): scaffold now writes a filled
 # common.yaml + models/ + safety/ so A/M pass green. Framework tests

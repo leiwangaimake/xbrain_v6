@@ -35,7 +35,6 @@ import sqlite3  # BUSINESS-IMPORT-OK(probe-bootstrap): probe runs BEFORE aiosqli
 from pathlib import Path
 from typing import List, Optional
 
-
 # --- Disk ---------------------------------------------------------
 
 def check_disk(path: str, threshold_pct: float) -> Optional[dict]:

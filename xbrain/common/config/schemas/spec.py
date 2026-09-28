@@ -58,12 +58,13 @@ The three writings that look correct and are not (each measured in this project)
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from ...errors import E_CONFIG_INVALID, XbrainError
+
 # Imported, not spelled as a literal: CLAUDE.md 3.5 forbids E_* string literals
 # outside common/errors/, and no_literal_ecode.py enforces it tree-wide. The
 # rename-safety argument is the same one ConfigLayerError makes -- a literal here
 # would be a second source of truth for the spelling that diverges silently.
 from ..merge import flatten
-from ...errors import E_CONFIG_INVALID, XbrainError
 
 # ---------------------------------------------------------------------------
 # The closed vocabulary of schema types.

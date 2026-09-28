@@ -21,25 +21,38 @@ import os
 import pytest
 
 from xbrain.boot.freeze.refuse_to_boot import (
-    DefaultFallbackForbidden, FreezeVerdict,
-    compose_stdout_lines, refuse_code_default,
-    safety_zero_still_fails_g, verdict,
+    DefaultFallbackForbidden,
+    FreezeVerdict,
+    compose_stdout_lines,
+    refuse_code_default,
+    safety_zero_still_fails_g,
+    verdict,
 )
 from xbrain.common.errors import E_BUSY
 from xbrain.p2_core.shutdown.orderly import (
-    CLOUD_ACK_MAX_MS, DB_STEADY_SYNC_MODE, ShutdownProgress,
-    ShutdownStep, any_cmd_vel_after_p1_exit, assert_pwr_s2_banner,
-    check_gates, run_s1_cloud_ack, run_s6_db_checkpoint,
+    CLOUD_ACK_MAX_MS,
+    DB_STEADY_SYNC_MODE,
+    ShutdownProgress,
+    ShutdownStep,
+    any_cmd_vel_after_p1_exit,
+    assert_pwr_s2_banner,
+    check_gates,
+    run_s1_cloud_ack,
+    run_s6_db_checkpoint,
     run_s7_motion_zero_p1_last,
 )
 from xbrain.p5_gateway.minimal.observation_window import (
-    BitObservationState, BootFailRecord, FORBIDDEN_IN_MINIMAL,
-    MINIMAL_MODE_PUBLISHERS, MinimalModeSurfaceViolation,
-    append_boot_fail_jsonl, assert_minimal_publisher_set,
-    classify_bit_observation, read_boot_fail_jsonl,
+    FORBIDDEN_IN_MINIMAL,
+    MINIMAL_MODE_PUBLISHERS,
+    BitObservationState,
+    BootFailRecord,
+    MinimalModeSurfaceViolation,
+    append_boot_fail_jsonl,
+    assert_minimal_publisher_set,
+    classify_bit_observation,
+    read_boot_fail_jsonl,
     transpose_to_event,
 )
-
 
 pytestmark = pytest.mark.no_device
 

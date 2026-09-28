@@ -74,9 +74,14 @@ def test_all_five_open_types_route_somewhere():
     只测 GOTO_KEYPOINT 的话, 一个只认它的实现能通过 -- 而 Qt 联调时会把
     五个都发一遍.
     """
-    from xbrain.p5_gateway.inbound.task_router import (KEY_AUDIO, KEY_ESTOP,
-                                                       KEY_GEO, KEY_TASK,
-                                                       OPEN_TASK_TYPES, route)
+    from xbrain.p5_gateway.inbound.task_router import (
+        KEY_AUDIO,
+        KEY_ESTOP,
+        KEY_GEO,
+        KEY_TASK,
+        OPEN_TASK_TYPES,
+        route,
+    )
 
     payloads = {
         "GOTO_KEYPOINT": {"coordinate_system": "WGS84",
@@ -362,9 +367,10 @@ def test_the_payload_survives_into_the_task_row():
     变异体: 网关改回 recorded_path_id => route_geo_id 变空, 本条红.
     """
     from dataclasses import replace as _replace
+
+    from xbrain.p3_task.ingest.task_command import parse_task_command
     from xbrain.p3_task.ingest.task_row import task_row_from_command
     from xbrain.p5_gateway.inbound.task_router import route
-    from xbrain.p3_task.ingest.task_command import parse_task_command
 
     (_key, body), = route(_data("GOTO_KEYPOINT",
                                 _CREATE_TASK_SAMPLES["GOTO_KEYPOINT"]))
@@ -457,8 +463,12 @@ def test_routing_targets_are_the_existing_internal_keys():
 
     这里查落点确实是机内模块正在订阅的那几条.
     """
-    from xbrain.p5_gateway.inbound.task_router import (KEY_AUDIO, KEY_ESTOP,
-                                                       KEY_GEO, KEY_TASK)
+    from xbrain.p5_gateway.inbound.task_router import (
+        KEY_AUDIO,
+        KEY_ESTOP,
+        KEY_GEO,
+        KEY_TASK,
+    )
 
     # 这四条都是 11 S2.2 登记的机内 key, 且语音/HMI 链路也在用.
     assert KEY_TASK == "cmd/task"

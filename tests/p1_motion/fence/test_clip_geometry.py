@@ -21,12 +21,23 @@ import math
 import pytest
 
 from xbrain.common.fence.geom import fence_set_crc32
-from xbrain.p1_motion.fence.clip import (CompiledPolygon, FenceClipError, FenceConstants,
-                                         boundary_hit, compile_fence, d_stop_m,
-                                         margin_soft_eff_m, project_halfspaces,
-                                         v_fence_mps)
-from xbrain.p1_motion.fence.fence_set import (FenceSetError, HeldFenceSet, HeldPolygon,
-                                              compile_fence_set)
+from xbrain.p1_motion.fence.clip import (
+    CompiledPolygon,
+    FenceClipError,
+    FenceConstants,
+    boundary_hit,
+    compile_fence,
+    d_stop_m,
+    margin_soft_eff_m,
+    project_halfspaces,
+    v_fence_mps,
+)
+from xbrain.p1_motion.fence.fence_set import (
+    FenceSetError,
+    HeldFenceSet,
+    HeldPolygon,
+    compile_fence_set,
+)
 from xbrain.p1_motion.path.local_frame import LocalFrame
 
 pytestmark = pytest.mark.no_device

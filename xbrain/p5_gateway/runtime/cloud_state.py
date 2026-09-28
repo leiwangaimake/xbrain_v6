@@ -55,20 +55,25 @@ outbound/state_projection.py, 信封与 seq 在 outbound/cloud_envelope.py.
 from __future__ import annotations
 
 import json
-import re as _re
 import logging
+import re as _re
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 from ..outbound.cloud_envelope import UnmappedLinkLevel
+from ..outbound.state_projection import (
+    ProjectionError,
+    audio_payload,
+    geo_manifest_payload,
+    mode_payload,
+    robot_payload,
+    robot_state_from,
+    task_item,
+    to_v2_device_status,
+    to_v2_task_state,
+)
 from ..outbound.task_result import TaskResultTracker, build_result
-from ..outbound.state_projection import (ProjectionError, audio_payload,
-                                         geo_manifest_payload, mode_payload,
-                                         robot_payload, robot_state_from,
-                                         task_item, to_v2_device_status,
-                                         to_v2_task_state)
-
 
 #: state/audio 判为陈旧的门限. p2 的发布下限是 1 Hz(11 S2.2.2), 取 5 拍 --
 #: 单拍抖动(GC / 一次慢的 payload 轮询)不该让界面闪一下 fault, 而连续 5 拍

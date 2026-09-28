@@ -15,20 +15,30 @@ the 7-type dispatcher with a startup completeness gate.
 import pytest
 
 from xbrain.p3_task.schedule.dispatcher import (
-    Dispatcher, DispatcherIncomplete, UnknownDispatchTarget,
+    Dispatcher,
+    DispatcherIncomplete,
+    UnknownDispatchTarget,
 )
 from xbrain.p3_task.schedule.loop import (
-    ScheduleCandidate, decide, pick_next,
+    ScheduleCandidate,
+    decide,
+    pick_next,
 )
 from xbrain.p3_task.state.machine import (
-    InvalidTransition, TASK_STATES, TERMINAL_STATES, TRANSITIONS,
-    apply_transition, validate_suspend_fields,
+    TASK_STATES,
+    TERMINAL_STATES,
+    TRANSITIONS,
+    InvalidTransition,
+    apply_transition,
+    validate_suspend_fields,
 )
 from xbrain.p3_task.state.preconditions import (
-    check_v1_type, check_v2_priority, check_v3_energy_reach,
-    check_v5_mission_parses, check_v6_step_count,
+    check_v1_type,
+    check_v2_priority,
+    check_v3_energy_reach,
+    check_v5_mission_parses,
+    check_v6_step_count,
 )
-
 
 pytestmark = pytest.mark.no_device
 

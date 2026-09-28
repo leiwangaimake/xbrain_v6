@@ -39,6 +39,7 @@ sys.path.insert(0, "/opt/xbrain_v6")
 sys.path.insert(0, "/opt/xbrain_v6/scripts/sil")
 
 import field_probe2 as fp  # noqa: E402  (its main() only runs under __main__)
+
 from xbrain.p1_motion.rns.source import RnsSource  # noqa: E402
 from xbrain.p1_motion.rns.types import MissionKind  # noqa: E402
 

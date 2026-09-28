@@ -41,8 +41,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
-from xbrain.p1_motion.rns.types import (WATCHDOG_FENCE_SOURCE, NavFailReason,
-                                        NavFailure)
+from xbrain.p1_motion.rns.types import WATCHDOG_FENCE_SOURCE, NavFailReason, NavFailure
 
 #: 11 S9.3.2A.6 abort_reason closed set (v2.0: six + deviation).
 ABORT_REASONS = ("soft_estop", "obstacle", "fence", "timeout", "preempted",

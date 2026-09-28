@@ -16,27 +16,39 @@ tests; variants live in the modules themselves as raise semantics.
 import pytest
 
 from xbrain.p1_motion.fence.geom import (
-    FenceStage, FenceStageMachine, vector_project_toward_fence,
+    FenceStage,
+    FenceStageMachine,
+    vector_project_toward_fence,
 )
 from xbrain.p1_motion.freshness.degradation import (
-    CAM_THRESH, Freshness, GRID_THRESH, LIDAR_THRESH, classify,
+    CAM_THRESH,
+    GRID_THRESH,
+    LIDAR_THRESH,
+    Freshness,
+    classify,
 )
 from xbrain.p1_motion.gate.audit import limiter_all, limiter_argmax
 from xbrain.p1_motion.gate.g_targets import g_targets
 from xbrain.p1_motion.gate.speed_gate import (
-    BandHysteresis, f_speed_gate, gate_rule,
+    BandHysteresis,
+    f_speed_gate,
+    gate_rule,
 )
 from xbrain.p1_motion.perception_src.source import (
-    PerceptionFrame, ReplayPerceptionSource,
+    PerceptionFrame,
+    ReplayPerceptionSource,
 )
 from xbrain.p1_motion.rotation.rcg import (
-    R_EFF_FALLBACK_M, is_spin_like, rotation_permitted,
+    R_EFF_FALLBACK_M,
+    is_spin_like,
+    rotation_permitted,
 )
 from xbrain.p1_motion.rt_base.rtc import RtcViolation, note_single_slot
 from xbrain.p1_motion.sources.arbiter_p1 import (
-    BehaviorSource, P1Arbiter, priority_of,
+    BehaviorSource,
+    P1Arbiter,
+    priority_of,
 )
-
 
 pytestmark = pytest.mark.no_device
 

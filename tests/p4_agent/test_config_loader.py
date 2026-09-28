@@ -99,9 +99,9 @@ which nothing else in the system would perform.
 
 import ast
 import copy
+import hashlib
 import inspect
 import json
-import hashlib
 import os
 import re
 import sys

@@ -23,17 +23,26 @@ from pathlib import Path
 import pytest
 
 from xbrain.p2_core.audio.audio_io import (
-    ASR_RATE_HZ, ASR_SAMPLES_PER_FRAME, AudioFrame,
+    ASR_RATE_HZ,
+    ASR_SAMPLES_PER_FRAME,
+    AudioFrame,
 )
 from xbrain.p2_core.runtime.mic_capture import (
-    DEFAULT_MIC_TOPIC, MicCaptureConfig, MicCaptureError,
-    decode_frame, default_config, encode_frame,
+    DEFAULT_MIC_TOPIC,
+    MicCaptureConfig,
+    MicCaptureError,
+    decode_frame,
+    default_config,
+    encode_frame,
 )
 from xbrain.p2_core.runtime.speaker_wiring import (
-    GATE_TOPIC, SPEAK_ACK_TOPIC, SPEAK_TOPIC,
-    GatePayload, SpeakerHwError, parse_speak_payload,
+    GATE_TOPIC,
+    SPEAK_ACK_TOPIC,
+    SPEAK_TOPIC,
+    GatePayload,
+    SpeakerHwError,
+    parse_speak_payload,
 )
-
 
 pytestmark = pytest.mark.no_device
 

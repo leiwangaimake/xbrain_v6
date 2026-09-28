@@ -38,8 +38,7 @@ from pathlib import Path
 import pytest
 
 from xbrain.p1_motion.runtime.fault_forward import rebuild_forward
-from xbrain.p1_motion.runtime.nav_wiring import (EVENT_CHASSIS_FAULT_TOPIC,
-                                                 NavRuntime)
+from xbrain.p1_motion.runtime.nav_wiring import EVENT_CHASSIS_FAULT_TOPIC, NavRuntime
 
 pytestmark = pytest.mark.no_device
 

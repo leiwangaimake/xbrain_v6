@@ -26,7 +26,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, Optional
 
-
 _ROUTE_SET: FrozenSet[str] = frozenset({
     "fastpath", "llm", "bypass", "fastpath_then_llm",
 })

@@ -26,12 +26,21 @@ from typing import List
 import pytest
 import yaml
 
-from tests.p1_motion.rns.scenes import (healthy_status, one_object, snapshot,
-                                        uniform_free)
+from tests.p1_motion.rns.scenes import (
+    healthy_status,
+    one_object,
+    snapshot,
+    uniform_free,
+)
 from xbrain.common.errors import E_CAPABILITY
 from xbrain.p1_motion.nav.health_factor import HealthView
-from xbrain.p1_motion.nav.mission_host import (CH_EVENT, CH_PROGRESS,
-                                               CH_RELMOVE, Emit, MissionHost)
+from xbrain.p1_motion.nav.mission_host import (
+    CH_EVENT,
+    CH_PROGRESS,
+    CH_RELMOVE,
+    Emit,
+    MissionHost,
+)
 from xbrain.p1_motion.nav.nav_tick import NavInputs, NavTick
 from xbrain.p1_motion.nav.relmove_intake import RelMoveLimits
 from xbrain.p1_motion.nav.route_intake import RouteClear, RouteSet

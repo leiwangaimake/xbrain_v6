@@ -42,7 +42,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import FrozenSet, Optional
 
-
 # --- Action closed set (16 §4 table) -----------------------------
 
 BYPASS_ESTOP = "estop"

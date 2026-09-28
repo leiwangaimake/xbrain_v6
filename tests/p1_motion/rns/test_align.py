@@ -19,7 +19,11 @@ import math
 import pytest
 
 from xbrain.p1_motion.rns.route import (
-    align_omega, align_weight, arrived_with_heading, desired_heading, wrap_angle,
+    align_omega,
+    align_weight,
+    arrived_with_heading,
+    desired_heading,
+    wrap_angle,
 )
 
 

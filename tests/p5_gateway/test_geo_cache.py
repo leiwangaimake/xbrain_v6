@@ -17,7 +17,9 @@ a missing lat/lon renders NOTHING -- toXY returns null).
 from __future__ import annotations
 
 from xbrain.p5_gateway.geo.cache import (
-    GEO_STALE_AFTER_MS, GeoCache, geo_layers,
+    GEO_STALE_AFTER_MS,
+    GeoCache,
+    geo_layers,
 )
 
 _PAYLOAD = {

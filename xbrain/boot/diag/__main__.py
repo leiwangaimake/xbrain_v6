@@ -33,7 +33,6 @@ from pathlib import Path
 
 from xbrain.boot.diag import collect
 
-
 _DEFAULT_CLAUDE_MD = "/opt/xbrain_v6/CLAUDE.md"
 _DEFAULT_DATA_ROOT = "/opt/xbrain_v6/data"
 _DEFAULT_RESOLVED = "/opt/xbrain_v6/data/run/resolved"

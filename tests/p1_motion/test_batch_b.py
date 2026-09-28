@@ -18,35 +18,55 @@ hello_ack version mismatch refusal, config forbidden alias.
 import pytest
 
 from xbrain.p1_motion.config.loader import (
-    FORBIDDEN_ALIAS_KEYS, P1SelfcheckError,
-    check_no_alias_keys, check_rcg_constants,
+    FORBIDDEN_ALIAS_KEYS,
+    P1SelfcheckError,
+    check_no_alias_keys,
+    check_rcg_constants,
 )
 from xbrain.p1_motion.handshake.hello import (
-    HandshakeError, PROTO_VERSION, build_hello, build_hello_ack,
+    PROTO_VERSION,
+    HandshakeError,
+    build_hello,
+    build_hello_ack,
     validate_hello_ack,
 )
 from xbrain.p1_motion.path.nav2_proxy import (
-    DoubleGate, VerifyState, can_correct, consume_correction,
+    DoubleGate,
+    VerifyState,
+    can_correct,
+    consume_correction,
     needs_correction,
 )
 from xbrain.p1_motion.path.path_follow import (
-    LoopState, PathFollowConfig, PathFollowState,
-    advance_waypoint, is_arrived, pure_pursuit_target,
+    LoopState,
+    PathFollowConfig,
+    PathFollowState,
+    advance_waypoint,
+    is_arrived,
+    pure_pursuit_target,
 )
 from xbrain.p1_motion.path.pose_assembly import (
-    MotionSnapshot, to_cmd_vel_gate, to_pose_motion,
+    MotionSnapshot,
+    to_cmd_vel_gate,
+    to_pose_motion,
 )
 from xbrain.p1_motion.path.target_oriented import (
-    SchemaError, TargetOrientedParams, compute_face_target,
+    SchemaError,
+    TargetOrientedParams,
+    compute_face_target,
 )
 from xbrain.p1_motion.teleop.four_source import (
-    ParsedEstop, TeleopFrame, TeleopSource,
-    is_fresh, parse_estop_first,
+    ParsedEstop,
+    TeleopFrame,
+    TeleopSource,
+    is_fresh,
+    parse_estop_first,
 )
 from xbrain.p1_motion.teleop.teleop_cloud import (
-    CloudTeleopFrame, CloudTeleopReject, clamp_and_check,
+    CloudTeleopFrame,
+    CloudTeleopReject,
+    clamp_and_check,
 )
-
 
 pytestmark = pytest.mark.no_device
 

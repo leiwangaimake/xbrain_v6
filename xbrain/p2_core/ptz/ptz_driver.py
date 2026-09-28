@@ -44,7 +44,6 @@ from typing import Mapping, Optional
 
 from xbrain.p2_core.ptz import onvif_client as oc
 
-
 _logger = logging.getLogger("xbrain.p2.ptz")
 
 

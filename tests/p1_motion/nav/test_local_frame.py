@@ -18,9 +18,12 @@ import math
 
 import pytest
 
-from xbrain.p1_motion.path.local_frame import (M_PER_DEG, LocalFrame,
-                                               LocalFrameError,
-                                               frame_from_config)
+from xbrain.p1_motion.path.local_frame import (
+    M_PER_DEG,
+    LocalFrame,
+    LocalFrameError,
+    frame_from_config,
+)
 
 pytestmark = pytest.mark.no_device
 

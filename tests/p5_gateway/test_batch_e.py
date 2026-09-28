@@ -22,29 +22,47 @@ import pytest
 
 from xbrain.p5_gateway.config.assertions import (
     FreezeAssertionFailure,
-    check_bind_entries, check_bind_no_port_reuse, is_pending_key,
+    check_bind_entries,
+    check_bind_no_port_reuse,
+    is_pending_key,
 )
 from xbrain.p5_gateway.ftp.vsftpd import (
-    DiskWatermark, DiskWatermarkPolicy, FtpWriteForbidden,
-    UnknownPlane, check_verb_read_only, dscp_for,
+    DiskWatermark,
+    DiskWatermarkPolicy,
+    FtpWriteForbidden,
+    UnknownPlane,
+    check_verb_read_only,
+    dscp_for,
 )
 from xbrain.p5_gateway.hmi.data_sets import (
-    HMI_DATA_GROUPS, UiRotationState, UnknownDataGroup,
-    redact_ptz_angle_for_ui, validate_group,
+    HMI_DATA_GROUPS,
+    UiRotationState,
+    UnknownDataGroup,
+    redact_ptz_angle_for_ui,
+    validate_group,
 )
 from xbrain.p5_gateway.lifecycle.state_machine import (
-    GatewayState, InvalidGatewayTransition,
-    minimal_mode_allows, transition,
+    GatewayState,
+    InvalidGatewayTransition,
+    minimal_mode_allows,
+    transition,
 )
 from xbrain.p5_gateway.media.reference import (
-    MediaFileMissing, MediaRef, VALID_MEDIA_KINDS,
-    validate_kind, verify_file_exists_before_submit,
+    VALID_MEDIA_KINDS,
+    MediaFileMissing,
+    MediaRef,
+    validate_kind,
+    verify_file_exists_before_submit,
 )
 from xbrain.p5_gateway.ptz.state_machine import (
-    InvalidPtzTransition, LEASE_RENEWAL_HZ, PtzButtonState,
-    lease_renewal_period_ms, transition as ptz_transition,
+    LEASE_RENEWAL_HZ,
+    InvalidPtzTransition,
+    PtzButtonState,
+    lease_renewal_period_ms,
 )
-
+from xbrain.p5_gateway.ptz.state_machine import (
+    transition as ptz_transition,
+)
 
 pytestmark = pytest.mark.no_device
 

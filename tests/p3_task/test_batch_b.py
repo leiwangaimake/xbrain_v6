@@ -13,23 +13,30 @@ matching red variant). The 5/16 quota triggers are verified by
 inserting one past the cap and asserting ABORT.
 """
 
+import aiosqlite
 import pytest
 import pytest_asyncio
-import aiosqlite
 
 from xbrain.p3_task.dao.simple_daos import (
-    DocksDAO, FencesDAO, GeoObjectDAO, MemoryDAO,
-    PatrolProgressDAO, PendingPushDAO, SnapshotDAO,
+    DocksDAO,
+    FencesDAO,
+    GeoObjectDAO,
+    MemoryDAO,
+    PatrolProgressDAO,
+    PendingPushDAO,
+    SnapshotDAO,
 )
 from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO
 from xbrain.p3_task.persistence.schema_geo import (
-    FENCE_DB_STATEMENTS, GEO_DB_STATEMENTS, RECORD_DB_STATEMENTS,
+    FENCE_DB_STATEMENTS,
+    GEO_DB_STATEMENTS,
+    RECORD_DB_STATEMENTS,
 )
 from xbrain.p3_task.persistence.schema_task import (
-    ALL_DDL_STATEMENTS, PatrolProgressShapeConflict,
+    ALL_DDL_STATEMENTS,
+    PatrolProgressShapeConflict,
     ensure_patrol_progress_shape,
 )
-
 
 pytestmark = pytest.mark.no_device
 
@@ -592,7 +599,8 @@ async def test_fence_single_allow_trigger_rejects_second(fence_conn):
 
 def test_validate_active_fence_set_exactly_one_allow():
     from xbrain.p3_task.fence.geom import (
-        InvalidFenceSet, validate_active_fence_set,
+        InvalidFenceSet,
+        validate_active_fence_set,
     )
     validate_active_fence_set(["allow", "forbid", "warning"])   # ok: 1 allow, 3 total
     # 0 allow (no activity area) and >= 2 allow both reject (FS-5A existence half,

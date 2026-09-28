@@ -35,10 +35,12 @@ from xbrain.p3_task.dao.simple_daos import PatrolProgressDAO
 from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 from xbrain.p3_task.runtime.progress_sink import apply_path_progress
-from xbrain.p3_task.state.path_progress import (MOTION_RESULT_FOR_PATH_STATE,
-                                                PathProgressError,
-                                                ProgressTracker,
-                                                parse_path_progress)
+from xbrain.p3_task.state.path_progress import (
+    MOTION_RESULT_FOR_PATH_STATE,
+    PathProgressError,
+    ProgressTracker,
+    parse_path_progress,
+)
 
 pytestmark = pytest.mark.no_device
 

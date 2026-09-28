@@ -17,7 +17,6 @@ import pytest
 
 from xbrain.p2_core.payload_client import errors_map as em
 
-
 pytestmark = pytest.mark.no_device
 
 

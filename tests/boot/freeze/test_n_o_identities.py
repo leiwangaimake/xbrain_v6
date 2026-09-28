@@ -27,7 +27,6 @@ import yaml
 from xbrain.boot.freeze.assertions.n_o_identities import run_n, run_o
 from xbrain.common.errors.exceptions import XbrainError
 
-
 # ---------------------------------------------------------------------------
 # Scaffolding
 # ---------------------------------------------------------------------------

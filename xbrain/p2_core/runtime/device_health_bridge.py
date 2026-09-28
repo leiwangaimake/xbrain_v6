@@ -32,7 +32,8 @@ import logging
 from typing import Callable, Optional
 
 from xbrain.p5_gateway.event.device_events import (
-    DeviceLivenessMonitor, build_device_event,
+    DeviceLivenessMonitor,
+    build_device_event,
 )
 
 _logger = logging.getLogger("xbrain.p2.device_health")

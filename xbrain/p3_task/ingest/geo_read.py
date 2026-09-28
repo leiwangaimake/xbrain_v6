@@ -49,7 +49,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from xbrain.common.enums import GEO_TYPE
 from xbrain.common.errors import E_NOT_FOUND, E_NOT_IMPLEMENTED, E_SCHEMA
 from xbrain.p3_task.ingest.geo_apply import (
-    ApplyResult, GeoContext, register_applier,
+    ApplyResult,
+    GeoContext,
+    register_applier,
 )
 from xbrain.p3_task.ingest.geo_command import GeoCommand, GeoCommandError
 from xbrain.p3_task.ingest.geo_object import TABLE_FOR_TYPE

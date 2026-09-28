@@ -43,7 +43,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 DOWN_MESSAGE_KINDS = frozenset({
     "state_snapshot", "state_delta", "event", "telemetry", "approval",
     "task_status", "dock_status", "link_status", "prompt",

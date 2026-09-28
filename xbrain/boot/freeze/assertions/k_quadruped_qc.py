@@ -235,6 +235,7 @@ Per-QC rationale (why each rule exists, failure mode, doc anchor):
 # json import unused historically; kept out. os for path work in QC-15
 # (cred_dir stat).
 import os
+
 # typing for annotations. Iterable/List/Optional used across the
 # seventeen sub-checks.
 from typing import Any, Dict, Iterable, List, Optional
@@ -242,6 +243,7 @@ from typing import Any, Dict, Iterable, List, Optional
 # Layer loader for reading L6 raw quadruped.yaml. K does not need
 # overlay (no cross-file check); L6 is enough.
 from xbrain.boot.freeze.assertions._layer_loader import load_l6_files
+
 # XbrainError base; K uses E_CONFIG_INVALID uniformly for every QC-N
 # failure. detail.rule discriminates which rule fired.
 from xbrain.common.errors import E_CONFIG_INVALID

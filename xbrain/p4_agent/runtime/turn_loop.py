@@ -43,12 +43,15 @@ from typing import Callable, List, Optional
 from xbrain.p2_core.audio.audio_io import AudioFrame
 from xbrain.p2_core.runtime.mic_capture import decode_frame
 from xbrain.p4_agent.runtime.intent_dispatch import (
-    DispatchResult, UnknownIntentDispatch, dispatch,
+    DispatchResult,
+    UnknownIntentDispatch,
+    dispatch,
 )
 from xbrain.p4_agent.runtime.vad import (
-    VadConfig, VadState_, feed_frame,
+    VadConfig,
+    VadState_,
+    feed_frame,
 )
-
 
 _logger = logging.getLogger("xbrain.p4.turn_loop")
 
@@ -102,10 +105,12 @@ def naive_classify(text: str) -> str:
 
 def transcribe_utterance(cfg: TurnLoopConfig, pcm_samples: List[int]) -> str:
     """Blocking HTTP call to services/asr :8010."""
-    from xbrain.p4_agent.ai_client.asr_client import (
-        AsrClientError, transcribe,
-    )
     import struct
+
+    from xbrain.p4_agent.ai_client.asr_client import (
+        AsrClientError,
+        transcribe,
+    )
     pcm_bytes = struct.pack(f"<{len(pcm_samples)}h", *pcm_samples)
     try:
         return transcribe(

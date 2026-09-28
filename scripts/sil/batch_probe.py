@@ -28,8 +28,8 @@ sys.path.insert(0, "/opt/xbrain_v6")
 sys.path.insert(0, "/opt/xbrain_v6/scripts/sil")
 
 import yaml
-
 from sil_world import SilWorld
+
 from xbrain.p1_motion.rns.route import Mission
 from xbrain.p1_motion.rns.source import RnsSource
 from xbrain.p1_motion.rns.types import MissionKind, Origin

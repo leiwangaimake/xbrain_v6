@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-
 pytestmark = pytest.mark.no_device
 
 
@@ -29,13 +28,12 @@ CHECKER = REPO / "scripts" / "doccheck" / "debt_code_cover.py"
 sys.path.insert(0, str(REPO))
 from scripts.doccheck.debt_code_cover import (  # noqa: E402
     Debt,
+    Report,
+    _fail_silent_in_positive_context,
     check_coverage,
     check_fail_loud,
     parse_21,
-    _fail_silent_in_positive_context,
-    Report,
 )
-
 
 # --- Parser ---------------------------------------------------------
 

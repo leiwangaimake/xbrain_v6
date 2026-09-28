@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import pytest
 
-from xbrain.p5_gateway.runtime.cloud_wiring import CloudBridge
 from tests.p5_gateway.test_cloud_rx_refreshes_link import (
-    _FakeSession, _Sample,
+    _FakeSession,
+    _Sample,
 )
+from xbrain.p5_gateway.runtime.cloud_wiring import CloudBridge
 
 pytestmark = pytest.mark.no_device
 

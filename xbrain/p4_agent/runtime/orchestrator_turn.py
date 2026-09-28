@@ -40,14 +40,20 @@ from typing import Any, Callable, List, Optional, Tuple
 
 from xbrain.p4_agent.registry.intents import IntentRegistry
 from xbrain.p4_agent.runtime.intent_dispatch import (
-    CMD_AUDIO_SPEAK, CMD_GEO, CMD_MODE, CMD_MOTION_INTENT, CMD_SYSTEM,
-    CMD_TASK, CMD_TEACH,
+    CMD_AUDIO_SPEAK,
+    CMD_GEO,
+    CMD_MODE,
+    CMD_MOTION_INTENT,
+    CMD_SYSTEM,
+    CMD_TASK,
+    CMD_TEACH,
+)
+from xbrain.p4_agent.runtime.turn_orchestrator import (
+    OrchestratorSession,
+    TurnDecision,
+    TurnOrchestrator,
 )
 from xbrain.p4_agent.session.chitchat import ChitchatResponder
-from xbrain.p4_agent.runtime.turn_orchestrator import (
-    OrchestratorSession, TurnDecision, TurnOrchestrator,
-)
-
 
 _logger = logging.getLogger("xbrain.p4.orch_turn")
 

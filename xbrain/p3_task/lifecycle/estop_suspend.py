@@ -45,8 +45,7 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from xbrain.p3_task.state.machine import (apply_transition,
-                                          validate_suspend_fields)
+from xbrain.p3_task.state.machine import apply_transition, validate_suspend_fields
 
 #: ES-2 的挂起归因(15 S11.1 / common.enums). passive 因为 estop 不自动恢复;
 #: estop_soft 因为软急停(硬急停 estop_hes 走别的路径, 不是本 cmd/estop).

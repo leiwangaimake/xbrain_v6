@@ -37,7 +37,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, FrozenSet, Optional
 
-
 # 11 S7.16 / WL-G3: P4 subscribes each state key EXPLICITLY (no wildcard
 # subscription -- that is the 'universal bridge' anti-pattern W-2). These
 # are the keys the query layer reads from; the wiring (GWY-P4-41) declares

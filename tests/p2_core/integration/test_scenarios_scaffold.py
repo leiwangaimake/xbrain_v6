@@ -29,7 +29,6 @@ this specific test'.
 
 import pytest
 
-
 pytestmark = pytest.mark.no_device
 
 

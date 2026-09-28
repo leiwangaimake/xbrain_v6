@@ -33,30 +33,41 @@ import pytest
 from xbrain.p1_motion.rns._legacy.audit_ring import RnsAuditRecord, RnsAuditRing
 from xbrain.p1_motion.rns._legacy.candidate_gen import r_eff, wz_clamp_geometric
 from xbrain.p1_motion.rns._legacy.corridor import (
-    CorridorSample, find_widest_corridor, is_blocked,
+    CorridorSample,
+    find_widest_corridor,
+    is_blocked,
 )
 from xbrain.p1_motion.rns._legacy.grid_motion import (
-    OdomUnavailable, check_odom_available, transform_grid_to_robot,
+    OdomUnavailable,
+    check_odom_available,
+    transform_grid_to_robot,
 )
 from xbrain.p1_motion.rns._legacy.inflate import compute_r_inflate
 from xbrain.p1_motion.rns._legacy.module import (
-    RnsCandidate, RnsModuleUnavailable, RnsSnapshot,
+    RnsCandidate,
+    RnsModuleUnavailable,
+    RnsSnapshot,
 )
 from xbrain.p1_motion.rns._legacy.shutdown import (
-    RnsShutdownReason, ShutdownDecision, evaluate_shutdown,
+    RnsShutdownReason,
+    ShutdownDecision,
+    evaluate_shutdown,
 )
 from xbrain.p1_motion.rns._legacy.side_select import (
-    Candidate, choose_side, cost_of,
+    Candidate,
+    choose_side,
+    cost_of,
 )
 from xbrain.p1_motion.rns._legacy.targets_veto import (
     ReverseNotAllowed,
-    geometry_fallback_velocity, within_veto_distance,
+    geometry_fallback_velocity,
+    within_veto_distance,
 )
 from xbrain.p1_motion.rns._legacy.u54_semantic import (
-    is_within_safety, should_stop_but_not_retreat,
+    is_within_safety,
+    should_stop_but_not_retreat,
     type_b_slowdown_factor,
 )
-
 
 pytestmark = pytest.mark.no_device
 

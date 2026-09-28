@@ -39,8 +39,12 @@ import json
 import re
 from typing import Any, Dict, Optional, Tuple
 
-from ..outbound.error_map import (CODE_JSON_PARSE, CODE_REQUIRED_FIELD,
-                                  CODE_RID_MISMATCH, envelope_error)
+from ..outbound.error_map import (
+    CODE_JSON_PARSE,
+    CODE_REQUIRED_FIELD,
+    CODE_RID_MISMATCH,
+    envelope_error,
+)
 
 #: v2.0 S1 第 3 条: rid 的值域.
 RID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")

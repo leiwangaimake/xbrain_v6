@@ -17,8 +17,15 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p1_motion.rns.speed import (
-    SpeedCaps, cap_align, cap_deviation, cap_gap_tightness, cap_rtk_float,
-    cap_unknown_ratio, cap_wall, g_down, g_up,
+    SpeedCaps,
+    cap_align,
+    cap_deviation,
+    cap_gap_tightness,
+    cap_rtk_float,
+    cap_unknown_ratio,
+    cap_wall,
+    g_down,
+    g_up,
 )
 
 

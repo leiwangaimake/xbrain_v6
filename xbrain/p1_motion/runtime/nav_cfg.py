@@ -29,13 +29,16 @@ does, on construction), does not validate ranges beyond "positive number"
 from __future__ import annotations
 
 import math
-
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping
 
-from xbrain.p1_motion.nav.relmove_intake import RelMoveLimits
 from xbrain.p1_motion.fence.clip import FIX_WITH_FENCE, FenceClipError, FenceConstants
-from xbrain.p1_motion.path.local_frame import LocalFrame, LocalFrameError, frame_from_config
+from xbrain.p1_motion.nav.relmove_intake import RelMoveLimits
+from xbrain.p1_motion.path.local_frame import (
+    LocalFrame,
+    LocalFrameError,
+    frame_from_config,
+)
 
 
 class NavConfigError(ValueError):

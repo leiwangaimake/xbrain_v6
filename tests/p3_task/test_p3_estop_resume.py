@@ -26,8 +26,11 @@ import pytest
 import pytest_asyncio
 
 from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO
-from xbrain.p3_task.lifecycle.estop import (EstopController, HUMAN_SOURCES,
-                                            is_human_resume_command)
+from xbrain.p3_task.lifecycle.estop import (
+    HUMAN_SOURCES,
+    EstopController,
+    is_human_resume_command,
+)
 from xbrain.p3_task.lifecycle.estop_suspend import suspend_running_for_estop
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 

@@ -51,6 +51,7 @@ from typing import Any, Callable, Dict, List, NamedTuple
 # job in the production ORD-1 sequence but tests may call G directly.
 from xbrain.boot.freeze.assertions._layer_loader import load_layers
 from xbrain.common.config import build_overlay
+
 # XbrainError = base for every deliberate raise; G uses E_CONFIG_INVALID
 # uniformly (all failures are "the tree has a bad value").
 # E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)

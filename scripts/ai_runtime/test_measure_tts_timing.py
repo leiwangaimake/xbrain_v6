@@ -27,11 +27,11 @@ from __future__ import annotations
 import pytest
 
 from scripts.ai_runtime.measure_tts_timing import (
-    PhraseTiming,
     _FRAME_MS,
     _MIN_MARGIN_MS,
     _ONSET_FRAMES,
     _SILENCE_FRAMES,
+    PhraseTiming,
     _find_speech,
     _report,
     _round_up,

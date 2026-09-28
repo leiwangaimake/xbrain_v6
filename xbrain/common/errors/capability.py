@@ -83,7 +83,6 @@ from typing import Dict, FrozenSet, NamedTuple, Optional
 # the time this line runs the names exist on the partially-initialised package.
 from . import E_CAPABILITY, E_NOT_IMPLEMENTED
 
-
 # The unavailable-capability table. Hand-written single source of truth, keyed by
 # 21 debt id, valued by the rejection code (an imported name, never a literal).
 # Every entry is diffed against 21 sections 2 and 3 in both directions by

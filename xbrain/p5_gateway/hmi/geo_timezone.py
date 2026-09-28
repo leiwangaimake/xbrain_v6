@@ -36,7 +36,7 @@ from typing import Optional
 # without it degrades to the site fallback rather than failing to import the
 # whole HMI snapshot path -- the clock still ticks, just in the site zone.
 try:
-    from tzfpy import get_tz as _get_tz          # get_tz(lon, lat) -> str
+    from tzfpy import get_tz as _get_tz  # get_tz(lon, lat) -> str
     _HAVE_TZFPY = True
 except ImportError:                              # pragma: no cover - host-dependent
     _get_tz = None

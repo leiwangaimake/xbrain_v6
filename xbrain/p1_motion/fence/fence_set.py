@@ -38,11 +38,10 @@ polygons 重算, 与 wire["crc32"] 逐字比. 不一致即报文损坏, 拒绝(F
 from __future__ import annotations
 
 import math
-
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-from xbrain.common.enums import FENCE_ROLE           # 11 S9A.2 闭集 (CLAUDE.md 3.5)
+from xbrain.common.enums import FENCE_ROLE  # 11 S9A.2 闭集 (CLAUDE.md 3.5)
 from xbrain.common.fence.geom import fence_set_crc32  # 跨进程单一真源 (报警 F0)
 
 

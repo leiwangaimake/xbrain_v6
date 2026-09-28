@@ -65,6 +65,7 @@ from typing import Optional
 # environment is wrong, the process never got as far as talking to anything.
 from .asr_client import AsrClientError
 from .config import AiRuntimeConfig, AiRuntimeConfigError
+
 # IntercomError is caught for the same reason as the client errors: a malformed control
 # message from office-client names its own fix and does not need a stack through websockets.
 from .intercom import IntercomError, IntercomServer

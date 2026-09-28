@@ -32,8 +32,7 @@ import json
 import pytest
 
 from xbrain.common.envelope import decode
-from xbrain.p2_core.runtime.main_wiring import (run_voice_loop_wiring,
-                                                stamp_body)
+from xbrain.p2_core.runtime.main_wiring import run_voice_loop_wiring, stamp_body
 
 pytestmark = pytest.mark.no_device
 
@@ -198,8 +197,7 @@ def test_p5_on_health_reads_the_body_out_of_the_envelope():
 
     MUTATION: 删掉解包的三行 -> /api/health 与云端 devices 一起空掉, 本条红.
     """
-    from xbrain.p5_gateway.runtime.main_wiring import (
-        run_voice_loop_wiring as p5_wiring)
+    from xbrain.p5_gateway.runtime.main_wiring import run_voice_loop_wiring as p5_wiring
 
     src = inspect.getsource(p5_wiring)
     block = src[src.index("def _on_health("):]

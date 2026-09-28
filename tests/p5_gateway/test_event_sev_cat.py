@@ -22,14 +22,15 @@ from __future__ import annotations
 
 import inspect
 
-from xbrain.p5_gateway.runtime import main_wiring
-from xbrain.p5_gateway.runtime.main_wiring import (
-    _event_sev_cat, _normalise_event, run_voice_loop_wiring,
-)
-
-
 # INF-TS-1: 纯单测, 不碰设备(无 zenohd / 无底盘 / 无 ORIN 专属硬件).
 import pytest
+
+from xbrain.p5_gateway.runtime import main_wiring
+from xbrain.p5_gateway.runtime.main_wiring import (
+    _event_sev_cat,
+    _normalise_event,
+    run_voice_loop_wiring,
+)
 
 pytestmark = pytest.mark.no_device
 

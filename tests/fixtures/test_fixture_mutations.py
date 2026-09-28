@@ -33,7 +33,6 @@ import yaml
 
 from xbrain.common.errors.exceptions import XbrainError
 
-
 pytestmark = pytest.mark.no_device
 
 
@@ -54,9 +53,8 @@ def test_mutation_a_safety_zero_trips_g(tmp_path):
     Testing G in isolation still exercises the exact rule that
     would reject a 0.0 safety value at deploy freeze."""
     from tests.fixtures.conftest import _build_and_freeze
-
-    from xbrain.boot.freeze.assertions.g_safety_range import run as run_g
     from xbrain.boot.freeze.assertions._layer_loader import load_layers
+    from xbrain.boot.freeze.assertions.g_safety_range import run as run_g
     from xbrain.common.config import build_overlay
 
     # Build the fixture with a safety copy + 0.0 mutation.
@@ -88,7 +86,8 @@ def test_mutation_b_prod_new_leaf_uncovered(tmp_path, resolved_configs_factory):
     Do NOT modify real prod -- we work on a copy.
     """
     from tests.fixtures.conftest import (
-        _copy_configs, _rewrite_yaml_with_overrides,
+        _copy_configs,
+        _rewrite_yaml_with_overrides,
     )
     from tests.fixtures.test_fixture_integrity import (
         _walk_leaf_keys,

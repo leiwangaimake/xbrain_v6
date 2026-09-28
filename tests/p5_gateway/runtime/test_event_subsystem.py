@@ -21,7 +21,6 @@ import pytest
 
 from xbrain.p5_gateway.runtime.event_subsystem import EventSubsystem
 
-
 pytestmark = pytest.mark.no_device
 
 

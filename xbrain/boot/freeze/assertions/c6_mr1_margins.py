@@ -49,11 +49,14 @@ from typing import Any, Dict
 # load_l6_files for the p1_motion.yaml side of both checks; load_layers
 # for the isolated-fallback path building overlay.
 from xbrain.boot.freeze.assertions._layer_loader import (
-    load_l6_files, load_layers,
+    load_l6_files,
+    load_layers,
 )
+
 # build_overlay for the fallback path only; production ORD-1 has A
 # already provided overlay in ctx.
 from xbrain.common.config import build_overlay
+
 # XbrainError base -- both C-6 and MR-1 raise E_CONFIG_INVALID
 # uniformly.
 # E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)

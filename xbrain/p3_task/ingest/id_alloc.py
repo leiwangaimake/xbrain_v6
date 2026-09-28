@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import re
 
-
 # A well-formed daily sequence id: 't-' + 8 digits + '-' + digits. The capture
 # is the NNN part, read back to find the current max for a day.
 _TASK_ID_RE = re.compile(r"^t-(\d{8})-(\d+)$")

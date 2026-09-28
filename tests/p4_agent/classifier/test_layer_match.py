@@ -17,7 +17,8 @@ import os
 import yaml
 
 from xbrain.p4_agent.classifier.keyword_matcher import (
-    KeywordMatcher, classify_text,
+    KeywordMatcher,
+    classify_text,
 )
 from xbrain.p4_agent.registry.intents import load_intent_registry
 

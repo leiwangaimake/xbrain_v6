@@ -25,7 +25,6 @@ from xbrain.p2_core.messaging import (
     whitelist_gate,
 )
 
-
 pytestmark = pytest.mark.no_device
 
 

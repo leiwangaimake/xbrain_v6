@@ -29,10 +29,10 @@ import asyncio
 
 import pytest
 
-from services.payload.config import PayloadConfig
-from services.payload.core.device_link import DeviceLinkError
-from services.payload.core.deter import DeterParams
 import services.payload.core.session as session_mod
+from services.payload.config import PayloadConfig
+from services.payload.core.deter import DeterParams
+from services.payload.core.device_link import DeviceLinkError
 from services.payload.core.session import (
     Mode,
     ModeStateError,

@@ -18,7 +18,8 @@ import pytest
 
 import xbrain.p4_agent.ai_client.lights_client as lc
 from xbrain.p2_core.runtime.payload_wiring import (
-    PayloadDomain, PayloadWiringConfig,
+    PayloadDomain,
+    PayloadWiringConfig,
 )
 
 pytestmark = pytest.mark.no_device

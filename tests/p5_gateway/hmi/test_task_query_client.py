@@ -16,9 +16,10 @@ silently make P3 answer the default page.
 from __future__ import annotations
 
 from xbrain.p5_gateway.hmi.task_query_client import (
-    build_task_selector, parse_get_reply, query_tasks,
+    build_task_selector,
+    parse_get_reply,
+    query_tasks,
 )
-
 
 # -- selector build: ';' separated (zenoh, not '&') ----------------------------
 

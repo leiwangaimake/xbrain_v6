@@ -43,8 +43,7 @@ def _frame(**over):
 
 
 def _reject_code(raw, key_rid="gj-001"):
-    from xbrain.p5_gateway.inbound.cloud_inbound import (InboundReject,
-                                                         parse_frame)
+    from xbrain.p5_gateway.inbound.cloud_inbound import InboundReject, parse_frame
     try:
         parse_frame(raw, key_rid)
     except InboundReject as exc:

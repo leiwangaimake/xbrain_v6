@@ -16,16 +16,25 @@ GWY-P4-00 + P4-02 + P4-02b batch 1 tests.
 import pytest
 
 from xbrain.p4_agent.audio_rx.gate_observer import (
-    GateHeartbeatWatch, GateSample, SchemaError, SpeakRequest,
-    default_est_duration_ms, is_mic_closed_by_speaker,
+    GateHeartbeatWatch,
+    GateSample,
+    SchemaError,
+    SpeakRequest,
+    default_est_duration_ms,
+    is_mic_closed_by_speaker,
 )
 from xbrain.p4_agent.gateway.gpu_token import (
-    AdmissionResult, CircuitState, GpuTokenState, release, try_admit,
+    AdmissionResult,
+    CircuitState,
+    GpuTokenState,
+    release,
+    try_admit,
 )
 from xbrain.p4_agent.threads import (
-    InvocationGuard, P1Violation, P2Violation,
+    InvocationGuard,
+    P1Violation,
+    P2Violation,
 )
-
 
 pytestmark = pytest.mark.no_device
 

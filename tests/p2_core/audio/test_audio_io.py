@@ -16,13 +16,17 @@ BIZ-P2-3 -- audio_io decimation math + AudioFrame invariants.
 import pytest
 
 from xbrain.p2_core.audio.audio_io import (
-    ASR_RATE_HZ, ASR_SAMPLES_PER_FRAME,
+    ASR_RATE_HZ,
+    ASR_SAMPLES_PER_FRAME,
+    CAPTURE_RATE_HZ,
+    CAPTURE_SAMPLES_PER_FRAME,
+    DECIMATION_FACTOR,
+    FRAME_MS,
     AlsaCaptureUnavailable,
-    AudioFrame, CAPTURE_RATE_HZ, CAPTURE_SAMPLES_PER_FRAME,
-    DECIMATION_FACTOR, FRAME_MS,
-    build_frame, decimate_3to1,
+    AudioFrame,
+    build_frame,
+    decimate_3to1,
 )
-
 
 pytestmark = pytest.mark.no_device
 
@@ -127,8 +131,9 @@ def test_open_capture_fails_loudly_when_arecord_missing(monkeypatch):
     """The fail-safe direction: when arecord isn't available, raise
     AlsaCaptureUnavailable (caller maps to mic=device_fault). Do
     NOT return a dead Popen or None."""
-    import xbrain.p2_core.audio.audio_io as mod
     import shutil
+
+    import xbrain.p2_core.audio.audio_io as mod
     monkeypatch.setattr(shutil, "which", lambda _: None)
     with pytest.raises(AlsaCaptureUnavailable):
         mod.open_capture()

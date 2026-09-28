@@ -17,13 +17,17 @@ tests/p5_gateway/event/test_pipeline.py and tests/p5_gateway/persistence/.
 import pytest
 
 from xbrain.p5_gateway.event.pipeline import (
-    PIPELINE_STAGES, PipelineOrderViolation, assert_stage_order,
+    PIPELINE_STAGES,
+    PipelineOrderViolation,
+    assert_stage_order,
 )
 from xbrain.p5_gateway.lifecycle.skeleton import (
-    DuplicateTaskRegistration, IncompleteTaskRegistration,
-    NINE_TASKS, P1_P2_WRITERS, TaskRegistry,
+    NINE_TASKS,
+    P1_P2_WRITERS,
+    DuplicateTaskRegistration,
+    IncompleteTaskRegistration,
+    TaskRegistry,
 )
-
 
 pytestmark = pytest.mark.no_device
 

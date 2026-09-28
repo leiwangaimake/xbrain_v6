@@ -14,9 +14,10 @@ newer batches.
 """
 
 from xbrain.p5_gateway.config.bind_guard import (
-    P5ConfigError, PENDING_KEYS_ALLOWED, check_p5_config,
+    PENDING_KEYS_ALLOWED,
+    P5ConfigError,
+    check_p5_config,
 )
-
 
 __all__ = [
     "P5ConfigError",

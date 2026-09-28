@@ -13,7 +13,11 @@ Guards report-once (A-FAIL-1), no-auto-retry (A-FAIL-2), superseded-not-failure
 from __future__ import annotations
 
 from xbrain.p1_motion.rns.audit import (
-    AuditRecord, Outcome, RingAudit, TerminalReporter, on_route_superseded,
+    AuditRecord,
+    Outcome,
+    RingAudit,
+    TerminalReporter,
+    on_route_superseded,
 )
 from xbrain.p1_motion.rns.types import NavFailReason, NavFailure
 

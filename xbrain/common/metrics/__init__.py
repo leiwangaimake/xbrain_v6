@@ -15,7 +15,9 @@ would be a green shell.
 """
 
 from xbrain.common.metrics.histogram import (
-    LatencyHistogram, MetricRegistry, REGISTRY,
+    REGISTRY,
+    LatencyHistogram,
+    MetricRegistry,
 )
 
 __all__ = ["LatencyHistogram", "MetricRegistry", "REGISTRY"]

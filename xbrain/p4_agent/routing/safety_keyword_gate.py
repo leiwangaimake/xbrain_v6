@@ -34,7 +34,6 @@ from __future__ import annotations
 
 from typing import Iterable, Set
 
-
 SAFETY_INTENT_IDS = frozenset({
     "B09", "C01", "C03", "C04", "B07", "D12", "D13",
 })

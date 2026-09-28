@@ -30,7 +30,9 @@ from zoneinfo import ZoneInfoNotFoundError
 import pytest
 
 from xbrain.common.time.local_time import (
-    format_local, format_spoken, is_valid_tz,
+    format_local,
+    format_spoken,
+    is_valid_tz,
 )
 
 # 2023-11-14T22:13:20Z. Chosen so +8 (Shanghai) and +9 (Tokyo) both roll into

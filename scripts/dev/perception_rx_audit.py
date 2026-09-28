@@ -48,9 +48,15 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from xbrain.p1_motion.perception_src.three_keys import (  # noqa: E402
-    KEYS, key_expr, parse_payload)
+    KEYS,
+    key_expr,
+    parse_payload,
+)
 from xbrain.p1_motion.rns.inputs import (  # noqa: E402
-    ARRIVAL_ACCEPT, ARRIVAL_EPOCH_RESET, classify_arrival)
+    ARRIVAL_ACCEPT,
+    ARRIVAL_EPOCH_RESET,
+    classify_arrival,
+)
 
 RT_ENDPOINT = "tcp/127.0.0.1:7449"
 # 11 S1.6.1 consumer timeouts (ms); the ledger only counts arrivals past them

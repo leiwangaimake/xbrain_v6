@@ -15,16 +15,18 @@ scan, JSONL degrade on write failure -- is exercised here. Each load-bearing
 assertion is paired with the mutation that turns it red (CLAUDE.md 3.3).
 """
 
+import aiosqlite
 import pytest
 import pytest_asyncio
-import aiosqlite
 
 from xbrain.p5_gateway.persistence.base import RecordConn
 from xbrain.p5_gateway.persistence.record_dao import RecordDao
 from xbrain.p5_gateway.persistence.schema_record import (
-    ALL_RECORD_STATEMENTS, SeqOrderViolation, advance_confirmed, need_ack,
+    ALL_RECORD_STATEMENTS,
+    SeqOrderViolation,
+    advance_confirmed,
+    need_ack,
 )
-
 
 pytestmark = pytest.mark.no_device
 

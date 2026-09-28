@@ -48,7 +48,6 @@ import os
 import sys
 from typing import Iterable, List, Tuple
 
-
 _EXEMPT_MARKER = "NO-DANGLING-SUB-LINT"
 
 

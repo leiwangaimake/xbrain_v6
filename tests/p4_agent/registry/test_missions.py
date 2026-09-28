@@ -20,7 +20,11 @@ import pytest
 import yaml
 
 from xbrain.p4_agent.registry.missions import (
-    EXPECTED_EMISSIONS, KNOWN_GAPS, MISSIONS, MissionError, emitted_intents,
+    EXPECTED_EMISSIONS,
+    KNOWN_GAPS,
+    MISSIONS,
+    MissionError,
+    emitted_intents,
     load_missions,
 )
 

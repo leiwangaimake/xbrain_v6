@@ -832,8 +832,12 @@ def test_cloud_uses_only_existing_internal_keys():
     与互斥的旁路 -- 本地 MIC / HMI / 将来的微信都在既有那几条上排队, 而
     云端从旁边插进去. 用户 2026-08-24 明令四种输入形式共用一套执行链路.
     """
-    from xbrain.p5_gateway.inbound.task_router import (KEY_AUDIO, KEY_ESTOP,
-                                                       KEY_GEO, KEY_TASK)
+    from xbrain.p5_gateway.inbound.task_router import (
+        KEY_AUDIO,
+        KEY_ESTOP,
+        KEY_GEO,
+        KEY_TASK,
+    )
 
     # 这四条都是 11 S2.2 既有的机内 key, 语音与 HMI 今天就在用.
     assert {KEY_TASK, KEY_ESTOP, KEY_GEO, KEY_AUDIO} == {

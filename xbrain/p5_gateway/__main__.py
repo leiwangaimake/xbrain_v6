@@ -37,7 +37,6 @@ import sys
 import time
 from typing import Optional
 
-
 _logger = logging.getLogger("xbrain.p5_gateway")
 _HEARTBEAT_SECONDS = 30.0
 

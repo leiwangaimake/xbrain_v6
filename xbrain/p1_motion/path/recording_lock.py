@@ -23,7 +23,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import FrozenSet
 
-
 # Sources ALLOWED during recording (the two local teleop channels).
 _ALLOWED_DURING_RECORDING: FrozenSet[str] = frozenset({
     "teleop_keyboard", "teleop_joystick",

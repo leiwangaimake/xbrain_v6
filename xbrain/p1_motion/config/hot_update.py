@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from typing import FrozenSet
 
-
 # P1's hot-updatable key surface. Non-hot: rns.rcg constants (need
 # restart because they change the rotation permit math).
 HOT_UPDATABLE_KEYS: FrozenSet[str] = frozenset({

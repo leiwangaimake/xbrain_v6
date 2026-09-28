@@ -79,8 +79,10 @@ def test_d_p1_state_fence_advance_resolves_p5_alarm_terminal():
     state/fence 信封]串起来. p1 的 FenceRuntimeState 若字段/嵌套与 p5 的 _on_state_
     fence 读法对不上(active.rev 读不到), 终态发不出, 这条红.
     """
-    from xbrain.p1_motion.fence.fence_set import (FenceSetHolder,
-                                                  build_fence_runtime_state)
+    from xbrain.p1_motion.fence.fence_set import (
+        FenceSetHolder,
+        build_fence_runtime_state,
+    )
     from xbrain.p3_task.fence.fence_set import build_fence_set
     from xbrain.p5_gateway.runtime.cloud_wiring import CloudBridge
 

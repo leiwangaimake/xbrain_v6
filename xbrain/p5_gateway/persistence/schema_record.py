@@ -36,7 +36,6 @@ in-memory connection (CLAUDE.md 7.2).
 
 from __future__ import annotations
 
-
 # The events table -- 17 S3.4 verbatim (SQL comments kept in English per 2.1).
 # foreign_keys is OFF at the connection (15 S9.1 DBF-2): every FK-like column
 # below is a SOFT reference, so a dangling trace_id/task_id never blocks a write.

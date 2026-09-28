@@ -51,7 +51,6 @@ import re
 import sys
 from typing import List, Tuple
 
-
 # Only flag when the singular 'config/' looks like a filesystem
 # path to a config FILE (ends with .yaml/.yml/.json/.conf) OR is
 # an absolute path segment (/opt/.../config/). Bare Zenoh key names

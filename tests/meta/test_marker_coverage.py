@@ -30,7 +30,6 @@ from pathlib import Path
 
 import pytest
 
-
 TESTS_ROOT = Path(__file__).parent.parent
 
 # Regex for a module-level pytestmark assignment (single mark or list).

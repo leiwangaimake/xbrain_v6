@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-
 # 11 S8.7.5 channel closed set.
 _CHANNELS = frozenset({"cloud", "wecom", "hmi"})
 

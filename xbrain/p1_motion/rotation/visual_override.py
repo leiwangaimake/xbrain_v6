@@ -25,7 +25,6 @@ a safety check via config is not a supported operation.
 
 from __future__ import annotations
 
-
 DETAIL_KIND = "rotation_visual_override"
 
 

@@ -178,10 +178,12 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 # which is a returned value object, never an input to deep_merge and never
 # serialised.
 from ..config import MISSING
+
 # PLANE is the eight-value closed set from 11 S2.1, exported by the shared
 # library. Written as a literal here it would be a private copy that drifts;
 # imported, an out-of-set plane raises ClosedSetViolation with the set named.
 from ..enums import PLANE
+
 # CLAUDE.md 3.5: the codes are imported, never spelled. A misspelt import is an
 # ImportError in this file; a misspelt literal travels to whoever branches on it.
 from ..errors import E_CONFIG_INVALID, E_QOS_VIOLATION

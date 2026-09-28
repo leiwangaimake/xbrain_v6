@@ -19,8 +19,7 @@ supplies, mirroring how the wiring feeds monotonic ms (11 CLK-C1).
 
 from __future__ import annotations
 
-from xbrain.p5_gateway.hmi.estop_probe import (EstopProbe, build_ping_data,
-                                               pong_seq)
+from xbrain.p5_gateway.hmi.estop_probe import EstopProbe, build_ping_data, pong_seq
 
 
 def _probe():

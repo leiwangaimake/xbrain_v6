@@ -96,8 +96,7 @@ def test_levels_match_row_by_row():
 
     MUTATION: 把 intents.yaml 里任一条的 auth 改掉 -> 这里红.
     """
-    from xbrain.p4_agent.registry.startup_assertions import (
-        check_intent_levels_match)
+    from xbrain.p4_agent.registry.startup_assertions import check_intent_levels_match
 
     check_intent_levels_match(_yaml_rows(), _cmdset_rows())
 
@@ -108,7 +107,9 @@ def test_a_level_mismatch_is_caught():
     没有这条, 一个什么都不比的 check_intent_levels_match 也能让上一条通过.
     """
     from xbrain.p4_agent.registry.startup_assertions import (
-        CsAssertionError, check_intent_levels_match)
+        CsAssertionError,
+        check_intent_levels_match,
+    )
 
     rows = dict(_yaml_rows())
     cs = _cmdset_rows()
@@ -126,7 +127,8 @@ def test_no_new_trigger_word_conflicts():
     [不再多出第四组].
     """
     from xbrain.p4_agent.registry.startup_assertions import (
-        check_no_trigger_word_conflict)
+        check_no_trigger_word_conflict,
+    )
 
     check_no_trigger_word_conflict(_yaml_rows())
 
@@ -137,7 +139,9 @@ def test_a_fresh_conflict_is_rejected():
     MUTATION: 把 KNOWN_TRIGGER_CONFLICTS 改成"放过一切" -> 这里红.
     """
     from xbrain.p4_agent.registry.startup_assertions import (
-        CsAssertionError, check_no_trigger_word_conflict)
+        CsAssertionError,
+        check_no_trigger_word_conflict,
+    )
 
     rows = {k: dict(v) for k, v in _yaml_rows().items()}
     names = sorted(rows)[:2]

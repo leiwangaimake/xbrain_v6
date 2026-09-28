@@ -49,10 +49,9 @@ Mutations verified red on 2026-09-27 (3.3), each named at its assertion.
 
 import pytest
 
-from xbrain.p5_gateway.event.chassis_events import ChassisFaultDeriver
 from xbrain.p5_gateway.event.channel_map import derive_channel
+from xbrain.p5_gateway.event.chassis_events import ChassisFaultDeriver
 from xbrain.p5_gateway.event.pipeline import _REQUIRED_FIELDS
-
 
 pytestmark = pytest.mark.no_device
 
@@ -237,6 +236,7 @@ async def test_a_recurrence_survives_record_dao_when_the_chassis_clock_is_behind
     mutant: put back ts = since_ts in _raises -> the row count is 2, not 3.
     """
     import aiosqlite
+
     from xbrain.p5_gateway.persistence.base import RecordConn
     from xbrain.p5_gateway.persistence.record_dao import RecordDao
     from xbrain.p5_gateway.persistence.schema_record import ALL_RECORD_STATEMENTS

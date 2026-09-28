@@ -16,9 +16,11 @@ BIZ-P2-17 -- authz level check + L3 pending-approval flow tests.
 import pytest
 
 from xbrain.p2_core.authz.levels import (
-    AuthLevel, PendingApproval, approve, check,
+    AuthLevel,
+    PendingApproval,
+    approve,
+    check,
 )
-
 
 pytestmark = pytest.mark.no_device
 

@@ -110,7 +110,9 @@ async def open_configured(path: str, ddl_statements=()):
     # rebuild what it removes. No-op on a fresh database and on the three DBs
     # that do not carry the table (15 S9.5 patrol_progress lives in task.db).
     from xbrain.p3_task.persistence.schema_task import (
-        ensure_patrol_progress_shape, ensure_task_route_snapshot_shape)
+        ensure_patrol_progress_shape,
+        ensure_task_route_snapshot_shape,
+    )
 
     if await ensure_patrol_progress_shape(conn):
         _logger.warning(

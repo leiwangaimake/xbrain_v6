@@ -30,18 +30,24 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from xbrain.p3_task.ingest.geo_command import parse_geo_command
-from xbrain.p3_task.ingest.task_command import parse_task_command
 from xbrain.p2_core.runtime.mode_wiring import ModeFace
 from xbrain.p2_core.runtime.motion_intent_wiring import (
-    MotionLimits, evaluate as motion_evaluate, parse_intent_envelope,
+    MotionLimits,
+    parse_intent_envelope,
     to_relative_move,
 )
+from xbrain.p2_core.runtime.motion_intent_wiring import (
+    evaluate as motion_evaluate,
+)
+from xbrain.p3_task.ingest.geo_command import parse_geo_command
+from xbrain.p3_task.ingest.task_command import parse_task_command
 from xbrain.p3_task.teach.command import parse_teach_command
 from xbrain.p4_agent.registry.intents import load_intent_registry
 from xbrain.p4_agent.runtime.orchestrator_turn import decision_to_publishes
 from xbrain.p4_agent.runtime.turn_orchestrator import (
-    OrchestratorSession, Tier2Classification, TurnOrchestrator,
+    OrchestratorSession,
+    Tier2Classification,
+    TurnOrchestrator,
 )
 from xbrain.p4_agent.session.chitchat import ChitchatResponder
 

@@ -67,7 +67,6 @@ from dataclasses import dataclass
 
 from xbrain.common.enums import SUSPEND_KIND, SUSPEND_REASON, TASK_STATE
 
-
 # The 12-value closed set, taken from the single source (NOT re-listed). A
 # frozenset for O(1) membership; the graph below is what constrains order.
 TASK_STATES = frozenset(TASK_STATE.values)

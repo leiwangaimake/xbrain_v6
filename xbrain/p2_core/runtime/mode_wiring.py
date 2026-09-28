@@ -43,7 +43,10 @@ from typing import Any, Callable, Dict, FrozenSet, Optional, Tuple
 
 from xbrain.common.errors import E_BUSY, E_INTERNAL, E_SCHEMA
 from xbrain.p2_core.mode.state_machine import (
-    ModeState, ModeStateMachine, TransitionRequest, TriggerKind,
+    ModeState,
+    ModeStateMachine,
+    TransitionRequest,
+    TriggerKind,
 )
 from xbrain.p2_core.mode_actions.dispatch import DispatchResult, dispatch
 

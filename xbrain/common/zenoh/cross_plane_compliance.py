@@ -26,7 +26,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Tuple
 
-
 # WL-G2: audio/broadcast MUST NOT be in any forwarding entry.
 FORBIDDEN_KEYS = frozenset({
     "audio/broadcast",

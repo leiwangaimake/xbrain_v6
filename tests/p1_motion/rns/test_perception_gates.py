@@ -28,8 +28,13 @@ from typing import Optional, Tuple
 import pytest
 import yaml
 
-from tests.p1_motion.rns.scenes import (healthy_status, one_object, snapshot,
-                                        uniform_free, with_block)
+from tests.p1_motion.rns.scenes import (
+    healthy_status,
+    one_object,
+    snapshot,
+    uniform_free,
+    with_block,
+)
 from xbrain.p1_motion.rns.inputs import PerceptionSnapshot
 from xbrain.p1_motion.rns.route import Mission
 from xbrain.p1_motion.rns.source import RnsSource
@@ -198,6 +203,7 @@ def test_epoch_reset_clears_memory_and_accepts_frame():
                                       t_seg_mono_ms=NOW - 30), 90, 3.0)
     _tick(s, NOW, profile=blocked, status=healthy_status(t_publish_mono_ms=NOW))
     import math
+
     from xbrain.p1_motion.rns.types import Cell
     assert s._grid.read(3.0, 0.0, NOW) == Cell.BLOCKED   # the wall is remembered
     new_epoch_now = 500

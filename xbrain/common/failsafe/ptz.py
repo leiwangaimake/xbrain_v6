@@ -59,6 +59,7 @@ from dataclasses import dataclass
 # operator errors (key deleted vs key left null), so the guard treats them
 # together yet the sentinel keeps them from being confused with a real False.
 from ..config import MISSING
+
 # Codes and the base error come from the shared library, never as literals
 # (CLAUDE.md 3.5). E_CONFIG_INVALID is the startup-refusal code; E_CAPABILITY is
 # the "本体能力不支持" reject; ClosedSetViolation raises E_SCHEMA for an out-of-set

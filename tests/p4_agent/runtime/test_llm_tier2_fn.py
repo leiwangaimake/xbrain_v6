@@ -22,7 +22,6 @@ from xbrain.p4_agent.gateway.gpu_token import GpuTokenState
 from xbrain.p4_agent.registry.intents import load_intent_registry
 from xbrain.p4_agent.runtime.llm_tier2_fn import build_tier2_fn
 
-
 pytestmark = pytest.mark.no_device
 
 _INTENTS = "/opt/xbrain_v6/configs/intents.yaml"

@@ -16,21 +16,34 @@ BIZ-P2-18/19/20/21 -- health items + factor + restrict matrix + three-stops.
 import pytest
 
 from xbrain.p2_core.health.factor import (
-    FactorConfig, FactorOutput, compute_factor, factor_for,
+    FactorConfig,
+    FactorOutput,
+    compute_factor,
+    factor_for,
 )
 from xbrain.p2_core.health.items import (
-    BIT_ONLY_ITEMS, HEALTH_ITEMS, ITEMS, HealthLevel, HealthState,
-    ITEM_LEVELS, is_fatal, level_of,
+    BIT_ONLY_ITEMS,
+    HEALTH_ITEMS,
+    ITEM_LEVELS,
+    ITEMS,
+    HealthLevel,
+    HealthState,
+    is_fatal,
+    level_of,
 )
 from xbrain.p2_core.health.restrict_matrix import (
-    check_asr_local_admission, check_new_task_admission,
-    check_ptz_command, check_time_window_rules_active,
+    check_asr_local_admission,
+    check_new_task_admission,
+    check_ptz_command,
+    check_time_window_rules_active,
 )
 from xbrain.p2_core.three_stops import (
-    ForceStrobeState, StopEvent, StopReason,
-    apply_rearm, apply_stop,
+    ForceStrobeState,
+    StopEvent,
+    StopReason,
+    apply_rearm,
+    apply_stop,
 )
-
 
 pytestmark = pytest.mark.no_device
 

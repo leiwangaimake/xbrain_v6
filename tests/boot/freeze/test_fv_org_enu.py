@@ -29,7 +29,6 @@ import yaml
 from xbrain.boot.freeze.assertions.fv_org_enu import run
 from xbrain.common.errors.exceptions import XbrainError
 
-
 # ---------------------------------------------------------------------------
 # Scaffolding
 # ---------------------------------------------------------------------------

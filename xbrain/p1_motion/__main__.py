@@ -40,7 +40,6 @@ import sys
 import time
 from typing import Optional
 
-
 _logger = logging.getLogger("xbrain.p1_motion")
 _HEARTBEAT_SECONDS = 30.0
 
@@ -144,7 +143,8 @@ def main(argv: Optional[list] = None) -> int:
 
     if args.voice_loop:
         from xbrain.p1_motion.runtime.main_wiring import (
-            ChassisClientConfig, run_voice_loop_wiring,
+            ChassisClientConfig,
+            run_voice_loop_wiring,
         )
         chassis_cfg = ChassisClientConfig(
             host=args.chassis_host,
@@ -156,8 +156,7 @@ def main(argv: Optional[list] = None) -> int:
         # (12 S12.0A). A null or missing key disables the loop LOUDLY --
         # p1 still runs the voice-loop wiring but publishes no cmd_vel, so
         # the chassis stays in timeout_lock (CLAUDE.md 3.1: never a default).
-        from xbrain.p1_motion.runtime.nav_cfg import (NavConfigError,
-                                                       build_nav_config)
+        from xbrain.p1_motion.runtime.nav_cfg import NavConfigError, build_nav_config
         nav_cfg = None
         try:
             _rns = load_resolved("rns", **_load_kwargs)

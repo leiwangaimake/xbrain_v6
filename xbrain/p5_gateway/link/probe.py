@@ -26,7 +26,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 PROBE_PAYLOAD_BYTES = 16
 PROBE_BUDGET_MS = 10
 PROBE_RATE_HZ = 20

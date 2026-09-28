@@ -100,12 +100,6 @@ import os
 from types import MappingProxyType
 from typing import Dict, FrozenSet, Iterable, List, Mapping, Tuple
 
-# ClosedSetViolation is defined with the error hierarchy rather than here, so a
-# caller catches one exception type for the whole common/ family. It is
-# re-exported in __all__ for the same reason: a module that validates values
-# should not force its callers to import a second package to catch the failure.
-from ..errors.exceptions import ClosedSetViolation
-
 # E_CONFIG_INVALID and XbrainError come from the errors PACKAGE, not from
 # .exceptions, because the code constants are bound in errors/__init__ (from
 # codes.yaml) and not in the exceptions module. Importing them adds no cost the
@@ -116,6 +110,12 @@ from ..errors.exceptions import ClosedSetViolation
 # outside common/errors/ and scripts/lint/no_literal_ecode.py enforces it -- the
 # same rule every module in common/config/ follows for this exact code.
 from ..errors import E_CONFIG_INVALID, XbrainError
+
+# ClosedSetViolation is defined with the error hierarchy rather than here, so a
+# caller catches one exception type for the whole common/ family. It is
+# re-exported in __all__ for the same reason: a module that validates values
+# should not force its callers to import a second package to catch the failure.
+from ..errors.exceptions import ClosedSetViolation
 
 # Path derived from __file__, not from the configuration root. These values are
 # the contract itself, not tunable configuration: they must not be reachable

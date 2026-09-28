@@ -33,7 +33,6 @@ from xbrain.common.arbiter.model import (
     SourceSpec,
 )
 
-
 # 14 S3 domain names as registered in xbrain/common/enums/sets.yaml.
 # The factory rejects any domain name outside this set.
 _P2_DOMAINS = ("speaker", "asr", "payload_light", "ptz")

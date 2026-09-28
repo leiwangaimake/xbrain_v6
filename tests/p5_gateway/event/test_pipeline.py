@@ -20,11 +20,13 @@ import pytest
 
 from xbrain.common.enums import EVENT_CATEGORY
 from xbrain.p5_gateway.event.channel_map import (
-    CATEGORY_CHANNEL, ChannelDerivationError, derive_channel, detail_type_of,
+    CATEGORY_CHANNEL,
+    ChannelDerivationError,
+    derive_channel,
+    detail_type_of,
 )
 from xbrain.p5_gateway.event.pipeline import EventPipeline
 from xbrain.p5_gateway.persistence.record_dao import InsertResult
-
 
 pytestmark = pytest.mark.no_device
 

@@ -35,7 +35,8 @@ from xbrain.common.errors import E_NOT_FOUND, E_SCHEMA, E_TASK_STATE
 from xbrain.p3_task.dao.tasks_dao import TasksDAO
 from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
 from xbrain.p3_task.ingest.task_command import (
-    TaskCommandError, parse_task_command,
+    TaskCommandError,
+    parse_task_command,
 )
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 

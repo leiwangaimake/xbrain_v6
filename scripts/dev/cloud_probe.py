@@ -44,7 +44,6 @@ import sys
 import time
 import uuid
 
-
 # The uplink keys v2.0 S2 declares. Subscribed as one wildcard per family so an
 # unexpected key still shows up: a probe that only listens for what it expects
 # cannot report "the gateway answered on a key we did not plan for".

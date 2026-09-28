@@ -37,11 +37,13 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 
-from xbrain.common.config import ConfigLayerError  # noqa: E402
-from xbrain.common.config import check_l2_not_copy_of_l1  # noqa: E402
-from xbrain.common.config import build_overlay, unflatten  # noqa: E402
-from xbrain.common.config import refs  # noqa: E402
-
+from xbrain.common.config import (  # noqa: E402
+    ConfigLayerError,  # noqa: E402
+    build_overlay,
+    check_l2_not_copy_of_l1,  # noqa: E402
+    refs,  # noqa: E402
+    unflatten,
+)
 
 # ── 逐层独立用例(10 S5.4.3 合并规则表"本层允许写入的命名空间"列)──────────────
 #

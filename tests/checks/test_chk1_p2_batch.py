@@ -36,17 +36,29 @@ import pytest
 
 from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.p2_core.ptz.hold_ms_renewal import (
-    DeadmanState, HoldMsConfigError, create, on_nudge, tick,
+    DeadmanState,
+    HoldMsConfigError,
+    create,
+    on_nudge,
+    tick,
 )
 from xbrain.p2_core.ptz.tilt_limit import (
-    TiltLimits, TiltOutOfLimits, check_tilt,
+    TiltLimits,
+    TiltOutOfLimits,
+    check_tilt,
 )
 from xbrain.p2_core.suspicion.hysteresis import (
-    DEGRADE_LEVELS, HysteresisConfig, HysteresisConfigError,
-    band_width_m, entering_threshold, event_detail_for_level,
-    exiting_threshold, is_entering, is_exiting, zone_rules_active,
+    DEGRADE_LEVELS,
+    HysteresisConfig,
+    HysteresisConfigError,
+    band_width_m,
+    entering_threshold,
+    event_detail_for_level,
+    exiting_threshold,
+    is_entering,
+    is_exiting,
+    zone_rules_active,
 )
-
 
 pytestmark = pytest.mark.no_device
 

@@ -52,9 +52,27 @@ artifacts only and holds no schema source.
 # that is not used locally, and these are the package's public half, not dead
 # code -- the same argument the errors package makes for its __all__.
 from .registry import CONFIG_FILES, SCHEMAS, validate_config, variant_base
-from .spec import (ANY, BOOLEAN, INTEGER, LIST, MAPPING, NUMBER, STRING,
-                   TYPE_TOKENS, FieldSpec, Schema, SchemaError, anything,
-                   boolean, integer, listof, mapping, num, text, validate_tree)
+from .spec import (
+                   ANY,
+                   BOOLEAN,
+                   INTEGER,
+                   LIST,
+                   MAPPING,
+                   NUMBER,
+                   STRING,
+                   TYPE_TOKENS,
+                   FieldSpec,
+                   Schema,
+                   SchemaError,
+                   anything,
+                   boolean,
+                   integer,
+                   listof,
+                   mapping,
+                   num,
+                   text,
+                   validate_tree,
+)
 
 __all__ = [
     # engine

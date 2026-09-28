@@ -33,7 +33,8 @@ import threading
 from typing import Any, Callable, Dict, FrozenSet, Optional, Protocol
 
 from xbrain.p2_core.messaging.whitelist_gate import (
-    WhitelistViolation, check_pub_keys,
+    WhitelistViolation,
+    check_pub_keys,
 )
 
 

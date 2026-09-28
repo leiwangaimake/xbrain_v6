@@ -33,7 +33,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-
 # ── arrival acceptance (11 S3.1B.5 v2.1, #20-22) ──────────────────────────────
 ARRIVAL_ACCEPT = "accept"
 ARRIVAL_DUP = "dup"                    # same identity re-sent: never refreshes age

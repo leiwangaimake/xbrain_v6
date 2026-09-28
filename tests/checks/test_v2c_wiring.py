@@ -21,17 +21,23 @@ import time
 import pytest
 
 from xbrain.p1_motion.runtime.main_wiring import (
-    CMD_MOTION_FACTOR_TOPIC, CMD_MOTION_INTENT_TOPIC,
-    ChassisClient, ChassisClientConfig, intent_to_apdu,
+    CMD_MOTION_FACTOR_TOPIC,
+    CMD_MOTION_INTENT_TOPIC,
+    ChassisClient,
+    ChassisClientConfig,
+    intent_to_apdu,
 )
 from xbrain.p3_task.runtime.main_wiring import (
-    CMD_TASK_TOPIC, STATE_TASK_TOPIC,
+    CMD_TASK_TOPIC,
+    STATE_TASK_TOPIC,
 )
 from xbrain.p5_gateway.runtime.main_wiring import (
-    CMD_AUDIO_SPEAK_ACK_TOPIC, STATE_LINK_TOPIC,
+    CMD_AUDIO_SPEAK_ACK_TOPIC,
+    STATE_LINK_TOPIC,
+)
+from xbrain.p5_gateway.runtime.main_wiring import (
     STATE_TASK_TOPIC as P5_STATE_TASK,
 )
-
 
 pytestmark = pytest.mark.no_device
 

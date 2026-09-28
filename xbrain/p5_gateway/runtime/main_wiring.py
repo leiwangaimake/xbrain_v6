@@ -34,7 +34,6 @@ from typing import Optional
 #: 在某个字段上静默退出, 不报错也不回内容(13 DDS-9 的形状).
 from xbrain.common.envelope import Envelope, encode, read_local_boot_id
 
-
 _logger = logging.getLogger("xbrain.p5.wiring")
 
 
@@ -262,7 +261,10 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
     surfaces as available:false so the frontend greys those layers, never fakes.
     """
     from xbrain.p5_gateway.hmi.web_server import (
-        HmiBindError, build_app, make_bound_sockets, start_in_thread,
+        HmiBindError,
+        build_app,
+        make_bound_sockets,
+        start_in_thread,
     )
 
     bind = hmi_cfg.get("bind") if isinstance(hmi_cfg, dict) else None
@@ -536,8 +538,7 @@ def run_voice_loop_wiring(stop_flag: dict,
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p5_gateway.fence.cache import FenceCache
     from xbrain.p5_gateway.geo.cache import GeoCache
-    from xbrain.p5_gateway.hmi.estop_probe import (EstopProbe, build_ping_data,
-                                                   pong_seq)
+    from xbrain.p5_gateway.hmi.estop_probe import EstopProbe, build_ping_data, pong_seq
 
     # W5: estop-path probe (17 S6.3). Thresholds ride on the hmi subtree
     # (link_rtt_degrade_ms / link_down_misses); the fallbacks are probe tuning,
@@ -643,7 +644,8 @@ def run_voice_loop_wiring(stop_flag: dict,
         # per 3.1). It also subsumes the old LinkReconnectDetector: its snapshot's
         # .reconnected edge drives trigger_backfill.
         from xbrain.p5_gateway.uplink.link_state import (
-            LinkStateMachine, LinkThresholds,
+            LinkStateMachine,
+            LinkThresholds,
         )
         # rtb_s = 1800 s (30 min): the L2->L3 return-to-base threshold. User decision
         # 2026-08-17 taking the 11 S4.6.2 / 15 S11.2 suggested value; still an INTERIM

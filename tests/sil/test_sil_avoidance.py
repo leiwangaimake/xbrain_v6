@@ -32,9 +32,15 @@ sys.path.insert(0, str(ROOT / "scripts" / "sil"))
 # noqa: E402 -- same reason as test_sil_smoke: sil_world is on the path only
 # after the insert above.
 from sil_world import SilWorld  # noqa: E402
+
 from xbrain.p1_motion.rns.route import Mission  # noqa: E402
 from xbrain.p1_motion.rns.source import RnsSource  # noqa: E402
-from xbrain.p1_motion.rns.types import MissionKind, NavFailReason, NavState, Origin  # noqa: E402
+from xbrain.p1_motion.rns.types import (  # noqa: E402
+    MissionKind,
+    NavFailReason,
+    NavState,
+    Origin,
+)
 
 CFG = yaml.safe_load((ROOT / "configs" / "rns.yaml").read_text(encoding="utf-8"))
 DT = 0.05

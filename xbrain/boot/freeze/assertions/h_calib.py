@@ -156,16 +156,18 @@ degrade would look identical to a clean pass.
 
 # math for hypot + sin used by the recompute step.
 import math
+
 # typing for annotations.
 from typing import Any, Dict, FrozenSet, Iterable, Optional
 
 # Layer loader for L1 (common.robot_id) + L4b (calib file).
 from xbrain.boot.freeze.assertions._layer_loader import load_layers
+
 # E_CONFIG_INVALID by name, per CLAUDE.md 3.5.
 from xbrain.common.errors import E_CONFIG_INVALID
+
 # XbrainError base -- H uses E_CONFIG_INVALID uniformly.
 from xbrain.common.errors.exceptions import XbrainError
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -614,6 +616,7 @@ def _load_calib_and_robot_id(ctx: Dict[str, Any]) -> tuple:
         # Delayed import so the loader stays self-contained for
         # unit tests that skip disk I/O entirely.
         import os
+
         import yaml
         calib_dir = os.path.join(root, "calib")
         calib_raw = {}

@@ -27,7 +27,6 @@ import sys
 import time
 from typing import Optional
 
-
 _logger = logging.getLogger("xbrain.p3_task")
 _HEARTBEAT_SECONDS = 30.0
 
@@ -113,7 +112,8 @@ def main(argv: Optional[list] = None) -> int:
 
     if args.voice_loop:
         from xbrain.p3_task.runtime.main_wiring import (
-            DEFAULT_TASK_DB, run_voice_loop_wiring,
+            DEFAULT_TASK_DB,
+            run_voice_loop_wiring,
         )
         # 11 S9A.2: FenceSet 的 enu_origin 是[必填]字段("本地 ENU 平面的锚点,
         # 全系统唯一, 来自 common.geo.enu_origin"). 在此之前 p3 加载了配置却

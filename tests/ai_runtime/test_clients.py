@@ -27,7 +27,12 @@ import pytest
 
 from tests.ai_runtime.asr_client import AsrClientError, pcm_to_wav, transcribe
 from tests.ai_runtime.config import AiRuntimeConfig
-from tests.ai_runtime.llm_client import LlmClientError, _build_messages, _delta_text, complete
+from tests.ai_runtime.llm_client import (
+    LlmClientError,
+    _build_messages,
+    _delta_text,
+    complete,
+)
 from tests.ai_runtime.payload_client import (
     MODE_FUNC1,
     PayloadClientError,

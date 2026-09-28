@@ -31,8 +31,8 @@ import asyncio
 import pytest
 
 from services.payload.config import PayloadConfig
-from services.payload.core.device_link import DeviceLinkError
 from services.payload.core.deter import DeterController, DeterParamError, DeterParams
+from services.payload.core.device_link import DeviceLinkError
 from services.payload.protocol.audio_8519 import build_hail_stop
 from services.payload.protocol.lights_8529 import (
     BRIGHT_MAX,

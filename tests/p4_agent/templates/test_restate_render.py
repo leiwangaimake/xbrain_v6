@@ -17,14 +17,14 @@ import pytest
 import yaml
 
 from xbrain.p4_agent.templates.restate_engine import (
+    _ACTION_LEADS,
     RestateSchemaError,
+    _has_numeric_slot,
     check_rs1_numeric_uses_request_word,
     check_rs2_starts_with_action,
     render_restate,
     render_rs4_correction,
     validate_restate_templates,
-    _ACTION_LEADS,
-    _has_numeric_slot,
 )
 
 pytestmark = pytest.mark.no_device

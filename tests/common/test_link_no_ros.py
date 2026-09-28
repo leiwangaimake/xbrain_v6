@@ -78,11 +78,11 @@ the reason names exactly which claim went unverified, because a silent skip
 turns the central assertion of this item into an empty green tick.
 """
 
-import json           # compile_commands.json, the compiler's own record
-import os             # path work and the independent header walk
-import re             # parsing include lines out of C++ sources
-import shutil         # which(), and staging the mutation sandbox
-import subprocess     # cmake, the compiler, ldd and the built binary
+import json  # compile_commands.json, the compiler's own record
+import os  # path work and the independent header walk
+import re  # parsing include lines out of C++ sources
+import shutil  # which(), and staging the mutation sandbox
+import subprocess  # cmake, the compiler, ldd and the built binary
 
 import pytest
 

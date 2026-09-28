@@ -19,10 +19,10 @@ audio/voice_in 只被 p4_agent 订阅.
 在 CI 上跑不动; 而"这条 key 有没有被订"是一个静态可答的问题.
 """
 
-import pytest
-
 import re
 from pathlib import Path
+
+import pytest
 
 # INF-TS-1 三档 marker. 纯函数 / 静态检查, 不碰任何硬件 -> no_device.
 pytestmark = pytest.mark.no_device

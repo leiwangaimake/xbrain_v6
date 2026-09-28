@@ -40,6 +40,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.a
 sys.path.insert(0, ROOT)
 
 from xbrain.common import errors  # noqa: E402
+
 # Imported from the submodules directly: the package __init__ is docstring-only
 # (it does not re-export), the same convention as xbrain/common/__init__.py.
 from xbrain.common.failsafe.outcome import (  # noqa: E402

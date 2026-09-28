@@ -14,7 +14,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 SCRIPT = Path(__file__).parent.parent.parent / "scripts" / "doccheck" / "map1_scan.py"
 
 

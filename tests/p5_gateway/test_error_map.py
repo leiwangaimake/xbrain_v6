@@ -88,8 +88,7 @@ def test_an_unregistered_code_raises_instead_of_falling_back():
 
     MUTATION: 把 to_qt_code 改成 _MAP.get(e, CODE_STORAGE) -> 这里红.
     """
-    from xbrain.p5_gateway.outbound.error_map import (UnmappedErrorCode,
-                                                      to_qt_code)
+    from xbrain.p5_gateway.outbound.error_map import UnmappedErrorCode, to_qt_code
 
     with pytest.raises(UnmappedErrorCode):
         to_qt_code("E_A_CODE_THAT_DOES_NOT_EXIST")
@@ -103,8 +102,7 @@ def test_channel_denied_maps_to_1006():
     是不是安全拒绝.
     """
     from xbrain.common import errors
-    from xbrain.p5_gateway.outbound.error_map import (CODE_TASK_UNSUPPORTED,
-                                                      to_qt_code)
+    from xbrain.p5_gateway.outbound.error_map import CODE_TASK_UNSUPPORTED, to_qt_code
 
     assert to_qt_code(errors.E_CHANNEL_DENIED) == CODE_TASK_UNSUPPORTED
     assert to_qt_code(errors.E_NOT_IMPLEMENTED) == CODE_TASK_UNSUPPORTED
@@ -121,8 +119,7 @@ def test_not_found_maps_to_1003_per_customer_reply():
     这条用例把那次裁决钉住, 免得下一个人按字面读法"订正"回 2004.
     """
     from xbrain.common import errors
-    from xbrain.p5_gateway.outbound.error_map import (CODE_INVALID_FIELD,
-                                                      to_qt_code)
+    from xbrain.p5_gateway.outbound.error_map import CODE_INVALID_FIELD, to_qt_code
 
     assert to_qt_code(errors.E_NOT_FOUND) == CODE_INVALID_FIELD
 
@@ -134,8 +131,10 @@ def test_build_error_fields_keeps_both_codes():
     没人知道机内到底是哪一条; 只给字符串, Qt 没法做界面分支.
     """
     from xbrain.common import errors
-    from xbrain.p5_gateway.outbound.error_map import (CODE_LOW_BATTERY,
-                                                      build_error_fields)
+    from xbrain.p5_gateway.outbound.error_map import (
+        CODE_LOW_BATTERY,
+        build_error_fields,
+    )
 
     out = build_error_fields(errors.E_LOW_BATTERY, "电量不足, 无法出勤",
                              {"soc_pct": 8})
@@ -175,8 +174,11 @@ def test_the_three_v2_named_codes_have_equivalents():
     """
     from xbrain.common import errors
     from xbrain.p5_gateway.outbound.error_map import (
-        CODE_RID_MISMATCH, CODE_TASK_UNSUPPORTED, CODE_VERSION_UNSUPPORTED,
-        to_qt_code)
+        CODE_RID_MISMATCH,
+        CODE_TASK_UNSUPPORTED,
+        CODE_VERSION_UNSUPPORTED,
+        to_qt_code,
+    )
 
     assert to_qt_code(errors.E_NOT_IMPLEMENTED) == CODE_TASK_UNSUPPORTED
     assert to_qt_code(errors.E_PROTO_VERSION) == CODE_VERSION_UNSUPPORTED
@@ -199,8 +201,12 @@ def test_envelope_codes_are_produced_only_by_the_envelope_path():
     """
     from xbrain.common import errors
     from xbrain.p5_gateway.outbound.error_map import (
-        CODE_JSON_PARSE, CODE_REQUIRED_FIELD, CODE_RID_MISMATCH,
-        ENVELOPE_ONLY_CODES, to_qt_code)
+        CODE_JSON_PARSE,
+        CODE_REQUIRED_FIELD,
+        CODE_RID_MISMATCH,
+        ENVELOPE_ONLY_CODES,
+        to_qt_code,
+    )
 
     envelope = {CODE_JSON_PARSE, CODE_REQUIRED_FIELD, CODE_RID_MISMATCH}
     assert set(ENVELOPE_ONLY_CODES) == envelope
@@ -219,8 +225,7 @@ def test_envelope_error_carries_a_real_e_code_in_detail():
     具体是哪一种由整数码区分 -- 那正是甲方要整数码的原因.
     """
     from xbrain.common import errors
-    from xbrain.p5_gateway.outbound.error_map import (CODE_RID_MISMATCH,
-                                                      envelope_error)
+    from xbrain.p5_gateway.outbound.error_map import CODE_RID_MISMATCH, envelope_error
 
     out = envelope_error(CODE_RID_MISMATCH, "rid 与 key 第二段不一致",
                          {"expected": "gj-001", "got": "gj-002"})
@@ -235,9 +240,11 @@ def test_envelope_error_refuses_a_business_code():
     没有这条, envelope_error 会变成第二个"什么码都能出"的入口, 而它的
     detail.code 恒为 E_SCHEMA -- 于是一个电量不足的拒绝会显示成结构错.
     """
-    from xbrain.p5_gateway.outbound.error_map import (CODE_LOW_BATTERY,
-                                                      UnmappedErrorCode,
-                                                      envelope_error)
+    from xbrain.p5_gateway.outbound.error_map import (
+        CODE_LOW_BATTERY,
+        UnmappedErrorCode,
+        envelope_error,
+    )
 
     with pytest.raises(UnmappedErrorCode):
         envelope_error(CODE_LOW_BATTERY, "电量不足")

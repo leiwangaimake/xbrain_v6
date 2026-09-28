@@ -39,7 +39,10 @@ import pytest
 from xbrain.p2_core.audio.audio_io import CAPTURE_SAMPLES_PER_FRAME
 from xbrain.p2_core.runtime import mic_capture as MC
 from xbrain.p2_core.runtime.mic_capture import (
-    MicCaptureConfig, MicCaptureThread, is_stream_end, respawn_backoff_s,
+    MicCaptureConfig,
+    MicCaptureThread,
+    is_stream_end,
+    respawn_backoff_s,
 )
 
 pytestmark = pytest.mark.no_device
@@ -325,7 +328,7 @@ def test_publisher_survives_a_capture_error_report(fast_backoff):
         def __init__(self): self.pub = _FakePub()
         def declare_publisher(self, _t): return self.pub
 
-    from xbrain.p2_core.audio.audio_io import AudioFrame, ASR_RATE_HZ, FRAME_MS
+    from xbrain.p2_core.audio.audio_io import ASR_RATE_HZ, FRAME_MS, AudioFrame
     q: queue.Queue = queue.Queue(maxsize=64)
     stop = threading.Event()
     sess = _FakeSess()
@@ -365,8 +368,7 @@ def test_publisher_error_list_does_not_grow_without_bound(fast_backoff):
 
     变异体: 去掉截断 => 本条红.
     """
-    from xbrain.p2_core.runtime.mic_capture import (
-        MicPublisherThread, _MAX_KEPT_ERRORS)
+    from xbrain.p2_core.runtime.mic_capture import _MAX_KEPT_ERRORS, MicPublisherThread
 
     class _FakeSess:
         def declare_publisher(self, _t):

@@ -32,9 +32,11 @@ from pathlib import Path
 import pytest
 
 from xbrain.boot.freeze.meta import (
-    impl_as, impl_qc, impl_s, impl_sp,
+    impl_as,
+    impl_qc,
+    impl_s,
+    impl_sp,
 )
-
 
 pytestmark = pytest.mark.no_device
 

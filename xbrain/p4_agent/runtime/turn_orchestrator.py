@@ -51,45 +51,62 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
 from xbrain.p4_agent.classifier.keyword_matcher import (
-    KeywordMatcher, classify_text,
+    KeywordMatcher,
+    classify_text,
 )
 from xbrain.p4_agent.classifier.large_class import (
-    has_ptz_subject, resolve_large_class, resolve_ptz,
+    has_ptz_subject,
+    resolve_large_class,
+    resolve_ptz,
 )
 from xbrain.p4_agent.envelope.intent_envelope import IntentEnvelope
 from xbrain.p4_agent.registry.intents import IntentEntry, IntentRegistry
-from xbrain.p4_agent.runtime.intent_dispatch import (
-    DispatchResult, dispatch,
-)
 from xbrain.p4_agent.runtime.geo_request import (
-    GeoRequestError, is_geo_intent, manifest_from_state, resolve_geo_id,
+    GeoRequestError,
+    is_geo_intent,
+    manifest_from_state,
+    resolve_geo_id,
     to_geo_command,
 )
-from xbrain.p4_agent.runtime.task_request import (
-    TaskRequestError, is_task_create_intent, to_task_command,
-)
-from xbrain.p4_agent.runtime.system_request import (
-    is_system_intent, to_system_command,
-)
-from xbrain.p4_agent.runtime.task_control_request import (
-    TaskControlError, is_task_control_intent, spoken_target,
-    to_task_control_command,
-)
-from xbrain.p4_agent.runtime.motion_intent_request import (
-    MotionIntentError, is_motion_intent, to_motion_intent,
+from xbrain.p4_agent.runtime.intent_dispatch import (
+    DispatchResult,
+    dispatch,
 )
 from xbrain.p4_agent.runtime.mode_request import (
-    ModeRequestError, is_mode_intent, to_mode_command,
+    ModeRequestError,
+    is_mode_intent,
+    to_mode_command,
+)
+from xbrain.p4_agent.runtime.motion_intent_request import (
+    MotionIntentError,
+    is_motion_intent,
+    to_motion_intent,
+)
+from xbrain.p4_agent.runtime.system_request import (
+    is_system_intent,
+    to_system_command,
+)
+from xbrain.p4_agent.runtime.task_control_request import (
+    TaskControlError,
+    is_task_control_intent,
+    spoken_target,
+    to_task_control_command,
+)
+from xbrain.p4_agent.runtime.task_request import (
+    TaskRequestError,
+    is_task_create_intent,
+    to_task_command,
 )
 from xbrain.p4_agent.runtime.teach_request import (
-    TeachRequestError, is_teach_intent, session_id_from_state,
+    TeachRequestError,
+    is_teach_intent,
+    session_id_from_state,
     to_teach_command,
 )
 from xbrain.p4_agent.safety_bypass import matcher as bypass_matcher
 from xbrain.p4_agent.safety_bypass import recording_gate
 from xbrain.p4_agent.session.chitchat import ChitchatResponder, ChitchatState
 from xbrain.p4_agent.session.state_machines import L2ConfirmState, L2Slot
-
 
 # Spoken wording for the F-class build failures. Hot-tunable phrasing, ASCII
 # punctuation per CLAUDE.md 2.2; the keys are the English reasons the builders
@@ -219,11 +236,16 @@ def _payload_slots(intent_id: str, text: str) -> Dict[str, Any]:
     level/mode/volume intents (D10/D17/D18) and the PTZ move/zoom/speed
     intents (E01/E06/E09)."""
     from xbrain.p4_agent.slots.payload_slots import (
-        parse_light_level, parse_strobe_mode, parse_volume,
+        parse_light_level,
+        parse_strobe_mode,
+        parse_volume,
     )
     from xbrain.p4_agent.slots.ptz_slots import (
-        parse_ptz_amount, parse_ptz_direction, parse_ptz_speed_level,
-        parse_scan, parse_zoom_direction,
+        parse_ptz_amount,
+        parse_ptz_direction,
+        parse_ptz_speed_level,
+        parse_scan,
+        parse_zoom_direction,
     )
     if intent_id == "D17":                       # set_light_bright
         level = parse_light_level(text)

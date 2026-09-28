@@ -22,7 +22,9 @@ import pytest
 import yaml
 
 from xbrain.p5_gateway.config import (
-    P5ConfigError, PENDING_KEYS_ALLOWED, check_p5_config,
+    PENDING_KEYS_ALLOWED,
+    P5ConfigError,
+    check_p5_config,
 )
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

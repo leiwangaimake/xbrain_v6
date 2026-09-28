@@ -25,16 +25,34 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "sil"))
 
 from sil_world import SilWorld  # noqa: E402
-from zenoh_world import (clear_body, factor_body, fence_body, gnss_bodies,  # noqa: E402
-                         perception_bodies, relmove_body, route_body,
-                         world_to_body)
+from zenoh_world import (  # noqa: E402
+    clear_body,
+    factor_body,
+    fence_body,
+    gnss_bodies,
+    perception_bodies,
+    relmove_body,
+    route_body,
+    world_to_body,
+)
+
 from xbrain.p1_motion.nav.health_factor import parse_health_factor  # noqa: E402
-from xbrain.p1_motion.nav.relmove_intake import RelMoveLimits, translate_relative_move  # noqa: E402
-from xbrain.p1_motion.nav.route_intake import RouteAssembler, RouteClear, RouteSet  # noqa: E402
+from xbrain.p1_motion.nav.relmove_intake import (  # noqa: E402
+    RelMoveLimits,
+    translate_relative_move,
+)
+from xbrain.p1_motion.nav.route_intake import (  # noqa: E402
+    RouteAssembler,
+    RouteClear,
+    RouteSet,
+)
 from xbrain.p1_motion.path.gnss_pose import assemble_pose  # noqa: E402
 from xbrain.p1_motion.path.local_frame import LocalFrame  # noqa: E402
-from xbrain.p1_motion.perception_src.three_keys import (parse_objects,  # noqa: E402
-                                                        parse_profile, parse_status)
+from xbrain.p1_motion.perception_src.three_keys import (  # noqa: E402
+    parse_objects,
+    parse_profile,
+    parse_status,
+)
 
 pytestmark = pytest.mark.no_device
 

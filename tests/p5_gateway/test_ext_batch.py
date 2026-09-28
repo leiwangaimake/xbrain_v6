@@ -45,19 +45,27 @@ import pytest
 
 from xbrain.common.errors import E_CONFIG_INVALID, E_GEO_INVALID, E_SCHEMA
 from xbrain.p5_gateway.ext.dedupe import (
-    DEFAULT_DEDUP_WINDOW_MS, InboundDedupe,
+    DEFAULT_DEDUP_WINDOW_MS,
+    InboundDedupe,
 )
 from xbrain.p5_gateway.ext.estop import (
-    ESTOP_MAX_E2E_MS, ESTOP_MAX_FORWARD_MS,
-    EstopFrame, EstopPathHealth, EstopSchemaError,
-    build_ack, check_e2e_budget, check_forward_budget,
+    ESTOP_MAX_E2E_MS,
+    ESTOP_MAX_FORWARD_MS,
+    EstopFrame,
+    EstopPathHealth,
+    EstopSchemaError,
+    build_ack,
+    check_e2e_budget,
+    check_forward_budget,
     validate_and_forward,
 )
 from xbrain.p5_gateway.ext.translate import (
-    ALLOWED_TASK_TYPES, InboundTask, LEGACY_TASK_TYPES,
-    TranslateFailure, translate,
+    ALLOWED_TASK_TYPES,
+    LEGACY_TASK_TYPES,
+    InboundTask,
+    TranslateFailure,
+    translate,
 )
-
 
 pytestmark = pytest.mark.no_device
 

@@ -243,7 +243,7 @@ def _inject_cloud_link_lost():
     检测时间列写 T-28 = 3 s; 降级行为列写按 level 分级(11 S4.6.4).
     两项都断言 -- 判据(2)要的就是"同时断言两列".
     """
-    from xbrain.p5_gateway.uplink.link_state import LinkThresholds, LinkStateMachine
+    from xbrain.p5_gateway.uplink.link_state import LinkStateMachine, LinkThresholds
 
     # 四个阈值全部显式给出 -- LinkThresholds 按 CLAUDE.md 3.1 不带默认值,
     # 漏一个就抛, 那正是设计要的.
@@ -375,8 +375,7 @@ def _unit_p1_crash():
 
 def _unit_lidar_lost():
     """lidar 失效: 500 ms degraded / 1 s failed -- 检测时间列的可测部分."""
-    from xbrain.p1_motion.freshness.degradation import (
-        LIDAR_THRESH, Freshness, classify)
+    from xbrain.p1_motion.freshness.degradation import LIDAR_THRESH, Freshness, classify
 
     assert classify(100, LIDAR_THRESH) == Freshness.OK
     assert classify(600, LIDAR_THRESH) == Freshness.DEGRADED, "500 ms 未降级"
@@ -385,8 +384,7 @@ def _unit_lidar_lost():
 
 def _unit_336l_lost():
     """336L 失效: 300 ms degraded / 1 s failed."""
-    from xbrain.p1_motion.freshness.degradation import (
-        CAM_THRESH, Freshness, classify)
+    from xbrain.p1_motion.freshness.degradation import CAM_THRESH, Freshness, classify
 
     assert classify(100, CAM_THRESH) == Freshness.OK
     assert classify(400, CAM_THRESH) == Freshness.DEGRADED

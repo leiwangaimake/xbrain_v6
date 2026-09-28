@@ -29,9 +29,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
 sys.path.insert(0, ROOT)
 
 from xbrain.common.envelope import (  # noqa: E402
+    KNOWN_VERSIONS,
     Envelope,
     EnvelopeSchemaError,
-    KNOWN_VERSIONS,
     decode,
     encode,
 )

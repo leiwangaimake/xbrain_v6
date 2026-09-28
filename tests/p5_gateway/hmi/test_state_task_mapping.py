@@ -24,7 +24,6 @@ from __future__ import annotations
 from xbrain.p5_gateway.hmi.data_readers import plan_group
 from xbrain.p5_gateway.runtime.main_wiring import _extract_active_tasks
 
-
 # The real P3 envelope (p3_task main_wiring _make_publish / _record_one).
 _P3_ENVELOPE = {
     "schema": "state_task_v1",

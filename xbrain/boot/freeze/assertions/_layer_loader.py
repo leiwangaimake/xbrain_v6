@@ -133,7 +133,7 @@ def _with_variant(base_path: str, tree: Dict[str, Any],
     sib = variant_sibling(base_path, variant)
     if not os.path.isfile(sib):
         return tree
-    from xbrain.common.config.merge import deep_merge   # local to avoid cycle
+    from xbrain.common.config.merge import deep_merge  # local to avoid cycle
     return deep_merge(tree, _read_yaml(sib))
 
 
@@ -185,7 +185,7 @@ def _read_dir(dir_path: str, variant: Optional[str] = None,
     """
     if not os.path.isdir(dir_path):
         return {}
-    from xbrain.common.config.merge import deep_merge   # local to avoid cycle
+    from xbrain.common.config.merge import deep_merge  # local to avoid cycle
 
     merged: Dict[str, Any] = {}
     for name in sorted(os.listdir(dir_path)):

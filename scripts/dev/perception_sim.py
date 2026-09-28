@@ -376,6 +376,7 @@ def _rebase(body: Dict[str, Any], delta: int) -> Dict[str, Any]:
 
 def publish(scenario_names, rid: str, loop: bool) -> int:
     import zenoh  # lazy: --write / index need no zenoh install
+
     from xbrain.common.envelope import read_local_boot_id
     conf = zenoh.Config()
     conf.insert_json5("mode", '"client"')

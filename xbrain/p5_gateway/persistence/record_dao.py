@@ -43,7 +43,6 @@ from typing import Optional
 from .base import PersistenceMisuse, RecordConn
 from .schema_record import CHANNELS, SEVERITIES, advance_confirmed, need_ack
 
-
 # The events columns written on a fresh insert, in a fixed order shared by the
 # INSERT statement and the value tuple below. Kept as one list so the two can
 # never drift (a mismatch would bind the wrong value to the wrong column).

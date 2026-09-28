@@ -33,11 +33,11 @@ seven arbiter domains (motion / speaker / asr / payload_light / ptz
 from __future__ import annotations
 
 import json
-import queue
-import uuid
 import logging
 import os
+import queue
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -45,26 +45,27 @@ from typing import Optional
 #: NO 不手写八个键 -- 手写过的地方(p1 的 stamp_envelope)把 ts/mono 戳成
 #: 毫秒整数而 S3.0 是秒 float64, 一个编码器意味着这类单位错只犯一次.
 from xbrain.common.envelope import Envelope, encode, read_local_boot_id
-from xbrain.p2_core.runtime.mic_capture import (
-    MicCaptureConfig, spawn_mic_pipeline,
-)
-from xbrain.p2_core.boot.config_digest import (ConfigDigestGuard,
-                                               digest_fault_event)
-from xbrain.p2_core.health.aggregate import HealthAggregator, refresh_health
-from xbrain.p2_core.health.factor import build_health_factor
-from xbrain.p2_core.audio.broadcast_rx import (BroadcastSession,
-                                              accept_chunk)
+from xbrain.p2_core.audio.broadcast_rx import BroadcastSession, accept_chunk
 from xbrain.p2_core.audio.broadcast_sink import BroadcastPlaySink
-from xbrain.p2_core.health.factor import FactorConfig, hold_grant
-from xbrain.p2_core.messaging.audio_state import (audio_publish_due,
-                                                  build_audio_state)
+from xbrain.p2_core.boot.config_digest import ConfigDigestGuard, digest_fault_event
+from xbrain.p2_core.health.aggregate import HealthAggregator, refresh_health
+from xbrain.p2_core.health.factor import FactorConfig, build_health_factor, hold_grant
+from xbrain.p2_core.messaging.audio_state import audio_publish_due, build_audio_state
 from xbrain.p2_core.mode.b_mode_timer import BModeTimer
 from xbrain.p2_core.mode.state_machine import ModeState
-from xbrain.p2_core.runtime.speaker_wiring import (
-    SPEAK_TOPIC, SpeakerBusy, SpeakerDomain, SpeakerHwError,
-    SpeakerWiringConfig, parse_speak_payload, parse_speak_source,
+from xbrain.p2_core.runtime.mic_capture import (
+    MicCaptureConfig,
+    spawn_mic_pipeline,
 )
-
+from xbrain.p2_core.runtime.speaker_wiring import (
+    SPEAK_TOPIC,
+    SpeakerBusy,
+    SpeakerDomain,
+    SpeakerHwError,
+    SpeakerWiringConfig,
+    parse_speak_payload,
+    parse_speak_source,
+)
 
 _logger = logging.getLogger("xbrain.p2.wiring")
 
@@ -327,7 +328,9 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # /lights HTTP call. GEN plane like speak. Same Rust-thread
         # handoff pattern to avoid blocking Zenoh.
         from xbrain.p2_core.runtime.payload_wiring import (
-            CMD_PAYLOAD_TOPIC, PayloadDomain, PayloadWiringConfig,
+            CMD_PAYLOAD_TOPIC,
+            PayloadDomain,
+            PayloadWiringConfig,
         )
         payload_cfg = PayloadWiringConfig(
             payload_base_url=spk_cfg.payload_base_url,
@@ -351,7 +354,10 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # a missing file just disables PTZ (audio/payload keep running).
         # Sub handle held in _gen_subs (strong ref, CLAUDE.md 4.3).
         from xbrain.p2_core.runtime.ptz_wiring import (
-            CMD_PTZ_TOPIC, PtzDomain, PtzLivenessProbe, load_onvif_config,
+            CMD_PTZ_TOPIC,
+            PtzDomain,
+            PtzLivenessProbe,
+            load_onvif_config,
             make_onvif_reachability_check,
         )
         ptz_domain = None
@@ -394,7 +400,10 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # That is a different discipline from payload/ptz above, which hand off
         # to a worker thread because their domains are I/O and stateless.
         from xbrain.p2_core.runtime.mode_wiring import (
-            CMD_MODE_ACK_TOPIC, CMD_MODE_TOPIC, STATE_MODE_TOPIC, ModeFace,
+            CMD_MODE_ACK_TOPIC,
+            CMD_MODE_TOPIC,
+            STATE_MODE_TOPIC,
+            ModeFace,
         )
         mode_queue: "queue.Queue" = queue.Queue(maxsize=64)
         mode_ack_pub = gen.declare_publisher(CMD_MODE_ACK_TOPIC)
@@ -415,8 +424,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # `from ... import load_resolved`, 于是这个名字在[整个函数]里都是
         # 局部的, 在那行之前用它是 UnboundLocalError -- 而单测跑不到这个
         # 接线函数, 只有真起进程才会暴露(2026-09-03 实测到).
-        from xbrain.common.config.resolved import (
-            load_resolved as _load_resolved)
+        from xbrain.common.config.resolved import load_resolved as _load_resolved
         b_cast_max_duration_s = float(
             _load_resolved("p2_core").get("mode.b_cast_max_duration_s"))
 
@@ -547,14 +555,16 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         #
         # Same main-thread discipline: the gates read the state caches this
         # loop owns, so a Rust callback must not evaluate them.
-        from xbrain.p2_core.runtime.motion_intent_wiring import (
-            CMD_MOTION_INTENT_ACK_TOPIC, CMD_MOTION_INTENT_TOPIC,
-            CMD_RELATIVE_MOVE_TOPIC, MotionLimits,
-        )
         # G-3 limits come from config, never from a code default
         # (CLAUDE.md 3.1). A missing key raises here, at startup, naming the
         # path -- not at the first "go forward" of a shift.
         from xbrain.common.config.resolved import MISSING, load_resolved
+        from xbrain.p2_core.runtime.motion_intent_wiring import (
+            CMD_MOTION_INTENT_ACK_TOPIC,
+            CMD_MOTION_INTENT_TOPIC,
+            CMD_RELATIVE_MOVE_TOPIC,
+            MotionLimits,
+        )
         _p2cfg = load_resolved("p2_core")
         # Three outcomes, and they are NOT the same thing (resolved.get's own
         # docstring makes the point): MISSING = the key is not in the snapshot
@@ -601,8 +611,10 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # p1 reads that and zeroes speed (P1-21) -- and (2) force the red/blue
         # strobe on (SE-1). The four domains P2 owns (2/3/4/5) are NOT disarmed.
         from xbrain.common.arbiter.core import Arbiter
-        from xbrain.p2_core.runtime.estop_wiring import (EstopCoordinator,
-                                                         suspended_frame)
+        from xbrain.p2_core.runtime.estop_wiring import (
+            EstopCoordinator,
+            suspended_frame,
+        )
         from xbrain.p2_core.three_stops import ForceStrobeState
         # wait_atomic_timeout does NOT participate in estop disarm: arb_suspend
         # never reads it, and this motion arbiter registers no source so
@@ -1025,7 +1037,10 @@ def _handle_motion_intent(raw, limits, state_cache, health_agg, factor_cfg,
     """
     from xbrain.common.errors import E_INTERNAL, E_SCHEMA
     from xbrain.p2_core.runtime.motion_intent_wiring import (
-        evaluate, motion_intent_ack, parse_intent_envelope, to_relative_move,
+        evaluate,
+        motion_intent_ack,
+        parse_intent_envelope,
+        to_relative_move,
     )
     cmd_id = ""
     try:

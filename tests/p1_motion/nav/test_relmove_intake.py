@@ -18,9 +18,12 @@ import math
 import pytest
 
 from xbrain.common.errors import E_CAPABILITY, E_DEGRADED, E_NO_HEADING, E_SCHEMA
-from xbrain.p1_motion.nav.relmove_intake import (RelMoveLimits, RelMoveReject,
-                                                 achieved_body_delta,
-                                                 translate_relative_move)
+from xbrain.p1_motion.nav.relmove_intake import (
+    RelMoveLimits,
+    RelMoveReject,
+    achieved_body_delta,
+    translate_relative_move,
+)
 
 pytestmark = pytest.mark.no_device
 

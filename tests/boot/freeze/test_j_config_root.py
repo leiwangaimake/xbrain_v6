@@ -32,10 +32,11 @@ import stat
 import pytest
 
 from xbrain.boot.freeze.assertions.j_config_root import (
-    _OBSOLETE_FILES, _REQUIRED_FILES, run,
+    _OBSOLETE_FILES,
+    _REQUIRED_FILES,
+    run,
 )
 from xbrain.common.errors.exceptions import XbrainError
-
 
 # ---------------------------------------------------------------------------
 # Scaffolding: build a green fake config tree in tmp_path

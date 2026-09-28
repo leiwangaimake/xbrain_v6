@@ -53,14 +53,6 @@ target-directory column says xbrain/common/envelope/, the same reading.
 #   EnvelopeSchemaError  the E_SCHEMA failure, a named type so a caller catches
 #                        exactly the envelope case (CLAUDE.md 4.5)
 #   KNOWN_VERSIONS       the accepted schema versions, {1} today per S3.0
-from .envelope import (
-    Envelope,
-    EnvelopeSchemaError,
-    KNOWN_VERSIONS,
-    decode,
-    encode,
-)
-
 # age.py -- S3.0.1.
 #   message_age_s        the age, with the CLK-C5 event wired through a required
 #                        sink so the emission can never be silently dropped
@@ -71,12 +63,12 @@ from .envelope import (
 #   read_local_boot_id   this host's LOCAL_BOOT_ID (first 8 hex of boot_id)
 #   BRANCH_* / NEGATIVE_AGE_*  the fixed labels and event fields
 from .age import (
-    AgeResult,
     BRANCH_PRODUCED,
     BRANCH_RX_FALLBACK,
     NEGATIVE_AGE_CAT,
     NEGATIVE_AGE_KIND,
     NEGATIVE_AGE_SEV,
+    AgeResult,
     NegativeAgeEvent,
     NegativeAgeSink,
     compute_age,
@@ -96,6 +88,13 @@ from .directionality import (
     GuardedResult,
     guarded_decode,
     is_collapse_safe,
+)
+from .envelope import (
+    KNOWN_VERSIONS,
+    Envelope,
+    EnvelopeSchemaError,
+    decode,
+    encode,
 )
 
 # __all__ is spelled out in full rather than assembled from the sub-modules'

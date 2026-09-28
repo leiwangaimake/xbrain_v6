@@ -13,9 +13,17 @@ CFG-BT-14 startup failure classifier tests.
 import pytest
 
 from xbrain.boot.failure_class import (
-    CLASSES, CLASS_B, CLASS_D, CLASS_R, CLASS_T,
-    all_ids, all_rows, classify,
-    is_reject, requires_hmi_marker, requires_upgrade,
+    CLASS_B,
+    CLASS_D,
+    CLASS_R,
+    CLASS_T,
+    CLASSES,
+    all_ids,
+    all_rows,
+    classify,
+    is_reject,
+    requires_hmi_marker,
+    requires_upgrade,
 )
 
 

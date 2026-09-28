@@ -28,7 +28,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 DSCP_EF   = 46   # control
 DSCP_AF41 = 34   # data
 DSCP_AF31 = 26   # media

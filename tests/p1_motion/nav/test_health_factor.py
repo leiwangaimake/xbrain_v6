@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import pytest
 
-from xbrain.p1_motion.nav.health_factor import (DEGRADED_SPEED_FACTOR,
-                                                HealthFactorError,
-                                                HealthFactorSlot,
-                                                parse_health_factor)
+from xbrain.p1_motion.nav.health_factor import (
+    DEGRADED_SPEED_FACTOR,
+    HealthFactorError,
+    HealthFactorSlot,
+    parse_health_factor,
+)
 
 pytestmark = pytest.mark.no_device
 

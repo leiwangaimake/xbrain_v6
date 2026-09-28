@@ -166,7 +166,7 @@ def test_rearm_does_not_touch_a_hardware_lock():
 
     MUTATION: maybe_rearm 里把 != "soft_estop" 改成恒 True 进入 -> 这里红.
     """
-    from xbrain.p2_core.three_stops import (StopEvent, StopReason, apply_stop)
+    from xbrain.p2_core.three_stops import StopEvent, StopReason, apply_stop
 
     coord, arb, strobe, _ev, _pub = _coord()
     # 直接用 hes 缴械(模拟硬件锁到达, 走的是别的通道不是 cmd/estop).

@@ -114,7 +114,10 @@ class PayloadDomain:
         (level/mode/volume). Deliberately verbose so the log names WHICH
         intent triggered the HTTP call."""
         from xbrain.p4_agent.ai_client.lights_client import (
-            LightsClientError, set_redblue, set_searchlight, set_volume,
+            LightsClientError,
+            set_redblue,
+            set_searchlight,
+            set_volume,
         )
         intent_id = env.get("intent_id", "")
         base = self._cfg.payload_base_url

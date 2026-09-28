@@ -38,9 +38,12 @@ from typing import Awaitable, Callable, Optional
 from ..persistence.schema_record import CHANNELS
 from ..reconnect.recon import build_recon_req, compute_resend_seqs
 from ..reconnect.replay import (
-    RateLimiter, build_begin, build_end, build_item, weighted_interleave,
+    RateLimiter,
+    build_begin,
+    build_end,
+    build_item,
+    weighted_interleave,
 )
-
 
 # EventAck.result closed set (11 S8.4): {ok, duplicate}. Both mean "the cloud has
 # it" -- duplicate is the idempotent re-delivery of an eid it already stored (11

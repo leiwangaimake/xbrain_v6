@@ -110,9 +110,13 @@ sys.path.insert(0, ROOT)
 # Imported from the package, not from the modules inside it. That is the surface
 # a consumer actually writes against, so importing it here also checks that the
 # package re-exports what it claims to.
-from xbrain.common.zenoh import (EventBus, HandlerContractError,  # noqa: E402
-                                 RegistryClosedError, SubscriberRegistry,
-                                 ThreadAffinityError)
+from xbrain.common.zenoh import (  # noqa: E402
+    EventBus,
+    HandlerContractError,
+    RegistryClosedError,
+    SubscriberRegistry,
+    ThreadAffinityError,
+)
 
 #: Three keys, because the criterion says three subscriptions. They are written
 #: in the full xbrain/{rid}/... form of 11 S2.2 only so that they read like real

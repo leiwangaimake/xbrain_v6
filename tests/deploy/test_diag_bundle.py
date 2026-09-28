@@ -21,7 +21,6 @@ import pytest
 
 from xbrain.boot.diag import collect
 
-
 pytestmark = pytest.mark.no_device
 
 

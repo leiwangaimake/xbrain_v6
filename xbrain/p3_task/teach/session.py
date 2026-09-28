@@ -39,8 +39,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from xbrain.common.enums import TEACH_STATE
 from xbrain.common.errors import (
-    E_BUSY, E_LOCKED, E_LOW_BATTERY, E_TEACH_BUSY, E_TEACH_QUALITY,
-    E_TEACH_STATE, E_UNHEALTHY,
+    E_BUSY,
+    E_LOCKED,
+    E_LOW_BATTERY,
+    E_TEACH_BUSY,
+    E_TEACH_QUALITY,
+    E_TEACH_STATE,
+    E_UNHEALTHY,
 )
 
 #: The S12A.3 transition graph: (state, action) -> next state. Exhaustive by

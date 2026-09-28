@@ -14,7 +14,9 @@ rotating blocker cannot reset. Each test names its mutant.
 from __future__ import annotations
 
 from xbrain.p1_motion.rns.dynamic import (
-    DynamicAction, WaitBudget, distance_action,
+    DynamicAction,
+    WaitBudget,
+    distance_action,
 )
 from xbrain.p1_motion.rns.types import NavFailReason
 

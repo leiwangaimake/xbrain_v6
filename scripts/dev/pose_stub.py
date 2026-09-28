@@ -48,6 +48,7 @@ sys.path.insert(0, str(ROOT / "scripts" / "sil"))
 
 from sil_world import SilWorld  # noqa: E402
 from zenoh_world import ZenohWorldLink, load_map, read_resolved_p1  # noqa: E402
+
 from xbrain.p1_motion.path.local_frame import LocalFrame  # noqa: E402
 
 TICK_HZ = 20.0

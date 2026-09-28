@@ -48,13 +48,22 @@ from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
 from xbrain.p1_motion.ctrl_loop import CtrlState
+from xbrain.p1_motion.fence.clip import (
+    CompiledFence,
+    FenceConstants,
+    FenceEval,
+    evaluate,
+)
 from xbrain.p1_motion.freshness.degradation import CAM_THRESH, Freshness, classify
 from xbrain.p1_motion.gate.speed_gate import BandHysteresis, SpeedGateError
 from xbrain.p1_motion.nav.health_factor import HealthView
-from xbrain.p1_motion.fence.clip import (CompiledFence, FenceConstants, FenceEval,
-                                         evaluate)
-from xbrain.p1_motion.nav.host_gate import (apply_gate, attribute, compute_gate,
-                                            fence_attribution, forward_d_free)
+from xbrain.p1_motion.nav.host_gate import (
+    apply_gate,
+    attribute,
+    compute_gate,
+    fence_attribution,
+    forward_d_free,
+)
 from xbrain.p1_motion.rns.inputs import PerceptionSnapshot
 from xbrain.p1_motion.sources.arbiter_p1 import BehaviorSource, P1Arbiter
 from xbrain.p1_motion.sources.rns_avoid import RnsAvoidSource

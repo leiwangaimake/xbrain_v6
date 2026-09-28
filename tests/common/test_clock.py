@@ -64,6 +64,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts", "lint"))
 
 import clock_scan as L  # noqa: E402
+
 from xbrain.common import clock  # noqa: E402
 
 SCRIPT = os.path.join(ROOT, "scripts", "lint", "clock_scan.py")

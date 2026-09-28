@@ -30,25 +30,32 @@ from __future__ import annotations
 import logging
 import queue
 import time
-from typing import Dict
-
-from typing import Optional
+from typing import Dict, Optional
 
 from xbrain.p4_agent.runtime.intent_dispatch import (
-    CMD_AUDIO_SPEAK, CMD_MOTION_INTENT, CMD_PAYLOAD, CMD_PTZ, CMD_TASK,
+    CMD_AUDIO_SPEAK,
+    CMD_MOTION_INTENT,
+    CMD_PAYLOAD,
+    CMD_PTZ,
+    CMD_TASK,
 )
 from xbrain.p4_agent.runtime.orchestrator_turn import (
-    VoiceOrchestratorInputs, build_orchestrator, compose_query_fns,
-    make_battery_query_fn, make_rtk_query_fn, make_time_query_fn,
+    CMD_ESTOP,
+    VoiceOrchestratorInputs,
+    build_orchestrator,
+    compose_query_fns,
+    make_battery_query_fn,
+    make_rtk_query_fn,
+    make_time_query_fn,
     make_turn_handler,
 )
 from xbrain.p4_agent.runtime.turn_loop import (
-    MIC_TOPIC, TurnLoopConfig, TurnLoopWorker,
+    MIC_TOPIC,
+    TurnLoopConfig,
+    TurnLoopWorker,
     on_mic_frame_callback,
 )
-from xbrain.p4_agent.runtime.orchestrator_turn import CMD_ESTOP
 from xbrain.p4_agent.runtime.turn_orchestrator import OrchestratorSession
-
 
 _logger = logging.getLogger("xbrain.p4.wiring")
 

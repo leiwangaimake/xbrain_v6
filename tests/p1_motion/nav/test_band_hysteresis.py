@@ -23,7 +23,12 @@ import pytest
 import yaml
 
 from tests.p1_motion.rns.scenes import healthy_status, snapshot, uniform_free
-from xbrain.p1_motion.gate.speed_gate import BANDS, BandHysteresis, SpeedGateError, band_of
+from xbrain.p1_motion.gate.speed_gate import (
+    BANDS,
+    BandHysteresis,
+    SpeedGateError,
+    band_of,
+)
 from xbrain.p1_motion.nav.health_factor import HealthView
 from xbrain.p1_motion.nav.nav_tick import NavInputs, NavTick, NavTickConfigError
 from xbrain.p1_motion.nav.relmove_intake import RelMoveLimits, translate_relative_move

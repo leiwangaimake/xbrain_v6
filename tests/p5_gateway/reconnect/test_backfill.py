@@ -16,10 +16,13 @@ mutation that reddens it (3.3).
 import pytest
 
 from xbrain.p5_gateway.reconnect.replay import (
-    DEFAULT_ALARM_WEIGHT, RateLimiter, build_begin, build_end, build_item,
+    DEFAULT_ALARM_WEIGHT,
+    RateLimiter,
+    build_begin,
+    build_end,
+    build_item,
     weighted_interleave,
 )
-
 
 pytestmark = pytest.mark.no_device
 

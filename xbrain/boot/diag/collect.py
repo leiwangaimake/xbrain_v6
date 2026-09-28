@@ -44,7 +44,6 @@ import tarfile
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-
 # --- Process list from CLAUDE.md 0.1 --------------------------------
 
 _PROCESS_ROW_RE = re.compile(r"^\|\s*`([A-Za-z][A-Za-z0-9 _-]+)`\s*\|")

@@ -35,7 +35,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
-
 # 14 S2.3 P-1: per-tick budget in milliseconds.
 MAIN_TICK_BUDGET_MS = 50
 

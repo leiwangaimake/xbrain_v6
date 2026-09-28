@@ -34,7 +34,6 @@ from typing import FrozenSet, List
 
 from xbrain.p2_core.mode.state_machine import ModeState
 
-
 # 14 S5.7.1 verbatim map. Adding a mode requires a doc change.
 _SYS_TO_DEV = {
     ModeState.IDLE:      "func1",

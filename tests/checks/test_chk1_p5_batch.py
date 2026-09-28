@@ -18,39 +18,63 @@ import pytest
 
 from xbrain.common.errors import E_BUSY, E_CAPABILITY, E_SCHEMA
 from xbrain.p5_gateway.errormap.qt_int_codes import (
-    ErrorCodeMapDivergence, NeedsDetailMissing, QT_CODE_MAP,
+    QT_CODE_MAP,
+    ErrorCodeMapDivergence,
+    NeedsDetailMissing,
     QtVisibilityViolation,
-    assert_bidirectional_diff_empty, assert_v6_code_not_in_qt_display,
-    outbound_text_for_reason, translate,
+    assert_bidirectional_diff_empty,
+    assert_v6_code_not_in_qt_display,
+    outbound_text_for_reason,
+    translate,
 )
 from xbrain.p5_gateway.outbound.key_surface import (
-    KeySurfaceDivergence, P5_EXPECTED_PUBLISHERS,
-    P5_EXPECTED_SUBSCRIBERS, assert_surface_matches, diff,
+    P5_EXPECTED_PUBLISHERS,
+    P5_EXPECTED_SUBSCRIBERS,
+    KeySurfaceDivergence,
+    assert_surface_matches,
+    diff,
 )
 from xbrain.p5_gateway.outbound.projection import (
-    OUTBOUND_KEYS, ProjectionShapeError, TerminalSourceViolation,
-    check_terminal_source, has_both_time_fields,
-    outbound_keys_bidirectional_diff, project_progress,
+    OUTBOUND_KEYS,
+    ProjectionShapeError,
+    TerminalSourceViolation,
+    check_terminal_source,
+    has_both_time_fields,
+    outbound_keys_bidirectional_diff,
+    project_progress,
     split_progress_by_task,
 )
 from xbrain.p5_gateway.outbound.state_media import (
-    ENDPOINT_KINDS, Endpoint, FORBIDDEN_CREDENTIAL_KEYS,
-    HEARTBEAT_PERIOD_MS, REQUIRED_QOS_PROFILE,
-    StateMediaCredentialLeak, StateMediaPublisher,
-    assert_qos_profile, build_payload, scan_credential_keys,
+    ENDPOINT_KINDS,
+    FORBIDDEN_CREDENTIAL_KEYS,
+    HEARTBEAT_PERIOD_MS,
+    REQUIRED_QOS_PROFILE,
+    Endpoint,
+    StateMediaCredentialLeak,
+    StateMediaPublisher,
+    assert_qos_profile,
+    build_payload,
+    scan_credential_keys,
 )
 from xbrain.p5_gateway.uplink.rate_limit import (
     DEGRADE_ENTER_CONSECUTIVE_REJECTS,
-    ForbiddenConnectionMutation, ForbiddenMessagePassthrough,
-    INVALID_REQ_TYPE_PLACEHOLDER, RejectAckCoalescer,
-    UPLINK_STATE_NORMAL, UPLINK_STATE_RESTRICTED, UplinkConfigError,
-    UplinkDegradeState, UplinkLimits,
-    can_admit_in_state, emit_ack_message,
-    refuse_close_ws, refuse_ip_ban,
-    sanitise_event_detail_never_echo, sanitise_req_id,
+    INVALID_REQ_TYPE_PLACEHOLDER,
+    UPLINK_STATE_NORMAL,
+    UPLINK_STATE_RESTRICTED,
+    ForbiddenConnectionMutation,
+    ForbiddenMessagePassthrough,
+    RejectAckCoalescer,
+    UplinkConfigError,
+    UplinkDegradeState,
+    UplinkLimits,
+    can_admit_in_state,
+    emit_ack_message,
+    refuse_close_ws,
+    refuse_ip_ban,
+    sanitise_event_detail_never_echo,
+    sanitise_req_id,
     sanitise_req_type,
 )
-
 
 pytestmark = pytest.mark.no_device
 

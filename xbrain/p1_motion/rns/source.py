@@ -33,30 +33,67 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from .audit import TerminalReporter
-from .candidate import (CandidateSelector, candidate_cost, candidates_from_profile,
-                        clear_extrapolation, clearance_at, obstacle_points,
-                        passes_hard_gates)
-from .classify import (IGNORE_BEHAVIOR, dispatch_dynamic, effective_behavior,
-                       health_speed_capped, usable_velocity)
+from xbrain.common.types.units import Mps
+
+from .audit import AuditRecord, RingAudit, TerminalReporter
+from .candidate import (
+    CandidateSelector,
+    candidate_cost,
+    candidates_from_profile,
+    clear_extrapolation,
+    clearance_at,
+    obstacle_points,
+    passes_hard_gates,
+)
+from .classify import (
+    IGNORE_BEHAVIOR,
+    dispatch_dynamic,
+    effective_behavior,
+    health_speed_capped,
+    usable_velocity,
+)
 from .config import RnsConfigError, run_startup_assertions
 from .dynamic import DynamicAction, WaitBudget, distance_action, in_corridor
-from .grid import (MemoryGrid, profile_age_ms, profile_speed_limited,
-                   profile_zero_speed, seg_stale)
-from .inputs import (ARRIVAL_ACCEPT, ARRIVAL_DUP, ARRIVAL_EPOCH_RESET,
-                     PerceptionSnapshot, classify_arrival)
+from .grid import (
+    MemoryGrid,
+    profile_age_ms,
+    profile_speed_limited,
+    profile_zero_speed,
+    seg_stale,
+)
+from .inputs import (
+    ARRIVAL_ACCEPT,
+    ARRIVAL_DUP,
+    ARRIVAL_EPOCH_RESET,
+    PerceptionSnapshot,
+    classify_arrival,
+)
 from .planner import GuidancePlanner
-from .wallfollow import (Side, WallFollowState, can_enter, can_leave,
-                         check_failure, inner_corner_stop, keep_distance_omega,
-                         record_crossing, select_side, wall_vanished)
-from .watchdog import ProgressWatchdog, WatchdogResult, no_progress_failure
-from .audit import AuditRecord, RingAudit
 from .route import Mission, align_omega, lookahead_distance, wrap_angle
-from .speed import (SpeedCaps, cap_deviation, cap_gap_tightness,
-                    cap_unknown_ratio)
-from .types import (Cell, MissionKind, NavFailReason, NavFailure, NavState, Origin,
-                    VelocityCandidate, is_legal_transition)
-from xbrain.common.types.units import Mps
+from .speed import SpeedCaps, cap_deviation, cap_gap_tightness, cap_unknown_ratio
+from .types import (
+    Cell,
+    MissionKind,
+    NavFailReason,
+    NavFailure,
+    NavState,
+    Origin,
+    VelocityCandidate,
+    is_legal_transition,
+)
+from .wallfollow import (
+    Side,
+    WallFollowState,
+    can_enter,
+    can_leave,
+    check_failure,
+    inner_corner_stop,
+    keep_distance_omega,
+    record_crossing,
+    select_side,
+    wall_vanished,
+)
+from .watchdog import ProgressWatchdog, WatchdogResult, no_progress_failure
 
 # 11 S1.6.1 consumer timeouts on the three perception keys. T-50/T-51 are
 # the profile's two tiers (already literal at their use sites); these two

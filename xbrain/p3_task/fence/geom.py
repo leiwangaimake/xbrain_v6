@@ -35,8 +35,7 @@ import math
 # (xbrain/common/fence/geom.py): p1_motion 自算 crc32 比对与报警区点在多边形内
 # 判定要与本进程用[同一套]实现, 否则两侧漂移. 这里 re-import 保持 p3 既有 API
 # (from xbrain.p3_task.fence.geom import Polygon / point_in_polygon 仍可用).
-from xbrain.common.fence.geom import (Circle, Polygon, point_in_circle,
-                                      point_in_polygon)
+from xbrain.common.fence.geom import Circle, Polygon, point_in_circle, point_in_polygon
 
 
 class InvalidPolygon(Exception):

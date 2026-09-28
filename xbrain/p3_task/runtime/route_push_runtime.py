@@ -53,11 +53,15 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 from xbrain.p3_task.persistence.schema_task import iso_from_wall_ms
-from xbrain.p3_task.route.push import (RouteAck, RouteAckWindow,
-                                       RoutePushError, RoutePushTrigger,
-                                       build_route_frames, new_cmd_id)
-from xbrain.p3_task.route.snapshot_build import (SnapshotBuildError,
-                                                 build_snapshot)
+from xbrain.p3_task.route.push import (
+    RouteAck,
+    RouteAckWindow,
+    RoutePushError,
+    RoutePushTrigger,
+    build_route_frames,
+    new_cmd_id,
+)
+from xbrain.p3_task.route.snapshot_build import SnapshotBuildError, build_snapshot
 
 _logger = logging.getLogger("xbrain.p3.route_push")
 

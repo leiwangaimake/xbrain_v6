@@ -23,7 +23,9 @@ snapshot" invariant CFG-CM-11 defends would silently fail.
 
 from xbrain.boot.freeze.pipeline import build_manifest, run_freeze
 from xbrain.boot.freeze.registry import (
-    ASSERT_REGISTRY, AssertSpec, ordered_assertion_names,
+    ASSERT_REGISTRY,
+    AssertSpec,
+    ordered_assertion_names,
 )
 
 __all__ = [

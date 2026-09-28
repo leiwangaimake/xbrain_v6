@@ -18,7 +18,6 @@ import requests
 
 from xbrain.p4_agent.ai_client import llm_client
 
-
 pytestmark = pytest.mark.no_device
 
 

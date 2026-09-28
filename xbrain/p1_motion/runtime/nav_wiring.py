@@ -71,13 +71,27 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from xbrain.common.envelope.envelope import Envelope, encode
 from xbrain.p1_motion.ctrl_loop import CtrlLoop, CtrlState
-from xbrain.p1_motion.nav.arb_state import SUSPENDED_SOFT_ESTOP, ArbVisibility
-from xbrain.p1_motion.fence.clip import CompiledFence, FenceClipError, FenceEval, compile_fence
+from xbrain.p1_motion.fence.clip import (
+    CompiledFence,
+    FenceClipError,
+    FenceEval,
+    compile_fence,
+)
 from xbrain.p1_motion.fence.episodes import FenceEpisodeTracker
-from xbrain.p1_motion.nav.health_factor import (STATE_OK, HealthFactorError,
-                                                HealthFactorSlot, HealthView)
-from xbrain.p1_motion.nav.mission_host import (CH_EVENT, CH_PROGRESS,
-                                               CH_RELMOVE, Emit, MissionHost)
+from xbrain.p1_motion.nav.arb_state import SUSPENDED_SOFT_ESTOP, ArbVisibility
+from xbrain.p1_motion.nav.health_factor import (
+    STATE_OK,
+    HealthFactorError,
+    HealthFactorSlot,
+    HealthView,
+)
+from xbrain.p1_motion.nav.mission_host import (
+    CH_EVENT,
+    CH_PROGRESS,
+    CH_RELMOVE,
+    Emit,
+    MissionHost,
+)
 from xbrain.p1_motion.nav.nav_tick import NavInputs, NavOutput, NavTick, ctrl_state_for
 from xbrain.p1_motion.nav.route_intake import RouteAssembler, RouteIntakeError
 from xbrain.p1_motion.path import gnss_pose

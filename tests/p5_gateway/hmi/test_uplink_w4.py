@@ -27,7 +27,11 @@ import os
 import pytest
 
 from xbrain.common.errors import (
-    E_BUSY, E_CHANNEL_DENIED, E_CONFIRM_REQUIRED, E_NOT_IMPLEMENTED, E_SCHEMA,
+    E_BUSY,
+    E_CHANNEL_DENIED,
+    E_CONFIRM_REQUIRED,
+    E_NOT_IMPLEMENTED,
+    E_SCHEMA,
 )
 from xbrain.p5_gateway.hmi import uplink
 

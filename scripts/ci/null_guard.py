@@ -53,7 +53,6 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import yaml
 
-
 # The 21 doc path relative to the repo root.
 _DEBT_DOC_REL = "docs/21-实测与第三方欠账.md"
 

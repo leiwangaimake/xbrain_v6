@@ -16,7 +16,8 @@ GWY-P4-12/13/14 batch 4 tests.
 import pytest
 
 from xbrain.p4_agent.envelope.intent_envelope import (
-    EnvelopeSchemaError, IntentEnvelope,
+    EnvelopeSchemaError,
+    IntentEnvelope,
 )
 from xbrain.p4_agent.gbnf.generator import (
     GbnfInvariantError,
@@ -28,9 +29,11 @@ from xbrain.p4_agent.gbnf.generator import (
     check_r4_no_empty_production,
 )
 from xbrain.p4_agent.validation.checks import (
-    SlotSchema, ValidationResult, ValidationRule, validate,
+    SlotSchema,
+    ValidationResult,
+    ValidationRule,
+    validate,
 )
-
 
 pytestmark = pytest.mark.no_device
 

@@ -45,7 +45,6 @@ from typing import Dict, List, Optional
 
 import requests  # BUSINESS-IMPORT-OK(ai-client): CLAUDE.md 4.1 sanctions requests only inside ai_client/
 
-
 _logger = logging.getLogger("xbrain.ai_client.llm")
 
 # llama-server OpenAI-compatible route.

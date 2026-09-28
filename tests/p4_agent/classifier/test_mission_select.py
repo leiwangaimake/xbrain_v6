@@ -19,7 +19,6 @@ import pytest
 from xbrain.p4_agent.classifier.mission_select import select_mission
 from xbrain.p4_agent.registry.missions import MISSIONS
 
-
 pytestmark = pytest.mark.no_device
 
 

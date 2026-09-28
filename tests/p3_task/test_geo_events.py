@@ -23,10 +23,12 @@ import pytest
 
 from xbrain.p3_task.runtime import main_wiring
 from xbrain.p3_task.state.geo_events import (
-    GEO_CATEGORY, GEO_EVENT_INFO, GEO_EVENT_WARN,
-    geo_event_severity, render_geo_event,
+    GEO_CATEGORY,
+    GEO_EVENT_INFO,
+    GEO_EVENT_WARN,
+    geo_event_severity,
+    render_geo_event,
 )
-
 
 # INF-TS-1: 纯单测, 不碰设备(无 zenohd / 无底盘 / 无 ORIN 专属硬件).
 pytestmark = pytest.mark.no_device

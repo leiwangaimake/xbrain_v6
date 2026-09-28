@@ -30,7 +30,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import FrozenSet
 
-
 # --- The 4-value closed set (16 §5.3 verbatim) ---------------------
 
 ROUTE_BYPASS = "bypass"

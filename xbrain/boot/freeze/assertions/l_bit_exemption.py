@@ -108,7 +108,8 @@ import re
 from typing import Any, Dict, FrozenSet, Optional, Tuple
 
 from xbrain.boot.freeze.assertions._layer_loader import (
-    load_l6_files, load_layers,
+    load_l6_files,
+    load_layers,
 )
 from xbrain.common.config import build_overlay
 from xbrain.common.errors import E_CONFIG_INVALID

@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from typing import FrozenSet
 
-
 # 11 S1.1.6 RT-only publisher keys for P1. Publishing any of these
 # on GEN would leak safety-critical traffic to the wider LAN.
 RT_ONLY_PUB: FrozenSet[str] = frozenset({

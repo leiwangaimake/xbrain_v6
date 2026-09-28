@@ -34,7 +34,6 @@ from typing import Any, Dict, Optional
 
 from xbrain.common.envelope.envelope import Envelope, encode
 
-
 # i_fix by fix_type (11 S3.2.1 / S4.5): the speed-gate quality factor. rtk_fixed
 # full trust, rtk_float 0.4, everything else 0 (no autonomous motion). Derived
 # HERE from fix_type, not carried in GnssFix.

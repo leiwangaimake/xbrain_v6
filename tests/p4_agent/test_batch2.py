@@ -16,19 +16,27 @@ GWY-P4-03/04/05/06 batch 2 tests.
 import pytest
 
 from xbrain.p4_agent.asr_post.correction_log import (
-    CorrectionLayer, build_row, negative_samples, reject_row,
+    CorrectionLayer,
+    build_row,
+    negative_samples,
+    reject_row,
 )
 from xbrain.p4_agent.asr_post.three_layer import (
-    L1Dict, L3ClosedSet, post_process,
+    L1Dict,
+    L3ClosedSet,
+    post_process,
 )
 from xbrain.p4_agent.classifier.priority_chain import (
-    ChainLayer, classify_after_bypass, is_directed_at_robot,
+    ChainLayer,
+    classify_after_bypass,
+    is_directed_at_robot,
     is_semantically_broken,
 )
 from xbrain.p4_agent.safety_bypass.recording_gate import (
-    RecordingState, SuppressionRecord, evaluate,
+    RecordingState,
+    SuppressionRecord,
+    evaluate,
 )
-
 
 pytestmark = pytest.mark.no_device
 

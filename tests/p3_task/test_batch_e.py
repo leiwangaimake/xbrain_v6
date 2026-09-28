@@ -16,19 +16,27 @@ demand/cede/refresh with contention scenarios.
 import pytest
 
 from xbrain.p3_task.charge.dock_arbiter import (
-    DockArbiter, DockOp, DockResult,
+    DockArbiter,
+    DockOp,
+    DockResult,
 )
 from xbrain.p3_task.charge.dock_select import (
-    Dock, cost_select, energy_reach_filter, route_filter,
+    Dock,
+    cost_select,
+    energy_reach_filter,
+    route_filter,
 )
 from xbrain.p3_task.charge.executor import (
-    ChargeStage, InvalidChargeStageTransition,
-    dedup_key, is_forward_transition, next_stage,
+    ChargeStage,
+    InvalidChargeStageTransition,
+    dedup_key,
+    is_forward_transition,
+    next_stage,
 )
 from xbrain.p3_task.charge.trigger import (
-    ChargeThresholds, evaluate,
+    ChargeThresholds,
+    evaluate,
 )
-
 
 pytestmark = pytest.mark.no_device
 

@@ -43,8 +43,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from xbrain.p2_core.three_stops import (StopEvent, StopReason, apply_rearm,
-                                        apply_stop)
+from xbrain.p2_core.three_stops import StopEvent, StopReason, apply_rearm, apply_stop
 
 _logger = logging.getLogger(__name__)
 

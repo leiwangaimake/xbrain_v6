@@ -35,7 +35,6 @@ import time
 
 import pytest
 
-
 pytestmark = pytest.mark.no_device
 
 
@@ -169,7 +168,8 @@ def test_p4_publish_pipeline_shape_matches_p3_subscription():
     receive. Ensures schema alignment without any zenoh calls."""
     from xbrain.p3_task.runtime.main_wiring import CMD_TASK_TOPIC
     from xbrain.p4_agent.runtime.intent_dispatch import (
-        CMD_TASK, dispatch,
+        CMD_TASK,
+        dispatch,
     )
 
     # p4 dispatches B01 to CMD_TASK.
@@ -184,8 +184,12 @@ def test_p4_publish_pipeline_shape_matches_p3_subscription():
 def test_p4_dispatch_covers_five_key_families():
     """Sanity: p4 can dispatch to all 5 outbound key families."""
     from xbrain.p4_agent.runtime.intent_dispatch import (
-        CMD_AUDIO_SPEAK, CMD_MOTION_INTENT, CMD_PAYLOAD, CMD_PTZ,
-        CMD_TASK, dispatch,
+        CMD_AUDIO_SPEAK,
+        CMD_MOTION_INTENT,
+        CMD_PAYLOAD,
+        CMD_PTZ,
+        CMD_TASK,
+        dispatch,
     )
     cases = [
         # 2026-08-11 (GWY-P4-41): D07 (strobe_off) was remapped to
@@ -207,10 +211,13 @@ def test_audio_frame_wire_roundtrip_via_peer(peer_pair):
     pub_sess, sub_sess = peer_pair
 
     from xbrain.p2_core.audio.audio_io import (
-        ASR_RATE_HZ, ASR_SAMPLES_PER_FRAME, AudioFrame,
+        ASR_RATE_HZ,
+        ASR_SAMPLES_PER_FRAME,
+        AudioFrame,
     )
     from xbrain.p2_core.runtime.mic_capture import (
-        decode_frame, encode_frame,
+        decode_frame,
+        encode_frame,
     )
 
     src = AudioFrame(

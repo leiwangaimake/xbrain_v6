@@ -106,8 +106,11 @@ from typing import Any, Dict
 import yaml
 
 from xbrain.boot.freeze.assertions._layer_loader import (
-    _L6_FILES, load_l6_files, load_layers,
+    _L6_FILES,
+    load_l6_files,
+    load_layers,
 )
+
 # L4/L4b loaders live in fv_org_enu because that assertion was the first
 # consumer that needed the two-step load (read L1 -> get site_id/robot_id
 # -> read L4/L4b). Materialise is the second consumer and reuses them
@@ -116,7 +119,8 @@ from xbrain.boot.freeze.assertions._layer_loader import (
 # promoted to _layer_loader.py; today the cross-assertion import stays
 # because promoting for two callers would be premature abstraction.
 from xbrain.boot.freeze.assertions.fv_org_enu import (
-    _load_l4_tree, _load_l4b_tree,
+    _load_l4_tree,
+    _load_l4b_tree,
 )
 from xbrain.boot.freeze.inventory import config_rev_of, layer_rows
 from xbrain.common.config import build_overlay

@@ -22,9 +22,7 @@ Description:
 
 import pytest
 
-from xbrain.p2_core.messaging.audio_state import (DEVICE_STATES,
-
-                                                  build_audio_state)
+from xbrain.p2_core.messaging.audio_state import DEVICE_STATES, build_audio_state
 
 # INF-TS-1 三档 marker. 纯函数 / 静态检查, 不碰任何硬件 -> no_device.
 pytestmark = pytest.mark.no_device

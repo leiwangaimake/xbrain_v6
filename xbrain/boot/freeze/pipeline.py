@@ -67,7 +67,9 @@ from typing import Any, Dict, Mapping, Optional
 # so a future refactor that moves the registry into its own subpackage does
 # not need to touch this file.
 from xbrain.boot.freeze.registry import (
-    ASSERT_REGISTRY, ordered_assertion_names, validate_topology,
+    ASSERT_REGISTRY,
+    ordered_assertion_names,
+    validate_topology,
 )
 
 # MANIFEST schema version. Bumped only when the SHAPE breaks backward

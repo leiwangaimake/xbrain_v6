@@ -22,8 +22,13 @@ import math
 
 import pytest
 
-from xbrain.p1_motion.fence.clip import (CompiledFence, CompiledPolygon, FenceConstants,
-                                         evaluate, v_fence_mps)
+from xbrain.p1_motion.fence.clip import (
+    CompiledFence,
+    CompiledPolygon,
+    FenceConstants,
+    evaluate,
+    v_fence_mps,
+)
 
 pytestmark = pytest.mark.no_device
 

@@ -39,7 +39,6 @@ from typing import Optional
 
 from xbrain.common.enums import EVENT_CATEGORY
 
-
 # Per-category DEFAULT channel (11 S6.2). Every value in EVENT_CATEGORY must have
 # an entry here (metatest-enforced). Categories with per-detail exceptions list
 # their default here and the exceptions in _DETAIL_OVERRIDES below.

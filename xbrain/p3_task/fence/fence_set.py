@@ -33,7 +33,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, Sequence
 
-from xbrain.common.enums import FENCE_ROLE       # 11 S9A.2 closed set (CLAUDE.md 3.5)
+from xbrain.common.enums import FENCE_ROLE  # 11 S9A.2 closed set (CLAUDE.md 3.5)
+
 # fence_set_crc32 现由跨进程共享库导出 -- p1_motion 收到 cmd/fence 后自算比对必须
 #与本进程用同一套归一化(11 S9A.2). re-import 保持 from ...fence_set import
 # fence_set_crc32 的既有调用(test_fence_set / 跨语言金标)可用.

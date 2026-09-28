@@ -32,10 +32,12 @@ import yaml
 
 from xbrain.boot.freeze.assertions.a_references import run as a_run
 from xbrain.boot.freeze.assertions.m_required import (
-    _REQUIRED_KEYS, run as m_run,
+    _REQUIRED_KEYS,
+)
+from xbrain.boot.freeze.assertions.m_required import (
+    run as m_run,
 )
 from xbrain.common.errors.exceptions import XbrainError
-
 
 # ---------------------------------------------------------------------------
 # Scaffolding: build a green common.yaml + models/*.yaml + safety/*.yaml

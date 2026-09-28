@@ -58,9 +58,10 @@ from __future__ import annotations
 from typing import Optional
 
 from xbrain.p4_agent.slots.ptz_slots import (
-    parse_ptz_direction, parse_ptz_speed_level, parse_zoom_direction,
+    parse_ptz_direction,
+    parse_ptz_speed_level,
+    parse_zoom_direction,
 )
-
 
 # ---------------------------------------------------------------------------
 # E class (PTZ)

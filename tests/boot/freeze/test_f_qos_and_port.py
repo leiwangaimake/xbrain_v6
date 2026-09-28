@@ -28,10 +28,12 @@ import pytest
 import yaml
 
 from xbrain.boot.freeze.assertions.f_qos_and_port import (
-    _EXPECTED_IDENTITY, _FALLBACK_PATTERN, _stub_port_probe, run,
+    _EXPECTED_IDENTITY,
+    _FALLBACK_PATTERN,
+    _stub_port_probe,
+    run,
 )
 from xbrain.common.errors.exceptions import XbrainError
-
 
 # ---------------------------------------------------------------------------
 # Scaffolding: minimal-but-valid QoS document

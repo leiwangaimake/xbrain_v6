@@ -27,7 +27,6 @@ import pytest
 from xbrain.boot.freeze.assertions.g_safety_range import _REGISTRY, run
 from xbrain.common.errors.exceptions import XbrainError
 
-
 # ---------------------------------------------------------------------------
 # Scaffolding: build a green merged tree that satisfies every rule.
 # ---------------------------------------------------------------------------

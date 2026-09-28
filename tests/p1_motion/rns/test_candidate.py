@@ -18,8 +18,15 @@ import math
 import pytest
 
 from xbrain.p1_motion.rns.candidate import (
-    Candidate, CandidateSelector, candidate_cost, clear_extrapolation,
-    clearance_penalty, detour_subgoal, Edge, find_edges, passes_hard_gates,
+    Candidate,
+    CandidateSelector,
+    Edge,
+    candidate_cost,
+    clear_extrapolation,
+    clearance_penalty,
+    detour_subgoal,
+    find_edges,
+    passes_hard_gates,
     thread_subgoal,
 )
 
@@ -174,8 +181,9 @@ def test_thread_candidate_carries_throat_clearance():
     # passes the 0.5 m throat. mutant: build with clearance_at (point probe) ->
     # clearance_m jumps to ~2.1 -> reddens (and the 1.1 m gate would pass a
     # sub-body slot, which is how the robot drove through parked cars).
-    from xbrain.p1_motion.rns.candidate import candidates_from_profile
     import math as _m
+
+    from xbrain.p1_motion.rns.candidate import candidates_from_profile
     n = 181
     amin, astep = -_m.pi / 4, (_m.pi / 2) / (n - 1)
     d_block = [None] * n

@@ -14,7 +14,10 @@ mutant.
 from __future__ import annotations
 
 from xbrain.p1_motion.rns.classify import (
-    RtkTier, health_speed_capped, rtk_arrival_radius, rtk_speed_factor,
+    RtkTier,
+    health_speed_capped,
+    rtk_arrival_radius,
+    rtk_speed_factor,
     rtk_stop_and_report,
 )
 from xbrain.p1_motion.rns.types import NavFailReason

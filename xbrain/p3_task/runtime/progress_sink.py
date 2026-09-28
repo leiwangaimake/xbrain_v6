@@ -47,9 +47,11 @@ from typing import Any, Dict, Optional
 
 from xbrain.p3_task.persistence.schema_task import iso_from_wall_ms
 from xbrain.p3_task.schedule.driver import apply_path_progress_terminal
-from xbrain.p3_task.state.path_progress import (PathProgress,
-                                                PathProgressError,
-                                                parse_path_progress)
+from xbrain.p3_task.state.path_progress import (
+    PathProgress,
+    PathProgressError,
+    parse_path_progress,
+)
 
 _logger = logging.getLogger("xbrain.p3.progress")
 

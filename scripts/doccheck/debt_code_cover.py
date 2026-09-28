@@ -41,7 +41,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
-
 # Row regex: 5 pipe-separated columns; first cell has book + bold ID.
 # Example:
 #   | `11` **V-02** | ... | ... | ... | ... |

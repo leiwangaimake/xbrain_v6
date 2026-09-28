@@ -16,10 +16,18 @@ from __future__ import annotations
 
 import pytest
 
-from xbrain.p1_motion.fence.clip import (CompiledFence, CompiledPolygon, FenceConstants,
-                                         evaluate, runtime_state_fields)
-from xbrain.p1_motion.fence.fence_set import (HeldFenceSet, HeldPolygon,
-                                              build_fence_runtime_state)
+from xbrain.p1_motion.fence.clip import (
+    CompiledFence,
+    CompiledPolygon,
+    FenceConstants,
+    evaluate,
+    runtime_state_fields,
+)
+from xbrain.p1_motion.fence.fence_set import (
+    HeldFenceSet,
+    HeldPolygon,
+    build_fence_runtime_state,
+)
 
 pytestmark = pytest.mark.no_device
 

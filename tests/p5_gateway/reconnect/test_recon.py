@@ -16,7 +16,6 @@ import pytest
 
 from xbrain.p5_gateway.reconnect.recon import build_recon_req, compute_resend_seqs
 
-
 pytestmark = pytest.mark.no_device
 
 

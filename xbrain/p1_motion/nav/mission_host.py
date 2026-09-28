@@ -56,12 +56,14 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from xbrain.common.errors import E_TIMEOUT
 from xbrain.p1_motion.nav.nav_tick import NavInputs, NavOutput
 from xbrain.p1_motion.nav.progress import build_path_progress
-from xbrain.p1_motion.nav.relmove_intake import (RelMoveGoal, RelMoveLimits,
-                                                 RelMoveReject,
-                                                 achieved_body_delta,
-                                                 translate_relative_move)
-from xbrain.p1_motion.nav.report_map import (SEV_WARN, event_severity,
-                                             map_failure)
+from xbrain.p1_motion.nav.relmove_intake import (
+    RelMoveGoal,
+    RelMoveLimits,
+    RelMoveReject,
+    achieved_body_delta,
+    translate_relative_move,
+)
+from xbrain.p1_motion.nav.report_map import SEV_WARN, event_severity, map_failure
 from xbrain.p1_motion.nav.route_intake import RouteClear, RouteSet
 from xbrain.p1_motion.rns.types import NavFailure, NavState, Origin
 from xbrain.p1_motion.sources.rns_avoid import RnsAvoidSource

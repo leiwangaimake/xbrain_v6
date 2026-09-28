@@ -55,8 +55,13 @@ import math
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-from xbrain.common.errors import (E_CAPABILITY, E_DEGRADED, E_NO_HEADING, E_SCHEMA,
-                                  E_UNHEALTHY)
+from xbrain.common.errors import (
+    E_CAPABILITY,
+    E_DEGRADED,
+    E_NO_HEADING,
+    E_SCHEMA,
+    E_UNHEALTHY,
+)
 
 
 class RelMoveReject(Exception):

@@ -16,29 +16,44 @@ GWY-P4-24/25/26/27/28/30/31 batch 7 tests (final P4 batch).
 import pytest
 
 from xbrain.p4_agent.envelope.pose_snap import (
-    Pose, PoseRing, PoseSnap,
+    Pose,
+    PoseRing,
+    PoseSnap,
 )
 from xbrain.p4_agent.registry.channel_permission import (
-    allowed_channels, is_channel_allowed,
+    allowed_channels,
+    is_channel_allowed,
 )
 from xbrain.p4_agent.registry.d_class import (
-    DRangeError, LightWhich, SchemaError,
-    route_brightness, route_lights_on, route_redblue_pattern, route_volume,
+    DRangeError,
+    LightWhich,
+    SchemaError,
+    route_brightness,
+    route_lights_on,
+    route_redblue_pattern,
+    route_volume,
 )
 from xbrain.p4_agent.registry.rulings_18b import (
-    CumulativeDrift, E09SessionTier, E09TierError,
-    check_r3_within_range, check_r5_restate_no_forbidden,
+    CumulativeDrift,
+    E09SessionTier,
+    E09TierError,
+    check_r3_within_range,
+    check_r5_restate_no_forbidden,
     resolve_e09_tier,
 )
 from xbrain.p4_agent.registry.time_expr import (
-    TimeExpr, TimeParseError, parse, parse_at_local, parse_delay,
+    TimeExpr,
+    TimeParseError,
+    parse,
+    parse_at_local,
+    parse_delay,
 )
 from xbrain.p4_agent.registry.tools_projection import (
     ToolProjectionError,
     check_t1_tools_subset_of_alternation,
-    check_t2_max_five_tools, check_t3_schema_slots_match,
+    check_t2_max_five_tools,
+    check_t3_schema_slots_match,
 )
-
 
 pytestmark = pytest.mark.no_device
 

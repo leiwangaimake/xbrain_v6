@@ -32,7 +32,6 @@ import os
 from dataclasses import dataclass
 from typing import Iterable, Tuple
 
-
 SCAN_SURFACE = {
     "include": ("scripts/ci", "scripts/lint", "scripts/doccheck"),
     "exclude": ("xbrain/common/checks/scan_surface.py",

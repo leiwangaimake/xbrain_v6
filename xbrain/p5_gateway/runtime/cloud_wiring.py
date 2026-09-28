@@ -51,14 +51,24 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...common import errors
-from ..inbound.cloud_inbound import (InboundReject, SRC_QT, frame_ids,
-                                     is_cloud_frame, parse_frame, rid_from_key)
-from ..inbound.task_router import (CLOUD_ORIGIN, KEY_AUDIO, KEY_GEO,
-                                    KEY_TASK, route)
+from ..inbound.cloud_inbound import (
+    SRC_QT,
+    InboundReject,
+    frame_ids,
+    is_cloud_frame,
+    parse_frame,
+    rid_from_key,
+)
+from ..inbound.task_router import CLOUD_ORIGIN, KEY_AUDIO, KEY_GEO, KEY_TASK, route
 from ..outbound.ack_translate import aggregate_child_acks, translate_ack
 from ..outbound.cloud_envelope import SeqCounter, build_envelope
-from ..outbound.task_ack import (DedupWindow, RESULT_ACCEPTED, RESULT_REJECTED,
-                                 build_ack, duplicate_ack)
+from ..outbound.task_ack import (
+    RESULT_ACCEPTED,
+    RESULT_REJECTED,
+    DedupWindow,
+    build_ack,
+    duplicate_ack,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -1146,7 +1156,7 @@ class CloudBridge:
         NO 不能因为"p1 几乎必定会锁存"就填 ["zero_vel"] -- 那是凭信心断言,
         与 estop_path 曾被硬编码成 "ok" 是同一个错(见 hmi/estop_probe.py).
         """
-        from ..ext.estop import (EstopSchemaError, build_estop_ack_detail)
+        from ..ext.estop import EstopSchemaError, build_estop_ack_detail
 
         detail = None
         try:

@@ -253,6 +253,7 @@ def test_exit_broadcast_is_accepted_by_p2s_real_mode_face():
     S7.3's six-value closed set) and P2 refuses with E_SCHEMA.
     """
     import json as _json
+
     from xbrain.p2_core.mode.state_machine import ModeState, ModeStateMachine
     from xbrain.p2_core.runtime.mode_wiring import ModeFace
     built = uplink.build_exit_broadcast_command({"type": "exit_broadcast",

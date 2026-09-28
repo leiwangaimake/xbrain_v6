@@ -34,7 +34,6 @@ from dataclasses import dataclass
 
 from xbrain.common.errors import E_BUSY, E_CAPABILITY
 
-
 RJ_1_TEMPLATE = ("旋转能力不可用: 建议改为原地拍照或申请人工现场维护")
 RJ_2_TEMPLATE = ("旋转已阻塞: 检测到 {occ_count} 个障碍物在 "
                    "{r_check_m:.2f} 米内, 请让开或改为直行")

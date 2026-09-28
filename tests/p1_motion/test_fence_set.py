@@ -13,9 +13,12 @@ Description:
 import pytest
 
 from xbrain.common.fence.geom import fence_set_crc32
-from xbrain.p1_motion.fence.fence_set import (FenceSetError, FenceSetHolder,
-                                              build_fence_runtime_state,
-                                              compile_fence_set)
+from xbrain.p1_motion.fence.fence_set import (
+    FenceSetError,
+    FenceSetHolder,
+    build_fence_runtime_state,
+    compile_fence_set,
+)
 
 _RING = [{"lat": 34.697, "lon": 135.505}, {"lat": 34.698, "lon": 135.505},
          {"lat": 34.698, "lon": 135.506}]

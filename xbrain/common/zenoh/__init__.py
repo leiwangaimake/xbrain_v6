@@ -57,8 +57,21 @@ What does NOT belong here:
 # build_session_config" and never has to know which module inside the package
 # holds it. The module split is ours to change; this import list is the contract
 # with the rest of the tree.
-from .event_bus import (EventBus, Handler, HandlerContractError,
-                        ThreadAffinityError)
+from .event_bus import EventBus, Handler, HandlerContractError, ThreadAffinityError
+
+# Imported after qos because publisher_thread_check consumes QosResolution and the
+# BLOCK / PRIORITIES constants from it. The A-1 self-check (INF-ZN-6) is the one
+# anti-pattern check that lives in this package, because it needs the runtime
+# thread<->publisher binding a config-static check cannot see (10 S3.3.6 line 9).
+from .publisher_thread_check import (
+                        ASSERTION_F_ANTI_PATTERNS,
+                        IN_PROCESS_ANTI_PATTERNS,
+                        MixedQosThreadError,
+                        PublisherThreadRegistry,
+                        ThreadMix,
+                        current_thread_name,
+)
+
 # The QoS surface is deliberately narrow. load_qos_table is the only supported
 # way to build a table, and the two error types are exported beside it so a
 # caller that must distinguish "the document is wrong" from "this key cannot be
@@ -67,27 +80,34 @@ from .event_bus import (EventBus, Handler, HandlerContractError,
 # FROZEN_PROFILES and RT_OVERRIDE are exported for the cross-language metatest
 # and for tooling that dumps the table; nothing in the runtime should be reading
 # a profile directly instead of resolving a key.
-from .qos import (FROZEN_PROFILES, RT_OVERRIDE, HandlerSpec, QosConfigError,
-                  QosProfile, QosResolution, QosTable, QosViolation,
-                  load_qos_table, parse_full_key)
-from .session_factory import (PLANE_GEN, PLANE_RT, TRANSPORT_PLANES,
-                              ZenohPlaneConfigError, build_session_config,
-                              parse_plane, session_config_document,
-                              session_config_json5)
+from .qos import (
+                        FROZEN_PROFILES,
+                        RT_OVERRIDE,
+                        HandlerSpec,
+                        QosConfigError,
+                        QosProfile,
+                        QosResolution,
+                        QosTable,
+                        QosViolation,
+                        load_qos_table,
+                        parse_full_key,
+)
+from .session_factory import (
+                        PLANE_GEN,
+                        PLANE_RT,
+                        TRANSPORT_PLANES,
+                        ZenohPlaneConfigError,
+                        build_session_config,
+                        parse_plane,
+                        session_config_document,
+                        session_config_json5,
+)
+
 # Imported after event_bus because subscriber_registry imports from it. The order
 # is not required by Python -- absolute imports resolve either way -- but reading
 # it in dependency order is what stops someone from "tidying" the two modules
 # into a cycle later.
 from .subscriber_registry import RegistryClosedError, SubscriberRegistry
-# Imported after qos because publisher_thread_check consumes QosResolution and the
-# BLOCK / PRIORITIES constants from it. The A-1 self-check (INF-ZN-6) is the one
-# anti-pattern check that lives in this package, because it needs the runtime
-# thread<->publisher binding a config-static check cannot see (10 S3.3.6 line 9).
-from .publisher_thread_check import (ASSERTION_F_ANTI_PATTERNS,
-                                     IN_PROCESS_ANTI_PATTERNS,
-                                     MixedQosThreadError,
-                                     PublisherThreadRegistry, ThreadMix,
-                                     current_thread_name)
 
 # Listed explicitly rather than left to the star-export default. Every name here
 # is imported-and-unused from this file's point of view, which is precisely what

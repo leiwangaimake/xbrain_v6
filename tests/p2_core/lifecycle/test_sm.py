@@ -16,9 +16,10 @@ BIZ-P2-22 -- lifecycle SM tests.
 import pytest
 
 from xbrain.p2_core.lifecycle.sm import (
-    IllegalTransition, LifecycleSM, LifecycleState,
+    IllegalTransition,
+    LifecycleSM,
+    LifecycleState,
 )
-
 
 pytestmark = pytest.mark.no_device
 

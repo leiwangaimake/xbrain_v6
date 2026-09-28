@@ -20,7 +20,6 @@ import yaml
 
 from xbrain.p2_core.config import assertions as A
 
-
 pytestmark = pytest.mark.no_device
 
 

@@ -37,9 +37,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from xbrain.common.errors import (
-    E_CONFIRM_REQUIRED, E_SCHEMA,
+    E_CONFIRM_REQUIRED,
+    E_SCHEMA,
 )
-
 
 ACTION_CLOSED_SET = (
     "set_voice_mode",

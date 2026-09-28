@@ -15,7 +15,6 @@ import requests
 
 from xbrain.p4_agent.ai_client import tts_client
 
-
 pytestmark = pytest.mark.no_device
 
 

@@ -23,8 +23,6 @@ from services.payload.protocol.crc import crc8_maxim
 from services.payload.protocol.lights_8529 import (
     BRIGHT_MAX,
     BRIGHT_MIN,
-    Lights8529Framer,
-    LightsProtocolError,
     MSG_BRIGHTNESS,
     MSG_ID_STATUS,
     MSG_REDBLUE,
@@ -33,6 +31,8 @@ from services.payload.protocol.lights_8529 import (
     REDBLUE_MAX,
     REDBLUE_MIN,
     STATUS_PAYLOAD_LEN,
+    Lights8529Framer,
+    LightsProtocolError,
     build_brightness,
     build_control_frame,
     build_redblue,

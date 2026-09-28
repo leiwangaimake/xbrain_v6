@@ -16,27 +16,35 @@ tests focused on the named-variant behavior in the spec.
 import pytest
 
 from xbrain.p1_motion.config.hot_update import (
-    HOT_UPDATABLE_KEYS, HotUpdateError,
-    check_hot_updatable, is_mirror_read_only,
+    HOT_UPDATABLE_KEYS,
+    HotUpdateError,
+    check_hot_updatable,
+    is_mirror_read_only,
 )
 from xbrain.p1_motion.config.zenoh_planes import (
-    PlaneViolation, RT_ONLY_PUB,
-    check_gen_pub_not_rt_only, check_rt_key_on_rt_only,
+    RT_ONLY_PUB,
+    PlaneViolation,
+    check_gen_pub_not_rt_only,
+    check_rt_key_on_rt_only,
 )
 from xbrain.p1_motion.ctrl_loop import (
-    CtrlLoop, CtrlState,
+    CtrlLoop,
+    CtrlState,
 )
 from xbrain.p1_motion.failure.handlers import (
-    MotionFailKind, build_event,
+    MotionFailKind,
+    build_event,
 )
 from xbrain.p1_motion.gate.observability import build_clip_report
 from xbrain.p1_motion.path.recording_lock import (
-    RecordingLock, RecordingRejection,
+    RecordingLock,
+    RecordingRejection,
 )
 from xbrain.p1_motion.sources.fallback import (
-    FenceGuardOutput, build_fence_guard, hold_output,
+    FenceGuardOutput,
+    build_fence_guard,
+    hold_output,
 )
-
 
 pytestmark = pytest.mark.no_device
 

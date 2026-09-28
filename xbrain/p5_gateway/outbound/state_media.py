@@ -28,7 +28,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-
 HEARTBEAT_PERIOD_MS = 10_000       # 0.1 Hz
 ENDPOINT_KINDS = frozenset({"rgb", "ir", "rgbd"})
 FORBIDDEN_CREDENTIAL_KEYS = frozenset({

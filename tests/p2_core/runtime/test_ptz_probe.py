@@ -19,9 +19,11 @@ import time
 import pytest
 
 from xbrain.p2_core.runtime.ptz_wiring import (
-    VERDICT_AUTH, VERDICT_DOWN, VERDICT_UP, PtzLivenessProbe,
+    VERDICT_AUTH,
+    VERDICT_DOWN,
+    VERDICT_UP,
+    PtzLivenessProbe,
 )
-
 
 pytestmark = pytest.mark.no_device
 

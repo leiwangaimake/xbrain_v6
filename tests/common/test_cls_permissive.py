@@ -12,10 +12,13 @@ MOT-CM-1 (PRC-69/PRC-70) permissive cls parser tests.
 
 import pytest
 
-from xbrain.common.enums import CLS, parse_enum, ClosedSetViolation
+from xbrain.common.enums import CLS, ClosedSetViolation, parse_enum
 from xbrain.common.enums.cls_permissive import (
-    _reset_for_tests, off_set_count, parse_cls_permissive,
-    seen_off_set_names, set_event_emitter,
+    _reset_for_tests,
+    off_set_count,
+    parse_cls_permissive,
+    seen_off_set_names,
+    set_event_emitter,
 )
 
 

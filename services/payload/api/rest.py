@@ -75,11 +75,11 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..config import PayloadConfig
-from ..core.device_link import DeviceLink, DeviceLinkError
 
 # POST /deter turns an HTTP body into one deter run: the DeterParams DTO carries the
 # body's tunables into SessionManager, which builds and drives the controller.
 from ..core.deter import DeterParams
+from ..core.device_link import DeviceLink, DeviceLinkError
 
 # POST /mode and the /tts and /deter gates all go through the SessionManager on app.state.
 # Mode is imported so the request/response bodies are typed by the enum (pydantic then

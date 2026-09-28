@@ -48,7 +48,10 @@ from dataclasses import dataclass
 from typing import Dict, Mapping
 
 from xbrain.p2_core.health.items import (
-    HealthLevel, HealthState, counts_in_speed_factor, drives_allow_motion,
+    HealthLevel,
+    HealthState,
+    counts_in_speed_factor,
+    drives_allow_motion,
     level_of,
 )
 

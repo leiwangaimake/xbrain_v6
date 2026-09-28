@@ -42,7 +42,6 @@ from typing import Optional
 
 from xbrain.common.errors import E_BUSY, E_UNHEALTHY
 
-
 _logger = logging.getLogger("xbrain.p2.speaker")
 
 
@@ -195,7 +194,8 @@ class SpeakerDomain:
         # Import here so pytest doesn't drag `requests` at module
         # import time for pure-unit tests.
         from xbrain.p4_agent.ai_client.tts_client import (
-            TtsClientError, speak,
+            TtsClientError,
+            speak,
         )
         try:
             return speak(

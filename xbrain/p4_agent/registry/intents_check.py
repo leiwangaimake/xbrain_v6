@@ -22,7 +22,6 @@ from __future__ import annotations
 import re
 from typing import Dict, FrozenSet, Iterable, List
 
-
 # The 4 required fields per intent (ID-1).
 _REQUIRED_INTENT_FIELDS = ("id", "route", "auth", "slots")
 

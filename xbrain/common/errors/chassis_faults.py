@@ -69,12 +69,6 @@ its mutation test injects the drop-on-bad shape and watches the safety bit vanis
 import re
 from typing import FrozenSet, NamedTuple, Optional, Sequence, Tuple
 
-# ClosedSetViolation carries E_SCHEMA in its .code (see exceptions.py): its meaning
-# in codes.yaml lists 枚举值越界 / malformed structure, which is exactly a code that
-# fails the CF-1 shape. Raising it -- rather than referencing an E_SCHEMA literal --
-# is how the malformed path reports E_SCHEMA without spelling the code here.
-from .exceptions import ClosedSetViolation
-
 # The E_SCHEMA name for the per-entry outcome of read_fault_report. Imported (a
 # bare name, not a literal) from the shared library, which the package __init__
 # has already bound by the time it imports this submodule at the end of its body.
@@ -82,6 +76,11 @@ from .exceptions import ClosedSetViolation
 # keeps the batch outcome and the raised exception naming one value.
 from . import E_SCHEMA
 
+# ClosedSetViolation carries E_SCHEMA in its .code (see exceptions.py): its meaning
+# in codes.yaml lists 枚举值越界 / malformed structure, which is exactly a code that
+# fails the CF-1 shape. Raising it -- rather than referencing an E_SCHEMA literal --
+# is how the malformed path reports E_SCHEMA without spelling the code here.
+from .exceptions import ClosedSetViolation
 
 # CF-1, verbatim from 11 S9.8.4 (grep CF-1) and 13 S7.3 (grep CF-1). The prefix is
 # lowercase and closed to {chs, chg}; the hex body is four digits, either case, to

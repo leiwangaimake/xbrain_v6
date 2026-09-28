@@ -43,7 +43,6 @@ from typing import Iterable, Optional
 
 from xbrain.common.errors import E_CHANNEL_DENIED
 
-
 MANIFEST_HEARTBEAT_PERIOD_MS = 10_000   # 0.1 Hz
 CATALOG_HASH_HEX_LEN = 12
 

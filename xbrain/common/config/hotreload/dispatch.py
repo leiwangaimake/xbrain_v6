@@ -29,9 +29,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 from xbrain.common.errors import (
-    E_CHANNEL_DENIED, E_CONFIG_LOCKED, E_CONFIRM_REQUIRED,
+    E_CHANNEL_DENIED,
+    E_CONFIG_LOCKED,
+    E_CONFIRM_REQUIRED,
 )
-
 
 WHITELIST_SCOPES = ("log_level", "debug_flags", "asr_dictionary")
 ALLOWED_ORIGINS = ("cloud",)

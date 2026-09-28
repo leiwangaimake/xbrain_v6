@@ -47,11 +47,11 @@ proven is narrower and exact: given a tree, the item-3 glob names every
 violation with an ABSOLUTE path and fails closed.
 """
 
-import os               # filesystem layout and mode bits
-import pwd              # resolve a real second username for the owner mutation
-import subprocess       # run the baseline script as a black box, the way deploy will
+import os  # filesystem layout and mode bits
+import pwd  # resolve a real second username for the owner mutation
+import subprocess  # run the baseline script as a black box, the way deploy will
 
-import pytest           # skip honestly when the host has no second account
+import pytest  # skip honestly when the host has no second account
 
 # INF-TS-1 三档 marker. 本文件是纯静态/元检查(读文件与仓库状态),
 # 不碰任何硬件, 故 no_device -- 2026-08-23 从 legacy 未标记名单迁出.

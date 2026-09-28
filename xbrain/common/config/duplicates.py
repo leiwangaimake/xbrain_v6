@@ -82,6 +82,7 @@ from typing import Any, Dict, Optional
 # never spelled as a literal here -- scripts/lint/no_literal_ecode.py enforces
 # that, and CLAUDE.md 3.5 is the reason.
 from .layers import ConfigLayerError
+
 # flatten yields dotted LEAF paths, which is the only granularity at which "same
 # path same value" is well defined. Comparing nested dicts directly would compare
 # whole subtrees and miss the case where L2 copies most of a section and changes

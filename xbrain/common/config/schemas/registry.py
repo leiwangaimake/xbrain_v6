@@ -49,8 +49,18 @@ What this module does NOT encode, on purpose:
 
 from typing import Any, Dict, Tuple
 
-from .spec import (Schema, SchemaError, anything, boolean, integer, listof,
-                   mapping, num, text, validate_tree)
+from .spec import (
+    Schema,
+    SchemaError,
+    anything,
+    boolean,
+    integer,
+    listof,
+    mapping,
+    num,
+    text,
+    validate_tree,
+)
 
 # ---------------------------------------------------------------------------
 # 1. common.yaml  (L1)  -- authority: 10 S5.4.5 "共享参数唯一定义处对照表"

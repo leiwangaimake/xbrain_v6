@@ -80,7 +80,6 @@ from typing import Dict, FrozenSet
 # moment -- rather than the first runtime whitelist consult.
 import yaml
 
-
 # The authoritative data path. Kept as a Path relative to the repo
 # root so a caller in a different cwd still reaches it.
 # CONFIG-SOURCE-OK(freeze): This file's own path IS the source of

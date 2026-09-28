@@ -55,11 +55,15 @@ from typing import Any, Dict, Optional
 # _read_yaml + load_l6_files + load_layers reused from the shared
 # loader; keeps this module thin.
 from xbrain.boot.freeze.assertions._layer_loader import (
-    _read_yaml, load_l6_files, load_layers,
+    _read_yaml,
+    load_l6_files,
+    load_layers,
 )
+
 # build_overlay for the isolated-caller fallback path when ctx has no
 # overlay yet (production: A populates it).
 from xbrain.common.config import build_overlay
+
 # Base exception for every deliberate raise; FV-ORG uses
 # E_CONFIG_INVALID for all three sub-rules.
 # E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)

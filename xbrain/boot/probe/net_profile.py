@@ -62,7 +62,6 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
-
 # --- Load profile -----------------------------------------------------
 
 def load_profile(profile_path: str) -> Dict[str, dict]:

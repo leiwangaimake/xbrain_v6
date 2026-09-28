@@ -38,6 +38,7 @@ def open_planes(planes: Iterable[str]):
 
     Callers get a guaranteed close() on any exit path."""
     import zenoh
+
     from xbrain.common.zenoh.session_factory import build_session_config
 
     plane_list: List[str] = list(planes)

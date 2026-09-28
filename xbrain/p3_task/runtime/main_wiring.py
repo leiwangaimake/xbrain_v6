@@ -39,7 +39,6 @@ from typing import Dict, Optional
 
 from xbrain.p3_task.state.task_events import task_event_for_transition
 
-
 _logger = logging.getLogger("xbrain.p3.wiring")
 
 
@@ -154,33 +153,37 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  enu_origin: Optional[Dict[str, float]] = None) -> int:
     from xbrain.common.errors import E_GEO_INCOMPLETE
     from xbrain.common.runtime.session_ctx import open_planes
-    from xbrain.p3_task.dao.simple_daos import (FencesDAO, PatrolProgressDAO,
-                                                SnapshotDAO)
+    from xbrain.p3_task.dao.simple_daos import FencesDAO, PatrolProgressDAO, SnapshotDAO
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
-    from xbrain.p3_task.route.push import RoutePushTrigger
-    from xbrain.p3_task.runtime.progress_sink import apply_path_progress
-    from xbrain.p3_task.runtime.route_push_runtime import (
-        CMD_ROUTE_TOPIC, ack_outcome_is_fatal, make_ack_window,
-        push_route_for_task)
-    from xbrain.p3_task.state.path_progress import (ProgressTracker,
-                                                    parse_path_progress)
     from xbrain.p3_task.fence.fence_set import build_fence_set
     from xbrain.p3_task.fence.geom import InvalidFenceSet
     from xbrain.p3_task.geo.objects import read_geo_objects
     from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
-    from xbrain.p3_task.state.geo_events import render_geo_event
-    from xbrain.p3_task.state.task_state import (_waypoint_total,
-        read_task_state, wall_iso_to_epoch,
-    )
-    from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
     from xbrain.p3_task.ingest.geo_read import build_manifest
-    from xbrain.p3_task.teach.runtime import TeachRuntime
+    from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
     from xbrain.p3_task.persistence.base import open_configured
     from xbrain.p3_task.persistence.schema_geo import (
-        FENCE_DB_STATEMENTS, GEO_DB_STATEMENTS,
+        FENCE_DB_STATEMENTS,
+        GEO_DB_STATEMENTS,
     )
     from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
+    from xbrain.p3_task.route.push import RoutePushTrigger
+    from xbrain.p3_task.runtime.progress_sink import apply_path_progress
+    from xbrain.p3_task.runtime.route_push_runtime import (
+        CMD_ROUTE_TOPIC,
+        ack_outcome_is_fatal,
+        make_ack_window,
+        push_route_for_task,
+    )
     from xbrain.p3_task.schedule.driver import scheduler_tick
+    from xbrain.p3_task.state.geo_events import render_geo_event
+    from xbrain.p3_task.state.path_progress import ProgressTracker, parse_path_progress
+    from xbrain.p3_task.state.task_state import (
+        _waypoint_total,
+        read_task_state,
+        wall_iso_to_epoch,
+    )
+    from xbrain.p3_task.teach.runtime import TeachRuntime
 
     # Open + configure + create-schema THROUGH the persistence layer -- this
     # file imports no sqlite driver of its own (CLAUDE.md 4.1); it holds the
@@ -249,7 +252,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # 能做的是让它[每次开机都喊出来], 而不是像现在这样一声不响.
             try:
                 from xbrain.p3_task.schedule.dispatcher import (
-                    Dispatcher, DispatcherIncomplete)
+                    Dispatcher,
+                    DispatcherIncomplete,
+                )
                 _dispatcher = Dispatcher()
                 # 还没有任何执行器可注册 -- EX-1/EX-4 未落地. 有了就在这里 register.
                 _dispatcher.assert_complete()
@@ -301,7 +306,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # the latest snapshot (RUST thread -> no db, no await, CLAUDE.md 4.2);
             # the loop below reads it and does the insert.
             from xbrain.p3_task.lifecycle.link_loss import (
-                RETURN_HOME_PRIORITY, LinkLossReturnTrigger,
+                RETURN_HOME_PRIORITY,
+                LinkLossReturnTrigger,
                 maybe_inject_return_home,
             )
             link_holder: dict = {}
@@ -434,10 +440,11 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # the scheduling loop below reads scheduling_permitted() each pass.
             # ES-3 / 15 S11.3: p3 does NOT auto-resume -- there is no time-based
             # unfreeze, only an explicit p2 signal (CLAUDE.md 3.6: no bypass).
-            from xbrain.p3_task.lifecycle.estop import (EstopController,
-                                                        is_human_resume_command)
-            from xbrain.p3_task.lifecycle.estop_suspend import (
-                suspend_running_for_estop)
+            from xbrain.p3_task.lifecycle.estop import (
+                EstopController,
+                is_human_resume_command,
+            )
+            from xbrain.p3_task.lifecycle.estop_suspend import suspend_running_for_estop
             estop_ctrl = EstopController()
 
             def _on_task(sample) -> None:

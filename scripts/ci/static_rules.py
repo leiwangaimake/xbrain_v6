@@ -40,7 +40,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 # The rule registry. Each row: (rule_num, script_name, one_liner).
 # Rules 2 and 3 both fire from clock_scan.py (Python + C++ side); the
 # script differentiates internally.

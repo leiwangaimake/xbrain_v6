@@ -179,8 +179,7 @@ def test_the_health_factor_slot_rejects_a_frame_that_was_not_unwrapped():
     HealthFactorSlot.on_message 会抛 -- 帧被丢, 槽位停在 never = 零速.
     这条是"漏解包"的可观测证据, 不是重复断言.
     """
-    from xbrain.p1_motion.nav.health_factor import (HealthFactorError,
-                                                    HealthFactorSlot)
+    from xbrain.p1_motion.nav.health_factor import HealthFactorError, HealthFactorSlot
 
     enveloped = _decode(stamp_body(_FACTOR, rid="m20s", boot="b", seq=1,
                                    ts_sync=False))
@@ -201,8 +200,7 @@ def test_p5_on_state_audio_reads_the_body_out_of_the_envelope():
 
     MUTATION: 删掉解包的两行 -> 本条红.
     """
-    from xbrain.p5_gateway.runtime.main_wiring import (
-        run_voice_loop_wiring as p5_wiring)
+    from xbrain.p5_gateway.runtime.main_wiring import run_voice_loop_wiring as p5_wiring
 
     src = inspect.getsource(p5_wiring)
     block = src[src.index("def _on_state_audio("):]

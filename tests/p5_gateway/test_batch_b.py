@@ -18,18 +18,26 @@ TTL expiry + RB-3 rollback cycle detection.
 import pytest
 
 from xbrain.p5_gateway.approval.queue import (
-    ApprovalCycleDetected, ApprovalEntry, ApprovalMutationForbidden,
-    ApprovalQueue, ApprovalState,
+    ApprovalCycleDetected,
+    ApprovalEntry,
+    ApprovalMutationForbidden,
+    ApprovalQueue,
+    ApprovalState,
 )
 from xbrain.p5_gateway.backpressure.watermark import (
-    BackpressureState, BackpressureThresholds,
-    classify, should_drop_at_ingress, trim_info_from_queue,
+    BackpressureState,
+    BackpressureThresholds,
+    classify,
+    should_drop_at_ingress,
+    trim_info_from_queue,
 )
 from xbrain.p5_gateway.delivery.recon import (
-    ReconWindowExceeded, SeqRange,
-    compute_missing, dedupe_ranges, enforce_window,
+    ReconWindowExceeded,
+    SeqRange,
+    compute_missing,
+    dedupe_ranges,
+    enforce_window,
 )
-
 
 pytestmark = pytest.mark.no_device
 

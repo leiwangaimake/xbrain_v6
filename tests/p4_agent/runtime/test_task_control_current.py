@@ -22,10 +22,11 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p4_agent.runtime.task_control_request import (
-    TaskControlError, current_task_from_state, spoken_target,
+    TaskControlError,
+    current_task_from_state,
+    spoken_target,
     to_task_control_command,
 )
-
 
 # INF-TS-1: 纯单测, 不碰设备(无 zenohd / 无底盘 / 无 ORIN 专属硬件).
 pytestmark = pytest.mark.no_device

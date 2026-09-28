@@ -28,9 +28,10 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p4_agent.classifier.large_class import (
-    resolve_large_class, resolve_payload, resolve_ptz,
+    resolve_large_class,
+    resolve_payload,
+    resolve_ptz,
 )
-
 
 # -- E class: subject promotes overlapping directions -------------------------
 

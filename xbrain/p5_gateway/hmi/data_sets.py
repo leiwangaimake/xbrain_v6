@@ -31,7 +31,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 HMI_DATA_GROUPS = frozenset({"A", "B", "C", "D", "E", "F"})
 
 

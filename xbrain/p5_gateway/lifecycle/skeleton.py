@@ -33,7 +33,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-
 NINE_TASKS = (
     "event_ingress", "event_pipeline", "cloud_uplink", "hmi_ws",
     "rest_api", "approval_loop", "telemetry", "delivery_ledger",

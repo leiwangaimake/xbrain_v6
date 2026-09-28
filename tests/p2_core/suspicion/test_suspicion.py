@@ -16,11 +16,14 @@ BIZ-P2-14 + P2-15 -- rules loader + target ledger tests.
 import pytest
 
 from xbrain.p2_core.suspicion.rules_loader import (
-    Rule, Ruleset, RulesSchemaError,
-    filter_by_night_patrol, filter_by_ts_sync, parse_ruleset,
+    Rule,
+    Ruleset,
+    RulesSchemaError,
+    filter_by_night_patrol,
+    filter_by_ts_sync,
+    parse_ruleset,
 )
 from xbrain.p2_core.suspicion.target_track import TargetLedger
-
 
 pytestmark = pytest.mark.no_device
 

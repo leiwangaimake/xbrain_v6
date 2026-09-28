@@ -34,11 +34,11 @@ a monkeypatch is deliberate: it is visible at its definition and cannot leak int
 another test.
 """
 
-import os                            # for the ROOT path derivation below
-import sys                           # to put the repo root on sys.path
-import time                          # only the AB-6 mutant reads the wall clock
+import os  # for the ROOT path derivation below
+import sys  # to put the repo root on sys.path
+import time  # only the AB-6 mutant reads the wall clock
 
-import pytest                        # raises-assertions and the runner
+import pytest  # raises-assertions and the runner
 
 # ROOT is three levels up from tests/common/test_arbiter.py, same derivation the
 # other common tests use, so `from xbrain...` resolves whether pytest is invoked
@@ -46,13 +46,18 @@ import pytest                        # raises-assertions and the runner
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)             # make the xbrain package importable
 
+from xbrain.common import errors  # noqa: E402  -- E_BUSY / E_ARB_NO_SOURCE checks
 from xbrain.common.arbiter import (  # noqa: E402  -- import after sys.path edit
-    Arbiter, ArbAction, DEFAULT_LEASE_MS, GrantResult, IMMEDIATE_GRACE_MS,
-    PreemptPolicy, Request, SourceSpec,
+    DEFAULT_LEASE_MS,
+    IMMEDIATE_GRACE_MS,
+    ArbAction,
+    Arbiter,
+    GrantResult,
+    PreemptPolicy,
+    Request,
+    SourceSpec,
 )
 from xbrain.common.enums import DOMAIN  # noqa: E402  -- the seven-domain closed set
-from xbrain.common import errors  # noqa: E402  -- E_BUSY / E_ARB_NO_SOURCE checks
-
 
 # -- builders ------------------------------------------------------------------
 # Defaults live on these TEST helpers, never on SourceSpec itself (SourceSpec
@@ -449,7 +454,7 @@ def test_release_frees_the_domain_and_emits_one_release_event():
 def test_release_with_an_off_contract_reason_raises():
     """The release_reason is validated against the closed set, not passed through
     (11 S13.6). An unknown reason raises rather than being silently accepted."""
-    from xbrain.common.errors import ClosedSetViolation   # the boundary exception
+    from xbrain.common.errors import ClosedSetViolation  # the boundary exception
     a = Arbiter("speaker", 3000)                        # a real arbiter
     a.register(_spec("tts", 600, lease_s=1.0))          # the holder
     a.request("tts", _req("r1", 1000))                  # tts holds
@@ -472,7 +477,7 @@ def test_protected_holder_is_not_taken_even_by_higher_priority():
 def test_bad_domain_at_construction_raises():
     """The domain is validated against the closed set at construction, so a typo
     fails at startup with the value in the traceback, not at the first request."""
-    from xbrain.common.errors import ClosedSetViolation   # the boundary exception
+    from xbrain.common.errors import ClosedSetViolation  # the boundary exception
     with pytest.raises(ClosedSetViolation):             # a misspelt domain raises
         Arbiter("speakerr", 3000)                       # note the extra r
 

@@ -28,9 +28,9 @@ import pytest
 
 from xbrain.common.envelope import decode
 from xbrain.p5_gateway.runtime.main_wiring import (
-    run_voice_loop_wiring, stamp_internal,
+    run_voice_loop_wiring,
+    stamp_internal,
 )
-
 
 pytestmark = pytest.mark.no_device
 
@@ -132,8 +132,10 @@ def test_the_cloud_projector_needs_the_BODY_not_the_envelope():
     the ORIN on 2026-09-27, once per comm event, the same day the envelope was
     added to that key. The event never reached the cloud.
     """
-    from xbrain.p5_gateway.outbound.state_projection import (ProjectionError,
-                                                             event_payload)
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError,
+        event_payload,
+    )
 
     body = {"eid": "comm-1", "title": "cloud link cloud_down",
             "detail": {"kind": "cloud_down"}, "src": "p5_gateway", "ts": 1.0}

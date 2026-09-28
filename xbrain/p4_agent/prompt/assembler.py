@@ -25,7 +25,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import FrozenSet, List, Optional
 
-
 _HISTORY_SCENARIOS: FrozenSet[str] = frozenset({"clarify", "recent"})
 
 

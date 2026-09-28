@@ -25,7 +25,6 @@ from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple
 
 from xbrain.common.errors import E_CHANNEL_DENIED
 
-
 # Origin letter -> set of channel keys that are ALLOWED to submit
 # intents of this origin. Missing letter -> deny all channels.
 _ORIGIN_TO_CHANNELS: Dict[str, FrozenSet[str]] = {

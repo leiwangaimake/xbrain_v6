@@ -50,13 +50,15 @@ are strong forms; hypothesis is not always the better tool.
 
 
 import pytest
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from xbrain.common.arbiter.core import Arbiter
 from xbrain.common.arbiter.model import (
-    PreemptPolicy, Request, SourceSpec,
+    PreemptPolicy,
+    Request,
+    SourceSpec,
 )
-
 
 pytestmark = pytest.mark.no_device
 

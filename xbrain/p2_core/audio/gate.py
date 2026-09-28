@@ -35,7 +35,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-
 # 11 S8.9.2 reasons in priority order. Priority CANNOT be reordered
 # without changing observed behavior; the "device_fault before
 # speaker_active" order is what makes "mic fail while speaker

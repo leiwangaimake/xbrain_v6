@@ -14,7 +14,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 DOCCHECK_DIR = Path(__file__).parent.parent.parent / "scripts" / "doccheck"
 
 

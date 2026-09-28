@@ -65,14 +65,14 @@ verifies bidirectional_diff("QC") returns a non-empty forward set.
 # frozenset for immutable rule sets.
 from typing import FrozenSet, Tuple
 
-# Import the implementation-side registries so impl_*() functions
-# stay in step with what actually runs at freeze time.
-from xbrain.boot.freeze.assertions.g_safety_range import _REGISTRY as _G_REGISTRY
 # k_quadruped_qc doesn't have a _REGISTRY tuple -- its QC-N checks
 # are named _check_qcN. Enumerate them dynamically so a new QC row
 # added there is picked up automatically.
 from xbrain.boot.freeze.assertions import k_quadruped_qc as _k_module
 
+# Import the implementation-side registries so impl_*() functions
+# stay in step with what actually runs at freeze time.
+from xbrain.boot.freeze.assertions.g_safety_range import _REGISTRY as _G_REGISTRY
 
 # ---------------------------------------------------------------------------
 # Doc-side sets (hardcoded per CFG-FZ-13 verbatim)

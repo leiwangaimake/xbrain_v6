@@ -20,7 +20,6 @@ import yaml
 
 from xbrain.p2_core.domains import factory, lapi_guard, lighting_auto
 
-
 pytestmark = pytest.mark.no_device
 
 

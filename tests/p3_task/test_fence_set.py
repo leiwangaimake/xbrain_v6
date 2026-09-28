@@ -21,7 +21,8 @@ import zlib
 import pytest
 
 from xbrain.p3_task.fence.fence_set import (
-    build_fence_set, fence_set_crc32,
+    build_fence_set,
+    fence_set_crc32,
 )
 from xbrain.p3_task.fence.geom import InvalidFenceSet
 

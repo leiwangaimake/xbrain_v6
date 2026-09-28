@@ -44,13 +44,12 @@ aiosqlite conn on P3's single db thread (15 S2.1), same contract as task_query.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from xbrain.common.enums import TASK_STATE
 from xbrain.p3_task.state.machine import TERMINAL_STATES
-
 
 #: The `tasks` columns TaskState needs. Explicit so the SELECT is never
 #: `SELECT *` -- column order could then drift under the zip below.

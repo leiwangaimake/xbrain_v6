@@ -29,7 +29,6 @@ import pytest
 
 from xbrain.p5_gateway.hmi import data_readers as D
 
-
 # -- readers: honest availability -------------------------------------------
 
 def test_list_endpoint_none_is_unavailable_not_empty():
@@ -100,6 +99,7 @@ class _LegacyProvider(_Provider):
 
 def _client(provider):
     from fastapi.testclient import TestClient
+
     from xbrain.p5_gateway.hmi.web_server import build_app
     app = build_app(_MIN_WEB, provider, lambda: None, _STATIC)
     return TestClient(app)

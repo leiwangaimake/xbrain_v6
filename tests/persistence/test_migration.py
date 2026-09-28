@@ -77,8 +77,8 @@ def test_a_newer_database_is_refused(tmp_path):
     至少报错), 也可能改了某列语义(旧代码照读不误而含义已变 -- 不报错).
     后者是真正要防的.
     """
-    from xbrain.persistence.migration import MigrationError, migrate
     from xbrain.common.errors import E_CONFIG_INVALID
+    from xbrain.persistence.migration import MigrationError, migrate
 
     path = _make_db(tmp_path, 4)
     with pytest.raises(MigrationError) as exc:
@@ -149,8 +149,8 @@ def test_a_corrupt_database_reports_the_db_name(tmp_path):
 
     不带库名的报错让运维要挨个打开四个库找是哪个坏了.
     """
-    from xbrain.persistence.migration import MigrationError, migrate
     from xbrain.common.errors import E_STORAGE_CORRUPT
+    from xbrain.persistence.migration import MigrationError, migrate
 
     path = str(pathlib.Path(tmp_path) / "bad.db")
     with open(path, "wb") as fh:

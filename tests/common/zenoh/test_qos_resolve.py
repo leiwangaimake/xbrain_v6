@@ -87,10 +87,15 @@ sys.path.insert(0, ROOT)
 from xbrain.common.config import MISSING  # noqa: E402
 from xbrain.common.errors import E_CONFIG_INVALID, E_QOS_VIOLATION  # noqa: E402
 from xbrain.common.errors.exceptions import ClosedSetViolation  # noqa: E402
-from xbrain.common.zenoh.qos import (FROZEN_PROFILES,  # noqa: E402
-                                     RT_OVERRIDE, QosConfigError, QosViolation,
-                                     key_expr_matches, load_qos_table,
-                                     parse_full_key)
+from xbrain.common.zenoh.qos import (  # noqa: E402
+    FROZEN_PROFILES,
+    RT_OVERRIDE,
+    QosConfigError,
+    QosViolation,
+    key_expr_matches,
+    load_qos_table,
+    parse_full_key,
+)
 
 #: The fixture: the S2.4.7 document plus one expectation per golden key.
 GOLDEN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden",

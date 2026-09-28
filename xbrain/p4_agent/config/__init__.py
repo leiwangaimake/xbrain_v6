@@ -39,9 +39,16 @@ work. Pulling those in here would make this the place where P4's behaviour is
 decided, and the seam would stop being a seam.
 """
 
-from .loader import (HISTORY_SCENARIOS, P4_PROCESS, P4ConfigError,
-                     check_history_scenarios, check_min_agent_version,
-                     check_no_unassigned_keys, load_p4_config, startup_report)
+from .loader import (
+                     HISTORY_SCENARIOS,
+                     P4_PROCESS,
+                     P4ConfigError,
+                     check_history_scenarios,
+                     check_min_agent_version,
+                     check_no_unassigned_keys,
+                     load_p4_config,
+                     startup_report,
+)
 from .version import parse_version, satisfies
 
 # The individual check_* functions are exported alongside load_p4_config on

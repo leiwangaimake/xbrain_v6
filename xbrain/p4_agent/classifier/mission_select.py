@@ -44,7 +44,6 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-
 # Ordered (mission, cue-substrings). FIRST mission with any cue present wins,
 # so more specific families are listed before the ones they could shadow.
 _MISSION_CUES: List[Tuple[str, Tuple[str, ...]]] = [

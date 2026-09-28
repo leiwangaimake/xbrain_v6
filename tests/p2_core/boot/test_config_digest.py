@@ -30,8 +30,13 @@ import os
 import pytest
 
 from xbrain.p2_core.boot.config_digest import (
-    KIND_MISMATCH, KIND_OK, KIND_UNREADABLE, ConfigDigestGuard, DigestVerdict,
-    digest_fault_event)
+    KIND_MISMATCH,
+    KIND_OK,
+    KIND_UNREADABLE,
+    ConfigDigestGuard,
+    DigestVerdict,
+    digest_fault_event,
+)
 from xbrain.p2_core.health.factor import WIRE_PROFILE_WHEN_BLOCKED, hold_grant
 
 DIGEST = "9f2c4a1b7e5d0836"

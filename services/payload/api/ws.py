@@ -131,12 +131,13 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from ..codec.opus_stream import OpusDecoderStream, OpusEncoderStream
 from ..codec.resample import resample_linear
 from ..core.device_link import DeviceLink, DeviceLinkError
+
 # SessionManager is the mode/gate authority both routes consult before accepting a socket
 # (invariants R2/R3). ModeStateError is the refusal it raises; the two _KIND_* constants are
 # session's canonical audio-kind names, imported here (rather than re-spelled as literals) so
 # the gate key a route opens with can never drift from the set of kinds session actually
 # gates on -- the single-source-of-truth reason those constants exist.
-from ..core.session import ModeStateError, SessionManager, _KIND_MIC, _KIND_PLAY
+from ..core.session import _KIND_MIC, _KIND_PLAY, ModeStateError, SessionManager
 from ..protocol.audio_8519 import build_hail, build_hail_stop
 
 # Namespaced under "payload." like the rest of the service so an operator can raise or

@@ -23,7 +23,9 @@ import yaml
 
 from xbrain.p4_agent.registry.geo_id import GeoIdError
 from xbrain.p4_agent.registry.speech_presets import (
-    SpeechPresetError, load_speech_presets, VOICES,
+    VOICES,
+    SpeechPresetError,
+    load_speech_presets,
 )
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(

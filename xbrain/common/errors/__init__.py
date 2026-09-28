@@ -366,8 +366,19 @@ def is_failure(code: str) -> bool:
 # noqa E402: these are module-level imports below code by necessity, not by
 # oversight -- the necessity is the binding order just described.
 from .capability import (  # noqa: E402
-    CAPABILITY_DEBTS, CapabilityRejection, capability_guard)
+    CAPABILITY_DEBTS,
+    CapabilityRejection,
+    capability_guard,
+)
 from .chassis_faults import (  # noqa: E402
-    FAULT_MALFORMED, FAULT_REGISTERED, FAULT_STATUSES, FAULT_UNKNOWN,
-    FaultOutcome, FaultReport, classify_fault_code, is_wellformed_fault_code,
-    read_fault_report, require_wellformed_fault_code)
+    FAULT_MALFORMED,
+    FAULT_REGISTERED,
+    FAULT_STATUSES,
+    FAULT_UNKNOWN,
+    FaultOutcome,
+    FaultReport,
+    classify_fault_code,
+    is_wellformed_fault_code,
+    read_fault_report,
+    require_wellformed_fault_code,
+)

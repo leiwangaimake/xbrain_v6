@@ -87,7 +87,9 @@ def test_l6_files_do_not_use_blacklisted_private_key_names():
     配置文件, 加载时不会报错 -- 它只是被忽略, 于是那一项回到默认.
     """
     from xbrain.common.checks.alias_blacklist import (
-        ALIAS_BLACKLIST, scan_config_for_alias)
+        ALIAS_BLACKLIST,
+        scan_config_for_alias,
+    )
 
     assert ALIAS_BLACKLIST, "别名黑名单是空的 -- 这条检查什么都不查"
     for name in L6_PROCESS:
@@ -104,7 +106,9 @@ def test_a_blacklisted_alias_is_actually_caught():
     没有这条, 一个什么都不查的 scan_config_for_alias 会让上一条通过.
     """
     from xbrain.common.checks.alias_blacklist import (
-        ALIAS_BLACKLIST, scan_config_for_alias)
+        ALIAS_BLACKLIST,
+        scan_config_for_alias,
+    )
 
     victim = sorted(ALIAS_BLACKLIST)[0]
     from xbrain.common.checks.alias_blacklist import AliasKeyFound

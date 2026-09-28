@@ -18,7 +18,8 @@ from __future__ import annotations
 import time
 
 from xbrain.p4_agent.runtime.orchestrator_turn import (
-    compose_query_fns, make_rtk_query_fn,
+    compose_query_fns,
+    make_rtk_query_fn,
 )
 from xbrain.p4_agent.state import query_data as qd
 from xbrain.p4_agent.state.cache import StateCache

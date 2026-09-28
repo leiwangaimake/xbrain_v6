@@ -14,7 +14,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 LINT = Path(__file__).parent.parent.parent / "scripts" / "lint" / "no_chinese_in_log.py"
 
 

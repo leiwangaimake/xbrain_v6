@@ -29,7 +29,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import FrozenSet, Optional
 
-
 # Forbidden words in PTZ restate (R-5).
 _FORBIDDEN_IN_RESTATE = frozenset({"已转", "已完成移动"})
 

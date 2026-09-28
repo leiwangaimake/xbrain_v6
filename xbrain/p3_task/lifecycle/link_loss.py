@@ -38,7 +38,6 @@ from typing import Optional
 
 from xbrain.p3_task.dao.tasks_dao import TaskRow
 
-
 # 15 S4.2.1 / 11 S4.6.4 v0.7: the link-loss return_home priority. A contract value
 # (one of the locked common.priority.task.* five), inlined as an interim constant
 # until that config axis is wired -- NOT a made-up default.

@@ -31,7 +31,6 @@ common.enums) NEVER a bare string literal.
 
 from __future__ import annotations
 
-
 NEGATIVE_VX_CAP_LIMITER = "negative_vx_cap"     # closed-set enum value
 
 

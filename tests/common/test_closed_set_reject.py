@@ -78,7 +78,6 @@ sys.path.insert(0, ROOT)
 from xbrain.common import enums  # noqa: E402
 from xbrain.common.errors.exceptions import ClosedSetViolation  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Python side: parse_enum rejection semantics (CFG-CM-5, the exact named case)
 # ---------------------------------------------------------------------------

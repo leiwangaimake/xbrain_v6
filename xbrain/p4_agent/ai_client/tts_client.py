@@ -34,7 +34,6 @@ from typing import Optional
 
 import requests  # BUSINESS-IMPORT-OK(ai-client): CLAUDE.md 4.1 sanctions requests only inside ai_client/
 
-
 _logger = logging.getLogger("xbrain.ai_client.tts")
 
 _TTS_PATH = "/tts"

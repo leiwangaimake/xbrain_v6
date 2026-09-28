@@ -45,8 +45,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Tuple
 
 from ...common import errors
-from ..outbound.error_map import (V2_DETAIL_TASK_UNSUPPORTED,
-                                  build_error_fields)
+from ..outbound.error_map import V2_DETAIL_TASK_UNSUPPORTED, build_error_fields
 from .cloud_inbound import InboundReject
 from .field_validate import check_ids, validate_alarm, validate_goto
 

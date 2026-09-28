@@ -222,7 +222,9 @@ def test_the_unsourced_list_matches_what_is_actually_null():
     现在改成[每个来源都供上]再比对: 剩下还是 null 的, 才是真的没有采集点.
     """
     from xbrain.p5_gateway.outbound.state_projection import (
-        UNSOURCED_ROBOT_SECTIONS, robot_payload)
+        UNSOURCED_ROBOT_SECTIONS,
+        robot_payload,
+    )
 
     d = _robot(power={"soc_pct": 46.8}, devices=[], motion_speed_mps=0.6)
     actually_null = {k for k, v in d.items() if v is None}
@@ -314,7 +316,10 @@ def test_gps_fix_maps_the_internal_closed_set_to_v2():
     变异体: 表里删掉 no_fix 一行 => 本条红.
     """
     from xbrain.p5_gateway.outbound.state_projection import (
-        INTERNAL_TO_V2_GPS_FIX, GPS_FIXES, to_v2_gps_fix)
+        GPS_FIXES,
+        INTERNAL_TO_V2_GPS_FIX,
+        to_v2_gps_fix,
+    )
 
     internal = {"no_fix", "single", "dgps", "rtk_float", "rtk_fixed"}
     assert set(INTERNAL_TO_V2_GPS_FIX) == internal, (
@@ -338,8 +343,10 @@ def test_an_off_set_gps_fix_throws():
     变异体: 改成 .get(value, "none") => 本条红.
     """
     import pytest as _pytest
+
     from xbrain.p5_gateway.outbound.state_projection import (
-        ProjectionError, to_v2_gps_fix,
+        ProjectionError,
+        to_v2_gps_fix,
     )
     # ProjectionError, NO 不写 Exception: to_v2_gps_fix 里的 .get() 换成下标
     # [] 就会抛 KeyError -- 同样是抛了, 但那条路径说的是 "字典没这个键",
@@ -431,8 +438,7 @@ def test_device_status_closed_set_is_complete_both_ways():
 
     变异体: 表里删掉 warn 一行 => 左边差集非空, 本条红.
     """
-    from xbrain.p5_gateway.outbound.state_projection import (
-        HEALTH_STATE_TO_V2_STATUS)
+    from xbrain.p5_gateway.outbound.state_projection import HEALTH_STATE_TO_V2_STATUS
 
     internal = {"ok", "warn", "degraded", "fail", "unknown"}
     v2_status = {"online", "degraded", "offline", "fault", "unknown"}
@@ -458,6 +464,7 @@ def test_an_off_set_health_state_throws():
     变异体: to_v2_device_status 改成 .get(value, "unknown") => 本条红.
     """
     import pytest as _pytest
+
     from xbrain.p5_gateway.outbound.state_projection import to_v2_device_status
 
     with _pytest.raises(ValueError):
@@ -529,8 +536,10 @@ def test_broadcast_without_a_stream_id_raises():
     没有它 Qt 没法把 state/audio 的帧对上是哪一次喊话 -- 两条 key 各说
     各话, 而按钮选中态要同时参考两条(v2.0 S4.4 逐字).
     """
-    from xbrain.p5_gateway.outbound.state_projection import (ProjectionError,
-                                                             mode_payload)
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError,
+        mode_payload,
+    )
 
     with pytest.raises(ProjectionError):
         mode_payload(voice_mode="broadcast", source="cloud")
@@ -595,7 +604,9 @@ def test_geo_id_prefix_must_match_the_type():
     路点而 id 以 f- 开头的记录, 在 Qt 的两处代码里会被分到两个图层.
     """
     from xbrain.p5_gateway.outbound.state_projection import (
-        ProjectionError, geo_manifest_payload)
+        ProjectionError,
+        geo_manifest_payload,
+    )
 
     with pytest.raises(ProjectionError):
         geo_manifest_payload(manifest_rev=1, objects=[
@@ -610,7 +621,9 @@ def test_a_waypoint_without_coordinates_raises():
     操作员看到的是"这个点不见了" -- 他会以为点被删了.
     """
     from xbrain.p5_gateway.outbound.state_projection import (
-        ProjectionError, geo_manifest_payload)
+        ProjectionError,
+        geo_manifest_payload,
+    )
 
     with pytest.raises(ProjectionError):
         geo_manifest_payload(manifest_rev=1, objects=[
@@ -625,7 +638,9 @@ def test_an_alarm_region_must_carry_enabled():
     会让操作员以为区域仍在保护现场.
     """
     from xbrain.p5_gateway.outbound.state_projection import (
-        ProjectionError, geo_manifest_payload)
+        ProjectionError,
+        geo_manifest_payload,
+    )
 
     with pytest.raises(ProjectionError):
         geo_manifest_payload(manifest_rev=1, objects=[
@@ -635,8 +650,7 @@ def test_an_alarm_region_must_carry_enabled():
 
 def test_a_full_manifest_round_trips():
     """反向. 没有这条, 一个"什么都抛"的实现能让上面三条全绿."""
-    from xbrain.p5_gateway.outbound.state_projection import (
-        geo_manifest_payload)
+    from xbrain.p5_gateway.outbound.state_projection import geo_manifest_payload
 
     d = geo_manifest_payload(manifest_rev=12, objects=[
         {"geo_id": "w-north_gate", "type": "waypoint", "name": "北门",
@@ -701,8 +715,10 @@ def test_exit_reason_closed_set_in_mode():
 
     MUTATION: mode_payload 的 exit_reason 改回直接透传 -> 这里红.
     """
-    from xbrain.p5_gateway.outbound.state_projection import (ProjectionError,
-                                                             mode_payload)
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError,
+        mode_payload,
+    )
 
     # 合法值 + null 都通过.
     for good in (None, "requested", "target_left_fence", "manual_cloud"):
@@ -717,8 +733,10 @@ def test_exit_reason_closed_set_in_mode():
 
 
 def test_exit_reason_closed_set_in_audio():
-    from xbrain.p5_gateway.outbound.state_projection import (ProjectionError,
-                                                             audio_payload)
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError,
+        audio_payload,
+    )
 
     audio_payload(speaker_state="idle", microphone_state="idle",
                   exit_reason="timeout")        # 合法
@@ -780,8 +798,10 @@ def test_event_sev_and_state_closed_sets():
     """sev(info|warn|error|fatal) 与 state(active|cleared|acknowledged|
     occurred) 闭集(S5.1). 闭集外必抛.
     """
-    from xbrain.p5_gateway.outbound.state_projection import (ProjectionError,
-                                                             event_payload)
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError,
+        event_payload,
+    )
 
     with pytest.raises(ProjectionError):
         event_payload({"eid": "e"}, sev="alarm", category="task")   # alarm 非 sev
@@ -792,8 +812,10 @@ def test_event_sev_and_state_closed_sets():
 
 def test_event_missing_eid_raises():
     """eid 是可靠事件的幂等 ID(S5.1 必填). 缺了 Qt 没法去重/补发关联."""
-    from xbrain.p5_gateway.outbound.state_projection import (ProjectionError,
-                                                             event_payload)
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError,
+        event_payload,
+    )
 
     with pytest.raises(ProjectionError):
         event_payload({"title": "no eid"}, sev="info", category="task")
@@ -816,8 +838,7 @@ def test_every_internal_task_state_has_a_v2_mapping():
     MUTATION: 从 INTERNAL_TO_V2_TASK_STATE 删掉任意一个键 -> 红.
     """
     from xbrain.p3_task.persistence.schema_task import TASK_STATES as INTERNAL
-    from xbrain.p5_gateway.outbound.state_projection import (
-        INTERNAL_TO_V2_TASK_STATE)
+    from xbrain.p5_gateway.outbound.state_projection import INTERNAL_TO_V2_TASK_STATE
 
     missing = sorted(set(INTERNAL) - set(INTERNAL_TO_V2_TASK_STATE))
     assert not missing, (
@@ -835,7 +856,9 @@ def test_the_mapping_never_produces_a_value_outside_v2():
     MUTATION: 把任意一个值改成 v2.0 闭集外的词(如 "done") -> 红.
     """
     from xbrain.p5_gateway.outbound.state_projection import (
-        INTERNAL_TO_V2_TASK_STATE, TASK_STATES)
+        INTERNAL_TO_V2_TASK_STATE,
+        TASK_STATES,
+    )
 
     bad = {k: v for k, v in INTERNAL_TO_V2_TASK_STATE.items()
            if v not in TASK_STATES}
@@ -853,8 +876,7 @@ def test_the_three_bucket_states_are_all_reachable():
     MUTATION: 把 suspended 的映射从 paused 改成别的 -> paused 桶失去唯一
     来源 -> 红.
     """
-    from xbrain.p5_gateway.outbound.state_projection import (
-        INTERNAL_TO_V2_TASK_STATE)
+    from xbrain.p5_gateway.outbound.state_projection import INTERNAL_TO_V2_TASK_STATE
 
     produced = set(INTERNAL_TO_V2_TASK_STATE.values())
     for bucket in ("running", "queued", "paused"):
@@ -874,8 +896,7 @@ def test_terminal_internal_states_never_map_to_paused():
 
     MUTATION: 把 needs_review 映成 paused -> 红.
     """
-    from xbrain.p5_gateway.outbound.state_projection import (
-        INTERNAL_TO_V2_TASK_STATE)
+    from xbrain.p5_gateway.outbound.state_projection import INTERNAL_TO_V2_TASK_STATE
 
     for terminal in ("needs_review", "interrupted", "wait_for_power_off",
                      "done", "failed", "cancelled"):
@@ -894,6 +915,7 @@ def test_an_unknown_internal_state_raises_not_defaults():
     MUTATION: 给 to_v2_task_state 加 .get(value, "failed") -> 红.
     """
     import pytest as _pytest
+
     from xbrain.p5_gateway.outbound.state_projection import to_v2_task_state
 
     with _pytest.raises(ValueError):
@@ -912,7 +934,8 @@ def test_an_unknown_event_severity_throws_instead_of_downgrading():
     import pytest as _pytest
 
     from xbrain.p5_gateway.outbound.state_projection import (
-        ProjectionError, to_v2_event_sev,
+        ProjectionError,
+        to_v2_event_sev,
     )
 
     # 正向: 四个机内值都有像样的落点.
@@ -936,7 +959,8 @@ def test_the_two_severity_closed_sets_are_covered_both_ways():
     """
     from xbrain.common.enums import SEVERITY
     from xbrain.p5_gateway.outbound.state_projection import (
-        EVENT_SEV, INTERNAL_TO_V2_EVENT_SEV,
+        EVENT_SEV,
+        INTERNAL_TO_V2_EVENT_SEV,
     )
 
     missing = set(SEVERITY) - set(INTERNAL_TO_V2_EVENT_SEV)

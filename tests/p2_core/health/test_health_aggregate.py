@@ -23,8 +23,13 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p2_core.health.aggregate import (
-    HealthAggregator, refresh_health, state_from_clock, state_from_link,
-    state_from_pose, state_from_power, state_from_robot,
+    HealthAggregator,
+    refresh_health,
+    state_from_clock,
+    state_from_link,
+    state_from_pose,
+    state_from_power,
+    state_from_robot,
 )
 from xbrain.p2_core.health.factor import FactorConfig
 from xbrain.p2_core.health.items import ITEMS, HealthState
@@ -171,6 +176,7 @@ def test_absent_chassis_is_unknown_not_fail():
     # A value outside the closed set must throw, never slide through as
     # "linked" (CLAUDE.md 3.5: no silent pass-through).
     import pytest as _pytest
+
     from xbrain.common.enums import ClosedSetViolation as _CSV
     with _pytest.raises(_CSV):
         state_from_robot({"conn": "ok"})   # quadruped's INTERNAL name, not wire

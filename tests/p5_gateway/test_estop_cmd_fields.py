@@ -46,9 +46,9 @@ import re
 import pytest
 
 from xbrain.p5_gateway.runtime.main_wiring import (
-    hmi_estop_cmd_id, hmi_estop_frame,
+    hmi_estop_cmd_id,
+    hmi_estop_frame,
 )
-
 
 pytestmark = pytest.mark.no_device
 

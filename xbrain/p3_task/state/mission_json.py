@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import json
 
-
 VALID_STEP_STATUS = frozenset({"pending", "ok", "skipped", "failed"})
 
 

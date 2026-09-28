@@ -225,7 +225,7 @@ def test_build_version_file_is_well_formed():
     MUTATION: blank out commit_sha in _build.py and this goes red, while the
     git-agreement check above stays skipped.
     """
-    from xbrain.common.version import _build            # noqa: PLC0415
+    from xbrain.common.version import _build  # noqa: PLC0415
     for field in ("build_version", "commit_sha", "commit_date_iso"):
         value = getattr(_build, field, None)
         assert isinstance(value, str) and value.strip(), (
@@ -236,7 +236,7 @@ def test_build_version_file_is_well_formed():
 def test_build_version_is_importable_and_not_the_fallback():
     """*** The committed _build.py exists AND does not carry the fallback
     literal "unknown-dev" -- a real repo must ship a real version string."""
-    from xbrain.common.version import build_version, BUILD_VERSION
+    from xbrain.common.version import BUILD_VERSION, build_version
     assert build_version == BUILD_VERSION
     assert build_version and build_version != "unknown-dev", build_version
 
@@ -309,7 +309,7 @@ def test_mutation_c_hardcoded_build_version_would_defeat_check_drift():
     field in a temp _build.py and confirming --check catches it."""
     import tempfile
     sys.path.insert(0, os.path.join(ROOT, "scripts", "version"))
-    import gen_build_version as gv                    # noqa: E402
+    import gen_build_version as gv  # noqa: E402
     # Grab the truthful snapshot.
     current = gv.snapshot(cwd=ROOT)
     # Write a _build.py that lies about commit_sha.

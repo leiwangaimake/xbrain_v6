@@ -40,14 +40,29 @@ derive the CS-A1 closed set from the registry itself -- that oracle is injected,
 because a self-derived set cannot be falsified (see check_intents_in_closed_set).
 """
 
-from .geo_id import (GEO_ID_PREFIXES, GeoIdError, is_valid_geo_object_id,
-                     validate_geo_object_id)
-from .intents import (CONFIRM_LEVELS, INTENT_ID_RE, MI1_MOTION_INTENTS,
-                      NAME_ENCODED_SLOTS, REQUIRED_FIELDS, ROUTES,
-                      IntentEntry, IntentRegistry, IntentRegistryError,
-                      check_closed_sets, check_fields_present,
-                      check_intents_in_closed_set, check_no_name_encoded_slot,
-                      load_intent_registry, load_intent_registry_from_yaml)
+from .geo_id import (
+                     GEO_ID_PREFIXES,
+                     GeoIdError,
+                     is_valid_geo_object_id,
+                     validate_geo_object_id,
+)
+from .intents import (
+                     CONFIRM_LEVELS,
+                     INTENT_ID_RE,
+                     MI1_MOTION_INTENTS,
+                     NAME_ENCODED_SLOTS,
+                     REQUIRED_FIELDS,
+                     ROUTES,
+                     IntentEntry,
+                     IntentRegistry,
+                     IntentRegistryError,
+                     check_closed_sets,
+                     check_fields_present,
+                     check_intents_in_closed_set,
+                     check_no_name_encoded_slot,
+                     load_intent_registry,
+                     load_intent_registry_from_yaml,
+)
 
 __all__ = [
     # loader and types

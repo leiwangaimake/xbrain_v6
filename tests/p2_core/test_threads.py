@@ -22,7 +22,6 @@ from xbrain.p2_core.threads import (
     TickReport,
 )
 
-
 pytestmark = pytest.mark.no_device
 
 

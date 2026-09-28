@@ -131,12 +131,17 @@ from typing import Dict, NamedTuple, Optional
 # enforces this tree-wide, and a string literal here would fail its
 # scan.
 from xbrain.common.errors import (
-    E_CONFIG_INVALID, E_CONFIG_LOCKED, E_FENCE_INVALID,
-    E_LOCKED, E_PROTO_VERSION, E_QOS_VIOLATION,
-    E_SAFETY_LINK_LOST, E_STORAGE_CORRUPT, E_TIMEOUT,
+    E_CONFIG_INVALID,
+    E_CONFIG_LOCKED,
+    E_FENCE_INVALID,
+    E_LOCKED,
+    E_PROTO_VERSION,
+    E_QOS_VIOLATION,
+    E_SAFETY_LINK_LOST,
+    E_STORAGE_CORRUPT,
+    E_TIMEOUT,
     E_UNHEALTHY,
 )
-
 
 # Class constants. Kept as bare str (not enum) because the values
 # appear in doc anchors and log lines; wrapping them in an enum

@@ -57,6 +57,7 @@ class _ProviderWithTasks(_BaseProvider):
 
 def _client(provider):
     from fastapi.testclient import TestClient
+
     from xbrain.p5_gateway.hmi.web_server import build_app
     return TestClient(build_app(_MIN_WEB, provider, lambda: None, _STATIC))
 

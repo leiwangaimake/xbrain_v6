@@ -17,11 +17,18 @@ from __future__ import annotations
 
 import pytest
 
-from xbrain.p1_motion.rns.types import (
-    Cell, MissionKind, NavFailReason, NavState, Origin, SrcBit,
-    TRANSITIONS, VelocityCandidate, is_legal_transition,
-)
 from xbrain.common.types.units import Mps
+from xbrain.p1_motion.rns.types import (
+    TRANSITIONS,
+    Cell,
+    MissionKind,
+    NavFailReason,
+    NavState,
+    Origin,
+    SrcBit,
+    VelocityCandidate,
+    is_legal_transition,
+)
 
 
 def test_cell_closed_set_exact():

@@ -82,8 +82,17 @@ audits, so the corruption would be recorded as if it were the truth.
 from typing import Any, Dict, List, Optional, Tuple
 
 from .duplicates import check_l2_not_copy_of_l1
-from .layers import (ENV_KEY_MAP, ENV_WHITELIST, LAYERS, ConfigLayerError, Layer,
-                     check_namespace, env_overlay, resolve_config_root, safety_root)
+from .layers import (
+    ENV_KEY_MAP,
+    ENV_WHITELIST,
+    LAYERS,
+    ConfigLayerError,
+    Layer,
+    check_namespace,
+    env_overlay,
+    resolve_config_root,
+    safety_root,
+)
 from .merge import MISSING, deep_merge, flatten, unflatten
 
 # The public surface of the overlay axis. check_namespace and LAYERS are

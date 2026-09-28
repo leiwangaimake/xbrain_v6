@@ -50,7 +50,6 @@ import re
 import sys
 from typing import List, Tuple
 
-
 # Safety-key tokens the lint recognises as safety-relevant. Anything
 # whose leaf key matches these keywords is treated as a safety param
 # for the default check. Kept conservative: better a false positive

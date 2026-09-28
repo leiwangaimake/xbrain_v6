@@ -45,25 +45,38 @@ from __future__ import annotations
 import pytest
 
 from xbrain.common.errors import (
-    E_CONFIRM_REQUIRED, E_SCHEMA,
+    E_CONFIRM_REQUIRED,
+    E_SCHEMA,
 )
 from xbrain.p1_motion.arb.visibility import (
-    ArbEvent, ArbPublisher, ArbState, DEDUP_WINDOW_MS,
-    HEARTBEAT_PERIOD_MS, dedup_key_for,
+    DEDUP_WINDOW_MS,
+    HEARTBEAT_PERIOD_MS,
+    ArbEvent,
+    ArbPublisher,
+    ArbState,
+    dedup_key_for,
 )
 from xbrain.p1_motion.gate.negative_vx import (
-    NEGATIVE_VX_CAP_LIMITER, NegativeVxCap, NegativeVxConfigError,
+    NEGATIVE_VX_CAP_LIMITER,
+    NegativeVxCap,
+    NegativeVxConfigError,
 )
 from xbrain.p1_motion.route.behavior_goto import (
-    BEHAVIOR_GOTO, GotoRouteDecision, GotoRouteError,
-    PATH_FOLLOW_PRIORITY, assert_not_registered_in_teleop,
-    deadman_applies_to_source, route_behavior_goto,
+    BEHAVIOR_GOTO,
+    PATH_FOLLOW_PRIORITY,
+    GotoRouteDecision,
+    GotoRouteError,
+    assert_not_registered_in_teleop,
+    deadman_applies_to_source,
+    route_behavior_goto,
 )
 from xbrain.p2_core.mode_actions.dispatch import (
-    ACTION_CLOSED_SET, CONFIRM_TOKEN_ISSUER, SPEED_PROFILE_CLOSED_SET,
-    dispatch, handlers_complete,
+    ACTION_CLOSED_SET,
+    CONFIRM_TOKEN_ISSUER,
+    SPEED_PROFILE_CLOSED_SET,
+    dispatch,
+    handlers_complete,
 )
-
 
 pytestmark = pytest.mark.no_device
 

@@ -45,7 +45,10 @@ def test_stage_order_is_enforced():
     会让机器人在没做自检的情况下获得运动权.
     """
     from xbrain.p2_core.boot.stage_machine import (
-        BootStage, BootStageMachine, InvalidBootTransition)
+        BootStage,
+        BootStageMachine,
+        InvalidBootTransition,
+    )
 
     sm = BootStageMachine()
     with pytest.raises(InvalidBootTransition):
@@ -64,7 +67,10 @@ def test_blocked_is_a_sink_only_an_operator_leaves():
     它消失了也需要人确认过. 自动出来等于把一次未经确认的放行做成常态.
     """
     from xbrain.p2_core.boot.stage_machine import (
-        BootStage, BootStageMachine, InvalidBootTransition)
+        BootStage,
+        BootStageMachine,
+        InvalidBootTransition,
+    )
 
     sm = BootStageMachine()
     sm.transition(BootStage.BLOCKED)
@@ -79,8 +85,7 @@ def test_blocked_is_reachable_from_every_stage():
 
     没有 D->BLOCKED 这条边, 一个在运行中出现的 fatal 就没有降级出口了.
     """
-    from xbrain.p2_core.boot.stage_machine import (
-        ALLOWED, BootStage, BootStageMachine)
+    from xbrain.p2_core.boot.stage_machine import ALLOWED, BootStage, BootStageMachine
 
     for stage in (BootStage.STAGE_A, BootStage.STAGE_B,
                   BootStage.STAGE_C, BootStage.STAGE_D):
@@ -113,8 +118,11 @@ def test_boot_i2_never_received_is_not_the_same_as_stale():
     NO 不只断言字段: check_boot_i2_initial 必须真的抛.
     """
     from xbrain.p2_core.boot.stage_machine import (
-        BootI2Violation, MotionFactor, check_boot_i2_initial,
-        initial_motion_factor)
+        BootI2Violation,
+        MotionFactor,
+        check_boot_i2_initial,
+        initial_motion_factor,
+    )
 
     # 正例: 出厂初值必须过.
     check_boot_i2_initial(initial_motion_factor())
@@ -190,7 +198,10 @@ def test_boot_l2_unlock_needs_l2_token_and_an_allowed_channel():
     什么都不检查的实现同样能过.
     """
     from xbrain.p2_core.boot.timeout_lock import (
-        ALLOWED_UNLOCK_CHANNELS, TimeoutLockAction, validate_unlock_request)
+        ALLOWED_UNLOCK_CHANNELS,
+        TimeoutLockAction,
+        validate_unlock_request,
+    )
 
     channel = sorted(ALLOWED_UNLOCK_CHANNELS)[0]
     good = {"action": TimeoutLockAction.ENABLE.value, "confirm_token": "t-1"}
@@ -214,7 +225,9 @@ def test_hes_and_timeout_lock_are_never_conflated():
     独立的安全约束.
     """
     from xbrain.p2_core.boot.timeout_lock import (
-        HesLockConflation, assert_locks_are_separate)
+        HesLockConflation,
+        assert_locks_are_separate,
+    )
 
     # 逐字用实现要求的两个名字. 第一版写了 "hes"(简写), 被拒 --
     # 而那正是这个门要的效果: 名字含糊就等于两把锁分不清.

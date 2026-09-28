@@ -38,16 +38,15 @@ completion that a P1 status reports. A dispatched task correctly sits at
 from __future__ import annotations
 
 import logging
-
 from typing import Awaitable, Callable, List, Tuple
 
-from xbrain.p3_task.state.machine import (apply_transition,
-                                          validate_suspend_fields)
+from xbrain.p3_task.state.machine import apply_transition, validate_suspend_fields
 from xbrain.p3_task.state.preconditions import (
-    check_v1_type, check_v2_priority, check_v5_mission_parses,
+    check_v1_type,
+    check_v2_priority,
+    check_v5_mission_parses,
     check_v8_route_exists,
 )
-
 
 # on_transition(task_id, from_state, to_state, reason) -> awaitable.
 # from_state is what apply_transition was called with -- the event decision is
@@ -281,8 +280,7 @@ async def apply_path_progress_terminal(conn, dao, task_id: str,
     nothing on purpose (it is preemption or e-stop, which P3 has already
     turned into a resumable `suspended`).
     """
-    from xbrain.p3_task.state.path_progress import (
-        MOTION_RESULT_FOR_PATH_STATE)
+    from xbrain.p3_task.state.path_progress import MOTION_RESULT_FOR_PATH_STATE
 
     result = MOTION_RESULT_FOR_PATH_STATE.get(path_state)
     if result is None:

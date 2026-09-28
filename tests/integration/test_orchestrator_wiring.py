@@ -23,7 +23,9 @@ import yaml
 from xbrain.p4_agent.registry.intents import load_intent_registry
 from xbrain.p4_agent.runtime import main_wiring
 from xbrain.p4_agent.runtime.orchestrator_turn import (
-    build_orchestrator, make_battery_query_fn, make_turn_handler,
+    build_orchestrator,
+    make_battery_query_fn,
+    make_turn_handler,
 )
 from xbrain.p4_agent.runtime.turn_orchestrator import OrchestratorSession
 from xbrain.p4_agent.session.chitchat import ChitchatResponder

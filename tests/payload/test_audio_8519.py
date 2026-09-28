@@ -22,13 +22,13 @@ import pytest
 
 from services.payload.protocol.audio_8519 import (
     AudioProtocolError,
-    build_volume,
     AudioUplinkFramer,
     build_hail,
     build_hail_stop,
     build_record_start,
     build_record_stop,
     build_tts,
+    build_volume,
     encode_frame,
 )
 

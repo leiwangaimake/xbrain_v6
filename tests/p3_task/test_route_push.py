@@ -40,13 +40,21 @@ from xbrain.p3_task.dao.simple_daos import PatrolProgressDAO, SnapshotDAO
 from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO
 from xbrain.p3_task.persistence.schema_geo import GEO_DB_STATEMENTS
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
-from xbrain.p3_task.route.push import (CHUNK_POINTS, MAX_POINTS, RouteAck,
-                                       RouteAckWindow, RoutePoint,
-                                       RoutePushError, RoutePushTrigger,
-                                       build_route_frames)
-from xbrain.p3_task.route.snapshot_build import (SnapshotBuildError,
-                                                 build_snapshot,
-                                                 cumulative_arclen)
+from xbrain.p3_task.route.push import (
+    CHUNK_POINTS,
+    MAX_POINTS,
+    RouteAck,
+    RouteAckWindow,
+    RoutePoint,
+    RoutePushError,
+    RoutePushTrigger,
+    build_route_frames,
+)
+from xbrain.p3_task.route.snapshot_build import (
+    SnapshotBuildError,
+    build_snapshot,
+    cumulative_arclen,
+)
 from xbrain.p3_task.runtime.route_push_runtime import push_route_for_task
 
 pytestmark = pytest.mark.no_device

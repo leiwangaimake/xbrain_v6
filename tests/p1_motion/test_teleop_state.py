@@ -18,7 +18,10 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p1_motion.teleop.state import (
-    LOCAL_ESTOP_DEVICES, SWITCH_HYSTERESIS_MS, TELEOP_DEVICES, TeleopTracker,
+    LOCAL_ESTOP_DEVICES,
+    SWITCH_HYSTERESIS_MS,
+    TELEOP_DEVICES,
+    TeleopTracker,
     has_local_estop_source,
 )
 

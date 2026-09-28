@@ -17,12 +17,17 @@ import pytest
 
 from xbrain.p2_core.mode.b_mode_timer import BModeTimer
 from xbrain.p2_core.mode.device_map import (
-    SWITCH_ORDER, is_409_ok, is_device_mode_change, to_device_mode,
+    SWITCH_ORDER,
+    is_409_ok,
+    is_device_mode_change,
+    to_device_mode,
 )
 from xbrain.p2_core.mode.state_machine import (
-    ModeState, ModeStateMachine, TransitionRequest, TriggerKind,
+    ModeState,
+    ModeStateMachine,
+    TransitionRequest,
+    TriggerKind,
 )
-
 
 pytestmark = pytest.mark.no_device
 

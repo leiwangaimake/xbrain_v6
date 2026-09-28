@@ -18,7 +18,6 @@ work list for landing each.
 
 import pytest
 
-
 pytestmark = pytest.mark.no_device
 
 

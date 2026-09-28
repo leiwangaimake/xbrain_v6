@@ -16,7 +16,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-
 # 12 S6.7 14-value limiter enum (verbatim).
 _LIMITER_VALUES = (
     "none", "f_speed", "g_targets", "h_heading", "i_rtk",

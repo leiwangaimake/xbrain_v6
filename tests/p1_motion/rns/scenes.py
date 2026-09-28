@@ -29,7 +29,11 @@ import math
 from typing import List, Optional, Sequence, Tuple
 
 from xbrain.p1_motion.rns.inputs import (
-    ObjectsMsg, PerceptionSnapshot, ProfileMsg, StatusMsg, TrackedObject,
+    ObjectsMsg,
+    PerceptionSnapshot,
+    ProfileMsg,
+    StatusMsg,
+    TrackedObject,
 )
 
 # Default sector geometry (11 S3.1B.1 example values: +/-45 deg, 0.5 deg, 181).

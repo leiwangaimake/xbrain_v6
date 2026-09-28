@@ -49,8 +49,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 sys.path.insert(0, ROOT)
 
-from xbrain.common.zenoh import (PLANE_GEN, PLANE_RT,  # noqa: E402
-                                 session_config_document)
+from xbrain.common.zenoh import (  # noqa: E402
+    PLANE_GEN,
+    PLANE_RT,
+    session_config_document,
+)
 
 #: The C++ source under test and the include root it reads the header from.
 SOURCE = os.path.join(ROOT, "tests", "common", "zenoh", "test_session_config.cc")

@@ -21,7 +21,10 @@ import pytest
 
 from xbrain.common import errors
 from xbrain.common.zenoh.startup_selfcheck import (
-    DEFAULT_CROSS_PLANE_PROCESSES, Declaration, SelfcheckError, selfcheck,
+    DEFAULT_CROSS_PLANE_PROCESSES,
+    Declaration,
+    SelfcheckError,
+    selfcheck,
 )
 
 # Reach the ZN-4 extractor as the registry source, so the two items stay
@@ -30,7 +33,7 @@ from xbrain.common.zenoh.startup_selfcheck import (
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(ROOT, "scripts", "doccheck"))
-from key_registry import extract as extract_keys                # noqa: E402
+from key_registry import extract as extract_keys  # noqa: E402
 
 
 @pytest.fixture(scope="module")

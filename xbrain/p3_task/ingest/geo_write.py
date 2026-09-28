@@ -42,16 +42,24 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from xbrain.common.enums import GEO_CREATED_BY, GEO_STATE
 from xbrain.common.errors import (
-    E_GEO_CONFLICT, E_GEO_INVALID, E_NAME_CONFLICT, E_NOT_FOUND, E_SCHEMA,
+    E_GEO_CONFLICT,
+    E_GEO_INVALID,
+    E_NAME_CONFLICT,
+    E_NOT_FOUND,
+    E_SCHEMA,
 )
 from xbrain.p3_task.ingest.geo_apply import ApplyResult, GeoContext, register_applier
 from xbrain.p3_task.ingest.geo_command import GeoCommand, GeoCommandError
 from xbrain.p3_task.ingest.geo_object import (
-    TABLE_FOR_TYPE, ParsedObject, parse_geo_object, polyline_len_m,
+    TABLE_FOR_TYPE,
+    ParsedObject,
+    parse_geo_object,
+    polyline_len_m,
     resolvable_anchor_ids,
 )
 from xbrain.p3_task.state.geo_events import (
-    GEO_EVENT_INFO, GEO_EVENT_WARN,
+    GEO_EVENT_INFO,
+    GEO_EVENT_WARN,
 )
 from xbrain.p3_task.state.geo_rev import content_hash
 
@@ -306,7 +314,7 @@ async def apply_rename(cmd: GeoCommand, ctx: GeoContext,
         from xbrain.p3_task.ingest.geo_object import _name  # noqa: PLC0415
         cols["name"] = _name(obj, required=True)
     if "num" in obj:
-        from xbrain.p3_task.ingest.geo_object import _num   # noqa: PLC0415
+        from xbrain.p3_task.ingest.geo_object import _num  # noqa: PLC0415
         cols["num"] = _num(obj)
     if "alias" in obj:
         from xbrain.p3_task.ingest.geo_object import _alias_json  # noqa: PLC0415

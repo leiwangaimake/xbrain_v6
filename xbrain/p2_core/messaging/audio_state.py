@@ -33,7 +33,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, FrozenSet, Optional, Tuple
 
-
 # Closed set for state/audio.mic per 11 S8.9.1 (mic status).
 # ok            = capturing, frames flowing
 # muted         = intentionally gated (half-duplex, mode = broadcast, ...)

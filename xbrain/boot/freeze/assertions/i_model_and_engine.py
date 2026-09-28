@@ -160,17 +160,22 @@ is 'green + these counts'.
 # algorithm used to build MODEL.json.files[].sha256 on the build
 # side (11 S11A.4.2), so a byte-for-byte comparison is defined.
 import hashlib
+
 # json for MODEL.json parse. json5 would tolerate the doc's example
 # comment-style syntax, but the shipped MODEL.json is strict json.
 import json
+
 # os for path joins, exists checks, readlink, and symlink target
 # resolution (islink + realpath).
 import os
+
 # re for probing dpkg -s output (kept only for _probe_runtime).
 import re
+
 # subprocess for the runtime probe. Test callers inject runtime_env
 # directly to skip subprocess entirely.
 import subprocess
+
 # typing for annotations; Optional used on runtime_env because the
 # probe may return None on hosts without JetPack.
 from typing import Any, Dict, Iterable, List, Optional, Tuple

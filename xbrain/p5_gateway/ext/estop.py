@@ -38,10 +38,9 @@ liveness beat, it only advances the last-ack-received timestamp.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Sequence, Tuple
-
-import logging
 
 from xbrain.common.errors import E_SCHEMA
 

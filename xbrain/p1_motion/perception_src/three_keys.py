@@ -51,9 +51,14 @@ import threading
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from xbrain.common.envelope import EnvelopeSchemaError, decode
-from xbrain.p1_motion.rns.inputs import (ObjectsMsg, PerceptionInput,
-                                         PerceptionSnapshot, ProfileMsg,
-                                         StatusMsg, TrackedObject)
+from xbrain.p1_motion.rns.inputs import (
+    ObjectsMsg,
+    PerceptionInput,
+    PerceptionSnapshot,
+    ProfileMsg,
+    StatusMsg,
+    TrackedObject,
+)
 
 _logger = logging.getLogger("xbrain.p1_motion.perception_src")
 

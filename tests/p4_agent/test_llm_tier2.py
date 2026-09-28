@@ -16,14 +16,18 @@ from __future__ import annotations
 import pytest
 import yaml
 
+from xbrain.p4_agent.gateway.gpu_token import GpuTokenState
 from xbrain.p4_agent.gbnf.generator import (
-    GbnfInvariantError, MAX_MISSION_INTENTS, generate_grammar,
+    MAX_MISSION_INTENTS,
+    GbnfInvariantError,
+    generate_grammar,
     project_mission_intents,
 )
-from xbrain.p4_agent.gateway.gpu_token import GpuTokenState
 from xbrain.p4_agent.registry.intents import load_intent_registry
 from xbrain.p4_agent.runtime.llm_tier2 import (
-    Tier2Error, Tier2Result, classify_unknown,
+    Tier2Error,
+    Tier2Result,
+    classify_unknown,
 )
 
 pytestmark = pytest.mark.no_device

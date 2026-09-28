@@ -16,33 +16,52 @@ from __future__ import annotations
 import pytest
 
 from xbrain.common.errors import (
-    E_BUSY, E_CAPABILITY,
+    E_BUSY,
+    E_CAPABILITY,
 )
 from xbrain.p4_agent.dialog.speak_stop import (
-    REPLY_CASE_1, REPLY_CASE_2, REPLY_CASE_3, REPLY_CASE_4,
-    REPLY_STOPPED_BARE, SpeakStopDecision,
-    assert_route2_no_bracket_loop, decide, replies_pairwise_distinct,
+    REPLY_CASE_1,
+    REPLY_CASE_2,
+    REPLY_CASE_3,
+    REPLY_CASE_4,
+    REPLY_STOPPED_BARE,
+    SpeakStopDecision,
+    assert_route2_no_bracket_loop,
+    decide,
+    replies_pairwise_distinct,
 )
 from xbrain.p4_agent.failsafe.degrade_modes import (
-    DEGRADE_MODES, DegradeModes, IntentRoute,
+    DEGRADE_MODES,
+    DegradeModes,
+    IntentRoute,
     assert_no_direct_audio_bypass,
 )
 from xbrain.p4_agent.failsafe.rotation_reject import (
-    RJ_1_TEMPLATE, RJ_2_TEMPLATE, RotationRejectResponse,
+    RJ_1_TEMPLATE,
+    RJ_2_TEMPLATE,
+    RotationRejectResponse,
     RotationRejectShapeError,
-    precheck_yaw_capable, refuse_from_ack, scripts_are_distinct,
+    precheck_yaw_capable,
+    refuse_from_ack,
+    scripts_are_distinct,
 )
 from xbrain.p4_agent.query.sources_g01_g24 import (
-    BINDINGS, G_QUERY_IDS, QueryBindingError,
-    assert_bindings_cover_all_24, assert_zero_llm_for_g_queries,
-    g01_render, g02_render, g24_render,
+    BINDINGS,
+    G_QUERY_IDS,
+    QueryBindingError,
+    assert_bindings_cover_all_24,
+    assert_zero_llm_for_g_queries,
+    g01_render,
+    g02_render,
+    g24_render,
 )
 from xbrain.p4_agent.routing.safety_keyword_gate import (
-    SAFETY_INTENT_IDS, SafetyRoutingViolation,
-    assert_projection_matches_frozen, check_intent_is_fastpath,
+    SAFETY_INTENT_IDS,
+    SafetyRoutingViolation,
+    assert_projection_matches_frozen,
+    check_intent_is_fastpath,
     project_safety_ids_from_intents_yaml,
 )
-
 
 pytestmark = pytest.mark.no_device
 

@@ -46,8 +46,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from xbrain.p1_motion.arb.visibility import HEARTBEAT_PERIOD_MS, dedup_key_for
-from xbrain.p1_motion.sources.arbiter_p1 import (BehaviorSource, SourceState,
-                                                 priority_of)
+from xbrain.p1_motion.sources.arbiter_p1 import BehaviorSource, SourceState, priority_of
 
 DOMAIN = "motion"
 POLICY = "immediate"                 # 7A.5.1 sources[].policy for a re-selected domain

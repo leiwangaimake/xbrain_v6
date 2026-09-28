@@ -16,8 +16,11 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p1_motion.rns.config import (
-    RnsConfigError, assert_leave_progress_below_2r_eff, assert_person_locked,
-    require, run_startup_assertions,
+    RnsConfigError,
+    assert_leave_progress_below_2r_eff,
+    assert_person_locked,
+    require,
+    run_startup_assertions,
 )
 
 

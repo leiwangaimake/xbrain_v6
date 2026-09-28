@@ -17,11 +17,13 @@ import pytest
 import yaml
 
 from xbrain.p4_agent.registry.intents import load_intent_registry
-from xbrain.p4_agent.session.chitchat import ChitchatResponder
 from xbrain.p4_agent.runtime.turn_orchestrator import (
-    OrchestratorSession, Tier2Classification, TurnOrchestrator,
+    OrchestratorSession,
+    Tier2Classification,
+    TurnOrchestrator,
     refine_ptz_intent,
 )
+from xbrain.p4_agent.session.chitchat import ChitchatResponder
 
 pytestmark = pytest.mark.no_device
 

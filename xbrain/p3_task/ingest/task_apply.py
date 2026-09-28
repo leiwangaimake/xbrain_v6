@@ -42,18 +42,26 @@ from dataclasses import replace
 from typing import Any, Dict, List, Optional, Tuple
 
 from xbrain.common.errors import (
-    E_INTERNAL, E_NOT_FOUND, E_TASK_STATE,
+    E_INTERNAL,
+    E_NOT_FOUND,
+    E_TASK_STATE,
 )
 from xbrain.p3_task.ingest.id_alloc import next_submit_seq, next_task_id
 from xbrain.p3_task.ingest.task_command import (
-    TaskCommand, TaskCommandError, parse_task_command, task_ack,
+    TaskCommand,
+    TaskCommandError,
+    parse_task_command,
+    task_ack,
 )
 from xbrain.p3_task.ingest.task_row import task_row_from_command
+
 # compute_duration_sec 与 driver 共用一份: 15 S9.5 的口径(跨重启写
 # NULL, 不回退墙钟差值)只能有一个实现, 抄第二份必然漂.
 from xbrain.p3_task.schedule.driver import compute_duration_sec
 from xbrain.p3_task.state.machine import (
-    InvalidTransition, TERMINAL_STATES, apply_transition,
+    TERMINAL_STATES,
+    InvalidTransition,
+    apply_transition,
 )
 
 _logger = logging.getLogger("xbrain.p3.task_cmd")

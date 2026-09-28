@@ -34,7 +34,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, Tuple
 
-
 #: 11 S6.2 category for every event this module renders.
 GEO_CATEGORY = "geo"
 

@@ -51,7 +51,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 from xbrain.common.errors import E_CONFIG_INVALID, XbrainError
-
 from xbrain.p4_agent.registry.geo_id import validate_geo_object_id
 
 __all__ = ["SpeechPreset", "SpeechPresetError", "load_speech_presets", "VOICES"]

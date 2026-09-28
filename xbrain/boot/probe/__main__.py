@@ -40,7 +40,6 @@ from xbrain.boot.probe import checks, net_profile
 from xbrain.common.errors import E_CONFIG_INVALID, E_STORAGE_CORRUPT
 from xbrain.common.errors.exceptions import XbrainError
 
-
 _DEFAULT_CONFIG_PATH = "/opt/xbrain_v6/configs/probe/thresholds.yaml"  # CONFIG-SOURCE-OK(J): probe entry point deploy default path
 _DEFAULT_HW_PROFILE_PATH = "/etc/xbrain/hw_profile"
 

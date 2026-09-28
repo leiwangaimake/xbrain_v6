@@ -53,9 +53,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from xbrain.common.errors import (
-    E_CONFIG_INVALID, E_GEO_INVALID, E_SCHEMA,
+    E_CONFIG_INVALID,
+    E_GEO_INVALID,
+    E_SCHEMA,
 )
-
 
 RID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 WAYPOINT_ID_RE = re.compile(r"^w-[a-z0-9_]{1,40}$")

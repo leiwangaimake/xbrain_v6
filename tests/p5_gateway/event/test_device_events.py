@@ -15,11 +15,13 @@ flaps. Mutations paired per 3.3.
 
 import pytest
 
-from xbrain.p5_gateway.event.device_events import (
-    DEVICE_CATEGORY, DeviceLivenessMonitor, UnknownDevice, build_device_event,
-)
 from xbrain.p5_gateway.event.channel_map import derive_channel
-
+from xbrain.p5_gateway.event.device_events import (
+    DEVICE_CATEGORY,
+    DeviceLivenessMonitor,
+    UnknownDevice,
+    build_device_event,
+)
 
 pytestmark = pytest.mark.no_device
 

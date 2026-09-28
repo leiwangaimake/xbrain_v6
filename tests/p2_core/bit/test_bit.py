@@ -16,11 +16,13 @@ BIZ-P2-23 -- BIT report + BIT-G1 guard tests.
 import pytest
 
 from xbrain.p2_core.bit.report import (
-    BitConfigViolation, BitItemReport, BitReport, BitResult,
+    BitConfigViolation,
+    BitItemReport,
+    BitReport,
+    BitResult,
     check_bit_g1,
 )
 from xbrain.p2_core.health.items import HealthState
-
 
 pytestmark = pytest.mark.no_device
 

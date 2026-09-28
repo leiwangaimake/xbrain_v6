@@ -32,7 +32,6 @@ from typing import Callable, Optional
 
 from xbrain.p2_core.ptz.ptz_driver import PtzDriver, PtzDriverConfig
 
-
 _logger = logging.getLogger("xbrain.p2.ptz_wiring")
 
 CMD_PTZ_TOPIC = "cmd/ptz"

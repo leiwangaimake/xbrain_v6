@@ -36,7 +36,6 @@ sys.path.insert(0, ROOT)
 from xbrain.common import config  # noqa: E402
 from xbrain.common.config import ConfigLayerError  # noqa: E402
 
-
 # ── 合并规则(10 S5.4.3"深合并的粒度"表)────────────────────────────────
 
 def test_map_deep_merges_and_later_leaf_wins():

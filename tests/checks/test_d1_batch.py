@@ -19,31 +19,51 @@ import pytest
 
 from xbrain.common.errors import E_CHANNEL_DENIED, E_CONFIRM_REQUIRED
 from xbrain.p2_core.bit.gpu_dla import (
-    BitAssertViolation, BitItemState, Pc3Violation,
-    assert_no_pc3_key, assert_no_unknown_state_in_source,
-    evaluate_dla, evaluate_gpu,
+    BitAssertViolation,
+    BitItemState,
+    Pc3Violation,
+    assert_no_pc3_key,
+    assert_no_unknown_state_in_source,
+    evaluate_dla,
+    evaluate_gpu,
 )
 from xbrain.p2_core.bit.network_links import (
-    LNK_D_DETAIL_ONLY, LinkClassificationError, LinkDetail,
+    LNK_D_DETAIL_ONLY,
+    LinkClassificationError,
+    LinkDetail,
     OnvifInBitPath,
-    assert_no_onvif_in_bit_source, classify_link_failure,
-    is_link_healthy, lnk_d_writes_detail_only,
+    assert_no_onvif_in_bit_source,
+    classify_link_failure,
+    is_link_healthy,
+    lnk_d_writes_detail_only,
 )
 from xbrain.p2_core.boot.stage_machine import (
-    BootFailure, BootI2Violation, BootStage, BootStageMachine,
-    InvalidBootTransition, MotionFactor,
-    check_boot_i2_initial, initial_motion_factor,
+    BootFailure,
+    BootI2Violation,
+    BootStage,
+    BootStageMachine,
+    InvalidBootTransition,
+    MotionFactor,
+    check_boot_i2_initial,
+    initial_motion_factor,
 )
 from xbrain.p2_core.boot.timeout_lock import (
-    ALLOWED_UNLOCK_CHANNELS, HesLockConflation, TimeoutLockGate,
-    assert_locks_are_separate, validate_unlock_request,
+    ALLOWED_UNLOCK_CHANNELS,
+    HesLockConflation,
+    TimeoutLockGate,
+    assert_locks_are_separate,
+    validate_unlock_request,
 )
 from xbrain.p4_agent.throttle.motion_gate import (
-    CtxCapViolation, LlmRequestRefused, MotionThrottleConfigError,
-    PromptSections, ThrottleConfig,
-    admit_llm_request, should_throttle, trim_to_cap,
+    CtxCapViolation,
+    LlmRequestRefused,
+    MotionThrottleConfigError,
+    PromptSections,
+    ThrottleConfig,
+    admit_llm_request,
+    should_throttle,
+    trim_to_cap,
 )
-
 
 pytestmark = pytest.mark.no_device
 

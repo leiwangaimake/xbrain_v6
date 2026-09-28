@@ -17,19 +17,30 @@ depletion; REST GET-only enforcement; fences degraded -> 503.
 import pytest
 
 from xbrain.p5_gateway.delivery.handshake import (
-    DeliveryRecord, DeliveryStage, InvalidDeliveryTransition,
-    is_stuck, transition,
+    DeliveryRecord,
+    DeliveryStage,
+    InvalidDeliveryTransition,
+    is_stuck,
+    transition,
 )
 from xbrain.p5_gateway.hmi.ws_protocol import (
-    DOWN_MESSAGE_KINDS, RateLimitBucket, UP_MESSAGE_KINDS,
-    UnknownMessageKind, classify_down, classify_up,
+    DOWN_MESSAGE_KINDS,
+    UP_MESSAGE_KINDS,
+    RateLimitBucket,
+    UnknownMessageKind,
+    classify_down,
+    classify_up,
 )
 from xbrain.p5_gateway.rest.endpoints import fences_endpoint
 from xbrain.p5_gateway.telemetry.aggregator import (
-    Sample, TELEMETRY_CLASSES, TelemetryClass, TelemetryRing,
-    WEAK_LINK_DOWNSAMPLE, is_weak_link, uplink_cadence_ms,
+    TELEMETRY_CLASSES,
+    WEAK_LINK_DOWNSAMPLE,
+    Sample,
+    TelemetryClass,
+    TelemetryRing,
+    is_weak_link,
+    uplink_cadence_ms,
 )
-
 
 pytestmark = pytest.mark.no_device
 

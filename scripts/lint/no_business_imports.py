@@ -42,7 +42,6 @@ import re
 import sys
 from typing import List, Tuple
 
-
 # Banned import patterns. Match both `import X` and `from X import Y`.
 _PATTERNS = [
     ("rclpy",   re.compile(r"^\s*(?:import\s+rclpy(?:\s|$|\.|,)|from\s+rclpy\b)")),

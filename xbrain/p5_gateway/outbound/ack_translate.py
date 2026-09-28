@@ -35,8 +35,7 @@ from typing import Any, Dict
 
 from ...common import errors
 from .error_map import to_qt_code
-from .task_ack import (RESULT_ACCEPTED, RESULT_DUPLICATE, RESULT_REJECTED,
-                       build_ack)
+from .task_ack import RESULT_ACCEPTED, RESULT_DUPLICATE, RESULT_REJECTED, build_ack
 
 #: 机内 result 四值 -> v2.0 三值. error 折成 rejected.
 _RESULT_MAP = {

@@ -34,12 +34,16 @@ enforced by tests/meta/test_mutant_coverage.py.
 import pytest
 
 from xbrain.boot.freeze.meta import (
-    DEFERRED_QC, DEFERRED_S, DEFERRED_SP,
-    DOC_AS, DOC_QC, DOC_S, DOC_SP,
+    DEFERRED_QC,
+    DEFERRED_S,
+    DEFERRED_SP,
+    DOC_AS,
+    DOC_QC,
+    DOC_S,
+    DOC_SP,
     EXEMPT_SP,
     bidirectional_diff,
 )
-
 
 pytestmark = pytest.mark.no_device
 

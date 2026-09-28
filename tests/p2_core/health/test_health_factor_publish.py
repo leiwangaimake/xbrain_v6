@@ -28,9 +28,13 @@ import pathlib
 import pytest
 
 from xbrain.p1_motion.nav.health_factor import MAX_PROFILES, parse_health_factor
-from xbrain.p2_core.health.factor import (DETAIL_REF, FactorConfig,
-                                          build_health_factor, compute_factor,
-                                          dominant_reason)
+from xbrain.p2_core.health.factor import (
+    DETAIL_REF,
+    FactorConfig,
+    build_health_factor,
+    compute_factor,
+    dominant_reason,
+)
 from xbrain.p2_core.health.items import ITEMS, HealthState
 
 pytestmark = pytest.mark.no_device

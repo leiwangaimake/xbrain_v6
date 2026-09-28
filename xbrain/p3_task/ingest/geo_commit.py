@@ -43,10 +43,9 @@ import json
 import math
 from typing import Optional, Sequence
 
-from xbrain.common.enums import FENCE_ROLE       # 11 S9A.2 closed set (CLAUDE.md 3.5)
+from xbrain.common.enums import FENCE_ROLE  # 11 S9A.2 closed set (CLAUDE.md 3.5)
 from xbrain.p3_task.fence.geom import validate_polygon
 from xbrain.p3_task.state.geo_rev import content_hash
-
 
 # A route needs at least two points to be a path. The upper bound is the 11 S7.8.3
 # RouteGeometry cap (<= 5000 vertices); the old 16 was the retired assoc trigger.

@@ -28,7 +28,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 from xbrain.common.errors import (
-    E_CHANNEL_DENIED, E_CONFIRM_REQUIRED,
+    E_CHANNEL_DENIED,
+    E_CONFIRM_REQUIRED,
 )
 
 

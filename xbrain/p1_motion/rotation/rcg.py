@@ -13,7 +13,6 @@ The speed gate only constrains linear motion. Angular motion (wz) needs its own 
 
 from __future__ import annotations
 
-
 # RCG-1: minimum clearance ring around robot for spin permission.
 # r_eff = max(r_robot, r_eff_fallback). r_robot may be null placeholder
 # (0.0) if V-03 not measured; fallback 0.60 m ensures the check STAYS ACTIVE.

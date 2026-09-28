@@ -22,10 +22,15 @@ from pathlib import Path
 
 import pytest
 
-from xbrain.p1_motion.runtime.nav_wiring import (CMD_FACTOR_TOPIC, CMD_RELMOVE_TOPIC,
-                                                 CMD_ROUTE_TOPIC, RELMOVE_STATUS_TOPIC,
-                                                 STATE_PROGRESS_TOPIC, TICK_PERIOD_S,
-                                                 unwrap_body)
+from xbrain.p1_motion.runtime.nav_wiring import (
+    CMD_FACTOR_TOPIC,
+    CMD_RELMOVE_TOPIC,
+    CMD_ROUTE_TOPIC,
+    RELMOVE_STATUS_TOPIC,
+    STATE_PROGRESS_TOPIC,
+    TICK_PERIOD_S,
+    unwrap_body,
+)
 
 pytestmark = pytest.mark.no_device
 

@@ -48,11 +48,9 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from xbrain.common.errors import E_SCHEMA
-from xbrain.p5_gateway.hmi import uplink
-from xbrain.p5_gateway.hmi.ws_protocol import RateLimitBucket
-
-from xbrain.p5_gateway.hmi import data_readers
+from xbrain.p5_gateway.hmi import data_readers, uplink
 from xbrain.p5_gateway.hmi.ui_config import build_ui_config
+from xbrain.p5_gateway.hmi.ws_protocol import RateLimitBucket
 
 # WebSocket / WebSocketDisconnect are imported at MODULE level, not lazily inside
 # build_app, on purpose: `from __future__ import annotations` (top of this file)
@@ -207,7 +205,7 @@ async def _uplink_reader(websocket, provider, bucket, pending) -> None:
     and 12.3's reconnect rule (resend with the same req_id) depends on them
     being able to tell "no answer yet" from "answered".
     """
-    import time as _time                        # noqa: PLC0415
+    import time as _time  # noqa: PLC0415
 
     while True:
         try:
@@ -297,9 +295,9 @@ def build_app(
     # Imported lazily (like services/payload) so importing this module has no
     # FastAPI side effect and the W-1 startup window can still report why P5 did
     # not come up. FastAPI is a p5_gateway dependency (17 S6.10.0).
-    from fastapi import FastAPI                     # noqa: PLC0415
-    from fastapi.responses import JSONResponse      # noqa: PLC0415
-    from fastapi.staticfiles import StaticFiles     # noqa: PLC0415
+    from fastapi import FastAPI  # noqa: PLC0415
+    from fastapi.responses import JSONResponse  # noqa: PLC0415
+    from fastapi.staticfiles import StaticFiles  # noqa: PLC0415
 
     from xbrain.p5_gateway.rest.endpoints import fences_endpoint  # noqa: PLC0415
 
@@ -360,7 +358,7 @@ def build_app(
         runs in a worker thread -- never inline on the FastAPI event loop. A
         provider without query_tasks (a legacy/test seam) -> available:false empty
         so the panel greys rather than 500s."""
-        import asyncio                              # noqa: PLC0415
+        import asyncio  # noqa: PLC0415
         if scope not in ("current", "history"):
             return JSONResponse(
                 status_code=400,
@@ -373,7 +371,8 @@ def build_app(
         return await asyncio.to_thread(qt, scope, limit, before)
 
     from xbrain.p5_gateway.hmi.data_readers import (  # noqa: PLC0415
-        events_group, geo_group,
+        events_group,
+        geo_group,
     )
 
     @app.get("/api/fences/active", response_model=None)
@@ -402,7 +401,8 @@ def build_app(
     # A..F set -- adding keys there would break build_snapshot(**inputs)). Sources
     # not yet subscribed report available:false, never a fabricated body.
     from xbrain.p5_gateway.hmi.data_readers import (  # noqa: PLC0415
-        rest_list_endpoint, rest_object_endpoint,
+        rest_list_endpoint,
+        rest_object_endpoint,
     )
 
     def _rest() -> Dict[str, Any]:
@@ -473,8 +473,8 @@ def build_app(
     async def ws_snapshot(websocket: WebSocket) -> None:
         # The `WebSocket` type annotation is REQUIRED -- FastAPI injects the
         # connection by type, and without it the handshake is rejected 403.
-        import asyncio                          # noqa: PLC0415
-        import time                             # noqa: PLC0415
+        import asyncio  # noqa: PLC0415
+        import time  # noqa: PLC0415
         await websocket.accept()
         # Per-connection delta state: the last-sent snapshot for THIS client (a
         # late joiner must diff against what it has actually received, so this is
@@ -557,10 +557,10 @@ def start_in_thread(app, sockets: List[socket.socket]):
     sockets make_bound_sockets created -- the NET-C9 per-interface guarantee made
     at bind time is the one that actually serves, never widened here.
     """
-    import asyncio                                   # noqa: PLC0415
-    import threading                                 # noqa: PLC0415
+    import asyncio  # noqa: PLC0415
+    import threading  # noqa: PLC0415
 
-    import uvicorn                                    # noqa: PLC0415
+    import uvicorn  # noqa: PLC0415
 
     # ws="wsproto": uvicorn's legacy websockets_impl handshake is incompatible
     # with the websockets 16.x API present here (rejects the upgrade 403);

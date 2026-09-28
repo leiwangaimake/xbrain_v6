@@ -19,7 +19,9 @@ import pytest
 import yaml
 
 from xbrain.p4_agent.session.chitchat import (
-    ChitchatPresetError, ChitchatResponder, ChitchatState,
+    ChitchatPresetError,
+    ChitchatResponder,
+    ChitchatState,
 )
 
 pytestmark = pytest.mark.no_device

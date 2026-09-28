@@ -20,7 +20,9 @@ queued instead of answered -- the RED case here.
 from __future__ import annotations
 
 from xbrain.p4_agent.runtime.intent_dispatch import (
-    CMD_AUDIO_SPEAK, CMD_TASK, choose_key,
+    CMD_AUDIO_SPEAK,
+    CMD_TASK,
+    choose_key,
 )
 
 

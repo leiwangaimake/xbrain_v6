@@ -33,7 +33,6 @@ import pytest
 from xbrain.boot.freeze.assertions.k_quadruped_qc import run
 from xbrain.common.errors.exceptions import XbrainError
 
-
 # ---------------------------------------------------------------------------
 # Green scaffold: matches 13 S8.2 example values
 # ---------------------------------------------------------------------------

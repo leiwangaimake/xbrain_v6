@@ -24,8 +24,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from xbrain.p1_motion.fence.clip import (CompiledFence, CompiledPolygon, FenceConstants,
-                                         v_fence_mps)
+from tests.p1_motion.rns.scenes import healthy_status, snapshot, uniform_free
+from xbrain.p1_motion.fence.clip import (
+    CompiledFence,
+    CompiledPolygon,
+    FenceConstants,
+    v_fence_mps,
+)
 from xbrain.p1_motion.nav.health_factor import HealthView
 from xbrain.p1_motion.nav.host_gate import GateResult, fence_attribution
 from xbrain.p1_motion.nav.nav_tick import NavInputs, NavTick
@@ -33,7 +38,6 @@ from xbrain.p1_motion.nav.relmove_intake import RelMoveLimits, translate_relativ
 from xbrain.p1_motion.rns.source import RnsSource
 from xbrain.p1_motion.sources.arbiter_p1 import P1Arbiter
 from xbrain.p1_motion.sources.rns_avoid import RnsAvoidSource
-from tests.p1_motion.rns.scenes import healthy_status, snapshot, uniform_free
 
 pytestmark = pytest.mark.no_device
 

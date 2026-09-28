@@ -106,6 +106,7 @@ from typing import Dict, FrozenSet, List, Sequence, Tuple
 # level for this, so the only outcome is a raise that refuses the process start.
 from ..errors import E_QOS_VIOLATION
 from ..errors.exceptions import XbrainError
+
 # BLOCK is the block congestion-control literal, defined once in qos.py so the
 # QOS-C1 trigger, the set-clause prohibition and the messages there cannot drift
 # apart. Imported so the offender test compares against the same value the

@@ -151,10 +151,10 @@ from ..protocol.audio_8519 import (
     build_record_stop,
 )
 from ..protocol.lights_8529 import (
-    Lights8529Framer,
-    LightsStatus,
     MSG_ID_STATUS,
     STATUS_PAYLOAD_LEN,
+    Lights8529Framer,
+    LightsStatus,
     parse_status_payload,
     status_crc_ok,
 )

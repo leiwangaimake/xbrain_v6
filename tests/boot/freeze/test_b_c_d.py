@@ -28,13 +28,13 @@ import pytest
 import yaml
 
 from xbrain.boot.freeze.assertions._alias_table import (
-    BLACKLIST, REVERSE_ENTRIES,
+    BLACKLIST,
+    REVERSE_ENTRIES,
 )
 from xbrain.boot.freeze.assertions.b_no_duplicates import run as b_run
 from xbrain.boot.freeze.assertions.c_cross_file import run as c_run
 from xbrain.boot.freeze.assertions.d_identity import run as d_run
 from xbrain.common.errors.exceptions import XbrainError
-
 
 # ---------------------------------------------------------------------------
 # Scaffolding

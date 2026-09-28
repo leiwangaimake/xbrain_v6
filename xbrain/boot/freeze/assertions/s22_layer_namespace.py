@@ -130,25 +130,30 @@ duplicate B's logic and create drift risk).
 
 # os for L6 file path composition.
 import os
+
 # typing for annotations.
 from typing import Any, Dict, Iterable
 
 # Layer loader: L1-L5 raw trees via load_layers (production path);
 # L6 raw trees via load_l6_files. Both allow ctx override.
 from xbrain.boot.freeze.assertions._layer_loader import (
-    load_l6_files, load_layers,
+    load_l6_files,
+    load_layers,
 )
+
 # LAYERS carries the (allowed, excluded) prefix rules for L0-L5.
 # check_namespace is the same primitive assertion A uses.
 from xbrain.common.config.layers import LAYERS, check_namespace
+
 # flatten walks nested dicts to dotted paths, matching what
 # check_namespace expects.
 from xbrain.common.config.merge import flatten
+
 # E_CONFIG_INVALID by name, per CLAUDE.md 3.5.
 from xbrain.common.errors import E_CONFIG_INVALID
+
 # XbrainError base; S22 uses E_CONFIG_INVALID uniformly.
 from xbrain.common.errors.exceptions import XbrainError
-
 
 # Which top-level key each L6 file legitimately owns. Same shape
 # as _L6_FILES in _layer_loader.py but keyed by filename and mapped

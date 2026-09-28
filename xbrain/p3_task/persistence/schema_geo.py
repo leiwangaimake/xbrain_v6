@@ -42,7 +42,6 @@ so the whole geo tree is WGS84 (charging is unwired, so no integration ripple).
 
 from __future__ import annotations
 
-
 DDL_WAYPOINTS = """
 CREATE TABLE IF NOT EXISTS waypoints (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,

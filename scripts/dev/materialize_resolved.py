@@ -49,7 +49,6 @@ import shutil
 import sys
 from pathlib import Path
 
-
 DEFAULT_OUT = "/opt/xbrain_v6/data/run/resolved"
 BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
 

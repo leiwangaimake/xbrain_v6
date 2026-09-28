@@ -30,7 +30,6 @@ from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 from xbrain.p3_task.schedule.driver import scheduler_tick
 
-
 pytestmark = pytest.mark.no_device
 
 

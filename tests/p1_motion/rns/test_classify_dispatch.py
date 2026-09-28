@@ -16,9 +16,11 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p1_motion.rns.classify import (
-    behavior_class, dispatch_dynamic, is_static, usable_velocity,
+    behavior_class,
+    dispatch_dynamic,
+    is_static,
+    usable_velocity,
 )
-
 
 CM = {"car": "vehicle_dynamic", "chair": "block", "grass": "traverse"}
 

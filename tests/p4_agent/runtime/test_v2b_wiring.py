@@ -15,18 +15,29 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p4_agent.runtime.intent_dispatch import (
-    CMD_AUDIO_SPEAK, CMD_MOTION_INTENT, CMD_PAYLOAD, CMD_PTZ, CMD_TASK,
-    INTENT_TO_KEY, UnknownIntentDispatch,
-    build_payload, choose_key, dispatch,
+    CMD_AUDIO_SPEAK,
+    CMD_MOTION_INTENT,
+    CMD_PAYLOAD,
+    CMD_PTZ,
+    CMD_TASK,
+    INTENT_TO_KEY,
+    UnknownIntentDispatch,
+    build_payload,
+    choose_key,
+    dispatch,
 )
 from xbrain.p4_agent.runtime.turn_loop import (
-    MIC_TOPIC, naive_classify,
+    MIC_TOPIC,
+    naive_classify,
 )
 from xbrain.p4_agent.runtime.vad import (
-    VadConfig, VadConfigError, VadState, VadState_,
-    feed_frame, frame_energy,
+    VadConfig,
+    VadConfigError,
+    VadState,
+    VadState_,
+    feed_frame,
+    frame_energy,
 )
-
 
 pytestmark = pytest.mark.no_device
 

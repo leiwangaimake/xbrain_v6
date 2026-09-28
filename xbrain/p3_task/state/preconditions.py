@@ -32,7 +32,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 VALID_TYPES = frozenset({
     "patrol", "goto", "charge", "return_home", "standby", "teach", "follow",
 })

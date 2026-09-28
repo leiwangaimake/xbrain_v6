@@ -22,7 +22,10 @@ failure becomes, and when to stop hammering a dead service.
 
 from xbrain.p4_agent.ai_client.breaker import BreakerState, CircuitBreaker
 from xbrain.p4_agent.ai_client.errors_map import (
-    AS7_TIMEOUT_S, MappedError, map_status, map_transport_error,
+    AS7_TIMEOUT_S,
+    MappedError,
+    map_status,
+    map_transport_error,
 )
 
 __all__ = [

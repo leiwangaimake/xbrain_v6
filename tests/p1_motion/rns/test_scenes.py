@@ -14,10 +14,15 @@ otherwise), and the geometry-only src (no t_seg) drops bit0.
 
 from __future__ import annotations
 
-from xbrain.p1_motion.rns.types import SrcBit
 from tests.p1_motion.rns.scenes import (
-    healthy_status, one_object, snapshot, uniform_free, with_block, with_unknown,
+    healthy_status,
+    one_object,
+    snapshot,
+    uniform_free,
+    with_block,
+    with_unknown,
 )
+from xbrain.p1_motion.rns.types import SrcBit
 
 
 def test_uniform_free_all_bins_free():

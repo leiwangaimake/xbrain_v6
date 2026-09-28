@@ -73,12 +73,18 @@ sys.path.insert(0, ROOT)
 # insert above has to run before them, and moving them to the top would import
 # from whatever xbrain happens to be installed rather than this checkout.
 from xbrain.common.errors import E_QOS_VIOLATION  # noqa: E402
-from xbrain.common.zenoh.qos import (BLOCK, FROZEN_PROFILES,  # noqa: E402
-                                     load_qos_table)
 from xbrain.common.zenoh.publisher_thread_check import (  # noqa: E402
-    A1, ALL_ANTI_PATTERNS, ASSERTION_F_ANTI_PATTERNS, IN_PROCESS_ANTI_PATTERNS,
-    REALTIME_PRIORITY, MixedQosThreadError, PublisherThreadRegistry, _tags,
-    current_thread_name)
+    A1,
+    ALL_ANTI_PATTERNS,
+    ASSERTION_F_ANTI_PATTERNS,
+    IN_PROCESS_ANTI_PATTERNS,
+    REALTIME_PRIORITY,
+    MixedQosThreadError,
+    PublisherThreadRegistry,
+    _tags,
+    current_thread_name,
+)
+from xbrain.common.zenoh.qos import BLOCK, FROZEN_PROFILES, load_qos_table  # noqa: E402
 
 # The same golden document the resolver tests use: the 11 S2.4.7 profiles plus the
 # ordered bindings. Reused rather than duplicated so a drift in the bindings shows

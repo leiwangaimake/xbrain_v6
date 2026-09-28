@@ -22,10 +22,10 @@ from typing import Optional, Tuple
 
 import yaml as _yaml
 
+from xbrain.common.types.units import Mps
 from xbrain.p1_motion.rns.route import Mission
 from xbrain.p1_motion.rns.source import RnsSource
 from xbrain.p1_motion.rns.types import MissionKind, Origin
-from xbrain.common.types.units import Mps
 
 
 @dataclass
@@ -173,6 +173,7 @@ def test_construction_runs_startup_assertions():
     # W1 (review fix): a cfg violating D2 (leave_progress >= 2*r_eff) must
     # refuse construction; cfg without r_eff also refuses.
     import pytest
+
     from xbrain.p1_motion.rns.config import RnsConfigError
     bad = _cfg()
     bad["rns"]["wall_follow"]["leave_progress_m"] = 2.0   # >= 2*0.48
@@ -202,8 +203,8 @@ def test_wall_stall_counter_immune_to_suspension():
     # WALL_NO_PROGRESS. Simulate: enter wall state, stall 100 ticks, hold
     # suspended for a (virtual) minute, release -- the next wall tick must
     # NOT fail. mutant: revert to wall-clock stall -> reddens.
-    from xbrain.p1_motion.rns.wallfollow import Side, WallFollowState
     from xbrain.p1_motion.rns.types import NavState
+    from xbrain.p1_motion.rns.wallfollow import Side, WallFollowState
     s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
     s._state = NavState.WALL_FOLLOW
@@ -223,8 +224,8 @@ def test_wall_tick_survives_perception_dropout():
     # REVIEW R1-20 (3-pass audit): hugging + perception dropout (snap None)
     # dereferenced profile.d_free and CRASHED the tick. It must hold zero.
     # mutant: drop the None guard -> AttributeError -> reddens.
-    from xbrain.p1_motion.rns.wallfollow import Side, WallFollowState
     from xbrain.p1_motion.rns.types import NavState
+    from xbrain.p1_motion.rns.wallfollow import Side, WallFollowState
     s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
     s._state = NavState.WALL_FOLLOW
@@ -244,8 +245,9 @@ def test_escape_probe_reach_exceeds_smallness_threshold():
     # or shrink wall_end_dist's default reach under 4.0 -> reddens.
     import inspect
     import re
-    from xbrain.p1_motion.rns import source as src_mod
+
     from xbrain.p1_motion.rns import grid as grid_mod
+    from xbrain.p1_motion.rns import source as src_mod
     body = inspect.getsource(src_mod.RnsSource._enter_wall)
     m = re.search(r"left_end \+ right_end < ([0-9.]+)", body)
     assert m, "smallness verdict missing from _enter_wall"
@@ -283,6 +285,7 @@ def test_subgoal_keep_gate_is_the_physical_floor():
     # reddens.
     import inspect
     import re
+
     from xbrain.p1_motion.rns import source as src_mod
     body = inspect.getsource(src_mod.RnsSource._run_follow)
     i = body.index("A-HYS-2: drop NOW")
@@ -298,6 +301,7 @@ def test_end_hop_present_with_lenient_ratio():
     # mutant: remove the branch or tighten below 0.6 -> reddens.
     import inspect
     import re
+
     from xbrain.p1_motion.rns import source as src_mod
     body = inspect.getsource(src_mod.RnsSource._enter_wall)
     m = re.search(r"w_end < 1\.0 and w_cost < ([0-9.]+) \* o_cost", body)
@@ -313,6 +317,7 @@ def test_detour_stall_drop_present():
     # the stall branch or raise the tick threshold past 200 -> reddens.
     import inspect
     import re
+
     from xbrain.p1_motion.rns import source as src_mod
     body = inspect.getsource(src_mod.RnsSource._run_follow)
     m = re.search(r"self\._detour_stall_ticks > (\d+)", body)

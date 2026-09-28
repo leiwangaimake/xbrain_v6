@@ -24,7 +24,12 @@ from typing import Optional, Tuple
 import pytest
 import yaml
 
-from tests.p1_motion.rns.scenes import healthy_status, one_object, snapshot, uniform_free
+from tests.p1_motion.rns.scenes import (
+    healthy_status,
+    one_object,
+    snapshot,
+    uniform_free,
+)
 from xbrain.p1_motion.rns.inputs import PerceptionSnapshot, StatusMsg
 from xbrain.p1_motion.rns.route import Mission
 from xbrain.p1_motion.rns.source import RnsSource

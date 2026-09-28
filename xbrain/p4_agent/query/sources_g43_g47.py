@@ -31,7 +31,6 @@ from typing import Dict, Optional
 
 from xbrain.p4_agent.query.sources_g01_g24 import QueryBinding, QueryBindingError
 
-
 C_QUERY_IDS = ("G43", "G44", "G45", "G46", "G47")
 
 

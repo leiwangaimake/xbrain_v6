@@ -15,8 +15,12 @@ from __future__ import annotations
 
 import pytest
 
-from xbrain.p1_motion.nav.report_map import (ABORT_REASONS, ReportMapError,
-                                             event_severity, map_failure)
+from xbrain.p1_motion.nav.report_map import (
+    ABORT_REASONS,
+    ReportMapError,
+    event_severity,
+    map_failure,
+)
 from xbrain.p1_motion.rns.types import NavFailReason, NavFailure
 
 pytestmark = pytest.mark.no_device

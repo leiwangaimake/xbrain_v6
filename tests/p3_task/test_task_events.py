@@ -17,7 +17,8 @@ import pytest
 
 from xbrain.p3_task.state.machine import TRANSITIONS
 from xbrain.p3_task.state.task_events import (
-    _TRANSITION_EVENT, task_event_for_transition,
+    _TRANSITION_EVENT,
+    task_event_for_transition,
 )
 
 pytestmark = pytest.mark.no_device

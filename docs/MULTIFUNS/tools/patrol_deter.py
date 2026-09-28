@@ -22,8 +22,8 @@ import time
 
 sys.path.insert(0, "/opt/speaker/tools")   # dev box
 sys.path.insert(0, "/home/jack")           # Orin (probes deployed here)
-import probe_8519 as A   # noqa: E402  audio: framing + Opus + [42]/[31] + [14]
-import probe_8529 as L   # noqa: E402  lights: CRC + searchlight + red/blue frames
+import probe_8519 as A  # noqa: E402  audio: framing + Opus + [42]/[31] + [14]
+import probe_8529 as L  # noqa: E402  lights: CRC + searchlight + red/blue frames
 
 DEV = "192.168.144.38"
 CMD_VOLUME = 14
@@ -116,7 +116,7 @@ def ensure_siren(path, level, accent_hz, force):
     """
     if os.path.exists(path) and not force:
         return
-    import siren_gen as SG   # noqa: E402
+    import siren_gen as SG  # noqa: E402
     pcm = SG.build_siren(SG.FS_DEFAULT, 6.0, "combo", 600.0, 1500.0,
                          4.0, 0.30, 3.5, 2.5, accent_hz, 0.22, level=level)
     SG.write_wav(path, pcm, SG.FS_DEFAULT)

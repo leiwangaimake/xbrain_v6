@@ -10,11 +10,11 @@ INF-CI-2 variant 2 -- File field mismatch check in header_lint.
 """
 
 
+import os
 import subprocess
 import sys
-from pathlib import Path
 import tempfile
-import os
+from pathlib import Path
 
 # Load header_lint by path.
 LINT_PATH = Path(__file__).parent.parent.parent / "scripts" / "lint" / "header_lint.py"

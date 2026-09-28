@@ -149,7 +149,8 @@ def test_a13_retired_profiles_are_refused_by_the_builder(profile):
     """U33 删除了 cruise / transit; 18 S3.0 要求 GBNF 与 schema 两侧都拒,
     NO 不得映射成 patrol -- 与 HMI W2 的 speed_profile 同一条规矩. """
     from xbrain.p4_agent.runtime.mode_request import (
-        ModeRequestError, to_mode_command,
+        ModeRequestError,
+        to_mode_command,
     )
     with pytest.raises(ModeRequestError):
         to_mode_command("set_speed_profile", slots={"profile": profile},

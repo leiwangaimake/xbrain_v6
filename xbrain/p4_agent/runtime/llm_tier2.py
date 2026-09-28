@@ -40,7 +40,9 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from xbrain.p4_agent.gateway.gpu_token import (
-    GpuTokenState, release, try_admit,
+    GpuTokenState,
+    release,
+    try_admit,
 )
 
 

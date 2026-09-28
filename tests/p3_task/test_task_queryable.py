@@ -24,7 +24,10 @@ import pytest_asyncio
 from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 from xbrain.p3_task.query.queryable import (
-    DEFAULT_LIMIT, MAX_LIMIT, answer_task_query, parse_query_params,
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    answer_task_query,
+    parse_query_params,
 )
 
 pytestmark = pytest.mark.no_device

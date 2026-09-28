@@ -43,8 +43,9 @@ Phrases with parameter placeholders like 'N 米' / 'N 度' are kept
 verbatim -- the user substitutes a real number at test time.
 """
 from __future__ import annotations
-import re
+
 import pathlib
+import re
 import sys
 
 DOCS = [

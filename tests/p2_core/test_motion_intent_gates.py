@@ -28,10 +28,18 @@ import math
 import pytest
 
 from xbrain.common.errors import (
-    E_BUSY, E_CAPABILITY, E_LOCKED, E_NO_HEADING, E_SCHEMA, E_UNHEALTHY,
+    E_BUSY,
+    E_CAPABILITY,
+    E_LOCKED,
+    E_NO_HEADING,
+    E_SCHEMA,
+    E_UNHEALTHY,
 )
 from xbrain.p2_core.runtime.motion_intent_wiring import (
-    MotionLimits, evaluate, parse_intent_envelope, to_relative_move,
+    MotionLimits,
+    evaluate,
+    parse_intent_envelope,
+    to_relative_move,
 )
 
 pytestmark = pytest.mark.no_device

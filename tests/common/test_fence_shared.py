@@ -13,8 +13,8 @@ p1_motion 自算 crc32 比对(11 S9A.2"接收方必须自算比对")与报警区
 crc32 跨进程不一致, 现象与网络坏不可区分).
 """
 
-from xbrain.common.fence.geom import (fence_set_crc32 as shared_crc32,
-                                       point_in_polygon as shared_pip)
+from xbrain.common.fence.geom import fence_set_crc32 as shared_crc32
+from xbrain.common.fence.geom import point_in_polygon as shared_pip
 
 
 def test_p3_symbols_are_the_shared_ones_not_a_copy():

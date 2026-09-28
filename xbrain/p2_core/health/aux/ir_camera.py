@@ -43,7 +43,6 @@ from typing import List
 
 from xbrain.common.errors import E_UNHEALTHY
 
-
 IR_UNAVAILABLE_ERR = E_UNHEALTHY
 IR_UNAVAILABLE_DETAIL = {"item": "cam_ptz_ir"}
 

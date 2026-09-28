@@ -31,10 +31,15 @@ import pytest
 import pytest_asyncio
 
 from xbrain.common.errors import (
-    E_BUSY, E_NAME_CONFLICT, E_TEACH_GEOMETRY, E_TEACH_QUALITY, E_TEACH_STATE,
+    E_BUSY,
+    E_NAME_CONFLICT,
+    E_TEACH_GEOMETRY,
+    E_TEACH_QUALITY,
+    E_TEACH_STATE,
 )
 from xbrain.p3_task.persistence.schema_geo import (
-    FENCE_DB_STATEMENTS, GEO_DB_STATEMENTS,
+    FENCE_DB_STATEMENTS,
+    GEO_DB_STATEMENTS,
 )
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 from xbrain.p3_task.teach.runtime import TeachRuntime

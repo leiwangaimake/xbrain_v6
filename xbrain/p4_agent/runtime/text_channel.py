@@ -30,21 +30,23 @@ here, next to the channel token.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import json
 import time
+from dataclasses import dataclass, field
 from typing import Any, List, Mapping, Optional, Tuple
 
 from xbrain.p4_agent.classifier.keyword_matcher import KeywordMatcher
 from xbrain.p4_agent.registry.channel_permission import (
-    ChannelAdmissionError, channel_admission,
+    ChannelAdmissionError,
+    channel_admission,
 )
 from xbrain.p4_agent.runtime.intent_dispatch import CMD_AUDIO_SPEAK
 from xbrain.p4_agent.runtime.orchestrator_turn import decision_to_publishes
 from xbrain.p4_agent.runtime.turn_orchestrator import (
-    OrchestratorSession, TurnDecision, TurnOrchestrator,
+    OrchestratorSession,
+    TurnDecision,
+    TurnOrchestrator,
 )
-
 
 # cmd/voice_text channel closed set (11 S8.7.5).
 _TEXT_CHANNELS = frozenset({"cloud", "wecom", "hmi"})

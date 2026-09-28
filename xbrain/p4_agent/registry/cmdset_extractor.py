@@ -23,7 +23,6 @@ from __future__ import annotations
 import re
 from typing import Dict, List
 
-
 # 18 S13.1 row pattern. Rows look like:
 #   | A05 | move_forward | fastpath | L1a |
 #   | E01 | ptz_move    | fastpath | L1a |

@@ -48,7 +48,6 @@ import os
 import re
 from typing import Optional
 
-
 # ONVIF XML namespaces (report S4.3).
 NS = {
     "s": "http://www.w3.org/2003/05/soap-envelope",

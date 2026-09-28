@@ -23,7 +23,6 @@ import pytest
 
 from xbrain.p5_gateway.outbound.state_projection import task_item
 
-
 # INF-TS-1: 纯单测, 不碰设备(无 zenohd / 无底盘 / 无 ORIN 专属硬件).
 pytestmark = pytest.mark.no_device
 

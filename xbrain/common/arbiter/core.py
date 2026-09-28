@@ -71,15 +71,28 @@ from typing import Dict, List, Optional
 # The shared error library and the shared closed sets. Bare names, never string
 # literals (CLAUDE.md 3.5): errors.E_BUSY is a name, "E_BUSY" would be a second
 # spelling that only disagrees during integration.
-from xbrain.common import errors                    # E_BUSY / E_ARB_NO_SOURCE / OK
-from xbrain.common.enums import (                   # closed-set validators
-    ARB_SUSPENDED, DOMAIN, RELEASE_REASON,
+from xbrain.common import errors  # E_BUSY / E_ARB_NO_SOURCE / OK
+from xbrain.common.enums import (  # closed-set validators
+    ARB_SUSPENDED,
+    DOMAIN,
+    RELEASE_REASON,
 )
 
-from .model import (                                # the frozen value layer
-    ArbAction, ArbEvent, FORCED_PREEMPT_MAX, FORCED_PREEMPT_WINDOW_MS,
-    Grant, GrantResult, Holder, IMMEDIATE_GRACE_MS,
-    LastChange, Preempt, PreemptPolicy, Request, SourceSnapshot, SourceSpec,
+from .model import (  # the frozen value layer
+    FORCED_PREEMPT_MAX,
+    FORCED_PREEMPT_WINDOW_MS,
+    IMMEDIATE_GRACE_MS,
+    ArbAction,
+    ArbEvent,
+    Grant,
+    GrantResult,
+    Holder,
+    LastChange,
+    Preempt,
+    PreemptPolicy,
+    Request,
+    SourceSnapshot,
+    SourceSpec,
     WaiterSnapshot,
 )
 

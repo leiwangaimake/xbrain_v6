@@ -21,7 +21,6 @@ from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 from xbrain.p3_task.schedule.driver import apply_motion_result, scheduler_tick
 
-
 pytestmark = pytest.mark.no_device
 
 

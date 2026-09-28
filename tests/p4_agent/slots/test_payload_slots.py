@@ -14,7 +14,9 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p4_agent.slots.payload_slots import (
-    parse_light_level, parse_strobe_mode, parse_volume,
+    parse_light_level,
+    parse_strobe_mode,
+    parse_volume,
 )
 
 pytestmark = pytest.mark.no_device

@@ -14,13 +14,17 @@ free). Each test names its mutant (CLAUDE.md 3.3).
 
 from __future__ import annotations
 
+from tests.p1_motion.rns.scenes import uniform_free, with_block, with_unknown
 from xbrain.p1_motion.rns.grid import (
-    bin_needs_seg_speed_cap, forward_min_d_free, fuse_bin, profile_age_ms,
-    profile_speed_limited, profile_zero_speed, seg_stale,
+    bin_needs_seg_speed_cap,
+    forward_min_d_free,
+    fuse_bin,
+    profile_age_ms,
+    profile_speed_limited,
+    profile_zero_speed,
+    seg_stale,
 )
 from xbrain.p1_motion.rns.types import Cell, SrcBit
-from tests.p1_motion.rns.scenes import uniform_free, with_block, with_unknown
-
 
 TG = SrcBit.SEG | SrcBit.GEOM       # both channels back it
 G_ONLY = SrcBit.GEOM                # geometry only, no T

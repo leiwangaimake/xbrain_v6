@@ -55,12 +55,15 @@ from typing import Any, Dict
 # _layer_loader gives both load_l6_files (for the L6 side of N/O) and
 # load_layers (for the fresh-overlay path when ctx has no overlay yet).
 from xbrain.boot.freeze.assertions._layer_loader import (
-    load_l6_files, load_layers,
+    load_l6_files,
+    load_layers,
 )
+
 # build_overlay used in the isolated-caller fallback path (unit tests
 # that skip A). Production ORD-1 has A -> ... -> G -> N/O, so overlay
 # is normally present.
 from xbrain.common.config import build_overlay
+
 # E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
 # imported by name from xbrain.common.errors instead of
 # spelled as a string literal. CLAUDE.md 3.5 forbids literal

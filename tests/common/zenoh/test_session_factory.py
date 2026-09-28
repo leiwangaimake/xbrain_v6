@@ -52,10 +52,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 sys.path.insert(0, ROOT)
 
 from xbrain.common.errors.exceptions import ClosedSetViolation  # noqa: E402
-from xbrain.common.zenoh import (PLANE_GEN, PLANE_RT,  # noqa: E402
-                                 TRANSPORT_PLANES, build_session_config,
-                                 parse_plane, session_config_document,
-                                 session_config_json5)
+from xbrain.common.zenoh import (  # noqa: E402
+    PLANE_GEN,
+    PLANE_RT,
+    TRANSPORT_PLANES,
+    build_session_config,
+    parse_plane,
+    session_config_document,
+    session_config_json5,
+)
 
 #: Transcribed from 11, not imported. See the header for why that is the point.
 #: test_contract_pins_the_two_endpoints holds this table against the contract.

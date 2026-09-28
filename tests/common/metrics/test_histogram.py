@@ -15,7 +15,7 @@ a gate that has nothing to run against.
 
 import pytest
 
-from xbrain.common.metrics import LatencyHistogram, MetricRegistry, REGISTRY
+from xbrain.common.metrics import REGISTRY, LatencyHistogram, MetricRegistry
 from xbrain.common.metrics import histogram as histmod
 
 

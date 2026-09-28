@@ -17,8 +17,13 @@ from __future__ import annotations
 
 import pytest
 
-from xbrain.p1_motion.fence.clip import (CompiledFence, CompiledPolygon, FenceConstants,
-                                         FenceEval, evaluate)
+from xbrain.p1_motion.fence.clip import (
+    CompiledFence,
+    CompiledPolygon,
+    FenceConstants,
+    FenceEval,
+    evaluate,
+)
 from xbrain.p1_motion.fence.episodes import FenceEpisodeTracker
 
 pytestmark = pytest.mark.no_device

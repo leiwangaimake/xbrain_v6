@@ -39,8 +39,7 @@ import re
 from typing import Any, Dict, List
 
 from ...common import errors
-from ..outbound.error_map import (CODE_REQUIRED_FIELD, build_error_fields,
-                                  envelope_error)
+from ..outbound.error_map import CODE_REQUIRED_FIELD, build_error_fields, envelope_error
 from .cloud_inbound import InboundReject
 
 # --- v2.0 S1.2 ID 正则. 地理 ID 另有更严的正则(w-/r-/f-), 这是通用 ID. ------

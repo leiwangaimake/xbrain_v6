@@ -28,9 +28,10 @@ import pytest
 from xbrain.p5_gateway.hmi import data_readers as D
 from xbrain.p5_gateway.hmi.ui_config import UiConfigError, build_ui_config
 from xbrain.p5_gateway.hmi.web_server import (
-    HmiBindError, make_bound_sockets, parse_bind_entry,
+    HmiBindError,
+    make_bound_sockets,
+    parse_bind_entry,
 )
-
 
 # -- NET-C9: never bind 0.0.0.0 ---------------------------------------------
 

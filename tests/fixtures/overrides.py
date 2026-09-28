@@ -34,7 +34,6 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-
 NULL_OVERRIDES: Dict[str, Any] = {}
 # 2026-09-12 (10 S5.4.7, user ruling): the null-filling values moved OUT of this
 # dict into configs/*_sim.yaml variant files (common_sim.yaml, models/

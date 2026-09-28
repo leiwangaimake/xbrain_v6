@@ -16,10 +16,12 @@ BIZ-P2-30 -- speech_presets loader + BIT announce sequence.
 import pytest
 
 from xbrain.p2_core.speech.presets import (
-    PresetSet, SpeechPreset, SpeechPresetError,
-    build_announce_sequence, parse_presets,
+    PresetSet,
+    SpeechPreset,
+    SpeechPresetError,
+    build_announce_sequence,
+    parse_presets,
 )
-
 
 pytestmark = pytest.mark.no_device
 

@@ -34,14 +34,20 @@ import pytest
 import pytest_asyncio
 
 from xbrain.common.errors import (
-    E_GEO_CONFLICT, E_GEO_INVALID, E_NAME_CONFLICT, E_NOT_FOUND, E_SCHEMA,
+    E_GEO_CONFLICT,
+    E_GEO_INVALID,
+    E_NAME_CONFLICT,
+    E_NOT_FOUND,
+    E_SCHEMA,
 )
 from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
 from xbrain.p3_task.ingest.geo_write import (
-    GEO_EVENT_INFO, GEO_EVENT_WARN,
+    GEO_EVENT_INFO,
+    GEO_EVENT_WARN,
 )
 from xbrain.p3_task.persistence.schema_geo import (
-    FENCE_DB_STATEMENTS, GEO_DB_STATEMENTS,
+    FENCE_DB_STATEMENTS,
+    GEO_DB_STATEMENTS,
 )
 
 pytestmark = pytest.mark.no_device

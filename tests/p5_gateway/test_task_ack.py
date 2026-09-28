@@ -63,8 +63,9 @@ def test_accepted_is_derived_not_supplied():
     机器人什么都没做. v2.0 S3.1 给了对应关系, 这里让代码去推而不是让
     调用方传.
     """
-    from xbrain.p5_gateway.outbound.task_ack import build_ack
     import inspect
+
+    from xbrain.p5_gateway.outbound.task_ack import build_ack
 
     sig = inspect.signature(build_ack)
     assert "accepted" not in sig.parameters, (

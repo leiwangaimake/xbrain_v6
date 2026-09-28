@@ -24,9 +24,13 @@ from typing import Any, Dict, Iterator, Tuple
 import pytest
 import yaml
 
-from xbrain.boot.freeze.assertions._layer_loader import (VARIANTS, load_l6_files,
-                                                         load_layers, variant_of,
-                                                         variant_sibling)
+from xbrain.boot.freeze.assertions._layer_loader import (
+    VARIANTS,
+    load_l6_files,
+    load_layers,
+    variant_of,
+    variant_sibling,
+)
 from xbrain.common.config.schemas.registry import SCHEMAS, variant_base
 from xbrain.common.errors.exceptions import XbrainError
 

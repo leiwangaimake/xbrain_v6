@@ -15,7 +15,6 @@ import pytest
 
 from xbrain.p5_gateway.event.comm_events import comm_event_for_level
 
-
 pytestmark = pytest.mark.no_device
 
 

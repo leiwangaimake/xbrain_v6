@@ -129,16 +129,21 @@ Skip semantics:
 
 # os for walking the configs tree.
 import os
+
 # typing for annotations.
 from typing import Any, Dict, Iterable, Optional
 
 # The schema registry + primitive validator + shared error class.
 from xbrain.common.config.schemas.registry import (
-    CONFIG_FILES, SCHEMAS, validate_config,
+    CONFIG_FILES,
+    SCHEMAS,
+    validate_config,
 )
 from xbrain.common.config.schemas.spec import SchemaError
+
 # E_CONFIG_INVALID by name, per CLAUDE.md 3.5.
 from xbrain.common.errors import E_CONFIG_INVALID
+
 # XbrainError base -- S10 uses E_CONFIG_INVALID uniformly for
 # every failure mode.
 from xbrain.common.errors.exceptions import XbrainError

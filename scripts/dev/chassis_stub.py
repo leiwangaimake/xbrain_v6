@@ -35,7 +35,6 @@ import sys
 import threading
 import time
 
-
 DEFAULT_PORT = 30004
 DEFAULT_HOST = "0.0.0.0"
 LOG_PATH = "/opt/xbrain_v6/logs/chassis_stub.log"

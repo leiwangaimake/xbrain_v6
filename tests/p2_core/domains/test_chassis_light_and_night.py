@@ -16,13 +16,16 @@ BIZ-P2-27 + P2-28 -- chassis light no-merge + night_patrol RE-7.
 import pytest
 
 from xbrain.p2_core.domains.chassis_light import (
-    CHASSIS_LIGHT_PATTERNS, ChassisLightCommand,
-    guard_no_merge, is_payload_light_key,
+    CHASSIS_LIGHT_PATTERNS,
+    ChassisLightCommand,
+    guard_no_merge,
+    is_payload_light_key,
 )
 from xbrain.p2_core.suspicion.night_patrol import (
-    NightPatrolCfg, effective_speed_limit_enabled, should_emit_advisory,
+    NightPatrolCfg,
+    effective_speed_limit_enabled,
+    should_emit_advisory,
 )
-
 
 pytestmark = pytest.mark.no_device
 

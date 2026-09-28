@@ -17,9 +17,13 @@ from __future__ import annotations
 
 import pytest
 
-from xbrain.p1_motion.nav.route_intake import (MAX_POINTS, RouteAssembler,
-                                               RouteClear, RouteIntakeError,
-                                               RouteSet)
+from xbrain.p1_motion.nav.route_intake import (
+    MAX_POINTS,
+    RouteAssembler,
+    RouteClear,
+    RouteIntakeError,
+    RouteSet,
+)
 from xbrain.p1_motion.path.local_frame import M_PER_DEG, LocalFrame
 
 pytestmark = pytest.mark.no_device

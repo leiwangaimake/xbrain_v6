@@ -33,7 +33,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List
 
-
 # 18-A §2 expansion pass. Values are AT-LEAST -- production
 # intents.yaml may add more synonyms, but every keyword here must
 # appear in intents.yaml's keywords[] for that intent (bidirectional

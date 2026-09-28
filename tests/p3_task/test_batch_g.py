@@ -18,20 +18,25 @@ import pytest
 
 from xbrain.p3_task.config.assertions import (
     FreezeAssertionFailure,
-    check_a_no_residuals, check_b_no_alias_keys,
-    check_c_retention_and_fence_relation, check_j_config_root,
+    check_a_no_residuals,
+    check_b_no_alias_keys,
+    check_c_retention_and_fence_relation,
+    check_j_config_root,
     run_all_assertions,
 )
 from xbrain.p3_task.lifecycle.estop import EstopController
 from xbrain.p3_task.lifecycle.failure import (
-    UnknownFailureKind, classify,
+    UnknownFailureKind,
+    classify,
 )
 from xbrain.p3_task.lifecycle.shutdown import ShutdownController
 from xbrain.p3_task.persistence.retention import (
-    RetentionOrderViolation, RetentionWindows,
-    should_checkpoint, tombstone_safe_to_hard_delete, validate_windows,
+    RetentionOrderViolation,
+    RetentionWindows,
+    should_checkpoint,
+    tombstone_safe_to_hard_delete,
+    validate_windows,
 )
-
 
 pytestmark = pytest.mark.no_device
 

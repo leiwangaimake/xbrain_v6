@@ -17,9 +17,9 @@ per 3.3.
 import pytest
 
 from xbrain.p5_gateway.runtime.main_wiring import (
-    _event_seg_index, _normalise_event,
+    _event_seg_index,
+    _normalise_event,
 )
-
 
 pytestmark = pytest.mark.no_device
 

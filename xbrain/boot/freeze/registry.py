@@ -91,11 +91,11 @@ that keeps MANIFEST honest would silently pass.
 # defend ORD-1 -- a caller cannot swap a runner or reorder the registry
 # without a monkeypatch (tests use exactly that; production code cannot).
 from dataclasses import dataclass, field
+
 # Typing imports for AssertSpec (Any/Callable/Optional in the runner sig,
 # Tuple for the immutable registry, Mapping stays around for future runners
 # that need read-only dict-like ctx).
 from typing import Any, Callable, Mapping, Optional, Tuple
-
 
 # Real bodies live under xbrain/boot/freeze/assertions/. Import them here
 # so the registry rows can point at the callable directly. Stubs (below)
@@ -118,9 +118,9 @@ from typing import Any, Callable, Mapping, Optional, Tuple
 # import list.
 from xbrain.boot.freeze.assertions.a_references import run as _a_run
 from xbrain.boot.freeze.assertions.b_no_duplicates import run as _b_run
+from xbrain.boot.freeze.assertions.c6_mr1_margins import run as _c6mr1_run
 from xbrain.boot.freeze.assertions.c_cross_file import run as _c_run
 from xbrain.boot.freeze.assertions.d_identity import run as _d_run
-from xbrain.boot.freeze.assertions.c6_mr1_margins import run as _c6mr1_run
 from xbrain.boot.freeze.assertions.e_hot_update_disjoint import run as _e_run
 from xbrain.boot.freeze.assertions.f_qos_and_port import run as _f_run
 from xbrain.boot.freeze.assertions.fv_org_enu import run as _fv_org_run
@@ -133,10 +133,14 @@ from xbrain.boot.freeze.assertions.l_bit_exemption import run as _l_run
 from xbrain.boot.freeze.assertions.m_required import run as _m_run
 from xbrain.boot.freeze.assertions.materialise import run as _materialise_run
 from xbrain.boot.freeze.assertions.n_o_identities import (
-    run_n as _n_run, run_o as _o_run,
+    run_n as _n_run,
+)
+from xbrain.boot.freeze.assertions.n_o_identities import (
+    run_o as _o_run,
 )
 from xbrain.boot.freeze.assertions.s10_schema import run as _s10_run
 from xbrain.boot.freeze.assertions.s22_layer_namespace import run as _s22_run
+
 
 # Every assertion body lives in a CFG-FZ-N item's own file eventually. Until
 # that item lands, the stub below stands in -- visible, not silent. The stub

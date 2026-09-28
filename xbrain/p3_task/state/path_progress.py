@@ -64,7 +64,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-
 #: 11 S3.5B `state` closed set. An off-set value RAISES (CLAUDE.md 3.5: no
 #: silent pass-through, no "interpret the unknown value as the nearest known
 #: one"). The two v2.0 additions matter: `failed` is an RNS navigation failure

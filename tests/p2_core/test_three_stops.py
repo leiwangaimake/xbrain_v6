@@ -59,7 +59,7 @@ def test_soft_estop_disarms_domain1():
 
     MUTATION: apply_stop 里删掉 arb_suspend 调用 -> 这里红.
     """
-    from xbrain.p2_core.three_stops import (StopEvent, StopReason, apply_stop)
+    from xbrain.p2_core.three_stops import StopEvent, StopReason, apply_stop
 
     arb, strobe, emit, _ev = _harness()
     assert arb.suspended() is None                       # 基线: 未缴械
@@ -78,7 +78,7 @@ def test_the_strobe_is_forced_on_but_domain4_is_not_disarmed():
 
     MUTATION: apply_stop 里删掉 strobe_state.active = True -> 这里红.
     """
-    from xbrain.p2_core.three_stops import (StopEvent, StopReason, apply_stop)
+    from xbrain.p2_core.three_stops import StopEvent, StopReason, apply_stop
 
     arb, strobe, emit, _ev = _harness()
     assert strobe.active is False
@@ -93,7 +93,7 @@ def test_a_stop_emits_one_audit_event_naming_the_reason():
 
     MUTATION: apply_stop 里 emit 的 detail.reason 写死 -> 三停区分那条红.
     """
-    from xbrain.p2_core.three_stops import (StopEvent, StopReason, apply_stop)
+    from xbrain.p2_core.three_stops import StopEvent, StopReason, apply_stop
 
     arb, strobe, emit, events = _harness()
 
@@ -111,7 +111,7 @@ def test_all_three_stops_share_one_branch_differing_only_in_reason():
     hes 与 cmd_timeout 走同一个 apply_stop, 结果只有 detail.reason 不同 --
     域1 都缴械, 域4 都爆闪. 一个为 hes 单开分支的实现会在两条路径间漂移.
     """
-    from xbrain.p2_core.three_stops import (StopEvent, StopReason, apply_stop)
+    from xbrain.p2_core.three_stops import StopEvent, StopReason, apply_stop
 
     for reason, want in ((StopReason.HES, "hes"),
                          (StopReason.CMD_TIMEOUT, "cmd_timeout")):
@@ -129,7 +129,7 @@ def test_a_repeated_estop_under_the_same_cmd_id_is_idempotent():
     第二次已缴械, arb_suspend 返回 None(不再发第二条 suspend 审计).
     验证 apply_stop 不因二次调用而改变缴械态或造出矛盾.
     """
-    from xbrain.p2_core.three_stops import (StopEvent, StopReason, apply_stop)
+    from xbrain.p2_core.three_stops import StopEvent, StopReason, apply_stop
 
     arb, strobe, emit, _ev = _harness()
     apply_stop(StopEvent(StopReason.SOFT_ESTOP, "e-1", 1000), arb, strobe, emit)
@@ -146,8 +146,12 @@ def test_rearm_clears_the_disarm_and_the_strobe():
     MUTATION: apply_rearm 里删掉 arb_rearm -> suspended 那条红.
     MUTATION: apply_rearm 里删掉 strobe.active = False -> strobe 那条红.
     """
-    from xbrain.p2_core.three_stops import (StopEvent, StopReason, apply_rearm,
-                                            apply_stop)
+    from xbrain.p2_core.three_stops import (
+        StopEvent,
+        StopReason,
+        apply_rearm,
+        apply_stop,
+    )
 
     arb, strobe, emit, events = _harness()
     apply_stop(StopEvent(StopReason.SOFT_ESTOP, "e-1", 1000), arb, strobe, emit)

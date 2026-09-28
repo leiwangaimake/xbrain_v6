@@ -28,8 +28,10 @@ Every test uses a tmp_path model tree; no dpkg / nvidia-smi is called.
 # test scaffold is self-consistent (no fixed hex strings that would
 # drift as fixture files change).
 import hashlib
+
 # json for writing MODEL.json into the scaffold.
 import json
+
 # os for path joins + symlink calls.
 import os
 
@@ -37,7 +39,6 @@ import pytest
 
 from xbrain.boot.freeze.assertions.i_model_and_engine import run
 from xbrain.common.errors.exceptions import XbrainError
-
 
 # ---------------------------------------------------------------------------
 # Scaffolding helpers

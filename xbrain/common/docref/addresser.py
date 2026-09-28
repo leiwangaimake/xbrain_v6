@@ -28,7 +28,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-
 BOOK_ID_RE = re.compile(r"^(0[0-9]|1[0-9]|2[0-9]|99|1[0-9]-[A-Z])$")
 
 

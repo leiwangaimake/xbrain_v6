@@ -41,7 +41,9 @@ from typing import Callable, Dict, Optional
 
 from xbrain.p4_agent.classifier.mission_select import select_mission
 from xbrain.p4_agent.gbnf.generator import (
-    GbnfInvariantError, generate_grammar, project_mission_intents,
+    GbnfInvariantError,
+    generate_grammar,
+    project_mission_intents,
 )
 from xbrain.p4_agent.registry.missions import EXPECTED_EMISSIONS
 from xbrain.p4_agent.runtime.llm_tier2 import Tier2Error, classify_unknown

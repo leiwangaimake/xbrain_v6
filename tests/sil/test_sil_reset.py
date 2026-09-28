@@ -30,8 +30,8 @@ pytestmark = pytest.mark.no_device
 @pytest.fixture(scope="module")
 def srv():
     pytest.importorskip("fastapi")
-    from fastapi.testclient import TestClient
     import sil_server
+    from fastapi.testclient import TestClient
     return sil_server, TestClient(sil_server.app)
 
 

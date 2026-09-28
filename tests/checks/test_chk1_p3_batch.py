@@ -40,29 +40,51 @@ from pathlib import Path
 
 import pytest
 
-from xbrain.common.errors import (
-    E_CHANNEL_DENIED, E_CONFIG_LOCKED, E_CONFIRM_REQUIRED,
-)
 from xbrain.common.config.hotreload.dispatch import (
-    ALLOWED_ORIGINS, RESPONDING_PROCESSES, TOKEN_ISSUER,
+    ALLOWED_ORIGINS,
+    RESPONDING_PROCESSES,
+    TOKEN_ISSUER,
     WHITELIST_SCOPES,
-    build_ack, check_request, fanout_ack,
+    build_ack,
+    check_request,
+    fanout_ack,
+)
+from xbrain.common.errors import (
+    E_CHANNEL_DENIED,
+    E_CONFIG_LOCKED,
+    E_CONFIRM_REQUIRED,
 )
 from xbrain.p3_task.geo.manifest import (
-    ALLOWED_RESYNC_ORIGINS, CATALOG_HASH_HEX_LEN, GeoItem,
-    MANIFEST_HEARTBEAT_PERIOD_MS, ManifestSchemaError,
-    RevRewindForbidden, SYNC_BRANCH_GET, SYNC_BRANCH_S4_ACCEPT_DELETE,
-    SYNC_BRANCH_TOMBSTONE, SYNC_BRANCH_UPSERT,
-    build_snapshot, catalog_hash, check_resync_origin,
-    check_rev_monotone, classify_sync, prune_skip_dirty,
+    ALLOWED_RESYNC_ORIGINS,
+    CATALOG_HASH_HEX_LEN,
+    MANIFEST_HEARTBEAT_PERIOD_MS,
+    SYNC_BRANCH_GET,
+    SYNC_BRANCH_S4_ACCEPT_DELETE,
+    SYNC_BRANCH_TOMBSTONE,
+    SYNC_BRANCH_UPSERT,
+    GeoItem,
+    ManifestSchemaError,
+    RevRewindForbidden,
+    build_snapshot,
+    catalog_hash,
+    check_resync_origin,
+    check_rev_monotone,
+    classify_sync,
+    prune_skip_dirty,
 )
 from xbrain.p3_task.geo.snapshot import (
-    RestoreCoordinator, RestoreWithoutResyncError,
-    SNAPSHOT_STEP, SnapshotConfigError, SnapshotSink,
-    crossed_multiples, latest_snapshot_rev, list_snapshots,
-    restore_from_snapshot, snapshot_path, write_snapshot,
+    SNAPSHOT_STEP,
+    RestoreCoordinator,
+    RestoreWithoutResyncError,
+    SnapshotConfigError,
+    SnapshotSink,
+    crossed_multiples,
+    latest_snapshot_rev,
+    list_snapshots,
+    restore_from_snapshot,
+    snapshot_path,
+    write_snapshot,
 )
-
 
 pytestmark = pytest.mark.no_device
 

@@ -23,12 +23,21 @@ Each behaviour is paired with a mutant per CLAUDE.md 3.3:
 import pytest
 
 from xbrain.common.arbiter import (
-    Arbiter, ArbAction, PreemptPolicy, Request, SourceSpec,
-    DEDUP_EXEMPT, DEDUP_WINDOW_S, SEVERITY_BY_ACTION,
-    merge_audit_window, render_audit_event, render_domain_state, severity_of,
+    DEDUP_EXEMPT,
+    DEDUP_WINDOW_S,
+    SEVERITY_BY_ACTION,
+    ArbAction,
+    Arbiter,
+    PreemptPolicy,
+    Request,
+    SourceSpec,
+    merge_audit_window,
+    render_audit_event,
+    render_domain_state,
+    severity_of,
 )
-from xbrain.common.arbiter.model import ArbEvent
 from xbrain.common.arbiter import audit as audit_mod
+from xbrain.common.arbiter.model import ArbEvent
 
 
 def _event(action, domain="speaker", mono_ms=1000, gen=1, detail=None):

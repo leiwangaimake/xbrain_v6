@@ -159,6 +159,7 @@ def test_list_by_priority_filters_terminal_states():
     变异体: 去掉 WHERE 子句 => 本条红.
     """
     import inspect
+
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
     src = inspect.getsource(TasksDAO.list_by_priority)
     assert "WHERE state IN" in src, "调度取数没有状态过滤"
@@ -234,6 +235,7 @@ def test_preempt_is_suspend_not_cancel():
     变异体: preempt_task 的 SQL 写 state='cancelled' => 本条红.
     """
     import inspect
+
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
     src = inspect.getsource(TasksDAO.preempt_task)
     assert "state='suspended'" in src, (
@@ -262,6 +264,7 @@ def test_preempt_kind_is_fixed_not_caller_supplied():
     变异体: 给 preempt_task 加一个 kind 形参 => 本条红.
     """
     import inspect
+
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
     sig = inspect.signature(TasksDAO.preempt_task)
     assert "kind" not in sig.parameters, (
@@ -301,6 +304,7 @@ def test_started_at_comes_from_the_caller_not_a_second_clock():
     变异体: driver 里 import time 自己生成 => 本条红.
     """
     import inspect
+
     from xbrain.p3_task.schedule import driver
     src = inspect.getsource(driver)
     assert "started_at: str" in src, "scheduler_tick 没有接收 started_at"
@@ -369,6 +373,7 @@ def test_passive_suspended_is_never_auto_resumed():
     变异体: list_yielding 的 SQL 去掉 suspend_kind 条件 => 本条红.
     """
     import inspect
+
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
     src = inspect.getsource(TasksDAO.list_yielding)
     assert "suspend_kind='yielding'" in src, (
@@ -419,6 +424,7 @@ def test_resume_scan_runs_before_preemption_not_after():
     变异体: 把 phase 1b 挪到 phase 2 之后 => 本条红.
     """
     import inspect
+
     from xbrain.p3_task.schedule import driver
     src = inspect.getsource(driver.scheduler_tick)
     i_resume = src.index("phase 1b")
@@ -461,6 +467,7 @@ def test_duration_excludes_queue_wait():
     变异体: compute_duration_sec 改用 created_ms => 本条红(签名就不对).
     """
     import inspect
+
     from xbrain.p3_task.schedule.driver import compute_duration_sec
     sig = inspect.signature(compute_duration_sec)
     assert "started_mono" in sig.parameters, "时长基准不是 started_mono"
@@ -484,6 +491,7 @@ def test_dispatch_records_started_boot():
     变异体: dispatch_task 的 SQL 去掉 started_boot => 本条红.
     """
     import inspect
+
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
     src = inspect.getsource(TasksDAO.dispatch_task)
     assert "started_boot=?" in src, (
@@ -507,6 +515,7 @@ def test_terminal_writes_finished_at_and_duration():
     变异体: 改回 update_state => 本条红.
     """
     import inspect
+
     from xbrain.p3_task.schedule import driver
     src = inspect.getsource(driver.apply_motion_result)
     assert "dao.finish_task(" in src, (

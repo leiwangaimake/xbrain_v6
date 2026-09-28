@@ -67,7 +67,7 @@ import sys
 # script can be invoked from anywhere.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-from key_registry import extract as extract_keys                # noqa: E402
+from key_registry import extract as extract_keys  # noqa: E402
 
 DEFAULT_DOC = os.path.join(os.path.dirname(os.path.dirname(_HERE)),
                            "docs", "11-接口契约.md")

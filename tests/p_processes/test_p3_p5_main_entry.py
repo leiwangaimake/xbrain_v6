@@ -21,7 +21,6 @@ from pathlib import Path
 
 import pytest
 
-
 pytestmark = pytest.mark.no_device
 
 
@@ -91,6 +90,7 @@ def test_p5_gateway_minimal_mode_main_loop_logs_label():
     """Verify heartbeat log line distinguishes minimal from full mode."""
     import io
     import logging
+
     from xbrain.p5_gateway.__main__ import main_loop
 
     handler = logging.StreamHandler(io.StringIO())

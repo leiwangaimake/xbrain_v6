@@ -45,36 +45,36 @@ as its target directory, which is the same reading.
 # `from xbrain.common.arbiter import Arbiter, SourceSpec, Request` without
 # knowing which submodule each name lives in. The submodule split is an
 # implementation detail; this list is the package's contract.
-from .core import Arbiter                     # the per-domain state machine
-from .model import (
-    ArbAction,                    # audit action enum; BIZ-CM-2 maps it to severity
-    ArbEvent,                     # one audit record emitted on a holder change
-    DEFAULT_LEASE_MS,             # 11 S7A.4 contract default (1000 ms)
-    DEFAULT_WAIT_ATOMIC_TIMEOUT_MS,   # 11 S7A.3 contract default (3000 ms)
-    Grant,                        # the result of one request (11 S7A.2)
-    GrantResult,                  # granted | denied | queued | ... enum
-    Holder,                       # frozen holder snapshot (11 S7A.5.1)
-    IMMEDIATE_GRACE_MS,           # 11 S7A.3 immediate preempt grace (100 ms)
-    LastChange,                   # most recent holder change (11 S7A.5.1)
-    Preempt,                      # the preempt sub-object of a queued grant
-    PreemptPolicy,                # immediate | wait_atomic | reject enum
-    Request,                      # one acquire attempt (11 S7A.1)
-    SourceSnapshot,               # a registry entry for ArbDomainState.sources[]
-    SourceSpec,                   # a competing source registered at startup
-    WaiterSnapshot,               # a queued request for ArbDomainState.waiting[]
-)
 # BIZ-CM-2 serialisers: the audit stream (event/{severity}/arbitration) and the
 # domain state (state/arb/{domain}). Kept in their own modules because they fail
 # and are tested differently from the state machine.
 from .audit import (
-    DEDUP_EXEMPT,                 # actions never merged (forced_preempt, ...)
-    DEDUP_WINDOW_S,               # 11 S7A.7 merge window, seconds (10)
-    SEVERITY_BY_ACTION,           # 11 S7A.7 action -> severity map
-    merge_audit_window,           # collapse a burst into one, count in detail
-    render_audit_event,           # one ArbEvent -> Event payload
-    severity_of,                  # action string -> severity string
+    DEDUP_EXEMPT,  # actions never merged (forced_preempt, ...)
+    DEDUP_WINDOW_S,  # 11 S7A.7 merge window, seconds (10)
+    SEVERITY_BY_ACTION,  # 11 S7A.7 action -> severity map
+    merge_audit_window,  # collapse a burst into one, count in detail
+    render_audit_event,  # one ArbEvent -> Event payload
+    severity_of,  # action string -> severity string
 )
-from .state import render_domain_state   # Arbiter snapshot -> ArbDomainState
+from .core import Arbiter  # the per-domain state machine
+from .model import (
+    DEFAULT_LEASE_MS,  # 11 S7A.4 contract default (1000 ms)
+    DEFAULT_WAIT_ATOMIC_TIMEOUT_MS,  # 11 S7A.3 contract default (3000 ms)
+    IMMEDIATE_GRACE_MS,  # 11 S7A.3 immediate preempt grace (100 ms)
+    ArbAction,  # audit action enum; BIZ-CM-2 maps it to severity
+    ArbEvent,  # one audit record emitted on a holder change
+    Grant,  # the result of one request (11 S7A.2)
+    GrantResult,  # granted | denied | queued | ... enum
+    Holder,  # frozen holder snapshot (11 S7A.5.1)
+    LastChange,  # most recent holder change (11 S7A.5.1)
+    Preempt,  # the preempt sub-object of a queued grant
+    PreemptPolicy,  # immediate | wait_atomic | reject enum
+    Request,  # one acquire attempt (11 S7A.1)
+    SourceSnapshot,  # a registry entry for ArbDomainState.sources[]
+    SourceSpec,  # a competing source registered at startup
+    WaiterSnapshot,  # a queued request for ArbDomainState.waiting[]
+)
+from .state import render_domain_state  # Arbiter snapshot -> ArbDomainState
 
 # Explicit, so `import *` carries exactly these names and a linter does not prune
 # the re-exports above as unused: they are the public half of this package. The

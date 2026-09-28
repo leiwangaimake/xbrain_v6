@@ -59,12 +59,12 @@ Callers:
 # threading for the dedup set + event counter guard (perception may
 # call from multiple threads).
 import threading
+
 # typing for optional callback signature.
 from typing import Callable, Optional
 
 # CLS closed set + strict entry point.
 from xbrain.common.enums import CLS
-
 
 # Module-level dedup set: an off-set class name we already emitted
 # an event for is not re-emitted. Threading-guarded because

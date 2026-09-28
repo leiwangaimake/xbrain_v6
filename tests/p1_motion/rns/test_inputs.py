@@ -15,7 +15,11 @@ Each test names its mutant (CLAUDE.md 3.3).
 from __future__ import annotations
 
 from xbrain.p1_motion.rns.inputs import (
-    ObjectsMsg, PerceptionSnapshot, ProfileMsg, ReplayPerceptionInput, StatusMsg,
+    ObjectsMsg,
+    PerceptionSnapshot,
+    ProfileMsg,
+    ReplayPerceptionInput,
+    StatusMsg,
     TrackedObject,
 )
 

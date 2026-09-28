@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import re
 
-
 ALIAS_BLACKLIST = frozenset({
     "rot_occ_max_cells",   # renamed to rot_occ_max
     "fail_ticks",           # renamed to recheck_ticks

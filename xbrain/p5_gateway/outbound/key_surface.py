@@ -23,7 +23,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Set, Tuple
 
-
 # The current P5 pub/sub commitments. Updated when 11 §2.2 changes.
 # The whole point of this module is that when someone drops a
 # publisher without updating this frozen set, the diff test reddens.

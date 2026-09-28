@@ -86,7 +86,11 @@ def battery_answer(
 # cache-freshness layer: a stale state/pose or state/clock -> 'unknown', never a
 # last-known RTK reading spoken as current (16 S8.2.1 QT shadow rule).
 from xbrain.p4_agent.query.sources_g43_g47 import (  # noqa: E402
-    g43_render, g44_render, g45_render, g46_render, g47_render,
+    g43_render,
+    g44_render,
+    g45_render,
+    g46_render,
+    g47_render,
 )
 
 _POSE_UNKNOWN = "定位信息暂时读不到,请稍后再问"

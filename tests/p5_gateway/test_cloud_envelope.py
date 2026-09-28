@@ -72,8 +72,7 @@ def test_ts_is_a_float():
 
 def test_src_defaults_to_the_gateway():
     """后端 -> Qt 固定 p5_gateway(S1.1). 真实来源放 data.source."""
-    from xbrain.p5_gateway.outbound.cloud_envelope import (SRC_GATEWAY,
-                                                           build_envelope)
+    from xbrain.p5_gateway.outbound.cloud_envelope import SRC_GATEWAY, build_envelope
 
     assert build_envelope("gj-001", "k", {}, ts=1.0, seq=1)["src"] == SRC_GATEWAY
 
@@ -154,8 +153,10 @@ def test_a_level_out_of_range_still_raises():
     E-2 裁决只给了 L0..L3 落点; 一个 level=4 或 -1 是 link_state.py 的 bug,
     静默发一个猜的 state 会让 Qt 收到一个与真实链路无关的值.
     """
-    from xbrain.p5_gateway.outbound.cloud_envelope import (UnmappedLinkLevel,
-                                                           link_state_word)
+    from xbrain.p5_gateway.outbound.cloud_envelope import (
+        UnmappedLinkLevel,
+        link_state_word,
+    )
 
     for bad in (4, -1, 99):
         with pytest.raises(UnmappedLinkLevel):
@@ -191,10 +192,12 @@ def test_snapshot_and_result_are_the_same_key_different_type():
     我方 2026-08-08 答复接受了, 理由逐字: 终态仍由任务权威模块产生, 不由
     网关猜测; 有 duration_sec/distance_m/ended_ts 权威值; 少一条订阅.
     """
-    from xbrain.p5_gateway.outbound.cloud_envelope import (MSG_RESULT,
-                                                           MSG_SNAPSHOT,
-                                                           task_result,
-                                                           task_snapshot)
+    from xbrain.p5_gateway.outbound.cloud_envelope import (
+        MSG_RESULT,
+        MSG_SNAPSHOT,
+        task_result,
+        task_snapshot,
+    )
 
     snap = task_snapshot("m-1", None, [], [])
     assert snap["message_type"] == MSG_SNAPSHOT

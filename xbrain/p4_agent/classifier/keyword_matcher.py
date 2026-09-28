@@ -41,10 +41,10 @@ from __future__ import annotations
 from typing import Callable, Dict, Optional
 
 from xbrain.p4_agent.classifier.priority_chain import (
-    ClassifyResult, classify_after_bypass,
+    ClassifyResult,
+    classify_after_bypass,
 )
 from xbrain.p4_agent.registry.intents import IntentRegistry
-
 
 # Intents that must NOT enter the layer-2 keyword index, per 16 S5.2:
 #   * route == "bypass": estop/prone/stand are matched at LAYER 1 by

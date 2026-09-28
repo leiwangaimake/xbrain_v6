@@ -15,7 +15,6 @@ import pytest
 
 from xbrain.p2_core.runtime.device_health_bridge import DeviceHealthBridge
 
-
 pytestmark = pytest.mark.no_device
 
 

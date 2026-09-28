@@ -16,7 +16,6 @@ import pytest
 
 from xbrain.p4_agent.classifier import routes
 
-
 pytestmark = pytest.mark.no_device
 
 

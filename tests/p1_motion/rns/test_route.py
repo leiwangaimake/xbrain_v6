@@ -18,7 +18,8 @@ import math
 import pytest
 
 from xbrain.p1_motion.rns.route import (
-    PolylineTracker, lookahead_distance,
+    PolylineTracker,
+    lookahead_distance,
 )
 
 

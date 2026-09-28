@@ -40,13 +40,13 @@ from websockets.frames import Close
 
 from tests.office_client.audio_io import AudioIoError
 from tests.office_client.client import (
-    IntercomClient,
-    IntercomClientError,
-    WavTalkSource,
     _DOWNLINK_LOG_FRAMES,
     _PTT_IDLE,
     _PTT_LISTEN,
     _PTT_TALK,
+    IntercomClient,
+    IntercomClientError,
+    WavTalkSource,
 )
 
 _FRAME_BYTES = 640

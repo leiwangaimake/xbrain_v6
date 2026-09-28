@@ -17,17 +17,26 @@ import threading
 import pytest
 
 from xbrain.p3_task.persistence.base import (
-    DbHandle, PersistenceMisuse, REQUIRED_PRAGMAS,
-    assert_all_required_pragmas, format_pragma_statements,
+    REQUIRED_PRAGMAS,
+    DbHandle,
+    PersistenceMisuse,
+    assert_all_required_pragmas,
+    format_pragma_statements,
 )
 from xbrain.p3_task.persistence.migration import (
-    DatabaseCorrupt, DegradedWriteMode, Migration, MigrationOrderError,
-    parse_integrity_check, pending_migrations, validate_migration_sequence,
+    DatabaseCorrupt,
+    DegradedWriteMode,
+    Migration,
+    MigrationOrderError,
+    parse_integrity_check,
+    pending_migrations,
+    validate_migration_sequence,
 )
 from xbrain.p3_task.persistence.threads import (
-    ThreadRegistry, ThreadRole, require_thread,
+    ThreadRegistry,
+    ThreadRole,
+    require_thread,
 )
-
 
 pytestmark = pytest.mark.no_device
 

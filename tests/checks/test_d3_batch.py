@@ -19,31 +19,51 @@ import pytest
 
 from xbrain.common.checks.scan_surface import (
     SCAN_SURFACE as META_SCAN_SURFACE,
-    ScanSurfaceViolation, ScriptSurface,
-    audit_scan_scripts, check_docs_never_included,
-    check_self_excluded, load_script_surface,
+)
+from xbrain.common.checks.scan_surface import (
+    ScanSurfaceViolation,
+    ScriptSurface,
+    audit_scan_scripts,
+    check_docs_never_included,
+    check_self_excluded,
+    load_script_surface,
 )
 from xbrain.common.docref.addresser import (
-    BOOK_ID_RE, ConstraintId, ConstraintIdShapeError,
-    constraint_cover_diff, require_triple,
+    BOOK_ID_RE,
+    ConstraintId,
+    ConstraintIdShapeError,
+    constraint_cover_diff,
+    require_triple,
 )
 from xbrain.common.zenoh.cross_plane_compliance import (
-    CrlYamlReadForbidden, FORBIDDEN_KEYS, ForwardingEntry,
-    RelayEnvelope, WhitelistViolation,
-    assert_no_forbidden_keys, assert_relay_source_uses_compile_time_constant,
-    assert_unique_direction, check_envelope_rebuilt,
+    FORBIDDEN_KEYS,
+    CrlYamlReadForbidden,
+    ForwardingEntry,
+    RelayEnvelope,
+    WhitelistViolation,
+    assert_no_forbidden_keys,
+    assert_relay_source_uses_compile_time_constant,
+    assert_unique_direction,
+    check_envelope_rebuilt,
 )
 from xbrain.p2_core.ptz.drift_home import (
-    DriftHomeConfig, DriftHomeConfigError, DriftHomeState,
-    DriftHomeTrigger, PtzSpeedTierConfigError, PtzSpeedTiers,
-    check_t_drift_trigger, note_home_fired,
+    DriftHomeConfig,
+    DriftHomeConfigError,
+    DriftHomeState,
+    DriftHomeTrigger,
+    PtzSpeedTierConfigError,
+    PtzSpeedTiers,
+    check_t_drift_trigger,
+    note_home_fired,
 )
 from xbrain.p4_agent.intents_expand.d01_d10 import (
-    D10ClassificationError, D10_MUTE_LEVEL,
-    D_EXPANSION_TABLE, bidirectional_diff_vs_yaml,
-    classify_d10, resolve_d10_level,
+    D10_MUTE_LEVEL,
+    D_EXPANSION_TABLE,
+    D10ClassificationError,
+    bidirectional_diff_vs_yaml,
+    classify_d10,
+    resolve_d10_level,
 )
-
 
 pytestmark = pytest.mark.no_device
 

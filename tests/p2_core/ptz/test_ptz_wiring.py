@@ -18,7 +18,9 @@ import pytest
 
 import xbrain.p2_core.ptz.onvif_client as oc
 from xbrain.p2_core.runtime.ptz_wiring import (
-    OnvifConfig, PtzDomain, load_onvif_config,
+    OnvifConfig,
+    PtzDomain,
+    load_onvif_config,
 )
 
 pytestmark = pytest.mark.no_device

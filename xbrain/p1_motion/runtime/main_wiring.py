@@ -34,7 +34,6 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-
 _logger = logging.getLogger("xbrain.p1.wiring")
 
 
@@ -203,8 +202,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         # 自算 crc32 比对(S9A.2)后持有, 供 F2(zone_enter), F3(state/fence.active.rev)
         # 与 nav 回路的几何裁剪(fence/clip.py, 12 S2.2 第 7 步, 2026-09-12 起)取用.
         # 通用面订阅, 严禁转发回 RT 面(S9A.3).
-        from xbrain.p1_motion.fence.fence_set import (FenceSetError,
-                                                      FenceSetHolder)
+        from xbrain.p1_motion.fence.fence_set import FenceSetError, FenceSetHolder
         fence_holder = FenceSetHolder()
 
         def _on_fence(sample) -> None:
@@ -383,8 +381,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
             # production intake. Subscribed here (p1 IS the cross-plane point);
             # the 20 Hz tick reads perception_in.latest(now) once RnsSource is
             # wired into the arbiter (P7.2). Held for the loop's lifetime.
-            from xbrain.p1_motion.perception_src.three_keys import (
-                ZenohPerceptionInput)
+            from xbrain.p1_motion.perception_src.three_keys import ZenohPerceptionInput
             perception_in = ZenohPerceptionInput(rid)
             perception_in.declare(rt)
             _logger.info("p1 perception intake on: rid=%s "
@@ -452,7 +449,8 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 if state_fence_pub is not None:
                     from xbrain.p1_motion.fence.clip import runtime_state_fields
                     from xbrain.p1_motion.fence.fence_set import (
-                        build_fence_runtime_state)
+                        build_fence_runtime_state,
+                    )
                     _held = fence_holder.active
                     _cur_rev = _held.rev if _held is not None else None
                     _changed = _cur_rev != fence_state["rev"]

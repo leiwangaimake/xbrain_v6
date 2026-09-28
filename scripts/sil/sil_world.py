@@ -35,7 +35,11 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from xbrain.p1_motion.rns.inputs import (
-    ObjectsMsg, PerceptionSnapshot, ProfileMsg, StatusMsg, TrackedObject,
+    ObjectsMsg,
+    PerceptionSnapshot,
+    ProfileMsg,
+    StatusMsg,
+    TrackedObject,
 )
 from xbrain.p1_motion.rns.types import SrcBit
 

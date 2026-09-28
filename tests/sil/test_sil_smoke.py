@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT / "scripts" / "sil"))
 # via the sys.path.insert above; the xbrain imports sit with it so the block
 # reads as one unit rather than half-hoisted.
 from sil_world import SilWorld  # noqa: E402
+
 from xbrain.p1_motion.rns.route import Mission  # noqa: E402
 from xbrain.p1_motion.rns.source import RnsSource  # noqa: E402
 from xbrain.p1_motion.rns.types import MissionKind, Origin  # noqa: E402

@@ -41,8 +41,11 @@ from typing import Optional, Tuple
 import pytest
 import yaml
 
-from xbrain.p1_motion.perception_src.three_keys import (KEYS, PerceptionSchemaError,
-                                                        parse_payload)
+from xbrain.p1_motion.perception_src.three_keys import (
+    KEYS,
+    PerceptionSchemaError,
+    parse_payload,
+)
 from xbrain.p1_motion.rns.inputs import PerceptionSnapshot
 from xbrain.p1_motion.rns.route import Mission
 from xbrain.p1_motion.rns.source import RnsSource

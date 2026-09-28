@@ -26,7 +26,8 @@ def test_pose_staleness_gate_greys_a_dead_source():
     last position kept showing). MUTATION: passing the pose through regardless of
     age reddens the last two asserts."""
     from xbrain.p5_gateway.runtime.main_wiring import (
-        POSE_STALE_AFTER_MS, _pose_if_fresh,
+        POSE_STALE_AFTER_MS,
+        _pose_if_fresh,
     )
     p = {"lat": 34.70, "lon": 135.50, "fix_type": "rtk_fixed"}
     # fresh, exactly at the window edge -> passes through

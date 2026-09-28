@@ -27,13 +27,22 @@ import pytest
 
 from xbrain.common.enums import GEO_ACTION, GEO_ORIGIN, GEO_TYPE
 from xbrain.common.errors import (
-    E_CHANNEL_DENIED, E_GEO_CONFLICT, E_INTERNAL, E_NOT_IMPLEMENTED, E_SCHEMA,
+    E_CHANNEL_DENIED,
+    E_GEO_CONFLICT,
+    E_INTERNAL,
+    E_NOT_IMPLEMENTED,
+    E_SCHEMA,
 )
 from xbrain.p3_task.ingest.geo_apply import (
-    APPLIERS, GeoContext, handle_geo_payload,
+    APPLIERS,
+    GeoContext,
+    handle_geo_payload,
 )
 from xbrain.p3_task.ingest.geo_command import (
-    GeoCommandError, allowed_origins, check_channel, geo_ack,
+    GeoCommandError,
+    allowed_origins,
+    check_channel,
+    geo_ack,
     parse_geo_command,
 )
 

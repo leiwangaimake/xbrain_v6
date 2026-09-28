@@ -41,7 +41,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from xbrain.common.errors import (
-    E_BUSY, E_CAPABILITY, E_LOCKED, E_NO_HEADING, E_SCHEMA, E_UNHEALTHY,
+    E_BUSY,
+    E_CAPABILITY,
+    E_LOCKED,
+    E_NO_HEADING,
+    E_SCHEMA,
+    E_UNHEALTHY,
 )
 
 _logger = logging.getLogger("xbrain.p2.motion_intent")

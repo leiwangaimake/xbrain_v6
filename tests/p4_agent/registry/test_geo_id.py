@@ -31,9 +31,12 @@ sys.path.insert(0, ROOT)
 
 import pytest  # noqa: E402
 
-from xbrain.p4_agent.registry import (GEO_ID_PREFIXES, GeoIdError,  # noqa: E402
-                                      is_valid_geo_object_id,
-                                      validate_geo_object_id)
+from xbrain.p4_agent.registry import (  # noqa: E402
+    GEO_ID_PREFIXES,
+    GeoIdError,
+    is_valid_geo_object_id,
+    validate_geo_object_id,
+)
 
 # The exact strings the GWY-P4-07 criterion 2 names as must-reject. They are the
 # v0.1 route_N format 16 S7.0.2 uses as its worked example of an I3 defect.

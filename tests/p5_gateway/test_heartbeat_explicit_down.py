@@ -22,7 +22,8 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p5_gateway.uplink.link_state import (
-    LinkStateMachine, LinkThresholds,
+    LinkStateMachine,
+    LinkThresholds,
 )
 
 pytestmark = pytest.mark.no_device
@@ -143,8 +144,7 @@ def test_the_bridge_reports_down_only_for_state_down():
 
     MUTATION: 把 state == "down" 判断去掉 -> 红.
     """
-    from tests.p5_gateway.test_cloud_rx_refreshes_link import (
-        _Sample, _FakeSession)
+    from tests.p5_gateway.test_cloud_rx_refreshes_link import _FakeSession, _Sample
     from xbrain.p5_gateway.runtime.cloud_wiring import CloudBridge
 
     downs = []

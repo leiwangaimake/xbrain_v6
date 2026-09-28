@@ -16,17 +16,22 @@ GWY-P4-19 + P4-21 batch 6 tests.
 import pytest
 
 from xbrain.p4_agent.failure.handlers import (
-    FailureCode, HandlerResult, TtsQuotaLimiter,
-    handle_estop1_arbiter_down, handle_estop2_dispatch_failed,
-    handle_gate1_heartbeat_lost, handle_gate2_hes,
+    FailureCode,
+    HandlerResult,
+    TtsQuotaLimiter,
+    handle_estop1_arbiter_down,
+    handle_estop2_dispatch_failed,
+    handle_gate1_heartbeat_lost,
+    handle_gate2_hes,
     handle_speak1_tts_failed,
 )
 from xbrain.p4_agent.registry.evolution import (
-    EvolutionError, HOT_UPDATABLE_FILES,
-    check_cf1_no_shared_key, check_cf3_version_compat,
+    HOT_UPDATABLE_FILES,
+    EvolutionError,
+    check_cf1_no_shared_key,
+    check_cf3_version_compat,
     is_hot_updatable,
 )
-
 
 pytestmark = pytest.mark.no_device
 

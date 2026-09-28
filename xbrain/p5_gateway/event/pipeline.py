@@ -42,9 +42,8 @@ from typing import Optional
 
 from xbrain.common.enums import EVENT_CATEGORY, SEVERITY
 
-from .channel_map import derive_channel
 from ..persistence.schema_record import need_ack
-
+from .channel_map import derive_channel
 
 # The seven stages in contract order. Kept as data so assert_stage_order can gate
 # a reordering (persist-before-cloud is the one that matters, S3.1).

@@ -104,7 +104,8 @@ class EventSubsystem:
         # without aiosqlite still imports this module; only start() needs it.
         from xbrain.p5_gateway.event.pipeline import EventPipeline
         from xbrain.p5_gateway.persistence.base import (
-            open_record_reader, open_record_writer,
+            open_record_reader,
+            open_record_writer,
         )
         from xbrain.p5_gateway.persistence.record_dao import RecordDao
         from xbrain.p5_gateway.persistence.schema_record import (
@@ -112,7 +113,10 @@ class EventSubsystem:
         )
         from xbrain.p5_gateway.reconnect.replay import RateLimiter
         from xbrain.p5_gateway.uplink.cloud import (
-            AckTracker, BackfillRunner, DeliveryMarker, ReconRunner,
+            AckTracker,
+            BackfillRunner,
+            DeliveryMarker,
+            ReconRunner,
         )
 
         # writer_normal creates the schema; writer_full + reader open the same

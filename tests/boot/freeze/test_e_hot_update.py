@@ -27,10 +27,12 @@ Coverage extra:
 import pytest
 
 from xbrain.boot.freeze.assertions.e_hot_update_disjoint import (
-    _DEFAULT_HOT_UPDATE_WHITELIST, _SAFETY_NAMESPACES, _is_safety_entry, run,
+    _DEFAULT_HOT_UPDATE_WHITELIST,
+    _SAFETY_NAMESPACES,
+    _is_safety_entry,
+    run,
 )
 from xbrain.common.errors.exceptions import XbrainError
-
 
 # ---------------------------------------------------------------------------
 # Reverse baseline: the real (default) whitelist passes

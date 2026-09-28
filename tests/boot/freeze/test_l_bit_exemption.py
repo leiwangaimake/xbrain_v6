@@ -25,11 +25,12 @@ import pytest
 import yaml
 
 from xbrain.boot.freeze.assertions.l_bit_exemption import (
-    _FALLBACK_FATAL_ITEMS, _fatal_items_from_map, _parse_bit_levels,
+    _FALLBACK_FATAL_ITEMS,
+    _fatal_items_from_map,
+    _parse_bit_levels,
     run,
 )
 from xbrain.common.errors.exceptions import XbrainError
-
 
 # ---------------------------------------------------------------------------
 # Scaffolding

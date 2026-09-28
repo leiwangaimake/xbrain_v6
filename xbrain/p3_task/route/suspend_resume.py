@@ -33,7 +33,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 RESUME_POLICIES = frozenset({"exact", "nearest_wp", "restart"})
 
 

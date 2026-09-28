@@ -18,7 +18,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 CI_DIR = Path(__file__).parent.parent.parent / "scripts" / "ci"
 CHECKS_YAML = CI_DIR / "checks.yaml"
 RUN_ALL_SH = CI_DIR / "run_all.sh"

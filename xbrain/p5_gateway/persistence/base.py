@@ -31,7 +31,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-
 # Connection-level defaults for the two writers + the reader (15 S9.1). The FULL
 # writer overrides synchronous only; everything else is identical, so the two
 # writers agree on WAL/FK/busy and differ ONLY in durability (S-2).

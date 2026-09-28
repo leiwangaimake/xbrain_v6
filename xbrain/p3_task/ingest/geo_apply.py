@@ -39,7 +39,11 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from xbrain.common.errors import E_INTERNAL, E_NOT_IMPLEMENTED
 from xbrain.p3_task.ingest.geo_command import (
-    GeoCommand, GeoCommandError, check_channel, geo_ack, parse_geo_command,
+    GeoCommand,
+    GeoCommandError,
+    check_channel,
+    geo_ack,
+    parse_geo_command,
 )
 
 _logger = logging.getLogger("xbrain.p3.geo")
@@ -171,5 +175,7 @@ async def handle_geo_payload(payload: Dict[str, Any], ctx: GeoContext,
 # E_NOT_IMPLEMENTED for an action that IS implemented, which reads as "not built
 # yet" rather than as a wiring bug. test_appliers_are_registered pins the set.
 from xbrain.p3_task.ingest import (  # noqa: E402,F401
-    geo_delete, geo_read, geo_write,
+    geo_delete,
+    geo_read,
+    geo_write,
 )

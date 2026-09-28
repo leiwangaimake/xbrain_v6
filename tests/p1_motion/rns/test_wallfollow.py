@@ -14,11 +14,17 @@ Each test names its mutant.
 
 from __future__ import annotations
 
-from xbrain.p1_motion.rns.wallfollow import (
-    Side, WallFollowState, can_enter, can_leave, check_failure, d3_relax_leave,
-    record_crossing, select_side,
-)
 from xbrain.p1_motion.rns.types import NavFailReason
+from xbrain.p1_motion.rns.wallfollow import (
+    Side,
+    WallFollowState,
+    can_enter,
+    can_leave,
+    check_failure,
+    d3_relax_leave,
+    record_crossing,
+    select_side,
+)
 
 
 def _state(side=Side.LEFT, s_hit=10.0, H=(5.0, 5.0), followed=0.0):

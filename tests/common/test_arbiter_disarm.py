@@ -22,12 +22,19 @@ disarm semantics BIZ-CM-3 adds on top of the BIZ-CM-1 core:
 import pytest
 
 from xbrain.common import errors
-from xbrain.common.enums import ClosedSetViolation
 from xbrain.common.arbiter import (
-    Arbiter, ArbAction, GrantResult, PreemptPolicy, Request, SourceSpec,
-    DEDUP_EXEMPT, merge_audit_window, severity_of,
+    DEDUP_EXEMPT,
+    ArbAction,
+    Arbiter,
+    GrantResult,
+    PreemptPolicy,
+    Request,
+    SourceSpec,
+    merge_audit_window,
+    severity_of,
 )
 from xbrain.common.arbiter.model import ArbEvent
+from xbrain.common.enums import ClosedSetViolation
 
 
 def _motion_arb():

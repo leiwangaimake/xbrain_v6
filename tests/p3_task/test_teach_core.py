@@ -29,22 +29,41 @@ import pytest
 
 from xbrain.common.enums import TEACH_ACTION, TEACH_STATE
 from xbrain.common.errors import (
-    E_BUSY, E_LOCKED, E_LOW_BATTERY, E_SCHEMA, E_TEACH_BUSY, E_TEACH_QUALITY,
-    E_TEACH_STATE, E_UNHEALTHY,
+    E_BUSY,
+    E_LOCKED,
+    E_LOW_BATTERY,
+    E_SCHEMA,
+    E_TEACH_BUSY,
+    E_TEACH_QUALITY,
+    E_TEACH_STATE,
+    E_UNHEALTHY,
 )
 from xbrain.p3_task.teach.command import (
-    TeachCommandError, parse_teach_command, teach_ack,
+    TeachCommandError,
+    parse_teach_command,
+    teach_ack,
 )
 from xbrain.p3_task.teach.sampling import (
-    PoseSample, Recorder, fix_is_good_enough, haversine_m,
+    PoseSample,
+    Recorder,
+    fix_is_good_enough,
+    haversine_m,
 )
 from xbrain.p3_task.teach.session import (
-    ArmingInputs, TRANSITIONS, TeachSession, TeachStateError, check_arming,
+    TRANSITIONS,
+    ArmingInputs,
+    TeachSession,
+    TeachStateError,
+    check_arming,
     clamp_limits,
 )
 from xbrain.p3_task.teach.validate import (
-    BLOCKING_ISSUES, merge_degenerate, ring_area_m2, ring_self_intersects,
-    validate_fence, validate_route,
+    BLOCKING_ISSUES,
+    merge_degenerate,
+    ring_area_m2,
+    ring_self_intersects,
+    validate_fence,
+    validate_route,
 )
 
 pytestmark = pytest.mark.no_device

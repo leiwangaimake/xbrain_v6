@@ -15,18 +15,21 @@ event/replay/{channel} (never the live key), and paces through the rate limiter.
 Each load-bearing assertion is paired with the mutation that reddens it (3.3).
 """
 
+import aiosqlite
 import pytest
 import pytest_asyncio
-import aiosqlite
 
 from xbrain.p5_gateway.persistence.base import RecordConn
 from xbrain.p5_gateway.persistence.record_dao import RecordDao
 from xbrain.p5_gateway.persistence.schema_record import ALL_RECORD_STATEMENTS
 from xbrain.p5_gateway.reconnect.replay import RateLimiter
 from xbrain.p5_gateway.uplink.cloud import (
-    AckTracker, BackfillRunner, DeliveryMarker, ReconRunner, replay_key,
+    AckTracker,
+    BackfillRunner,
+    DeliveryMarker,
+    ReconRunner,
+    replay_key,
 )
-
 
 pytestmark = pytest.mark.no_device
 

@@ -12,13 +12,15 @@ bounded backup (A-BK-1/2). Each test names its mutant.
 
 from __future__ import annotations
 
+from xbrain.common.types.units import Mps
 from xbrain.p1_motion.rns.backup import backup_permitted
 from xbrain.p1_motion.rns.source import EstopSuspension
 from xbrain.p1_motion.rns.types import NavFailReason, VelocityCandidate
 from xbrain.p1_motion.rns.watchdog import (
-    ProgressWatchdog, WatchdogResult, no_progress_failure,
+    ProgressWatchdog,
+    WatchdogResult,
+    no_progress_failure,
 )
-from xbrain.common.types.units import Mps
 
 
 # ── watchdog (A-CVG-2) ────────────────────────────────────────────────────────

@@ -26,7 +26,6 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, FrozenSet, List, Mapping
 
-
 # 16 S8.2.1 QT-1..QT-11 -> 16 S8.4 template branch keys. KEY IS THE
 # TEMPLATE NAME (query_light_state), NOT "QT-1_battery".
 #

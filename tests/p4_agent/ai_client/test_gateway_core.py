@@ -16,9 +16,12 @@ import pytest
 
 from xbrain.common import errors
 from xbrain.p4_agent.ai_client import (
-    BreakerState, CircuitBreaker, map_status, map_transport_error, AS7_TIMEOUT_S,
+    AS7_TIMEOUT_S,
+    BreakerState,
+    CircuitBreaker,
+    map_status,
+    map_transport_error,
 )
-
 
 # --------------------------------------------------------------------------
 # error map (11 S8.13.5)

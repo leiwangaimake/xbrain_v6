@@ -19,8 +19,8 @@ buckets while proving nothing about which rows the query actually selects.
 
 from __future__ import annotations
 
-import json
 import inspect
+import json
 
 import aiosqlite
 import pytest
@@ -29,10 +29,14 @@ from xbrain.common.enums import TASK_STATE
 from xbrain.p3_task.runtime import main_wiring
 from xbrain.p3_task.state.machine import TERMINAL_STATES
 from xbrain.p3_task.state.task_state import (
-    NON_TERMINAL_STATES, build_task_state, current_item, queue_item,
-    read_task_state, suspended_item, wall_iso_to_epoch,
+    NON_TERMINAL_STATES,
+    build_task_state,
+    current_item,
+    queue_item,
+    read_task_state,
+    suspended_item,
+    wall_iso_to_epoch,
 )
-
 
 # INF-TS-1: 纯单测, 不碰设备(无 zenohd / 无底盘 / 无 ORIN 专属硬件).
 pytestmark = pytest.mark.no_device
@@ -200,7 +204,6 @@ def test_the_non_terminal_set_is_derived_from_the_state_closed_set():
 # DDL it replaced and why that copy rotted). Hoisting the import separates it
 # from its own justification.
 from xbrain.p3_task.persistence.schema_task import DDL_TASKS as _DDL  # noqa: E402
-
 
 #: 用例不关心但真表要求非空的列, 按类型给中性值.
 #: *** 由 PRAGMA table_info [现算], NO 不在这里手列一份.

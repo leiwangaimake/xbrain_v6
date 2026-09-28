@@ -16,10 +16,11 @@ BIZ-P2-26 + P2-29 -- motion_behavior mapper + B-mode forward tests.
 import pytest
 
 from xbrain.p2_core.mode.motion_behavior import (
-    BehaviorCommand, MotionBehaviorParams,
-    command_for_mode, command_for_target_lost,
+    BehaviorCommand,
+    MotionBehaviorParams,
+    command_for_mode,
+    command_for_target_lost,
 )
-
 
 pytestmark = pytest.mark.no_device
 

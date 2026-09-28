@@ -34,7 +34,8 @@ from typing import Any, Dict
 
 from xbrain.p3_task.dao.tasks_dao import TaskRow
 from xbrain.p3_task.ingest.voice_task import (
-    VoiceTaskIngestError, default_resume_policy,
+    VoiceTaskIngestError,
+    default_resume_policy,
 )
 from xbrain.p3_task.persistence.schema_task import TASK_SOURCES, TASK_TYPES
 

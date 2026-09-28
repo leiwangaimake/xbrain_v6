@@ -70,8 +70,13 @@ What this module deliberately does NOT do:
 
 from typing import Any, Dict, List, Optional
 
-from ...common.config.resolved import (BOOT_ID_PATH, RESOLVED_ROOT, Manifest,
-                                       ResolvedConfig, load_resolved)
+from ...common.config.resolved import (
+    BOOT_ID_PATH,
+    RESOLVED_ROOT,
+    Manifest,
+    ResolvedConfig,
+    load_resolved,
+)
 from ...common.errors import E_CONFIG_INVALID
 from ...common.errors.exceptions import XbrainError
 from .version import satisfies

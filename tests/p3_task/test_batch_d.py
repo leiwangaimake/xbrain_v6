@@ -19,14 +19,17 @@ import math
 import pytest
 
 from xbrain.p3_task.route.remap import (
-    RemapTooFar, cumulative_arc_lengths, remap,
+    RemapTooFar,
+    cumulative_arc_lengths,
+    remap,
 )
 from xbrain.p3_task.route.suspend_resume import (
-    DirectionMismatch, InvalidResumePolicy,
-    build_resume_snapshot, check_direction_consistency,
+    DirectionMismatch,
+    InvalidResumePolicy,
+    build_resume_snapshot,
+    check_direction_consistency,
     resume_start_index,
 )
-
 
 pytestmark = pytest.mark.no_device
 

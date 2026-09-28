@@ -49,7 +49,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-
 # reason closed set (11 S4.6.2). transport_error / router_down need signals P5 does
 # not have yet; the observable outage is heartbeat_timeout.
 REASON_OK = "ok"

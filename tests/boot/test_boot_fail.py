@@ -174,8 +174,7 @@ def test_the_stage_0z2_scenario_end_to_end(tmp_path):
     那一刻上行通道本身就是失败的那一项. 走一遍: 落盘 -> 下次启动读出 ->
     转事件 -> 标记已上行 -> 不再重复.
     """
-    from xbrain.boot.boot_fail import (mark_uplinked, read_pending, to_event,
-                                       write)
+    from xbrain.boot.boot_fail import mark_uplinked, read_pending, to_event, write
 
     d = str(tmp_path)
     rec = _rec(stage="0z-2", code="E_CONFIG_INVALID",

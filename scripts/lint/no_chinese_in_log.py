@@ -48,7 +48,6 @@ import os
 import sys
 from typing import Iterable, List, Tuple
 
-
 # CJK character ranges. Kept as a small tuple of (lo, hi) pairs so
 # adding a range later is one line.
 _CJK_RANGES = (

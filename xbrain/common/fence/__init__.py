@@ -11,8 +11,13 @@ p1_motion(执行者)与 p3_task(权威源)共享的围栏几何与 crc32 单一�
 录制期校验仍留在 p3_task/fence/.
 """
 
-from xbrain.common.fence.geom import (Circle, Polygon, fence_set_crc32,
-                                       point_in_circle, point_in_polygon)
+from xbrain.common.fence.geom import (
+                                       Circle,
+                                       Polygon,
+                                       fence_set_crc32,
+                                       point_in_circle,
+                                       point_in_polygon,
+)
 
 __all__ = ["Circle", "Polygon", "point_in_circle", "point_in_polygon",
            "fence_set_crc32"]

@@ -55,6 +55,7 @@ from typing import Any, Dict, List
 from xbrain.boot.freeze.assertions._layer_loader import load_l6_files
 from xbrain.common.config import build_overlay
 from xbrain.common.config.merge import flatten
+
 # E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
 # imported by name from xbrain.common.errors instead of
 # spelled as a string literal. CLAUDE.md 3.5 forbids literal

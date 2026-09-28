@@ -18,10 +18,14 @@ from __future__ import annotations
 
 import pytest
 
-from xbrain.p1_motion.nav.health_factor import HealthView
 from xbrain.p1_motion.gate.speed_gate import f_speed_gate
-from xbrain.p1_motion.nav.host_gate import (apply_gate, attribute, compute_gate,
-                                            forward_d_free)
+from xbrain.p1_motion.nav.health_factor import HealthView
+from xbrain.p1_motion.nav.host_gate import (
+    apply_gate,
+    attribute,
+    compute_gate,
+    forward_d_free,
+)
 
 pytestmark = pytest.mark.no_device
 

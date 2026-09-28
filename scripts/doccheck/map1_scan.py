@@ -46,7 +46,6 @@ import sys
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Tuple
 
-
 # Default doc paths. Override via CLI.
 _DEFAULT_DOC = "docs/10-顶层设计.md"
 

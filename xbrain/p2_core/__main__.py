@@ -44,7 +44,6 @@ import sys
 import time
 from typing import Optional
 
-
 _logger = logging.getLogger("xbrain.p2_core")
 _HEARTBEAT_SECONDS = 30.0
 
@@ -154,7 +153,8 @@ def main(argv: Optional[list] = None) -> int:
         # Voice-loop wiring path: real MIC + speaker + half-duplex gate.
         from xbrain.p2_core.runtime.main_wiring import run_voice_loop_wiring
         from xbrain.p2_core.runtime.mic_capture import (
-            DEFAULT_MIC_TOPIC, MicCaptureConfig,
+            DEFAULT_MIC_TOPIC,
+            MicCaptureConfig,
         )
         from xbrain.p2_core.runtime.speaker_wiring import SpeakerWiringConfig
         mic_cfg = MicCaptureConfig(

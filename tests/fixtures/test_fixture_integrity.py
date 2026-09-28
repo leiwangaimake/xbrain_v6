@@ -34,12 +34,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from xbrain.common.errors.exceptions import XbrainError
-
 from tests.fixtures.overrides import (
-    NULL_OVERRIDES, SAFETY_KEY_PREFIX, assert_no_safety_overrides,
+    NULL_OVERRIDES,
+    SAFETY_KEY_PREFIX,
+    assert_no_safety_overrides,
 )
-
+from xbrain.common.errors.exceptions import XbrainError
 
 pytestmark = pytest.mark.no_device
 

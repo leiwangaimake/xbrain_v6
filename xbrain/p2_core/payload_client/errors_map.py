@@ -29,7 +29,6 @@ from typing import Any, Dict, Optional
 
 from xbrain.common.errors import E_BUSY, E_SCHEMA, E_UNHEALTHY
 
-
 # Closed-set codes we produce come from the shared library above
 # (CLAUDE.md 3.5). No local re-declaration -- that risks the string
 # drifting from the yaml source of truth.

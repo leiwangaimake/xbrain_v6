@@ -34,7 +34,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-
 BEHAVIOR_GOTO = "goto"
 PATH_FOLLOW_PRIORITY = 300
 

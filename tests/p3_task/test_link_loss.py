@@ -21,11 +21,12 @@ import pytest_asyncio
 
 from xbrain.p3_task.dao.tasks_dao import TasksDAO
 from xbrain.p3_task.lifecycle.link_loss import (
-    RETURN_HOME_PRIORITY, LinkLossReturnTrigger, build_return_home_row,
+    RETURN_HOME_PRIORITY,
+    LinkLossReturnTrigger,
+    build_return_home_row,
     maybe_inject_return_home,
 )
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
-
 
 pytestmark = pytest.mark.no_device
 

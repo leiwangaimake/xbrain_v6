@@ -36,11 +36,14 @@ import pytest_asyncio
 from xbrain.common.errors import E_GEO_CONFLICT, E_NOT_FOUND
 from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
 from xbrain.p3_task.persistence.schema_geo import (
-    FENCE_DB_STATEMENTS, GEO_DB_STATEMENTS,
+    FENCE_DB_STATEMENTS,
+    GEO_DB_STATEMENTS,
 )
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
 from xbrain.p3_task.route.geo_linkage import (
-    GeoChange, UnknownGeoChange, classify,
+    GeoChange,
+    UnknownGeoChange,
+    classify,
 )
 
 pytestmark = pytest.mark.no_device

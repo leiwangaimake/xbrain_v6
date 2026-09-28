@@ -16,10 +16,12 @@ BIZ-P2-16 -- D-mode sequencer tests.
 import pytest
 
 from xbrain.p2_core.d_mode.sequencer import (
-    DModeConfig, DModeState, DModeStep,
-    check_cycle_boundary, next_action_after_response,
+    DModeConfig,
+    DModeState,
+    DModeStep,
+    check_cycle_boundary,
+    next_action_after_response,
 )
-
 
 pytestmark = pytest.mark.no_device
 

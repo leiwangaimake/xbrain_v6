@@ -28,7 +28,8 @@ across hosts and timezones.
 from __future__ import annotations
 
 from xbrain.p4_agent.runtime.orchestrator_turn import (
-    compose_query_fns, make_time_query_fn,
+    compose_query_fns,
+    make_time_query_fn,
 )
 from xbrain.p4_agent.state import query_data as qd
 from xbrain.p4_agent.state.cache import StateCache

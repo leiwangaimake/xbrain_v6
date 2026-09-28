@@ -28,7 +28,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-
 # 11 S8.9.2: reasons that indicate an active close (mic can reopen
 # once the reason is cleared).
 _ACTIVE_CLOSE_REASONS = frozenset({"speaker_active", "tail_hold"})

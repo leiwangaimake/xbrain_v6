@@ -22,10 +22,15 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "scripts", "deps"))
 
-from check_deps import (                              # noqa: E402
-    _IMPORT_TO_DIST, _LOCK_LINE_RE, _major,
-    check_imports_covered, check_installed, check_zenoh_wire,
-    load_lock, scan_third_party_imports,
+from check_deps import (  # noqa: E402
+    _IMPORT_TO_DIST,
+    _LOCK_LINE_RE,
+    _major,
+    check_imports_covered,
+    check_installed,
+    check_zenoh_wire,
+    load_lock,
+    scan_third_party_imports,
 )
 
 # INF-TS-1 三档 marker. 本文件是纯静态/元检查(读文件与仓库状态),

@@ -198,8 +198,6 @@ def test_g1_ai_layer_death_still_finishes_the_path():
 
     DIRECTION: finish-path
     """
-    from xbrain.p1_motion import ctrl_loop
-
     # *** 这条断言的第一版是判据自伤, 当场被抓到.
     # 它写的是 `"freshness" in src` -- 而 ctrl_loop 的注释里就有那个词
     # (头注写着 "freshness -> arbiter tick -> gate" 的步骤顺序). 断言恒真,
@@ -208,6 +206,8 @@ def test_g1_ai_layer_death_still_finishes_the_path():
     #
     # 改用 AST 查 import: 注释里写什么都不影响它, 而真接线一定要 import.
     import ast
+
+    from xbrain.p1_motion import ctrl_loop
 
     tree = ast.parse(pathlib.Path(ctrl_loop.__file__).read_text(encoding="utf-8"))
     imported = set()

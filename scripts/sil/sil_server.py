@@ -29,11 +29,11 @@ Run:  python3 scripts/sil/sil_server.py   (listens on 0.0.0.0:8890)
 from __future__ import annotations
 
 import asyncio
-from collections import deque
 import json
 import math
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 import yaml
@@ -49,9 +49,9 @@ sys.path.insert(0, str(ROOT / "scripts" / "sil"))
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import FileResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
-
-from sil_world import (BLIND_NEAR_M, FOV_HALF_RAD, RANGE_MAX_M, SilWorld)  # noqa: E402
+from sil_world import BLIND_NEAR_M, FOV_HALF_RAD, RANGE_MAX_M, SilWorld  # noqa: E402
 from zenoh_world import world_to_body  # noqa: E402
+
 from xbrain.p1_motion.path.local_frame import LocalFrame  # noqa: E402
 from xbrain.p1_motion.rns.route import Mission  # noqa: E402
 from xbrain.p1_motion.rns.source import RnsSource  # noqa: E402
@@ -591,6 +591,7 @@ async def on_start():
 
 if __name__ == "__main__":
     import argparse
+
     import uvicorn
     ap = argparse.ArgumentParser(description="RNS SIL web server")
     ap.add_argument("--mode", choices=("rns", "e2e"), default="rns",

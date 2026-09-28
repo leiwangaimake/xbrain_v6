@@ -36,7 +36,6 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-
 # 11 S5.1A device id -> 11 S6.2 event category. The four payload sub-devices all
 # roll up to the payload category; mic is the voice category's device; ptz is its
 # own. An id outside this map raises (closed-set discipline, 11 S13.6).

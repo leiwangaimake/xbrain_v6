@@ -37,7 +37,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-
 # 17 S3.5.2 weight: 4 alarm items for every 1 normal item, while both have a
 # backlog. NOT a code default for a safety param -- it is a scheduling ratio, and
 # the real value is injected by the runner from configs (backfill.weight).

@@ -19,15 +19,27 @@ import pytest
 import yaml
 
 from xbrain.p4_agent.session.level_routing import (
-    Level, LevelRoutingError, SessionUpgrade,
-    resolve_level, try_downgrade_to_l1a, upgrade_to_l1b,
+    Level,
+    LevelRoutingError,
+    SessionUpgrade,
+    resolve_level,
+    try_downgrade_to_l1a,
+    upgrade_to_l1b,
 )
 from xbrain.p4_agent.session.state_machines import (
-    CHITCHAT_WHITELIST, L2ConfirmState, L2Slot, L3ApprovalState, L3Slot,
-    RecordingSlot, RecordingState, is_chitchat_interrupt,
+    CHITCHAT_WHITELIST,
+    L2ConfirmState,
+    L2Slot,
+    L3ApprovalState,
+    L3Slot,
+    RecordingSlot,
+    RecordingState,
+    is_chitchat_interrupt,
 )
 from xbrain.p4_agent.templates.query_engine import (
-    TemplateSchemaError, check_qt_branches, render_reply,
+    TemplateSchemaError,
+    check_qt_branches,
+    render_reply,
 )
 from xbrain.p4_agent.templates.restate_engine import (
     RestateSchemaError,
@@ -36,7 +48,6 @@ from xbrain.p4_agent.templates.restate_engine import (
     check_rs3_placeholders_available,
     needs_rs4_correction,
 )
-
 
 pytestmark = pytest.mark.no_device
 

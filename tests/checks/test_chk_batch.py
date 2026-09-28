@@ -27,27 +27,37 @@ import pytest
 
 from xbrain.common.checks.alias_blacklist import (
     AliasKeyFound,
-    check_source_for_closed_set_literals, scan_config_for_alias,
+    check_source_for_closed_set_literals,
+    scan_config_for_alias,
 )
 from xbrain.p1_motion.gate.creep import (
-    CreepConfigError, apply_creep_clamp, assert_creep_below_gate_min,
+    CreepConfigError,
+    apply_creep_clamp,
+    assert_creep_below_gate_min,
 )
 from xbrain.p1_motion.profile.switch_sm import (
-    InvalidProfileTransition, ProfileSwitchSM,
+    InvalidProfileTransition,
+    ProfileSwitchSM,
     all_five_upshift_conditions,
 )
 from xbrain.p1_motion.rotation.visual_override import (
-    DETAIL_KIND, ForbiddenClearanceToggle, VisualOverrideDenied,
-    check_all_four, rc_d7_scan,
+    DETAIL_KIND,
+    ForbiddenClearanceToggle,
+    VisualOverrideDenied,
+    check_all_four,
+    rc_d7_scan,
 )
 from xbrain.p2_core.health.aux.ir_camera import (
-    IR_UNAVAILABLE_ERR, IrCameraHealth,
-    is_blocking_for_availability, reject_ir_command_when_unhealthy,
+    IR_UNAVAILABLE_ERR,
+    IrCameraHealth,
+    is_blocking_for_availability,
+    reject_ir_command_when_unhealthy,
 )
 from xbrain.p2_core.health.aux.single_battery import (
-    SingleBatteryMode, choose_velocity_for_eta, compose_max_vx_min,
+    SingleBatteryMode,
+    choose_velocity_for_eta,
+    compose_max_vx_min,
 )
-
 
 pytestmark = pytest.mark.no_device
 

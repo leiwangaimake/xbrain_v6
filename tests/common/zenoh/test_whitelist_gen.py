@@ -25,8 +25,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(ROOT, "scripts", "doccheck"))
 
-from whitelist_gen import extract_all, check as gen_check      # noqa: E402
-from xbrain.common.zenoh import whitelists as W                # noqa: E402
+# noqa: E402 on both -- whitelist_gen lives in scripts/doccheck and is
+# importable only after the sys.path.insert above. The isort pass split
+# one original line into two and the marker rode along on only one of
+# them; both need it.
+from whitelist_gen import check as gen_check  # noqa: E402
+from whitelist_gen import extract_all  # noqa: E402
+
+from xbrain.common.zenoh import whitelists as W  # noqa: E402
 
 DOC = os.path.join(ROOT, "docs", "11-接口契约.md")
 

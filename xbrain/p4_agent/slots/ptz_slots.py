@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-
 # --- E01 pan/tilt direction (18-B E01) ----------------------------------
 # Keyword substrings -> direction enum. Longest-first at match time.
 _MOVE_DIR = {

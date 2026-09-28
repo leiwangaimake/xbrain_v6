@@ -14,7 +14,6 @@ import pytest
 
 from xbrain.p4_agent.safety_bypass import matcher
 
-
 pytestmark = pytest.mark.no_device
 
 
