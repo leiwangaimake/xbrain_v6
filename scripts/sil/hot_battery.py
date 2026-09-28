@@ -64,7 +64,17 @@ def main(argv) -> int:
         hist = {}
         trail = []
 
-        def w_line(t, wd, rn, pts=pts, off=off, total=total, hist=hist, trail=trail):
+        # k=k belongs with the other five: every value this closure reads that
+        # the loop rebinds is bound at DEFINITION time, not looked up at call
+        # time. k was the one omission and it is the only one the closure
+        # reaches through the enclosing scope, so all legs' callbacks would
+        # read whatever k held at the moment they ran. It happens not to bite
+        # today only because fp.drive calls watch() synchronously inside the
+        # same iteration; the day a leg's callback is deferred (a thread, a
+        # queue, a list of callbacks drained afterwards) every leg's diag
+        # output silently becomes the last leg's.
+        def w_line(t, wd, rn, k=k, pts=pts, off=off, total=total,
+                   hist=hist, trail=trail):
             total[0] += 1
             if fp.dist_to_polyline(wd.rx, wd.ry, pts) > 2.5:
                 off[0] += 1
