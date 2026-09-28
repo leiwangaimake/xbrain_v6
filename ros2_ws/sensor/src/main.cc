@@ -47,14 +47,14 @@
 namespace {
 
 // Monotonic seconds for periods and ages (CLK-C1). Never the wall clock.
-double MonoNowS() {
+double mono_now_s() {
   return std::chrono::duration<double>(
              std::chrono::steady_clock::now().time_since_epoch())
       .count();
 }
 
 // Wall milliseconds for the envelope ts only (align + log, 11 S3.0). Not a timeout.
-int64_t WallMs() {
+int64_t wall_ms() {
   // Marker on the system_clock line itself (clock_scan associates the exemption
   // with the occurrence line): envelope ts is cross-machine align / log only.
   auto now = std::chrono::system_clock::now();  // WALL-CLOCK-OK(align): envelope ts (11 S3.0), never an age/timeout
@@ -65,7 +65,7 @@ int64_t WallMs() {
 
 // OS boot id, first 8 hex chars -- matches Python read_local_boot_id so a C++
 // envelope's boot equals its Python neighbours' on the same host.
-std::string ReadBootId() {
+std::string read_boot_id() {
   std::ifstream f("/proc/sys/kernel/random/boot_id");
   std::string s;
   std::getline(f, s);
@@ -77,7 +77,7 @@ std::string ReadBootId() {
   return hex;
 }
 
-speed_t BaudConst(int baud) {
+speed_t baud_const(int baud) {
   switch (baud) {
     case 9600: return B9600;
     case 19200: return B19200;
@@ -89,7 +89,7 @@ speed_t BaudConst(int baud) {
 }
 
 // Open the serial port raw 8N1, non-blocking. Returns the fd or -1 on failure.
-int OpenSerial(const std::string& port, int baud) {
+int open_serial(const std::string& port, int baud) {
   const int fd = open(port.c_str(), O_RDONLY | O_NOCTTY | O_NONBLOCK);
   if (fd < 0) {
     std::fprintf(stderr, "rtk_driver: open %s failed: %s\n", port.c_str(), std::strerror(errno));
@@ -101,7 +101,7 @@ int OpenSerial(const std::string& port, int baud) {
     close(fd);
     return -1;
   }
-  const speed_t b = BaudConst(baud);
+  const speed_t b = baud_const(baud);
   if (b == B0) {
     std::fprintf(stderr, "rtk_driver: unsupported baud %d\n", baud);
     close(fd);
@@ -124,7 +124,7 @@ int OpenSerial(const std::string& port, int baud) {
   return fd;
 }
 
-const char* EnvOr(const char* name, const char* fallback) {
+const char* env_or(const char* name, const char* fallback) {
   const char* v = std::getenv(name);
   return (v && *v) ? v : fallback;
 }
@@ -133,7 +133,7 @@ const char* EnvOr(const char* name, const char* fallback) {
 // line from `chronyc -c tracking`: refid, name, stratum, ref_time, sys_offset,
 // last_offset, rms_offset, ..., leap. have=false if chrony is unreachable, which
 // the judge maps to source=none / sync=false (fail-safe).
-sensor::ChronyReading ReadChrony(double wall_now_s) {
+sensor::ChronyReading read_chrony(double wall_now_s) {
   sensor::ChronyReading r;
   FILE* p = popen("chronyc -c tracking 2>/dev/null", "r");
   if (p == nullptr) return r;
@@ -183,15 +183,15 @@ int main() {
     return 1;
   }
   const std::string rid = rid_env;
-  const std::string boot = ReadBootId();
+  const std::string boot = read_boot_id();
   const std::string src = "rtk_driver";
 
   // 2) Config: read the resolved product (10 S5.4.1), never the source.
-  const std::string resolved_dir = EnvOr("XBRAIN_RESOLVED_DIR", "/run/xbrain/resolved");
+  const std::string resolved_dir = env_or("XBRAIN_RESOLVED_DIR", "/run/xbrain/resolved");
   const std::string cfg_path = resolved_dir + "/rtk_driver.yaml";
   sensor::RtkConfig cfg;
   try {
-    cfg = sensor::LoadRtkConfig(cfg_path, rid, src, boot);
+    cfg = sensor::load_rtk_config(cfg_path, rid, src, boot);
   } catch (const std::exception& e) {
     std::fprintf(stderr, "rtk_driver: config load failed: %s\n", e.what());
     return 1;
@@ -199,7 +199,7 @@ int main() {
 
   // 3) Serial. fd is mutable: the loop closes + reopens it on a USB unplug so the
   //    link recovers when the cable is plugged back in (serial_reopen.h).
-  int fd = OpenSerial(cfg.serial_port, cfg.serial_baud);
+  int fd = open_serial(cfg.serial_port, cfg.serial_baud);
   if (fd < 0) return 1;
 
   // 4) RT-plane transport (throws if the RT router is unreachable).
@@ -232,19 +232,19 @@ int main() {
   char buf[1024];
   int64_t ticks = 0;
   int64_t bytes_total = 0;
-  double last_hb = MonoNowS();
+  double last_hb = mono_now_s();
   double last_clock = 0.0;
-  double last_byte_mono = MonoNowS();   // for the stale-data reopen watchdog
+  double last_byte_mono = mono_now_s();   // for the stale-data reopen watchdog
   double last_reopen_try = 0.0;
   for (;;) {
-    const double mono = MonoNowS();
+    const double mono = mono_now_s();
     if (fd < 0) {
       // Disconnected: retry opening the configured port ~1 Hz. When the USB is
       // plugged back in the kernel re-creates the same CDC-ACM node, so this
       // succeeds and the link resumes.
       if (mono - last_reopen_try >= kReopenTryS) {
         last_reopen_try = mono;
-        fd = OpenSerial(cfg.serial_port, cfg.serial_baud);
+        fd = open_serial(cfg.serial_port, cfg.serial_baud);
         if (fd >= 0) {
           last_byte_mono = mono;   // fresh grace window before the stale watchdog
           std::printf("rtk_driver: serial %s reopened (hotplug recovery)\n",
@@ -255,7 +255,7 @@ int main() {
     } else {
       const ssize_t n = read(fd, buf, sizeof(buf));
       const int err = errno;
-      switch (sensor::ClassifySerialRead(n, err, mono, last_byte_mono,
+      switch (sensor::classify_serial_read(n, err, mono, last_byte_mono,
                                          kStaleReopenS)) {
         case sensor::SerialAction::kFeed:
           driver.feed(buf, static_cast<std::size_t>(n), mono);
@@ -275,12 +275,12 @@ int main() {
           break;
       }
     }
-    driver.tick(mono, WallMs());
+    driver.tick(mono, wall_ms());
     // 1 Hz rt/clock/status (11 S3.11). The chrony read is I/O, done here (not in
     // the 20 Hz gnss path), once per second.
     if (mono - last_clock >= 1.0) {
-      const int64_t w = WallMs();
-      driver.tickClock(ReadChrony(static_cast<double>(w) / 1000.0), mono, w);
+      const int64_t w = wall_ms();
+      driver.tickClock(read_chrony(static_cast<double>(w) / 1000.0), mono, w);
       last_clock = mono;
     }
     ++ticks;

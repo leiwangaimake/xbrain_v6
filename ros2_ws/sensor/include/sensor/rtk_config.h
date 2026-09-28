@@ -38,7 +38,7 @@ struct RtkConfig {
 // Parse the resolved yaml at `path` and fold in the runtime identity. Throws
 // std::runtime_error (with the offending key path) on any missing / null /
 // unparseable value -- fail-stop, never fail-silent (3.1).
-RtkConfig LoadRtkConfig(const std::string& path, const std::string& rid,
+RtkConfig load_rtk_config(const std::string& path, const std::string& rid,
                         const std::string& src, const std::string& boot);
 
 }  // namespace sensor

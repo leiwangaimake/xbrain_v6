@@ -36,17 +36,17 @@ static int g_failures = 0;
       ++g_failures;                                                       \
     }                                                                     \
   } while (0)
-static bool Near(double a, double b, double eps) { return std::fabs(a - b) < eps; }
+static bool near(double a, double b, double eps) { return std::fabs(a - b) < eps; }
 
 // The engineering-default thresholds (11 S3.3.1/S3.3.3), the values the driver
 // will load from configs/. cov 0.02 / age 0.2 / cog 0.5 / degrade 0.5 /
 // recover 2.0 / fix_lost 1.0 / blind_rise 0.5 / blind_timeout 30 / cov_h 0.05 /
 // dt 0.9 / i 1.0,0.4,0.0.
-static ResolverConfig Cfg() {
+static ResolverConfig cfg() {
   return {0.02, 0.2, 0.5, 0.5, 2.0, 1.0, 0.5, 30.0, 0.05, 0.9, 1.0, 0.4, 0.0};
 }
 
-static HeadingInputs L1Good() {
+static HeadingInputs l1_good() {
   HeadingInputs in;
   in.heading_present = true; in.baseline_valid = true;
   in.heading_true_deg = 90.0; in.heading_cov_rad = 0.01; in.heading_age_s = 0.1;
@@ -55,12 +55,12 @@ static HeadingInputs L1Good() {
   return in;
 }
 // L1 admission fails (no dual-antenna) but the fix can still COG while moving.
-static HeadingInputs L2Only() {
-  HeadingInputs in = L1Good();
+static HeadingInputs l2_only() {
+  HeadingInputs in = l1_good();
   in.baseline_valid = false; in.heading_present = false;
   return in;
 }
-static HeadingInputs FixLost() {
+static HeadingInputs fix_lost() {
   HeadingInputs in;
   in.fix_is_lost = true; in.baseline_valid = false; in.heading_present = false;
   in.speed_mps = 0.0; in.cog_present = false;
@@ -70,7 +70,7 @@ static HeadingInputs FixLost() {
 // Step the resolver over `dur` seconds at dt. Returns the tick where a
 // transition event fired during the drive (events fire on ONE tick, then the
 // level is stable and the fields are the same), or the last tick if none did.
-static ResolveResult Drive(HeadingResolver& r, const HeadingInputs& in,
+static ResolveResult drive(HeadingResolver& r, const HeadingInputs& in,
                            double& now, double dur, double dt) {
   ResolveResult res = r.update(in, now);
   ResolveResult evt = res;
@@ -84,69 +84,69 @@ static ResolveResult Drive(HeadingResolver& r, const HeadingInputs& in,
   return (evt.event != HeadingEvent::kNone) ? evt : res;
 }
 
-static void TestL3ToL1AndFields() {
-  HeadingResolver r(Cfg());
+static void test_l3_to_l1_and_fields() {
+  HeadingResolver r(cfg());
   double now = 100.0;
-  ResolveResult res = Drive(r, L1Good(), now, 2.5, 0.1);  // recover 2.0 s
+  ResolveResult res = drive(r, l1_good(), now, 2.5, 0.1);  // recover 2.0 s
   CHECK(r.level() == 1);
   CHECK(res.heading.heading_valid);
   CHECK(res.heading.source == "dual_antenna");
   CHECK(res.heading.level == 1);
   CHECK(res.heading.yaw_capable);
-  CHECK(Near(res.heading.i_heading, 1.0, 1e-9));
-  CHECK(res.heading.cov_rad.has_value() && Near(*res.heading.cov_rad, 0.01, 1e-9));
+  CHECK(near(res.heading.i_heading, 1.0, 1e-9));
+  CHECK(res.heading.cov_rad.has_value() && near(*res.heading.cov_rad, 0.01, 1e-9));
   // 90 deg true (east) -> ENU 0.
-  CHECK(Near(res.heading.heading_rad, 0.0, 1e-6));
+  CHECK(near(res.heading.heading_rad, 0.0, 1e-6));
 }
 
-static void TestL1ToL2Degrade() {
-  HeadingResolver r(Cfg());
+static void test_l1_to_l2_degrade() {
+  HeadingResolver r(cfg());
   double now = 0.0;
-  Drive(r, L1Good(), now, 2.5, 0.1);           // reach L1
-  ResolveResult res = Drive(r, L2Only(), now, 0.7, 0.1);  // degrade 0.5 s
+  drive(r, l1_good(), now, 2.5, 0.1);           // reach L1
+  ResolveResult res = drive(r, l2_only(), now, 0.7, 0.1);  // degrade 0.5 s
   CHECK(r.level() == 2);
   CHECK(res.heading.source == "cog");
   CHECK(res.heading.heading_valid);            // moving -> L2-active
   CHECK(!res.heading.yaw_capable);
-  CHECK(Near(res.heading.i_heading, 0.4, 1e-9));
+  CHECK(near(res.heading.i_heading, 0.4, 1e-9));
 }
 
-static void TestL2Substates() {
-  HeadingResolver r(Cfg());
+static void test_l2_substates() {
+  HeadingResolver r(cfg());
   double now = 0.0;
-  Drive(r, L1Good(), now, 2.5, 0.1);
-  Drive(r, L2Only(), now, 0.7, 0.1);           // L2-active (moving)
+  drive(r, l1_good(), now, 2.5, 0.1);
+  drive(r, l2_only(), now, 0.7, 0.1);           // L2-active (moving)
   CHECK(r.level() == 2);
   // Stop: fall to blind is IMMEDIATE, level stays 2, no event.
-  HeadingInputs slow = L2Only(); slow.speed_mps = 0.0; slow.cog_present = false;
+  HeadingInputs slow = l2_only(); slow.speed_mps = 0.0; slow.cog_present = false;
   ResolveResult res = r.update(slow, now); now += 0.1;
   CHECK(r.level() == 2);
   CHECK(!res.heading.heading_valid);           // L2-blind
   CHECK(res.event == HeadingEvent::kNone);     // blind is not a fault
   // Move again: rise to active needs 0.5 s sustained.
-  res = Drive(r, L2Only(), now, 0.7, 0.1);
+  res = drive(r, l2_only(), now, 0.7, 0.1);
   CHECK(r.level() == 2);
   CHECK(res.heading.heading_valid);
 }
 
-static void TestL2ToL3FixLost() {
-  HeadingResolver r(Cfg());
+static void test_l2_to_l3_fix_lost() {
+  HeadingResolver r(cfg());
   double now = 0.0;
-  Drive(r, L1Good(), now, 2.5, 0.1);
-  Drive(r, L2Only(), now, 0.7, 0.1);
-  ResolveResult res = Drive(r, FixLost(), now, 1.2, 0.1);   // fix_lost 1.0 s
+  drive(r, l1_good(), now, 2.5, 0.1);
+  drive(r, l2_only(), now, 0.7, 0.1);
+  ResolveResult res = drive(r, fix_lost(), now, 1.2, 0.1);   // fix_lost 1.0 s
   CHECK(r.level() == 3);
   CHECK(res.event == HeadingEvent::kLost);
   CHECK(res.lost_reason == LostReason::kFixLost);
 }
 
-static void TestL1ToL3DualAntennaFail() {
-  HeadingResolver r(Cfg());
+static void test_l1_to_l3_dual_antenna_fail() {
+  HeadingResolver r(cfg());
   double now = 0.0;
-  Drive(r, L1Good(), now, 2.5, 0.1);
+  drive(r, l1_good(), now, 2.5, 0.1);
   // Baseline lost AND fix lost (cannot COG) -> dual_antenna_fail after 1.0 s.
-  HeadingInputs bad = FixLost();               // fix_is_lost, no heading
-  ResolveResult res = Drive(r, bad, now, 1.2, 0.1);
+  HeadingInputs bad = fix_lost();               // fix_is_lost, no heading
+  ResolveResult res = drive(r, bad, now, 1.2, 0.1);
   CHECK(r.level() == 3);
   CHECK(res.lost_reason == LostReason::kDualAntennaFail);
 }
@@ -157,69 +157,69 @@ static void TestL1ToL3DualAntennaFail() {
 // (!fix_is_lost && speed) holds and L3 recovers to L2 (COG). MUTATION: the old
 // l2_admissible = fix_is_rtk ({rtk_fixed,rtk_float} only) left a dgps/non-rtk
 // fix STUCK in L3 -- this recovery would never fire.
-static void TestL3ToL2RecoverCogCapable() {
-  HeadingResolver r(Cfg());
+static void test_l3_to_l2_recover_cog_capable() {
+  HeadingResolver r(cfg());
   double now = 0.0;
-  r.update(FixLost(), now); now += 0.1;                    // start at L3
+  r.update(fix_lost(), now); now += 0.1;                    // start at L3
   CHECK(r.level() == 3);
-  ResolveResult res = Drive(r, L2Only(), now, 3.0, 0.1);   // recover_sustain 2.0 s
+  ResolveResult res = drive(r, l2_only(), now, 3.0, 0.1);   // recover_sustain 2.0 s
   CHECK(r.level() == 2);
   CHECK(res.heading.source == "cog");
   CHECK(res.heading.heading_valid);
 }
 
-static void TestL3Fields() {
-  HeadingResolver r(Cfg());
+static void test_l3_fields() {
+  HeadingResolver r(cfg());
   double now = 0.0;
-  ResolveResult res = r.update(FixLost(), now);   // starts at L3
+  ResolveResult res = r.update(fix_lost(), now);   // starts at L3
   CHECK(r.level() == 3);
   CHECK(res.heading.source == "none");
   CHECK(!res.heading.heading_valid);
   CHECK(!res.heading.cov_rad.has_value());        // null, NOT 0 (NAV-02)
   CHECK(!res.heading.yaw_capable);
-  CHECK(Near(res.heading.i_heading, 0.0, 1e-9));
+  CHECK(near(res.heading.i_heading, 0.0, 1e-9));
 }
 
-static void TestBlindTimeout() {
-  HeadingResolver r(Cfg());
+static void test_blind_timeout() {
+  HeadingResolver r(cfg());
   double now = 0.0;
-  Drive(r, L1Good(), now, 2.5, 0.1);
-  Drive(r, L2Only(), now, 0.7, 0.1);
+  drive(r, l1_good(), now, 2.5, 0.1);
+  drive(r, l2_only(), now, 0.7, 0.1);
   // Stop with a pending autonomous move: after > 30 s blind -> L3.
-  HeadingInputs blind = L2Only();
+  HeadingInputs blind = l2_only();
   blind.speed_mps = 0.0; blind.cog_present = false;
   blind.pending_autonomous_motion = true;
-  ResolveResult res = Drive(r, blind, now, 31.0, 0.5);
+  ResolveResult res = drive(r, blind, now, 31.0, 0.5);
   CHECK(r.level() == 3);
   CHECK(res.lost_reason == LostReason::kHeadingBlindTimeout);
 }
 
-static void TestAntiChatterDwell() {
-  HeadingResolver r(Cfg());
+static void test_anti_chatter_dwell() {
+  HeadingResolver r(cfg());
   double now = 0.0;
-  Drive(r, L1Good(), now, 2.5, 0.1);           // L1
+  drive(r, l1_good(), now, 2.5, 0.1);           // L1
   CHECK(r.level() == 1);
   // 0.4 s of bad (< 0.5 dwell) -> still L1.
-  Drive(r, L2Only(), now, 0.4, 0.1);
+  drive(r, l2_only(), now, 0.4, 0.1);
   CHECK(r.level() == 1);
   // ONE good tick must RESET the degrade dwell (single false restarts it).
-  r.update(L1Good(), now); now += 0.1;
+  r.update(l1_good(), now); now += 0.1;
   CHECK(r.level() == 1);
   // Another 0.4 s of bad -> still L1 (dwell restarted, mutation: no reset -> L2).
-  Drive(r, L2Only(), now, 0.4, 0.1);
+  drive(r, l2_only(), now, 0.4, 0.1);
   CHECK(r.level() == 1);
 }
 
 int main() {
-  TestL3ToL1AndFields();
-  TestL1ToL2Degrade();
-  TestL2Substates();
-  TestL2ToL3FixLost();
-  TestL1ToL3DualAntennaFail();
-  TestL3ToL2RecoverCogCapable();
-  TestL3Fields();
-  TestBlindTimeout();
-  TestAntiChatterDwell();
+  test_l3_to_l1_and_fields();
+  test_l1_to_l2_degrade();
+  test_l2_substates();
+  test_l2_to_l3_fix_lost();
+  test_l1_to_l3_dual_antenna_fail();
+  test_l3_to_l2_recover_cog_capable();
+  test_l3_fields();
+  test_blind_timeout();
+  test_anti_chatter_dwell();
   if (g_failures == 0) {
     std::printf("ALL HEADING RESOLVER TESTS PASSED\n");
     return 0;

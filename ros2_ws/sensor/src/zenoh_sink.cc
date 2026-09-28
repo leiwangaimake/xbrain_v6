@@ -29,9 +29,9 @@ namespace {
 // Build the RT-plane session from the shared config emitter and open it. Kept a
 // free function so the Impl ctor initialiser can hand the opened session straight
 // into the member (zenoh::Session is not default-constructible).
-zenoh::Session OpenRtSession() {
+zenoh::Session open_rt_session() {
   namespace zc = hachist::xbrain::zenoh_config;
-  const std::string json5 = zc::ToJson5(zc::PlaneConfig(zc::Plane::kRt));
+  const std::string json5 = zc::to_json5(zc::plane_config(zc::Plane::kRt));
   auto config = zenoh::Config::from_str(json5);
   return zenoh::Session::open(std::move(config));
 }
@@ -43,7 +43,7 @@ struct ZenohSink::Impl {
   // keeps the declaration out of the hot path after the first tick per key.
   std::map<std::string, zenoh::Publisher> pubs;
 
-  Impl() : session(OpenRtSession()) {}
+  Impl() : session(open_rt_session()) {}
 };
 
 ZenohSink::ZenohSink() {

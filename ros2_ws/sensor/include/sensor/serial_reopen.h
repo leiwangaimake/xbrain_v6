@@ -41,7 +41,7 @@ enum class SerialAction { kFeed, kKeep, kReopen };
 // Pure classification of a non-blocking serial read() result. n/err are read()'s
 // return value and errno; now_mono_s is the current monotonic time, last_byte_mono_s
 // is when the last real bytes arrived, stale_s is the no-data reopen threshold.
-inline SerialAction ClassifySerialRead(ssize_t n, int err, double now_mono_s,
+inline SerialAction classify_serial_read(ssize_t n, int err, double now_mono_s,
                                        double last_byte_mono_s, double stale_s) {
   if (n > 0) return SerialAction::kFeed;
   if (n == 0) return SerialAction::kReopen;   // EOF -- device hung up on unplug

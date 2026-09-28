@@ -36,7 +36,7 @@ static int g_failures = 0;
       ++g_failures;                                                       \
     }                                                                     \
   } while (0)
-static bool Has(const std::string& s, const std::string& sub) {
+static bool has(const std::string& s, const std::string& sub) {
   return s.find(sub) != std::string::npos;
 }
 
@@ -48,7 +48,7 @@ class CaptureSink : public PublishSink {
   }
 };
 
-static DriverConfig Cfg() {
+static DriverConfig cfg() {
   DriverConfig c;
   c.rid = "r1";
   c.src = "rtk_driver";
@@ -66,7 +66,7 @@ static DriverConfig Cfg() {
 
 // Most-recent published payload on `key`, or nullptr. tick() now publishes TWO
 // messages (heading then fix), so tests select by key rather than assume order.
-static const std::string* FindByKey(const CaptureSink& s, const std::string& key) {
+static const std::string* find_by_key(const CaptureSink& s, const std::string& key) {
   for (auto it = s.msgs.rbegin(); it != s.msgs.rend(); ++it) {
     if (it->first == key) return &it->second;
   }
@@ -87,9 +87,9 @@ static void feedAll(RtkDriver& d, double now) {
   d.feed(kRmc, std::char_traits<char>::length(kRmc), now);
 }
 
-static void TestPublishL1() {
+static void test_publish_l1() {
   CaptureSink sink;
-  RtkDriver d(Cfg(), &sink);
+  RtkDriver d(cfg(), &sink);
   double now = 100.0;
   for (int i = 0; i < 30; ++i) {   // 3.0 s at 0.1 -> past the 2.0 s recovery dwell
     feedAll(d, now);
@@ -98,70 +98,70 @@ static void TestPublishL1() {
   }
   CHECK(d.level() == 1);
   CHECK(!sink.msgs.empty());
-  const std::string* hp = FindByKey(sink, "xbrain/r1/rt/gnss/heading");
+  const std::string* hp = find_by_key(sink, "xbrain/r1/rt/gnss/heading");
   CHECK(hp != nullptr);   // keyexpr (mutation target)
   const std::string& j = *hp;
   // envelope (11 S3.0)
-  CHECK(Has(j, "\"v\":1"));
-  CHECK(Has(j, "\"rid\":\"r1\""));
-  CHECK(Has(j, "\"src\":\"rtk_driver\""));
-  CHECK(Has(j, "\"boot\":\"9f2c1a44\""));
-  CHECK(Has(j, "\"ts_sync\":false"));   // no ClockStatus -> CLK-A3 fail-safe false
-  CHECK(Has(j, "\"seq\":"));
-  CHECK(Has(j, "\"data\":{"));
+  CHECK(has(j, "\"v\":1"));
+  CHECK(has(j, "\"rid\":\"r1\""));
+  CHECK(has(j, "\"src\":\"rtk_driver\""));
+  CHECK(has(j, "\"boot\":\"9f2c1a44\""));
+  CHECK(has(j, "\"ts_sync\":false"));   // no ClockStatus -> CLK-A3 fail-safe false
+  CHECK(has(j, "\"seq\":"));
+  CHECK(has(j, "\"data\":{"));
   // data (11 S3.3): reached L1, heading = 90 deg true -> ENU 0.
-  CHECK(Has(j, "\"source\":\"dual_antenna\""));
-  CHECK(Has(j, "\"heading_valid\":true"));
-  CHECK(Has(j, "\"level\":1"));
-  CHECK(Has(j, "\"heading_rad\":0.000000"));
+  CHECK(has(j, "\"source\":\"dual_antenna\""));
+  CHECK(has(j, "\"heading_valid\":true"));
+  CHECK(has(j, "\"level\":1"));
+  CHECK(has(j, "\"heading_rad\":0.000000"));
   // rt/gnss/fix (11 S3.2): GGA quality 4 -> rtk_fixed, position present, cov real.
-  const std::string* fp = FindByKey(sink, "xbrain/r1/rt/gnss/fix");
+  const std::string* fp = find_by_key(sink, "xbrain/r1/rt/gnss/fix");
   CHECK(fp != nullptr);
   const std::string& jf = *fp;
-  CHECK(Has(jf, "\"fix_type\":\"rtk_fixed\""));
-  CHECK(!Has(jf, "\"lat\":null"));          // has a position
-  CHECK(!Has(jf, "\"cov_h_m\":null"));      // cov is real, not null
-  CHECK(Has(jf, "\"sats\":18"));
+  CHECK(has(jf, "\"fix_type\":\"rtk_fixed\""));
+  CHECK(!has(jf, "\"lat\":null"));          // has a position
+  CHECK(!has(jf, "\"cov_h_m\":null"));      // cov is real, not null
+  CHECK(has(jf, "\"sats\":18"));
 }
 
-static void TestPublishL3Startup() {
+static void test_publish_l3_startup() {
   CaptureSink sink;
-  RtkDriver d(Cfg(), &sink);
+  RtkDriver d(cfg(), &sink);
   d.tick(50.0, 1700000000000LL);   // no data fed -> L3 heading + no_fix
   CHECK(d.level() == 3);
   CHECK(sink.msgs.size() == 2);    // heading + fix, one tick
-  const std::string* hp = FindByKey(sink, "xbrain/r1/rt/gnss/heading");
+  const std::string* hp = find_by_key(sink, "xbrain/r1/rt/gnss/heading");
   CHECK(hp != nullptr);
-  CHECK(Has(*hp, "\"source\":\"none\""));
-  CHECK(Has(*hp, "\"heading_valid\":false"));
-  CHECK(Has(*hp, "\"cov_rad\":null"));    // null, NOT 0 (NAV-02)
-  CHECK(Has(*hp, "\"level\":3"));
-  const std::string* fp = FindByKey(sink, "xbrain/r1/rt/gnss/fix");
+  CHECK(has(*hp, "\"source\":\"none\""));
+  CHECK(has(*hp, "\"heading_valid\":false"));
+  CHECK(has(*hp, "\"cov_rad\":null"));    // null, NOT 0 (NAV-02)
+  CHECK(has(*hp, "\"level\":3"));
+  const std::string* fp = find_by_key(sink, "xbrain/r1/rt/gnss/fix");
   CHECK(fp != nullptr);
-  CHECK(Has(*fp, "\"fix_type\":\"no_fix\""));
-  CHECK(Has(*fp, "\"lat\":null"));        // no position -> null, NOT 0 (NAV-02)
+  CHECK(has(*fp, "\"fix_type\":\"no_fix\""));
+  CHECK(has(*fp, "\"lat\":null"));        // no position -> null, NOT 0 (NAV-02)
 }
 
-static void TestSeqIncrements() {
+static void test_seq_increments() {
   CaptureSink sink;
-  RtkDriver d(Cfg(), &sink);
+  RtkDriver d(cfg(), &sink);
   d.tick(1.0, 1000LL);
   d.tick(2.0, 1000LL);
   // Two ticks x (heading + fix) = 4 messages; each topic has its OWN seq (its own
   // envelope writer) so per-topic gap detection works: heading 1,2 and fix 1,2.
   CHECK(sink.msgs.size() == 4);
   CHECK(sink.msgs[0].first == "xbrain/r1/rt/gnss/heading");
-  CHECK(Has(sink.msgs[0].second, "\"seq\":1"));   // heading seq 1
+  CHECK(has(sink.msgs[0].second, "\"seq\":1"));   // heading seq 1
   CHECK(sink.msgs[1].first == "xbrain/r1/rt/gnss/fix");
-  CHECK(Has(sink.msgs[1].second, "\"seq\":1"));   // fix seq 1 (own counter)
-  CHECK(Has(sink.msgs[2].second, "\"seq\":2"));   // heading seq 2
-  CHECK(Has(sink.msgs[3].second, "\"seq\":2"));   // fix seq 2
+  CHECK(has(sink.msgs[1].second, "\"seq\":1"));   // fix seq 1 (own counter)
+  CHECK(has(sink.msgs[2].second, "\"seq\":2"));   // heading seq 2
+  CHECK(has(sink.msgs[3].second, "\"seq\":2"));   // fix seq 2
 }
 
 int main() {
-  TestPublishL1();
-  TestPublishL3Startup();
-  TestSeqIncrements();
+  test_publish_l1();
+  test_publish_l3_startup();
+  test_seq_increments();
   if (g_failures == 0) {
     std::printf("ALL RTK DRIVER TESTS PASSED\n");
     return 0;

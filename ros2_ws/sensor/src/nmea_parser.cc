@@ -24,7 +24,7 @@ namespace sensor {
 namespace {
 
 // Parse a hex nibble; returns -1 on a non-hex char.
-int HexNibble(char c) {
+int hex_nibble(char c) {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
   if (c >= 'A' && c <= 'F') return c - 'A' + 10;
@@ -33,24 +33,24 @@ int HexNibble(char c) {
 
 // Find the start ('$') so leading serial noise before the sentence is
 // tolerated. Returns std::string::npos when absent.
-size_t FindStart(const std::string& s) { return s.find('$'); }
+size_t find_start(const std::string& s) { return s.find('$'); }
 
 // strtod that treats an empty / blank field as 0.0 (NMEA leaves optional
 // numeric fields empty rather than zero).
-double FieldToDouble(const std::string& f) {
+double field_to_double(const std::string& f) {
   if (f.empty()) return 0.0;
   return std::strtod(f.c_str(), nullptr);
 }
 
-int FieldToInt(const std::string& f) {
+int field_to_int(const std::string& f) {
   if (f.empty()) return 0;
   return static_cast<int>(std::strtol(f.c_str(), nullptr, 10));
 }
 
 }  // namespace
 
-bool NmeaChecksumOk(const std::string& sentence) {
-  const size_t start = FindStart(sentence);
+bool nmea_checksum_ok(const std::string& sentence) {
+  const size_t start = find_start(sentence);
   if (start == std::string::npos) return false;
   const size_t star = sentence.find('*', start);
   if (star == std::string::npos) {
@@ -64,15 +64,15 @@ bool NmeaChecksumOk(const std::string& sentence) {
   }
   // Need two hex chars after '*'.
   if (star + 2 >= sentence.size()) return false;
-  const int hi = HexNibble(sentence[star + 1]);
-  const int lo = HexNibble(sentence[star + 2]);
+  const int hi = hex_nibble(sentence[star + 1]);
+  const int lo = hex_nibble(sentence[star + 2]);
   if (hi < 0 || lo < 0) return false;
   return xsum == static_cast<unsigned char>((hi << 4) | lo);
 }
 
-std::vector<std::string> NmeaSplitFields(const std::string& sentence) {
+std::vector<std::string> nmea_split_fields(const std::string& sentence) {
   std::vector<std::string> fields;
-  const size_t start = FindStart(sentence);
+  const size_t start = find_start(sentence);
   if (start == std::string::npos) return fields;
   // Stop at '*' (checksum) or end of line.
   size_t end = sentence.find('*', start);
@@ -97,15 +97,15 @@ std::vector<std::string> NmeaSplitFields(const std::string& sentence) {
   return fields;
 }
 
-std::string NmeaSentenceType(const std::string& sentence) {
-  const size_t start = FindStart(sentence);
+std::string nmea_sentence_type(const std::string& sentence) {
+  const size_t start = find_start(sentence);
   if (start == std::string::npos) return "";
   // Address is "$ttTYP" -> talker (2) + type (3). Need at least 6 chars.
   if (sentence.size() < start + 6) return "";
   return sentence.substr(start + 3, 3);
 }
 
-double NmeaLatLonToDegrees(const std::string& magnitude,
+double nmea_lat_lon_to_degrees(const std::string& magnitude,
                            const std::string& hemisphere) {
   if (magnitude.empty()) return 0.0;
   const double raw = std::strtod(magnitude.c_str(), nullptr);
@@ -119,79 +119,79 @@ double NmeaLatLonToDegrees(const std::string& magnitude,
   return result;
 }
 
-bool ParseGga(const std::string& sentence, GgaFix* out) {
+bool parse_gga(const std::string& sentence, GgaFix* out) {
   if (out == nullptr) return false;
   *out = GgaFix();
-  if (NmeaSentenceType(sentence) != "GGA") return false;
-  if (!NmeaChecksumOk(sentence)) return false;
-  const std::vector<std::string> f = NmeaSplitFields(sentence);
+  if (nmea_sentence_type(sentence) != "GGA") return false;
+  if (!nmea_checksum_ok(sentence)) return false;
+  const std::vector<std::string> f = nmea_split_fields(sentence);
   // GGA columns: 0 addr,1 utc,2 lat,3 N/S,4 lon,5 E/W,6 quality,7 numSV,
   // 8 HDOP,9 alt,10 M,11 geoidSep,...  -> need at least 10 fields.
   if (f.size() < 10) return false;
   // No position fix yet -> report a parsed-but-invalid GGA (quality kept so
   // the node can still publish a NONE-status fix for the R88 grace timer).
-  out->quality = FieldToInt(f[6]);
-  out->num_satellites = FieldToInt(f[7]);
-  out->hdop = FieldToDouble(f[8]);
+  out->quality = field_to_int(f[6]);
+  out->num_satellites = field_to_int(f[7]);
+  out->hdop = field_to_double(f[8]);
   if (f[2].empty() || f[4].empty()) {
     out->valid = false;
     return true;  // recognised GGA, just no lat/lon
   }
-  out->latitude_deg = NmeaLatLonToDegrees(f[2], f[3]);
-  out->longitude_deg = NmeaLatLonToDegrees(f[4], f[5]);
-  out->altitude_m = FieldToDouble(f[9]);
+  out->latitude_deg = nmea_lat_lon_to_degrees(f[2], f[3]);
+  out->longitude_deg = nmea_lat_lon_to_degrees(f[4], f[5]);
+  out->altitude_m = field_to_double(f[9]);
   out->valid = true;
   return true;
 }
 
-bool ParseHdt(const std::string& sentence, HdtHeading* out) {
+bool parse_hdt(const std::string& sentence, HdtHeading* out) {
   if (out == nullptr) return false;
   *out = HdtHeading();
-  if (NmeaSentenceType(sentence) != "HDT") return false;
-  if (!NmeaChecksumOk(sentence)) return false;
-  const std::vector<std::string> f = NmeaSplitFields(sentence);
+  if (nmea_sentence_type(sentence) != "HDT") return false;
+  if (!nmea_checksum_ok(sentence)) return false;
+  const std::vector<std::string> f = nmea_split_fields(sentence);
   // HDT columns: 0 addr, 1 heading_deg, 2 'T'. Need >= 2 fields + a value.
   if (f.size() < 2 || f[1].empty()) return false;
-  out->heading_true_deg = FieldToDouble(f[1]);
+  out->heading_true_deg = field_to_double(f[1]);
   out->valid = true;
   return true;
 }
 
-bool ParseTra(const std::string& sentence, TraHeading* out) {
+bool parse_tra(const std::string& sentence, TraHeading* out) {
   if (out == nullptr) return false;
   *out = TraHeading();
-  if (NmeaSentenceType(sentence) != "TRA") return false;
-  if (!NmeaChecksumOk(sentence)) return false;
-  const std::vector<std::string> f = NmeaSplitFields(sentence);
+  if (nmea_sentence_type(sentence) != "TRA") return false;
+  if (!nmea_checksum_ok(sentence)) return false;
+  const std::vector<std::string> f = nmea_split_fields(sentence);
   // $GPTRA columns: 0 addr, 1 utc, 2 heading, 3 pitch, 4 roll, 5 QF,
   // 6 numSV, 7 age, 8 stnID. Need >= 6 fields to reach the QF column.
   if (f.size() < 6) return false;
-  out->heading_true_deg = FieldToDouble(f[2]);
-  out->pitch_deg = FieldToDouble(f[3]);
-  out->quality = FieldToInt(f[5]);
-  out->num_satellites = (f.size() > 6) ? FieldToInt(f[6]) : 0;
+  out->heading_true_deg = field_to_double(f[2]);
+  out->pitch_deg = field_to_double(f[3]);
+  out->quality = field_to_int(f[5]);
+  out->num_satellites = (f.size() > 6) ? field_to_int(f[6]) : 0;
   out->valid = true;  // parsed OK; quality field says if the heading is usable
   return true;
 }
 
-bool ParseRmc(const std::string& sentence, RmcData* out) {
+bool parse_rmc(const std::string& sentence, RmcData* out) {
   if (out == nullptr) return false;
   *out = RmcData();
-  if (NmeaSentenceType(sentence) != "RMC") return false;
-  if (!NmeaChecksumOk(sentence)) return false;
-  const std::vector<std::string> f = NmeaSplitFields(sentence);
+  if (nmea_sentence_type(sentence) != "RMC") return false;
+  if (!nmea_checksum_ok(sentence)) return false;
+  const std::vector<std::string> f = nmea_split_fields(sentence);
   // RMC columns: 0 addr, 1 utc, 2 status(A/V), 3 lat, 4 N/S, 5 lon, 6 E/W,
   // 7 speed(knots), 8 cog(deg true), 9 date, ...  Need >= 9 to reach cog.
   if (f.size() < 9) return false;
   out->status_active = (!f[2].empty() && f[2][0] == 'A');
   // RMC reports speed over ground in KNOTS; convert to m/s (1 kn = 1852 m/3600 s).
   constexpr double kKnotToMps = 1852.0 / 3600.0;
-  out->speed_mps = FieldToDouble(f[7]) * kKnotToMps;
+  out->speed_mps = field_to_double(f[7]) * kKnotToMps;
   // The module leaves the course field EMPTY at a standstill (COG undefined).
   // Report the absence so the resolver withholds L2 rather than reading 0 as
   // "heading due North" -- the exact fabricated-heading the resolver must avoid.
   out->cog_present = !f[8].empty();
-  out->cog_deg = FieldToDouble(f[8]);
+  out->cog_deg = field_to_double(f[8]);
   out->valid = true;
   return true;
 }

@@ -21,12 +21,12 @@
 namespace sensor {
 
 namespace {
-std::string OptNum(double v, bool present) {
+std::string opt_num(double v, bool present) {
   return present ? std::to_string(v) : std::string("null");
 }
 }  // namespace
 
-ClockStatus JudgeClock(const ChronyReading& r, const ClockConfig& cfg,
+ClockStatus judge_clock(const ChronyReading& r, const ClockConfig& cfg,
                        int step_count, double mono_now_s, const std::string& boot) {
   ClockStatus cs;
   cs.boot = boot;
@@ -84,14 +84,14 @@ ClockStatus JudgeClock(const ChronyReading& r, const ClockConfig& cfg,
   return cs;  // sync=false, source=none
 }
 
-std::string ToJsonData(const ClockStatus& cs) {
+std::string to_json_data(const ClockStatus& cs) {
   const bool o = cs.has_offset;
   std::string j = "{";
   j += "\"sync\":" + std::string(cs.sync ? "true" : "false");
   j += ",\"source\":\"" + cs.source + "\"";
   j += ",\"quality\":\"" + cs.quality + "\"";
-  j += ",\"offset_ms\":" + OptNum(cs.offset_ms, o);
-  j += ",\"rms_ms\":" + OptNum(cs.rms_ms, o);
+  j += ",\"offset_ms\":" + opt_num(cs.offset_ms, o);
+  j += ",\"rms_ms\":" + opt_num(cs.rms_ms, o);
   j += ",\"ref_age_s\":" + std::to_string(cs.ref_age_s);
   j += ",\"mono_ref\":" + std::to_string(cs.mono_ref);
   j += ",\"utc_ref\":" + std::to_string(cs.utc_ref);

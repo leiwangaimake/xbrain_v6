@@ -3,13 +3,13 @@
  * Author: wanglei@hachist.com
  * 上海哈船智能船舶技术有限公司
  * File: test_rtk_config.cc
- * Brief: Offline unit test for LoadRtkConfig (3.1 fail-stop on null/missing)
+ * Brief: Offline unit test for load_rtk_config (3.1 fail-stop on null/missing)
  *
  * Description:
  * Golden case: a full valid flat config loads into DriverConfig with every field
  * mapped and heading_stddev converted deg->rad. Mutation cases (CLAUDE.md 3.3):
  * a null resolver threshold and a missing driver timeout must each make
- * LoadRtkConfig THROW -- proving the 3.1 no-default contract is actually
+ * load_rtk_config THROW -- proving the 3.1 no-default contract is actually
  * enforced, not just intended. Without the null-throws mutant, a loader that
  * quietly substituted 0.0 would pass a positive-only test and ship a machine
  * that limits itself to a stop with no error.
@@ -22,7 +22,7 @@
 #include <fstream>
 #include <string>
 
-using sensor::LoadRtkConfig;
+using sensor::load_rtk_config;
 using sensor::RtkConfig;
 
 static int g_failures = 0;
@@ -36,7 +36,7 @@ static int g_failures = 0;
   } while (0)
 
 template <class F>
-static bool Throws(F f) {
+static bool throws(F f) {
   try {
     f();
     return false;
@@ -45,7 +45,7 @@ static bool Throws(F f) {
   }
 }
 
-static void WriteFile(const std::string& path, const std::string& body) {
+static void write_file(const std::string& path, const std::string& body) {
   std::ofstream f(path, std::ios::binary);
   f << body;
 }
@@ -88,8 +88,8 @@ int main() {
   const std::string p = "test_rtk_cfg_tmp.yaml";
 
   // Golden: full valid config maps every field.
-  WriteFile(p, kValid);
-  const RtkConfig c = LoadRtkConfig(p, "robot1", "rtk_driver", "abc12345");
+  write_file(p, kValid);
+  const RtkConfig c = load_rtk_config(p, "robot1", "rtk_driver", "abc12345");
   CHECK(c.driver.rid == "robot1");
   CHECK(c.driver.src == "rtk_driver");
   CHECK(c.driver.boot == "abc12345");
@@ -111,8 +111,8 @@ int main() {
     const std::string from = "cov_thresh_rad: 0.02";
     null_cov.replace(null_cov.find(from), from.size(), "cov_thresh_rad: null");
   }
-  WriteFile(p, null_cov);
-  CHECK(Throws([&] { LoadRtkConfig(p, "r", "rtk_driver", "b"); }));
+  write_file(p, null_cov);
+  CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
 
   // 3.3 mutant B: a missing driver timeout must stop the load.
   std::string no_gga = kValid;
@@ -120,8 +120,8 @@ int main() {
     const std::string from = "gga_timeout_s: 1.0\n";
     no_gga.replace(no_gga.find(from), from.size(), "");
   }
-  WriteFile(p, no_gga);
-  CHECK(Throws([&] { LoadRtkConfig(p, "r", "rtk_driver", "b"); }));
+  write_file(p, no_gga);
+  CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
 
   std::remove(p.c_str());
   if (g_failures == 0) {

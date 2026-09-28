@@ -17,10 +17,10 @@
 #include <cstdio>
 #include <string>
 
-using sensor::FixTypeFromGgaQuality;
-using sensor::FixTypeValid;
+using sensor::fix_type_from_gga_quality;
+using sensor::fix_type_valid;
 using sensor::GnssFix;
-using sensor::ToJsonData;
+using sensor::to_json_data;
 
 static int g_failures = 0;
 
@@ -32,38 +32,38 @@ static int g_failures = 0;
     }                                                              \
   } while (0)
 
-static bool Has(const std::string& s, const std::string& sub) {
+static bool has(const std::string& s, const std::string& sub) {
   return s.find(sub) != std::string::npos;
 }
 
 int main() {
   // quality -> fix_type (11 S4.5 closed set).
-  CHECK(FixTypeFromGgaQuality(4) == "rtk_fixed");
-  CHECK(FixTypeFromGgaQuality(5) == "rtk_float");
-  CHECK(FixTypeFromGgaQuality(2) == "dgps");
-  CHECK(FixTypeFromGgaQuality(1) == "single");
-  CHECK(FixTypeFromGgaQuality(0) == "no_fix");
-  CHECK(FixTypeFromGgaQuality(6) == "no_fix");   // dead-reckoning is not a fix
-  CHECK(FixTypeValid("rtk_fixed"));
-  CHECK(!FixTypeValid("garbage"));
+  CHECK(fix_type_from_gga_quality(4) == "rtk_fixed");
+  CHECK(fix_type_from_gga_quality(5) == "rtk_float");
+  CHECK(fix_type_from_gga_quality(2) == "dgps");
+  CHECK(fix_type_from_gga_quality(1) == "single");
+  CHECK(fix_type_from_gga_quality(0) == "no_fix");
+  CHECK(fix_type_from_gga_quality(6) == "no_fix");   // dead-reckoning is not a fix
+  CHECK(fix_type_valid("rtk_fixed"));
+  CHECK(!fix_type_valid("garbage"));
 
   // has_position = true -> real numbers.
   GnssFix f;
   f.has_position = true;
   f.lat = 34.7; f.lon = 135.5; f.alt = 40.0;
   f.fix_type = "rtk_fixed"; f.cov_h_m = 0.02; f.sats = 24;
-  const std::string j = ToJsonData(f);
-  CHECK(Has(j, "\"fix_type\":\"rtk_fixed\""));
-  CHECK(Has(j, "\"sats\":24"));
-  CHECK(!Has(j, "\"lat\":null"));
+  const std::string j = to_json_data(f);
+  CHECK(has(j, "\"fix_type\":\"rtk_fixed\""));
+  CHECK(has(j, "\"sats\":24"));
+  CHECK(!has(j, "\"lat\":null"));
 
   // 3.3 mutant: no position -> lat/lon/cov are JSON null, never 0.
   GnssFix nf;   // defaults: has_position=false, fix_type=no_fix
-  const std::string jn = ToJsonData(nf);
-  CHECK(Has(jn, "\"lat\":null"));
-  CHECK(Has(jn, "\"lon\":null"));
-  CHECK(Has(jn, "\"cov_h_m\":null"));
-  CHECK(Has(jn, "\"fix_type\":\"no_fix\""));
+  const std::string jn = to_json_data(nf);
+  CHECK(has(jn, "\"lat\":null"));
+  CHECK(has(jn, "\"lon\":null"));
+  CHECK(has(jn, "\"cov_h_m\":null"));
+  CHECK(has(jn, "\"fix_type\":\"no_fix\""));
 
   if (g_failures == 0) {
     std::printf("ALL GNSS FIX TESTS PASSED\n");

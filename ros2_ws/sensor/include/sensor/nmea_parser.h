@@ -99,40 +99,40 @@ struct RmcData {
 // XOR checksum of every char between '$' and '*'. Returns true when the
 // trailing *HH matches, OR when no '*' is present (tolerant: some configs
 // emit checksum-less lines). Returns false only on a present-but-wrong sum.
-bool NmeaChecksumOk(const std::string& sentence);
+bool nmea_checksum_ok(const std::string& sentence);
 
 // The 3-char sentence type after the talker id, e.g. "GGA" / "HDT". Returns
 // "" when the string is not a recognisable NMEA sentence ($ttTYP,...).
-std::string NmeaSentenceType(const std::string& sentence);
+std::string nmea_sentence_type(const std::string& sentence);
 
 // Split a sentence into comma fields: field[0] is the address ($GNGGA),
 // subsequent fields are the data columns (the trailing *HH is stripped off
 // the final field). Returns {} for a non-NMEA line.
-std::vector<std::string> NmeaSplitFields(const std::string& sentence);
+std::vector<std::string> nmea_split_fields(const std::string& sentence);
 
 // Convert an NMEA ddmm.mmmm / dddmm.mmmm magnitude + hemisphere to signed
 // decimal degrees. Empty magnitude returns 0.0. S / W hemispheres negate.
-double NmeaLatLonToDegrees(const std::string& magnitude,
+double nmea_lat_lon_to_degrees(const std::string& magnitude,
                            const std::string& hemisphere);
 
 // Parse a GGA sentence. Returns false (and out->valid == false) when the
 // sentence is not a GGA, the checksum is wrong, or it carries no position.
-bool ParseGga(const std::string& sentence, GgaFix* out);
+bool parse_gga(const std::string& sentence, GgaFix* out);
 
 // Parse an HDT sentence. Returns false on non-HDT / bad checksum / empty.
-bool ParseHdt(const std::string& sentence, HdtHeading* out);
+bool parse_hdt(const std::string& sentence, HdtHeading* out);
 
 // Parse a TRA ($GPTRA) sentence. Returns false on non-TRA / bad checksum /
 // too-few fields. out->quality carries the QF flag (0/4/5) so the caller can
 // gate on NARROW_INT (QF==4). A parsed line with QF==0 still returns true
 // (valid==true) but signals "no heading solution" via quality.
-bool ParseTra(const std::string& sentence, TraHeading* out);
+bool parse_tra(const std::string& sentence, TraHeading* out);
 
 // Parse an RMC sentence (position/velocity/time). Returns false on non-RMC / bad
 // checksum / too-few fields. out->speed_mps is converted from the knots field;
 // out->cog_present is false when the course field is empty (standstill), so the
 // resolver can withhold the L2 COG source rather than trust an undefined course.
-bool ParseRmc(const std::string& sentence, RmcData* out);
+bool parse_rmc(const std::string& sentence, RmcData* out);
 
 }  // namespace sensor
 

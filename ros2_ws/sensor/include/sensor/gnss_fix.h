@@ -47,14 +47,14 @@ struct GnssFix {
 
 // Raw GGA fix-quality field -> the 11 S4.5 closed-set fix_type. 4=RTK fixed,
 // 5=RTK float, 2=DGPS, 1=single; 0 (invalid) and 6 (dead-reckoning) are no_fix.
-std::string FixTypeFromGgaQuality(int quality);
+std::string fix_type_from_gga_quality(int quality);
 
 // True iff fix_type is a member of the 11 S4.5 closed set.
-bool FixTypeValid(const std::string& fix_type);
+bool fix_type_valid(const std::string& fix_type);
 
 // Serialise the GnssFix data object (11 S3.2). lat/lon/alt/cov are JSON null when
 // has_position is false; fix_type is always present.
-std::string ToJsonData(const GnssFix& fix);
+std::string to_json_data(const GnssFix& fix);
 
 }  // namespace sensor
 

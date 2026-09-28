@@ -36,7 +36,7 @@ constexpr std::size_t kMaxRx = 8192;  // drop runaway garbage, keep the last lin
 
 // Serialise the 11 S3.0 envelope around a data object. The envelope fields come
 // from EnvelopeWriter (v/rid/ts/mono/boot/seq/src/ts_sync); data is the caller's.
-std::string WrapEnvelope(const hachist::xbrain::envelope::StampedEnvelope& e,
+std::string wrap_envelope(const hachist::xbrain::envelope::StampedEnvelope& e,
                          const std::string& data_json) {
   std::string o = "{";
   o += "\"v\":" + std::to_string(e.v);
@@ -54,7 +54,7 @@ std::string WrapEnvelope(const hachist::xbrain::envelope::StampedEnvelope& e,
 
 // Per-fix_type nominal horizontal sigma from config. no_fix never reaches here
 // (it has no position); single is the widest usable class.
-double NominalCovH(const std::string& fix_type, const FixCovConfig& c) {
+double nominal_cov_h(const std::string& fix_type, const FixCovConfig& c) {
   if (fix_type == "rtk_fixed") return c.rtk_fixed_h_m;
   if (fix_type == "rtk_float") return c.rtk_float_h_m;
   if (fix_type == "dgps") return c.dgps_h_m;
@@ -94,19 +94,19 @@ void RtkDriver::feed(const char* data, std::size_t n, double now_mono_s) {
 void RtkDriver::processLine(const std::string& line, double now_mono_s) {
   if (line.find('$') == std::string::npos) return;
   GgaFix fix;
-  if (ParseGga(line, &fix)) {
+  if (parse_gga(line, &fix)) {
     gga_ = fix;
     gga_mono_ = now_mono_s;
     return;
   }
   TraHeading tra;
-  if (ParseTra(line, &tra)) {
+  if (parse_tra(line, &tra)) {
     tra_ = tra;
     tra_mono_ = now_mono_s;
     return;
   }
   RmcData rmc;
-  if (ParseRmc(line, &rmc)) {
+  if (parse_rmc(line, &rmc)) {
     rmc_ = rmc;
     rmc_mono_ = now_mono_s;
   }
@@ -146,7 +146,7 @@ GnssFix RtkDriver::buildFix(double now_mono_s) const {
   const bool fresh =
       gga_mono_ >= 0.0 && (now_mono_s - gga_mono_) <= cfg_.gga_timeout_s;
   // fix_type follows the raw quality when fresh; a stale GGA is no_fix (T-09).
-  fix.fix_type = fresh ? FixTypeFromGgaQuality(gga_.quality) : "no_fix";
+  fix.fix_type = fresh ? fix_type_from_gga_quality(gga_.quality) : "no_fix";
   fix.t_mono = now_mono_s;
   fix.age_s = (gga_mono_ >= 0.0) ? (now_mono_s - gga_mono_) : 1.0e9;
   fix.sats = gga_.num_satellites;
@@ -161,7 +161,7 @@ GnssFix RtkDriver::buildFix(double now_mono_s) const {
     // cov_h_m = nominal(fix_type) x max(hdop, 1): moves with class + geometry,
     // never a constant (NAV-02). GST/BESTPOS exact sigma is the T7 refinement.
     const double hdop_factor = (gga_.hdop > 1.0) ? gga_.hdop : 1.0;
-    fix.cov_h_m = NominalCovH(fix.fix_type, cfg_.fix_cov) * hdop_factor;
+    fix.cov_h_m = nominal_cov_h(fix.fix_type, cfg_.fix_cov) * hdop_factor;
     fix.cov_v_m = fix.cov_h_m * cfg_.fix_cov.vertical_factor;
   }
   return fix;
@@ -177,12 +177,12 @@ void RtkDriver::tick(double now_mono_s, int64_t wall_ms) {
   const ResolveResult r = resolver_.update(in, now_mono_s);
   const hachist::xbrain::envelope::StampedEnvelope env_h =
       envelope_.stamp(wall_s, now_mono_s);
-  const std::string hpayload = WrapEnvelope(env_h, ToJsonData(r.heading));
+  const std::string hpayload = wrap_envelope(env_h, to_json_data(r.heading));
   // rt/gnss/fix (11 S3.2). Own envelope writer -> its own seq for gap detection.
   const GnssFix fix = buildFix(now_mono_s);
   const hachist::xbrain::envelope::StampedEnvelope env_f =
       envelope_fix_.stamp(wall_s, now_mono_s);
-  const std::string fpayload = WrapEnvelope(env_f, ToJsonData(fix));
+  const std::string fpayload = wrap_envelope(env_f, to_json_data(fix));
   if (sink_ != nullptr) {
     sink_->publish(heading_key_, hpayload);
     sink_->publish(fix_key_, fpayload);
@@ -206,13 +206,13 @@ void RtkDriver::tickClock(const ChronyReading& r, double now_mono_s,
   last_clock_mono_s_ = now_mono_s;
   last_clock_wall_ms_ = wall_ms;
 
-  const ClockStatus cs = JudgeClock(r, cfg_.clock, step_count_, now_mono_s, cfg_.boot);
+  const ClockStatus cs = judge_clock(r, cfg_.clock, step_count_, now_mono_s, cfg_.boot);
   // 11 S3.0 stamps both envelope times in SECONDS. The millisecond conversion
   // that used to happen here is what made them integers on the wire.
   const double wall_s = static_cast<double>(wall_ms) / 1000.0;
   const hachist::xbrain::envelope::StampedEnvelope env =
       envelope_clock_.stamp(wall_s, now_mono_s);
-  const std::string payload = WrapEnvelope(env, ToJsonData(cs));
+  const std::string payload = wrap_envelope(env, to_json_data(cs));
   if (sink_ != nullptr) {
     sink_->publish(clock_key_, payload);
   }

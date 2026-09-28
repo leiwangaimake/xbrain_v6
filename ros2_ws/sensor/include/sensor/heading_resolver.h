@@ -140,7 +140,7 @@ class HeadingResolver {
 
   // Advance one tick. `now_s` is CLOCK_MONOTONIC seconds. Returns the GnssHeading
   // to publish plus any transition event. The heading it returns is always
-  // GnssHeadingConsistent().
+  // gnss_heading_consistent().
   ResolveResult update(const HeadingInputs& in, double now_s);
 
   int level() const { return level_; }

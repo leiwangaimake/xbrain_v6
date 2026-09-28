@@ -6,7 +6,7 @@
  * Brief: GnssFix mapping + JSON (see gnss_fix.h)
  *
  * Description:
- * The GGA-quality -> fix_type table and the null-safe serialiser. OptNum emits
+ * The GGA-quality -> fix_type table and the null-safe serialiser. opt_num emits
  * JSON null (not 0.0) for the position/cov fields when there is no fix, so a
  * consumer cannot plot 0,0 or read a 0 m covariance as a perfect fix (NAV-02).
  */
@@ -20,7 +20,7 @@ namespace sensor {
 
 namespace {
 // Emit a number, or the literal null when this field is absent (no position).
-std::string OptNum(double v, bool present) {
+std::string opt_num(double v, bool present) {
   if (!present) return "null";
   return std::to_string(v);
 }
@@ -29,7 +29,7 @@ const std::array<const char*, 5> kFixTypes = {
     "no_fix", "single", "dgps", "rtk_float", "rtk_fixed"};
 }  // namespace
 
-std::string FixTypeFromGgaQuality(int quality) {
+std::string fix_type_from_gga_quality(int quality) {
   switch (quality) {
     case 1: return "single";
     case 2: return "dgps";
@@ -40,24 +40,24 @@ std::string FixTypeFromGgaQuality(int quality) {
   }
 }
 
-bool FixTypeValid(const std::string& fix_type) {
+bool fix_type_valid(const std::string& fix_type) {
   for (const char* t : kFixTypes) {
     if (fix_type == t) return true;
   }
   return false;
 }
 
-std::string ToJsonData(const GnssFix& fix) {
+std::string to_json_data(const GnssFix& fix) {
   const bool p = fix.has_position;
   std::string o = "{";
-  o += "\"lat\":" + OptNum(fix.lat, p);
-  o += ",\"lon\":" + OptNum(fix.lon, p);
-  o += ",\"alt\":" + OptNum(fix.alt, p);
+  o += "\"lat\":" + opt_num(fix.lat, p);
+  o += ",\"lon\":" + opt_num(fix.lon, p);
+  o += ",\"alt\":" + opt_num(fix.alt, p);
   o += ",\"fix_type\":\"" + fix.fix_type + "\"";
-  o += ",\"hdop\":" + OptNum(fix.hdop, p);
+  o += ",\"hdop\":" + opt_num(fix.hdop, p);
   o += ",\"sats\":" + std::to_string(fix.sats);
-  o += ",\"cov_h_m\":" + OptNum(fix.cov_h_m, p);
-  o += ",\"cov_v_m\":" + OptNum(fix.cov_v_m, p);
+  o += ",\"cov_h_m\":" + opt_num(fix.cov_h_m, p);
+  o += ",\"cov_v_m\":" + opt_num(fix.cov_v_m, p);
   o += ",\"age_s\":" + std::to_string(fix.age_s);
   o += ",\"t_mono\":" + std::to_string(fix.t_mono);
   o += "}";

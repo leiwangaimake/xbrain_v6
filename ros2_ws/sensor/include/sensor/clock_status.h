@@ -75,12 +75,12 @@ struct ClockStatus {
 };
 
 // The 11 S3.11 judgement (pure). step_count is the boot's wall-step count so far.
-ClockStatus JudgeClock(const ChronyReading& r, const ClockConfig& cfg,
+ClockStatus judge_clock(const ChronyReading& r, const ClockConfig& cfg,
                        int step_count, double mono_now_s, const std::string& boot);
 
 // Serialise the ClockStatus data object (11 S3.11). offset/rms are JSON null when
 // there is no external reference (has_offset false), never 0.
-std::string ToJsonData(const ClockStatus& cs);
+std::string to_json_data(const ClockStatus& cs);
 
 }  // namespace sensor
 

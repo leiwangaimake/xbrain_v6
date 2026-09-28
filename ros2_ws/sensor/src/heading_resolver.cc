@@ -27,15 +27,15 @@ namespace sensor {
 namespace {
 constexpr double kPi = 3.14159265358979323846;
 
-double WrapPi(double a) {
+double wrap_pi(double a) {
   a = std::fmod(a + kPi, 2.0 * kPi);
   if (a < 0.0) a += 2.0 * kPi;
   return a - kPi;
 }
 // True-north clockwise degrees -> ENU radians (east=0, ccw). 11 S3.3:
 // heading_enu = wrap(pi/2 - heading_ned). This is the one place the frame flips.
-double TrueDegToEnu(double deg) { return WrapPi(kPi / 2.0 - deg * kPi / 180.0); }
-double TrueDegToRad(double deg) { return deg * kPi / 180.0; }
+double true_deg_to_enu(double deg) { return wrap_pi(kPi / 2.0 - deg * kPi / 180.0); }
+double true_deg_to_rad(double deg) { return deg * kPi / 180.0; }
 }  // namespace
 
 HeadingResolver::HeadingResolver(ResolverConfig cfg) : cfg_(cfg) {}
@@ -132,15 +132,15 @@ ResolveResult HeadingResolver::update(const HeadingInputs& in, double now_s) {
   GnssHeading h;
   h.t_mono = now_s;
   h.speed_mps = in.speed_mps;
-  if (in.cog_present) h.cog_rad = TrueDegToEnu(in.cog_true_deg);
+  if (in.cog_present) h.cog_rad = true_deg_to_enu(in.cog_true_deg);
   h.baseline_m = in.baseline_m;
   h.baseline_valid = in.baseline_valid;
 
   if (level_ == 1) {
     h.source = "dual_antenna";
     h.level = 1;
-    h.heading_rad = TrueDegToEnu(in.heading_true_deg);
-    h.heading_true_north_rad = TrueDegToRad(in.heading_true_deg);
+    h.heading_rad = true_deg_to_enu(in.heading_true_deg);
+    h.heading_true_north_rad = true_deg_to_rad(in.heading_true_deg);
     h.heading_valid = true;
     h.cov_rad = in.heading_cov_rad;
     h.yaw_capable = true;
@@ -165,8 +165,8 @@ ResolveResult HeadingResolver::update(const HeadingInputs& in, double now_s) {
       h.age_s = last_valid_heading_rad_ ? (now_s - last_valid_mono_s_) : 0.0;
     } else {
       h.heading_valid = true;
-      h.heading_rad = TrueDegToEnu(in.cog_true_deg);
-      h.heading_true_north_rad = TrueDegToRad(in.cog_true_deg);
+      h.heading_rad = true_deg_to_enu(in.cog_true_deg);
+      h.heading_true_north_rad = true_deg_to_rad(in.cog_true_deg);
       h.age_s = 0.0;
       last_valid_heading_rad_ = h.heading_rad;
       last_valid_mono_s_ = now_s;

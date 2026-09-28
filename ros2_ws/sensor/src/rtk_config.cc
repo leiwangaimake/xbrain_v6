@@ -23,9 +23,9 @@ namespace {
 constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
 }  // namespace
 
-RtkConfig LoadRtkConfig(const std::string& path, const std::string& rid,
+RtkConfig load_rtk_config(const std::string& path, const std::string& rid,
                         const std::string& src, const std::string& boot) {
-  const xbrain::config::YamlNode cfg = xbrain::config::LoadYamlFile(path);
+  const xbrain::config::YamlNode cfg = xbrain::config::load_yaml_file(path);
   RtkConfig out;
 
   // Identity is injected by the caller (not in the file, see header).

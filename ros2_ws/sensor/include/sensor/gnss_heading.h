@@ -29,7 +29,7 @@
  * (emit-text only, same rule as common/zenoh/session_config.h) and no ROS.
  *
  * Traps this exists to avoid. source is a closed set (kHeadingSource) and is
- * one-to-one with level (11 S3.3): GnssHeadingConsistent() enforces both, and the
+ * one-to-one with level (11 S3.3): gnss_heading_consistent() enforces both, and the
  * caller must NOT publish a struct it rejects -- an out-of-set or mismatched
  * source is the silent-degrade 11 S13.6 forbids, not a value to serialise anyway.
  * A null-valued cov_rad must serialise as JSON null, never as 0.0: a 0 covariance
@@ -67,12 +67,12 @@ struct GnssHeading {
 // True iff source is a kHeadingSource member AND matches level one-to-one
 // (dual_antenna<->1, cog<->2, none<->3, 11 S3.3). The caller must reject a false
 // return before publishing (11 S13.6: no silent degrade to a nearby value).
-bool GnssHeadingConsistent(const GnssHeading& h);
+bool gnss_heading_consistent(const GnssHeading& h);
 
 // Serialise the inner DATA object as JSON text ({"heading_rad":...,...}). Null
 // optionals emit JSON null (never 0). The 11 S3.0 envelope is the driver's
 // concern (EnvelopeWriter) -- this returns only the data object.
-std::string ToJsonData(const GnssHeading& h);
+std::string to_json_data(const GnssHeading& h);
 
 }  // namespace sensor
 

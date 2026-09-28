@@ -22,8 +22,8 @@
 using sensor::ChronyReading;
 using sensor::ClockConfig;
 using sensor::ClockStatus;
-using sensor::JudgeClock;
-using sensor::ToJsonData;
+using sensor::judge_clock;
+using sensor::to_json_data;
 
 static int g_failures = 0;
 #define CHECK(cond)                                                \
@@ -33,7 +33,7 @@ static int g_failures = 0;
       ++g_failures;                                                \
     }                                                              \
   } while (0)
-static bool Has(const std::string& s, const std::string& sub) {
+static bool has(const std::string& s, const std::string& sub) {
   return s.find(sub) != std::string::npos;
 }
 
@@ -45,7 +45,7 @@ int main() {
   ChronyReading ntp;
   ntp.have = true; ntp.is_ntp = true; ntp.leap_normal = true;
   ntp.offset_ms = 4.5; ntp.rms_ms = 1.5; ntp.ref_age_s = 720.0; ntp.utc_ref = 1786856085.0;
-  ClockStatus a = JudgeClock(ntp, kCfg, 0, 100.0, "abcd1234");
+  ClockStatus a = judge_clock(ntp, kCfg, 0, 100.0, "abcd1234");
   CHECK(a.sync == true);
   CHECK(a.source == "ntp");
   CHECK(a.quality == "precise");
@@ -53,39 +53,39 @@ int main() {
 
   // 3.3 mutant: NTP with leap NOT normal -> no sync.
   ChronyReading n2 = ntp; n2.leap_normal = false;
-  CHECK(JudgeClock(n2, kCfg, 0, 100.0, "b").sync == false);
+  CHECK(judge_clock(n2, kCfg, 0, 100.0, "b").sync == false);
   // 3.3 mutant: NTP offset over the gate -> no sync.
   ChronyReading n3 = ntp; n3.offset_ms = 25.0;
-  CHECK(JudgeClock(n3, kCfg, 0, 100.0, "b").sync == false);
+  CHECK(judge_clock(n3, kCfg, 0, 100.0, "b").sync == false);
 
   // rtk (PPS): fresh (ref_age 0.4 <= 5) -> sync rtk.
   ChronyReading pps;
   pps.have = true; pps.is_pps_refclock = true; pps.leap_normal = true;
   pps.offset_ms = 2.0; pps.ref_age_s = 0.4;
-  ClockStatus p = JudgeClock(pps, kCfg, 0, 100.0, "b");
+  ClockStatus p = judge_clock(pps, kCfg, 0, 100.0, "b");
   CHECK(p.sync == true && p.source == "rtk");
   // 3.3 mutant: PPS with stale ref (>5 s) -> no sync (a lost pulse; PPS DOES gate
   // on ref_age, unlike NTP).
   ChronyReading p2 = pps; p2.ref_age_s = 9.0;
-  CHECK(JudgeClock(p2, kCfg, 0, 100.0, "b").sync == false);
+  CHECK(judge_clock(p2, kCfg, 0, 100.0, "b").sync == false);
 
   // no source (chrony unreachable) -> sync false, source none, offset null.
   ChronyReading none;   // have=false
-  ClockStatus z = JudgeClock(none, kCfg, 0, 100.0, "b");
+  ClockStatus z = judge_clock(none, kCfg, 0, 100.0, "b");
   CHECK(z.sync == false && z.source == "none");
-  CHECK(Has(ToJsonData(z), "\"offset_ms\":null"));   // no ref -> null, not 0
+  CHECK(has(to_json_data(z), "\"offset_ms\":null"));   // no ref -> null, not 0
 
   // rtc: trusted + no step -> coarse sync; a step -> no sync.
   ClockConfig rtc_cfg{20.0, 5.0, true};
-  CHECK(JudgeClock(none, rtc_cfg, 0, 100.0, "b").source == "rtc");
-  CHECK(JudgeClock(none, rtc_cfg, 1, 100.0, "b").sync == false);   // step_count>0 -> no rtc
+  CHECK(judge_clock(none, rtc_cfg, 0, 100.0, "b").source == "rtc");
+  CHECK(judge_clock(none, rtc_cfg, 1, 100.0, "b").sync == false);   // step_count>0 -> no rtc
 
   // JSON of a real sync carries the fields.
-  const std::string j = ToJsonData(a);
-  CHECK(Has(j, "\"sync\":true"));
-  CHECK(Has(j, "\"source\":\"ntp\""));
-  CHECK(Has(j, "\"offset_ms\":"));
-  CHECK(!Has(j, "\"offset_ms\":null"));
+  const std::string j = to_json_data(a);
+  CHECK(has(j, "\"sync\":true"));
+  CHECK(has(j, "\"source\":\"ntp\""));
+  CHECK(has(j, "\"offset_ms\":"));
+  CHECK(!has(j, "\"offset_ms\":null"));
 
   if (g_failures == 0) {
     std::printf("ALL CLOCK STATUS TESTS PASSED\n");
