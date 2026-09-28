@@ -215,7 +215,7 @@ def readonly_gaits(parse):
 
 
 def commandable_gait_map(parse, reports):
-    """The commandable gait set, derived the way GaitValue computes it:
+    """The commandable gait set, derived the way gait_value computes it:
     the read-back table minus the read-only values. Deriving rather than
     re-authoring keeps this script from becoming the second copy the QD-3
     merge deleted."""

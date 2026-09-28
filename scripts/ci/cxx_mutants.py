@@ -137,16 +137,16 @@ QUAD_MUTANTS = [
      '"{\\"Type\\": %d, \\"Color\\": [%d], \\"Cycle\\": %d}, "',
      '"{\\"Type\\": %d, \\"Color\\": %d, \\"Cycle\\": %d}, "'),
     # A dropped datagram must leave no state behind. Keeping the stream buffer
-    # across PushDatagram is how a bad datagram poisons the next good one.
+    # across push_datagram is how a bad datagram poisons the next good one.
     #
-    # Anchored on the COMMENT above it: Framer::Reset clears the same five
+    # Anchored on the COMMENT above it: Framer::reset clears the same five
     # fields in the same order. That is the third collision in one day (the
     # rt_parse cmd_id guard, the payloads null triple, this), and all three had
     # the same cause -- a function written later copying the shape of one
     # written earlier. The runner reports anchor counts rather than taking the
     # first match precisely so these surface as UNUSABLE instead of as a mutant
     # that quietly tests the wrong function.
-    ("framer: PushDatagram leaves the stream buffer behind",
+    ("framer: push_datagram leaves the stream buffer behind",
      FRAMER,
      "  // not supported, made loudly in code rather than only in the header.\n  used_ = 0;",
      "  // not supported, made loudly in code rather than only in the header.\n  /* stream state kept */;"),
@@ -226,11 +226,11 @@ QUAD_MUTANTS = [
     # becomes an acknowledgement and the caller proceeds as if it worked.
     ("codec: unreadable ErrorCode reported as code 0",
      CODEC,
-     "    if (ReadU32(s, len, ep, &code)) {\n"
+     "    if (read_u32(s, len, ep, &code)) {\n"
      "      r.has_error_code = true;\n"
      "      r.error_code = code;\n"
      "    }",
-     "    ReadU32(s, len, ep, &code);\n"
+     "    read_u32(s, len, ep, &code);\n"
      "    r.has_error_code = true;\n"
      "    r.error_code = code;"),
     # ---- framer: FR-1 ------------------------------------------------------
@@ -304,8 +304,8 @@ QUAD_MUTANTS = [
     # one, so the first frame after every reconnect can be garbage.
     ("framer: Reset keeps the bytes of the old connection",
      FRAMER,
-     "void Framer::Reset() {\n  used_ = 0;",
-     "void Framer::Reset() {\n  used_ = used_;"),
+     "void Framer::reset() {\n  used_ = 0;",
+     "void Framer::reset() {\n  used_ = used_;"),
 ]
 
 
@@ -373,7 +373,7 @@ CONFIG_SOURCES = [
     os.path.join(QUAD, "src", "chs_a_codec.cc"),
     os.path.join(QUAD, "src", "chs_a_framer.cc"),
     # 13 QC-9 resolves the prone-forbidden gait NAMES against the read-back
-    # table, which lives here. The loader needs GaitValueByName, and without
+    # table, which lives here. The loader needs gait_value_by_name, and without
     # this entry the suite fails to LINK -- reported as a red baseline, which
     # points at the code rather than at the source list.
     os.path.join(QUAD, "src", "chs_a_reports.cc"),
@@ -387,7 +387,7 @@ CONFIG_MUTANTS = [
     # package keeps finding.
     ("config: mlockall may be turned off",
      CONFIG_CC,
-     '    if (!root.require_bool(K("realtime.mlockall"))) {',
+     '    if (!root.require_bool(k("realtime.mlockall"))) {',
      "    if (false) {"),
     # 13 S9.1. ctrl carries the 200 ms Tier 1 deadline; chs_b only writes a
     # lock-free slot. Inverted, a 200 Hz DDS reader can preempt the thread that
@@ -424,7 +424,7 @@ CONFIG_MUTANTS = [
     ("config: motion_info_topic is defaulted instead of read",
      CONFIG_CC,
      "    cfg.dds.motion_info_topic =\n"
-     '        root.require_string(K("chassis_dds.drdds.motion_info_topic"));',
+     '        root.require_string(k("chassis_dds.drdds.motion_info_topic"));',
      '    cfg.dds.motion_info_topic = "/MOTION_INFO";'),
     # 13 S4.2. Two sources and no ranking in the code (v1.16 takes the newer
     # sample), so a reordered list cannot be honoured -- refusing it at load is
@@ -461,7 +461,7 @@ CONFIG_MUTANTS = [
     # a later block copying the shape of an earlier one.
     ("config: an unresolvable gait name is skipped instead of refused",
      CONFIG_CC,
-     "        if (!chs_a::GaitValueByName(name, &value)) {\n"
+     "        if (!chs_a::gait_value_by_name(name, &value)) {\n"
      "          throw ConfigError(\n"
      '              label + " = \\"" + name +',
      "        if (false) {\n"
@@ -496,7 +496,7 @@ CONFIG_MUTANTS = [
     ("config: the domain-0 network interface is optional",
      CONFIG_CC,
      '    cfg.dds.network_interface =\n'
-     '        root.require_string(K("chassis_dds.network_interface"));',
+     '        root.require_string(k("chassis_dds.network_interface"));',
      '    cfg.dds.network_interface = "";'),
     ("config: asdu_format not checked",
      CONFIG_CC, '  if (cfg.link.asdu_format != "json") {', "  if (false) {"),
@@ -517,7 +517,7 @@ CONFIG_MUTANTS = [
     # robot_id is the {rid} of every key. A malformed one yields keys that are
     # well-formed and match nothing, which looks exactly like a dead network.
     ("config: robot_id charset not checked",
-     CONFIG_CC, "    if (!IsValidRobotId(cfg.robot_id)) {", "    if (false) {"),
+     CONFIG_CC, "    if (!is_valid_robot_id(cfg.robot_id)) {", "    if (false) {"),
     ("config: robot_id upper case accepted",
      CONFIG_CC, "    const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||",
      "    const bool ok = (c >= 'A' && c <= 'z') || (c >= '0' && c <= '9') ||"),
@@ -564,7 +564,7 @@ REPORTS_MUTANTS = [
     # readable label for every value and invents state that was never reported.
     ("reports: unregistered value falls back to the first table entry",
      REPORTS_CC,
-     "  v.known = false;\n  v.label = UnknownLabel(raw);\n  return v;",
+     "  v.known = false;\n  v.label = unknown_label(raw);\n  return v;",
      "  v.known = true;\n  v.label = table[0].name;\n  return v;"),
     # Ban 3. The label alone is not actionable in the field.
     ("reports: raw value dropped once a label is found",
@@ -687,7 +687,7 @@ REPORTS_MUTANTS = [
      "  if (pd == root.end() || !pd->is_object()) return nullptr;",
      "  if (false) return nullptr;"),
     # Declared EQUIVALENT, with the reasoning in chs_a_reports.cc: every parse
-    # function calls ItemsOf immediately after this, and find() on a discarded
+    # function calls items_of immediately after this, and find() on a discarded
     # or non-object value returns end() without throwing, so the report is
     # refused one step later with the same answer. Kept as a mutant so that the
     # day the line becomes load-bearing, the runner says so.
@@ -702,7 +702,7 @@ REPORTS_MUTANTS = [
 # backwards until you ask what it costs in the field.
 SESSION_CC = os.path.join(QUAD, "src", "chs_a_session.cc")
 SESSION_SOURCES = [SESSION_CC, os.path.join(QUAD, "src", "quadruped_config.cc"),
-os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through GaitValueByName, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
+os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through gait_value_by_name, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
                    os.path.join(QUAD, "src", "chs_a_codec.cc")]
 SESSION_TESTS = [os.path.join(QUAD, "test", "test_chs_a_session.cc")]
 
@@ -754,8 +754,8 @@ SESSION_MUTANTS = [
     ("session: E001..E005 no longer count toward cmd_fail",
      SESSION_CC, "  if (d.counts_toward_cmd_fail) ++send_failures_;", "  (void)0;"),
     ("session: 0xE00B run not broken by another code",
-     SESSION_CC, "    internal_errors_ = 0;\n  }\n}\n\nvoid Session::OnSleep",
-     "    (void)0;\n  }\n}\n\nvoid Session::OnSleep"),
+     SESSION_CC, "    internal_errors_ = 0;\n  }\n}\n\nvoid Session::on_sleep",
+     "    (void)0;\n  }\n}\n\nvoid Session::on_sleep"),
     # 13 F-21. There is no wake command in the protocol, and each attempt is
     # five seconds of believing we are driving.
     ("session: motion sent while the chassis reports Sleep",
@@ -783,18 +783,18 @@ SESSION_MUTANTS = [
     # FR-1..FR-4 degraded and 13 S3.6's latency budget void.
     ("session: the recovery probe is never started",
      SESSION_CC,
-     "    if (state_ == ConnState::kOk && RecoveryDue(now_mono_s)) {",
+     "    if (state_ == ConnState::kOk && recovery_due(now_mono_s)) {",
      "    if (false) {"),
     # The whole point of a probe is that it can FAIL. Adopting the candidate
     # without evidence switches the live link onto a dead endpoint, and the
     # session then reports ok on a socket nothing will ever answer.
     ("session: recovery switches without waiting for the candidate to answer",
      SESSION_CC,
-     "  candidate_ = 0;\n  AdvanceCandidate(now_mono_s, out);\n}\n"
-     "\nvoid Session::AdvanceCandidate",
-     "  candidate_ = 0;\n  AdvanceCandidate(now_mono_s, out);\n"
+     "  candidate_ = 0;\n  advance_candidate(now_mono_s, out);\n}\n"
+     "\nvoid Session::advance_candidate",
+     "  candidate_ = 0;\n  advance_candidate(now_mono_s, out);\n"
      "  active_ = 0;\n  state_ = ConnState::kOk;\n}\n"
-     "\nvoid Session::AdvanceCandidate"),
+     "\nvoid Session::advance_candidate"),
     # 13 S7.5 0xE006 / CA-1: dropping the socket inside the two-second client
     # affinity window makes the new socket's first axis command come back
     # refused -- accepted, and the robot does not move. It is also the guard
@@ -846,10 +846,10 @@ SESSION_MUTANTS = [
     # The shipped numbers. Every behavioural case above runs at test scale, so
     # without this the whole family passes against a build that ships with the
     # feature switched off.
-    ("session: FromLinkConfig ships the recovery feature disabled",
+    ("session: from_link_config ships the recovery feature disabled",
      SESSION_CC, "  c.endpoint_recovery_period_s = kRecoveryPeriodS;",
      "  c.endpoint_recovery_period_s = 0.0;"),
-    ("session: FromLinkConfig ships a zero axis-quiet window",
+    ("session: from_link_config ships a zero axis-quiet window",
      SESSION_CC, "  c.axis_quiet_before_switch_s = kAxisQuietBeforeSwitchS;",
      "  c.axis_quiet_before_switch_s = 0.0;"),
 ]
@@ -858,7 +858,7 @@ SESSION_MUTANTS = [
 # list is longer than the others and every entry names what reaches the robot.
 TIER1_CC = os.path.join(QUAD, "src", "tier1.cc")
 TIER1_SOURCES = [TIER1_CC, os.path.join(QUAD, "src", "quadruped_config.cc"),
-os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through GaitValueByName, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
+os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through gait_value_by_name, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
                  os.path.join(QUAD, "src", "chs_a_codec.cc")]
 TIER1_TESTS = [os.path.join(QUAD, "test", "test_tier1.cc")]
 
@@ -878,7 +878,7 @@ TIER1_MUTANTS = [
      TIER1_CC, "  if (in.usage_mode_raw != kUsageModeNavigation) {",
      "  if (false) {"),
     ("tier1: a poisoned payload is executed",
-     TIER1_CC, "  if (!AllFinite(in)) {", "  if (false) {"),
+     TIER1_CC, "  if (!all_finite(in)) {", "  if (false) {"),
     # ---- the locks, from the direction that matters ------------------------
     ("tier1: hardware stop released by the signal alone",
      TIER1_CC, "    if (!in.hes_raw && in.enable_requested) {",
@@ -887,9 +887,9 @@ TIER1_MUTANTS = [
      TIER1_CC, "    if (!in.hes_raw && in.enable_requested) {",
      "    if (in.enable_requested) {"),
     ("tier1: timeout lock clears itself when the upstream returns",
-     TIER1_CC, "    Tier1Output o = Stop(StopReason::kTimeout);\n"
+     TIER1_CC, "    Tier1Output o = stop(StopReason::kTimeout);\n"
                "    if (in.enable_requested) {\n      timeout_lock_ = false;",
-     "    Tier1Output o = Stop(StopReason::kTimeout);\n"
+     "    Tier1Output o = stop(StopReason::kTimeout);\n"
      "    if (true) {\n      timeout_lock_ = false;"),
     ("tier1: no command ever received looks FRESH",
      TIER1_CC, "  if (!in.has_cmd || cmd_age_s > cmd_timeout_s_) {",
@@ -912,17 +912,17 @@ TIER1_MUTANTS = [
     ("tier1: the mode-mismatch event repeats every period",
      TIER1_CC, "    if (!mode_mismatch_seen_) {", "    if (true) {"),
     ("tier1: the mode-mismatch latch never resets, so only the first is seen",
-     TIER1_CC, "  mode_mismatch_seen_ = false;\n\n  if (!AllFinite(in)) {",
-     "  if (!AllFinite(in)) {"),
+     TIER1_CC, "  mode_mismatch_seen_ = false;\n\n  if (!all_finite(in)) {",
+     "  if (!all_finite(in)) {"),
     ("tier1: the actual mode is not reported with the event",
      TIER1_CC, "      o.mode_mismatch_actual = in.usage_mode_raw;",
      "      o.mode_mismatch_actual = 0;"),
     # ---- clamp and trim -----------------------------------------------------
     ("tier1: yaw clamped against the LINEAR limit",
-     TIER1_CC, "  o.wz = Clamp(Radps{in.wz}, Radps{limits_.max_wz_radps}).value;",
-     "  o.wz = Clamp(Radps{in.wz}, Radps{limits_.max_vx_mps}).value;"),
+     TIER1_CC, "  o.wz = clamp(Radps{in.wz}, Radps{limits_.max_wz_radps}).value;",
+     "  o.wz = clamp(Radps{in.wz}, Radps{limits_.max_vx_mps}).value;"),
     ("tier1: lateral axis not clamped",
-     TIER1_CC, "  o.vy = Clamp(Mps{in.vy}, Mps{limits_.max_vy_mps}).value;",
+     TIER1_CC, "  o.vy = clamp(Mps{in.vy}, Mps{limits_.max_vy_mps}).value;",
      "  o.vy = in.vy;"),
     ("tier1: a non-holonomic chassis still gets a lateral command",
      TIER1_CC, "  if (!limits_.holonomic) {\n    o.vy = 0.0;\n  }",
@@ -951,11 +951,11 @@ UNITS_MUTANTS = [
      UNITS_H, "  if (v.value < -limit.value) return Mps{-limit.value};\n  return v;\n}",
      "  return v;\n}"),
     ("units: a non-positive limit passes the value through",
-     UNITS_H, "inline Mps Clamp(Mps v, Mps limit) {\n  if (!(limit.value > 0.0)) return Mps{0.0};",
-     "inline Mps Clamp(Mps v, Mps limit) {\n  if (false) return Mps{0.0};"),
+     UNITS_H, "inline Mps clamp(Mps v, Mps limit) {\n  if (!(limit.value > 0.0)) return Mps{0.0};",
+     "inline Mps clamp(Mps v, Mps limit) {\n  if (false) return Mps{0.0};"),
     ("units: NaN silently becomes the limit, hiding Tier 1's own branch",
-     UNITS_H, "inline Mps Clamp(Mps v, Mps limit) {\n  if (!(limit.value > 0.0)) return Mps{0.0};",
-     "inline Mps Clamp(Mps v, Mps limit) {\n  if (v.value != v.value) return limit;\n"
+     UNITS_H, "inline Mps clamp(Mps v, Mps limit) {\n  if (!(limit.value > 0.0)) return Mps{0.0};",
+     "inline Mps clamp(Mps v, Mps limit) {\n  if (v.value != v.value) return limit;\n"
      "  if (!(limit.value > 0.0)) return Mps{0.0};"),
 ]
 
@@ -1022,23 +1022,23 @@ PAYLOADS_MUTANTS = [
     # ships a number in the wrong unit under a name ending in _ms.
     ("payloads: tau published in seconds under a _ms name",
      PAYLOADS_CC,
-     '    a.Num(in.odom->tau_s * 1000.0);',
-     '    a.Num(in.odom->tau_s);'),
+     '    a.add_num(in.odom->tau_s * 1000.0);',
+     '    a.add_num(in.odom->tau_s);'),
     # The source names are the table's own closed pair. Swapping them is the
     # kind of defect no type system sees -- both are valid strings.
     ("payloads: the two odom source names are swapped",
      PAYLOADS_CC,
      '''      case RobotStateInput::OdomSrc::kDrdds:
-        a.Raw("\\"motion_info_20hz\\"");
+        a.add_raw("\\"motion_info_20hz\\"");
         break;
       case RobotStateInput::OdomSrc::kMonitor:
-        a.Raw("\\"monitor_10hz\\"");
+        a.add_raw("\\"monitor_10hz\\"");
         break;''',
      '''      case RobotStateInput::OdomSrc::kDrdds:
-        a.Raw("\\"monitor_10hz\\"");
+        a.add_raw("\\"monitor_10hz\\"");
         break;
       case RobotStateInput::OdomSrc::kMonitor:
-        a.Raw("\\"motion_info_20hz\\"");
+        a.add_raw("\\"motion_info_20hz\\"");
         break;'''),
     # No source is an absence. Mapping it to the nearer name is 13 S6.5 ban 1.
     ("payloads: an absent odom source mapped to a neighbour",
@@ -1047,74 +1047,74 @@ PAYLOADS_MUTANTS = [
         // An absence, not a third source name: nothing has fed the linear
         // integration yet (13 S6.5 ban 1 -- never map an unknown to a near
         // neighbour).
-        a.Raw("null");
+        a.add_raw("null");
         break;''',
      '''      case RobotStateInput::OdomSrc::kNone:
-        a.Raw("\\"monitor_10hz\\"");
+        a.add_raw("\\"monitor_10hz\\"");
         break;'''),
     # TR-4's bit copied from mode_switching: every test that sets the pair
     # equal stays green, which is why the writer test sets them apart.
     ("payloads: transitioning copied from mode_switching",
      PAYLOADS_CC,
-     '  a.Raw(",\\"motion_state_transitioning\\":");\n'
-     '  a.Bool(in.motion_state_transitioning);',
-     '  a.Raw(",\\"motion_state_transitioning\\":");\n'
-     '  a.Bool(in.mode_switching);'),
+     '  a.add_raw(",\\"motion_state_transitioning\\":");\n'
+     '  a.add_bool(in.motion_state_transitioning);',
+     '  a.add_raw(",\\"motion_state_transitioning\\":");\n'
+     '  a.add_bool(in.mode_switching);'),
     # 11 S3.0 makes the envelope mandatory on every locally produced message.
     # Dropping a field is the state this process shipped in for its whole life
     # -- bare payloads, measured on the chassis 2026-09-21.
     ("payloads: the envelope omits mono",
      PAYLOADS_CC,
-     '  a.Raw(",\\"mono\\":");\n'
-     "  a.TimeSec(in.mono);",
-     '  a.Raw(",\\"_mono\\":");\n'
-     "  a.TimeSec(in.mono);"),
-    # *** The one that motivated TimeSec. Num() is "%.6g": six SIGNIFICANT
+     '  a.add_raw(",\\"mono\\":");\n'
+     "  a.add_time_sec(in.mono);",
+     '  a.add_raw(",\\"_mono\\":");\n'
+     "  a.add_time_sec(in.mono);"),
+    # *** The one that motivated add_time_sec. add_num() is "%.6g": six SIGNIFICANT
     # digits, so a monotonic reading near 9.4e5 loses every fractional digit
     # and a wall clock near 1.79e9 comes out in exponent form. 11 S3.0 makes
     # mono the sole basis for every age and timeout in the system, so this
     # coarsens all of them -- silently, because the result is still valid JSON.
     ("payloads: envelope timestamps written with %.6g",
      PAYLOADS_CC,
-     "  a.TimeSec(in.mono);",
-     "  a.Num(in.mono);"),
+     "  a.add_time_sec(in.mono);",
+     "  a.add_num(in.mono);"),
     # The payload merged into the envelope instead of nested under data. A
     # subscriber reading msg["data"] then finds nothing.
     ("payloads: the payload is not nested under data",
      PAYLOADS_CC,
-     '  a.Raw(",\\"data\\":");',
-     '  a.Raw(",\\"data\\":null,\\"x\\":");'),
+     '  a.add_raw(",\\"data\\":");',
+     '  a.add_raw(",\\"data\\":null,\\"x\\":");'),
     # 13 PB-Q3 verbatim: "禁止在任何分支填 true 兜底".
     ("payloads: ts_sync filled true as a fallback",
      PAYLOADS_CC,
-     "  a.Raw(\",\\\"ts_sync\\\":\");\n"
-     "  a.Bool(in.ts_sync);",
-     "  a.Raw(\",\\\"ts_sync\\\":\");\n"
-     "  a.Bool(true);"),
+     "  a.add_raw(\",\\\"ts_sync\\\":\");\n"
+     "  a.add_bool(in.ts_sync);",
+     "  a.add_raw(\",\\\"ts_sync\\\":\");\n"
+     "  a.add_bool(true);"),
     # Same day, same writer line as the charge fix, walked past twice: the
     # state path has no `basic`, so hes and sleep stayed null on every state
     # message. hes is the HES emergency-stop read-back.
     ("payloads: state-path hes and sleep stay null",
      PAYLOADS_CC,
      "    if (in.has_charge) {\n"
-     '      a.Raw(",\\"hes\\":");\n'
-     "      a.Bool(in.hes);",
+     '      a.add_raw(",\\"hes\\":");\n'
+     "      a.add_bool(in.hes);",
      "    if (false) {\n"
-     '      a.Raw(",\\"hes\\":");\n'
-     "      a.Bool(in.hes);"),
+     '      a.add_raw(",\\"hes\\":");\n'
+     "      a.add_bool(in.hes);"),
     # The pair swapped: both booleans, both valid JSON, nothing but a reader
     # of the VALUES catches it -- and "hes":false on a robot whose HES is
     # pressed is the unsafe direction.
     ("payloads: hes and sleep swapped",
      PAYLOADS_CC,
-     '      a.Raw(",\\"hes\\":");\n'
-     "      a.Bool(in.hes);\n"
-     '      a.Raw(",\\"sleep\\":");\n'
-     "      a.Bool(in.sleep);",
-     '      a.Raw(",\\"hes\\":");\n'
-     "      a.Bool(in.sleep);\n"
-     '      a.Raw(",\\"sleep\\":");\n'
-     "      a.Bool(in.hes);"),
+     '      a.add_raw(",\\"hes\\":");\n'
+     "      a.add_bool(in.hes);\n"
+     '      a.add_raw(",\\"sleep\\":");\n'
+     "      a.add_bool(in.sleep);",
+     '      a.add_raw(",\\"hes\\":");\n'
+     "      a.add_bool(in.sleep);\n"
+     '      a.add_raw(",\\"sleep\\":");\n'
+     "      a.add_bool(in.hes);"),
     # 11 S13.9 draws detail.item from a closed set WHEN PRESENT. Writing it
     # unconditionally puts "" on the wire for every accepted ack, and "" is
     # not in that set -- a consumer switching on item then has to special-case
@@ -1134,10 +1134,10 @@ PAYLOADS_MUTANTS = [
     # 11 S9.11's flow keys off exactly that.
     ("payloads: RobotState drops the charge field",
      PAYLOADS_CC,
-     '  a.Raw(",\\"charge\\":");\n'
+     '  a.add_raw(",\\"charge\\":");\n'
      "  {\n"
      "    // Either source: `basic` when the full report is in hand, the raw int",
-     '  a.Raw(",\\"_charge\\":");\n'
+     '  a.add_raw(",\\"_charge\\":");\n'
      "  {\n"
      "    // Either source: `basic` when the full report is in hand, the raw int"),
     # The state path only ever has the raw int; reading `basic` alone made the
@@ -1152,30 +1152,30 @@ PAYLOADS_MUTANTS = [
     # service is healthy on the strength of never having looked.
     ("payloads: services_ok claims healthy without looking",
      PAYLOADS_CC,
-     '  a.Raw(",\\"services_ok\\":null");',
-     '  a.Raw(",\\"services_ok\\":true");'),
+     '  a.add_raw(",\\"services_ok\\":null");',
+     '  a.add_raw(",\\"services_ok\\":true");'),
     # 11 S4.1 / S9.9 / 13 S4.4 (4). The odom block is the ONLY carrier of
     # `valid`: a ROS nav_msgs/Odometry has no field for it, so dropping this
     # block leaves the stair-gait rule with no reader anywhere in the system,
     # while 11 CD-6 and N-2 both gate delegation on odom.valid.
     ("payloads: RobotState drops the odom block",
      PAYLOADS_CC,
-     '    a.Raw(",\\"odom\\":{\\"x\\":");',
-     '    a.Raw(",\\"_odom\\":{\\"x\\":");'),
+     '    a.add_raw(",\\"odom\\":{\\"x\\":");',
+     '    a.add_raw(",\\"_odom\\":{\\"x\\":");'),
     # Variance published under a name whose unit is metres. Wrong by a square:
     # SAFE-looking below 1 m (0.04 reads tighter than the true 0.2) and unsafe
     # above it, so a bench test at short range would never show it.
     ("payloads: odom publishes variance under the _m / _rad names",
      PAYLOADS_CC,
-     "    a.Num(std::sqrt(in.odom->var_x));",
-     "    a.Num(in.odom->var_x);"),
+     "    a.add_num(std::sqrt(in.odom->var_x));",
+     "    a.add_num(in.odom->var_x);"),
     # A zeroed odom object where there is none. An origin pose is a CLAIM;
     # "nothing integrated yet" is an absence, and a consumer cannot tell a
     # robot at the origin from a robot that has never run.
     ("payloads: an absent odom rendered as an origin pose",
      PAYLOADS_CC,
-     '    a.Raw(",\\"odom\\":null");',
-     '    a.Raw(",\\"odom\\":{\\"x\\":0,\\"y\\":0,\\"yaw_rad\\":0,'
+     '    a.add_raw(",\\"odom\\":null");',
+     '    a.add_raw(",\\"odom\\":{\\"x\\":0,\\"y\\":0,\\"yaw_rad\\":0,'
      '\\"vx\\":0,\\"vy\\":0,\\"wz\\":0,\\"cov_xy_m\\":0,'
      '\\"cov_yaw_rad\\":0,\\"valid\\":true}");'),
     # 11 S9.1.4 / 13 ASM-4 (2). 10 S3.3 Stage 1 does not complete without the
@@ -1184,39 +1184,39 @@ PAYLOADS_MUTANTS = [
     # as "connected, receiving nothing".
     ("payloads: hello_ack drops the transport block (CB-4 / DDS-9 / TF-1)",
      PAYLOADS_CC,
-     'a.Raw(",\\"transport\\":{\\"endpoint\\":");',
-     'a.Raw(",\\"_transport\\":{\\"endpoint\\":");'),
+     'a.add_raw(",\\"transport\\":{\\"endpoint\\":");',
+     'a.add_raw(",\\"_transport\\":{\\"endpoint\\":");'),
     # One domain echoed into both. DDS-7 keeps them opposite; an echo would
     # report a correct-looking pair on a process bound to one domain twice.
     ("payloads: hello_ack echoes one domain into both fields",
      PAYLOADS_CC,
-     "  a.Int(in.uplink_ros_domain);",
-     "  a.Int(in.chassis_dds_domain);"),
+     "  a.add_int(in.uplink_ros_domain);",
+     "  a.add_int(in.chassis_dds_domain);"),
     # drdds_available is a constant at the CALL SITE (21 V-20), not in the
     # encoder. An encoder that hardcoded it would make the call site's ruling
     # unenforceable -- and unnoticeable the day V-20 closes.
     ("payloads: hello_ack reports drdds_available as a constant",
      PAYLOADS_CC,
-     "  a.Bool(in.drdds_available);",
-     "  a.Bool(false);"),
+     "  a.add_bool(in.drdds_available);",
+     "  a.add_bool(false);"),
     # 21 V-14: services is 恒填 [不可查]. Omitting the key reads as an older
     # ack that predates the field, which is a different claim from "we cannot
     # query this" -- and it is the one an upstream would retry on.
     ("payloads: hello_ack omits services instead of filling it null",
      PAYLOADS_CC,
-     '  a.Raw(",\\"services\\":null");',
+     '  a.add_raw(",\\"services\\":null");',
      "  /* services omitted */"),
     # Empty identity as "" rather than null: reads as a chassis that answered
     # with a blank model.
-    # Anchor carries the un-comma'd key line: WriteRobotState now emits the
+    # Anchor carries the un-comma'd key line: write_robot_state now emits the
     # SAME conditional for its own model field (2026-09-26), and the bare
     # guard would match three places.
     ("payloads: hello_ack emits an empty model instead of null",
      PAYLOADS_CC,
-     '  a.Raw("\\"model\\":");\n'
-     '  if (in.model != nullptr) { a.Str(in.model); } else { a.Raw("null"); }',
-     '  a.Raw("\\"model\\":");\n'
-     '  a.Str(in.model == nullptr ? "" : in.model);'),
+     '  a.add_raw("\\"model\\":");\n'
+     '  if (in.model != nullptr) { a.add_str(in.model); } else { a.add_raw("null"); }',
+     '  a.add_raw("\\"model\\":");\n'
+     '  a.add_str(in.model == nullptr ? "" : in.model);'),
     # 13 ASM-4 boundary: the mode TRIPLE travels in rt/chassis/state even
     # though the full BasicStatus does not. Tier 1 gates on usage_mode
     # (NAV-111), and on the bench it read null for an hour while the chassis
@@ -1226,28 +1226,28 @@ PAYLOADS_MUTANTS = [
     # substring of both.
     ("payloads: the triple is dropped when there is no full BasicStatus",
      PAYLOADS_CC,
-     "    a.Bool(in.basic->sleep);\n  } else if (in.has_triple) {",
-     "    a.Bool(in.basic->sleep);\n  } else if (false) {"),
+     "    a.add_bool(in.basic->sleep);\n  } else if (in.has_triple) {",
+     "    a.add_bool(in.basic->sleep);\n  } else if (false) {"),
     # has_triple ignored: a silent chassis then reports itself as
     # normal-mode / idle / no-gait, which is what a healthy idle robot looks
     # like. Zero is a real value on all three.
     ("payloads: never-read-back is emitted as a zeroed triple",
      PAYLOADS_CC,
-     "    a.Bool(in.basic->sleep);\n  } else if (in.has_triple) {",
-     "    a.Bool(in.basic->sleep);\n  } else if (true) {"),
+     "    a.add_bool(in.basic->sleep);\n  } else if (in.has_triple) {",
+     "    a.add_bool(in.basic->sleep);\n  } else if (true) {"),
     # 13 S6.5: an open-set value travels as BOTH the number and the label.
     # Dropping the raw leaves a consumer who sees "unknown_0x0000" unable to say
     # WHICH unregistered value it was -- and V-66's Gait 0 arrives on every boot.
     ("payloads: an open-set value loses its raw number",
      PAYLOADS_CC,
-     '  a->Raw(",\\"");\n  a->Raw(name);\n  a->Raw("_raw\\":");\n'
-     "  a->Int(static_cast<long long>(v.raw));",
+     '  a->add_raw(",\\"");\n  a->add_raw(name);\n  a->add_raw("_raw\\":");\n'
+     "  a->add_int(static_cast<long long>(v.raw));",
      "  (void)0;"),
     # 13 S7.3: both fault lists travel. An empty `cleared` and an absent one are
     # different claims, and a consumer that has to guess keeps a fault asserted.
     ("payloads: the cleared-fault list is omitted",
      PAYLOADS_CC,
-     '  a.Raw(",\\"cleared\\":");\n  WriteClearedArray(&a, in.cleared);',
+     '  a.add_raw(",\\"cleared\\":");\n  write_cleared_array(&a, in.cleared);',
      "  (void)0;"),
 
     # -- 11 S9.8.4 ChassisFault wire shape (the three violations audited on
@@ -1259,28 +1259,28 @@ PAYLOADS_MUTANTS = [
     # and finds nothing, so a real fault reaches the cloud with no text at all.
     ("payloads: the fault entry spells desc as name again",
      PAYLOADS_CC,
-     '    a->Raw(",\\"desc\\":");\n    a->Str(f.name.c_str());',
-     '    a->Raw(",\\"name\\":");\n    a->Str(f.name.c_str());'),
+     '    a->add_raw(",\\"desc\\":");\n    a->add_str(f.name.c_str());',
+     '    a->add_raw(",\\"name\\":");\n    a->add_str(f.name.c_str());'),
     # cleared[] back to objects -- one routine serving both lists, which is how
     # the violation arose. CF-1 puts the regex on each ELEMENT of this list.
     ("payloads: cleared[] written as objects instead of code strings",
      PAYLOADS_CC,
-     '  WriteClearedArray(&a, in.cleared);',
-     '  WriteFaultArray(&a, in.cleared);'),
+     '  write_cleared_array(&a, in.cleared);',
+     '  write_fault_array(&a, in.cleared);'),
     # since_ts truncated to whole seconds. The value stays a plausible wall
     # clock, so only an assertion on the FRACTION catches it.
     ("payloads: since_ts truncated to whole seconds",
      PAYLOADS_CC,
-     '      a->TimeSec(static_cast<double>(f.since_sec) +\n'
+     '      a->add_time_sec(static_cast<double>(f.since_sec) +\n'
      '                 static_cast<double>(f.since_nanosec) * 1e-9);',
-     '      a->TimeSec(static_cast<double>(f.since_sec));'),
+     '      a->add_time_sec(static_cast<double>(f.since_sec));'),
     # ...and the %.6g form of the same regression (11 S3.0's own lesson): six
     # SIGNIFICANT digits render 1.789e9 as "1.78946e+09", off by minutes.
     ("payloads: since_ts formatted with %.6g",
      PAYLOADS_CC,
-     '      a->TimeSec(static_cast<double>(f.since_sec) +\n'
+     '      a->add_time_sec(static_cast<double>(f.since_sec) +\n'
      '                 static_cast<double>(f.since_nanosec) * 1e-9);',
-     '      a->Num(static_cast<double>(f.since_sec) +\n'
+     '      a->add_num(static_cast<double>(f.since_sec) +\n'
      '             static_cast<double>(f.since_nanosec) * 1e-9);'),
     # A fault the chassis sent no Timestamp with must be null, not the epoch:
     # p5 takes since_ts as detected_at and 0.0 files the fault under 1970.
@@ -1295,8 +1295,8 @@ PAYLOADS_MUTANTS = [
     # added 2026-09-26 with the v1.35 correction.)
     ("payloads: the fault desc filled from details, not the fault name",
      PAYLOADS_CC,
-     '    a->Raw(",\\"desc\\":");\n    a->Str(f.name.c_str());',
-     '    a->Raw(",\\"desc\\":");\n    a->Str(f.details.c_str());'),
+     '    a->add_raw(",\\"desc\\":");\n    a->add_str(f.name.c_str());',
+     '    a->add_raw(",\\"desc\\":");\n    a->add_str(f.details.c_str());'),
     # 13 S7.3 marks Source[] and SourceIds[] upstream on ONE row. source_ids
     # was parsed by chs_a_reports from the day that reader was written and
     # never written to the wire until 2026-09-27 -- and an absent key is
@@ -1305,8 +1305,8 @@ PAYLOADS_MUTANTS = [
     # faulted, which is the question a field engineer has.
     ("payloads: the fault entry drops source_ids",
      PAYLOADS_CC,
-     '    a->Raw("],\\"source_ids\\":[");',
-     '    a->Raw("],\\"_source_ids\\":[");'),
+     '    a->add_raw("],\\"source_ids\\":[");',
+     '    a->add_raw("],\\"_source_ids\\":[");'),
     # ...and the head-of-list form: forwarding only the first id passes any
     # "the key is present" assertion while losing every other instance.
     ("payloads: only the first source_ids element is forwarded",
@@ -1319,55 +1319,55 @@ PAYLOADS_MUTANTS = [
     # measurement as 0 -- and 0 passes the contract's 100 ms criterion.
     ("payloads: latency_ms written with the integer writer",
      PAYLOADS_CC,
-     '  a.Raw(",\\"latency_ms\\":");\n  a.MilliSec(in.latency_ms);',
-     '  a.Raw(",\\"latency_ms\\":");\n  a.UInt('
+     '  a.add_raw(",\\"latency_ms\\":");\n  a.add_milli_sec(in.latency_ms);',
+     '  a.add_raw(",\\"latency_ms\\":");\n  a.add_uint('
      "static_cast<unsigned long long>(in.latency_ms));"),
     # ...and the %.6g form: correct for 0.293512 and an exponent for anything
     # past six significant digits, which is the lesson since_ts already taught
     # this file.
     ("payloads: latency_ms formatted with %.6g",
      PAYLOADS_CC,
-     '  a.Raw(",\\"latency_ms\\":");\n  a.MilliSec(in.latency_ms);',
-     '  a.Raw(",\\"latency_ms\\":");\n  a.Num(in.latency_ms);'),
+     '  a.add_raw(",\\"latency_ms\\":");\n  a.add_milli_sec(in.latency_ms);',
+     '  a.add_raw(",\\"latency_ms\\":");\n  a.add_num(in.latency_ms);'),
     # 13 V-68: an empty slot reports 0, so min_level alone cannot tell a flat
     # battery from an absent one. present_count is the fact that supplies it.
     ("payloads: present_count is dropped from the device report",
      PAYLOADS_CC,
-     '  a.Raw(",\\"present_count\\":");\n  a.UInt(in.present_count);\n'
-     '  a.Raw(",\\"any_charging\\":");',
-     '  a.Raw(",\\"any_charging\\":");'),
+     '  a.add_raw(",\\"present_count\\":");\n  a.add_uint(in.present_count);\n'
+     '  a.add_raw(",\\"any_charging\\":");',
+     '  a.add_raw(",\\"any_charging\\":");'),
     # 13 V-55: the left/right mapping is unknown, so the ORIGINAL index is the
     # only handle anyone has on which slot is which. Renumbering destroys it.
     ("payloads: every battery entry reports slot 0's values",
      PAYLOADS_CC,
      '    const chs_a::BatteryEntry& b = in.batteries[i];\n'
-     '    if (i != 0) a.Raw(",");',
+     '    if (i != 0) a.add_raw(",");',
      '    const chs_a::BatteryEntry& b = in.batteries[0];\n'
-     '    if (i != 0) a.Raw(",");'),
+     '    if (i != 0) a.add_raw(",");'),
     # 13 V-46: the manual's units column says raw/s for the angular axis and is
     # wrong; the wire value is rad/s. Swapping the axes here is invisible in a
     # capture at rest and wrong by 57 the moment the robot turns.
     # 2026-09-28: re-anchored onto 11 S9.8.2's own key name (was ",\"yaw\"").
     ("payloads: the motion report swaps yaw rate and roll",
-     PAYLOADS_CC, '  a.Raw(",\\"wz_radps\\":");\n  a.Num(in.angular_z);',
-     '  a.Raw(",\\"wz_radps\\":");\n  a.Num(in.omega_x);'),
+     PAYLOADS_CC, '  a.add_raw(",\\"wz_radps\\":");\n  a.add_num(in.angular_z);',
+     '  a.add_raw(",\\"wz_radps\\":");\n  a.add_num(in.omega_x);'),
     # 13 S5.6 / V-53: PRO gates the chassis navigation licence, and an operator
     # cannot tell a STD machine from a PRO one without it.
     ("payloads: the basic report drops the firmware version",
-     PAYLOADS_CC, '  a.Raw(",\\"version\\":");\n  a.Str(in.version.c_str());',
+     PAYLOADS_CC, '  a.add_raw(",\\"version\\":");\n  a.add_str(in.version.c_str());',
      "  (void)0;"),
 
     # 11 D-08: four fields, four meanings. Deriving locked from one latch hides
     # the other, and an operator reads "not locked" on a robot that cannot move.
     ("payloads: locked derived from the HES latch alone",
-     PAYLOADS_CC, "  a.Bool(in.tier1.hes_lock || in.tier1.timeout_lock);",
-     "  a.Bool(in.tier1.hes_lock);"),
+     PAYLOADS_CC, "  a.add_bool(in.tier1.hes_lock || in.tier1.timeout_lock);",
+     "  a.add_bool(in.tier1.hes_lock);"),
     ("payloads: locked derived from the timeout latch alone",
-     PAYLOADS_CC, "  a.Bool(in.tier1.hes_lock || in.tier1.timeout_lock);",
-     "  a.Bool(in.tier1.timeout_lock);"),
+     PAYLOADS_CC, "  a.add_bool(in.tier1.hes_lock || in.tier1.timeout_lock);",
+     "  a.add_bool(in.tier1.timeout_lock);"),
     # An absent report rendered as a zeroed struct reads as a healthy robot
     # standing still, which is the worst default for the message a human watches.
-    # The anchor carries the comment line ABOVE it. WriteHelloAck (added
+    # The anchor carries the comment line ABOVE it. write_hello_ack (added
     # 2026-09-18) emits the same null triple verbatim, so the bare line now
     # matches twice -- the second time this has happened, and both times the
     # collision came from a NEW function copying an existing shape. See the
@@ -1377,19 +1377,21 @@ PAYLOADS_MUTANTS = [
     # closing brace instead, so the pair stays unique.
     ("payloads: an absent BasicStatus rendered as zeros instead of null",
      PAYLOADS_CC,
-     '    a.Raw(",\\"usage_mode\\":null,\\"motion_state\\":null,\\"gait\\":null");\n'
-     '    a.Raw(",\\"model\\":");',
-     '    a.Raw(",\\"usage_mode\\":\\"normal\\",\\"motion_state\\":\\"idle\\",\\"gait\\":\\"basic\\"");\n'
-     '    a.Raw(",\\"model\\":");'),
+     '    a.add_raw(",\\"usage_mode\\":null,\\"motion_state\\":null,'
+     '\\"gait\\":null");\n'
+     '    a.add_raw(",\\"model\\":");',
+     '    a.add_raw(",\\"usage_mode\\":\\"normal\\",\\"motion_state\\":\\"idle\\",\\"gait\\":\\"basic\\"");\n'
+     '    a.add_raw(",\\"model\\":");'),
     # Same shape one function up: hello_ack is the FIRST thing the upstream
     # sees, so a fabricated triple there is believed before any state key
     # arrives to contradict it.
     ("payloads: hello_ack invents a triple before any chassis answered",
      PAYLOADS_CC,
-     '    a.Raw(",\\"usage_mode\\":null,\\"motion_state\\":null,\\"gait\\":null");\n'
+     '    a.add_raw(",\\"usage_mode\\":null,\\"motion_state\\":null,'
+     '\\"gait\\":null");\n'
      '  }\n'
      '  // 11 S9.7 lists `services`',
-     '    a.Raw(",\\"usage_mode\\":\\"navigation\\",\\"motion_state\\":null,\\"gait\\":null");\n'
+     '    a.add_raw(",\\"usage_mode\\":\\"navigation\\",\\"motion_state\\":null,\\"gait\\":null");\n'
      '  }\n'
      '  // 11 S9.7 lists `services`'),
     # "Never received a command" is a different fact from "the command is old".
@@ -1398,39 +1400,39 @@ PAYLOADS_MUTANTS = [
     # 13 S6.5 ban 3: the raw value is what a field engineer matches to the
     # manual, and an unregistered value has no other handle at all.
     ("payloads: open-set raw value dropped, label only",
-     PAYLOADS_CC, '  a->Int(static_cast<long long>(v.raw));', '  a->Int(0);'),
+     PAYLOADS_CC, '  a->add_int(static_cast<long long>(v.raw));', '  a->add_int(0);'),
     # 11 S4.2 / 13 BAT-1: the MINIMUM. A maximum reports a robot as fuller than
     # its emptiest pack, which is the direction that strands it.
     # 2026-09-28: re-anchored one indent level in -- the call moved inside the
     # else of the present_count == 0 test.
     ("payloads: SOC published from present_count instead of the minimum",
-     PAYLOADS_CC, "    a.Int(in.device->min_level);",
-     "    a.Int(static_cast<long long>(in.device->present_count));"),
+     PAYLOADS_CC, "    a.add_int(in.device->min_level);",
+     "    a.add_int(static_cast<long long>(in.device->present_count));"),
     # CLAUDE.md 9.3 / 11 S4.1: RobotState has no `motion` field. This writer
-    # emitted one until 2026-09-28 and PublishState never filled it, so the key
+    # emitted one until 2026-09-28 and publish_state never filled it, so the key
     # rode the wire as null on every message. The mutant puts the null branch
     # back -- the cheapest way for it to come back, and the exact state the
     # code was in.
     ("payloads: RobotState grows an unregistered motion field again",
      PAYLOADS_CC,
      "  // 11 S4.1 RobotState.odom. This block is the ONLY carrier of `valid`",
-     "  a.Raw(\",\\\"motion\\\":null\");\n"
+     "  a.add_raw(\",\\\"motion\\\":null\");\n"
      "  // 11 S4.1 RobotState.odom. This block is the ONLY carrier of `valid`"),
     # 11 S4.2 CHG-10 as corrected 2026-09-28. With no pack present there is no
     # minimum, and min_level carries its initialiser -- which is 0, a legal
     # SOC. Publishing it says "the robot is flat" about a robot nobody asked.
     ("payloads: soc_pct published as 0 when no pack is present",
-     PAYLOADS_CC, "  if (in.device->present_count == 0) {\n    a.Raw(\"null\");",
-     "  if (false) {\n    a.Raw(\"null\");"),
+     PAYLOADS_CC, "  if (in.device->present_count == 0) {\n    a.add_raw(\"null\");",
+     "  if (false) {\n    a.add_raw(\"null\");"),
     ("payloads: min_level_pct published as 0 when no pack is present",
-     PAYLOADS_CC, "  if (in.present_count == 0) {\n    a.Raw(\"null\");",
-     "  if (false) {\n    a.Raw(\"null\");"),
+     PAYLOADS_CC, "  if (in.present_count == 0) {\n    a.add_raw(\"null\");",
+     "  if (false) {\n    a.add_raw(\"null\");"),
     # 13 BAT-2: array order is not a measurement. Filling left/right from it is
     # the failure CLAUDE.md 3.2 calls a guess presented as a measurement, and
     # BAT-4 forbids even saying "left" in that state.
     ("payloads: left/right filled from array order while the mapping is unknown",
-     PAYLOADS_CC, "  if (!in.index_map_known) {\n    a.Raw(\"null\");",
-     "  if (false) {\n    a.Raw(\"null\");"),
+     PAYLOADS_CC, "  if (!in.index_map_known) {\n    a.add_raw(\"null\");",
+     "  if (false) {\n    a.add_raw(\"null\");"),
     ("payloads: a mapping pointing outside the array is used anyway",
      PAYLOADS_CC,
      "    if (!ok) {\n      // A configured mapping that points outside the array is a configuration",
@@ -1442,7 +1444,7 @@ PAYLOADS_MUTANTS = [
     # past the table length is the same defect in the new shape: an
     # unregistered value would index past kPowerManagement.
     # 2026-09-28: re-anchored again -- the bound now lives in the ONE converter
-    # PowerManagementName, which ChassisBasic shares with PowerState.
+    # power_management_name, which ChassisBasic shares with PowerState.
     ("payloads: an unregistered power_management mapped to a member",
      PAYLOADS_CC,
      "  if (raw >= 0 && static_cast<std::size_t>(raw) < kPowerManagementCount) {",
@@ -1454,24 +1456,24 @@ PAYLOADS_MUTANTS = [
     # to know which key it was reading to know what a value meant.
     ("payloads: chassis_basic publishes charge as a raw integer again",
      PAYLOADS_CC,
-     '  a.Raw(",\\"charge\\":");\n  ChargeName(&a, in.charge);',
-     '  a.Raw(",\\"charge\\":");\n  a.Int(in.charge);'),
+     '  a.add_raw(",\\"charge\\":");\n  charge_name(&a, in.charge);',
+     '  a.add_raw(",\\"charge\\":");\n  a.add_int(in.charge);'),
     ("payloads: chassis_basic publishes power_management as a raw integer again",
      PAYLOADS_CC,
-     '  a.Raw(",\\"power_management\\":");\n'
-     "  PowerManagementName(&a, in.power_management);",
-     '  a.Raw(",\\"power_management\\":");\n  a.Int(in.power_management);'),
+     '  a.add_raw(",\\"power_management\\":");\n'
+     "  power_management_name(&a, in.power_management);",
+     '  a.add_raw(",\\"power_management\\":");\n  a.add_int(in.power_management);'),
     # 11 S9.8.2's own names. The old ones carried the right values under keys
     # the contract does not have, so a consumer coded against 11 found nothing
     # and reported no error.
     ("payloads: the motion report goes back to vel{x,y,yaw}",
      PAYLOADS_CC,
-     '  a.Raw("{\\"velocity\\":{\\"vx_mps\\":");',
-     '  a.Raw("{\\"vel\\":{\\"x\\":");'),
+     '  a.add_raw("{\\"velocity\\":{\\"vx_mps\\":");',
+     '  a.add_raw("{\\"vel\\":{\\"x\\":");'),
     ("payloads: the motion report goes back to rpy{roll,pitch,yaw}",
      PAYLOADS_CC,
-     '  a.Raw(",\\"attitude\\":{\\"roll_rad\\":");',
-     '  a.Raw(",\\"rpy\\":{\\"roll\\":");'),
+     '  a.add_raw(",\\"attitude\\":{\\"roll_rad\\":");',
+     '  a.add_raw(",\\"rpy\\":{\\"roll\\":");'),
     # 11 S9.8.2 `joints` and 11 S9.8.3 `motor_temp_c` are the SAME sixteen
     # joints in the SAME vendor order (guide 1.3.1.2). Transposing the two
     # loops still yields a well-formed object with the right sixteen numbers in
@@ -1479,71 +1481,71 @@ PAYLOADS_MUTANTS = [
     # and not just index 0.
     ("payloads: the joint grouping transposes leg and joint",
      PAYLOADS_CC,
-     "        a.Num(in.joint[leg * 4 + j]);",
-     "        a.Num(in.joint[j * 4 + leg]);"),
+     "        a.add_num(in.joint[leg * 4 + j]);",
+     "        a.add_num(in.joint[j * 4 + leg]);"),
     ("payloads: motor_temp_c transposes leg and joint",
      PAYLOADS_CC,
-     "        a.Num(in.temps.motor[idx]);",
-     "        a.Num(in.temps.motor[(idx % 4) * 4 + idx / 4]);"),
+     "        a.add_num(in.temps.motor[idx]);",
+     "        a.add_num(in.temps.motor[(idx % 4) * 4 + idx / 4]);"),
     # 11 S9.8.3 wants the absent case to be null, not a zeroed object: 0
     # degrees, 0 satellites and load_power 0 are all plausible readings, so a
     # zeroed group is indistinguishable from a real one.
     ("payloads: an unreported device group published as a zeroed object",
      PAYLOADS_CC,
-     '  a.Raw(",\\"dev_enable\\":");\n  if (!in.dev_enable.valid) {',
-     '  a.Raw(",\\"dev_enable\\":");\n  if (false) {'),
+     '  a.add_raw(",\\"dev_enable\\":");\n  if (!in.dev_enable.valid) {',
+     '  a.add_raw(",\\"dev_enable\\":");\n  if (false) {'),
     ("payloads: a CPU host that never reported published as zeros",
      PAYLOADS_CC,
      "  if (!h.valid) {\n"
      "    // A STD machine has no GOS, and a host that did not report is absent --\n"
      "    // not a host running at 0 degrees (11 S9.8.3 asks for tolerance here).\n"
-     '    a->Raw("null");\n'
+     '    a->add_raw("null");\n'
      "    return;\n"
      "  }",
      "  if (false) {\n"
-     '    a->Raw("null");\n'
+     '    a->add_raw("null");\n'
      "    return;\n"
      "  }"),
     # 13 BAT-2 / V-55: the named view stays null while the index mapping is
     # unknown, and BAT-4 forbids even SAYING "left" in that state.
     ("payloads: chassis_device claims a known battery mapping",
      PAYLOADS_CC,
-     '  a.Raw(",\\"battery\\":null,\\"battery_mapping\\":\\"unknown\\"");',
-     '  a.Raw(",\\"battery\\":null,\\"battery_mapping\\":\\"known\\"");'),
+     '  a.add_raw(",\\"battery\\":null,\\"battery_mapping\\":\\"unknown\\"");',
+     '  a.add_raw(",\\"battery\\":null,\\"battery_mapping\\":\\"known\\"");'),
     # 11 S9.8.3 lists `led` and the device report has no LED group. Filling it
     # from the DevEnable bits is the same "one value, two shapes" defect the
     # charge field had.
     ("payloads: led filled from the dev_enable bits",
      PAYLOADS_CC,
-     '  a.Raw(",\\"led\\":null");',
-     '  a.Raw(",\\"led\\":{\\"fill_front\\":1,\\"fill_back\\":1}");'),
+     '  a.add_raw(",\\"led\\":null");',
+     '  a.add_raw(",\\"led\\":{\\"fill_front\\":1,\\"fill_back\\":1}");'),
     # The vendor guide has no interactive/application frequency split, so a
     # number in freq_int / freq_app would be invented (11 S9.8.3 registration).
     ("payloads: cpu freq_int invented from the current frequency",
      PAYLOADS_CC,
-     '  a->Raw(",\\"freq_int\\":null,\\"freq_app\\":null,\\"soc_id\\":");',
-     '  a->Raw(",\\"freq_int\\":0,\\"freq_app\\":0,\\"soc_id\\":");'),
+     '  a->add_raw(",\\"freq_int\\":null,\\"freq_app\\":null,\\"soc_id\\":");',
+     '  a->add_raw(",\\"freq_int\\":0,\\"freq_app\\":0,\\"soc_id\\":");'),
     # 11 S9.8.2 v0.2 deleted payload_kg -- the chassis marks Payload an INVALID
     # parameter. Putting it back publishes a constant 0.0 that reads as a load
     # measurement. The mutant re-adds it as a literal, since the struct member
     # is gone too.
     ("payloads: the motion report grows payload_kg back",
      PAYLOADS_CC,
-     '  a.Raw(",\\"remain_mile_km\\":");\n  a.Num(in.remain_mile);',
-     '  a.Raw(",\\"payload_kg\\":0,\\"remain_mile_km\\":");\n'
-     "  a.Num(in.remain_mile);"),
+     '  a.add_raw(",\\"remain_mile_km\\":");\n  a.add_num(in.remain_mile);',
+     '  a.add_raw(",\\"payload_kg\\":0,\\"remain_mile_km\\":");\n'
+     "  a.add_num(in.remain_mile);"),
     # CF-5: the prefix travels with the code. Without it the two overlapping
     # code spaces cannot be told apart at all.
     # The entries are a const char* view since 2026-09-26 (the cached-fault
     # batch); the mutant still strips the four prefix bytes CF-5 requires.
     ("payloads: fault code published without its namespace prefix",
-     PAYLOADS_CC, "      a.Str(f.code);",
-     "      a.Str(std::strlen(f.code) > 4 ? f.code + 4 : f.code);"),
+     PAYLOADS_CC, "      a.add_str(f.code);",
+     "      a.add_str(std::strlen(f.code) > 4 ? f.code + 4 : f.code);"),
     # Truncation: half an object decodes to the wrong thing, or to nothing.
     ("payloads: a truncated object is returned instead of refused",
      PAYLOADS_CC, "    if (overflow_) return 0;", "    if (false) return 0;"),
     ("payloads: overflow not sticky, so later fields hide an earlier loss",
-     # The anchor includes Raw's strlen line: RawN (added for the envelope)
+     # The anchor includes add_raw's strlen line: add_raw_n (added for the envelope)
      # copied the same overflow shape three lines down, and the bare guard
      # matched both -- the seventh anchor collision this package has had,
      # every one of them a later block copying an earlier block's shape.
@@ -1555,16 +1557,17 @@ PAYLOADS_MUTANTS = [
     # An unescaped quote produces text no decoder accepts, and the symptom is
     # state/robot going silent -- which reads as the robot having died.
     ("payloads: JSON string escaping removed",
-     PAYLOADS_CC, '        case \'"\': Raw("\\\\\\""); break;',
-     '        case \'"\': Raw("\\""); break;'),
+     PAYLOADS_CC, '        case \'"\': add_raw("\\\\\\""); break;',
+     '        case \'"\': add_raw("\\""); break;'),
     # The pong seq is ECHOED; a self-counted one answers a question nobody asked.
     ("payloads: pong seq replaced by a constant",
-     PAYLOADS_CC, '  a.Raw("{\\"type\\":\\"pong\\",\\"seq\\":");\n  a.UInt(in.seq);',
-     '  a.Raw("{\\"type\\":\\"pong\\",\\"seq\\":");\n  a.UInt(0);'),
+     PAYLOADS_CC,
+     '  a.add_raw("{\\"type\\":\\"pong\\",\\"seq\\":");\n  a.add_uint(in.seq);',
+     '  a.add_raw("{\\"type\\":\\"pong\\",\\"seq\\":");\n  a.add_uint(0);'),
     # 13 Q-2 makes detail.action required; without it an ack cannot be matched
     # to the command it answers.
     ("payloads: ctrl ack drops detail.action",
-     PAYLOADS_CC, '  a.Str(in.action);', '  a.Str("");'),
+     PAYLOADS_CC, '  a.add_str(in.action);', '  a.add_str("");'),
     # 11 S4.1 mode_mismatch is 当且仅当: dropping the branch is the shape the
     # writer shipped in until 2026-09-26 -- the field simply never existed.
     ("payloads: mode_mismatch is always omitted",
@@ -1581,35 +1584,36 @@ PAYLOADS_MUTANTS = [
     # hides the missing wiring forever (11 S13.6).
     ("payloads: a null conn falls back to a member",
      PAYLOADS_CC,
-     '  if (in.conn_wire != nullptr) { a.Str(in.conn_wire); } else { a.Raw("null"); }',
-     '  if (in.conn_wire != nullptr) { a.Str(in.conn_wire); } else { a.Str("connecting"); }'),
+     '  if (in.conn_wire != nullptr) { a.add_str(in.conn_wire); }'
+     ' else { a.add_raw("null"); }',
+     '  if (in.conn_wire != nullptr) { a.add_str(in.conn_wire); } else { a.add_str("connecting"); }'),
     # last_soft_estop exists the moment a stop happened; ignoring the flag is
     # the pre-2026-09-26 wire shape (the key did not exist -- null forever).
     ("payloads: last_soft_estop is always null",
      PAYLOADS_CC,
-     "  if (!in.has_last_estop) {\n    a.Raw(\"null\");",
-     "  if (true) {\n    a.Raw(\"null\");"),
+     "  if (!in.has_last_estop) {\n    a.add_raw(\"null\");",
+     "  if (true) {\n    a.add_raw(\"null\");"),
     # An absent reason is null, not "": an empty string reads as a sender that
     # supplied a blank reason, and HMI would render it as one.
     ("payloads: an absent estop reason goes out as an empty string",
      PAYLOADS_CC,
      '    if (in.last_estop_reason != nullptr) {\n'
-     '      a.Str(in.last_estop_reason);\n'
+     '      a.add_str(in.last_estop_reason);\n'
      '    } else {\n'
-     '      a.Raw("null");\n'
+     '      a.add_raw("null");\n'
      '    }',
      '    if (in.last_estop_reason != nullptr) {\n'
-     '      a.Str(in.last_estop_reason);\n'
+     '      a.add_str(in.last_estop_reason);\n'
      '    } else {\n'
-     '      a.Str("");\n'
+     '      a.add_str("");\n'
      '    }'),
     # The 11 S4.1 example's key is `desc`; "name" is what this writer said
     # until 2026-09-26, and a consumer coded against the contract found
     # nothing where the fault text should be.
     ("payloads: the fault desc key is spelled name again",
      PAYLOADS_CC,
-     '      a.Raw(",\\"desc\\":");',
-     '      a.Raw(",\\"name\\":");'),
+     '      a.add_raw(",\\"desc\\":");',
+     '      a.add_raw(",\\"name\\":");'),
 ]
 
 # Mode-machine mutants. Three of the rules below are the opposite of the
@@ -1650,7 +1654,7 @@ MODE_MUTANTS = [
      MODE_CC,
      "  if (switching_) {\n"
      "    // Our own switch is in flight: the movement this stream is about to show\n"
-     "    // IS that switch. Same reasoning as OnReadback's switching_ branch --\n"
+     "    // IS that switch. Same reasoning as on_readback's switching_ branch --\n"
      "    // treating it as external would extend a hold past MS-1's completion.\n"
      "    return;\n"
      "  }",
@@ -1689,18 +1693,18 @@ MODE_MUTANTS = [
      MODE_CC, "  if (switching_) {\n    // MS-3: a second switch", "  if (false) {\n    // MS-3: a second switch"),
     # PR-1, both directions.
     ("mode: prone allowed on a stair gait",
-     MODE_CC, "  return !Contains(cfg_.prone_forbidden_gaits, steady_.gait);",
+     MODE_CC, "  return !contains(cfg_.prone_forbidden_gaits, steady_.gait);",
      "  return true;"),
     ("mode: prone allowed before any read-back",
      MODE_CC, "  if (!has_readback_) {\n    // Nothing has been read back yet",
      "  if (false) {\n    // Nothing has been read back yet"),
     # TR-2: the pre-check judges the STEADY value.
     ("mode: the prone pre-check judges the instantaneous read-back",
-     MODE_CC, "  return !Contains(cfg_.prone_forbidden_gaits, steady_.gait);",
-     "  return !Contains(cfg_.prone_forbidden_gaits, last_.gait);"),
+     MODE_CC, "  return !contains(cfg_.prone_forbidden_gaits, steady_.gait);",
+     "  return !contains(cfg_.prone_forbidden_gaits, last_.gait);"),
     # GS-1.
     ("mode: the uncommandable gait is sent anyway",
-     MODE_CC, "  return !Contains(cfg_.command_forbidden_gaits, gait);",
+     MODE_CC, "  return !contains(cfg_.command_forbidden_gaits, gait);",
      "  return true;"),
     # TR-1 and its hold.
     ("mode: an external transition is not noticed",
@@ -1725,7 +1729,7 @@ MODE_MUTANTS = [
 # one 13 S4.4's own superseded formula went in.
 ODOM_CC = os.path.join(QUAD, "src", "odometry.cc")
 ODOM_SOURCES = [ODOM_CC, os.path.join(QUAD, "src", "quadruped_config.cc"),
-os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through GaitValueByName, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
+os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through gait_value_by_name, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
                 os.path.join(QUAD, "src", "chs_a_codec.cc")]
 ODOM_TESTS = [os.path.join(QUAD, "test", "test_odometry.cc")]
 
@@ -1740,8 +1744,8 @@ ODOM_MUTANTS = [
      ODOM_CC, "  s.var_x = (p_xx_committed_ + open * open) / divisor;",
      "  s.var_x = p_xx_committed_ / divisor;"),
     ("odom: the closed interval accounted with dt instead of the whole tau",
-     ODOM_CC, "      const double inc = SigmaV(tau_used) * tau_used;",
-     "      const double inc = SigmaV(tau_used) * 0.01;"),
+     ODOM_CC, "      const double inc = sigma_v(tau_used) * tau_used;",
+     "      const double inc = sigma_v(tau_used) * 0.01;"),
     # The yaw correlation factor, mistaken for a unit conversion.
     ("odom: the yaw correlation factor removed",
      ODOM_CC, "                  kYawCorrelationFactor;", "                  1.0;"),
@@ -1828,7 +1832,7 @@ NAMES_MUTANTS = [
 # wrongly in a way that reads as a chassis problem rather than a code problem.
 SOCKET_CC = os.path.join(QUAD, "src", "chassis_socket.cc")
 SOCKET_SOURCES = [SOCKET_CC, os.path.join(QUAD, "src", "quadruped_config.cc"),
-os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through GaitValueByName, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
+os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through gait_value_by_name, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
                   os.path.join(QUAD, "src", "chs_a_codec.cc")]
 SOCKET_TESTS = [os.path.join(QUAD, "test", "test_chassis_socket.cc")]
 
@@ -1844,12 +1848,12 @@ SOCKET_MUTANTS = [
     # CA-1: two live sockets are two clients, and axis commands come back
     # 0xE006 for two seconds -- accepted, and the robot does not move.
     ("socket: the previous socket left open when redialling",
-     SOCKET_CC, "  Close();\n  last_error_ = DialError::kNone;",
+     SOCKET_CC, "  close();\n  last_error_ = DialError::kNone;",
      "  last_error_ = DialError::kNone;"),
     # EAGAIN is a short write, not a broken link.
     ("socket: EAGAIN on send reported as an error",
-     SOCKET_CC, "  if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;\n  return -1;\n}\n\nlong ChassisSocket::Recv",
-     "  return -1;\n}\n\nlong ChassisSocket::Recv"),
+     SOCKET_CC, "  if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;\n  return -1;\n}\n\nlong ChassisSocket::recv",
+     "  return -1;\n}\n\nlong ChassisSocket::recv"),
     # ...and on the read side, EAGAIN as -1 turns every idle moment into a
     # reconnect. 13 CA-6 makes each reconnect play a voice prompt on the robot.
     ("socket: nothing-to-read reported as a dead link",
@@ -1960,14 +1964,14 @@ PROCESS_MUTANTS = [
      "  snap.motion_state_transitioning = mode_.motion_state_transitioning();",
      "  snap.motion_state_transitioning = mode_.mode_switching();"),
     # 13 TR-1, user ruling 2026-09-21. The call is the wiring; without it the
-    # unit tests on ModeMachine::OnMotionSample all still pass (they call it
+    # unit tests on ModeMachine::on_motion_sample all still pass (they call it
     # themselves), which is v1.22's lesson verbatim -- this mutant is the
     # process-level test's reason to exist.
     ("process: the 10 Hz stream never reaches the mode machine",
      PROCESS_CC,
-     "      mode_.OnMotionSample(now_mono_s, m.motion_state.raw, m.gait.raw);",
+     "      mode_.on_motion_sample(now_mono_s, m.motion_state.raw, m.gait.raw);",
      "      (void)0;"),
-    # FR-5 / SD-3. Dial threw the setsockopt return away and nothing read the
+    # FR-5 / SD-3. dial threw the setsockopt return away and nothing read the
     # option back, so "Nagle is off" was a guarantee nobody held -- while every
     # latency figure in 13 S3.6 rests on it.
     #
@@ -2021,7 +2025,7 @@ PROCESS_MUTANTS = [
      "  in.mode_switching = mode_.mode_switching();"),
     # *** 13 PR-1 / QC-9 / V-54 (P0). THE defect: the ModeConfig lambda took
     # cfg and discarded it, so prone_forbidden_gaits was empty and
-    # ProneAllowed -- which answers !Contains(list, gait) -- was true for every
+    # prone_allowed -- which answers !contains(list, gait) -- was true for every
     # gait. `prone` was accepted on a staircase, and 13 V-54 calls that a
     # safety incident outright. test_mode_machine.cc builds its OWN list and
     # stays green under this mutant, which is why the case lives in
@@ -2044,7 +2048,7 @@ PROCESS_MUTANTS = [
      PROCESS_CC,
      "        m.switch_timeout_s = cfg.motion.mode_switch_timeout_s;",
      "        m.switch_timeout_s = 5.0;"),
-    # FR-5 / 13 S2.2. THE defect: Framer::PushDatagram had zero production call
+    # FR-5 / 13 S2.2. THE defect: Framer::push_datagram had zero production call
     # sites, so the udp:30004 candidate (enabled in the resolved config) was
     # framed as a STREAM. The stream framer carries leftovers across pushes, so
     # two halves of two unrelated datagrams can be concatenated into something
@@ -2070,14 +2074,14 @@ PROCESS_MUTANTS = [
      os.path.join(QUAD, "src", "chs_a_framer.cc"),
      "  if (kHeaderBytes + static_cast<std::size_t>(h.asdu_len) != len) {",
      "  if (kHeaderBytes + static_cast<std::size_t>(h.asdu_len) > len) {"),
-    # 13 S4.4 (4) / 11 S9.9. THE defect: Odometry::OnGait had zero production
+    # 13 S4.4 (4) / 11 S9.9. THE defect: Odometry::on_gait had zero production
     # call sites, so a robot on a staircase published wheel odometry with
-    # flat-ground trust and valid = true. test_odometry.cc calls OnGait(true)
+    # flat-ground trust and valid = true. test_odometry.cc calls on_gait(true)
     # directly and stays green under this mutant -- which is the whole reason
     # the case lives in test_process.cc instead.
     ("process: a stair gait never reaches the odometry",
      PROCESS_CC,
-     "    odom_.OnGait(chs_a::IsStairGait(latest_.gait_raw));",
+     "    odom_.on_gait(chs_a::is_stair_gait(latest_.gait_raw));",
      "    (void)0;"),
     # Only the navigation stair gait listed. GS-3 verbatim: 我方不发 is not
     # 它不会出现 -- the factory handset can set 0x1003 and the read-back path
@@ -2091,8 +2095,8 @@ PROCESS_MUTANTS = [
     # to choose between "always invalid" and "ignore the flag" picks the second.
     ("process: the stair-gait flag latches once set",
      os.path.join(QUAD, "src", "odometry.cc"),
-     "void Odometry::OnGait(bool is_stair_gait) { is_stair_gait_ = is_stair_gait; }",
-     "void Odometry::OnGait(bool is_stair_gait) {\n"
+     "void Odometry::on_gait(bool is_stair_gait) { is_stair_gait_ = is_stair_gait; }",
+     "void Odometry::on_gait(bool is_stair_gait) {\n"
      "  if (is_stair_gait) is_stair_gait_ = true;\n}"),
     # Unknown code treated as a staircase. Looks conservative; fires on the
     # most ordinary report there is -- 13 V-66 measured Gait 0 at rest, which
@@ -2113,13 +2117,13 @@ PROCESS_MUTANTS = [
     # MotionState 0 throughout.
     ("process: the mode step is accepted but no frame is sent (ASM-6)",
      PROCESS_CC,
-     "  if (tx_.Send(caller, buf, n) != TxResult::kSent) return false;",
+     "  if (tx_.send(caller, buf, n) != TxResult::kSent) return false;",
      "  if (true) return false;"),
     # ASM-6's second half: the ctrl key's stand/prone returned accepted and
     # sent nothing. Measured -- the robot stood up and would not lie down.
     ("process: the ctrl path accepts stand/prone but sends no frame",
      PROCESS_CC,
-     "    SendModeFrame(action, param, TxCaller::kNonRealtime);",
+     "    send_mode_frame(action, param, TxCaller::kNonRealtime);",
      "    (void)0;"),
     # A second switch dispatched while one is in flight. 13 MS-3: two
     # expectations with no way to say which read-back belongs to which.
@@ -2156,7 +2160,7 @@ PROCESS_MUTANTS = [
     # meaning that, and both are silent at runtime.
     ("process: the odom sample is never stamped (stays at the 0.0 default)",
      PROCESS_CC,
-     "  last_odom_.stamp_wall_s = WallNowSeconds();",
+     "  last_odom_.stamp_wall_s = wall_now_seconds();",
      "  (void)0;"),
     # ::time() resolution. All hundred samples in a second then share one
     # stamp, and downstream sees a 100 Hz stream whose timestamps advance in
@@ -2164,29 +2168,29 @@ PROCESS_MUTANTS = [
     # reported as the opposite of what it is.
     ("process: the odom stamp drops to whole-second resolution",
      PROCESS_CC,
-     "  last_odom_.stamp_wall_s = WallNowSeconds();",
-     "  last_odom_.stamp_wall_s = static_cast<double>(WallNow());"),
+     "  last_odom_.stamp_wall_s = wall_now_seconds();",
+     "  last_odom_.stamp_wall_s = static_cast<double>(wall_now());"),
     # 13 CA-7: an arriving report is the ONLY evidence the link is alive,
     # because axis commands are never acknowledged. Drop the call and the
     # session never learns it has a peer -- the socket is open, frames are
     # being parsed, and the link is declared lost anyway.
     ("process: the arriving report never reaches the session (CA-7)",
-     PROCESS_CC, "    session_.OnReport(fresh.rx_mono_s);", "    (void)0;"),
+     PROCESS_CC, "    session_.on_report(fresh.rx_mono_s);", "    (void)0;"),
     # The defect this suite's test found. Ticking the session first makes every
     # report one period late, and a report landing just inside the lost timeout
     # is ignored with the evidence sitting unread in the slot.
     ("process: the session is ticked before the snapshot is taken",
      PROCESS_CC,
-     "  ChassisSnapshot fresh;\n  if (snapshot_slot_.TakeFresh(&fresh)) {",
-     "  const chs_a::TickResult early = session_.Tick(now_mono_s);\n"
+     "  ChassisSnapshot fresh;\n  if (snapshot_slot_.take_fresh(&fresh)) {",
+     "  const chs_a::TickResult early = session_.tick(now_mono_s);\n"
      "  (void)early;\n"
-     "  ChassisSnapshot fresh;\n  if (snapshot_slot_.TakeFresh(&fresh)) {"),
+     "  ChassisSnapshot fresh;\n  if (snapshot_slot_.take_fresh(&fresh)) {"),
     # 13 F-21. The sleep flag is the chassis saying it will ignore motion; a
     # process that reports it as awake commands a robot that is not listening,
     # and the symptom is a command stream with no movement.
     ("process: the sleep readback is reported as awake (F-21)",
-     PROCESS_CC, "      session_.OnSleep(fresh.sleep);",
-     "      session_.OnSleep(false);"),
+     PROCESS_CC, "      session_.on_sleep(fresh.sleep);",
+     "      session_.on_sleep(false);"),
     # The HES bit travels in the basic report. Losing it between the parser and
     # Tier 1 removes the one stop that software cannot clear.
     ("process: HES dropped between the report and Tier 1",
@@ -2202,7 +2206,7 @@ PROCESS_MUTANTS = [
     # it had, and nothing in the process reports the difference.
     ("process: the soft stop waits for the next control period (T-1)",
      PROCESS_CC,
-     "    const TxResult r = tx_.Send(TxCaller::kNonRealtime, buf, n);\n"
+     "    const TxResult r = tx_.send(TxCaller::kNonRealtime, buf, n);\n"
      "    if (r == TxResult::kSent) {\n"
      "      ++axis_frames_sent_;",
      "    (void)buf; (void)n;\n"
@@ -2218,7 +2222,7 @@ PROCESS_MUTANTS = [
     # Eight spaces of indent: the estop's forward, a few lines up, is the same
     # call at four. The anchor has to pick the driven one on its own.
     ("process: a driven axis frame is hidden from the session (13 CA-9)",
-     PROCESS_CC, "        session_.OnAxisCommandSent(now_mono_s);",
+     PROCESS_CC, "        session_.on_axis_command_sent(now_mono_s);",
      "        (void)0;"),
     ("process: the soft stop does not advance the generation",
      PROCESS_CC, "  ++estop_epoch_;", "  /* not advanced */"),
@@ -2258,7 +2262,7 @@ PROCESS_MUTANTS = [
     # the pose stays put while the robot walks away.
     ("process: the velocity sample never reaches the odometry",
      PROCESS_CC,
-     "      odom_.OnVelocitySample(fresh.rx_mono_s, fresh.linear_x, fresh.linear_y);",
+     "      odom_.on_velocity_sample(fresh.rx_mono_s, fresh.linear_x, fresh.linear_y);",
      "      (void)0;"),
     # The counter the whole receive path is judged by.
     ("process: received frames are not counted",
@@ -2272,7 +2276,7 @@ PROCESS_MUTANTS = [
      PROCESS_CC, "  snap.conn = session_.state();",
      "  snap.conn = chs_a::ConnState::kOk;"),
     ("process: the state snapshot is never offered to rt_pub",
-     PROCESS_CC, "  state_slot_.Publish(snap);", "  /* not offered */"),
+     PROCESS_CC, "  state_slot_.publish(snap);", "  /* not offered */"),
     # 13 S9.12.2 (3): the disagreement is what holds zero. Reporting it as
     # absent makes an operator look for a different cause.
     ("process: the soft-estop disagreement is never reported",
@@ -2322,7 +2326,7 @@ PROCESS_MUTANTS = [
     # Recording the choice while integrating the other value: the report says
     # drdds and the pose is built from the 10 Hz samples.
     ("process: the source is recorded but the IMU value is not integrated",
-     PROCESS_CC, "      odom_.OnYawRate(last_imu_.wz);", "      (void)0;"),
+     PROCESS_CC, "      odom_.on_yaw_rate(last_imu_.wz);", "      (void)0;"),
     # 13 S4.2 linear table: the drdds source is priority 1. Never taking it
     # leaves the odometry on 10 Hz forever while drdds is publishing at 20.
     ("process: the drdds velocity is never preferred",
@@ -2341,20 +2345,20 @@ PROCESS_MUTANTS = [
     # Dropping the hand-off leaves the publisher with nothing while the process
     # looks entirely healthy from the chassis side.
     ("process: the integrated sample never reaches rt_pub",
-     PROCESS_CC, "  odom_slot_.Publish(last_odom_);", "  /* not offered */"),
+     PROCESS_CC, "  odom_slot_.publish(last_odom_);", "  /* not offered */"),
     # The ticks that say "do not publish" are part of the hand-off. Filtering
     # them here leaves rt_pub holding the last good pose forever, and 13 S4.4
     # (4) requires the TF to stop with the odometry -- a frozen TF makes Nav2
     # believe the robot is stationary and keep commanding rotation.
     ("process: only publishable samples are offered to rt_pub",
-     PROCESS_CC, "  odom_slot_.Publish(last_odom_);",
-     "  if (last_odom_.publish) odom_slot_.Publish(last_odom_);"),
+     PROCESS_CC, "  odom_slot_.publish(last_odom_);",
+     "  if (last_odom_.publish) odom_slot_.publish(last_odom_);"),
     # A slot, not a latch: taking the same integration twice makes a stalled
     # robot read downstream as a moving one whose pose happens not to change.
     ("process: the odom slot re-serves the sample it already gave out",
      PROCESS_CC,
-     "  if (out == nullptr) return false;\n  return odom_slot_.TakeFresh(out);",
-     "  if (out == nullptr) return false;\n  if (odom_slot_.TakeFresh(out)) last_odom_ = *out;\n"
+     "  if (out == nullptr) return false;\n  return odom_slot_.take_fresh(out);",
+     "  if (out == nullptr) return false;\n  if (odom_slot_.take_fresh(out)) last_odom_ = *out;\n"
      "  *out = last_odom_;\n  return true;"),
     # 13 SD-1: the mirror is the ONLY witness that nothing enlarged the axis
     # socket's send buffer. A mirror that reports 0 reads as "not connected
@@ -2446,7 +2450,7 @@ RT_BRIDGE_MUTANTS = [
     # exactly the state the code shipped in until the bench run on 2026-09-21.
     ("bridge: a refused ctrl ack carries no item name",
      RT_BRIDGE_CC,
-     "    ack.item = ModeRejectItem(verdict.reject);",
+     "    ack.item = mode_reject_item(verdict.reject);",
      "    ack.item = \"\";"),
     # And the other direction: an item that is always the same string satisfies
     # "prone_on_stair appears" and tells a reader nothing. This is the mutant
@@ -2454,7 +2458,7 @@ RT_BRIDGE_MUTANTS = [
     # action case sits next to it in the test.
     ("bridge: every refusal is named prone_on_stair",
      RT_BRIDGE_CC,
-     "    ack.item = ModeRejectItem(verdict.reject);",
+     "    ack.item = mode_reject_item(verdict.reject);",
      "    ack.item = \"prone_on_stair\";"),
     # 13 V-47, verbatim: illumination is refused, "不静默丢弃, 也不假装设置
     # 成功". Accepting it silently is the fail-silent half of that sentence.
@@ -2476,15 +2480,16 @@ RT_BRIDGE_MUTANTS = [
     ("bridge: a failed light send is counted as accepted",
      RT_BRIDGE_CC,
      "  ++light_accepted_;\n"
-     "  if (!proc_->SendLightFrame(m.custom_enable, head, tail)) ++light_send_failed_;",
-     "  if (proc_->SendLightFrame(m.custom_enable, head, tail)) ++light_accepted_;"),
+     "  if (!proc_->send_light_frame(m.custom_enable, head, tail))"
+     " ++light_send_failed_;",
+     "  if (proc_->send_light_frame(m.custom_enable, head, tail)) ++light_accepted_;"),
     # 11 S4.2 / 13 S7.1. rt/chassis/power was declared in rt_keys.cc and
-    # WritePowerState was fully implemented WITH tests, and nothing ever called
+    # write_power_state was fully implemented WITH tests, and nothing ever called
     # it -- so CHG-10's low-battery return, which reads soc_pct off state/power
     # (CR-5 relays this key), had no data source at all.
     ("bridge: PowerState is never published",
      RT_BRIDGE_CC,
-     "      if (n > 0) Publish(kPowerSuffix, out, n);",
+     "      if (n > 0) publish(kPowerSuffix, out, n);",
      "      (void)n;"),
     # 13 S7.1 gives PowerState 1 Hz while the device stream that triggers it
     # runs at 2 Hz. Publishing on every device report doubles the rate, and a
@@ -2507,26 +2512,26 @@ RT_BRIDGE_MUTANTS = [
      "      p.remain_mile_km = 0.0;"),
     # 11 S4.2 lists `charge`, and it was absent from the object entirely --
     # state/power could not say whether the robot was on a dock.
-    # 2026-09-28: re-anchored. The body moved into the shared ChargeName
+    # 2026-09-28: re-anchored. The body moved into the shared charge_name
     # converter (11 S9.8.1 gives the same field on ChassisBasic, and the two
     # were publishing different line shapes), so what is left at this call
     # site is the key plus the call.
     ("payloads: PowerState drops the charge field",
      PAYLOADS_CC,
-     '  a.Raw(",\\"charge\\":");\n'
+     '  a.add_raw(",\\"charge\\":");\n'
      "  if (in.basic == nullptr) {\n"
-     '    a.Raw("null");\n'
+     '    a.add_raw("null");\n'
      "  } else {\n"
-     "    ChargeName(&a, in.basic->charge);\n"
+     "    charge_name(&a, in.basic->charge);\n"
      "  }\n"
-     '  a.Raw("}");',
-     '  a.Raw(",\\"_charge\\":");\n'
+     '  a.add_raw("}");',
+     '  a.add_raw(",\\"_charge\\":");\n'
      "  if (in.basic == nullptr) {\n"
-     '    a.Raw("null");\n'
+     '    a.add_raw("null");\n'
      "  } else {\n"
-     "    ChargeName(&a, in.basic->charge);\n"
+     "    charge_name(&a, in.basic->charge);\n"
      "  }\n"
-     '  a.Raw("}");'),
+     '  a.add_raw("}");'),
     # 11 S13.6 forbids degrading to a nearby member. Publishing `idle` for a
     # charge state we do not recognise tells the upper stack the robot is free
     # to drive away.
@@ -2536,26 +2541,26 @@ RT_BRIDGE_MUTANTS = [
     ("payloads: an unrecognised charge state is reported as idle",
      PAYLOADS_CC,
      "  if (raw < 0 || static_cast<std::size_t>(raw) >= kChargeCount) {\n"
-     '    a->Raw("null");\n'
+     '    a->add_raw("null");\n'
      "    return;\n"
      "  }",
      "  if (raw < 0 || static_cast<std::size_t>(raw) >= kChargeCount) {\n"
-     "    a->StrView(sets::kCharge[0]);\n"
+     "    a->add_str_view(sets::kCharge[0]);\n"
      "    return;\n"
      "  }"),
-    # 13 ASM-4 (3) / S7.1 Q-5. Recorded as "v1.15 已做" while SetReportSink
+    # 13 ASM-4 (3) / S7.1 Q-5. Recorded as "v1.15 已做" while set_report_sink
     # had zero production call sites -- four keys declared, four writers
     # implemented and tested, not one frame sent.
     ("bridge: the basic report goes to the wrong key",
      RT_BRIDGE_CC,
-     'if (n > 0) Publish(kBasicSuffix, out, n);',
-     'if (n > 0) Publish(kStateSuffix, out, n);'),
+     'if (n > 0) publish(kBasicSuffix, out, n);',
+     'if (n > 0) publish(kStateSuffix, out, n);'),
     ("bridge: a null report is published as an empty message",
      RT_BRIDGE_CC,
      "  if (motion != nullptr) {\n"
-     "    const std::size_t n = WriteChassisMotion",
+     "    const std::size_t n = write_chassis_motion",
      "  if (true) {\n"
-     "    const std::size_t n = WriteChassisMotion"),
+     "    const std::size_t n = write_chassis_motion"),
     # 11 S7.1.1 latency_ms, "收到消息 -> 首个零速帧下发", float ms. Hardcoded 0
     # until 2026-09-27, and 0 is the worst constant for it: p5 relays it verbatim
     # (S7.1.1 透传口径), the far end checks it against the 100 ms criterion, and
@@ -2593,7 +2598,7 @@ RT_BRIDGE_MUTANTS = [
     ("bridge: the default mono clock is a constant",
      RT_BRIDGE_CC,
      "      mono_now_(mono_now ? std::move(mono_now)\n"
-     "                         : MonoFn(&MonoNowSeconds)) {",
+     "                         : MonoFn(&mono_now_seconds)) {",
      "      mono_now_(mono_now ? std::move(mono_now)\n"
      "                         : MonoFn([]() { return 1.0; })) {"),
     # recv_mono_ms filled from the latency clock instead of the session's receipt
@@ -2601,16 +2606,16 @@ RT_BRIDGE_MUTANTS = [
     # instant on the session's clock, the other an interval measured here.
     ("bridge: recv_mono_ms filled from the latency clock",
      RT_BRIDGE_CC,
-     "  ack.recv_mono_ms = ToMs(now_mono_s);",
-     "  ack.recv_mono_ms = ToMs(t_enter);"),
+     "  ack.recv_mono_ms = to_ms(now_mono_s);",
+     "  ack.recv_mono_ms = to_ms(t_enter);"),
     # *** THE ONE THIS FILE'S ORDERING EXISTS FOR. Stopping only when the
     # payload parsed is the natural-looking version, and it silently removes
     # the waiver of 11 S3.0.1: a truncated or hostile estop then does nothing.
     ("rt_bridge: the estop stops only when the payload parsed",
      RT_BRIDGE_CC,
-     "  if (!duplicate) {\n    proc_->OnSoftEstop(now_mono_s);",
-     "  EstopMsg pre;\n  ParseEstop(data, len, rid_, boot_, &pre);\n"
-     "  if (!duplicate && pre.envelope_ok) {\n    proc_->OnSoftEstop(now_mono_s);"),
+     "  if (!duplicate) {\n    proc_->on_soft_estop(now_mono_s);",
+     "  EstopMsg pre;\n  parse_estop(data, len, rid_, boot_, &pre);\n"
+     "  if (!duplicate && pre.envelope_ok) {\n    proc_->on_soft_estop(now_mono_s);"),
     # 11 S9.12.6: a duplicate is swallowed AND still acked. Dropping the ack
     # makes the sender retry, which is the event storm the window prevents.
     ("rt_bridge: a deduped estop is not acked",
@@ -2672,12 +2677,12 @@ RT_BRIDGE_MUTANTS = [
     # -- 11 S7.1.1's four initiators then share one indistinguishable key.
     ("rt_bridge: the in-window estop parse is skipped",
      RT_BRIDGE_CC,
-     "  if (in_window) ParseEstop(data, len, rid_, boot_, &m);",
-     "  if (false) ParseEstop(data, len, rid_, boot_, &m);"),
+     "  if (in_window) parse_estop(data, len, rid_, boot_, &m);",
+     "  if (false) parse_estop(data, len, rid_, boot_, &m);"),
     ("rt_bridge: the window-closed estop parse is skipped",
      RT_BRIDGE_CC,
-     "  if (!in_window) ParseEstop(data, len, rid_, boot_, &m);",
-     "  if (false) ParseEstop(data, len, rid_, boot_, &m);"),
+     "  if (!in_window) parse_estop(data, len, rid_, boot_, &m);",
+     "  if (false) parse_estop(data, len, rid_, boot_, &m);"),
     # A refused command that is acted on anyway is the whole loosening rule,
     # undone at the routing layer instead of at the parser.
     ("rt_bridge: a refused cmd_vel is passed to the process anyway",
@@ -2703,8 +2708,8 @@ RT_BRIDGE_MUTANTS = [
     # "refused" from "lost", and it will retry a command that was refused.
     ("rt_bridge: a refused ctrl command is not acked",
      RT_BRIDGE_CC,
-     "    const std::size_t n = WriteCtrlAck(ack, out, sizeof(out));\n"
-     "    Publish(kCtrlAckSuffix, out, n);\n    return;",
+     "    const std::size_t n = write_ctrl_ack(ack, out, sizeof(out));\n"
+     "    publish(kCtrlAckSuffix, out, n);\n    return;",
      "    return;"),
     # 11 CR-12: the locks in an ack are READ-BACK values. Echoing "unlocked"
     # because the request was accepted is the exact mistake the contract names.
@@ -2728,9 +2733,9 @@ RT_BRIDGE_MUTANTS = [
     # degrades to hold. A publisher's bad field must not become a stopped robot.
     ("rt_bridge: a malformed ping goes unanswered",
      RT_BRIDGE_CC,
-     "  ProbePingMsg probe;\n  ParseProbePing(data, len, rid_, boot_, &probe);",
+     "  ProbePingMsg probe;\n  parse_probe_ping(data, len, rid_, boot_, &probe);",
      "  ProbePingMsg probe;\n"
-     "  if (ParseProbePing(data, len, rid_, boot_, &probe) != RtParse::kOk) return;"),
+     "  if (parse_probe_ping(data, len, rid_, boot_, &probe) != RtParse::kOk) return;"),
     # 11 S8.5 + the 2026-09-27 ruling: the echo is data.seq. RT-C3.e makes
     # chassis_relay REWRITE the envelope seq on both legs of the probe, so an
     # envelope echo hands p5_gateway the relay's counter -- no reply ever
@@ -2758,18 +2763,18 @@ RT_BRIDGE_MUTANTS = [
     ("rt_bridge: conn falls back to the internal session names",
      RT_BRIDGE_CC,
      "  in.conn_wire =\n"
-     "      incompatible ? enums::kChassisConn[5].data() : ConnWireName(snap.conn);",
+     "      incompatible ? enums::kChassisConn[5].data() : conn_wire_name(snap.conn);",
      "  in.conn_wire =\n"
      "      incompatible ? enums::kChassisConn[5].data()\n"
-     "                   : chs_a::ConnStateName(snap.conn);"),
+     "                   : chs_a::conn_state_name(snap.conn);"),
     # 11 S9.1.3 INCOMPATIBLE: without the override a consumer reads
     # "connected" beside a version it cannot speak and proceeds to command a
     # robot that refuses to move (E_PROTO_VERSION).
     ("rt_bridge: the incompatible verdict never overrides conn",
      RT_BRIDGE_CC,
      "  in.conn_wire =\n"
-     "      incompatible ? enums::kChassisConn[5].data() : ConnWireName(snap.conn);",
-     "  in.conn_wire = ConnWireName(snap.conn);"),
+     "      incompatible ? enums::kChassisConn[5].data() : conn_wire_name(snap.conn);",
+     "  in.conn_wire = conn_wire_name(snap.conn);"),
     # The verdict describes the NEWEST handshake; a latch that never clears
     # turns one wrong publisher restart into a permanent red flag.
     ("rt_bridge: a matching hello does not clear the incompatible latch",
@@ -2796,8 +2801,8 @@ RT_BRIDGE_MUTANTS = [
     ("rt_bridge: the estop age is the publish instant, not an age",
      RT_BRIDGE_CC,
      "      in.last_estop_age_ms =\n"
-     "          (MonoNowSeconds() - last_estop_rx_mono_) * 1000.0;",
-     "      in.last_estop_age_ms = MonoNowSeconds() * 1000.0;"),
+     "          (mono_now_seconds() - last_estop_rx_mono_) * 1000.0;",
+     "      in.last_estop_age_ms = mono_now_seconds() * 1000.0;"),
     # The four facts are stored on the REAL-stop branch; inverting the guard
     # leaves last_soft_estop null after every genuine stop.
     # 2026-09-27: re-anchored. The cmd_id dedup put the remembered-key store
@@ -2896,7 +2901,7 @@ RT_CFG_MUTANTS = [
 RT_PARSE_CC = os.path.join(QUAD, "src", "rt_parse.cc")
 RT_PARSE_SOURCES = [
     RT_PARSE_CC,
-    os.path.join(QUAD, "src", "chs_a_reports.cc"),  # GaitValue delegates to GaitValueByName there (13 QD-3, 2026-09-26 merge); without it the suite fails to LINK
+    os.path.join(QUAD, "src", "chs_a_reports.cc"),  # gait_value delegates to gait_value_by_name there (13 QD-3, 2026-09-26 merge); without it the suite fails to LINK
 ]
 RT_PARSE_TESTS = [os.path.join(QUAD, "test", "test_rt_parse.cc")]
 
@@ -2934,12 +2939,12 @@ RT_PARSE_MUTANTS = [
     # member turns a refused command into a warning that does not warn.
     ("rt_parse: an unknown light colour falls back to a member",
      RT_PARSE_CC,
-     "  if (!GetString(*it, \"color\", &name) ||\n"
-     "      !LookupNamed(kLightColors, sizeof(kLightColors) / sizeof(kLightColors[0]),\n"
+     "  if (!get_string(*it, \"color\", &name) ||\n"
+     "      !lookup_named(kLightColors, sizeof(kLightColors) / sizeof(kLightColors[0]),\n"
      "                   name, color)) {\n"
      "    return false;\n  }",
-     "  if (!GetString(*it, \"color\", &name)) return false;\n"
-     "  if (!LookupNamed(kLightColors, sizeof(kLightColors) / sizeof(kLightColors[0]),\n"
+     "  if (!get_string(*it, \"color\", &name)) return false;\n"
+     "  if (!lookup_named(kLightColors, sizeof(kLightColors) / sizeof(kLightColors[0]),\n"
      "                   name, color)) { *color = 1; }"),
     # 13 V-47 needs the PRESENCE of illumination to reach the caller. A parser
     # that drops it leaves nothing to refuse.
@@ -2951,7 +2956,7 @@ RT_PARSE_MUTANTS = [
     # a message naming one has no representation on the wire.
     ("rt_parse: a light command with only one lamp is accepted",
      RT_PARSE_CC,
-     '        !ReadLamp(*custom, "tail", &out->tail_pattern, &out->tail_color,\n'
+     '        !read_lamp(*custom, "tail", &out->tail_pattern, &out->tail_color,\n'
      "                  &out->tail_cycle_s)) {",
      "        false) {"),
     # LOOSENING (11 S3.0.1): a light command that fails the envelope check is
@@ -2959,14 +2964,14 @@ RT_PARSE_MUTANTS = [
     # anything that looked roughly right.
     ("rt_parse: the light command skips the envelope check",
      RT_PARSE_CC,
-     "  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &data);\n"
+     "  const RtParse env = read_envelope(j, our_rid, our_boot, &out->env, &data);\n"
      "  if (env != RtParse::kOk) return env;\n"
-     '  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {\n'
+     '  if (!get_string(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {\n'
      "    return RtParse::kMissingField;\n"
      "  }\n"
      "  // 13 V-47: presence is what the caller needs.",
-     "  ReadEnvelope(j, our_rid, our_boot, &out->env, &data);\n"
-     '  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {\n'
+     "  read_envelope(j, our_rid, our_boot, &out->env, &data);\n"
+     '  if (!get_string(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {\n'
      "    return RtParse::kMissingField;\n"
      "  }\n"
      "  // 13 V-47: presence is what the caller needs."),
@@ -2981,7 +2986,7 @@ RT_PARSE_MUTANTS = [
     # The hello key accepting any type.
     ("rt_parse: hello accepts a message whose type is not hello",
      RT_PARSE_CC,
-     '  if (!GetString(j, "type", &type) || type != "hello") {',
+     '  if (!get_string(j, "type", &type) || type != "hello") {',
      '  if (false) {'),
     # 11:1722 marks estop_epoch MANDATORY on this key. Defaulting it to zero
     # locks the robot at standstill after the first soft stop and never
@@ -3030,23 +3035,23 @@ RT_PARSE_MUTANTS = [
     # does not know this schema" into "the publisher commanded a stop on that
     # axis", which is a different and unearned statement.
     ("rt_parse: a missing axis defaults to zero",
-     RT_PARSE_CC, '  if (!GetFinite(data, "wz", &out->wz)) return RtParse::kMissingField;',
-     '  GetFinite(data, "wz", &out->wz);'),
+     RT_PARSE_CC, '  if (!get_finite(data, "wz", &out->wz)) return RtParse::kMissingField;',
+     '  get_finite(data, "wz", &out->wz);'),
     ("rt_parse: the unused axes are not required",
-     RT_PARSE_CC, '  if (!GetFinite(data, "v_roll", &out->v_roll)) return RtParse::kMissingField;',
-     '  GetFinite(data, "v_roll", &out->v_roll);'),
-    # The defect this suite's test actually found. ReadEnvelope returns early on
+     RT_PARSE_CC, '  if (!get_finite(data, "v_roll", &out->v_roll)) return RtParse::kMissingField;',
+     '  get_finite(data, "v_roll", &out->v_roll);'),
+    # The defect this suite's test actually found. read_envelope returns early on
     # a bad version or a foreign rid, so taking `data` from it made the cmd_id
     # vanish on exactly the malformed messages the estop path exists to survive.
     ("rt_parse: the estop reads cmd_id only when the envelope is valid",
      RT_PARSE_CC,
      '  const auto d_it = j.find("data");\n'
      "  if (d_it == j.end() || !d_it->is_object()) return;\n"
-     '  out->cmd_id_present = GetString(*d_it, "cmd_id", &out->cmd_id);',
+     '  out->cmd_id_present = get_string(*d_it, "cmd_id", &out->cmd_id);',
      "  if (!out->envelope_ok) return;\n"
      '  const auto d_it = j.find("data");\n'
      "  if (d_it == j.end() || !d_it->is_object()) return;\n"
-     '  out->cmd_id_present = GetString(*d_it, "cmd_id", &out->cmd_id);'),
+     '  out->cmd_id_present = get_string(*d_it, "cmd_id", &out->cmd_id);'),
     # 11 S9.3.3 v0.3: the three deleted actions answer E_CAPABILITY, not
     # E_SCHEMA. Telling an operator "malformed" about a word that used to be
     # valid sends them hunting a typo instead of reading the release notes.
@@ -3057,14 +3062,14 @@ RT_PARSE_MUTANTS = [
      "  /* folded into the unknown bucket */"),
     # A loosening command without a cmd_id cannot be acked or de-duplicated,
     # and Q-3's idempotency rule has nothing to key on.
-    # The anchor carries the line ABOVE it. ParseChassisMode (added 2026-09-18)
+    # The anchor carries the line ABOVE it. parse_chassis_mode (added 2026-09-18)
     # repeats the same cmd_id guard verbatim, so the bare guard now matches
     # twice and the mutant became unusable -- silently, which is why the runner
     # reports anchor counts rather than picking the first match.
     ("rt_parse: a ctrl command without cmd_id is accepted",
      RT_PARSE_CC,
      '  // ("same cmd_id re-sent => duplicate, epoch unchanged") has nothing to key on.\n'
-     '  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {',
+     '  if (!get_string(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {',
      '  // ("same cmd_id re-sent => duplicate, epoch unchanged") has nothing to key on.\n'
      '  if (false) {'),
     # A joint rate that does not divide 1000 gives a period the chassis cannot
@@ -3074,7 +3079,7 @@ RT_PARSE_MUTANTS = [
      "    if (out->joint_rate_hz < 1 || out->joint_rate_hz > 200 ||\n"
      "        (1000 % out->joint_rate_hz) != 0) {",
      "    if (out->joint_rate_hz < 1 || out->joint_rate_hz > 200) {"),
-    # DECLARED EQUIVALENT. See the note at GetFinite: JSON has no NaN literal
+    # DECLARED EQUIVALENT. See the note at get_finite: JSON has no NaN literal
     # and nlohmann discards a document containing an overflowing one, so a
     # non-finite value is refused a layer earlier and never reaches this branch.
     # The guard stays because that is a property of the READER, not of this
@@ -3087,7 +3092,7 @@ RT_PARSE_MUTANTS = [
     # named gait switch is then refused, which the parity case sees at once.
     ("rt_parse: the gait delegation to the read-back table is severed",
      RT_PARSE_CC,
-     "  if (!chs_a::GaitValueByName(name, out)) return false;",
+     "  if (!chs_a::gait_value_by_name(name, out)) return false;",
      "  (void)name;\n  (void)out;\n  return false;"),
     # ...and the directional half: dropping the exclusion makes platform
     # (0x1002, absent from the guide's COMMAND enumeration, 13 S5.3 G-03)
@@ -3105,11 +3110,11 @@ RT_PARSE_MUTANTS = [
     # for reason/src_role; dropping either read makes every stop anonymous.
     ("rt_parse: the estop reason is never read",
      RT_PARSE_CC,
-     '  GetString(*d_it, "reason", &out->reason);',
+     '  get_string(*d_it, "reason", &out->reason);',
      '  (void)0;'),
     ("rt_parse: the estop src_role is never read",
      RT_PARSE_CC,
-     '  GetString(*d_it, "src_role", &out->src_role);',
+     '  get_string(*d_it, "src_role", &out->src_role);',
      '  (void)0;'),
 ]
 
@@ -3127,7 +3132,7 @@ CHS_B_CC = os.path.join(QUAD, "src", "chs_b.cc")
 CHS_B_SOURCES = [CHS_B_CC,
                  os.path.join(QUAD, "src", "dds_names.cc"),
                  os.path.join(QUAD, "src", "quadruped_config.cc"),
-                 os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through GaitValueByName, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
+                 os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through gait_value_by_name, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
                  os.path.join(QUAD, "src", "chs_a_codec.cc")]
 CHS_B_TESTS = [os.path.join(QUAD, "test", "test_chs_b.cc")]
 
@@ -3150,19 +3155,19 @@ CHS_B_MUTANTS = [
     # is "rt/IMU" on the wire. A reader created with the ROS spelling matches
     # nothing, and the symptom is silence -- identical to a dead network.
     ("chs_b: the reader uses the ROS topic name instead of the DDS one",
-     CHS_B_CC, "  const std::string imu_topic = RosTopicToDdsTopic(cfg.imu_topic);",
+     CHS_B_CC, "  const std::string imu_topic = ros_topic_to_dds_topic(cfg.imu_topic);",
      "  const std::string imu_topic = cfg.imu_topic;"),
     ("chs_b: /MOTION_INFO uses the ROS topic name",
      CHS_B_CC,
-     "  const std::string mi_topic = RosTopicToDdsTopic(cfg.motion_info_topic);",
+     "  const std::string mi_topic = ros_topic_to_dds_topic(cfg.motion_info_topic);",
      "  const std::string mi_topic = cfg.motion_info_topic;"),
     # 13 S8.2: the topic name comes from config, like imu_topic beside it. A
     # literal here is a key that changes nothing, and the symptom of a wrong
     # name is DDS-9's -- participant up, topic present, zero samples.
     ("chs_b: the /MOTION_INFO topic name is hardcoded",
      CHS_B_CC,
-     "  const std::string mi_topic = RosTopicToDdsTopic(cfg.motion_info_topic);",
-     '  const std::string mi_topic = RosTopicToDdsTopic("/MOTION_INFO");'),
+     "  const std::string mi_topic = ros_topic_to_dds_topic(cfg.motion_info_topic);",
+     '  const std::string mi_topic = ros_topic_to_dds_topic("/MOTION_INFO");'),
     # 13 DDS-1. The environment is process-wide and this process also holds an
     # rclcpp context on domain 42; reading it collapses the two domains.
     ("chs_b: the participant takes the domain from the environment (DDS-1)",
@@ -3249,7 +3254,7 @@ UPLINK_CC = os.path.join(QUAD, "src", "uplink.cc")
 UPLINK_SOURCES = [UPLINK_CC,
                   os.path.join(QUAD, "src", "odometry.cc"),
                   os.path.join(QUAD, "src", "quadruped_config.cc"),
-                  os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through GaitValueByName, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
+                  os.path.join(QUAD, "src", "chs_a_reports.cc"),  # the config loader resolves gait NAMES (13 QC-9 / GS-1) through gait_value_by_name, which lives there; without it the suite fails to LINK and reports a red baseline that points at the code
                   os.path.join(QUAD, "src", "chs_a_codec.cc")]
 UPLINK_TESTS = [os.path.join(QUAD, "test", "test_uplink.cc")]
 
@@ -3342,17 +3347,17 @@ UPLINK_MUTANTS = [
     # heading -- the most dangerous wrong answer this file can produce.
     ("uplink: the pose covariance is filled with the twist variances",
      UPLINK_CC,
-     "  FillCovariance36(s.var_x, s.var_y, s.var_yaw, msg.pose.covariance.data());",
-     "  FillCovariance36(s.var_vx, s.var_vy, s.var_wz, msg.pose.covariance.data());"),
+     "  fill_covariance36(s.var_x, s.var_y, s.var_yaw, msg.pose.covariance.data());",
+     "  fill_covariance36(s.var_vx, s.var_vy, s.var_wz, msg.pose.covariance.data());"),
     ("uplink: the twist covariance is filled with the pose variances",
      UPLINK_CC,
-     "  FillCovariance36(s.var_vx, s.var_vy, s.var_wz, msg.twist.covariance.data());",
-     "  FillCovariance36(s.var_x, s.var_y, s.var_yaw, msg.twist.covariance.data());"),
+     "  fill_covariance36(s.var_vx, s.var_vy, s.var_wz, msg.twist.covariance.data());",
+     "  fill_covariance36(s.var_x, s.var_y, s.var_yaw, msg.twist.covariance.data());"),
     # A half-angle error in the quaternion is invisible in every count and
     # makes the heading wrong by a factor of two.
     ("uplink: the orientation is built from the yaw without halving it",
-     UPLINK_CC, "  const Quaternion q = YawToQuaternion(s.yaw);",
-     "  const Quaternion q = YawToQuaternion(s.yaw * 2.0);"),
+     UPLINK_CC, "  const Quaternion q = yaw_to_quaternion(s.yaw);",
+     "  const Quaternion q = yaw_to_quaternion(s.yaw * 2.0);"),
     # The stamp is the wall time passed IN. Splitting it wrongly produces a
     # header that is plausible and an ordering that is not.
     ("uplink: the stamp nanoseconds are scaled wrongly",
@@ -3538,17 +3543,17 @@ RELAY_MUTANTS = [
     # the smallest such difference and must already go red.
     ("relay: the data span is not copied verbatim",
      RELAY_ENV_CC,
-     "  o.Lit(\",\\\"data\\\":\");\n  o.SpanOf(in, scan.data);",
-     "  o.Lit(\",\\\"data\\\":\");\n"
+     "  o.add_lit(\",\\\"data\\\":\");\n  o.add_span_of(in, scan.data);",
+     "  o.add_lit(\",\\\"data\\\":\");\n"
      "  Span shifted = scan.data;\n"
      "  shifted.off += 1;\n"
      "  shifted.len -= 1;\n"
-     "  o.SpanOf(in, shifted);"),
+     "  o.add_span_of(in, shifted);"),
     # orig_src dropped: the audit trail RT-C3.e requires ends at the relay,
     # and a capture can no longer say who produced the frame.
     ("relay: orig_src is not preserved",
      RELAY_ENV_CC,
-     "  EmitCopied(&o, &first, in, \"orig_src\", scan.src);",
+     "  emit_copied(&o, &first, in, \"orig_src\", scan.src);",
      "  ;"),
     # ts left as the producer's: latency statistics across the hop collapse
     # to zero and a message that sat in the relay looks like it never did.
@@ -3562,15 +3567,15 @@ RELAY_MUTANTS = [
     # garbage launders that garbage into a well-formed envelope.
     ("relay: the scanner accepts trailing garbage after the object",
      RELAY_ENV_CC,
-     "  SkipWs(in, len, &i);\n  return i == len;",
-     "  SkipWs(in, len, &i);\n  return true;"),
+     "  skip_ws(in, len, &i);\n  return i == len;",
+     "  skip_ws(in, len, &i);\n  return true;"),
     # The wrap path gone: bare payloads (the live 1 Hz probe ping among
     # them) return to being dropped, and the relay black-holes the estop
     # probe it is itself supervised by.
     ("relay: bare payloads are dropped instead of wrapped",
      RELAY_ENV_CC,
      "  if (!scan.data.present) {\n"
-     "    return WrapBare(in, scan.input_len, fwd_ts_s, fwd_seq, fwd_src, "
+     "    return wrap_bare(in, scan.input_len, fwd_ts_s, fwd_seq, fwd_src, "
      "out, cap);\n"
      "  }",
      "  if (!scan.data.present) {\n    return 0;\n  }"),
