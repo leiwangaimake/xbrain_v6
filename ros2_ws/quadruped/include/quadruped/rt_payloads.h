@@ -127,7 +127,14 @@ struct RobotStateInput {
   // an invented "1.0" would claim a handshake nobody performed.
   const char* proto_version = nullptr;
   const chs_a::BasicStatus* basic = nullptr;
-  const chs_a::MotionStatus* motion = nullptr;
+  // *** No `motion` member here (deleted 2026-09-28, user ruling). It fed a
+  // RobotState.motion block that 11 S4.1 never registered and that
+  // PublishState never assigned, so the key went out null on every message
+  // since the writer was written. The six values it would have carried are
+  // all published elsewhere -- state/chassis_motion (CR-7) has all six, and
+  // the odom block below has vx/vy/wz/yaw -- so removing it loses nothing.
+  // Adding it back means registering the field in 11 S4.1 first (F-5 frozen
+  // surface), not re-adding the writer branch.
   // 11 S4.1 model / version on the STATE path. The full BasicStatus cannot
   // cross the lock-free slot (12 RTC-6), so these come from rt_bridge's
   // report-side cache (chassis_id_mu_), same source hello_ack uses. Null

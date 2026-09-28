@@ -1311,6 +1311,16 @@ PAYLOADS_MUTANTS = [
     ("payloads: SOC published from present_count instead of the minimum",
      PAYLOADS_CC, "    a.Int(in.device->min_level);",
      "    a.Int(static_cast<long long>(in.device->present_count));"),
+    # CLAUDE.md 9.3 / 11 S4.1: RobotState has no `motion` field. This writer
+    # emitted one until 2026-09-28 and PublishState never filled it, so the key
+    # rode the wire as null on every message. The mutant puts the null branch
+    # back -- the cheapest way for it to come back, and the exact state the
+    # code was in.
+    ("payloads: RobotState grows an unregistered motion field again",
+     PAYLOADS_CC,
+     "  // 11 S4.1 RobotState.odom. This block is the ONLY carrier of `valid`",
+     "  a.Raw(\",\\\"motion\\\":null\");\n"
+     "  // 11 S4.1 RobotState.odom. This block is the ONLY carrier of `valid`"),
     # 11 S4.2 CHG-10 as corrected 2026-09-28. With no pack present there is no
     # minimum, and min_level carries its initialiser -- which is 0, a legal
     # SOC. Publishing it says "the robot is flat" about a robot nobody asked.

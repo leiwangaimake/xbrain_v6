@@ -176,10 +176,6 @@ int main(int argc, char** argv) {
   // ---- RobotState, everything present ------------------------------------
   {
     const chs_a::BasicStatus basic = MakeBasic();
-    chs_a::MotionStatus motion;
-    motion.linear_x = 0.25;
-    motion.angular_z = -0.1;
-    motion.yaw = 1.5;
 
     // The fault entries arrive as the VIEW rt_bridge builds from its cache --
     // already prefixed, already levelled (CF-5's "same converter", satisfied
@@ -194,7 +190,6 @@ int main(int argc, char** argv) {
     in.conn_wire = "connected";
     in.proto_version = "1.0";
     in.basic = &basic;
-    in.motion = &motion;
     in.faults = fview;
     in.fault_count = 1;
     in.tier1.stop_reason = StopReason::kNone;
@@ -217,7 +212,11 @@ int main(int argc, char** argv) {
     CHECK(j["stop_reason"] == "none");
     CHECK(j["estop_epoch"] == 42);
     CHECK(j["cmd_age_ms"] == 12.0);
-    CHECK(j["motion"]["vx"] == 0.25);
+    // *** No `motion` key, and that is the assertion (user ruling
+    // 2026-09-28). 11 S4.1 registers no such field; this writer emitted one
+    // anyway and PublishState never filled it, so every message on the wire
+    // carried "motion": null. MUTATION: put the block back -> red.
+    CHECK(!j.contains("motion"));
     // *** CF-5: the same prefixed code the fault stream carries. The 11 S4.1
     // example showed a bare 0x1007 until 2026-09-27 (corrected to chg:0x1007
     // on the strength of this assertion), and copying a bare number makes the
@@ -310,7 +309,7 @@ int main(int argc, char** argv) {
     CHECK(j["motion_state"].is_null());
     CHECK(j["hes"].is_null());
     CHECK(j["sleep"].is_null());
-    CHECK(j["motion"].is_null());
+    CHECK(!j.contains("motion"));
     // "never received a command" is a different fact from "the command is very
     // old", so it is null rather than a large number.
     CHECK(j["cmd_age_ms"].is_null());

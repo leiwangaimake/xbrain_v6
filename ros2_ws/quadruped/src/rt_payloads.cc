@@ -510,24 +510,16 @@ std::size_t WriteRobotState(const RobotStateInput& in, char* out,
     a.Num(in.cmd_age_ms);
   }
 
-  if (in.motion != nullptr) {
-    a.Raw(",\"motion\":{\"vx\":");
-    a.Num(in.motion->linear_x);
-    a.Raw(",\"vy\":");
-    a.Num(in.motion->linear_y);
-    a.Raw(",\"wz\":");
-    a.Num(in.motion->angular_z);
-    a.Raw(",\"roll\":");
-    a.Num(in.motion->roll);
-    a.Raw(",\"pitch\":");
-    a.Num(in.motion->pitch);
-    a.Raw(",\"yaw\":");
-    a.Num(in.motion->yaw);
-    a.Raw("}");
-  } else {
-    a.Raw(",\"motion\":null");
-  }
-
+  // *** There is no `motion` block here, and its absence is deliberate.
+  // Until 2026-09-28 this writer emitted one ({vx,vy,wz,roll,pitch,yaw} from
+  // a MotionStatus pointer) that 11 S4.1 does not register in either its JSON
+  // example or its field table, and that PublishState never filled -- so the
+  // wire carried "motion": null on every message, forever. User ruling that
+  // day: delete it. Nothing is lost, only a duplicate: MotionStatus has its
+  // own key (CR-7 -> state/chassis_motion) carrying all six values, and
+  // RobotState's own `odom` block below carries vx/vy/wz/yaw. CLAUDE.md 9.3
+  // forbids the shape it had -- a field in the schema that no business logic
+  // fills or consumes is a reserved hole, and it is removed at review.
   // 11 S4.1 RobotState.odom. This block is the ONLY carrier of `valid`: a ROS
   // nav_msgs/Odometry has no field for it, so /odom_quadruped cannot say the
   // pose is untrustworthy. 11 CD-6 and N-2 both refuse relative-displacement
