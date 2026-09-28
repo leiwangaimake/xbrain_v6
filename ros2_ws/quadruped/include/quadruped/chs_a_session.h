@@ -42,6 +42,32 @@
  *     Not "send and handle the error": the chassis takes five seconds to answer
  *     0xE008, there is no wake command anywhere in the protocol, and each
  *     attempt is five seconds during which the process believes it is driving.
+ *   * running on a lower-priority candidate is not a resting state (13 CA-9,
+ *     added 2026-09-28). 13 S8.2 said only "the first candidate that answers
+ *     wins" and said nothing about going back, so one transient TCP fault left
+ *     the robot on udp:30004 for the rest of the deployment with nobody the
+ *     wiser -- and on UDP, FR-1..FR-4 degrade to "one datagram is one frame"
+ *     (FR-5) and the whole 13 S3.6 latency budget rests on TCP_NODELAY, which
+ *     is meaningless on a datagram socket. So the session re-tests the
+ *     preferred candidates, on a long period, a bounded number of times.
+ *
+ * Why the recovery probe COSTS the live link, and why that is not a shortcut:
+ * CA-1 makes a second live socket a second CLIENT to the chassis, which refuses
+ * axis commands with 0xE006 for two seconds afterwards, and CA-5 forbids the
+ * probe-by-short-connection shape outright. There is therefore NO way to test
+ * another endpoint while keeping this one: the chassis reports only to the
+ * address that keeps sending heartbeats, so testing tcp:30003 means being the
+ * client on tcp:30003. The probe consequently reuses the ordinary candidate
+ * walk -- hang up, then dial -- and the three guards below are what make that
+ * acceptable rather than reckless. Two of them come from measurements, not
+ * from taste:
+ *   * CA-6 measured that robot_server PLAYS A VOICE PROMPT and switches its LED
+ *     mode on every heartbeat connect AND disconnect. One failed recovery is
+ *     therefore two announcements on a fire-station patrol robot. That is why
+ *     the attempt budget is finite and why the period is minutes, not seconds.
+ *   * the 0xE006 affinity window is two seconds (13 S7.5), so the switch only
+ *     happens after the axis stream has been quiet for at least that long --
+ *     which also means it cannot happen while the robot is being driven.
  *
  * Boundary: no bytes, no socket, no events. Encoding is chs_a_codec, framing is
  * chs_a_framer, the single write path is tx_owner, and turning a state change
@@ -117,6 +143,19 @@ struct SessionConfig {
   int cmd_fail_threshold = 0;
   std::vector<double> reconnect_backoff_s;
 
+  // 13 CA-9. Zero on EITHER of the first two disables the recovery probe
+  // entirely, which is the pre-2026-09-28 behaviour -- a legal, safe state (the
+  // link simply stays where it is), so a zero here is "off", never an
+  // uncalibrated safety value standing in for a real one. FromLinkConfig always
+  // sets all three; a hand-built SessionConfig (the tests) opts in explicitly.
+  double endpoint_recovery_period_s = 0.0;
+  int endpoint_recovery_attempts = 0;
+  // How long the axis stream must have been silent before the link may be
+  // dropped for a probe. 13 S7.5's 0xE006 row: the chassis holds a two-second
+  // client-affinity window open after an axis command, so switching inside it
+  // makes the new socket's first axis command come back refused.
+  double axis_quiet_before_switch_s = 0.0;
+
   // Build from the loaded config. Throws when a value would make the session
   // degenerate (a zero heartbeat period is a busy loop; an empty ladder has no
   // delay to apply), rather than clamping -- a clamped value runs, and runs
@@ -166,6 +205,16 @@ class Session {
   void OnSendFailure(double now_mono_s);
   void OnSendSuccess();
 
+  // An AXIS command left the process at this monotonic time (13 CA-9). Not any
+  // frame: a heartbeat does not arm the 0xE006 affinity window and does not
+  // mean the robot is being driven, and counting it would make the link look
+  // busy forever -- the heartbeat never stops.
+  //
+  // Monotone: the caller may hand over a timestamp it read earlier (the estop
+  // path sends its zero frame from another thread and the control period
+  // forwards it), so an out-of-order call must never move the mark backwards.
+  void OnAxisCommandSent(double now_mono_s);
+
   // A generic response arrived with this code (13 S7.5).
   void OnErrorCode(double now_mono_s, std::uint32_t code);
 
@@ -200,6 +249,17 @@ class Session {
   std::uint64_t probe_cycles() const { return probe_cycles_; }
   std::uint64_t reconnects() const { return reconnects_; }
   int consecutive_send_failures() const { return send_failures_; }
+  // 13 CA-9 diagnostics. The COUNT of recovery probes started, and how many
+  // are still allowed before the session gives up on the preferred candidates
+  // until the next genuine drop. Reported rather than judged, for the reason
+  // 13 v1.25 spells out about nodelay: a verdict computed in here is one number
+  // a mutant can replace with a constant, while two facts each vary.
+  std::uint64_t recovery_attempts() const { return recovery_attempts_; }
+  int recovery_budget() const { return recovery_budget_; }
+  // True while a recovery probe is walking the list. Exposed so the caller can
+  // tell "the link dropped" from "we dropped it on purpose" -- those are the
+  // same TickResult, and an operator reading a log needs them apart.
+  bool recovering() const { return recovering_; }
 
  private:
   // Move to the next candidate, skipping the ones that can be judged without
@@ -208,6 +268,14 @@ class Session {
   void AdvanceCandidate(double now_mono_s, TickResult* out);
   void EnterLost(double now_mono_s, TickResult* out);
   double BackoffFor(std::size_t attempt) const;
+  // 13 CA-9. Split into three so each one is separately assertable: when the
+  // next probe is due, whether it is allowed to start right now, and the walk
+  // itself. A single "MaybeRecover" would hide the axis-quiet guard inside a
+  // function whose only observable is "did the endpoint change".
+  bool HasHigherPriorityCandidate();
+  void ScheduleRecovery(double now_mono_s);
+  bool RecoveryDue(double now_mono_s) const;
+  void StartRecovery(double now_mono_s, TickResult* out);
 
   SessionConfig cfg_;
   Dial dial_;
@@ -240,6 +308,26 @@ class Session {
   std::uint64_t probe_cycles_ = 0;
   std::uint64_t reconnects_ = 0;
   std::uint64_t link_epoch_ = 0;
+
+  // ---- 13 CA-9 recovery to a higher-priority candidate -------------------
+  // When the next probe may start. Negative means "not armed", which is the
+  // state for a link already on the preferred candidate, for an exhausted
+  // budget, and for a configuration with the feature off -- three different
+  // reasons for the same non-action, kept apart by recovery_budget_ and the
+  // config rather than by three flags nobody reads.
+  double recovery_at_s_ = -1.0;
+  // When an axis command last went out. Negative means "never since boot",
+  // which is NOT the same as "long ago": a session that has never driven is
+  // free to switch immediately, and treating never as 0.0 would make the very
+  // first tick after boot look like it had just commanded motion.
+  double last_axis_cmd_s_ = -1.0;
+  bool recovering_ = false;
+  // Which candidate the probe left behind. The success test is "did we land
+  // on a HIGHER-priority one", and comparing against active_ after the fact
+  // cannot answer that -- active_ is the new one by then.
+  int recovery_from_ = -1;
+  int recovery_budget_ = 0;
+  std::uint64_t recovery_attempts_ = 0;
 };
 
 }  // namespace chs_a

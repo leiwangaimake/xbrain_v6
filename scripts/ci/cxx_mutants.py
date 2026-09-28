@@ -777,6 +777,81 @@ SESSION_MUTANTS = [
      SESSION_CC,
      "    if (last_report_s_ >= probe_started_s_ && last_report_s_ >= 0.0) {",
      "    if (last_report_s_ >= 0.0) {"),
+    # ---- 13 CA-9 recovery to a higher-priority candidate -------------------
+    # The defect this exists to prevent: one transient tcp:30003 fault leaves
+    # the robot on udp:30004 for the rest of the deployment, silently, with
+    # FR-1..FR-4 degraded and 13 S3.6's latency budget void.
+    ("session: the recovery probe is never started",
+     SESSION_CC,
+     "    if (state_ == ConnState::kOk && RecoveryDue(now_mono_s)) {",
+     "    if (false) {"),
+    # The whole point of a probe is that it can FAIL. Adopting the candidate
+    # without evidence switches the live link onto a dead endpoint, and the
+    # session then reports ok on a socket nothing will ever answer.
+    ("session: recovery switches without waiting for the candidate to answer",
+     SESSION_CC,
+     "  candidate_ = 0;\n  AdvanceCandidate(now_mono_s, out);\n}\n"
+     "\nvoid Session::AdvanceCandidate",
+     "  candidate_ = 0;\n  AdvanceCandidate(now_mono_s, out);\n"
+     "  active_ = 0;\n  state_ = ConnState::kOk;\n}\n"
+     "\nvoid Session::AdvanceCandidate"),
+    # 13 S7.5 0xE006 / CA-1: dropping the socket inside the two-second client
+    # affinity window makes the new socket's first axis command come back
+    # refused -- accepted, and the robot does not move. It is also the guard
+    # that keeps the probe off a robot that is being driven.
+    ("session: the link is dropped for a probe while axis commands are flowing",
+     SESSION_CC,
+     "  if (last_axis_cmd_s_ >= 0.0 &&\n"
+     "      now_mono_s - last_axis_cmd_s_ < cfg_.axis_quiet_before_switch_s) {\n"
+     "    return false;\n  }",
+     "  (void)0;"),
+    # 13 CA-6: robot_server announces every heartbeat connect AND disconnect
+    # with a voice prompt. Unbounded retries against a dead endpoint turn a
+    # patrol robot into a beacon that speaks twice a period, forever.
+    ("session: the recovery attempt budget is never spent",
+     SESSION_CC, "        if (active_ >= recovery_from_) --recovery_budget_;",
+     "        (void)recovery_from_;"),
+    ("session: recovery re-arms even with the budget spent",
+     SESSION_CC, "  if (recovery_budget_ <= 0) return;", "  if (false) return;"),
+    # A probe costs the LIVE link, so scheduling one for a candidate that
+    # cannot be dialled (disabled, or no certificate per 13 TLS-4) breaks the
+    # link every period for nothing.
+    ("session: recovery scheduled for a candidate that cannot be dialled",
+     SESSION_CC,
+     "    if (!ep.enabled) continue;\n"
+     "    // 13 TLS-4 is applied HERE as well as in the walk, and that is not",
+     "    if (false) continue;\n"
+     "    // 13 TLS-4 is applied HERE as well as in the walk, and that is not"),
+    ("session: recovery scheduled onto a TLS candidate with no certificate",
+     SESSION_CC, "    if (ep.tls && creds_ && !creds_(ep)) continue;\n    return true;",
+     "    return true;"),
+    # Without the period the probe fires on the very next tick, which is a
+    # link that spends its life being re-dialled at the control rate.
+    ("session: the recovery period is ignored, the probe fires immediately",
+     SESSION_CC, "  if (now_mono_s < recovery_at_s_) return false;",
+     "  (void)0;"),
+    # A genuine outage is a new world: refusing to refill leaves a robot that
+    # spent its budget in the morning on UDP for the rest of the day.
+    ("session: a genuine drop does not refill the recovery budget",
+     SESSION_CC,
+     "  recovery_budget_ = cfg_.endpoint_recovery_attempts;\n  recovering_ = false;",
+     "  recovering_ = false;"),
+    # Monotone mark: the estop path's axis frame is forwarded a period late
+    # from another thread, so an out-of-order mark must never shorten the
+    # quiet window.
+    ("session: an out-of-order axis mark moves the quiet window backwards",
+     SESSION_CC,
+     "  if (now_mono_s > last_axis_cmd_s_) last_axis_cmd_s_ = now_mono_s;",
+     "  last_axis_cmd_s_ = now_mono_s;"),
+    # The shipped numbers. Every behavioural case above runs at test scale, so
+    # without this the whole family passes against a build that ships with the
+    # feature switched off.
+    ("session: FromLinkConfig ships the recovery feature disabled",
+     SESSION_CC, "  c.endpoint_recovery_period_s = kRecoveryPeriodS;",
+     "  c.endpoint_recovery_period_s = 0.0;"),
+    ("session: FromLinkConfig ships a zero axis-quiet window",
+     SESSION_CC, "  c.axis_quiet_before_switch_s = kAxisQuietBeforeSwitchS;",
+     "  c.axis_quiet_before_switch_s = 0.0;"),
 ]
 
 # Tier 1 mutants. This is the last thing between a command and the legs, so the
@@ -2128,8 +2203,23 @@ PROCESS_MUTANTS = [
     ("process: the soft stop waits for the next control period (T-1)",
      PROCESS_CC,
      "    const TxResult r = tx_.Send(TxCaller::kNonRealtime, buf, n);\n"
-     "    if (r == TxResult::kSent) ++axis_frames_sent_;",
-     "    (void)buf; (void)n;"),
+     "    if (r == TxResult::kSent) {\n"
+     "      ++axis_frames_sent_;",
+     "    (void)buf; (void)n;\n"
+     "    if (false) {\n"
+     "      ++axis_frames_sent_;"),
+    # 13 CA-9: the estop's zero frame IS an axis command and arms the chassis's
+    # 0xE006 affinity window. Not telling the session means a recovery probe
+    # could drop the link inside the window an EMERGENCY STOP opened, and the
+    # first axis command on the new socket comes back refused.
+    ("process: the soft stop's axis frame is hidden from the session",
+     PROCESS_CC, "      estop_axis_tx_.store(true, std::memory_order_relaxed);",
+     "      (void)0;"),
+    # Eight spaces of indent: the estop's forward, a few lines up, is the same
+    # call at four. The anchor has to pick the driven one on its own.
+    ("process: a driven axis frame is hidden from the session (13 CA-9)",
+     PROCESS_CC, "        session_.OnAxisCommandSent(now_mono_s);",
+     "        (void)0;"),
     ("process: the soft stop does not advance the generation",
      PROCESS_CC, "  ++estop_epoch_;", "  /* not advanced */"),
     # 13 S2.2 / CA-2: the chassis reports only to an address that keeps sending

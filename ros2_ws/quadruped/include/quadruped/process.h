@@ -618,6 +618,15 @@ class QuadrupedProcess {
   std::atomic<std::uint64_t> pub_tx_acquires_{0};
   std::atomic<std::uint64_t> pub_tx_sent_{0};
 
+  // 13 CA-9: an axis frame left from OnSoftEstop, which runs on the zenoh
+  // callback thread. The control period drains this and tells the session, so
+  // the session keeps exactly one writer (ctrl). A flag and not a timestamp:
+  // std::atomic<double> is not guaranteed lock-free, the control period is at
+  // most 10 ms late, and the session takes the max -- so the only effect of
+  // the approximation is a marginally LONGER quiet window, never a shorter
+  // one.
+  std::atomic<bool> estop_axis_tx_{false};
+
   std::atomic<bool> running_{false};
   std::thread ctrl_thread_;
   std::thread rx_thread_;

@@ -34,6 +34,7 @@
 #include "quadruped/process.h"
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -122,8 +123,29 @@ class FakeChassis {
   bool Accept() {
     if (conn_ >= 0) ::close(conn_);
     conn_ = ::accept(fd_, nullptr, nullptr);
+    if (conn_ >= 0) ++accepts_;
     return conn_ >= 0;
   }
+  // Non-blocking accept, for a loop that MAY see a reconnect. Accept() blocks,
+  // which is right for the opening handshake and wrong here: a 13 CA-9
+  // recovery probe may or may not have dropped the link on any given period,
+  // and a blocking accept on the period where it did not would hang the suite.
+  bool TryAccept() {
+    const int fl = ::fcntl(fd_, F_GETFL, 0);
+    ::fcntl(fd_, F_SETFL, fl | O_NONBLOCK);
+    const int f = ::accept(fd_, nullptr, nullptr);
+    ::fcntl(fd_, F_SETFL, fl);
+    if (f < 0) return false;
+    if (conn_ >= 0) ::close(conn_);
+    conn_ = f;
+    ++accepts_;
+    return true;
+  }
+  // How many times the process has connected. THE observable for 13 CA-9: a
+  // recovery probe is a hangup followed by a dial, so a second accept is the
+  // probe reaching the wire -- and no second accept is the probe correctly
+  // not happening.
+  int accepts() const { return accepts_; }
   // Everything the process has sent so far, appended.
   std::size_t Drain() {
     std::uint8_t buf[8192];
@@ -143,6 +165,14 @@ class FakeChassis {
       std::fprintf(stderr, "FakeChassis::Send short write r=%ld errno=%d\n",
                    r, errno);
     }
+  }
+  // Like Send, but silent when the peer has gone. A 13 CA-9 recovery probe
+  // closes the connection ON PURPOSE, so a failed write is the expected
+  // outcome for the few periods before the process dials back in; printing
+  // there would bury Send's real short-write warning under noise.
+  void SendIfLive(const Bytes& b) {
+    if (conn_ < 0) return;
+    ::send(conn_, b.data(), b.size(), MSG_NOSIGNAL);
   }
   const Bytes& sent() const { return sent_; }
   void ClearSent() { sent_.clear(); }
@@ -220,6 +250,7 @@ class FakeChassis {
   int fd_ = -1;
   int conn_ = -1;
   int port_ = 0;
+  int accepts_ = 0;
   Bytes sent_;
 };
 
@@ -349,6 +380,36 @@ QuadrupedConfig UdpCfg(int port) {
   return c;
 }
 
+// A loopback port with nothing listening on it: bound, read back, closed. The
+// number is therefore one the kernel really handed out, and a connect to it
+// cannot accidentally reach some unrelated service.
+int DeadPort() {
+  const int f = ::socket(AF_INET, SOCK_STREAM, 0);
+  sockaddr_in a;
+  std::memset(&a, 0, sizeof(a));
+  a.sin_family = AF_INET;
+  a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  ::bind(f, reinterpret_cast<sockaddr*>(&a), sizeof(a));
+  socklen_t len = sizeof(a);
+  ::getsockname(f, reinterpret_cast<sockaddr*>(&a), &len);
+  const int p = ntohs(a.sin_port);
+  ::close(f);
+  return p;
+}
+
+// Two candidates: a higher-priority one that is unreachable, and the live
+// chassis behind it. Exactly the deployed shape after a transient tcp:30003
+// fault -- the process settles on candidate 1 and 13 CA-9 is the only thing
+// that will ever put it back on 0.
+QuadrupedConfig RecoveryCfg(int preferred_port, int live_port) {
+  QuadrupedConfig c = Cfg(live_port);
+  EndpointCandidate first = c.link.endpoints[0];
+  first.port = preferred_port;
+  c.link.endpoints.insert(c.link.endpoints.begin(), first);
+  return c;
+}
+
+
 // A report frame of an arbitrary Type, carrying no ErrorCode.
 //
 // It exists because the capture has no such frame: the two non-modelled frames
@@ -471,6 +532,31 @@ void Settle(QuadrupedProcess* p, FakeChassis* chassis, double from, double to,
     p->CtrlTick(t);
   }
   chassis->Drain();
+}
+
+// Drives the process across a span of SIMULATED time while the chassis reports
+// at 2 Hz, reconnecting whenever the process dials in again.
+//
+// `driving` keeps a fresh cmd_vel in front of Tier 1 every period, which is
+// what makes axis frames flow -- and an axis frame is what 13 CA-9's quiet
+// window is measured from. `estopping` fires the soft stop instead, whose zero
+// frame is an axis command too (that is the whole point of the estop case).
+void RunLink(QuadrupedProcess* p, FakeChassis* chassis, double from, double to,
+             bool driving, bool estopping) {
+  double next_report = from;
+  for (double t = from; t < to; t += 0.1) {
+    chassis->TryAccept();
+    if (t >= next_report) {
+      chassis->SendIfLive(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+                                     0x3002, /*hes=*/false, /*sleep=*/false));
+      next_report = t + 0.5;      // 2 Hz, 13 S7.1
+    }
+    if (driving) p->OnCmdVel(t, 0.5, 0.0, 0.1, p->estop_epoch());
+    if (estopping) p->OnSoftEstop(t);
+    p->RxPump(t);
+    p->CtrlTick(t);
+    chassis->Drain();
+  }
 }
 
 
@@ -1998,6 +2084,94 @@ int main(int argc, char** argv) {
     CHECK(type == chs_a::kMotionStateSwitch.type);
     CHECK(cmd == chs_a::kMotionStateSwitch.command);
     CHECK(p.mode_frames_sent() == 1);
+  }
+
+  // ======================================================================
+  // 13 CA-9 wiring. The POLICY is tested in test_chs_a_session.cc against an
+  // injected dialler; what these three cases exist for is the last segment --
+  // whether the process tells the session that an axis frame went out, and
+  // whether the probe reaches a real socket. This process has had that exact
+  // shape five times before (Odometry::OnGait, Uplink::Publish, the
+  // rt/chassis/mode subscription, the three mode-frame encoders, SetReportSink):
+  // capability present, compiles, unit tests green, last segment not connected.
+  //
+  // These run 120+ seconds of SIMULATED time. The period is the shipped one
+  // (13 CA-9, via FromLinkConfig), because shrinking it for the test would
+  // leave the shipped value uncovered -- which is what the shrunk-scale
+  // session cases already cover.
+  // ======================================================================
+
+  // ---- a standing robot: the probe fires, and falls back ------------------
+  {
+    FakeChassis chassis;
+    QuadrupedProcess p(RecoveryCfg(DeadPort(), chassis.port()));
+    RunLink(&p, &chassis, 0.0, 3.0, /*driving=*/false, /*estopping=*/false);
+    CHECK(chassis.accepts() == 1);
+    CHECK(p.link_status().active_endpoint == 1);   // the fallback candidate
+
+    // Nothing happens for two minutes: a probe every period would be a link
+    // that spends its life being re-dialled.
+    RunLink(&p, &chassis, 3.0, 110.0, false, false);
+    CHECK(chassis.accepts() == 1);
+
+    // ...and then the probe runs. The preferred port is still dead, so the
+    // walk continues and lands back on the live one -- which is a SECOND
+    // connection, and that is the observable.
+    RunLink(&p, &chassis, 110.0, 130.0, false, false);
+    CHECK(chassis.accepts() == 2);
+    CHECK(p.link_status().active_endpoint == 1);
+    CHECK(p.link_status().conn == chs_a::ConnState::kOk);
+  }
+
+  // ---- a robot being driven: the probe waits ------------------------------
+  {
+    // 13 S7.5's 0xE006 window doubles as the "is it moving" test: a 20 Hz axis
+    // stream never leaves a two-second hole, so the deadline simply slides.
+    // Dropping the link here would interrupt a moving robot AND make its next
+    // axis command come back refused for two seconds.
+    FakeChassis chassis;
+    QuadrupedProcess p(RecoveryCfg(DeadPort(), chassis.port()));
+    RunLink(&p, &chassis, 0.0, 3.0, false, false);
+    CHECK(chassis.accepts() == 1);
+    // The enable is what lets Tier 1 out of the opening timeout lock; without
+    // it no axis frame is ever written and this case would be testing silence.
+    p.OnCmdVel(3.0, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.OnEnable();
+    p.CtrlTick(3.01);
+    const std::uint64_t axis_before = p.axis_frames_sent();
+    RunLink(&p, &chassis, 3.1, 130.0, /*driving=*/true, false);
+    // The premise of the case: frames really were going out the whole time.
+    // Without this the case passes on a process that never sent one, i.e. it
+    // would be asserting the wrong reason for the right answer.
+    CHECK(p.axis_frames_sent() > axis_before + 100);
+    CHECK(chassis.accepts() == 1);
+    CHECK(p.link_status().active_endpoint == 1);
+
+    // Stop driving, and the overdue probe goes ahead once the window closes.
+    RunLink(&p, &chassis, 130.0, 140.0, false, false);
+    CHECK(chassis.accepts() == 2);
+  }
+
+  // ---- the soft stop's zero frame counts too ------------------------------
+  {
+    // OnSoftEstop sends its zero frame from the zenoh callback thread, so the
+    // control period has to forward the fact. Not forwarding it is wrong in
+    // the dangerous direction: the probe would drop the link inside the
+    // affinity window an EMERGENCY STOP had just opened, and the first axis
+    // command on the new socket would come back 0xE006.
+    FakeChassis chassis;
+    QuadrupedProcess p(RecoveryCfg(DeadPort(), chassis.port()));
+    RunLink(&p, &chassis, 0.0, 3.0, false, false);
+    CHECK(chassis.accepts() == 1);
+    const std::uint64_t axis_before = p.axis_frames_sent();
+    // Estops across the whole window in which the probe would otherwise be
+    // due. No cmd_vel at all -- the ONLY axis frames here are the stop frames.
+    RunLink(&p, &chassis, 3.0, 130.0, /*driving=*/false, /*estopping=*/true);
+    CHECK(p.axis_frames_sent() > axis_before + 100);
+    CHECK(chassis.accepts() == 1);
+
+    RunLink(&p, &chassis, 130.0, 140.0, false, false);
+    CHECK(chassis.accepts() == 2);
   }
 
   if (g_failures == 0) {

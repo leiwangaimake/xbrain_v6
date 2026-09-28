@@ -262,7 +262,21 @@ void QuadrupedProcess::OnSoftEstop(double now_mono_s) {
     // frame is the emergency stop and must not be dropped because ctrl happened
     // to hold the section (TX-2).
     const TxResult r = tx_.Send(TxCaller::kNonRealtime, buf, n);
-    if (r == TxResult::kSent) ++axis_frames_sent_;
+    if (r == TxResult::kSent) {
+      ++axis_frames_sent_;
+      // 13 CA-9: this IS an axis command, so it arms the chassis's two-second
+      // 0xE006 client-affinity window exactly like a driven one. Flagged for
+      // the control period to forward rather than calling the session here:
+      // every other session_ member is written from ctrl, and a second writer
+      // on this thread would be a data race whose usual outcome is the right
+      // answer -- which is what makes that kind of race survive review.
+      //
+      // Not forwarding it at all was the tempting shortcut and it is wrong in
+      // the dangerous direction: a recovery probe could then drop the link
+      // inside the affinity window opened by an EMERGENCY STOP, and the first
+      // axis command on the new socket would come back 0xE006.
+      estop_axis_tx_.store(true, std::memory_order_relaxed);
+    }
   }
   (void)now_mono_s;
 }
@@ -373,6 +387,19 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   }
 
   // ---- 2. the link ------------------------------------------------------
+  //
+  // BEFORE the tick: 13 CA-9's recovery probe is decided inside Tick, and it
+  // must see the estop zero frame that went out between periods. Forwarding
+  // afterwards would let one tick's probe start inside the affinity window
+  // that frame opened.
+  if (estop_axis_tx_.exchange(false, std::memory_order_relaxed)) {
+    // now_mono_s and not the estop's own time: the estop ran on another
+    // thread, this is at most one control period (10 ms) later, and the
+    // session takes the max -- so a slightly late mark can only ever make the
+    // quiet window LONGER, never shorter. OnAxisCommandSent's monotone rule
+    // is what makes that safe to say.
+    session_.OnAxisCommandSent(now_mono_s);
+  }
   const chs_a::TickResult link = session_.Tick(now_mono_s);
   if (link.connected) {
     // FR-5 / SD-3 verified HERE, once per connection, and read BACK from the
@@ -489,6 +516,10 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
       if (r == TxResult::kSent) {
         ++axis_frames_sent_;
         session_.OnSendSuccess();
+        // 13 CA-9. Only on kSent: a frame the guard skipped never reached the
+        // chassis, so it opened no affinity window. Marking a skip would make
+        // a link that is merely contended look like one that is driving.
+        session_.OnAxisCommandSent(now_mono_s);
       } else if (r == TxResult::kSkipped) {
         // TX-3: skipping is safe. The frame this period would have carried is
         // superseded by the next one 10 ms later, and a stop is never carried

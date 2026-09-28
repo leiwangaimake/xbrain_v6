@@ -310,6 +310,9 @@ int Run(const std::string& path) {
   // the session starts in, so a link that comes up prints exactly one line and
   // a link that never comes up prints exactly one too.
   quadruped::chs_a::ConnState said_conn = quadruped::chs_a::ConnState::kProbing;
+  // -1 is LinkStatus's own "no live endpoint", so the first connection is a
+  // change and prints, while said_anything keeps it to one line.
+  int said_endpoint = -1;
   bool said_anything = false;
   bool said_priority = false;
 
@@ -595,9 +598,18 @@ int Run(const std::string& path) {
     // that "assuming a guarantee you do not have", and it is the reason a dead
     // chassis is usually diagnosed as a dead network.
     const quadruped::QuadrupedProcess::LinkStatus st = proc.link_status();
-    if (!said_anything || st.conn != said_conn) {
+    // *** The ENDPOINT is part of the trigger, not just of the message
+    // (13 CA-9, 2026-09-28). A recovery probe goes ok -> probing -> ok and can
+    // land on a different candidate; keying only on conn, this loop would
+    // print the same word twice at whatever rate it happens to poll and the
+    // endpoint change -- the entire event -- could scroll past unsaid. Running
+    // on udp:30004 instead of tcp:30003 is precisely the thing that went
+    // unnoticed for a whole deployment and is why CA-9 exists.
+    if (!said_anything || st.conn != said_conn ||
+        st.active_endpoint != said_endpoint) {
       said_anything = true;
       said_conn = st.conn;
+      said_endpoint = st.active_endpoint;
       std::fprintf(stderr,
                    "quadruped_m20: chassis link %s (endpoint=%d, probe_cycles="
                    "%llu, reports=%llu)\n",

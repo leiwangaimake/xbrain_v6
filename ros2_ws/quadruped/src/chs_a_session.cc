@@ -22,6 +22,14 @@
  *   backoff_attempt_   which rung. Reset on success, so an hour of healthy link
  *                      followed by one drop waits 0.5 s, not 5 s.
  *   send_failures_     consecutive write failures, NOT missing acks.
+ *   recovery_at_s_     when the next 13 CA-9 probe of the PREFERRED candidates
+ *                      is due. Negative = not armed, for any of three reasons
+ *                      (already preferred / budget spent / feature off).
+ *   last_axis_cmd_s_   when an axis command last left. Separate from every
+ *                      other send because it is the only one that arms the
+ *                      0xE006 affinity window, and because it is what tells
+ *                      "the robot is standing still" from "the robot is being
+ *                      driven" -- a 20 Hz stream never leaves a 2 s hole.
  *
  * All comparisons are on the monotonic clock passed in (CLK-C1). Nothing here
  * reads a clock: a state machine that reads its own clock cannot be tested for
@@ -42,6 +50,42 @@
 
 namespace quadruped {
 namespace chs_a {
+namespace {
+
+// ---- 13 CA-9 constants -------------------------------------------------
+//
+// These three are protocol and deployment facts written into 13 CA-9, not
+// tunables: there is no operator question they answer, and putting them in
+// quadruped.yaml would add keys the deployed resolved snapshot does not have,
+// which by CLAUDE.md 3.6 is a refusal to start. They are named here, cited
+// there, and asserted in the tests -- the same treatment 13 S7.5's "three
+// 0xE00B in a row" already gets a few lines below.
+
+// How long to run on a lower-priority candidate before re-testing the
+// preferred ones. Derived in 13 CA-9: one failed attempt costs at most
+// (enabled candidates) x probe_timeout of link outage -- 2 x 2 s on the
+// shipped config -- plus TWO robot_server voice prompts (CA-6 measured that
+// it announces every heartbeat connect and disconnect). 120 s keeps the
+// outage duty cycle near 3% and, with kRecoveryAttempts, spreads the retries
+// over six minutes, which is longer than any transient this is meant to
+// recover from (a TCP reset, a switch port bounce, a DHCP renew).
+constexpr double kRecoveryPeriodS = 120.0;
+
+// How many times, before giving up until the link genuinely drops again. NOT
+// unlimited, and CA-6 is the whole reason: an unlimited retry against a
+// permanently dead tcp:30003 turns a patrol robot into something that
+// announces itself twice every two minutes, forever.
+constexpr int kRecoveryAttempts = 3;
+
+// 13 S7.5, 0xE006 row: the chassis requires axis commands inside a two-second
+// window to come from the same client. Switching sockets with less quiet than
+// that makes the new socket's first axis command come back refused -- and
+// "accepted but the robot does not move" is the symptom CA-1 exists to
+// prevent. It doubles as the "is the robot being driven" test: a 20 Hz axis
+// stream never leaves a two-second hole.
+constexpr double kAxisQuietBeforeSwitchS = 2.0;
+
+}  // namespace
 
 const char* ConnStateName(ConnState s) {
   switch (s) {
@@ -137,6 +181,11 @@ SessionConfig SessionConfig::FromLinkConfig(const ChassisLinkConfig& link) {
         "chassis_link.probe_timeout_ms must be > 0: a zero probe window rejects "
         "every candidate on the tick it is dialled");
   }
+  // 13 CA-9. Set from the named constants above rather than from the file:
+  // see their comment on why they are not config keys.
+  c.endpoint_recovery_period_s = kRecoveryPeriodS;
+  c.endpoint_recovery_attempts = kRecoveryAttempts;
+  c.axis_quiet_before_switch_s = kAxisQuietBeforeSwitchS;
   return c;
 }
 
@@ -145,7 +194,9 @@ Session::Session(SessionConfig cfg, Dial dial, Hangup hangup,
     : cfg_(std::move(cfg)),
       dial_(std::move(dial)),
       hangup_(std::move(hangup)),
-      creds_(std::move(creds)) {}
+      creds_(std::move(creds)) {
+  recovery_budget_ = cfg_.endpoint_recovery_attempts;
+}
 
 double Session::BackoffFor(std::size_t attempt) const {
   // The last rung repeats forever. A ladder that ran off its end would either
@@ -168,6 +219,75 @@ void Session::EnterLost(double now_mono_s, TickResult* out) {
   retry_at_s_ = now_mono_s + BackoffFor(backoff_attempt_);
   ++backoff_attempt_;
   candidate_ = 0;
+  // 13 CA-9: a genuine drop refills the recovery budget. The budget exists to
+  // stop us re-testing an endpoint we have already found dead THIS TIME; a
+  // link that went away and came back is a new world, and whatever made
+  // tcp:30003 unreachable may have gone with it. Not refilling would mean a
+  // robot that exhausted its three attempts in the morning stays on UDP for
+  // the rest of the day even after the network is fixed and the link bounces.
+  recovery_budget_ = cfg_.endpoint_recovery_attempts;
+  recovering_ = false;
+  recovery_from_ = -1;
+  recovery_at_s_ = -1.0;
+}
+
+bool Session::HasHigherPriorityCandidate() {
+  // active_ <= 0 covers both "already on the preferred candidate" and "no live
+  // link", and in neither case is there anything to recover to.
+  if (active_ <= 0) return false;
+  for (std::size_t i = 0; i < static_cast<std::size_t>(active_); ++i) {
+    const EndpointCandidate& ep = cfg_.endpoints[i];
+    if (!ep.enabled) continue;
+    // 13 TLS-4 is applied HERE as well as in the walk, and that is not
+    // duplication: a TLS candidate with no certificate is skipped at no cost
+    // during a walk, but scheduling a walk FOR it is not free -- the walk
+    // itself drops the live link. Without this the session would break the
+    // link every period for a candidate it already knows it cannot dial.
+    if (ep.tls && creds_ && !creds_(ep)) continue;
+    return true;
+  }
+  return false;
+}
+
+void Session::ScheduleRecovery(double now_mono_s) {
+  recovery_at_s_ = -1.0;
+  if (!(cfg_.endpoint_recovery_period_s > 0.0)) return;
+  if (recovery_budget_ <= 0) return;
+  if (!HasHigherPriorityCandidate()) return;
+  recovery_at_s_ = now_mono_s + cfg_.endpoint_recovery_period_s;
+}
+
+bool Session::RecoveryDue(double now_mono_s) const {
+  if (recovery_at_s_ < 0.0) return false;
+  if (now_mono_s < recovery_at_s_) return false;
+  // The axis stream must have been quiet for the 0xE006 affinity window. This
+  // is the guard that keeps the probe off a robot that is moving: at 20 Hz the
+  // stream never leaves a two-second hole, so a driving robot simply never
+  // satisfies it and the deadline slides until it stops.
+  //
+  // Negative means no axis command has ever gone out, which passes: there is
+  // no affinity window to wait out and nothing is in flight.
+  if (last_axis_cmd_s_ >= 0.0 &&
+      now_mono_s - last_axis_cmd_s_ < cfg_.axis_quiet_before_switch_s) {
+    return false;
+  }
+  return true;
+}
+
+void Session::StartRecovery(double now_mono_s, TickResult* out) {
+  recovering_ = true;
+  recovery_from_ = active_;
+  recovery_at_s_ = -1.0;
+  ++recovery_attempts_;
+  // From the TOP of the list, through the ordinary walk. Three things come for
+  // free that a bespoke "dial candidate 0" would each have to redo: the
+  // enabled / credentials skips, the probe window, and -- the one that matters
+  // -- the FALLBACK. If the preferred candidates stay silent the walk simply
+  // continues and arrives back at the one we were using, so "the probe failed"
+  // and "we are back where we started" are the same code path rather than an
+  // error branch nothing exercises.
+  candidate_ = 0;
+  AdvanceCandidate(now_mono_s, out);
 }
 
 void Session::AdvanceCandidate(double now_mono_s, TickResult* out) {
@@ -239,6 +359,18 @@ TickResult Session::Tick(double now_mono_s) {
       ++link_epoch_;
       ++reconnects_;
       out.connected = true;
+      // 13 CA-9: settle the recovery attempt this connection belongs to.
+      // "Success" is landing on a HIGHER-priority candidate -- anything else
+      // (including landing back on the one we left, which is the normal
+      // outcome when the preferred endpoint is still dead) spends one of the
+      // three attempts. Charging the budget only on failure is what makes the
+      // feature converge: a successful recovery costs nothing, so a link that
+      // flaps between candidates never runs out of attempts.
+      if (recovering_) {
+        recovering_ = false;
+        if (active_ >= recovery_from_) --recovery_budget_;
+      }
+      ScheduleRecovery(now_mono_s);
     } else if (now_mono_s - probe_started_s_ > cfg_.probe_timeout_s) {
       last_skip_ = SkipReason::kNoReportInTime;
       ++candidate_;
@@ -267,6 +399,21 @@ TickResult Session::Tick(double now_mono_s) {
     } else {
       state_ = ConnState::kDegraded;
     }
+    // 13 CA-9, and ONLY from kOk. A degraded link is already being worked on
+    // by the ladder above (late reports, or a downlink failure run), and
+    // dropping it for a probe on top of that makes the next failure
+    // unattributable: the operator cannot tell whether the endpoint switched
+    // because the preferred one came back or because this one was dying.
+    // Stable-and-healthy is the one state where the only thing wrong is which
+    // candidate we are on.
+    if (state_ == ConnState::kOk && RecoveryDue(now_mono_s)) {
+      StartRecovery(now_mono_s, &out);
+      // The walk can run off the end of the list (every candidate silent) and
+      // land in kLost with no socket. Returning here rather than falling into
+      // the heartbeat block below, which would ask for a heartbeat on a socket
+      // that is not there.
+      if (!socket_open_) return out;
+    }
   }
 
   // Heartbeat, on the same socket as the axis commands (13 CA-2) and on the
@@ -292,6 +439,14 @@ void Session::OnSendSuccess() {
   // cumulative counter would eventually degrade a link that has been healthy
   // for hours with a handful of transient failures spread across them.
   send_failures_ = 0;
+}
+
+void Session::OnAxisCommandSent(double now_mono_s) {
+  // Monotone on purpose. The caller forwards the estop path's send time from a
+  // later control period (that frame goes out on the zenoh callback thread),
+  // so the two sources arrive interleaved; taking the max means a stale
+  // forward can only ever be ignored, never shorten the quiet window.
+  if (now_mono_s > last_axis_cmd_s_) last_axis_cmd_s_ = now_mono_s;
 }
 
 void Session::OnErrorCode(double now_mono_s, std::uint32_t code) {

@@ -94,13 +94,17 @@ struct FakeLink {
   int max_open = 0;
   bool dial_succeeds = true;
   bool creds_present = false;  // TLS-1 ships with no certificates installed
+  // One port that refuses to dial while the rest work. Needed by the 13 CA-9
+  // cases: "tcp is down, udp is up" is the whole premise, and a single
+  // dial_succeeds flag cannot express it. -1 = nothing is blocked.
+  int fail_dial_port = -1;
 
   Session::Dial dial() {
     return [this](const EndpointCandidate& e) {
       ++dials;
       dialled_ports.push_back(e.port);
       dialled_tls.push_back(e.tls);
-      if (!dial_succeeds) return false;
+      if (!dial_succeeds || e.port == fail_dial_port) return false;
       ++open;
       if (open > max_open) max_open = open;
       return true;
@@ -114,6 +118,53 @@ struct FakeLink {
   }
   Session::CredentialsReady creds() {
     return [this](const EndpointCandidate&) { return creds_present; };
+  }
+};
+
+// BaseConfig with 13 CA-9 switched on at test scale. The periods are small so
+// the cases run in microseconds; what is under test is the RULES, and the
+// shipped numbers are pinned separately by the FromLinkConfig case.
+SessionConfig RecoveryConfig() {
+  SessionConfig c = BaseConfig();
+  c.endpoint_recovery_period_s = 10.0;
+  c.endpoint_recovery_attempts = 3;
+  c.axis_quiet_before_switch_s = 2.0;
+  return c;
+}
+
+// Drives a session the way process.cc does -- report first, then tick -- and
+// delivers a report ONLY when the port currently dialled is one the fake
+// chassis answers on. That is the real rule (13 S2.2: the chassis reports to
+// whoever keeps sending heartbeats to a port it has open), and it is what
+// makes "the preferred candidate is dead" and "the preferred candidate is
+// back" two different fixtures rather than two different assertions.
+struct Driver {
+  Session* s;
+  FakeLink* link;
+  std::vector<int> answering;
+
+  bool answers(int port) const {
+    for (std::size_t i = 0; i < answering.size(); ++i) {
+      if (answering[i] == port) return true;
+    }
+    return false;
+  }
+
+  TickResult step(double t) {
+    const int port =
+        link->dialled_ports.empty() ? -1 : link->dialled_ports.back();
+    // One millisecond BEFORE the tick, never at the same instant. The probe
+    // test is last_report_s_ >= probe_started_s_, so a report stamped exactly
+    // at the dialling instant would let a freshly dialled candidate inherit
+    // the PREVIOUS candidate's evidence and be adopted without ever answering.
+    if (link->open > 0 && answers(port)) s->OnReport(t - 0.001);
+    return s->Tick(t);
+  }
+
+  TickResult run(double from, double to, double dt) {
+    TickResult r;
+    for (double t = from; t <= to + 1e-9; t += dt) r = step(t);
+    return r;
   }
 };
 
@@ -512,6 +563,334 @@ int main() {
     ChassisLinkConfig no_probe = link;
     no_probe.probe_timeout_ms = 0;
     CHECK(Throws([&] { SessionConfig::FromLinkConfig(no_probe); }));
+  }
+
+  // ======================================================================
+  // 13 CA-9: recovery to a higher-priority candidate.
+  //
+  // The premise, measured on the bench: after a transient tcp:30003 fault the
+  // session moved to udp:30004 and STAYED there -- 13 S8.2 said only "the
+  // first candidate that answers wins" and nothing about going back. Running
+  // on UDP is a real degradation (FR-5 drops FR-1..FR-4 to "one datagram is
+  // one frame", and 13 S3.6's latency budget rests on TCP_NODELAY, which a
+  // datagram socket does not have), and nothing in the system said so.
+  // ======================================================================
+
+  // ---- the whole sequence: tcp down -> udp -> tcp back -> tcp -------------
+  {
+    FakeLink link;
+    link.fail_dial_port = 30003;            // the transient fault
+    Session s(RecoveryConfig(), link.dial(), link.hangup(), link.creds());
+    Driver d{&s, &link, {30004}};
+    d.run(0.0, 1.0, 0.5);
+    CHECK(s.state() == ConnState::kOk);
+    CHECK(s.active_endpoint() == 1);        // on the UDP candidate
+    CHECK(s.recovery_attempts() == 0);      // nothing tried yet
+    const int dials_on_udp = link.dials;
+
+    // The fault clears while we are running on UDP. Nothing in the session
+    // can see that -- which is the point: only a probe can find out.
+    link.fail_dial_port = -1;
+    d.answering.push_back(30003);
+
+    // Before the period elapses, NOTHING happens. Without this half the case
+    // would pass against an implementation that re-probes every single tick,
+    // i.e. one that breaks the link a hundred times a second.
+    d.run(1.5, 9.5, 0.5);
+    CHECK(link.dials == dials_on_udp);
+    CHECK(s.active_endpoint() == 1);
+
+    // ...and after it, the session goes back to TCP.
+    d.run(10.0, 12.0, 0.5);
+    CHECK(s.recovery_attempts() == 1);
+    CHECK(s.active_endpoint() == 0);
+    CHECK(s.state() == ConnState::kOk);
+    // A successful recovery does NOT spend an attempt: the budget is there to
+    // stop us hammering a dead endpoint, and this one was not dead.
+    CHECK(s.recovery_budget() == 3);
+    // 13 CA-1 throughout. A probe that opened the new socket before closing
+    // the old one would be a second CLIENT, and the chassis answers a second
+    // client's axis commands with 0xE006 for two seconds.
+    CHECK(link.max_open == 1);
+    // ...and the layer above is told to re-handshake (CON-07): the link came
+    // back on a different transport, and coming back is not resuming.
+    CHECK(s.link_epoch() == 2);
+  }
+
+  // ---- a failed probe falls back to the candidate we were using ----------
+  {
+    FakeLink link;
+    link.fail_dial_port = 30003;
+    Session s(RecoveryConfig(), link.dial(), link.hangup(), link.creds());
+    Driver d{&s, &link, {30004}};
+    d.run(0.0, 1.0, 0.5);
+    CHECK(s.active_endpoint() == 1);
+
+    // tcp:30003 is still dead when the probe fires.
+    d.run(10.0, 12.0, 0.5);
+    CHECK(s.recovery_attempts() == 1);
+    // Back where we started, not lost, not stuck probing. The fallback is the
+    // ordinary walk continuing past the silent candidates, so "the probe
+    // failed" is not a branch of its own.
+    CHECK(s.active_endpoint() == 1);
+    CHECK(s.state() == ConnState::kOk);
+    CHECK(s.motion_allowed() == true);
+    CHECK(s.recovery_budget() == 2);        // this one DID cost an attempt
+    CHECK(link.max_open == 1);
+  }
+
+  // ---- a probe whose candidate dials but never answers -------------------
+  {
+    // The realistic TCP failure: a non-blocking connect to a dead port
+    // returns EINPROGRESS, which chassis_socket treats as success (it has to
+    // -- every healthy TCP connect does that). So the candidate is dialled,
+    // opens, and is silent for the whole probe window.
+    FakeLink link;
+    Session s(RecoveryConfig(), link.dial(), link.hangup(), link.creds());
+    Driver d{&s, &link, {30004}};       // 30003 dials fine, answers nothing
+    d.run(0.0, 3.0, 0.5);               // walks past the silent 30003
+    CHECK(s.active_endpoint() == 1);
+    const std::size_t dials_before = link.dialled_ports.size();
+
+    d.run(10.0, 16.0, 0.5);
+    CHECK(s.recovery_attempts() == 1);
+    CHECK(link.dialled_ports.size() > dials_before);
+    CHECK(link.dialled_ports[dials_before] == 30003);   // preferred first
+    CHECK(s.active_endpoint() == 1);                    // ...then fell back
+    CHECK(s.recovery_budget() == 2);
+    CHECK(link.max_open == 1);
+  }
+
+  // ---- the budget runs out, and then the session stops asking ------------
+  {
+    // 13 CA-6, measured: robot_server plays a voice prompt and switches LED
+    // mode on EVERY heartbeat connect and disconnect. One failed recovery is
+    // two announcements. An unbounded retry against a permanently dead
+    // tcp:30003 would turn a patrol robot into a beacon that announces itself
+    // twice every period, forever -- which is why the budget exists at all.
+    FakeLink link;
+    link.fail_dial_port = 30003;
+    Session s(RecoveryConfig(), link.dial(), link.hangup(), link.creds());
+    Driver d{&s, &link, {30004}};
+    d.run(0.0, 1.0, 0.5);
+    d.run(10.0, 42.0, 0.5);             // three periods and change
+    CHECK(s.recovery_attempts() == 3);
+    CHECK(s.recovery_budget() == 0);
+    const std::uint64_t tried = s.recovery_attempts();
+    d.run(42.5, 120.0, 0.5);            // eight more periods
+    CHECK(s.recovery_attempts() == tried);   // silence, not a fourth attempt
+    CHECK(s.active_endpoint() == 1);
+  }
+
+  // ---- a genuine drop refills the budget ---------------------------------
+  {
+    FakeLink link;
+    link.fail_dial_port = 30003;
+    Session s(RecoveryConfig(), link.dial(), link.hangup(), link.creds());
+    Driver d{&s, &link, {30004}};
+    d.run(0.0, 1.0, 0.5);
+    d.run(10.0, 42.0, 0.5);
+    CHECK(s.recovery_budget() == 0);
+
+    // The link dies for real: no reports at all for longer than the lost
+    // threshold (3 s; the last report was stamped just before t = 42.0), then
+    // it comes back on UDP. The loop stops at 45.0 on purpose: that is the
+    // first tick where the age (3.001 s) passes state_timeout_lost_s, and the
+    // first backoff rung is 0.5 s -- one more tick and the session would
+    // already have walked back out of kLost, so the assertion below would be
+    // reading a state it had left.
+    for (double t = 42.5; t <= 45.0; t += 0.5) s.Tick(t);
+    CHECK(s.state() == ConnState::kLost);
+    d.run(45.5, 55.0, 0.5);
+    CHECK(s.state() == ConnState::kOk);
+    CHECK(s.active_endpoint() == 1);
+    // Whatever made tcp:30003 unreachable may have gone with the outage. A
+    // budget that stayed spent would leave a robot that used its three
+    // attempts in the morning on UDP for the rest of the day, through any
+    // number of link bounces.
+    CHECK(s.recovery_budget() == 3);
+  }
+
+  // ---- the switch waits for the axis stream to go quiet -------------------
+  {
+    // 13 S7.5's 0xE006 row: axis commands inside a two-second window must
+    // come from the same client. Dropping the socket inside that window makes
+    // the new one's first axis command come back refused -- "accepted, and
+    // the robot does not move". It doubles as the "is the robot moving" test:
+    // a 20 Hz axis stream never leaves a two-second hole.
+    FakeLink link;
+    link.fail_dial_port = 30003;
+    Session s(RecoveryConfig(), link.dial(), link.hangup(), link.creds());
+    Driver d{&s, &link, {30004}};
+    d.run(0.0, 1.0, 0.5);
+    link.fail_dial_port = -1;
+    d.answering.push_back(30003);
+
+    // The robot is being driven right as the period expires.
+    for (double t = 9.0; t <= 11.0; t += 0.05) {
+      s.OnAxisCommandSent(t);
+      d.step(t);
+    }
+    CHECK(s.active_endpoint() == 1);     // not switched, the stream is live
+    CHECK(s.recovery_attempts() == 0);
+
+    // Still inside the affinity window opened by the last command at 11.0.
+    d.run(11.05, 12.9, 0.05);
+    CHECK(s.recovery_attempts() == 0);
+
+    // ...and once it has been quiet for the window, the probe goes ahead.
+    d.run(13.05, 15.0, 0.5);
+    CHECK(s.recovery_attempts() == 1);
+    CHECK(s.active_endpoint() == 0);
+  }
+
+  // ---- an out-of-order axis mark never shortens the quiet window ----------
+  {
+    // The estop path sends its zero frame on another thread and the control
+    // period forwards it, so the marks can arrive out of order. Taking the max
+    // means a stale forward is ignored; taking the last value would let it
+    // re-open a window that had already closed, or close one early.
+    FakeLink link;
+    link.fail_dial_port = 30003;
+    Session s(RecoveryConfig(), link.dial(), link.hangup(), link.creds());
+    Driver d{&s, &link, {30004}};
+    d.run(0.0, 1.0, 0.5);
+    link.fail_dial_port = -1;
+    d.answering.push_back(30003);
+
+    s.OnAxisCommandSent(11.0);
+    s.OnAxisCommandSent(4.0);            // stale, must not move the mark back
+    d.run(10.0, 12.5, 0.5);              // 12.5 - 11.0 = 1.5 s < 2 s
+    CHECK(s.recovery_attempts() == 0);
+    d.run(13.0, 15.0, 0.5);
+    CHECK(s.recovery_attempts() == 1);
+  }
+
+  // ---- nothing to recover to: the preferred candidate is already live ----
+  {
+    FakeLink link;
+    Session s(RecoveryConfig(), link.dial(), link.hangup(), link.creds());
+    Driver d{&s, &link, {30003}};
+    d.run(0.0, 1.0, 0.5);
+    CHECK(s.active_endpoint() == 0);
+    d.run(1.5, 60.0, 0.5);
+    CHECK(s.recovery_attempts() == 0);   // six periods, not one probe
+    CHECK(link.dials == 1);
+  }
+
+  // ---- nothing to recover to: the higher candidate is disabled -----------
+  {
+    SessionConfig c = RecoveryConfig();
+    c.endpoints[0].enabled = false;
+    FakeLink link;
+    Session s(c, link.dial(), link.hangup(), link.creds());
+    Driver d{&s, &link, {30004}};
+    d.run(0.0, 1.0, 0.5);
+    CHECK(s.active_endpoint() == 1);
+    d.run(1.5, 60.0, 0.5);
+    // Probing for a candidate the config has switched off would break the
+    // link every period for something that can never be dialled.
+    CHECK(s.recovery_attempts() == 0);
+  }
+
+  // ---- nothing to recover to: the higher candidate has no certificate ----
+  {
+    // 13 TLS-4 applied to the SCHEDULING decision, not just to the walk. In
+    // the walk a credential-less candidate costs nothing; scheduling a walk
+    // for it costs the live link, every period, for an endpoint we already
+    // know cannot be dialled.
+    SessionConfig c = RecoveryConfig();
+    c.endpoints = {Ep("tcp", 30003, true, true), Ep("udp", 30004, false, true)};
+    FakeLink link;
+    link.creds_present = false;
+    Session s(c, link.dial(), link.hangup(), link.creds());
+    Driver d{&s, &link, {30004}};
+    d.run(0.0, 1.0, 0.5);
+    CHECK(s.active_endpoint() == 1);
+    d.run(1.5, 60.0, 0.5);
+    CHECK(s.recovery_attempts() == 0);
+    // ...and with the certificate installed it IS worth a probe, so the rule
+    // is "skip what cannot work", not "never recover onto TLS".
+    FakeLink link2;
+    link2.creds_present = true;
+    Session s2(c, link2.dial(), link2.hangup(), link2.creds());
+    Driver d2{&s2, &link2, {30004}};
+    // Longer than the 2 s probe window: with certificates present the TLS
+    // candidate IS dialled, so the walk has to wait it out before reaching
+    // the UDP one. (The fake dials it happily -- whether a real TLS handshake
+    // would succeed is chassis_socket's business, not the session's.)
+    d2.run(0.0, 3.5, 0.5);
+    CHECK(s2.active_endpoint() == 1);
+    d2.run(4.0, 20.0, 0.5);
+    CHECK(s2.recovery_attempts() == 1);
+  }
+
+  // ---- a degraded link is not probed -------------------------------------
+  {
+    FakeLink link;
+    link.fail_dial_port = 30003;
+    Session s(RecoveryConfig(), link.dial(), link.hangup(), link.creds());
+    Driver d{&s, &link, {30004}};
+    d.run(0.0, 1.0, 0.5);
+    link.fail_dial_port = -1;
+    d.answering.push_back(30003);
+
+    // Reports stop arriving for longer than state_timeout_degraded_s (1 s)
+    // but not longer than state_timeout_lost_s (3 s): the link is degraded
+    // and still open, exactly across the moment the probe would be due.
+    for (double t = 1.5; t <= 9.4; t += 0.5) { s.OnReport(t - 0.001); s.Tick(t); }
+    s.Tick(10.0);
+    s.Tick(11.5);
+    CHECK(s.state() == ConnState::kDegraded);
+    // Dropping a link that is ALREADY in trouble makes the next failure
+    // unattributable -- did the endpoint change because the preferred one
+    // came back, or because this one was dying?
+    CHECK(s.recovery_attempts() == 0);
+
+    // A fresh report clears the degradation, and then the overdue probe runs.
+    d.run(12.0, 14.0, 0.5);
+    CHECK(s.recovery_attempts() == 1);
+    CHECK(s.active_endpoint() == 0);
+  }
+
+  // ---- the feature is off unless the config turns it on -------------------
+  {
+    // BaseConfig leaves the three CA-9 values at zero, which is the
+    // pre-2026-09-28 behaviour. Zero here means OFF, and it has to stay
+    // expressible: a session built by hand in some other test must not start
+    // dropping its link on a timer nobody asked for.
+    FakeLink link;
+    link.fail_dial_port = 30003;
+    Session s(BaseConfig(), link.dial(), link.hangup(), link.creds());
+    Driver d{&s, &link, {30004}};
+    d.run(0.0, 1.0, 0.5);
+    CHECK(s.active_endpoint() == 1);
+    d.run(1.5, 600.0, 1.0);
+    CHECK(s.recovery_attempts() == 0);
+  }
+
+  // ---- FromLinkConfig ships the CA-9 numbers ------------------------------
+  {
+    // The rest of this section runs at test scale, so without this case every
+    // one of them would pass against a build that shipped the feature turned
+    // OFF -- CLAUDE.md 3.2's first shape.
+    ChassisLinkConfig link;
+    link.endpoints = {Ep("tcp", 30003, false, true)};
+    link.probe_timeout_ms = 2000;
+    link.heartbeat_hz = 2.0;
+    link.state_timeout_degraded_s = 1.0;
+    link.state_timeout_lost_s = 3.0;
+    link.cmd_fail_threshold = 3;
+    link.reconnect_backoff_s = {0.5, 1.0};
+    const SessionConfig c = SessionConfig::FromLinkConfig(link);
+    CHECK(c.endpoint_recovery_period_s == 120.0);
+    CHECK(c.endpoint_recovery_attempts == 3);
+    // 13 S7.5's 0xE006 window, verbatim.
+    CHECK(c.axis_quiet_before_switch_s == 2.0);
+    // The period must be far longer than one walk of the list, or the link
+    // spends a visible fraction of its life being probed.
+    CHECK(c.endpoint_recovery_period_s >
+          c.probe_timeout_s * static_cast<double>(link.endpoints.size()) * 10.0);
   }
 
   // ---- the state names are distinct ---------------------------------------
