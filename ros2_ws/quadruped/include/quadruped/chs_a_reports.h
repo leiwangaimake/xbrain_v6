@@ -45,10 +45,19 @@
  *
  * Boundary: this turns bytes into structs. It does not decide anything -- the
  * session state machine (chs_a_session) owns conn state and failure counting,
- * Tier 1 owns the stop decision, and publishing the full-fidelity report onto
- * the RT plane is B4's. The raw ASDU is deliberately NOT copied into these
- * structs: 13 S7.1 requires every field to be forwarded verbatim, and that is
- * done from the received buffer rather than by rebuilding it from here.
+ * and Tier 1 owns the stop decision.
+ *
+ * *** This paragraph used to end with "publishing the full-fidelity report onto
+ * the RT plane is B4's; the raw ASDU is deliberately NOT copied into these
+ * structs -- 13 S7.1 requires every field to be forwarded verbatim, and that is
+ * done from the received buffer rather than by rebuilding it from here."
+ * It was not true. Nothing forwarded from the received buffer, so for the whole
+ * life of the file the three groups this header waved at (DeviceTemperature,
+ * DevEnable, CPU -- and the GPS group the real machine adds) reached nobody:
+ * 11 S9.8.3 lists every one of them and state/chassis_device carried none.
+ * Corrected 2026-09-28 by PARSING them here, which is what 13 S7.1's "verbatim"
+ * now means in practice. A comment describing a mechanism that does not exist
+ * is worse than no comment: it answers the reader's question wrongly.
  */
 #ifndef HACHIST_XBRAIN_V6_QUADRUPED_CHS_A_REPORTS_H_
 #define HACHIST_XBRAIN_V6_QUADRUPED_CHS_A_REPORTS_H_
@@ -148,6 +157,84 @@ struct MotionStatus {
   double omega_x = 0.0;
   double omega_y = 0.0;
   double omega_z = 0.0;
+  // MotorStatus.Joint[16], the report's other parameter group. 11 S9.8.2
+  // lists it as `joints` and even gives the leg-prefix table, and it was NOT
+  // parsed until 2026-09-28 -- the chassis sends sixteen joint angles ten
+  // times a second and nothing in this system could see one of them.
+  //
+  // *** The ORDER is the vendor's, quoted from the guide 1.3.1.2 note because
+  // 13 does not carry it: LeftFrontHipX, LeftFrontHipY, LeftFrontKnee,
+  // LeftFrontWheel, then RightFront*, LeftBack*, RightBack* in the same four.
+  // A fixed array rather than a vector: the length is the machine's leg count
+  // and a short list is a malformed report, not a smaller robot.
+  bool has_joints = false;
+  double joint[16] = {};
+};
+
+// The per-joint temperatures, DeviceTemperature in the device report. Two
+// readings per joint (the winding and its driver), in the SAME order as
+// MotionStatus::joint -- the guide names the order once, for Joint[16], and
+// these two arrays are the same sixteen joints by construction (same length,
+// same group, "各关节的电机温度及驱动器温度"). That inference is registered in
+// 11 S9.8.3 rather than left implicit: it is the one thing here the vendor
+// does not state twice.
+struct DeviceTemps {
+  bool valid = false;
+  double motor[16] = {};
+  double driver[16] = {};
+};
+
+// DevEnable, the peripheral enable bits. 11 S9.8.3 carries `load_power` into
+// the health model (13 V-56 closed on the 2026-09-15 measurement), so this is
+// not a diagnostic curiosity -- it is where "the payload bay lost power" would
+// first be visible.
+struct DevEnableStatus {
+  bool valid = false;
+  int fan_speed = 0;
+  int load_power = 0;
+  int led_host = 0;
+  int led_ext = 0;
+  int fp = 0;
+  int lidar = 0;   // 0 off / 1 on / 2 starting (guide 1.3.1.3)
+  int gps = 0;
+  int video = 0;
+  int gps_mode = 0;
+  int led = 0;
+  int voice = 0;
+  int voiceplay = 0;
+};
+
+// The chassis's own GPS. 11 S9.8.3 is explicit that this is REFERENCE ONLY --
+// positioning runs on our G90 RTK -- so it is forwarded and never consumed.
+struct GpsStatus {
+  bool valid = false;
+  double latitude = 0.0;
+  double longitude = 0.0;
+  double altitude = 0.0;
+  double speed = 0.0;
+  double course = 0.0;
+  double hdop = 0.0;
+  double vdop = 0.0;
+  double pdop = 0.0;
+  int fix_quality = 0;
+  int num_satellites = 0;
+  int visible_satellites = 0;
+};
+
+// One of the chassis's control hosts (AOS / NOS; this machine is STD and has
+// no GOS, and 11 S9.8.3 says the parser must tolerate that rather than treat
+// a missing group as a malformed report).
+struct CpuHostStatus {
+  bool valid = false;
+  std::string soc_id;        // "103" / "106"
+  int avg_util_pct = 0;
+  int package_temp_c = 0;
+  std::vector<int> util_pct;
+  std::vector<int> temps_c;
+  std::vector<int> cur_freq_khz;
+  std::vector<int> hw_max_freq_khz;
+  std::vector<int> hw_min_freq_khz;
+  std::vector<std::string> gov_policy;
 };
 
 // One battery, as the chassis reports it. 13 S7.2: the array is authoritative
@@ -202,6 +289,18 @@ struct DeviceStatus {
   // power_management "single_battery" rather than as a fault. Also the
   // validity flag for min_level above.
   std::size_t present_count = 0;
+  // The device report's other parameter groups. The guide (1.3.1.3) lists four
+  // -- BatteryList, DeviceTemperature, DevEnable, CPU -- and the real machine
+  // sends a fifth, GPS (13 S7.2 v1.3 measured it and closed V-52 on it).
+  // Only BatteryList was lifted out until 2026-09-28, and this header said so
+  // in as many words: "everything else is forwarded verbatim from the raw
+  // buffer". Nothing forwarded it. 11 S9.8's heading requires all of it and
+  // 11 S9.8.3 lists every one of these blocks by name.
+  DeviceTemps temps;
+  DevEnableStatus dev_enable;
+  GpsStatus gps;
+  CpuHostStatus cpu_aos;
+  CpuHostStatus cpu_nos;
 };
 
 // One fault, 13 S7.3. `code` already carries its namespace prefix.

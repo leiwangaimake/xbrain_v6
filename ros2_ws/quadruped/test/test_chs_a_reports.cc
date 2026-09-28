@@ -186,6 +186,81 @@ int main(int argc, char** argv) {
     CHECK(s.present_count == 2);
     CHECK(s.batteries[0].present == true);
     CHECK(s.batteries[1].present == true);
+
+    // *** The other groups of the SAME report. Until 2026-09-28 only
+    // BatteryList was lifted out of it -- the header even said the rest was
+    // "forwarded verbatim from the raw buffer", and nothing forwarded it.
+    // The guide (1.3.1.3) names four groups and the real machine sends a
+    // fifth (GPS, 13 S7.2 v1.3).
+    CHECK(s.temps.valid);
+    CHECK(s.temps.motor[0] > 37.0 && s.temps.motor[0] < 38.0);
+    CHECK(s.temps.driver[0] > 42.0 && s.temps.driver[0] < 43.0);
+    CHECK(s.dev_enable.valid);
+    // 13 V-56 closed on this one: LoadPower exists, so the health item that
+    // watches external power has a source.
+    CHECK(s.dev_enable.load_power == 1);
+    CHECK(s.dev_enable.gps_mode == 69905);
+    CHECK(s.dev_enable.voiceplay == 1);
+    CHECK(s.gps.valid);
+    CHECK(s.gps.fix_quality == 0);      // V-52: the receiver is off
+    CHECK(s.cpu_aos.valid && s.cpu_nos.valid);
+    CHECK(s.cpu_aos.soc_id == "103");
+    CHECK(s.cpu_nos.soc_id == "106");
+    CHECK(s.cpu_aos.package_temp_c == 39);
+    CHECK(s.cpu_aos.cur_freq_khz.size() == 8);
+    CHECK(s.cpu_aos.gov_policy.size() == 8);
+    // 11 S9.8.3: this build is STD and has no GOS group. Tolerated by NOT
+    // being there rather than by an empty host -- valid stays false.
+    CpuHostStatus gos;
+    CHECK(gos.valid == false);
+  }
+
+  // ---- one temperature array without the other is NOT a valid pair ------
+  {
+    // Motor and Driver are read together or not at all. With only one of them
+    // the other publishes sixteen zeros under its own name, and 0 degrees is
+    // a plausible reading for a cold joint -- so "half the group arrived"
+    // would go out looking like a measurement.
+    const Bytes p = Wrap(
+        "{\"BatteryList\":[],"
+        " \"DeviceTemperature\":{\"Motor\":[1,2,3,4,5,6,7,8,9,10,11,12,13,"
+        "14,15,16]}}");
+    DeviceStatus s;
+    CHECK(ParseDeviceStatus(p.data(), p.size(), &s));
+    CHECK(s.temps.valid == false);
+  }
+
+  // ---- a Joint list that is not sixteen long is a malformed report -------
+  {
+    // Filling the tail with zeros would publish a leg folded flat at the
+    // origin, and a quadruped standing has every knee bent -- so a short list
+    // must read as ABSENT, not as a pose. This is the shape that makes a
+    // firmware change look like a mechanical fault.
+    const Bytes p = Wrap(
+        "{\"MotionStatus\":{\"LinearX\":0.5},"
+        " \"MotorStatus\":{\"Joint\":[0.1,0.2,0.3]}}");
+    MotionStatus m;
+    CHECK(ParseMotionStatus(p.data(), p.size(), &m));
+    CHECK(m.has_joints == false);
+    // The rest of the report still arrives -- 13 S6.5 ban 2: one bad group
+    // must not cost the whole message.
+    CHECK(m.linear_x == 0.5);
+  }
+
+  // ---- the sixteen joints arrive in the vendor's own order ---------------
+  {
+    const Bytes& f = golden.at("RX_00100001_00f00000");
+    MotionStatus m;
+    CHECK(ParseMotionStatus(Asdu(f), AsduLen(f), &m));
+    CHECK(m.has_joints);
+    // Guide 1.3.1.2: LeftFront{HipX,HipY,Knee,Wheel}, RightFront, LeftBack,
+    // RightBack. Index 1 and index 5 are the two front HipY readings, and
+    // they are mirrored on this capture -- forwarded as the vendor names
+    // them, NOT renumbered to make the sign look tidy.
+    CHECK(m.joint[1] > 1.0);
+    CHECK(m.joint[5] < -1.0);
+    CHECK(m.joint[9] < -1.0);
+    CHECK(m.joint[13] > 1.0);
   }
 
   // ---- an EMPTY SLOT is not a flat battery -------------------------------

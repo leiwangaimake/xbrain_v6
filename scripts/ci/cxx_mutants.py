@@ -605,6 +605,25 @@ REPORTS_MUTANTS = [
      "    }",
      "    if (b.present) ++s.present_count;\n"
      "    if (s.batteries.empty() || b.level < s.min_level) s.min_level = b.level;"),
+    # A short Joint list must read as ABSENT. Zero-filling publishes a leg
+    # folded flat at the origin, and a quadruped standing has every knee bent
+    # -- so the wrong answer looks like a mechanical fault rather than like a
+    # protocol change.
+    ("reports: a short Joint list is zero-filled instead of refused",
+     REPORTS_CC,
+     "  if (it == j.end() || !it->is_array() || it->size() != n) return false;",
+     "  if (it == j.end() || !it->is_array()) return false;"),
+    # MotorStatus is a SIBLING of MotionStatus inside Items, not a member of
+    # it. Reading it off `ms` finds nothing and leaves joints silently empty --
+    # exactly the state this file was in before 2026-09-28.
+    ("reports: MotorStatus looked up inside MotionStatus",
+     REPORTS_CC,
+     '  auto mo = items->find("MotorStatus");',
+     '  auto mo = ms->find("MotorStatus");'),
+    # Both temperature arrays or neither. One alone publishes sixteen zeros
+    # under the other name, and 0 degrees is a plausible reading.
+    ("reports: one temperature array alone marks the pair valid",
+     REPORTS_CC, "    s.temps.valid = m && d;", "    s.temps.valid = m || d;"),
     # The count is also min_level's validity flag, so it has to be a COUNT and
     # not a boolean: "one pack removed" and "both packs in" are different
     # answers to 11 S4.2's power_management question, and the health item wants
@@ -1378,6 +1397,57 @@ PAYLOADS_MUTANTS = [
      PAYLOADS_CC,
      '  a.Raw(",\\"attitude\\":{\\"roll_rad\\":");',
      '  a.Raw(",\\"rpy\\":{\\"roll\\":");'),
+    # 11 S9.8.2 `joints` and 11 S9.8.3 `motor_temp_c` are the SAME sixteen
+    # joints in the SAME vendor order (guide 1.3.1.2). Transposing the two
+    # loops still yields a well-formed object with the right sixteen numbers in
+    # it -- which is why the tests assert index 4 (the first RightFront value)
+    # and not just index 0.
+    ("payloads: the joint grouping transposes leg and joint",
+     PAYLOADS_CC,
+     "        a.Num(in.joint[leg * 4 + j]);",
+     "        a.Num(in.joint[j * 4 + leg]);"),
+    ("payloads: motor_temp_c transposes leg and joint",
+     PAYLOADS_CC,
+     "        a.Num(in.temps.motor[idx]);",
+     "        a.Num(in.temps.motor[(idx % 4) * 4 + idx / 4]);"),
+    # 11 S9.8.3 wants the absent case to be null, not a zeroed object: 0
+    # degrees, 0 satellites and load_power 0 are all plausible readings, so a
+    # zeroed group is indistinguishable from a real one.
+    ("payloads: an unreported device group published as a zeroed object",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"dev_enable\\":");\n  if (!in.dev_enable.valid) {',
+     '  a.Raw(",\\"dev_enable\\":");\n  if (false) {'),
+    ("payloads: a CPU host that never reported published as zeros",
+     PAYLOADS_CC,
+     "  if (!h.valid) {\n"
+     "    // A STD machine has no GOS, and a host that did not report is absent --\n"
+     "    // not a host running at 0 degrees (11 S9.8.3 asks for tolerance here).\n"
+     '    a->Raw("null");\n'
+     "    return;\n"
+     "  }",
+     "  if (false) {\n"
+     '    a->Raw("null");\n'
+     "    return;\n"
+     "  }"),
+    # 13 BAT-2 / V-55: the named view stays null while the index mapping is
+    # unknown, and BAT-4 forbids even SAYING "left" in that state.
+    ("payloads: chassis_device claims a known battery mapping",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"battery\\":null,\\"battery_mapping\\":\\"unknown\\"");',
+     '  a.Raw(",\\"battery\\":null,\\"battery_mapping\\":\\"known\\"");'),
+    # 11 S9.8.3 lists `led` and the device report has no LED group. Filling it
+    # from the DevEnable bits is the same "one value, two shapes" defect the
+    # charge field had.
+    ("payloads: led filled from the dev_enable bits",
+     PAYLOADS_CC,
+     '  a.Raw(",\\"led\\":null");',
+     '  a.Raw(",\\"led\\":{\\"fill_front\\":1,\\"fill_back\\":1}");'),
+    # The vendor guide has no interactive/application frequency split, so a
+    # number in freq_int / freq_app would be invented (11 S9.8.3 registration).
+    ("payloads: cpu freq_int invented from the current frequency",
+     PAYLOADS_CC,
+     '  a->Raw(",\\"freq_int\\":null,\\"freq_app\\":null,\\"soc_id\\":");',
+     '  a->Raw(",\\"freq_int\\":0,\\"freq_app\\":0,\\"soc_id\\":");'),
     # 11 S9.8.2 v0.2 deleted payload_kg -- the chassis marks Payload an INVALID
     # parameter. Putting it back publishes a constant 0.0 that reads as a load
     # measurement. The mutant re-adds it as a literal, since the struct member

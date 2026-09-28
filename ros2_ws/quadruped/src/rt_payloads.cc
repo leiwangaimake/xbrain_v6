@@ -264,6 +264,82 @@ void PowerManagementName(Appender* a, int raw) {
   a->Str(buf);
 }
 
+// 11 S9.8.2's leg prefixes and the four joints per leg, in the vendor's own
+// Joint[16] order (guide 1.3.1.2: LeftFront{HipX,HipY,Knee,Wheel}, then
+// RightFront, LeftBack, RightBack). ONE table, used by both `joints` on the
+// motion report and `motor_temp_c` on the device report -- the two are the
+// same sixteen joints and a second copy is how index 9 comes to mean two
+// different legs.
+constexpr const char* kLegNames[4] = {"lf", "rf", "lb", "rb"};
+constexpr const char* kJointNames[4] = {"hip_x_rad", "hip_y_rad", "knee_rad",
+                                        "wheel_radps"};
+// The same four joints under the names motor_temp_c uses -- no unit suffix,
+// because that key's suffix is on the field itself (11 S9.8.3's example is
+// lf_hip_x_motor / lf_hip_x_driver).
+constexpr const char* kJointStems[4] = {"hip_x", "hip_y", "knee", "wheel"};
+
+// A JSON array of ints from a vector. Empty vector -> [], never null: the
+// chassis sends one entry per core, and an empty array says "the group was
+// there and carried nothing", which is a different fact from "no group".
+void IntArray(Appender* a, const std::vector<int>& v) {
+  a->Raw("[");
+  for (std::size_t i = 0; i < v.size(); ++i) {
+    if (i != 0) a->Raw(",");
+    a->Int(v[i]);
+  }
+  a->Raw("]");
+}
+
+void StrArray(Appender* a, const std::vector<std::string>& v) {
+  a->Raw("[");
+  for (std::size_t i = 0; i < v.size(); ++i) {
+    if (i != 0) a->Raw(",");
+    a->Str(v[i].c_str());
+  }
+  a->Raw("]");
+}
+
+// One CPU host. 11 S9.8.3's example names temp_c / freq_int / freq_app; only
+// the first has a source (PackageTemp). The other two are published as NULL
+// rather than omitted or faked -- see the registration in 11 S9.8.3: the
+// vendor guide has no interactive/application frequency split at all, so a
+// number there would be invented. Everything the guide DOES define follows,
+// under the chassis's own names.
+void CpuHost(Appender* a, const char* name, const chs_a::CpuHostStatus& h) {
+  // No leading comma: the caller separates the two hosts, so this object does
+  // not have to know whether it is first. (WriteChassisBasic's OpenSet does
+  // the opposite and needs a field ahead of it -- two conventions in one file
+  // is a trap, so this one says which it is.)
+  a->Raw("\"");
+  a->Raw(name);
+  a->Raw("\":");
+  if (!h.valid) {
+    // A STD machine has no GOS, and a host that did not report is absent --
+    // not a host running at 0 degrees (11 S9.8.3 asks for tolerance here).
+    a->Raw("null");
+    return;
+  }
+  a->Raw("{\"temp_c\":");
+  a->Int(h.package_temp_c);
+  a->Raw(",\"freq_int\":null,\"freq_app\":null,\"soc_id\":");
+  a->Str(h.soc_id.c_str());
+  a->Raw(",\"avg_util_pct\":");
+  a->Int(h.avg_util_pct);
+  a->Raw(",\"util_pct\":");
+  IntArray(a, h.util_pct);
+  a->Raw(",\"temps_c\":");
+  IntArray(a, h.temps_c);
+  a->Raw(",\"cur_freq_khz\":");
+  IntArray(a, h.cur_freq_khz);
+  a->Raw(",\"hw_max_freq_khz\":");
+  IntArray(a, h.hw_max_freq_khz);
+  a->Raw(",\"hw_min_freq_khz\":");
+  IntArray(a, h.hw_min_freq_khz);
+  a->Raw(",\"gov_policy\":");
+  StrArray(a, h.gov_policy);
+  a->Raw("}");
+}
+
 }  // namespace
 
 std::size_t WriteHelloAck(const HelloAckInput& in, char* out,
@@ -1012,6 +1088,35 @@ std::size_t WriteChassisMotion(const chs_a::MotionStatus& in, char* out,
   // there is nothing left to publish by accident.
   a.Raw(",\"remain_mile_km\":");
   a.Num(in.remain_mile);
+  // 11 S9.8.2 `joints`, MotorStatus's sixteen angles grouped by leg. Missing
+  // entirely until 2026-09-28: the contract listed the block AND the leg
+  // prefix table, and the parser never read the group.
+  //
+  // Null when the report did not carry a well-formed Joint[16] -- not an
+  // object of zeros. A quadruped standing has every knee bent; sixteen zeros
+  // is a pose the machine cannot hold, and publishing it would look like a
+  // reading rather than like an absence.
+  a.Raw(",\"joints\":");
+  if (!in.has_joints) {
+    a.Raw("null");
+  } else {
+    a.Raw("{");
+    for (std::size_t leg = 0; leg < 4; ++leg) {
+      if (leg != 0) a.Raw(",");
+      a.Raw("\"");
+      a.Raw(kLegNames[leg]);
+      a.Raw("\":{");
+      for (std::size_t j = 0; j < 4; ++j) {
+        if (j != 0) a.Raw(",");
+        a.Raw("\"");
+        a.Raw(kJointNames[j]);
+        a.Raw("\":");
+        a.Num(in.joint[leg * 4 + j]);
+      }
+      a.Raw("}");
+    }
+    a.Raw("}");
+  }
   a.Raw("}");
   return a.Finish();
 }
@@ -1059,7 +1164,135 @@ std::size_t WriteChassisDevice(const chs_a::DeviceStatus& in, char* out,
     a.Str(b.serial.c_str());
     a.Raw("}");
   }
-  a.Raw("]}");
+  a.Raw("]");
+
+  // 11 S9.8.3 `battery` -- the NAMED view, null while the index mapping is
+  // unknown (13 BAT-2, V-55 still open: the serial that was supposed to
+  // disambiguate came back empty on the real machine). `list[]` above is the
+  // authoritative one (BAT-1) and the mapping field says which state we are
+  // in, exactly as PowerState does. Filling left/right from array order would
+  // be a guess presented as a measurement, and BAT-4 forbids even SAYING
+  // "left" in that state.
+  a.Raw(",\"battery\":null,\"battery_mapping\":\"unknown\"");
+
+  // 11 S9.8.3 `motor_temp_c` -- 32 readings, one motor and one driver per
+  // joint, keyed by the SAME leg/joint names `joints` uses on the motion
+  // report. Missing entirely until 2026-09-28 although the chassis has been
+  // sending DeviceTemperature twice a second all along.
+  a.Raw(",\"motor_temp_c\":");
+  if (!in.temps.valid) {
+    a.Raw("null");
+  } else {
+    a.Raw("{");
+    for (std::size_t leg = 0; leg < 4; ++leg) {
+      for (std::size_t j = 0; j < 4; ++j) {
+        const std::size_t idx = leg * 4 + j;
+        if (idx != 0) a.Raw(",");
+        // "<leg>_<joint>_motor" then "..._driver", the two names 11 S9.8.3's
+        // example spells out.
+        a.Raw("\"");
+        a.Raw(kLegNames[leg]);
+        a.Raw("_");
+        a.Raw(kJointStems[j]);
+        a.Raw("_motor\":");
+        a.Num(in.temps.motor[idx]);
+        a.Raw(",\"");
+        a.Raw(kLegNames[leg]);
+        a.Raw("_");
+        a.Raw(kJointStems[j]);
+        a.Raw("_driver\":");
+        a.Num(in.temps.driver[idx]);
+      }
+    }
+    a.Raw("}");
+  }
+
+  // 11 S9.8.3 `led`. NULL, and that is the honest answer rather than a
+  // missing key: the device report has no LED group at all. `Led` in the
+  // vendor guide is a COMMAND (1.2.7 custom light language, Type 0x00100005),
+  // not a report, and the only LED facts the chassis reports are the
+  // DevEnable bits below -- which are enable states, not the fill-light
+  // readings 11 S9.8.3's example shows. Publishing led_host/led_ext a second
+  // time under this name would be the same "one value, two shapes" defect the
+  // charge field had. Registered in 11 S9.8.3 as having no source this batch.
+  a.Raw(",\"led\":null");
+
+  // 11 S9.8.3 `gps` -- the chassis's own receiver, REFERENCE ONLY (our G90
+  // RTK does the positioning). Forwarded with the contract's own key names.
+  a.Raw(",\"gps\":");
+  if (!in.gps.valid) {
+    a.Raw("null");
+  } else {
+    a.Raw("{\"lat\":");
+    a.Num(in.gps.latitude);
+    a.Raw(",\"lon\":");
+    a.Num(in.gps.longitude);
+    a.Raw(",\"alt\":");
+    a.Num(in.gps.altitude);
+    a.Raw(",\"speed\":");
+    a.Num(in.gps.speed);
+    a.Raw(",\"course\":");
+    a.Num(in.gps.course);
+    a.Raw(",\"fix_quality\":");
+    a.Int(in.gps.fix_quality);
+    a.Raw(",\"num_satellites\":");
+    a.Int(in.gps.num_satellites);
+    a.Raw(",\"hdop\":");
+    a.Num(in.gps.hdop);
+    a.Raw(",\"vdop\":");
+    a.Num(in.gps.vdop);
+    a.Raw(",\"pdop\":");
+    a.Num(in.gps.pdop);
+    a.Raw(",\"visible_satellites\":");
+    a.Int(in.gps.visible_satellites);
+    a.Raw("}");
+  }
+
+  // 11 S9.8.3 `dev_enable`. load_power is the one the health model reads
+  // (13 V-56): our payload bay may be fed from it, so "the chassis switched
+  // external power off" has to be visible somewhere.
+  a.Raw(",\"dev_enable\":");
+  if (!in.dev_enable.valid) {
+    a.Raw("null");
+  } else {
+    a.Raw("{\"fan_speed\":");
+    a.Int(in.dev_enable.fan_speed);
+    a.Raw(",\"load_power\":");
+    a.Int(in.dev_enable.load_power);
+    a.Raw(",\"led_host\":");
+    a.Int(in.dev_enable.led_host);
+    a.Raw(",\"led_ext\":");
+    a.Int(in.dev_enable.led_ext);
+    a.Raw(",\"fp\":");
+    a.Int(in.dev_enable.fp);
+    // 0 off / 1 on / 2 starting -- three values, so this is NOT a bool
+    // (13 S7.2 v1.3 measured the third one).
+    a.Raw(",\"lidar\":");
+    a.Int(in.dev_enable.lidar);
+    a.Raw(",\"gps\":");
+    a.Int(in.dev_enable.gps);
+    a.Raw(",\"video\":");
+    a.Int(in.dev_enable.video);
+    a.Raw(",\"gps_mode\":");
+    a.Int(in.dev_enable.gps_mode);
+    a.Raw(",\"led\":");
+    a.Int(in.dev_enable.led);
+    a.Raw(",\"voice_control\":{\"voice\":");
+    a.Int(in.dev_enable.voice);
+    a.Raw(",\"voiceplay\":");
+    a.Int(in.dev_enable.voiceplay);
+    a.Raw("}}");
+  }
+
+  // 11 S9.8.3 `cpu`, two hosts. See CpuHost for why freq_int / freq_app are
+  // null and everything else carries the chassis's own names.
+  a.Raw(",\"cpu\":{");
+  CpuHost(&a, "aos", in.cpu_aos);
+  a.Raw(",");
+  CpuHost(&a, "nos", in.cpu_nos);
+  a.Raw("}");
+
+  a.Raw("}");
   return a.Finish();
 }
 

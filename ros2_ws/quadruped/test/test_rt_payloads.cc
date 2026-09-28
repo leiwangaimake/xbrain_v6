@@ -893,6 +893,42 @@ int main(int argc, char** argv) {
         // The key must be ABSENT, not null -- null still reads as "the field
         // exists and we have no value".
         CHECK(!jm.contains("payload_kg"));
+        // *** 11 S9.8.2 `joints`, from MotorStatus.Joint[16]. The whole block
+        // was missing until 2026-09-28 -- the contract listed it AND the leg
+        // prefix table, and the parser never looked at the group (MotorStatus
+        // is a SIBLING of MotionStatus inside Items, not a member of it).
+        //
+        // The values are the capture's own, in the vendor's Joint[16] order
+        // (guide 1.3.1.2): index 0..3 are LeftFront Hip X / Hip Y / Knee /
+        // Wheel, then RightFront, LeftBack, RightBack.
+        CHECK(Close(jm["joints"]["lf"]["hip_x_rad"], 0.009799718856811523));
+        CHECK(Close(jm["joints"]["lf"]["knee_rad"], 0.00804149080067873));
+        CHECK(Close(jm["joints"]["lf"]["wheel_radps"], 0.0036286364775151014));
+        // Index 4 is the FIRST RightFront value. Asserting it is what catches
+        // an off-by-one in the leg grouping: a writer that ran the legs in
+        // groups of three, or that transposed leg and joint, still produces a
+        // well-formed object with the right sixteen numbers in it.
+        CHECK(Close(jm["joints"]["rf"]["hip_x_rad"], -0.005199711304157972));
+        CHECK(Close(jm["joints"]["lb"]["hip_x_rad"], -0.015360607765614986));
+        CHECK(Close(jm["joints"]["rb"]["hip_x_rad"], 0.005336006172001362));
+        // *** hip_y is mirrored left/right (+1.048 vs -1.051) on this capture.
+        // That reads like an abduction axis rather than a thigh pitch, and it
+        // is NOT a reason to renumber: the guide names index 1 LeftFrontHipY
+        // and this forwards the vendor's naming. Pinned here so the next
+        // reader does not "fix" it.
+        //
+        // Asserted as SIGN plus magnitude rather than as an exact value: the
+        // wire carries "%.6g", so -1.0512137 goes out as -1.05121 and an
+        // exact 1e-6 relative comparison fails on the writer's formatting
+        // rather than on anything the test is about. The small-magnitude
+        // joints above keep their exact values because six significant digits
+        // is lossless there -- which is the same asymmetry TimeSec exists to
+        // avoid on the timestamps.
+        CHECK(jm["joints"]["lf"]["hip_y_rad"].get<double>() > 1.0);
+        CHECK(jm["joints"]["rf"]["hip_y_rad"].get<double>() < -1.0);
+        CHECK(jm["joints"]["lb"]["hip_y_rad"].get<double>() < -1.0);
+        CHECK(jm["joints"]["rb"]["hip_y_rad"].get<double>() > 1.0);
+        CHECK(jm["joints"].size() == 4);
         CHECK(jm["imu"]["acc"].size() == 3);
         CHECK(jm["imu"]["omega"].size() == 3);
         CHECK(Close(jm["imu"]["omega"][2], m2.omega_z));
@@ -904,6 +940,16 @@ int main(int argc, char** argv) {
       CHECK(chs_a::ParseDeviceStatus(Asdu(df), AsduLen(df), &d));
       n = WriteChassisDevice(d, out, sizeof(out));
       CHECK(n > 0);
+      // *** The device object is by far the largest of the four (32 joint
+      // temperatures plus two CPU hosts of per-core arrays), and
+      // RtBridge::PublishReports assembles all four into ONE 8192-byte stack
+      // buffer. On overflow the writer returns 0 and PublishReports simply
+      // does not publish -- the key goes QUIET, with no error anywhere. That
+      // failure is indistinguishable from a chassis that stopped reporting,
+      // so the margin is asserted rather than assumed. 2439 bytes on this
+      // capture; the CPU arrays are per-core and the core count is the
+      // chassis's, so the headroom is what is being pinned, not the number.
+      CHECK(n < 8192 / 2);
       Json jd = Json::parse(out, out + n, nullptr, false);
       CHECK(!jd.is_discarded());
       if (!jd.is_discarded()) {
@@ -927,6 +973,86 @@ int main(int argc, char** argv) {
           CHECK(jd["list"][i]["level_pct"] == d.batteries[i].level);
           CHECK(jd["list"][i]["present"] == d.batteries[i].present);
         }
+        // *** The four blocks 11 S9.8.3 lists that this writer did not carry
+        // until 2026-09-28. The chassis has been sending all of them twice a
+        // second since the link came up; the header even said "everything
+        // else is forwarded verbatim from the raw buffer", and nothing
+        // forwarded it.
+        //
+        // 13 BAT-2: the NAMED view stays null while V-55 is open, with the
+        // mapping field saying so. list[] above is the authoritative one.
+        CHECK(jd["battery"].is_null());
+        CHECK(jd["battery_mapping"] == "unknown");
+
+        // motor_temp_c: 32 readings, keyed by the SAME leg/joint names the
+        // motion report's `joints` uses -- one table, so index 9 cannot come
+        // to mean two different legs. Values are the capture's own:
+        // Motor[0] = 37.79, Driver[0] = 42.32.
+        CHECK(jd["motor_temp_c"].size() == 32);
+        CHECK(Close(jd["motor_temp_c"]["lf_hip_x_motor"], 37.790000915527344));
+        CHECK(Close(jd["motor_temp_c"]["lf_hip_x_driver"], 42.31999969482422));
+        // Index 4 again: the first RightFront reading, which is what catches
+        // a transposed leg/joint loop.
+        CHECK(Close(jd["motor_temp_c"]["rf_hip_x_motor"], 37.04999923706055));
+        CHECK(Close(jd["motor_temp_c"]["rb_wheel_driver"], 42.540000915527344));
+
+        // 11 S9.8.3 lists `led`, and the device report has NO led group --
+        // the vendor's Led is a COMMAND (guide 1.2.7), not a report. null,
+        // and NOT the DevEnable bits under a second name: that would be the
+        // same "one value, two shapes" defect charge had.
+        CHECK(jd["led"].is_null());
+
+        // gps: reference only (our G90 RTK positions the robot). All zeros on
+        // this capture with FixQuality 0, which is the honest reading of a
+        // receiver with no fix -- asserted so a writer that dropped the block
+        // is not confused with a chassis that has no fix.
+        CHECK(jd["gps"]["fix_quality"] == 0);
+        CHECK(jd["gps"]["num_satellites"] == 0);
+        CHECK(jd["gps"].contains("lat") && jd["gps"].contains("lon"));
+        CHECK(jd["gps"].contains("hdop") && jd["gps"].contains("pdop"));
+
+        // dev_enable: load_power is the one the health model reads (13 V-56).
+        // lidar is an INT not a bool -- 0 off / 1 on / 2 starting.
+        CHECK(jd["dev_enable"]["load_power"] == 1);
+        CHECK(jd["dev_enable"]["lidar"] == 1);
+        CHECK(jd["dev_enable"]["lidar"].is_number());
+        CHECK(jd["dev_enable"]["gps_mode"] == 69905);
+        CHECK(jd["dev_enable"]["voice_control"]["voiceplay"] == 1);
+
+        // cpu: two hosts on a STD machine. temp_c comes from PackageTemp;
+        // freq_int / freq_app are NULL because the vendor guide has no
+        // interactive/application frequency split at all -- a number there
+        // would be invented (registered in 11 S9.8.3).
+        CHECK(jd["cpu"]["aos"]["soc_id"] == "103");
+        CHECK(jd["cpu"]["aos"]["temp_c"] == 39);
+        CHECK(jd["cpu"]["aos"]["freq_int"].is_null());
+        CHECK(jd["cpu"]["aos"]["freq_app"].is_null());
+        CHECK(jd["cpu"]["aos"]["avg_util_pct"] == 14);
+        CHECK(jd["cpu"]["aos"]["cur_freq_khz"].size() == 8);
+        CHECK(jd["cpu"]["aos"]["gov_policy"][0] == "performance");
+        CHECK(jd["cpu"]["nos"]["soc_id"] == "106");
+        CHECK(jd["cpu"]["nos"]["temp_c"] == 48);
+      }
+
+      // --- device: an absent group is null, never a zeroed one ------------
+      {
+        // 11 S9.8.3 warns that a STD build has no GOS and the parser must
+        // tolerate it. The same rule covers a firmware that stops sending a
+        // group: null says "not reported", a zeroed object says "reported,
+        // and everything reads zero" -- and 0 degrees, 0 satellites and
+        // load_power 0 are all plausible readings.
+        chs_a::DeviceStatus bare;
+        bare.batteries.clear();
+        const std::size_t bn = WriteChassisDevice(bare, out, sizeof(out));
+        const Json jb2 = ParseOrFail("ChassisDevice/bare", out, bn);
+        CHECK(jb2["motor_temp_c"].is_null());
+        CHECK(jb2["gps"].is_null());
+        CHECK(jb2["dev_enable"].is_null());
+        CHECK(jb2["cpu"]["aos"].is_null());
+        CHECK(jb2["cpu"]["nos"].is_null());
+        // The keys are still THERE. An absent key and a null one are
+        // different claims, and the contract example carries all of them.
+        CHECK(jb2.contains("motor_temp_c") && jb2.contains("led"));
       }
 
       // --- fault ---------------------------------------------------------

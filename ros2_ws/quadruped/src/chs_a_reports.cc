@@ -164,6 +164,36 @@ bool GetBool(const Json& j, const char* key, bool dflt) {
   return dflt;
 }
 
+// A FIXED-length double array. Returns false unless the key is an array of
+// exactly `n` numbers: a short Joint list is a malformed report, not a robot
+// with fewer legs, and filling the tail with zeros would publish a leg folded
+// flat at the origin. Partial reads are the shape that makes a protocol change
+// look like a mechanical fault.
+bool GetFixedDoubleArray(const Json& j, const char* key, double* out,
+                         std::size_t n) {
+  auto it = j.find(key);
+  if (it == j.end() || !it->is_array() || it->size() != n) return false;
+  std::size_t i = 0;
+  for (const Json& e : *it) {
+    if (!e.is_number()) return false;
+    out[i++] = e.get<double>();
+  }
+  return true;
+}
+
+// A variable-length int array. Unlike the fixed one this tolerates any length:
+// the CPU arrays are per-core and the core count is the chassis's business,
+// not ours -- pinning it here would turn a different SoC into a parse failure.
+std::vector<int> GetIntArray(const Json& j, const char* key) {
+  std::vector<int> out;
+  auto it = j.find(key);
+  if (it == j.end() || !it->is_array()) return out;
+  for (const Json& e : *it) {
+    if (e.is_number()) out.push_back(static_cast<int>(e.get<std::int64_t>()));
+  }
+  return out;
+}
+
 std::vector<std::string> GetStringArray(const Json& j, const char* key) {
   std::vector<std::string> out;
   auto it = j.find(key);
@@ -175,6 +205,24 @@ std::vector<std::string> GetStringArray(const Json& j, const char* key) {
     out.push_back(e.is_string() ? e.get<std::string>() : e.dump());
   }
   return out;
+}
+
+// One CPU host out of the CPU group. A helper rather than two copies: the
+// blocks are identical in shape and the only thing that differs is which key
+// they live under, so a copy is two places for a field name to be missed.
+void ParseCpuHost(const Json& cpu, const char* key, CpuHostStatus* out) {
+  auto h = cpu.find(key);
+  if (h == cpu.end() || !h->is_object()) return;
+  out->valid = true;
+  out->soc_id = GetString(*h, "SocId");
+  out->avg_util_pct = static_cast<int>(GetInt(*h, "AvgUtil", 0));
+  out->package_temp_c = static_cast<int>(GetInt(*h, "PackageTemp", 0));
+  out->util_pct = GetIntArray(*h, "Util");
+  out->temps_c = GetIntArray(*h, "Temps");
+  out->cur_freq_khz = GetIntArray(*h, "CurFreqKhz");
+  out->hw_max_freq_khz = GetIntArray(*h, "HwMaxFreqKhz");
+  out->hw_min_freq_khz = GetIntArray(*h, "HwMinFreqKhz");
+  out->gov_policy = GetStringArray(*h, "GovPolicy");
 }
 
 // Parse the ASDU and descend to PatrolDevice.Items, the object every report
@@ -356,6 +404,13 @@ bool ParseMotionStatus(const std::uint8_t* asdu, std::size_t len, MotionStatus* 
   s.omega_x = GetDouble(*ms, "OmegaX", 0.0);
   s.omega_y = GetDouble(*ms, "OmegaY", 0.0);
   s.omega_z = GetDouble(*ms, "OmegaZ", 0.0);
+  // MotorStatus is a SIBLING group of MotionStatus inside Items, not a member
+  // of it -- reading it off `ms` finds nothing and leaves joints silently
+  // empty, which is exactly the state this file was in before 2026-09-28.
+  auto mo = items->find("MotorStatus");
+  if (mo != items->end() && mo->is_object()) {
+    s.has_joints = GetFixedDoubleArray(*mo, "Joint", s.joint, 16);
+  }
   *out = s;
   return true;
 }
@@ -406,6 +461,69 @@ bool ParseDeviceStatus(const std::uint8_t* asdu, std::size_t len, DeviceStatus* 
     }
     s.batteries.push_back(b);
   }
+
+  // DeviceTemperature: two readings per joint, same sixteen joints and same
+  // order as MotionStatus::joint. Fixed length on purpose -- see
+  // GetFixedDoubleArray.
+  auto dt = items->find("DeviceTemperature");
+  if (dt != items->end() && dt->is_object()) {
+    const bool m = GetFixedDoubleArray(*dt, "Motor", s.temps.motor, 16);
+    const bool d = GetFixedDoubleArray(*dt, "Driver", s.temps.driver, 16);
+    // Both or neither. One of the two alone would publish sixteen zeros under
+    // the other name, and 0 degrees is a plausible reading.
+    s.temps.valid = m && d;
+  }
+
+  // DevEnable. The names are the chassis's own (guide 1.3.1.3), including the
+  // nested VoiceControl pair -- 13 S7.2 v1.3 measured every one of them.
+  auto de = items->find("DevEnable");
+  if (de != items->end() && de->is_object()) {
+    s.dev_enable.valid = true;
+    s.dev_enable.fan_speed = static_cast<int>(GetInt(*de, "FanSpeed", 0));
+    s.dev_enable.load_power = static_cast<int>(GetInt(*de, "LoadPower", 0));
+    s.dev_enable.led_host = static_cast<int>(GetInt(*de, "LedHost", 0));
+    s.dev_enable.led_ext = static_cast<int>(GetInt(*de, "LedExt", 0));
+    s.dev_enable.fp = static_cast<int>(GetInt(*de, "FP", 0));
+    s.dev_enable.lidar = static_cast<int>(GetInt(*de, "Lidar", 0));
+    s.dev_enable.gps = static_cast<int>(GetInt(*de, "GPS", 0));
+    s.dev_enable.video = static_cast<int>(GetInt(*de, "Video", 0));
+    s.dev_enable.gps_mode = static_cast<int>(GetInt(*de, "GPSMode", 0));
+    s.dev_enable.led = static_cast<int>(GetInt(*de, "LED", 0));
+    auto vc = de->find("VoiceControl");
+    if (vc != de->end() && vc->is_object()) {
+      s.dev_enable.voice = static_cast<int>(GetInt(*vc, "Voice", 0));
+      s.dev_enable.voiceplay = static_cast<int>(GetInt(*vc, "Voiceplay", 0));
+    }
+  }
+
+  // GPS. Forwarded, never consumed: 11 S9.8.3 says positioning runs on our own
+  // G90 RTK and this is reference only.
+  auto gp = items->find("GPS");
+  if (gp != items->end() && gp->is_object()) {
+    s.gps.valid = true;
+    s.gps.latitude = GetDouble(*gp, "Latitude", 0.0);
+    s.gps.longitude = GetDouble(*gp, "Longitude", 0.0);
+    s.gps.altitude = GetDouble(*gp, "Altitude", 0.0);
+    s.gps.speed = GetDouble(*gp, "Speed", 0.0);
+    s.gps.course = GetDouble(*gp, "Course", 0.0);
+    s.gps.hdop = GetDouble(*gp, "HDOP", 0.0);
+    s.gps.vdop = GetDouble(*gp, "VDOP", 0.0);
+    s.gps.pdop = GetDouble(*gp, "PDOP", 0.0);
+    s.gps.fix_quality = static_cast<int>(GetInt(*gp, "FixQuality", 0));
+    s.gps.num_satellites = static_cast<int>(GetInt(*gp, "NumSatellites", 0));
+    s.gps.visible_satellites =
+        static_cast<int>(GetInt(*gp, "VisibleSatellites", 0));
+  }
+
+  // CPU. Two hosts on this machine; 11 S9.8.3 warns that GOS is absent on a
+  // STD build and that the parser must tolerate it -- which the find() below
+  // does by leaving `valid` false rather than by inventing an empty host.
+  auto cp = items->find("CPU");
+  if (cp != items->end() && cp->is_object()) {
+    ParseCpuHost(*cp, "AOS", &s.cpu_aos);
+    ParseCpuHost(*cp, "NOS", &s.cpu_nos);
+  }
+
   *out = s;
   return true;
 }
