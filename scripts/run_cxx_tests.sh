@@ -7,9 +7,10 @@
 # Brief: Run every built C++ test binary with the cwd, argv and env it needs
 #
 # Description:
-# What this solves. The two C++ packages in ros2_ws (quadruped, chassis_relay)
-# build 25 test binaries between them, and five of them do NOT pass when they
-# are simply executed. Each failure looks like a real defect and is not:
+# What this solves. The C++ packages in ros2_ws that are ours -- quadruped,
+# chassis_relay and sensor (perception is another team's, out of scope here) --
+# build a set of test binaries between them, and five of those do NOT pass when
+# they are simply executed. Each failure looks like a real defect and is not:
 #
 #   * test_rt_session prints "FAIL session_factory.py path not passed as
 #     argv[1]" and exits non-zero. It has no default -- the comparison it
@@ -35,7 +36,7 @@
 #     apart, so it reports what is on disk and says so.
 #   * it does not replace ctest. ctest remains the in-tree gate that
 #     build_quadruped.sh runs; this is the out-of-tree one that also covers
-#     chassis_relay and that a human can point at a single binary.
+#     chassis_relay and sensor, and that a human can point at a single binary.
 #   * it does not judge test CONTENT. Exit status is the whole verdict.
 #
 # Two properties that make it usable as a gate (CLAUDE.md 8.1):
@@ -45,6 +46,13 @@
 #     number nobody can interpret (CLAUDE.md 3.2 form 6), and the way that
 #     goes wrong here is concrete: somebody adds test_foo.cc, everyone keeps
 #     seeing "all passed", and test_foo never ran once.
+#     This is not hypothetical: the guard below scanned only the quadruped and
+#     chassis_relay build dirs until 2026-09-28, so the nine sensor binaries
+#     were never listed AND never scanned -- the summary said "all passed" of a
+#     surface that did not include them. The scan surface is the list of build
+#     dirs in BUILD_DIRS; adding a row to TESTS without adding the package's
+#     build dir there reinstates exactly that hole, which is why the two are
+#     spelled once, side by side, rather than in two places.
 #
 # SKIP is never spelled as pass. When ROS is absent the three ROS-linked
 # binaries are reported as SKIP with the reason, and the script still exits
@@ -65,9 +73,17 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 QUAD_DIR="$REPO_ROOT/ros2_ws/quadruped"
 RELAY_DIR="$REPO_ROOT/ros2_ws/chassis_relay"
+SENSOR_DIR="$REPO_ROOT/ros2_ws/sensor"
 QUAD_BUILD="$QUAD_DIR/build"
 RELAY_BUILD="$RELAY_DIR/build"
+SENSOR_BUILD="$SENSOR_DIR/build"
 ROS_SETUP="/opt/ros/humble/setup.bash"
+
+# The scan surface of the drift guard, spelled ONCE. Every build dir here is
+# both walked for unlisted binaries and named by at least one TESTS row; a
+# package listed in TESTS but missing here is listed-but-unwatched, which is
+# the hole that hid ros2_ws/sensor until 2026-09-28.
+BUILD_DIRS=("$QUAD_BUILD" "$RELAY_BUILD" "$SENSOR_BUILD")
 
 # The three argv payloads, spelled once. These are the same values the
 # add_test lines compute from CMAKE_CURRENT_SOURCE_DIR -- grep them with
@@ -88,7 +104,11 @@ for arg in "$@"; do
     --allow-skip) allow_skip=1 ;;
     --list)       list_only=1 ;;
     -h|--help)
-      sed -n '2,60p' "${BASH_SOURCE[0]}"
+      # Print the header block: line 2 through the last comment line before the
+      # first line of code. A hard-coded end line (it was '60') silently starts
+      # truncating -- or spilling code into the help text -- the first time the
+      # header grows, which is what happened when sensor was added.
+      sed -n '2,/^[^#]/p' "${BASH_SOURCE[0]}" | sed '$d'
       exit 0
       ;;
     -*)
@@ -147,6 +167,9 @@ fi
 #     works but leaves the files behind under a name nobody recognises.
 #   * the relay binaries run from the relay package dir for the same reason
 #     the quadruped ones run from theirs.
+#   * the sensor binaries run from the sensor package dir, except
+#     test_rtk_config: it writes its fixture to the CWD and takes no argv, so
+#     it is the one row whose cwd is a build dir (see the row's own note).
 # ---------------------------------------------------------------------------
 TESTS=(
   # -- quadruped: pure unit tests, no argv, no environment -----------------
@@ -188,6 +211,26 @@ TESTS=(
   "test_relay_core|$RELAY_BUILD|$RELAY_DIR|0|"
   "test_relay_keys|$RELAY_BUILD|$RELAY_DIR|0|$CONTRACT_MD"
   "test_relay_config|$RELAY_BUILD|$RELAY_DIR|0|$RELAY_BUILD"
+  # -- sensor (rtk_driver): plain-CMake package, no ament, no rclcpp --------
+  # Nine binaries from one foreach in ros2_ws/sensor/CMakeLists.txt, all
+  # offline: no argv, no fixture file, no hardware, no ROS (the package is
+  # built with plain cmake precisely so it links none).
+  "test_clock_status|$SENSOR_BUILD|$SENSOR_DIR|0|"
+  "test_gnss_fix|$SENSOR_BUILD|$SENSOR_DIR|0|"
+  "test_gnss_heading|$SENSOR_BUILD|$SENSOR_DIR|0|"
+  "test_heading_resolver|$SENSOR_BUILD|$SENSOR_DIR|0|"
+  "test_nmea_parser|$SENSOR_BUILD|$SENSOR_DIR|0|"
+  "test_rtk_driver|$SENSOR_BUILD|$SENSOR_DIR|0|"
+  "test_serial_reopen|$SENSOR_BUILD|$SENSOR_DIR|0|"
+  "test_yaml_lite|$SENSOR_BUILD|$SENSOR_DIR|0|"
+  # -- sensor: writes a fixture into the CWD, so the cwd is the build dir ---
+  # test_rtk_config writes "test_rtk_cfg_tmp.yaml" beside itself and takes NO
+  # argv, so unlike test_quadruped_config / test_relay_config the directory
+  # cannot be handed to it -- the cwd IS the choice. The build dir is what its
+  # add_test gets from ctest (WORKING_DIRECTORY defaults to the binary dir) and
+  # it is git-ignored, so an aborted run leaves the temp file somewhere already
+  # ignored instead of in the source tree.
+  "test_rtk_config|$SENSOR_BUILD|$SENSOR_BUILD|0|"
 )
 
 if [ "$list_only" = "1" ]; then
@@ -202,7 +245,7 @@ fi
 # assertion that cannot go red.
 # ---------------------------------------------------------------------------
 unlisted=0
-for build_dir in "$QUAD_BUILD" "$RELAY_BUILD"; do
+for build_dir in "${BUILD_DIRS[@]}"; do
   [ -d "$build_dir" ] || continue
   for path in "$build_dir"/test_*; do
     [ -x "$path" ] || continue
