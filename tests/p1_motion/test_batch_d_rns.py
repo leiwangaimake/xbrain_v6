@@ -26,6 +26,8 @@ This whole file is removed once _legacy/ is consumed. Do NOT add new tests here.
 
 
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from xbrain.p1_motion.rns._legacy.audit_ring import RnsAuditRecord, RnsAuditRing
@@ -65,7 +67,13 @@ def test_rns_snapshot_frozen():
     snap = RnsSnapshot(grid_targets=(), d_free_forward_m=3.0,
                         lidar_available=True, grid_age_ms=50,
                         robot_vx_mps=1.0, robot_vy_mps=0.0)
-    with pytest.raises(Exception):
+    # FrozenInstanceError by name: it is the only exception that means
+    # dataclass(frozen=True). raises(Exception) is satisfied by any refusal at
+    # all -- a NamedTuple or a __slots__ class raises a bare AttributeError
+    # here -- so it cannot state which mechanism is doing the work
+    # (CLAUDE.md 3.2 form 1). Red-verified 2026-09-28 by flipping RnsSnapshot
+    # to frozen=False: DID NOT RAISE.
+    with pytest.raises(FrozenInstanceError):
         snap.d_free_forward_m = 2.0    # frozen
 
 

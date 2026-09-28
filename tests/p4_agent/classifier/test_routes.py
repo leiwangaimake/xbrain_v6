@@ -10,6 +10,8 @@ Description:
 """
 
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from xbrain.p4_agent.classifier import routes
@@ -84,5 +86,13 @@ def test_route_decision_is_frozen():
     """dataclass(frozen=True) invariant -- caller cannot mutate
     a decision after construction."""
     d = routes.RouteDecision(route=routes.ROUTE_BYPASS)
-    with pytest.raises(Exception):   # FrozenInstanceError inherits from AttributeError
+    # FrozenInstanceError by name. The old comment here already said the type
+    # -- "FrozenInstanceError inherits from AttributeError" -- and then
+    # asserted Exception anyway, which is the whole problem: the comment knew
+    # what was expected and the assertion did not. A RouteDecision refactored
+    # to __slots__ or to a NamedTuple raises a bare AttributeError here and
+    # raises(Exception) cannot tell it from the frozen one (CLAUDE.md 3.2
+    # form 1). Red-verified 2026-09-28 with frozen=True -> frozen=False:
+    # DID NOT RAISE.
+    with pytest.raises(FrozenInstanceError):
         d.route = "llm"   # type: ignore[misc]

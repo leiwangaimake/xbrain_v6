@@ -102,7 +102,8 @@ def test_backoff_is_exponential_and_capped():
     seq = [respawn_backoff_s(i) for i in range(1, 9)]
     assert seq[0] == MC.RESPAWN_BACKOFF_INITIAL_S
     # 单调不减
-    assert all(b >= a for a, b in zip(seq, seq[1:])), seq
+    # strict=False: 滑动配对, 右侧按构造少一个 (B905 的有意截断那一支).
+    assert all(b >= a for a, b in zip(seq, seq[1:], strict=False)), seq
     # 真的涨过(不是恒为初值)
     assert seq[3] > seq[0], seq
     # 封顶

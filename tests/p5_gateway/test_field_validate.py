@@ -292,11 +292,25 @@ def test_msg_id_and_task_id_regex():
             {"msg_id": "m id", "task_id": "t"},        # 空格
             {"msg_id": "x" * 129, "task_id": "t"}):    # 超长
         from xbrain.p5_gateway.inbound.cloud_inbound import InboundReject
-        try:
+        # pytest.raises, NO 不写 try/assert False/except.
+        #
+        # 原写法是 try: check_ids(bad); assert False; except InboundReject.
+        # 那条 assert False 是整段里唯一区分 "拒了" 与 "没拒" 的东西 -- 它一旦
+        # 不执行, check_ids 正常返回, 控制流直接走到 for 的下一轮, 四个非法 id
+        # 全部被放行而本条测试照样绿 (CLAUDE.md 3.2 形态一).
+        #
+        # *** 2026-09-28 实测把触发条件定死了, NO 不是 ruff B011 说的 "python -O
+        # 就会删": pytest 对它收集的测试模块做 assertion rewriting, 重写后的代码
+        # 不依赖 __debug__, 所以单开 -O 时 assert False 仍然执行 (实测: 注入
+        # "check_ids 不查格式" 变异体, python -O -m pytest => 红).
+        # 真正让它消失的是[重写被关掉]的那一刻 -- --assert=plain, 或者这段判据
+        # 被挪进一个 pytest 不收集的辅助模块. 实测: 同一个变异体下
+        #   python -O -m pytest --assert=plain  => 旧写法 GREEN (四个非法 id 全放行)
+        #                                       => 本写法 RED (DID NOT RAISE)
+        # pytest.raises 的 DID NOT RAISE 是 raise 不是 assert, 两种模式下都在.
+        with pytest.raises(InboundReject) as ei:
             check_ids(bad_data)
-            assert False, "非法 id 未被拒: %s" % bad_data
-        except InboundReject as exc:
-            assert exc.fields["error_code"] in (1002, 1003)
+        assert ei.value.fields["error_code"] in (1002, 1003), bad_data
 
 
 def test_missing_id_is_1002_not_1003():
@@ -304,8 +318,8 @@ def test_missing_id_is_1002_not_1003():
     from xbrain.p5_gateway.inbound.cloud_inbound import InboundReject
     from xbrain.p5_gateway.inbound.field_validate import check_ids
 
-    try:
+    # 同上: 裸 assert False 一旦不执行 (-O 且 assertion rewriting 关掉,
+    # 见上一条实测), 缺 task_id 被放行也会绿. 实测同样两档已验.
+    with pytest.raises(InboundReject) as ei:
         check_ids({"msg_id": "m-1"})               # 缺 task_id
-        assert False
-    except InboundReject as exc:
-        assert exc.fields["error_code"] == 1002
+    assert ei.value.fields["error_code"] == 1002

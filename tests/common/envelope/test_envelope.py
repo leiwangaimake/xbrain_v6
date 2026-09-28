@@ -16,6 +16,7 @@ mutation it would catch.
 
 import os
 import sys
+from dataclasses import FrozenInstanceError
 
 import pytest
 
@@ -73,7 +74,16 @@ def test_a_complete_onhost_envelope_decodes():
     assert env.data == {"min_dist_m": 3.2}
     # The result is frozen: a consumer cannot rewrite ts_sync (that is CLK-A4's
     # job, at the gateway, not a consumer's). Assigning raises FrozenInstanceError.
-    with pytest.raises(Exception):
+    #
+    # The named type, not Exception: raises(Exception) does not say WHICH
+    # mechanism refuses the write, and FrozenInstanceError is the only one that
+    # means dataclass(frozen=True). An Envelope refactored to a NamedTuple or
+    # to __slots__ raises a plain AttributeError here, and raises(Exception)
+    # cannot tell those apart -- nor either of them from an unrelated error
+    # (CLAUDE.md 3.2 form 1: an assertion any outcome satisfies).
+    # Red-verified 2026-09-28: frozen=True -> frozen=False on Envelope turns
+    # this line into DID NOT RAISE.
+    with pytest.raises(FrozenInstanceError):
         env.ts_sync = False  # type: ignore[misc]
 
 

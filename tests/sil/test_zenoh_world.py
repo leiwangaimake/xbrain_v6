@@ -69,7 +69,10 @@ def test_route_round_trips_through_the_p1_assembler():
     body = route_body(FRAME, pts, cmd_id="rg-1", route_rev=3, arrive_radius_m=0.8)
     rs = RouteAssembler(FRAME).accept(body)
     assert isinstance(rs, RouteSet) and rs.route_rev == 3 and rs.waypoint_total == 4
-    for (x, y), (bx, by) in zip(pts, rs.points_xy):
+    # strict=True: waypoint_total is asserted above but points_xy's own length
+    # is not, so a bare zip() would compare the surviving prefix and stay green
+    # on an assembler that dropped the last waypoint.
+    for (x, y), (bx, by) in zip(pts, rs.points_xy, strict=True):
         assert abs(x - bx) < 0.01 and abs(y - by) < 0.01
     assert rs.endpoint_arrive_radius_m == 0.8
     assert isinstance(RouteAssembler(FRAME).accept(clear_body("rg-2", "r-sil", 3)), RouteClear)
@@ -115,7 +118,11 @@ def test_fence_body_compiles_in_p1_and_maps_back_to_site_metres():
     assert held.rev == 3 and [p.role for p in held.polygons] == ["allow", "forbid"]
     assert held.polygons[0].poly_id == "sil-%d" % fid and held.polygons[0].hard_enforce
     cf = compile_fence(held, FRAME)
-    for got, want in zip(cf.polygons[0].xy, w.fences[fid].points):
+    # strict=True: the compiled polygon must carry exactly the vertices that
+    # went in. A compile step that dropped or duplicated one (a closing vertex,
+    # say) is precisely what this round-trip is here to catch, and a bare zip()
+    # would compare the common prefix and pass.
+    for got, want in zip(cf.polygons[0].xy, w.fences[fid].points, strict=True):
         assert abs(got[0] - want[0]) < 1e-3 and abs(got[1] - want[1]) < 1e-3
     assert cf.polygons[0].keep_in and not cf.polygons[1].keep_in
     empty = compile_fence_set(json.loads(json.dumps(fence_body(FRAME, [], fence_set_id="fs-sil", rev=4))))

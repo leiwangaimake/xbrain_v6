@@ -25,6 +25,8 @@ All inputs are fixed utc epochs -- no wall-clock read -- so the vectors are
 deterministic across hosts and timezones.
 """
 
+from zoneinfo import ZoneInfoNotFoundError
+
 import pytest
 
 from xbrain.common.time.local_time import (
@@ -45,8 +47,14 @@ def test_format_local_applies_zone():
 
 def test_format_local_raises_on_bad_zone():
     """A misconfigured site tz must FAIL LOUD, not degrade to UTC.
-    MUTATION: try/except -> return UTC string -> no raise -> this fails."""
-    with pytest.raises(Exception):
+    MUTATION: try/except -> return UTC string -> no raise -> this fails.
+
+    ZoneInfoNotFoundError by name, not Exception: the point of this test is
+    that the ZONE NAME was refused. raises(Exception) also accepts a TypeError
+    from a changed signature or an OSError from a missing tzdata install, and
+    both of those would leave the degrade-to-UTC path untested while the test
+    stayed green (CLAUDE.md 3.2 form 1)."""
+    with pytest.raises(ZoneInfoNotFoundError):
         format_local(_UTC, "Mars/Olympus")
 
 

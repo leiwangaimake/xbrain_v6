@@ -1315,8 +1315,13 @@ def scan_for_safety_defaults(path):
             # the slice is taken from the end; keyword-only defaults are
             # positional in their own list with None marking "no default".
             defaulted = args.args[len(args.args) - len(args.defaults):]
+            # strict=True: the ast module guarantees kw_defaults is exactly as
+            # long as kwonlyargs (None marks "no default"). A bare zip() would
+            # let a future ast change silently shrink this rule's scan surface,
+            # which is CLAUDE.md 3.2 form 6 inside a scanner.
             defaulted = defaulted + [a for a, d in zip(args.kwonlyargs,
-                                                       args.kw_defaults)
+                                                       args.kw_defaults,
+                                                       strict=True)
                                      if d is not None]
             for arg in defaulted:
                 if arg.arg.endswith(UNIT_SUFFIXES):

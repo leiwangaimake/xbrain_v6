@@ -93,7 +93,13 @@ def test_generate_grammar_rejects_unknown_in_alternation():
 
 def test_project_mission_intent_unknown_name_raises():
     reg = _reg()
-    with pytest.raises(Exception):
+    # KeyError by name, matched on the offending name: the raise comes from
+    # IntentRegistry.by_name, which is documented to KeyError rather than
+    # default. raises(Exception) also accepted the TypeError a changed
+    # project_mission_intents signature would raise before ever reaching the
+    # registry, so the "never silently drop an unknown intent" rule this test
+    # states could be undone without it going red (CLAUDE.md 3.2 form 1).
+    with pytest.raises(KeyError, match="not_a_real_intent"):
         project_mission_intents(reg, ["not_a_real_intent"])
 
 

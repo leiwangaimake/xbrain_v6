@@ -100,7 +100,11 @@ def test_raycast_profile_is_prof1_consistent():
     p = snap.profile
     assert p.n_bins == 181
     hit = 0
-    for df, db in zip(p.d_free, p.d_block):
+    # strict=True: both are per-bin arrays of the synthesized profile. n_bins
+    # is asserted above for the profile as a whole, but nothing else pins the
+    # two arrays to each other -- a bare zip() would check the shorter one and
+    # report PROF-1 held over bins it never visited.
+    for df, db in zip(p.d_free, p.d_block, strict=True):
         if db is not None:
             hit += 1
             assert df is not None and df < db, "PROF-1 violated by the synth"

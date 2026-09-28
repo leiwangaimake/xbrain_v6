@@ -93,7 +93,10 @@ def test_prof1_dfree_le_dblock_property():
     # (d_free = d_block) collapses the UNKNOWN band; here we assert the consumer
     # can DETECT a violation rather than trusting it.
     p = with_block(uniform_free(), bin_index=90, d_block_m=0.8)  # d_free 0.7 < 0.8
-    for df, db in zip(p.d_free, p.d_block):
+    # strict=True: the two band arrays are per-bin and must be the same length.
+    # A bare zip() would check only the shorter one and stay green about the
+    # bins it never looked at -- on a PROPERTY test that is the whole surface.
+    for df, db in zip(p.d_free, p.d_block, strict=True):
         if df is not None and db is not None:
             assert df <= db, "PROF-1 violated in scene"
 

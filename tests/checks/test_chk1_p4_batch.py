@@ -190,9 +190,15 @@ def test_bindings_cover_all_24():
 
 def test_binding_missing_template_key_reddens():
     """A binding without both ok + no_data must fail load."""
-    from xbrain.p4_agent.query.sources_g01_g24 import (
-        BINDINGS, QueryBinding, assert_bindings_cover_all_24,
-    )
+    # Only QueryBinding is new here. BINDINGS and assert_bindings_cover_all_24
+    # come from the module-level import at the top of this file; re-importing
+    # them rebound the SAME objects under local names that shadowed the outer
+    # ones (F811). Harmless as written, but it hid the fact that the mutation
+    # below writes into the one process-wide BINDINGS dict -- a reader seeing a
+    # local import can reasonably think the local name is a private copy and
+    # that the try/finally restore is belt-and-braces. It is not: drop the
+    # restore and every later test in the session sees the broken G01.
+    from xbrain.p4_agent.query.sources_g01_g24 import QueryBinding
     backup = BINDINGS["G01"]
     BINDINGS["G01"] = QueryBinding(intent_id="G01", source="state/pose",
                                       templates={"ok": "..."})

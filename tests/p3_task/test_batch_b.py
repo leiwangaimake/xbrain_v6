@@ -34,6 +34,22 @@ from xbrain.p3_task.persistence.schema_task import (
 pytestmark = pytest.mark.no_device
 
 
+# Every negative DDL test below names aiosqlite.IntegrityError AND matches
+# "CHECK constraint failed", never pytest.raises(Exception).
+#
+# The reason is the one CLAUDE.md 3.2 form 1 describes. Each of these tests
+# builds a row by hand and hands it to a DAO; raises(Exception) is satisfied by
+# ANY failure on that path -- a TypeError from a TaskRow field that was renamed,
+# an OperationalError from a column the INSERT no longer has, an AttributeError
+# from a DAO method that moved. All of those are green here while saying
+# nothing at all about the CHECK the test is named after, and every one of them
+# is a change somebody will plausibly make.
+#
+# The match= half matters as much as the type: DELETING a CHECK from the DDL
+# does not make the insert succeed if some OTHER constraint (NOT NULL, UNIQUE,
+# a foreign key) also rejects the row -- it would still raise IntegrityError
+# and the test would still pass. "CHECK constraint failed" is the only string
+# sqlite emits for the constraint class these tests are about.
 async def _apply(conn, statements):
     for stmt in statements:
         await conn.execute(stmt)
@@ -119,7 +135,8 @@ async def test_tasks_check_rejects_bad_state(task_conn):
                    total_steps=1, current_step=0, step_status_json="[]",
                    created_ms=0, updated_ms=0, source="local",
                    trace_id="tr", resume_policy="continue")
-    with pytest.raises(Exception):
+    with pytest.raises(aiosqlite.IntegrityError,
+                       match="CHECK constraint failed"):
         await dao.insert(row)
 
 
@@ -131,7 +148,8 @@ async def test_tasks_check_rejects_current_step_past_total(task_conn):
                    total_steps=2, current_step=5, step_status_json="[]",
                    created_ms=0, updated_ms=0, source="local",
                    trace_id="tr", resume_policy="continue")
-    with pytest.raises(Exception):
+    with pytest.raises(aiosqlite.IntegrityError,
+                       match="CHECK constraint failed"):
         await dao.insert(row)
 
 
@@ -172,14 +190,16 @@ async def test_new_columns_round_trip(task_conn):
 @pytest.mark.asyncio
 async def test_source_check_rejects_out_of_set(task_conn):
     dao = TasksDAO(task_conn)
-    with pytest.raises(Exception):
+    with pytest.raises(aiosqlite.IntegrityError,
+                       match="CHECK constraint failed"):
         await dao.insert(_task(task_id="tx", source="martian"))
 
 
 @pytest.mark.asyncio
 async def test_resume_policy_check_rejects_out_of_set(task_conn):
     dao = TasksDAO(task_conn)
-    with pytest.raises(Exception):
+    with pytest.raises(aiosqlite.IntegrityError,
+                       match="CHECK constraint failed"):
         await dao.insert(_task(task_id="tx", resume_policy="whenever"))
 
 
@@ -194,7 +214,8 @@ async def test_interrupt_reason_closed_set_but_not_state_paired(task_conn):
                            interrupt_reason="low_battery"))   # not suspended
     await task_conn.commit()
     assert (await dao.fetch_by_id("tok")).interrupt_reason == "low_battery"
-    with pytest.raises(Exception):
+    with pytest.raises(aiosqlite.IntegrityError,
+                       match="CHECK constraint failed"):
         await dao.insert(_task(task_id="tbad", interrupt_reason="hangover"))
 
 
@@ -206,7 +227,8 @@ async def test_duration_sec_only_at_terminal(task_conn):
     await dao.insert(_task(task_id="tdone", state="done", duration_sec=12.5))
     await task_conn.commit()
     assert (await dao.fetch_by_id("tdone")).duration_sec == 12.5
-    with pytest.raises(Exception):
+    with pytest.raises(aiosqlite.IntegrityError,
+                       match="CHECK constraint failed"):
         await dao.insert(_task(task_id="trun", state="running",
                                duration_sec=3.0))
 

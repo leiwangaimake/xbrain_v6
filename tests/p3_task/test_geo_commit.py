@@ -135,7 +135,16 @@ async def test_commit_route_is_atomic(geo_conn):
     no partial row from the failed attempt remains (BEGIN IMMEDIATE rollback)."""
     await commit_route(geo_conn, route_id="r-a", name="a",
                        path_points=_path(3), now_ms=1)
-    with pytest.raises(Exception):
+    # The named type + match: the row this second call collides on is the
+    # PRIMARY KEY geo_id, and "UNIQUE constraint failed" is the only message
+    # sqlite emits for it. raises(Exception) would also be satisfied by a
+    # GeoCommitError from the argument validation at the top of commit_route
+    # (e.g. if _path(2) one day fell under _MIN_ROUTE_POINTS) -- in which case
+    # the INSERT never ran, the rollback this test is named after never
+    # happened, and the COUNT(*) below would read 1 for the wrong reason.
+    # CLAUDE.md 3.2 form 1.
+    with pytest.raises(aiosqlite.IntegrityError,
+                       match="UNIQUE constraint failed"):
         await commit_route(geo_conn, route_id="r-a", name="a2",
                            path_points=_path(2), now_ms=2)
     cur = await geo_conn.execute("SELECT COUNT(*) FROM routes")

@@ -42,7 +42,11 @@ FB = CompiledPolygon("p-fuel", "forbid", "fuel", True, False,
 
 
 def _close(a, b, tol=1e-9):
-    return all(abs(x - y) <= tol for x, y in zip(a, b))
+    # strict=True: this helper backs assertions that two POINTS coincide, and a
+    # bare zip() calls a 2-tuple close to a 3-tuple as long as the first two
+    # coordinates match. Every caller compares same-arity points, so a length
+    # difference is a shape change in the code under test, not an input.
+    return all(abs(x - y) <= tol for x, y in zip(a, b, strict=True))
 
 
 # --- signed distance ---------------------------------------------------------

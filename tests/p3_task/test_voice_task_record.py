@@ -116,11 +116,22 @@ def test_fabricated_mapping_value_raises_cs_a1(monkeypatch):
     bad["schedule_patrol"] = "patrol"          # not a registry intent
     monkeypatch.setattr(tr, "_TASK_CREATE_INTENTS", bad)
     reg = _reg()
-    with pytest.raises(Exception):
+    # KeyError by name, matched on the fabricated id: IntentRegistry.by_name
+    # is documented to raise KeyError and never default, and that lookup is
+    # the CS-A1 guard this test is named after.
+    #
+    # raises(Exception) was green for the wrong reasons here. to_task_command
+    # raises TaskRequestError three lines earlier when cmd_id is missing and
+    # again when the task_type is off the closed set; either would satisfy
+    # raises(Exception) with the registry lookup never reached -- and so would
+    # a TypeError from the monkeypatched _TASK_CREATE_INTENTS being the wrong
+    # shape. CLAUDE.md 3.2 form 1.
+    with pytest.raises(KeyError, match="schedule_patrol"):
         to_task_command("schedule_patrol", reg, slots={}, source="voice",
                         cmd_id="c-x")
-    # And the startup meta-check catches the same fabricated mapping.
-    with pytest.raises(Exception):
+    # And the startup meta-check catches the same fabricated mapping -- same
+    # registry lookup, so the same named type.
+    with pytest.raises(KeyError, match="schedule_patrol"):
         assert_mapping_covered_by_registry(reg)
 
 

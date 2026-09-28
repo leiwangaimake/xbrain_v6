@@ -39,14 +39,17 @@ def test_g_down_is_monotone_nonincreasing():
     # sign in g_down (return g_min + frac*(1-g_min)) -> rises with x -> reddens.
     xs = [i * 0.05 for i in range(0, 120)]  # 0 .. 6
     vals = [g_down(x, 1.0, 5.0, 0.2) for x in xs]
-    for a, b in zip(vals, vals[1:]):
+    # strict=False deliberately: sliding pair over one list, so the right side
+    # is one shorter by construction (B905's intended-truncation case).
+    for a, b in zip(vals, vals[1:], strict=False):
         assert b <= a + 1e-12, "g_down rose"
 
 
 def test_g_up_is_monotone_nondecreasing():
     xs = [i * 0.05 for i in range(0, 120)]
     vals = [g_up(x, 1.0, 5.0, 0.3) for x in xs]
-    for a, b in zip(vals, vals[1:]):
+    # strict=False deliberately: sliding pair, same as g_down above.
+    for a, b in zip(vals, vals[1:], strict=False):
         assert b >= a - 1e-12, "g_up fell"
 
 

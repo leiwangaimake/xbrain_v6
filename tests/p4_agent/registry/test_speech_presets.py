@@ -21,6 +21,7 @@ import os
 import pytest
 import yaml
 
+from xbrain.p4_agent.registry.geo_id import GeoIdError
 from xbrain.p4_agent.registry.speech_presets import (
     SpeechPresetError, load_speech_presets, VOICES,
 )
@@ -83,7 +84,15 @@ def test_warn_nn_form_id_is_rejected():
     This is the cross-volume rule the yaml header documents; accepting the old
     form would let the library and the few-shot enumerations teach two shapes.
     """
-    with pytest.raises(Exception):                   # geo-id validator raises its own type
+    # GeoIdError by name. The old comment said "the geo-id validator raises
+    # its own type" and then asserted Exception, which left every OTHER
+    # SpeechPresetError in load_speech_presets able to satisfy it -- including
+    # the "missing field" branch three lines above it. Concretely: delete the
+    # validate_geo_object_id(pid) call and warn_01 still fails, on the
+    # `not pid.startswith("p-")` line right after it, so the ID-2 regex this
+    # test exists for could be removed with the test staying green.
+    # CLAUDE.md 3.2 form 1.
+    with pytest.raises(GeoIdError, match="warn_01"):
         load_speech_presets(mutate(
             lambda p: p[0].__setitem__("preset_id", "warn_01")))
 

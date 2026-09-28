@@ -338,8 +338,15 @@ def test_an_off_set_gps_fix_throws():
     变异体: 改成 .get(value, "none") => 本条红.
     """
     import pytest as _pytest
-    from xbrain.p5_gateway.outbound.state_projection import to_v2_gps_fix
-    with _pytest.raises(Exception):
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError, to_v2_gps_fix,
+    )
+    # ProjectionError, NO 不写 Exception: to_v2_gps_fix 里的 .get() 换成下标
+    # [] 就会抛 KeyError -- 同样是抛了, 但那条路径说的是 "字典没这个键",
+    # 而不是 "值不在 11 S4.5 闭集", 错误信息里既没有闭集也没有键路径.
+    # raises(Exception) 对这两者不可区分, 而本条断言的全部内容就是区分它们
+    # (CLAUDE.md 3.2 形态一).
+    with _pytest.raises(ProjectionError, match="gnss_wtf"):
         to_v2_gps_fix("gnss_wtf")
 
 
