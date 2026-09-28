@@ -35,22 +35,10 @@ from xbrain.p1_motion.path.nav2_proxy import (
     consume_correction,
     needs_correction,
 )
-from xbrain.p1_motion.path.path_follow import (
-    PathFollowConfig,
-    PathFollowState,
-    advance_waypoint,
-    is_arrived,
-    pure_pursuit_target,
-)
 from xbrain.p1_motion.path.pose_assembly import (
     MotionSnapshot,
     to_cmd_vel_gate,
     to_pose_motion,
-)
-from xbrain.p1_motion.path.target_oriented import (
-    SchemaError,
-    TargetOrientedParams,
-    compute_face_target,
 )
 from xbrain.p1_motion.teleop.four_source import (
     TeleopFrame,
@@ -81,32 +69,12 @@ def test_ps4_cmd_vel_and_pose_are_byte_identical():
     assert to_cmd_vel_gate(snap) == to_pose_motion(snap)
 
 
-# --- MOT-PM-17 path_follow LP-3a ---
-
-def test_lp3a_loops_zero_never_arrives():
-    """LP-3a: infinite loop (loops_total=0) MUST NEVER return arrived."""
-    cfg = PathFollowConfig(waypoints=[(0, 0)], loops_total=0, lookahead_m=0.5)
-    st = PathFollowState()
-    # Advance many "traversals"; still not arrived.
-    for _ in range(100):
-        advance_waypoint(st, cfg)
-    assert is_arrived(st, cfg) is False
-
-
-def test_lp4_finite_loops_arrives_after_n():
-    cfg = PathFollowConfig(waypoints=[(0, 0), (1, 0)],
-                            loops_total=2, lookahead_m=0.5)
-    st = PathFollowState()
-    for _ in range(4):
-        advance_waypoint(st, cfg)
-    assert is_arrived(st, cfg) is True
-
-
-def test_target_none_when_arrived():
-    cfg = PathFollowConfig(waypoints=[(0, 0)], loops_total=1, lookahead_m=0.5)
-    st = PathFollowState(loop_index=1)
-    assert pure_pursuit_target(st, cfg, 0, 0) is None
-
+# --- MOT-PM-17 path_follow: source deleted 2026-09-28 (PM1.3 ruling,
+# docs/rns-legacy-audit.md S4 verbatim "删 (折线跟随归 RNS route.py,
+# P1.3/P1.8 接管其路径指针消费)", 12 v0.8 #20-1). The three LP tests that
+# lived here went with it: sources/arbiter_p1.py has had no PATH_FOLLOW
+# member since PM1.3, so they pinned a behaviour source that cannot win
+# the P1 output slot.
 
 # --- MOT-PM-18 relative_move executor: removed 2026-09-13 (dead since #20-9; the
 # relmove path is nav/relmove_intake.py + RNS goto, abort_reason seven values in
@@ -206,35 +174,11 @@ def test_cloud_wz_clipped_to_wz_blind():
     assert wz == 0.5
 
 
-# --- MOT-PM-23 target_oriented no-default ---
-
-def test_target_oriented_hold_returns_zeros():
-    p = TargetOrientedParams(keep_dist_m=1.0, max_speed_mps=0.5,
-                              stop_at_fence=False)
-    assert compute_face_target(2.0, 0.0, p, "hold") == (0.0, 0.0, 0.0)
-
-
-def test_target_oriented_stop_only_wz():
-    p = TargetOrientedParams(keep_dist_m=1.0, max_speed_mps=0.5,
-                              stop_at_fence=False)
-    vx, vy, wz = compute_face_target(2.0, 0.0, p, "face_target_stop")
-    assert vx == 0.0
-    assert vy == 0.0
-
-
-def test_target_oriented_follow_moves_toward():
-    p = TargetOrientedParams(keep_dist_m=1.0, max_speed_mps=0.5,
-                              stop_at_fence=False)
-    vx, vy, wz = compute_face_target(3.0, 0.0, p, "face_target_follow")
-    assert vx > 0    # target further than keep_dist -> move toward
-
-
-def test_target_oriented_unknown_mode_raises():
-    p = TargetOrientedParams(keep_dist_m=1.0, max_speed_mps=0.5,
-                              stop_at_fence=False)
-    with pytest.raises(SchemaError):
-        compute_face_target(1, 0, p, "magic_mode")
-
+# --- MOT-PM-23 target_oriented: source deleted 2026-09-28 (PM1.3 ruling,
+# same table row, verbatim "删 (并入 RNS follow_target, 本期预留 #20-13 --
+# 删源不删预留位)", #20-9). The four mode tests went with it. The RESERVED
+# SLOT is untouched: #20-13 keeps follow_target as an RNS behaviour, and
+# nothing in this commit touches that reservation.
 
 # --- MOT-PM-24 hello handshake ---
 
