@@ -197,10 +197,12 @@ int main(int argc, char** argv) {
     // pack discharged to nothing -- and 11 S4.2 puts soc_pct on the MINIMUM, so
     // the aggregate reads 0% and the robot would head for the dock forever.
     //
-    // min_level stays 0 here on purpose: 13 BAT-1 says every SOC judgement uses
-    // the list and min(level) is unchanged. What this pins is that the ABSENCE
-    // is visible alongside it, so the consumer can tell the two apart rather
-    // than this file deciding a question 13 V-68 raises.
+    // *** min_level is the minimum over the PRESENT packs (11 S4.2 CHG-10 as
+    // corrected 2026-09-28). Until that day this assertion read
+    // CHECK(s.min_level == 0) with a comment saying the contract's literal
+    // min() was deliberately not "fixed" here. 26 is the whole point of the
+    // case: an implementation that still folds the vacant slot's fake zero in
+    // answers 0, and a machine with one pack at 26% then reports 0% SOC.
     const Bytes p = Wrap(
         "{\"BatteryList\":["
         "{\"BatteryLevel\":0,\"Voltage\":0.0,\"battery_temperature\":-273.0,"
@@ -213,8 +215,47 @@ int main(int argc, char** argv) {
     CHECK(s.batteries[0].present == false);
     CHECK(s.batteries[1].present == true);
     CHECK(s.present_count == 1);
-    CHECK(s.min_level == 0);          // contract-literal, and not "fixed" here
+    CHECK(s.min_level == 26);
     CHECK(s.batteries[1].level == 26);
+  }
+
+  // ---- every slot empty: there is no minimum to take ---------------------
+  {
+    // The case the writer turns into soc_pct: null. It is separated from the
+    // one above because present_count is min_level's validity flag and a
+    // reader that ignores the flag sees the initialiser -- which is 0, a legal
+    // SOC. Pinning present_count == 0 here is what makes the writer's null
+    // branch reachable by a test at all.
+    const Bytes p = Wrap(
+        "{\"BatteryList\":["
+        "{\"BatteryLevel\":0,\"Voltage\":0.0,\"battery_temperature\":-273.0,"
+        " \"charge\":false,\"serial\":\"\"},"
+        "{\"BatteryLevel\":0,\"Voltage\":0.0,\"battery_temperature\":-273.0,"
+        " \"charge\":false,\"serial\":\"\"}]}");
+    DeviceStatus s;
+    CHECK(ParseDeviceStatus(p.data(), p.size(), &s));
+    CHECK(s.batteries.size() == 2);
+    CHECK(s.present_count == 0);
+  }
+
+  // ---- the minimum ignores an empty slot that is LOWER than the real one --
+  {
+    // Ordering matters: with the vacant slot FIRST, a seed-from-entry-zero
+    // implementation starts at 0 and never rises, so it answers 0 whatever the
+    // real pack holds. With it second, a naive min() also answers 0. This case
+    // has the real pack first and the vacant slot second, so only an
+    // implementation that actually tests `present` before folding the value in
+    // can answer 72 -- the live reading of 2026-09-28.
+    const Bytes p = Wrap(
+        "{\"BatteryList\":["
+        "{\"BatteryLevel\":72,\"Voltage\":77.89,\"battery_temperature\":31.4,"
+        " \"charge\":false,\"serial\":\"\"},"
+        "{\"BatteryLevel\":0,\"Voltage\":0.0,\"battery_temperature\":-273.0,"
+        " \"charge\":false,\"serial\":\"\"}]}");
+    DeviceStatus s;
+    CHECK(ParseDeviceStatus(p.data(), p.size(), &s));
+    CHECK(s.present_count == 1);
+    CHECK(s.min_level == 72);
   }
 
   // ---- a pack discharged to nothing is still PRESENT ---------------------

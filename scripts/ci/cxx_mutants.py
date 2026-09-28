@@ -581,12 +581,36 @@ REPORTS_MUTANTS = [
      REPORTS_CC, "  if (present) {", "  if (true) {"),
     # 11 S9.8.3 puts the SOC judgement on the minimum: the emptier pack decides
     # when the robot must come home.
+    # 2026-09-28: re-anchored. The seed flag `first` is gone -- the minimum is
+    # now taken inside the `present` branch and seeded off present_count, so
+    # the old two anchors (`if (first || b.level < s.min_level) {`) no longer
+    # match. Both mutations are preserved on the new line.
     ("reports: battery SOC taken from the fuller pack",
-     REPORTS_CC, "    if (first || b.level < s.min_level) {",
-     "    if (first || b.level > s.min_level) {"),
-    ("reports: SOC seeded from zero instead of the first pack",
-     REPORTS_CC, "    if (first || b.level < s.min_level) {",
-     "    if (b.level < s.min_level) {"),
+     REPORTS_CC,
+     "      if (s.present_count == 1 || b.level < s.min_level) s.min_level = b.level;",
+     "      if (s.present_count == 1 || b.level > s.min_level) s.min_level = b.level;"),
+    ("reports: SOC seeded from zero instead of the first present pack",
+     REPORTS_CC,
+     "      if (s.present_count == 1 || b.level < s.min_level) s.min_level = b.level;",
+     "      if (b.level < s.min_level) s.min_level = b.level;"),
+    # 11 S4.2 CHG-10 as corrected 2026-09-28. The regression this guards is the
+    # behaviour this file had until that day: an empty slot reports level 0, and
+    # folding it into the minimum makes a legally single-battery machine publish
+    # 0% while holding 72%. CHG-10 reads soc_pct, so a calibrated
+    # critical_soc_pct then refuses every motion on a full battery.
+    ("reports: the empty slot is folded back into the SOC minimum",
+     REPORTS_CC,
+     "    if (b.present) {\n      ++s.present_count;\n"
+     "      if (s.present_count == 1 || b.level < s.min_level) s.min_level = b.level;\n"
+     "    }",
+     "    if (b.present) ++s.present_count;\n"
+     "    if (s.batteries.empty() || b.level < s.min_level) s.min_level = b.level;"),
+    # The count is also min_level's validity flag, so it has to be a COUNT and
+    # not a boolean: "one pack removed" and "both packs in" are different
+    # answers to 11 S4.2's power_management question, and the health item wants
+    # both packs online.
+    ("reports: present_count saturates at one instead of counting",
+     REPORTS_CC, "      ++s.present_count;", "      s.present_count = 1;"),
     # CF-3 / 11 S9.8.4: raised and cleared are two lists, and merging them
     # reports a fault that has already gone away as still active.
     # A fault whose Timestamp the chassis omitted must be distinguishable from
@@ -626,10 +650,14 @@ REPORTS_MUTANTS = [
     ("reports: a pack discharged to 0% counted as absent",
      REPORTS_CC, "    b.present = b.voltage > 0.0;",
      "    b.present = b.voltage > 0.0 && b.level > 0;"),
-    ("reports: absent packs silently excluded from the SOC minimum",
-     REPORTS_CC, "    if (first || b.level < s.min_level) {",
-     "    if (!b.present) { s.batteries.push_back(b); continue; }\n"
-     "    if (first || b.level < s.min_level) {"),
+    # 2026-09-28: the mutant that used to sit here was
+    # "reports: absent packs silently excluded from the SOC minimum", which
+    # injected exactly the exclusion the user ruled FOR that day. Deleted
+    # rather than re-anchored: it now describes the specified behaviour, and a
+    # mutant that asks for the old rule back would make the corrected code
+    # report as a defect. The inverse of it -- folding the empty slot back in
+    # -- is "reports: the empty slot is folded back into the SOC minimum"
+    # above, and that is the one with a field failure behind it.
     # HES and Sleep arrive as 0/1 integers, `charge` as a real bool.
     ("reports: integer booleans no longer accepted",
      REPORTS_CC, "  if (it->is_number()) return it->get<std::int64_t>() != 0;",
@@ -1278,9 +1306,20 @@ PAYLOADS_MUTANTS = [
      PAYLOADS_CC, '  a->Int(static_cast<long long>(v.raw));', '  a->Int(0);'),
     # 11 S4.2 / 13 BAT-1: the MINIMUM. A maximum reports a robot as fuller than
     # its emptiest pack, which is the direction that strands it.
+    # 2026-09-28: re-anchored one indent level in -- the call moved inside the
+    # else of the present_count == 0 test.
     ("payloads: SOC published from present_count instead of the minimum",
-     PAYLOADS_CC, "  a.Int(in.device->min_level);",
-     "  a.Int(static_cast<long long>(in.device->present_count));"),
+     PAYLOADS_CC, "    a.Int(in.device->min_level);",
+     "    a.Int(static_cast<long long>(in.device->present_count));"),
+    # 11 S4.2 CHG-10 as corrected 2026-09-28. With no pack present there is no
+    # minimum, and min_level carries its initialiser -- which is 0, a legal
+    # SOC. Publishing it says "the robot is flat" about a robot nobody asked.
+    ("payloads: soc_pct published as 0 when no pack is present",
+     PAYLOADS_CC, "  if (in.device->present_count == 0) {\n    a.Raw(\"null\");",
+     "  if (false) {\n    a.Raw(\"null\");"),
+    ("payloads: min_level_pct published as 0 when no pack is present",
+     PAYLOADS_CC, "  if (in.present_count == 0) {\n    a.Raw(\"null\");",
+     "  if (false) {\n    a.Raw(\"null\");"),
     # 13 BAT-2: array order is not a measurement. Filling left/right from it is
     # the failure CLAUDE.md 3.2 calls a guess presented as a measurement, and
     # BAT-4 forbids even saying "left" in that state.

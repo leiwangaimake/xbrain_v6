@@ -370,7 +370,6 @@ bool ParseDeviceStatus(const std::uint8_t* asdu, std::size_t len, DeviceStatus* 
   if (bl == items->end() || !bl->is_array()) return false;
 
   DeviceStatus s;
-  bool first = true;
   for (const Json& e : *bl) {
     if (!e.is_object()) continue;
     BatteryEntry b;
@@ -385,15 +384,25 @@ bool ParseDeviceStatus(const std::uint8_t* asdu, std::size_t len, DeviceStatus* 
     // a genuinely flat pack also reads level 0, and telling those two apart is
     // the whole point of this flag.
     b.present = b.voltage > 0.0;
-    if (b.present) ++s.present_count;
     if (b.charging) s.any_charging = true;
-    // The minimum over the packs, per 11 S9.8.3. Seeded from the first entry
-    // rather than from 0 or 100: seeding from 0 would report a full robot as
-    // empty when the list is short, and seeding from 100 would hide an empty
-    // pack if the list came back with a single malformed entry.
-    if (first || b.level < s.min_level) {
-      s.min_level = b.level;
-      first = false;
+    // The minimum over the PRESENT packs, per 11 S4.2 CHG-10 as corrected on
+    // 2026-09-28 (user ruling; 13 V-68). An empty slot reports level 0, and
+    // taking it into the minimum makes a legally single-battery machine read
+    // 0% forever -- measured on the live chassis the same day: list[0] absent
+    // and list[1] at 72%, soc_pct published as 0. Once critical_soc_pct is
+    // calibrated that is a machine that refuses to move at 72% charge.
+    //
+    // The count and the minimum are updated under ONE condition on purpose.
+    // present == 0 is what tells WritePowerState to publish null rather than a
+    // number, and two separate conditions could disagree about whether a
+    // minimum exists at all. Reading `present_count == 1` as "this is the
+    // first present pack" also removes the separate seed flag: seeding from 0
+    // would report a full robot as empty and seeding from 100 would hide a
+    // flat pack, and neither failure can happen if the seed IS the first
+    // qualifying value.
+    if (b.present) {
+      ++s.present_count;
+      if (s.present_count == 1 || b.level < s.min_level) s.min_level = b.level;
     }
     s.batteries.push_back(b);
   }

@@ -439,7 +439,9 @@ int main(int argc, char** argv) {
     chs_a::BatteryEntry a1;
     a1.level = 26; a1.voltage = 69.28; a1.temperature_c = 38.2; a1.present = true;
     dev.batteries = {a0, a1};
-    dev.min_level = 0;
+    // The minimum over the PRESENT packs, which is what ParseDeviceStatus now
+    // computes -- see its own test for the arithmetic. 26, not 0.
+    dev.min_level = 26;
     dev.present_count = 1;
 
     chs_a::BasicStatus basic = MakeBasic();
@@ -452,10 +454,14 @@ int main(int argc, char** argv) {
 
     const std::size_t n = WritePowerState(in, buf, sizeof(buf));
     const Json j = ParseOrFail("PowerState", buf, n);
-    // 11 S4.2 / 13 BAT-1: the minimum, unchanged even with a slot empty. The
-    // honest response to 13 V-68 is to publish present_count beside it, not to
-    // quietly exclude the slot.
-    CHECK(j["soc_pct"] == 0);
+    // 11 S4.2 CHG-10 as corrected 2026-09-28: the minimum over the packs that
+    // are THERE. This assertion read CHECK(j["soc_pct"] == 0) until that day,
+    // under a comment saying the contract's literal min() was left alone -- a
+    // single-battery machine therefore published 0% while holding 26%, and
+    // CHG-10 keys the return-to-dock decision off exactly this number. The
+    // absence is still reported in full: present_count and list[0].present
+    // below are unchanged.
+    CHECK(j["soc_pct"] == 26);
     CHECK(j["present_count"] == 1);
     CHECK(j["remain_mile_km"] == 4.2);
     CHECK(j["power_management"] == "single_battery");
@@ -469,6 +475,47 @@ int main(int argc, char** argv) {
     // says so. Array order is not a measurement.
     CHECK(j["batteries"].is_null());
     CHECK(j["battery_mapping"] == "unknown");
+  }
+
+  // ---- PowerState with every slot empty: soc_pct is null, not 0 ----------
+  {
+    // 0 is a legal SOC. Publishing it for "there is no pack to ask" is the
+    // CLAUDE.md 3.1 shape -- an absence dressed as a measurement -- and the
+    // consumer (CHG-10) cannot tell the two apart. min_level is left at its
+    // initialiser here ON PURPOSE: that is exactly the state
+    // ParseDeviceStatus leaves it in when nothing is present, so the writer
+    // must reach its null branch through present_count and not by noticing
+    // that the number looks unset.
+    chs_a::DeviceStatus dev;
+    chs_a::BatteryEntry a0;
+    a0.level = 0; a0.voltage = 0.0; a0.temperature_c = -273.0; a0.present = false;
+    chs_a::BatteryEntry a1;
+    a1.level = 0; a1.voltage = 0.0; a1.temperature_c = -273.0; a1.present = false;
+    dev.batteries = {a0, a1};
+    dev.present_count = 0;
+    chs_a::BasicStatus basic = MakeBasic();
+
+    PowerStateInput in;
+    in.device = &dev;
+    in.basic = &basic;
+    const std::size_t n = WritePowerState(in, buf, sizeof(buf));
+    const Json j = ParseOrFail("PowerState/none-present", buf, n);
+    CHECK(j["soc_pct"].is_null());
+    CHECK(j["present_count"] == 0);
+    // Nothing is hidden: both slots are still reported, still with their
+    // original indices, still flagged absent.
+    CHECK(j["list"].size() == 2);
+    CHECK(j["list"][0]["present"] == false);
+    CHECK(j["list"][1]["present"] == false);
+
+    // ChassisDevice carries the same number under another name and must make
+    // the same answer. Asserted here beside its twin rather than in the
+    // golden-driven device case: that capture has both packs in, so it cannot
+    // reach either writer's null branch.
+    const std::size_t nd = WriteChassisDevice(dev, buf, sizeof(buf));
+    const Json jdev = ParseOrFail("ChassisDevice/none-present", buf, nd);
+    CHECK(jdev["min_level_pct"].is_null());
+    CHECK(jdev["present_count"] == 0);
   }
 
   // ---- PowerState with the mapping configured ---------------------------
@@ -828,10 +875,15 @@ int main(int argc, char** argv) {
       CHECK(!jd.is_discarded());
       if (!jd.is_discarded()) {
         CHECK(jd["list"].size() == d.batteries.size());
+        // Both packs are in on this capture, so the minimum over the present
+        // packs is the minimum over the list and the two agree. The
+        // none-present branch (null) is pinned on WritePowerState, which
+        // shares the rule -- see its "every slot empty" case.
         CHECK(jd["min_level_pct"] == d.min_level);
-        // 13 V-68: an empty slot reports 0, so min_level alone cannot tell a
+        // 13 V-68: an empty slot reports 0, so a level alone cannot tell a
         // flat battery from an absent one. present_count is the fact that
-        // would otherwise be missing -- the contract's min() rule is untouched.
+        // would otherwise be missing, and it is also min_level_pct's validity
+        // flag (11 S4.2 CHG-10 as corrected 2026-09-28).
         CHECK(jd["present_count"] == d.batteries.size() ||
               jd["present_count"] == d.present_count);
         for (std::size_t i = 0; i < d.batteries.size(); ++i) {

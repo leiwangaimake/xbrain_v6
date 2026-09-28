@@ -629,11 +629,31 @@ std::size_t WritePowerState(const PowerStateInput& in, char* out,
     return a.Finish();
   }
 
-  // 11 S4.2 / 13 BAT-1: the MINIMUM over the list. Left unchanged even when a
-  // slot is empty (which reports 0) -- see 13 V-68; the honest response is to
-  // report present_count beside it, not to quietly exclude a slot.
+  // 11 S4.2 / 13 BAT-1: the MINIMUM over the PRESENT packs, and null when no
+  // pack is present at all.
+  //
+  // *** This line published the minimum over ALL slots until 2026-09-28, with
+  // a comment arguing that the honest response to an empty slot is to report
+  // present_count beside it rather than to exclude the slot. The user ruling
+  // that day reversed it, and the reason is worth keeping: not hiding an empty
+  // slot (right) is a different thing from feeding its fake zero into an
+  // aggregate (wrong). present: false means "no pack here", not "this pack is
+  // at 0%", and the list[] plus present_count below still report the absence
+  // in full -- nothing is hidden by taking the minimum over what is actually
+  // there. Measured on the chassis the same day: list[0] absent, list[1] at
+  // 72%, soc_pct on the wire 0. CHG-10 reads soc_pct, so once
+  // critical_soc_pct is calibrated that machine is judged FAIL and refuses to
+  // move on a full battery -- a fuse with the pin already pulled.
+  //
+  // Null, not 0, when present_count is zero: 0 is a legal SOC and would read
+  // as a flat robot (CLAUDE.md 3.1). min_level carries its initialiser in that
+  // case and means nothing.
   a.Raw("\"soc_pct\":");
-  a.Int(in.device->min_level);
+  if (in.device->present_count == 0) {
+    a.Raw("null");
+  } else {
+    a.Int(in.device->min_level);
+  }
   a.Raw(",\"present_count\":");
   a.UInt(in.device->present_count);
   a.Raw(",\"remain_mile_km\":");
@@ -961,12 +981,19 @@ std::size_t WriteChassisMotion(const chs_a::MotionStatus& in, char* out,
 std::size_t WriteChassisDevice(const chs_a::DeviceStatus& in, char* out,
                                std::size_t cap) {
   Appender a(out, cap);
+  // The minimum over the PRESENT packs, null when none is (same rule and same
+  // reason as WritePowerState's soc_pct -- 11 S4.2 CHG-10 as corrected
+  // 2026-09-28, 13 V-68). Both keys read the one value ParseDeviceStatus
+  // computes, so they cannot give two answers for the same chassis report.
   a.Raw("{\"min_level_pct\":");
-  a.Int(in.min_level);
-  // 13 V-68: an empty slot reports 0, so min_level alone cannot tell a flat
-  // battery from an absent one. present_count travels beside it for exactly
-  // that reason -- the contract's min() rule is left alone and the FACT that
-  // would otherwise be missing is supplied.
+  if (in.present_count == 0) {
+    a.Raw("null");
+  } else {
+    a.Int(in.min_level);
+  }
+  // present_count travels beside it: it is what distinguishes "one pack
+  // removed" from "both packs flat", and it is also min_level_pct's validity
+  // flag (13 V-68).
   a.Raw(",\"present_count\":");
   a.UInt(in.present_count);
   a.Raw(",\"any_charging\":");

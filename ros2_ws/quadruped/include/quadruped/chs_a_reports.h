@@ -179,16 +179,24 @@ struct DeviceStatus {
   // 11 S9.8.3 / 13 BAT-1 keep the SOC judgement on the MINIMUM: a pack that is
   // nearly empty decides when the robot must return, regardless of the other.
   //
-  // *** With a slot EMPTY this reads 0, because an absent pack reports level 0.
-  // That is the contract's arithmetic, implemented literally and deliberately
-  // not "fixed" here -- see 13 V-68. The consumer needs present_count to tell
-  // "one pack removed" from "both packs flat", and 11's own battery health item
-  // already requires both packs online, so the two facts belong together.
+  // *** The minimum is over the PRESENT packs only (11 S4.2 CHG-10 as corrected
+  // 2026-09-28; 13 V-68). An absent slot reports level 0, and until that day
+  // this field took it into the minimum "because the contract said min over the
+  // list" -- which made a legally single-battery machine read 0% forever.
+  // present: false means "there is no pack here", not "this pack is at zero";
+  // reading the absence as a zero is CLAUDE.md 3.1's `0.0 masquerading as a
+  // calibrated value`, and it arms a refusal that fires at full charge.
+  //
+  // *** VALID ONLY WHEN present_count > 0. With every slot empty there is no
+  // minimum to take and this field keeps its initialiser -- the writer must
+  // publish null, never the 0 that sits here. The two are updated under the
+  // same condition (see ParseDeviceStatus) so they cannot disagree.
   int min_level = 0;
   bool any_charging = false;
   // How many slots hold a pack. Compared against batteries.size() by the
   // consumer: fewer means a slot is empty, which 11 S4.2 models as
-  // power_management "single_battery" rather than as a fault.
+  // power_management "single_battery" rather than as a fault. Also the
+  // validity flag for min_level above.
   std::size_t present_count = 0;
 };
 
