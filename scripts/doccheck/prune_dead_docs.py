@@ -200,7 +200,12 @@ def table_shape(text):
 def code_bytes(text):
     """Total size of all fenced code blocks -- must not change during pruning."""
     flags = code_line_flags(text)
-    return sum(len(ln) for ln, f in zip(text.split("\n"), flags) if f)
+    # strict=True: code_line_flags appends exactly one flag per line, so a
+    # length mismatch means that invariant broke. This function is a DAMAGE
+    # DETECTOR -- a silently truncated zip would under-count the code bytes and
+    # report "unchanged" for a prune that ate the tail of a file.
+    return sum(len(ln) for ln, f in zip(text.split("\n"), flags, strict=True)
+               if f)
 
 
 def process(path, apply_changes):
