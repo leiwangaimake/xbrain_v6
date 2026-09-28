@@ -96,7 +96,7 @@ def test_the_voice_estop_frame_carries_the_audit_triple():
     all three fields are OPTIONAL on the wire (S7.1 says so, because S3.0.1
     makes cmd/estop execute even when it cannot be parsed), so their absence
     breaks nothing here and shows up two layers away --
-      * no cmd_id => quadruped answers "anonymous" (rt_bridge HandleEstop), and
+      * no cmd_id => quadruped answers "anonymous" (rt_bridge handle_estop), and
         S7.1's four initiators share ONE ack key, so p4's ack becomes
         indistinguishable from the HMI's and the cloud's;
       * no reason / src_role => 11 S4.1 last_soft_estop = {epoch, reason,

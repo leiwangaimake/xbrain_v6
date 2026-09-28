@@ -249,7 +249,7 @@ def decision_to_publishes(decision: TurnDecision) -> List[Tuple[str, dict]]:
             #
             # cmd_id is S7.1's idempotency key and quadruped echoes it verbatim
             # into EstopAck, falling back to "anonymous" when the request
-            # carried none (rt_bridge HandleEstop). S7.1's four parallel
+            # carried none (rt_bridge handle_estop). S7.1's four parallel
             # initiators share ONE ack key, so with no cmd_id p4's ack is
             # indistinguishable on the bus from the HMI's and the cloud's. The
             # es- prefix plus a uuid4 is how this file's siblings already build
@@ -273,7 +273,7 @@ def decision_to_publishes(decision: TurnDecision) -> List[Tuple[str, dict]]:
             # The wrong value could never be caught by watching the robot:
             # S7.1.2 makes cmd/estop the one key that is NOT validated --
             # anything unparsable is executed as a stop (S3.0.1) -- and
-            # quadruped's ParseEstop does not even read the field, because
+            # quadruped's parse_estop does not even read the field, because
             # there is no reading of it that could license NOT stopping. So a
             # voice estop with action="estop" stopped the machine exactly like
             # a correct one, and the only place the defect was visible was a
