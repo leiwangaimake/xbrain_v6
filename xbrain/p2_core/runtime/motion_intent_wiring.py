@@ -197,7 +197,17 @@ def evaluate(cmd: Mapping[str, Any], *, limits: MotionLimits,
     # S1.5.5 把"相对位移"明列在时钟未同步时禁止的动作里.
     # None(还没收到 state/clock) 视为[未同步]: 这一门的失效方向是"时钟没同步
     # 却放行", 后果是位移与录包时间对不上且跨机对齐失效, 所以缺省取保守侧.
-    if not (clock or {}).get("ts_sync"):
+    # *** The payload field is `sync`, not `ts_sync`. 11 S3.11 gives
+    # ClockStatus `"sync": true` as the system-wide truth, and P1-13
+    # mirrors it verbatim (gnss_pose.mirror_clock emits "sync").
+    # `ts_sync` is the ENVELOPE field (S3.0) -- a different layer.
+    # Reading it here returned None on every message, so this gate was
+    # always closed: every relative-move intent was refused with
+    # E_UNHEALTHY{item:clock} no matter how good the clock was. Same
+    # shape as the chassis_link defect fixed 2026-09-26 -- a field name
+    # that never existed reads as "absent", and absent is the fail-safe
+    # side, so nothing ever complained (CLAUDE.md S3.2, always-red).
+    if not (clock or {}).get("sync"):
         return _fail("G-4", E_UNHEALTHY, {"item": "clock"})
     # -- G-5 健康度 ------------------------------------------------------
     if health is not None and not health.get("allow_motion", False):

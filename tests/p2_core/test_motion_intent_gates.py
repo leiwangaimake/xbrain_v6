@@ -37,7 +37,11 @@ from xbrain.p2_core.runtime.motion_intent_wiring import (
 pytestmark = pytest.mark.no_device
 
 _LIMITS = MotionLimits(max_distance_m=20.0, max_angle_deg=720.0)
-_CLOCK_OK = {"ts_sync": True}
+# The ClockStatus payload shape, not the envelope: 11 S3.11 gives `sync`
+# and P1-13 mirrors it verbatim. This fixture said `ts_sync` (the
+# ENVELOPE field) and so did the implementation, so both agreed and the
+# suite stayed green while the real gate was shut on every message.
+_CLOCK_OK = {"sync": True, "source": "rtk"}
 
 
 def _cmd(**kw):
@@ -135,7 +139,7 @@ def test_angle_over_the_ceiling_is_refused():
 
 def test_clock_not_synced_refuses_with_unhealthy_clock():
     """S1.5.5 把相对位移明列在时钟未同步时禁止的动作里. """
-    v = _ev(clock={"ts_sync": False})
+    v = _ev(clock={"sync": False, "source": "none"})
     assert not v.passed and v.code == E_UNHEALTHY and v.detail["item"] == "clock"
 
 
