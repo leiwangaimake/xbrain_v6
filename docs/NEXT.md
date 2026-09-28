@@ -728,3 +728,82 @@
 | C | ★ **`quadruped` 的 `EstopAck.latency_ms` 恒 0**（`rt_bridge.cc` `HandleEstop` 逐字 `ack.latency_ms = 0`），而 `11` §7.1.1 定义它是「收到消息 → 首个零速帧下发」的实测时延 | `ros2_ws/quadruped/src/rt_bridge.cc` | ★ 网关按 `R3.4` **逐字段透传**，🚫 不拿网关自己的转发耗时顶替（那会让字段名与含义脱节）。属 quadruped 侧欠测量，C++ 改动<br>✅★★★ **2026-09-27 已修并已推**：`rt_bridge.cc` 的 `HandleEstop` 不再硬编码 0 —— 进入时用**单调钟**取戳（`t_enter`），首个零速帧下发后算 `const double latency_ms = (mono_now_() - t_enter) * 1000.0;` 并 `ack.latency_ms = latency_ms;`，注释逐字引 `11` §7.1.1「收到消息 -> 首个零速帧下发」。★ 提交 `40b7f59`，实测数与 `13` v1.38 一并登记（`03f11d1`）。★ 依据：`grep -n latency_ms ros2_ws/quadruped/src/rt_bridge.cc` |
 | D | ★ **机内 `cmd/estop` 仍是裸对象且只有云端那一路带 `cmd_id`**：HMI 按钮（`p5 _estop_sender`）与 `p4_agent` 发的仍无 `cmd_id`，其真 ack 回来一律 `cmd_id="anonymous"`，在总线上分不出是谁的 | `11` §7.1 `EstopCommand` 四字段（`cmd_id`/`action`/`reason`/`src_role`）；`p5 main_wiring._estop_sender` | ★ 本批只补了云端那一路（项 2 的关联号必需）。另两路 ＋ `reason`/`src_role`（`RobotState.last_soft_estop` 的审计对现在恒空）是独立改动<br>✅★★★ **2026-09-27 已修并已推**：**HMI 按钮那一路** —— `p5 runtime/main_wiring.py` 新增 `hmi_estop_cmd_id(boot, seq)` ＋ `hmi_estop_frame(cmd_id)`，发 `{"type":"estop","action":"stop","cmd_id":…,"reason":…,"src_role":…}`（提交 `b9ab21c`）；**语音那一路** —— `p4 runtime/orchestrator_turn.py` 发 `cmd_id: "es-"+uuid[:12]` ＋ `reason: "voice_command"` ＋ `src_role: "voice"`，并把 `action` 由 `"estop"` 改为契约唯一合法值 `"stop"`（提交 `97dd8ec` ＋ `2465c33`；★ 顺带修掉一个真缺陷：`11` §7.1 给 `action` 只有一个合法值，而 §7.1.2 又让 `cmd/estop` 成为**唯一不校验**的 key ⇒ 错值照样停机，只在录包里能看出违约）。★ 三项审计已在 `11` §7.1.1/§12.1.1 登记（`03f11d1`）。★ 依据：`grep -n "hmi_estop_frame" xbrain/p5_gateway/runtime/main_wiring.py`；`grep -n "src_role" xbrain/p4_agent/runtime/orchestrator_turn.py` |
 | ★ **E**<br>**2026-09-27 新增** | ★★★ **`configs/chassis_relay.yaml` 是一个【未登记】的 L6 文件，且该进程【直读源】** —— `10` §5.4.0 的目录树把每个 L6 文件逐行列出（`p1_motion` / `p2_core` / `p3_task` / `p4_agent` / `p5_gateway` / `quadruped` / `rtk_driver` / `rns` / `perception` ＋ 六个内容表），**唯独没有 `chassis_relay.yaml`**；`xbrain/common/config/resolved.py` 的 `SNAPSHOT_PROCESSES` 九项里也没有它 ⇒ 冻结线不为它产出快照，二进制按文件头注**直读 `configs/` 源** | 文件头注自己写得很清楚（逐字）：「TRANSITIONAL DIRECT-READ FILE」「The V6 rule (10 S5.4.1) is that processes read the RESOLVED product …… chassis_relay does not yet have a product」「this file must carry LITERALS ONLY -- the binary …… REFUSES to start when it finds one here」「robot_id therefore DUPLICATES common.robot_id for the duration of the transition」。提交 `d6b8c14` | ★ **形状与 `10` 已修过两次的那个完全一样**：quadruped「进程在册、配置不在册」（v0.7.7 补）· rtk_driver（2026-08-14 补）。⇒ **登记那一半是文档缺口**，按铁律 1 该补进 §5.4.0 目录树 ＋ §5.4.3 L6 清单。<br>★★ **但「要不要进冻结线」那一半是设计裁决，🚫 本轮不代拍** —— 它牵着「冻结线现跑不通（铁律 3）」与「急停链路进程能不能依赖一条会失败的启动前置」两件事。<br>⚠️ **为什么必须现在登记而不是等**：现状是**两份 `robot_id`**（源里一份、resolved 产物里一份），正是 §3.6 铁律 2 起因的那个形状；头注把它写成「transition」，而 transition 没有到期日就会变成常态 |
+
+---
+
+### 8.11 ★★★ 2026-09-28 · 底盘上电窗口：CR-11/CR-12 端到端 ＋ 真数据逐字段对账（机器人全程未动）
+
+> ★ 本节记**实测结论**与**新发现（未修）**。判据数字不抄进文档（`CLAUDE.md` §3.7），命令与逐条证据在本批提交信息里。
+> ★ `T-DRDDS-1` 的十六进制对照归 `13` §11.1（同日另一批提交），本节不重复。
+
+**★★★ 一、`CR-11` / `CR-12` 端到端已验 —— 12 条 CR 至此【全部】在真链路上走过**
+
+| 项 | 实测 |
+|---|---|
+| 链路 | 通用面 `cmd/chassis/ctrl` → **relay(CR-11)** → RT 面 `rt/chassis/ctrl` → quadruped → RT 面 `rt/chassis/ctrl/ack` → **relay(CR-12)** → 通用面 `cmd/chassis/ctrl/ack` |
+| 往返时延 | ★ 五次注入**全部 1.2 ~ 1.3 ms**（put → CR-12 出口），含两次跨面转发 ＋ quadruped 解析与应答 |
+| 计数 | ★ relay 60 s 统计行由 `CR-11=0/0 CR-12=0/0` 变为 **`CR-11=5/5 CR-12=5/5`**，`put_fail=0` `oversize=0` |
+| **RT-C3.e 信封重建** | ★ CR-11 出口：`src` 改 `chassis_relay`、`ts` 重打、`seq` 为**本行自己的**计数，原值落 `orig_src` / `orig_ts`；★★ `v`/`rid`/`data` **逐字节原样**，且**注入方没带 `mono`/`boot` 时出口也没有** —— 🚫 不伪造，与 `envelope_rebuild.h` 自述一致 |
+| 动作选择 | ★★★ **只用不产生运动的动作**：`set_sdk_mode`（§9.3.4 恒拒）· `idle`（§9.3.3 v0.3 已删除的动作）· `foobar_action`（未知串）· `joint_rate_hz=37`（不整除 1000）· `enable`（只清锁，不下发底盘）。🚫 未发 `stand` / `prone` |
+| 拒绝分支 | ★ `idle` → **`E_CAPABILITY`**（已删除动作，`RX-8`）· `foobar_action` → **`E_SCHEMA`** · `joint_rate_hz=37` → **`E_SCHEMA`** · `set_sdk_mode` → **`E_CAPABILITY`** 且**不带 `item`**（`ModeReject::kNone` ⇒ 空即省略，`11` §13.9 闭集，与 `13` v1.27 那半互为正反对照） |
+
+> ★★★ **`enable` 这一次把 `CR-12` 那句话【演出来了】**：ack 回 `accepted` ＋ `OK`，而**同一条 ack 里**
+> 回抄的 `timeout_lock` 是 **`true`**，随后 30 拍 `state/robot` 的 `timeout_lock` **也一直是 `true`**。
+> ★ **机理（`tier1.cc` 分支 2 / 分支 3）**：`enable` 只在**命令重新新鲜之后**才清锁；本次现场**根本没有 `cmd_vel`**
+> （见下方三），于是分支 2 直接返回，`enable_requested` 被消费掉而**不生效**。
+> ★★ **这不是缺陷，正是 `11` CR-12 逐字「ack=accepted 不等于锁已解除，解除的唯一判据是 `state/robot` 回读」的成因** ——
+> 🚫 **不要据此去把 `enable` 的 ack 改成「按是否真解锁返回 accepted/rejected」**：那会把「指令被受理」与「前置条件已满足」
+> 两件事合并成一个码，而 `11` §9.12.1 逐字把它们分开（「上游回来了」≠「上游被信任」）。
+
+**★★ 二、`RobotState` 逐字段核真机取值（对 `11` §4.1）**
+
+★ 契约字段全部在线且取值合法；★ **四个 `null` 逐条给了成因**，其中**只有一个是真缺口**：
+
+| 字段 | 实测 | 判定 |
+|---|---|---|
+| `proto_version` | `null` | ★ 成因：**没有人发过 `rt/chassis/hello`**。发布者是 `p1_motion`（`11` §2.2.1），而现场 p1 跑在语音回路形态、nav/握手那一段未接线 ⇒ **部署形态使然**，非代码缺陷 |
+| `services_ok` | `null` | ★ **按裁决**（`21` V-14：`runtime.services` 本期恒「不可查」，§9.10.2 的查询方法本身无答复）⇒ 诚实值 |
+| `cmd_age_ms` | `null` | ★ 同 `proto_version`：RT 面**一条 `rt/motion/cmd_vel` 都没有**（`zenoh_echo --plane rt --list` 无此 key）⇒ 「从未收到」与「迟到」是两件事，写 `null` 是对的 |
+| ★★★ `motion` | `null` | 🔴 **真缺口 —— 见下方「新发现 A」** |
+| `odom.source` | `monitor_10hz` | ★★ **它独立报出了一次降级**（通道二未起，`13` v1.39 ③）—— `11` §4.1 v0.8 解冻这个字段的理由当场兑现 |
+| `odom.tau_ms` | `38.63` | ★ 与 10 Hz 源相符 |
+| `motion_state_transitioning` / `mode_switching` | `false` / `false` | ★ 静止稳态，两位一致 |
+| `hes` / `hes_lock` / `sleep` / `charge` | `false` / `false` / `false` / `"idle"` | ★★ `charge` 已**不再恒 `null`**（`13` **V-68** ④ 记的那条已修，本次真机复核） |
+| `locked` / `timeout_lock` / `stop_reason` | `true` / `true` / `"timeout"` | ★ 三者自洽（`locked` ＝ 派生或） |
+| `gait` / `gait_raw` | `"unknown_0x0000"` / `0` | ★ **`V-66` 的静止值**，按 §6.5 开放集处置，**是设计行为** |
+| `model` / `version` / `conn` | `"CA9C"` / `"PRO"` / `"connected"` | ★ 闭集内 |
+| `faults[]` | `[]` | ★ 真机零故障（两次上电窗口都是） |
+
+**★★ 三、`state/power` 对 `11` §4.2 ＋ 健康项**
+
+- ★★★ **`V-68` 第二次原样复现**：`soc_pct: 0` 而 `list[1].level_pct: 97`（空槽 `list[0]` 报 `level 0 / voltage 0 / temp -273`，`present:false`）。
+  ★ `present_count: 1` · `power_management: "single_battery"` —— **契约字面实现，不擅自排除空槽**（`V-68` 逐字），⇒ 行为正确、**裁决仍欠**。
+- ★ `batteries: null` ＋ `battery_mapping: "unknown"`：`11` §4.2 的 `left`/`right` 明细**在 `V-55`（左右下标映射未知）关闭前填不出来** ⇒ 报 `null` 而不是猜，方向对。
+- ★★ **健康项 `battery` 的表现与预期一致**：`state: "degraded"` · `level: "fatal"` · `detail` 逐字 **`"soc 0.0%, critical threshold not set"`**
+  —— ★ 它**同时说出了两件事**（读数 ＋ 阈值未标定），这正是 §3.1「未标定一律 `null` 并报键路径」要的形态，🚫 不要为了让它变绿去填 `critical_soc_pct`（**铁律 3**）。
+- ★ 健康项 `chassis`：`state: "ok"` · `detail: "linked"` —— 与真链路一致。
+
+**★★★ 新发现（本批未修，逐条待处置）**
+
+| # | 发现 | 证据 | 为什么本批不改 |
+|---|---|---|---|
+| 🔴 **A** | ★★★ **`RobotState` 在线多发一个 `motion` 字段，而 `11` §4.1 【没有这个字段】，且它恒为 `null`** —— JSON 示例与字段表**两处都查不到** `motion`；`rt_payloads.cc` 有完整的写出分支（`vx/vy/wz/roll/pitch/yaw`），但 `rt_bridge.cc::PublishState` **从不给 `in.motion` 赋值** ⇒ 走的永远是 `a.Raw(",\"motion\":null")` 那一支 | ★ 线上载荷逐字含 `"motion": null`；★ `grep -n '"motion"' ros2_ws/quadruped/src/rt_payloads.cc` 两处（写出分支 ＋ null 分支）；★ `grep -n 'in.motion' ros2_ws/quadruped/src/rt_bridge.cc` **零命中** | ★★★ **两条出路是【取舍】不是对错** ——（a）删掉该字段（它是 `CLAUDE.md` §9.3「不为将来留口子」的标准形态：schema 里留了字段、业务从不消费）；（b）在 `11` §4.1 登记它并接上数据源（要走 **F-5** 冻结面登记）。⇒ **停下问用户**（§9.1 / 铁律 1 的边界：没有经验证的事实能判定谁对谁错） |
+| ⚠️ **B** | ★★ **`state/chassis_basic` / `state/chassis_motion` / `state/chassis_device` 三条在真机上 2/10/2 Hz 稳定转发，而【全仓零订阅者】** —— `11` §2.2.2 把消费者登记为 `p2_core · HMI · 云端`，`configs/generated/whitelist.yaml` 的 `p2_core.sub` 里三条也都在，**代码里一个都没订** | ★ `grep -rn "chassis_basic\|chassis_motion\|chassis_device" xbrain/ --include=*.py` 只命中 `configs/generated/whitelist.yaml`；★ `p2_core` 实际订阅只有 `cmd/estop` · `cmd/motion/intent` · `state/arb/motion` · `state/mode` ＋ 主接线里的 `state/robot` / `state/power`；★ relay 统计行 `CR-6=4235 CR-7=21179 CR-8=4235`（60 s 窗口，持续增长） | ★ **不是 bug，是【登记与实现的差】**：`11` §4.1 逐字说 `RobotState` 就是 quadruped 由 §9.8 四路原始状态**聚合**出来的汇总视图，`p2_core` 用汇总视图就够。⇒ 要么把契约的消费者列收窄到「云端/HMI 可选」，要么给 p5 云端投影接上 —— **属设计取舍，问用户**。🚫 本批不擅自删 CR 行（CR 白名单是 `11` §1.1.6 冻结面） |
+| ⚠️ **C** | ★ **`health/summary` 看不见「通道二降级」** —— `chassis` 项全程 `ok` / `linked`，而 quadruped 的 drdds 源整整两天 `imu rx=0 motion_info rx=0` | ★ `13` v1.39 ③；★ `health/summary.items.chassis` 线上取值 | ★ 加不加健康项属**新增判据**，⇒ 问用户（已在 `13` v1.39 行同步登记） |
+
+**★★★ 「还需要底盘在场」清单（按可做性排序，供排期占用底盘时间）**
+
+| # | 项 | 还缺什么 | 要不要机器人动 |
+|---|---|---|---|
+| 1 | ★ **重启 `quadruped` 让通道二起来** | ★ USB 网卡 `enx00e04c3600fb` 现已在位，重启即可；★★ 它在急停链路上，**要用户点头**。做完才能验 drdds 20 Hz / IMU 200 Hz 的**在线**里程计源 | 🚫 不需要 |
+| 2 | ★ **`T-DRDDS-1` 的五个零值格** | ★ 走行时再取一次 hex（`vel_x/vel_y/vel_yaw/payload/remain_mile`） | ✅ **需要走行** |
+| 3 | ★ **`T-CHS-1c`** `PointCloud2` | ★ 底盘侧雷达节点要发 —— 现场实测 `/LIDAR/POINTS` **publisher=0**；★ 订阅方是 `perception` | 🚫 不需要 |
+| 4 | ★ **`T-CHS-3` ④ 真机那一半** | ★ 要让 `tcp:30003` 失败以逼出 `udp:30004` 候选 | 🚫 不需要（但要断链路） |
+| 5 | ★ **`T-CHS-4` 后半**（断 socket → `conn=degraded` 且停发） | ★ 同 4，要一次真断链 | 🚫 不需要 |
+| 6 | ★ **`T-ODOM-2` / `T-ODOM-3`** | ★ 要人为把运控上报堵住 200 ms / 350 ms / 1.2 s | 🚫 不需要 |
+| 7 | ★ **真故障端到端** | ★ 见 `13` §11.1 表后的覆盖边界注；诱发方式要用户裁决 | 🚫 不需要 |
+| 8 | ★ **`T-DECEL` · `T-ODOM-4` · `M-28`** | ★★ 要场地 ＋ 监护人 | ✅ **需要走行** |
+
+> ⚠️★★ **一句话订正预期**：此前以为「只剩标定三项（`T-DECEL` / `T-ODOM-4` / `M-28`）要底盘」——
+> **不成立**。上表 1~7 都还要底盘在场，其中 **1 / 3 / 4 / 5 / 6 / 7 六项不需要机器人移动**，
+> 只有 **2 与 8 要真走行**。⇒ 排期时「要不要清场」和「要不要底盘」是两件事。
