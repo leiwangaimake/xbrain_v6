@@ -94,10 +94,10 @@ namespace {
 // rather than returning quietly on timeout: a discovery that never completes
 // and a sample that never arrives look the same from here, and both are
 // findings.
-bool PollUntil(ChassisDds* dds, int* got, double* t) {
+bool poll_until(ChassisDds* dds, int* got, double* t) {
   for (int i = 0; i < 2000; ++i) {   // 2000 x 1 ms = 2 s, well past discovery
     *t += 0.001;
-    const int n = dds->Poll(*t);
+    const int n = dds->poll(*t);
     if (n > 0) {
       *got = n;
       return true;
@@ -112,7 +112,7 @@ bool PollUntil(ChassisDds* dds, int* got, double* t) {
 // works, and a high one stays clear of the ROS defaults people set by hand.
 constexpr int kTestDomain = 89;
 
-ChassisDdsConfig Cfg() {
+ChassisDdsConfig cfg() {
   ChassisDdsConfig c;
   c.backend = "cyclone_raw";
   c.domain_id = 0;               // 13 DDS-1: the chassis domain
@@ -126,7 +126,7 @@ ChassisDdsConfig Cfg() {
   c.network_interface = "lo";
   c.imu_topic = "/IMU";
   // Required since the topic name stopped being a literal in chs_b.cc.
-  // An empty one throws from RosTopicToDdsTopic -- which is the right
+  // An empty one throws from ros_topic_to_dds_topic -- which is the right
   // answer (an empty ROS topic is not a topic), and the reason the
   // config loader require_string()s it rather than defaulting.
   // *** Deliberately NOT "/MOTION_INFO". A fixture that matches the literal
@@ -147,7 +147,7 @@ int main() {
   // An implementation that read it would join 42 and never hear the chassis.
   setenv("ROS_DOMAIN_ID", "42", 1);
 
-  ChassisDds dds(Cfg());
+  ChassisDds dds(cfg());
 
   // Read back from the entity. Echoing the config would pass on the broken
   // implementation as well, which is the whole reason this is a read-back.
@@ -160,7 +160,7 @@ int main() {
   ImuSample s;
   CHECK(dds.latest_imu(&s) == false);
   CHECK(dds.imu_age_s(1.0) < 0.0);
-  CHECK(ClassifyImuAge(dds.imu_age_s(1.0), 50) == ImuFreshness::kNeverSeen);
+  CHECK(classify_imu_age(dds.imu_age_s(1.0), 50) == ImuFreshness::kNeverSeen);
   CHECK(dds.imu_count() == 0);
 
   MotionInfoSample m;
@@ -169,7 +169,7 @@ int main() {
 
   // Polling an empty reader is a no-op, not an error and not a block. The
   // chs_b thread calls this at 200 Hz and must never stall there (DDS-6).
-  for (int i = 0; i < 20; ++i) CHECK(dds.Poll(0.001 * i) == 0);
+  for (int i = 0; i < 20; ++i) CHECK(dds.poll(0.001 * i) == 0);
   CHECK(dds.imu_count() == 0);
 
   // ---- the round trip, on the ISOLATED domain ---------------------------
@@ -179,7 +179,7 @@ int main() {
   // the field copy -- is independent of WHICH domain it runs on, and running it
   // on the vendor's would mean publishing fabricated IMU samples onto a live
   // robot's wire. The domain-0 instance above stays reader-only.
-  ChassisDdsConfig loop_cfg = Cfg();
+  ChassisDdsConfig loop_cfg = cfg();
   loop_cfg.domain_id = kTestDomain;
   ChassisDds loop(loop_cfg);
   CHECK(loop.actual_domain_id() == kTestDomain);
@@ -198,7 +198,7 @@ int main() {
   // *** The MAPPED name, from the same function the reader uses. Writing
   // "/IMU" here would make the test pass against a reader that also used the
   // ROS spelling -- and that reader hears nothing from the chassis.
-  const std::string imu_topic = RosTopicToDdsTopic("/IMU");
+  const std::string imu_topic = ros_topic_to_dds_topic("/IMU");
   CHECK(imu_topic == "rt/IMU");
   const dds_entity_t imu_t = dds_create_topic(
       pub_dp, &sensor_msgs_msg_dds__Imu__desc, imu_topic.c_str(), nullptr,
@@ -232,7 +232,7 @@ int main() {
   bool received = false;
   for (int attempt = 0; attempt < 20 && !received; ++attempt) {
     CHECK(dds_write(imu_w, &msg) == DDS_RETCODE_OK);
-    received = PollUntil(&loop, &got, &t);
+    received = poll_until(&loop, &got, &t);
   }
   CHECK(received);
 
@@ -258,7 +258,7 @@ int main() {
     // ...and freshness is now measured from that, so a sample just taken is
     // neither never-seen nor stale.
     CHECK(loop.imu_age_s(t) == 0.0);
-    CHECK(ClassifyImuAge(loop.imu_age_s(t), 50) == ImuFreshness::kFresh);
+    CHECK(classify_imu_age(loop.imu_age_s(t), 50) == ImuFreshness::kFresh);
   }
 
   // ---- a disposal is NOT a reading (DDS-5) ------------------------------
@@ -271,7 +271,7 @@ int main() {
   const std::uint64_t before_dispose = loop.imu_count();
   for (int i = 0; i < 200; ++i) {
     t += 0.001;
-    loop.Poll(t);
+    loop.poll(t);
     dds_sleepfor(DDS_MSECS(1));
   }
   CHECK(loop.imu_count() == before_dispose);
@@ -288,7 +288,7 @@ int main() {
   // The writer publishes on the name the CONFIG names, so a reader that
   // subscribed to a hardcoded /MOTION_INFO instead receives nothing and the
   // reception assertions below go red.
-  const std::string mi_topic = RosTopicToDdsTopic(Cfg().motion_info_topic);
+  const std::string mi_topic = ros_topic_to_dds_topic(cfg().motion_info_topic);
   CHECK(mi_topic == "rt/MOTION_INFO_FIXTURE");
   const dds_entity_t mi_t = dds_create_topic(
       pub_dp, &drdds_msg_dds__MotionInfo__desc, mi_topic.c_str(), nullptr,
@@ -312,7 +312,7 @@ int main() {
   bool mi_ok = false;
   for (int attempt = 0; attempt < 20 && !mi_ok; ++attempt) {
     CHECK(dds_write(mi_w, &mi) == DDS_RETCODE_OK);
-    mi_ok = PollUntil(&loop, &got_mi, &t);
+    mi_ok = poll_until(&loop, &got_mi, &t);
   }
   CHECK(mi_ok);
 

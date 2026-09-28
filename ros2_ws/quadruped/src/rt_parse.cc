@@ -11,7 +11,7 @@
  * found, and each caller decides what a gap MEANS. For a loosening command a
  * gap is a refusal; for the estop it is nothing at all.
  *
- * One implementation note worth more than the rest. GetFinite below refuses
+ * One implementation note worth more than the rest. get_finite below refuses
  * NaN and infinity rather than passing them through, and it does so for fields
  * the robot does not even use on an ordinary gait (vz, v_roll, v_pitch). That
  * is not tidiness: 11 S9.12.1 lists a non-finite axis as 载荷污染, and a message
@@ -25,7 +25,7 @@
 #include <cmath>
 
 #include "nlohmann/json.hpp"
-// For GaitValueByName: the gait name table lives in the read-back unit and
+// For gait_value_by_name: the gait name table lives in the read-back unit and
 // ONLY there (13 QD-3) -- see the note where this file's copy used to be.
 #include "quadruped/chs_a_reports.h"
 
@@ -48,7 +48,7 @@ using Json = nlohmann::json;
 // reader, not of this function, and the next person to swap the reader would
 // inherit the assumption without being told. Registered as a declared
 // equivalent mutant rather than defended by a test that cannot fail.
-bool GetFinite(const Json& j, const char* key, double* out) {
+bool get_finite(const Json& j, const char* key, double* out) {
   const auto it = j.find(key);
   if (it == j.end() || !it->is_number()) return false;
   const double v = it->get<double>();
@@ -57,7 +57,7 @@ bool GetFinite(const Json& j, const char* key, double* out) {
   return true;
 }
 
-bool GetString(const Json& j, const char* key, std::string* out) {
+bool get_string(const Json& j, const char* key, std::string* out) {
   const auto it = j.find(key);
   if (it == j.end() || !it->is_string()) return false;
   *out = it->get<std::string>();
@@ -70,7 +70,7 @@ bool GetString(const Json& j, const char* key, std::string* out) {
 // It fills `out` as far as it got even when it fails, because the estop path
 // needs whatever could be read in order to answer an ack, and a parser that
 // wiped its output on failure would leave that ack blank.
-RtParse ReadEnvelope(const Json& j, const std::string& our_rid,
+RtParse read_envelope(const Json& j, const std::string& our_rid,
                      const std::string& our_boot, Envelope* out, Json* data) {
   if (!j.is_object()) return RtParse::kBadJson;
 
@@ -81,15 +81,15 @@ RtParse ReadEnvelope(const Json& j, const std::string& our_rid,
   out->v = v_it->get<int>();
   if (out->v != kEnvelopeVersion) return RtParse::kBadVersion;
 
-  if (!GetString(j, "rid", &out->rid)) return RtParse::kMissingField;
+  if (!get_string(j, "rid", &out->rid)) return RtParse::kMissingField;
   if (out->rid != our_rid) return RtParse::kWrongRobot;
-  if (!GetString(j, "src", &out->src)) return RtParse::kMissingField;
+  if (!get_string(j, "src", &out->src)) return RtParse::kMissingField;
 
   const auto seq_it = j.find("seq");
   if (seq_it == j.end() || !seq_it->is_number_unsigned()) return RtParse::kMissingField;
   out->seq = seq_it->get<std::uint64_t>();
 
-  if (!GetFinite(j, "ts", &out->ts)) return RtParse::kMissingField;
+  if (!get_finite(j, "ts", &out->ts)) return RtParse::kMissingField;
 
   // ts_sync: 11 S3.0 makes it mandatory AND makes absence mean false. Both
   // halves are kept -- a missing field is still a malformed envelope for a
@@ -102,8 +102,8 @@ RtParse ReadEnvelope(const Json& j, const std::string& our_rid,
   // mono + boot travel together (11 S3.0: "mono 存在时 boot 必填"). A publisher
   // on another machine omits both (CLK-C4).
   double mono = -1.0;
-  const bool has_mono = GetFinite(j, "mono", &mono);
-  const bool has_boot = GetString(j, "boot", &out->boot);
+  const bool has_mono = get_finite(j, "mono", &mono);
+  const bool has_boot = get_string(j, "boot", &out->boot);
   if (has_mono) {
     out->mono = mono;
     // *** The boot comparison. A monotonic reading from another boot counts
@@ -126,7 +126,7 @@ RtParse ReadEnvelope(const Json& j, const std::string& our_rid,
 
 }  // namespace
 
-const char* RtParseName(RtParse r) {
+const char* rt_parse_name(RtParse r) {
   switch (r) {
     case RtParse::kOk: return "ok";
     case RtParse::kBadJson: return "bad_json";
@@ -140,7 +140,7 @@ const char* RtParseName(RtParse r) {
   return "invalid";
 }
 
-const char* CtrlActionName(CtrlAction a) {
+const char* ctrl_action_name(CtrlAction a) {
   switch (a) {
     case CtrlAction::kStand: return "stand";
     case CtrlAction::kProne: return "prone";
@@ -150,14 +150,14 @@ const char* CtrlActionName(CtrlAction a) {
   return "invalid";
 }
 
-RtParse ParseCmdVel(const char* json, std::size_t len, const std::string& our_rid,
+RtParse parse_cmd_vel(const char* json, std::size_t len, const std::string& our_rid,
                     const std::string& our_boot, CmdVelMsg* out) {
   if (json == nullptr || out == nullptr) return RtParse::kBadJson;
   const Json j = Json::parse(json, json + len, nullptr, /*allow_exceptions=*/false);
   if (j.is_discarded()) return RtParse::kBadJson;
 
   Json data;
-  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &data);
+  const RtParse env = read_envelope(j, our_rid, our_boot, &out->env, &data);
   if (env != RtParse::kOk) return env;
 
   // All six axes are mandatory (11 S3.4). vz / v_roll / v_pitch are zero on
@@ -165,12 +165,12 @@ RtParse ParseCmdVel(const char* json, std::size_t len, const std::string& our_ri
   // that spec.* defines no limit for them, so Tier 1 trims them to zero, and a
   // message that omits them is a message from a publisher that does not know
   // the schema this one is being validated against.
-  if (!GetFinite(data, "vx", &out->vx)) return RtParse::kMissingField;
-  if (!GetFinite(data, "vy", &out->vy)) return RtParse::kMissingField;
-  if (!GetFinite(data, "wz", &out->wz)) return RtParse::kMissingField;
-  if (!GetFinite(data, "vz", &out->vz)) return RtParse::kMissingField;
-  if (!GetFinite(data, "v_roll", &out->v_roll)) return RtParse::kMissingField;
-  if (!GetFinite(data, "v_pitch", &out->v_pitch)) return RtParse::kMissingField;
+  if (!get_finite(data, "vx", &out->vx)) return RtParse::kMissingField;
+  if (!get_finite(data, "vy", &out->vy)) return RtParse::kMissingField;
+  if (!get_finite(data, "wz", &out->wz)) return RtParse::kMissingField;
+  if (!get_finite(data, "vz", &out->vz)) return RtParse::kMissingField;
+  if (!get_finite(data, "v_roll", &out->v_roll)) return RtParse::kMissingField;
+  if (!get_finite(data, "v_pitch", &out->v_pitch)) return RtParse::kMissingField;
 
   // *** estop_epoch. 11:1722 marks it MANDATORY on this key. Defaulting it --
   // to zero, or to "whatever we hold" -- is the fail-silent option twice over:
@@ -194,7 +194,7 @@ struct NameValue {
   std::int64_t value;
 };
 
-bool LookupName(const NameValue* table, std::size_t n, const std::string& name,
+bool lookup_name(const NameValue* table, std::size_t n, const std::string& name,
                 std::int64_t* out) {
   for (std::size_t i = 0; i < n; ++i) {
     if (name == table[i].name) {
@@ -224,7 +224,7 @@ constexpr NameValue kMotionStates[] = {
 // NO gait name table here. 13 QD-3 requires the chassis value mapping to
 // live in ONE translation unit, and that table's home is chs_a_reports.cc
 // (the read-back direction) -- the config loader already resolves gait NAMES
-// through its GaitValueByName (13 QC-9 / GS-3: "配置按名解析走的就是它"), so
+// through its gait_value_by_name (13 QC-9 / GS-3: "配置按名解析走的就是它"), so
 // a second name table here was a second place for a gait to be spelled, and
 // the two had in fact already drifted by one member when they were merged
 // (2026-09-26): this file's copy omitted platform.
@@ -243,28 +243,28 @@ constexpr std::int64_t kReadOnlyGaits[] = {0x1002};
 
 }  // namespace
 
-bool UsageModeValue(const std::string& name, std::int64_t* out) {
-  return LookupName(kUsageModes, sizeof(kUsageModes) / sizeof(kUsageModes[0]),
+bool usage_mode_value(const std::string& name, std::int64_t* out) {
+  return lookup_name(kUsageModes, sizeof(kUsageModes) / sizeof(kUsageModes[0]),
                     name, out);
 }
 
-bool MotionStateValue(const std::string& name, std::int64_t* out) {
-  return LookupName(kMotionStates,
+bool motion_state_value(const std::string& name, std::int64_t* out) {
+  return lookup_name(kMotionStates,
                     sizeof(kMotionStates) / sizeof(kMotionStates[0]), name, out);
 }
 
-bool GaitValue(const std::string& name, std::int64_t* out) {
+bool gait_value(const std::string& name, std::int64_t* out) {
   // Name -> value through the ONE table (13 QD-3, merged 2026-09-26), then
   // the directional exclusion -- see kReadOnlyGaits above for why the second
   // step is not a second table.
-  if (!chs_a::GaitValueByName(name, out)) return false;
+  if (!chs_a::gait_value_by_name(name, out)) return false;
   for (const std::int64_t g : kReadOnlyGaits) {
     if (*out == g) return false;
   }
   return true;
 }
 
-RtParse ParseHello(const char* json, std::size_t len,
+RtParse parse_hello(const char* json, std::size_t len,
                    const std::string& our_rid, const std::string& our_boot,
                    HelloMsg* out) {
   // rid / boot are accepted and unused: the handshake carries no envelope
@@ -277,12 +277,12 @@ RtParse ParseHello(const char* json, std::size_t len,
   const Json j = Json::parse(json, json + len, nullptr, /*allow_exceptions=*/false);
   if (j.is_discarded()) return RtParse::kBadJson;
   std::string type;
-  if (!GetString(j, "type", &type) || type != "hello") {
+  if (!get_string(j, "type", &type) || type != "hello") {
     return RtParse::kUnsupportedAction;
   }
-  GetString(j, "client", &out->client);   // informational, not required
+  get_string(j, "client", &out->client);   // informational, not required
   std::string ver;
-  if (!GetString(j, "proto_version", &ver)) return RtParse::kMissingField;
+  if (!get_string(j, "proto_version", &ver)) return RtParse::kMissingField;
   // major.minor, split on the FIRST dot. A version that does not parse is a
   // refusal rather than a default: 11 S9.1.4 makes major the compatibility
   // decision, and defaulting it to 1 would make an unreadable version
@@ -324,7 +324,7 @@ constexpr NamedInt kLightColors[] = {
     {"black", 0}, {"white", 1}, {"green", 2}, {"blue", 3},
 };
 
-bool LookupNamed(const NamedInt* table, std::size_t n, const std::string& name,
+bool lookup_named(const NamedInt* table, std::size_t n, const std::string& name,
                  int* out) {
   for (std::size_t i = 0; i < n; ++i) {
     if (name == table[i].name) {
@@ -339,19 +339,19 @@ bool LookupNamed(const NamedInt* table, std::size_t n, const std::string& name,
 // lamp would leave the encoder to invent the rest, and the chassis takes both
 // lamps positionally in one message (guide 1.2.7) -- there is no "leave this
 // one as it was".
-bool ReadLamp(const Json& parent, const char* key, int* pattern, int* color,
+bool read_lamp(const Json& parent, const char* key, int* pattern, int* color,
               int* cycle_s) {
   const auto it = parent.find(key);
   if (it == parent.end() || !it->is_object()) return false;
   std::string name;
-  if (!GetString(*it, "pattern", &name) ||
-      !LookupNamed(kLightPatterns,
+  if (!get_string(*it, "pattern", &name) ||
+      !lookup_named(kLightPatterns,
                    sizeof(kLightPatterns) / sizeof(kLightPatterns[0]), name,
                    pattern)) {
     return false;
   }
-  if (!GetString(*it, "color", &name) ||
-      !LookupNamed(kLightColors, sizeof(kLightColors) / sizeof(kLightColors[0]),
+  if (!get_string(*it, "color", &name) ||
+      !lookup_named(kLightColors, sizeof(kLightColors) / sizeof(kLightColors[0]),
                    name, color)) {
     return false;
   }
@@ -372,7 +372,7 @@ bool ReadLamp(const Json& parent, const char* key, int* pattern, int* color,
 
 }  // namespace
 
-RtParse ParseLight(const char* json, std::size_t len, const std::string& our_rid,
+RtParse parse_light(const char* json, std::size_t len, const std::string& our_rid,
                    const std::string& our_boot, LightMsg* out) {
   if (json == nullptr || out == nullptr) return RtParse::kBadJson;
   const Json j = Json::parse(json, json + len, nullptr, /*allow_exceptions=*/false);
@@ -381,9 +381,9 @@ RtParse ParseLight(const char* json, std::size_t len, const std::string& our_rid
   // LOOSENING (11 S3.0.1): a light command asks the robot to do something, so
   // a malformed one is refused outright. The asymmetry matters -- the estop
   // path stops FIRST and parses after, and this one must not copy that shape.
-  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &data);
+  const RtParse env = read_envelope(j, our_rid, our_boot, &out->env, &data);
   if (env != RtParse::kOk) return env;
-  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {
+  if (!get_string(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {
     return RtParse::kMissingField;
   }
   // 13 V-47: presence is what the caller needs. The value is deliberately not
@@ -399,9 +399,9 @@ RtParse ParseLight(const char* json, std::size_t len, const std::string& our_rid
     // Both lamps, always. The chassis message is positional over a two-element
     // array; a message naming only the head has no representation on the wire
     // that does not also say something about the tail.
-    if (!ReadLamp(*custom, "head", &out->head_pattern, &out->head_color,
+    if (!read_lamp(*custom, "head", &out->head_pattern, &out->head_color,
                   &out->head_cycle_s) ||
-        !ReadLamp(*custom, "tail", &out->tail_pattern, &out->tail_color,
+        !read_lamp(*custom, "tail", &out->tail_pattern, &out->tail_color,
                   &out->tail_cycle_s)) {
       return RtParse::kUnsupportedAction;
     }
@@ -416,19 +416,19 @@ RtParse ParseLight(const char* json, std::size_t len, const std::string& our_rid
   return RtParse::kOk;
 }
 
-RtParse ParseChassisMode(const char* json, std::size_t len,
+RtParse parse_chassis_mode(const char* json, std::size_t len,
                          const std::string& our_rid, const std::string& our_boot,
                          ChassisModeMsg* out) {
   if (json == nullptr || out == nullptr) return RtParse::kBadJson;
   const Json j = Json::parse(json, json + len, nullptr, /*allow_exceptions=*/false);
   if (j.is_discarded()) return RtParse::kBadJson;
   Json data;
-  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &data);
+  const RtParse env = read_envelope(j, our_rid, our_boot, &out->env, &data);
   if (env != RtParse::kOk) return env;
   // cmd_id is mandatory: this is a loosening command in the 11 S3.0.1 sense
   // (it can end at usage_mode = navigation, which is what Tier 1 waits for),
   // and without a cmd_id the switch cannot be correlated with its read-back.
-  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {
+  if (!get_string(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {
     return RtParse::kMissingField;
   }
   // Each field optional, each validated when present. A name outside the
@@ -436,20 +436,20 @@ RtParse ParseChassisMode(const char* json, std::size_t len,
   // a unit, so applying the fields that parsed would leave the machine waiting
   // on an expectation nobody can satisfy.
   std::string name;
-  if (GetString(data, "usage_mode", &name)) {
-    if (!UsageModeValue(name, &out->usage_mode)) {
+  if (get_string(data, "usage_mode", &name)) {
+    if (!usage_mode_value(name, &out->usage_mode)) {
       return RtParse::kUnsupportedAction;
     }
     out->has_usage_mode = true;
   }
-  if (GetString(data, "motion_state", &name)) {
-    if (!MotionStateValue(name, &out->motion_state)) {
+  if (get_string(data, "motion_state", &name)) {
+    if (!motion_state_value(name, &out->motion_state)) {
       return RtParse::kUnsupportedAction;
     }
     out->has_motion_state = true;
   }
-  if (GetString(data, "gait", &name)) {
-    if (!GaitValue(name, &out->gait)) return RtParse::kUnsupportedAction;
+  if (get_string(data, "gait", &name)) {
+    if (!gait_value(name, &out->gait)) return RtParse::kUnsupportedAction;
     out->has_gait = true;
   }
   // A message that changes nothing is a defect in the sender, not a no-op to
@@ -462,7 +462,7 @@ RtParse ParseChassisMode(const char* json, std::size_t len,
   return RtParse::kOk;
 }
 
-RtParse ParseClockStatus(const char* json, std::size_t len,
+RtParse parse_clock_status(const char* json, std::size_t len,
                          const std::string& our_rid,
                          const std::string& our_boot, ClockStatusMsg* out) {
   if (json == nullptr || out == nullptr) return RtParse::kBadJson;
@@ -470,7 +470,7 @@ RtParse ParseClockStatus(const char* json, std::size_t len,
   if (j.is_discarded()) return RtParse::kBadJson;
 
   Json data;
-  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &data);
+  const RtParse env = read_envelope(j, our_rid, our_boot, &out->env, &data);
   if (env != RtParse::kOk) return env;
 
   // The one consumed field. Mandatory boolean -- see the header for why a
@@ -482,7 +482,7 @@ RtParse ParseClockStatus(const char* json, std::size_t len,
   return RtParse::kOk;
 }
 
-RtParse ParseProbePing(const char* json, std::size_t len,
+RtParse parse_probe_ping(const char* json, std::size_t len,
                        const std::string& our_rid, const std::string& our_boot,
                        ProbePingMsg* out) {
   if (json == nullptr || out == nullptr) return RtParse::kBadJson;
@@ -490,7 +490,7 @@ RtParse ParseProbePing(const char* json, std::size_t len,
   if (j.is_discarded()) return RtParse::kBadJson;
 
   Json data;
-  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &data);
+  const RtParse env = read_envelope(j, our_rid, our_boot, &out->env, &data);
   // Envelope first, and a failure stops here with has_seq still false. See the
   // header: reading a seq out of a message addressed to another robot would
   // answer that robot's probe with our estop state.
@@ -508,7 +508,7 @@ RtParse ParseProbePing(const char* json, std::size_t len,
   return RtParse::kOk;
 }
 
-RtParse ParseChassisCtrl(const char* json, std::size_t len,
+RtParse parse_chassis_ctrl(const char* json, std::size_t len,
                          const std::string& our_rid, const std::string& our_boot,
                          ChassisCtrlMsg* out) {
   if (json == nullptr || out == nullptr) return RtParse::kBadJson;
@@ -516,16 +516,16 @@ RtParse ParseChassisCtrl(const char* json, std::size_t len,
   if (j.is_discarded()) return RtParse::kBadJson;
 
   Json data;
-  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &data);
+  const RtParse env = read_envelope(j, our_rid, our_boot, &out->env, &data);
   if (env != RtParse::kOk) return env;
 
   // cmd_id is mandatory for a loosening command (11 S3.0.1 names it directly).
   // Without it an ack cannot be correlated and the idempotency rule of Q-3
   // ("same cmd_id re-sent => duplicate, epoch unchanged") has nothing to key on.
-  if (!GetString(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {
+  if (!get_string(data, "cmd_id", &out->cmd_id) || out->cmd_id.empty()) {
     return RtParse::kMissingField;
   }
-  if (!GetString(data, "action", &out->raw_action)) return RtParse::kMissingField;
+  if (!get_string(data, "action", &out->raw_action)) return RtParse::kMissingField;
 
   const std::string& a = out->raw_action;
   // The three the contract DELETED (11 S9.3.3 v0.3). They are named here rather
@@ -564,7 +564,7 @@ RtParse ParseChassisCtrl(const char* json, std::size_t len,
   return RtParse::kOk;
 }
 
-void ParseEstop(const char* json, std::size_t len, const std::string& our_rid,
+void parse_estop(const char* json, std::size_t len, const std::string& our_rid,
                 const std::string& our_boot, EstopMsg* out) {
   if (out == nullptr) return;
   *out = EstopMsg();
@@ -577,7 +577,7 @@ void ParseEstop(const char* json, std::size_t len, const std::string& our_rid,
   if (j.is_discarded()) return;
 
   Json env_data;
-  const RtParse env = ReadEnvelope(j, our_rid, our_boot, &out->env, &env_data);
+  const RtParse env = read_envelope(j, our_rid, our_boot, &out->env, &env_data);
   // Deliberately not returned. Even a WRONG-ROBOT estop is acted on: 99 U75
   // accepts that a malformed or hostile payload can stop the robot, on the
   // stated ground that a wrongful stop costs nothing and a wrongful release
@@ -585,9 +585,9 @@ void ParseEstop(const char* json, std::size_t len, const std::string& our_rid,
   // (U23), which is the assumption that makes the trade acceptable.
   out->envelope_ok = (env == RtParse::kOk);
 
-  // *** `data` is read from the DOCUMENT, not from ReadEnvelope's out-param.
+  // *** `data` is read from the DOCUMENT, not from read_envelope's out-param.
   //
-  // ReadEnvelope returns early on a bad version or a foreign rid and never
+  // read_envelope returns early on a bad version or a foreign rid and never
   // reaches the data object, which is correct for a loosening command and wrong
   // here: this estop is going to be acted on regardless, so the ack has to be
   // able to name the cmd_id it is acknowledging. Taking the envelope reader's
@@ -596,12 +596,12 @@ void ParseEstop(const char* json, std::size_t len, const std::string& our_rid,
   // cases in test_rt_parse.cc, which is why they are there.
   const auto d_it = j.find("data");
   if (d_it == j.end() || !d_it->is_object()) return;
-  out->cmd_id_present = GetString(*d_it, "cmd_id", &out->cmd_id);
+  out->cmd_id_present = get_string(*d_it, "cmd_id", &out->cmd_id);
   // The audit pair (11 S9.12), same best-effort discipline as everything on
   // this key: absent or mistyped means empty, never a refusal -- nothing
   // here may gate the stop. Feeds RobotState.last_soft_estop (11 S4.1).
-  GetString(*d_it, "reason", &out->reason);
-  GetString(*d_it, "src_role", &out->src_role);
+  get_string(*d_it, "reason", &out->reason);
+  get_string(*d_it, "src_role", &out->src_role);
 }
 
 }  // namespace rt

@@ -62,7 +62,7 @@ class Uplink {
   // clock and looks identical to the steady one at the call site).
   //
   // Publishes nothing at all when the sample says not to.
-  void Publish(const OdomSample& s, double wall_ts_s);
+  void publish(const OdomSample& s, double wall_ts_s);
 
   // The domain the context actually joined, READ BACK from it rather than
   // echoed from the config. Echoing would report 42 on an implementation that

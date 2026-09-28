@@ -22,7 +22,7 @@
  *
  *   * it runs on ctrl, SCHED_FIFO 80 (13 S9.1). QD-7 / RTC-5 forbid allocation
  *     and RTC-4 forbids blocking I/O there, so there is no std::string, no
- *     container, no log call and no lock anywhere in Step();
+ *     container, no log call and no lock anywhere in step();
  *   * every deadline is monotonic (CLK-C1), and injecting the reading is what
  *     makes a 200 ms timeout testable without waiting 200 ms. A test that
  *     sleeps is flaky on a loaded machine, and this is the one function whose
@@ -78,7 +78,7 @@ enum class StopReason : std::uint8_t {
 // The contract spelling, from common/include/xbrain/enums/closed_sets.h. Never
 // a literal here: CLAUDE.md 3.5 keeps closed-set strings in one place, and the
 // one place is generated from xbrain/common/enums/sets.yaml.
-std::string_view StopReasonName(StopReason r);
+std::string_view stop_reason_name(StopReason r);
 
 // One control period's worth of input. Plain data, so a test can state a whole
 // situation in one initialiser and a reader can see every condition at once.
@@ -184,7 +184,7 @@ class Tier1 {
   explicit Tier1(const Tier1Config& cfg);
 
   // One control period. noexcept, allocation-free, lock-free, clock-free.
-  Tier1Output Step(const Tier1Input& in) noexcept;
+  Tier1Output step(const Tier1Input& in) noexcept;
 
   bool hes_lock() const noexcept { return hes_lock_; }
   bool timeout_lock() const noexcept { return timeout_lock_; }
@@ -196,7 +196,7 @@ class Tier1 {
  private:
   // Zero every axis and stamp a reason. The only way an output becomes a stop,
   // so there is exactly one place where "stopped" is spelled out.
-  static Tier1Output Stop(StopReason r) noexcept;
+  static Tier1Output stop(StopReason r) noexcept;
 
   Tier1Limits limits_;
   double cmd_timeout_s_ = 0.0;

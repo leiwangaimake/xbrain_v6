@@ -87,11 +87,11 @@ static_assert(
     "forbids");
 static_assert(
     noexcept(std::declval<hachist::xbrain::rtcomm::TxGuard&>()
-                 .TryAcquireRealtime()),
+                 .try_acquire_realtime()),
     "13 CPP-4: the realtime acquire must be noexcept (a try, not a lock)");
 static_assert(
     noexcept(std::declval<hachist::xbrain::rtcomm::TxGuard&>()
-                 .AcquireNonRealtime()),
+                 .acquire_non_realtime()),
     "13 CPP-4: the non-realtime acquire must be noexcept");
 
 // How the caller reached the socket, which decides the wait policy. Named
@@ -137,7 +137,7 @@ class TxOwner {
   //   an exception crossing this boundary would terminate the process, and
   //   while stopping is safe (QD-8), stopping for a transient write error is
   //   an unnecessary outage. Errors are returned, never thrown.
-  TxResult Send(TxCaller caller, const std::uint8_t* data,
+  TxResult send(TxCaller caller, const std::uint8_t* data,
                 std::size_t len) noexcept;
 
   // Diagnostics that must be visible, not just counted: a guard held by a stuck
@@ -158,7 +158,7 @@ class TxOwner {
   // section (FR-4 / TX-7). Bounded by partial_send_retry_; on exhaustion the
   // caller gets kShortWrite and must close the connection -- leaving half a
   // frame in a TCP stream makes the peer parse the next bytes as a header.
-  TxResult WriteWhole(const std::uint8_t* data, std::size_t len) noexcept;
+  TxResult write_whole(const std::uint8_t* data, std::size_t len) noexcept;
 
   FrameWriter writer_;
   int partial_send_retry_;

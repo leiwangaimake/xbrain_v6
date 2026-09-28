@@ -98,7 +98,7 @@ enum class ConnState {
   kLost,      // no reports for state_timeout_lost_s; waiting out the backoff
 };
 
-const char* ConnStateName(ConnState s);
+const char* conn_state_name(ConnState s);
 
 // Why a probe candidate was passed over. Kept because "skipped" and "timed out"
 // are the two outcomes 13 S2.2 says must never look alike in a log.
@@ -128,7 +128,7 @@ struct ErrorDisposition {
 };
 
 // Pure function of the code, so the table can be read against 13 S7.5 directly.
-ErrorDisposition ClassifyErrorCode(std::uint32_t code);
+ErrorDisposition classify_error_code(std::uint32_t code);
 
 // Everything the session needs, lifted out of ChassisLinkConfig so the tests
 // can build one without a whole config file. Seconds throughout: the config
@@ -146,7 +146,7 @@ struct SessionConfig {
   // 13 CA-9. Zero on EITHER of the first two disables the recovery probe
   // entirely, which is the pre-2026-09-28 behaviour -- a legal, safe state (the
   // link simply stays where it is), so a zero here is "off", never an
-  // uncalibrated safety value standing in for a real one. FromLinkConfig always
+  // uncalibrated safety value standing in for a real one. from_link_config always
   // sets all three; a hand-built SessionConfig (the tests) opts in explicitly.
   double endpoint_recovery_period_s = 0.0;
   int endpoint_recovery_attempts = 0;
@@ -160,7 +160,7 @@ struct SessionConfig {
   // degenerate (a zero heartbeat period is a busy loop; an empty ladder has no
   // delay to apply), rather than clamping -- a clamped value runs, and runs
   // differently from what the file says.
-  static SessionConfig FromLinkConfig(const ChassisLinkConfig& link);
+  static SessionConfig from_link_config(const ChassisLinkConfig& link);
 };
 
 // What one Tick decided. The caller performs the send; the session never holds
@@ -171,7 +171,7 @@ struct TickResult {
   // see CON-07 in the file comment (mis-cited CON-05 until 2026-09-26).
   bool connected = false;
   // The link just went down. The caller drops any half-assembled frame
-  // (chs_a_framer::Reset) so bytes from the old connection are never read as
+  // (chs_a_framer::reset) so bytes from the old connection are never read as
   // the start of the new one.
   bool disconnected = false;
 };
@@ -194,16 +194,16 @@ class Session {
 
   // Drive the session. Called from ctrl at control_loop_hz; does no I/O beyond
   // the injected callables and never blocks.
-  TickResult Tick(double now_mono_s);
+  TickResult tick(double now_mono_s);
 
   // A report of any kind arrived. This is the ONLY thing that proves the link
   // is alive: 13 CA-7 says axis commands are never acknowledged, so silence on
   // the downlink says nothing at all.
-  void OnReport(double now_mono_s);
+  void on_report(double now_mono_s);
 
   // Results of a frame write (tx_owner's verdict).
-  void OnSendFailure(double now_mono_s);
-  void OnSendSuccess();
+  void on_send_failure(double now_mono_s);
+  void on_send_success();
 
   // An AXIS command left the process at this monotonic time (13 CA-9). Not any
   // frame: a heartbeat does not arm the 0xE006 affinity window and does not
@@ -213,10 +213,10 @@ class Session {
   // Monotone: the caller may hand over a timestamp it read earlier (the estop
   // path sends its zero frame from another thread and the control period
   // forwards it), so an out-of-order call must never move the mark backwards.
-  void OnAxisCommandSent(double now_mono_s);
+  void on_axis_command_sent(double now_mono_s);
 
   // A generic response arrived with this code (13 S7.5).
-  void OnErrorCode(double now_mono_s, std::uint32_t code);
+  void on_error_code(double now_mono_s, std::uint32_t code);
 
   // The last NON-success response code, and how many have arrived. 13 S7.5
   // classifies each one; the CODE ITSELF is what names the problem, and it was
@@ -225,7 +225,7 @@ class Session {
   std::uint64_t error_codes_seen() const { return error_codes_seen_; }
 
   // The chassis said it is asleep or awake (BasicStatus.Sleep, 13 F-21).
-  void OnSleep(bool sleeping);
+  void on_sleep(bool sleeping);
 
   ConnState state() const { return state_; }
   bool asleep() const { return asleep_; }
@@ -265,17 +265,17 @@ class Session {
   // Move to the next candidate, skipping the ones that can be judged without
   // dialling. Sets state_ to kOk-pending (probing with a live socket) or walks
   // off the end of the list and starts the backoff.
-  void AdvanceCandidate(double now_mono_s, TickResult* out);
-  void EnterLost(double now_mono_s, TickResult* out);
-  double BackoffFor(std::size_t attempt) const;
+  void advance_candidate(double now_mono_s, TickResult* out);
+  void enter_lost(double now_mono_s, TickResult* out);
+  double backoff_for(std::size_t attempt) const;
   // 13 CA-9. Split into three so each one is separately assertable: when the
   // next probe is due, whether it is allowed to start right now, and the walk
   // itself. A single "MaybeRecover" would hide the axis-quiet guard inside a
   // function whose only observable is "did the endpoint change".
-  bool HasHigherPriorityCandidate();
-  void ScheduleRecovery(double now_mono_s);
-  bool RecoveryDue(double now_mono_s) const;
-  void StartRecovery(double now_mono_s, TickResult* out);
+  bool has_higher_priority_candidate();
+  void schedule_recovery(double now_mono_s);
+  bool recovery_due(double now_mono_s) const;
+  void start_recovery(double now_mono_s, TickResult* out);
 
   SessionConfig cfg_;
   Dial dial_;

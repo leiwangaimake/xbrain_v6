@@ -135,12 +135,12 @@ struct Header {
 
 // Write the 16 header bytes. Returns false only when cap is too small, so the
 // caller cannot accidentally emit a truncated header.
-bool WriteHeader(const Header& h, std::uint8_t* buf, std::size_t cap);
+bool write_header(const Header& h, std::uint8_t* buf, std::size_t cap);
 
 // Read the 16 header bytes. Returns false when the sync word does not match or
 // the buffer is short -- the caller then resyncs (FR-2) rather than trusting a
 // length field it just read out of arbitrary bytes.
-bool ReadHeader(const std::uint8_t* buf, std::size_t len, Header* out);
+bool read_header(const std::uint8_t* buf, std::size_t len, Header* out);
 
 // ---------------------------------------------------------------------------
 // Encoders. Each renders a COMPLETE frame (header + ASDU) into buf and returns
@@ -155,17 +155,17 @@ bool ReadHeader(const std::uint8_t* buf, std::size_t len, Header* out);
 
 // C-01. Items is an empty object, and it must be present: a missing Items is
 // one of the three 0xE002 causes.
-std::size_t EncodeHeartbeat(std::uint8_t* buf, std::size_t cap,
+std::size_t encode_heartbeat(std::uint8_t* buf, std::size_t cap,
                             std::uint16_t msg_id, std::int64_t now_wall);
 
 // C-02. mode: 0 normal / 1 navigation / 2 assist (guide 1.2.2).
-std::size_t EncodeUsageMode(std::uint8_t* buf, std::size_t cap,
+std::size_t encode_usage_mode(std::uint8_t* buf, std::size_t cap,
                             std::uint16_t msg_id, std::int64_t now_wall,
                             int mode);
 
 // C-03. motion_param values are 13 S5.2; the caller is responsible for not
 // sending one this project does not implement (that list is config, not code).
-std::size_t EncodeMotionState(std::uint8_t* buf, std::size_t cap,
+std::size_t encode_motion_state(std::uint8_t* buf, std::size_t cap,
                               std::uint16_t msg_id, std::int64_t now_wall,
                               int motion_param);
 
@@ -181,12 +181,12 @@ std::size_t EncodeMotionState(std::uint8_t* buf, std::size_t cap,
 // `color`. The vendor's own example sends a one-element array, so that is what
 // this writes -- the array is the wire shape, not a per-segment list we have
 // any way to fill.
-std::size_t EncodeCustomLight(std::uint8_t* buf, std::size_t cap,
+std::size_t encode_custom_light(std::uint8_t* buf, std::size_t cap,
                               std::uint16_t msg_id, std::int64_t now_wall,
                               bool custom_mode, const LedSetting& head,
                               const LedSetting& tail);
 
-std::size_t EncodeGait(std::uint8_t* buf, std::size_t cap, std::uint16_t msg_id,
+std::size_t encode_gait(std::uint8_t* buf, std::size_t cap, std::uint16_t msg_id,
                        std::int64_t now_wall, std::uint32_t gait_param);
 
 // C-06, the only command that moves the robot. Units are physical (m/s, rad/s)
@@ -205,12 +205,12 @@ struct AxisCommand {
   double pitch = 0.0;    // rad/s (special gaits only)
   double yaw = 0.0;      // rad/s yaw rate
 };
-std::size_t EncodeRealAxis(std::uint8_t* buf, std::size_t cap,
+std::size_t encode_real_axis(std::uint8_t* buf, std::size_t cap,
                            std::uint16_t msg_id, std::int64_t now_wall,
                            const AxisCommand& cmd);
 
 // C-08. Deployment-time only: 11 S9.3.4 keeps it off the general plane.
-std::size_t EncodeSdkMode(std::uint8_t* buf, std::size_t cap,
+std::size_t encode_sdk_mode(std::uint8_t* buf, std::size_t cap,
                           std::uint16_t msg_id, std::int64_t now_wall,
                           bool enable, int joint_rate_hz);
 
@@ -232,7 +232,7 @@ struct AsduRouting {
 
 // Extract routing from an ASDU payload. Returns false when the payload is not
 // the expected shape, which the caller reports rather than guessing at.
-bool ParseAsduRouting(const std::uint8_t* asdu, std::size_t len,
+bool parse_asdu_routing(const std::uint8_t* asdu, std::size_t len,
                       AsduRouting* out);
 
 }  // namespace chs_a

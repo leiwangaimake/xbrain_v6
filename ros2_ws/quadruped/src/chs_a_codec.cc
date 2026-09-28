@@ -45,7 +45,7 @@ constexpr std::size_t kTimeBufBytes = 24;
 //   fails, instead of leaving the buffer uninitialised. A garbage Time is
 //   rejected by the chassis with 0xE002, which is loud; uninitialised stack
 //   bytes would sometimes parse and sometimes not.
-void FormatTime(std::int64_t now_wall, char* out, std::size_t cap) {
+void format_time(std::int64_t now_wall, char* out, std::size_t cap) {
   std::time_t t = static_cast<std::time_t>(now_wall);
   std::tm tm_buf;
   if (localtime_r(&t, &tm_buf) == nullptr ||
@@ -57,7 +57,7 @@ void FormatTime(std::int64_t now_wall, char* out, std::size_t cap) {
 // Finish a frame: write the header in front of an already-rendered ASDU.
 // Returns the total frame size, or 0 if the ASDU did not fit or is too large
 // for the 16-bit length field.
-std::size_t Finish(std::uint8_t* buf, std::size_t cap, std::uint16_t msg_id,
+std::size_t finish(std::uint8_t* buf, std::size_t cap, std::uint16_t msg_id,
                    int asdu_written) {
   if (asdu_written <= 0) return 0;
   const std::size_t asdu_len = static_cast<std::size_t>(asdu_written);
@@ -69,22 +69,22 @@ std::size_t Finish(std::uint8_t* buf, std::size_t cap, std::uint16_t msg_id,
   Header h;
   h.asdu_len = static_cast<std::uint16_t>(asdu_len);
   h.msg_id = msg_id;
-  if (!WriteHeader(h, buf, cap)) return 0;
+  if (!write_header(h, buf, cap)) return 0;
   return kHeaderBytes + asdu_len;
 }
 
 // Space available for the ASDU given the whole-frame capacity.
-std::size_t AsduCap(std::size_t cap) {
+std::size_t asdu_cap(std::size_t cap) {
   return cap > kHeaderBytes ? cap - kHeaderBytes : 0;
 }
 
-char* AsduStart(std::uint8_t* buf) {
+char* asdu_start(std::uint8_t* buf) {
   return reinterpret_cast<char*>(buf + kHeaderBytes);
 }
 
 // Guard for every float that goes on the wire. Non-finite values would render
 // as "nan"/"inf", which is not JSON and which the chassis rejects as OUR bug.
-bool AllFinite(const AxisCommand& c) {
+bool all_finite(const AxisCommand& c) {
   return std::isfinite(c.vx) && std::isfinite(c.vy) && std::isfinite(c.vz) &&
          std::isfinite(c.roll) && std::isfinite(c.pitch) && std::isfinite(c.yaw);
 }
@@ -97,7 +97,7 @@ bool AllFinite(const AxisCommand& c) {
 //   are at the top level of PatrolDevice, and a match inside a nested object
 //   would be a different key with the same name -- none exists in this
 //   protocol, and B2's parser removes the question entirely.
-std::size_t FindValue(const char* s, std::size_t len, const char* name) {
+std::size_t find_value(const char* s, std::size_t len, const char* name) {
   const std::size_t nlen = std::strlen(name);
   for (std::size_t i = 0; i + nlen + 2 < len; ++i) {
     if (s[i] != '"') continue;
@@ -117,7 +117,7 @@ std::size_t FindValue(const char* s, std::size_t len, const char* name) {
 // Read an unsigned decimal at position p. Returns false when there is no digit
 // there, which is how a field that exists but holds an object or a string is
 // rejected rather than read as 0.
-bool ReadU32(const char* s, std::size_t len, std::size_t p, std::uint32_t* out) {
+bool read_u32(const char* s, std::size_t len, std::size_t p, std::uint32_t* out) {
   if (p >= len || s[p] < '0' || s[p] > '9') return false;
   std::uint64_t v = 0;
   while (p < len && s[p] >= '0' && s[p] <= '9') {
@@ -131,7 +131,7 @@ bool ReadU32(const char* s, std::size_t len, std::size_t p, std::uint32_t* out) 
 
 }  // namespace
 
-bool WriteHeader(const Header& h, std::uint8_t* buf, std::size_t cap) {
+bool write_header(const Header& h, std::uint8_t* buf, std::size_t cap) {
   if (buf == nullptr || cap < kHeaderBytes) return false;
   buf[0] = kSync0;
   buf[1] = kSync1;
@@ -153,7 +153,7 @@ bool WriteHeader(const Header& h, std::uint8_t* buf, std::size_t cap) {
   return true;
 }
 
-bool ReadHeader(const std::uint8_t* buf, std::size_t len, Header* out) {
+bool read_header(const std::uint8_t* buf, std::size_t len, Header* out) {
   if (buf == nullptr || out == nullptr || len < kHeaderBytes) return false;
   if (buf[0] != kSync0 || buf[1] != kSync1 || buf[2] != kSync2 ||
       buf[3] != kSync3) {
@@ -169,66 +169,66 @@ bool ReadHeader(const std::uint8_t* buf, std::size_t len, Header* out) {
   return true;
 }
 
-std::size_t EncodeHeartbeat(std::uint8_t* buf, std::size_t cap,
+std::size_t encode_heartbeat(std::uint8_t* buf, std::size_t cap,
                             std::uint16_t msg_id, std::int64_t now_wall) {
   if (buf == nullptr) return 0;
   char ts[kTimeBufBytes];
-  FormatTime(now_wall, ts, sizeof(ts));
+  format_time(now_wall, ts, sizeof(ts));
   const int n = std::snprintf(
-      AsduStart(buf), AsduCap(cap),
+      asdu_start(buf), asdu_cap(cap),
       "{\"PatrolDevice\": {\"Type\": %u, \"Command\": %u, \"Time\": \"%s\", "
       "\"Items\": {}}}",
       kHeartbeat.type, kHeartbeat.command, ts);
-  return (n > 0 && static_cast<std::size_t>(n) < AsduCap(cap))
-             ? Finish(buf, cap, msg_id, n)
+  return (n > 0 && static_cast<std::size_t>(n) < asdu_cap(cap))
+             ? finish(buf, cap, msg_id, n)
              : 0;
 }
 
-std::size_t EncodeUsageMode(std::uint8_t* buf, std::size_t cap,
+std::size_t encode_usage_mode(std::uint8_t* buf, std::size_t cap,
                             std::uint16_t msg_id, std::int64_t now_wall,
                             int mode) {
   if (buf == nullptr) return 0;
   char ts[kTimeBufBytes];
-  FormatTime(now_wall, ts, sizeof(ts));
+  format_time(now_wall, ts, sizeof(ts));
   const int n = std::snprintf(
-      AsduStart(buf), AsduCap(cap),
+      asdu_start(buf), asdu_cap(cap),
       "{\"PatrolDevice\": {\"Type\": %u, \"Command\": %u, \"Time\": \"%s\", "
       "\"Items\": {\"Mode\": %d}}}",
       kUsageModeSwitch.type, kUsageModeSwitch.command, ts, mode);
-  return (n > 0 && static_cast<std::size_t>(n) < AsduCap(cap))
-             ? Finish(buf, cap, msg_id, n)
+  return (n > 0 && static_cast<std::size_t>(n) < asdu_cap(cap))
+             ? finish(buf, cap, msg_id, n)
              : 0;
 }
 
-std::size_t EncodeMotionState(std::uint8_t* buf, std::size_t cap,
+std::size_t encode_motion_state(std::uint8_t* buf, std::size_t cap,
                               std::uint16_t msg_id, std::int64_t now_wall,
                               int motion_param) {
   if (buf == nullptr) return 0;
   char ts[kTimeBufBytes];
-  FormatTime(now_wall, ts, sizeof(ts));
+  format_time(now_wall, ts, sizeof(ts));
   const int n = std::snprintf(
-      AsduStart(buf), AsduCap(cap),
+      asdu_start(buf), asdu_cap(cap),
       "{\"PatrolDevice\": {\"Type\": %u, \"Command\": %u, \"Time\": \"%s\", "
       "\"Items\": {\"MotionParam\": %d}}}",
       kMotionStateSwitch.type, kMotionStateSwitch.command, ts, motion_param);
-  return (n > 0 && static_cast<std::size_t>(n) < AsduCap(cap))
-             ? Finish(buf, cap, msg_id, n)
+  return (n > 0 && static_cast<std::size_t>(n) < asdu_cap(cap))
+             ? finish(buf, cap, msg_id, n)
              : 0;
 }
 
-std::size_t EncodeCustomLight(std::uint8_t* buf, std::size_t cap,
+std::size_t encode_custom_light(std::uint8_t* buf, std::size_t cap,
                               std::uint16_t msg_id, std::int64_t now_wall,
                               bool custom_mode, const LedSetting& head,
                               const LedSetting& tail) {
   if (buf == nullptr) return 0;
   char ts[kTimeBufBytes];
-  FormatTime(now_wall, ts, sizeof(ts));
+  format_time(now_wall, ts, sizeof(ts));
   // Led is positional: [0] head, [1] tail (vendor guide 1.2.7). Swapping them
   // is the one mistake this message can make that still looks correct on the
   // wire, so the order is written once, here, and the test asserts it by
   // giving the two lamps different colours.
   const int n = std::snprintf(
-      AsduStart(buf), AsduCap(cap),
+      asdu_start(buf), asdu_cap(cap),
       "{\"PatrolDevice\": {\"Type\": %u, \"Command\": %u, \"Time\": \"%s\", "
       "\"Items\": {\"CustomMode\": %s, \"Led\": ["
       "{\"Type\": %d, \"Color\": [%d], \"Cycle\": %d}, "
@@ -237,86 +237,86 @@ std::size_t EncodeCustomLight(std::uint8_t* buf, std::size_t cap,
       custom_mode ? "true" : "false",
       head.pattern, head.color, head.cycle_s,
       tail.pattern, tail.color, tail.cycle_s);
-  return (n > 0 && static_cast<std::size_t>(n) < AsduCap(cap))
-             ? Finish(buf, cap, msg_id, n)
+  return (n > 0 && static_cast<std::size_t>(n) < asdu_cap(cap))
+             ? finish(buf, cap, msg_id, n)
              : 0;
 }
 
-std::size_t EncodeGait(std::uint8_t* buf, std::size_t cap, std::uint16_t msg_id,
+std::size_t encode_gait(std::uint8_t* buf, std::size_t cap, std::uint16_t msg_id,
                        std::int64_t now_wall, std::uint32_t gait_param) {
   if (buf == nullptr) return 0;
   char ts[kTimeBufBytes];
-  FormatTime(now_wall, ts, sizeof(ts));
+  format_time(now_wall, ts, sizeof(ts));
   const int n = std::snprintf(
-      AsduStart(buf), AsduCap(cap),
+      asdu_start(buf), asdu_cap(cap),
       "{\"PatrolDevice\": {\"Type\": %u, \"Command\": %u, \"Time\": \"%s\", "
       "\"Items\": {\"GaitParam\": %u}}}",
       kGaitSwitch.type, kGaitSwitch.command, ts, gait_param);
-  return (n > 0 && static_cast<std::size_t>(n) < AsduCap(cap))
-             ? Finish(buf, cap, msg_id, n)
+  return (n > 0 && static_cast<std::size_t>(n) < asdu_cap(cap))
+             ? finish(buf, cap, msg_id, n)
              : 0;
 }
 
-std::size_t EncodeRealAxis(std::uint8_t* buf, std::size_t cap,
+std::size_t encode_real_axis(std::uint8_t* buf, std::size_t cap,
                            std::uint16_t msg_id, std::int64_t now_wall,
                            const AxisCommand& cmd) {
   if (buf == nullptr) return 0;
   // Checked before anything is rendered: a partially written buffer that is
   // then rejected is harder to reason about than one that was never touched.
-  if (!AllFinite(cmd)) return 0;
+  if (!all_finite(cmd)) return 0;
   char ts[kTimeBufBytes];
-  FormatTime(now_wall, ts, sizeof(ts));
+  format_time(now_wall, ts, sizeof(ts));
   // Six decimals: the chassis limit is 2 m/s and 1 rad/s, so 1e-6 is far below
   // any actuator resolution, and a fixed format keeps the frame length stable
   // (which %g would not -- it switches to exponent form for small values, and
   // 1e-07 is valid JSON but changes the byte count tick to tick).
   const int n = std::snprintf(
-      AsduStart(buf), AsduCap(cap),
+      asdu_start(buf), asdu_cap(cap),
       "{\"PatrolDevice\": {\"Type\": %u, \"Command\": %u, \"Time\": \"%s\", "
       "\"Items\": {\"X\": %.6f, \"Y\": %.6f, \"Z\": %.6f, \"Roll\": %.6f, "
       "\"Pitch\": %.6f, \"Yaw\": %.6f}}}",
       kRealAxis.type, kRealAxis.command, ts, cmd.vx, cmd.vy, cmd.vz, cmd.roll,
       cmd.pitch, cmd.yaw);
-  return (n > 0 && static_cast<std::size_t>(n) < AsduCap(cap))
-             ? Finish(buf, cap, msg_id, n)
+  return (n > 0 && static_cast<std::size_t>(n) < asdu_cap(cap))
+             ? finish(buf, cap, msg_id, n)
              : 0;
 }
 
-std::size_t EncodeSdkMode(std::uint8_t* buf, std::size_t cap,
+std::size_t encode_sdk_mode(std::uint8_t* buf, std::size_t cap,
                           std::uint16_t msg_id, std::int64_t now_wall,
                           bool enable, int joint_rate_hz) {
   if (buf == nullptr) return 0;
   char ts[kTimeBufBytes];
-  FormatTime(now_wall, ts, sizeof(ts));
+  format_time(now_wall, ts, sizeof(ts));
   const int n = std::snprintf(
-      AsduStart(buf), AsduCap(cap),
+      asdu_start(buf), asdu_cap(cap),
       "{\"PatrolDevice\": {\"Type\": %u, \"Command\": %u, \"Time\": \"%s\", "
       "\"Items\": {\"SDKEnable\": %s, \"Frequency\": %d}}}",
       kSdkMode.type, kSdkMode.command, ts, enable ? "true" : "false",
       joint_rate_hz);
-  return (n > 0 && static_cast<std::size_t>(n) < AsduCap(cap))
-             ? Finish(buf, cap, msg_id, n)
+  return (n > 0 && static_cast<std::size_t>(n) < asdu_cap(cap))
+             ? finish(buf, cap, msg_id, n)
              : 0;
 }
 
-bool ParseAsduRouting(const std::uint8_t* asdu, std::size_t len,
+bool parse_asdu_routing(const std::uint8_t* asdu, std::size_t len,
                       AsduRouting* out) {
   if (asdu == nullptr || out == nullptr || len == 0) return false;
   const char* s = reinterpret_cast<const char*>(asdu);
   // The wrapper must be there. Checking it here as well as trusting the fields
   // means a payload from some other protocol that happened to contain a "Type"
   // key is rejected instead of routed.
-  if (FindValue(s, len, "PatrolDevice") == len) return false;
-  const std::size_t tp = FindValue(s, len, "Type");
-  const std::size_t cp = FindValue(s, len, "Command");
+  if (find_value(s, len, "PatrolDevice") == len) return false;
+  const std::size_t tp = find_value(s, len, "Type");
+  const std::size_t cp = find_value(s, len, "Command");
   if (tp == len || cp == len) return false;
   AsduRouting r;
-  if (!ReadU32(s, len, tp, &r.type)) return false;
-  if (!ReadU32(s, len, cp, &r.command)) return false;
-  const std::size_t ep = FindValue(s, len, "ErrorCode");
+  if (!read_u32(s, len, tp, &r.type)) return false;
+  if (!read_u32(s, len, cp, &r.command)) return false;
+  const std::size_t ep = find_value(s, len, "ErrorCode");
   if (ep != len) {
     std::uint32_t code = 0;
-    if (ReadU32(s, len, ep, &code)) {
+    if (read_u32(s, len, ep, &code)) {
       r.has_error_code = true;
       r.error_code = code;
     }

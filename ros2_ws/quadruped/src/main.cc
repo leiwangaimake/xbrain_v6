@@ -70,7 +70,7 @@ constexpr int kExitOk = 0;
 constexpr int kExitUsage = 64;
 constexpr int kExitConfig = 78;
 
-void PrintUsage(const char* argv0) {
+void print_usage(const char* argv0) {
   std::printf(
       "usage: %s --selfcheck [<resolved.yaml>]\n"
       "\n"
@@ -85,17 +85,17 @@ void PrintUsage(const char* argv0) {
       "uplink (odom + TF). A link that fails to come up is reported and the\n"
       "process continues -- 13 S4.2 row 2 exists so that losing the better\n"
       "odometry source degrades rather than refuses.\n",
-      argv0, quadruped::DefaultResolvedPath(),
-      quadruped::DefaultResolvedPath());
+      argv0, quadruped::default_resolved_path(),
+      quadruped::default_resolved_path());
 }
 
 // Set by the signal handler, read by the run loop. sig_atomic_t and volatile
 // because that is the only thing a handler may portably touch, and because the
-// alternative -- calling Stop() from the handler -- would join threads inside
+// alternative -- calling stop() from the handler -- would join threads inside
 // a signal context.
 volatile std::sig_atomic_t g_stop = 0;
 
-void OnSignal(int) { g_stop = 1; }
+void on_signal(int) { g_stop = 1; }
 
 // The first 8 hex of /proc/sys/kernel/random/boot_id, which is what 11 S3.0
 // puts in the envelope's `boot` field. It rides with `mono` so a receiver can
@@ -108,7 +108,7 @@ void OnSignal(int) { g_stop = 1; }
 // so every `mono` we receive falls back to the receive-time age. That is the
 // safe direction: the fallback is merely less precise, while a wrong match is
 // an age that is wrong by hours.
-std::string ReadBootId() {
+std::string read_boot_id() {
   std::ifstream f("/proc/sys/kernel/random/boot_id");
   std::string id;
   if (!f || !(f >> id)) return std::string();
@@ -116,12 +116,12 @@ std::string ReadBootId() {
   return id.substr(0, 8);
 }
 
-int Run(const std::string& path) {
-  const quadruped::QuadrupedConfig cfg = quadruped::LoadQuadrupedConfig(path);
+int run(const std::string& path) {
+  const quadruped::QuadrupedConfig cfg = quadruped::load_quadruped_config(path);
   // The effective values, once, at startup (13 DDS-9 / CB-4). This is the only
   // cheap way to tell a misconfigured domain from a dead network later.
   std::printf("config: %s\n", path.c_str());
-  std::fputs(quadruped::DescribeConfig(cfg).c_str(), stdout);
+  std::fputs(quadruped::describe_config(cfg).c_str(), stdout);
   std::fflush(stdout);
 
   // Installed BEFORE the threads exist, not after. A SIGTERM in the window
@@ -129,11 +129,11 @@ int Run(const std::string& path) {
   // kill the process outright -- no Stop, no join, and the chassis left holding
   // whatever the last axis command was. The window is microseconds wide, which
   // is an argument about how often it happens and not about what happens.
-  std::signal(SIGINT, OnSignal);
-  std::signal(SIGTERM, OnSignal);
+  std::signal(SIGINT, on_signal);
+  std::signal(SIGTERM, on_signal);
 
   quadruped::QuadrupedProcess proc(cfg);
-  if (!proc.Start()) {
+  if (!proc.start()) {
     // Start refuses only when the object is already running, which a freshly
     // constructed one is not. It is checked rather than discarded because an
     // ignored bool return is how a process that started nothing goes on to
@@ -164,7 +164,7 @@ int Run(const std::string& path) {
   // runs on the 10 Hz source and says which one it is using.
   quadruped::ChsBRuntime chs_b(&proc, cfg);
   std::string chs_b_err;
-  const bool chs_b_up = chs_b.Start(&chs_b_err);
+  const bool chs_b_up = chs_b.start(&chs_b_err);
   if (!chs_b_up) {
     std::fprintf(stderr,
                  "quadruped_m20: channel two did NOT come up (%s) -- the "
@@ -186,7 +186,7 @@ int Run(const std::string& path) {
 #if QUADRUPED_HAVE_RT
   // The RT plane. Started AFTER the process so a command arriving on the first
   // millisecond has somewhere to go.
-  const std::string boot = ReadBootId();
+  const std::string boot = read_boot_id();
   if (boot.empty()) {
     std::fprintf(stderr,
                  "quadruped_m20: cannot read /proc/sys/kernel/random/boot_id "
@@ -196,14 +196,14 @@ int Run(const std::string& path) {
   quadruped::rt::RtRuntime rt(&proc, cfg, boot);
 #if QUADRUPED_HAVE_UPLINK
   // 13 V-69: odom + TF publish on rt_pub, integration stays in ctrl. This is
-  // the binding that makes that true -- before it, Uplink::Publish had no call
+  // the binding that makes that true -- before it, Uplink::publish had no call
   // site anywhere in the process and the whole of channel three was a library
   // nobody invoked. The sink is injected (rather than rt_runtime calling
   // Uplink directly) so quadruped_rt keeps its zero-rclcpp dependency; see
   // OdomSink in rt_runtime.h.
   //
-  // Constructed BEFORE rt.Start(): the loop reads odom_sink_ without a lock
-  // (see SetOdomSink), so binding it after the thread exists would be a race.
+  // Constructed BEFORE rt.start(): the loop reads odom_sink_ without a lock
+  // (see set_odom_sink), so binding it after the thread exists would be a race.
   std::unique_ptr<quadruped::Uplink> uplink;
   try {
     uplink.reset(new quadruped::Uplink(cfg.uplink, cfg.robot_id));
@@ -213,8 +213,8 @@ int Run(const std::string& path) {
     std::printf("uplink: ROS 2 domain %d, odom on %s\n",
                 uplink->actual_domain_id(), cfg.uplink.odom_topic.c_str());
     quadruped::Uplink* up = uplink.get();
-    rt.SetOdomSink([up](const quadruped::OdomSample& s, double wall_ts_s) {
-      up->Publish(s, wall_ts_s);
+    rt.set_odom_sink([up](const quadruped::OdomSample& s, double wall_ts_s) {
+      up->publish(s, wall_ts_s);
     });
   } catch (const std::exception& e) {
     // Reported and the process continues. Channel three is the way the upper
@@ -228,14 +228,14 @@ int Run(const std::string& path) {
   }
 #endif
   std::string rt_err;
-  const bool rt_up = rt.Start(&rt_err);
+  const bool rt_up = rt.start(&rt_err);
   if (rt_up) {
     // 13 S7.1 Q-5 / ASM-4 (3): the four chassis report streams onto their own
     // keys. Bound AFTER Start so the bridge exists and its publishers are
     // declared -- binding earlier would hand the rx thread a null bridge.
     //
     // *** This binding is what ASM-4 (3) recorded as "v1.15 已做" while
-    // SetReportSink had ZERO production call sites. All four keys were
+    // set_report_sink had ZERO production call sites. All four keys were
     // declared, all four writers implemented and tested, and not one frame
     // ever went out: subscribing to xbrain/dev/rt/chassis/** for 12 s on
     // 2026-09-18 returned only rt/chassis/state.
@@ -266,20 +266,20 @@ int Run(const std::string& path) {
     // /NAV_CMD, /fault_aggregator, /GAIT -- are NOT built: 21 V-12 forbids
     // building /GAIT at all while its type name is unconfirmed. "The package
     // is available" would therefore be read as more than we have.
-    bridge->SetTransport(ep, cfg.link.codebook, cfg.dds.domain_id,
+    bridge->set_transport(ep, cfg.link.codebook, cfg.dds.domain_id,
                          cfg.uplink.ros_domain_id, cfg.dds.imu_frame_id,
                          /*drdds_available=*/false);
     // 11 S9.6: the static limits come from the RESOLVED config, never from the
     // chassis -- the contract is explicit that the chassis does not provide
     // them, and v0.1's mistake was putting them in the handshake as if it did.
-    bridge->SetSpec(cfg.tier1.limits.holonomic, cfg.tier1.limits.max_vx_mps,
+    bridge->set_spec(cfg.tier1.limits.holonomic, cfg.tier1.limits.max_vx_mps,
                     cfg.tier1.limits.max_vy_mps, cfg.tier1.limits.max_wz_radps);
-    proc.SetReportSink([bridge](double now_mono_s,
+    proc.set_report_sink([bridge](double now_mono_s,
                                 const quadruped::chs_a::BasicStatus* b,
                                 const quadruped::chs_a::MotionStatus* m,
                                 const quadruped::chs_a::DeviceStatus* d,
                                 const quadruped::chs_a::FaultReport* f) {
-      bridge->PublishReports(now_mono_s, b, m, d, f);
+      bridge->publish_reports(now_mono_s, b, m, d, f);
     });
   }
   if (!rt_up) {
@@ -398,7 +398,7 @@ int Run(const std::string& path) {
                        "requester sees nothing -- a refused switch and a switch "
                        "nobody sent look identical from there.\n",
                        static_cast<unsigned long long>(refused),
-                       quadruped::ModeRejectItem(proc.last_mode_reject()));
+                       quadruped::mode_reject_item(proc.last_mode_reject()));
         }
       }
       // *** The RT plane's PARSE-layer refusals, aggregated. Five of these
@@ -472,7 +472,7 @@ int Run(const std::string& path) {
                      "missing a mandatory field, and 11:1722 makes estop_epoch "
                      "mandatory on this key.\n",
                      static_cast<unsigned long long>(refused),
-                     quadruped::rt::RtParseName(rt.bridge().first_refusal()));
+                     quadruped::rt::rt_parse_name(rt.bridge().first_refusal()));
       }
       static bool said_accepted = false;
       if (!said_accepted && rt.bridge().cmd_vel_accepted() > 0) {
@@ -613,7 +613,7 @@ int Run(const std::string& path) {
       std::fprintf(stderr,
                    "quadruped_m20: chassis link %s (endpoint=%d, probe_cycles="
                    "%llu, reports=%llu)\n",
-                   quadruped::chs_a::ConnStateName(st.conn), st.active_endpoint,
+                   quadruped::chs_a::conn_state_name(st.conn), st.active_endpoint,
                    static_cast<unsigned long long>(st.probe_cycles),
                    static_cast<unsigned long long>(st.frames));
     }
@@ -720,13 +720,13 @@ int Run(const std::string& path) {
   // The RT plane goes down first: its subscriptions call into the process, and
   // stopping the process while a callback is inside one is a use-after-free
   // waiting for the right timing.
-  if (rt_up) rt.Stop();
+  if (rt_up) rt.stop();
 #endif
 #if QUADRUPED_HAVE_CHS_B
   // Same reason, same order.
-  if (chs_b_up) chs_b.Stop();
+  if (chs_b_up) chs_b.stop();
 #endif
-  proc.Stop();
+  proc.stop();
   // The axis count is printed because "the robot did not move" needs to be a
   // NUMBER, not an inference from "we did not send an enable". Tier 1 holding
   // zero and Tier 1 having been unlocked without anyone noticing look the same
@@ -743,7 +743,7 @@ int Run(const std::string& path) {
     std::printf("quadruped_m20: rt_pub period -- samples=%llu p99=%.2f ms "
                 "max=%.2f ms overflow=%llu (odom sent=%llu)\n",
                 static_cast<unsigned long long>(ts.count()),
-                ts.PercentileMs(0.99), ts.max_ms(),
+                ts.percentile_ms(0.99), ts.max_ms(),
                 static_cast<unsigned long long>(ts.overflow()),
                 static_cast<unsigned long long>(rt.odom_sent()));
   }
@@ -755,7 +755,7 @@ int Run(const std::string& path) {
               static_cast<unsigned long long>(proc.axis_frames_sent()),
               static_cast<unsigned long long>(proc.heartbeats_sent()),
               static_cast<unsigned long long>(proc.tx_skipped()),
-              std::string(StopReasonName(proc.last_tier1().stop_reason)).c_str());
+              std::string(stop_reason_name(proc.last_tier1().stop_reason)).c_str());
   return kExitOk;
 }
 
@@ -765,7 +765,7 @@ int main(int argc, char** argv) {
   if (argc < 2) {
     // Service invocation: run.
     try {
-      return Run(quadruped::DefaultResolvedPath());
+      return run(quadruped::default_resolved_path());
     } catch (const quadruped::ConfigError& e) {
       std::fprintf(stderr, "%s\n", e.what());
       return kExitConfig;
@@ -776,20 +776,20 @@ int main(int argc, char** argv) {
   }
   const std::string arg1 = argv[1];
   if (arg1 == "-h" || arg1 == "--help") {
-    PrintUsage(argv[0]);
+    print_usage(argv[0]);
     return kExitOk;
   }
   if (arg1 != "--selfcheck") {
-    PrintUsage(argv[0]);
+    print_usage(argv[0]);
     return kExitUsage;
   }
   const std::string path =
       (argc >= 3) ? std::string(argv[2])
-                  : std::string(quadruped::DefaultResolvedPath());
+                  : std::string(quadruped::default_resolved_path());
   try {
-    const quadruped::QuadrupedConfig cfg = quadruped::LoadQuadrupedConfig(path);
+    const quadruped::QuadrupedConfig cfg = quadruped::load_quadruped_config(path);
     std::printf("config: %s\n", path.c_str());
-    std::fputs(quadruped::DescribeConfig(cfg).c_str(), stdout);
+    std::fputs(quadruped::describe_config(cfg).c_str(), stdout);
     return kExitOk;
   } catch (const quadruped::ConfigError& e) {
     // The message already carries the dotted key path (CLAUDE.md 3.1). An

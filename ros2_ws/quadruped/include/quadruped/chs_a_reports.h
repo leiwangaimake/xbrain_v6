@@ -86,9 +86,9 @@ struct OpenSetValue {
 // manual 11 was written against -- soft_estop is -2 there and 2 here, and 2 is
 // joint_damp, so copying the old table maps an emergency stop onto a damping
 // state (13 S6.1 calls this out as the册's most important correction).
-OpenSetValue ResolveMotionState(std::int64_t raw);
-OpenSetValue ResolveGait(std::int64_t raw);
-OpenSetValue ResolveUsageMode(std::int64_t raw);
+OpenSetValue resolve_motion_state(std::int64_t raw);
+OpenSetValue resolve_gait(std::int64_t raw);
+OpenSetValue resolve_usage_mode(std::int64_t raw);
 
 // Whether a RAW gait value is one of the two stair gaits (0x1003 / 0x3003).
 // 13 S4.4 (4) and 11 S9.9 both hang on this: on a stair gait the wheel odometry
@@ -101,9 +101,9 @@ OpenSetValue ResolveUsageMode(std::int64_t raw);
 // A gait's raw value from its contract name, or false when the name is not one
 // of 13 S5.3's five. Used by the config loader, which takes NAMES and has to
 // compare them against the read-back VALUES the chassis reports.
-bool GaitValueByName(const std::string& name, std::int64_t* out);
+bool gait_value_by_name(const std::string& name, std::int64_t* out);
 
-bool IsStairGait(std::int64_t raw);
+bool is_stair_gait(std::int64_t raw);
 
 // The basic status report (Type 0x00100064 / Command 0x00f00000), 2 Hz.
 struct BasicStatus {
@@ -281,7 +281,7 @@ struct DeviceStatus {
   // *** VALID ONLY WHEN present_count > 0. With every slot empty there is no
   // minimum to take and this field keeps its initialiser -- the writer must
   // publish null, never the 0 that sits here. The two are updated under the
-  // same condition (see ParseDeviceStatus) so they cannot disagree.
+  // same condition (see parse_device_status) so they cannot disagree.
   int min_level = 0;
   bool any_charging = false;
   // How many slots hold a pack. Compared against batteries.size() by the
@@ -344,18 +344,18 @@ struct FaultReport {
 // unknown severity is a normal event rather than a defect, and the conservative
 // direction is the one that keeps the robot from being reported as merely
 // noisy while it is in trouble.
-std::string SeverityToLevel(bool present, std::int64_t severity);
+std::string severity_to_level(bool present, std::int64_t severity);
 
 // CF-1 / CF-2. Two spaces, numerically overlapping and semantically disjoint.
 // Both exist here because CF-2 requires both branches to be written together,
 // so that enabling the charging channel later changes no code in this file.
-std::string FormatChassisFaultCode(std::int64_t code);  // "chs:0x8001"
-std::string FormatChargeFaultCode(std::int64_t code);   // "chg:0x1007"
+std::string format_chassis_fault_code(std::int64_t code);  // "chs:0x8001"
+std::string format_charge_fault_code(std::int64_t code);   // "chg:0x1007"
 
 // CF-1's regular expression, as a predicate: ^(chs|chg):0x[0-9A-Fa-f]{4}$.
 // Used to validate before a code goes up, since a bare or mis-prefixed code
 // must be E_SCHEMA rather than guessed into one of the two spaces.
-bool IsValidPrefixedFaultCode(const std::string& code);
+bool is_valid_prefixed_fault_code(const std::string& code);
 
 // Parse one report ASDU. Each returns false when the payload is not the report
 // it was asked for or is not parseable at all; a field that is merely MISSING
@@ -365,10 +365,10 @@ bool IsValidPrefixedFaultCode(const std::string& code);
 // `asdu` is the JSON body only (no 16-byte header), as chs_a_framer hands it
 // out. It is not retained: everything the caller needs is in the struct, and
 // the verbatim forwarding path reads the original buffer.
-bool ParseBasicStatus(const std::uint8_t* asdu, std::size_t len, BasicStatus* out);
-bool ParseMotionStatus(const std::uint8_t* asdu, std::size_t len, MotionStatus* out);
-bool ParseDeviceStatus(const std::uint8_t* asdu, std::size_t len, DeviceStatus* out);
-bool ParseFaultReport(const std::uint8_t* asdu, std::size_t len, FaultReport* out);
+bool parse_basic_status(const std::uint8_t* asdu, std::size_t len, BasicStatus* out);
+bool parse_motion_status(const std::uint8_t* asdu, std::size_t len, MotionStatus* out);
+bool parse_device_status(const std::uint8_t* asdu, std::size_t len, DeviceStatus* out);
+bool parse_fault_report(const std::uint8_t* asdu, std::size_t len, FaultReport* out);
 
 }  // namespace chs_a
 }  // namespace quadruped

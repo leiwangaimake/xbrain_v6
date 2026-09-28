@@ -54,8 +54,8 @@ class ChsBRuntime {
   // second row is the whole point of having a priority table, and a robot that
   // refuses to run because the better odometry source is missing is worse than
   // one that runs on the 10 Hz source and says so.
-  bool Start(std::string* err);
-  void Stop();
+  bool start(std::string* err);
+  void stop();
   bool running() const { return running_.load(std::memory_order_acquire); }
 
   // Non-zero when the SCHED_FIFO change was refused (13 S9.1). Reported for the
@@ -67,7 +67,7 @@ class ChsBRuntime {
   int actual_domain_id() const;
 
  private:
-  void Loop();
+  void loop();
 
   QuadrupedProcess* proc_;
   QuadrupedConfig cfg_;

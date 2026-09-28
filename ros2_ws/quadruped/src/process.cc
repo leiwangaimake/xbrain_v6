@@ -6,7 +6,7 @@
  * Brief: The assembly (see process.h)
  *
  * Description:
- * The order inside CtrlTick is 13 S9.4 ASM-1, and it is not interchangeable:
+ * The order inside ctrl_tick is 13 S9.4 ASM-1, and it is not interchangeable:
  *
  *   1. the snapshot that arrived this period is taken first. An arriving report
  *      is the only evidence the link is alive (13 CA-7), so the session has to
@@ -55,15 +55,15 @@ namespace {
 namespace rt = hachist::xbrain::rtcomm;
 
 
-std::int64_t WallNow() { return static_cast<std::int64_t>(::time(nullptr)); }
+std::int64_t wall_now() { return static_cast<std::int64_t>(::time(nullptr)); }
 
 // Sub-second wall clock, for the ROS header stamp carried on OdomSample.
-// WallNow above is SECOND resolution (CHS-A's "Time" field is a formatted
+// wall_now above is SECOND resolution (CHS-A's "Time" field is a formatted
 // second string, 13 S2.2), and reusing it here would give all hundred samples
 // in a second the same stamp -- downstream would see a 100 Hz stream whose
 // timestamps advance in 1 Hz steps, which reads as a stalled publisher.
 //
-double WallNowSeconds() {
+double wall_now_seconds() {
   // WALL-CLOCK-OK(align): a ROS header.stamp, required on every locally
   // produced message by CLK-C3 for cross-host alignment. It labels the sample
   // and decides nothing; every age, period and timeout here is steady_clock.
@@ -86,13 +86,13 @@ QuadrupedProcess::QuadrupedProcess(const QuadrupedConfig& cfg)
       // The socket is the FrameWriter. TxOwner owns the sending discipline --
       // the single critical section, the bounded short-write completion -- and
       // the socket owns only the system call.
-      tx_([this](const std::uint8_t* d, std::size_t n) { return socket_.Send(d, n); },
+      tx_([this](const std::uint8_t* d, std::size_t n) { return socket_.send(d, n); },
           cfg.link.partial_send_retry),
-      session_(chs_a::SessionConfig::FromLinkConfig(cfg.link),
+      session_(chs_a::SessionConfig::from_link_config(cfg.link),
                [this](const EndpointCandidate& ep) {
-                 return socket_.Dial(ep, cfg_.link.tcp_nodelay);
+                 return socket_.dial(ep, cfg_.link.tcp_nodelay);
                },
-               [this]() { socket_.Close(); },
+               [this]() { socket_.close(); },
                [](const EndpointCandidate&) {
                  // 13 TLS-4: credentials are judged before dialling so a
                  // missing certificate costs no probe window. This build has no
@@ -109,7 +109,7 @@ QuadrupedProcess::QuadrupedProcess(const QuadrupedConfig& cfg)
         ModeConfig m;
         // *** This lambda used to take cfg and discard it with (void)cfg,
         // hardcoding two numbers and leaving prone_forbidden_gaits EMPTY.
-        // ProneAllowed answers !Contains(list, gait), so an empty list made it
+        // prone_allowed answers !contains(list, gait), so an empty list made it
         // true for every gait: PR-1 never fired and `prone` was accepted on a
         // staircase. 13 V-54 calls that a safety incident. The config carried
         // the right two gaits the whole time.
@@ -119,15 +119,15 @@ QuadrupedProcess::QuadrupedProcess(const QuadrupedConfig& cfg)
         // *** The FOURTH field, and it was missed when the other three were
         // wired -- ModeConfig has two gait lists and fixing one of them looks
         // finished. GS-1 stayed dead a batch longer because of it: without
-        // this line GaitCommandable returns true for everything and 0x1003
+        // this line gait_commandable returns true for everything and 0x1003
         // goes out to a chassis that can never read it back.
         m.command_forbidden_gaits = cfg.motion.command_forbidden_gaits;
         return m;
       }()) {}
 
-QuadrupedProcess::~QuadrupedProcess() { Stop(); }
+QuadrupedProcess::~QuadrupedProcess() { stop(); }
 
-void QuadrupedProcess::OnCmdVel(double now_mono_s, double vx, double vy,
+void QuadrupedProcess::on_cmd_vel(double now_mono_s, double vx, double vy,
                                 double wz, std::uint64_t estop_epoch) {
   cmd_vx_ = vx;
   cmd_vy_ = vy;
@@ -137,9 +137,9 @@ void QuadrupedProcess::OnCmdVel(double now_mono_s, double vx, double vy,
   have_cmd_ = true;
 }
 
-void QuadrupedProcess::OnEnable() { enable_pending_ = true; }
+void QuadrupedProcess::on_enable() { enable_pending_ = true; }
 
-bool QuadrupedProcess::OnChassisMode(bool has_usage_mode,
+bool QuadrupedProcess::on_chassis_mode(bool has_usage_mode,
                                      std::int64_t usage_mode,
                                      bool has_motion_state,
                                      std::int64_t motion_state, bool has_gait,
@@ -161,9 +161,9 @@ bool QuadrupedProcess::OnChassisMode(bool has_usage_mode,
   return true;
 }
 
-bool QuadrupedProcess::SendModeFrame(ModeAction action, std::int64_t param,
+bool QuadrupedProcess::send_mode_frame(ModeAction action, std::int64_t param,
                                      TxCaller caller) {
-  // *** THE FRAME. Before this existed (13 ASM-6) ModeMachine::Request
+  // *** THE FRAME. Before this existed (13 ASM-6) ModeMachine::request
   // returned accepted, switching_ went true, the read-back was waited for --
   // and nothing was ever sent to the chassis. Measured on the bench:
   // `stand` acked "accepted" while the chassis reported MotionState 0
@@ -182,24 +182,24 @@ bool QuadrupedProcess::SendModeFrame(ModeAction action, std::int64_t param,
   std::size_t n = 0;
   switch (action) {
     case ModeAction::kStand:
-      n = chs_a::EncodeMotionState(buf, sizeof(buf), msg_id_++, WallNow(),
+      n = chs_a::encode_motion_state(buf, sizeof(buf), msg_id_++, wall_now(),
                                    static_cast<int>(kCommandMotionStateStand));
       break;
     case ModeAction::kProne:
-      n = chs_a::EncodeMotionState(buf, sizeof(buf), msg_id_++, WallNow(),
+      n = chs_a::encode_motion_state(buf, sizeof(buf), msg_id_++, wall_now(),
                                    static_cast<int>(kCommandMotionStateProne));
       break;
     case ModeAction::kRlControl:
-      n = chs_a::EncodeMotionState(
-          buf, sizeof(buf), msg_id_++, WallNow(),
+      n = chs_a::encode_motion_state(
+          buf, sizeof(buf), msg_id_++, wall_now(),
           static_cast<int>(kCommandMotionStateRlControl));
       break;
     case ModeAction::kSetGait:
-      n = chs_a::EncodeGait(buf, sizeof(buf), msg_id_++, WallNow(),
+      n = chs_a::encode_gait(buf, sizeof(buf), msg_id_++, wall_now(),
                             static_cast<std::uint32_t>(param));
       break;
     case ModeAction::kSetUsageMode:
-      n = chs_a::EncodeUsageMode(buf, sizeof(buf), msg_id_++, WallNow(),
+      n = chs_a::encode_usage_mode(buf, sizeof(buf), msg_id_++, wall_now(),
                                  static_cast<int>(param));
       break;
   }
@@ -209,46 +209,46 @@ bool QuadrupedProcess::SendModeFrame(ModeAction action, std::int64_t param,
   // reproduces ASM-6 exactly, so the caller is told and mode_switching times
   // out through MS-2 -- the path that reports a failed switch.
   if (n == 0) return false;
-  if (tx_.Send(caller, buf, n) != TxResult::kSent) return false;
+  if (tx_.send(caller, buf, n) != TxResult::kSent) return false;
   ++mode_frames_sent_;
   return true;
 }
 
-bool QuadrupedProcess::SendLightFrame(bool custom_mode,
+bool QuadrupedProcess::send_light_frame(bool custom_mode,
                                      const chs_a::LedSetting& head,
                                      const chs_a::LedSetting& tail) {
   std::uint8_t buf[512];
-  const std::size_t n = chs_a::EncodeCustomLight(
-      buf, sizeof(buf), msg_id_++, WallNow(), custom_mode, head, tail);
+  const std::size_t n = chs_a::encode_custom_light(
+      buf, sizeof(buf), msg_id_++, wall_now(), custom_mode, head, tail);
   // A zero-length encode means the buffer was too small for this message --
   // a defect, not a transient. Reporting false lets the caller count it
   // instead of incrementing a "sent" counter for a frame nobody sent, which
   // is the shape 13 ASM-6 recorded.
   if (n == 0) return false;
-  if (tx_.Send(TxCaller::kNonRealtime, buf, n) != TxResult::kSent) return false;
+  if (tx_.send(TxCaller::kNonRealtime, buf, n) != TxResult::kSent) return false;
   ++light_frames_sent_;
   return true;
 }
 
-ModeRequestResult QuadrupedProcess::OnChassisAction(double now_mono_s,
+ModeRequestResult QuadrupedProcess::on_chassis_action(double now_mono_s,
                                                     ModeAction action,
                                                     std::int64_t param) {
   // Straight through to the machine. There is deliberately no pre-filtering
   // here: the stair precondition (13 PR-1 / D-40), the switch window (MS-1) and
   // the read-back expectation all live in one place, and a second opinion at
   // this level is how the two drift apart.
-  const ModeRequestResult r = mode_.Request(now_mono_s, action, param);
+  const ModeRequestResult r = mode_.request(now_mono_s, action, param);
   if (r.accepted) {
     // kNonRealtime: this runs on the zenoh callback thread, not on ctrl. TX-2
     // makes that caller spin for the send guard rather than skip, which is
     // right here -- a stand or a prone the operator asked for must not be
     // dropped because ctrl happened to hold the section.
-    SendModeFrame(action, param, TxCaller::kNonRealtime);
+    send_mode_frame(action, param, TxCaller::kNonRealtime);
   }
   return r;
 }
 
-void QuadrupedProcess::OnSoftEstop(double now_mono_s) {
+void QuadrupedProcess::on_soft_estop(double now_mono_s) {
   // 13 S9.12.2 (3) and T-1: the generation advances HERE and a zero frame goes
   // out NOW. Setting a flag for the next control period would be up to 10 ms of
   // travel at whatever speed the robot had, against a 5 ms budget.
@@ -256,12 +256,12 @@ void QuadrupedProcess::OnSoftEstop(double now_mono_s) {
   std::uint8_t buf[512];
   chs_a::AxisCommand zero;   // every axis defaults to 0.0
   const std::size_t n =
-      chs_a::EncodeRealAxis(buf, sizeof(buf), msg_id_++, WallNow(), zero);
+      chs_a::encode_real_axis(buf, sizeof(buf), msg_id_++, wall_now(), zero);
   if (n > 0) {
     // The non-realtime caller spins for the guard rather than skipping: this
     // frame is the emergency stop and must not be dropped because ctrl happened
     // to hold the section (TX-2).
-    const TxResult r = tx_.Send(TxCaller::kNonRealtime, buf, n);
+    const TxResult r = tx_.send(TxCaller::kNonRealtime, buf, n);
     if (r == TxResult::kSent) {
       ++axis_frames_sent_;
       // 13 CA-9: this IS an axis command, so it arms the chassis's two-second
@@ -281,7 +281,7 @@ void QuadrupedProcess::OnSoftEstop(double now_mono_s) {
   (void)now_mono_s;
 }
 
-void QuadrupedProcess::CtrlTick(double now_mono_s) {
+void QuadrupedProcess::ctrl_tick(double now_mono_s) {
   ++ctrl_ticks_;
 
   // ---- 1. the newest chassis snapshot, if one arrived -------------------
@@ -294,7 +294,7 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   // sitting unread in the slot. Found by the assembly test, which could not
   // bring the link up at all.
   ChassisSnapshot fresh;
-  if (snapshot_slot_.TakeFresh(&fresh)) {
+  if (snapshot_slot_.take_fresh(&fresh)) {
     // MERGED BY SOURCE, never assigned whole. Each report fills only its own
     // fields and leaves the rest at the struct's defaults, so `latest_ = fresh`
     // let the 10 Hz MotionStatus overwrite everything the 2 Hz BasicStatus had
@@ -328,7 +328,7 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
       // MotionStatus carries motion_state and gait too, at 10 Hz against
       // BasicStatus's 2 Hz, so the faster source wins for those two.
       // *** It does NOT carry ControlUsageMode -- that field appears only in
-      // BasicStatus (see ParseMotionStatus), which is the whole reason the
+      // BasicStatus (see parse_motion_status), which is the whole reason the
       // wholesale assignment erased it. usage_mode_raw is updated in the
       // from_basic branch and NOWHERE else; adding it here would be writing a
       // field this report never mentioned.
@@ -341,14 +341,14 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
     // inflated 3.33x AND valid = false -- and says in so many words that the
     // inflation alone is not enough there.
     //
-    // *** Before this line, Odometry::OnGait had ZERO production call sites.
+    // *** Before this line, Odometry::on_gait had ZERO production call sites.
     // is_stair_gait_ therefore sat at its initialiser forever, so a robot on a
     // staircase published odometry with FLAT-ground trust and valid = true.
     // Everything else was in place: the trust divisor, the valid expression,
-    // the config keys, and a unit test that calls OnGait(true) directly and
+    // the config keys, and a unit test that calls on_gait(true) directly and
     // passes. The fifth instance of the same shape in this process, after
-    // Uplink::Publish, the rt/chassis/mode subscription, the three mode-frame
-    // encoders, and SetReportSink -- capability present, compiles, tests green,
+    // Uplink::publish, the rt/chassis/mode subscription, the three mode-frame
+    // encoders, and set_report_sink -- capability present, compiles, tests green,
     // last segment not connected.
     //
     // Placed after BOTH branches because both reports carry Gait. That caps the
@@ -356,19 +356,19 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
     // gait_state but this process does not read it (MotionInfoTick carries
     // velocity only). Not a safety gap: entering a stair gait is a commanded
     // transition that takes seconds, not one period.
-    odom_.OnGait(chs_a::IsStairGait(latest_.gait_raw));
+    odom_.on_gait(chs_a::is_stair_gait(latest_.gait_raw));
     // Receive time always: it is a property of the ARRIVAL, not of the report
     // kind, and the session's liveness judgement is about arrivals.
     latest_.rx_mono_s = fresh.rx_mono_s;
     have_snapshot_ = true;
-    session_.OnReport(fresh.rx_mono_s);
+    session_.on_report(fresh.rx_mono_s);
     if (fresh.from_basic) {
       // 13 F-21: the sleep flag gates every motion command, and the session is
       // where that gate lives.
-      session_.OnSleep(fresh.sleep);
+      session_.on_sleep(fresh.sleep);
     }
     if (fresh.from_motion) {
-      odom_.OnVelocitySample(fresh.rx_mono_s, fresh.linear_x, fresh.linear_y);
+      odom_.on_velocity_sample(fresh.rx_mono_s, fresh.linear_x, fresh.linear_y);
       // When the MONITOR velocity last arrived -- not when any report did. The
       // linear source choice below compares against this, and the two are not
       // the same thing: basic, device and fault reports all refresh
@@ -382,7 +382,7 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
       // 10 Hz monitor protocol. 13 S4.2 names this the DEGRADED source, and the
       // covariance model does not know the difference -- which is a gap worth
       // naming here rather than in a commit message nobody reads twice.
-      odom_.OnYawRate(fresh.angular_z);
+      odom_.on_yaw_rate(fresh.angular_z);
     }
   }
 
@@ -396,11 +396,11 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
     // now_mono_s and not the estop's own time: the estop ran on another
     // thread, this is at most one control period (10 ms) later, and the
     // session takes the max -- so a slightly late mark can only ever make the
-    // quiet window LONGER, never shorter. OnAxisCommandSent's monotone rule
+    // quiet window LONGER, never shorter. on_axis_command_sent's monotone rule
     // is what makes that safe to say.
-    session_.OnAxisCommandSent(now_mono_s);
+    session_.on_axis_command_sent(now_mono_s);
   }
-  const chs_a::TickResult link = session_.Tick(now_mono_s);
+  const chs_a::TickResult link = session_.tick(now_mono_s);
   if (link.connected) {
     // FR-5 / SD-3 verified HERE, once per connection, and read BACK from the
     // kernel rather than trusted from the setsockopt return. The two are
@@ -441,7 +441,7 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   if (link.disconnected) {
     // Bytes from the old connection must never be read as the start of the new
     // one, so the reassembly buffer is dropped with the socket.
-    framer_.Reset();
+    framer_.reset();
   }
   if (link.send_heartbeat) {
     // 13 HB-1..HB-3: the heartbeat is NOT a safety mechanism -- it is the
@@ -451,16 +451,16 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
     // because the uplink it rents is where Tier 1 reads HES from).
     std::uint8_t buf[256];
     const std::size_t n =
-        chs_a::EncodeHeartbeat(buf, sizeof(buf), msg_id_++, WallNow());
+        chs_a::encode_heartbeat(buf, sizeof(buf), msg_id_++, wall_now());
     if (n > 0) {
-      const TxResult r = tx_.Send(TxCaller::kRealtime, buf, n);
+      const TxResult r = tx_.send(TxCaller::kRealtime, buf, n);
       if (r == TxResult::kSent) {
         ++heartbeats_sent_;
-        session_.OnSendSuccess();
+        session_.on_send_success();
       } else if (r == TxResult::kSkipped) {
         ++tx_skipped_;
       } else {
-        session_.OnSendFailure(now_mono_s);
+        session_.on_send_failure(now_mono_s);
       }
     }
   }
@@ -487,7 +487,7 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   // V-61 is why we cannot see the transition end any other way.
   in.mode_switching = mode_.motion_state_transitioning();
   // Consumed here, on the period that reads it (13 S9.4 ASM-2). A held flag
-  // would re-unlock the lock on every period after the first -- see OnEnable.
+  // would re-unlock the lock on every period after the first -- see on_enable.
   in.enable_requested = enable_pending_;
   enable_pending_ = false;
   if (have_snapshot_) {
@@ -500,7 +500,7 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
     // zero -- the correct answer before the mode is known.
     in.usage_mode_raw = 0;
   }
-  last_tier1_ = tier1_.Step(in);
+  last_tier1_ = tier1_.step(in);
 
   // ---- 4. the axis command, behind BOTH gates (13 S9.4 ASM-3) -----------
   if (last_tier1_.stop_reason == StopReason::kNone && session_.motion_allowed()) {
@@ -510,23 +510,23 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
     axis.vy = last_tier1_.vy;
     axis.yaw = last_tier1_.wz;
     const std::size_t n =
-        chs_a::EncodeRealAxis(buf, sizeof(buf), msg_id_++, WallNow(), axis);
+        chs_a::encode_real_axis(buf, sizeof(buf), msg_id_++, wall_now(), axis);
     if (n > 0) {
-      const TxResult r = tx_.Send(TxCaller::kRealtime, buf, n);
+      const TxResult r = tx_.send(TxCaller::kRealtime, buf, n);
       if (r == TxResult::kSent) {
         ++axis_frames_sent_;
-        session_.OnSendSuccess();
+        session_.on_send_success();
         // 13 CA-9. Only on kSent: a frame the guard skipped never reached the
         // chassis, so it opened no affinity window. Marking a skip would make
         // a link that is merely contended look like one that is driving.
-        session_.OnAxisCommandSent(now_mono_s);
+        session_.on_axis_command_sent(now_mono_s);
       } else if (r == TxResult::kSkipped) {
         // TX-3: skipping is safe. The frame this period would have carried is
         // superseded by the next one 10 ms later, and a stop is never carried
         // by this path -- it goes out from the callback.
         ++tx_skipped_;
       } else {
-        session_.OnSendFailure(now_mono_s);
+        session_.on_send_failure(now_mono_s);
       }
     }
   }
@@ -534,20 +534,20 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   // ---- 4b. channel two, and the source choice (13 S4.2) -----------------
   {
     ImuTick imu;
-    if (imu_slot_.TakeFresh(&imu)) last_imu_ = imu;
+    if (imu_slot_.take_fresh(&imu)) last_imu_ = imu;
     MotionInfoTick mi;
-    if (mi_slot_.TakeFresh(&mi)) last_mi_ = mi;
+    if (mi_slot_.take_fresh(&mi)) last_mi_ = mi;
 
     // ANGULAR. The threshold is the configured one, whose own comment says what
-    // it is for. ClassifyImuAge draws the "never seen" case apart from "stale"
+    // it is for. classify_imu_age draws the "never seen" case apart from "stale"
     // -- they call for the same fallback but a different message, and merging
     // them is how "the IMU was never wired" gets reported as "the IMU is late".
     const double imu_age =
         (last_imu_.rx_mono_s < 0.0) ? -1.0 : (now_mono_s - last_imu_.rx_mono_s);
     const ImuFreshness imu_fresh =
-        ClassifyImuAge(imu_age, cfg_.dds.imu_age_warn_ms);
+        classify_imu_age(imu_age, cfg_.dds.imu_age_warn_ms);
     if (imu_fresh == ImuFreshness::kFresh) {
-      odom_.OnYawRate(last_imu_.wz);
+      odom_.on_yaw_rate(last_imu_.wz);
       angular_src_ = OdomSource::kDrdds;
       ++ang_drdds_;
     } else if (have_snapshot_ && latest_.from_motion) {
@@ -564,7 +564,7 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
     const bool mi_newer = last_mi_.rx_mono_s >= 0.0 &&
                           last_mi_.rx_mono_s > last_monitor_vel_s_;
     if (mi_newer) {
-      odom_.OnVelocitySample(last_mi_.rx_mono_s, last_mi_.vx, last_mi_.vy);
+      odom_.on_velocity_sample(last_mi_.rx_mono_s, last_mi_.vx, last_mi_.vy);
       linear_src_ = OdomSource::kDrdds;
       ++lin_drdds_;
     } else if (last_monitor_vel_s_ >= 0.0) {
@@ -605,9 +605,9 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
       param = mode_usage_;
       mode_want_usage_ = false;
     }
-    const ModeRequestResult r = mode_.Request(now_mono_s, action, param);
+    const ModeRequestResult r = mode_.request(now_mono_s, action, param);
     if (r.accepted) {
-      SendModeFrame(action, param, TxCaller::kRealtime);
+      send_mode_frame(action, param, TxCaller::kRealtime);
       ++mode_steps_;
     } else {
       // A refused step abandons the REST of the triple. Carrying on would
@@ -634,20 +634,20 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   // ---- 5. the odometry --------------------------------------------------
   const double dt = (last_ctrl_s_ < 0.0) ? (1.0 / cfg_.tier1.control_loop_hz)
                                          : (now_mono_s - last_ctrl_s_);
-  last_odom_ = odom_.Tick(now_mono_s, dt);
+  last_odom_ = odom_.tick(now_mono_s, dt);
   // WALL-CLOCK-OK(align): stamps the sample for the ROS header downstream
   // (13 S9.1 "时间戳取自样本, 不取自发布时刻"). Read HERE, on the thread that
   // produced the pose, so the label says when the pose was true rather than
   // when someone got around to sending it. It decides nothing -- dt above and
   // every Tier 1 age are steady_clock.
-  last_odom_.stamp_wall_s = WallNowSeconds();
+  last_odom_.stamp_wall_s = wall_now_seconds();
   // Offered to rt_pub, every tick, including the ticks whose sample says not to
   // publish: the DECISION not to publish is itself something the publisher has
   // to see. Dropping those here would leave rt_pub sending the last good pose
   // forever, and 13 S4.4 (4) requires the TF to stop with the odometry -- a
   // frozen TF makes Nav2 believe the robot is stationary and keep commanding
   // rotation.
-  odom_slot_.Publish(last_odom_);
+  odom_slot_.publish(last_odom_);
   ++odom_offered_;
 
   // The state rt_pub publishes from. Built here, on the thread that owns every
@@ -700,10 +700,10 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   pub_tx_skips_.store(tx_.tx_skip_count(), std::memory_order_relaxed);
   pub_tx_acquires_.store(tx_.rt_acquire_count(), std::memory_order_relaxed);
   pub_tx_sent_.store(tx_.sent_count(), std::memory_order_relaxed);
-  state_slot_.Publish(snap);
+  state_slot_.publish(snap);
 
   last_ctrl_s_ = now_mono_s;
-  mode_.Tick(now_mono_s);
+  mode_.tick(now_mono_s);
 
   // Publish for the supervisor. Relaxed: these are a status display, not a
   // synchronisation point, and nothing downstream orders anything on them.
@@ -714,27 +714,27 @@ void QuadrupedProcess::CtrlTick(double now_mono_s) {
   pub_probe_cycles_.store(session_.probe_cycles(), std::memory_order_relaxed);
 }
 
-bool QuadrupedProcess::TakeOdomForPublish(OdomSample* out) {
+bool QuadrupedProcess::take_odom_for_publish(OdomSample* out) {
   if (out == nullptr) return false;
-  return odom_slot_.TakeFresh(out);
+  return odom_slot_.take_fresh(out);
 }
 
-void QuadrupedProcess::OnImu(double now_mono_s, double wz) {
+void QuadrupedProcess::on_imu(double now_mono_s, double wz) {
   ImuTick t;
   t.wz = wz;
   t.rx_mono_s = now_mono_s;
-  imu_slot_.Publish(t);
+  imu_slot_.publish(t);
 }
 
-void QuadrupedProcess::OnMotionInfo(double now_mono_s, double vx, double vy) {
+void QuadrupedProcess::on_motion_info(double now_mono_s, double vx, double vy) {
   MotionInfoTick t;
   t.vx = vx;
   t.vy = vy;
   t.rx_mono_s = now_mono_s;
-  mi_slot_.Publish(t);
+  mi_slot_.publish(t);
 }
 
-void QuadrupedProcess::SetReportSink(ReportSink sink) {
+void QuadrupedProcess::set_report_sink(ReportSink sink) {
   // Installed before the threads start. There is no lock: the only writer is
   // the setup path and the only reader is chs_a_rx, and they do not overlap in
   // time. Calling this on a running process would be a defect, which is why it
@@ -742,9 +742,9 @@ void QuadrupedProcess::SetReportSink(ReportSink sink) {
   report_sink_ = std::move(sink);
 }
 
-bool QuadrupedProcess::TakeStateForPublish(StateSnapshot* out) {
+bool QuadrupedProcess::take_state_for_publish(StateSnapshot* out) {
   if (out == nullptr) return false;
-  return state_slot_.TakeFresh(out);
+  return state_slot_.take_fresh(out);
 }
 
 QuadrupedProcess::LinkStatus QuadrupedProcess::link_status() const {
@@ -774,13 +774,13 @@ QuadrupedProcess::LinkStatus QuadrupedProcess::link_status() const {
 // framing paths below share it verbatim: a stream path and a datagram path
 // that each grew their own copy would drift, and the drift would show up as
 // "the UDP endpoint reports a different set of things".
-void QuadrupedProcess::HandleFrame(double now_mono_s) {
+void QuadrupedProcess::handle_frame(double now_mono_s) {
   chs_a::AsduRouting route;
-  if (!chs_a::ParseAsduRouting(framer_.asdu(), framer_.asdu_len(), &route)) {
+  if (!chs_a::parse_asdu_routing(framer_.asdu(), framer_.asdu_len(), &route)) {
     return;
   }
   if (route.has_error_code) {
-    session_.OnErrorCode(now_mono_s, route.error_code);
+    session_.on_error_code(now_mono_s, route.error_code);
     return;
   }
 
@@ -791,7 +791,7 @@ void QuadrupedProcess::HandleFrame(double now_mono_s) {
   snap.rx_mono_s = now_mono_s;
   if (route.type == chs_a::kTypeBasic && route.command == chs_a::kReportCommand) {
     chs_a::BasicStatus b;
-    if (chs_a::ParseBasicStatus(framer_.asdu(), framer_.asdu_len(), &b)) {
+    if (chs_a::parse_basic_status(framer_.asdu(), framer_.asdu_len(), &b)) {
       snap.from_basic = true;
       snap.hes = b.hes;
       snap.sleep = b.sleep;
@@ -799,8 +799,8 @@ void QuadrupedProcess::HandleFrame(double now_mono_s) {
       snap.motion_state_raw = b.motion_state.raw;
       snap.gait_raw = b.gait.raw;
       snap.charge_raw = b.charge;
-      mode_.OnReadback(now_mono_s, b);
-      snapshot_slot_.Publish(snap);
+      mode_.on_readback(now_mono_s, b);
+      snapshot_slot_.publish(snap);
       // Forwarded from HERE, with the full report including its strings.
       // What went into the slot above is the trimmed POD ctrl acts on; this
       // is the report itself, and the two are not interchangeable.
@@ -812,7 +812,7 @@ void QuadrupedProcess::HandleFrame(double now_mono_s) {
   } else if (route.type == chs_a::kTypeMotion &&
              route.command == chs_a::kReportCommand) {
     chs_a::MotionStatus m;
-    if (chs_a::ParseMotionStatus(framer_.asdu(), framer_.asdu_len(), &m)) {
+    if (chs_a::parse_motion_status(framer_.asdu(), framer_.asdu_len(), &m)) {
       snap.from_motion = true;
       snap.linear_x = m.linear_x;
       snap.linear_y = m.linear_y;
@@ -824,8 +824,8 @@ void QuadrupedProcess::HandleFrame(double now_mono_s) {
       // BasicStatus, and before this line the state message could carry a
       // moved triple while mode_switching still read false for up to 0.5 s
       // (measured on the chassis with the factory handset).
-      mode_.OnMotionSample(now_mono_s, m.motion_state.raw, m.gait.raw);
-      snapshot_slot_.Publish(snap);
+      mode_.on_motion_sample(now_mono_s, m.motion_state.raw, m.gait.raw);
+      snapshot_slot_.publish(snap);
       if (report_sink_) {
         report_sink_(now_mono_s, nullptr, &m, nullptr, nullptr);
         ++reports_forwarded_;
@@ -834,8 +834,8 @@ void QuadrupedProcess::HandleFrame(double now_mono_s) {
   } else if (route.type == chs_a::kTypeDevice &&
              route.command == chs_a::kReportCommand) {
     chs_a::DeviceStatus d;
-    if (chs_a::ParseDeviceStatus(framer_.asdu(), framer_.asdu_len(), &d)) {
-      snapshot_slot_.Publish(snap);
+    if (chs_a::parse_device_status(framer_.asdu(), framer_.asdu_len(), &d)) {
+      snapshot_slot_.publish(snap);
       if (report_sink_) {
         report_sink_(now_mono_s, nullptr, nullptr, &d, nullptr);
         ++reports_forwarded_;
@@ -848,8 +848,8 @@ void QuadrupedProcess::HandleFrame(double now_mono_s) {
     // that matter -- a new fault is reported the moment it appears, and that
     // is the one an operator is waiting for.
     chs_a::FaultReport f;
-    if (chs_a::ParseFaultReport(framer_.asdu(), framer_.asdu_len(), &f)) {
-      snapshot_slot_.Publish(snap);
+    if (chs_a::parse_fault_report(framer_.asdu(), framer_.asdu_len(), &f)) {
+      snapshot_slot_.publish(snap);
       if (report_sink_) {
         report_sink_(now_mono_s, nullptr, nullptr, nullptr, &f);
         ++reports_forwarded_;
@@ -861,26 +861,26 @@ void QuadrupedProcess::HandleFrame(double now_mono_s) {
     // link is alive, whatever kind of report it is -- and they are NOT
     // forwarded, because forwarding a frame nobody parsed would put bytes of
     // unknown shape onto a key with a schema.
-    snapshot_slot_.Publish(snap);
+    snapshot_slot_.publish(snap);
   }
 }
 
-int QuadrupedProcess::RxPump(double now_mono_s) {
+int QuadrupedProcess::rx_pump(double now_mono_s) {
   if (!socket_.is_open()) return 0;
   std::uint8_t rx[4096];
-  const long n = socket_.Recv(rx, sizeof(rx));
+  const long n = socket_.recv(rx, sizeof(rx));
   if (n < 0) {
     // The peer closed or the link broke. The session decides what to do about
     // it on its own timetable; this thread only reports the fact.
-    session_.OnSendFailure(now_mono_s);
+    session_.on_send_failure(now_mono_s);
     return 0;
   }
 
   // *** Which framing. 13 S2.2 gives channel one TWO endpoint candidates --
   // tcp:30003 and udp:30004 -- and BOTH are enabled in the resolved config,
   // with S8.2 picking "the first one that delivers a status report". Before
-  // this branch every byte went through Push(), the STREAM entry point, and
-  // Framer::PushDatagram had ZERO production call sites.
+  // this branch every byte went through push(), the STREAM entry point, and
+  // Framer::push_datagram had ZERO production call sites.
   //
   // What that would have cost on the UDP candidate: the stream framer resyncs
   // on the sync word and carries leftover bytes into the next push, so a
@@ -894,7 +894,7 @@ int QuadrupedProcess::RxPump(double now_mono_s) {
   // is exactly why it would have stayed broken until the day TCP failed.
   if (socket_.is_udp()) {
     if (n == 0) return 0;
-    if (framer_.PushDatagram(rx, static_cast<std::size_t>(n)) !=
+    if (framer_.push_datagram(rx, static_cast<std::size_t>(n)) !=
         chs_a::FrameStatus::kFrame) {
       // Counted, not logged: FR-5's `warn` needs an event path this process
       // does not have (11 RT-C4), and a log line per bad datagram is how a
@@ -904,28 +904,28 @@ int QuadrupedProcess::RxPump(double now_mono_s) {
       return 0;
     }
     ++frames_received_;
-    HandleFrame(now_mono_s);
+    handle_frame(now_mono_s);
     pub_frames_.store(frames_received_, std::memory_order_relaxed);
     pub_dropped_.store(framer_.dropped_frames(), std::memory_order_relaxed);
-    // One frame per datagram, by FR-5. Next() would not find it anyway: it
-    // reads the stream buffer, which PushDatagram deliberately leaves empty.
+    // One frame per datagram, by FR-5. next() would not find it anyway: it
+    // reads the stream buffer, which push_datagram deliberately leaves empty.
     return 1;
   }
 
   if (n > 0) {
-    framer_.Push(rx, static_cast<std::size_t>(n));
+    framer_.push(rx, static_cast<std::size_t>(n));
   }
 
   int frames = 0;
   for (;;) {
-    const chs_a::FrameStatus st = framer_.Next(now_mono_s);
+    const chs_a::FrameStatus st = framer_.next(now_mono_s);
     if (st != chs_a::FrameStatus::kFrame) {
-      if (st == chs_a::FrameStatus::kPoisoned) socket_.Close();
+      if (st == chs_a::FrameStatus::kPoisoned) socket_.close();
       break;
     }
     ++frames;
     ++frames_received_;
-    HandleFrame(now_mono_s);
+    handle_frame(now_mono_s);
   }
   // Published from THIS thread, which is the one that owns the counters.
   pub_frames_.store(frames_received_, std::memory_order_relaxed);
@@ -937,38 +937,38 @@ int QuadrupedProcess::RxPump(double now_mono_s) {
   return frames;
 }
 
-bool QuadrupedProcess::Start() {
+bool QuadrupedProcess::start() {
   if (running_.exchange(true)) return false;
 
   // 13 S9.2 RTC-7. Reported rather than ignored: under the systemd defaults
   // this returns ENOMEM, the process runs on with pageable memory, and the
   // first deadline it misses is whenever the kernel next reclaims a page.
-  mlock_error_ = rt::LockAllMemory();
+  mlock_error_ = rt::lock_all_memory();
 
-  rx_thread_ = std::thread([this] { RxLoop(); });
-  ctrl_thread_ = std::thread([this] { CtrlLoop(); });
+  rx_thread_ = std::thread([this] { rx_loop(); });
+  ctrl_thread_ = std::thread([this] { ctrl_loop(); });
   return true;
 }
 
-void QuadrupedProcess::Stop() {
+void QuadrupedProcess::stop() {
   if (!running_.exchange(false)) return;
   if (ctrl_thread_.joinable()) ctrl_thread_.join();
   if (rx_thread_.joinable()) rx_thread_.join();
-  socket_.Close();
+  socket_.close();
 }
 
-void QuadrupedProcess::CtrlLoop() {
+void QuadrupedProcess::ctrl_loop() {
   // 13 S9.1: SCHED_FIFO 80. The errno is kept rather than discarded -- EPERM
   // here means the unit did not raise LimitRTPRIO, and the loop then runs at
   // ordinary priority with nothing to show for it.
   ctrl_priority_error_ =
-      rt::ApplyFifoPriority(pthread_self(), cfg_.realtime.ctrl_priority);
+      rt::apply_fifo_priority(pthread_self(), cfg_.realtime.ctrl_priority);
 
   const double period_s = 1.0 / cfg_.tier1.control_loop_hz;
   const auto period = std::chrono::duration<double>(period_s);
   auto next = std::chrono::steady_clock::now();
   while (running_.load(std::memory_order_acquire)) {
-    CtrlTick(MonoNowSeconds());
+    ctrl_tick(mono_now_seconds());
     // Absolute deadlines, not sleep-for. Sleeping for a period after the work
     // makes the loop drift by however long the work took, every period, and at
     // 100 Hz that drift is what the jitter budget is made of.
@@ -977,11 +977,11 @@ void QuadrupedProcess::CtrlLoop() {
   }
 }
 
-void QuadrupedProcess::RxLoop() {
+void QuadrupedProcess::rx_loop() {
   // Ordinary priority by design: the JSON parse lives here precisely so it is
   // NOT on a realtime thread.
   while (running_.load(std::memory_order_acquire)) {
-    const int n = RxPump(MonoNowSeconds());
+    const int n = rx_pump(mono_now_seconds());
     if (n == 0) {
       // Nothing waiting. A short sleep rather than a spin: this thread has no
       // deadline, and a spin would take a core away from one that does.

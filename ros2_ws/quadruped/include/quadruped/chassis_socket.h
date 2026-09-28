@@ -55,7 +55,7 @@ enum class DialError {
   kTlsNotBuilt,        // the candidate asks for TLS and this build has none
 };
 
-const char* DialErrorName(DialError e);
+const char* dial_error_name(DialError e);
 
 class ChassisSocket {
  public:
@@ -74,9 +74,9 @@ class ChassisSocket {
   // and a build that silently fell back to plaintext on a candidate marked
   // tls:true would be a downgrade nobody asked for -- TLS-5 forbids exactly
   // that, because a downgrade that happens by itself can be forced.
-  bool Dial(const EndpointCandidate& ep, bool tcp_nodelay);
+  bool dial(const EndpointCandidate& ep, bool tcp_nodelay);
 
-  void Close();
+  void close();
   bool is_open() const { return fd_ >= 0; }
 
   // Write bytes. Returns the count written, 0 on EAGAIN (the socket is full
@@ -84,11 +84,11 @@ class ChassisSocket {
   //
   // This is the FrameWriter TxOwner takes: the bounded short-write completion
   // of FR-4 happens there, inside the critical section, not here.
-  long Send(const std::uint8_t* data, std::size_t len);
+  long send(const std::uint8_t* data, std::size_t len);
 
   // Read whatever is available. Returns the count, 0 when there is nothing
   // right now, or -1 on a closed or broken connection. Never blocks.
-  long Recv(std::uint8_t* out, std::size_t cap);
+  long recv(std::uint8_t* out, std::size_t cap);
 
   DialError last_error() const { return last_error_; }
   // The errno from the failing call, so a message can say "connection refused"

@@ -11,7 +11,7 @@
  * else -- the counters, the two enums -- exists so that a violation is visible
  * rather than inferred from a chassis error code hours later.
  *
- * Reading order: Send() picks the wait policy, WriteWhole() owns the bytes. The
+ * Reading order: send() picks the wait policy, write_whole() owns the bytes. The
  * split is deliberate -- the retry loop must not be reachable without holding
  * the guard, and a single function would let a later edit move the loop above
  * the acquire without anything failing.
@@ -36,7 +36,7 @@ TxOwner::TxOwner(FrameWriter writer, int partial_send_retry)
       guard_(),
       sent_count_(0) {}
 
-TxResult TxOwner::WriteWhole(const std::uint8_t* data,
+TxResult TxOwner::write_whole(const std::uint8_t* data,
                              std::size_t len) noexcept {
   std::size_t done = 0;
   // attempts counts COMPLETION attempts after the first write, which is what
@@ -65,7 +65,7 @@ TxResult TxOwner::WriteWhole(const std::uint8_t* data,
   return TxResult::kSent;
 }
 
-TxResult TxOwner::Send(TxCaller caller, const std::uint8_t* data,
+TxResult TxOwner::send(TxCaller caller, const std::uint8_t* data,
                        std::size_t len) noexcept {
   // A zero-length frame is a caller bug, not a wire condition. Reporting it as
   // "sent" would make an encoder defect invisible; reporting it as a writer
@@ -84,14 +84,14 @@ TxResult TxOwner::Send(TxCaller caller, const std::uint8_t* data,
     if (!scope.acquired()) {
       return TxResult::kSkipped;
     }
-    return WriteWhole(data, len);
+    return write_whole(data, len);
   }
 
   // Non-realtime: spin until the guard is free. Bounded by one whole-frame
   // send from ctrl (TX-6), which is the only reason an unbounded-looking wait
   // is acceptable on the estop path.
   hachist::xbrain::rtcomm::NonRealtimeTxScope scope(&guard_);
-  return WriteWhole(data, len);
+  return write_whole(data, len);
 }
 
 }  // namespace quadruped

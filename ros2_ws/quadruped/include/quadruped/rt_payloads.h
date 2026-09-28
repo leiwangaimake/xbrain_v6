@@ -98,25 +98,25 @@ struct HelloAckInput {
   double max_wz_radps = 0.0;
 };
 
-std::size_t WriteHelloAck(const HelloAckInput& in, char* out, std::size_t cap);
+std::size_t write_hello_ack(const HelloAckInput& in, char* out, std::size_t cap);
 
 // One row of RobotState.faults[], as the writer consumes it. A VIEW, not an
-// owner: the three pointers must outlive the WriteRobotState call, and the
-// caller (rt_bridge's PublishState) copies the cached entries into locals
+// owner: the three pointers must outlive the write_robot_state call, and the
+// caller (rt_bridge's publish_state) copies the cached entries into locals
 // first for exactly that reason. `desc` is the human-readable fault name --
 // the 11 S4.1 example's key is `desc`, and FaultEntry.name is the only field
 // carrying that content (details is free-form vendor text with no schema).
 struct RobotStateFault {
   const char* code;   // prefixed, "chs:0x1007" -- CF-5, same converter as
                       // the fault stream, never the bare example form
-  const char* level;  // from the closed kFaultLevel set (SeverityToLevel)
+  const char* level;  // from the closed kFaultLevel set (severity_to_level)
   const char* desc;
 };
 
 struct RobotStateInput {
   // 11 S4.1 `conn`, already mapped to the WIRE closed set (kChassisConn:
   // connecting/connected/degraded/lost/incompatible...). The mapping from the
-  // session's internal states lives in rt_bridge's PublishState, NOT here --
+  // session's internal states lives in rt_bridge's publish_state, NOT here --
   // the writer only spells what it is given, so the one mapping cannot fork.
   // nullptr is a caller defect (conn always has a value) and is emitted as
   // JSON null rather than as a guessed member (11 S13.6): a fabricated
@@ -129,7 +129,7 @@ struct RobotStateInput {
   const chs_a::BasicStatus* basic = nullptr;
   // *** No `motion` member here (deleted 2026-09-28, user ruling). It fed a
   // RobotState.motion block that 11 S4.1 never registered and that
-  // PublishState never assigned, so the key went out null on every message
+  // publish_state never assigned, so the key went out null on every message
   // since the writer was written. The six values it would have carried are
   // all published elsewhere -- state/chassis_motion (CR-7) has all six, and
   // the odom block below has vx/vy/wz/yaw -- so removing it loses nothing.
@@ -143,8 +143,8 @@ struct RobotStateInput {
   const char* model = nullptr;
   const char* version = nullptr;
   // 11 S4.1 faults[]. Same cache batch as model/version: the FaultReport
-  // holds std::string and cannot cross the slot, so PublishReports rebuilds
-  // a cached copy per fault report and PublishState hands a VIEW of it here.
+  // holds std::string and cannot cross the slot, so publish_reports rebuilds
+  // a cached copy per fault report and publish_state hands a VIEW of it here.
   // fault_count == 0 emits the empty array -- "no faults asserted" is a
   // claim, not an absence, and the contract example always carries the key.
   const RobotStateFault* faults = nullptr;
@@ -234,7 +234,7 @@ struct RobotStateInput {
 };
 
 // 11 S4.1. Returns bytes written, or 0 if the buffer is too small.
-std::size_t WriteRobotState(const RobotStateInput& in, char* out,
+std::size_t write_robot_state(const RobotStateInput& in, char* out,
                             std::size_t cap);
 
 // 11 S4.2. `remain_mile_km` comes from MotionStatus, everything else from
@@ -250,7 +250,7 @@ struct PowerStateInput {
   int right_index = 1;
 };
 
-std::size_t WritePowerState(const PowerStateInput& in, char* out,
+std::size_t write_power_state(const PowerStateInput& in, char* out,
                             std::size_t cap);
 
 // 11 S7.1.1 EstopAck. Every field is required, and the deadline that governs
@@ -282,7 +282,7 @@ struct EstopAckInput {
   bool timeout_lock = false;
 };
 
-std::size_t WriteEstopAck(const EstopAckInput& in, char* out, std::size_t cap);
+std::size_t write_estop_ack(const EstopAckInput& in, char* out, std::size_t cap);
 
 // 11 S7.7 Ack, used for rt/chassis/ctrl/ack (13 Q-2).
 // 11 S3.0's common envelope, the outer object EVERY Zenoh JSON payload this
@@ -321,7 +321,7 @@ struct EnvelopeInput {
 // Wraps `data` (which must already be a complete JSON object) in the envelope.
 // Returns 0 if it does not fit -- callers publish nothing rather than a
 // truncated object, same rule as every other writer here.
-std::size_t WriteEnvelope(const EnvelopeInput& in, const char* data,
+std::size_t write_envelope(const EnvelopeInput& in, const char* data,
                           std::size_t dlen, char* out, std::size_t cap);
 
 struct CtrlAckInput {
@@ -346,7 +346,7 @@ struct CtrlAckInput {
   const char* item = "";
 };
 
-std::size_t WriteCtrlAck(const CtrlAckInput& in, char* out, std::size_t cap);
+std::size_t write_ctrl_ack(const CtrlAckInput& in, char* out, std::size_t cap);
 
 // 13 Q-4 / 11 S8.5. Sent ON RECEIPT of a ping, never on a timer of its own:
 // a self-timed pong reports the link alive while the ping path is dead, which
@@ -361,7 +361,7 @@ struct PongInput {
   StopReason stop_reason = StopReason::kNone;
 };
 
-std::size_t WritePong(const PongInput& in, char* out, std::size_t cap);
+std::size_t write_pong(const PongInput& in, char* out, std::size_t cap);
 
 // ---------------------------------------------------------------------------
 // The four chassis report streams (13 S7.1). Each is the parsed report
@@ -378,11 +378,11 @@ std::size_t WritePong(const PongInput& in, char* out, std::size_t cap);
 // appears on every boot.
 // ---------------------------------------------------------------------------
 
-std::size_t WriteChassisBasic(const chs_a::BasicStatus& in, char* out,
+std::size_t write_chassis_basic(const chs_a::BasicStatus& in, char* out,
                               std::size_t cap);
-std::size_t WriteChassisMotion(const chs_a::MotionStatus& in, char* out,
+std::size_t write_chassis_motion(const chs_a::MotionStatus& in, char* out,
                                std::size_t cap);
-std::size_t WriteChassisDevice(const chs_a::DeviceStatus& in, char* out,
+std::size_t write_chassis_device(const chs_a::DeviceStatus& in, char* out,
                                std::size_t cap);
 // Both lists travel (13 S7.3): `faults` is what is asserted now and `cleared`
 // is what just stopped. Sending only the first leaves a consumer unable to tell
@@ -395,7 +395,7 @@ std::size_t WriteChassisDevice(const chs_a::DeviceStatus& in, char* out,
 // Writing both with one routine is the defect this key carried until
 // 2026-09-27, together with `name` for `desc` and a nested since:{sec,nanosec}
 // where the contract wants float seconds.
-std::size_t WriteChassisFault(const chs_a::FaultReport& in, char* out,
+std::size_t write_chassis_fault(const chs_a::FaultReport& in, char* out,
                               std::size_t cap);
 
 }  // namespace rt

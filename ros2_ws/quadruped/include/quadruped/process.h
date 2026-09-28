@@ -51,7 +51,7 @@
  * uplink are built as OPTIONAL targets because they need CycloneDDS and
  * rclcpp, and THIS CLASS does not start them -- main.cc does, and it is the one
  * place that knows whether they are present. What this class exposes to them is
- * the two lock-free slots below plus SetReportSink.
+ * the two lock-free slots below plus set_report_sink.
  *
  * *** This paragraph used to end "The IMU therefore has no source yet and the
  * odometry runs on the monitor protocol's 10 Hz velocity alone", which stopped
@@ -60,7 +60,7 @@
  * it decays silently and is then read as current. Kept as narrow as it can be
  * for that reason: what this CLASS does, not what the process happens to have.
  *
- * Testability. CtrlTick and RxPump are public and take the clock as an
+ * Testability. ctrl_tick and rx_pump are public and take the clock as an
  * argument, so a test drives the whole assembly with no threads and no waiting:
  * a 200 ms Tier 1 timeout is exercised in microseconds. The threads are thin
  * loops around them, which is deliberate -- logic inside a thread body is logic
@@ -133,19 +133,19 @@ class QuadrupedProcess {
   // One control period: session, Tier 1, the axis command, the heartbeat.
   // Everything it needs is passed in or already latched, so a test can run ten
   // thousand periods in a millisecond.
-  void CtrlTick(double now_mono_s);
+  void ctrl_tick(double now_mono_s);
 
   // Drain the socket once: read, reassemble, parse, publish a snapshot.
   // Returns the number of frames consumed.
-  int RxPump(double now_mono_s);
+  int rx_pump(double now_mono_s);
 
   // ---- the threads -----------------------------------------------------
   //
   // Start applies mlockall and the SCHED_FIFO priorities of 13 S9.1, and
   // reports which of them failed rather than carrying on quietly: under the
   // systemd defaults BOTH fail, and neither prints anything by itself.
-  bool Start();
-  void Stop();
+  bool start();
+  void stop();
   bool running() const { return running_.load(std::memory_order_acquire); }
 
   // Non-zero when mlockall or a priority change was refused. The value is the
@@ -178,13 +178,13 @@ class QuadrupedProcess {
   // A slot and not a queue: a publisher that fell behind must send the CURRENT
   // pose, not work through a backlog of stale ones. That is RTC-6, and for an
   // odometry a stale sample is a QD-5 violation rather than a latency figure.
-  bool TakeOdomForPublish(OdomSample* out);
-  // Diagnostics for the mode sequence; see OnChassisMode.
+  bool take_odom_for_publish(OdomSample* out);
+  // Diagnostics for the mode sequence; see on_chassis_mode.
   std::uint64_t mode_steps() const { return mode_steps_; }
   std::uint64_t mode_frames_sent() const { return mode_frames_sent_; }
   // 13 MS-2 / MS-3, for the self-report and for tests. Reads the mode machine
   // DIRECTLY, so like the neighbours above it is only safe from the thread
-  // that drives CtrlTick -- which means from a test, or from the ctrl thread.
+  // that drives ctrl_tick -- which means from a test, or from the ctrl thread.
   // OUR OWN switch is in flight (13 MS-3). NOT what Tier 1 is gated on and
   // NOT what RobotState publishes -- both of those use the predicate below,
   // because 13 TR-1 puts an EXTERNAL transition in the same bucket.
@@ -232,7 +232,7 @@ class QuadrupedProcess {
   // on its own ordinary-priority thread where allocating is allowed.
   //
   // Consequence, stated rather than discovered: rt/chassis/state published from
-  // this snapshot carries NO basic/motion block yet (WriteRobotState accepts
+  // this snapshot carries NO basic/motion block yet (write_robot_state accepts
   // null for both). What it does carry is estop_epoch, which is the field
   // p1_motion is waiting on (11:1722 / 13 RX-3).
   // 13 S4.2's two linear-velocity sources. Declared before StateSnapshot
@@ -283,7 +283,7 @@ class QuadrupedProcess {
     //
     // *** Carried HERE for the same reason the triple is: the full BasicStatus
     // holds std::string and cannot cross a LockfreeSlot (12 RTC-6), so
-    // PublishState never had a `basic` to read and the charge field it emits
+    // publish_state never had a `basic` to read and the charge field it emits
     // was null on every message -- measured on the live chassis 2026-09-21,
     // while rt/chassis/power on the same run reported `idle` correctly from
     // the report path. The writer was right; the state path had no input.
@@ -308,18 +308,18 @@ class QuadrupedProcess {
 
   // The newest snapshot, or false when ctrl has not produced one since the last
   // call. Same slot discipline as the odometry: newest wins, no backlog.
-  bool TakeStateForPublish(StateSnapshot* out);
+  bool take_state_for_publish(StateSnapshot* out);
 
   // ---- the four report streams (13 S7.1) --------------------------------
   //
-  // Called from RxPump, on the chs_a_rx thread, with the report that was just
+  // Called from rx_pump, on the chs_a_rx thread, with the report that was just
   // parsed and nullptr for the others. It is a callback rather than a slot
   // because these structs hold std::string and cannot cross a LockfreeSlot --
   // and because there is nothing to hand to ctrl anyway: forwarding a report is
   // not realtime work, and it belongs on the thread that already did the
   // allocating parse (QD-7's whole reason for that thread existing).
   //
-  // It runs INSIDE RxPump, so a sink that blocks stalls report reception, and a
+  // It runs INSIDE rx_pump, so a sink that blocks stalls report reception, and a
   // stalled reception is what the session reads as a dead link (13 CA-7). The
   // sink in production is one zenoh put.
   using ReportSink = std::function<void(double now_mono_s,
@@ -327,7 +327,7 @@ class QuadrupedProcess {
                                         const chs_a::MotionStatus*,
                                         const chs_a::DeviceStatus*,
                                         const chs_a::FaultReport*)>;
-  void SetReportSink(ReportSink sink);
+  void set_report_sink(ReportSink sink);
 
   // ---- channel two, the domain-0 sources (13 S4.2) ----------------------
   //
@@ -353,8 +353,8 @@ class QuadrupedProcess {
   // 13 S4.2 also bans a third source outright: the axis command read back as
   // velocity. Using a commanded value as feedback is open loop pretending to be
   // closed loop, and there is deliberately no entry point for it here.
-  void OnImu(double now_mono_s, double wz);
-  void OnMotionInfo(double now_mono_s, double vx, double vy);
+  void on_imu(double now_mono_s, double wz);
+  void on_motion_info(double now_mono_s, double vx, double vy);
 
   // Which source fed the odometry on the last control period. Published so the
   // degradation is VISIBLE: the covariance model does not know the difference
@@ -381,7 +381,7 @@ class QuadrupedProcess {
   // A cmd_vel arrived from the RT plane. Called by the publisher thread once it
   // exists; a test calls it directly. Taking the values rather than a message
   // keeps this class free of any transport type.
-  void OnCmdVel(double now_mono_s, double vx, double vy, double wz,
+  void on_cmd_vel(double now_mono_s, double vx, double vy, double wz,
                 std::uint64_t estop_epoch);
 
   // An operator enable arrived on rt/{rid}/ctrl/enable (13 S3.2 / 11 S9.12.1).
@@ -391,10 +391,10 @@ class QuadrupedProcess {
   // is explicit that "the upstream came back" and "the upstream is trusted" are
   // different events, and a level-held flag collapses them into one.
   //
-  // This is the other half of the seam OnCmdVel opens, not a hook kept for
-  // later: without it the axis-command branch of CtrlTick is unreachable, since
+  // This is the other half of the seam on_cmd_vel opens, not a hook kept for
+  // later: without it the axis-command branch of ctrl_tick is unreachable, since
   // Tier 1 locks on the opening silence and nothing could ever unlock it.
-  void OnEnable();
+  void on_enable();
 
   // A discrete chassis action from rt/chassis/ctrl (11 S9.3.3): stand, prone,
   // a gait or a usage mode. Routed through the mode machine, which owns the
@@ -413,7 +413,7 @@ class QuadrupedProcess {
   // couples the three (a gait switch moves the motion mode, and the reverse),
   // and MS-3 refuses a second switch while one is in flight. So the triple has
   // to be walked one step at a time, each step waiting for its read-back.
-  bool OnChassisMode(bool has_usage_mode, std::int64_t usage_mode,
+  bool on_chassis_mode(bool has_usage_mode, std::int64_t usage_mode,
                      bool has_motion_state, std::int64_t motion_state,
                      bool has_gait, std::int64_t gait);
 
@@ -422,26 +422,26 @@ class QuadrupedProcess {
   // rt/chassis/ctrl stand/prone path (zenoh callback, kNonRealtime).
   // Returns false when nothing reached the socket -- see 13 ASM-6 on why
   // "accepted" and "sent" must stay distinguishable.
-  bool SendModeFrame(ModeAction action, std::int64_t param, TxCaller caller);
+  bool send_mode_frame(ModeAction action, std::int64_t param, TxCaller caller);
 
   // C-07, the custom light command (11 S9.4.1 / 13 S5.1). Sits beside
-  // SendModeFrame because it is the same kind of thing: a non-periodic frame
+  // send_mode_frame because it is the same kind of thing: a non-periodic frame
   // the RT bridge asks for, with no state kept here.
   //
   // Goes out through tx_ like every other non-periodic frame (13 CA-4): a
   // light frame must not interleave with the zero-velocity frame the estop
   // callback sends, and tx_ is the seam that guarantees it.
-  bool SendLightFrame(bool custom_mode, const chs_a::LedSetting& head,
+  bool send_light_frame(bool custom_mode, const chs_a::LedSetting& head,
                       const chs_a::LedSetting& tail);
   std::uint64_t light_frames_sent() const { return light_frames_sent_; }
 
-  ModeRequestResult OnChassisAction(double now_mono_s, ModeAction action,
+  ModeRequestResult on_chassis_action(double now_mono_s, ModeAction action,
                                     std::int64_t param);
 
   // A soft stop. 13 S9.12.2 (3) and T-1: the generation advances HERE, in the
   // callback, and a zero frame goes out immediately rather than next period --
   // the next period is up to 10 ms away and the budget is 5 ms.
-  void OnSoftEstop(double now_mono_s);
+  void on_soft_estop(double now_mono_s);
   std::uint64_t estop_epoch() const { return estop_epoch_; }
 
   // What the supervisor thread is allowed to read while ctrl is running.
@@ -515,10 +515,10 @@ class QuadrupedProcess {
   LinkStatus link_status() const;
 
  private:
-  void CtrlLoop();
-  void RxLoop();
+  void ctrl_loop();
+  void rx_loop();
   // One decoded frame, shared by the stream and datagram framing paths.
-  void HandleFrame(double now_mono_s);
+  void handle_frame(double now_mono_s);
 
   QuadrupedConfig cfg_;
   ChassisSocket socket_;
@@ -568,7 +568,7 @@ class QuadrupedProcess {
   double cmd_vx_ = 0.0, cmd_vy_ = 0.0, cmd_wz_ = 0.0;
   double cmd_rx_mono_s_ = -1.0;
   bool have_cmd_ = false;
-  // One-shot, cleared by the period that reads it. See OnEnable.
+  // One-shot, cleared by the period that reads it. See on_enable.
   bool enable_pending_ = false;
   std::uint64_t cmd_estop_epoch_ = 0;
   std::uint64_t estop_epoch_ = 0;
@@ -618,7 +618,7 @@ class QuadrupedProcess {
   std::atomic<std::uint64_t> pub_tx_acquires_{0};
   std::atomic<std::uint64_t> pub_tx_sent_{0};
 
-  // 13 CA-9: an axis frame left from OnSoftEstop, which runs on the zenoh
+  // 13 CA-9: an axis frame left from on_soft_estop, which runs on the zenoh
   // callback thread. The control period drains this and tells the session, so
   // the session keeps exactly one writer (ctrl). A flag and not a timestamp:
   // std::atomic<double> is not guaranteed lock-free, the control period is at

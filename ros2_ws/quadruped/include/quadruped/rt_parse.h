@@ -21,8 +21,8 @@
  * The contract says it in one line: "stop" may fire by mistake, "go" must not.
  *
  * That asymmetry is expressed in the SIGNATURES, not in comments (13 RX-2).
- * ParseCmdVel and ParseChassisCtrl return a verdict the caller has to inspect;
- * ParseEstop returns void, because there is no answer it could give that would
+ * parse_cmd_vel and parse_chassis_ctrl return a verdict the caller has to inspect;
+ * parse_estop returns void, because there is no answer it could give that would
  * let a caller skip the stop. A reviewer can see the rule without reading the
  * bodies.
  *
@@ -100,7 +100,7 @@ enum class RtParse {
   kUnsupportedAction,  // an action the contract removed -- E_CAPABILITY
 };
 
-const char* RtParseName(RtParse r);
+const char* rt_parse_name(RtParse r);
 
 // ---------------------------------------------------------------------------
 // rt/motion/cmd_vel -- LOOSENING, full validation (11:1722, 11 S3.4)
@@ -124,7 +124,7 @@ struct CmdVelMsg {
 // `our_boot` is compared with the envelope's `boot` to decide mono_usable.
 // Pass the first 8 hex of /proc/sys/kernel/random/boot_id, the same string the
 // envelope writer stamps.
-RtParse ParseCmdVel(const char* json, std::size_t len, const std::string& our_rid,
+RtParse parse_cmd_vel(const char* json, std::size_t len, const std::string& our_rid,
                     const std::string& our_boot, CmdVelMsg* out);
 
 // ---------------------------------------------------------------------------
@@ -156,25 +156,25 @@ struct ChassisModeMsg {
 // Semantic string -> chassis number, per the 11 S9.2.4 tables.
 //
 // The three differ in where their table lives, and that is 13 QD-3's line:
-//   * MotionStateValue keeps a LOCAL table that is deliberately a SUBSET of
+//   * motion_state_value keeps a LOCAL table that is deliberately a SUBSET of
 //     the read-back set -- only stand/prone/rl_control may be commanded;
 //     11 S9.2.4 marks soft_estop / idle / joint_damp / boot_damp / zero_cal /
 //     cart_move / damped_prone read-only ("只读, 禁止下发"), and accepting one
 //     would send a value the contract says only ever comes back.
-//   * GaitValue owns NO name table: it delegates to chs_a_reports'
-//     GaitValueByName (merged 2026-09-26 -- the two copies had already
+//   * gait_value owns NO name table: it delegates to chs_a_reports'
+//     gait_value_by_name (merged 2026-09-26 -- the two copies had already
 //     drifted by one member, platform), then applies a local DIRECTIONAL
 //     value exclusion: platform (0x1002) is absent from the guide's command
 //     enumeration altogether (13 S5.3 G-03), so it still refuses here.
 //     stair_standard stays commandable at this layer -- its refusal is the
 //     configured not_implemented.gaits (GS-1), not the parser's.
-//   * UsageModeValue keeps a local table whose CONTENT coincides with the
+//   * usage_mode_value keeps a local table whose CONTENT coincides with the
 //     read-back set (all three usage modes are commandable) -- a candidate
 //     for the same merge, left as-is pending a ruling because unlike gait no
 //     reverse lookup exists in chs_a_reports for it yet.
-bool UsageModeValue(const std::string& name, std::int64_t* out);
-bool MotionStateValue(const std::string& name, std::int64_t* out);
-bool GaitValue(const std::string& name, std::int64_t* out);
+bool usage_mode_value(const std::string& name, std::int64_t* out);
+bool motion_state_value(const std::string& name, std::int64_t* out);
+bool gait_value(const std::string& name, std::int64_t* out);
 
 // 11 S9.1.4 hello: { "type", "proto_version", "client" }. This message has NO
 // envelope -- it is the handshake, sent before the two sides have agreed on
@@ -189,7 +189,7 @@ struct HelloMsg {
 // Parses and splits proto_version on the dot. A version that is not
 // major.minor is a refusal, not a default: 11 S9.1.4 makes major the
 // compatibility decision, and a missing major would have to be guessed.
-RtParse ParseHello(const char* json, std::size_t len,
+RtParse parse_hello(const char* json, std::size_t len,
                    const std::string& our_rid, const std::string& our_boot,
                    HelloMsg* out);
 
@@ -226,14 +226,14 @@ struct LightMsg {
   int tail_cycle_s = 0;
 };
 
-RtParse ParseLight(const char* json, std::size_t len, const std::string& our_rid,
+RtParse parse_light(const char* json, std::size_t len, const std::string& our_rid,
                    const std::string& our_boot, LightMsg* out);
 
-RtParse ParseChassisMode(const char* json, std::size_t len,
+RtParse parse_chassis_mode(const char* json, std::size_t len,
                          const std::string& our_rid, const std::string& our_boot,
                          ChassisModeMsg* out);
 
-const char* CtrlActionName(CtrlAction a);
+const char* ctrl_action_name(CtrlAction a);
 
 struct ChassisCtrlMsg {
   Envelope env;
@@ -248,7 +248,7 @@ struct ChassisCtrlMsg {
   std::string raw_action;
 };
 
-RtParse ParseChassisCtrl(const char* json, std::size_t len,
+RtParse parse_chassis_ctrl(const char* json, std::size_t len,
                          const std::string& our_rid, const std::string& our_boot,
                          ChassisCtrlMsg* out);
 
@@ -289,8 +289,8 @@ struct ProbePingMsg {
 // answer someone else's probe with this robot's estop state.
 //
 // 13 F-15 applies to the CALLER, not here: whatever this returns, the pong
-// still goes out. See RtBridge::HandlePing.
-RtParse ParseProbePing(const char* json, std::size_t len,
+// still goes out. See RtBridge::handle_ping.
+RtParse parse_probe_ping(const char* json, std::size_t len,
                        const std::string& our_rid, const std::string& our_boot,
                        ProbePingMsg* out);
 
@@ -313,7 +313,7 @@ struct ClockStatusMsg {
 // publisher speaking a different schema -- refused, never defaulted, in
 // either direction (a default true is CLK-A3's exact failure, a default
 // false would silently discard a valid report).
-RtParse ParseClockStatus(const char* json, std::size_t len,
+RtParse parse_clock_status(const char* json, std::size_t len,
                          const std::string& our_rid,
                          const std::string& our_boot, ClockStatusMsg* out);
 
@@ -339,9 +339,9 @@ struct EstopMsg {
 // still collapse to "stop" -- 99 U75 calls the property 收紧型 (collapse-safe) and
 // forbids extending the waiver to any key with a loosening interpretation.
 //
-// A caller therefore reads: ParseEstop(...); Stop(); -- with no `if`. Giving
+// A caller therefore reads: parse_estop(...); stop(); -- with no `if`. Giving
 // this function a bool return is exactly the change that would let one appear.
-void ParseEstop(const char* json, std::size_t len, const std::string& our_rid,
+void parse_estop(const char* json, std::size_t len, const std::string& our_rid,
                 const std::string& our_boot, EstopMsg* out);
 
 }  // namespace rt

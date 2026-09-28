@@ -45,7 +45,7 @@ namespace {
 
 // Floating-point comparison at the bucket width. Exact equality would be
 // asserting the compiler's division, not the class's behaviour.
-bool Close(double a, double b) {
+bool close(double a, double b) {
   const double d = a - b;
   return (d < 0 ? -d : d) < kTickBucketMs * 0.5;
 }
@@ -63,7 +63,7 @@ int main() {
     TickStats s;
     CHECK(s.count() == 0);
     CHECK(s.max_ms() == 0.0);
-    CHECK(s.PercentileMs(0.99) == 0.0);
+    CHECK(s.percentile_ms(0.99) == 0.0);
     CHECK(s.overflow() == 0);
   }
 
@@ -72,12 +72,12 @@ int main() {
     // The healthy case, and the one that must stay quiet: 10 ms at 100 Hz.
     // mutant: make Add ignore its argument -> P99 goes to 0 -> red.
     TickStats s;
-    for (int i = 0; i < 1000; ++i) s.Add(10.0);
+    for (int i = 0; i < 1000; ++i) s.add(10.0);
     CHECK(s.count() == 1000);
-    CHECK(Close(s.max_ms(), 10.0));
+    CHECK(close(s.max_ms(), 10.0));
     // 10.0 exactly, not the bucket edge 10.1: the clamp caps the reported
     // percentile at the true maximum, which here IS 10.0.
-    CHECK(Close(s.PercentileMs(0.99), 10.0));
+    CHECK(close(s.percentile_ms(0.99), 10.0));
     CHECK(s.overflow() == 0);
   }
 
@@ -88,11 +88,11 @@ int main() {
     // reason the criterion is a percentile.
     // mutant: report the mean instead of a percentile -> red.
     TickStats s;
-    for (int i = 0; i < 980; ++i) s.Add(10.0);
-    for (int i = 0; i < 20; ++i) s.Add(200.0);
-    CHECK(Close(s.max_ms(), 200.0));
+    for (int i = 0; i < 980; ++i) s.add(10.0);
+    for (int i = 0; i < 20; ++i) s.add(200.0);
+    CHECK(close(s.max_ms(), 200.0));
     CHECK(s.max_ms() > 20.0);                 // T-ODOM-1 max criterion: FAIL
-    CHECK(s.PercentileMs(0.99) > 12.0);       // T-ODOM-1 P99 criterion: FAIL
+    CHECK(s.percentile_ms(0.99) > 12.0);       // T-ODOM-1 P99 criterion: FAIL
     CHECK(s.overflow() == 20);
     // 2% slow, not 1%: a tail of EXACTLY 1% leaves P99 sitting on the fast
     // samples by definition, so it fails only the max criterion. Writing the
@@ -110,16 +110,16 @@ int main() {
     // mutant: return the bucket's LOWER edge -> 11.9 -> this goes red, and a
     // marginal run would start reporting a pass it did not earn.
     TickStats s;
-    for (int i = 0; i < 98; ++i) s.Add(5.0);
-    s.Add(11.95);
+    for (int i = 0; i < 98; ++i) s.add(5.0);
+    s.add(11.95);
     // One sample ABOVE the percentile's bucket, so the clamp-to-max does not
     // bind and the rounding is observable. Without it the run's max would be
     // 11.95, the clamp would cap the answer there, and this case would be
     // testing the clamp instead of the rounding -- two different behaviours
     // that happen to agree on this input.
-    s.Add(50.0);
-    CHECK(Close(s.PercentileMs(0.99), 12.0));
-    CHECK(s.PercentileMs(0.99) <= s.max_ms());
+    s.add(50.0);
+    CHECK(close(s.percentile_ms(0.99), 12.0));
+    CHECK(s.percentile_ms(0.99) <= s.max_ms());
   }
 
   // ---- max stays exact, never quantised ---------------------------------
@@ -132,7 +132,7 @@ int main() {
     // its own reason, and a large round max cannot catch this.
     // mutant: bucket the max in Add -> 11.9 -> red.
     TickStats s;
-    s.Add(11.95);
+    s.add(11.95);
     CHECK(s.max_ms() > 11.94 && s.max_ms() < 11.96);
   }
 
@@ -145,27 +145,27 @@ int main() {
     // how the first draft of this case passed a broken implementation.
     // mutant: truncate instead of ceiling -> reports 1.1 ms -> red.
     TickStats s;
-    for (int i = 0; i < 99; ++i) s.Add(1.0);
-    s.Add(8.0);
-    s.Add(25.0);
+    for (int i = 0; i < 99; ++i) s.add(1.0);
+    s.add(8.0);
+    s.add(25.0);
     CHECK(s.count() == 101);
     // 8.1 (the bucket edge), not 8.0: the clamp binds against the run's max
     // of 25 ms, which is far above, so the edge survives here.
-    CHECK(Close(s.PercentileMs(0.99), 8.0 + kTickBucketMs));
+    CHECK(close(s.percentile_ms(0.99), 8.0 + kTickBucketMs));
   }
 
   // ---- overflow is visible, and the percentile says so -------------------
   {
-    // Everything past the histogram ceiling. PercentileMs cannot name a
+    // Everything past the histogram ceiling. percentile_ms cannot name a
     // bucket edge, so it falls back to the exact max -- and overflow() is how
     // a reader knows that happened rather than having to infer it.
     // mutant: return the last bucket's edge (30.0) instead of max -> red, and
     // a 5-second stall would be reported as 30 ms.
     TickStats s;
-    for (int i = 0; i < 10; ++i) s.Add(5000.0);
+    for (int i = 0; i < 10; ++i) s.add(5000.0);
     CHECK(s.overflow() == 10);
-    CHECK(Close(s.PercentileMs(0.99), 5000.0));
-    CHECK(Close(s.max_ms(), 5000.0));
+    CHECK(close(s.percentile_ms(0.99), 5000.0));
+    CHECK(close(s.max_ms(), 5000.0));
   }
 
   // ---- a negative delta is dropped, not clamped --------------------------
@@ -175,11 +175,11 @@ int main() {
     // that bug behind an improbably good result.
     // mutant: clamp to 0.0 and count it -> count becomes 3 -> red.
     TickStats s;
-    s.Add(10.0);
-    s.Add(-1.0);
-    s.Add(10.0);
+    s.add(10.0);
+    s.add(-1.0);
+    s.add(10.0);
     CHECK(s.count() == 2);
-    CHECK(Close(s.max_ms(), 10.0));
+    CHECK(close(s.max_ms(), 10.0));
   }
 
   // ---- zero is a real sample -------------------------------------------
@@ -188,7 +188,7 @@ int main() {
     // loop ran twice without sleeping, which is a period defect worth seeing.
     // mutant: drop non-positive instead of negative -> count becomes 0 -> red.
     TickStats s;
-    s.Add(0.0);
+    s.add(0.0);
     CHECK(s.count() == 1);
   }
 
@@ -202,13 +202,13 @@ int main() {
     // stops trusting.
     // mutant: drop the clamp -> p99 comes back 10.1 while max is 10.06 -> red.
     TickStats s;
-    for (int i = 0; i < 3000; ++i) s.Add(10.06);
-    CHECK(s.PercentileMs(0.99) <= s.max_ms());
-    CHECK(Close(s.PercentileMs(0.99), 10.06));
+    for (int i = 0; i < 3000; ++i) s.add(10.06);
+    CHECK(s.percentile_ms(0.99) <= s.max_ms());
+    CHECK(close(s.percentile_ms(0.99), 10.06));
     // The same must hold at every p, not just at 0.99.
-    CHECK(s.PercentileMs(0.5) <= s.max_ms());
-    CHECK(s.PercentileMs(1.0) <= s.max_ms());
-    CHECK(s.PercentileMs(0.0) <= s.max_ms());
+    CHECK(s.percentile_ms(0.5) <= s.max_ms());
+    CHECK(s.percentile_ms(1.0) <= s.max_ms());
+    CHECK(s.percentile_ms(0.0) <= s.max_ms());
   }
 
   // ---- the T-ODOM-1 verdict shape --------------------------------------
@@ -218,9 +218,9 @@ int main() {
     // implementation that always reported a failure would satisfy every case
     // above.
     TickStats s;
-    for (int i = 0; i < 60000; ++i) s.Add(10.0);
-    for (int i = 0; i < 100; ++i) s.Add(11.5);   // under 1% of samples
-    CHECK(s.PercentileMs(0.99) <= 12.0);
+    for (int i = 0; i < 60000; ++i) s.add(10.0);
+    for (int i = 0; i < 100; ++i) s.add(11.5);   // under 1% of samples
+    CHECK(s.percentile_ms(0.99) <= 12.0);
     CHECK(s.max_ms() <= 20.0);
   }
 

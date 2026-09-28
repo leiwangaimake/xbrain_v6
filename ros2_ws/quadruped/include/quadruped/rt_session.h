@@ -39,7 +39,7 @@
  * already established to the loopback RT router, and cannot reach the general
  * plane's gossip domain.
  *
- * RtSessionConfigJson is public so a test can compare this file's values with
+ * rt_session_config_json is public so a test can compare this file's values with
  * session_factory.py's WITHOUT opening a session. Two implementations of one
  * configuration diverge silently otherwise, and the symptom of that divergence
  * is silence.
@@ -66,7 +66,7 @@ namespace rt {
 // so that test_rt_session can hold it beside session_factory.py.
 //
 // `endpoint` is the single connect endpoint (11 S1.1.2: tcp/127.0.0.1:7449).
-std::string RtSessionConfigJson(const std::string& endpoint);
+std::string rt_session_config_json(const std::string& endpoint);
 
 class RtSession {
  public:
@@ -80,8 +80,8 @@ class RtSession {
   // is reported by the caller rather than retried silently, because "the RT
   // plane is not there" and "the RT plane is there and empty" need different
   // answers from an operator.
-  bool Open(const std::string& endpoint, std::string* err);
-  void Close();
+  bool open(const std::string& endpoint, std::string* err);
+  void close();
   bool is_open() const;
 
   // Declares a publisher. Publishers are declared ONCE at startup, never per
@@ -89,12 +89,12 @@ class RtSession {
   // put a discovery round trip on the path of every state update.
   //
   // Returns a handle, or -1 on failure.
-  int DeclarePublisher(const std::string& key, std::string* err);
+  int declare_publisher(const std::string& key, std::string* err);
 
   // Sends one payload on a previously declared handle. Returns false when the
   // handle is unknown or the session is closed -- never throws, because the
   // callers are periodic and a throw would take the publishing thread out.
-  bool Put(int handle, const char* data, std::size_t len);
+  bool put(int handle, const char* data, std::size_t len);
 
   // Called on a Zenoh thread with the raw payload. See the file comment: no
   // blocking, no long work, hand off and return.
@@ -104,7 +104,7 @@ class RtSession {
   // declares no wildcards and offers no way to ask for one, because 11 RT-C3.b
   // makes a wildcard subscription the technical precondition of the general
   // forwarding that RT-C3 exists to prevent.
-  bool DeclareSubscriber(const std::string& key, SampleFn on_sample,
+  bool declare_subscriber(const std::string& key, SampleFn on_sample,
                          std::string* err);
 
   // Counters, so "it is connected" is a number rather than an impression.

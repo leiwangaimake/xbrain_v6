@@ -36,7 +36,7 @@ namespace quadruped {
 // CLOCK_MONOTONIC, in seconds. Allocation-free and safe to call from the
 // realtime threads: clock_gettime on a monotonic clock is a vDSO call on this
 // platform, not a syscall.
-inline double MonoNowSeconds() {
+inline double mono_now_seconds() {
   timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return static_cast<double>(ts.tv_sec) +

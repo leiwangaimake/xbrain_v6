@@ -26,7 +26,7 @@
 namespace quadruped {
 namespace rt {
 
-std::string RtSessionConfigJson(const std::string& endpoint) {
+std::string rt_session_config_json(const std::string& endpoint) {
   // Field order follows the json5 block in 11 S1.1.2 so the two can be held
   // side by side, exactly as session_factory.py does and for the same reason:
   // a document that reads differently from the contract invites a reader to

@@ -51,7 +51,7 @@
 
 namespace quadruped {
 
-// Thrown by every Require* accessor and by LoadQuadrupedConfig. Carries the
+// Thrown by every Require* accessor and by load_quadruped_config. Carries the
 // dotted key path in what(), because "config invalid" without the key is a
 // message that makes an operator grep the whole tree.
 // * Why a dedicated type rather than std::runtime_error: main() must be able
@@ -239,8 +239,8 @@ struct MotionConfig {
   // values. Configured by NAME and resolved here, because the chassis reports
   // values and 13 S5.3 is the one place the two are tied together.
   //
-  // *** This list was never populated in production. ModeMachine::ProneAllowed
-  // answers `!Contains(list, steady_gait)`, so an empty list makes it return
+  // *** This list was never populated in production. ModeMachine::prone_allowed
+  // answers `!contains(list, steady_gait)`, so an empty list makes it return
   // true for every gait and PR-1 never fires. 13 V-54 is a P0 for exactly this
   // reason: "楼梯上不防侧翻 = 安全事故". Everything else was in place -- the
   // predicate, the refusal code, the config key with both stair gaits in it,
@@ -294,18 +294,18 @@ struct QuadrupedConfig {
 // value, unparsable number, or a violated process-side invariant (see the
 // header comment for which invariants are checked here and which are not).
 // * path is the RESOLVED snapshot, not the source config.
-QuadrupedConfig LoadQuadrupedConfig(const std::string& path);
+QuadrupedConfig load_quadruped_config(const std::string& path);
 
 // Default resolved-snapshot location (10 S5.4.1). Exposed as a function rather
 // than a macro so a test can print it without the preprocessor.
-const char* DefaultResolvedPath();
+const char* default_resolved_path();
 
 // Human-readable one-block self report used at startup and by --selfcheck.
 // * DDS-9 and CB-4 both require the EFFECTIVE values to be printed: the two
 //   domain ids, the endpoint that will be probed first, and the codebook in
 //   force. A configuration mistake in either is otherwise indistinguishable
 //   from a dead network.
-std::string DescribeConfig(const QuadrupedConfig& cfg);
+std::string describe_config(const QuadrupedConfig& cfg);
 
 }  // namespace quadruped
 

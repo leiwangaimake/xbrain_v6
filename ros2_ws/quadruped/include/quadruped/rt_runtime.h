@@ -71,32 +71,32 @@ class RtRuntime {
   // and starts the loop. Returns false and fills `err` on the first failure --
   // a partially declared RT plane is worse than none, because the keys that DID
   // come up make the process look connected.
-  bool Start(std::string* err);
-  void Stop();
+  bool start(std::string* err);
+  void stop();
   bool running() const { return running_.load(std::memory_order_acquire); }
 
   const RtBridge& bridge() const { return *bridge_; }
   // Non-const, for the report sink: the chs_a_rx thread publishes through the
-  // bridge, and a const handle cannot. Valid only between Start() and Stop();
+  // bridge, and a const handle cannot. Valid only between start() and stop();
   // null before Start, which the caller must not dereference.
   RtBridge* bridge_mut() { return bridge_.get(); }
   const RtSession& session() const { return session_; }
   std::uint64_t ticks() const { return ticks_; }
-  // Must be called BEFORE Start(). Setting it while the loop runs would be a
+  // Must be called BEFORE start(). Setting it while the loop runs would be a
   // data race on a std::function, and there is no case for changing where odom
   // goes mid-flight -- the destination is a property of the build.
-  void SetOdomSink(OdomSink sink) { odom_sink_ = std::move(sink); }
+  void set_odom_sink(OdomSink sink) { odom_sink_ = std::move(sink); }
   // T-ODOM-1's evidence (13 S11.1): the measured period of THIS loop.
-  // Read after Stop(); reading it while the loop runs gives a torn value, and
+  // Read after stop(); reading it while the loop runs gives a torn value, and
   // the item asks about a completed 10-minute run, not a live number.
   const TickStats& tick_stats() const { return tick_stats_; }
   // How many samples the loop actually handed to the sink. Separate from
-  // ticks(): TakeFresh returns nothing when ctrl has not produced a new
+  // ticks(): take_fresh returns nothing when ctrl has not produced a new
   // sample since the last read, and "the loop ran" is not "odom went out".
   std::uint64_t odom_sent() const { return odom_sent_; }
 
  private:
-  void PubLoop();
+  void pub_loop();
 
   QuadrupedProcess* proc_;
   QuadrupedConfig cfg_;

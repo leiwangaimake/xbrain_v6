@@ -87,7 +87,7 @@ const KeySpec kKeys[] = {
 
 const std::size_t kKeyCount = sizeof(kKeys) / sizeof(kKeys[0]);
 
-std::size_t BuildKey(const char* rid, const char* suffix, char* out,
+std::size_t build_key(const char* rid, const char* suffix, char* out,
                      std::size_t cap) {
   if (rid == nullptr || suffix == nullptr || out == nullptr || cap == 0) {
     return 0;
@@ -101,20 +101,20 @@ std::size_t BuildKey(const char* rid, const char* suffix, char* out,
   return static_cast<std::size_t>(n);
 }
 
-std::string BuildKey(const std::string& rid, const std::string& suffix) {
+std::string build_key(const std::string& rid, const std::string& suffix) {
   // Sized from the inputs rather than from a fixed maximum: a key is short, and
   // a constant here would be a second place for the format's length to be
   // assumed.
   std::string out(rid.size() + suffix.size() + std::strlen(kKeyRoot) + 3, '\0');
-  const std::size_t n = BuildKey(rid.c_str(), suffix.c_str(), &out[0], out.size());
+  const std::size_t n = build_key(rid.c_str(), suffix.c_str(), &out[0], out.size());
   if (n == 0) {
-    throw std::length_error("rt::BuildKey: key does not fit: " + rid + " / " + suffix);
+    throw std::length_error("rt::build_key: key does not fit: " + rid + " / " + suffix);
   }
   out.resize(n);
   return out;
 }
 
-const KeySpec* FindKey(const char* suffix) {
+const KeySpec* find_key(const char* suffix) {
   if (suffix == nullptr) return nullptr;
   for (std::size_t i = 0; i < kKeyCount; ++i) {
     if (std::strcmp(kKeys[i].suffix, suffix) == 0) return &kKeys[i];

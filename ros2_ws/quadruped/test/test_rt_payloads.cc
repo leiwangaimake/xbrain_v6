@@ -75,7 +75,7 @@ namespace {
 // Parse the produced text, failing loudly when it is not JSON at all. Returns a
 // discarded value on failure so the caller's field checks fail rather than
 // throw out of main.
-Json ParseOrFail(const char* what, const char* buf, std::size_t n) {
+Json parse_or_fail(const char* what, const char* buf, std::size_t n) {
   if (n == 0) {
     std::printf("FAIL %s: writer returned 0\n", what);
     ++g_failures;
@@ -91,11 +91,11 @@ Json ParseOrFail(const char* what, const char* buf, std::size_t n) {
   return j;
 }
 
-chs_a::BasicStatus MakeBasic() {
+chs_a::BasicStatus make_basic() {
   chs_a::BasicStatus b;
-  b.usage_mode = chs_a::ResolveUsageMode(1);     // navigation
-  b.motion_state = chs_a::ResolveMotionState(17);  // rl_control
-  b.gait = chs_a::ResolveGait(0x3002);           // flat
+  b.usage_mode = chs_a::resolve_usage_mode(1);     // navigation
+  b.motion_state = chs_a::resolve_motion_state(17);  // rl_control
+  b.gait = chs_a::resolve_gait(0x3002);           // flat
   b.model = "CA9C";
   b.version = "PRO";
   b.hes = false;
@@ -113,7 +113,7 @@ namespace {
 // shared header would make four passing tests depend on a fifth one's edits.
 using Bytes = std::vector<std::uint8_t>;
 
-Bytes FromHex(const std::string& hex) {
+Bytes from_hex(const std::string& hex) {
   Bytes out;
   for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
     out.push_back(static_cast<std::uint8_t>(std::stoul(hex.substr(i, 2), nullptr, 16)));
@@ -121,7 +121,7 @@ Bytes FromHex(const std::string& hex) {
   return out;
 }
 
-std::map<std::string, Bytes> LoadGolden(const std::string& path, int* failures) {
+std::map<std::string, Bytes> load_golden(const std::string& path, int* failures) {
   std::map<std::string, Bytes> out;
   std::ifstream f(path);
   if (!f) {
@@ -136,7 +136,7 @@ std::map<std::string, Bytes> LoadGolden(const std::string& path, int* failures) 
     std::string tag, hex;
     std::size_t n = 0;
     if (!(is >> tag >> n >> hex)) continue;
-    out[tag] = FromHex(hex);
+    out[tag] = from_hex(hex);
   }
   if (out.empty()) {
     std::printf("FAIL golden file parsed to zero vectors\n");
@@ -155,16 +155,16 @@ std::map<std::string, Bytes> LoadGolden(const std::string& path, int* failures) 
 //
 // The tolerance is the format's, not a fudge factor: six significant digits on
 // a rad/s figure is far below any actuator or sensor resolution in this system.
-bool Close(double got, double want) {
+bool close(double got, double want) {
   const double scale = std::fabs(want) > 1.0 ? std::fabs(want) : 1.0;
   return std::fabs(got - want) <= 1e-6 * scale;
 }
 
 // The ASDU of a captured frame, ready for a parser.
-const std::uint8_t* Asdu(const Bytes& frame) {
+const std::uint8_t* asdu(const Bytes& frame) {
   return frame.data() + chs_a::kHeaderBytes;
 }
-std::size_t AsduLen(const Bytes& frame) {
+std::size_t asdu_len(const Bytes& frame) {
   return frame.size() - chs_a::kHeaderBytes;
 }
 
@@ -175,12 +175,12 @@ int main(int argc, char** argv) {
 
   // ---- RobotState, everything present ------------------------------------
   {
-    const chs_a::BasicStatus basic = MakeBasic();
+    const chs_a::BasicStatus basic = make_basic();
 
     // The fault entries arrive as the VIEW rt_bridge builds from its cache --
     // already prefixed, already levelled (CF-5's "same converter", satisfied
     // by copying the fault stream's own values).
-    const std::string fcode = chs_a::FormatChassisFaultCode(0x8001);
+    const std::string fcode = chs_a::format_chassis_fault_code(0x8001);
     const RobotStateFault fview[] = {
         {fcode.c_str(), "fatal", "motor_over_temperature"},
     };
@@ -196,8 +196,8 @@ int main(int argc, char** argv) {
     in.estop_epoch = 42;
     in.cmd_age_ms = 12.0;
 
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("RobotState", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("RobotState", buf, n);
     CHECK(j["conn"] == "connected");
     CHECK(j["proto_version"] == "1.0");
     // The open-set fields go out as LABEL plus RAW (13 S6.5 ban 3): a label
@@ -214,7 +214,7 @@ int main(int argc, char** argv) {
     CHECK(j["cmd_age_ms"] == 12.0);
     // *** No `motion` key, and that is the assertion (user ruling
     // 2026-09-28). 11 S4.1 registers no such field; this writer emitted one
-    // anyway and PublishState never filled it, so every message on the wire
+    // anyway and publish_state never filled it, so every message on the wire
     // carried "motion": null. MUTATION: put the block back -> red.
     CHECK(!j.contains("motion"));
     // *** CF-5: the same prefixed code the fault stream carries. The 11 S4.1
@@ -251,7 +251,7 @@ int main(int argc, char** argv) {
         {true, true, true, true},
     };
     for (const Case& c : cases) {
-      chs_a::BasicStatus basic = MakeBasic();
+      chs_a::BasicStatus basic = make_basic();
       basic.hes = c.hes;
       RobotStateInput in;
       in.conn_wire = "connected";
@@ -261,8 +261,8 @@ int main(int argc, char** argv) {
       in.tier1.stop_reason =
           c.hes_lock ? StopReason::kHes
                      : (c.timeout_lock ? StopReason::kTimeout : StopReason::kNone);
-      const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-      const Json j = ParseOrFail("RobotState/locks", buf, n);
+      const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+      const Json j = parse_or_fail("RobotState/locks", buf, n);
       CHECK(j["hes"] == c.hes);
       CHECK(j["hes_lock"] == c.hes_lock);
       CHECK(j["timeout_lock"] == c.timeout_lock);
@@ -279,9 +279,9 @@ int main(int argc, char** argv) {
     for (StopReason r : all) {
       RobotStateInput in;
       in.tier1.stop_reason = r;
-      const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-      const Json j = ParseOrFail("RobotState/stop_reason", buf, n);
-      CHECK(j["stop_reason"] == std::string(StopReasonName(r)));
+      const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+      const Json j = parse_or_fail("RobotState/stop_reason", buf, n);
+      CHECK(j["stop_reason"] == std::string(stop_reason_name(r)));
     }
   }
 
@@ -290,8 +290,8 @@ int main(int argc, char** argv) {
     RobotStateInput in;
     in.conn_wire = "connecting";
     in.cmd_age_ms = -1.0;
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("RobotState/empty", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("RobotState/empty", buf, n);
     CHECK(j["conn"] == "connecting");
     // The contract fields whose data has not happened yet are null, with one
     // exception: mode_mismatch is OMITTED (当且仅当 in 11 S4.1 -- an absent
@@ -322,8 +322,8 @@ int main(int argc, char** argv) {
     // the writer answers null rather than inventing a member (11 S13.6).
     // mutant: fall back to any fixed member here -> red.
     RobotStateInput in;
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("RobotState/conn-null", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("RobotState/conn-null", buf, n);
     CHECK(j["conn"].is_null());
   }
 
@@ -336,8 +336,8 @@ int main(int argc, char** argv) {
     in.last_estop_reason = "operator_hmi";
     in.last_estop_src_role = "hmi";
     in.last_estop_age_ms = 3200.0;
-    std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    Json j = ParseOrFail("RobotState/last_estop", buf, n);
+    std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    Json j = parse_or_fail("RobotState/last_estop", buf, n);
     CHECK(j["last_soft_estop"]["epoch"] == 42);
     CHECK(j["last_soft_estop"]["reason"] == "operator_hmi");
     CHECK(j["last_soft_estop"]["src_role"] == "hmi");
@@ -351,8 +351,8 @@ int main(int argc, char** argv) {
     bare.has_last_estop = true;
     bare.last_estop_epoch = 7;
     bare.last_estop_age_ms = 15.5;
-    n = WriteRobotState(bare, buf, sizeof(buf));
-    j = ParseOrFail("RobotState/last_estop-bare", buf, n);
+    n = write_robot_state(bare, buf, sizeof(buf));
+    j = parse_or_fail("RobotState/last_estop-bare", buf, n);
     CHECK(j["last_soft_estop"]["epoch"] == 7);
     CHECK(j["last_soft_estop"]["reason"].is_null());
     CHECK(j["last_soft_estop"]["src_role"].is_null());
@@ -371,8 +371,8 @@ int main(int argc, char** argv) {
     in.usage_mode_raw = 0;                    // read back "normal"
     in.motion_state_raw = 17;
     in.gait_raw = 0x3002;
-    std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    Json j = ParseOrFail("RobotState/mode_mismatch", buf, n);
+    std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    Json j = parse_or_fail("RobotState/mode_mismatch", buf, n);
     CHECK(j.contains("mode_mismatch"));
     CHECK(j["mode_mismatch"]["expect"] == "navigation");
     CHECK(j["mode_mismatch"]["actual"] == "normal");
@@ -381,8 +381,8 @@ int main(int argc, char** argv) {
     // present and actual is null, never a guessed member (11 S13.6).
     RobotStateInput cold;
     cold.tier1.stop_reason = StopReason::kModeMismatch;
-    n = WriteRobotState(cold, buf, sizeof(buf));
-    j = ParseOrFail("RobotState/mode_mismatch-cold", buf, n);
+    n = write_robot_state(cold, buf, sizeof(buf));
+    j = parse_or_fail("RobotState/mode_mismatch-cold", buf, n);
     CHECK(j.contains("mode_mismatch"));
     CHECK(j["mode_mismatch"]["expect"] == "navigation");
     CHECK(j["mode_mismatch"]["actual"].is_null());
@@ -400,8 +400,8 @@ int main(int argc, char** argv) {
       o.tier1.stop_reason = r;
       o.has_triple = true;
       o.usage_mode_raw = 0;
-      n = WriteRobotState(o, buf, sizeof(buf));
-      j = ParseOrFail("RobotState/mode_mismatch-absent", buf, n);
+      n = write_robot_state(o, buf, sizeof(buf));
+      j = parse_or_fail("RobotState/mode_mismatch-absent", buf, n);
       CHECK(!j.contains("mode_mismatch"));
     }
   }
@@ -414,8 +414,8 @@ int main(int argc, char** argv) {
     RobotStateInput in;                      // no basic, no triple
     in.model = "CA9C";
     in.version = "PRO";
-    std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    Json j = ParseOrFail("RobotState/model-cold", buf, n);
+    std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    Json j = parse_or_fail("RobotState/model-cold", buf, n);
     CHECK(j["model"] == "CA9C");
     CHECK(j["version"] == "PRO");
 
@@ -424,8 +424,8 @@ int main(int argc, char** argv) {
     tr.usage_mode_raw = 1;
     tr.model = "CA9C";
     tr.version = "PRO";
-    n = WriteRobotState(tr, buf, sizeof(buf));
-    j = ParseOrFail("RobotState/model-triple", buf, n);
+    n = write_robot_state(tr, buf, sizeof(buf));
+    j = parse_or_fail("RobotState/model-triple", buf, n);
     CHECK(j["model"] == "CA9C");
     CHECK(j["version"] == "PRO");
   }
@@ -438,12 +438,12 @@ int main(int argc, char** argv) {
     chs_a::BatteryEntry a1;
     a1.level = 26; a1.voltage = 69.28; a1.temperature_c = 38.2; a1.present = true;
     dev.batteries = {a0, a1};
-    // The minimum over the PRESENT packs, which is what ParseDeviceStatus now
+    // The minimum over the PRESENT packs, which is what parse_device_status now
     // computes -- see its own test for the arithmetic. 26, not 0.
     dev.min_level = 26;
     dev.present_count = 1;
 
-    chs_a::BasicStatus basic = MakeBasic();
+    chs_a::BasicStatus basic = make_basic();
     basic.power_management = 1;   // single_battery, as measured with one pack
 
     PowerStateInput in;
@@ -451,8 +451,8 @@ int main(int argc, char** argv) {
     in.basic = &basic;
     in.remain_mile_km = 4.2;
 
-    const std::size_t n = WritePowerState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("PowerState", buf, n);
+    const std::size_t n = write_power_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("PowerState", buf, n);
     // 11 S4.2 CHG-10 as corrected 2026-09-28: the minimum over the packs that
     // are THERE. This assertion read CHECK(j["soc_pct"] == 0) until that day,
     // under a comment saying the contract's literal min() was left alone -- a
@@ -482,7 +482,7 @@ int main(int argc, char** argv) {
     // CLAUDE.md 3.1 shape -- an absence dressed as a measurement -- and the
     // consumer (CHG-10) cannot tell the two apart. min_level is left at its
     // initialiser here ON PURPOSE: that is exactly the state
-    // ParseDeviceStatus leaves it in when nothing is present, so the writer
+    // parse_device_status leaves it in when nothing is present, so the writer
     // must reach its null branch through present_count and not by noticing
     // that the number looks unset.
     chs_a::DeviceStatus dev;
@@ -492,13 +492,13 @@ int main(int argc, char** argv) {
     a1.level = 0; a1.voltage = 0.0; a1.temperature_c = -273.0; a1.present = false;
     dev.batteries = {a0, a1};
     dev.present_count = 0;
-    chs_a::BasicStatus basic = MakeBasic();
+    chs_a::BasicStatus basic = make_basic();
 
     PowerStateInput in;
     in.device = &dev;
     in.basic = &basic;
-    const std::size_t n = WritePowerState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("PowerState/none-present", buf, n);
+    const std::size_t n = write_power_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("PowerState/none-present", buf, n);
     CHECK(j["soc_pct"].is_null());
     CHECK(j["present_count"] == 0);
     // Nothing is hidden: both slots are still reported, still with their
@@ -511,8 +511,8 @@ int main(int argc, char** argv) {
     // the same answer. Asserted here beside its twin rather than in the
     // golden-driven device case: that capture has both packs in, so it cannot
     // reach either writer's null branch.
-    const std::size_t nd = WriteChassisDevice(dev, buf, sizeof(buf));
-    const Json jdev = ParseOrFail("ChassisDevice/none-present", buf, nd);
+    const std::size_t nd = write_chassis_device(dev, buf, sizeof(buf));
+    const Json jdev = parse_or_fail("ChassisDevice/none-present", buf, nd);
     CHECK(jdev["min_level_pct"].is_null());
     CHECK(jdev["present_count"] == 0);
   }
@@ -525,7 +525,7 @@ int main(int argc, char** argv) {
     dev.batteries = {a0, a1};
     dev.min_level = 43;
     dev.present_count = 2;
-    chs_a::BasicStatus basic = MakeBasic();
+    chs_a::BasicStatus basic = make_basic();
 
     PowerStateInput in;
     in.device = &dev;
@@ -533,8 +533,8 @@ int main(int argc, char** argv) {
     in.index_map_known = true;
     in.left_index = 0;
     in.right_index = 1;
-    const std::size_t n = WritePowerState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("PowerState/mapped", buf, n);
+    const std::size_t n = write_power_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("PowerState/mapped", buf, n);
     CHECK(j["battery_mapping"] == "known");
     CHECK(j["batteries"]["left"]["level_pct"] == 43);
     CHECK(j["batteries"]["right"]["level_pct"] == 44);
@@ -545,21 +545,21 @@ int main(int argc, char** argv) {
     // null is the same answer as "unknown". Inventing a side would be worse.
     PowerStateInput bad = in;
     bad.right_index = 7;
-    const std::size_t m = WritePowerState(bad, buf, sizeof(buf));
-    const Json jb = ParseOrFail("PowerState/badmap", buf, m);
+    const std::size_t m = write_power_state(bad, buf, sizeof(buf));
+    const Json jb = parse_or_fail("PowerState/badmap", buf, m);
     CHECK(jb["batteries"].is_null());
   }
 
   // ---- an unregistered power_management is reported as itself -----------
   {
     chs_a::DeviceStatus dev;
-    chs_a::BasicStatus basic = MakeBasic();
+    chs_a::BasicStatus basic = make_basic();
     basic.power_management = 7;
     PowerStateInput in;
     in.device = &dev;
     in.basic = &basic;
-    const std::size_t n = WritePowerState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("PowerState/unknownpm", buf, n);
+    const std::size_t n = write_power_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("PowerState/unknownpm", buf, n);
     // Same open-set discipline as the mode fields: not mapped onto one of the
     // two known values, and the raw number survives in the label.
     CHECK(j["power_management"] == "unknown_7");
@@ -579,9 +579,9 @@ int main(int argc, char** argv) {
     // writer publishes this as 0, which is what the field carried while it was
     // hardcoded AND a value that passes the contract's 100 ms criterion.
     in.latency_ms = 0.293512;
-    const std::size_t n = WriteEstopAck(in, buf, sizeof(buf));
+    const std::size_t n = write_estop_ack(in, buf, sizeof(buf));
     const std::string ack_text(buf, n);
-    const Json j = ParseOrFail("EstopAck", buf, n);
+    const Json j = parse_or_fail("EstopAck", buf, n);
     CHECK(j["cmd_id"] == "e-3d91");
     CHECK(j["result"] == "accepted");
     CHECK(j["estop_epoch"] == 42);
@@ -611,9 +611,9 @@ int main(int argc, char** argv) {
     // thing that decides which magnitudes are representable.
     EstopAckInput big = in;
     big.latency_ms = 1234567.5;
-    const std::size_t bn = WriteEstopAck(big, buf, sizeof(buf));
+    const std::size_t bn = write_estop_ack(big, buf, sizeof(buf));
     const std::string big_text(buf, bn);
-    const Json bj = ParseOrFail("EstopAck/big-latency", buf, bn);
+    const Json bj = parse_or_fail("EstopAck/big-latency", buf, bn);
     CHECK(bj["latency_ms"].get<double>() == 1234567.5);
     CHECK(big_text.find("\"latency_ms\":1234567.500000") != std::string::npos);
 
@@ -622,22 +622,22 @@ int main(int argc, char** argv) {
     // second stop happened.
     EstopAckInput dup = in;
     dup.result = "duplicate";
-    const std::size_t m = WriteEstopAck(dup, buf, sizeof(buf));
-    const Json jd = ParseOrFail("EstopAck/dup", buf, m);
+    const std::size_t m = write_estop_ack(dup, buf, sizeof(buf));
+    const Json jd = parse_or_fail("EstopAck/dup", buf, m);
     CHECK(jd["result"] == "duplicate");
     CHECK(jd["estop_epoch"] == 42);
 
     // An anonymous request echoes the literal 11 names, not an empty string.
     EstopAckInput anon;
-    const std::size_t k = WriteEstopAck(anon, buf, sizeof(buf));
-    const Json ja = ParseOrFail("EstopAck/anon", buf, k);
+    const std::size_t k = write_estop_ack(anon, buf, sizeof(buf));
+    const Json ja = parse_or_fail("EstopAck/anon", buf, k);
     CHECK(ja["cmd_id"] == "anonymous");
 
     // Both actions, so the array is an array and not a scalar in disguise.
     EstopAckInput two = in;
     two.applied_charge_abort = true;
-    const std::size_t t = WriteEstopAck(two, buf, sizeof(buf));
-    const Json jt = ParseOrFail("EstopAck/two", buf, t);
+    const std::size_t t = write_estop_ack(two, buf, sizeof(buf));
+    const Json jt = parse_or_fail("EstopAck/two", buf, t);
     CHECK(jt["applied"] == Json::array({"zero_vel", "charge_abort"}));
   }
 
@@ -651,8 +651,8 @@ int main(int argc, char** argv) {
     // omitted them would leave the caller unable to tell the difference.
     in.hes_lock = true;
     in.timeout_lock = false;
-    const std::size_t n = WriteCtrlAck(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("CtrlAck", buf, n);
+    const std::size_t n = write_ctrl_ack(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("CtrlAck", buf, n);
     CHECK(j["cmd_id"] == "c-9a3f2e");
     CHECK(j["result"] == "accepted");
     CHECK(j["detail"]["action"] == "enable");
@@ -669,8 +669,8 @@ int main(int argc, char** argv) {
     named.result = "rejected";
     named.action = "prone";
     named.item = "prone_on_stair";
-    const std::size_t m = WriteCtrlAck(named, buf, sizeof(buf));
-    const Json jn = ParseOrFail("CtrlAck/item", buf, m);
+    const std::size_t m = write_ctrl_ack(named, buf, sizeof(buf));
+    const Json jn = parse_or_fail("CtrlAck/item", buf, m);
     CHECK(jn["detail"]["item"] == "prone_on_stair");
     // The item lives under detail, next to action -- not at the top level.
     // 11 S13.9's shape is {code, detail:{item, ...}}, and a consumer reading
@@ -693,8 +693,8 @@ int main(int argc, char** argv) {
     // NOT strlen at the call site: the writer takes a length because the
     // payloads it wraps are not NUL-terminated.
     const std::size_t n =
-        WriteEnvelope(env, kPayload, sizeof(kPayload) - 1, buf, sizeof(buf));
-    const Json j = ParseOrFail("Envelope", buf, n);
+        write_envelope(env, kPayload, sizeof(kPayload) - 1, buf, sizeof(buf));
+    const Json j = parse_or_fail("Envelope", buf, n);
     CHECK(j["v"] == 1);
     CHECK(j["rid"] == "gj-001");
     CHECK(j["boot"] == "a1b2c3d4");
@@ -723,10 +723,10 @@ int main(int argc, char** argv) {
     CHECK(j["mono"].get<double>() < 940821.4);
 
     // Too small to hold the wrapped object: nothing, never a truncated one.
-    CHECK(WriteEnvelope(env, kPayload, sizeof(kPayload) - 1, buf, n) == 0);
+    CHECK(write_envelope(env, kPayload, sizeof(kPayload) - 1, buf, n) == 0);
     // An empty payload is refused rather than wrapped as `"data":`, which
     // would not be parseable.
-    CHECK(WriteEnvelope(env, kPayload, 0, buf, sizeof(buf)) == 0);
+    CHECK(write_envelope(env, kPayload, 0, buf, sizeof(buf)) == 0);
   }
 
   // ---- Pong --------------------------------------------------------------
@@ -737,8 +737,8 @@ int main(int argc, char** argv) {
     in.estop_epoch = 42;
     in.hes_lock = true;
     in.stop_reason = StopReason::kHes;
-    const std::size_t n = WritePong(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("Pong", buf, n);
+    const std::size_t n = write_pong(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("Pong", buf, n);
     CHECK(j["type"] == "pong");
     // The seq is ECHOED from the ping, so the prober can match a reply to its
     // request; a pong with its own counter answers a question nobody asked.
@@ -754,15 +754,15 @@ int main(int argc, char** argv) {
     // The names come from a vendor firmware, not from an operator, so this is
     // unlikely rather than impossible. The symptom if it happened would be
     // state/robot going silent, which reads as the robot having died.
-    const std::string fcode = chs_a::FormatChassisFaultCode(0x8001);
+    const std::string fcode = chs_a::format_chassis_fault_code(0x8001);
     const RobotStateFault fview[] = {
         {fcode.c_str(), "warn", "joint \"11\" \\ over\nlimit"},
     };
     RobotStateInput in;
     in.faults = fview;
     in.fault_count = 1;
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("RobotState/escape", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("RobotState/escape", buf, n);
     CHECK(j["faults"][0]["desc"] == "joint \"11\" \\ over\nlimit");
   }
 
@@ -772,33 +772,33 @@ int main(int argc, char** argv) {
     // to nothing at all. Each writer is given exactly one byte less than it
     // needs, which is the boundary a length check gets wrong.
     RobotStateInput rs;
-    const std::size_t full_rs = WriteRobotState(rs, buf, sizeof(buf));
+    const std::size_t full_rs = write_robot_state(rs, buf, sizeof(buf));
     CHECK(full_rs > 0);
-    CHECK(WriteRobotState(rs, buf, full_rs) == 0);
-    CHECK(WriteRobotState(rs, buf, 0) == 0);
-    CHECK(WriteRobotState(rs, nullptr, 64) == 0);
+    CHECK(write_robot_state(rs, buf, full_rs) == 0);
+    CHECK(write_robot_state(rs, buf, 0) == 0);
+    CHECK(write_robot_state(rs, nullptr, 64) == 0);
 
     chs_a::DeviceStatus dev;
     PowerStateInput ps;
     ps.device = &dev;
-    const std::size_t full_ps = WritePowerState(ps, buf, sizeof(buf));
+    const std::size_t full_ps = write_power_state(ps, buf, sizeof(buf));
     CHECK(full_ps > 0);
-    CHECK(WritePowerState(ps, buf, full_ps) == 0);
+    CHECK(write_power_state(ps, buf, full_ps) == 0);
 
     EstopAckInput ea;
-    const std::size_t full_ea = WriteEstopAck(ea, buf, sizeof(buf));
+    const std::size_t full_ea = write_estop_ack(ea, buf, sizeof(buf));
     CHECK(full_ea > 0);
-    CHECK(WriteEstopAck(ea, buf, full_ea) == 0);
+    CHECK(write_estop_ack(ea, buf, full_ea) == 0);
 
     CtrlAckInput ca;
-    const std::size_t full_ca = WriteCtrlAck(ca, buf, sizeof(buf));
+    const std::size_t full_ca = write_ctrl_ack(ca, buf, sizeof(buf));
     CHECK(full_ca > 0);
-    CHECK(WriteCtrlAck(ca, buf, full_ca) == 0);
+    CHECK(write_ctrl_ack(ca, buf, full_ca) == 0);
 
     PongInput pg;
-    const std::size_t full_pg = WritePong(pg, buf, sizeof(buf));
+    const std::size_t full_pg = write_pong(pg, buf, sizeof(buf));
     CHECK(full_pg > 0);
-    CHECK(WritePong(pg, buf, full_pg) == 0);
+    CHECK(write_pong(pg, buf, full_pg) == 0);
   }
 
   // ---- the four report streams, from REAL frames -------------------------
@@ -810,15 +810,15 @@ int main(int argc, char** argv) {
   {
     const std::string golden_path =
         (argc >= 2) ? argv[1] : "test/golden/chs_a_frames.txt";
-    const auto golden = LoadGolden(golden_path, &g_failures);
+    const auto golden = load_golden(golden_path, &g_failures);
     if (!golden.empty()) {
       char out[8192];
 
       // --- basic ---------------------------------------------------------
       chs_a::BasicStatus b;
       const Bytes& bf = golden.at("RX_00100064_00f00000");
-      CHECK(chs_a::ParseBasicStatus(Asdu(bf), AsduLen(bf), &b));
-      std::size_t n = WriteChassisBasic(b, out, sizeof(out));
+      CHECK(chs_a::parse_basic_status(asdu(bf), asdu_len(bf), &b));
+      std::size_t n = write_chassis_basic(b, out, sizeof(out));
       CHECK(n > 0);
       Json jb = Json::parse(out, out + n, nullptr, false);
       CHECK(!jb.is_discarded());
@@ -827,8 +827,8 @@ int main(int argc, char** argv) {
         // mapping an unregistered value onto a known one, and a consumer given
         // only "unknown_0x0000" cannot tell WHICH unregistered value it was --
         // 13 V-66's Gait 0 is exactly that case and it is in this very frame.
-        // FLAT `name` + `name_raw`, which is what OpenSet emits and what
-        // WriteRobotState already publishes. This test first asserted a NESTED
+        // FLAT `name` + `name_raw`, which is what open_set emits and what
+        // write_robot_state already publishes. This test first asserted a NESTED
         // shape and caught the writer emitting a second one -- two shapes for
         // the same value is a consumer having to choose.
         CHECK(jb["gait"] == b.gait.label);
@@ -851,8 +851,8 @@ int main(int argc, char** argv) {
           chs_a::DeviceStatus empty_dev;
           pin.device = &empty_dev;
           pin.basic = &b;
-          const std::size_t pn = WritePowerState(pin, other, sizeof(other));
-          const Json jp = ParseOrFail("PowerState/agrees", other, pn);
+          const std::size_t pn = write_power_state(pin, other, sizeof(other));
+          const Json jp = parse_or_fail("PowerState/agrees", other, pn);
           CHECK(jb["charge"] == jp["charge"]);
           CHECK(jb["power_management"] == jp["power_management"]);
           CHECK(jb["charge"].is_string());
@@ -866,8 +866,8 @@ int main(int argc, char** argv) {
       // --- motion --------------------------------------------------------
       chs_a::MotionStatus m2;
       const Bytes& mf = golden.at("RX_00100001_00f00000");
-      CHECK(chs_a::ParseMotionStatus(Asdu(mf), AsduLen(mf), &m2));
-      n = WriteChassisMotion(m2, out, sizeof(out));
+      CHECK(chs_a::parse_motion_status(asdu(mf), asdu_len(mf), &m2));
+      n = write_chassis_motion(m2, out, sizeof(out));
       CHECK(n > 0);
       Json jm = Json::parse(out, out + n, nullptr, false);
       CHECK(!jm.is_discarded());
@@ -876,15 +876,15 @@ int main(int argc, char** argv) {
         // until 2026-09-28: right values under wrong keys, which is the
         // shape a consumer coded against the contract cannot work around --
         // it finds nothing and reports no error.
-        CHECK(Close(jm["velocity"]["vx_mps"], m2.linear_x));
-        CHECK(Close(jm["velocity"]["vy_mps"], m2.linear_y));
+        CHECK(close(jm["velocity"]["vx_mps"], m2.linear_x));
+        CHECK(close(jm["velocity"]["vy_mps"], m2.linear_y));
         // The manual's units column says raw/s for this axis and 13 V-46
         // records that as an error: the wire value is rad/s. Forwarding it
         // under another name would make every consumer wrong by 57.
-        CHECK(Close(jm["velocity"]["wz_radps"], m2.angular_z));
-        CHECK(Close(jm["attitude"]["yaw_rad"], m2.yaw));
-        CHECK(Close(jm["attitude"]["roll_rad"], m2.roll));
-        CHECK(Close(jm["attitude"]["pitch_rad"], m2.pitch));
+        CHECK(close(jm["velocity"]["wz_radps"], m2.angular_z));
+        CHECK(close(jm["attitude"]["yaw_rad"], m2.yaw));
+        CHECK(close(jm["attitude"]["roll_rad"], m2.roll));
+        CHECK(close(jm["attitude"]["pitch_rad"], m2.pitch));
         CHECK(!jm.contains("vel"));
         CHECK(!jm.contains("rpy"));
         // *** 11 S9.8.2 v0.2 DELETED payload_kg: the chassis marks Payload an
@@ -901,16 +901,16 @@ int main(int argc, char** argv) {
         // The values are the capture's own, in the vendor's Joint[16] order
         // (guide 1.3.1.2): index 0..3 are LeftFront Hip X / Hip Y / Knee /
         // Wheel, then RightFront, LeftBack, RightBack.
-        CHECK(Close(jm["joints"]["lf"]["hip_x_rad"], 0.009799718856811523));
-        CHECK(Close(jm["joints"]["lf"]["knee_rad"], 0.00804149080067873));
-        CHECK(Close(jm["joints"]["lf"]["wheel_radps"], 0.0036286364775151014));
+        CHECK(close(jm["joints"]["lf"]["hip_x_rad"], 0.009799718856811523));
+        CHECK(close(jm["joints"]["lf"]["knee_rad"], 0.00804149080067873));
+        CHECK(close(jm["joints"]["lf"]["wheel_radps"], 0.0036286364775151014));
         // Index 4 is the FIRST RightFront value. Asserting it is what catches
         // an off-by-one in the leg grouping: a writer that ran the legs in
         // groups of three, or that transposed leg and joint, still produces a
         // well-formed object with the right sixteen numbers in it.
-        CHECK(Close(jm["joints"]["rf"]["hip_x_rad"], -0.005199711304157972));
-        CHECK(Close(jm["joints"]["lb"]["hip_x_rad"], -0.015360607765614986));
-        CHECK(Close(jm["joints"]["rb"]["hip_x_rad"], 0.005336006172001362));
+        CHECK(close(jm["joints"]["rf"]["hip_x_rad"], -0.005199711304157972));
+        CHECK(close(jm["joints"]["lb"]["hip_x_rad"], -0.015360607765614986));
+        CHECK(close(jm["joints"]["rb"]["hip_x_rad"], 0.005336006172001362));
         // *** hip_y is mirrored left/right (+1.048 vs -1.051) on this capture.
         // That reads like an abduction axis rather than a thigh pitch, and it
         // is NOT a reason to renumber: the guide names index 1 LeftFrontHipY
@@ -931,19 +931,19 @@ int main(int argc, char** argv) {
         CHECK(jm["joints"].size() == 4);
         CHECK(jm["imu"]["acc"].size() == 3);
         CHECK(jm["imu"]["omega"].size() == 3);
-        CHECK(Close(jm["imu"]["omega"][2], m2.omega_z));
+        CHECK(close(jm["imu"]["omega"][2], m2.omega_z));
       }
 
       // --- device --------------------------------------------------------
       chs_a::DeviceStatus d;
       const Bytes& df = golden.at("RX_00100002_00f00000");
-      CHECK(chs_a::ParseDeviceStatus(Asdu(df), AsduLen(df), &d));
-      n = WriteChassisDevice(d, out, sizeof(out));
+      CHECK(chs_a::parse_device_status(asdu(df), asdu_len(df), &d));
+      n = write_chassis_device(d, out, sizeof(out));
       CHECK(n > 0);
       // *** The device object is by far the largest of the four (32 joint
       // temperatures plus two CPU hosts of per-core arrays), and
-      // RtBridge::PublishReports assembles all four into ONE 8192-byte stack
-      // buffer. On overflow the writer returns 0 and PublishReports simply
+      // RtBridge::publish_reports assembles all four into ONE 8192-byte stack
+      // buffer. On overflow the writer returns 0 and publish_reports simply
       // does not publish -- the key goes QUIET, with no error anywhere. That
       // failure is indistinguishable from a chassis that stopped reporting,
       // so the margin is asserted rather than assumed. 2439 bytes on this
@@ -956,7 +956,7 @@ int main(int argc, char** argv) {
         CHECK(jd["list"].size() == d.batteries.size());
         // Both packs are in on this capture, so the minimum over the present
         // packs is the minimum over the list and the two agree. The
-        // none-present branch (null) is pinned on WritePowerState, which
+        // none-present branch (null) is pinned on write_power_state, which
         // shares the rule -- see its "every slot empty" case.
         CHECK(jd["min_level_pct"] == d.min_level);
         // 13 V-68: an empty slot reports 0, so a level alone cannot tell a
@@ -989,12 +989,12 @@ int main(int argc, char** argv) {
         // to mean two different legs. Values are the capture's own:
         // Motor[0] = 37.79, Driver[0] = 42.32.
         CHECK(jd["motor_temp_c"].size() == 32);
-        CHECK(Close(jd["motor_temp_c"]["lf_hip_x_motor"], 37.790000915527344));
-        CHECK(Close(jd["motor_temp_c"]["lf_hip_x_driver"], 42.31999969482422));
+        CHECK(close(jd["motor_temp_c"]["lf_hip_x_motor"], 37.790000915527344));
+        CHECK(close(jd["motor_temp_c"]["lf_hip_x_driver"], 42.31999969482422));
         // Index 4 again: the first RightFront reading, which is what catches
         // a transposed leg/joint loop.
-        CHECK(Close(jd["motor_temp_c"]["rf_hip_x_motor"], 37.04999923706055));
-        CHECK(Close(jd["motor_temp_c"]["rb_wheel_driver"], 42.540000915527344));
+        CHECK(close(jd["motor_temp_c"]["rf_hip_x_motor"], 37.04999923706055));
+        CHECK(close(jd["motor_temp_c"]["rb_wheel_driver"], 42.540000915527344));
 
         // 11 S9.8.3 lists `led`, and the device report has NO led group --
         // the vendor's Led is a COMMAND (guide 1.2.7), not a report. null,
@@ -1043,8 +1043,8 @@ int main(int argc, char** argv) {
         // load_power 0 are all plausible readings.
         chs_a::DeviceStatus bare;
         bare.batteries.clear();
-        const std::size_t bn = WriteChassisDevice(bare, out, sizeof(out));
-        const Json jb2 = ParseOrFail("ChassisDevice/bare", out, bn);
+        const std::size_t bn = write_chassis_device(bare, out, sizeof(out));
+        const Json jb2 = parse_or_fail("ChassisDevice/bare", out, bn);
         CHECK(jb2["motor_temp_c"].is_null());
         CHECK(jb2["gps"].is_null());
         CHECK(jb2["dev_enable"].is_null());
@@ -1058,8 +1058,8 @@ int main(int argc, char** argv) {
       // --- fault ---------------------------------------------------------
       chs_a::FaultReport f;
       const Bytes& ff = golden.at("RX_0010007f_00f00000");
-      CHECK(chs_a::ParseFaultReport(Asdu(ff), AsduLen(ff), &f));
-      n = WriteChassisFault(f, out, sizeof(out));
+      CHECK(chs_a::parse_fault_report(asdu(ff), asdu_len(ff), &f));
+      n = write_chassis_fault(f, out, sizeof(out));
       CHECK(n > 0);
       Json jf = Json::parse(out, out + n, nullptr, false);
       CHECK(!jf.is_discarded());
@@ -1082,7 +1082,7 @@ int main(int argc, char** argv) {
           // The prefixed form (13 S7.3): "chs:0x8001", never a bare number --
           // the chassis and charger code spaces overlap.
           CHECK(jf["faults"][i]["code"] == f.faults[i].code);
-          CHECK(chs_a::IsValidPrefixedFaultCode(
+          CHECK(chs_a::is_valid_prefixed_fault_code(
               jf["faults"][i]["code"].get<std::string>()));
           CHECK(jf["faults"][i]["level"] == f.faults[i].level);
         }
@@ -1094,10 +1094,10 @@ int main(int argc, char** argv) {
       // on a state key makes the consumer see nothing at all, which reads as
       // the robot having stopped reporting.
       char tiny[16];
-      CHECK(WriteChassisBasic(b, tiny, sizeof(tiny)) == 0);
-      CHECK(WriteChassisMotion(m2, tiny, sizeof(tiny)) == 0);
-      CHECK(WriteChassisDevice(d, tiny, sizeof(tiny)) == 0);
-      CHECK(WriteChassisFault(f, tiny, sizeof(tiny)) == 0);
+      CHECK(write_chassis_basic(b, tiny, sizeof(tiny)) == 0);
+      CHECK(write_chassis_motion(m2, tiny, sizeof(tiny)) == 0);
+      CHECK(write_chassis_device(d, tiny, sizeof(tiny)) == 0);
+      CHECK(write_chassis_fault(f, tiny, sizeof(tiny)) == 0);
     }
   }
 
@@ -1110,7 +1110,7 @@ int main(int argc, char** argv) {
   {
     chs_a::FaultReport f;
     chs_a::FaultEntry a1;
-    a1.code = chs_a::FormatChassisFaultCode(0x8001);
+    a1.code = chs_a::format_chassis_fault_code(0x8001);
     a1.name = "joint_position_over_limit";
     a1.level = "fatal";
     a1.details = "joint 11";
@@ -1130,21 +1130,21 @@ int main(int argc, char** argv) {
     f.faults.push_back(a1);
 
     chs_a::FaultEntry a2;              // no Timestamp from the chassis
-    a2.code = chs_a::FormatChassisFaultCode(0x9409);
+    a2.code = chs_a::format_chassis_fault_code(0x9409);
     a2.name = "batt_low";
     a2.level = "warn";
     f.faults.push_back(a2);
 
     chs_a::FaultEntry c1;
-    c1.code = chs_a::FormatChassisFaultCode(0x8101);
+    c1.code = chs_a::format_chassis_fault_code(0x8101);
     c1.name = "was_broken_now_fine";
     c1.level = "warn";
     f.cleared.push_back(c1);
 
     char buf[4096];
-    const std::size_t n = WriteChassisFault(f, buf, sizeof(buf));
+    const std::size_t n = write_chassis_fault(f, buf, sizeof(buf));
     const std::string text(buf, n);
-    const Json j = ParseOrFail("chassis fault", buf, n);
+    const Json j = parse_or_fail("chassis fault", buf, n);
 
     // *** the key name. This writer emitted `name` here until 2026-09-27 while
     // 13 v1.35 had already corrected the same field on rt/chassis/state; a
@@ -1154,7 +1154,7 @@ int main(int argc, char** argv) {
     CHECK(j["faults"][0]["desc"] == "joint_position_over_limit");
     CHECK(!j["faults"][0].contains("name"));
     CHECK(j["faults"][0]["code"] == "chs:0x8001");
-    CHECK(chs_a::IsValidPrefixedFaultCode(
+    CHECK(chs_a::is_valid_prefixed_fault_code(
         j["faults"][0]["code"].get<std::string>()));
     CHECK(j["faults"][0]["level"] == "fatal");
 
@@ -1188,7 +1188,7 @@ int main(int argc, char** argv) {
     CHECK(j["cleared"][0].is_string());
     CHECK(!j["cleared"][0].is_object());
     CHECK(j["cleared"][0] == "chs:0x8101");
-    CHECK(chs_a::IsValidPrefixedFaultCode(j["cleared"][0].get<std::string>()));
+    CHECK(chs_a::is_valid_prefixed_fault_code(j["cleared"][0].get<std::string>()));
 
     // *** the five evidence fields, 11 S9.8.4's registered extensions. source
     // and source_ids are the pair that says WHERE: the module and the instance.
@@ -1213,7 +1213,7 @@ int main(int argc, char** argv) {
     // exactly {code, level, desc} and CF-5 binds those three. Registering the
     // evidence fields on one key is the decision; asserting it here is what
     // stops a later "let us mirror it everywhere" from passing quietly.
-    // mutant: emit source_ids from WriteRobotState too -> red.
+    // mutant: emit source_ids from write_robot_state too -> red.
 
     // CF-5: this key and RobotState.faults[] are one conversion. Asserted by
     // building the state view the way rt_bridge does -- from the fault
@@ -1229,8 +1229,8 @@ int main(int argc, char** argv) {
     st.faults = sv;
     st.fault_count = 1;
     char sbuf[8192];
-    const std::size_t sn = WriteRobotState(st, sbuf, sizeof(sbuf));
-    const Json sj = ParseOrFail("state faults", sbuf, sn);
+    const std::size_t sn = write_robot_state(st, sbuf, sizeof(sbuf));
+    const Json sj = parse_or_fail("state faults", sbuf, sn);
     CHECK(sj["faults"][0]["code"] == j["faults"][0]["code"]);
     CHECK(sj["faults"][0]["level"] == j["faults"][0]["level"]);
     CHECK(sj["faults"][0]["desc"] == j["faults"][0]["desc"]);
@@ -1243,8 +1243,8 @@ int main(int argc, char** argv) {
     // Both lists always travel, including when one is empty: an empty cleared
     // and an absent cleared are different claims.
     chs_a::FaultReport empty;
-    const std::size_t en = WriteChassisFault(empty, buf, sizeof(buf));
-    const Json ej = ParseOrFail("chassis fault empty", buf, en);
+    const std::size_t en = write_chassis_fault(empty, buf, sizeof(buf));
+    const Json ej = parse_or_fail("chassis fault empty", buf, en);
     CHECK(ej["faults"].is_array() && ej["faults"].empty());
     CHECK(ej["cleared"].is_array() && ej["cleared"].empty());
   }
@@ -1268,8 +1268,8 @@ int main(int argc, char** argv) {
     in.usage_mode_raw = 1;
     in.motion_state_raw = 17;
     in.gait_raw = 0x3002;
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("RobotState triple", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("RobotState triple", buf, n);
     // mutant: drop the has_triple branch -> these go null -> red.
     CHECK(j["usage_mode"] == "navigation");
     CHECK(j["usage_mode_raw"] == 1);
@@ -1291,8 +1291,8 @@ int main(int argc, char** argv) {
     in.conn_wire = "connecting";
     in.basic = nullptr;
     in.has_triple = false;
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("RobotState no readback", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("RobotState no readback", buf, n);
     CHECK(j["usage_mode"].is_null());
     CHECK(j["motion_state"].is_null());
     CHECK(j["gait"].is_null());
@@ -1308,8 +1308,8 @@ int main(int argc, char** argv) {
     basic.charge = 2;                      // charging (11 S9.8.1)
     RobotStateInput in;
     in.basic = &basic;
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("robot state charge", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("robot state charge", buf, n);
     CHECK(j["charge"] == "charging");
     // 21 V-14: services_ok is null, and null is the ANSWER -- the query method
     // itself is unanswered (Q20), so S9.10.2's check cannot be run. A `true`
@@ -1327,8 +1327,8 @@ int main(int argc, char** argv) {
     basic.charge = 9;
     RobotStateInput in;
     in.basic = &basic;
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("robot state charge odd", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("robot state charge odd", buf, n);
     CHECK(j["charge"].is_null());
   }
   {
@@ -1336,8 +1336,8 @@ int main(int argc, char** argv) {
     // chassis-sourced field is null here.
     char buf[8192];
     RobotStateInput in;                    // basic left null
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("robot state charge cold", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("robot state charge cold", buf, n);
     CHECK(j["charge"].is_null());
   }
 
@@ -1352,8 +1352,8 @@ int main(int argc, char** argv) {
     RobotStateInput in;
     in.has_charge = true;
     in.charge_raw = 1;                     // going_to_dock (11 S9.8.1)
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("robot state charge raw", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("robot state charge raw", buf, n);
     CHECK(j["charge"] == "going_to_dock");
   }
   {
@@ -1361,8 +1361,8 @@ int main(int argc, char** argv) {
     // particular tells the upper stack the robot is free to drive away.
     char buf[8192];
     RobotStateInput in;                    // has_charge stays false
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("robot state charge none", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("robot state charge none", buf, n);
     CHECK(j["charge"].is_null());
   }
 
@@ -1383,8 +1383,8 @@ int main(int argc, char** argv) {
     in.has_charge = true;
     in.hes = true;
     in.sleep = false;
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("robot state hes/sleep raw", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("robot state hes/sleep raw", buf, n);
     CHECK(j["hes"] == true);
     CHECK(j["sleep"] == false);
     // And the flag off: null, not false -- "never reported" and "reported
@@ -1395,15 +1395,15 @@ int main(int argc, char** argv) {
     cold.usage_mode_raw = 1;
     cold.motion_state_raw = 17;
     cold.gait_raw = 0x3002;
-    const std::size_t m = WriteRobotState(cold, buf, sizeof(buf));
-    const Json jc = ParseOrFail("robot state hes/sleep none", buf, m);
+    const std::size_t m = write_robot_state(cold, buf, sizeof(buf));
+    const Json jc = parse_or_fail("robot state hes/sleep none", buf, m);
     CHECK(jc["hes"].is_null());
     CHECK(jc["sleep"].is_null());
   }
 
   // ---- RobotState.odom (11 S4.1 / S9.9 / 13 S4.4 (4)) --------------------
   {
-    // The gap this closes: WriteRobotState emitted no odom block at all, while
+    // The gap this closes: write_robot_state emitted no odom block at all, while
     // 11 S9.9's output table names RobotState.odom.* as one of this process's
     // three outputs and 11 CD-6 / N-2 gate relative-displacement delegation on
     // odom.valid. A ROS nav_msgs/Odometry has no valid field, so before this
@@ -1419,8 +1419,8 @@ int main(int argc, char** argv) {
     od.var_yaw = 0.01;  // sigma 0.1 rad
     od.valid = true;
     in.odom = &od;
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("robot state odom", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("robot state odom", buf, n);
     CHECK(j["odom"]["x"] == 1.5);
     CHECK(j["odom"]["yaw_rad"] == 0.25);
     CHECK(j["odom"]["valid"] == true);
@@ -1438,21 +1438,21 @@ int main(int argc, char** argv) {
     // The source arrives under the table's own closed names.
     od.tau_s = 0.123;
     in.odom_source = RobotStateInput::OdomSrc::kDrdds;
-    const std::size_t n2 = WriteRobotState(in, buf, sizeof(buf));
-    const Json j2 = ParseOrFail("robot state odom tau", buf, n2);
+    const std::size_t n2 = write_robot_state(in, buf, sizeof(buf));
+    const Json j2 = parse_or_fail("robot state odom tau", buf, n2);
     CHECK(j2["odom"]["tau_ms"] == 123.0);
     CHECK(j2["odom"]["source"] == "motion_info_20hz");
 
     in.odom_source = RobotStateInput::OdomSrc::kMonitor;
-    const std::size_t n3 = WriteRobotState(in, buf, sizeof(buf));
-    const Json j3 = ParseOrFail("robot state odom src", buf, n3);
+    const std::size_t n3 = write_robot_state(in, buf, sizeof(buf));
+    const Json j3 = parse_or_fail("robot state odom src", buf, n3);
     CHECK(j3["odom"]["source"] == "monitor_10hz");
 
     // No source yet: null, never a third name and never a near neighbour
     // (13 S6.5 ban 1).
     in.odom_source = RobotStateInput::OdomSrc::kNone;
-    const std::size_t n4 = WriteRobotState(in, buf, sizeof(buf));
-    const Json j4 = ParseOrFail("robot state odom nosrc", buf, n4);
+    const std::size_t n4 = write_robot_state(in, buf, sizeof(buf));
+    const Json j4 = parse_or_fail("robot state odom nosrc", buf, n4);
     CHECK(j4["odom"]["source"].is_null());
   }
 
@@ -1466,8 +1466,8 @@ int main(int argc, char** argv) {
     RobotStateInput in;
     in.mode_switching = false;
     in.motion_state_transitioning = true;
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("robot state transitioning", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("robot state transitioning", buf, n);
     CHECK(j["mode_switching"] == false);
     CHECK(j["motion_state_transitioning"] == true);
   }
@@ -1480,8 +1480,8 @@ int main(int argc, char** argv) {
     // mutant: emit a zeroed odom object -> red.
     char buf[8192];
     RobotStateInput in;  // odom left null
-    const std::size_t n = WriteRobotState(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("robot state no odom", buf, n);
+    const std::size_t n = write_robot_state(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("robot state no odom", buf, n);
     CHECK(j["odom"].is_null());
   }
 
@@ -1509,8 +1509,8 @@ int main(int argc, char** argv) {
     in.drdds_available = true;
     in.holonomic = true;
     in.max_vx_mps = 2.0;
-    const std::size_t n = WriteHelloAck(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("hello_ack", buf, n);
+    const std::size_t n = write_hello_ack(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("hello_ack", buf, n);
     CHECK(j["type"] == "hello_ack");
     CHECK(j["proto_version"] == "1.0");
     CHECK(j["runtime"]["model"] == "CA9C");
@@ -1551,8 +1551,8 @@ int main(int argc, char** argv) {
     // mutant: emit "" instead of null -> red.
     char buf[4096];
     HelloAckInput in;                 // model / version left null
-    const std::size_t n = WriteHelloAck(in, buf, sizeof(buf));
-    const Json j = ParseOrFail("hello_ack cold", buf, n);
+    const std::size_t n = write_hello_ack(in, buf, sizeof(buf));
+    const Json j = parse_or_fail("hello_ack cold", buf, n);
     CHECK(j["runtime"]["model"].is_null());
     CHECK(j["runtime"]["version"].is_null());
     CHECK(j["runtime"]["usage_mode"].is_null());

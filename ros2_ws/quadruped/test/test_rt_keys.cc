@@ -44,8 +44,8 @@
 
 #include "xbrain/zenoh/qos_profiles.h"
 
-using quadruped::rt::BuildKey;
-using quadruped::rt::FindKey;
+using quadruped::rt::build_key;
+using quadruped::rt::find_key;
 using quadruped::rt::KeyRole;
 using quadruped::rt::KeySpec;
 using quadruped::rt::kKeyCount;
@@ -63,7 +63,7 @@ static int g_failures = 0;
 
 namespace {
 
-std::string ReadFile(const std::string& path) {
+std::string read_file(const std::string& path) {
   std::ifstream f(path);
   if (!f) return std::string();
   std::ostringstream ss;
@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
 
   // ---- every declared key exists verbatim in the contract ----------------
   {
-    const std::string contract = ReadFile(contract_path);
+    const std::string contract = read_file(contract_path);
     // A missing contract FAILS. Skipping would turn the one assertion that
     // matters into an empty green tick, which is the shape CLAUDE.md 3.2 warns
     // about: a criterion that cannot fail is not a criterion.
@@ -140,14 +140,14 @@ int main(int argc, char** argv) {
     // silently selects nothing, and a safety key ends up on whatever the
     // caller's fallback is.
     for (std::size_t i = 0; i < kKeyCount; ++i) {
-      const auto* p = hachist::xbrain::qos::FindProfile(kKeys[i].qos);
+      const auto* p = hachist::xbrain::qos::find_profile(kKeys[i].qos);
       if (p == nullptr) {
         std::printf("FAIL unknown QoS profile %s on key %s\n", kKeys[i].qos,
                     kKeys[i].suffix);
         ++g_failures;
       }
     }
-    CHECK(hachist::xbrain::qos::FindProfile("Q9_nonexistent") == nullptr);
+    CHECK(hachist::xbrain::qos::find_profile("Q9_nonexistent") == nullptr);
   }
 
   // ---- the Q0 set is exactly the six keys of 13 PB-Q1's three pairs -----
@@ -167,7 +167,7 @@ int main(int argc, char** argv) {
     CHECK(q0 == expect);
     // cmd_vel is NOT Q0: it is 20 Hz best-effort state, and putting it on the
     // safety profile would put ordinary traffic on the express budget.
-    const KeySpec* cv = FindKey("rt/motion/cmd_vel");
+    const KeySpec* cv = find_key("rt/motion/cmd_vel");
     CHECK(cv != nullptr);
     if (cv != nullptr) CHECK(std::strcmp(cv->qos, "Q0_safety") != 0);
   }
@@ -175,7 +175,7 @@ int main(int argc, char** argv) {
   // ---- key composition ---------------------------------------------------
   {
     char buf[128];
-    const std::size_t n = BuildKey("gj-001", "rt/chassis/state", buf, sizeof(buf));
+    const std::size_t n = build_key("gj-001", "rt/chassis/state", buf, sizeof(buf));
     CHECK(n > 0);
     CHECK(std::string(buf, n) == "xbrain/gj-001/rt/chassis/state");
     // The first segment is fixed and the second is the rid -- both stated by
@@ -186,28 +186,28 @@ int main(int argc, char** argv) {
     // A buffer one byte short returns 0 rather than a truncated key. This is
     // the case that matters: "xbrain/gj-001/rt/chassis/stat" is a perfectly
     // well-formed key that nothing subscribes to.
-    CHECK(BuildKey("gj-001", "rt/chassis/state", buf, n) == 0);
-    CHECK(BuildKey("gj-001", "rt/chassis/state", buf, 0) == 0);
-    CHECK(BuildKey(nullptr, "rt/chassis/state", buf, sizeof(buf)) == 0);
-    CHECK(BuildKey("gj-001", nullptr, buf, sizeof(buf)) == 0);
-    CHECK(BuildKey("gj-001", "rt/chassis/state", nullptr, 16) == 0);
+    CHECK(build_key("gj-001", "rt/chassis/state", buf, n) == 0);
+    CHECK(build_key("gj-001", "rt/chassis/state", buf, 0) == 0);
+    CHECK(build_key(nullptr, "rt/chassis/state", buf, sizeof(buf)) == 0);
+    CHECK(build_key("gj-001", nullptr, buf, sizeof(buf)) == 0);
+    CHECK(build_key("gj-001", "rt/chassis/state", nullptr, 16) == 0);
 
     // The string form agrees with the buffer form. Two builders that disagree
     // is how setup code and the hot path end up publishing on different keys.
-    CHECK(BuildKey(std::string("gj-001"), std::string("rt/chassis/state")) ==
+    CHECK(build_key(std::string("gj-001"), std::string("rt/chassis/state")) ==
           "xbrain/gj-001/rt/chassis/state");
     for (std::size_t i = 0; i < kKeyCount; ++i) {
       char b[256];
-      const std::size_t m = BuildKey("gj-001", kKeys[i].suffix, b, sizeof(b));
+      const std::size_t m = build_key("gj-001", kKeys[i].suffix, b, sizeof(b));
       CHECK(m > 0);
-      CHECK(BuildKey(std::string("gj-001"), std::string(kKeys[i].suffix)) ==
+      CHECK(build_key(std::string("gj-001"), std::string(kKeys[i].suffix)) ==
             std::string(b, m));
     }
   }
 
   // ---- lookup ------------------------------------------------------------
   {
-    const KeySpec* k = FindKey("rt/safety/estop/ack");
+    const KeySpec* k = find_key("rt/safety/estop/ack");
     CHECK(k != nullptr);
     if (k != nullptr) {
       CHECK(k->role == KeyRole::kPublish);
@@ -216,16 +216,16 @@ int main(int argc, char** argv) {
     // An undeclared suffix returns nullptr rather than something usable:
     // publishing on a key that is not in the table is how a key escapes the
     // comparison against the contract.
-    CHECK(FindKey("rt/chassis/made_up") == nullptr);
-    CHECK(FindKey(nullptr) == nullptr);
+    CHECK(find_key("rt/chassis/made_up") == nullptr);
+    CHECK(find_key(nullptr) == nullptr);
     // Prefix and suffix near-misses must NOT match: a lookup that accepted
     // them would let "rt/chassis/state" resolve to "rt/chassis/state/extra".
-    CHECK(FindKey("rt/chassis/stat") == nullptr);
-    CHECK(FindKey("rt/chassis/state/extra") == nullptr);
+    CHECK(find_key("rt/chassis/stat") == nullptr);
+    CHECK(find_key("rt/chassis/state/extra") == nullptr);
     // Every row is findable by its own suffix, so the table and the lookup
     // cannot disagree about what is declared.
     for (std::size_t i = 0; i < kKeyCount; ++i) {
-      CHECK(FindKey(kKeys[i].suffix) == &kKeys[i]);
+      CHECK(find_key(kKeys[i].suffix) == &kKeys[i]);
     }
   }
 

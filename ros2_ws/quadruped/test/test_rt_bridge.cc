@@ -63,7 +63,7 @@ struct Sent {
   std::string body;
 };
 
-QuadrupedConfig Cfg() {
+QuadrupedConfig cfg() {
   QuadrupedConfig c;
   c.robot_id = kRid;
   EndpointCandidate ep;
@@ -113,13 +113,13 @@ QuadrupedConfig Cfg() {
   return c;
 }
 
-std::string Wrap(const std::string& body) {
+std::string wrap(const std::string& body) {
   return std::string("{\"v\":1,\"rid\":\"") + kRid +
          "\",\"ts\":1789455340.125,\"mono\":812.5,\"boot\":\"" + kBoot +
          "\",\"seq\":7,\"src\":\"p1_motion\",\"ts_sync\":true,\"data\":" + body + "}";
 }
 
-bool Has(const std::string& hay, const std::string& needle) {
+bool has(const std::string& hay, const std::string& needle) {
   return hay.find(needle) != std::string::npos;
 }
 
@@ -128,7 +128,7 @@ bool Has(const std::string& hay, const std::string& needle) {
 // The payload of the LAST message sent on one key, or empty when the key never
 // appeared. Reading the last rather than scanning for any is deliberate: a case
 // that publishes twice must be checked against what a subscriber would hold.
-std::string FindLast(const std::vector<Sent>& sent, const std::string& key) {
+std::string find_last(const std::vector<Sent>& sent, const std::string& key) {
   for (std::size_t i = sent.size(); i > 0; --i) {
     if (sent[i - 1].key == key) return sent[i - 1].body;
   }
@@ -138,7 +138,7 @@ std::string FindLast(const std::vector<Sent>& sent, const std::string& key) {
 int main() {
   // ---- a conformant cmd_vel reaches the process --------------------------
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -146,10 +146,10 @@ int main() {
                  return true;
                });
 
-    const std::string good = Wrap(
+    const std::string good = wrap(
         "{\"vx\":0.3,\"vy\":0.0,\"wz\":0.2,\"vz\":0.0,\"v_roll\":0.0,"
         "\"v_pitch\":0.0,\"estop_epoch\":0}");
-    b.HandleCmdVel(1.0, good.c_str(), good.size());
+    b.handle_cmd_vel(1.0, good.c_str(), good.size());
     CHECK(b.cmd_vel_accepted() == 1);
     CHECK(b.cmd_vel_refused() == 0);
     CHECK(b.first_refusal() == RtParse::kOk);
@@ -159,14 +159,14 @@ int main() {
 
   // ---- *** p1_motion's ACTUAL body: refused, and the reason is reportable -
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     RtBridge b(&p, kRid, kBoot,
                [](const std::string&, const char*, std::size_t) { return true; });
 
-    const std::string p1 = Wrap(
+    const std::string p1 = wrap(
         "{\"vx\":0.3,\"vy\":0.0,\"wz\":0.2,\"vz\":0.0,\"v_roll\":0.0,"
         "\"v_pitch\":0.0,\"gate\":{\"v_max\":2.0,\"limiter\":\"none\"}}");
-    for (int i = 0; i < 20; ++i) b.HandleCmdVel(1.0 + 0.05 * i, p1.c_str(), p1.size());
+    for (int i = 0; i < 20; ++i) b.handle_cmd_vel(1.0 + 0.05 * i, p1.c_str(), p1.size());
 
     CHECK(b.cmd_vel_accepted() == 0);
     CHECK(b.cmd_vel_refused() == 20);
@@ -177,7 +177,7 @@ int main() {
 
   // ---- every malformed estop still stops, and is still acked -------------
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -185,22 +185,22 @@ int main() {
                  return true;
                });
 
-    const std::string good = Wrap("{\"cmd_id\":\"e-1\",\"action\":\"stop\"}");
+    const std::string good = wrap("{\"cmd_id\":\"e-1\",\"action\":\"stop\"}");
     std::uint64_t epoch = p.estop_epoch();
 
     // Well formed.
-    b.HandleEstop(1.0, good.c_str(), good.size());
+    b.handle_estop(1.0, good.c_str(), good.size());
     CHECK(p.estop_epoch() == epoch + 1);
     CHECK(sent.size() == 1);
     CHECK(sent.back().key == "rt/safety/estop/ack");
-    CHECK(Has(sent.back().body, "\"result\": \"accepted\"") ||
-          Has(sent.back().body, "\"result\":\"accepted\""));
-    CHECK(Has(sent.back().body, "e-1"));
+    CHECK(has(sent.back().body, "\"result\": \"accepted\"") ||
+          has(sent.back().body, "\"result\":\"accepted\""));
+    CHECK(has(sent.back().body, "e-1"));
 
     // Truncated mid-object, 200 ms later so the dedup window is closed.
     epoch = p.estop_epoch();
     const std::string trunc = good.substr(0, good.size() / 2);
-    b.HandleEstop(1.2, trunc.c_str(), trunc.size());
+    b.handle_estop(1.2, trunc.c_str(), trunc.size());
     CHECK(p.estop_epoch() == epoch + 1);    // *** it STILL stopped
     CHECK(sent.size() == 2);                // *** and still acked
 
@@ -208,22 +208,22 @@ int main() {
     epoch = p.estop_epoch();
     std::string badv = good;
     badv.replace(badv.find("\"v\":1"), 5, "\"v\":9");
-    b.HandleEstop(1.4, badv.c_str(), badv.size());
+    b.handle_estop(1.4, badv.c_str(), badv.size());
     CHECK(p.estop_epoch() == epoch + 1);
     CHECK(sent.size() == 3);
-    CHECK(Has(sent.back().body, "e-1"));    // the ack can still name it
+    CHECK(has(sent.back().body, "e-1"));    // the ack can still name it
 
     // Another robot's id. 99 U75: a wrongful stop costs nothing.
     epoch = p.estop_epoch();
     std::string other = good;
     other.replace(other.find(kRid), std::string(kRid).size(), "gj-999");
-    b.HandleEstop(1.6, other.c_str(), other.size());
+    b.handle_estop(1.6, other.c_str(), other.size());
     CHECK(p.estop_epoch() == epoch + 1);
     CHECK(sent.size() == 4);
 
     // Empty payload.
     epoch = p.estop_epoch();
-    b.HandleEstop(1.8, "", 0);
+    b.handle_estop(1.8, "", 0);
     CHECK(p.estop_epoch() == epoch + 1);
     CHECK(sent.size() == 5);
     CHECK(b.estops_applied() == 5);
@@ -231,28 +231,28 @@ int main() {
 
   // ---- the 50 ms dedup: no new generation, no event, STILL acked ---------
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
                  sent.push_back({k, std::string(d, n)});
                  return true;
                });
-    const std::string stop = Wrap("{\"cmd_id\":\"e-2\",\"action\":\"stop\"}");
+    const std::string stop = wrap("{\"cmd_id\":\"e-2\",\"action\":\"stop\"}");
 
-    b.HandleEstop(10.0, stop.c_str(), stop.size());
+    b.handle_estop(10.0, stop.c_str(), stop.size());
     const std::uint64_t after_first = p.estop_epoch();
     CHECK(b.estops_applied() == 1);
 
     // 20 ms later -- inside the window.
-    b.HandleEstop(10.020, stop.c_str(), stop.size());
+    b.handle_estop(10.020, stop.c_str(), stop.size());
     CHECK(p.estop_epoch() == after_first);   // *** generation NOT advanced
     CHECK(b.estops_deduped() == 1);
     CHECK(sent.size() == 2);                 // *** and STILL acked
-    CHECK(Has(sent.back().body, "duplicate"));
+    CHECK(has(sent.back().body, "duplicate"));
 
     // 60 ms after the first -- outside the window.
-    b.HandleEstop(10.060, stop.c_str(), stop.size());
+    b.handle_estop(10.060, stop.c_str(), stop.size());
     CHECK(p.estop_epoch() == after_first + 1);
     CHECK(b.estops_applied() == 2);
     CHECK(sent.size() == 3);
@@ -272,20 +272,20 @@ int main() {
   // block above cannot see that: it sends the same bytes twice, which is a
   // repeat under both the old rule and the new one.
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
                  sent.push_back({k, std::string(d, n)});
                  return true;
                });
-    const std::string one = Wrap("{\"cmd_id\":\"e-hmi\",\"action\":\"stop\"}");
-    const std::string two = Wrap("{\"cmd_id\":\"e-voice\",\"action\":\"stop\"}");
+    const std::string one = wrap("{\"cmd_id\":\"e-hmi\",\"action\":\"stop\"}");
+    const std::string two = wrap("{\"cmd_id\":\"e-voice\",\"action\":\"stop\"}");
     const std::uint64_t before = p.estop_epoch();
 
-    b.HandleEstop(20.0, one.c_str(), one.size());
+    b.handle_estop(20.0, one.c_str(), one.size());
     // 20 ms later, INSIDE the window, but a different command.
-    b.HandleEstop(20.020, two.c_str(), two.size());
+    b.handle_estop(20.020, two.c_str(), two.size());
 
     // *** +2, not +1. The old implementation produced +1 here.
     // mutant: drop the cmd_id conjunct (back to the pure window) -> red.
@@ -296,24 +296,24 @@ int main() {
     // The second one is ACCEPTED, and its ack names its own cmd_id -- the
     // sender has to be able to tell "yours was executed" from "yours was
     // treated as someone else's repeat".
-    CHECK(Has(sent.back().body, "\"result\":\"accepted\"") ||
-          Has(sent.back().body, "\"result\": \"accepted\""));
-    CHECK(Has(sent.back().body, "e-voice"));
+    CHECK(has(sent.back().body, "\"result\":\"accepted\"") ||
+          has(sent.back().body, "\"result\": \"accepted\""));
+    CHECK(has(sent.back().body, "e-voice"));
 
     // And the tightening did not cost the original behaviour: e-voice
     // repeated inside ITS window is still a duplicate.
     // mutant: compare cmd_id but ignore the window -> this stays green while
     // the >window case below goes red, which is why both are here.
-    b.HandleEstop(20.030, two.c_str(), two.size());
+    b.handle_estop(20.030, two.c_str(), two.size());
     CHECK(p.estop_epoch() == before + 2);
     CHECK(b.estops_deduped() == 1);
-    CHECK(Has(sent.back().body, "duplicate"));
+    CHECK(has(sent.back().body, "duplicate"));
 
     // Same cmd_id but OUTSIDE the window -> a new stop. An operator pressing
     // the same HMI button again 100 ms later means it again; the idempotency
     // rule is about a retransmission, and S7.1.1's retry budget is 200 ms.
     // mutant: compare cmd_id only, ignore the window -> red here.
-    b.HandleEstop(20.200, two.c_str(), two.size());
+    b.handle_estop(20.200, two.c_str(), two.size());
     CHECK(p.estop_epoch() == before + 3);
     CHECK(b.estops_applied() == 3);
   }
@@ -325,18 +325,18 @@ int main() {
   // window is the only debounce left and the behaviour is exactly what it was
   // before the tightening. S9.12.6's own row names no cmd_id either.
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
                  sent.push_back({k, std::string(d, n)});
                  return true;
                });
-    const std::string anon = Wrap("{\"action\":\"stop\"}");
+    const std::string anon = wrap("{\"action\":\"stop\"}");
     const std::uint64_t before = p.estop_epoch();
 
-    b.HandleEstop(30.0, anon.c_str(), anon.size());
-    b.HandleEstop(30.020, anon.c_str(), anon.size());
+    b.handle_estop(30.0, anon.c_str(), anon.size());
+    b.handle_estop(30.020, anon.c_str(), anon.size());
     // mutant: treat a missing cmd_id as "never a duplicate" (drop the
     // !m.cmd_id_present arm) -> +2 here, red. That mutant is the tempting
     // one: it reads as the safer direction, and it turns the 10 Hz resend of
@@ -345,10 +345,10 @@ int main() {
     CHECK(p.estop_epoch() == before + 1);
     CHECK(b.estops_deduped() == 1);
     CHECK(sent.size() == 2);                 // still acked
-    CHECK(Has(sent.back().body, "duplicate"));
+    CHECK(has(sent.back().body, "duplicate"));
     // The ack for a key-less command is "anonymous" (11 S7.1.1 field table),
     // which is exactly why it cannot be de-duplicated by key.
-    CHECK(Has(sent.back().body, "anonymous"));
+    CHECK(has(sent.back().body, "anonymous"));
 
     // A message that DOES carry a key, inside the same window, after a
     // key-less one: it cannot be proved a repeat of anything, so it executes.
@@ -356,8 +356,8 @@ int main() {
     // command, and every other reading fails toward NOT stopping.
     // mutant: fall back to the pure window whenever either side lacks a key
     // -> red.
-    const std::string keyed = Wrap("{\"cmd_id\":\"e-k\",\"action\":\"stop\"}");
-    b.HandleEstop(30.030, keyed.c_str(), keyed.size());
+    const std::string keyed = wrap("{\"cmd_id\":\"e-k\",\"action\":\"stop\"}");
+    b.handle_estop(30.030, keyed.c_str(), keyed.size());
     CHECK(p.estop_epoch() == before + 2);
     CHECK(b.estops_applied() == 2);
   }
@@ -379,11 +379,11 @@ int main() {
   // The fake advances by a known amount per call, which is what lets the VALUE
   // be asserted rather than just its sign.
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     // 1.25 ms between the entry reading and the closing one.
     //
-    // The base is 5000 s, deliberately NOT a value ToMs(now_mono_s) could
+    // The base is 5000 s, deliberately NOT a value to_ms(now_mono_s) could
     // produce: the recv_mono_ms assertion below is a substring search, and with
     // a base of 1000.0 the mutant "recv_mono_ms filled from the latency clock"
     // wrote 1000000 -- which CONTAINS the expected "1000" and survived. The
@@ -396,18 +396,18 @@ int main() {
                },
                [&fake]() { const double v = fake; fake += 0.00125; return v; });
 
-    const std::string stop = Wrap("{\"cmd_id\":\"e-lat\",\"action\":\"stop\"}");
-    b.HandleEstop(1.0, stop.c_str(), stop.size());
-    const std::string ack = FindLast(sent, "rt/safety/estop/ack");
+    const std::string stop = wrap("{\"cmd_id\":\"e-lat\",\"action\":\"stop\"}");
+    b.handle_estop(1.0, stop.c_str(), stop.size());
+    const std::string ack = find_last(sent, "rt/safety/estop/ack");
     // mutant: ack.latency_ms = 0 (the old line) -> red on all three.
-    CHECK(Has(ack, "\"latency_ms\":1.250000"));
-    CHECK(!Has(ack, "\"latency_ms\":0"));
+    CHECK(has(ack, "\"latency_ms\":1.250000"));
+    CHECK(!has(ack, "\"latency_ms\":0"));
     // recv_mono_ms stays the SESSION's receipt reading, in ms, not the injected
     // clock: they are two different facts and 11 lists them on adjacent rows.
-    // ToMs(1.0) = 1000, and the trailing comma makes this an exact field match
+    // to_ms(1.0) = 1000, and the trailing comma makes this an exact field match
     // -- without it the mutant's 5000000 matched as a prefix and survived.
     // mutant: fill recv_mono_ms from mono_now_ too -> red.
-    CHECK(Has(ack, "\"recv_mono_ms\":1000,"));
+    CHECK(has(ack, "\"recv_mono_ms\":1000,"));
 
     // A SWALLOWED duplicate (inside the 50 ms window) still reports a latency.
     // No zero frame goes out for it, so the "first zero frame" reading does not
@@ -415,11 +415,11 @@ int main() {
     // and result="duplicate" in the same message is what tells the two apart.
     // Publishing 0 or null here would make a non-error case look unmeasured.
     // mutant: skip the measurement on the duplicate branch -> red.
-    b.HandleEstop(1.020, stop.c_str(), stop.size());
-    const std::string dup_ack = FindLast(sent, "rt/safety/estop/ack");
-    CHECK(Has(dup_ack, "\"result\":\"duplicate\"") ||
-          Has(dup_ack, "\"result\": \"duplicate\""));
-    CHECK(Has(dup_ack, "\"latency_ms\":1.250000"));
+    b.handle_estop(1.020, stop.c_str(), stop.size());
+    const std::string dup_ack = find_last(sent, "rt/safety/estop/ack");
+    CHECK(has(dup_ack, "\"result\":\"duplicate\"") ||
+          has(dup_ack, "\"result\": \"duplicate\""));
+    CHECK(has(dup_ack, "\"latency_ms\":1.250000"));
     CHECK(b.estops_deduped() == 1);
   }
 
@@ -431,20 +431,20 @@ int main() {
   // and publish 0 on the robot -- the defect being fixed, back again, with the
   // whole test suite green.
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
-    // No clock argument: the constructor must substitute MonoNowSeconds.
+    // No clock argument: the constructor must substitute mono_now_seconds.
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
                  sent.push_back({k, std::string(d, n)});
                  return true;
                });
-    const std::string stop = Wrap("{\"cmd_id\":\"e-real\",\"action\":\"stop\"}");
-    const double t0 = MonoNowSeconds();
-    b.HandleEstop(1.0, stop.c_str(), stop.size());
-    const double elapsed_ms = (MonoNowSeconds() - t0) * 1000.0;
+    const std::string stop = wrap("{\"cmd_id\":\"e-real\",\"action\":\"stop\"}");
+    const double t0 = mono_now_seconds();
+    b.handle_estop(1.0, stop.c_str(), stop.size());
+    const double elapsed_ms = (mono_now_seconds() - t0) * 1000.0;
 
-    const std::string ack = FindLast(sent, "rt/safety/estop/ack");
+    const std::string ack = find_last(sent, "rt/safety/estop/ack");
     // Parsed rather than string-matched: the value is not predictable, only its
     // range is. std::stod stops at the first non-numeric character.
     const std::size_t at = ack.find("\"latency_ms\":");
@@ -452,7 +452,7 @@ int main() {
     const double got = at == std::string::npos
                            ? -1.0
                            : std::stod(ack.substr(at + 13));
-    // STRICTLY positive: the encode-and-send inside OnSoftEstop cannot take
+    // STRICTLY positive: the encode-and-send inside on_soft_estop cannot take
     // zero time, and 0 is exactly what the hardcoded field published.
     // mutant: bind the default MonoFn to a constant -> red.
     CHECK(got > 0.0);
@@ -467,7 +467,7 @@ int main() {
 
   // ---- rt/chassis/ctrl: enable clears the lock, and the ack reads back ---
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -476,17 +476,17 @@ int main() {
                });
 
     // The opening silence locks Tier 1.
-    p.CtrlTick(0.0);
-    p.CtrlTick(0.5);
+    p.ctrl_tick(0.0);
+    p.ctrl_tick(0.5);
     CHECK(p.last_tier1().timeout_lock == true);
 
-    const std::string en = Wrap("{\"cmd_id\":\"c-04\",\"action\":\"enable\"}");
-    b.HandleChassisCtrl(0.6, en.c_str(), en.size());
+    const std::string en = wrap("{\"cmd_id\":\"c-04\",\"action\":\"enable\"}");
+    b.handle_chassis_ctrl(0.6, en.c_str(), en.size());
     CHECK(b.ctrl_accepted() == 1);
     CHECK(sent.size() == 1);
     CHECK(sent.back().key == "rt/chassis/ctrl/ack");
     // *** 11 S3.0: what goes on the wire is the ENVELOPE, with the payload
-    // under `data`. Every other assertion in this file uses Has() -- a
+    // under `data`. Every other assertion in this file uses has() -- a
     // substring search, which cannot tell a wrapped payload from a bare one,
     // so all of them stayed green while this process published bare payloads
     // for its whole life. Measured on the live chassis 2026-09-21 by printing
@@ -494,39 +494,39 @@ int main() {
     CHECK(sent.back().body.compare(0, 7, "{\"v\":1,") == 0);
     for (const char* f : {"\"rid\":", "\"ts\":", "\"mono\":", "\"boot\":",
                           "\"seq\":", "\"src\":", "\"ts_sync\":", "\"data\":"}) {
-      CHECK(Has(sent.back().body, f));
+      CHECK(has(sent.back().body, f));
     }
     // The payload is INSIDE data, not merged next to the envelope fields.
-    CHECK(Has(sent.back().body, "\"data\":{\"cmd_id\""));
+    CHECK(has(sent.back().body, "\"data\":{\"cmd_id\""));
     // 13 PB-Q3: never true without a ClockStatus (13 Q-5, not built yet).
-    CHECK(Has(sent.back().body, "\"ts_sync\":false"));
-    CHECK(!Has(sent.back().body, "\"ts_sync\":true"));
-    CHECK(Has(sent.back().body, "accepted"));
-    CHECK(Has(sent.back().body, "enable"));
+    CHECK(has(sent.back().body, "\"ts_sync\":false"));
+    CHECK(!has(sent.back().body, "\"ts_sync\":true"));
+    CHECK(has(sent.back().body, "accepted"));
+    CHECK(has(sent.back().body, "enable"));
     // *** 11 CR-12: the ack carries the READ-BACK locks. At this instant the
     // lock is still on -- the enable has not been consumed by a control period
     // yet -- and saying otherwise would be the "ack = accepted means unlocked"
     // mistake the contract calls out by name.
-    CHECK(Has(sent.back().body, "\"timeout_lock\": true") ||
-          Has(sent.back().body, "\"timeout_lock\":true"));
+    CHECK(has(sent.back().body, "\"timeout_lock\": true") ||
+          has(sent.back().body, "\"timeout_lock\":true"));
     // An ACCEPTED ack names no item, and the key is absent rather than empty:
     // 11 S13.9 draws item from a closed set when it is present, and "" is not
     // in that set. A consumer that switches on item would have to special-case
     // the empty string, which is how a closed set stops being closed.
-    CHECK(!Has(sent.back().body, "item"));
+    CHECK(!has(sent.back().body, "item"));
 
     // The next period consumes it, with a fresh command, and the lock goes.
-    const std::string good = Wrap(
+    const std::string good = wrap(
         "{\"vx\":0.1,\"vy\":0.0,\"wz\":0.0,\"vz\":0.0,\"v_roll\":0.0,"
         "\"v_pitch\":0.0,\"estop_epoch\":0}");
-    b.HandleCmdVel(0.61, good.c_str(), good.size());
-    p.CtrlTick(0.62);
+    b.handle_cmd_vel(0.61, good.c_str(), good.size());
+    p.ctrl_tick(0.62);
     CHECK(p.last_tier1().timeout_lock == false);
   }
 
   // ---- rt/chassis/ctrl: refusals are acked, with the RIGHT code ----------
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -539,40 +539,40 @@ int main() {
     // hunting a typo instead of reading the release notes (11 S9.3.3 v0.3).
     for (const char* gone : {"soft_estop", "estop_release", "idle"}) {
       const std::string body =
-          Wrap(std::string("{\"cmd_id\":\"c-9\",\"action\":\"") + gone + "\"}");
-      b.HandleChassisCtrl(1.0, body.c_str(), body.size());
-      CHECK(Has(sent.back().body, "E_CAPABILITY"));
-      CHECK(Has(sent.back().body, "rejected"));
-      CHECK(Has(sent.back().body, gone));   // the ack names what it refused
+          wrap(std::string("{\"cmd_id\":\"c-9\",\"action\":\"") + gone + "\"}");
+      b.handle_chassis_ctrl(1.0, body.c_str(), body.size());
+      CHECK(has(sent.back().body, "E_CAPABILITY"));
+      CHECK(has(sent.back().body, "rejected"));
+      CHECK(has(sent.back().body, gone));   // the ack names what it refused
     }
 
     // A word that was never valid.
-    const std::string fly = Wrap("{\"cmd_id\":\"c-9\",\"action\":\"fly\"}");
-    b.HandleChassisCtrl(1.0, fly.c_str(), fly.size());
-    CHECK(Has(sent.back().body, "E_SCHEMA"));
+    const std::string fly = wrap("{\"cmd_id\":\"c-9\",\"action\":\"fly\"}");
+    b.handle_chassis_ctrl(1.0, fly.c_str(), fly.size());
+    CHECK(has(sent.back().body, "E_SCHEMA"));
 
     // No cmd_id: a loosening command that cannot be acked or de-duplicated.
-    const std::string noid = Wrap("{\"action\":\"enable\"}");
-    b.HandleChassisCtrl(1.0, noid.c_str(), noid.size());
-    CHECK(Has(sent.back().body, "E_SCHEMA"));
-    CHECK(Has(sent.back().body, "anonymous"));
+    const std::string noid = wrap("{\"action\":\"enable\"}");
+    b.handle_chassis_ctrl(1.0, noid.c_str(), noid.size());
+    CHECK(has(sent.back().body, "E_SCHEMA"));
+    CHECK(has(sent.back().body, "anonymous"));
     CHECK(b.ctrl_accepted() == 0);
 
     // *** 11 S9.3.3: the refusal's NAME, on the wire. Measured on the chassis
     // 2026-09-21: a prone on a stair gait was correctly refused with
     // E_CAPABILITY and the ack carried detail = {action, hes_lock,
-    // timeout_lock} and nothing else. ModeRejectItem existed, had both names
+    // timeout_lock} and nothing else. mode_reject_item existed, had both names
     // in it, and was reached only from tests -- so every unit test asserting
     // the item passed while no ack ever carried one.
     //
-    // No read-back has arrived on this process, so ProneAllowed answers false
+    // No read-back has arrived on this process, so prone_allowed answers false
     // (the gait is unknown and a staircase has no anti-roll path). That is the
     // PR-1 refusal, and the ack must name it.
-    const std::string prone = Wrap("{\"cmd_id\":\"c-pr1\",\"action\":\"prone\"}");
-    b.HandleChassisCtrl(1.0, prone.c_str(), prone.size());
-    CHECK(Has(sent.back().body, "E_CAPABILITY"));
-    CHECK(Has(sent.back().body, "\"item\":\"prone_on_stair\"") ||
-          Has(sent.back().body, "\"item\": \"prone_on_stair\""));
+    const std::string prone = wrap("{\"cmd_id\":\"c-pr1\",\"action\":\"prone\"}");
+    b.handle_chassis_ctrl(1.0, prone.c_str(), prone.size());
+    CHECK(has(sent.back().body, "E_CAPABILITY"));
+    CHECK(has(sent.back().body, "\"item\":\"prone_on_stair\"") ||
+          has(sent.back().body, "\"item\": \"prone_on_stair\""));
 
     // *** And the two halves that keep the one above from being satisfied by a
     // constant. A deleted action answers the SAME code from a DIFFERENT place
@@ -580,10 +580,10 @@ int main() {
     // must NOT be named prone_on_stair. This is the pair that a hard-coded
     // item would fail: the assertion above alone cannot tell "the mapping is
     // wired" from "the writer always emits prone_on_stair".
-    const std::string deleted = Wrap("{\"cmd_id\":\"c-9\",\"action\":\"idle\"}");
-    b.HandleChassisCtrl(1.0, deleted.c_str(), deleted.size());
-    CHECK(Has(sent.back().body, "E_CAPABILITY"));
-    CHECK(!Has(sent.back().body, "prone_on_stair"));
+    const std::string deleted = wrap("{\"cmd_id\":\"c-9\",\"action\":\"idle\"}");
+    b.handle_chassis_ctrl(1.0, deleted.c_str(), deleted.size());
+    CHECK(has(sent.back().body, "E_CAPABILITY"));
+    CHECK(!has(sent.back().body, "prone_on_stair"));
 
     // *** set_sdk_mode is the case that does the killing, and the difference
     // from the one above is the point. A deleted action never reaches the mode
@@ -595,18 +595,18 @@ int main() {
     // Both required fields, and a rate that divides 1000 -- otherwise this
     // stops at the parser with E_SCHEMA and never reaches the branch under
     // test, which is how the first draft of this case failed.
-    const std::string sdk = Wrap(
+    const std::string sdk = wrap(
         "{\"cmd_id\":\"c-sdk\",\"action\":\"set_sdk_mode\","
         "\"enable\":true,\"joint_rate_hz\":100}");
-    b.HandleChassisCtrl(1.0, sdk.c_str(), sdk.size());
-    CHECK(Has(sent.back().body, "E_CAPABILITY"));
-    CHECK(Has(sent.back().body, "rejected"));
-    CHECK(!Has(sent.back().body, "item"));
+    b.handle_chassis_ctrl(1.0, sdk.c_str(), sdk.size());
+    CHECK(has(sent.back().body, "E_CAPABILITY"));
+    CHECK(has(sent.back().body, "rejected"));
+    CHECK(!has(sent.back().body, "item"));
   }
 
   // ---- 11 S3.0: seq is PER KEY, and it starts at 0 -----------------------
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -619,19 +619,19 @@ int main() {
     // fails here: the second ack would read 2 rather than 1, and a subscriber
     // on that key would see a gap and report a lost message that never
     // existed. That is the mutant this case exists for.
-    const std::string en = Wrap("{\"cmd_id\":\"s-1\",\"action\":\"enable\"}");
-    b.HandleChassisCtrl(1.0, en.c_str(), en.size());
-    CHECK(Has(FindLast(sent, "rt/chassis/ctrl/ack"), "\"seq\":0"));
+    const std::string en = wrap("{\"cmd_id\":\"s-1\",\"action\":\"enable\"}");
+    b.handle_chassis_ctrl(1.0, en.c_str(), en.size());
+    CHECK(has(find_last(sent, "rt/chassis/ctrl/ack"), "\"seq\":0"));
 
-    const std::string es = Wrap("{\"reason\":\"test\"}");
-    b.HandleEstop(1.1, es.c_str(), es.size());
+    const std::string es = wrap("{\"reason\":\"test\"}");
+    b.handle_estop(1.1, es.c_str(), es.size());
     // A different key, so IT starts at 0 too.
-    CHECK(Has(FindLast(sent, "rt/safety/estop/ack"), "\"seq\":0"));
+    CHECK(has(find_last(sent, "rt/safety/estop/ack"), "\"seq\":0"));
 
-    const std::string en2 = Wrap("{\"cmd_id\":\"s-2\",\"action\":\"enable\"}");
-    b.HandleChassisCtrl(1.2, en2.c_str(), en2.size());
-    CHECK(Has(FindLast(sent, "rt/chassis/ctrl/ack"), "\"seq\":1"));
-    CHECK(!Has(FindLast(sent, "rt/chassis/ctrl/ack"), "\"seq\":2"));
+    const std::string en2 = wrap("{\"cmd_id\":\"s-2\",\"action\":\"enable\"}");
+    b.handle_chassis_ctrl(1.2, en2.c_str(), en2.size());
+    CHECK(has(find_last(sent, "rt/chassis/ctrl/ack"), "\"seq\":1"));
+    CHECK(!has(find_last(sent, "rt/chassis/ctrl/ack"), "\"seq\":2"));
   }
 
   // ---- 13 Q-5 / A2: ts_sync is fed by rt/clock/status --------------------
@@ -641,7 +641,7 @@ int main() {
     // (PB-Q3's default, which is also what a missing report means). This
     // case is the half that never existed -- the subscription actually
     // FEEDING the field.
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -654,41 +654,41 @@ int main() {
     // judges ts_sync at the envelope's own mono, which is a real reading --
     // an injected 100.0 would be "aged out" against it before it was ever
     // fresh. (The first draft did exactly that and asserted on a red herring.)
-    const std::string cs = Wrap("{\"sync\":true}");
-    b.HandleClockStatus(MonoNowSeconds(), cs.c_str(), cs.size());
-    const std::string en = Wrap("{\"cmd_id\":\"k-1\",\"action\":\"enable\"}");
-    b.HandleChassisCtrl(100.1, en.c_str(), en.size());
-    CHECK(Has(sent.back().body, "\"ts_sync\":true"));
+    const std::string cs = wrap("{\"sync\":true}");
+    b.handle_clock_status(mono_now_seconds(), cs.c_str(), cs.size());
+    const std::string en = wrap("{\"cmd_id\":\"k-1\",\"action\":\"enable\"}");
+    b.handle_chassis_ctrl(100.1, en.c_str(), en.size());
+    CHECK(has(sent.back().body, "\"ts_sync\":true"));
 
-    // *** The aging, on an injected axis -- this is why TsSyncAt exists as
+    // *** The aging, on an injected axis -- this is why ts_sync_at exists as
     // a time-injected predicate while Publish reads the real clock.
     // CLK-A3 is "≥ 5 s 未收到 -> false", monotonic:
-    const std::string cs1 = Wrap("{\"sync\":true}");
-    b.HandleClockStatus(100.0, cs1.c_str(), cs1.size());
-    CHECK(b.TsSyncAt(104.9) == true);
-    CHECK(b.TsSyncAt(105.0) == true);    // 5.0 s since arrival is not yet ">= 5 s unheard"
-    CHECK(b.TsSyncAt(105.1) == false);   // aged out
+    const std::string cs1 = wrap("{\"sync\":true}");
+    b.handle_clock_status(100.0, cs1.c_str(), cs1.size());
+    CHECK(b.ts_sync_at(104.9) == true);
+    CHECK(b.ts_sync_at(105.0) == true);    // 5.0 s since arrival is not yet ">= 5 s unheard"
+    CHECK(b.ts_sync_at(105.1) == false);   // aged out
     // Aging is not latching: the next report starts a fresh window.
-    const std::string cs2 = Wrap("{\"sync\":true}");
-    b.HandleClockStatus(200.0, cs2.c_str(), cs2.size());
-    CHECK(b.TsSyncAt(200.1) == true);
+    const std::string cs2 = wrap("{\"sync\":true}");
+    b.handle_clock_status(200.0, cs2.c_str(), cs2.size());
+    CHECK(b.ts_sync_at(200.1) == true);
 
     // sync:false is a VALID report and must be carried, not confused with
     // absence -- rtk_driver saying "not synced" is information.
-    const std::string cs3 = Wrap("{\"sync\":false}");
-    b.HandleClockStatus(200.2, cs3.c_str(), cs3.size());
-    CHECK(b.TsSyncAt(200.3) == false);
+    const std::string cs3 = wrap("{\"sync\":false}");
+    b.handle_clock_status(200.2, cs3.c_str(), cs3.size());
+    CHECK(b.ts_sync_at(200.3) == false);
 
     // A malformed report refreshes NOTHING: inject good-true, then garbage;
     // the verdict and its window are still the good report's. Refusing to
     // default in the false direction matters here too -- a schema drift
     // would otherwise read as "not synced" instead of being counted.
-    const std::string cs4 = Wrap("{\"sync\":true}");
-    b.HandleClockStatus(300.0, cs4.c_str(), cs4.size());
-    const std::string junk = Wrap("{\"source\":\"rtk\"}");
-    b.HandleClockStatus(300.5, junk.c_str(), junk.size());
-    CHECK(b.TsSyncAt(300.6) == true);          // still the good report
-    CHECK(b.TsSyncAt(305.2) == false);         // aged from 300.0, not 300.5
+    const std::string cs4 = wrap("{\"sync\":true}");
+    b.handle_clock_status(300.0, cs4.c_str(), cs4.size());
+    const std::string junk = wrap("{\"source\":\"rtk\"}");
+    b.handle_clock_status(300.5, junk.c_str(), junk.size());
+    CHECK(b.ts_sync_at(300.6) == true);          // still the good report
+    CHECK(b.ts_sync_at(305.2) == false);         // aged from 300.0, not 300.5
   }
 
   // ---- ping answers pong, and a malformed ping answers too ---------------
@@ -697,7 +697,7 @@ int main() {
   // degrades the system to hold. Withholding the answer over a bad field would
   // turn a publisher's bug into a stopped robot.
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -705,13 +705,13 @@ int main() {
                  return true;
                });
 
-    const std::string ping = Wrap("{\"type\":\"ping\"}");
-    b.HandlePing(5.0, ping.c_str(), ping.size());
+    const std::string ping = wrap("{\"type\":\"ping\"}");
+    b.handle_ping(5.0, ping.c_str(), ping.size());
     CHECK(b.pongs_sent() == 1);
     CHECK(sent.back().key == "rt/safety/probe/pong");
-    CHECK(Has(sent.back().body, "pong"));
+    CHECK(has(sent.back().body, "pong"));
 
-    b.HandlePing(6.0, "not json at all", 15);
+    b.handle_ping(6.0, "not json at all", 15);
     CHECK(b.pongs_sent() == 2);   // *** answered anyway
   }
 
@@ -723,13 +723,13 @@ int main() {
   // by the time a ping reaches this process the envelope seq is the relay's
   // counter and only data.seq still carries p5_gateway's.
   //
-  // Wrap() puts 7 in the envelope; the body carries 12345. An implementation
+  // wrap() puts 7 in the envelope; the body carries 12345. An implementation
   // echoing the envelope is red on the second CHECK -- and NOTHING ELSE in
   // this file would catch it, because on a bus with no relay the two numbers
   // are equal and every other ping assertion passes either way. That is why
   // the case is written with the two deliberately different.
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -737,27 +737,27 @@ int main() {
                  return true;
                });
 
-    const std::string ping = Wrap("{\"type\":\"ping\",\"seq\":12345}");
-    b.HandlePing(5.0, ping.c_str(), ping.size());
+    const std::string ping = wrap("{\"type\":\"ping\",\"seq\":12345}");
+    b.handle_ping(5.0, ping.c_str(), ping.size());
     CHECK(b.pongs_sent() == 1);
     CHECK(b.pings_without_seq() == 0);
-    const std::string body = FindLast(sent, "rt/safety/probe/pong");
+    const std::string body = find_last(sent, "rt/safety/probe/pong");
     // The pong's OWN envelope seq is this process's counter, so the assertion
-    // has to look inside data -- where WritePong put the echo.
-    CHECK(Has(body, "\"data\":{\"type\":\"pong\",\"seq\":12345"));
+    // has to look inside data -- where write_pong put the echo.
+    CHECK(has(body, "\"data\":{\"type\":\"pong\",\"seq\":12345"));
     // And the relay's number must not appear as the echo.
-    CHECK(!Has(body, "\"data\":{\"type\":\"pong\",\"seq\":7"));
+    CHECK(!has(body, "\"data\":{\"type\":\"pong\",\"seq\":7"));
 
     // A ping with no data.seq: still answered (13 F-15), echoes 0, and SAYS SO
     // through the counter. Zero is not a seq p5_gateway sends, so the far end
     // scores it unmatched and estop_path degrades -- fail-safe -- while this
     // counter is what tells an operator the link is fine and the PUBLISHER is
     // wrong. Without it the two are indistinguishable from either end.
-    const std::string bare = Wrap("{\"type\":\"ping\"}");
-    b.HandlePing(6.0, bare.c_str(), bare.size());
+    const std::string bare = wrap("{\"type\":\"ping\"}");
+    b.handle_ping(6.0, bare.c_str(), bare.size());
     CHECK(b.pongs_sent() == 2);
     CHECK(b.pings_without_seq() == 1);
-    CHECK(Has(FindLast(sent, "rt/safety/probe/pong"),
+    CHECK(has(find_last(sent, "rt/safety/probe/pong"),
               "\"data\":{\"type\":\"pong\",\"seq\":0"));
 
     // A ping for another robot: refused envelope -> no echo of its seq, and
@@ -769,7 +769,7 @@ int main() {
                     "\"mono\":812.5,\"boot\":\"") + kBoot +
         "\",\"seq\":9,\"src\":\"chassis_relay\",\"ts_sync\":true,"
         "\"data\":{\"type\":\"ping\",\"seq\":777}}";
-    b.HandlePing(7.0, other.c_str(), other.size());
+    b.handle_ping(7.0, other.c_str(), other.size());
     CHECK(b.pongs_sent() == 3);
     CHECK(b.pings_without_seq() == 2);
     // Asserted on the echo POSITION, not by scanning the body for "777".
@@ -777,7 +777,7 @@ int main() {
     // carries a wall-clock ts and a monotonic mono, and three digits match one
     // of them often enough to look like a real regression. Measured here on
     // 2026-09-27 -- the first version of this line failed on a timestamp.
-    CHECK(Has(FindLast(sent, "rt/safety/probe/pong"),
+    CHECK(has(find_last(sent, "rt/safety/probe/pong"),
               "\"data\":{\"type\":\"pong\",\"seq\":0"));
   }
 
@@ -789,7 +789,7 @@ int main() {
   // it first". So what is asserted is not that a state message went out -- it
   // is that the epoch in it TRACKS the process, including across a stop.
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -797,29 +797,29 @@ int main() {
                  return true;
                });
 
-    p.CtrlTick(0.0);
+    p.ctrl_tick(0.0);
     QuadrupedProcess::StateSnapshot snap;
-    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(p.take_state_for_publish(&snap) == true);
     CHECK(snap.estop_epoch == p.estop_epoch());
-    CHECK(b.PublishState(snap) == true);
+    CHECK(b.publish_state(snap) == true);
     CHECK(sent.back().key == "rt/chassis/state");
     CHECK(b.states_published() == 1);
     // No command yet, so the age is reported as null rather than as a huge
     // number -- "never" and "very old" are different facts (11 S4.1).
-    CHECK(Has(sent.back().body, "\"cmd_age_ms\": null") ||
-          Has(sent.back().body, "\"cmd_age_ms\":null"));
+    CHECK(has(sent.back().body, "\"cmd_age_ms\": null") ||
+          has(sent.back().body, "\"cmd_age_ms\":null"));
 
     // A stop advances the generation, and the NEXT published state must show
     // it. A state that lagged here would keep p1 echoing the old generation,
     // and Tier 1 would hold zero forever waiting for a number that never comes.
-    const std::string stop = Wrap("{\"cmd_id\":\"e-9\",\"action\":\"stop\"}");
-    b.HandleEstop(1.0, stop.c_str(), stop.size());
+    const std::string stop = wrap("{\"cmd_id\":\"e-9\",\"action\":\"stop\"}");
+    b.handle_estop(1.0, stop.c_str(), stop.size());
     const std::uint64_t after = p.estop_epoch();
     CHECK(after >= 1);
-    p.CtrlTick(1.01);
-    CHECK(p.TakeStateForPublish(&snap) == true);
+    p.ctrl_tick(1.01);
+    CHECK(p.take_state_for_publish(&snap) == true);
     CHECK(snap.estop_epoch == after);
-    CHECK(b.PublishState(snap) == true);
+    CHECK(b.publish_state(snap) == true);
     {
       char want[64];
       std::snprintf(want, sizeof(want), "\"estop_epoch\": %llu",
@@ -827,23 +827,23 @@ int main() {
       char want2[64];
       std::snprintf(want2, sizeof(want2), "\"estop_epoch\":%llu",
                     static_cast<unsigned long long>(after));
-      CHECK(Has(sent.back().body, want) || Has(sent.back().body, want2));
+      CHECK(has(sent.back().body, want) || has(sent.back().body, want2));
     }
 
     // The slot is a slot: taken once, and the newest wins.
     QuadrupedProcess::StateSnapshot again;
-    CHECK(p.TakeStateForPublish(&again) == false);
-    for (int i = 0; i < 5; ++i) p.CtrlTick(1.02 + 0.01 * i);
-    CHECK(p.TakeStateForPublish(&again) == true);
-    CHECK(p.TakeStateForPublish(&snap) == false);
+    CHECK(p.take_state_for_publish(&again) == false);
+    for (int i = 0; i < 5; ++i) p.ctrl_tick(1.02 + 0.01 * i);
+    CHECK(p.take_state_for_publish(&again) == true);
+    CHECK(p.take_state_for_publish(&snap) == false);
 
     // With a command in hand the age becomes a number.
-    const std::string good = Wrap(
+    const std::string good = wrap(
         "{\"vx\":0.1,\"vy\":0.0,\"wz\":0.0,\"vz\":0.0,\"v_roll\":0.0,"
         "\"v_pitch\":0.0,\"estop_epoch\":0}");
-    b.HandleCmdVel(2.0, good.c_str(), good.size());
-    p.CtrlTick(2.05);
-    CHECK(p.TakeStateForPublish(&snap) == true);
+    b.handle_cmd_vel(2.0, good.c_str(), good.size());
+    p.ctrl_tick(2.05);
+    CHECK(p.take_state_for_publish(&snap) == true);
     CHECK(snap.cmd_age_ms > 40.0);
     CHECK(snap.cmd_age_ms < 60.0);
     // ...and the generation disagreement is visible while it lasts: the command
@@ -853,11 +853,11 @@ int main() {
 
   // ---- 11 S4.1: conn speaks the WIRE vocabulary, incompatible included ----
   {
-    // The mapping lives in PublishState (writer echoes what it is given), so
-    // it is asserted THROUGH PublishState. Until 2026-09-26 the wire carried
+    // The mapping lives in publish_state (writer echoes what it is given), so
+    // it is asserted THROUGH publish_state. Until 2026-09-26 the wire carried
     // the session's internal names -- "probing"/"ok" -- which are outside the
     // contract's closed set.
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -866,15 +866,15 @@ int main() {
                });
 
     // No chassis behind this fixture: the session is probing, the wire says
-    // "connecting". mutant: fall back to ConnStateName -> "probing" -> red.
+    // "connecting". mutant: fall back to conn_state_name -> "probing" -> red.
     QuadrupedProcess::StateSnapshot snap;
-    p.CtrlTick(0.0);
-    CHECK(p.TakeStateForPublish(&snap) == true);
-    CHECK(b.PublishState(snap) == true);
-    CHECK(Has(sent.back().body, "\"conn\":\"connecting\""));
-    CHECK(!Has(sent.back().body, "probing"));
+    p.ctrl_tick(0.0);
+    CHECK(p.take_state_for_publish(&snap) == true);
+    CHECK(b.publish_state(snap) == true);
+    CHECK(has(sent.back().body, "\"conn\":\"connecting\""));
+    CHECK(!has(sent.back().body, "probing"));
     // And no handshake yet: proto_version is null, not an invented "1.0".
-    CHECK(Has(sent.back().body, "\"proto_version\":null"));
+    CHECK(has(sent.back().body, "\"proto_version\":null"));
 
     // A hello whose major we do not speak. The refusal is already counted;
     // the NEW half is that conn latches to "incompatible" (11 S9.1.3) --
@@ -882,31 +882,31 @@ int main() {
     // refuse. mutant: drop the override -> "connecting" -> red.
     const std::string bad =
         "{\"type\":\"hello\",\"proto_version\":\"2.0\",\"client\":\"p1\"}";
-    b.HandleHello(1.0, bad.c_str(), bad.size());
+    b.handle_hello(1.0, bad.c_str(), bad.size());
     CHECK(b.hello_answered() == 0);
-    p.CtrlTick(0.1);
-    CHECK(p.TakeStateForPublish(&snap) == true);
-    CHECK(b.PublishState(snap) == true);
-    CHECK(Has(sent.back().body, "\"conn\":\"incompatible\""));
+    p.ctrl_tick(0.1);
+    CHECK(p.take_state_for_publish(&snap) == true);
+    CHECK(b.publish_state(snap) == true);
+    CHECK(has(sent.back().body, "\"conn\":\"incompatible\""));
 
     // A matching hello CLEARS the verdict: conn describes the newest
     // handshake, and the fix for an incompatible upstream arrives exactly as
     // a fresh hello. The validated version is now on the state key.
     const std::string good =
         "{\"type\":\"hello\",\"proto_version\":\"1.4\",\"client\":\"p1\"}";
-    b.HandleHello(2.0, good.c_str(), good.size());
+    b.handle_hello(2.0, good.c_str(), good.size());
     CHECK(b.hello_answered() == 1);
-    CHECK(FindLast(sent, "rt/chassis/hello_ack") != "");
-    p.CtrlTick(0.2);
-    CHECK(p.TakeStateForPublish(&snap) == true);
-    CHECK(b.PublishState(snap) == true);
-    CHECK(Has(sent.back().body, "\"conn\":\"connecting\""));
-    CHECK(Has(sent.back().body, "\"proto_version\":\"1.4\""));
+    CHECK(find_last(sent, "rt/chassis/hello_ack") != "");
+    p.ctrl_tick(0.2);
+    CHECK(p.take_state_for_publish(&snap) == true);
+    CHECK(b.publish_state(snap) == true);
+    CHECK(has(sent.back().body, "\"conn\":\"connecting\""));
+    CHECK(has(sent.back().body, "\"proto_version\":\"1.4\""));
   }
 
   // ---- 11 S4.1 last_soft_estop reaches the state key ----------------------
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -916,35 +916,35 @@ int main() {
 
     // Before any stop: the key is null (11 S4.1's "none this boot" spelling).
     QuadrupedProcess::StateSnapshot snap;
-    p.CtrlTick(0.0);
-    CHECK(p.TakeStateForPublish(&snap) == true);
-    CHECK(b.PublishState(snap) == true);
-    CHECK(Has(sent.back().body, "\"last_soft_estop\":null"));
+    p.ctrl_tick(0.0);
+    CHECK(p.take_state_for_publish(&snap) == true);
+    CHECK(b.publish_state(snap) == true);
+    CHECK(has(sent.back().body, "\"last_soft_estop\":null"));
 
     // A stop with the audit pair. The receipt is stamped ~2 s in the past on
-    // the REAL clock: PublishState computes the age at publish time from its
+    // the REAL clock: publish_state computes the age at publish time from its
     // own clock read, so the published number must land near 2000 ms.
     // mutant: stamp the publish instant plus a constant instead -> the age is
     // the machine's uptime in ms, far outside the window -> red.
-    const double rx = MonoNowSeconds() - 2.0;
-    const std::string stop = Wrap(
+    const double rx = mono_now_seconds() - 2.0;
+    const std::string stop = wrap(
         "{\"cmd_id\":\"e-a1\",\"action\":\"stop\","
         "\"reason\":\"operator_hmi\",\"src_role\":\"hmi\"}");
-    b.HandleEstop(rx, stop.c_str(), stop.size());
+    b.handle_estop(rx, stop.c_str(), stop.size());
     const std::uint64_t epoch = p.estop_epoch();
     CHECK(epoch >= 1);
-    p.CtrlTick(0.1);
-    CHECK(p.TakeStateForPublish(&snap) == true);
-    CHECK(b.PublishState(snap) == true);
+    p.ctrl_tick(0.1);
+    CHECK(p.take_state_for_publish(&snap) == true);
+    CHECK(b.publish_state(snap) == true);
     const std::string& body = sent.back().body;
     {
       char want[64];
       std::snprintf(want, sizeof(want), "\"last_soft_estop\":{\"epoch\":%llu",
                     static_cast<unsigned long long>(epoch));
-      CHECK(Has(body, want));
+      CHECK(has(body, want));
     }
-    CHECK(Has(body, "\"reason\":\"operator_hmi\""));
-    CHECK(Has(body, "\"src_role\":\"hmi\""));
+    CHECK(has(body, "\"reason\":\"operator_hmi\""));
+    CHECK(has(body, "\"src_role\":\"hmi\""));
     {
       const std::size_t at = body.find("\"age_ms\":");
       CHECK(at != std::string::npos);
@@ -960,11 +960,11 @@ int main() {
     // BY the duplicate is unobservable by construction: the window is 50 ms,
     // so the age can shift by at most 50 ms -- noted here so nobody writes a
     // mutant for it and calls the survivor a hole (CLAUDE.md 7.2.1).
-    b.HandleEstop(rx + 0.020, stop.c_str(), stop.size());
+    b.handle_estop(rx + 0.020, stop.c_str(), stop.size());
     CHECK(b.estops_deduped() == 1);
-    p.CtrlTick(0.2);
-    CHECK(p.TakeStateForPublish(&snap) == true);
-    CHECK(b.PublishState(snap) == true);
+    p.ctrl_tick(0.2);
+    CHECK(p.take_state_for_publish(&snap) == true);
+    CHECK(b.publish_state(snap) == true);
     {
       const std::string& b2 = sent.back().body;
       const std::size_t at = b2.find("\"age_ms\":");
@@ -975,18 +975,18 @@ int main() {
 
     // A stop WITHOUT the pair (best-effort on this key): the block exists,
     // the strings are null. 200 ms later so the dedup window is closed.
-    const std::string bare = Wrap("{\"cmd_id\":\"e-a2\",\"action\":\"stop\"}");
-    b.HandleEstop(rx + 0.3, bare.c_str(), bare.size());
-    p.CtrlTick(0.3);
-    CHECK(p.TakeStateForPublish(&snap) == true);
-    CHECK(b.PublishState(snap) == true);
-    CHECK(Has(sent.back().body, "\"reason\":null"));
-    CHECK(Has(sent.back().body, "\"src_role\":null"));
+    const std::string bare = wrap("{\"cmd_id\":\"e-a2\",\"action\":\"stop\"}");
+    b.handle_estop(rx + 0.3, bare.c_str(), bare.size());
+    p.ctrl_tick(0.3);
+    CHECK(p.take_state_for_publish(&snap) == true);
+    CHECK(b.publish_state(snap) == true);
+    CHECK(has(sent.back().body, "\"reason\":null"));
+    CHECK(has(sent.back().body, "\"src_role\":null"));
   }
 
   // ---- 11 S4.1 model/version/faults ride the report-side cache ------------
   {
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -995,40 +995,40 @@ int main() {
                });
 
     // Cold: all three are their null shapes (asserted through the writer test
-    // too; HERE the claim is that PublishState wires the cache, not zeros).
+    // too; HERE the claim is that publish_state wires the cache, not zeros).
     QuadrupedProcess::StateSnapshot snap;
-    p.CtrlTick(0.0);
-    CHECK(p.TakeStateForPublish(&snap) == true);
-    CHECK(b.PublishState(snap) == true);
-    CHECK(Has(sent.back().body, "\"model\":null"));
-    CHECK(Has(sent.back().body, "\"faults\":[]"));
+    p.ctrl_tick(0.0);
+    CHECK(p.take_state_for_publish(&snap) == true);
+    CHECK(b.publish_state(snap) == true);
+    CHECK(has(sent.back().body, "\"model\":null"));
+    CHECK(has(sent.back().body, "\"faults\":[]"));
 
     // A BasicStatus fills the identity cache; the NEXT state carries it.
     // mutant: never cache model -> stays null -> red.
     chs_a::BasicStatus basic;
     basic.model = "CA9C";
     basic.version = "PRO";
-    b.PublishReports(0.05, &basic, nullptr, nullptr, nullptr);
-    p.CtrlTick(0.1);
-    CHECK(p.TakeStateForPublish(&snap) == true);
-    CHECK(b.PublishState(snap) == true);
-    CHECK(Has(sent.back().body, "\"model\":\"CA9C\""));
-    CHECK(Has(sent.back().body, "\"version\":\"PRO\""));
+    b.publish_reports(0.05, &basic, nullptr, nullptr, nullptr);
+    p.ctrl_tick(0.1);
+    CHECK(p.take_state_for_publish(&snap) == true);
+    CHECK(b.publish_state(snap) == true);
+    CHECK(has(sent.back().body, "\"model\":\"CA9C\""));
+    CHECK(has(sent.back().body, "\"version\":\"PRO\""));
 
     // A fault report fills the fault cache -- the state key then carries the
     // asserted set, values verbatim from the stream (CF-5: same converter,
     // by copying). Note the key inside the state entry is `desc`.
     chs_a::FaultReport fr;
     chs_a::FaultEntry fe;
-    fe.code = chs_a::FormatChassisFaultCode(0x1007);
+    fe.code = chs_a::format_chassis_fault_code(0x1007);
     fe.level = "degraded";
     fe.name = "dock_no_current";
     fr.faults.push_back(fe);
-    b.PublishReports(0.15, nullptr, nullptr, nullptr, &fr);
-    p.CtrlTick(0.2);
-    CHECK(p.TakeStateForPublish(&snap) == true);
-    CHECK(b.PublishState(snap) == true);
-    CHECK(Has(sent.back().body,
+    b.publish_reports(0.15, nullptr, nullptr, nullptr, &fr);
+    p.ctrl_tick(0.2);
+    CHECK(p.take_state_for_publish(&snap) == true);
+    CHECK(b.publish_state(snap) == true);
+    CHECK(has(sent.back().body,
               "\"faults\":[{\"code\":\"chs:0x1007\",\"level\":\"degraded\","
               "\"desc\":\"dock_no_current\"}]"));
 
@@ -1036,17 +1036,17 @@ int main() {
     // asserted set) empties the state key's list. mutant: skip the rebuild
     // (or merge) -> the cleared fault stays asserted forever -> red.
     chs_a::FaultReport clear;
-    b.PublishReports(0.25, nullptr, nullptr, nullptr, &clear);
-    p.CtrlTick(0.3);
-    CHECK(p.TakeStateForPublish(&snap) == true);
-    CHECK(b.PublishState(snap) == true);
-    CHECK(Has(sent.back().body, "\"faults\":[]"));
+    b.publish_reports(0.25, nullptr, nullptr, nullptr, &clear);
+    p.ctrl_tick(0.3);
+    CHECK(p.take_state_for_publish(&snap) == true);
+    CHECK(b.publish_state(snap) == true);
+    CHECK(has(sent.back().body, "\"faults\":[]"));
   }
 
   // ---- the four report streams reach their own keys (13 S7.1 Q-5) --------
   {
     // 13 ASM-4 (3) recorded this forwarding as "v1.15 已做" while
-    // SetReportSink had ZERO production call sites: all four keys declared,
+    // set_report_sink had ZERO production call sites: all four keys declared,
     // all four writers implemented and tested, and not one frame ever sent.
     // Measured 2026-09-18 -- subscribing to xbrain/dev/rt/chassis/** for 12 s
     // returned ONLY rt/chassis/state.
@@ -1054,7 +1054,7 @@ int main() {
     // The case asserts the KEY each report lands on, because that is what was
     // missing. A test that only checked "the writer produces JSON" passed
     // throughout the whole period the feature did not exist.
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -1063,24 +1063,24 @@ int main() {
                });
     chs_a::BasicStatus basic;
     basic.model = "CA9C";
-    b.PublishReports(0.0, &basic, nullptr, nullptr, nullptr);
+    b.publish_reports(0.0, &basic, nullptr, nullptr, nullptr);
     CHECK(sent.size() == 1);
     CHECK(sent.back().key == "rt/chassis/basic");
 
     chs_a::MotionStatus motion;
-    b.PublishReports(0.1, nullptr, &motion, nullptr, nullptr);
+    b.publish_reports(0.1, nullptr, &motion, nullptr, nullptr);
     CHECK(sent.back().key == "rt/chassis/motion");
 
     // The device report carries the batteries, so it ALSO triggers PowerState
     // (11 S4.2, 1 Hz). Two messages land here, not one.
     chs_a::DeviceStatus device;
-    b.PublishReports(0.2, nullptr, nullptr, &device, nullptr);
+    b.publish_reports(0.2, nullptr, nullptr, &device, nullptr);
     CHECK(sent.size() == 4);
     CHECK(sent[2].key == "rt/chassis/device");
     CHECK(sent[3].key == "rt/chassis/power");
 
     chs_a::FaultReport fault;
-    b.PublishReports(0.3, nullptr, nullptr, nullptr, &fault);
+    b.publish_reports(0.3, nullptr, nullptr, nullptr, &fault);
     CHECK(sent.back().key == "rt/chassis/fault");
     CHECK(sent.size() == 5);
 
@@ -1089,17 +1089,17 @@ int main() {
     // three fabricated messages on the bus for every real one.
     // mutant: drop the null guards -> sent.size() jumps -> red.
     const std::size_t before = sent.size();
-    b.PublishReports(0.4, nullptr, nullptr, nullptr, nullptr);
+    b.publish_reports(0.4, nullptr, nullptr, nullptr, nullptr);
     CHECK(sent.size() == before);
   }
 
   // ---- PowerState reaches rt/chassis/power at 1 Hz (11 S4.2 / 13 S7.1) ----
   {
     // The gap this closes: rt/chassis/power was declared in rt_keys.cc and
-    // WritePowerState was fully implemented WITH tests, and nothing ever
+    // write_power_state was fully implemented WITH tests, and nothing ever
     // called it. CHG-10's low-battery return reads soc_pct off state/power
     // (CR-5 relays this key), so the rule had no data source at all.
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
@@ -1113,10 +1113,10 @@ int main() {
     chs_a::BasicStatus basic;
     basic.power_management = 1;          // single_battery (11 S9.8.1)
     basic.charge = 2;                    // charging
-    b.PublishReports(0.0, &basic, nullptr, nullptr, nullptr);
+    b.publish_reports(0.0, &basic, nullptr, nullptr, nullptr);
     chs_a::MotionStatus motion;
     motion.remain_mile = 4.2;
-    b.PublishReports(0.05, nullptr, &motion, nullptr, nullptr);
+    b.publish_reports(0.05, nullptr, &motion, nullptr, nullptr);
 
     chs_a::DeviceStatus device;
     chs_a::BatteryEntry b0;
@@ -1126,9 +1126,9 @@ int main() {
     device.batteries.push_back(b0);
     device.min_level = 47;
     device.present_count = 1;
-    b.PublishReports(0.1, nullptr, nullptr, &device, nullptr);
+    b.publish_reports(0.1, nullptr, nullptr, &device, nullptr);
 
-    const std::string power = FindLast(sent, "rt/chassis/power");
+    const std::string power = find_last(sent, "rt/chassis/power");
     CHECK(!power.empty());
     // Fields from all three reports, which is the point of caching them.
     CHECK(power.find("\"soc_pct\":47") != std::string::npos);
@@ -1148,14 +1148,14 @@ int main() {
     // chassis changed that cadence.
     // mutant: drop the deadline check -> a second power message appears.
     const std::size_t before = sent.size();
-    b.PublishReports(0.2, nullptr, nullptr, &device, nullptr);
+    b.publish_reports(0.2, nullptr, nullptr, &device, nullptr);
     CHECK(sent.size() == before + 1);          // the device report itself
     CHECK(sent.back().key == "rt/chassis/device");
 
     // And it DOES publish again once the period has passed. Without this the
     // assertion above is satisfied by an implementation that publishes once
     // and never again.
-    b.PublishReports(1.3, nullptr, nullptr, &device, nullptr);
+    b.publish_reports(1.3, nullptr, nullptr, &device, nullptr);
     CHECK(sent.back().key == "rt/chassis/power");
 
     // A charge value outside the closed set is NULL, never a nearby member.
@@ -1165,9 +1165,9 @@ int main() {
     chs_a::BasicStatus odd;
     odd.charge = 9;                      // outside idle..on_dock_no_current
     odd.power_management = 7;            // outside normal / single_battery
-    b.PublishReports(2.4, &odd, nullptr, nullptr, nullptr);
-    b.PublishReports(2.5, nullptr, nullptr, &device, nullptr);
-    const std::string odd_power = FindLast(sent, "rt/chassis/power");
+    b.publish_reports(2.4, &odd, nullptr, nullptr, nullptr);
+    b.publish_reports(2.5, nullptr, nullptr, &device, nullptr);
+    const std::string odd_power = find_last(sent, "rt/chassis/power");
     CHECK(odd_power.find("\"charge\":null") != std::string::npos);
     // power_management keeps the open-set form the writer already used for it
     // -- the raw value is preserved rather than dropped, which is the 13 S6.5
@@ -1183,18 +1183,18 @@ int main() {
     // NOTHING subscribed to it -- quadruped has no light code at all, so the
     // chassis lamps and 13 C-07's custom patterns were unreachable from the
     // upper stack (11 P1-8 forwards this key from cmd/chassis/light).
-    QuadrupedProcess p(Cfg());
+    QuadrupedProcess p(cfg());
     std::vector<Sent> sent;
     RtBridge b(&p, kRid, kBoot,
                [&sent](const std::string& k, const char* d, std::size_t n) {
                  sent.push_back({k, std::string(d, n)});
                  return true;
                });
-    const std::string ok = Wrap(
+    const std::string ok = wrap(
         "{\"cmd_id\":\"l-01\",\"custom\":{\"enable\":true,"
         "\"head\":{\"pattern\":\"blink\",\"color\":\"white\",\"cycle_s\":1},"
         "\"tail\":{\"pattern\":\"breath\",\"color\":\"green\",\"cycle_s\":2}}}");
-    b.HandleLight(0.0, ok.data(), ok.size());
+    b.handle_light(0.0, ok.data(), ok.size());
     // ACCEPTED, counted before the send and separately from it. There is no
     // chassis behind this fixture, so the send fails -- and that is precisely
     // the case 13 ASM-6 shows must stay distinguishable: a single counter
@@ -1204,9 +1204,9 @@ int main() {
     CHECK(b.light_send_failures() == 1);
 
     // 13 V-47: illumination is REFUSED. Not accepted, not silently dropped.
-    const std::string illum = Wrap(
+    const std::string illum = wrap(
         "{\"cmd_id\":\"l-02\",\"illumination\":{\"front\":1,\"back\":0}}");
-    b.HandleLight(0.1, illum.data(), illum.size());
+    b.handle_light(0.1, illum.data(), illum.size());
     CHECK(b.lights_accepted() == 1);          // unchanged
     CHECK(b.lights_refused() == 1);
 
@@ -1215,20 +1215,20 @@ int main() {
     // which is worse than a refusal it can see.
     // mutant: apply custom anyway when illumination is present -> accepted
     // goes to 2.
-    const std::string both = Wrap(
+    const std::string both = wrap(
         "{\"cmd_id\":\"l-03\",\"illumination\":{\"front\":1},"
         "\"custom\":{\"enable\":true,"
         "\"head\":{\"pattern\":\"solid\",\"color\":\"white\",\"cycle_s\":0},"
         "\"tail\":{\"pattern\":\"solid\",\"color\":\"white\",\"cycle_s\":0}}}");
-    b.HandleLight(0.2, both.data(), both.size());
+    b.handle_light(0.2, both.data(), both.size());
     CHECK(b.lights_accepted() == 1);          // still unchanged
     CHECK(b.lights_refused() == 2);
 
     // A malformed one is refused too, and nothing is published either way:
     // this key has no ack (11 S2.2.1 declares none), so the bridge must not
     // invent one.
-    const std::string bad = Wrap("{\"cmd_id\":\"l-04\"}");
-    b.HandleLight(0.3, bad.data(), bad.size());
+    const std::string bad = wrap("{\"cmd_id\":\"l-04\"}");
+    b.handle_light(0.3, bad.data(), bad.size());
     CHECK(b.lights_refused() == 3);
     CHECK(sent.empty());
   }

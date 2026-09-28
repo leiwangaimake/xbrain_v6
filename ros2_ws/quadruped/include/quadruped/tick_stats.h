@@ -73,7 +73,7 @@ class TickStats {
   }
 
   // Record one inter-tick interval.
-  void Add(double dt_ms) {
+  void add(double dt_ms) {
     // Negative deltas are dropped rather than clamped to zero. steady_clock
     // cannot go backwards, so a negative value means the caller subtracted in
     // the wrong order -- counting it as a perfect 0 ms tick would hide that bug
@@ -93,7 +93,7 @@ class TickStats {
   // UPPER edge; see the header note on why it rounds away from passing.
   // An empty histogram returns 0.0 -- a loop that never ticked has no period,
   // and inventing one would let a run that produced no samples report a pass.
-  double PercentileMs(double p) const {
+  double percentile_ms(double p) const {
     if (count_ == 0) return 0.0;
     // A real ceiling. The rank wanted is ceil(p * n): for p=0.99 and n=101 that
     // is the 100th sample, and truncation gives the 99th -- one sample earlier,
@@ -137,7 +137,7 @@ class TickStats {
   double max_ms() const { return max_ms_; }
   std::uint64_t count() const { return count_; }
   // Ticks at or beyond the histogram's ceiling. Exposed separately because a
-  // non-zero overflow makes PercentileMs fall back to max_ms, and a reader has
+  // non-zero overflow makes percentile_ms fall back to max_ms, and a reader has
   // to be able to tell that happened rather than infer it.
   std::uint64_t overflow() const { return over_; }
 

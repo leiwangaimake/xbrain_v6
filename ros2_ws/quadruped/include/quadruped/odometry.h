@@ -63,7 +63,7 @@ enum class OdomBand {
   kStop = 3,       // tau > 1000 ms: stop publishing odom AND TF
 };
 
-const char* OdomBandName(OdomBand b);
+const char* odom_band_name(OdomBand b);
 
 // 13 S4.4: K_corr = T_s / dt = 10, the correlation correction in the yaw
 // recursion. It is NOT a unit conversion, and 13 checks the result numerically
@@ -123,30 +123,30 @@ class Odometry {
 
   // A new linear velocity sample from the chassis (10 Hz, or 20 Hz on drdds).
   // Commits the covariance for the interval that just closed and restarts tau.
-  void OnVelocitySample(double now_mono_s, double vx, double vy);
+  void on_velocity_sample(double now_mono_s, double vx, double vy);
 
   // A yaw rate from the IMU (200 Hz). Integrated at the publish tick rather
   // than here, so the integration step is the publish period and not the
   // jittery arrival interval.
-  void OnYawRate(double wz);
+  void on_yaw_rate(double wz);
 
   // The gait currently read back, so the trust factor can be applied and a
   // stair gait can invalidate the sample (11 S9.9).
-  void OnGait(bool is_stair_gait);
+  void on_gait(bool is_stair_gait);
 
   // One 100 Hz publish tick. dt is the publish period, passed in rather than
   // derived from successive now values: a tick that was late must not integrate
   // a longer step on a velocity it does not have (that would be extrapolation
   // by the back door, ODO-3).
-  OdomSample Tick(double now_mono_s, double dt_s);
+  OdomSample tick(double now_mono_s, double dt_s);
 
   // The committed part alone, for a test that wants to see the two halves.
   double committed_var_xy() const { return p_xx_committed_; }
   bool has_velocity() const { return has_velocity_; }
 
  private:
-  double SigmaV(double tau_s) const;
-  double TrustDivisor() const;
+  double sigma_v(double tau_s) const;
+  double trust_divisor() const;
 
   OdomConfig cfg_;
   bool holonomic_;
@@ -182,7 +182,7 @@ struct Quaternion {
   double w = 1.0;
 };
 
-Quaternion YawToQuaternion(double yaw_rad);
+Quaternion yaw_to_quaternion(double yaw_rad);
 
 // Where each variance lands in the 6x6 row-major covariance array that
 // nav_msgs/Odometry carries. Named because the numbers are the bug: [35] is
@@ -199,7 +199,7 @@ inline constexpr int kCovIndexYaw = 35;   // row 5, col 5
 // Fill a 36-element row-major covariance from the three estimated diagonal
 // terms. The three unestimated axes get -1, the REP-105 convention for "not
 // provided" -- zero would claim perfect knowledge of something never measured.
-void FillCovariance36(double var_x, double var_y, double var_yaw, double* out36);
+void fill_covariance36(double var_x, double var_y, double var_yaw, double* out36);
 
 }  // namespace quadruped
 

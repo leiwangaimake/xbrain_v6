@@ -61,7 +61,7 @@ namespace {
 
 using Bytes = std::vector<std::uint8_t>;
 
-Bytes FromHex(const std::string& hex) {
+Bytes from_hex(const std::string& hex) {
   Bytes out;
   out.reserve(hex.size() / 2);
   for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
@@ -72,7 +72,7 @@ Bytes FromHex(const std::string& hex) {
 
 // An empty map FAILS rather than letting every capture-driven case below pass
 // on nothing -- the "zero tests ran, all green" shape.
-std::map<std::string, Bytes> LoadGolden(const std::string& path) {
+std::map<std::string, Bytes> load_golden(const std::string& path) {
   std::map<std::string, Bytes> out;
   std::ifstream f(path);
   if (!f) {
@@ -87,7 +87,7 @@ std::map<std::string, Bytes> LoadGolden(const std::string& path) {
     std::string tag, hex;
     std::size_t n = 0;
     if (!(is >> tag >> n >> hex)) continue;
-    out[tag] = FromHex(hex);
+    out[tag] = from_hex(hex);
   }
   if (out.empty()) {
     std::printf("FAIL golden file parsed to zero vectors\n");
@@ -97,12 +97,12 @@ std::map<std::string, Bytes> LoadGolden(const std::string& path) {
 }
 
 // The ASDU of a captured frame: everything past the 16-byte header.
-const std::uint8_t* Asdu(const Bytes& frame) { return frame.data() + kHeaderBytes; }
-std::size_t AsduLen(const Bytes& frame) { return frame.size() - kHeaderBytes; }
+const std::uint8_t* asdu(const Bytes& frame) { return frame.data() + kHeaderBytes; }
+std::size_t asdu_len(const Bytes& frame) { return frame.size() - kHeaderBytes; }
 
 // A synthetic payload. Written as text because that is how a reader compares it
 // with the manual, and wrapped the way every real ASDU is.
-Bytes Wrap(const std::string& items) {
+Bytes wrap(const std::string& items) {
   const std::string s = "{\"PatrolDevice\":{\"Command\":15728640,\"Items\":" +
                         items + ",\"Time\":\"2026-09-15 14:55:55.457\"," +
                         "\"Type\":1048676}}";
@@ -114,7 +114,7 @@ Bytes Wrap(const std::string& items) {
 int main(int argc, char** argv) {
   const std::string golden_path =
       (argc >= 2) ? argv[1] : "test/golden/chs_a_frames.txt";
-  const auto golden = LoadGolden(golden_path);
+  const auto golden = load_golden(golden_path);
   if (golden.empty()) {
     std::printf("%d CHS_A_REPORTS TEST(S) FAILED\n", g_failures);
     return 1;
@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
   {
     const Bytes& f = golden.at("RX_00100064_00f00000");
     BasicStatus s;
-    CHECK(ParseBasicStatus(Asdu(f), AsduLen(f), &s));
+    CHECK(parse_basic_status(asdu(f), asdu_len(f), &s));
     CHECK(s.motion_state.raw == 0);
     CHECK(s.motion_state.known == true);
     CHECK(s.motion_state.label == "idle");
@@ -152,7 +152,7 @@ int main(int argc, char** argv) {
   {
     const Bytes& f = golden.at("RX_00100001_00f00000");
     MotionStatus s;
-    CHECK(ParseMotionStatus(Asdu(f), AsduLen(f), &s));
+    CHECK(parse_motion_status(asdu(f), asdu_len(f), &s));
     CHECK(s.linear_x == 0.0);
     CHECK(s.linear_y == 0.0);
     CHECK(s.motion_state.label == "idle");
@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
   {
     const Bytes& f = golden.at("RX_00100002_00f00000");
     DeviceStatus s;
-    CHECK(ParseDeviceStatus(Asdu(f), AsduLen(f), &s));
+    CHECK(parse_device_status(asdu(f), asdu_len(f), &s));
     CHECK(s.batteries.size() == 2);
     CHECK(s.batteries[0].level == 43);
     CHECK(s.batteries[1].level == 44);
@@ -221,12 +221,12 @@ int main(int argc, char** argv) {
     // the other publishes sixteen zeros under its own name, and 0 degrees is
     // a plausible reading for a cold joint -- so "half the group arrived"
     // would go out looking like a measurement.
-    const Bytes p = Wrap(
+    const Bytes p = wrap(
         "{\"BatteryList\":[],"
         " \"DeviceTemperature\":{\"Motor\":[1,2,3,4,5,6,7,8,9,10,11,12,13,"
         "14,15,16]}}");
     DeviceStatus s;
-    CHECK(ParseDeviceStatus(p.data(), p.size(), &s));
+    CHECK(parse_device_status(p.data(), p.size(), &s));
     CHECK(s.temps.valid == false);
   }
 
@@ -236,11 +236,11 @@ int main(int argc, char** argv) {
     // origin, and a quadruped standing has every knee bent -- so a short list
     // must read as ABSENT, not as a pose. This is the shape that makes a
     // firmware change look like a mechanical fault.
-    const Bytes p = Wrap(
+    const Bytes p = wrap(
         "{\"MotionStatus\":{\"LinearX\":0.5},"
         " \"MotorStatus\":{\"Joint\":[0.1,0.2,0.3]}}");
     MotionStatus m;
-    CHECK(ParseMotionStatus(p.data(), p.size(), &m));
+    CHECK(parse_motion_status(p.data(), p.size(), &m));
     CHECK(m.has_joints == false);
     // The rest of the report still arrives -- 13 S6.5 ban 2: one bad group
     // must not cost the whole message.
@@ -251,7 +251,7 @@ int main(int argc, char** argv) {
   {
     const Bytes& f = golden.at("RX_00100001_00f00000");
     MotionStatus m;
-    CHECK(ParseMotionStatus(Asdu(f), AsduLen(f), &m));
+    CHECK(parse_motion_status(asdu(f), asdu_len(f), &m));
     CHECK(m.has_joints);
     // Guide 1.3.1.2: LeftFront{HipX,HipY,Knee,Wheel}, RightFront, LeftBack,
     // RightBack. Index 1 and index 5 are the two front HipY readings, and
@@ -278,14 +278,14 @@ int main(int argc, char** argv) {
     // min() was deliberately not "fixed" here. 26 is the whole point of the
     // case: an implementation that still folds the vacant slot's fake zero in
     // answers 0, and a machine with one pack at 26% then reports 0% SOC.
-    const Bytes p = Wrap(
+    const Bytes p = wrap(
         "{\"BatteryList\":["
         "{\"BatteryLevel\":0,\"Voltage\":0.0,\"battery_temperature\":-273.0,"
         " \"charge\":false,\"serial\":\"\"},"
         "{\"BatteryLevel\":26,\"Voltage\":69.28,\"battery_temperature\":38.2,"
         " \"charge\":false,\"serial\":\"\"}]}");
     DeviceStatus s;
-    CHECK(ParseDeviceStatus(p.data(), p.size(), &s));
+    CHECK(parse_device_status(p.data(), p.size(), &s));
     CHECK(s.batteries.size() == 2);
     CHECK(s.batteries[0].present == false);
     CHECK(s.batteries[1].present == true);
@@ -301,14 +301,14 @@ int main(int argc, char** argv) {
     // reader that ignores the flag sees the initialiser -- which is 0, a legal
     // SOC. Pinning present_count == 0 here is what makes the writer's null
     // branch reachable by a test at all.
-    const Bytes p = Wrap(
+    const Bytes p = wrap(
         "{\"BatteryList\":["
         "{\"BatteryLevel\":0,\"Voltage\":0.0,\"battery_temperature\":-273.0,"
         " \"charge\":false,\"serial\":\"\"},"
         "{\"BatteryLevel\":0,\"Voltage\":0.0,\"battery_temperature\":-273.0,"
         " \"charge\":false,\"serial\":\"\"}]}");
     DeviceStatus s;
-    CHECK(ParseDeviceStatus(p.data(), p.size(), &s));
+    CHECK(parse_device_status(p.data(), p.size(), &s));
     CHECK(s.batteries.size() == 2);
     CHECK(s.present_count == 0);
   }
@@ -321,14 +321,14 @@ int main(int argc, char** argv) {
     // has the real pack first and the vacant slot second, so only an
     // implementation that actually tests `present` before folding the value in
     // can answer 72 -- the live reading of 2026-09-28.
-    const Bytes p = Wrap(
+    const Bytes p = wrap(
         "{\"BatteryList\":["
         "{\"BatteryLevel\":72,\"Voltage\":77.89,\"battery_temperature\":31.4,"
         " \"charge\":false,\"serial\":\"\"},"
         "{\"BatteryLevel\":0,\"Voltage\":0.0,\"battery_temperature\":-273.0,"
         " \"charge\":false,\"serial\":\"\"}]}");
     DeviceStatus s;
-    CHECK(ParseDeviceStatus(p.data(), p.size(), &s));
+    CHECK(parse_device_status(p.data(), p.size(), &s));
     CHECK(s.present_count == 1);
     CHECK(s.min_level == 72);
   }
@@ -338,12 +338,12 @@ int main(int argc, char** argv) {
     // The other side of the same discriminator. A real pack at 0% still holds
     // a voltage and still reports a temperature; calling it absent would hide a
     // genuinely empty battery, which is the more dangerous mistake of the two.
-    const Bytes p = Wrap(
+    const Bytes p = wrap(
         "{\"BatteryList\":["
         "{\"BatteryLevel\":0,\"Voltage\":58.4,\"battery_temperature\":22.0,"
         " \"charge\":true,\"serial\":\"\"}]}");
     DeviceStatus s;
-    CHECK(ParseDeviceStatus(p.data(), p.size(), &s));
+    CHECK(parse_device_status(p.data(), p.size(), &s));
     CHECK(s.batteries.size() == 1);
     CHECK(s.batteries[0].present == true);
     CHECK(s.present_count == 1);
@@ -357,7 +357,7 @@ int main(int argc, char** argv) {
     FaultReport r;
     // Treating "no faults" as a parse failure would make a healthy link look
     // broken twice a second.
-    CHECK(ParseFaultReport(Asdu(f), AsduLen(f), &r));
+    CHECK(parse_fault_report(asdu(f), asdu_len(f), &r));
     CHECK(r.faults.empty());
     CHECK(r.cleared.empty());
   }
@@ -368,14 +368,14 @@ int main(int argc, char** argv) {
     // soft_estop is -2 (13 S6.1). A parser built from 11 reads an emergency
     // stop as a damping state -- and reads a damping state as an emergency
     // stop, which is the direction that stops a healthy robot for no reason.
-    CHECK(ResolveMotionState(-2).label == "soft_estop");
-    CHECK(ResolveMotionState(-2).known == true);
-    CHECK(ResolveMotionState(2).label == "joint_damp");
-    CHECK(ResolveMotionState(2).known == true);
+    CHECK(resolve_motion_state(-2).label == "soft_estop");
+    CHECK(resolve_motion_state(-2).known == true);
+    CHECK(resolve_motion_state(2).label == "joint_damp");
+    CHECK(resolve_motion_state(2).known == true);
     // The negative value also exercises the label format: 0x%04X on -2 would
     // render 0xFFFE and send a reader hunting for a code never sent.
-    CHECK(ResolveMotionState(-7).known == false);
-    CHECK(ResolveMotionState(-7).label == "unknown_-7");
+    CHECK(resolve_motion_state(-7).known == false);
+    CHECK(resolve_motion_state(-7).label == "unknown_-7");
   }
 
   // ---- ban 1: an unregistered value is never mapped onto a neighbour ------
@@ -385,13 +385,13 @@ int main(int argc, char** argv) {
     // would swallow. 0x1003 is registered but unreachable on readback, and
     // 16 (cart_move) is registered and MUST resolve even though we never
     // command it: readback is how we learn someone used the factory handset.
-    CHECK(ResolveGait(0x3004).known == false);
-    CHECK(ResolveGait(0x3004).label == "unknown_0x3004");
-    CHECK(ResolveGait(0x1003).label == "stair_standard");
-    CHECK(ResolveMotionState(16).label == "cart_move");
-    CHECK(ResolveMotionState(17).label == "rl_control");
-    CHECK(ResolveUsageMode(1).label == "navigation");
-    CHECK(ResolveUsageMode(9).known == false);
+    CHECK(resolve_gait(0x3004).known == false);
+    CHECK(resolve_gait(0x3004).label == "unknown_0x3004");
+    CHECK(resolve_gait(0x1003).label == "stair_standard");
+    CHECK(resolve_motion_state(16).label == "cart_move");
+    CHECK(resolve_motion_state(17).label == "rl_control");
+    CHECK(resolve_usage_mode(1).label == "navigation");
+    CHECK(resolve_usage_mode(9).known == false);
   }
 
   // ---- ban 2: a strange field must not cost the whole report --------------
@@ -400,11 +400,11 @@ int main(int argc, char** argv) {
     // parser that rejects the report over an unregistered gait throws away the
     // hardware emergency stop -- and the robot is then held by a signal
     // nothing upstream can see.
-    const Bytes p = Wrap("{\"BasicStatus\":{\"Gait\":39321,\"HES\":1,"
+    const Bytes p = wrap("{\"BasicStatus\":{\"Gait\":39321,\"HES\":1,"
                          "\"MotionState\":17,\"Sleep\":1,"
                          "\"ControlUsageMode\":1}}");
     BasicStatus s;
-    CHECK(ParseBasicStatus(p.data(), p.size(), &s));
+    CHECK(parse_basic_status(p.data(), p.size(), &s));
     CHECK(s.hes == true);
     CHECK(s.sleep == true);
     CHECK(s.motion_state.label == "rl_control");
@@ -421,9 +421,9 @@ int main(int argc, char** argv) {
     // Same rule seen from the other side: BasicStatus with almost nothing in
     // it still parses, so one firmware that drops a field cannot blind us to
     // the rest of the report.
-    const Bytes p = Wrap("{\"BasicStatus\":{\"HES\":1}}");
+    const Bytes p = wrap("{\"BasicStatus\":{\"HES\":1}}");
     BasicStatus s;
-    CHECK(ParseBasicStatus(p.data(), p.size(), &s));
+    CHECK(parse_basic_status(p.data(), p.size(), &s));
     CHECK(s.hes == true);
     CHECK(s.sleep == false);
     CHECK(s.device_num.empty());
@@ -435,69 +435,69 @@ int main(int argc, char** argv) {
     // back a zeroed struct that reads as "the robot is idle and fine".
     BasicStatus s;
     const Bytes not_json = {'n', 'o', 't', ' ', 'j', 's', 'o', 'n'};
-    CHECK(!ParseBasicStatus(not_json.data(), not_json.size(), &s));
+    CHECK(!parse_basic_status(not_json.data(), not_json.size(), &s));
     const std::string no_wrap = "{\"BasicStatus\":{\"HES\":1}}";
-    CHECK(!ParseBasicStatus(reinterpret_cast<const std::uint8_t*>(no_wrap.data()),
+    CHECK(!parse_basic_status(reinterpret_cast<const std::uint8_t*>(no_wrap.data()),
                             no_wrap.size(), &s));
-    const Bytes wrong = Wrap("{\"MotionStatus\":{\"LinearX\":1.0}}");
-    CHECK(!ParseBasicStatus(wrong.data(), wrong.size(), &s));
-    CHECK(!ParseBasicStatus(nullptr, 0, &s));
-    CHECK(!ParseBasicStatus(wrong.data(), wrong.size(), nullptr));
+    const Bytes wrong = wrap("{\"MotionStatus\":{\"LinearX\":1.0}}");
+    CHECK(!parse_basic_status(wrong.data(), wrong.size(), &s));
+    CHECK(!parse_basic_status(nullptr, 0, &s));
+    CHECK(!parse_basic_status(wrong.data(), wrong.size(), nullptr));
     // The measured machine sends ErrorList as an array; anything else is an
     // envelope failure, not an empty fault list.
     FaultReport r;
-    const Bytes bad_list = Wrap("{\"ErrorList\":{}}");
-    CHECK(!ParseFaultReport(bad_list.data(), bad_list.size(), &r));
+    const Bytes bad_list = wrap("{\"ErrorList\":{}}");
+    CHECK(!parse_fault_report(bad_list.data(), bad_list.size(), &r));
   }
 
   // ---- severity -> level, including the default that matters -------------
   {
-    CHECK(SeverityToLevel(true, 3) == "warn");
-    CHECK(SeverityToLevel(true, 4) == "degraded");
-    CHECK(SeverityToLevel(true, 5) == "fatal");
+    CHECK(severity_to_level(true, 3) == "warn");
+    CHECK(severity_to_level(true, 4) == "degraded");
+    CHECK(severity_to_level(true, 5) == "fatal");
     // *** 13 S7.3: absent or unrecognised is DEGRADED, not warn. The chassis
     // fault space is open, so an unknown severity is an ordinary event -- and
     // calling it "warn" reports a machine in trouble as merely noisy. Both
     // sides of the default are pinned because "always degraded" would also
     // pass an assertion that only checked the unknown case.
-    CHECK(SeverityToLevel(false, 0) == "degraded");
+    CHECK(severity_to_level(false, 0) == "degraded");
     // The `present` flag is the whole reason this takes two arguments: an
     // ABSENT severity must not be read as whatever number happens to sit in
     // the variable. Without this line the flag could be ignored entirely and
     // every case above would still pass, because the caller zeroes the value
     // when the field is missing.
-    CHECK(SeverityToLevel(false, 3) == "degraded");
-    CHECK(SeverityToLevel(false, 5) == "degraded");
-    CHECK(SeverityToLevel(true, 0) == "degraded");
-    CHECK(SeverityToLevel(true, 99) == "degraded");
-    CHECK(SeverityToLevel(true, 2) == "degraded");
+    CHECK(severity_to_level(false, 3) == "degraded");
+    CHECK(severity_to_level(false, 5) == "degraded");
+    CHECK(severity_to_level(true, 0) == "degraded");
+    CHECK(severity_to_level(true, 99) == "degraded");
+    CHECK(severity_to_level(true, 2) == "degraded");
   }
 
   // ---- CF-1 / CF-2: the prefix is written here, and validated -------------
   {
-    CHECK(FormatChassisFaultCode(0x8001) == "chs:0x8001");
-    CHECK(FormatChargeFaultCode(0x1007) == "chg:0x1007");
+    CHECK(format_chassis_fault_code(0x8001) == "chs:0x8001");
+    CHECK(format_charge_fault_code(0x1007) == "chg:0x1007");
     // Upper-case hex body, four digits, zero padded: CF-4's dedup key IS this
     // string, so two spellings of one number would be two faults.
-    CHECK(FormatChassisFaultCode(0x800f) == "chs:0x800F");
-    CHECK(FormatChassisFaultCode(0x12) == "chs:0x0012");
-    CHECK(IsValidPrefixedFaultCode("chs:0x8001"));
-    CHECK(IsValidPrefixedFaultCode("chg:0x1007"));
-    CHECK(IsValidPrefixedFaultCode("chs:0x800f"));  // CF-1 allows either case
+    CHECK(format_chassis_fault_code(0x800f) == "chs:0x800F");
+    CHECK(format_chassis_fault_code(0x12) == "chs:0x0012");
+    CHECK(is_valid_prefixed_fault_code("chs:0x8001"));
+    CHECK(is_valid_prefixed_fault_code("chg:0x1007"));
+    CHECK(is_valid_prefixed_fault_code("chs:0x800f"));  // CF-1 allows either case
     // A bare code cannot be interpreted at all: 0x1007 is "no current at the
     // dock" in one space and undefined in the other.
-    CHECK(!IsValidPrefixedFaultCode("0x8001"));
-    CHECK(!IsValidPrefixedFaultCode("chs:8001"));
-    CHECK(!IsValidPrefixedFaultCode("xyz:0x8001"));
-    CHECK(!IsValidPrefixedFaultCode("chs:0x801"));
-    CHECK(!IsValidPrefixedFaultCode("chs:0x80011"));
-    CHECK(!IsValidPrefixedFaultCode("chs:0xZZZZ"));
-    CHECK(!IsValidPrefixedFaultCode(""));
+    CHECK(!is_valid_prefixed_fault_code("0x8001"));
+    CHECK(!is_valid_prefixed_fault_code("chs:8001"));
+    CHECK(!is_valid_prefixed_fault_code("xyz:0x8001"));
+    CHECK(!is_valid_prefixed_fault_code("chs:0x801"));
+    CHECK(!is_valid_prefixed_fault_code("chs:0x80011"));
+    CHECK(!is_valid_prefixed_fault_code("chs:0xZZZZ"));
+    CHECK(!is_valid_prefixed_fault_code(""));
   }
 
   // ---- faults and cleared are split by Type, and both carry the prefix ----
   {
-    const Bytes p = Wrap(
+    const Bytes p = wrap(
         "{\"ErrorList\":["
         "{\"Code\":32769,\"Name\":\"motor_over_temperature\",\"Type\":1,"
         " \"Severities\":5,\"Grouped\":true,\"Resources\":[\"11\"],"
@@ -508,7 +508,7 @@ int main(int argc, char** argv) {
         "{\"Code\":33025,\"Name\":\"battery_low\",\"Type\":2,\"Severities\":3}"
         "]}");
     FaultReport r;
-    CHECK(ParseFaultReport(p.data(), p.size(), &r));
+    CHECK(parse_fault_report(p.data(), p.size(), &r));
     CHECK(r.faults.size() == 2);
     CHECK(r.cleared.size() == 1);
     if (r.faults.size() == 2 && r.cleared.size() == 1) {
@@ -544,8 +544,8 @@ int main(int argc, char** argv) {
     }
     // Every code this parser emits must satisfy CF-1, including the ones built
     // from a code the table has never seen.
-    for (const FaultEntry& f : r.faults) CHECK(IsValidPrefixedFaultCode(f.code));
-    for (const FaultEntry& f : r.cleared) CHECK(IsValidPrefixedFaultCode(f.code));
+    for (const FaultEntry& f : r.faults) CHECK(is_valid_prefixed_fault_code(f.code));
+    for (const FaultEntry& f : r.cleared) CHECK(is_valid_prefixed_fault_code(f.code));
   }
 
   // ---- a wrong-typed field falls back rather than throwing ----------------
@@ -553,10 +553,10 @@ int main(int argc, char** argv) {
     // A firmware that sent Gait as a string would otherwise throw out of the
     // middle of the parse and cost the whole report -- ban 2 again, reached
     // through a type error rather than through an unknown value.
-    const Bytes p = Wrap("{\"BasicStatus\":{\"Gait\":\"flat\",\"HES\":1,"
+    const Bytes p = wrap("{\"BasicStatus\":{\"Gait\":\"flat\",\"HES\":1,"
                          "\"MotionState\":4,\"DeviceNum\":7}}");
     BasicStatus s;
-    CHECK(ParseBasicStatus(p.data(), p.size(), &s));
+    CHECK(parse_basic_status(p.data(), p.size(), &s));
     CHECK(s.hes == true);
     CHECK(s.motion_state.label == "prone");
     CHECK(s.gait.raw == 0);          // the documented default, not the string

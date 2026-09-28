@@ -81,18 +81,18 @@ extern const std::size_t kKeyCount;
 // Allocation-free: the RT publisher builds keys once at declaration time, but
 // the same function is reachable from paths that must not allocate, and a
 // second "fast" variant would be a second place for the format to drift.
-std::size_t BuildKey(const char* rid, const char* suffix, char* out,
+std::size_t build_key(const char* rid, const char* suffix, char* out,
                      std::size_t cap);
 
 // Convenience for setup code, where a std::string is what the Zenoh API wants
 // anyway. Throws std::length_error rather than returning a truncated key.
-std::string BuildKey(const std::string& rid, const std::string& suffix);
+std::string build_key(const std::string& rid, const std::string& suffix);
 
 // Look up one row by suffix. Returns nullptr when the suffix is not declared --
 // which a caller must treat as a defect, not as "use it anyway": publishing on
 // an undeclared key is how a key escapes the table the contract is checked
 // against.
-const KeySpec* FindKey(const char* suffix);
+const KeySpec* find_key(const char* suffix);
 
 }  // namespace rt
 }  // namespace quadruped

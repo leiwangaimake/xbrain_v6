@@ -6,7 +6,7 @@
  * Brief: RT plane routing (see rt_bridge.h)
  *
  * Description:
- * The order inside HandleEstop is the only thing in this file that is not
+ * The order inside handle_estop is the only thing in this file that is not
  * obvious, and it is the most important: ON A NEW STOP the stop is issued
  * FIRST, before the payload is looked at for the ack. Parsing first and
  * stopping afterwards reads identically and behaves identically right up until
@@ -19,7 +19,7 @@
  * one command from a second, different one. RX-6's guarantee is not lost
  * there: being inside the window MEANS a real stop went out less than 50 ms
  * ago, so the machine is already at zero and the parse sits in front of a
- * possible second stop, never the first. HandleEstop carries the full
+ * possible second stop, never the first. handle_estop carries the full
  * argument at the branch.
  *
  * Everything else here is routing, and the routing is deliberately dull: one
@@ -60,7 +60,7 @@ namespace enums = hachist::xbrain::enums;
 
 // Internal session state -> the 11 S4.1 wire name, drawn from the SHARED
 // closed set (kChassisConn), never a literal (CLAUDE.md 3.5). This mapping
-// lives HERE, at the one PublishState call site, and not in the writer: the
+// lives HERE, at the one publish_state call site, and not in the writer: the
 // writer spells what it is given, so there is exactly one place the two
 // vocabularies meet. Until 2026-09-26 no mapping existed at all and the wire
 // carried the internal names ("probing"/"ok") -- values outside the contract's
@@ -69,7 +69,7 @@ namespace enums = hachist::xbrain::enums;
 // The indices are pinned below; "disconnected" ([0]) is deliberately not
 // produced this batch -- the session has no matching state (its life starts at
 // probing), and inventing a mapping would claim a distinction the process
-// cannot observe. Registered in 13 v1.35. ConnStateName stays what the LOGS
+// cannot observe. Registered in 13 v1.35. conn_state_name stays what the LOGS
 // print (the internal vocabulary is the truer statement about the session).
 static_assert(enums::kChassisConn[1] == "connecting", "table order changed");
 static_assert(enums::kChassisConn[2] == "connected", "table order changed");
@@ -77,7 +77,7 @@ static_assert(enums::kChassisConn[3] == "degraded", "table order changed");
 static_assert(enums::kChassisConn[4] == "lost", "table order changed");
 static_assert(enums::kChassisConn[5] == "incompatible", "table order changed");
 
-const char* ConnWireName(chs_a::ConnState s) {
+const char* conn_wire_name(chs_a::ConnState s) {
   switch (s) {
     case chs_a::ConnState::kProbing: return enums::kChassisConn[1].data();
     case chs_a::ConnState::kOk: return enums::kChassisConn[2].data();
@@ -128,7 +128,7 @@ constexpr const char* kHelloAckSuffix = "rt/chassis/hello_ack";
 // be mixed.
 constexpr const char* kProtoVersion = "1.0";
 
-std::uint64_t ToMs(double s) {
+std::uint64_t to_ms(double s) {
   return s < 0.0 ? 0 : static_cast<std::uint64_t>(s * 1000.0 + 0.5);
 }
 
@@ -143,7 +143,7 @@ RtBridge::RtBridge(QuadrupedProcess* proc, std::string rid, std::string boot,
       // Bound once, here, so the estop path never branches on emptiness and
       // production gets the one reader mono_clock.h exists to be (CLK-C1).
       mono_now_(mono_now ? std::move(mono_now)
-                         : MonoFn(&MonoNowSeconds)) {
+                         : MonoFn(&mono_now_seconds)) {
   // *** Every key this class publishes on must be IN THE TABLE. 11 S2.2.1 is
   // the closed set of RT-plane keys, rt_keys.cc is its transcription, and a
   // suffix that is not there is a key nobody reviewed. Checked once here, at
@@ -153,7 +153,7 @@ RtBridge::RtBridge(QuadrupedProcess* proc, std::string rid, std::string boot,
                         kStateSuffix, kBasicSuffix, kMotionSuffix,
                         kDeviceSuffix, kFaultSuffix, kHelloAckSuffix,
                         kPowerSuffix}) {
-    if (FindKey(k) == nullptr) {
+    if (find_key(k) == nullptr) {
       std::fprintf(stderr,
                    "rt_bridge: key %s is not declared in rt_keys.cc -- it is "
                    "not part of the 11 S2.2.1 closed set\n", k);
@@ -168,24 +168,24 @@ RtBridge::RtBridge(QuadrupedProcess* proc, std::string rid, std::string boot,
 // produced message and confines it to cross-host alignment, recording and
 // latency statistics. Every age, period and timeout in this process is
 // steady_clock -- the envelope's `mono` next to it is what those use.
-double WallNowSeconds() {
+double wall_now_seconds() {
   const auto d = std::chrono::system_clock::now().time_since_epoch();
   return std::chrono::duration<double>(d).count();
 }
 
-std::uint64_t RtBridge::NextSeq(const std::string& suffix) {
+std::uint64_t RtBridge::next_seq(const std::string& suffix) {
   // Per key (11 S3.0), and under a lock because Publish is reached from two
   // threads: rt_pub for the state stream, chs_a_rx for the four report keys
-  // (see PublishReports). A racing ++ would hand two messages the same seq,
+  // (see publish_reports). A racing ++ would hand two messages the same seq,
   // and a subscriber reads a repeated seq as a replay rather than a race.
   std::lock_guard<std::mutex> lk(seq_mu_);
   return seq_[suffix]++;
 }
 
-void RtBridge::HandleClockStatus(double now_mono_s, const char* data,
+void RtBridge::handle_clock_status(double now_mono_s, const char* data,
                                  std::size_t len) {
   ClockStatusMsg m;
-  if (ParseClockStatus(data, len, rid_, boot_, &m) != RtParse::kOk) {
+  if (parse_clock_status(data, len, rid_, boot_, &m) != RtParse::kOk) {
     // Refused, not defaulted -- in either direction. A malformed report
     // simply fails to refresh the age, and CLK-A3's aging does the safe
     // thing on its own. Counted because a schema drift between rtk_driver
@@ -202,7 +202,7 @@ void RtBridge::HandleClockStatus(double now_mono_s, const char* data,
   clock_rx_mono_.store(now_mono_s, std::memory_order_release);
 }
 
-bool RtBridge::TsSyncAt(double now_mono_s) const {
+bool RtBridge::ts_sync_at(double now_mono_s) const {
   const double rx = clock_rx_mono_.load(std::memory_order_acquire);
   // Never received: false. 13 PB-Q3 forbids a true fallback on any branch,
   // and 11 S3.0 gives a missing report the same meaning.
@@ -216,7 +216,7 @@ bool RtBridge::TsSyncAt(double now_mono_s) const {
   return clock_sync_.load(std::memory_order_relaxed);
 }
 
-bool RtBridge::Publish(const std::string& suffix, const char* data,
+bool RtBridge::publish(const std::string& suffix, const char* data,
                        std::size_t len) {
   if (!publish_ || len == 0) return false;
   // 11 S3.0 / 13 PB-Q3: the envelope goes on HERE, at the one exit every
@@ -226,21 +226,21 @@ bool RtBridge::Publish(const std::string& suffix, const char* data,
   EnvelopeInput env;
   env.rid = rid_.c_str();
   env.boot = boot_.c_str();
-  env.ts = WallNowSeconds();
-  env.mono = MonoNowSeconds();
-  env.seq = NextSeq(suffix);
+  env.ts = wall_now_seconds();
+  env.mono = mono_now_seconds();
+  env.seq = next_seq(suffix);
   // 13 Q-5: ts_sync copies the latest ClockStatus.sync, aged out by CLK-A3.
   // Judged at the envelope's own mono -- the same instant the message claims
   // to have been produced -- rather than at a second clock read.
-  env.ts_sync = TsSyncAt(env.mono);
+  env.ts_sync = ts_sync_at(env.mono);
   char wrapped[kEnvCap];
-  const std::size_t n = WriteEnvelope(env, data, len, wrapped, sizeof(wrapped));
+  const std::size_t n = write_envelope(env, data, len, wrapped, sizeof(wrapped));
   // Nothing rather than a truncated object, same rule as the writers.
   //
   // Unreachable by construction today, and deliberately kept: every payload
   // is written into a kOutCap buffer by a writer that returns 0 rather than
   // truncating, so len < 2048; the envelope's own cost is bounded (~190
-  // bytes: eight fixed names, rid capped at 32 by IsValidRobotId, boot at 8,
+  // bytes: eight fixed names, rid capped at 32 by is_valid_robot_id, boot at 8,
   // src fixed) and kEnvCap leaves 512. A mutant forcing this branch cannot be
   // killed by any test that goes through the writers, which is the CLAUDE.md
   // 7.2.1 definition of an equivalent mutant -- noted here instead of assert-
@@ -254,7 +254,7 @@ bool RtBridge::Publish(const std::string& suffix, const char* data,
   return publish_(suffix, wrapped, n);
 }
 
-void RtBridge::PublishReports(double now_mono_s,
+void RtBridge::publish_reports(double now_mono_s,
                              const chs_a::BasicStatus* basic,
                              const chs_a::MotionStatus* motion,
                              const chs_a::DeviceStatus* device,
@@ -266,7 +266,7 @@ void RtBridge::PublishReports(double now_mono_s,
   // (13 S9.1).
   //
   // Before this existed, 13 ASM-4 (3) recorded the forwarding as "v1.15 已做"
-  // while SetReportSink had ZERO production call sites: all four keys were
+  // while set_report_sink had ZERO production call sites: all four keys were
   // declared, all four writers were implemented and tested, and not one frame
   // ever went out. Measured 2026-09-18 -- subscribing to xbrain/dev/rt/chassis/**
   // for 12 s returned only rt/chassis/state.
@@ -281,27 +281,27 @@ void RtBridge::PublishReports(double now_mono_s,
       chassis_model_ = basic->model;
       chassis_version_ = basic->version;
     }
-    const std::size_t n = WriteChassisBasic(*basic, out, sizeof(out));
-    if (n > 0) Publish(kBasicSuffix, out, n);
+    const std::size_t n = write_chassis_basic(*basic, out, sizeof(out));
+    if (n > 0) publish(kBasicSuffix, out, n);
   }
   if (motion != nullptr) {
-    const std::size_t n = WriteChassisMotion(*motion, out, sizeof(out));
-    if (n > 0) Publish(kMotionSuffix, out, n);
+    const std::size_t n = write_chassis_motion(*motion, out, sizeof(out));
+    if (n > 0) publish(kMotionSuffix, out, n);
   }
   if (device != nullptr) {
-    const std::size_t n = WriteChassisDevice(*device, out, sizeof(out));
-    if (n > 0) Publish(kDeviceSuffix, out, n);
+    const std::size_t n = write_chassis_device(*device, out, sizeof(out));
+    if (n > 0) publish(kDeviceSuffix, out, n);
   }
   if (fault != nullptr) {
-    const std::size_t n = WriteChassisFault(*fault, out, sizeof(out));
-    if (n > 0) Publish(kFaultSuffix, out, n);
+    const std::size_t n = write_chassis_fault(*fault, out, sizeof(out));
+    if (n > 0) publish(kFaultSuffix, out, n);
     // 11 S4.1 faults[] rides the state key too, and the state path cannot
     // carry the report (std::string, 12 RTC-6) -- so the currently-asserted
-    // set is cached here for PublishState. REBUILT per report, never merged:
+    // set is cached here for publish_state. REBUILT per report, never merged:
     // `faults` is the complete asserted set each time, so an empty list is a
     // real all-clear, and merging would keep a cleared fault on the state key
     // forever. The values are the fault stream's own (code already prefixed,
-    // level already mapped by SeverityToLevel at parse time) -- CF-5's "same
+    // level already mapped by severity_to_level at parse time) -- CF-5's "same
     // converter" requirement, satisfied by copying rather than reconverting.
     {
       std::lock_guard<std::mutex> lk(report_cache_mu_);
@@ -316,7 +316,7 @@ void RtBridge::PublishReports(double now_mono_s,
   // 11 S4.2 PowerState on rt/chassis/power, 1 Hz (13 S7.1), relayed to
   // state/power by CR-5.
   //
-  // *** Before this, the key was declared in rt_keys.cc and WritePowerState was
+  // *** Before this, the key was declared in rt_keys.cc and write_power_state was
   // fully implemented WITH tests -- and nothing ever called it. CHG-10's
   // low-battery return reads soc_pct from state/power and the HMI battery
   // display reads the same message, so both had no data source at all. The
@@ -342,7 +342,7 @@ void RtBridge::PublishReports(double now_mono_s,
     if (power_next_s_ < 0.0 || now_mono_s >= power_next_s_) {
       power_next_s_ = now_mono_s + kPowerPeriodS;
       // Copied out UNDER the lock, then released before writing and
-      // publishing. Holding it across a zenoh put would stall HandleHello on
+      // publishing. Holding it across a zenoh put would stall handle_hello on
       // the subscription thread for the length of a network call, and the two
       // have nothing to do with each other.
       chs_a::BasicStatus basic_copy;
@@ -361,8 +361,8 @@ void RtBridge::PublishReports(double now_mono_s,
       // index_map_known stays false: 13 BAT-2 keeps left/right null until
       // V-55 closes, and 13 BAT-3's config switch is deliberately not wired
       // while the key can only be null (CLAUDE.md S9.3, no reserved hooks).
-      const std::size_t n = WritePowerState(p, out, sizeof(out));
-      if (n > 0) Publish(kPowerSuffix, out, n);
+      const std::size_t n = write_power_state(p, out, sizeof(out));
+      if (n > 0) publish(kPowerSuffix, out, n);
     }
   }
   // A zero-length write is dropped rather than published: the writers return 0
@@ -371,14 +371,14 @@ void RtBridge::PublishReports(double now_mono_s,
   // malformed sender.
 }
 
-bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
+bool RtBridge::publish_state(const QuadrupedProcess::StateSnapshot& snap) {
   RobotStateInput in;
   // basic / motion stay null. They hold std::string and therefore cannot
   // cross the lock-free slot from ctrl (see StateSnapshot's comment);
   // forwarding those four report streams belongs to the rx thread. What the
   // state key DOES carry of them -- model/version, the fault list -- comes
   // from this class's report-side caches below, filled on the rx thread.
-  // WriteRobotState emits the rest as absent rather than as zeros -- "not
+  // write_robot_state emits the rest as absent rather than as zeros -- "not
   // reported yet" and "reported as zero" are different claims, and a zeroed
   // chassis reads as a level robot at rest.
   in.tier1 = snap.tier1;
@@ -400,19 +400,19 @@ bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
     proto = peer_proto_;
     incompatible = proto_incompatible_;
   }
-  // 11 S4.1 conn, on the WIRE vocabulary (see ConnWireName). The handshake
+  // 11 S4.1 conn, on the WIRE vocabulary (see conn_wire_name). The handshake
   // verdict OVERRIDES the link state: 11 S9.1.3's INCOMPATIBLE is terminal
   // until a compatible hello arrives, and a consumer reading "connected"
   // beside a version it cannot speak would proceed to command a robot that
   // refuses to move (E_PROTO_VERSION).
   in.conn_wire =
-      incompatible ? enums::kChassisConn[5].data() : ConnWireName(snap.conn);
+      incompatible ? enums::kChassisConn[5].data() : conn_wire_name(snap.conn);
   // Null until a handshake validated a version -- see RobotStateInput.
   if (!proto.empty()) in.proto_version = proto.c_str();
   if (!model.empty()) in.model = model.c_str();
   if (!version.empty()) in.version = version.c_str();
   // The fault view. Copied out under the lock, then handed to the writer as
-  // pointers into the LOCALS -- local_faults must outlive WriteRobotState,
+  // pointers into the LOCALS -- local_faults must outlive write_robot_state,
   // which is why both vectors live at function scope (RobotStateFault is a
   // view, rt_payloads.h says so in as many words).
   std::vector<CachedFault> local_faults;
@@ -430,9 +430,9 @@ bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
     in.faults = fault_view.data();
     in.fault_count = fault_view.size();
   }
-  // 11 S4.1 last_soft_estop. Copied under its own mutex (HandleEstop writes
+  // 11 S4.1 last_soft_estop. Copied under its own mutex (handle_estop writes
   // it on the zenoh thread); the age is computed HERE, at publish time, from
-  // the arrival stamp -- the writer takes a finished number. PublishState has
+  // the arrival stamp -- the writer takes a finished number. publish_state has
   // no clock parameter (the snapshot is the input), so this is one of the two
   // real clock reads in this class, beside Publish's envelope stamp.
   std::string estop_reason, estop_src_role;
@@ -444,7 +444,7 @@ bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
       estop_reason = last_estop_reason_;
       estop_src_role = last_estop_src_role_;
       in.last_estop_age_ms =
-          (MonoNowSeconds() - last_estop_rx_mono_) * 1000.0;
+          (mono_now_seconds() - last_estop_rx_mono_) * 1000.0;
     }
   }
   if (!estop_reason.empty()) in.last_estop_reason = estop_reason.c_str();
@@ -485,17 +485,17 @@ bool RtBridge::PublishState(const QuadrupedProcess::StateSnapshot& snap) {
   }
 
   char out[kOutCap];
-  const std::size_t n = WriteRobotState(in, out, sizeof(out));
+  const std::size_t n = write_robot_state(in, out, sizeof(out));
   if (n == 0) return false;
-  if (!Publish(kStateSuffix, out, n)) return false;
+  if (!publish(kStateSuffix, out, n)) return false;
   ++states_;
   return true;
 }
 
-void RtBridge::HandleCmdVel(double now_mono_s, const char* data,
+void RtBridge::handle_cmd_vel(double now_mono_s, const char* data,
                             std::size_t len) {
   CmdVelMsg m;
-  const RtParse r = ParseCmdVel(data, len, rid_, boot_, &m);
+  const RtParse r = parse_cmd_vel(data, len, rid_, boot_, &m);
   if (r != RtParse::kOk) {
     ++cmd_refused_;
     // Remembered, not logged: at 20 Hz a log line per refusal buries the one
@@ -510,10 +510,10 @@ void RtBridge::HandleCmdVel(double now_mono_s, const char* data,
   // that is on purpose: this is the moment the command became available to
   // Tier 1, and 11 S3.0 forbids trusting a foreign mono anyway when the boot
   // ids differ (rt_parse reports that as mono_usable == false).
-  proc_->OnCmdVel(now_mono_s, m.vx, m.vy, m.wz, m.estop_epoch);
+  proc_->on_cmd_vel(now_mono_s, m.vx, m.vy, m.wz, m.estop_epoch);
 }
 
-void RtBridge::SetTransport(const std::string& endpoint,
+void RtBridge::set_transport(const std::string& endpoint,
                             const std::string& codebook,
                             int chassis_dds_domain, int uplink_ros_domain,
                             const std::string& imu_frame_id,
@@ -526,7 +526,7 @@ void RtBridge::SetTransport(const std::string& endpoint,
   tp_drdds_ = drdds_available;
 }
 
-void RtBridge::SetSpec(bool holonomic, double max_vx, double max_vy,
+void RtBridge::set_spec(bool holonomic, double max_vx, double max_vy,
                        double max_wz) {
   spec_holonomic_ = holonomic;
   spec_max_vx_ = max_vx;
@@ -534,11 +534,11 @@ void RtBridge::SetSpec(bool holonomic, double max_vx, double max_vy,
   spec_max_wz_ = max_wz;
 }
 
-void RtBridge::HandleHello(double now_mono_s, const char* data,
+void RtBridge::handle_hello(double now_mono_s, const char* data,
                            std::size_t len) {
   (void)now_mono_s;
   HelloMsg m;
-  const RtParse r = ParseHello(data, len, rid_, boot_, &m);
+  const RtParse r = parse_hello(data, len, rid_, boot_, &m);
   if (r != RtParse::kOk) {
     ++hello_refused_;
     return;
@@ -551,7 +551,7 @@ void RtBridge::HandleHello(double now_mono_s, const char* data,
   // is not reachable from this thread.
   if (m.proto_major != 1) {
     // The mismatch is also the "incompatible" half of RobotState.conn
-    // (11 S9.1.3 INCOMPATIBLE): latched here, published by PublishState,
+    // (11 S9.1.3 INCOMPATIBLE): latched here, published by publish_state,
     // cleared only by a hello whose major does match (see rt_bridge.h).
     {
       std::lock_guard<std::mutex> lk(chassis_id_mu_);
@@ -585,7 +585,7 @@ void RtBridge::HandleHello(double now_mono_s, const char* data,
   if (!version.empty()) in.version = version.c_str();
   // The triple, from the last state this bridge PUBLISHED -- not from the
   // process. The snapshot slot is consume-only by design (LockfreeSlot has no
-  // Read(), and its header explains why: a non-consuming read cannot say
+  // read(), and its header explains why: a non-consuming read cannot say
   // whether the value is new), so peeking would have meant stealing the sample
   // rt_pub is about to publish and dropping a state frame per handshake.
   {
@@ -606,19 +606,19 @@ void RtBridge::HandleHello(double now_mono_s, const char* data,
   in.max_vy_mps = spec_max_vy_;
   in.max_wz_radps = spec_max_wz_;
   char out[4096];
-  const std::size_t n = WriteHelloAck(in, out, sizeof(out));
+  const std::size_t n = write_hello_ack(in, out, sizeof(out));
   if (n == 0) {
     ++hello_refused_;
     return;
   }
-  if (Publish(kHelloAckSuffix, out, n)) ++hello_ok_;
+  if (publish(kHelloAckSuffix, out, n)) ++hello_ok_;
 }
 
-void RtBridge::HandleLight(double now_mono_s, const char* data,
+void RtBridge::handle_light(double now_mono_s, const char* data,
                            std::size_t len) {
   (void)now_mono_s;
   LightMsg m;
-  if (ParseLight(data, len, rid_, boot_, &m) != RtParse::kOk) {
+  if (parse_light(data, len, rid_, boot_, &m) != RtParse::kOk) {
     ++light_refused_;
     return;
   }
@@ -658,18 +658,18 @@ void RtBridge::HandleLight(double now_mono_s, const char* data,
   // ASM-6 is exactly what happens when one counter stands for both: the mode
   // path reported accepted while nothing went out.
   ++light_accepted_;
-  if (!proc_->SendLightFrame(m.custom_enable, head, tail)) ++light_send_failed_;
+  if (!proc_->send_light_frame(m.custom_enable, head, tail)) ++light_send_failed_;
 }
 
-void RtBridge::HandleChassisMode(double now_mono_s, const char* data,
+void RtBridge::handle_chassis_mode(double now_mono_s, const char* data,
                                 std::size_t len) {
   // now_mono_s is unused: the sequence is dispatched from the control period,
-  // not from this callback (see QuadrupedProcess::OnChassisMode on why). Kept
+  // not from this callback (see QuadrupedProcess::on_chassis_mode on why). Kept
   // in the signature so every subscriber handler has the same shape and the
   // subscription table needs no special case.
   (void)now_mono_s;
   ChassisModeMsg m;
-  const RtParse r = ParseChassisMode(data, len, rid_, boot_, &m);
+  const RtParse r = parse_chassis_mode(data, len, rid_, boot_, &m);
   if (r != RtParse::kOk) {
     // No ack key for this one (11 registers rt/chassis/mode alone), so a
     // refusal is a COUNTER, not a message. main.cc's supervisor prints it --
@@ -678,21 +678,21 @@ void RtBridge::HandleChassisMode(double now_mono_s, const char* data,
     ++mode_refused_;
     return;
   }
-  if (proc_->OnChassisMode(m.has_usage_mode, m.usage_mode,
+  if (proc_->on_chassis_mode(m.has_usage_mode, m.usage_mode,
                            m.has_motion_state, m.motion_state,
                            m.has_gait, m.gait)) {
     ++mode_ok_;
   } else {
     // 13 MS-3: a switch is already in flight. Counted as refused rather than
-    // queued -- see OnChassisMode.
+    // queued -- see on_chassis_mode.
     ++mode_refused_;
   }
 }
 
-void RtBridge::HandleChassisCtrl(double now_mono_s, const char* data,
+void RtBridge::handle_chassis_ctrl(double now_mono_s, const char* data,
                                  std::size_t len) {
   ChassisCtrlMsg m;
-  const RtParse r = ParseChassisCtrl(data, len, rid_, boot_, &m);
+  const RtParse r = parse_chassis_ctrl(data, len, rid_, boot_, &m);
 
   char out[kOutCap];
   CtrlAckInput ack;
@@ -713,8 +713,8 @@ void RtBridge::HandleChassisCtrl(double now_mono_s, const char* data,
     // reading release notes.
     ack.code = (r == RtParse::kUnsupportedAction) ? err::kECapability.data()
                                                   : err::kESchema.data();
-    const std::size_t n = WriteCtrlAck(ack, out, sizeof(out));
-    Publish(kCtrlAckSuffix, out, n);
+    const std::size_t n = write_ctrl_ack(ack, out, sizeof(out));
+    publish(kCtrlAckSuffix, out, n);
     return;
   }
 
@@ -724,16 +724,16 @@ void RtBridge::HandleChassisCtrl(double now_mono_s, const char* data,
       // 11 S9.3.3: local only, nothing goes to the chassis. It clears
       // timeout_lock, and hes_lock only when the physical signal is already
       // gone -- both of those rules live in Tier 1, not here.
-      proc_->OnEnable();
+      proc_->on_enable();
       verdict.accepted = true;
       break;
     case CtrlAction::kStand:
-      verdict = proc_->OnChassisAction(now_mono_s, ModeAction::kStand, 0);
+      verdict = proc_->on_chassis_action(now_mono_s, ModeAction::kStand, 0);
       break;
     case CtrlAction::kProne:
       // The stair precondition (13 PR-1 / D-40) is inside the machine. Checking
       // it here as well would be a second copy of a safety rule.
-      verdict = proc_->OnChassisAction(now_mono_s, ModeAction::kProne, 0);
+      verdict = proc_->on_chassis_action(now_mono_s, ModeAction::kProne, 0);
       break;
     case CtrlAction::kSetSdkMode:
       // 11 S9.3.4 keeps this off the general plane; it is a deployment-time
@@ -753,19 +753,19 @@ void RtBridge::HandleChassisCtrl(double now_mono_s, const char* data,
     ack.result = "rejected";
     ack.code = (m.action == CtrlAction::kSetSdkMode)
                    ? err::kECapability.data()
-                   : ModeRejectCode(verdict.reject);
+                   : mode_reject_code(verdict.reject);
     // 11 S9.3.3 wants the NAME of the refusal alongside the code. The mapping
-    // already existed in ModeRejectItem and was reached only by tests: the ack
+    // already existed in mode_reject_item and was reached only by tests: the ack
     // on the wire never carried it, so a bench run saw E_CAPABILITY and had no
     // way to tell a stair refusal from set_sdk_mode. Measured 2026-09-21 on the
     // chassis -- the refusal was correct, the ack was not.
-    ack.item = ModeRejectItem(verdict.reject);
+    ack.item = mode_reject_item(verdict.reject);
   }
-  const std::size_t n = WriteCtrlAck(ack, out, sizeof(out));
-  Publish(kCtrlAckSuffix, out, n);
+  const std::size_t n = write_ctrl_ack(ack, out, sizeof(out));
+  publish(kCtrlAckSuffix, out, n);
 }
 
-void RtBridge::HandleEstop(double now_mono_s, const char* data,
+void RtBridge::handle_estop(double now_mono_s, const char* data,
                            std::size_t len) {
   // *** THE STOP IS FIRST (13 RX-6). See the file comment: anything above it
   // can be reached by an edit to the parsing, and nothing below it can.
@@ -793,22 +793,22 @@ void RtBridge::HandleEstop(double now_mono_s, const char* data,
   // to give -- and neither has to give on the path that matters:
   //
   //   window CLOSED -- this is a new stop whatever the payload says, so no
-  //     cmd_id is needed and NOTHING runs before OnSoftEstop. RX-6 holds
+  //     cmd_id is needed and NOTHING runs before on_soft_estop. RX-6 holds
   //     exactly as written, on the path that every first stop takes.
   //   window OPEN -- a real stop went out less than 50 ms ago, so the machine
   //     is ALREADY at zero velocity. The parse here is not in front of the
   //     first stop; it is in front of a possible SECOND one, and its worst
-  //     case (ParseEstop hangs) leaves a robot that is already stopped and
+  //     case (parse_estop hangs) leaves a robot that is already stopped and
   //     latched at the current generation. That is the bound RX-6 is really
   //     about, and it still holds.
   //
-  // ParseEstop cannot throw (rt_parse.cc: Json::parse with
+  // parse_estop cannot throw (rt_parse.cc: Json::parse with
   // allow_exceptions=false) and returns void on purpose, so the one edit RX-6
   // fears most -- `if (parse failed) return;` -- has no verdict to be built
   // from. rt_parse.h states the intended call shape in as many words:
-  // "ParseEstop(...); Stop(); -- with no `if`".
+  // "parse_estop(...); stop(); -- with no `if`".
   EstopMsg m;
-  if (in_window) ParseEstop(data, len, rid_, boot_, &m);
+  if (in_window) parse_estop(data, len, rid_, boot_, &m);
 
   // *** THE DEDUP TEST: SAME cmd_id AND INSIDE THE WINDOW.
   //
@@ -839,7 +839,7 @@ void RtBridge::HandleEstop(double now_mono_s, const char* data,
   // zero-velocity frame and one extra generation; the cost of the old
   // behaviour was a real estop that never happened.
   if (!duplicate) {
-    proc_->OnSoftEstop(now_mono_s);
+    proc_->on_soft_estop(now_mono_s);
     last_estop_mono_s_ = now_mono_s;
     ++estop_applied_;
   } else {
@@ -847,7 +847,7 @@ void RtBridge::HandleEstop(double now_mono_s, const char* data,
   }
   // 11 S7.1.1 latency_ms, verbatim "收到消息 -> 首个零速帧下发", float ms, and
   // the S7.1.1 时限 row measures the 100 ms budget from quadruped's receipt.
-  // Read HERE and not after the parse: OnSoftEstop encodes and sends the zero
+  // Read HERE and not after the parse: on_soft_estop encodes and sends the zero
   // frame synchronously (process.cc, T-1: "a zero frame goes out NOW"), so this
   // instant IS "the first zero-velocity frame dispatched". Everything below is
   // for the ack, and charging the ack's own parse to the stop's latency would
@@ -873,13 +873,13 @@ void RtBridge::HandleEstop(double now_mono_s, const char* data,
   // -- they are guarded by complementary readings of the same variable, which
   // is deliberately not a `bool parsed` flag that a later edit could leave
   // out of step with the condition that set it.
-  if (!in_window) ParseEstop(data, len, rid_, boot_, &m);
+  if (!in_window) parse_estop(data, len, rid_, boot_, &m);
 
-  // 11 S4.1 last_soft_estop's four facts, for PublishState. BELOW the stop
+  // 11 S4.1 last_soft_estop's four facts, for publish_state. BELOW the stop
   // and the parse on purpose (the stop must stay unreachable from any edit
   // here), and only for a REAL stop: a swallowed duplicate is not a new stop,
   // and restamping it would make the age lie about when the stop happened.
-  // The epoch is read back from the process AFTER OnSoftEstop, so it is the
+  // The epoch is read back from the process AFTER on_soft_estop, so it is the
   // advanced generation this stop produced. reason/src_role may be empty
   // (best-effort on this key) -- stored as-is, published as null.
   if (!duplicate) {
@@ -904,17 +904,17 @@ void RtBridge::HandleEstop(double now_mono_s, const char* data,
   ack.code = "OK";
   ack.estop_epoch = proc_->estop_epoch();
   ack.applied_zero_vel = !duplicate;
-  ack.recv_mono_ms = ToMs(now_mono_s);
+  ack.recv_mono_ms = to_ms(now_mono_s);
   ack.latency_ms = latency_ms;
   ack.hes = proc_->last_tier1().hes_lock;
   ack.timeout_lock = proc_->last_tier1().timeout_lock;
 
   char out[kOutCap];
-  const std::size_t n = WriteEstopAck(ack, out, sizeof(out));
-  Publish(kEstopAckSuffix, out, n);
+  const std::size_t n = write_estop_ack(ack, out, sizeof(out));
+  publish(kEstopAckSuffix, out, n);
 }
 
-void RtBridge::HandlePing(double now_mono_s, const char* data,
+void RtBridge::handle_ping(double now_mono_s, const char* data,
                           std::size_t len) {
   // 13 Q-4: driven by the ping, never by a timer of our own. A timer would go
   // on answering after the subscription died, which is precisely the failure
@@ -938,7 +938,7 @@ void RtBridge::HandlePing(double now_mono_s, const char* data,
   // just greys its estop button forever. `data` is the only part a forwarder
   // copies byte for byte, so it is the only place a correlation key survives.
   ProbePingMsg probe;
-  ParseProbePing(data, len, rid_, boot_, &probe);
+  parse_probe_ping(data, len, rid_, boot_, &probe);
   PongInput pong;
   // No usable data.seq -> echo 0 and COUNT it; still never withhold the pong
   // (13 F-15 again). Zero is not a value p5_gateway ever sends (it counts from
@@ -952,7 +952,7 @@ void RtBridge::HandlePing(double now_mono_s, const char* data,
     pong.seq = 0;
     ++pings_no_seq_;
   }
-  pong.t_mono_ms = ToMs(now_mono_s);
+  pong.t_mono_ms = to_ms(now_mono_s);
   pong.estop_epoch = proc_->estop_epoch();
   pong.hes = proc_->last_tier1().hes_lock;
   pong.hes_lock = proc_->last_tier1().hes_lock;
@@ -960,8 +960,8 @@ void RtBridge::HandlePing(double now_mono_s, const char* data,
   pong.stop_reason = proc_->last_tier1().stop_reason;
 
   char out[kOutCap];
-  const std::size_t n = WritePong(pong, out, sizeof(out));
-  if (Publish(kPongSuffix, out, n)) ++pongs_;
+  const std::size_t n = write_pong(pong, out, sizeof(out));
+  if (publish(kPongSuffix, out, n)) ++pongs_;
 }
 
 }  // namespace rt

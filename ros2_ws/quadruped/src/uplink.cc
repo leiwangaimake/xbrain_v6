@@ -107,7 +107,7 @@ Uplink::~Uplink() {
   }
 }
 
-void Uplink::Publish(const OdomSample& s, double wall_ts_s) {
+void Uplink::publish(const OdomSample& s, double wall_ts_s) {
   if (!impl_) return;
   if (!s.publish) {
     // 13 S4.4 (4): past one second of staleness NOTHING goes out, TF included.
@@ -122,7 +122,7 @@ void Uplink::Publish(const OdomSample& s, double wall_ts_s) {
   stamp.nanosec = static_cast<std::uint32_t>(
       (wall_ts_s - static_cast<double>(stamp.sec)) * 1e9);
 
-  const Quaternion q = YawToQuaternion(s.yaw);
+  const Quaternion q = yaw_to_quaternion(s.yaw);
 
   // ---- rclcpp call site 2 of 3: publish the Odometry --------------------
   nav_msgs::msg::Odometry msg;
@@ -142,8 +142,8 @@ void Uplink::Publish(const OdomSample& s, double wall_ts_s) {
   // The index constants live in the ROS-free core and are tested there: [35]
   // is yaw, and an implementation that used [5] leaves the yaw variance zero
   // while filling a correlation nobody reads.
-  FillCovariance36(s.var_x, s.var_y, s.var_yaw, msg.pose.covariance.data());
-  FillCovariance36(s.var_vx, s.var_vy, s.var_wz, msg.twist.covariance.data());
+  fill_covariance36(s.var_x, s.var_y, s.var_yaw, msg.pose.covariance.data());
+  fill_covariance36(s.var_vx, s.var_vy, s.var_wz, msg.twist.covariance.data());
   impl_->odom_pub->publish(msg);
   ++impl_->odom_count;
 

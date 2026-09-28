@@ -40,7 +40,7 @@ inline constexpr const char* kRosTopicPrefix = "rt/";
 // valid ROS topic, rather than producing something that would subscribe to
 // silence: a mapping that quietly accepted "" would create a reader on "rt/"
 // and the failure would present as a dead chassis.
-std::string RosTopicToDdsTopic(const std::string& ros_topic);
+std::string ros_topic_to_dds_topic(const std::string& ros_topic);
 
 // How fresh the IMU stream is. 13 S2.5: an age over ten sample periods (50 ms
 // at 200 Hz) degrades the odometry onto the 10 Hz attitude from the monitor
@@ -53,10 +53,10 @@ enum class ImuFreshness {
   kStale,
 };
 
-const char* ImuFreshnessName(ImuFreshness f);
+const char* imu_freshness_name(ImuFreshness f);
 
 // age_s < 0 means nothing has been received yet.
-ImuFreshness ClassifyImuAge(double age_s, int warn_ms);
+ImuFreshness classify_imu_age(double age_s, int warn_ms);
 
 }  // namespace quadruped
 

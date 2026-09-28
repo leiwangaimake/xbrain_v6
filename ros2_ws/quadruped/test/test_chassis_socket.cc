@@ -86,15 +86,15 @@ class TcpStub {
   }
   int port() const { return port_; }
   // Accept the next connection, replacing any previous one.
-  bool Accept() {
+  bool accept() {
     if (conn_ >= 0) ::close(conn_);
     conn_ = ::accept(fd_, nullptr, nullptr);
     return conn_ >= 0;
   }
-  long Read(std::uint8_t* out, std::size_t cap) {
+  long read(std::uint8_t* out, std::size_t cap) {
     return conn_ < 0 ? -1 : ::recv(conn_, out, cap, 0);
   }
-  long Write(const std::uint8_t* d, std::size_t n) {
+  long write(const std::uint8_t* d, std::size_t n) {
     return conn_ < 0 ? -1 : ::send(conn_, d, n, MSG_NOSIGNAL);
   }
   int conn_fd() const { return conn_; }
@@ -123,12 +123,12 @@ class UdpStub {
     if (fd_ >= 0) ::close(fd_);
   }
   int port() const { return port_; }
-  long RecvFrom(std::uint8_t* out, std::size_t cap) {
+  long recv_from(std::uint8_t* out, std::size_t cap) {
     peer_len_ = sizeof(peer_);
     return ::recvfrom(fd_, out, cap, 0, reinterpret_cast<sockaddr*>(&peer_),
                       &peer_len_);
   }
-  long SendBack(const std::uint8_t* d, std::size_t n) {
+  long send_back(const std::uint8_t* d, std::size_t n) {
     return ::sendto(fd_, d, n, 0, reinterpret_cast<sockaddr*>(&peer_), peer_len_);
   }
 
@@ -139,7 +139,7 @@ class UdpStub {
   socklen_t peer_len_ = 0;
 };
 
-EndpointCandidate Ep(const char* proto, int port, bool tls = false) {
+EndpointCandidate ep(const char* proto, int port, bool tls = false) {
   EndpointCandidate e;
   e.proto = proto;
   e.host = "127.0.0.1";
@@ -152,9 +152,9 @@ EndpointCandidate Ep(const char* proto, int port, bool tls = false) {
 // Poll a non-blocking read until it produces something or the budget runs out.
 // A fixed sleep would be either flaky or slow; this is bounded and usually
 // returns on the first pass.
-long ReadWithin(ChassisSocket* s, std::uint8_t* out, std::size_t cap, int ms) {
+long read_within(ChassisSocket* s, std::uint8_t* out, std::size_t cap, int ms) {
   for (int i = 0; i < ms; ++i) {
-    const long n = s->Recv(out, cap);
+    const long n = s->recv(out, cap);
     if (n != 0) return n;
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
@@ -171,10 +171,10 @@ int main() {
     // A non-blocking connect to a live loopback listener returns either 0 or
     // EINPROGRESS; both are success. Rejecting EINPROGRESS would fail every
     // TCP candidate on a healthy network.
-    CHECK(s.Dial(Ep("tcp", stub.port()), /*tcp_nodelay=*/true));
+    CHECK(s.dial(ep("tcp", stub.port()), /*tcp_nodelay=*/true));
     CHECK(s.is_open());
     CHECK(s.is_udp() == false);
-    CHECK(stub.Accept());
+    CHECK(stub.accept());
 
     // *** FR-5 / SD-3: Nagle off, READ BACK from the socket.
     //
@@ -186,17 +186,17 @@ int main() {
     // the mutant which removed the setsockopt survived it.
     CHECK(s.nodelay_enabled() == true);
     const std::uint8_t frame[] = {0xEB, 0x91, 0xEB, 0x90, 0x01, 0x02};
-    CHECK(s.Send(frame, sizeof(frame)) == static_cast<long>(sizeof(frame)));
+    CHECK(s.send(frame, sizeof(frame)) == static_cast<long>(sizeof(frame)));
     std::uint8_t got[64];
-    const long n = stub.Read(got, sizeof(got));
+    const long n = stub.read(got, sizeof(got));
     CHECK(n == static_cast<long>(sizeof(frame)));
     CHECK(std::memcmp(got, frame, sizeof(frame)) == 0);
 
     // ...and back the other way.
     const std::uint8_t reply[] = {0xEB, 0x91, 0xEB, 0x90, 0x09};
-    CHECK(stub.Write(reply, sizeof(reply)) == static_cast<long>(sizeof(reply)));
+    CHECK(stub.write(reply, sizeof(reply)) == static_cast<long>(sizeof(reply)));
     std::uint8_t rx[64];
-    CHECK(ReadWithin(&s, rx, sizeof(rx), 500) == static_cast<long>(sizeof(reply)));
+    CHECK(read_within(&s, rx, sizeof(rx), 500) == static_cast<long>(sizeof(reply)));
     CHECK(std::memcmp(rx, reply, sizeof(reply)) == 0);
 
     // A local port was assigned, and it is what the chassis will answer to
@@ -211,21 +211,21 @@ int main() {
     // each reconnect play a voice prompt and change the LEDs on the robot.
     TcpStub stub;
     ChassisSocket s;
-    CHECK(s.Dial(Ep("tcp", stub.port()), true));
-    CHECK(stub.Accept());
+    CHECK(s.dial(ep("tcp", stub.port()), true));
+    CHECK(stub.accept());
     std::uint8_t buf[32];
-    CHECK(s.Recv(buf, sizeof(buf)) == 0);
-    CHECK(s.Recv(buf, sizeof(buf)) == 0);   // and it stays 0
+    CHECK(s.recv(buf, sizeof(buf)) == 0);
+    CHECK(s.recv(buf, sizeof(buf)) == 0);   // and it stays 0
   }
 
   // ---- a peer that goes away is -1, and Send does not kill the process ----
   {
     TcpStub* stub = new TcpStub();
     ChassisSocket s;
-    CHECK(s.Dial(Ep("tcp", stub->port()), true));
-    CHECK(stub->Accept());
+    CHECK(s.dial(ep("tcp", stub->port()), true));
+    CHECK(stub->accept());
     const std::uint8_t hello[] = {1, 2, 3};
-    CHECK(s.Send(hello, sizeof(hello)) == 3);
+    CHECK(s.send(hello, sizeof(hello)) == 3);
     // *** The far end READS before closing, so the close is orderly and recv
     // returns 0. Closing with unread data in the buffer sends an RST instead,
     // and recv then returns ECONNRESET -- which takes the n < 0 path and never
@@ -233,17 +233,17 @@ int main() {
     // collapsed the TCP and UDP meanings of a zero-length read survived the
     // version without these two lines.
     std::uint8_t drain[8];
-    CHECK(stub->Read(drain, sizeof(drain)) == 3);
+    CHECK(stub->read(drain, sizeof(drain)) == 3);
     delete stub;                      // the far end closes, orderly
 
     std::uint8_t buf[32];
     // A TCP zero-length read means the peer closed, which is fatal for the
     // connection -- distinct from "nothing right now".
-    CHECK(ReadWithin(&s, buf, sizeof(buf), 500) == -1);
+    CHECK(read_within(&s, buf, sizeof(buf), 500) == -1);
     // And writing into it returns an error rather than raising SIGPIPE. Without
     // MSG_NOSIGNAL this line ends the process, and the test would not report a
     // failure -- it would vanish.
-    for (int i = 0; i < 4; ++i) (void)s.Send(hello, sizeof(hello));
+    for (int i = 0; i < 4; ++i) (void)s.send(hello, sizeof(hello));
     CHECK(true);                      // reaching here at all is the assertion
   }
 
@@ -255,19 +255,19 @@ int main() {
     // two shapes where the option does not exist at all.
     TcpStub stub;
     ChassisSocket on;
-    CHECK(on.Dial(Ep("tcp", stub.port()), /*tcp_nodelay=*/true));
-    CHECK(stub.Accept());
+    CHECK(on.dial(ep("tcp", stub.port()), /*tcp_nodelay=*/true));
+    CHECK(stub.accept());
     CHECK(on.nodelay_enabled() == true);
 
     ChassisSocket off;
-    CHECK(off.Dial(Ep("tcp", stub.port()), /*tcp_nodelay=*/false));
-    CHECK(stub.Accept());
+    CHECK(off.dial(ep("tcp", stub.port()), /*tcp_nodelay=*/false));
+    CHECK(stub.accept());
     CHECK(off.nodelay_enabled() == false);
 
     // UDP has no such option, and a closed socket has no option at all.
     UdpStub ustub;
     ChassisSocket u;
-    CHECK(u.Dial(Ep("udp", ustub.port()), true));
+    CHECK(u.dial(ep("udp", ustub.port()), true));
     CHECK(u.nodelay_enabled() == false);
     ChassisSocket closed;
     CHECK(closed.nodelay_enabled() == false);
@@ -281,8 +281,8 @@ int main() {
     // chassis read a little slowly.
     TcpStub stub;
     ChassisSocket s;
-    CHECK(s.Dial(Ep("tcp", stub.port()), true));
-    CHECK(stub.Accept());
+    CHECK(s.dial(ep("tcp", stub.port()), true));
+    CHECK(stub.accept());
     // The stub never reads, so both socket buffers fill. A megabyte is well
     // past any default, and the loop stops at the first short write rather
     // than assuming which attempt it lands on.
@@ -296,7 +296,7 @@ int main() {
     // into an error survived that version of this case.
     bool saw_eagain = false;
     for (int i = 0; i < 512 && !saw_eagain; ++i) {
-      const long n = s.Send(block, sizeof(block));
+      const long n = s.send(block, sizeof(block));
       CHECK(n >= 0);                  // never an error: the link is healthy
       if (n == 0) saw_eagain = true;
     }
@@ -312,12 +312,12 @@ int main() {
     // stub keeps the first connection and reads it after the second dial.
     TcpStub stub;
     ChassisSocket s;
-    CHECK(s.Dial(Ep("tcp", stub.port()), true));
-    CHECK(stub.Accept());
+    CHECK(s.dial(ep("tcp", stub.port()), true));
+    CHECK(stub.accept());
     const int first_conn = stub.conn_fd();
     const int first_port = s.local_port();
 
-    CHECK(s.Dial(Ep("tcp", stub.port()), true));
+    CHECK(s.dial(ep("tcp", stub.port()), true));
     const int second_port = s.local_port();
     // A different source port means a different socket, which is necessary but
     // not sufficient -- the old one could still be open.
@@ -339,16 +339,16 @@ int main() {
   {
     UdpStub stub;
     ChassisSocket s;
-    CHECK(s.Dial(Ep("udp", stub.port()), /*tcp_nodelay=*/true));
+    CHECK(s.dial(ep("udp", stub.port()), /*tcp_nodelay=*/true));
     CHECK(s.is_udp() == true);
     const std::uint8_t frame[] = {0xEB, 0x91, 0xEB, 0x90, 0x55};
-    CHECK(s.Send(frame, sizeof(frame)) == static_cast<long>(sizeof(frame)));
+    CHECK(s.send(frame, sizeof(frame)) == static_cast<long>(sizeof(frame)));
     std::uint8_t got[64];
-    CHECK(stub.RecvFrom(got, sizeof(got)) == static_cast<long>(sizeof(frame)));
+    CHECK(stub.recv_from(got, sizeof(got)) == static_cast<long>(sizeof(frame)));
     const std::uint8_t reply[] = {0xEB, 0x91, 0xEB, 0x90, 0x66, 0x77};
-    CHECK(stub.SendBack(reply, sizeof(reply)) == static_cast<long>(sizeof(reply)));
+    CHECK(stub.send_back(reply, sizeof(reply)) == static_cast<long>(sizeof(reply)));
     std::uint8_t rx[64];
-    CHECK(ReadWithin(&s, rx, sizeof(rx), 500) == static_cast<long>(sizeof(reply)));
+    CHECK(read_within(&s, rx, sizeof(rx), 500) == static_cast<long>(sizeof(reply)));
     CHECK(std::memcmp(rx, reply, sizeof(reply)) == 0);
   }
 
@@ -357,16 +357,16 @@ int main() {
     ChassisSocket s;
     // *** TLS-5: a candidate marked tls:true FAILS. It must not quietly dial
     // plaintext -- a downgrade that happens by itself can be forced.
-    CHECK(s.Dial(Ep("tcp", 30003, /*tls=*/true), true) == false);
+    CHECK(s.dial(ep("tcp", 30003, /*tls=*/true), true) == false);
     CHECK(s.last_error() == DialError::kTlsNotBuilt);
     CHECK(s.is_open() == false);      // and no socket was left behind
 
-    CHECK(s.Dial(Ep("sctp", 30003), true) == false);
+    CHECK(s.dial(ep("sctp", 30003), true) == false);
     CHECK(s.last_error() == DialError::kUnsupportedProto);
 
-    EndpointCandidate bad = Ep("tcp", 30003);
+    EndpointCandidate bad = ep("tcp", 30003);
     bad.host = "not-an-address";
-    CHECK(s.Dial(bad, true) == false);
+    CHECK(s.dial(bad, true) == false);
     CHECK(s.last_error() == DialError::kAddressInvalid);
     CHECK(s.is_open() == false);
   }
@@ -381,15 +381,15 @@ int main() {
       dead_port = tmp.port();
     }
     ChassisSocket s;
-    const bool ok = s.Dial(Ep("tcp", dead_port), true);
+    const bool ok = s.dial(ep("tcp", dead_port), true);
     if (ok) {
       // Some kernels report the refusal on the first send instead of on
       // connect. Either is acceptable; what must NOT happen is a socket that
       // reads and writes as though connected.
       const std::uint8_t b[] = {1};
-      long sent = s.Send(b, 1);
+      long sent = s.send(b, 1);
       std::uint8_t rx[8];
-      const long got = ReadWithin(&s, rx, sizeof(rx), 200);
+      const long got = read_within(&s, rx, sizeof(rx), 200);
       CHECK(sent < 0 || got == -1);
     } else {
       CHECK(s.last_error() == DialError::kConnectFailed);
@@ -401,21 +401,21 @@ int main() {
     ChassisSocket s;
     std::uint8_t buf[8] = {0};
     CHECK(s.is_open() == false);
-    CHECK(s.Send(buf, sizeof(buf)) == -1);
-    CHECK(s.Recv(buf, sizeof(buf)) == -1);
+    CHECK(s.send(buf, sizeof(buf)) == -1);
+    CHECK(s.recv(buf, sizeof(buf)) == -1);
     CHECK(s.local_port() == -1);
-    CHECK(s.Send(nullptr, 4) == -1);
-    CHECK(s.Recv(nullptr, 4) == -1);
-    s.Close();                        // idempotent
-    s.Close();
+    CHECK(s.send(nullptr, 4) == -1);
+    CHECK(s.recv(nullptr, 4) == -1);
+    s.close();                        // idempotent
+    s.close();
   }
 
   // ---- the error names are distinct --------------------------------------
   {
     const std::string n[] = {
-        DialErrorName(DialError::kNone), DialErrorName(DialError::kUnsupportedProto),
-        DialErrorName(DialError::kAddressInvalid), DialErrorName(DialError::kSocketFailed),
-        DialErrorName(DialError::kConnectFailed), DialErrorName(DialError::kTlsNotBuilt)};
+        dial_error_name(DialError::kNone), dial_error_name(DialError::kUnsupportedProto),
+        dial_error_name(DialError::kAddressInvalid), dial_error_name(DialError::kSocketFailed),
+        dial_error_name(DialError::kConnectFailed), dial_error_name(DialError::kTlsNotBuilt)};
     for (int i = 0; i < 6; ++i) {
       CHECK(!n[i].empty());
       for (int j = i + 1; j < 6; ++j) CHECK(n[i] != n[j]);

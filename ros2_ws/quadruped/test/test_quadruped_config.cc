@@ -3,7 +3,7 @@
  * Author: wanglei@hachist.com
  * 上海哈船智能船舶技术有限公司
  * File: test_quadruped_config.cc
- * Brief: Offline test for LoadQuadrupedConfig -- fail-stop on null (3.1)
+ * Brief: Offline test for load_quadruped_config -- fail-stop on null (3.1)
  *
  * Description:
  * The fixture is written in the shape the freeze materialiser emits
@@ -38,7 +38,7 @@
 #include <string>
 
 using quadruped::ConfigError;
-using quadruped::LoadQuadrupedConfig;
+using quadruped::load_quadruped_config;
 using quadruped::QuadrupedConfig;
 
 static int g_failures = 0;
@@ -176,7 +176,7 @@ std::string g_dir;
 // Write text to a temp file and return the path. The loader takes a path
 // because the real caller reads the freeze product from disk; loading from a
 // string would test a different function than the one that ships.
-std::string WriteTemp(const std::string& name, const std::string& text) {
+std::string write_temp(const std::string& name, const std::string& text) {
   const std::string path = g_dir + "/" + name;
   std::ofstream f(path, std::ios::binary);
   f << text;
@@ -187,7 +187,7 @@ std::string WriteTemp(const std::string& name, const std::string& text) {
 // Replace the first occurrence of `from` with `to`; aborts the case loudly if
 // the anchor is gone, so a fixture edit cannot silently turn a mutant into a
 // copy of the healthy config (which would pass and prove nothing).
-std::string Mutate(const std::string& from, const std::string& to) {
+std::string mutate(const std::string& from, const std::string& to) {
   std::string s = kGood;
   const std::size_t at = s.find(from);
   if (at == std::string::npos) {
@@ -199,7 +199,7 @@ std::string Mutate(const std::string& from, const std::string& to) {
 }
 
 template <class F>
-bool Throws(F f) {
+bool throws(F f) {
   try {
     f();
   } catch (const std::exception&) {
@@ -229,8 +229,8 @@ int main(int argc, char** argv) {
 
   // ---- positive: the full snapshot loads and every field lands ----------
   {
-    const std::string p = WriteTemp("q_good.yaml", kGood);
-    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    const std::string p = write_temp("q_good.yaml", kGood);
+    const QuadrupedConfig c = load_quadruped_config(p);
     CHECK(c.robot_id == "gj-001");
     // Count before fields: a merged-entry parser bug would pass every field
     // assertion below on the single surviving entry.
@@ -269,7 +269,7 @@ int main(int argc, char** argv) {
     CHECK(c.tier1.limits.holonomic == true);
     // The self report must name both domains: that is the whole point of
     // DDS-9, and a report that omitted one would look complete.
-    const std::string d = quadruped::DescribeConfig(c);
+    const std::string d = quadruped::describe_config(c);
     CHECK(d.find("chassis_dds.domain_id=0") != std::string::npos);
     CHECK(d.find("uplink.ros_domain_id=42") != std::string::npos);
     CHECK(d.find("endpoint[1]=udp://10.21.33.103:30004") != std::string::npos);
@@ -278,16 +278,16 @@ int main(int argc, char** argv) {
   // ---- 3.1: a null limit stops the process, it does not become 0.0 -------
   // This is today's real snapshot state (common.spec.max_* pending V-01).
   {
-    const std::string p = WriteTemp(
-        "q_null.yaml", Mutate("      max_vx_mps: 2.0\n", "      max_vx_mps: null\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    const std::string p = write_temp(
+        "q_null.yaml", mutate("      max_vx_mps: 2.0\n", "      max_vx_mps: null\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
 
   // ---- a missing key stops the process -----------------------------------
   {
     const std::string p =
-        WriteTemp("q_missing.yaml", Mutate("    cmd_timeout_ms: 200\n", ""));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+        write_temp("q_missing.yaml", mutate("    cmd_timeout_ms: 200\n", ""));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
 
   // ---- 13 S4.2: the source list is VALIDATED, not silently ignored -------
@@ -296,20 +296,20 @@ int main(int argc, char** argv) {
     // newer sample because S4.2's enabling condition has no time criterion in
     // the book. A reordered list therefore cannot be honoured by anything, so
     // it is refused at load rather than left to mean nothing.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_prio.yaml",
-        Mutate("    - motion_info_20hz\n    - monitor_10hz\n",
+        mutate("    - motion_info_20hz\n    - monitor_10hz\n",
                "    - monitor_10hz\n    - motion_info_20hz\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // A dropped entry too: a one-element list reads as "only drdds", which the
     // process does not implement either.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_prio2.yaml",
-        Mutate("    - motion_info_20hz\n    - monitor_10hz\n",
+        mutate("    - motion_info_20hz\n    - monitor_10hz\n",
                "    - motion_info_20hz\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
 
   // ---- channel two takes BOTH topic names from config --------------------
@@ -319,8 +319,8 @@ int main(int argc, char** argv) {
     // of a wrong topic name is DDS-9's: participant up, topic present, zero
     // samples -- indistinguishable from a dead network, and the one failure
     // mode an offline test can never reproduce.
-    const std::string p = WriteTemp("q_topics.yaml", kGood);
-    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    const std::string p = write_temp("q_topics.yaml", kGood);
+    const QuadrupedConfig c = load_quadruped_config(p);
     CHECK(c.dds.imu_topic == "/IMU");
     CHECK(c.dds.motion_info_topic == "/MOTION_INFO");
   }
@@ -328,20 +328,20 @@ int main(int argc, char** argv) {
     // A changed name must ARRIVE, not be ignored. Asserting the value came
     // from the file rather than from a default is the whole point: a loader
     // that returned a literal would satisfy the case above.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_topics2.yaml",
-        Mutate("      motion_info_topic: /MOTION_INFO\n",
+        mutate("      motion_info_topic: /MOTION_INFO\n",
                "      motion_info_topic: /MOTION_INFO_V2\n"));
-    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    const QuadrupedConfig c = load_quadruped_config(p);
     CHECK(c.dds.motion_info_topic == "/MOTION_INFO_V2");
   }
   {
     // Missing stops the process. Same rule as every other required key: an
     // absent topic name is a config error with a key path, not a default.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_topics3.yaml",
-        Mutate("    drdds:\n      motion_info_topic: /MOTION_INFO\n", ""));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+        mutate("    drdds:\n      motion_info_topic: /MOTION_INFO\n", ""));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
 
   // ---- 13 QC-9: the prone-forbidden list may widen, never narrow ---------
@@ -349,8 +349,8 @@ int main(int argc, char** argv) {
     // The positive half first: the two stair gaits arrive as VALUES, resolved
     // from the names the config spells. Without this, an empty list would
     // satisfy every negative case below by throwing for the wrong reason.
-    const std::string p = WriteTemp("q_prone_ok.yaml", kGood);
-    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    const std::string p = write_temp("q_prone_ok.yaml", kGood);
+    const QuadrupedConfig c = load_quadruped_config(p);
     CHECK(c.motion.prone_forbidden_gaits.size() == 2);
     bool has_agile = false, has_standard = false;
     for (const std::int64_t g : c.motion.prone_forbidden_gaits) {
@@ -365,56 +365,56 @@ int main(int argc, char** argv) {
     // says why it belongs there even though we never command it -- the factory
     // handset can set it, and PR-1 refuses prone on whatever the chassis
     // REPORTS.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_prone_narrow.yaml",
-        Mutate("    - stair_agile\n    - stair_standard\n", "    - stair_agile\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+        mutate("    - stair_agile\n    - stair_standard\n", "    - stair_agile\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // The other stair gait removed. Both directions, because a check written
     // against one of them passes on a list missing the other.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_prone_narrow2.yaml",
-        Mutate("    - stair_agile\n    - stair_standard\n", "    - stair_standard\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+        mutate("    - stair_agile\n    - stair_standard\n", "    - stair_standard\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // WIDENING is allowed: an extra gait on the list loads.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_prone_wide.yaml",
-        Mutate("    - stair_agile\n    - stair_standard\n",
+        mutate("    - stair_agile\n    - stair_standard\n",
                "    - stair_agile\n    - stair_standard\n    - platform\n"));
-    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    const QuadrupedConfig c = load_quadruped_config(p);
     CHECK(c.motion.prone_forbidden_gaits.size() == 3);
   }
   {
     // A name that is not one of 13 S5.3's five is REFUSED, not skipped. A
     // skipped entry is a gait the operator believes is forbidden and is not --
     // the same silence PR-1 already suffered from, one layer up.
-    const std::string p = WriteTemp(
-        "q_prone_name.yaml", Mutate("    - stair_agile\n", "    - stairs\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    const std::string p = write_temp(
+        "q_prone_name.yaml", mutate("    - stair_agile\n", "    - stairs\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // 13 MS-2 / TR-1: both windows come from config now, and neither may be
     // zero. They were literals in the process constructor while these keys sat
     // in the config doing nothing.
-    const std::string p = WriteTemp("q_win.yaml", kGood);
-    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    const std::string p = write_temp("q_win.yaml", kGood);
+    const QuadrupedConfig c = load_quadruped_config(p);
     CHECK(c.motion.mode_switch_timeout_s == 5.0);
     CHECK(c.motion.external_transition_hold_s == 3.5);
   }
   {
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_win0.yaml",
-        Mutate("    mode_switch_timeout_s: 5.0\n", "    mode_switch_timeout_s: 0.0\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+        mutate("    mode_switch_timeout_s: 5.0\n", "    mode_switch_timeout_s: 0.0\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
-    const std::string p = WriteTemp(
-        "q_hold0.yaml", Mutate("    external_transition_hold_s: 3.5\n",
+    const std::string p = write_temp(
+        "q_hold0.yaml", mutate("    external_transition_hold_s: 3.5\n",
                                "    external_transition_hold_s: 0.0\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
 
   // ---- 13 QD-7: mlockall is read and required ---------------------------
@@ -423,15 +423,15 @@ int main(int argc, char** argv) {
     // the safe direction, and exactly the silent-no-op shape this package keeps
     // finding. QD-7 lists mlockall as a property of the realtime path: a page
     // fault on ctrl is a missed deadline with no other symptom.
-    const std::string p = WriteTemp(
-        "q_mlock.yaml", Mutate("    mlockall: true\n", "    mlockall: false\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    const std::string p = write_temp(
+        "q_mlock.yaml", mutate("    mlockall: true\n", "    mlockall: false\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
 
   // ---- 13 S9.1: the two FIFO priorities come from config ----------------
   {
-    const std::string p = WriteTemp("q_rt.yaml", kGood);
-    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    const std::string p = write_temp("q_rt.yaml", kGood);
+    const QuadrupedConfig c = load_quadruped_config(p);
     CHECK(c.realtime.ctrl_priority == 80);
     CHECK(c.realtime.chs_b_priority == 70);
   }
@@ -439,30 +439,30 @@ int main(int argc, char** argv) {
     // *** The ORDERING, and it is not a preference. ctrl carries the 200 ms
     // Tier 1 deadline while chs_b only writes a lock-free slot -- inverted, a
     // 200 Hz DDS reader can preempt the thread that stops the robot.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_rt_inv.yaml",
-        Mutate("      ctrl: 80\n      chs_b: 70\n",
+        mutate("      ctrl: 80\n      chs_b: 70\n",
                "      ctrl: 60\n      chs_b: 70\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // Equal is also refused: two realtime threads at the same priority give
     // the scheduler no answer, which is the ambiguity the rule exists to
     // remove.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_rt_eq.yaml",
-        Mutate("      ctrl: 80\n      chs_b: 70\n",
+        mutate("      ctrl: 80\n      chs_b: 70\n",
                "      ctrl: 70\n      chs_b: 70\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // Outside the SCHED_FIFO range the priority call fails and the thread runs
     // at ordinary priority with nothing to show for it -- the silent failure
     // 13 S9.1's mlock/priority reporting exists to prevent.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_rt_range.yaml",
-        Mutate("      ctrl: 80\n", "      ctrl: 120\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+        mutate("      ctrl: 80\n", "      ctrl: 120\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
 
   // ---- 13 要求 e: the other two not_implemented lists are pinned ---------
@@ -472,33 +472,33 @@ int main(int argc, char** argv) {
     // -- so editing these lists changes nothing. Pinned to the code precisely
     // because of that: an unread list lets somebody delete an entry and
     // believe they enabled the feature.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_ni_ms.yaml",
-        Mutate("      - zero_cal\n      - cart_move\n      - damped_prone\n",
+        mutate("      - zero_cal\n      - cart_move\n      - damped_prone\n",
                "      - zero_cal\n      - cart_move\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_ni_cmd.yaml",
-        Mutate("      - normalized_axis\n      - illumination\n",
+        mutate("      - normalized_axis\n      - illumination\n",
                "      - normalized_axis\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // Order too: a membership test would call [illumination, normalized_axis]
     // the same list, and the message it produces names positions.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_ni_order.yaml",
-        Mutate("      - normalized_axis\n      - illumination\n",
+        mutate("      - normalized_axis\n      - illumination\n",
                "      - illumination\n      - normalized_axis\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
 
   // ---- 13 GS-1: not_implemented.gaits must keep stair_standard -----------
   {
-    const std::string p = WriteTemp("q_gs1_ok.yaml", kGood);
-    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    const std::string p = write_temp("q_gs1_ok.yaml", kGood);
+    const QuadrupedConfig c = load_quadruped_config(p);
     CHECK(c.motion.command_forbidden_gaits.size() == 1);
     CHECK(c.motion.command_forbidden_gaits[0] == 0x1003);
     // The two lists are DIFFERENT. GS-3 keeps stair_standard on both for
@@ -510,24 +510,24 @@ int main(int argc, char** argv) {
     // Removing it does not enable the gait; it replaces an immediate
     // E_NOT_IMPLEMENTED with a five-second MS-2 timeout on every request,
     // because 13 G-02 records that 0x1003 can never be read back.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_gs1_drop.yaml",
-        Mutate("    not_implemented:\n      gaits:\n      - stair_standard\n",
+        mutate("    not_implemented:\n      gaits:\n      - stair_standard\n",
                "    not_implemented:\n      gaits: []\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
 
   // ---- process-side invariants -------------------------------------------
   {
     // warn >= invalid: band 2 becomes unreachable.
-    const std::string p = WriteTemp(
-        "q_bands.yaml", Mutate("    stale_warn_ms: 150\n", "    stale_warn_ms: 400\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    const std::string p = write_temp(
+        "q_bands.yaml", mutate("    stale_warn_ms: 150\n", "    stale_warn_ms: 400\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
-    const std::string p = WriteTemp(
-        "q_hz.yaml", Mutate("    control_loop_hz: 100.0\n", "    control_loop_hz: 0.0\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    const std::string p = write_temp(
+        "q_hz.yaml", mutate("    control_loop_hz: 100.0\n", "    control_loop_hz: 0.0\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // robot_id is the {rid} segment of every key (11 S2.2.11 / FLT-02). A
@@ -542,167 +542,167 @@ int main(int argc, char** argv) {
         {"gj-001", "gj+001"},
     };
     for (const auto& pair : bad) {
-      const std::string p = WriteTemp(
+      const std::string p = write_temp(
           "q_rid.yaml",
-          Mutate(std::string("  robot_id: ") + pair[0] + "\n",
+          mutate(std::string("  robot_id: ") + pair[0] + "\n",
                  std::string("  robot_id: ") + pair[1] + "\n"));
-      CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+      CHECK(throws([&] { load_quadruped_config(p); }));
     }
     // Empty, and one character past the 32 the contract allows. The length
     // bound is checked from BOTH sides: a check that only refused the empty
     // string would pass a rid long enough to be truncated downstream.
-    const std::string empty = WriteTemp(
-        "q_rid_empty.yaml", Mutate("  robot_id: gj-001\n", "  robot_id: ''\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(empty); }));
+    const std::string empty = write_temp(
+        "q_rid_empty.yaml", mutate("  robot_id: gj-001\n", "  robot_id: ''\n"));
+    CHECK(throws([&] { load_quadruped_config(empty); }));
     const std::string long33(33, 'a');
-    const std::string too_long = WriteTemp(
+    const std::string too_long = write_temp(
         "q_rid_long.yaml",
-        Mutate("  robot_id: gj-001\n", "  robot_id: " + long33 + "\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(too_long); }));
+        mutate("  robot_id: gj-001\n", "  robot_id: " + long33 + "\n"));
+    CHECK(throws([&] { load_quadruped_config(too_long); }));
     // ...and exactly 32 is accepted, so the bound is the contract's and not
     // one the implementation invented.
     const std::string long32(32, 'a');
-    const std::string ok = WriteTemp(
+    const std::string ok = write_temp(
         "q_rid_32.yaml",
-        Mutate("  robot_id: gj-001\n", "  robot_id: " + long32 + "\n"));
-    CHECK(LoadQuadrupedConfig(ok).robot_id == long32);
+        mutate("  robot_id: gj-001\n", "  robot_id: " + long32 + "\n"));
+    CHECK(load_quadruped_config(ok).robot_id == long32);
   }
   {
     // A whitelist that would enable axes Tier 1 cannot clamp. Refused rather
     // than ignored: spec.* defines no limit for vz / v_roll / v_pitch, so
     // filling this list changes nothing and the operator believes otherwise.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_special.yaml",
-        Mutate("      special_gaits: []\n",
+        mutate("      special_gaits: []\n",
                "      special_gaits:\n      - flat\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // An axis list that disagrees with 11 S9.3.1. Tier 1 implements that set
     // directly, so a different list here would silently do nothing.
-    const std::string p = WriteTemp(
-        "q_axes.yaml", Mutate("      - wz\n", "      - wz\n      - vz\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    const std::string p = write_temp(
+        "q_axes.yaml", mutate("      - wz\n", "      - wz\n      - vz\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // ...including a REORDERING, which a set-membership check would miss.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_axesorder.yaml",
-        Mutate("      - vx\n      - vy\n      - wz\n",
+        mutate("      - vx\n      - vy\n      - wz\n",
                "      - wz\n      - vy\n      - vx\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // A zero rung in the reconnect ladder: the reconnect becomes a busy loop
     // against a chassis that is already in trouble, and 13 CA-6 means every
     // attempt plays a voice prompt and switches the LEDs.
-    const std::string p = WriteTemp(
-        "q_backoff0.yaml", Mutate("    - 0.5\n", "    - 0.0\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    const std::string p = write_temp(
+        "q_backoff0.yaml", mutate("    - 0.5\n", "    - 0.0\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // A negative rung, which a formula-derived ladder could produce and which
     // "> 0" catches but "!= 0" would not.
-    const std::string p = WriteTemp(
-        "q_backoffneg.yaml", Mutate("    - 1.0\n", "    - -1.0\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    const std::string p = write_temp(
+        "q_backoffneg.yaml", mutate("    - 1.0\n", "    - -1.0\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // An empty ladder. The list is still PRESENT, so a loader that only
     // required the key would accept it and leave the session with no delay.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_backoffnone.yaml",
-        Mutate("    reconnect_backoff_s:\n    - 0.5\n    - 1.0\n    - 5.0\n",
+        mutate("    reconnect_backoff_s:\n    - 0.5\n    - 1.0\n    - 5.0\n",
                "    reconnect_backoff_s: []\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // 13 CA-1: a per-command socket reads to the chassis as a new client and
     // axis commands come back 0xE006 -- accepted, and the robot does not move.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_sockfix.yaml",
-        Mutate("    axis_cmd_socket_fixed: true\n",
+        mutate("    axis_cmd_socket_fixed: true\n",
                "    axis_cmd_socket_fixed: false\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // 13 CA-4 / QC-16: two writers on one TCP socket interleave two frames.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_txowner.yaml",
-        Mutate("    single_tx_owner: true\n", "    single_tx_owner: false\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+        mutate("    single_tx_owner: true\n", "    single_tx_owner: false\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // The config and the codec must agree on the header version byte. This is
     // the case that makes the check worth having: 2 is a perfectly valid
     // integer, so nothing but the comparison rejects it.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_ver.yaml",
-        Mutate("    proto_version_byte: 1\n", "    proto_version_byte: 2\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+        mutate("    proto_version_byte: 1\n", "    proto_version_byte: 2\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // XML is a documented ASDU format (format byte 0x00) with no encoder here.
-    const std::string p = WriteTemp(
-        "q_fmt.yaml", Mutate("    asdu_format: json\n", "    asdu_format: xml\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    const std::string p = write_temp(
+        "q_fmt.yaml", mutate("    asdu_format: json\n", "    asdu_format: xml\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // CB-1: the only codebook the code implements.
-    const std::string p = WriteTemp(
-        "q_cb.yaml", Mutate("    codebook: hex32\n", "    codebook: legacy_decimal\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    const std::string p = write_temp(
+        "q_cb.yaml", mutate("    codebook: hex32\n", "    codebook: legacy_decimal\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // QC-13: all-or-nothing. Four of the five codes is the dangerous shape --
     // selectable, and failing on the first command it does not cover.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_legacy4.yaml",
-        Mutate("      legacy_decimal: {}\n",
+        mutate("      legacy_decimal: {}\n",
                "      legacy_decimal:\n"
                "        axis: 4\n"
                "        gait: 3\n"
                "        heartbeat: 1\n"
                "        motion_state: 2\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
   {
     // ...and the complete table is accepted (still with codebook hex32, which
     // CB-3 describes as the one-switch-to-flip state). Without this case the
     // rule above could be "any non-empty table is refused", which is a
     // different and wrong rule.
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_legacy5.yaml",
-        Mutate("      legacy_decimal: {}\n",
+        mutate("      legacy_decimal: {}\n",
                "      legacy_decimal:\n"
                "        axis: 5\n"
                "        gait: 4\n"
                "        heartbeat: 1\n"
                "        motion_state: 3\n"
                "        usage_mode: 2\n"));
-    const QuadrupedConfig c = LoadQuadrupedConfig(p);
+    const QuadrupedConfig c = load_quadruped_config(p);
     CHECK(c.link.legacy_decimal_entries == 5);
   }
   {
     // Every candidate disabled: the probe would contact nothing.
-    const std::string p = WriteTemp(
-        "q_noep.yaml", Mutate("    - enabled: true\n", "    - enabled: false\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    const std::string p = write_temp(
+        "q_noep.yaml", mutate("    - enabled: true\n", "    - enabled: false\n"));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
 
   // ---- an unexpanded reference is loud, not a silent zero ----------------
   // If the freeze line did not run, the file still carries "${common.spec...}";
   // require_double must reject it rather than parse a leading digit.
   {
-    const std::string p = WriteTemp(
+    const std::string p = write_temp(
         "q_ref.yaml",
-        Mutate("      max_vx_mps: 2.0\n",
+        mutate("      max_vx_mps: 2.0\n",
                "      max_vx_mps: ${common.spec.max_vx_mps}\n"));
-    CHECK(Throws([&] { LoadQuadrupedConfig(p); }));
+    CHECK(throws([&] { load_quadruped_config(p); }));
   }
 
   // ---- a missing file is an error, never an empty config ------------------
-  CHECK(Throws([&] { LoadQuadrupedConfig(g_dir + "/does_not_exist.yaml"); }));
+  CHECK(throws([&] { load_quadruped_config(g_dir + "/does_not_exist.yaml"); }));
 
   // ---- an EMPTY domain-0 interface is refused (13 DDS-9) -----------------
   //
@@ -718,14 +718,14 @@ int main(int argc, char** argv) {
     const std::size_t at = text.find(from);
     CHECK(at != std::string::npos);
     text.replace(at, from.size(), to);
-    const std::string path = WriteTemp("q_empty_iface.yaml", text);
+    const std::string path = write_temp("q_empty_iface.yaml", text);
     // The message is asserted, not just the throw. yaml_lite could reject an
     // empty quoted scalar for its own reasons, and then this case would pass
     // against a loader that had no interface check at all -- which is exactly
     // what the mutant run showed before this line was added.
     std::string what;
     try {
-      LoadQuadrupedConfig(path);
+      load_quadruped_config(path);
     } catch (const ConfigError& e) {
       what = e.what();
     }

@@ -13,7 +13,7 @@
  * in the stream" from having two answers that can disagree.
  *
  * *** The deferred consume is the one non-obvious mechanism here, and it exists
- * to avoid copying every frame out. Next() hands back a pointer INTO the
+ * to avoid copying every frame out. next() hands back a pointer INTO the
  * buffer; if the bytes were compacted away immediately that pointer would
  * dangle before the caller could read it, and if they were never compacted the
  * buffer would fill. So the consume is RECORDED on the way out and APPLIED at
@@ -43,7 +43,7 @@ Framer::Framer(std::size_t resync_max_bytes, int frame_assembly_timeout_ms)
       frame_assembly_timeout_s_(static_cast<double>(frame_assembly_timeout_ms) /
                                 1000.0) {}
 
-void Framer::ApplyPendingConsume() {
+void Framer::apply_pending_consume() {
   if (pending_consume_ == 0) return;
   // The frame handed out by the previous call ends here. Shift the remainder
   // down; the caller's pointer is invalid from this moment, which is what the
@@ -55,7 +55,7 @@ void Framer::ApplyPendingConsume() {
   frame_len_ = 0;
 }
 
-void Framer::Reset() {
+void Framer::reset() {
   used_ = 0;
   pending_consume_ = 0;
   partial_since_s_ = -1.0;
@@ -67,16 +67,16 @@ void Framer::Reset() {
   // reconnect every few seconds -- the exact pattern worth seeing.
 }
 
-bool Framer::Push(const std::uint8_t* data, std::size_t len) {
+bool Framer::push(const std::uint8_t* data, std::size_t len) {
   if (data == nullptr) return false;
-  ApplyPendingConsume();
+  apply_pending_consume();
   if (len > capacity()) return false;
   std::memcpy(buf_ + used_, data, len);
   used_ += len;
   return true;
 }
 
-bool Framer::Resync() {
+bool Framer::resync() {
   // Start at offset 1: offset 0 has just been rejected by the caller, and
   // searching from 0 would match nothing new and spin.
   std::size_t i = 1;
@@ -106,8 +106,8 @@ bool Framer::Resync() {
   return resync_run_ <= resync_max_bytes_;
 }
 
-FrameStatus Framer::Next(double now_mono_s) {
-  ApplyPendingConsume();
+FrameStatus Framer::next(double now_mono_s) {
+  apply_pending_consume();
 
   for (;;) {
     if (used_ < kHeaderBytes) {
@@ -115,7 +115,7 @@ FrameStatus Framer::Next(double now_mono_s) {
     }
     if (buf_[0] != kSync0 || buf_[1] != kSync1 || buf_[2] != kSync2 ||
         buf_[3] != kSync3) {
-      if (!Resync()) {
+      if (!resync()) {
         // Poisoned. Clear the buffer so a caller that ignores the status and
         // keeps pushing does not re-report forever on the same bytes.
         used_ = 0;
@@ -126,7 +126,7 @@ FrameStatus Framer::Next(double now_mono_s) {
       continue;  // re-examine from the new offset
     }
     Header h;
-    if (!ReadHeader(buf_, used_, &h)) {
+    if (!read_header(buf_, used_, &h)) {
       // Unreachable while used_ >= 16 and the sync word matched, but returning
       // rather than asserting keeps a future header change from turning a
       // parse problem into a crash on the receive path.
@@ -150,7 +150,7 @@ FrameStatus Framer::Next(double now_mono_s) {
       // not coming.
       ++dropped_frames_;
       partial_since_s_ = -1.0;
-      if (!Resync()) {
+      if (!resync()) {
         used_ = 0;
         resync_run_ = 0;
         return FrameStatus::kPoisoned;
@@ -169,7 +169,7 @@ FrameStatus Framer::Next(double now_mono_s) {
   }
 }
 
-FrameStatus Framer::PushDatagram(const std::uint8_t* data, std::size_t len) {
+FrameStatus Framer::push_datagram(const std::uint8_t* data, std::size_t len) {
   // One Framer serves one transport. Clearing the stream state here is not a
   // mode switch -- it is a statement that mixing the two on one instance is
   // not supported, made loudly in code rather than only in the header.
@@ -184,7 +184,7 @@ FrameStatus Framer::PushDatagram(const std::uint8_t* data, std::size_t len) {
     return FrameStatus::kDropped;
   }
   Header h;
-  if (!ReadHeader(data, len, &h)) {
+  if (!read_header(data, len, &h)) {
     ++dropped_frames_;
     return FrameStatus::kDropped;
   }

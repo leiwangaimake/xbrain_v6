@@ -56,9 +56,9 @@ namespace {
 // Somewhere for the process's own SIGTERM disposition to point, so the test can
 // tell "still ours" from "replaced". Never raised.
 volatile std::sig_atomic_t g_signalled = 0;
-void OurHandler(int) { g_signalled = 1; }
+void our_handler(int) { g_signalled = 1; }
 
-UplinkConfig Cfg(bool with_tf) {
+UplinkConfig cfg(bool with_tf) {
   UplinkConfig c;
   c.ros_domain_id = 42;          // 13 DDS-1, the configured value
   c.rmw = "rmw_cyclonedds_cpp";
@@ -70,7 +70,7 @@ UplinkConfig Cfg(bool with_tf) {
   return c;
 }
 
-OdomSample Fresh() {
+OdomSample fresh() {
   OdomSample s;
   s.x = 1.25;
   s.y = -0.5;
@@ -116,16 +116,16 @@ int main() {
   // that adds rclcpp::install_signal_handlers() is what proves it can fail.
   struct sigaction ours;
   std::memset(&ours, 0, sizeof(ours));
-  ours.sa_handler = OurHandler;
+  ours.sa_handler = our_handler;
   CHECK(sigaction(SIGTERM, &ours, nullptr) == 0);
 
   {
-    Uplink up(Cfg(/*with_tf=*/true), "gj-001");
+    Uplink up(cfg(/*with_tf=*/true), "gj-001");
     // Read BACK from the rcl context, not echoed from the config.
     CHECK(up.actual_domain_id() == 42);
     CHECK(up.odom_published() == 0);
 
-    up.Publish(Fresh(), 1789455340.125);
+    up.publish(fresh(), 1789455340.125);
     CHECK(up.odom_published() == 1);
     CHECK(up.tf_published() == 1);
     CHECK(up.suppressed() == 0);
@@ -134,18 +134,18 @@ int main() {
     // A frozen TF makes Nav2 believe the robot is stationary and keep
     // commanding rotation; stopping it makes Nav2 abort inside its 200 ms
     // transform tolerance, which is the fail-safe we want.
-    OdomSample stopped = Fresh();
+    OdomSample stopped = fresh();
     stopped.band = OdomBand::kStop;
     stopped.publish = false;
     stopped.valid = false;
-    up.Publish(stopped, 1789455341.125);
+    up.publish(stopped, 1789455341.125);
     CHECK(up.odom_published() == 1);      // unchanged
     CHECK(up.tf_published() == 1);        // unchanged -- the TF stopped too
     CHECK(up.suppressed() == 1);
 
     // ...and it resumes when the band does, so the suppression is a state and
     // not a latch.
-    up.Publish(Fresh(), 1789455342.125);
+    up.publish(fresh(), 1789455342.125);
     CHECK(up.odom_published() == 2);
     CHECK(up.tf_published() == 2);
   }
@@ -155,8 +155,8 @@ int main() {
     // not. A deployment where something else owns odom->base_link would
     // otherwise get two publishers for one edge, and tf2 resolves that by
     // whichever arrived last.
-    Uplink up(Cfg(/*with_tf=*/false), "gj-001");
-    up.Publish(Fresh(), 1789455340.125);
+    Uplink up(cfg(/*with_tf=*/false), "gj-001");
+    up.publish(fresh(), 1789455340.125);
     CHECK(up.odom_published() == 1);
     CHECK(up.tf_published() == 0);
   }
@@ -168,7 +168,7 @@ int main() {
     struct sigaction now;
     std::memset(&now, 0, sizeof(now));
     CHECK(sigaction(SIGTERM, nullptr, &now) == 0);
-    CHECK(now.sa_handler == OurHandler);
+    CHECK(now.sa_handler == our_handler);
   }
 
   // ---- what actually went on the wire -----------------------------------
@@ -178,7 +178,7 @@ int main() {
   // and downstream that reads as a robot sitting at the origin -- the one pose
   // a planner will happily accept. This block subscribes and looks.
   {
-    Uplink up(Cfg(/*with_tf=*/true), "gj-001");
+    Uplink up(cfg(/*with_tf=*/true), "gj-001");
 
     // A subscriber on the SAME domain, built with its own context so it is a
     // genuinely separate participant rather than an intra-node shortcut.
@@ -208,9 +208,9 @@ int main() {
     // Published repeatedly while spinning: discovery between two participants
     // takes time, and a single publish before it completes is dropped with no
     // error. Bounded, and the failure is asserted rather than waited out.
-    const OdomSample sample = Fresh();
+    const OdomSample sample = fresh();
     for (int i = 0; i < 200 && !have; ++i) {
-      up.Publish(sample, 1789455340.125);
+      up.publish(sample, 1789455340.125);
       exec.spin_some(std::chrono::milliseconds(10));
     }
     CHECK(have);

@@ -43,23 +43,23 @@ RtRuntime::RtRuntime(QuadrupedProcess* proc, const QuadrupedConfig& cfg,
                      std::string boot)
     : proc_(proc), cfg_(cfg), boot_(std::move(boot)) {}
 
-RtRuntime::~RtRuntime() { Stop(); }
+RtRuntime::~RtRuntime() { stop(); }
 
-bool RtRuntime::Start(std::string* err) {
+bool RtRuntime::start(std::string* err) {
   if (running_.load(std::memory_order_acquire)) {
     if (err) *err = "rt runtime already started";
     return false;
   }
-  if (!session_.Open(cfg_.uplink.zenoh_rt_endpoint, err)) return false;
+  if (!session_.open(cfg_.uplink.zenoh_rt_endpoint, err)) return false;
 
   // Publishers first, so the bridge has somewhere to send an ack before any
   // subscription can deliver one to answer.
   for (std::size_t i = 0; i < kKeyCount; ++i) {
     if (kKeys[i].role != KeyRole::kPublish) continue;
-    const std::string key = BuildKey(cfg_.robot_id, kKeys[i].suffix);
-    const int h = session_.DeclarePublisher(key, err);
+    const std::string key = build_key(cfg_.robot_id, kKeys[i].suffix);
+    const int h = session_.declare_publisher(key, err);
     if (h < 0) {
-      session_.Close();
+      session_.close();
       return false;
     }
     pub_handles_.push_back({kKeys[i].suffix, h});
@@ -69,7 +69,7 @@ bool RtRuntime::Start(std::string* err) {
       proc_, cfg_.robot_id, boot_,
       [this](const std::string& suffix, const char* d, std::size_t n) {
         for (const auto& p : pub_handles_) {
-          if (p.first == suffix) return session_.Put(p.second, d, n);
+          if (p.first == suffix) return session_.put(p.second, d, n);
         }
         // An undeclared suffix is a defect, not a fallback: the bridge already
         // aborts at construction for a key outside the table, so reaching here
@@ -84,52 +84,52 @@ bool RtRuntime::Start(std::string* err) {
     void (RtBridge::*fn)(double, const char*, std::size_t);
   };
   const Sub subs[] = {
-      {"rt/motion/cmd_vel", &RtBridge::HandleCmdVel},
-      {"rt/chassis/ctrl", &RtBridge::HandleChassisCtrl},
-      {"rt/chassis/mode", &RtBridge::HandleChassisMode},
-      {"rt/chassis/hello", &RtBridge::HandleHello},
-      {"rt/chassis/light", &RtBridge::HandleLight},
-      {"rt/safety/estop", &RtBridge::HandleEstop},
-      {"rt/safety/probe/ping", &RtBridge::HandlePing},
+      {"rt/motion/cmd_vel", &RtBridge::handle_cmd_vel},
+      {"rt/chassis/ctrl", &RtBridge::handle_chassis_ctrl},
+      {"rt/chassis/mode", &RtBridge::handle_chassis_mode},
+      {"rt/chassis/hello", &RtBridge::handle_hello},
+      {"rt/chassis/light", &RtBridge::handle_light},
+      {"rt/safety/estop", &RtBridge::handle_estop},
+      {"rt/safety/probe/ping", &RtBridge::handle_ping},
       // 13 Q-5 / A2: declared in the key table from the start, handled
       // only now. Without this row every envelope's ts_sync stayed at
       // the PB-Q3 default forever -- correctly false, silently unfed.
-      {"rt/clock/status", &RtBridge::HandleClockStatus},
+      {"rt/clock/status", &RtBridge::handle_clock_status},
   };
   for (const Sub& s : subs) {
-    if (FindKey(s.suffix) == nullptr) {
+    if (find_key(s.suffix) == nullptr) {
       if (err) *err = std::string("rt runtime: key not in the table: ") + s.suffix;
-      session_.Close();
+      session_.close();
       return false;
     }
-    const std::string key = BuildKey(cfg_.robot_id, s.suffix);
+    const std::string key = build_key(cfg_.robot_id, s.suffix);
     RtBridge* b = bridge_.get();
     auto fn = s.fn;
-    if (!session_.DeclareSubscriber(
+    if (!session_.declare_subscriber(
             key,
             [b, fn](const char* d, std::size_t n) {
-              (b->*fn)(MonoNowSeconds(), d, n);
+              (b->*fn)(mono_now_seconds(), d, n);
             },
             err)) {
-      session_.Close();
+      session_.close();
       return false;
     }
   }
 
   running_.store(true, std::memory_order_release);
-  thread_ = std::thread([this] { PubLoop(); });
+  thread_ = std::thread([this] { pub_loop(); });
   return true;
 }
 
-void RtRuntime::Stop() {
+void RtRuntime::stop() {
   if (!running_.exchange(false)) return;
   if (thread_.joinable()) thread_.join();
   // The session goes down AFTER the loop stops: closing it first would drop
   // subscribers while a callback may still be inside one.
-  session_.Close();
+  session_.close();
 }
 
-void RtRuntime::PubLoop() {
+void RtRuntime::pub_loop() {
   const auto period = std::chrono::duration<double>(1.0 / kLoopHz);
   auto next = std::chrono::steady_clock::now();
   // steady_clock, not system_clock: this measures a PERIOD, and CLK-C1 puts
@@ -145,7 +145,7 @@ void RtRuntime::PubLoop() {
     // and a loop whose body overran its budget would still look punctual.
     const auto tick_start = std::chrono::steady_clock::now();
     if (have_prev) {
-      tick_stats_.Add(
+      tick_stats_.add(
           std::chrono::duration<double, std::milli>(tick_start - prev).count());
     }
     prev = tick_start;
@@ -158,10 +158,10 @@ void RtRuntime::PubLoop() {
     // of the decision, and the price is the jitter T-ODOM-1 measures.
     if (odom_sink_) {
       OdomSample odom;
-      // TakeFresh, not "read the last value": republishing a sample ctrl has
+      // take_fresh, not "read the last value": republishing a sample ctrl has
       // not refreshed would put a stale pose on the wire at full rate, and
       // downstream has no way to tell it from a robot that stopped moving.
-      if (proc_->TakeOdomForPublish(&odom)) {
+      if (proc_->take_odom_for_publish(&odom)) {
         // The SAMPLE's stamp, not the publish moment. 13 S9.1 rt_pub row,
         // verbatim: "时间戳取自样本, 不取自发布时刻 => 发布晚了是到得晚,
         // 不是数据错". ctrl writes it at integration time and it rides the
@@ -181,7 +181,7 @@ void RtRuntime::PubLoop() {
     // means a missed period costs one sample, not a backlog.
     if ((ticks_ % kStateDivider) == 0) {
       QuadrupedProcess::StateSnapshot snap;
-      if (proc_->TakeStateForPublish(&snap)) bridge_->PublishState(snap);
+      if (proc_->take_state_for_publish(&snap)) bridge_->publish_state(snap);
     }
     next += std::chrono::duration_cast<std::chrono::steady_clock::duration>(period);
     std::this_thread::sleep_until(next);

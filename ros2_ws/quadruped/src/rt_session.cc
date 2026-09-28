@@ -59,7 +59,7 @@ struct CallbackCtx {
   std::atomic<std::uint64_t>* counter;
 };
 
-void OnSampleTrampoline(z_loaned_sample_t* sample, void* context) {
+void on_sample_trampoline(z_loaned_sample_t* sample, void* context) {
   auto* ctx = static_cast<CallbackCtx*>(context);
   if (ctx == nullptr || ctx->fn == nullptr) return;
   ctx->counter->fetch_add(1, std::memory_order_relaxed);
@@ -74,7 +74,7 @@ void OnSampleTrampoline(z_loaned_sample_t* sample, void* context) {
   z_drop(z_move(slice));
 }
 
-void OnDropTrampoline(void* context) {
+void on_drop_trampoline(void* context) {
   delete static_cast<CallbackCtx*>(context);
 }
 
@@ -82,14 +82,14 @@ void OnDropTrampoline(void* context) {
 
 RtSession::RtSession() : impl_(new Impl()) {}
 
-RtSession::~RtSession() { Close(); }
+RtSession::~RtSession() { close(); }
 
-bool RtSession::Open(const std::string& endpoint, std::string* err) {
+bool RtSession::open(const std::string& endpoint, std::string* err) {
   if (impl_->open) {
     if (err) *err = "rt session already open";
     return false;
   }
-  const std::string cfg_json = RtSessionConfigJson(endpoint);
+  const std::string cfg_json = rt_session_config_json(endpoint);
   z_owned_config_t cfg;
   if (zc_config_from_str(&cfg, cfg_json.c_str()) != Z_OK) {
     if (err) *err = "rt session: config rejected by zenoh: " + cfg_json;
@@ -106,7 +106,7 @@ bool RtSession::Open(const std::string& endpoint, std::string* err) {
   return true;
 }
 
-void RtSession::Close() {
+void RtSession::close() {
   if (!impl_ || !impl_->open) return;
   // Subscribers first: a subscriber whose session is already gone still has a
   // callback the runtime may be inside.
@@ -121,7 +121,7 @@ void RtSession::Close() {
 
 bool RtSession::is_open() const { return impl_ && impl_->open; }
 
-int RtSession::DeclarePublisher(const std::string& key, std::string* err) {
+int RtSession::declare_publisher(const std::string& key, std::string* err) {
   if (!is_open()) {
     if (err) *err = "rt session not open";
     return -1;
@@ -144,7 +144,7 @@ int RtSession::DeclarePublisher(const std::string& key, std::string* err) {
   return static_cast<int>(impl_->publishers.size()) - 1;
 }
 
-bool RtSession::Put(int handle, const char* data, std::size_t len) {
+bool RtSession::put(int handle, const char* data, std::size_t len) {
   if (!is_open() || data == nullptr) return false;
   if (handle < 0 || static_cast<std::size_t>(handle) >= impl_->publishers.size()) {
     return false;
@@ -165,7 +165,7 @@ bool RtSession::Put(int handle, const char* data, std::size_t len) {
   return true;
 }
 
-bool RtSession::DeclareSubscriber(const std::string& key, SampleFn on_sample,
+bool RtSession::declare_subscriber(const std::string& key, SampleFn on_sample,
                                   std::string* err) {
   if (!is_open()) {
     if (err) *err = "rt session not open";
@@ -184,7 +184,7 @@ bool RtSession::DeclareSubscriber(const std::string& key, SampleFn on_sample,
   auto* ctx = new CallbackCtx{impl_->callbacks.back().get(), &impl_->samples};
 
   z_owned_closure_sample_t closure;
-  z_closure_sample(&closure, OnSampleTrampoline, OnDropTrampoline, ctx);
+  z_closure_sample(&closure, on_sample_trampoline, on_drop_trampoline, ctx);
 
   z_owned_subscriber_t sub;
   const z_result_t rc = z_declare_subscriber(z_loan(impl_->session), &sub,

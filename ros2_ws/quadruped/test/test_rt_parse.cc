@@ -20,7 +20,7 @@
  *     p1 is fixed. If someone "fixes" this test by making the parser lenient,
  *     they have removed the soft-stop hold rather than fixed anything.
  *   * "a truncated estop still yields a stop". There is no assertion that
- *     ParseEstop SUCCEEDED, because success is not what matters: the function
+ *     parse_estop SUCCEEDED, because success is not what matters: the function
  *     returns void so that no caller can branch on it, and what is asserted is
  *     that it survives the malformed input and still reports what it could.
  */
@@ -32,7 +32,7 @@
 #include <cstring>
 #include <string>
 
-// For GaitValueByName: the gait parity case below asserts the mode parse
+// For gait_value_by_name: the gait parity case below asserts the mode parse
 // resolves through the read-back unit's table (13 QD-3), so the expectation
 // is read from that table rather than restated as numbers here.
 #include "quadruped/chs_a_reports.h"
@@ -59,7 +59,7 @@ const char* kBoot = "a1b2c3d4";
 // built with a JSON library on purpose: the thing under test is a decoder, and
 // generating its input with the same abstraction would hide exactly the
 // spelling mistakes it exists to catch.
-std::string Wrap(const std::string& body, const std::string& extra = "") {
+std::string wrap(const std::string& body, const std::string& extra = "") {
   return std::string("{\"v\":1,\"rid\":\"") + kRid +
          "\",\"ts\":1789455340.125,\"mono\":812.5,\"boot\":\"" + kBoot +
          "\",\"seq\":7,\"src\":\"p1_motion\",\"ts_sync\":true" + extra +
@@ -67,14 +67,14 @@ std::string Wrap(const std::string& body, const std::string& extra = "") {
 }
 
 // Every axis present and finite, plus the mandatory generation.
-std::string GoodCmdBody(const char* epoch = "0") {
+std::string good_cmd_body(const char* epoch = "0") {
   return std::string("{\"vx\":0.3,\"vy\":0.0,\"wz\":0.2,\"vz\":0.0,"
                      "\"v_roll\":0.0,\"v_pitch\":0.0,\"estop_epoch\":") +
          epoch + "}";
 }
 
-RtParse Cmd(const std::string& text, CmdVelMsg* m) {
-  return ParseCmdVel(text.c_str(), text.size(), kRid, kBoot, m);
+RtParse cmd(const std::string& text, CmdVelMsg* m) {
+  return parse_cmd_vel(text.c_str(), text.size(), kRid, kBoot, m);
 }
 
 }  // namespace
@@ -83,7 +83,7 @@ int main() {
   // ---- the happy path, so the negatives below mean something --------------
   {
     CmdVelMsg m;
-    CHECK(Cmd(Wrap(GoodCmdBody("4")), &m) == RtParse::kOk);
+    CHECK(cmd(wrap(good_cmd_body("4")), &m) == RtParse::kOk);
     CHECK(m.vx == 0.3);
     CHECK(m.wz == 0.2);
     CHECK(m.estop_epoch == 4);
@@ -108,7 +108,7 @@ int main() {
         "\"limiter\":\"none\",\"limiter_all\":[],\"h_factor\":1.0,"
         "\"i_factor\":1.0,\"raw_vx\":0.3,\"source\":\"rns_avoid\"}}";
     CmdVelMsg m;
-    CHECK(Cmd(Wrap(p1_body), &m) == RtParse::kMissingField);
+    CHECK(cmd(wrap(p1_body), &m) == RtParse::kMissingField);
   }
 
   // ---- each mandatory axis, one at a time --------------------------------
@@ -117,13 +117,13 @@ int main() {
     for (const char* name : omit) {
       // Build the good body with one field renamed, so the JSON stays valid and
       // only the NAME the parser looks for is gone.
-      std::string body = GoodCmdBody();
+      std::string body = good_cmd_body();
       const std::string needle = std::string("\"") + name + "\":";
       const std::size_t at = body.find(needle);
       CHECK(at != std::string::npos);
       body.replace(at, needle.size(), std::string("\"zz_") + name + "\":");
       CmdVelMsg m;
-      CHECK(Cmd(Wrap(body), &m) == RtParse::kMissingField);
+      CHECK(cmd(wrap(body), &m) == RtParse::kMissingField);
     }
   }
 
@@ -143,37 +143,37 @@ int main() {
     const std::string body =
         "{\"vx\":0.3,\"vy\":0.0,\"wz\":0.2,\"vz\":0.0,"
         "\"v_roll\":1e999,\"v_pitch\":0.0,\"estop_epoch\":0}";
-    CHECK(Cmd(Wrap(body), &m) == RtParse::kBadJson);
+    CHECK(cmd(wrap(body), &m) == RtParse::kBadJson);
     // A finite extreme is NOT refused -- the rule is about finiteness, not size.
     const std::string big =
         "{\"vx\":1e308,\"vy\":0.0,\"wz\":0.2,\"vz\":0.0,"
         "\"v_roll\":0.0,\"v_pitch\":0.0,\"estop_epoch\":0}";
-    CHECK(Cmd(Wrap(big), &m) == RtParse::kOk);   // Tier 1 is what clamps it
+    CHECK(cmd(wrap(big), &m) == RtParse::kOk);   // Tier 1 is what clamps it
   }
 
   // ---- the envelope rules -------------------------------------------------
   {
     CmdVelMsg m;
     // An unknown version is refused, not guessed at (11 S3.0).
-    std::string t = Wrap(GoodCmdBody());
+    std::string t = wrap(good_cmd_body());
     t.replace(t.find("\"v\":1"), 5, "\"v\":2");
-    CHECK(Cmd(t, &m) == RtParse::kBadVersion);
+    CHECK(cmd(t, &m) == RtParse::kBadVersion);
 
     // Another robot's message.
-    t = Wrap(GoodCmdBody());
+    t = wrap(good_cmd_body());
     t.replace(t.find(kRid), std::string(kRid).size(), "gj-999");
-    CHECK(Cmd(t, &m) == RtParse::kWrongRobot);
+    CHECK(cmd(t, &m) == RtParse::kWrongRobot);
 
     // ts_sync is mandatory AND absence means false, so a message without it is
     // refused for a loosening command -- both halves of the rule, not one.
-    t = Wrap(GoodCmdBody());
+    t = wrap(good_cmd_body());
     t.replace(t.find(",\"ts_sync\":true"), 15, "");
-    CHECK(Cmd(t, &m) == RtParse::kMissingField);
+    CHECK(cmd(t, &m) == RtParse::kMissingField);
 
     // ...and when it IS present and false, it is carried as false.
-    t = Wrap(GoodCmdBody());
+    t = wrap(good_cmd_body());
     t.replace(t.find("\"ts_sync\":true"), 14, "\"ts_sync\":false");
-    CHECK(Cmd(t, &m) == RtParse::kOk);
+    CHECK(cmd(t, &m) == RtParse::kOk);
     CHECK(m.env.ts_sync == false);
   }
 
@@ -185,9 +185,9 @@ int main() {
   // arriving from the future. 11 S3.0 requires falling back to the receive time.
   {
     CmdVelMsg m;
-    std::string t = Wrap(GoodCmdBody());
+    std::string t = wrap(good_cmd_body());
     t.replace(t.find(kBoot), std::string(kBoot).size(), "deadbeef");
-    CHECK(Cmd(t, &m) == RtParse::kOk);      // the message is still valid
+    CHECK(cmd(t, &m) == RtParse::kOk);      // the message is still valid
     CHECK(m.env.mono == 812.5);             // the value is still reported
     CHECK(m.env.mono_usable == false);      // ...and must not be compared
   }
@@ -195,9 +195,9 @@ int main() {
   // ---- a cross-host publisher omits mono entirely (CLK-C4) ---------------
   {
     CmdVelMsg m;
-    std::string t = Wrap(GoodCmdBody());
+    std::string t = wrap(good_cmd_body());
     t.replace(t.find(",\"mono\":812.5"), 13, "");
-    CHECK(Cmd(t, &m) == RtParse::kOk);
+    CHECK(cmd(t, &m) == RtParse::kOk);
     CHECK(m.env.mono < 0.0);
     CHECK(m.env.mono_usable == false);
   }
@@ -205,10 +205,10 @@ int main() {
   // ---- not JSON at all ----------------------------------------------------
   {
     CmdVelMsg m;
-    const std::string trunc = Wrap(GoodCmdBody()).substr(0, 40);
-    CHECK(Cmd(trunc, &m) == RtParse::kBadJson);
+    const std::string trunc = wrap(good_cmd_body()).substr(0, 40);
+    CHECK(cmd(trunc, &m) == RtParse::kBadJson);
     const std::string empty = "";
-    CHECK(Cmd(empty, &m) == RtParse::kBadJson);
+    CHECK(cmd(empty, &m) == RtParse::kBadJson);
   }
 
   // ---- rt/clock/status: the one consumed field, refused both ways --------
@@ -218,28 +218,28 @@ int main() {
     // one is a refusal, never a default: defaulting true is CLK-A3's exact
     // failure, defaulting false silently discards a valid report.
     ClockStatusMsg m;
-    CHECK(ParseClockStatus(Wrap("{\"sync\":true}").c_str(),
-                           Wrap("{\"sync\":true}").size(), kRid, kBoot,
+    CHECK(parse_clock_status(wrap("{\"sync\":true}").c_str(),
+                           wrap("{\"sync\":true}").size(), kRid, kBoot,
                            &m) == RtParse::kOk);
     CHECK(m.sync == true);
     ClockStatusMsg f;
-    CHECK(ParseClockStatus(Wrap("{\"sync\":false}").c_str(),
-                           Wrap("{\"sync\":false}").size(), kRid, kBoot,
+    CHECK(parse_clock_status(wrap("{\"sync\":false}").c_str(),
+                           wrap("{\"sync\":false}").size(), kRid, kBoot,
                            &f) == RtParse::kOk);
     CHECK(f.sync == false);
     ClockStatusMsg bad;
-    const std::string none = Wrap("{\"source\":\"rtk\"}");
-    CHECK(ParseClockStatus(none.c_str(), none.size(), kRid, kBoot, &bad) ==
+    const std::string none = wrap("{\"source\":\"rtk\"}");
+    CHECK(parse_clock_status(none.c_str(), none.size(), kRid, kBoot, &bad) ==
           RtParse::kMissingField);
-    const std::string typed = Wrap("{\"sync\":1}");
-    CHECK(ParseClockStatus(typed.c_str(), typed.size(), kRid, kBoot, &bad) ==
+    const std::string typed = wrap("{\"sync\":1}");
+    CHECK(parse_clock_status(typed.c_str(), typed.size(), kRid, kBoot, &bad) ==
           RtParse::kMissingField);
     // The envelope rules hold here as everywhere: another robot's report is
     // not our clock verdict.
-    std::string other = Wrap("{\"sync\":true}");
+    std::string other = wrap("{\"sync\":true}");
     const std::size_t at = other.find(kRid);
     other = other.substr(0, at) + "gj-002" + other.substr(at + std::string(kRid).size());
-    CHECK(ParseClockStatus(other.c_str(), other.size(), kRid, kBoot, &bad) ==
+    CHECK(parse_clock_status(other.c_str(), other.size(), kRid, kBoot, &bad) ==
           RtParse::kWrongRobot);
   }
 
@@ -247,8 +247,8 @@ int main() {
   {
     ChassisCtrlMsg c;
     auto ctrl = [&c](const std::string& body) {
-      const std::string t = Wrap(body);
-      return ParseChassisCtrl(t.c_str(), t.size(), kRid, kBoot, &c);
+      const std::string t = wrap(body);
+      return parse_chassis_ctrl(t.c_str(), t.size(), kRid, kBoot, &c);
     };
 
     CHECK(ctrl("{\"cmd_id\":\"c-04\",\"action\":\"enable\"}") == RtParse::kOk);
@@ -302,8 +302,8 @@ int main() {
   // do not crash or hang on the way through.
   {
     EstopMsg e;
-    const std::string good = Wrap("{\"cmd_id\":\"e-1\",\"action\":\"stop\"}");
-    ParseEstop(good.c_str(), good.size(), kRid, kBoot, &e);
+    const std::string good = wrap("{\"cmd_id\":\"e-1\",\"action\":\"stop\"}");
+    parse_estop(good.c_str(), good.size(), kRid, kBoot, &e);
     CHECK(e.envelope_ok == true);
     CHECK(e.cmd_id_present == true);
     CHECK(e.cmd_id == "e-1");
@@ -317,26 +317,26 @@ int main() {
     // With the pair present (11 S9.12), both are carried through -- this is
     // the only source RobotState.last_soft_estop has for them.
     EstopMsg tagged;
-    const std::string full = Wrap(
+    const std::string full = wrap(
         "{\"cmd_id\":\"e-2\",\"action\":\"stop\","
         "\"reason\":\"operator_hmi\",\"src_role\":\"hmi\"}");
-    ParseEstop(full.c_str(), full.size(), kRid, kBoot, &tagged);
+    parse_estop(full.c_str(), full.size(), kRid, kBoot, &tagged);
     CHECK(tagged.reason == "operator_hmi");
     CHECK(tagged.src_role == "hmi");
     // Mistyped values follow the same best-effort rule as everything else on
     // this key: ignored, empty, and the stop is unaffected.
     EstopMsg mistyped;
-    const std::string odd = Wrap(
+    const std::string odd = wrap(
         "{\"cmd_id\":\"e-3\",\"action\":\"stop\",\"reason\":7,"
         "\"src_role\":[\"hmi\"]}");
-    ParseEstop(odd.c_str(), odd.size(), kRid, kBoot, &mistyped);
+    parse_estop(odd.c_str(), odd.size(), kRid, kBoot, &mistyped);
     CHECK(mistyped.cmd_id_present == true);
     CHECK(mistyped.reason.empty());
     CHECK(mistyped.src_role.empty());
 
     // Truncated mid-object.
     const std::string trunc = good.substr(0, good.size() / 2);
-    ParseEstop(trunc.c_str(), trunc.size(), kRid, kBoot, &e);
+    parse_estop(trunc.c_str(), trunc.size(), kRid, kBoot, &e);
     CHECK(e.envelope_ok == false);
     CHECK(e.cmd_id_present == false);
 
@@ -344,7 +344,7 @@ int main() {
     // is not, because there is nothing to refuse it WITH.
     std::string badv = good;
     badv.replace(badv.find("\"v\":1"), 5, "\"v\":9");
-    ParseEstop(badv.c_str(), badv.size(), kRid, kBoot, &e);
+    parse_estop(badv.c_str(), badv.size(), kRid, kBoot, &e);
     CHECK(e.envelope_ok == false);
     CHECK(e.cmd_id_present == true);      // ...and the ack can still name it
     CHECK(e.cmd_id == "e-1");
@@ -354,7 +354,7 @@ int main() {
     // costs nothing and a wrongful release costs everything.
     std::string other = good;
     other.replace(other.find(kRid), std::string(kRid).size(), "gj-999");
-    ParseEstop(other.c_str(), other.size(), kRid, kBoot, &e);
+    parse_estop(other.c_str(), other.size(), kRid, kBoot, &e);
     CHECK(e.envelope_ok == false);
     CHECK(e.cmd_id_present == true);
 
@@ -369,22 +369,22 @@ int main() {
     // would look valid.
     std::string nosync = good;
     nosync.replace(nosync.find(",\"ts_sync\":true"), 15, "");
-    ParseEstop(nosync.c_str(), nosync.size(), kRid, kBoot, &e);
+    parse_estop(nosync.c_str(), nosync.size(), kRid, kBoot, &e);
     CHECK(e.env.ts_sync == false);
     CHECK(e.cmd_id_present == true);     // ...and it is still acted on
 
     // Empty and null inputs must not crash.
-    ParseEstop("", 0, kRid, kBoot, &e);
+    parse_estop("", 0, kRid, kBoot, &e);
     CHECK(e.envelope_ok == false);
-    ParseEstop(nullptr, 0, kRid, kBoot, &e);
+    parse_estop(nullptr, 0, kRid, kBoot, &e);
     CHECK(e.envelope_ok == false);
   }
 
   // ---- rt/chassis/mode: gait names resolve through the ONE table ----------
   {
     // 13 QD-3 (2026-09-26 merge): the parse direction owns no gait NAME table
-    // any more -- GaitValue delegates to chs_a_reports' GaitValueByName, the
-    // same table ResolveGait and the config loader read. The assertion is
+    // any more -- gait_value delegates to chs_a_reports' gait_value_by_name, the
+    // same table resolve_gait and the config loader read. The assertion is
     // PARITY on the commandable members: whatever the read-back unit
     // resolves, the mode parse resolves to the same number, so the two
     // directions cannot drift by a member again (they had -- the parse copy
@@ -392,11 +392,11 @@ int main() {
     for (const char* name : {"basic", "stair_standard", "flat",
                              "stair_agile"}) {
       std::int64_t expect = 0;
-      CHECK(chs_a::GaitValueByName(name, &expect) == true);
+      CHECK(chs_a::gait_value_by_name(name, &expect) == true);
       ChassisModeMsg m;
-      const std::string body = Wrap(
+      const std::string body = wrap(
           std::string("{\"cmd_id\":\"g-1\",\"gait\":\"") + name + "\"}");
-      CHECK(ParseChassisMode(body.c_str(), body.size(), kRid, kBoot, &m)
+      CHECK(parse_chassis_mode(body.c_str(), body.size(), kRid, kBoot, &m)
             == RtParse::kOk);
       CHECK(m.has_gait == true);
       CHECK(m.gait == expect);
@@ -410,12 +410,12 @@ int main() {
     // permission set" (wrong: read-only members would become commandable).
     {
       std::int64_t v = 0;
-      CHECK(chs_a::GaitValueByName("platform", &v) == true);   // read-back: yes
+      CHECK(chs_a::gait_value_by_name("platform", &v) == true);   // read-back: yes
       CHECK(v == 0x1002);
       ChassisModeMsg m;
       const std::string body =
-          Wrap("{\"cmd_id\":\"g-p\",\"gait\":\"platform\"}");
-      CHECK(ParseChassisMode(body.c_str(), body.size(), kRid, kBoot, &m)
+          wrap("{\"cmd_id\":\"g-p\",\"gait\":\"platform\"}");
+      CHECK(parse_chassis_mode(body.c_str(), body.size(), kRid, kBoot, &m)
             == RtParse::kUnsupportedAction);                   // command: no
     }
 
@@ -423,8 +423,8 @@ int main() {
     // compares the triple as a unit).
     ChassisModeMsg bad;
     const std::string unknown =
-        Wrap("{\"cmd_id\":\"g-2\",\"gait\":\"trot\"}");
-    CHECK(ParseChassisMode(unknown.c_str(), unknown.size(), kRid, kBoot, &bad)
+        wrap("{\"cmd_id\":\"g-2\",\"gait\":\"trot\"}");
+    CHECK(parse_chassis_mode(unknown.c_str(), unknown.size(), kRid, kBoot, &bad)
           == RtParse::kUnsupportedAction);
 
     // And the motion_state direction stays the commandable SUBSET -- the
@@ -433,9 +433,9 @@ int main() {
     // THAT table would be a contract violation, not a cleanup).
     for (const char* ro : {"idle", "joint_damp", "cart_move", "soft_estop"}) {
       ChassisModeMsg m;
-      const std::string body = Wrap(
+      const std::string body = wrap(
           std::string("{\"cmd_id\":\"g-3\",\"motion_state\":\"") + ro + "\"}");
-      CHECK(ParseChassisMode(body.c_str(), body.size(), kRid, kBoot, &m)
+      CHECK(parse_chassis_mode(body.c_str(), body.size(), kRid, kBoot, &m)
             == RtParse::kUnsupportedAction);
     }
   }
@@ -448,7 +448,7 @@ int main() {
     HelloMsg m;
     const char* ok = "{\"type\":\"hello\",\"proto_version\":\"1.0\","
                      "\"client\":\"p1_motion\"}";
-    CHECK(ParseHello(ok, std::strlen(ok), "dev", "boot", &m) == RtParse::kOk);
+    CHECK(parse_hello(ok, std::strlen(ok), "dev", "boot", &m) == RtParse::kOk);
     CHECK(m.proto_major == 1);
     CHECK(m.proto_minor == 0);
     CHECK(m.client == "p1_motion");
@@ -456,7 +456,7 @@ int main() {
     // major.minor split. 11 S9.1.4: major differing means incompatible.
     HelloMsg m2;
     const char* v2 = "{\"type\":\"hello\",\"proto_version\":\"2.3\"}";
-    CHECK(ParseHello(v2, std::strlen(v2), "dev", "boot", &m2) == RtParse::kOk);
+    CHECK(parse_hello(v2, std::strlen(v2), "dev", "boot", &m2) == RtParse::kOk);
     CHECK(m2.proto_major == 2);
     CHECK(m2.proto_minor == 3);
 
@@ -470,29 +470,29 @@ int main() {
              "{\"type\":\"hello\",\"proto_version\":\"x.y\"}",
              "{\"type\":\"hello\"}"}) {
       HelloMsg bm;
-      CHECK(ParseHello(bad, std::strlen(bad), "dev", "boot", &bm)
+      CHECK(parse_hello(bad, std::strlen(bad), "dev", "boot", &bm)
             != RtParse::kOk);
     }
 
     // Wrong type on the hello key is refused, not silently accepted.
     HelloMsg m3;
     const char* wrong = "{\"type\":\"goodbye\",\"proto_version\":\"1.0\"}";
-    CHECK(ParseHello(wrong, std::strlen(wrong), "dev", "boot", &m3)
+    CHECK(parse_hello(wrong, std::strlen(wrong), "dev", "boot", &m3)
           == RtParse::kUnsupportedAction);
   }
 
-  // ---- ParseLight (11 S9.4.1 / 13 V-47) ----------------------------------
+  // ---- parse_light (11 S9.4.1 / 13 V-47) ----------------------------------
   {
     // A well-formed custom light command. The names map to the vendor's
     // integers (guide 1.2.7) and BOTH lamps are mandatory -- the chassis takes
     // them as a positional two-element array, so a message naming only one has
     // no representation on the wire.
-    const std::string ok = Wrap(
+    const std::string ok = wrap(
         "{\"cmd_id\":\"l-01\",\"custom\":{\"enable\":true,"
         "\"head\":{\"pattern\":\"blink\",\"color\":\"white\",\"cycle_s\":1},"
         "\"tail\":{\"pattern\":\"breath\",\"color\":\"green\",\"cycle_s\":2}}}");
     LightMsg m;
-    CHECK(ParseLight(ok.data(), ok.size(), kRid, kBoot, &m) == RtParse::kOk);
+    CHECK(parse_light(ok.data(), ok.size(), kRid, kBoot, &m) == RtParse::kOk);
     CHECK(m.cmd_id == "l-01");
     CHECK(m.has_custom);
     CHECK(m.custom_enable);
@@ -513,40 +513,40 @@ int main() {
     // deterrent flash on our own payload (PAY-02). A request for it is
     // REFUSED, never mapped onto white -- a warning that does not warn is
     // worse than a refused command.
-    const std::string red = Wrap(
+    const std::string red = wrap(
         "{\"cmd_id\":\"l-02\",\"custom\":{\"enable\":true,"
         "\"head\":{\"pattern\":\"blink\",\"color\":\"red\",\"cycle_s\":1},"
         "\"tail\":{\"pattern\":\"solid\",\"color\":\"black\",\"cycle_s\":0}}}");
     LightMsg m;
-    CHECK(ParseLight(red.data(), red.size(), kRid, kBoot, &m) ==
+    CHECK(parse_light(red.data(), red.size(), kRid, kBoot, &m) ==
           RtParse::kUnsupportedAction);
   }
   {
     // A pattern outside the six. Same rule, same outcome.
-    const std::string bad = Wrap(
+    const std::string bad = wrap(
         "{\"cmd_id\":\"l-03\",\"custom\":{\"enable\":true,"
         "\"head\":{\"pattern\":\"strobe\",\"color\":\"white\",\"cycle_s\":1},"
         "\"tail\":{\"pattern\":\"solid\",\"color\":\"black\",\"cycle_s\":0}}}");
     LightMsg m;
-    CHECK(ParseLight(bad.data(), bad.size(), kRid, kBoot, &m) ==
+    CHECK(parse_light(bad.data(), bad.size(), kRid, kBoot, &m) ==
           RtParse::kUnsupportedAction);
   }
   {
     // Only one lamp named. Refused: the wire form is positional over two.
-    const std::string half = Wrap(
+    const std::string half = wrap(
         "{\"cmd_id\":\"l-04\",\"custom\":{\"enable\":true,"
         "\"head\":{\"pattern\":\"solid\",\"color\":\"white\",\"cycle_s\":0}}}");
     LightMsg m;
-    CHECK(ParseLight(half.data(), half.size(), kRid, kBoot, &m) ==
+    CHECK(parse_light(half.data(), half.size(), kRid, kBoot, &m) ==
           RtParse::kUnsupportedAction);
   }
   {
     // 13 V-47: illumination is REPORTED, not dropped. The caller has to refuse
     // it, and it cannot refuse what the parser silently discarded.
-    const std::string illum = Wrap(
+    const std::string illum = wrap(
         "{\"cmd_id\":\"l-05\",\"illumination\":{\"front\":1,\"back\":0}}");
     LightMsg m;
-    CHECK(ParseLight(illum.data(), illum.size(), kRid, kBoot, &m) ==
+    CHECK(parse_light(illum.data(), illum.size(), kRid, kBoot, &m) ==
           RtParse::kOk);
     CHECK(m.has_illumination);
     CHECK(!m.has_custom);
@@ -554,9 +554,9 @@ int main() {
   {
     // Neither half. Refused rather than treated as a no-op: an empty light
     // command is a schema mistake at the sender, and "accepted" would hide it.
-    const std::string empty = Wrap("{\"cmd_id\":\"l-06\"}");
+    const std::string empty = wrap("{\"cmd_id\":\"l-06\"}");
     LightMsg m;
-    CHECK(ParseLight(empty.data(), empty.size(), kRid, kBoot, &m) ==
+    CHECK(parse_light(empty.data(), empty.size(), kRid, kBoot, &m) ==
           RtParse::kMissingField);
   }
   {
@@ -567,15 +567,15 @@ int main() {
         "\"head\":{\"pattern\":\"solid\",\"color\":\"black\",\"cycle_s\":0},"
         "\"tail\":{\"pattern\":\"solid\",\"color\":\"black\",\"cycle_s\":0}}}";
     LightMsg m;
-    CHECK(ParseLight(bare.data(), bare.size(), kRid, kBoot, &m) !=
+    CHECK(parse_light(bare.data(), bare.size(), kRid, kBoot, &m) !=
           RtParse::kOk);
   }
   {
     // *** The case that actually pins the envelope CHECK rather than the
-    // envelope's side effects. ReadEnvelope fills `data` before it validates
+    // envelope's side effects. read_envelope fills `data` before it validates
     // ts_sync, so a body that parses fine reaches the rest of the function
     // even when the envelope was rejected -- an implementation that ignored
-    // ReadEnvelope's return value passes every other envelope case here and
+    // read_envelope's return value passes every other envelope case here and
     // fails only this one. Found by a surviving mutant, not by reading.
     //
     // 11 S3.0 makes ts_sync mandatory; its absence is a malformed envelope for
@@ -588,7 +588,7 @@ int main() {
         "\"head\":{\"pattern\":\"solid\",\"color\":\"white\",\"cycle_s\":0},"
         "\"tail\":{\"pattern\":\"solid\",\"color\":\"white\",\"cycle_s\":0}}}}";
     LightMsg m;
-    CHECK(ParseLight(no_sync.data(), no_sync.size(), kRid, kBoot, &m) ==
+    CHECK(parse_light(no_sync.data(), no_sync.size(), kRid, kBoot, &m) ==
           RtParse::kMissingField);
     CHECK(!m.has_custom);
   }
@@ -603,9 +603,9 @@ int main() {
   // accident.
   {
     // The shape the relay actually delivers: envelope seq 7, data.seq 12345.
-    const std::string ping = Wrap("{\"type\":\"ping\",\"seq\":12345}");
+    const std::string ping = wrap("{\"type\":\"ping\",\"seq\":12345}");
     ProbePingMsg m;
-    CHECK(ParseProbePing(ping.data(), ping.size(), kRid, kBoot, &m) ==
+    CHECK(parse_probe_ping(ping.data(), ping.size(), kRid, kBoot, &m) ==
           RtParse::kOk);
     CHECK(m.has_seq);
     CHECK(m.seq == 12345u);
@@ -618,9 +618,9 @@ int main() {
     // No data.seq at all. kMissingField like every other absent body field,
     // and has_seq false -- the caller must be able to tell "absent" from
     // "present and zero", because 13 F-15 makes it answer either way.
-    const std::string ping = Wrap("{\"type\":\"ping\"}");
+    const std::string ping = wrap("{\"type\":\"ping\"}");
     ProbePingMsg m;
-    CHECK(ParseProbePing(ping.data(), ping.size(), kRid, kBoot, &m) ==
+    CHECK(parse_probe_ping(ping.data(), ping.size(), kRid, kBoot, &m) ==
           RtParse::kMissingField);
     CHECK(!m.has_seq);
     CHECK(m.seq == 0u);
@@ -630,18 +630,18 @@ int main() {
     // get<uint64_t>() on -5 wraps to 18446744073709551611 without throwing, so
     // the pong would carry a number nobody sent and it would look like a
     // perfectly ordinary counter on the wire.
-    const std::string ping = Wrap("{\"type\":\"ping\",\"seq\":-5}");
+    const std::string ping = wrap("{\"type\":\"ping\",\"seq\":-5}");
     ProbePingMsg m;
-    CHECK(ParseProbePing(ping.data(), ping.size(), kRid, kBoot, &m) ==
+    CHECK(parse_probe_ping(ping.data(), ping.size(), kRid, kBoot, &m) ==
           RtParse::kMissingField);
     CHECK(!m.has_seq);
   }
   {
     // A string seq. Same refusal; separate case because it fails a different
     // half of the guard (is_number_unsigned is false for a different reason).
-    const std::string ping = Wrap("{\"type\":\"ping\",\"seq\":\"12345\"}");
+    const std::string ping = wrap("{\"type\":\"ping\",\"seq\":\"12345\"}");
     ProbePingMsg m;
-    CHECK(ParseProbePing(ping.data(), ping.size(), kRid, kBoot, &m) ==
+    CHECK(parse_probe_ping(ping.data(), ping.size(), kRid, kBoot, &m) ==
           RtParse::kMissingField);
     CHECK(!m.has_seq);
   }
@@ -657,7 +657,7 @@ int main() {
         "\",\"seq\":7,\"src\":\"chassis_relay\",\"ts_sync\":true,"
         "\"data\":{\"type\":\"ping\",\"seq\":12345}}";
     ProbePingMsg m;
-    CHECK(ParseProbePing(ping.data(), ping.size(), kRid, kBoot, &m) ==
+    CHECK(parse_probe_ping(ping.data(), ping.size(), kRid, kBoot, &m) ==
           RtParse::kWrongRobot);
     CHECK(!m.has_seq);
     CHECK(m.seq == 0u);
@@ -665,7 +665,7 @@ int main() {
   {
     // Not JSON at all. Still no crash, still no seq.
     ProbePingMsg m;
-    CHECK(ParseProbePing("not json at all", 15, kRid, kBoot, &m) ==
+    CHECK(parse_probe_ping("not json at all", 15, kRid, kBoot, &m) ==
           RtParse::kBadJson);
     CHECK(!m.has_seq);
   }

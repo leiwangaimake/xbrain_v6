@@ -51,9 +51,9 @@ constexpr auto kPollPeriod = std::chrono::microseconds(2500);
 ChsBRuntime::ChsBRuntime(QuadrupedProcess* proc, const QuadrupedConfig& cfg)
     : proc_(proc), cfg_(cfg) {}
 
-ChsBRuntime::~ChsBRuntime() { Stop(); }
+ChsBRuntime::~ChsBRuntime() { stop(); }
 
-bool ChsBRuntime::Start(std::string* err) {
+bool ChsBRuntime::start(std::string* err) {
   if (running_.load(std::memory_order_acquire)) {
     if (err) *err = "chs_b runtime already started";
     return false;
@@ -69,20 +69,20 @@ bool ChsBRuntime::Start(std::string* err) {
     return false;
   }
   running_.store(true, std::memory_order_release);
-  thread_ = std::thread([this] { Loop(); });
+  thread_ = std::thread([this] { loop(); });
   return true;
 }
 
-void ChsBRuntime::Stop() {
+void ChsBRuntime::stop() {
   if (!running_.exchange(false)) return;
   if (thread_.joinable()) thread_.join();
   // After the thread is joined, never before: the reader is polled from it.
   dds_.reset();
 }
 
-void ChsBRuntime::Loop() {
+void ChsBRuntime::loop() {
   priority_error_ =
-      rt::ApplyFifoPriority(pthread_self(), cfg_.realtime.chs_b_priority);
+      rt::apply_fifo_priority(pthread_self(), cfg_.realtime.chs_b_priority);
 
   ImuSample imu;
   MotionInfoSample mi;
@@ -90,8 +90,8 @@ void ChsBRuntime::Loop() {
   double last_mi_rx = -1.0;
 
   while (running_.load(std::memory_order_acquire)) {
-    const double now = MonoNowSeconds();
-    dds_->Poll(now);
+    const double now = mono_now_seconds();
+    dds_->poll(now);
 
     // Handed on only when the sample is NEW. Re-offering the same reading every
     // poll would make a dead publisher look like a live one: the age check on
@@ -100,11 +100,11 @@ void ChsBRuntime::Loop() {
     // receive time meaningful in the first place).
     if (dds_->latest_imu(&imu) && imu.rx_mono_s > last_imu_rx) {
       last_imu_rx = imu.rx_mono_s;
-      proc_->OnImu(imu.rx_mono_s, imu.wz);
+      proc_->on_imu(imu.rx_mono_s, imu.wz);
     }
     if (dds_->latest_motion_info(&mi) && mi.rx_mono_s > last_mi_rx) {
       last_mi_rx = mi.rx_mono_s;
-      proc_->OnMotionInfo(mi.rx_mono_s, mi.vel_x, mi.vel_y);
+      proc_->on_motion_info(mi.rx_mono_s, mi.vel_x, mi.vel_y);
     }
 
     std::this_thread::sleep_for(kPollPeriod);

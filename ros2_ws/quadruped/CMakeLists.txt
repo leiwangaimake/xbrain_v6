@@ -413,8 +413,8 @@ add_executable(test_chassis_socket test/test_chassis_socket.cc)
 target_link_libraries(test_chassis_socket PRIVATE quadruped_core)
 add_test(NAME test_chassis_socket COMMAND test_chassis_socket)
 
-# The assembly. It drives CtrlTick and RxPump DIRECTLY, with no threads running
-# and the clock supplied per call, and it feeds RxPump the frames captured off
+# The assembly. It drives ctrl_tick and rx_pump DIRECTLY, with no threads running
+# and the clock supplied per call, and it feeds rx_pump the frames captured off
 # the real chassis on 2026-09-15 rather than frames this repository invented.
 #
 # Both choices are load-bearing. Without the first, a 200 ms Tier 1 timeout

@@ -87,7 +87,7 @@ static int g_failures = 0;
 
 namespace {
 
-UplinkConfig Cfg() {
+UplinkConfig cfg() {
   UplinkConfig c;
   c.ros_domain_id = 42;
   c.rmw = "rmw_cyclonedds_cpp";
@@ -99,7 +99,7 @@ UplinkConfig Cfg() {
   return c;
 }
 
-OdomSample Fresh() {
+OdomSample fresh() {
   OdomSample s;
   s.x = 1.25;
   s.y = -0.5;
@@ -120,16 +120,16 @@ OdomSample Fresh() {
 }  // namespace
 
 int main() {
-  Uplink up(Cfg(), "gj-001");
-  const OdomSample sample = Fresh();
+  Uplink up(cfg(), "gj-001");
+  const OdomSample sample = fresh();
 
   // Warm up. See the file comment: the first publishes build caches a steady
   // loop does not rebuild, and the question is what one PERIOD costs.
-  for (int i = 0; i < 50; ++i) up.Publish(sample, 1789455340.0 + i * 0.01);
+  for (int i = 0; i < 50; ++i) up.publish(sample, 1789455340.0 + i * 0.01);
 
   const int kTicks = 100;
   g_counting.store(true, std::memory_order_relaxed);
-  for (int i = 0; i < kTicks; ++i) up.Publish(sample, 1789455345.0 + i * 0.01);
+  for (int i = 0; i < kTicks; ++i) up.publish(sample, 1789455345.0 + i * 0.01);
   g_counting.store(false, std::memory_order_relaxed);
 
   const long allocs = g_new_count.load();

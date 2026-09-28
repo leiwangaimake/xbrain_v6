@@ -21,7 +21,7 @@
  *      process would sit reporting conn=lost forever with a config that
  *      looks fine.
  *
- * Why only three. Assertion K (10 S5.4.4) already evaluates QC-1..QC-17 at
+ * Why only three. Assertion k (10 S5.4.4) already evaluates QC-1..QC-17 at
  * freeze time over this same file; re-checking those here would be a second
  * copy of a rule owned elsewhere, and two copies drift. These three are not in
  * K -- they are process-side preconditions, and they are cheap to state here
@@ -55,7 +55,7 @@ using xbrain::config::YamlNode;
 // max_vx_mps" costs the operator one failed grep.
 const char* kNs = "quadruped.";
 
-std::string K(const std::string& rest) { return std::string(kNs) + rest; }
+std::string k(const std::string& rest) { return std::string(kNs) + rest; }
 
 // One endpoint row. Reads through require_* so a malformed row names its field;
 // the row index is added by the caller because yaml_lite has no notion of where
@@ -64,7 +64,7 @@ std::string K(const std::string& rest) { return std::string(kNs) + rest; }
 // in a large amount of code and can throw -- this runs once at load, and the
 // pattern is four character classes wide. Written as the shape it accepts so a
 // reader can compare it with the contract line directly.
-bool IsValidRobotId(const std::string& id) {
+bool is_valid_robot_id(const std::string& id) {
   if (id.empty() || id.size() > 32) return false;
   for (char c : id) {
     const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
@@ -74,7 +74,7 @@ bool IsValidRobotId(const std::string& id) {
   return true;
 }
 
-EndpointCandidate ReadEndpoint(const YamlNode& row) {
+EndpointCandidate read_endpoint(const YamlNode& row) {
   EndpointCandidate ep;
   ep.proto = row.require_string("proto");
   ep.host = row.require_string("host");
@@ -87,18 +87,18 @@ EndpointCandidate ReadEndpoint(const YamlNode& row) {
 
 }  // namespace
 
-const char* DefaultResolvedPath() {
+const char* default_resolved_path() {
   return "/opt/xbrain_v6/data/run/resolved/quadruped.yaml";
 }
 
-QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
+QuadrupedConfig load_quadruped_config(const std::string& path) {
   QuadrupedConfig cfg;
   // yaml_lite throws std::runtime_error; translate at this one boundary so
   // callers catch a single type and main() can map it to EX_CONFIG.
   try {
-    const YamlNode root = xbrain::config::LoadYamlFile(path);
+    const YamlNode root = xbrain::config::load_yaml_file(path);
 
-    cfg.robot_id = root.require_string(K("robot_id"));
+    cfg.robot_id = root.require_string(k("robot_id"));
     // 11 S2.2.11 / FLT-02: this value is the {rid} segment of EVERY Zenoh key
     // this process publishes or subscribes. The freeze line already enforces
     // the charset (assertion D-1 in xbrain/boot/freeze/assertions/d_identity.py)
@@ -110,7 +110,7 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
     // subscriber stays silent -- the same picture as an unplugged cable, and
     // the same class of failure 13 DDS-9 exists to make distinguishable.
     // Catching it here names the one key path instead.
-    if (!IsValidRobotId(cfg.robot_id)) {
+    if (!is_valid_robot_id(cfg.robot_id)) {
       throw ConfigError(
           "quadruped config: robot_id \"" + cfg.robot_id + "\" does not match "
           "[a-z0-9_-]{1,32} (11 S2.2.11 FLT-02, freeze assertion D-1). It is "
@@ -120,50 +120,50 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
     }
 
     // ---- channel one -------------------------------------------------
-    const YamlNode& eps = root.require_seq(K("chassis_link.endpoint_candidates"));
+    const YamlNode& eps = root.require_seq(k("chassis_link.endpoint_candidates"));
     for (std::size_t i = 0; i < eps.size(); ++i) {
-      cfg.link.endpoints.push_back(ReadEndpoint(eps.at_index(i)));
+      cfg.link.endpoints.push_back(read_endpoint(eps.at_index(i)));
     }
     cfg.link.probe_timeout_ms =
-        static_cast<int>(root.require_int(K("chassis_link.probe_timeout_ms")));
-    cfg.link.heartbeat_hz = root.require_double(K("chassis_link.heartbeat_hz"));
-    cfg.link.codebook = root.require_string(K("chassis_link.codebook"));
+        static_cast<int>(root.require_int(k("chassis_link.probe_timeout_ms")));
+    cfg.link.heartbeat_hz = root.require_double(k("chassis_link.heartbeat_hz"));
+    cfg.link.codebook = root.require_string(k("chassis_link.codebook"));
     cfg.link.resync_max_bytes =
-        static_cast<int>(root.require_int(K("chassis_link.resync_max_bytes")));
+        static_cast<int>(root.require_int(k("chassis_link.resync_max_bytes")));
     cfg.link.frame_assembly_timeout_ms = static_cast<int>(
-        root.require_int(K("chassis_link.frame_assembly_timeout_ms")));
+        root.require_int(k("chassis_link.frame_assembly_timeout_ms")));
     cfg.link.partial_send_retry =
-        static_cast<int>(root.require_int(K("chassis_link.partial_send_retry")));
-    cfg.link.tcp_nodelay = root.require_bool(K("chassis_link.tcp_nodelay"));
-    cfg.link.axis_cmd_hz = root.require_double(K("chassis_link.axis_cmd_hz"));
+        static_cast<int>(root.require_int(k("chassis_link.partial_send_retry")));
+    cfg.link.tcp_nodelay = root.require_bool(k("chassis_link.tcp_nodelay"));
+    cfg.link.axis_cmd_hz = root.require_double(k("chassis_link.axis_cmd_hz"));
     cfg.link.cmd_fail_threshold =
-        static_cast<int>(root.require_int(K("chassis_link.cmd_fail_threshold")));
+        static_cast<int>(root.require_int(k("chassis_link.cmd_fail_threshold")));
     cfg.link.state_timeout_degraded_s =
-        root.require_double(K("chassis_link.state_timeout_degraded_s"));
+        root.require_double(k("chassis_link.state_timeout_degraded_s"));
     cfg.link.state_timeout_lost_s =
-        root.require_double(K("chassis_link.state_timeout_lost_s"));
+        root.require_double(k("chassis_link.state_timeout_lost_s"));
     // The reconnect ladder. Read through the node-level accessor because a
     // sequence entry has no key of its own; before that accessor existed this
     // list sat in the config unread, which is the quiet half of the same
     // defect 13 S8.2 v1.4 fixed on the tier1 limits.
-    const YamlNode& backoff = root.require_seq(K("chassis_link.reconnect_backoff_s"));
+    const YamlNode& backoff = root.require_seq(k("chassis_link.reconnect_backoff_s"));
     for (std::size_t i = 0; i < backoff.size(); ++i) {
       const std::string label =
-          K("chassis_link.reconnect_backoff_s") + "[" + std::to_string(i) + "]";
+          k("chassis_link.reconnect_backoff_s") + "[" + std::to_string(i) + "]";
       cfg.link.reconnect_backoff_s.push_back(backoff.at_index(i).as_double(label));
     }
     cfg.link.axis_cmd_socket_fixed =
-        root.require_bool(K("chassis_link.axis_cmd_socket_fixed"));
+        root.require_bool(k("chassis_link.axis_cmd_socket_fixed"));
     cfg.link.single_tx_owner =
-        root.require_bool(K("chassis_link.single_tx_owner"));
+        root.require_bool(k("chassis_link.single_tx_owner"));
     cfg.link.proto_version_byte =
-        static_cast<int>(root.require_int(K("chassis_link.proto_version_byte")));
-    cfg.link.asdu_format = root.require_string(K("chassis_link.asdu_format"));
+        static_cast<int>(root.require_int(k("chassis_link.proto_version_byte")));
+    cfg.link.asdu_format = root.require_string(k("chassis_link.asdu_format"));
     // Counted, not copied: nothing consumes the legacy table yet, and 9.3
     // forbids writing the consumer before there is something to consume. The
     // count is what QC-13 needs.
     const YamlNode& legacy =
-        root.at(K("chassis_link.codebook_table.legacy_decimal"));
+        root.at(k("chassis_link.codebook_table.legacy_decimal"));
     cfg.link.legacy_decimal_entries = legacy.is_map() ? legacy.items().size() : 0;
 
     // ---- motion axes: declared here, FIXED by the contract ------------
@@ -175,12 +175,12 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
     // believes something changed. That exact defect has already been found
     // twice in this package (13 S8.2 v1.4, and the six link keys of B2).
     {
-      const YamlNode& active = root.require_seq(K("motion.axes.always_active"));
+      const YamlNode& active = root.require_seq(k("motion.axes.always_active"));
       const char* kExpected[] = {"vx", "vy", "wz"};
       bool matches = active.size() == 3;
       for (std::size_t i = 0; matches && i < 3; ++i) {
         const std::string label =
-            K("motion.axes.always_active") + "[" + std::to_string(i) + "]";
+            k("motion.axes.always_active") + "[" + std::to_string(i) + "]";
         matches = active.at_index(i).as_scalar(label) == kExpected[i];
       }
       if (!matches) {
@@ -197,7 +197,7 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
       // through -- it zeroes all three unconditionally. Enabling a gait here
       // would therefore do nothing at all, which this refuses rather than
       // performs.
-      const YamlNode& special = root.require_seq(K("motion.axes.special_gaits"));
+      const YamlNode& special = root.require_seq(k("motion.axes.special_gaits"));
       if (special.size() != 0) {
         throw ConfigError(
             "quadruped config: motion.axes.special_gaits must be empty. "
@@ -222,12 +222,12 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
     // "填了不生效 = 让设置的人以为改了什么", 13 v1.7's sentence for
     // special_gaits.
     {
-      const YamlNode& prio = root.require_seq(K("odom.vel_source_priority"));
+      const YamlNode& prio = root.require_seq(k("odom.vel_source_priority"));
       const char* kExpected[] = {"motion_info_20hz", "monitor_10hz"};
       bool matches = prio.size() == 2;
       for (std::size_t i = 0; matches && i < 2; ++i) {
         const std::string label =
-            K("odom.vel_source_priority") + "[" + std::to_string(i) + "]";
+            k("odom.vel_source_priority") + "[" + std::to_string(i) + "]";
         matches = prio.at_index(i).as_scalar(label) == kExpected[i];
       }
       if (!matches) {
@@ -246,21 +246,21 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
     //
     // *** prone_forbidden_gaits was NEVER READ. The process built its
     // ModeConfig from a lambda that took cfg and threw it away, so the list
-    // stayed empty -- and ProneAllowed answers !Contains(list, gait), which is
+    // stayed empty -- and prone_allowed answers !contains(list, gait), which is
     // true for every gait when the list is empty. PR-1 therefore never fired:
     // `prone` was accepted on a staircase, and 13 V-54 calls that a safety
     // incident in as many words.
     {
-      const YamlNode& gaits = root.require_seq(K("motion.prone_forbidden_gaits"));
+      const YamlNode& gaits = root.require_seq(k("motion.prone_forbidden_gaits"));
       for (std::size_t i = 0; i < gaits.size(); ++i) {
         const std::string label =
-            K("motion.prone_forbidden_gaits") + "[" + std::to_string(i) + "]";
+            k("motion.prone_forbidden_gaits") + "[" + std::to_string(i) + "]";
         const std::string name = gaits.at_index(i).as_scalar(label);
         std::int64_t value = 0;
         // A name outside 13 S5.3's five is refused rather than skipped. A
         // skipped entry is a gait the operator believes is forbidden and is
         // not -- the same silence PR-1 already suffered from, one layer up.
-        if (!chs_a::GaitValueByName(name, &value)) {
+        if (!chs_a::gait_value_by_name(name, &value)) {
           throw ConfigError(
               label + " = \"" + name +
               "\" is not one of the gaits in 13 S5.3 (basic / platform / "
@@ -273,7 +273,7 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
       // QC-9, verbatim: the list MUST contain both stair gaits; widening is
       // allowed, narrowing is not, and narrowing refuses startup.
       //
-      // Checked against chs_a::IsStairGait rather than against two literals
+      // Checked against chs_a::is_stair_gait rather than against two literals
       // here: that predicate sits next to the gait table, so a stair gait
       // added there is required here without an edit -- which is the whole
       // point of "允许改宽不允许改窄".
@@ -285,7 +285,7 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
         }
         if (!found) {
           throw ConfigError(
-              K("motion.prone_forbidden_gaits") +
+              k("motion.prone_forbidden_gaits") +
               " must contain BOTH stair gaits (stair_agile 0x3003 and "
               "stair_standard 0x1003) -- 13 QC-9 allows widening this list and "
               "forbids narrowing it. 13 GS-3 is why stair_standard belongs "
@@ -298,13 +298,13 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
     // 13 GS-1: the gaits this build refuses to COMMAND. Same name resolution
     // and the same refuse-do-not-skip rule as the prone list above.
     {
-      const YamlNode& ni = root.require_seq(K("motion.not_implemented.gaits"));
+      const YamlNode& ni = root.require_seq(k("motion.not_implemented.gaits"));
       for (std::size_t i = 0; i < ni.size(); ++i) {
         const std::string label =
-            K("motion.not_implemented.gaits") + "[" + std::to_string(i) + "]";
+            k("motion.not_implemented.gaits") + "[" + std::to_string(i) + "]";
         const std::string name = ni.at_index(i).as_scalar(label);
         std::int64_t value = 0;
-        if (!chs_a::GaitValueByName(name, &value)) {
+        if (!chs_a::gait_value_by_name(name, &value)) {
           throw ConfigError(label + " = \"" + name +
                             "\" is not one of the gaits in 13 S5.3. A name "
                             "that resolves to nothing would leave that gait "
@@ -323,7 +323,7 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
       }
       if (!has_standard) {
         throw ConfigError(
-            K("motion.not_implemented.gaits") +
+            k("motion.not_implemented.gaits") +
             " must contain stair_standard (0x1003). 13 GS-1 refuses to command "
             "it because 13 G-02 records that it can never be read back: "
             "commanding it leaves the read-back check with nothing to match, "
@@ -338,7 +338,7 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
     // Both refusals are STRUCTURAL: rt_parse's kMotionStates admits only
     // stand / prone / rl_control, so zero_cal / cart_move / damped_prone never
     // reach a dispatch at all, and normalized_axis (C-05) is decode-only while
-    // illumination is refused in HandleLight (13 V-47). A config-driven list
+    // illumination is refused in handle_light (13 V-47). A config-driven list
     // would add a second place for the same rule to live, and 11 S2.2.1
     // declares no ack key for rt/chassis/mode (13 MS-3a), so the refusal REASON
     // is not observable from outside either way.
@@ -365,11 +365,11 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
            "list does not enable either"},
       };
       for (const FixedList& f : kFixed) {
-        const YamlNode& got = root.require_seq(K(f.key));
+        const YamlNode& got = root.require_seq(k(f.key));
         bool matches = got.size() == f.count;
         for (std::size_t i = 0; matches && i < f.count; ++i) {
           const std::string label =
-              K(f.key) + "[" + std::to_string(i) + "]";
+              k(f.key) + "[" + std::to_string(i) + "]";
           matches = got.at_index(i).as_scalar(label) == f.expected[i];
         }
         if (!matches) {
@@ -378,7 +378,7 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
             if (i != 0) want += ", ";
             want += f.expected[i];
           }
-          throw ConfigError(std::string("quadruped config: ") + K(f.key) +
+          throw ConfigError(std::string("quadruped config: ") + k(f.key) +
                             " must be exactly [" + want + "]. " + f.why +
                             ". A list that changes nothing is worse than an "
                             "absent one: somebody will edit it and believe the "
@@ -387,19 +387,19 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
       }
     }
     cfg.motion.mode_switch_timeout_s =
-        root.require_double(K("motion.mode_switch_timeout_s"));
+        root.require_double(k("motion.mode_switch_timeout_s"));
     cfg.motion.external_transition_hold_s =
-        root.require_double(K("motion.external_transition_hold_s"));
+        root.require_double(k("motion.external_transition_hold_s"));
     // Both were literals in the process constructor while these keys sat in
     // the config doing nothing -- "填了不生效 = 让设置的人以为改了什么", the
     // same sentence 13 v1.7 used for special_gaits.
     if (!(cfg.motion.mode_switch_timeout_s > 0.0)) {
-      throw ConfigError(K("motion.mode_switch_timeout_s") +
+      throw ConfigError(k("motion.mode_switch_timeout_s") +
                         " must be positive: a zero or negative window makes "
                         "every mode switch fail on the period it is requested");
     }
     if (!(cfg.motion.external_transition_hold_s > 0.0)) {
-      throw ConfigError(K("motion.external_transition_hold_s") +
+      throw ConfigError(k("motion.external_transition_hold_s") +
                         " must be positive: 13 TR-1 holds the robot at zero "
                         "for this long after an EXTERNAL triple change, and a "
                         "zero hold releases it on the same period");
@@ -407,16 +407,16 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
 
     // ---- 13 QD-7 / RTC-7: mlockall ----------------------------------
     //
-    // Read and required true. The process calls LockAllMemory()
+    // Read and required true. The process calls lock_all_memory()
     // unconditionally, so a `false` here changed nothing -- the safe direction,
     // but a key that silently refuses to do what it says is the shape this
     // package keeps finding. QD-7 lists mlockall beside "no dynamic
     // allocation" and "no blocking logging" as a property of the realtime
     // path, not a preference: a page fault on ctrl is a missed deadline with
     // no other symptom.
-    if (!root.require_bool(K("realtime.mlockall"))) {
+    if (!root.require_bool(k("realtime.mlockall"))) {
       throw ConfigError(
-          K("realtime.mlockall") +
+          k("realtime.mlockall") +
           " must be true. 13 QD-7 / RTC-7 require locked pages on the realtime "
           "path; the process locks them regardless, so a false here is a "
           "request it cannot honour rather than a setting");
@@ -424,14 +424,14 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
 
     // ---- 13 S9.1: the two SCHED_FIFO priorities ----------------------
     cfg.realtime.ctrl_priority = static_cast<int>(
-        root.require_int(K("realtime.sched_fifo_priority.ctrl")));
+        root.require_int(k("realtime.sched_fifo_priority.ctrl")));
     cfg.realtime.chs_b_priority = static_cast<int>(
-        root.require_int(K("realtime.sched_fifo_priority.chs_b")));
+        root.require_int(k("realtime.sched_fifo_priority.chs_b")));
     for (const int prio : {cfg.realtime.ctrl_priority,
                            cfg.realtime.chs_b_priority}) {
       if (prio < 1 || prio > 99) {
         throw ConfigError(
-            K("realtime.sched_fifo_priority") +
+            k("realtime.sched_fifo_priority") +
             " values must be in 1..99 (the SCHED_FIFO range). A value outside "
             "it makes the priority call fail and the thread runs at ordinary "
             "priority with nothing to show for it");
@@ -443,7 +443,7 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
     // thread that stops the robot.
     if (cfg.realtime.ctrl_priority <= cfg.realtime.chs_b_priority) {
       throw ConfigError(
-          K("realtime.sched_fifo_priority") +
+          k("realtime.sched_fifo_priority") +
           ": ctrl must outrank chs_b (13 S9.1 gives 80 and 70). ctrl carries "
           "the 200 ms Tier 1 deadline; chs_b only writes a lock-free slot. "
           "Inverted, a 200 Hz DDS reader can preempt the thread that stops the "
@@ -466,9 +466,9 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
     //               (CLAUDE.md S9.3).
 
     // ---- channel two: chassis DDS domain 0 ---------------------------
-    cfg.dds.backend = root.require_string(K("chassis_dds.backend"));
+    cfg.dds.backend = root.require_string(k("chassis_dds.backend"));
     cfg.dds.domain_id =
-        static_cast<int>(root.require_int(K("chassis_dds.domain_id")));
+        static_cast<int>(root.require_int(k("chassis_dds.domain_id")));
     // require_string, not an optional read: see the field's comment. A missing
     // NIC name is a config error that fails at startup with the key path, and
     // the alternative is a participant that binds the wrong interface and is
@@ -482,81 +482,81 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
     // YAML, which the mutant run showed by surviving. ChassisDds keeps its own
     // guard, because that class can be constructed without this loader.
     cfg.dds.network_interface =
-        root.require_string(K("chassis_dds.network_interface"));
-    cfg.dds.imu_topic = root.require_string(K("chassis_dds.imu_topic"));
-    cfg.dds.imu_expect_hz = root.require_double(K("chassis_dds.imu_expect_hz"));
+        root.require_string(k("chassis_dds.network_interface"));
+    cfg.dds.imu_topic = root.require_string(k("chassis_dds.imu_topic"));
+    cfg.dds.imu_expect_hz = root.require_double(k("chassis_dds.imu_expect_hz"));
     cfg.dds.motion_info_topic =
-        root.require_string(K("chassis_dds.drdds.motion_info_topic"));
+        root.require_string(k("chassis_dds.drdds.motion_info_topic"));
     cfg.dds.imu_age_warn_ms =
-        static_cast<int>(root.require_int(K("chassis_dds.imu_age_warn_ms")));
-    cfg.dds.imu_frame_id = root.require_string(K("chassis_dds.imu_frame_id"));
+        static_cast<int>(root.require_int(k("chassis_dds.imu_age_warn_ms")));
+    cfg.dds.imu_frame_id = root.require_string(k("chassis_dds.imu_frame_id"));
     cfg.dds.forward_imu_to_rt =
-        root.require_bool(K("chassis_dds.forward_imu_to_rt"));
+        root.require_bool(k("chassis_dds.forward_imu_to_rt"));
     // imu_rt_key is legitimately the empty string while forward_imu_to_rt is
     // false (D-44), and require_string treats "" as null -- so read the node
     // directly and let QC-14 (freeze time) own the paired-value rule.
     {
-      const YamlNode& key_node = root.at(K("chassis_dds.imu_rt_key"));
+      const YamlNode& key_node = root.at(k("chassis_dds.imu_rt_key"));
       cfg.dds.imu_rt_key = key_node.is_null() ? std::string()
                                               : key_node.require_string("");
     }
 
     // ---- channel three: uplink (ROS 2 domain 42 + RT plane) ----------
     cfg.uplink.zenoh_rt_endpoint =
-        root.require_string(K("uplink.zenoh_rt_endpoint"));
+        root.require_string(k("uplink.zenoh_rt_endpoint"));
     cfg.uplink.ros_domain_id =
-        static_cast<int>(root.require_int(K("uplink.ros_domain_id")));
-    cfg.uplink.rmw = root.require_string(K("uplink.rmw"));
-    cfg.uplink.odom_topic = root.require_string(K("uplink.odom_topic"));
-    cfg.uplink.odom_frame = root.require_string(K("uplink.odom_frame"));
-    cfg.uplink.base_frame = root.require_string(K("uplink.base_frame"));
-    cfg.uplink.publish_odom_tf = root.require_bool(K("uplink.publish_odom_tf"));
+        static_cast<int>(root.require_int(k("uplink.ros_domain_id")));
+    cfg.uplink.rmw = root.require_string(k("uplink.rmw"));
+    cfg.uplink.odom_topic = root.require_string(k("uplink.odom_topic"));
+    cfg.uplink.odom_frame = root.require_string(k("uplink.odom_frame"));
+    cfg.uplink.base_frame = root.require_string(k("uplink.base_frame"));
+    cfg.uplink.publish_odom_tf = root.require_bool(k("uplink.publish_odom_tf"));
 
     // ---- odometry ----------------------------------------------------
-    cfg.odom.publish_hz = root.require_double(K("odom.publish_hz"));
-    cfg.odom.vel_deadzone_mps = root.require_double(K("odom.vel_deadzone_mps"));
+    cfg.odom.publish_hz = root.require_double(k("odom.publish_hz"));
+    cfg.odom.vel_deadzone_mps = root.require_double(k("odom.vel_deadzone_mps"));
     cfg.odom.gyro_deadzone_radps =
-        root.require_double(K("odom.gyro_deadzone_radps"));
-    cfg.odom.sigma_v0_mps = root.require_double(K("odom.sigma_v0_mps"));
-    cfg.odom.gyro_bias_radps = root.require_double(K("odom.gyro_bias_radps"));
-    cfg.odom.arw_rad_sqrt_s = root.require_double(K("odom.arw_rad_sqrt_s"));
+        root.require_double(k("odom.gyro_deadzone_radps"));
+    cfg.odom.sigma_v0_mps = root.require_double(k("odom.sigma_v0_mps"));
+    cfg.odom.gyro_bias_radps = root.require_double(k("odom.gyro_bias_radps"));
+    cfg.odom.arw_rad_sqrt_s = root.require_double(k("odom.arw_rad_sqrt_s"));
     // a_max and trust_by_gait are ${common.spec.*} references (13 S8.2 v1.4).
     // They are read exactly like a local value: by the time this file is read
     // the freeze line has already expanded them, and an unexpanded reference
     // would arrive as the literal "${common...}" and fail require_double with
     // the key path -- which is the correct, loud outcome.
-    cfg.odom.a_max_mps2 = root.require_double(K("odom.a_max_mps2"));
-    cfg.odom.trust_flat = root.require_double(K("odom.trust_by_gait.flat"));
-    cfg.odom.trust_stair = root.require_double(K("odom.trust_by_gait.stair"));
+    cfg.odom.a_max_mps2 = root.require_double(k("odom.a_max_mps2"));
+    cfg.odom.trust_flat = root.require_double(k("odom.trust_by_gait.flat"));
+    cfg.odom.trust_stair = root.require_double(k("odom.trust_by_gait.stair"));
     cfg.odom.stale_warn_ms =
-        static_cast<int>(root.require_int(K("odom.stale_warn_ms")));
+        static_cast<int>(root.require_int(k("odom.stale_warn_ms")));
     cfg.odom.stale_invalid_ms =
-        static_cast<int>(root.require_int(K("odom.stale_invalid_ms")));
+        static_cast<int>(root.require_int(k("odom.stale_invalid_ms")));
     cfg.odom.stale_stop_publish_ms =
-        static_cast<int>(root.require_int(K("odom.stale_stop_publish_ms")));
+        static_cast<int>(root.require_int(k("odom.stale_stop_publish_ms")));
 
     // ---- Tier 1 ------------------------------------------------------
     cfg.tier1.cmd_timeout_ms =
-        static_cast<int>(root.require_int(K("tier1.cmd_timeout_ms")));
+        static_cast<int>(root.require_int(k("tier1.cmd_timeout_ms")));
     cfg.tier1.estop_ack_ms =
-        static_cast<int>(root.require_int(K("tier1.estop_ack_ms")));
+        static_cast<int>(root.require_int(k("tier1.estop_ack_ms")));
     cfg.tier1.estop_dedup_ms =
-        static_cast<int>(root.require_int(K("tier1.estop_dedup_ms")));
-    cfg.tier1.control_loop_hz = root.require_double(K("tier1.control_loop_hz"));
+        static_cast<int>(root.require_int(k("tier1.estop_dedup_ms")));
+    cfg.tier1.control_loop_hz = root.require_double(k("tier1.control_loop_hz"));
     cfg.tier1.safety_probe_stale_s =
-        root.require_double(K("tier1.safety_probe_stale_s"));
+        root.require_double(k("tier1.safety_probe_stale_s"));
     // Last on purpose: these are the values most likely to be null today
     // (common.spec.max_* pending V-01), and stopping here means every cheaper
     // configuration mistake has already been reported.
-    cfg.tier1.limits.max_vx_mps = root.require_double(K("tier1.limits.max_vx_mps"));
-    cfg.tier1.limits.max_vy_mps = root.require_double(K("tier1.limits.max_vy_mps"));
+    cfg.tier1.limits.max_vx_mps = root.require_double(k("tier1.limits.max_vx_mps"));
+    cfg.tier1.limits.max_vy_mps = root.require_double(k("tier1.limits.max_vy_mps"));
     cfg.tier1.limits.max_wz_radps =
-        root.require_double(K("tier1.limits.max_wz_radps"));
+        root.require_double(k("tier1.limits.max_wz_radps"));
     cfg.tier1.limits.max_accel_mps2 =
-        root.require_double(K("tier1.limits.max_accel_mps2"));
+        root.require_double(k("tier1.limits.max_accel_mps2"));
     cfg.tier1.limits.max_decel_mps2 =
-        root.require_double(K("tier1.limits.max_decel_mps2"));
-    cfg.tier1.limits.holonomic = root.require_bool(K("tier1.limits.holonomic"));
+        root.require_double(k("tier1.limits.max_decel_mps2"));
+    cfg.tier1.limits.holonomic = root.require_bool(k("tier1.limits.holonomic"));
   } catch (const std::exception& e) {
     throw ConfigError(std::string("quadruped config: ") + e.what());
   }
@@ -669,7 +669,7 @@ QuadrupedConfig LoadQuadrupedConfig(const std::string& path) {
   return cfg;
 }
 
-std::string DescribeConfig(const QuadrupedConfig& cfg) {
+std::string describe_config(const QuadrupedConfig& cfg) {
   // DDS-9 / CB-4: the effective values, printed at startup and carried into
   // hello_ack.runtime.transport. Two domain ids that silently became equal, or
   // a codebook that is not the one the operator believes, both present as "the

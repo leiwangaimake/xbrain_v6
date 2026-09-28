@@ -29,7 +29,7 @@
  * the two type systems together, and the loan would have to be returned from
  * whichever thread happened to finish with it.
  *
- * DDS-6: Poll() is called from the chs_b thread and does no Zenoh and no socket
+ * DDS-6: poll() is called from the chs_b thread and does no Zenoh and no socket
  * work. One blocking call across planes would take out both.
  *
  * The two names this file depends on are in dds_names.h and the IDL, tested
@@ -86,12 +86,12 @@ class ChassisDds {
   // Take whatever has arrived. Returns the number of samples copied out.
   // Non-blocking: the caller owns its own loop rate (13 S9.1, the chs_b
   // thread at 200 Hz).
-  int Poll(double now_mono_s);
+  int poll(double now_mono_s);
 
   bool latest_imu(ImuSample* out) const;
   bool latest_motion_info(MotionInfoSample* out) const;
 
-  // Negative when nothing has arrived yet, which ClassifyImuAge turns into the
+  // Negative when nothing has arrived yet, which classify_imu_age turns into the
   // kNeverSeen band -- a different message from "stale", because the two have
   // different causes.
   double imu_age_s(double now_mono_s) const;

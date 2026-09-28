@@ -60,7 +60,7 @@ namespace {
 
 using Bytes = std::vector<std::uint8_t>;
 
-Bytes FromHex(const std::string& hex) {
+Bytes from_hex(const std::string& hex) {
   Bytes out;
   out.reserve(hex.size() / 2);
   for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
@@ -71,7 +71,7 @@ Bytes FromHex(const std::string& hex) {
 
 // Loads the same golden file the codec test uses. An empty result FAILS rather
 // than letting every case below pass on nothing.
-std::map<std::string, Bytes> LoadGolden(const std::string& path) {
+std::map<std::string, Bytes> load_golden(const std::string& path) {
   std::map<std::string, Bytes> out;
   std::ifstream f(path);
   if (!f) {
@@ -86,7 +86,7 @@ std::map<std::string, Bytes> LoadGolden(const std::string& path) {
     std::string tag, hex;
     std::size_t n = 0;
     if (!(is >> tag >> n >> hex)) continue;
-    out[tag] = FromHex(hex);
+    out[tag] = from_hex(hex);
   }
   if (out.empty()) {
     std::printf("FAIL golden file parsed to zero vectors\n");
@@ -101,7 +101,7 @@ std::map<std::string, Bytes> LoadGolden(const std::string& path) {
 // form segfaults, and a crash in CI carries none of the information the FAIL
 // line would have carried. Found by mutation -- the mutant that made resync
 // discard everything took the suite down with SIGSEGV instead of a message.
-bool FrameEquals(const Framer& fr, const Bytes& want) {
+bool frame_equals(const Framer& fr, const Bytes& want) {
   if (fr.frame() == nullptr || fr.frame_len() != want.size()) return false;
   return std::memcmp(fr.frame(), want.data(), want.size()) == 0;
 }
@@ -122,7 +122,7 @@ constexpr int kAssemblyTimeoutMs = 500;
 int main(int argc, char** argv) {
   const std::string golden_path =
       (argc >= 2) ? argv[1] : "test/golden/chs_a_frames.txt";
-  const auto golden = LoadGolden(golden_path);
+  const auto golden = load_golden(golden_path);
   if (golden.empty()) {
     std::printf("%d CHS_A_FRAMER TEST(S) FAILED\n", g_failures);
     return 1;
@@ -134,12 +134,12 @@ int main(int argc, char** argv) {
   // ---- one frame, one read ------------------------------------------------
   {
     Framer fr(kResyncMax, kAssemblyTimeoutMs);
-    CHECK(fr.Push(basic.data(), basic.size()));
-    CHECK(fr.Next(0.0) == FrameStatus::kFrame);
+    CHECK(fr.push(basic.data(), basic.size()));
+    CHECK(fr.next(0.0) == FrameStatus::kFrame);
     CHECK(fr.frame_len() == basic.size());
     CHECK(fr.asdu_len() == basic.size() - kHeaderBytes);
-    CHECK(FrameEquals(fr, basic));
-    CHECK(fr.Next(0.0) == FrameStatus::kNeedMore);
+    CHECK(frame_equals(fr, basic));
+    CHECK(fr.next(0.0) == FrameStatus::kNeedMore);
     CHECK(fr.frames_out() == 1);
   }
 
@@ -148,15 +148,15 @@ int main(int argc, char** argv) {
     Framer fr(kResyncMax, kAssemblyTimeoutMs);
     // 2 bytes: cuts the sync word itself, so the framer holds a prefix that is
     // not yet identifiable as anything.
-    CHECK(fr.Push(basic.data(), 2));
-    CHECK(fr.Next(0.0) == FrameStatus::kNeedMore);
+    CHECK(fr.push(basic.data(), 2));
+    CHECK(fr.next(0.0) == FrameStatus::kNeedMore);
     // up to mid-header: the length field is still incomplete
-    CHECK(fr.Push(basic.data() + 2, 7));
-    CHECK(fr.Next(0.0) == FrameStatus::kNeedMore);
-    CHECK(fr.Push(basic.data() + 9, basic.size() - 9));
-    CHECK(fr.Next(0.0) == FrameStatus::kFrame);
+    CHECK(fr.push(basic.data() + 2, 7));
+    CHECK(fr.next(0.0) == FrameStatus::kNeedMore);
+    CHECK(fr.push(basic.data() + 9, basic.size() - 9));
+    CHECK(fr.next(0.0) == FrameStatus::kFrame);
     CHECK(fr.frame_len() == basic.size());
-    CHECK(FrameEquals(fr, basic));
+    CHECK(frame_equals(fr, basic));
   }
 
   // ---- two frames glued into one read ------------------------------------
@@ -165,15 +165,15 @@ int main(int argc, char** argv) {
     Bytes glued;
     glued.insert(glued.end(), basic.begin(), basic.end());
     glued.insert(glued.end(), fault.begin(), fault.end());
-    CHECK(fr.Push(glued.data(), glued.size()));
-    CHECK(fr.Next(0.0) == FrameStatus::kFrame);
+    CHECK(fr.push(glued.data(), glued.size()));
+    CHECK(fr.next(0.0) == FrameStatus::kFrame);
     CHECK(fr.frame_len() == basic.size());
     // The second frame must survive the first being handed out: this is where
     // the deferred consume either works or loses a frame per read.
-    CHECK(fr.Next(0.0) == FrameStatus::kFrame);
+    CHECK(fr.next(0.0) == FrameStatus::kFrame);
     CHECK(fr.frame_len() == fault.size());
-    CHECK(FrameEquals(fr, fault));
-    CHECK(fr.Next(0.0) == FrameStatus::kNeedMore);
+    CHECK(frame_equals(fr, fault));
+    CHECK(fr.next(0.0) == FrameStatus::kNeedMore);
     CHECK(fr.frames_out() == 2);
   }
 
@@ -187,12 +187,12 @@ int main(int argc, char** argv) {
     std::size_t got = 0;
     std::vector<std::size_t> sizes;
     for (std::size_t i = 0; i < all.size(); ++i) {
-      CHECK(fr.Push(all.data() + i, 1));
-      FrameStatus st = fr.Next(0.0);
+      CHECK(fr.push(all.data() + i, 1));
+      FrameStatus st = fr.next(0.0);
       while (st == FrameStatus::kFrame) {
         ++got;
         sizes.push_back(fr.frame_len());
-        st = fr.Next(0.0);
+        st = fr.next(0.0);
       }
     }
     CHECK(got == 3);
@@ -213,8 +213,8 @@ int main(int argc, char** argv) {
     noisy.push_back(0x91);
     noisy.push_back(0x00);
     noisy.insert(noisy.end(), basic.begin(), basic.end());
-    CHECK(fr.Push(noisy.data(), noisy.size()));
-    FrameStatus st = fr.Next(0.0);
+    CHECK(fr.push(noisy.data(), noisy.size()));
+    FrameStatus st = fr.next(0.0);
     CHECK(st == FrameStatus::kFrame);
     CHECK(fr.frame_len() == basic.size());
     CHECK(fr.resync_bytes_total() == 40);  // 37 noise + the 3 decoy bytes
@@ -224,9 +224,9 @@ int main(int argc, char** argv) {
   {
     Framer fr(64, kAssemblyTimeoutMs);  // small budget so the case is quick
     const Bytes junk(200, 0x11);
-    CHECK(fr.Push(junk.data(), junk.size()));
-    CHECK(fr.Next(0.0) == FrameStatus::kPoisoned);
-    CHECK(fr.Next(0.0) == FrameStatus::kNeedMore);
+    CHECK(fr.push(junk.data(), junk.size()));
+    CHECK(fr.next(0.0) == FrameStatus::kPoisoned);
+    CHECK(fr.next(0.0) == FrameStatus::kNeedMore);
   }
 
   // ---- FR-2: poisoning DISCARDS what is buffered, frame or not -------------
@@ -244,9 +244,9 @@ int main(int argc, char** argv) {
     Framer fr(8, kAssemblyTimeoutMs);
     Bytes noisy(20, 0x5A);
     noisy.insert(noisy.end(), basic.begin(), basic.end());
-    CHECK(fr.Push(noisy.data(), noisy.size()));
-    CHECK(fr.Next(0.0) == FrameStatus::kPoisoned);
-    CHECK(fr.Next(0.0) == FrameStatus::kNeedMore);
+    CHECK(fr.push(noisy.data(), noisy.size()));
+    CHECK(fr.next(0.0) == FrameStatus::kPoisoned);
+    CHECK(fr.next(0.0) == FrameStatus::kNeedMore);
     CHECK(fr.frames_out() == 0);
   }
 
@@ -261,16 +261,16 @@ int main(int argc, char** argv) {
       Framer fr(kBudget, kAssemblyTimeoutMs);
       Bytes noisy(kBudget, 0x5A);  // exactly the budget: still acceptable
       noisy.insert(noisy.end(), fault.begin(), fault.end());
-      CHECK(fr.Push(noisy.data(), noisy.size()));
-      CHECK(fr.Next(0.0) == FrameStatus::kFrame);
+      CHECK(fr.push(noisy.data(), noisy.size()));
+      CHECK(fr.next(0.0) == FrameStatus::kFrame);
       CHECK(fr.resync_bytes_total() == kBudget);
     }
     {
       Framer fr(kBudget, kAssemblyTimeoutMs);
       Bytes noisy(kBudget + 1, 0x5A);  // one past: poisoned
       noisy.insert(noisy.end(), fault.begin(), fault.end());
-      CHECK(fr.Push(noisy.data(), noisy.size()));
-      CHECK(fr.Next(0.0) == FrameStatus::kPoisoned);
+      CHECK(fr.push(noisy.data(), noisy.size()));
+      CHECK(fr.next(0.0) == FrameStatus::kPoisoned);
     }
   }
 
@@ -286,12 +286,12 @@ int main(int argc, char** argv) {
     Bytes head(20, 0x5A);
     head.push_back(basic[0]);
     head.push_back(basic[1]);
-    CHECK(fr.Push(head.data(), head.size()));
-    CHECK(fr.Next(0.0) == FrameStatus::kNeedMore);
-    CHECK(fr.Push(basic.data() + 2, basic.size() - 2));
-    CHECK(fr.Next(0.0) == FrameStatus::kFrame);
+    CHECK(fr.push(head.data(), head.size()));
+    CHECK(fr.next(0.0) == FrameStatus::kNeedMore);
+    CHECK(fr.push(basic.data() + 2, basic.size() - 2));
+    CHECK(fr.next(0.0) == FrameStatus::kFrame);
     CHECK(fr.frame_len() == basic.size());
-    CHECK(FrameEquals(fr, basic));
+    CHECK(frame_equals(fr, basic));
   }
 
   // ---- FR-2: the budget is per noise RUN, not a lifetime total --------------
@@ -306,8 +306,8 @@ int main(int argc, char** argv) {
     for (int round = 0; round < 3; ++round) {
       Bytes noisy(40, 0x5A);
       noisy.insert(noisy.end(), fault.begin(), fault.end());
-      CHECK(fr.Push(noisy.data(), noisy.size()));
-      CHECK(fr.Next(0.0) == FrameStatus::kFrame);
+      CHECK(fr.push(noisy.data(), noisy.size()));
+      CHECK(fr.next(0.0) == FrameStatus::kFrame);
       CHECK(fr.frame_len() == fault.size());
     }
     CHECK(fr.resync_bytes_total() == 120);  // the TOTAL still counts them all
@@ -319,13 +319,13 @@ int main(int argc, char** argv) {
     Framer fr(kResyncMax, kAssemblyTimeoutMs);
     // Header plus one payload byte: the framer knows how many bytes it wants
     // and will never get them.
-    CHECK(fr.Push(basic.data(), kHeaderBytes + 1));
-    CHECK(fr.Next(10.0) == FrameStatus::kNeedMore);   // timer starts at t=10
-    CHECK(fr.Next(10.2) == FrameStatus::kNeedMore);   // still inside 500 ms
+    CHECK(fr.push(basic.data(), kHeaderBytes + 1));
+    CHECK(fr.next(10.0) == FrameStatus::kNeedMore);   // timer starts at t=10
+    CHECK(fr.next(10.2) == FrameStatus::kNeedMore);   // still inside 500 ms
     // *** The mutation this kills: refreshing partial_since on every call. With
     // a refresh, the elapsed time below is 0.3 s, not 0.6 s, and the drop
     // never happens -- on a stalled link that means waiting forever.
-    CHECK(fr.Next(10.6) == FrameStatus::kDropped);
+    CHECK(fr.next(10.6) == FrameStatus::kDropped);
     // The boundary itself, from both sides. 13 S2.2 FR-3 says a partial frame
     // "older than" the timeout is dropped, so elapsed == timeout is NOT yet
     // older and must keep waiting. Without this pair the comparison is whichever
@@ -337,76 +337,76 @@ int main(int argc, char** argv) {
     // comparing 0.09999999999999998 against 0.1 and would be a coin flip.
     CHECK(fr.dropped_frames() == 1);
     // ...and the framer is usable afterwards: a fresh frame parses.
-    CHECK(fr.Push(fault.data(), fault.size()));
-    CHECK(fr.Next(11.0) == FrameStatus::kFrame);
+    CHECK(fr.push(fault.data(), fault.size()));
+    CHECK(fr.next(11.0) == FrameStatus::kFrame);
     CHECK(fr.frame_len() == fault.size());
   }
 
   // ---- FR-3: elapsed == timeout still waits; one ulp past it drops --------
   {
     Framer fr(kResyncMax, kAssemblyTimeoutMs);  // 500 ms -> exactly 0.5
-    CHECK(fr.Push(basic.data(), kHeaderBytes + 1));
-    CHECK(fr.Next(10.0) == FrameStatus::kNeedMore);  // timer starts at 10.0
-    CHECK(fr.Next(10.5) == FrameStatus::kNeedMore);  // exactly at the timeout
+    CHECK(fr.push(basic.data(), kHeaderBytes + 1));
+    CHECK(fr.next(10.0) == FrameStatus::kNeedMore);  // timer starts at 10.0
+    CHECK(fr.next(10.5) == FrameStatus::kNeedMore);  // exactly at the timeout
     CHECK(fr.dropped_frames() == 0);
-    CHECK(fr.Next(10.5000001) == FrameStatus::kDropped);  // past it
+    CHECK(fr.next(10.5000001) == FrameStatus::kDropped);  // past it
   }
 
   // ---- Reset drops buffered bytes but keeps the totals --------------------
   {
     Framer fr(kResyncMax, kAssemblyTimeoutMs);
-    CHECK(fr.Push(basic.data(), 40));  // partial
-    CHECK(fr.Next(0.0) == FrameStatus::kNeedMore);
-    fr.Reset();
+    CHECK(fr.push(basic.data(), 40));  // partial
+    CHECK(fr.next(0.0) == FrameStatus::kNeedMore);
+    fr.reset();
     // Bytes from the old connection must never be read as the start of the new
     // one, so the remainder of that frame must NOT complete anything.
-    CHECK(fr.Push(basic.data() + 40, basic.size() - 40));
-    const FrameStatus st = fr.Next(0.0);
+    CHECK(fr.push(basic.data() + 40, basic.size() - 40));
+    const FrameStatus st = fr.next(0.0);
     CHECK(st != FrameStatus::kFrame);
   }
 
   // ---- FR-5: one datagram, one frame -------------------------------------
   {
     Framer fr(kResyncMax, kAssemblyTimeoutMs);
-    CHECK(fr.PushDatagram(basic.data(), basic.size()) == FrameStatus::kFrame);
+    CHECK(fr.push_datagram(basic.data(), basic.size()) == FrameStatus::kFrame);
     CHECK(fr.frame_len() == basic.size());
     // Truncated: dropped, not buffered for a continuation that UDP cannot
     // promise to deliver next.
-    CHECK(fr.PushDatagram(basic.data(), basic.size() - 5) == FrameStatus::kDropped);
+    CHECK(fr.push_datagram(basic.data(), basic.size() - 5) == FrameStatus::kDropped);
     // Two frames in one datagram: also dropped, because consuming the first
     // and discarding the rest would silently lose a report.
     Bytes doubled;
     doubled.insert(doubled.end(), basic.begin(), basic.end());
     doubled.insert(doubled.end(), fault.begin(), fault.end());
-    CHECK(fr.PushDatagram(doubled.data(), doubled.size()) == FrameStatus::kDropped);
+    CHECK(fr.push_datagram(doubled.data(), doubled.size()) == FrameStatus::kDropped);
     // Garbage: dropped.
     const Bytes junk(40, 0x00);
-    CHECK(fr.PushDatagram(junk.data(), junk.size()) == FrameStatus::kDropped);
+    CHECK(fr.push_datagram(junk.data(), junk.size()) == FrameStatus::kDropped);
     CHECK(fr.dropped_frames() == 3);
   }
 
-  // ---- PushDatagram clears whatever the stream path left behind ----------
+  // ---- push_datagram clears whatever the stream path left behind ----------
   {
-    // The header says one Framer serves one transport, and PushDatagram opens
+    // The header says one Framer serves one transport, and push_datagram opens
     // by clearing the stream state to say the same thing in code. That line
     // matters on ONE path: 13 S8.2's endpoint failover walks the candidate
     // list, so a tcp:30003 attempt that half-delivered a frame can be followed
     // by the udp:30004 candidate on the same instance.
     //
-    // Without the clear, the leftover bytes stay in buf_ and the NEXT Next()
+    // Without the clear, the leftover bytes stay in buf_ and the NEXT next()
     // parses them -- i.e. bytes from a dead TCP connection surface as a frame
-    // after the process has moved to UDP. Reset() on disconnect normally gets
+    // after the process has moved to UDP. reset() on disconnect normally gets
     // there first; this is the second lock on the same door, and it is only a
     // lock if something proves it turns.
     Framer fr(kResyncMax, kAssemblyTimeoutMs);
-    CHECK(fr.Push(basic.data(), 40));          // a partial stream frame
-    CHECK(fr.PushDatagram(fault.data(), fault.size()) == FrameStatus::kFrame);
+    CHECK(fr.push(basic.data(), 40));          // a partial stream frame
+    CHECK(fr.push_datagram(fault.data(), fault.size()) == FrameStatus::kFrame);
     // The datagram's own frame is the one on offer.
     CHECK(fr.frame_len() == fault.size());
     // And the stream leftovers are gone: completing that partial frame must
     // now produce nothing, because its first 40 bytes no longer exist.
-    CHECK(fr.Push(basic.data() + 40, basic.size() - 40));
-    CHECK(fr.Next(0.0) != FrameStatus::kFrame);
+    CHECK(fr.push(basic.data() + 40, basic.size() - 40));
+    CHECK(fr.next(0.0) != FrameStatus::kFrame);
   }
 
   if (g_failures == 0) {

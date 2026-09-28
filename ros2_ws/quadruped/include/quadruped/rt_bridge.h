@@ -12,15 +12,15 @@
  * process seams and somewhere to send bytes -- none of which is a transport. So
  * it lives in quadruped_core, is built on every machine, and its tests run with
  * no router: a case like "an estop with truncated JSON still stops the robot"
- * is exercised by calling HandleEstop with those bytes. rt_session.cc does
+ * is exercised by calling handle_estop with those bytes. rt_session.cc does
  * nothing but hand zenoh's callbacks to these four functions.
  *
  * The publish side is INJECTED for the same reason. A test captures the acks
  * and asserts on them, instead of inferring from a counter that the right thing
  * was probably sent.
  *
- * THE ASYMMETRY SURVIVES THE TRIP (11 S3.0.1). HandleCmdVel and
- * HandleChassisCtrl can refuse; HandleEstop cannot, and its body has no branch
+ * THE ASYMMETRY SURVIVES THE TRIP (11 S3.0.1). handle_cmd_vel and
+ * handle_chassis_ctrl can refuse; handle_estop cannot, and its body has no branch
  * that skips the stop. The signatures of rt_parse already make that hard to get
  * wrong, and this layer keeps it that way: the stop is issued BEFORE anything
  * is parsed for the ack.
@@ -62,7 +62,7 @@ namespace rt {
 // together: 11 S7.1 calls cmd_id the idempotency key ("重发同 cmd_id 不再递增
 // estop_epoch") and S7.1.1 spells result=duplicate as "同 cmd_id 重发". The
 // full condition is therefore `same cmd_id AND inside this window`; see
-// HandleEstop, which also states what happens when a message carries no
+// handle_estop, which also states what happens when a message carries no
 // cmd_id at all.
 inline constexpr double kEstopDedupS = 0.050;
 
@@ -77,7 +77,7 @@ class RtBridge {
 
   // Reads CLOCK_MONOTONIC in seconds. Injected for the same reason the handlers
   // take `now_mono_s` as an argument (see rt_runtime: "the clock is read at the
-  // edge and passed inward so a test can drive it") -- but HandleEstop needs a
+  // edge and passed inward so a test can drive it") -- but handle_estop needs a
   // SECOND reading, taken after the stop has gone out, which no caller can
   // supply in advance. A test that drove the handler with 1.0 / 1.2 / 10.0 and
   // then met a real uptime reading inside would compute a latency of nine
@@ -91,66 +91,66 @@ class RtBridge {
   // ---- the four inbound handlers ---------------------------------------
   //
   // Called on Zenoh threads in production and directly from tests. They take
-  // the clock as an argument for the same reason CtrlTick does: a 50 ms dedup
+  // the clock as an argument for the same reason ctrl_tick does: a 50 ms dedup
   // window is then exercised in microseconds.
 
   // LOOSENING. Refused messages change nothing and are counted.
   // 13 S7.1 Q-5: the four chassis report streams, each onto its own key.
-  // Called from the chs_a_rx thread via QuadrupedProcess::SetReportSink --
+  // Called from the chs_a_rx thread via QuadrupedProcess::set_report_sink --
   // these structs hold std::string and cannot cross a lock-free slot, and
   // forwarding them is not realtime work.
-  void PublishReports(double now_mono_s, const chs_a::BasicStatus* basic,
+  void publish_reports(double now_mono_s, const chs_a::BasicStatus* basic,
                       const chs_a::MotionStatus* motion,
                       const chs_a::DeviceStatus* device,
                       const chs_a::FaultReport* fault);
 
   // 11 S9.1.4 / 13 ASM-4 (2): answer the upstream's handshake. Without it
   // 10 S3.3 Stage 1 never completes at this process.
-  void HandleHello(double now_mono_s, const char* data, std::size_t len);
+  void handle_hello(double now_mono_s, const char* data, std::size_t len);
 
   // The transport facts 13 CB-4 / DDS-9 / TF-1 require in hello_ack.runtime.
   // Set once from main after the config is loaded; strings are copied because
   // the handshake can be answered long after the caller's buffers are gone.
-  void SetTransport(const std::string& endpoint, const std::string& codebook,
+  void set_transport(const std::string& endpoint, const std::string& codebook,
                     int chassis_dds_domain, int uplink_ros_domain,
                     const std::string& imu_frame_id, bool drdds_available);
   // 11 S9.6 spec block, from the resolved config.
-  void SetSpec(bool holonomic, double max_vx, double max_vy, double max_wz);
+  void set_spec(bool holonomic, double max_vx, double max_vy, double max_wz);
 
   // 11 S9.4.1 rt/chassis/light. Subscribed, never published: p1_motion
   // forwards it from cmd/chassis/light (11 P1-8).
-  void HandleLight(double now_mono_s, const char* data, std::size_t len);
+  void handle_light(double now_mono_s, const char* data, std::size_t len);
 
-  void HandleCmdVel(double now_mono_s, const char* data, std::size_t len);
+  void handle_cmd_vel(double now_mono_s, const char* data, std::size_t len);
 
   // LOOSENING. Every outcome is acked, including refusals -- an ack that only
   // appears on success leaves the sender unable to tell "refused" from "lost".
-  void HandleChassisCtrl(double now_mono_s, const char* data, std::size_t len);
+  void handle_chassis_ctrl(double now_mono_s, const char* data, std::size_t len);
   // 11 S9.2.4 rt/chassis/mode. No ack key exists for this one (the contract
   // registers rt/chassis/mode alone); the result is observable as the triple
   // in rt/chassis/state, which is what 13 MS-1 compares against anyway.
-  void HandleChassisMode(double now_mono_s, const char* data, std::size_t len);
+  void handle_chassis_mode(double now_mono_s, const char* data, std::size_t len);
 
   // TIGHTENING. Always stops. Returns void because there is no outcome a caller
   // could act on differently (11 S3.0.1).
-  void HandleEstop(double now_mono_s, const char* data, std::size_t len);
+  void handle_estop(double now_mono_s, const char* data, std::size_t len);
 
   // Answers on rt/safety/probe/pong. 13 Q-4: the reply is driven by the ping,
   // never by a timer of our own -- a timer would keep answering after the
   // subscription died, which is the one thing this probe exists to detect.
-  void HandlePing(double now_mono_s, const char* data, std::size_t len);
+  void handle_ping(double now_mono_s, const char* data, std::size_t len);
   // 13 Q-5 / A2: rt/clock/status, the subscription that was declared in
   // rt_keys.cc from the start and never handled -- every envelope's ts_sync
   // was the PB-Q3 default (false) because nothing ever fed it. Stores the
   // latest sync verdict and its arrival time; produces no reply.
-  void HandleClockStatus(double now_mono_s, const char* data, std::size_t len);
+  void handle_clock_status(double now_mono_s, const char* data, std::size_t len);
 
   // The envelope's ts_sync as of `now_mono_s`: the last received
   // ClockStatus.sync, aged out to false after kClockSyncTimeoutS (11 CLK-A3,
   // monotonic), false before the first message ever arrives. Public and
   // time-injected so the aging half is assertable without sleeping --
   // Publish itself reads the real clock.
-  bool TsSyncAt(double now_mono_s) const;
+  bool ts_sync_at(double now_mono_s) const;
 
   // ---- outbound ----------------------------------------------------------
   //
@@ -163,7 +163,7 @@ class RtBridge {
   // cannot echo a generation it has never been told; 13 RX-3 and NEXT.md
   // P7.3 (7) both record the dependency as "quadruped publishes it first".
   // This is that publish.
-  bool PublishState(const QuadrupedProcess::StateSnapshot& snap);
+  bool publish_state(const QuadrupedProcess::StateSnapshot& snap);
 
   // ---- observables -------------------------------------------------------
   std::uint64_t cmd_vel_accepted() const { return cmd_ok_; }
@@ -214,35 +214,35 @@ class RtBridge {
   RtParse first_refusal() const { return first_refusal_; }
 
  private:
-  bool Publish(const std::string& suffix, const char* data, std::size_t len);
-  std::uint64_t NextSeq(const std::string& suffix);
+  bool publish(const std::string& suffix, const char* data, std::size_t len);
+  std::uint64_t next_seq(const std::string& suffix);
 
   QuadrupedProcess* proc_;
   std::string rid_;
   std::string boot_;
   PublishFn publish_;
-  // Never empty: the constructor substitutes MonoNowSeconds when the caller
+  // Never empty: the constructor substitutes mono_now_seconds when the caller
   // passes nothing, so no call site needs a null check on the estop path.
   MonoFn mono_now_;
 
   double last_estop_mono_s_ = -1.0;
   // The idempotency key of the stop that armed last_estop_mono_s_, and
-  // whether that stop carried one. Touched only by HandleEstop on the zenoh
+  // whether that stop carried one. Touched only by handle_estop on the zenoh
   // thread -- like last_estop_mono_s_ above and UNLIKE the four fields below,
-  // which PublishState reads from another thread and which therefore need the
+  // which publish_state reads from another thread and which therefore need the
   // mutex. Nothing outside the dedup test reads these two, so adding them to
   // the locked group would buy a lock on the estop path for nothing.
   //
   // std::string, so the assignment allocates. That is already true of
   // last_estop_reason_ one field down and it is allowed here: QD-7 bars
   // allocation on the REALTIME path, and this handler runs on rt_safety /
-  // rt_sub (rt_parse.h says so in as many words -- ParseEstop itself
+  // rt_sub (rt_parse.h says so in as many words -- parse_estop itself
   // allocates, via nlohmann and std::string).
   std::string last_estop_cmd_id_;
   bool last_estop_cmd_id_present_ = false;
-  // 11 S4.1 last_soft_estop, the four facts behind it. Written by HandleEstop
+  // 11 S4.1 last_soft_estop, the four facts behind it. Written by handle_estop
   // (zenoh thread, non-duplicate branch only -- a swallowed repeat is not a
-  // new stop), read by PublishState (rt_pub thread); a mutex because reason
+  // new stop), read by publish_state (rt_pub thread); a mutex because reason
   // and src_role are std::string (12 RTC-6 rules out a lock-free slot) and
   // neither thread is realtime. last_estop_rx_mono_ < 0 means none yet.
   mutable std::mutex estop_info_mu_;
@@ -260,8 +260,8 @@ class RtBridge {
   std::atomic<std::uint64_t> light_send_failed_{0};
   std::atomic<std::uint64_t> hello_ok_{0};
   std::atomic<std::uint64_t> hello_refused_{0};
-  // model / version arrive on the chs_a_rx thread (PublishReports) and are
-  // read on the zenoh subscription thread (HandleHello). std::string, so a
+  // model / version arrive on the chs_a_rx thread (publish_reports) and are
+  // read on the zenoh subscription thread (handle_hello). std::string, so a
   // lock-free slot is not available (12 RTC-6) -- a mutex is correct here:
   // neither thread is realtime, and the critical section is two string
   // assignments.
@@ -269,7 +269,7 @@ class RtBridge {
   std::string chassis_model_;
   std::string chassis_version_;
   // 11 S4.1 proto_version + the "incompatible" half of conn. Written by
-  // HandleHello (zenoh thread), read by PublishState (rt_pub thread) -- same
+  // handle_hello (zenoh thread), read by publish_state (rt_pub thread) -- same
   // mutex as the identity strings because it is the same producer/consumer
   // pair and the critical section is one string and one bool.
   //
@@ -289,13 +289,13 @@ class RtBridge {
   bool have_basic_ = false;
   double last_remain_mile_km_ = 0.0;
   // 11 S4.1 faults[] on the STATE path. The FaultReport holds std::string and
-  // cannot cross the lock-free slot (12 RTC-6), so PublishReports (chs_a_rx
+  // cannot cross the lock-free slot (12 RTC-6), so publish_reports (chs_a_rx
   // thread) rebuilds this cache from every fault report -- REBUILDS, not
   // appends: each report's `faults` list is the complete currently-asserted
-  // set, so an empty list legitimately clears the cache. PublishState
+  // set, so an empty list legitimately clears the cache. publish_state
   // (rt_pub thread) copies it out under the lock and publishes a view. Its
   // own mutex rather than chassis_id_mu_: the fault list can be long, and a
-  // long copy under the identity mutex would stall HandleHello for its
+  // long copy under the identity mutex would stall handle_hello for its
   // duration over data the handshake never reads.
   struct CachedFault {
     std::string code;   // prefixed, as the fault stream carries it (CF-5)
@@ -314,7 +314,7 @@ class RtBridge {
   std::int64_t last_usage_mode_ = 0;
   std::int64_t last_motion_state_ = 0;
   std::int64_t last_gait_ = 0;
-  // Transport / spec: written once before Start, read in HandleHello.
+  // Transport / spec: written once before Start, read in handle_hello.
   std::string tp_endpoint_;
   std::string tp_codebook_;
   std::string tp_imu_frame_;

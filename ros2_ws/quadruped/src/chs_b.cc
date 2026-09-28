@@ -60,7 +60,7 @@ namespace {
 // 192.168.1.8 and the chassis on 10.21.33.200, it chose the first, and the
 // reader sat at zero samples while the chassis published /IMU throughout. The
 // participant was up, the topic existed, no call returned an error.
-std::string DomainConfig(const std::string& iface) {
+std::string domain_config(const std::string& iface) {
   return std::string("<CycloneDDS><Domain><General>") +
          "<Interfaces><NetworkInterface name=\"" + iface + "\"/></Interfaces>" +
          "<AllowMulticast>true</AllowMulticast>"
@@ -99,7 +99,7 @@ ChassisDds::ChassisDds(const ChassisDdsConfig& cfg) : impl_(new Impl()) {
         "would otherwise pick an interface itself, and on a multi-homed host "
         "the participant comes up clean and receives nothing (13 DDS-9)");
   }
-  const std::string domain_xml = DomainConfig(cfg.network_interface);
+  const std::string domain_xml = domain_config(cfg.network_interface);
   impl_->domain = dds_create_domain(static_cast<dds_domainid_t>(cfg.domain_id),
                                     domain_xml.c_str());
   // DDS_RETCODE_PRECONDITION_NOT_MET means the domain already exists in this
@@ -122,7 +122,7 @@ ChassisDds::ChassisDds(const ChassisDdsConfig& cfg) : impl_(new Impl()) {
 
   // The topic names go through the mapping in dds_names.h: /IMU is rt/IMU on
   // the wire, and a reader created with the ROS spelling matches nothing.
-  const std::string imu_topic = RosTopicToDdsTopic(cfg.imu_topic);
+  const std::string imu_topic = ros_topic_to_dds_topic(cfg.imu_topic);
 
   // BEST_EFFORT with a small history: the chassis publishes IMU BEST_EFFORT at
   // 200 Hz (measured 2026-09-15, 201 Hz), and a RELIABLE reader would simply
@@ -158,7 +158,7 @@ ChassisDds::ChassisDds(const ChassisDdsConfig& cfg) : impl_(new Impl()) {
   // chassis_dds.drdds.motion_info_topic sat in the file doing nothing --
   // and the symptom of a wrong topic name is DDS-9's: participant up,
   // topic present, zero samples, indistinguishable from a dead network.
-  const std::string mi_topic = RosTopicToDdsTopic(cfg.motion_info_topic);
+  const std::string mi_topic = ros_topic_to_dds_topic(cfg.motion_info_topic);
   const dds_entity_t mi_t = dds_create_topic(
       impl_->participant, &drdds_msg_dds__MotionInfo__desc, mi_topic.c_str(),
       nullptr, nullptr);
@@ -178,7 +178,7 @@ ChassisDds::~ChassisDds() {
   if (impl_->domain > 0) dds_delete(impl_->domain);
 }
 
-int ChassisDds::Poll(double now_mono_s) {
+int ChassisDds::poll(double now_mono_s) {
   if (!impl_) return 0;
   int n = 0;
 

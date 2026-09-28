@@ -99,7 +99,7 @@ constexpr CodeName kUsageModes[] = {
 // negative -- so a negative or oversized value is rendered in decimal instead
 // of being mangled into 0xFFFE, which would send a reader looking for a code
 // that was never sent.
-std::string UnknownLabel(std::int64_t raw) {
+std::string unknown_label(std::int64_t raw) {
   char buf[40];
   if (raw >= 0 && raw <= 0xFFFF) {
     std::snprintf(buf, sizeof(buf), "unknown_0x%04X", static_cast<unsigned>(raw));
@@ -110,7 +110,7 @@ std::string UnknownLabel(std::int64_t raw) {
 }
 
 template <std::size_t N>
-OpenSetValue Resolve(const CodeName (&table)[N], std::int64_t raw) {
+OpenSetValue resolve(const CodeName (&table)[N], std::int64_t raw) {
   OpenSetValue v;
   v.raw = raw;
   for (std::size_t i = 0; i < N; ++i) {
@@ -124,7 +124,7 @@ OpenSetValue Resolve(const CodeName (&table)[N], std::int64_t raw) {
   // discard either. The caller is told plainly that this value is not
   // modelled, and the raw number rides along.
   v.known = false;
-  v.label = UnknownLabel(raw);
+  v.label = unknown_label(raw);
   return v;
 }
 
@@ -135,25 +135,25 @@ OpenSetValue Resolve(const CodeName (&table)[N], std::int64_t raw) {
 // as a string, and a firmware that swapped one for the other would otherwise
 // throw out of the middle of a parse and cost the entire report.
 
-std::int64_t GetInt(const Json& j, const char* key, std::int64_t dflt) {
+std::int64_t get_int(const Json& j, const char* key, std::int64_t dflt) {
   auto it = j.find(key);
   if (it == j.end() || !it->is_number()) return dflt;
   return it->get<std::int64_t>();
 }
 
-double GetDouble(const Json& j, const char* key, double dflt) {
+double get_double(const Json& j, const char* key, double dflt) {
   auto it = j.find(key);
   if (it == j.end() || !it->is_number()) return dflt;
   return it->get<double>();
 }
 
-std::string GetString(const Json& j, const char* key) {
+std::string get_string(const Json& j, const char* key) {
   auto it = j.find(key);
   if (it == j.end() || !it->is_string()) return std::string();
   return it->get<std::string>();
 }
 
-bool GetBool(const Json& j, const char* key, bool dflt) {
+bool get_bool(const Json& j, const char* key, bool dflt) {
   auto it = j.find(key);
   if (it == j.end()) return dflt;
   // The chassis writes booleans both ways: `charge` is a real JSON bool in the
@@ -169,7 +169,7 @@ bool GetBool(const Json& j, const char* key, bool dflt) {
 // with fewer legs, and filling the tail with zeros would publish a leg folded
 // flat at the origin. Partial reads are the shape that makes a protocol change
 // look like a mechanical fault.
-bool GetFixedDoubleArray(const Json& j, const char* key, double* out,
+bool get_fixed_double_array(const Json& j, const char* key, double* out,
                          std::size_t n) {
   auto it = j.find(key);
   if (it == j.end() || !it->is_array() || it->size() != n) return false;
@@ -184,7 +184,7 @@ bool GetFixedDoubleArray(const Json& j, const char* key, double* out,
 // A variable-length int array. Unlike the fixed one this tolerates any length:
 // the CPU arrays are per-core and the core count is the chassis's business,
 // not ours -- pinning it here would turn a different SoC into a parse failure.
-std::vector<int> GetIntArray(const Json& j, const char* key) {
+std::vector<int> get_int_array(const Json& j, const char* key) {
   std::vector<int> out;
   auto it = j.find(key);
   if (it == j.end() || !it->is_array()) return out;
@@ -194,7 +194,7 @@ std::vector<int> GetIntArray(const Json& j, const char* key) {
   return out;
 }
 
-std::vector<std::string> GetStringArray(const Json& j, const char* key) {
+std::vector<std::string> get_string_array(const Json& j, const char* key) {
   std::vector<std::string> out;
   auto it = j.find(key);
   if (it == j.end() || !it->is_array()) return out;
@@ -210,25 +210,25 @@ std::vector<std::string> GetStringArray(const Json& j, const char* key) {
 // One CPU host out of the CPU group. A helper rather than two copies: the
 // blocks are identical in shape and the only thing that differs is which key
 // they live under, so a copy is two places for a field name to be missed.
-void ParseCpuHost(const Json& cpu, const char* key, CpuHostStatus* out) {
+void parse_cpu_host(const Json& cpu, const char* key, CpuHostStatus* out) {
   auto h = cpu.find(key);
   if (h == cpu.end() || !h->is_object()) return;
   out->valid = true;
-  out->soc_id = GetString(*h, "SocId");
-  out->avg_util_pct = static_cast<int>(GetInt(*h, "AvgUtil", 0));
-  out->package_temp_c = static_cast<int>(GetInt(*h, "PackageTemp", 0));
-  out->util_pct = GetIntArray(*h, "Util");
-  out->temps_c = GetIntArray(*h, "Temps");
-  out->cur_freq_khz = GetIntArray(*h, "CurFreqKhz");
-  out->hw_max_freq_khz = GetIntArray(*h, "HwMaxFreqKhz");
-  out->hw_min_freq_khz = GetIntArray(*h, "HwMinFreqKhz");
-  out->gov_policy = GetStringArray(*h, "GovPolicy");
+  out->soc_id = get_string(*h, "SocId");
+  out->avg_util_pct = static_cast<int>(get_int(*h, "AvgUtil", 0));
+  out->package_temp_c = static_cast<int>(get_int(*h, "PackageTemp", 0));
+  out->util_pct = get_int_array(*h, "Util");
+  out->temps_c = get_int_array(*h, "Temps");
+  out->cur_freq_khz = get_int_array(*h, "CurFreqKhz");
+  out->hw_max_freq_khz = get_int_array(*h, "HwMaxFreqKhz");
+  out->hw_min_freq_khz = get_int_array(*h, "HwMinFreqKhz");
+  out->gov_policy = get_string_array(*h, "GovPolicy");
 }
 
 // Parse the ASDU and descend to PatrolDevice.Items, the object every report
 // puts its payload in. Returns nullptr when the envelope is not what it must
 // be -- which is a real failure, unlike a missing leaf field.
-const Json* ItemsOf(const Json& root) {
+const Json* items_of(const Json& root) {
   auto pd = root.find("PatrolDevice");
   if (pd == root.end() || !pd->is_object()) return nullptr;
   auto items = pd->find("Items");
@@ -236,14 +236,14 @@ const Json* ItemsOf(const Json& root) {
   return &(*items);
 }
 
-bool ParseRoot(const std::uint8_t* asdu, std::size_t len, Json* out) {
+bool parse_root(const std::uint8_t* asdu, std::size_t len, Json* out) {
   if (asdu == nullptr || len == 0) return false;
   // Non-throwing parse: a malformed frame is a link event, not an exception to
   // unwind through the receive thread.
   *out = Json::parse(asdu, asdu + len, nullptr, false);
   // *** EQUIVALENT-MUTANT NOTE (CLAUDE.md 7.2.1). No test can make this line
   // fail, and that is worth stating rather than leaving for the next person to
-  // rediscover. Every public parse function calls ItemsOf immediately after
+  // rediscover. Every public parse function calls items_of immediately after
   // this, and find() on a discarded value -- or on any non-object -- returns
   // end() without throwing, so the report is refused one step later with the
   // same answer. Measured against the vendored nlohmann build for "not json",
@@ -260,11 +260,11 @@ bool ParseRoot(const std::uint8_t* asdu, std::size_t len, Json* out) {
 
 }  // namespace
 
-OpenSetValue ResolveMotionState(std::int64_t raw) { return Resolve(kMotionStates, raw); }
-OpenSetValue ResolveGait(std::int64_t raw) { return Resolve(kGaits, raw); }
+OpenSetValue resolve_motion_state(std::int64_t raw) { return resolve(kMotionStates, raw); }
+OpenSetValue resolve_gait(std::int64_t raw) { return resolve(kGaits, raw); }
 
-bool GaitValueByName(const std::string& name, std::int64_t* out) {
-  // The SAME table ResolveGait reads, walked the other way. A second name
+bool gait_value_by_name(const std::string& name, std::int64_t* out) {
+  // The SAME table resolve_gait reads, walked the other way. A second name
   // table would be a second place for a gait to be spelled, and the two only
   // have to disagree once -- 13 QC-9's list is configured by name and compared
   // against read-back VALUES, so a mismatch there disarms PR-1 silently.
@@ -277,7 +277,7 @@ bool GaitValueByName(const std::string& name, std::int64_t* out) {
   return false;
 }
 
-bool IsStairGait(std::int64_t raw) {
+bool is_stair_gait(std::int64_t raw) {
   for (const std::int64_t g : kStairGaits) {
     if (g == raw) return true;
   }
@@ -290,9 +290,9 @@ bool IsStairGait(std::int64_t raw) {
   // costs more than it buys on the one gait it was built for.
   return false;
 }
-OpenSetValue ResolveUsageMode(std::int64_t raw) { return Resolve(kUsageModes, raw); }
+OpenSetValue resolve_usage_mode(std::int64_t raw) { return resolve(kUsageModes, raw); }
 
-std::string SeverityToLevel(bool present, std::int64_t severity) {
+std::string severity_to_level(bool present, std::int64_t severity) {
   namespace sets = hachist::xbrain::enums;
   if (present) {
     if (severity == 3) return std::string(sets::kFaultLevel[0]);  // warn
@@ -311,7 +311,7 @@ namespace {
 // CF-1's body format: exactly four hex digits, UPPER case. Shared by both
 // spaces so they cannot drift into different spellings of the same number --
 // which would defeat CF-4's dedup key, since that key IS the formatted string.
-std::string FormatWithPrefix(const char* prefix, std::int64_t code) {
+std::string format_with_prefix(const char* prefix, std::int64_t code) {
   char buf[32];
   std::snprintf(buf, sizeof(buf), "%s:0x%04X", prefix,
                 static_cast<unsigned>(code & 0xFFFF));
@@ -320,15 +320,15 @@ std::string FormatWithPrefix(const char* prefix, std::int64_t code) {
 
 }  // namespace
 
-std::string FormatChassisFaultCode(std::int64_t code) {
-  return FormatWithPrefix("chs", code);
+std::string format_chassis_fault_code(std::int64_t code) {
+  return format_with_prefix("chs", code);
 }
 
-std::string FormatChargeFaultCode(std::int64_t code) {
-  return FormatWithPrefix("chg", code);
+std::string format_charge_fault_code(std::int64_t code) {
+  return format_with_prefix("chg", code);
 }
 
-bool IsValidPrefixedFaultCode(const std::string& code) {
+bool is_valid_prefixed_fault_code(const std::string& code) {
   // Hand-checked rather than a regex: this runs per fault per report, and the
   // pattern is fixed at ten characters. Written as the shape it accepts so a
   // reader can compare it with CF-1 directly: ^(chs|chg):0x[0-9A-Fa-f]{4}$
@@ -346,80 +346,80 @@ bool IsValidPrefixedFaultCode(const std::string& code) {
   return true;
 }
 
-bool ParseBasicStatus(const std::uint8_t* asdu, std::size_t len, BasicStatus* out) {
+bool parse_basic_status(const std::uint8_t* asdu, std::size_t len, BasicStatus* out) {
   if (out == nullptr) return false;
   Json root;
-  if (!ParseRoot(asdu, len, &root)) return false;
-  const Json* items = ItemsOf(root);
+  if (!parse_root(asdu, len, &root)) return false;
+  const Json* items = items_of(root);
   if (items == nullptr) return false;
   auto bs = items->find("BasicStatus");
   if (bs == items->end() || !bs->is_object()) return false;
 
   BasicStatus s;
-  s.motion_state = ResolveMotionState(GetInt(*bs, "MotionState", 0));
-  s.gait = ResolveGait(GetInt(*bs, "Gait", 0));
-  s.usage_mode = ResolveUsageMode(GetInt(*bs, "ControlUsageMode", 0));
-  s.hes = GetBool(*bs, "HES", false);
-  s.sleep = GetBool(*bs, "Sleep", false);
-  s.charge = static_cast<int>(GetInt(*bs, "Charge", 0));
-  s.status_code = static_cast<int>(GetInt(*bs, "StatusCode", 0));
-  s.robot_type = static_cast<int>(GetInt(*bs, "RobotType", 0));
-  s.direction = static_cast<int>(GetInt(*bs, "Direction", 0));
-  s.ooa = static_cast<int>(GetInt(*bs, "OOA", 0));
-  s.ota_status = static_cast<int>(GetInt(*bs, "OTAStatus", 0));
-  s.power_management = static_cast<int>(GetInt(*bs, "PowerManagement", 0));
-  s.reset_joints_zero = static_cast<int>(GetInt(*bs, "ResetJointsZero", 0));
-  s.device_num = GetString(*bs, "DeviceNum");
-  s.model = GetString(*bs, "Model");
-  s.sn = GetString(*bs, "Sn");
-  s.version = GetString(*bs, "Version");
+  s.motion_state = resolve_motion_state(get_int(*bs, "MotionState", 0));
+  s.gait = resolve_gait(get_int(*bs, "Gait", 0));
+  s.usage_mode = resolve_usage_mode(get_int(*bs, "ControlUsageMode", 0));
+  s.hes = get_bool(*bs, "HES", false);
+  s.sleep = get_bool(*bs, "Sleep", false);
+  s.charge = static_cast<int>(get_int(*bs, "Charge", 0));
+  s.status_code = static_cast<int>(get_int(*bs, "StatusCode", 0));
+  s.robot_type = static_cast<int>(get_int(*bs, "RobotType", 0));
+  s.direction = static_cast<int>(get_int(*bs, "Direction", 0));
+  s.ooa = static_cast<int>(get_int(*bs, "OOA", 0));
+  s.ota_status = static_cast<int>(get_int(*bs, "OTAStatus", 0));
+  s.power_management = static_cast<int>(get_int(*bs, "PowerManagement", 0));
+  s.reset_joints_zero = static_cast<int>(get_int(*bs, "ResetJointsZero", 0));
+  s.device_num = get_string(*bs, "DeviceNum");
+  s.model = get_string(*bs, "Model");
+  s.sn = get_string(*bs, "Sn");
+  s.version = get_string(*bs, "Version");
   *out = s;
   return true;
 }
 
-bool ParseMotionStatus(const std::uint8_t* asdu, std::size_t len, MotionStatus* out) {
+bool parse_motion_status(const std::uint8_t* asdu, std::size_t len, MotionStatus* out) {
   if (out == nullptr) return false;
   Json root;
-  if (!ParseRoot(asdu, len, &root)) return false;
-  const Json* items = ItemsOf(root);
+  if (!parse_root(asdu, len, &root)) return false;
+  const Json* items = items_of(root);
   if (items == nullptr) return false;
   auto ms = items->find("MotionStatus");
   if (ms == items->end() || !ms->is_object()) return false;
 
   MotionStatus s;
-  s.motion_state = ResolveMotionState(GetInt(*ms, "MotionState", 0));
-  s.gait = ResolveGait(GetInt(*ms, "Gait", 0));
-  s.linear_x = GetDouble(*ms, "LinearX", 0.0);
-  s.linear_y = GetDouble(*ms, "LinearY", 0.0);
-  s.angular_z = GetDouble(*ms, "AngularZ", 0.0);
-  s.roll = GetDouble(*ms, "Roll", 0.0);
-  s.pitch = GetDouble(*ms, "Pitch", 0.0);
-  s.yaw = GetDouble(*ms, "Yaw", 0.0);
-  s.height = GetDouble(*ms, "Height", 0.0);
+  s.motion_state = resolve_motion_state(get_int(*ms, "MotionState", 0));
+  s.gait = resolve_gait(get_int(*ms, "Gait", 0));
+  s.linear_x = get_double(*ms, "LinearX", 0.0);
+  s.linear_y = get_double(*ms, "LinearY", 0.0);
+  s.angular_z = get_double(*ms, "AngularZ", 0.0);
+  s.roll = get_double(*ms, "Roll", 0.0);
+  s.pitch = get_double(*ms, "Pitch", 0.0);
+  s.yaw = get_double(*ms, "Yaw", 0.0);
+  s.height = get_double(*ms, "Height", 0.0);
   // Payload is deliberately NOT read -- see MotionStatus in the header.
-  s.remain_mile = GetDouble(*ms, "RemainMile", 0.0);
-  s.acc_x = GetDouble(*ms, "AccX", 0.0);
-  s.acc_y = GetDouble(*ms, "AccY", 0.0);
-  s.acc_z = GetDouble(*ms, "AccZ", 0.0);
-  s.omega_x = GetDouble(*ms, "OmegaX", 0.0);
-  s.omega_y = GetDouble(*ms, "OmegaY", 0.0);
-  s.omega_z = GetDouble(*ms, "OmegaZ", 0.0);
+  s.remain_mile = get_double(*ms, "RemainMile", 0.0);
+  s.acc_x = get_double(*ms, "AccX", 0.0);
+  s.acc_y = get_double(*ms, "AccY", 0.0);
+  s.acc_z = get_double(*ms, "AccZ", 0.0);
+  s.omega_x = get_double(*ms, "OmegaX", 0.0);
+  s.omega_y = get_double(*ms, "OmegaY", 0.0);
+  s.omega_z = get_double(*ms, "OmegaZ", 0.0);
   // MotorStatus is a SIBLING group of MotionStatus inside Items, not a member
   // of it -- reading it off `ms` finds nothing and leaves joints silently
   // empty, which is exactly the state this file was in before 2026-09-28.
   auto mo = items->find("MotorStatus");
   if (mo != items->end() && mo->is_object()) {
-    s.has_joints = GetFixedDoubleArray(*mo, "Joint", s.joint, 16);
+    s.has_joints = get_fixed_double_array(*mo, "Joint", s.joint, 16);
   }
   *out = s;
   return true;
 }
 
-bool ParseDeviceStatus(const std::uint8_t* asdu, std::size_t len, DeviceStatus* out) {
+bool parse_device_status(const std::uint8_t* asdu, std::size_t len, DeviceStatus* out) {
   if (out == nullptr) return false;
   Json root;
-  if (!ParseRoot(asdu, len, &root)) return false;
-  const Json* items = ItemsOf(root);
+  if (!parse_root(asdu, len, &root)) return false;
+  const Json* items = items_of(root);
   if (items == nullptr) return false;
   auto bl = items->find("BatteryList");
   if (bl == items->end() || !bl->is_array()) return false;
@@ -428,11 +428,11 @@ bool ParseDeviceStatus(const std::uint8_t* asdu, std::size_t len, DeviceStatus* 
   for (const Json& e : *bl) {
     if (!e.is_object()) continue;
     BatteryEntry b;
-    b.level = static_cast<int>(GetInt(e, "BatteryLevel", 0));
-    b.voltage = GetDouble(e, "Voltage", 0.0);
-    b.temperature_c = GetDouble(e, "battery_temperature", 0.0);
-    b.charging = GetBool(e, "charge", false);
-    b.serial = GetString(e, "serial");
+    b.level = static_cast<int>(get_int(e, "BatteryLevel", 0));
+    b.voltage = get_double(e, "Voltage", 0.0);
+    b.temperature_c = get_double(e, "battery_temperature", 0.0);
+    b.charging = get_bool(e, "charge", false);
+    b.serial = get_string(e, "serial");
     // An empty slot reports 0 V. A pack that can deliver anything cannot, so
     // voltage is the discriminator; the -273 temperature (the absolute-zero
     // "no sensor" sentinel) and level 0 corroborate it but are not the test --
@@ -448,7 +448,7 @@ bool ParseDeviceStatus(const std::uint8_t* asdu, std::size_t len, DeviceStatus* 
     // calibrated that is a machine that refuses to move at 72% charge.
     //
     // The count and the minimum are updated under ONE condition on purpose.
-    // present == 0 is what tells WritePowerState to publish null rather than a
+    // present == 0 is what tells write_power_state to publish null rather than a
     // number, and two separate conditions could disagree about whether a
     // minimum exists at all. Reading `present_count == 1` as "this is the
     // first present pack" also removes the separate seed flag: seeding from 0
@@ -464,11 +464,11 @@ bool ParseDeviceStatus(const std::uint8_t* asdu, std::size_t len, DeviceStatus* 
 
   // DeviceTemperature: two readings per joint, same sixteen joints and same
   // order as MotionStatus::joint. Fixed length on purpose -- see
-  // GetFixedDoubleArray.
+  // get_fixed_double_array.
   auto dt = items->find("DeviceTemperature");
   if (dt != items->end() && dt->is_object()) {
-    const bool m = GetFixedDoubleArray(*dt, "Motor", s.temps.motor, 16);
-    const bool d = GetFixedDoubleArray(*dt, "Driver", s.temps.driver, 16);
+    const bool m = get_fixed_double_array(*dt, "Motor", s.temps.motor, 16);
+    const bool d = get_fixed_double_array(*dt, "Driver", s.temps.driver, 16);
     // Both or neither. One of the two alone would publish sixteen zeros under
     // the other name, and 0 degrees is a plausible reading.
     s.temps.valid = m && d;
@@ -479,20 +479,20 @@ bool ParseDeviceStatus(const std::uint8_t* asdu, std::size_t len, DeviceStatus* 
   auto de = items->find("DevEnable");
   if (de != items->end() && de->is_object()) {
     s.dev_enable.valid = true;
-    s.dev_enable.fan_speed = static_cast<int>(GetInt(*de, "FanSpeed", 0));
-    s.dev_enable.load_power = static_cast<int>(GetInt(*de, "LoadPower", 0));
-    s.dev_enable.led_host = static_cast<int>(GetInt(*de, "LedHost", 0));
-    s.dev_enable.led_ext = static_cast<int>(GetInt(*de, "LedExt", 0));
-    s.dev_enable.fp = static_cast<int>(GetInt(*de, "FP", 0));
-    s.dev_enable.lidar = static_cast<int>(GetInt(*de, "Lidar", 0));
-    s.dev_enable.gps = static_cast<int>(GetInt(*de, "GPS", 0));
-    s.dev_enable.video = static_cast<int>(GetInt(*de, "Video", 0));
-    s.dev_enable.gps_mode = static_cast<int>(GetInt(*de, "GPSMode", 0));
-    s.dev_enable.led = static_cast<int>(GetInt(*de, "LED", 0));
+    s.dev_enable.fan_speed = static_cast<int>(get_int(*de, "FanSpeed", 0));
+    s.dev_enable.load_power = static_cast<int>(get_int(*de, "LoadPower", 0));
+    s.dev_enable.led_host = static_cast<int>(get_int(*de, "LedHost", 0));
+    s.dev_enable.led_ext = static_cast<int>(get_int(*de, "LedExt", 0));
+    s.dev_enable.fp = static_cast<int>(get_int(*de, "FP", 0));
+    s.dev_enable.lidar = static_cast<int>(get_int(*de, "Lidar", 0));
+    s.dev_enable.gps = static_cast<int>(get_int(*de, "GPS", 0));
+    s.dev_enable.video = static_cast<int>(get_int(*de, "Video", 0));
+    s.dev_enable.gps_mode = static_cast<int>(get_int(*de, "GPSMode", 0));
+    s.dev_enable.led = static_cast<int>(get_int(*de, "LED", 0));
     auto vc = de->find("VoiceControl");
     if (vc != de->end() && vc->is_object()) {
-      s.dev_enable.voice = static_cast<int>(GetInt(*vc, "Voice", 0));
-      s.dev_enable.voiceplay = static_cast<int>(GetInt(*vc, "Voiceplay", 0));
+      s.dev_enable.voice = static_cast<int>(get_int(*vc, "Voice", 0));
+      s.dev_enable.voiceplay = static_cast<int>(get_int(*vc, "Voiceplay", 0));
     }
   }
 
@@ -501,18 +501,18 @@ bool ParseDeviceStatus(const std::uint8_t* asdu, std::size_t len, DeviceStatus* 
   auto gp = items->find("GPS");
   if (gp != items->end() && gp->is_object()) {
     s.gps.valid = true;
-    s.gps.latitude = GetDouble(*gp, "Latitude", 0.0);
-    s.gps.longitude = GetDouble(*gp, "Longitude", 0.0);
-    s.gps.altitude = GetDouble(*gp, "Altitude", 0.0);
-    s.gps.speed = GetDouble(*gp, "Speed", 0.0);
-    s.gps.course = GetDouble(*gp, "Course", 0.0);
-    s.gps.hdop = GetDouble(*gp, "HDOP", 0.0);
-    s.gps.vdop = GetDouble(*gp, "VDOP", 0.0);
-    s.gps.pdop = GetDouble(*gp, "PDOP", 0.0);
-    s.gps.fix_quality = static_cast<int>(GetInt(*gp, "FixQuality", 0));
-    s.gps.num_satellites = static_cast<int>(GetInt(*gp, "NumSatellites", 0));
+    s.gps.latitude = get_double(*gp, "Latitude", 0.0);
+    s.gps.longitude = get_double(*gp, "Longitude", 0.0);
+    s.gps.altitude = get_double(*gp, "Altitude", 0.0);
+    s.gps.speed = get_double(*gp, "Speed", 0.0);
+    s.gps.course = get_double(*gp, "Course", 0.0);
+    s.gps.hdop = get_double(*gp, "HDOP", 0.0);
+    s.gps.vdop = get_double(*gp, "VDOP", 0.0);
+    s.gps.pdop = get_double(*gp, "PDOP", 0.0);
+    s.gps.fix_quality = static_cast<int>(get_int(*gp, "FixQuality", 0));
+    s.gps.num_satellites = static_cast<int>(get_int(*gp, "NumSatellites", 0));
     s.gps.visible_satellites =
-        static_cast<int>(GetInt(*gp, "VisibleSatellites", 0));
+        static_cast<int>(get_int(*gp, "VisibleSatellites", 0));
   }
 
   // CPU. Two hosts on this machine; 11 S9.8.3 warns that GOS is absent on a
@@ -520,19 +520,19 @@ bool ParseDeviceStatus(const std::uint8_t* asdu, std::size_t len, DeviceStatus* 
   // does by leaving `valid` false rather than by inventing an empty host.
   auto cp = items->find("CPU");
   if (cp != items->end() && cp->is_object()) {
-    ParseCpuHost(*cp, "AOS", &s.cpu_aos);
-    ParseCpuHost(*cp, "NOS", &s.cpu_nos);
+    parse_cpu_host(*cp, "AOS", &s.cpu_aos);
+    parse_cpu_host(*cp, "NOS", &s.cpu_nos);
   }
 
   *out = s;
   return true;
 }
 
-bool ParseFaultReport(const std::uint8_t* asdu, std::size_t len, FaultReport* out) {
+bool parse_fault_report(const std::uint8_t* asdu, std::size_t len, FaultReport* out) {
   if (out == nullptr) return false;
   Json root;
-  if (!ParseRoot(asdu, len, &root)) return false;
-  const Json* items = ItemsOf(root);
+  if (!parse_root(asdu, len, &root)) return false;
+  const Json* items = items_of(root);
   if (items == nullptr) return false;
   auto el = items->find("ErrorList");
   // An EMPTY list is the healthy case and must parse: the measured machine
@@ -544,8 +544,8 @@ bool ParseFaultReport(const std::uint8_t* asdu, std::size_t len, FaultReport* ou
   for (const Json& e : *el) {
     if (!e.is_object()) continue;
     FaultEntry f;
-    f.code = FormatChassisFaultCode(GetInt(e, "Code", 0));
-    f.name = GetString(e, "Name");
+    f.code = format_chassis_fault_code(get_int(e, "Code", 0));
+    f.name = get_string(e, "Name");
     // Details has no schema on either side of the link (13 S7.3), so it is
     // carried as text. Rendering a non-string with dump() keeps a structured
     // Details readable instead of silently empty.
@@ -553,20 +553,20 @@ bool ParseFaultReport(const std::uint8_t* asdu, std::size_t len, FaultReport* ou
     if (det != e.end()) {
       f.details = det->is_string() ? det->get<std::string>() : det->dump();
     }
-    f.grouped = GetBool(e, "Grouped", false);
-    f.resources = GetStringArray(e, "Resources");
-    f.source = GetStringArray(e, "Source");
-    f.source_ids = GetStringArray(e, "SourceIds");
+    f.grouped = get_bool(e, "Grouped", false);
+    f.resources = get_string_array(e, "Resources");
+    f.source = get_string_array(e, "Source");
+    f.source_ids = get_string_array(e, "SourceIds");
     auto ts = e.find("Timestamp");
     if (ts != e.end() && ts->is_object()) {
-      f.since_sec = GetInt(*ts, "Sec", 0);
-      f.since_nanosec = GetInt(*ts, "Nanosec", 0);
+      f.since_sec = get_int(*ts, "Sec", 0);
+      f.since_nanosec = get_int(*ts, "Nanosec", 0);
       // Presence is recorded, not inferred from the values: a fault whose
       // Timestamp the chassis omitted must reach the wire as since_ts = null,
       // never as the epoch (see FaultEntry::since_valid).
       f.since_valid = true;
     }
-    f.type = static_cast<int>(GetInt(e, "Type", 0));
+    f.type = static_cast<int>(get_int(e, "Type", 0));
     // Severities is per-fault and travels with the report. Presence matters:
     // an absent field and a value of 3 mean different things, and collapsing
     // them would turn every unlabelled fault into a warning.
@@ -585,7 +585,7 @@ bool ParseFaultReport(const std::uint8_t* asdu, std::size_t len, FaultReport* ou
         sev_value = sev->front().get<std::int64_t>();
       }
     }
-    f.level = SeverityToLevel(sev_present, sev_value);
+    f.level = severity_to_level(sev_present, sev_value);
     // CF-3: a cleared fault carries the byte-identical code string it was
     // raised with, so the two lists can be matched without re-formatting.
     if (f.type == 2) {

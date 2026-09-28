@@ -87,7 +87,7 @@ constexpr double kAxisQuietBeforeSwitchS = 2.0;
 
 }  // namespace
 
-const char* ConnStateName(ConnState s) {
+const char* conn_state_name(ConnState s) {
   switch (s) {
     case ConnState::kProbing: return "probing";
     case ConnState::kOk: return "ok";
@@ -100,7 +100,7 @@ const char* ConnStateName(ConnState s) {
   return "invalid";
 }
 
-ErrorDisposition ClassifyErrorCode(std::uint32_t code) {
+ErrorDisposition classify_error_code(std::uint32_t code) {
   ErrorDisposition d;
   switch (code) {
     case 0x0000:
@@ -154,7 +154,7 @@ ErrorDisposition ClassifyErrorCode(std::uint32_t code) {
   }
 }
 
-SessionConfig SessionConfig::FromLinkConfig(const ChassisLinkConfig& link) {
+SessionConfig SessionConfig::from_link_config(const ChassisLinkConfig& link) {
   SessionConfig c;
   c.endpoints = link.endpoints;
   c.probe_timeout_s = static_cast<double>(link.probe_timeout_ms) / 1000.0;
@@ -198,7 +198,7 @@ Session::Session(SessionConfig cfg, Dial dial, Hangup hangup,
   recovery_budget_ = cfg_.endpoint_recovery_attempts;
 }
 
-double Session::BackoffFor(std::size_t attempt) const {
+double Session::backoff_for(std::size_t attempt) const {
   // The last rung repeats forever. A ladder that ran off its end would either
   // need a default here -- a number not in the config, which CLAUDE.md 3.1
   // forbids for exactly this reason -- or stop reconnecting altogether.
@@ -206,7 +206,7 @@ double Session::BackoffFor(std::size_t attempt) const {
   return cfg_.reconnect_backoff_s[attempt < n ? attempt : n - 1];
 }
 
-void Session::EnterLost(double now_mono_s, TickResult* out) {
+void Session::enter_lost(double now_mono_s, TickResult* out) {
   if (socket_open_) {
     hangup_();
     socket_open_ = false;
@@ -216,7 +216,7 @@ void Session::EnterLost(double now_mono_s, TickResult* out) {
   active_ = -1;
   probe_started_s_ = -1.0;
   last_heartbeat_s_ = -1.0;
-  retry_at_s_ = now_mono_s + BackoffFor(backoff_attempt_);
+  retry_at_s_ = now_mono_s + backoff_for(backoff_attempt_);
   ++backoff_attempt_;
   candidate_ = 0;
   // 13 CA-9: a genuine drop refills the recovery budget. The budget exists to
@@ -231,7 +231,7 @@ void Session::EnterLost(double now_mono_s, TickResult* out) {
   recovery_at_s_ = -1.0;
 }
 
-bool Session::HasHigherPriorityCandidate() {
+bool Session::has_higher_priority_candidate() {
   // active_ <= 0 covers both "already on the preferred candidate" and "no live
   // link", and in neither case is there anything to recover to.
   if (active_ <= 0) return false;
@@ -249,15 +249,15 @@ bool Session::HasHigherPriorityCandidate() {
   return false;
 }
 
-void Session::ScheduleRecovery(double now_mono_s) {
+void Session::schedule_recovery(double now_mono_s) {
   recovery_at_s_ = -1.0;
   if (!(cfg_.endpoint_recovery_period_s > 0.0)) return;
   if (recovery_budget_ <= 0) return;
-  if (!HasHigherPriorityCandidate()) return;
+  if (!has_higher_priority_candidate()) return;
   recovery_at_s_ = now_mono_s + cfg_.endpoint_recovery_period_s;
 }
 
-bool Session::RecoveryDue(double now_mono_s) const {
+bool Session::recovery_due(double now_mono_s) const {
   if (recovery_at_s_ < 0.0) return false;
   if (now_mono_s < recovery_at_s_) return false;
   // The axis stream must have been quiet for the 0xE006 affinity window. This
@@ -274,7 +274,7 @@ bool Session::RecoveryDue(double now_mono_s) const {
   return true;
 }
 
-void Session::StartRecovery(double now_mono_s, TickResult* out) {
+void Session::start_recovery(double now_mono_s, TickResult* out) {
   recovering_ = true;
   recovery_from_ = active_;
   recovery_at_s_ = -1.0;
@@ -287,10 +287,10 @@ void Session::StartRecovery(double now_mono_s, TickResult* out) {
   // and "we are back where we started" are the same code path rather than an
   // error branch nothing exercises.
   candidate_ = 0;
-  AdvanceCandidate(now_mono_s, out);
+  advance_candidate(now_mono_s, out);
 }
 
-void Session::AdvanceCandidate(double now_mono_s, TickResult* out) {
+void Session::advance_candidate(double now_mono_s, TickResult* out) {
   // Close whatever the previous candidate left open before trying the next:
   // 13 CA-1 turns a second live socket into a second CLIENT, and the chassis
   // then refuses axis commands for two seconds with 0xE006.
@@ -330,20 +330,20 @@ void Session::AdvanceCandidate(double now_mono_s, TickResult* out) {
   // Off the end of the list: every candidate was disabled, uncredentialed,
   // unreachable, or silent.
   ++probe_cycles_;
-  EnterLost(now_mono_s, out);
+  enter_lost(now_mono_s, out);
 }
 
-TickResult Session::Tick(double now_mono_s) {
+TickResult Session::tick(double now_mono_s) {
   TickResult out;
 
   if (state_ == ConnState::kLost) {
     if (retry_at_s_ >= 0.0 && now_mono_s < retry_at_s_) return out;
     retry_at_s_ = -1.0;
     candidate_ = 0;
-    AdvanceCandidate(now_mono_s, &out);
+    advance_candidate(now_mono_s, &out);
   } else if (!socket_open_) {
     // First entry: nothing dialled yet.
-    AdvanceCandidate(now_mono_s, &out);
+    advance_candidate(now_mono_s, &out);
   }
 
   if (!socket_open_) return out;
@@ -370,11 +370,11 @@ TickResult Session::Tick(double now_mono_s) {
         recovering_ = false;
         if (active_ >= recovery_from_) --recovery_budget_;
       }
-      ScheduleRecovery(now_mono_s);
+      schedule_recovery(now_mono_s);
     } else if (now_mono_s - probe_started_s_ > cfg_.probe_timeout_s) {
       last_skip_ = SkipReason::kNoReportInTime;
       ++candidate_;
-      AdvanceCandidate(now_mono_s, &out);
+      advance_candidate(now_mono_s, &out);
       if (!socket_open_) return out;
     }
   } else {
@@ -384,7 +384,7 @@ TickResult Session::Tick(double now_mono_s) {
     // way past the lost threshold.
     const double age = now_mono_s - last_report_s_;
     if (last_report_s_ < 0.0 || age > cfg_.state_timeout_lost_s) {
-      EnterLost(now_mono_s, &out);
+      enter_lost(now_mono_s, &out);
       return out;
     }
     if (age > cfg_.state_timeout_degraded_s) {
@@ -406,8 +406,8 @@ TickResult Session::Tick(double now_mono_s) {
     // because the preferred one came back or because this one was dying.
     // Stable-and-healthy is the one state where the only thing wrong is which
     // candidate we are on.
-    if (state_ == ConnState::kOk && RecoveryDue(now_mono_s)) {
-      StartRecovery(now_mono_s, &out);
+    if (state_ == ConnState::kOk && recovery_due(now_mono_s)) {
+      start_recovery(now_mono_s, &out);
       // The walk can run off the end of the list (every candidate silent) and
       // land in kLost with no socket. Returning here rather than falling into
       // the heartbeat block below, which would ask for a heartbeat on a socket
@@ -427,21 +427,21 @@ TickResult Session::Tick(double now_mono_s) {
   return out;
 }
 
-void Session::OnReport(double now_mono_s) { last_report_s_ = now_mono_s; }
+void Session::on_report(double now_mono_s) { last_report_s_ = now_mono_s; }
 
-void Session::OnSendFailure(double now_mono_s) {
+void Session::on_send_failure(double now_mono_s) {
   (void)now_mono_s;  // the count is what matters; the state ages on the tick
   ++send_failures_;
 }
 
-void Session::OnSendSuccess() {
+void Session::on_send_success() {
   // 13 S2.5 counts CONSECUTIVE failures, so one good write clears the run. A
   // cumulative counter would eventually degrade a link that has been healthy
   // for hours with a handful of transient failures spread across them.
   send_failures_ = 0;
 }
 
-void Session::OnAxisCommandSent(double now_mono_s) {
+void Session::on_axis_command_sent(double now_mono_s) {
   // Monotone on purpose. The caller forwards the estop path's send time from a
   // later control period (that frame goes out on the zenoh callback thread),
   // so the two sources arrive interleaved; taking the max means a stale
@@ -449,9 +449,9 @@ void Session::OnAxisCommandSent(double now_mono_s) {
   if (now_mono_s > last_axis_cmd_s_) last_axis_cmd_s_ = now_mono_s;
 }
 
-void Session::OnErrorCode(double now_mono_s, std::uint32_t code) {
+void Session::on_error_code(double now_mono_s, std::uint32_t code) {
   (void)now_mono_s;
-  const ErrorDisposition d = ClassifyErrorCode(code);
+  const ErrorDisposition d = classify_error_code(code);
   // *** KEPT, not just classified. The code was consumed here and discarded,
   // so a chassis that refused a command left no trace anywhere: measured on
   // the live machine 2026-09-21, a usage_mode switch to navigation was
@@ -483,7 +483,7 @@ void Session::OnErrorCode(double now_mono_s, std::uint32_t code) {
   }
 }
 
-void Session::OnSleep(bool sleeping) { asleep_ = sleeping; }
+void Session::on_sleep(bool sleeping) { asleep_ = sleeping; }
 
 bool Session::motion_allowed() const {
   // 13 F-21: asleep means every motion command comes back 0xE008 five seconds

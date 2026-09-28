@@ -17,7 +17,7 @@
 
 namespace quadruped {
 
-std::string RosTopicToDdsTopic(const std::string& ros_topic) {
+std::string ros_topic_to_dds_topic(const std::string& ros_topic) {
   // A ROS topic is absolute and non-empty. Refusing the degenerate forms here
   // is what keeps a reader from being created on "rt/" -- which is a valid
   // topic name that nothing publishes, so the failure would look like silence
@@ -36,7 +36,7 @@ std::string RosTopicToDdsTopic(const std::string& ros_topic) {
   return std::string(kRosTopicPrefix) + ros_topic.substr(1);
 }
 
-const char* ImuFreshnessName(ImuFreshness f) {
+const char* imu_freshness_name(ImuFreshness f) {
   switch (f) {
     case ImuFreshness::kNeverSeen: return "never_seen";
     case ImuFreshness::kFresh: return "fresh";
@@ -45,7 +45,7 @@ const char* ImuFreshnessName(ImuFreshness f) {
   return "invalid";
 }
 
-ImuFreshness ClassifyImuAge(double age_s, int warn_ms) {
+ImuFreshness classify_imu_age(double age_s, int warn_ms) {
   // Negative age is the sentinel for "nothing has arrived". It is a distinct
   // band because the two causes differ: never-seen is almost always the name
   // mapping, stale is almost always the link.

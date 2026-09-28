@@ -35,7 +35,7 @@
  *
  * Boundary: this yields ASDU byte ranges. It does not parse them (chs_a_codec
  * for routing, B2 for payloads) and it does not own the socket (B2). It never
- * copies a frame out: Next() hands back a pointer INTO the buffer, valid until
+ * copies a frame out: next() hands back a pointer INTO the buffer, valid until
  * the next call, which is what keeps a 10 Hz stream of 2.4 KB device reports
  * from allocating on every frame.
  */
@@ -50,7 +50,7 @@
 namespace quadruped {
 namespace chs_a {
 
-// What one Next() call found. Four outcomes, not a bool, because three of them
+// What one next() call found. Four outcomes, not a bool, because three of them
 // demand different handling and collapsing any two of them loses the
 // distinction the caller needs.
 enum class FrameStatus {
@@ -73,7 +73,7 @@ class Framer {
   // Append bytes read from the socket. Returns false when the data does not
   // fit, which can only happen if the caller ignored capacity() -- the buffer
   // holds one maximum-size frame, so a correct caller never overflows it.
-  bool Push(const std::uint8_t* data, std::size_t len);
+  bool push(const std::uint8_t* data, std::size_t len);
 
   // Try to extract the next frame. Call in a loop until it stops returning
   // kFrame: one read() commonly carries several reports.
@@ -81,9 +81,9 @@ class Framer {
   // now_mono_s is CLOCK_MONOTONIC seconds, used ONLY for the FR-3 partial
   // timeout. A jump in this value cannot corrupt a frame; it can only cause an
   // early or late discard of an incomplete one.
-  FrameStatus Next(double now_mono_s);
+  FrameStatus next(double now_mono_s);
 
-  // Valid until the next Next()/Push(). Pointer into the internal buffer.
+  // Valid until the next next()/push(). Pointer into the internal buffer.
   const std::uint8_t* frame() const { return frame_; }
   std::size_t frame_len() const { return frame_len_; }
   // The payload alone, which is what a parser wants.
@@ -91,7 +91,7 @@ class Framer {
   std::size_t asdu_len() const { return frame_len_ - kHeaderBytes; }
   const Header& header() const { return header_; }
 
-  // How many bytes the caller may still Push before it must drain with Next().
+  // How many bytes the caller may still Push before it must drain with next().
   std::size_t capacity() const { return kMaxFrameBytes - used_; }
 
   // Diagnostics. Counters rather than log lines because the interesting signal
@@ -104,24 +104,24 @@ class Framer {
 
   // Drop everything buffered. Called on reconnect: bytes from the old
   // connection must never be parsed as the beginning of the new one.
-  void Reset();
+  void reset();
 
   // FR-5: one datagram is one frame. Returns kFrame when the datagram holds
   // exactly one valid frame, kDropped otherwise. Deliberately does NOT share
   // the stream buffer -- carrying a partial datagram into the next one is the
   // bug this separate entry point exists to prevent, since UDP has no ordering
   // guarantee that would make the continuation meaningful.
-  FrameStatus PushDatagram(const std::uint8_t* data, std::size_t len);
+  FrameStatus push_datagram(const std::uint8_t* data, std::size_t len);
 
  private:
   // Slide to the next sync-word candidate, counting the skipped bytes against
   // the FR-2 budget. Returns false when the budget is exhausted.
-  bool Resync();
+  bool resync();
 
   // Drop the frame handed out by the previous call. Deferred rather than done
   // on the way out so the caller's pointer stays valid until it calls again --
   // see the .cc file comment for why that beats a read cursor.
-  void ApplyPendingConsume();
+  void apply_pending_consume();
 
   std::size_t resync_max_bytes_;
   double frame_assembly_timeout_s_;

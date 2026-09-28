@@ -57,7 +57,7 @@ static int g_failures = 0;
 
 namespace {
 
-std::vector<std::uint8_t> FromHex(const std::string& hex) {
+std::vector<std::uint8_t> from_hex(const std::string& hex) {
   std::vector<std::uint8_t> out;
   out.reserve(hex.size() / 2);
   for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
@@ -69,7 +69,7 @@ std::vector<std::uint8_t> FromHex(const std::string& hex) {
 // Load the golden file into tag -> bytes. A missing or empty file FAILS rather
 // than yielding an empty map that would make every case below vacuously pass --
 // the "zero tests ran, all green" shape.
-std::map<std::string, std::vector<std::uint8_t>> LoadGolden(const std::string& path) {
+std::map<std::string, std::vector<std::uint8_t>> load_golden(const std::string& path) {
   std::map<std::string, std::vector<std::uint8_t>> out;
   std::ifstream f(path);
   if (!f) {
@@ -84,7 +84,7 @@ std::map<std::string, std::vector<std::uint8_t>> LoadGolden(const std::string& p
     std::string tag, hex;
     std::size_t n = 0;
     if (!(is >> tag >> n >> hex)) continue;
-    std::vector<std::uint8_t> b = FromHex(hex);
+    std::vector<std::uint8_t> b = from_hex(hex);
     if (b.size() != n) {
       std::printf("FAIL golden %s: declared %zu bytes, hex holds %zu\n",
                   tag.c_str(), n, b.size());
@@ -100,13 +100,13 @@ std::map<std::string, std::vector<std::uint8_t>> LoadGolden(const std::string& p
   return out;
 }
 
-std::string AsduText(const std::vector<std::uint8_t>& frame) {
+std::string asdu_text(const std::vector<std::uint8_t>& frame) {
   if (frame.size() <= kHeaderBytes) return std::string();
   return std::string(reinterpret_cast<const char*>(frame.data() + kHeaderBytes),
                      frame.size() - kHeaderBytes);
 }
 
-bool Contains(const std::string& hay, const char* needle) {
+bool contains(const std::string& hay, const char* needle) {
   return hay.find(needle) != std::string::npos;
 }
 
@@ -122,15 +122,15 @@ constexpr std::int64_t kFixedWall = 1789455340;
 // the memset left the test green because the stack was already zero.
 constexpr std::uint8_t kPoison = 0xAA;
 
-void Poison(std::uint8_t* buf, std::size_t cap) { std::memset(buf, kPoison, cap); }
+void poison(std::uint8_t* buf, std::size_t cap) { std::memset(buf, kPoison, cap); }
 
 // Structural invariants that hold for EVERY frame this encoder emits. Applied
 // to all five commands: the mutation that drops the PatrolDevice wrapper from
 // one encoder survived a test suite that only checked the wrapper on CAPTURED
 // frames, because nothing looked at our own output that way.
-void CheckFrameShape(const char* what, const std::uint8_t* buf, std::size_t n) {
+void check_frame_shape(const char* what, const std::uint8_t* buf, std::size_t n) {
   Header h;
-  if (!ReadHeader(buf, n, &h)) {
+  if (!read_header(buf, n, &h)) {
     std::printf("FAIL %s: header did not parse\n", what);
     ++g_failures;
     return;
@@ -200,14 +200,14 @@ void CheckFrameShape(const char* what, const std::uint8_t* buf, std::size_t n) {
 int main(int argc, char** argv) {
   const std::string golden_path =
       (argc >= 2) ? argv[1] : "test/golden/chs_a_frames.txt";
-  const auto golden = LoadGolden(golden_path);
+  const auto golden = load_golden(golden_path);
 
   // ---- every captured frame parses as a header, with the invariants ------
   for (const auto& kv : golden) {
     const std::string& tag = kv.first;
     const std::vector<std::uint8_t>& f = kv.second;
     Header h;
-    if (!ReadHeader(f.data(), f.size(), &h)) {
+    if (!read_header(f.data(), f.size(), &h)) {
       std::printf("FAIL %s: header did not parse\n", tag.c_str());
       ++g_failures;
       continue;
@@ -225,10 +225,10 @@ int main(int argc, char** argv) {
     // zero, and the chassis accepted zero.
     for (std::size_t i = 11; i < 16; ++i) CHECK(f[i] == 0);
     // The wrapper and the mandatory Time field, in both directions.
-    const std::string body = AsduText(f);
-    CHECK(Contains(body, "\"PatrolDevice\""));
-    CHECK(Contains(body, "\"Time\""));
-    CHECK(Contains(body, "\"Items\""));
+    const std::string body = asdu_text(f);
+    CHECK(contains(body, "\"PatrolDevice\""));
+    CHECK(contains(body, "\"Time\""));
+    CHECK(contains(body, "\"Items\""));
   }
 
   // ---- routing: the captured reports must resolve to the code book -------
@@ -256,7 +256,7 @@ int main(int argc, char** argv) {
       continue;
     }
     AsduRouting r;
-    const bool ok = ParseAsduRouting(it->second.data() + kHeaderBytes,
+    const bool ok = parse_asdu_routing(it->second.data() + kHeaderBytes,
                                      it->second.size() - kHeaderBytes, &r);
     if (!ok) {
       std::printf("FAIL %s: routing did not parse\n", e.tag);
@@ -274,9 +274,9 @@ int main(int argc, char** argv) {
     if (ack != golden.end() && rep != golden.end()) {
       AsduRouting a;
       AsduRouting b;
-      CHECK(ParseAsduRouting(ack->second.data() + kHeaderBytes,
+      CHECK(parse_asdu_routing(ack->second.data() + kHeaderBytes,
                              ack->second.size() - kHeaderBytes, &a));
-      CHECK(ParseAsduRouting(rep->second.data() + kHeaderBytes,
+      CHECK(parse_asdu_routing(rep->second.data() + kHeaderBytes,
                              rep->second.size() - kHeaderBytes, &b));
       // 0 means SUCCESS on this protocol, so "absent" and "zero" must never be
       // collapsed: a report read as a successful response would make a failed
@@ -289,8 +289,8 @@ int main(int argc, char** argv) {
 
   // ---- Time renders the instant it was GIVEN, not the fallback -----------
   {
-    // The shape check in CheckFrameShape cannot see this on its own: when the
-    // conversion fails, FormatTime substitutes "1970-01-01 00:00:00", which has
+    // The shape check in check_frame_shape cannot see this on its own: when the
+    // conversion fails, format_time substitutes "1970-01-01 00:00:00", which has
     // exactly the right shape. A mutant that broke strftime outright therefore
     // survived the whole suite -- the frames stayed well-formed and every one
     // of them was stamped with the epoch.
@@ -301,27 +301,27 @@ int main(int argc, char** argv) {
     // across the whole UTC-12..UTC+14 range the local date is the 14th or the
     // 15th of 2026-09. Any of those separates a real conversion from 1970.
     std::uint8_t buf[512];
-    Poison(buf, sizeof(buf));
-    const std::size_t n = EncodeHeartbeat(buf, sizeof(buf), 0, kFixedWall);
+    poison(buf, sizeof(buf));
+    const std::size_t n = encode_heartbeat(buf, sizeof(buf), 0, kFixedWall);
     CHECK(n > kHeaderBytes);
     const std::string body(reinterpret_cast<const char*>(buf + kHeaderBytes),
                            n - kHeaderBytes);
-    CHECK(Contains(body, "\"Time\": \"2026-09-1"));
+    CHECK(contains(body, "\"Time\": \"2026-09-1"));
   }
 
   // ---- an unconvertible instant still yields a well-formed frame ----------
   {
-    // The documented fallback (see FormatTime): on a conversion failure the
+    // The documented fallback (see format_time): on a conversion failure the
     // buffer must hold an obviously-wrong but well-formed timestamp, never
     // uninitialised stack. The difference matters because garbage is rejected
     // by the chassis with a loud 0xE002, whereas stack bytes parse sometimes
     // and not others -- an intermittent fault with no cause visible in a log.
     std::uint8_t buf[512];
-    Poison(buf, sizeof(buf));
+    poison(buf, sizeof(buf));
     const std::size_t n =
-        EncodeHeartbeat(buf, sizeof(buf), 0, (std::numeric_limits<std::int64_t>::max)());
+        encode_heartbeat(buf, sizeof(buf), 0, (std::numeric_limits<std::int64_t>::max)());
     CHECK(n > kHeaderBytes);
-    CheckFrameShape("heartbeat/unconvertible-time", buf, n);
+    check_frame_shape("heartbeat/unconvertible-time", buf, n);
   }
 
   // ---- an ErrorCode that is PRESENT but unreadable is not code 0 ----------
@@ -350,7 +350,7 @@ int main(int argc, char** argv) {
     };
     for (const char* text : bad) {
       AsduRouting r;
-      const bool ok = ParseAsduRouting(
+      const bool ok = parse_asdu_routing(
           reinterpret_cast<const std::uint8_t*>(text), std::strlen(text), &r);
       // Routing itself still succeeds -- Type and Command are readable, and the
       // frame must still be routed. It is only the code that is unknown.
@@ -365,20 +365,20 @@ int main(int argc, char** argv) {
   // ---- our heartbeat reproduces the captured shape ------------------------
   {
     std::uint8_t buf[512];
-    Poison(buf, sizeof(buf));
-    const std::size_t n = EncodeHeartbeat(buf, sizeof(buf), 0, kFixedWall);
+    poison(buf, sizeof(buf));
+    const std::size_t n = encode_heartbeat(buf, sizeof(buf), 0, kFixedWall);
     CHECK(n > kHeaderBytes);
-    CheckFrameShape("heartbeat", buf, n);
+    check_frame_shape("heartbeat", buf, n);
     Header h;
-    CHECK(ReadHeader(buf, n, &h));
+    CHECK(read_header(buf, n, &h));
     CHECK(kHeaderBytes + h.asdu_len == n);
     CHECK(h.msg_id == 0);
     const std::string body(reinterpret_cast<const char*>(buf + kHeaderBytes),
                            n - kHeaderBytes);
     // DECIMAL codes. If this ever reads 0x00100064 the chassis answers 0xE002.
-    CHECK(Contains(body, "\"Type\": 1048676"));
-    CHECK(Contains(body, "\"Command\": 5"));
-    CHECK(Contains(body, "\"Items\": {}"));
+    CHECK(contains(body, "\"Type\": 1048676"));
+    CHECK(contains(body, "\"Command\": 5"));
+    CHECK(contains(body, "\"Items\": {}"));
     // Time format, not Time value: the test must pass in any timezone.
     const std::size_t tpos = body.find("\"Time\": \"");
     CHECK(tpos != std::string::npos);
@@ -405,101 +405,101 @@ int main(int argc, char** argv) {
   // ---- the command encoders ----------------------------------------------
   {
     std::uint8_t buf[512];
-    Poison(buf, sizeof(buf));
-    std::size_t n = EncodeMotionState(buf, sizeof(buf), 7, kFixedWall, 1);
+    poison(buf, sizeof(buf));
+    std::size_t n = encode_motion_state(buf, sizeof(buf), 7, kFixedWall, 1);
     CHECK(n > 0);
-    CheckFrameShape("motion_state", buf, n);
+    check_frame_shape("motion_state", buf, n);
     std::string body(reinterpret_cast<const char*>(buf + kHeaderBytes),
                      n - kHeaderBytes);
-    CHECK(Contains(body, "\"Type\": 1048577"));    // 0x00100001
-    CHECK(Contains(body, "\"Command\": 2097154"));  // 0x00200002
-    CHECK(Contains(body, "\"MotionParam\": 1"));
+    CHECK(contains(body, "\"Type\": 1048577"));    // 0x00100001
+    CHECK(contains(body, "\"Command\": 2097154"));  // 0x00200002
+    CHECK(contains(body, "\"MotionParam\": 1"));
     Header h;
-    CHECK(ReadHeader(buf, n, &h));
+    CHECK(read_header(buf, n, &h));
     CHECK(h.msg_id == 7);  // the pairing id the chassis echoes
 
-    Poison(buf, sizeof(buf));
-    n = EncodeUsageMode(buf, sizeof(buf), 1, kFixedWall, 1);
-    CheckFrameShape("usage_mode", buf, n);
+    poison(buf, sizeof(buf));
+    n = encode_usage_mode(buf, sizeof(buf), 1, kFixedWall, 1);
+    check_frame_shape("usage_mode", buf, n);
     body.assign(reinterpret_cast<const char*>(buf + kHeaderBytes), n - kHeaderBytes);
-    CHECK(Contains(body, "\"Type\": 1048578"));    // 0x00100002
-    CHECK(Contains(body, "\"Command\": 5242882"));  // 0x00500002
-    CHECK(Contains(body, "\"Mode\": 1"));
+    CHECK(contains(body, "\"Type\": 1048578"));    // 0x00100002
+    CHECK(contains(body, "\"Command\": 5242882"));  // 0x00500002
+    CHECK(contains(body, "\"Mode\": 1"));
 
-    Poison(buf, sizeof(buf));
-    n = EncodeGait(buf, sizeof(buf), 2, kFixedWall, 0x3002u);
-    CheckFrameShape("gait", buf, n);
+    poison(buf, sizeof(buf));
+    n = encode_gait(buf, sizeof(buf), 2, kFixedWall, 0x3002u);
+    check_frame_shape("gait", buf, n);
     body.assign(reinterpret_cast<const char*>(buf + kHeaderBytes), n - kHeaderBytes);
-    CHECK(Contains(body, "\"Command\": 3145730"));  // 0x00300002
-    CHECK(Contains(body, "\"GaitParam\": 12290"));  // 0x3002 in decimal
+    CHECK(contains(body, "\"Command\": 3145730"));  // 0x00300002
+    CHECK(contains(body, "\"GaitParam\": 12290"));  // 0x3002 in decimal
     // ActionParam is deliberately absent (13 V-45: its value table does not
     // exist, so a guessed value would be invented data).
-    CHECK(!Contains(body, "ActionParam"));
+    CHECK(!contains(body, "ActionParam"));
 
-    Poison(buf, sizeof(buf));
-    n = EncodeSdkMode(buf, sizeof(buf), 3, kFixedWall, true, 100);
-    CheckFrameShape("sdk_mode", buf, n);
+    poison(buf, sizeof(buf));
+    n = encode_sdk_mode(buf, sizeof(buf), 3, kFixedWall, true, 100);
+    check_frame_shape("sdk_mode", buf, n);
     body.assign(reinterpret_cast<const char*>(buf + kHeaderBytes), n - kHeaderBytes);
-    CHECK(Contains(body, "\"SDKEnable\": true"));
-    CHECK(Contains(body, "\"Frequency\": 100"));
+    CHECK(contains(body, "\"SDKEnable\": true"));
+    CHECK(contains(body, "\"Frequency\": 100"));
   }
 
   // ---- the axis command, including the refusal that matters --------------
   {
     std::uint8_t buf[512];
-    Poison(buf, sizeof(buf));
+    poison(buf, sizeof(buf));
     AxisCommand c;
     c.vx = 0.25;
     c.yaw = -0.5;
-    std::size_t n = EncodeRealAxis(buf, sizeof(buf), 9, kFixedWall, c);
+    std::size_t n = encode_real_axis(buf, sizeof(buf), 9, kFixedWall, c);
     CHECK(n > 0);
-    CheckFrameShape("real_axis", buf, n);
+    check_frame_shape("real_axis", buf, n);
     const std::string body(reinterpret_cast<const char*>(buf + kHeaderBytes),
                            n - kHeaderBytes);
-    CHECK(Contains(body, "\"Command\": 1114114"));  // 0x00110002, the REAL axis
-    CHECK(Contains(body, "\"X\": 0.250000"));
-    CHECK(Contains(body, "\"Yaw\": -0.500000"));
+    CHECK(contains(body, "\"Command\": 1114114"));  // 0x00110002, the REAL axis
+    CHECK(contains(body, "\"X\": 0.250000"));
+    CHECK(contains(body, "\"Yaw\": -0.500000"));
     // All six axes present even when zero: the chassis reads the object, and a
     // missing field is not the same as a zero one.
-    CHECK(Contains(body, "\"Y\": 0.000000"));
-    CHECK(Contains(body, "\"Z\": 0.000000"));
-    CHECK(Contains(body, "\"Roll\": 0.000000"));
-    CHECK(Contains(body, "\"Pitch\": 0.000000"));
+    CHECK(contains(body, "\"Y\": 0.000000"));
+    CHECK(contains(body, "\"Z\": 0.000000"));
+    CHECK(contains(body, "\"Roll\": 0.000000"));
+    CHECK(contains(body, "\"Pitch\": 0.000000"));
 
     // *** The refusal. "nan" is not JSON; letting it out would arrive as
     // 0xE002 and be misread as a chassis fault.
     AxisCommand bad;
     bad.vx = std::nan("");
-    CHECK(EncodeRealAxis(buf, sizeof(buf), 10, kFixedWall, bad) == 0);
+    CHECK(encode_real_axis(buf, sizeof(buf), 10, kFixedWall, bad) == 0);
     AxisCommand inf;
     inf.yaw = std::numeric_limits<double>::infinity();
-    CHECK(EncodeRealAxis(buf, sizeof(buf), 11, kFixedWall, inf) == 0);
+    CHECK(encode_real_axis(buf, sizeof(buf), 11, kFixedWall, inf) == 0);
   }
 
   // ---- a too-small buffer returns 0, never a truncated frame -------------
   {
     std::uint8_t tiny[20];
-    CHECK(EncodeHeartbeat(tiny, sizeof(tiny), 0, kFixedWall) == 0);
-    CHECK(EncodeHeartbeat(nullptr, 512, 0, kFixedWall) == 0);
+    CHECK(encode_heartbeat(tiny, sizeof(tiny), 0, kFixedWall) == 0);
+    CHECK(encode_heartbeat(nullptr, 512, 0, kFixedWall) == 0);
     // Exactly the header size: there is room for a header and nothing else, so
     // a partial frame is the tempting wrong answer.
     std::uint8_t exact[kHeaderBytes];
-    CHECK(EncodeHeartbeat(exact, sizeof(exact), 0, kFixedWall) == 0);
+    CHECK(encode_heartbeat(exact, sizeof(exact), 0, kFixedWall) == 0);
   }
 
   // ---- routing refuses what it cannot read -------------------------------
   {
     AsduRouting r;
     const char* not_ours = "{\"Other\": {\"Type\": 1, \"Command\": 2}}";
-    CHECK(!ParseAsduRouting(reinterpret_cast<const std::uint8_t*>(not_ours),
+    CHECK(!parse_asdu_routing(reinterpret_cast<const std::uint8_t*>(not_ours),
                             std::strlen(not_ours), &r));
     const char* no_cmd = "{\"PatrolDevice\": {\"Type\": 1048676}}";
-    CHECK(!ParseAsduRouting(reinterpret_cast<const std::uint8_t*>(no_cmd),
+    CHECK(!parse_asdu_routing(reinterpret_cast<const std::uint8_t*>(no_cmd),
                             std::strlen(no_cmd), &r));
     // A Type holding an object rather than a number must be refused, not read
     // as 0 -- 0 is a legal-looking code.
     const char* obj = "{\"PatrolDevice\": {\"Type\": {}, \"Command\": 5}}";
-    CHECK(!ParseAsduRouting(reinterpret_cast<const std::uint8_t*>(obj),
+    CHECK(!parse_asdu_routing(reinterpret_cast<const std::uint8_t*>(obj),
                             std::strlen(obj), &r));
   }
 
@@ -518,11 +518,11 @@ int main(int argc, char** argv) {
     tail.pattern = 4;          // breath
     tail.color = 2;            // green
     tail.cycle_s = 2;
-    const std::size_t n = EncodeCustomLight(buf, sizeof(buf), 0x1234,
+    const std::size_t n = encode_custom_light(buf, sizeof(buf), 0x1234,
                                                    kFixedWall, true, head, tail);
     CHECK(n > kHeaderBytes);
     Header h;
-    CHECK(ReadHeader(buf, n, &h));
+    CHECK(read_header(buf, n, &h));
     const std::string asdu(reinterpret_cast<const char*>(buf) +
                                kHeaderBytes,
                            n - kHeaderBytes);
@@ -551,7 +551,7 @@ int main(int argc, char** argv) {
     // omits them, and leaving them out would let the chassis decide.
     std::uint8_t buf[512];
     LedSetting off;
-    const std::size_t n = EncodeCustomLight(buf, sizeof(buf), 1, kFixedWall,
+    const std::size_t n = encode_custom_light(buf, sizeof(buf), 1, kFixedWall,
                                                    false, off, off);
     CHECK(n > kHeaderBytes);
     const std::string asdu(reinterpret_cast<const char*>(buf) +

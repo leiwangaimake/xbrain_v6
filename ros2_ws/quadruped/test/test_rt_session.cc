@@ -59,47 +59,47 @@ static int g_failures = 0;
 
 namespace {
 
-bool Contains(const std::string& hay, const std::string& needle) {
+bool contains(const std::string& hay, const std::string& needle) {
   return hay.find(needle) != std::string::npos;
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-  const std::string cfg = RtSessionConfigJson("tcp/127.0.0.1:7449");
+  const std::string cfg = rt_session_config_json("tcp/127.0.0.1:7449");
 
   // ---- half 1: what the C++ side hands to zenoh --------------------------
   //
   // mode peer. 11 RT-C3.d forbids mode router outright ("永不使用"), and a
   // client-mode session would need the router to proxy every declaration.
-  CHECK(Contains(cfg, "mode:\"peer\""));
-  CHECK(!Contains(cfg, "\"router\""));
+  CHECK(contains(cfg, "mode:\"peer\""));
+  CHECK(!contains(cfg, "\"router\""));
 
   // Exactly the endpoint passed in, and only it.
-  CHECK(Contains(cfg, "connect:{endpoints:[\"tcp/127.0.0.1:7449\"]}"));
+  CHECK(contains(cfg, "connect:{endpoints:[\"tcp/127.0.0.1:7449\"]}"));
   // *** and NOT the general plane. RT-C4 forbids this process a general-plane
   // session; 7447 appearing here at all would mean it had acquired one.
-  CHECK(!Contains(cfg, "7447"));
+  CHECK(!contains(cfg, "7447"));
 
   // RT-C3.d: empty. A listening participant is reachable from outside the
   // router's peer set, which is what the plane isolation rests on.
-  CHECK(Contains(cfg, "listen:{endpoints:[]}"));
+  CHECK(contains(cfg, "listen:{endpoints:[]}"));
 
   // RT-C1: Zenoh's default is multicast discovery plus peer autoconnect over
   // "router" and "peer" -- left on, the two planes find each other.
-  CHECK(Contains(cfg, "multicast:{enabled:false}"));
+  CHECK(contains(cfg, "multicast:{enabled:false}"));
 
   // *** RT-C2 as corrected. Both halves, and they say opposite things on
   // purpose: gossip must be ON so declarations propagate through the router,
   // and multihop must be OFF because that is the condition the correction
   // rests on and what keeps RT gossip out of the general plane's domain.
-  CHECK(Contains(cfg, "gossip:{enabled:true,multihop:false}"));
-  CHECK(!Contains(cfg, "gossip:{enabled:false"));
+  CHECK(contains(cfg, "gossip:{enabled:true,multihop:false}"));
+  CHECK(!contains(cfg, "gossip:{enabled:false"));
 
   // The endpoint really is a parameter, not a decoration -- a config that
   // ignored it would pass every assertion above.
-  const std::string other = RtSessionConfigJson("tcp/127.0.0.1:7449x");
-  CHECK(Contains(other, "tcp/127.0.0.1:7449x"));
+  const std::string other = rt_session_config_json("tcp/127.0.0.1:7449x");
+  CHECK(contains(other, "tcp/127.0.0.1:7449x"));
 
   // ---- half 2: the Python validator demands the same ---------------------
   //
@@ -122,20 +122,20 @@ int main(int argc, char** argv) {
       const std::string py = ss.str();
 
       // mode peer, router forbidden.
-      CHECK(Contains(py, "_MODE = \"peer\""));
-      CHECK(Contains(py, "_MODE_FORBIDDEN = \"router\""));
+      CHECK(contains(py, "_MODE = \"peer\""));
+      CHECK(contains(py, "_MODE_FORBIDDEN = \"router\""));
       // listen endpoints must be empty.
-      CHECK(Contains(py, "if doc[\"listen\"][\"endpoints\"]:"));
+      CHECK(contains(py, "if doc[\"listen\"][\"endpoints\"]:"));
       // multicast must be False.
-      CHECK(Contains(py, "doc[\"scouting\"][\"multicast\"][\"enabled\"] is not False"));
+      CHECK(contains(py, "doc[\"scouting\"][\"multicast\"][\"enabled\"] is not False"));
       // *** gossip must be True -- the corrected form. If this line ever reads
       // "is not False", the two implementations have diverged and one of them
       // will be receiving nothing.
-      CHECK(Contains(py, "gossip_cfg.get(\"enabled\") is not True"));
+      CHECK(contains(py, "gossip_cfg.get(\"enabled\") is not True"));
       // multihop must not be True.
-      CHECK(Contains(py, "gossip_cfg.get(\"multihop\") is True"));
+      CHECK(contains(py, "gossip_cfg.get(\"multihop\") is True"));
       // ...and the RT endpoint agrees with the one asserted above.
-      CHECK(Contains(py, "tcp/127.0.0.1:7449"));
+      CHECK(contains(py, "tcp/127.0.0.1:7449"));
     }
   }
 

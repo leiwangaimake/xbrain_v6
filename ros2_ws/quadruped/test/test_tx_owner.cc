@@ -65,7 +65,7 @@ struct Recorder {
   long fail_after = -1;  // >=0 = return an error on that call index
   long calls = 0;
 
-  long Write(const std::uint8_t*, std::size_t len) {
+  long write(const std::uint8_t*, std::size_t len) {
     const long idx = calls++;
     if (fail_after >= 0 && idx >= fail_after) return -1;
     const long n =
@@ -84,9 +84,9 @@ int main() {
   // ---- a whole frame goes out in one write -------------------------------
   {
     Recorder rec;
-    TxOwner tx([&rec](const std::uint8_t* d, std::size_t n) { return rec.Write(d, n); },
+    TxOwner tx([&rec](const std::uint8_t* d, std::size_t n) { return rec.write(d, n); },
                3);
-    CHECK(tx.Send(TxCaller::kRealtime, kFrame, sizeof(kFrame)) == TxResult::kSent);
+    CHECK(tx.send(TxCaller::kRealtime, kFrame, sizeof(kFrame)) == TxResult::kSent);
     CHECK(rec.writes.size() == 1);
     CHECK(rec.writes[0] == "a:8");
     CHECK(tx.sent_count() == 1);
@@ -97,9 +97,9 @@ int main() {
   {
     Recorder rec;
     rec.chunk = 3;  // 8 bytes => 3 + 3 + 2
-    TxOwner tx([&rec](const std::uint8_t* d, std::size_t n) { return rec.Write(d, n); },
+    TxOwner tx([&rec](const std::uint8_t* d, std::size_t n) { return rec.write(d, n); },
                3);
-    CHECK(tx.Send(TxCaller::kNonRealtime, kFrame, sizeof(kFrame)) ==
+    CHECK(tx.send(TxCaller::kNonRealtime, kFrame, sizeof(kFrame)) ==
           TxResult::kSent);
     CHECK(rec.writes.size() == 3);
     CHECK(rec.writes[0] == "a:3" && rec.writes[1] == "a:3" &&
@@ -111,9 +111,9 @@ int main() {
   {
     Recorder rec;
     rec.chunk = 1;  // 8 bytes with a budget of 2 completions cannot finish
-    TxOwner tx([&rec](const std::uint8_t* d, std::size_t n) { return rec.Write(d, n); },
+    TxOwner tx([&rec](const std::uint8_t* d, std::size_t n) { return rec.write(d, n); },
                2);
-    const TxResult r = tx.Send(TxCaller::kNonRealtime, kFrame, sizeof(kFrame));
+    const TxResult r = tx.send(TxCaller::kNonRealtime, kFrame, sizeof(kFrame));
     CHECK(r == TxResult::kShortWrite);
     // Reporting kSent here would leave half a frame in the stream and the peer
     // would parse the remainder as a header -- the exact corruption FR-4 names.
@@ -124,9 +124,9 @@ int main() {
   {
     Recorder rec;
     rec.fail_after = 0;
-    TxOwner tx([&rec](const std::uint8_t* d, std::size_t n) { return rec.Write(d, n); },
+    TxOwner tx([&rec](const std::uint8_t* d, std::size_t n) { return rec.write(d, n); },
                3);
-    CHECK(tx.Send(TxCaller::kRealtime, kFrame, sizeof(kFrame)) ==
+    CHECK(tx.send(TxCaller::kRealtime, kFrame, sizeof(kFrame)) ==
           TxResult::kWriterFailed);
     CHECK(tx.sent_count() == 0);
   }
@@ -143,12 +143,12 @@ int main() {
     TxOwner tx([&](const std::uint8_t* d, std::size_t n) -> long {
       if (inner_calls++ == 0) {
         // Realtime caller arrives mid-frame: it must NOT write, must NOT wait.
-        inner = self->Send(TxCaller::kRealtime, kFrame, sizeof(kFrame));
+        inner = self->send(TxCaller::kRealtime, kFrame, sizeof(kFrame));
       }
-      return rec.Write(d, n);
+      return rec.write(d, n);
     }, 3);
     self = &tx;
-    const TxResult outer = tx.Send(TxCaller::kNonRealtime, kFrame, sizeof(kFrame));
+    const TxResult outer = tx.send(TxCaller::kNonRealtime, kFrame, sizeof(kFrame));
     CHECK(outer == TxResult::kSent);
     CHECK(inner == TxResult::kSkipped);
     // One frame on the wire, not two interleaved.
@@ -161,10 +161,10 @@ int main() {
   // ---- degenerate input is loud, not silently "sent" ---------------------
   {
     Recorder rec;
-    TxOwner tx([&rec](const std::uint8_t* d, std::size_t n) { return rec.Write(d, n); },
+    TxOwner tx([&rec](const std::uint8_t* d, std::size_t n) { return rec.write(d, n); },
                3);
-    CHECK(tx.Send(TxCaller::kRealtime, nullptr, 8) == TxResult::kShortWrite);
-    CHECK(tx.Send(TxCaller::kRealtime, kFrame, 0) == TxResult::kShortWrite);
+    CHECK(tx.send(TxCaller::kRealtime, nullptr, 8) == TxResult::kShortWrite);
+    CHECK(tx.send(TxCaller::kRealtime, kFrame, 0) == TxResult::kShortWrite);
     CHECK(rec.writes.empty());
     CHECK(tx.sent_count() == 0);
   }

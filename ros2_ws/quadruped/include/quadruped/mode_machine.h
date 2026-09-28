@@ -68,7 +68,7 @@ enum class ModeReject {
   kUnknownGait,       // a gait this build does not model
 };
 
-const char* ModeRejectItem(ModeReject r);
+const char* mode_reject_item(ModeReject r);
 
 // The closed-set error code that goes with a rejection. Here rather than at the
 // ack site because the MEANING of each rejection is this machine's -- PR-1 is a
@@ -78,7 +78,7 @@ const char* ModeRejectItem(ModeReject r);
 // Returns the exported constant from common/errors (CLAUDE.md 3.5), never a
 // literal: a hardcoded "E_CAPABILITY" here and an "E_Capability" there is the
 // kind of divergence that only surfaces during integration.
-const char* ModeRejectCode(ModeReject r);
+const char* mode_reject_code(ModeReject r);
 
 // The three read-back values, raw. Compared as a triple (MS-5).
 struct ModeTriple {
@@ -133,12 +133,12 @@ class ModeMachine {
   // window here, not when the frame leaves: the chassis begins moving on
   // receipt, and a window that started later would leave a gap in which the
   // robot is moving and mode_switching is false.
-  ModeRequestResult Request(double now_mono_s, ModeAction action,
+  ModeRequestResult request(double now_mono_s, ModeAction action,
                             std::int64_t param);
 
   // A BasicStatus arrived. Drives MS-1's clear condition, MS-2's timeout and
   // TR-1's external-transition detection.
-  void OnReadback(double now_mono_s, const chs_a::BasicStatus& b);
+  void on_readback(double now_mono_s, const chs_a::BasicStatus& b);
 
   // A MotionStatus sample's (motion_state, gait) pair -- the 10 Hz stream.
   //
@@ -148,16 +148,16 @@ class ModeMachine {
   // often as BasicStatus (measured 9.94 Hz vs 1.99 Hz on the chassis), so
   // watching only BasicStatus detects an external transition up to 0.5 s
   // late. This feeds ONLY the hold: the triple, the steady value and MS-1's
-  // whole-triple match stay driven by OnReadback, because MotionStatus has
+  // whole-triple match stay driven by on_readback, because MotionStatus has
   // no usage_mode and a partial read-back would re-open MS-5's problem --
   // each source with its own idea of the fields it cannot see.
-  void OnMotionSample(double now_mono_s, std::int64_t motion_state,
+  void on_motion_sample(double now_mono_s, std::int64_t motion_state,
                       std::int64_t gait);
 
   // Called every control period so the timeout can fire even when the chassis
   // has gone quiet. Returns true on the tick a switch is declared FAILED
   // (MS-2), so the caller raises the fault exactly once.
-  bool Tick(double now_mono_s);
+  bool tick(double now_mono_s);
 
   // MS-3: true while a switch is in flight. Tier 1 reads this and outputs zero.
   bool mode_switching() const { return switching_; }
@@ -189,8 +189,8 @@ class ModeMachine {
   std::uint64_t switches_completed() const { return switches_completed_; }
 
  private:
-  bool ProneAllowed() const;
-  bool GaitCommandable(std::int64_t gait) const;
+  bool prone_allowed() const;
+  bool gait_commandable(std::int64_t gait) const;
 
   ModeConfig cfg_;
   bool switching_ = false;

@@ -11,7 +11,7 @@
  * exercises the actual path: socket, framer, codec, report parser, session,
  * Tier 1, tx owner, odometry -- with no test double anywhere between them.
  *
- * No threads. CtrlTick and RxPump are called directly with an explicit clock,
+ * No threads. ctrl_tick and rx_pump are called directly with an explicit clock,
  * which is why a 200 ms Tier 1 timeout and a 5 s probe window are exercised in
  * microseconds. A test that started the threads would have to wait for real
  * time and would be flaky on a loaded machine; worse, it could only observe the
@@ -66,7 +66,7 @@ namespace {
 
 using Bytes = std::vector<std::uint8_t>;
 
-Bytes FromHex(const std::string& hex) {
+Bytes from_hex(const std::string& hex) {
   Bytes out;
   for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
     out.push_back(static_cast<std::uint8_t>(std::stoul(hex.substr(i, 2), nullptr, 16)));
@@ -74,7 +74,7 @@ Bytes FromHex(const std::string& hex) {
   return out;
 }
 
-std::map<std::string, Bytes> LoadGolden(const std::string& path) {
+std::map<std::string, Bytes> load_golden(const std::string& path) {
   std::map<std::string, Bytes> out;
   std::ifstream f(path);
   if (!f) {
@@ -89,7 +89,7 @@ std::map<std::string, Bytes> LoadGolden(const std::string& path) {
     std::string tag, hex;
     std::size_t n = 0;
     if (!(is >> tag >> n >> hex)) continue;
-    out[tag] = FromHex(hex);
+    out[tag] = from_hex(hex);
   }
   if (out.empty()) {
     std::printf("FAIL golden file parsed to zero vectors\n");
@@ -120,17 +120,17 @@ class FakeChassis {
     if (fd_ >= 0) ::close(fd_);
   }
   int port() const { return port_; }
-  bool Accept() {
+  bool accept() {
     if (conn_ >= 0) ::close(conn_);
     conn_ = ::accept(fd_, nullptr, nullptr);
     if (conn_ >= 0) ++accepts_;
     return conn_ >= 0;
   }
-  // Non-blocking accept, for a loop that MAY see a reconnect. Accept() blocks,
+  // Non-blocking accept, for a loop that MAY see a reconnect. accept() blocks,
   // which is right for the opening handshake and wrong here: a 13 CA-9
   // recovery probe may or may not have dropped the link on any given period,
   // and a blocking accept on the period where it did not would hang the suite.
-  bool TryAccept() {
+  bool try_accept() {
     const int fl = ::fcntl(fd_, F_GETFL, 0);
     ::fcntl(fd_, F_SETFL, fl | O_NONBLOCK);
     const int f = ::accept(fd_, nullptr, nullptr);
@@ -147,7 +147,7 @@ class FakeChassis {
   // not happening.
   int accepts() const { return accepts_; }
   // Everything the process has sent so far, appended.
-  std::size_t Drain() {
+  std::size_t drain() {
     std::uint8_t buf[8192];
     long n = 0;
     std::size_t total = 0;
@@ -157,12 +157,12 @@ class FakeChassis {
     }
     return total;
   }
-  void Send(const Bytes& b) {
+  void send(const Bytes& b) {
     // A short write here would fail the case somewhere far away with no clue;
     // print loudly instead of silently losing bytes.
     const long r = ::send(conn_, b.data(), b.size(), MSG_NOSIGNAL);
     if (r != static_cast<long>(b.size())) {
-      std::fprintf(stderr, "FakeChassis::Send short write r=%ld errno=%d\n",
+      std::fprintf(stderr, "FakeChassis::send short write r=%ld errno=%d\n",
                    r, errno);
     }
   }
@@ -170,29 +170,29 @@ class FakeChassis {
   // closes the connection ON PURPOSE, so a failed write is the expected
   // outcome for the few periods before the process dials back in; printing
   // there would bury Send's real short-write warning under noise.
-  void SendIfLive(const Bytes& b) {
+  void send_if_live(const Bytes& b) {
     if (conn_ < 0) return;
     ::send(conn_, b.data(), b.size(), MSG_NOSIGNAL);
   }
   const Bytes& sent() const { return sent_; }
-  void ClearSent() { sent_.clear(); }
+  void clear_sent() { sent_.clear(); }
 
   // How many whole CHS-A frames the process has sent, and what the last one
   // routes to. Counting FRAMES rather than bytes is what makes an assertion
   // about "a heartbeat went out" mean something.
-  int CountFrames(std::uint32_t* last_type, std::uint32_t* last_cmd) const {
+  int count_frames(std::uint32_t* last_type, std::uint32_t* last_cmd) const {
     int count = 0;
     std::size_t i = 0;
     while (i + chs_a::kHeaderBytes <= sent_.size()) {
       chs_a::Header h;
-      if (!chs_a::ReadHeader(sent_.data() + i, sent_.size() - i, &h)) {
+      if (!chs_a::read_header(sent_.data() + i, sent_.size() - i, &h)) {
         ++i;
         continue;
       }
       const std::size_t total = chs_a::kHeaderBytes + h.asdu_len;
       if (i + total > sent_.size()) break;
       chs_a::AsduRouting r;
-      if (chs_a::ParseAsduRouting(sent_.data() + i + chs_a::kHeaderBytes,
+      if (chs_a::parse_asdu_routing(sent_.data() + i + chs_a::kHeaderBytes,
                                   h.asdu_len, &r)) {
         if (last_type) *last_type = r.type;
         if (last_cmd) *last_cmd = r.command;
@@ -208,19 +208,19 @@ class FakeChassis {
   // above is satisfied by a frame of the right SHAPE carrying any velocity at
   // all, so without this a process that sends the unclamped command instead of
   // the Tier 1 output looks exactly like a correct one.
-  bool LastAxis(double* vx, double* vy, double* yaw) const {
+  bool last_axis(double* vx, double* vy, double* yaw) const {
     bool found = false;
     std::size_t i = 0;
     while (i + chs_a::kHeaderBytes <= sent_.size()) {
       chs_a::Header h;
-      if (!chs_a::ReadHeader(sent_.data() + i, sent_.size() - i, &h)) {
+      if (!chs_a::read_header(sent_.data() + i, sent_.size() - i, &h)) {
         ++i;
         continue;
       }
       const std::size_t total = chs_a::kHeaderBytes + h.asdu_len;
       if (i + total > sent_.size()) break;
       chs_a::AsduRouting r;
-      if (chs_a::ParseAsduRouting(sent_.data() + i + chs_a::kHeaderBytes,
+      if (chs_a::parse_asdu_routing(sent_.data() + i + chs_a::kHeaderBytes,
                                   h.asdu_len, &r) &&
           r.type == chs_a::kRealAxis.type && r.command == chs_a::kRealAxis.command) {
         const std::string asdu(
@@ -280,7 +280,7 @@ class FakeUdpChassis {
   int port() const { return port_; }
 
   // Read whatever the process has sent, and remember where it came from.
-  bool LearnPeer() {
+  bool learn_peer() {
     std::uint8_t buf[8192];
     socklen_t len = sizeof(peer_);
     const long n = ::recvfrom(fd_, buf, sizeof(buf), MSG_DONTWAIT,
@@ -292,12 +292,12 @@ class FakeUdpChassis {
   // Send EXACTLY these bytes as one datagram. Callers use it to send a whole
   // frame, half a frame, or two frames at once -- FR-5 says only the first is
   // a frame, and the other two are what this endpoint must refuse.
-  void SendRaw(const std::uint8_t* d, std::size_t n) {
+  void send_raw(const std::uint8_t* d, std::size_t n) {
     if (!have_peer_) return;
     ::sendto(fd_, d, n, MSG_NOSIGNAL, reinterpret_cast<sockaddr*>(&peer_),
              sizeof(peer_));
   }
-  void SendRaw(const Bytes& b) { SendRaw(b.data(), b.size()); }
+  void send_raw(const Bytes& b) { send_raw(b.data(), b.size()); }
 
  private:
   int fd_ = -1;
@@ -306,7 +306,7 @@ class FakeUdpChassis {
   bool have_peer_ = false;
 };
 
-QuadrupedConfig Cfg(int port) {
+QuadrupedConfig cfg(int port) {
   QuadrupedConfig c;
   c.robot_id = "gj-001";
   EndpointCandidate ep;
@@ -374,8 +374,8 @@ QuadrupedConfig Cfg(int port) {
 
 // The same config with its one endpoint switched to UDP. Same shape as the real
 // resolved file, whose second candidate is udp:30004 with enabled: true.
-QuadrupedConfig UdpCfg(int port) {
-  QuadrupedConfig c = Cfg(port);
+QuadrupedConfig udp_cfg(int port) {
+  QuadrupedConfig c = cfg(port);
   c.link.endpoints[0].proto = "udp";
   return c;
 }
@@ -383,7 +383,7 @@ QuadrupedConfig UdpCfg(int port) {
 // A loopback port with nothing listening on it: bound, read back, closed. The
 // number is therefore one the kernel really handed out, and a connect to it
 // cannot accidentally reach some unrelated service.
-int DeadPort() {
+int dead_port() {
   const int f = ::socket(AF_INET, SOCK_STREAM, 0);
   sockaddr_in a;
   std::memset(&a, 0, sizeof(a));
@@ -401,8 +401,8 @@ int DeadPort() {
 // chassis behind it. Exactly the deployed shape after a transient tcp:30003
 // fault -- the process settles on candidate 1 and 13 CA-9 is the only thing
 // that will ever put it back on 0.
-QuadrupedConfig RecoveryCfg(int preferred_port, int live_port) {
-  QuadrupedConfig c = Cfg(live_port);
+QuadrupedConfig recovery_cfg(int preferred_port, int live_port) {
+  QuadrupedConfig c = cfg(live_port);
   EndpointCandidate first = c.link.endpoints[0];
   first.port = preferred_port;
   c.link.endpoints.insert(c.link.endpoints.begin(), first);
@@ -414,11 +414,11 @@ QuadrupedConfig RecoveryCfg(int preferred_port, int live_port) {
 //
 // It exists because the capture has no such frame: the two non-modelled frames
 // in it (the location report and the heartbeat response) BOTH carry an
-// ErrorCode and are therefore consumed by the error branch of RxPump, never
+// ErrorCode and are therefore consumed by the error branch of rx_pump, never
 // reaching the "unmodelled report" path. Without this builder that path has no
 // input at all, and a mutant that forwards unparsed bytes onto a schema'd key
 // survives for lack of a test case rather than for lack of a defect.
-Bytes TypedReportFrame(std::uint32_t type, std::uint32_t command) {
+Bytes typed_report_frame(std::uint32_t type, std::uint32_t command) {
   char items[256];
   std::snprintf(items, sizeof(items),
                 "{\"PatrolDevice\":{\"Command\":%u,\"Items\":{},"
@@ -429,7 +429,7 @@ Bytes TypedReportFrame(std::uint32_t type, std::uint32_t command) {
   chs_a::Header h;
   h.asdu_len = static_cast<std::uint16_t>(asdu_len);
   h.msg_id = 0;
-  chs_a::WriteHeader(h, out.data(), out.size());
+  chs_a::write_header(h, out.data(), out.size());
   std::memcpy(out.data() + chs_a::kHeaderBytes, items, asdu_len);
   return out;
 }
@@ -440,7 +440,7 @@ Bytes TypedReportFrame(std::uint32_t type, std::uint32_t command) {
 // synthetic fault frame with an empty Items block does not parse, so it would
 // test nothing. This keeps the vendor's own bytes and changes exactly the field
 // under test.
-Bytes WithCommand(const Bytes& frame, std::uint32_t command) {
+Bytes with_command(const Bytes& frame, std::uint32_t command) {
   const std::string asdu(reinterpret_cast<const char*>(frame.data() + chs_a::kHeaderBytes),
                          frame.size() - chs_a::kHeaderBytes);
   const std::string needle = "\"Command\":";
@@ -459,13 +459,13 @@ Bytes WithCommand(const Bytes& frame, std::uint32_t command) {
   chs_a::Header h;
   h.asdu_len = static_cast<std::uint16_t>(out_asdu.size());
   h.msg_id = 0;
-  chs_a::WriteHeader(h, out.data(), out.size());
+  chs_a::write_header(h, out.data(), out.size());
   std::memcpy(out.data() + chs_a::kHeaderBytes, out_asdu.data(), out_asdu.size());
   return out;
 }
 
 // A BasicStatus frame with chosen fields, built the way the chassis builds one.
-Bytes BasicFrame(int usage_mode, int motion_state, int gait, bool hes,
+Bytes basic_frame(int usage_mode, int motion_state, int gait, bool hes,
                  bool sleep) {
   char items[512];
   std::snprintf(items, sizeof(items),
@@ -479,7 +479,7 @@ Bytes BasicFrame(int usage_mode, int motion_state, int gait, bool hes,
   chs_a::Header h;
   h.asdu_len = static_cast<std::uint16_t>(asdu_len);
   h.msg_id = 0;
-  chs_a::WriteHeader(h, out.data(), out.size());
+  chs_a::write_header(h, out.data(), out.size());
   std::memcpy(out.data() + chs_a::kHeaderBytes, items, asdu_len);
   return out;
 }
@@ -488,7 +488,7 @@ Bytes BasicFrame(int usage_mode, int motion_state, int gait, bool hes,
 // A MotionStatus frame. It carries motion_state and gait -- but NOT
 // ControlUsageMode, which is the asymmetry the snapshot merge bug turned on:
 // BasicStatus is the only report that mentions the usage mode.
-Bytes MotionFrame(int motion_state, int gait) {
+Bytes motion_frame(int motion_state, int gait) {
   char items[512];
   std::snprintf(items, sizeof(items),
                 "{\"PatrolDevice\":{\"Command\":15728640,\"Items\":"
@@ -501,7 +501,7 @@ Bytes MotionFrame(int motion_state, int gait) {
   chs_a::Header h;
   h.asdu_len = static_cast<std::uint16_t>(asdu_len);
   h.msg_id = 0;
-  chs_a::WriteHeader(h, out.data(), out.size());
+  chs_a::write_header(h, out.data(), out.size());
   std::memcpy(out.data() + chs_a::kHeaderBytes, items, asdu_len);
   return out;
 }
@@ -519,19 +519,19 @@ Bytes MotionFrame(int motion_state, int gait) {
 // Used where 13 TR-1's external-transition hold has to expire before PR-1's
 // verdict means anything: during the hold the STEADY triple is still the old
 // one (TR-2), so an assertion made too early is answered by the previous gait.
-void Settle(QuadrupedProcess* p, FakeChassis* chassis, double from, double to,
+void settle(QuadrupedProcess* p, FakeChassis* chassis, double from, double to,
             int gait) {
   double next_report = from;
   for (double t = from; t < to; t += 0.1) {
     if (t >= next_report) {
-      chassis->Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17, gait,
+      chassis->send(basic_frame(/*usage_mode=*/1, /*motion_state=*/17, gait,
                                /*hes=*/false, /*sleep=*/false));
       next_report = t + 0.5;      // 2 Hz, 13 S7.1
     }
-    p->RxPump(t);
-    p->CtrlTick(t);
+    p->rx_pump(t);
+    p->ctrl_tick(t);
   }
-  chassis->Drain();
+  chassis->drain();
 }
 
 // Drives the process across a span of SIMULATED time while the chassis reports
@@ -541,21 +541,21 @@ void Settle(QuadrupedProcess* p, FakeChassis* chassis, double from, double to,
 // what makes axis frames flow -- and an axis frame is what 13 CA-9's quiet
 // window is measured from. `estopping` fires the soft stop instead, whose zero
 // frame is an axis command too (that is the whole point of the estop case).
-void RunLink(QuadrupedProcess* p, FakeChassis* chassis, double from, double to,
+void run_link(QuadrupedProcess* p, FakeChassis* chassis, double from, double to,
              bool driving, bool estopping) {
   double next_report = from;
   for (double t = from; t < to; t += 0.1) {
-    chassis->TryAccept();
+    chassis->try_accept();
     if (t >= next_report) {
-      chassis->SendIfLive(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+      chassis->send_if_live(basic_frame(/*usage_mode=*/1, /*motion_state=*/17,
                                      0x3002, /*hes=*/false, /*sleep=*/false));
       next_report = t + 0.5;      // 2 Hz, 13 S7.1
     }
-    if (driving) p->OnCmdVel(t, 0.5, 0.0, 0.1, p->estop_epoch());
-    if (estopping) p->OnSoftEstop(t);
-    p->RxPump(t);
-    p->CtrlTick(t);
-    chassis->Drain();
+    if (driving) p->on_cmd_vel(t, 0.5, 0.0, 0.1, p->estop_epoch());
+    if (estopping) p->on_soft_estop(t);
+    p->rx_pump(t);
+    p->ctrl_tick(t);
+    chassis->drain();
   }
 }
 
@@ -565,7 +565,7 @@ void RunLink(QuadrupedProcess* p, FakeChassis* chassis, double from, double to,
 int main(int argc, char** argv) {
   const std::string golden_path =
       (argc >= 2) ? argv[1] : "test/golden/chs_a_frames.txt";
-  const auto golden = LoadGolden(golden_path);
+  const auto golden = load_golden(golden_path);
   if (golden.empty()) {
     std::printf("%d PROCESS TEST(S) FAILED\n", g_failures);
     return 1;
@@ -574,16 +574,16 @@ int main(int argc, char** argv) {
   // ---- dial, heartbeat, real captured report, link up --------------------
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
+    QuadrupedProcess p(cfg(chassis.port()));
 
     // The first period dials and sends a heartbeat. Both happen on THIS period:
     // the chassis reports only to an address already sending them, so a probe
     // that waited would spend the wait guaranteed to hear nothing.
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
-    chassis.Drain();
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
+    chassis.drain();
     std::uint32_t type = 0, cmd = 0;
-    CHECK(chassis.CountFrames(&type, &cmd) >= 1);
+    CHECK(chassis.count_frames(&type, &cmd) >= 1);
     CHECK(type == chs_a::kHeartbeat.type);
     CHECK(cmd == chs_a::kHeartbeat.command);
     CHECK(p.heartbeats_sent() == 1);
@@ -591,15 +591,15 @@ int main(int argc, char** argv) {
 
     // *** A REAL captured report comes back. These bytes came off the chassis
     // on 2026-09-15; nothing in this path has been mocked.
-    chassis.Send(golden.at("RX_00100064_00f00000"));
+    chassis.send(golden.at("RX_00100064_00f00000"));
     // The receive thread's body, called directly.
     int frames = 0;
-    for (int i = 0; i < 50 && frames == 0; ++i) frames = p.RxPump(0.01 * i);
+    for (int i = 0; i < 50 && frames == 0; ++i) frames = p.rx_pump(0.01 * i);
     CHECK(frames >= 1);
     CHECK(p.frames_received() >= 1);
 
     // The next period takes the snapshot and declares the link up.
-    p.CtrlTick(0.6);
+    p.ctrl_tick(0.6);
     CHECK(p.conn_state() == chs_a::ConnState::kOk);
 
     // No command has arrived from above, so Tier 1 reports a timeout and holds
@@ -612,30 +612,30 @@ int main(int argc, char** argv) {
   // ---- an axis command needs BOTH gates ---------------------------------
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
 
     // The chassis is in navigation mode, standing, on the flat gait.
-    chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
-    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
-    p.CtrlTick(0.6);
+    chassis.send(basic_frame(1, 17, 0x3002, false, false));
+    for (int i = 0; i < 50; ++i) p.rx_pump(0.01 * i);
+    p.ctrl_tick(0.6);
 
     // Clear the timeout lock the opening silence set: it needs a fresh command
     // AND an enable, and the process has no enable path yet, so this case
     // drives a fresh instance instead of unlocking one.
     CHECK(p.last_tier1().stop_reason == StopReason::kTimeout);
 
-    chassis.ClearSent();
-    chassis.Drain();
+    chassis.clear_sent();
+    chassis.drain();
     // A command arrives with the generation we hold.
-    p.OnCmdVel(0.61, 1.0, 0.0, 0.2, p.estop_epoch());
-    p.CtrlTick(0.62);
-    chassis.Drain();
+    p.on_cmd_vel(0.61, 1.0, 0.0, 0.2, p.estop_epoch());
+    p.ctrl_tick(0.62);
+    chassis.drain();
     // Still locked, so nothing but heartbeats goes out. This is the gate: a
     // link that is up is not permission to move.
     std::uint32_t type = 0, cmd = 0;
-    const int n = chassis.CountFrames(&type, &cmd);
+    const int n = chassis.count_frames(&type, &cmd);
     if (n > 0) CHECK(type != chs_a::kRealAxis.type || cmd != chs_a::kRealAxis.command);
     CHECK(p.axis_frames_sent() == 0);
   }
@@ -643,35 +643,35 @@ int main(int argc, char** argv) {
   // ---- a soft stop sends its zero frame from the CALLBACK ---------------
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
     // Unlocked and moving first. Without that the opening timeout lock holds
     // the robot anyway, and "the soft stop worked" cannot be told apart from
     // "something else was already stopping it" -- which is what the estop
     // generation mutant survived on before this was added.
-    chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
-    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
-    p.CtrlTick(0.6);
-    p.OnCmdVel(0.61, 1.0, 0.0, 0.0, p.estop_epoch());
-    p.OnEnable();
-    p.CtrlTick(0.62);
-    p.OnCmdVel(0.63, 1.0, 0.0, 0.0, p.estop_epoch());
-    p.CtrlTick(0.64);
+    chassis.send(basic_frame(1, 17, 0x3002, false, false));
+    for (int i = 0; i < 50; ++i) p.rx_pump(0.01 * i);
+    p.ctrl_tick(0.6);
+    p.on_cmd_vel(0.61, 1.0, 0.0, 0.0, p.estop_epoch());
+    p.on_enable();
+    p.ctrl_tick(0.62);
+    p.on_cmd_vel(0.63, 1.0, 0.0, 0.0, p.estop_epoch());
+    p.ctrl_tick(0.64);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
-    chassis.Drain();
-    chassis.ClearSent();
+    chassis.drain();
+    chassis.clear_sent();
 
     const std::uint64_t before = p.estop_epoch();
     const std::uint64_t axis_before = p.axis_frames_sent();
-    // *** No CtrlTick between the stop and the assertion. The frame must
+    // *** No ctrl_tick between the stop and the assertion. The frame must
     // already be on the wire: the next period is up to 10 ms away and
     // 11 S9.12.6 T-1 budgets 5 ms.
-    p.OnSoftEstop(0.65);
+    p.on_soft_estop(0.65);
     CHECK(p.estop_epoch() == before + 1);
-    chassis.Drain();
+    chassis.drain();
     std::uint32_t type = 0, cmd = 0;
-    CHECK(chassis.CountFrames(&type, &cmd) >= 1);
+    CHECK(chassis.count_frames(&type, &cmd) >= 1);
     CHECK(type == chs_a::kRealAxis.type);
     CHECK(cmd == chs_a::kRealAxis.command);
     CHECK(p.axis_frames_sent() == axis_before + 1);
@@ -679,13 +679,13 @@ int main(int argc, char** argv) {
     // carries is; a stop frame holding the last commanded velocity would pass
     // every other assertion here.
     double zx = 1.0, zy = 1.0, zw = 1.0;
-    CHECK(chassis.LastAxis(&zx, &zy, &zw));
+    CHECK(chassis.last_axis(&zx, &zy, &zw));
     CHECK(zx == 0.0 && zy == 0.0 && zw == 0.0);
 
     // And the generation now disagrees with whatever the upstream last echoed,
     // so the next period holds zero until it catches up (13 S9.12.2 (3)).
-    p.OnCmdVel(0.66, 1.0, 0.0, 0.0, before);   // still the OLD generation
-    p.CtrlTick(0.67);
+    p.on_cmd_vel(0.66, 1.0, 0.0, 0.0, before);   // still the OLD generation
+    p.ctrl_tick(0.67);
     // EXACTLY soft_estop. Nothing else is stopping this robot: the command is
     // fresh, the mode is navigation, there is no HES and the link is up.
     CHECK(p.last_tier1().stop_reason == StopReason::kSoftEstop);
@@ -694,20 +694,20 @@ int main(int argc, char** argv) {
     // And it converges: once the upstream echoes OUR generation, motion is
     // allowed again. A hold that never released would be a robot that needs a
     // restart after every stop.
-    p.OnCmdVel(0.68, 1.0, 0.0, 0.0, p.estop_epoch());
-    p.CtrlTick(0.69);
+    p.on_cmd_vel(0.68, 1.0, 0.0, 0.0, p.estop_epoch());
+    p.ctrl_tick(0.69);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
   }
 
   // ---- HES in the readback latches, and the link stays up ---------------
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
-    chassis.Send(BasicFrame(1, 17, 0x3002, /*hes=*/true, false));
-    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
-    p.CtrlTick(0.6);
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
+    chassis.send(basic_frame(1, 17, 0x3002, /*hes=*/true, false));
+    for (int i = 0; i < 50; ++i) p.rx_pump(0.01 * i);
+    p.ctrl_tick(0.6);
     // The hardware stop wins over everything, including the absent command.
     CHECK(p.last_tier1().stop_reason == StopReason::kHes);
     CHECK(p.last_tier1().hes_lock == true);
@@ -718,12 +718,12 @@ int main(int argc, char** argv) {
   // ---- the sleep flag reaches the session -------------------------------
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
-    chassis.Send(BasicFrame(1, 17, 0x3002, false, /*sleep=*/true));
-    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
-    p.CtrlTick(0.6);
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
+    chassis.send(basic_frame(1, 17, 0x3002, false, /*sleep=*/true));
+    for (int i = 0; i < 50; ++i) p.rx_pump(0.01 * i);
+    p.ctrl_tick(0.6);
     // 13 F-21: asleep means no motion command goes out at all, and the gate
     // lives in the session rather than in Tier 1's stop reason.
     CHECK(p.motion_allowed() == false);
@@ -732,15 +732,15 @@ int main(int argc, char** argv) {
   // ---- a motion report drives the odometry ------------------------------
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
     // The captured motion report: the machine was at rest, so the velocities
     // are zero and the covariance is what moves.
-    chassis.Send(golden.at("RX_00100001_00f00000"));
-    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
-    p.CtrlTick(0.6);
-    p.CtrlTick(0.61);
+    chassis.send(golden.at("RX_00100001_00f00000"));
+    for (int i = 0; i < 50; ++i) p.rx_pump(0.01 * i);
+    p.ctrl_tick(0.6);
+    p.ctrl_tick(0.61);
     // A sample arrived, so the odometry is publishing rather than stopped.
     CHECK(p.last_odom().publish == true);
     CHECK(p.last_odom().var_x > 0.0);
@@ -749,27 +749,27 @@ int main(int argc, char** argv) {
   // ---- the enable unlocks, and then BOTH gates decide --------------------
   //
   // Every case above leaves Tier 1 locked by the opening silence, so the axis
-  // branch of CtrlTick was never reached and the SESSION half of its gate was
+  // branch of ctrl_tick was never reached and the SESSION half of its gate was
   // never the thing that decided. This case reaches it.
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
     // Navigation mode, standing. 17 and 0x3002 are the READ-BACK values the
     // machine actually returns (13 V-66); 1 is what the manual says.
-    chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
-    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
-    p.CtrlTick(0.6);
+    chassis.send(basic_frame(1, 17, 0x3002, false, false));
+    for (int i = 0; i < 50; ++i) p.rx_pump(0.01 * i);
+    p.ctrl_tick(0.6);
     CHECK(p.last_tier1().timeout_lock == true);
 
-    chassis.ClearSent();
-    chassis.Drain();
+    chassis.clear_sent();
+    chassis.drain();
     // A fresh command AND an enable: 11 S9.12.1 needs both, and the enable
     // alone against a stale command must not move anything.
-    p.OnCmdVel(0.61, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.OnEnable();
-    p.CtrlTick(0.62);
+    p.on_cmd_vel(0.61, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.on_enable();
+    p.ctrl_tick(0.62);
     CHECK(p.last_tier1().timeout_lock == false);
 
     // The period AFTER the unlock is the first that can move: the unlocking
@@ -777,17 +777,17 @@ int main(int argc, char** argv) {
     // does not command motion).
     // *** Over the limit on purpose: max_vx_mps is 2.0 and this asks for 9.
     // What goes on the wire must be the Tier 1 OUTPUT, not the request.
-    p.OnCmdVel(0.63, 9.0, 0.0, 5.0, p.estop_epoch());
-    p.CtrlTick(0.64);
+    p.on_cmd_vel(0.63, 9.0, 0.0, 5.0, p.estop_epoch());
+    p.ctrl_tick(0.64);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
     CHECK(p.axis_frames_sent() >= 1);
-    chassis.Drain();
+    chassis.drain();
     std::uint32_t type = 0, cmd = 0;
-    CHECK(chassis.CountFrames(&type, &cmd) >= 1);
+    CHECK(chassis.count_frames(&type, &cmd) >= 1);
     CHECK(type == chs_a::kRealAxis.type);
     CHECK(cmd == chs_a::kRealAxis.command);
     double wx = 0.0, wy = 0.0, ww = 0.0;
-    CHECK(chassis.LastAxis(&wx, &wy, &ww));
+    CHECK(chassis.last_axis(&wx, &wy, &ww));
     CHECK(wx == p.last_tier1().vx);
     CHECK(ww == p.last_tier1().wz);
     // ...and the limits are what they are clamped TO, so the assertion above
@@ -798,11 +798,11 @@ int main(int argc, char** argv) {
     // *** The enable is ONE SHOT. If it were latched, the next timeout would
     // unlock itself on the following period and the lock would never hold.
     // Let the command go stale: Tier 1 locks, and it STAYS locked.
-    p.CtrlTick(1.2);
+    p.ctrl_tick(1.2);
     CHECK(p.last_tier1().stop_reason == StopReason::kTimeout);
     CHECK(p.last_tier1().timeout_lock == true);
-    p.OnCmdVel(1.21, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.CtrlTick(1.22);
+    p.on_cmd_vel(1.21, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.ctrl_tick(1.22);
     CHECK(p.last_tier1().timeout_lock == true);   // no second enable arrived
   }
 
@@ -820,17 +820,17 @@ int main(int argc, char** argv) {
   // nothing about either.
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
-    chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
-    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
-    p.CtrlTick(0.6);
-    p.OnCmdVel(0.61, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.OnEnable();
-    p.CtrlTick(0.62);
-    p.OnCmdVel(0.63, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.CtrlTick(0.64);
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
+    chassis.send(basic_frame(1, 17, 0x3002, false, false));
+    for (int i = 0; i < 50; ++i) p.rx_pump(0.01 * i);
+    p.ctrl_tick(0.6);
+    p.on_cmd_vel(0.61, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.on_enable();
+    p.ctrl_tick(0.62);
+    p.on_cmd_vel(0.63, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.ctrl_tick(0.64);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
     const std::uint64_t sent_while_awake = p.axis_frames_sent();
     CHECK(sent_while_awake >= 1);
@@ -841,15 +841,15 @@ int main(int argc, char** argv) {
     // yes. Commands keep arriving fresh throughout.
     double t = 0.66;
     for (; t < 6.0 && p.conn_state() == chs_a::ConnState::kOk; t += 0.01) {
-      p.OnCmdVel(t, 0.5, 0.0, 0.1, p.estop_epoch());
-      p.CtrlTick(t + 0.001);
+      p.on_cmd_vel(t, 0.5, 0.0, 0.1, p.estop_epoch());
+      p.ctrl_tick(t + 0.001);
     }
     CHECK(p.conn_state() != chs_a::ConnState::kOk);
     // Keep driving. Everything Tier 1 can see is still fine, and it says so.
     const std::uint64_t sent_at_loss = p.axis_frames_sent();
     for (int i = 0; i < 200; ++i, t += 0.01) {
-      p.OnCmdVel(t, 0.5, 0.0, 0.1, p.estop_epoch());
-      p.CtrlTick(t + 0.001);
+      p.on_cmd_vel(t, 0.5, 0.0, 0.1, p.estop_epoch());
+      p.ctrl_tick(t + 0.001);
     }
     CHECK(p.motion_allowed() == false);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
@@ -866,16 +866,16 @@ int main(int argc, char** argv) {
   // current pose, not work through a backlog (RTC-6).
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
-    chassis.Send(golden.at("RX_00100001_00f00000"));   // the captured motion report
-    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
+    chassis.send(golden.at("RX_00100001_00f00000"));   // the captured motion report
+    for (int i = 0; i < 50; ++i) p.rx_pump(0.01 * i);
 
-    p.CtrlTick(0.6);
+    p.ctrl_tick(0.6);
     CHECK(p.odom_offered() == 2);          // the dial tick and this one
     OdomSample got;
-    CHECK(p.TakeOdomForPublish(&got) == true);
+    CHECK(p.take_odom_for_publish(&got) == true);
     // The SAME sample ctrl computed, not a default-constructed one.
     CHECK(got.x == p.last_odom().x);
     CHECK(got.y == p.last_odom().y);
@@ -887,14 +887,14 @@ int main(int argc, char** argv) {
     // it were a new one -- downstream would read a stalled robot as a moving
     // one whose pose happens not to change.
     OdomSample again;
-    CHECK(p.TakeOdomForPublish(&again) == false);
+    CHECK(p.take_odom_for_publish(&again) == false);
 
     // Falling behind costs the intermediate samples, not the current one.
-    for (int i = 0; i < 10; ++i) p.CtrlTick(0.61 + 0.01 * i);
+    for (int i = 0; i < 10; ++i) p.ctrl_tick(0.61 + 0.01 * i);
     CHECK(p.odom_offered() == 12);
-    CHECK(p.TakeOdomForPublish(&got) == true);
+    CHECK(p.take_odom_for_publish(&got) == true);
     CHECK(got.x == p.last_odom().x);       // the NEWEST, not the oldest
-    CHECK(p.TakeOdomForPublish(&again) == false);
+    CHECK(p.take_odom_for_publish(&again) == false);
 
     // *** The ticks that say "do not publish" are offered too. Skipping them
     // would leave rt_pub holding the last good pose forever, and 13 S4.4 (4)
@@ -903,10 +903,10 @@ int main(int argc, char** argv) {
     //
     // No reports for well past stale_stop_publish_ms, so the band reaches kStop.
     const std::uint64_t before = p.odom_offered();
-    for (double t = 0.8; t < 3.0; t += 0.01) p.CtrlTick(t);
+    for (double t = 0.8; t < 3.0; t += 0.01) p.ctrl_tick(t);
     CHECK(p.odom_offered() > before);
     CHECK(p.last_odom().publish == false);
-    CHECK(p.TakeOdomForPublish(&got) == true);
+    CHECK(p.take_odom_for_publish(&got) == true);
     CHECK(got.publish == false);           // the DECISION reached the publisher
   }
 
@@ -917,16 +917,16 @@ int main(int argc, char** argv) {
   // that stops offering it has to be caught by the process's own suite.
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
 
     QuadrupedProcess::StateSnapshot snap;
-    CHECK(p.TakeStateForPublish(&snap) == true);
+    CHECK(p.take_state_for_publish(&snap) == true);
     // Taken once, gone -- a publisher must not resend one period's state as if
     // it were the next.
     QuadrupedProcess::StateSnapshot again;
-    CHECK(p.TakeStateForPublish(&again) == false);
+    CHECK(p.take_state_for_publish(&again) == false);
 
     // The connection is the REAL one, not a constant. Before any report has
     // arrived the session is still probing, and a snapshot that reported "ok"
@@ -934,10 +934,10 @@ int main(int argc, char** argv) {
     CHECK(snap.conn == p.conn_state());
     CHECK(snap.conn != chs_a::ConnState::kOk);
 
-    chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
-    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
-    p.CtrlTick(0.6);
-    CHECK(p.TakeStateForPublish(&snap) == true);
+    chassis.send(basic_frame(1, 17, 0x3002, false, false));
+    for (int i = 0; i < 50; ++i) p.rx_pump(0.01 * i);
+    p.ctrl_tick(0.6);
+    CHECK(p.take_state_for_publish(&snap) == true);
     CHECK(snap.conn == chs_a::ConnState::kOk);     // ...and it followed
     CHECK(snap.estop_epoch == p.estop_epoch());
     CHECK(snap.tier1.stop_reason == p.last_tier1().stop_reason);
@@ -948,20 +948,20 @@ int main(int argc, char** argv) {
     // up here, or an operator looking at state/robot sees a stopped robot with
     // no reason attached.
     const std::uint64_t before = p.estop_epoch();
-    p.OnSoftEstop(0.61);
+    p.on_soft_estop(0.61);
     CHECK(p.estop_epoch() == before + 1);
-    p.OnCmdVel(0.62, 0.2, 0.0, 0.0, before);       // the OLD generation
-    p.CtrlTick(0.63);
-    CHECK(p.TakeStateForPublish(&snap) == true);
+    p.on_cmd_vel(0.62, 0.2, 0.0, 0.0, before);       // the OLD generation
+    p.ctrl_tick(0.63);
+    CHECK(p.take_state_for_publish(&snap) == true);
     CHECK(snap.soft_estop_active == true);
     CHECK(snap.estop_epoch == before + 1);
     CHECK(snap.cmd_age_ms > 0.0);
 
     // ...and it clears by itself once the upstream catches up. It is not a
     // lock, and reporting it as one would send someone looking for an unlock.
-    p.OnCmdVel(0.64, 0.2, 0.0, 0.0, p.estop_epoch());
-    p.CtrlTick(0.65);
-    CHECK(p.TakeStateForPublish(&snap) == true);
+    p.on_cmd_vel(0.64, 0.2, 0.0, 0.0, p.estop_epoch());
+    p.ctrl_tick(0.65);
+    CHECK(p.take_state_for_publish(&snap) == true);
     CHECK(snap.soft_estop_active == false);
   }
 
@@ -973,9 +973,9 @@ int main(int argc, char** argv) {
   // which proves the constant matches itself and nothing else.
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
 
     struct Seen {
       std::uint64_t basic = 0, motion = 0, device = 0, fault = 0;
@@ -986,7 +986,7 @@ int main(int argc, char** argv) {
       std::size_t fault_count = 0;
     } seen;
 
-    p.SetReportSink([&seen](double now, const chs_a::BasicStatus* b,
+    p.set_report_sink([&seen](double now, const chs_a::BasicStatus* b,
                             const chs_a::MotionStatus* m,
                             const chs_a::DeviceStatus* d,
                             const chs_a::FaultReport* f) {
@@ -1002,21 +1002,21 @@ int main(int argc, char** argv) {
       if (n != 1) ++seen.both;
     });
 
-    chassis.Send(golden.at("RX_00100064_00f00000"));   // basic
-    chassis.Send(golden.at("RX_00100001_00f00000"));   // motion
-    chassis.Send(golden.at("RX_00100002_00f00000"));   // device
-    chassis.Send(golden.at("RX_0010007f_00f00000"));   // fault
+    chassis.send(golden.at("RX_00100064_00f00000"));   // basic
+    chassis.send(golden.at("RX_00100001_00f00000"));   // motion
+    chassis.send(golden.at("RX_00100002_00f00000"));   // device
+    chassis.send(golden.at("RX_0010007f_00f00000"));   // fault
     // *** A type this build does not model, and with NO ErrorCode.
     //
     // The capture's location report cannot serve here: it carries an ErrorCode
-    // (measured 2026-09-17) and is consumed by RxPump's error branch, so it
+    // (measured 2026-09-17) and is consumed by rx_pump's error branch, so it
     // never reaches the unmodelled-report path at all. This frame does.
-    chassis.Send(TypedReportFrame(0x00100099u, chs_a::kReportCommand));
+    chassis.send(typed_report_frame(0x00100099u, chs_a::kReportCommand));
     // Pumped from a NON-ZERO time on purpose. All five frames are already in
     // the socket buffer, so they come out on the first call -- starting at 0.0
     // would make the clock assertion below pass against a sink that invented
     // its own timestamp, which is the thing it is there to catch.
-    for (int i = 0; i < 200; ++i) p.RxPump(5.0 + 0.01 * i);
+    for (int i = 0; i < 200; ++i) p.rx_pump(5.0 + 0.01 * i);
 
     CHECK(seen.basic == 1);
     CHECK(seen.motion == 1);
@@ -1042,7 +1042,7 @@ int main(int argc, char** argv) {
 
     // ...and the link is up, because an arriving report is the evidence
     // (13 CA-7) no matter which kind it was.
-    p.CtrlTick(2.5);
+    p.ctrl_tick(2.5);
     CHECK(p.conn_state() == chs_a::ConnState::kOk);
 
     // *** A fault frame is forwarded whatever its Command field says.
@@ -1055,8 +1055,8 @@ int main(int argc, char** argv) {
     // whose Command we did not expect is recoverable; dropping the frame that
     // reports a new fault is not.
     const std::uint64_t before_fault = seen.fault;
-    chassis.Send(WithCommand(golden.at("RX_0010007f_00f00000"), 1u));
-    for (int i = 0; i < 100; ++i) p.RxPump(7.0 + 0.01 * i);
+    chassis.send(with_command(golden.at("RX_0010007f_00f00000"), 1u));
+    for (int i = 0; i < 100; ++i) p.rx_pump(7.0 + 0.01 * i);
     CHECK(seen.fault == before_fault + 1);
   }
 
@@ -1067,11 +1067,11 @@ int main(int argc, char** argv) {
   // undefined behaviour, so the guard is asserted rather than assumed.
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
-    chassis.Send(golden.at("RX_00100064_00f00000"));
-    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
+    chassis.send(golden.at("RX_00100064_00f00000"));
+    for (int i = 0; i < 50; ++i) p.rx_pump(0.01 * i);
     CHECK(p.frames_received() >= 1);
     CHECK(p.reports_forwarded() == 0);
   }
@@ -1085,50 +1085,50 @@ int main(int argc, char** argv) {
   // that report is what these cases assert.
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
     // Nothing from either source yet.
     CHECK(p.angular_source() == QuadrupedProcess::OdomSource::kNone);
 
     // The monitor report arrives: the 10 Hz source, priority 2 on both tables.
-    chassis.Send(golden.at("RX_00100001_00f00000"));
-    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
-    p.CtrlTick(0.60);
+    chassis.send(golden.at("RX_00100001_00f00000"));
+    for (int i = 0; i < 50; ++i) p.rx_pump(0.01 * i);
+    p.ctrl_tick(0.60);
     CHECK(p.angular_source() == QuadrupedProcess::OdomSource::kMonitor);
     CHECK(p.linear_source() == QuadrupedProcess::OdomSource::kMonitor);
 
     // *** /IMU arrives. Priority 1 on the angular table, and it takes over.
-    p.OnImu(0.61, 0.25);
-    p.CtrlTick(0.62);
+    p.on_imu(0.61, 0.25);
+    p.ctrl_tick(0.62);
     CHECK(p.angular_source() == QuadrupedProcess::OdomSource::kDrdds);
 
     // *** and now it stops. imu_age_warn_ms is 50 in the fixture, so by +0.2 s
     // the IMU is stale and 13 S4.2 says fall back to the 10 Hz source. A
     // process that kept integrating the last IMU sample would produce a yaw
     // that is smooth, plausible, and frozen.
-    p.CtrlTick(0.85);
+    p.ctrl_tick(0.85);
     CHECK(p.angular_source() == QuadrupedProcess::OdomSource::kMonitor);
 
     // ...and it comes back when the IMU does. The fallback is a state, not a
     // latch: a degradation that never clears means one dropped packet costs the
     // good source until a restart.
-    p.OnImu(0.86, 0.25);
-    p.CtrlTick(0.87);
+    p.on_imu(0.86, 0.25);
+    p.ctrl_tick(0.87);
     CHECK(p.angular_source() == QuadrupedProcess::OdomSource::kDrdds);
 
     // *** /MOTION_INFO: priority 1 on the LINEAR table, chosen by being newer.
-    p.OnMotionInfo(0.88, 0.4, 0.0);
-    p.CtrlTick(0.89);
+    p.on_motion_info(0.88, 0.4, 0.0);
+    p.ctrl_tick(0.89);
     CHECK(p.linear_source() == QuadrupedProcess::OdomSource::kDrdds);
     CHECK(p.last_odom().publish == true);
 
     // ...and a NEWER monitor report wins it back, with no threshold anywhere:
     // that is the whole point of choosing by arrival time rather than by a
     // constant CLAUDE.md 3.1 would not let us invent.
-    chassis.Send(golden.at("RX_00100001_00f00000"));
-    for (int i = 0; i < 50; ++i) p.RxPump(1.0 + 0.01 * i);
-    p.CtrlTick(1.6);
+    chassis.send(golden.at("RX_00100001_00f00000"));
+    for (int i = 0; i < 50; ++i) p.rx_pump(1.0 + 0.01 * i);
+    p.ctrl_tick(1.6);
     CHECK(p.linear_source() == QuadrupedProcess::OdomSource::kMonitor);
   }
 
@@ -1138,18 +1138,18 @@ int main(int argc, char** argv) {
   // the choice and integrated the other value.
   {
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
-    chassis.Send(golden.at("RX_00100001_00f00000"));   // captured AT REST: wz = 0
-    for (int i = 0; i < 50; ++i) p.RxPump(0.01 * i);
-    p.CtrlTick(0.60);
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
+    chassis.send(golden.at("RX_00100001_00f00000"));   // captured AT REST: wz = 0
+    for (int i = 0; i < 50; ++i) p.rx_pump(0.01 * i);
+    p.ctrl_tick(0.60);
     const double yaw_at_rest = p.last_odom().yaw;
 
     // A real turn rate from the IMU, integrated over ten periods.
     for (int i = 0; i < 10; ++i) {
-      p.OnImu(0.61 + 0.01 * i, 0.5);
-      p.CtrlTick(0.615 + 0.01 * i);
+      p.on_imu(0.61 + 0.01 * i, 0.5);
+      p.ctrl_tick(0.615 + 0.01 * i);
     }
     // 0.5 rad/s over ~0.1 s. The bound is loose on purpose -- what is asserted
     // is that the IMU value was INTEGRATED, not that the integrator is exact
@@ -1163,10 +1163,10 @@ int main(int argc, char** argv) {
   {
     // Nothing is listening. The process must survive the whole probe and
     // backoff cycle, keep reporting, and never emit an axis command.
-    QuadrupedProcess p(Cfg(1));   // port 1: nothing there
+    QuadrupedProcess p(cfg(1));   // port 1: nothing there
     for (int i = 0; i < 2000; ++i) {
-      p.CtrlTick(0.01 * i);
-      p.RxPump(0.01 * i);
+      p.ctrl_tick(0.01 * i);
+      p.rx_pump(0.01 * i);
     }
     CHECK(p.ctrl_ticks() == 2000);
     CHECK(p.axis_frames_sent() == 0);
@@ -1187,24 +1187,24 @@ int main(int argc, char** argv) {
     // being observable downstream. The measurement would look BETTER the worse
     // the scheduling got.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
     OdomSample first;
     // mutant: leave stamp_wall_s at its 0.0 default -> red. A zero stamp
     // reaches ROS as 1970 and every consumer that filters on age drops it.
-    CHECK(p.TakeOdomForPublish(&first));
+    CHECK(p.take_odom_for_publish(&first));
     CHECK(first.stamp_wall_s > 1.0e9);        // a real epoch, not the default
 
-    // Sub-second resolution. WallNow() elsewhere in this file is ::time(),
+    // Sub-second resolution. wall_now() elsewhere in this file is ::time(),
     // i.e. WHOLE SECONDS -- reusing it here would give all hundred samples in
     // a second the same stamp, and downstream would see a 100 Hz stream whose
     // timestamps advance in 1 Hz steps. That reads as a stalled publisher, so
     // the defect would be reported as the opposite of what it is.
-    // mutant: stamp with WallNow() instead of WallNowSeconds() -> the two
+    // mutant: stamp with wall_now() instead of wall_now_seconds() -> the two
     // stamps below become equal -> red.
-    p.CtrlTick(0.01);
+    p.ctrl_tick(0.01);
     OdomSample second;
-    CHECK(p.TakeOdomForPublish(&second));
+    CHECK(p.take_odom_for_publish(&second));
     CHECK(second.stamp_wall_s > first.stamp_wall_s);
 
     // The stamp travels WITH the sample through the slot. A stamp written
@@ -1233,29 +1233,29 @@ int main(int argc, char** argv) {
     // an implementation detail. mutant: restore `latest_ = fresh` -> the
     // second stop_reason check goes red.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
-    chassis.Drain();
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
+    chassis.drain();
 
     // Navigation mode, standing, navigation gait -- everything Tier 1 needs.
-    chassis.Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+    chassis.send(basic_frame(/*usage_mode=*/1, /*motion_state=*/17,
                             /*gait=*/0x3002, /*hes=*/false, /*sleep=*/false));
-    p.RxPump(0.05);
+    p.rx_pump(0.05);
     // enable clears the boot-time timeout_lock. WITHOUT it the stop reason is
     // kTimeout in every implementation, and an assertion phrased as
     // "not kModeMismatch" is then true whatever the merge does -- which is
     // exactly how the first draft of this case passed the mutant it was
     // written to catch (CLAUDE.md S3.2 form 1).
-    p.OnEnable();
-    p.OnCmdVel(0.06, 0.1, 0.0, 0.0, p.estop_epoch());
+    p.on_enable();
+    p.on_cmd_vel(0.06, 0.1, 0.0, 0.0, p.estop_epoch());
     // Two periods, not one: the enable CLEARS the lock on the period that
     // consumes it but that period still stops (tier1.cc "the upstream came
     // back is not the same event as the upstream is trusted", 11 S9.12.1).
     // Asserting after one period would fail on a correct implementation.
-    p.CtrlTick(0.06);
-    p.OnCmdVel(0.07, 0.1, 0.0, 0.0, p.estop_epoch());
-    p.CtrlTick(0.07);
+    p.ctrl_tick(0.06);
+    p.on_cmd_vel(0.07, 0.1, 0.0, 0.0, p.estop_epoch());
+    p.ctrl_tick(0.07);
     // kNone, not "not kModeMismatch": the gate is either fully open or it is
     // not, and the weaker phrasing cannot tell the two implementations apart.
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
@@ -1264,17 +1264,17 @@ int main(int argc, char** argv) {
     // Now a MotionStatus, which says nothing about usage_mode. The gate must
     // stay open -- this is the assertion the bug broke.
     const std::uint64_t before = p.axis_frames_sent();
-    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0x3002));
-    p.RxPump(0.10);
-    p.OnCmdVel(0.11, 0.1, 0.0, 0.0, p.estop_epoch());
-    p.CtrlTick(0.11);
+    chassis.send(motion_frame(/*motion_state=*/17, /*gait=*/0x3002));
+    p.rx_pump(0.10);
+    p.on_cmd_vel(0.11, 0.1, 0.0, 0.0, p.estop_epoch());
+    p.ctrl_tick(0.11);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
     CHECK(p.axis_frames_sent() > before);
   }
 
   // ---- 13 TR-1 from the 10 Hz stream (user ruling 2026-09-21) ------------
   {
-    // The gap this closes: HandleFrame's MotionStatus branch updated the
+    // The gap this closes: handle_frame's MotionStatus branch updated the
     // snapshot's motion_state/gait and published it -- and never told the
     // mode machine. Only BasicStatus (measured 1.99 Hz) fed TR-1, while the
     // stream that actually reports the field five times as often (9.94 Hz)
@@ -1283,11 +1283,11 @@ int main(int argc, char** argv) {
     // false. Both were observed on the chassis with the factory handset.
     //
     // Driven with chassis FRAMES, whole process: the unit tests above cannot
-    // see a process that never calls OnMotionSample -- v1.22's lesson.
+    // see a process that never calls on_motion_sample -- v1.22's lesson.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
     // Baselines on BOTH streams, then prove the robot can move (without this
     // half, everything below is satisfied by a robot that never moves).
     //
@@ -1297,26 +1297,26 @@ int main(int argc, char** argv) {
     // which beside a 0x3xxx gait reads as normal-mode-with-navigation-gait
     // and trips the mode_mismatch gate. The first draft of this case did
     // exactly that and spent its time debugging the wrong thing.
-    chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
-    p.RxPump(0.04);
-    p.CtrlTick(0.05);
-    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0x3002));
-    p.RxPump(0.055);
-    p.OnCmdVel(0.06, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.OnEnable();
-    p.CtrlTick(0.07);
-    p.OnCmdVel(0.08, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.CtrlTick(0.09);
+    chassis.send(basic_frame(1, 17, 0x3002, false, false));
+    p.rx_pump(0.04);
+    p.ctrl_tick(0.05);
+    chassis.send(motion_frame(/*motion_state=*/17, /*gait=*/0x3002));
+    p.rx_pump(0.055);
+    p.on_cmd_vel(0.06, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.on_enable();
+    p.ctrl_tick(0.07);
+    p.on_cmd_vel(0.08, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.ctrl_tick(0.09);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
     CHECK(p.last_tier1().vx > 0.0);
 
     // The handset lies the robot down. ONLY the 10 Hz stream has reported it
     // so far -- the next BasicStatus is up to half a second away, and this
     // case deliberately never sends it.
-    chassis.Send(MotionFrame(/*motion_state=*/0, /*gait=*/0x3002));
-    p.RxPump(0.15);
-    p.OnCmdVel(0.16, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.CtrlTick(0.17);
+    chassis.send(motion_frame(/*motion_state=*/0, /*gait=*/0x3002));
+    p.rx_pump(0.15);
+    p.on_cmd_vel(0.16, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.ctrl_tick(0.17);
     // Held at zero NOW, not when BasicStatus catches up.
     CHECK(p.motion_state_transitioning());
     CHECK(p.last_tier1().stop_reason == StopReason::kModeSwitching);
@@ -1326,7 +1326,7 @@ int main(int argc, char** argv) {
     // mode_switching false" that the bench kept showing cannot appear.
     {
       QuadrupedProcess::StateSnapshot snap;
-      CHECK(p.TakeStateForPublish(&snap));
+      CHECK(p.take_state_for_publish(&snap));
       // *** The two fields DIVERGE here, and that is the point of having two
       // (11 S4.1, 2026-09-21 unfreeze): nothing of ours is in flight, so
       // mode_switching -- the MS-3 "may I send another command" answer -- is
@@ -1339,20 +1339,20 @@ int main(int argc, char** argv) {
     // The hold expires on the configured clock, exactly as the BasicStatus-
     // detected one does -- same key, same duration, one clock.
     for (double t = 0.2; t < 3.6; t += 0.1) {
-      p.RxPump(t);
-      p.OnCmdVel(t, 0.5, 0.0, 0.1, p.estop_epoch());
-      p.CtrlTick(t);
+      p.rx_pump(t);
+      p.on_cmd_vel(t, 0.5, 0.0, 0.1, p.estop_epoch());
+      p.ctrl_tick(t);
     }
     CHECK(p.motion_state_transitioning());
-    p.OnCmdVel(3.75, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.CtrlTick(3.8);
+    p.on_cmd_vel(3.75, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.ctrl_tick(3.8);
     CHECK(!p.motion_state_transitioning());
-    // One more period: CtrlTick reads Tier 1's inputs BEFORE it ticks the
+    // One more period: ctrl_tick reads Tier 1's inputs BEFORE it ticks the
     // mode machine, so the period on which the hold expires still stops with
     // kModeSwitching and the NEXT one releases. A one-period (10 ms) lag on
     // the release side, and the conservative direction.
-    p.OnCmdVel(3.85, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.CtrlTick(3.9);
+    p.on_cmd_vel(3.85, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.ctrl_tick(3.9);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
   }
 
@@ -1364,27 +1364,27 @@ int main(int argc, char** argv) {
     // the published RobotState says sleep, and Sleep=0 recovers on the next
     // period with no enable ceremony -- the motors were unpowered, not locked.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
     // Awake and moving first: without this half, "no frames during sleep" is
     // satisfied by a process that never sends frames at all.
-    chassis.Send(BasicFrame(1, 17, 0x3002, /*hes=*/false, /*sleep=*/false));
-    p.RxPump(0.05);
-    p.OnCmdVel(0.06, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.OnEnable();
-    p.CtrlTick(0.07);
-    p.OnCmdVel(0.08, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.CtrlTick(0.09);
+    chassis.send(basic_frame(1, 17, 0x3002, /*hes=*/false, /*sleep=*/false));
+    p.rx_pump(0.05);
+    p.on_cmd_vel(0.06, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.on_enable();
+    p.ctrl_tick(0.07);
+    p.on_cmd_vel(0.08, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.ctrl_tick(0.09);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
     CHECK(p.axis_frames_sent() >= 1);
 
     // The chassis goes to sleep. Next period: sleep reason, zero frames.
-    chassis.Send(BasicFrame(1, 17, 0x3002, /*hes=*/false, /*sleep=*/true));
-    p.RxPump(0.15);
+    chassis.send(basic_frame(1, 17, 0x3002, /*hes=*/false, /*sleep=*/true));
+    p.rx_pump(0.15);
     const std::uint64_t frames_at_sleep = p.axis_frames_sent();
-    p.OnCmdVel(0.16, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.CtrlTick(0.17);
+    p.on_cmd_vel(0.16, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.ctrl_tick(0.17);
     CHECK(p.last_tier1().stop_reason == StopReason::kSleep);
     // NO axis frame went out -- not a zero-velocity frame either. F-21: the
     // motors are unpowered; a frame of any content is a frame the criterion
@@ -1392,14 +1392,14 @@ int main(int argc, char** argv) {
     CHECK(p.axis_frames_sent() == frames_at_sleep);
     // And several more periods, so a one-period suppression cannot pass.
     for (double t = 0.18; t < 0.40; t += 0.01) {
-      p.OnCmdVel(t, 0.5, 0.0, 0.1, p.estop_epoch());
-      p.CtrlTick(t);
+      p.on_cmd_vel(t, 0.5, 0.0, 0.1, p.estop_epoch());
+      p.ctrl_tick(t);
     }
     CHECK(p.axis_frames_sent() == frames_at_sleep);
     // The published state says so -- read from the snapshot rt_pub publishes.
     {
       QuadrupedProcess::StateSnapshot snap;
-      CHECK(p.TakeStateForPublish(&snap));
+      CHECK(p.take_state_for_publish(&snap));
       CHECK(snap.sleep);
       CHECK(!snap.motion_allowed);
     }
@@ -1415,24 +1415,24 @@ int main(int argc, char** argv) {
     // tens of milliseconds late -- a bare Send-then-pump read zero bytes and
     // this case spent an afternoon looking like a process bug. Poll with an
     // injected-time axis; 50 ms sufficed on the bench, the cap is 200.
-    chassis.Drain();
-    chassis.Send(BasicFrame(1, 17, 0x3002, /*hes=*/false, /*sleep=*/false));
+    chassis.drain();
+    chassis.send(basic_frame(1, 17, 0x3002, /*hes=*/false, /*sleep=*/false));
     int woke = 0;
     for (int i = 0; i < 100 && woke == 0; ++i) {
       ::usleep(2000);
-      woke = p.RxPump(0.451 + i * 1e-4);
+      woke = p.rx_pump(0.451 + i * 1e-4);
     }
     CHECK(woke >= 1);
-    p.OnCmdVel(0.46, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.CtrlTick(0.47);
+    p.on_cmd_vel(0.46, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.ctrl_tick(0.47);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
     CHECK(p.axis_frames_sent() > frames_at_sleep);
   }
 
   // ---- the UDP endpoint frames by DATAGRAM, not by stream (FR-5) --------
   {
-    // The gap this closes: Framer::PushDatagram had ZERO production call
-    // sites. Every byte went through Push(), the STREAM entry point, on both
+    // The gap this closes: Framer::push_datagram had ZERO production call
+    // sites. Every byte went through push(), the STREAM entry point, on both
     // endpoint candidates -- and 13 S2.2 gives channel one a udp:30004
     // candidate that the resolved config has enabled.
     //
@@ -1444,39 +1444,39 @@ int main(int argc, char** argv) {
     // dropped -- because UDP has no ordering that would make a continuation
     // meaningful.
     FakeUdpChassis chassis;
-    QuadrupedProcess p(UdpCfg(chassis.port()));
+    QuadrupedProcess p(udp_cfg(chassis.port()));
     // A tick so the process connects and sends its first frame, which is what
     // teaches the peer where to reply.
-    p.CtrlTick(0.0);
-    for (int i = 0; i < 20 && !chassis.LearnPeer(); ++i) p.CtrlTick(0.01 * i);
-    CHECK(chassis.LearnPeer());
+    p.ctrl_tick(0.0);
+    for (int i = 0; i < 20 && !chassis.learn_peer(); ++i) p.ctrl_tick(0.01 * i);
+    CHECK(chassis.learn_peer());
 
     // A whole frame in one datagram: accepted.
-    const Bytes good = BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+    const Bytes good = basic_frame(/*usage_mode=*/1, /*motion_state=*/17,
                                   /*gait=*/0x3002, /*hes=*/false,
                                   /*sleep=*/false);
-    chassis.SendRaw(good);
-    p.RxPump(0.30);
+    chassis.send_raw(good);
+    p.rx_pump(0.30);
     CHECK(p.frames_received() == 1);
 
     // *** The assertion the defect fails. Two halves of that frame, sent as
     // two datagrams. Under FR-5 both are dropped and the counter does not
     // move; under the stream framer the second push completes the first and
     // yields a frame -- which is the concatenation this endpoint must never
-    // perform. mutant: route UDP through Push() -> frames_received becomes 2.
+    // perform. mutant: route UDP through push() -> frames_received becomes 2.
     const std::size_t half = good.size() / 2;
-    chassis.SendRaw(good.data(), half);
-    p.RxPump(0.31);
-    chassis.SendRaw(good.data() + half, good.size() - half);
-    p.RxPump(0.32);
+    chassis.send_raw(good.data(), half);
+    p.rx_pump(0.31);
+    chassis.send_raw(good.data() + half, good.size() - half);
+    p.rx_pump(0.32);
     CHECK(p.frames_received() == 1);
 
     // And a datagram carrying TWO frames is one frame too many, not one frame
     // plus a remainder: FR-5 drops it whole.
     Bytes two = good;
     two.insert(two.end(), good.begin(), good.end());
-    chassis.SendRaw(two);
-    p.RxPump(0.33);
+    chassis.send_raw(two);
+    p.rx_pump(0.33);
     CHECK(p.frames_received() == 1);
 
     // Asserted HERE, before any further good frame arrives. FR-5 asks for a
@@ -1497,8 +1497,8 @@ int main(int argc, char** argv) {
     // The link still works afterwards -- a dropped datagram must not leave
     // state that poisons the next good one. A framer that kept the leftovers
     // would parse this one against them.
-    chassis.SendRaw(good);
-    p.RxPump(0.34);
+    chassis.send_raw(good);
+    p.rx_pump(0.34);
     CHECK(p.frames_received() == 2);
 
     // And the refusals are VISIBLE. FR-5 asks for a `warn`, which this process
@@ -1517,21 +1517,21 @@ int main(int argc, char** argv) {
     // was a guarantee nobody held (CLAUDE.md S3.2), while every latency figure
     // in 13 S3.6 rests on it.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
+    QuadrupedProcess p(cfg(chassis.port()));
     // Before any connection the verdict is optimistic on purpose: there is
     // nothing to complain about yet, and a false here would have the
     // supervisor report a timing fault on a process that has not dialled.
     CHECK(!p.link_status().nodelay_expected);
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
     // *** Drive until the session actually reports a connection, and ASSERT
     // that it did. The first draft ticked twice and moved on -- the connect
     // event had not fired, so nodelay_ok was still its initial true and the
     // case passed without exercising anything. Found by a surviving mutant.
     for (int i = 0; i < 40; ++i) {
-      chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
-      p.RxPump(0.01 * i);
-      p.CtrlTick(0.01 * i);
+      chassis.send(basic_frame(1, 17, 0x3002, false, false));
+      p.rx_pump(0.01 * i);
+      p.ctrl_tick(0.01 * i);
     }
     CHECK(p.conn_state() == chs_a::ConnState::kOk);
     // The config asked, so we had business asking; the kernel says it is on.
@@ -1554,14 +1554,14 @@ int main(int argc, char** argv) {
     // This is also what makes "assume true instead of reading back"
     // observable: on TCP both answers agree, and only here do they part.
     FakeUdpChassis chassis;
-    QuadrupedProcess p(UdpCfg(chassis.port()));
-    p.CtrlTick(0.0);
-    for (int i = 0; i < 20 && !chassis.LearnPeer(); ++i) p.CtrlTick(0.01 * i);
-    CHECK(chassis.LearnPeer());
+    QuadrupedProcess p(udp_cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    for (int i = 0; i < 20 && !chassis.learn_peer(); ++i) p.ctrl_tick(0.01 * i);
+    CHECK(chassis.learn_peer());
     for (int i = 0; i < 40; ++i) {
-      chassis.SendRaw(BasicFrame(1, 17, 0x3002, false, false));
-      p.RxPump(0.01 * i);
-      p.CtrlTick(0.01 * i);
+      chassis.send_raw(basic_frame(1, 17, 0x3002, false, false));
+      p.rx_pump(0.01 * i);
+      p.ctrl_tick(0.01 * i);
     }
     CHECK(p.conn_state() == chs_a::ConnState::kOk);
     // mutant: drop the is_udp term -> expected goes true on a socket the
@@ -1574,15 +1574,15 @@ int main(int argc, char** argv) {
     // mutant: demand it regardless of the config -> red, because nothing ever
     // called setsockopt on this socket.
     FakeChassis chassis;
-    QuadrupedConfig c = Cfg(chassis.port());
+    QuadrupedConfig c = cfg(chassis.port());
     c.link.tcp_nodelay = false;
     QuadrupedProcess p(c);
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
     for (int i = 0; i < 40; ++i) {
-      chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
-      p.RxPump(0.01 * i);
-      p.CtrlTick(0.01 * i);
+      chassis.send(basic_frame(1, 17, 0x3002, false, false));
+      p.rx_pump(0.01 * i);
+      p.ctrl_tick(0.01 * i);
     }
     CHECK(p.conn_state() == chs_a::ConnState::kOk);
     CHECK(!p.link_status().nodelay_expected);
@@ -1597,36 +1597,36 @@ int main(int argc, char** argv) {
   {
     // ModeConfig has TWO gait lists, and the second one was missed when the
     // first was wired -- GS-1 stayed dead a batch longer for exactly that
-    // reason. Without command_forbidden_gaits, GaitCommandable returns true
+    // reason. Without command_forbidden_gaits, gait_commandable returns true
     // for everything and 0x1003 goes out to a chassis that can never read it
     // back (13 G-02, "读回枚举中无此值") -- so the read-back check has nothing
     // to match and MS-2 turns the request into a five-second timeout instead
     // of an immediate, honest refusal.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
-    chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
-    p.RxPump(0.05);
-    p.CtrlTick(0.06);
-    chassis.Drain();
-    chassis.ClearSent();
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
+    chassis.send(basic_frame(1, 17, 0x3002, false, false));
+    p.rx_pump(0.05);
+    p.ctrl_tick(0.06);
+    chassis.drain();
+    chassis.clear_sent();
 
-    const ModeRequestResult r = p.OnChassisAction(0.1, ModeAction::kSetGait, 0x1003);
+    const ModeRequestResult r = p.on_chassis_action(0.1, ModeAction::kSetGait, 0x1003);
     CHECK(!r.accepted);
     // The REASON. A refusal for "a switch is in flight" would satisfy
     // !accepted and mean something else entirely.
-    CHECK(std::string(ModeRejectItem(r.reject)) == "gait_readback_gap");
+    CHECK(std::string(mode_reject_item(r.reject)) == "gait_readback_gap");
     // And NOTHING went on the wire. 13 GS-1: 不静默丢弃, 不假装成功 -- but
     // also not sent. A counter-only check would pass on an implementation
     // that refused upward while still writing the frame.
-    p.CtrlTick(0.11);
-    chassis.Drain();
-    CHECK(chassis.CountFrames(nullptr, nullptr) == 0);
+    p.ctrl_tick(0.11);
+    chassis.drain();
+    CHECK(chassis.count_frames(nullptr, nullptr) == 0);
 
     // A commandable gait still goes through, so the assertions above are not
     // satisfied by a build that refuses every gait.
-    CHECK(p.OnChassisAction(0.2, ModeAction::kSetGait, 0x3002).accepted);
+    CHECK(p.on_chassis_action(0.2, ModeAction::kSetGait, 0x3002).accepted);
   }
 
   // ---- every ModeConfig field is actually wired --------------------------
@@ -1637,7 +1637,7 @@ int main(int argc, char** argv) {
     // done because the first one had been. Asserting the struct field by field
     // is the only thing that makes "a field nobody wired" visible without a
     // chassis and without waiting for the behaviour to be noticed.
-    QuadrupedConfig c = Cfg(1);
+    QuadrupedConfig c = cfg(1);
     c.motion.mode_switch_timeout_s = 7.5;
     c.motion.external_transition_hold_s = 1.25;
     c.motion.prone_forbidden_gaits = {0x3003, 0x1003};
@@ -1667,33 +1667,33 @@ int main(int argc, char** argv) {
     // *** Every existing test stayed green when this was fixed, which is the
     // whole reason this case exists: nothing covered it at all.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
     // Standing, navigation, flat. First read-back of the process's life, so it
     // is NOT an external transition (there was no previous value to differ
     // from) -- the machine treats it as the steady baseline.
-    chassis.Send(BasicFrame(1, 17, 0x3002, false, false));
-    p.RxPump(0.05);
-    p.CtrlTick(0.06);
+    chassis.send(basic_frame(1, 17, 0x3002, false, false));
+    p.rx_pump(0.05);
+    p.ctrl_tick(0.06);
     CHECK(!p.motion_state_transitioning());
 
     // Unlock and prove the robot CAN move here. Without this half, every
     // assertion below is satisfied by a robot that never moves at all.
-    p.OnCmdVel(0.07, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.OnEnable();
-    p.CtrlTick(0.08);
-    p.OnCmdVel(0.09, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.CtrlTick(0.10);
+    p.on_cmd_vel(0.07, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.on_enable();
+    p.ctrl_tick(0.08);
+    p.on_cmd_vel(0.09, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.ctrl_tick(0.10);
     CHECK(p.last_tier1().stop_reason == StopReason::kNone);
     CHECK(p.last_tier1().vx > 0.0);
 
     // Now the handset lies the robot down: MotionState 17 -> 0, and WE never
     // commanded it.
-    chassis.Send(BasicFrame(1, 0, 0x3002, false, false));
-    p.RxPump(0.15);
-    p.OnCmdVel(0.16, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.CtrlTick(0.17);
+    chassis.send(basic_frame(1, 0, 0x3002, false, false));
+    p.rx_pump(0.15);
+    p.on_cmd_vel(0.16, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.ctrl_tick(0.17);
     CHECK(p.motion_state_transitioning());
     CHECK(p.last_tier1().stop_reason == StopReason::kModeSwitching);
     // ZERO, on the axis that was moving a moment ago.
@@ -1706,7 +1706,7 @@ int main(int argc, char** argv) {
     // a mutant that reverted only that line survived until this assertion.
     {
       QuadrupedProcess::StateSnapshot snap;
-      CHECK(p.TakeStateForPublish(&snap));
+      CHECK(p.take_state_for_publish(&snap));
       // Externally caused, nothing of ours outstanding: the TR-4 bit is the
       // one that says so, and mode_switching stays false (see the stream
       // case above for why the divergence is the assertion).
@@ -1717,10 +1717,10 @@ int main(int argc, char** argv) {
     // Still held most of the way through the window. Without this, an
     // implementation that released on the next period passes the check above.
     for (double t = 0.2; t < 3.5; t += 0.1) {
-      if (t > 3.0 && t < 3.1) chassis.Send(BasicFrame(1, 0, 0x3002, false, false));
-      p.RxPump(t);
-      p.OnCmdVel(t, 0.5, 0.0, 0.1, p.estop_epoch());
-      p.CtrlTick(t);
+      if (t > 3.0 && t < 3.1) chassis.send(basic_frame(1, 0, 0x3002, false, false));
+      p.rx_pump(t);
+      p.on_cmd_vel(t, 0.5, 0.0, 0.1, p.estop_epoch());
+      p.ctrl_tick(t);
     }
     CHECK(p.motion_state_transitioning());
     CHECK(p.last_tier1().vx == 0.0);
@@ -1730,10 +1730,10 @@ int main(int argc, char** argv) {
     // configured external_transition_hold_s would be a key that changed
     // nothing, which is the defect this package keeps finding.
     for (double t = 3.5; t < 4.3; t += 0.1) {
-      if (t > 3.9 && t < 4.0) chassis.Send(BasicFrame(1, 0, 0x3002, false, false));
-      p.RxPump(t);
-      p.OnCmdVel(t, 0.5, 0.0, 0.1, p.estop_epoch());
-      p.CtrlTick(t);
+      if (t > 3.9 && t < 4.0) chassis.send(basic_frame(1, 0, 0x3002, false, false));
+      p.rx_pump(t);
+      p.on_cmd_vel(t, 0.5, 0.0, 0.1, p.estop_epoch());
+      p.ctrl_tick(t);
     }
     CHECK(!p.motion_state_transitioning());
   }
@@ -1749,31 +1749,31 @@ int main(int argc, char** argv) {
     // to 5.0" is an EQUIVALENT mutation and no assertion could tell the two
     // apart -- measured, that mutant survived until the fixture changed.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
     // A steady read-back first, so the request is not refused for having no
     // triple to reason from.
-    chassis.Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+    chassis.send(basic_frame(/*usage_mode=*/1, /*motion_state=*/17,
                             /*gait=*/0x3002, /*hes=*/false, /*sleep=*/false));
-    p.RxPump(0.05);
-    p.CtrlTick(0.06);
+    p.rx_pump(0.05);
+    p.ctrl_tick(0.06);
 
     // Ask for a gait the chassis will never confirm -- no read-back is sent
     // after this point, which is exactly the case MS-2 exists for.
-    CHECK(p.OnChassisAction(0.1, ModeAction::kSetGait, 0x3003).accepted);
-    p.CtrlTick(0.11);
+    CHECK(p.on_chassis_action(0.1, ModeAction::kSetGait, 0x3003).accepted);
+    p.ctrl_tick(0.11);
     CHECK(p.mode_switching());
 
     // Still in flight just before the configured window closes. Without this
     // half, an implementation that gave up immediately would pass the check
     // below.
-    for (double t = 0.2; t < 1.9; t += 0.1) p.CtrlTick(t);
+    for (double t = 0.2; t < 1.9; t += 0.1) p.ctrl_tick(t);
     CHECK(p.mode_switching());
     CHECK(p.mode_switch_failures() == 0);
 
     // And failed just after it. A hardcoded 5.0 is still waiting here.
-    for (double t = 1.9; t < 2.6; t += 0.1) p.CtrlTick(t);
+    for (double t = 1.9; t < 2.6; t += 0.1) p.ctrl_tick(t);
     CHECK(!p.mode_switching());
     CHECK(p.mode_switch_failures() == 1);
   }
@@ -1783,7 +1783,7 @@ int main(int argc, char** argv) {
     // *** THE DEFECT THIS CLOSES, and it is the worst one in this file.
     // QuadrupedProcess built its ModeConfig from a lambda that took cfg and
     // threw it away with (void)cfg. prone_forbidden_gaits was therefore EMPTY,
-    // and ProneAllowed answers !Contains(list, gait) -- true for every gait.
+    // and prone_allowed answers !contains(list, gait) -- true for every gait.
     // PR-1 never fired: `prone` was accepted on a staircase, and 13 V-54 calls
     // that a safety incident outright ("楼梯上不防侧翻 = 安全事故", P0).
     //
@@ -1793,9 +1793,9 @@ int main(int argc, char** argv) {
     // -- a unit test that supplies the configuration cannot see a process that
     // never reads it. So this case drives the PROCESS with chassis frames.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
 
     // *** ORDER MATTERS, and it is not cosmetic. An ACCEPTED prone starts a
     // mode switch, and 13 MS-3 then refuses the next request with
@@ -1806,15 +1806,15 @@ int main(int argc, char** argv) {
     //
     // The navigation stair gait, which is the one the robot reaches by itself
     // (13 G-05, 自主上下楼梯).
-    chassis.Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+    chassis.send(basic_frame(/*usage_mode=*/1, /*motion_state=*/17,
                             /*gait=*/0x3003, /*hes=*/false, /*sleep=*/false));
-    Settle(&p, &chassis, 0.2, 4.2, 0x3003);
-    const ModeRequestResult on_stair = p.OnChassisAction(4.3, ModeAction::kProne, 0);
+    settle(&p, &chassis, 0.2, 4.2, 0x3003);
+    const ModeRequestResult on_stair = p.on_chassis_action(4.3, ModeAction::kProne, 0);
     CHECK(!on_stair.accepted);
     // The REASON, not just the refusal: a prone refused for "a switch is
     // already in flight" would satisfy `!accepted` and mean something else
     // entirely -- and it would clear by itself a second later.
-    CHECK(std::string(ModeRejectItem(on_stair.reject)) == "prone_on_stair");
+    CHECK(std::string(mode_reject_item(on_stair.reject)) == "prone_on_stair");
 
     // 13 GS-3: "我方不发" is not "它不会出现". The factory handset can set
     // stair_standard, and PR-1 refuses prone on whatever the chassis REPORTS.
@@ -1825,12 +1825,12 @@ int main(int argc, char** argv) {
     // previous staircase, so the refusal came from the stale value, not from
     // 0x1003 being on the list. An assertion a wrong implementation passes
     // (CLAUDE.md S3.2 form 1), caught by running the mutant.
-    chassis.Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+    chassis.send(basic_frame(/*usage_mode=*/1, /*motion_state=*/17,
                             /*gait=*/0x1003, /*hes=*/false, /*sleep=*/false));
-    Settle(&p, &chassis, 4.4, 8.4, 0x1003);
-    const ModeRequestResult standard = p.OnChassisAction(8.5, ModeAction::kProne, 0);
+    settle(&p, &chassis, 4.4, 8.4, 0x1003);
+    const ModeRequestResult standard = p.on_chassis_action(8.5, ModeAction::kProne, 0);
     CHECK(!standard.accepted);
-    CHECK(std::string(ModeRejectItem(standard.reject)) == "prone_on_stair");
+    CHECK(std::string(mode_reject_item(standard.reject)) == "prone_on_stair");
 
     // And back to flat: prone is ALLOWED again. Two things at once -- the
     // refusal does not latch (a latching one would leave the robot unable to
@@ -1844,10 +1844,10 @@ int main(int argc, char** argv) {
     // commanded one), so TR-1 holds the machine in transition for
     // external_transition_hold_s. During that hold the steady value is still
     // the staircase, and refusing is "正是我们要的方向" in TR-2's own words.
-    chassis.Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+    chassis.send(basic_frame(/*usage_mode=*/1, /*motion_state=*/17,
                             /*gait=*/0x3002, /*hes=*/false, /*sleep=*/false));
-    Settle(&p, &chassis, 8.6, 12.6, 0x3002);
-    CHECK(p.OnChassisAction(12.7, ModeAction::kProne, 0).accepted);
+    settle(&p, &chassis, 8.6, 12.6, 0x3002);
+    CHECK(p.on_chassis_action(12.7, ModeAction::kProne, 0).accepted);
   }
 
   // ---- the light command puts a FRAME on the wire (C-07 / 11 S9.4.1) -----
@@ -1857,11 +1857,11 @@ int main(int argc, char** argv) {
     // every layer looked healthy. A counter that moves next to a frame nobody
     // sent is the same defect wearing a number.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
-    chassis.Drain();
-    chassis.ClearSent();
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
+    chassis.drain();
+    chassis.clear_sent();
 
     chs_a::LedSetting head;
     head.pattern = 5;            // blink
@@ -1871,12 +1871,12 @@ int main(int argc, char** argv) {
     tail.pattern = 4;            // breath
     tail.color = 2;              // green
     tail.cycle_s = 2;
-    CHECK(p.SendLightFrame(true, head, tail));
+    CHECK(p.send_light_frame(true, head, tail));
     CHECK(p.light_frames_sent() == 1);
-    chassis.Drain();
+    chassis.drain();
 
     std::uint32_t type = 0, cmd = 0;
-    CHECK(chassis.CountFrames(&type, &cmd) == 1);
+    CHECK(chassis.count_frames(&type, &cmd) == 1);
     // C-07: Type 0x00100005 / Command 0x00200002 (13 S5.1, vendor guide 1.2.7).
     CHECK(type == 0x00100005u);
     CHECK(cmd == 0x00200002u);
@@ -1890,31 +1890,31 @@ int main(int argc, char** argv) {
 
   // ---- a stair gait REACHES the odometry (13 S4.4 (4) / 11 S9.9) ---------
   {
-    // The gap this closes: Odometry::OnGait had ZERO production call sites, so
+    // The gap this closes: Odometry::on_gait had ZERO production call sites, so
     // is_stair_gait_ stayed at its initialiser for the life of the process. A
     // robot on a staircase therefore published wheel odometry with FLAT-ground
     // trust and valid = true, which is the one thing 11 S9.9 names outright.
     //
     // *** Why the existing unit test did not catch it. test_odometry.cc calls
-    // stair.OnGait(true) DIRECTLY and asserts the divisor and the flag, and it
+    // stair.on_gait(true) DIRECTLY and asserts the divisor and the flag, and it
     // passes either way -- it tests the setter, not the wiring. A defect that
     // lives in "nobody calls this" is invisible to every test that calls it.
     // So this case drives the PROCESS with a chassis frame and reads what the
-    // process publishes. mutant: drop the odom_.OnGait line -> both stair
+    // process publishes. mutant: drop the odom_.on_gait line -> both stair
     // assertions below go red while test_odometry stays green.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
-    chassis.Drain();
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
+    chassis.drain();
 
     // Flat gait first, and a velocity sample so the band is fresh and the
     // sample is actually published -- valid is false on a STALE sample too, so
     // asserting it on a robot that never reported a velocity would pass on an
     // unwired implementation.
-    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0x3002));
-    p.RxPump(0.05);
-    p.CtrlTick(0.06);
+    chassis.send(motion_frame(/*motion_state=*/17, /*gait=*/0x3002));
+    p.rx_pump(0.05);
+    p.ctrl_tick(0.06);
     const OdomSample flat = p.last_odom();
     CHECK(flat.publish);
     CHECK(flat.valid);
@@ -1922,9 +1922,9 @@ int main(int argc, char** argv) {
 
     // 0x3003, the navigation stair gait. This is the one the robot reaches by
     // itself (G-05, 自主上下楼梯).
-    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0x3003));
-    p.RxPump(0.10);
-    p.CtrlTick(0.11);
+    chassis.send(motion_frame(/*motion_state=*/17, /*gait=*/0x3003));
+    p.rx_pump(0.10);
+    p.ctrl_tick(0.11);
     const OdomSample stair = p.last_odom();
     // Still PUBLISHED -- 13 S4.4's table says 发布 for the stair row. Dropping
     // the message would leave the consumer with no pose at all, which is a
@@ -1953,18 +1953,18 @@ int main(int argc, char** argv) {
     // GS-3 says verbatim that "我方不发" is not "它不会出现" -- the factory
     // handset can set it and the read-back path resolves it. An implementation
     // that only listed 0x3003 passes every test above and fails here.
-    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0x1003));
-    p.RxPump(0.15);
-    p.CtrlTick(0.16);
+    chassis.send(motion_frame(/*motion_state=*/17, /*gait=*/0x1003));
+    p.rx_pump(0.15);
+    p.ctrl_tick(0.16);
     CHECK(!p.last_odom().valid);
 
     // Back to flat: the flag must CLEAR, not latch. A latching implementation
     // is safe-looking and wrong -- after one staircase the robot would report
     // invalid odometry for the rest of the sortie, and the consumer that has to
     // choose between "always invalid" and "ignore the flag" chooses the second.
-    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0x3002));
-    p.RxPump(0.20);
-    p.CtrlTick(0.21);
+    chassis.send(motion_frame(/*motion_state=*/17, /*gait=*/0x3002));
+    p.rx_pump(0.20);
+    p.ctrl_tick(0.21);
     CHECK(p.last_odom().valid);
     // The INFLATION must clear too, not just the flag -- same reason, and the
     // same var_wz for the same reason.
@@ -1974,9 +1974,9 @@ int main(int argc, char** argv) {
     // contain, so it resolves to unknown_0x0000. It must NOT be read as a
     // staircase: treating every unregistered code as one would clear valid on
     // every boot before RL control, on the most ordinary report there is.
-    chassis.Send(MotionFrame(/*motion_state=*/17, /*gait=*/0));
-    p.RxPump(0.25);
-    p.CtrlTick(0.26);
+    chassis.send(motion_frame(/*motion_state=*/17, /*gait=*/0));
+    p.rx_pump(0.25);
+    p.ctrl_tick(0.26);
     CHECK(p.last_odom().valid);
   }
 
@@ -1990,31 +1990,31 @@ int main(int argc, char** argv) {
     //
     // Asserted on the WIRE, not on a counter alone: a counter that increments
     // beside a send that failed is the same defect wearing a number.
-    // mutant: drop the tx_.Send call -> the frame checks below go red.
+    // mutant: drop the tx_.send call -> the frame checks below go red.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
     // Read back a posture so the machine has a steady triple to reason from
     // (prone is refused without one, and the sequence would stall).
-    chassis.Send(BasicFrame(/*usage_mode=*/0, /*motion_state=*/0, /*gait=*/0,
+    chassis.send(basic_frame(/*usage_mode=*/0, /*motion_state=*/0, /*gait=*/0,
                             /*hes=*/false, /*sleep=*/false));
-    p.RxPump(0.01);
-    p.CtrlTick(0.02);
-    chassis.Drain();
+    p.rx_pump(0.01);
+    p.ctrl_tick(0.02);
+    chassis.drain();
 
     // The whole triple in one message, as 11 S9.2.4 sends it.
-    CHECK(p.OnChassisMode(/*has_usage=*/true, /*usage=*/1,
+    CHECK(p.on_chassis_mode(/*has_usage=*/true, /*usage=*/1,
                           /*has_state=*/true, /*state=*/kCommandMotionStateStand,
                           /*has_gait=*/true, /*gait=*/0x3002));
     CHECK(p.mode_sequence_pending());
 
     // Step 1 is motion_state -- the order is fixed (13 MS-5), and usage_mode
     // goes last because it is the gate Tier 1 opens on.
-    p.CtrlTick(0.03);
+    p.ctrl_tick(0.03);
     std::uint32_t type = 0, cmd = 0;
-    chassis.Drain();
-    CHECK(chassis.CountFrames(&type, &cmd) >= 1);
+    chassis.drain();
+    CHECK(chassis.count_frames(&type, &cmd) >= 1);
     CHECK(type == chs_a::kMotionStateSwitch.type);
     CHECK(cmd == chs_a::kMotionStateSwitch.command);
     CHECK(p.mode_frames_sent() == 1);
@@ -2024,32 +2024,32 @@ int main(int argc, char** argv) {
     // mutant: dispatch regardless of mode_switching -> this goes red, and two
     // expectations would be outstanding with no way to say which read-back
     // belongs to which.
-    chassis.ClearSent();
-    p.CtrlTick(0.04);
-    chassis.Drain();
-    CHECK(chassis.CountFrames(&type, &cmd) == 0);
+    chassis.clear_sent();
+    p.ctrl_tick(0.04);
+    chassis.drain();
+    CHECK(chassis.count_frames(&type, &cmd) == 0);
     CHECK(p.mode_frames_sent() == 1);
 
     // Confirm the posture; the gait step then goes out.
-    chassis.Send(BasicFrame(/*usage_mode=*/0, /*motion_state=*/17,
+    chassis.send(basic_frame(/*usage_mode=*/0, /*motion_state=*/17,
                             /*gait=*/0x1001, /*hes=*/false, /*sleep=*/false));
-    p.RxPump(0.05);
-    chassis.ClearSent();
-    p.CtrlTick(0.06);
-    chassis.Drain();
-    CHECK(chassis.CountFrames(&type, &cmd) >= 1);
+    p.rx_pump(0.05);
+    chassis.clear_sent();
+    p.ctrl_tick(0.06);
+    chassis.drain();
+    CHECK(chassis.count_frames(&type, &cmd) >= 1);
     CHECK(type == chs_a::kGaitSwitch.type);
     CHECK(cmd == chs_a::kGaitSwitch.command);
     CHECK(p.mode_frames_sent() == 2);
 
     // Confirm the gait; usage_mode is LAST -- the permissive step.
-    chassis.Send(BasicFrame(/*usage_mode=*/0, /*motion_state=*/17,
+    chassis.send(basic_frame(/*usage_mode=*/0, /*motion_state=*/17,
                             /*gait=*/0x3002, /*hes=*/false, /*sleep=*/false));
-    p.RxPump(0.07);
-    chassis.ClearSent();
-    p.CtrlTick(0.08);
-    chassis.Drain();
-    CHECK(chassis.CountFrames(&type, &cmd) >= 1);
+    p.rx_pump(0.07);
+    chassis.clear_sent();
+    p.ctrl_tick(0.08);
+    chassis.drain();
+    CHECK(chassis.count_frames(&type, &cmd) >= 1);
     CHECK(type == chs_a::kUsageModeSwitch.type);
     CHECK(cmd == chs_a::kUsageModeSwitch.command);
     CHECK(p.mode_frames_sent() == 3);
@@ -2064,23 +2064,23 @@ int main(int argc, char** argv) {
     // up through the sequencer and then would NOT lie down, because prone
     // came in on the ctrl key. An operator's stop-what-you-are-doing command
     // silently doing nothing is the worst shape this defect can take.
-    // mutant: drop the SendModeFrame call in OnChassisAction -> red.
+    // mutant: drop the send_mode_frame call in on_chassis_action -> red.
     FakeChassis chassis;
-    QuadrupedProcess p(Cfg(chassis.port()));
-    p.CtrlTick(0.0);
-    CHECK(chassis.Accept());
+    QuadrupedProcess p(cfg(chassis.port()));
+    p.ctrl_tick(0.0);
+    CHECK(chassis.accept());
     // A steady read-back, so prone is not refused for an unknown gait (PR-1).
-    chassis.Send(BasicFrame(/*usage_mode=*/1, /*motion_state=*/17,
+    chassis.send(basic_frame(/*usage_mode=*/1, /*motion_state=*/17,
                             /*gait=*/0x3002, /*hes=*/false, /*sleep=*/false));
-    p.RxPump(0.01);
-    p.CtrlTick(0.02);
-    chassis.ClearSent();
+    p.rx_pump(0.01);
+    p.ctrl_tick(0.02);
+    chassis.clear_sent();
 
-    const ModeRequestResult r = p.OnChassisAction(0.03, ModeAction::kProne, 0);
+    const ModeRequestResult r = p.on_chassis_action(0.03, ModeAction::kProne, 0);
     CHECK(r.accepted);
     std::uint32_t type = 0, cmd = 0;
-    chassis.Drain();
-    CHECK(chassis.CountFrames(&type, &cmd) >= 1);
+    chassis.drain();
+    CHECK(chassis.count_frames(&type, &cmd) >= 1);
     CHECK(type == chs_a::kMotionStateSwitch.type);
     CHECK(cmd == chs_a::kMotionStateSwitch.command);
     CHECK(p.mode_frames_sent() == 1);
@@ -2091,12 +2091,12 @@ int main(int argc, char** argv) {
   // injected dialler; what these three cases exist for is the last segment --
   // whether the process tells the session that an axis frame went out, and
   // whether the probe reaches a real socket. This process has had that exact
-  // shape five times before (Odometry::OnGait, Uplink::Publish, the
-  // rt/chassis/mode subscription, the three mode-frame encoders, SetReportSink):
+  // shape five times before (Odometry::on_gait, Uplink::publish, the
+  // rt/chassis/mode subscription, the three mode-frame encoders, set_report_sink):
   // capability present, compiles, unit tests green, last segment not connected.
   //
   // These run 120+ seconds of SIMULATED time. The period is the shipped one
-  // (13 CA-9, via FromLinkConfig), because shrinking it for the test would
+  // (13 CA-9, via from_link_config), because shrinking it for the test would
   // leave the shipped value uncovered -- which is what the shrunk-scale
   // session cases already cover.
   // ======================================================================
@@ -2104,20 +2104,20 @@ int main(int argc, char** argv) {
   // ---- a standing robot: the probe fires, and falls back ------------------
   {
     FakeChassis chassis;
-    QuadrupedProcess p(RecoveryCfg(DeadPort(), chassis.port()));
-    RunLink(&p, &chassis, 0.0, 3.0, /*driving=*/false, /*estopping=*/false);
+    QuadrupedProcess p(recovery_cfg(dead_port(), chassis.port()));
+    run_link(&p, &chassis, 0.0, 3.0, /*driving=*/false, /*estopping=*/false);
     CHECK(chassis.accepts() == 1);
     CHECK(p.link_status().active_endpoint == 1);   // the fallback candidate
 
     // Nothing happens for two minutes: a probe every period would be a link
     // that spends its life being re-dialled.
-    RunLink(&p, &chassis, 3.0, 110.0, false, false);
+    run_link(&p, &chassis, 3.0, 110.0, false, false);
     CHECK(chassis.accepts() == 1);
 
     // ...and then the probe runs. The preferred port is still dead, so the
     // walk continues and lands back on the live one -- which is a SECOND
     // connection, and that is the observable.
-    RunLink(&p, &chassis, 110.0, 130.0, false, false);
+    run_link(&p, &chassis, 110.0, 130.0, false, false);
     CHECK(chassis.accepts() == 2);
     CHECK(p.link_status().active_endpoint == 1);
     CHECK(p.link_status().conn == chs_a::ConnState::kOk);
@@ -2130,16 +2130,16 @@ int main(int argc, char** argv) {
     // Dropping the link here would interrupt a moving robot AND make its next
     // axis command come back refused for two seconds.
     FakeChassis chassis;
-    QuadrupedProcess p(RecoveryCfg(DeadPort(), chassis.port()));
-    RunLink(&p, &chassis, 0.0, 3.0, false, false);
+    QuadrupedProcess p(recovery_cfg(dead_port(), chassis.port()));
+    run_link(&p, &chassis, 0.0, 3.0, false, false);
     CHECK(chassis.accepts() == 1);
     // The enable is what lets Tier 1 out of the opening timeout lock; without
     // it no axis frame is ever written and this case would be testing silence.
-    p.OnCmdVel(3.0, 0.5, 0.0, 0.1, p.estop_epoch());
-    p.OnEnable();
-    p.CtrlTick(3.01);
+    p.on_cmd_vel(3.0, 0.5, 0.0, 0.1, p.estop_epoch());
+    p.on_enable();
+    p.ctrl_tick(3.01);
     const std::uint64_t axis_before = p.axis_frames_sent();
-    RunLink(&p, &chassis, 3.1, 130.0, /*driving=*/true, false);
+    run_link(&p, &chassis, 3.1, 130.0, /*driving=*/true, false);
     // The premise of the case: frames really were going out the whole time.
     // Without this the case passes on a process that never sent one, i.e. it
     // would be asserting the wrong reason for the right answer.
@@ -2148,29 +2148,29 @@ int main(int argc, char** argv) {
     CHECK(p.link_status().active_endpoint == 1);
 
     // Stop driving, and the overdue probe goes ahead once the window closes.
-    RunLink(&p, &chassis, 130.0, 140.0, false, false);
+    run_link(&p, &chassis, 130.0, 140.0, false, false);
     CHECK(chassis.accepts() == 2);
   }
 
   // ---- the soft stop's zero frame counts too ------------------------------
   {
-    // OnSoftEstop sends its zero frame from the zenoh callback thread, so the
+    // on_soft_estop sends its zero frame from the zenoh callback thread, so the
     // control period has to forward the fact. Not forwarding it is wrong in
     // the dangerous direction: the probe would drop the link inside the
     // affinity window an EMERGENCY STOP had just opened, and the first axis
     // command on the new socket would come back 0xE006.
     FakeChassis chassis;
-    QuadrupedProcess p(RecoveryCfg(DeadPort(), chassis.port()));
-    RunLink(&p, &chassis, 0.0, 3.0, false, false);
+    QuadrupedProcess p(recovery_cfg(dead_port(), chassis.port()));
+    run_link(&p, &chassis, 0.0, 3.0, false, false);
     CHECK(chassis.accepts() == 1);
     const std::uint64_t axis_before = p.axis_frames_sent();
     // Estops across the whole window in which the probe would otherwise be
     // due. No cmd_vel at all -- the ONLY axis frames here are the stop frames.
-    RunLink(&p, &chassis, 3.0, 130.0, /*driving=*/false, /*estopping=*/true);
+    run_link(&p, &chassis, 3.0, 130.0, /*driving=*/false, /*estopping=*/true);
     CHECK(p.axis_frames_sent() > axis_before + 100);
     CHECK(chassis.accepts() == 1);
 
-    RunLink(&p, &chassis, 130.0, 140.0, false, false);
+    run_link(&p, &chassis, 130.0, 140.0, false, false);
     CHECK(chassis.accepts() == 2);
   }
 

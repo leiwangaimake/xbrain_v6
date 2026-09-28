@@ -33,7 +33,7 @@
 
 namespace quadruped {
 
-const char* OdomBandName(OdomBand b) {
+const char* odom_band_name(OdomBand b) {
   switch (b) {
     case OdomBand::kFresh: return "fresh";
     case OdomBand::kWarn: return "warn";
@@ -46,7 +46,7 @@ const char* OdomBandName(OdomBand b) {
 Odometry::Odometry(const OdomConfig& cfg, bool holonomic)
     : cfg_(cfg), holonomic_(holonomic) {}
 
-double Odometry::SigmaV(double tau_s) const {
+double Odometry::sigma_v(double tau_s) const {
   // 13 S4.4 (1). The a_max term is what makes a stale sample expensive: at one
   // sample period it already dominates sigma_v0, which is the quantitative
   // reason ODO-1 refuses to call this 100 Hz information.
@@ -54,7 +54,7 @@ double Odometry::SigmaV(double tau_s) const {
   return std::sqrt(cfg_.sigma_v0_mps * cfg_.sigma_v0_mps + at * at);
 }
 
-double Odometry::TrustDivisor() const {
+double Odometry::trust_divisor() const {
   // 13 S4.4: the published covariance is P * (1 / trust_by_gait[gait]).
   // trust_flat is 1.0 and trust_stair 0.3, so a stair gait inflates by 3.33.
   const double t = is_stair_gait_ ? cfg_.trust_stair : cfg_.trust_flat;
@@ -67,14 +67,14 @@ double Odometry::TrustDivisor() const {
   return t;
 }
 
-void Odometry::OnVelocitySample(double now_mono_s, double vx, double vy) {
+void Odometry::on_velocity_sample(double now_mono_s, double vx, double vy) {
   if (has_velocity_ && last_vel_s_ >= 0.0) {
     // The interval that just closed. Normally T_s; larger when a frame was
     // dropped, and the growth is quadratic in it (CV-3) so a gap is
     // automatically conservative without a special case.
     const double tau_used = now_mono_s - last_vel_s_;
     if (tau_used > 0.0) {
-      const double inc = SigmaV(tau_used) * tau_used;
+      const double inc = sigma_v(tau_used) * tau_used;
       p_xx_committed_ += inc * inc;
     }
   }
@@ -87,16 +87,16 @@ void Odometry::OnVelocitySample(double now_mono_s, double vx, double vy) {
   has_velocity_ = true;
 }
 
-void Odometry::OnYawRate(double wz) {
+void Odometry::on_yaw_rate(double wz) {
   // 13 S4.6: the V5 measurement found 0.01 rad/s to be the best dead zone, and
   // that a LARGER one is worse (it took the closed-loop error from 7.75 to 16.4
   // degrees per turn). The number is configured, not chosen here.
   wz_ = (std::fabs(wz) < cfg_.gyro_deadzone_radps) ? 0.0 : wz;
 }
 
-void Odometry::OnGait(bool is_stair_gait) { is_stair_gait_ = is_stair_gait; }
+void Odometry::on_gait(bool is_stair_gait) { is_stair_gait_ = is_stair_gait; }
 
-OdomSample Odometry::Tick(double now_mono_s, double dt_s) {
+OdomSample Odometry::tick(double now_mono_s, double dt_s) {
   OdomSample s;
   const double tau = (has_velocity_ && last_vel_s_ >= 0.0)
                          ? (now_mono_s - last_vel_s_)
@@ -150,9 +150,9 @@ OdomSample Odometry::Tick(double now_mono_s, double dt_s) {
   // growth for the part of the current interval that has elapsed (CV-1/CV-4).
   // Readable mid-interval and monotonic in tau, which is what lets Nav2 and RNS
   // see the cost of a late sample rather than a step every tenth of a second.
-  const double sv = SigmaV(tau);
+  const double sv = sigma_v(tau);
   const double open = sv * tau;
-  const double divisor = TrustDivisor();
+  const double divisor = trust_divisor();
   s.var_x = (p_xx_committed_ + open * open) / divisor;
   s.var_y = holonomic_ ? s.var_x : -1.0;
   s.var_yaw = p_yaw_ / divisor;
@@ -171,7 +171,7 @@ OdomSample Odometry::Tick(double now_mono_s, double dt_s) {
   return s;
 }
 
-Quaternion YawToQuaternion(double yaw_rad) {
+Quaternion yaw_to_quaternion(double yaw_rad) {
   Quaternion q;
   // *** The HALF angle. sin(yaw) instead of sin(yaw/2) is right at 0 and at
   // pi and wrong at every angle between, which is the shape that survives a
@@ -181,7 +181,7 @@ Quaternion YawToQuaternion(double yaw_rad) {
   return q;
 }
 
-void FillCovariance36(double var_x, double var_y, double var_yaw,
+void fill_covariance36(double var_x, double var_y, double var_yaw,
                       double* out36) {
   if (out36 == nullptr) return;
   for (int i = 0; i < 36; ++i) out36[i] = 0.0;

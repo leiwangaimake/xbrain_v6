@@ -13,7 +13,7 @@
  * instantaneous read-back holds the old value anyway, so keeping only one would
  * make the pre-check judge against a value that is about to be wrong.
  *
- * The expectations are built in one place, BuildExpect. That matters because of
+ * The expectations are built in one place, build_expect. That matters because of
  * MS-5: a command that touches one field of the triple moves two, and the
  * expectation has to describe the whole resulting triple. Building it at the
  * call site would give each action its own idea of what the other two fields
@@ -28,7 +28,7 @@
 
 namespace quadruped {
 
-const char* ModeRejectItem(ModeReject r) {
+const char* mode_reject_item(ModeReject r) {
   switch (r) {
     case ModeReject::kNone: return "";
     // 13 PR-1. The vendor answered that a prone from a NAVIGATION gait first
@@ -46,7 +46,7 @@ const char* ModeRejectItem(ModeReject r) {
   return "invalid";
 }
 
-const char* ModeRejectCode(ModeReject r) {
+const char* mode_reject_code(ModeReject r) {
   // The codes come from the generated closed-set export, never from literals
   // (CLAUDE.md 3.5). The mapping itself is the contract's:
   //   PR-1  prone on a stair gait      -> a capability limit (11 S9.3.3)
@@ -73,7 +73,7 @@ namespace {
 // a stand settles at {17, 0x1001} because the firmware switches itself to RL
 // control within the same millisecond, and a prone settles at 0 because 4 is
 // only a waypoint on the way there.
-ModeTriple BuildExpect(const ModeTriple& current, ModeAction action,
+ModeTriple build_expect(const ModeTriple& current, ModeAction action,
                        std::int64_t param) {
   ModeTriple e = current;
   switch (action) {
@@ -105,7 +105,7 @@ ModeTriple BuildExpect(const ModeTriple& current, ModeAction action,
   return e;
 }
 
-bool Contains(const std::vector<std::int64_t>& v, std::int64_t x) {
+bool contains(const std::vector<std::int64_t>& v, std::int64_t x) {
   return std::find(v.begin(), v.end(), x) != v.end();
 }
 
@@ -113,7 +113,7 @@ bool Contains(const std::vector<std::int64_t>& v, std::int64_t x) {
 
 ModeMachine::ModeMachine(ModeConfig cfg) : cfg_(std::move(cfg)) {}
 
-bool ModeMachine::ProneAllowed() const {
+bool ModeMachine::prone_allowed() const {
   // TR-2: judged on the STEADY read-back, not the instantaneous one. During a
   // transition the instantaneous value holds the OLD triple, and judging on the
   // old one is the more conservative choice -- which is the direction this
@@ -123,14 +123,14 @@ bool ModeMachine::ProneAllowed() const {
     // conservative answer: a prone on a staircase has no anti-roll path.
     return false;
   }
-  return !Contains(cfg_.prone_forbidden_gaits, steady_.gait);
+  return !contains(cfg_.prone_forbidden_gaits, steady_.gait);
 }
 
-bool ModeMachine::GaitCommandable(std::int64_t gait) const {
-  return !Contains(cfg_.command_forbidden_gaits, gait);
+bool ModeMachine::gait_commandable(std::int64_t gait) const {
+  return !contains(cfg_.command_forbidden_gaits, gait);
 }
 
-ModeRequestResult ModeMachine::Request(double now_mono_s, ModeAction action,
+ModeRequestResult ModeMachine::request(double now_mono_s, ModeAction action,
                                        std::int64_t param) {
   ModeRequestResult r;
   if (switching_) {
@@ -139,16 +139,16 @@ ModeRequestResult ModeMachine::Request(double now_mono_s, ModeAction action,
     r.reject = ModeReject::kSwitchInFlight;
     return r;
   }
-  if (action == ModeAction::kProne && !ProneAllowed()) {
+  if (action == ModeAction::kProne && !prone_allowed()) {
     r.reject = ModeReject::kProneOnStair;
     return r;
   }
-  if (action == ModeAction::kSetGait && !GaitCommandable(param)) {
+  if (action == ModeAction::kSetGait && !gait_commandable(param)) {
     r.reject = ModeReject::kGaitReadbackGap;
     return r;
   }
 
-  r.expect = BuildExpect(last_, action, param);
+  r.expect = build_expect(last_, action, param);
   r.accepted = true;
   switching_ = true;
   expect_ = r.expect;
@@ -162,7 +162,7 @@ ModeRequestResult ModeMachine::Request(double now_mono_s, ModeAction action,
   return r;
 }
 
-void ModeMachine::OnReadback(double now_mono_s, const chs_a::BasicStatus& b) {
+void ModeMachine::on_readback(double now_mono_s, const chs_a::BasicStatus& b) {
   ModeTriple t;
   t.usage_mode = b.usage_mode.raw;
   t.motion_state = b.motion_state.raw;
@@ -207,11 +207,11 @@ void ModeMachine::OnReadback(double now_mono_s, const chs_a::BasicStatus& b) {
   }
 }
 
-void ModeMachine::OnMotionSample(double now_mono_s,
+void ModeMachine::on_motion_sample(double now_mono_s,
                                  std::int64_t motion_state,
                                  std::int64_t gait) {
   // See the header. Only the HOLD is driven from here; everything that needs
-  // the whole triple keeps its single source in OnReadback.
+  // the whole triple keeps its single source in on_readback.
   const bool first = !has_motion_;
   const bool changed =
       !first && (motion_state != motion_ms_ || gait != motion_gait_);
@@ -220,12 +220,12 @@ void ModeMachine::OnMotionSample(double now_mono_s,
   has_motion_ = true;
   if (switching_) {
     // Our own switch is in flight: the movement this stream is about to show
-    // IS that switch. Same reasoning as OnReadback's switching_ branch --
+    // IS that switch. Same reasoning as on_readback's switching_ branch --
     // treating it as external would extend a hold past MS-1's completion.
     return;
   }
   // The first sample of the stream's life has no predecessor to differ from,
-  // the same rule OnReadback applies to its first read-back.
+  // the same rule on_readback applies to its first read-back.
   if (!changed) return;
   // TR-1: somebody else moved the machine. Refresh (or start) the hold. If
   // the 2 Hz BasicStatus has not reported this change yet, this path is what
@@ -235,7 +235,7 @@ void ModeMachine::OnMotionSample(double now_mono_s,
   external_change_s_ = now_mono_s;
 }
 
-bool ModeMachine::Tick(double now_mono_s) {
+bool ModeMachine::tick(double now_mono_s) {
   // TR-1's hold expires here, on the control tick, because there is nothing to
   // observe that would end it: 13 V-61 records that the "standing up" and
   // "lying down" states have no enumeration values, so the read-back cannot

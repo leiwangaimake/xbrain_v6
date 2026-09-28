@@ -42,7 +42,7 @@
 
 namespace quadruped {
 
-const char* DialErrorName(DialError e) {
+const char* dial_error_name(DialError e) {
   switch (e) {
     case DialError::kNone: return "none";
     case DialError::kUnsupportedProto: return "unsupported_proto";
@@ -56,20 +56,20 @@ const char* DialErrorName(DialError e) {
 
 ChassisSocket::ChassisSocket() = default;
 
-ChassisSocket::~ChassisSocket() { Close(); }
+ChassisSocket::~ChassisSocket() { close(); }
 
-void ChassisSocket::Close() {
+void ChassisSocket::close() {
   if (fd_ >= 0) {
     ::close(fd_);
     fd_ = -1;
   }
 }
 
-bool ChassisSocket::Dial(const EndpointCandidate& ep, bool tcp_nodelay) {
+bool ChassisSocket::dial(const EndpointCandidate& ep, bool tcp_nodelay) {
   // CA-1: never two live sockets. A second one is a second CLIENT to the
   // chassis, and axis commands come back 0xE006 for two seconds -- accepted,
   // and the robot does not move.
-  Close();
+  close();
   last_error_ = DialError::kNone;
   last_errno_ = 0;
 
@@ -139,14 +139,14 @@ bool ChassisSocket::Dial(const EndpointCandidate& ep, bool tcp_nodelay) {
     if (errno != EINPROGRESS) {
       last_error_ = DialError::kConnectFailed;
       last_errno_ = errno;
-      Close();
+      close();
       return false;
     }
   }
   return true;
 }
 
-long ChassisSocket::Send(const std::uint8_t* data, std::size_t len) {
+long ChassisSocket::send(const std::uint8_t* data, std::size_t len) {
   if (fd_ < 0 || data == nullptr) return -1;
   // MSG_NOSIGNAL per call rather than a process-wide SIGPIPE disposition: a
   // library that installs one takes the choice away from the process that owns
@@ -160,7 +160,7 @@ long ChassisSocket::Send(const std::uint8_t* data, std::size_t len) {
   return -1;
 }
 
-long ChassisSocket::Recv(std::uint8_t* out, std::size_t cap) {
+long ChassisSocket::recv(std::uint8_t* out, std::size_t cap) {
   if (fd_ < 0 || out == nullptr || cap == 0) return -1;
   const ssize_t n = ::recv(fd_, out, cap, 0);
   if (n > 0) return static_cast<long>(n);
