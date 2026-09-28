@@ -55,7 +55,7 @@ ROBOT_STATES = ("offline", "idle", "running", "charging", "fault",
 #: degraded|fail)不是同一个集合 -- 两处形近而 fail/fatal 不同名". 那句话不
 #: 成立, 它是照 S9.8.4 json5 示例里的 "fail" 写的, 而那个示例值本身是错的:
 #: S4.1 本行的闭集是 warn|degraded|fatal, 13 S7.3 的 Severities 映射表给的是
-#: 3->warn / 4->degraded / 5->fatal, quadruped 的 SeverityToLevel 与其单测逐
+#: 3->warn / 4->degraded / 5->fatal, quadruped 的 severity_to_level 与其单测逐
 #: 字发 fatal(test_chs_a_reports.cc). 两者是[同一个]集合, 且 13 S7.3 CF-5 的
 #: 落地逐字要求汇总侧与故障侧"用同一个转换函数". S9.8.4 的示例已按铁律 1 同
 #: 批订正. 抄错一个字仍然会让整条 state/robot 因闭集越界被打掉 -- 那一句是
@@ -450,7 +450,7 @@ def _battery(power: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     契约字面: min_level 仍取全表最小值'" -- 已作废. 裁决理由: 不隐瞒空槽(对)
     != 把它的假零算进聚合值(错); present: false 的含义是[这里没有电池]而不是
     [这块电池 0%]. 11 S4.2 的 soc_pct 行与 13 V-68 已同批订正.
-    ! 落点在 quadruped(ParseDeviceStatus / WritePowerState), 所以这里仍然是
+    ! 落点在 quadruped(parse_device_status / write_power_state), 所以这里仍然是
       [直接过] soc_pct -- NO 不在本文件再算一次. 两处各算一次就会在某一天给出
       两个电量, 而现场只会看见其中一个.
     ! 全空槽时源头发 null, 下面的 isinstance 分支把它照样带成 null.

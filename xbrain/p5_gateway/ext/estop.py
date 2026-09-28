@@ -225,7 +225,7 @@ class EstopPathHealth:
 REAL_ACK_RESULTS = ("accepted", "duplicate", "rejected")
 
 #: hes 的跨面翻译. 11 S7.1.1 的样例是 bool(false), quadruped 实发也是 bool
-#: (rt_payloads.cc WriteEstopAck: a.Bool(in.hes)); 而 v2.0 S3.4 的样例是字符串
+#: (rt_payloads.cc write_estop_ack: a.add_bool(in.hes)); 而 v2.0 S3.4 的样例是字符串
 #: "ok". 两份文档对同一个字段给了两种类型, 网关是它们之间唯一的翻译点, 所以
 #: 这里必须有一张表.
 #:

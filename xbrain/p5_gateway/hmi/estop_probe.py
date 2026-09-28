@@ -104,7 +104,7 @@ class EstopProbe:
 #
 # *** 缺陷的形状(实测 2026-09-27, chassis_relay 上机之后):
 # p5 发 ping 时 seq 写在[顶层], 收 pong 时也按[顶层] seq 匹配; quadruped 的
-# HandlePing 回显的是[信封] seq. 三方看起来一致 -- 直到 chassis_relay 进链:
+# handle_ping 回显的是[信封] seq. 三方看起来一致 -- 直到 chassis_relay 进链:
 # RT-C3.e [要求]转发者重建信封并换上自己的计数, 而 relay 在 CR-2/CR-3 两条腿
 # 上都要转发本探活. 于是 p5 发出去的号在 RT 侧已经被换掉, 回来的是 relay 的
 # 计数, 匹配永远不成立. 现象: pong 以 1 Hz 稳定流动, 两侧进程都健康,

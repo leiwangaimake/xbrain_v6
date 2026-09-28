@@ -888,7 +888,7 @@ class CloudBridge:
             # 于是云端拼错一次, 机内 RT 面上就出现一个闭集外的取值, 而上面
             # 那句"形状完全一致"当场不成立.
             # 这不是把一次拒绝改成放行: 转发 "release" 与转发 "stop" 的
-            # 下游行为本来就一样 -- quadruped 的 ParseEstop 根本不读这个
+            # 下游行为本来就一样 -- quadruped 的 parse_estop 根本不读这个
             # 字段(S3.0.1: 不存在一个取值可以让它不停), 所以透传既拦不住
             # 任何东西, 又把一个非法值写进录包. 翻译成闭集里唯一那个值,
             # 正是 S7.1.2 对网关这一侧的规定.
@@ -901,7 +901,7 @@ class CloudBridge:
             action_in = data.get("payload", {}).get("action")
             # *** cmd_id 是[关联号], 不是装饰.
             # 11 S7.1 EstopCommand 的第一个字段就是它("幂等键; 重发同 cmd_id
-            # 不再递增 estop_epoch"), 而 quadruped 的 HandleEstop 逐字
+            # 不再递增 estop_epoch"), 而 quadruped 的 handle_estop 逐字
             # ack.cmd_id = m.cmd_id_present ? m.cmd_id : "anonymous" -- 原样
             # 回显. 本行之前我方转发的帧里没有它, 于是每一条真 ack 回来都叫
             # "anonymous", 三个并行发起方(HMI / 云端 / p4_agent)的 ack 在总线
@@ -909,7 +909,7 @@ class CloudBridge:
             cmd_id = self._next_estop_cmd_id()
             # reason / src_role: 11 S4.1 last_soft_estop is {epoch, reason,
             # src_role, age_ms} and quadruped stores whatever arrives, null
-            # otherwise (rt_bridge HandleEstop). Unfilled, the audit object is
+            # otherwise (rt_bridge handle_estop). Unfilled, the audit object is
             # permanently half empty and the HMI cannot say whether a stop came
             # from the cloud or from its own button. src_role is from S7.1's
             # five-value set; HW-5 forbids the reverse direction (P5 must never

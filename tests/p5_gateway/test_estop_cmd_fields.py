@@ -16,7 +16,7 @@ even when it cannot be parsed (S3.0.1 fail-safe). That is exactly what let them
 go unfilled: nothing rejects a frame without them, nothing logs a warning, and
 the robot stops either way. The cost surfaces two layers later:
 
-  * with no cmd_id, quadruped answers "anonymous" (rt_bridge HandleEstop), and
+  * with no cmd_id, quadruped answers "anonymous" (rt_bridge handle_estop), and
     S7.1's FOUR parallel initiators -- HMI button, cloud, p4_agent, p5 itself --
     all share ONE ack key. Every real ack on the bus is then called anonymous
     and no reader can say which request it answers.

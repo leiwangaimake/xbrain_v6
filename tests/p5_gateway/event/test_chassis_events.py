@@ -385,7 +385,7 @@ def test_faults_entries_must_be_objects():
 
 def test_since_ts_is_read_as_float_seconds_only():
     # 13 S7.3 verbatim: Timestamp{Sec,Nanosec} -> 转 since_ts, and the producer
-    # now does that conversion (rt_payloads.cc WriteFaultArray). The nested pair
+    # now does that conversion (rt_payloads.cc write_fault_array). The nested pair
     # is no longer produced and no longer read: an entry carrying it has no
     # usable occurrence time, which is the no_since_ts case.
     # mutant: restore the since:{sec,nanosec} reader -> red.
@@ -480,7 +480,7 @@ def test_both_halves_ride_the_alarm_channel():
 # wrong while passing every "the field is there" assertion.
 
 
-# One faults[] entry as WriteFaultArray actually writes it: the four derivation
+# One faults[] entry as write_fault_array actually writes it: the four derivation
 # keys plus the five evidence keys, every one non-empty so a test can tell a
 # forwarded value from a default.
 EVIDENCE = {

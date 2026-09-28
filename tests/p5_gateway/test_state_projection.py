@@ -86,7 +86,7 @@ def test_battery_soc_comes_through_when_power_is_present():
     assert d["battery"]["temperature_c"] is None
 
 
-#: 一份带两块在位电池的 state/power(形状按 quadruped 的 WritePowerState:
+#: 一份带两块在位电池的 state/power(形状按 quadruped 的 write_power_state:
 #: list[] 权威, batteries 在 left/right 物理对应未定前为 null, 13 BAT-1/2).
 _TWO_CELLS = {
     "soc_pct": 46, "present_count": 2, "battery_mapping": "unknown",

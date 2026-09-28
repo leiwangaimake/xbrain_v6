@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 #: 11 S3.0 信封的共享编解码器. 探活 ping 走它而不是手拼一个 dict --
-#: 八字段手写一次就是一次拼错的机会, 而拼错的表现是对端 ReadEnvelope
+#: 八字段手写一次就是一次拼错的机会, 而拼错的表现是对端 read_envelope
 #: 在某个字段上静默退出, 不报错也不回内容(13 DDS-9 的形状).
 from xbrain.common.envelope import Envelope, encode, read_local_boot_id
 
@@ -227,7 +227,7 @@ def hmi_estop_frame(cmd_id: str) -> dict:
     Why each field is here -- none of them is decoration:
       * cmd_id   11 S7.1's first field, the idempotency key. quadruped echoes it
                  verbatim and falls back to "anonymous" when the request carried
-                 none (rt_bridge HandleEstop). With four initiators on one ack
+                 none (rt_bridge handle_estop). With four initiators on one ack
                  key, no cmd_id means every real ack is called "anonymous" and
                  nobody can say whose it is. 11 S7.1.1's 2026-09-27 note
                  registered the HMI button as the half still missing one.
@@ -1332,7 +1332,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                     # *** 信封是必须的, 不是装饰(11 S3.0 逐字: "所有 Zenoh JSON
                     # 载荷共用此外层结构"). 本行在 2026-09-27 之前发的是裸对象,
                     # 于是 chassis_relay 走 wrap-if-bare 兜底转发, 而那条兜底
-                    # [写不出 rid](它没有原信封可抄) => quadruped 的 ReadEnvelope
+                    # [写不出 rid](它没有原信封可抄) => quadruped 的 read_envelope
                     # 在 rid 那一步就退出, data 根本没被填, 回显恒 0.
                     #
                     # *** 关联号 seq 放在 data 里, 信封 seq 是另一个数.

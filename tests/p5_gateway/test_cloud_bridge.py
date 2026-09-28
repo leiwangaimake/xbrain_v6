@@ -522,13 +522,13 @@ def test_estop_reaches_the_internal_key_in_the_hmi_shape():
     assert p["type"] == "estop" and p["action"] == "stop"
     assert p["origin"] == "cloud"
     # 2026-09-27 加的一项: cmd_id(11 S7.1 EstopCommand 的幂等键). quadruped 的
-    # HandleEstop 原样回显它, 所以它是网关在机内 cmd/estop/ack 上认出"这条
+    # handle_estop 原样回显它, 所以它是网关在机内 cmd/estop/ack 上认出"这条
     # 是回应云端那次"的唯一依据 -- 没有它每条真 ack 都叫 anonymous, 而 HMI
     # 按钮与 p4_agent 的急停也在同一条 key 上回执.
     assert p["cmd_id"].startswith("c-estop-")
     # 2026-09-27 同批加的另两项: reason / src_role. 11 S4.1 的
     # last_soft_estop = {epoch, reason, src_role, age_ms}, quadruped 只存收到
-    # 的, 没收到的发 null(rt_bridge HandleEstop) -- 不填这两项, 那个"3.2 秒前
+    # 的, 没收到的发 null(rt_bridge handle_estop) -- 不填这两项, 那个"3.2 秒前
     # 由谁触发"的审计对象就永久半空, HMI 分不出云端急停与自己按钮的急停.
     # MUTATION: 删掉 reason 或 src_role -> 红.
     assert p["reason"] == "cloud_command"
@@ -550,7 +550,7 @@ def test_a_wrong_cloud_action_still_lands_on_the_internal_key_as_stop():
     不成立. S7.1.2 逐字"缺失, 拼错, 无法解析 -> 按 stop 处理", 说的正是
     网关这一侧该做的事.
 
-    *** 为什么这个缺陷在机器人上看不见: quadruped 的 ParseEstop 根本不读
+    *** 为什么这个缺陷在机器人上看不见: quadruped 的 parse_estop 根本不读
     action(S3.0.1 不存在一个取值可以让它不停), 所以透传 "release" 和透传
     "stop" 停得一模一样 -- 差别只在录包里那个非法值, 而没有任何断言在看它.
 

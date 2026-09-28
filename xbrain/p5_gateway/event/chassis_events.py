@@ -337,7 +337,7 @@ class ChassisFaultDeriver:
 
         quadruped shipped cleared[] as objects until 2026-09-27 (one writer
         served both lists) and this method read that form too. The producer is
-        fixed (rt_payloads.cc WriteClearedArray) and the reader went with it: a
+        fixed (rt_payloads.cc write_cleared_array) and the reader went with it: a
         sniffing reader leaves two wire shapes legal with nothing left to
         decide between them, and the next divergence has nowhere to show up.
         An element of the wrong type is counted as bad_shape, and the rest of
@@ -377,7 +377,7 @@ class ChassisFaultDeriver:
         this entry is lost. Note the direction is the opposite of the code rule
         above: a code is an OPEN set (13 QD-6, the vendor table is incomplete),
         while level is a CLOSED three-value set that quadruped itself derives
-        (13 S7.3 SeverityToLevel), so an unexpected value means the two sides
+        (13 S7.3 severity_to_level), so an unexpected value means the two sides
         disagree about the contract, not that the chassis found a new fault.
         """
         if not isinstance(entry, dict):
@@ -410,7 +410,7 @@ class ChassisFaultDeriver:
         # that this counter -- and not a 1970 detected_at -- is what a reader
         # sees. Until 2026-09-27 quadruped sent since:{sec,nanosec} here and
         # this method converted it; that reader went out with the producer fix
-        # (rt_payloads.cc WriteFaultArray now writes float seconds).
+        # (rt_payloads.cc write_fault_array now writes float seconds).
         self.stats["no_since_ts"] += 1
         return None
 
@@ -436,7 +436,7 @@ class ChassisFaultDeriver:
         source / source_ids upstream with one reason written against the whole
         group -- "xian chang ding wei kao ta", field localisation depends on
         them. quadruped forwards all five on event/fault/chassis
-        (rt_payloads.cc WriteFaultArray) and 11 S9.8.4 registers them there as
+        (rt_payloads.cc write_fault_array) and 11 S9.8.4 registers them there as
         our extension; until 2026-09-27 this deriver read only the four keys
         the derivation rules name, so the chain was complete and the evidence
         still stopped at p5: record.db, the cloud and the HMI saw a code with
