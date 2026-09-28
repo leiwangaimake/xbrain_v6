@@ -1152,10 +1152,25 @@ def run_voice_loop_wiring(stop_flag: dict,
             # Relay P2's latest health/summary to /api/health. P5 forwards the
             # authoritative payload unchanged (G-2 same-source), REPLACING the
             # whole value so the web thread's read stays consistent under the GIL.
+            #
+            # *** 存的是信封里的 data, 不是整条报文(2026-09-28, p2 给
+            # health/summary 补上 11 S3.0 信封的同一批). 裸形态照样接受, 理由
+            # 与 p2/p3 的 _make_state_sink 同一条: 桩发布者与旧版本 p2 都不带
+            # 信封, 两种形态各写一条代码路径必然分叉.
+            # ! 这一层 NO 不能省: 下游三处(REST /api/health 透传 /
+            #   cloud_state 的 _devices_from_health / state_projection)全部按
+            #   HealthSummary 的顶层字段(schema/items/overall)取值. 只改发布侧
+            #   而消费侧仍读顶层, 正是 2026-09-27 修 event/*/comm 时引入过的
+            #   那次回归(5d6981a) -- 现象是 /api/health 里 items 整块消失,
+            #   而两侧进程都健康.
             try:
                 d = json.loads(bytes(sample.payload).decode("utf-8"))
             except Exception:      # noqa: BLE001
                 d = None
+            if isinstance(d, dict):
+                inner = d.get("data")
+                if isinstance(inner, dict):
+                    d = inner
             if d:
                 hmi_state["health"] = d
 

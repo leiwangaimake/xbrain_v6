@@ -41,6 +41,10 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
+#: 11 S3.0 逐字"所有 Zenoh JSON 载荷共用此外层结构". 走共享编码器,
+#: NO 不手写八个键 -- 手写过的地方(p1 的 stamp_envelope)把 ts/mono 戳成
+#: 毫秒整数而 S3.0 是秒 float64, 一个编码器意味着这类单位错只犯一次.
+from xbrain.common.envelope import Envelope, encode, read_local_boot_id
 from xbrain.p2_core.runtime.mic_capture import (
     MicCaptureConfig, spawn_mic_pipeline,
 )
@@ -85,6 +89,40 @@ STATE_POWER_TOPIC = "state/power"        # -> battery (chassis_relay, CR-5)
 STATE_LINK_TOPIC = "state/link"          # -> network (11 S4.6)
 CMD_ESTOP_TOPIC = "cmd/estop"            # CLD-1: soft-estop disarm (14 S3.7)
 STATE_ARB_MOTION_TOPIC = "state/arb/motion"  # 11 S7A.5.1: suspended broadcast
+
+
+def stamp_health(data: dict, *, rid: str, boot: str, seq: int,
+                 ts_sync: bool) -> bytes:
+    """一份 HealthSummary -> 11 S3.0 信封的 JSON 字节.
+
+    S3.0 逐字"所有 Zenoh JSON 载荷共用此外层结构". health/summary 在
+    2026-09-28 之前发的是[裸报文](顶层直接 {"schema":"health_summary_v1",...}),
+    与 p5 的 state/link 和 event/{sev}/comm 在 2026-09-27 之前是同一个缺陷:
+    按 S3.0 解码的消费方会在必填字段那一步退出.
+    ! 现场为什么一直没炸: 今天的三个消费方(p3 的 _make_state_sink / p5 的
+      _on_health / teach 的 missing_sources)都直接读顶层, 于是裸报文[恰好]
+      能用 -- 一个新写的, 按契约解码的消费方才会在第一帧就失败.
+
+    *** 走共享编码器 xbrain.common.envelope.encode, NO 不手写八个键.
+    手写过的地方(p1 的 stamp_envelope)把 ts/mono 戳成了毫秒整数, 而 S3.0 是
+    秒 float64 -- 按 S3.0 计龄的消费方会把 5 s 前的消息读成 5000 s 前的.
+
+    *** 模块级函数而不是闭包内联, 与 p5 的 stamp_internal 同一理由: 闭包只能
+    靠读源码断言, 而信封是逐字段的契约, 要能逐字段断言(八个键 / ts 与 mono
+    都是秒 / 无 boot 则 mono 一并省略).
+
+    boot 为空时 mono 一并省略(CLK-C4: 没有 boot 就没有 mono 的定义域),
+    NO 不写一个裸 mono -- 那会让对端拿自己的 boot 域去解释别人的读数.
+    """
+    return json.dumps(encode(Envelope(
+        v=1, rid=rid,
+        # WALL-CLOCK-OK(align): S3.0 的信封 ts 只做跨机对齐 / 录包 / 延迟
+        # 统计. 超时与年龄判定一律走 mono(CLK-C1).
+        ts=time.time(),
+        mono=time.monotonic() if boot else None,
+        boot=boot or None,
+        seq=seq, src="p2_core", ts_sync=ts_sync, data=data,
+    )), ensure_ascii=False).encode("utf-8")
 
 
 def _stage_a_config() -> "tuple":
@@ -159,6 +197,16 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # callback only stores the decoded body (RUST THREAD, CLAUDE.md 4.2)
         # and the loop below does the derivation and the publish.
         health_pub = gen.declare_publisher(HEALTH_SUMMARY_TOPIC)
+        #: 11 S3.0 信封的四个进程级字段. rid/boot 开机读一次:
+        #: read_local_boot_id 是文件 IO, 放进 1 Hz 心跳里是白白的系统调用.
+        #: rid 缺失时发空串而 NO 不兜 "unknown" -- 空串至少是[可见的缺失],
+        #: 一个编出来的 rid 会让消费方按一台不存在的车归档.
+        _health_env_rid = os.environ.get("XBRAIN_ROBOT_ID", "")
+        _health_env_boot = read_local_boot_id()
+        #: S3.0 的 seq 按 key 各自递增(进程重启从 0 起). 一个全局计数器会让
+        #: 每条 key 在消费方看来一直在跳号, 而 seq 正是 U18 补发游标与缺口
+        #: 判定的依据. health/summary 只有一条 key, 所以是标量.
+        _health_env_seq = [0]
         # 11 S3.6 / 14 S2.3 P-2: cmd/motion/factor is P2's grant to P1 -- the
         # speed gate's h() input, allow_motion and the admissible profile. It is
         # derived from the SAME aggregate as health/summary in the 1 Hz block
@@ -684,9 +732,20 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     try:
                         refresh_health(health_agg, state_cache, now_mono_s=now,
                                        device_states=device_bridge.states())
-                        health_pub.put(json.dumps(
+                        # 11 S3.0 信封. ts_sync 抄 P1-13 镜像来的
+                        # ClockStatus.sync(CLK-A2: 本进程 NO 不自行判定授时
+                        # 状态, 唯一有权判定的是 rtk_driver).
+                        # NO 不读 state_cache["clock"]["ts_sync"] -- 那个键名
+                        # 在 state/clock 的 data 里不存在(p1 发的是 sync),
+                        # 恒取到 None.
+                        _health_env_seq[0] += 1
+                        health_pub.put(stamp_health(
                             health_agg.build_summary(factor_cfg),
-                            ensure_ascii=False).encode("utf-8"))
+                            rid=_health_env_rid, boot=_health_env_boot,
+                            seq=_health_env_seq[0],
+                            ts_sync=bool(
+                                (state_cache.get("clock") or {}).get("sync")
+                                is True)))
                         # the grant, from the same aggregate (11 S3.6 body).
                         factor_body = build_health_factor(health_agg.states(), factor_cfg)
                         # 10 S3.3.3 Stage C criterion 3 / 10 S5.4.4 failure row:
