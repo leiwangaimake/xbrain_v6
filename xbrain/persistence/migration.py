@@ -79,7 +79,7 @@ def migrate(db_path: str, db_name: str, code_version: int,
         conn = sqlite3.connect(db_path, isolation_level=None)
     except sqlite3.Error as exc:
         raise MigrationError(E_STORAGE_CORRUPT,
-                             {"db_name": db_name, "reason": str(exc)})
+                             {"db_name": db_name, "reason": str(exc)}) from exc
     try:
         # 先做完整性检查. 一个 malformed 的库在后面的 PRAGMA 上也会抛,
         # 但那时的报错指向的是 PRAGMA 而不是"库坏了".
@@ -87,7 +87,7 @@ def migrate(db_path: str, db_name: str, code_version: int,
             ok = conn.execute("PRAGMA integrity_check").fetchone()
         except sqlite3.DatabaseError as exc:
             raise MigrationError(E_STORAGE_CORRUPT,
-                                 {"db_name": db_name, "reason": str(exc)})
+                                 {"db_name": db_name, "reason": str(exc)}) from exc
         if not ok or str(ok[0]).lower() != "ok":
             raise MigrationError(
                 E_STORAGE_CORRUPT,
@@ -136,7 +136,7 @@ def migrate(db_path: str, db_name: str, code_version: int,
             raise MigrationError(
                 E_CONFIG_INVALID,
                 {"db_name": db_name, "from": current, "to": code_version,
-                 "reason": "migration step failed and was rolled back: %s" % exc})
+                 "reason": "migration step failed and was rolled back: %s" % exc}) from exc
         return code_version
     finally:
         conn.close()

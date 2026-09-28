@@ -179,39 +179,39 @@ def test_ledger_rejects_unknown_plane_at_construction():
 
 
 def test_ledger_rejects_unknown_plane_at_record():
-    l = Ledger(budgets={"control": 1000})
+    ledger = Ledger(budgets={"control": 1000})
     with pytest.raises(UnknownPlane):
-        l.record("halfway", 100)
+        ledger.record("halfway", 100)
 
 
 def test_ledger_over_budget_true_when_exceeded():
-    l = Ledger(budgets={"control": 100})
-    l.record("control", 150)
-    assert l.over_budget("control") is True
+    ledger = Ledger(budgets={"control": 100})
+    ledger.record("control", 150)
+    assert ledger.over_budget("control") is True
 
 
 def test_ledger_over_budget_false_when_within():
-    l = Ledger(budgets={"control": 100})
-    l.record("control", 50)
-    assert l.over_budget("control") is False
+    ledger = Ledger(budgets={"control": 100})
+    ledger.record("control", 50)
+    assert ledger.over_budget("control") is False
 
 
 def test_ledger_raise_budget_refused():
     """UG-2: dynamic budget raise is refused, ALWAYS."""
-    l = Ledger(budgets={"control": 100})
+    ledger = Ledger(budgets={"control": 100})
     with pytest.raises(BandwidthBoostForbidden, match="cannot raise"):
-        l.raise_budget("control", 200)
+        ledger.raise_budget("control", 200)
 
 
 def test_ledger_borrow_between_planes_refused():
     """UG-1: cannot borrow across planes."""
-    l = Ledger(budgets={"control": 100, "data": 100})
+    ledger = Ledger(budgets={"control": 100, "data": 100})
     with pytest.raises(BandwidthBoostForbidden, match="cannot borrow"):
-        l.borrow_from("data", "control")
+        ledger.borrow_from("data", "control")
 
 
 def test_ledger_reset_clears_usage():
-    l = Ledger(budgets={"control": 100})
-    l.record("control", 50)
-    l.reset()
-    assert l.over_budget("control") is False
+    ledger = Ledger(budgets={"control": 100})
+    ledger.record("control", 50)
+    ledger.reset()
+    assert ledger.over_budget("control") is False

@@ -100,16 +100,16 @@ def check_envelope_rebuilt(env: RelayEnvelope,
             f"src ({producer_src!r}); envelope was NOT rebuilt")
     if env.ts_mono_ms == producer_ts_mono_ms:
         raise WhitelistViolation(
-            f"relay envelope.ts equals producer ts; envelope was "
-            f"NOT rebuilt")
+            "relay envelope.ts equals producer ts; envelope was "
+            "NOT rebuilt")
     if env.orig_src != producer_src:
         raise WhitelistViolation(
             f"relay envelope.orig_src ({env.orig_src!r}) does not "
             f"preserve producer src ({producer_src!r})")
     if env.orig_ts_mono_ms != producer_ts_mono_ms:
         raise WhitelistViolation(
-            f"relay envelope.orig_ts_mono_ms does not preserve "
-            f"producer ts")
+            "relay envelope.orig_ts_mono_ms does not preserve "
+            "producer ts")
 
 
 class CrlYamlReadForbidden(Exception):

@@ -1696,7 +1696,7 @@ class RnsSource:
         # profile hit closer than 0.75 m in the forward hemisphere stops and
         # turns away immediately.
         near_hit = None
-        for i, db in enumerate(profile.d_block):
+        for _i, db in enumerate(profile.d_block):
             if db is not None and db < 0.75 and (near_hit is None
                                                  or db < near_hit):
                 near_hit = db

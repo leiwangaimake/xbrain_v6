@@ -288,7 +288,7 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
         return ApplyResult("accepted", "OK", detail, tuple(events))
     except Exception as exc:
         await conn.rollback()
-        raise _as_nameconflict_error(exc, cmd)
+        raise _as_nameconflict_error(exc, cmd) from exc
 
 
 async def apply_rename(cmd: GeoCommand, ctx: GeoContext,
@@ -355,7 +355,7 @@ async def apply_rename(cmd: GeoCommand, ctx: GeoContext,
                               "name": cols.get("name")}),))
     except Exception as exc:
         await conn.rollback()
-        raise _as_nameconflict_error(exc, cmd)
+        raise _as_nameconflict_error(exc, cmd) from exc
 
 
 async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
@@ -419,7 +419,7 @@ async def apply_set_state(cmd: GeoCommand, ctx: GeoContext,
                               "state": target}),))
     except Exception as exc:
         await conn.rollback()
-        raise _as_nameconflict_error(exc, cmd)
+        raise _as_nameconflict_error(exc, cmd) from exc
 
 
 def _as_nameconflict_error(exc: Exception, cmd: GeoCommand) -> Exception:

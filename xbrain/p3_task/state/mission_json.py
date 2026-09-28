@@ -61,7 +61,7 @@ def parse_step_status(step_status_json: str, total: int):
     try:
         entries = json.loads(step_status_json)
     except json.JSONDecodeError as e:
-        raise MissionJsonInvariantViolation(f"step_status_json: {e}")
+        raise MissionJsonInvariantViolation(f"step_status_json: {e}") from e
     if not isinstance(entries, list):
         raise MissionJsonInvariantViolation(
             "step_status_json must be a list")

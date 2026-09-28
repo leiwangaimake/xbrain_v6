@@ -423,7 +423,7 @@ class MicStream:
                 message = await self._connection.recv()
             except ConnectionClosedOK:
                 # Normal close: the session is over, which is what ends an async for.
-                raise StopAsyncIteration
+                raise StopAsyncIteration from None
             except ConnectionClosed as exc:
                 # Any other close code is a fault the caller must hear about; 1011 in
                 # particular is payload-service reporting the device audio link is down.

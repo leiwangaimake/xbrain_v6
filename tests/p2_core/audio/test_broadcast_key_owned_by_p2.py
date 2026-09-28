@@ -65,7 +65,7 @@ def test_neither_p5_nor_p4_subscribes_it():
     """*** RT-A3 的隔离是[订阅关系]上的, 不依赖任何运行时模式判定.
 
     p4 订上它会破坏 RT-A3(audio/broadcast 与 audio/voice_in 两条链路必须
-    物理隔离); p5 订上它就回到 2026-09-03 之前那个"看起来有人在处理, 
+    物理隔离); p5 订上它就回到 2026-09-03 之前那个"看起来有人在处理,
     实际进黑洞"的状态.
     """
     for d, who in ((P5_DIR, "p5_gateway"), (P4_DIR, "p4_agent")):

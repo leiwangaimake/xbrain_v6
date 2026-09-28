@@ -6,7 +6,7 @@ File: test_fence_set.py
 Brief: P1 FenceSet 接收/自算比对/持有 (11 S9A.2/S9A.3, 报警 F1)
 
 Description:
-守 P1 侧围栏接收的四条不变式: crc32 自算比对(报文损坏必拒), role 闭集越界必抛, 
+守 P1 侧围栏接收的四条不变式: crc32 自算比对(报文损坏必拒), role 闭集越界必抛,
 少于 3 顶点必拒, FS-7 坏帧保留旧 active. 每条配一个会让它变红的变异体.
 """
 

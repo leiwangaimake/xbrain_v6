@@ -102,7 +102,7 @@ def _rewrite_manifest_for_final_location(
         manifest = json.load(fh)
     manifest["boot_id"] = boot_id
     processes = manifest.get("processes") or {}
-    for proc_name, entry in processes.items():
+    for _proc_name, entry in processes.items():
         if not isinstance(entry, dict):
             continue
         src_path = entry.get("path")

@@ -108,7 +108,10 @@ def test_ban_emits_source_disabled_event_with_detail():
     _force_one_strike(a, 2000)   # this one triggers the ban
 
     # Drain accumulated events (audit stream = tick returns + buffer).
-    events = a.drain_events()   # release events go here
+    a.drain_events()            # release events go here; value unused --
+    #   the assertion below is built on the rebuilt arbiter `b`, see the
+    #   next comment. Keeping the call because drain_events() EMPTIES the
+    #   buffer; dropping it would change what `a` holds.
     # The SOURCE_DISABLED event was emitted into `sink` = tick's return
     # list during the third force cycle. We need to re-run that cycle
     # and capture the tick result explicitly. Simpler: rebuild.

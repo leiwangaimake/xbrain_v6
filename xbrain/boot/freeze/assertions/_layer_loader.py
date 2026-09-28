@@ -164,7 +164,7 @@ def _read_yaml(path: str) -> Dict[str, Any]:
             "YAML parse failed at %s: %s" % (path, exc),
             {"kind": "config_file_missing", "path": os.path.abspath(path),
              "parse_error": str(exc)},
-        )
+        ) from exc
     # YAML "---" empty document parses to None. Normalise to {} so
     # callers do not have to guard.
     return loaded if isinstance(loaded, dict) else {}

@@ -95,7 +95,7 @@ def test_sec_check_emits_valid_json(sec_id, tmp_path):
     env["PATH"] = os.environ.get("PATH", "")
     r = subprocess.run(["bash", str(script)],
                        env=env, capture_output=True, text=True, timeout=SCRIPT_TIMEOUT_S)
-    lines = [l for l in r.stdout.splitlines() if l.strip()]
+    lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
     assert lines, "no output from %s (stderr: %s)" % (script, r.stderr)
     # Parsed exactly the way scripts/sec/aggregate.py parses it (lines[-1]).
     # If that ever diverges, a script could satisfy this test and still be
@@ -145,7 +145,7 @@ def test_variant_sec08_flags_legacy_bridge(tmp_path):
         "// V5 legacy junk\n")
     r = subprocess.run(["bash", str(dst)],
                        capture_output=True, text=True, timeout=SCRIPT_TIMEOUT_S)
-    line = [l for l in r.stdout.splitlines() if l.strip()][-1]
+    line = [ln for ln in r.stdout.splitlines() if ln.strip()][-1]
     doc = json.loads(line)
     assert doc["status"] == "FAIL"
     assert "V5" in doc["message"] or "GATE-5" in doc["message"]
@@ -167,7 +167,7 @@ def test_variant_sec05_flags_injected_credential(tmp_path):
         'server:\n  password: "supersecret123"\n')
     r = subprocess.run(["bash", str(dst)],
                        capture_output=True, text=True, timeout=SCRIPT_TIMEOUT_S)
-    line = [l for l in r.stdout.splitlines() if l.strip()][-1]
+    line = [ln for ln in r.stdout.splitlines() if ln.strip()][-1]
     doc = json.loads(line)
     assert doc["status"] == "FAIL", "expected FAIL, got: %s" % doc
 
@@ -193,7 +193,7 @@ def test_variant_sec05_ignores_bare_mention(tmp_path):
         "server:\n  port: 7447\n")
     r = subprocess.run(["bash", str(dst)],
                        capture_output=True, text=True, timeout=SCRIPT_TIMEOUT_S)
-    line = [l for l in r.stdout.splitlines() if l.strip()][-1]
+    line = [ln for ln in r.stdout.splitlines() if ln.strip()][-1]
     doc = json.loads(line)
     assert doc["status"] == "PASS", \
         "SEC-05 must not false-fire on comment mentions; got: %s" % doc
@@ -208,7 +208,7 @@ def test_sec09_severity_is_warning_never_blocks(tmp_path):
     src = CHECKS_DIR / "SEC-09-charge-manager-stopped.sh"
     r = subprocess.run(["bash", str(src)],
                        capture_output=True, text=True, timeout=SCRIPT_TIMEOUT_S)
-    line = [l for l in r.stdout.splitlines() if l.strip()][-1]
+    line = [ln for ln in r.stdout.splitlines() if ln.strip()][-1]
     doc = json.loads(line)
     assert doc["severity"] == "WARNING", \
         "SEC-09 must be WARNING, got %s" % doc["severity"]

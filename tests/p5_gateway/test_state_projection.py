@@ -973,7 +973,7 @@ def test_hes_lock_alone_is_still_emergency_stop():
     # *** 这一格最容易漏: hes 已经落回 false 而 hes_lock 还在.
     # 11 S4.1 逐字: hes_lock "hes 上跳即置位, 软件不可解除, 须 hes == 0 +
     # 现场人工 enable 才清除" -> 这段时间机器人[仍然动不了].
-    # 只看 hes 会让它显示成 idle, 恰好是操作员刚松开急停, 界面说就绪, 
+    # 只看 hes 会让它显示成 idle, 恰好是操作员刚松开急停, 界面说就绪,
     # 而机器人不动的那一段.
     # RED MUTANT: 去掉 hes_lock 那半 -> 这里红.
     assert _rs({"hes": False, "hes_lock": True}) == "emergency_stop"

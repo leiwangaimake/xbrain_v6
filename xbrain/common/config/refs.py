@@ -288,7 +288,7 @@ def resolve(tree: Dict[str, Any]) -> Dict[str, Any]:
     # that is the point: with a single interleaved pass, "${common.a:-2.5}"
     # would be reported only if resolution happened to reach it, so the same
     # defective file would pass or fail depending on dict ordering.
-    for key, value in flat.items():
+    for _key, value in flat.items():
         if isinstance(value, str) and "${" in value:
             classify(value)
 

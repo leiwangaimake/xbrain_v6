@@ -243,7 +243,8 @@ def test_escape_probe_reach_exceeds_smallness_threshold():
     # threshold must stay below the probe's default reach, and the
     # verdict must exist in _enter_wall at all. mutant: drop the verdict
     # or shrink wall_end_dist's default reach under 4.0 -> reddens.
-    import inspect, re
+    import inspect
+    import re
     from xbrain.p1_motion.rns import source as src_mod
     from xbrain.p1_motion.rns import grid as grid_mod
     body = inspect.getsource(src_mod.RnsSource._enter_wall)
@@ -281,7 +282,8 @@ def test_subgoal_keep_gate_is_the_physical_floor():
     # Keeping uses the physical floor whatever gate adopted. Source-level
     # pin on the A-HYS-2 block. mutant: revert the check to gate_base ->
     # reddens.
-    import inspect, re
+    import inspect
+    import re
     from xbrain.p1_motion.rns import source as src_mod
     body = inspect.getsource(src_mod.RnsSource._run_follow)
     i = body.index("A-HYS-2: drop NOW")
@@ -295,7 +297,8 @@ def test_end_hop_present_with_lenient_ratio():
     # funnel loop 2026-09-11 (path rev 3-4 laps of 52 s): near-end hop
     # inside _enter_wall, ratio 0.7 (0.5 left the fwd entry unhopped).
     # mutant: remove the branch or tighten below 0.6 -> reddens.
-    import inspect, re
+    import inspect
+    import re
     from xbrain.p1_motion.rns import source as src_mod
     body = inspect.getsource(src_mod.RnsSource._enter_wall)
     m = re.search(r"w_end < 1\.0 and w_cost < ([0-9.]+) \* o_cost", body)
@@ -309,7 +312,8 @@ def test_detour_stall_drop_present():
     # the infeasible path -- the lenient keep gate alone parked goto_02/11,
     # wp_chain and the sealed box on watchdog_no_progress. mutant: delete
     # the stall branch or raise the tick threshold past 200 -> reddens.
-    import inspect, re
+    import inspect
+    import re
     from xbrain.p1_motion.rns import source as src_mod
     body = inspect.getsource(src_mod.RnsSource._run_follow)
     m = re.search(r"self\._detour_stall_ticks > (\d+)", body)

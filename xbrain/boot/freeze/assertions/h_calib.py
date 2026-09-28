@@ -272,7 +272,7 @@ def _recompute_lat_err(frames: Dict[str, Any],
     # silently skipped -- H-3 owns the schema-level enforcement, so
     # this function only cares about entries that CAN produce a
     # number.
-    for name, frame in frames.items():
+    for _name, frame in frames.items():
         # Skip non-dict frames (shape defect; H-3 or H-2 will fire).
         # Silently skipping here lets those checks own the failure
         # attribution.

@@ -215,7 +215,7 @@ def _l1_placeholder_shape_ok(l1_enu: Any) -> bool:
     # forward-compat if a fourth component (e.g. epoch) is added.
     # Any non-None value in ANY component = real value = bad.
     # Loop stops on first non-None; no need to inspect all.
-    for k, v in l1_enu.items():
+    for _k, v in l1_enu.items():
         if v is not None:
             return False
     # All components are None (or the dict is empty) = ok placeholder.

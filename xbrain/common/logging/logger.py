@@ -362,7 +362,7 @@ def _shutdown_all() -> None:
     for name, listener in list(_LISTENERS.items()):
         listener.stop()
         del _LISTENERS[name]
-    for name, logger in list(_LOGGERS.items()):
+    for _name, logger in list(_LOGGERS.items()):
         # Copy the handler list so removal does not mutate under iteration
         # (logger.handlers is the live list Python's logging module reads).
         for handler in list(logger.handlers):

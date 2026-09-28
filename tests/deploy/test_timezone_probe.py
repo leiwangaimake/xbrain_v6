@@ -238,8 +238,8 @@ def test_missing_timezone_key_reports_the_key_path_not_a_traceback():
                               cwd=str(ROOT))
         assert proc.returncode != 0, "缺键却放行了"
         # 关键: stderr 里要有一行能解析的 JSON, 且带键路径.
-        emitted = [json.loads(l) for l in proc.stderr.splitlines()
-                   if l.strip().startswith("{")]
+        emitted = [json.loads(ln) for ln in proc.stderr.splitlines()
+                   if ln.strip().startswith("{")]
         assert emitted, ("缺键时只吐了 traceback, 没有结构化输出:\n%s"
                          % proc.stderr)
         keys = [e.get("detail", {}).get("key") for e in emitted]

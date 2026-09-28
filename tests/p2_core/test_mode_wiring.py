@@ -347,7 +347,11 @@ def test_the_ack_and_state_mode_cannot_disagree():
 
     applied = (ack.get("detail") or {}).get("applied") or {}
     modes = [b for k, b in sent if k == "state/mode"]
-    assert applied["stream_id"] == modes[-1]["stream_id"] != None
+    # `is not None` rather than `!= None` (E711): the chain reads
+    # applied == modes[-1] AND modes[-1] is not None. With != a payload
+    # whose stream_id was an object defining __eq__(None) as False-y
+    # could slip through; identity has no such escape.
+    assert applied["stream_id"] == modes[-1]["stream_id"] is not None
 
 
 def test_leaving_broadcast_clears_the_stream_id():

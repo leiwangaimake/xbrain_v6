@@ -351,7 +351,9 @@ async def test_push_writes_the_snapshot_before_it_sends(dbs):
     saw at put time).
     """
     task_conn, geo_conn = dbs
-    dao = await _seed(task_conn, geo_conn)
+    await _seed(task_conn, geo_conn)   # seeds both DBs; the DAO handle
+    #   it returns is not needed here (this case drives push_route_for_task
+    #   directly and reads back through snapshot_dao).
     snapshot_dao = SnapshotDAO(task_conn)
     seen_rows = []
 

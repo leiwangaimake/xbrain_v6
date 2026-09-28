@@ -43,7 +43,9 @@ Phrases with parameter placeholders like 'N 米' / 'N 度' are kept
 verbatim -- the user substitutes a real number at test time.
 """
 from __future__ import annotations
-import re, pathlib, sys
+import re
+import pathlib
+import sys
 
 DOCS = [
     ("18-语音文本指令集.md", "18"),
@@ -233,7 +235,9 @@ def parse_doc(path: pathlib.Path, source_tag: str) -> list[dict]:
         rest_cells = parse_row_columns(rest)
         # rest_cells layout after id/intent/phrases = [slots, level,
         # channel, notes, ''] (trailing '|' produces an empty last cell).
-        slots  = rest_cells[0] if len(rest_cells) > 0 else ''
+        # _slots: read for the layout it documents; the slot cell is not
+        # consumed by this extractor (18-B slots are re-derived downstream).
+        _slots = rest_cells[0] if len(rest_cells) > 0 else ''
         level  = rest_cells[1] if len(rest_cells) > 1 else ''
         chan   = rest_cells[2] if len(rest_cells) > 2 else ''
         # Split by '/', full-width slash '\uff5c', OR a <br> tag. <br> MUST be a

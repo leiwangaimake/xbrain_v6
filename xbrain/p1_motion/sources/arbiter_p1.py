@@ -83,7 +83,7 @@ class P1Arbiter:
         st.last_hit_mono_ms = now_mono_ms
 
     def tick(self, now_mono_ms: int) -> None:
-        for s, st in self._states.items():
+        for _s, st in self._states.items():
             if st.active and (now_mono_ms - st.last_hit_mono_ms) > self._dwell_ms:
                 st.active = False
 

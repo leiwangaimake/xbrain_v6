@@ -54,7 +54,7 @@ def test_summary_shape_matches_the_contract():
     summary = agg.build_summary(_CFG)
     assert summary["overall"] in ("ok", "degraded", "fatal")
     assert set(summary["items"]) == set(ITEMS)
-    for name, body in summary["items"].items():
+    for _name, body in summary["items"].items():
         assert body["state"] in ("ok", "warn", "degraded", "fail", "unknown")
         assert body["level"] in ("fatal", "degraded", "warn")
         assert body["kind"] in ("device", "cap")

@@ -177,7 +177,7 @@ class MemoryGrid:
         300 s-TTL sortie leaked cells without bound. Lazy sweep every ~200
         writes: drop entries past TTL or outside radius_m of the pose."""
         dead = []
-        for key, (state, cls, t_seen) in self._cells.items():
+        for key, (_state, cls, t_seen) in self._cells.items():
             ttl = (self._ttl_dynamic_ms if _is_dynamic_class(cls)
                    else self._ttl_static_ms)
             if now_ms - t_seen > ttl:

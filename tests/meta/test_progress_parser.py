@@ -55,7 +55,7 @@ def _todo_task_rows():
     """
     pat = re.compile(r"^\|\s*`([A-Z]{3}-[A-Za-z0-9-]+)`")
     return [m.group(1) for m in
-            (pat.match(l) for l in TODO.read_text(encoding="utf-8").splitlines())
+            (pat.match(ln) for ln in TODO.read_text(encoding="utf-8").splitlines())
             if m]
 
 
@@ -104,8 +104,8 @@ def test_evidence_annotated_rows_are_still_parsed():
     apart."""
     parsed = {it["id"] for it in _progress().parse()}
     annotated = [m.group(1) for m in
-                 (re.match(r"^\|\s*`([A-Z]{3}-[A-Za-z0-9-]+)`[^|]*证据", l)
-                  for l in TODO.read_text(encoding="utf-8").splitlines()) if m]
+                 (re.match(r"^\|\s*`([A-Z]{3}-[A-Za-z0-9-]+)`[^|]*证据", ln)
+                  for ln in TODO.read_text(encoding="utf-8").splitlines()) if m]
     if not annotated:
         pytest.skip("no evidence-annotated rows yet")
     assert not sorted(set(annotated) - parsed)
@@ -166,7 +166,7 @@ def test_every_non_failure_row_cites_where_the_reason_lives():
 
     MUTATION: 把某行的理由改成一句不含出处的话 -> 红.
     """
-    for task_id, (status, why) in _progress().NON_FAILURE.items():
+    for task_id, (_status, why) in _progress().NON_FAILURE.items():
         kw = _EXPECTED_NON_FAILURE[task_id][1]
         assert kw.lower() in why.lower(), (
             "%s 的理由 %r 没有指向出处(期望提到 %r)" % (task_id, why, kw))

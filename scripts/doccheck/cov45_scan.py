@@ -133,7 +133,6 @@ def yaml_list(text, key_path):
     and the thing being checked is what a human reading the file sees.
     """
     lines = text.split("\n")
-    depth = 0
     want = key_path.split(".")
     idx = 0
     base_indent = -1
@@ -259,7 +258,7 @@ def run(doc, cfg, parse, mm, reports, quiet=False):
     unmarked = []
     our_col = {sec: our_column(blk, CLASS_COLUMN[sec])
                for sec, blk in blocks.items()}
-    for sec, blk in blocks.items():
+    for sec, _blk in blocks.items():
         if our_col[sec] is None:
             findings.append(("COV-2", "%s has no %s column header"
                              % (sec, CLASS_COLUMN[sec])))

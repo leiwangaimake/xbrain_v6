@@ -507,7 +507,11 @@ async def post_selftest(request: Request, body: Optional[dict] = None) -> Selfte
 @router.post("/v1/audio/transcriptions", response_model=TranscriptionResponse)
 async def post_transcriptions(
     request: Request,
-    file: UploadFile = File(...),
+    # noqa B008 below: `File(...)` in the default IS the FastAPI
+    # dependency-declaration idiom -- FastAPI reads the default object to
+    # build the route signature, it is never used as a runtime default.
+    # Moving it into the body (what B008 asks for) breaks the endpoint.
+    file: UploadFile = File(...),  # noqa: B008
     model: str = Form(default=""),
     language: str = Form(default=""),
     sample_rate: int = Form(default=_DEFAULT_RAW_SAMPLE_RATE),

@@ -51,7 +51,7 @@ def _run_one(check_path: Path) -> dict:
             "message": "check timed out after 60s",
             "detail": {"kind": "check_timeout"},
         }
-    lines = [l for l in r.stdout.splitlines() if l.strip()]
+    lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
     if not lines:
         return {
             "id": check_path.stem, "severity": "BLOCKING",

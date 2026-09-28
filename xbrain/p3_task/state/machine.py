@@ -163,7 +163,7 @@ def apply_transition(from_state: str, event: str) -> TransitionResult:
         # The event may name (or map to) the state we are already in; if so it
         # is an idempotent replay, not an error. We check by scanning for any
         # arrow on this event whose target == from_state.
-        for (fs, ev), ts in TRANSITIONS.items():
+        for (_fs, ev), ts in TRANSITIONS.items():
             if ev == event and ts == from_state:
                 return TransitionResult(from_state, from_state, idempotent=True)
         raise InvalidTransition(

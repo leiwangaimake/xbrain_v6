@@ -298,7 +298,7 @@ def test_long_car_wall_hand_on_wall_and_no_pin_stall():
     # revert to the body-axis pick -> lap > 20 m -> reddens.
     laps = [r.detail.get("followed_m", 0.0) for r in rns.audit.drain()
             if r.kind == "wall_exit"]
-    assert all(l < 20.0 for l in laps), "wall lap too long: %s" % laps
+    assert all(lap < 20.0 for lap in laps), "wall lap too long: %s" % laps
 
 
 def test_wall_entry_side_pick_survives_swung_yaw():
@@ -389,7 +389,7 @@ def test_user_full_run_side_pick_at_oblique_entry():
     assert tick is not None, "user full run failed again"
     laps = [r.detail.get("followed_m", 0.0) for r in rns.audit.drain()
             if r.kind == "wall_exit"]
-    assert all(l < 20.0 for l in laps), \
+    assert all(lap < 20.0 for lap in laps), \
         "oblique-entry side pick walked the long way: laps %s" % laps
 
 

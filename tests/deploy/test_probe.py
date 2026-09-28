@@ -141,8 +141,8 @@ def test_probe_fails_on_incomplete_config(happy_env, tmp_path):
     r = _run_probe(env)
     assert r.returncode != 0
     lines = _emit_lines(r.stderr)
-    assert any("temperature" in json.dumps(l) or "databases" in json.dumps(l)
-               for l in lines), r.stderr
+    assert any("temperature" in json.dumps(ln) or "databases" in json.dumps(ln)
+               for ln in lines), r.stderr
 
 
 # --- Negative + variant: disk full ---------------------------------
@@ -167,8 +167,8 @@ def test_probe_reports_disk_full_when_threshold_exceeded(happy_env, tmp_path):
     })
     assert r.returncode != 0
     lines = _emit_lines(r.stderr)
-    assert any(l["code"] == "E_CONFIG_INVALID"
-               and l["detail"]["kind"] == "disk_full" for l in lines), r.stderr
+    assert any(ln["code"] == "E_CONFIG_INVALID"
+               and ln["detail"]["kind"] == "disk_full" for ln in lines), r.stderr
 
 
 # --- DB corruption: E_STORAGE_CORRUPT + detail.db_name -------------
@@ -195,7 +195,7 @@ def test_db_corruption_reports_storage_corrupt_with_db_name(happy_env, tmp_path)
     })
     assert r.returncode != 0
     lines = _emit_lines(r.stderr)
-    corrupt = [l for l in lines if l["code"] == "E_STORAGE_CORRUPT"]
+    corrupt = [ln for ln in lines if ln["code"] == "E_STORAGE_CORRUPT"]
     assert corrupt, "expected E_STORAGE_CORRUPT, got: %s" % r.stderr
     assert corrupt[0]["detail"]["db_name"] == "task.db"
 
@@ -226,10 +226,10 @@ def test_db_schema_mismatch_reports_config_invalid_not_storage_corrupt(
     })
     assert r.returncode != 0
     lines = _emit_lines(r.stderr)
-    assert any(l["code"] == "E_CONFIG_INVALID"
-               and l["detail"]["kind"] == "db_schema_mismatch"
-               for l in lines), r.stderr
-    assert not any(l["code"] == "E_STORAGE_CORRUPT" for l in lines)
+    assert any(ln["code"] == "E_CONFIG_INVALID"
+               and ln["detail"]["kind"] == "db_schema_mismatch"
+               for ln in lines), r.stderr
+    assert not any(ln["code"] == "E_STORAGE_CORRUPT" for ln in lines)
 
 
 # --- GATE-6: iface missing ------------------------------------------
@@ -250,9 +250,9 @@ def test_gate6_missing_iface_reports_net_profile_mismatch(happy_env, tmp_path):
     r = _run_probe(env)
     assert r.returncode != 0
     lines = _emit_lines(r.stderr)
-    mism = [l for l in lines
-            if l["detail"].get("kind") == "net_profile_mismatch"
-            and l["detail"].get("interface") == "zz99_missing"]
+    mism = [ln for ln in lines
+            if ln["detail"].get("kind") == "net_profile_mismatch"
+            and ln["detail"].get("interface") == "zz99_missing"]
     assert mism, r.stderr
     # Per-port expected vs actual must be present.
     assert mism[0]["detail"]["expected"]["ipv4"] == "10.99.99.1"
@@ -279,12 +279,12 @@ def test_gate6_profile_overlap_fires_before_actual_diff(happy_env, tmp_path):
     r = _run_probe(env)
     assert r.returncode != 0
     lines = _emit_lines(r.stderr)
-    over = [l for l in lines
-            if l["detail"].get("kind") == "net_profile_overlap"]
+    over = [ln for ln in lines
+            if ln["detail"].get("kind") == "net_profile_overlap"]
     assert over, r.stderr
     # No per-iface diff should have been emitted (overlap short-circuits).
-    diff = [l for l in lines
-            if l["detail"].get("kind") == "net_profile_mismatch"]
+    diff = [ln for ln in lines
+            if ln["detail"].get("kind") == "net_profile_mismatch"]
     assert not diff, "overlap should suppress iface diff; got %s" % diff
 
 

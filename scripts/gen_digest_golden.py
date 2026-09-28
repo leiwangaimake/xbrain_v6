@@ -496,7 +496,7 @@ def main():
         seen = {}
         for v in vecs:
             seen.setdefault(v[key], []).append(v["name"])
-        for text, names in seen.items():
+        for _text, names in seen.items():
             if len(names) > 1:
                 print("note: %s vectors %s share a canonical string; that is "
                       "intended only where the vector says so" % (name, names))

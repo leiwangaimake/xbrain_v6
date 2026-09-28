@@ -64,8 +64,8 @@ class ThreadRegistry:
     def get(self, role: ThreadRole) -> ThreadIdent:
         try:
             return self._map[role]
-        except KeyError:
-            raise RuntimeError(f"role {role.value!r} not bound yet")
+        except KeyError as exc:
+            raise RuntimeError(f"role {role.value!r} not bound yet") from exc
 
     def role_of(self, tid: int) -> ThreadRole:
         for role, ident in self._map.items():

@@ -84,7 +84,9 @@ def test_start_recording_arms_and_sends_40() -> None:
     link = _link()
     sock = _FakeSock()
     link._audio_sock = sock  # type: ignore[attr-defined]
-    sink = lambda pkt: None
+    def sink(pkt):          # def, not lambda (E731). The assertion below
+        return None         #   is `link._mic_sink is sink` -- identity,
+                            #   so the body is irrelevant, the name is not.
     link.start_recording(sink)
     assert link._recording is True  # type: ignore[attr-defined]
     assert link._mic_sink is sink  # type: ignore[attr-defined]

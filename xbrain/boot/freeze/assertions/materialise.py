@@ -275,7 +275,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
             {"kind": "l4_l4b_resolve_failed",
              "site_id": site_id, "robot_id": robot_id,
              "reason": str(exc)},
-        )
+        ) from exc
 
     # Isolate the common subtree; that is the ONLY namespace L6 refs
     # may point at (R-2). Wrapping in a dict keeps a fresh reference so
@@ -307,7 +307,7 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
             "materialise: common.* still holds an unexpanded reference "
             "after resolve(); %s" % exc,
             {"kind": "common_digest_unresolved", "reason": str(exc)},
-        )
+        ) from exc
     # layers[] + config_rev: the audit trail (10 S5.4.6 CFG-41). site_id
     # and robot_id are the RESOLVED values read above, so the rows name
     # the L4 / L4b files the merge actually consumed rather than the

@@ -448,7 +448,7 @@ def main():
         print("scan surface: 11 S1.1.6 hand-tables + S2.2 via WL-G1")
         # Surface policy_errors and wl_g3_errors first: those are defects in
         # the DOC that no amount of whitelists.py edits can suppress.
-        for proc, data in extracted.items():
+        for _proc, data in extracted.items():
             for pe in data["policy_errors"]:
                 print("  DIRECTION-POLICY: %s %s direction=%s want=%s"
                       % (pe[0], pe[1], pe[2], pe[3]))

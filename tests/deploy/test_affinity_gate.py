@@ -133,8 +133,8 @@ def test_removing_the_affinity_line_is_caught_separately():
     两种处置不同, 一条消息盖住两件事会把人引到错的方向."""
     target = UNIT_DIR / "xbrain-quadruped.service"
     original = target.read_text(encoding="utf-8")
-    stripped = "\n".join(l for l in original.split("\n")
-                         if not l.startswith("CPUAffinity="))
+    stripped = "\n".join(ln for ln in original.split("\n")
+                         if not ln.startswith("CPUAffinity="))
     assert stripped != original
     try:
         target.write_text(stripped, encoding="utf-8")
@@ -200,7 +200,7 @@ def test_unit_names_are_derived_not_hand_mapped():
         idx = block.index('"%s"' % key)
         before = block[:idx]
         # 该行之前必须有注释(最近一段以 # 开头的连续行).
-        prev = [l for l in before.split("\n") if l.strip()][-1]
+        prev = [ln for ln in before.split("\n") if ln.strip()][-1]
         assert prev.strip().startswith("#"), (
             "例外映射的理由缺失: %s 上面没有注释" % key)
 

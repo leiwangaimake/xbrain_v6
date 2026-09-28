@@ -479,7 +479,9 @@ def test_mutation_forced_preempt_deadline_is_bounded():
     a.request("low_atomic", Request("r1", mono_ms=0, atomic=True))
     a.request("high", Request("r2", mono_ms=10))
     # After 50ms wait_atomic timeout + a little, tick forces.
-    events = a.tick(now_mono_ms=100)
+    a.tick(now_mono_ms=100)   # the tick is what forces; the event list it
+    #   returns is not what this property is about -- the assertion below
+    #   reads the holder, which is the invariant being stated.
     # Must have advanced -- if unbounded, high would stay queued.
     assert a.holder().source_id == "high", \
         "unbounded deadline mutation: high should be installed by 100ms"

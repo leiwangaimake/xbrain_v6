@@ -60,8 +60,8 @@ def next_stage(current: str) -> str:
     (DETACH) has no next: caller ends the task."""
     try:
         ix = STAGE_ORDER.index(ChargeStage(current))
-    except ValueError:
-        raise InvalidChargeStageTransition(f"unknown stage {current!r}")
+    except ValueError as exc:
+        raise InvalidChargeStageTransition(f"unknown stage {current!r}") from exc
     if ix + 1 >= len(STAGE_ORDER):
         raise InvalidChargeStageTransition(
             f"no next stage after {current!r}")

@@ -284,7 +284,7 @@ def main(argv=None) -> int:
     print("\n--- uplink received in %.0fs: %d sample(s) ---"
           % (args.seconds, len(received)))
     seen_keys = {}
-    for key, body in received:
+    for key, _body in received:
         seen_keys[key] = seen_keys.get(key, 0) + 1
     for key in sorted(seen_keys):
         print("  %-44s x%d" % (key, seen_keys[key]))

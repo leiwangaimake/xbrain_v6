@@ -256,7 +256,7 @@ def rule_4_no_double_claim(rows):
     bad = []
     for path, claims in claim_lines.items():
         if len(claims) >= 2:
-            names = ", ".join("%s@L%d" % (i, l) for i, l in claims)
+            names = ", ".join("%s@L%d" % (i, ln) for i, ln in claims)
             bad.append("rule-4 double-claim: %r -- %s" % (path, names))
     return bad
 

@@ -186,7 +186,7 @@ def validate_restate_templates(templates) -> None:
     (render_rs4_correction).
     """
     l1b_pre = templates.get("l1b_pre", {})
-    for name, text in l1b_pre.items():
+    for _name, text in l1b_pre.items():
         check_rs1_numeric_uses_request_word(text, _has_numeric_slot(text))
     for group, block in templates.items():
         if group in _GROUPS_NOT_ACTION_TEMPLATES:

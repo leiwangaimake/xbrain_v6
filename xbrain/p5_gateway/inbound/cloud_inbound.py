@@ -95,7 +95,7 @@ def parse_frame(raw: bytes, key_rid: str) -> Dict[str, Any]:
         body = json.loads(text)
     except (UnicodeDecodeError, ValueError) as exc:
         raise InboundReject(envelope_error(
-            CODE_JSON_PARSE, "frame is not valid JSON", {"parse_error": str(exc)}))
+            CODE_JSON_PARSE, "frame is not valid JSON", {"parse_error": str(exc)})) from exc
     if not isinstance(body, dict):
         raise InboundReject(envelope_error(
             CODE_JSON_PARSE, "frame top level is not an object",

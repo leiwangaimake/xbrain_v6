@@ -253,7 +253,7 @@ async def _transition_one(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
         result = apply_transition(state, event)
     except InvalidTransition as exc:
         raise TaskCommandError(E_TASK_STATE, str(exc),
-                               {"task_id": cmd.task_id, "state": state})
+                               {"task_id": cmd.task_id, "state": state}) from exc
     if result.idempotent:
         return task_ack(cmd.cmd_id, "duplicate", "OK",
                         {"task_id": cmd.task_id,

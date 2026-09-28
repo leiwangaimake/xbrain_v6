@@ -131,7 +131,7 @@ class OnvifSession:
         headers = {"Content-Type": "application/soap+xml; charset=utf-8",
                    "Connection": "keep-alive"}
         last_exc = None
-        for attempt in (1, 2):          # the peer may reap the connection
+        for _attempt in (1, 2):          # the peer may reap the connection
             try:
                 if self._conn is None:
                     self._conn = http.client.HTTPConnection(

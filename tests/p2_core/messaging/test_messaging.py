@@ -218,7 +218,9 @@ class _FakeSubscriberRegistry:
 def test_subscriber_declares_registered_key():
     reg = _FakeSubscriberRegistry()
     sub = p2_subscriber.P2Subscriber(registry=reg)
-    handler = lambda sample: None
+    def handler(sample):    # a def, not a lambda (E731); the assertion
+        return None         #   below compares by IDENTITY, so any
+                            #   callable works as long as it is THIS one.
     sub.declare(None, "cmd/motion/intent", handler)
     assert reg.declared == [("cmd/motion/intent", handler)]
     assert "cmd/motion/intent" in sub.declared_keys

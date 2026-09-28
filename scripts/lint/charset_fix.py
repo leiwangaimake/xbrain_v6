@@ -147,7 +147,10 @@ def fix_file(path, apply_changes):
         # guessing at string boundaries is how a fixer corrupts code.
         comment = {i for i, ln in enumerate(lines, 1)
                    if ln.lstrip().startswith(("#", "//", "*", "/*"))}
-        string = set()
+        # _string: the tokenizer branch returns a string-line set, this
+        # branch has none. fix_file never reads it (it only rewrites
+        # whole-line comments), so the name is a dummy on both sides.
+        _string = set()
 
     fixed = skipped = 0
     for i, line in enumerate(lines, 1):

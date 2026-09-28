@@ -61,6 +61,6 @@ class Dispatcher:
     def dispatch(self, task_type: str):
         try:
             return self._handlers[task_type]
-        except KeyError:
+        except KeyError as exc:
             raise UnknownDispatchTarget(
-                f"no handler for {task_type!r}")
+                f"no handler for {task_type!r}") from exc

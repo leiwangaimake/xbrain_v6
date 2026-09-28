@@ -188,8 +188,8 @@ def test_every_known_conflict_is_real_in_the_doc():
     for word, *intents in sa.KNOWN_TRIGGER_CONFLICTS:
         for intent in intents:
             # 该意图那一行必须真的含这个触发词.
-            rows = [l for l in doc.split("\n")
-                    if ("`%s`" % intent) in l and word in l]
+            rows = [ln for ln in doc.split("\n")
+                    if ("`%s`" % intent) in ln and word in ln]
             assert rows, (
                 "已知冲突 (%s, %s) 在 18 里查无实据 -- 编造的豁免会让一个"
                 "真冲突被永久放过" % (word, intent))

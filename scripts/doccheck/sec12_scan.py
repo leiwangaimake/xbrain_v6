@@ -78,7 +78,7 @@ def sp8_values(docs_dir):
     for m in PROFILE_BLOCK.finditer(text):
         name, body = m.group(1), m.group(2)
         vals = set()
-        for k, v in NUM_KEY.findall(body):
+        for _k, v in NUM_KEY.findall(body):
             if v != "null":
                 vals.add(float(v))
         if vals:

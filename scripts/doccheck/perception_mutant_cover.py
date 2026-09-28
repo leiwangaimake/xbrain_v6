@@ -109,7 +109,7 @@ def evaluate(text: str):
 def run(text: str, label: str) -> bool:
     defined, covered, missing = evaluate(text)
     print(f"scan surface: {DOC}  [{label}]")
-    print(f"  rules region : whole file MINUS the mutant table")
+    print("  rules region : whole file MINUS the mutant table")
     print(f"  mutant table : {TABLE_START_ANCHOR!r} .. {TABLE_END_ANCHOR!r}")
     print(f"  rules defined={len(defined)}  covered={len(defined & covered)}")
     if missing:

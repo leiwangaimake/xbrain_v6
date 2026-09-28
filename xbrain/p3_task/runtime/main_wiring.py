@@ -260,7 +260,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     "(EX-1/EX-4, NEXT.md [GATED-HW]).", _exc)
             except Exception as _exc:      # noqa: BLE001
                 _logger.error("p3 dispatcher self-check failed: %s", _exc)
-            
+
             state_pub = gen.declare_publisher(STATE_TASK_TOPIC)
             # 11 S4.4 TaskState, empty shape: the db is not open on this line yet,
             # and a subscriber that arrives before the first loop pass must still

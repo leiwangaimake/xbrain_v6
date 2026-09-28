@@ -167,27 +167,27 @@ def test_history_enable_on_unknown_raises():
 
 
 def test_trim_pops_history_first():
-    l = PromptLayers(system="S", mission="M", few_shots=["F1"],
+    layers = PromptLayers(system="S", mission="M", few_shots=["F1"],
                       history=["H1", "H2"])
     # Budget forces history to shrink.
-    trimmed = trim_to_budget(l, char_budget=len("S") + len("M") + len("F1"))
+    trimmed = trim_to_budget(layers, char_budget=len("S") + len("M") + len("F1"))
     assert trimmed.history == []
     # few_shots retained.
     assert trimmed.few_shots == ["F1"]
 
 
 def test_trim_never_touches_system():
-    l = PromptLayers(system="S" * 100, mission="", few_shots=[],
+    layers = PromptLayers(system="S" * 100, mission="", few_shots=[],
                       history=[])
-    trimmed = trim_to_budget(l, char_budget=10)
+    trimmed = trim_to_budget(layers, char_budget=10)
     # system still full (only trim step 4 would touch mission; not system).
     assert trimmed.system == "S" * 100
 
 
 def test_assemble_concatenates_layers():
-    l = PromptLayers(system="SYS", mission="MISSION",
+    layers = PromptLayers(system="SYS", mission="MISSION",
                       few_shots=["S1"], history=["H1"])
-    out = assemble(l)
+    out = assemble(layers)
     assert "SYS" in out
     assert "MISSION" in out
     assert "S1" in out
