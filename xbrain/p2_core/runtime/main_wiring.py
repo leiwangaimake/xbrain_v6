@@ -91,9 +91,9 @@ CMD_ESTOP_TOPIC = "cmd/estop"            # CLD-1: soft-estop disarm (14 S3.7)
 STATE_ARB_MOTION_TOPIC = "state/arb/motion"  # 11 S7A.5.1: suspended broadcast
 
 
-def stamp_health(data: dict, *, rid: str, boot: str, seq: int,
-                 ts_sync: bool) -> bytes:
-    """一份 HealthSummary -> 11 S3.0 信封的 JSON 字节.
+def stamp_body(data: dict, *, rid: str, boot: str, seq: int,
+               ts_sync: bool) -> bytes:
+    """一份报文体 -> 11 S3.0 信封的 JSON 字节. p2 三条 key 共用.
 
     S3.0 逐字"所有 Zenoh JSON 载荷共用此外层结构". health/summary 在
     2026-09-28 之前发的是[裸报文](顶层直接 {"schema":"health_summary_v1",...}),
@@ -102,6 +102,13 @@ def stamp_health(data: dict, *, rid: str, boot: str, seq: int,
     ! 现场为什么一直没炸: 今天的三个消费方(p3 的 _make_state_sink / p5 的
       _on_health / teach 的 missing_sources)都直接读顶层, 于是裸报文[恰好]
       能用 -- 一个新写的, 按契约解码的消费方才会在第一帧就失败.
+
+    *** 2026-09-28 本名由 stamp_health 改为 stamp_body: 同一批把
+    cmd/motion/factor(11 S3.6)与 state/audio(11 S8.10)一并补上信封, 三条
+    key 走同一个编码点. 一个叫 stamp_health 的函数给另外两条 key 用, 是一
+    句会让下一个读者找错发布点的假名字.
+    *** src 恒 "p2_core" 不开参数: 三条 key 的发布者在 11 S2.2 里都是本进程,
+    一个可传的 src 等于给"冒充别的进程"开一个不需要的口子(S8.8.1 发布者绑定).
 
     *** 走共享编码器 xbrain.common.envelope.encode, NO 不手写八个键.
     手写过的地方(p1 的 stamp_envelope)把 ts/mono 戳成了毫秒整数, 而 S3.0 是
@@ -201,12 +208,22 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         #: read_local_boot_id 是文件 IO, 放进 1 Hz 心跳里是白白的系统调用.
         #: rid 缺失时发空串而 NO 不兜 "unknown" -- 空串至少是[可见的缺失],
         #: 一个编出来的 rid 会让消费方按一台不存在的车归档.
-        _health_env_rid = os.environ.get("XBRAIN_ROBOT_ID", "")
-        _health_env_boot = read_local_boot_id()
+        _env_rid = os.environ.get("XBRAIN_ROBOT_ID", "")
+        _env_boot = read_local_boot_id()
         #: S3.0 的 seq 按 key 各自递增(进程重启从 0 起). 一个全局计数器会让
         #: 每条 key 在消费方看来一直在跳号, 而 seq 正是 U18 补发游标与缺口
-        #: 判定的依据. health/summary 只有一条 key, 所以是标量.
-        _health_env_seq = [0]
+        #: 判定的依据.
+        #: *** 2026-09-28 由标量改为按 key 的表: 本进程现在发三条带信封的
+        #: key(health/summary . cmd/motion/factor . state/audio), 而 state/audio
+        #: 是"变更即报"(最快 10 Hz), 另两条是 1 Hz -- 共用一个计数器会让 1 Hz
+        #: 那两条每帧跳十几号, 消费方按 U18 判"中间丢了十几帧".
+        _env_seq: dict = {}
+
+        def _next_seq(key: str) -> int:
+            """该 key 的下一个信封 seq. 按 key 各自递增(S3.0)."""
+            n = _env_seq.get(key, 0) + 1
+            _env_seq[key] = n
+            return n
         # 11 S3.6 / 14 S2.3 P-2: cmd/motion/factor is P2's grant to P1 -- the
         # speed gate's h() input, allow_motion and the admissible profile. It is
         # derived from the SAME aggregate as health/summary in the 1 Hz block
@@ -234,6 +251,20 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # while a bare seq resets, so two boots would collide on eid.
         _cfg_evt = {"boot": os.urandom(3).hex(), "seq": 0}
         state_cache: dict = {}
+
+        def _clock_sync() -> bool:
+            """11 S3.0 信封的 ts_sync. 抄 P1-13 镜像来的 ClockStatus.sync.
+
+            CLK-A2: 本进程 NO 不自行判定授时状态 -- 唯一有权判定的是
+            rtk_driver. 这里只是把它转述一次.
+            *** 字段名是 sync, NO 不是 ts_sync: 后者只存在于[信封]层, 而
+            state/clock 的 data 里 p1 发的是 sync. 读错名字不报错, 只会恒取到
+            None 再恒判 False -- 一条永远"未同步"的报文, 而两侧进程都健康.
+            *** 提成一个函数而不是在三个发布点各抄一遍: 抄三遍必然有一遍
+            先腐烂, 而三条 key 的 ts_sync 不一致会让消费方以为同一台车的
+            授时状态在 key 之间跳变.
+            """
+            return (state_cache.get("clock") or {}).get("sync") is True
         # Boot-unique estop event token + seq (same rationale as _dev_eid: seq
         # resets per boot but record.db persists, so a bare seq re-collides).
         _estop_boot = os.urandom(3).hex()
@@ -732,20 +763,12 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     try:
                         refresh_health(health_agg, state_cache, now_mono_s=now,
                                        device_states=device_bridge.states())
-                        # 11 S3.0 信封. ts_sync 抄 P1-13 镜像来的
-                        # ClockStatus.sync(CLK-A2: 本进程 NO 不自行判定授时
-                        # 状态, 唯一有权判定的是 rtk_driver).
-                        # NO 不读 state_cache["clock"]["ts_sync"] -- 那个键名
-                        # 在 state/clock 的 data 里不存在(p1 发的是 sync),
-                        # 恒取到 None.
-                        _health_env_seq[0] += 1
-                        health_pub.put(stamp_health(
+                        # 11 S3.0 信封. ts_sync 见 _clock_sync 的注释.
+                        health_pub.put(stamp_body(
                             health_agg.build_summary(factor_cfg),
-                            rid=_health_env_rid, boot=_health_env_boot,
-                            seq=_health_env_seq[0],
-                            ts_sync=bool(
-                                (state_cache.get("clock") or {}).get("sync")
-                                is True)))
+                            rid=_env_rid, boot=_env_boot,
+                            seq=_next_seq(HEALTH_SUMMARY_TOPIC),
+                            ts_sync=_clock_sync()))
                         # the grant, from the same aggregate (11 S3.6 body).
                         factor_body = build_health_factor(health_agg.states(), factor_cfg)
                         # 10 S3.3.3 Stage C criterion 3 / 10 S5.4.4 failure row:
@@ -760,8 +783,18 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                             # max_profile together; see its docstring on why
                             # forcing only the flag is not enough.
                             hold_grant(factor_body, _verdict.detail["kind"])
-                        factor_pub.put(json.dumps(
-                            factor_body, ensure_ascii=False).encode("utf-8"))
+                        # 11 S3.0 信封(2026-09-28 补). 在此之前发的是裸报文,
+                        # 与 health/summary 同一个缺陷 -- 而这条是 P1 速度门
+                        # h() 的唯一输入(11 S3.6 P1-4): 一个按 S3.0 解码的新
+                        # 消费方会在必填字段那一步退出, 现象是 P1 的
+                        # HealthFactorSlot 永远停在 "never" = 零速, 而 p2 每秒
+                        # 都在发. 消费侧 p1 nav_wiring 的 unwrap_body 两种形态
+                        # 都吃(判据 tests/p1_motion/nav/test_nav_wiring_factor_
+                        # envelope.py), 所以桩发布者不受影响.
+                        factor_pub.put(stamp_body(
+                            factor_body, rid=_env_rid, boot=_env_boot,
+                            seq=_next_seq(CMD_MOTION_FACTOR_TOPIC),
+                            ts_sync=_clock_sync()))
                         if _verdict.edge:
                             # 10 S5.4.4 verbatim: event/fault/bit with
                             # detail.kind = "config_digest_mismatch". On the
@@ -869,8 +902,15 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         _body, last_audio_body, now, last_audio,
                         AUDIO_STATE_PERIOD_S)
                     if _due:
-                        audio_state_pub.put(json.dumps(
-                            _body, ensure_ascii=False).encode("utf-8"))
+                        # 11 S3.0 信封(2026-09-28 补, 与 health/summary .
+                        # cmd/motion/factor 同一批). 比对键 _cmp 取自[体],
+                        # NO 不取信封 -- 信封每帧 seq/ts 都不同, 拿它比对会
+                        # 让"变更即报"退化成"每拍都报"(同 audio_publish_due
+                        # 摘掉 ts_mono 的理由).
+                        audio_state_pub.put(stamp_body(
+                            _body, rid=_env_rid, boot=_env_boot,
+                            seq=_next_seq(STATE_AUDIO_TOPIC),
+                            ts_sync=_clock_sync()))
                         last_audio_body = _cmp
                         last_audio = now
                 except Exception as exc:      # noqa: BLE001

@@ -878,11 +878,23 @@ def run_voice_loop_wiring(stop_flag: dict,
             # playing/recording), 那个映射在 cloud_state._audio 里做 -- 回调跑
             # 在 Rust 线程池上(CLAUDE.md 4.2), 只做一次 dict 赋值(原子), 不做
             # 闭集校验: 校验会抛, 而在 Rust 线程上抛出去没人接得住.
+            #
+            # *** 存的是信封里的 data, 不是整条报文(2026-09-28, p2 给
+            # state/audio 补上 11 S3.0 信封的同一批). 裸形态照样接受, 理由与
+            # _on_health 同一条: 桩发布者与旧版本 p2 都不带信封.
+            # ! 这一层 NO 不能省, 而且这条 key 漏解包的后果比 health 更坏:
+            #   下游 cloud_state._audio 读 a.get("speaker") 取不到 -> holder
+            #   为 None -> speaking = (holder != "none") 判成 True ->
+            #   Qt 上"喇叭一直在响"而机器人其实静默. 一个按信封发的发布者
+            #   会让这一格变成恒真, 与"没解包"在报文上不可区分.
             try:
                 d = json.loads(bytes(sample.payload).decode("utf-8"))
             except Exception:      # noqa: BLE001
                 return
             if isinstance(d, dict):
+                inner = d.get("data")
+                if isinstance(inner, dict):
+                    d = inner
                 hmi_state["audio"] = d
                 # 陈旧度判据的时基. p2 的下限是 1 Hz, 所以"很久没来"是可判的.
                 # 没有这个戳的话, p2 挂掉之后 hmi_state["audio"] 会一直停在

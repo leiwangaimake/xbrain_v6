@@ -14,7 +14,7 @@ v/rid/ts/mono/boot/seq/src/ts_sync. 2026-09-28 在 ORIN 总线上抓到的就是
 准入(15 S179 V-5 allow_motion)与 HMI 健康面板的唯一来源.
 
 本文件分三半, 每一半都能在另外两半全绿时坏掉:
-  * stamp_health 的[逐字段]判据 -- 九个键齐全 / ts 与 mono 是秒 float(不是
+  * stamp_body 的[逐字段]判据 -- 九个键齐全 / ts 与 mono 是秒 float(不是
     毫秒整数, p1 的 stamp_envelope 正是这么错过一次) / 无 boot 时 mono 与
     boot 一并省略(CLK-C4) / ts_sync 照传不自行判定 / src 是 p2_core;
   * 接线上真的用了它 -- 纯函数写对而调用处还在 json.dumps(裸 dict) 是一个
@@ -33,7 +33,7 @@ import pytest
 
 from xbrain.common.envelope import decode
 from xbrain.p2_core.runtime.main_wiring import (run_voice_loop_wiring,
-                                                stamp_health)
+                                                stamp_body)
 
 pytestmark = pytest.mark.no_device
 
@@ -60,7 +60,7 @@ def _decode(raw: bytes) -> dict:
 
 
 def test_the_stamp_carries_all_eight_envelope_fields_plus_data():
-    env = _decode(stamp_health(_SUMMARY, rid="m20s", boot="abc12345",
+    env = _decode(stamp_body(_SUMMARY, rid="m20s", boot="abc12345",
                                seq=3, ts_sync=True))
     assert set(env) == {"v", "rid", "ts", "mono", "boot", "seq", "src",
                         "ts_sync", "data"}
@@ -77,10 +77,10 @@ def test_the_stamp_carries_all_eight_envelope_fields_plus_data():
 def test_the_summary_is_the_data_not_the_top_level():
     """裸报文与信封的区别就在这一条.
 
-    MUTATION: 把 stamp_health 改回 json.dumps(data) -> 顶层出现 schema,
+    MUTATION: 把 stamp_body 改回 json.dumps(data) -> 顶层出现 schema,
     data 消失, 本条红.
     """
-    env = _decode(stamp_health(_SUMMARY, rid="m20s", boot="b", seq=1,
+    env = _decode(stamp_body(_SUMMARY, rid="m20s", boot="b", seq=1,
                                ts_sync=False))
     assert "schema" not in env
     assert env["data"]["schema"] == "health_summary_v1"
@@ -94,7 +94,7 @@ def test_ts_and_mono_are_seconds_not_milliseconds():
     5000 s 前的, 于是每一条都超龄, 而发布方看着完全正常.
     MUTATION: 任一个乘 1000 或取 int -> 本条红.
     """
-    env = _decode(stamp_health(_SUMMARY, rid="m20s", boot="b", seq=1,
+    env = _decode(stamp_body(_SUMMARY, rid="m20s", boot="b", seq=1,
                                ts_sync=False))
     for field in ("ts", "mono"):
         assert isinstance(env[field], float)
@@ -112,7 +112,7 @@ def test_without_a_boot_id_mono_is_omitted_too():
     看起来能算, 算出来是错的年龄.
     MUTATION: boot 为空时仍填 mono -> 本条红.
     """
-    env = _decode(stamp_health(_SUMMARY, rid="m20s", boot="", seq=1,
+    env = _decode(stamp_body(_SUMMARY, rid="m20s", boot="", seq=1,
                                ts_sync=False))
     assert "mono" not in env and "boot" not in env
     # 其余字段照常, 这一条才不会退化成"什么都不发也通过".
@@ -125,9 +125,9 @@ def test_ts_sync_is_relayed_not_decided_here():
 
     MUTATION: 写死 True 或 False -> 两个取值里必有一个红.
     """
-    assert _decode(stamp_health(_SUMMARY, rid="r", boot="b", seq=1,
+    assert _decode(stamp_body(_SUMMARY, rid="r", boot="b", seq=1,
                                 ts_sync=True))["ts_sync"] is True
-    assert _decode(stamp_health(_SUMMARY, rid="r", boot="b", seq=1,
+    assert _decode(stamp_body(_SUMMARY, rid="r", boot="b", seq=1,
                                 ts_sync=False))["ts_sync"] is False
 
 
@@ -138,7 +138,7 @@ def test_health_summary_is_published_through_the_stamper():
     # MUTATION: 恢复 health_pub.put(json.dumps(health_agg.build_summary(...)))
     # -> 本条红. 纯函数写对而调用处没换, 上面五条全绿而线上仍是裸报文.
     src = inspect.getsource(run_voice_loop_wiring)
-    assert "health_pub.put(stamp_health(" in src
+    assert "health_pub.put(stamp_body(" in src
     assert "health_pub.put(json.dumps(" not in src
 
 
@@ -148,8 +148,10 @@ def test_the_envelope_seq_increments_per_publish():
     MUTATION: 删掉自增行 -> 本条红.
     """
     src = inspect.getsource(run_voice_loop_wiring)
-    assert "_health_env_seq[0] += 1" in src
-    assert "seq=_health_env_seq[0]" in src
+    # 2026-09-28: 标量 _health_env_seq 改为按 key 的表(本进程现在发三条带
+    # 信封的 key). 判据随之改为"health/summary 取的是它自己那条 key 的号".
+    assert "seq=_next_seq(HEALTH_SUMMARY_TOPIC)" in src
+    assert "_env_seq[key] = n" in src
 
 
 def test_ts_sync_comes_from_the_clock_mirror_field_named_sync():
@@ -159,10 +161,15 @@ def test_ts_sync_comes_from_the_clock_mirror_field_named_sync():
     读错名字不会报错, 只会恒取到 None 再恒判 False: 一条永远"未同步"的
     health/summary, 而两侧进程都健康.
     MUTATION: 改成 .get("ts_sync") -> 本条红.
+
+    2026-09-28: 求值从三个发布点内联改为 _clock_sync() 一处(三条 key 共用),
+    所以判据读的是那个函数体, NO 不再切 health 发布块 -- 切块的写法在函数
+    提取之后会切到一段不含 .get 的代码上, 变成一条恒红(再被人改成恒绿)的
+    断言.
     """
     src = inspect.getsource(run_voice_loop_wiring)
-    block = src[src.index("health_pub.put(stamp_health("):]
-    block = block[:block.index("factor_body =")]
+    block = src[src.index("def _clock_sync()"):]
+    block = block[:block.index("def _estop_seq_next()")]
     assert '.get("sync")' in block
     assert '.get("ts_sync")' not in block
 
