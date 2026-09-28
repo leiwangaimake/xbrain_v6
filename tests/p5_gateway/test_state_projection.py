@@ -102,8 +102,11 @@ _TWO_CELLS = {
 #: 13 V-68 的实测形态: 只装了一块, 空槽上报全零 + -273.0(绝对零度哨兵).
 #: 2026-09-15 现场换电池后抓到的就是这个, 底盘同时报 PowerManagement 1
 #: (single_battery), 而 11 S4.2 把 single_battery 列为[合法]状态.
+#: ! soc_pct 是 26 而不是 0: 2026-09-28 用户裁决后, quadruped 的 min 只看在位
+#:   的槽(11 S4.2 soc_pct 行 + 13 V-68 已同批订正). 本 fixture 曾写 0 --
+#:   那是[修之前]的线上取值, 照它写会让本文件断言一个已经不会发生的输入.
 _EMPTY_SLOT = {
-    "soc_pct": 0, "present_count": 1, "battery_mapping": "unknown",
+    "soc_pct": 26, "present_count": 1, "battery_mapping": "unknown",
     "batteries": None,
     "list": [
         {"index": 0, "level_pct": 0, "voltage_v": 0.0, "temp_c": -273.0,
@@ -139,10 +142,10 @@ def test_an_empty_slot_is_excluded_from_both_reductions():
     d = _robot(power=_EMPTY_SLOT)
     assert d["battery"]["voltage_v"] == 50.4
     assert d["battery"]["temperature_c"] == 30.2
-    # NO 不顺手把 soc 也排除空槽: 13 V-68 逐字"本期按契约字面, min_level 仍
-    # 取全表最小值, 不自行排除(那是替云深处裁决)". soc 由 quadruped 算, 这里
-    # 只是照传 -- 0 原样出去.
-    assert d["battery"]["soc"] == 0
+    # soc 也排除空槽了(2026-09-28 用户裁决), 但那是[源头]做的 -- 本文件只照
+    # 传. 断言 26 是在钉住"照传"这件事: 一个自己再算一遍的实现会从 list[] 里
+    # 重新取 min 而得到 0, 两处各算一次就会在某天给出两个电量.
+    assert d["battery"]["soc"] == 26
 
 
 def test_a_cell_without_the_present_flag_falls_back_to_the_voltage_test():

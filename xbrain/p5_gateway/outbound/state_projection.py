@@ -445,17 +445,25 @@ def _battery(power: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     -273 拉偏 -- 而 single_battery 是 S4.2 列明的[合法]状态, 所以这不是异常
     分支, 是常态. 判据用 quadruped 已经算好的 present(13 V-68: Voltage > 0.0,
     真电池即使 0% 也仍有电压), 缺该字段时按同一条自行判.
-    ! NO 不顺手把 soc_pct 也排除空槽 -- 13 V-68 逐字"本期实现按契约字面:
-      min_level 仍取全表最小值, 不自行把空槽排除在外(那是替云深处裁决)".
-      塌缩规则本文件可以定(契约没写), soc 的规则契约写了, 两者不同性质.
+    *** soc_pct 同样排除空槽, 但那是[源头]做的, 不是这里(2026-09-28 用户裁决).
+    本段此前写着"NO 不顺手把 soc_pct 也排除空槽 -- 13 V-68 逐字'本期实现按
+    契约字面: min_level 仍取全表最小值'" -- 已作废. 裁决理由: 不隐瞒空槽(对)
+    != 把它的假零算进聚合值(错); present: false 的含义是[这里没有电池]而不是
+    [这块电池 0%]. 11 S4.2 的 soc_pct 行与 13 V-68 已同批订正.
+    ! 落点在 quadruped(ParseDeviceStatus / WritePowerState), 所以这里仍然是
+      [直接过] soc_pct -- NO 不在本文件再算一次. 两处各算一次就会在某一天给出
+      两个电量, 而现场只会看见其中一个.
+    ! 全空槽时源头发 null, 下面的 isinstance 分支把它照样带成 null.
     """
     if not power:
         return None
     soc = power.get("soc_pct")
     cells = _present_cells(power)
     return {
-        # S4.2: soc_pct 已经是两块电池的较小值(CHG-10), 直接过.
-        # 非数值一律 null -- 一条坏报文不该变成一个电量读数.
+        # S4.2: soc_pct 已经是[在位]电池的较小值(CHG-10, 2026-09-28 订正),
+        # 由 quadruped 算好, 直接过.
+        # 非数值一律 null -- 一条坏报文不该变成一个电量读数. 源头在全空槽时
+        # 发 null, 这一条同时把它带过去.
         "soc": soc if isinstance(soc, (int, float)) and not isinstance(soc, bool)
                else None,
         # 一块在位电池都没有(底盘离线 / 两槽全空) -> null, NO 不报 0.
