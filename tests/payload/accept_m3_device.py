@@ -35,11 +35,13 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from services.payload.codec.opus_stream import OpusDecoderStream, OpusEncoderStream
-from services.payload.codec.resample import resample_linear
-from services.payload.config import PayloadConfig
-from services.payload.core.device_link import DeviceLink, DeviceLinkError
-from services.payload.protocol.audio_8519 import (
+# noqa: E402 -- same as bench_asr_device: `services.*` resolves only after the
+# _REPO_ROOT insert above.
+from services.payload.codec.opus_stream import OpusDecoderStream, OpusEncoderStream  # noqa: E402
+from services.payload.codec.resample import resample_linear  # noqa: E402
+from services.payload.config import PayloadConfig  # noqa: E402
+from services.payload.core.device_link import DeviceLink, DeviceLinkError  # noqa: E402
+from services.payload.protocol.audio_8519 import (  # noqa: E402
     VOICE_MALE,
     build_hail,
     build_hail_stop,

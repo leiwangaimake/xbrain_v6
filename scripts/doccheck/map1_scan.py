@@ -202,13 +202,15 @@ def _self_test() -> int:
         print("self-test FAIL: baseline had diff %s" % d)
         return 1
     # Variant 1: A has row 4 -> E_ONE, B does not.
-    a2 = dict(a); a2["4"] = "E_ONE"
+    a2 = dict(a)
+    a2["4"] = "E_ONE"
     d2 = diff(a2, b)
     if not d2.get("E_ONE", {}).get("forward"):
         print("self-test FAIL: variant 1 (forward) did not fire")
         return 1
     # Variant 2: B points E_TWO at row 99, A does not.
-    b2 = dict(b); b2["E_TWO"] = frozenset({"3", "99"})
+    b2 = dict(b)
+    b2["E_TWO"] = frozenset({"3", "99"})
     d3 = diff(a, b2)
     if not d3.get("E_TWO", {}).get("reverse"):
         print("self-test FAIL: variant 2 (reverse) did not fire")

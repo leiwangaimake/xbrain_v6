@@ -56,9 +56,11 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from services.asr.config import _FAMILY_MODEL_DIRS, AsrConfig
-from services.asr.core.audio_in import decode_wav
-from services.asr.core.recognizer import AsrEngineError, Recognizer
+# noqa: E402 -- the _REPO_ROOT insert above is what makes `services.*` importable
+# when this file is launched as a plain script; hoisting these breaks that.
+from services.asr.config import _FAMILY_MODEL_DIRS, AsrConfig  # noqa: E402
+from services.asr.core.audio_in import decode_wav  # noqa: E402
+from services.asr.core.recognizer import AsrEngineError, Recognizer  # noqa: E402
 
 # The acceptance budget. A spoken second must cost under half a second to transcribe, so
 # recognition never becomes the bottleneck in a 功能1 dialogue turn.

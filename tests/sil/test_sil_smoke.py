@@ -27,10 +27,13 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "sil"))
 
-from sil_world import SilWorld
-from xbrain.p1_motion.rns.route import Mission
-from xbrain.p1_motion.rns.source import RnsSource
-from xbrain.p1_motion.rns.types import MissionKind, Origin
+# noqa: E402 throughout -- sil_world lives in scripts/sil and is reachable only
+# via the sys.path.insert above; the xbrain imports sit with it so the block
+# reads as one unit rather than half-hoisted.
+from sil_world import SilWorld  # noqa: E402
+from xbrain.p1_motion.rns.route import Mission  # noqa: E402
+from xbrain.p1_motion.rns.source import RnsSource  # noqa: E402
+from xbrain.p1_motion.rns.types import MissionKind, Origin  # noqa: E402
 
 CFG = yaml.safe_load((ROOT / "configs" / "rns.yaml").read_text(encoding="utf-8"))
 DT = 0.05

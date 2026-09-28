@@ -29,6 +29,7 @@ Run:  python3 scripts/sil/sil_server.py   (listens on 0.0.0.0:8890)
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import json
 import math
 import sys
@@ -41,16 +42,20 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts" / "sil"))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+# E402 on the block below is DELIBERATE, not an oversight: every one of these
+# resolves only because of the two sys.path.insert lines above (the repo root
+# for xbrain.*, scripts/sil for the two bench modules). Hoisting them to the
+# top of the file -- which is what E402 asks for -- makes the import fail.
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from sil_world import (BLIND_NEAR_M, FOV_HALF_RAD, RANGE_MAX_M, SilWorld)
-from zenoh_world import world_to_body
-from xbrain.p1_motion.path.local_frame import LocalFrame
-from xbrain.p1_motion.rns.route import Mission
-from xbrain.p1_motion.rns.source import RnsSource
-from xbrain.p1_motion.rns.types import MissionKind, Origin
+from sil_world import (BLIND_NEAR_M, FOV_HALF_RAD, RANGE_MAX_M, SilWorld)  # noqa: E402
+from zenoh_world import world_to_body  # noqa: E402
+from xbrain.p1_motion.path.local_frame import LocalFrame  # noqa: E402
+from xbrain.p1_motion.rns.route import Mission  # noqa: E402
+from xbrain.p1_motion.rns.source import RnsSource  # noqa: E402
+from xbrain.p1_motion.rns.types import MissionKind, Origin  # noqa: E402
 
 TICK_HZ = 20.0
 DT = 1.0 / TICK_HZ
@@ -109,7 +114,6 @@ nav = {"state": "idle", "direction": 1, "target": None, "last_done": None}
 # flight recorder (user 2026-09-10: a long stall could not be diagnosed after
 # the fact -- the audit ring lived in-process with no REST). Ring of per-tick
 # records, 10 min at 20 Hz; /api/trace pulls it, /api/audit drains RNS events.
-from collections import deque
 TRACE = deque(maxlen=12000)
 
 

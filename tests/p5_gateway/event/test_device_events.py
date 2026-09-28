@@ -109,7 +109,8 @@ def test_flap_below_threshold_does_not_fire():
 
 def test_online_fires_after_recovery():
     m, fired = _mon(down_threshold=2, up_threshold=2)
-    m.observe(False); m.observe(False)   # offline
+    m.observe(False)
+    m.observe(False)   # offline
     assert m.observe(True) is None       # up streak 1
     assert m.observe(True) is False      # up streak 2 -> online
     assert fired == [("payload_speaker", True), ("payload_speaker", False)]

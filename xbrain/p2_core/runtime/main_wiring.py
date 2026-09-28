@@ -52,7 +52,14 @@ from xbrain.p2_core.boot.config_digest import (ConfigDigestGuard,
                                                digest_fault_event)
 from xbrain.p2_core.health.aggregate import HealthAggregator, refresh_health
 from xbrain.p2_core.health.factor import build_health_factor
+from xbrain.p2_core.audio.broadcast_rx import (BroadcastSession,
+                                              accept_chunk)
+from xbrain.p2_core.audio.broadcast_sink import BroadcastPlaySink
 from xbrain.p2_core.health.factor import FactorConfig, hold_grant
+from xbrain.p2_core.messaging.audio_state import (audio_publish_due,
+                                                  build_audio_state)
+from xbrain.p2_core.mode.b_mode_timer import BModeTimer
+from xbrain.p2_core.mode.state_machine import ModeState
 from xbrain.p2_core.runtime.speaker_wiring import (
     SPEAK_TOPIC, SpeakerBusy, SpeakerDomain, SpeakerHwError,
     SpeakerWiringConfig, parse_speak_payload, parse_speak_source,
@@ -67,14 +74,6 @@ _logger = logging.getLogger("xbrain.p2.wiring")
 HEALTH_SUMMARY_TOPIC = "health/summary"
 CMD_MOTION_FACTOR_TOPIC = "cmd/motion/factor"   # 11 S3.6, P2 -> P1, 1 Hz (14 S2.3 P-2)
 STATE_AUDIO_TOPIC = "state/audio"    # 11 S2.2.2, 内部总线裸键(rid 前缀由 p5 转云端时加)
-from xbrain.p2_core.audio.broadcast_rx import (BroadcastSession,
-                                              accept_chunk)
-from xbrain.p2_core.audio.broadcast_sink import BroadcastPlaySink
-from xbrain.p2_core.mode.b_mode_timer import BModeTimer
-from xbrain.p2_core.mode.state_machine import ModeState
-from xbrain.p2_core.messaging.audio_state import (audio_publish_due,
-                                                  build_audio_state)
-
 # 11 S2.2.2 逐字 "1 Hz + 变更即报": 1 Hz 是[下限](静止时也要有心跳),
 # 变更即报是[上限](主循环 10 Hz, 所以变更最迟 100ms 出去).
 # *** 两者不是二选一 -- 只做 1 Hz 会让"喇叭响了"这个瞬态被采样漏掉,

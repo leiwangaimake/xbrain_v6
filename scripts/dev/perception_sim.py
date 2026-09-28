@@ -101,32 +101,45 @@ def profile_body(now: int, *, kind: str = "open", extrinsic: bool = True,
         if kind == "unknown":
             # RNS-I-1: unobserved is null, never 0 nor range_max; src 0 says
             # geometry saw NOTHING in this bin (11 S3.1B.1 v2.1 bit1)
-            d_free.append(None); d_block.append(None); h_block.append(None)
-            src.append(0); conf.append(0)
+            d_free.append(None)
+            d_block.append(None)
+            h_block.append(None)
+            src.append(0)
+            conf.append(0)
             continue
         if kind == "ground_withdrawn":
             # 19 S3.2A v1.6 withdrawal: samples exist (bit1) but back no FREE
             # (bit0 = 0) and no plane-dependent block; the S block is the one
             # piece of evidence that does not depend on the failed plane.
-            d_free.append(None); h_block.append(None)
+            d_free.append(None)
+            h_block.append(None)
             if 85 <= i <= 95:
-                d_block.append(2.5); src.append(SRC_G | SRC_S)
+                d_block.append(2.5)
+                src.append(SRC_G | SRC_S)
             else:
-                d_block.append(None); src.append(SRC_G)
+                d_block.append(None)
+                src.append(SRC_G)
             conf.append(0)
             continue
         if kind == "semantic_only" and 85 <= i <= 95:
             # 11 S3.1B.1 v2.2 (Q3 ruling): no geometry at all in this bin,
             # but a semantic footprint injected a 2.5 m block: S only gives
             # BLOCKED, never FREE -> d_free stays null, h_block null, bit1 0
-            d_free.append(None); d_block.append(2.5); h_block.append(None)
-            src.append(SRC_S); conf.append(0)
+            d_free.append(None)
+            d_block.append(2.5)
+            h_block.append(None)
+            src.append(SRC_S)
+            conf.append(0)
             continue
         if 130 <= i <= 134:
             # a 0.4 m box at 3.0 m: far-cell-end stop puts d_free at 2.75
-            d_free.append(2.75); d_block.append(3.0); h_block.append(0.4)
+            d_free.append(2.75)
+            d_block.append(3.0)
+            h_block.append(0.4)
         else:
-            d_free.append(RANGE_MAX); d_block.append(None); h_block.append(None)
+            d_free.append(RANGE_MAX)
+            d_block.append(None)
+            h_block.append(None)
         src.append((SRC_T if seg else 0) | SRC_G)
         conf.append(220)
     return {

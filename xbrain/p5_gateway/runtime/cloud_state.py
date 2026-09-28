@@ -61,14 +61,6 @@ import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
-
-#: state/audio 判为陈旧的门限. p2 的发布下限是 1 Hz(11 S2.2.2), 取 5 拍 --
-#: 单拍抖动(GC / 一次慢的 payload 轮询)不该让界面闪一下 fault, 而连续 5 拍
-#: 没来已经不是抖动了.
-#: NO 不取 1000ms: 那等于要求零抖动, 判据会频繁误报, 而一条频繁误报的判据
-#: 最后一定被人放宽成永远不报(CLAUDE.md 3.2 形态二).
-AUDIO_STALE_MS = 5000.0
-
 from ..outbound.cloud_envelope import UnmappedLinkLevel
 from ..outbound.task_result import TaskResultTracker, build_result
 from ..outbound.state_projection import (ProjectionError, audio_payload,
@@ -76,6 +68,14 @@ from ..outbound.state_projection import (ProjectionError, audio_payload,
                                          robot_payload, robot_state_from,
                                          task_item, to_v2_device_status,
                                          to_v2_task_state)
+
+
+#: state/audio 判为陈旧的门限. p2 的发布下限是 1 Hz(11 S2.2.2), 取 5 拍 --
+#: 单拍抖动(GC / 一次慢的 payload 轮询)不该让界面闪一下 fault, 而连续 5 拍
+#: 没来已经不是抖动了.
+#: NO 不取 1000ms: 那等于要求零抖动, 判据会频繁误报, 而一条频繁误报的判据
+#: 最后一定被人放宽成永远不报(CLAUDE.md 3.2 形态二).
+AUDIO_STALE_MS = 5000.0
 
 _logger = logging.getLogger(__name__)
 

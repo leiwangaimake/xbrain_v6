@@ -29,10 +29,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts" / "sil"))
 
-from sil_world import SilWorld
-from xbrain.p1_motion.rns.route import Mission
-from xbrain.p1_motion.rns.source import RnsSource
-from xbrain.p1_motion.rns.types import MissionKind, NavFailReason, NavState, Origin
+# noqa: E402 -- same reason as test_sil_smoke: sil_world is on the path only
+# after the insert above.
+from sil_world import SilWorld  # noqa: E402
+from xbrain.p1_motion.rns.route import Mission  # noqa: E402
+from xbrain.p1_motion.rns.source import RnsSource  # noqa: E402
+from xbrain.p1_motion.rns.types import MissionKind, NavFailReason, NavState, Origin  # noqa: E402
 
 CFG = yaml.safe_load((ROOT / "configs" / "rns.yaml").read_text(encoding="utf-8"))
 DT = 0.05
@@ -334,16 +336,22 @@ def test_deviation_never_fails_in_any_state():
     rns.load_mission(_mission([(0.0, 0.0)]))
 
     class C:
-        pose_xy = (0.0, -1.0); yaw_rad = 0.0
-        v_nom_mps = 2.0; wz_max_rps = 1.2
-        perception = world.synth_snapshot(0); now_mono_ms = 0
+        pose_xy = (0.0, -1.0)
+        yaw_rad = 0.0
+        v_nom_mps = 2.0
+        wz_max_rps = 1.2
+        perception = world.synth_snapshot(0)
+        now_mono_ms = 0
         holonomic = True
     rns.compute(C())                        # anchors the goto line
 
     class C2:
-        pose_xy = (14.0, -1.0); yaw_rad = 0.0   # 14 m off the anchored line
-        v_nom_mps = 2.0; wz_max_rps = 1.2
-        perception = world.synth_snapshot(50); now_mono_ms = 50
+        pose_xy = (14.0, -1.0)
+        yaw_rad = 0.0   # 14 m off the anchored line
+        v_nom_mps = 2.0
+        wz_max_rps = 1.2
+        perception = world.synth_snapshot(50)
+        now_mono_ms = 50
         holonomic = True
     rns.compute(C2())
     assert rns.take_failure() is None, \
@@ -435,9 +443,12 @@ def test_memory_appeal_layer_rehabilitates_walked_ground():
     snap = world.synth_snapshot(0)
 
     class C:
-        pose_xy = (0.0, 0.0); yaw_rad = 0.0
-        v_nom_mps = 1.0; wz_max_rps = 1.2
-        perception = snap; now_mono_ms = 0
+        pose_xy = (0.0, 0.0)
+        yaw_rad = 0.0
+        v_nom_mps = 1.0
+        wz_max_rps = 1.2
+        perception = snap
+        now_mono_ms = 0
     rns.compute(C())                      # anchors mission, sets _last_now
     # paint the DIAGONAL X->S corridor FREE in memory (as a wall lap would
     # have): the appeal walks the straight line to the subgoal (~(2.3, 2.9)),

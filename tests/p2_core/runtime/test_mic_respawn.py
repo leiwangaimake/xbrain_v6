@@ -36,13 +36,13 @@ import time
 
 import pytest
 
-pytestmark = pytest.mark.no_device
-
 from xbrain.p2_core.audio.audio_io import CAPTURE_SAMPLES_PER_FRAME
 from xbrain.p2_core.runtime import mic_capture as MC
 from xbrain.p2_core.runtime.mic_capture import (
     MicCaptureConfig, MicCaptureThread, is_stream_end, respawn_backoff_s,
 )
+
+pytestmark = pytest.mark.no_device
 
 _GOOD_FRAME = struct.pack("<%dh" % CAPTURE_SAMPLES_PER_FRAME,
                           *([0] * CAPTURE_SAMPLES_PER_FRAME))

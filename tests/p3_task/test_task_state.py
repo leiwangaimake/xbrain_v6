@@ -195,7 +195,11 @@ def test_the_non_terminal_set_is_derived_from_the_state_closed_set():
 #: (夹具建的表里没有那一列, 测试报 no such column).
 #: 这正是 CLAUDE.md 3.7 那条"人抄的清单会过期": 抄的时候是对的, 之后真
 #: schema 每加一列, 这份副本就旧一分, 而没有任何判据会红.
-from xbrain.p3_task.persistence.schema_task import DDL_TASKS as _DDL
+# noqa: E402 -- deliberately here rather than at the top: the eight lines of
+# comment above are the whole point of this import (they record the hand-copied
+# DDL it replaced and why that copy rotted). Hoisting the import separates it
+# from its own justification.
+from xbrain.p3_task.persistence.schema_task import DDL_TASKS as _DDL  # noqa: E402
 
 
 #: 用例不关心但真表要求非空的列, 按类型给中性值.

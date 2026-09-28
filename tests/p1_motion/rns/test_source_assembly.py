@@ -15,8 +15,12 @@ v_nom_mps until P7.1 defines the real tick snapshot.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
+from pathlib import Path as _Path
 from typing import Optional, Tuple
+
+import yaml as _yaml
 
 from xbrain.p1_motion.rns.route import Mission
 from xbrain.p1_motion.rns.source import RnsSource
@@ -31,11 +35,6 @@ class Ctx:
     yaw_rad: Optional[float] = 0.0        # facing +x by default
     wz_max_rps: Optional[float] = 1.0
 
-
-import copy
-from pathlib import Path as _Path
-
-import yaml as _yaml
 
 _ROOT = _Path(__file__).resolve().parents[3]
 _REAL_CFG = _yaml.safe_load((_ROOT / "configs" / "rns.yaml").read_text(

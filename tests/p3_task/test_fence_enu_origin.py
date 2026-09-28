@@ -29,9 +29,9 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = pytest.mark.no_device
-
 from xbrain.p3_task.fence.fence_set import build_fence_set
+
+pytestmark = pytest.mark.no_device
 
 #: FencesDAO.list_active() 的行形状: (fence_id, name, role, kind, geom_json,
 #: hard_enforce, rev). 只放一个 allow -- FV-3 要求恰好一个.

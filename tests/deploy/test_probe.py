@@ -160,7 +160,8 @@ def test_probe_reports_disk_full_when_threshold_exceeded(happy_env, tmp_path):
         # 顺带拦下 -- 时区本身由 test_timezone_probe.py 专门守.
         "timezone": {"expected": _host_zone()},
     })
-    hw = tmp_path / "hw"; _write_yaml(hw, {"interfaces": {}})
+    hw = tmp_path / "hw"
+    _write_yaml(hw, {"interfaces": {}})
     r = _run_probe({
         "XBRAIN_PROBE_CONFIG": str(cfg),
         "XBRAIN_HW_PROFILE": str(hw),
@@ -188,7 +189,8 @@ def test_db_corruption_reports_storage_corrupt_with_db_name(happy_env, tmp_path)
         # 顺带拦下 -- 时区本身由 test_timezone_probe.py 专门守.
         "timezone": {"expected": _host_zone()},
     })
-    hw = tmp_path / "hw"; _write_yaml(hw, {"interfaces": {}})
+    hw = tmp_path / "hw"
+    _write_yaml(hw, {"interfaces": {}})
     r = _run_probe({
         "XBRAIN_PROBE_CONFIG": str(cfg),
         "XBRAIN_HW_PROFILE": str(hw),
@@ -219,7 +221,8 @@ def test_db_schema_mismatch_reports_config_invalid_not_storage_corrupt(
         # 顺带拦下 -- 时区本身由 test_timezone_probe.py 专门守.
         "timezone": {"expected": _host_zone()},
     })
-    hw = tmp_path / "hw"; _write_yaml(hw, {"interfaces": {}})
+    hw = tmp_path / "hw"
+    _write_yaml(hw, {"interfaces": {}})
     r = _run_probe({
         "XBRAIN_PROBE_CONFIG": str(cfg),
         "XBRAIN_HW_PROFILE": str(hw),

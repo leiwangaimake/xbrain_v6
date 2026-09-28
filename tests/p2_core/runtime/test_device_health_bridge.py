@@ -71,8 +71,10 @@ def test_flap_below_threshold_silent():
 def test_recovery_emits_online():
     b, emitted = _bridge(down_threshold=2, up_threshold=2)
     b.register("mic")
-    b.observe("mic", False); b.observe("mic", False)   # offline
-    b.observe("mic", True); b.observe("mic", True)     # online
+    b.observe("mic", False)
+    b.observe("mic", False)   # offline
+    b.observe("mic", True)
+    b.observe("mic", True)     # online
     assert [e["detail"]["type"] for e in emitted] == \
         ["device_offline", "device_online"]
     assert emitted[1]["cat"] == "voice" and emitted[1]["sev"] == "info"
