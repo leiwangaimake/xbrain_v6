@@ -22,10 +22,10 @@
  * publishes "cmd/estop" and "probe/estop/ping" bare, p1_motion publishes
  * "state/pose" bare, and scripts/dev/zenoh_echo.py documents the convention
  * ("GEN router; BARE keys like state/pose"). The RT plane DOES carry the full
- * prefix: quadruped builds xbrain/{rid}/rt/... (rt_keys.cc BuildKey) and
+ * prefix: quadruped builds xbrain/{rid}/rt/... (rt_keys.cc build_key) and
  * p1_motion subscribes "xbrain/%s/rt/chassis/state". A relay that publishes
  * prefixed keys on the general plane is heard by NOBODY in the running stack,
- * so this table stores gen keys bare and rt keys as suffixes for BuildRtKey.
+ * so this table stores gen keys bare and rt keys as suffixes for build_rt_key.
  * The doc-vs-stack divergence is registered as a finding, not silently fixed.
  *
  * What does NOT belong here: payload knowledge. CRL-1 -- the relay never
@@ -93,16 +93,16 @@ inline constexpr const char* kKeyRoot = "xbrain";
 // written, or 0 when it does not fit -- a truncated key is well formed and
 // matches nothing, which is the silent failure this file exists to prevent.
 // Allocation-free; safe on any thread.
-std::size_t BuildRtKey(const char* rid, const char* suffix, char* out,
+std::size_t build_rt_key(const char* rid, const char* suffix, char* out,
                        std::size_t cap);
 
 // Same composition, allocating. Startup only (declarations), never on the
 // forward path. Throws std::length_error when the key does not fit.
-std::string BuildRtKey(const std::string& rid, const std::string& suffix);
+std::string build_rt_key(const std::string& rid, const std::string& suffix);
 
 // Row lookup by contract id ("CR-4"), or nullptr. For tests and stats only;
 // the forward path indexes the table directly.
-const RelaySpec* FindRelaySpec(const char* cr_id);
+const RelaySpec* find_relay_spec(const char* cr_id);
 
 }  // namespace chassis_relay
 

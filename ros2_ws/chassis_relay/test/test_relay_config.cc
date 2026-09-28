@@ -52,7 +52,7 @@ namespace {
 
 std::string g_dir;
 
-std::string WriteFixture(const char* name, const std::string& body) {
+std::string write_fixture(const char* name, const std::string& body) {
   const std::string path = g_dir + "/" + name;
   std::ofstream f(path);
   f << body;
@@ -61,9 +61,9 @@ std::string WriteFixture(const char* name, const std::string& body) {
 
 // One loader failure case: expects a throw whose message contains `needle`
 // (the dotted key path -- the whole point of the 3.1 contract).
-void ExpectLoadThrow(const std::string& path, const char* needle) {
+void expect_load_throw(const std::string& path, const char* needle) {
   try {
-    (void)LoadRelayConfig(path);
+    (void)load_relay_config(path);
     std::printf("FAIL no throw for fixture %s\n", path.c_str());
     ++g_failures;
   } catch (const std::exception& e) {
@@ -81,9 +81,9 @@ const char* kGoodYaml =
     "  zenoh_rt_endpoint: \"tcp/127.0.0.1:7449\"\n"
     "  whitelist_audit_path: \"/opt/xbrain_v6/configs/generated/whitelist.yaml\"\n";
 
-void LoaderHappyPath() {
-  const std::string p = WriteFixture("good.yaml", kGoodYaml);
-  const RelayConfig cfg = LoadRelayConfig(p);
+void loader_happy_path() {
+  const std::string p = write_fixture("good.yaml", kGoodYaml);
+  const RelayConfig cfg = load_relay_config(p);
   CHECK(cfg.robot_id == "dev");
   CHECK(cfg.gen_endpoint == "tcp/127.0.0.1:7447");
   CHECK(cfg.rt_endpoint == "tcp/127.0.0.1:7449");
@@ -91,28 +91,28 @@ void LoaderHappyPath() {
         "/opt/xbrain_v6/configs/generated/whitelist.yaml");
 }
 
-void LoaderRefusals() {
+void loader_refusals() {
   // Missing key: the throw names it.
-  ExpectLoadThrow(WriteFixture("missing.yaml",
+  expect_load_throw(write_fixture("missing.yaml",
                                "chassis_relay:\n  robot_id: dev\n"),
                   "chassis_relay.zenoh_gen_endpoint");
   // Null value: uncalibrated per 3.1, named as such by yaml_lite.
   std::string with_null = kGoodYaml;
   with_null.replace(with_null.find("dev"), 3, "null");
-  ExpectLoadThrow(WriteFixture("null.yaml", with_null),
+  expect_load_throw(write_fixture("null.yaml", with_null),
                   "chassis_relay.robot_id");
   // Unexpanded reference: the transitional file must carry literals; a
   // ${common.robot_id} reaching a direct reader would flow into every key
   // as a dollar string (relay_config.h).
   std::string with_ref = kGoodYaml;
   with_ref.replace(with_ref.find("dev"), 3, "\"${common.robot_id}\"");
-  ExpectLoadThrow(WriteFixture("ref.yaml", with_ref), "unexpanded reference");
+  expect_load_throw(write_fixture("ref.yaml", with_ref), "unexpanded reference");
   // Absent file.
-  ExpectLoadThrow(g_dir + "/does_not_exist.yaml", "cannot open");
+  expect_load_throw(g_dir + "/does_not_exist.yaml", "cannot open");
 }
 
 // The registry as the generator writes it today, matching the code table.
-std::string MatchingAudit() {
+std::string matching_audit() {
   return
       "processes:\n"
       "  chassis_relay:\n"
@@ -132,35 +132,35 @@ std::string MatchingAudit() {
       "    - probe/estop/ping\n";
 }
 
-void AuditAgrees() {
-  const std::string p = WriteFixture("wl_ok.yaml", MatchingAudit());
-  const WhitelistAudit audit = LoadWhitelistAudit(p);
+void audit_agrees() {
+  const std::string p = write_fixture("wl_ok.yaml", matching_audit());
+  const WhitelistAudit audit = load_whitelist_audit(p);
   CHECK(audit.pub.size() == 9);
   CHECK(audit.sub.size() == 3);
-  CHECK(CompareWhitelistAudit(audit).empty());
+  CHECK(compare_whitelist_audit(audit).empty());
 }
 
-void AuditDisagrees() {
+void audit_disagrees() {
   // One pub missing: the diff names it as missing.
-  std::string missing = MatchingAudit();
+  std::string missing = matching_audit();
   missing.erase(missing.find("    - state/robot\n"),
                 std::strlen("    - state/robot\n"));
   {
     const WhitelistAudit a =
-        LoadWhitelistAudit(WriteFixture("wl_missing.yaml", missing));
-    const std::string diff = CompareWhitelistAudit(a);
+        load_whitelist_audit(write_fixture("wl_missing.yaml", missing));
+    const std::string diff = compare_whitelist_audit(a);
     CHECK(!diff.empty());
     CHECK(diff.find("pub missing from audit: state/robot") !=
           std::string::npos);
   }
   // One extra sub: somebody widening the relay through the registry -- the
   // gate says so and the startup refuses.
-  std::string extra = MatchingAudit();
+  std::string extra = matching_audit();
   extra += "    - cmd/motion/behavior\n";
   {
     const WhitelistAudit a =
-        LoadWhitelistAudit(WriteFixture("wl_extra.yaml", extra));
-    const std::string diff = CompareWhitelistAudit(a);
+        load_whitelist_audit(write_fixture("wl_extra.yaml", extra));
+    const std::string diff = compare_whitelist_audit(a);
     CHECK(!diff.empty());
     CHECK(diff.find("sub extra in audit: cmd/motion/behavior") !=
           std::string::npos);
@@ -172,8 +172,8 @@ void AuditDisagrees() {
       "    sub:\n    - state/robot\n";
   {
     const WhitelistAudit a =
-        LoadWhitelistAudit(WriteFixture("wl_swap.yaml", swapped));
-    const std::string diff = CompareWhitelistAudit(a);
+        load_whitelist_audit(write_fixture("wl_swap.yaml", swapped));
+    const std::string diff = compare_whitelist_audit(a);
     CHECK(diff.find("pub missing from audit: state/robot") !=
           std::string::npos);
     CHECK(diff.find("pub extra in audit: cmd/estop") != std::string::npos);
@@ -182,15 +182,15 @@ void AuditDisagrees() {
   }
   // Registry without the section: throws, never "gate skipped".
   try {
-    (void)LoadWhitelistAudit(WriteFixture("wl_empty.yaml", "processes: {}\n"));
+    (void)load_whitelist_audit(write_fixture("wl_empty.yaml", "processes: {}\n"));
     std::printf("FAIL no throw for empty registry\n");
     ++g_failures;
   } catch (const std::exception&) {
   }
 }
 
-void SessionDocument() {
-  const std::string doc = RelaySessionConfigJson("tcp/127.0.0.1:7449");
+void session_document() {
+  const std::string doc = relay_session_config_json("tcp/127.0.0.1:7449");
   // The five frozen fields, as bytes. Each one's absence or inversion is a
   // silent-merge or silent-deafness failure on the robot; the header of
   // relay_session_config.cc carries the measurements.
@@ -204,7 +204,7 @@ void SessionDocument() {
   CHECK(doc.find("router") == std::string::npos);
   // The endpoint parameter is not decoration: a second call with the other
   // plane's endpoint must differ exactly there.
-  const std::string gen_doc = RelaySessionConfigJson("tcp/127.0.0.1:7447");
+  const std::string gen_doc = relay_session_config_json("tcp/127.0.0.1:7447");
   CHECK(gen_doc.find("7447") != std::string::npos);
   CHECK(gen_doc.find("7449") == std::string::npos);
 }
@@ -218,11 +218,11 @@ int main(int argc, char** argv) {
   }
   g_dir = argv[1];
 
-  LoaderHappyPath();
-  LoaderRefusals();
-  AuditAgrees();
-  AuditDisagrees();
-  SessionDocument();
+  loader_happy_path();
+  loader_refusals();
+  audit_agrees();
+  audit_disagrees();
+  session_document();
 
   if (g_failures != 0) {
     std::printf("test_relay_config: %d FAILURES\n", g_failures);

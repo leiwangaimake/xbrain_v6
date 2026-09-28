@@ -60,7 +60,7 @@ struct RelayConfig {
 // reference (a reference reaching a direct reader means someone re-added one
 // to the transitional file -- refuse rather than forward with a literal
 // "${common.robot_id}" in every key).
-RelayConfig LoadRelayConfig(const std::string& path);
+RelayConfig load_relay_config(const std::string& path);
 
 // The chassis_relay section of the generated whitelist, as two plain lists
 // of general-plane keys (the generator writes them bare, matching the
@@ -73,14 +73,14 @@ struct WhitelistAudit {
 // Parse processes.chassis_relay.{pub,sub} out of the generated file. Throws
 // std::runtime_error when the file or the section is missing -- an absent
 // audit registry is a deployment defect, not a license to skip the gate.
-WhitelistAudit LoadWhitelistAudit(const std::string& path);
+WhitelistAudit load_whitelist_audit(const std::string& path);
 
 // Compare the audit lists against the hardcoded table (relay_keys.cc):
 // pub must equal the general-plane keys of the RT->GEN rows, sub those of
 // the GEN->RT rows, both as SETS (order-free, duplicates collapse). Returns
 // an empty string when they agree; otherwise a multi-line report naming
 // every key missing from or extra in the audit file, for the refusal log.
-std::string CompareWhitelistAudit(const WhitelistAudit& audit);
+std::string compare_whitelist_audit(const WhitelistAudit& audit);
 
 }  // namespace chassis_relay
 

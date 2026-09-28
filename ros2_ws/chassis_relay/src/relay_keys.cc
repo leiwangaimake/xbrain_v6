@@ -82,7 +82,7 @@ const RelaySpec kRelayTable[kRelayCount] = {
 static_assert(sizeof(kRelayTable) / sizeof(kRelayTable[0]) == kRelayCount,
               "kRelayCount must match the table body");
 
-std::size_t BuildRtKey(const char* rid, const char* suffix, char* out,
+std::size_t build_rt_key(const char* rid, const char* suffix, char* out,
                        std::size_t cap) {
   if (rid == nullptr || suffix == nullptr || out == nullptr || cap == 0) {
     return 0;
@@ -96,21 +96,21 @@ std::size_t BuildRtKey(const char* rid, const char* suffix, char* out,
   return static_cast<std::size_t>(n);
 }
 
-std::string BuildRtKey(const std::string& rid, const std::string& suffix) {
+std::string build_rt_key(const std::string& rid, const std::string& suffix) {
   // Sized from the inputs rather than a fixed maximum, so no second place
   // assumes the format's length. Startup only -- this allocates.
   std::string out(rid.size() + suffix.size() + std::strlen(kKeyRoot) + 3, '\0');
   const std::size_t n =
-      BuildRtKey(rid.c_str(), suffix.c_str(), &out[0], out.size());
+      build_rt_key(rid.c_str(), suffix.c_str(), &out[0], out.size());
   if (n == 0) {
-    throw std::length_error("chassis_relay::BuildRtKey: key does not fit: " +
+    throw std::length_error("chassis_relay::build_rt_key: key does not fit: " +
                             rid + " / " + suffix);
   }
   out.resize(n);
   return out;
 }
 
-const RelaySpec* FindRelaySpec(const char* cr_id) {
+const RelaySpec* find_relay_spec(const char* cr_id) {
   if (cr_id == nullptr) return nullptr;
   for (std::size_t i = 0; i < kRelayCount; ++i) {
     if (std::strcmp(kRelayTable[i].cr_id, cr_id) == 0) return &kRelayTable[i];

@@ -7,7 +7,7 @@
  *        count. No zenoh, no threads -- the testable half of the process
  *
  * Description:
- * One call per inbound sample: OnSample(row, bytes, len, wall_ts). It rebuilds
+ * One call per inbound sample: on_sample(row, bytes, len, wall_ts). It rebuilds
  * the envelope (RT-C3.e, envelope_rebuild.h), hands the result to the sink the
  * process wired at startup, and keeps per-row counters. The zenoh sessions,
  * the threads and the QoS options all live OUTSIDE this class, which is what
@@ -35,7 +35,7 @@
  * Threading and CRL-6, argued once here because this class is where the hot
  * path lives (main.cc wires it, relay_session.cc carries the same argument in
  * short form):
- *   * OnSample is called INLINE from zenoh subscriber callbacks. There is no
+ *   * on_sample is called INLINE from zenoh subscriber callbacks. There is no
  *     application queue anywhere on a forward: one hop = one callback = one
  *     rebuild on the stack = one put. The general-plane session subscribes
  *     ONLY the three Q0 command keys (CR-1/2/11), so the threads that carry
@@ -84,7 +84,7 @@ namespace chassis_relay {
 // KiB; 64 KiB is an order of magnitude of headroom, not a tuned value.
 inline constexpr std::size_t kMaxForwardBytes = 64 * 1024;
 
-// What one OnSample call did, for tests and for the audit trail. The numeric
+// What one on_sample call did, for tests and for the audit trail. The numeric
 // values are stable only within a build; nothing serialises them.
 enum class ForwardOutcome {
   kForwarded,         // rebuilt and handed to the sink, sink accepted
@@ -99,7 +99,7 @@ enum class ForwardOutcome {
 // subscribers on different threads; relaxed order is enough for counters that
 // only ever feed logs and tests.
 struct RelayRowStats {
-  std::atomic<std::uint64_t> rx{0};             // samples entering OnSample
+  std::atomic<std::uint64_t> rx{0};             // samples entering on_sample
   std::atomic<std::uint64_t> forwarded{0};      // rebuilt forwards
   std::atomic<std::uint64_t> forwarded_raw{0};  // estop verbatim forwards
   std::atomic<std::uint64_t> dropped_malformed{0};
@@ -123,7 +123,7 @@ class RelayCore {
   // Forward one inbound sample for table row `index`. Called inline from
   // subscriber callbacks; allocation-free (one stack buffer); noexcept
   // because an exception escaping into the zenoh runtime aborts the process.
-  ForwardOutcome OnSample(std::size_t index, const char* bytes,
+  ForwardOutcome on_sample(std::size_t index, const char* bytes,
                           std::size_t len, double wall_ts_s) noexcept;
 
   // Counters for row `index`; used by the stats line and by every test.
@@ -136,9 +136,9 @@ class RelayCore {
 
  private:
   // The rebuild-failed fork: drop (eleven rows) or verbatim raw forward
-  // (cmd/estop alone). Split out of OnSample for the 40-line function rule
+  // (cmd/estop alone). Split out of on_sample for the 40-line function rule
   // and so the exemption boundary reads as one block.
-  ForwardOutcome OnRebuildFailed(std::size_t index, const char* bytes,
+  ForwardOutcome on_rebuild_failed(std::size_t index, const char* bytes,
                                  std::size_t len) noexcept;
 
   PutFn put_;

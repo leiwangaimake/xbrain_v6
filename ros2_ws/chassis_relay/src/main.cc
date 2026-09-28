@@ -31,14 +31,14 @@
  *     no blocking log on forward paths -- callbacks only bump atomics).
  *   * main thread: sleeps until SIGINT/SIGTERM, then tears down in reverse.
  *
- * Two orderings in Run() are load-bearing, not style:
+ * Two orderings in run() are load-bearing, not style:
  *   * every publisher on BOTH planes is declared before any subscriber, so
  *     the first estop arriving in the declaration window has somewhere to
  *     go;
  *   * both sessions are CLOSED (subscribers dropped) before Run returns.
  *     The core and the fault slot are declared after the sessions and so
  *     die FIRST on unwind; a callback firing in that window would use a
- *     destroyed core. Close() ends callbacks, making the unwind safe on
+ *     destroyed core. close() ends callbacks, making the unwind safe on
  *     every return path below the core's construction.
  *
  * Exit codes follow quadruped's vocabulary: 0 ok, 64 usage, 78 config
@@ -100,7 +100,7 @@ using FaultSlot = hachist::xbrain::rtcomm::LockfreeSlot<FaultFrame>;
 // Set by SIGINT/SIGTERM; polled by main. sig_atomic_t is the only type the
 // standard lets a handler touch.
 volatile std::sig_atomic_t g_stop = 0;
-void OnSignal(int) { g_stop = 1; }
+void on_signal(int) { g_stop = 1; }
 
 // WALL-CLOCK-OK(align): ts for rebuilt envelopes. 11 S3.0 defines the field as
 // the WALL clock (Unix seconds UTC) and confines it to cross-machine alignment,
@@ -108,7 +108,7 @@ void OnSignal(int) { g_stop = 1; }
 // steady_clock (CLK-C1); the marker is machine-readable so clock_scan.py counts
 // this as a reviewed decision rather than an unexplained CLOCK_REALTIME on the
 // e-stop path.
-double WallNowS() {
+double wall_now_s() {
   timespec ts;
   // WALL-CLOCK-OK(align): see the block above. The marker sits HERE, not only
   // on the function, because clock_scan.py attaches a marker to the contiguous
@@ -119,7 +119,7 @@ double WallNowS() {
          static_cast<double>(ts.tv_nsec) * 1e-9;
 }
 
-int Usage(const char* argv0) {
+int usage(const char* argv0) {
   std::fprintf(stderr,
                "usage: %s [--selfcheck] [<config.yaml>]\n"
                "  --selfcheck   load config, run the whitelist audit gate,\n"
@@ -131,8 +131,8 @@ int Usage(const char* argv0) {
 
 // Print the effective configuration and the whole table once at startup --
 // the cheap way to tell a misconfigured relay from a dead router later
-// (same practice as quadruped's DescribeConfig).
-void PrintEffective(const RelayConfig& cfg) {
+// (same practice as quadruped's describe_config).
+void print_effective(const RelayConfig& cfg) {
   std::printf("chassis_relay: rid=%s gen=%s rt=%s audit=%s\n",
               cfg.robot_id.c_str(), cfg.gen_endpoint.c_str(),
               cfg.rt_endpoint.c_str(), cfg.whitelist_audit_path.c_str());
@@ -149,11 +149,11 @@ void PrintEffective(const RelayConfig& cfg) {
 
 // The audit gate (CRL-3 double insurance): the hardcoded table is the law;
 // the generated registry must agree or the process refuses to start.
-bool RunAuditGate(const RelayConfig& cfg) {
+bool run_audit_gate(const RelayConfig& cfg) {
   try {
     const chassis_relay::WhitelistAudit audit =
-        chassis_relay::LoadWhitelistAudit(cfg.whitelist_audit_path);
-    const std::string diff = chassis_relay::CompareWhitelistAudit(audit);
+        chassis_relay::load_whitelist_audit(cfg.whitelist_audit_path);
+    const std::string diff = chassis_relay::compare_whitelist_audit(audit);
     if (!diff.empty()) {
       std::fprintf(stderr,
                    "chassis_relay: whitelist audit MISMATCH against %s\n%s"
@@ -174,18 +174,18 @@ bool RunAuditGate(const RelayConfig& cfg) {
 // Declare the twelve output publishers, RT plane targets first (they are
 // where an estop lands). Fills pub[] with per-row handles and *fault_row
 // with the CR-9 index. False + message on any failure.
-bool DeclareAllPublishers(const RelayConfig& cfg, RelaySession* gen,
+bool declare_all_publishers(const RelayConfig& cfg, RelaySession* gen,
                           RelaySession* rt, int* pub, std::size_t* fault_row) {
   std::string err;
   for (std::size_t i = 0; i < kRelayCount; ++i) {
     const auto& row = kRelayTable[i];
     if (row.direction == Direction::kGenToRt) {
       const std::string key =
-          chassis_relay::BuildRtKey(cfg.robot_id, row.rt_suffix);
-      pub[i] = rt->DeclarePublisher(key, row.qos_profile, &err);
+          chassis_relay::build_rt_key(cfg.robot_id, row.rt_suffix);
+      pub[i] = rt->declare_publisher(key, row.qos_profile, &err);
     } else {
       // Deployed general-plane spelling is BARE (see relay_keys.h).
-      pub[i] = gen->DeclarePublisher(row.gen_key, row.qos_profile, &err);
+      pub[i] = gen->declare_publisher(row.gen_key, row.qos_profile, &err);
     }
     if (pub[i] < 0) {
       std::fprintf(stderr, "chassis_relay: %s\n", err.c_str());
@@ -198,21 +198,21 @@ bool DeclareAllPublishers(const RelayConfig& cfg, RelaySession* gen,
 
 // Subscribe all twelve inputs, RT side first so the GEN estop inputs come
 // up last, when everything downstream of them already exists.
-bool DeclareAllSubscribers(const RelayConfig& cfg, RelaySession* gen,
+bool declare_all_subscribers(const RelayConfig& cfg, RelaySession* gen,
                            RelaySession* rt, RelayCore* core) {
   std::string err;
   for (std::size_t i = 0; i < kRelayCount; ++i) {
     const auto& row = kRelayTable[i];
     // i by value: the lambda outlives this loop inside the session.
     const auto cb = [core, i](const char* bytes, std::size_t len) {
-      core->OnSample(i, bytes, len, WallNowS());
+      core->on_sample(i, bytes, len, wall_now_s());
     };
     const bool ok =
         (row.direction == Direction::kRtToGen)
-            ? rt->DeclareSubscriber(
-                  chassis_relay::BuildRtKey(cfg.robot_id, row.rt_suffix), cb,
+            ? rt->declare_subscriber(
+                  chassis_relay::build_rt_key(cfg.robot_id, row.rt_suffix), cb,
                   &err)
-            : gen->DeclareSubscriber(row.gen_key, cb, &err);
+            : gen->declare_subscriber(row.gen_key, cb, &err);
     if (!ok) {
       std::fprintf(stderr, "chassis_relay: %s\n", err.c_str());
       return false;
@@ -226,15 +226,15 @@ bool DeclareAllSubscribers(const RelayConfig& cfg, RelaySession* gen,
 // bounds the added latency at a fraction of the 2 Hz fault period; the slot
 // keeps only the newest frame, which for a full-list fault stream is the
 // correct staleness behaviour (relay_core.h).
-void EventLoop(const std::atomic<bool>* run, FaultSlot* slot,
+void event_loop(const std::atomic<bool>* run, FaultSlot* slot,
                RelaySession* gen, int fault_handle) {
   FaultFrame f;
   while (run->load(std::memory_order_relaxed)) {
-    if (slot->TakeFresh(&f)) {
+    if (slot->take_fresh(&f)) {
       // A refused put is counted by the session; the frame is superseded by
       // the next 2 Hz publication rather than retried (a retry loop here
       // would stall the drain and grow the coalescing window).
-      gen->Put(fault_handle, f.bytes, f.len);
+      gen->put(fault_handle, f.bytes, f.len);
     } else {
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
@@ -245,7 +245,7 @@ void EventLoop(const std::atomic<bool>* run, FaultSlot* slot,
 // moved since the last pass (estop, ctrl, both acks -- the 1 Hz probe pair
 // would flood the journal and lives in the 60 s stats instead). Runs on the
 // housekeeping thread; the forward paths only bump the atomics this reads.
-void PrintSafetyAudit(const RelayCore& core, std::uint64_t* seen) {
+void print_safety_audit(const RelayCore& core, std::uint64_t* seen) {
   for (std::size_t i = 0; i < kRelayCount; ++i) {
     const auto& row = kRelayTable[i];
     if (std::strcmp(row.qos_profile, "Q0_safety") != 0) continue;
@@ -266,7 +266,7 @@ void PrintSafetyAudit(const RelayCore& core, std::uint64_t* seen) {
 
 // The 60 s stats line: rx/forwarded per row plus the session-level drop and
 // refusal counters, one line so journal grep stays cheap.
-void PrintStats(const RelayCore& core, const RelaySession& gen,
+void print_stats(const RelayCore& core, const RelaySession& gen,
                 const RelaySession& rt) {
   std::printf("stats: total_rx=%llu",
               static_cast<unsigned long long>(core.total_rx()));
@@ -292,45 +292,45 @@ void PrintStats(const RelayCore& core, const RelaySession& gen,
 // restarts it -- CRL-4's supervision), audit lines at 10 Hz granularity,
 // stats every 60 s. This thread never touches zenoh, so no put can stall
 // the watchdog.
-void HousekeepingLoop(const std::atomic<bool>* run, const RelayCore* core,
+void housekeeping_loop(const std::atomic<bool>* run, const RelayCore* core,
                       const RelaySession* gen, const RelaySession* rt) {
   using clock = std::chrono::steady_clock;  // CLK-C1: intervals, never wall
   auto last_wd = clock::now();
   auto last_stats = clock::now();
   std::uint64_t seen[kRelayCount] = {};
-  chassis_relay::SdNotify("READY=1");
+  chassis_relay::sd_notify("READY=1");
   while (run->load(std::memory_order_relaxed)) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     const auto now = clock::now();
     if (now - last_wd >= std::chrono::seconds(1)) {
-      chassis_relay::SdNotify("WATCHDOG=1");
+      chassis_relay::sd_notify("WATCHDOG=1");
       last_wd = now;
     }
-    PrintSafetyAudit(*core, seen);
+    print_safety_audit(*core, seen);
     if (now - last_stats >= std::chrono::seconds(60)) {
-      PrintStats(*core, *gen, *rt);
+      print_stats(*core, *gen, *rt);
       last_stats = now;
     }
   }
 }
 
-// The wired process. Both sessions are explicitly Close()d on every return
+// The wired process. Both sessions are explicitly close()d on every return
 // path below the core's construction -- see the header on why the unwind
 // order alone would be a use-after-free window.
-int Run(const RelayConfig& cfg) {
+int run(const RelayConfig& cfg) {
   RelaySession gen;
   RelaySession rt;
   std::string err;
   // RT first: its publishers are the estop targets; a dead router exits 78
   // and systemd restarts the process into a VISIBLE loop.
-  if (!rt.Open(cfg.rt_endpoint, &err) || !gen.Open(cfg.gen_endpoint, &err)) {
+  if (!rt.open(cfg.rt_endpoint, &err) || !gen.open(cfg.gen_endpoint, &err)) {
     std::fprintf(stderr, "chassis_relay: %s\n", err.c_str());
     return kExitConfig;
   }
 
   int pub[kRelayCount];
   std::size_t fault_row = kRelayCount;
-  if (!DeclareAllPublishers(cfg, &gen, &rt, pub, &fault_row)) {
+  if (!declare_all_publishers(cfg, &gen, &rt, pub, &fault_row)) {
     return kExitConfig;
   }
 
@@ -348,17 +348,17 @@ int Run(const RelayConfig& cfg) {
       FaultFrame f;
       f.len = static_cast<std::uint32_t>(len);
       std::memcpy(f.bytes, bytes, len);
-      slot->Publish(f);
+      slot->publish(f);
       return true;  // accepted for deferred publish
     }
     RelaySession& out =
         kRelayTable[i].direction == Direction::kGenToRt ? rt : gen;
-    return out.Put(pub[i], bytes, len);
+    return out.put(pub[i], bytes, len);
   });
 
-  if (!DeclareAllSubscribers(cfg, &gen, &rt, &core)) {
-    gen.Close();  // ends callbacks before core unwinds (header note)
-    rt.Close();
+  if (!declare_all_subscribers(cfg, &gen, &rt, &core)) {
+    gen.close();  // ends callbacks before core unwinds (header note)
+    rt.close();
     return kExitConfig;
   }
   std::printf("chassis_relay: forwarding up (%zu pubs, %zu subs)\n",
@@ -367,8 +367,8 @@ int Run(const RelayConfig& cfg) {
   std::fflush(stdout);
 
   std::atomic<bool> run{true};
-  std::thread event_thread(EventLoop, &run, slot, &gen, pub[fault_row]);
-  std::thread housekeeping(HousekeepingLoop, &run, &core, &gen, &rt);
+  std::thread event_thread(event_loop, &run, slot, &gen, pub[fault_row]);
+  std::thread housekeeping(housekeeping_loop, &run, &core, &gen, &rt);
 
   // Sleep until a signal; the handler only flips the flag, so teardown
   // still runs (no _exit shortcuts on a process holding sessions).
@@ -379,8 +379,8 @@ int Run(const RelayConfig& cfg) {
   run.store(false, std::memory_order_relaxed);
   event_thread.join();
   housekeeping.join();
-  gen.Close();  // drops subscribers -> no callback outlives the core
-  rt.Close();
+  gen.close();  // drops subscribers -> no callback outlives the core
+  rt.close();
   return kExitOk;
 }
 
@@ -393,7 +393,7 @@ int main(int argc, char** argv) {
     if (std::strcmp(argv[i], "--selfcheck") == 0) {
       selfcheck = true;
     } else if (argv[i][0] == '-') {
-      return Usage(argv[0]);
+      return usage(argv[0]);
     } else {
       path = argv[i];
     }
@@ -401,7 +401,7 @@ int main(int argc, char** argv) {
 
   RelayConfig cfg;
   try {
-    cfg = chassis_relay::LoadRelayConfig(path);
+    cfg = chassis_relay::load_relay_config(path);
   } catch (const std::exception& e) {
     std::fprintf(stderr, "chassis_relay: config: %s\n", e.what());
     return kExitConfig;
@@ -415,14 +415,14 @@ int main(int argc, char** argv) {
     cfg.robot_id = env_rid;
   }
 
-  PrintEffective(cfg);
-  if (!RunAuditGate(cfg)) return kExitConfig;
+  print_effective(cfg);
+  if (!run_audit_gate(cfg)) return kExitConfig;
   if (selfcheck) {
     std::printf("chassis_relay: selfcheck ok\n");
     return kExitOk;
   }
 
-  std::signal(SIGINT, OnSignal);
-  std::signal(SIGTERM, OnSignal);
-  return Run(cfg);
+  std::signal(SIGINT, on_signal);
+  std::signal(SIGTERM, on_signal);
+  return run(cfg);
 }

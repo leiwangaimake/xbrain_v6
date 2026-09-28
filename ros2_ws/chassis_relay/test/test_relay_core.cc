@@ -70,7 +70,7 @@ struct Harness {
 
 // Table indices resolved by cr id so a table reorder cannot silently point
 // the cases at the wrong rows.
-std::size_t RowOf(const char* cr) {
+std::size_t row_of(const char* cr) {
   for (std::size_t i = 0; i < kRelayCount; ++i) {
     if (std::strcmp(kRelayTable[i].cr_id, cr) == 0) return i;
   }
@@ -84,10 +84,10 @@ const char* kGoodState =
     "\"boot\":\"9f2c1a44\",\"seq\":5,\"src\":\"quadruped\","
     "\"ts_sync\":true,\"data\":{\"soc\":0.9}}";
 
-void ForwardRebuilds() {
+void forward_rebuilds() {
   Harness h;
-  const std::size_t row = RowOf("CR-4");
-  CHECK(h.core.OnSample(row, kGoodState, std::strlen(kGoodState), 200.0) ==
+  const std::size_t row = row_of("CR-4");
+  CHECK(h.core.on_sample(row, kGoodState, std::strlen(kGoodState), 200.0) ==
         ForwardOutcome::kForwarded);
   CHECK(h.sent.size() == 1);
   CHECK(h.sent[0].index == row);
@@ -107,13 +107,13 @@ void ForwardRebuilds() {
   CHECK(h.core.stats(row).forwarded_raw.load() == 0);
 }
 
-void SeqIsPerKey() {
+void seq_is_per_key() {
   Harness h;
-  const std::size_t r4 = RowOf("CR-4");
-  const std::size_t r5 = RowOf("CR-5");
-  h.core.OnSample(r4, kGoodState, std::strlen(kGoodState), 1.0);
-  h.core.OnSample(r4, kGoodState, std::strlen(kGoodState), 2.0);
-  h.core.OnSample(r5, kGoodState, std::strlen(kGoodState), 3.0);
+  const std::size_t r4 = row_of("CR-4");
+  const std::size_t r5 = row_of("CR-5");
+  h.core.on_sample(r4, kGoodState, std::strlen(kGoodState), 1.0);
+  h.core.on_sample(r4, kGoodState, std::strlen(kGoodState), 2.0);
+  h.core.on_sample(r5, kGoodState, std::strlen(kGoodState), 3.0);
   CHECK(h.sent.size() == 3);
   // CR-4 counts 1, 2; CR-5 starts back at 1. A process-wide counter would
   // stamp 3 here and every consumer's gap detector would report holes.
@@ -122,20 +122,20 @@ void SeqIsPerKey() {
   CHECK(json::parse(h.sent[2].body)["seq"] == 1);
 }
 
-void MalformedEstopStillForwards() {
+void malformed_estop_still_forwards() {
   Harness h;
-  const std::size_t estop = RowOf("CR-1");
+  const std::size_t estop = row_of("CR-1");
   // Each shape separately: truncated JSON and non-JSON text cannot be
   // re-enveloped at all; 11 S3.0.1 says they go through anyway, VERBATIM.
   // (An object that scans but lacks data is NOT in this list any more: it
-  // wraps -- see BareObjectWrapsEverywhere below.)
+  // wraps -- see bare_object_wraps_everywhere below.)
   const char* shapes[] = {
       "{\"v\":1,\"data\":{\"action\":\"stop\"",  // truncated
       "STOP",                                    // not JSON at all
   };
   std::size_t expected_raw = 0;
   for (const char* s : shapes) {
-    CHECK(h.core.OnSample(estop, s, std::strlen(s), 10.0) ==
+    CHECK(h.core.on_sample(estop, s, std::strlen(s), 10.0) ==
           ForwardOutcome::kForwardedRaw);
     ++expected_raw;
     CHECK(h.sent.size() == expected_raw);
@@ -147,15 +147,15 @@ void MalformedEstopStillForwards() {
   CHECK(h.core.stats(estop).dropped_malformed.load() == 0);
 }
 
-void BareObjectWrapsEverywhere() {
+void bare_object_wraps_everywhere() {
   Harness h;
   // The live case this exists for: p5_gateway's probe ping is a BARE object
   // (no S3.0 envelope; measured on the deployed plane 2026-09-26). It must
   // FORWARD -- wrapped, not raw and not dropped -- on its non-exempt row,
   // or the relay black-holes the estop probe it is itself supervised by.
   const char* ping = "{\"seq\":42,\"t_mono_ms\":9,\"type\":\"ping\"}";
-  const std::size_t row = RowOf("CR-2");
-  CHECK(h.core.OnSample(row, ping, std::strlen(ping), 3.5) ==
+  const std::size_t row = row_of("CR-2");
+  CHECK(h.core.on_sample(row, ping, std::strlen(ping), 3.5) ==
         ForwardOutcome::kForwarded);
   CHECK(h.sent.size() == 1);
   json j = json::parse(h.sent[0].body, nullptr, false);
@@ -164,18 +164,18 @@ void BareObjectWrapsEverywhere() {
   CHECK(j["data"]["type"] == "ping");
   CHECK(j["data"]["seq"] == 42);
   // The estop row wraps the same shape too (still a forward, not raw).
-  CHECK(h.core.OnSample(RowOf("CR-1"), ping, std::strlen(ping), 3.6) ==
+  CHECK(h.core.on_sample(row_of("CR-1"), ping, std::strlen(ping), 3.6) ==
         ForwardOutcome::kForwarded);
-  CHECK(h.core.stats(RowOf("CR-1")).forwarded_raw.load() == 0);
+  CHECK(h.core.stats(row_of("CR-1")).forwarded_raw.load() == 0);
 }
 
-void WellFormedEstopIsRebuilt() {
+void well_formed_estop_is_rebuilt() {
   Harness h;
-  const std::size_t estop = RowOf("CR-1");
+  const std::size_t estop = row_of("CR-1");
   const char* good =
       "{\"v\":1,\"rid\":\"dev\",\"ts\":50.0,\"seq\":2,\"src\":\"p5_gateway\","
       "\"ts_sync\":true,\"data\":{\"action\":\"stop\",\"cmd_id\":\"c-1\"}}";
-  CHECK(h.core.OnSample(estop, good, std::strlen(good), 51.0) ==
+  CHECK(h.core.on_sample(estop, good, std::strlen(good), 51.0) ==
         ForwardOutcome::kForwarded);
   json j = json::parse(h.sent[0].body, nullptr, false);
   CHECK(!j.is_discarded());
@@ -186,14 +186,14 @@ void WellFormedEstopIsRebuilt() {
   CHECK(j["data"]["action"] == "stop");
 }
 
-void MalformedNonExemptDrops() {
+void malformed_non_exempt_drops() {
   Harness h;
   // The relaxing command is the row this gate protects hardest; the probe
   // ping and a state row are the same policy exercised on both directions.
   const char* garbage = "{\"data\":broken";
   for (const char* cr : {"CR-11", "CR-2", "CR-4"}) {
-    const std::size_t row = RowOf(cr);
-    CHECK(h.core.OnSample(row, garbage, std::strlen(garbage), 1.0) ==
+    const std::size_t row = row_of(cr);
+    CHECK(h.core.on_sample(row, garbage, std::strlen(garbage), 1.0) ==
           ForwardOutcome::kDroppedMalformed);
     CHECK(h.core.stats(row).dropped_malformed.load() == 1);
     CHECK(h.core.stats(row).forwarded_raw.load() == 0);
@@ -202,43 +202,43 @@ void MalformedNonExemptDrops() {
   CHECK(h.sent.empty());
 }
 
-void OversizeDropsEverywhere() {
+void oversize_drops_everywhere() {
   Harness h;
   // One byte over the cap: dropped and counted on its own counter, estop
   // included -- the boundary relay_core.h argues (bounded refusal over
   // unbounded allocation on the no-alloc path).
   std::string big(kMaxForwardBytes + 1, 'x');
   for (const char* cr : {"CR-1", "CR-4"}) {
-    const std::size_t row = RowOf(cr);
-    CHECK(h.core.OnSample(row, big.data(), big.size(), 1.0) ==
+    const std::size_t row = row_of(cr);
+    CHECK(h.core.on_sample(row, big.data(), big.size(), 1.0) ==
           ForwardOutcome::kDroppedOversize);
     CHECK(h.core.stats(row).dropped_oversize.load() == 1);
   }
   CHECK(h.sent.empty());
   // Zero-length is the same refusal (there is nothing to forward).
-  CHECK(h.core.OnSample(RowOf("CR-1"), "", 0, 1.0) ==
+  CHECK(h.core.on_sample(row_of("CR-1"), "", 0, 1.0) ==
         ForwardOutcome::kDroppedOversize);
 }
 
-void PutRefusalIsCounted() {
+void put_refusal_is_counted() {
   Harness h;
   h.refuse = true;
-  const std::size_t row = RowOf("CR-4");
-  CHECK(h.core.OnSample(row, kGoodState, std::strlen(kGoodState), 1.0) ==
+  const std::size_t row = row_of("CR-4");
+  CHECK(h.core.on_sample(row, kGoodState, std::strlen(kGoodState), 1.0) ==
         ForwardOutcome::kPutFailed);
   CHECK(h.core.stats(row).put_failed.load() == 1);
   CHECK(h.core.stats(row).forwarded.load() == 0);
   // The estop raw fallback reports refusal too rather than pretending.
   h.refuse = true;
-  CHECK(h.core.OnSample(RowOf("CR-1"), "junk", 4, 1.0) ==
+  CHECK(h.core.on_sample(row_of("CR-1"), "junk", 4, 1.0) ==
         ForwardOutcome::kPutFailed);
 }
 
-void BadIndexRefused() {
+void bad_index_refused() {
   Harness h;
-  CHECK(h.core.OnSample(kRelayCount, kGoodState, std::strlen(kGoodState),
+  CHECK(h.core.on_sample(kRelayCount, kGoodState, std::strlen(kGoodState),
                         1.0) == ForwardOutcome::kBadIndex);
-  CHECK(h.core.OnSample(0, nullptr, 4, 1.0) == ForwardOutcome::kBadIndex);
+  CHECK(h.core.on_sample(0, nullptr, 4, 1.0) == ForwardOutcome::kBadIndex);
   CHECK(h.sent.empty());
   CHECK(h.core.total_rx() == 0);
 }
@@ -246,15 +246,15 @@ void BadIndexRefused() {
 }  // namespace
 
 int main() {
-  ForwardRebuilds();
-  SeqIsPerKey();
-  MalformedEstopStillForwards();
-  WellFormedEstopIsRebuilt();
-  BareObjectWrapsEverywhere();
-  MalformedNonExemptDrops();
-  OversizeDropsEverywhere();
-  PutRefusalIsCounted();
-  BadIndexRefused();
+  forward_rebuilds();
+  seq_is_per_key();
+  malformed_estop_still_forwards();
+  well_formed_estop_is_rebuilt();
+  bare_object_wraps_everywhere();
+  malformed_non_exempt_drops();
+  oversize_drops_everywhere();
+  put_refusal_is_counted();
+  bad_index_refused();
 
   if (g_failures != 0) {
     std::printf("test_relay_core: %d FAILURES\n", g_failures);

@@ -3,7 +3,7 @@
  * Author: wanglei@hachist.com
  * 上海哈船智能船舶技术有限公司
  * File: relay_core.cc
- * Brief: OnSample -- one bounded rebuild-and-put per inbound frame
+ * Brief: on_sample -- one bounded rebuild-and-put per inbound frame
  *
  * Description:
  * The body of the forward step the header argues for. Two properties carry
@@ -44,7 +44,7 @@ constexpr const char* kSrcName = "chassis_relay";
 
 RelayCore::RelayCore(PutFn put) : put_(std::move(put)) {}
 
-ForwardOutcome RelayCore::OnSample(std::size_t index, const char* bytes,
+ForwardOutcome RelayCore::on_sample(std::size_t index, const char* bytes,
                                    std::size_t len,
                                    double wall_ts_s) noexcept {
   // A wiring bug, not traffic: no counter row exists for it, so it is the one
@@ -66,17 +66,17 @@ ForwardOutcome RelayCore::OnSample(std::size_t index, const char* bytes,
   // can never stamp the same value; a failed put therefore leaves a gap,
   // which is the honest reading (the message existed and was lost).
   EnvelopeScan scan;
-  const bool scanned = ScanEnvelope(bytes, len, &scan);
+  const bool scanned = scan_envelope(bytes, len, &scan);
   char out[kMaxForwardBytes + kRebuildSlack];
   std::size_t out_len = 0;
   if (scanned) {
     const std::uint64_t seq =
         st.seq.fetch_add(1, std::memory_order_relaxed) + 1;
-    out_len = RebuildEnvelope(bytes, scan, wall_ts_s, seq, kSrcName, out,
+    out_len = rebuild_envelope(bytes, scan, wall_ts_s, seq, kSrcName, out,
                               sizeof(out));
   }
 
-  if (out_len == 0) return OnRebuildFailed(index, bytes, len);
+  if (out_len == 0) return on_rebuild_failed(index, bytes, len);
 
   if (!put_(index, out, out_len)) {
     st.put_failed.fetch_add(1, std::memory_order_relaxed);
@@ -86,7 +86,7 @@ ForwardOutcome RelayCore::OnSample(std::size_t index, const char* bytes,
   return ForwardOutcome::kForwarded;
 }
 
-ForwardOutcome RelayCore::OnRebuildFailed(std::size_t index,
+ForwardOutcome RelayCore::on_rebuild_failed(std::size_t index,
                                           const char* bytes,
                                           std::size_t len) noexcept {
   RelayRowStats& st = stats_[index];

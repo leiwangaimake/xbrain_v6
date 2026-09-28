@@ -83,10 +83,10 @@ const ExpectedPair kExpected[] = {
      "rt/chassis/ctrl/ack", "Q0_safety", false},
 };
 
-void CheckTableAgainstExpected() {
+void check_table_against_expected() {
   CHECK(kRelayCount == sizeof(kExpected) / sizeof(kExpected[0]));
   for (const ExpectedPair& e : kExpected) {
-    const RelaySpec* row = FindRelaySpec(e.cr);
+    const RelaySpec* row = find_relay_spec(e.cr);
     CHECK(row != nullptr);
     if (row == nullptr) continue;
     CHECK(row->direction == e.dir);
@@ -104,7 +104,7 @@ void CheckTableAgainstExpected() {
   CHECK(exempt == 1);
 }
 
-void CheckWhitelistShape() {
+void check_whitelist_shape() {
   // The frozen counts: 3 general-plane subscribes (GEN->RT rows), 9
   // publishes -- 11 S1.1.6 (3) "12 条 (v0.6 由 9 增 3)".
   std::size_t gen_to_rt = 0;
@@ -133,7 +133,7 @@ void CheckWhitelistShape() {
   CHECK(rt_suffixes.size() == kRelayCount);
 }
 
-void CheckAgainstContract(const std::string& contract_text) {
+void check_against_contract(const std::string& contract_text) {
   // Every key must appear verbatim in docs/11. This is the assertion that
   // catches a typo: the key table of the contract spells both columns bare,
   // so a plain substring search is exact enough, and a missing file FAILS
@@ -156,27 +156,27 @@ void CheckAgainstContract(const std::string& contract_text) {
   }
 }
 
-void CheckBuildKey() {
+void check_build_key() {
   // The composed spelling must match what quadruped composes for the same
   // rid/suffix, byte for byte -- the two processes meet on these keys.
-  CHECK(BuildRtKey("dev", "rt/safety/estop") == "xbrain/dev/rt/safety/estop");
-  CHECK(BuildRtKey("gj-001", "rt/chassis/state") ==
+  CHECK(build_rt_key("dev", "rt/safety/estop") == "xbrain/dev/rt/safety/estop");
+  CHECK(build_rt_key("gj-001", "rt/chassis/state") ==
         "xbrain/gj-001/rt/chassis/state");
   // The bounded form refuses truncation rather than returning a prefix: a
   // truncated key is well formed and matches nothing.
   char small[16];
-  CHECK(BuildRtKey("dev", "rt/safety/estop", small, sizeof(small)) == 0);
+  CHECK(build_rt_key("dev", "rt/safety/estop", small, sizeof(small)) == 0);
   char big[128];
-  const std::size_t n = BuildRtKey("dev", "rt/safety/estop", big, sizeof(big));
+  const std::size_t n = build_rt_key("dev", "rt/safety/estop", big, sizeof(big));
   CHECK(n == std::strlen("xbrain/dev/rt/safety/estop"));
   CHECK(std::strcmp(big, "xbrain/dev/rt/safety/estop") == 0);
   // Null inputs answer zero, never crash.
-  CHECK(BuildRtKey(nullptr, "x", big, sizeof(big)) == 0);
-  CHECK(BuildRtKey("dev", nullptr, big, sizeof(big)) == 0);
+  CHECK(build_rt_key(nullptr, "x", big, sizeof(big)) == 0);
+  CHECK(build_rt_key("dev", nullptr, big, sizeof(big)) == 0);
   // Lookup misses answer null, never a nearby row (11 S13.6's ban on
   // substituting a neighbouring member, applied to table rows).
-  CHECK(FindRelaySpec("CR-99") == nullptr);
-  CHECK(FindRelaySpec(nullptr) == nullptr);
+  CHECK(find_relay_spec("CR-99") == nullptr);
+  CHECK(find_relay_spec(nullptr) == nullptr);
 }
 
 }  // namespace
@@ -196,10 +196,10 @@ int main(int argc, char** argv) {
   std::stringstream buf;
   buf << f.rdbuf();
 
-  CheckTableAgainstExpected();
-  CheckWhitelistShape();
-  CheckAgainstContract(buf.str());
-  CheckBuildKey();
+  check_table_against_expected();
+  check_whitelist_shape();
+  check_against_contract(buf.str());
+  check_build_key();
 
   if (g_failures != 0) {
     std::printf("test_relay_keys: %d FAILURES\n", g_failures);

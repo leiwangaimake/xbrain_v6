@@ -40,7 +40,7 @@
 
 namespace chassis_relay {
 
-std::string RelaySessionConfigJson(const std::string& endpoint) {
+std::string relay_session_config_json(const std::string& endpoint) {
   // Field order follows the json5 block in 11 S1.1.2 so a reader can hold
   // the two side by side; the VALUES follow the corrected contract lines
   // named above. Built once per session at startup -- allocation here never

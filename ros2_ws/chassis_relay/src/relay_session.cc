@@ -66,7 +66,7 @@ struct CallbackCtx {
 // Copy the loaned payload into a stack buffer and hand it on. No allocation:
 // z_bytes_get_reader reads into caller memory, unlike z_bytes_to_slice which
 // allocates a fresh slice per sample -- this callback is the estop path.
-void OnSampleTrampoline(z_loaned_sample_t* sample, void* context) {
+void on_sample_trampoline(z_loaned_sample_t* sample, void* context) {
   auto* ctx = static_cast<CallbackCtx*>(context);
   if (ctx == nullptr || ctx->fn == nullptr) return;
 
@@ -93,15 +93,15 @@ void OnSampleTrampoline(z_loaned_sample_t* sample, void* context) {
   (*ctx->fn)(buf, len);
 }
 
-void OnDropTrampoline(void* context) {
+void on_drop_trampoline(void* context) {
   delete static_cast<CallbackCtx*>(context);
 }
 
 // The frozen profile, mapped onto this binding's option set. Returns false
 // on a name the table does not carry -- declaring with binding defaults is
 // anti-pattern A-7, so an unknown profile refuses rather than guesses.
-bool ApplyProfile(const char* profile_name, z_publisher_options_t* opts) {
-  const qos::QosProfile* p = qos::FindProfile(profile_name);
+bool apply_profile(const char* profile_name, z_publisher_options_t* opts) {
+  const qos::QosProfile* p = qos::find_profile(profile_name);
   if (p == nullptr) return false;
   opts->congestion_control =
       (std::strcmp(p->congestion_control, "block") == 0)
@@ -128,14 +128,14 @@ bool ApplyProfile(const char* profile_name, z_publisher_options_t* opts) {
 
 RelaySession::RelaySession() : impl_(new Impl()) {}
 
-RelaySession::~RelaySession() { Close(); }
+RelaySession::~RelaySession() { close(); }
 
-bool RelaySession::Open(const std::string& endpoint, std::string* err) {
+bool RelaySession::open(const std::string& endpoint, std::string* err) {
   if (impl_->open) {
     if (err) *err = "relay session already open";
     return false;
   }
-  const std::string cfg_json = RelaySessionConfigJson(endpoint);
+  const std::string cfg_json = relay_session_config_json(endpoint);
   z_owned_config_t cfg;
   if (zc_config_from_str(&cfg, cfg_json.c_str()) != Z_OK) {
     if (err) *err = "relay session: config rejected by zenoh: " + cfg_json;
@@ -150,7 +150,7 @@ bool RelaySession::Open(const std::string& endpoint, std::string* err) {
   return true;
 }
 
-void RelaySession::Close() {
+void RelaySession::close() {
   if (!impl_ || !impl_->open) return;
   // Subscribers first: a subscriber whose session is already gone still has
   // a callback the runtime may be inside.
@@ -165,7 +165,7 @@ void RelaySession::Close() {
 
 bool RelaySession::is_open() const { return impl_ && impl_->open; }
 
-int RelaySession::DeclarePublisher(const std::string& key,
+int RelaySession::declare_publisher(const std::string& key,
                                    const char* qos_profile, std::string* err) {
   if (!is_open()) {
     if (err) *err = "relay session not open";
@@ -173,7 +173,7 @@ int RelaySession::DeclarePublisher(const std::string& key,
   }
   z_publisher_options_t opts;
   z_publisher_options_default(&opts);
-  if (!ApplyProfile(qos_profile, &opts)) {
+  if (!apply_profile(qos_profile, &opts)) {
     // A-7: no publisher goes up carrying QoS nobody chose for it.
     if (err) {
       *err = "relay session: unknown qos profile '" +
@@ -199,7 +199,7 @@ int RelaySession::DeclarePublisher(const std::string& key,
   return static_cast<int>(impl_->publishers.size()) - 1;
 }
 
-bool RelaySession::Put(int handle, const char* bytes, std::size_t len) {
+bool RelaySession::put(int handle, const char* bytes, std::size_t len) {
   if (!is_open() || bytes == nullptr) return false;
   if (handle < 0 ||
       static_cast<std::size_t>(handle) >= impl_->publishers.size()) {
@@ -221,7 +221,7 @@ bool RelaySession::Put(int handle, const char* bytes, std::size_t len) {
   return true;
 }
 
-bool RelaySession::DeclareSubscriber(const std::string& key,
+bool RelaySession::declare_subscriber(const std::string& key,
                                      SampleFn on_sample, std::string* err) {
   if (!is_open()) {
     if (err) *err = "relay session not open";
@@ -238,7 +238,7 @@ bool RelaySession::DeclareSubscriber(const std::string& key,
   auto* ctx = new CallbackCtx{impl_->callbacks.back().get(), &impl_->samples,
                               &impl_->oversize};
   z_owned_closure_sample_t closure;
-  z_closure_sample(&closure, OnSampleTrampoline, OnDropTrampoline, ctx);
+  z_closure_sample(&closure, on_sample_trampoline, on_drop_trampoline, ctx);
   z_owned_subscriber_t sub;
   const z_result_t rc = z_declare_subscriber(
       z_loan(impl_->session), &sub, z_loan(ke), z_move(closure), nullptr);

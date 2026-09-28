@@ -39,7 +39,7 @@ namespace {
 // Refuse a value the freeze line should have expanded. See the file header;
 // checked on every loaded string because ANY of them flowing through as a
 // literal "${...}" fails silently downstream.
-std::string RequireExpanded(const std::string& value, const char* key) {
+std::string require_expanded(const std::string& value, const char* key) {
   if (value.size() >= 2 && value[0] == '$' && value[1] == '{') {
     throw std::runtime_error(
         std::string("config key ") + key +
@@ -51,7 +51,7 @@ std::string RequireExpanded(const std::string& value, const char* key) {
 
 }  // namespace
 
-RelayConfig LoadRelayConfig(const std::string& path) {
+RelayConfig load_relay_config(const std::string& path) {
   std::ifstream f(path);
   if (!f) {
     throw std::runtime_error("cannot open relay config: " + path);
@@ -59,26 +59,26 @@ RelayConfig LoadRelayConfig(const std::string& path) {
   std::stringstream buf;
   buf << f.rdbuf();
   const xbrain::config::YamlNode root =
-      xbrain::config::ParseYaml(buf.str());
+      xbrain::config::parse_yaml(buf.str());
 
   // All keys live under one top-level map named after the process, the same
   // L6 shape every configs/*.yaml in this repository uses.
   RelayConfig cfg;
-  cfg.robot_id = RequireExpanded(
+  cfg.robot_id = require_expanded(
       root.require_string("chassis_relay.robot_id"), "chassis_relay.robot_id");
   cfg.gen_endpoint =
-      RequireExpanded(root.require_string("chassis_relay.zenoh_gen_endpoint"),
+      require_expanded(root.require_string("chassis_relay.zenoh_gen_endpoint"),
                       "chassis_relay.zenoh_gen_endpoint");
   cfg.rt_endpoint =
-      RequireExpanded(root.require_string("chassis_relay.zenoh_rt_endpoint"),
+      require_expanded(root.require_string("chassis_relay.zenoh_rt_endpoint"),
                       "chassis_relay.zenoh_rt_endpoint");
-  cfg.whitelist_audit_path = RequireExpanded(
+  cfg.whitelist_audit_path = require_expanded(
       root.require_string("chassis_relay.whitelist_audit_path"),
       "chassis_relay.whitelist_audit_path");
   return cfg;
 }
 
-WhitelistAudit LoadWhitelistAudit(const std::string& path) {
+WhitelistAudit load_whitelist_audit(const std::string& path) {
   std::ifstream f(path);
   if (!f) {
     // Absent registry = deployment defect. The gate exists to catch drift;
@@ -89,7 +89,7 @@ WhitelistAudit LoadWhitelistAudit(const std::string& path) {
   std::stringstream buf;
   buf << f.rdbuf();
   const xbrain::config::YamlNode root =
-      xbrain::config::ParseYaml(buf.str());
+      xbrain::config::parse_yaml(buf.str());
 
   WhitelistAudit audit;
   const xbrain::config::YamlNode& pub =
@@ -113,7 +113,7 @@ namespace {
 // "missing" means the generator or the contract moved, "extra" means
 // somebody tried to widen the relay through the registry, which CRL-3
 // makes impossible by construction but should still be SAID at startup.
-void DiffOneWay(const std::set<std::string>& expected,
+void diff_one_way(const std::set<std::string>& expected,
                 const std::set<std::string>& audited, const char* label,
                 std::string* report) {
   for (const std::string& k : expected) {
@@ -130,7 +130,7 @@ void DiffOneWay(const std::set<std::string>& expected,
 
 }  // namespace
 
-std::string CompareWhitelistAudit(const WhitelistAudit& audit) {
+std::string compare_whitelist_audit(const WhitelistAudit& audit) {
   // The expectation comes from the ONE authoritative table (CRL-3). pub =
   // what this process publishes on the general plane = the RT->GEN rows;
   // sub = what it subscribes there = the GEN->RT rows.
@@ -147,8 +147,8 @@ std::string CompareWhitelistAudit(const WhitelistAudit& audit) {
   const std::set<std::string> audited_sub(audit.sub.begin(), audit.sub.end());
 
   std::string report;
-  DiffOneWay(expect_pub, audited_pub, "pub", &report);
-  DiffOneWay(expect_sub, audited_sub, "sub", &report);
+  diff_one_way(expect_pub, audited_pub, "pub", &report);
+  diff_one_way(expect_sub, audited_sub, "sub", &report);
   return report;
 }
 

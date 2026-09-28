@@ -9,7 +9,7 @@
  * Two halves, both allocation-free because they run inside zenoh callback
  * threads on the emergency-stop path (CRL-4, CRL-5):
  *
- *   * ScanEnvelope walks the ONE top level of a JSON object and records the
+ *   * scan_envelope walks the ONE top level of a JSON object and records the
  *     byte span of each S3.0 field it recognises. Values it does not need are
  *     skipped structurally: strings by escape-aware quote matching, objects
  *     and arrays by a single depth counter with in-string tracking, scalars
@@ -20,7 +20,7 @@
  *     the object closed before the input ended, which is all the rebuild
  *     needs to compose a well-formed output.
  *
- *   * RebuildEnvelope emits the new envelope through a bounded appender that
+ *   * rebuild_envelope emits the new envelope through a bounded appender that
  *     latches on overflow, so there is no branch in which a half-written
  *     object escapes (the same shape as quadruped's rt_payloads.cc Appender,
  *     and for the same reason: truncated JSON at a consumer reads as "the
@@ -46,17 +46,17 @@ namespace chassis_relay {
 namespace {
 
 // The four whitespace bytes JSON permits between tokens (RFC 8259 s2).
-inline bool IsWs(char c) {
+inline bool is_ws(char c) {
   return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
-inline void SkipWs(const char* in, std::size_t len, std::size_t* i) {
-  while (*i < len && IsWs(in[*i])) ++(*i);
+inline void skip_ws(const char* in, std::size_t len, std::size_t* i) {
+  while (*i < len && is_ws(in[*i])) ++(*i);
 }
 
 // Advance past one JSON string, *i at the opening quote on entry, one past
 // the closing quote on exit. Escapes are skipped pairwise -- \" never closes.
-bool ScanString(const char* in, std::size_t len, std::size_t* i) {
+bool scan_string(const char* in, std::size_t len, std::size_t* i) {
   ++(*i);  // the opening quote
   while (*i < len) {
     const char c = in[*i];
@@ -76,7 +76,7 @@ bool ScanString(const char* in, std::size_t len, std::size_t* i) {
 // counter covers both bracket kinds; in-string state keeps braces inside
 // string values from counting. Depth is capped so a hostile input cannot
 // turn the scan into an effectively unbounded loop of nested openers.
-bool ScanContainer(const char* in, std::size_t len, std::size_t* i) {
+bool scan_container(const char* in, std::size_t len, std::size_t* i) {
   constexpr int kMaxDepth = 64;
   int depth = 0;
   bool in_string = false;
@@ -110,28 +110,28 @@ bool ScanContainer(const char* in, std::size_t len, std::size_t* i) {
 
 // Advance past one scalar (number / true / false / null / any bare token).
 // Stops at the delimiters that can follow a value at the scanned level.
-bool ScanLiteral(const char* in, std::size_t len, std::size_t* i) {
+bool scan_literal(const char* in, std::size_t len, std::size_t* i) {
   const std::size_t start = *i;
   while (*i < len) {
     const char c = in[*i];
-    if (c == ',' || c == '}' || c == ']' || IsWs(c)) break;
+    if (c == ',' || c == '}' || c == ']' || is_ws(c)) break;
     ++(*i);
   }
   return *i > start;  // an empty literal ("key: ,") is malformed
 }
 
 // Advance past one value of any shape, recording its span.
-bool ScanValue(const char* in, std::size_t len, std::size_t* i, Span* out) {
+bool scan_value(const char* in, std::size_t len, std::size_t* i, Span* out) {
   const std::size_t start = *i;
   bool ok = false;
   if (*i >= len) return false;
   const char c = in[*i];
   if (c == '"') {
-    ok = ScanString(in, len, i);
+    ok = scan_string(in, len, i);
   } else if (c == '{' || c == '[') {
-    ok = ScanContainer(in, len, i);
+    ok = scan_container(in, len, i);
   } else {
-    ok = ScanLiteral(in, len, i);
+    ok = scan_literal(in, len, i);
   }
   if (!ok) return false;
   out->off = start;
@@ -144,7 +144,7 @@ bool ScanValue(const char* in, std::size_t len, std::size_t* i, Span* out) {
 // interior bytes; an escaped spelling of a known name ("v" for v) will
 // not match and the field lands in the ignored set -- our own writers never
 // escape these seven-bit names, so nothing real is lost.
-bool KeyIs(const char* in, const Span& key, const char* name) {
+bool key_is(const char* in, const Span& key, const char* name) {
   const std::size_t n = std::strlen(name);
   if (key.len != n + 2) return false;  // interior length plus the two quotes
   return std::memcmp(in + key.off + 1, name, n) == 0;
@@ -152,17 +152,17 @@ bool KeyIs(const char* in, const Span& key, const char* name) {
 
 // Route one scanned key/value pair into the result struct. Last occurrence
 // wins on a duplicate key, matching the json decoders used in this stack.
-void Assign(const char* in, const Span& key, const Span& val,
+void assign(const char* in, const Span& key, const Span& val,
             EnvelopeScan* out) {
-  if (KeyIs(in, key, "v")) out->v = val;
-  else if (KeyIs(in, key, "rid")) out->rid = val;
-  else if (KeyIs(in, key, "ts")) out->ts = val;
-  else if (KeyIs(in, key, "mono")) out->mono = val;
-  else if (KeyIs(in, key, "boot")) out->boot = val;
-  else if (KeyIs(in, key, "seq")) out->seq = val;
-  else if (KeyIs(in, key, "src")) out->src = val;
-  else if (KeyIs(in, key, "ts_sync")) out->ts_sync = val;
-  else if (KeyIs(in, key, "data")) out->data = val;
+  if (key_is(in, key, "v")) out->v = val;
+  else if (key_is(in, key, "rid")) out->rid = val;
+  else if (key_is(in, key, "ts")) out->ts = val;
+  else if (key_is(in, key, "mono")) out->mono = val;
+  else if (key_is(in, key, "boot")) out->boot = val;
+  else if (key_is(in, key, "seq")) out->seq = val;
+  else if (key_is(in, key, "src")) out->src = val;
+  else if (key_is(in, key, "ts_sync")) out->ts_sync = val;
+  else if (key_is(in, key, "data")) out->data = val;
   // Every other key is dropped by the rebuild -- see the header on why a
   // forwarder must not copy fields it cannot name.
 }
@@ -176,7 +176,7 @@ struct Out {
   std::size_t n = 0;
   bool overflow = false;
 
-  void Bytes(const char* s, std::size_t k) {
+  void add_bytes(const char* s, std::size_t k) {
     if (overflow) return;
     if (n + k > cap) {
       overflow = true;
@@ -185,31 +185,31 @@ struct Out {
     std::memcpy(p + n, s, k);
     n += k;
   }
-  void Lit(const char* s) { Bytes(s, std::strlen(s)); }
-  void SpanOf(const char* in, const Span& s) { Bytes(in + s.off, s.len); }
+  void add_lit(const char* s) { add_bytes(s, std::strlen(s)); }
+  void add_span_of(const char* in, const Span& s) { add_bytes(in + s.off, s.len); }
 };
 
 // The key/value walk of the top-level object, *i one past the opening brace
 // on entry (and NOT at a closing one), one past the closing brace on success.
-bool WalkPairs(const char* in, std::size_t len, std::size_t* i,
+bool walk_pairs(const char* in, std::size_t len, std::size_t* i,
                EnvelopeScan* out) {
   while (true) {
     if (*i >= len || in[*i] != '"') return false;
     Span key{*i, 0, false};
-    if (!ScanString(in, len, i)) return false;
+    if (!scan_string(in, len, i)) return false;
     key.len = *i - key.off;
-    SkipWs(in, len, i);
+    skip_ws(in, len, i);
     if (*i >= len || in[*i] != ':') return false;
     ++(*i);
-    SkipWs(in, len, i);
+    skip_ws(in, len, i);
     Span val;
-    if (!ScanValue(in, len, i, &val)) return false;
-    Assign(in, key, val, out);
-    SkipWs(in, len, i);
+    if (!scan_value(in, len, i, &val)) return false;
+    assign(in, key, val, out);
+    skip_ws(in, len, i);
     if (*i >= len) return false;  // object never closed
     if (in[*i] == ',') {
       ++(*i);
-      SkipWs(in, len, i);
+      skip_ws(in, len, i);
       continue;
     }
     if (in[*i] == '}') {
@@ -222,25 +222,25 @@ bool WalkPairs(const char* in, std::size_t len, std::size_t* i,
 
 }  // namespace
 
-bool ScanEnvelope(const char* in, std::size_t len, EnvelopeScan* out) {
+bool scan_envelope(const char* in, std::size_t len, EnvelopeScan* out) {
   if (in == nullptr || out == nullptr || len == 0) return false;
   *out = EnvelopeScan{};
   out->input_len = len;
   std::size_t i = 0;
-  SkipWs(in, len, &i);
+  skip_ws(in, len, &i);
   if (i >= len || in[i] != '{') return false;
   ++i;
-  SkipWs(in, len, &i);
+  skip_ws(in, len, &i);
   // The empty object closes immediately; otherwise walk key/value pairs.
   if (i < len && in[i] == '}') {
     ++i;
-  } else if (!WalkPairs(in, len, &i, out)) {
+  } else if (!walk_pairs(in, len, &i, out)) {
     return false;
   }
   // Strictly one object: trailing bytes other than whitespace mean this was
   // not the message it claims to be, and a rebuild from a prefix of garbage
   // would launder that garbage into a well-formed envelope.
-  SkipWs(in, len, &i);
+  skip_ws(in, len, &i);
   return i == len;
 }
 
@@ -248,15 +248,15 @@ namespace {
 
 // One optionally-copied field: emitted only when the scan saw it, with the
 // comma bookkeeping shared through `first`.
-void EmitCopied(Out* o, bool* first, const char* in, const char* name,
+void emit_copied(Out* o, bool* first, const char* in, const char* name,
                 const Span& s) {
   if (!s.present) return;
-  if (!*first) o->Lit(",");
+  if (!*first) o->add_lit(",");
   *first = false;
-  o->Lit("\"");
-  o->Lit(name);
-  o->Lit("\":");
-  o->SpanOf(in, s);
+  o->add_lit("\"");
+  o->add_lit(name);
+  o->add_lit("\":");
+  o->add_span_of(in, s);
 }
 
 // The three REBUILT fields, in S3.0 order relative to each other:
@@ -264,22 +264,22 @@ void EmitCopied(Out* o, bool* first, const char* in, const char* name,
 // own example carries; %g would coarsen it to whole seconds), then seq = the
 // relay's own per-key counter (RT-C3.e: gap detection on the destination
 // plane must measure THIS hop, not the far one), then src = the forwarder.
-void EmitRebuiltTs(Out* o, bool* first, double fwd_ts_s) {
+void emit_rebuilt_ts(Out* o, bool* first, double fwd_ts_s) {
   char num[48];
   std::snprintf(num, sizeof(num), "%s\"ts\":%.6f", *first ? "" : ",",
                 fwd_ts_s);
   *first = false;
-  o->Lit(num);
+  o->add_lit(num);
 }
 
-void EmitRebuiltSeqSrc(Out* o, std::uint64_t fwd_seq, const char* fwd_src) {
+void emit_rebuilt_seq_src(Out* o, std::uint64_t fwd_seq, const char* fwd_src) {
   char num[48];
   std::snprintf(num, sizeof(num), ",\"seq\":%llu",
                 static_cast<unsigned long long>(fwd_seq));
-  o->Lit(num);
-  o->Lit(",\"src\":\"");
-  o->Lit(fwd_src);
-  o->Lit("\"");
+  o->add_lit(num);
+  o->add_lit(",\"src\":\"");
+  o->add_lit(fwd_src);
+  o->add_lit("\"");
 }
 
 }  // namespace
@@ -313,57 +313,57 @@ void EmitRebuiltSeqSrc(Out* o, std::uint64_t fwd_seq, const char* fwd_src) {
 //     judgement CRL-1 forbids, and the consumer's schema rejects it either
 //     way.
 // v IS written: it versions THIS envelope, which the relay is the author of.
-static std::size_t WrapBare(const char* in, std::size_t len, double fwd_ts_s,
+static std::size_t wrap_bare(const char* in, std::size_t len, double fwd_ts_s,
                             std::uint64_t fwd_seq, const char* fwd_src,
                             char* out, std::size_t cap) {
   Out o{out, cap};
   char num[48];
   std::snprintf(num, sizeof(num), "{\"v\":1,\"ts\":%.6f", fwd_ts_s);
-  o.Lit(num);
-  EmitRebuiltSeqSrc(&o, fwd_seq, fwd_src);
-  o.Lit(",\"data\":");
-  // The whole input, verbatim -- ScanEnvelope already proved it is exactly
+  o.add_lit(num);
+  emit_rebuilt_seq_src(&o, fwd_seq, fwd_src);
+  o.add_lit(",\"data\":");
+  // The whole input, verbatim -- scan_envelope already proved it is exactly
   // one object in optional whitespace, and surrounding whitespace is legal
   // inside a JSON value position.
-  o.Bytes(in, len);
-  o.Lit("}");
+  o.add_bytes(in, len);
+  o.add_lit("}");
   if (o.overflow) return 0;
   return o.n;
 }
 
-std::size_t RebuildEnvelope(const char* in, const EnvelopeScan& scan,
+std::size_t rebuild_envelope(const char* in, const EnvelopeScan& scan,
                             double fwd_ts_s, std::uint64_t fwd_seq,
                             const char* fwd_src, char* out, std::size_t cap) {
   if (in == nullptr || fwd_src == nullptr || out == nullptr || cap == 0) {
     return 0;
   }
-  // No data field = a bare payload: wrap it whole (see WrapBare above).
+  // No data field = a bare payload: wrap it whole (see wrap_bare above).
   // scan.data carries no offsets to recover the input length from, so the
   // caller-visible contract stays "the scan plus the same in/len".
   if (!scan.data.present) {
-    return WrapBare(in, scan.input_len, fwd_ts_s, fwd_seq, fwd_src, out, cap);
+    return wrap_bare(in, scan.input_len, fwd_ts_s, fwd_seq, fwd_src, out, cap);
   }
 
   Out o{out, cap};
-  o.Lit("{");
+  o.add_lit("{");
   // Copied fields go out only when they came in; the emit order follows the
   // S3.0 listing so a human diffing a capture against the contract reads top
-  // to bottom (same argument as quadruped's WriteEnvelope).
+  // to bottom (same argument as quadruped's write_envelope).
   bool first = true;
-  EmitCopied(&o, &first, in, "v", scan.v);
-  EmitCopied(&o, &first, in, "rid", scan.rid);
-  EmitRebuiltTs(&o, &first, fwd_ts_s);
-  EmitCopied(&o, &first, in, "mono", scan.mono);
-  EmitCopied(&o, &first, in, "boot", scan.boot);
-  EmitRebuiltSeqSrc(&o, fwd_seq, fwd_src);
-  EmitCopied(&o, &first, in, "ts_sync", scan.ts_sync);
+  emit_copied(&o, &first, in, "v", scan.v);
+  emit_copied(&o, &first, in, "rid", scan.rid);
+  emit_rebuilt_ts(&o, &first, fwd_ts_s);
+  emit_copied(&o, &first, in, "mono", scan.mono);
+  emit_copied(&o, &first, in, "boot", scan.boot);
+  emit_rebuilt_seq_src(&o, fwd_seq, fwd_src);
+  emit_copied(&o, &first, in, "ts_sync", scan.ts_sync);
   // The originals, kept as RT-C3.e requires. Spans verbatim: orig_src keeps
   // its quotes, orig_ts its number formatting.
-  EmitCopied(&o, &first, in, "orig_ts", scan.ts);
-  EmitCopied(&o, &first, in, "orig_src", scan.src);
-  o.Lit(",\"data\":");
-  o.SpanOf(in, scan.data);
-  o.Lit("}");
+  emit_copied(&o, &first, in, "orig_ts", scan.ts);
+  emit_copied(&o, &first, in, "orig_src", scan.src);
+  o.add_lit(",\"data\":");
+  o.add_span_of(in, scan.data);
+  o.add_lit("}");
   if (o.overflow) return 0;
   return o.n;
 }

@@ -46,7 +46,7 @@
  * depth with in-string tracking; it EXTRACTS spans, it does not validate JSON
  * (a mismatched bracket pair deep inside data will pass the scan and fail at
  * the consumer, which is where schema validation lives -- CRL-1). Failure
- * answers are uniform: ScanEnvelope returns false, RebuildEnvelope returns 0,
+ * answers are uniform: scan_envelope returns false, rebuild_envelope returns 0,
  * and the caller (relay_core) decides what a failure means per key -- drop
  * for eleven rows, verbatim raw forward for cmd/estop (11 S3.0.1).
  */
@@ -91,7 +91,7 @@ struct EnvelopeScan {
 // is one complete object (optionally wrapped in whitespace) whose top level
 // could be walked to the closing brace; field spans are filled for the keys
 // that were seen. Allocation-free, single pass, bounded by len.
-bool ScanEnvelope(const char* in, std::size_t len, EnvelopeScan* out);
+bool scan_envelope(const char* in, std::size_t len, EnvelopeScan* out);
 
 // Serialise the rebuilt envelope into [out, out+cap):
 //   { v?, rid?, ts = fwd_ts_s, mono?, boot?, seq = fwd_seq, src = fwd_src,
@@ -103,20 +103,20 @@ bool ScanEnvelope(const char* in, std::size_t len, EnvelopeScan* out);
 // instead: { v:1, ts, seq, src, data = the whole original object } -- no
 // copied fields, no orig_*, no fabricated rid/mono/boot/ts_sync (the
 // receivers' fallbacks for those are the fail-safe directions). See the
-// WrapBare note in the .cc for the full argument.
+// wrap_bare note in the .cc for the full argument.
 //
 // Returns bytes written, or 0 when the buffer is too small -- never a
 // partial object (half an envelope is valid-looking JSON that decodes to the
 // wrong thing). fwd_ts_s is rendered with six decimals, the precision S3.0's
 // own example carries. Allocation-free.
-std::size_t RebuildEnvelope(const char* in, const EnvelopeScan& scan,
+std::size_t rebuild_envelope(const char* in, const EnvelopeScan& scan,
                             double fwd_ts_s, std::uint64_t fwd_seq,
                             const char* fwd_src, char* out, std::size_t cap);
 
 // Worst-case growth of a rebuild over its input: the fixed field names and
 // punctuation plus a re-rendered ts/seq, with orig_ts/orig_src duplicating
 // the two original spans. Callers size their output buffer as
-// input_cap + kRebuildSlack; RebuildEnvelope still checks every write, this
+// input_cap + kRebuildSlack; rebuild_envelope still checks every write, this
 // constant only makes "big enough" writable as one expression.
 inline constexpr std::size_t kRebuildSlack = 256;
 

@@ -45,7 +45,7 @@ namespace chassis_relay {
 // Send one state string ("READY=1", "WATCHDOG=1") to $NOTIFY_SOCKET.
 // True when the datagram went out; false when there is no socket (normal
 // outside systemd) or the send failed (systemd's watchdog handles it).
-inline bool SdNotify(const char* state) {
+inline bool sd_notify(const char* state) {
   const char* path = std::getenv("NOTIFY_SOCKET");
   if (path == nullptr || path[0] == '\0' || state == nullptr) return false;
 

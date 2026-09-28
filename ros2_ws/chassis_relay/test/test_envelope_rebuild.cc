@@ -56,21 +56,21 @@ const char* kFull =
     "\"data\":{\"soc\":0.81,\"faults\":[{\"name\":\"f{1}\",\"detail\":"
     "\"a\\\"b\"}],\"hes_lock\":false}}";
 
-std::string Rebuild(const char* in, double ts, std::uint64_t seq,
+std::string rebuild(const char* in, double ts, std::uint64_t seq,
                     bool* ok = nullptr) {
   EnvelopeScan scan;
-  const bool scanned = ScanEnvelope(in, std::strlen(in), &scan);
+  const bool scanned = scan_envelope(in, std::strlen(in), &scan);
   if (ok != nullptr) *ok = scanned;
   if (!scanned) return std::string();
   char out[8192];
-  const std::size_t n = RebuildEnvelope(in, scan, ts, seq, "chassis_relay",
+  const std::size_t n = rebuild_envelope(in, scan, ts, seq, "chassis_relay",
                                         out, sizeof(out));
   return std::string(out, n);
 }
 
-void FullRoundTrip() {
+void full_round_trip() {
   bool scanned = false;
-  const std::string out = Rebuild(kFull, 1753660900.5, 42, &scanned);
+  const std::string out = rebuild(kFull, 1753660900.5, 42, &scanned);
   CHECK(scanned);
   CHECK(!out.empty());
   json j = json::parse(out, nullptr, false);
@@ -103,14 +103,14 @@ void FullRoundTrip() {
   CHECK(j["seq"] != 777);
 }
 
-void CrossHostShape() {
+void cross_host_shape() {
   // A cloud publisher MUST omit mono/boot (CLK-C4); the rebuild forwards
   // that shape unchanged rather than inventing local values -- re-stamping
   // mono here would make relay-queue time invisible to every age check.
   const char* in =
       "{\"v\":1,\"rid\":\"dev\",\"ts\":1753660800.0,\"seq\":3,"
       "\"src\":\"cloud\",\"ts_sync\":false,\"data\":{\"action\":\"stop\"}}";
-  const std::string out = Rebuild(in, 100.25, 1);
+  const std::string out = rebuild(in, 100.25, 1);
   CHECK(!out.empty());
   json j = json::parse(out, nullptr, false);
   CHECK(!j.is_discarded());
@@ -121,13 +121,13 @@ void CrossHostShape() {
   CHECK(j["ts_sync"] == false);
 }
 
-void UnknownFieldsDropped() {
+void unknown_fields_dropped() {
   // S3.0 receivers ignore unknown fields; a FORWARDER that copied them would
   // be a byte tunnel for whatever a sender smuggles at the top level.
   const char* in =
       "{\"v\":1,\"smuggled\":{\"cmd\":\"open\"},\"ts\":5.0,\"src\":\"x\","
       "\"data\":{}}";
-  const std::string out = Rebuild(in, 6.0, 1);
+  const std::string out = rebuild(in, 6.0, 1);
   CHECK(!out.empty());
   CHECK(out.find("smuggled") == std::string::npos);
   json j = json::parse(out, nullptr, false);
@@ -135,11 +135,11 @@ void UnknownFieldsDropped() {
   CHECK(j["data"].is_object());
 }
 
-void MissingOriginalsOmitted() {
+void missing_originals_omitted() {
   // No ts / no src in the input -> no orig_ts / no orig_src in the output
   // (writing null would fabricate a claim about the producer).
   const char* in = "{\"v\":1,\"data\":{\"k\":1}}";
-  const std::string out = Rebuild(in, 7.5, 9);
+  const std::string out = rebuild(in, 7.5, 9);
   CHECK(!out.empty());
   json j = json::parse(out, nullptr, false);
   CHECK(!j.is_discarded());
@@ -149,48 +149,48 @@ void MissingOriginalsOmitted() {
   CHECK(j["src"] == "chassis_relay");
 }
 
-void DuplicateKeyLastWins() {
+void duplicate_key_last_wins() {
   // Documented tie-break: the LAST occurrence of a duplicate key is the one
   // forwarded, matching the json decoders used across this stack.
   const char* in = "{\"src\":\"first\",\"src\":\"second\",\"data\":{}}";
-  const std::string out = Rebuild(in, 1.0, 1);
+  const std::string out = rebuild(in, 1.0, 1);
   CHECK(!out.empty());
   json j = json::parse(out, nullptr, false);
   CHECK(j["orig_src"] == "second");
 }
 
-void ScanRejections() {
+void scan_rejections() {
   EnvelopeScan s;
   // Truncated: the object never closes.
   const char* cut = "{\"v\":1,\"data\":{\"a\":1}";
-  CHECK(!ScanEnvelope(cut, std::strlen(cut), &s));
+  CHECK(!scan_envelope(cut, std::strlen(cut), &s));
   // Trailing garbage after the close: not one object.
   const char* trail = "{\"v\":1,\"data\":{}} extra";
-  CHECK(!ScanEnvelope(trail, std::strlen(trail), &s));
+  CHECK(!scan_envelope(trail, std::strlen(trail), &s));
   // Not an object at all.
   const char* arr = "[1,2,3]";
-  CHECK(!ScanEnvelope(arr, std::strlen(arr), &s));
+  CHECK(!scan_envelope(arr, std::strlen(arr), &s));
   const char* text = "stop the robot";
-  CHECK(!ScanEnvelope(text, std::strlen(text), &s));
+  CHECK(!scan_envelope(text, std::strlen(text), &s));
   // Unterminated string inside.
   const char* badstr = "{\"src\":\"never closed}";
-  CHECK(!ScanEnvelope(badstr, std::strlen(badstr), &s));
+  CHECK(!scan_envelope(badstr, std::strlen(badstr), &s));
   // Empty and null inputs.
-  CHECK(!ScanEnvelope("", 0, &s));
-  CHECK(!ScanEnvelope(nullptr, 5, &s));
+  CHECK(!scan_envelope("", 0, &s));
+  CHECK(!scan_envelope(nullptr, 5, &s));
   // Whitespace around one object is fine.
   const char* padded = "  {\"data\":{}}\n";
-  CHECK(ScanEnvelope(padded, std::strlen(padded), &s));
+  CHECK(scan_envelope(padded, std::strlen(padded), &s));
   CHECK(s.data.present);
 }
 
-void BarePayloadWraps() {
+void bare_payload_wraps() {
   // The deployed general plane carries envelope-less payloads; the probe
   // ping is the live 1 Hz case (measured 2026-09-26). Data absent => the
   // WHOLE object becomes data under a fresh relay-authored envelope.
   const char* ping = "{\"seq\":969863,\"t_mono_ms\":1409403071,"
                      "\"type\":\"ping\"}";
-  const std::string out = Rebuild(ping, 55.5, 7);
+  const std::string out = rebuild(ping, 55.5, 7);
   CHECK(!out.empty());
   json j = json::parse(out, nullptr, false);
   CHECK(!j.is_discarded());
@@ -219,29 +219,29 @@ void BarePayloadWraps() {
   // deciding it was "an envelope missing data" rather than "a payload"
   // would be the semantic judgement CRL-1 forbids.
   const char* half = "{\"v\":9,\"ts\":2.0,\"src\":\"y\"}";
-  const std::string wrapped = Rebuild(half, 1.0, 1);
+  const std::string wrapped = rebuild(half, 1.0, 1);
   CHECK(!wrapped.empty());
   json h = json::parse(wrapped, nullptr, false);
   CHECK(h["data"]["v"] == 9);
   CHECK(h["src"] == "chassis_relay");
 }
 
-void RebuildRejections() {
+void rebuild_rejections() {
   // A buffer too small answers 0, never a prefix: half an envelope is
   // valid-looking JSON that decodes to the wrong thing. Both forms.
   EnvelopeScan s;
-  CHECK(ScanEnvelope(kFull, std::strlen(kFull), &s));
+  CHECK(scan_envelope(kFull, std::strlen(kFull), &s));
   char tiny[64];
-  CHECK(RebuildEnvelope(kFull, s, 1.0, 1, "chassis_relay", tiny,
+  CHECK(rebuild_envelope(kFull, s, 1.0, 1, "chassis_relay", tiny,
                         sizeof(tiny)) == 0);
   const char* bare = "{\"type\":\"ping\",\"pad\":\"0123456789abcdef\"}";
-  CHECK(ScanEnvelope(bare, std::strlen(bare), &s));
+  CHECK(scan_envelope(bare, std::strlen(bare), &s));
   char tiny2[40];
-  CHECK(RebuildEnvelope(bare, s, 1.0, 1, "chassis_relay", tiny2,
+  CHECK(rebuild_envelope(bare, s, 1.0, 1, "chassis_relay", tiny2,
                         sizeof(tiny2)) == 0);
 }
 
-void DeepNesting() {
+void deep_nesting() {
   // 63 nested arrays pass (the cap is 64 levels); 65 must fail the scan
   // rather than spin or misparse. Built programmatically so the two cases
   // cannot drift apart.
@@ -252,7 +252,7 @@ void DeepNesting() {
     for (int i = 0; i < depth; ++i) in += "]";
     in += "}";
     EnvelopeScan s;
-    const bool ok = ScanEnvelope(in.c_str(), in.size(), &s);
+    const bool ok = scan_envelope(in.c_str(), in.size(), &s);
     CHECK(ok == (depth == 63));
   }
 }
@@ -260,15 +260,15 @@ void DeepNesting() {
 }  // namespace
 
 int main() {
-  FullRoundTrip();
-  CrossHostShape();
-  UnknownFieldsDropped();
-  MissingOriginalsOmitted();
-  DuplicateKeyLastWins();
-  ScanRejections();
-  BarePayloadWraps();
-  RebuildRejections();
-  DeepNesting();
+  full_round_trip();
+  cross_host_shape();
+  unknown_fields_dropped();
+  missing_originals_omitted();
+  duplicate_key_last_wins();
+  scan_rejections();
+  bare_payload_wraps();
+  rebuild_rejections();
+  deep_nesting();
 
   if (g_failures != 0) {
     std::printf("test_envelope_rebuild: %d FAILURES\n", g_failures);

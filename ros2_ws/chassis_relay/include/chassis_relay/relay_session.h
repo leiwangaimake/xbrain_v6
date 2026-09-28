@@ -9,7 +9,7 @@
  * Description:
  * The relay holds TWO of these (general at :7447, RT at :7449), which RT-C3
  * permits exactly because each is its own independent runtime with scouting
- * locked down (RelaySessionConfigJson below; the a-e sub-conditions are
+ * locked down (relay_session_config_json below; the a-e sub-conditions are
  * argued field by field in relay_session_config.cc). The class is a close
  * copy of quadruped's rt_session.cc -- deliberately self-held rather than
  * shared, because the two are separate processes and a shared session class
@@ -17,7 +17,7 @@
  * (owned keyexpr, z_move discipline, loaned samples) apply here verbatim.
  *
  * What is DIFFERENT from the quadruped copy, and why:
- *   * DeclarePublisher takes a QoS profile name and maps it onto
+ *   * declare_publisher takes a QoS profile name and maps it onto
  *     z_publisher_options_t (congestion_control / priority / is_express).
  *     quadruped declares with binding defaults; for the relay that would put
  *     "block" congestion on the estop forward, which anti-pattern A-5
@@ -57,10 +57,10 @@ namespace chassis_relay {
 // a router; the wrong values fail as SILENCE (a session that connects and
 // receives nothing), which is why this is the one function that must be
 // checkable everywhere (same reasoning as quadruped's rt_session_config.cc).
-std::string RelaySessionConfigJson(const std::string& endpoint);
+std::string relay_session_config_json(const std::string& endpoint);
 
 // One plane's session. Publishers are addressed by the integer handle
-// DeclarePublisher returns; subscribers hold their callback for the life of
+// declare_publisher returns; subscribers hold their callback for the life of
 // the session (strong-reference discipline: dropping a subscriber silently
 // unsubscribes, the zenoh trap CLAUDE.md 4.3 documents for Python and which
 // holds for zenoh-c owned types just the same).
@@ -80,28 +80,28 @@ class RelaySession {
   // router is down" and "the router is up and silent" are different faults,
   // and a retry loop turns the first into the second (quadruped's argument,
   // kept). False + *err on failure.
-  bool Open(const std::string& endpoint, std::string* err);
+  bool open(const std::string& endpoint, std::string* err);
 
   // Drop subscribers first, then publishers, then the session. Idempotent.
-  void Close();
+  void close();
 
   bool is_open() const;
 
   // Declare a publisher on `key` with the named frozen QoS profile
   // ("Q0_safety" / "Q2_state" / "Q3_cmd"). Returns a handle >= 0, or -1 with
   // *err (unknown profile included -- see the header on A-7).
-  int DeclarePublisher(const std::string& key, const char* qos_profile,
+  int declare_publisher(const std::string& key, const char* qos_profile,
                        std::string* err);
 
   // Publish len bytes on a declared handle. Allocation in OUR code: none;
   // zenoh's own runtime copies the payload internally, the same acceptance
   // quadruped's rt made. False on refusal (counted by the caller).
-  bool Put(int handle, const char* bytes, std::size_t len);
+  bool put(int handle, const char* bytes, std::size_t len);
 
   // Subscribe `key`, invoking on_sample per received sample. The callback
   // context is owned by the session (never by the vector's storage -- the
   // reallocation trap rt_session.cc names).
-  bool DeclareSubscriber(const std::string& key, SampleFn on_sample,
+  bool declare_subscriber(const std::string& key, SampleFn on_sample,
                          std::string* err);
 
   // Counters, for the stats line: samples delivered to callbacks, samples
