@@ -164,7 +164,6 @@ _KNOWN_UNWIRED = {
     "xbrain/p1_motion/path/recording_lock.py": "untriaged",
     "xbrain/p1_motion/profile/switch_sm.py": "untriaged",
     "xbrain/p1_motion/rotation/visual_override.py": "untriaged",
-    "xbrain/p1_motion/rt_base/rtc.py": "untriaged",
     "xbrain/p1_motion/teleop/four_source.py": "untriaged",
     "xbrain/p2_core/domains/lighting_auto.py": "untriaged",
     "xbrain/p2_core/health/aux/ir_camera.py": "untriaged",

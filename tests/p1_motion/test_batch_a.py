@@ -6,7 +6,8 @@ File: test_batch_a.py
 Brief: MOT-PM-1..15 batch A tests (foundation + gate + rotation + fence)
 
 Description:
-Covers the eight P1 modules landed in batch A: RTC guards, perception
+Covers the P1 modules landed in batch A (the RTC guards were deleted
+2026-09-28, see mid-file): perception
 source abstraction, freshness classification, 8-tier source arbiter,
 speed gate f(d_free) + rule form + audit, g(targets), rotation permit
 RCG, and fence geometry + two-stage commit. Each module has 2-4 focused
@@ -40,7 +41,6 @@ from xbrain.p1_motion.rotation.rcg import (
     is_spin_like,
     rotation_permitted,
 )
-from xbrain.p1_motion.rt_base.rtc import RtcViolation, note_single_slot
 from xbrain.p1_motion.sources.arbiter_p1 import (
     BehaviorSource,
     P1Arbiter,
@@ -50,15 +50,15 @@ from xbrain.p1_motion.sources.arbiter_p1 import (
 pytestmark = pytest.mark.no_device
 
 
-# --- MOT-PM-2 RTC ---
-
-def test_single_slot_ok():
-    note_single_slot(existing=1)
-
-
-def test_single_slot_over_1_raises():
-    with pytest.raises(RtcViolation):
-        note_single_slot(existing=2)
+# MOT-PM-2's rt_base/rtc.py was deleted on 2026-09-28 together with these
+# two tests. Its three exported "guards" only raised when the caller handed
+# them a value that already admitted the violation
+# (note_import_completed(True), note_single_slot(existing=2)), and
+# note_no_blocking_log() was literally `pass` -- so no implementation could
+# fail them and nothing in the 20 Hz path ever called one. CLAUDE.md S3.2
+# form 1 plus S9.3. RTC-1 / RTC-3 / RTC-6 are left with no executable
+# enforcement at all, which is the honest state and is reported as such;
+# the module never provided any.
 
 
 # --- MOT-PM-3 PerceptionSource ---
