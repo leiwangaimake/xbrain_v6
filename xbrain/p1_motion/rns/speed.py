@@ -31,7 +31,7 @@ inside the family and wrap at the cap boundary to stay readable.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional
+from typing import Dict
 
 
 def g_down(x: float, x0: float, x1: float, g_min: float) -> float:

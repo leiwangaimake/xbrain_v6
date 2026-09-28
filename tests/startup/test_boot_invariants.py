@@ -85,7 +85,7 @@ def test_blocked_is_reachable_from_every_stage():
 
     没有 D->BLOCKED 这条边, 一个在运行中出现的 fatal 就没有降级出口了.
     """
-    from xbrain.p2_core.boot.stage_machine import ALLOWED, BootStage, BootStageMachine
+    from xbrain.p2_core.boot.stage_machine import ALLOWED, BootStage
 
     for stage in (BootStage.STAGE_A, BootStage.STAGE_B,
                   BootStage.STAGE_C, BootStage.STAGE_D):

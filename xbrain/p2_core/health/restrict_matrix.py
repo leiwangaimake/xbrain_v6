@@ -27,7 +27,7 @@ domain 3 while mic=fail) reflects the fault.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import FrozenSet, Mapping
+from typing import Mapping
 
 from xbrain.common.errors import E_DEGRADED, E_UNHEALTHY
 from xbrain.p2_core.health.items import HealthState

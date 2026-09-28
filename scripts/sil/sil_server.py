@@ -48,7 +48,6 @@ sys.path.insert(0, str(ROOT / "scripts" / "sil"))
 # top of the file -- which is what E402 asks for -- makes the import fail.
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import FileResponse  # noqa: E402
-from fastapi.staticfiles import StaticFiles  # noqa: E402
 from sil_world import BLIND_NEAR_M, FOV_HALF_RAD, RANGE_MAX_M, SilWorld  # noqa: E402
 from zenoh_world import world_to_body  # noqa: E402
 

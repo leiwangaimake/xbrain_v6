@@ -35,13 +35,9 @@ CHK-1-61 snapshot backup (snapshot.py)
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import pytest
 
 from xbrain.common.config.hotreload.dispatch import (
-    ALLOWED_ORIGINS,
     RESPONDING_PROCESSES,
     TOKEN_ISSUER,
     WHITELIST_SCOPES,
@@ -82,7 +78,6 @@ from xbrain.p3_task.geo.snapshot import (
     latest_snapshot_rev,
     list_snapshots,
     restore_from_snapshot,
-    snapshot_path,
     write_snapshot,
 )
 

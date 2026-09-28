@@ -32,7 +32,7 @@ gate_seq (11 S8.9.2 GS-1..GS-3):
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 # 11 S8.9.2 reasons in priority order. Priority CANNOT be reordered

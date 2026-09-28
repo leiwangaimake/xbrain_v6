@@ -26,7 +26,7 @@ failing rule short-circuits and names the specific rule.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, Optional
+from typing import Any, Dict, FrozenSet
 
 
 class ValidationRule:

@@ -34,7 +34,6 @@ from xbrain.p4_agent.classifier.priority_chain import (
 )
 from xbrain.p4_agent.safety_bypass.recording_gate import (
     RecordingState,
-    SuppressionRecord,
     evaluate,
 )
 

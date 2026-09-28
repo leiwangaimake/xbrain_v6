@@ -36,7 +36,7 @@ Boundaries: 只校验[能在网关本地判定]的: 类型/范围/闭集/ID 正�
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from ...common import errors
 from ..outbound.error_map import CODE_REQUIRED_FIELD, build_error_fields, envelope_error

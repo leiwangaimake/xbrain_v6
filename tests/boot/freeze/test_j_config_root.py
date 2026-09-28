@@ -27,7 +27,6 @@ the test author to keep in sync with j_config_root.py's contract.
 """
 
 import os
-import stat
 
 import pytest
 

@@ -16,7 +16,6 @@ BIZ-P2-4 -- AsrGate reason chain + gate_seq + variants.
 import pytest
 
 from xbrain.p2_core.audio.gate import (
-    AsrGateMessage,
     GateInputs,
     GatePublisher,
     evaluate_reason,

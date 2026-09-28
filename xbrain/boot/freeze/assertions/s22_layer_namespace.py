@@ -129,10 +129,9 @@ duplicate B's logic and create drift risk).
 """
 
 # os for L6 file path composition.
-import os
 
 # typing for annotations.
-from typing import Any, Dict, Iterable
+from typing import Any, Dict
 
 # Layer loader: L1-L5 raw trees via load_layers (production path);
 # L6 raw trees via load_l6_files. Both allow ctx override.

@@ -26,7 +26,6 @@ from xbrain.p4_agent.gbnf.generator import (
 from xbrain.p4_agent.registry.intents import load_intent_registry
 from xbrain.p4_agent.runtime.llm_tier2 import (
     Tier2Error,
-    Tier2Result,
     classify_unknown,
 )
 

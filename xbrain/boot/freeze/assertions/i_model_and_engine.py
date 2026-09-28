@@ -178,7 +178,7 @@ import subprocess
 
 # typing for annotations; Optional used on runtime_env because the
 # probe may return None on hosts without JetPack.
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 # XbrainError base -- I uses E_CONFIG_INVALID uniformly (all three
 # defects are "config or shipped-artifact is wrong", not runtime

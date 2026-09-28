@@ -21,7 +21,7 @@ CURRENT expected sets and provide the diff helper.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Set, Tuple
+from typing import Iterable, Tuple
 
 # The current P5 pub/sub commitments. Updated when 11 §2.2 changes.
 # The whole point of this module is that when someone drops a

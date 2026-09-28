@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 from xbrain.p4_agent.state.cache import STATE_TOPICS, StateCache
-from xbrain.p4_agent.state.query_data import QueryAnswer, battery_answer
+from xbrain.p4_agent.state.query_data import battery_answer
 
 pytestmark = pytest.mark.no_device
 

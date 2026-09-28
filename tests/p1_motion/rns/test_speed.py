@@ -22,7 +22,6 @@ from xbrain.p1_motion.rns.speed import (
     cap_deviation,
     cap_gap_tightness,
     cap_rtk_float,
-    cap_unknown_ratio,
     cap_wall,
     g_down,
     g_up,

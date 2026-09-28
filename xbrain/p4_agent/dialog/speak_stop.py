@@ -31,7 +31,6 @@ endpoint. Static asserted by the meta-check.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 REPLY_STOPPED_BARE = "已停止喊话"      # forbidden as a sole reply
 REPLY_CASE_1 = "后面几遍不再播了, 当前这一句会播完"

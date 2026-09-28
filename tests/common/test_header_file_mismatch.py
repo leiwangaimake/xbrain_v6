@@ -11,7 +11,6 @@ INF-CI-2 variant 2 -- File field mismatch check in header_lint.
 
 
 import os
-import subprocess
 import sys
 import tempfile
 from pathlib import Path

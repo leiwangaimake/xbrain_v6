@@ -17,16 +17,13 @@ import pytest
 
 from xbrain.p2_core.health.factor import (
     FactorConfig,
-    FactorOutput,
     compute_factor,
     factor_for,
 )
 from xbrain.p2_core.health.items import (
     BIT_ONLY_ITEMS,
     HEALTH_ITEMS,
-    ITEM_LEVELS,
     ITEMS,
-    HealthLevel,
     HealthState,
     is_fatal,
     level_of,

@@ -37,7 +37,6 @@ Semantics:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 ARB_MOTION_STATE_KEY = "state/arb/motion"
 ARB_MOTION_EVENT_KEY_TEMPLATE = "event/{severity}/arbitration"

@@ -16,10 +16,9 @@ committed files (VAR-8), and every variant maps to a registered base (VAR-7).
 """
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Iterator, Tuple
+from typing import Any, Iterator, Tuple
 
 import pytest
 import yaml

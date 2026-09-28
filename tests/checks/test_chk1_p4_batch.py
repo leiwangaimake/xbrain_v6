@@ -25,7 +25,6 @@ from xbrain.p4_agent.dialog.speak_stop import (
     REPLY_CASE_3,
     REPLY_CASE_4,
     REPLY_STOPPED_BARE,
-    SpeakStopDecision,
     assert_route2_no_bracket_loop,
     decide,
     replies_pairwise_distinct,
@@ -33,13 +32,11 @@ from xbrain.p4_agent.dialog.speak_stop import (
 from xbrain.p4_agent.failsafe.degrade_modes import (
     DEGRADE_MODES,
     DegradeModes,
-    IntentRoute,
     assert_no_direct_audio_bypass,
 )
 from xbrain.p4_agent.failsafe.rotation_reject import (
     RJ_1_TEMPLATE,
     RJ_2_TEMPLATE,
-    RotationRejectResponse,
     RotationRejectShapeError,
     precheck_yaw_capable,
     refuse_from_ack,
@@ -60,7 +57,6 @@ from xbrain.p4_agent.routing.safety_keyword_gate import (
     SafetyRoutingViolation,
     assert_projection_matches_frozen,
     check_intent_is_fastpath,
-    project_safety_ids_from_intents_yaml,
 )
 
 pytestmark = pytest.mark.no_device

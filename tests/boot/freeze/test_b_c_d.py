@@ -21,7 +21,6 @@ Reverse baseline: fully filled tree + minimal L6 files pass B + C + D
 all green.
 """
 
-import os
 from typing import Any, Dict
 
 import pytest

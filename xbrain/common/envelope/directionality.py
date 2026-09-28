@@ -71,7 +71,6 @@ from typing import Any, Optional, Union
 # and so still propagates. E_SCHEMA is imported as a name to build the rejection
 # for a raw-JSON failure (a truncated byte string never reached decode, so it
 # needs its own E_SCHEMA wrapper). CLAUDE.md 3.5: the literal never appears.
-from ..errors import E_SCHEMA
 from ..errors.exceptions import XbrainError
 from .envelope import Envelope, EnvelopeSchemaError, decode
 

@@ -16,8 +16,6 @@ is a hard startup refusal.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 PROTO_VERSION = "1.0"
 
 

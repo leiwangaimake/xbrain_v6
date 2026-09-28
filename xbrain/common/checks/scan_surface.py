@@ -28,7 +28,6 @@ Docs (markdown) are ALWAYS excluded from source-code scan surfaces
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import Iterable, Tuple
 

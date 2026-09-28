@@ -41,7 +41,6 @@ from xbrain.p1_motion.path.recording_lock import (
     RecordingRejection,
 )
 from xbrain.p1_motion.sources.fallback import (
-    FenceGuardOutput,
     build_fence_guard,
     hold_output,
 )

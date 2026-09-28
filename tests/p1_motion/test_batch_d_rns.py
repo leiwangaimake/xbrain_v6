@@ -45,18 +45,14 @@ from xbrain.p1_motion.rns._legacy.grid_motion import (
 from xbrain.p1_motion.rns._legacy.inflate import compute_r_inflate
 from xbrain.p1_motion.rns._legacy.module import (
     RnsCandidate,
-    RnsModuleUnavailable,
     RnsSnapshot,
 )
 from xbrain.p1_motion.rns._legacy.shutdown import (
-    RnsShutdownReason,
-    ShutdownDecision,
     evaluate_shutdown,
 )
 from xbrain.p1_motion.rns._legacy.side_select import (
     Candidate,
     choose_side,
-    cost_of,
 )
 from xbrain.p1_motion.rns._legacy.targets_veto import (
     ReverseNotAllowed,
@@ -64,7 +60,6 @@ from xbrain.p1_motion.rns._legacy.targets_veto import (
     within_veto_distance,
 )
 from xbrain.p1_motion.rns._legacy.u54_semantic import (
-    is_within_safety,
     should_stop_but_not_retreat,
     type_b_slowdown_factor,
 )

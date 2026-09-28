@@ -43,7 +43,7 @@ CHK-0-40 estop:
 
 import pytest
 
-from xbrain.common.errors import E_CONFIG_INVALID, E_GEO_INVALID, E_SCHEMA
+from xbrain.common.errors import E_GEO_INVALID, E_SCHEMA
 from xbrain.p5_gateway.ext.dedupe import (
     DEFAULT_DEDUP_WINDOW_MS,
     InboundDedupe,

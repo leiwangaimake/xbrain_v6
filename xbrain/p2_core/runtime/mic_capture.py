@@ -39,13 +39,11 @@ import queue
 import struct
 import subprocess
 import threading
-import time
 from dataclasses import dataclass
 from typing import Optional
 
 from xbrain.p2_core.audio.audio_io import (
     ASR_RATE_HZ,
-    ASR_SAMPLES_PER_FRAME,
     CAPTURE_RATE_HZ,
     CAPTURE_SAMPLES_PER_FRAME,
     FRAME_MS,

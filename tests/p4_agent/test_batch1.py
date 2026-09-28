@@ -24,7 +24,6 @@ from xbrain.p4_agent.audio_rx.gate_observer import (
     is_mic_closed_by_speaker,
 )
 from xbrain.p4_agent.gateway.gpu_token import (
-    AdmissionResult,
     CircuitState,
     GpuTokenState,
     release,

@@ -21,9 +21,7 @@ from xbrain.p1_motion.fence.geom import (
     vector_project_toward_fence,
 )
 from xbrain.p1_motion.freshness.degradation import (
-    CAM_THRESH,
     GRID_THRESH,
-    LIDAR_THRESH,
     Freshness,
     classify,
 )
@@ -39,7 +37,6 @@ from xbrain.p1_motion.perception_src.source import (
     ReplayPerceptionSource,
 )
 from xbrain.p1_motion.rotation.rcg import (
-    R_EFF_FALLBACK_M,
     is_spin_like,
     rotation_permitted,
 )

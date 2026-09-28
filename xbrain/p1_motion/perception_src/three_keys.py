@@ -48,7 +48,7 @@ import functools
 import json
 import logging
 import threading
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from xbrain.common.envelope import EnvelopeSchemaError, decode
 from xbrain.p1_motion.rns.inputs import (

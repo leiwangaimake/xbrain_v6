@@ -30,7 +30,6 @@ from xbrain.p4_agent.gbnf.generator import (
 )
 from xbrain.p4_agent.validation.checks import (
     SlotSchema,
-    ValidationResult,
     ValidationRule,
     validate,
 )

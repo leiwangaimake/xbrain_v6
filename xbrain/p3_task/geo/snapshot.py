@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Callable, Iterable, List, Optional
+from typing import Iterable, List, Optional
 
 SNAPSHOT_STEP = 100
 SNAPSHOT_FILE_PREFIX = "geo_snapshot_"

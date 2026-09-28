@@ -24,8 +24,7 @@ RS-4: 'applied != requested' after execution MUST trigger a
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import FrozenSet, Set
+from typing import FrozenSet
 
 
 class RestateSchemaError(RuntimeError):

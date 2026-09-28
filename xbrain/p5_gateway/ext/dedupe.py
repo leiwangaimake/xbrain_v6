@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict
 
 DEFAULT_DEDUP_WINDOW_MS = 60_000   # R1.8: >= 60s
 

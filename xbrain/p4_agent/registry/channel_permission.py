@@ -20,8 +20,7 @@ ALLOWED to submit it. Three default rules govern the mapping.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Mapping, Tuple
 
 from xbrain.common.errors import E_CHANNEL_DENIED
 

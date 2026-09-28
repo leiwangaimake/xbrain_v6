@@ -166,7 +166,6 @@ def test_the_runtime_hands_the_bridge_the_real_down_entry():
 
     MUTATION: main_wiring 不传 on_cloud_down -> 红.
     """
-    import inspect
     import pathlib
 
     from xbrain.p5_gateway.runtime import cloud_wiring

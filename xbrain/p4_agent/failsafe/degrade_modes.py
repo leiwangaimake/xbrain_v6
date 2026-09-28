@@ -35,7 +35,6 @@ handlers_complete().
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict
 
 DEGRADE_MODES = (
     "llm_circuit_break",

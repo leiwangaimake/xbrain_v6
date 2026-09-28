@@ -37,7 +37,6 @@ from xbrain.boot.freeze.meta import (
     DEFERRED_QC,
     DEFERRED_S,
     DEFERRED_SP,
-    DOC_AS,
     DOC_QC,
     DOC_S,
     DOC_SP,

@@ -73,7 +73,7 @@ Traps that look right and are not:
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict
 
 # EVENT_CATEGORY is the closed set from the shared library; "system" is validated
 # against it AT IMPORT below, so a future rename of that category breaks this

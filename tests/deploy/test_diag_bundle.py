@@ -10,10 +10,7 @@ CHK-2-63 -- support-bundle collector + 4 variants.
 """
 
 
-import json
 import os
-import subprocess
-import sys
 import tarfile
 from pathlib import Path
 

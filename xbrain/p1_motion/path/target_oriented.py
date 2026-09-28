@@ -22,7 +22,6 @@ the failure direction 16 S4.3.2 warns against.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 class SchemaError(RuntimeError):

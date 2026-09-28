@@ -21,8 +21,7 @@ Three consistency assertions:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Set
+from typing import FrozenSet
 
 
 class ToolProjectionError(RuntimeError):

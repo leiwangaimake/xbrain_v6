@@ -26,7 +26,7 @@ PS-6: consumer refuses intent with still_1s_ok=False when the intent
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 
 @dataclass(frozen=True)

@@ -21,8 +21,7 @@ into walls that have effectively 'moved' in the RNS view.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Tuple
 
 
 class OdomUnavailable(RuntimeError):

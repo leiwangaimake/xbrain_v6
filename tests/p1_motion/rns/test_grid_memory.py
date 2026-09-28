@@ -257,7 +257,6 @@ def test_side_query_stops_at_unobserved_run():
     # A ray meeting >= 0.5 m of un-observed cells (no FREE between) must stop
     # and report the run's START. mutant: read through UNKNOWN to the far
     # BLOCKED -> returns ~3.0 -> reddens.
-    import math
     g = _grid(cell_m=0.25)
     g.write(3.0, 0.0, Cell.BLOCKED, 1000)     # far stale hit dead ahead
     d = g.nearest_blocked_in_sector((0.0, 0.0), 0.0, 0.0, 0.0, 1000,

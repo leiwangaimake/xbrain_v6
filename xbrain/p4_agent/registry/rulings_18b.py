@@ -27,7 +27,7 @@ module encodes the ones with runtime-checkable behavior:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import FrozenSet, Optional
+from typing import Optional
 
 # Forbidden words in PTZ restate (R-5).
 _FORBIDDEN_IN_RESTATE = frozenset({"已转", "已完成移动"})

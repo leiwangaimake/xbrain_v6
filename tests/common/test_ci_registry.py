@@ -11,11 +11,8 @@ INF-CI-5 -- checks.yaml <-> run_all.sh bidirectional diff.
 
 
 import re
-import subprocess
-import sys
 from pathlib import Path
 
-import pytest
 import yaml
 
 CI_DIR = Path(__file__).parent.parent.parent / "scripts" / "ci"

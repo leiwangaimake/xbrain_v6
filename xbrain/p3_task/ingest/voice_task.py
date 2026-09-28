@@ -30,12 +30,6 @@ the caller (CLK-C1); the ingest never reads a clock itself.
 """
 from __future__ import annotations
 
-import json
-from typing import Any, Mapping
-
-from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO
-from xbrain.p3_task.persistence.schema_task import TASK_SOURCES, TASK_TYPES
-
 
 class VoiceTaskIngestError(RuntimeError):
     """A voice/text task request is not recordable (bad task_type)."""

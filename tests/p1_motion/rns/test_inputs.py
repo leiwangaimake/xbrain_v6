@@ -19,7 +19,6 @@ from xbrain.p1_motion.rns.inputs import (
     PerceptionSnapshot,
     ProfileMsg,
     ReplayPerceptionInput,
-    StatusMsg,
     TrackedObject,
 )
 

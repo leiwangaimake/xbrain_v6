@@ -26,7 +26,6 @@ import pytest
 
 from xbrain.common.arbiter.core import Arbiter
 from xbrain.common.arbiter.model import (
-    GrantResult,
     PreemptPolicy,
     Request,
     SourceSpec,

@@ -16,8 +16,6 @@ GWY-P4-19 + P4-21 batch 6 tests.
 import pytest
 
 from xbrain.p4_agent.failure.handlers import (
-    FailureCode,
-    HandlerResult,
     TtsQuotaLimiter,
     handle_estop1_arbiter_down,
     handle_estop2_dispatch_failed,
@@ -26,7 +24,6 @@ from xbrain.p4_agent.failure.handlers import (
     handle_speak1_tts_failed,
 )
 from xbrain.p4_agent.registry.evolution import (
-    HOT_UPDATABLE_FILES,
     EvolutionError,
     check_cf1_no_shared_key,
     check_cf3_version_compat,

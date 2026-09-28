@@ -23,7 +23,7 @@ write guard) is cleaner.
 
 from __future__ import annotations
 
-from typing import Dict, Mapping, Optional
+from typing import Dict, Mapping
 
 from xbrain.common.arbiter.core import Arbiter
 from xbrain.common.arbiter.model import (

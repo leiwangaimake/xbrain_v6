@@ -19,8 +19,8 @@ APPENDS.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Any, Deque, List
+from dataclasses import dataclass
+from typing import Deque, List
 
 
 @dataclass(frozen=True)

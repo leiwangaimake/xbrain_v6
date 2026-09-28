@@ -24,7 +24,7 @@ Description:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional
+from typing import Dict
 
 G_QUERY_IDS = tuple(f"G{n:02d}" for n in range(1, 25))
 

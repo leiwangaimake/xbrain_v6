@@ -32,7 +32,7 @@ I4: alternation must NOT contain the sentinel 'unknown' -- 'unknown'
 
 from __future__ import annotations
 
-from typing import Dict, FrozenSet, List, Set
+from typing import Dict, FrozenSet, List
 
 
 class GbnfInvariantError(RuntimeError):

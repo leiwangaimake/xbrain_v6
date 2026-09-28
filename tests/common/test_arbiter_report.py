@@ -20,10 +20,8 @@ Each behaviour is paired with a mutant per CLAUDE.md 3.3:
   * state: the off-contract suspended reason must raise, not be shown verbatim.
 """
 
-import pytest
 
 from xbrain.common.arbiter import (
-    DEDUP_EXEMPT,
     DEDUP_WINDOW_S,
     SEVERITY_BY_ACTION,
     ArbAction,

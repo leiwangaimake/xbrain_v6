@@ -26,7 +26,6 @@ Rules (variant coverage per CHK-1-58 spec):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from xbrain.common.errors import (
     E_CHANNEL_DENIED,

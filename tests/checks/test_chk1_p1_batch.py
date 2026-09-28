@@ -51,9 +51,7 @@ from xbrain.common.errors import (
 from xbrain.p1_motion.arb.visibility import (
     DEDUP_WINDOW_MS,
     HEARTBEAT_PERIOD_MS,
-    ArbEvent,
     ArbPublisher,
-    ArbState,
     dedup_key_for,
 )
 from xbrain.p1_motion.gate.negative_vx import (
@@ -64,7 +62,6 @@ from xbrain.p1_motion.gate.negative_vx import (
 from xbrain.p1_motion.route.behavior_goto import (
     BEHAVIOR_GOTO,
     PATH_FOLLOW_PRIORITY,
-    GotoRouteDecision,
     GotoRouteError,
     assert_not_registered_in_teleop,
     deadman_applies_to_source,

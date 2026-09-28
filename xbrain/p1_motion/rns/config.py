@@ -32,7 +32,7 @@ provide skip switches (CLAUDE.md 3.6), does not define keys (that is 12 S12.0A).
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from .types import T_CLASS_NAMES
 

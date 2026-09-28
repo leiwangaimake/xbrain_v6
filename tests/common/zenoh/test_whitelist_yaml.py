@@ -10,8 +10,6 @@ CFG-BT-17 -- whitelist yaml loader tests.
 """
 
 
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest

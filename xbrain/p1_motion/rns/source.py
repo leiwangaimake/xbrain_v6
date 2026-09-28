@@ -77,7 +77,6 @@ from .types import (
     NavFailReason,
     NavFailure,
     NavState,
-    Origin,
     VelocityCandidate,
     is_legal_transition,
 )

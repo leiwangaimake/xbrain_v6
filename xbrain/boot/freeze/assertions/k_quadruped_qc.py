@@ -238,7 +238,7 @@ import os
 
 # typing for annotations. Iterable/List/Optional used across the
 # seventeen sub-checks.
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable
 
 # Layer loader for reading L6 raw quadruped.yaml. K does not need
 # overlay (no cross-file check); L6 is enough.

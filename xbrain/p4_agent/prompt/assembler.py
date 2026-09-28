@@ -23,7 +23,7 @@ History policy (16 S14 prompt.history.enable_on):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import FrozenSet, List, Optional
+from typing import FrozenSet, List
 
 _HISTORY_SCENARIOS: FrozenSet[str] = frozenset({"clarify", "recent"})
 

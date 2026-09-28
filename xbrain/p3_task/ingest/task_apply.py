@@ -39,7 +39,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import replace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from xbrain.common.errors import (
     E_INTERNAL,

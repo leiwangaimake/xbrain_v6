@@ -79,7 +79,7 @@ digest that describes a tree no process ever read, and the digest is what CFG-41
 audits, so the corruption would be recorded as if it were the truth.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from .duplicates import check_l2_not_copy_of_l1
 from .layers import (

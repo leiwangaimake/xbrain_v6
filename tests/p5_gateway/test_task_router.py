@@ -205,7 +205,6 @@ def test_retired_names_are_not_implemented_not_channel_denied():
     前者意味着"以后可能开", 后者意味着"这个名字没有了, 去看新契约".
     混报会让人以为改个名字就能用.
     """
-    from xbrain.common import errors
     from xbrain.p5_gateway.inbound.task_router import RETIRED_TASK_TYPES
 
     assert RETIRED_TASK_TYPES, "旧名称清单是空的"
@@ -366,7 +365,6 @@ def test_the_payload_survives_into_the_task_row():
 
     变异体: 网关改回 recorded_path_id => route_geo_id 变空, 本条红.
     """
-    from dataclasses import replace as _replace
 
     from xbrain.p3_task.ingest.task_command import parse_task_command
     from xbrain.p3_task.ingest.task_row import task_row_from_command

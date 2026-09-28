@@ -439,7 +439,7 @@ def test_memory_appeal_layer_rehabilitates_walked_ground():
     # rejected -- that separation is exactly why the car-wall regressions
     # survived this feature while the first (mixed-in) cut blew them all up.
     # mutant: drop the appeal block -> appeal pick returns None too -> reddens.
-    from xbrain.p1_motion.rns.types import Cell, NavState
+    from xbrain.p1_motion.rns.types import Cell
     world = SilWorld()
     world.add_obstacle("car", 4.0, 1.1)
     world.add_obstacle("car", 4.0, -1.1)

@@ -39,7 +39,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import List, Set
 
 # Row regex: 5 pipe-separated columns; first cell has book + bold ID.
 # Example:

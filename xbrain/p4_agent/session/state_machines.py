@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import FrozenSet, List, Optional
+from typing import FrozenSet, List
 
 
 class L2ConfirmState(str, Enum):

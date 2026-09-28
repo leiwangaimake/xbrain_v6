@@ -27,7 +27,6 @@ would pass for the wrong reason, and the tool would be ignored in the field
 within a week.
 """
 
-import json
 import os
 
 import yaml

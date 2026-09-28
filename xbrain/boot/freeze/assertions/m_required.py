@@ -36,7 +36,7 @@ Failure vocabulary (closed set for detail.kind on M raises):
 # side-by-side reading of the two assertions.
 # Tuple is imported for the required-keys frozenset element type; not
 # used directly in signatures but kept to make future annotations easy.
-from typing import Any, Dict, FrozenSet, Tuple
+from typing import Any, Dict, FrozenSet
 
 from xbrain.boot.freeze.assertions._layer_loader import load_layers
 from xbrain.common.config import build_overlay

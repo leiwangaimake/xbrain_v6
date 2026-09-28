@@ -15,11 +15,8 @@ is_legal_transition() stops rejecting a table-external move.
 
 from __future__ import annotations
 
-import pytest
-
 from xbrain.common.types.units import Mps
 from xbrain.p1_motion.rns.types import (
-    TRANSITIONS,
     Cell,
     MissionKind,
     NavFailReason,

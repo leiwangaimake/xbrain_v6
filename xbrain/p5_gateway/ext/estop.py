@@ -40,9 +40,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence, Tuple
-
-from xbrain.common.errors import E_SCHEMA
+from typing import Any, Dict, Sequence, Tuple
 
 _logger = logging.getLogger("xbrain.p5.estop")
 

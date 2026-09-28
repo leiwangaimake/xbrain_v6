@@ -11,7 +11,6 @@ INF-DB-1 -- 21册 debt-trace parser + coverage checker + variants.
 
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path

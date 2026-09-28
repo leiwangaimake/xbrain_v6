@@ -16,13 +16,11 @@ mode + PWR-S2 banner.
 from __future__ import annotations
 
 import json
-import os
 
 import pytest
 
 from xbrain.boot.freeze.refuse_to_boot import (
     DefaultFallbackForbidden,
-    FreezeVerdict,
     compose_stdout_lines,
     refuse_code_default,
     safety_zero_still_fails_g,

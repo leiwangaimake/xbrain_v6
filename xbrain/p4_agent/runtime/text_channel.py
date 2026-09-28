@@ -37,7 +37,6 @@ from typing import Any, List, Mapping, Optional, Tuple
 
 from xbrain.p4_agent.classifier.keyword_matcher import KeywordMatcher
 from xbrain.p4_agent.registry.channel_permission import (
-    ChannelAdmissionError,
     channel_admission,
 )
 from xbrain.p4_agent.runtime.intent_dispatch import CMD_AUDIO_SPEAK

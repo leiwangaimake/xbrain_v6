@@ -21,7 +21,6 @@ chassis). The `which` slot MUST be filled; missing = E_SCHEMA.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import Enum
 
 

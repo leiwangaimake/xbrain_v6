@@ -36,7 +36,6 @@ import pytest
 
 from xbrain.common.errors import E_CONFIG_INVALID
 from xbrain.p2_core.ptz.hold_ms_renewal import (
-    DeadmanState,
     HoldMsConfigError,
     create,
     on_nudge,

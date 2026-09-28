@@ -13,7 +13,6 @@ GWY-P4-15/16/17/18 batch 5 tests.
 """
 
 
-import os
 
 import pytest
 import yaml
@@ -27,7 +26,6 @@ from xbrain.p4_agent.session.level_routing import (
     upgrade_to_l1b,
 )
 from xbrain.p4_agent.session.state_machines import (
-    CHITCHAT_WHITELIST,
     L2ConfirmState,
     L2Slot,
     L3ApprovalState,

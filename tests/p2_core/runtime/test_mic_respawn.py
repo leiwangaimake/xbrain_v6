@@ -28,7 +28,6 @@ device_health_bridge 一侧, 本文件只保证喂给它的 streaming 信号是�
 """
 from __future__ import annotations
 
-import io
 import queue
 import struct
 import threading

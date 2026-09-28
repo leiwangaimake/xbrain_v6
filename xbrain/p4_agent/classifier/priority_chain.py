@@ -37,9 +37,9 @@ regardless of directional judgment (anyone yelling stop -> stop).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import FrozenSet, List, Optional
+from typing import FrozenSet, Optional
 
 
 class ChainLayer(str, Enum):

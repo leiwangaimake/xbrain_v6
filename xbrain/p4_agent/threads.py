@@ -22,8 +22,8 @@ This module owns the LOOP + ordering discipline for these threads.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Callable, Optional
+from dataclasses import dataclass
+from typing import Optional
 
 
 class P1Violation(RuntimeError):

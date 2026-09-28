@@ -28,7 +28,6 @@ from xbrain.p2_core.bit.gpu_dla import (
     evaluate_gpu,
 )
 from xbrain.p2_core.bit.network_links import (
-    LNK_D_DETAIL_ONLY,
     LinkClassificationError,
     LinkDetail,
     OnvifInBitPath,

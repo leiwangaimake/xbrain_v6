@@ -19,7 +19,6 @@ from xbrain.p2_core.threads import (
     BLOCKED_AFTER_OVER_BUDGET_TICKS,
     MAIN_TICK_BUDGET_MS,
     MainLoop,
-    TickReport,
 )
 
 pytestmark = pytest.mark.no_device

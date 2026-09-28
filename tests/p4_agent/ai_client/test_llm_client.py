@@ -11,7 +11,7 @@ GWY-P4-01 -- llm_client wrapper tests + variants.
 
 
 import json
-from typing import Iterator, List
+from typing import List
 
 import pytest
 import requests

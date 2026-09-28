@@ -71,7 +71,6 @@ Not in scope for this file:
 # os retained for future path composition; currently pathlib
 # handles everything. Kept in the import list to avoid an unused-
 # import lint if a future test adds env-var overrides.
-import os
 from pathlib import Path
 from typing import Dict, FrozenSet
 

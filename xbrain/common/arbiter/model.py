@@ -59,7 +59,7 @@ Traps -- things that look right and are not:
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Optional
 
 # The whole public value surface. core.py adds the Arbiter class; the two are
 # re-exported together from the package __init__ so a caller writes

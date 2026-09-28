@@ -50,11 +50,10 @@ Contract with the pipeline:
 # unused today but kept for future _fail extra fields that may want
 # to name a list-typed detail (present_profiles is a list of str, for
 # instance -- currently unpacked as **extra).
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from xbrain.boot.freeze.assertions._layer_loader import load_l6_files
 from xbrain.common.config import build_overlay
-from xbrain.common.config.merge import flatten
 
 # E_CONFIG_INVALID (or E_QOS_VIOLATION / E_CONFIG_LOCKED)
 # imported by name from xbrain.common.errors instead of

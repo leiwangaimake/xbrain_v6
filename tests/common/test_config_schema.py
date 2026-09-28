@@ -37,13 +37,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, ROOT)
 
 from xbrain.common.config.schemas import (  # noqa: E402
-    ANY,
-    BOOLEAN,
     CONFIG_FILES,
-    INTEGER,
-    NUMBER,
     SCHEMAS,
-    STRING,
     TYPE_TOKENS,
     Schema,
     SchemaError,

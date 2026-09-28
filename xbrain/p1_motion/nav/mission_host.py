@@ -63,7 +63,7 @@ from xbrain.p1_motion.nav.relmove_intake import (
     achieved_body_delta,
     translate_relative_move,
 )
-from xbrain.p1_motion.nav.report_map import SEV_WARN, event_severity, map_failure
+from xbrain.p1_motion.nav.report_map import event_severity, map_failure
 from xbrain.p1_motion.nav.route_intake import RouteClear, RouteSet
 from xbrain.p1_motion.rns.types import NavFailure, NavState, Origin
 from xbrain.p1_motion.sources.rns_avoid import RnsAvoidSource

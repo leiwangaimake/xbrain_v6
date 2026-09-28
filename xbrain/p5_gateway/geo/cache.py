@@ -24,7 +24,7 @@ ENU metres and land the route in the wrong frame.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 # Geo publishes every 5 s (11 S7.10A GEO_PUBLISH_PERIOD_S); treat it as gone only

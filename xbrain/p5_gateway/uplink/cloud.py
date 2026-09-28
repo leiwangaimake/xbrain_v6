@@ -33,7 +33,7 @@ stops an alarm-channel recovery (sev=info) from being dropped (E-1).
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable
 
 from ..persistence.schema_record import CHANNELS
 from ..reconnect.recon import build_recon_req, compute_resend_seqs

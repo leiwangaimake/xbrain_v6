@@ -49,7 +49,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 import yaml
 

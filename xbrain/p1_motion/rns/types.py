@@ -34,9 +34,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Tuple
 
-from xbrain.common.types.units import Mps, Seconds
+from xbrain.common.types.units import Mps
 
 
 # ── Three-state space (20 S3.1.2 / RNS-N-5) ───────────────────────────────────

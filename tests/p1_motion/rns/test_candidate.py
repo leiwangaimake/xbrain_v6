@@ -22,7 +22,6 @@ from xbrain.p1_motion.rns.candidate import (
     CandidateSelector,
     Edge,
     candidate_cost,
-    clear_extrapolation,
     clearance_penalty,
     detour_subgoal,
     find_edges,

@@ -23,8 +23,8 @@ cmd/task/create, etc.). Seven invariants:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, FrozenSet, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, FrozenSet
 
 _ROUTE_SET: FrozenSet[str] = frozenset({
     "fastpath", "llm", "bypass", "fastpath_then_llm",

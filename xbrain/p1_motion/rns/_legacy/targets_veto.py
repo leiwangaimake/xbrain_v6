@@ -20,7 +20,6 @@ the robot could be in the reverse path. Better to stop.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Tuple
 
 

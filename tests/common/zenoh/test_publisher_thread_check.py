@@ -56,7 +56,6 @@ What these cases do NOT establish, so a green run is not read as more than it is
     file only asserts, against the doc, that A-1 is not among them.
 """
 
-import copy
 import json
 import os
 import sys

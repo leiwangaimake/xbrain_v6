@@ -160,7 +160,6 @@ def test_publisher_thread_affinity_rejects_wrong_thread():
     """CLAUDE.md 4.2: publishing from a Zenoh callback thread is
     forbidden. VARIANT: give an allowed_threads set that does NOT
     include the current thread; put() must raise."""
-    import threading
     sess = _FakeSession()
     # allowed = a bogus tid so the current thread is NOT allowed.
     pub = p2_publisher.P2Publisher(session=sess,

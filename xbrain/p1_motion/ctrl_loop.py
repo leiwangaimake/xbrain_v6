@@ -20,9 +20,9 @@ first job is 'always publish something'.
 from __future__ import annotations
 
 import collections
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Deque, List, Optional
+from typing import Callable, Deque, List
 
 #: ticks kept for observability (60 s at 20 Hz). Bounded: the P7.2 loop runs
 #: for the process lifetime and an unbounded list grew by 20 records a second.

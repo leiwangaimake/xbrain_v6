@@ -136,7 +136,6 @@ from typing import Any, Dict, Iterable, Optional
 # The schema registry + primitive validator + shared error class.
 from xbrain.common.config.schemas.registry import (
     CONFIG_FILES,
-    SCHEMAS,
     validate_config,
 )
 from xbrain.common.config.schemas.spec import SchemaError

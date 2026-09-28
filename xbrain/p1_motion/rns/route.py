@@ -46,8 +46,6 @@ import math
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
-from .types import NavFailReason, NavFailure
-
 Point = Tuple[float, float]
 
 

@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from xbrain.common.errors import E_NOT_FOUND
 from xbrain.p3_task.ingest.geo_apply import ApplyResult, GeoContext, register_applier

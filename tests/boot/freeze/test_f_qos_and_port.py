@@ -21,11 +21,9 @@ Reverse: default green qos + stub port probe (returns zenohd_router)
 pass both F and F'.
 """
 
-import os
 from typing import Any, Dict
 
 import pytest
-import yaml
 
 from xbrain.boot.freeze.assertions.f_qos_and_port import (
     _EXPECTED_IDENTITY,

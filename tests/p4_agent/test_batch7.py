@@ -18,15 +18,12 @@ import pytest
 from xbrain.p4_agent.envelope.pose_snap import (
     Pose,
     PoseRing,
-    PoseSnap,
 )
 from xbrain.p4_agent.registry.channel_permission import (
-    allowed_channels,
     is_channel_allowed,
 )
 from xbrain.p4_agent.registry.d_class import (
     DRangeError,
-    LightWhich,
     SchemaError,
     route_brightness,
     route_lights_on,
@@ -42,7 +39,6 @@ from xbrain.p4_agent.registry.rulings_18b import (
     resolve_e09_tier,
 )
 from xbrain.p4_agent.registry.time_expr import (
-    TimeExpr,
     TimeParseError,
     parse,
     parse_at_local,

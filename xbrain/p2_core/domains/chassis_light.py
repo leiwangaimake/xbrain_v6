@@ -26,7 +26,7 @@ transformation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import FrozenSet
 
 # Chassis light patterns known to M20S. Closed set; adding requires

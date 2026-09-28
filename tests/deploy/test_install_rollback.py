@@ -15,7 +15,6 @@ was ACTUALLY called and in what order (mutation d would drop the reload).
 
 import os
 import shutil
-import stat
 import subprocess
 import sys
 import textwrap

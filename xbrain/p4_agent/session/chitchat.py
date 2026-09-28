@@ -34,8 +34,8 @@ unimplemented free-form path -- a fail-safe, not a fail-open stub.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, List, Mapping, Optional
+from dataclasses import dataclass
+from typing import Any, Mapping, Optional
 
 
 class ChitchatPresetError(RuntimeError):

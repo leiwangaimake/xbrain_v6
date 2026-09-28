@@ -30,7 +30,6 @@ startup (any drift reddens the projection meta-test).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Dict, List
 
 # 18-A §2 expansion pass. Values are AT-LEAST -- production

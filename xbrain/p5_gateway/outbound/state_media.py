@@ -25,7 +25,7 @@ endpoints (visible-light camera, IR camera, RGBD). Discipline:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 
 HEARTBEAT_PERIOD_MS = 10_000       # 0.1 Hz

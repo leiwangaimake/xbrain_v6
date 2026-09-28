@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional
 
 import requests  # BUSINESS-IMPORT-OK(ai-client): CLAUDE.md 4.1 sanctions requests only inside ai_client/
 

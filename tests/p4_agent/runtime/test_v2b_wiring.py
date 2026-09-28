@@ -15,7 +15,6 @@ from __future__ import annotations
 import pytest
 
 from xbrain.p4_agent.runtime.intent_dispatch import (
-    CMD_AUDIO_SPEAK,
     CMD_MOTION_INTENT,
     CMD_PAYLOAD,
     CMD_PTZ,

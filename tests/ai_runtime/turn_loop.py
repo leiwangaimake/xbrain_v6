@@ -68,7 +68,7 @@ from . import asr_client, llm_client, payload_client
 from .asr_client import AsrClientError
 from .config import AiRuntimeConfig
 from .llm_client import LlmClientError
-from .local_mic import LocalMicError, LocalMicStream
+from .local_mic import LocalMicStream
 from .payload_client import MODE_FUNC1, MODE_IDLE, MicStream, PayloadClientError
 from .vad import Utterance, VoiceActivityDetector, build_speech_detector
 

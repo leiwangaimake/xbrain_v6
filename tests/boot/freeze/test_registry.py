@@ -19,7 +19,6 @@ Plus reverse assertions:
 
 import dataclasses
 import json
-import os
 
 import pytest
 import yaml
@@ -33,7 +32,6 @@ from xbrain.boot.freeze.pipeline import (
 )
 from xbrain.boot.freeze.registry import (
     ASSERT_REGISTRY,
-    AssertSpec,
     ordered_assertion_names,
     registry_names,
     validate_topology,

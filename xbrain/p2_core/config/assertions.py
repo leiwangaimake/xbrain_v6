@@ -51,7 +51,7 @@ maps the exception to E_CONFIG_INVALID and prints the reason.
 
 from __future__ import annotations
 
-from typing import Dict, FrozenSet, Iterable, List, Optional
+from typing import FrozenSet, Iterable, List, Optional
 
 
 class ConfigAssertError(RuntimeError):

@@ -26,7 +26,7 @@ assertion id it serves (M-3 requires the scene-file header to name it).
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 from xbrain.p1_motion.rns.inputs import (
     ObjectsMsg,

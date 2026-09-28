@@ -24,7 +24,6 @@ rendered by Qt.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Dict, Optional
 
 import xbrain.common.errors as _errors_pkg

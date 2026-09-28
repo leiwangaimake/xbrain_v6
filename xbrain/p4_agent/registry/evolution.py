@@ -31,8 +31,7 @@ CF-3: version bump requires ALL hot files to carry a compatible
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import FrozenSet, List
+from typing import FrozenSet
 
 HOT_UPDATABLE_FILES: FrozenSet[str] = frozenset({
     "suspicion_rules.yaml",

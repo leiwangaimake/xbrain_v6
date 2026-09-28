@@ -13,8 +13,7 @@ Every 20 Hz tick, the gate produces `limiter` (the single constraint that clippe
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 # 12 S6.7 14-value limiter enum (verbatim).
 _LIMITER_VALUES = (

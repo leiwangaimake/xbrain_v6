@@ -24,7 +24,7 @@ chassis_relay) is a compile-time constant. INF-ZN-9 checks:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Tuple
+from typing import Iterable
 
 # WL-G2: audio/broadcast MUST NOT be in any forwarding entry.
 FORBIDDEN_KEYS = frozenset({

@@ -68,7 +68,6 @@ from typing import Any, Dict, Mapping, Optional
 # not need to touch this file.
 from xbrain.boot.freeze.registry import (
     ASSERT_REGISTRY,
-    ordered_assertion_names,
     validate_topology,
 )
 

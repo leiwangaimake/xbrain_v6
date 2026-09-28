@@ -47,8 +47,6 @@ import os
 import re
 import sys
 
-import pytest
-
 # ROOT is three levels up (tests/common/this_file -> repo root), inserted on
 # sys.path because there is no conftest.py, matching test_error_codes.py exactly.
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

@@ -58,7 +58,7 @@ Traps already hit / to avoid:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from xbrain.p5_gateway.hmi.geo_timezone import timezone_for_fix
 

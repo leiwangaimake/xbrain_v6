@@ -41,7 +41,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Callable
 
 from xbrain.p2_core.three_stops import StopEvent, StopReason, apply_rearm, apply_stop
 

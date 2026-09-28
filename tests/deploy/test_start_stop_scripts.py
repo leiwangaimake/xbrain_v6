@@ -12,7 +12,6 @@ CFG-BT-7 -- start_all.sh / stop_all.sh / clean_pyc.sh sanity tests.
 
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest

@@ -27,7 +27,7 @@ that would rescue a false candidate. NEVER snap on a tie.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 
 @dataclass

@@ -19,7 +19,6 @@ edit that broke the table shape surfaces here.
 """
 
 import os
-from typing import Any, Dict
 
 import pytest
 import yaml

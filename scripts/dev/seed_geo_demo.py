@@ -46,7 +46,6 @@ import json
 import math
 import sys
 import time
-import uuid
 
 LAT0, LON0 = 31.2301971, 121.4732683
 M_LAT = 111132.92 - 559.82 * math.cos(2 * math.radians(LAT0)) \

@@ -12,9 +12,7 @@ CFG-BT-21 / INF-DB-5 -- SEC-1..SEC-12 checklist + severity + variants.
 
 import json
 import os
-import re
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest

@@ -30,10 +30,9 @@ requiring a live zenoh install is the point.
 from __future__ import annotations
 
 import threading
-from typing import Any, Callable, Dict, FrozenSet, Optional, Protocol
+from typing import Callable, Dict, FrozenSet, Optional, Protocol
 
 from xbrain.p2_core.messaging.whitelist_gate import (
-    WhitelistViolation,
     check_pub_keys,
 )
 

@@ -31,7 +31,6 @@ G-1/G-2/G-3 are the three global guards enforced at startup:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
 
 NINE_TASKS = (
     "event_ingress", "event_pipeline", "cloud_uplink", "hmi_ws",

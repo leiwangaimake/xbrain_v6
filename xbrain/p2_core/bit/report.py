@@ -20,11 +20,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, FrozenSet, Iterable, List
+from typing import Iterable, List
 
 from xbrain.p2_core.health.items import (
-    ITEM_LEVELS,
-    HealthLevel,
     HealthState,
     is_fatal,
 )

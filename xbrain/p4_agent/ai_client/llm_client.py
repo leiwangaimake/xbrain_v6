@@ -41,7 +41,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Dict, List, Optional
+from typing import List
 
 import requests  # BUSINESS-IMPORT-OK(ai-client): CLAUDE.md 4.1 sanctions requests only inside ai_client/
 

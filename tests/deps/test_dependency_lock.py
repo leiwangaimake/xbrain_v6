@@ -25,7 +25,6 @@ sys.path.insert(0, os.path.join(ROOT, "scripts", "deps"))
 from check_deps import (  # noqa: E402
     _IMPORT_TO_DIST,
     _LOCK_LINE_RE,
-    _major,
     check_imports_covered,
     check_installed,
     check_zenoh_wire,

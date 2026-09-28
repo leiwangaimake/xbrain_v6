@@ -13,8 +13,6 @@ turn red per CLAUDE.md 3.3.
 """
 from __future__ import annotations
 
-import json
-
 import pytest
 import yaml
 

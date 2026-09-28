@@ -32,7 +32,6 @@ can flip a safety key to trigger assertion G.
 
 from __future__ import annotations
 
-import os
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -41,8 +40,6 @@ from typing import Any, Dict, Optional
 
 import pytest
 import yaml
-
-from tests.fixtures.overrides import apply_overrides
 
 REAL_CONFIG_ROOT = "/opt/xbrain_v6/configs"
 

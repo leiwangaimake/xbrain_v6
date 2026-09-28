@@ -95,7 +95,7 @@ from dataclasses import dataclass, field
 # Typing imports for AssertSpec (Any/Callable/Optional in the runner sig,
 # Tuple for the immutable registry, Mapping stays around for future runners
 # that need read-only dict-like ctx).
-from typing import Any, Callable, Mapping, Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 # Real bodies live under xbrain/boot/freeze/assertions/. Import them here
 # so the registry rows can point at the callable directly. Stubs (below)

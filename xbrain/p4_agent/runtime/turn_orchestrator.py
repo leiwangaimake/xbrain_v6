@@ -89,7 +89,6 @@ from xbrain.p4_agent.runtime.system_request import (
 from xbrain.p4_agent.runtime.task_control_request import (
     TaskControlError,
     is_task_control_intent,
-    spoken_target,
     to_task_control_command,
 )
 from xbrain.p4_agent.runtime.task_request import (

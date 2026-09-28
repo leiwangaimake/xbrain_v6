@@ -13,7 +13,6 @@ INF-DP-9 / CFG-BT-20 -- deploy/net + check_net.sh + variants.
 import os
 import re
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest

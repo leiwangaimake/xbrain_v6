@@ -57,7 +57,7 @@ from xbrain.p3_task.ingest.geo_object import (
     polyline_len_m,
     resolvable_anchor_ids,
 )
-from xbrain.p3_task.state.geo_events import (
+from xbrain.p3_task.state.geo_events import (  # noqa: F401  (re-export)
     GEO_EVENT_INFO,
     GEO_EVENT_WARN,
 )
@@ -78,6 +78,11 @@ from xbrain.p3_task.state.geo_rev import content_hash
 # type there, so keeping the sets next to the appliers would put the closed
 # set and the half-it-implies in two files. Re-exported by that import, so
 # importing them from here still works.
+#
+# *** The noqa: F401 on that import is load-bearing, NO 不是装饰:
+# 这两个名字在本模块内部一次都没用到, 所以 ruff 会把整条 import 删掉,
+# 而 tests/p3_task/test_geo_write.py 正是从[这里]导入它们的 --
+# 2026-09-28 批量清 F401 时实测过一次, 当场 collect 就 ImportError.
 
 #: The lifecycle state a newly created object starts in, by type. See the module
 #: docstring for why fence differs.

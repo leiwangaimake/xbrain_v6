@@ -18,7 +18,6 @@ CFG-FZ-8 named variants:
 Reverse: equal values pass; missing values skip.
 """
 
-import os
 from typing import Any, Dict
 
 import pytest

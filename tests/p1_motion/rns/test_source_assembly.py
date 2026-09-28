@@ -22,7 +22,6 @@ from typing import Optional, Tuple
 
 import yaml as _yaml
 
-from xbrain.common.types.units import Mps
 from xbrain.p1_motion.rns.route import Mission
 from xbrain.p1_motion.rns.source import RnsSource
 from xbrain.p1_motion.rns.types import MissionKind, Origin
@@ -145,7 +144,6 @@ def test_wz_is_angular_velocity_not_bearing():
     # CLAMPED by wz_max. The old bug returned theta_des itself regardless of
     # yaw. Distinguisher: set yaw = theta_des -> error 0 -> wz MUST be 0; the
     # bearing bug would return 0.46.
-    import math
     src = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     src.load_mission(_mission())
     pose = (2.0, -1.0)
@@ -284,7 +282,6 @@ def test_subgoal_keep_gate_is_the_physical_floor():
     # pin on the A-HYS-2 block. mutant: revert the check to gate_base ->
     # reddens.
     import inspect
-    import re
 
     from xbrain.p1_motion.rns import source as src_mod
     body = inspect.getsource(src_mod.RnsSource._run_follow)

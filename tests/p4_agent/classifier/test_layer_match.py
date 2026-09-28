@@ -12,8 +12,6 @@ turn red, per CLAUDE.md 3.3.
 """
 from __future__ import annotations
 
-import os
-
 import yaml
 
 from xbrain.p4_agent.classifier.keyword_matcher import (

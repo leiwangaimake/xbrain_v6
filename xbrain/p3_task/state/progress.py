@@ -26,7 +26,7 @@ event is queued in DegradedWriteMode.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List
 
 

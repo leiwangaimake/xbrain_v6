@@ -39,10 +39,9 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import tarfile
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import List, Optional
 
 # --- Process list from CLAUDE.md 0.1 --------------------------------
 

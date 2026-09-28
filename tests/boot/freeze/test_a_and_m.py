@@ -24,7 +24,6 @@ CFG-FZ-3 named variants:
 Reverse: a fully-filled tree must pass both A and M green.
 """
 
-import os
 from typing import Any, Dict
 
 import pytest

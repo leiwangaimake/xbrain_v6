@@ -18,13 +18,11 @@ hello_ack version mismatch refusal, config forbidden alias.
 import pytest
 
 from xbrain.p1_motion.config.loader import (
-    FORBIDDEN_ALIAS_KEYS,
     P1SelfcheckError,
     check_no_alias_keys,
     check_rcg_constants,
 )
 from xbrain.p1_motion.handshake.hello import (
-    PROTO_VERSION,
     HandshakeError,
     build_hello,
     build_hello_ack,
@@ -38,7 +36,6 @@ from xbrain.p1_motion.path.nav2_proxy import (
     needs_correction,
 )
 from xbrain.p1_motion.path.path_follow import (
-    LoopState,
     PathFollowConfig,
     PathFollowState,
     advance_waypoint,
@@ -56,7 +53,6 @@ from xbrain.p1_motion.path.target_oriented import (
     compute_face_target,
 )
 from xbrain.p1_motion.teleop.four_source import (
-    ParsedEstop,
     TeleopFrame,
     TeleopSource,
     is_fresh,

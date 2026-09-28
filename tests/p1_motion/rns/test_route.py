@@ -13,8 +13,6 @@ search). Each test names its mutant (CLAUDE.md 3.3).
 
 from __future__ import annotations
 
-import math
-
 import pytest
 
 from xbrain.p1_motion.rns.route import (

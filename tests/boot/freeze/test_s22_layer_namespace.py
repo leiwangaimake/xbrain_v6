@@ -1,6 +1,5 @@
 """CFG-FZ-16 S22 layer-namespace tests: three variants + baseline."""
 
-from typing import Any, Dict
 
 import pytest
 

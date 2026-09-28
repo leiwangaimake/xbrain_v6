@@ -53,7 +53,7 @@ reason; a regression test keeps the gap visible.
 
 import os
 import re
-from typing import Dict, FrozenSet, Iterable, List, Tuple
+from typing import Dict, FrozenSet, Iterable, Tuple
 
 from xbrain.common.errors import E_CONFIG_INVALID, XbrainError
 
