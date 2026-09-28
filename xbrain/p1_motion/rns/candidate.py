@@ -357,7 +357,10 @@ def candidates_from_profile(
         cands.append(_mk(detour_subgoal(e, clear_m)))
     # thread: a gap is a +1 edge (clear at higher bearing) followed by a -1
     # edge (clear at lower bearing) -- open space between two obstacles.
-    for a, b in zip(edges, edges[1:]):
+    # strict=False is the DELIBERATE half of B905: this is a sliding pair over
+    # one list, so the second operand is one shorter by construction and the
+    # truncation is the point. strict=True here would raise on every call.
+    for a, b in zip(edges, edges[1:], strict=False):
         if a.clear_side == 1 and b.clear_side == -1:
             e1 = _polar_to_xy(a.theta_rad, a.d_near_m)
             e2 = _polar_to_xy(b.theta_rad, b.d_near_m)
