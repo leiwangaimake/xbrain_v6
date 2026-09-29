@@ -34,10 +34,13 @@ CHK-1-22 goto route:
   * shape errors raise with descriptive message
 
 CHK-1-45 negative vx cap:
-  * every source hitting vx=-1.5 clamps to -0.5 with limiter set
+  * every source hitting vx=-1.5 clamps to -0.5 and reports that it did
   * positive vx untouched (no fail-safe overshoot)
   * cap=0 raises (fail-silent form)
   * cap value comes from constructor injection only
+  * the module names NO gate.limiter value: 11 S9.6.5's set is closed,
+    12 S6A.8 OB-1 forbids adding to it, and which field or event carries
+    R2.3-b's attribution is an open ruling (docs/NEXT.md S8.12 R-D2)
 """
 
 from __future__ import annotations
@@ -55,7 +58,6 @@ from xbrain.p1_motion.arb.visibility import (
     dedup_key_for,
 )
 from xbrain.p1_motion.gate.negative_vx import (
-    NEGATIVE_VX_CAP_LIMITER,
     NegativeVxCap,
     NegativeVxConfigError,
 )
@@ -328,29 +330,29 @@ def test_negative_cap_positive_vx_untouched():
     """Fail-safe overshoot guard: positive direction not affected."""
     cap = NegativeVxCap(abs_max_reverse_mps=0.5)
     for v in (0.0, 0.1, 1.5, 3.0):
-        result, limiter = cap.apply(v)
-        assert result == v and limiter == ""
+        result, clamped = cap.apply(v)
+        assert result == v and clamped is False
 
 
 def test_negative_cap_clamps_at_boundary():
     cap = NegativeVxCap(abs_max_reverse_mps=0.5)
-    result, limiter = cap.apply(-1.5)
+    result, clamped = cap.apply(-1.5)
     assert result == -0.5
-    assert limiter == NEGATIVE_VX_CAP_LIMITER
+    assert clamped is True
 
 
 def test_negative_cap_within_range_unchanged():
-    """vx = -0.3 within cap -> unchanged, no limiter attribution."""
+    """vx = -0.3 within cap -> unchanged, nothing was clipped."""
     cap = NegativeVxCap(abs_max_reverse_mps=0.5)
-    result, limiter = cap.apply(-0.3)
-    assert result == -0.3 and limiter == ""
+    result, clamped = cap.apply(-0.3)
+    assert result == -0.3 and clamped is False
 
 
 def test_negative_cap_exactly_at_boundary_no_limiter():
     """vx = -0.5 exactly: at boundary, not over -> no clamp."""
     cap = NegativeVxCap(abs_max_reverse_mps=0.5)
-    result, limiter = cap.apply(-0.5)
-    assert result == -0.5 and limiter == ""
+    result, clamped = cap.apply(-0.5)
+    assert result == -0.5 and clamped is False
 
 
 def test_negative_cap_source_agnostic():
@@ -360,19 +362,41 @@ def test_negative_cap_source_agnostic():
     cap = NegativeVxCap(abs_max_reverse_mps=0.5)
     for source in ("teleop", "teleop_cloud", "relative_move",
                      "nav2_proxy_backup", "rns_avoid"):
-        result, limiter = cap.apply(-1.5)
+        result, clamped = cap.apply(-1.5)
         assert result == -0.5, (
             f"source {source!r}: expected -0.5, got {result}")
-        assert limiter == NEGATIVE_VX_CAP_LIMITER
+        assert clamped is True
 
 
-def test_negative_cap_limiter_attribution_is_closed_set_enum():
-    """gate.limiter comes from closed-set enum (no bare literal).
-    CHK-1-45 spec: 'limiter 归因取自 common/enums 导出的闭集值'."""
-    from xbrain.p1_motion.gate.negative_vx import NEGATIVE_VX_CAP_LIMITER
-    # The imported name (module-level constant) is the source-of-
-    # truth; test asserts a caller consuming it can compare-by-name.
-    assert isinstance(NEGATIVE_VX_CAP_LIMITER, str)
-    # Meta: NOT written in test as a bare literal that could drift.
-    # We're literally checking the exported name is stable.
-    assert NEGATIVE_VX_CAP_LIMITER == "negative_vx_cap"
+def test_the_reverse_cap_mints_no_gate_limiter_value():
+    """This module must not name a gate.limiter value at all.
+
+    11 S9.6.5 closes gate.limiter at fourteen members (mirrored in
+    xbrain/common/enums/sets.yaml) and 12 S6A.8 OB-1 forbids adding one
+    without going through 11's review; no existing member fits either,
+    because S9.6.5's argmax runs over unsigned magnitude caps and this one
+    only exists when vx < 0. Which field or event carries R2.3-b's
+    attribution is an open ruling (docs/NEXT.md S8.12 R-D2).
+
+    Until 2026-09-30 the module exported NEGATIVE_VX_CAP_LIMITER =
+    "negative_vx_cap", commented "closed-set enum value", and the test here
+    asserted it equalled that same literal -- an assertion a completely
+    empty implementation of the rule passes, which is CLAUDE.md 3.2 form 1.
+    The real property is the one below.
+
+    MUTATION: re-add any module-level string constant (an out-of-set one, or
+    an in-set one such as "free_space") -> red. An out-of-set value on the
+    wire is CLAUDE.md 3.5; an in-set one is a ruling nobody made.
+    """
+    from xbrain.p1_motion.gate import negative_vx as mod
+
+    named = sorted(k for k, v in vars(mod).items()
+                   if isinstance(v, str) and not k.startswith("__"))
+    assert named == [], (
+        "negative_vx exports string constant(s) %s -- the only string this "
+        "module could offer is a gate.limiter attribution, and it has no "
+        "member to give (11 S9.6.5 / 12 S6A.8 OB-1)" % named)
+    cap = NegativeVxCap(abs_max_reverse_mps=0.5)
+    assert cap.apply(-1.5)[1] is True        # it reports THAT it clipped
+    assert cap.apply(-0.2)[1] is False       # and only then
+    assert cap.apply(9.9)[1] is False        # forward is untouched

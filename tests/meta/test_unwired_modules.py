@@ -237,16 +237,20 @@ _KNOWN_UNWIRED = {
     # CHK-1-45 R2.3-b. NOT the same rule as the wired one: nav/host_gate.
     # apply_gate clips vx < 0 to -gate.v_max_free, which is v_lin_free*h*i
     # and can exceed 0.5 m/s, while R2.3-b is an ABSOLUTE rear cap because
-    # there is no rear perception (11 S15.6 D-33). So this is a real gap,
-    # AND the module is wrong as written: it defines
-    # NEGATIVE_VX_CAP_LIMITER = "negative_vx_cap" with the comment
-    # "closed-set enum value" while 11 S9.6.5 / enums/sets.yaml
-    # gate_limiter carries no such value -- its own docstring says the
-    # value must be imported from the closed-set enum and NEVER a bare
-    # literal. Wiring it would put an out-of-set gate.limiter on the wire
-    # (CLAUDE.md S3.5). Needs a ruling: which existing limiter value
-    # attributes R2.3-b (free_space? spec?), or does 11 S9.6.5 gain one.
-    "xbrain/p1_motion/gate/negative_vx.py": "registered: NEXT S8.12 -- real gap, but its limiter value is outside the 11 S9.6.5 closed set; needs a ruling before it can be wired",
+    # there is no rear perception (11 S15.6 D-33). So this is a real gap.
+    #   2026-09-30: the module also USED to define NEGATIVE_VX_CAP_LIMITER =
+    #   "negative_vx_cap", commented "closed-set enum value", while 11
+    #   S9.6.5 / enums/sets.yaml gate_limiter carries no such member --
+    #   wiring it would have put an out-of-set gate.limiter on the wire
+    #   (CLAUDE.md S3.5). Removed: apply() now reports only WHETHER it
+    #   clipped.
+    # What still blocks wiring is the attribution itself, and that is a
+    # ruling, not a code change: 12 S6A.8 OB-1 forbids adding a member, and
+    # no existing member fits (S9.6.5's argmax runs over unsigned magnitude
+    # caps; this one exists only when vx < 0, and step 4's downstream list
+    # was narrowed in v0.7 to exactly brake and fence). Same shape as OB-4
+    # for wz: a new gate field, or an event. 11's call.
+    "xbrain/p1_motion/gate/negative_vx.py": "registered: NEXT S8.12 -- real gap, but R2.3-b has no gate.limiter member and OB-1 bars adding one; needs a ruling on the attribution before it can be wired",
 
     # MOT-PM-16 PS-1..PS-6. p1 runtime/main_wiring.py builds and publishes
     # state/pose inline in the GNSS bridge (via path/gnss_pose.py); the

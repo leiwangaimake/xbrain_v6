@@ -24,14 +24,43 @@ Sources it applies to (ALL of them; the whole point is
   teleop (600), teleop_cloud (550), relative_move (500),
   nav2_proxy (backup), rns_avoid (any)
 
-Attribution: `gate.limiter` is set to the enum value
-NEGATIVE_VX_CAP (imported from the closed-set enum in
-common.enums) NEVER a bare string literal.
+*** ATTRIBUTION IS UNDECIDED, and this module deliberately names
+nothing. Until 2026-09-30 it exported
+
+  NEGATIVE_VX_CAP_LIMITER = "negative_vx_cap"   # closed-set enum value
+
+and the paragraph here said the value was "imported from the
+closed-set enum in common.enums, NEVER a bare string literal".
+Three things were wrong with that at once: there is no such
+member (11 S9.6.5's gate.limiter is closed at estop / mode /
+health / rtk / heading / clock / fence / free_space / target /
+brake / gait / profile / spec / none, mirrored in
+xbrain/common/enums/sets.yaml), it was not imported from
+anywhere, and it WAS a bare string literal. Wiring it would have
+put an out-of-set gate.limiter on the wire, which CLAUDE.md 3.5
+says must raise rather than pass.
+
+Why the fix is "name nothing" and not "pick a value":
+  * 12 S6A.8 OB-1 verbatim: 不擅自往 gate.limiter 里加值. Adding
+    a member is a change to 11's F-19 frozen surface and goes
+    through review.
+  * No existing member fits by inspection either. S9.6.5's whole
+    machinery is v_max = min(V_min x C, H_min) plus
+    limiter = argmax(delta) over UNSIGNED magnitude caps; this cap
+    exists only when vx < 0, so it never enters that formula. Its
+    landing point is 12 S8.1 stage 1, DOWNSTREAM of the gate, and
+    S9.6.5 step 4 (downstream clipping) was narrowed in v0.7 to
+    exactly two members, brake and fence, with the note that both
+    are "真的发生在速度门之后" ones. A third has no slot.
+  * That leaves the same shape as OB-4 records for wz: no field in
+    11 S3.4's gate block answers this, and the choice between a
+    new gate field and an event is 11's to make. Registered in
+    docs/NEXT.md S8.12 R-D2.
+So apply() reports WHETHER it clamped, and the caller that wires
+this will have to carry the ruling with it.
 """
 
 from __future__ import annotations
-
-NEGATIVE_VX_CAP_LIMITER = "negative_vx_cap"     # closed-set enum value
 
 
 class NegativeVxConfigError(Exception):
@@ -54,14 +83,20 @@ class NegativeVxCap:
         self._cap = float(abs_max_reverse_mps)
 
     def apply(self, vx: float) -> tuple:
-        """Return (clamped_vx, limiter_hit).
-        limiter_hit is either '' (no clamp) or NEGATIVE_VX_CAP_LIMITER."""
+        """Return (clamped_vx, clamped).
+
+        `clamped` is a bool, not an attribution string: see the module
+        docstring -- naming a gate.limiter value here would either invent a
+        closed-set member (11 S9.6.5 / CLAUDE.md 3.5) or make a choice among
+        the existing ones that nobody has ruled on (12 S6A.8 OB-1). A bool
+        says exactly what this module knows, which is whether it clipped.
+        """
         if vx >= 0:
-            return vx, ""
+            return vx, False
         min_allowed = -self._cap
         if vx < min_allowed:
-            return min_allowed, NEGATIVE_VX_CAP_LIMITER
-        return vx, ""
+            return min_allowed, True
+        return vx, False
 
     @property
     def cap(self) -> float:
