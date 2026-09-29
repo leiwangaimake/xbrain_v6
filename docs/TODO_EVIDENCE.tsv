@@ -43,6 +43,65 @@
 #
 # ★ 已知没有自报覆盖、需要走慢路的子系统: MOT-PM(p1_motion) · CPP-*(C++ 侧,
 #   多数尚未建成) · MOT-PCP(perception, 未建) · 各类 INF-/CFG-/CHK- 基础设施项。
+#   ★ 2026-09-29 订正上一行的"多数尚未建成": quadruped / chassis_relay /
+#     sensor(rtk_driver) 三个包已建成并有测试二进制在跑; 仍未建成的是
+#     behavior_proxy 与 teleop_input 两个包(见下面的"本批不映射"清单)。
+#
+# -- C++ 侧的验证产物怎么写(2026-09-29 本批新增) ---------------------------
+#
+# C++ 侧的验证产物是[测试源文件] ros2_ws/<pkg>/test/test_xxx.cc, 不是二进制,
+# 也不是 .sh。progress.py 见到这个形状就把 .cc 去掉后交给
+# scripts/run_cxx_tests.sh 跑对应的那一个二进制 -- 那个脚本持有每个二进制需要
+# 的 cwd / argv / ROS 环境(34 个里有 5 个直接执行会红, 原因与测试内容无关)。
+#
+# ★★★ 由此带出的一个必须知道的坑: 名字是[派生]的而不是人打的, 所以
+#   run_cxx_tests.sh 原先"选择器不匹配任何一行就什么都不跑并退出 0"的行为
+#   变成了一条恒绿判据(改个测试文件名, 对应任务照样报 DONE 而一个断言都没跑)。
+#   2026-09-29 已在该脚本里补上 UNKNOWN 选择器 -> exit 64。NO 不要把它改回去。
+#
+# ★ 未建成的包不要写占位行: 产物不存在 -> test_todo_evidence 直接红。
+#
+# -- 本批(Phase 3)判定所用的尺子, 以及[故意不映射]的那些 -------------------
+#
+# 尺子只有一句: [把被测实现挖掉, 这条产物会不会红?] 答不上来或答"不会"的
+# 一律不映射。本表头注早就写过一行的含义"不等于该任务判据里的每条变异体都已
+# 验证" -- 这条尺子不改那个口径, 它只是把下限钉死。
+#
+# ★ 多数 quadruped / chassis_relay 行的底气是 scripts/ci/cxx_mutants.py:
+#   每个被映射的模块都有自己的变异体套件, 逐条注入后测试必红。判据强度问
+#   "哪个套件覆盖了这个 .cc", 而不是问"这个测试看起来全不全"。
+#   ros2_ws/sensor 的八个离线测试[没有]变异体套件(只有 yaml_lite 有),
+#   所以 CPP-RT-2 / CPP-RT-3 两行是逐条读断言后落的, CPP-RT-1 读完没落(见下)。
+#
+# ★★★ 故意留空的(判据不足, NO 不要为了消灭 UNMAPPED 而挂个沾边的测试):
+#   CPP-RT-1   判据逐字要求"cov_h_m 的方差为 0 即红", 现有断言只查它非 null
+#              -> 一个把 cov_h_m 写成常数的实现今天能全绿通过。缺的是那一条
+#              断言, 不是缺实现(实现是 nominal(fix_type) x max(hdop,1))。
+#   CPP-CXX-0  只有"CMAKE_CXX_STANDARD 不是 17 即红"这条 forbid 规则;
+#              把 STANDARD/REQUIRED/EXTENSIONS/-W 四项整段删掉反而没人报。
+#              正向断言缺失 -> 挖掉实现不会红。
+#   CPP-CR-2   CRL-6(Q0 五条同线程且不承载 Q3)已由 cxx_discipline_audit 的
+#              NOT_STATICALLY_CHECKABLE 具名声明为静态查不了; RSS 连跑 30 min
+#              与 systemd 看门狗实活都没有离线替身。
+#   CPP-QD-7   核心判据是 kill -9 后抓包无残余轴指令, 离线只有 TCP_NODELAY /
+#              SO_SNDBUF 回读; SIGTERM 主动发一帧零速无断言。
+#   CPP-QD-16  三条判据(100 Hz 周期 P50/P99、RSS 常量、mlockall 生效)全是
+#              运行期量测; 离线只有配置校验, 那是[相邻]的东西不是这一项。
+#   CPP-QD-14c 判据与 21 V-14 的在先裁决冲突(判据要 services 全 "unknown" +
+#              services_ok=false, V-14 逐字"握手 runtime.services 恒填不可查",
+#              代码按 V-14 落 null)。属设计冲突, 按 CLAUDE.md 9.1 留给用户裁决,
+#              NO 不在这里替它选一边。
+#
+# ★★★ 未开工(不是没记证据, 是真没有实现), 同样 NO 不要硬找产物:
+#   behavior_proxy 整包: CPP-BP-1 / 1b / 2 / 3 / 6 / 7
+#   teleop_input 整包:   CPP-TI-1 / 2 / 3
+#   CHK-2-18(xbrain_msgs 包, 且判据自带"开工前置须先问用户")
+#   CPP-QD-11b(/MOTION_STATE 与 /GAIT 的只读 reader 与交叉校验, 全仓零命中)
+#   CPP-QD-11c(fastdds_vendored 退路后端)
+#   CPP-QD-13b(xbrain_description 包)
+#   CPP-QD-18(chassis_msgs.hpp 隔离头 + XBRAIN_HAVE_DRDDS; drdds 类型名今天
+#             直接出现在 chs_b.cc 里, 正是该项要禁的形态)
+#   CPP-CR-3(单跳时延夹具)
 #
 # 🚫 不按文件名相似度自动补映射: 2026-08-23 实测会配出 test_loader->test_logger、
 #    run_calib->run_all.sh 这类错配。
@@ -404,3 +463,33 @@ BIZ-P2-10	xbrain/p2_core/domains/lapi_guard.py;tests/p2_core/domains/test_domain
 BIZ-P2-21	xbrain/p2_core/three_stops.py;tests/p2_core/health/test_health_all.py	manual	2026-08-23
 CHK-1-23	tests/p1_motion/test_config_key_parity.py	manual	2026-08-23
 MOT-PM-33	tests/p1_motion/test_config_key_parity.py	manual	2026-08-23
+
+# -- Phase 3 (C++ 侧) 2026-09-29 --------------------------------------------
+# 逐项判定见本文件头注的"本批判定所用的尺子"一节。产物为 .cc 的行由
+# progress.py 经 scripts/run_cxx_tests.sh 跑对应二进制; 多数模块的断言强度由
+# scripts/ci/cxx_mutants.py 的同名套件背书(注入变异体逐条必红)。
+CHK-1-27	ros2_ws/quadruped/test/test_chs_a_session.cc	manual	2026-09-29
+CPP-CR-01	ros2_ws/chassis_relay/test/test_relay_keys.cc;ros2_ws/chassis_relay/test/test_relay_core.cc;ros2_ws/chassis_relay/test/test_envelope_rebuild.cc	manual	2026-09-29
+CPP-QD-01	ros2_ws/quadruped/test/test_chs_a_codec.cc	manual	2026-09-29
+CPP-QD-02	ros2_ws/quadruped/test/test_chs_a_framer.cc	manual	2026-09-29
+CPP-QD-03	ros2_ws/quadruped/test/test_chs_a_session.cc;ros2_ws/quadruped/test/test_chassis_socket.cc;ros2_ws/quadruped/test/test_quadruped_config.cc	manual	2026-09-29
+CPP-QD-04	ros2_ws/quadruped/test/test_tx_owner.cc;ros2_ws/quadruped/test/test_quadruped_config.cc;ros2_ws/quadruped/test/test_process.cc	manual	2026-09-29
+CPP-QD-05	ros2_ws/quadruped/test/test_tier1.cc	manual	2026-09-29
+CPP-QD-06	ros2_ws/quadruped/test/test_rt_bridge.cc;ros2_ws/quadruped/test/test_process.cc	manual	2026-09-29
+CPP-QD-08	ros2_ws/quadruped/test/test_mode_machine.cc;ros2_ws/quadruped/test/test_chs_a_reports.cc	manual	2026-09-29
+CPP-QD-09	ros2_ws/quadruped/test/test_chs_a_reports.cc;ros2_ws/quadruped/test/test_rt_payloads.cc	manual	2026-09-29
+CPP-QD-9b	ros2_ws/quadruped/test/test_rt_payloads.cc;ros2_ws/quadruped/test/test_rt_bridge.cc	manual	2026-09-29
+CPP-QD-10	ros2_ws/quadruped/test/test_chs_a_reports.cc	manual	2026-09-29
+CPP-QD-11	ros2_ws/quadruped/test/test_chs_b.cc;tests/boot/freeze/test_k_quadruped_qc.py	manual	2026-09-29
+CPP-QD-12	ros2_ws/quadruped/test/test_odometry.cc	manual	2026-09-29
+CPP-QD-12b	ros2_ws/quadruped/test/test_odometry.cc;ros2_ws/quadruped/test/test_process.cc	manual	2026-09-29
+CPP-QD-13	ros2_ws/quadruped/test/test_uplink.cc;ros2_ws/quadruped/test/test_uplink_alloc.cc	manual	2026-09-29
+CPP-QD-14	ros2_ws/quadruped/test/test_rt_keys.cc;ros2_ws/quadruped/test/test_rt_session.cc;ros2_ws/quadruped/test/test_rt_bridge.cc	manual	2026-09-29
+CPP-QD-14b	ros2_ws/quadruped/test/test_rt_bridge.cc;ros2_ws/quadruped/test/test_rt_parse.cc;ros2_ws/quadruped/test/test_rt_payloads.cc	manual	2026-09-29
+CPP-QD-15	tests/boot/freeze/test_k_quadruped_qc.py;ros2_ws/quadruped/test/test_quadruped_config.cc	manual	2026-09-29
+CPP-QD-17	scripts/doccheck/cov45_scan.py;ros2_ws/quadruped/test/test_quadruped_config.cc;ros2_ws/quadruped/test/test_rt_parse.cc	manual	2026-09-29
+CPP-QD-17b	ros2_ws/quadruped/test/test_chs_a_codec.cc;ros2_ws/quadruped/test/test_rt_parse.cc;ros2_ws/quadruped/test/test_rt_bridge.cc	manual	2026-09-29
+CPP-QD-19	ros2_ws/quadruped/test/test_chs_a_session.cc	manual	2026-09-29
+CPP-QD-20	ros2_ws/quadruped/test/test_chs_b.cc;ros2_ws/quadruped/test/test_process.cc;tests/boot/freeze/test_k_quadruped_qc.py	manual	2026-09-29
+CPP-RT-02	ros2_ws/sensor/test/test_heading_resolver.cc;ros2_ws/sensor/test/test_gnss_heading.cc	manual	2026-09-29
+CPP-RT-03	ros2_ws/sensor/test/test_clock_status.cc	manual	2026-09-29
