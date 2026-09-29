@@ -74,34 +74,101 @@
 #   所以 CPP-RT-2 / CPP-RT-3 两行是逐条读断言后落的, CPP-RT-1 读完没落(见下)。
 #
 # ★★★ 故意留空的(判据不足, NO 不要为了消灭 UNMAPPED 而挂个沾边的测试):
-#   CPP-RT-1   判据逐字要求"cov_h_m 的方差为 0 即红", 现有断言只查它非 null
-#              -> 一个把 cov_h_m 写成常数的实现今天能全绿通过。缺的是那一条
-#              断言, 不是缺实现(实现是 nominal(fix_type) x max(hdop,1))。
-#   CPP-CXX-0  只有"CMAKE_CXX_STANDARD 不是 17 即红"这条 forbid 规则;
-#              把 STANDARD/REQUIRED/EXTENSIONS/-W 四项整段删掉反而没人报。
-#              正向断言缺失 -> 挖掉实现不会红。
-#   CPP-CR-2   CRL-6(Q0 五条同线程且不承载 Q3)已由 cxx_discipline_audit 的
-#              NOT_STATICALLY_CHECKABLE 具名声明为静态查不了; RSS 连跑 30 min
-#              与 systemd 看门狗实活都没有离线替身。
+#   ★ 2026-09-30 把下面每一条[重新自己核了一遍], NO 不拿上一轮写在本文件里的
+#     话当依据(CLAUDE.md 3.2"拿未兑现的逐字当证据": 自己写下的话不是证据)。
+#     判定六条全部维持, 但其中三条的[理由被订正] -- 原写"什么都没有"的地方
+#     其实有东西, 只是那东西守的不是这一项。这个差别要紧: 写"没有"会让下一个
+#     人去从零建, 写"有但面不对"才能让他去补那一小块。
+#
+#   CPP-RT-1   判据逐字要求"该断言必须用[同一进程内 cov_h_m 的方差为 0]判,
+#              不能只看有没有这个字段"。现有断言恰恰是后者, 锚点:
+#                grep -n "cov is real, not null" ros2_ws/sensor/test/test_rtk_driver.cc
+#              即 CHECK(!has(jf, "cov_h_m":null)) -- 判据点名禁止的那一种。
+#              test_gnss_fix.cc 里的 cov 是测试自己手填的(f.cov_h_m = 0.02),
+#              量的是 JSON 映射不是解算。判据另一半"用录制的 NMEA 语料回放,
+#              五级 fix_type 逐个出现"也缺: 仓里无语料文件, 离线只覆盖
+#              single / rtk_fixed / no_fix 三级, dgps 与 rtk_float 零命中。
+#              ⇒ 把 cov 写成常数的实现今天全绿。缺的是断言, 不是实现。
+#   CPP-CXX-0  ★ 订正理由: 正向断言[是存在的] -- tests/common/test_link_no_ros.py
+#              读 build_facts.txt 与 compile_commands.json, 四个 -W 逐个查,
+#              CXX_EXTENSIONS 还用 typeof 做行为判别(不只查文本)。不落的原因
+#              是[扫描面对不上]: 那一门是 CFG-CM-14, 面是 common/; 本项的面是
+#              ros2_ws 各包的 CMakeLists。挂上去就是 CLAUDE.md 3.2 形态6
+#              (扫描面不声明)。ros2_ws 侧今天只有 cxx_discipline_audit 的
+#              PB-5b, 而它是 forbid 形态(匹配"CMAKE_CXX_STANDARD 后面不是 17"),
+#              把那四行整段删掉反而无人报 -> 挖掉实现不会红。
+#   CPP-CR-2   ★ 订正理由: systemd 侧[已实现] -- deploy/systemd/
+#              xbrain-chassis-relay.service 自 2026-09-26 起带 Type=notify /
+#              WatchdogSec=5s / Restart=always, 二进制内有手写 sd_notify。
+#              不落的原因是[没有任何测试回读它]: grep -rn WatchdogSec tests/
+#              零命中。加上 CRL-6(Q0 五条同线程且不承载 Q3)已由
+#              cxx_discipline_audit 的 NOT_STATICALLY_CHECKABLE 具名声明为静态
+#              查不了, 而 RSS 连跑 30 min 与"挂起转发线程看 systemd 重启"都
+#              没有离线替身 ⇒ 三条判据一条也接不住。
 #   CPP-QD-7   核心判据是 kill -9 后抓包无残余轴指令, 离线只有 TCP_NODELAY /
-#              SO_SNDBUF 回读; SIGTERM 主动发一帧零速无断言。
-#   CPP-QD-16  三条判据(100 Hz 周期 P50/P99、RSS 常量、mlockall 生效)全是
-#              运行期量测; 离线只有配置校验, 那是[相邻]的东西不是这一项。
+#              SO_SNDBUF 回读(chassis_socket.cc 的 getsockopt)。判据末句
+#              "SIGTERM 优雅退出必须主动发一帧零速"则是[实现也没有]:
+#              src/main.cc 的 on_signal 只有 g_stop = 1。
+#   CPP-QD-16  ★ 订正理由: mlockall 与两档 SCHED_FIFO [已实现](main.cc 把
+#              mlockall 的 errno 报出来, quadruped_config.cc 有
+#              require_bool("realtime.mlockall"))。不落的原因是三条判据
+#              (100 Hz 周期 P50/P99 . RSS 常量 . mlockall 生效)全是[运行期
+#              量测], 离线只有配置校验 -- 那是相邻的东西不是这一项。
 #   CPP-QD-14c 判据与 21 V-14 的在先裁决冲突(判据要 services 全 "unknown" +
 #              services_ok=false, V-14 逐字"握手 runtime.services 恒填不可查",
-#              代码按 V-14 落 null)。属设计冲突, 按 CLAUDE.md 9.1 留给用户裁决,
-#              NO 不在这里替它选一边。
+#              代码按 V-14 落 null: rt_payloads.cc 写 "services_ok":null,
+#              test_rt_payloads.cc 还有一条断言钉住它必须是 null)。属设计冲突,
+#              按 CLAUDE.md 9.1 留给用户裁决, NO 不在这里替它选一边。
+#
+# ★★★ 已作废(不是没做, 是用户裁决[不做了]; NO 不要再当成待排期):
+#   behavior_proxy 整包: CPP-BP-1 / 1b / 2 / 3 / 6 / 7
+#     依据: 12 S4.6 节头逐字"v0.9 整节作废(2026-09-29 用户裁决) . nav2_proxy
+#     源与 behavior_proxy 进程一并移除", 裁决语"机器人的运动全部由 RNS 负责,
+#     不用 ROS 2 的 action"; 11 S1.1.6 封闭集口径表同批补"v0.9 移除
+#     behavior_proxy 后 = 8"。提交 d0d54f0。TODO 表体六行已同批标 [作废0929]。
+#     ⇒ 这六项的产物[永远不会出现]。留在"未开工"里, 下一个人会去排期建一个
+#       已经被判死的进程 -- 这正是本文件存在的理由的反面。
+#   ⚠️ 同族的 CPP-BP-4 / 4b / 5 在 Phase 0, [本批不动, 且不可照搬作废]:
+#     CPP-BP-5 的 MR-1(margin_rot_m == common.safety.d_safe_m)[今天还活着] --
+#     configs/p1_motion.yaml 有该键并写着"冻结线 MR-1 断言两者严格相等",
+#     xbrain/boot/freeze/assertions/c6_mr1_margins.py 是它的断言体,
+#     xbrain/p1_motion/rotation/rcg.py 消费它。死的只是判据里"configs/nav2
+#     (nav2_proxy 段)"那个落点, 不是断言本身。CPP-BP-4 / 4b 指向 Nav2
+#     behavior_server 自检与"Nav2 侧限值 <= P1 侧限值", 左操作数随 Nav2 消失,
+#     看上去该死 -- 但那是另一个判断, 且 d0d54f0 的裁决语没点到 Phase 0 这三项。
+#     按 CLAUDE.md 9.1 留给用户与 Phase 0 那一批一并裁。
 #
 # ★★★ 未开工(不是没记证据, 是真没有实现), 同样 NO 不要硬找产物:
-#   behavior_proxy 整包: CPP-BP-1 / 1b / 2 / 3 / 6 / 7
-#   teleop_input 整包:   CPP-TI-1 / 2 / 3
-#   CHK-2-18(xbrain_msgs 包, 且判据自带"开工前置须先问用户")
-#   CPP-QD-11b(/MOTION_STATE 与 /GAIT 的只读 reader 与交叉校验, 全仓零命中)
-#   CPP-QD-11c(fastdds_vendored 退路后端)
-#   CPP-QD-13b(xbrain_description 包)
-#   CPP-QD-18(chassis_msgs.hpp 隔离头 + XBRAIN_HAVE_DRDDS; drdds 类型名今天
-#             直接出现在 chs_b.cc 里, 正是该项要禁的形态)
-#   CPP-CR-3(单跳时延夹具)
+#   teleop_input 整包:   CPP-TI-1 / 2 / 3 -- ros2_ws 下无该包; 全仓命中只有
+#                        P1 侧的订阅方(main_wiring.py) . qos_profiles.h 的档位
+#                        与 deploy 单元, 没有一处是这个进程的实现
+#   CHK-2-18   xbrain_msgs 全仓零命中, 且判据自带"开工前置须先问用户"
+#   CPP-QD-11b ★ 不是"忘了做": src/main.cc 逐字"21 V-12 forbids building
+#              /GAIT at all while its type name is unconfirmed" -- 契约[明令
+#              不许建]。⇒ 卡的是 V-12 这条裁决, 不是工期。
+#   CPP-QD-11c fastdds_vendored 只作为 backend 的枚举值出现在
+#              quadruped_config.h 的注释与 configs/quadruped.yaml 里,
+#              无任何后端实现
+#   CPP-QD-13b xbrain_description 全仓零命中
+#   CPP-QD-18  chassis_msgs.hpp 与 XBRAIN_HAVE_DRDDS 均零命中; drdds 类型名
+#              今天直接写在 chs_b.cc 里(drdds_msg_dds__MotionInfo__desc),
+#              正是该项要禁的形态
+#   CPP-CR-3   单跳时延夹具; 在 scripts/ 与 tests/ 下 grep P50/P99 无 relay
+#              相关命中
+#
+# ★★★ 跑 --run [必须在 ORIN 上]。C++ 证据经 run_cxx_tests.sh 执行 aarch64
+#   二进制, 在调试 PC(x86_64, 仓库是 sshfs 挂载)上一条也起不来, 结果是整片
+#   C++ 证据显示 IN_PROGRESS。★ 那是[环境]不是[进度] -- 2026-09-30 的重派单
+#   上写着"Phase 3 全部 UNMAPPED . 0 DONE", 而同日在 ORIN 上实跑得到的是
+#   "已映射的那些全部 DONE"。★ 本行 NO 不写条数(CLAUDE.md 3.7): 现数跑
+#   progress.py --run 就有, 抄进来当天就开始腐烂。差别的另一半是那份单子
+#   成文于本映射落盘之前。
+#
+# ★ 下一批的入口: 这几个 C++ 测试二进制全绿, 却没有任何任务号认领 --
+#   test_tick_stats . test_dds_names . test_relay_config . test_gnss_fix .
+#   test_nmea_parser . test_rtk_driver . test_serial_reopen . test_yaml_lite。
+#   要么是 TODO 缺了对应任务, 要么是映射缺了它们; 两种都得逐个读判据才能定。
+#   NO 不要因为"它绿着"就随手找个任务挂上去 -- 那是本文件头注第一段说的错配。
 #
 # 🚫 不按文件名相似度自动补映射: 2026-08-23 实测会配出 test_loader->test_logger、
 #    run_calib->run_all.sh 这类错配。
