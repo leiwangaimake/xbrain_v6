@@ -13,8 +13,11 @@ CFG-BT-14 startup failure classifier tests.
 import pytest
 
 from xbrain.boot.failure_class import (
+    ALL_CLASS_LABELS,
     CLASS_B,
     CLASS_D,
+    CLASS_NOT_A_FAILURE,
+    CLASS_POINTER,
     CLASS_R,
     CLASS_T,
     CLASSES,
@@ -51,8 +54,29 @@ def test_classify_unknown_id_raises_key_error():
 
 
 def test_every_row_has_valid_class():
+    """A row's class is one of the six labels 10 S3.3.6 actually uses.
+
+    ALL_CLASS_LABELS, not CLASSES: the doc's class column also carries
+    'not a failure' (row 27) and 'pointer' (rows 28/29), which are NOT
+    failure classes. Which label each row gets is judged against the doc
+    itself in tests/boot/test_failure_class_table.py; this one only
+    rejects a label from nowhere.
+    """
     for row in all_rows():
-        assert row.cls in CLASSES, "%s cls %r not in CLASSES" % (row.id, row.cls)
+        assert row.cls in ALL_CLASS_LABELS, \
+            "%s cls %r not in ALL_CLASS_LABELS" % (row.id, row.cls)
+
+
+def test_the_non_failure_labels_are_not_failure_classes():
+    """CLASSES stays the FOUR-class set; the two extra labels sit outside it.
+
+    Folding them in would make 'cls in CLASSES' read as 'this is a startup
+    failure' for a row the doc says is not one.
+    """
+    assert CLASS_NOT_A_FAILURE not in CLASSES
+    assert CLASS_POINTER not in CLASSES
+    assert set(ALL_CLASS_LABELS) == set(CLASSES) | {CLASS_NOT_A_FAILURE,
+                                                    CLASS_POINTER}
 
 
 def test_every_r_row_has_ecode():
@@ -92,8 +116,15 @@ def test_requires_upgrade_true_only_for_t():
 
 
 def test_requires_hmi_marker_true_only_for_d():
+    """D owes a persistent HMI marker; nothing else does.
+
+    The two non-failure labels are in the loop on purpose. Row 27 (RTK
+    not fixed) is passed on every cold boot, so a True there would hang
+    a permanent degrade marker on the HMI at every power-on -- which is
+    exactly what the table did while those rows were classed D.
+    """
     assert requires_hmi_marker(CLASS_D) is True
-    for cls in (CLASS_R, CLASS_B, CLASS_T):
+    for cls in (CLASS_R, CLASS_B, CLASS_T, CLASS_NOT_A_FAILURE, CLASS_POINTER):
         assert requires_hmi_marker(cls) is False
 
 

@@ -52,12 +52,27 @@ _ANCHOR = "#### 3.3.6"
 #: NO 这不是豁免口: 新增第六行照样红(下面的差集只放过这五个).
 UNDOCUMENTED_ROWS = frozenset({"7e", "7f", "7g", "7h", "7i"})
 
+#: *** 文档"类"列的[非四类]取值 -> 代码标签.
+#: 10 S3.3.6 逐条清单的类列一共有六种取值: R/B/D/T 四个失败类, 加上
+#: 第 27 行的"不属失败"与第 28/29 行的"指针". 本映射是两侧的唯一翻译
+#: 点 -- 它必须是[逐字]的文档串, 所以这里写中文.
+#:
+#: NO 不把它们折成 None. 折成 None 就等于"本节不定类, 不比", 而那正是
+#: 2026-09-30 之前的写法: 行集合与四类行的类都比了, 偏偏三行没比 --
+#: 而那三行在代码里全被写成了 CLASS_D, requires_hmi_marker(D) 为真,
+#: 即"每次冷启动 RTK 未固定前都挂一个常驻降级标记", 文档说那根本不是
+#: 失败. 一条只在[大多数行]上求值的判据, 漏掉的恰好是被改错的那几行.
+_DOC_LABEL_TO_CODE = {
+    "不属失败": "not_a_failure",
+    "指针": "pointer",
+}
+
 
 def _doc_rows():
     """从 10 S3.3.6 的逐条清单解析 {行号: 类}.
 
     清单的形状: | # | 失败项 | 检出点 | 类 | 处置 | 错误码 | 依据 |
-    首列是编号(1 / 2 / 3b / 7i ...), 第四列是类(R/B/D/T).
+    首列是编号(1 / 2 / 3b / 7i ...), 第四列是类.
     NO 解析不到就抛 -- 返回空会让双向差集变成"两边都空 = 一致".
     """
     text = DOC.read_text(encoding="utf-8")
@@ -91,8 +106,8 @@ def _doc_rows():
             continue                       # 表头 / 分隔行 / 四类定义表
         # *** 类列不只有单个字母.
         # 实测出三种写法: 单字母(R/B/D/T) - 复合(T->R, 表示超上界升级) -
-        # "指针"(那一行只是指向别册, 本身不定类). 第一版只认单字母, 于是
-        # 13/14/23(T->R) 与 28/29(指针) 全被漏掉, 双向差集报出五个"代码
+        # 以及非四类的两个标签(见 _DOC_LABEL_TO_CODE). 第一版只认单字母,
+        # 于是 13/14/23(T->R) 与 28/29 全被漏掉, 双向差集报出五个"代码
         # 里多出来的行"-- 而那五行文档里都有.
         # 一个解析漏认导致的假差异, 会把人引去改代码而不是改解析器.
         # 全角箭头用码位写: 它是文档里的那个字符, 而 CLAUDE.md 2.2 要求
@@ -104,10 +119,16 @@ def _doc_rows():
             # T->R: 表里记升级前的类, 与代码表的 cls 字段对齐
             # (代码用 upgrade_to 单独记升级目标).
             rows[rid] = cls.split("->")[0]
+        elif cls in _DOC_LABEL_TO_CODE:
+            rows[rid] = _DOC_LABEL_TO_CODE[cls]
         elif cls:
-            # 指针类: 记下来参与行集合比对, 但类值标记为 None 表示
-            # "本节不定类", 由逐行类比对那条用例跳过.
-            rows[rid] = None
+            # *** 认不出就抛, NO 不降级为 None.
+            # 降级为 None 的那一版让"类列比对"对这几行恒真, 于是三行都被
+            # 写成 CLASS_D 也没人红. 文档若新增第三种非四类标签, 这里应当
+            # 当场失败并要求补进 _DOC_LABEL_TO_CODE, 而不是静默放过.
+            raise AssertionError(
+                "10 S3.3.6 第 %s 行的类列 %r 既不是四类也不在 "
+                "_DOC_LABEL_TO_CODE 内 -- 补映射, 不要放过它" % (rid, cls))
     if not rows:
         raise AssertionError("S3.3.6 逐条清单解析到 0 行 -- 表结构变了")
     return rows
@@ -145,14 +166,44 @@ def test_每一行的类与文档逐行一致():
 
     一行从 R 变成 D 的后果很具体: 本该拒绝启动的故障变成了"降级启动",
     机器人带着这个故障出勤. 而行数, 行号集合都没变.
+
+    *** 比的是[全部]交集行, 不放过任何一行.
+    2026-09-30 之前这里写着 `if doc[k] is not None`, 而解析器把"不属
+    失败"/"指针"两种类列折成 None -- 于是 27/28/29 三行[永远不参与比对],
+    代码里把它们全写成 CLASS_D 也是绿的.
+
+    MUTATION: 把 _CLASSIFIER_TABLE 第 27 行改回 CLASS_D -> 红.
     """
     from xbrain.boot import failure_class as fc
 
     doc = _doc_rows()
     code = {r.id: r.cls for r in fc._CLASSIFIER_TABLE}
     bad = [(k, code[k], doc[k]) for k in sorted(set(doc) & set(code))
-           if doc[k] is not None and code[k] != doc[k]]
+           if code[k] != doc[k]]
     assert not bad, "这些行的类与 10 S3.3.6 不一致 (id, 代码, 文档): %s" % bad
+
+
+def test_非四类的三行不领常驻降级标记():
+    """10 S3.3.6 的类列对 27 行逐字是"不属失败", 28/29 行是"指针".
+
+    这三行都不是 D. 差别不是措辞: requires_hmi_marker(D) 为真, D 类必落
+    warn 事件 + HMI [常驻]标记. 第 27 行(RTK 尚未固定解)是每次冷启动都
+    要经过的状态, 判成 D 就等于每次开机都挂一个常驻降级标记 -- 而一个
+    每次都亮的标记, 会让真正降级的那几行失去它唯一的通道.
+
+    MUTATION: 把 27/28/29 任一行改回 CLASS_D -> 本条红(它不再在非四类
+    标签集内), 且上面那条逐行比对同时红.
+    """
+    from xbrain.boot import failure_class as fc
+
+    for rid in ("27", "28", "29"):
+        row = fc.classify(rid)
+        assert row.cls in fc.NON_FAILURE_LABELS, (
+            "第 %s 行的类是 %r, 而 10 S3.3.6 把它排在四类之外" % (rid, row.cls))
+        assert fc.requires_hmi_marker(row.cls) is False, (
+            "第 %s 行要求了 HMI 常驻标记, 而文档说它不属失败/只是指针" % rid)
+        assert fc.is_reject(row.cls) is False
+        assert fc.requires_upgrade(row.cls) is False
 
 
 def test_r_class_means_both_no_release_and_no_motion():

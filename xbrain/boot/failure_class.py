@@ -23,13 +23,39 @@ Four classes with strict, documented behaviour (10 S3.3.6):
   T  timed-retry      Bounded retries; over the bound MUST upgrade to
                       R or B (BOOT-I3). Infinite retry is forbidden.
 
+*** The doc's class column carries SIX distinct values, not four.
+10 S3.3.6's per-item list marks three rows with something that is not
+one of R/B/D/T, verbatim:
+
+  row 27  RTK not fixed yet          class column = 不属失败 (not a failure)
+  row 28  perception internal boot    class column = 指针 (pointer)
+  row 29  RNS internal boot           class column = 指针 (pointer)
+
+Those two labels are represented here by CLASS_NOT_A_FAILURE and
+CLASS_POINTER, which are deliberately NOT members of CLASSES: CLASSES
+is the set of FAILURE classes the four-class table defines, and these
+three rows are the doc saying "this row is not one of them".
+
+Why they cannot simply be D, which is what this table said until
+2026-09-30. D means "motion allowed, capability limited" and carries a
+MANDATORY consequence: requires_hmi_marker(D) is True, so a D row lands
+a warn event plus a PERSISTENT HMI marker. Row 27 is a cold-boot state
+every single startup passes through before the RTK converges -- classing
+it D means every boot hangs a permanent degrade marker on the HMI for a
+condition the doc says is not a failure at all. A marker that appears on
+every boot is a marker operators learn to ignore, which costs the real D
+rows their only channel. Rows 28/29 are pointers: the failure is
+classified inside perception / RNS and surfaces here only as a BIT item
+or an inactive behaviour source, so this table has no class to give.
+
 The 29-item enumeration lives in _CLASSIFIER_TABLE below, one row per
 failure listed in 10 S3.3.6. Each row carries:
 
   id           1..29 or 3b / 7b / 7c / 7d / 7e / 7f / 7g / 7h / 7i
   detection    where the failure is detected (assertion N, Stage 0,
                probe, etc.)
-  cls          R / B / D / T
+  cls          R / B / D / T, or one of the two non-failure labels
+               above (see ALL_CLASS_LABELS)
   ecode        the error-code group L identifier
   ref          the doc anchor for reviewers
 
@@ -40,8 +66,12 @@ class inline at each detection site is exactly what CFG-BT-14
 forbids (verbatim: NO scattered if-branches at each site).
 
 Meta test (CFG-BT-13-like): _CLASSIFIER_TABLE row set must equal
-the doc's 10 S3.3.6 row set. Enforced by
-tests/boot/test_failure_class.py against the parsed doc.
+the doc's 10 S3.3.6 row set, AND every row's cls must equal the
+doc's class column for that row. Enforced by
+tests/boot/test_failure_class_table.py against the parsed doc. The
+second half is what caught the 27/28/29 mis-class: the row SETS
+agreed all along, so an id-only diff stayed green while three rows
+carried a class the doc does not give them.
 
 Contract:
   classify(item_id)        -> ClassResult  (or KeyError if unknown)
@@ -156,11 +186,31 @@ CLASS_B = "B"       # boot-but-block: up but no motion authority
 CLASS_D = "D"       # degraded: motion allowed, capability limited
 CLASS_T = "T"       # timed-retry: bounded retry, then upgrade
 
-# The full closed set. Order = doc §3.3.6 order.
+# The four FAILURE classes. Order = doc 10 S3.3.6 order.
 # Tuple (not frozenset) so the traversal order in tests is stable
 # and matches the doc; the discipline tests iterate in this order
 # when building error reports.
 CLASSES = (CLASS_R, CLASS_B, CLASS_D, CLASS_T)
+
+# The two labels the doc's class column uses for rows that are NOT in
+# the four-class set. Values are ASCII and self-describing rather than
+# single letters: a reader meeting "N" in a log would reach for the
+# four-class legend and not find it, while "not_a_failure" cannot be
+# mistaken for a fifth failure class.
+#
+# They are kept OUT of CLASSES on purpose. Every predicate below is
+# written as "cls == <one class>", so all three of is_reject /
+# requires_upgrade / requires_hmi_marker answer False for them, which
+# is exactly the doc's intent: no reject, no retry bound, and above all
+# no persistent HMI degrade marker.
+CLASS_NOT_A_FAILURE = "not_a_failure"   # 10 S3.3.6 row 27, verbatim 不属失败
+CLASS_POINTER = "pointer"               # 10 S3.3.6 rows 28/29, verbatim 指针
+
+#: Every label the class column can carry. The row-validity test uses
+#: THIS set; the per-row class is held to the doc itself by the table
+#: meta test, which is the judge that has a source of truth behind it.
+NON_FAILURE_LABELS = (CLASS_NOT_A_FAILURE, CLASS_POINTER)
+ALL_CLASS_LABELS = CLASSES + NON_FAILURE_LABELS
 
 
 class ClassResult(NamedTuple):
@@ -295,13 +345,19 @@ _CLASSIFIER_TABLE = (
                 None, "10 S3.3.6.25"),
     ClassResult("26", "record.db continuous write fail",    CLASS_D,
                 None, "10 S3.3.6.26"),
-    # Non-failure: RTK not fixed yet.
-    ClassResult("27", "RTK not fixed",                      CLASS_D,
+    # Non-failure: RTK not fixed yet. The doc's class column for this
+    # row is 不属失败, NOT D -- the degrade it causes (i() factor plus
+    # teleop <= 0.5 m/s) is a RUNTIME rule, not a startup failure, so
+    # no warn event and no persistent HMI marker are owed here.
+    ClassResult("27", "RTK not fixed",                  CLASS_NOT_A_FAILURE,
                 None, "10 S3.3.6.27"),
-    # Pointer rows (perception + RNS internal boot failures).
+    # Pointer rows (perception + RNS internal boot failures). The doc's
+    # class column is 指针: the classification happens inside those two
+    # components and surfaces here only as a BIT item (cam_rgbd / lidar)
+    # or as rns_avoid going inactive.
     ClassResult("28", "perception internal boot fail (pointer)",
-                CLASS_D, None, "10 S3.3.6.28"),
-    ClassResult("29", "RNS internal boot fail (pointer)",   CLASS_D,
+                CLASS_POINTER, None, "10 S3.3.6.28"),
+    ClassResult("29", "RNS internal boot fail (pointer)",   CLASS_POINTER,
                 None, "10 S3.3.6.29"),
 )
 
@@ -372,6 +428,13 @@ def requires_hmi_marker(cls: str) -> bool:
     clears it; a marker that decays after N seconds would let a
     degrade slip past attention if the operator was looking
     elsewhere at the wrong moment.
+
+    False for CLASS_NOT_A_FAILURE and CLASS_POINTER, and that is the
+    whole point of separating them from D: row 27 (RTK not fixed) is
+    reached on every cold boot, so answering True there would put a
+    permanent marker on the HMI every time the machine is switched on
+    -- and a marker that is always lit carries no information for the
+    rows that really are degraded.
     """
     return cls == CLASS_D
 
