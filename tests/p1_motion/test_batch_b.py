@@ -114,7 +114,7 @@ def test_verify_correction_countdown():
 def test_estop_parses_from_corrupt_frame():
     """TL-1/TL-2: even a corrupt-body frame with estop bit set MUST
     still fire the stop path."""
-    corrupt = TeleopFrame(source=TeleopSource.KEYBOARD,
+    corrupt = TeleopFrame(source=TeleopSource.KEYBOARD_LOCAL,
                            raw_bytes=b"\x01",    # only estop byte
                            arrived_mono_ms=0)
     r = parse_estop_first(corrupt)
@@ -123,7 +123,7 @@ def test_estop_parses_from_corrupt_frame():
 
 
 def test_estop_bit_absent_on_normal_frame():
-    frame = TeleopFrame(source=TeleopSource.KEYBOARD,
+    frame = TeleopFrame(source=TeleopSource.KEYBOARD_LOCAL,
                          raw_bytes=b"\x00\x01\x02\x03",
                          arrived_mono_ms=0)
     r = parse_estop_first(frame)
@@ -131,14 +131,47 @@ def test_estop_bit_absent_on_normal_frame():
     assert r.raw_ok is True
 
 
-def test_tl3_freshness_per_source():
-    kb = TeleopFrame(TeleopSource.KEYBOARD, b"\x00", 0)
-    assert is_fresh(kb, now_mono_ms=150) is True
-    assert is_fresh(kb, now_mono_ms=250) is False
-    hmi = TeleopFrame(TeleopSource.HMI, b"\x00", 0)
-    assert is_fresh(hmi, now_mono_ms=400) is True     # HMI gets 500 ms
-    cloud = TeleopFrame(TeleopSource.CLOUD, b"\x00", 0)
-    assert is_fresh(cloud, now_mono_ms=900) is True   # cloud gets 1000 ms
+def test_teleop_source_is_exactly_the_contract_closed_set():
+    """11 S12A.9.7 closes the device set at four values.
+
+    Pinned as a SET equality, not member by member: a fifth member
+    added here would otherwise pass, and a source with no priority and
+    no deadline in S12A.9.6/9.7 is one the arbitration cannot rank.
+    `none` is deliberately absent -- S12A.9.7 makes it an active_source
+    sentinel, not a member of sources[].
+
+    Until 2026-09-30 this module carried keyboard / joystick / hmi /
+    cloud, none of which is in the set, and nothing was red.
+
+    MUTATION: rename any member value back (e.g. KEYBOARD_LOCAL ->
+    "keyboard") -> red.
+    """
+    assert {s.value for s in TeleopSource} == {
+        "gamepad", "keyboard_local", "keyboard_hmi", "virtual_stick"}
+
+
+def test_tl3_freshness_is_200_local_and_400_network():
+    """TL-3 / 11 S12A.9.6: local rt/teleop/input 200 ms, HMI cmd/teleop
+    400 ms. 11 S13 E_TELEOP_STALE repeats the same pair verbatim.
+
+    Both edges are asserted for each link, so a deadline that is too
+    LONG fails too -- that is the direction that matters: an expired
+    source left in the arbitration keeps the robot driving on the last
+    frame it got before the link died. The module used to give the HMI
+    500 ms and a `cloud` source 1000 ms; 12 S4.7.1 TL-3 carries the
+    500 ms reading struck through as 已作废 for exactly this reason.
+
+    MUTATION: put keyboard_hmi back to 500 -> the 401 ms assertion
+    below goes red.
+    """
+    for local in (TeleopSource.GAMEPAD, TeleopSource.KEYBOARD_LOCAL):
+        f = TeleopFrame(local, b"\x00", 0)
+        assert is_fresh(f, now_mono_ms=200) is True
+        assert is_fresh(f, now_mono_ms=201) is False
+    for net in (TeleopSource.KEYBOARD_HMI, TeleopSource.VIRTUAL_STICK):
+        f = TeleopFrame(net, b"\x00", 0)
+        assert is_fresh(f, now_mono_ms=400) is True
+        assert is_fresh(f, now_mono_ms=401) is False
 
 
 # --- MOT-PM-22 teleop_cloud vy reject + link-down ---

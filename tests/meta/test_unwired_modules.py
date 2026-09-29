@@ -282,16 +282,21 @@ _KNOWN_UNWIRED = {
     # MOT-PM-21. Two problems. (1) Superseded: teleop/state.py is the
     # WIRED arbiter (main_wiring.py:266 TeleopTracker) and implements
     # T-1..T-5 with the 11 S12A.9.7 closed set gamepad / keyboard_local /
-    # keyboard_hmi / virtual_stick. This module's TeleopSource enum is
-    # keyboard / joystick / hmi / cloud -- NOT ONE of those four values is
-    # in the contract's closed set, and its cloud deadline is 1000 ms
-    # where S12A.9.6 gives 500 ms. Its tests pin all of it. (2) The
-    # TL-1/TL-2 half (parse estop before normalize) has no other
+    # keyboard_hmi / virtual_stick. This module holds the same four names
+    # but only parses and ages frames; it ranks nothing, so wiring it
+    # would put a SECOND freshness table beside the arbiter's.
+    #   2026-09-30: its TeleopSource used to be keyboard / joystick / hmi
+    #   / cloud -- not one of them in the closed set -- with 500 ms for
+    #   hmi and 1000 ms for cloud, where 11 S12A.9.6 and 11 S13
+    #   E_TELEOP_STALE both give 200 ms local / 400 ms HMI. Its tests
+    #   pinned all of it. Corrected in the same commit as this note; the
+    #   registration below stands on the duplication, not on the names.
+    # (2) The TL-1/TL-2 half (parse estop before normalize) has no other
     # implementation, but its input rt/teleop/input has no subscriber and
     # 11 S12A.9.4's 2026-08-05 F3 finding leaves WHO relays the gamepad
     # estop undecided between three candidates. Deleting the file would
     # delete TL-1/TL-2 with it, so this waits on that ruling.
-    "xbrain/p1_motion/teleop/four_source.py": "registered: NEXT S8.12 -- arbiter half superseded by teleop/state.py with an OFF-CONTRACT source set; TL-1/TL-2 half blocked on the 11 S12A F3 relay ruling",
+    "xbrain/p1_motion/teleop/four_source.py": "registered: NEXT S8.12 -- arbiter half superseded by teleop/state.py, this one would be a second freshness table; TL-1/TL-2 half blocked on the 11 S12A F3 relay ruling",
 
     # BIZ-P2-8 decides auto lighting from three sources (photocell /
     # image brightness / almanac). None of the three exists anywhere in
