@@ -239,6 +239,35 @@ if [ "$list_only" = "1" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Selector guard. A name on the command line that matches no row used to run
+# nothing and exit 0 -- pass=fail=skip=0 reads as success to every caller that
+# only looks at the status, which is the always-green assertion this file
+# already guards against in the other direction (an UNLISTED binary).
+#
+# It stopped being hypothetical the moment a name became DERIVED rather than
+# typed: docs/TODO_EVIDENCE.tsv names C++ test SOURCES as evidence and
+# scripts/progress.py turns each one into a selector by stripping the .cc, so
+# a renamed test would have kept reporting its task DONE while running nothing.
+# ---------------------------------------------------------------------------
+unknown=0
+if [ "${#only[@]}" -gt 0 ]; then
+  for want in "${only[@]}"; do
+    known=0
+    for row in "${TESTS[@]}"; do
+      if [ "${row%%|*}" = "$want" ]; then known=1; break; fi
+    done
+    if [ "$known" = "0" ]; then
+      printf 'UNKNOWN %s -- no row in %s (try --list)\n' \
+             "$want" "${BASH_SOURCE[0]}" >&2
+      unknown=$((unknown + 1))
+    fi
+  done
+fi
+if [ "$unknown" -gt 0 ]; then
+  exit 64
+fi
+
+# ---------------------------------------------------------------------------
 # Drift guard, run BEFORE anything else. Every test binary sitting in either
 # build dir must have a row above. A binary with no row would otherwise never
 # run while the summary still said "all passed" -- the exact shape of an

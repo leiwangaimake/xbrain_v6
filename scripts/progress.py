@@ -227,19 +227,46 @@ def evaluate(item, run_tests, evidence=None, cache=None):
     return "DONE", "判据全部通过"
 
 
+#: A C++ test source, e.g. ros2_ws/quadruped/test/test_tier1.cc. These cannot
+#: be handed to python3, so before 2026-09-29 the whole C++ side had no
+#: representable evidence at all and Phase 3 read 0/46 with 46 UNMAPPED --
+#: a phase that had 34 passing test binaries and a 487-anchor mutation set.
+#: The binary name is DERIVED from the source name, which is also why
+#: run_cxx_tests.sh had to start refusing a selector it does not know: a
+#: derived name that matches no row would otherwise run nothing and exit 0.
+CXX_TEST = re.compile(r"^ros2_ws/[\w.-]+/test/(test_[\w-]+)\.cc$")
+
+
 def _artifact_passes(rel, cache):
     """Run one artifact once per invocation and remember the verdict.
 
     Cached because several items legitimately share one artifact (test_batch_c
     covers four BIZ-P3 items); without the cache the same suite would be run
     four times and the report would take minutes instead of seconds.
+
+    Three kinds of artifact, dispatched by what they ARE rather than by where
+    they sit: a pytest file, a C++ test source, and anything else, which is
+    executed with python3 because that is what the map's non-test artifacts
+    (scripts/ci/*.py, xbrain/**/*.py) are.
     """
     if cache is not None and rel in cache:
         return cache[rel]
     path = os.path.join(ROOT, rel)
+    cxx = CXX_TEST.match(rel)
     if rel.startswith("tests/"):
         r = subprocess.run(["python3", "-m", "pytest", "-q", path],
                            capture_output=True, text=True, cwd=ROOT)
+    elif cxx:
+        # run_cxx_tests.sh owns the cwd, argv and ROS environment each binary
+        # needs -- five of the 34 do not pass when merely executed, and
+        # re-deriving that here would be the second copy of a table that
+        # already drifted once. It does not build: a binary missing from the
+        # tree is reported as a failure by that script, which is the verdict
+        # wanted here too (an unbuilt test verifies nothing).
+        r = subprocess.run(
+            ["bash", os.path.join(ROOT, "scripts", "run_cxx_tests.sh"),
+             cxx.group(1)],
+            capture_output=True, text=True, cwd=ROOT)
     else:
         r = subprocess.run(["python3", path],
                            capture_output=True, text=True, cwd=ROOT)

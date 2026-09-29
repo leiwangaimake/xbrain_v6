@@ -59,15 +59,33 @@ def _rows():
 
 
 def _todo_ids():
-    """Task ids present in the TODO, normalised to two-digit form.
+    """Task ids present in the TODO, normalised the way progress.py does.
 
     Normalised because the TODO writes both `BIZ-P3-0` and `GWY-P5-01`; an
     exact string compare would report a third of the table as missing.
+
+    *** The tail is not always a number. 12 ids end in a letter -- the
+    supplementary rows (`CPP-QD-9b`, `CPP-QD-11c`, `CPP-BP-1b`, ...) -- and the
+    earlier pattern required a digit run immediately before the closing
+    backtick, so none of them was visible here. The damage is one-directional
+    and silent in the worst way: a perfectly good evidence row for one of those
+    12 was reported as a STRAY id (test_every_task_id_exists... would fail),
+    which reads as "you invented a task number" rather than "this matcher
+    cannot see it". Measured 2026-09-29 while mapping Phase 3, where four of
+    the 12 are real work with real tests.
+
+    This is the same failure this file already records twice -- the extractor's
+    scan surface narrower than the author's writing surface, with the
+    difference silent (see the range-style and below-the-Brief cases). The
+    pattern is now the SAME one progress.py parses rows with, and the
+    normalisation the same one it keys the map with, so the two cannot drift
+    into disagreeing about what a task id is.
     """
     ids = set()
     text = TODO.read_text(encoding="utf-8")
-    for m in re.finditer(r"^\|\s*`([A-Z]{3}-[A-Za-z0-9]+)-([0-9]+)`", text, re.M):
-        ids.add("%s-%02d" % (m.group(1), int(m.group(2))))
+    for m in re.finditer(r"^\|\s*`([A-Z]{3}-[A-Za-z0-9-]+)`", text, re.M):
+        head, _, tail = m.group(1).rpartition("-")
+        ids.add("%s-%02d" % (head, int(tail)) if tail.isdigit() else m.group(1))
     return ids
 
 
