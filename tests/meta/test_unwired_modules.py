@@ -264,12 +264,20 @@ _KNOWN_UNWIRED = {
     # none either. Nothing publishes or consumes a profile transition.
     "xbrain/p1_motion/profile/switch_sm.py": "no-surface: neither nav_tick nor ctrl_loop has a profile-switch stage",
 
-    # CHK-1-20 is the UNIQUE BYPASS of the rotation permit -- and the
-    # permit itself is not running: nav_tick.py's module note says
-    # verbatim "no rotation permit", and rotation/rcg.py has no
-    # production caller either. A bypass of a gate that never fires
-    # cannot be exercised. Closing move = wire RCG-1..4 first.
-    "xbrain/p1_motion/rotation/visual_override.py": "no-surface: it bypasses the rotation permit, and nav_tick runs no rotation permit (12 S6A unwired)",
+    # CHK-1-20 is the UNIQUE BYPASS of the rotation permit. 2026-09-29: the
+    # permit itself IS running now (nav_tick step 6b -> rotation/rcg.py), so
+    # the old reason here -- "the gate never fires" -- no longer holds and has
+    # been replaced rather than left standing.
+    #
+    # The bypass stays unwired on purpose, and the reason is 12 S6A.6's own
+    # fourth condition: the release must land an event naming the confirming
+    # command's origin and cmd_id. Step 6b sees a velocity, not a command, so
+    # it has no identity to name; 12 S6A.6 says that without that record the
+    # switch is a silent safety-release channel. rcg.py therefore refuses to
+    # construct when allow_visual_override is true, which is the same verdict
+    # reached loudly. Closing move = wire the permit's ENTRY call site
+    # (12 S4.6.4 RC-1), where a cmd_id exists, and route the bypass there.
+    "xbrain/p1_motion/rotation/visual_override.py": "no-surface: 12 S6A.6 needs the confirming cmd_id in the release event and step 6b has none; the entry call site (12 S4.6.4 RC-1) is unwired",
 
     # MOT-PM-21. Two problems. (1) Superseded: teleop/state.py is the
     # WIRED arbiter (main_wiring.py:266 TeleopTracker) and implements

@@ -41,8 +41,11 @@ so it caps vx > 0 only. Reverse vx and lateral vy keep the ceiling without the
 f term (profile / spec x h x i) -- gating the body-shield vy or a backup with
 the front clearance would pin the robot against the very wall it is easing off,
 and would diverge from the three SIL batteries that validated v2.0. wz is not
-gated here (rotation permit RCG-1..4 is a separate stage, not chained in this
-phase; registered in NEXT.md).
+gated here: it has its own stage, the rotation permit RCG-1..4, which runs at
+12 S2.2 step 6b right after this one (rotation/rcg.py, chained 2026-09-29).
+Keeping them apart is 12 S6A.2's point -- the swept ring does not shrink when
+the speed does, so a linear cap is not a weaker version of the permit, it is
+an answer to a different question.
 
 Attribution (11 S9.6.5 concurrency rule): every term's cut delta is measured;
 limiter = the largest delta, ties by the closed-set order (which IS the

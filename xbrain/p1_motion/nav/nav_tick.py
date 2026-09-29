@@ -19,6 +19,12 @@ order:
                        estop are SUSPENSION edges on the source, not priorities
   6  gate clip         host_gate.apply_gate (vx > 0 by f; vx < 0 / vy without f);
                        f carries the 12 S6.2 band hysteresis (BandHysteresis)
+  6b rotation permit   rcg.apply_rotation_permit on the GATED velocity, only
+                       when the tick is spin_like (12 S6A.4.1). The one gate in
+                       V6 that constrains wz at all -- 12 S6A.1 shows the other
+                       six layers are each a no-op on it. Veto or clamp by
+                       source (12 S6A.4.2); never touches limiter (OB-1)
+  7  fence clip        fence/clip.evaluate on the post-6b vector (12 S7)
   9  output            NavOutput; the wiring serialises 11 S3.4 and publishes
 
 Suspension (20 RNS-M-7 / 12 S4.2c.5 TR-RNS-1): estop latched OR a local teleop
@@ -32,10 +38,20 @@ the holder is hold and the tick still emits a (zero) cmd_vel, which is what
 chassis Tier 1 needs to stay out of timeout_lock.
 
 What it does NOT do: no publishing, no mission entry (route / relmove intake +
-the rns_avoid adapter), no path_progress (progress.py), no rotation permit /
-jerk limiter (12 S2.2 6b / 8 -- not chained this phase; step 7 fence clip IS
-chained since 2026-09-12, see fence/clip.py;
-NEXT.md).
+the rns_avoid adapter), no path_progress (progress.py), no jerk limiter
+(12 S2.2 step 8 -- not chained this phase). Step 7 fence clip IS chained since
+2026-09-12 (fence/clip.py) and step 6b the rotation permit since 2026-09-29
+(rotation/rcg.py); NEXT.md carries what is left.
+
+About step 6b's data. The permit's ring read (RingSample) arrives on NavInputs
+and is None on this machine: 12 S6A.3.1 RC-D2 makes rt/lidar/grid the one
+primary source and 11's LiDAR single-topic row records that the machine has no
+LiDAR, so nothing produces one. RC-D2's own failure direction for that is
+refuse, and 12 S6A's opening line says a permit that cannot be decided refuses,
+with nothing in between "cannot tell" and "safe". So on today's hardware every
+spin_like tick is refused -- which is 12 S6A.3.3's stated intent, not a defect,
+and is also why the permitting path is exercised by tests rather than by the
+robot: a judge that only ever refused would be satisfied by a stub.
 
 Trap: passing ctx.perception = None to RNS when the profile is merely OLD. RNS
 ages the profile itself (T-50 slow / T-51 zero) and its memory grid needs the
@@ -65,6 +81,12 @@ from xbrain.p1_motion.nav.host_gate import (
     forward_d_free,
 )
 from xbrain.p1_motion.rns.inputs import PerceptionSnapshot
+from xbrain.p1_motion.rotation.rcg import (
+    RingSample,
+    RotationEval,
+    RotationLimits,
+    apply_rotation_permit,
+)
 from xbrain.p1_motion.sources.arbiter_p1 import BehaviorSource, P1Arbiter
 from xbrain.p1_motion.sources.rns_avoid import RnsAvoidSource
 
@@ -92,6 +114,12 @@ class NavInputs:
     ts_wall_s: float = 0.0    # WALL-CLOCK-OK(align/log)
     fix_type: Optional[str] = None            # 11 S3.2.1 GnssFix.fix_type (fence inset)
     fence: Optional[CompiledFence] = None     # the active FenceSet, compiled (12 S7)
+    # 12 S2.2 step 6b input: this tick's read of the sweep annulus. None means
+    # the RC-D2 primary source produced nothing -- which is the standing state
+    # on this machine (no LiDAR) and is a REFUSE, never a skip. It is a tick
+    # input rather than a NavTick field because it changes every tick, exactly
+    # like perception: the wiring assembles it, the tick only reads it.
+    ring: Optional[RingSample] = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +142,13 @@ class NavOutput:
     nav_state: str
     profile: str = "patrol"       # effective tier (11 S3.4 gate.profile)
     fence: Optional[FenceEval] = None   # 12 S2.2 step 7 result (state/fence + events)
+    # 12 S2.2 step 6b result. Always present -- a non-spin tick reports
+    # decision "pass" with spin_like False -- so the wiring never has to guess
+    # whether the permit ran. limiter / limiter_all above are deliberately
+    # untouched by it: 12 S6A.8 OB-1 forbids widening that closed set, since
+    # every value in it describes a LINEAR cap and 11 S9.6.5's argmax over the
+    # reduction Delta is undefined for wz. OB-2 routes this out as an event.
+    rotation: Optional[RotationEval] = None
 
 
 class RnsCtx:
@@ -143,10 +178,30 @@ class NavTick:
     def __init__(self, source: RnsAvoidSource, arbiter: P1Arbiter, *,
                  v_nom_mps: Any, wz_max_rps: Any, spec_max_vx_mps: Any,
                  holonomic: bool, speed_up_hold_ms: Any, d_up_margin_m: Any,
+                 rot_limits: RotationLimits, r_robot_m: Optional[float],
                  v_obstacle_avoid_mps: Any = None,
                  fence_consts: Optional[FenceConstants] = None) -> None:
         self._src = source
         self._arb = arbiter
+        # 12 S2.2 step 6b constants. REQUIRED, with no None-means-skip shape --
+        # unlike fence_consts above, which tolerates None for the unit-test
+        # spine. 12 S6A.7 RC-D7 refuses to give the rotation permit any off
+        # switch, reasoning that one enabled:false is a remote channel for
+        # releasing rotation protection; a constructor that silently ran
+        # without the permit when the block was absent would be that switch
+        # spelled differently, so a missing block is a construction failure.
+        if not isinstance(rot_limits, RotationLimits):
+            raise NavTickConfigError(
+                "rot_limits must be a RotationLimits (12 S12 rotation_clearance); "
+                "there is no no-permit mode (12 S6A.7 RC-D7), got %r" % (rot_limits,))
+        self._rot = rot_limits
+        # The TRUE r_robot, and None when it is not configured anywhere. 12 S12
+        # keeps its single definition in the RNS geometry section and forbids a
+        # P1-private second copy, so this arrives from nav_cfg rather than from
+        # a key of our own. None and 0.0 mean the same thing to RCG-1 -- "not
+        # known, so do not turn" -- and neither is ever replaced by the
+        # trigger-side fallback (12 S6A.4.1 iron rule 1).
+        self._r_robot = r_robot_m
         # 12 S6.2 / S6.7 band hysteresis on the f term (U54: rise to 2.0 needs
         # 3.5 m for 3 s, drop is instant). Both numbers come from the resolved
         # snapshot (speed_gate.hysteresis.*); a null leaf refuses here.
@@ -240,6 +295,17 @@ class NavTick:
         vx, vy, wz = apply_gate(gate, raw[0], raw[1], raw[2], self._holo,
                                 wz_max_radps=self._wz_max)
         limiter, limiter_all = attribute(gate, raw[0])
+        # 12 S2.2 step 6b, between the speed gate and the fence exactly as the
+        # step list orders it. It reads the GATED vx / vy: at this point in the
+        # chain a tick whose vx the gate has already zeroed IS a spin, and
+        # judging the pre-gate candidate instead would wave that case through.
+        # The winning source name is passed verbatim -- 12 S6A.4.2's disposal
+        # differs per source and its rns_avoid row demands the test be written
+        # out rather than defaulted.
+        rot = apply_rotation_permit(
+            vx_mps=vx, vy_mps=vy, wz_radps=wz, source=source,
+            limits=self._rot, r_robot_m=self._r_robot, ring=inp.ring)
+        wz = rot.wz_out
         v_max = gate.v_max_fwd
         fev: Optional[FenceEval] = None
         if self._fence is not None:
@@ -268,7 +334,7 @@ class NavTick:
             freshness=fresh.value, suspended=self._suspended,
             nav_state=self._src.nav_state().value,
             profile="obstacle_avoid" if downgraded else "patrol",
-            fence=fev)
+            fence=fev, rotation=rot)
 
 
 def ctrl_state_for(inp: NavInputs, out: NavOutput, *, health_ever_ok: bool,

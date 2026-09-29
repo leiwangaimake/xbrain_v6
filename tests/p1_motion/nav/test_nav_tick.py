@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.p1_motion.nav.rot_fixture import rot_limits
 from tests.p1_motion.rns.scenes import healthy_status, snapshot, uniform_free
 from xbrain.p1_motion.nav.health_factor import HealthView
 from xbrain.p1_motion.nav.nav_tick import NavInputs, NavTick, NavTickConfigError
@@ -47,7 +48,8 @@ def _stack():
     rns = RnsSource(cfg=cfg, r_eff_m=0.5)
     src = RnsAvoidSource(rns, cfg["rns"])
     tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=1.2,
-                   spec_max_vx_mps=2.0, holonomic=True)
+                   spec_max_vx_mps=2.0, holonomic=True,
+                   rot_limits=rot_limits(), r_robot_m=None)
     return src, tick
 
 
@@ -161,7 +163,8 @@ def test_ctor_refuses_unset_limits():
     src, _ = _stack()
     with pytest.raises(NavTickConfigError):
         NavTick(src, P1Arbiter(), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=None,
-                spec_max_vx_mps=2.0, holonomic=True)
+                spec_max_vx_mps=2.0, holonomic=True,
+                rot_limits=rot_limits(), r_robot_m=None)
 
 
 # ---- adapter entries ---------------------------------------------------------
@@ -209,7 +212,8 @@ def test_max_profile_obstacle_avoid_caps_the_nominal():
     the gate names health. mutant: ignore max_profile -> vx above 0.5 -> red."""
     src, _ = _stack()
     tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=1.2,
-                   spec_max_vx_mps=2.0, holonomic=True, v_obstacle_avoid_mps=0.5)
+                   spec_max_vx_mps=2.0, holonomic=True, v_obstacle_avoid_mps=0.5,
+                   rot_limits=rot_limits(), r_robot_m=None)
     _goto(src, 5000)
     oa = HealthView(1.0, True, "obstacle_avoid", "ok", 100)
     outs = [tick.run(_inp(5000 + 50 * k, health=oa)) for k in range(10)]

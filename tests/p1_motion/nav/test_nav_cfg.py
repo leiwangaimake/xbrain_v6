@@ -34,7 +34,23 @@ P1 = {
               "predict_dt_s": 0.45, "margin_by_fix": {"rtk_fixed": 0.3, "rtk_float": 1.0},
               "projection_iters": 3},
     "speed_gate": {"hysteresis": {"speed_up_hold_s": 3.0, "d_up_margin_m": 0.5}},
+    # 12 S12 rotation_clearance (step 6b). The three zeros are the STRICTEST
+    # settings the section gives, not uncalibrated placeholders: any occupied
+    # cell refuses, unknown cells get no tolerance, and inner radius 0 means
+    # the whole disc is judged.
+    "rotation_clearance": {"data_source": "lidar_grid", "margin_rot_m": 1.0,
+                           "r_self_mask_m": 0.0, "rot_occ_max": 0,
+                           "rot_unknown_max_cells": 0,
+                           "rot_unknown_ratio_max": 0.5,
+                           "grid_age_max_ms": 200, "recheck_ticks": 3,
+                           "wz_eps_radps": 0.05, "k_rot": 0.5,
+                           "r_robot_fallback_m": 0.60, "ped_speed_mps": 1.5,
+                           "allow_visual_override": False},
 }
+# No inflation section, exactly like configs/rns.yaml: r_robot has no key
+# anywhere, so RCG-1 has nothing to evaluate and the permit refuses. That is
+# 12 S6A.3.3's specified behaviour for an uncalibrated body, and the test below
+# pins that nav_cfg reports None rather than borrowing r_eff_m for it.
 RNS = {"rns": {"route": {"search_window": 30}, "geometry": {"r_eff_m": 0.5}}}
 
 
@@ -48,6 +64,45 @@ def test_complete_tree_builds():
     assert c.fence.brake_k == 1.5 and c.fence.v_profile_max_mps == 1.5
     assert c.fence.teleop_cap_degraded_mps == 0.5 and c.fence.margin_by_fix["rtk_float"] == 1.0
     assert c.speed_up_hold_ms == 3000 and c.d_up_margin_m == 0.5     # 12 S6.7 T_up in ms
+    # 12 S12 rotation_clearance -> RotationLimits, and the two values that are
+    # deliberately NOT read from a file.
+    assert c.rot_limits.margin_rot_m == 1.0 and c.rot_limits.k_rot == 0.5
+    # None because no loaded tree carries the key. 12 S12 landing plan (2)
+    # rules this state: the LIMIT branch degrades to a veto plus one fault,
+    # rather than clamping to a guessed rate.
+    assert c.rot_limits.wz_blind_radps is None
+    # None because configs/rns.yaml has no inflation section. r_eff_m is NOT
+    # borrowed for it -- 12 S6A.4.1 iron rule (1) forbids r_eff reaching
+    # r_check, and doing so here would let an unmeasured body pass RCG-1.
+    assert c.r_robot_m is None
+
+
+def test_r_robot_is_read_only_from_the_rns_inflation_key():
+    """12 S12: r_robot's single definition is the RNS inflation section.
+
+    When that key does land, nav_cfg must pick it up from there -- not from a
+    P1-private copy (the freeze line's assertion B would flag one as a
+    suspected duplicate) and not from geometry.r_eff_m next door.
+    """
+    rns = {"rns": {"route": {"search_window": 30},
+                   "geometry": {"r_eff_m": 0.5},
+                   "inflation": {"r_robot_m": 0.482}}}
+    assert build_nav_config(P1, rns).r_robot_m == pytest.approx(0.482)
+
+
+@pytest.mark.parametrize("key", ["rot_occ_max", "k_rot", "allow_visual_override"])
+def test_missing_rotation_key_names_itself(key):
+    """A missing rotation_clearance leaf refuses by name (CLAUDE.md 3.1).
+
+    Parametrised over one of each kind -- a count, a coefficient and a flag --
+    because a walker that special-cases falsy values would let 0 and False
+    through as "missing" or as "present" depending on which mistake it made.
+    """
+    import copy as _copy
+    tree = _copy.deepcopy(P1)
+    del tree["rotation_clearance"][key]
+    with pytest.raises(NavConfigError, match=key):
+        build_nav_config(tree, RNS)
 
 
 @pytest.mark.parametrize("dotted", [

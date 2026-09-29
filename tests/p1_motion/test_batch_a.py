@@ -38,8 +38,10 @@ from xbrain.p1_motion.perception_src.source import (
     ReplayPerceptionSource,
 )
 from xbrain.p1_motion.rotation.rcg import (
-    is_spin_like,
-    rotation_permitted,
+    REASON_R_ROBOT_UNCALIBRATED,
+    effective_radius,
+    ring_check_radius,
+    spin_like,
 )
 from xbrain.p1_motion.sources.arbiter_p1 import (
     BehaviorSource,
@@ -173,27 +175,68 @@ def test_limiter_all_includes_ties_within_threshold():
 
 
 # --- MOT-PM-10/11/12 rotation permit ---
+#
+# 2026-09-29: these four were rewritten when the permit was wired into
+# nav_tick step 6b. The previous versions asserted the two shapes 12 S6A
+# forbids by name, so they had to go rather than be ported:
+#
+#   * rotation_permitted(clearance_m=0.7, r_robot=0.0) is True -- an
+#     uncalibrated body permitted to spin. 12 S6A.3.3 RCG-1 requires the
+#     opposite, verbatim "0.0 does not mean zero radius therefore safe, it
+#     means not known therefore do not turn", and calls reading it the other
+#     way the section's most likely and most costly fail-open.
+#   * r_eff = max(r_robot, fallback), and r_eff used as the clearance radius.
+#     12 S12 v0.7 retired the max form (it disagrees with the branch below
+#     0.60), and 12 S6A.4.1 iron rule (1) forbids r_eff from reaching r_check
+#     at all -- that substitution writes "not known" as "known 0.60".
+#
+# The ring verdict and the per-source disposal now live in
+# tests/p1_motion/nav/test_nav_tick_rotation.py, which drives both failure
+# directions. What stays here is the trigger and the two radius rules.
 
-def test_is_spin_like_true_when_wz_and_low_vx():
-    assert is_spin_like(vx_mps=0.02, wz_radps=0.3) is True
+
+def test_spin_like_true_when_turn_radius_is_inside_the_body():
+    """vx=0.02 with wz=0.3 -> R = 0.067 m, well inside the body."""
+    assert spin_like(0.02, 0.0, 0.3, wz_eps_radps=0.05, k_rot=0.5,
+                     r_eff_m=0.60) is True
 
 
-def test_is_spin_like_false_when_moving_forward():
-    """path_follow style turn: vx=1.5, wz=0.3 -> NOT spin."""
-    assert is_spin_like(vx_mps=1.5, wz_radps=0.3) is False
+def test_spin_like_false_when_moving_forward():
+    """path_follow style turn: vx=1.5, wz=0.3 -> R = 5.0 m, NOT a spin.
+
+    The too-much direction. 12 S6A.4.1's correction records the v0.3 trigger
+    calling every patrol tick a sweep, which left the robot able to drive only
+    in straight lines.
+    """
+    assert spin_like(1.5, 0.0, 0.3, wz_eps_radps=0.05, k_rot=0.5,
+                     r_eff_m=0.60) is False
 
 
-def test_rotation_permitted_uses_r_eff_fallback():
-    """r_robot=0.0 placeholder + fallback 0.6 -> requires clearance
-    >= 0.6, NOT 0.0."""
-    assert rotation_permitted(clearance_m=0.7, r_robot=0.0) is True
-    assert rotation_permitted(clearance_m=0.5, r_robot=0.0) is False
+def test_effective_radius_falls_back_only_for_the_trigger():
+    """12 S6A.4.1: a branch, and only on the trigger side.
+
+    The fallback keeps spin_like working on an uncalibrated body -- without it
+    the threshold is k_rot * 0 = 0, nothing is ever spin_like, and the gate
+    stops existing. A measured radius is used as measured, not raised to the
+    fallback by a max().
+    """
+    assert effective_radius(0.0, 0.60) == 0.60
+    assert effective_radius(None, 0.60) == 0.60
+    assert effective_radius(0.30, 0.60) == 0.30
 
 
-def test_rotation_permitted_uses_r_robot_when_larger():
-    """A concrete r_robot > fallback wins the max()."""
-    assert rotation_permitted(clearance_m=0.8, r_robot=1.0) is False
-    assert rotation_permitted(clearance_m=1.2, r_robot=1.0) is True
+def test_ring_check_radius_refuses_an_uncalibrated_body():
+    """RCG-1: r_check is r_robot + margin_rot on the TRUE value, or nothing.
+
+    None is the answer, not the fallback and not margin_rot alone: 12 S6A.3.3
+    notes that dropping r_robot shrinks the decision domain to a few cells
+    round the origin, where the permit passes nearly everything.
+    """
+    assert ring_check_radius(0.0, 1.00) is None
+    assert ring_check_radius(None, 1.00) is None
+    assert ring_check_radius(0.482, 1.00) == pytest.approx(1.482)
+    # The reason string that verdict carries, kept next to the rule it names.
+    assert REASON_R_ROBOT_UNCALIBRATED == "r_robot_uncalibrated"
 
 
 # --- MOT-PM-13/14/15 fence geometry + stage machine ---

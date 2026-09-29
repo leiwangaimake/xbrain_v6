@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.p1_motion.nav.rot_fixture import rot_limits
 from tests.p1_motion.rns.scenes import healthy_status, snapshot, uniform_free
 from xbrain.p1_motion.fence.clip import (
     CompiledFence,
@@ -60,7 +61,8 @@ def _stack(with_fence=True):
     src = RnsAvoidSource(rns, cfg["rns"])
     tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=1.2,
                    spec_max_vx_mps=2.0, holonomic=True,
-                   fence_consts=FC if with_fence else None)
+                   fence_consts=FC if with_fence else None,
+                   rot_limits=rot_limits(), r_robot_m=None)
     goal = translate_relative_move(
         {"cmd_id": "rm-1", "dx_m": 12.0, "dy_m": 0.0, "dyaw_rad": 0.0},
         pose_xy=(0.0, 0.0), yaw_rad=0.0, heading_valid=True, holonomic=True, limits=LIM)

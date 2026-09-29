@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.p1_motion.nav.rot_fixture import rot_limits
 from tests.p1_motion.rns.scenes import healthy_status, snapshot, uniform_free
 from xbrain.p1_motion.gate.speed_gate import (
     BANDS,
@@ -141,7 +142,8 @@ def _stack(hold_ms=3000):
     src = RnsAvoidSource(rns, cfg["rns"])
     tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=2.0, wz_max_rps=1.2,
                    spec_max_vx_mps=2.0, holonomic=True,
-                   speed_up_hold_ms=hold_ms, d_up_margin_m=0.5)
+                   speed_up_hold_ms=hold_ms, d_up_margin_m=0.5,
+                   rot_limits=rot_limits(), r_robot_m=None)
     goal = translate_relative_move(
         {"cmd_id": "rm-1", "dx_m": 15.0, "dy_m": 0.0, "dyaw_rad": 0.0},
         pose_xy=(0.0, 0.0), yaw_rad=0.0, heading_valid=True, holonomic=True, limits=LIM)
@@ -180,4 +182,5 @@ def test_nav_tick_refuses_a_null_hysteresis_leaf():
     src = RnsAvoidSource(RnsSource(cfg=cfg, r_eff_m=0.5), cfg["rns"])
     with pytest.raises(NavTickConfigError):
         NavTick(src, P1Arbiter(), v_nom_mps=2.0, wz_max_rps=1.2, spec_max_vx_mps=2.0,
-                holonomic=True, speed_up_hold_ms=None, d_up_margin_m=0.5)
+                holonomic=True, speed_up_hold_ms=None, d_up_margin_m=0.5,
+                rot_limits=rot_limits(), r_robot_m=None)

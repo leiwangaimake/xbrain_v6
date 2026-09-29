@@ -63,6 +63,34 @@ fence:                                # 12 S7 clipping constants (fence/clip.py)
     rtk_fixed: ${common.fence.margin_by_fix.rtk_fixed}    #   dgps / single are not referenced: B6 says no
     rtk_float: ${common.fence.margin_by_fix.rtk_float}    #   inset there (fence_eval unavailable)
   projection_iters: 3                                     # 11 S9A.8 POCS rounds (p1 private, 11 S9A.12)
+# ===========================================================================
+# 旋转许可 (12 S6A) -- 落地 11 S10.3.2 R-3. 本段全部键属[安全参数], 不支持热更新
+# (CFG-31). 本段[没有] enabled 开关 -- 裁决 RC-D7: 一个 enabled:false 就是一条
+# "远程解除旋转保护"的通道.
+# NO r_robot 不在本段重复定义 -- 唯一定义处 = rns 膨胀段 (12 S12), 本段写了会被
+#    10 S5.4.4 断言 B 判"疑似复制"而拒绝启动. 消费方 runtime/nav_cfg.py 去 rns 树读.
+# NO wz_blind_radps 不在本段定义 -- 复用 11 S3.1.5.6 free_space.blind.wz_blind_radps.
+#    写成 ${common.*} 会被断言 A 判未解析(该键未进 10 S5.4.5 共享参数对照表);
+#    读不到时按 12 S12 落地方案(2)降级: 限幅分支退化为否决 + 一次 fault 事件.
+# 下面三个 0 不是"未标定占位" -- 12 S12 把 0 定为本键的[最严]取值(任一占据格即拒,
+#    未知格不设容差, 内半径 0 = 整圆盘). CLAUDE.md 3.1 禁的是拿 0 冒充已赋值的
+#    标定量, 与此不同.
+# ===========================================================================
+rotation_clearance:
+  data_source:            lidar_grid   # 裁决 RC-D2: 当前唯一合法值
+  margin_rot_m: ${common.safety.d_safe_m}   # U54 规则(3); 冻结线 MR-1 断言两者严格相等
+  r_self_mask_m:          0.0          # 整圆盘; 必须 < r_robot + margin_rot (RCG-2)
+  rot_occ_max:            0            # 任一占据格即拒 (11 S13.8 (8) 键名)
+  rot_unknown_max_cells:  0            # RCG-3: 未知格不设容差, 改大即 fail-open
+  rot_unknown_ratio_max:  0.5          # 整帧 sanity check, 与 11 S3.9 同源
+  grid_age_max_ms:        200          # RC-3: 比 T-05 的 500 更严, 理由见 12 S6A.5
+  recheck_ticks:          3            # RC-2: 已被 RCG-4 第二项买单; age=200 时上限 8
+  wz_eps_radps:           0.05         # spin_like 第一合取项 (12 S6A.4.1)
+  k_rot:                  0.5          # spin_like 曲率半径系数; 待实机整定 (12 S15 #25)
+  r_robot_fallback_m:     0.60         # 只进 spin_like 触发判据, NO 绝不进 r_check
+  ped_speed_mps:          1.5          # RCG-4 公式的行人速度; 待评审
+  allow_visual_override:  false        # 缺省 false (RC-D4); 出口层无 cmd_id 可留名,
+                                       #   置 true 时 rotation/rcg.py 直接拒绝构造
 timeouts_ms:                          # 12 S12 中本批有消费者的三键 (runtime/nav_wiring.py / nav/health_factor.py);
                                       #   感知计龄按 11 S3.1B T-50/T-51 (freshness/degradation.CAM_THRESH), NO 不用本段
                                       #   的 perception 键 (12 S12 的 200 与 11 的 300/1000 不一致, 契约为准; 待 12 收口);

@@ -26,6 +26,7 @@ from typing import List
 import pytest
 import yaml
 
+from tests.p1_motion.nav.rot_fixture import rot_limits
 from tests.p1_motion.rns.scenes import (
     healthy_status,
     one_object,
@@ -65,7 +66,8 @@ class Sim:
         cfg = copy.deepcopy(_CFG)
         self.src = RnsAvoidSource(RnsSource(cfg=cfg, r_eff_m=0.5), cfg["rns"])
         self.tick = NavTick(self.src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5,
-                            wz_max_rps=1.2, spec_max_vx_mps=2.0, holonomic=True)
+                            wz_max_rps=1.2, spec_max_vx_mps=2.0, holonomic=True,
+                            rot_limits=rot_limits(), r_robot_m=None)
         self.now = 5000
         self.host = MissionHost(self.src, relmove_limits=LIM, holonomic=True,
                                 now_mono_ms=self.now)

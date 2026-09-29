@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Optional
 
 from xbrain.p1_motion.fence.clip import FIX_WITH_FENCE, FenceClipError, FenceConstants
 from xbrain.p1_motion.nav.relmove_intake import RelMoveLimits
@@ -39,6 +39,7 @@ from xbrain.p1_motion.path.local_frame import (
     LocalFrameError,
     frame_from_config,
 )
+from xbrain.p1_motion.rotation.rcg import RotationConfigError, RotationLimits
 
 
 class NavConfigError(ValueError):
@@ -62,6 +63,11 @@ class NavConfig:
     health_dead_ms: int
     rns: Dict[str, Any]           # the whole {"rns": {...}} tree for RnsSource
     r_eff_m: float                # rns.geometry.r_eff_m (12 S6A; D2 assertion base)
+    rot_limits: RotationLimits    # 12 S12 rotation_clearance (step 6b constants)
+    # The TRUE body radius RCG-1 and r_check are evaluated on. None when no
+    # loaded tree carries it -- see _read_r_robot for why that is the standing
+    # state and why nothing here substitutes a number for it.
+    r_robot_m: Optional[float]
 
 
 def _walk(tree: Mapping[str, Any], dotted: str) -> Any:
@@ -114,6 +120,87 @@ def _bool(tree: Mapping[str, Any], dotted: str) -> bool:
     return v
 
 
+def _read_r_robot(rns_tree: Mapping[str, Any]) -> Optional[float]:
+    """The TRUE r_robot for RCG-1, or None when no tree carries it.
+
+    12 S12's rotation_clearance block states that r_robot is NOT redefined
+    there: its single definition lives in the RNS inflation section, and a
+    private P1 copy would be flagged as a suspected duplicate by the freeze
+    line's assertion B. So it is read from the RNS tree, at the path 12 S12
+    names, and nowhere else.
+
+    Returning None when that key is absent is the whole point of this helper.
+    configs/rns.yaml carries rns.geometry.r_eff_m but no inflation section, and
+    r_eff_m is NOT a substitute: 12 S6A.4.1 iron rule (1) forbids r_eff from
+    reaching r_check, because doing so writes "not known" as "known 0.5" --
+    the fail-open RCG-1 exists to name. Nor is the doc's calibrated figure
+    copied in here: CLAUDE.md iron rule 3 forbids filling a calibration value
+    to make something run, and a number typed in at this layer would be
+    indistinguishable downstream from one that came off the machine.
+
+    The consequence is that RCG-1 refuses until the key lands, which is
+    precisely what 12 S6A.3.3 specifies for an uncalibrated body.
+
+    mutant: return cfg r_eff_m when the inflation key is missing -> RCG-1
+    passes on an unmeasured body and r_check is built from it -> the
+    r_robot-uncalibrated criterion goes green with no calibration.
+    """
+    infl = rns_tree.get("rns", {})
+    if not isinstance(infl, Mapping):
+        return None
+    infl = infl.get("inflation")
+    if not isinstance(infl, Mapping):
+        return None
+    v = infl.get("r_robot_m")
+    if v is None or isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v)
+
+
+def _rotation_limits(p1_tree: Mapping[str, Any]) -> RotationLimits:
+    """12 S12 rotation_clearance -> RotationLimits, or NavConfigError by key.
+
+    Every leaf goes through _walk, so a missing or null one is reported with
+    its dotted path and nothing is defaulted (CLAUDE.md 3.1). Range and type
+    checks are RotationLimits' own __post_init__ rather than a second copy
+    here; its error is re-raised as a NavConfigError so the caller has one
+    exception type to handle for the whole config.
+
+    wz_blind_radps is passed as None on purpose, and it is the one value not
+    read from a file. 12 S12 keeps it out of this block and reuses 11 S3.1.5.6
+    free_space.blind.wz_blind_radps, noting that writing it as a ${common.*}
+    reference would be rejected as unresolved because the key is not in the
+    shared-parameter table yet, and that it should therefore be read straight
+    from the L2 model layer. This process loads the p1 and rns snapshots only,
+    and neither carries it, so the value is genuinely absent. 12 S12's landing
+    plan (2) rules exactly that case: the LIMIT branch degrades to a veto plus
+    one rotation_clearance_unconfigured fault -- verbatim, cannot get the clamp
+    value then do not let it through, never on a guessed one. When the key
+    lands in the model layer this becomes a single-line change here.
+    """
+    try:
+        return RotationLimits(
+            margin_rot_m=_walk(p1_tree, "rotation_clearance.margin_rot_m"),
+            r_self_mask_m=_walk(p1_tree, "rotation_clearance.r_self_mask_m"),
+            rot_occ_max=_walk(p1_tree, "rotation_clearance.rot_occ_max"),
+            rot_unknown_max_cells=_walk(
+                p1_tree, "rotation_clearance.rot_unknown_max_cells"),
+            rot_unknown_ratio_max=_walk(
+                p1_tree, "rotation_clearance.rot_unknown_ratio_max"),
+            grid_age_max_ms=_walk(p1_tree, "rotation_clearance.grid_age_max_ms"),
+            recheck_ticks=_walk(p1_tree, "rotation_clearance.recheck_ticks"),
+            wz_eps_radps=_walk(p1_tree, "rotation_clearance.wz_eps_radps"),
+            k_rot=_walk(p1_tree, "rotation_clearance.k_rot"),
+            r_robot_fallback_m=_walk(
+                p1_tree, "rotation_clearance.r_robot_fallback_m"),
+            ped_speed_mps=_walk(p1_tree, "rotation_clearance.ped_speed_mps"),
+            allow_visual_override=_walk(
+                p1_tree, "rotation_clearance.allow_visual_override"),
+            wz_blind_radps=None)
+    except RotationConfigError as exc:
+        raise NavConfigError(str(exc)) from exc
+
+
 def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) -> NavConfig:
     """Two resolved trees -> NavConfig, or NavConfigError naming the first
     offending key. rns_tree must carry the "rns" section (12 S12.0A)."""
@@ -163,4 +250,6 @@ def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) ->
         health_dead_ms=_pos_int(p1_tree, "timeouts_ms.health_dead"),
         rns={"rns": dict(rns_tree["rns"])},
         r_eff_m=_pos(rns_tree, "rns.geometry.r_eff_m"),
+        rot_limits=_rotation_limits(p1_tree),
+        r_robot_m=_read_r_robot(rns_tree),
     )

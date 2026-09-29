@@ -48,10 +48,19 @@ Bodies on the general plane are accepted bare or inside the 11 S3.0 envelope
 (unwrap_body) because today's producers differ: p2 publishes relative_move
 bare while RT-plane producers envelope everything.
 
-What it does NOT do: no rotation permit / jerk limiter (fence clip IS in, 12 S2.2 step 7; not
-chained this phase, NEXT.md), no Nav2 spin delegate, no RobotState estop
-back-check (11 S7A.6.5 E-2; quadruped not built). It never reads the config source (NavConfig arrives
-from the resolved snapshots via runtime/nav_cfg.py).
+What it does NOT do: no jerk limiter (12 S2.2 step 8, not chained this phase,
+NEXT.md), no Nav2 spin delegate, no RobotState estop back-check (11 S7A.6.5
+E-2; quadruped not built). Fence clip (step 7) and the rotation permit (step
+6b) ARE in. It never reads the config source (NavConfig arrives from the
+resolved snapshots via runtime/nav_cfg.py).
+
+One thing the rotation permit does NOT get from here: its ring read. 12 S6A.3.1
+RC-D2 makes rt/lidar/grid the single primary source, this process subscribes to
+no such key, and 11's LiDAR single-topic row records that the machine has none
+-- so NavInputs.ring stays None and every spin_like tick is refused. RC-D2's
+own failure direction for an unavailable primary source is exactly that, so
+there is nothing to work around here; what is missing is a ring producer, and
+that choice is a ruling (NEXT.md P7.3 (1)), not a wiring detail.
 
 Trap: publishing cmd_vel from the heartbeat loop "as well" to be safe. Two
 publishers on one Tier-1 key interleave and the chassis sees a 10 Hz jitter
@@ -193,6 +202,8 @@ class NavRuntime:
                              holonomic=cfg.holonomic,
                              speed_up_hold_ms=cfg.speed_up_hold_ms,
                              d_up_margin_m=cfg.d_up_margin_m,
+                             rot_limits=cfg.rot_limits,
+                             r_robot_m=cfg.r_robot_m,
                              v_obstacle_avoid_mps=cfg.v_obstacle_avoid_mps,
                              fence_consts=cfg.fence)
         self._host = MissionHost(self._src, relmove_limits=cfg.relmove,
