@@ -466,6 +466,11 @@ class RotationEval:
     the only carrier and it has to hold the whole story (OB-2's detail list:
     r_check_m, occ_cells, unknown_cells, blocked_sector_deg, grid_age_ms,
     decision).
+
+    No field has a default, and that is not style. Every one of them is read
+    into an event detail, so a default would let a construction site added
+    later ship a field the operator reads as a measurement when nothing
+    measured it -- the same shape CLAUDE.md 3.1 bans for the safety params.
     """
 
     spin_like: bool
@@ -473,6 +478,14 @@ class RotationEval:
     reason: str                     # REASON_* above
     wz_in: float
     wz_out: float
+    # The clamp that was actually in force, or None when none was.
+    #
+    # It is NOT recoverable from wz_out: a clamp only shows there when the
+    # request exceeded it, so an operator turning at 0.2 rad/s under a 0.3
+    # limit sees wz_out == wz_in and cannot tell a limited tick from a
+    # permitted one. That is the diagnosis 12 S15 #54 exists to make possible,
+    # so the value is carried rather than inferred.
+    wz_limit_radps: Optional[float]
     r_check_m: Optional[float]
     occ_cells: int
     unknown_cells: int
@@ -794,7 +807,7 @@ def apply_rotation_permit(*, vx_mps: float, vy_mps: float, wz_radps: float,
         # real ones and get the gate switched off in the field.
         return RotationEval(
             spin_like=False, decision=DECISION_PASS, reason=REASON_PERMITTED,
-            wz_in=wz_radps, wz_out=wz_radps, r_check_m=None,
+            wz_in=wz_radps, wz_out=wz_radps, wz_limit_radps=None, r_check_m=None,
             occ_cells=0, unknown_cells=0, grid_age_ms=None,
             blocked_sector_deg=(), event_kind=None, detail_item=None)
 
@@ -806,7 +819,8 @@ def apply_rotation_permit(*, vx_mps: float, vy_mps: float, wz_radps: float,
     if verdict.permitted:
         return RotationEval(
             spin_like=True, decision=DECISION_PASS, reason=REASON_PERMITTED,
-            wz_in=wz_radps, wz_out=wz_radps, r_check_m=verdict.r_check_m,
+            wz_in=wz_radps, wz_out=wz_radps, wz_limit_radps=None,
+            r_check_m=verdict.r_check_m,
             occ_cells=occ, unknown_cells=unk, grid_age_ms=age,
             blocked_sector_deg=sectors, event_kind=None, detail_item=None)
 
@@ -849,6 +863,9 @@ def apply_rotation_permit(*, vx_mps: float, vy_mps: float, wz_radps: float,
     else:
         kind = KIND_ROTATION_BLOCKED
 
+    # None unless a clamp is actually applied below. A veto has no limit in
+    # force -- reporting one would read as "it was allowed to turn this fast".
+    wz_limit: Optional[float] = None
     if decision == DECISION_LIMIT:
         blind = limits.wz_blind_radps
         if blind is None:
@@ -866,12 +883,14 @@ def apply_rotation_permit(*, vx_mps: float, vy_mps: float, wz_radps: float,
             # the avoidance source's wz away refuses to dodge because there is
             # something to dodge.
             wz_out = max(-blind, min(blind, wz_radps))
+            wz_limit = blind
     else:
         wz_out = 0.0
 
     return RotationEval(
         spin_like=True, decision=decision, reason=verdict.reason,
-        wz_in=wz_radps, wz_out=wz_out, r_check_m=verdict.r_check_m,
+        wz_in=wz_radps, wz_out=wz_out, wz_limit_radps=wz_limit,
+        r_check_m=verdict.r_check_m,
         occ_cells=occ, unknown_cells=unk, grid_age_ms=age,
         blocked_sector_deg=sectors, event_kind=kind, detail_item=detail_item)
 

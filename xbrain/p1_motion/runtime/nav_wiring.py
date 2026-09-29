@@ -37,8 +37,9 @@ safe by itself.
 Keys (11 S1.1.6 whitelist, p1 rows): sub cmd/motion/route (P1-11),
 cmd/motion/relative_move (P1-5), cmd/motion/factor (P1-4) on the general
 plane; pub xbrain/{rid}/rt/motion/cmd_vel (RT), state/motion/path_progress
-(P1-12), cmd/motion/relative_move/status (P1-6), state/arb/motion (P1-22)
-and event/{sev}/arbitration (P1-23) on the general plane. Also sub
+(P1-12), cmd/motion/relative_move/status (P1-6), state/arb/motion (P1-22),
+event/{sev}/motion (P1-10) and event/{sev}/arbitration (P1-23) on the general
+plane. Also sub
 xbrain/{rid}/rt/chassis/state (P1-24, estop_epoch only) and
 xbrain/{rid}/rt/chassis/fault (P1-20) on the RT plane, the latter forwarded to
 event/fault/chassis with the envelope rebuilt per RT-C3.e (see
@@ -64,6 +65,14 @@ rail on a layer crossing 12 S15 #50 registers as a constraint rather than a
 design. Two consequences worth knowing before reading a field log: the census
 is one tick old (NavInputs is built before NavTick.run, and RNS writes the grid
 inside it), and sectors_min_m is None because nothing publishes free_space.
+
+The permit's VERDICT leaves here too, as of 2026-09-29 (12 S15 #54, closed).
+rotation/episodes.py turns the per-tick RotationEval into 12 S6A.8 OB-2 events
+and _publish_rotation_event puts them on event/{sev}/motion. Read that module
+before changing the rate: the decision to emit on the edge of
+(kind, decision, blind) rather than every tick, to send no clear, to send no
+heartbeat and to set dedup_window_s to 0 are four separate rulings and each one
+has a way of failing silently if it is reversed without reading why.
 
 Trap: publishing cmd_vel from the heartbeat loop "as well" to be safe. Two
 publishers on one Tier-1 key interleave and the chassis sees a 10 Hz jitter
@@ -109,6 +118,7 @@ from xbrain.p1_motion.nav.route_intake import RouteAssembler, RouteIntakeError
 from xbrain.p1_motion.path import gnss_pose
 from xbrain.p1_motion.path.local_frame import LocalFrameError
 from xbrain.p1_motion.rns.source import RnsSource
+from xbrain.p1_motion.rotation.episodes import RotationEpisodeTracker, RotationEvent
 from xbrain.p1_motion.rotation.rcg import RingSample
 from xbrain.p1_motion.runtime.fault_forward import now_wall, rebuild_forward
 from xbrain.p1_motion.runtime.nav_cfg import NavConfig
@@ -181,6 +191,11 @@ class NavRuntime:
         self._fence_key: Optional[Tuple[str, int]] = None
         self._fence_latest: Optional[FenceEval] = None
         self._episodes = FenceEpisodeTracker()
+        # 12 S6A.8 OB-2 / 12 S15 #54. Same shape and same reason as the fence
+        # tracker above it: the permit says what is true THIS tick, the cloud
+        # and the HMI need to know when it changed. Level to edge, 20 Hz in,
+        # one event per turn attempt out.
+        self._rot_episodes = RotationEpisodeTracker()
         self._rid = rid
         self._boot = boot
         self._rt = rt
@@ -713,6 +728,17 @@ class NavRuntime:
             held = self._fence_holder.active
             for fe in self._episodes.observe(out.fence, rev=None if held is None else held.rev):
                 self._publish_fence_event(fe, out, inp, held)
+        if out.rotation is not None:
+            # 12 S6A.8 OB-2 / 12 S15 #54: step 6b's verdict leaves as an event
+            # or it does not leave at all. OB-1 bars gate.limiter and OB-4
+            # records that 11 S3.4's gate block has no field for it either, so
+            # this loop is the only thing standing between "wz was clamped to
+            # 0.3" and a field report of "it turns very slowly for no reason".
+            #
+            # out.source, not a reconstruction: OB-3 keeps the real arbitration
+            # winner even when its wz was taken away.
+            for re_ in self._rot_episodes.observe(out.rotation, source=out.source):
+                self._publish_rotation_event(re_, inp)
         # 12 S11 state word (WAIT_GRANT / WAIT_INPUT / SAFE_STOP / READY / ACTIVE):
         # the CtrlLoop zeroes every non-ACTIVE state itself, under the vetoes.
         if health.allow_motion:
@@ -828,6 +854,41 @@ class NavRuntime:
         except Exception as exc:      # noqa: BLE001
             self._counts["publish_fail"] += 1
             _logger.error("p1 fence event publish failed: %s", exc)
+
+    def _publish_rotation_event(self, re_: RotationEvent, inp: NavInputs) -> None:
+        """event/{sev}/motion for one 12 S6A.8 OB-2 row (P1-10).
+
+        Same envelope-free event shape the zone and fence events use, so the
+        p5 pipeline takes all three alike; cat comes from the key segment and
+        the channel is p5's to derive (11 S6.2 puts motion on normal).
+
+        Two things here are not interchangeable with the fence publisher above.
+
+        ts is inp.ts_wall_s, the tick's own wall reading, and it has to be a
+        real rising clock rather than the 0.0 _publish_event sends. With
+        dedup_window_s at 0 the p5 merge test is (ts - last_ts) > 0, so a
+        constant ts makes every later event of this dedup_key fold into the
+        first open row and vanish -- the mixed-clock failure chassis_events.py
+        measured on 2026-09-27, arrived at from the other end.
+
+        The whole put is guarded. A publish failure on a DIAGNOSTIC path must
+        not become an exception that the tick guard turns into a zero-velocity
+        tick: the permit has already decided and the wz is already correct, so
+        losing the event is strictly better than losing the tick.
+        """
+        self._seq["event"] += 1
+        try:
+            self._gen.put("event/%s/motion" % re_.severity, json.dumps({
+                "eid": "rot-%s-%d" % (self._event_boot, self._seq["event"]),
+                "title": re_.kind,
+                "dedup_key": re_.dedup_key,
+                "dedup_window_s": re_.dedup_window_s,
+                "detail": re_.detail(),
+                "src": "p1_motion", "ts": inp.ts_wall_s,
+            }, ensure_ascii=False).encode("utf-8"))
+        except Exception as exc:      # noqa: BLE001
+            self._counts["publish_fail"] += 1
+            _logger.error("p1 rotation event publish failed: %s", exc)
 
     def _publish_event(self, e: Emit) -> None:
         """event/{sev}/motion in the shape the p5 pipeline already takes from

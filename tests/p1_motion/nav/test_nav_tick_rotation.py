@@ -308,6 +308,50 @@ def test_cloud_teleop_keeps_its_veto_when_the_ring_is_blind(reason_ring):
     assert local.wz_out == pytest.approx(lim.wz_blind_radps)
 
 
+def test_wz_limit_radps_is_reported_only_when_a_clamp_was_applied():
+    """The clamp in force rides in RotationEval, and only on a clamped tick.
+
+    12 S15 #54 needs the event to say what the limit WAS, because wz_out cannot
+    answer it: a request already under the clamp comes out unchanged, so a
+    limited tick and a permitted one look identical on the wire. So the value
+    is carried -- and carried as None on a veto, because 0.0 there would read
+    as "it was allowed to turn at 0 rad/s", which is CLAUDE.md 3.1's zero
+    standing in for an absent value in a diagnostic field.
+
+    Written against the real permit, not a hand-built RotationEval. The
+    tracker-side test in tests/p1_motion/rotation cannot see this: it feeds
+    values it built itself, so a mutant that initialised wz_limit
+    unconditionally in apply_rotation_permit survived it (measured
+    2026-09-29).
+
+    mutant: `wz_limit: Optional[float] = limits.wz_blind_radps` at the top of
+    the disposal block -> the veto branch reports 0.3 -> red on the first
+    assertion. mutant: delete `wz_limit = blind` -> the clamp branch reports
+    None -> red on the second.
+    """
+    lim = rot_limits()
+    r_check = R_ROBOT_CALIBRATED + lim.margin_rot_m
+    veto = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
+                   ring=_clean_ring(r_check, occ=1), limits=lim)
+    assert veto.decision == DECISION_REJECT
+    assert veto.wz_limit_radps is None
+    clamp = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
+                    ring=_clean_ring(r_check, unknown=1), limits=lim)
+    assert clamp.decision == DECISION_LIMIT
+    assert clamp.wz_limit_radps == pytest.approx(lim.wz_blind_radps)
+    # A request UNDER the clamp is the case the field cannot diagnose without
+    # this: wz is untouched, so only wz_limit_radps says it was limited.
+    quiet = _permit(0.0, 0.0, 0.1, source="nav2_proxy",
+                    ring=_clean_ring(r_check, unknown=1), limits=lim)
+    if quiet.spin_like:
+        assert quiet.wz_out == pytest.approx(quiet.wz_in)
+        assert quiet.wz_limit_radps == pytest.approx(lim.wz_blind_radps)
+    # A permitted tick has no limit in force either.
+    ok = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
+                 ring=_clean_ring(r_check), limits=lim)
+    assert ok.decision == DECISION_PASS and ok.wz_limit_radps is None
+
+
 def test_the_blind_exemption_is_a_subset_of_the_veto_branch():
     """A source exempted from the blind clamp must already be a veto source.
 
