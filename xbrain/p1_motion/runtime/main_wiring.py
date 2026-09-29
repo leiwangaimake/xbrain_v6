@@ -241,20 +241,38 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         def _publish_zone_events(evs) -> None:
             # 循环线程调用(非 Rust 回调): 组装 S9A.9 event/{sev}/fence 并发布.
             # detail 载 kind/poly_id/poly_name/role/episode_id(无 d_nom/v_fence,
-            # 报警区无距离语义); dedup_key 供 p5 管线 60s 合并(E-3 已在 tracker
-            # 保证不刷屏, 这里再叠一层去重窗). channel 不由本进程定, p5 按 fence
-            # 类派生 alarm(E-1 成对同通道).
+            # 报警区无距离语义); channel 不由本进程定, p5 按 fence 类派生
+            # alarm(E-1 成对同通道).
+            #
+            # *** 本函数原来写死 ts=0.0 且不发窗口, 两处都改.
+            # (1) 窗口是真正在丢事件的那一处: record_dao._try_merge 取该
+            #     dedup_key 上最近的未放弃行(delivered != -1, 已投递的行同样
+            #     算), 而在事件与该行[都没有]窗口时[无条件并入] -- 于是第一条
+            #     zone_enter 之后每一次入区都静默并掉, 现场表现是"入区报警只
+            #     响过一次". 原注释写着"dedup_key 供 p5 管线 60s 合并", 但 p5
+            #     侧没有任何逐类窗口表(grep dedup_window_s: p5 只从 payload 里
+            #     取), 那 60 s 只能由发布方发; 由 zones.ZoneEvent 按 kind 查
+            #     S9A.9 得到.
+            # (2) ts=0.0 今天被 p5 的 _event_row 遮住了 --
+            #     `d.get("ts") or data.get("ts") or now.timestamp()`, 0.0 为假
+            #     值 => 落库的是 p5 的收包时刻. 代价是事件时间变成"p5 什么时候
+            #     看到的", 且这条通路是靠一个[碰巧为假]的值在兜底: 那个 or 一旦
+            #     收紧成 None 判定, 恒定 ts 会让任何窗口都不可能被超过.
             for ev in evs:
                 _zone_eid_seq[0] += 1
                 key = "event/%s/fence" % ev.severity
+                # WALL-CLOCK-OK(record): 11 S6.1 Event.ts, 事件发生的墙钟时刻,
+                # 也是 p5 去重窗的比较基准. 不做年龄/超时判定(那些在本循环里
+                # 一律 time.monotonic(), CLK-C1).
                 gen.put(key, json.dumps({
                     "eid": "zone-%s-%d" % (_zone_eid_boot, _zone_eid_seq[0]),
                     "title": ev.kind,
                     "dedup_key": ev.dedup_key,
+                    "dedup_window_s": ev.dedup_window_s,
                     "detail": {"kind": ev.kind, "poly_id": ev.poly_id,
                                "poly_name": ev.poly_name, "role": "warning",
                                "episode_id": ev.episode_id},
-                    "src": "p1_motion", "ts": 0.0,
+                    "src": "p1_motion", "ts": time.time(),
                 }, ensure_ascii=False).encode("utf-8"))
 
         # --- 11 S12A.9.7 teleop arbitration + state/teleop -------------------

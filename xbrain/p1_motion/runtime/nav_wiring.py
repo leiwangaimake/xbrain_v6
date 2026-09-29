@@ -143,6 +143,28 @@ TICK_PERIOD_S = 0.05
 _STATS_WINDOW = 400
 #: mission nominal tier name reported in gate.profile_req (20 S8.1A).
 PROFILE_REQ = "patrol"
+#: dedup_window_s for the event/{sev}/motion rows THIS file composes --
+#: nav:failed:{reason} (mission_host), nav:health:{state}, nav:tick_failed.
+#:
+#: 0, and it must be sent. 11 has no window for these three keys: they are
+#: p1-internal, none of them appears in a S9A.9-style table, and inventing a
+#: number here would be a judgement nobody made (CLAUDE.md 3.7). What is NOT
+#: open is whether to send the field at all: p5's record_dao._try_merge
+#: merges onto the latest still-open row with this dedup_key whenever neither
+#: the event nor the row carries a window, so a key with no window means the
+#: first nav_failed of the process life gets a row and every later one is
+#: absorbed into it for ever. 0 means "carry the key, coalesce nothing" -- the
+#: merge test is (ts - last_ts) > window, so a strictly later event never
+#: merges.
+#:
+#: The flood these three could cause is already damped upstream by state, not
+#: by seconds: the health row fires on the transition only, the tick-failure
+#: row on the 1st and every 100th, and a nav failure ends the mission that
+#: raised it. Same argument and same value as rotation/episodes.DEDUP_WINDOW_S
+#: and p5 chassis_events.DEDUP_WINDOW_S; it is not CLAUDE.md 3.1's "0
+#: pretending to be a calibrated value", because it is not a safety parameter
+#: and not a stand-in for a number somebody should have measured.
+NAV_EVENT_DEDUP_WINDOW_S = 0
 
 
 def unwrap_body(doc: Any) -> Any:
@@ -508,16 +530,24 @@ class NavRuntime:
     # ---- the loop ------------------------------------------------------------
     def _fault_event(self, exc: BaseException) -> None:
         """CLAUDE.md 4.4 '落 fault': event/fault/motion for a failed tick, the
-        first and then every 100th so a tight failure does not flood p5."""
+        first and then every 100th so a tight failure does not flood p5.
+
+        This path takes its own wall reading instead of the tick's: the tick
+        raised, so NavInputs may not have been built yet, and a stamp from
+        an earlier tick would be a lie about when the failure happened.
+        """
         self._fault_events += 1
         if self._fault_events != 1 and self._fault_events % 100 != 0:
             return
         try:
+            # WALL-CLOCK-OK(record): 11 S6.1 Event.ts, the moment this failure
+            # is recorded. Never an age or a timeout -- the loop's own timing
+            # is on time.monotonic() (CLK-C1).
             self._publish_event(Emit(CH_EVENT, {
                 "title": "nav_tick_failed",
                 "dedup_key": "nav:tick_failed",
                 "detail": {"error": type(exc).__name__, "count": self._tick_errors}},
-                "fault"))
+                "fault"), time.time())
         except Exception:      # noqa: BLE001 -- the fault path must not raise
             pass
 
@@ -752,8 +782,13 @@ class NavRuntime:
         self._ctrl.run_one_tick(computed_vx=out.vx, computed_wz=out.wz,
                                 computed_vy=out.vy, estop=inp.estop)
         emits += self._host.after_tick(inp, out)
-        self._publish_emits(emits)
-        self._health_edge(health)
+        # inp.ts_wall_s, so every event this tick produces carries ONE reading
+        # of ONE clock. Two readings would be harmless here, two CLOCKS would
+        # not: that is what p5 chassis_events measured on 2026-09-27, where a
+        # raise dated from the chassis and a clear from us made (ts - last_ts)
+        # negative and folded every recurrence into the first row.
+        self._publish_emits(emits, inp.ts_wall_s)
+        self._health_edge(health, inp.ts_wall_s)
         self._publish_arb(inp, now_ms)
 
     # ---- publishing ----------------------------------------------------------
@@ -806,7 +841,7 @@ class NavRuntime:
                 _logger.error("p1 cmd_vel publish failed: %s", exc)
             raise
 
-    def _publish_emits(self, emits: List[Emit]) -> None:
+    def _publish_emits(self, emits: List[Emit], ts_wall_s: float) -> None:
         for e in emits:
             try:
                 if e.channel == CH_PROGRESS:
@@ -814,7 +849,7 @@ class NavRuntime:
                 elif e.channel == CH_RELMOVE:
                     self._status_pub.put(self._envelope(e.body, "status"))
                 elif e.channel == CH_EVENT:
-                    self._publish_event(e)
+                    self._publish_event(e, ts_wall_s)
             except Exception as exc:      # noqa: BLE001
                 self._counts["publish_fail"] += 1
                 _logger.error("p1 nav publish %s failed: %s", e.channel, exc)
@@ -848,6 +883,12 @@ class NavRuntime:
                 "eid": "fence-%s-%d" % (self._event_boot, self._seq["event"]),
                 "title": fe.kind,
                 "dedup_key": fe.dedup_key,
+                # S9A.9's window column, per kind (60 s for the per-polygon
+                # rows, 300 s for the set-level degrade pair). The ts here was
+                # already the tick's, but a key with NO window still merges
+                # unconditionally in record_dao, so the second breach of the
+                # day was being absorbed into the first.
+                "dedup_window_s": fe.dedup_window_s,
                 "detail": detail,
                 "src": "p1_motion", "ts": inp.ts_wall_s,
             }, ensure_ascii=False).encode("utf-8"))
@@ -890,22 +931,57 @@ class NavRuntime:
             self._counts["publish_fail"] += 1
             _logger.error("p1 rotation event publish failed: %s", exc)
 
-    def _publish_event(self, e: Emit) -> None:
+    def _publish_event(self, e: Emit, ts_wall_s: float) -> None:
         """event/{sev}/motion in the shape the p5 pipeline already takes from
-        p1 (the zone events): eid / title / dedup_key / detail / src / ts."""
+        p1 (the zone events): eid / title / dedup_key / dedup_window_s /
+        detail / src / ts.
+
+        ts_wall_s is a parameter, not a default and not a reading taken here,
+        so every caller has to say which moment the event belongs to; the two
+        tick callers pass the tick's own NavInputs.ts_wall_s and the fault
+        path passes its own reading. It used to be the literal 0.0.
+
+        What that actually costs, stated no larger than it is. p5's
+        _event_row writes `d.get("ts") or data.get("ts") or now.timestamp()`,
+        and 0.0 is falsy, so TODAY the producer's stamp is silently replaced
+        by p5's own ingestion clock: the merge arithmetic downstream still
+        sees a rising ts, and the visible failure is that every p1 event is
+        dated when p5 looked rather than when it happened. The danger is that
+        this depends on a fallback firing on a value that is only falsy by
+        accident -- tighten that `or` to a None check, or read the field
+        anywhere else (the recorder, a replay), and a constant ts makes
+        (ts - last_ts) zero for every event of a key, so no window can ever
+        be exceeded. The unconditional merge is a separate defect and is
+        fixed by the window below, not by this.
+        """
         self._seq["event"] += 1
         key = "event/%s/motion" % (e.severity or "warn")
         self._gen.put(key, json.dumps({
             "eid": "nav-%s-%d" % (self._event_boot, self._seq["event"]),
             "title": e.body.get("title", "nav"),
             "dedup_key": e.body.get("dedup_key", "nav"),
+            "dedup_window_s": NAV_EVENT_DEDUP_WINDOW_S,
             "detail": e.body.get("detail", {}),
-            "src": "p1_motion", "ts": 0.0,
+            "src": "p1_motion", "ts": ts_wall_s,
         }, ensure_ascii=False).encode("utf-8"))
 
     def _publish_arb(self, inp: NavInputs, now_ms: int) -> None:
         """P1-22 state/arb/motion (change + 1 Hz) and P1-23
-        event/{sev}/arbitration (change only), 11 S7A.8 / S7A.5.1 / S7A.7."""
+        event/{sev}/arbitration (change only), 11 S7A.8 / S7A.5.1 / S7A.7.
+
+        The audit event carries the tick's wall ts and the 7A.7 window that
+        arb_state derived for its action. Neither was sent before.
+
+        The window is the one that was losing events: record_dao._try_merge
+        takes the latest row with this dedup_key that has not been given up
+        (delivered != -1, so a DELIVERED row still counts) and, when neither
+        the event nor that row carries a window, merges with no test at all.
+        So arb:motion:grant got one row for the life of the process and every
+        later handover bumped its dedup_count. 7A.7's closing line calls
+        domain 1 the largest source of these events in the system (rns_avoid
+        <-> path_follow switching back and forth), so the branch being
+        absorbed was the biggest one.
+        """
         body, events = self._arbvis.observe(
             holder=self._arb.holder(), snapshot=self._arb.snapshot(),
             suspended=SUSPENDED_SOFT_ESTOP if inp.estop else None, now_mono_ms=now_ms)
@@ -917,13 +993,15 @@ class NavRuntime:
                 self._gen.put("event/%s/arbitration" % ev.severity, json.dumps({
                     "eid": "arb-%s-%d" % (self._event_boot, self._seq["event"]),
                     "title": ev.action, "dedup_key": ev.dedup_key,
-                    "detail": ev.detail, "src": "p1_motion", "ts": 0.0,
+                    "dedup_window_s": ev.dedup_window_s,
+                    "detail": ev.detail, "src": "p1_motion",
+                    "ts": inp.ts_wall_s,
                 }, ensure_ascii=False).encode("utf-8"))
         except Exception as exc:      # noqa: BLE001
             self._counts["publish_fail"] += 1
             _logger.error("p1 state/arb/motion publish failed: %s", exc)
 
-    def _health_edge(self, view: HealthView) -> None:
+    def _health_edge(self, view: HealthView, ts_wall_s: float) -> None:
         """11 S3.6: the degrade / dead transitions raise a warn event; logged
         on the edge only so a silent p2 does not flood at 20 Hz."""
         if view.state == self._health_state:
@@ -939,4 +1017,5 @@ class NavRuntime:
             self._publish_event(Emit(CH_EVENT, {
                 "title": "health_factor_%s" % view.state,
                 "dedup_key": "nav:health:%s" % view.state,
-                "detail": {"state": view.state, "age_ms": view.age_ms}}, "warn"))
+                "detail": {"state": view.state, "age_ms": view.age_ms}}, "warn"),
+                ts_wall_s)

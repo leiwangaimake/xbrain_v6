@@ -105,3 +105,63 @@ def test_envelopes_use_the_contract_encoder_not_millisecond_stamps():
 def test_stats_deque_is_locked_against_the_heartbeat_thread():
     assert "with self._stats_lock:\n                self._periods.append" in _NAV
     assert "with self._stats_lock:\n            p = sorted(self._periods)" in _NAV
+
+
+def test_no_event_this_process_publishes_is_stamped_with_a_constant_ts():
+    """11 S6.1 Event.ts is the producer's time and p5's dedup comparison value.
+
+    Until 2026-09-30 three of p1's four event publishers stamped the literal
+    0.0: the arbitration audit, the nav/health/tick-failure rows, and the
+    zone_enter/zone_exit rows.
+
+    Claimed no larger than it is: p5's _event_row writes
+    `d.get("ts") or data.get("ts") or now.timestamp()` and 0.0 is falsy, so
+    today the row lands with p5's ingestion time and the merge arithmetic
+    still sees a rising value. What is lost is WHEN the event happened, and
+    the thing standing between that and a broken dedup is a fallback that
+    fires because 0.0 happens to be falsy. Tighten that `or` to a None check,
+    or read ts anywhere else (recorder, replay), and (ts - last_ts) is 0 for
+    every event of a key, so no window can ever be exceeded -- which is the
+    failure p5 measured from the other end on 2026-09-27
+    (chassis_events.DEDUP_WINDOW_S).
+
+    MUTATION: put `"ts": 0.0,` back into any of them -> red.
+    """
+    for name, text in (("nav_wiring.py", _NAV), ("main_wiring.py", _MAIN)):
+        assert '"ts": 0.0' not in text, (
+            "%s stamps a constant Event.ts -- see record_dao._try_merge" % name)
+
+
+def test_every_published_event_carries_both_a_dedup_key_and_a_window():
+    """A dedup_key with no dedup_window_s is a silent drop, not a dedup.
+
+    record_dao._try_merge: when the event and the still-open row BOTH carry
+    no window, it merges unconditionally. So the field is not optional for a
+    producer that sets a key -- p5 has no per-kind window table to fall back
+    on (grep dedup_window_s under xbrain/p5_gateway: it only reads what the
+    payload carries).
+
+    Every PUBLISHED payload is checked, not a sample: an Event payload is a
+    json.dumps({...}) block carrying an eid, which is what distinguishes it
+    from the Emit bodies that feed _publish_event (those carry the key as an
+    INPUT and get their window stamped by the publisher). So a publisher
+    added later cannot quietly be the one without a window.
+
+    MUTATION: delete one "dedup_window_s" line from either file -> red.
+    """
+    total = 0
+    for name, text in (("nav_wiring.py", _NAV), ("main_wiring.py", _MAIN)):
+        blocks = [b for b in re.findall(r"json\.dumps\(\{(.*?)\}, ensure_ascii",
+                                        text, re.S) if '"eid":' in b]
+        assert blocks, "%s composes no event payload any more" % name
+        total += len(blocks)
+        for block in blocks:
+            eid = re.search(r'"eid": "([a-z]+)-', block)
+            who = eid.group(1) if eid else block[:40]
+            assert '"dedup_key"' in block, (
+                "%s: the %s event payload carries no dedup_key" % (name, who))
+            assert '"dedup_window_s"' in block, (
+                "%s: the %s event payload sets a dedup_key with NO window -- "
+                "record_dao merges those unconditionally" % (name, who))
+    # nav / fence / rotation / arbitration + main_wiring's zone rows.
+    assert total == 5, "the set of p1 event publishers changed (%d found)" % total

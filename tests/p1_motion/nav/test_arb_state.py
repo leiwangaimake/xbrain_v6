@@ -97,3 +97,69 @@ def test_suspend_and_rearm_are_audited():
     body, events = _obs(vis, arb, 100, suspended=None)
     assert body["suspended"] is None and [e.action for e in events] == ["rearm"]
     assert vis.gen == 1                                # not a winner change
+
+
+def test_the_dedupable_actions_carry_the_10_s_window():
+    """11 S7A.7: dedup_key arb:motion:{action}, dedup_window_s = 10.
+
+    The window has to be ON the event. p5's record_dao._try_merge merges onto
+    the latest still-open row with this key whenever NEITHER the event nor
+    that row carries a window, so a key with no window means the first
+    handover of the process life opens a row and every later one folds into
+    it -- and 7A.7 calls domain 1 the largest source of these events there is.
+
+    MUTATION: drop dedup_window_s from ArbEmit (or return None) -> red.
+    """
+    arb, vis = P1Arbiter(), ArbVisibility()
+    arb.note(BehaviorSource.HOLD, 0)
+    arb.tick(0)
+    _body, events = _obs(vis, arb, 0)
+    assert [e.action for e in events] == ["grant"]
+    assert events[0].dedup_key == "arb:motion:grant"
+    assert events[0].dedup_window_s == 10
+
+
+def test_suspend_and_rearm_are_never_merged():
+    """11 S7A.7 not-deduplicated list: forced_preempt / source_death /
+    source_disabled / suspend / rearm. Domain 1 emits the last two.
+
+    Window 0 (not a missing key) is how the shared renderer in
+    xbrain/common/arbiter/audit.py expresses it, and both producers of this
+    stream must agree: with a rising ts the merge test (ts - last_ts) > 0
+    passes for every later event, so nothing is ever collapsed. Collapsing
+    two soft-estops into count: 2 would hide one of them.
+
+    MUTATION: give suspend the 10 s window -> red.
+    """
+    arb, vis = P1Arbiter(), ArbVisibility()
+    arb.note(BehaviorSource.HOLD, 0)
+    arb.tick(0)
+    _obs(vis, arb, 0)
+    _body, events = _obs(vis, arb, 50, suspended="soft_estop")
+    assert [e.action for e in events] == ["suspend"]
+    assert events[0].dedup_window_s == 0
+    _body, events = _obs(vis, arb, 100, suspended=None)
+    assert [e.action for e in events] == ["rearm"]
+    assert events[0].dedup_window_s == 0
+
+
+def test_the_window_and_the_exempt_list_come_from_the_shared_module():
+    """One contract table, not two.
+
+    p5 renders the same audit stream through xbrain/common/arbiter/audit.py.
+    If domain 1 kept its own copy of the 10 s and of the never-merge list,
+    the two producers of event/{sev}/arbitration could drift, and the drift
+    would show up as some arbitrations being collapsed on one path and not
+    the other.
+
+    MUTATION: re-spell either value inside arb_state -> this reddens the
+    moment the shared one is changed and the local one is not.
+    """
+    from xbrain.common.arbiter.audit import DEDUP_EXEMPT, DEDUP_WINDOW_S
+    from xbrain.common.arbiter.model import ArbAction
+    from xbrain.p1_motion.nav import arb_state as st
+
+    assert st._dedup_window_for(st.ACTION_GRANT) == DEDUP_WINDOW_S
+    assert st._dedup_window_for(st.ACTION_SUSPEND) == 0
+    assert ArbAction.SUSPEND in DEDUP_EXEMPT and ArbAction.REARM in DEDUP_EXEMPT
+    assert ArbAction.GRANT not in DEDUP_EXEMPT

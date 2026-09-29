@@ -40,6 +40,16 @@ from typing import Dict, List, Sequence
 from xbrain.common.fence.geom import Polygon, point_in_polygon
 
 
+#: S9A.9 表里 zone_enter / zone_exit 两行的"窗口"列, 逐字 60 s.
+#:
+#: *** 必须随事件发出, NO 省不得.
+#: p5 的 record_dao._try_merge 在事件与未结行[都没有]窗口时[无条件并入] --
+#: 于是进程生命期内第一条 zone_enter 开一行, 之后每一次入区都静默并进去.
+#: 报警区入侵是 alarm 通道, "看起来发了而云端只有一条"正是 E-1 要防的那种
+#: 停在错误状态.
+ZONE_DEDUP_WINDOW_S_BY_KIND = {"zone_enter": 60, "zone_exit": 60}
+
+
 @dataclass(frozen=True)
 class ZoneEvent:
     """一条 zone_enter / zone_exit. 字段够发布侧组装 S9A.9 的 event/{sev}/fence:
@@ -50,6 +60,12 @@ class ZoneEvent:
     poly_name: str
     episode_id: int
     dedup_key: str      # 'fence:zone:{poly_id}:{ep}' | 'fence:zone_exit:{poly_id}:{ep}'
+
+    @property
+    def dedup_window_s(self) -> int:
+        """S9A.9 的窗口列, 由 kind 查表. 表里没有的 kind 直接 KeyError --
+        新增一类就该当场补一行窗口, 而不是默默取默认值."""
+        return ZONE_DEDUP_WINDOW_S_BY_KIND[self.kind]
 
 
 def _enter_key(poly_id: str, ep: int) -> str:

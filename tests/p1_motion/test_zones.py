@@ -117,3 +117,23 @@ def test_p1_loop_actually_runs_zone_detection():
     assert "observe" in called, "循环没调 zone_tracker.observe -- 报警区不判入侵"
     assert "_publish_zone_events" in called, (
         "observe 的结果没交给 _publish_zone_events -- 判了不发, 云端收不到告警")
+
+
+def test_zone事件带S9A9给的60秒去重窗口():
+    """11 S9A.9 的 zone_enter / zone_exit 两行, 窗口列逐字 60 s.
+
+    *** 窗口必须由发布方随事件发出.
+    p5 的 record_dao._try_merge 在[事件与未结行都没有窗口]时无条件并入,
+    于是进程生命期内第一条 zone_enter 开一行, 之后每一次入区都静默并进去 --
+    现场表现是"入区报警只响过一次". 报警区走 alarm 通道, 正是 E-1 最怕
+    停在错误状态的那一类.
+
+    MUTATION: 把 zone_exit 从 ZONE_DEDUP_WINDOW_S_BY_KIND 删掉 -> 该事件
+    取窗口时 KeyError; 把 60 改成别的数 -> 本条红.
+    """
+    t = ZoneTracker()
+    t.observe(*_OUT, [_SQUARE])
+    enter = t.observe(*_IN, [_SQUARE])[0]
+    assert enter.kind == "zone_enter" and enter.dedup_window_s == 60
+    exit_ = t.observe(*_OUT, [_SQUARE])[0]
+    assert exit_.kind == "zone_exit" and exit_.dedup_window_s == 60

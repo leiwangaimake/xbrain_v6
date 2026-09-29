@@ -89,3 +89,48 @@ def test_degenerate_reports_once():
     assert [e.kind for e in first] == ["soft_enter", "hard_clip", "fence_clip_degenerate"]
     assert first[-1].severity == "alarm" and first[-1].dedup_key == "fence:degenerate:p-outer"
     assert [e.kind for e in t.observe(deg, rev=1)] == []
+
+
+def test_每一类事件都带S9A9给的去重窗口():
+    """11 S9A.9 "窗口"列: 逐多边形那些 60 s, 集合级降级/恢复 300 s.
+
+    *** 窗口必须由发布方随事件发出, p5 侧没有逐类窗口表.
+    record_dao._try_merge 在[事件与未结行都没有窗口]时无条件并入 -- 于是
+    进程生命期内第一条 breach 开一行, 之后每一条 breach 都静默并进去,
+    dedup_count 在涨而云端只看得到一条. 事件"发出去了"却到不了, 比不发更
+    坏: 它看起来是做完的.
+
+    MUTATION: 把 fence_degraded 的窗口从 300 改成 60 -> 红;
+              从 DEDUP_WINDOW_S_BY_KIND 删掉任意一行 -> 该类事件 KeyError.
+    """
+    t = FenceEpisodeTracker()
+    t.observe(_ev(5.0), rev=1)
+    got = {}
+    for ev in (_ev(8.5), _ev(9.8), _ev(10.5), _ev(9.5, vx=-1.0),
+               _ev(5.0, vx=-1.0)):
+        for e in t.observe(ev, rev=1):
+            got[e.kind] = e.dedup_window_s
+    assert got == {"soft_enter": 60, "hard_clip": 60, "breach": 60,
+                   "recovered": 60, "soft_exit": 60}
+    # 集合级的那一对: key 里没有 episode, 抖一次就是一对 degraded/restored,
+    # 所以窗口是 300 而不是 60.
+    t2 = FenceEpisodeTracker()
+    t2.observe(_ev(8.5), rev=1)
+    deg = t2.observe(_ev(8.5, fix="dgps"), rev=1)
+    assert deg[0].kind == "fence_degraded" and deg[0].dedup_window_s == 300
+    back = t2.observe(_ev(8.5), rev=1)
+    assert back[0].kind == "fence_restored" and back[0].dedup_window_s == 300
+
+
+def test_表里没有的kind当场抛而不是取一个默认窗口():
+    """新增一类事件时应当被要求补一行窗口.
+
+    默认值会让新类静默拿到一个没人裁过的窗口 -- 那正是 CLAUDE.md S3.1 说的
+    "被判为已赋值而放行".
+    """
+    import pytest as _pytest
+
+    from xbrain.p1_motion.fence.episodes import FenceEvent
+    bogus = FenceEvent("fence_changed", "info", "p", "n", "allow", 0, "k")
+    with _pytest.raises(KeyError):
+        _ = bogus.dedup_window_s

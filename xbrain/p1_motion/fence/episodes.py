@@ -44,6 +44,29 @@ from typing import Dict, List, Optional
 from xbrain.p1_motion.fence.clip import ENFORCEMENT_FULL, FenceEval
 
 
+#: 11 S9A.9 的"窗口"列, 逐行抄. 60 s 是逐多边形的那些(它们的 key 里带
+#: episode, 一次越界过程内才可能重复), 300 s 是集合级的降级/恢复/丢失.
+#:
+#: *** 必须由发布方随事件发出, NO 不能省.
+#: p5 的 record_dao._try_merge 取该 dedup_key 上最近的[未结]行, 而在事件与
+#: 该行[都没有]窗口时[无条件并入]. 所以一条只带 key 不带窗口的围栏事件, 会
+#: 让进程生命期内第一条 breach 开一行, 之后的每一条 breach 都静默并进去 --
+#: 云端与 HMI 看到的是一条, dedup_count 在涨. 事件"发出去了"而到不了, 比
+#: 不发更坏: 它看起来是做完的.
+#: NO 也不要图省事全写 60: 300 s 那三行是集合级的, key 里没有 episode,
+#: 抖动一次就是一对 degraded/restored, 窗口短了会把抖动全放出去(EVT-14).
+DEDUP_WINDOW_S_BY_KIND = {
+    "soft_enter": 60,
+    "soft_exit": 60,
+    "hard_clip": 60,
+    "breach": 60,
+    "recovered": 60,
+    "fence_clip_degenerate": 60,
+    "fence_degraded": 300,
+    "fence_restored": 300,
+}
+
+
 @dataclass(frozen=True)
 class FenceEvent:
     """One 11 S9A.9 row. poly_id / role are "" for set-level kinds."""
@@ -56,6 +79,16 @@ class FenceEvent:
     dedup_key: str
     d_nom_m: Optional[float] = None
     d_eff_m: Optional[float] = None
+
+    @property
+    def dedup_window_s(self) -> int:
+        """S9A.9 的窗口, 由 kind 查表.
+
+        做成 property 而不是构造参数: 窗口是 kind 的函数, 每个构造点各传一次
+        就是八份手抄. 表里没有的 kind 直接 KeyError -- 新增一类事件时应当
+        当场要求补一行窗口, 而不是默默取一个默认值.
+        """
+        return DEDUP_WINDOW_S_BY_KIND[self.kind]
 
 
 class FenceEpisodeTracker:
@@ -143,4 +176,4 @@ class FenceEpisodeTracker:
         return out
 
 
-__all__ = ["FenceEvent", "FenceEpisodeTracker"]
+__all__ = ["DEDUP_WINDOW_S_BY_KIND", "FenceEvent", "FenceEpisodeTracker"]
