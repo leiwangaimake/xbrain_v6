@@ -54,13 +54,16 @@ E-2; quadruped not built). Fence clip (step 7) and the rotation permit (step
 6b) ARE in. It never reads the config source (NavConfig arrives from the
 resolved snapshots via runtime/nav_cfg.py).
 
-One thing the rotation permit does NOT get from here: its ring read. 12 S6A.3.1
-RC-D2 makes rt/lidar/grid the single primary source, this process subscribes to
-no such key, and 11's LiDAR single-topic row records that the machine has none
--- so NavInputs.ring stays None and every spin_like tick is refused. RC-D2's
-own failure direction for an unavailable primary source is exactly that, so
-there is nothing to work around here; what is missing is a ring producer, and
-that choice is a ruling (NEXT.md P7.3 (1)), not a wiring detail.
+The rotation permit's ring read is assembled here as of 2026-09-29
+(_ring_sample). 12 S6A.3.1 RC-D2 used to name rt/lidar/grid the single primary
+source; this process subscribes to no such key and 11 records that the machine
+has no LiDAR, so the corrected RC-D2 names the RNS memory grid and _ring_sample
+reads it through RnsSource.ring_counts. Everything rotation-shaped stays on
+this side of that call -- rns/ does not import rotation/ -- which is the guard
+rail on a layer crossing 12 S15 #50 registers as a constraint rather than a
+design. Two consequences worth knowing before reading a field log: the census
+is one tick old (NavInputs is built before NavTick.run, and RNS writes the grid
+inside it), and sectors_min_m is None because nothing publishes free_space.
 
 Trap: publishing cmd_vel from the heartbeat loop "as well" to be safe. Two
 publishers on one Tier-1 key interleave and the chassis sees a 10 Hz jitter
@@ -106,6 +109,7 @@ from xbrain.p1_motion.nav.route_intake import RouteAssembler, RouteIntakeError
 from xbrain.p1_motion.path import gnss_pose
 from xbrain.p1_motion.path.local_frame import LocalFrameError
 from xbrain.p1_motion.rns.source import RnsSource
+from xbrain.p1_motion.rotation.rcg import RingSample
 from xbrain.p1_motion.runtime.fault_forward import now_wall, rebuild_forward
 from xbrain.p1_motion.runtime.nav_cfg import NavConfig
 from xbrain.p1_motion.sources.arbiter_p1 import P1Arbiter
@@ -584,6 +588,90 @@ class NavRuntime:
     def fence_episode(self, poly_id: Optional[str]) -> int:
         return self._episodes.episode_of(poly_id)
 
+    def _frame_unknown_ratio(self, snap) -> Optional[float]:
+        """Fraction of this frame's profile bins that were not observed.
+
+        The stand-in for 11 S3.9's LidarGrid.unknown_ratio, which no longer has
+        a structure to live in. Same question -- how much of this frame did the
+        sensor fail to see -- asked of the data that actually arrives: 11 S3.1B
+        makes d_free[i] None exactly when bin i is unobserved (RNS-I-1), so the
+        None fraction IS the frame's unknown ratio.
+
+        It is deliberately NOT the ring's own unknown fraction. The rear of the
+        ring is never observed on this machine, so a ring-derived ratio would
+        sit above rot_unknown_ratio_max on every tick and turn that conjunct
+        into a permanently-false one -- a hidden refusal that would cancel the
+        whole RCG-3 correction while looking like a sanity check (12 S6A.3.2
+        spells this trap out).
+
+        None when there is no profile at all; the caller then has no ring to
+        build either, and the permit reports no ring source.
+        """
+        profile = None if snap is None else snap.profile
+        if profile is None or not profile.d_free:
+            return None
+        bins = profile.d_free
+        return sum(1 for v in bins if v is None) / float(len(bins))
+
+    def _ring_sample(self, pose, snap, now_ms: int):
+        """Assemble 12 S2.2 step 6b's RingSample from the RNS memory grid.
+
+        This is the layer crossing 12 S15 #50 registers, and the direction is
+        deliberate: the exit layer reads DOWN into RNS through a read-only
+        query, and rns/ never imports rotation/. Everything rotation-specific
+        -- what r_check is, what counts as stale, what a RingSample looks like
+        -- is decided here, so the navigator has no idea a rotation gate exists.
+
+        Returns None whenever the ring cannot be answered, which the permit
+        reads as a veto (REASON_NO_RING_SOURCE), never as the blind clamp:
+          * no calibrated r_robot -> no r_check, so no annulus to scan. RCG-1
+            refuses first anyway, but building a ring off the fallback radius
+            would be 12 S6A.4.1 iron rule (1) broken in a second place.
+          * no pose or heading -> nothing to centre the annulus on.
+          * no profile this tick -> no frame to take an unknown_ratio from.
+          * RNS has never written the grid -> RnsSource.ring_counts returns
+            None itself (see its docstring).
+
+        ORDERING, worth knowing before trusting the numbers: NavInputs is built
+        BEFORE NavTick.run, and RNS writes the grid inside that call. So the
+        census read here is of the grid as of the PREVIOUS tick -- 50 ms of
+        lag. That is already bought by RCG-4's first term (ped_speed times
+        grid_age_max_ms), which is why it is reported rather than corrected;
+        moving the read after run() would need the permit to run outside the
+        tick, which is a bigger change than the lag is worth.
+
+        sectors_min_m is None and will stay None until something publishes
+        free_space: rt/perception/objects carries no such field and the
+        repository has no producer. Since 2026-09-29 the permit reads that as
+        blind rather than as a refusal (12 S6A.3.2), so passing None here is
+        the honest answer and not a fail-open.
+        """
+        r_robot = self._cfg.r_robot_m
+        lim = self._cfg.rot_limits
+        if r_robot is None or r_robot <= 0.0:
+            return None
+        if pose.xy is None or pose.yaw is None:
+            return None
+        ratio = self._frame_unknown_ratio(snap)
+        if ratio is None:
+            return None
+        counts = self._src.rns.ring_counts(
+            pose_xy=pose.xy, yaw_rad=pose.yaw,
+            r_inner_m=lim.r_self_mask_m, r_outer_m=r_robot + lim.margin_rot_m,
+            now_ms=now_ms, free_max_age_ms=lim.grid_age_max_ms)
+        if counts is None:
+            return None
+        ingest = self._src.rns.last_ingest_ms
+        # ingest cannot be None here (ring_counts refuses in that case), but
+        # the max(0, ...) is not paranoia about that: a zero-length age must
+        # never come out negative if the two reads ever straddle a clock read.
+        age_ms = max(0, now_ms - int(ingest)) if ingest is not None else 0
+        return RingSample(
+            occ_cells=counts.occupied, unknown_cells=counts.unknown,
+            total_cells=counts.total, unknown_ratio=ratio, age_ms=age_ms,
+            resolution_m=counts.resolution_m, sectors_min_m=None,
+            blocked_sector_deg=counts.blocked_deg)
+
     def _teleop_active(self, now_ms: int) -> bool:
         with self._teleop_lock:
             return self._teleop.arbitrate(now_ms) is not None
@@ -608,13 +696,15 @@ class NavRuntime:
             emits += self._host.on_relmove(b, now=now_ms, pose=pose.xy,
                                            yaw_rad=pose.yaw, heading_valid=pose.heading_valid,
                                            allow_motion=health.allow_motion)
+        snap = self._perception.latest(now_ms)
         inp = NavInputs(now_mono_ms=now_ms, pose_xy=pose.xy, yaw_rad=pose.yaw,
                         heading_valid=pose.heading_valid, i_fix=pose.i_fix,
                         i_heading=pose.i_heading,
-                        perception=self._perception.latest(now_ms), health=health,
+                        perception=snap, health=health,
                         estop=bool(self._estop.is_active()),
                         teleop_active=self._teleop_active(now_ms), ts_wall_s=ts_wall,
-                        fix_type=pose.fix_type, fence=self._fence_geometry())
+                        fix_type=pose.fix_type, fence=self._fence_geometry(),
+                        ring=self._ring_sample(pose, snap, now_ms))
         out = self._tick.run(inp)
         self._cur = out
         if out.fence is not None:

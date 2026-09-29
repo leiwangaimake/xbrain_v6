@@ -165,6 +165,12 @@ class RnsSource:
         self._objects_lost = False          # T-52 tier, edge-audited
         self._n_unlocalized = 0             # 11 v2.3 row 4, edge-audited
         self._grid: Optional[MemoryGrid] = None
+        # Monotonic ms of the last ingest_profile write. None until the first
+        # one, and that None is load-bearing: ring_counts refuses to answer
+        # from a grid nobody has written, so "RNS never ran" reaches the
+        # rotation permit as "no ring source" (a veto) rather than as "the
+        # whole ring is unobserved" (the blind clamp). See ring_counts.
+        self._grid_ingest_ms: Optional[int] = None
         self._watchdog: Optional[ProgressWatchdog] = None
         self._wall: Optional[WallFollowState] = None
         self._s_star = float("-inf")     # monotone best arc progress (RNS-N-15)
@@ -311,6 +317,64 @@ class RnsSource:
     def nav_state(self) -> NavState:
         return self._state
 
+    def ring_counts(self, *, pose_xy, yaw_rad, r_inner_m: float,
+                    r_outer_m: float, now_ms: int, free_max_age_ms: int):
+        """Read-only annulus census for 12 S2.2 step 6b, or None.
+
+        The seam 12 S15 #50 registers. The exit-layer rotation permit needs a
+        per-cell view of the ring and MemoryGrid is the only structure in V6
+        that has one (12 S6A.3.1 RC-D2 as corrected), so the permit reaches in
+        here. That is a real constraint, not the intended layering -- RNS is a
+        behaviour source and a behaviour source should emit candidates, not
+        publish its world model -- and the three guard rails that keep it
+        reviewable are all in this signature:
+
+          * read-only: nothing here mutates RNS state, so a caller cannot make
+            the navigator behave differently by asking a question;
+          * a neutral value object comes back (RingCounts), never the grid
+            handle, so the caller cannot start writing cells or walking the
+            memory for purposes nobody reviewed;
+          * rns/ does not import rotation/; the RingSample is assembled in
+            runtime/nav_wiring, so the direction is "the exit layer reads down"
+            and never "RNS knows about a rotation gate".
+
+        None means the ring cannot be answered AT ALL, which the permit reads
+        as REASON_NO_RING_SOURCE -- a veto, not the blind clamp. The three
+        cases are genuinely "no data": no config so no grid, no pose or heading
+        to centre the annulus on, and no profile ingested yet so the grid has
+        never been written. The last one matters: an all-UNKNOWN census from an
+        empty grid is indistinguishable from "the robot has looked and seen
+        nothing", and 12 S6A.3.2 keeps those apart on purpose.
+
+        Staleness is NOT decided here. _grid_ingest_ms is handed back to the
+        caller (last_ingest_ms) so RC-3 stays where the threshold lives; a
+        second age judgement in this module would be a second place to change
+        grid_age_max_ms.
+
+        mutant: return the census anyway when _grid_ingest_ms is None -> a
+        process whose RNS never ran reports a fully unobserved ring -> the
+        permit clamps instead of vetoing -> a robot with no perception at all
+        turns at 0.3 rad/s.
+        """
+        if self._grid is None or pose_xy is None or yaw_rad is None:
+            return None
+        if self._grid_ingest_ms is None:
+            return None
+        return self._grid.ring_counts(pose_xy, yaw_rad, r_inner_m, r_outer_m,
+                                      now_ms, free_max_age_ms)
+
+    @property
+    def last_ingest_ms(self) -> Optional[int]:
+        """Monotonic ms of the last profile written into the memory grid.
+
+        The age operand for RC-3 on a memory grid. It is NOT the age of the
+        newest perception frame: a frame that arrived while RNS was suspended,
+        or while no mission was loaded, was never written, so the grid is that
+        much older than perception is. Reporting perception's age instead would
+        say "fresh" about cells nobody refreshed.
+        """
+        return self._grid_ingest_ms
+
     def _accept(self, snap, now):
         """11 S3.1B.5 v2.1 consumer acceptance (A-ACC-1/2): per key, only a
         message whose identity timestamp is strictly newer than the last
@@ -352,6 +416,13 @@ class RnsSource:
                     self._acc[k] = None
                 if self._grid is not None:
                     self._grid.clear_all()
+                    # The grid is empty again, so the rotation permit must go
+                    # back to "no ring source" (veto) rather than reading a
+                    # fully unobserved ring as the blind clamp. The very next
+                    # ingest in B2 re-stamps it, so this costs at most the
+                    # remainder of this tick -- and it costs nothing at all
+                    # when perception really is gone, which is when it matters.
+                    self._grid_ingest_ms = None
                 if self._planner is not None:
                     self._planner.request_replan()
                 self._acc[key] = msg
@@ -480,6 +551,10 @@ class RnsSource:
             self._grid.on_pose(pose)
             self._grid.ingest_profile(profile, pose, yaw, now)
             self._grid.maybe_sweep(pose, now)   # SYNC AUDIT S1: bounded memory
+            # Stamped HERE, next to the write, not at the top of the tick: the
+            # rotation permit's RC-3 asks how old the GRID is, and a tick that
+            # ran but did not write (no profile) must not refresh that answer.
+            self._grid_ingest_ms = now
         # guidance layer (20 S4A): advance the budgeted build, then take R*.
         # None -> every consumer below falls back to its v1.0 target.
         self._r_star = None

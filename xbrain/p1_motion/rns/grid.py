@@ -26,14 +26,76 @@ Trap this file's shape guards: "FREE = T or G" (union instead of intersection)
 is the fail-open one-sided shell A-FUS-2 exists to kill. And a d_free bin whose
 src bit0 is unset is geometry-only FREE (no T backing) -- it must NOT be treated
 as full FREE (S3.1.11, A-FUS-6); it caps speed.
+
+Second consumer since 2026-09-29: MemoryGrid.ring_counts feeds the P1 rotation
+permit (12 S6A.3.1 RC-D2, corrected from rt/lidar/grid which has no producer on
+a machine with no LiDAR). It is a READ, it adds no state, and this module still
+knows nothing about rotation -- the RingSample is assembled one layer up. The
+asymmetric freshness rule it applies (memory may refuse, never permit) is
+documented on the method and registered as 12 S15 #51.
 """
 
 from __future__ import annotations
 
-from typing import Optional
+import math
+from typing import NamedTuple, Optional, Tuple
 
 from .inputs import ProfileMsg
 from .types import Cell, SrcBit
+
+# Width of one blocked_deg reporting bin. 15 degrees is the step 11 S3.1.5
+# already uses for its sectors, so an operator reading a rotation event and an
+# operator reading a free_space sector are looking at the same granularity.
+_SECTOR_DEG = 15.0
+
+
+class RingCounts(NamedTuple):
+    """One annulus census. A neutral value object on purpose.
+
+    It carries counts and geometry, nothing about rotation: 12 S15 #50 records
+    that the exit layer reading RNS's world model is a constraint rather than
+    the intended layering, and the smallest honest shape for that seam is data
+    flowing OUT. rns/ must not import rotation/ -- the RingSample is assembled
+    by runtime/nav_wiring, so this grid never learns that a rotation gate
+    exists and cannot start making decisions for it.
+
+    free is reported even though the permit does not read it. It is what
+    separates "the ring is covered and clear" from "the ring is covered and
+    occupied" from "nobody has looked", and without it a field log showing
+    total == unknown could not be told from a grid that was never fed.
+    """
+
+    occupied: int
+    unknown: int
+    free: int
+    total: int
+    resolution_m: float
+    blocked_deg: Tuple[Tuple[float, float], ...]
+
+
+def _merge_bins(bins) -> Tuple[Tuple[float, float], ...]:
+    """Contiguous 15-degree bin indices -> (lo, hi) body-frame intervals.
+
+    Merging matters for readability, not for the verdict: one obstacle spans
+    several cells and would otherwise print as a row of adjacent 15-degree
+    slivers. The seam at -180/+180 is deliberately NOT merged (see ring_counts)
+    -- doing so would need a wrap-aware interval type for a cosmetic gain.
+    """
+    out = []
+    start = prev = None
+    for b in sorted(bins):
+        if start is None:
+            start = prev = b
+        elif b == prev + 1:
+            prev = b
+        else:
+            out.append((start * _SECTOR_DEG - 180.0,
+                        (prev + 1) * _SECTOR_DEG - 180.0))
+            start = prev = b
+    if start is not None:
+        out.append((start * _SECTOR_DEG - 180.0,
+                    (prev + 1) * _SECTOR_DEG - 180.0))
+    return tuple(out)
 
 
 # ── ageing (T-50..T-53) ───────────────────────────────────────────────────────
@@ -250,18 +312,111 @@ class MemoryGrid:
         new_cls = cls if cls is not None else (old[1] if old is not None else None)
         self._cells[key] = (state, new_cls, now_ms)
 
-    def read(self, x: float, y: float, now_ms: int) -> Cell:
-        """Read a cell, applying TTL expiry (S4.2.1): a cell older than its
-        class ttl reverts to UNKNOWN."""
-        key = self._key(x, y)
+    def _read_key(self, key: tuple, now_ms: int):
+        """(state, t_seen) of one cell BY KEY, TTL applied; t_seen None when
+        the answer is UNKNOWN.
+
+        The ONE place the TTL rule lives. read() and ring_counts() both go
+        through it rather than each expiring cells their own way: a second copy
+        of "older than its class ttl reverts to UNKNOWN" is a rule that can
+        drift, and a ring query that disagreed with read() about whether a cell
+        has expired would make the rotation permit and the wall-follow query
+        see two different worlds."""
         entry = self._cells.get(key)
         if entry is None:
-            return Cell.UNKNOWN
+            return Cell.UNKNOWN, None
         state, cls, t_seen = entry
         ttl = self._ttl_dynamic_ms if _is_dynamic_class(cls) else self._ttl_static_ms
         if now_ms - t_seen > ttl:
-            return Cell.UNKNOWN
-        return state
+            return Cell.UNKNOWN, None
+        return state, t_seen
+
+    def read(self, x: float, y: float, now_ms: int) -> Cell:
+        """Read a cell, applying TTL expiry (S4.2.1): a cell older than its
+        class ttl reverts to UNKNOWN."""
+        return self._read_key(self._key(x, y), now_ms)[0]
+
+    def ring_counts(self, pose_xy, yaw_rad: float, r_inner_m: float,
+                    r_outer_m: float, now_ms: int, free_max_age_ms: int):
+        """Three-state census of the annulus around pose_xy (12 S6A.3.2).
+
+        Feeds the rotation permit's RingSample. 12 S6A.3.1 RC-D2 named
+        rt/lidar/grid the primary source until 2026-09-29; the machine has no
+        LiDAR and that key has no producer, so the corrected RC-D2 names this
+        grid and this method is the seam.
+
+        Domain A = { cell | r_inner <= rho(cell centre, pose) <= r_outer }.
+        Scanned as the bounding SQUARE in index space with a radius filter, NOT
+        by casting rays. nearest_blocked_full's 24-ray sweep is right for "how
+        far is the nearest wall" and wrong here: cells between two rays are
+        never visited, so a census built on rays silently undercounts both
+        occupied and unknown, which is a fail-open in the one direction the
+        permit exists to catch.
+
+        Complexity, because this runs inside the 20 Hz tick (CLAUDE.md 4.4):
+          N   = (2*ceil(r_outer/cell_m) + 1)^2        cells visited (square)
+          |A| ~ pi*(r_outer^2 - r_inner^2) / cell_m^2 cells counted (annulus)
+        At today's values -- cell_m 0.25, r_outer = r_robot + d_safe = 1.482 --
+        that is 13^2 = 169 visits, each a dict lookup plus one subtraction.
+        Worst case in this section's own terms (r_outer 2.0, cell_m dropped to
+        0.05) is 81^2 = 6561 visits, about 39x today's; still inside the 12 S2.2
+        budget, but lowering cell_m means re-checking that arithmetic.
+
+        FRESHNESS IS ASYMMETRIC, and this is the part that is easy to get
+        wrong. BLOCKED is returned on the grid's own TTL -- memory of an
+        obstacle stays memory. FREE additionally has to be no older than
+        free_max_age_ms, and a FREE cell past that age is counted as UNKNOWN.
+        Without that, a cell seen empty five minutes ago would still vouch for
+        the ring today, while RCG-4's lower bound only ever priced
+        grid_age_max_ms plus the recheck window -- three orders of magnitude
+        less. The consequence is deliberate and worth stating plainly: memory
+        cannot grant this permit, it can only refuse it. 12 S15 #51 carries it.
+
+        blocked_deg reports BODY-frame 15-degree bins holding an occupied cell,
+        for 12 S6A.8 OB-2's detail. Occupied only: unknown bins would cover
+        most of the circle on every tick of this machine (the rear is never
+        observed) and would drown the signal the field actually needs, which is
+        "there is something, and it is over there". Runs are not merged across
+        the -180/+180 seam; a rear obstacle therefore shows as two intervals.
+        """
+        cell = self._cell_m
+        cx, cy = pose_xy[0], pose_xy[1]
+        r_in2 = r_inner_m * r_inner_m
+        r_out2 = r_outer_m * r_outer_m
+        # floor(), not int(), for the low bound: int() truncates toward zero,
+        # so a pose west of the origin would lose the outermost column and the
+        # ring would be judged on a domain missing its own edge.
+        i0 = int(math.floor((cx - r_outer_m) / cell))
+        i1 = int(math.floor((cx + r_outer_m) / cell))
+        j0 = int(math.floor((cy - r_outer_m) / cell))
+        j1 = int(math.floor((cy + r_outer_m) / cell))
+        occupied = unknown = free = 0
+        bins = set()
+        for ix in range(i0, i1 + 1):
+            dx = (ix + 0.5) * cell - cx
+            for iy in range(j0, j1 + 1):
+                dy = (iy + 0.5) * cell - cy
+                rho2 = dx * dx + dy * dy
+                if rho2 < r_in2 or rho2 > r_out2:
+                    continue
+                state, t_seen = self._read_key((ix, iy), now_ms)
+                if state == Cell.BLOCKED:
+                    occupied += 1
+                    # body frame: world bearing minus heading, folded to
+                    # [-180, 180) so bin 0 starts at the right-rear quarter.
+                    deg = math.degrees(math.atan2(dy, dx) - yaw_rad)
+                    deg = (deg + 180.0) % 360.0
+                    bins.add(int(deg // _SECTOR_DEG))
+                elif state == Cell.FREE and t_seen is not None \
+                        and now_ms - t_seen <= free_max_age_ms:
+                    free += 1
+                else:
+                    # stale FREE lands here too -- see the docstring. Counting
+                    # it as free is the fail-open this branch exists to stop.
+                    unknown += 1
+        return RingCounts(occupied=occupied, unknown=unknown, free=free,
+                          total=occupied + unknown + free, resolution_m=cell,
+                          blocked_deg=_merge_bins(bins))
 
     def cell_count(self) -> int:
         return len(self._cells)

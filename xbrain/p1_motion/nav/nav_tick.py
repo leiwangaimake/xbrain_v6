@@ -43,15 +43,20 @@ the rns_avoid adapter), no path_progress (progress.py), no jerk limiter
 2026-09-12 (fence/clip.py) and step 6b the rotation permit since 2026-09-29
 (rotation/rcg.py); NEXT.md carries what is left.
 
-About step 6b's data. The permit's ring read (RingSample) arrives on NavInputs
-and is None on this machine: 12 S6A.3.1 RC-D2 makes rt/lidar/grid the one
-primary source and 11's LiDAR single-topic row records that the machine has no
-LiDAR, so nothing produces one. RC-D2's own failure direction for that is
-refuse, and 12 S6A's opening line says a permit that cannot be decided refuses,
-with nothing in between "cannot tell" and "safe". So on today's hardware every
-spin_like tick is refused -- which is 12 S6A.3.3's stated intent, not a defect,
-and is also why the permitting path is exercised by tests rather than by the
-robot: a judge that only ever refused would be satisfied by a stub.
+About step 6b's data. The permit's ring read (RingSample) arrives on NavInputs.
+It used to be None always -- 12 S6A.3.1 RC-D2 named rt/lidar/grid the one
+primary source and the machine has no LiDAR -- and RC-D2 was corrected on
+2026-09-29 to name the RNS memory grid, which runtime/nav_wiring assembles into
+a sample. None still means "the ring cannot be answered at all", and the permit
+still refuses on it; what changed is that None is no longer the standing state.
+
+Three outcomes now reach the tick, not two (12 S6A.3.2): permitted leaves wz
+alone, a hard refusal applies 12 S6A.4.2's per-source table, and a BLIND
+refusal -- the ring is answerable but that direction was not observed -- clamps
+wz to wz_blind_radps for every source. The blind branch is the standing state
+on this machine: the RGBD covers the forward half, so the rear of the ring is
+unobserved on every tick. What still refuses outright here is RCG-1, because
+configs/rns.yaml carries no inflation.r_robot_m (12 S15 #10).
 
 Trap: passing ctx.perception = None to RNS when the profile is merely OLD. RNS
 ages the profile itself (T-50 slow / T-51 zero) and its memory grid needs the
@@ -115,8 +120,9 @@ class NavInputs:
     fix_type: Optional[str] = None            # 11 S3.2.1 GnssFix.fix_type (fence inset)
     fence: Optional[CompiledFence] = None     # the active FenceSet, compiled (12 S7)
     # 12 S2.2 step 6b input: this tick's read of the sweep annulus. None means
-    # the RC-D2 primary source produced nothing -- which is the standing state
-    # on this machine (no LiDAR) and is a REFUSE, never a skip. It is a tick
+    # the RC-D2 primary source produced nothing, which is a REFUSE and never a
+    # skip -- and, since 2026-09-29, never the blind clamp either: "no data"
+    # and "the data says I could not see" are different answers. It is a tick
     # input rather than a NavTick field because it changes every tick, exactly
     # like perception: the wiring assembles it, the tick only reads it.
     ring: Optional[RingSample] = None
