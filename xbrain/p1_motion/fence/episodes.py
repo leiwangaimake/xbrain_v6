@@ -43,7 +43,6 @@ from typing import Dict, List, Optional
 
 from xbrain.p1_motion.fence.clip import ENFORCEMENT_FULL, FenceEval
 
-
 #: 11 S9A.9 的"窗口"列, 逐行抄. 60 s 是逐多边形的那些(它们的 key 里带
 #: episode, 一次越界过程内才可能重复), 300 s 是集合级的降级/恢复/丢失.
 #:

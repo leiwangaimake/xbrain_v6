@@ -39,7 +39,6 @@ from typing import Dict, List, Sequence
 
 from xbrain.common.fence.geom import Polygon, point_in_polygon
 
-
 #: S9A.9 表里 zone_enter / zone_exit 两行的"窗口"列, 逐字 60 s.
 #:
 #: *** 必须随事件发出, NO 省不得.
