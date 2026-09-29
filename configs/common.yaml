@@ -48,10 +48,33 @@ common:
   #   用于填 Zenoh key 的 {rid} 段, 全部进程读. 权威: 11 S2.1.
   #   现无任何 yaml 定义它而各处默认"存在" -- 10 S5.4.5 该行的现状列逐字如此,
   #   本行就是补上那个键位.
+  #
+  # [2026-09-29 复核: 不可落值] 本键的唯一定义处确实就是本文件(10 S5.4.5 该行
+  #   逐字 "common.yaml . 顶层(可被 XBRAIN_ROBOT_ID 覆盖)"), 但没有任何权威
+  #   给出过一个 rid 的值 -- 11 S2.1 给的是格式 [a-z0-9_-]{1,32}, 不是取值,
+  #   而 rid 本来就是一车一个.
+  #   deploy/etc-xbrain/robot.env 模板已把这条坑逐字写下来: "Shipping a
+  #   placeholder rid (e.g. CHANGE-ME) would let rtk_driver + p1 start and
+  #   publish under a bogus id -- fail-silent", 故该模板里 XBRAIN_ROBOT_ID
+  #   是刻意注释掉的. 在本层写一个占位 rid, 后果与那句话描述的完全一样, 且更糟:
+  #   L1 的值对每一台车都生效, 而 L5 至少只影响一台.
+  #   => 落值归部署(写 /etc/xbrain/robot.env 的 XBRAIN_ROBOT_ID), 不归本文件.
   robot_id: null
 
   # site_id: 唯一定义处是 sites/{site_id}.yaml, 文件名即值 (L4).
   #   本文件只声明键位, 不落值; 落值见 CFG-CF-7.
+  #
+  # [2026-09-29 复核: 不可落值, 且本层写了也进不去] 两条:
+  #   1. L4 的命名空间允许面不含本键 -- xbrain/common/config/layers.py 的 L4 行
+  #      逐字 ("common.geo.", "common.site.", "common.retention."), 没有
+  #      common.site_id. 即"文件名即值"这半句在加载器里没有执行体: 站点文件的
+  #      名字不会被写进这个键. 实际供值口只有 L5 的 XBRAIN_SITE_ID
+  #      (ENV_KEY_MAP 里逐字 "XBRAIN_SITE_ID": "common.site_id").
+  #   2. tests/configs/test_config_variants.py 的
+  #      test_loader_ignores_sim_files_without_a_variant_and_overlays_with_it
+  #      逐字断言 _get(plain["L1"], "common.site_id") is None -- 本层落值即红.
+  #   => "site_id 到底由谁供" 是设计未定(L1 缺省 / L5 必填 / 断言 A 豁免 三选一),
+  #      按 CLAUDE.md S9.1 停下问用户, 已登记 docs/NEXT.md. 本文件不自行裁.
   site_id: null
 
   # 站点显示时区 (IANA 名, 如 Asia/Shanghai / Asia/Tokyo). 本地时间[显示]的唯一
@@ -65,19 +88,54 @@ common:
     # rt_endpoint: RT 面 router 的地址, RT 面封闭集 9 个进程 (11 S1.1.3 R-3) 与
     #   zenohd -l 启动参数共用同一个值. 现状是硬编码在 11 正文与 systemd 脚本两处,
     #   本键位存在的意义就是把那两处收成一处.
-    #   TODO(11 S1.1.2): 落值时逐字抄该节, 不要凭记忆写端口号.
-    rt_endpoint: null
+    #
+    # [2026-09-29 落值] tcp/127.0.0.1:7449. 不是自拟, 三处独立出处逐字一致:
+    #   1. 10 S5.4.5 对照表本行左列逐字 "common.zenoh.rt_endpoint = tcp/127.0.0.1:7449";
+    #   2. 11 S1.1.2 的 json5 配置块逐字 connect: { endpoints: ["tcp/127.0.0.1:7449"] },
+    #      同节 zenohd 启动行逐字 "zenohd -l tcp/127.0.0.1:7449 --no-multicast-scouting";
+    #   3. 部署事实: configs/zenoh/router_rt.json5 的 listen 段即此地址, 且
+    #      configs/chassis_relay.yaml / quadruped.yaml / perception.yaml 三个 L6
+    #      文件各自硬抄了同一个字面量 -- 本键落值就是把那三份收成一处的前提.
+    #
+    # 为什么本值与 gen_listen 不同, 可以现在就落: 它是 lo 上的固定回环地址,
+    #   11 S1.1 平面表逐字 "RT 面 = tcp/127.0.0.1:7449 跑在 lo 上 -- 与下列物理口
+    #   全无关", 不依赖任何站点网段分配. gen_listen 依赖的 LAN2_IP / WIFI_IP 则
+    #   至今没有可抄的事实(见该键注释), 两者不可一起落.
+    rt_endpoint: "tcp/127.0.0.1:7449"
 
     # gen_listen: [列表, 不是标量]. NET-C9 要求逐口显式绑定并禁用通配绑定,
     #   所以它是一组逐口地址 (LAN2 / WIFI / 本机回环), 键的形状随之由标量改列表.
     #   TODO(U-15 与部署): 网口地址由 deploy/net/{hw_profile}.network 提供并经
     #     GATE-6 校验一致, 未定前留 null.
     #   注意: 留 null 而不是留空列表 -- 空列表是"已赋值且监听零个口", 起得来但谁也连不上.
+    #
+    # [2026-09-29 复核: 仍然不可落值] 本轮逐条查过三处可能的事实来源, 三处都没有值:
+    #   1. configs/hw_profile/PROD.yaml.template 的 lan2.ipv4 / wlan0.ipv4 全是 null,
+    #      且该文件头注逐字 "Do NOT commit 127.0.0.1 or 0-value placeholders here";
+    #   2. deploy/net/PROD.network 写的是 ${LAN2_IP} / ${WIFI_IP} 占位, 由部署期从
+    #      /etc/xbrain/hw_profile 代入, 仓库内无实值;
+    #   3. deploy/etc-xbrain/network.env 是模板, 两个地址都是 127.0.0.1 的 fail-safe
+    #      占位(其头注逐字说明这是"degraded, never dangerous"的兜底, 不是站点地址).
+    #   连带: configs/zenoh/router_gen.json5 头注逐字 "NET-C9 will move it to
+    #   explicit-per-port bind after the LAN/host allocation freezes; until then
+    #   loopback" -- 网段分配尚未冻结, 这正是本键没有事实可抄的原因.
+    #   => 只落回环那一项也不行: 那是"已赋值且只监听 lo", 远端 HMI 与云端桥连不上
+    #      而 router 照常起来, 与上面那句空列表的坑是同一个形状.
     gen_listen: null
 
     # gen_connect: 机内参与者连通用面 router 用的单个地址 (标量).
-    #   TODO(11 S1.1.4): 与 gen_listen 的本机回环项同源, 落值时一起抄.
-    gen_connect: null
+    #
+    # [2026-09-29 落值] tcp/127.0.0.1:7447. 三处出处逐字一致:
+    #   1. 10 S5.4.5 对照表本行左列逐字 "common.zenoh.gen_connect = tcp/127.0.0.1:7447
+    #      (机内参与者用)";
+    #   2. 11 S1.1.4 部署形态行逐字 "单 router 星型: zenohd mode:router, 所有本机
+    #      参与者 connect tcp/127.0.0.1:7447";
+    #   3. 部署事实: configs/zenoh/router_gen.json5 的 listen 段即 tcp/127.0.0.1:7447.
+    #
+    # 注意本键与 gen_listen 不是同一件事, 不要因为 gen_listen 未定就一起压着:
+    #   gen_listen 是 router 监听哪些口(要站点网段), gen_connect 是本机参与者往哪儿
+    #   连(恒为回环). NET-C9 管的是前者; 后者不受网段分配影响, 故可单独落值.
+    gen_connect: "tcp/127.0.0.1:7447"
 
   # -- QoS (10 S5.4.5 qos 行; 权威 11 S2.4.7) -------------------------------
   # 属安全参数: 热更新一律 E_CONFIG_LOCKED.
@@ -246,28 +304,82 @@ common:
   # -- 数据库 (10 S5.4.5 db 两行; 权威 15 S9.0 U46) -------------------------
   # 四库, 不是两库: P3 写 task / fence / geo 三库, P5 写 record 库, P1 与 RNS 只读,
   # P4 只读. 启动断言查四库, 关机 checkpoint 也是四库, 少一个库第一次开机就拒绝启动.
+  #
+  # [2026-09-29 落值] 四个路径. 库名逐字取 15 S9.0 "四个数据库文件(U46 修订)"表的
+  #   首列(data/task.db . data/record.db . data/fence.db . data/geo.db); 绝对化到
+  #   /opt/xbrain_v6/data/run/ 取的是部署事实, 不是我选的一个"合理位置":
+  #     * 四个库文件现就在 /opt/xbrain_v6/data/run/ 下且在用(fence.db 带 -wal/-shm);
+  #     * xbrain/p3_task/runtime/main_wiring.py 的 DEFAULT_TASK_DB / DEFAULT_GEO_DB /
+  #       DEFAULT_FENCE_DB 三个常量逐字就是 /opt/xbrain_v6/data/run/<name>.db;
+  #     * scripts/dev/run_stack_dev.sh 与 run_stack_cloud.sh 的 XBRAIN_RECORD_DB
+  #       同样指向 $REPO_ROOT/data/run/record.db.
+  #
+  # WARN 一处文档与部署的差, 落值时必须知道: 15 S9.0 与 10 S5.2 的框图都把路径写作
+  #   data/<name>.db (没有中间的 run/), 而代码与现网都在 data/run/ 下. 本文件取
+  #   data/run/ 的理由是失效方向, 不是"代码更新":
+  #     照 data/<name>.db 落值 => 那四个文件不存在 => SQLite 会静默新建四个空库,
+  #     现有的围栏/地理/任务数据当场变成"看不见"且不报任何错(fail-silent);
+  #     照 data/run/ 落值 => 与今天进程实际打开的文件完全一致, 行为零变化.
+  #   这一处 data/ 与 data/run/ 的取舍归 15 与 10 两册主裁(是放哪儿的决定, 不是
+  #   表述缺陷), 已登记 docs/NEXT.md, 本文件不代裁, 也不改那两册的表.
   db:
-    task_db: null
-    record_db: null
-    fence_db: null
-    geo_db: null
+    task_db: "/opt/xbrain_v6/data/run/task.db"
+    record_db: "/opt/xbrain_v6/data/run/record.db"
+    fence_db: "/opt/xbrain_v6/data/run/fence.db"
+    geo_db: "/opt/xbrain_v6/data/run/geo.db"
 
     # pragma: 四库共用的连接级缺省 (含只读连接), 权威 15 S9.1.
     #   这里只声明 10 S5.4.5 左列逐字点名的三个键位; 该行以省略号结尾, 说明键集
     #   在 15 S9.1 那边是开放的, 且 15 S9.1 的超时键名不带单位后缀而本表带 --
     #   两处键名不一致的裁决归 15 册主, 本文件按 10 的左列写, 不代它统一.
-    #   TODO(15 S9.1): 落值时连同 FULL 清单一起看 -- 该节的默认同步档只管清单之外
-    #     的写, 照默认档理解会以为掉电最多丢一个采点.
+    #
+    # [2026-09-29 落值] 三项逐字取 15 S9.1 的 "PRAGMA -- 连接级缺省(四库一致, 冻结)"
+    #   代码块, 该块逐字四行:
+    #     journal_mode  = WAL         writer 不阻塞 reader
+    #     synchronous   = NORMAL      连接级[缺省] -- 仅用于下方"FULL 清单"之外的写
+    #     foreign_keys  = OFF         引用完整性由应用层维护(见 DBF-2)
+    #     busy_timeout  = 5000        5 s 后才抛 OperationalError
+    #   本文件只落 10 S5.4.5 左列逐字点名的三个键位; foreign_keys 不在左列, 故
+    #   不据此扩键(该行以省略号结尾, 键集在 15 S9.1 那边是开放的).
+    #
+    # WARN synchronous: NORMAL 只是[连接级缺省], 不是全部写的同步档. 15 S9.1 的
+    #   "逐事务提升为 synchronous = FULL 的清单"(FS-a ~ FS-f)要求 patrol_progress
+    #   进度落盘 . tasks.status 每一次状态迁移 . commands.approval_state .
+    #   alarm/fault 级事件 . 地理要素 upsert . task_route_snapshot 六类写走 FULL.
+    #   照本行的 NORMAL 理解整个持久化层, 会以为掉电最多丢一个采点 -- 而 11 PWR-3
+    #   逐字写的是 NORMAL 下 commit 只进 WAL 不 fsync, 掉电"丢的可能不是一个
+    #   waypoint, 而是最近十分钟". FULL 那一半不是本键能表达的: PRAGMA 是连接级的,
+    #   15 S9.1 推荐做法 1 是每个关键库另开一个 synchronous=FULL 的 writer 连接
+    #   (w_full), 归 P3/P5 的持久化层实现, 不是这里再加一个键.
+    #
+    # 键名的一处已知分歧(不在本文件裁): 15 S9.1 写 busy_timeout(无单位后缀),
+    #   10 S5.4.5 左列写 busy_timeout_ms. 本文件按断言 M 求值的那一列(左列)写,
+    #   值 5000 的单位就是毫秒, 与 15 那行的 "5 s" 一致.
     pragma:
-      journal_mode: null
-      synchronous: null
-      busy_timeout_ms: null
+      journal_mode: "WAL"
+      synchronous: "NORMAL"
+      busy_timeout_ms: 5000
 
   # -- 保留期 (10 S5.4.5 retention 行; 权威 15 S9.11) -----------------------
   # 唯一定义处是 sites/{site_id}.yaml 的 retention 段 (L4), 键位在本文件.
   # 读者: P3 清理 / P5 清理 / 启动断言 C 的递增校验.
   # TODO(15 与 17 两方裁决): 事件保留期一处按单值写, 一处按告警级分级写, 两者不可
   #   同真; 断言 C 只能对单值求值. 未裁前本文件只声明键位.
+  #
+  # [2026-09-29 复核: 仍然不可落值] 注意卡点不是"没有数". 15 S9.11 的保留与清理表
+  #   逐字给了三个数(tasks 终态行 30 天 . events 90 天 . commands 180 天),
+  #   同节并逐字 "task(30) <= events(90) <= commands(180) (三项)". 压着不落的是
+  #   另外两件事:
+  #     1. 唯一定义处在 L4 -- 10 S5.4.5 本行的"唯一定义处"列逐字
+  #        "sites/{site_id}.yaml . retention(键位在 common.yaml)". 在本层落值
+  #        就是同一个键的第二份定义, 正是断言 B 要拦的"疑似复制";
+  #     2. 15 与 17 的分歧未裁 -- 10 S5.4.5 本行逐字 "15 S12 按单值断言
+  #        event = 90, 17 S10 却按 sev 分级 {info:7, warn:30, alarm:365, fault:365}
+  #        ... 两者不可同真 ... 归 15 / 17 两方裁决". 照单值落, 分级那一支一旦
+  #        被采纳, 断言 C 的递增判据本身要改(info:7 < task:30 会误报).
+  #   连带一个结构问题(已登记 docs/NEXT.md): build_overlay 不合并 L4(选 L4 需要先
+  #   有 site_id), 而断言 A 的 null 豁免表只有 enu_origin 三项 => 本段三个键即使
+  #   由 L4 站点文件供值, 也仍会在断言 A 处被判 null. 这一条归冻结线, 不在本文件解.
   retention:
     task_days: null
     event_days: null
@@ -288,11 +400,24 @@ common:
   # 唯一定义处就是本文件. 读者: P4 意图与 Prompt 与 GBNF / P5 HMI 展示 / 18 指令集.
   # TODO(16 S12.4): 16 S14 在同一个文件里把意图表路径写了两遍 (一遍在关键词规则段,
   #   一遍在 cmdset 段), 落值时只认本文件这一份, 另一份按重复定义处理.
+  #
+  # [2026-09-29 落值] 四项逐字取 16 S12.4 "版本管理"的 yaml 块与 16 S14 的 cmdset
+  #   段(两处字面量一致), 三个路径并经实地核对存在:
+  #     configs/intents.yaml . configs/prompts/missions/ . configs/query_templates.yaml
+  #   三者均在仓库内, missions 目录下有 M1~M10 共 11 个 .txt.
   cmdset:
-    version: null
-    intents_file: null
-    missions_dir: null
-    query_templates: null
+    # WARN 如实登记, 本文件不代裁(与 configs/p4_agent.yaml 的 cmdset 段同一条警告):
+    #   16 S12.4 与 16 S14 两处逐字都写 version: "1.0.0", 而 18 S16.5 的标题逐字是
+    #   "本轮 cmdset.version 的单点结论(全文唯一出处, 其余各节一律引用本节)",
+    #   其结论行逐字为 "一次 major 递增" 且 "必须评审" -- 但没有写出递增后的数值.
+    #   => "1.0.0 是不是那一次 major 之后的值" 两册都没写. 本文件落 16 的逐字值,
+    #      评审前必须由人对齐; 不得由实现者按 major+1 自行推一个 2.0.0 出来.
+    version: "1.0.0"
+    intents_file: "/opt/xbrain_v6/configs/intents.yaml"
+    # 末尾斜杠逐字取自 16 S14, 不要顺手去掉: 它是目录不是文件, 同段的
+    #   intents_file / query_templates 才是文件.
+    missions_dir: "/opt/xbrain_v6/configs/prompts/missions/"
+    query_templates: "/opt/xbrain_v6/configs/query_templates.yaml"
 
   # -- 语音旁路词 (10 S5.4.5 audio 行; 权威 18 A01) -------------------------
   # 唯一定义处就是本文件. 读者: P4 旁路匹配 / 18 A01-A03 / HMI 帮助页.

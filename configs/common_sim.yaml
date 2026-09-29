@@ -31,20 +31,18 @@ common:
     frames: {}
     gate: {}
     lat_err_ref_m: 0.05
-  cmdset:
-    intents_file: /opt/xbrain_v6/configs/intents.yaml
-    missions_dir: /opt/xbrain_v6/configs/missions
-    query_templates: /opt/xbrain_v6/configs/query_templates.yaml
-    version: v1.0-sim
-  db:
-    fence_db: /opt/xbrain_v6/data/fence.db
-    geo_db: /opt/xbrain_v6/data/geo.db
-    pragma:
-      busy_timeout_ms: 5000
-      journal_mode: WAL
-      synchronous: FULL
-    record_db: /opt/xbrain_v6/data/record.db
-    task_db: /opt/xbrain_v6/data/task.db
+  # cmdset 四键 . db 四库与 pragma 三键: 已从本变体移除 (2026-09-29). 真机文件
+  #   已按 16 S12.4 / S14 与 15 S9.0 / S9.1 落值, 而变体只许填真机文件里为 null
+  #   的键 (10 S5.4.7 VAR-2), 留着即 shadow.
+  #   移除时顺带带走了三处本变体自己的偏差, 逐条记下来, 它们都不是等价替换:
+  #     1. missions_dir 本变体写 /opt/xbrain_v6/configs/missions, 而 16 S14 逐字是
+  #        /opt/xbrain_v6/configs/prompts/missions/ -- 前者在仓库里不存在, 即
+  #        --variant sim 跑出来的产物指向一个空目录;
+  #     2. pragma.synchronous 本变体写 FULL, 而 15 S9.1 的连接级缺省逐字是 NORMAL
+  #        (FULL 是 FS-a ~ FS-f 六类写逐事务提升, 走另一个 writer 连接, 不是缺省档);
+  #     3. 四个库路径本变体写 data/<name>.db, 而代码常量与现网都在 data/run/ 下.
+  #   cmdset.version 的 v1.0-sim 不再需要: 真机值 1.0.0 取自 16 逐字, 仿真没有
+  #   要与之区分的理由(本键是标签, 不进任何判定).
   fence:
     margin_by_fix:
       dgps: 1.5
@@ -139,7 +137,9 @@ common:
   robot_id: dev
   site_id: sim
   zenoh:
-    gen_connect: tcp/127.0.0.1:7447
+    # gen_connect / rt_endpoint: 已从本变体移除 (2026-09-29). 真机文件已按
+    #   10 S5.4.5 左列与 11 S1.1.2 / S1.1.4 落值(同值), 留着即 shadow.
+    #   gen_listen 留在这里: 真机文件仍为 null(站点网段未冻结, 见该键注释),
+    #   而 SIL 台架只需要一个回环口就能起 router.
     gen_listen:
     - tcp/127.0.0.1:7447
-    rt_endpoint: tcp/127.0.0.1:7449

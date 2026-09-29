@@ -487,13 +487,58 @@ def test_no_zero_placeholder_anywhere_in_the_file():
     how the value ends up on the key underneath it.
 
     Mutation run: set common.safety.t_lat_s to a zero => red.
+
+    *** WHY DOTTED IDENTIFIERS ARE CUT OUT OF THE RAW SCAN FIRST (2026-09-29).
+    The raw scan looks for the two-character-apart spelling of a zero, and two
+    kinds of token carry it without being a number at all: an IPv4 address
+    (tcp/127.0.0.1:7449) and a semver (the cmdset version "1.0.0"). Neither is a
+    judgement call -- the 10 S5.4.5 left column states the two endpoints
+    verbatim, and 16 S12.4 states the version verbatim -- so before this
+    narrowing the check made the values the design volumes mandate impossible
+    to land. A criterion that cannot be satisfied is the "permanently red" shape
+    of CLAUDE.md 3.2, and its documented end state is somebody relaxing it into
+    "contains is fine", i.e. permanently green.
+
+    The cut is lexical and stated as one rule: a numeric scalar in YAML has AT
+    MOST ONE decimal point, so a run of digits with TWO OR MORE dots is a dotted
+    identifier, never a number. That is why the sub below requires {2,} groups
+    and not a hand-listed pair of shapes -- listing shapes would need a new
+    entry every time another dotted form lands, and the missing entry always
+    reads as "the check went red again".
+
+    Such a token cannot express the failure this case exists for. The mechanism
+    it describes is numeric -- v_max = min(..., 0) = 0 -- and an address or a
+    version string never reaches that comparison. Everything else on the
+    surface, comments included, is still scanned, and the typed pass below still
+    catches a real numeric zero however it is spelled.
+
+    *** AND WHY THE WILDCARD BIND IS RE-ASSERTED BY NAME. The cut would also
+    hide 0.0.0.0, and that address IS a real defect here: NET-C9 (11 S1.1.9)
+    forbids the general-plane router from binding it, because the plane is
+    unauthenticated (U23) and a wildcard bind puts cmd/estop on the chassis and
+    device segments. So it is banned explicitly rather than left to fall out of
+    a scan that no longer sees it. This is additive: the narrowing above removes
+    no reachable violation.
+
+    Mutation run, all three halves: write t_lat_s: <a zero with one decimal
+    point> => still red (one dot, not a dotted identifier); write
+    gen_listen: [tcp/<the wildcard>:7447] => red on the wildcard assertion;
+    write t_lat_s: 0 => red on the typed pass below.
     """
     with open(COMMON_YAML, encoding="utf-8") as handle:
         raw = handle.read()
     # Built from parts so this criterion is not inside its own scan face: a check
     # whose text contains the string it greps for can never reach zero hits.
     zero = "0" + "." + "0"
-    assert zero not in raw, "zero placeholder found in %s" % COMMON_YAML
+    wildcard = zero + "." + zero
+    assert wildcard not in raw, (
+        "%s binds the wildcard address; NET-C9 forbids it on the general "
+        "plane (11 S1.1.9)" % COMMON_YAML
+    )
+    # Two or more dots => dotted identifier (address, version), not a number.
+    # A real zero placeholder has exactly one dot and is therefore untouched.
+    scanned = re.sub(r"\b\d+(?:\.\d+){2,}\b", "<dotted>", raw)
+    assert zero not in scanned, "zero placeholder found in %s" % COMMON_YAML
 
     # The raw scan catches the spelling; this catches the value however it was
     # spelled, including a plain 0 and an exponent form.
@@ -518,6 +563,51 @@ _LANDED = {
     # "本值[不影响安全]". A null here would break G24 instead of protecting
     # anything, which is why it is landed rather than left unassigned.
     "common.timezone": "Asia/Shanghai",
+
+    # 2026-09-29: the deployment-fact batch. Every entry below is a value a
+    # 10 S5.4.5 row names as belonging in common.yaml AND that some authority
+    # states verbatim -- none is a number chosen to get the freeze line past
+    # assertion A (CLAUDE.md iron rule 3). The reason is per GROUP, because
+    # each group has one authority, not one per leaf.
+
+    # zenoh: both addresses appear verbatim in the 10 S5.4.5 left column
+    # itself ("common.zenoh.rt_endpoint = tcp/127.0.0.1:7449",
+    # "common.zenoh.gen_connect = tcp/127.0.0.1:7447"), again in 11 S1.1.2's
+    # json5 block / S1.1.4's deployment row, and a third time as the live
+    # listen endpoints of configs/zenoh/router_rt.json5 and router_gen.json5.
+    # gen_listen is NOT here and must stay null: it needs LAN2_IP / WIFI_IP,
+    # which hw_profile/*.yaml.template leaves null on purpose.
+    "common.zenoh.rt_endpoint": "tcp/127.0.0.1:7449",
+    "common.zenoh.gen_connect": "tcp/127.0.0.1:7447",
+
+    # db paths: file names verbatim from 15 S9.0 (the U46 four-database
+    # table); the directory is the deployment fact -- the four databases live
+    # and are in use under /opt/xbrain_v6/data/run/, which is also what
+    # p3_task/runtime/main_wiring.py's DEFAULT_*_DB constants say. Landing
+    # 15's shorthand data/<name>.db instead would point the stack at files
+    # that do not exist, and SQLite would silently create empty ones.
+    "common.db.task_db": "/opt/xbrain_v6/data/run/task.db",
+    "common.db.record_db": "/opt/xbrain_v6/data/run/record.db",
+    "common.db.fence_db": "/opt/xbrain_v6/data/run/fence.db",
+    "common.db.geo_db": "/opt/xbrain_v6/data/run/geo.db",
+
+    # pragma: verbatim from 15 S9.1's "connection-level defaults" block.
+    # synchronous is NORMAL because that is the CONNECTION-level default;
+    # the FS-a..FS-f writes are raised to FULL on a second writer connection,
+    # which is a persistence-layer concern and not a fourth key here.
+    "common.db.pragma.journal_mode": "WAL",
+    "common.db.pragma.synchronous": "NORMAL",
+    "common.db.pragma.busy_timeout_ms": 5000,
+
+    # cmdset: verbatim from 16 S12.4 and repeated in 16 S14; all three paths
+    # were checked to exist in the tree. version is pinned at 16's literal
+    # "1.0.0" WITH the caveat recorded in common.yaml and already in
+    # p4_agent.yaml: 18 S16.5 rules this round needs one major bump plus a
+    # review, and never writes the resulting number. Nobody may derive 2.0.0.
+    "common.cmdset.version": "1.0.0",
+    "common.cmdset.intents_file": "/opt/xbrain_v6/configs/intents.yaml",
+    "common.cmdset.missions_dir": "/opt/xbrain_v6/configs/prompts/missions/",
+    "common.cmdset.query_templates": "/opt/xbrain_v6/configs/query_templates.yaml",
 }
 
 
