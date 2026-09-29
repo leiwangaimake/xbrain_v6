@@ -50,11 +50,21 @@ TELEOP_DEVICES = ("gamepad", "keyboard_local", "keyboard_hmi", "virtual_stick")
 _PRIORITY = {"gamepad": 30, "keyboard_local": 20,
              "keyboard_hmi": 10, "virtual_stick": 10}
 
-#: S12A.9.6 per-source freshness. The two local links are held to 200 ms; the
-#: two that cross the network get 500 ms, which is the same figure 11 S2.2 gives
-#: the HMI teleop key.
+#: S12A.9.6 per-source freshness, split by LINK: the two local devices arrive
+#: on rt/teleop/input and are held to 200 ms; the two network devices arrive on
+#: cmd/teleop and get 400 ms.
+#:
+#: *** 2026-09-30 correction. This pair read 500 ms for the network half, with
+#: the note "the same figure 11 S2.2 gives the HMI teleop key". 11 S2.2 gives no
+#: such figure: its cmd/teleop row (S2.2.3) ends verbatim "无 t_mono, P1 按
+#: t_rx_mono 计龄, 超期 400 ms", the S1.1.6 P1-19 row says the same, and so do
+#: S12A.9.6, S12.1's WS-disconnect rule and S13's E_TELEOP_STALE row. 12 S4.7.1
+#: TL-3 carries the 500 ms reading struck through as 已作废 with the reason
+#: spelled out: both contract figures are STRICTER than 500 ms. A teleop
+#: deadline that is too long keeps a source in the arbitration after its link is
+#: gone, so the robot drives on for another 100 ms of nothing.
 _TIMEOUT_MS = {"gamepad": 200, "keyboard_local": 200,
-               "keyboard_hmi": 500, "virtual_stick": 500}
+               "keyboard_hmi": 400, "virtual_stick": 400}
 
 #: T-2: a source change must persist this long before it takes over. Without it
 #: a marginal link flaps the active source and, with T-4, restarts the ramp on

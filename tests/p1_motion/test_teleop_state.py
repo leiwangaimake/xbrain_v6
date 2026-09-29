@@ -138,6 +138,29 @@ def test_a_source_going_stale_drops_it_immediately():
     assert t.build_state(1000 + 201)["active_source"] == "none"
 
 
+def test_the_two_deadlines_are_200_local_and_400_network():
+    """S12A.9.6: rt/teleop/input 200 ms, cmd/teleop 400 ms.
+
+    Both edges per link, because the direction that hurts is a deadline
+    that is too LONG: the source stays eligible after its link is gone
+    and the robot keeps driving on the last frame. Until 2026-09-30 the
+    network pair sat at 500 ms citing 11 S2.2 -- a figure S2.2 does not
+    contain (its cmd/teleop row says 400 ms) -- and no test touched the
+    boundary, so the extra 100 ms was invisible.
+
+    MUTATION: put keyboard_hmi / virtual_stick back to 500 -> the 401 ms
+    assertion reddens.
+    """
+    for dev, deadline in (("gamepad", 200), ("keyboard_local", 200),
+                          ("keyboard_hmi", 400), ("virtual_stick", 400)):
+        t = _tracker()
+        t.observe(dev, now_mono_ms=1000, deadman=True)
+        assert t.is_stale(dev, 1000 + deadline) is False, (
+            "%s went stale at its own deadline" % dev)
+        assert t.is_stale(dev, 1000 + deadline + 1) is True, (
+            "%s survived past %d ms" % (dev, deadline))
+
+
 def test_axes_come_from_the_active_source_only():
     """S12A.9.7: axes_out is what the ACTIVE source asked for. MUTATION: merge
     every source's axes and a stale HMI stick keeps contributing to a command
