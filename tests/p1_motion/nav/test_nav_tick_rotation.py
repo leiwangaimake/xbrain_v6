@@ -499,16 +499,22 @@ def test_local_teleop_is_clamped_and_cloud_teleop_is_vetoed():
 
 
 def test_missing_clamp_value_degrades_limit_to_veto_and_says_why():
-    """12 S12 landing plan (2), which is the state this machine is in.
+    """12 S12 landing plan (2).
 
     Verbatim: cannot get the clamp value, then do not let it through, and never
     on a guessed one. The detail must name wz_blind_radps rather than the
     ring's own reason, because the operator's next action is completely
     different -- land a config key, not clear the area.
+
+    None is passed explicitly since 2026-09-29. Before that it was the fixture
+    default, because nav_cfg hard-coded None; the key now carries a value and
+    is read, so None is a modelled degrade rather than the machine's state.
+    Keeping the test means the degrade still cannot be deleted by accident.
     """
     r_check = R_ROBOT_CALIBRATED + rot_limits().margin_rot_m
     ev = _permit(0.0, 0.0, 1.5, source="rns_avoid",
-                 ring=_clean_ring(r_check, occ=1), limits=rot_limits())
+                 ring=_clean_ring(r_check, occ=1),
+                 limits=rot_limits(wz_blind_radps=None))
     assert ev.decision == DECISION_REJECT
     assert ev.wz_out == 0.0
     assert ev.event_kind == KIND_CLEARANCE_UNCONFIGURED

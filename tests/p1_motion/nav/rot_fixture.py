@@ -22,9 +22,15 @@ configs/safety/brake.yaml -- the same single source, not a literal retyped.
 
 What this file is NOT for: it does not decide anything the permit judges.
 r_robot stays a per-test argument because the criteria differ on exactly that
-value, and wz_blind_radps stays None here because that is the state 12 S12
-landing plan (2) rules on and the state the robot is actually in; a test that
-wants the clamp branch passes its own.
+value.
+
+wz_blind_radps used to default to None here, and that default was correct for
+as long as nav_cfg hard-coded None. It no longer is: as of 2026-09-29 the key
+carries a value (configs/common.yaml, user ruling) and nav_cfg reads it, so
+None would now be a shape the robot never runs -- and a misleading one, since
+12 S6A.3.3's RCG-3 correction makes the clamp the STANDING path rather than an
+exception. The default therefore resolves the same reference the config file
+does. A test that wants 12 S12 landing plan (2) passes wz_blind_radps=None.
 """
 from __future__ import annotations
 
@@ -39,6 +45,8 @@ _ROOT = Path(__file__).resolve().parents[3]
 _P1 = yaml.safe_load((_ROOT / "configs" / "p1_motion.yaml").read_text(encoding="utf-8"))
 _BRAKE = yaml.safe_load(
     (_ROOT / "configs" / "safety" / "brake.yaml").read_text(encoding="utf-8"))
+_COMMON = yaml.safe_load(
+    (_ROOT / "configs" / "common.yaml").read_text(encoding="utf-8"))
 
 # The block as written in configs/p1_motion.yaml. KeyError here is the point:
 # if somebody removes the section, every NavTick test fails at import with the
@@ -51,14 +59,29 @@ _RC = _P1["rotation_clearance"]
 # disagreeing too.
 _D_SAFE = _BRAKE["common"]["safety"]["d_safe_m"]
 
+# Same treatment for the clamp: p1_motion.yaml holds
+# "${common.motion.free_space.blind.wz_blind_radps}", and 11 S3.1.5.6 defines
+# it in the L1 common layer. Reading it there is how the fixture stays a
+# reference rather than becoming a second source of the number.
+_WZ_BLIND = _COMMON["common"]["motion"]["free_space"]["blind"]["wz_blind_radps"]
 
-def rot_limits(*, wz_blind_radps: Optional[float] = None) -> RotationLimits:
-    """The production rotation_clearance block, with the clamp value optional.
+# Sentinel so "caller said None on purpose" stays distinguishable from "caller
+# said nothing". A plain None default cannot express both, and the difference
+# is the whole point here: None is the 12 S12 landing-plan-(2) degrade and must
+# be reachable, while the absent case must give the production value.
+_UNSET = object()
 
-    wz_blind_radps defaults to None because that is what nav_cfg passes on this
-    machine (12 S12 keeps the key in the L2 model layer and nothing loads it),
-    so a test that does not say otherwise exercises the shape the robot runs.
+
+def rot_limits(*, wz_blind_radps: object = _UNSET) -> RotationLimits:
+    """The production rotation_clearance block, with the clamp overridable.
+
+    Omitting wz_blind_radps gives the value the robot runs with (the L1 key).
+    Passing None explicitly gives 12 S12 landing plan (2) -- cannot get the
+    clamp value, so do not let it through -- which is still a modelled state
+    and still has its own test, it is just no longer the default shape.
     """
+    clamp: Optional[float] = (_WZ_BLIND if wz_blind_radps is _UNSET
+                              else wz_blind_radps)   # type: ignore[assignment]
     return RotationLimits(
         margin_rot_m=_D_SAFE,
         r_self_mask_m=_RC["r_self_mask_m"],
@@ -72,4 +95,4 @@ def rot_limits(*, wz_blind_radps: Optional[float] = None) -> RotationLimits:
         r_robot_fallback_m=_RC["r_robot_fallback_m"],
         ped_speed_mps=_RC["ped_speed_mps"],
         allow_visual_override=_RC["allow_visual_override"],
-        wz_blind_radps=wz_blind_radps)
+        wz_blind_radps=clamp)

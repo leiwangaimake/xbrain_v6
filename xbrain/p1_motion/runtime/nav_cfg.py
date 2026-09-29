@@ -166,17 +166,34 @@ def _rotation_limits(p1_tree: Mapping[str, Any]) -> RotationLimits:
     here; its error is re-raised as a NavConfigError so the caller has one
     exception type to handle for the whole config.
 
-    wz_blind_radps is passed as None on purpose, and it is the one value not
-    read from a file. 12 S12 keeps it out of this block and reuses 11 S3.1.5.6
-    free_space.blind.wz_blind_radps, noting that writing it as a ${common.*}
-    reference would be rejected as unresolved because the key is not in the
-    shared-parameter table yet, and that it should therefore be read straight
-    from the L2 model layer. This process loads the p1 and rns snapshots only,
-    and neither carries it, so the value is genuinely absent. 12 S12's landing
-    plan (2) rules exactly that case: the LIMIT branch degrades to a veto plus
-    one rotation_clearance_unconfigured fault -- verbatim, cannot get the clamp
-    value then do not let it through, never on a guessed one. When the key
-    lands in the model layer this becomes a single-line change here.
+    wz_blind_radps is read like every other leaf as of 2026-09-29. It was
+    hard-coded None before that, and the reason it was is worth keeping: 12 S12
+    kept the key out of this block and reused 11 S3.1.5.6
+    free_space.blind.wz_blind_radps, then warned that a ${common.*} reference
+    would be rejected as unresolved because the key was not in any shared table.
+    What changed is that the key now HAS a value -- configs/common.yaml carries
+    common.motion.free_space.blind.wz_blind_radps: 0.3 (user ruling, 2026-09-29)
+    -- so the reference resolves and 10 S5.4.2 R-2's only requirement (the path
+    starts with common.) is met. refs.resolve looks the path up in the merged
+    tree; there is no allow-list of reachable common.* paths, which is what the
+    old warning assumed.
+
+    Reading it rather than passing None is not cosmetic. 12 S6A.3.3's RCG-3
+    correction makes the blind clamp the STANDING path on this machine (the
+    rear of the ring is never observed), so a None here would degrade every
+    spin_like tick to a veto -- the robot could not turn at all, which is the
+    availability failure the correction exists to fix.
+
+    A missing or null leaf still refuses by name (_walk), same as the other
+    twelve. RotationLimits keeps wz_blind_radps Optional and apply_rotation_
+    permit keeps 12 S12 landing plan (2) -- cannot get the clamp value, then do
+    not let it through, never on a guessed one -- because that is a modelled
+    state, not a defaulted one; it is simply no longer reachable from a
+    well-formed snapshot.
+
+    mutant: default it to 0.3 here when the leaf is absent -> the clamp value
+    stops being traceable to a file and CLAUDE.md 3.1 is broken for a safety
+    param -> test_missing_rotation_key_names_itself[wz_blind_radps] red.
     """
     try:
         return RotationLimits(
@@ -196,7 +213,7 @@ def _rotation_limits(p1_tree: Mapping[str, Any]) -> RotationLimits:
             ped_speed_mps=_walk(p1_tree, "rotation_clearance.ped_speed_mps"),
             allow_visual_override=_walk(
                 p1_tree, "rotation_clearance.allow_visual_override"),
-            wz_blind_radps=None)
+            wz_blind_radps=_walk(p1_tree, "rotation_clearance.wz_blind_radps"))
     except RotationConfigError as exc:
         raise NavConfigError(str(exc)) from exc
 

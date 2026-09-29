@@ -69,21 +69,34 @@ fence:                                # 12 S7 clipping constants (fence/clip.py)
 # "远程解除旋转保护"的通道.
 # NO r_robot 不在本段重复定义 -- 唯一定义处 = rns 膨胀段 (12 S12), 本段写了会被
 #    10 S5.4.4 断言 B 判"疑似复制"而拒绝启动. 消费方 runtime/nav_cfg.py 去 rns 树读.
-# NO wz_blind_radps 不在本段定义 -- 复用 11 S3.1.5.6 free_space.blind.wz_blind_radps.
-#    写成 ${common.*} 会被断言 A 判未解析(该键未进 10 S5.4.5 共享参数对照表);
-#    读不到时按 12 S12 落地方案(2)降级: 限幅分支退化为否决 + 一次 fault 事件.
+# wz_blind_radps 在本段是一个[引用], 真源仍是 11 S3.1.5.6 的
+#    common.motion.free_space.blind.wz_blind_radps (L1 configs/common.yaml).
+#    2026-09-29 之前本段没有这一行, 理由是"写成 ${common.*} 会被断言 A 判未解析
+#    (该键未进 10 S5.4.5 共享参数对照表)" -- [已不成立]: 该键当日落值 0.3(用户裁决),
+#    而 10 S5.4.2 R-2 对引用的唯一要求是路径以 common. 开头, refs.resolve 在合并后的
+#    树里查路径, 没有"可达 common.* 路径白名单"这回事. 断言 A 查的是[残留 ${ / 查不到
+#    的路径 / null], 三者都不命中.
+#    NO 不得在本段写字面量 0.3 -- 那会变成第二份真源, 正是 10 S5.4.4 断言 B 要拦的形态.
 # 下面三个 0 不是"未标定占位" -- 12 S12 把 0 定为本键的[最严]取值(任一占据格即拒,
 #    未知格不设容差, 内半径 0 = 整圆盘). CLAUDE.md 3.1 禁的是拿 0 冒充已赋值的
 #    标定量, 与此不同.
 # ===========================================================================
 rotation_clearance:
-  data_source:            lidar_grid   # 裁决 RC-D2: 当前唯一合法值
+  data_source:            memory_grid  # 裁决 RC-D2 (2026-09-29 改判): 当前唯一合法值.
+                                       #   原 lidar_grid 已作废 -- 整机无 LiDAR, 该 key
+                                       #   无生产者 (12 S6A.3.1 订正框).
+                                       #   NO 本键当前无代码消费者, 是声明不是门.
   margin_rot_m: ${common.safety.d_safe_m}   # U54 规则(3); 冻结线 MR-1 断言两者严格相等
   r_self_mask_m:          0.0          # 整圆盘; 必须 < r_robot + margin_rot (RCG-2)
   rot_occ_max:            0            # 任一占据格即拒 (11 S13.8 (8) 键名)
-  rot_unknown_max_cells:  0            # RCG-3: 未知格不设容差, 改大即 fail-open
+  rot_unknown_max_cells:  0            # RCG-3: 未知格不设容差, 改大即 fail-open.
+                                       #   2026-09-29 语义变了取值没变: 现在是[限速触发阈],
+                                       #   超过它走盲向限速而不是拒绝 (12 S6A.3.3 订正框).
   rot_unknown_ratio_max:  0.5          # 整帧 sanity check, 与 11 S3.9 同源
-  grid_age_max_ms:        200          # RC-3: 比 T-05 的 500 更严, 理由见 12 S6A.5
+  grid_age_max_ms:        200          # RC-3: 比 T-05 的 500 更严, 理由见 12 S6A.5.
+                                       #   换 MemoryGrid 后它还多管一件事: 环带统计里
+                                       #   FREE 格超过这个龄期即降级为 UNKNOWN (12 S6A.3.2
+                                       #   新鲜度分层) -- 记忆不参与放行, 只参与拒绝.
   recheck_ticks:          3            # RC-2: 已被 RCG-4 第二项买单; age=200 时上限 8
   wz_eps_radps:           0.05         # spin_like 第一合取项 (12 S6A.4.1)
   k_rot:                  0.5          # spin_like 曲率半径系数; 待实机整定 (12 S15 #25)
@@ -91,6 +104,12 @@ rotation_clearance:
   ped_speed_mps:          1.5          # RCG-4 公式的行人速度; 待评审
   allow_visual_override:  false        # 缺省 false (RC-D4); 出口层无 cmd_id 可留名,
                                        #   置 true 时 rotation/rcg.py 直接拒绝构造
+  wz_blind_radps: ${common.motion.free_space.blind.wz_blind_radps}
+                                       # 盲向角速上限 (11 S3.1.5.4/S3.1.5.6, 现值 0.3).
+                                       #   RCG-3 改向后这是[常走路径]: 身后恒未观测 =>
+                                       #   每个 spin_like 拍都被限到这个值.
+                                       #   读不到时仍按 12 S12 落地方案(2): 限幅退化为
+                                       #   否决 + 一次 rotation_clearance_unconfigured.
 timeouts_ms:                          # 12 S12 中本批有消费者的三键 (runtime/nav_wiring.py / nav/health_factor.py);
                                       #   感知计龄按 11 S3.1B T-50/T-51 (freshness/degradation.CAM_THRESH), NO 不用本段
                                       #   的 perception 键 (12 S12 的 200 与 11 的 300/1000 不一致, 契约为准; 待 12 收口);
