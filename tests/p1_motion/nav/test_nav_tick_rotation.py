@@ -54,6 +54,7 @@ from xbrain.p1_motion.nav.health_factor import HealthView
 from xbrain.p1_motion.nav.nav_tick import NavInputs, NavTick, NavTickConfigError
 from xbrain.p1_motion.rns.source import RnsSource
 from xbrain.p1_motion.rotation.rcg import (
+    BLIND_REASONS,
     DECISION_LIMIT,
     DECISION_PASS,
     DECISION_REJECT,
@@ -67,9 +68,11 @@ from xbrain.p1_motion.rotation.rcg import (
     REASON_OCCUPIED_CELLS,
     REASON_PERMITTED,
     REASON_R_ROBOT_UNCALIBRATED,
+    REASON_SECTORS_BELOW_R_CHECK,
     REASON_SECTORS_UNAVAILABLE,
     REASON_SELF_MASK_GE_R_CHECK,
     REASON_UNKNOWN_CELLS,
+    REASON_UNKNOWN_RATIO,
     VETO_SOURCES,
     RingSample,
     RotationConfigError,
@@ -210,62 +213,191 @@ def test_spin_with_occupied_cell_is_blocked():
     assert ev.occ_cells == 1
 
 
-def test_spin_with_unknown_cell_is_blocked():
-    """RCG-3: an unknown cell blocks exactly like an occupied one.
+@pytest.mark.parametrize("source", sorted(LIMIT_SOURCES | VETO_SOURCES))
+def test_spin_with_unknown_cell_is_clamped_not_vetoed(source):
+    """RCG-3 as corrected 2026-09-29: unknown -> blind clamp, for EVERY source.
 
-    Dropping this branch is "treat what you did not see as empty", which makes
-    every uncovered direction read as permanently clear -- the whole of the R-3
-    gap reproduced in one predicate.
+    Availability half of the gate, and it is not a nicety. The machine has no
+    LiDAR and the RGBD covers the forward half, so the rear of the ring is
+    unobserved on every tick of every mission. Under the pre-correction rule
+    that is a permanent veto: 18 A09..A12 all reach the chassis through
+    nav2_proxy, which 12 S6A.4.2 puts on the veto branch, so "turn around"
+    could never execute -- and seeing behind requires turning, which requires
+    seeing behind.
+
+    Parametrised over the WHOLE source closed set on purpose. An implementation
+    that left the blind case under 12 S6A.4.2's table would pass a test written
+    against rns_avoid alone and still veto every autonomous turn, which is the
+    only path an operator actually uses (12 S15 #52 records the cost of
+    crossing that table, including teleop_cloud).
+
+    mutant: decision = _disposal_for(source) for blind reasons too -> every
+    VETO_SOURCES parameter goes red while rns_avoid stays green, which is
+    exactly the half-fix this parametrisation exists to catch.
     """
-    r_check = R_ROBOT_CALIBRATED + rot_limits().margin_rot_m
-    ev = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
-                 ring=_clean_ring(r_check, unknown=1))
-    assert ev.decision == DECISION_REJECT
-    assert ev.reason == REASON_UNKNOWN_CELLS
-
-
-def test_spin_with_no_ring_source_is_blocked():
-    """RC-D2's failure direction, and the state this machine is actually in.
-
-    There is no LiDAR, so nothing builds a RingSample. 12 S6A's opening line
-    allows no middle ground between "cannot tell" and "safe", so absent source
-    is a refusal, reported as unconfigured rather than as a stale grid because
-    waiting will not produce one.
-    """
-    ev = _permit(0.0, 0.0, 1.5, source="nav2_proxy", ring=None)
-    assert ev.decision == DECISION_REJECT
-    assert ev.reason == REASON_NO_RING_SOURCE
-    assert ev.event_kind == KIND_CLEARANCE_UNCONFIGURED
-    assert ev.wz_out == 0.0
-
-
-def test_spin_with_stale_grid_is_blocked():
-    """RC-3 (12 S6A.5): older than grid_age_max_ms refuses, never uses."""
     r_check = R_ROBOT_CALIBRATED + rot_limits().margin_rot_m
     lim = rot_limits()
+    ev = _permit(0.0, 0.0, 1.5, source=source,
+                 ring=_clean_ring(r_check, unknown=1), limits=lim)
+    assert ev.reason == REASON_UNKNOWN_CELLS
+    assert ev.decision == DECISION_LIMIT
+    assert ev.wz_out == pytest.approx(lim.wz_blind_radps)
+    # The sign of the operator's turn must survive the clamp: 12 S6A.4.2's
+    # reason for clamping rather than zeroing is that the turn is how you get
+    # OUT of the situation, and a clamp that dropped the sign would turn the
+    # wrong way.
+    back = _permit(0.0, 0.0, -1.5, source=source,
+                   ring=_clean_ring(r_check, unknown=1), limits=lim)
+    assert back.wz_out == pytest.approx(-lim.wz_blind_radps)
+    # Still a warn, not a fault: turning is what clears it, so a retry helps.
+    assert ev.event_kind == KIND_ROTATION_BLOCKED
+
+
+def test_blind_clamp_is_not_a_permit():
+    """A clamped tick is still a refusal -- wz is reduced, never passed.
+
+    The failure this pins is subtle and would look like a success in a log: an
+    implementation that treated "blind" as "permitted" would leave wz at its
+    input value and still report decision limit nowhere. 12 S6A.2's key
+    property is that limiting does not shrink the swept annulus, so the clamp
+    only buys time to react; it is not permission.
+    """
+    r_check = R_ROBOT_CALIBRATED + rot_limits().margin_rot_m
+    lim = rot_limits()
+    v = evaluate_ring(lim, R_ROBOT_CALIBRATED, _clean_ring(r_check, unknown=1))
+    assert v.permitted is False
+    ev = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
+                 ring=_clean_ring(r_check, unknown=1), limits=lim)
+    assert ev.wz_out < ev.wz_in
+    assert ev.decision != DECISION_PASS
+
+
+def test_a_hard_refusal_outranks_a_blind_one():
+    """"There is something there" must never be reported as "I cannot see".
+
+    Since the two now have different dispositions, the order between the hard
+    and blind conjuncts decides whether the tick vetoes or turns at 0.3 rad/s.
+    Three rings, each tripping one hard conjunct AND the blind one at the same
+    time; every one must name the hard reason.
+
+    mutant: put the unknown_cells test back above unknown_ratio (its position
+    before 2026-09-29) -> the unknown_ratio row below goes red.
+    """
+    lim = rot_limits()
+    r_check = R_ROBOT_CALIBRATED + lim.margin_rot_m
+    both_cells = _clean_ring(r_check, occ=1, unknown=1)
+    bad_frame = replace(_clean_ring(r_check, unknown=1),
+                        unknown_ratio=lim.rot_unknown_ratio_max + 0.1)
+    near_sector = replace(_clean_ring(r_check, unknown=1),
+                          sectors_min_m=r_check - 0.01)
+    for ring, want in ((both_cells, REASON_OCCUPIED_CELLS),
+                       (bad_frame, REASON_UNKNOWN_RATIO),
+                       (near_sector, REASON_SECTORS_BELOW_R_CHECK)):
+        v = evaluate_ring(lim, R_ROBOT_CALIBRATED, ring)
+        assert v.reason == want, "blind reason outranked a hard one: %s" % v.reason
+        assert v.reason not in BLIND_REASONS
+        ev = _permit(0.0, 0.0, 1.5, source="nav2_proxy", ring=ring, limits=lim)
+        assert ev.decision == DECISION_REJECT and ev.wz_out == 0.0
+
+
+def test_spin_with_occupied_cell_is_still_vetoed_for_autonomous_sources():
+    """Safety half: the 2026-09-29 correction touched unknown and nothing else.
+
+    A ring with something IN it keeps the pre-correction disposition exactly --
+    veto for an autonomous source, clamp for the local-teleop / rns_avoid
+    exemption of 12 S6A.4.2. Written next to the blind test so that a change
+    which relaxed both at once cannot look like a change that relaxed one.
+    """
+    lim = rot_limits()
+    r_check = R_ROBOT_CALIBRATED + lim.margin_rot_m
+    ring = _clean_ring(r_check, occ=1)
+    for source in sorted(VETO_SOURCES):
+        ev = _permit(0.0, 0.0, 1.5, source=source, ring=ring, limits=lim)
+        assert ev.reason == REASON_OCCUPIED_CELLS
+        assert ev.decision == DECISION_REJECT and ev.wz_out == 0.0
+    for source in sorted(LIMIT_SOURCES):
+        ev = _permit(0.0, 0.0, 1.5, source=source, ring=ring, limits=lim)
+        assert ev.decision == DECISION_LIMIT
+        assert ev.wz_out == pytest.approx(lim.wz_blind_radps)
+
+
+@pytest.mark.parametrize("source", sorted(VETO_SOURCES))
+def test_spin_with_no_ring_source_is_vetoed_not_clamped(source):
+    """"No data" and "the data says I cannot see" are two different answers.
+
+    Both end in "the permit does not pass", which is exactly why they are easy
+    to merge -- and merging them is a fail-open: an absent RingSample means
+    nothing at all is known about the ring, not even that the near cells are
+    clear, so there is no basis for the 0.3 rad/s that a blind tick gets.
+
+    Parametrised over VETO_SOURCES, which is where the two answers actually
+    diverge. The local-teleop family and rns_avoid are clamped here too, but by
+    12 S6A.4.2's per-source exemption rather than by the blind branch -- an
+    unchanged, pre-2026-09-29 path, pinned in the companion assertion below so
+    that "they look the same from outside" cannot hide a merge of the two.
+
+    Reported as unconfigured rather than as a stale grid, because waiting will
+    not produce a source.
+
+    mutant: add REASON_NO_RING_SOURCE to BLIND_REASONS -> every parameter here
+    goes red, which is the point: a process with no ring producer at all would
+    otherwise start turning.
+    """
+    ev = _permit(0.0, 0.0, 1.5, source=source, ring=None)
+    assert ev.decision == DECISION_REJECT
+    assert ev.reason == REASON_NO_RING_SOURCE
+    assert ev.reason not in BLIND_REASONS
+    assert ev.event_kind == KIND_CLEARANCE_UNCONFIGURED
+    assert ev.wz_out == 0.0
+    # The exempt sources are clamped by the TABLE, not by the blind branch:
+    # same wz, different reason, and the fault kind says which.
+    for exempt in sorted(LIMIT_SOURCES):
+        alt = _permit(0.0, 0.0, 1.5, source=exempt, ring=None)
+        assert alt.decision == DECISION_LIMIT
+        assert alt.event_kind == KIND_CLEARANCE_UNCONFIGURED
+        assert alt.detail_item == REASON_NO_RING_SOURCE
+
+
+def test_spin_with_stale_grid_is_vetoed_not_clamped():
+    """RC-3 (12 S6A.5): older than grid_age_max_ms refuses, never uses.
+
+    Same family as the absent source: a dead perception channel is "no data",
+    not "I looked and saw nothing there", so it keeps the veto. The two are
+    told apart by whether a RingSample arrived at all, and both must stay out
+    of BLIND_REASONS or a perception outage would turn into a licence to spin
+    slowly.
+    """
+    lim = rot_limits()
+    r_check = R_ROBOT_CALIBRATED + lim.margin_rot_m
     ev = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
                  ring=_clean_ring(r_check, age_ms=lim.grid_age_max_ms + 1))
     assert ev.decision == DECISION_REJECT
     assert ev.reason == REASON_GRID_STALE
+    assert ev.reason not in BLIND_REASONS
 
 
-def test_sectors_cross_veto_unavailable_is_a_refusal_not_an_abstention():
-    """12 S6A.3.2: "or that value is unavailable -> treated as not passing".
+def test_sectors_cross_veto_unavailable_is_blind_not_an_abstention():
+    """12 S6A.3.2's cross-veto with no value: refuses the permit, then clamps.
 
-    This is the conjunct 12 S6A.3.3's 2026-08-05 note says keeps the permit
-    refusing even after RCG-1 was satisfied by calibration: V-33 leaves the
-    flanks uncovered, the sectors span only +/-90 degrees, so no full-circle
-    minimum can be formed. An implementation that skipped the check when the
-    value was missing would silently drop half the conjunction.
+    The conjunct is NOT skipped -- that would silently drop half the
+    conjunction -- but since 2026-09-29 it lands in the blind branch. The
+    reason it had to move with RCG-3: free_space.sectors has no producer
+    anywhere in the repository, so sectors_min_m is None on every tick, and one
+    permanently-false hard conjunct cancels the whole correction by itself.
+    11 S3.1.5.4's own table already reads this case as blind.
     """
     # Built inline rather than via _clean_ring because sectors_min_m=None is
     # the whole point here and a helper default would hide it.
+    lim = rot_limits()
     ring = RingSample(occ_cells=0, unknown_cells=0, total_cells=800,
                       unknown_ratio=0.1, age_ms=100, resolution_m=0.1,
                       sectors_min_m=None)
-    v = evaluate_ring(rot_limits(), R_ROBOT_CALIBRATED, ring)
+    v = evaluate_ring(lim, R_ROBOT_CALIBRATED, ring)
     assert v.permitted is False
     assert v.reason == REASON_SECTORS_UNAVAILABLE
+    ev = _permit(0.0, 0.0, 1.5, source="nav2_proxy", ring=ring, limits=lim)
+    assert ev.decision == DECISION_LIMIT
+    assert ev.wz_out == pytest.approx(lim.wz_blind_radps)
 
 
 # ---------------------------------------------------------------------------

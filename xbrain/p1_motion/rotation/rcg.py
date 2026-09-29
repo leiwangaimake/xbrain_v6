@@ -31,10 +31,10 @@ What this file does NOT do, and where that work lives instead.
     CLAUDE.md 4.4 forbids blocking IO there.
   * It does not own the ring READ. Counting occupied and unknown cells in the
     annulus belongs to whoever holds the occupancy grid; this file consumes the
-    counts as a RingSample. 12 S6A.3.1 RC-D2 rules rt/lidar/grid the single
-    primary source, and 11's LiDAR single-topic row records that the machine
-    has no LiDAR, so today nothing produces a RingSample -- see nav_tick step
-    6b for what that means at run time.
+    counts as a RingSample. 12 S6A.3.1 RC-D2 named rt/lidar/grid the single
+    primary source until 2026-09-29 and the machine has no LiDAR, so that key
+    has no producer; the corrected RC-D2 names the RNS MemoryGrid, and
+    runtime/nav_wiring assembles the sample from it.
   * It is not the V-33 coverage fail-safe in xbrain/common/failsafe/rotation.py.
     That one answers the COMMAND layer (18 A09..A12 / C07 -> E_BUSY) at intent
     time; this one is the per-tick velocity-layer gate. 12 S6A.9 ND-3 wants one
@@ -60,7 +60,17 @@ The looks-right-but-wrong writings, each one a named prohibition.
     The curvature radius has no such seam, which is why 12 S12 deleted the
     v_eps_mps key outright.
   * Reading an unknown cell as free. RCG-3. That is "treat what you did not see
-    as empty", and it is why rot_unknown_max_cells carries no tolerance.
+    as empty", and it is why rot_unknown_max_cells carries no tolerance. What
+    2026-09-29 changed is the DISPOSAL, not this: an unknown cell still fails
+    the permit, it just fails it into the blind clamp rather than into a veto.
+  * Answering a blind refusal by source. The blind branch deliberately crosses
+    12 S6A.4.2's per-source table; the reasoning and its cost are in
+    BLIND_REASONS below. Putting it back under the table would make the
+    correction a no-op for every autonomous turn, which is every turn 18
+    A09..A12 can ask for.
+  * Reporting "there is something there" as "I cannot see". evaluate_ring
+    evaluates every HARD conjunct before every BLIND one for exactly that
+    reason; see the ordering note there before moving any check.
   * Letting an empty annulus pass. RCG-2. count(blocked) == 0 is vacuously true
     over an empty set, so "no cells to check" must read as "cannot tell", never
     as "clean".
@@ -156,6 +166,9 @@ REASON_EMPTY_DOMAIN = "decision_domain_empty"
 # the field to be able to see "there is something there" vs "it is not
 # covered", and 12 S6A.6 turns the same split into two HMI sentences: clear the
 # area and retry, against rotation is unavailable and retrying will not help.
+#
+# Since 2026-09-29 the split also decides the DISPOSAL, so it is no longer only
+# a diagnostic nicety: occupied refuses, unknown clamps (BLIND_REASONS).
 REASON_OCCUPIED_CELLS = "occupied_cells_over_max"
 REASON_UNKNOWN_CELLS = "unknown_cells_over_max"
 
@@ -176,12 +189,52 @@ REASON_GRID_STALE = "grid_stale"
 # which is why it does not share a reason with the cell counts.
 REASON_MARGIN_BELOW_BOUND = "margin_rot_below_rcg4_bound"
 
-# The 12 S6A.3.2 cross-veto on sectors. Unavailable is a REJECT, not a skip:
-# two independent channels are required to agree, and a missing second opinion
-# is not an abstention. This is the conjunct that keeps refusing even after a
-# body radius is measured, because the sectors span only the forward half.
+# The 12 S6A.3.2 cross-veto on sectors. Two independent channels are required
+# to agree, and a missing second opinion is not an abstention -- but as of
+# 2026-09-29 "unavailable" is a BLIND refusal rather than a hard one.
+#
+# Why that had to move together with RCG-3. free_space.sectors has no producer
+# at all: rt/perception/objects carries no free_space field and nothing in the
+# repository publishes one, so sectors_min_m is None on every tick. Left as a
+# hard refusal it is a permanently false conjunct, and one permanently false
+# conjunct cancels the whole RCG-3 correction on its own. 11 S3.1.5.4's own
+# disposal table already reads this case as blind, verbatim "存在 null 扇区时
+# 旋转按盲向处理"; 12 S6A.6 turned it into a refusal by taking the stricter of
+# the two readings, and that is the ruling 2026-09-29 overturned (12 S15 #16).
+#
+# BELOW_R_CHECK stays hard. A sectors minimum that EXISTS and is too close is
+# "there is something there", which is the other half of the split and was
+# never in question.
 REASON_SECTORS_UNAVAILABLE = "sectors_full_circle_unavailable"
 REASON_SECTORS_BELOW_R_CHECK = "sectors_min_below_r_check"
+
+# ---------------------------------------------------------------------------
+# 12 S6A.3.3's RCG-3 correction (2026-09-29, user ruling): the refusals that
+# mean "that direction was not observed" get the blind clamp of 11 S3.1.5.4
+# instead of a veto. Everything NOT in this set keeps the old disposal.
+#
+# Two properties of this set are load-bearing and neither is obvious.
+#
+#   * It is a set of REASONS, not of cells. "Nothing is there" and "I did not
+#     look" are different statements, and only the second one is in here.
+#     REASON_NO_RING_SOURCE and REASON_GRID_STALE are deliberately OUT: those
+#     say the channel itself is missing or dead, which is not an observation
+#     about the ring at all. 12 S6A.3.2 splits the three cases explicitly as
+#     "there is something" / "no data" / "cannot see", and only the third one
+#     clamps.
+#
+#   * The clamp crosses 12 S6A.4.2's per-source table. The table vetoes the
+#     autonomous sources (nav2_proxy, relative_move, target_oriented) and
+#     teleop_cloud, and 18 A09..A12 all reach the chassis through nav2_proxy.
+#     Since the rear of the ring is never observed on this machine, leaving the
+#     blind case under that table would veto every voice-commanded turn for
+#     ever -- the correction would change nothing on the one path an operator
+#     actually uses. The cost is recorded rather than hidden: teleop_cloud's
+#     v0.7.9 narrowing (no "standing next to it" premise for a cloud operator)
+#     is NOT withdrawn, it is simply out-ranked in the blind case. 12 S15 #52
+#     carries that for the user to confirm or reverse; reversing it is one
+#     membership test here.
+BLIND_REASONS = frozenset({REASON_UNKNOWN_CELLS, REASON_SECTORS_UNAVAILABLE})
 
 # ---------------------------------------------------------------------------
 # 12 S6A.4.2 disposal by source. The table's axis is "is a human watching THIS
@@ -342,10 +395,11 @@ class RingSample:
 
     sectors_min_m is the 12 S6A.3.2 cross-veto input: the FULL-CIRCLE minimum
     of 11 S3.1.5's sectors. None means the full-circle minimum cannot be formed
-    -- which is today's standing state, because V-33 leaves the flanks and rear
-    at covered = false and the sectors span only +/-90 degrees. 12 S6A.3.3's
-    2026-08-05 note is explicit that this makes the cross-veto conjunct false
-    and that this is the design intent, not a defect.
+    -- which is the standing state and for a stronger reason than V-33: nothing
+    in the repository publishes free_space at all, so there are no sectors to
+    take a minimum over. Since 2026-09-29 that reads as blind rather than as a
+    refusal (BLIND_REASONS); 12 S6A.3.3's 2026-08-05 note, which called the
+    permanently-false conjunct the design intent, is the wording that changed.
     """
 
     occ_cells: int                  # count(occ == 2) inside A
@@ -520,29 +574,34 @@ def evaluate_ring(limits: RotationLimits, r_robot_m: Optional[float],
 
     Every conjunct is evaluated from data, none is hard-wired: hand this a
     calibrated r_robot and a clean full-circle ring and it returns permitted.
-    That matters more than it looks. On today's machine the permit always
-    refuses -- there is no LiDAR, so no RingSample exists, and V-33 leaves
-    sectors_min unavailable on top of that -- and a judge that only ever
+    That matters more than it looks, because the permit still refuses on this
+    machine for reasons outside this function, and a judge that only ever
     refused would be passed just as happily by a one-line "return False". The
     permitting path is what separates this from that stub, so it is asserted.
 
-    Evaluation order is fixed for a reproducible reason string, and runs
-    config-level checks before data-level ones: an unusable configuration
-    should be reported as such rather than surfacing as whatever the grid
-    happened to contain. The verdict itself is order-independent -- it is a
-    conjunction -- so the order only decides WHICH failure gets named.
+    Evaluation order carries two different jobs and they must not be confused.
+    Config-level checks run before data-level ones purely for a readable reason
+    string -- an unusable configuration should say so rather than surfacing as
+    whatever the grid happened to contain, and the verdict is a conjunction so
+    that part is cosmetic. The hard-before-blind order is NOT cosmetic: since
+    2026-09-29 the two groups have different dispositions, so which one is
+    named decides whether the tick vetoes or clamps. See the ordering note in
+    the body.
 
-    Worked, on today's machine, to make the three independent refusals visible
-    rather than leaving "it always refuses" as one undifferentiated fact:
+    Worked, on today's machine, to keep the independent refusals visible rather
+    than leaving "it refuses" as one undifferentiated fact:
 
-      RCG-1  r_robot      no key in any loaded tree      -> REFUSE (reported)
-      RC-D2  ring sample  no LiDAR, nothing builds one   -> would refuse
-      cross  sectors min  forward half only, no full     -> would refuse
-             veto                     circle minimum
+      RCG-1  r_robot      no key in any loaded tree      -> REFUSE (hard)
+      RC-D2  ring sample  MemoryGrid, wired 2026-09-29   -> present
+      RCG-3  unknown      rear of the ring never seen    -> CLAMP (blind)
+      cross  sectors min  no producer for free_space     -> CLAMP (blind)
+             veto                     .sectors at all
 
     Each is closed by different work -- a calibration key, a ring producer, a
     sensor-coverage answer -- so collapsing them into one boolean would hide
-    two of the three from whoever comes to close them.
+    the others from whoever comes to close them. RCG-1 is the one still open:
+    configs/rns.yaml carries no inflation.r_robot_m, so the permit refuses
+    before it ever looks at the ring (12 S15 #10).
     """
     # RCG-1, first, and on the TRUE r_robot. 0.0 does not mean "zero radius, so
     # always safe"; it means "not known, so do not turn". Reading it the other
@@ -582,31 +641,49 @@ def evaluate_ring(limits: RotationLimits, r_robot_m: Optional[float],
     if ring.age_ms > limits.grid_age_max_ms:
         return RotationVerdict(False, REASON_GRID_STALE, r_check)
 
-    # The two cell counts. Occupied first so that a ring with both gets the
-    # more actionable reason -- "there is something there" can be cleared by
-    # moving it, "not covered" cannot.
+    # ---- every HARD conjunct, before any BLIND one -------------------------
+    # The order inside each group only picks which failure gets named; the
+    # order BETWEEN the groups is a safety property. A tick can trip both an
+    # occupied cell and an unobserved one, and since 2026-09-29 the two have
+    # different dispositions (veto vs clamp). Reporting the blind one first
+    # would announce "there is something 0.5 m off the flank" as "I cannot see
+    # that way" and then turn at 0.3 rad/s into it. So: anything that means
+    # "there is something there" or "there is no data" is decided first, and
+    # only a ring that survives all of them can be called blind.
+    #
+    # mutant: move the unknown_cells test above unknown_ratio (its position
+    # before 2026-09-29) -> a garbage frame with an unobserved ring clamps
+    # instead of refusing -> test_a_hard_refusal_outranks_a_blind_one red.
+
+    # Occupied cells. "There is something there", and it can be cleared by
+    # moving it, which is why it gets the more actionable reason.
     if ring.occ_cells > limits.rot_occ_max:
         return RotationVerdict(False, REASON_OCCUPIED_CELLS, r_check)
 
-    # RCG-3. Unknown blocks exactly like occupied. Raising the tolerance is
-    # equivalent to calling everything unseen empty, which is the whole of the
-    # R-3 gap reproduced in one config line.
-    if ring.unknown_cells > limits.rot_unknown_max_cells:
-        return RotationVerdict(False, REASON_UNKNOWN_CELLS, r_check)
-
     # Whole-frame sanity check. Cheap, and it does not replace the per-cell
-    # test above -- a frame can be mostly known and still have the ring blocked.
+    # tests -- a frame can be mostly known and still have the ring blocked.
+    # Hard, not blind: a frame this bad is not "I did not look that way", it is
+    # "this frame cannot be used", which no amount of turning fixes.
     if ring.unknown_ratio > limits.rot_unknown_ratio_max:
         return RotationVerdict(False, REASON_UNKNOWN_RATIO, r_check)
 
-    # The cross-veto of 12 S6A.3.2, written the way the conjunction writes it:
-    # "sectors full-circle minimum >= r_check, OR that value is unavailable ->
-    # treated as not passing". Two independent channels must both agree, and an
-    # absent second opinion is not an abstention.
+    # The cross-veto of 12 S6A.3.2, with a value present: two independent
+    # channels must both agree, and this one says something is inside r_check.
+    if ring.sectors_min_m is not None and ring.sectors_min_m < r_check:
+        return RotationVerdict(False, REASON_SECTORS_BELOW_R_CHECK, r_check)
+
+    # ---- the BLIND conjuncts ----------------------------------------------
+    # RCG-3. Unknown still fails the permit and the tolerance is still zero;
+    # raising it would be "call everything unseen empty", the R-3 gap in one
+    # config line. What it fails INTO is the clamp of 11 S3.1.5.4.
+    if ring.unknown_cells > limits.rot_unknown_max_cells:
+        return RotationVerdict(False, REASON_UNKNOWN_CELLS, r_check)
+
+    # The same cross-veto with no value at all -- the standing state, since
+    # free_space.sectors has no producer. An absent second opinion is still not
+    # an abstention: the permit does not pass here, it clamps.
     if ring.sectors_min_m is None:
         return RotationVerdict(False, REASON_SECTORS_UNAVAILABLE, r_check)
-    if ring.sectors_min_m < r_check:
-        return RotationVerdict(False, REASON_SECTORS_BELOW_R_CHECK, r_check)
 
     return RotationVerdict(True, REASON_PERMITTED, r_check)
 
@@ -652,6 +729,14 @@ def apply_rotation_permit(*, vx_mps: float, vy_mps: float, wz_radps: float,
     A tick whose vx the speed gate has already zeroed is, at this point in the
     chain, genuinely a spin, and judging on the pre-gate candidate would let
     exactly that case through.
+
+    Three outcomes, not two (12 S6A.3.2, as corrected 2026-09-29):
+      permitted        wz untouched
+      blind refusal    wz clamped to +/- wz_blind_radps, ANY source
+      hard refusal     12 S6A.4.2's per-source table -- clamp for the local
+                       teleop family and rns_avoid, zero for the rest
+    The clamp degrades to a veto when wz_blind_radps is missing (12 S12 landing
+    plan (2)); that is now the only way a blind tick reaches zero.
     """
     # Trigger first, verdict second, and never the other way round. The order
     # is what keeps the two fail-safes apart: the trigger answers "is this a
@@ -688,7 +773,16 @@ def apply_rotation_permit(*, vx_mps: float, vy_mps: float, wz_radps: float,
             occ_cells=occ, unknown_cells=unk, grid_age_ms=age,
             blocked_sector_deg=sectors, event_kind=None, detail_item=None)
 
-    decision = _disposal_for(source)
+    # _disposal_for is called unconditionally, even when the blind branch is
+    # about to override it. It is the closed-set check of CLAUDE.md 3.5 (an
+    # unruled source raises rather than picking a branch), and short-circuiting
+    # it for blind ticks would let an unrecognised source through on exactly
+    # the path that is taken on every tick of this machine.
+    disposal = _disposal_for(source)
+    # 12 S6A.3.3 RCG-3 (2026-09-29): "I could not see that way" clamps for
+    # every source; "there is something there" and "there is no data" keep the
+    # 12 S6A.4.2 table. See BLIND_REASONS for why the table is crossed.
+    decision = DECISION_LIMIT if verdict.reason in BLIND_REASONS else disposal
     detail_item: Optional[str] = None
     # 12 S6A.8's two kinds split on whether a retry could ever clear it. The
     # three config-level reasons are persistent (12 S6A.7 RC-D5 routes the same
@@ -746,7 +840,7 @@ __all__ = [
     "REASON_OCCUPIED_CELLS", "REASON_UNKNOWN_CELLS", "REASON_UNKNOWN_RATIO",
     "REASON_GRID_STALE", "REASON_MARGIN_BELOW_BOUND",
     "REASON_SECTORS_UNAVAILABLE", "REASON_SECTORS_BELOW_R_CHECK",
-    "LIMIT_SOURCES", "VETO_SOURCES",
+    "LIMIT_SOURCES", "VETO_SOURCES", "BLIND_REASONS",
     "RotationConfigError", "RotationLimits", "RingSample",
     "RotationVerdict", "RotationEval",
     "effective_radius", "spin_like", "ring_check_radius", "rcg4_lower_bound",

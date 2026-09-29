@@ -14,8 +14,10 @@ and must be refused by name.
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
+import yaml
 
 from xbrain.p1_motion.runtime.nav_cfg import NavConfigError, build_nav_config
 
@@ -183,10 +185,6 @@ def test_wz_blind_reference_in_the_real_file_resolves():
     common.yaml without the other -> the walk below stops on a missing segment
     and names it.
     """
-    from pathlib import Path                                    # noqa: PLC0415
-
-    import yaml                                                 # noqa: PLC0415
-
     root = Path(__file__).resolve().parents[3]
     p1 = yaml.safe_load((root / "configs" / "p1_motion.yaml").read_text(encoding="utf-8"))
     ref = p1["rotation_clearance"]["wz_blind_radps"]
