@@ -54,6 +54,7 @@ from xbrain.p1_motion.nav.health_factor import HealthView
 from xbrain.p1_motion.nav.nav_tick import NavInputs, NavTick, NavTickConfigError
 from xbrain.p1_motion.rns.source import RnsSource
 from xbrain.p1_motion.rotation.rcg import (
+    BLIND_CLAMP_EXEMPT_SOURCES,
     BLIND_REASONS,
     DECISION_LIMIT,
     DECISION_PASS,
@@ -213,9 +214,11 @@ def test_spin_with_occupied_cell_is_blocked():
     assert ev.occ_cells == 1
 
 
-@pytest.mark.parametrize("source", sorted(LIMIT_SOURCES | VETO_SOURCES))
+@pytest.mark.parametrize(
+    "source", sorted((LIMIT_SOURCES | VETO_SOURCES) - BLIND_CLAMP_EXEMPT_SOURCES))
 def test_spin_with_unknown_cell_is_clamped_not_vetoed(source):
-    """RCG-3 as corrected 2026-09-29: unknown -> blind clamp, for EVERY source.
+    """RCG-3 as corrected 2026-09-29: unknown -> blind clamp, for every source
+    12 S15 #52 did not exempt.
 
     Availability half of the gate, and it is not a nicety. The machine has no
     LiDAR and the RGBD covers the forward half, so the rear of the ring is
@@ -225,11 +228,14 @@ def test_spin_with_unknown_cell_is_clamped_not_vetoed(source):
     could never execute -- and seeing behind requires turning, which requires
     seeing behind.
 
-    Parametrised over the WHOLE source closed set on purpose. An implementation
-    that left the blind case under 12 S6A.4.2's table would pass a test written
-    against rns_avoid alone and still veto every autonomous turn, which is the
-    only path an operator actually uses (12 S15 #52 records the cost of
-    crossing that table, including teleop_cloud).
+    Parametrised over the source closed set MINUS the exempt row, not over
+    rns_avoid alone. An implementation that left the blind case under 12
+    S6A.4.2's table would pass a test written against rns_avoid and still veto
+    every autonomous turn, which is the only path an operator actually uses.
+    Subtracting the exempt set rather than listing the four survivors is what
+    keeps this test and test_cloud_teleop_keeps_its_veto_when_the_ring_is_blind
+    from ever both claiming the same source: whatever 12 S15 #52 exempts leaves
+    here automatically.
 
     mutant: decision = _disposal_for(source) for blind reasons too -> every
     VETO_SOURCES parameter goes red while rns_avoid stays green, which is
@@ -251,6 +257,72 @@ def test_spin_with_unknown_cell_is_clamped_not_vetoed(source):
     assert back.wz_out == pytest.approx(-lim.wz_blind_radps)
     # Still a warn, not a fault: turning is what clears it, so a retry helps.
     assert ev.event_kind == KIND_ROTATION_BLOCKED
+
+
+@pytest.mark.parametrize("reason_ring", ["unknown", "sectors"])
+def test_cloud_teleop_keeps_its_veto_when_the_ring_is_blind(reason_ring):
+    """12 S15 #52, ruled 2026-09-29: teleop_cloud does NOT get the blind clamp.
+
+    The two halves of that ruling are separate arguments and this file has to
+    hold both apart. Crossing 12 S6A.4.2's table is about AVAILABILITY -- turns
+    that reach the chassis through nav2_proxy would otherwise be vetoed for
+    ever, so the feature would not exist. teleop_cloud is not in that position
+    (local teleop is always an alternative), and the v0.7.9 premise it was
+    narrowed on -- a cloud operator watches a delayed feed with a narrow field
+    of view, no peripheral vision and no sound -- is untouched by "the robot
+    cannot see behind itself".
+
+    Both blind reasons are exercised. Testing only unknown_cells would leave
+    sectors_full_circle_unavailable free to clamp, and that is the reason this
+    machine actually hits on every tick (nothing publishes free_space), so the
+    hole would be the standing case rather than the rare one.
+
+    mutant: drop `source not in BLIND_CLAMP_EXEMPT_SOURCES` from the decision
+    line in rcg.apply_rotation_permit -> decision becomes limit and wz_out
+    becomes the clamp -> both parameters red.
+    """
+    lim = rot_limits()
+    r_check = R_ROBOT_CALIBRATED + lim.margin_rot_m
+    if reason_ring == "unknown":
+        ring = _clean_ring(r_check, unknown=1)
+        expect_reason = REASON_UNKNOWN_CELLS
+    else:
+        ring = RingSample(occ_cells=0, unknown_cells=0, total_cells=800,
+                          unknown_ratio=0.1, age_ms=100, resolution_m=0.1,
+                          sectors_min_m=None)
+        expect_reason = REASON_SECTORS_UNAVAILABLE
+    ev = _permit(0.0, 0.0, 1.5, source="teleop_cloud", ring=ring, limits=lim)
+    assert ev.reason == expect_reason
+    assert ev.reason in BLIND_REASONS      # the refusal IS blind ...
+    assert ev.decision == DECISION_REJECT  # ... and it is still a veto
+    assert ev.wz_out == 0.0
+    # The veto here is the TABLE's answer, not the missing-clamp degrade of 12
+    # S12 landing plan (2). detail_item is what separates them, and confusing
+    # the two would send the operator to look for an unset config key.
+    assert ev.detail_item is None
+    assert ev.event_kind == KIND_ROTATION_BLOCKED
+    # And the neighbouring rows must NOT have moved with it: the exemption is
+    # one row, not "cloud-shaped sources".
+    local = _permit(0.0, 0.0, 1.5, source="teleop_joystick", ring=ring, limits=lim)
+    assert local.decision == DECISION_LIMIT
+    assert local.wz_out == pytest.approx(lim.wz_blind_radps)
+
+
+def test_the_blind_exemption_is_a_subset_of_the_veto_branch():
+    """A source exempted from the blind clamp must already be a veto source.
+
+    Without this, BLIND_CLAMP_EXEMPT_SOURCES could name a LIMIT_SOURCES row and
+    the exemption would be a no-op that reads like a rule -- the blind branch
+    would hand back DECISION_LIMIT anyway, from the table instead of from the
+    correction, and nothing would look wrong. It also catches a typo'd source
+    name, which is the same failure wearing a different hat: a name in neither
+    set exempts nothing at all.
+
+    mutant: add "rns_avoid" to BLIND_CLAMP_EXEMPT_SOURCES -> red here, and
+    nowhere else, because the disposal it falls back to is LIMIT either way.
+    """
+    assert BLIND_CLAMP_EXEMPT_SOURCES <= VETO_SOURCES
+    assert BLIND_CLAMP_EXEMPT_SOURCES & LIMIT_SOURCES == frozenset()
 
 
 def test_blind_clamp_is_not_a_permit():

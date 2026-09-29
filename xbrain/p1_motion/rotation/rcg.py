@@ -67,7 +67,9 @@ The looks-right-but-wrong writings, each one a named prohibition.
     12 S6A.4.2's per-source table; the reasoning and its cost are in
     BLIND_REASONS below. Putting it back under the table would make the
     correction a no-op for every autonomous turn, which is every turn 18
-    A09..A12 can ask for.
+    A09..A12 can ask for. The one exception is teleop_cloud, and it is an
+    exception by ruling rather than by oversight -- see
+    BLIND_CLAMP_EXEMPT_SOURCES, and do not widen it to the local teleop rows.
   * Reporting "there is something there" as "I cannot see". evaluate_ring
     evaluates every HARD conjunct before every BLIND one for exactly that
     reason; see the ordering note there before moving any check.
@@ -223,18 +225,48 @@ REASON_SECTORS_BELOW_R_CHECK = "sectors_min_below_r_check"
 #     "there is something" / "no data" / "cannot see", and only the third one
 #     clamps.
 #
-#   * The clamp crosses 12 S6A.4.2's per-source table. The table vetoes the
-#     autonomous sources (nav2_proxy, relative_move, target_oriented) and
-#     teleop_cloud, and 18 A09..A12 all reach the chassis through nav2_proxy.
-#     Since the rear of the ring is never observed on this machine, leaving the
-#     blind case under that table would veto every voice-commanded turn for
-#     ever -- the correction would change nothing on the one path an operator
-#     actually uses. The cost is recorded rather than hidden: teleop_cloud's
-#     v0.7.9 narrowing (no "standing next to it" premise for a cloud operator)
-#     is NOT withdrawn, it is simply out-ranked in the blind case. 12 S15 #52
-#     carries that for the user to confirm or reverse; reversing it is one
-#     membership test here.
+#   * The clamp crosses 12 S6A.4.2's per-source table for every source but one.
+#     The table vetoes the autonomous sources (nav2_proxy, relative_move,
+#     target_oriented) and teleop_cloud, and 18 A09..A12 all reach the chassis
+#     through nav2_proxy. Since the rear of the ring is never observed on this
+#     machine, leaving the blind case under that table would veto every
+#     voice-commanded turn for ever -- the correction would change nothing on
+#     the one path an operator actually uses. teleop_cloud is the row that is
+#     NOT crossed; BLIND_CLAMP_EXEMPT_SOURCES carries why.
 BLIND_REASONS = frozenset({REASON_UNKNOWN_CELLS, REASON_SECTORS_UNAVAILABLE})
+
+# ---------------------------------------------------------------------------
+# 12 S15 #52, ruled by the user 2026-09-29: the sources for which a BLIND
+# refusal does NOT cross 12 S6A.4.2's table. Membership here means "keep the
+# per-source disposal", so a blind tick from teleop_cloud is still a veto.
+#
+# Why this one row, when crossing the table was the whole point of the RCG-3
+# correction. The two are different arguments and only one of them was ruled.
+# Crossing the table is about AVAILABILITY: 18 A09..A12 reach the chassis
+# through nav2_proxy, the rear of the ring is never observed, so a veto there
+# is permanent and the feature simply does not exist. teleop_cloud has no such
+# problem -- local teleop is always an alternative -- and 12 S6A.4.2's v0.7.9
+# row rests on a premise the correction never touched: a cloud operator is a
+# DEGRADED human in the loop, watching a delayed feed through a narrow field of
+# view with no peripheral vision and no sound, so he does not get the exit-layer
+# exemption the pad and the keyboard get. "The robot cannot see behind itself"
+# does not make that premise weaker; the two compound.
+#
+# The cost, stated rather than hidden (12 S6A.4.2's v0.7.9 row states it too):
+# a cloud operator cannot turn OUT of a wall he is against while the ring is
+# blind, and on this machine the ring is blind most of the time. The intended
+# handling is to send someone to the machine or hand over to local teleop, NOT
+# to relax this row.
+#
+# Not in here, deliberately: teleop_keyboard and teleop_joystick are the
+# "standing next to it" rows the exemption was written for, and rns_avoid is
+# the one source whose motive is to get away from the obstacle -- zeroing its
+# wz is the safety gate used backwards (see LIMIT_SOURCES).
+#
+# mutant: empty this set (its state before the ruling) -> a blind tick from
+# teleop_cloud clamps to wz_blind_radps ->
+# test_cloud_teleop_keeps_its_veto_when_the_ring_is_blind red.
+BLIND_CLAMP_EXEMPT_SOURCES = frozenset({"teleop_cloud"})
 
 # ---------------------------------------------------------------------------
 # 12 S6A.4.2 disposal by source. The table's axis is "is a human watching THIS
@@ -732,11 +764,16 @@ def apply_rotation_permit(*, vx_mps: float, vy_mps: float, wz_radps: float,
 
     Three outcomes, not two (12 S6A.3.2, as corrected 2026-09-29):
       permitted        wz untouched
-      blind refusal    wz clamped to +/- wz_blind_radps, ANY source
+      blind refusal    wz clamped to +/- wz_blind_radps, for every source
+                       except the BLIND_CLAMP_EXEMPT_SOURCES row, which keeps
+                       the table's answer (12 S15 #52)
       hard refusal     12 S6A.4.2's per-source table -- clamp for the local
                        teleop family and rns_avoid, zero for the rest
     The clamp degrades to a veto when wz_blind_radps is missing (12 S12 landing
-    plan (2)); that is now the only way a blind tick reaches zero.
+    plan (2)). So a blind tick reaches zero two ways and they are not the same
+    situation: no clamp value to apply, or a source that is not allowed the
+    clamp. detail_item tells them apart -- it names wz_blind_radps only in the
+    first case.
     """
     # Trigger first, verdict second, and never the other way round. The order
     # is what keeps the two fail-safes apart: the trigger answers "is this a
@@ -779,10 +816,19 @@ def apply_rotation_permit(*, vx_mps: float, vy_mps: float, wz_radps: float,
     # it for blind ticks would let an unrecognised source through on exactly
     # the path that is taken on every tick of this machine.
     disposal = _disposal_for(source)
-    # 12 S6A.3.3 RCG-3 (2026-09-29): "I could not see that way" clamps for
-    # every source; "there is something there" and "there is no data" keep the
-    # 12 S6A.4.2 table. See BLIND_REASONS for why the table is crossed.
-    decision = DECISION_LIMIT if verdict.reason in BLIND_REASONS else disposal
+    # 12 S6A.3.3 RCG-3 (2026-09-29): "I could not see that way" clamps; "there
+    # is something there" and "there is no data" keep the 12 S6A.4.2 table.
+    # BLIND_REASONS carries why the table is crossed at all,
+    # BLIND_CLAMP_EXEMPT_SOURCES the one row that is not crossed (12 S15 #52).
+    #
+    # The exemption falls back to `disposal`, never to a hard-wired veto. That
+    # matters for the next edit rather than for today: if 12 S6A.4.2 ever moves
+    # teleop_cloud onto the limit branch, this line follows the table instead of
+    # quietly contradicting it from a second place.
+    blind_reason = verdict.reason in BLIND_REASONS
+    decision = (DECISION_LIMIT
+                if blind_reason and source not in BLIND_CLAMP_EXEMPT_SOURCES
+                else disposal)
     detail_item: Optional[str] = None
     # 12 S6A.8's two kinds split on whether a retry could ever clear it. The
     # three config-level reasons are persistent (12 S6A.7 RC-D5 routes the same
@@ -841,6 +887,7 @@ __all__ = [
     "REASON_GRID_STALE", "REASON_MARGIN_BELOW_BOUND",
     "REASON_SECTORS_UNAVAILABLE", "REASON_SECTORS_BELOW_R_CHECK",
     "LIMIT_SOURCES", "VETO_SOURCES", "BLIND_REASONS",
+    "BLIND_CLAMP_EXEMPT_SOURCES",
     "RotationConfigError", "RotationLimits", "RingSample",
     "RotationVerdict", "RotationEval",
     "effective_radius", "spin_like", "ring_check_radius", "rcg4_lower_bound",
