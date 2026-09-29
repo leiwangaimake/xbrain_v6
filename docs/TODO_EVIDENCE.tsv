@@ -560,3 +560,12 @@ CPP-QD-19	ros2_ws/quadruped/test/test_chs_a_session.cc	manual	2026-09-29
 CPP-QD-20	ros2_ws/quadruped/test/test_chs_b.cc;ros2_ws/quadruped/test/test_process.cc;tests/boot/freeze/test_k_quadruped_qc.py	manual	2026-09-29
 CPP-RT-02	ros2_ws/sensor/test/test_heading_resolver.cc;ros2_ws/sensor/test/test_gnss_heading.cc	manual	2026-09-29
 CPP-RT-03	ros2_ws/sensor/test/test_clock_status.cc	manual	2026-09-29
+# CPP-BP-05 -- MR-1 (margin_rot_m == common.safety.d_safe_m).
+#   red-verified 2026-09-30: mutate `if rot != d_safe` -> `if False`
+#   => test_variant_a/b_..._is_mr1_red both RED; restore => 10 passed.
+#   NOTE the task title says nav2_proxy, but MR-1 itself OUTLIVED Nav2
+#   (12 S4.6 v0.9 deprecation). What died is the configs/nav2 landing
+#   spot, not the assertion: body c6_mr1_margins.py, key
+#   configs/p1_motion.yaml, consumer p1_motion/rotation/rcg.py (the
+#   rotation permit wired 2026-09-29).
+CPP-BP-05	tests/boot/freeze/test_c6_mr1_margins.py	manual	2026-09-30
