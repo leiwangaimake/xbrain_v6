@@ -140,6 +140,59 @@ def test_verdict_from_error_assertion_a_key_is_listed():
     assert "  unassigned_key: common.safety.t_lat_s" in v.stdout_lines
 
 
+def test_verdict_from_error_lists_every_key_when_the_raiser_had_them():
+    """detail.keys (all of them) must produce one row EACH, not one row.
+
+    10 S5.4.5 asks the refusal to list "unassigned key paths" -- plural.
+    Until 2026-09-29 assertion A passed only nulls[0] even though it had
+    computed the whole list to decide whether to fail at all, so an
+    operator filling in one null re-ran the entire freeze to learn the
+    next one. On the tree at the time that was dozens of rounds for a
+    list that existed in full on the first run.
+
+    mutant: drop the `keys` branch (back to detail.key only) -> the two
+    later rows disappear and this goes red.
+    """
+    exc = XbrainError(E_CONFIG_INVALID, "assertion A failed",
+                      {"kind": "null_unassigned",
+                       "key": "common.calib.calib_rev",
+                       "keys": ["common.calib.calib_rev",
+                                "common.db.fence_db",
+                                "common.zenoh.rt_endpoint"],
+                       "null_count": 3})
+    v = verdict_from_error(exc)
+    assert v.exit_code == 1
+    for k in ("common.calib.calib_rev", "common.db.fence_db",
+              "common.zenoh.rt_endpoint"):
+        assert ("  unassigned_key: %s" % k) in v.stdout_lines
+    # Exactly three rows: a mutant that appended the first key again (or
+    # that listed `key` alongside `keys`) would duplicate a row, and a
+    # duplicated key path reads to an operator as two separate problems.
+    rows = [ln for ln in v.stdout_lines if ln.startswith("  unassigned_key:")]
+    assert len(rows) == 3
+
+
+def test_verdict_from_error_falls_back_to_single_key():
+    """A raiser that has only the first one keeps working unchanged.
+
+    This is the compatibility half of the change above: no assertion is
+    REQUIRED to start collecting, and the ones that genuinely cannot
+    (their walk stops at the first violation) must not regress into an
+    EMPTY listing -- which is the one outcome worse than a single row
+    (see this module's "A TRAP WORTH NAMING").
+
+    mutant: make the keys branch unconditional (drop the isinstance /
+    non-empty guard) -> detail without `keys` yields no rows and this
+    goes red.
+    """
+    exc = XbrainError(E_CONFIG_INVALID, "assertion A failed",
+                      {"kind": "null_unassigned",
+                       "key": "common.safety.t_lat_s"})
+    v = verdict_from_error(exc)
+    assert v.exit_code == 1
+    assert "  unassigned_key: common.safety.t_lat_s" in v.stdout_lines
+
+
 def test_verdict_from_error_assertion_j_uses_absolute_path():
     """A J failure lands in the missing-files section and carries
     detail.path (absolute, because J makes it absolute at raise time)."""

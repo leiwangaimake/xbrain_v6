@@ -167,6 +167,46 @@ def test_mutant_null_value_caught_by_a_not_g(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# A-1b: detail.keys carries EVERY null, not just the first
+# ---------------------------------------------------------------------------
+
+def test_a_reports_every_null_not_only_the_first(tmp_path):
+    """10 S5.4.5 asks for "unassigned key paths" -- plural.
+
+    A already builds the complete null list to decide whether to fail at
+    all; until 2026-09-29 it passed only nulls[0] onward, so refuse_to_boot
+    could print just one row and an operator filling in one null re-ran the
+    whole freeze to learn the next. Nothing here is a second walk -- the
+    list is the same one the `if nulls:` above it tested.
+
+    detail.key stays = the first, so consumers that only know `key` are
+    unaffected (test_mutant_null_value_caught_by_a_not_g pins that).
+
+    mutant: pass keys=[first] instead of keys=nulls -> the second path is
+    missing and this goes red.
+    """
+    tree = _green_common_tree()
+    # Two nulls in DIFFERENT sub-trees, so a mutant that collected only
+    # within one branch cannot pass either.
+    tree["common"]["safety"]["t_lat_s"] = None
+    tree["common"]["spec"]["max_vx_mps"] = None
+    root = _write_config_tree(tmp_path / "configs", tree)
+    with pytest.raises(XbrainError) as ei:
+        a_run({"config_root": root})
+    detail = ei.value.detail
+    assert detail["kind"] == "null_unassigned"
+    keys = detail["keys"]
+    assert "common.safety.t_lat_s" in keys
+    assert "common.spec.max_vx_mps" in keys
+    # null_count must agree with the list it is reported beside: a count
+    # that disagrees with the rows is worse than no count, because an
+    # operator uses it to decide whether the listing is complete.
+    assert detail["null_count"] == len(keys)
+    # And `key` is still the first of them, not something else.
+    assert detail["key"] == keys[0]
+
+
+# ---------------------------------------------------------------------------
 # Mutant A-2: residual ${...} that cannot resolve -> A reports unresolved_ref
 # ---------------------------------------------------------------------------
 

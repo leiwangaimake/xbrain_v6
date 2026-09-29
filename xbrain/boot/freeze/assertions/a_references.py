@@ -152,7 +152,30 @@ def run(ctx: Dict[str, Any]) -> Dict[str, Any]:
         # Provenance tells us which layer DECLARED the null; that's
         # where the operator needs to fill it in.
         layer = overlay.provenance.get(first, "unknown")
+        # *** `keys` carries ALL of them, not just the first.
+        #
+        # 10 S5.4.5 asks the refusal to list "unassigned key paths" --
+        # plural. Until 2026-09-29 only `first` was passed, so an operator
+        # filling in a null re-ran the whole freeze to learn the next one
+        # -- once per remaining null, for a list this function already
+        # held in full. The count is whatever the tree currently carries;
+        # read it with the command in refuse_to_boot's docstring rather
+        # than from a number written here (CLAUDE.md 3.7).
+        #
+        # Why this is NOT the "second implementation that drifts" that
+        # refuse_to_boot's verdict_from_error docstring warns about: that
+        # warning is about a COLLECTOR living in refuse_to_boot, which
+        # would have to re-walk every runner's tree to find the rest.
+        # Nothing is re-walked here. `nulls` is the very list this
+        # assertion already computed to decide whether to fail at all, so
+        # there is exactly one walk and exactly one implementation. The
+        # fail-fast shape of the chain is untouched: A still raises on its
+        # first violation, and the assertions after it still do not run.
+        #
+        # `key` stays for compatibility and still means "the first one".
+        # Consumers that only know `key` keep working unchanged.
         _fail("null_unassigned", first,
+              keys=nulls,
               layer=layer,
               null_count=len(nulls))
 

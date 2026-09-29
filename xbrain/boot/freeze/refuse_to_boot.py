@@ -155,11 +155,28 @@ def verdict_from_error(exc: XbrainError) -> FreezeVerdict:
 
     The freeze chain is fail-fast by construction -- every runner in
     assertions/ raises at its first violation rather than collecting --
-    so this receives one failure per run, and the listing has one row.
-    That is the honest shape: the operator fixes that key, re-runs, and
-    gets the next one. A collector here would have to re-implement every
-    runner's walk to find the rest, and the second implementation would
-    be the one that drifts.
+    so this receives one failure per run. A collector HERE would have to
+    re-implement every runner's walk to find the rest, and the second
+    implementation would be the one that drifts. That still holds, and
+    this function still does no walking of its own.
+
+    *** But "one failure" is not the same as "one row" (2026-09-29).
+    A raiser that ALREADY holds the full set may hand it over in
+    detail.keys, and then printing one row throws away something nobody
+    has to recompute. Assertion A is exactly that case: it builds the
+    complete null list to decide whether to fail at all, so listing all
+    of them costs no second walk. An operator given only the first one
+    re-runs the freeze once per remaining null to read a list that
+    existed in full on the first run. To see the current count:
+      PYTHONPATH=/opt/xbrain_v6 python3 -c "from
+      xbrain.boot.freeze.assertions._layer_loader import load_layers;
+      from xbrain.common.config import build_overlay;
+      print(len(build_overlay(load_layers('/opt/xbrain_v6/configs')).unassigned()))"
+    (CLAUDE.md 3.7: the number is a measurement, not a constant.)
+
+    So: detail.keys when present, else detail.key. A raiser that has only
+    the first one keeps working unchanged, and none of them is required
+    to start collecting.
 
     An exception whose detail.kind is not one of the three CFG-CF-9
     buckets is NOT dropped: it gets an 'assertion (unclassified)' block
@@ -171,6 +188,12 @@ def verdict_from_error(exc: XbrainError) -> FreezeVerdict:
     if kind in _J_KINDS:
         return verdict([str(detail.get("path", exc))], [], [])
     if kind in _A_KINDS:
+        # keys (all of them) when the raiser had them; key (the first)
+        # otherwise. A raiser is never REQUIRED to collect -- this only
+        # stops the listing from discarding a set that already exists.
+        all_keys = detail.get("keys")
+        if isinstance(all_keys, (list, tuple)) and all_keys:
+            return verdict([], [str(k) for k in all_keys], [])
         return verdict([], [str(detail.get("key", exc))], [])
     if kind in _M_KINDS:
         row = "%s%s" % (detail.get("key", exc), _layer_suffix(detail))
