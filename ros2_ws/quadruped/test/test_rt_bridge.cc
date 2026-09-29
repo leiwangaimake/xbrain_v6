@@ -318,6 +318,58 @@ int main() {
     CHECK(b.estops_applied() == 3);
   }
 
+  // ---- A -> B -> A: the key compared against is the LAST one, not a set --
+  //
+  // 13 Q-3 said "同 cmd_id 重发 -> duplicate" without saying WHICH earlier
+  // message the cmd_id is compared against. Read as "any cmd_id seen inside
+  // the window", A -> B -> A would make the third message a duplicate. It
+  // does not: last_estop_cmd_id_ holds exactly one key, so the third is
+  // compared against B, differs, and executes.
+  //
+  // That is the specified behaviour as of the 2026-09-29 correction, and the
+  // reason is the whole point of this block: calling the third message a
+  // duplicate would DISCARD A REAL ESTOP that arrived inside the window --
+  // the same defect shape fixed on 2026-09-27 (two different stops 20 ms
+  // apart, the second swallowed), reached through a different sequence.
+  // Idempotency exists to absorb a RETRANSMISSION, and a retransmission is
+  // adjacent on the wire. The cost of executing here is one redundant zero
+  // frame plus one generation, with the robot already at zero; the cost of
+  // swallowing is a stop that never happened. The two directions are not
+  // symmetric, so the tie goes to stopping.
+  //
+  // Measured on the real chassis 2026-09-29 (robot stationary, hes=false):
+  // A accepted epoch=4, B accepted epoch=5, A-again(+42ms) accepted epoch=6.
+  {
+    QuadrupedProcess p(cfg());
+    std::vector<Sent> sent;
+    RtBridge b(&p, kRid, kBoot,
+               [&sent](const std::string& k, const char* d, std::size_t n) {
+                 sent.push_back({k, std::string(d, n)});
+                 return true;
+               });
+    const std::string one = wrap("{\"cmd_id\":\"e-hmi\",\"action\":\"stop\"}");
+    const std::string two = wrap("{\"cmd_id\":\"e-voice\",\"action\":\"stop\"}");
+    const std::uint64_t before = p.estop_epoch();
+
+    b.handle_estop(40.0, one.c_str(), one.size());
+    b.handle_estop(40.020, two.c_str(), two.size());
+    // Still inside the window measured from B (last_estop_mono_s_ advances
+    // only on a stop that executed), and carrying A's key again.
+    b.handle_estop(40.040, one.c_str(), one.size());
+
+    // +3: every one of the three executed.
+    // mutant: remember every cmd_id seen in the window instead of only the
+    // last one -> the third becomes a duplicate and this goes red.
+    CHECK(p.estop_epoch() == before + 3);
+    CHECK(b.estops_applied() == 3);
+    CHECK(b.estops_deduped() == 0);
+    // The ack names A's own cmd_id, not B's: a sender must be able to tell
+    // "yours executed" from "yours was read as someone else's repeat".
+    CHECK(has(sent.back().body, "e-hmi"));
+    CHECK(has(sent.back().body, "\"result\":\"accepted\"") ||
+          has(sent.back().body, "\"result\": \"accepted\""));
+  }
+
   // ---- no cmd_id -> no idempotency key -> the pure window, as before -----
   //
   // 11 S7.1's field table: "缺失也照常执行(fail-safe), 仅失去去重能力". With
