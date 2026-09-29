@@ -357,10 +357,18 @@ class MemoryGrid:
           N   = (2*ceil(r_outer/cell_m) + 1)^2        cells visited (square)
           |A| ~ pi*(r_outer^2 - r_inner^2) / cell_m^2 cells counted (annulus)
         At today's values -- cell_m 0.25, r_outer = r_robot + d_safe = 1.482 --
-        that is 13^2 = 169 visits, each a dict lookup plus one subtraction.
-        Worst case in this section's own terms (r_outer 2.0, cell_m dropped to
-        0.05) is 81^2 = 6561 visits, about 39x today's; still inside the 12 S2.2
-        budget, but lowering cell_m means re-checking that arithmetic.
+        that is 13^2 = 169 visits and about 110 counted, each a dict lookup
+        plus one subtraction. Worst case in this section's own terms (r_outer
+        2.0, cell_m dropped to 0.05) is 81^2 = 6561 visits, roughly 39x. The
+        measured wall time is NOT written here (CLAUDE.md 3.7 -- it would go
+        stale on the next Jetson image); 12 S6A.3.2 carries the criterion and
+        a reproducible command to evaluate it on the ORIN.
+
+        It runs on EVERY tick, not only spin_like ones: the trigger is decided
+        from the GATED velocity inside NavTick.run, after this sample has been
+        assembled. Conditioning it would mean the permit sometimes has data and
+        sometimes does not, told apart by a predicate evaluated elsewhere --
+        more surface than the scan costs.
 
         FRESHNESS IS ASYMMETRIC, and this is the part that is easy to get
         wrong. BLOCKED is returned on the grid's own TTL -- memory of an
