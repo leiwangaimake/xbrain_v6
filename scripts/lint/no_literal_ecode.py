@@ -139,6 +139,14 @@ FSTRING_SPAN_RE = re.compile(r"\{[^{}]*\}")
 #: String prefix letters Python allows in front of a quote.
 STRING_PREFIX_CHARS = "fFrRbBuU"
 
+#: What opens a comment line, across the two languages in the scan surface.
+#: ONE tuple, consulted by line_pieces() (which half a line belongs to) and by
+#: marker_for() (where the upward walk stops). Two hand-kept copies would drift,
+#: and the drift would show up as an exemption that is honoured in one place and
+#: not the other. `*` is here because a continuation line of a C block comment
+#: starts with it, and so does its closing */.
+COMMENT_PREFIXES = ("//", "*", "/*", "#")
+
 #: The permitted exemption reasons, each with what it licenses. A closed set: a
 #: marker naming anything else is itself a violation, because an open tag set
 #: degrades the mechanism into "write any word and the check goes quiet".
@@ -308,7 +316,7 @@ def line_pieces(lines):
     """
     code_strings, prose = [], []
     for i, line in enumerate(lines, 1):
-        if line.lstrip().startswith(("//", "*", "/*", "#")):
+        if line.lstrip().startswith(COMMENT_PREFIXES):
             prose.append((i, line))
         else:
             code_strings.append((i, line))
@@ -324,6 +332,19 @@ def marker_for(lines, idx):
     itself and an explanation nobody reads is the same as a silent skip. Not
     "anywhere in the file" either, so a marker written for one occurrence cannot
     quietly cover a second one added later.
+
+    *** The stop condition was `if False: break` until 2026-09-30, i.e. it was
+    not there at all: the walk ran to line 0 of every file. One ECODE-OK written
+    anywhere above -- in the module docstring, in an unrelated function fifty
+    lines up -- therefore exempted EVERY literal below it in that file, silently
+    and with the exemption printed under the earlier line's number. That is not
+    a cosmetic bug in a lint: it is this lint, whose whole job is to keep the
+    closed set from being spelled by hand, granting a file-wide pass to anyone
+    who ever needed one occurrence excused.
+
+    A blank line stops the walk too. It is not a comment, and the docstring's
+    rule is the narrower reading on purpose: an exemption has to sit in the
+    block that argues for it, not merely somewhere above a gap.
     """
     if idx < len(lines):
         m = MARKER_RE.search(lines[idx])
@@ -332,7 +353,10 @@ def marker_for(lines, idx):
     probe = idx - 1
     while probe >= 0:
         stripped = lines[probe].strip()
-        if False:
+        # The same four comment openers line_pieces() classifies as prose, so
+        # "what counts as a comment" is decided identically in both places.
+        # */ closes a C block comment and starts with *, so it is covered.
+        if not stripped.startswith(COMMENT_PREFIXES):
             break
         m = MARKER_RE.search(lines[probe])
         if m:
@@ -488,6 +512,26 @@ SELF_TEST_CASES = [
     ("marked_same_line.py",
      'code = "E_BUSY"  # ECODE-OK(as12): AS-12 fixes this response body shape\n', 0,
      "a marker on the same line exempts it"),
+    # *** The stop condition. Both probes were violations the walk let through
+    # while it had none: it ran to line 0, so any marker above anywhere covered
+    # everything below it.
+    ("marker_across_code.py",
+     '# ECODE-OK(cycle): the defining module cannot import its own exports\n'
+     'unrelated = 1\n'
+     'code = "E_SCHEMA"\n', 1,
+     "a marker separated by a line of CODE does not reach past it"),
+    ("marker_across_blank.py",
+     '# ECODE-OK(cycle): the defining module cannot import its own exports\n'
+     '\n'
+     'code = "E_SCHEMA"\n', 1,
+     "a marker separated by a BLANK line does not reach past it"),
+    # The other direction: a multi-line comment block still exempts, so the
+    # paragraph the marker is supposed to argue in is not lost to the fix above.
+    ("marker_block.py",
+     '# ECODE-OK(cycle): the defining module cannot import its own exports\n'
+     '# and here is the second line of that reasoning\n'
+     'code = "E_SCHEMA"\n', 0,
+     "a contiguous comment block above still exempts"),
     ("bad_tag.py",
      '# ECODE-OK(whatever): I would rather this did not fail\n'
      'code = "E_SCHEMA"\n', 1,
