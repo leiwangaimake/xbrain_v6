@@ -139,6 +139,24 @@ common:
         require_sense_m: null
         sensors: null
 
+    # -- 盲向旋转限幅 (11 S3.1.5.6) -----------------------------------------
+    # 为什么这个键存在: sectors 只有 13 条, 覆盖 +-90 度前半圈, 后半圈无数据.
+    # S3.1.5.6 的处置表逐字: 后向/侧向 covered == false 时该扇区 dist_m = null,
+    # 而 "存在 null 扇区时旋转按盲向处理" -- wz 限本值 + L1 确认.
+    #
+    # 注意它[不是]"看不见就不许转". 契约对看不见的方向给的是限速 + 确认,
+    # 拒绝是另一条路径 (12 S6A 的 RCG 许可判据) 的事, 两者处置不同.
+    #
+    # [2026-09-29 落值] 取 11 S3.1.5.6 的[建议]0.3 rad/s, 用户裁决
+    # "按你的建议设置实施". 在此之前本键全仓 configs 零命中, 而 12 S12 落地
+    # 方案 2 是"拿不到限幅值就不放行" => rns_avoid 那一支退化为否决, 而
+    # rns/source.py 的接触保险丝在 0.7m 内正是[刻意]压零 v 保留转向
+    # (源码逐字 "turn continues; upper layers re-plan"), 那一拍恰是 spin_like
+    # => 机器人会停在障碍前转不开. 这是落值的直接动因.
+    free_space:
+      blind:
+        wz_blind_radps: 0.3
+
   # -- 安全常数 (10 S5.4.5 safety 两行) -------------------------------------
   # 唯一定义处是 safety/brake.yaml 与 safety/clock.yaml (L3, 整层自动 locked,
   # 且永不跟随 XBRAIN_CONFIG_DIR). 本文件只声明键位.
