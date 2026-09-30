@@ -249,9 +249,46 @@ def test_arb_dedup_key_composition_stable():
     assert dedup_key_for("winner_change") == "arb:motion:winner_change"
 
 
-def test_arb_dedup_window_ms_matches_spec():
-    """§7A.7: 10-second coalesce window."""
-    assert DEDUP_WINDOW_MS == 10_000
+def test_arb_dedup_window_ms_is_derived_from_the_shared_authority():
+    """11 S7A.7's window must come from ONE place, not be re-typed per module.
+
+    The old form here was `assert DEDUP_WINDOW_MS == 10_000`, which is the
+    assertion shape that let the duplication live: it pins the literal in the
+    module against the same literal in the test, so both stay green no matter
+    what xbrain/common/arbiter/audit.py says. That module is the authority (p5
+    renders this same event stream through it, and merge_audit_window does the
+    same x1000 there), and until 2026-09-30 visibility.py held a THIRD copy.
+
+    So the property asserted is the DERIVATION, not the number. A window that
+    disagrees between producer and aggregator raises nothing -- it merges the
+    wrong events, and 11 S7A.7 calls domain 1 the highest-volume producer in the
+    audit trail.
+
+    MUTATION: write DEDUP_WINDOW_MS = 10_000 back as a literal -> red, because
+    identity with the imported value is what is checked, not equality with 10000.
+    """
+    from xbrain.common.arbiter import audit as shared
+
+    assert DEDUP_WINDOW_MS == shared.DEDUP_WINDOW_S * 1000, (
+        "p1's arb dedup window (%r ms) disagrees with the shared authority "
+        "(%r s)" % (DEDUP_WINDOW_MS, shared.DEDUP_WINDOW_S))
+    # Re-deriving under a patched authority is what separates "derived" from
+    # "happens to equal today". A literal 10_000 survives the equality above
+    # while this reload does not.
+    import importlib
+
+    from xbrain.p1_motion.arb import visibility
+    monkey = shared.DEDUP_WINDOW_S
+    try:
+        shared.DEDUP_WINDOW_S = 7
+        importlib.reload(visibility)
+        assert visibility.DEDUP_WINDOW_MS == 7000, (
+            "DEDUP_WINDOW_MS did not follow the shared authority; it is still a "
+            "hand-written copy")
+    finally:
+        shared.DEDUP_WINDOW_S = monkey
+        importlib.reload(visibility)
+    assert visibility.DEDUP_WINDOW_MS == shared.DEDUP_WINDOW_S * 1000
 
 
 def test_arb_gen_never_increments_on_pure_heartbeat_burst():

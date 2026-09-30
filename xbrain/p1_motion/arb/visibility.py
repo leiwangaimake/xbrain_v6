@@ -38,9 +38,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from xbrain.common.arbiter.audit import DEDUP_WINDOW_S
+
 ARB_MOTION_STATE_KEY = "state/arb/motion"
 ARB_MOTION_EVENT_KEY_TEMPLATE = "event/{severity}/arbitration"
-DEDUP_WINDOW_MS = 10_000
+#: 11 S7A.7's coalesce window, in ms because this module works in ms.
+#:
+#: DERIVED, not written down again. This was a literal 10_000 until 2026-09-30 --
+#: the THIRD copy of the same number (the authority is
+#: xbrain/common/arbiter/audit.py DEDUP_WINDOW_S, which p5 renders the very same
+#: event stream with, and which merge_audit_window also multiplies by 1000).
+#: Three hand-maintained copies of one contract value is the shape CLAUDE.md S3.7
+#: is about: the copies do not drift on the day they are written, they drift on
+#: the day somebody changes one of them, and a dedup window that disagrees
+#: between producer and aggregator does not raise -- it silently merges the wrong
+#: things (11 S7A.7 events are the arbitration audit trail, and domain 1 is the
+#: highest-volume one in it).
+DEDUP_WINDOW_MS = DEDUP_WINDOW_S * 1000
 HEARTBEAT_PERIOD_MS = 1000
 
 
