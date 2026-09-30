@@ -33,16 +33,48 @@ def test_self_test_passes():
 
 
 def test_the_repository_currently_passes():
-    """Reality: 5 spec keys are null (V-01 open), t_lat_s is 0.4 (M-01 closed)."""
+    """Reality: 4 spec keys are null (V-01 open for those four), t_lat_s is
+    0.4 (M-01 closed), max_vx_mps is 2.0 (user ruling 2026-09-10)."""
     r = _run()
     assert r.returncode == 0, r.stdout
 
 
-def test_scan_reports_guarded_key_count():
+#: The guarded set, spelled out rather than counted.
+#
+# Why the SET and not just the number: a count cannot tell "one key was
+# dropped and another added" from "nothing changed", and the one thing this
+# file has to notice is a safety key quietly leaving the guard. The count is
+# still asserted below, from len() of this list, so the two cannot disagree.
+#
+# Why max_vx_mps is NOT here -- and why that is the correction rather than a
+# hole. 21 V-01 was corrected on 2026-09-28 under CLAUDE.md iron rule 1,
+# verbatim: "守卫已同步(受守键 9 -> 8)". The value 2.0 was landed by the user
+# on 2026-09-10 on a three-fold basis (99 U54 ceiling + the vendor's "actual
+# maximum 2 m/s" + the user's own confirmation), recorded at the value in
+# configs/models/m20s.yaml. V-01 itself stays OPEN: the written spec and the
+# bench cross-check are both unmet, so the other four spec keys stay guarded.
+# Guarding max_vx too made the gate report a permanent red against a standing
+# ruling, which is how a gate stops being read (CLAUDE.md 3.2 form 2).
+_GUARDED_KEYS = (
+    "common.spec.max_accel_mps2",   # V-01
+    "common.spec.max_decel_mps2",   # V-01
+    "common.spec.max_vy_mps",       # V-01
+    "common.spec.max_wz_radps",     # V-01
+    "ptz.k_ms_per_deg",             # M-PTZ-1
+    "ptz.omega_pan",                # T-PTZ-3
+    "ptz.omega_tilt",               # T-PTZ-3
+    "ptz.preset_effective",         # T-PTZ-1
+)
+
+
+def test_scan_reports_the_guarded_key_set():
     r = _run("-v")
-    # 5 V-01 spec keys + 4 PTZ keys (preset_effective / omega_pan /
-    # omega_tilt / k_ms_per_deg). M-01 closed by U54.
-    assert "guards 9 keys" in r.stdout
+    listed = sorted(
+        line.split("<-")[0].replace("guarded:", "").strip()
+        for line in r.stdout.splitlines() if line.strip().startswith("guarded:")
+    )
+    assert listed == sorted(_GUARDED_KEYS), r.stdout
+    assert "guards %d keys" % len(_GUARDED_KEYS) in r.stdout
 
 
 def test_verbose_lists_debt_ids():
