@@ -704,7 +704,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             rid=os.environ.get("XBRAIN_ROBOT_ID", "unknown"),
             emit=_emit_device_event,
             now_iso=lambda: datetime.now(timezone.utc).isoformat(),  # WALL-CLOCK-OK(record): event record timestamp, never an age or timeout
-            eid_gen=_dev_eid)
+            eid_gen=_dev_eid,
+            now_wall_s=time.time)  # WALL-CLOCK-OK(record): 11 S6.1 Event.ts, replaces the ts=0.0 that made p5 stamp its own receive time
         # Per-device OFFLINE detail (11 S6.2 reason/socket evidence). audio sub-
         # devices (speaker/siren) sit on the 8519 socket, lights (strobe/light) on
         # 8529; mic reason aligns with AsrGate.reason device_fault (16 S8.9.2); ptz

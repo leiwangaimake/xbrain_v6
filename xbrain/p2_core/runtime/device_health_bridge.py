@@ -44,11 +44,17 @@ class DeviceHealthBridge:
 
     def __init__(self, rid: str, emit: Callable[[dict], None],
                  now_iso: Callable[[], str], eid_gen: Callable[[str, bool], str],
+                 now_wall_s: Callable[[], float],
                  down_threshold: int = 3, up_threshold: int = 2) -> None:
         self._rid = rid
         self._emit = emit
         self._now_iso = now_iso
         self._eid_gen = eid_gen
+        # 11 S6.1 Event.ts, epoch seconds. Injected rather than read inline for
+        # the same reason now_iso is: the two stamps on one event must come from
+        # ONE clock, and a test can only assert that if it supplies both.
+        # NO default: an omitted clock here used to be ts=0.0 (see _on_transition).
+        self._now_wall_s = now_wall_s
         self._down_thr = down_threshold
         self._up_thr = up_threshold
         self._monitors: dict = {}
@@ -108,11 +114,23 @@ class DeviceHealthBridge:
             # 11 S6.2: attach reason/socket on the OFFLINE event only (evidence of
             # what went down); the paired online carries just {type, device}.
             extra = self._offline_detail.get(device_id) if offline else None
+            # ts was 0.0 until 2026-09-30. It did not show up as a bug because
+            # p5's _normalise_event writes `d.get("ts") or data.get("ts") or
+            # now.timestamp()` and 0.0 is FALSY, so record.db got p5's receive
+            # time instead. What was lost is WHEN THE DEVICE WENT DOWN: a
+            # backlogged or restarted p5 stamps its own clock, and the offline /
+            # online pair can even land out of order. Relying on a value that
+            # happens to be falsy is the fragile half -- tightening that `or`
+            # into an `is None` test (which is the correct fix there) would turn
+            # every one of these into a genuine 1970 timestamp.
+            # WALL-CLOCK-OK(record): 11 S6.1 Event.ts, the moment the transition
+            # was confirmed. Never an age or a timeout -- the debounce counts
+            # SAMPLES, not seconds, so no monotonic reading is needed here.
             ev = build_device_event(
                 device_id, offline, rid=self._rid,
                 eid=self._eid_gen(device_id, offline),
                 detected_at=self._now_iso(), created_at=self._now_iso(),
-                ts=0.0, src="p2_core", extra_detail=extra)
+                ts=self._now_wall_s(), src="p2_core", extra_detail=extra)
             self._emit(ev)
             _logger.info("device %s %s emitted", device_id,
                          "offline" if offline else "online")
