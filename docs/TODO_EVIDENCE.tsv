@@ -24,6 +24,35 @@
 #   ⇒ 这两项在 progress.py 里会稳定显示 IN_PROGRESS。这是【诚实的显示】--
 #     证据产物确实没通过, NO 不要为了把数字做上去而改成指向别的测试。
 #
+# ! 2026-09-30 Phase 1 对账 -- 三行「把数据文件当验证产物」的订正。
+#   起因: progress.py 对每个产物的做法是【跑它】-- tests/ 下的交给 pytest,
+#   其余交给 python3。于是一个纯注释的 yaml 恰好是合法的空 Python 程序而通过,
+#   而 pyproject.toml / .clang-tidy / tests/requirements.txt 不是, 必然非零退出。
+#   结果是三项被报成「证据未通过: pyproject.toml」-- 结论对不对另说, 理由是假的。
+#   ⇒ 数据文件不是验证产物; 验证它的那条测试才是。逐条:
+#   * CFG-DC-02  改挂 test_toolchain_config.py + test_ci_registry.py。
+#                红验(2026-09-30 实跑): 挪走 pyproject.toml ⇒ 5 条红;
+#                挪走 .clang-tidy ⇒ 3 条红; 放回 ⇒ 8 条全绿。变异体③
+#                「run_gate 某条门改成 || true」由 test_ci_registry.py 的
+#                test_run_all_has_set_e 逐字覆盖。变异体①②(mypy / clang-tidy
+#                真跑)不在覆盖内 -- test_toolchain_config.py 头注 Boundaries
+#                逐字「不跑 ruff, 不跑 clang-tidy」。
+#   * INF-CI-03  【摘除映射, 回到 UNMAPPED】。本项判据要的是【基线】:
+#                ① mypy --strict 零 error ② ruff check 零 error
+#                ③ C++ -Wall -Wextra -Werror -Wpedantic 编译通过。三条都没有
+#                执行体; test_toolchain_config.py 只验配置文件在不在、写了什么。
+#                挂它会把本项报成 DONE = 谎称已验证。★ 反证在仓内:
+#                tests/ci/test_ruff_hard_rules.py 头注逐字记着 ruff 那一档
+#                「一直是红的」。⇒ 宁可 UNMAPPED。
+#   * CFG-DC-04  【摘除映射, 回到 UNMAPPED】。① tests/requirements.txt 与
+#                「pytest --collect-only 零 collect error」全仓无执行体;
+#                ② 三档 marker 的【完备性】判据(判据原文: 给某 needs_chassis
+#                用例去掉 marker ⇒ 元测试必须红)对应的正是
+#                tests/meta/test_marker_coverage.py::test_no_new_unmarked_test_file,
+#                而那条断言按构造永远绿(_LEGACY_UNMARKED 在 import 期由当前
+#                目录树重算, surprises 恒为空集 -- CLAUDE.md 3.2 形态⑦)。
+#                ⇒ 它正是本项要杀的那个变异体杀不掉的那条, 不挂。
+#
 # -- 续做指南(给下一次接手的人, 含我自己) --------------------------------
 #
 # 已落: BIZ-P3 30 / GWY-P5 25 / GWY-P4 11 / BIZ-P2 27 = 93 项命中 TODO。
@@ -602,7 +631,6 @@ INF-TS-05	tests/property/test_arbiter_invariants.py	brief	2026-08-23
 INF-ZN-04	tests/common/zenoh/test_qos_resolve.py	brief	2026-08-23
 INF-ZN-08	tests/deploy/test_zenoh_router_config.py	brief	2026-08-23
 CHK-2-26	scripts/lint/no_disabled_switch.py;tests/common/test_lints.py	manual	2026-08-23
-CFG-DC-04	tests/requirements.txt;pytest.ini;tests/conftest.py	manual	2026-08-23
 GWY-P4-32	xbrain/p4_agent/runtime/orchestrator_turn.py;tests/integration/test_orchestrator_wiring.py	manual	2026-08-23
 GWY-P4-34	xbrain/p4_agent/templates/query_engine.py;tests/p4_agent/test_batch5.py	manual	2026-08-23
 CHK-1-49	scripts/ci/gen_drift_gate.py;tests/ci/test_gen_drift_gate.py	manual	2026-08-23
@@ -616,8 +644,7 @@ CFG-BT-11	xbrain/p2_core/boot/stage_machine.py;tests/startup/test_boot_invariant
 CFG-BT-12	xbrain/p2_core/boot/timeout_lock.py;tests/startup/test_boot_invariants.py	manual	2026-08-23
 CFG-BT-13	xbrain/p2_core/bit/report.py;tests/startup/test_boot_invariants.py	manual	2026-08-23
 CFG-BT-19	xbrain/p4_agent/registry/startup_assertions.py;tests/p4_agent/registry/test_cmdset_conflicts.py	manual	2026-08-23
-CFG-DC-02	pyproject.toml;tests/ci/test_toolchain_config.py	manual	2026-08-23
-INF-CI-03	pyproject.toml;.clang-tidy;tests/ci/test_toolchain_config.py	manual	2026-08-23
+CFG-DC-02	tests/ci/test_toolchain_config.py;tests/common/test_ci_registry.py	manual	2026-09-30
 CFG-CF-05	configs/p1_motion.yaml;tests/configs/test_config_layers.py	manual	2026-08-23
 CFG-CF-06	configs/intents.yaml;tests/configs/test_config_layers.py	manual	2026-08-23
 CFG-CF-08	configs/nav2/behavior_only.yaml;tests/configs/test_config_layers.py	manual	2026-08-23
