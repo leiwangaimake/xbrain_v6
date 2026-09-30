@@ -67,12 +67,23 @@ def geo_event_severity(etype: str) -> str:
 
 
 def render_geo_event(sev: str, etype: str, detail: Dict[str, Any],
-                     eid: str) -> Tuple[str, Dict[str, Any]]:
+                     eid: str, ts: float) -> Tuple[str, Dict[str, Any]]:
     """One ApplyResult.events triple -> (key, body) for event/{sev}/geo.
 
     sev is checked against the type rather than trusted: see the module docstring.
     The caller's detail dict is never mutated -- an applier that reuses it for its
     ack would otherwise ship an event field to the cloud in the ack shape.
+
+    ts is 11 S6.1 Event.ts in epoch seconds and is a REQUIRED argument, read by
+    the wiring layer. It was hard-coded 0.0 until 2026-09-30, which stayed
+    invisible because p5's _normalise_event does
+    `d.get("ts") or data.get("ts") or now.timestamp()` and 0.0 is falsy, so
+    record.db silently recorded p5's RECEIVE time -- "who changed the map, and
+    when" degraded to "when the gateway got round to it". Passed in rather than
+    read here because this module is the pure mapping (module docstring) and
+    must stay callable with no clock; the same split 12 S6A.8 PUB-1 makes for
+    the rotation events. No default value: a defaulted ts is a call site that
+    can forget it and go back to a constant without anything going red.
     """
     expected = geo_event_severity(etype)
     if sev != expected:
@@ -85,6 +96,14 @@ def render_geo_event(sev: str, etype: str, detail: Dict[str, Any],
         "title": "geo %s %s" % (detail.get("geo_id"), etype),
         "detail": dict(detail, type=etype),
         "src": "p3_task",
-        "ts": 0.0,
+        "ts": ts,
     }
+    # No dedup_key / dedup_window_s on purpose. 11 S6.2's geo row fixes the sev,
+    # the channel (normal) and the nine detail.type values, and specifies
+    # neither -- and S7.10 says this stream carries no synchronisation duty, so
+    # there is nothing for a merge to protect. p5 only calls _try_merge
+    # `if ev.get("dedup_key")`, so a window with no key would never be read,
+    # while a key with no window is the combination that silently folds every
+    # later event onto the first row. Adding either is a contract change, not an
+    # implementation choice (CLAUDE.md S3.7).
     return key, body

@@ -333,11 +333,21 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 # 唯一还带着任务的报文.
                 if extra:
                     detail.update(extra)
+                # WALL-CLOCK-OK(record): 11 S6.1 Event.ts, 任务跃迁发生的墙钟
+                # 时刻. 原写死 0.0 -- 被 p5 的 `or` 兜底遮住(见上面 geo 那处的
+                # 同一条论证), 入库成 p5 收包时刻. 这一处代价更大: 上面注释已
+                # 写明"任务一终结就从 11 S4.4 的 TaskState 广播里消失, 事件是
+                # 终态那一刻唯一还带着任务的报文" -- 那份报文的时间戳本来就是
+                # 唯一一份, 写 0.0 等于把它交给 p5 的调度时机.
+                # NO 不带 dedup_key: 11 S6.2 的 task 行只规定 sev 与 channel,
+                # 既没有 key 也没有窗口; 而 p5 只在 ev.get("dedup_key") 为真时
+                # 才走 _try_merge, 带 key 不带窗口才是会静默并掉事件的那一半.
+                # 不做年龄/超时判定(那些一律 time.monotonic(), CLK-C1).
                 gen.put("event/%s/task" % sev, json.dumps({
                     "eid": "task-%s-%d" % (_task_evt_boot, _task_evt_seq[0]),
                     "title": "task %s %s" % (task_id, kind),
                     "detail": detail,
-                    "src": "p3_task", "ts": 0.0,
+                    "src": "p3_task", "ts": time.time(),
                 }, ensure_ascii=False).encode("utf-8"))
 
             async def _list_route_ids():
@@ -393,9 +403,17 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 # guards this callback per event, so a raise is logged and the
                 # already-committed write still acks accepted.
                 _geo_evt_seq[0] += 1
+                # WALL-CLOCK-OK(record): 11 S6.1 Event.ts, 这次改图发生的墙钟
+                # 时刻. 原为 render_geo_event 内写死的 0.0 -- p5 的
+                # _normalise_event 是 `d.get("ts") or ... or now.timestamp()`,
+                # 0.0 为假值, 于是入库的是 p5 收包时刻, 审计里"谁什么时候改了
+                # 图"退化成"网关什么时候看到的". 这里读钟而不在 renderer 里读:
+                # 那个模块是纯映射, 同 12 S6A.8 PUB-1 的分工.
+                # 不做年龄/超时判定(那些一律 time.monotonic(), CLK-C1).
                 key, body = render_geo_event(
                     sev, etype, detail,
-                    "geo-%s-%d" % (_geo_evt_boot, _geo_evt_seq[0]))
+                    "geo-%s-%d" % (_geo_evt_boot, _geo_evt_seq[0]),
+                    time.time())
                 gen.put(key, json.dumps(
                     body, ensure_ascii=False).encode("utf-8"))
 

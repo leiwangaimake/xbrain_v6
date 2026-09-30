@@ -13,6 +13,10 @@ event. Mutations paired per 3.3.
 """
 from __future__ import annotations
 
+import io
+import textwrap
+import tokenize
+
 import pytest
 
 from xbrain.p3_task.state.machine import TRANSITIONS
@@ -220,3 +224,109 @@ async def test_the_publish_seam_still_logs_the_reason_it_no_longer_judges_by():
     assert "reason" in src
     assert "from_state, to_state, reason" in src, (
         "日志没有同时带上 from/to/reason, 出问题时看不出迁移是从哪来的")
+
+
+# ------------------------------------------- 11 S6.1 Event.ts 必须是发生时刻
+
+
+def _nested_def_body(src: str, name: str) -> str:
+    """把 src 里名为 name 的嵌套函数体切出来, 按缩进定界.
+
+    *** 不用"从 def 起数 N 个字符"那种切法: 本判据第一版就是 1400 字符, 而给
+    该函数补了几行注释后 gen.put 就落在窗口外, 断言当场变红. 那种红是[判据自己
+    的长度假设过期], 不是代码错 -- 按 CLAUDE.md S3.2 形态2, 恒红的判据最后会被
+    人放宽成"包含即可", 于是变成恒绿. 按缩进定界没有这个长度假设.
+    """
+    needle = "def %s(" % name
+    assert needle in src, "%s 搬走了, 本判据要重新对靶" % name
+    start = src.index(needle)
+    line_start = src.rfind("\n", 0, start) + 1
+    indent = len(src[line_start:start])          # def 这一行的缩进宽度
+    lines = src[line_start:].splitlines()
+    out = [lines[0]]
+    for line in lines[1:]:
+        # 空行属于函数体; 缩进回到 def 同级或更浅即函数结束.
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        out.append(line)
+    return textwrap.dedent("\n".join(out))
+
+
+def _code_only(text: str) -> str:
+    """去掉注释, 只留代码.
+
+    *** 本判据踩过一次[判据自伤](CLAUDE.md S3.2 形态3): 下面那条断言要在函数体
+    里 grep 带引号的 dedup key 字段名, 而同一个函数体里正好有一行解释性注释原样
+    写着 ev.get(...) 那个字段名 -- 于是命中数[永不可能为 0], 断言恒红. 判据句必须
+    在自己的扫描面之外, 所以这里把注释整类移出扫描面.
+
+    用 tokenize 而不是按 # 切: 字符串里的 # 会被按字面切掉, 那种切法会在某天悄悄
+    改变被测文本.
+    """
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, IndentationError):      # pragma: no cover
+        # 切出来的片段不成完整语法时退回原文: 宁可让断言在更大的面上求值(可能
+        # 误红并被人看到), NO 也不要静默换成一个更容易通过的输入.
+        return text
+    return "".join(
+        t.string if t.type != tokenize.COMMENT else ""
+        for t in toks
+        if t.type not in (tokenize.ENCODING, tokenize.ENDMARKER))
+
+
+def test_任务事件的ts是本拍墙钟而不是写死的零():
+    """*** 这一条只能在源文本上求值: 装配层的 gen.put 需要真 Zenoh session.
+
+    原状: _emit_task_event 里 "ts": 0.0 写死. 它一直看不出问题, 是因为 p5 的
+    _normalise_event 写的是
+      d.get("ts") or data.get("ts") or now.timestamp()
+    而 0.0 是[假值] => 入库的是 p5 收包时刻, 去重算式仍看到递增 ts, 所以没有
+    任何测试会红.
+
+    为何这一处代价最大: 同一段代码上面的注释自己写着 -- 11 S4.4 的 TaskState
+    [只列非终态任务], 任务一终结就从广播里消失, "事件是终态那一刻唯一还带着
+    任务的报文". 那份报文的时间戳是唯一一份, 写 0.0 等于把"任务什么时候完成
+    的"交给 p5 的调度时机; p5 落后或重启时, 终态时间就是错的.
+
+    连带: 这条通路靠一个[碰巧为假]的值兜底. 把那个 or 收紧成 is None(p5 侧的
+    正确修法)会让每一条都变成真的 1970 年.
+
+    MUTATION: 把 time.time() 改回 0.0 -> 红.
+    """
+    import inspect
+
+    from xbrain.p3_task.runtime import main_wiring
+
+    body = _nested_def_body(inspect.getsource(main_wiring._amain),
+                            "_emit_task_event")
+    assert 'gen.put("event/%s/task"' in body, "任务事件的 put 不在这一段里了"
+    assert '"ts": time.time()' in body, (
+        "任务事件没有带本拍墙钟; 写死的 ts 会被 p5 的 or 兜底换成收包时刻")
+    assert '"ts": 0.0' not in body, "写死的 ts=0.0 回来了"
+
+
+def test_任务事件不带dedup_key所以也不需要窗口():
+    """会静默并掉事件的组合是[带 key 不带窗口], 不是[不带窗口].
+
+    11 S6.2 的 task 行只规定 sev(info/warn) 与 channel(normal), 既没有
+    dedup_key 也没有 dedup_window_s. 而 p5 的 record_dao._attempt_insert 只在
+    ev.get("dedup_key") 为真时才调 _try_merge => 不带 key 时窗口根本读不到,
+    带 key 不带窗口才会让 record_dao 把后续每一条都并进第一行(dedup_count 在
+    涨, 云端只看得到一条).
+
+    NO 不给它编一个窗口秒数: 那是 CLAUDE.md S3.7 说的"没人实测过的判定量",
+    而且加 key 或窗口都是改契约, 不是实现选择.
+
+    MUTATION: 在 _emit_task_event 的 put 里加 dedup_key 而不加窗口 -> 红.
+    """
+    import inspect
+
+    from xbrain.p3_task.runtime import main_wiring
+
+    body = _code_only(_nested_def_body(inspect.getsource(main_wiring._amain),
+                                       "_emit_task_event"))
+    if '"dedup_key"' in body:
+        assert '"dedup_window_s"' in body, (
+            "任务事件长出了 dedup_key 却没有 dedup_window_s -- p5 对这个组合"
+            "是无条件合并, 审计链会塌成一行")
