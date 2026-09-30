@@ -26,7 +26,6 @@ from xbrain.p1_motion.freshness.degradation import (
     Freshness,
     classify,
 )
-from xbrain.p1_motion.gate.audit import limiter_all, limiter_argmax
 from xbrain.p1_motion.gate.g_targets import g_targets
 from xbrain.p1_motion.gate.speed_gate import (
     BandHysteresis,
@@ -170,21 +169,39 @@ def test_g_targets_absent_is_unit_multiplier():
     assert g_targets(False) == 1.0
 
 
-# --- MOT-PM-9 audit ---
-
-def test_limiter_argmax_picks_min():
-    limits = {"f_speed": 0.5, "g_targets": 0.7, "hard_upper": 2.0}
-    assert limiter_argmax(limits) == "f_speed"
-
-
-def test_limiter_argmax_returns_none_on_empty():
-    assert limiter_argmax({}) == "none"
-
-
-def test_limiter_all_includes_ties_within_threshold():
-    limits = {"f_speed": 0.5, "g_targets": 0.51, "hard_upper": 2.0}
-    all_ = limiter_all(limits, threshold_delta=0.05)
-    assert set(all_) == {"f_speed", "g_targets"}
+# --- MOT-PM-9 audit: three tests DELETED 2026-09-30, with their module ---
+#
+# What stood here: test_limiter_argmax_picks_min / _returns_none_on_empty /
+# test_limiter_all_includes_ties_within_threshold, importing
+# xbrain/p1_motion/gate/audit.py. They asserted limiter_argmax(...) ==
+# "f_speed" and limiter_all(...) == {"f_speed", "g_targets"}.
+#
+# Why they had to go rather than be ported: the module they pinned carried a
+# SECOND limiter closed set, and all three of its claims were false at once.
+#   * Its comment said "12 S6.7 14-value limiter enum (verbatim)". 12 S6.7 is
+#     titled 降档迟滞 (downshift hysteresis) and holds no enum; the limiter
+#     table is 12 S6.8, which says in as many words that it is a MIRROR of
+#     11 S3.4 / S9.6.5 and that 11 is the only authority.
+#   * The contract set (11 S9.6.5, exported as xbrain.common.enums
+#     GATE_LIMITER via enums/sets.yaml) is estop / mode / health / rtk /
+#     heading / clock / fence / free_space / target / brake / gait / profile /
+#     spec / none -- ORDERED, the order being the attribution priority.
+#   * Of the module's 14 values only none / profile / estop were members. The
+#     other 11 (f_speed, g_targets, h_heading, i_rtk, hard_upper, fence_soft,
+#     fence_hard, rotation_permit, hes, cmd_timeout, source_deactivated) were
+#     minted here and exist nowhere in the contract.
+# So these assertions pinned the invented set, not the contract. Porting them
+# would have meant inventing a mapping from 11 names nobody ruled on, which
+# 12 S6A.8 OB-1 forbids (the set is 11's F-19 frozen surface).
+#
+# Where MOT-PM-9 actually lives: nav/host_gate.py, which imports GATE_LIMITER
+# and uses its order as the tie-break rank. Its evidence is
+# tests/p1_motion/nav/test_host_gate.py -- test_attribution_matches_11_s34_
+# example reproduces the 11 S3.4 worked example verbatim (v_max 1.20 =
+# 2.00 x 0.60 x 1.00, limiter health, limiter_all [health, free_space,
+# profile, spec]) -- plus tests/common/test_closed_sets.py for the
+# bidirectional set difference. Nothing in production ever imported audit.py,
+# so deleting it changed no behaviour (CLAUDE.md S9.3).
 
 
 # --- MOT-PM-10/11/12 rotation permit ---
