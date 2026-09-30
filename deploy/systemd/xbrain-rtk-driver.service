@@ -9,9 +9,12 @@
 #   cd /opt/xbrain_v6/ros2_ws/sensor && cmake -B build && cmake --build build
 # LD_LIBRARY_PATH carries libzenohc (installed to /usr/local by the zenoh-c step).
 # SupplementaryGroups=dialout lets it open /dev/ttyACM0 without a chmod.
-# XBRAIN_ROBOT_ID (the {rid} key segment) comes from /etc/xbrain/robot.env, the
+# XBRAIN_ROBOT_ID (the {rid} key segment) comes from deploy/env/robot.env, the
 # same site identity the rest of the stack uses; if absent the process refuses to
-# start (3.1: no default rid). No WatchdogSec: this binary does not sd_notify.
+# start (3.1: no default rid). That fail-stop is unchanged by the 2026-09-30 move
+# of the file out of /etc/xbrain -- the leading - below still lets the UNIT start
+# without the file, and the binary is what refuses.
+# No WatchdogSec: this binary does not sd_notify.
 
 [Unit]
 Description=XBRAIN v6 rtk_driver (Stage 1, RTK GPS + heading + clock)
@@ -30,7 +33,7 @@ Restart=always
 RestartSec=2s
 OOMScoreAdjust=-500
 SupplementaryGroups=dialout
-EnvironmentFile=-/etc/xbrain/robot.env
+EnvironmentFile=-/opt/xbrain_v6/deploy/env/robot.env
 Environment="LD_LIBRARY_PATH=/usr/local/lib"
 # DEC-15 (U83) install root = /opt/xbrain_v6/data/install. rtk_driver installs there
 # via its CMakeLists install() rule (DEP-5, done 2026-08-17):

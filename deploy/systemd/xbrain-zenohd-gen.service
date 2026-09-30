@@ -9,7 +9,7 @@
 # (config-freeze).
 #
 # Per-port binding (NET-C9 verbatim): binds ONLY specific IPs, never
-# 0.0.0.0. LAN2_IP / WIFI_IP come from /etc/xbrain/network.env at
+# 0.0.0.0. LAN2_IP / WIFI_IP come from deploy/env/network.env at
 # service start via EnvironmentFile= below. If either env var is
 # missing, envsubst emits a literal "${LAN2_IP}" that zenohd rejects
 # as an invalid endpoint -- refusing to start beats binding wildcard.
@@ -32,10 +32,15 @@ StartLimitIntervalSec=60s
 Type=simple
 Restart=always
 RestartSec=2s
-# Deploy writes /etc/xbrain/network.env with LAN2_IP / WIFI_IP per
-# site. Missing file = service refuses to start (per-site config is
-# mandatory for the GEN router; a default would silently bind wrong).
-EnvironmentFile=/etc/xbrain/network.env
+# Deploy fills in deploy/env/network.env with LAN2_IP / WIFI_IP per
+# site. NO leading - on purpose: missing file = service refuses to
+# start (per-site config is mandatory for the GEN router; a default
+# would silently bind wrong). That stays true after the 2026-09-30 move
+# out of /etc/xbrain -- the file is in the tree now, so "missing" means
+# somebody deleted it, which is still a refuse-to-start.
+# Absolute path because systemd does not accept a relative
+# EnvironmentFile.
+EnvironmentFile=/opt/xbrain_v6/deploy/env/network.env
 # Resolved config path: envsubst expands ${LAN2_IP} / ${WIFI_IP} into
 # a per-boot copy under /run/xbrain/zenoh/zenohd-gen.json5. Prevents
 # the source template from ever containing resolved values.

@@ -4,12 +4,14 @@
 # Author: wanglei@hachist.com
 # 上海哈船智能船舶技术有限公司
 # File: install_units.sh
-# Brief: Install XBRAIN v6 systemd units + /etc/xbrain env templates (no auto-enable)
+# Brief: Install XBRAIN v6 systemd units (no auto-enable, no /etc writes beyond units)
 #
 # Description:
 # The problem this solves: deploy/systemd/ holds the unit files but nothing installs
-# them, and hand-copying 18 units + wiring /etc/xbrain by hand is where a staged-boot
-# deployment silently drifts from 10 S3.3. This script is the one installer.
+# them, and hand-copying a directory of units is where a staged-boot deployment
+# silently drifts from 10 S3.3. This script is the one installer. The unit count is
+# not written here on purpose -- it is a measured quantity (CLAUDE.md 3.7); the list
+# is deploy/systemd/ minus DRAFT_UNITS below, and --dry-run prints it.
 #
 # What it installs: every deploy/systemd/*.service + run-xbrain.mount EXCEPT the three
 # AI drafts (ai-asr, llm, payload). Those carry a "草稿, 不安装" header because DEC-15
@@ -24,14 +26,19 @@
 # then the units are dormant: present, verifiable, started only on explicit `systemctl
 # start` or via scripts/start_all.sh.
 #
-# /etc/xbrain templates: robot.env / network.env are copied from deploy/etc-xbrain/ ONLY
-# if absent -- a real host's identity + per-site IPs must never be clobbered by a reinstall.
-# The templates fail SAFE: robot.env leaves XBRAIN_ROBOT_ID unset (rtk_driver then refuses
-# to start rather than publish under a bogus rid), network.env binds 127.0.0.1 (loopback,
-# not a wildcard) until real site IPs are written.
+# Env files: this script no longer installs any. robot.env / network.env used to be
+# TEMPLATES here that were copied into /etc/xbrain if absent; the 2026-09-30 user ruling
+# moved them into the tree (deploy/env/) and the units now reference that path directly,
+# so there is nothing to copy and no system directory to create. One consequence worth
+# stating: this script no longer needs to write anything outside /etc/systemd/system, and
+# --dry-run is now a complete description of what it touches.
+#   The fail-safe behaviour did not move with the files -- it lives in the units and the
+# binaries: robot.env is EnvironmentFile=- (optional) and rtk_driver refuses to start
+# without a rid; network.env is EnvironmentFile= (mandatory) so the GEN router refuses to
+# start without it rather than binding a wildcard. See deploy/env/robot.env.
 #
 # Modes: (default) install; --dry-run print actions only; --enable also enable (opt-in);
-# --uninstall remove installed units + daemon-reload (never touches /etc/xbrain).
+# --uninstall remove installed units + daemon-reload.
 #
 # Boundary: this does not build the C++ ros2_ws binaries (7 units are ConditionPathExists-
 # gated and skip cleanly until built) and does not calibrate configs/. It only places
@@ -44,9 +51,11 @@ set -euo pipefail
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 UNIT_SRC_DIR="$REPO_ROOT/deploy/systemd"
-ENV_SRC_DIR="$REPO_ROOT/deploy/etc-xbrain"
 SYSTEMD_DIR="/etc/systemd/system"
-ETC_XBRAIN_DIR="/etc/xbrain"
+# The env files the units read live at $REPO_ROOT/deploy/env/ and are NOT installed
+# anywhere -- see the header. Kept as a variable only so the closing hints can name
+# the directory without hard-coding it (CLAUDE.md 6: derive, never hard-code).
+ENV_DIR="$REPO_ROOT/deploy/env"
 
 # The three AI-service units are drafts (see file headers + deploy/systemd/README.md).
 # Excluded from install until DEC-15 + the 11 backfills are settled.
@@ -56,18 +65,15 @@ DRAFT_UNITS=(
   "xbrain-payload.service"
 )
 
-# The two per-host env templates and their fail-safe rationale live in the source files.
-ENV_TEMPLATES=("robot.env" "network.env")
-
 usage() {
   cat <<'EOF'
 Usage: sudo install_units.sh [--dry-run | --enable | --uninstall | --help]
 
-  (no flag)    Install non-draft units + env templates, daemon-reload. Does NOT enable.
-  --dry-run    Print exactly what would be installed/copied; change nothing.
+  (no flag)    Install non-draft units, daemon-reload. Does NOT enable.
+  --dry-run    Print exactly what would be installed; change nothing.
   --enable     Install, then `systemctl enable` the installed units (opt-in, on-boot).
   --uninstall  Remove installed xbrain units + run-xbrain.mount, daemon-reload.
-               Leaves /etc/xbrain untouched (that is host identity, not ours to delete).
+               Never touches deploy/env/ (that is host identity, not ours to delete).
   --help       This text.
 
 The three AI drafts (ai-asr, llm, payload) are never installed by this script.
@@ -96,7 +102,8 @@ installable_units() {
 }
 
 require_root() {
-  # A dry-run only reads, so it may run unprivileged; every other mode writes /etc.
+  # A dry-run only reads, so it may run unprivileged; every other mode writes
+  # /etc/systemd/system.
   if [[ "$MODE" != "dry-run" && "${EUID}" -ne 0 ]]; then
     echo "install_units: must run as root for mode '$MODE' (use sudo)" >&2
     exit 1
@@ -118,27 +125,23 @@ install_one_unit() {
   echo "  installed $base"
 }
 
-# Copy an env template into /etc/xbrain ONLY if the destination is absent, so a reinstall
-# never overwrites a host's real robot.env / network.env.
-install_env_template() {
-  local name="$1" src="$ENV_SRC_DIR/$1" dst="$ETC_XBRAIN_DIR/$1"
-  if [[ ! -f "$src" ]]; then
-    echo "install_units: env template missing: $src" >&2
-    exit 1
-  fi
-  if [[ -e "$dst" ]]; then
-    echo "  kept existing $dst (not overwritten)"
-    return 0
-  fi
-  if [[ "$MODE" == "dry-run" ]]; then
-    echo "  would create $dst from template (fill in before enabling)"
-    return 0
-  fi
-  install -d -m 0755 "$ETC_XBRAIN_DIR"
-  # robot.env can hold a secret-ish identity; 0644 is fine (no credentials), but keep it
-  # owner-writable only. network.env is non-sensitive. Both 0644.
-  install -m 0644 "$src" "$dst"
-  echo "  created $dst from template -- EDIT before enabling"
+# Verify the two env files the units reference are actually present. This is a CHECK,
+# not an install: the units hold absolute paths into deploy/env/, so a missing file is
+# not something this script can fix by copying -- it means the checkout is incomplete.
+# Reported rather than silently skipped, because the two failures differ and both are
+# quiet: a missing robot.env leaves rtk_driver refusing to start, and a missing
+# network.env leaves the GEN router refusing to start.
+check_env_files_present() {
+  local name missing=0
+  for name in robot.env network.env; do
+    if [[ -f "$ENV_DIR/$name" ]]; then
+      echo "  ok   $ENV_DIR/$name"
+    else
+      echo "  MISSING $ENV_DIR/$name -- units reference it by absolute path" >&2
+      missing=$(( missing + 1 ))
+    fi
+  done
+  [[ "$missing" -eq 0 ]] || exit 1
 }
 
 do_install() {
@@ -150,10 +153,8 @@ do_install() {
     install_one_unit "$base"
   done
 
-  echo "Env templates in $ETC_XBRAIN_DIR:"
-  for base in "${ENV_TEMPLATES[@]}"; do
-    install_env_template "$base"
-  done
+  echo "Env files the units reference (read in place, never copied):"
+  check_env_files_present
 
   if [[ "$MODE" == "dry-run" ]]; then
     echo "(dry-run) would run: systemctl daemon-reload"
@@ -172,8 +173,9 @@ do_install() {
   else
     echo
     echo "Units are INSTALLED but NOT enabled (dormant). Next steps:"
-    echo "  1. Edit $ETC_XBRAIN_DIR/robot.env  (set XBRAIN_ROBOT_ID)"
-    echo "  2. Edit $ETC_XBRAIN_DIR/network.env (set LAN2_IP / WIFI_IP for the GEN router)"
+    echo "  1. $ENV_DIR/robot.env already carries XBRAIN_ROBOT_ID (ruled 2026-09-30);"
+    echo "     change it only for a different robot."
+    echo "  2. Edit $ENV_DIR/network.env (set LAN2_IP / WIFI_IP for the GEN router)"
     echo "  3. Start the stack for a run:   sudo $REPO_ROOT/scripts/start_all.sh"
     echo "  4. To enable on boot (after DEC-15): sudo $0 --enable"
   fi
@@ -195,7 +197,7 @@ do_uninstall() {
     removed=$(( removed + 1 ))
   done
   systemctl daemon-reload
-  echo "Removed $removed file(s); daemon-reload done. /etc/xbrain left untouched."
+  echo "Removed $removed file(s); daemon-reload done. $ENV_DIR left untouched."
 }
 
 # ---- arg parse: exactly one optional mode flag ----

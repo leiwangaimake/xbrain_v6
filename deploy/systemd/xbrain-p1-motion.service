@@ -25,11 +25,14 @@ Environment="PYTHONUNBUFFERED=1"
 # XBRAIN_ROBOT_ID is read directly at RUNTIME by the gnss->state/pose bridge
 # (main_wiring.py): unset -> bridge OFF -> state/pose goes silent, the exact
 # rid-mismatch that broke rt/gnss->state/pose in dev. rtk_driver reads the same
-# var, so both must carry the identical rid; a single /etc/xbrain/robot.env keeps
+# var, so both must carry the identical rid; a single deploy/env/robot.env keeps
 # them on one id. The leading - keeps p1 startable if the file is absent (the
 # bridge then logs OFF rather than failing the unit). p2..p5 do NOT need this --
 # they take robot_id from the resolved snapshot (common.robot_id), not the env.
-EnvironmentFile=-/etc/xbrain/robot.env
+# Path: in-tree since 2026-09-30 (was /etc/xbrain/robot.env; user ruling moved it
+# under deploy/). Absolute because systemd does not accept a relative
+# EnvironmentFile -- there is no per-unit working directory to resolve it against.
+EnvironmentFile=-/opt/xbrain_v6/deploy/env/robot.env
 # CHK-1-03 / 10 S3.2 CPU affinity baseline.
 # 核 4 独占(isolcpus 隔离): 20 Hz 周期 P99 的前提, RNS 的激光栅格绕障也在这个环里
 # The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py

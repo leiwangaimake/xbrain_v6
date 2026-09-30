@@ -10,7 +10,7 @@
 //   WiFi      tcp/${WIFI_IP}:7447       cloud uplink        (U-15 pending)
 //
 // ${LAN2_IP} / ${WIFI_IP} are resolved at unit startup by envsubst; the
-// xbrain-zenohd-gen.service unit reads /etc/xbrain/network.env for the
+// xbrain-zenohd-gen.service unit reads deploy/env/network.env for the
 // values (see deploy/systemd/xbrain-zenohd-gen.service). This templating
 // approach lets a per-site deploy substitute without editing this file.
 //

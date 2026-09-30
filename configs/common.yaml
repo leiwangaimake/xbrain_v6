@@ -53,12 +53,19 @@ common:
   #   逐字 "common.yaml . 顶层(可被 XBRAIN_ROBOT_ID 覆盖)"), 但没有任何权威
   #   给出过一个 rid 的值 -- 11 S2.1 给的是格式 [a-z0-9_-]{1,32}, 不是取值,
   #   而 rid 本来就是一车一个.
-  #   deploy/etc-xbrain/robot.env 模板已把这条坑逐字写下来: "Shipping a
-  #   placeholder rid (e.g. CHANGE-ME) would let rtk_driver + p1 start and
-  #   publish under a bogus id -- fail-silent", 故该模板里 XBRAIN_ROBOT_ID
-  #   是刻意注释掉的. 在本层写一个占位 rid, 后果与那句话描述的完全一样, 且更糟:
-  #   L1 的值对每一台车都生效, 而 L5 至少只影响一台.
-  #   => 落值归部署(写 /etc/xbrain/robot.env 的 XBRAIN_ROBOT_ID), 不归本文件.
+  #   deploy/env/robot.env 已把这条坑逐字写下来: "a bogus rid (e.g. CHANGE-ME)
+  #   would let rtk_driver + p1 start and publish under an id the cloud does not
+  #   know -- fail-silent". 在本层写一个占位 rid, 后果与那句话描述的完全一样,
+  #   且更糟: L1 的值对每一台车都生效, 而 L5 至少只影响一台.
+  #   => 落值归部署(写 deploy/env/robot.env 的 XBRAIN_ROBOT_ID), 不归本文件.
+  #
+  # [2026-09-30 订正两处, 不改本键的 null]
+  #   1. 路径: 原写 /etc/xbrain/robot.env, 用户 2026-09-30 裁决"不要放 /etc 下,
+  #      放 xbrain_v6/deploy 下", 文件现在是 deploy/env/robot.env, 单元直接读它.
+  #   2. 原写"该模板里 XBRAIN_ROBOT_ID 是刻意注释掉的" -- 已不成立: 同一裁决定了
+  #      rid 取值 gj-001, 该行已取消注释. *** 但这不改变本键仍须为 null:
+  #      L5 覆盖 L1 是分层设计本身(10 S5.4.3), rid 在 L5 落值恰恰是为了不让 L1
+  #      的一个值对每台车生效. 这两句话同时成立, NO 不要据此来给本键填值.
   robot_id: null
 
   # site_id: 唯一定义处是 sites/{site_id}.yaml, 文件名即值 (L4).
@@ -114,8 +121,11 @@ common:
     #      且该文件头注逐字 "Do NOT commit 127.0.0.1 or 0-value placeholders here";
     #   2. deploy/net/PROD.network 写的是 ${LAN2_IP} / ${WIFI_IP} 占位, 由部署期从
     #      /etc/xbrain/hw_profile 代入, 仓库内无实值;
-    #   3. deploy/etc-xbrain/network.env 是模板, 两个地址都是 127.0.0.1 的 fail-safe
-    #      占位(其头注逐字说明这是"degraded, never dangerous"的兜底, 不是站点地址).
+    #   3. deploy/env/network.env (2026-09-30 前在 deploy/etc-xbrain/) 两个地址都是
+    #      127.0.0.1 的 fail-safe 占位(其头注逐字说明这是"degraded, never dangerous"
+    #      的兜底, 不是站点地址). 该文件 2026-09-30 随裁决移出 /etc/xbrain, 但两个值
+    #      一个未动 -- 与 robot.env 的 rid 不同, 这两个键没有任何已裁决的取值可抄,
+    #      U-15 仍开(见本键下方), 填一个数进去正是 CLAUDE.md 3.6 铁律 3 禁的那件事.
     #   连带: configs/zenoh/router_gen.json5 头注逐字 "NET-C9 will move it to
     #   explicit-per-port bind after the LAN/host allocation freezes; until then
     #   loopback" -- 网段分配尚未冻结, 这正是本键没有事实可抄的原因.
