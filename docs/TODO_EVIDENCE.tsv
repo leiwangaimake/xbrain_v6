@@ -164,6 +164,108 @@
 #   progress.py --run 就有, 抄进来当天就开始腐烂。差别的另一半是那份单子
 #   成文于本映射落盘之前。
 #
+# -- 本批(Phase 2 + Phase 4)判定, 2026-09-30 --------------------------------
+#
+# 尺子与 Phase 3 同一把: [把被测实现挖掉, 这条产物会不会红?] 答不上来或答
+# "不会"的一律不映射。★ 本批新增映射 0 条; 订正既有行 2 条(理由见下, 不是
+# 补新证据, 是去掉一个不可能跑的产物)。
+#
+# ★★★ 订正两行[结构上永远红]的证据: CFG-BT-18 与 CFG-BT-09
+#   两行原先各挂两个产物: 一个测试 + 一个[实现模块]。progress.py 对非 tests/
+#   产物执行 `python3 <path>`, 而这两个模块是相对导入:
+#     xbrain/common/config/locked_keys.py  from ..errors import E_CONFIG_LOCKED
+#     xbrain/persistence/migration.py      from ..common.errors import ...
+#   `python3 <file>` 下相对导入必然 ImportError(no known parent package)。
+#   ⇒ 这两个产物[从落盘那天起就不可能通过], 与软件做没做完无关 --
+#   CLAUDE.md 3.2 形态2(一条永远红的断言, 早晚被人改松)。改法是把[实现模块]
+#   从产物列去掉, 只留真正的验证产物; 实现还在不在由测试自己保证(两个测试都
+#   直接 import 该模块, 删掉即红)。
+#   ★ 红验(2026-09-30 ORIN, 每次跑测试前清 __pycache__, CLAUDE.md 7.2.1):
+#     locked_keys: LOCKED_PREFIXES 换成断言 E 的五组(判据点名的那个变异体)
+#                  -> 7 passed 变 4 failed/3 passed
+#     migration  : `if current > code_version:` 改 `+ 9`(判据点名的"库 > 代码
+#                  必须拒") -> 8 passed 变 2 failed/6 passed
+#     两个变异体均已还原, git diff 空。
+#   ⚠️ 全表[只有这两行]是相对导入模块(逐行扫过), NO 不要据此去动别的
+#     xbrain/**.py 行 -- 其余是绝对导入, `python3 <path>` + PYTHONPATH 能跑。
+#
+# ★★★ Phase 2 故意留空的六条(判据不足; NO 不要为消灭 UNMAPPED 挂个沾边的测试):
+#   CFG-BT-15  探活逻辑[不存在]。18082 / ai_svc 在 xbrain/boot/ 下零命中;
+#              全仓唯一的 ai_svc 命中是 xbrain/p2_core/health/items.py 的注释,
+#              且逐字写着 "ai_svc is deliberately absent"。⇒ 未开工, 不是缺判据。
+#   CFG-BT-4   ★★★ 这条最像能映射, 挂上去恰恰是形态1。实现在
+#              xbrain/p5_gateway/minimal/observation_window.py, 测试在
+#              tests/checks/test_d2_batch.py(最小 publisher 集 . 三态 BIT .
+#              boot_fail JSONL 正负用例都有)。问题: 那个模块[没有任何生产
+#              调用者] -- grep 全 xbrain/ 与 scripts/, 唯一命中是
+#              xbrain/boot/freeze/refuse_to_boot.py 注释里的一句提及;
+#              xbrain/p5_gateway/__main__.py 的最小模式分支既不 import 它,
+#              也不调 assert_minimal_publisher_set。⇒ 判据点名的变异体
+#              "让最小模式发一条 cmd/motion/factor" [杀不掉]那些用例 --
+#              它们拿手搭的集合直接喂 helper, 从不观察最小模式真发了什么。
+#              与 BIZ-P2-10 的 lapi_guard.py 同型(NEXT S8: 没有写入面可守的
+#              守卫不可能失败)。★ 判据另两半也无执行体: "最小模式不读任何
+#              快照" 与 "freeze 失败时把失败断言与键路径显示在 HMI 上"
+#              (后者 NEXT SW-26 已记为卡真栈)。systemd 那一半[是有的]:
+#              tests/deploy/test_systemd_units.py::test_freeze_requires_matches_class
+#              与 tests/p_processes/test_p3_p5_main_entry.py::
+#              test_p5_gateway_unit_has_no_requires_freeze 会被变异体1 杀。
+#              但一条判据只对上三分之一, 挂上去就是谎称已验证。
+#   CHK-2-34   判据点名的 xbrain/p2_core/domains/ptz_boot_seq.py [不存在];
+#              domains/ 下只有 chassis_light . factory . lapi_guard .
+#              lighting_auto。⇒ 未开工; NEXT SW-26 记为卡球机硬件。
+#   CHK-2-36   判据点名的 xbrain/p2_core/payload/failsafe_defaults.py 不存在,
+#              连 xbrain/p2_core/payload/ 这个目录都没有; payload_tilt_* 在
+#              xbrain/ 下唯一命中是 p4_agent/registry/d_class.py 的一句注释。
+#              ⇒ 未开工。
+#   CHK-2-46   ★ 订正理由: 实现[是有的] --
+#              xbrain/p5_gateway/outbound/state_projection.py 有 exit_reason
+#              闭集校验(越界抛); tests/p5_gateway/test_state_projection.py 与
+#              test_cloud_projector.py 里 alarm_window_active 正反两向都有
+#              (授时未同步恒 false / 同步且在窗内必须 true)。不落的原因两条:
+#              (1) 判据点名的[满射]那一半没有执行体 -- 没有任何用例去走 D 模式
+#                  每一条退出路径, 断言各值都被覆盖过;
+#              (2) 判据自身的事实已被代码证否: 闭集是[8 值]不是判据写的四值,
+#                  真源是甲方 v2.0 S4.3 不是判据写的 14 S5.4.2(NEXT SW-26 的
+#                  2026-09-27 订正记的是同一件事)。⇒ 先订正判据再谈映射, 而
+#                  "新真源下满射该怎么定"属设计裁决, 按 CLAUDE.md 9.1 留给用户。
+#   GWY-P4-02b ★ 订正理由: 一半[是有的] -- xbrain/p4_agent/audio_rx/
+#              gate_observer.py 与 tests/p4_agent/test_batch1.py(该文件
+#              Description 自报覆盖 P4-02b); 判据3(NO 不许写 == "muted")与
+#              判据4(max_duration_ms 必填)都有用例。不落是因为另一半整个缺:
+#              (1) 判据1/2 是[全仓 grep 零命中]形态的静态门(alsaaudio|
+#                  sounddevice|pyaudio|snd_pcm|hw:0,0 与 opus|resample|decimat),
+#                  tests/ 与 scripts/ 下没有对 xbrain/p4_agent/ 跑这两条扫描的
+#                  执行体; test_chk1_p4_batch.py 的 assert_no_direct_audio_bypass
+#                  是拿字符串字面量喂的单测, 不是仓面扫描;
+#              (2) 判据5(AudioFrame frame_ms==20 && count==320 否则丢弃+warn)
+#                  在 xbrain/p4_agent/ 下零命中;
+#              (3) gate_observer.py 本身已在 tests/meta/test_unwired_modules.py
+#                  的 _KNOWN_UNWIRED 里具名登记 "p4 never subscribes
+#                  rt/audio/gate" -- 与 CFG-BT-4 同一个形状。
+#
+# ★★★ Phase 4(MOT-PCP 十三项)[一条都不映射]。理由不是判据不足, 是[不是我方
+#   工作项], 三条各自独立成立:
+#   (1) 被测物不在仓里: TODO 写的 services/perception/ 不存在(services/ 下只有
+#       asr . llm . payload); 盘上唯一的 perception 是 ros2_ws/perception/,
+#       它[不入库](git status 长期 ?? ), 按用户 2026-09-15 裁定是感知方交付的
+#       参考副本 -- NO 不审查, NO 不作任何判据的依据。docs/NEXT.md S2 的
+#       2026-09-27 订正记着归属变更: 我方欠账改为 部署 / 标定 / 接收端对表。
+#   (2) 判据前提已被裁定不成立: 19 册开头逐字"整册建立在[整机有 LiDAR + 底盘
+#       前后雷达可用]上。两个前提 2026-09-07 均被用户裁定不成立"; 同册表体把
+#       走廊 bands . dir_free . sectors . 点云线程 . CHS-B 名字映射逐项标
+#       "已死(前提消失) . 不迁移", 把 rt/perception/targets 与 rt/lidar/* 标
+#       "不实现", 把 wpos / cls 闭集 / ambient 归入 PCC-9 停车场。⇒ 照
+#       MOT-PCP-1/3/4/5/6/8/10/12 的判据去找证据, 找的是没有生产者的 key。
+#   (3) 用户 2026-08-23 已裁定 Phase 4 不做映射(docs/NEXT.md SW-26 末行)。
+#   ⇒ 这十三项的 UNMAPPED 是[诚实的不知道], NO 不要为它们建产物行。
+#
+# ★ Phase 2 剩下的三条 IN_PROGRESS 里, CHK-1-10 走的是散文判据(它没有证据行):
+#   判据点名 tests/p2_core/test_bit_items.py 不存在, 且 BIT-30/31/32/34 在
+#   tests/ 与 xbrain/ 下零命中(xbrain/p2_core/bit/gpu_dla.py 守的是 CHK-2-24
+#   的 deep 档 age-fail, 不是这一项)。NEXT SW-26 记为卡 ORIN/GPU。
+#   ⇒ 不建证据行: 产物不存在, 建了 test_todo_evidence 直接红。
+#
 # ★ 下一批的入口: 这几个 C++ 测试二进制全绿, 却没有任何任务号认领 --
 #   test_tick_stats . test_dds_names . test_relay_config . test_gnss_fix .
 #   test_nmea_parser . test_rtk_driver . test_serial_reopen . test_yaml_lite。
@@ -522,9 +624,9 @@ CFG-CF-08	configs/nav2/behavior_only.yaml;tests/configs/test_config_layers.py	ma
 INF-BT-02	xbrain/boot/failure_class.py;tests/boot/test_failure_class_table.py	manual	2026-08-23
 MOT-PM-35	tests/p1_motion/test_stage_budget.py	manual	2026-08-23
 BIZ-P2-19	xbrain/p2_core/health/factor.py;tests/p2_core/health/test_factor_participation.py	manual	2026-08-23
-CFG-BT-18	xbrain/common/config/locked_keys.py;tests/configs/test_locked_keys.py	manual	2026-08-23
+CFG-BT-18	tests/configs/test_locked_keys.py	manual	2026-09-30
 BIZ-P2-08	xbrain/p2_core/domains/lighting_auto.py;tests/p2_core/domains/test_lighting_auto_rules.py	manual	2026-08-23
-CFG-BT-09	xbrain/persistence/migration.py;tests/persistence/test_migration.py	manual	2026-08-23
+CFG-BT-09	tests/persistence/test_migration.py	manual	2026-09-30
 CFG-BT-05	xbrain/boot/boot_fail.py;tests/boot/test_boot_fail.py	manual	2026-08-23
 BIZ-P2-10	xbrain/p2_core/domains/lapi_guard.py;tests/p2_core/domains/test_domains.py	manual	2026-08-23
 BIZ-P2-21	xbrain/p2_core/three_stops.py;tests/p2_core/health/test_health_all.py	manual	2026-08-23
