@@ -1,8 +1,19 @@
 # INF-ZN-8 / CFG-BT-2 -- GEN-plane Zenoh router (Stage 0z-2).
 #
 # The GEN router carries general-plane traffic (state/*, cmd/*, event/*)
-# for p2_core, p3_task, p4_agent, p5_gateway, behavior_proxy, cloud
-# uplink via LAN2 / WiFi.
+# for p2_core, p3_task, p4_agent, p5_gateway, p1_motion and perception
+# (the last two are cross-plane, 11 S1.1.6), plus cloud uplink via
+# LAN2 / WiFi.
+#
+# behavior_proxy left this list on 2026-09-30. Two reasons, and the second
+# is the one that matters: the process no longer exists at all (12 S4.6 was
+# voided whole on 2026-09-29, "the robot's motion is all RNS, no ROS 2
+# action", and 10 S3.1's row for it is struck through as of that date), and
+# even while it was designed it was an RT-plane-only participant that held
+# no general-plane session -- so naming it as a client of THIS router was
+# wrong both before and after. Anyone sizing this router's client set from
+# the old comment would have provisioned for a participant that never
+# connects.
 #
 # Boot placement (10 S3.3): Stage 0z-2 -- after the RT router
 # (Stage 0z-1) but before Stage 0z-3 (chassis probe) and 0c

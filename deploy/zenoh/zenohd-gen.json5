@@ -2,7 +2,14 @@
 //
 // INF-ZN-8 -- GEN-plane Zenoh router config for the xbrain-zenohd-gen.service
 // unit. This is the general-plane router for p2_core / p3_task / p4_agent /
-// p5_gateway / behavior_proxy plus cloud uplink via LAN2 / WiFi.
+// p5_gateway plus the two cross-plane participants p1_motion / perception
+// (11 S1.1.6), plus cloud uplink via LAN2 / WiFi.
+//
+// behavior_proxy was listed here until 2026-09-30 and is gone: the process
+// does not exist (12 S4.6 voided whole 2026-09-29, 10 S3.1's row struck
+// through the same day), and even as designed it held NO general-plane
+// session, so it was never a client of this router. See the matching note in
+// deploy/systemd/xbrain-zenohd-gen.service.
 //
 // Ports (11 S1.1.4 + NET-C9 verbatim "逐口绑定, 禁 0.0.0.0"):
 //   loopback  tcp/127.0.0.1:7447        local processes

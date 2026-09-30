@@ -23,9 +23,12 @@ RestartSec=5
 # ★ AIR-P3. Doubly load-bearing here: this service is pinned to the CPU provider
 # (services/asr/core/families.py) precisely so it never takes a CUDA context away from
 # perception, so all of its work lands on this one core.
-# 10 S3.2 lists ai_asr on core 7 (with P2..P4 / behavior_proxy / Nav2 /
-# llama-server). The number lives in that table, not here --
+# 10 S3.2 lists ai_asr on core 7 (with P2..P4 / llama-server /
+# payload-service). The number lives in that table, not here --
 # scripts/ci/check_affinity.py parses it live and fails on divergence.
+# behavior_proxy and Nav2 were named here until 2026-09-30; both are struck
+# through in that table (v0.9) and their systemd units are deleted, so the
+# processes do not exist.
 CPUAffinity=7
 
 # ★ AIR-F3. +400 -- killed before p4/p5 (+200) is wrong and after llama-server (+500) is
