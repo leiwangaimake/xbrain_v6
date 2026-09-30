@@ -485,6 +485,21 @@ def _event_sev_cat(key: str, d: dict):
     return sev, cat
 
 
+def _first_present(*candidates):
+    """The first candidate that is not None; the last one is the fallback.
+
+    Exists so the ts chain in _normalise_event cannot be written back as an `or`
+    chain by habit. `a or b` picks b whenever a is FALSY, which for a numeric
+    field means 0 and 0.0 are indistinguishable from absent -- and Event.ts is a
+    field where 0.0 is a legal (wrong, but legal) value a producer can send, and
+    where silently replacing it hid three producers for months.
+    """
+    for value in candidates:
+        if value is not None:
+            return value
+    return None
+
+
 def _normalise_event(key: str, d: dict) -> Optional[dict]:
     """Best-effort normalise an incoming event/{sev}/{cat} message to the
     record.db ev shape (the EventSubsystem persists it). sev/cat are the two
@@ -510,7 +525,26 @@ def _normalise_event(key: str, d: dict) -> Optional[dict]:
         "title": data.get("title") or data.get("message") or "",
         "detail": detail if isinstance(detail, dict) else {},
         "src": d.get("src") or data.get("src") or "unknown",
-        "ts": d.get("ts") or data.get("ts") or now.timestamp(),
+        # ts: `is None` and NOT `or`. A producer's legitimate 0.0 must not be
+        # rewritten, and the old truthiness chain rewrote it silently -- which is
+        # why three producers (p2 device_health_bridge, p3 geo_events, p3 task
+        # events) shipped a hard-coded ts=0.0 for months with every test green:
+        # p5 quietly substituted its own RECEIVE time, so the merge arithmetic
+        # still saw an increasing ts and nothing looked wrong. All three were
+        # fixed 2026-09-30 and the repository now has no ts=0.0 publisher onto
+        # event/**, which is the precondition for tightening this.
+        # ABSENT is still handled: a missing key reads None from both dicts and
+        # falls through to now.timestamp() exactly as before. The only behaviour
+        # that changes is that an explicit 0.0 now SURVIVES -- 1970 in the HMI is
+        # a visible bug someone chases, whereas a plausible wrong timestamp is
+        # not (11 S6.1 Event.ts is also record_dao's dedup comparison value: a
+        # constant ts makes (ts - last_ts) > window false for every window, so
+        # every recurrence folds into the first row and disappears, which is the
+        # failure chassis_events.DEDUP_WINDOW_S records from the other end).
+        "ts": _first_present(d.get("ts"), data.get("ts"),
+                             now.timestamp()),  # WALL-CLOCK-OK(record): 11 S6.2 event record ts, fallback only when the producer sent none
+        # ts_sync keeps `or`: 0 is its DEFAULT meaning (not synced, 11 S0.2.1) and
+        # the fallback is 0 too, so truthiness and `is None` agree here.
         "ts_sync": d.get("ts_sync") or data.get("ts_sync") or 0,
         "detected_at": now.strftime("%Y-%m-%d %H:%M:%S"),
         "created_at": now.isoformat(),
