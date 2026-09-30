@@ -88,7 +88,11 @@ def test_arbiter_priority_order():
     """Higher priority source wins (12 S4.2 v0.8: rns_avoid 900 > hold 100)."""
     a = P1Arbiter(dwell_ms=1000)
     a.note(BehaviorSource.HOLD, now_mono_ms=0)
-    a.note(BehaviorSource.NAV2_PROXY, now_mono_ms=0)
+    # The middle source used to be NAV2_PROXY (600); it was removed on
+    # 2026-09-30 with 12 S4.6. TELEOP_CLOUD (550) takes its place so the case
+    # still proves "three active sources, the highest wins" rather than the
+    # weaker "two active sources".
+    a.note(BehaviorSource.TELEOP_CLOUD, now_mono_ms=0)
     a.note(BehaviorSource.RNS_AVOID, now_mono_ms=0)
     assert a.holder() == BehaviorSource.RNS_AVOID
 
@@ -112,6 +116,15 @@ def test_arbiter_priority_table_matches_doc():
     assert not hasattr(BehaviorSource, "PATH_FOLLOW")
     assert not hasattr(BehaviorSource, "TARGET_ORIENTED")
     assert not hasattr(BehaviorSource, "ESTOP_ECHO")
+    # NAV2_PROXY (600) removed 2026-09-30 with the 12 S4.6 whole-section
+    # tombstone. This line is the red-able half of that deletion: restoring the
+    # member -- which is what a half-done revert looks like -- turns it red,
+    # whereas nothing else in the suite would notice a re-added enum value.
+    assert not hasattr(BehaviorSource, "NAV2_PROXY")
+    # And the priority table must not carry a value for it either: an enum
+    # member and its _PRIORITY entry are two edits, and only one of them is
+    # visible to the assertion above.
+    assert "nav2_proxy" not in {s.value for s in BehaviorSource}
 
 
 # --- MOT-PM-6/7 speed gate ---

@@ -3,16 +3,18 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_batch_b.py
-Brief: MOT-PM-16..25 batch B tests (odom + path + nav2 + teleop + config)
+Brief: MOT-PM-16..25 batch B tests (odom + teleop + handshake + config)
 
 Description:
 Ten modules landed as P1 batch B. Each covers a single MOT-PM item;
 tests focus on the spec's named variants: pose_assembly PS-4 byte-
-for-byte identity, path_follow LP-3a loops=0 no auto-arrive,
-nav2 double-gate (the MOT-PM-18 relative_move executor tests left with the module)
-PG-2, teleop TL-1/TL-2 estop-before-normalize, cloud teleop vy
-reject + link-down zero, target_oriented no-default schema,
-hello_ack version mismatch refusal, config forbidden alias.
+for-byte identity, teleop TL-1/TL-2 estop-before-normalize, cloud
+teleop vy reject + link-down zero, hello_ack version mismatch
+refusal, config forbidden alias.
+Four MOT-PM items no longer have tests here because their source
+module was deleted; each one leaves a tombstone comment below saying
+which ruling removed it, so a reader who greps for e.g. PG-2 lands on
+the reason instead of concluding the assertion was dropped silently.
 """
 
 import pytest
@@ -27,13 +29,6 @@ from xbrain.p1_motion.handshake.hello import (
     build_hello,
     build_hello_ack,
     validate_hello_ack,
-)
-from xbrain.p1_motion.path.nav2_proxy import (
-    DoubleGate,
-    VerifyState,
-    can_correct,
-    consume_correction,
-    needs_correction,
 )
 from xbrain.p1_motion.path.pose_assembly import (
     MotionSnapshot,
@@ -80,33 +75,22 @@ def test_ps4_cmd_vel_and_pose_are_byte_identical():
 # relmove path is nav/relmove_intake.py + RNS goto, abort_reason seven values in
 # nav/report_map.py, 11 S9.3.2A.6) ---
 
-# --- MOT-PM-19 nav2 double-gate PG-2 ---
-
-def test_pg2_missing_cmd_id_rejects():
-    """PG-2: a cmd_vel without cmd_id is treated as unmatched."""
-    g = DoubleGate(expected_cmd_id="c1", expected_gen=42)
-    assert g.accept(frame_cmd_id=None, frame_gen=42) is False
-
-
-def test_pg2_matching_pair_accepts():
-    g = DoubleGate(expected_cmd_id="c1", expected_gen=42)
-    assert g.accept(frame_cmd_id="c1", frame_gen=42) is True
-
-
-def test_pg2_wrong_gen_rejects():
-    g = DoubleGate(expected_cmd_id="c1", expected_gen=42)
-    assert g.accept(frame_cmd_id="c1", frame_gen=41) is False
-
-
-# --- MOT-PM-20 verify state ---
-
-def test_verify_correction_countdown():
-    vs = VerifyState(corrections_left=2, tolerance_deg=3.0)
-    assert needs_correction(4.0, 3.0)
-    assert can_correct(vs)
-    consume_correction(vs)
-    consume_correction(vs)
-    assert not can_correct(vs)
+# --- MOT-PM-19 nav2 double-gate PG-2 + MOT-PM-20 verify state: source
+# deleted 2026-09-29 (user ruling "机器人的运动全部由 RNS 负责, 不用 ROS 2 的
+# action", landed as the 12 S4.6 whole-section tombstone). path/nav2_proxy.py
+# went with it, and the four tests that lived here (three PG-2 accept/reject
+# cases + the DELEG_VERIFY correction countdown) went with the module.
+#
+# Why deleting the assertions is right rather than a coverage loss: they
+# pinned DoubleGate and VerifyState, which only ever ran inside the Nav2
+# delegation. Both ends of that delegation were empty -- the behavior_proxy
+# process was never built (ros2_ws/ had no such package) and nav2_proxy.py had
+# no production caller, this file's import being the only one in the repo. An
+# assertion whose subject cannot be reached from any production path is the
+# CLAUDE.md 3.2 "always-green assertion" shape: a do-nothing implementation
+# passes it. The three behaviours it guarded are covered elsewhere now --
+# backup by rns.backup.max_backup_m, wait by rns.dynamic.wait_budget_s (20
+# S5.3A RNS-N-16), spin by the 12 S6A rotation permit (RCG-1..4).
 
 
 # --- MOT-PM-21 teleop estop-first ---

@@ -6,7 +6,10 @@ File: test_systemd_units.py
 Brief: deploy tests -- systemd units
 
 Description:
-INF-DP-7 / CFG-BT-3 -- systemd 15-unit set integrity.
+INF-DP-7 / CFG-BT-3 -- systemd unit set integrity. The unit count is
+deliberately NOT written down here: it is a measured quantity and a
+copied number goes stale (CLAUDE.md 3.7). The UNITS table below IS
+the list; it is the thing to read.
 """
 
 
@@ -22,7 +25,7 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 UNIT_DIR = REPO_ROOT / "deploy" / "systemd"
 
 
-# 15-unit table drawn from 10 S3.3 + CLAUDE.md S0.1.
+# Unit table drawn from 10 S3.3 + CLAUDE.md S0.1.
 # Column layout: (name, stage_key, oom_score, must_require_freeze)
 # stage_key is the ordering bucket, not a literal string in the unit.
 # xbrain-probe (Stage 0) is authored under CFG-BT-1, tested separately.
@@ -34,8 +37,10 @@ UNITS = [
     ("xbrain-perception.service",        "1",   -900,  True),
     ("xbrain-rtk-driver.service",        "1",   -500,  True),
     ("xbrain-teleop-input.service",      "1",   -500,  True),
-    ("xbrain-behavior-proxy.service",    "1",   -500,  True),
-    ("xbrain-nav2-behavior.service",     "1",   -500,  True),
+    # xbrain-behavior-proxy / xbrain-nav2-behavior were removed here on
+    # 2026-09-30 with their unit files (12 S4.6 whole-section tombstone,
+    # user ruling 2026-09-29). Leaving the rows would have made this table
+    # assert the existence of files the same commit deleted.
     ("xbrain-zenoh-bridge.service",      "1",   -500,  True),
     ("xbrain-chassis-relay.service",     "2",   -1000, True),
     ("xbrain-p1-motion.service",         "2",   -1000, True),
@@ -192,16 +197,41 @@ def test_start_limit_bounded(name, stage, oom, req):
 
 
 # --- Set totals -----------------------------------------------------
-# If the 15-unit set was hand-edited elsewhere, the count guard here
-# is the canary. 21 units total = 4 already existing (probe, RT, GEN,
-# freeze) + 13 built by INF-DP-7 + 4 AI/payload (Stage 5).
-# The exact count on disk is asserted only for the *runtime* subset
-# validated by this file.
+# If the runtime set was hand-edited elsewhere, the guard here is the
+# canary. It used to be a retyped constant ("assert n == 13"), which is
+# the shape CLAUDE.md 3.7 warns about: the 2026-09-30 removal of
+# xbrain-behavior-proxy / xbrain-nav2-behavior turned it red for the
+# one reason that is NOT drift, and the only available repair was to
+# retype the new number -- i.e. the guard could only ever be re-aligned
+# by hand, never satisfied by evidence.
+# It now compares the table against the units actually on disk, so it
+# fires on the real failure (a unit added or deleted without the table
+# following) and stays quiet on an intended, matched change.
 
-def test_runtime_unit_count_13():
-    """Runtime = 13 rows with stage in {1, 2, 3}.
-    Full 15-unit set = 13 runtime + 4 boot (probe, RT, GEN, freeze) -
-    2 already tested by their own suites (RT/GEN in test_zenoh_...).
-    xbrain-probe (Stage 0) tested separately when CFG-BT-1 lands."""
-    n = sum(1 for _, s, _, _ in UNITS if s in ("1", "2", "3"))
-    assert n == 13, "runtime set drifted: %d" % n
+def test_runtime_rows_match_the_units_on_disk():
+    """Every Stage 1/2/3 row has a file, and every non-boot non-AI unit
+    file has a row -- both directions.
+
+    One direction alone is not enough: rows without files were the old
+    failure mode (this table asserted two deleted units for an hour),
+    and files without rows means a unit joins the boot with none of the
+    OOM / freeze / restart-cap checks in this file ever applied to it.
+    """
+    boot_or_ai = {
+        # Stage 0 / 0z / 0c -- rows exist above, or the unit has its own suite.
+        "xbrain-probe.service",
+        "xbrain-zenohd-rt.service",
+        "xbrain-zenohd-gen.service",
+        "xbrain-config-freeze.service",
+        # Stage 5 AI drafts -- validated by their own test files.
+        "xbrain-ai-asr.service",
+        "xbrain-llm.service",
+        "xbrain-payload.service",
+    }
+    runtime_rows = {n for n, s, _, _ in UNITS if s in ("1", "2", "3")}
+    on_disk = {p.name for p in UNIT_DIR.glob("xbrain-*.service")}
+    assert runtime_rows - on_disk == set(), \
+        "table rows with no unit file: %s" % sorted(runtime_rows - on_disk)
+    assert on_disk - runtime_rows - boot_or_ai == set(), \
+        "unit files with no table row: %s" % sorted(
+            on_disk - runtime_rows - boot_or_ai)

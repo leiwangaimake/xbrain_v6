@@ -6,7 +6,7 @@ File: arbiter_p1.py
 Brief: MOT-PM-5 P1-internal behavior source arbiter (12 S4.2 v0.8)
 
 Description:
-The sources (fence_guard / teleop_* / rns_avoid / nav2_proxy / teleop_cloud / relative_move + hold) compete for the P1 output slot; highest active priority wins. Sources not seen for dwell_ms deactivate; a fresh note() re-activates. Separate from xbrain/common/arbiter -- P1 sources are process-local with no cross-process story. PM1.3 (2026-09-09) removed path_follow/target_oriented/estop_echo and moved rns_avoid to 900 (12 v0.8, #20-1/#20-9).
+The sources (fence_guard / teleop_* / rns_avoid / teleop_cloud / relative_move + hold) compete for the P1 output slot; highest active priority wins. Sources not seen for dwell_ms deactivate; a fresh note() re-activates. Separate from xbrain/common/arbiter -- P1 sources are process-local with no cross-process story. PM1.3 (2026-09-09) removed path_follow/target_oriented/estop_echo and moved rns_avoid to 900 (12 v0.8, #20-1/#20-9). v0.9 (2026-09-29) removed nav2_proxy (12 S4.6 whole-section tombstone).
 """
 
 
@@ -30,12 +30,23 @@ class BehaviorSource(str, Enum):
         zeroing the output directly (P1-21). Removing it also clears the 900
         collision it had with rns_avoid's new priority (user ruling 2026-09-09).
     rns_avoid moved 700 -> 900: it is navigation itself now, not an avoidance
-    overlay. Its relation to teleop is TR-RNS-1 (12 S4.2c.5), not the number."""
+    overlay. Its relation to teleop is TR-RNS-1 (12 S4.2c.5), not the number.
+
+    v0.9 (2026-09-29 user ruling, 12 S4.6 whole-section tombstone): NAV2_PROXY
+    was removed too. It delegated Nav2's three recovery behaviours
+    (spin/backup/wait), and all three are covered elsewhere now -- backup by
+    rns.backup.max_backup_m, wait by rns.dynamic.wait_budget_s (20 S5.3A
+    RNS-N-16), spin by the 12 S6A rotation permit (RCG-1..4). Both ends of the
+    delegation were already empty: the behavior_proxy process was never built
+    and the P1-side proxy module had no production caller.
+      *** The string "nav2_proxy" deliberately STAYS in rotation/rcg.py's
+    VETO_SOURCES. That set is matched against a source NAME, so a stale entry
+    only ever vetoes -- fail-safe. Removing it is a separate decision about the
+    rotation permit's veto surface, not part of this deletion."""
     FENCE_GUARD = "fence_guard"           # 1000 - veto only, produces no motion
     TELEOP_KEYBOARD = "teleop_keyboard"   # 800  - local (teleop family)
     TELEOP_JOYSTICK = "teleop_joystick"   # 750
     RNS_AVOID = "rns_avoid"               # 900  - the single navigation source
-    NAV2_PROXY = "nav2_proxy"             # 600  - Nav2 delegate (spin/backup/wait)
     TELEOP_CLOUD = "teleop_cloud"         # 550  - cloud tel-op
     RELATIVE_MOVE = "relative_move"       # 500  - shell only (translates to goto)
     HOLD = "hold"                         # 100  - always-alive zero-vel
@@ -49,7 +60,6 @@ _PRIORITY = {
     BehaviorSource.RNS_AVOID: 900,
     BehaviorSource.TELEOP_KEYBOARD: 800,
     BehaviorSource.TELEOP_JOYSTICK: 750,
-    BehaviorSource.NAV2_PROXY: 600,
     BehaviorSource.TELEOP_CLOUD: 550,
     BehaviorSource.RELATIVE_MOVE: 500,
     BehaviorSource.HOLD: 100,

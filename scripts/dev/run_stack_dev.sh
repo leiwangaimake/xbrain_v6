@@ -18,8 +18,10 @@
 # (no systemd, no freeze, no GATE) so the voice / RTK / HMI chain can be
 # integration-tested now. It is NOT the deployment path -- start_all.sh is, and
 # stays systemd-pure. The C++ robot side (quadruped / perception / chassis_relay
-# / behavior_proxy / teleop_input / nav2 / zenoh-bridge) is not built yet and is
-# simply not started here.
+# / teleop_input / zenoh-bridge) is not built yet and is simply not started here.
+# (behavior_proxy and nav2 were listed here too until 2026-09-30; both were
+# removed with the 12 S4.6 whole-section tombstone, so they are not "not built
+# yet" -- they are gone.)
 #
 # Startup order mirrors the SPIRIT of 10 S3.3 for the pieces that run:
 #   routers (RT then GEN) -> rtk_driver -> p1_motion (cross-plane bridge)

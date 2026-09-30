@@ -136,17 +136,18 @@ _UNIT_EXCEPTIONS = {
     # 表体是 zenoh 官方桥的全名, 单元名截短. 全名里的 ros2dds 是桥的类型,
     # 不是我方进程的一部分.
     "zenoh-bridge-ros2dds": "xbrain-zenoh-bridge.service",
-    # 以下两条是 2026-08-23 把 payload-service 补登进 10 S3.2 时暴露的:
+    # 本条是 2026-08-23 把 payload-service 补登进 10 S3.2 时暴露的:
     # 补登本身让门从"少一行"变成"多两条名字对不上", 而那两条一直都在,
-    # 只是此前因为表体里没有它们(payload 整表未列, Nav2 没加反引号)
-    # 而看不见.
+    # 只是此前因为表体里没有它们(payload 整表未列)而看不见.
     #
-    # 单元名带角色后缀: Nav2 的单元是 behavior_server 那一个, 名字里带
-    # 它的角色而不只是框架名 -- 将来若再接一个 Nav2 组件, 两者要分得开.
-    "Nav2": "xbrain-nav2-behavior.service",
     # 表体写服务全名(payload-service), 单元名截短. 与 llama-server 同理:
     # 单元名是角色, 不是二进制名.
     "payload-service": "xbrain-payload.service",
+    # 2026-09-30 删掉的第四条是 "Nav2" -> xbrain-nav2-behavior.service.
+    # 它随 12 S4.6 整节作废(用户 2026-09-29 裁决)一起走: 单元文件已删, 10 S3.2
+    # 核 7 行也同批划删了 `behavior_proxy` 与 `Nav2` 两个反引号名.
+    # *** 两侧必须同批改, 否则这个门会当场红: 表体里留着 `Nav2` 而磁盘上没有
+    # 对应单元, 就是下面 main() 里的 NO-UNIT 分支.
 }
 
 

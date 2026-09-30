@@ -46,8 +46,8 @@ _sudo_systemctl_stop xbrain-llm.service
 _sudo_systemctl_stop xbrain-ai-asr.service
 
 # --- Stage 3 down --------------------------------------------------
-# Reverse of start Stage 3: p5 -> p4 -> p3 -> p2. behavior_proxy is NOT here
-# (it is a Stage-1 RT participant, torn down in Stage 1 below).
+# Reverse of start Stage 3: p5 -> p4 -> p3 -> p2. (behavior_proxy was never a
+# Stage-3 unit, and as of 2026-09-30 it no longer exists -- see Stage 1 below.)
 _stage_hdr 3 "general-plane"
 _sudo_systemctl_stop xbrain-p5-gateway.service
 _sudo_systemctl_stop xbrain-p4-agent.service
@@ -62,11 +62,14 @@ _sudo_systemctl_stop xbrain-chassis-relay.service
 
 # --- Stage 1 down --------------------------------------------------
 # Reverse of start Stage 1 RT participants.
+# xbrain-nav2-behavior / xbrain-behavior-proxy were stopped here until
+# 2026-09-30; both units were deleted with the 12 S4.6 whole-section tombstone
+# (user ruling 2026-09-29). Kept symmetric with start_all.sh Stage 1 on purpose:
+# a stop line for a unit that no longer exists is a teardown that reports an
+# error on every clean shutdown.
 _stage_hdr 1 "RT-plane"
 _sudo_systemctl_stop xbrain-teleop-input.service
 _sudo_systemctl_stop xbrain-zenoh-bridge.service
-_sudo_systemctl_stop xbrain-nav2-behavior.service
-_sudo_systemctl_stop xbrain-behavior-proxy.service
 _sudo_systemctl_stop xbrain-rtk-driver.service
 _sudo_systemctl_stop xbrain-perception.service
 _sudo_systemctl_stop xbrain-quadruped.service

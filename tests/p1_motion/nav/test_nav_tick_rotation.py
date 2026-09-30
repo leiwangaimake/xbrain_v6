@@ -201,7 +201,7 @@ def test_pure_spin_triggers_even_with_a_little_vx():
 def test_spin_with_occupied_cell_is_blocked():
     """One occupied cell in the ring refuses the spin (rot_occ_max is 0)."""
     r_check = R_ROBOT_CALIBRATED + rot_limits().margin_rot_m
-    ev = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
+    ev = _permit(0.0, 0.0, 1.5, source="relative_move",
                  ring=_clean_ring(r_check, occ=1))
     assert ev.spin_like is True
     assert ev.decision == DECISION_REJECT
@@ -227,6 +227,11 @@ def test_spin_with_unknown_cell_is_clamped_not_vetoed(source):
     nav2_proxy, which 12 S6A.4.2 puts on the veto branch, so "turn around"
     could never execute -- and seeing behind requires turning, which requires
     seeing behind.
+      That last sentence is HISTORY as of 2026-09-30: nav2_proxy went away with
+    the 12 S4.6 tombstone, and voice turns now arrive under rns_avoid, which
+    this table already puts on the LIMIT branch. Whether the crossing is still
+    needed once its original path is gone is a ruling, not a test edit -- see
+    the note on VETO_SOURCES in rotation/rcg.py. Nothing here was relaxed.
 
     Parametrised over the source closed set MINUS the exempt row, not over
     rns_avoid alone. An implementation that left the blind case under 12
@@ -265,7 +270,8 @@ def test_cloud_teleop_keeps_its_veto_when_the_ring_is_blind(reason_ring):
 
     The two halves of that ruling are separate arguments and this file has to
     hold both apart. Crossing 12 S6A.4.2's table is about AVAILABILITY -- turns
-    that reach the chassis through nav2_proxy would otherwise be vetoed for
+    that reach the chassis through nav2_proxy (gone 2026-09-30; the argument is
+    recorded as it was ruled) would otherwise be vetoed for
     ever, so the feature would not exist. teleop_cloud is not in that position
     (local teleop is always an alternative), and the v0.7.9 premise it was
     narrowed on -- a cloud operator watches a delayed feed with a narrow field
@@ -331,23 +337,23 @@ def test_wz_limit_radps_is_reported_only_when_a_clamp_was_applied():
     """
     lim = rot_limits()
     r_check = R_ROBOT_CALIBRATED + lim.margin_rot_m
-    veto = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
+    veto = _permit(0.0, 0.0, 1.5, source="relative_move",
                    ring=_clean_ring(r_check, occ=1), limits=lim)
     assert veto.decision == DECISION_REJECT
     assert veto.wz_limit_radps is None
-    clamp = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
+    clamp = _permit(0.0, 0.0, 1.5, source="relative_move",
                     ring=_clean_ring(r_check, unknown=1), limits=lim)
     assert clamp.decision == DECISION_LIMIT
     assert clamp.wz_limit_radps == pytest.approx(lim.wz_blind_radps)
     # A request UNDER the clamp is the case the field cannot diagnose without
     # this: wz is untouched, so only wz_limit_radps says it was limited.
-    quiet = _permit(0.0, 0.0, 0.1, source="nav2_proxy",
+    quiet = _permit(0.0, 0.0, 0.1, source="relative_move",
                     ring=_clean_ring(r_check, unknown=1), limits=lim)
     if quiet.spin_like:
         assert quiet.wz_out == pytest.approx(quiet.wz_in)
         assert quiet.wz_limit_radps == pytest.approx(lim.wz_blind_radps)
     # A permitted tick has no limit in force either.
-    ok = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
+    ok = _permit(0.0, 0.0, 1.5, source="relative_move",
                  ring=_clean_ring(r_check), limits=lim)
     assert ok.decision == DECISION_PASS and ok.wz_limit_radps is None
 
@@ -382,7 +388,7 @@ def test_blind_clamp_is_not_a_permit():
     lim = rot_limits()
     v = evaluate_ring(lim, R_ROBOT_CALIBRATED, _clean_ring(r_check, unknown=1))
     assert v.permitted is False
-    ev = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
+    ev = _permit(0.0, 0.0, 1.5, source="relative_move",
                  ring=_clean_ring(r_check, unknown=1), limits=lim)
     assert ev.wz_out < ev.wz_in
     assert ev.decision != DECISION_PASS
@@ -412,7 +418,7 @@ def test_a_hard_refusal_outranks_a_blind_one():
         v = evaluate_ring(lim, R_ROBOT_CALIBRATED, ring)
         assert v.reason == want, "blind reason outranked a hard one: %s" % v.reason
         assert v.reason not in BLIND_REASONS
-        ev = _permit(0.0, 0.0, 1.5, source="nav2_proxy", ring=ring, limits=lim)
+        ev = _permit(0.0, 0.0, 1.5, source="relative_move", ring=ring, limits=lim)
         assert ev.decision == DECISION_REJECT and ev.wz_out == 0.0
 
 
@@ -485,7 +491,7 @@ def test_spin_with_stale_grid_is_vetoed_not_clamped():
     """
     lim = rot_limits()
     r_check = R_ROBOT_CALIBRATED + lim.margin_rot_m
-    ev = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
+    ev = _permit(0.0, 0.0, 1.5, source="relative_move",
                  ring=_clean_ring(r_check, age_ms=lim.grid_age_max_ms + 1))
     assert ev.decision == DECISION_REJECT
     assert ev.reason == REASON_GRID_STALE
@@ -511,7 +517,7 @@ def test_sectors_cross_veto_unavailable_is_blind_not_an_abstention():
     v = evaluate_ring(lim, R_ROBOT_CALIBRATED, ring)
     assert v.permitted is False
     assert v.reason == REASON_SECTORS_UNAVAILABLE
-    ev = _permit(0.0, 0.0, 1.5, source="nav2_proxy", ring=ring, limits=lim)
+    ev = _permit(0.0, 0.0, 1.5, source="relative_move", ring=ring, limits=lim)
     assert ev.decision == DECISION_LIMIT
     assert ev.wz_out == pytest.approx(lim.wz_blind_radps)
 
@@ -529,7 +535,7 @@ def test_spin_with_clean_ring_is_permitted():
     This one is what makes those tests mean anything.
     """
     r_check = R_ROBOT_CALIBRATED + rot_limits().margin_rot_m
-    ev = _permit(0.0, 0.0, 1.5, source="nav2_proxy",
+    ev = _permit(0.0, 0.0, 1.5, source="relative_move",
                  ring=_clean_ring(r_check, sectors_min_m=r_check + 0.01))
     assert ev.spin_like is True
     assert ev.decision == DECISION_PASS

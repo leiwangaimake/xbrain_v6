@@ -19,7 +19,9 @@
 #   0z-3  chassis link probe          tcp/30003 (soft-gated)
 #   0c    xbrain-config-freeze        assertion table + resolved/
 #   1     RT-plane participants       quadruped -> perception -> rtk_driver ->
-#                                       behavior_proxy -> nav2 -> zenoh-bridge -> teleop
+#                                       zenoh-bridge -> teleop
+#         (behavior_proxy + nav2 were here until 2026-09-30; removed with
+#          12 S4.6, see the Stage 1 block below)
 #   2     cross-plane participants    chassis_relay -> p1_motion (GATE-3/4)
 #   3     general-plane 5 processes   p2_core -> p3_task -> p4_agent -> p5_gateway
 #   4     RELEASE (P2 internal)       NOT a systemd stage
@@ -89,17 +91,21 @@ _sudo_systemctl start xbrain-config-freeze.service
 
 # --- Stage 1: RT-plane participants ---------------------------------
 _stage_hdr 1 "RT-plane participants"
-# 10 S3.3 verbatim order: quadruped -> perception -> rtk_driver -> behavior_proxy,
-# and alongside them Nav2 behavior_server + zenoh-bridge-ros2dds. These are the
-# RT-plane pure participants; p1_motion is NOT here (it is a Stage-2 cross-plane
+# 10 S3.3 order for the units that still exist: quadruped -> perception ->
+# rtk_driver, and alongside them zenoh-bridge-ros2dds. These are the RT-plane
+# pure participants; p1_motion is NOT here (it is a Stage-2 cross-plane
 # point). teleop_input is an RT-plane pub-only participant (10 S3.1) the S3.3
 # diagram does not draw -- placed here because it must precede p1_motion (which
 # reads cmd/teleop) and, like the rest, is RT-plane so precedes Stage 2.
+#
+# behavior_proxy and Nav2 behavior_server used to start here. Both were removed
+# on 2026-09-30 with the 12 S4.6 whole-section tombstone (user ruling
+# 2026-09-29: motion is RNS's job, no ROS 2 actions). Their unit files are gone,
+# so leaving the two start lines would make this script fail on a unit systemd
+# does not know -- the two lines went with the units, not just the comment.
 _sudo_systemctl start xbrain-quadruped.service
 _sudo_systemctl start xbrain-perception.service
 _sudo_systemctl start xbrain-rtk-driver.service
-_sudo_systemctl start xbrain-behavior-proxy.service
-_sudo_systemctl start xbrain-nav2-behavior.service
 _sudo_systemctl start xbrain-zenoh-bridge.service
 _sudo_systemctl start xbrain-teleop-input.service
 
@@ -115,9 +121,10 @@ _sudo_systemctl start xbrain-p1-motion.service
 
 # --- Stage 3: general-plane 5 processes -----------------------------
 _stage_hdr 3 "general-plane 5 processes"
-# 10 S3.3: p2_core -> p3_task -> p4_agent -> p5_gateway. behavior_proxy is NOT
-# here -- it is an RT-plane Stage-1 participant (the old script wrongly listed
-# it here). p2_core runs its internal Stage A -> B(BIT 19) -> C(WAV announce) ->
+# 10 S3.3: p2_core -> p3_task -> p4_agent -> p5_gateway. (The old script also
+# listed behavior_proxy here, which was wrong twice over: it was an RT-plane
+# Stage-1 participant, and as of 2026-09-30 it no longer exists at all.)
+# p2_core runs its internal Stage A -> B(BIT 19) -> C(WAV announce) ->
 # D(release) machine; the release (Stage 4) is P2's own action, not a systemd
 # unit, so this script cannot start it.
 _sudo_systemctl start xbrain-p2-core.service

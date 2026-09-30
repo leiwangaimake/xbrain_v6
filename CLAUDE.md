@@ -85,7 +85,9 @@
 
 ### 0.1 进程清单
 
-★★★ **全系统 15 个常驻进程**（`10` §3.1）。**Zenoh 有【两个】物理隔离的 router**，🚫 不是一条总线。
+★★★ **常驻进程清单的唯一真源是 `10` §3.1**，现数**去数那张表**（本文 🚫 不写数 —— 判定量会腐烂，§3.7）。**Zenoh 有【两个】物理隔离的 router**，🚫 不是一条总线。
+
+⚠️★★★ **2026-09-30 订正**：本行原写「**全系统 15 个常驻进程**」。★ **为何不再成立**：`behavior_proxy` 与 `Nav2 behavior_server` 两行已随 `12` §4.6 整节作废（用户 2026-09-29 裁决）删除，`10` §3.1 同批划删两行 ⇒ 15 减 2。★★ **为何这次不换成新的数字**：本文件先后写过「跨面点只有三个」（实际五个）与本行的 15，**两次都是同一个形状** —— 一个抄进 markdown 的计数，改代码的人不会想到来改它，而读它的人会当契约用。⇒ 改为**指向真源**，并由 `scripts/ci/check_affinity.py` 现场求值（它解析 `10` §3.2 与 `deploy/systemd/*.service` 求双向差集，多一个少一个都报）。
 
 | 进程 | 语言 | 面 | 说明 |
 |---|---|---|---|
@@ -101,8 +103,8 @@
 | `quadruped` | **C++17** | ② + ③ 底盘面 | 三通道双域（见 §5.4）；★★★ **RT-C4 明令禁止持通用面 session** |
 | `rtk_driver` | ⚠️ 待定（建议 C++） | ② | ★★ 全系统**唯一有权判定 `ClockStatus.sync`** 的进程（CLK-A1） |
 | `teleop_input` | ⚠️ 建议 C++（未定） | ② **pub-only** | ★ **不持通用面 session ⇒ 不是跨面点**；遥控 `deadman` 的时基持有者 |
-| `behavior_proxy` | C++ | ② | Nav2 Action ↔ Zenoh 翻译；不持任何通用面 session |
-| `Nav2 behavior_server` | C++ | ROS 2 域 | ★ **仅 spin / backup / wait 三个行为** |
+| ~~`behavior_proxy`~~ | — | — | ★★★ **本行已作废**（2026-09-30 删代码侧）。★ 原写「C++ ／ ② ／ Nav2 Action ↔ Zenoh 翻译；不持任何通用面 session」。★ **为何不再成立**：用户 2026-09-29 裁决「机器人的运动全部由 RNS 负责，不用 ROS 2 的 action」，落为 `12` §4.6 整节作废声明；该进程**从未建过**（`ros2_ws/` 零命中）。★ **依据**：`12` §4.6 节头四条实测 ＋ `10` §3.1 / §3.2 同批划删后 `scripts/ci/check_affinity.py` 双向差集 `failures: 0` |
+| ~~`Nav2 behavior_server`~~ | — | — | ★★★ **本行已作废**（同上）。★ 原写「C++ ／ ROS 2 域 ／ 仅 spin / backup / wait 三个行为」。★ **为何不再成立**：三项职责已各自被覆盖 —— `backup` → `rns.backup.max_backup_m`；`wait` → `rns.dynamic.wait_budget_s`（`20` §5.3A `RNS-N-16`）；`spin` → `12` §6A 旋转许可（`RCG-1`~`4`）。★ 两个 systemd 单元 `xbrain-behavior-proxy.service` / `xbrain-nav2-behavior.service` 同批删除 |
 | `zenoh-bridge-ros2dds` | Rust | ① ↔ ROS 2 | ⚠️ GATE-5 必须先删 V5 遗留的 `zenoh_bridge.json5`；★ 它**不是云端桥** |
 | `payload-service` | Python | — | GZH-2 三合一（音频 8519 / 灯光 8529 / 载荷 18080） |
 
@@ -146,7 +148,9 @@
 │                     #    (3) ★★★ 正式编号册是【唯一】权威真源，任何结论必须能在正式册内部自证。
 │                     #    ★ 差别一句话：读取【仅为迁移】允许；【依赖】永远禁止。
 ├── ros2_ws/          # ★ 机器人侧【全部 C++ 进程】资产（用户 2026-08-06 · 99 U80）
-│                     #    ★ 含标准 ROS2 节点(用 rclcpp)：quadruped · perception · behavior_proxy
+│                     #    ★ 含标准 ROS2 节点(用 rclcpp)：quadruped · perception
+│                     #      (原并列的 behavior_proxy 已于 2026-09-30 随 12 §4.6 整节作废移除 ——
+│                     #       它从未建过, ros2_ws/ 下从来只有 quadruped/chassis_relay/sensor/perception)
 │                     #    ★ 也含【非 ROS2 的 C++ 进程】(纯 CMake 包, 🚫 不链 rclcpp)：
 │                     #      chassis_relay(急停链路 CRL 绝不引 rclcpp) · rtk_driver · teleop_input
 │                     #    ★★ colcon 能编纯 CMake 包；「不链 rclcpp」由各包 CMakeLists ＋ 无 ROS 链接

@@ -120,7 +120,7 @@ def _unconfigured_eval() -> RotationEval:
         detail_item=REASON_R_ROBOT_UNCALIBRATED)
 
 
-def _run(tracker: RotationEpisodeTracker, evals, *, source="nav2_proxy"):
+def _run(tracker: RotationEpisodeTracker, evals, *, source="relative_move"):
     """Feed a list of RotationEval and collect every event that came out."""
     out = []
     for ev in evals:
@@ -482,10 +482,10 @@ def test_the_real_permit_on_a_blind_ring_yields_one_event_for_the_whole_turn():
     evs = []
     for _ in range(60):
         ev = apply_rotation_permit(
-            vx_mps=0.0, vy_mps=0.0, wz_radps=1.5, source="nav2_proxy",
+            vx_mps=0.0, vy_mps=0.0, wz_radps=1.5, source="relative_move",
             limits=lim, r_robot_m=R_ROBOT_CALIBRATED, ring=ring)
         assert ev.decision == DECISION_LIMIT      # the standing path
-        evs += t.observe(ev, source="nav2_proxy")
+        evs += t.observe(ev, source="relative_move")
     assert len(evs) == 1
     d = evs[0].detail()
     assert d["blind"] is True

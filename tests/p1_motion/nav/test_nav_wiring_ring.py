@@ -149,7 +149,7 @@ def _ring(holder: _Holder, pose: _Pose, snap: Any, now_ms: int = NOW):
     return NavRuntime._ring_sample(holder, pose, snap, now_ms)
 
 
-def _permit(ring, *, source: str = "nav2_proxy", r_robot: Optional[float] = R_ROBOT):
+def _permit(ring, *, source: str = "relative_move", r_robot: Optional[float] = R_ROBOT):
     """A pure spin through the real permit: vx 0, wz 1.5 rad/s."""
     return apply_rotation_permit(vx_mps=0.0, vy_mps=0.0, wz_radps=1.5,
                                  source=source, limits=rot_limits(),
@@ -166,8 +166,10 @@ def test_unobserved_rear_clamps_the_spin_instead_of_refusing_it():
 
     Before the RCG-3 correction this tick was a veto, and since the rear is
     never observed the veto was permanent: 18 A09..A12 all reach the chassis
-    through nav2_proxy, so "turn around" could not execute, and seeing behind
-    requires turning. A clamped 0.3 rad/s turn is what lets the RGBD sweep the
+    through nav2_proxy (that source was deleted 2026-09-30 with the 12 S4.6
+    tombstone; the sentence records the argument as it was ruled, and voice
+    turns now arrive under rns_avoid), so "turn around" could not execute, and
+    seeing behind requires turning. A clamped 0.3 rad/s turn lets the RGBD sweep the
     rear into the grid, at which point an obstacle there becomes BLOCKED and
     the occupied conjunct stops the turn on its own.
 

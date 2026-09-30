@@ -293,7 +293,22 @@ LIMIT_SOURCES = frozenset({"teleop_keyboard", "teleop_joystick", "rns_avoid"})
 # more; the behaviour they described now arrives under rns_avoid, which the
 # same table puts on the LIMIT branch. That divergence is reported, not
 # resolved here -- picking a branch for the merged source is a ruling.
-VETO_SOURCES = frozenset({"nav2_proxy", "relative_move", "teleop_cloud",
+#
+# nav2_proxy left this set on 2026-09-30, with the enum member, when 12 S4.6
+# was tombstoned whole (user ruling 2026-09-29). It had to leave rather than
+# linger as a harmless-looking extra: the union of the two sets is asserted
+# EQUAL to BehaviorSource's values in both directions
+# (test_every_behavior_source_has_a_disposal), and _source_disposal() raises on
+# any name in neither set, so a stale row is coverage that is not there.
+#   *** REPORTED, NOT RESOLVED: the BLIND_REASONS comment above argues that the
+# blind clamp must cross this table because "18 A09..A12 all reach the chassis
+# through nav2_proxy". That premise is now gone -- voice turns arrive under
+# rns_avoid, which this table already puts on the LIMIT branch. Whether the
+# RCG-3 crossing is still needed, or was only ever needed for the path that no
+# longer exists, is a ruling (12 S15 #52's sibling question), NOT something to
+# settle by editing the set. Nothing here was widened or narrowed on that
+# account.
+VETO_SOURCES = frozenset({"relative_move", "teleop_cloud",
                           "hold", "fence_guard"})
 
 
