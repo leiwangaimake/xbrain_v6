@@ -252,6 +252,32 @@ _KNOWN_UNWIRED = {
     # for wz: a new gate field, or an event. 11's call.
     "xbrain/p1_motion/gate/negative_vx.py": "registered: NEXT S8.12 -- real gap, but R2.3-b has no gate.limiter member and OB-1 bars adding one; needs a ruling on the attribution before it can be wired",
 
+    # MOT-PM-8 g(targets), 12 S6.4. SUPERSEDED, not a gap -- and the way it
+    # surfaced is worth keeping.
+    #   It appeared here on 2026-09-30, the day xbrain/p1_motion/gate/audit.py
+    #   was deleted. It had not become unwired that day: audit.py's invented
+    #   14-value limiter tuple contained the literal "g_targets", and that
+    #   string was the ONLY production mention of this module's name. So a
+    #   dead module's made-up enum value had been holding a second dead module
+    #   out of this list. That is this door's name-mention surface doing
+    #   exactly what its header says it does (it under-reports; a name in a
+    #   neighbouring file counts as wired), and it is the clearest example of
+    #   it the repository has.
+    # Why superseded rather than missing: 11 S2.2.1 (the p1_motion row)
+    # records "targets 与 rt/lidar/* 转历史条目" once rt/perception/profile |
+    # objects | status landed as the RNS inputs in v1.7, and the T-02 note
+    # adds that "targets 的消费方 path_follow 已删除". nav/host_gate.py says
+    # the same from the code side, verbatim: "g(targets) is absent on purpose:
+    # 11 S3.1B replaced rt/perception/targets with the objects list RNS
+    # consumes itself (20 S5), so near persons stop the robot INSIDE the
+    # candidate (WAIT_DYNAMIC), not in a second host term."
+    # NOT deleted here on purpose: 12 S6.4 still describes g() as one of the
+    # six gate inputs and 11 S9.6.5 still carries the `target` limiter value,
+    # so whether the rule is retired (delete) or merely re-sourced (rewrite
+    # against objects[]) is a ruling on those two sections, not an
+    # implementation choice -- CLAUDE.md S1. Reported 2026-09-30, awaiting it.
+    "xbrain/p1_motion/gate/g_targets.py": "registered: superseded input -- 11 S2.2.1 turned rt/perception/targets into a historical entry and its consumer path_follow is deleted; host_gate omits g() deliberately. Delete-vs-re-source is a ruling on 12 S6.4 + 11 S9.6.5 `target`",
+
     # MOT-PM-16 PS-1..PS-6. p1 runtime/main_wiring.py builds and publishes
     # state/pose inline in the GNSS bridge (via path/gnss_pose.py); the
     # MotionSnapshot -> pose/cmd_vel byte-identity shape here has no call
