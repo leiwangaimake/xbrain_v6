@@ -3,14 +3,22 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_d3_batch.py
-Brief: D-3 batch CHK-2-08/35/51 + INF-QD-2 + INF-ZN-9 tests
+Brief: D-3 batch CHK-2-08/51 + INF-QD-2 + INF-ZN-9 tests
 
 Description:
-PTZ drift auto-home three-triggers + speed tiers; D01/D10 few-shot
-expansion + D10 mute-vs-restore; scan-surface meta-gate (SCAN
-_SURFACE + self-exclusion + docs-never-included); constraint-id
-triple addresser; cross-plane forwarding compliance (WL-G2 +
-envelope rebuild + CRL-3).
+PTZ drift auto-home three-triggers + speed tiers; scan-surface
+meta-gate (SCAN_SURFACE + self-exclusion + docs-never-included);
+constraint-id triple addresser; cross-plane forwarding compliance
+(WL-G2 + envelope rebuild + CRL-3).
+
+CHK-2-35 (the D01/D02/D06/D07/D10 few-shot expansion) was removed on
+2026-09-30 together with xbrain/p4_agent/intents_expand/, the module it
+exercised. Four of that module's five table rows named an intent that
+configs/intents.yaml gives to something else entirely -- D01/D02 were
+written as broadcast start/stop against the real light_on / light_off, and
+D06/D07 as volume/segment against the real strobe_on / strobe_off -- and
+the nine tests here could not see it, because the only test that compared
+the table with the yaml built its expected yaml FROM the table.
 """
 
 from __future__ import annotations
@@ -55,14 +63,6 @@ from xbrain.p2_core.ptz.drift_home import (
     PtzSpeedTiers,
     check_t_drift_trigger,
     note_home_fired,
-)
-from xbrain.p4_agent.intents_expand.d01_d10 import (
-    D10_MUTE_LEVEL,
-    D_EXPANSION_TABLE,
-    D10ClassificationError,
-    bidirectional_diff_vs_yaml,
-    classify_d10,
-    resolve_d10_level,
 )
 
 pytestmark = pytest.mark.no_device
@@ -142,68 +142,6 @@ def test_ptz_speed_tiers_ordering_enforced():
 def test_ptz_speed_tiers_valid_ok():
     t = PtzSpeedTiers(speed_coarse=1.0, speed_fine=0.3)
     assert t.speed_coarse == 1.0 and t.speed_fine == 0.3
-
-
-# ---------- CHK-2-35 D01/D06/D10 few-shot ----------
-
-def test_d10_mute_level_is_zero():
-    """D10 hard branch: '静音' -> level == 0."""
-    assert D10_MUTE_LEVEL == 0
-    kind = classify_d10("静音")
-    assert resolve_d10_level(kind, resolved_restore_level=25) == 0
-
-
-def test_d10_bie_chusheng_also_mute():
-    kind = classify_d10("别出声")
-    assert kind == "mute"
-    assert resolve_d10_level(kind, resolved_restore_level=25) == 0
-
-
-def test_d10_restore_uses_resolved_value():
-    """Variant c guard: no code default; the tier value comes from
-    resolved products."""
-    kind = classify_d10("音量恢复正常")
-    assert kind == "restore"
-    assert resolve_d10_level(kind, resolved_restore_level=25) == 25
-
-
-def test_d10_restore_non_int_refused():
-    """resolved product must supply an integer level."""
-    with pytest.raises(D10ClassificationError):
-        resolve_d10_level("restore", resolved_restore_level=None)
-
-
-def test_d10_mute_level_folded_to_1_would_variant_b_red():
-    """Regression guard: if someone changes D10_MUTE_LEVEL to 1,
-    the test would notice."""
-    assert D10_MUTE_LEVEL != 1
-
-
-def test_d10_unknown_returns_kind_unknown():
-    """Utterances outside D10's set don't classify; caller falls
-    through to D06 relative adjust."""
-    assert classify_d10("音量调大") == "unknown"
-
-
-def test_expansion_yaml_diff_empty_when_synced():
-    """Meta-check: bidirectional diff empty when yaml matches
-    D_EXPANSION_TABLE exactly."""
-    fake_yaml = {k: list(v) for k, v in D_EXPANSION_TABLE.items()}
-    assert bidirectional_diff_vs_yaml(fake_yaml) == {}
-
-
-def test_expansion_yaml_diff_reddens_when_yaml_misses_entry():
-    """Variant a guard: yaml missing D02 while D_EXPANSION_TABLE
-    has D02 -> diff reports 'expansion_only'."""
-    fake_yaml = {k: list(v) for k, v in D_EXPANSION_TABLE.items()}
-    fake_yaml["D02"] = []       # yaml stripped
-    d = bidirectional_diff_vs_yaml(fake_yaml)
-    assert "D02" in d
-    assert len(d["D02"]["expansion_only"]) > 0
-
-
-def test_expansion_covers_five_intents():
-    assert set(D_EXPANSION_TABLE) == {"D01", "D02", "D06", "D07", "D10"}
 
 
 # ---------- CHK-2-51 scan-surface meta-gate ----------

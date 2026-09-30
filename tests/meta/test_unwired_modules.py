@@ -403,15 +403,6 @@ _KNOWN_UNWIRED = {
     # orchestrator render the refusal from the ack, or delete.
     "xbrain/p4_agent/failsafe/rotation_reject.py": "no-surface: the refusal DECISION is wired in p2 motion_intent_wiring (G-6); the P4 wording split has no render site",
 
-    # CHK-2-35. Its bidirectional_diff_vs_yaml() is a META-CHECK against
-    # configs/intents.yaml keywords[], and that file exists -- but the
-    # test that calls it builds its fake yaml FROM D_EXPANSION_TABLE, so
-    # the "synced" assertion is empty by construction and the real file is
-    # never compared (CLAUDE.md S3.2 form 7). Two defects, one entry: it
-    # has no production caller (a meta-check belongs in scripts/, not
-    # xbrain/, CLAUDE.md S0.2) AND its only assertion cannot fail.
-    "xbrain/p4_agent/intents_expand/d01_d10.py": "no-surface: meta-check with no production caller, and its test derives the oracle from the table it checks",
-
     # GWY-P4-28 PL-1..PL-6 D-class light/volume routing. The wired path is
     # p2_core/runtime/payload_wiring.py -> ai_client/lights_client.py,
     # which maps the D intents to /lights itself; nothing names
