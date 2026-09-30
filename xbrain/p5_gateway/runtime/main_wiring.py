@@ -730,6 +730,9 @@ def run_voice_loop_wiring(stop_flag: dict,
 
         speak_acks_seen = 0
         state_task_updates = 0
+        # Last state/task payload seen, for the edge-triggered INFO below.
+        # A one-element list so the nested callback mutates it without nonlocal.
+        _last_task_sig = [None]
         #: 11 S8.5 的端到端关联号, 放在信封的 data 里(见下方发布处的长注).
         probe_seq = 0
         #: 探活 ping 自己的信封 seq. 与上面那个是两个数, 不许合并 --
@@ -826,9 +829,31 @@ def run_voice_loop_wiring(stop_flag: dict,
             if cloud_projector is not None:
                 for _t in tasks or ():
                     cloud_projector.observe_task(_t)
-            _logger.info("p5 obs state/task update #%d: %s",
-                         state_task_updates,
-                         json.dumps(d, ensure_ascii=False))
+            # *** INFO carries a SUMMARY and only on change; the full payload
+            # goes to DEBUG.
+            #
+            # state/task is a periodic broadcast, so dumping the whole payload
+            # at INFO wrote one full TaskState per second forever. Measured
+            # 2026-09-30 on the robot: data/run/p5_smoke.log had reached 11 GB
+            # and was still growing at ~3.5 GB/day, i.e. it fills the disk in
+            # about a month. Nothing consumed those lines -- no test, no script
+            # greps this message (checked before changing it).
+            #
+            # Edge-triggered rather than rate-limited: a period would be a new
+            # tunable with no basis (CLAUDE.md 3.7), while "the task set
+            # changed" is exactly what an operator reading INFO wants. The
+            # counter still advances every tick, so the observation window's
+            # own numbering is unaffected.
+            _task_sig = json.dumps(d, ensure_ascii=False, sort_keys=True)
+            if _task_sig != _last_task_sig[0]:
+                _last_task_sig[0] = _task_sig
+                _logger.info("p5 obs state/task update #%d: %d task(s), "
+                             "current=%s",
+                             state_task_updates,
+                             len(tasks or ()),
+                             (d.get("current") or {}).get("task_id"))
+            _logger.debug("p5 obs state/task update #%d: %s",
+                          state_task_updates, _task_sig)
 
         def _on_cmd_fence(sample) -> None:
             # W1: cache the staged FenceSet geometry (P5F-1 overwrite). Each
