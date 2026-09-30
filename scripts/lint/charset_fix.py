@@ -98,7 +98,22 @@ def classify_lines(path):
     Uses the tokenizer because a hash inside a string is not a comment and a
     docstring is not code. A line-based guess would rewrite inside string
     literals, which is the one thing this tool must not do.
+
+    Python only, and the guard is the point rather than a shortcut. Before
+    2026-09-30 every extension was fed to tokenize.generate_tokens, which is
+    harmless for shell and C++ only because they raise TokenError and fall
+    through to (None, None). A .json5 router config does not raise: the Python
+    tokenizer reads `//` as a floor-division operator, so it returns a perfectly
+    valid token stream in which not one of the file's comment lines is a
+    COMMENT. Both callers then believe the comments are data -- charset_lint
+    filed deploy/zenoh/zenohd-gen.json5's four CJK characters under "strings",
+    the bucket that can be declared debt, instead of under "comments", the
+    bucket its criterion enforces; this fixer would have declined to touch them
+    for the same reason. Failure in that direction is silent: the run stays
+    green and the file stays dirty.
     """
+    if not path.endswith(".py"):
+        return None, None
     src = open(path, encoding="utf-8").read()
     comment, string = set(), set()
     try:

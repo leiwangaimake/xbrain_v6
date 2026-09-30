@@ -45,11 +45,32 @@ ROOT = "/opt/xbrain_v6"
 # but configs/ was never a source dir nor .yaml a source ext, so configs yaml were
 # never scanned by default (only when an arg was passed, and this main() ignores
 # file args) -- a scan-surface blind spot (CLAUDE.md 3.2).
+#
+# deploy/ added 2026-09-30, the same blind spot one level up. The tree holds
+# eighteen systemd units, two zenoh router configs, the nftables and networkd
+# drops and the logrotate rule -- all written and maintained by us, so all of
+# them are inside CLAUDE.md 2.2's declared surface ("我方书写并维护的源文件与
+# 配置"). Not one of them had ever been read by this script, and three of the
+# units carry star markers and CJK punctuation in their header comments.
 SOURCE_DIRS = ("xbrain", "scripts", "tests", "common", "ros2_ws", "services",
-               "configs")
+               "configs", "deploy")
 
+# CLAUDE.md 2.2's 2026-08-11 iron rule covers EVERY file that is not .md /
+# .pdf / .doc(x), and names .json / .json5 explicitly. The list stayed at ten
+# extensions for seven weeks after that ruling, so the document asserted a
+# check that did not exist -- CLAUDE.md 3.2's fourth shape ("拿未兑现的逐字当
+# 证据"), this time in CLAUDE.md itself. The rule is the user's, so the lint
+# moves to meet it rather than the other way round.
+#
+# .service and .mount are here on the same rule and are NOT named by it: the
+# ruling's list ends in 等 and its stated scope is every non-document file we
+# write. A systemd unit is a configuration file we author, review and ship, it
+# carries a # comment block exactly like the .sh and .yaml the 2026-08-10
+# ruling added, and deploy/systemd is where three of this repository's six
+# dirtiest files turned out to be. Leaving unit files out would have meant the
+# scan surface stopped precisely where the violations were.
 SOURCE_EXT = (".py", ".c", ".cc", ".cpp", ".h", ".hpp", ".sh", ".bash",
-              ".yaml", ".yml")
+              ".yaml", ".yml", ".json", ".json5", ".service", ".mount")
 
 # Decorative symbols the project uses in markdown and forbids in source.
 # Listed explicitly rather than by Unicode block: a block test would also catch
@@ -105,7 +126,23 @@ FROZEN_STRING_TREES = {
 
 
 def is_frozen(rel_path):
-    """The reason this file's string literals are exempt, or None."""
+    """The reason this file's string literals are exempt, or None.
+
+    Python only, deliberately. Every reason in FROZEN_STRING_TREES is about a
+    Chinese string a PROGRAM prints -- a doccheck report, a progress line, an
+    assertion message -- and the exemption exists because rewriting those would
+    change behaviour a test depends on. A data file has no such argument: it
+    prints nothing and no test reads its punctuation.
+      Applying the tree prefix to data files was a live hole from the moment
+    .json joined the surface. scripts/doccheck/scan_manifest.json carried 141
+    violations and would have been filed as "declared debt" purely because it
+    sits next to the frozen scripts -- an extension that reports nothing and
+    fails on nothing, which is CLAUDE.md 3.2's first shape (an assertion a
+    do-nothing implementation also passes). The manifest is hand-maintained
+    ("新增文档 = 在 members 里加一行"), so it is ours to clean, and it was.
+    """
+    if not rel_path.endswith(".py"):
+        return None
     for prefix, why in FROZEN_STRING_TREES.items():
         if rel_path == prefix or rel_path.startswith(prefix + os.sep):
             return why
@@ -114,7 +151,14 @@ def is_frozen(rel_path):
 
 def comment_lines_of(path):
     """Line numbers that hold comments or docstrings, so string literals can be
-    told apart from comments. Non-Python falls back to whole-line comments."""
+    told apart from comments. Non-Python falls back to whole-line comments.
+
+    classify_lines answers None for anything that is not Python, and this
+    function's whole-line fallback is what every other extension gets. That
+    split is load-bearing rather than an optimisation -- see the guard's own
+    note in charset_fix.classify_lines for what the Python tokenizer does to a
+    .json5 file, and why a wrong answer there is silent rather than loud.
+    """
     try:
         import charset_fix
         c, _s = charset_fix.classify_lines(path)
@@ -153,6 +197,62 @@ THIRD_PARTY_SNAPSHOTS = (
     "common/third_party",
 )
 
+# Directory names CLAUDE.md 2.2 puts outside the surface wherever they appear.
+#
+# golden: CLAUDE.md 2.2 exempts the Chinese-under-test inside golden vectors,
+# tests/**/golden/**, because that data is what a recogniser or a codec is
+# compared against and cleaning its punctuation would break the reference.
+#   (Quoted in translation, not verbatim: the ruling's own sentence uses the
+# lenticular brackets this script forbids, so transcribing it here would make
+# the file fail its own check -- CLAUDE.md 3.2's third shape, a criterion that
+# harms itself. Anchor for grep in CLAUDE.md 2.2: the phrase golden 测试向量.)
+# The ruling draws a line this script
+# has to respect in both directions: a spoken line WE author and the device
+# plays back is our output and gets ASCII punctuation (configs/speech_presets
+# .yaml), while a line a recogniser is measured against is the INPUT and keeps
+# whatever punctuation the corpus really has. Re-punctuating the second kind
+# does not clean it, it silently changes what the test proves.
+#   Matched by directory NAME rather than by the literal tests/**/golden/**
+# path, because ros2_ws/quadruped/test/golden holds the same kind of data under
+# a different parent and the ruling is about what the bytes ARE, not where they
+# sit. Naming a directory `golden` for anything other than frozen vectors is
+# the one way to misuse this, and it is visible in review.
+#   This costs nothing today -- the four golden trees are clean -- and that is
+# the point of writing it down now: the exclusion is a statement of contract,
+# not cover for an existing violation.
+EXCLUDED_DIR_NAMES = ("golden",)
+
+# Generated files, by basename, wherever they appear. CLAUDE.md 2.2 excludes
+# "运行期生成物 ... MANIFEST.json (freeze 产出, 不手改)" and iron rule 2 makes
+# hand-editing a generated artefact a rule violation in itself -- so reporting
+# one here would be an instruction to do the forbidden thing. compile_commands
+# .json is the same shape from CMake: it appears under ros2_ws/*/build, it is
+# gitignored, and it is rewritten by every configure.
+#   Excluded by BASENAME, not by skipping build/ wholesale. build/ currently
+# holds 58 .yaml fixtures that this script already scans and keeps clean;
+# pruning the directory would shrink an existing surface to solve a problem
+# that only three generated files have (CLAUDE.md 3.2's sixth shape -- a
+# surface that quietly got smaller is worse than one that was never there).
+EXCLUDED_BASENAMES = ("MANIFEST.json", "compile_commands.json")
+
+# The ASR golden corpus, named separately from EXCLUDED_DIR_NAMES because it
+# does not live in a directory called golden. CLAUDE.md 2.2 lists "ASR 金标语料"
+# beside tests/**/golden/** for the same reason: it is the speech the recogniser
+# is scored against, so its punctuation is measurement data, not our prose.
+EXCLUDED_PATHS = ("services/asr/selftest/gold.json",)
+
+
+def _is_excluded_file(rel_path, name):
+    """True when CLAUDE.md 2.2 puts this file outside the scan surface.
+
+    Kept as one predicate so the three reasons stay listed in one place. A
+    caller that grew its own inline check is how a scan surface stops being
+    declarable, which 11 S15.6F.3 wants stated on every run.
+    """
+    if name in EXCLUDED_BASENAMES:
+        return True
+    return rel_path in EXCLUDED_PATHS
+
 
 def iter_sources():
     """Every source file we own, with docs/ and vendor trees excluded."""
@@ -174,10 +274,15 @@ def iter_sources():
             dirnames[:] = [d for d in dirnames
                            if d not in ("__pycache__", ".git", "node_modules",
                                         "generated")
+                           and d not in EXCLUDED_DIR_NAMES
                            and not (d.startswith("model") and "services" in dirpath)]
             for name in filenames:
-                if name.endswith(SOURCE_EXT):
-                    yield os.path.join(dirpath, name)
+                if not name.endswith(SOURCE_EXT):
+                    continue
+                rel = os.path.relpath(os.path.join(dirpath, name), ROOT)
+                if _is_excluded_file(rel, name):
+                    continue
+                yield os.path.join(dirpath, name)
 
 
 def scan(path):
