@@ -16,10 +16,19 @@
 #   Layer rule: L1 may write any common.* except common.safety.* (ENV-2).
 #   motion.profiles.*.max_mps are NOT here: landed in common.yaml (2026-09-10).
 #   qos.bindings: the four-row dev set the CHK-0-56 fixture always used, NOT the
-#   25-row 11 S2.4.7 table -- that table's 'rt/** -> Q3_cmd' row is refused by
+#   full 11 S2.4.7 table -- that table's 'rt/** -> Q3_cmd' row is refused by
 #   freeze assertion F (a5_block_on_rt); the contract-vs-F conflict is a
-#   pre-existing item (tests/common/zenoh test_fixture_bindings_are_verbatim
-#   is red for the same reason), registered in NEXT.md, not settled here.
+#   pre-existing item, registered in NEXT.md, not settled here.
+#   CORRECTION 2026-09-30 (iron rule 1): the sentence removed from here claimed
+#   tests/common/zenoh test_fixture_bindings_are_verbatim "is red for the same
+#   reason". It is not. That case compares the json5 block in docs/11 S2.4.7
+#   against the golden fixture only -- it never evaluates assertion F and never
+#   reads this file, and the 'rt/** -> Q3_cmd' row is present on both sides. Its
+#   red was a transcription drift (the contract gained rt/perception/status ->
+#   Q2_state and the fixture had not followed); fixed 2026-09-30, measured: 54
+#   cases green, and 10 red again when the row is taken back out. Do NOT cite
+#   that case as evidence for the F conflict -- the conflict is still open, but
+#   nothing in that test file bears on it.
 #
 common:
   audio:

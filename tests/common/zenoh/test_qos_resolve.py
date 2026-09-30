@@ -24,7 +24,7 @@ computed from the module under test they would agree with it by construction,
 which is CLAUDE.md 3.2 form 7: a claim that cannot have a counterexample.
 
 *** What holds the fixture honest. test_fixture_bindings_are_verbatim reads the
-json5 block out of 11 and requires the fixture's twenty-five bindings to appear
+json5 block out of 11 and requires every one of the fixture's bindings to appear
 in it, in order, with their set clauses spelled the same way; the profile table
 and rt_override get the same treatment. Without that, this file would be testing
 the resolver against a copy of the bindings that had quietly drifted from the
@@ -674,7 +674,7 @@ def test_mutant_2_a_set_clause_overriding_a_safety_knob_is_refused(field, value)
     assert caught.value.code == E_CONFIG_INVALID
     message = str(caught.value)
     # The field must be named, because a deployment engineer reading this has
-    # twenty-five bindings to choose from.
+    # the whole bindings array to choose from.
     assert field in message
     # And it must be reported as forbidden rather than as unknown. This is the
     # assertion the injected mutation defeated.
