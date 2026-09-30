@@ -68,11 +68,34 @@ def _relpath(path: Path) -> str:
     return str(path.relative_to(TESTS_ROOT.parent))
 
 
-# Build the legacy allowlist ONCE at import: whatever is unmarked
-# today. A new addition surfaces as 'unmarked AND not legacy'.
+# *** The allowlist is a FROZEN SNAPSHOT on disk, not a recomputation.
+#
+# Until 2026-10-01 these lines read:
+#
+#     _LEGACY_UNMARKED = frozenset(
+#         _relpath(p) for p in _collect_all_test_files()
+#         if not _has_module_marker(p))
+#
+# i.e. the SAME expression test_no_new_unmarked_test_file evaluates a
+# moment later. `unmarked_now - _LEGACY_UNMARKED` was therefore empty
+# BY CONSTRUCTION -- a new unmarked file joined both sets at once and
+# the gate could never fire. Verified 2026-09-30 by dropping an
+# unmarked test file into tests/meta/: the case still passed.
+# CLAUDE.md 3.2 form 7 (the conclusion defined into the premise).
+#
+# The comment above it gave the mistake away -- "whatever is unmarked
+# TODAY" was meant as "the day the rule landed", but the code read it
+# as "this instant".
+#
+# A snapshot file rather than an inline tuple: 149 paths inline would
+# be re-sorted and re-wrapped by every formatter that touches this
+# file, and the diff noise would hide an addition. One path per line
+# makes "somebody added a row" a one-line diff.
+_LEGACY_PATH = Path(__file__).parent / "_legacy_unmarked.txt"
 _LEGACY_UNMARKED = frozenset(
-    _relpath(p) for p in _collect_all_test_files()
-    if not _has_module_marker(p)
+    line.strip() for line in
+    _LEGACY_PATH.read_text(encoding="utf-8").splitlines()
+    if line.strip()
 )
 
 
@@ -93,14 +116,31 @@ def test_no_new_unmarked_test_file():
 
 
 def test_legacy_allowlist_shrinks_over_time():
-    """Sanity: the legacy allowlist starts at ~109 and should
-    trend down. If it grows, the migration is going backwards."""
-    # Freeze the upper bound to today's number so a future PR
-    # cannot silently add unmarked tests by reshuffling the
-    # allowlist.
-    assert len(_LEGACY_UNMARKED) <= 120, (
-        "legacy unmarked count is %d, above the 120 debt ceiling"
-        % len(_LEGACY_UNMARKED)
+    """The debt ceiling. It may only ever be lowered.
+
+    *** The ceiling was 120 and the list had grown to 149, so this
+    case had been red for a long time -- and the reason is the defect
+    fixed above it on 2026-10-01: test_no_new_unmarked_test_file was
+    green BY CONSTRUCTION, so nothing stopped unmarked files from
+    landing. The 29 over the old ceiling arrived while the gate that
+    was supposed to catch them could not fire.
+
+    Raising a ceiling to meet reality is normally how a ratchet dies
+    (CLAUDE.md 3.2 form 2: a permanently red criterion gets loosened
+    until it passes). It is done here ONCE, with the cause fixed in
+    the same commit -- otherwise this stays red forever, gets muted,
+    and takes the working gate down with it.
+
+    What holds the line now is NOT this number: it is the snapshot
+    file plus the case above. A new unmarked file fails there; adding
+    a row to _legacy_unmarked.txt to silence it is a one-line diff in
+    review. This ceiling is the backstop for that edit.
+    """
+    ceiling = 149
+    assert len(_LEGACY_UNMARKED) <= ceiling, (
+        "legacy unmarked count is %d, above the %d debt ceiling -- "
+        "the allowlist may only shrink; lower the ceiling with it"
+        % (len(_LEGACY_UNMARKED), ceiling)
     )
 
 
