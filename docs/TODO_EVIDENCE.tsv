@@ -301,6 +301,171 @@
 #   要么是 TODO 缺了对应任务, 要么是映射缺了它们; 两种都得逐个读判据才能定。
 #   NO 不要因为"它绿着"就随手找个任务挂上去 -- 那是本文件头注第一段说的错配。
 #
+# -- 本批(Phase 0 . 地基)判定, 2026-10-01 ---------------------------------
+#
+# 尺子与前三批同一把: [把被测实现挖掉, 这条产物会不会红?] 答不上来或答"不会"
+# 的一律不映射。本批新增映射 0 条; [摘除]三行 (CFG-CF-05 / CFG-CF-06 /
+# CFG-CF-08), 三行原先都把 [yaml 数据文件]当验证产物, 是 Phase 1 已订正过的
+# 同一形态在 configs 侧的三个新实例。
+#
+# ★★★ 为什么 yaml 当产物在这三行上尤其坏 (比 Phase 1 那三行更坏):
+#   progress.py 对非 tests/ 产物执行 `python3 <path>`。于是同一个错误在两个
+#   方向上各说一次谎:
+#     * 有内容的 yaml -> SyntaxError -> 报"证据未通过: configs/xxx.yaml"。
+#       结论(未完成)碰巧对, [理由是假的] -- 会让下一个人去改一个没坏的文件。
+#       实测: python3 configs/p1_motion.yaml -> exit 1 (line 27 `geo:`);
+#             python3 configs/intents.yaml   -> exit 1 (line 67 `intents:`)。
+#     * 纯注释的 yaml -> 合法的空 Python 程序 -> exit 0 -> [报绿]。
+#       实测: python3 configs/nav2/behavior_only.yaml -> exit 0
+#             (该文件 20 行, 有效键 0 行)。
+#       ⇒ CFG-CF-08 本批之前一直显示 DONE, 而它的三条判据一条都没跑。
+#       这是 CLAUDE.md 3.2 形态1 的 skeleton 拼写: 骨架既让数据产物恒绿,
+#       又让测试侧 pytest.skip, 两头都不红。
+#
+# 逐条 (红验均在 ORIN 实跑, 每次跑测试前清 __pycache__, CLAUDE.md 7.2.1):
+#
+#   CFG-CF-05 [摘除映射, 回到 UNMAPPED]。判据三件: (a) 六个 L6 文件无 common
+#             顶层键 + 无别名黑名单键名(断言 B); (b) 断言 N
+#             corridor.margin_base_m == d_safe_m; (c) 断言 O
+#             teleop.cloud.priority == arbitration.priorities.teleop_cloud。
+#     ★ 订正理由, 不是"什么都没有": (a) [有执行体且有下限] --
+#       tests/configs/test_config_layers.py 读真实的六个文件, 其 Brief 自报
+#       "CFG-CF-5/6/8"。红验: 把 configs/p1_motion.yaml 挪走 ->
+#       test_the_six_process_files_exist 红 (1 failed/6 passed/3 skipped);
+#       放回 -> 7 passed/3 skipped。别名黑名单还有一条反向用例
+#       (test_a_blacklisted_alias_is_actually_caught), 挡住"扫描器什么都不查"。
+#     ★ 不落的原因是 (b)(c) 两条判据[在真文件上没有操作数]:
+#         grep -n "margin_base_m\|safety_distance\|arbitration" configs/p1_motion.yaml
+#       零命中 (该文件只落"有消费者的键", 见其 speed_gate 段逐字注释)。
+#       ⇒ 判据点名的变异体1 "把 margin_base_m 改 1.1 -> N 必须红" [无法施加],
+#       assertion N 在生产路径上同样是 skip (tests/boot/freeze/
+#       test_n_o_identities.py 逐字 "N should skip if p1_motion.yaml lacks
+#       corridor.margin_base_m")。三条判据只对上一条, 挂上去就是谎称已验证
+#       (与 CFG-BT-4 同一个判法)。
+#     ⚠️ 顺带发现一处[判据自身的 RHS 已过期], 本批不改, 只记: CFG-CF-5 行写
+#       `p1_motion.safety_distance.d_safe_m`, 而 U67(2026-08-06) 已把该值上提
+#       L3, xbrain/boot/freeze/assertions/n_o_identities.py 头注与 10 S5.4.4
+#       都写 `common.safety.d_safe_m`。属 CLAUDE.md 铁律 1 的范围, 但改判据
+#       会连带 CFG-FZ-8 一起动, 归下一批。
+#
+#   CFG-CF-06 [摘除映射, 回到 UNMAPPED]。两个产物都不合格:
+#     (1) configs/intents.yaml 见上(假理由);
+#     (2) test_config_layers.py 对本项[没有下限] -- 它的内容表循环是
+#         `body, path = _load(name); if body is None: continue`, 文件缺席即
+#         静默跳过。红验: 把 configs/intents.yaml 整个挪走 ->
+#         7 passed/3 skipped, [一条都不红]。
+#     ★ 实现侧也确实没完成, 三条同向:
+#       (a) 八个内容表里三个是纯注释 (有效键 0 行): ptz_presets . asr_dict .
+#           suspicion_rules;
+#       (b) 判据点名的 require_all_day_rule 在 xbrain/ tests/ configs/
+#           scripts/ 下[零命中], 其变异体"删光全天候规则"无靶;
+#       (c) ai_corpus 在上述四处的唯一命中是 configs/prompts/missions/
+#           README.md 一句提及, "五项整体原子生效"无实现。
+#
+#   CFG-CF-08 [摘除映射, 回到 UNMAPPED] -- 本批唯一一条让 DONE 减少的。
+#     configs/nav2/behavior_only.yaml 是 0 有效键骨架, 见上: 数据产物 exit 0
+#     恒绿。而 test_config_layers.py 的三条 nav2 断言[全部 skip], 实测 -rs:
+#       :144 behavior_only.yaml 还没有插件表(骨架状态)
+#       :198 behavior_only.yaml 还没有 simulate_ahead_time(骨架状态)
+#       :208 behavior_only.yaml 是骨架
+#     ⇒ 判据的三件事(插件表恰好三项 / simulate_ahead_time 0.0 / 无 costmap
+#     节点)今天一条也没有被求值。★ 注意区分: 那三条断言[不是结构性恒绿] --
+#     真写进第四个插件它们会红; 恒绿的是"骨架 + skip"这个今天的组合。所以
+#     本行该做的是摘映射, NO 不是去改那三条断言。
+#
+# ★★★ 本批[故意不映射]的七项 (判据不足或未开工; NO 不要为消灭 UNMAPPED
+#   挂个沾边的测试)。★ 其中两项是[已作废], 两项是[未开工], 三项是[判据不足]:
+#
+#   CPP-BP-4 / CPP-BP-4b  [已作废] -- 2026-09-30 提交 f3e05cb 已在 TODO 表体
+#             标 作废0930, 落点 configs/nav2 随 12 S4.6 v0.9 整节作废。
+#             本行只是复述那次裁决, 不是新判断。
+#
+#   CPP-CXX-5  [未开工]。判据点名 common/rtcomm/(parse_guard.cc) 与
+#              common/include/xbrain/rtcomm/(parse_guard.h): parse_guard 在
+#              docs/ 之外[零命中]; common/ 下无 rtcomm 源码目录, 头目录里只有
+#              lockfree_slot.h . rt_thread.h . tx_guard.h (那是 CPP-CXX-3)。
+#              ★ ros2_ws/chassis_relay/src/relay_core.cc 里有 estop 相关解析,
+#              但那是 relay 自己的, 本项的面是 common/ 的共享库 -- 拿它来挂
+#              就是 CLAUDE.md 3.2 形态6(扫描面不声明), 与 CPP-CXX-0 同判。
+#
+#   CPP-DP-3   [未开工]。deploy/systemd/xbrain-zenoh-bridge.service 的
+#              ExecStart 指向 deploy/zenoh/zenoh-bridge-ros2dds.json5, 而该
+#              文件[不存在](deploy/zenoh/ 下只有 zenohd-gen.json5 与
+#              zenohd-rt.json5); scripts/ 下无 bridge_allowlist_check.sh;
+#              ROS_LOCALHOST_ONLY 与 ROS_AUTOMATIC_DISCOVERY_RANGE 在
+#              py/sh/service/json5/yaml 五类文件里[零命中]。
+#              ★ 已有的那一半是 GATE-5(删 V5 遗留), 由
+#              scripts/sec/checks/SEC-08-v5-bridge-deleted.sh 守, 守的不是
+#              本项的 allow 列表。
+#
+#   CFG-CF-7   [判据不足 + 实现不完整]。★ 订正理由: 执行体[是有的] --
+#              test_config_layers.py::test_sites_and_calib_layers_have_a_skeleton
+#              读真实的 configs/sites/ 与 configs/calib/, 挖掉即红; 断言 H
+#              本体 xbrain/boot/freeze/assertions/h_calib.py 也在, 且已映射给
+#              CFG-FZ-09。不落的原因两条:
+#              (1) 判据点名的键集[真文件里缺一半]: configs/sites/sim.yaml 只有
+#                  common.geo.enu_origin, 没有 common.site.* 也没有
+#                  common.retention.{task_days,event_days,command_log_days};
+#              (2) 三个变异体(robot_id 换车 / 删 frames.*.accuracy /
+#                  lat_err_ref_m 改成不可复算)全部施加在[断言 H 的合成树]上 --
+#                  tests/boot/freeze/test_h_calib.py 的 _green_calib() 是手搭
+#                  字典, 从不读 configs/calib/dev.yaml。tests/fixtures/
+#                  conftest.py 同样是自己写 sites/lab.yaml 到 tmp 目录;
+#                  tests/common/test_config_schema.py 则把 sites/ calib/
+#                  显式排除在 20 文件扫描面之外。
+#              ⇒ 把 CFG-FZ-09 那条测试再挂一次, 等于拿断言实现冒充 yaml 内容
+#                已落值。缺的是"在真文件上求值"那一小块。
+#
+#   CPP-CXX-1  [判据不足]。★ 订正理由: 实现[存在且部分已验] -- common/ 下
+#              C++ 头与静态库在, tests/common/test_link_no_ros.py 真跑 cmake,
+#              回读 compile_commands.json(命令行无 ROS include path)与 ldd
+#              (无 ROS .so)。那一门已映射给 CFG-CM-14, 面同为 common/,
+#              所以这里不是扫描面问题。不落的原因是判据[明文否决]了现有那个
+#              变异体的红法: 判据逐字要求"检查脚本必须明确报出'common 引入了
+#              ROS 类型'(编译失败不算过)", 而该测试头注自述 rclcpp 变异体
+#              "goes red ... at the PREPROCESSING stage, with 'no such file or
+#              directory'" -- 正是判据点名不算的那一种。另判据点名的
+#              nm/readelf 符号检查全仓无执行体, 反证在仓内:
+#                grep -n "CPP-CXX-1" scripts/ci/layout_gate.py
+#              逐字 "the ROS-type half is CPP-CXX-1's job (needs nm/readelf)"。
+#
+#   MOT-PCP-15 [判据不足]。两个 yaml [都已存在]: configs/perception.yaml
+#              (4017 字节, 全 null 键位骨架) 与 configs/models/m20s.yaml。
+#              四条判据无一有执行体:
+#              (1) 与 19 S14 键路径双向差集: scripts/doccheck/ 下无此脚本
+#                  (perception_mutant_cover.py 量的是变异体覆盖, 不是键集);
+#              (2) 占位数禁令 x0_m / z_hi_m / cam_rgbd_valid_range_m 在
+#                  scripts/ 与 tests/ 下零命中;
+#              (3) CFG-40 单一来源: free_space_corridor 在 configs/ 下[零命中],
+#                  键本身还没进配置, 无从谈"只出现一次";
+#              (4) r_body_m 与 rns.inflation.r_robot_m 同源: configs/ 下
+#                  r_body_m 零命中 (只有 configs/rns.yaml 的 r_robot_m: 0.482),
+#                  tests/common/test_config_namespaces.py 里的 0.48 是手喂的
+#                  overlay 值, 不是对账。
+#              ⚠️ 另记: 本项判据末句 "(5) 现状核实: configs/perception.yaml
+#              今天[不存在] . configs/models/m20s.yaml 今天是 0 行有效键的纯
+#              注释骨架" [已被实测否证](两文件均有内容)。那是把一个判定量写进
+#              了文档(CLAUDE.md 3.7), 到期就腐烂。本批不改它: 改判据属 Phase 0
+#              判据订正那一摊, 与本次对账分开。
+#
+# ★ Phase 0 剩下的 7 条 IN_PROGRESS [全部是判据正确 . 仓面真红], 且[全部]
+#   落在 CI 八档内 (static_rules / comment_ratio / pytest_common /
+#   pytest_configs), 按派单归下一批, 本批只登记不修:
+#     CFG-CF-2   test_common_skeleton: common.audio.bypass_keywords.{estop,
+#                prone,stand} 已落值而测试的 _LANDED 白名单没同批更新 --
+#                该用例头注自己就记着 common.timezone 犯过同一件事。
+#     CFG-CM-2   no_literal_ecode.py 9 violations + 豁免标签闭集一条。
+#     CFG-CM-11  no_config_source_read.py 3 violations。
+#     CFG-CM-12  clock_scan.py violations。
+#     CFG-FZ-17  schema 注册表少 chassis_relay.yaml(文件在盘上, 注册表没它)。
+#     CHK-2-26   ★ 本项自己的那条 lint (scripts/lint/no_disabled_switch.py)
+#                [是绿的]; 红的是 test_lints.py 这个[打包产物]里的另外四条
+#                (三条 static_rules + comment_ratio)。即判据挂得过宽, 不是
+#                本项未完成。NO 不要为了让它变绿就改指向 -- 那等于拆掉一个
+#                会随八档一起转绿的指示灯。
+#     INF-CM-3   11 S1.6 的 T-50..T-53 (598718f 随 perception 接口新增) 没进
+#                xbrain/common/clock/timeouts.yaml, 注册表落在契约后面。
+#
 # 🚫 不按文件名相似度自动补映射: 2026-08-23 实测会配出 test_loader->test_logger、
 #    run_calib->run_all.sh 这类错配。
 #
@@ -645,9 +810,6 @@ CFG-BT-12	xbrain/p2_core/boot/timeout_lock.py;tests/startup/test_boot_invariants
 CFG-BT-13	xbrain/p2_core/bit/report.py;tests/startup/test_boot_invariants.py	manual	2026-08-23
 CFG-BT-19	xbrain/p4_agent/registry/startup_assertions.py;tests/p4_agent/registry/test_cmdset_conflicts.py	manual	2026-08-23
 CFG-DC-02	tests/ci/test_toolchain_config.py;tests/common/test_ci_registry.py	manual	2026-09-30
-CFG-CF-05	configs/p1_motion.yaml;tests/configs/test_config_layers.py	manual	2026-08-23
-CFG-CF-06	configs/intents.yaml;tests/configs/test_config_layers.py	manual	2026-08-23
-CFG-CF-08	configs/nav2/behavior_only.yaml;tests/configs/test_config_layers.py	manual	2026-08-23
 INF-BT-02	xbrain/boot/failure_class.py;tests/boot/test_failure_class_table.py	manual	2026-08-23
 MOT-PM-35	tests/p1_motion/test_stage_budget.py	manual	2026-08-23
 BIZ-P2-19	xbrain/p2_core/health/factor.py;tests/p2_core/health/test_factor_participation.py	manual	2026-08-23
