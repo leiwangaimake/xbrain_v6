@@ -98,12 +98,42 @@ class Rule:
 #: 规则表. 规则号取自 11 / 13, NO 不自造 -- 元测试会拿它与 TODO 判据列里
 #: 出现的规则号集合求双向差集.
 RULES = (
+    # *** getenv 不再一刀切, 两个名字按名登记放行.
+    #
+    # CRL-3 的对象逐字是[白名单]: "白名单硬编码于代码, 不可配置, 不读配置
+    # 文件", 可执行判据逐字"白名单必须是编译期常量数组, 出现任何 config/yaml
+    # 读取即失败"(两处均在 XBRAIN_V6_TODO.md 的 CPP-CR-1 / INF-ZN-9 判据列).
+    # 而原 pattern 禁掉了[所有] getenv, 命中两处与白名单无关的读取:
+    #   include/chassis_relay/sd_notify.h  std::getenv("NOTIFY_SOCKET")
+    #   src/main.cc                        std::getenv("XBRAIN_ROBOT_ID")
+    # 前者是 systemd sd_notify 协议规定的 socket 路径, 删掉它等于关掉急停链路
+    # 上这个进程的 watchdog; 后者是 rid 的 L5 覆盖, 与 Python 栈同一机制.
+    # 两个都不是配置文件读取, 更不是白名单.
+    #
+    # NO 不把 getenv 整条删掉: getenv("XBRAIN_WHITELIST") 就会一路放行,
+    # 那才是真的放宽. 所以保留 getenv 为违规, 只用否定环视排除[这两个
+    # 具名调用形态]; 参数是变量的 getenv(var) 同样仍然报违规(环视只认字面量),
+    # 方向朝严.
+    #
+    # *** 为什么登记在规则表里, 而不用 allow 行内标记(DDS-4 的 /CHARGE 那种).
+    # allow 标记写在被扫文件的注释里 -- 改那个文件的人可以把标记复制到新加的
+    # 一行上, 而评审看不出差别. 按名登记只能靠改本表来扩大, 而本表的改动有
+    # 元测试与评审两道眼睛.
+    #
+    # ! 已知残余面: 本规则是[白名单是编译期常量]的代理, 它证明不了这一点.
+    # 真正守那一条的是 src/relay_keys.cc 的常量表 + test_relay_keys.cc 的
+    # check_whitelist_shape() + 启动时与 configs/generated/whitelist.yaml
+    # 逐条比对(不一致拒启). 记在这里而不是假装代理等于本体.
     Rule("CRL-3", "13 CRL-3",
          ("ros2_ws/chassis_relay",),
-         r"\b(yaml-cpp|YAML::|std::getenv|getenv\s*\(|nlohmann::json::parse)",
+         r"\b(?:yaml-cpp|YAML::|nlohmann::json::parse"
+         r"|(?:std::)?getenv\b"
+         r"(?!\s*\(\s*\"(?:NOTIFY_SOCKET|XBRAIN_ROBOT_ID)\"\s*\)))",
          "forbid",
          "白名单必须硬编码于代码. 一个可配置的白名单等于可被改成通用桥 -- "
-         "而 chassis_relay 在急停链路上, 通用桥意味着任意消息可以走急停路径"),
+         "而 chassis_relay 在急停链路上, 通用桥意味着任意消息可以走急停路径. "
+         "放行的环境变量只有 NOTIFY_SOCKET(systemd watchdog 协议) 与 "
+         "XBRAIN_ROBOT_ID(rid 的 L5 覆盖), 二者均不读配置文件"),
     Rule("DDS-3", "13 DDS-3",
          ("ros2_ws/quadruped",),
          r"CYCLONEDDS_URI",
@@ -152,6 +182,50 @@ RULES = (
          "forbid",
          "quadruped 不持通用面 session. 通用面绑 0.0.0.0 且无鉴权, 营区网内"
          "任一主机都能发布 -- 唯一能让腿动起来的进程必须在网络上不可达"),
+    # *** RT-C2, 拆成两条 -- 正则形态是选择题, 两个方向各杀一类变异体.
+    #
+    # 现行逐字(11 S1.1.2 RT-C2, 2026-08-23 订正): "scouting.gossip.multihop
+    # 必须为 false; 在 multihop = false 的前提下 gossip.enabled 允许为 true".
+    # NO 不是"关掉 gossip" -- 那条表述已被 RT-C2 自身替代, 照它实现会让 peer
+    # 经 router 收 0 帧(hub-and-spoke 下订阅表只能靠 gossip 经 router 传播).
+    #
+    # 为什么是两条而不是一条(与 PB-5a/PB-5b 同一范式):
+    #   RT-C2a forbid  multihop:true  -- 杀[把 false 翻成 true]
+    #   RT-C2b require multihop:false -- 杀[整条 gossip 子句被删掉]
+    # 单用 forbid: 一个根本不写 gossip 的空壳照样全绿(3.2 形态1).
+    # 单用 require: 只要还有一个文件写着 false 就绿, 另一处翻成 true 查不出来.
+    # 两条都要, 且哪一条都不被另一条包含.
+    #
+    # 环视 "? 让 json5 裸键与 JSON 带引号两种写法都命中: 本仓现在拼的是
+    # json5 裸键(multihop:false), 而 zenoh 同样吃带引号的形态, 只认一种会在
+    # 有人改写法时静默失活.
+    #
+    # *** 扫描面是 src/ 与 include/, NO 不含 test/ -- 与 DDS-4 / RT-C4 同一
+    # 理由, 而这里尤其要紧: test_rt_session.cc 与 test_relay_config.cc 里
+    # 都写着这两个字串(前者拿它与 session_factory.py 跨语言比对), 那正是
+    # 3.2 形态3 判据自伤 -- 判据句落进自己的扫描面.
+    #
+    # ! 已知残余面: require 是[扫描面里至少一处命中]的面级语义(与 CPP-2 /
+    # CPP-4 / DDS-9 一致), 所以"两处里删掉一处"它查不出来. 守住逐文件那一侧
+    # 的是两个包各自的 C++ 单测(quadruped/test/test_rt_session.cc 逐字段比对,
+    # chassis_relay/test/test_relay_config.cc 同组断言). 记在这里而不是把
+    # 面级语义当成逐文件语义.
+    Rule("RT-C2a", "11 S1.1.2 RT-C2",
+         ("ros2_ws/quadruped/src", "ros2_ws/quadruped/include",
+          "ros2_ws/chassis_relay/src", "ros2_ws/chassis_relay/include"),
+         r"\"?multihop\"?\s*:\s*true",
+         "forbid",
+         "gossip.multihop 必须 false. 整条 2026-08-23 订正的成立条件就是它为 "
+         "false -- 置 true 则跨面进程的两条链路成为 gossip 扩散通道, "
+         "两个平面的隔离当场不存在, 而现象是[一切正常]"),
+    Rule("RT-C2b", "11 S1.1.2 RT-C2",
+         ("ros2_ws/quadruped/src", "ros2_ws/quadruped/include",
+          "ros2_ws/chassis_relay/src", "ros2_ws/chassis_relay/include"),
+         r"\"?multihop\"?\s*:\s*false",
+         "require",
+         "multihop 必须被显式写出. 整条 gossip 子句被删掉时 zenoh 取默认值, "
+         "而默认值不是本契约选的那个 -- 缺省与[显式设成默认值]在代码上看不出"
+         "差别, 在平面隔离上差别是全部"),
     Rule("CPP-2", "13 CPP-2",
          ("ros2_ws/quadruped",),
          r"noexcept",
