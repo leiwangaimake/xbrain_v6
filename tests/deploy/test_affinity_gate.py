@@ -35,6 +35,7 @@ Boundaries: 不设置任何亲和, 不改单元. 只比对声明.
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
 import re
 import shutil
@@ -317,11 +318,140 @@ def test_runtime_masks_match_the_table():
     pytest.skip("needs the full stack running on the target; see NEXT SW-20")
 
 
-@pytest.mark.needs_chassis
+# 判据(3) 的扫描面与登记表.
+#
+# 受 10 S3.2 那条约束的三个进程, 连同它们的源码树. teleop_input 的格子是
+# None 而不是从表里删掉 -- 它 NEXT S2 标着"未建 [GATED-HW], 依赖遥控器",
+# 而一个从扫描面里消失的名字与一个扫过且干净的名字在结果上不可区分
+# (CLAUDE.md 3.2 形态六). 判据会把它作为 ABSENT 报出来.
+#
+# rtk_driver 没有自己的包: 它的实现是 ros2_ws/sensor/src/rtk_driver.cc.
+# 这里扫整个 sensor 包而不是单个文件, 取保守侧 -- 多扫几个同包文件不会漏判,
+# 少扫一个会.
+_RT_CONSTRAINED = {
+    "chassis_relay": "ros2_ws/chassis_relay",
+    "rtk_driver": "ros2_ws/sensor",
+    "teleop_input": None,
+}
+
+# 把线程切到 SCHED_FIFO 的调用形态. 前两个是 common/include/xbrain/rtcomm/
+# rt_thread.h 的封装(本仓唯一正当入口), 后两个是绕过封装的裸系统调用.
+_FIFO_CALLS = ("apply_fifo_priority(", "start_fifo_thread(",
+               "pthread_setschedparam(", "sched_setscheduler(")
+
+# 已登记的实时优先级: 调用点 -> 优先级. 空表不是占位, 它是今天的事实 --
+# 这三个进程一个都没有设 SCHED_FIFO, 跑在普通优先级上.
+#
+# *** 这个空表正是本判据的要点. 约束今天成立, 但成立的原因是"他们恰好没设",
+# 不是有东西在保证. chassis_relay 在急停链路上(CRL-5 单跳 < 200 us), 给它加
+# 实时优先级是很自然的下一步 -- 那一天如果没有本判据, 不会有任何东西变红.
+_DECLARED_RT_PRIORITIES: dict = {}
+
+
+def _quadruped_ctrl_priority():
+    """quadruped Tier 1 线程的 SCHED_FIFO 优先级, 读 configs/ 源.
+
+    值的执行体在 quadruped_config.cc: require_int("realtime.
+    sched_fifo_priority.ctrl"), 缺键即拒绝启动. 这里读同一个键的源文件 --
+    tests/ 不在 no_config_source_read 的 SCAN_DIRS 内, 夹具读源是允许的
+    (那条 lint 的 SCAN_DIRS 注释自己写明了理由).
+    """
+    import yaml
+    with open(ROOT / "configs" / "quadruped.yaml", encoding="utf-8") as fh:
+        tree = yaml.safe_load(fh)
+    node = tree
+    for key in ("quadruped", "realtime", "sched_fifo_priority", "ctrl"):
+        assert isinstance(node, dict) and key in node, (
+            "configs/quadruped.yaml 里找不到 realtime.sched_fifo_priority.ctrl "
+            "-- 13 S9.1 的线程表没有落点, 本判据失去比较基准")
+        node = node[key]
+    assert isinstance(node, int), "ctrl 优先级不是整数: %r" % (node,)
+    return node
+
+
+def _scan_fifo_calls(tree):
+    """(文件, 行号, 行文) for 每个 SCHED_FIFO 设置调用, 跳过注释行."""
+    hits = []
+    for dirpath, dirnames, filenames in os.walk(tree):
+        dirnames[:] = [d for d in dirnames if d not in ("build", "install", "log")]
+        for name in filenames:
+            if not name.endswith((".cc", ".cpp", ".h", ".hpp")):
+                continue
+            path = os.path.join(dirpath, name)
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                for lineno, line in enumerate(fh, 1):
+                    stripped = line.strip()
+                    if stripped.startswith(("//", "*", "/*")):
+                        continue
+                    if any(call in line for call in _FIFO_CALLS):
+                        hits.append((os.path.relpath(path, ROOT), lineno,
+                                     stripped[:90]))
+    return hits
+
+
 def test_realtime_priorities_are_below_quadruped_tier1():
     """判据(3): chassis_relay / rtk_driver / teleop_input 的 SCHED_FIFO
-    优先级必须严格小于 quadruped Tier 1 线程.
+    优先级必须严格小于 quadruped Tier 1 线程 (10 S3.2 逐字, 理由是"防止将来
+    核 6 被合并回核 5 时静默产生优先级反转").
 
-    卡在 quadruped 本身 -- C++ 侧尚未建成(NEXT S2), 没有 Tier1 线程可比.
+    *** 本判据 2026-10-01 从一句无条件 skip 改写而来, 原理由逐字是
+    "quadruped (C++) not built yet; see NEXT S2" -- 而 quadruped 2026-09-21
+    已上机, 那句话早就不成立了. 顺着查下去发现更要紧的: 那条约束当时没有
+    任何执行体 -- deploy/systemd/ 下零 CPUSchedulingPriority/Policy, 三个进程
+    源码里零 SCHED_FIFO 设置调用. 约束"成立", 但成立的原因是巧合 (NEXT SW-30).
+
+    改成静态判据之后它不再需要任何进程在跑, needs_chassis 标记因此摘掉 --
+    原来那个标记本身就是上一版实现方式的产物, 不是约束的性质.
+
+    *** 它不能证明什么, 一并写明 (3.2 形态七): 这是对源码与单元文件的
+    静态检查. 一个在运行期由外部工具 (chrt / systemd drop-in / 父进程继承)
+    改上去的优先级, 不出现在任何被扫文件里, 本判据看不见. 运行期那一半是
+    判据(2) 的事, 它要全栈在跑 (NEXT SW-20).
     """
-    pytest.skip("quadruped (C++) not built yet; see NEXT S2")
+    ctrl_priority = _quadruped_ctrl_priority()
+
+    # 扫描面逐个报出来, 包括不存在的那个 -- 无条件打印, 不只在失败时.
+    surface, absent = [], []
+    for proc, tree in sorted(_RT_CONSTRAINED.items()):
+        if tree is None or not (ROOT / tree).is_dir():
+            absent.append(proc)
+        else:
+            surface.append((proc, tree))
+    print("判据(3) 扫描面: quadruped ctrl=SCHED_FIFO %d (configs/quadruped.yaml)"
+          % ctrl_priority)
+    for proc, tree in surface:
+        print("  扫 %-16s %s" % (proc, tree))
+    for proc in absent:
+        print("  ABSENT %-13s 尚未建成, 本轮无源码可扫 (NEXT S2)" % proc)
+    assert surface, "三个受约束进程一个都不存在, 本判据无对象可扫"
+
+    # systemd 单元里的声明式优先级.
+    unit_hits = []
+    units = ROOT / "deploy" / "systemd"
+    if units.is_dir():
+        for unit in sorted(units.glob("*.service")):
+            for lineno, line in enumerate(unit.read_text().split("\n"), 1):
+                if line.startswith(("CPUSchedulingPolicy", "CPUSchedulingPriority")):
+                    unit_hits.append((unit.name, lineno, line.strip()))
+    print("  systemd 单元里的调度声明: %d 处" % len(unit_hits))
+
+    # 源码里的 SCHED_FIFO 设置点.
+    code_hits = []
+    for proc, tree in surface:
+        for rel, lineno, text in _scan_fifo_calls(str(ROOT / tree)):
+            code_hits.append((proc, rel, lineno, text))
+
+    undeclared = [h for h in code_hits
+                  if "%s:%d" % (h[1], h[2]) not in _DECLARED_RT_PRIORITIES]
+    assert not undeclared, (
+        "这些调用点把线程切到了 SCHED_FIFO, 而 _DECLARED_RT_PRIORITIES 里没有登记:\n"
+        + "\n".join("  %s  %s:%d  %s" % h for h in undeclared)
+        + "\n10 S3.2 要求这三个进程的优先级严格低于 quadruped 的 Tier 1 (ctrl=%d).\n"
+          "登记它: 在 _DECLARED_RT_PRIORITIES 里加一行 '<文件>:<行>': <优先级>, "
+          "并在 NEXT 里写清依据.\n"
+          "删掉本断言不是选项 -- 它是这条约束唯一的执行体 (NEXT SW-30)." % ctrl_priority)
+
+    for where, priority in sorted(_DECLARED_RT_PRIORITIES.items()):
+        assert priority < ctrl_priority, (
+            "%s 登记的优先级 %d 不低于 quadruped ctrl 的 %d -- 10 S3.2 要求严格小于, "
+            "理由是核合并后的静默优先级反转" % (where, priority, ctrl_priority))
