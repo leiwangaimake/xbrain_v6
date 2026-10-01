@@ -547,6 +547,10 @@ class NavRuntime:
                 "title": "nav_tick_failed",
                 "dedup_key": "nav:tick_failed",
                 "detail": {"error": type(exc).__name__, "count": self._tick_errors}},
+                # WALL-CLOCK-OK(record): the Event.ts of the line above. The
+                # marker has to sit HERE rather than on the comment block before
+                # the call: marker_for stops its upward walk at the first line
+                # that is not a comment, and the call's own first line is code.
                 "fault"), time.time())
         except Exception:      # noqa: BLE001 -- the fault path must not raise
             pass
@@ -726,7 +730,10 @@ class NavRuntime:
 
     def _one_tick(self, t0: float) -> None:
         now_ms = int(t0 * 1000.0)
-        ts_wall = time.time()                     # WALL-CLOCK-OK(align/log)
+        # WALL-CLOCK-OK(align): 11 S3.0 envelope ts, taken ONCE per tick and
+        # handed to every event this tick emits (see inp.ts_wall_s below). No
+        # age, period or timeout reads it -- those are time.monotonic() (CLK-C1).
+        ts_wall = time.time()
         pose = self._pose_view(t0)
         with self._lock:
             routes = list(self._route_q)
@@ -798,7 +805,9 @@ class NavRuntime:
         gnss_pose.stamp_envelope, which stamps milliseconds -- a C++ consumer
         decoding rt/motion/cmd_vel per S3.0 would read those as seconds."""
         env = Envelope(v=1, rid=self._rid,
-                       ts=time.time(),               # WALL-CLOCK-OK(align/log)
+                       # WALL-CLOCK-OK(align): the S3.0 ts field itself, which
+                       # CLK-C3 makes mandatory next to mono on every message.
+                       ts=time.time(),
                        mono=time.monotonic(), boot=self._boot or None,
                        seq=self._seq[seq_key], src="p1_motion",
                        ts_sync=self._ts_sync(), data=data)

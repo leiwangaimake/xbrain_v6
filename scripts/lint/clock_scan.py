@@ -52,10 +52,19 @@ What this script deliberately does NOT do:
     including either tree makes the hit count unable to reach zero and the
     repair anyone reaches for is to loosen the criterion.
 
-How to read the report, because the three buckets ask for different work:
+How to read the report, because the four buckets ask for different work:
   * BAD lines are defects. Each names the file, the line and the spelling that
     matched, and the fix is to take the reading from xbrain/common/clock/
     instead -- mono_now_s() in Python, steady_clock in C++.
+  * NOT-OURS lines are hits inside a tree this repository does not write (see
+    NOT_OURS below: another team's frozen perception delivery and the vendor
+    SDK headers). They are walked, counted and printed exactly like the rest --
+    the only thing that differs is that they do not gate, because the fix is
+    not ours to make. Before this bucket existed, most of the reported hits
+    were of this kind and the gate was permanently red on work nobody here is
+    allowed to do, which is the shape CLAUDE.md 3.2 form 2 describes. The two
+    counts are printed at the bottom of every run; they are not written down
+    here, per CLAUDE.md 3.7.
   * declared exemptions are decisions, not defects. They are printed on every
     run precisely so their number and their reasons stay in front of whoever is
     reading the output, because the failure mode for an exemption mechanism is
@@ -248,6 +257,87 @@ MARKER_WORD = "WALL-CLOCK-OK"
 #: out "ok" and "needed" without demanding an essay on the same line as the
 #: code; the tag already says which permitted purpose is claimed.
 MIN_REASON_CHARS = 12
+
+# Trees the repository does not write, shared with the five source lints through
+# charset_lint.THIRD_PARTY_SNAPSHOTS -- imported, never copied (CLAUDE.md 3.7:
+# two hand-kept lists drift, and the drift shows up as a tree excluded by one
+# checker and reported by another).
+#
+# TWO candidate directories, and the second one is load-bearing. The metatests
+# in tests/common/test_clock.py exercise mutated COPIES of this script written
+# into a temporary directory, so this file's own directory is not scripts/lint
+# during those runs and a single-candidate import raises ModuleNotFoundError
+# before main() ever runs. Measured 2026-10-01: that turned the behavioural half
+# of the surface-shrink probe into a no-op -- the diff-only mutant exited
+# non-zero for the import error, so "a planted violation went unreported" could
+# not fire and the probe reported only its textual finding.
+#
+# ROOT is safe to use here because this runs at IMPORT time, before a metatest
+# repoints it; comment_lines_of() deliberately does NOT use it for the opposite
+# reason (it runs per file, after the repoint).
+for _lint_dir in (os.path.dirname(os.path.abspath(__file__)),
+                  os.path.join(ROOT, "scripts", "lint")):
+    if _lint_dir not in sys.path:
+        sys.path.insert(0, _lint_dir)
+import charset_lint  # noqa: E402
+
+#: Trees whose hits are ATTRIBUTED elsewhere rather than removed from the scan.
+#:
+#: *** This is an attribution bucket, not an exclusion. Every file below is
+#: still walked, still counted in the surface report, and every hit in it is
+#: still printed with file, line and spelling. What changes is the VERDICT: a
+#: hit here is not a defect this repository can fix, so it does not gate.
+#:
+#: Why that distinction is the whole design. tests/common/test_clock.py reports
+#: any shrink of the counted files as a failure, and
+#: tests/common/test_third_party_exclusion.py states in as many words why this
+#: lint is not on the pruning list: "if a future upgrade of the header ever
+#: introduces one, clock_scan is the lint that should say so rather than the one
+#: that was taught to look away". Pruning the walk would contradict both. An
+#: attribution bucket keeps the saying-so and drops only the claim that WE owe
+#: the fix.
+#:
+#: Measured 2026-10-01: most of the reported hits were in these trees, so the
+#: gate was permanently red on work nobody here is allowed to do -- CLAUDE.md
+#: 3.2 form 2, the shape that ends up loosened until it passes. The two counts
+#: are printed by this script on every run and are deliberately not transcribed
+#: into this comment (CLAUDE.md 3.7: a number copied by hand goes stale).
+#:
+#: Each entry must be REMOVED the day its tree is adopted into our maintenance;
+#: that is the same condition charset_lint's list carries, stated next to the
+#: shared definition there.
+NOT_OURS: Tuple[str, ...] = charset_lint.THIRD_PARTY_SNAPSHOTS + (
+    # The Orbbec SDK headers. Vendor code verbatim -- the first two lines of
+    # every file are "Copyright (c) Orbbec Inc. All Rights Reserved." plus the
+    # MIT notice -- consumed by the perception tree, which is itself in the
+    # shared list above. The single hit is in a doc comment on an enumerator of
+    # the vendor's own API (OB_CLOCK_TYPE_REALTIME, whose comment names the
+    # clock it selects), reported as code only because the C++ half of
+    # comment_lines_of deliberately counts a trailing comment after code as
+    # code, erring towards reporting.
+    #
+    # Declared HERE and not added to charset_lint's shared tuple on purpose:
+    # that tuple PRUNES five other walkers, all of which are clean on this tree
+    # today, and widening five scan surfaces to change one verdict is a change
+    # with no evidence behind it. If a vendor refresh ever brings a non-ASCII
+    # byte or an E_-shaped token into these headers, those five should still
+    # say so.
+    "common/include/libobsensor",
+)
+
+
+def _not_ours(rel_path: str) -> bool:
+    """True when rel_path sits inside a declared not-ours tree.
+
+    Takes the path RELATIVE to ROOT so a metatest that repoints ROOT at a
+    fixture tree gets the same answer it would in production: the comparison is
+    against the declared relative prefixes, never against an absolute path that
+    only exists on one machine.
+    """
+    for top in NOT_OURS:
+        if rel_path == top or rel_path.startswith(top + "/"):
+            return True
+    return False
 
 
 def _files_under(base: str):
@@ -561,9 +651,15 @@ def _print_surface() -> None:
     *** Printed on every run, not only on failure. A tree that is absent, or
     present and empty, contributes zero hits, and zero hits from an unread tree
     is indistinguishable from zero hits from a clean one -- CLAUDE.md 3.2 form 6
-    (扫描面不声明). ros2_ws/ holds no file today, which is exactly the case that
-    would otherwise let this report read as "four trees checked, all clean". The
-    counts are derived here and written down nowhere, per CLAUDE.md 3.7.
+    (扫描面不声明). A tree with no scannable file is exactly the case that would
+    otherwise let this report read as "four trees checked, all clean". The counts
+    are derived here and written down nowhere, per CLAUDE.md 3.7.
+
+    The not-ours trees are printed here too, with the count of files they
+    contribute. They are INSIDE the counts above -- the walk does not skip them
+    -- so this block is the declaration that some of those files cannot produce
+    a gating finding, which is the thing a reader has to know to interpret the
+    numbers at the bottom.
     """
     print("scan surface: " + ", ".join(SCAN_DIRS))
     for top in SCAN_DIRS:
@@ -583,6 +679,17 @@ def _print_surface() -> None:
     # asserts both this line and the behaviour behind it.
     print("scan mode: FULL TEXT of every file counted above, on every run --")
     print("  not a diff and not a changed-files list (CLAUDE.md 3.2 form 5)")
+    # Declared on every run, next to the counts it qualifies. An attribution
+    # rule that only appears in source is one a reader of the output cannot see.
+    print("trees NOT written by this repository (walked and reported, but a hit")
+    print("  there does not gate -- the fix belongs to whoever owns the tree):")
+    for top in NOT_OURS:
+        base = os.path.join(ROOT, top)
+        if not os.path.isdir(base):
+            print("    %-36s absent on this host" % top)
+            continue
+        print("    %-36s %d file(s), inside the counts above"
+              % (top, sum(1 for _ in _files_under(base))))
 
 
 def _print_rules() -> None:
@@ -624,6 +731,12 @@ def _print_criterion() -> None:
     print("    4. a shell script deriving a timestamp from the date command")
     print("  A mention inside a comment or docstring is counted as prose and not")
     print("  failed: a comment cannot read a clock.")
+    print("  NOT-OURS hits are counted separately and excluded from the gating")
+    print("  number. They are NOT excluded from the scan: the trees are walked")
+    print("  and every hit is printed above. What the separation says is only")
+    print("  that this repository cannot fix them -- it says nothing about")
+    print("  whether those processes read a wall clock, and the day such a tree")
+    print("  is adopted its row comes out of NOT_OURS and the hits gate again.")
 
 
 def main() -> int:
@@ -636,16 +749,33 @@ def main() -> int:
     print("")
 
     violations: List[Tuple[str, int, str]] = []
+    not_ours: List[Tuple[str, int, str]] = []
     exemptions: List[Tuple[str, int, str, str]] = []
     prose: List[Tuple[str, int, str]] = []
     for path in sorted(iter_sources()):
-        v, e, p = scan_file(path, os.path.relpath(path, ROOT))
-        violations.extend(v)
+        rel = os.path.relpath(path, ROOT)
+        v, e, p = scan_file(path, rel)
+        # The split happens HERE, after the file has been read, and on the
+        # declared relative prefix. Doing it at the walk instead would remove
+        # the file from the counts _print_surface prints, which is the shrink
+        # tests/common/test_clock.py exists to report.
+        if _not_ours(rel):
+            not_ours.extend(v)
+        else:
+            violations.extend(v)
         exemptions.extend(e)
         prose.extend(p)
 
     for shown, lineno, why in violations:
         print("  BAD  %s:%d  %s" % (shown, lineno, why))
+
+    if not_ours:
+        print("")
+        print("  hits in trees this repository does not write (reported, not")
+        print("  gating -- see NOT_OURS; each tree's row leaves that tuple on")
+        print("  the day the tree is adopted, and these then become BAD):")
+        for shown, lineno, why in not_ours:
+            print("  NOT-OURS  %s:%d  %s" % (shown, lineno, why))
 
     if exemptions:
         print("")
@@ -661,6 +791,7 @@ def main() -> int:
 
     print("")
     print("  violations:          %d" % len(violations))
+    print("  not-ours hits:       %d" % len(not_ours))
     print("  declared exemptions: %d" % len(exemptions))
     print("  prose mentions:      %d%s"
           % (len(prose), "" if verbose else "   (-v to list)"))

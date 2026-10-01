@@ -32,6 +32,12 @@ that could quietly stop being true:
     violation case below and be worthless, and the usual response to a check
     that fails everything is to delete it.
   * the exemption mechanism, which only works while the tag set stays closed.
+  * the not-ours attribution bucket, which is the one piece of the lint that
+    makes a hit stop gating. It needs a positive control more than anything
+    else here: "no hit in another team's tree gates" is also true of a bucket
+    that swallows everything, so the cases below plant one violation in our own
+    tree and one in a not-ours tree in the SAME fixture run and require the
+    first to gate and the second not to.
 
 The three mutations the criterion names are run here as cases:
   (1) a wall-clock age computation inside p1_motion must turn the scan red;
@@ -40,15 +46,24 @@ The three mutations the criterion names are run here as cases:
       a shrunken scan surface -- and mutation (3) is exercised against a real
       mutated copy of the script, not merely described.
 
-*** On (1) and (2) being run against fixture trees. Neither xbrain/p1_motion/
-nor ros2_ws/quadruped/ exists today -- ros2_ws/ holds no file at all -- so the
-mutation cannot be injected into the real tree by a test that also has to leave
-the tree as it found it. The fixture stands in for the real thing only because
-two further cases pin the connection: the scan surface really does include those
-two trees, and the run against the real repository really does report ros2_ws/
-as empty rather than counting it as checked. Without that pair, "the directory
-has no files" would be doing the work of "the directory was read and was clean",
-which is CLAUDE.md 3.2 form 6.
+*** On (1) and (2) being run against fixture trees. The mutation cannot be
+injected into the real tree by a test that also has to leave the tree as it
+found it, so a fixture stands in. It stands in for the real thing only because
+two further cases pin the connection: the scan surface really does include
+xbrain/ and ros2_ws/, and the run against the real repository really does report
+each tree with either a file count or a NOTE saying it contributed nothing.
+Without that pair, "the directory has no files" would be doing the work of "the
+directory was read and was clean", which is CLAUDE.md 3.2 form 6.
+
+~~Neither xbrain/p1_motion/ nor ros2_ws/quadruped/ exists today -- ros2_ws/
+holds no file at all.~~ SUPERSEDED WORDING (in force until 2026-10-01). Both
+trees exist and hold source now; the per-tree counts are computed by the lint on
+every run and are deliberately not transcribed here (CLAUDE.md 3.7). The
+sentence is kept struck through rather than deleted because the case named
+test_ros2_ws_is_in_the_surface_and_its_emptiness_is_reported_not_hidden still
+carries "emptiness" in its name, and a reader who meets that name needs to know
+the name is the leftover, not the behaviour -- the case itself was written to
+handle both states and does.
 """
 
 import os
@@ -534,6 +549,201 @@ def test_mutation_three_a_diff_only_script_is_reported_as_surface_shrink(
     # probe did, the detector would be a spelling check that a rename defeats.
     assert "went unreported" in joined
     assert "consults version control" in joined
+
+
+# -- the lint: the not-ours attribution bucket --------------------------------
+#
+# *** Why this bucket exists at all, recorded here because it is the only part
+# of the lint that makes a hit stop gating.
+#
+# Measured 2026-10-01: of the hits the lint reported, the large majority sat in
+# ros2_ws/perception/ (another engineer's frozen delivery, which no commit in
+# this repository carries) and in common/include/libobsensor/ (the Orbbec SDK
+# headers, "Copyright (c) Orbbec Inc." on line 1). CLAUDE.md 2.2 scopes a source
+# scan to what we write and maintain, and charset_lint already carries both
+# kinds of tree in one shared list that four other walkers import. So the gate
+# was permanently red on edits nobody here is permitted to make, which is
+# CLAUDE.md 3.2 form 2 -- the shape that gets loosened until it passes.
+#
+# The bucket is an ATTRIBUTION, not an exclusion, and that is the part these
+# cases have to hold down. tests/common/test_third_party_exclusion.py states in
+# as many words why this lint is not on the pruning list: "if a future upgrade
+# of the header ever introduces one, clock_scan is the lint that should say so
+# rather than the one that was taught to look away". So the files stay in the
+# walk and in the counts, every hit is still printed, and only the verdict
+# changes.
+#
+# The mutation that matters is NOT "does a perception hit stay quiet" -- a
+# bucket that swallowed the whole tree would pass that. It is the pair below:
+# one violation in our own tree and one in a not-ours tree, in the same run.
+
+
+def _mixed_tree(tmp_path):
+    """A fixture tree with one violation in OUR tree and one in a not-ours tree.
+
+    The two files carry the same forbidden spelling on purpose: anything that
+    separates them in the report is the attribution rule and nothing else.
+    """
+    ours = tmp_path / "xbrain" / "p2_core"
+    ours.mkdir(parents=True)
+    (ours / "health.py").write_text(
+        "import time\n"
+        "def age(t0):\n"
+        "    return time.time() - t0\n",
+        encoding="utf-8")
+    theirs = tmp_path / "ros2_ws" / "perception" / "tools"
+    theirs.mkdir(parents=True)
+    (theirs / "probe.py").write_text(
+        "import time\n"
+        "def age(t0):\n"
+        "    return time.time() - t0\n",
+        encoding="utf-8")
+    return str(tmp_path)
+
+
+def test_the_not_ours_trees_are_declared_and_the_shared_half_is_imported():
+    """The membership is declared data, not an `if` inside the scan.
+
+    The shared half has to come FROM charset_lint, not be retyped: two hand-kept
+    lists drift, and the drift reads as a tree one checker excludes and another
+    reports (CLAUDE.md 3.7). The repository-specific half (the vendor SDK
+    headers) is declared in the lint rather than pushed into the shared list,
+    because that list PRUNES four other walkers and they are clean on that tree
+    today.
+
+    *** The "imported" half is asserted by CONTENT plus a source check, NOT by
+    comparing module objects. tests/common/test_third_party_exclusion.py loads
+    charset_lint under its own name into sys.modules, so `L.charset_lint is
+    <a fresh import>` is true when this file runs alone and false when the suite
+    runs -- a classic order-dependent assertion. Measured 2026-10-01: it passed
+    standalone and failed in the full run, with nothing wrong in the lint.
+    """
+    shared = L.charset_lint.THIRD_PARTY_SNAPSHOTS
+    assert L.NOT_OURS, "the bucket must name at least one tree"
+    for tree in shared:
+        assert tree in L.NOT_OURS, (
+            "the shared third-party list must be carried whole, not cherry "
+            "picked: %s is missing" % tree
+        )
+    # Source check: the tuple must be BUILT from the shared attribute. A future
+    # rewrite into a literal copy satisfies the content check above and is
+    # exactly what 3.7 warns about, so the spelling is pinned too.
+    body = open(SCRIPT, encoding="utf-8").read()
+    assert "charset_lint.THIRD_PARTY_SNAPSHOTS" in body, (
+        "the shared half is no longer read from charset_lint; a retyped copy "
+        "drifts and the drift shows up as a tree one lint excuses and another "
+        "reports"
+    )
+    # The entries this lint adds for itself have to be real trees, otherwise a
+    # row excuses nothing and nobody notices.
+    extra = [t for t in L.NOT_OURS if t not in shared]
+    assert extra, "the lint-specific additions are gone; was that intended?"
+    for tree in extra:
+        assert os.path.isdir(os.path.join(ROOT, tree)), (
+            "declared not-ours tree does not exist: %s" % tree
+        )
+
+
+def test_a_not_ours_tree_is_walked_and_counted_not_pruned():
+    """*** The difference between attribution and exclusion, asserted.
+
+    If the walk skipped these trees, the surface counts would shrink and the
+    hits would vanish from the output -- which is precisely what
+    test_third_party_exclusion.py says this lint must not do. So: the files are
+    reachable through iter_sources(), and the report names each declared tree.
+
+    Mutation: prune the trees in _files_under instead of classifying in main()
+    => this case goes red, and so does
+    test_the_real_script_reads_the_full_text_of_the_declared_trees.
+    """
+    walked = set(L.iter_sources())
+    _rc, out = _run_real()
+    seen_any = False
+    for tree in L.NOT_OURS:
+        base = os.path.join(ROOT, tree)
+        if not os.path.isdir(base):
+            continue
+        files = list(L._files_under(base))
+        if not files:
+            continue
+        seen_any = True
+        assert set(files) <= walked, (
+            "files under the declared not-ours tree %s are not in the scan "
+            "surface; the bucket has become an exclusion" % tree
+        )
+        assert tree in out, (
+            "every declared not-ours tree must be named in the report: %s" % tree
+        )
+    assert seen_any, (
+        "no declared not-ours tree holds a scannable file on this host, so this "
+        "case proved nothing -- check the declarations before trusting it"
+    )
+
+
+def test_a_not_ours_hit_does_not_gate_but_our_own_hit_does(tmp_path):
+    """*** The positive control. Both halves in one run.
+
+    A bucket that absorbed everything would keep the perception hit quiet AND
+    the p2_core hit quiet, and the negative half alone cannot tell the two
+    apart. So the same forbidden spelling is planted in both trees and the
+    report must separate them: one BAD, one NOT-OURS, exit non-zero.
+    """
+    rc, out = _run_script(SCRIPT, _mixed_tree(tmp_path))
+    assert rc != 0, (
+        "a wall-clock age in xbrain/p2_core must still gate; the bucket has "
+        "swallowed our own tree:\n" + out
+    )
+    assert "BAD  xbrain/p2_core/health.py" in out, out
+    assert "NOT-OURS  ros2_ws/perception/tools/probe.py" in out, out
+    # The counters, because the listing alone would pass if a hit were counted
+    # in the wrong bucket while still being printed in the right one.
+    assert "violations:          1" in out, out
+    assert "not-ours hits:       1" in out, out
+
+
+#: Appended to a copy of the script so the later definition wins at import. The
+#: mutant differs from the original by exactly this block, which is the same
+#: technique DIFF_ONLY_MUTATION uses above.
+EMPTY_BUCKET_MUTATION = '''
+
+NOT_OURS = ()
+'''
+
+
+def test_emptying_the_bucket_makes_the_same_hit_gate_again(tmp_path):
+    """*** The other direction: the bucket is what is doing the work.
+
+    Without this, "the perception hit does not gate" could be true because the
+    file was never read, or because the spelling was not matched, or for any
+    reason at all. Here the identical fixture is scanned by a copy of the script
+    whose bucket is empty, and the same line must become a gating violation.
+    """
+    mutant = tmp_path / "clock_scan_empty_bucket_mutant.py"
+    mutant.write_text(open(SCRIPT, encoding="utf-8").read() + EMPTY_BUCKET_MUTATION,
+                      encoding="utf-8")
+    rc, out = _run_script(str(mutant), _mixed_tree(tmp_path / "tree"))
+    assert rc != 0, out
+    assert "BAD  ros2_ws/perception/tools/probe.py" in out, out
+    assert "violations:          2" in out, out
+    assert "not-ours hits:       0" in out, out
+
+
+def test_the_report_says_a_not_ours_hit_is_reported_rather_than_excused():
+    """The wording in front of the number, not only the number.
+
+    A reader who sees "violations: 0" and nothing else will read it as "no wall
+    clock anywhere in four trees". The criterion block has to say what the
+    separation does and does not mean, and that the row comes out of the bucket
+    when the tree is adopted -- otherwise the bucket is a quiet permanent
+    exemption.
+
+    Mutation: delete the NOT-OURS paragraph from _print_criterion => red.
+    """
+    _rc, out = _run_real()
+    assert "not-ours hits:" in out
+    assert "NOT-OURS hits are counted separately" in out
+    assert "NOT excluded from the scan" in out
+    assert "adopted" in out
 
 
 # -- the lint: the exemption mechanism ----------------------------------------

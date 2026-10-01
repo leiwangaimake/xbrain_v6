@@ -169,6 +169,10 @@ RtBridge::RtBridge(QuadrupedProcess* proc, std::string rid, std::string boot,
 // latency statistics. Every age, period and timeout in this process is
 // steady_clock -- the envelope's `mono` next to it is what those use.
 double wall_now_seconds() {
+  // WALL-CLOCK-OK(align): the S3.0 ts field, as the block above states. The
+  // marker has to be repeated INSIDE the body: marker_for walks up only through
+  // a contiguous run of comment lines, and the function signature line breaks
+  // that run, so the block above attaches to nothing.
   const auto d = std::chrono::system_clock::now().time_since_epoch();
   return std::chrono::duration<double>(d).count();
 }

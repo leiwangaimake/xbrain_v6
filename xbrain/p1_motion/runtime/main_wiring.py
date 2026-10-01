@@ -272,6 +272,18 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                     "detail": {"kind": ev.kind, "poly_id": ev.poly_id,
                                "poly_name": ev.poly_name, "role": "warning",
                                "episode_id": ev.episode_id},
+                    # WALL-CLOCK-OK(record): 11 S6.1 Event.ts, the moment this
+                    # zone transition happened; it is also p5's dedup-window
+                    # comparison base. The marker is on this line and not in the
+                    # block above the call because marker_for stops its upward
+                    # walk at the first non-comment line, and the publish call's
+                    # own first line is code -- a marker four lines up reads as
+                    # attached to the reader but attaches to nothing.
+                    # Note: no unbalanced opening parenthesis in a comment that
+                    # sits INSIDE a call. Source-text tests in this repository
+                    # slice a call by matching parentheses, and one stray opener
+                    # makes them read past the call (measured 2026-10-01 on the
+                    # p3 geo wiring, where it turned two cases red).
                     "src": "p1_motion", "ts": time.time(),
                 }, ensure_ascii=False).encode("utf-8"))
 

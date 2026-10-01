@@ -347,6 +347,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     "eid": "task-%s-%d" % (_task_evt_boot, _task_evt_seq[0]),
                     "title": "task %s %s" % (task_id, kind),
                     "detail": detail,
+                    # WALL-CLOCK-OK(record): 11 S6.1 Event.ts, 这条任务终态事件
+                    # 发生的墙钟时刻. 标记必须落在本行而不是调用上方的注释块 --
+                    # marker_for 的上行查找在第一个非注释行停住, 发布调用的首行
+                    # 就是代码, 所以写在上面的标记谁也挂不上.
                     "src": "p3_task", "ts": time.time(),
                 }, ensure_ascii=False).encode("utf-8"))
 
@@ -413,6 +417,14 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 key, body = render_geo_event(
                     sev, etype, detail,
                     "geo-%s-%d" % (_geo_evt_boot, _geo_evt_seq[0]),
+                    # WALL-CLOCK-OK(record): 上面那段注释说的就是本行 --
+                    # 11 S6.1 Event.ts. 标记重复落在这里是因为 marker_for 只认
+                    # 本行或[紧贴本行]的连续注释块, 而 renderer 调用的首行是
+                    # 代码, 把上行查找截断了.
+                    # 注意本行注释里[不能]出现未配对的左括号: tests/p3_task/
+                    # test_geo_events.py 的 _call_text 按括号配平截取本调用,
+                    # 注释里多一个左括号就让它读到调用之外 -- 2026-10-01 实测,
+                    # 本注释的初稿写了 renderer 函数名带括号, 当场红了两条.
                     time.time())
                 gen.put(key, json.dumps(
                     body, ensure_ascii=False).encode("utf-8"))

@@ -1217,7 +1217,9 @@ class CloudBridge:
         # 一个都不是: 本进程内的时长判定(去重窗口)走的是 DedupWindow 的
         # 单调钟.
         body = build_envelope(self._rid, name, data,
-                              ts=time.time(),   # WALL-CLOCK-OK(align)
+                              # WALL-CLOCK-OK(align): v2.0 S1.1 ts, for Qt
+                              # cross-host alignment; durations use DedupWindow.
+                              ts=time.time(),
                               seq=self._seq.next(self._rid, name))
         pub.put(json.dumps(body, ensure_ascii=False).encode("utf-8"))
 
@@ -1233,7 +1235,9 @@ class CloudBridge:
         if pub is None:
             raise KeyError("no cloud publisher for %r" % name)
         body = build_envelope(self._rid, name, data,
-                              ts=time.time(),   # WALL-CLOCK-OK(align)
+                              # WALL-CLOCK-OK(align): v2.0 S1.1 ts, for Qt
+                              # cross-host alignment; durations use DedupWindow.
+                              ts=time.time(),
                               seq=self._seq.next(self._rid, name))
         pub.put(json.dumps(body, ensure_ascii=False).encode("utf-8"))
 
@@ -1269,7 +1273,9 @@ class CloudBridge:
         from ..outbound.state_projection import event_payload
         v2_data = event_payload(data, sev=v2_sev, category=category)
         body = build_envelope(self._rid, key, v2_data,
-                              ts=time.time(),   # WALL-CLOCK-OK(align)
+                              # WALL-CLOCK-OK(align): v2.0 S1.1 ts, for Qt
+                              # cross-host alignment; durations use DedupWindow.
+                              ts=time.time(),
                               seq=self._seq.next(self._rid, key))
         pub.put(json.dumps(body, ensure_ascii=False).encode("utf-8"))
 
