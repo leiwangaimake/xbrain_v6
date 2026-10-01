@@ -42,6 +42,9 @@
 
 #include "quadruped/chs_a_codec.h"
 #include "xbrain/config/yaml_lite.h"
+// The generated C++ view of the E_* closed set; header-only and standard
+// library only, so it adds no link dependency to this static library.
+#include "xbrain/errors/errors.h"
 
 namespace quadruped {
 
@@ -328,8 +331,12 @@ QuadrupedConfig load_quadruped_config(const std::string& path) {
             "it because 13 G-02 records that it can never be read back: "
             "commanding it leaves the read-back check with nothing to match, "
             "so MS-2 turns every such request into a timeout. Removing it here "
-            "does not enable the gait, it only replaces an immediate "
-            "E_NOT_IMPLEMENTED with a five-second failure");
+            "does not enable the gait, it only replaces an immediate " +
+            // The code NAME from the generated export, not a literal: a rename
+            // in codes.yaml must break the build rather than leave this message
+            // naming a code that no longer exists (CLAUDE.md 3.5).
+            std::string(hachist::xbrain::errors::kENotImplemented) +
+            " with a five-second failure");
       }
     }
     // 13 要求 e's other two not_implemented lists, VALIDATED rather than

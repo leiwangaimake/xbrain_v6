@@ -638,12 +638,18 @@ void RtBridge::handle_light(double now_mono_s, const char* data,
   // Registered in 13 rather than papered over with a key we invented.
   if (m.has_illumination) {
     ++light_refused_;
+    // The code NAME comes from the generated export (err:: is already aliased
+    // at the top of this file), not from a literal: CLAUDE.md 3.5, and the
+    // "inside" shape no_literal_ecode.py rejects. %.*s because the export is a
+    // string_view and the length travels with it.
     std::fprintf(stderr,
                  "rt_bridge: light cmd_id=%s carries `illumination`, which is "
                  "REFUSED (13 V-47: the 1.2.6 lamp switch is absent from the "
-                 "current vendor guide). E_CAPABILITY has no ack key on this "
+                 "current vendor guide). %.*s has no ack key on this "
                  "plane, so this line is the only report.\n",
-                 m.cmd_id.c_str());
+                 m.cmd_id.c_str(),
+                 static_cast<int>(err::kECapability.size()),
+                 err::kECapability.data());
     // The custom half is NOT applied either. A message asking for two things
     // and getting one is worse than a refusal: the sender has no way to learn
     // which half took effect.

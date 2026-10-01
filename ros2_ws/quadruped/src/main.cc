@@ -52,6 +52,10 @@
 
 #include "quadruped/process.h"
 #include "quadruped/quadruped_config.h"
+// The generated C++ view of the E_* closed set. Header-only, standard library
+// only (19 S1.2 keeps everything under common/ free of ROS types), so pulling
+// it into the process binary costs nothing at link time.
+#include "xbrain/errors/errors.h"
 #if QUADRUPED_HAVE_CHS_B
 #include "quadruped/chs_b_runtime.h"
 #endif
@@ -63,6 +67,12 @@
 #endif
 
 namespace {
+
+// Short alias for the generated closed-set export. Named xbrain_err rather than
+// err because this translation unit already uses err-prefixed locals for chassis
+// response codes, which are a DIFFERENT vocabulary (13 S7.5 hex codes, not the
+// 11 S13 E_* set) and must not read as the same thing.
+namespace xbrain_err = hachist::xbrain::errors;
 
 // sysexits.h values, written out rather than included: the header is not
 // guaranteed on every toolchain and these three are the whole vocabulary.
@@ -630,13 +640,22 @@ int run(const std::string& path) {
       static std::uint64_t said_err = 0;
       if (st.error_codes_seen != said_err) {
         said_err = st.error_codes_seen;
+        // The code NAME comes from the generated closed-set export, not from a
+        // literal: a rename in codes.yaml must break the build here rather than
+        // leave a message naming a code that no longer exists (CLAUDE.md 3.5,
+        // and the "inside" shape scripts/lint/no_literal_ecode.py rejects).
+        // %.*s because the export is a string_view -- the length travels with
+        // it, and relying on the literal behind it being null-terminated would
+        // be true today and silently wrong the day the generator changes.
         std::fprintf(stderr,
                      "quadruped_m20: chassis answered 0x%04X (%llu non-success "
                      "code(s) so far). 13 S7.5 names the disposition; the code "
-                     "names the problem -- E_BUSY on a mode switch is 11 "
+                     "names the problem -- %.*s on a mode switch is 11 "
                      "S9.10.1's charge_manager, not a framing fault.\n",
                      st.last_error_code,
-                     static_cast<unsigned long long>(st.error_codes_seen));
+                     static_cast<unsigned long long>(st.error_codes_seen),
+                     static_cast<int>(xbrain_err::kEBusy.size()),
+                     xbrain_err::kEBusy.data());
       }
       static std::uint64_t said_sw = 0;
       if (st.switch_failures != said_sw) {

@@ -185,6 +185,18 @@ EXEMPT_TAGS = {
               "they are not in xbrain/common/errors and must not be (they belong "
               "to the customer's protocol, not ours). One exempted definition "
               "point in outbound/error_map.py; every use references the name",
+    "wirepin": "a TEST assertion pinning the code as it appears ON THE WIRE. "
+               "The scan surface already licenses this for Python: the "
+               "Description above says tests/ is excluded because pinning "
+               "errors.E_TIMEOUT == \"E_TIMEOUT\" is what binds the constant to "
+               "the wire value and cannot be written without a literal. The C++ "
+               "unit tests do the same job and cannot be excluded the same way, "
+               "because they live INSIDE a package under ros2_ws/ rather than "
+               "in a tree of their own -- a top-level directory list cannot "
+               "express them. Substituting the exported constant would make "
+               "the assertion compare the constant with itself and it would "
+               "pass through any rename, so the literal here IS the independent "
+               "operand and removing it removes the check",
 }
 
 #: The marker itself. Shouty and greppable on purpose: an exemption a reviewer

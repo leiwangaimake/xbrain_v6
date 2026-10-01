@@ -586,6 +586,17 @@ int main() {
                  return true;
                });
 
+    // *** On the ECODE-OK(wirepin) markers that follow, read once and the rest
+    // of them make sense. Every assertion below looks for a code INSIDE THE ACK
+    // BYTES this process published. The literal is the independent operand: it
+    // is the only thing binding the generated constant to what a peer actually
+    // receives, so writing err::kECapability here instead would make the
+    // assertion compare the constant with itself and pass through any rename --
+    // which is the one failure 11 S13 and CLAUDE.md 3.5 exist to prevent.
+    // scripts/lint/no_literal_ecode.py excludes the top-level tests/ tree for
+    // exactly this reason and cannot reach these, because they live inside a
+    // package under ros2_ws/; the tag is how that intent is expressed here.
+    //
     // *** A DELETED action answers E_CAPABILITY, not E_SCHEMA. Telling an
     // operator "malformed" about a word that was valid last release sends them
     // hunting a typo instead of reading the release notes (11 S9.3.3 v0.3).
@@ -593,6 +604,7 @@ int main() {
       const std::string body =
           wrap(std::string("{\"cmd_id\":\"c-9\",\"action\":\"") + gone + "\"}");
       b.handle_chassis_ctrl(1.0, body.c_str(), body.size());
+      // ECODE-OK(wirepin): the ack bytes themselves, asserted verbatim
       CHECK(has(sent.back().body, "E_CAPABILITY"));
       CHECK(has(sent.back().body, "rejected"));
       CHECK(has(sent.back().body, gone));   // the ack names what it refused
@@ -601,11 +613,13 @@ int main() {
     // A word that was never valid.
     const std::string fly = wrap("{\"cmd_id\":\"c-9\",\"action\":\"fly\"}");
     b.handle_chassis_ctrl(1.0, fly.c_str(), fly.size());
+    // ECODE-OK(wirepin): the ack bytes themselves, asserted verbatim
     CHECK(has(sent.back().body, "E_SCHEMA"));
 
     // No cmd_id: a loosening command that cannot be acked or de-duplicated.
     const std::string noid = wrap("{\"action\":\"enable\"}");
     b.handle_chassis_ctrl(1.0, noid.c_str(), noid.size());
+    // ECODE-OK(wirepin): the ack bytes themselves, asserted verbatim
     CHECK(has(sent.back().body, "E_SCHEMA"));
     CHECK(has(sent.back().body, "anonymous"));
     CHECK(b.ctrl_accepted() == 0);
@@ -622,6 +636,7 @@ int main() {
     // PR-1 refusal, and the ack must name it.
     const std::string prone = wrap("{\"cmd_id\":\"c-pr1\",\"action\":\"prone\"}");
     b.handle_chassis_ctrl(1.0, prone.c_str(), prone.size());
+    // ECODE-OK(wirepin): the ack bytes themselves, asserted verbatim
     CHECK(has(sent.back().body, "E_CAPABILITY"));
     CHECK(has(sent.back().body, "\"item\":\"prone_on_stair\"") ||
           has(sent.back().body, "\"item\": \"prone_on_stair\""));
@@ -634,6 +649,7 @@ int main() {
     // wired" from "the writer always emits prone_on_stair".
     const std::string deleted = wrap("{\"cmd_id\":\"c-9\",\"action\":\"idle\"}");
     b.handle_chassis_ctrl(1.0, deleted.c_str(), deleted.size());
+    // ECODE-OK(wirepin): the ack bytes themselves, asserted verbatim
     CHECK(has(sent.back().body, "E_CAPABILITY"));
     CHECK(!has(sent.back().body, "prone_on_stair"));
 
@@ -651,6 +667,7 @@ int main() {
         "{\"cmd_id\":\"c-sdk\",\"action\":\"set_sdk_mode\","
         "\"enable\":true,\"joint_rate_hz\":100}");
     b.handle_chassis_ctrl(1.0, sdk.c_str(), sdk.size());
+    // ECODE-OK(wirepin): the ack bytes themselves, asserted verbatim
     CHECK(has(sent.back().body, "E_CAPABILITY"));
     CHECK(has(sent.back().body, "rejected"));
     CHECK(!has(sent.back().body, "item"));

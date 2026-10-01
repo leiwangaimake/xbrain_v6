@@ -280,16 +280,32 @@ def test_an_empty_or_absent_tree_is_reported_and_does_not_pass_for_clean():
 # -- the CI rule: exemption mechanism ------------------------------------------
 
 def test_the_exempt_tag_set_is_closed_and_each_tag_says_what_it_licenses():
-    """Three tags, and none may be handed out for convenience.
+    """Five tags, and none may be handed out for convenience.
 
     An open tag set degrades the mechanism into "write any word and the check
-    goes quiet". Mutation: add a fourth tag without a reason => red. The third,
-    "export", was earned by CFG-CM-3 for the generated C++ header
-    common/include/xbrain/errors/errors.h, which must spell the codes because a
-    header cannot parse the yaml at compile time; the lint's own EXEMPT_TAGS note
-    records that reasoning.
+    goes quiet". Mutation: add a sixth tag without a reason => red. Each one was
+    earned by a case the mechanism could not otherwise express:
+      cycle   -- the exception package importing its own generated names
+      as12    -- 11 S11A.8.2 fixes the AI-service refusal body, and services/
+                 does not depend on xbrain/
+      export  -- CFG-CM-3's generated C++ header, which must spell the codes
+                 because a header cannot parse the yaml at compile time
+      v2wire  -- the customer's v2.0 ack.detail.code strings, which are NOT our
+                 closed set and must not be added to it
+      wirepin -- a C++ unit test asserting on the ACK BYTES. The surface already
+                 excludes the top-level tests/ tree for this reason and cannot
+                 reach a test that lives inside a package under ros2_ws/
+
+    ~~assert set(L.EXEMPT_TAGS) == {"cycle", "as12", "export"}~~ SUPERSEDED
+    (in force until 2026-10-01). This case was red, and had been since v2wire
+    landed: the tag was added to the lint and this assertion was not updated in
+    the same commit, which is the forcing function the docstring below claims
+    the case provides. It is worth noticing WHY that is bad rather than merely
+    stale -- a red case is one nobody reads, so the next tag after v2wire would
+    have gone in under cover of a failure everyone had learned to expect.
     """
-    assert set(L.EXEMPT_TAGS) == {"cycle", "as12", "export"}
+    assert set(L.EXEMPT_TAGS) == {"cycle", "as12", "export", "v2wire",
+                                  "wirepin"}
     for tag, why in L.EXEMPT_TAGS.items():
         assert len(why) > 40, "tag %r must say what it licenses" % tag
 
