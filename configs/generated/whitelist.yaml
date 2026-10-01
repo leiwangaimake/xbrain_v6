@@ -31,6 +31,7 @@ processes:
     - state/clock
     - state/fence
     - state/motion/path_progress
+    - state/perception
     - state/pose
     - state/teleop
     sub:
@@ -112,6 +113,7 @@ processes:
     - state/clock
     - state/fence
     - state/link
+    - state/perception
     - state/pose
     - state/power
     - state/robot
