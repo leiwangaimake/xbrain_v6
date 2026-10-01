@@ -23,6 +23,23 @@
 #   * scripts/doccheck/*.py individual scripts -- they roll up under
 #     tests/common/test_doccheck_coverage.py (INF-CI-4) which itself is
 #     invoked via pytest below.
+#
+# Pytest scan surface -- declared, because an undeclared one is CLAUDE.md 3.2
+# form 6 and this registry was living it (NEXT S5 SW-29, fixed 2026-10-01):
+#   * The single pytest entry runs `tests` with NO -m filter, so the surface
+#     is every test the tree collects.
+#   * It used to be three entries naming three directories. The other 30 were
+#     invoked by nothing, and nothing here said so -- "run_all.sh is green"
+#     and "the tests pass" were different sentences and the file did not
+#     admit it.
+#   * No -m filter, deliberately. pytest.ini offers `-m no_device` as the CI
+#     filter for DEVELOPER machines; this runner is the robot. The real
+#     difference is not the hardware tests -- needs_orin and needs_chassis
+#     have one case each and both skip unconditionally -- it is the ~2275
+#     cases carrying NO marker at all, which every -m selection deselects.
+#     Those are exactly the ones that must not be invisible here. (Their file
+#     count is ratcheted down by tests/meta/test_marker_coverage.py; counts
+#     are not written here, per 3.7.)
 
 checks:
 
@@ -70,17 +87,12 @@ checks:
     path: scripts/ci/m5_acceptance.py
     reason: "CHK-1-05 -- M5 exit report generated from test results; hand-written rows are rejected"
 
-  - name: pytest_common
+  - name: pytest_tree
     path: pytest
-    args: ["tests/common"]
-    reason: "unit tests for xbrain/common (arbiter, config, digest, enums, ...)"
-
-  - name: pytest_boot_freeze
-    path: pytest
-    args: ["tests/boot/freeze"]
-    reason: "freeze pipeline assertion tests (CFG-FZ-1..17)"
-
-  - name: pytest_configs
-    path: pytest
-    args: ["tests/configs"]
-    reason: "config-tree tests (CFG-CF-2/3/4/CF-1 secrets baseline)"
+    args: ["tests"]
+    reason: >-
+      the WHOLE test tree, no -m filter. Replaces three entries that named
+      tests/common, tests/boot/freeze and tests/configs -- 3 of the 33
+      directories under tests/, with the other 30 (p_processes, deps,
+      p1_motion, p3_task, meta, ci, repo, sil, ...) invoked by nothing. See
+      the scan-surface note in this file's header for why there is no -m here.

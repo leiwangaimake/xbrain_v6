@@ -99,9 +99,7 @@ run_check cxx_discipline     scripts/ci/cxx_discipline_audit.py
 # only check was "the report must list every item" -- so a hand-written
 # markdown with every row set to pass would clear the delivery gate.
 run_check m5_acceptance      scripts/ci/m5_acceptance.py
-run_check pytest_common      pytest tests/common
-run_check pytest_boot_freeze pytest tests/boot/freeze
-run_check pytest_configs     pytest tests/configs
+run_check pytest_tree        pytest tests
 
 # --- Report ---------------------------------------------------------
 ROWS_JOINED=$(IFS=,; echo "${REPORT_ROWS[*]}")
