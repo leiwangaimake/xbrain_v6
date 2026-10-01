@@ -150,7 +150,25 @@ EXEMPT_TAGS = {
                "another process; a test binary is not one of the 15 resident "
                "processes and has no peer to diverge from, which is the same "
                "boundary CLAUDE.md 3.6 draws for scripts/sil/",
+    "transitional": "a PROCESS that reads the source because the freeze line "
+                    "does not yet emit its product. This is the one tag that "
+                    "exempts something 10 S5.4.1 really does cover, so it is "
+                    "the one tag with an expiry: the reason MUST carry "
+                    "'UNTIL <repo-relative path>' naming the product whose "
+                    "appearance ends the transition. The moment that file "
+                    "exists this marker becomes a violation again -- see "
+                    "UNTIL_RE below for why that is the whole point",
 }
+
+#: The expiry clause of the transitional tag. A transitional exemption without a
+#: machine-readable end condition is just a permanent one with an apologetic
+#: comment, and relay_config.h says in its own words that what it fears is the
+#: transition being inherited. So the condition is not prose for a human to
+#: honour later: the path is read out of the marker and stat'ed on every run, and
+#: the exemption dies on its own the day the product lands. Nobody has to
+#: remember, which is the only form of "we will clean this up" that has ever
+#: worked in this repo.
+UNTIL_RE = re.compile(r"\bUNTIL\s+(\S+)")
 
 #: The marker itself. Deliberately shouty and greppable: an exemption that a
 #: reviewer can miss is not a visible marker, which is what the criterion asks
@@ -326,6 +344,21 @@ def scan_file(path, rel_path=None):
             elif len(reason) < 12:
                 violations.append((path, lineno,
                                    "exemption gives no usable reason: %r" % reason))
+            elif tag == "transitional" and not UNTIL_RE.search(reason):
+                violations.append((path, lineno,
+                                   "transitional exemption carries no "
+                                   "'UNTIL <product path>' expiry clause"))
+            elif (tag == "transitional"
+                  and os.path.exists(os.path.join(
+                      ROOT, UNTIL_RE.search(reason).group(1)))):
+                # The transition is over. Reported as a violation rather than
+                # dropped quietly: the code still reads the source while its
+                # product exists, which is the divergence 10 S5.4.1 is about.
+                violations.append((path, lineno,
+                                   "transition is OVER -- %s now exists, so this "
+                                   "process must read the product; remove the "
+                                   "marker and repoint the default path"
+                                   % UNTIL_RE.search(reason).group(1)))
             else:
                 exemptions.append((path, lineno, tag, reason))
             continue
@@ -370,6 +403,24 @@ SELF_TEST_CASES = [
      "the definition site is not a use"),
     ("clean.py", 'p = "/run/xbrain/resolved/p1_motion.yaml"\n', 0,
      "the resolved path is what everything should use"),
+    # The transitional tag and its expiry. Three cases, because the tag is only
+    # worth having if all three hold: it exempts, it refuses to exempt without an
+    # end condition, and it stops exempting once that condition is met.
+    ("trans_ok.py",
+     '# CONFIG-SOURCE-OK(transitional): freeze does not emit this product yet '
+     'UNTIL data/run/resolved/_no_such_product.yaml\n'
+     'p = "%s/x.yaml"\n' % _CONFIG_ROOT_LITERAL, 0,
+     "a transitional marker naming a product that does not exist yet exempts"),
+    ("trans_no_until.py",
+     '# CONFIG-SOURCE-OK(transitional): freeze does not emit this product yet, '
+     'we will fix it later honest\n'
+     'p = "%s/x.yaml"\n' % _CONFIG_ROOT_LITERAL, 1,
+     "a transitional marker with no UNTIL clause does not exempt"),
+    ("trans_expired.py",
+     '# CONFIG-SOURCE-OK(transitional): product landed long ago '
+     'UNTIL configs/common.yaml\n'
+     'p = "%s/x.yaml"\n' % _CONFIG_ROOT_LITERAL, 1,
+     "a transitional marker whose named product now exists is a violation again"),
 ]
 
 

@@ -34,6 +34,17 @@
  * exists to prevent. When chassis_relay joins the freeze line: point the
  * default path at data/run/resolved/chassis_relay.yaml and change robot_id
  * in the source back to ${common.robot_id}. Both files carry this note.
+ *
+ * "Spelled out so it gets removed rather than inherited" is no longer only a
+ * wish. 2026-10-01 (user ruling, NEXT 8.6 CFG-A7) the direct read was granted a
+ * declared exemption with a deadline attached: main.cc carries
+ * CONFIG-SOURCE-OK(transitional) with an UNTIL clause naming
+ * data/run/resolved/chassis_relay.yaml, and scripts/lint/
+ * no_config_source_read.py stats that path on every run -- the exemption dies,
+ * and the gate goes red naming this file, the day the product appears. So the
+ * paragraph above is enforced rather than merely written down, and whoever gets
+ * the freeze line working will be told about these two edits by CI rather than
+ * having to find this comment.
  */
 
 #ifndef HACHIST_XBRAIN_V6_CHASSIS_RELAY_RELAY_CONFIG_H_

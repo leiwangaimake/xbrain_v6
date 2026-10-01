@@ -122,11 +122,79 @@ def test_the_exempt_tag_set_is_closed_and_is_what_the_item_permits():
     visible in the file and invisible in review. This test staying red on a new
     tag is the forcing function that made 2026-08-12's secrets/content additions
     a conscious edit here, not a silent widening.
+
+    On transitional, added 2026-10-01 (user ruling on NEXT 8.6 CFG-A7). It is the
+    only tag that exempts something 10 S5.4.1 genuinely does cover: chassis_relay
+    is one of the 15 resident processes and it really does read the source,
+    because the freeze line emits no product for it. The three options were a
+    declared exemption, keeping the gate permanently red, or putting the process
+    on the freeze line today; the first was chosen with a condition attached, and
+    that condition is the next test.
     """
     assert set(L.EXEMPT_TAGS) == {"freeze", "J", "B", "K", "secrets", "content",
-                                  "fixture"}
+                                  "fixture", "transitional"}
     for tag, why in L.EXEMPT_TAGS.items():
         assert len(why) > 30, "tag %r must say what it licenses" % tag
+
+
+def test_transitional_exemptions_have_an_unexpired_deadline():
+    """*** The condition the transitional tag was granted under.
+
+    A transitional exemption with no end condition is a permanent one wearing an
+    apology, and relay_config.h names that exact fear in its own words. So the
+    tag requires an 'UNTIL <repo-relative path>' clause, the lint stats that path
+    on every run, and the exemption turns back into a violation the day the
+    product appears. Nobody has to remember to come back -- which is the only
+    form of "we will clean this up later" this repo has ever seen work.
+
+    This test evaluates the condition on the REAL tree, not in a temp directory:
+    the lint's own self-test proves the mechanism reacts (three cases: valid,
+    no-UNTIL, expired), and that is a different claim from "every transitional
+    marker committed to this repository names a product that has not landed".
+    Both are needed. An expired marker here means someone ran the freeze line
+    successfully and left a process reading the source anyway.
+
+    Mutation: point one UNTIL at a path that exists => red. Delete an UNTIL
+    clause => red (the lint reports it, and the per-marker loop below would then
+    find no clause to check).
+    """
+    assert L.UNTIL_RE.search("x UNTIL some/path"), \
+        "UNTIL_RE no longer parses the clause the tag contract requires"
+    # A whole-tree grep of tracked files, deliberately WIDER than the lint's
+    # SCAN_DIRS. A transitional marker written outside the scan surface exempts
+    # nothing, so the lint will never look at it -- but it still reads as a
+    # promise to whoever finds it, and the deadline should hold wherever the
+    # promise was written. git grep also scopes this to committed files, which is
+    # what "every transitional marker in this repository" means.
+    #
+    # Two files are excluded, and the exclusion is declared rather than implied
+    # (CLAUDE.md 3.2 form 6). Both are the criterion itself: the lint holds three
+    # transitional markers as SELF_TEST_CASES data -- one of which is SUPPOSED to
+    # be expired -- and this file holds the grep pattern. A criterion inside its
+    # own scan surface can never reach zero (form 3), and neither file can grant
+    # a real exemption anyway: the lint's SCAN_DIRS covers xbrain/ ros2_ws/
+    # services/, so a marker under scripts/ or tests/ exempts nothing.
+    proc = subprocess.run(
+        ["git", "-C", ROOT, "grep", "-n", "CONFIG-SOURCE-OK(transitional)",
+         "--", ":(exclude)scripts/lint/no_config_source_read.py",
+         ":(exclude)tests/common/test_no_config_source_read.py"],
+        capture_output=True, text=True)
+    # 1 = no matches, which is a legitimate end state, not a failure.
+    assert proc.returncode in (0, 1), proc.stdout + proc.stderr
+    lines = [ln for ln in proc.stdout.split("\n") if ln.strip()]
+    # Not asserted non-empty: zero of these is the right end state for CFG-A7,
+    # and a test demanding one would turn the cleanup into a test failure.
+    for ln in lines:
+        where, _, text = ln.partition(":")
+        lineno, _, text = text.partition(":")
+        m = L.UNTIL_RE.search(text)
+        assert m, ("%s:%s carries a transitional marker with no UNTIL clause"
+                   % (where, lineno))
+        product = os.path.join(ROOT, m.group(1))
+        assert not os.path.exists(product), (
+            "%s:%s names %s as its expiry and that file now EXISTS -- the "
+            "transition is over, so this read must move to the product and the "
+            "marker must go" % (where, lineno, m.group(1)))
 
 
 def test_every_declared_tree_exemption_carries_a_reason():

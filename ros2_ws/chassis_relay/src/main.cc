@@ -86,7 +86,16 @@ constexpr int kExitConfig = 78;  // EX_CONFIG, same vocabulary as quadruped
 // The transitional direct-read source; see relay_config.h for the note that
 // moves this to data/run/resolved/chassis_relay.yaml when the freeze line
 // covers this process.
+//
+// The marker below is not an apology, it is a deadline. scripts/lint/
+// no_config_source_read.py reads the path out of the UNTIL clause and stats it
+// on every run: while no product exists the exemption holds, and the day the
+// freeze line emits data/run/resolved/chassis_relay.yaml the SAME marker turns
+// into a violation that names it. So the transition cannot be inherited by
+// whoever comes next -- nobody has to remember to come back here, because the
+// gate starts asking on its own. Repoint the literal and delete the marker then.
 constexpr const char* kDefaultConfigPath =
+    // CONFIG-SOURCE-OK(transitional): none emitted yet UNTIL data/run/resolved/chassis_relay.yaml
     "/opt/xbrain_v6/configs/chassis_relay.yaml";
 
 // One buffered fault frame for the CR-9 handoff. Trivially copyable, as the
