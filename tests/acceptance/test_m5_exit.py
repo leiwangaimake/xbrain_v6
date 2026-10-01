@@ -139,7 +139,19 @@ def test_g6_a_new_platform_is_config_only():
              "auth_level": "L1", "intent": intent,
              "slots": {"distance_m": 1.0, "angle_deg": 30.0}},
             limits=miw.MotionLimits(max_distance_m=20.0, max_angle_deg=720.0),
-            clock={"ts_sync": True},
+            # The ClockStatus PAYLOAD field is `sync` (11 S3.11, mirrored
+            # verbatim by P1-13). `ts_sync` is the ENVELOPE field (S3.0),
+            # a different layer -- reading it here gave None, so G-4 shut
+            # before G-7 was ever reached and BOTH platforms came back
+            # E_UNHEALTHY{item:clock}. The failure message then said
+            # "the gate is not looking at the config", pointing at the
+            # wrong thing entirely. Fixed in the implementation and in
+            # tests/p2_core/test_motion_intent_gates.py on 2026-09-26;
+            # this call site and the one in
+            # tests/integration/test_p4_p3_command_frames.py were missed
+            # (CLAUDE.md 9.1A -- a green suite only speaks for the call
+            # sites it covers).
+            clock={"sync": True},
             health={"allow_motion": True},
             pose={"yaw_capable": True},
             robot={},

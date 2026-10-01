@@ -53,6 +53,17 @@ from xbrain.p4_agent.session.chitchat import ChitchatResponder
 
 pytestmark = pytest.mark.no_device
 
+# The ClockStatus PAYLOAD shape, not the envelope: 11 S3.11 gives `sync` and
+# P1-13 mirrors it verbatim. Both call sites below said `ts_sync` -- the
+# ENVELOPE field (S3.0), a different layer -- which reads as absent, and
+# absent is G-4's fail-safe side, so every frame was refused with
+# E_UNHEALTHY{item:clock} before reaching the gate each test is about. The
+# implementation and tests/p2_core/test_motion_intent_gates.py were corrected
+# on 2026-09-26; these two call sites were missed, and only one of them went
+# red for it (the other asserts a G-3 refusal, and G-3 runs BEFORE G-4, so it
+# kept passing for the wrong reason -- CLAUDE.md 9.1A).
+_CLOCK_OK = {"sync": True, "source": "rtk"}
+
 _INTENTS = "/opt/xbrain_v6/configs/intents.yaml"
 _CHITCHAT = "/opt/xbrain_v6/configs/chitchat.yaml"
 
@@ -186,7 +197,7 @@ def test_voice_motion_frame_passes_p2s_real_gates():
     assert cmd["turn_id"]
     verdict = motion_evaluate(
         cmd, limits=MotionLimits(max_distance_m=20.0, max_angle_deg=720.0),
-        clock={"ts_sync": True})
+        clock=_CLOCK_OK)
     assert verdict.passed, verdict
     body = to_relative_move(cmd, rm_cmd_id="rm-1", params={})
     assert body["dx_m"] == 3.0
@@ -212,7 +223,7 @@ def test_p4_never_clamps_an_over_range_distance():
     assert cmd["slots"]["distance_m"] == 25.0        # 原样, 没被 P4 削
     verdict = motion_evaluate(
         cmd, limits=MotionLimits(max_distance_m=20.0, max_angle_deg=720.0),
-        clock={"ts_sync": True})
+        clock=_CLOCK_OK)
     assert not verdict.passed and verdict.gate == "G-3"
     assert verdict.detail["limit"] == 20.0
 

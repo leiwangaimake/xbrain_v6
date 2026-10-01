@@ -210,8 +210,27 @@ def main():
     print("criterion: report rows == execution results")
     print("items: %d, not-run: %s, xfailed cases: %d"
           % (len(G_ITEMS), ",".join(not_run) or "none", len(xfailed)))
-    # 有 failed 才算门失败. xfail 是[已声明的未实现], 它让报告不全绿,
-    # 但不该阻断 CI -- 阻断的话这条门会在实现补齐前被关掉.
+    # *** xfail 口径, 写出来而不是留在注释里.
+    #
+    # 三个状态互不相同, NO 不许两两合并:
+    #   passed  跑了, 过了;
+    #   xfailed 跑了, [已声明的]预期失败 -- 报告里逐行写 xfailed, 所以
+    #           "M5 出口未达成"这件事在报告上是看得见的;
+    #   NOT-RUN 没跑 -- 连证据用例都没有.
+    #
+    # 把 xfail 当 passed 是 CLAUDE.md 3.2 形态1("判不出来就算做完"), 本门
+    # 不这么做: 报告里它就是 xfailed, 任何地方都不计入通过.
+    # 把 xfail 当 NOT-RUN 同样是错的 -- 它跑了, 有 junit 节点, 有证据用例名,
+    # 而 NOT-RUN 的意思是"这一条没有任何执行结果支撑".
+    #
+    # 本门只在有 failed 时退非零, xfail 不阻断. 理由不是宽容, 是本门的判据
+    # 就是[报告等于执行结果](见文件头 Boundaries: 不判断 G-* 标准本身).
+    # 拿 xfail 阻断等于把另一条判据(M5 是否可交付)塞进来, 而那条判据在声明过
+    # 的未实现项补齐之前恒红 -- 一条恒红的门会被关掉, 然后两条判据一起失效
+    # (3.2 形态2).M5 可交付性由报告里的 verdict 列读出, 不由本门退出码读出.
+    print("xfail verdict: counted as RAN, never as PASSED, does not gate "
+          "(this gate asserts report == execution; M5 readiness is read off "
+          "the verdict column, not off this exit code)")
     failed = [n for n, s in results.items() if s == "failed"]
     return 1 if failed else 0
 
