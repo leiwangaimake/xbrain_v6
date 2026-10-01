@@ -44,6 +44,7 @@ NOTE: Scan surface declared per rule: violated CHK-1-52 star point about
 
 import argparse
 import os
+import subprocess
 import re
 import sys
 from dataclasses import dataclass, field
@@ -156,7 +157,12 @@ RULES: Tuple[RuleSpec, ...] = (
         # common/lib is the shared-object output directory; a .so or .a
         # landing there is a BUILD PRODUCT, not source, and shouldn't
         # trigger the extension gate on shape alone.
-        ignore_subroots=("lib",),
+        # third_party carries verbatim upstream snapshots -- their file
+        # names are not ours to choose (CLAUDE.md S0.2 requires the
+        # LICENSE next to the source, and nlohmann ships LICENSE.MIT).
+        # charset_lint already excludes the same tree via
+        # THIRD_PARTY_SNAPSHOTS; this rule had no counterpart.
+        ignore_subroots=("lib", "third_party"),
     ),
     RuleSpec(
         label="CHK-1-52-D-import",
@@ -170,13 +176,18 @@ RULES: Tuple[RuleSpec, ...] = (
         allow_ext=None,
         deny_ext=None,
         content_probe=_check_common_py_no_xbrain,
-        ignore_subroots=("lib",),
+        # third_party carries verbatim upstream snapshots -- their file
+        # names are not ours to choose (CLAUDE.md S0.2 requires the
+        # LICENSE next to the source, and nlohmann ships LICENSE.MIT).
+        # charset_lint already excludes the same tree via
+        # THIRD_PARTY_SNAPSHOTS; this rule had no counterpart.
+        ignore_subroots=("lib", "third_party"),
     ),
     RuleSpec(
         label="CHK-1-52-B",
         root="deploy",
-        reason="deploy/ holds systemd/network glue only (.service / .timer / "
-               ".network / .nft / .conf / .rules); no Python "
+        reason="deploy/ holds systemd/network glue plus the env and "
+               "router config those units reference; no Python "
                "(CLAUDE.md S0.2)",
         allow_ext=frozenset({
             # systemd unit types.
@@ -187,7 +198,23 @@ RULES: Tuple[RuleSpec, ...] = (
             ".rules",
             # Docs.
             ".md",
+            # *** .env added 2026-10-01: the user ruled on 2026-09-30 that
+            # the per-robot identity file lives under deploy/ rather than
+            # /etc/xbrain, so deploy/env/{robot,network}.env moved into the
+            # tree (see 99 U88). The units reference them by absolute path
+            # via EnvironmentFile=. The ruling came first and this list did
+            # not follow -- correcting the rule, not the placement.
+            ".env",
+            # *** .json5 was always here: deploy/zenoh/zenohd-{gen,rt}.json5
+            # are the router configs the zenohd units launch with. They
+            # predate this rule and were reported from the day it landed.
+            ".json5",
         }),
+        # logrotate config files carry NO extension by Linux convention --
+        # /etc/logrotate.d/<name> is the shape the tool reads. Allowing an
+        # empty extension repo-wide would let any stray file through, so
+        # the exemption is the directory, not the extension.
+        ignore_subroots=("logrotate",),
     ),
     RuleSpec(
         label="CHK-1-52-C",
@@ -208,10 +235,46 @@ RULES: Tuple[RuleSpec, ...] = (
 # Runner
 # ---------------------------------------------------------------------------
 
-def _walk(root_abs: str, ignore_prefixes: Tuple[str, ...]):
+def _tracked_under(root_abs: str, repo_root: str):
+    """Paths git tracks under root_abs, or None when git cannot answer.
+
+    *** The scan surface must be WHAT THE REPOSITORY CARRIES, not what
+    happens to sit on this disk.
+
+    .gitignore line 40 is `data/*`, so every runtime artefact, delivery
+    pack and resolved snapshot under data/ is untracked. Walking the
+    filesystem made rule CHK-1-52-C report those: measured 2026-10-01 it
+    produced 105 findings of which 99 were untracked files -- delivery
+    snapshots and chassis helper scripts that no commit ever carried.
+
+    That is not a loud rule, it is a rule aimed at nothing: the only two
+    tracked files under data/ are .gitkeep and README.md, and both are in
+    _ALWAYS_OK_NAMES. So the rule could never produce a meaningful hit
+    while still being permanently red (CLAUDE.md 3.2 form 2 -- the shape
+    that eventually gets loosened until it passes).
+
+    Tracking-based scanning keeps the rule's INTENT -- `git add data/x.py`
+    is still caught, which is the thing worth catching -- and drops the
+    artefacts. Returning None (git unavailable / not a work tree) makes
+    the caller fall back to walking, so a delivery pack without .git is
+    checked as before rather than silently passing.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", repo_root, "ls-files", "-z", "--", root_abs],
+            capture_output=True, check=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    names = [n for n in out.stdout.decode("utf-8", "replace").split("\0") if n]
+    return {os.path.join(repo_root, n) for n in names}
+
+
+def _walk(root_abs: str, ignore_prefixes: Tuple[str, ...],
+          tracked=None):
     """Yield (rel_path, abs_path) for every file under `root_abs`, skipping
     the standard build/VCS dirs and any relative subroot in
-    ignore_prefixes."""
+    ignore_prefixes. When `tracked` is a set, only paths in it are
+    yielded (see _tracked_under)."""
     for dirpath, dirnames, filenames in os.walk(root_abs):
         # In-place mutation of dirnames tells os.walk NOT to descend.
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
@@ -221,6 +284,8 @@ def _walk(root_abs: str, ignore_prefixes: Tuple[str, ...]):
             # Skip anything under an ignored subroot (common/lib etc).
             if any(rel_p == p or rel_p.startswith(p + os.sep)
                    for p in ignore_prefixes):
+                continue
+            if tracked is not None and abs_p not in tracked:
                 continue
             yield rel_p, abs_p
 
@@ -235,7 +300,8 @@ def _check_rule(rule: RuleSpec, repo_root: str) -> List[str]:
     # violate a rule, only future files can.
     if not os.path.isdir(root_abs):
         return findings
-    for rel_p, abs_p in _walk(root_abs, rule.ignore_subroots):
+    tracked = _tracked_under(root_abs, repo_root)
+    for rel_p, abs_p in _walk(root_abs, rule.ignore_subroots, tracked):
         basename = os.path.basename(rel_p)
         # Extension gate. Extension is the .lower()'d suffix; a file with
         # no extension gets "" and passes when allow_ext contains ""
