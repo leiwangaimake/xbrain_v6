@@ -31,10 +31,15 @@
 #   nothing in that test file bears on it.
 #
 common:
-  audio:
-    # bypass_keywords: 已从本变体移除 (2026-09-21). 真机文件已落值 (三组并集,
-    #   用户裁决), 而变体只许填真机文件里为 null 的键 (10 S5.4.7) -- 且此前这里
-    #   的形状 (扁平三词) 与 16 S4 的三组形状不一致, 本就不该被任何测试消费.
+  # audio.bypass_keywords: 已从本变体移除 (2026-09-21). 真机文件已落值 (三组并集,
+  #   用户裁决), 而变体只许填真机文件里为 null 的键 (10 S5.4.7) -- 且此前这里
+  #   的形状 (扁平三词) 与 16 S4 的三组形状不一致, 本就不该被任何测试消费.
+  # 2026-10-01 订正: 2026-09-21 那次只删掉了 bypass_keywords 这一行, 把父键
+  #   `audio:` 留在原处. yaml 把只带注释的键读成 null, 于是本变体声明了一个
+  #   `common.audio: null` 的裸键 -- VAR-2 的 null_value 一档, 即
+  #   tests/configs/test_config_variants.py 报的那一条. 变体的语义是 [填值],
+  #   一个 null 什么也不填: 它既不覆盖真机值, 又让 _leaves() 把这一支算作本
+  #   变体赋了值的叶子. 所以键名整条降为注释, 保留痕迹但不再进 yaml 树.
   calib:
     calib_rev: unspecified
     frames: {}

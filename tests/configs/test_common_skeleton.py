@@ -608,6 +608,72 @@ _LANDED = {
     "common.cmdset.intents_file": "/opt/xbrain_v6/configs/intents.yaml",
     "common.cmdset.missions_dir": "/opt/xbrain_v6/configs/prompts/missions/",
     "common.cmdset.query_templates": "/opt/xbrain_v6/configs/query_templates.yaml",
+
+    # 2026-09-21 ruling, landed in configs/common.yaml and NOT reflected here
+    # until 2026-10-01 -- the same omission the timezone entry at the top of
+    # this dict records, repeated verbatim one month later. That recurrence is
+    # the reason this entry spells out what authorises it rather than just
+    # naming the paths.
+    #
+    # Why landed and not null. 10 S5.4.5's audio row names
+    # common.audio.bypass_keywords as belonging in this file, and 16 S4 / 18 A01
+    # each shipped a five-word list -- two DIFFERENT lists, which 10 S5.4.5
+    # itself records as drifted. The user ruled on 2026-09-21 that the value is
+    # the UNION of the two, on 16 S4.1's ground that a missed trigger costs a
+    # collision while a false one costs a recoverable stop. A null here would
+    # not protect anything: it would leave the safety word list undefined while
+    # the ruling that fixes it already exists.
+    #
+    # Pinned per GROUP, not flattened into one list, because 16 S4 gives the
+    # three groups different actions -- estop goes straight to Tier 1, prone and
+    # stand go through arbitration. A single list would lose that and the loss
+    # would not show up until a spoken "stand" reached the estop path.
+    #
+    # The values are pinned BY CONTENT, so dropping or adding a word is red
+    # here. That is the half that matters: the union is the ruling, and a later
+    # edit that quietly trims "stop" or the bare single-character word is
+    # exactly what 16 S4.1 argues against.
+    "common.audio.bypass_keywords.estop": ["急停", "停止", "紧急停止",
+                                           "立刻停下", "停", "stop"],
+    "common.audio.bypass_keywords.prone": ["趴下", "卧倒", "趴着"],
+    "common.audio.bypass_keywords.stand": ["站立", "站起来", "起立"],
+
+    # 2026-09-29 ruling, also missed here until 2026-10-01 -- and it was missed
+    # by the SAME 2026-09-29 batch that added the zenoh / db / cmdset entries
+    # above, which is how a whitelist omission hides: the case reports only the
+    # FIRST offending path in sorted order, so common.audio.* above was masking
+    # this one. Both are repaired in one commit for that reason.
+    #
+    # Authority: 11 S3.1.5.6's blind-rotation disposition table suggests
+    # 0.3 rad/s and the user ruled on 2026-09-29 to implement the suggestion.
+    # It is a LIMIT, not a safety parameter on the common.safety.* axis, and it
+    # is not a number picked to get the freeze line moving (CLAUDE.md iron rule
+    # 3): leaving it null makes 12 S12's option 2 refuse the rotation outright,
+    # and rns/source.py's contact fuse deliberately keeps turning at zero linear
+    # speed inside 0.7 m -- so a null here stops the robot in front of an
+    # obstacle unable to turn away, which is the opposite of conservative.
+    "common.motion.free_space.blind.wz_blind_radps": 0.3,
+
+    # 2026-09-10 ruling, the OLDEST of the three omissions and the one that was
+    # masked deepest -- it only became visible once the two above were entered,
+    # which is the whole argument for enumerating every offending leaf at once
+    # instead of repairing the one the case happens to report.
+    #
+    # Authority: 11 S9.6.1's profile block names this file verbatim as the
+    # unique definition point of the profile table (10 S5.4.5's source column
+    # says common.yaml too), and 99 U54-b recalibrated the two intervals. Each
+    # value is the UPPER bound of its interval: 0.2-0.5 for obstacle_avoid
+    # (14 S8.3) and 1.0-2.0 for patrol, where 2.0 is also the chassis physical
+    # limit that models/m20s.yaml carries as spec.max_vx_mps and SP-2 requires
+    # spec >= this value. configs/common_sim.yaml's own header records the other
+    # side of the same fact -- the sim overlay had to DROP these two keys when
+    # they landed, because a 1.5 left there shadowed the real 2.0 for a day.
+    #
+    # The other three keys of each profile stay null on purpose: 11 S9.6 SP-6
+    # welds require_sense_m to the four-band gate, so landing one without
+    # re-deriving the other makes the freeze line refuse the whole stack.
+    "common.motion.profiles.obstacle_avoid.max_mps": 0.5,
+    "common.motion.profiles.patrol.max_mps": 2.0,
 }
 
 
