@@ -34,17 +34,41 @@
 # ⚠️ Both are wanted in a real deployment. "Not in the floor" means bring-up
 # does not BLOCK on them, not that the deployment should skip them.
 #
-# Versions: exact matches of what the paraformer-ASR + freeze pipeline were
-# validated against 2026-08. Update PROCESS: edit here, re-run
-# `python scripts/deps/check_deps.py --strict`, commit both together.
+# Versions: THE LOCK IS A SNAPSHOT OF WHAT IS INSTALLED AND RUNNING, not an
+# upgrade target. User ruling 2026-10-01 (NEXT S5 SW-27 (4)(5)).
+#
+# ⚠️ Read this before "updating" a version here. Five lines in this file had
+# drifted ABOVE the deployed versions -- PyYAML / requests / fastapi /
+# starlette / uvicorn all named a release that this robot has never run. The
+# note that used to sit here claimed the opposite in so many words ("exact
+# matches of what ... were validated against"), so the file asserted something
+# untrue about itself for as long as the drift lasted.
+#
+# ★ Why a snapshot beats a target HERE. The point of the lock is assertion ②
+# (installed == lock, exactly), and its job is that a bring-up on a NEW machine
+# gets the combination this one was validated on. A lock naming versions nobody
+# has run turns that job inside out: the new machine would install an untested
+# combination and the gate would call it correct. That is worse than being
+# behind, because being behind is visible and this is not.
+#
+# ★ The scope is the ORIN deployment surface. The repo is mounted over sshfs
+# and the tests run on the robot, so "installed" means installed there.
+#
+# Update PROCESS (unchanged, and the part that was skipped last time):
+#   1. install the new version ON THE DEPLOYMENT MACHINE
+#   2. edit the line here to match it
+#   3. re-run `python scripts/deps/check_deps.py --strict`
+#   4. commit both together
+# ⇒ step 1 comes FIRST. Editing this file to a version you have not installed
+# does not schedule an upgrade; it only makes the gate lie.
 
 eclipse-zenoh==1.9.0
-PyYAML==6.0.2
-requests==2.32.3
+PyYAML==5.4.1
+requests==2.25.1
 aiosqlite==0.22.1
-fastapi==0.141.1
-starlette==1.4.1
-uvicorn==0.52.1
+fastapi==0.140.0
+starlette==1.3.1
+uvicorn==0.51.0
 # B mode cloud broadcast: p2_core streams PCM into payload-service WS /play.
 # Uses the SYNC client (websockets.sync.client, available since 12.0) --
 # p2_core has no asyncio loop and must not grow one for this.
