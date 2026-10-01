@@ -44,8 +44,24 @@ def test_p3_task_module_help_exits_zero():
     assert r.returncode == 0, r.stderr
 
 
-def test_p3_task_missing_config_exits_nonzero():
-    r = _run_module("xbrain.p3_task", ["--dry-run"])
+def test_p3_task_missing_config_exits_nonzero(tmp_path):
+    # *** The empty --resolved-root is what makes this a test.
+    #
+    # Until 2026-10-01 this called _run_module(...) with no root, so the
+    # process read the real /opt/xbrain_v6/data/run/resolved/ -- which has
+    # carried snapshots since 2026-09-18. The process therefore found a
+    # perfectly good config, logged "config OK" and exited 0, and the
+    # assertion below failed for the one reason it was never meant to
+    # catch: the scenario was never constructed.
+    #
+    # The signature already said so: tmp_path was taken and never used.
+    # That unused parameter is the fossil of the original intent.
+    #
+    # Pointing at an empty tmp_path makes the absence real, and makes the
+    # case independent of what happens to sit on this disk -- the previous
+    # form would have flipped to green the day somebody cleared the
+    # snapshots, which reads as "fixed" while nothing was verified.
+    r = _run_module("xbrain.p3_task", ["--dry-run", "--resolved-root", str(tmp_path)])
     assert r.returncode != 0, r.stderr
     assert "config-freeze" in r.stderr
 
@@ -68,7 +84,23 @@ def test_p5_gateway_missing_config_enters_minimal_mode(tmp_path):
     failed. It enters minimal mode. This is the observation window
     W-1 (10 S3.3). If future code regresses and adds `sys.exit(4)` on
     missing config, this test catches it."""
-    r = _run_module("xbrain.p5_gateway", ["--dry-run"])
+    # *** The empty --resolved-root is what makes this a test.
+    #
+    # Until 2026-10-01 this called _run_module(...) with no root, so the
+    # process read the real /opt/xbrain_v6/data/run/resolved/ -- which has
+    # carried snapshots since 2026-09-18. The process therefore found a
+    # perfectly good config, logged "config OK" and exited 0, and the
+    # assertion below failed for the one reason it was never meant to
+    # catch: the scenario was never constructed.
+    #
+    # The signature already said so: tmp_path was taken and never used.
+    # That unused parameter is the fossil of the original intent.
+    #
+    # Pointing at an empty tmp_path makes the absence real, and makes the
+    # case independent of what happens to sit on this disk -- the previous
+    # form would have flipped to green the day somebody cleared the
+    # snapshots, which reads as "fixed" while nothing was verified.
+    r = _run_module("xbrain.p5_gateway", ["--dry-run", "--resolved-root", str(tmp_path)])
     # dry-run + no config = exit 0 in minimal mode.
     assert r.returncode == 0, r.stderr
     assert "MINIMAL" in r.stderr
