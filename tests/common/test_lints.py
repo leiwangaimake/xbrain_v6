@@ -17,13 +17,25 @@ CFG-CM-11 is the item that adds the fifth lint and calls it a CI hard rule, so
 the runner belongs with it: without one, the new check is a script, not a rule.
 
 *** On comment_ratio specifically, and being exact about what is claimed.
-CLAUDE.md 2.4 sets the threshold at 70 percent with no exemption for any tree,
-and comment_ratio.py scans xbrain/, scripts/ and tests/. Today xbrain/ meets it
-and the other two do not -- a pre-existing gap, not one this item created. So
-this file asserts the part that is actually in force (every file under xbrain/)
-and MEASURES the rest, printing it rather than hiding it. It does not assert
-repo-wide compliance, because that would be false, and it does not silence the
-check, because a silenced check is how a gap becomes permanent.
+
+~~Today xbrain/ meets it and the other two do not ... this file asserts the part
+that is actually in force (every file under xbrain/) and MEASURES the rest.~~
+SUPERSEDED WORDING, in force until 2026-10-01. It was never true of xbrain/:
+measured that day, hundreds of files under xbrain/ were below the threshold and
+test_comment_ratio_holds_for_the_tree_it_is_enforced_on had been red for a long
+time, with a docstring claiming the tree "was brought to the threshold
+deliberately and must stay there". Both halves of the old arrangement were
+therefore red -- the asserted one and the CI check -- which is the state
+CLAUDE.md 3.2 form 2 describes.
+
+What is in force now (user ruling 2026-10-01, option B): comment_ratio.py
+carries a debt snapshot, every file NOT in it must meet the threshold in all
+three trees, and the snapshot may only shrink. That is a STRICTLY LARGER
+enforced surface than the old arrangement, which gated nothing under scripts/ or
+tests/ at all. The lint therefore joins CLEAN_LINTS below, and the mechanism
+that makes the widening safe -- the gate, the shrink rules and the ceiling --
+lives in tests/common/test_comment_ratio.py rather than here, because it needs
+fixture trees and this file runs lints as they ship.
 
 The counts are derived here at run time and written down nowhere -- CLAUDE.md
 3.7: a number maintained by hand is a number that goes stale.
@@ -116,6 +128,16 @@ CLEAN_LINTS = [
      "no bare or _-discarded zenoh declare_subscriber(...) under xbrain/; "
      "return value must be captured or Rust-side GC silently unsubscribes "
      "(CFG-DC-3 / CLAUDE.md 4.3)"),
+    # Joined this list 2026-10-01, when the ratchet made its zero reachable.
+    # Its zero is narrower than the others and the script prints the boundary
+    # itself: it means no file OUTSIDE the debt snapshot is below the CLAUDE.md
+    # 2.4 threshold, and that the snapshot has not grown or gone stale. The
+    # mechanism behind that -- including the cases that prove an unlisted file
+    # still gates -- is tests/common/test_comment_ratio.py.
+    ("comment_ratio.py",
+     "no file outside the debt snapshot is below the CLAUDE.md 2.4 comment "
+     "threshold under xbrain/, scripts/ or tests/, and the snapshot has "
+     "neither grown nor gone stale"),
 ]
 
 #: Lints that also ship a --self-test. Running it here keeps the probes honest;
@@ -181,50 +203,68 @@ def test_every_lint_script_is_invoked_by_this_runner():
     )
 
 
-def test_comment_ratio_holds_for_the_tree_it_is_enforced_on():
+def test_no_file_outside_the_comment_ratio_snapshot_is_below_the_threshold():
     """*** The part of CLAUDE.md 2.4 that is actually in force today.
 
-    xbrain/ was brought to the threshold deliberately and must stay there.
-    Mutation: add a file under xbrain/ below 70 percent => red.
+    Replaces test_comment_ratio_holds_for_the_tree_it_is_enforced_on, whose
+    docstring claimed xbrain/ "was brought to the threshold deliberately and
+    must stay there". It had not been and it was not: that case was red, and so
+    was the CI check behind it. Keeping the old name would have kept a sentence
+    nobody could act on (CLAUDE.md iron rule 1).
+
+    What is asserted now covers MORE than that case did -- every tree the lint
+    walks, not only xbrain/ -- and it is phrased as "outside the snapshot"
+    because the snapshot is the declared debt. The gate that makes the snapshot
+    a ratchet rather than a waiver is tests/common/test_comment_ratio.py; this
+    case is only the repository-wide statement.
+
+    Mutation: add a file anywhere in the three trees below 70 percent without a
+    snapshot row => red, naming it.
     """
     _rc, out = run_lint("comment_ratio.py")
     offenders = [ln.strip() for ln in out.split("\n")
-                 if ln.strip().startswith("LOW") and " xbrain/" in ln]
+                 if ln.strip().startswith("LOW")]
     assert not offenders, (
-        "every file under xbrain/ must meet the CLAUDE.md 2.4 threshold:\n"
+        "these files are below the CLAUDE.md 2.4 threshold and are not in the "
+        "debt snapshot; write the comments, or -- if there is a reason the "
+        "comments cannot be written -- add the row and lower nothing:\n"
         + "\n".join(offenders)
     )
 
 
-def test_the_comment_ratio_gap_outside_xbrain_is_reported_not_hidden():
-    """*** Measures the pre-existing gap instead of asserting it away.
+def test_the_comment_ratio_debt_is_reported_not_hidden():
+    """*** Measures the carried debt instead of asserting it away.
 
-    CLAUDE.md 2.4 states the threshold with no exemption for any tree, and
-    comment_ratio.py scans scripts/ and tests/ as well. Neither meets it today.
-    That is a real gap and it predates CFG-CM-11.
+    The snapshot is large, and the number is the thing that has to stay in
+    front of people: a debt list nobody sees is a waiver. So the run's carried
+    count is printed here on every invocation of the suite, next to the first
+    few rows, rather than being something one has to go and look for.
 
-    This case deliberately does NOT fail. Failing it would make the suite red for
-    a decision nobody has taken yet, and the usual response to a permanently red
-    assertion is to delete it -- CLAUDE.md 3.2 form 2 becoming form 1. Instead it
-    prints what is outstanding, so extending the rule to those trees is a choice
-    someone makes with the size in front of them rather than a thing that quietly
-    never happens.
+    This case deliberately does NOT fail on the carried files. Failing it would
+    make the suite red for work nobody has scheduled, and the usual response to
+    a permanently red assertion is to delete it -- CLAUDE.md 3.2 form 2 becoming
+    form 1, which is the exact history of the case this replaced.
 
-    If the decision is taken to enforce it everywhere, this case is replaced by
-    an assertion on the whole output, and test_lint_passes gains comment_ratio.
+    The one thing asserted is that the report still exists. A comment_ratio.py
+    that printed nothing would produce an empty list and this case would read as
+    "no debt" -- the same shape as a scan surface that quietly became empty.
     """
     _rc, out = run_lint("comment_ratio.py")
-    outstanding = [ln.strip() for ln in out.split("\n")
-                   if ln.strip().startswith("LOW") and " xbrain/" not in ln]
-    if outstanding:
-        print("\ncomment ratio below the CLAUDE.md 2.4 threshold outside xbrain/ "
-              "(pre-existing, not asserted here -- see this test's docstring):")
-        for line in outstanding:
+    carried = [ln.strip() for ln in out.split("\n")
+               if ln.strip().startswith("debt ")]
+    if carried:
+        print("\ncomment ratio: files carried by the debt snapshot "
+              "(declared debt, not exemption -- see "
+              "tests/common/test_comment_ratio.py):")
+        for line in carried[:10]:
             print("  " + line)
-    # The one thing that IS asserted: the check still runs and still reports.
-    # A comment_ratio.py that printed nothing would make the list empty and this
-    # case would read as "nothing outstanding".
+        if len(carried) > 10:
+            print("  ... and more; run scripts/lint/comment_ratio.py for all")
     assert "scan surface" in out, "comment_ratio produced no report at all"
+    assert "carried debt:" in out, (
+        "the report no longer states how much debt it carried; the count is "
+        "the only thing that makes the snapshot visible between reviews"
+    )
 
 
 def test_no_lint_declares_a_criterion_it_cannot_reach():

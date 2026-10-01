@@ -28,6 +28,49 @@ reporting a percentage as though it settled the question would be exactly the
 kind of number this project keeps catching.
 
 The ratio is printed, never written back into any document (CLAUDE.md 3.7).
+
+================================================================================
+THE RATCHET, and why a one-time widening here is not the usual way a ratchet
+dies. Read this before touching the snapshot (user ruling, 2026-10-01, option B
+-- ratchet rather than a bulk rewrite of the tree).
+
+The state this replaces. The threshold applies to xbrain/, scripts/ and tests/
+with no exemption, and the large majority of the files in those trees have never
+met it. So this check has been red since the day it was written and on every run
+since. A permanently red gate is CLAUDE.md 3.2 form 2: it gets read as noise,
+then it gets loosened until it passes, and the loosening is what finally kills
+it. The repository has already paid for that shape once -- tests/meta/
+test_marker_coverage.py had a gate that was green BY CONSTRUCTION while a debt
+ceiling above it stayed red for weeks, and nothing could fire.
+
+What is now enforced, and it is MORE than before, not less:
+  * every file NOT in the snapshot must meet the threshold, in all three trees.
+    Before this, only xbrain/ was asserted anywhere (tests/common/test_lints.py
+    measured scripts/ and tests/ and deliberately did not fail on them). A new
+    file under scripts/ or tests/ below the threshold was previously invisible
+    and is now red.
+  * a snapshot row whose file has RISEN to the threshold is red: the row must
+    come out in the same commit. That is what makes the list shrink by itself
+    rather than merely stop growing.
+  * a snapshot row naming a file that is no longer scanned is red, so a rename
+    cannot carry debt along silently.
+
+What holds the line is NOT a number. It is the snapshot file plus those three
+rules. Adding a row to the snapshot is a one-line diff with a filename in it,
+which is a thing a reviewer can refuse; the debt ceiling in tests/common/
+test_comment_ratio.py is the backstop for that edit and may only ever be
+lowered.
+
+A snapshot file rather than an inline tuple, for the reason 019f1ec records for
+the marker allowlist: hundreds of paths inline get re-sorted and re-wrapped by
+every formatter that touches the file, and the diff noise hides an addition.
+One path per line makes "somebody added a row" a one-line diff.
+
+*** There is deliberately NO flag that regenerates the snapshot. A --write-debt
+option would make the gate self-silencing: the first response to a red run would
+be to run it, and the ratchet would be gone with no diff worth reading. Rows go
+in by hand or not at all.
+================================================================================
 """
 
 import io
@@ -38,6 +81,29 @@ import tokenize
 ROOT = "/opt/xbrain_v6"
 SOURCE_DIRS = ("xbrain", "scripts", "tests")
 THRESHOLD = 0.70
+
+#: The debt snapshot. Resolved from this file's own location rather than from
+#: ROOT so the two can be repointed independently: tests/common/
+#: test_comment_ratio.py runs the script against a fixture tree AND against a
+#: fixture snapshot, and a snapshot derived from ROOT could not be varied on its
+#: own. Read inside main(), never at import, for the same reason.
+DEBT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "_comment_ratio_debt.txt")
+
+
+def load_debt():
+    """The snapshot as a set of repo-relative paths, or an empty set.
+
+    A missing file is NOT an error and NOT a silent pass: it means every file is
+    held to the threshold, which is the strict direction. The report says which
+    file was read and how many rows it had, so "the snapshot did not load" can
+    never look like "there is no debt".
+    """
+    try:
+        with open(DEBT_PATH, encoding="utf-8") as fh:
+            return {ln.strip() for ln in fh if ln.strip()}
+    except OSError:
+        return set()
 
 
 def iter_python():
@@ -151,34 +217,84 @@ def self_test():
 def main():
     if "--self-test" in sys.argv:
         return self_test()
-    failures = []
+    debt = load_debt()
+    # new_low gates; carried is declared debt; cleared and orphan gate because
+    # they are the two ways the snapshot stops shrinking.
+    new_low, carried, cleared, unparsable = [], [], [], []
+    seen = set()
+
     print("scan surface: " + ", ".join(SOURCE_DIRS))
     print("  threshold: comment / (comment + code) >= %.0f%%  (CLAUDE.md 2.4)" % (THRESHOLD * 100))
+    print("  debt snapshot: %s (%d row(s))"
+          % (os.path.relpath(DEBT_PATH, ROOT), len(debt)))
     print("")
     for path in sorted(iter_python()):
         rel = os.path.relpath(path, ROOT)
+        seen.add(rel)
         comments, code = measure(path)
         if comments is None:
             print("  %-52s UNPARSABLE" % rel)
-            failures.append(rel)
+            unparsable.append(rel)
             continue
         total = comments + code
         if total == 0:
             continue  # an empty __init__.py has nothing to explain
         ratio = comments / total
-        mark = "ok  " if ratio >= THRESHOLD else "LOW "
-        if ratio < THRESHOLD:
-            failures.append(rel)
+        if ratio >= THRESHOLD:
+            # A file that has risen out of the snapshot must LEAVE it. Without
+            # this the list would only ever stop growing; with it, the list
+            # shrinks on its own and the shrink is visible in review.
+            mark = "RISEN" if rel in debt else "ok   "
+            if rel in debt:
+                cleared.append(rel)
+        elif rel in debt:
+            mark = "debt "
+            carried.append(rel)
+        else:
+            mark = "LOW  "
+            new_low.append(rel)
         print("  %s %-50s %5.1f%%  (%d comment / %d code)"
               % (mark, rel, ratio * 100, comments, code))
 
+    # A row that names nothing the walk reached. A rename must not carry its
+    # debt along invisibly, so the row is a finding rather than a no-op.
+    orphan = sorted(r for r in debt if r not in seen)
+
+    if new_low:
+        print("")
+        print("  BELOW THRESHOLD and not in the snapshot -- these gate:")
+        for rel in new_low:
+            print("    %s" % rel)
+    if cleared:
+        print("")
+        print("  RISEN to the threshold while still in the snapshot. Delete")
+        print("  these rows from %s in the same commit:"
+              % os.path.relpath(DEBT_PATH, ROOT))
+        for rel in cleared:
+            print("    %s" % rel)
+    if orphan:
+        print("")
+        print("  snapshot rows naming no scanned file (renamed or deleted?).")
+        print("  Delete them; a rename must not carry its debt along unseen:")
+        for rel in orphan:
+            print("    %s" % rel)
+
     print("")
-    print("  below threshold: %d" % len(failures))
+    print("  gating findings:   %d" % (len(new_low) + len(cleared)
+                                       + len(orphan) + len(unparsable)))
+    print("  carried debt:      %d" % len(carried))
     print("")
-    print("criterion: no file below the threshold")
-    print("  2.4 states the ratio is a means, not the goal. A file can pass this")
-    print("  and still fail review: the real gate is that every block explains WHY.")
-    return 1 if failures else 0
+    print("criterion: no file below the threshold EXCEPT the ones the snapshot")
+    print("  names, and the snapshot may only shrink. Three ways to fail: a file")
+    print("  below the threshold that is not in the snapshot, a row whose file")
+    print("  has risen above it, and a row naming nothing.")
+    print("  What this does NOT establish: that the carried files are acceptable.")
+    print("  They are declared debt, not exemption -- CLAUDE.md 2.4 states the")
+    print("  ratio is a means and the real gate is that every block explains WHY,")
+    print("  which no scan can decide. The snapshot is the list of files where")
+    print("  nobody has done that work yet, and it is allowed to get shorter and")
+    print("  nothing else.")
+    return 1 if (new_low or cleared or orphan or unparsable) else 0
 
 
 if __name__ == "__main__":
