@@ -79,6 +79,12 @@ const char* kGoodYaml =
     "  robot_id: dev\n"
     "  zenoh_gen_endpoint: \"tcp/127.0.0.1:7447\"\n"
     "  zenoh_rt_endpoint: \"tcp/127.0.0.1:7449\"\n"
+    // CONFIG-SOURCE-OK(fixture): the fixture yaml this loader test parses. The
+    // path is DATA inside a string this test writes to a temp file -- nothing
+    // here opens it. Spelling the real deployed path rather than a made-up one
+    // is deliberate: the audit gate in relay_config.h refuses to start on any
+    // difference between the code table and that file, so a fixture carrying a
+    // different path would stop exercising the shape the process really sees.
     "  whitelist_audit_path: \"/opt/xbrain_v6/configs/generated/whitelist.yaml\"\n";
 
 void loader_happy_path() {
@@ -88,6 +94,13 @@ void loader_happy_path() {
   CHECK(cfg.gen_endpoint == "tcp/127.0.0.1:7447");
   CHECK(cfg.rt_endpoint == "tcp/127.0.0.1:7449");
   CHECK(cfg.whitelist_audit_path ==
+        // CONFIG-SOURCE-OK(fixture): the expected value of the key parsed
+        // above, asserted verbatim. The literal IS the independent operand --
+        // reading it back from the same fixture string would make the case
+        // compare the fixture with itself and pass whatever the loader did.
+        // The marker sits on THIS continuation line, not above the CHECK:
+        // marker_for walks up only through contiguous comment lines, and the
+        // first line of the call is code.
         "/opt/xbrain_v6/configs/generated/whitelist.yaml");
 }
 

@@ -105,7 +105,17 @@ def test_the_exempt_tag_set_is_closed_and_is_what_the_item_permits():
     two non-axis categories added 2026-08-12: secrets (credentials under
     configs/secrets/, never materialised to resolved) and content (an L6 content
     table with zero ${common.*}, for which source == resolved so no
-    misresolution can arise).
+    misresolution can arise), plus fixture, added 2026-10-01.
+
+    On fixture, because it is the one tag that widens the surface rather than
+    naming a category inside it. SCAN_DIRS leaves tests/ out and its own note
+    gives the reason -- a test must be free to construct a source path in a
+    fixture -- but a C++ unit test lives inside its package under ros2_ws/, so
+    the directory list cannot reach it and two such lines in chassis_relay's
+    loader test were being reported as process behaviour. The tag expresses the
+    existing intent for the case the surface cannot express; it does NOT excuse
+    a process, and the one real process read in that package is deliberately
+    still reported.
 
     Mutation: add a tag => red. An open tag set degrades the mechanism into
     "write any word and the check goes quiet", which is an exemption that is
@@ -113,7 +123,8 @@ def test_the_exempt_tag_set_is_closed_and_is_what_the_item_permits():
     tag is the forcing function that made 2026-08-12's secrets/content additions
     a conscious edit here, not a silent widening.
     """
-    assert set(L.EXEMPT_TAGS) == {"freeze", "J", "B", "K", "secrets", "content"}
+    assert set(L.EXEMPT_TAGS) == {"freeze", "J", "B", "K", "secrets", "content",
+                                  "fixture"}
     for tag, why in L.EXEMPT_TAGS.items():
         assert len(why) > 30, "tag %r must say what it licenses" % tag
 

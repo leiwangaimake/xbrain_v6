@@ -140,6 +140,16 @@ EXEMPT_TAGS = {
                "reference-free content tables, so source and resolved are "
                "byte-identical and the rule's misresolution concern -- a "
                "different result per process -- cannot arise for them",
+    "fixture": "a C++ unit-test fixture under ros2_ws/<pkg>/test/ that builds "
+               "or asserts a source path. SCAN_DIRS already licenses exactly "
+               "this for Python -- the note on it says tests/ must be free to "
+               "construct a source path in a fixture -- but a C++ unit test "
+               "lives INSIDE its package rather than in a tree of its own, so a "
+               "top-level directory list cannot reach it. The thing 10 S5.4.1 "
+               "forbids is a PROCESS resolving a reference differently from "
+               "another process; a test binary is not one of the 15 resident "
+               "processes and has no peer to diverge from, which is the same "
+               "boundary CLAUDE.md 3.6 draws for scripts/sil/",
 }
 
 #: The marker itself. Deliberately shouty and greppable: an exemption that a
