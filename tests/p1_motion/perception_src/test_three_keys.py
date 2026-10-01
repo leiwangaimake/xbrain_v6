@@ -26,6 +26,7 @@ from xbrain.p1_motion.perception_src.three_keys import (
     PerceptionSchemaError,
     ZenohPerceptionInput,
     key_expr,
+    mirror_status_to_gen,
     parse_objects,
     parse_payload,
     parse_profile,
@@ -327,3 +328,42 @@ def test_status_invalid_ratio_null_is_legal():
     assert parse_status(status_body(invalid_pixel_ratio=None)).invalid_pixel_ratio is None
     with pytest.raises(PerceptionSchemaError):
         parse_status(status_body(invalid_pixel_ratio="n/a"))
+
+
+def test_mirror_status_copies_every_field_verbatim():
+    """P1-25: the GEN mirror is field-for-field, no selection, no re-judging.
+
+    Picking a subset here would decide for p2_core which field it may judge
+    on, and 14 S8.1 is where that choice lives (it reads fps_depth). The
+    assertion walks the DTO rather than naming fields, so a field added to
+    StatusMsg later and forgotten in the mirror fails here.
+
+    mutant: drop fps_depth from the mirrored dict -> red.
+    """
+    s = parse_status(status_body())
+    out = mirror_status_to_gen(s)
+    assert out is not None
+    assert out["schema"] == "perception_status_v1"
+    import dataclasses
+    for f in dataclasses.fields(s):
+        name = f.name
+        got = out[name]
+        want = getattr(s, name)
+        # degraded_reasons is a tuple in the DTO, a list on the wire (JSON has
+        # no tuple); compare by value, not by type.
+        assert list(got) == list(want) if isinstance(want, tuple) else got == want, name
+
+
+def test_mirror_status_absent_yields_no_publish():
+    """No heartbeat -> no body, NOT a body with fps_depth 0.0.
+
+    "measured, and the camera delivered no frames" and "no heartbeat arrived"
+    are different facts. 11 v2.3 draws the same line for invalid_pixel_ratio
+    (null when the window held no depth frame, verbatim "never as 0 (looks
+    healthy)"). Absence is signalled by absence: the publisher skips the tick
+    and 14 S8.1's heartbeat-age criterion turns that into 失效.
+
+    mutant: return a zero-filled body on None -> the age criterion stops being
+    reachable (a consumer sees a fresh heartbeat forever) and this goes red.
+    """
+    assert mirror_status_to_gen(None) is None

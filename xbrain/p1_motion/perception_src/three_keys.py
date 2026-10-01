@@ -452,3 +452,45 @@ class ZenohPerceptionInput(PerceptionInput):
 __all__ = ["KEYS", "PROFILE_SCHEMA", "OBJECTS_SCHEMA", "STATUS_SCHEMA",
            "PerceptionSchemaError", "ZenohPerceptionInput", "key_expr",
            "parse_payload", "parse_profile", "parse_objects", "parse_status"]
+
+
+def mirror_status_to_gen(status: Optional[StatusMsg]) -> Optional[Dict[str, Any]]:
+    """Mirror a parsed StatusMsg into the state/perception `data` (11 S1.1.6
+    P1-25). Returns None when there is nothing to mirror -- see below.
+
+    P1 copies VERBATIM and NEVER re-judges, the same discipline P1-13 states
+    for state/clock: the judgement of what counts as an unhealthy camera is
+    p2_core's (14 S8.1 reads fps_depth plus the heartbeat age), and a P1 that
+    pre-digested it would make that threshold unreachable from the place that
+    owns it.
+
+    *** Why this returns None instead of a fail-safe body.
+    mirror_clock answers {"sync": False} when it has nothing, because
+    "not synced" is a real state a consumer must act on. Here the equivalent
+    is NOT a body with fps_depth = 0.0: that reads as "measured, and the
+    camera delivered no frames", which is a different fact from "no heartbeat
+    arrived". 11 v2.3 makes the same distinction for invalid_pixel_ratio --
+    null when the window held no depth frame, verbatim "never as 0 (looks
+    healthy)". So absence is signalled by ABSENCE: the publisher skips the
+    tick, and 14 S8.1's own second criterion -- the heartbeat age -- is what
+    turns that into 失效. The envelope already carries mono, so the age is
+    computable without inventing a field for it.
+
+    mutant: return a body with fps_depth 0.0 on None -> the age criterion
+    stops being reachable (a consumer sees a fresh heartbeat forever) and
+    test_mirror_status_absent_yields_no_publish goes red.
+    """
+    if status is None:
+        return None
+    # Field-for-field, no selection. Picking a subset here would decide for
+    # p2 which field it may judge on, and that choice lives in 14 S8.1.
+    return {
+        "schema": STATUS_SCHEMA,
+        "t_publish_mono_ms": status.t_publish_mono_ms,
+        "fps_depth": status.fps_depth,
+        "fps_infer": status.fps_infer,
+        "invalid_pixel_ratio": status.invalid_pixel_ratio,
+        "extrinsic_calibrated": status.extrinsic_calibrated,
+        "traversable_seg_available": status.traversable_seg_available,
+        "degraded_reasons": list(status.degraded_reasons),
+    }
