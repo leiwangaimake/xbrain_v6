@@ -75,7 +75,7 @@ def _brake_tree(t_lat_s=0.4, a_mps2=2.5, k=1.5):
 # ── coverage: the assets cover exactly the 20 files ──────────────────────────
 
 def test_registry_covers_exactly_the_on_disk_config_set():
-    """SCHEMAS must key exactly the 22 config files on disk.
+    """SCHEMAS must key exactly the config-file set on disk.
 
     Mutation: drop one entry from SCHEMAS => the on-disk file has no schema and
     this set difference goes non-empty. The point is to catch a NEW config file
@@ -90,7 +90,7 @@ def test_registry_covers_exactly_the_on_disk_config_set():
         # 11 S1.1.6, validated by its consumer xbrain/common/zenoh/whitelists.py),
         # and probe/ is a Stage-0 config (thresholds.yaml, CFG-BT-1) the probe
         # validates itself by crashing on any absent key -- neither passes
-        # through the SCHEMAS registry, so both sit outside this 20-file set.
+        # through the SCHEMAS registry, so both sit outside the set counted here.
         dirs[:] = [d for d in dirs
                    if d not in ("sites", "calib", "prompts", "secrets",
                                 "generated", "probe")]
@@ -104,8 +104,19 @@ def test_registry_covers_exactly_the_on_disk_config_set():
                     assert base in SCHEMAS, "variant %s has no base schema %s" % (rel, base)
                 on_disk.add(base)
     assert set(CONFIG_FILES) == on_disk
-    # 22 since 2026-09-12: rns.yaml + perception.yaml registered (20 #20-26).
-    assert len(CONFIG_FILES) == 22
+    # *** This count is a GATE, not a measurement.
+    #
+    # The set equality above already follows the disk, so on its own it would let
+    # a new configs/*.yaml in silently as long as whoever added it also added a
+    # SCHEMAS entry. The literal makes the config-file set a thing someone has to
+    # change on purpose. It is the one place a number like this belongs (3.7 bans
+    # copying measured numbers into prose, not writing an expected value into an
+    # assertion) -- so no other comment, docstring or module header restates it;
+    # the three that used to (19 / 20 / 22, all meaning this) had drifted apart.
+    #
+    # 23 since 2026-10-01: chassis_relay.yaml registered (deferred; the process
+    # reads this source directly, see CFG-A7).
+    assert len(CONFIG_FILES) == 23
 
 
 @pytest.mark.parametrize("rel", CONFIG_FILES)

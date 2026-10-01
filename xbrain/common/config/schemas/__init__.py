@@ -37,7 +37,9 @@ Public surface:
   validate_tree(schema, tree)      validate against an explicit Schema; used by
                                    tests and by validate_config.
   SchemaError                      the failure type; carries path/expected/actual.
-  SCHEMAS / CONFIG_FILES           the 19 assets, and their fixed path set.
+  SCHEMAS / CONFIG_FILES           the schema assets, and their path set. The
+                                   count is asserted in one place only, see
+                                   tests/common/test_config_schema.py.
   Schema / FieldSpec               the asset types.
   num/integer/text/boolean/mapping/listof/anything   FieldSpec constructors.
   NUMBER/INTEGER/STRING/BOOLEAN/MAPPING/LIST/ANY/TYPE_TOKENS   the type tokens.

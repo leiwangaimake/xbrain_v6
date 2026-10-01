@@ -381,6 +381,16 @@ _DEFERRED: Dict[str, str] = {
     "p5_gateway.yaml": "17 S10 (P5 private config)",
     "quadruped.yaml": "13 S8.1 / S8.2 (quadruped private config)",
     "rtk_driver.yaml": "11 S3.2 / S3.11 (rtk_driver private config)",
+    # chassis_relay is the one entry whose binary reads this SOURCE rather than a
+    # resolved product (the freeze line does not cover it yet -- configs/
+    # chassis_relay.yaml carries the transition note, and whether it joins is the
+    # open ruling CFG-A7 in NEXT 8.6). It is deferred rather than typed for the
+    # same reason as its three C++ siblings above: the key set has no definition
+    # in 11, and its executable form already exists as the four require_string /
+    # require_expanded calls in relay_config.cc. A field map here would be a
+    # second hand-maintained copy of that, free to drift from the binary that
+    # actually refuses to start.
+    "chassis_relay.yaml": "11 S1.1.6 / S1.1.4 (chassis_relay private config, CRL-3 audit path)",
     # module / process configs that the freeze line materialises alongside the
     # L6 files (20 #20-26, 2026-09-12): rns.yaml is the RNS module config
     # (12 S12.0A, consumed by p1_motion), perception.yaml the perception
@@ -391,7 +401,7 @@ _DEFERRED: Dict[str, str] = {
 
 
 def _build_registry() -> Dict[str, Schema]:
-    """Assemble the 20 Schema assets keyed by config-relative path.
+    """Assemble the Schema assets keyed by config-relative path.
 
     Built once at import so a duplicate or a typo'd path fails loudly here rather
     than on first validate_config call in the field. The four typed files are
