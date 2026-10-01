@@ -65,6 +65,33 @@ timeouts:
     group: A          # 11 S1.6.1
     timebase: monotonic
     threshold: "2 s"
+  # *** T-50..T-53 supersede T-02..T-06 for the perception inputs.
+  #
+  # 11 S1.6.1 states the two sets are "两个时代的同一件事" and that the
+  # implementation follows T-50..T-53: the older rows judge rt/lidar/* and
+  # rt/perception/targets, neither of which RNS subscribes to. They are filed
+  # here, beside the rows they replace, rather than after T-46 in numeric order,
+  # so a reader arriving at either half sees the relation.
+  #
+  # The number jumps to 50 because A-group T-13..T-17 are already taken by the
+  # S10.3.5 patch block, leaving no run of four free ids inside A; 11 S1.6.1
+  # declines to renumber used ids because that would strand references.
+  - id: T-50
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "300 ms"
+  - id: T-51
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "1 s"
+  - id: T-52
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "500 ms"
+  - id: T-53
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "3 s"
   - id: T-07
     group: A          # 11 S1.6.1
     timebase: monotonic
