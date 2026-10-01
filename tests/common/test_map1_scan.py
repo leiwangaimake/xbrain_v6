@@ -22,6 +22,16 @@ def _run(*args):
                           capture_output=True, text=True)
 
 
+def _module():
+    """Import the scanner directly, for the parse/diff API tests."""
+    sys.path.insert(0, str(SCRIPT.parent))
+    try:
+        import map1_scan
+        return map1_scan
+    finally:
+        sys.path.pop(0)
+
+
 def test_self_test_passes():
     """Injection self-test: forward + reverse diffs both fire."""
     r = _run("--self-test")
@@ -29,23 +39,67 @@ def test_self_test_passes():
 
 
 def test_scan_produces_deterministic_report():
-    """The real scan must run without crash + name every code with drift.
+    """The real scan must pass, and must still NAME what it did not diff.
 
-    NOTE: this test does NOT require the repo to currently pass
-    MAP-1. As of the CFG-DC-1 landing, 10 S3.3.6 alignment table
-    is missing 7 codes (E_CONFIG_LOCKED, E_FENCE_INVALID, E_LOCKED,
-    E_PROTO_VERSION, E_SAFETY_LINK_LOST, E_TIMEOUT, E_UNHEALTHY).
-    That is exactly the drift MAP-1 was designed to expose; the
-    remediation is a doc update, not a code change.
+    *** This test used to assert the opposite, and the note it carried
+    was wrong. It read: "the alignment table is missing 7 codes
+    (E_CONFIG_LOCKED, E_FENCE_INVALID, E_LOCKED, E_PROTO_VERSION,
+    E_SAFETY_LINK_LOST, E_TIMEOUT, E_UNHEALTHY) ... the remediation is
+    a doc update". It is not. Table B's first column is headed
+    "11 S13.15 codes"; S13.15 is group L and its entire membership is
+    E_QOS_VIOLATION / E_CONFIG_INVALID / E_STORAGE_CORRUPT
+    (xbrain/common/errors/codes.yaml, group: L). The seven above are
+    group B / F / G / K codes, so writing them into a table titled
+    "S13.15 codes" would state something false. The scanner was keying
+    its diff on the union of both tables instead of on table B, which
+    is what MAP-1 says verbatim -- so the gate could not be cleared by
+    any edit to either table.
+
+    The seven must still appear, now as OUT-OF-SCOPE rather than as
+    findings: a criterion that silently narrows its surface is how
+    "nothing was reported" turns into "nothing was checked".
     """
     r = _run()
-    # Non-zero exit expected today (doc has known drift).
-    # We assert the report includes the specific known drifts so a
-    # future doc fix that reduces the drift set surfaces here.
+    assert r.returncode == 0, r.stdout + r.stderr
     for code in ("E_CONFIG_LOCKED", "E_FENCE_INVALID", "E_LOCKED",
                  "E_PROTO_VERSION", "E_SAFETY_LINK_LOST",
                  "E_TIMEOUT", "E_UNHEALTHY"):
-        assert code in r.stdout, "expected %s in report" % code
+        assert ("OUT-OF-SCOPE %s" % code) in r.stdout, (
+            "%s must still be named, as out-of-scope" % code)
+    assert "codes with non-empty diff: 0" in r.stdout
+
+
+def test_a_code_only_table_a_names_is_out_of_scope_not_a_finding():
+    """The narrowing, pinned: B is answerable only for codes it carries.
+
+    Keyed on the union, E_TIMEOUT (group K) made table B answerable
+    for a code about which it says nothing -- permanently red, and a
+    permanently red criterion gets relaxed into a permanently green
+    one (CLAUDE.md 3.2 shape 2).
+
+    MUTATION: put `set(a_by_code) | set(table_b)` back as diff()'s key
+    set -> this goes red, and so does
+    test_scan_produces_deterministic_report.
+    """
+    m = _module()
+    a = {"1": "E_ONE", "9": "E_OTHER_GROUP"}
+    b = {"E_ONE": frozenset({"1"})}
+    assert m.diff(a, b) == {}, "a code B has no row for is not a finding"
+    assert m.out_of_scope(a, b) == {"E_OTHER_GROUP": frozenset({"9"})}
+
+
+def test_out_of_scope_never_hides_a_code_table_b_does_carry():
+    """The other half: carrying a row makes a code answerable.
+
+    Without this, "out of scope" would be a place to put anything
+    inconvenient -- which is the relaxation this whole change exists
+    to avoid.
+    """
+    m = _module()
+    a = {"1": "E_ONE", "2": "E_ONE"}
+    b = {"E_ONE": frozenset({"1"})}          # B forgot row 2
+    assert m.out_of_scope(a, b) == {}, "E_ONE is in B, so never skipped"
+    assert m.diff(a, b)["E_ONE"]["forward"] == frozenset({"2"})
 
 
 def test_scan_recognises_alignment_table_codes():
@@ -84,7 +138,11 @@ def test_parse_and_diff_direct():
     d = m.diff(a, b)
     assert len(a) == 29
     assert "E_CONFIG_INVALID" in b
-    assert d, "expected non-empty diff today (known doc drift)"
+    # Empty, and it must be empty for a reason that can be stated: every
+    # code table B carries a row for agrees with A row-for-row. The codes
+    # it carries no row for are reported separately, never folded in here.
+    assert d == {}, d
+    assert set(m.out_of_scope(a, b)).isdisjoint(b)
 
 
 def test_diff_empty_on_matched_tables():

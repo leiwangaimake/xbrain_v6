@@ -16,13 +16,39 @@ Description:
   B. The alignment table ('与 11 S13.15 的对齐'): for each E_* code,
      lists which failure-row IDs use it.
 
-MAP-1 asserts, for EACH code:
+MAP-1 asserts, for each code THE ALIGNMENT TABLE B CARRIES A ROW FOR:
     forward  = rows-in-A-with-code(C) - rows-in-B-for-code(C)  (empty)
     reverse  = rows-in-B-for-code(C)  - rows-in-A-with-code(C) (empty)
 
 Both must be empty; a non-empty forward means someone added a row
 to A without updating B; a non-empty reverse means B points at a
 row A doesn't have.
+
+*** The key set is B's codes, not the union of both sides.
+10 S3.3.6's MAP-1 row says it verbatim: "for EACH CODE OF THIS
+ALIGNMENT TABLE". This script originally keyed on the union, which
+made table B answerable for codes it was never about: B's own first
+column is headed "11 S13.15 codes", and S13.15 is group L, whose
+whole membership is E_QOS_VIOLATION / E_CONFIG_INVALID /
+E_STORAGE_CORRUPT. Table A also names codes from groups B, F, G and
+K (E_PROTO_VERSION, E_LOCKED, E_UNHEALTHY, E_CONFIG_LOCKED,
+E_SAFETY_LINK_LOST, E_FENCE_INVALID, E_TIMEOUT) -- out of B's scope
+by construction, so the union produced a forward diff that no edit
+to either table could ever clear. Group membership is machine
+readable in xbrain/common/errors/codes.yaml.
+
+A permanently red criterion does not stay a criterion: it gets
+relaxed to "close enough" and then it is permanently green instead
+(CLAUDE.md 3.2 shape 2). So the fix is the key set, NOT the
+comparison -- the diff itself is unchanged and still fires on both
+of the mutations 10 S3.3.6 registers for MAP-1.
+
+Codes present in A but absent from B are NOT dropped silently: they
+are printed as OUT-OF-SCOPE with their row ids, so a reader can see
+what was not diffed. Closing that side is explicitly somebody
+else's job -- the same MAP-1 block declares "the reverse coverage on
+the 11 S13.15 side belongs to 11's owner, this volume does not do it
+for them".
 
 The doc itself (10 S3.3.6, 2026-08-05 record) explains this defect
 class in first person: rows 7f/7g/7h/7i were added to A during S28
@@ -172,15 +198,14 @@ def diff(table_a: Dict[str, str],
 
     Returns {code: {'forward': set, 'reverse': set}} for codes that
     have non-empty diff on either side.
+
+    Keyed on table B, verbatim per the MAP-1 row ("for each code of
+    this alignment table"). See the module docstring for why the
+    union is wrong here; use out_of_scope() to see what B omits.
     """
-    # Invert A: {ecode: {row_id, ...}}
-    a_by_code: Dict[str, set] = {}
-    for row_id, code in table_a.items():
-        a_by_code.setdefault(code, set()).add(row_id)
-    # Union of codes in either side.
-    all_codes = set(a_by_code) | set(table_b)
+    a_by_code = invert_a(table_a)
     out: Dict[str, Dict[str, FrozenSet[str]]] = {}
-    for code in sorted(all_codes):
+    for code in sorted(table_b):
         a_set = frozenset(a_by_code.get(code, set()))
         b_set = table_b.get(code, frozenset())
         fwd = a_set - b_set
@@ -188,6 +213,29 @@ def diff(table_a: Dict[str, str],
         if fwd or rev:
             out[code] = {"forward": fwd, "reverse": rev}
     return out
+
+
+def invert_a(table_a: Dict[str, str]) -> Dict[str, FrozenSet[str]]:
+    """{ecode: {row_id, ...}} -- table A read the way B indexes it."""
+    by_code: Dict[str, set] = {}
+    for row_id, code in table_a.items():
+        by_code.setdefault(code, set()).add(row_id)
+    return {code: frozenset(rows) for code, rows in by_code.items()}
+
+
+def out_of_scope(table_a: Dict[str, str],
+                 table_b: Dict[str, FrozenSet[str]]) -> Dict[str, FrozenSet[str]]:
+    """{ecode: rows} for codes table A names that table B has no row for.
+
+    These are NOT findings. Table B aligns the 11 S13.15 (group L)
+    codes against A's rows; A also names codes belonging to other
+    S13.x groups, and those have no business in B. Reported so the
+    scan surface is visible rather than inferred -- a count nobody
+    can explain is the failure mode CLAUDE.md 3.2 shape 6 names.
+    """
+    a_by_code = invert_a(table_a)
+    return {code: rows for code, rows in sorted(a_by_code.items())
+            if code not in table_b}
 
 
 def _self_test() -> int:
@@ -235,6 +283,16 @@ def main() -> int:
           % args.doc)
     print("  table A rows with ecode: %d" % len(table_a))
     print("  table B codes:           %d" % len(table_b))
+    # Print the out-of-scope side FIRST and unconditionally. A check that
+    # only speaks when it fails cannot be told from one that never ran, and
+    # the codes listed here are exactly the ones a reader would otherwise
+    # assume MAP-1 had covered.
+    skipped = out_of_scope(table_a, table_b)
+    for code, rows in skipped.items():
+        print("  OUT-OF-SCOPE %s: rows %s -- not an 11 S13.15 code, so "
+              "table B carries no row for it" % (code, sorted(rows)))
+    print("  codes diffed (table B keys): %s" % (sorted(table_b) or "none"))
+    print("  codes out of scope:          %s" % (sorted(skipped) or "none"))
     diffs = diff(table_a, table_b)
     if diffs:
         for code, d in diffs.items():
@@ -245,7 +303,11 @@ def main() -> int:
                 print("  BAD (rev) %s: rows in B not in A: %s"
                       % (code, sorted(d["reverse"])))
     print("  codes with non-empty diff: %d" % len(diffs))
-    print("criterion: diff == 0 per code, both directions")
+    print("criterion: diff == 0 both directions, for each code table B "
+          "carries a row for (10 S3.3.6 MAP-1, verbatim 'for each code of "
+          "this alignment table'). Codes of other S13.x groups are out of "
+          "scope; their reverse coverage belongs to 11's owner, per the "
+          "same MAP-1 scan-surface declaration.")
     return 1 if diffs else 0
 
 
