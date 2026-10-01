@@ -9,7 +9,13 @@
  * Fixtures are written under argv[1] (the build/work dir), never next to the
  * source -- the same argv convention quadruped's config test uses, because
  * ctest and the mutant runner execute from different directories and a
- * relative fixture path finds nothing silently.
+ * relative fixture path finds nothing silently. They are REMOVED before exit:
+ * argv[1] is whatever the caller passes, and a run with the repository root
+ * passed in left nine untracked yaml files sitting in it (2026-10-01). That is
+ * not merely untidy here -- NEXT 8.9 records this repo being broken once by a
+ * parallel session's `git add -A` sweeping up files that were never meant to be
+ * committed, and loose fixtures named good.yaml / null.yaml / wl_ok.yaml are
+ * exactly what such a sweep would take.
  *
  * Three groups:
  *   * loader: values load; a missing key, a null value and an unexpanded
@@ -32,6 +38,7 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include "chassis_relay/relay_config.h"
 #include "chassis_relay/relay_session.h"
@@ -52,11 +59,30 @@ namespace {
 
 std::string g_dir;
 
+// Every fixture path this run created, so main can take them all away again.
+// Collected here rather than re-listing the names at the bottom: a second list
+// is a second thing to keep correct, and the one that rots is the one nobody
+// reads -- a fixture added later would simply not be cleaned up.
+std::vector<std::string> g_written;
+
 std::string write_fixture(const char* name, const std::string& body) {
   const std::string path = g_dir + "/" + name;
   std::ofstream f(path);
   f << body;
+  g_written.push_back(path);
   return path;
+}
+
+// Delete what this run wrote. A failure to unlink is printed but does NOT fail
+// the test: it says nothing about the behaviour under test, and swallowing it
+// silently is how the leftovers went unnoticed in the first place.
+void remove_fixtures() {
+  for (const std::string& path : g_written) {
+    if (std::remove(path.c_str()) != 0) {
+      std::printf("WARN could not remove fixture %s\n", path.c_str());
+    }
+  }
+  g_written.clear();
 }
 
 // One loader failure case: expects a throw whose message contains `needle`
@@ -236,6 +262,8 @@ int main(int argc, char** argv) {
   audit_agrees();
   audit_disagrees();
   session_document();
+
+  remove_fixtures();
 
   if (g_failures != 0) {
     std::printf("test_relay_config: %d FAILURES\n", g_failures);
