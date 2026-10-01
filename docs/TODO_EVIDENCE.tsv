@@ -430,7 +430,7 @@
 #              逐字 "the ROS-type half is CPP-CXX-1's job (needs nm/readelf)"。
 #
 #   MOT-PCP-15 [判据不足]。两个 yaml [都已存在]: configs/perception.yaml
-#              (4017 字节, 全 null 键位骨架) 与 configs/models/m20s.yaml。
+#              (全 null 的键位骨架, 已有内容) 与 configs/models/m20s.yaml。
 #              四条判据无一有执行体:
 #              (1) 与 19 S14 键路径双向差集: scripts/doccheck/ 下无此脚本
 #                  (perception_mutant_cover.py 量的是变异体覆盖, 不是键集);
@@ -454,8 +454,9 @@
 #     CFG-CF-2   test_common_skeleton: common.audio.bypass_keywords.{estop,
 #                prone,stand} 已落值而测试的 _LANDED 白名单没同批更新 --
 #                该用例头注自己就记着 common.timezone 犯过同一件事。
-#     CFG-CM-2   no_literal_ecode.py 9 violations + 豁免标签闭集一条。
-#     CFG-CM-11  no_config_source_read.py 3 violations。
+#     CFG-CM-2   scripts/lint/no_literal_ecode.py 仍有未豁免的 E_* 字面量,
+#                另有一条"豁免标签闭集"用例红。现数跑该脚本即有(3.7)。
+#     CFG-CM-11  scripts/lint/no_config_source_read.py 仍有未豁免命中。同上。
 #     CFG-CM-12  clock_scan.py violations。
 #     CFG-FZ-17  schema 注册表少 chassis_relay.yaml(文件在盘上, 注册表没它)。
 #     CHK-2-26   ★ 本项自己的那条 lint (scripts/lint/no_disabled_switch.py)
