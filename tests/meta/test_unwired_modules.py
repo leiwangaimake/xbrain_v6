@@ -157,26 +157,37 @@ _KNOWN_UNWIRED = {
     #     (CFG-BT-11) -- are Phase 2 and not built. Nothing in the tree
     #     calls classify(); boot_fail.py (which IS wired, from
     #     p5_gateway/__main__.py) records failures without classifying.
-    # (2) Three of its 29 rows are a decision it was not entitled to
-    #     make. 10 S3.3.6 gives row 27 (RTK not fixed) the class column
-    #     verbatim "不属失败" and rows 28/29 (perception / RNS internal
-    #     boot failure) verbatim "指针" -- neither is one of R/B/D/T.
-    #     _CLASSIFIER_TABLE assigns CLASS_D to all three, and its own
-    #     comment says "# Non-failure: RTK not fixed" one line above
-    #     doing it. requires_hmi_marker(CLASS_D) is True, so a consumer
-    #     would raise a persistent HMI degraded marker on every cold
-    #     start before RTK fix -- for a condition the doc says is not a
-    #     failure. The meta-test only diffs the ID set against the doc,
-    #     never the class column, so nothing can go red on this.
-    #     docs/PHASE0_待裁决清单.md CFG-BT-14 (3) already registers the
-    #     question verbatim ("这三行收不收, 收进来给什么类, 十四册没写").
-    #     Ruling options: (a) drop the three rows from the table and make
-    #     classify() raise for them; (b) give 27 its own non-failure
-    #     class and 28/29 a pointer class, i.e. 10 S3.3.6 gains classes;
-    #     (c) keep D and write the justification into 10 S3.3.6.
-    #     CLAUDE.md S9.1: no verified fact decides this, so it is a
-    #     ruling, not a doc defect -- NOT fixed here.
-    "xbrain/boot/failure_class.py": "registered: NEXT S8.12 / PHASE0 CFG-BT-14 -- no consumer until CFG-BT-4+CFG-BT-11, and rows 27/28/29 carry an unruled class",
+    # (2) ~~Three of its 29 rows carry a class the four-class set has no
+    #     room for, and nothing can go red on it.~~ CLOSED 2026-09-30,
+    #     and this paragraph is REWRITTEN rather than deleted because it
+    #     misled a reader once already.
+    #
+    #     *** What it used to say, and why it stopped being true.
+    #     It read: "_CLASSIFIER_TABLE assigns CLASS_D to all three ...
+    #     requires_hmi_marker(CLASS_D) is True, so a consumer would raise
+    #     a persistent HMI degraded marker on every cold start ... The
+    #     meta-test only diffs the ID set against the doc, never the
+    #     class column, so nothing can go red on this." Every clause of
+    #     that was fixed on 2026-09-30: failure_class.py now carries
+    #     CLASS_NOT_A_FAILURE and CLASS_POINTER, kept OUT of CLASSES so
+    #     all three predicates answer False for them; row 27 is
+    #     CLASS_NOT_A_FAILURE and rows 28/29 are CLASS_POINTER; and
+    #     test_failure_class_table.py diffs the CLASS COLUMN row by row
+    #     plus asserts those three rows draw no persistent marker.
+    #     10 S3.3.6 gained the two labels in its definition table on
+    #     2026-10-01 (iron rule 1 -- the code and criterion were the
+    #     verified evidence; the volume had not followed).
+    #
+    #     *** The lesson is why this is rewritten in place. On
+    #     2026-10-01 this very paragraph was quoted back as evidence
+    #     that the question was still open, and it was taken at face
+    #     value because a comment reads like a statement of fact. It is
+    #     not: it is a statement about a moment. A stale comment is the
+    #     same failure as CLAUDE.md 3.2's "quoting unmerged text as
+    #     evidence" -- the text was real, it just was not true any more.
+    #     Hence: when the thing a comment describes gets fixed, the
+    #     comment is part of the fix.
+    "xbrain/boot/failure_class.py": "registered: NEXT S8.12 -- no consumer until CFG-BT-4+CFG-BT-11; the class question CFG-BT-14 (3) raised is closed (see above)",
     # refuse_to_boot.py left this registry on 2026-09-28: it is now called
     # from xbrain/boot/freeze/__main__.py, which catches the XbrainError an
     # assertion runner raises and renders the 10 S5.4.5 three-section
