@@ -22,6 +22,8 @@ DBT-4  the "what changes on closure" cell names a volume AND a section anchor
 DBT-5  inclusion completeness: every M/V/T id found on the declared scan surface
        appears either in the main table or in the explicit exclusion table
 DBT-6  attribution: the volume a row names must really contain that bare id
+DBT-7  an exclusion that parks an id as "not allocated yet" must still be true:
+       the id must not have become a real entry in the volume that allocates it
 
 SCAN SURFACE (declared, not implied -- CLAUDE.md 3.2 form 6):
   DBT-1..DBT-4  rows of 21's main tables whose FIRST CELL carries a bare M/V/T
@@ -33,6 +35,12 @@ SCAN SURFACE (declared, not implied -- CLAUDE.md 3.2 form 6):
   DBT-5         every file in scan_manifest.members EXCEPT 21 itself.
   DBT-6         the same member set, read as the authority on what each volume
                 actually contains.
+  DBT-7         rows of the exclusion block whose REASON cell carries one of
+                UNALLOCATED_REASONS, read against the table bodies of every
+                member except 21. A row whose FIRST CELL is struck through
+                (~~...~~) is out of surface: that is this document's way of
+                voiding a row, and the ids it names have moved to the main
+                table, which DBT-5 then owns.
 
 Usage:
   debt21_scan.py                # run DBT-1..DBT-6
@@ -288,6 +296,81 @@ def check_dbt6(rows, vols):
     return bad
 
 
+# DBT-7 reason vocabulary. A closed set, not a substring heuristic: these are
+# the five phrasings 21 S6 actually uses to park an id as "upstream has not given
+# this number a meaning yet". Any other reason (closed, renamed, tombstoned,
+# grouped) makes a claim about something that already happened and cannot rot the
+# same way.
+UNALLOCATED_REASONS = ("未分配", "下一可分配", "预留段", "段界", "真空号")
+
+
+def check_dbt7(text, vols):
+    """DBT-7: a "not allocated yet" exclusion must still be unallocated.
+
+    *** Why this is a separate check and not a wider DBT-5.
+    DBT-5 asks whether every id has A destination. It cannot ask whether that
+    destination is still TRUE. 2026-10-01: 21 S6 carried a row reading
+    "V-66 / V-69 -- next assignable number and segment bound, no meaning
+    assigned", while 13 S12.1 had since allocated V-66..V-69 as four real
+    entries. All four were missing from the main table, yet DBT-5 reported only
+    V-67 and V-68 -- the other two had their literals sitting inside that stale
+    exclusion row, so the check saw a destination and moved on. The case history
+    is in 21 S0.6; this function is its executable half.
+
+    The hazard is structural, not a one-off: every "next assignable" row becomes
+    false on the day upstream assigns that number, and nothing announces it.
+
+    Surface: exclusion rows whose reason carries an UNALLOCATED_REASONS token,
+    minus rows struck through in the first cell. For each id, every member
+    volume except 21 is read for a TABLE ROW (>= 4 cells) whose first cell holds
+    the bare id -- that shape is what distinguishes a real registry entry from a
+    prose mention of the same number, which the segment-bound rows legitimately
+    have.
+    """
+    bad = []
+    in_block = False
+    for n, line in enumerate(text.split("\n"), 1):
+        if "DBT-5-EXCLUDE-BEGIN" in line:
+            in_block = True
+            continue
+        if "DBT-5-EXCLUDE-END" in line:
+            in_block = False
+            continue
+        if not in_block or not line.startswith("|"):
+            continue
+        cells = split_row(line)
+        if len(cells) < 2 or set(cells[0]) <= set("-: "):
+            continue
+        if not any(w in cells[1] for w in UNALLOCATED_REASONS):
+            continue
+        # A struck-through id cell is this document's void marker; the ids it
+        # named are in the main table now and belong to DBT-5, not here.
+        if cells[0].strip().startswith("~~"):
+            continue
+        ids = set()
+        for rx in ID_ALL:
+            ids.update(rx.findall(cells[0]))
+        for tok in sorted(ids):
+            for vol in sorted(vols):
+                if vol == DEBT_DOC[:2]:
+                    continue
+                for vline in vols[vol].split("\n"):
+                    if not vline.startswith("|"):
+                        continue
+                    vcells = split_row(vline)
+                    if len(vcells) < 4:
+                        continue
+                    if re.search(r"\b%s\b" % re.escape(tok), vcells[0]):
+                        bad.append((n, tok,
+                                    "parked as unallocated but volume %s carries "
+                                    "it as a table entry" % vol))
+                        break
+                else:
+                    continue
+                break
+    return bad
+
+
 def check_dbt5(rows, excl, candidates):
     listed = set()
     for _, cells in rows:
@@ -300,7 +383,7 @@ def check_dbt5(rows, excl, candidates):
     return bad
 
 
-CHECKS = ["DBT-1", "DBT-2", "DBT-3", "DBT-4", "DBT-5", "DBT-6"]
+CHECKS = ["DBT-1", "DBT-2", "DBT-3", "DBT-4", "DBT-5", "DBT-6", "DBT-7"]
 
 
 def run(docs_dir, members, debt_text, quiet=False):
@@ -315,6 +398,7 @@ def run(docs_dir, members, debt_text, quiet=False):
         "DBT-4": check_dbt4(rows),
         "DBT-5": check_dbt5(rows, excl, cands),
         "DBT-6": check_dbt6(rows, vols),
+        "DBT-7": check_dbt7(debt_text, vols),
     }
     if not quiet:
         print("scan surface: %d volumes for DBT-5; %d scanned rows in %s"
@@ -350,7 +434,18 @@ MUTANTS = {
     "DBT-5": lambda t: _drop_first_row(t),
     # re-attribute the row to a volume that provably does not carry its id
     "DBT-6": lambda t: _misattribute_first_row(t),
+    # park an id that IS allocated upstream as if it were not. V-40 is the first
+    # entry of 13 S12.1 and has been a real row since v0.1, so this mutant does
+    # not depend on any wording that a future edit could move.
+    "DBT-7": lambda t: _park_allocated_id(t),
 }
+
+
+def _park_allocated_id(text, tok="V-40"):
+    """Insert an exclusion row claiming tok is unallocated. DBT-7 must catch it."""
+    marker = "<!-- DBT-5-EXCLUDE-END -->"
+    row = "| `%s` | * mutant: parked as 未分配 *\n" % tok
+    return text.replace(marker, row + marker, 1)
 
 
 def _first_row_lineno(text):
