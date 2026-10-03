@@ -353,6 +353,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         gnss_subs = []
         pose_pub = None
         clock_pub = None
+        perc_pub = None          # state/perception mirror (P1-25)
         # Rust-thread callbacks store only; a dict assignment is atomic (CLAUDE.md
         # 4.2 forbids await/publish in a Zenoh callback). Publishing is done by the
         # loop thread below.
@@ -361,6 +362,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         clock_cache = {"data": None}
         pose_seq = {"n": 0}
         clock_seq = {"n": 0}
+        perc_seq = {"n": 0}
         # state/fence 广播状态(F3): 1 Hz + rev 变更即发. applied_mono 在 rev 变的
         # 那一拍戳(FS-4/S-6 生效唯一事实是 active.rev 换的那刻).
         fence_state = {"seq": 0, "rev": None, "pub_mono": 0.0, "applied": None}
@@ -404,6 +406,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                 "xbrain/%s/rt/clock/status" % rid, _on_clock))
             pose_pub = gen.declare_publisher("state/pose")
             clock_pub = gen.declare_publisher("state/clock")
+            perc_pub = gen.declare_publisher("state/perception")
             state_fence_pub = gen.declare_publisher(STATE_FENCE_TOPIC)
             _logger.info("p1 gnss bridge on: rid=%s (rt/gnss/heading -> state/pose)",
                          rid)
@@ -411,7 +414,10 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
             # production intake. Subscribed here (p1 IS the cross-plane point);
             # the 20 Hz tick reads perception_in.latest(now) once RnsSource is
             # wired into the arbiter (P7.2). Held for the loop's lifetime.
-            from xbrain.p1_motion.perception_src.three_keys import ZenohPerceptionInput
+            from xbrain.p1_motion.perception_src.three_keys import (
+                ZenohPerceptionInput,
+                mirror_status_to_gen,
+            )
             perception_in = ZenohPerceptionInput(rid)
             perception_in.declare(rt)
             _logger.info("p1 perception intake on: rid=%s "
@@ -442,6 +448,7 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         try:
             last_hb = time.monotonic()
             last_clock = 0.0
+            last_perc = 0.0
             last_teleop = 0.0
             while not stop_flag.get("stop"):
                 now = time.monotonic()
@@ -474,6 +481,27 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                             json.dumps(cenv, ensure_ascii=False).encode("utf-8"))
                         clock_seq["n"] += 1
                         last_clock = now
+                    # 1 Hz state/perception mirror (11 S1.1.6 P1-25). p2_core
+                    # judges cam_rgbd from fps_depth plus this heartbeat's age
+                    # (14 S8.1); p1 only carries the body across, it never
+                    # decides whether the camera is healthy.
+                    #
+                    # No status cached -> mirror_status_to_gen answers None and
+                    # NOTHING is published. That is deliberate: a zero-filled
+                    # body would read as "measured, camera delivered no frames"
+                    # and would keep the age criterion permanently fresh, so a
+                    # dead perception would look alive. Absence stays absence.
+                    if perc_pub is not None and now - last_perc >= 1.0:
+                        _snap = perception_in.latest(int(now * 1000.0))
+                        _pdata = mirror_status_to_gen(_snap.status)
+                        if _pdata is not None:
+                            _penv = gnss_pose.stamp_envelope(
+                                _pdata, rid=rid, boot=boot, seq=perc_seq["n"],
+                                src="p1_motion", ts_sync=ts_sync)
+                            perc_pub.put(
+                                json.dumps(_penv, ensure_ascii=False).encode("utf-8"))
+                            perc_seq["n"] += 1
+                        last_perc = now
                 # 11 S9A.5 state/fence 广播(F3): 1 Hz + rev 变更即发. 不依赖 GNSS
                 # 定位(围栏状态与 pose 无关), 但信封要 rid, 故与 pose 同在 rid 分支.
                 if state_fence_pub is not None:
