@@ -25,6 +25,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+#: 11 S3.5 behavior, narrowed by 99 U90 / R-8 (a). Spelled once so the two
+#: producers and the config assertion cannot disagree about it.
+BEHAVIOR_CLOSED_SET = frozenset({"hold", "resume_task"})
+
 
 @dataclass(frozen=True)
 class MotionBehaviorParams:
@@ -37,7 +41,12 @@ class MotionBehaviorParams:
 @dataclass(frozen=True)
 class BehaviorCommand:
     """cmd/motion/behavior message shape."""
-    behavior: str                    # closed set: face_target_stop / follow / hold
+    # 2026-10-08 (99 U90 / R-8 (a)): closed set narrowed to {hold, resume_task}.
+    # 11 S3.5's capability table marks face_target_stop / face_target_follow
+    # with (x) -- verbatim "needs heading closed-loop onto the target", not
+    # built this phase -- and path_follow was deleted as a source by 12 v0.8
+    # (RNS-M-6). So the only values P1 can actually execute are these two.
+    behavior: str                    # closed set: hold / resume_task
     keep_dist_m: Optional[float]
     max_speed_mps: Optional[float]
     stop_at_fence: bool
@@ -60,6 +69,14 @@ def command_for_mode(
     if block is None:
         return None
     behavior = block["behavior"]
+    # 闭集越界必抛, NO 不降级解释(3.5 / 11 S13.6). 一个配成 face_target_stop
+    # 的块会在这里抛 -- 那正是想要的: P1 侧没有东西能执行它, 静默放行等于让
+    # 一条"机器人该停下"的指令变成无人消费的报文.
+    if behavior not in BEHAVIOR_CLOSED_SET:
+        raise ValueError(
+            "mode_motion[%s].behavior=%r not in %s (99 U90 / R-8 (a); "
+            "face_target_* needs heading closed-loop, see 11 S3.5)"
+            % (mode, behavior, sorted(BEHAVIOR_CLOSED_SET)))
     params = block.get("params", {})
     return BehaviorCommand(
         behavior=behavior,

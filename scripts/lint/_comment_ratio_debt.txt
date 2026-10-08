@@ -565,7 +565,6 @@ xbrain/p1_motion/rns/speed.py
 xbrain/p1_motion/rns/wallfollow.py
 xbrain/p1_motion/rns/watchdog.py
 xbrain/p1_motion/rotation/visual_override.py
-xbrain/p1_motion/route/behavior_goto.py
 xbrain/p1_motion/runtime/estop_latch.py
 xbrain/p1_motion/runtime/main_wiring.py
 xbrain/p1_motion/runtime/nav_cfg.py

@@ -251,17 +251,28 @@ d_mode:
 # p1_motion.yaml MUST NOT redefine keep_dist_m / max_speed_mps.
 
 mode_motion:
+  # 2026-10-08 (99 U90 / R-8 裁决 (a)): behavior 闭集收窄为 {hold, resume_task}.
+  #
+  # *** 原配的是 face_target_stop, 而 11 S3.5 的能力表把 face_target_stop /
+  # face_target_follow 两个值标 (x), 逐字"需航向闭环对准目标" -- 本期不建.
+  # 于是旧配置在配一个[建不出来]的行为: command_for_mode 产出它, P1 侧没有
+  # 任何东西能执行它. 收窄到 hold 是 R-8(a) 裁决的意图("进 d_alarm / b_cast /
+  # 目标丢失时让 P1 停"), 也是唯一可实装的取值.
+  #
+  # ASSERTION: behavior in closed set {hold, resume_task}
+  # Out-of-set -> E_CONFIG_INVALID. NOT downgraded to default.
   d_alarm:
-    # ASSERTION: behavior in closed set
-    #   {face_target_stop, face_target_follow, hold}
-    # Out-of-set -> E_CONFIG_INVALID. NOT downgraded to default.
-    behavior: face_target_stop
+    behavior: hold
     params:
-      keep_dist_m:   3.0     # only used by face_target_follow
-      max_speed_mps: 1.0     # only used by face_target_follow; still under speed gate
+      # keep_dist_m / max_speed_mps 只被 face_target_follow 读, 该值已不在闭集
+      # 内 ==> 这两键当前[无消费者]. NO 不删: 11 S3.5 的能力表把两个
+      # face_target_* 标为"需航向闭环"而不是作废, 航向闭环建成后它们会回来,
+      # 而删掉再加回会丢掉 3.0 / 1.0 这两个已决值的来历(14 S5.6.3).
+      keep_dist_m:   3.0
+      max_speed_mps: 1.0
       stop_at_fence: true    # NAV-50c: stop at fence boundary
   b_cast:
-    behavior: face_target_stop
+    behavior: hold
     params:
       keep_dist_m:   3.0
       max_speed_mps: 1.0

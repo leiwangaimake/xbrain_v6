@@ -20,7 +20,7 @@ CHK-1-13 ModeCommand dispatch:
 
 CHK-1-17 arb visibility:
   * winner change triggers state + audit event together (never
-    one without the other -- §7A.8 half-done trap)
+    one without the other -- S7A.8 half-done trap)
   * gen++ only on winner change, not on 1Hz heartbeat
   * heartbeat fires state only, not event
   * dedup_key = 'arb:motion:{action}' composed exactly once
@@ -61,14 +61,6 @@ from xbrain.p1_motion.gate.negative_vx import (
     NegativeVxCap,
     NegativeVxConfigError,
 )
-from xbrain.p1_motion.route.behavior_goto import (
-    BEHAVIOR_GOTO,
-    PATH_FOLLOW_PRIORITY,
-    GotoRouteError,
-    assert_not_registered_in_teleop,
-    deadman_applies_to_source,
-    route_behavior_goto,
-)
 from xbrain.p2_core.mode_actions.dispatch import (
     ACTION_CLOSED_SET,
     CONFIRM_TOKEN_ISSUER,
@@ -83,7 +75,7 @@ pytestmark = pytest.mark.no_device
 # --- CHK-1-13 ModeCommand dispatch ---
 
 def test_action_closed_set_has_six_rows():
-    """11 §7.3 action table has EXACTLY six rows -- no fewer, no more."""
+    """11 S7.3 action table has EXACTLY six rows -- no fewer, no more."""
     assert len(ACTION_CLOSED_SET) == 6
 
 
@@ -124,7 +116,7 @@ def test_sp_c1_profile_closed_set_size():
 
 
 def test_sp_c1_cruise_rejected():
-    """SP-C1 profile ∈ {obstacle_avoid, patrol}; 'cruise' rejected."""
+    """SP-C1 profile  in  {obstacle_avoid, patrol}; 'cruise' rejected."""
     r = dispatch({"action": "set_speed_profile", "profile": "cruise"},
                     profile_state={})
     assert not r.accepted and r.code == E_SCHEMA
@@ -212,7 +204,7 @@ def test_arb_first_observe_bumps_gen_and_fires_both():
 
 
 def test_arb_stable_winner_heartbeats_no_event():
-    """§7A.8: heartbeat publishes state but NEVER an audit event.
+    """S7A.8: heartbeat publishes state but NEVER an audit event.
     gen must NOT increment on heartbeat."""
     p = ArbPublisher()
     p.observe("path_follow", "task-1", now_mono_ms=100)
@@ -301,56 +293,29 @@ def test_arb_gen_never_increments_on_pure_heartbeat_burst():
     assert p.gen == 1     # never bumped
 
 
-# --- CHK-1-22 goto route ---
-
-def test_goto_routes_to_path_follow():
-    decision = route_behavior_goto({
-        "behavior": BEHAVIOR_GOTO,
-        "waypoint": {"x": 1.0, "y": 2.0},
-    })
-    assert decision.source == "path_follow"
-    assert decision.priority == PATH_FOLLOW_PRIORITY == 300
-    assert decision.goes_via_teleop is False
-
-
-def test_goto_wrong_behavior_rejected():
-    with pytest.raises(GotoRouteError, match="expected behavior='goto'"):
-        route_behavior_goto({"behavior": "spin", "waypoint": {"x": 0, "y": 0}})
-
-
-def test_goto_missing_waypoint_rejected():
-    """No silent default per CLAUDE.md 3.1."""
-    with pytest.raises(GotoRouteError, match="waypoint"):
-        route_behavior_goto({"behavior": BEHAVIOR_GOTO})
-
-
-def test_teleop_source_registry_must_exclude_goto():
-    """CHK-1-22: teleop four-source arbiter must NOT list any of
-    the goto aliases (600-inheritance guard)."""
-    with pytest.raises(GotoRouteError, match="path_follow"):
-        assert_not_registered_in_teleop(
-            ["teleop_local", "teleop_cloud", "behavior_goto"])
-
-
-def test_teleop_source_registry_clean_ok():
-    assert_not_registered_in_teleop([
-        "teleop_local", "teleop_cloud", "teleop_gamepad",
-    ])
-
-
-def test_deadman_does_not_apply_to_path_follow():
-    """goto in-flight (source=path_follow) is not subject to
-    teleop-side deadman timers."""
-    assert deadman_applies_to_source("path_follow") is False
-
-
-def test_deadman_applies_to_teleop_sources():
-    for s in ("teleop_local", "teleop_cloud", "teleop_gamepad",
-                "teleop_keyboard"):
-        assert deadman_applies_to_source(s) is True
-
-
-# --- CHK-1-45 negative vx cap ---
+# --- CHK-1-22 goto route --- (X) 整组已删(2026-10-08 - 99 U90 R-8 裁决 (a))
+#
+# 原有六条用例, 全部以 path_follow(300) 这个行为源[存在]为前提:
+#   goto 路由到 path_follow / 错误 behavior 拒收 / 缺 waypoint 拒收 /
+#   teleop 源注册表不得含 goto / 注册表干净放行 / deadman 不适用于 path_follow
+#
+# *** 为什么是删而不是改. 12 v0.8(#20-1/#20-9, 用户 2026-09-07 裁定
+# "RNS 是系统唯一导航源" RNS-M-6)把 path_follow 从行为源闭集里[删源]了 --
+# sources/arbiter_p1.BehaviorSource 已无该成员(实跑可验).于是:
+#   * route_behavior_goto 返回一个[不可能存在]的源;
+#   * deadman_applies_to_source("path_follow") 问的是一个不存在的源;
+#   * assert_not_registered_in_teleop 守的是"goto 别挂进 teleop 继承 600",
+#     而 goto 的入口已被 12 S4.2c.3 定死为两条(route 单点 + relative_move
+#     转译)并明禁新增 key -- 没有那个挂错的机会了.
+# 六条都绿, 而它们钉的是不存在的语义 -- 正是 CLAUDE.md 3.2 形态一
+# ("一条永远绿的断言"): 任何实现都能通过, 因为被测的东西不存在.
+#
+# 模块 xbrain/p1_motion/route/behavior_goto.py 同批删除(9.3: 不留没有调用方
+# 的未来脚手架), 并从 tests/meta/test_unwired_modules.py 的 _KNOWN_UNWIRED
+# 摘掉那一行(该门双向, 注册项被删时另一向会红).
+#
+# NO 不要"为了保住覆盖率"把它们改写成测 rns_avoid -- 那是另一条路径, 已有
+# 自己的判据; 把旧用例的外壳套上去只会得到一组看起来在测什么的空断言.
 
 def test_negative_cap_rejects_zero_at_construction():
     """Zero cap = fail-silent no reverse allowed. Refuse."""

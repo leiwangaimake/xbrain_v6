@@ -127,7 +127,6 @@ _KNOWN_UNWIRED = {
     # set; sources/arbiter_p1.py has no PATH_FOLLOW member any more. So
     # this returns a source that cannot exist, and its tests pin it.
     # Same shape as the r_eff max() test: green, and wrong to follow.
-    "xbrain/p1_motion/route/behavior_goto.py": "ruled-dead: 12 v0.8 deleted path_follow",
 
     # ---- no-surface ----
     # Guards the PTZ LAPI WRITE key set. There is no LAPI client in
