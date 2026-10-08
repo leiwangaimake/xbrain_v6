@@ -55,13 +55,24 @@ _FORBID = _row("f-oil", "油库禁区", "forbid",
                [[31.203, 121.503], [31.205, 121.503], [31.204, 121.505]])
 
 
-def test_crc32_matches_the_9A2_normalisation():
-    # Reproduce the 11 S9A.2 rule by hand and assert the builder's crc equals it.
-    # MUTATION: any deviation (wrong field order, missing '|', %.6f instead of
-    # %.8f, sorting vertices) changes the crc and reddens this.
+def test_crc32_matches_the_9A2_block_b3_normalisation():
+    """手工复现 11 S9A.2 [块 B-3]配方, 断言 builder 的 crc 等于它.
+
+    *** 七段, 不是五段. 块 B-3 在 hard_enforce 之后插了 priority, 再插一段
+    speed_limit_mps(role != speed_limit 时写[空串], 但分隔符仍在) --
+    本用例原先手抄的是 v0.2 的五段形态, 而它当时能通过, 恰恰因为
+    common/fence/geom.py 里那份实现也是 v0.2 的: 两个过时互相印证, 于是
+    FV-8 与本判据[同时]通过而线上配方是错的.
+    MUTATION: 任何偏差(字段顺序 / 缺一个 '|' / 少写 priority 那一段 /
+    %.6f 代替 %.8f / 给顶点排序)都改 crc 并打红本条.
+    """
     fs = build_fence_set([_ALLOW], fence_set_id="fs-x", rev=7)
     p = fs["polygons"][0]
-    s = "fs-x|7|" + "%s|%s|%s|1|" % (p["poly_id"], p["role"], p["winding"])
+    # allow 不带 speed_limit_mps, 所以第六段是空串 -- 下面 "|%s|" 之间什么都
+    # 没有的那一处就是它. 空段必须[仍然]产生一个分隔符, 否则两个本该不同的
+    # FenceSet 会把字段挤在一起而哈希成同一个值.
+    s = "fs-x|7|" + "%s|%s|%s|1|%d||" % (
+        p["poly_id"], p["role"], p["winding"], p["priority"])
     for v in p["vertices"]:
         s += "%.8f,%.8f;" % (v["lat"], v["lon"])
     expect = "%08x" % (zlib.crc32(s.encode("utf-8")) & 0xFFFFFFFF)

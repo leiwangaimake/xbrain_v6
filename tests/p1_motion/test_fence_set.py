@@ -28,9 +28,9 @@ def _wire(polys=None, fence_set_id="fs-active", rev=1):
     """一份[合法]的 wire FenceSet: crc32 用共享库算真值(与 p3 广播同源)."""
     if polys is None:
         polys = [{"poly_id": "f-allow", "role": "allow", "name": "camp",
-                  "winding": "ccw", "hard_enforce": False, "vertices": _RING},
+                  "winding": "ccw", "hard_enforce": False, "priority": 0, "vertices": _RING},
                  {"poly_id": "f-zone", "role": "warning", "name": "gate",
-                  "winding": "cw", "hard_enforce": False, "vertices": _RING}]
+                  "winding": "cw", "hard_enforce": False, "priority": 0, "vertices": _RING}]
     crc = fence_set_crc32(fence_set_id, rev, polys)
     return {"fence_set_id": fence_set_id, "rev": rev, "crc32": crc,
             "enu_origin": None, "soft_margin_min_m": None, "polygons": polys}
@@ -65,9 +65,9 @@ def test_unknown_role_is_rejected_not_degraded():
     MUTATION: _parse_polygon 把未知 role 放行 -> 这里不抛 -> 红.
     """
     polys = [{"poly_id": "f-allow", "role": "allow", "name": "c",
-              "winding": "ccw", "hard_enforce": False, "vertices": _RING},
+              "winding": "ccw", "hard_enforce": False, "priority": 0, "vertices": _RING},
              {"poly_id": "f-x", "role": "restricted", "name": "x",   # 越界 role
-              "winding": "cw", "hard_enforce": False, "vertices": _RING}]
+              "winding": "cw", "hard_enforce": False, "priority": 0, "vertices": _RING}]
     with pytest.raises(FenceSetError):
         compile_fence_set(_wire(polys=polys))
 
@@ -75,7 +75,7 @@ def test_unknown_role_is_rejected_not_degraded():
 def test_polygon_with_fewer_than_three_vertices_is_rejected():
     """< 3 顶点围不出面积(FV-1), 点在内恒 False -> 报警区静默失效, 必拒."""
     polys = [{"poly_id": "f-allow", "role": "allow", "name": "c",
-              "winding": "ccw", "hard_enforce": False,
+              "winding": "ccw", "hard_enforce": False, "priority": 0,
               "vertices": [{"lat": 34.0, "lon": 135.0},
                            {"lat": 34.1, "lon": 135.0}]}]           # 只 2 点
     with pytest.raises(FenceSetError):
@@ -148,9 +148,9 @@ def test_warning_hard_enforce_is_normalized_to_false():
     MUTATION: _parse_polygon 原样存 hard_enforce(不归一化) -> held True -> 红.
     """
     polys = [{"poly_id": "f-a", "role": "allow", "name": "camp",
-              "winding": "ccw", "hard_enforce": True, "vertices": _RING},
+              "winding": "ccw", "hard_enforce": True, "priority": 0, "vertices": _RING},
              {"poly_id": "f-zone", "role": "warning", "name": "gate",
-              "winding": "cw", "hard_enforce": True, "vertices": _RING}]
+              "winding": "cw", "hard_enforce": True, "priority": 0, "vertices": _RING}]
     crc = fence_set_crc32("fs-active", 1, polys)     # crc 用 wire 原值(含 true)
     wire = {"fence_set_id": "fs-active", "rev": 1, "crc32": crc,
             "enu_origin": None, "soft_margin_min_m": None, "polygons": polys}

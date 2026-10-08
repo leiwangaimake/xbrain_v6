@@ -179,7 +179,7 @@ def test_compile_drops_warning_and_projects_to_enu():
 def test_wire_soft_margin_is_carried_and_validated():
     verts = [{"lat": 30.999, "lon": 120.999}, {"lat": 31.001, "lon": 120.999},
              {"lat": 31.001, "lon": 121.001}]
-    polys = [{"poly_id": "p-outer", "role": "allow", "winding": "ccw", "hard_enforce": True,
+    polys = [{"poly_id": "p-outer", "role": "allow", "winding": "ccw", "hard_enforce": True, "priority": 0,
               "vertices": verts, "soft_margin_min_m": 2.5}]
     wire = {"fence_set_id": "fs", "rev": 1, "polygons": polys, "soft_margin_min_m": 2.0,
             "crc32": fence_set_crc32("fs", 1, polys)}

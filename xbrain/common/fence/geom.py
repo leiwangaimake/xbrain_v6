@@ -22,9 +22,14 @@ Description:
     p3 私有, 留在 p3_task/fence/geom.py).
   * 不做坐标系转换 -- point_in_polygon 在[同一平面](x,y)内判定, 调用方负责先把
     pose 与顶点转到同一系(WGS84 或 ENU).
-  * fence_set_crc32 的归一化[逐字节][对 C++ 接收方也成立]: 顶点用 %.8f 定点,
-    role/winding/hard_enforce 顺序固定 -- 金标向量 tests/common/golden/
-    fence_crc32_vectors.json 是跨语言契约, 改归一化就是改契约.
+  * fence_set_crc32 [不再自己实现]归一化(2026-10-08): 配方的唯一实现在
+    common/digest/fence.py(块 B-3: 每多边形七段, 含 priority 与 role=
+    speed_limit 的 speed_limit_mps), 本函数只做签名适配. 金标向量
+    tests/common/golden/fence_crc32_vectors.json 是跨语言契约, 改归一化
+    就是改契约.
+    *** 本文件原先自带一份[v0.2]配方(只有 poly_id/role/winding/hard_enforce
+    + 顶点), 而块 B-3 加的两个字段只落到了 digest 模块与 C++ 头 ==> 两份对的
+    没人调, 线上调的那份是过时的. 后果见 fence_set_crc32 的 docstring.
 
 看起来对但会出错的写法: 用 %g / repr(float) 序列化顶点 -- 不同实现给不同位数,
 crc32 立刻跨语言不一致. 必须 %.8f 定点(11 S9A.2 逐字).
@@ -33,9 +38,13 @@ crc32 立刻跨语言不一致. 必须 %.8f 定点(11 S9A.2 逐字).
 from __future__ import annotations
 
 import math
-import zlib
 from dataclasses import dataclass
 from typing import Any, Dict, Sequence
+
+# The block B-3 recipe. digest/fence.py imports nothing of ours on purpose (it
+# is a leaf, so the C++ twin can be read against it), which is why the arrow
+# points this way and not the other.
+from xbrain.common.digest.fence import fence_crc32
 
 
 @dataclass(frozen=True)
@@ -76,19 +85,33 @@ def point_in_polygon(x: float, y: float, poly: Polygon) -> bool:
 
 def fence_set_crc32(fence_set_id: str, rev: int,
                     polygons: Sequence[Dict[str, Any]]) -> str:
-    """11 S9A.2 crc32: fence_set_id|rev| then per polygon (array order)
-    poly_id|role|winding|hard_enforce(1/0)| then each vertex '%.8f,%.8f;'.
-    CRC-32 IEEE 802.3 (== zlib.crc32), 8 lowercase hex. The receiver self-computes
-    and compares (FV-8); a byte-identical set MUST yield the same crc32."""
-    parts = ["%s|%d|" % (fence_set_id, rev)]
-    for p in polygons:
-        parts.append("%s|%s|%s|%s|" % (
-            p["poly_id"], p["role"], p["winding"],
-            "1" if p["hard_enforce"] else "0"))
-        for v in p["vertices"]:
-            parts.append("%.8f,%.8f;" % (v["lat"], v["lon"]))
-    data = "".join(parts).encode("utf-8")
-    return "%08x" % (zlib.crc32(data) & 0xFFFFFFFF)
+    """11 S9A.2 block B-3 crc32, by delegation to the one implementation of it.
+
+    This function keeps its (id, rev, polygons) signature -- it is what p3's
+    build_fence_set and p1's FV-8 self-check both call -- and hands the recipe
+    itself to common/digest/fence.py, which the C++ twin in
+    common/include/xbrain/digest/canonical_digest.h is written against line by
+    line and which the cross-language golden vectors pin.
+
+    *** Why this is a delegation and not an implementation. It WAS an
+    implementation: the v0.2 recipe, poly_id|role|winding|hard_enforce| plus
+    vertices. Block B-3 added two fields to the string -- priority and, on a
+    speed_limit polygon, its limit -- and both the C++ header and the digest
+    module were updated; this function was not. So the two correct
+    implementations were the ones nobody called at run time, and the live path
+    (p3's broadcast, p1's self-check) used the superseded recipe. S9A.2 states
+    the consequence in its own words: "改限速/改叠放次序得到相同 crc32" ==>
+    S-5 answers duplicate ==> "改了不生效, 而且不报任何错". On the real
+    broadcast path that is worse than it sounds, because p3's main_wiring uses
+    this very checksum as the CHANGE DETECTOR that drives fence_rev += 1 -- a
+    limit edit produced the same signature, so not even the revision moved.
+
+    Three implementations of one recipe is how two of them end up being right
+    and the third one shipping. Now there is one, and the duplicate that
+    remains (the C++ header) is pinned to it by test_digest_cross_language.
+    """
+    return fence_crc32({"fence_set_id": fence_set_id, "rev": rev,
+                        "polygons": list(polygons)})
 
 
 __all__ = ["Circle", "Polygon", "point_in_circle", "point_in_polygon",

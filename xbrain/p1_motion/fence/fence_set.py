@@ -147,9 +147,11 @@ def compile_fence_set(wire: Dict[str, Any]) -> HeldFenceSet:
     校验三关:
       1. 结构: fence_set_id/rev/crc32/polygons 齐全且类型对;
       2. role 闭集 + 每多边形 >= 3 顶点(_parse_polygon);
-      3. crc32 自算比对(S9A.2): 用[发送方声明的] winding/hard_enforce 重算 --
-         crc32 归一化含 winding, 而 P1 持有态里不留 winding(只报警用, 无所谓朝向),
-         所以重算时从 wire 原样取 winding, 与 wire.crc32 比. 不一致 = 报文损坏.
+      3. crc32 自算比对(S9A.2): 把[发送方原样的] wire 多边形字典直接交给共享库
+         重算 -- crc32 归一化含 winding 与 priority 等 P1 持有态不留的字段(只报警
+         用, 无所谓朝向), 所以必须从 wire 原样取, 与 wire.crc32 比. 不一致 =
+         报文损坏. NO 不在这里重组一个字段子集: 子集就是配方字段表的第二份副本,
+         而它已经漂过一次(块 B-3 加的两个字段没进去, 2026-10-08 修).
     """
     # *** 结构校验[先于]crc32 自算, 是有意的顺序: 一条缺字段/类型错的坏帧, 若直接
     # 去算 crc32 会在取 wire["polygons"] 之类的地方抛 KeyError/TypeError(晦涩), 或
@@ -176,14 +178,19 @@ def compile_fence_set(wire: Dict[str, Any]) -> HeldFenceSet:
 
     held = tuple(_parse_polygon(p, i) for i, p in enumerate(polys_raw))
 
-    # *** crc32 自算比对(S9A.2 FV-8). 用共享库 + 发送方原样的 winding/hard_enforce.
-    # winding 只在 crc32 归一化里出现, P1 持有态不留它(报警不看朝向), 故从 wire 取.
-    crc_input = [
-        {"poly_id": p.get("poly_id"), "role": p.get("role"),
-         "winding": p.get("winding"), "hard_enforce": p.get("hard_enforce"),
-         "vertices": p.get("vertices")}
-        for p in polys_raw]
-    recomputed = fence_set_crc32(fence_set_id, rev, crc_input)
+    # *** crc32 自算比对(S9A.2 FV-8). 用共享库 + [发送方原样的] wire 字典 --
+    # winding 只在 crc32 归一化里出现, P1 持有态不留它(报警不看朝向), 故必须从
+    # wire 取; hard_enforce 同理取 wire 原值而非归一化后的值, 否则一条畸形帧的
+    # crc32 会被我方"修正"成自洽的, 帧损坏就查不出来了.
+    #
+    # *** 这里原先手工重组一个只含[五个键]的子集字典, 而那正是漂移源:
+    # S9A.2 块 B-3 给每个多边形七段(加了 priority 与 role=speed_limit 的
+    # speed_limit_mps), 子集里没有这两个, 于是自算比对用的是过时配方 --
+    # 恰好与 common/fence/geom.py 当时那份过时实现"对得上", 两个错互相掩盖,
+    # 所以 FV-8 一直通过. 改为[直传 polys_raw]: canonical_fence_string 只读
+    # 它认的那几个键(name 等一概不读), 于是配方再加字段时这里不用改, 也不会
+    # 再出现"本地抄了一份字段表"这件事.
+    recomputed = fence_set_crc32(fence_set_id, rev, polys_raw)
     if recomputed != claimed:
         raise FenceSetError(
             "crc32 mismatch: wire=%s recomputed=%s (frame corrupt, FV-8)"

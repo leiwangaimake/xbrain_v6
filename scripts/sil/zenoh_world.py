@@ -178,7 +178,14 @@ def fence_body(frame: LocalFrame, fences: Sequence[Any], *, fence_set_id: str,
         polys.append({"poly_id": "sil-%d" % f.fid, "role": f.role,
                       "name": "%s-%d" % (f.role, f.fid),
                       "winding": "ccw" if f.role == "allow" else "cw",
-                      "hard_enforce": True, "vertices": verts})
+                      "hard_enforce": True,
+                      # 11 S9A.2 block B-3 requires priority on every polygon.
+                      # 0 for every bench fence: the painter order only matters
+                      # between OVERLAPPING constraints, and giving the bench a
+                      # knob for it would invite scenarios that depend on an
+                      # ordering P1 does not implement yet (clip.py FE-2 is
+                      # analytic edge distance, no SDF composite).
+                      "priority": 0, "vertices": verts})
     lat0, lon0 = frame.origin
     return {"fence_set_id": fence_set_id, "rev": rev, "name": name,
             "crc32": fence_set_crc32(fence_set_id, rev, polys),
