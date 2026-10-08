@@ -104,10 +104,27 @@ timeouts:
     group: A          # 11 S1.6.1
     timebase: monotonic
     threshold: "500 ms(本次新增)"
+  # T-09a / T-10a: 2026-10-08 随 11 S1.6.1 的"编辑 C"补丁块合入正文(PH-1,
+  # 用户裁决三选一取 (a) 合入). threshold 的值不是手写的 -- 是跑
+  # tests/common/clock/test_timeout_table.extract_contract_timeouts() 从表体
+  # 读出来再照抄的, 否则这里就成了契约的第二份手维护副本.
+  #
+  # *** 它们与 T-09 / T-10 的差别是[失效后果]而不是阈值: 后者停车, 前者只让
+  # wpos 失效(perception 的 RTK 依赖是语义链路, 不是控制链路). 实现不得把 GNSS
+  # 超时传导为 PerceptionFrame 停发 -- 那会在 500 ms 后再触发 T-02(targets
+  # 200 ms -> 零速), 把一个定位故障放大成停车故障.
+  - id: T-09a
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "500 ms"
   - id: T-10
     group: A          # 11 S1.6.1
     timebase: monotonic
     threshold: "1 s(本次新增)"
+  - id: T-10a
+    group: A          # 11 S1.6.1
+    timebase: monotonic
+    threshold: "500 ms"
   - id: T-11
     group: A          # 11 S1.6.1
     timebase: monotonic
