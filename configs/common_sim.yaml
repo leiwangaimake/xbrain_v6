@@ -67,14 +67,32 @@ common:
     soft_margin_min_m: 2.0     # 11 S9A.6 declared floor of the soft band
   motion:
     profiles:
+      # require_sense_m: 2026-10-08 改为 U54 段界(R-5 裁决, 99 U90 批次).
+      #
+      # *** 原值 obstacle_avoid 0.3 / patrol 1.0 与 11 S9.6.1 的 U54 四段定标
+      # 表不符, 而 11 S9.6 SP-6 逐字要求 f(require_sense_m) == max_mps --
+      # "段界与档位表是互为逆运算的两张表, 改一张不改另一张会让 freeze 拒绝
+      # 整栈启动".
+      #
+      # *** 实测原值的后果(比 R-5 记的更重): f() 的段界是
+      # gate/speed_gate.BANDS = ((3.0,2.0),(1.8,0.5),(1.25,0.2),(0.0,0.0)),
+      # 于是 f(1.0) = 0.0 -- 按 SP-6 这意味着 patrol 档的授权上限是[零],
+      # 即 sim 里机器人巡逻档根本不许动.f(0.3) 同样是 0.0.
+      #
+      # 改后: f(3.0) = 2.0 对上 common.yaml 的 patrol.max_mps = 2.0;
+      #       f(1.8) = 0.5 对上 obstacle_avoid.max_mps = 0.5.SP-6 自洽.
+      #
+      # NO 不改 BANDS: 用户 2026-09-13 裁定"迟滞批段界仍按 11 S9.6.2 U54 常数
+      # (gate/speed_gate.BANDS)", 段界配置化另立项.这里改的是[变体的值],
+      # 让它与那组常数对齐, 不是反过来.
       obstacle_avoid:
-        require_sense_m: 0.3
+        require_sense_m: 1.8
         sensors:
         - lidar
         - rgbd
         up_enter_mps: 0.4
       patrol:
-        require_sense_m: 1.0
+        require_sense_m: 3.0
         sensors:
         - lidar
         - rgbd

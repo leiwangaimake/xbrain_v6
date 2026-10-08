@@ -721,3 +721,111 @@ def test_empty_container_is_not_used_as_a_placeholder():
     for path, value in sorted(merge.flatten(load_common()).items()):
         assert value != [], "%s uses an empty list as a placeholder; use null" % path
         assert value != {}, "%s uses an empty map as a placeholder; use null" % path
+
+
+# ── SP-6: 段界与档位表互为逆运算(2026-10-08 新增)──────────────────────────
+#
+# 11 S9.6 SP-6 逐字: "f(require_sense_m) == max_mps -- 段界与档位表是互为逆运算
+# 的两张表, 改一张不改另一张会让 freeze 拒绝整栈启动."
+#
+# *** 在本文件之前, 全仓[没有任何一条判据求值这个等式].只有上面那组钉 null
+# 骨架的用例, 而它们对"值落下来之后两张表是否自洽"完全无感.
+# 实测代价(2026-10-08, R-5 裁决时发现): common_sim.yaml 原本是
+# obstacle_avoid 0.3 / patrol 1.0, 而 BANDS 的段界是 3.0 / 1.8 / 1.25,
+# 于是 f(1.0) == 0.0 -- 按 SP-6 这意味着 sim 里 patrol 档的授权上限是[零],
+# 机器人巡逻档根本不许动, 而没有任何判据会红.
+
+
+def _merged_profiles(variant):
+    """真机 common.yaml 与 variant 合并后的 profiles.
+
+    SP-6 的两张表[不在同一个文件里]: max_mps 落在真机文件(2026-09-10),
+    require_sense_m 在变体里.所以这个等式只有在合并后才成立或不成立 --
+    任何只读一个文件的判据都看不见它.
+    """
+    import copy
+
+    import yaml
+    base = load_common()["common"]["motion"]["profiles"]
+    with open(variant, encoding="utf-8") as fh:
+        over_tree = yaml.safe_load(fh) or {}
+    over = over_tree.get("common", {}).get("motion", {}).get("profiles", {})
+    out = copy.deepcopy(base)
+    for name, blk in over.items():
+        out.setdefault(name, {}).update(blk)
+    return out
+
+
+def check_sp6(prof, min_pairs=2):
+    """对 profiles 求值 SP-6, 返回真正检查过的档位数.
+
+    *** 抽成函数而不是写在用例里, 是为了让[空转护栏]可测.
+    2026-10-08 实测: 护栏原先内联在用例里, 于是把 `checked >= 2` 改成
+    `>= 0` 的变异体[存活]-- 今天两个档位都有值, 那个分支不可达.
+    它不是等价变异(真空转时两者答案不同), 只是没有输入能走到.
+    ==> 正确处置是把输入造出来(见下一条用例), 不是在代码里注一句"等价变异".
+    """
+    from xbrain.p1_motion.gate.speed_gate import f_speed_gate
+    checked = 0
+    for name, blk in sorted(prof.items()):
+        rs, mm = blk.get("require_sense_m"), blk.get("max_mps")
+        if rs is None or mm is None:
+            continue            # 还没落值的档位不在射程内
+        assert f_speed_gate(rs) == mm, (
+            "SP-6 broken for %s: f(require_sense_m=%s) = %s but max_mps = %s "
+            "-- 11 S9.6 SP-6 两张表互为逆运算, freeze 会拒绝整栈启动"
+            % (name, rs, f_speed_gate(rs), mm))
+        checked += 1
+    # *** 空转护栏: 必须真的检查过至少 min_pairs 个档位.否则一个把
+    # require_sense_m 全删掉的变更会让上面的循环一个都不跑而本条照样绿 --
+    # 那就是 3.2 形态一(一条什么实现都能通过的断言).
+    assert checked >= min_pairs, (
+        "SP-6 只覆盖了 %d 个档位, 至少要有 %d 个 -- 循环空转等于没有判据"
+        % (checked, min_pairs))
+    return checked
+
+
+def test_sp6_holds_for_the_sim_variant():
+    """sim 变体合并后 f(require_sense_m) == max_mps 对每个档位成立.
+
+    MUTATION: 把 common_sim.yaml 的 patrol.require_sense_m 改回 1.0 ->
+    f(1.0) = 0.0 != 2.0 -> 本条红(而在本条之前, 全树是绿的).
+    """
+    assert check_sp6(_merged_profiles(
+        os.path.join(ROOT, "configs", "common_sim.yaml"))) >= 2
+
+
+def test_the_sp6_vacuity_guard_actually_trips():
+    """空转时 check_sp6 必须抛, 不许静默通过.
+
+    *** 这条是上一条的护栏的护栏.驱动三种空转形态: 空 profiles / 只有
+    max_mps / 只有 require_sense_m -- 三者都会让比对循环一个都不跑.
+    MUTATION: 把 check_sp6 的 `checked >= min_pairs` 改成 `>= 0` ->
+    本条红(而只有上一条时该变异体存活, 2026-10-08 实测).
+    """
+    import pytest as _pytest
+    for vacuous in ({},
+                    {"patrol": {"max_mps": 2.0}},
+                    {"patrol": {"require_sense_m": 3.0}},
+                    {"patrol": {"max_mps": None, "require_sense_m": None}}):
+        with _pytest.raises(AssertionError, match="空转|至少要有"):
+            check_sp6(vacuous)
+    # 反向: 一个真有一对值的输入必须[通过], 否则上面的抛可能只是"什么都抛".
+    assert check_sp6({"patrol": {"require_sense_m": 3.0, "max_mps": 2.0}},
+                     min_pairs=1) == 1
+
+
+def test_the_production_file_has_no_landed_pair_to_check_yet():
+    """真机文件今天只落了 max_mps, require_sense_m 仍 null.
+
+    *** 这条不是凑数: 它把"为什么上面那条只测 sim"钉成一个会变的事实.
+    等甲方标定把真机的 require_sense_m 落下来, 本条[会红], 那一天的正确动作
+    是给真机文件也加一条 SP-6 判据, 而不是放宽本条.
+    MUTATION: 给真机 common.yaml 落一个 require_sense_m -> 本条红 -> 提醒
+    补真机侧的 SP-6 判据.
+    """
+    prof = load_common()["common"]["motion"]["profiles"]
+    landed = [n for n, b in prof.items() if b.get("require_sense_m") is not None]
+    assert landed == [], (
+        "真机 require_sense_m 已落值 %s -- 请给真机文件也加一条 SP-6 判据"
+        "(f(require_sense_m) == max_mps), 不要放宽本条" % landed)
