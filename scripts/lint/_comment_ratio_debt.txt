@@ -574,7 +574,6 @@ xbrain/p1_motion/sources/arbiter_p1.py
 xbrain/p1_motion/sources/fallback.py
 xbrain/p1_motion/sources/rns_avoid.py
 xbrain/p1_motion/teleop/state.py
-xbrain/p1_motion/teleop/teleop_cloud.py
 xbrain/p2_core/__main__.py
 xbrain/p2_core/audio/audio_io.py
 xbrain/p2_core/audio/broadcast_rx.py
