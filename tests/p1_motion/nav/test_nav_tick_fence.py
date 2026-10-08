@@ -155,3 +155,133 @@ def test_no_fence_stage_is_a_pass_through_over_a_whole_drive():
         assert oa.fence is not None and oa.fence.enforcement == "disabled" and ob.fence is None
         x += oa.vx * 0.05                          # integrate the shared command
     assert x > 1.0                                 # it actually drove
+
+
+# ---------------------------------------------------------------- speed zone --
+# 11 S9A.2 块 B-2 逐字: speed_limit_mps "该区内的速度上限, 直接进 S9.6.1 的
+# min(); 重叠时取最小值". S9A.1A 把[施加]派给 RNS("具体速度上限由 RNS 走速度门
+# 施加"). 下面四条分别钉: 区内施加 / 区外不施加 / 重叠取最小 / 无围栏零回归.
+
+
+def _zone(poly_id, pts, limit):
+    """一个 role=speed_limit 的 HeldPolygon. hard_enforce 恒 False --
+    S9A.2 对两个 advisory role 都这么定, 而 compile_fence 会把它放进
+    speed_zones 而不是 polygons(所以它永远进不了半空间投影)."""
+    from xbrain.p1_motion.fence.fence_set import HeldPolygon
+    return HeldPolygon(poly_id, "speed_limit", poly_id, False, tuple(pts),
+                       speed_limit_mps=limit)
+
+
+def _held_with_zone(*zones):
+    """一个只含限速区的持有集. 刻意不放 allow/forbid: 这样编译出的 .polygons
+    为空, evaluate 走 disabled/no_fence 分支 -- 于是本组用例测到的任何限速
+    效果都只能来自速度门那一项, 不可能是裁剪层顺带做的."""
+    from xbrain.p1_motion.fence.fence_set import HeldFenceSet
+    return HeldFenceSet("fs-z", 1, "00000000", tuple(zones))
+
+
+def _run_zone(held, pose, limit_pts_scale=1.0):
+    """编译并跑一拍, 返回 NavOutput."""
+    from xbrain.p1_motion.fence.clip import compile_fence
+    from xbrain.p1_motion.path.local_frame import LocalFrame
+    cf = compile_fence(held, LocalFrame(0.0, 0.0))
+    return _run(_stack(), pose, fence=cf)
+
+
+def test_a_speed_zone_caps_v_max_and_names_fence_as_the_limiter():
+    """区内: 限速值进 min(), 且 gate.limiter 必须说是 fence.
+
+    *** limiter 这一半和数值一样重要(11 S9.6.5): 若把限速写成事后 clamp,
+    v_max 会对而 limiter 仍指向 profile -- 现场看到的是"机器人在爬, 而系统
+    说是档位限的", 排障会走到完全错误的方向.
+    MUTATION: 把 terms["fence"] 那一行删掉 -> v_max 不降, 第一条断言红;
+    改成在 compute_gate 之后 clamp -> v_max 对而 limiter 仍是 profile,
+    第二条断言红.
+    """
+    # 以原点为心, 半径约 50 m 的方形限速区(ENU 米, LocalFrame(0,0) 下
+    # 1 deg lat ~ 111320 m, 所以 0.00045 deg ~ 50 m).
+    d = 0.00045
+    z = _zone("f-slow", [(-d, -d), (-d, d), (d, d), (d, -d)], 0.4)
+    out = _run_zone(_held_with_zone(z), (0.0, 0.0))        # 机器人在区心
+    assert out.v_max == pytest.approx(0.4, abs=1e-6)
+    assert out.limiter == "fence"
+    # 裁剪层没有参与: 集里没有 allow/forbid, 所以它报 disabled/no_fence.
+    assert out.fence.enforcement == "disabled"
+
+
+def test_outside_the_zone_the_cap_does_not_apply():
+    """区外: 不施加. 否则一个画在角落的慢行区会把整个场地限速.
+
+    MUTATION: speed_cap_mps 把 `d_nom > -inset` 写成 `d_nom < inset`(符号反)
+    -> 区外反而被限速 -> 本条红.
+    """
+    d = 0.00045
+    z = _zone("f-slow", [(-d, -d), (-d, d), (d, d), (d, -d)], 0.4)
+    # 区心在原点, 机器人放到 500 m 外 -- 远超任何 inset.
+    out = _run_zone(_held_with_zone(z), (500.0, 0.0))
+    assert out.v_max > 0.4
+    assert out.limiter != "fence"
+
+
+def test_overlapping_zones_take_the_minimum():
+    """重叠时取最小值(S9A.2 块 B-2 逐字).
+
+    MUTATION: 把 min(cap, v) 换成 max 或"第一个命中即返回" -> 本条红.
+    两个区同心, 一个 1.2 一个 0.4, 机器人同时在两个区内.
+    """
+    d = 0.00045
+    # *** 两个限速值都取得比本栈的其余 min() 项低(实测该 min 是 1.0).
+    # 第一版给大区 1.2, 于是 v_max 取到 1.0 而不是 1.2 -- 断言红在"取最小"
+    # 上, 而真正的原因是"限速项根本没赢". 判据要测的是哪一项赢, 就必须让它
+    # 有机会赢, 否则红了也不知道红在哪.
+    big = _zone("f-a", [(-d, -d), (-d, d), (d, d), (d, -d)], 0.9)
+    small = _zone("f-b", [(-d / 2, -d / 2), (-d / 2, d / 2),
+                          (d / 2, d / 2), (d / 2, -d / 2)], 0.3)
+    out = _run_zone(_held_with_zone(big, small), (0.0, 0.0))
+    assert out.v_max == pytest.approx(0.3, abs=1e-6)
+    # 反向: 只在大区内(小区之外)时取 0.9, 否则上面的 0.3 可能只是"恒取最后
+    # 一个"或"恒取遇到的第一个", 而不是真的取最小.
+    out2 = _run_zone(_held_with_zone(big, small), (0.0, 40.0))
+    assert out2.v_max == pytest.approx(0.9, abs=1e-6)
+    # *** NO 这里不能断言 limiter == "fence". 11 S9.6.5 末行: 没有实际裁到
+    # 且 h == i == 1.0 时 limiter 就是 "none" -- 而这一拍的候选速度本来就低于
+    # 0.9, 天花板摆在那里但没咬到任何东西. 第一条用例(区心, 上限 0.3)才是
+    # 真咬到的那一拍, limiter 在那里断言.
+    assert out2.limiter in ("none", "fence")
+
+
+def test_a_zone_also_caps_reverse_and_lateral():
+    """限速是[速度]上限, 各向同性 -- 倒车与横移同样受限.
+
+    *** v_lin_free(倒车/横移的上限)故意丢掉 f 项(前向净空), 但 NO 不能连
+    限速区一起丢: 在一个 1 m/s 的区里以 2 m/s 倒车, 违反限速的程度与前进
+    完全一样.
+    MUTATION: v_lin_free 回 min(terms["profile"], terms["spec"]) ->
+    v_max_free 不受限速约束 -> 本条红.
+    """
+    from xbrain.p1_motion.nav.host_gate import compute_gate
+    g = compute_gate(v_nom_mps=2.0, spec_max_vx_mps=2.0, free_space_mps=2.0,
+                     health=OK, i_fix=1.0,
+                     i_heading=1.0, heading_valid=True, estop=False,
+                     perception_dead=False, fence_zone_mps=0.4)
+    assert g.v_max_fwd == pytest.approx(0.4, abs=1e-9)
+    assert g.v_max_free == pytest.approx(0.4, abs=1e-9)
+
+
+def test_no_zone_leaves_the_gate_byte_identical():
+    """零回归(NEXT I-1): 没有限速区时, 速度门算出的与加这一项之前完全一样.
+
+    *** 这是用户 2026-10-08 明令的那条不变量在速度门这一层的落点:
+    系统没有围栏数据时不对运动做任何限制.
+    MUTATION: 给 fence_zone_mps 一个兜底默认值(例如 2.0)而不是 None ->
+    terms 里凭空多一项 -> 一旦该默认值小于其它项就会无声限速 -> 本条红.
+    """
+    from xbrain.p1_motion.nav.host_gate import compute_gate
+    args = dict(v_nom_mps=2.0, spec_max_vx_mps=2.0, free_space_mps=1.5,
+                health=OK, i_fix=1.0, i_heading=1.0,
+                heading_valid=True, estop=False, perception_dead=False)
+    a = compute_gate(**args)                         # 不传该参
+    b = compute_gate(**args, fence_zone_mps=None)    # 显式 None
+    assert (a.v_max_fwd, a.v_max_free, a.cuts, a.tied_min) == \
+           (b.v_max_fwd, b.v_max_free, b.cuts, b.tied_min)
+    assert "fence" not in a.tied_min and "fence" not in [k for k, _ in a.cuts]

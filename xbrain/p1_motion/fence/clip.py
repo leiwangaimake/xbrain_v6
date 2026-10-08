@@ -12,6 +12,11 @@ geometry, not by trusting the planner to stay inside. Without this module a
 FenceSet is held (fence_set.py) and reported (state/fence) but constrains
 nothing, which state/fence honestly called clip_deferred.
 
+An EMPTY active set is a first-class case, not an error: "the customer has
+not recorded any fence" must leave the robot free to move (11 S9A.7's
+disabled tier, and NEXT I-1). compile_fence returns empty tuples and
+evaluate's first line passes (vx, vy) through untouched.
+
 What it computes per 20 Hz tick (11 S9A.6 (2)-(5), S9A.8, 12 S7.1-7.3):
   * d_nom     signed distance from the robot to the nearest edge of each
               constraining polygon, allowed side positive (FE-2: analytic
@@ -43,10 +48,25 @@ also has no chatter: a scalar ceiling switched on/off by the sign of v . n
 would flip between v_fence and full speed while driving parallel inside the
 band. What is registered as a doc-sync item is only this wording.
 
+Also, from 2026-10-08, the in-zone speed ceiling (speed_cap_mps): a
+role=speed_limit polygon is NOT a boundary -- it never enters the half-space
+projection -- but 11 S9A.2 block B-2 sends its speed_limit_mps "直接进 S9.6.1
+的 min()" and S9A.1A assigns the applying to RNS ("具体速度上限由 RNS 走速度门
+施加"). So compile_fence puts those polygons in a SECOND tuple
+(CompiledFence.speed_zones) and speed_cap_mps answers "what ceiling does this
+position imply", which host_gate takes as its term named "fence". The two
+readings are not in conflict once separated: the fence carries the VALUE, RNS
+is the one that APPLIES it.
+*** v_fence_mps and the zone cap are DIFFERENT numbers and must not be folded
+(NEXT FN-5): v_fence_mps is S9A.6 (4)'s closed-form brake inverse for the
+nearest boundary, so a min() baked into it would make it uncheckable against
+its own formula. Both can be in force at once; the gate does the min().
+
 What it does NOT do: publish, emit events (episodes.py turns FenceEval
 transitions into 11 S9A.9 events), or evaluate warning polygons (zones.py:
-point-in-polygon, no distance semantics, 12 FS-12). speed_limit polygons are
-"区内限速由 RNS 施加" (11 S9A.1A, pending) and are not boundaries here.
+point-in-polygon, no distance semantics, 12 FS-12 -- that is the contract's
+特例 for warning, NOT a general rule that could be applied to speed_limit,
+which is why the zones above do get compiled into ENU).
 
 Things that look right and are wrong:
   * treating heading_rad as a compass bearing. 11 S3.3: ENU, east = 0,
@@ -71,6 +91,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from xbrain.common.fence.geom import Polygon, point_in_polygon
+
+# SPEED_LIMIT_ROLE 与 p3 写入方 / p1 解析侧同源(common/fence/roles),
+# 否则这里又会多出一份 role 字面量副本.
+from xbrain.common.fence.roles import SPEED_LIMIT_ROLE
 from xbrain.p1_motion.fence.fence_set import HeldFenceSet
 from xbrain.p1_motion.path.local_frame import LocalFrame, LocalFrameError
 
@@ -205,8 +229,15 @@ def inset_for_fix(fix_type: Optional[str], c: FenceConstants) -> Optional[float]
 
 @dataclass(frozen=True)
 class CompiledPolygon:
-    """One constraining polygon in ENU metres. keep_in: the allowed side is
-    the interior (allow); False for forbid (allowed side is outside)."""
+    """One polygon in ENU metres. keep_in: the allowed side is the interior
+    (allow); False for forbid (allowed side is outside).
+
+    The same shape serves a BOUNDARY (allow / forbid, in CompiledFence
+    .polygons) and a SPEED ZONE (speed_limit, in .speed_zones). keep_in is
+    True for a zone because "inside the zone" is the side its rule applies
+    on, and that lets boundary_hit answer both questions with one function --
+    which is the point: a second inside/outside implementation is how RNS
+    ends up proposing a subgoal the clip then kills (see speed_cap_mps)."""
     poly_id: str
     role: str
     name: str
@@ -214,27 +245,56 @@ class CompiledPolygon:
     keep_in: bool
     xy: Tuple[Tuple[float, float], ...]
     soft_margin_min_m: Optional[float]
+    #: 11 S9A.2 block B-2: the in-zone speed ceiling, set only for a
+    #: role=speed_limit polygon. None on a boundary polygon -- and NOT 0.0,
+    #: which would read as "this polygon caps you at a standstill" (3.1).
+    speed_limit_mps: Optional[float] = None
 
 
 @dataclass(frozen=True)
 class CompiledFence:
-    """The active set's constraint polygons, compiled once per rev (12 FS-1:
-    compile off the tick, swap atomically) -- the tick only reads."""
+    """The active set compiled once per rev (12 FS-1: compile off the tick,
+    swap atomically) -- the tick only reads.
+
+    TWO tuples, deliberately not one. .polygons are the BOUNDARIES that enter
+    project_halfspaces; .speed_zones are role=speed_limit regions that must
+    NEVER enter it. Mixing them would turn an advisory zone into a keep-out
+    the moment anything iterated the wrong tuple, and that mistake has no
+    visible symptom other than a robot that cannot enter the slow zone.
+    speed_zones defaults to () so a CompiledFence built by older test code
+    still means "no zones" rather than raising."""
     fence_set_id: str
     rev: int
     polygons: Tuple[CompiledPolygon, ...]
+    speed_zones: Tuple[CompiledPolygon, ...] = ()
 
 
 def compile_fence(held: HeldFenceSet, frame: LocalFrame) -> CompiledFence:
     """HeldFenceSet (WGS84 vertices) -> CompiledFence about the site frame
     (11 S9A.2: enu_origin is common.geo.enu_origin, every process projects
-    with the same origin so ENU agrees to the bit). warning / speed_limit
-    polygons are dropped here (module note). A vertex the frame rejects
-    (non-finite / out of range) refuses the whole set: a partly compiled
-    fence would be a fence with a hole in it."""
+    with the same origin so ENU agrees to the bit).
+
+    Three roles are compiled, into two tuples:
+      * allow / forbid -> .polygons, the BOUNDARIES (project_halfspaces);
+      * speed_limit    -> .speed_zones, regions whose rule is a speed ceiling
+        (speed_cap_mps). They are NOT boundaries and never enter the
+        projection -- S9A.2 makes hard_enforce false for them by definition.
+      * warning        -> not compiled at all. 12 FS-12 defines it as pure
+        point-in-polygon with no distance semantics, and zones.py already
+        evaluates it on the WGS84 vertices (affine-invariant, so the ENU trip
+        would answer the same question at more cost).
+
+    A vertex the frame rejects (non-finite / out of range) refuses the whole
+    set: a partly compiled fence would be a fence with a hole in it.
+
+    An EMPTY set compiles to two empty tuples and does NOT raise. "The
+    customer has not recorded any fence" must leave the robot free to move
+    (11 S9A.7's disabled tier); raising here would put an exception on every
+    tick of the 20 Hz loop instead."""
     polys: List[CompiledPolygon] = []
+    zones: List[CompiledPolygon] = []
     for p in held.polygons:
-        if p.role not in CONSTRAINT_ROLES:
+        if p.role not in CONSTRAINT_ROLES and p.role != SPEED_LIMIT_ROLE:
             continue
         try:
             xy = tuple(frame.to_xy(lat, lon) for lat, lon in p.vertices)
@@ -243,11 +303,27 @@ def compile_fence(held: HeldFenceSet, frame: LocalFrame) -> CompiledFence:
                                  % (held.fence_set_id, p.poly_id, exc)) from exc
         declared = p.soft_margin_min_m if p.soft_margin_min_m is not None \
             else held.soft_margin_min_m
-        polys.append(CompiledPolygon(
+        # keep_in per role, spelled one branch each rather than as a single
+        # negation of "forbid". The flag means two different things depending
+        # on the tuple it lands in -- "which side is ALLOWED" for a boundary,
+        # "which side the RULE APPLIES on" for a zone -- and a `!= "forbid"`
+        # would quietly hand a future fifth role the True branch without
+        # anyone having decided that is right.
+        if p.role == "allow":
+            keep_in = True              # 活动区: 允许侧 = 内
+        elif p.role == "forbid":
+            keep_in = False             # 禁入区: 允许侧 = 外
+        else:                           # SPEED_LIMIT_ROLE
+            keep_in = True              # 限速区: 规则适用侧 = 内
+        cp = CompiledPolygon(
             poly_id=p.poly_id, role=p.role, name=p.name,
-            hard_enforce=p.hard_enforce, keep_in=(p.role == "allow"),
-            xy=xy, soft_margin_min_m=declared))
-    return CompiledFence(held.fence_set_id, held.rev, tuple(polys))
+            hard_enforce=p.hard_enforce, keep_in=keep_in,
+            xy=xy, soft_margin_min_m=declared,
+            speed_limit_mps=(p.speed_limit_mps
+                             if p.role == SPEED_LIMIT_ROLE else None))
+        (zones if p.role == SPEED_LIMIT_ROLE else polys).append(cp)
+    return CompiledFence(held.fence_set_id, held.rev, tuple(polys),
+                         tuple(zones))
 
 
 # --- signed distance (FE-2 analytic edge distance) --------------------------
@@ -502,6 +578,67 @@ def evaluate(fence: Optional[CompiledFence], c: FenceConstants, *,
         teleop_max_mps=c.v_profile_max_mps)
 
 
+def speed_cap_mps(fence: Optional[CompiledFence],
+                  xy: Optional[Tuple[float, float]],
+                  inset_m: Optional[float]) -> Optional[float]:
+    """11 S9A.2 block B-2: the in-zone speed ceiling, or None when none applies.
+
+    The contract's own words for this field are "该区内的速度上限, 直接进
+    S9.6.1 的 min(); 重叠时取最小值", and S9A.1A assigns the APPLYING to RNS
+    ("具体速度上限由 RNS 走速度门施加"). So this function answers one
+    question -- what ceiling does the robot's position imply -- and the speed
+    gate does the min() (host_gate, term "fence"). It does NOT clip a vector.
+
+    None (no ceiling) in three cases, each for its own reason:
+      * no fence, or no speed_limit zone in it. "The customer recorded no
+        slow zone" must leave the robot at its normal ceiling. This is the
+        same invariant as 11 S9A.7's disabled tier: an absent fence
+        constrains NOTHING (NEXT I-1).
+      * no position. Without xy there is no "inside"; inventing one would be
+        a guess about where the robot is.
+      * no inset, i.e. the fix is not rtk_* (FIX_WITH_FENCE). The gate's rtk
+        veto already forbids autonomous motion on such a tick, so the ceiling
+        would be moot -- and a ceiling derived from a position the contract
+        says is not good enough to judge geometry with would be worse than
+        none.
+
+    *** Why the inset widens the zone instead of shrinking it. For a BOUNDARY
+    the inset shrinks the permitted region: uncertainty must not let the robot
+    end up outside. A zone is the mirror image -- the conservative answer to
+    "might I be inside a slow zone" is yes -- so the same number is applied
+    with the opposite sign: d_nom > -inset rather than d_nom > 0. One number,
+    one meaning (how far the position might be off), two signs because the two
+    questions are opposite. A cap applied slightly early is never unsafe; a
+    cap applied slightly late is driving over the limit inside the zone.
+
+    *** Why boundary_hit and not point_in_polygon. The ray cast says in its
+    own comment that boundary points may be reported either way, and it has
+    nowhere to put the inset. Reusing the signed distance keeps ONE notion of
+    inside in P1: the RNS candidate gate, the clip and this cap all answer
+    from the same geometry, so none of them can propose what another kills.
+    Being exactly on the edge counts as inside (d_nom = 0 > -inset for any
+    inset > 0) -- the safe side of an ambiguous answer.
+    """
+    if fence is None or not fence.speed_zones:
+        return None
+    if xy is None or inset_m is None:
+        return None
+    x, y = xy
+    cap: Optional[float] = None
+    for zone in fence.speed_zones:
+        # A zone with no limit cannot be reached from the wire (FV-13 is
+        # enforced in fence_set._parse_polygon) but the dataclass field is
+        # Optional, so the branch is written rather than assumed away: a
+        # None here would otherwise become the min() and silence every other
+        # zone.
+        if zone.speed_limit_mps is None:
+            continue
+        if boundary_hit(x, y, zone).d_nom_m > -inset_m:
+            v = float(zone.speed_limit_mps)
+            cap = v if cap is None else min(cap, v)
+    return cap
+
+
 def runtime_state_fields(ev: Optional[FenceEval], *, episode_id: int = 0) -> Optional[Dict[str, Any]]:
     """The 11 S9A.5 enforcement / degrade_reason / geo / allow blocks from the
     latest evaluation, for fence_set.build_fence_runtime_state. None when the
@@ -530,7 +667,7 @@ def runtime_state_fields(ev: Optional[FenceEval], *, episode_id: int = 0) -> Opt
 __all__ = ["FenceClipError", "FenceConstants", "CompiledPolygon", "CompiledFence",
            "BoundaryHit", "PolyDistance", "FenceEval", "compile_fence",
            "boundary_hit", "project_halfspaces", "evaluate", "d_stop_m",
-           "runtime_state_fields",
+           "runtime_state_fields", "speed_cap_mps", "SPEED_LIMIT_ROLE",
            "v_fence_mps", "margin_soft_eff_m", "inset_for_fix",
            "FIX_WITH_FENCE", "CONSTRAINT_ROLES", "DEGENERATE_EPS_MPS",
            "ENFORCEMENT_FULL", "ENFORCEMENT_WARN_ONLY", "ENFORCEMENT_DISABLED",

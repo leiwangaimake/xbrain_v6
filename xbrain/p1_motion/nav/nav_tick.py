@@ -74,6 +74,8 @@ from xbrain.p1_motion.fence.clip import (
     FenceConstants,
     FenceEval,
     evaluate,
+    inset_for_fix,
+    speed_cap_mps,
 )
 from xbrain.p1_motion.freshness.degradation import CAM_THRESH, Freshness, classify
 from xbrain.p1_motion.gate.speed_gate import BandHysteresis, SpeedGateError
@@ -292,12 +294,28 @@ class NavTick:
         # the f term with its rise hysteresis (12 S6.2 table): the clearance
         # feeds the band memory every tick, the gate takes the band's speed.
         f_mps = self._hyst.update(f_free, now)
+        # 11 S9A.2 block B-2 sends the in-zone ceiling "直接进 S9.6.1 的
+        # min()", and S9.6.1 IS this gate -- so the zone cap is computed HERE,
+        # before step 6, not inside the step-7 clip. Two consequences worth
+        # stating because both are deliberate:
+        #   * it applies on a heading_lost tick. Being inside a polygon is a
+        #     question about POSITION; the clip degrades to warn_only without
+        #     heading only because the body->ENU rotation it needs is
+        #     undefined, and a scalar ceiling needs no rotation.
+        #   * it is None whenever there is no fence, no speed_limit zone, no
+        #     position, or no inset -- so a system with no fence data gets
+        #     exactly the pre-zone gate (NEXT I-1: no fence constrains
+        #     nothing). speed_cap_mps is where each of those is decided.
+        zone_cap = None
+        if self._fence is not None:
+            zone_cap = speed_cap_mps(inp.fence, inp.pose_xy,
+                                     inset_for_fix(inp.fix_type, self._fence))
         gate = compute_gate(
             v_nom_mps=v_nom, spec_max_vx_mps=self._spec_vx,
             free_space_mps=f_mps, health=inp.health, i_fix=inp.i_fix,
             i_heading=inp.i_heading, heading_valid=inp.heading_valid,
             estop=inp.estop, perception_dead=(fresh is Freshness.FAILED),
-            profile_downgraded=downgraded)
+            profile_downgraded=downgraded, fence_zone_mps=zone_cap)
         vx, vy, wz = apply_gate(gate, raw[0], raw[1], raw[2], self._holo,
                                 wz_max_radps=self._wz_max)
         limiter, limiter_all = attribute(gate, raw[0])

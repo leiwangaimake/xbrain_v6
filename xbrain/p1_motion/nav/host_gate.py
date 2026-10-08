@@ -12,9 +12,15 @@ f(d_free) over the forward sector clamps a positive vx) plus the terms the real
 process has and the simulator does not.
 
 Formula (11 S9.6.2 / 12 S2.2 line 3, the four-in-min, two-multiplied form):
-    v_lin = min(profile.max_mps, f(d_free), spec.max_vx_mps)     [m/s terms]
+    v_lin = min(profile.max_mps, f(d_free), spec.max_vx_mps,
+                fence zone cap)                                  [m/s terms]
     v_max = v_lin * h_factor * i_factor                            [factors]
     i_factor = i_fix * i_heading (11 S3.2.1 / S3.3.1)
+The fence zone cap is 11 S9A.2's speed_limit_mps, which that section sends
+"直接进 S9.6.1 的 min()"; it is present only on ticks whose position lies in
+(or within the RTK inset of) a role=speed_limit polygon -- clip.speed_cap_mps
+decides that, this module only takes the min. Absent on every other tick, so
+a system with no fence computes the pre-zone formula unchanged.
 g(targets) is absent on purpose: 11 S3.1B replaced rt/perception/targets with
 the objects list RNS consumes itself (20 S5), so near persons stop the robot
 INSIDE the candidate (WAIT_DYNAMIC), not in a second host term.
@@ -114,7 +120,8 @@ def compute_gate(*, v_nom_mps: float, spec_max_vx_mps: float,
                  i_fix: Optional[float], i_heading: Optional[float],
                  heading_valid: bool, estop: bool,
                  perception_dead: bool,
-                 profile_downgraded: bool = False) -> GateResult:
+                 profile_downgraded: bool = False,
+                 fence_zone_mps: Optional[float] = None) -> GateResult:
     """The ceiling. Vetoes are checked in 11 S9.6.5 priority order and the
     first hit names the limiter; otherwise the four-in-min / two-multiplied
     formula with per-term deltas for attribution.
@@ -147,8 +154,24 @@ def compute_gate(*, v_nom_mps: float, spec_max_vx_mps: float,
     # (19 S3.2A v1.6 withdrawal) into a stop, against the r4 Q4.2 ruling.
     if free_space_mps is not None:
         terms["free_space"] = float(free_space_mps)
+    # 11 S9A.2 block B-2: a speed_limit zone's ceiling enters THIS min(), by
+    # name. It is a term and not a post-hoc clamp so the delta attribution
+    # below names "fence" for free -- gate.limiter must say what actually cut
+    # the speed (11 S9.6.5), and a clamp applied after the fact would leave
+    # the limiter pointing at profile while the robot crawls.
+    # None when no zone applies (clip.speed_cap_mps), which is also the case
+    # when there is no fence at all -- then nothing is added and this function
+    # computes exactly what it did before the zones existed (NEXT I-1).
+    if fence_zone_mps is not None:
+        terms["fence"] = float(fence_zone_mps)
     v_lin = min(terms.values())
-    v_lin_free = min(terms["profile"], terms["spec"])
+    # The ceiling for reverse vx and lateral vy drops ONLY the f term: f is a
+    # FORWARD clearance, so gating a backup with it would pin the robot
+    # against the wall it is easing off (see the module note). Every other
+    # term is direction-independent and must stay -- a zone limit especially:
+    # "该区内的速度上限" is a speed, and reversing at 2 m/s through a 1 m/s
+    # zone breaks it exactly as much as driving forward does.
+    v_lin_free = min(v for k, v in terms.items() if k != "free_space")
     # delta of the min term(s): what the next-larger term would have allowed.
     above = sorted(v for v in terms.values() if v > v_lin)
     second = above[0] if above else v_lin
