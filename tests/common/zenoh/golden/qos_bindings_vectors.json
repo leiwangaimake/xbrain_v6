@@ -29,175 +29,543 @@
   "robot_id": "dog-01",
   "qos": {
     "profiles": {
-      "Q0_safety": {"congestion_control": "drop", "priority": "real_time", "reliability": "reliable", "express": true, "handler": {"kind": "ring", "depth": 8}},
-      "Q1_rt": {"congestion_control": "drop", "priority": "real_time", "reliability": "best_effort", "express": true, "handler": {"kind": "ring", "depth": 1}},
-      "Q2_state": {"congestion_control": "drop", "priority": "data_high", "reliability": "reliable", "express": false, "handler": {"kind": "ring", "depth": 4}},
-      "Q3_cmd": {"congestion_control": "block", "priority": "data", "reliability": "reliable", "express": false, "handler": {"kind": "fifo", "depth": 256}},
-      "Q4_stream": {"congestion_control": "drop", "priority": "interactive_high", "reliability": "best_effort", "express": false, "handler": {"kind": "ring", "depth": 0}}
+      "Q0_safety": {
+        "congestion_control": "drop",
+        "priority": "real_time",
+        "reliability": "reliable",
+        "express": true,
+        "handler": {
+          "kind": "ring",
+          "depth": 8
+        }
+      },
+      "Q1_rt": {
+        "congestion_control": "drop",
+        "priority": "real_time",
+        "reliability": "best_effort",
+        "express": true,
+        "handler": {
+          "kind": "ring",
+          "depth": 1
+        }
+      },
+      "Q2_state": {
+        "congestion_control": "drop",
+        "priority": "data_high",
+        "reliability": "reliable",
+        "express": false,
+        "handler": {
+          "kind": "ring",
+          "depth": 4
+        }
+      },
+      "Q3_cmd": {
+        "congestion_control": "block",
+        "priority": "data",
+        "reliability": "reliable",
+        "express": false,
+        "handler": {
+          "kind": "fifo",
+          "depth": 256
+        }
+      },
+      "Q4_stream": {
+        "congestion_control": "drop",
+        "priority": "interactive_high",
+        "reliability": "best_effort",
+        "express": false,
+        "handler": {
+          "kind": "ring",
+          "depth": 0
+        }
+      }
     },
     "bindings": [
-      {"match": "xbrain/*/cmd/estop", "profile": "Q0_safety"},
-      {"match": "xbrain/*/cmd/estop/ack", "profile": "Q0_safety"},
-      {"match": "xbrain/*/rt/safety/**", "profile": "Q0_safety"},
-      {"match": "xbrain/*/probe/estop/**", "profile": "Q0_safety"},
-      {"match": "xbrain/*/cmd/chassis/ctrl", "profile": "Q0_safety"},
-      {"match": "xbrain/*/cmd/chassis/ctrl/ack", "profile": "Q0_safety"},
-      {"match": "xbrain/*/rt/audio/mic", "profile": "Q1_rt", "set": {"handler": {"kind": "ring", "depth": 4}}},
-      {"match": "xbrain/*/rt/audio/play", "profile": "Q1_rt", "set": {"handler": {"kind": "ring", "depth": 4}}},
-      {"match": "xbrain/*/rt/teleop/input", "profile": "Q1_rt"},
-      {"match": "xbrain/*/rt/lidar/points", "profile": "Q1_rt", "set": {"priority": "interactive_high"}},
-      {"match": "xbrain/*/rt/lidar/grid", "profile": "Q1_rt", "set": {"priority": "interactive_high"}},
-      {"match": "xbrain/*/rt/perception/status", "profile": "Q2_state"},
-      {"match": "xbrain/*/rt/perception/**", "profile": "Q1_rt"},
-      {"match": "xbrain/*/rt/gnss/**", "profile": "Q1_rt"},
-      {"match": "xbrain/*/rt/lidar/**", "profile": "Q1_rt"},
-      {"match": "xbrain/*/rt/**/cmd_vel", "profile": "Q1_rt"},
-      {"match": "xbrain/*/rt/**/status", "profile": "Q2_state"},
-      {"match": "xbrain/*/rt/**/state", "profile": "Q2_state"},
-      {"match": "xbrain/*/rt/chassis/**", "profile": "Q2_state"},
-      {"match": "xbrain/*/rt/**", "profile": "Q3_cmd"},
-      {"match": "xbrain/*/cmd/teleop", "profile": "Q1_rt", "set": {"handler": {"kind": "ring", "depth": 1}}},
-      {"match": "xbrain/*/state/targets", "profile": "Q2_state", "set": {"priority": "data"}},
-      {"match": "xbrain/*/state/**", "profile": "Q2_state"},
-      {"match": "xbrain/*/health/summary", "profile": "Q2_state"},
-      {"match": "xbrain/*/audio/**", "profile": "Q4_stream"},
-      {"match": "xbrain/*/**", "profile": "Q3_cmd"}
+      {
+        "match": "xbrain/*/cmd/estop",
+        "profile": "Q0_safety"
+      },
+      {
+        "match": "xbrain/*/cmd/estop/ack",
+        "profile": "Q0_safety"
+      },
+      {
+        "match": "xbrain/*/rt/safety/**",
+        "profile": "Q0_safety"
+      },
+      {
+        "match": "xbrain/*/probe/estop/**",
+        "profile": "Q0_safety"
+      },
+      {
+        "match": "xbrain/*/cmd/chassis/ctrl",
+        "profile": "Q0_safety"
+      },
+      {
+        "match": "xbrain/*/cmd/chassis/ctrl/ack",
+        "profile": "Q0_safety"
+      },
+      {
+        "match": "xbrain/*/rt/audio/mic",
+        "profile": "Q1_rt",
+        "set": {
+          "handler": {
+            "kind": "ring",
+            "depth": 4
+          }
+        }
+      },
+      {
+        "match": "xbrain/*/rt/audio/play",
+        "profile": "Q1_rt",
+        "set": {
+          "handler": {
+            "kind": "ring",
+            "depth": 4
+          }
+        }
+      },
+      {
+        "match": "xbrain/*/rt/teleop/input",
+        "profile": "Q1_rt"
+      },
+      {
+        "match": "xbrain/*/rt/lidar/points",
+        "profile": "Q1_rt",
+        "set": {
+          "priority": "interactive_high"
+        }
+      },
+      {
+        "match": "xbrain/*/rt/lidar/grid",
+        "profile": "Q1_rt",
+        "set": {
+          "priority": "interactive_high"
+        }
+      },
+      {
+        "match": "xbrain/*/rt/perception/status",
+        "profile": "Q2_state"
+      },
+      {
+        "match": "xbrain/*/rt/perception/**",
+        "profile": "Q1_rt"
+      },
+      {
+        "match": "xbrain/*/rt/gnss/**",
+        "profile": "Q1_rt"
+      },
+      {
+        "match": "xbrain/*/rt/lidar/**",
+        "profile": "Q1_rt"
+      },
+      {
+        "match": "xbrain/*/rt/**/cmd_vel",
+        "profile": "Q1_rt"
+      },
+      {
+        "match": "xbrain/*/rt/**/status",
+        "profile": "Q2_state"
+      },
+      {
+        "match": "xbrain/*/rt/**/state",
+        "profile": "Q2_state"
+      },
+      {
+        "match": "xbrain/*/rt/chassis/**",
+        "profile": "Q2_state"
+      },
+      {
+        "match": "xbrain/*/rt/audio/gate",
+        "profile": "Q2_state"
+      },
+      {
+        "match": "xbrain/*/rt/audio/lease",
+        "profile": "Q2_state"
+      },
+      {
+        "match": "xbrain/*/rt/**",
+        "profile": "Q3_cmd"
+      },
+      {
+        "match": "xbrain/*/cmd/teleop",
+        "profile": "Q1_rt",
+        "set": {
+          "handler": {
+            "kind": "ring",
+            "depth": 1
+          }
+        }
+      },
+      {
+        "match": "xbrain/*/state/targets",
+        "profile": "Q2_state",
+        "set": {
+          "priority": "data"
+        }
+      },
+      {
+        "match": "xbrain/*/state/**",
+        "profile": "Q2_state"
+      },
+      {
+        "match": "xbrain/*/health/summary",
+        "profile": "Q2_state"
+      },
+      {
+        "match": "xbrain/*/audio/**",
+        "profile": "Q4_stream"
+      },
+      {
+        "match": "xbrain/*/**",
+        "profile": "Q3_cmd"
+      }
     ],
-    "rt_override": {"congestion_control": "drop", "priority": "interactive_high", "handler": {"kind": "fifo", "depth": 32}}
+    "rt_override": {
+      "congestion_control": "drop",
+      "priority": "interactive_high",
+      "handler": {
+        "kind": "fifo",
+        "depth": 32
+      }
+    }
   },
   "vectors": [
     {
       "key": "xbrain/dog-01/cmd/estop",
       "why": "S2.4.5 第 7 条: estop is single-listed as Q0 so that Q3's block can never turn a pressed button into a 3 s wait",
-      "binding_index": 0, "binding_match": "xbrain/*/cmd/estop", "profile": "Q0_safety",
-      "congestion_control": "drop", "priority": "real_time", "reliability": "reliable", "express": true,
-      "handler": {"kind": "ring", "depth": 8}, "rt_override_applied": false
+      "binding_index": 0,
+      "binding_match": "xbrain/*/cmd/estop",
+      "profile": "Q0_safety",
+      "congestion_control": "drop",
+      "priority": "real_time",
+      "reliability": "reliable",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 8
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/cmd/estop/ack",
       "why": "the ack terminates the 10 Hz resend window in S2.4.5 第 7 条, so it needs the same queue as the command",
-      "binding_index": 1, "binding_match": "xbrain/*/cmd/estop/ack", "profile": "Q0_safety",
-      "congestion_control": "drop", "priority": "real_time", "reliability": "reliable", "express": true,
-      "handler": {"kind": "ring", "depth": 8}, "rt_override_applied": false
+      "binding_index": 1,
+      "binding_match": "xbrain/*/cmd/estop/ack",
+      "profile": "Q0_safety",
+      "congestion_control": "drop",
+      "priority": "real_time",
+      "reliability": "reliable",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 8
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/cmd/chassis/ctrl",
       "why": "S2.4.7 v0.3 added it as Q0 because S9.3.3 makes it the only path out of hes_lock and timeout_lock",
-      "binding_index": 4, "binding_match": "xbrain/*/cmd/chassis/ctrl", "profile": "Q0_safety",
-      "congestion_control": "drop", "priority": "real_time", "reliability": "reliable", "express": true,
-      "handler": {"kind": "ring", "depth": 8}, "rt_override_applied": false
+      "binding_index": 4,
+      "binding_match": "xbrain/*/cmd/chassis/ctrl",
+      "profile": "Q0_safety",
+      "congestion_control": "drop",
+      "priority": "real_time",
+      "reliability": "reliable",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 8
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/cmd/chassis/ctrl/ack",
       "why": "same unlock path as its command; a lower queue here would leave the unlock unconfirmed",
-      "binding_index": 5, "binding_match": "xbrain/*/cmd/chassis/ctrl/ack", "profile": "Q0_safety",
-      "congestion_control": "drop", "priority": "real_time", "reliability": "reliable", "express": true,
-      "handler": {"kind": "ring", "depth": 8}, "rt_override_applied": false
+      "binding_index": 5,
+      "binding_match": "xbrain/*/cmd/chassis/ctrl/ack",
+      "profile": "Q0_safety",
+      "congestion_control": "drop",
+      "priority": "real_time",
+      "reliability": "reliable",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 8
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/rt/safety/estop",
       "why": "the v0.3 repair itself: before it, this key fell through to rt/** and lost real_time plus express, which S2.2.12 calls the most serious row it found",
-      "binding_index": 2, "binding_match": "xbrain/*/rt/safety/**", "profile": "Q0_safety",
-      "congestion_control": "drop", "priority": "real_time", "reliability": "reliable", "express": true,
-      "handler": {"kind": "ring", "depth": 8}, "rt_override_applied": false
+      "binding_index": 2,
+      "binding_match": "xbrain/*/rt/safety/**",
+      "profile": "Q0_safety",
+      "congestion_control": "drop",
+      "priority": "real_time",
+      "reliability": "reliable",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 8
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/probe/estop/ping",
       "why": "the other half of the v0.3 repair: the old probe/estop rule matched no sub-segment, so ping and pong landed in the xbrain/*/** fallback and acquired block",
-      "binding_index": 3, "binding_match": "xbrain/*/probe/estop/**", "profile": "Q0_safety",
-      "congestion_control": "drop", "priority": "real_time", "reliability": "reliable", "express": true,
-      "handler": {"kind": "ring", "depth": 8}, "rt_override_applied": false
+      "binding_index": 3,
+      "binding_match": "xbrain/*/probe/estop/**",
+      "profile": "Q0_safety",
+      "congestion_control": "drop",
+      "priority": "real_time",
+      "reliability": "reliable",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 8
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/rt/audio/mic",
       "why": "S2.2.12 QoS gap table: 50 Hz audio on FIFO grows lag without bound, so the binding sets Ring(4) over Q1",
-      "binding_index": 6, "binding_match": "xbrain/*/rt/audio/mic", "profile": "Q1_rt",
-      "congestion_control": "drop", "priority": "real_time", "reliability": "best_effort", "express": true,
-      "handler": {"kind": "ring", "depth": 4}, "rt_override_applied": false
+      "binding_index": 6,
+      "binding_match": "xbrain/*/rt/audio/mic",
+      "profile": "Q1_rt",
+      "congestion_control": "drop",
+      "priority": "real_time",
+      "reliability": "best_effort",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 4
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/rt/audio/play",
       "why": "same argument as the mic direction",
-      "binding_index": 7, "binding_match": "xbrain/*/rt/audio/play", "profile": "Q1_rt",
-      "congestion_control": "drop", "priority": "real_time", "reliability": "best_effort", "express": true,
-      "handler": {"kind": "ring", "depth": 4}, "rt_override_applied": false
+      "binding_index": 7,
+      "binding_match": "xbrain/*/rt/audio/play",
+      "profile": "Q1_rt",
+      "congestion_control": "drop",
+      "priority": "real_time",
+      "reliability": "best_effort",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 4
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/rt/teleop/input",
       "why": "Ring(1) from Q1 unchanged; S2.2.12 notes FIFO here made the S12A.9.6 age check vacuous",
-      "binding_index": 8, "binding_match": "xbrain/*/rt/teleop/input", "profile": "Q1_rt",
-      "congestion_control": "drop", "priority": "real_time", "reliability": "best_effort", "express": true,
-      "handler": {"kind": "ring", "depth": 1}, "rt_override_applied": false
+      "binding_index": 8,
+      "binding_match": "xbrain/*/rt/teleop/input",
+      "profile": "Q1_rt",
+      "congestion_control": "drop",
+      "priority": "real_time",
+      "reliability": "best_effort",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 1
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/rt/lidar/points",
       "why": "S2.4.2 档内例外: 175 KB frames drop to interactive_high so they stop sharing a queue with cmd_vel and gnss",
-      "binding_index": 9, "binding_match": "xbrain/*/rt/lidar/points", "profile": "Q1_rt",
-      "congestion_control": "drop", "priority": "interactive_high", "reliability": "best_effort", "express": true,
-      "handler": {"kind": "ring", "depth": 1}, "rt_override_applied": false
+      "binding_index": 9,
+      "binding_match": "xbrain/*/rt/lidar/points",
+      "profile": "Q1_rt",
+      "congestion_control": "drop",
+      "priority": "interactive_high",
+      "reliability": "best_effort",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 1
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/rt/lidar/grid",
       "why": "same exception; Ring(1) is what keeps the RNS grid age check in S2.4.6 meaningful",
-      "binding_index": 10, "binding_match": "xbrain/*/rt/lidar/grid", "profile": "Q1_rt",
-      "congestion_control": "drop", "priority": "interactive_high", "reliability": "best_effort", "express": true,
-      "handler": {"kind": "ring", "depth": 1}, "rt_override_applied": false
+      "binding_index": 10,
+      "binding_match": "xbrain/*/rt/lidar/grid",
+      "profile": "Q1_rt",
+      "congestion_control": "drop",
+      "priority": "interactive_high",
+      "reliability": "best_effort",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 1
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/rt/motion/cmd_vel",
       "why": "reached through rt/**/cmd_vel, not through any domain-specific rule; block here is what S2.4.5 第 1 条 traces to Tier 1 locking the machine",
-      "binding_index": 15, "binding_match": "xbrain/*/rt/**/cmd_vel", "profile": "Q1_rt",
-      "congestion_control": "drop", "priority": "real_time", "reliability": "best_effort", "express": true,
-      "handler": {"kind": "ring", "depth": 1}, "rt_override_applied": false
+      "binding_index": 15,
+      "binding_match": "xbrain/*/rt/**/cmd_vel",
+      "profile": "Q1_rt",
+      "congestion_control": "drop",
+      "priority": "real_time",
+      "reliability": "best_effort",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 1
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/rt/chassis/state",
       "why": "the non-obvious one: rt/**/state wins over rt/chassis/** because it is written first, and S2.4.7 keeps that rule as the catch-all stopping any RT state key from landing in Q3-rt",
-      "binding_index": 17, "binding_match": "xbrain/*/rt/**/state", "profile": "Q2_state",
-      "congestion_control": "drop", "priority": "data_high", "reliability": "reliable", "express": false,
-      "handler": {"kind": "ring", "depth": 4}, "rt_override_applied": false
+      "binding_index": 17,
+      "binding_match": "xbrain/*/rt/**/state",
+      "profile": "Q2_state",
+      "congestion_control": "drop",
+      "priority": "data_high",
+      "reliability": "reliable",
+      "express": false,
+      "handler": {
+        "kind": "ring",
+        "depth": 4
+      },
+      "rt_override_applied": false
+    },
+    {
+      "key": "xbrain/dog-01/rt/audio/gate",
+      "why": "v1.8: half-duplex gate. Before v1.8 this key had NO binding row and fell to rt/** -> Q3_cmd, which QOS-C1 then rewrote to drop/FIFO(32) -- so it ran with interactive_high priority and a 32-deep FIFO. The S2.2 key table had been carrying '应为 Q2' as an open to-do since v0.6. rt_override_applied must be FALSE now: the binding points at Q2_state, which is already drop, so QOS-C1 has nothing to rewrite. A true here would mean the explicit row is not winning and rt/** still is.",
+      "binding_index": 19,
+      "binding_match": "xbrain/*/rt/audio/gate",
+      "profile": "Q2_state",
+      "congestion_control": "drop",
+      "priority": "data_high",
+      "reliability": "reliable",
+      "express": false,
+      "handler": {
+        "kind": "ring",
+        "depth": 4
+      },
+      "rt_override_applied": false
+    },
+    {
+      "key": "xbrain/dog-01/rt/audio/lease",
+      "why": "v1.8 (99 U90 1): the lease half of the same pair. The knobs here are the REAL change this binding makes -- priority drops interactive_high -> data_high and the handler goes FIFO(32) -> Ring(4), i.e. this key can now lose frames. reliability stays reliable on purpose: a dropped lease leaves the two sides disagreeing about who holds it. Pinning all five knobs here rather than just the profile name is what makes that trade-off visible to the next reader instead of hidden behind a profile label.",
+      "binding_index": 20,
+      "binding_match": "xbrain/*/rt/audio/lease",
+      "profile": "Q2_state",
+      "congestion_control": "drop",
+      "priority": "data_high",
+      "reliability": "reliable",
+      "express": false,
+      "handler": {
+        "kind": "ring",
+        "depth": 4
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/rt/behavior/request",
       "why": "the other non-obvious one: no specific rule covers it, so it falls to rt/** and Q3_cmd, and QOS-C1 then rewrites it to Q3-rt because block on the RT plane has no upper bound",
-      "binding_index": 19, "binding_match": "xbrain/*/rt/**", "profile": "Q3_cmd",
-      "congestion_control": "drop", "priority": "interactive_high", "reliability": "reliable", "express": false,
-      "handler": {"kind": "fifo", "depth": 32}, "rt_override_applied": true
+      "binding_index": 21,
+      "binding_match": "xbrain/*/rt/**",
+      "profile": "Q3_cmd",
+      "congestion_control": "drop",
+      "priority": "interactive_high",
+      "reliability": "reliable",
+      "express": false,
+      "handler": {
+        "kind": "fifo",
+        "depth": 32
+      },
+      "rt_override_applied": true
     },
     {
       "key": "xbrain/dog-01/cmd/teleop",
       "why": "S2.2.12 gap table: Q3's block here would stall the p5_gateway receive thread and take the whole cmd/** downlink with it",
-      "binding_index": 20, "binding_match": "xbrain/*/cmd/teleop", "profile": "Q1_rt",
-      "congestion_control": "drop", "priority": "real_time", "reliability": "best_effort", "express": true,
-      "handler": {"kind": "ring", "depth": 1}, "rt_override_applied": false
+      "binding_index": 22,
+      "binding_match": "xbrain/*/cmd/teleop",
+      "profile": "Q1_rt",
+      "congestion_control": "drop",
+      "priority": "real_time",
+      "reliability": "best_effort",
+      "express": true,
+      "handler": {
+        "kind": "ring",
+        "depth": 1
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/state/targets",
       "why": "S2.4.2 档内例外: the mask-carrying frame is far larger than other state keys, so it drops to data rather than crowding the state queue",
-      "binding_index": 21, "binding_match": "xbrain/*/state/targets", "profile": "Q2_state",
-      "congestion_control": "drop", "priority": "data", "reliability": "reliable", "express": false,
-      "handler": {"kind": "ring", "depth": 4}, "rt_override_applied": false
+      "binding_index": 23,
+      "binding_match": "xbrain/*/state/targets",
+      "profile": "Q2_state",
+      "congestion_control": "drop",
+      "priority": "data",
+      "reliability": "reliable",
+      "express": false,
+      "handler": {
+        "kind": "ring",
+        "depth": 4
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/health/summary",
       "why": "its own rule rather than the fallback, because health/summary is periodic state and the fallback is block plus FIFO(256)",
-      "binding_index": 23, "binding_match": "xbrain/*/health/summary", "profile": "Q2_state",
-      "congestion_control": "drop", "priority": "data_high", "reliability": "reliable", "express": false,
-      "handler": {"kind": "ring", "depth": 4}, "rt_override_applied": false
+      "binding_index": 25,
+      "binding_match": "xbrain/*/health/summary",
+      "profile": "Q2_state",
+      "congestion_control": "drop",
+      "priority": "data_high",
+      "reliability": "reliable",
+      "express": false,
+      "handler": {
+        "kind": "ring",
+        "depth": 4
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/health/bit",
       "why": "the fallback, and correctly so: S2.4.2 lists health/bit under Q3 with cmd/**, event/** and data/**",
-      "binding_index": 25, "binding_match": "xbrain/*/**", "profile": "Q3_cmd",
-      "congestion_control": "block", "priority": "data", "reliability": "reliable", "express": false,
-      "handler": {"kind": "fifo", "depth": 256}, "rt_override_applied": false
+      "binding_index": 27,
+      "binding_match": "xbrain/*/**",
+      "profile": "Q3_cmd",
+      "congestion_control": "block",
+      "priority": "data",
+      "reliability": "reliable",
+      "express": false,
+      "handler": {
+        "kind": "fifo",
+        "depth": 256
+      },
+      "rt_override_applied": false
     },
     {
       "key": "xbrain/dog-01/audio/broadcast",
       "why": "Q4, and its depth is the one the deployment still owes: S2.4.7 writes 0, S13.15 lists that exact condition under E_QOS_VIOLATION, so require_handler_depth() must refuse rather than pick a number",
-      "binding_index": 24, "binding_match": "xbrain/*/audio/**", "profile": "Q4_stream",
-      "congestion_control": "drop", "priority": "interactive_high", "reliability": "best_effort", "express": false,
-      "handler": {"kind": "ring", "depth": null}, "rt_override_applied": false
+      "binding_index": 26,
+      "binding_match": "xbrain/*/audio/**",
+      "profile": "Q4_stream",
+      "congestion_control": "drop",
+      "priority": "interactive_high",
+      "reliability": "best_effort",
+      "express": false,
+      "handler": {
+        "kind": "ring",
+        "depth": null
+      },
+      "rt_override_applied": false
     }
   ]
 }
