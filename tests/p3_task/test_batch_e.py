@@ -32,52 +32,43 @@ from xbrain.p3_task.charge.executor import (
     is_forward_transition,
     next_stage,
 )
-from xbrain.p3_task.charge.trigger import (
-    ChargeThresholds,
-    evaluate,
-)
 
 pytestmark = pytest.mark.no_device
 
 
-THR = ChargeThresholds(
-    soc_low_pct=30.0, soc_urgent_pct=15.0, soc_critical_pct=5.0,
-    soc_recover_pct=40.0, idle_charge_after_s=600.0)
-
-
-# --- BIZ-P3-15 charge triggers ---
-
-def test_cr3_critical_stop_in_place_wins_over_user_command():
-    d = evaluate(soc_pct=3.0, user_requested=True,
-                  patrol_block_ended=False, return_home_auto=False,
-                  dock_admission_ok_for_suspended=False,
-                  idle_seconds=0.0, thr=THR)
-    assert d.trigger_code == "CR-3" and d.stop_in_place is True
-
-
-def test_cr2_urgent():
-    d = evaluate(10.0, False, False, False, False, 0.0, THR)
-    assert d.trigger_code == "CR-2" and d.stop_in_place is False
-
-
-def test_cr1_low():
-    d = evaluate(25.0, False, False, False, False, 0.0, THR)
-    assert d.trigger_code == "CR-1"
-
-
-def test_cr4_user_over_normal_soc():
-    d = evaluate(50.0, True, False, False, False, 0.0, THR)
-    assert d.trigger_code == "CR-4"
-
-
-def test_cr8_idle_timer():
-    d = evaluate(50.0, False, False, False, False, 700.0, THR)
-    assert d.trigger_code == "CR-8"
-
-
-def test_no_trigger_when_all_conditions_false():
-    d = evaluate(50.0, False, False, False, False, 0.0, THR)
-    assert d.triggered is False
+# ===========================================================================
+# BIZ-P3-15 charge triggers -- SIX CASES REMOVED 2026-10-09 (T11)
+# ===========================================================================
+#
+# This file used to carry test_cr3_critical_stop_in_place_wins_over_user_command
+# / test_cr2_urgent / test_cr1_low / test_cr4_user_over_normal_soc /
+# test_cr8_idle_timer / test_no_trigger_when_all_conditions_false, plus a THR
+# constant built from soc_low_pct / soc_urgent_pct / soc_recover_pct /
+# idle_charge_after_s.
+#
+# WHY THEY WERE REMOVED RATHER THAN UPDATED: every one of them pinned a
+# specification that does not exist. 15 S8.2 defines TWO criteria joined by OR
+# ("两个判据取'或'"); charge/trigger.py had implemented eight, and these cases
+# asserted the eight. Four of the conditions have no source in any volume
+# (patrol block ended / return_home auto-charge / dock admission clearing a
+# suspended task / idle timer) and were deleted under CLAUDE.md S9.3; the two
+# SoC tiers collapsed into the contract's single soc_threshold_pct, because
+# 15 S12 CD-4 says verbatim "不要再加第三个阈值". The codes CR-1..CR-8 were
+# themselves a collision with 15's own CR-1..CR-8 (the S8.2A critical rules).
+#
+# So there was nothing in these six cases to carry forward: their inputs,
+# their thresholds and their expected codes all referred to things that are
+# now gone. Updating them would have meant writing new cases in old clothes.
+#
+# *** THE PART WORTH REMEMBERING: these six were GREEN for as long as they
+# existed, and they were the only cases that ever touched trigger.py. A full
+# suite of green criteria over an invented specification is indistinguishable
+# from a correctly tested module -- until somebody reads the source volume.
+# They also hid the real gap: criterion B (CHG-11, "is 30% even enough from
+# HERE") was never implemented, and no case could notice an absence.
+#
+# Replacement: tests/p3_task/test_charge_trigger.py, 14 cases against 15 S8.2
+# and S8.2A, eight mutants killed.
 
 
 # --- BIZ-P3-16 dock selection ---
