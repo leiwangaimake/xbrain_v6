@@ -57,7 +57,15 @@ def _green_common_tree() -> Dict[str, Any]:
             "fence": {"soft_margin_min_m": 0.30, "predict_dt_s": 0.45},
             "retention": {
                 # Monotone: task <= event <= command.
-                "task_days": 30, "event_days": 90, "command_days": 180,
+                # Key is `command_log_days`, NOT `command_days`. Until
+                # 2026-10-08 this dict said `command_days` and so did
+                # the implementation, so the pair agreed with each
+                # other and with nothing in configs/ -- the
+                # `event <= command` half compared None and was
+                # unconditionally green. Real key: 15 S9.11 verbatim
+                # "commands 180 days (common.retention.command_log_days)".
+                "task_days": 30, "event_days": 90,
+                "command_log_days": 180,
             },
             "recording": {
                 # C-3: fence_close_tol == 2 * min_dist.
@@ -186,6 +194,38 @@ def test_variant_2_retention_not_monotone_is_red(tmp_path):
         c_run({"config_root": root})
     assert ei.value.detail["kind"] == "retention_not_monotone"
     assert ei.value.detail["which_pair"] == "task > event"
+
+
+def test_tc21_command_log_shorter_than_task_is_red(tmp_path):
+    """15 TC-21 verbatim: "set command_log_days shorter than task_days
+    -> refuse to boot".
+
+    *** This case PASSED before 2026-10-08 and that was the defect.
+    C-1 read `common.retention.command_days`, which no layer ever
+    writes, so the `event <= command` comparison always got None on
+    the right-hand side and never ran. A tree with command_log_days=10
+    (shorter than task_days=30 AND than event_days=90) was accepted.
+    15 TC-21 names exactly this tree as a must-refuse.
+
+    Why it is pinned on `which_pair == "event > command"` rather than
+    on the mere fact of raising: the task > event pair is left green
+    here on purpose (task 30 <= event 90), so only the pair this fix
+    restored can be what fired. An implementation that still read the
+    wrong key cannot produce this detail at all.
+    """
+    tree = _green_common_tree()
+    # 10 < task_days=30 and < event_days=90; the pair that must fire is
+    # event(90) > command_log(10).
+    tree["common"]["retention"]["command_log_days"] = 10
+    root = _make_root(tmp_path, common_tree=tree)
+    with pytest.raises(XbrainError) as ei:
+        c_run({"config_root": root})
+    assert ei.value.detail["kind"] == "retention_not_monotone"
+    assert ei.value.detail["which_pair"] == "event > command"
+    # The offending value must be reported under the REAL key name --
+    # an operator greps configs/ for it. Reporting it as
+    # `command_days` would send them to a key that does not exist.
+    assert ei.value.detail["command_log_days"] == 10
 
 
 # ---------------------------------------------------------------------------

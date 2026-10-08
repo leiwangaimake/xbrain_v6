@@ -10,7 +10,10 @@ Runs FIFTH in the freeze pipeline (ORD-1, after B). Walks the merged
 overlay and every L6 tree; asserts five cross-file identities that
 must hold jointly:
 
-  C-1 Retention monotonicity: task_days <= event_days <= command_days
+  C-1 Retention monotonicity: task_days <= event_days <= command_log_days
+      plus all-three-present (15 S9.11 item 4 verbatim: "retention
+      THREE ITEMS COMPLETE (task_days / event_days /
+      command_log_days) ... (assertion C)").
       (three retention buckets on common.retention.*). Deleting a
       row (like pose_track) does not change the ordering; the current
       three-value form was defined post-U46. Reason: shorter retention
@@ -118,11 +121,27 @@ def _get(tree: Dict[str, Any], dotted: str, default=None) -> Any:
 
 
 def _check_retention_monotone(tree: Dict[str, Any]) -> None:
-    """C-1: common.retention.task_days <= event_days <= command_days.
+    """C-1: common.retention.task_days <= event_days <= command_log_days.
+
+    *** 2026-10-08 key-name fix (CLAUDE.md iron rule 1, defect class
+    3.2 shape (1) "an assertion that is always green"): this function
+    read `common.retention.command_days`, a key that exists NOWHERE in
+    the repo. The real key is `command_log_days` -- 15 S9.11 table
+    verbatim "commands 180 days (common.retention.command_log_days)",
+    the schema registry verbatim "common.retention.command_log_days",
+    configs/common.yaml and configs/sites/_skeleton.yaml both spell it
+    that way. Effect of the typo: `command_days` always resolved to
+    None, so the `event <= command` half NEVER compared anything and
+    was unconditionally green. 15 TC-21 verbatim ("set command_log_days
+    shorter than task_days -> refuse to boot") would have PASSED a
+    tree that violates it. The green test that covered this half was
+    green for the same reason -- its hand-built dict carried the same
+    wrong key, so test and implementation agreed with each other and
+    with nothing else.
 
     All three optional in the current tree -- if any is missing, we
-    skip the check (M would have caught the required-ness elsewhere,
-    if this key becomes required). If any TWO are present, we compare
+    skip the pair comparison (presence is enforced separately, see the
+    caller's L4 completeness check). If any TWO are present, we compare
     just those; that keeps the check useful during migration.
 
     Reason for monotonicity: shorter retention on a later pipeline
@@ -142,9 +161,9 @@ def _check_retention_monotone(tree: Dict[str, Any]) -> None:
     # so an override at any layer is honoured.
     task_days = _get(tree, "common.retention.task_days")
     event_days = _get(tree, "common.retention.event_days")
-    command_days = _get(tree, "common.retention.command_days")
+    command_log_days = _get(tree, "common.retention.command_log_days")
     # Ordered pairs. Only compare pairs where both values are present.
-    # Half-configured trees (task+event but no command_days) still
+    # Half-configured trees (task+event but no command_log_days) still
     # exercise the check for the pair that IS complete.
     # Two separate pair-checks (task<=event AND event<=command) rather
     # than a triple, so a missing middle still catches the outer pair.
@@ -153,10 +172,11 @@ def _check_retention_monotone(tree: Dict[str, Any]) -> None:
             _fail("retention_not_monotone",
                   task_days=task_days, event_days=event_days,
                   which_pair="task > event")
-    if event_days is not None and command_days is not None:
-        if event_days > command_days:
+    if event_days is not None and command_log_days is not None:
+        if event_days > command_log_days:
             _fail("retention_not_monotone",
-                  event_days=event_days, command_days=command_days,
+                  event_days=event_days,
+                  command_log_days=command_log_days,
                   which_pair="event > command")
 
 
