@@ -373,23 +373,29 @@ common:
   # -- 保留期 (10 S5.4.5 retention 行; 权威 15 S9.11) -----------------------
   # 唯一定义处是 sites/{site_id}.yaml 的 retention 段 (L4), 键位在本文件.
   # 读者: P3 清理 / P5 清理 / 启动断言 C 的递增校验.
-  # TODO(15 与 17 两方裁决): 事件保留期一处按单值写, 一处按告警级分级写, 两者不可
-  #   同真; 断言 C 只能对单值求值. 未裁前本文件只声明键位.
+  # [2026-10-08 已落值, 落在 L4 -- 本层[只声明键位, 三个 null 是正确形态]]
+  #   值: tasks 30 / events 90 / commands 180, 出处 15 S9.11 的保留与清理表,
+  #   逐项归属出处 17 S10 的 v0.7.3 订正(逐字 "events 90 天 -- 这是 P5 唯一
+  #   负责清理的一项; tasks 30 / commands 180 由 P3 侧管(15 S9.11)", 并逐字
+  #   "不再写'统一'"). 落点 configs/sites/{site_id}.yaml, 现有 sites/sim.yaml.
   #
-  # [2026-09-29 复核: 仍然不可落值] 注意卡点不是"没有数". 15 S9.11 的保留与清理表
-  #   逐字给了三个数(tasks 终态行 30 天 . events 90 天 . commands 180 天),
-  #   同节并逐字 "task(30) <= events(90) <= commands(180) (三项)". 压着不落的是
-  #   另外两件事:
-  #     1. 唯一定义处在 L4 -- 10 S5.4.5 本行的"唯一定义处"列逐字
-  #        "sites/{site_id}.yaml . retention(键位在 common.yaml)". 在本层落值
-  #        就是同一个键的第二份定义, 正是断言 B 要拦的"疑似复制";
-  #     2. 15 与 17 的分歧未裁 -- 10 S5.4.5 本行逐字 "15 S12 按单值断言
-  #        event = 90, 17 S10 却按 sev 分级 {info:7, warn:30, alarm:365, fault:365}
-  #        ... 两者不可同真 ... 归 15 / 17 两方裁决". 照单值落, 分级那一支一旦
-  #        被采纳, 断言 C 的递增判据本身要改(info:7 < task:30 会误报).
-  #   连带一个结构问题(已登记 docs/NEXT.md): build_overlay 不合并 L4(选 L4 需要先
-  #   有 site_id), 而断言 A 的 null 豁免表只有 enu_origin 三项 => 本段三个键即使
-  #   由 L4 站点文件供值, 也仍会在断言 A 处被判 null. 这一条归冻结线, 不在本文件解.
+  # *** 原先压着不落的两件事, 各自的下场:
+  #   1. "唯一定义处在 L4, 在本层落值就是第二份定义" -- [这条仍然成立且仍在守].
+  #      本段三个 null 就是 10 S5.4.5 说的"键位在 common.yaml". 判据
+  #      tests/configs/test_retention_single_definition.py 钉住本段必须是
+  #      三个 null, 且 common_sim.yaml 不许供这三个键(变体填它会掩盖 L4 是否
+  #      接线 -- 2026-10-08 之前它正是那样, 见下).
+  #   2. "15 与 17 的分歧未裁" -- [已过时]. 17 已于 v0.7.3 自行订正为逐项归属
+  #      (见上). 那条分歧曾经是真的: sev 分级出自 17 S10.1 的 v0.1 形态, p5 侧
+  #      至今留着拦 dict 形态的护栏(p5_gateway/config/bind_guard.py). 10 S5.4.5
+  #      该行的"仍漂移且待裁决"同批订正.
+  #
+  # *** 连带的结构问题(CFG-A6)已解: load_layers 现在二次合并 L4 -- 读完 L1 拿到
+  #   site_id 再选站点文件(xbrain/boot/freeze/assertions/_layer_loader.py 的
+  #   resolve_site_id). 之前 build_overlay 虽在 LAYERS 里列了 L4 及其命名空间
+  #   ("common.geo.", "common.site.", "common.retention."), 但 load_layers 不读
+  #   它, 于是站点文件供了全部自己该供的键, overlay 仍报它们未赋值.
+  #   判据: 同一文件的 provenance 用例(三键必须来自 L4, 不是"值对就行").
   retention:
     task_days: null
     event_days: null

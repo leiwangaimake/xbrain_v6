@@ -263,7 +263,32 @@ def layer_rows(config_root: str, *,
     actually read. Passing the raw value would list sites/<L1 value>.yaml while
     the freeze had merged sites/<env value>.yaml -- a MANIFEST that names the
     wrong file is worse than one that names none.
+
+    site_id=None means "work it out", not "no site layer" (2026-10-08,
+    CFG-A6): load_layers now picks L4 itself, so a caller that passes
+    no site_id would get a MANIFEST with no site row while the overlay
+    had merged one. Falling back to the SAME resolver load_layers uses
+    (_layer_loader.resolve_site_id) is what keeps the two in step --
+    the inventory test compares this row set against the paths the
+    loader really opens, and that is the comparison that caught it.
+    Pass a site_id explicitly (materialise does, from the resolved
+    tree) and that value still wins; the fallback never overrides it.
+
+    robot_id has NO such fallback on purpose: L4b is not merged by
+    load_layers (assertion H does its own two-step read and needs to
+    tell "no calib file" from "calib file with holes"), so there is no
+    second party for this function to agree with. Giving it a fallback
+    would list a calib file in the MANIFEST that the overlay never
+    merged -- the mirror image of the defect above.
     """
+    if site_id is None:
+        # Local import: inventory is imported by the freeze entry point
+        # and _layer_loader pulls yaml + the error classes, so keep the
+        # cost on the one call that needs it.
+        from xbrain.boot.freeze.assertions._layer_loader import (
+            resolve_site_id,
+        )
+        site_id = resolve_site_id(config_root, variant=variant, env=env)
     rows: List[Dict[str, Any]] = []
     # Declaration order of _LAYER_SOURCES is the overlay precedence order
     # (L1 lowest). Emitting rows in that order makes the MANIFEST readable

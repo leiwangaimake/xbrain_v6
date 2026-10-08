@@ -65,6 +65,7 @@ implementer (17 S11 "HMI 暴露面" row + CR-NET-1):
   * vsftpd's listen_address gets the identical treatment (COM-43).
 """
 
+import re
 from typing import List, Tuple
 
 from xbrain.common.errors import E_CONFIG_INVALID, XbrainError
@@ -101,6 +102,13 @@ class P5ConfigError(XbrainError):
     def __init__(self, message: str):
         # E_CONFIG_INVALID from the shared export, never a literal (CLAUDE.md 3.5).
         super().__init__(E_CONFIG_INVALID, message)
+
+
+#: A reference into the common.retention namespace, which is what the
+#: SOURCE yaml carries for retention_days (the freeze line expands it).
+#: Anchored at both ends and namespace-pinned on purpose: see the comment
+#: at its use site for what each half refuses.
+_RETENTION_REF = re.compile(r"^\$\{common\.retention\.[a-z_]+\}$")
 
 
 def _check_bind_list(entries: object, keypath: str) -> List[str]:
@@ -186,6 +194,29 @@ def check_p5_config(mapping: dict) -> None:
             raise P5ConfigError(
                 "%s is the struck per-severity mapping; it must be one integer"
                 % keypath)
+        if isinstance(value, str) and _RETENTION_REF.match(value):
+            # A reference into common.retention.* is the CORRECT shape for
+            # the SOURCE file, and this function only ever sees the source
+            # (it has no production caller -- docs/NEXT.md RT-4). The
+            # reference axis is expanded once, by the freeze line
+            # (10 S5.4.1 calls "references are not expanded per process"
+            # the most important structural decision in that section), so
+            # the integer this check wants exists in
+            # data/run/resolved/p5_gateway.yaml, not here.
+            #
+            # 2026-10-08: this branch exists because the yaml stopped
+            # restating the number. It held `retention_days: 90` twice as
+            # a literal, which made this int check pass and made the
+            # value a second definition of common.retention.event_days --
+            # editing the site file moved neither copy.
+            #
+            # What is NOT relaxed: a dict still raises above (the struck
+            # v0.1 per-severity shape), and any other string still raises
+            # below. The regex pins the namespace too, so
+            # ${common.spec.max_vx_mps} is refused -- a reference to the
+            # wrong key would otherwise expand to a plausible integer and
+            # nothing downstream distinguishes a day count from a speed.
+            continue
         if not isinstance(value, int):
             raise P5ConfigError("%s must be an integer, got %r" % (keypath, value))
 

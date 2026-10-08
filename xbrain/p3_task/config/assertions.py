@@ -88,7 +88,35 @@ def check_b_no_alias_keys(config: dict) -> None:
 
 def check_c_retention_and_fence_relation(config: dict) -> None:
     """Retention triple ascending. If low_batt_profile == 'disabled',
-    U71 guard skips the fence_close_tol == 2*min_dist sub-clause."""
+    U71 guard skips the fence_close_tol == 2*min_dist sub-clause.
+
+    *** This is NOT 10 S5.4.4 assertion C, despite the name (noted
+    2026-10-08). Different keys, different quantities:
+      here          retention.keep_{task,progress,snapshot}_days
+                    -- P3's own L6 keys: how long full task rows,
+                    patrol_progress + step_status, and
+                    task_route_snapshot survive (15 S8)
+      10 S5.4.4 C   common.retention.{task_days, event_days,
+                    command_log_days} -- row retention for the tasks /
+                    events / commands TABLES, checked by the freeze
+                    line (xbrain-config-freeze.service, Stage 0c)
+    They are not two implementations of one rule, so neither is the
+    drifting copy of the other. But 17 S10 v0.7.3 says verbatim that
+    the common.retention ordering is guaranteed by the freeze-line
+    assertion and "NOT by any volume's runtime code" -- a reader who
+    finds this function while checking that sentence must be able to
+    see immediately that it is about other keys, which is why this
+    paragraph is here and not in a commit message.
+
+    Reachability: no production caller today (validate_all, the only
+    function that calls it, has no caller outside tests either). So the
+    "retention keys missing" raise below is not currently a startup
+    behaviour of p3 -- and configs/p3_task.yaml has no retention
+    section at all, so it WOULD raise the moment anything wired it up.
+    Both facts are logged in docs/NEXT.md rather than fixed here:
+    wiring it is a P3 change with its own criteria, not a side effect
+    of a config-layer batch.
+    """
     ret = config.get("retention", {})
     d = ret.get("keep_task_days")
     p = ret.get("keep_progress_days")

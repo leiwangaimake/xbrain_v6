@@ -35,7 +35,16 @@ event:
     # PRAGMA/WAL/busy_timeout 不在此处配置 -- 四库一致且冻结, 见 15 §9.1
   batch_commit_ms:  100
   batch_commit_max: 50
-  retention_days:   90                # * 单值(GWY-P5-17 (5)); task(30) <= event(90) <= command_log(180)
+  # 2026-10-08: 由字面量 90 改为引用. 原写 "retention_days: 90" 并把
+  #   task(30) <= event(90) <= command_log(180) 三个值抄在同一行注释里.
+  #   为何不再成立: 10 S5.4.5 把这三个键的唯一定义处定在 sites/{site_id}.yaml,
+  #   而本行是同一个物理量的第二份定义 -- 改 L4 的 event_days 本进程仍按 90 清,
+  #   且断言 C 的递增校验走 overlay, 看不见本层这份. 抄进注释的三个数同样会过期
+  #   (CLAUDE.md S3.7).
+  #   现在: 引用轴由冻结线一次性展开(CFG-FZ-18), 本进程读产物里的展开值.
+  retention_days:   ${common.retention.event_days}
+                                      # * 单值(GWY-P5-17 (5)); 递增关系由
+                                      # 10 S5.4.4 断言 C-1 在启动期保证.
                                       # delivered != 1 的行不受保留期约束 (17 §3.5.4)
   need_ack_rule:    union             # channel='alarm'  union  sev in {alarm,fault} (17 §3.3 (2))
   ack_timeout_s:    5.0               # 与 11 §1.6 T-45 一致 (v0.7 定案 5.0)
@@ -94,7 +103,11 @@ delivery:                             # 17 §5.0 交付台账
   max_retries: 5
   normal_priority_when: [parked, charging]   # 仅驻车/充电时传普通数据 (COM-53)
   resume_batch:   200                 # 重启恢复一次扫描上限 (DP-3) [建议] 待实测
-  retention_days: 90                  # 与 events 一致; state 非 {acked,reclaimed} 不删 (DP-8)
+  # 2026-10-08: 同上, 由字面量 90 改为引用同一个键. 本行注释原逐字
+  #   "与 events 一致" -- 那正是"应当引用它"的说法, 而字面量做不到:
+  #   两个 90 各自独立, 改一个不会带动另一个.
+  retention_days: ${common.retention.event_days}
+                                      # state 非 {acked,reclaimed} 不删 (DP-8)
   outbox_dir:     outbox              # 相对 disk.data_root; 无同名 .meta.json 不进交付 (DP-6)
   ftp:
     listen_address:                   # ** COM-43: vsftpd 亦须逐口绑定,  禁 0.0.0.0

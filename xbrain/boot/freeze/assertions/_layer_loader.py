@@ -225,9 +225,32 @@ def load_layers(config_root: str,
     and L2; L3 (safety) never (ENV-2). None = production: variant files on
     disk are ignored entirely.
 
-    L4/L4b are NOT included -- they require site_id/robot_id which are
-    values inside the tree we're loading, and picking them here would
-    couple this loader to those values. See module docstring.
+    L4 IS included, by a second pass (CFG-A6 / NEXT T18 "B12 二次合并 L4").
+    sites/{site_id}.yaml cannot be named in _LAYER_SOURCES because its
+    path depends on common.site_id, which is a value inside the tree
+    being loaded. So the L1~L3 loop runs first, site_id is read out of
+    the L1 tree it produced, and only then is L4 picked -- the "two-step
+    load" shape that fv_org_enu and h_calib already use for L4 / L4b.
+    When site_id is absent (production today: no supply point for it,
+    that is CFG-A2) or names a file that is not there, L4 stays {} --
+    exactly the shape every caller already handles.
+
+    L4b is still NOT included: calib/{robot_id}.yaml has its own
+    consumer (assertion H) which does its own two-step load and needs
+    to distinguish "no calib file" from "calib file with holes" -- a
+    distinction this loader would erase by merging it into the overlay.
+    CFG-A6 names L4 only.
+
+    Why the second pass is NOT "the loader coupling itself to a value":
+    the coupling is one-directional and already unavoidable. L4 selection
+    needs site_id no matter who does it; before this change every
+    consumer that wanted L4 re-implemented the same two-step read
+    (fv_org_enu._load_l4_tree, h_calib for L4b), and build_overlay --
+    which already lists L4 in LAYERS with the namespace
+    ("common.geo.", "common.site.", "common.retention.") -- silently
+    merged an empty tree for it. That silent empty was the defect:
+    a site file could supply every key it owns and the overlay would
+    still report them unassigned.
 
     Every entry in the returned dict is present, even if empty ({}) --
     downstream build_overlay iterates the LAYERS constant, not the
@@ -266,7 +289,133 @@ def load_layers(config_root: str,
             # localise a future edit that adds one but forgets a handler.
             raise AssertionError("unknown layer kind %r for %s"
                                  % (kind, name))
+
+    # --- Second pass: L4 (CFG-A6) -------------------------------------
+    # site_id comes from the L1 tree we just built, variant overlay
+    # already applied -- so `--variant sim` picks up common_sim.yaml's
+    # site_id and therefore the sim site file, while a production run
+    # (no variant) sees whatever L1 itself declares.
+    #
+    # L5 (XBRAIN_SITE_ID) is deliberately NOT consulted here. L5 is
+    # applied by build_overlay, downstream of this function, and reading
+    # the environment here would make this loader's output depend on a
+    # variable build_overlay has not yet merged -- two different site
+    # selections for one freeze run, which is the exact failure
+    # 10 S5.4.1 exists to prevent. If site_id ends up being an
+    # L5-supplied key (one of the three options CFG-A2 is waiting on),
+    # THIS is the line that has to move, not build_overlay.
+    trees["L4"] = _load_site_layer(
+        config_root,
+        resolve_site_id(config_root, variant=variant,
+                        l1_tree=trees.get("L1") or {}),
+        variant)
     return trees
+
+
+def resolve_site_id(config_root: str,
+                    variant: Optional[str] = None,
+                    env: Optional[Dict[str, str]] = None,
+                    l1_tree: Optional[Dict[str, Any]] = None
+                    ) -> Optional[str]:
+    """The ONE place that decides which site file the freeze reads.
+
+    Order is L1 then L5, matching build_overlay's layer precedence
+    (LAYERS lists L5 after L4, and ENV_KEY_MAP maps XBRAIN_SITE_ID to
+    common.site_id). Consulting L5 here is not optional: if the loader
+    picked sites/<L1 value>.yaml while build_overlay then overwrote
+    common.site_id with the L5 value, the merged tree would name one
+    site and carry another site's keys, and nothing would say so.
+
+    Why this function exists rather than each caller reading site_id:
+    there are two callers that MUST agree -- load_layers (which reads
+    the file) and inventory.layer_rows (which writes the file name into
+    MANIFEST.layers[]). They disagreed the moment load_layers started
+    picking L4 on its own: layer_rows took site_id as a parameter and
+    the inventory test, which does not pass one, caught the mismatch
+    (MANIFEST naming no site file while the overlay had merged one).
+    A MANIFEST that names the wrong file is worse than one that names
+    none -- layer_rows' own docstring says so.
+
+    Returns None for "no site layer", which both callers already treat
+    as "layer present, wrote no keys". A non-str or empty value is None
+    too: a YAML `site_id: 1` must not become the path sites/1.yaml.
+
+    `l1_tree` lets load_layers hand over the tree it has already read
+    (with its variant overlay applied) instead of paying for a second
+    YAML parse of the same file. Callers without a tree get an
+    independent read of L1 + its variant -- same file, same helpers,
+    so the same value.
+    """
+    if l1_tree is None:
+        # Read L1 the same way load_layers does: base file, then the
+        # variant sibling. Hard-coding "common.yaml" here would be a
+        # second spelling of the L1 path, so take it from the table.
+        l1_frag = next(frag for name, _kind, frag in _LAYER_SOURCES
+                       if name == "L1")
+        full = os.path.join(config_root, l1_frag)
+        l1_tree = _with_variant(full, _read_yaml(full), variant)
+    # L1's value first.
+    site_id: Any = None
+    common = l1_tree.get("common")
+    if isinstance(common, dict):
+        site_id = common.get("site_id")
+    # Local import for the same reason deep_merge above is local:
+    # xbrain.common.config imports nothing from assertions today, but
+    # a future refactor that makes it do so would turn a module-level
+    # import here into a cycle at interpreter start rather than a
+    # failure in one function.
+    from xbrain.common.config.layers import env_overlay
+    # L5 wins when it supplies the key (env_overlay enforces the
+    # whitelist and raises on an unknown XBRAIN_* name, so a typo does
+    # not silently fall through to L1's value).
+    env_flat = env_overlay(env)
+    if "common.site_id" in env_flat:
+        site_id = env_flat["common.site_id"]
+    if not isinstance(site_id, str) or not site_id:
+        return None
+    return site_id
+
+
+def _load_site_layer(config_root: str, site_id: Optional[str],
+                     variant: Optional[str]) -> Dict[str, Any]:
+    """Read sites/{site_id}.yaml for an already-resolved site_id.
+
+    Returns {} for all three "no site layer" cases, which callers treat
+    identically (layer present, wrote no keys):
+      - common.site_id absent or null  -> nothing to pick
+      - site_id set, file missing       -> J-2 is the assertion that
+        reports a required layer file being absent; duplicating that
+        judgement here would give two different verdicts for one fact
+      - file present but empty          -> _read_yaml already gives {}
+
+    The site_id value is NOT validated here (no path-segment check): a
+    site_id containing a slash would reach os.path.join and could name
+    a file outside sites/. That check belongs to the schema layer
+    (S-10) which already types common.site_id, and to assertion D
+    (10 S5.4.4 assertion D requires site_id to equal the L4 file name).
+    What this function must not do is accept a tree it did not get from
+    sites/, so the join is guarded below rather than trusted.
+    """
+    # resolve_site_id has already rejected non-str / empty / absent.
+    if site_id is None:
+        return {}
+    # Containment guard: the joined path must stay directly inside
+    # sites/. basename != site_id means site_id carried a separator.
+    sites_dir = os.path.join(config_root, "sites")
+    full = os.path.join(sites_dir, "%s.yaml" % site_id)
+    if os.path.dirname(os.path.abspath(full)) != os.path.abspath(sites_dir):
+        # Not raising: a malformed site_id is assertion D's finding and
+        # it reports the mismatch with the file name in the detail.
+        # Returning {} here makes D's check fire on an empty L4, which
+        # is the same verdict by a clearer route.
+        return {}
+    if not os.path.exists(full):
+        return {}
+    # Same variant treatment as L1/L2 (L3 is the only no-variant layer,
+    # ENV-2). A sites/{site_id}_sim.yaml is not expected to exist today;
+    # treating L4 as variant-capable keeps one rule for the whole stack
+    # instead of a second rule that says "except L4".
+    return _with_variant(full, _read_yaml(full), variant)
 
 
 # Public helper: expose the layer-name list without exposing the full

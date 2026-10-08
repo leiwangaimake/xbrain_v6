@@ -162,10 +162,16 @@ common:
     min_dist_m: 0.5
     sample_hz: 1.0
     session_timeout_s: 300.0
-  retention:
-    command_log_days: 180
-    event_days: 90
-    task_days: 30
+  # retention: [2026-10-08 本变体不再供这三个键]
+  #   原写什么: 本段曾有 command_log_days: 180 / event_days: 90 / task_days: 30.
+  #   为何移除: 10 S5.4.5 把这三个键的"唯一定义处"列逐字定为
+  #     "sites/{site_id}.yaml . retention(键位在 common.yaml)" => L4.
+  #     在 L1 变体里供值, 结果树是对的, 但供值的层不是设计说的那一层;
+  #     而且它恰好掩盖了 CFG-A6: load_layers 当时不读 L4, 所以
+  #     "用 --variant sim 跑冻结线全链一条不落全过"(NEXT S8.8)这条证据
+  #     从未走过 L4 路径 -- 它过是因为本变体在 L1 把值填满了.
+  #   现在谁供: configs/sites/sim.yaml (L4), 由本批的 load_layers 二次
+  #     合并读入. 结果树里三个值不变(30/90/180), 变的是 provenance L1->L4.
   robot_id: dev
   site_id: sim
   zenoh:

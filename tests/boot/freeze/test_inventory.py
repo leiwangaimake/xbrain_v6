@@ -103,7 +103,15 @@ def test_layer_rows_match_what_the_loader_opens(tmp_path):
             _layer_loader._read_yaml = real_read
         really_opened = sorted({p for p in opened if os.path.isfile(p)})
         rows = layer_rows(root, variant=variant, env={})
-        listed = sorted(r["path"] for r in rows if r["level"] in ("L1", "L2", "L3"))
+        # L4 is in this comparison since 2026-10-08 (CFG-A6): load_layers
+        # picks sites/{site_id}.yaml itself, so the site file is now one of
+        # the paths it really opens, and a layer_rows that omitted it would
+        # write a MANIFEST missing a layer the overlay actually merged.
+        # L4b stays out -- load_layers does not read calib/ at all
+        # (assertion H does its own two-step read), so there is nothing on
+        # the loader side for an L4b row to be compared against.
+        listed = sorted(r["path"] for r in rows
+                        if r["level"] in ("L1", "L2", "L3", "L4"))
         assert listed == really_opened, (
             "variant=%r: layer_rows and load_layers disagree on the file set"
             % variant
@@ -111,21 +119,44 @@ def test_layer_rows_match_what_the_loader_opens(tmp_path):
 
 
 def test_the_picked_layers_name_the_files_the_merge_consumed(tmp_path):
-    """L4 / L4b rows follow site_id / robot_id, and are absent when the
-    picker value is unset.
+    """L4 / L4b rows follow site_id / robot_id; L4b is absent when the
+    picker value is unset, L4 falls back to the loader's own resolver.
 
     Mutant: read the picker from the raw L1 file instead of the resolved
     tree -> an L5 override would list the wrong site file -> red here.
+
+    *** Why L4 and L4b are NOT symmetric here (changed 2026-10-08,
+    CFG-A6). load_layers now picks and merges L4 on its own, so
+    "caller passed no site_id" can no longer mean "no site layer" --
+    it means the caller did not pre-resolve it, and layer_rows has to
+    reach the same file the loader did or the MANIFEST names fewer
+    layers than the freeze consumed. L4b has no such partner:
+    load_layers never reads calib/, so a fallback there would list a
+    calib file that nothing merged. The asymmetry is the point, and an
+    implementation that "tidied it up" by giving robot_id a fallback
+    would be reintroducing exactly that.
     """
     ctx = _scaffold_config_ctx(tmp_path)
     root = ctx["config_root"]
     calib = os.path.join(root, "calib")
     open(os.path.join(calib, "robot-7.yaml"), "w").write("common: {}\n")
 
-    # No picker values -> no picked rows at all.
+    # No picker values: L4b has none to fall back on, so no row. L4
+    # resolves through the loader's resolver, and this scaffold's L1
+    # declares site_id: site_scaffold -- so the row must name THAT file,
+    # the same one load_layers opens. An empty L4 here would be the
+    # MANIFEST-misses-a-layer defect.
     bare = layer_rows(root, env={})
-    assert _paths_at(bare, "L4") == []
+    assert _paths_at(bare, "L4") == [
+        os.path.join(root, "sites", "site_scaffold.yaml")]
     assert _paths_at(bare, "L4b") == []
+    # And it must be the loader's resolver doing it, not a re-read of
+    # the raw L1 file: an L5 override has to move the row. env= is
+    # honoured by resolve_site_id through env_overlay's whitelist.
+    other = os.path.join(root, "sites", "site_other.yaml")
+    open(other, "w").write("common: {}\n")
+    overridden = layer_rows(root, env={"XBRAIN_SITE_ID": "site_other"})
+    assert _paths_at(overridden, "L4") == [other]
 
     picked = layer_rows(root, site_id="site_scaffold", robot_id="robot-7", env={})
     assert _paths_at(picked, "L4") == [

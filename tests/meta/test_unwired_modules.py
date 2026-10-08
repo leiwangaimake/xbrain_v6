@@ -605,6 +605,28 @@ def _collect_unwired():
         for path in _walk_py(root):
             corpus.append((path, _mention_text(path)))
 
+    # *** WHAT THIS CANNOT CATCH (measured 2026-10-08, do not read the
+    # green as "every module is wired"). The test is a STEM-MENTION
+    # test: it asks whether the file's base name appears as a word in
+    # some other file. Two consequences:
+    #
+    #  (1) A generic stem is satisfied by anything that shares the word.
+    #      Real case: xbrain/p3_task/config/assertions.py has no
+    #      production caller at all (its validate_all is referenced only
+    #      from tests/p3_task/test_batch_g.py), yet it is reported wired
+    #      -- because "assertions" is also the name of the
+    #      xbrain/boot/freeze/assertions/ PACKAGE, which half the freeze
+    #      line imports from. The pattern matches the package path and
+    #      the file never has to be imported by anyone.
+    #  (2) A mention is not a call. A module imported and then never
+    #      invoked passes, as does one named only in a string.
+    #
+    # So this test's real guarantee is narrow: a module whose name
+    # appears NOWHERE else is definitely dead. The converse does not
+    # follow. Fixing (1) means replacing stem-matching with a real
+    # import/call graph over xbrain/ -- a different tool, logged in
+    # docs/NEXT.md as RT-3 rather than bolted on here, because a
+    # half-done graph would be worse than a declared-narrow grep.
     unwired = set()
     for path, stem in candidates.items():
         # Word boundaries so 'progress' does not satisfy 'progress_sink'

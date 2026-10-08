@@ -75,6 +75,47 @@ def test_real_file_has_no_forbidden_shape():
     check_p5_config(assigned())                      # must not raise
 
 
+def test_retention_days_may_be_a_reference_into_common_retention():
+    """A ${common.retention.*} reference is the correct SOURCE shape.
+
+    10 S5.4.1: the reference axis is expanded once, by the freeze line.
+    So the committed yaml carries a reference and the integer only exists
+    in data/run/resolved/p5_gateway.yaml. check_p5_config is a criterion
+    over the SOURCE (it has no production caller -- NEXT RT-4), so an
+    int-only check here would forbid the shape the design requires.
+
+    Before 2026-10-08 the file said `retention_days: 90` twice, the int
+    check passed, and that literal was a second definition of
+    common.retention.event_days: editing the site file moved neither
+    copy. This case is what keeps the reference legal.
+    """
+    m = assigned()
+    m["event"]["retention_days"] = "${common.retention.event_days}"
+    m["delivery"]["retention_days"] = "${common.retention.event_days}"
+    check_p5_config(m)                               # must not raise
+
+
+def test_a_reference_to_another_namespace_is_still_refused():
+    """The reference must point into common.retention, nothing else.
+
+    Mutant: drop the namespace from the regex (accept any ${...}) -> this
+    goes green while ${common.spec.max_vx_mps} expands to 2.0 and gets
+    used as a day count. Nothing downstream tells a day count from a
+    speed, which is why the namespace is pinned at the only place that
+    can still see the key name.
+    """
+    for bad in ("${common.spec.max_vx_mps}",       # wrong namespace
+                "${common.retention}",             # no leaf
+                "90",                              # the number as a string
+                "common.retention.event_days"):    # no ${} at all
+        m = assigned()
+        m["event"]["retention_days"] = bad
+        with pytest.raises(P5ConfigError) as ei:
+            check_p5_config(m)
+        # The refusal must name the key an operator has to go edit.
+        assert "event.retention_days" in str(ei.value), bad
+
+
 def test_real_pending_keys_are_exactly_the_three():
     """The committed escape hatch carries the three CR-EVT-1 keys, no more."""
     assert real_mapping()["startup"]["pending_keys"] == list(PENDING_KEYS_ALLOWED)

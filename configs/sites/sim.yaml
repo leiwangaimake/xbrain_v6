@@ -18,3 +18,29 @@ common:
       alt: 4.0
       lat: 31.2304
       lon: 121.4737
+  # retention: 2026-10-08 落值(CFG-A4 / CFG-A6, 99 U90 批次).
+  #
+  # *** 值的来历, 两册已无分歧(别再当"待裁"推):
+  #   15 S9.11 的表逐字给三个数: tasks 终态行 30 天 / events 90 天 /
+  #     commands 180 天(审计用途);
+  #   17 S10 的 v0.7.3 订正给出归属, 逐字"events 90 天 -- 这是 P5 唯一负责
+  #     清理的一项; tasks 30 / commands 180 由 P3 侧管(15 S9.11), P5 不清这
+  #     两张表", 并逐字"不再写'统一'".
+  #   ==> NEXT 的 CFG-A4 条目写的"15 与 17 分歧未裁"[已过时]. 那条分歧
+  #       曾经是真的: sev 分级 {info:7, warn:30, alarm:365, fault:365} 出自
+  #       17 S10.1 的 v0.1 形态, 并且 p5 侧至今留着拦它的护栏
+  #       (xbrain/p5_gateway/config/bind_guard.py 逐字 "the dict-form
+  #       retention_days ... the v0.1 {info: 7, ...} shape 17 S10.1").
+  #       17 已于 v0.7.3 自行订正为逐项归属, 全册零命中 365.
+  #
+  # *** 为什么落在这里(L4)而不是 L1: 10 S5.4.5 把 retention 的唯一定义处定在
+  # sites/{site_id}.yaml(键位在 common.yaml). 落进 L1 会被断言 B 判"疑似复制".
+  # L4 的允许命名空间含 common.retention.*(layers.py 的 L4 行), 通道是通的.
+  #
+  # *** 递增关系由断言 C-1 在启动期保证(c_cross_file.py 逐字 "Retention
+  # monotonicity: task_days <= event_days <= command_log_days"), NO 不由任何一册的
+  # 运行期代码保证 -- 这也是 17 v0.7.3 的结论.本处三值满足 30 <= 90 <= 180.
+  retention:
+    task_days:        30     # 15 S9.11: tasks 终态行
+    event_days:       90     # 15 S9.11 + 17 S10: P5 唯一负责清理的一项
+    command_log_days: 180    # 15 S9.11: 审计用途
