@@ -232,3 +232,104 @@ def test_p1_wiring_publishes_state_fence():
         "main_wiring 没发 state/fence -- D(SET_ALARM_CONFIG 终态)拿不到 active.rev")
     assert "build_fence_runtime_state" in called, (
         "循环没调 build_fence_runtime_state -- 发的不是 FenceRuntimeState")
+
+
+def _wire_nocrc(polys):
+    """一份 crc32 故意填错的 wire.
+
+    *** 为什么 FV-13 的负向用例不能用 _wire(): _wire 会先调 fence_set_crc32
+    算真值, 而一个非法多边形(限速区缺值 / 值不是数)在[算 crc32 那一步]就被
+    块 B-3 配方自己挡住了 -- 抛的是 FenceRecipeError, 测不到接收侧的 FV-13.
+    compile_fence_set 的顺序是 结构 -> _parse_polygon -> crc32 重算, 所以
+    填一个假 crc32 仍能走到 FV-13; 真到了 crc 那一步才会因不符而拒, 而本组
+    用例在那之前就该抛了.
+    """
+    return {"fence_set_id": "fs-active", "rev": 1, "crc32": "00000000",
+            "enu_origin": None, "soft_margin_min_m": None, "polygons": polys}
+
+
+def test_speed_limit_polygon_is_held_with_its_limit_and_never_hard_enforces():
+    """11 S9A.2 块 B-2: 限速区带 speed_limit_mps 进持有态, 且恒不硬执行.
+
+    *** 真机形态. data/run/fence.db 的 f-speed(中心限速区, state=active)在
+    2026-10-08 实测为 role=speed_limit 而 hard_enforce=1 -- p3 侧那条只认
+    warning 的旧派生规则写进去的. 本条就钉接收侧把它归一化掉:
+    S9A.2 逐字"接收方必须按 role 归一化不得信任发送方".
+    MUTATION: _parse_polygon 回 `False if role == "warning" else bool(...)`
+    -> 限速区被原样持有成 hard_enforce=True -> 一旦进裁剪几何, 慢行区变禁入区
+    -> 本条红.
+    """
+    polys = [{"poly_id": "f-a", "role": "allow", "name": "camp",
+              "winding": "ccw", "hard_enforce": True, "priority": 0,
+              "vertices": _RING},
+             {"poly_id": "f-speed", "role": "speed_limit", "name": "中心限速区",
+              "winding": "cw", "hard_enforce": True,   # 发送方的畸形值
+              "priority": 7, "speed_limit_mps": 1.0, "vertices": _RING}]
+    held = compile_fence_set(_wire(polys=polys))
+    sl = held.speed_limit_polygons()
+    assert len(sl) == 1 and sl[0].poly_id == "f-speed"
+    assert sl[0].hard_enforce is False          # 归一化掉了
+    assert sl[0].speed_limit_mps == 1.0
+    assert sl[0].priority == 7
+    # allow 不受"顺手归一化"影响, 仍硬执行.
+    a = next(p for p in held.polygons if p.poly_id == "f-a")
+    assert a.hard_enforce is True and a.speed_limit_mps is None
+
+
+def test_fv13_both_directions_are_refused_at_the_receiver():
+    """11 FV-13 双向, 在接收侧.
+
+    两个方向的失效不同: 缺值的限速区是"区存在而无从施加"(给兜底数就等于让那个
+    数静默成为真实区域的限速, 3.1); 非限速区带值是"操作员以为设了限速而没有
+    消费方会读它", 静默丢弃正是 S13.6 点名禁止的"未知值降级解释".
+    MUTATION: 删掉 _speed_limit 里任一方向 -> 对应那条不再抛 -> 红.
+    """
+    base = {"poly_id": "f-a", "role": "allow", "name": "camp",
+            "winding": "ccw", "hard_enforce": True, "priority": 0,
+            "vertices": _RING}
+    # 正向: 限速区缺值.
+    missing = {"poly_id": "f-s", "role": "speed_limit", "name": "s",
+               "winding": "cw", "hard_enforce": False, "priority": 0,
+               "vertices": _RING}
+    with pytest.raises(FenceSetError, match="requires speed_limit_mps"):
+        compile_fence_set(_wire_nocrc([base, missing]))
+    # 反向: 非限速区带值.
+    stray = dict(base, speed_limit_mps=1.0)
+    with pytest.raises(FenceSetError, match="only legal on role=speed_limit"):
+        compile_fence_set(_wire_nocrc([stray]))
+
+
+def test_a_zero_or_negative_speed_limit_is_refused():
+    """speed_limit_mps <= 0 必拒.
+
+    0.0 会让区内 v_max = min(..., 0) = 0 -- 机器人进了慢行区就不动, 而且
+    没有任何报错. 这正是 3.1 点名的 "0.0 冒充已赋值" 的 fail-silent, 只是
+    换了一个字段.
+    MUTATION: 把 `v <= 0.0` 放宽成 `v < 0.0` -> 0.0 放行 -> 本条第一段红.
+    """
+    base = {"poly_id": "f-a", "role": "allow", "name": "camp",
+            "winding": "ccw", "hard_enforce": True, "priority": 0,
+            "vertices": _RING}
+    for bad in (0.0, -1.0, float("nan"), float("inf"), True, "1.0"):
+        slow = {"poly_id": "f-s", "role": "speed_limit", "name": "s",
+                "winding": "cw", "hard_enforce": False, "priority": 0,
+                "speed_limit_mps": bad, "vertices": _RING}
+        with pytest.raises(FenceSetError, match="speed_limit_mps"):
+            compile_fence_set(_wire_nocrc([base, slow]))
+
+
+def test_priority_is_required_and_a_boolean_is_refused():
+    """priority 必填, 且 bool 必拒.
+
+    Python 里 True == 1, 于是一条把 priority 误填成布尔的帧会把该多边形叠到
+    priority 0 之上, 改变重叠时谁胜出; crc32 那一侧把它渲染成 "1", 看起来
+    毫无异常. 这是"静默改变判定结果"而不是"格式不对".
+    MUTATION: 去掉 isinstance(raw, bool) 这一半 -> 第二段由抛变不抛 -> 红.
+    """
+    nopri = {"poly_id": "f-a", "role": "allow", "name": "camp",
+             "winding": "ccw", "hard_enforce": True, "vertices": _RING}
+    with pytest.raises(FenceSetError, match="priority"):
+        compile_fence_set(_wire_nocrc([nopri]))
+    for bad in (True, 10.5, "0", None):
+        with pytest.raises(FenceSetError, match="priority"):
+            compile_fence_set(_wire_nocrc([dict(nopri, priority=bad)]))

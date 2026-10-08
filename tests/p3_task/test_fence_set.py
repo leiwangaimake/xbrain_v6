@@ -158,21 +158,47 @@ def test_priority_is_on_every_polygon_and_speed_limit_only_on_its_own_role():
     assert ps["hard_enforce"] is False
 
 
-def test_a_speed_limit_row_with_no_limit_refuses_the_whole_set():
-    """限速区没有限速值 = 一个无法施加的区. 抛 InvalidFenceSet 而不是让
-    float(None) 抛 TypeError.
+def test_a_speed_limit_row_with_no_limit_is_dropped_not_fatal():
+    """限速区没有限速值 = 一个无从施加的区 -> 只丢它, 其余照发.
 
-    为什么这条路径还存在: 本机 fence.db 的行写在该列存在之前, 而 SQLite 不能
-    给已有表 ALTER 出表级 CHECK. 三个写入方都已挡住, 这是读出侧的兜底.
-    MUTATION: 删掉这个 raise -> float(None) 抛 TypeError -> 落到调用方的
-    generic handler, 于是 1 Hz 广播循环每秒记一条 error 而不是只记一次.
+    *** 失效方向是本条的全部重点. 第一版在这里抛 InvalidFenceSet 拒整集,
+    那个取舍是反的: 拒整集 = 停广播, 而[刚启动]的 p1 于是一个围栏都没有 --
+    allow/forbid 不再生效 -- 为的是保护一条本来就不存在的区内限速.
+    FS-7 只救得了[已经收到过]好集的 p1. 所以安全关键的边界必须照发, 而那个
+    无从施加的区继续无从施加(它本来就是).
+    NO 不给它编一个兜底限速(3.1): 任何选定的数都会静默成为真实区域的限速.
+    MUTATION: 把 continue 换回 raise -> allow 多边形也进不了广播 -> 本条第二
+    段(f-lake 仍在)红.
     """
     legacy = _row("f-old", "老慢行区", "speed_limit",
                   [[31.208, 121.508], [31.209, 121.508], [31.2085, 121.509]],
                   limit=0)                 # 0 不是 None, 下面显式换成 None
     legacy = legacy[:8] + (None,)
-    with pytest.raises(InvalidFenceSet, match="speed_limit_mps"):
-        build_fence_set([_ALLOW, legacy], fence_set_id="fs-a", rev=1)
+    seen = []
+    fs = build_fence_set([_ALLOW, legacy], fence_set_id="fs-a", rev=1,
+                         on_unusable=lambda pid, why: seen.append((pid, why)))
+    # 坏行被点名丢掉...
+    assert [pid for pid, _ in seen] == ["f-old"]
+    assert "speed_limit_mps" in seen[0][1]
+    # ...而其余(含安全关键的活动区)照常上线.
+    ids = [p["poly_id"] for p in fs["polygons"]]
+    assert ids == ["f-lake"]
+
+
+def test_an_empty_active_set_is_refused_but_not_by_this_module():
+    """一般性边界, 写明以免误读上一条.
+
+    "没有围栏数据" 与 "围栏数据坏了" 是两件事:
+      * 客户没录任何围栏 -> p3 的 FV-3(validate_active_fence_set)在这里就拒,
+        于是 p3 [不广播]; p1 没有 active 集 ==> clip.evaluate 返回
+        disabled/no_fence 并[原样透传速度] ==> 机器人可任意行走, 不受限制.
+        这是 11 S9A.7 的 disabled 档, NO 不是"拒动".
+      * 已有一行存坏 -> 上一条: 丢那一行, 其余照发.
+    MUTATION: 删掉 validate_active_fence_set 调用 -> 0 allow 的集也上线 ->
+    本条红(而机器人会按一个没有活动区的集去跑).
+    """
+    with pytest.raises(InvalidFenceSet):
+        build_fence_set([], fence_set_id="fs-a", rev=1)
 
 
 def test_a_legacy_hard_enforcing_speed_limit_row_is_corrected_on_the_wire():

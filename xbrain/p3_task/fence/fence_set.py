@@ -31,7 +31,8 @@ fence.db with proper metadata). Do NOT read this as the commit protocol.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional, Sequence
+import logging
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from xbrain.common.enums import FENCE_ROLE  # 11 S9A.2 closed set (CLAUDE.md 3.5)
 
@@ -43,7 +44,9 @@ from xbrain.common.fence.geom import fence_set_crc32
 # S9A.2 field-presence rule for speed_limit_mps, shared with the writers and
 # with p1's receive-side FV-13 so one answer serves all of them.
 from xbrain.common.fence.roles import carries_speed_limit, hard_enforce_for_role
-from xbrain.p3_task.fence.geom import InvalidFenceSet, validate_active_fence_set
+from xbrain.p3_task.fence.geom import validate_active_fence_set
+
+_logger = logging.getLogger(__name__)
 
 # Declared winding per role (11 S9A.2: receiver normalises, this is a hint). Keys
 # ARE the FENCE_ROLE closed set -- asserted at import so adding a role to 11 S9A.2
@@ -61,11 +64,25 @@ def _vertices(geom_json: str) -> List[Dict[str, float]]:
 
 def build_fence_set(active_rows: Sequence, *, fence_set_id: str, rev: int,
                     enu_origin: Optional[Dict[str, float]] = None,
-                    soft_margin_min_m: Optional[float] = None) -> Dict[str, Any]:
+                    soft_margin_min_m: Optional[float] = None,
+                    on_unusable: Optional[Callable[[str, str], None]] = None
+                    ) -> Dict[str, Any]:
     """Build a 11 S9A.2 FenceSet from FencesDAO.list_active() rows. Each row is
     (fence_id, name, role, kind, geom_json, hard_enforce, rev, priority,
     speed_limit_mps). Raises InvalidFenceSet (FV-3) if the active set is not
-    exactly-1-allow / <= 5."""
+    exactly-1-allow / <= 5.
+
+    *** NOTHING here depends on what this robot's fence.db happens to hold.
+    A fence set is whatever the customer recorded on THEIR site: any count
+    within FV-3, any role mix, any ring shape, anywhere on earth. The one
+    site-specific number in the whole chain is enu_origin, and that comes from
+    common.geo.enu_origin (config), not from a fence row.
+
+    on_unusable(poly_id, reason) is called for a stored row that cannot be put
+    on the wire; that polygon is DROPPED and the rest of the set still goes
+    out. Default is a module-level warning, so a silent drop is not reachable
+    by forgetting the argument -- callers with a once-per-id latch pass their
+    own (the 1 Hz broadcast loop would otherwise log every second)."""
     roles = [r[2] for r in active_rows]
     validate_active_fence_set(roles)               # FV-3 / S9A.1A -- raises on bad set
     polygons: List[Dict[str, Any]] = []
@@ -76,19 +93,20 @@ def build_fence_set(active_rows: Sequence, *, fence_set_id: str, rev: int,
             "role": role,
             "name": name,
             "winding": _WINDING.get(role, "ccw"),
-            # S9A.2 DERIVES this from role, and it is derived again here rather
-            # than passed through. The stored column is right for every row the
-            # current writers made, and wrong for rows that predate them: this
-            # robot's fence.db holds an active role=speed_limit fence with
-            # hard_enforce=1, written by the rule that only knew about warning.
-            # Passing that through would put a keep-out on the wire for a zone
-            # the operator marked advisory -- p1 normalises it again on receipt
-            # (S9A.2 "接收方按 role 归一化, 不得信任发送方"), but there is no
-            # reason for the sender to state something it knows is wrong, and
-            # the crc32 is computed over what is actually sent so the two sides
+            # S9A.2 DERIVES this from role, and it is derived again here
+            # rather than passed through. The stored column is right for every
+            # row the current writers made, and can be wrong for any row that
+            # predates them -- the superseded rule knew only about warning, so
+            # a speed_limit row it wrote is stored hard-enforcing. Passing that
+            # through would put a keep-out on the wire for a zone the operator
+            # marked advisory. p1 normalises it again on receipt (S9A.2
+            # "接收方按 role 归一化, 不得信任发送方"), but there is no reason
+            # for the sender to state something it knows is wrong, and the
+            # crc32 is computed over what is actually sent so the two sides
             # still agree byte for byte. The column stays unpacked as
             # _hard_enforce (the file's convention for a field the row carries
-            # and this builder does not read) so the row shape stays documented.
+            # and this builder does not read) so the row shape stays
+            # documented.
             "hard_enforce": hard_enforce_for_role(role),
             # S9A.2 block B-2: required on every polygon, painter order, low
             # paints first. int() because SQLite hands back whatever was stored
@@ -104,17 +122,30 @@ def build_fence_set(active_rows: Sequence, *, fence_set_id: str, rev: int,
         # receiver, so every non-speed_limit polygon would be refused.
         if carries_speed_limit(role):
             if speed_limit_mps is None:
-                # Only reachable from a row written before the column existed:
-                # the DAO, geo_object and the CREATE TABLE form all refuse this
-                # now (FV-13). Raised as InvalidFenceSet rather than letting
-                # float(None) throw, because the caller already has a branch for
-                # "this set cannot be broadcast" that logs once and keeps the
-                # last good set on P1 (FS-7). A TypeError would land in the
-                # generic handler and log every second instead.
-                raise InvalidFenceSet(
-                    "fence %s is role=speed_limit with no speed_limit_mps "
-                    "(11 FV-13); fix the row, there is no default (3.1)"
-                    % (fence_id,))
+                # A stored speed_limit row with no limit. Only reachable from a
+                # row written before the column existed -- the DAO, geo_object
+                # and the CREATE TABLE form all refuse it now (FV-13).
+                #
+                # *** This DROPS the one polygon and keeps broadcasting the
+                # rest; it does NOT refuse the set. The first cut raised here,
+                # and that trade is backwards: refusing the set stops the
+                # broadcast, and a FRESHLY STARTED p1 then holds no fence at
+                # all -- allow / forbid stop being enforced -- to protect an
+                # in-zone limit that does not exist anyway. FS-7 only saves a
+                # p1 that already received a good set. So the safety-critical
+                # boundaries stay in force and the unusable zone stays
+                # unusable, which is what it already was.
+                # NO no default is invented for it (3.1): whatever number were
+                # chosen would silently become a real zone's speed ceiling.
+                if on_unusable is not None:
+                    on_unusable(fence_id, "role=speed_limit with no "
+                                          "speed_limit_mps (11 FV-13)")
+                else:
+                    _logger.warning(
+                        "fence %s dropped from the broadcast: role=speed_limit "
+                        "with no speed_limit_mps (11 FV-13); set a limit or "
+                        "deactivate the fence", fence_id)
+                continue
             poly["speed_limit_mps"] = float(speed_limit_mps)
         polygons.append(poly)
     return {

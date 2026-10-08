@@ -741,6 +741,13 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             fence_rev = [1]           # 11 S9A.2 rev; +1 on any geometry change
             last_fence_sig = [None]   # rev-0 crc32 of the last broadcast set
             fence_invalid_logged = [False]
+            # poly_id -> reason, for the rows build_fence_set could not put on
+            # the wire. A latch per ID, not a boolean: two different unusable
+            # fences must both be named, and neither may be re-logged every
+            # second by the 1 Hz broadcast. Cleared for an id that stops being
+            # unusable, so a fence the operator then fixes logs again if it
+            # ever breaks a second time.
+            fence_unusable_logged: dict = {}
             try:
                 while not stop_flag.get("stop"):
                     # Wait for a task or wake up to heartbeat / re-check stop.
@@ -1050,16 +1057,34 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             # 进 crc32 配方(11 S9A.2 的配方只含 polygons), 所以
                             # 这里传不传都不影响比对结果; 不传是为了让"签名"
                             # 这一步与"发布"那一步的意图区分得更清楚.
+                            def _on_unusable(poly_id: str, reason: str) -> None:
+                                # 11 FV-13 等校验挡不住的[已存]坏行: 该多边形
+                                # 被丢出广播, 其余照发(见 build_fence_set).
+                                # NO 不拒整集 -- 那会让刚启动的 p1 一个围栏都
+                                # 收不到, 为保一条本就无从施加的区内限速, 把
+                                # 真正安全关键的 allow/forbid 边界弄成 fail-open.
+                                if fence_unusable_logged.get(poly_id) != reason:
+                                    _logger.warning(
+                                        "p3 fence %s dropped from the broadcast: "
+                                        "%s", poly_id, reason)
+                                    fence_unusable_logged[poly_id] = reason
+
                             sig = build_fence_set(
-                                rows, fence_set_id=FENCE_SET_ID, rev=0)["crc32"]
+                                rows, fence_set_id=FENCE_SET_ID, rev=0,
+                                on_unusable=_on_unusable)["crc32"]
                             if sig != last_fence_sig[0]:
                                 if last_fence_sig[0] is not None:
                                     fence_rev[0] += 1
                                 last_fence_sig[0] = sig
                             # enu_origin 必须随发布带上(11 S9A.2 必填字段).
+                            # 第二次调用不再传 on_unusable: 同一批 rows 已在
+                            # 上面的签名计算里报过一遍, 再传会让每拍记两条.
+                            # 传 None 会落到模块 logger -- 所以给一个显式的
+                            # no-op, 并写明为什么它是 no-op 而不是忘了传.
                             fs = build_fence_set(
                                 rows, fence_set_id=FENCE_SET_ID,
-                                rev=fence_rev[0], enu_origin=enu_origin)
+                                rev=fence_rev[0], enu_origin=enu_origin,
+                                on_unusable=lambda _pid, _r: None)
                             fence_pub.put(json.dumps(
                                 fs, ensure_ascii=False).encode("utf-8"))
                             fence_invalid_logged[0] = False

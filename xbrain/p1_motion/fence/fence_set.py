@@ -44,6 +44,13 @@ from typing import Any, Dict, Optional, Tuple
 from xbrain.common.enums import FENCE_ROLE  # 11 S9A.2 闭集 (CLAUDE.md 3.5)
 from xbrain.common.fence.geom import fence_set_crc32  # 跨进程单一真源 (报警 F0)
 
+# S9A.2 的 role 派生事实, 与 p3 三个写入方同一个答案(见 common/fence/roles).
+from xbrain.common.fence.roles import (
+    SPEED_LIMIT_ROLE,
+    carries_speed_limit,
+    hard_enforce_for_role,
+)
+
 
 class FenceSetError(Exception):
     """收到的 FenceSet 不可用(crc32 不符 / role 越界 / 结构坏). 调用方据此保留旧
@@ -67,6 +74,19 @@ class HeldPolygon:
     # 11 S9A.2 polygons[].soft_margin_min_m: optional declared floor of the soft
     # band for this polygon (clip.margin_soft_eff_m only ever widens by it).
     soft_margin_min_m: Optional[float] = None
+    # 11 S9A.2 块 B-2 的两个 v0.3 字段.
+    #
+    # priority: 画家算法叠放次序(低者先刷, 同值 allow 先于 forbid). P1 今天
+    # [不消费]它 -- clip.py FE-2 逐字 "analytic edge distance over allow /
+    # forbid polygons, no SDF grid", 而画家算法以 SDF 复合为前提. 持在这里是
+    # 因为它进 crc32(块 B-3), 且 state/fence 的消费方(HMI 高亮次序)要它.
+    # NO 不写消费它做判定的代码(9.3): 重叠围栏谁胜出是架构裁决, 见 NEXT FN-2.
+    priority: int = 0
+    # speed_limit_mps: 该区内的速度上限, 直接进 11 S9.6.1 的 min()(块 B-2 逐字).
+    # 只有 role=speed_limit 带它, 其余 role 恒 None(FV-13 双向).
+    # NO 这里没有默认值可言 -- 一个 role=speed_limit 而无限速值的多边形在
+    # _parse_polygon 就被拒(3.1: 任何兜底数都会静默成为真实区域的限速).
+    speed_limit_mps: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +104,21 @@ class HeldFenceSet:
         """报警区 = role==warning(11 S9A.2, 旧名 zone). F2 的 zone_enter 只在这些
         多边形上判点在内(warning 从不硬执行, 不参与裁剪几何)."""
         return tuple(p for p in self.polygons if p.role == "warning")
+
+    def speed_limit_polygons(self) -> Tuple[HeldPolygon, ...]:
+        """限速区 = role==speed_limit(11 S9A.2). 区内的速度上限由 RNS 走速度门
+        施加(S9A.1A 逐字"具体速度上限由 RNS 走速度门施加"), 所以它们与报警区
+        一样[不参与裁剪几何], 但与报警区不同的是: 它们要进 ENU 编译 --
+        判"在不在区内"要用与硬边界同一套带符号距离, 不用 WGS84 射线法.
+
+        *** 为什么不照 warning_polygons 用射线法. point_in_polygon 自己的注释
+        逐字 "Boundary points may be reported either way", 而限速区的 inset
+        处置与硬边界同向(位置不确定时宁可认为自己在区内, 见 clip.speed_cap_mps):
+        射线法既给不出"离边界多远", 也没有把 inset 纳入的余地. 报警区能用射线法
+        是因为 FS-12 把它定成纯点在多边形内, 无 d_nom -- 那是契约给 warning 的
+        特例, NO 不是一个可以套到 speed_limit 上的通则.
+        """
+        return tuple(p for p in self.polygons if p.role == SPEED_LIMIT_ROLE)
 
 
 def _parse_polygon(raw: Any, idx: int) -> HeldPolygon:
@@ -108,14 +143,22 @@ def _parse_polygon(raw: Any, idx: int) -> HeldPolygon:
         if not isinstance(v, dict) or "lat" not in v or "lon" not in v:
             raise FenceSetError("polygons[%d] vertex missing lat/lon" % idx)
         verts.append((float(v["lat"]), float(v["lon"])))
-    # 审计 #4(已修): warning 恒 hard_enforce=False, 接收方[归一化], NO 不信发送方.
-    # 11 S9A.2 逐字"warning 恒为 false"且"接收方必须按 role 归一化不得信任发送方".
-    # p3 虽已保证(fence.db CHECK: role<>'warning' OR hard_enforce=0), 但一条畸形帧
-    # (warning+hard_enforce=true 且 crc 自洽)不该被信 -- clipping 落地后 p1 用
-    # hard_enforce 决定裁不裁, 信了就会把不该裁的报警区拿去裁. 在源头归一化, 一劳
-    # 永逸. crc32 自算仍用[wire 原值](见 compile_fence_set), 与 p3 的 crc 对齐;
+    # 审计 #4(已修): 两个 ADVISORY role 恒 hard_enforce=False, 接收方[归一化],
+    # NO 不信发送方. 11 S9A.2 逐字"role in {warning, speed_limit} 恒为 false"且
+    # "接收方必须按 role 归一化不得信任发送方".
+    # p3 虽已保证(fence.db CHECK + 三个写入方), 但一条畸形帧(advisory +
+    # hard_enforce=true 且 crc 自洽)不该被信 -- p1 用 hard_enforce 决定裁不裁,
+    # 信了就会把不该裁的区拿去裁. 在源头归一化, 一劳永逸.
+    # crc32 自算仍用[wire 原值](见 compile_fence_set), 与 p3 的 crc 对齐;
     # 归一化只作用于[持有态], 两者不冲突.
-    hard_enforce = False if role == "warning" else bool(raw.get("hard_enforce"))
+    #
+    # *** 2026-10-08: 本行原写 `False if role == "warning" else ...`, 只覆盖了
+    # 两个 advisory role 中的一个. 真机 fence.db 的 f-speed 就是 role=
+    # speed_limit 而 hard_enforce=1 的一行(p3 侧同一个旧规则写进去的), 照原行
+    # 它会被原样持有 ==> 限速区当禁入区硬裁剪, 机器人进不了中心区. 改用共享
+    # 派生 hard_enforce_for_role, 与三个 p3 写入方同一个答案.
+    hard_enforce = (bool(raw.get("hard_enforce"))
+                    if hard_enforce_for_role(role) else False)
     return HeldPolygon(
         poly_id=str(raw.get("poly_id")),
         role=role,
@@ -123,7 +166,61 @@ def _parse_polygon(raw: Any, idx: int) -> HeldPolygon:
         hard_enforce=hard_enforce,
         vertices=tuple(verts),
         soft_margin_min_m=_soft_margin(raw.get("soft_margin_min_m"),
-                                       "polygons[%d]" % idx))
+                                       "polygons[%d]" % idx),
+        priority=_priority(raw.get("priority"), "polygons[%d]" % idx),
+        speed_limit_mps=_speed_limit(raw, role, "polygons[%d]" % idx))
+
+
+def _priority(raw: Any, where: str) -> int:
+    """11 S9A.2 块 B-2 priority: int32, 必填.
+
+    bool 显式排除在数值检查之前 -- Python 里 True == 1, 于是一条把 priority
+    误填成布尔的帧会把该多边形叠到 priority 0 之上, 改变重叠时谁胜出, 而且
+    crc32 那一侧渲染成 "1" 看起来毫无异常.
+    非整数的 float 拒而不取整: 10.5 与 10.4 取整后同序, 而发送方明明写的是
+    两个不同的数, 静默合并会让现场无法解释为什么叠放次序与自己填的不一致.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise FenceSetError("%s priority must be an int32 (11 S9A.2), got %r"
+                            % (where, raw))
+    if isinstance(raw, float) and raw != int(raw):
+        raise FenceSetError("%s priority must be integral, got %r" % (where, raw))
+    return int(raw)
+
+
+def _speed_limit(raw: Dict[str, Any], role: str, where: str) -> Optional[float]:
+    """11 FV-13 双向: role=speed_limit 必带 speed_limit_mps > 0; 其余 role
+    必不带该字段, 出现即拒(S9A.2 把它定为 E_SCHEMA).
+
+    *** 两个方向的失效不同, 所以两条都要. 缺值的限速区是"区存在而无从施加"
+    -- 若给它一个兜底数, 那个数就静默成了真实区域的限速(3.1). 非限速区带值是
+    "操作员以为设了限速而没有任何消费方会读它" -- 静默丢弃就是 S13.6 点名禁止
+    的"把未知值降级解释", 所以拒.
+
+    *** 按 role 判, NO 不按"键在不在". 按键判会让一个非限速多边形上的游离值
+    改变本集的解释, 而 S9A.2 明确那是合法输入里的脏数据(crc32 侧也是按 role
+    决定要不要把它写进串的, 见 digest/fence._format_speed_limit).
+    """
+    present = "speed_limit_mps" in raw
+    if not carries_speed_limit(role):
+        if present:
+            raise FenceSetError(
+                "%s speed_limit_mps is only legal on role=speed_limit "
+                "(11 FV-13), got role=%r" % (where, role))
+        return None
+    if not present:
+        raise FenceSetError(
+            "%s role=speed_limit requires speed_limit_mps (11 FV-13); "
+            "there is no default for a zone's speed ceiling" % (where,))
+    v = raw["speed_limit_mps"]
+    if isinstance(v, bool) or not isinstance(v, (int, float)) \
+            or not math.isfinite(v) or v <= 0.0:
+        # <= 0 一并拒: 0.0 会让区内 v_max = min(..., 0) = 0, 机器人在区内不动
+        # 且无任何报错 -- 3.1 点名的那种 fail-silent, 换了个字段而已.
+        raise FenceSetError(
+            "%s speed_limit_mps must be a finite number > 0 (11 FV-13), "
+            "got %r" % (where, v))
+    return float(v)
 
 
 def _soft_margin(raw: Any, where: str) -> Optional[float]:
