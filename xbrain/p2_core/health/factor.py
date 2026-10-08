@@ -45,7 +45,7 @@ items.py carries.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Mapping
+from typing import Dict, Mapping, Optional
 
 from xbrain.p2_core.health.items import (
     HealthLevel,
@@ -63,6 +63,23 @@ class FactorConfig:
     degraded_fail: float        # degraded item, state fail
     degraded_degraded: float    # degraded item, state degraded
     unknown: float              # fatal/degraded item, state unknown
+
+
+@dataclass(frozen=True)
+class PerceptionHealthConfig:
+    """The cam_rgbd thresholds, from p2_core.yaml health.perception.
+
+    Both are Optional and the None case is a designed state, not an omission:
+    the resolved product predates these keys (it was frozen 2026-09-18, R-2
+    landed them later), so a product that has not been regenerated carries
+    neither. state_from_perception reads None as "thresholds not set" and
+    answers DEGRADED -- visible, motion-limited, never OK -- rather than
+    letting the wiring crash on a missing key or, worse, defaulting to a
+    number nobody configured (CLAUDE.md 3.1). Once the freeze line runs with
+    the keys present, both are floats and cam_rgbd can reach OK.
+    """
+    min_fps_depth: Optional[float]      # 14 S8.1 "< 15 Hz 降级"
+    max_age_s: Optional[float]          # T-53 (11 S1.6.1): status 断流上界
 
 
 @dataclass(frozen=True)

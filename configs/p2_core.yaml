@@ -310,6 +310,18 @@ ptz:
 health:
   publish_rate_hz: 1
   recover_hold_s: 5.0
+  # cam_rgbd monitoring thresholds (R-2 / 14 S8.1). Read via cfg.get(..., None)
+  # so a product frozen before these keys existed (2026-09-18) degrades
+  # cam_rgbd to DEGRADED rather than crashing p2; once the freeze line
+  # regenerates the product with them, cam_rgbd can reach OK.
+  perception:
+    # 14 S8.1 verdict "< 15 Hz 降级". Inherited contract text, carried from the
+    # old state/targets 帧率 wording to fps_depth; the carry-over is登记 as
+    # 待实测 in commit 4e64522 (no new field measurement of fps_depth yet).
+    min_fps_depth: 15.0
+    # T-53 (11 S1.6.1): rt/perception/status 断流上界 3 s. The mirror republishes
+    # at 1 Hz, so 3 s allows three missed heartbeats before 失效.
+    max_age_s: 3.0
   factors:
     fatal_degraded: 0.3
     degraded_fail: 0.5

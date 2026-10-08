@@ -27,6 +27,7 @@ from xbrain.p2_core.health.aggregate import (
     refresh_health,
     state_from_clock,
     state_from_link,
+    state_from_perception,
     state_from_pose,
     state_from_power,
     state_from_robot,
@@ -286,3 +287,136 @@ def test_with_every_source_healthy_motion_is_still_refused_without_a_camera():
     # rather than everything.
     for wired in ("rtk", "heading", "clock", "chassis", "battery", "network"):
         assert summary["items"][wired]["state"] != "unknown", wired
+
+
+# --- cam_rgbd from state/perception (R-2 option b, 14 S8.1) ------------------
+#
+# 14 S8.1's verdict for this item is "< 15 Hz 降级, 超时失效", so the five
+# cases below are the five answers the derivation can give. They are written
+# as one case per answer rather than one parametrised case, because the REASON
+# each answer is correct differs and a shared body would have nowhere to say
+# so -- and the reasons are the part that rots.
+
+def test_refresh_threads_perception_rx_mono_into_age():
+    """refresh_health is the seam between state_cache / rx_mono and
+    state_from_perception, and the seam has the only arithmetic in the path:
+    rx_age_s = now_mono_s - rx_mono["perception"]. The five tests above drive
+    state_from_perception directly and never exercise that subtraction, so a
+    bug there -- wrong key, sign flipped, rx_mono dropped -- would pass them
+    all. This one feeds refresh_health the way the loop does.
+
+    now_mono_s and rx_mono share ONE clock (both the P2 loop's time.monotonic),
+    which is the point of recording rx_mono locally instead of reading the
+    envelope's mono: CLK-C4 says a monotonic reading only means something in
+    its own boot domain, and here both readings are p2's.
+
+    mutant: in refresh_health, compute _perc_age from the envelope's mono
+    instead of now - rx_mono -> the age is a cross-domain nonsense number and
+    this test's fresh case stops being reliably OK.
+    """
+    cache = dict(_all_healthy_cache())
+    cache["perception"] = {"fps_depth": 29.4}
+    # Fresh: arrival == now, well inside max_age_s, rate above floor -> OK.
+    agg = HealthAggregator()
+    refresh_health(agg, cache, now_mono_s=100.0,
+                   rx_mono={"perception": 100.0},
+                   perception_min_fps_depth=15.0, perception_max_age_s=3.0)
+    assert agg.states()["cam_rgbd"] is HealthState.OK
+    # Stale: arrival 10 s ago, past the 3 s budget -> FAIL, even though the
+    # cached body still reads 29.4 (a last-value cache never clears itself).
+    agg = HealthAggregator()
+    refresh_health(agg, cache, now_mono_s=110.0,
+                   rx_mono={"perception": 100.0},
+                   perception_min_fps_depth=15.0, perception_max_age_s=3.0)
+    assert agg.states()["cam_rgbd"] is HealthState.FAIL
+    # No rx_mono for perception -> age unknown -> cannot time out, falls to the
+    # rate verdict. With a healthy rate that is OK; the point is it does not
+    # crash on the missing key.
+    agg = HealthAggregator()
+    refresh_health(agg, cache, now_mono_s=110.0, rx_mono={},
+                   perception_min_fps_depth=15.0, perception_max_age_s=3.0)
+    assert agg.states()["cam_rgbd"] is HealthState.OK
+
+
+def test_cam_rgbd_unknown_without_the_mirror():
+    """No state/perception at all -> UNKNOWN, not FAIL.
+
+    UNKNOWN and FAIL are different claims: silence on this key does not
+    distinguish "p1 is not mirroring" from "the camera died", and calling it
+    FAIL would forbid motion for a reason that is not evidence. Same asymmetry
+    state_from_robot documents for state/robot.
+
+    mutant: return FAIL on absence -> red.
+    """
+    assert state_from_perception(None)[0] is HealthState.UNKNOWN
+    # A body without the field is the same situation, not a parse error: a
+    # future producer that drops fps_depth must not read as healthy.
+    assert state_from_perception({"fps_infer": 20.0})[0] is HealthState.UNKNOWN
+
+
+def test_cam_rgbd_degraded_while_thresholds_unset():
+    """Thresholds absent -> DEGRADED with the rate in the detail.
+
+    CLAUDE.md 3.1 forbids a default on this item (it forbids motion), so the
+    derivation must have an answer for "configured nothing yet". DEGRADED is
+    that answer: the operator sees the rate, and nothing acts on a number
+    nobody calibrated. OK would hide it; FAIL would strand the robot on a
+    missing config key.
+
+    mutant: default min_fps_depth to 15.0 in the signature -> red.
+    """
+    st, detail = state_from_perception({"fps_depth": 29.4})
+    assert st is HealthState.DEGRADED
+    assert "29.4" in detail and "not set" in detail
+
+
+def test_cam_rgbd_stale_beats_a_healthy_rate():
+    """Age is checked BEFORE the rate, and that order is the point.
+
+    A stale body's fps_depth describes the past. Reading the rate first would
+    report a healthy camera from a heartbeat that stopped arriving minutes
+    ago -- which is exactly the failure mirror_status_to_gen's None branch is
+    built to avoid on the publishing side, seen from the consuming side.
+
+    mutant: move the staleness check below the rate check -> red (a stale body
+    carrying 29.4 would answer OK).
+    """
+    st, detail = state_from_perception(
+        {"fps_depth": 29.4}, rx_age_s=9.0, min_fps_depth=15.0, max_age_s=3.0)
+    assert st is HealthState.FAIL
+    assert "stale" in detail
+
+
+def test_cam_rgbd_degraded_below_the_rate_floor():
+    """< 15 Hz -> DEGRADED, verbatim from 14 S8.1.
+
+    DEGRADED rather than FAIL: a low frame rate is a camera that still sees,
+    and the item's own level (DEVICE/FATAL in items.py) decides what a FAIL
+    would cost. 14 S8.1 says 降级 for this half and 失效 only for the timeout.
+
+    mutant: return FAIL here -> red.
+    """
+    st, detail = state_from_perception(
+        {"fps_depth": 9.0}, rx_age_s=0.5, min_fps_depth=15.0, max_age_s=3.0)
+    assert st is HealthState.DEGRADED
+    assert "9.0" in detail
+
+
+def test_cam_rgbd_ok_when_fresh_and_fast_enough():
+    """The positive case, without which the four above all pass on a
+    derivation that never answers OK (CLAUDE.md 3.3 -- negative-only
+    assertions are passed by an empty shell).
+
+    mutant: make the comparison fps <= min_fps_depth and pass fps == floor
+    -> this case still passes, so the boundary gets its own assertion below.
+    """
+    st, detail = state_from_perception(
+        {"fps_depth": 29.4}, rx_age_s=0.5, min_fps_depth=15.0, max_age_s=3.0)
+    assert st is HealthState.OK
+    assert "29.4" in detail
+    # Boundary: exactly at the floor is NOT below it. 14 S8.1 writes "< 15 Hz
+    # 降级", so 15.0 itself is still acceptable -- an off-by-one here would
+    # degrade a camera running exactly to spec.
+    assert state_from_perception(
+        {"fps_depth": 15.0}, rx_age_s=0.5, min_fps_depth=15.0,
+        max_age_s=3.0)[0] is HealthState.OK

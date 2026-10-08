@@ -287,10 +287,65 @@ def state_from_link(link: Optional[Mapping[str, Any]]
     return HealthState.DEGRADED, "cloud link %s" % level
 
 
+def state_from_perception(perc: Optional[Mapping[str, Any]], *,
+                          rx_age_s: Optional[float] = None,
+                          min_fps_depth: Optional[float] = None,
+                          max_age_s: Optional[float] = None
+                          ) -> Tuple[HealthState, str]:
+    """cam_rgbd item from state/perception (p1_motion mirror, 11 S1.1.6 P1-25).
+
+    14 S8.1 reads this item from "state/perception 的 fps_depth 与心跳 age",
+    verdict "< 15 Hz 降级, 超时失效". Both halves are needed: a camera that
+    went dark stops the heartbeat (age), while one that is degraded keeps
+    publishing a low rate (fps_depth).
+
+    *** Why state/perception and not state/targets. 14 S8.1 pointed at
+    state/targets until 2026-10-01, and 19 S16 PCC-9 lists that key verbatim
+    as 停车场 / 本期不实现 -- a source that will not produce. The item is
+    DEVICE/FATAL and forbids motion, so it sat UNKNOWN and p2 published
+    allow_motion=false forever (NEXT S8.5 R-2, user ruling took option b).
+
+    *** Both thresholds have NO default, same reason state_from_power's
+    critical_soc_pct has none (CLAUDE.md 3.1): this item forbids motion, and a
+    guessed rate floor is wrong in both directions -- too high and a healthy
+    camera strands the robot, too low and a failing one is waved through.
+    Without them the rate is reported as a detail and the state stays
+    DEGRADED: visible, and not acted upon.
+
+    *** rx_age_s is measured by the CALLER, in the caller's own monotonic
+    domain. It is deliberately not derived from the envelope's mono field:
+    that reading belongs to p1's boot domain, and CLK-C4 says a monotonic
+    reading only means something inside the domain it was taken in. Comparing
+    it against p2's clock would produce an age that drifts with whatever the
+    two processes' boot times happen to be.
+    """
+    if not perc:
+        return (HealthState.UNKNOWN,
+                "no state/perception (p1 not mirroring, or perception down)")
+    fps = perc.get("fps_depth")
+    if not isinstance(fps, (int, float)):
+        return HealthState.UNKNOWN, "no fps_depth in state/perception"
+    # Staleness first: a stale body's fps_depth describes the past, so reading
+    # it before checking age would report a healthy rate for a dead camera.
+    if max_age_s is not None and rx_age_s is not None and rx_age_s > max_age_s:
+        return (HealthState.FAIL,
+                "state/perception stale %.1fs (> %.1fs)" % (rx_age_s, max_age_s))
+    if min_fps_depth is None or max_age_s is None:
+        return (HealthState.DEGRADED,
+                "fps_depth %.1f, thresholds not set" % fps)
+    if fps < min_fps_depth:
+        return (HealthState.DEGRADED,
+                "fps_depth %.1f < %.1f" % (fps, min_fps_depth))
+    return HealthState.OK, "fps_depth %.1f" % fps
+
+
 def refresh_health(agg: HealthAggregator, state_cache: Mapping[str, Any], *,
                    now_mono_s: float,
                    device_states: Optional[Mapping[str, Optional[bool]]] = None,
-                   critical_soc_pct: Optional[float] = None) -> None:
+                   critical_soc_pct: Optional[float] = None,
+                   rx_mono: Optional[Mapping[str, float]] = None,
+                   perception_min_fps_depth: Optional[float] = None,
+                   perception_max_age_s: Optional[float] = None) -> None:
     """Feed one round of observations into the aggregator.
 
     Called once per publish tick from the P2 loop. Every derivation runs every
@@ -302,7 +357,20 @@ def refresh_health(agg: HealthAggregator, state_cache: Mapping[str, Any], *,
     agg.observe("rtk", rtk[0], now_mono_s=now_mono_s, detail=rtk[1])
     agg.observe("heading", heading[0], now_mono_s=now_mono_s,
                 detail=heading[1])
+    # cam_rgbd (14 S8.1). rx_mono carries ARRIVAL times measured in this
+    # process's monotonic domain -- see state_from_perception on why the
+    # envelope's mono cannot be used (CLK-C4). Absent rx_mono means the caller
+    # does not track arrivals; the derivation then sees rx_age_s=None and
+    # cannot time out, which is why the three new parameters are all optional
+    # together rather than one of them being required.
+    _perc_rx = (rx_mono or {}).get("perception")
+    _perc_age = None if _perc_rx is None else now_mono_s - _perc_rx
     for item, derived in (
+            ("cam_rgbd", state_from_perception(
+                state_cache.get("perception"),
+                rx_age_s=_perc_age,
+                min_fps_depth=perception_min_fps_depth,
+                max_age_s=perception_max_age_s)),
             ("clock", state_from_clock(state_cache.get("clock"))),
             ("chassis", state_from_robot(state_cache.get("robot"))),
             ("battery", state_from_power(state_cache.get("power"),

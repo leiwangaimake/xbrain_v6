@@ -240,3 +240,37 @@ def test_p3_state_sink_unwraps_health_too():
     src = inspect.getsource(p3_main_wiring._amain)
     assert 'data = body.get("data") if isinstance(body, dict) else None' in src
     assert "(HEALTH_SUMMARY_TOPIC, \"health\")" in src
+
+
+def test_cam_rgbd_is_fed_from_state_perception_in_the_loop():
+    """The last segment of R-2 (b): the loop must subscribe state/perception
+    into the cache, record its ARRIVAL time locally, and hand both plus the
+    thresholds to refresh_health. state_from_perception and the refresh_health
+    age seam are proven behaviourally in test_health_aggregate.py; what those
+    cannot see is whether run_voice_loop_wiring actually threads them -- a pure
+    function wired to nothing passes every unit test (NEXT S5 SW-28).
+
+    This is a SOURCE check, deliberately, and weaker than behaviour: it catches
+    a deleted wiring line, not a logic error. It is here rather than driven
+    live because standing up the P2 voice loop means faking mic + speaker
+    capture threads; this file already settles for inspect.getsource on
+    run_voice_loop_wiring for the same reason (see the three tests above). The
+    strong half is the aggregate seam test; this is the "did anyone call it".
+
+    MUTATION (each reddens this alone):
+      * drop (STATE_PERCEPTION_TOPIC, "perception") from the subscribe loop
+      * drop the rx_mono[name] = time.monotonic() line from the sink
+      * call refresh_health without rx_mono= / perception_min_fps_depth=
+    """
+    src = inspect.getsource(run_voice_loop_wiring)
+    # (1) subscribed into state_cache under the name refresh_health reads.
+    assert '(STATE_PERCEPTION_TOPIC, "perception")' in src
+    # (2) arrival time recorded in THIS process's clock (not the envelope mono,
+    # CLK-C4) -- without it refresh_health gets rx_age_s=None and cannot 失效.
+    assert "rx_mono[name] = time.monotonic()" in src
+    # (3) both the arrival map and the configured thresholds reach the
+    # derivation. A refresh_health call missing these would leave cam_rgbd on
+    # the None fail-safe forever even once the product carries the keys.
+    assert "rx_mono=rx_mono" in src
+    assert "perception_min_fps_depth=perception_cfg.min_fps_depth" in src
+    assert "perception_max_age_s=perception_cfg.max_age_s" in src

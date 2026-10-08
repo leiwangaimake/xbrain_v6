@@ -49,7 +49,12 @@ from xbrain.p2_core.audio.broadcast_rx import BroadcastSession, accept_chunk
 from xbrain.p2_core.audio.broadcast_sink import BroadcastPlaySink
 from xbrain.p2_core.boot.config_digest import ConfigDigestGuard, digest_fault_event
 from xbrain.p2_core.health.aggregate import HealthAggregator, refresh_health
-from xbrain.p2_core.health.factor import FactorConfig, build_health_factor, hold_grant
+from xbrain.p2_core.health.factor import (
+    FactorConfig,
+    PerceptionHealthConfig,
+    build_health_factor,
+    hold_grant,
+)
 from xbrain.p2_core.messaging.audio_state import audio_publish_due, build_audio_state
 from xbrain.p2_core.mode.b_mode_timer import BModeTimer
 from xbrain.p2_core.mode.state_machine import ModeState
@@ -84,6 +89,11 @@ AUDIO_STATE_PERIOD_S = 1.0
 HEALTH_PUBLISH_PERIOD_S = 1.0            # 11 S2.2 / 14 S2.3 P-2: 1 Hz stable
 STATE_POSE_TOPIC = "state/pose"          # -> rtk + heading (11 S3.2 / S3.3)
 STATE_CLOCK_TOPIC = "state/clock"        # -> clock (CLK-A2 mirror)
+# -> cam_rgbd (14 S8.1). p1 mirrors rt/perception/status here (11 S1.1.6
+# P1-25); the key 14 S8.1 used to name, state/targets, is 19 S16 PCC-9
+# 停车场 and produces nothing -- which is why this item sat UNKNOWN and
+# allow_motion stayed false (NEXT S8.5 R-2).
+STATE_PERCEPTION_TOPIC = "state/perception"
 STATE_ROBOT_TOPIC = "state/robot"        # -> chassis (chassis_relay, CR-4)
 STATE_POWER_TOPIC = "state/power"        # -> battery (chassis_relay, CR-5)
 STATE_LINK_TOPIC = "state/link"          # -> network (11 S4.6)
@@ -136,7 +146,7 @@ def _stage_a_config() -> "tuple":
     """10 S3.3.3 Stage A: load the resolved snapshot ONCE and take both things
     this process needs from it -- the factor table and the config digest guard.
 
-    (FactorConfig, ConfigDigestGuard).
+    (FactorConfig, PerceptionHealthConfig, ConfigDigestGuard).
 
     One load, deliberately. A second load_resolved() for the guard could see a
     DIFFERENT MANIFEST than the one the factor table came from, and since a
@@ -158,9 +168,19 @@ def _stage_a_config() -> "tuple":
         degraded_fail=cfg.get("health.factors.degraded_fail"),
         degraded_degraded=cfg.get("health.factors.degraded_degraded"),
         unknown=cfg.get("health.factors.unknown"))
+    # cam_rgbd thresholds (R-2). default=None, NOT the MISSING that the factor
+    # keys above take: those predate every product and must exist, so their
+    # absence SHOULD raise; these two were added after the 2026-09-18 freeze,
+    # so a product that has not been regenerated simply lacks them, and the
+    # right answer to that is the fail-safe DEGRADED in state_from_perception
+    # -- not a crash that would brick p2 for an unrelated reason, and not a
+    # baked-in default (CLAUDE.md 3.1). The freeze line fills them in time.
+    perception = PerceptionHealthConfig(
+        min_fps_depth=cfg.get("health.perception.min_fps_depth", None),
+        max_age_s=cfg.get("health.perception.max_age_s", None))
     # Built from the ResolvedConfig object, not from a fresh MANIFEST read --
     # see ConfigDigestGuard.at_stage_a on why that distinction is the point.
-    return factor, ConfigDigestGuard.at_stage_a(cfg)
+    return factor, perception, ConfigDigestGuard.at_stage_a(cfg)
 
 
 def _now_mono_ms() -> int:
@@ -244,13 +264,15 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # change while the process runs (a config change goes through the
         # freeze line and a restart), and re-reading it at 1 Hz would put a
         # file read plus a sha256 verification in the publish path.
-        factor_cfg, digest_guard = _stage_a_config()
+        factor_cfg, perception_cfg, digest_guard = _stage_a_config()
         _logger.info("p2 stage A: common_digest=%s", digest_guard.cached_digest)
         # Edge-triggered fault sequence for event/fault/bit. Same boot-token
         # rationale as _estop_boot below: record.db persists across restarts
         # while a bare seq resets, so two boots would collide on eid.
         _cfg_evt = {"boot": os.urandom(3).hex(), "seq": 0}
         state_cache: dict = {}
+        # name -> local monotonic time of the last sample on that key.
+        rx_mono: dict = {}
 
         def _clock_sync() -> bool:
             """11 S3.0 信封的 ts_sync. 抄 P1-13 镜像来的 ClockStatus.sync.
@@ -286,13 +308,25 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 # works without a second code path.
                 data = body.get("data") if isinstance(body, dict) else None
                 state_cache[name] = data if isinstance(data, dict) else body
+                # Arrival time in THIS process's monotonic domain. Recorded for
+                # every key, not just the one that needs it today: the envelope
+                # carries the PUBLISHER's mono, and CLK-C4 says a monotonic
+                # reading only means something inside the domain it was taken
+                # in -- so an age computed from it would drift with the two
+                # processes' boot times. refresh_health's own docstring says a
+                # source that stops publishing must be able to age into a worse
+                # state; without this it could not, because state_cache is a
+                # last-value cache and a stale body looks identical to a fresh
+                # one.
+                rx_mono[name] = time.monotonic()
             return _sink
 
         for _topic, _name in ((STATE_POSE_TOPIC, "pose"),
                               (STATE_CLOCK_TOPIC, "clock"),
                               (STATE_ROBOT_TOPIC, "robot"),
                               (STATE_POWER_TOPIC, "power"),
-                              (STATE_LINK_TOPIC, "link")):
+                              (STATE_LINK_TOPIC, "link"),
+                              (STATE_PERCEPTION_TOPIC, "perception")):
             _gen_subs.append(gen.declare_subscriber(_topic,
                                                     _make_state_sink(_name)))
         _logger.info("p2 wiring: health sources subscribed, publishing %s",
@@ -773,8 +807,12 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 # stays UNKNOWN with a detail naming what is missing, never ok.
                 if now - last_health >= HEALTH_PUBLISH_PERIOD_S:
                     try:
-                        refresh_health(health_agg, state_cache, now_mono_s=now,
-                                       device_states=device_bridge.states())
+                        refresh_health(
+                            health_agg, state_cache, now_mono_s=now,
+                            device_states=device_bridge.states(),
+                            rx_mono=rx_mono,
+                            perception_min_fps_depth=perception_cfg.min_fps_depth,
+                            perception_max_age_s=perception_cfg.max_age_s)
                         # 11 S3.0 信封. ts_sync 见 _clock_sync 的注释.
                         health_pub.put(stamp_body(
                             health_agg.build_summary(factor_cfg),
