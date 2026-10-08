@@ -34,10 +34,12 @@ from xbrain.p3_task.fence.fence_set import build_fence_set
 pytestmark = pytest.mark.no_device
 
 #: FencesDAO.list_active() 的行形状: (fence_id, name, role, kind, geom_json,
-#: hard_enforce, rev). 只放一个 allow -- FV-3 要求恰好一个.
+#: hard_enforce, rev, priority, speed_limit_mps). 只放一个 allow -- FV-3 要求
+#: 恰好一个. 尾两列是 11 S9A.2 v0.3 字段: priority 取中性 0, speed_limit_mps
+#: 对 allow 必须是 None(FV-13 反向).
 _ROWS = [("f-a", "活动区", "allow", "polygon",
           '{"points": [[31.24, 121.45], [31.25, 121.46], [31.23, 121.47]]}',
-          1, 1)]
+          1, 1, 0, None)]
 _ORIGIN = {"lat": 31.2304, "lon": 121.4737, "alt": 4.0}
 
 

@@ -222,6 +222,15 @@ CREATE TABLE IF NOT EXISTS fences (
   geom_json     TEXT NOT NULL,                   -- WGS84 vertices (11 S9A.2)
   hard_enforce  INTEGER NOT NULL DEFAULT 1 CHECK (hard_enforce IN (0,1)),
   soft_margin_m REAL,
+  -- 11 S9A.2 block B-2 / 15 S9.3: the two fields the v0.3 contract added and
+  -- this table never carried. priority is the painter order (low paints first,
+  -- allow before forbid at equal values); speed_limit_mps is the in-zone speed
+  -- ceiling that enters the 11 S9.6.1 min(). Both are in the crc32 recipe
+  -- (block B-3), so a column that does not exist makes "lower the slow zone"
+  -- produce a byte-identical FenceSet -- S-5 then answers duplicate and the
+  -- change never takes effect, with no error anywhere.
+  priority      INTEGER NOT NULL DEFAULT 0,     -- 11 S9A.2 painter order (S9.4)
+  speed_limit_mps REAL CHECK (speed_limit_mps IS NULL OR speed_limit_mps > 0),
   num           INTEGER,                        -- 1..99 voice "2 hao wei lan" (F15)
   alias_json    TEXT NOT NULL DEFAULT '[]',
   state         TEXT NOT NULL DEFAULT 'active', -- draft|active|disabled|deleted
@@ -235,7 +244,17 @@ CREATE TABLE IF NOT EXISTS fences (
   CHECK (num IS NULL OR (num >= 1 AND num <= 99)),
   CHECK (role IN ('allow','forbid','speed_limit','warning')),
   CHECK (kind IN ('polygon','circle')),
-  CHECK (role <> 'warning' OR hard_enforce = 0),   -- 11 S9A.2: warning never hard-enforces
+  -- 11 S9A.2 field table: hard_enforce is false for BOTH advisory roles, not
+  -- just warning. A speed_limit row with hard_enforce=1 reaches P1 looking like
+  -- a keep-out, and once speed_limit compiles into the clip geometry the robot
+  -- cannot enter the slow zone at all -- the opposite of "drive slowly here".
+  CHECK (role NOT IN ('warning','speed_limit') OR hard_enforce = 0),
+  -- 15 S9.3 双向 CHECK, mirrored by 11 FV-13. Both directions matter: the
+  -- forward one stops a slow zone with no limit (nothing to apply), the reverse
+  -- one stops a stray limit on another role (it would not be applied, and
+  -- S9A.2 makes it E_SCHEMA rather than something to ignore).
+  CHECK (role <> 'speed_limit' OR speed_limit_mps IS NOT NULL),
+  CHECK (role  = 'speed_limit' OR speed_limit_mps IS NULL),
   CHECK (fence_id GLOB 'f-*')
 );
 """.strip()
@@ -380,6 +399,15 @@ FENCE_DB_STATEMENTS = (
 _STATE_COLDEF = ("TEXT NOT NULL DEFAULT 'active' "
                  "CHECK (state IN ('draft','active','disabled','deleted'))")
 _NUM_COLDEF = "INTEGER CHECK (num IS NULL OR (num >= 1 AND num <= 99))"
+# 11 FV-13's "> 0" half. Only the half that reads ONE column can travel through
+# ADD COLUMN: SQLite accepts a column-level CHECK there but has no syntax for
+# adding a TABLE-level one, and the two FV-13 directions both read `role`. So a
+# migrated database gets the range check from here and the role correlation from
+# the three writers (geo_object._fence, commit_fence, FencesDAO.insert) plus
+# FV-13 at the receiving end (p1 fence_set._parse_polygon). Stating it rather
+# than leaving it implied, because PRAGMA table_info reports no CHECK at all --
+# the migration test cannot see which of the two forms a database ended up with.
+_SPEED_LIMIT_COLDEF = "REAL CHECK (speed_limit_mps IS NULL OR speed_limit_mps > 0)"
 
 ADDED_COLUMNS = {
     "waypoints": (
@@ -408,6 +436,14 @@ ADDED_COLUMNS = {
         ("state", _STATE_COLDEF),
         ("created_by", "TEXT NOT NULL DEFAULT 'factory'"),
         ("updated_by", "TEXT NOT NULL DEFAULT 'factory'"),
+        # 11 S9A.2 v0.3 fields (block B-2). priority defaults to 0 for every
+        # existing row, which is the contract's own neutral value -- the painter
+        # order of a set nobody has ordered yet is the array order, unchanged.
+        # speed_limit_mps defaults to NULL, correct for all four existing roles:
+        # no row on this robot is a speed_limit zone yet, and NULL is "not
+        # calibrated" rather than a 0.0 that would read as "stop here" (3.1).
+        ("priority", "INTEGER NOT NULL DEFAULT 0"),
+        ("speed_limit_mps", _SPEED_LIMIT_COLDEF),
     ),
 }
 

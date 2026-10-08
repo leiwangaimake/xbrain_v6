@@ -20,6 +20,7 @@ import zlib
 
 import pytest
 
+from xbrain.common.fence.roles import hard_enforce_for_role
 from xbrain.p3_task.fence.fence_set import (
     build_fence_set,
     fence_set_crc32,
@@ -29,10 +30,23 @@ from xbrain.p3_task.fence.geom import InvalidFenceSet
 pytestmark = pytest.mark.no_device
 
 
-def _row(fid, name, role, pts, hard=None):
+def _row(fid, name, role, pts, hard=None, priority=0, limit=None):
+    """One FencesDAO.list_active() row: (fence_id, name, role, kind, geom_json,
+    hard_enforce, rev, priority, speed_limit_mps).
+
+    hard_enforce is derived the way the DAO derives it -- false for BOTH
+    advisory roles (11 S9A.2: warning AND speed_limit), which is why this
+    helper calls the shared function instead of re-spelling the rule. `hard`
+    overrides it so a test can hand the builder a row the writers would have
+    refused, which is the only way to check what the builder does with one.
+    """
     geom = json.dumps({"points": pts})
-    he = (0 if role == "warning" else 1) if hard is None else hard
-    return (fid, name, role, "polygon", geom, he, 1)
+    he = (1 if hard_enforce_for_role(role) else 0) if hard is None else hard
+    # speed_limit zones get a limit by default so a caller does not have to
+    # remember FV-13; every other role must carry None (the reverse half).
+    if limit is None and role == "speed_limit":
+        limit = 1.0
+    return (fid, name, role, "polygon", geom, he, 1, priority, limit)
 
 
 _ALLOW = _row("f-lake", "环湖活动区", "allow",
@@ -106,3 +120,65 @@ def test_crc32_helper_is_pure():
     fs = build_fence_set([_ALLOW, _FORBID], fence_set_id="fs-a", rev=4)
     again = fence_set_crc32("fs-a", 4, fs["polygons"])
     assert again == fs["crc32"]
+
+
+def test_priority_is_on_every_polygon_and_speed_limit_only_on_its_own_role():
+    """11 S9A.2 block B-2 的两个 v0.3 字段怎么上线.
+
+    priority 每个多边形都有(必填); speed_limit_mps 只在 role=speed_limit 上
+    出现, 其余 role 必须 OMIT 键而不是发 null -- 发 null 会被接收方的 FV-13
+    反向判据当成"带了该字段"而整条拒收, 于是每个非限速多边形都被拒.
+    MUTATION: 把 if carries_speed_limit(role) 换成无条件赋值 -> allow 多边形
+    上出现 speed_limit_mps 键, 本条红.
+    """
+    slow = _row("f-yard", "车场慢行区", "speed_limit",
+                [[31.206, 121.506], [31.207, 121.506], [31.2065, 121.507]],
+                priority=10, limit=1.0)
+    fs = build_fence_set([_ALLOW, slow], fence_set_id="fs-a", rev=1)
+    pa = next(p for p in fs["polygons"] if p["poly_id"] == "f-lake")
+    ps = next(p for p in fs["polygons"] if p["poly_id"] == "f-yard")
+    # priority: 两个都有, 取各自的值.
+    assert pa["priority"] == 0 and ps["priority"] == 10
+    # speed_limit_mps: 只有限速区有.
+    assert ps["speed_limit_mps"] == 1.0
+    assert "speed_limit_mps" not in pa
+    # 限速区从不硬执行(S9A.2 恒 false). 这条与 roles 的单测重叠是故意的 --
+    # 那条测函数, 这条测它真的被 wire 组装用上了.
+    assert ps["hard_enforce"] is False
+
+
+def test_a_speed_limit_row_with_no_limit_refuses_the_whole_set():
+    """限速区没有限速值 = 一个无法施加的区. 抛 InvalidFenceSet 而不是让
+    float(None) 抛 TypeError.
+
+    为什么这条路径还存在: 本机 fence.db 的行写在该列存在之前, 而 SQLite 不能
+    给已有表 ALTER 出表级 CHECK. 三个写入方都已挡住, 这是读出侧的兜底.
+    MUTATION: 删掉这个 raise -> float(None) 抛 TypeError -> 落到调用方的
+    generic handler, 于是 1 Hz 广播循环每秒记一条 error 而不是只记一次.
+    """
+    legacy = _row("f-old", "老慢行区", "speed_limit",
+                  [[31.208, 121.508], [31.209, 121.508], [31.2085, 121.509]],
+                  limit=0)                 # 0 不是 None, 下面显式换成 None
+    legacy = legacy[:8] + (None,)
+    with pytest.raises(InvalidFenceSet, match="speed_limit_mps"):
+        build_fence_set([_ALLOW, legacy], fence_set_id="fs-a", rev=1)
+
+
+def test_a_legacy_hard_enforcing_speed_limit_row_is_corrected_on_the_wire():
+    """旧行的 hard_enforce 不透传, 按 role 现场派生.
+
+    *** 这不是假设的情形: 本机 data/run/fence.db 的 f-speed(中心限速区,
+    state=active)就是 role=speed_limit 且 hard_enforce=1 -- 由只认 warning
+    的旧规则写进去的. 透传它 = 把一个操作员标为"提示性"的区域当禁入区发出去,
+    一旦 speed_limit 进裁剪几何, 机器人就进不了中心区.
+    MUTATION: 改回 bool(_hard_enforce) -> 本条红(它会原样带出 True).
+    """
+    legacy = _row("f-speed", "中心限速区", "speed_limit",
+                  [[31.21, 121.52], [31.22, 121.52], [31.215, 121.53]],
+                  hard=1, limit=1.0)          # hard=1: 旧规则留下的值
+    fs = build_fence_set([_ALLOW, legacy], fence_set_id="fs-a", rev=1)
+    ps = next(p for p in fs["polygons"] if p["poly_id"] == "f-speed")
+    assert ps["hard_enforce"] is False
+    # 反向也要成立: allow 不会被"顺手归一化"成不硬执行.
+    pa = next(p for p in fs["polygons"] if p["poly_id"] == "f-lake")
+    assert pa["hard_enforce"] is True

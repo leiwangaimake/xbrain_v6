@@ -39,7 +39,11 @@ from xbrain.common.enums import FENCE_ROLE  # 11 S9A.2 closed set (CLAUDE.md 3.5
 #与本进程用同一套归一化(11 S9A.2). re-import 保持 from ...fence_set import
 # fence_set_crc32 的既有调用(test_fence_set / 跨语言金标)可用.
 from xbrain.common.fence.geom import fence_set_crc32
-from xbrain.p3_task.fence.geom import validate_active_fence_set
+
+# S9A.2 field-presence rule for speed_limit_mps, shared with the writers and
+# with p1's receive-side FV-13 so one answer serves all of them.
+from xbrain.common.fence.roles import carries_speed_limit, hard_enforce_for_role
+from xbrain.p3_task.fence.geom import InvalidFenceSet, validate_active_fence_set
 
 # Declared winding per role (11 S9A.2: receiver normalises, this is a hint). Keys
 # ARE the FENCE_ROLE closed set -- asserted at import so adding a role to 11 S9A.2
@@ -59,20 +63,60 @@ def build_fence_set(active_rows: Sequence, *, fence_set_id: str, rev: int,
                     enu_origin: Optional[Dict[str, float]] = None,
                     soft_margin_min_m: Optional[float] = None) -> Dict[str, Any]:
     """Build a 11 S9A.2 FenceSet from FencesDAO.list_active() rows. Each row is
-    (fence_id, name, role, kind, geom_json, hard_enforce, rev). Raises
-    InvalidFenceSet (FV-3) if the active set is not exactly-1-allow / <= 5."""
+    (fence_id, name, role, kind, geom_json, hard_enforce, rev, priority,
+    speed_limit_mps). Raises InvalidFenceSet (FV-3) if the active set is not
+    exactly-1-allow / <= 5."""
     roles = [r[2] for r in active_rows]
     validate_active_fence_set(roles)               # FV-3 / S9A.1A -- raises on bad set
     polygons: List[Dict[str, Any]] = []
-    for (fence_id, name, role, _kind, geom_json, hard_enforce, _rev) in active_rows:
-        polygons.append({
+    for (fence_id, name, role, _kind, geom_json, _hard_enforce, _rev,
+         priority, speed_limit_mps) in active_rows:
+        poly: Dict[str, Any] = {
             "poly_id": fence_id,
             "role": role,
             "name": name,
             "winding": _WINDING.get(role, "ccw"),
-            "hard_enforce": bool(hard_enforce),
+            # S9A.2 DERIVES this from role, and it is derived again here rather
+            # than passed through. The stored column is right for every row the
+            # current writers made, and wrong for rows that predate them: this
+            # robot's fence.db holds an active role=speed_limit fence with
+            # hard_enforce=1, written by the rule that only knew about warning.
+            # Passing that through would put a keep-out on the wire for a zone
+            # the operator marked advisory -- p1 normalises it again on receipt
+            # (S9A.2 "接收方按 role 归一化, 不得信任发送方"), but there is no
+            # reason for the sender to state something it knows is wrong, and
+            # the crc32 is computed over what is actually sent so the two sides
+            # still agree byte for byte. The column stays unpacked as
+            # _hard_enforce (the file's convention for a field the row carries
+            # and this builder does not read) so the row shape stays documented.
+            "hard_enforce": hard_enforce_for_role(role),
+            # S9A.2 block B-2: required on every polygon, painter order, low
+            # paints first. int() because SQLite hands back whatever was stored
+            # and the recipe renders an int32 -- a float 0.0 would raise in the
+            # crc32 formatter rather than silently become "0.0" and disagree
+            # with the C++ receiver's std::to_string on an int32.
+            "priority": int(priority),
             "vertices": _vertices(geom_json),
-        })
+        }
+        # S9A.2: "role != speed_limit 时必须省略, 出现即 E_SCHEMA". The key is
+        # OMITTED rather than sent as null -- a null would be a present field
+        # with no value, which FV-13's reverse direction rejects at the
+        # receiver, so every non-speed_limit polygon would be refused.
+        if carries_speed_limit(role):
+            if speed_limit_mps is None:
+                # Only reachable from a row written before the column existed:
+                # the DAO, geo_object and the CREATE TABLE form all refuse this
+                # now (FV-13). Raised as InvalidFenceSet rather than letting
+                # float(None) throw, because the caller already has a branch for
+                # "this set cannot be broadcast" that logs once and keeps the
+                # last good set on P1 (FS-7). A TypeError would land in the
+                # generic handler and log every second instead.
+                raise InvalidFenceSet(
+                    "fence %s is role=speed_limit with no speed_limit_mps "
+                    "(11 FV-13); fix the row, there is no default (3.1)"
+                    % (fence_id,))
+            poly["speed_limit_mps"] = float(speed_limit_mps)
+        polygons.append(poly)
     return {
         "fence_set_id": fence_set_id,
         "rev": rev,

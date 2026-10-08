@@ -569,7 +569,8 @@ async def test_fences_list_active_excludes_tombstoned(fence_conn):
         "VALUES ('f-2', '禁区', 'forbid', 'polygon', '[]', 'h', 1, 0, 1)")
     rows = await dao.list_active()
     assert {r[0] for r in rows} == {"f-1"}
-    # list_active row = (fence_id, name, role, kind, geom_json, hard_enforce, rev);
+    # list_active row = (fence_id, name, role, kind, geom_json, hard_enforce,
+    # rev, priority, speed_limit_mps);
     # name + role carried out for the HMI/P1. MUTATION: wrong column order breaks
     # the FenceSet builder downstream.
     assert rows[0][1] == "活动区" and rows[0][2] == "allow"
@@ -635,3 +636,41 @@ async def test_record_commands_seq_autoincrement(record_conn):
         "SELECT cmd_seq FROM commands ORDER BY cmd_seq ASC")
     rows = await cur.fetchall()
     assert [r[0] for r in rows] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_fences_insert_derives_hard_enforce_false_for_speed_limit(fence_conn):
+    # 11 S9A.2: hard_enforce 恒 false for BOTH advisory roles. The old rule here
+    # was `0 if role == "warning" else 1`, which stored a slow zone as a
+    # hard-enforcing keep-out. MUTATION: restoring that rule reddens the
+    # speed_limit row below and leaves the warning row passing -- the exact
+    # asymmetry that let the defect live.
+    dao = FencesDAO(fence_conn)
+    await dao.insert("f-a", "allow", "[]", "h", 0)
+    await dao.insert("f-slow", "speed_limit", "[]", "h", 0, speed_limit_mps=1.0)
+    await dao.insert("f-warn", "warning", "[]", "h", 0)
+    cur = await fence_conn.execute(
+        "SELECT fence_id, hard_enforce, speed_limit_mps, priority FROM fences "
+        "ORDER BY fence_id")
+    rows = {r[0]: (r[1], r[2], r[3]) for r in await cur.fetchall()}
+    assert rows["f-slow"][0] == 0 and rows["f-warn"][0] == 0
+    assert rows["f-a"][0] == 1
+    # the limit lands, and priority defaults to the contract's neutral 0.
+    assert rows["f-slow"][1] == 1.0 and rows["f-slow"][2] == 0
+    # 3.1: a non-speed_limit row stores NULL, never 0.0 -- a 0.0 would read as
+    # "this zone caps you at a standstill" once the gate consumes the column.
+    assert rows["f-a"][1] is None
+
+
+@pytest.mark.asyncio
+async def test_fences_insert_enforces_fv13_both_ways(fence_conn):
+    # 11 FV-13. Both directions, because they fail differently: a slow zone with
+    # no limit is unusable, a limit on a keep-out is a value nobody reads.
+    # MUTATION: dropping either guard lets the bad row into fence.db, where the
+    # table CHECK cannot catch it on a MIGRATED database (SQLite has no syntax
+    # for adding a table-level CHECK, see schema_geo._SPEED_LIMIT_COLDEF).
+    dao = FencesDAO(fence_conn)
+    with pytest.raises(ValueError, match="requires speed_limit_mps"):
+        await dao.insert("f-slow", "speed_limit", "[]", "h", 0)
+    with pytest.raises(ValueError, match="only legal on role=speed_limit"):
+        await dao.insert("f-f", "forbid", "[]", "h", 0, speed_limit_mps=1.0)

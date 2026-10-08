@@ -36,12 +36,13 @@ _RING_ZONE = [[34.697, 135.505], [34.698, 135.505], [34.698, 135.506],
 
 def _fence_rows(rev=1):
     """FencesDAO.list_active() 的行形状: (fence_id, name, role, kind, geom_json,
-    hard_enforce, rev). 一个 allow(营区) + 一个 warning(报警区)."""
+    hard_enforce, rev, priority, speed_limit_mps). 一个 allow(营区) + 一个
+    warning(报警区). 两者都不是 speed_limit, 故尾列恒 None(11 FV-13 反向)."""
     return [
         ("f-camp", "camp", "allow", "polygon",
-         json.dumps({"points": _RING_ALLOW}), 1, rev),
+         json.dumps({"points": _RING_ALLOW}), 1, rev, 0, None),
         ("f-zone", "gate", "warning", "polygon",
-         json.dumps({"points": _RING_ZONE}), 0, rev),
+         json.dumps({"points": _RING_ZONE}), 0, rev, 0, None),
     ]
 
 

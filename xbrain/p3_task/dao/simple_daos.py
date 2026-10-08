@@ -19,6 +19,10 @@ DAO from performing schema translation, which is where drift enters.
 
 from __future__ import annotations
 
+# 11 S9A.2's role-derived facts, shared so the three fence writers cannot drift
+# apart (one of them already had the pre-speed_limit rule). See that module.
+from xbrain.common.fence.roles import carries_speed_limit, hard_enforce_for_role
+
 
 class PatrolProgressDAO:
     """15 S9.5 patrol_progress. One `active` row per task (idx_patrol_active).
@@ -265,17 +269,34 @@ class FencesDAO:
 
     async def insert(self, fence_id: str, role: str, geom_json: str,
                       content_hash: str, updated_ms: int, kind: str = "polygon",
-                      name=None, soft_margin_m=None) -> None:
-        # v1.5: role (11 S9A.2) replaces the old kind='zone'/zone_label overload;
-        # warning never hard-enforces (S9A.2). The S9A.1A count invariants are the
-        # fence.db triggers, not this DAO.
-        hard_enforce = 0 if role == "warning" else 1
+                      name=None, soft_margin_m=None, priority: int = 0,
+                      speed_limit_mps=None) -> None:
+        # v1.5: role (11 S9A.2) replaces the old kind='zone'/zone_label overload.
+        # The S9A.1A count invariants are the fence.db triggers, not this DAO.
+        #
+        # hard_enforce is DERIVED (S9A.2: 接收方按 role 归一化). It used to read
+        # `0 if role == "warning" else 1` here, which stored a speed_limit zone
+        # hard-enforcing -- see common/fence/roles for what that does to P1.
+        hard_enforce = 1 if hard_enforce_for_role(role) else 0
+        # 11 FV-13 both ways, before the row exists. The table CHECK says the
+        # same thing, but only on a database CREATEd with it: fence.db on this
+        # robot predates the column and SQLite cannot ADD a table-level CHECK,
+        # so a migrated database would accept the bad row silently (schema_geo
+        # _SPEED_LIMIT_COLDEF notes the same split).
+        if carries_speed_limit(role) and speed_limit_mps is None:
+            raise ValueError("role=speed_limit requires speed_limit_mps "
+                             "(11 FV-13); refusing to store a slow zone with "
+                             "no limit to apply")
+        if not carries_speed_limit(role) and speed_limit_mps is not None:
+            raise ValueError("speed_limit_mps is only legal on role=speed_limit "
+                             "(11 FV-13), got role=%r" % (role,))
         await self._conn.execute(
             "INSERT INTO fences (fence_id, name, role, kind, geom_json, "
-            " hard_enforce, soft_margin_m, content_hash, updated_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " hard_enforce, soft_margin_m, priority, speed_limit_mps, "
+            " content_hash, updated_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (fence_id, name, role, kind, geom_json, hard_enforce, soft_margin_m,
-             content_hash, updated_ms))
+             int(priority), speed_limit_mps, content_hash, updated_ms))
 
     async def list_active(self):
         # Ordered for a DETERMINISTIC FenceSet crc32 (11 S9A.2 concatenates
@@ -286,8 +307,17 @@ class FencesDAO:
         # into effect that nobody switched on. tombstone=0 stays as the second
         # half (a deleted row is also state='deleted', both are checked so the
         # filter still holds if one of the two is ever written alone).
+        #
+        # priority / speed_limit_mps are selected LAST, after rev, so the tuple
+        # positions every existing reader indexes stay put (build_fence_set
+        # unpacks by position). Appending is also why they are not folded into
+        # the ORDER BY: array order is the crc32's own order (S9A.2 "顺序即数组
+        # 序, 不排序"), and painter order is a separate judgement the consumer
+        # makes from the priority VALUE -- sorting here would quietly make the
+        # two the same thing and change the checksum of an unchanged fence.
         cur = await self._conn.execute(
-            "SELECT fence_id, name, role, kind, geom_json, hard_enforce, rev "
+            "SELECT fence_id, name, role, kind, geom_json, hard_enforce, rev, "
+            " priority, speed_limit_mps "
             "FROM fences WHERE tombstone=0 AND state='active' "
             "ORDER BY fence_id")
         return await cur.fetchall()

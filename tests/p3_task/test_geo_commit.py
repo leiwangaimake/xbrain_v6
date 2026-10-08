@@ -272,3 +272,58 @@ async def test_commit_waypoint_idempotent_on_reid(geo_conn):
     cur = await geo_conn.execute("SELECT COUNT(*), MAX(name) FROM waypoints "
                                  "WHERE geo_id='w-1'")
     assert await cur.fetchone() == (1, "新名")
+
+
+@pytest.mark.asyncio
+async def test_commit_fence_speed_limit_is_advisory_and_fv13_guarded(fence_conn):
+    """commit_fence 侧的同一组规则(teach save 走它, cmd/geo 走 geo_write).
+
+    两个写入方各有一份守卫是故意的: 它们由不同指令到达, 谁也不经过谁 --
+    §9.1A 的"无覆盖的调用点漏改不报错"正是这个形状.
+    MUTATION: 把 hard_enforce 改回 `0 if role == "warning" else 1` -> 限速区
+    存成硬执行 -> 第一条断言红.
+    """
+    pts = [(31.20, 121.50), (31.21, 121.50), (31.21, 121.51)]
+    await commit_fence(fence_conn, fence_id="f-slow", role="speed_limit",
+                       points=pts, now_ms=1, name="车场慢行区", state="active",
+                       priority=7, speed_limit_mps=1.0)
+    cur = await fence_conn.execute(
+        "SELECT hard_enforce, priority, speed_limit_mps FROM fences "
+        "WHERE fence_id='f-slow'")
+    row = await cur.fetchone()
+    assert row[0] == 0 and row[1] == 7 and row[2] == 1.0
+    # FV-13 both ways.
+    with pytest.raises(GeoCommitError, match="requires speed_limit_mps"):
+        await commit_fence(fence_conn, fence_id="f-s2", role="speed_limit",
+                           points=pts, now_ms=1, state="active")
+    with pytest.raises(GeoCommitError, match="only legal on role=speed_limit"):
+        await commit_fence(fence_conn, fence_id="f-f2", role="forbid",
+                           points=pts, now_ms=1, state="active",
+                           speed_limit_mps=1.0)
+
+
+@pytest.mark.asyncio
+async def test_commit_fence_content_hash_sees_the_two_new_fields(fence_conn):
+    """改限速 / 改叠放次序必须改 content_hash.
+
+    为什么: content_hash 是 geo 幂等判据("内容没变就不是新版本",
+    S7.9.2), 与 crc32 是同一个失效形态 -- 不含这两个字段时, 把慢行区
+    从 2.0 改到 1.0 哈希不变 -> 被判 unchanged -> 改了不生效且不报错.
+    MUTATION: 从 content_hash 的 dict 里去掉 priority 或 speed_limit_mps,
+    对应那一行红.
+    """
+    pts = [(31.20, 121.50), (31.21, 121.50), (31.21, 121.51)]
+
+    async def _hash_of(fid, **kw):
+        await commit_fence(fence_conn, fence_id=fid, points=pts, now_ms=1,
+                           state="active", **kw)
+        cur = await fence_conn.execute(
+            "SELECT content_hash FROM fences WHERE fence_id=?", (fid,))
+        return (await cur.fetchone())[0]
+
+    h_slow_20 = await _hash_of("f-a", role="speed_limit", speed_limit_mps=2.0)
+    h_slow_10 = await _hash_of("f-b", role="speed_limit", speed_limit_mps=1.0)
+    assert h_slow_20 != h_slow_10            # 限速值进了哈希
+    h_p0 = await _hash_of("f-c", role="forbid", priority=0)
+    h_p9 = await _hash_of("f-d", role="forbid", priority=9)
+    assert h_p0 != h_p9                      # 叠放次序进了哈希

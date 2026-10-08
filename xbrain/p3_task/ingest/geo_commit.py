@@ -44,6 +44,10 @@ import math
 from typing import Optional, Sequence
 
 from xbrain.common.enums import FENCE_ROLE  # 11 S9A.2 closed set (CLAUDE.md 3.5)
+
+# S9A.2's role-derived facts (hard_enforce, speed_limit_mps presence),
+# shared so this writer and the DAO cannot answer them differently.
+from xbrain.common.fence.roles import carries_speed_limit, hard_enforce_for_role
 from xbrain.p3_task.fence.geom import validate_polygon
 from xbrain.p3_task.state.geo_rev import content_hash
 
@@ -187,30 +191,53 @@ async def commit_waypoint(conn, *, geo_id: str, name: str, wtype: str,
 async def commit_fence(conn, *, fence_id: str, role: str, points: Sequence,
                        now_ms: int, state: str, name: Optional[str] = None,
                        soft_margin_m: Optional[float] = None,
+                       priority: int = 0,
+                       speed_limit_mps: Optional[float] = None,
                        created_by: str = "teach") -> str:
     """Write a polygon fence to fence.db with its 11 S9A.2 role (allow | forbid |
     speed_limit | warning) and display name. `points` is the WGS84 vertex ring
     (lat, lon) WITHOUT a duplicated closing vertex (closes implicitly), validated
     (FS-4: >= 3 unique points, non-zero area) before insert. hard_enforce is
-    derived: warning fences never hard-enforce (S9A.2), all others do. The S9A.1A
-    count invariants (<= 5 active, at most 1 allow) are enforced by the fence.db
-    triggers; the "exactly 1 allow" existence half is a set check at broadcast
-    time (validate_active_fence_set)."""
+    derived from role (common/fence/roles: false for the two ADVISORY roles,
+    warning AND speed_limit). The S9A.1A count invariants (<= 5 active, at most
+    1 allow) are enforced by the fence.db triggers; the "exactly 1 allow"
+    existence half is a set check at broadcast time (validate_active_fence_set).
+
+    priority / speed_limit_mps are the 11 S9A.2 v0.3 fields. speed_limit_mps has
+    NO default on purpose: it is the speed ceiling of a real zone, so a fallback
+    here would be a safety parameter with a default (3.1), and FV-13 makes its
+    absence on a speed_limit fence an error rather than something to fill in."""
     if role not in FENCE_ROLE:                  # 11 S9A.2 closed set, not a literal
         raise GeoCommitError(f"bad fence role {role!r}")
+    # 11 FV-13 both directions, before the row exists. Mirrors the DAO guard;
+    # both exist because the two writers are reached by different commands
+    # (teach save vs cmd/geo apply) and neither goes through the other.
+    if carries_speed_limit(role) and speed_limit_mps is None:
+        raise GeoCommitError("role=speed_limit requires speed_limit_mps (FV-13)")
+    if not carries_speed_limit(role) and speed_limit_mps is not None:
+        raise GeoCommitError(
+            f"speed_limit_mps is only legal on role=speed_limit, got {role!r}")
     validate_polygon(points)                   # raises InvalidPolygon on a bad ring
     verts = [[float(a), float(b)] for a, b in points]
     geom_json = json.dumps({"points": verts}, separators=(",", ":"))
-    ch = content_hash({"points": verts, "role": role, "name": name})
-    hard_enforce = 0 if role == "warning" else 1
+    # Both new fields enter the content hash. It answers "did this object
+    # change", and lowering a slow zone's limit or restacking two overlapping
+    # fences changes what the robot does -- leaving them out would make the
+    # edit look like a no-op to every idempotency check keyed on this hash,
+    # the same failure S9A.2 records for the crc32 recipe (block B-3).
+    ch = content_hash({"points": verts, "role": role, "name": name,
+                       "priority": int(priority),
+                       "speed_limit_mps": speed_limit_mps})
+    hard_enforce = 1 if hard_enforce_for_role(role) else 0
     await conn.execute("BEGIN IMMEDIATE")
     try:
         await conn.execute(
             "INSERT INTO fences (fence_id, name, role, kind, geom_json, "
-            " hard_enforce, soft_margin_m, state, created_by, updated_by, "
-            " content_hash, updated_ms) "
-            "VALUES (?, ?, ?, 'polygon', ?, ?, ?, ?, ?, ?, ?, ?)",
+            " hard_enforce, soft_margin_m, priority, speed_limit_mps, "
+            " state, created_by, updated_by, content_hash, updated_ms) "
+            "VALUES (?, ?, ?, 'polygon', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (fence_id, name, role, geom_json, hard_enforce, soft_margin_m,
+             int(priority), speed_limit_mps,
              state, created_by, created_by, ch, now_ms))
         await conn.commit()
     except Exception:

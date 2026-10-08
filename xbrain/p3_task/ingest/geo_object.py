@@ -41,6 +41,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from xbrain.common.enums import FENCE_ROLE
 from xbrain.common.errors import E_GEO_INVALID, E_GEO_TOO_LARGE
+from xbrain.common.fence.roles import carries_speed_limit, hard_enforce_for_role
 from xbrain.p3_task.ingest.geo_command import GeoCommandError
 
 # 11 S7.8.3: a route carries at most 5000 vertices; beyond that the answer is
@@ -285,6 +286,33 @@ def _fence(obj: Dict[str, Any]) -> ParsedObject:
     if margin is not None and (not isinstance(margin, (int, float))
                                or margin < 0.0):
         raise _bad("soft_margin_m must be a non-negative number")
+    # S9A.2 block B-2 priority: int32, painter order, low paints first. Absent
+    # means 0 -- the contract's own neutral value, and the ONLY default in this
+    # function, because a set nobody has ordered paints in array order and 0 for
+    # everyone says exactly that. bool is excluded ahead of the numeric check:
+    # True is 1 in Python, so a priority typed as a boolean would stack this
+    # polygon above a 0 and change which constraint wins, reported by nothing.
+    priority = geom.get("priority", obj.get("priority", 0))
+    if isinstance(priority, bool) or not isinstance(priority, int):
+        raise _bad("priority must be an int32 (11 S9A.2), got "
+                   f"{priority!r}")
+    # S9A.2 / FV-13 speed_limit_mps. NO default: it is the speed ceiling of a
+    # real zone, so a fallback would be a safety parameter with a default (3.1)
+    # -- and whichever number were chosen would silently become the limit of
+    # every slow zone an operator forgot to fill in.
+    limit = geom.get("speed_limit_mps", obj.get("speed_limit_mps"))
+    if carries_speed_limit(role):
+        if isinstance(limit, bool) or not isinstance(limit, (int, float)) \
+                or not (limit > 0.0):
+            raise _bad("role=speed_limit requires speed_limit_mps > 0 "
+                       f"(11 FV-13), got {limit!r}")
+    elif limit is not None:
+        # The reverse half of FV-13 is E_SCHEMA, not something to drop. A limit
+        # on a forbid polygon is a value the operator believes is in force and
+        # no consumer will ever read -- refusing is the only answer that tells
+        # them. S13.6 forbids the other reading ("ignore the unknown field").
+        raise _bad("speed_limit_mps is only legal on role=speed_limit "
+                   f"(11 FV-13), got role={role!r}")
     columns = {
         # name is nullable on fences (unlike the other three): S9A.2 lists it as
         # a display field, and a fence recorded by voice may be saved before it
@@ -295,15 +323,27 @@ def _fence(obj: Dict[str, Any]) -> ParsedObject:
         "geom_json": json.dumps(
             {"points": [[la, lo] for la, lo in verts]},
             separators=(",", ":")),
-        # S9A.2: a warning fence never hard-enforces. Derived, never taken from
-        # the sender -- a sender-set hard_enforce on a warning fence would make
-        # P1 clip against an advisory zone.
-        "hard_enforce": 0 if role == "warning" else 1,
+        # S9A.2: an ADVISORY fence never hard-enforces. Derived, never taken
+        # from the sender -- a sender-set hard_enforce on an advisory zone would
+        # make P1 clip against it. This line used to read `0 if role ==
+        # "warning" else 1`, which covered one of the two advisory roles and
+        # stored speed_limit zones hard-enforcing (common/fence/roles explains
+        # what that does once speed_limit reaches the clip geometry).
+        "hard_enforce": 0 if not hard_enforce_for_role(role) else 1,
         "soft_margin_m": margin,
+        "priority": priority,
+        # None for every role but speed_limit, matching the reverse FV-13 /
+        # the fences CHECK: the column is NULL rather than 0.0 (3.1 -- a 0.0
+        # here would read as "this zone caps you at a standstill").
+        "speed_limit_mps": limit if carries_speed_limit(role) else None,
         "num": _num(obj), "alias_json": _alias_json(obj),
     }
+    # Both new fields enter the content hash for the same reason S9A.2 put them
+    # in the crc32 recipe: they change what the robot does, so an edit that
+    # touches only them must not hash identical to the row it replaces.
     content = {"points": [[la, lo] for la, lo in verts], "role": role,
-               "name": columns["name"]}
+               "name": columns["name"], "priority": priority,
+               "speed_limit_mps": columns["speed_limit_mps"]}
     return ParsedObject("fences", "fence_id", columns, content)
 
 

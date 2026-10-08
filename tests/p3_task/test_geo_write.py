@@ -399,3 +399,56 @@ def test_event_types_match_the_contract():
     assert found == GEO_EVENT_INFO | GEO_EVENT_WARN, (
         f"contract {sorted(found)} vs library "
         f"{sorted(GEO_EVENT_INFO | GEO_EVENT_WARN)}")
+
+
+@pytest.mark.asyncio
+async def test_cmd_geo_carries_priority_and_speed_limit_into_fence_db(ctx):
+    """cmd/geo 的 upsert 把 11 S9A.2 v0.3 两字段落到 fence.db.
+
+    *** 这条走的是真入口 handle_geo_payload -> parse_geo_object -> geo_write 的
+    泛型 INSERT, 不是直调 _fence. 泛型 INSERT 按 columns 的键名拼 SQL, 所以
+    "解析出来了"与"落库了"是两件事 -- 只测解析会漏掉列名拼错这一类.
+    MUTATION: 从 _fence 的 columns 里去掉 priority 或 speed_limit_mps ->
+    对应断言取到 None/0, 本条红.
+    """
+    cmd = _fence_cmd("c-sl", "f-yard", role="speed_limit")
+    cmd["obj"]["geom"]["speed_limit_mps"] = 1.0
+    cmd["obj"]["geom"]["priority"] = 7
+    ack = await handle_geo_payload(cmd, ctx, now_ms=1)
+    assert ack["result"] == "accepted", ack
+    row = await _row(ctx.fence_conn, "fences", "fence_id", "f-yard",
+                     "hard_enforce, priority, speed_limit_mps")
+    # 11 S9A.2: 限速区恒不硬执行. 旧规则 `0 if role == "warning" else 1` 会
+    # 在这里存出 1 -> 一旦 speed_limit 进裁剪几何, 机器人进不了慢行区.
+    assert row[0] == 0
+    assert row[1] == 7 and row[2] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_cmd_geo_enforces_fv13_both_ways(ctx):
+    """FV-13 在 cmd/geo 这一侧.
+
+    两个方向的失效不同, 所以两条都要: 限速区缺值是"区存在但无从施加",
+    非限速区带值是"操作员以为设了限速而没人会读".
+    MUTATION: 删掉 _fence 里任一方向的检查 -> 对应那条由 rejected 变 accepted.
+    """
+    missing = _fence_cmd("c-m", "f-nolimit", role="speed_limit")
+    ack = await handle_geo_payload(missing, ctx, now_ms=1)
+    assert ack["result"] == "rejected" and "speed_limit_mps" in str(ack)
+    stray = _fence_cmd("c-s", "f-stray", role="forbid")
+    stray["obj"]["geom"]["speed_limit_mps"] = 1.0
+    ack = await handle_geo_payload(stray, ctx, now_ms=2)
+    assert ack["result"] == "rejected" and "speed_limit" in str(ack)
+
+
+@pytest.mark.asyncio
+async def test_cmd_geo_rejects_a_boolean_priority(ctx):
+    """priority 用 bool 传会静默生效 -- Python 里 True == 1, 于是这个多边形
+    被叠到 priority 0 之上, 改变了重叠时谁胜出, 而没有任何人报告.
+    MUTATION: 去掉 isinstance(priority, bool) 这一半 -> 本条由 rejected 变
+    accepted 且库里存出 1.
+    """
+    cmd = _fence_cmd("c-b", "f-bool", role="forbid")
+    cmd["obj"]["geom"]["priority"] = True
+    ack = await handle_geo_payload(cmd, ctx, now_ms=1)
+    assert ack["result"] == "rejected" and "priority" in str(ack)

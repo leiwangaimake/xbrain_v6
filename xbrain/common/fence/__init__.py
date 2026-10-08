@@ -11,6 +11,10 @@ p1_motion(执行者)与 p3_task(权威源)共享的围栏几何与 crc32 单一�
 录制期校验仍留在 p3_task/fence/.
 """
 
+# roles.py is re-exported for the same reason geom.py is: the role-DERIVED facts
+# (hard_enforce, speed_limit_mps presence) must read identically on both sides,
+# and the three p3 writers that each had their own copy of the first one are why
+# that is spelled out rather than assumed.
 from xbrain.common.fence.geom import (
                                        Circle,
                                        Polygon,
@@ -18,6 +22,13 @@ from xbrain.common.fence.geom import (
                                        point_in_circle,
                                        point_in_polygon,
 )
+from xbrain.common.fence.roles import (
+                                       ADVISORY_ROLES,
+                                       SPEED_LIMIT_ROLE,
+                                       carries_speed_limit,
+                                       hard_enforce_for_role,
+)
 
 __all__ = ["Circle", "Polygon", "point_in_circle", "point_in_polygon",
-           "fence_set_crc32"]
+           "fence_set_crc32", "ADVISORY_ROLES", "SPEED_LIMIT_ROLE",
+           "carries_speed_limit", "hard_enforce_for_role"]
