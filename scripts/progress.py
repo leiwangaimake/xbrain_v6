@@ -83,7 +83,36 @@ NON_FAILURE = {
 # rows, i.e. the parser could see only the unfinished ones. A progress checker
 # that structurally cannot see completed work will report near-zero forever,
 # which is exactly what "DONE 2/250" was.
-ROW = re.compile(r"^\|\s*`([A-Z]{3}-[A-Za-z0-9-]+)`[^|]*\|(.+)$")
+ROW = re.compile(r"^\|\s*`([A-Z]{3}-[A-Za-z0-9-]+)`([^|]*)\|(.+)$")
+# The status mark after the id used to be swallowed by [^|]* and thrown away.
+# It is captured now because one of its forms is load-bearing: see TOMBSTONE.
+#
+# TOMBSTONE -- a row whose OBJECT no longer exists.
+#
+# 2026-10-08. docs/XBRAIN_V6_TODO.md already carried this for eight rows, in
+# the form the behavior_proxy family uses verbatim:
+#       CPP-BP-1 (*)作废 2026-09-29 (12 S4.6 整节作废声明 - d0d54f0)
+# and this script could not see it, so all eight were reported UNMAPPED --
+# "nobody has recorded what verifies this". That is the wrong question for a
+# row whose subject was deleted: there is nothing to verify, and no evidence
+# row anyone could ever write. They inflated the not-done count permanently.
+#
+# *** Why this is NOT the rubber stamp the NON_FAILURE note warns about.
+# NON_FAILURE says "this item is not a failure even though no judge passes" --
+# a claim about an item that still EXISTS, which is why it must be hand-named
+# with a citation. A tombstone says the opposite: the object is gone. The two
+# are different statements and the second one is checkable from the row.
+#
+# *** But a bare glyph must NOT exempt anything, or this becomes exactly that
+# rubber stamp with a nicer name. So the mark is honoured ONLY when it carries
+# its own evidence: a date AND a parenthesised reason. A row marked merely
+# "(*)作废" keeps whatever status it had, and the summary says how many were
+# refused for lacking that -- silence here would let a lazy mark pass.
+TOMBSTONE = re.compile(r"[\u26d4\u2716\u274c]\s*\**作废\**\s*"
+                       r"(\d{4}-\d{2}-\d{2})\s*\(([^)]+)\)")
+#: A mark that says 作废 but carries no date+reason. Counted and printed, never
+#: honoured -- "it looked deleted" is not a verifiable statement.
+TOMBSTONE_BARE = re.compile(r"[\u26d4\u2716\u274c]\s*\**作废")
 # Note: one miner produced a two-segment number (CM-P4-1), so the tail must
 # accept hyphens. The earlier stricter pattern silently dropped that one row --
 # a parser that skips what it cannot match is a checker that under-reports.
@@ -104,15 +133,24 @@ def parse():
         m = ROW.match(line)
         if not m:
             continue
-        cells = [c.strip() for c in m.group(2).split("|")]
+        # group(2) is the status mark between the id and the first pipe;
+        # group(3) is the rest of the row. The mark used to be discarded.
+        mark = m.group(2)
+        cells = [c.strip() for c in m.group(3).split("|")]
         if len(cells) < 5:
             continue
+        tomb = TOMBSTONE.search(mark)
         rows.append({
             "phase": phase,
             "id": m.group(1),
             "title": cells[0],
             "dir": cells[1].strip("` "),
             "criterion": cells[3],
+            # (date, reason) when the row is marked 作废 WITH its evidence,
+            # else None. A mark lacking either half lands in bare_tombstone
+            # instead and is reported, not honoured.
+            "tombstone": (tomb.group(1), tomb.group(2)) if tomb else None,
+            "bare_tombstone": bool(TOMBSTONE_BARE.search(mark)) and not tomb,
         })
     return rows
 
@@ -152,7 +190,7 @@ def norm_id(task_id):
 def target_dir(d):
     """The directory an item lands in, with the annotated ones reduced to a path."""
     d = d.split("  ")[0].strip()
-    return os.path.join(ROOT, d) if d and not d.startswith(("?", "!", "（")) else None
+    return os.path.join(ROOT, d) if d and not d.startswith(("?", "!", "(")) else None
 
 
 def evaluate(item, run_tests, evidence=None, cache=None):
@@ -166,6 +204,17 @@ def evaluate(item, run_tests, evidence=None, cache=None):
     prose criterion names a filename someone predicted before writing the code,
     while the map names what actually verifies the item today.
     """
+    # TOMBSTONE first, before anything is looked up or run.
+    #
+    # A row whose object was deleted has nothing to verify: no evidence row
+    # can be written for it, no artifact can pass, and no directory can be
+    # inspected. Asking any of those questions produces a status that reads
+    # as unfinished work. Honoured only with the row's own date + reason
+    # (see TOMBSTONE); it is NOT counted as DONE -- a deleted item was never
+    # built -- and NOT counted as a failure either.
+    tomb = item.get("tombstone")
+    if tomb:
+        return "TOMBSTONE", "对象已作废 %s (%s)" % tomb
     mapped = (evidence or {}).get(norm_id(item["id"]))
     if mapped:
         missing = [f for f in mapped if not os.path.exists(os.path.join(ROOT, f))]
@@ -200,30 +249,30 @@ def evaluate(item, run_tests, evidence=None, cache=None):
             return "UNMAPPED", "尚未落证据映射(docs/TODO_EVIDENCE.tsv)"
         # No mechanically checkable artifact named. Say so; do not guess.
         if d and os.path.isdir(d) and os.listdir(d):
-            return "UNEVALUABLE", f"目标目录已有内容但判据未点名可执行件：{item['dir']}"
+            return "UNEVALUABLE", f"目标目录已有内容但判据未点名可执行件:{item['dir']}"
         return "UNEVALUABLE", "判据未点名任何 tests/ 或 scripts/ 可执行件"
 
     missing = [p for p in tests + scripts if not os.path.exists(os.path.join(ROOT, p))]
     if len(missing) == len(tests + scripts):
         if d and os.path.isdir(d) and os.listdir(d):
-            return "IN_PROGRESS", f"目录已建但判据文件全缺：{', '.join(missing[:2])}"
-        return "NOT_STARTED", f"判据文件不存在：{', '.join(missing[:2])}"
+            return "IN_PROGRESS", f"目录已建但判据文件全缺:{', '.join(missing[:2])}"
+        return "NOT_STARTED", f"判据文件不存在:{', '.join(missing[:2])}"
     if missing:
-        return "IN_PROGRESS", f"部分判据文件缺失：{', '.join(missing[:2])}"
+        return "IN_PROGRESS", f"部分判据文件缺失:{', '.join(missing[:2])}"
 
     if not run_tests:
-        return "IN_PROGRESS", "判据文件齐备（未跑；加 --run 实跑）"
+        return "IN_PROGRESS", "判据文件齐备(未跑;加 --run 实跑)"
 
     for p in tests:
         r = subprocess.run(["python3", "-m", "pytest", "-q", os.path.join(ROOT, p)],
                            capture_output=True, text=True, cwd=ROOT)
         if r.returncode != 0:
-            return "IN_PROGRESS", f"判据未通过：{p}"
+            return "IN_PROGRESS", f"判据未通过:{p}"
     for p in scripts:
         r = subprocess.run(["python3", os.path.join(ROOT, p)],
                            capture_output=True, text=True, cwd=ROOT)
         if r.returncode != 0:
-            return "IN_PROGRESS", f"判据未通过：{p}"
+            return "IN_PROGRESS", f"判据未通过:{p}"
     return "DONE", "判据全部通过"
 
 
@@ -285,7 +334,7 @@ def main():
 
     print(f"scan surface: {TODO}")
     print(f"  解析到开发项 {len(rows)} 个"
-          + ("（--run：实跑判据）" if run_tests else "（未加 --run：只查文件存在性）"))
+          + ("(--run:实跑判据)" if run_tests else "(未加 --run:只查文件存在性)"))
     if evidence:
         mapped = sum(1 for it in rows if norm_id(it["id"]) in evidence)
         print(f"  证据映射 {EVIDENCE}: {len(evidence)} 行, 命中本表 {mapped} 项")
@@ -312,9 +361,28 @@ def main():
               f"  · 待裁决 {c.get('WAITING_DECISION', 0):3}"
               f"  · 发布期 {c.get('RELEASE_ONLY', 0):3}"
               f"  · 待映射 {c.get('UNMAPPED', 0):3}"
+              f"  · 已作废 {c.get('TOMBSTONE', 0):3}"
               f"  · !️ 无法求值 {c.get('UNEVALUABLE', 0):3}")
 
     print("\n  " + " · ".join(f"{k} {v}" for k, v in sorted(tally.items())))
+
+    # 作废项逐条打印, NO 不只给一个计数.
+    # 一个被当成"已作废"而不再追问的行, 读者必须能看见它凭什么 -- 否则这个
+    # 状态就是一条免检通道. 每行连同它自己写的日期与依据一起打出来.
+    tombs = [i for its in by_phase.values() for i in its if i["status"] == "TOMBSTONE"]
+    if tombs:
+        print("\n  已作废(不计入 DONE, 也不算失败 -- 对象已不存在, 无可验证):")
+        for i in tombs:
+            print("    %-10s %s" % (i["id"], i["why"]))
+
+    # *** 标了作废但没带依据的, 一律[不]honour, 并在这里点名.
+    # 沉默会让一个懒标记混过去, 而那正是把 TOMBSTONE 变成免检通道的那一步.
+    bare = [i for its in by_phase.values() for i in its if i.get("bare_tombstone")]
+    if bare:
+        print("\n  !! 标了作废但[未带日期+依据], 未予认可(仍按原状态计):")
+        for i in bare:
+            print("    %-10s %s  <- 补成 '作废 YYYY-MM-DD (册号 S节 · 提交号)'"
+                  % (i["id"], i["status"]))
 
     if verbose:
         print("\n=== 逐项 ===")
@@ -323,17 +391,22 @@ def main():
             for i in its:
                 print(f"  {i['status']:12} {i['id']:8} {i['title'][:44]:46} {i['why'][:50]}")
 
-    print("\n★★★ 口径（🚫 不要改成对自己有利的读法）：")
-    print("  · DONE 必须【判据文件存在 ＋ 实跑通过】—— 存在但没跑只算 IN_PROGRESS。")
-    print("  · WAITING_DECISION / RELEASE_ONLY 【都不计入 DONE, 也不算失败】——")
-    print("    它们不是【程序没写完】, 是流程如此: 前者等架构裁决, 后者只在发布线校验。")
-    print("    ★ 两者都必须在 progress.py 的 NON_FAILURE 里【具名声明并指出理由出处】,")
-    print("      否则就是一个藏真失败的地方(本仓已有【判据被一路放宽到通过】的活体证据)。")
-    print("  · !️ UNMAPPED / UNEVALUABLE 两者【都永远不计入 DONE】。")
-    print("    UNMAPPED = 还没人记录【什么验证了这一项】（去补 docs/TODO_EVIDENCE.tsv 一行）；")
-    print("    UNEVALUABLE = 判据本身没点名任何可执行件（要改的是判据）。两者要做的事不同，")
-    print("    所以分开报；把任一算成完成，就是一条在空目录上也能报 100% 的恒绿判据（3.2 形态①）。")
-    print("  · 🚫 本脚本不写任何数字回 docs/XBRAIN_V6_TODO.md（CLAUDE.md 3.7）。")
+    print("\n★★★ 口径(🚫 不要改成对自己有利的读法):")
+    print("  · DONE 必须[判据文件存在 ＋ 实跑通过]—— 存在但没跑只算 IN_PROGRESS.")
+    print("  · TOMBSTONE[不计入 DONE, 也不算失败]—— 对象已作废, 没有可验证的东西;")
+    print("    ★ 只在该行自己带[日期 ＋ 括号依据]时才认(例: 作废 2026-09-29")
+    print("      (12 S4.6 整节作废声明 · d0d54f0)); 光写一个作废字样不予认可, 并会被点名.")
+    print("    ★ 与 NON_FAILURE 的区别: 后者说[项目还在但判据不过不算失败](必须手工具名),")
+    print("      前者说[对象没了]—— 两者是不同的陈述, 后一种可以从行里核出来.")
+    print("  · WAITING_DECISION / RELEASE_ONLY [都不计入 DONE, 也不算失败]——")
+    print("    它们不是[程序没写完], 是流程如此: 前者等架构裁决, 后者只在发布线校验.")
+    print("    ★ 两者都必须在 progress.py 的 NON_FAILURE 里[具名声明并指出理由出处],")
+    print("      否则就是一个藏真失败的地方(本仓已有[判据被一路放宽到通过]的活体证据).")
+    print("  · !️ UNMAPPED / UNEVALUABLE 两者[都永远不计入 DONE].")
+    print("    UNMAPPED = 还没人记录[什么验证了这一项](去补 docs/TODO_EVIDENCE.tsv 一行);")
+    print("    UNEVALUABLE = 判据本身没点名任何可执行件(要改的是判据).两者要做的事不同,")
+    print("    所以分开报;把任一算成完成,就是一条在空目录上也能报 100% 的恒绿判据(3.2 形态①).")
+    print("  · 🚫 本脚本不写任何数字回 docs/XBRAIN_V6_TODO.md(CLAUDE.md 3.7).")
     return 0
 
 

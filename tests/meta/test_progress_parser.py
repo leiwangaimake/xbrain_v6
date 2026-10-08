@@ -12,7 +12,7 @@ progress.py 是本项目唯一的自动进度门禁, 而它曾经[结构上看�
 完的那些], 于是无论做了多少都会报接近零(那正是 "DONE 2/250" 的由来).
 
 这种失效是无声的: 脚本不报错, 不警告, 只是少数了一半以上的行. CLAUDE.md 3.2
-形态⑥"扫描面不声明" -- 一个数是在什么范围上跑出来的, 必须自己说得清.
+形态6"扫描面不声明" -- 一个数是在什么范围上跑出来的, 必须自己说得清.
 
 本文件把解析面钉住, 三个方向各配变异体:
   1. 解析到的条数 == 表里真实的任务行数(带标记的也算);
@@ -242,3 +242,114 @@ def test_no_test_file_greps_documents_with_ascii_stars():
     scanned = [p for p in (root / "tests").rglob("test_*.py")
                if "docs" in p.read_text(encoding="utf-8", errors="replace")]
     assert len(scanned) >= 3, "只扫到 %d 个读文档的测试" % len(scanned)
+
+
+# -- TOMBSTONE(2026-10-08 新增)--------------------------------------------
+# 这个状态是一条[免检通道]: 落进它的行不再被追问证据. 所以它的判据要钉的不是
+# "它能工作", 而是"它不能被滥用" -- 同 test_every_non_failure_row_cites_where_
+# the_reason_lives 的用意, 那条守的是 NON_FAILURE 的同一个风险.
+
+
+def test_a_tombstone_mark_without_its_evidence_is_refused():
+    """标了作废但没带[日期 + 括号依据]-> 不予认可, 仍按原状态计.
+
+    *** 这是本状态唯一的护栏. 若一个光秃秃的"作废"字样就能免检, TOMBSTONE 就
+    成了"把任何算不过的项标掉"的通道 -- 而 progress.py 头注记着本仓已有
+    [判据被一路放宽到通过]的活体证据.
+    MUTATION: 把 evaluate 里的短路条件从 item["tombstone"] 改成
+    item["bare_tombstone"] or item["tombstone"] -> 本条红.
+    """
+    bare = {"id": "CPP-XX-1", "title": "t", "dir": "x", "criterion": "",
+            "tombstone": None, "bare_tombstone": True}
+    st, _ = _progress().evaluate(bare, False, {"CPP-XX-01": ["tests/x.py"]}, {})
+    assert st != "TOMBSTONE", "光秃秃的作废标记不得免检"
+
+
+def test_a_tombstone_with_date_and_reason_is_honoured_and_not_done():
+    """带齐依据 -> 认可为 TOMBSTONE, 且[不算 DONE].
+
+    不算 DONE 的理由: 一个被删掉的项从来没有被建成过. 把它计入完成度会让
+    "完成率"把删除当成产出 -- 那正是 3.2 形态 1 的一个变种(一个什么都不做
+    就能提高的数).
+    MUTATION: 把 evaluate 的 TOMBSTONE 返回改成 "DONE" -> 本条红.
+    """
+    tomb = {"id": "CPP-BP-1", "title": "t", "dir": "x", "criterion": "",
+            "tombstone": ("2026-09-29", "12 S4.6 整节作废声明 - d0d54f0"),
+            "bare_tombstone": False}
+    st, why = _progress().evaluate(tomb, False, {}, {})
+    assert st == "TOMBSTONE"
+    assert st != "DONE"
+    # 理由必须把行自己写的依据带出来 -- 读者要能不翻 TODO 就看见它凭什么.
+    assert "2026-09-29" in why and "S4.6" in why
+
+
+def test_the_tombstone_short_circuit_runs_before_any_artifact_is_touched():
+    """作废判定必须发生在查文件/跑判据[之前].
+
+    一个对象已删的行, 它判据里点名的文件也早就不在了. 若先去查文件, 它会
+    先被判成 IN_PROGRESS("证据产物缺失")或 NOT_STARTED, 永远走不到作废那一支.
+    这里给一个[指向不存在文件]的判据, 它仍必须是 TOMBSTONE.
+    MUTATION: 把短路挪到 evaluate 末尾 -> 本条红.
+    """
+    tomb = {"id": "CPP-BP-2", "title": "t", "dir": "ros2_ws/behavior_proxy",
+            "criterion": "tests/does_not_exist_at_all.py",
+            "tombstone": ("2026-09-29", "12 S4.6 整节作废声明 - d0d54f0"),
+            "bare_tombstone": False}
+    st, _ = _progress().evaluate(tomb, True, {}, {})
+    assert st == "TOMBSTONE"
+
+
+def test_the_behavior_proxy_family_is_the_live_case_and_is_all_tombstoned():
+    """实况锚点: behavior_proxy 家族八项在真 TODO 里都带齐了依据.
+
+    *** 为什么钉实况而不只钉机制: 机制对一个手造的 dict 成立, 不等于真 TODO
+    里那八行写对了格式. 本条在 2026-10-08 由"两行标记写成 (no-entry)**作废0930**(无
+    日期无依据)被点名拒收"而来 -- 那两行是补齐之后才进来的.
+    MUTATION: 把任一行的标记改回 (no-entry)**作废0930**(无日期无依据)
+    -> 它掉回 UNMAPPED -> 本条红. ((no-entry) = TODO 里那个标记字符,
+     注释里按 2.2 写成 ASCII 描述; 被测字面量用 \u26d4 转义, 见上一条)
+    """
+    rows = {r["id"]: r for r in _progress().parse()}
+    fam = [i for i in rows if i.startswith("CPP-BP-") and i != "CPP-BP-5"]
+    assert len(fam) == 8, "behavior_proxy 家族应为 8 项, 实得 %d" % len(fam)
+    for i in sorted(fam):
+        assert rows[i]["tombstone"], "%s 的作废标记缺日期或依据" % i
+        assert not rows[i]["bare_tombstone"]
+    # CPP-BP-5 刻意[不]在内: TODO 逐字"本项不随 Nav2 作废" -- 死的只是
+    # configs/nav2 那个落点, MR-1 本身还活着. 它若被一起标掉就是误伤.
+    assert not rows["CPP-BP-5"].get("tombstone"), \
+        "CPP-BP-5 不随 Nav2 作废(TODO 逐字), 不得被标掉"
+
+
+def test_the_tombstone_patterns_themselves_require_date_and_reason():
+    """直接钉[正则], 不经 evaluate.
+
+    *** 2026-10-08 实测: 上面四条用手造的 dict 驱动 evaluate, 于是一个"认可
+    光秃秃标记"的正则(把捕获组改成两个空组)让 13 条全绿 -- 变异体存活.
+    那四条测的是 evaluate 的分支, 不是标记的识别; 两者是不同的层.
+    ==> 一个状态的护栏在哪一层, 判据就得钉在哪一层.
+
+    MUTATION: 把 TOMBSTONE 的 (日期)(依据) 两个捕获改成空组 ()() -> 本条红.
+    """
+    p = _progress()
+    # \u26d4 就是 TODO 里那个标记字符. 写成转义是为了让本文件通过 2.2
+    # 的 ASCII 标点检查, 而 NO 不能换成别的字符 -- 换了判据就不在测真标记.
+    full = "\u26d4作废 2026-09-29 (12 S4.6 整节作废声明 - d0d54f0)"
+    # 带齐 -> 命中, 且两个捕获组真的取到内容(空组会让这两条红).
+    m = p.TOMBSTONE.search(full)
+    assert m is not None
+    assert m.group(1) == "2026-09-29"
+    assert "S4.6" in m.group(2) and m.group(2).strip() != ""
+    # 光秃秃 / 只有日期 / 只有括号 -> 一律不命中 TOMBSTONE.
+    for bad in ("\u26d4作废", "\u26d4**作废0930**",
+                "\u26d4作废 2026-09-29",
+                "\u26d4作废 (12 S4.6)", "\u26d4 作废**"):
+        assert p.TOMBSTONE.search(bad) is None, \
+            "%r 不该被认可为带依据的作废标记" % bad
+        # 但必须被 BARE 捕到 -- 否则它会静默溜过, 连点名都没有.
+        assert p.TOMBSTONE_BARE.search(bad) is not None, \
+            "%r 该被点名为无依据的作废标记" % bad
+    # 反向: 完全没有作废字样的标记两个都不该命中.
+    for ok in ("\u2705**0930 改记**", "\u23f8暂缓0807", ""):
+        assert p.TOMBSTONE.search(ok) is None
+        assert p.TOMBSTONE_BARE.search(ok) is None
