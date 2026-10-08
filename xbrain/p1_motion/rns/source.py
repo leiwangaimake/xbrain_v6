@@ -35,6 +35,10 @@ from typing import Optional
 
 from xbrain.common.types.units import Mps
 
+# 候选级围栏门用的几何. 与 20 Hz 裁剪层[同一个]实现 -- 另写一份
+# inside/outside 判定正是 R-4b 停滞的根因(RNS 提出, 裁剪层杀掉).
+from xbrain.p1_motion.fence.clip import candidate_fence_hazard
+
 from .audit import AuditRecord, RingAudit, TerminalReporter
 from .candidate import (
     CandidateSelector,
@@ -197,6 +201,13 @@ class RnsSource:
         self._verdict_mute_until = None
         self._wall_goal_dist_at_hit = 0.0
         self._holo = False
+        # Fence for the candidate gate, filled from ctx each tick in
+        # _run_follow. Initialised to None here so _pick_candidate is
+        # callable on a source that has never ticked (the unit tests do
+        # exactly that) -- an AttributeError there would be a crash in
+        # the 20 Hz loop rather than "no fence, no gating".
+        self._fence_cf = None
+        self._fence_inset = None
         self._last_R = None                  # lookahead point, for observability
         self._r_star = None                  # guidance point (20 S4A), per tick
         self._r_steer = None                 # known-field steering guide
@@ -500,6 +511,16 @@ class RnsSource:
                                   detail={"at": "tick"}))
             return VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0), wz=0.0)
         self._holo = bool(getattr(ctx, "holonomic", False))
+        # Fence for the candidate gate (NEXT R-4b). Stashed on self at the ONE
+        # place ctx is read, following this file's existing habit for
+        # _holo / _grid / _last_now -- the alternative is threading two more
+        # arguments through _pick_candidate's five call sites, which is the
+        # shape 9.1A warns about (a missed call site silently takes the
+        # default and no test says so).
+        # getattr with None: the ctx is duck-typed and the SIL bench builds
+        # its own without these, which must keep behaving as before (I-1).
+        self._fence_cf = getattr(ctx, "fence", None)
+        self._fence_inset = getattr(ctx, "fence_inset_m", None)
         cfg = self._cfg["rns"]
         route_cfg = cfg["route"]
         zero = VelocityCandidate(vx=Mps(0.0), vy=Mps(0.0), wz=0.0)
@@ -1940,6 +1961,26 @@ class RnsSource:
                                    self._r_eff_m + margin)
                        for ox, oy, orad in dyn_objs):
                     continue            # A-GAP-6: dynamic-occupied candidate
+            # Fence gate (NEXT R-4b). Same shape as the dynamic block above:
+            # the subgoal goes to the world frame and the P->S segment is
+            # judged there, because the fence is ENU and candidates are body.
+            #
+            # *** Set the FLAG rather than `continue`: gate 3 of
+            # passes_hard_gates is already written for exactly this field and
+            # has never been reachable. Routing through it keeps every hard
+            # gate in one function, which is what makes "why was this
+            # candidate rejected" answerable from one place.
+            #
+            # getattr with None: the ctx shape is duck-typed (RnsCtx in
+            # nav_tick carries these; the SIL bench's ctx does not), and
+            # candidate_fence_hazard returns False for a missing fence or
+            # inset -- so a host with no fence data gates nothing (NEXT I-1).
+            if self._fence_cf is not None and self._fence_inset is not None:
+                s_world = self._body_to_world(c.subgoal, pose, yaw)
+                if candidate_fence_hazard(self._fence_cf, pose, s_world,
+                                          self._fence_inset):
+                    import dataclasses
+                    c = dataclasses.replace(c, fence_hazard=True)
             if not passes_hard_gates(c, self._r_eff_m, margin):
                 continue
             from .candidate import unknown_ratio_toward

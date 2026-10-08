@@ -164,7 +164,8 @@ class RnsCtx:
     SIL / batteries and tests/p1_motion/rns share)."""
 
     def __init__(self, inp: NavInputs, v_nom: float, wz_max: float,
-                 holonomic: bool) -> None:
+                 holonomic: bool, fence: Optional[CompiledFence] = None,
+                 fence_inset_m: Optional[float] = None) -> None:
         self.pose_xy = inp.pose_xy
         self.yaw_rad = inp.yaw_rad
         self.v_nom_mps = v_nom
@@ -172,6 +173,20 @@ class RnsCtx:
         self.perception = inp.perception
         self.now_mono_ms = inp.now_mono_ms
         self.holonomic = holonomic
+        # The compiled fence and this tick's inset, for the CANDIDATE-level
+        # gate (clip.candidate_fence_hazard). Both default to None and RNS
+        # reads them with getattr(..., None), so a ctx that does not carry
+        # them -- the SIL bench builds its own -- simply has no fence gate
+        # and behaves exactly as before (NEXT I-1).
+        #
+        # *** Why RNS gets the fence at all, when 12 S7 already enforces it
+        # on the final velocity: without it RNS keeps proposing a subgoal
+        # through the boundary, the clip removes the outward component, and
+        # the robot sits on the fence (NEXT R-4b measured ~70 s of that).
+        # Handing it the SAME geometry the clip uses is the whole point --
+        # a second inside/outside notion would recreate the stall.
+        self.fence = fence
+        self.fence_inset_m = fence_inset_m
 
 
 def _positive(name: str, v: Any) -> float:
@@ -270,7 +285,25 @@ class NavTick:
                 and self._v_oa < v_nom:
             v_nom = self._v_oa
             downgraded = True
-        ctx = RnsCtx(inp, v_nom, self._wz_max, self._holo)
+        # ONE inset_for_fix call site per tick, read by two consumers: the
+        # candidate gate (through the ctx, below) and the zone speed cap
+        # (before compute_gate). The ctx carries the INSET rather than the
+        # fix_type so RNS never has to know the 11 S3.2.1 table -- one owner
+        # for that mapping, which is also why this is not computed twice.
+        # None when the process has no fence constants at all (the unit-test
+        # spine), which makes both consumers inert.
+        fence_inset = (inset_for_fix(inp.fix_type, self._fence)
+                       if self._fence is not None else None)
+        # *** `if self._fence is not None` 在 fence= 这一侧是[等价变异点],
+        # 2026-10-08 实测确认: 去掉它直接传 inp.fence, 没有任何测试会红, 而且
+        # 行为真的不变 -- 没有围栏常量时 fence_inset 已经是 None, 而
+        # candidate_fence_hazard 对 inset 为 None 一律返回 False. 它是第二道
+        # 带子(两个字段必须同生同死), 所以单独改一侧杀不掉.
+        # NO 不为它硬写一条断言(7.2.1: 等价变异在代码里注明, 不硬写判据) --
+        # 真正该守的是"两者同生同死", 那由上面 fence_inset 的同一个条件保证.
+        ctx = RnsCtx(inp, v_nom, self._wz_max, self._holo,
+                     fence=inp.fence if self._fence is not None else None,
+                     fence_inset_m=fence_inset)
         fresh = self._freshness(inp.perception, now)
         self._suspension_edge(inp, ctx)
         # arbitration (12 S5.1 A-1): note the sources that want the slot, hold
@@ -306,10 +339,7 @@ class NavTick:
         #     position, or no inset -- so a system with no fence data gets
         #     exactly the pre-zone gate (NEXT I-1: no fence constrains
         #     nothing). speed_cap_mps is where each of those is decided.
-        zone_cap = None
-        if self._fence is not None:
-            zone_cap = speed_cap_mps(inp.fence, inp.pose_xy,
-                                     inset_for_fix(inp.fix_type, self._fence))
+        zone_cap = speed_cap_mps(inp.fence, inp.pose_xy, fence_inset)
         gate = compute_gate(
             v_nom_mps=v_nom, spec_max_vx_mps=self._spec_vx,
             free_space_mps=f_mps, health=inp.health, i_fix=inp.i_fix,

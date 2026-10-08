@@ -578,6 +578,156 @@ def evaluate(fence: Optional[CompiledFence], c: FenceConstants, *,
         teleop_max_mps=c.v_profile_max_mps)
 
 
+def _orient(ax: float, ay: float, bx: float, by: float,
+            cx: float, cy: float) -> float:
+    """2D cross product of AB x AC: > 0 left turn, < 0 right, 0 collinear."""
+    return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+
+
+def _segments_cross(ax: float, ay: float, bx: float, by: float,
+                    cx: float, cy: float, dx: float, dy: float) -> bool:
+    """Do segments AB and CD cross?
+
+    The standard four-orientation test, with the COLLINEAR / touching cases
+    deliberately counted as crossing. That choice is the conservative one
+    here: a candidate whose path grazes a fence edge end-on is exactly the
+    case where the robot's true footprint is on both sides of it, and the
+    question this function serves is "may the robot aim there" -- an
+    ambiguous yes is the answer that keeps it away from the edge.
+    *** Written out rather than taken from a library because the only
+    alternative in this tree would be sampling the segment, and sampling can
+    miss a crossing of any depth below the sample spacing. A geometric gate
+    that is right 95% of the time is worse than none: it makes the failures
+    look like RNS misbehaving.
+    """
+    d1 = _orient(ax, ay, bx, by, cx, cy)
+    d2 = _orient(ax, ay, bx, by, dx, dy)
+    d3 = _orient(cx, cy, dx, dy, ax, ay)
+    d4 = _orient(cx, cy, dx, dy, bx, by)
+    # Strictly opposite sides on both tests -> a proper crossing.
+    if ((d1 > 0.0) != (d2 > 0.0)) and ((d3 > 0.0) != (d4 > 0.0)) \
+            and d1 != 0.0 and d2 != 0.0 and d3 != 0.0 and d4 != 0.0:
+        return True
+    # Any collinear endpoint that lands ON the other segment: touching.
+    for dv, (px, py, qx, qy, rx, ry) in (
+            (d1, (ax, ay, bx, by, cx, cy)),
+            (d2, (ax, ay, bx, by, dx, dy)),
+            (d3, (cx, cy, dx, dy, ax, ay)),
+            (d4, (cx, cy, dx, dy, bx, by))):
+        if dv == 0.0 and min(px, qx) <= rx <= max(px, qx) \
+                and min(py, qy) <= ry <= max(py, qy):
+            return True
+    return False
+
+
+def _seg_seg_distance(ax: float, ay: float, bx: float, by: float,
+                      cx: float, cy: float, dx: float, dy: float) -> float:
+    """Minimum distance between two NON-crossing segments.
+
+    For two segments that do not intersect, the minimum is attained at an
+    endpoint of one against the other -- so the four point-to-segment
+    distances are exact, not an approximation. The caller must have ruled
+    out crossing first (crossing means distance 0 and a different answer
+    anyway); this function does not re-check it.
+    """
+    best = math.inf
+    for px, py, ex, ey, fx, fy in (
+            (ax, ay, cx, cy, dx, dy), (bx, by, cx, cy, dx, dy),
+            (cx, cy, ax, ay, bx, by), (dx, dy, ax, ay, bx, by)):
+        qx, qy = _nearest_on_segment(px, py, ex, ey, fx, fy)
+        d = math.hypot(px - qx, py - qy)
+        if d < best:
+            best = d
+    return best
+
+
+def candidate_fence_hazard(fence: Optional[CompiledFence],
+                           start: Optional[Tuple[float, float]],
+                           end: Optional[Tuple[float, float]],
+                           inset_m: Optional[float]) -> bool:
+    """Would driving the straight segment start->end violate a boundary?
+
+    Both points are ENU metres in the site frame; `start` is the robot, `end`
+    the candidate subgoal. True means the RNS candidate must be rejected
+    (Candidate.fence_hazard -> candidate.passes_hard_gates gate 3).
+
+    *** Why RNS needs this at all. 12 S7 enforces the fence on the FINAL
+    velocity, which is correct and sufficient for safety -- the robot never
+    crosses. But RNS does not know, so it keeps proposing a subgoal straight
+    through the boundary, the clip removes the outward component, the
+    tangential remainder is near zero, and the robot sits there. NEXT R-4b
+    measured about 70 s of that in SIL (it did eventually arrive, and never
+    left the fence). This gate makes RNS stop proposing what the clip would
+    kill.
+
+    *** The decisive design constraint: this must use the SAME geometry as
+    the clip. Judging candidates with point_in_polygon (ray cast, no inset)
+    while the clip judges with the signed distance minus inset produces the
+    exact stall it is meant to fix -- ray cast says inside, the inset says
+    outside, RNS proposes and the clip kills. So both read boundary_hit and
+    the same inset.
+
+    Per polygon, three cases:
+
+      1. The robot is AT or PAST this polygon's effective boundary
+         (d_nom - inset <= 0). The polygon ABSTAINS -- it vetoes nothing.
+         *** This is the single most important line in the function. A
+         breached robot needs a way out, and every escape candidate crosses
+         the boundary it is on; vetoing them all leaves RNS with no
+         candidate at all, which is a hard stall rather than the slow one
+         above. 12 S7.2 says the same thing about the clip ("置零会让机器人
+         卡在边界上无法退回"), and the clip's half-space projection keeps the
+         retreat component for exactly this reason. Note the threshold is the
+         clip's own: the gate is live precisely on the ticks where the clip
+         is still in its soft band (d_eff > 0).
+
+      2. The segment crosses an edge -> HAZARD. Both endpoints legal does
+         not make the chord legal: a chord can cut across a concave allow
+         boundary, or clip a forbid corner, with both ends on the right side.
+
+      3. No crossing -> the whole segment is on the robot's side (connected,
+         same side at both ends). Then the only remaining question is
+         clearance: HAZARD iff the segment comes closer to the boundary than
+         the inset, because that is the EFFECTIVE boundary the clip zeroes
+         at.
+
+    Returns False when there is no fence, no boundary polygon, no position,
+    or no inset -- "the customer recorded no fence" must not stop RNS from
+    proposing anything (NEXT I-1). A missing inset means the fix is not
+    rtk_*, where the gate's rtk veto already forbids autonomous motion.
+    """
+    if fence is None or not fence.polygons:
+        return False
+    if start is None or end is None or inset_m is None:
+        return False
+    px, py = start
+    sx, sy = end
+    for poly in fence.polygons:
+        # A soft-only polygon never zeroes the velocity (11 S9A.2
+        # hard_enforce false = "只产生软减速与事件,不做硬裁剪"), so a
+        # candidate near it is not a stall risk and must not be vetoed.
+        if not poly.hard_enforce:
+            continue
+        # case 1: abstain while the robot has no margin left on this polygon.
+        if boundary_hit(px, py, poly).d_nom_m - inset_m <= 0.0:
+            continue
+        n = len(poly.xy)
+        hazard = False
+        d_min = math.inf
+        for i in range(n):
+            ax, ay = poly.xy[i]
+            bx, by = poly.xy[(i + 1) % n]
+            if _segments_cross(px, py, sx, sy, ax, ay, bx, by):
+                hazard = True           # case 2
+                break
+            d = _seg_seg_distance(px, py, sx, sy, ax, ay, bx, by)
+            if d < d_min:
+                d_min = d
+        if hazard or d_min < inset_m:   # case 2 or case 3
+            return True
+    return False
+
+
 def speed_cap_mps(fence: Optional[CompiledFence],
                   xy: Optional[Tuple[float, float]],
                   inset_m: Optional[float]) -> Optional[float]:
@@ -668,6 +818,7 @@ __all__ = ["FenceClipError", "FenceConstants", "CompiledPolygon", "CompiledFence
            "BoundaryHit", "PolyDistance", "FenceEval", "compile_fence",
            "boundary_hit", "project_halfspaces", "evaluate", "d_stop_m",
            "runtime_state_fields", "speed_cap_mps", "SPEED_LIMIT_ROLE",
+           "candidate_fence_hazard",
            "v_fence_mps", "margin_soft_eff_m", "inset_for_fix",
            "FIX_WITH_FENCE", "CONSTRAINT_ROLES", "DEGENERATE_EPS_MPS",
            "ENFORCEMENT_FULL", "ENFORCEMENT_WARN_ONLY", "ENFORCEMENT_DISABLED",
