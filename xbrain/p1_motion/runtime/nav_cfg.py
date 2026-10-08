@@ -68,6 +68,19 @@ class NavConfig:
     # loaded tree carries it -- see _read_r_robot for why that is the standing
     # state and why nothing here substitutes a number for it.
     r_robot_m: Optional[float]
+    # 12 S8.1 stage 2's a_max, or None when common.spec.max_accel_mps2 has
+    # not been calibrated. Same shape and same reason as r_robot_m above --
+    # see _read_accel_a_max.
+    #
+    # The VALUE and not an AccelLimits: stage 2 needs a_max AND the control
+    # period, and the period belongs to the loop (nav_wiring's
+    # TICK_PERIOD_S), not to the config snapshot. Building the limiter here
+    # would mean this module either imported the loop's period -- a
+    # dependency the wrong way round -- or kept a second copy of 0.05, which
+    # is the duplicate-constant shape this project has already measured
+    # twice. So nav_cfg reads the key, nav_wiring owns dt, and the two meet
+    # at the CtrlLoop construction.
+    accel_a_max_mps2: Optional[float]
 
 
 def _walk(tree: Mapping[str, Any], dotted: str) -> Any:
@@ -153,6 +166,53 @@ def _read_r_robot(rns_tree: Mapping[str, Any]) -> Optional[float]:
         return None
     v = infl.get("r_robot_m")
     if v is None or isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v)
+
+
+def _read_accel_a_max(p1_tree: Mapping[str, Any]) -> Optional[float]:
+    """common.spec.max_accel_mps2, or None when it is uncalibrated.
+
+    The key is common.spec.max_accel_mps2, reached through p1_motion.yaml's
+    own reference to it (the resolved snapshot has it expanded). It is null
+    on the real machine: models/m20s.yaml carries it as null with the note
+    that V-01 is the calibration item, and models/m20s_sim.yaml fills 1.5 so
+    the mechanism can be exercised in the sim variant.
+
+    Returning None rather than substituting a number: CLAUDE.md iron rule 3
+    forbids filling a calibration value to make something run, and S3.1
+    forbids a default for a safety parameter. A plausible figure typed in
+    here would be indistinguishable downstream from one measured on the
+    machine -- and the consequence of getting it wrong is the one 12 S8.1
+    stage 2 exists to prevent, in reverse: a ramp that is too permissive
+    does nothing, and one that is too tight makes the robot unable to reach
+    its commanded speed with no error anywhere.
+
+    The consequence of None is that stage 2 does not run, which is a REAL
+    reduction in protection and is logged as such by the caller -- NOT
+    silently equivalent to "ramp disabled by choice". AccelLimits itself
+    refuses a non-positive a_max, so there is no third state where the
+    stage looks configured and does nothing.
+
+    mutant: return 1.5 when the key is missing -> the ramp runs against a
+    number nobody measured, and the "uncalibrated means stage 2 is off and
+    visible" criterion goes green with no calibration.
+    """
+    spec = p1_tree.get("spec")
+    if not isinstance(spec, Mapping):
+        # p1_motion.yaml may not carry a spec block at all; stage 2 is then
+        # simply absent, same as an uncalibrated value.
+        return None
+    v = spec.get("max_accel_mps2")
+    # bool excluded explicitly: True would otherwise pass isinstance(int)
+    # and become a_max of 1.0 m/s2, a plausible-looking value from a typo.
+    if v is None or isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    if float(v) <= 0.0:
+        # A landed zero is NOT a configured "no acceleration allowed" -- it
+        # is CLAUDE.md S3.1's "0.0 passing for assigned". Treated as absent
+        # here so the caller reports it the same way as a null, and
+        # AccelLimits would refuse it anyway.
         return None
     return float(v)
 
@@ -269,4 +329,5 @@ def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) ->
         r_eff_m=_pos(rns_tree, "rns.geometry.r_eff_m"),
         rot_limits=_rotation_limits(p1_tree),
         r_robot_m=_read_r_robot(rns_tree),
+        accel_a_max_mps2=_read_accel_a_max(p1_tree),
     )

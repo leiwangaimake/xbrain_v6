@@ -99,6 +99,7 @@ from xbrain.p1_motion.fence.clip import (
     compile_fence,
 )
 from xbrain.p1_motion.fence.episodes import FenceEpisodeTracker
+from xbrain.p1_motion.gate.accel_limit import AccelLimits
 from xbrain.p1_motion.nav.arb_state import SUSPENDED_SOFT_ESTOP, ArbVisibility
 from xbrain.p1_motion.nav.health_factor import (
     STATE_OK,
@@ -315,7 +316,25 @@ class NavRuntime:
         self._progress_pub: Any = None
         self._status_pub: Any = None
         self._arb_pub: Any = None
-        self._ctrl = CtrlLoop(self._publish_cmd_vel, holonomic=cfg.holonomic)
+        # 12 S8.1 stage 2. cfg carries a_max (or None when uncalibrated),
+        # this module carries the control period -- they meet here. See
+        # nav_cfg._read_accel_a_max for why None is the standing state on
+        # the real machine and why nothing substitutes a number for it.
+        if cfg.accel_a_max_mps2 is None:
+            accel_limits = None
+            # WARNING and not INFO: stage 2 not running is a real reduction
+            # in protection, not a configuration choice. The key is named so
+            # an operator can go look at it. 12 S8.1 stage 2 is the one that
+            # stops a step command from hitting the body.
+            _logger.warning(
+                "12 S8.1 stage 2 DISABLED: common.spec.max_accel_mps2 is "
+                "not calibrated (V-01); step commands reach the chassis "
+                "unramped")
+        else:
+            accel_limits = AccelLimits(a_max_mps2=cfg.accel_a_max_mps2,
+                                       dt_s=TICK_PERIOD_S)
+        self._ctrl = CtrlLoop(self._publish_cmd_vel, holonomic=cfg.holonomic,
+                              accel_limits=accel_limits)
         self._cur: Optional[NavOutput] = None
         # "fault_fwd" is the P1-20 forward's own envelope seq. RT-C3.e wants
         # the FORWARDER's counter on the destination plane, and per key: sharing
