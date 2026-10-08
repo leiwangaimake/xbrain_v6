@@ -69,8 +69,10 @@ RED PROOF (CLAUDE.md S3.3 -- an assertion that never went red is unwritten)
   run before this file was committed.
 """
 
+import io
 import os
 import re
+import tokenize
 
 import pytest
 
@@ -132,6 +134,37 @@ _KNOWN_UNWIRED = {
     # production -- p2_core/ptz/ speaks ONVIF only. A guard with no write
     # site to guard cannot fail, so BIZ-P2-10 is not actually met.
     "xbrain/p2_core/domains/lapi_guard.py": "no-surface: no LAPI client in production, ONVIF only",
+
+    # ---- no-surface (2026-10-08, surfaced by dropping comments from the
+    #      mention corpus -- see _mention_text) ----
+    #
+    # *** These three were absent from this registry for one reason only:
+    # a COMMENT named them. Two of them were hidden by the very sentence
+    # that documents the defect -- p3_task/persistence/schema_geo.py says
+    # in as many words that the charging subsystem (dock_select /
+    # dock_arbiter) is NOT wired into the runtime yet. So the door was
+    # suppressing its own finding. Each has its own green tests, and
+    # every one of those tests tests the MODULE, not that the system uses
+    # it (the exact shape this file was born from).
+    #
+    # BIZ-P3-16 three-tier dock selection (energy reach -> route -> cost).
+    # Closing move is NOT "wire it": the DB->Dock loader that would feed
+    # it does not exist either, and schema_geo.py names that as a future
+    # charging batch. ==> docs/NEXT.md S11 T11 owns the whole chain
+    # (loader + shared reachability + CHG-11 trigger + V-3 admission).
+    "xbrain/p3_task/charge/dock_select.py":
+        "no-surface: no DB->Dock loader in production; whole chain is NEXT S11 T11",
+    # BIZ-P3-10 domain 7 dock arbiter (three keys + state/arb/dock + six
+    # ops). Same chain, same batch -- an arbiter with no dock to arbitrate.
+    "xbrain/p3_task/charge/dock_arbiter.py":
+        "no-surface: same charging chain as dock_select; NEXT S11 T11",
+    # BIZ-P2-27 rt/chassis/light, the chassis light channel (distinct from
+    # the payload light path, which IS wired through payload-service).
+    # Nothing in production publishes that key, so the module's encoder has
+    # no caller. Closing move = wire the key or delete the module; NO not
+    # "add a caller in a test", which is what its current green tests do.
+    "xbrain/p2_core/domains/chassis_light.py":
+        "no-surface: nothing in production publishes rt/chassis/light",
 
     # ---- registered elsewhere ----
     # NEXT S5 SW-23: its regex extracts 0 rows from 18 today, so the
@@ -500,6 +533,59 @@ def _read(path):
         return handle.read()
 
 
+def _mention_text(path):
+    """A production file's text with COMMENTS removed, strings kept.
+
+    Why comments are dropped (2026-10-08). The door's whole claim is
+    "nothing production-side names this module, so no test of it can tell
+    you whether the system uses it". A comment cannot use anything -- it
+    does not execute -- so a module whose only mention is a comment is
+    exactly the case the door exists to report, and counting it as wired
+    is the door suppressing its own finding.
+
+    *** The case that forced this. charge/dock_select.py and
+    charge/dock_arbiter.py were both absent from the registry because
+    p3_task/persistence/schema_geo.py carries a comment saying, in as many
+    words, that the charging subsystem is NOT wired into the runtime yet.
+    The sentence documenting the defect was what hid it. Stripping
+    comments surfaced those two plus p2_core/domains/chassis_light.py --
+    three, measured, not estimated.
+
+    Why STRINGS are kept, which is not symmetric and not an oversight.
+    A string CAN be the mechanism: importlib.import_module("...pkg.mod")
+    names a module in a string and really does wire it. Dropping strings
+    would turn that into a false positive, and the module docstring above
+    sets exactly one precondition for tightening this door -- "proving the
+    false-positive rate is zero". Comments meet it by construction;
+    strings do not.
+
+    What this does NOT fix, stated so the pass is not read as more than it
+    is: a module whose stem is an ordinary word still passes on a
+    coincidence. charge/trigger.py is the live example -- "trigger"
+    appears as an identifier in p4_agent/registry/intents.py and
+    elsewhere, so this door still does not report it. That is the
+    under-reporting the module docstring declares by design, not a
+    defect this change leaves behind; the import-graph view of the same
+    question lives in tests/repo/test_no_new_unwired_modules.py (an AST
+    ratchet, deliberately a count rather than a list).
+
+    tokenize, not a regex: a '#' inside a string literal is not a comment,
+    and a regex that does not know that would delete half a line of real
+    code and invent an unwired module. A file tokenize cannot parse is
+    returned whole -- the conservative direction, since keeping text can
+    only ever make this door report LESS.
+    """
+    src = _read(path)
+    out = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+            if tok.type != tokenize.COMMENT:
+                out.append(tok.string)
+    except (tokenize.TokenError, SyntaxError, IndentationError):
+        return src
+    return "\n".join(out)
+
+
 def _collect_unwired():
     """Return the set of repo-relative candidate modules that no other
     production file names.
@@ -518,7 +604,7 @@ def _collect_unwired():
     corpus = []
     for root in _MENTION_ROOTS:
         for path in _walk_py(root):
-            corpus.append((path, _read(path)))
+            corpus.append((path, _mention_text(path)))
 
     unwired = set()
     for path, stem in candidates.items():
@@ -590,3 +676,29 @@ def test_every_registry_entry_carries_a_legal_tag():
         if tag != "untriaged" and ":" not in note:
             bad.append((path, note, "tag %r requires a reason after ':'" % tag))
     assert not bad, "registry entries with an unusable note: %s" % bad
+
+
+def test_an_unparseable_file_keeps_its_whole_text(tmp_path):
+    """_mention_text 对解析不了的文件返回[全文], 不是空串.
+
+    *** 为什么这条要单独写. 这个分支在今天的树上[不可达] -- 语料里每个文件
+    都能 tokenize, 所以"返回空串"的变异体 2026-10-08 第一轮[存活]了.
+    它不是等价变异(真有这种文件时两者答案不同), 只是没有输入能走到那里.
+    ==> 正确处置是[把输入造出来], 不是在代码里注一句"等价变异"(7.2.1 那条
+    说的是"没有任何测试能杀它"的情形, 而这一条造个临时文件就能杀).
+
+    *** 方向为什么必须是"保守地保留全文". 语料文本越多, 本门报出的未接线模块
+    就越[少]. 所以保留全文 = 少报(可能漏一个真缺陷), 返回空串 = 多报
+    (会把一个真的被这个文件 import 的模块判成未接线 -> 一条为已接线模块而红的
+    门, 一周内就会被人放宽成"contains 即可", 正是模块头注引 3.2 形态二所防的).
+    两个方向的代价不对称, 所以这里不是随手选的.
+    """
+    bad = tmp_path / "unparseable.py"
+    # 未闭合的括号 + 非法缩进: tokenize 必抛, 而它里面提到了一个模块名.
+    bad.write_text("def f(:\n  return cross_plane_compliance\n", encoding="utf-8")
+    text = _mention_text(str(bad))
+    # 全文保留 -> 那个模块名还在 -> 它不会被误报成未接线.
+    assert "cross_plane_compliance" in text
+    # 反向: 不是空串. 若实现改成 return "" , 上面那条也会红, 但这一条让
+    # 失败信息直接说出"它返回了空串"而不是"名字不见了".
+    assert text != ""
