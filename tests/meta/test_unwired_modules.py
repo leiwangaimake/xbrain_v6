@@ -612,7 +612,7 @@ def _collect_unwired():
     #
     #  (1) A generic stem is satisfied by anything that shares the word.
     #      Real case: xbrain/p3_task/config/assertions.py has no
-    #      production caller at all (its validate_all is referenced only
+    #      production caller at all (its run_all_assertions is referenced
     #      from tests/p3_task/test_batch_g.py), yet it is reported wired
     #      -- because "assertions" is also the name of the
     #      xbrain/boot/freeze/assertions/ PACKAGE, which half the freeze

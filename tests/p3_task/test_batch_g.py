@@ -20,7 +20,7 @@ from xbrain.p3_task.config.assertions import (
     FreezeAssertionFailure,
     check_a_no_residuals,
     check_b_no_alias_keys,
-    check_c_retention_and_fence_relation,
+    check_c_fence_relation,
     check_j_config_root,
     run_all_assertions,
 )
@@ -31,11 +31,8 @@ from xbrain.p3_task.lifecycle.failure import (
 )
 from xbrain.p3_task.lifecycle.shutdown import ShutdownController
 from xbrain.p3_task.persistence.retention import (
-    RetentionOrderViolation,
-    RetentionWindows,
     should_checkpoint,
     tombstone_safe_to_hard_delete,
-    validate_windows,
 )
 
 pytestmark = pytest.mark.no_device
@@ -94,19 +91,34 @@ def test_failure_unknown_kind_raises():
         classify("halfway")
 
 
-# --- BIZ-P3-22 retention ---
-
-def test_retention_windows_ok_when_ascending():
-    validate_windows(RetentionWindows(30, 90, 180))
-
-
-def test_retention_windows_rejected_when_wrong_order():
-    with pytest.raises(RetentionOrderViolation):
-        validate_windows(RetentionWindows(180, 90, 30))
-
-
-def test_retention_windows_equal_boundary_accepted():
-    validate_windows(RetentionWindows(30, 30, 30))
+# ===========================================================================
+# BIZ-P3-22 retention -- THREE CASES REMOVED 2026-10-09 (RT-2)
+# ===========================================================================
+#
+# Removed: test_retention_windows_ok_when_ascending /
+# _rejected_when_wrong_order / _equal_boundary_accepted, plus the
+# RetentionWindows / RetentionOrderViolation / validate_windows imports.
+#
+# They tested a three-window model (keep_task_days / keep_progress_days /
+# keep_snapshot_days) whose three key names exist NOWHERE in the fourteen
+# volumes. See xbrain/p3_task/persistence/retention.py's header for the
+# full reasoning; the short version is that the model was a misreading of
+# common.retention, whose three day counts are tasks / events / commands.
+#
+# *** THE MISREADING IS VISIBLE IN THE DELETED CASES THEMSELVES, which is
+# why this block says so rather than just recording a deletion: the first
+# case called validate_windows(RetentionWindows(30, 90, 180)). Those are
+# the common.retention numbers -- tasks 30, events 90, commands 180. The
+# author took the triple from the right place and attached the wrong three
+# names to it, and 30 <= 90 <= 180 happens to be ascending, so every case
+# passed. A green criterion over an invented model is indistinguishable
+# from a correct one until somebody greps the key names.
+#
+# Nothing replaces them: the ordering they were checking belongs to the
+# freeze line (10 S5.4.4 assertion C, implemented in
+# xbrain/boot/freeze/assertions/c_cross_file.py and covered by
+# tests/boot/freeze/test_b_c_d.py), and 17 S10 v0.7.3 says verbatim it is
+# "不由任何一册的运行期代码保证".
 
 
 def test_should_checkpoint_skipped_in_degraded():
@@ -158,9 +170,20 @@ def test_shutdown_wait_window_ok_when_pending():
 
 # --- BIZ-P3-23 freeze assertions ---
 
+#: A hand-built config for the four sub-assertions.
+#:
+#: *** WHAT THIS FIXTURE IS NOT: configs/p3_task.yaml. That file has exactly
+#: ONE top-level key today -- `geo` -- so none of the sections these
+#: assertions read (`charge`, `recording`, `fence`) exists in it. This dict
+#: is therefore NOT a sample of the real file; it is the shape 15 S12
+#: specifies, used to exercise the checks. A reader who takes it for the
+#: real file would conclude p3_task.yaml is populated. Registered in
+#: docs/NEXT.md as RT-1.
+#:
+#: The `retention` block that used to be here is gone (2026-10-09, RT-2):
+#: its three keys were invented, and the check that read them has been
+#: removed. See xbrain/p3_task/persistence/retention.py's header.
 _GOOD_CONFIG = {
-    "retention": {"keep_task_days": 30, "keep_progress_days": 90,
-                    "keep_snapshot_days": 180},
     "recording": {"min_dist_m": 0.5},
     "fence": {"fence_close_tol_m": 1.0},
     "charge": {"low_batt_profile": "disabled"},
@@ -186,13 +209,11 @@ def test_assertion_b_rejects_alias_key():
         check_b_no_alias_keys(bad)
 
 
-def test_assertion_c_rejects_wrong_order():
-    bad = dict(_GOOD_CONFIG)
-    bad["retention"] = {"keep_task_days": 180, "keep_progress_days": 90,
-                          "keep_snapshot_days": 30}
-    with pytest.raises(FreezeAssertionFailure, match="ascending"):
-        check_c_retention_and_fence_relation(bad)
-
+# One more case removed here on 2026-10-09 (RT-2): it fed a descending
+# retention triple to the check and expected a refusal. Both the triple
+# and the check are gone -- the ordering belongs to freeze-line
+# assertion C (tests/boot/freeze/test_b_c_d.py covers it, including the
+# 15 TC-21 case that the real key-name fix made reachable).
 
 def test_assertion_c_disabled_sentinel_skips_fence_clause():
     """U71: with low_batt_profile='disabled', the fence sub-clause
@@ -202,7 +223,7 @@ def test_assertion_c_disabled_sentinel_skips_fence_clause():
                         "keep_snapshot_days": 180},
         "charge": {"low_batt_profile": "disabled"},
     }
-    check_c_retention_and_fence_relation(cfg)   # no raise
+    check_c_fence_relation(cfg)   # no raise
 
 
 def test_assertion_c_active_profile_needs_fence_relation():
@@ -215,7 +236,7 @@ def test_assertion_c_active_profile_needs_fence_relation():
         "charge": {"low_batt_profile": "active"},
     }
     with pytest.raises(FreezeAssertionFailure):
-        check_c_retention_and_fence_relation(cfg)
+        check_c_fence_relation(cfg)
 
 
 def test_assertion_j_rejects_wrong_root():

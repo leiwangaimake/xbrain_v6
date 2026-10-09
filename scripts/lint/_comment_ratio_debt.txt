@@ -656,7 +656,6 @@ xbrain/p3_task/lifecycle/link_loss.py
 xbrain/p3_task/lifecycle/shutdown.py
 xbrain/p3_task/persistence/base.py
 xbrain/p3_task/persistence/migration.py
-xbrain/p3_task/persistence/retention.py
 xbrain/p3_task/persistence/schema_geo.py
 xbrain/p3_task/persistence/schema_task.py
 xbrain/p3_task/persistence/threads.py

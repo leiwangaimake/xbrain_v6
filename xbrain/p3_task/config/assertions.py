@@ -86,48 +86,41 @@ def check_b_no_alias_keys(config: dict) -> None:
                 f"(see 15 S13)")
 
 
-def check_c_retention_and_fence_relation(config: dict) -> None:
-    """Retention triple ascending. If low_batt_profile == 'disabled',
-    U71 guard skips the fence_close_tol == 2*min_dist sub-clause.
+def check_c_fence_relation(config: dict) -> None:
+    """fence_close_tol == 2 * min_dist, unless U71's guard skips it.
 
-    *** This is NOT 10 S5.4.4 assertion C, despite the name (noted
-    2026-10-08). Different keys, different quantities:
-      here          retention.keep_{task,progress,snapshot}_days
-                    -- P3's own L6 keys: how long full task rows,
-                    patrol_progress + step_status, and
-                    task_route_snapshot survive (15 S8)
-      10 S5.4.4 C   common.retention.{task_days, event_days,
-                    command_log_days} -- row retention for the tasks /
-                    events / commands TABLES, checked by the freeze
-                    line (xbrain-config-freeze.service, Stage 0c)
-    They are not two implementations of one rule, so neither is the
-    drifting copy of the other. But 17 S10 v0.7.3 says verbatim that
-    the common.retention ordering is guaranteed by the freeze-line
-    assertion and "NOT by any volume's runtime code" -- a reader who
-    finds this function while checking that sentence must be able to
-    see immediately that it is about other keys, which is why this
-    paragraph is here and not in a commit message.
+    *** RENAMED AND HALVED 2026-10-09 (RT-2). This was
+    check_c_retention_and_fence_relation and it also checked a
+    retention triple -- retention.keep_{task,progress,snapshot}_days,
+    ascending. All of that is gone, for three reasons recorded in
+    xbrain/p3_task/persistence/retention.py's header:
 
-    Reachability: no production caller today (validate_all, the only
-    function that calls it, has no caller outside tests either). So the
-    "retention keys missing" raise below is not currently a startup
-    behaviour of p3 -- and configs/p3_task.yaml has no retention
-    section at all, so it WOULD raise the moment anything wired it up.
-    Both facts are logged in docs/NEXT.md rather than fixed here:
-    wiring it is a P3 change with its own criteria, not a side effect
-    of a config-layer batch.
+      (1) those three key names exist NOWHERE in the fourteen volumes;
+      (2) they were a misreading of common.retention, whose three day
+          counts are tasks / events / commands, not task / progress /
+          snapshot;
+      (3) an ascending check on them was a second implementation of
+          freeze-line assertion C, which 17 S10 v0.7.3 forbids in as
+          many words ("不由任何一册的运行期代码保证"), and with the
+          contract's real per-table numbers it was unsatisfiable
+          (progress 90 <= snapshot 30 is false).
+
+    The name mattered too: "assertion C" here is NOT 10 S5.4.4's
+    assertion C. A reader checking 17's sentence about the freeze line
+    would land on this function and see a runtime ordering check.
+
+    What survives is the fence relation, which does have a source:
+    15 S12's recording block pairs fence_close_tol_m with min_dist_m at
+    exactly 2x, and the freeze line's assertion C-3 checks the same
+    identity on the merged tree. This copy is the P3-local one over its
+    own L6 file -- NOT a duplicate of C-3 in the sense (3) forbids,
+    because C-3 reads common.* and this reads p3_task.yaml's own block.
+
+    U71's guard: when charge.low_batt_profile == 'disabled' the
+    sub-clause is skipped -- 15 S12 rules 'disabled' as current and
+    S8.3 is written for "本期不降速", so demanding the tolerance pair
+    would refuse a config the volume calls correct.
     """
-    ret = config.get("retention", {})
-    d = ret.get("keep_task_days")
-    p = ret.get("keep_progress_days")
-    s = ret.get("keep_snapshot_days")
-    if None in (d, p, s):
-        raise FreezeAssertionFailure(
-            "assertion C: retention keys missing")
-    if not (d <= p <= s):
-        raise FreezeAssertionFailure(
-            f"assertion C: retention not ascending: "
-            f"task={d} progress={p} snapshot={s}")
     rec = config.get("recording", {})
     fence = config.get("charge", {})
     low_batt = fence.get("low_batt_profile", "disabled")
@@ -158,5 +151,5 @@ def run_all_assertions(config: dict, config_path: str) -> None:
     """Runs A, B, C, J in order. First violation raises."""
     check_a_no_residuals(config)
     check_b_no_alias_keys(config)
-    check_c_retention_and_fence_relation(config)
+    check_c_fence_relation(config)
     check_j_config_root(config_path)
