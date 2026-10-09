@@ -492,7 +492,7 @@ BIZ-P3-11	tests/p3_task/test_batch_d.py	brief	2026-08-23
 BIZ-P3-12	tests/p3_task/test_batch_d.py	brief	2026-08-23
 BIZ-P3-13	tests/p3_task/test_batch_d.py	brief	2026-08-23
 BIZ-P3-14	tests/p3_task/test_batch_d.py	brief	2026-08-23
-BIZ-P3-15	tests/p3_task/test_batch_e.py	brief	2026-08-23
+BIZ-P3-15	tests/p3_task/test_charge_trigger.py	brief	2026-10-09
 BIZ-P3-16	tests/p3_task/test_batch_e.py	brief	2026-08-23
 BIZ-P3-17	tests/p3_task/test_batch_e.py	brief	2026-08-23
 BIZ-P3-18	tests/p3_task/test_batch_f.py	brief	2026-08-23

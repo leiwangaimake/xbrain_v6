@@ -3,14 +3,22 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_batch_e.py
-Brief: BIZ-P3-15/16/17/10 charge triggers + docking + executor + dock arbiter tests
+Brief: BIZ-P3-16/17/10 docking + executor + dock arbiter tests
 
 Description:
-Batch E: CR-1..8 trigger ordering (CR-3 first because it commands
-stop-in-place); three-tier dock selection with paired negative
-variants (unreachable dock filtered out; empty candidates -> None);
-charge stage progression rejects skips; dock arbiter reserve/release/
-demand/cede/refresh with contention scenarios.
+Batch E: three-tier dock selection with paired negative variants
+(unreachable dock filtered out; empty candidates -> None); charge stage
+progression rejects skips; dock arbiter reserve/release/demand/cede/
+refresh with contention scenarios.
+
+*** The charge TRIGGER cases that used to open this file are gone
+(2026-10-09, T11). They asserted an invented eight-condition spec;
+15 S8.2 defines two criteria. See the block further down for why they
+were deleted rather than updated, and tests/p3_task/test_charge_trigger.py
+for the replacement. docs/TODO_EVIDENCE.tsv's BIZ-P3-15 row was moved to
+that file in the same batch -- a criterion that moves without its
+evidence mapping leaves the mapping pointing at a file that no longer
+covers the item, and nothing reports that.
 """
 
 import pytest
