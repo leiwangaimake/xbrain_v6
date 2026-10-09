@@ -636,7 +636,6 @@ xbrain/p3_task/charge/executor.py
 xbrain/p3_task/config/assertions.py
 xbrain/p3_task/dao/simple_daos.py
 xbrain/p3_task/dao/tasks_dao.py
-xbrain/p3_task/fence/fence_set.py
 xbrain/p3_task/fence/geom.py
 xbrain/p3_task/geo/manifest.py
 xbrain/p3_task/geo/objects.py

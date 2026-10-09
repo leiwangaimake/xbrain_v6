@@ -16,17 +16,54 @@ demo injector. It:
   * shapes each row into a polygon {poly_id, role, name, winding, hard_enforce,
     vertices:[{lat,lon}]} (winding declared per role: allow->ccw, keep-out->cw;
     the receiver re-normalises per 11 S9A.2 and does not trust the sender);
-  * computes crc32 by the EXACT 11 S9A.2 normalisation (fence_set_id|rev| then per
-    polygon poly_id|role|winding|hard_enforce(1/0)| then each vertex %.8f,%.8f;),
-    CRC-32 IEEE 802.3 == zlib.crc32, 8 lowercase hex -- so the C++/Python receiver
-    self-computes the SAME value (FV-8).
+  * computes crc32 by the EXACT 11 S9A.2 normalisation, which this module does
+    NOT implement itself -- it delegates to xbrain.common.fence.geom, whose one
+    implementation is xbrain.common.digest.fence.fence_crc32. CRC-32 IEEE 802.3
+    == zlib.crc32, 8 lowercase hex, so the C++/Python receiver self-computes the
+    SAME value (FV-8).
 
-Scope (honest, 2026-08-20): this is the geometry broadcast only. The two-stage
-FenceCommand handshake of 11 S9A.3 (op=stage -> cmd/fence/ack -> op=commit +
-require_ack_from + P1 state/fence) is DEFERRED until P1 fence clipping lands --
-there is no consumer to ack yet. Until then P3 broadcasts the FenceSet directly
-(the demo injector already did the flat shape; this upgrades it to come from
-fence.db with proper metadata). Do NOT read this as the commit protocol.
+    *** CORRECTED 2026-10-09. This paragraph used to spell the recipe out as
+    five segments: "fence_set_id|rev| then per polygon
+    poly_id|role|winding|hard_enforce(1/0)| then each vertex %.8f,%.8f;".
+    That was the v0.2 recipe. The current one has SEVEN segments per polygon --
+    priority and, on a speed_limit polygon, speed_limit_mps sit between
+    hard_enforce and the vertices (11 S9A.2, originally patch block B-3, merged
+    into the contract body on 2026-10-09).
+
+    The code was changed to the seven-segment form on 2026-10-08 and this
+    header was not. Why that is worse than it sounds: the five-segment recipe
+    makes "lower the slow zone" produce a byte-identical crc32, so S-5 answers
+    duplicate and the change never takes effect with no error anywhere -- and
+    anybody reading this header to implement a second producer would have
+    reproduced exactly that bug. The recipe is now stated in ONE place (the
+    contract) and implemented in ONE place (fence_crc32); this header points
+    at them rather than restating either.
+
+Scope: this is the geometry broadcast only. The two-stage FenceCommand
+handshake of 11 S9A.3 (op=stage -> cmd/fence/ack -> op=commit +
+require_ack_from + P1 state/fence) is NOT implemented here; P3 broadcasts the
+FenceSet directly.
+
+*** CORRECTED 2026-10-09. The original wording was "DEFERRED until P1 fence
+clipping lands -- there is no consumer to ack yet". BOTH halves of that
+justification have expired:
+  * P1 fence clipping landed 2026-09-12 (xbrain/p1_motion/fence/clip.py) and
+    was extended on 2026-10-08 (speed zones, candidate gate).
+  * P1 publishes state/fence (11 S1.1.6 P1-14) and cmd/fence/ack (P1-16), so
+    there IS a consumer to ack.
+So the deferral's precondition is satisfied and the handshake is simply
+missing. It is now registered as a gap in docs/NEXT.md rather than described
+here as a deliberate wait -- a stale "deferred until X" reads as "somebody is
+watching for X", and nobody was.
+
+What the gap costs, concretely: 11 S2.2.3 (block C-2, merged 2026-10-09)
+requires that when the active rule set references ANY warning polygon,
+require_ack_from must include p2_core (S9A.13 SR-2). Without the handshake,
+P2 can be running PER-36 suspicion checks against a stale rev of the warning
+geometry while P3 has already committed a new set -- the two sides disagree
+about which areas are alarm zones, with no error anywhere.
+
+Do NOT read this module as the commit protocol.
 """
 from __future__ import annotations
 
