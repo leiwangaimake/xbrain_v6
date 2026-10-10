@@ -3,29 +3,58 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: preconditions.py
-Brief: BIZ-P3-8 admission gates V-1..V-9 (+ V-8a..V-8g and V-3 energy reach)
+Brief: BIZ-P3-8 admission gates, P3-local PC-n codes mapped to 15 S5.2 V-n
 
 Description:
-15 S6 defines nine hard preconditions any task must satisfy before
-the state machine will move it out of 'pending'. Each returns a
-V-code failure OR None on success. The scheduler AND at the
-apply_transition('pending','admit') point must both call these --
-we do not rely on a single call site staying live.
+Admission checks a task must pass before the state machine moves it out of
+'pending'. Each returns a PC-code failure OR None on success. The scheduler
+AND the apply_transition('pending','admit') point must both call these -- we
+do not rely on a single call site staying live.
 
-V-1: task_type is in the 7-value closed set
-V-2: priority is in [0, 100]
-V-3: energy-reachable (SoC is sufficient for the planned distance +
-     return-to-nearest-dock margin)
-V-4: no fence violation on the planned path
-V-5: mission_json parses
-V-6: total_steps > 0 for step-based types (patrol, teach)
-V-7: not already terminal (idempotent T-2)
-V-8: type-specific sub-checks (V-8a..V-8g cover the seven types)
-V-9: no exclusive resource conflict (charging in progress etc.)
+*** RENUMBERED 2026-10-10 (NEXT EX-1 gap 4): these codes used to be V-1..V-9
+and they COLLIDED with 15 S5.2's V-1..V-9 while meaning different things.
+Nine codes, and only two lined up:
 
-The V-3 energy-reach calculator uses a linear model: energy per
-metre + a fixed reserve for the return leg. It's deliberately
-conservative -- 15 §8.2 requires refusing when uncertain.
+  code    this module checks              15 S5.2's V-n of the same number
+  ------  -----------------------------   --------------------------------
+  PC-1    task_type in the 7-value set    route/waypoint/dock exists, not
+                                          tombstoned
+  PC-2    priority in [0, 100]            target point inside the hard fence
+  PC-3    energy-reachable                energy-reachable          <- same
+  PC-4    no fence violation on the path   body capability supports the cmd
+  PC-5    mission_json parses              health allows motion
+                                           (allow_motion)
+  PC-6    total_steps > 0                  fix quality (fix_type)
+  PC-7    not already terminal             clock synced (ts_sync)
+  PC-8    route exists in the manifest     parameters legal (V-8a..V-8g)
+  PC-9    (not implemented here)           refuse new tasks per SOURCE while
+                                           the link is down
+
+  Only PC-3 / V-3 are the same check. PC-4 is 15's V-2, PC-8 is 15's V-1 --
+  both present, both under the wrong number.
+
+*** WHY A NEW PREFIX RATHER THAN RENUMBERING ONTO 15's SCHEME. Five of
+15 S5.2's nine are NOT implemented anywhere (V-4 body capability, V-5
+allow_motion, V-6 fix_type, V-7 ts_sync, V-9 link-down-by-source). Moving
+this module's checks onto those numbers would put a check named "V-5" in the
+codebase while 15's V-5 remains unimplemented -- a reader grepping for V-5
+would find something and conclude it was done. A separate prefix keeps
+"15 S5.2 V-n" meaning exactly one thing, and makes the five missing ones
+visibly missing. They are registered in docs/NEXT.md.
+
+The precedent is 15's own handling of its CR-* collision (S8.2A's closing
+note): a prefix with two meanings inside one scan surface has to be renamed,
+and the one that moves is the one without prior claim to the number.
+
+*** The node number in the old header was also wrong: it said "15 S6
+defines nine hard preconditions". S6 is 调度 and contains no V-n at all; the
+table is 15 S5 前置校验 (TSK-14), S5.2 校验项.
+
+The PC-3 energy-reach calculator uses a linear model: energy per metre + a
+fixed reserve for the return leg. 15 S5.3's PRIMARY model is different
+(可用里程 = RemainMile x (1 - reserve_ratio)) and this is its fallback,
+whose authorising condition (T-CHG-1 measured) has not been met -- that is
+NEXT EX-1 gap 3, not fixed here.
 """
 
 from __future__ import annotations
@@ -43,50 +72,54 @@ class PreconditionFailure:
     detail: str
 
 
-def check_v1_type(task_type: str):
+def check_pc1_type(task_type: str):
     if task_type not in VALID_TYPES:
-        return PreconditionFailure("V-1", f"unknown task_type {task_type!r}")
+        return PreconditionFailure(
+            "PC-1", f"unknown task_type {task_type!r}")
     return None
 
 
-def check_v2_priority(priority: int):
+def check_pc2_priority(priority: int):
     if not (0 <= priority <= 100):
         return PreconditionFailure(
-            "V-2", f"priority {priority} outside [0, 100]")
+            "PC-2", f"priority {priority} outside [0, 100]")
     return None
 
 
-def check_v3_energy_reach(soc_pct: float,
+def check_pc3_energy_reach(soc_pct: float,
                             distance_m: float,
                             energy_per_meter_pct: float,
                             return_reserve_pct: float):
-    """V-3: soc_pct must cover forward distance PLUS return reserve.
+    """PC-3: soc_pct must cover forward distance PLUS return reserve.
     Refuse when equal (=), not just when less; the reserve is meant
     to be untouched."""
     need = distance_m * energy_per_meter_pct + return_reserve_pct
     if soc_pct <= need:
         return PreconditionFailure(
-            "V-3", f"soc={soc_pct}%, need>{need}%")
+            "PC-3", f"soc={soc_pct}%, need>{need}%")
     return None
 
 
-def check_v5_mission_parses(mission_json: str):
+def check_pc5_mission_parses(mission_json: str):
     """Structural gate; the real parser lives in dispatcher/. Here
     we only reject empty strings and 'null'."""
     import json
     if not mission_json.strip():
-        return PreconditionFailure("V-5", "mission_json is empty")
+        return PreconditionFailure(
+            "PC-5", "mission_json is empty")
     try:
         data = json.loads(mission_json)
     except json.JSONDecodeError as e:
-        return PreconditionFailure("V-5", f"json decode: {e}")
+        return PreconditionFailure(
+            "PC-5", f"json decode: {e}")
     if data is None:
-        return PreconditionFailure("V-5", "mission_json is JSON null")
+        return PreconditionFailure(
+            "PC-5", "mission_json is JSON null")
     return None
 
 
-def check_v8_route_exists(route_geo_id, route_exists):
-    """V-8: 任务引用的路径必须存在.
+def check_pc8_route_exists(route_geo_id, route_exists):
+    """PC-8: 任务引用的路径必须存在.
 
     v2.0 S2.1 逐字: recorded_path_id "必须存在于当前 manifest". 在此之前
     2026-09-03 实测 r-does_not_exist 被 accepted 并 started -- 机器人接了一条
@@ -108,18 +141,18 @@ def check_v8_route_exists(route_geo_id, route_exists):
         return None
     if not route_exists(route_geo_id):
         return PreconditionFailure(
-            "V-8", f"route {route_geo_id!r} is not in the current manifest")
+            "PC-8", f"route {route_geo_id!r} is not in the current manifest")
     return None
 
 
-def check_v6_step_count(task_type: str, total_steps: int):
+def check_pc6_step_count(task_type: str, total_steps: int):
     if task_type in ("patrol", "teach") and total_steps <= 0:
         return PreconditionFailure(
-            "V-6", f"total_steps={total_steps} for step-based type")
+            "PC-6", f"total_steps={total_steps} for step-based type")
     return None
 
 
-def check_v7_not_terminal(current_state: str):
+def check_pc7_not_terminal(current_state: str):
     """T-2 idempotency: an admit call on a terminal task is a no-op
     (return None) rather than an error, since retries are legal."""
     return None

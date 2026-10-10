@@ -355,7 +355,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 }, ensure_ascii=False).encode("utf-8"))
 
             async def _list_route_ids():
-                """V-8 用的路径全集(当前 manifest).
+                """PC-8 用的路径全集(当前 manifest).
 
                 墓碑不算存在 -- 一条被删的路径与从未存在过, 对"能不能执行这条
                 任务"是同一个答案.

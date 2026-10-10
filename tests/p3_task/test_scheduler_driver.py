@@ -94,16 +94,16 @@ async def test_only_one_runs_at_a_time(dao_conn):
 
 @pytest.mark.asyncio
 async def test_bad_type_validate_fails(dao_conn):
-    """A task whose type is outside the closed set fails V-1 -> 'failed', not
+    """A task whose type is outside the closed set fails PC-1 -> 'failed', not
     'ready'. MUTATION: skipping validation would send it to ready/running."""
     dao, conn = dao_conn
     # Insert directly with a state the CHECK allows but a bogus... type must be
-    # valid for the DDL, so use a valid type but an unparseable mission (V-5).
-    await dao.insert(_pending("tbad", mission="   "))    # empty mission -> V-5
+    # valid for the DDL, so use a valid type but an unparseable mission (PC-5).
+    await dao.insert(_pending("tbad", mission="   "))    # empty mission -> PC-5
     await conn.commit()
     made, seen = await _collect(dao, conn)
     assert (await dao.fetch_by_id("tbad")).state == "failed"
-    assert any(s[0] == "tbad" and s[1] == "failed" and "V-5" in s[2]
+    assert any(s[0] == "tbad" and s[1] == "failed" and "PC-5" in s[2]
                for s in seen)
 
 

@@ -615,7 +615,7 @@ def test_a_task_naming_a_missing_route_is_rejected_at_admission():
     2026-09-03 实测: 发 r-does_not_exist, 任务被 accepted 并 started -- 机器人
     接了一条它无从执行的任务, 而甲方界面显示"已开始".
 
-    MUTATION: 把 check_v8 从 validate_pending 拿掉 -> 红.
+    MUTATION: 把 check_pc8 从 validate_pending 拿掉 -> 红.
     """
     dao, made = _tick_routes(
         [{"task_id": "t-bad", "priority": 50, "submit_seq": 1,
@@ -628,7 +628,7 @@ def test_a_task_naming_a_missing_route_is_rejected_at_admission():
 def test_a_task_naming_a_real_route_still_passes():
     """反向: 恒拒的实现同样能通过上面那条.
 
-    MUTATION: 让 check_v8 无条件返回失败 -> 红.
+    MUTATION: 让 check_pc8 无条件返回失败 -> 红.
     """
     dao, _made = _tick_routes(
         [{"task_id": "t-ok", "priority": 50, "submit_seq": 1,

@@ -42,10 +42,10 @@ from typing import Awaitable, Callable, List, Tuple
 
 from xbrain.p3_task.state.machine import apply_transition, validate_suspend_fields
 from xbrain.p3_task.state.preconditions import (
-    check_v1_type,
-    check_v2_priority,
-    check_v5_mission_parses,
-    check_v8_route_exists,
+    check_pc1_type,
+    check_pc2_priority,
+    check_pc5_mission_parses,
+    check_pc8_route_exists,
 )
 
 # on_transition(task_id, from_state, to_state, reason) -> awaitable.
@@ -65,12 +65,12 @@ def validate_pending(row, route_exists=None) -> Tuple[str, str]:
     (event, reason): ('validate_ok', '') if all pass, else
     ('validate_fail', '<code>: <detail>')."""
     for check in (
-        check_v1_type(row.task_type),
-        check_v2_priority(row.priority),
-        check_v5_mission_parses(row.mission_json),
+        check_pc1_type(row.task_type),
+        check_pc2_priority(row.priority),
+        check_pc5_mission_parses(row.mission_json),
         # V-8: v2.0 S2.1 的"必须存在于当前 manifest". 查询由调用方注入 --
         # 本函数是纯的, 而且 driver 里不该有第二处数据源.
-        check_v8_route_exists(getattr(row, "route_geo_id", None), route_exists),
+        check_pc8_route_exists(getattr(row, "route_geo_id", None), route_exists),
     ):
         if check is not None:
             return "validate_fail", f"{check.code}: {check.detail}"

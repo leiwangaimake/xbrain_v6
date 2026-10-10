@@ -7,8 +7,8 @@ Brief: BIZ-P3-7/8/9/25 state machine + preconditions + scheduling + dispatcher t
 
 Description:
 Batch C: 12-value state machine transitions (positive + negative
-variants), suspend_kind orthogonality, preconditions V-1/V-2/V-3/V-5/
-V-6 with paired failures, priority-FIFO scheduler + preemption, and
+variants), suspend_kind orthogonality, preconditions PC-1/PC-2/PC-3/PC-5/
+PC-6 with paired failures, priority-FIFO scheduler + preemption, and
 the 7-type dispatcher with a startup completeness gate.
 """
 
@@ -33,11 +33,11 @@ from xbrain.p3_task.state.machine import (
     validate_suspend_fields,
 )
 from xbrain.p3_task.state.preconditions import (
-    check_v1_type,
-    check_v2_priority,
-    check_v3_energy_reach,
-    check_v5_mission_parses,
-    check_v6_step_count,
+    check_pc1_type,
+    check_pc2_priority,
+    check_pc3_energy_reach,
+    check_pc5_mission_parses,
+    check_pc6_step_count,
 )
 
 pytestmark = pytest.mark.no_device
@@ -159,69 +159,69 @@ def test_suspend_cr8_pairing_enforced():
 
 # --- BIZ-P3-8 preconditions ---
 
-def test_v1_unknown_type_fails():
-    r = check_v1_type("halfway")
-    assert r is not None and r.code == "V-1"
+def test_pc1_unknown_type_fails():
+    r = check_pc1_type("halfway")
+    assert r is not None and r.code == "PC-1"
 
 
-def test_v1_valid_type_passes():
-    assert check_v1_type("patrol") is None
+def test_pc1_valid_type_passes():
+    assert check_pc1_type("patrol") is None
 
 
-def test_v2_priority_out_of_range_fails():
-    assert check_v2_priority(-1) is not None
-    assert check_v2_priority(101) is not None
+def test_pc2_priority_out_of_range_fails():
+    assert check_pc2_priority(-1) is not None
+    assert check_pc2_priority(101) is not None
 
 
-def test_v2_priority_in_range_passes():
-    assert check_v2_priority(0) is None
-    assert check_v2_priority(50) is None
-    assert check_v2_priority(100) is None
+def test_pc2_priority_in_range_passes():
+    assert check_pc2_priority(0) is None
+    assert check_pc2_priority(50) is None
+    assert check_pc2_priority(100) is None
 
 
-def test_v3_refuses_when_equal_to_need():
-    """V-3: soc == need is REFUSED (reserve is untouched)."""
-    r = check_v3_energy_reach(
+def test_pc3_refuses_when_equal_to_need():
+    """PC-3: soc == need is REFUSED (reserve is untouched)."""
+    r = check_pc3_energy_reach(
         soc_pct=20.0, distance_m=100.0,
         energy_per_meter_pct=0.1, return_reserve_pct=10.0)
-    assert r is not None and r.code == "V-3"
+    assert r is not None and r.code == "PC-3"
 
 
-def test_v3_passes_when_over_need():
-    r = check_v3_energy_reach(
+def test_pc3_passes_when_over_need():
+    r = check_pc3_energy_reach(
         soc_pct=25.0, distance_m=100.0,
         energy_per_meter_pct=0.1, return_reserve_pct=10.0)
     assert r is None
 
 
-def test_v5_empty_json_fails():
-    r = check_v5_mission_parses("   ")
-    assert r is not None and r.code == "V-5"
+def test_pc5_empty_json_fails():
+    r = check_pc5_mission_parses("   ")
+    assert r is not None and r.code == "PC-5"
 
 
-def test_v5_bad_json_fails():
-    r = check_v5_mission_parses("{not_json")
-    assert r is not None and r.code == "V-5"
+def test_pc5_bad_json_fails():
+    r = check_pc5_mission_parses("{not_json")
+    assert r is not None and r.code == "PC-5"
 
 
-def test_v5_null_fails():
-    """V-5: JSON 'null' is not a valid mission body."""
-    r = check_v5_mission_parses("null")
+def test_pc5_null_fails():
+    """PC-5: JSON 'null' is not a valid mission body."""
+    r = check_pc5_mission_parses("null")
     assert r is not None
 
 
-def test_v5_good_json_passes():
-    assert check_v5_mission_parses('{"steps": []}') is None
+def test_pc5_good_json_passes():
+    assert check_pc5_mission_parses('{"steps": []}') is None
 
 
-def test_v6_step_types_require_positive_total():
-    r = check_v6_step_count("patrol", 0)
-    assert r is not None and r.code == "V-6"
+def test_pc6_step_types_require_positive_total():
+    r = check_pc6_step_count("patrol", 0)
+    assert r is not None and r.code == "PC-6"
 
 
-def test_v6_stepless_types_accept_zero_total():
+def test_pc6_stepless_types_accept_zero_total():
     """standby / follow / etc don't require step_count."""
-    assert check_v6_step_count("standby", 0) is None
+    assert check_pc6_step_count("standby", 0) is None
 
 
 # --- BIZ-P3-9 scheduling ---
