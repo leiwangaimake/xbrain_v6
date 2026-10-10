@@ -71,7 +71,10 @@ async def _seed(ctx, task_id, state, task_type="patrol"):
         " mission_json, total_steps, current_step, step_status_json, source, "
         " resume_policy, trace_id, created_ms, updated_ms, suspend_kind, "
         " suspend_reason) "
-        "VALUES (?, ?, ?, 50, 1, '{}', 0, 0, '[]', 'local', 'restart', "
+        # total_steps=1 (was 0): 15 S9.5A.2 ST-2 fixes the minimum at 1 and
+        # schema_task.py's CHECK was restored to >= 1 on 2026-10-10. No case
+        # here asserts on the step count.
+        "VALUES (?, ?, ?, 50, 1, '{}', 1, 0, '[]', 'local', 'restart', "
         " 'tr', 1, 1, ?, ?)",
         (task_id, task_type, state, kind, reason))
     await ctx.task_conn.commit()

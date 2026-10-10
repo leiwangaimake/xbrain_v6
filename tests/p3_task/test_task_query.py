@@ -40,7 +40,7 @@ async def dao():
         yield TasksDAO(c)
 
 
-async def _insert(dao, *, task_id, state, submit_seq, total_steps=0,
+async def _insert(dao, *, task_id, state, submit_seq, total_steps=1,
                   current_step=0, command_text="", created_at="",
                   task_type="patrol", source="local"):
     await dao.insert(TaskRow(
@@ -57,7 +57,10 @@ async def _seed(dao):
     await _insert(dao, task_id="t-1", state="running", submit_seq=1,
                   total_steps=3, current_step=1, command_text="开始巡逻东区",
                   created_at="2026-08-17T10:00:12Z")
-    await _insert(dao, task_id="t-2", state="pending", submit_seq=2)  # total 0
+    # t-2: pending, total_steps=1 (the _insert default since 2026-10-10).
+    # It used to be 0, which is what made the percent come back None --
+    # see test_pending_task_percent_is_zero_not_none for why that changed.
+    await _insert(dao, task_id="t-2", state="pending", submit_seq=2)
     await _insert(dao, task_id="t-3", state="done", submit_seq=3,
                   total_steps=2, current_step=2, command_text="回充电站")
     await _insert(dao, task_id="t-4", state="failed", submit_seq=4)
@@ -119,11 +122,37 @@ def test_percent_none_when_total_zero_else_value():
 
 
 @pytest.mark.asyncio
-async def test_pending_task_percent_is_none(dao):
+async def test_pending_task_percent_is_zero_not_none(dao):
+    """A pending task's card percent is 0.0, not None.
+
+    *** THIS CASE CHANGED MEANING ON 2026-10-10, and the change is a
+    consequence, not a decision about what the right answer is.
+
+    It used to assert `percent is None`, and it got there because the
+    fixture seeded total_steps=0 -- which _percent() maps to None. Zero is
+    no longer a legal value: 15 S9.5A.2 ST-2 fixes the minimum at 1 and
+    schema_task.py's CHECK was restored to >= 1 in that batch, because
+    total_steps turns out to be a per-type constant from that section's
+    table rather than something a route layer fills in later.
+
+    So a pending goto now has total_steps=1, current_step=0, and
+    _percent returns 0.0.
+
+    *** WHAT THIS PINS IS BEHAVIOUR, NOT CORRECTNESS. Whether a queued task
+    should show 0% or show nothing at all is a product question neither
+    volume answers, and there is a second question behind it: 15 S9.5A.2
+    ST-3 says verbatim that "current_step 不用于对外进度百分比 --
+    TaskState.progress.pct 只按里程算 (PP-3)", while this percent is
+    computed FROM current_step. Both are registered in docs/NEXT.md.
+
+    If the ruling says a queued task shows no percent, this case changes
+    again -- and that is the point of saying so here rather than leaving a
+    bare assertion that looks like a decided design.
+    """
     await _seed(dao)
     reply = await query_task_cards(dao._conn, scope="current", limit=10)
     card = next(c for c in reply["tasks"] if c["task_id"] == "t-2")
-    assert card["progress"]["percent"] is None
+    assert card["progress"]["percent"] == 0.0
 
 
 def test_empty_command_and_created_become_none():
@@ -132,7 +161,7 @@ def test_empty_command_and_created_become_none():
     card = task_card_from_row({
         "task_id": "t-x", "created_at": "", "command_text": "",
         "state": "done", "source": "charge", "task_type": "return_home",
-        "current_step": 0, "total_steps": 0, "submit_seq": 9})
+        "current_step": 0, "total_steps": 1, "submit_seq": 9})
     assert card["created_at"] is None and card["command_text"] is None
 
 

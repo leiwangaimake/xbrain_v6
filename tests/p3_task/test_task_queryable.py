@@ -80,7 +80,7 @@ async def conn():
 async def _insert(conn, *, task_id, state, submit_seq, command_text=""):
     await TasksDAO(conn).insert(TaskRow(
         task_id=task_id, task_type="patrol", state=state, priority=50,
-        submit_seq=submit_seq, mission_json="{}", total_steps=0, current_step=0,
+        submit_seq=submit_seq, mission_json="{}", total_steps=1, current_step=0,
         step_status_json="[]", created_ms=submit_seq, updated_ms=submit_seq,
         source="local", trace_id="tr", resume_policy="continue",
         command_text=command_text))

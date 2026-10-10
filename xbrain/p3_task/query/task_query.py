@@ -64,11 +64,31 @@ _SCOPE_WHERE = {
 
 
 def _percent(current_step: int, total_steps: int) -> Optional[float]:
-    """Progress percent for field 5, or None when total is unknown.
+    """Step-based percent for the task card, or None when total is unknown.
 
-    total_steps is 0 until the route layer expands the task (17 S6.10.4 EX-1);
-    percent MUST be None then, never a fabricated 0 or 100 (3.1/3.2 -- the same
-    rule plan_group already applies to the 'done / total' fraction)."""
+    *** DOCSTRING CORRECTED 2026-10-10. It used to read "total_steps is 0
+    until the route layer expands the task (17 S6.10.4 EX-1)". That causal
+    chain does not exist: 15 S9.5A.2 gives total_steps as a CONSTANT PER
+    TASK TYPE (patrol/goto/return_home/standby/follow = 1, charge/teach = 3,
+    composite = child count) and states in as many words that a step "不是
+    waypoint". Nothing was ever going to expand it. ingest/task_row.py now
+    fills it from that table, and schema_task.py's CHECK is back to >= 1.
+
+    So the `total_steps <= 0` branch below is no longer reachable through
+    the database -- the CHECK forbids it. It is kept as a guard for the
+    hand-built mappings task_card_from_row also accepts (several criteria
+    pass dicts directly), where a caller can still omit the field.
+
+    *** AND A LARGER QUESTION THIS FUNCTION SITS ON, registered rather than
+    answered: 15 S9.5A.2 ST-3 says verbatim that "current_step 不用于对外
+    进度百分比 -- TaskState.progress.pct 只按里程算 (PP-3)", with the reason
+    "两套百分比会让 HMI 与云端各读一个". This function computes a percent
+    FROM current_step. Whether the 17 S6.8.4 task card's percent is the same
+    quantity ST-3 is talking about, or a separate step-based indicator the
+    card is entitled to, is not something either volume settles -- and the
+    field-5 reference in the old docstring pointed at 17's "completed plans
+    list", which is not a percent at all. See docs/NEXT.md.
+    """
     if not total_steps or total_steps <= 0:
         return None
     return round(100.0 * current_step / total_steps, 1)

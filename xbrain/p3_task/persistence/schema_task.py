@@ -101,23 +101,36 @@ CREATE TABLE IF NOT EXISTS tasks (
   suspend_reason TEXT,
   interrupt_reason TEXT,     -- last interrupt cause; NOT cleared on resume (audit)
   mission_json  TEXT NOT NULL,
-  -- *** 实现是 >= 0, 而 15 S9.5 的 DDL 写的是 CHECK (total_steps >= 1).
-  -- 这处放宽此前没有任何记录, 2026-09-02 补登记.
+  -- *** 2026-10-10: 恢复为 >= 1, 与 15 S9.5 的 DDL 一致. 那条有期限的
+  -- 欠账到期了, 而到期的方式不是"EX-1 落地", 是"它的前提被否证".
   --
-  -- 放宽的原因: task_row_from_command 建行时写死 total_steps=0, 注释是
-  -- "expanded later by the route layer" -- 那一层是路径展开(NEXT.md EX-1:
-  -- mission_json + 航点名 -> geo.db 航点 -> total_steps + V-3/V-6 校验),
-  -- 至今未建. 若保持 >= 1, 每一条 goto/patrol 在入库那一刻就被 DDL 拒掉.
+  -- 原放宽的记录(2026-09-02 ~ 2026-10-10), 保留在这里因为它误导过人:
+  --   "放宽的原因: task_row_from_command 建行时写死 total_steps=0, 注释是
+  --    'expanded later by the route layer' -- 那一层是路径展开(NEXT.md
+  --    EX-1: mission_json + 航点名 -> geo.db 航点 -> total_steps + V-3/V-6
+  --    校验), 至今未建. 若保持 >= 1, 每一条 goto/patrol 在入库那一刻就被
+  --    DDL 拒掉."
   --
-  -- 这不是"判据挡路就改判据"的豁免, 是一条[有期限的]欠账:
-  --   EX-1 落地后, total_steps 由路径展开填出真值, 本行应改回 >= 1,
-  --   并同批把存量 0 值的行迁移或清理(2026-09-02 时 144 行里有 142 行是 0).
-  -- 在那之前, >= 0 与 15 S9.5 的差异必须留在这里可见 -- 一处没有记录的
-  -- 放宽, 与"当初就是这么设计的"在代码上完全不可区分(CLAUDE.md 3.2 形态2).
+  -- *** 那条因果链不存在. 15 S9.5A.2 的 total_steps 表[按任务类型给常量],
+  -- 与路径展开无关, 而且该节逐字把这一点列为自己的核心:
+  --   "它不是 waypoint -- 巡逻的进度在 patrol_progress 里, 不在
+  --    current_step 里", 理由是"把 waypoint 当步会让 total_steps 随路径
+  --    改版而变, 从而破坏 current_step <= total_steps 的 CHECK".
+  -- 七类的值: patrol/goto/return_home/standby/follow = 1,
+  --           charge/teach = 3, 复合任务 = 子任务条数.
+  -- => total_steps 从来不需要等任何东西; 它在入库那一刻就是已知的(ST-1
+  --    逐字"在入库时确定, 之后不变").
   --
-  -- NO 不把 total_steps 默认成 1 来"满足"约束: 那是编一个步数, 而下游的
-  -- current_step BETWEEN 0 AND total_steps 会据此放行一个不存在的进度.
-  total_steps   INTEGER NOT NULL CHECK (total_steps >= 0),
+  -- 原注那句"NO 不把 total_steps 默认成 1 来'满足'约束: 那是编一个步数"
+  -- [是对的, 而且现在仍然对]-- 本批不是那么做的. ingest/task_row.py 的
+  -- _TOTAL_STEPS_BY_TYPE 逐类取 15 S9.5A.2 表印的值, 未知类型[抛]而不是
+  -- 默认 1.
+  --
+  -- NO 存量 0 值的行: 2026-09-02 记录当时 144 行里 142 行是 0. 本批[不]
+  -- 迁移它们 -- 迁移要 migration.py 登记步骤, 而 15 S15 逐字"框架建好但
+  -- 没有任何一个库登记自己的迁移步骤". 已登记 docs/NEXT.md: 这条 CHECK 对
+  -- 新建库生效, 存量库需要一次迁移才能用新 schema 打开.
+  total_steps   INTEGER NOT NULL CHECK (total_steps >= 1),
   current_step  INTEGER NOT NULL DEFAULT 0
                  CHECK (current_step BETWEEN 0 AND total_steps),
   step_status_json TEXT NOT NULL DEFAULT '[]',

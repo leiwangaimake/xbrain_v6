@@ -213,8 +213,16 @@ from xbrain.p3_task.persistence.schema_task import DDL_TASKS as _DDL  # noqa: E4
 _NEUTRAL = {"INTEGER": 0, "REAL": 0.0, "TEXT": ""}
 
 #: 有闭集约束(CHECK)的列不能给空串, 单独指定. 值取自生产上真会出现的那个.
+#:
+#: total_steps 进这张表是 2026-10-10 的事: 它原本靠 _NEUTRAL 的 INTEGER 中性
+#: 值 0 落库, 而那时 schema_task.py 的 CHECK 被放宽到 >= 0. CHECK 恢复为 >= 1
+#: (15 S9.5A.2 ST-2 逐字"最小值是 1, 不是 0")之后, 0 不再是一个合法的中性值.
+#: 取 1 而不是别的: _row 的默认 task_type 是 goto, 而 15 S9.5A.2 的表给 goto
+#: 的 total_steps 正是 1 -- 所以这个值与"生产上真会出现的那个"这条既有口径
+#: 一致, NO 不是为了过约束而挑的.
 _SEEDED = {"mission_json": "{}", "resume_policy": "continue",
-           "source": "cloud", "task_type": "goto", "state": "ready"}
+           "source": "cloud", "task_type": "goto", "state": "ready",
+           "total_steps": 1}
 
 
 async def _seed(conn, rows):
