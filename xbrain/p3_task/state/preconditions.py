@@ -21,21 +21,43 @@ Nine codes, and only two lined up:
                                           tombstoned
   PC-2    priority in [0, 100]            target point inside the hard fence
   PC-3    energy-reachable                energy-reachable          <- same
-  PC-4    no fence violation on the path   body capability supports the cmd
+  PC-4    -- does not exist --             body capability supports the cmd
   PC-5    mission_json parses              health allows motion
                                            (allow_motion)
   PC-6    total_steps > 0                  fix quality (fix_type)
-  PC-7    not already terminal             clock synced (ts_sync)
+  PC-7    not already terminal (a no-op,   clock synced (ts_sync)
+          see its docstring)
   PC-8    route exists in the manifest     parameters legal (V-8a..V-8g)
-  PC-9    (not implemented here)           refuse new tasks per SOURCE while
+  PC-9    -- does not exist --             refuse new tasks per SOURCE while
                                            the link is down
 
-  Only PC-3 / V-3 are the same check. PC-4 is 15's V-2, PC-8 is 15's V-1 --
-  both present, both under the wrong number.
+  Only PC-3 / V-3 are the same check, and PC-8 is 15's V-1 under the wrong
+  number. 15's V-2 (hard-fence containment) is NOT implemented here -- there
+  is no PC-4.
 
-*** WHY A NEW PREFIX RATHER THAN RENUMBERING ONTO 15's SCHEME. Five of
-15 S5.2's nine are NOT implemented anywhere (V-4 body capability, V-5
-allow_motion, V-6 fix_type, V-7 ts_sync, V-9 link-down-by-source). Moving
+  *** THIS TABLE WAS WRONG FOR ONE COMMIT (corrected 2026-10-10, same day).
+  Its first version listed PC-4 as "no fence violation on the path" and so
+  claimed 15's V-2 was covered. There is no check_pc4 in this module; the
+  row was written from the renumbering notes rather than from the file.
+  A mapping table that overstates coverage is worse than none -- it is the
+  thing a reader consults INSTEAD of reading the code.
+  tests/p3_task/test_precondition_codes.py now holds the table to the set of
+  functions that actually exist.
+
+*** WHAT 15 S5.2 ACTUALLY GETS FROM THIS MODULE, counted 2026-10-10:
+ONE of its nine runs in production. V-1 does, via check_pc8_route_exists,
+which schedule/driver.py's validate_pending() calls. V-3 is implemented
+(check_pc3_energy_reach) and has NO production caller. The remaining seven
+-- V-2 hard-fence containment, V-4 body capability, V-5 allow_motion,
+V-6 fix_type, V-7 ts_sync, V-8 parameters legal (V-8a..V-8g, zero hits in
+the tree), V-9 link-down-by-source -- have no implementation at all.
+
+Meanwhile five checks here answer to nothing in 15 S5.2: PC-1, PC-2, PC-5,
+PC-6, PC-7. Of those, PC-6 has no production caller and PC-7 is a no-op.
+XBRAIN_V6_TODO.md's BIZ-P3-8 claims "前置校验 V-1~V-9"; see docs/NEXT.md.
+
+*** WHY A NEW PREFIX RATHER THAN RENUMBERING ONTO 15's SCHEME. Seven of
+15 S5.2's nine are NOT implemented anywhere. Moving
 this module's checks onto those numbers would put a check named "V-5" in the
 codebase while 15's V-5 remains unimplemented -- a reader grepping for V-5
 would find something and conclude it was done. A separate prefix keeps
@@ -153,6 +175,20 @@ def check_pc6_step_count(task_type: str, total_steps: int):
 
 
 def check_pc7_not_terminal(current_state: str):
-    """T-2 idempotency: an admit call on a terminal task is a no-op
-    (return None) rather than an error, since retries are legal."""
+    """T-2 idempotency: an admit on a terminal task is a no-op, not an error.
+
+    *** THIS FUNCTION CHECKS NOTHING. It returns None for every input,
+    including the terminal states its name is about. That is the T-2
+    semantic -- a retried admit must not fail -- but it means the function
+    is a declaration, not a gate: nothing downstream behaves differently
+    because it was called.
+
+    Noted explicitly (2026-10-10) because the shape is CLAUDE.md S3.2
+    form 1: a check that any implementation passes. If T-2 is the whole
+    requirement then the right form is for the CALLER to skip terminal
+    rows, and this function should go; if admitting a terminal task should
+    in fact be refused, then this is a missing check wearing a pass.
+    Either way `current_state` is read by nothing, which is the tell.
+    Registered in docs/NEXT.md.
+    """
     return None

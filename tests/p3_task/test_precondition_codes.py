@@ -100,7 +100,10 @@ def test_p3_preconditions_use_pc_codes_not_bare_v_codes():
     # code at a call site would leave the collision half-closed, which is
     # worse than not closing it (half the references resolve).
     watched = [
+        # The module that mints the codes.
         "xbrain/p3_task/state/preconditions.py",
+        # The two that consume them. A code asserted here by its old name
+        # is as broken as one minted by it.
         "xbrain/p3_task/schedule/driver.py",
         "xbrain/p3_task/runtime/main_wiring.py",
     ]
@@ -140,3 +143,78 @@ def test_p3_preconditions_use_pc_codes_not_bare_v_codes():
         "bare V-n precondition codes are back: %s -- 15 S5.2 owns V-1..V-9 "
         "and this module's codes are PC-n (see preconditions.py's header "
         "for the mapping and for why a separate prefix)" % offenders)
+
+
+def test_the_mapping_table_does_not_claim_a_check_that_does_not_exist():
+    """Every PC-n the header's table describes must be a real function.
+
+    *** This case exists because the table was wrong for one commit. Its
+    first version listed "PC-4  no fence violation on the path" and thereby
+    claimed 15 S5.2's V-2 was covered. There is no check_pc4 in the module;
+    the row had been written from the renumbering notes instead of from the
+    file. A mapping table that overstates coverage is worse than no table --
+    it is what a reader consults INSTEAD of reading the code.
+
+    The check runs the other way too: a function that exists but has no row
+    is a check nobody can map back to the contract.
+
+    How the table is read: lines of the form "  PC-n  <text>" inside the
+    module docstring. Rows whose text begins with the em-dash marker are
+    declared-absent and must NOT have a function.
+    """
+    # importlib rather than a module-level import: this case reads the
+    # module's __doc__, and importing it at module scope would make the
+    # whole file fail to collect if p3's layout moved -- hiding the OTHER
+    # case in here, which does not need the module at all.
+    import importlib
+    import re
+
+    module = importlib.import_module("xbrain.p3_task.state.preconditions")
+    doc = module.__doc__ or ""
+
+    # Rows look like "  PC-4    -- does not exist --   body capability..."
+    # The first two columns are what matter; anything after is the contract
+    # side and is prose.
+    # setdefault, not assignment: if a number ever appears twice the FIRST
+    # row wins, which keeps the failure about the duplicate rather than
+    # about whichever copy happened to be last.
+    rows = {}
+    for line in doc.splitlines():
+        m = re.match(r"\s+PC-(\d)\s{2,}(\S.*)$", line)
+        if m:
+            rows.setdefault(m.group(1), m.group(2).strip())
+    # The emptiness guard is the one that keeps this case honest: if the
+    # table's shape changes, the regex matches nothing, both differences
+    # come out empty, and the case passes while checking nothing at all
+    # (CLAUDE.md S3.2 form 1).
+    assert rows, (
+        "no PC-n rows found in the module docstring -- either the table was "
+        "removed or its shape changed, and this case has been checking "
+        "nothing since")
+
+    # Two sets, then two directed differences. A single symmetric check
+    # would report both kinds of mismatch as one finding, and they have
+    # opposite fixes: over-claiming means the table lies about coverage,
+    # under-claiming means a real check is unmapped.
+    #
+    # Which numbers the table says do not exist.
+    absent_claimed = {n for n, text in rows.items()
+                      if text.startswith("-- does not exist")}
+    # Which numbers actually have a function.
+    present_actual = {n for n in rows
+                      if any(name.startswith("check_pc%s_" % n)
+                             for name in dir(module))}
+
+    # A row claiming a check that is not there.
+    overclaimed = sorted((set(rows) - absent_claimed) - present_actual)
+    assert not overclaimed, (
+        "the table describes PC-%s as implemented, but no check_pc%s_* "
+        "function exists -- a table that overstates coverage is what a "
+        "reader consults instead of the code"
+        % ("/".join(overclaimed), "/".join(overclaimed)))
+
+    # A row claiming absence while the function is there.
+    understated = sorted(absent_claimed & present_actual)
+    assert not understated, (
+        "the table says PC-%s does not exist, but a check_pc%s_* function "
+        "is defined" % ("/".join(understated), "/".join(understated)))
