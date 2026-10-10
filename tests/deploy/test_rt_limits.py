@@ -91,14 +91,41 @@ def test_rtprio_covers_what_the_design_asks_for(unit):
         "grants a privilege nothing needs" % (unit, got, where))
 
 
-def test_python_units_do_not_get_realtime_limits():
+def test_no_unit_outside_rt_units_raises_rtprio():
     """The negative control, and it is not decoration.
 
-    Without it this file would pass on a change that gave every unit the
+    *** RENAMED 2026-10-10. This was test_python_units_do_not_get_realtime_
+    limits, and that name was wrong about its own scan surface in a way that
+    mattered: the loop below walks EVERY .service in deploy/systemd and skips
+    only the ones listed in RT_UNITS. It is not restricted to Python units --
+    and the three processes it most usefully protects are C++ ones
+    (chassis_relay, rtk_driver, teleop_input). A reader checking whether those
+    three are covered would have read the old name and concluded they were not.
+
+    Without this case the file would pass on a change that gave every unit the
     limits, which would put realtime priority within reach of processes that
     have a garbage collector -- 12 RTC-2/RTC-3 exist because a GC pause on a
     FIFO thread starves everything below it. It also proves the criterion above
     can distinguish units at all.
+
+    *** WHAT THIS CASE DOES AND DOES NOT SAY ABOUT 10 S3.2's ORDERING RULE
+    (NEXT S8.6 SW-30), because the relationship is easy to overstate.
+
+    10 S3.2 requires verbatim that "chassis_relay / rtk_driver / teleop_input
+    的 SCHED_FIFO 优先级必须低于 quadruped 的 Tier 1 线程". Nothing in this
+    repo evaluates that ordering, and this case is not it.
+
+    What this case does is hold down the PRECONDITION that makes the ordering
+    moot today: with DefaultLimitRTPRIO=0 and no LimitRTPRIO line, those three
+    units cannot obtain a realtime priority at all, so the comparison has no
+    left-hand side. Their unit files carry only CPUAffinity=6 -- checked by
+    tests/deploy/test_affinity_gate.py, which separately and explicitly
+    declares that comparing priorities with `chrt -p` is the thing it does NOT
+    do (it needs quadruped actually running).
+
+    So: the day any of those three gains a LimitRTPRIO, this case goes red,
+    and at THAT point the ordering rule acquires an object and needs a real
+    criterion. This case is the tripwire, not the check.
     """
     offenders = []
     for name in sorted(os.listdir(UNIT_DIR)):
