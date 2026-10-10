@@ -14,8 +14,15 @@ Description:
              snapshot used for dialog rendering)
       G02 -- battery is DUAL PACK; the reply value is min(pack_a,
              pack_b), never mean or max
-      G03 -- RemainMile computed from current SoC and per-metre
-             energy budget
+      G03 -- remain_mile_km off state/power (11 S4.2). NOTE: the
+             chassis COMPUTES it from SoC and a per-metre energy
+             budget, but it is the chassis that does so -- 11 S4.2
+             verbatim "底盘直接提供的预计剩余续航里程
+             (MotionStatus.RemainMile)". This module does not
+             recompute it, and must not: 15 S8.2's criterion B uses
+             the same quantity, and a second estimate here would give
+             the voice answer and the charge trigger two different
+             numbers for one question.
       G24 -- if health/time.ts_sync == False, MUST say "clock not
              synchronised, time may be inaccurate" -- NEVER report
              the actual timestamp directly
@@ -42,11 +49,24 @@ BINDINGS: Dict[str, QueryBinding] = {
         templates={"ok": "当前位置 {x_m:.1f},{y_m:.1f} 米",
                     "no_data": "位姿暂不可用"}),
     "G02": QueryBinding(
-        intent_id="G02", source="state/battery",
+        # 2026-10-10: source was "state/battery" (0 hits in docs/11).
+        # The field this template reads, soc_pct, is derived from
+        # PowerState.batteries[].level_pct on state/power -- same key as
+        # G03. 15 S8.2 CHG-12b fixes the derivation: take the smaller
+        # level_pct of the SEATED packs; g02_render below already takes
+        # two packs, so the shape agrees.
+        intent_id="G02", source="state/power",
         templates={"ok": "剩余电量 {soc_pct:d}%",
                     "no_data": "电量读取失败"}),
     "G03": QueryBinding(
-        intent_id="G03", source="state/battery",
+        # 2026-10-10: source was "state/battery", a key that does not
+        # exist -- `grep "state/battery" docs/11` returns 0. The field
+        # G03's template reads, remain_mile_km, lives on PowerState
+        # (11 S4.2), published on state/power. The chassis supplies it
+        # directly (MotionStatus.RemainMile -> quadruped's rt_bridge.cc
+        # -> state/power), so this binding now names the key that
+        # actually carries the value.
+        intent_id="G03", source="state/power",
         templates={"ok": "预计还能走 {remain_mile_km:.1f} 公里",
                     "no_data": "续航估算暂不可用"}),
     "G24": QueryBinding(
