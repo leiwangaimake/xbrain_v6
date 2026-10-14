@@ -15,8 +15,24 @@ After=xbrain-zenohd-gen.service
 After=xbrain-config-freeze.service
 # StartLimit* live in [Unit], NOT [Service]: systemd >= v229 silently
 # ignores them in [Service], voiding the restart-loop cap (README dev #1).
+#
+# 判据(2026-10-14, issues.md 12.1 实测定): 要让 [重试 N 次后停下] 成立,
+#   StartLimitIntervalSec >= StartLimitBurst x 一轮时长
+# 一轮 = 进程启动到退出 + RestartSec. 窗口不是滑动的: 距窗口首次启动
+# 超过 interval 就清零重数 => 一轮 > interval/burst 时 [永远] 撞不到上限,
+# 服务无限重启.
+#
+# 两边实测(systemd 249, 同机用户级临时单元, 参数同本单元):
+#   一轮 ~2.2s + interval 10s (5x2.2=11 > 10) -> 不触发, 16s 内重启 7 次;
+#   一轮 ~2.2s + interval 20s (11 <= 20)      -> 触发, NRestarts=5, failed.
+#
+# 取值: 感知方实测一轮 ~13s(进程起到首帧 ~4.1s + 首帧后 6s 截止 + 退出 ~1s
+# + RestartSec 2s), 5x13 = 65s. 不取边界值 75s -- 实测 0.2s 的启动开销差
+# 就足以让边界翻到另一侧. 取 90s => 容许一轮最长 18s(90/5), 余量约 38%.
+# => 换算一直坏时: 约 65s 内重试 5 次, 然后停在 failed.
+# 注意: 改 RestartSec 或感知改截止时间, 必须按上面那条不等式重算本值.
 StartLimitBurst=5
-StartLimitIntervalSec=60s
+StartLimitIntervalSec=90s
 
 [Service]
 Type=simple
