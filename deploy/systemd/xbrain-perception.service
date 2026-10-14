@@ -22,6 +22,13 @@ StartLimitIntervalSec=60s
 Type=simple
 Restart=always
 RestartSec=2s
+# 99 U91(2) / issues.md 10.1: 69 = 相机 SDK 线程摆放的恢复调用失败,
+# 感知在这种情况下直接退出, 不带着错误的核约束跑 (fail-safe).
+# 这是 [确定性] 失败 -- 同样的权限问题重启一次还是同样失败 --
+# 而 Restart=always + RestartSec=2s 会让它每 2 秒重启一次, 无限循环.
+# 形制同 13 ASM-5 对 78 (EX_CONFIG) 的处理: 重启修不好它, 就不要重启.
+# 注意与 OOM (137) / 段错误的区别: 那些值得重启, 所以这里只列 69.
+RestartPreventExitStatus=69
 OOMScoreAdjust=-900
 Environment="PYTHONUNBUFFERED=1"
 # CHK-1-03 / 10 S3.2 CPU affinity baseline.
