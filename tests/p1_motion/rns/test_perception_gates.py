@@ -269,6 +269,55 @@ def test_tier2_age_refuses_velocity_judgement():
     assert s.nav_state() == NavState.WAIT_DYNAMIC
 
 
+def _car_tick(s, now, fresh):
+    """One tick of the static-car scene: a fresh objects frame (20 ms old)
+    when `fresh`, otherwise no new objects frame -- RNS keeps the last
+    ACCEPTED one and its age simply grows, which is how a real inter-frame
+    gap reaches tier 2 (the sawtooth age of 20 S3.1.8)."""
+    car = None
+    if fresh:
+        car = one_object(class_name="car", r_near=1.0, velocity_xy=(0.0, 0.0),
+                         velocity_status="static", t_capture_mono_ms=now - 20)
+    return _tick(s, now,
+                 profile=uniform_free(t_capture_mono_ms=now - 20, t_seg_mono_ms=now - 30),
+                 objects=car, status=healthy_status(t_publish_mono_ms=now - 100))
+
+
+def test_tier2_tick_resets_static_dwell_not_pauses():
+    # A-AGE-4 (20 S3.1.8 v1.44): ONE tier-2 tick inside the dwell restarts the
+    # static clock -- it is a reset, not a pause. Scene: 30 fresh ticks
+    # (1.45 s, under t_static_dwell_s 2.0), a 5-tick gap with no new frame
+    # (age reaches 220 ms > objects_age_ok_ms 200 on the last gap tick), then
+    # 30 fresh ticks again: 1.45 s since the reset -> still dynamic -> WAIT.
+    # Then 12 more fresh ticks (2.05 s since the reset) -> static pile ->
+    # drives, which proves the reset re-arms the clock instead of locking it.
+    # mutant A: keep _slow_since on tier 2 (pause) -> dwell 3.2 s at the first
+    # check -> drives -> reddens. mutant B: never allow static again after a
+    # tier-2 tick -> the second check still waits -> reddens.
+    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
+    s.load_mission(_mission())
+    now = NOW
+    for _ in range(30):
+        _car_tick(s, now, fresh=True)
+        now += 50
+    last_fresh = now - 50
+    for _ in range(5):
+        _car_tick(s, now, fresh=False)
+        now += 50
+    assert now - 50 - (last_fresh - 20) > 200       # the gap really hit tier 2
+    out = None
+    for _ in range(30):
+        out = _car_tick(s, now, fresh=True)
+        now += 50
+    assert out is not None and out.vx.value == 0.0
+    assert s.nav_state() == NavState.WAIT_DYNAMIC
+    for _ in range(12):
+        out = _car_tick(s, now, fresh=True)
+        now += 50
+    assert out is not None and out.vx.value > 0.0
+    assert s.nav_state() != NavState.WAIT_DYNAMIC
+
+
 def test_tier3_objects_lost_caps_speed_and_ignores_stale_yield():
     # A-AGE-2: objects 600 ms old (> T-52): channel lost -> speed capped to the
     # no-seg cap (0.5) and the stale person does NOT drive a WAIT. mutant:
