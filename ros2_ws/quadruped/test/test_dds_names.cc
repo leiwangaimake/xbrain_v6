@@ -102,6 +102,32 @@ int main() {
     }
   }
 
+  // ---- chassis_dds_domain_xml: name= for a name, address= for an IPv4 -------
+  // mutant: always emit name= -> the IPv4 case reddens (the 2026-10-23 .1.26
+  // failure: name="10.21.33.200" matches no interface). mutant: always emit
+  // address= -> the name cases redden (the dev board's USB NIC config).
+  {
+    const std::string by_ip = chassis_dds_domain_xml("10.21.33.200");
+    CHECK(by_ip.find("<NetworkInterface address=\"10.21.33.200\"/>") !=
+          std::string::npos);
+    CHECK(by_ip.find("name=") == std::string::npos);
+    const std::string by_name = chassis_dds_domain_xml("enx00e04c3600fb");
+    CHECK(by_name.find("<NetworkInterface name=\"enx00e04c3600fb\"/>") !=
+          std::string::npos);
+    CHECK(by_name.find("address=") == std::string::npos);
+    CHECK(chassis_dds_domain_xml("eth2").find("name=\"eth2\"") != std::string::npos);
+    // Not an address: three octets, a trailing dot, an out-of-range octet.
+    // All three must stay names so a typo surfaces as "no such interface"
+    // instead of being reinterpreted.
+    CHECK(chassis_dds_domain_xml("10.21.33").find("name=") != std::string::npos);
+    CHECK(chassis_dds_domain_xml("10.21.33.200.").find("name=") != std::string::npos);
+    CHECK(chassis_dds_domain_xml("10.21.33.256").find("name=") != std::string::npos);
+    // Multicast stays on in both forms (DDS-7).
+    CHECK(by_ip.find("<AllowMulticast>true</AllowMulticast>") != std::string::npos);
+    CHECK(by_name.find("<AllowMulticast>true</AllowMulticast>") != std::string::npos);
+    CHECK(throws([] { chassis_dds_domain_xml(""); }));
+  }
+
   if (g_failures == 0) {
     std::printf("ALL DDS_NAMES TESTS PASSED\n");
     return 0;

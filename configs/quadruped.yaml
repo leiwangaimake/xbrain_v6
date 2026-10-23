@@ -95,7 +95,11 @@ quadruped:
     # 本机 wifi 在 192.168.1.8 而底盘在 10.21.33.200, 它挑了前者 ->
     # participant 起来, topic 存在, 零个样本, 与网络不通不可区分.
     # NO 不得留空, 也不得写默认值(CLAUDE.md 3.1).
-    network_interface: "enx00e04c3600fb"
+    # 2026-10-23 改填底盘侧 IPv4 (chs_b 对 IPv4 生成 address=, 对名字生成 name=):
+    # 机器人主控 .1.26 的两块 igc 网卡开机探测顺序不定, eth1/eth2 会互换, 填网卡名
+    # 会随机绑到相机口; 10.21.33.200 由 NM m20s-chassis 按 MAC 绑在底盘口上,
+    # 开发板 .1.8 的底盘 USB 网卡也是这个地址, 两板通用. 实测 .1.26 address= 可收 /IMU.
+    network_interface: "10.21.33.200"
     imu_age_warn_ms: 50                 # 13 S4.5
     imu_frame_id: "imu_link"            # TF-1 底盘不给 frame_id,我方赋值
     drdds:

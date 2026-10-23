@@ -58,6 +58,25 @@ const char* imu_freshness_name(ImuFreshness f);
 // age_s < 0 means nothing has been received yet.
 ImuFreshness classify_imu_age(double age_s, int warn_ms);
 
+// The per-domain CycloneDDS XML that pins the chassis participant to ONE
+// interface (13 DDS-3 / DDS-9). `iface` is either an interface NAME or a
+// dotted IPv4 ADDRESS, and the two are emitted differently because CycloneDDS
+// matches them differently: <NetworkInterface name="10.21.33.200"/> is refused
+// as "does not match an available interface", while address="..." selects the
+// NIC carrying that address. Measured on .1.26, 2026-10-23.
+//
+// Why an address is the form to configure: on the robot board the two igc
+// NICs swap eth1/eth2 between boots (probe order), so a NAME pins the reader
+// to whichever port happens to get it -- the camera port after one boot, the
+// chassis after another -- and the failure is the DDS-9 silence. The chassis
+// side address 10.21.33.200 is bound to the chassis NIC by MAC in
+// NetworkManager and is the same on the dev board, so one value fits both.
+//
+// Throws std::invalid_argument on an empty string: an empty name reaches
+// CycloneDDS as "Nameless and address-less interface", which does not point
+// anyone at the config key.
+std::string chassis_dds_domain_xml(const std::string& iface);
+
 }  // namespace quadruped
 
 #endif  // HACHIST_XBRAIN_V6_QUADRUPED_DDS_NAMES_H_

@@ -13,6 +13,8 @@
 
 #include "quadruped/dds_names.h"
 
+#include <arpa/inet.h>
+
 #include <stdexcept>
 
 namespace quadruped {
@@ -52,6 +54,26 @@ ImuFreshness classify_imu_age(double age_s, int warn_ms) {
   if (age_s < 0.0) return ImuFreshness::kNeverSeen;
   if (age_s * 1000.0 > static_cast<double>(warn_ms)) return ImuFreshness::kStale;
   return ImuFreshness::kFresh;
+}
+
+std::string chassis_dds_domain_xml(const std::string& iface) {
+  if (iface.empty()) {
+    throw std::invalid_argument(
+        "chassis_dds.network_interface is empty -- CycloneDDS would pick an "
+        "interface itself and, on a multi-homed host, receive nothing (13 DDS-9)");
+  }
+  // inet_pton is the strict parser: it accepts exactly four decimal octets, so
+  // a name such as "eth2" or "enx00e04c3600fb" can never be mistaken for an
+  // address and silently change which attribute is emitted.
+  in_addr probe{};
+  const bool is_ipv4 = inet_pton(AF_INET, iface.c_str(), &probe) == 1;
+  const std::string attr = is_ipv4 ? "address" : "name";
+  // Multicast stays on: the chassis is another machine and discovery has to
+  // leave this one (DDS-7), even when the ROS side is confined to localhost.
+  return std::string("<CycloneDDS><Domain><General>") +
+         "<Interfaces><NetworkInterface " + attr + "=\"" + iface +
+         "\"/></Interfaces>" + "<AllowMulticast>true</AllowMulticast>" +
+         "</General></Domain></CycloneDDS>";
 }
 
 }  // namespace quadruped
