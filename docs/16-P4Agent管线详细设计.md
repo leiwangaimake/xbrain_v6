@@ -1571,6 +1571,12 @@ E08 是**新增的达标条目**，★ **不解除任何既有 `breach`**（尤�
 | `F15` | set_active_fence    |    `high`    |     执行     | `ok_on_hit`   |
 | `G10` | query_events_recent |    `high`    |     执行     | `ok_on_hit`   |
 
+> ★★ **2026-10-24 实现 · B01 的「未命中支」按本表落地**（此前未实现）
+> ★ **缺陷形状**：B01 快路命中（关键词 `去`/`到`/`前往`，§5.3）后**不论槽位是否齐全**都直接派发，p4 又没有点位名的快路抽取器 ⇒ 快路上 `waypoint` **恒空**，于是每一句含「到」的话（「灯开到最大」「声音调到最大」、ASR 误识的「照明灯调到最岸」「到这里啊」）都变成**无目的地的 `goto`**，P3 受理、播「收到」（2026-10-24 `.1.26` 实测）。
+> ★★ **现行实现**（`xbrain/p4_agent/runtime/turn_orchestrator.py` `_dispatch_entry` ＋ `task_request.missing_destination`）：`route == fastpath_then_llm` 且目的地槽缺失、且本轮尚未用过 LLM ⇒ 走 **tier-2 LLM 支一次**（`_run_tier2`；LLM 可填点位、也可把整句改判为别的意图）；LLM 支仍缺 ⇒ `to_task_command` 拒绝（`GOTO_NEEDS_WAYPOINT`，`11` §7.2）⇒ 本轮以**澄清问句**收尾（「要去哪个点? 请说出点位名称」），🚫 不发 `cmd/task`；无 LLM 可用 ⇒ 按既有 tier-2 失败路径婉拒，同样不发。
+> ★ 目前只登记 B01（`DESTINATION_SLOT = {"goto_waypoint": "waypoint"}`）—— 本表其余「澄清」条目里 A05–A12 已由 **MI-2** 拦截（§8.0 EV-5），B11 为 L3（审批链），E04 为能力封锁。
+> ★ 判据：`tests/p4_agent/runtime/test_b01_needs_waypoint.py`（三个变异体全杀：去掉 LLM 支 / 去掉构造器校验 / 去掉「已用过 LLM」守卫 ⇒ 无限重入）。
+
 ⚠️ **「未命中支收尾＝澄清」的 10 条要单独看** —— 这些条目的 `T4` **不是到执行的时间，是到追问的时间**。
 到执行 = `T4` + 人应答 + 下一轮（`I06`，目前也是 `T4`）≈ **12 s**。★ 这是把 `I06` 改快路的根本理由（§6.6.5 第 3 条）。
 

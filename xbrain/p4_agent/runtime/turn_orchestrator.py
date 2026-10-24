@@ -92,8 +92,10 @@ from xbrain.p4_agent.runtime.task_control_request import (
     to_task_control_command,
 )
 from xbrain.p4_agent.runtime.task_request import (
+    GOTO_NEEDS_WAYPOINT,
     TaskRequestError,
     is_task_create_intent,
+    missing_destination,
     to_task_command,
 )
 from xbrain.p4_agent.runtime.teach_request import (
@@ -117,6 +119,9 @@ _F_REASON_CN = {
     "save needs a name": "要保存的话请说个名字",
     "a keypoint needs a name": "这个点要起个名字",
     "the object catalogue is not available yet": "对象列表还没加载好, 稍后再说一次",
+    # 16 S6.6.4: B01's miss branch ends in a clarify. Reached when neither the
+    # fast leg nor the tier-2 LLM leg could name the destination.
+    GOTO_NEEDS_WAYPOINT: "要去哪个点? 请说出点位名称",
 }
 
 # Reply-family intent NAMES routed to the preset responder (never LLM,
@@ -538,6 +543,18 @@ class TurnOrchestrator:
         # fills the closed-set enums. LLM values win a key collision.
         if llm_slots:
             extra = {**(extra or {}), **llm_slots}
+        # 16 S6.6.4 fastpath_then_llm: a keyword hit that did not fill the
+        # destination is NOT a finished fast leg -- it goes to the tier-2 LLM
+        # leg, which may name the waypoint (or classify the utterance as
+        # something else entirely). Only once, though: the LLM leg re-enters
+        # here with llm_used set, and a still-missing destination then falls to
+        # to_task_command, which refuses and the turn ends in the clarify
+        # question (GOTO_NEEDS_WAYPOINT). Before 2026-10-24 this case went
+        # straight to cmd/task as a goto with no destination -- see
+        # task_request.missing_destination for how it was triggered.
+        if (entry.route == "fastpath_then_llm" and not llm_used
+                and missing_destination(entry.name, extra)):
+            return self._run_tier2(text, session, now_mono_ms)
         # PB4: a task-CREATE intent (goto/patrol/charge/teach/follow) carries a
         # cmd/task REQUEST P3's ingest records into task.db -- {task_type,
         # intent, id, slots, source}. Without it the cmd/task frame is just the

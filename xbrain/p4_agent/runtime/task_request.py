@@ -93,6 +93,28 @@ class TaskRequestError(RuntimeError):
     """A task-create mapping is inconsistent with the registry / closed set."""
 
 
+#: TaskRequestError message for a goto with no destination (11 S7.2). It is a
+#: constant because the orchestrator maps it to the spoken clarify question by
+#: exact match (turn_orchestrator._F_REASON_CN); a reworded message would fall
+#: through to the generic "cannot submit" reply and lose the question.
+GOTO_NEEDS_WAYPOINT = "goto needs a waypoint"
+
+#: The slot that carries a task-create intent's destination, for the intents
+#: whose task type REQUIRES one (11 S7.2: goto -> waypoint_id or target). The
+#: orchestrator reads it to decide whether the fast leg is complete or the
+#: tier-2 LLM leg must run first (16 S6.6.4 fastpath_then_llm).
+DESTINATION_SLOT = {"goto_waypoint": "waypoint"}
+
+
+def missing_destination(intent_name: str, slots: Optional[Mapping[str, Any]]) -> bool:
+    """True iff the intent needs a destination slot and it is absent or blank."""
+    slot = DESTINATION_SLOT.get(intent_name)
+    if slot is None:
+        return False
+    value = (slots or {}).get(slot)
+    return not isinstance(value, str) or not value.strip()
+
+
 def is_task_create_intent(intent_name: str) -> bool:
     """True iff this intent MINTS a new task (vs a query/chitchat/control)."""
     return intent_name in _TASK_CREATE_INTENTS
@@ -150,6 +172,15 @@ def to_task_command(
         raise TaskRequestError(
             "intent %r maps to task_type %r not in %s"
             % (intent_name, task_type, sorted(_TASK_TYPES)))
+    # 11 S7.2 task table: goto REQUIRES a destination ("waypoint_id 或 target").
+    # On the voice path the destination is the spoken waypoint name in
+    # slots["waypoint"]; P3 resolves the name against geo.db. A goto without
+    # one was built and sent until 2026-10-24 -- B01's keywords are the single
+    # characters 去/到/前往, so "灯开到最大" or an ASR misread holding 到 became
+    # a goto task P3 accepted and the speaker answered "收到". This is the last
+    # point in p4 where such a frame can still be stopped (16 S8.1 check 1).
+    if task_type == "goto" and missing_destination(intent_name, slots):
+        raise TaskRequestError(GOTO_NEEDS_WAYPOINT)
     # S7.2 task.params carries what the contract has no field for: the 18
     # intent id, the slots and the raw text. 15 S5.10's mission_json is built
     # from it on the P3 side, so the provenance a party-A incident review needs
