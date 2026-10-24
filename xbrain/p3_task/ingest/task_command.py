@@ -73,6 +73,44 @@ class TaskCommand:
     source: str
 
 
+def _goto_has_destination(task: Dict[str, Any]) -> bool:
+    """True iff a goto task names a destination in a form a producer sends.
+
+    11 S7.2 writes the requirement as "waypoint_id or target". The three
+    producers carry it in different places, and every one of them must keep
+    working, so each form is listed with its sender:
+      * HMI W2 (11 W2 row)     params.waypoint_id, or params.lat + params.lon
+      * 11 S7.2 wording        params.target
+      * cloud GOTO_KEYPOINT    task.route_id and/or params.waypoints[] (the
+                               gateway passes the v2.0 plan through; P3 resolves
+                               it -- see p5 inbound/task_router._goto)
+      * voice B01              params.slots.waypoint, the spoken name (P3's
+                               geo_refs resolves names)
+    A key that is present but empty (blank name, empty list, half a position)
+    is not a destination.
+    """
+    params = task.get("params") if isinstance(task.get("params"), dict) else {}
+    slots = params.get("slots") if isinstance(params.get("slots"), dict) else {}
+
+    def _text(v: Any) -> bool:
+        return isinstance(v, str) and bool(v.strip())
+
+    def _num(v: Any) -> bool:
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+    if _text(task.get("route_id")) or _text(params.get("waypoint_id")):
+        return True
+    if _text(slots.get("waypoint")):
+        return True
+    if _num(params.get("lat")) and _num(params.get("lon")):
+        return True
+    target = params.get("target")
+    if isinstance(target, dict) and _num(target.get("lat")) and _num(target.get("lon")):
+        return True
+    waypoints = params.get("waypoints")
+    return isinstance(waypoints, list) and len(waypoints) > 0
+
+
 def parse_task_command(payload: Dict[str, Any]) -> TaskCommand:
     """Validate a cmd/task payload (11 S7.2) or raise TaskCommandError."""
     if not isinstance(payload, dict):
@@ -91,6 +129,15 @@ def parse_task_command(payload: Dict[str, Any]) -> TaskCommand:
     if action == "submit":
         if not isinstance(task, dict):
             raise TaskCommandError(E_SCHEMA, "submit requires a task body")
+        if task.get("type") == "goto" and not _goto_has_destination(task):
+            # 11 S7.2 task table: goto REQUIRES a destination ("waypoint_id 或
+            # target"). Refused here whoever the sender is: on 2026-10-24 p4
+            # sent a goto with params.slots {} (B01 hit on the single character
+            # 到), P3 accepted it, and the operator heard "收到" for a task with
+            # nowhere to go.
+            raise TaskCommandError(
+                E_SCHEMA, "goto requires a destination (11 S7.2: waypoint_id "
+                "or target)")
         inner = task.get("task_id")
         # S7.2 as corrected 2026-08-20: task.task_id is OPTIONAL. It has to be,
         # because the id form is t-YYYYMMDD-NNN and NNN is a per-day sequence

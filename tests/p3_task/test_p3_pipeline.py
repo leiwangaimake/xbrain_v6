@@ -42,7 +42,8 @@ async def dao_conn():
         yield TasksDAO(c), c
 
 
-def _frame(task_type="patrol", intent="patrol_route", id_="B02", cmd_id="c-1"):
+def _frame(task_type="patrol", intent="patrol_route", id_="B02", cmd_id="c-1",
+           slots=None):
     """An 11 S7.2 TaskCommand as p4_agent / the HMI / the cloud all send it.
 
     task.task_id is omitted on purpose: S7.2 (corrected 2026-08-20) lets the
@@ -51,7 +52,8 @@ def _frame(task_type="patrol", intent="patrol_route", id_="B02", cmd_id="c-1"):
     """
     return {"cmd_id": cmd_id, "action": "submit", "source": "voice",
             "task": {"type": task_type,
-                     "params": {"intent": intent, "id": id_, "slots": {},
+                     "params": {"intent": intent, "id": id_,
+                                "slots": dict(slots or {}),
                                 "text": "开始巡逻"}}}
 
 
@@ -88,8 +90,11 @@ async def test_two_voice_tasks_serialise(dao_conn):
     robot). Highest priority... here equal priority, so submit order wins."""
     dao, conn = dao_conn
     a = await _submit(conn, dao,
+                      # A goto must name its destination (11 S7.2); P3
+                      # refuses one without since 2026-10-24.
                       _frame(task_type="goto", intent="goto_waypoint",
-                             id_="B01", cmd_id="c-a"), now_mono_ms=1)
+                             id_="B01", cmd_id="c-a",
+                             slots={"waypoint": "东门"}), now_mono_ms=1)
     b = await _submit(conn, dao, _frame(cmd_id="c-b"), now_mono_ms=2)
     await scheduler_tick(conn, dao, now_mono_ms=3, on_transition=_noop)
     sa = (await dao.fetch_by_id(a)).state

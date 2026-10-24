@@ -113,6 +113,69 @@ def test_task_id_is_required_with_no_current_task_shorthand(action):
     assert ei.value.code == E_SCHEMA
 
 
+def _goto(**task_over):
+    """A goto submit with no destination of any kind; cases add one back."""
+    task = {"type": "goto", "params": {"intent": "goto_waypoint", "id": "B01",
+                                       "slots": {}, "text": "到这里啊"}}
+    task.update(task_over)
+    return {"cmd_id": "c-goto", "action": "submit", "task": task,
+            "source": "voice"}
+
+
+def test_a_goto_with_no_destination_is_refused():
+    """11 S7.2 task table: goto requires a destination ("waypoint_id 或 target").
+
+    2026-10-24 on .1.26: p4 sent exactly this frame (B01 hit on the single
+    character 到, no waypoint slot), P3 accepted it, and the operator heard
+    "收到" for a goto task with nowhere to go. P3 is the last receiver that can
+    refuse it, whoever the sender is.
+    """
+    with pytest.raises(TaskCommandError) as ei:
+        parse_task_command(_goto())
+    assert ei.value.code == E_SCHEMA
+    assert "destination" in str(ei.value)
+
+
+@pytest.mark.parametrize("task_over", [
+    # voice: the spoken name rides in params.slots (resolved by geo_refs)
+    {"params": {"slots": {"waypoint": "东门"}}},
+    # HMI W2: a stored waypoint id, or a raw position
+    {"params": {"waypoint_id": "w-east_gate"}},
+    {"params": {"lat": 34.69, "lon": 135.50}},
+    # 11 S7.2 wording: target (lat/lon)
+    {"params": {"target": {"lat": 34.69, "lon": 135.50}}},
+    # cloud GOTO_KEYPOINT: route_id plus params.waypoints[]
+    {"route_id": "r-north", "params": {"waypoints": [{"id": "w-a"}]}},
+    {"params": {"waypoints": [{"id": "w-a"}]}},
+])
+def test_every_producer_s_destination_form_is_accepted(task_over):
+    """Each of the forms the three producers actually send passes.
+
+    The check must refuse ONLY the destination-less frame; refusing a form a
+    producer really uses would silently turn off that producer's goto.
+    """
+    cmd = parse_task_command(_goto(**task_over))
+    assert cmd.action == "submit"
+
+
+@pytest.mark.parametrize("task_over", [
+    {"params": {"slots": {"waypoint": "  "}}},        # blank name
+    {"params": {"lat": 34.69}},                      # half a position
+    {"params": {"waypoints": []}},                    # empty list
+    {"route_id": ""},                                 # empty route id
+])
+def test_hollow_destinations_do_not_count(task_over):
+    """A key that is present but empty is not a destination."""
+    with pytest.raises(TaskCommandError):
+        parse_task_command(_goto(**task_over))
+
+
+def test_the_destination_rule_is_goto_only():
+    """patrol and the other types are untouched by the goto rule."""
+    cmd = parse_task_command(_submit())
+    assert cmd.task["type"] == "patrol"
+
+
 def test_submit_takes_its_id_from_the_task_body():
     cmd = parse_task_command(_submit())
     assert cmd.task_id == "t-20260820-001" and cmd.action == "submit"
