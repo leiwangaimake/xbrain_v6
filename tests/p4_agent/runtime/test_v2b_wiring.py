@@ -48,6 +48,9 @@ _VAD = VadConfig(
     tail_silence_ms=60,
     min_utterance_ms=40,
     frame_ms=20,
+    # 0 = no pre-roll: the cases below pin the segmenter's open/close logic on
+    # exact frame contents; pre-roll has its own file (test_vad_pre_roll.py).
+    pre_roll_ms=0,
 )
 
 
@@ -63,7 +66,7 @@ def test_vad_config_zero_field_refused():
     for bad in ("energy_threshold", "tail_silence_ms",
                   "min_utterance_ms", "frame_ms"):
         kwargs = dict(energy_threshold=100, tail_silence_ms=60,
-                        min_utterance_ms=40, frame_ms=20)
+                        min_utterance_ms=40, frame_ms=20, pre_roll_ms=0)
         kwargs[bad] = 0
         with pytest.raises(VadConfigError, match=bad):
             VadConfig(**kwargs)
@@ -72,7 +75,7 @@ def test_vad_config_zero_field_refused():
 def test_vad_min_utterance_below_frame_refused():
     with pytest.raises(VadConfigError, match="min_utterance_ms"):
         VadConfig(energy_threshold=100, tail_silence_ms=60,
-                    min_utterance_ms=10, frame_ms=20)
+                    min_utterance_ms=10, frame_ms=20, pre_roll_ms=0)
 
 
 def test_frame_energy_zero_for_empty():

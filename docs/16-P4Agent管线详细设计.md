@@ -294,6 +294,13 @@
   p4_agent · asr_rx  ──> AI 网关 transcribe() ──> ASR 服务（16 k s16le mono，AS-2）
 ```
 
+> ★★ **2026-10-24 实现现状 · 切句与 `vad_pre_roll_ms`（`11` §8.7.2）**
+> ★ **契约 `11` §8.7.2 的门控表**把 VAD 放在 `p2_core` audio_io（静音段不发布 `rt/audio/mic`），参数 `vad_pre_roll_ms = 300` / `vad_hang_ms = 500`。
+> ★★ **实现现状（不是设计变更）**：P2 侧的 VAD 门控与 KWS **尚未实现** —— P2 以 50 Hz 全量发布 `rt/audio/mic`；**切句**由 P4 `xbrain/p4_agent/runtime/vad.py`（能量阈切句器）完成，其参数经 `p4_agent` 命令行注入（`--vad-energy-threshold` / `--vad-tail-silence-ms`＝§8.7.2 `vad_hang_ms` / `--vad-min-utterance-ms` / ★ **`--vad-pre-roll-ms`＝§8.7.2 `vad_pre_roll_ms`，缺省 300**）。
+> ★★★ **为什么 P4 切句器也必须做 pre-roll**：即便 P2 门控落地、提前 300 ms 开始转发帧，P4 若仍在「首个超阈帧」处开句，提前转发的帧照样被丢 —— 吃首字的位置在**开句点**，不在转发点。⇒ pre-roll 必须落在**开句的那一处**。
+> ★ **实测依据**（2026-10-24 `.1.26`，HK-MIC 1 m，录音经真实切句代码重放、送同一 ASR 服务）：无 pre-roll ＝ 现场原样「照明灯调到最岸」「到这里啊」；300 ms pre-roll ＝「照明灯调到最暗」。★ 判据：`tests/p4_agent/runtime/test_vad_pre_roll.py`（5 个变异体全杀）。
+> ⚠️ **待裁（不在本条代改）**：`14` §4.x 的链路图写「`rt/audio/mic` ─> P4 (VAD/ASR)」，与 `11` §8.7.2 / 本节上图「VAD 在 P2 生效」字面不一致 —— 二者可能分别指「切句」与「门控」，但两册均未写明，需裁决后统一措辞。
+
 | # | 对 P4 的硬约束 | 依据 |
 |---|---|---|
 | ★★ 1 | ★ **P4 不得 open 任何音频设备** —— USB MIC 就是一块 ALSA 声卡（`hw:0,0`），★★ **独占者是 `p2_core` 的 audio_io**；第二个打开者要么拿到 `EBUSY`，要么把流抢走 | `11` §8.6.1 **RT-A1**（★ 原文有效，见下） |

@@ -14,7 +14,10 @@ on any dev machine without extra wheels.
 Algorithm:
   * per-frame energy = mean(abs(samples)) as int
   * frame is 'speech' iff energy > energy_threshold
-  * utterance opens on first speech frame
+  * utterance opens on first speech frame, and STARTS with the last
+    pre_roll_ms of quiet frames before it (11 S8.7.2 vad_pre_roll_ms =
+    300, "cache the audio before the VAD trigger so the first syllable
+    is not eaten"). Those frames are not counted as speech.
   * utterance closes after tail_silence_ms of continuous silence
   * min_utterance_ms floor so a single random click does not
     trigger a whole ASR round-trip
@@ -47,6 +50,7 @@ class VadConfig:
     tail_silence_ms: int               # silence to close utterance
     min_utterance_ms: int              # ignore utterances shorter
     frame_ms: int                      # ms per input frame
+    pre_roll_ms: int                   # audio kept from BEFORE the onset (11 S8.7.2)
 
     def __post_init__(self) -> None:
         for name in ("energy_threshold", "tail_silence_ms",
@@ -56,6 +60,11 @@ class VadConfig:
                 raise VadConfigError(
                     f"{name} must be > 0, got {v} "
                     f"(fail-silent form of no VAD)")
+        # 0 is legal (no pre-roll, the pre-2026-10-24 behaviour); negative is
+        # a typo, not a value -- refused rather than read as 0.
+        if self.pre_roll_ms < 0:
+            raise VadConfigError(
+                f"pre_roll_ms must be >= 0, got {self.pre_roll_ms}")
         if self.min_utterance_ms < self.frame_ms:
             raise VadConfigError(
                 f"min_utterance_ms ({self.min_utterance_ms}) must be "
@@ -77,6 +86,10 @@ class VadState_:
     utterance_frames: int = 0
     speech_frames: int = 0
     accumulated_samples: List[int] = field(default_factory=list)
+    # Below-threshold frames seen while IDLE, newest last, at most
+    # pre_roll_ms / frame_ms of them (11 S8.7.2 vad_pre_roll_ms). They become
+    # the head of the next utterance; they are NOT speech frames.
+    pre_roll: List[List[int]] = field(default_factory=list)
 
 
 def frame_energy(samples: List[int]) -> int:
@@ -96,11 +109,26 @@ def feed_frame(state: VadState_, samples: List[int],
 
     if state.state == VadState.IDLE:
         if is_speech:
+            # 11 S8.7.2 vad_pre_roll_ms: the utterance starts with the quiet
+            # frames just before the onset. Without them a soft first syllable
+            # (below the energy threshold) is lost -- 2026-10-24 measured: the
+            # p4 cut came back "照明灯调到对岸", the same audio 0.4 s earlier
+            # "照明灯调到最暗".
+            head = [s for f in state.pre_roll for s in f]
             state.state = VadState.SPEAKING
             state.tail_silence_frames = 0
-            state.utterance_frames = 1
+            state.utterance_frames = len(state.pre_roll) + 1
             state.speech_frames = 1
-            state.accumulated_samples = list(samples)
+            state.accumulated_samples = head + list(samples)
+            state.pre_roll = []
+            return None
+        keep = cfg.pre_roll_ms // cfg.frame_ms
+        if keep > 0:
+            # Bounded: only the newest `keep` frames. An unbounded buffer would
+            # send every second of room noise since the last turn into ASR.
+            state.pre_roll.append(list(samples))
+            if len(state.pre_roll) > keep:
+                del state.pre_roll[:len(state.pre_roll) - keep]
         return None
 
     if state.state == VadState.SPEAKING:

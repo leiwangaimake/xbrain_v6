@@ -199,6 +199,11 @@ def main(argv: Optional[list] = None) -> int:
                     help="silence to close utterance (voice-loop only)")
     ap.add_argument("--vad-min-utterance-ms", type=int, default=200,
                     help="min utterance to send to ASR (voice-loop only)")
+    # 11 S8.7.2 vad_pre_roll_ms (300): audio kept from before the energy onset
+    # so a soft first syllable reaches ASR. 0 disables it.
+    ap.add_argument("--vad-pre-roll-ms", type=int, default=300,
+                    help="audio kept before the VAD onset, 11 S8.7.2 "
+                         "(voice-loop only)")
     # The --config-dir default names the source for the reference-free content
     # tables (intents/chitchat/query_templates); with zero ${common.*} their
     # CONFIG-SOURCE-OK(content): source and resolved are byte-identical, so no
@@ -297,7 +302,8 @@ def main(argv: Optional[list] = None) -> int:
             energy_threshold=args.vad_energy_threshold,
             tail_silence_ms=args.vad_tail_silence_ms,
             min_utterance_ms=args.vad_min_utterance_ms,
-            frame_ms=20)
+            frame_ms=20,
+            pre_roll_ms=args.vad_pre_roll_ms)
         tl_cfg = TurnLoopConfig(
             asr_base_url=args.asr_base_url,
             asr_http_timeout_s=args.asr_http_timeout_s,
