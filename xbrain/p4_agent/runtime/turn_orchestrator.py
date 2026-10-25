@@ -470,14 +470,20 @@ class TurnOrchestrator:
 
     def handle_turn(self, text: str, session: OrchestratorSession,
                     now_mono_ms: int,
-                    raw_text: Optional[str] = None) -> TurnDecision:
+                    raw_text: Optional[str] = None,
+                    addressed: bool = False) -> TurnDecision:
         """Process one ASR utterance end-to-end. See module docstring for
         the ordering (16 S5.2).
 
         text is what the classifier sees (the ASR post-processed text on the
         voice path). raw_text, when given, is the ASR output BEFORE 16 S3
         post-processing; the safety bypass matches it first (16 S4 constraint
-        1). None means there was no post-processing (text channel)."""
+        1). None means there was no post-processing (text channel).
+
+        addressed=True waives the layer-5 directional cue for a channel that
+        is directed by construction (cmd/voice_text); every microphone path,
+        including cloud audio, leaves it False. It changes layer 5 only: the
+        bypass and the confirm gate run exactly as for voice."""
         text = (text or "").strip()
         raw = (raw_text or "").strip() if raw_text is not None else text
 
@@ -517,7 +523,8 @@ class TurnOrchestrator:
         # command ("云台朝左", "把照明灯搞亮点") still resolves. It runs only
         # when layer 2 missed, so exact keywords are never overridden.
         result = classify_text(text, self._registry, self._matcher,
-                               large_class_fn=resolve_large_class)
+                               large_class_fn=resolve_large_class,
+                               addressed=addressed)
         if result.layer == "overheard":
             # 16 S5.2.1: not addressed to the robot -> completely silent.
             return TurnDecision(kind="overheard", layer="overheard")

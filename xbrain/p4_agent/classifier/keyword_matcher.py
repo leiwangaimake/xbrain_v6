@@ -113,8 +113,12 @@ def classify_text(
     session_state_match: Optional[str] = None,
     asr_confidence: Optional[float] = None,
     large_class_fn: Optional[Callable[[str], Optional[str]]] = None,
+    addressed: bool = False,
 ) -> ClassifyResult:
     """Run 16 S5.2 layers 2-6 on ASR text (bypass already handled).
+
+    addressed is passed straight to layer 5 (see classify_after_bypass):
+    True only for an input channel that is directed by construction.
 
     layer 2 (long_phrase) = KeywordMatcher.longest_match.
     layer 3 (session_state) = passed in by the caller (the session
@@ -145,4 +149,5 @@ def classify_text(
         session_state_match=session_state_match,
         large_class_match=large_class,
         asr_confidence=asr_confidence,
+        addressed=addressed,
     )

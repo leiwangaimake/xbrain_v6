@@ -80,6 +80,8 @@ def handle_text_command(
     session: OrchestratorSession,
     matcher: KeywordMatcher,
     now_mono_ms: int,
+    raw_text: Optional[str] = None,
+    addressed: bool = True,
 ) -> TextTurnResult:
     """Process one cmd/voice_text message. NO ASR is invoked.
 
@@ -90,6 +92,16 @@ def handle_text_command(
     Runs the channel admission gate first (H03f cloud-only), then the
     orchestrator on the TEXT directly. Returns the decision + the (key,
     payload_bytes) pairs to publish.
+
+    Two arguments exist for the one other caller, cloud audio (11 S8.7.3),
+    which needs the same admission gate and reply rule after its own ASR:
+      * raw_text -- the ASR output before 16 S3 post-processing, so the
+        bypass sees what was actually heard; None for typed text, which
+        has no post-processing.
+      * addressed -- True for typed text: a message somebody sent to this
+        robot is directed by construction, so the 16 S5.2.1 overheard cue
+        (wake word / imperative) is waived. Cloud AUDIO passes False: it is
+        a microphone at the far end and can carry bystander speech.
     """
     channel = msg.get("channel")
     if channel not in _TEXT_CHANNELS:
@@ -112,7 +124,9 @@ def handle_text_command(
                                   publishes=pubs)
 
     # Allowed -> run the orchestrator on the TEXT (skips ASR).
-    decision = orchestrator.handle_turn(text, session, now_mono_ms)
+    decision = orchestrator.handle_turn(text, session, now_mono_ms,
+                                        raw_text=raw_text,
+                                        addressed=addressed)
     pubs: List[Tuple[str, bytes]] = []
     for key, payload in decision_to_publishes(decision):
         # require_tts_reply=false: text/HMI/WeChat callers can suppress the

@@ -109,6 +109,7 @@ def classify_after_bypass(
     session_state_match: Optional[str],
     large_class_match: Optional[str],
     asr_confidence: Optional[float] = None,
+    addressed: bool = False,
 ) -> ClassifyResult:
     """Run the 5 remaining layers (safety_bypass already handled
     by caller before this function).
@@ -118,6 +119,14 @@ def classify_after_bypass(
       long_phrase_match: intent id if layer 2 fired, else None.
       session_state_match: intent id if layer 3 fired, else None.
       large_class_match: intent id if layer 4 fired, else None.
+      addressed: the INPUT CHANNEL already establishes that the text is
+        meant for the robot (a typed cmd/voice_text command). Layer 5 asks
+        "is this said to the robot?" because a microphone also hears people
+        talking to each other (16 S5.2.1); a message somebody typed and sent
+        to this robot has no bystanders, so the wake-word / imperative cues
+        are not required. Semantically broken text is still overheard --
+        "addressed" settles WHO it is for, not whether it means anything.
+        False (the default) is every microphone path, local or cloud.
     """
     # Layer 2.
     if long_phrase_match is not None:
@@ -140,8 +149,10 @@ def classify_after_bypass(
             intent=large_class_match,
         )
     # Layer 5 fires only when NO earlier layer matched.
-    if not is_directed_at_robot(text, matched_intent_kw=False) \
-            or is_semantically_broken(text, asr_confidence):
+    # The directional cue is waived only for an addressed channel; the
+    # broken-text check is not, so a stray typed "嗯" stays silent.
+    directed = addressed or is_directed_at_robot(text, matched_intent_kw=False)
+    if not directed or is_semantically_broken(text, asr_confidence):
         return ClassifyResult(
             layer=ChainLayer.OVERHEARD.value,
             fires_llm=False,
