@@ -247,3 +247,50 @@ def test_the_token_order_is_deterministic():
     # seven two-character words that is a 1-in-5040 chance per run).
     two = [w for w in a.estop if len(w) == 2]
     assert two == sorted(two), two
+
+
+# --- stand: exactly the configured words (2026-10-25 user ruling) ---------
+# The built-in "起来" harvest word was removed: a false stand is a motion
+# nobody asked for, unlike a false stop. Measured on .1.26: a misheard
+# "云台向右看" came back "起来向右看" and fired the stand bypass.
+
+@pytest.mark.parametrize("text", [
+    "起来向右看",   # the .1.26 misread that stood the robot up
+    "看起来不错",   # ordinary speech containing the same two characters
+    "说起来",       # and another
+])
+def test_bare_qilai_no_longer_fires_the_stand_bypass(text):
+    """Without the harvest word nothing in these sentences is a stand word.
+
+    Asserted on the configured groups -- the production matcher -- so the
+    case fails if "起来" ever comes back through either the built-in table
+    or the union with the config.
+    """
+    # No bypass action at all: none of the sentences holds a stop / prone /
+    # stand word once "起来" is gone.
+    assert match_bypass(text, (), _configured()) is None, text
+
+
+def test_the_stand_group_is_exactly_the_configured_stand_words():
+    """The built-in stand table adds nothing to the configured stand list.
+
+    The union in tokens_from_config can only ADD words; for stand the user
+    ruled that the configured list is the whole list, so the effective group
+    must equal it. A built-in word sneaking back in fails here.
+    """
+    words = yaml.safe_load(open(_COMMON, encoding="utf-8"))[
+        "common"]["audio"]["bypass_keywords"]
+    # Same set, order aside (the matcher sorts longest-first).
+    assert set(_configured().stand) == set(words["stand"])
+
+
+@pytest.mark.parametrize("text", ["站起来", "站立", "起立"])
+def test_every_configured_stand_word_still_stands(text):
+    """The removal did not take any configured word with it.
+
+    The positive half of the two cases above: a matcher that dropped the
+    whole stand group would pass them and fail here.
+    """
+    hit = match_bypass(text, (), _configured())
+    # Each configured word alone is a stand bypass.
+    assert hit is not None and hit.action == "stand", (text, hit)

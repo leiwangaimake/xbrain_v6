@@ -94,9 +94,19 @@ _ESTOP_TOKENS = tuple(sorted(_ESTOP_TOKENS_UNSORTED, key=len, reverse=True))
 # / 趴下来); the substring match tolerates them naturally.
 _PRONE_TOKENS = tuple(sorted(("趴下", "卧倒"), key=len, reverse=True))
 
-# * stand tokens (站立 / 站起来 / 起立).
+# * stand tokens (站立 / 站起来 / 起立) -- exactly the configured stand group
+#   (common.audio.bypass_keywords.stand), nothing extra.
+#   The bare "起来" was here until 2026-10-25 and is REMOVED by user ruling:
+#   matched as a substring it fires on ordinary speech ("看起来", "说起来"),
+#   and on .1.26 a misheard "云台向右看" came back "起来向右看" and triggered
+#   the stand bypass (L0, no confirm). 16 S4.1's "a false trigger is cheap"
+#   argument holds for the ESTOP (a false stop is one extra halt); a false
+#   STAND is the robot starting a motion nobody asked for, so the loose
+#   harvest word does not belong in this group. The union in
+#   tokens_from_config can add words from config, so the robot still stands
+#   on every configured stand word.
 _STAND_TOKENS = tuple(sorted(
-    ("站立", "站起来", "起立", "起来"), key=len, reverse=True))
+    ("站立", "站起来", "起立"), key=len, reverse=True))
 
 
 def _longest_first(words: Iterable[str]) -> Tuple[str, ...]:
