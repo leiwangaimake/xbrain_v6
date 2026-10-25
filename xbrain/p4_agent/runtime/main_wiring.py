@@ -157,7 +157,8 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
             ])
             orchestrator = build_orchestrator(
                 orch.registry, orch.chitchat, l2_timeout_ms=orch.l2_timeout_ms,
-                tier2_fn=orch.tier2_fn, query_fn=query_fn)
+                tier2_fn=orch.tier2_fn, query_fn=query_fn,
+                bypass_tokens=orch.bypass_tokens)
             session = OrchestratorSession()
             turn_handler = make_turn_handler(orchestrator, session,
                                              asr_post=orch.asr_post)

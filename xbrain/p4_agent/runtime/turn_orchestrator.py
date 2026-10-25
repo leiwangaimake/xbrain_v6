@@ -429,6 +429,10 @@ class TurnOrchestrator:
         # added 2026-08-23 reads state/task from the same snapshot, and two
         # accessors over one snapshot is how they drift.
         state_fn: Optional[Callable[[], Dict[str, Any]]] = None,
+        # The bypass word groups (16 S4) from the resolved config, unioned
+        # with the built-in tables (matcher.tokens_from_config). None = the
+        # built-in tables alone -- tests and tools without a config.
+        bypass_tokens: Optional[bypass_matcher.BypassTokens] = None,
     ) -> None:
         self._registry = registry
         self._matcher = matcher or KeywordMatcher(registry)
@@ -456,10 +460,11 @@ class TurnOrchestrator:
         # intent (see _BYPASS_YIELD_IDS): taken from the registry, so the
         # keyword table stays the single source, and filtered to the ones
         # the bypass would actually fire on.
+        self._bypass_tokens = bypass_tokens
         self._bypass_yield = tuple(
             kw for iid in _BYPASS_YIELD_IDS
             for kw in registry.by_id(iid).keywords
-            if bypass_matcher.is_estop_phrase(kw))
+            if bypass_matcher.is_estop_phrase(kw, bypass_tokens))
 
     # -- public entry ----------------------------------------------------
 
@@ -481,8 +486,10 @@ class TurnOrchestrator:
         # (a mangled "停止" restored) but must never hide one the raw had.
         # Qualified PTZ stops ("停止扫描") yield to their intent first; any
         # stop word left after removing them still fires (_BYPASS_YIELD_IDS).
-        hit = (bypass_matcher.match_raw(raw, self._bypass_yield)
-               or bypass_matcher.match_normalized(text, self._bypass_yield))
+        hit = (bypass_matcher.match_raw(raw, self._bypass_yield,
+                                        self._bypass_tokens)
+               or bypass_matcher.match_normalized(text, self._bypass_yield,
+                                                  self._bypass_tokens))
         if hit is not None:
             supp = recording_gate.evaluate(session.recording, hit.action)
             if supp is not None:

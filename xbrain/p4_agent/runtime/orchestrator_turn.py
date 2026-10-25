@@ -127,6 +127,9 @@ class VoiceOrchestratorInputs:
     # 16 S3 ASR post-processing (three_layer.AsrPostProcessor), or None when it
     # could not be built (the turn then classifies the raw ASR text).
     asr_post: Any = None
+    # 16 S4 bypass word groups (matcher.BypassTokens) from the resolved
+    # bypass.* keys; None only where no config was loaded.
+    bypass_tokens: Any = None
 
 
 def null_tier2(text: str, session: OrchestratorSession,
@@ -147,16 +150,22 @@ def build_orchestrator(
     tier2_fn: Optional[Callable[[str, OrchestratorSession, int],
                                 Optional[str]]] = None,
     query_fn=None,
+    bypass_tokens=None,
 ) -> TurnOrchestrator:
     """Construct the voice-loop orchestrator (built once, reused per turn).
 
     query_fn (optional) answers a G-class query from live state (GWY-P4-39);
-    None leaves G queries to a normal dispatch."""
+    None leaves G queries to a normal dispatch.
+
+    bypass_tokens (16 S4): the configured bypass word groups, built by
+    __main__ from the resolved bypass.* keys. None = the matcher's built-in
+    tables, which lack the configured bare 停 / 趴着 -- production must pass
+    them (2026-10-25: "停" alone did not stop the robot)."""
     return TurnOrchestrator(
         registry, chitchat=chitchat,
         tier2_fn=tier2_fn or null_tier2,
         l2_timeout_ms=l2_timeout_ms,
-        query_fn=query_fn)
+        query_fn=query_fn, bypass_tokens=bypass_tokens)
 
 
 def make_battery_query_fn(cache, templates, *, max_age_ms: int,

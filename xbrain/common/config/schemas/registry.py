@@ -246,9 +246,16 @@ _P4: Dict[str, Any] = {
     "asr_post.log_corrections": boolean(),           # keep correction trail
     # bypass (16 S4): three word lists + a flag
     "bypass.match_before_postprocess": boolean(),    # match estop pre-correction
-    "bypass.estop": listof(),                        # estop word list
-    "bypass.prone": listof(),                        # prone word list
-    "bypass.stand": listof(),                        # stand word list
+    # The three lists are whole-node references to common.audio.bypass_keywords
+    # since 2026-10-25 (the one list, 10 S5.4.5; per-proc values must reference
+    # common, 10 S5.4.2 R-6). S10 checks the SOURCE tree, where the value is the
+    # reference string, so listof() refused the very form R-6 requires. anything()
+    # keeps the presence check; the list shape of the RESOLVED value is enforced
+    # where it is consumed -- p4 startup, safety_bypass.matcher.tokens_from_config
+    # refuses a missing, empty or non-string-list group and p4 exits 7.
+    "bypass.estop": anything(),                      # ref -> estop word list
+    "bypass.prone": anything(),                      # ref -> prone word list
+    "bypass.stand": anything(),                      # ref -> stand word list
     # intent routing (16 S5)
     # 2026-08-10 CFG-FZ-18-b: intent.keyword_rules removed. The path is
     # provided by common.cmdset.intents_file (canonical name from 10

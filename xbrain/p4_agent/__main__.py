@@ -376,9 +376,28 @@ def main(argv: Optional[list] = None) -> int:
                 "on this host; startup refused (fix configs/common.yaml)",
                 site_tz)
             return 6
+        # 16 S4 bypass words from the RESOLVED snapshot: bypass.* references
+        # common.audio.bypass_keywords (the one list, 10 S5.4.5), unioned with
+        # the matcher's built-in tables. Refused when missing or empty: a
+        # voice loop whose bypass has no stop words is the fail-silent form of
+        # no bypass (CLAUDE.md 3.1) -- before 2026-10-25 the configured list
+        # was never read and a bare "停" did not stop the robot.
+        from xbrain.p4_agent.safety_bypass.matcher import tokens_from_config
+        try:
+            bypass_tokens = tokens_from_config(
+                _cfg.require("bypass.estop"), _cfg.require("bypass.prone"),
+                _cfg.require("bypass.stand"))
+        except Exception as exc:      # noqa: BLE001 -- any shape fault refuses
+            _logger.error("voice-loop: bypass word lists unusable (%s); "
+                          "startup refused (fix configs/common.yaml "
+                          "audio.bypass_keywords)", exc)
+            return 7
+        _logger.info("voice-loop: bypass words estop=%d prone=%d stand=%d",
+                     len(bypass_tokens.estop), len(bypass_tokens.prone),
+                     len(bypass_tokens.stand))
         asr_post = _build_asr_post(_cfg, registry)
         orch = VoiceOrchestratorInputs(
-            asr_post=asr_post,
+            asr_post=asr_post, bypass_tokens=bypass_tokens,
             registry=registry, chitchat=chitchat,
             l2_timeout_ms=args.l2_confirm_timeout_ms,
             query_templates=query_templates,

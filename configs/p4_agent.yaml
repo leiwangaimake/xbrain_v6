@@ -38,9 +38,10 @@
 #        改的是[冒充方式], 没有改任何值:两种写法下该键都仍然是未选型.
 #   L6 只[取值]不[定义]: 不得出现 common 顶层键,共享值一律写 ${common.xxx}
 #     (`10` §5.4.2 R-6 / R-1;违反即被 §5.4.4 断言 B 判"疑似复制"而拒绝启动).
-#     * 本文件有一个 ${common.*} 引用: timezone: ${common.timezone}(站点显示时区,
-#       见文件尾同名段). 时区是站点级[显示]值, 多进程必须同源, 故落 common 由各
-#       进程引用. `11` §9.6 `SP-11` 拿 `common.spec.max_vx_mps` 与本文件的一个键
+#     * 本文件的 ${common.*} 引用: timezone: ${common.timezone}(站点显示时区,
+#       见文件尾同名段), 以及 bypass.estop/prone/stand 引用
+#       common.audio.bypass_keywords(2026-10-25, 见 bypass 段). 时区是站点级
+#       [显示]值, 旁路词表是安全类词表, 都必须多进程同源, 故落 common 由各进程引用. `11` §9.6 `SP-11` 拿 `common.spec.max_vx_mps` 与本文件的一个键
 #        比大小, 那是[冻结线]的求值, 不算本文件要写的引用.
 #   * 运行期读[解析产物]/run/xbrain/resolved/p4_agent.yaml, 不读本文件
 #     (`10` §5.4.1"引用不由各进程各自展开").* 读取侧 = xbrain/p4_agent/config/.
@@ -84,11 +85,16 @@ bypass:
   #   * 为什么不能省:三层后处理有可能把"急停"改写成别的词,
   #     旁路放在后处理之后就等于让纠错器有机会吃掉一条急停.
   match_before_postprocess: true
-  # 旁路词表 ---- `16` §4 的三组.* 这些是[数据]不是注释,
-  #   故保留原字形(CLAUDE.md §2.2 管的是源码注释与打印,不管配置数据).
-  estop: ["急停", "停止", "紧急停止", "立刻停下", "stop"]
-  prone: ["趴下", "卧倒"]
-  stand: ["站立", "站起来", "起立"]
+  # 旁路词表 ---- `16` §4 的三组, 引用唯一真源 common.audio.bypass_keywords
+  #   (用户 2026-09-21 并集裁决, `10` §5.4.5 "词表只此一份").
+  #   * 2026-10-25 订正: 本处原为裁决前的旧词表 (estop 5 词无"停", prone 无
+  #     "趴着"), 是第二份手抄副本; 且 p4 代码当时根本不读它 (matcher 用写死的
+  #     表), 实测 "停" 单字不触发急停. 现改为整节点引用, 由冻结线展开;
+  #     p4 启动时读产物里的 bypass.*, 与 matcher 内置的 V5 现场词表取并集
+  #     (只增不减), 缺失或为空即拒绝启动.
+  estop: ${common.audio.bypass_keywords.estop}
+  prone: ${common.audio.bypass_keywords.prone}
+  stand: ${common.audio.bypass_keywords.stand}
 
 
 # -- 两级路由(`16` §5)--------------------------------------------------
@@ -354,7 +360,7 @@ cmdset:
 
 # -- 站点显示时区(common.timezone,唯一真源)------------------------------
 # G24 query_time 的本地时间[显示]取此值;HMI 时钟 / TTS / CHS-A Time 字段同源.
-#   * 这是本文件唯一一个 ${common.*} 引用. 时区是站点级[显示]值, 多进程必须同源
+#   * (本文件另有 bypass 段的三个引用, 见该段.) 时区是站点级[显示]值, 多进程必须同源
 #     (HMI 显示 8 点, 语音也必须说 8 点), 故落 common 由各进程引用, 而非各写一份.
 #     机器人后续国际化售卖时, 只改 common.timezone 一处即可整栈切时区.
 #   * 纯[显示]值, 不碰安全: 内部墙钟恒 UTC(envelope ts), 一切超时/周期/年龄用

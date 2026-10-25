@@ -587,6 +587,14 @@ bypass:
 > 单字「停」会被「不停 / 停机坪」误命中，但误触发急停是一次可恢复的停车，漏触发是撞上去；
 > `"stop"` 对中文 ASR 大概率识别不出，保留无害。
 > ★ 真源落值在 `configs/common.yaml` 的 `common.audio.bypass_keywords`（三组同形状），本块与 `18` 已同批订正为同一组。
+>
+> ⚠️★★★ **2026-10-25 实测 · 上面这条裁决在代码里从未生效，已修**
+> ★ **缺陷形状**：还有**另外两份**词表、且都与真源不一致 —— ① `configs/p4_agent.yaml` 的 `bypass.*` 仍是裁决**前**的旧 5 词（无「停」、无「趴着」）；② `xbrain/p4_agent/safety_bypass/matcher.py` **写死**一张 V5 现场词表，**两份配置都不读**。⇒ 实测 `match_bypass("停") -> None`：**单说「停」不急停**，「趴着」不趴下（§4.1 排第一的漏停）。
+> ★★ **现行**：`p4_agent.yaml` 的 `bypass.estop/prone/stand` 改为**整节点引用** `${common.audio.bypass_keywords.*}`，冻结线展开；p4 启动读产物里的 `bypass.*`，经 `matcher.tokens_from_config` 与内置 V5 词表**取并集**（只增不减：配置能加词、删不掉内置的「急刹车 / 停车 / 紧急」等）；任一组缺失 / 为空 / 含非字符串 ⇒ **拒绝启动**（exit 7）。
+> ★ **冻结线配套**：S10 按**源文件**查类型，`listof()` 会拒绝 `10` §5.4.2 R-6 要求的引用写法 ⇒ 这三个键在 `xbrain/common/config/schemas/registry.py` 改为 `anything()`（只查存在），列表形状由消费端 `tokens_from_config` 查。
+> ★ **新被旁路吃掉的关键词**（按 §4.1「宁可误停」接受）：A04「停在这儿」、B05「暂停」「停一停」⇒ 现落急停。
+> ⚠️ **未做（需裁决）**：内置 V5 词表里有、`common.yaml` 里没有的词（「急刹」「急刹车」「紧急」「停车」「马上停」「快停」等）**尚未并入真源** —— 那是改一张用户裁决过的安全词表，留待裁决；在此之前代码侧的并集保证它们不丢。
+> ★ 判据：`tests/p4_agent/safety_bypass/test_bypass_config_words.py` ＋ 手工变异体（见提交信息）。
 
 | 约束 | 说明 |
 |---|---|
