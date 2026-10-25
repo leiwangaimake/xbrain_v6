@@ -742,6 +742,8 @@ bypass:
 | 出现其他人名、与机器人能力完全无关的话题 | ★ `overheard` |
 | ASR 置信度低 **且** 语义破碎 | ★ `overheard` |
 
+> ★ **2026-10-25 实现补记 ·「称呼机器人」含机器人自己的名字**：唤醒 / 称呼词表（`xbrain/p4_agent/classifier/priority_chain.py` `_WAKE_WORDS`）加入 **「海卫」**（`18` J02 甲方身份：名称海卫、全名海卫-风息；子串匹配同时覆盖全名）。★ **起因**：机器人自称「我是海卫」，但「海卫把这里记为东门岗亭」这类未命中关键词的句子曾被判 `overheard` 静默丢弃（`.1.26` 离线预跑）。★ 判据：`tests/p4_agent/classifier/test_wake_name.py`（含不带名字的对照句仍为 `overheard`）。
+
 ★ **非对称原则**：与 `out_of_scope` 拿不准时**判 `overheard`**。
 误判为静默 → 操作员再说一遍；误判为拒绝 → 机器人对着空气说话。
 

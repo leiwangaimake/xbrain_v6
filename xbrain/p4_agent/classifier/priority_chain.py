@@ -59,8 +59,14 @@ class ClassifyResult:
 
 
 # Wake-word / address tokens (case-insensitive; substring test).
+# 海卫 is the robot's own name (18 J02 party-A identity: name 海卫, full name
+# 海卫-风息; the substring also covers the full name). Added 2026-10-25: the
+# robot introduces itself as 海卫, yet "海卫, 把这里记为东门岗亭" was judged
+# not addressed to it and silently dropped -- 16 S5.2.1 counts "称呼机器人"
+# (addressing the robot) as directed speech, and its name is the most direct
+# way to address it.
 _WAKE_WORDS: FrozenSet[str] = frozenset({
-    "机器人", "小泰", "泰莎", "喂", "嘿",
+    "机器人", "小泰", "泰莎", "喂", "嘿", "海卫",
 })
 
 # Second-person imperative markers (rough Chinese cue set).
