@@ -416,13 +416,6 @@ _KNOWN_UNWIRED = {
     # migration in the tree creates that table.
     "xbrain/p4_agent/asr_post/correction_log.py": "no-surface: the asr_correction table exists in no schema or migration",
 
-    # GWY-P4-03 L1/L2/L3 ASR post-processing. The wired voice loop
-    # (runtime/turn_loop.py) goes transcribe_utterance -> classify with
-    # NO post-processing step between them, so raw ASR text reaches the
-    # classifier. Real gap, and wiring it changes what the robot hears;
-    # needs a bench run against real ASR output before it goes in.
-    "xbrain/p4_agent/asr_post/three_layer.py": "registered: NEXT S8.12 -- turn_loop feeds raw ASR text straight to the classifier; needs a bench run",
-
     # GWY-P4-02b half-duplex observation. p4 subscribes rt/audio/mic
     # (runtime/main_wiring.py:189) but NOT rt/audio/gate, although p2
     # publishes it (runtime/speaker_wiring.py) and p4_agent/__main__.py's

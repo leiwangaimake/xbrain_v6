@@ -159,7 +159,8 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                 orch.registry, orch.chitchat, l2_timeout_ms=orch.l2_timeout_ms,
                 tier2_fn=orch.tier2_fn, query_fn=query_fn)
             session = OrchestratorSession()
-            turn_handler = make_turn_handler(orchestrator, session)
+            turn_handler = make_turn_handler(orchestrator, session,
+                                             asr_post=orch.asr_post)
             _logger.info(
                 "p4 wiring: TurnOrchestrator handler active; state/* "
                 "subscribed (%d keys), G02 live", len(state_subs))

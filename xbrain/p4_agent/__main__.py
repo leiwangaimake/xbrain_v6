@@ -167,6 +167,43 @@ def _build_tier2_fn(config_dir, registry, *, base_url, model, timeout_s):
         return None
 
 
+def _build_asr_post(cfg, registry):
+    """16 S3 post-processor from the resolved asr_post.* keys, or None.
+
+    L2 corrects towards D/E keywords only and protects every keyword (see
+    three_layer.L2_TARGET_CLASSES for why). A missing pypinyin disables L2
+    loudly and keeps L1: the post-processor improves recognition, it is not a
+    gate, so its absence degrades the turn instead of stopping the loop.
+    """
+    from xbrain.p4_agent.asr_post.three_layer import (
+        AsrPostProcessor,
+        L2Pinyin,
+        L2_TARGET_CLASSES,
+    )
+    try:
+        dict_file = cfg.require("asr_post.dict_file")
+        max_d = int(cfg.require("asr_post.pinyin_distance_threshold"))
+        ignore_tone = bool(cfg.require("asr_post.ignore_tone"))
+        log_corr = bool(cfg.require("asr_post.log_corrections"))
+    except Exception as exc:      # noqa: BLE001
+        _logger.error("voice-loop: asr_post config unusable (%s); ASR text "
+                      "goes to the classifier uncorrected", exc)
+        return None
+    l2 = None
+    try:
+        l2 = L2Pinyin(
+            targets=[k for e in registry.entries
+                     if e.id[:1] in L2_TARGET_CLASSES for k in e.keywords],
+            protected=[k for e in registry.entries for k in e.keywords],
+            max_distance=max_d, ignore_tone=ignore_tone)
+    except ImportError as exc:
+        _logger.error("voice-loop: pypinyin unavailable (%s); ASR L2 disabled, "
+                      "L1 dict only", exc)
+    _logger.info("voice-loop: ASR post-processing on (L1 %s, L2 %s)",
+                 dict_file, "on" if l2 is not None else "OFF")
+    return AsrPostProcessor(dict_file, l2, log_corrections=log_corr)
+
+
 def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(prog="xbrain.p4_agent")
     ap.add_argument("--config", default=None,
@@ -339,7 +376,9 @@ def main(argv: Optional[list] = None) -> int:
                 "on this host; startup refused (fix configs/common.yaml)",
                 site_tz)
             return 6
+        asr_post = _build_asr_post(_cfg, registry)
         orch = VoiceOrchestratorInputs(
+            asr_post=asr_post,
             registry=registry, chitchat=chitchat,
             l2_timeout_ms=args.l2_confirm_timeout_ms,
             query_templates=query_templates,

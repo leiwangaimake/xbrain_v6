@@ -124,6 +124,9 @@ class VoiceOrchestratorInputs:
     site_timezone: str
     tier2_fn: Optional[Callable[[str, "OrchestratorSession", int],
                                 Optional[str]]] = None
+    # 16 S3 ASR post-processing (three_layer.AsrPostProcessor), or None when it
+    # could not be built (the turn then classifies the raw ASR text).
+    asr_post: Any = None
 
 
 def null_tier2(text: str, session: OrchestratorSession,
@@ -344,14 +347,24 @@ def _unwrap_contract_frame(key: str, payload: Any) -> Any:
 def make_turn_handler(
     orchestrator: TurnOrchestrator,
     session: OrchestratorSession,
+    asr_post: Any = None,
 ) -> Callable[[str], List[Tuple[str, bytes]]]:
     """Return a handler text -> [(key, payload_bytes)] for the turn loop.
 
     Binds ONE orchestrator + ONE session (per operator dialog). Uses the
-    monotonic clock for the turn time (CLK-C1)."""
-    def _handle(text: str) -> List[Tuple[str, bytes]]:
+    monotonic clock for the turn time (CLK-C1).
+
+    asr_post (16 S3): when given, the ASR text is corrected (L1 dict, L2
+    pinyin) BEFORE classification; the raw text still reaches the safety
+    bypass (16 S4 constraint 1). Until 2026-10-24 nothing called the
+    post-processor and "照明灯调到最岸" (暗 misheard as 岸) missed D17."""
+    def _handle(raw: str) -> List[Tuple[str, bytes]]:
         now_ms = int(time.monotonic() * 1000)
-        decision = orchestrator.handle_turn(text, session, now_ms)
+        text = raw
+        if asr_post is not None:
+            text, _corrections = asr_post.apply(raw)
+        decision = orchestrator.handle_turn(text, session, now_ms,
+                                            raw_text=raw)
         out: List[Tuple[str, bytes]] = []
         for key, payload in decision_to_publishes(decision):
             data = json.dumps(payload, ensure_ascii=False,

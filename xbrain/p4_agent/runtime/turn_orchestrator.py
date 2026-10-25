@@ -399,14 +399,22 @@ class TurnOrchestrator:
     # -- public entry ----------------------------------------------------
 
     def handle_turn(self, text: str, session: OrchestratorSession,
-                    now_mono_ms: int) -> TurnDecision:
+                    now_mono_ms: int,
+                    raw_text: Optional[str] = None) -> TurnDecision:
         """Process one ASR utterance end-to-end. See module docstring for
-        the ordering (16 S5.2)."""
-        text = (text or "").strip()
+        the ordering (16 S5.2).
 
-        # STEP 1: safety-bypass BEFORE classification (16 S4). Match raw
-        # then normalized; a hit here never reaches the classifier.
-        hit = (bypass_matcher.match_raw(text)
+        text is what the classifier sees (the ASR post-processed text on the
+        voice path). raw_text, when given, is the ASR output BEFORE 16 S3
+        post-processing; the safety bypass matches it first (16 S4 constraint
+        1). None means there was no post-processing (text channel)."""
+        text = (text or "").strip()
+        raw = (raw_text or "").strip() if raw_text is not None else text
+
+        # STEP 1: safety-bypass BEFORE classification (16 S4). Match the raw
+        # ASR text, then the corrected text: correction may ADD a stop word
+        # (a mangled "停止" restored) but must never hide one the raw had.
+        hit = (bypass_matcher.match_raw(raw)
                or bypass_matcher.match_normalized(text))
         if hit is not None:
             supp = recording_gate.evaluate(session.recording, hit.action)

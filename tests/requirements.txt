@@ -18,6 +18,10 @@ uvicorn>=0.20
 # it is absent -- without this, tests/p5_gateway/hmi/test_rest_endpoints_w8.py
 # fails to collect. Plain `httpx` also works but starlette deprecates it.
 httpx2>=2.0
+# pypinyin: 16 S3.3 L2 pinyin-distance ASR correction (p4_agent asr_post).
+# Also a RUNTIME dependency of p4 on the robot: without it p4 logs an ERROR
+# and runs L1 only. tests/p4_agent/asr_post/test_asr_post_pipeline.py needs it.
+pypinyin>=0.53
 # sherpa-onnx pinned loose so wheel availability across arm64/x86_64
 # does not break dev-machine collection. The actual model runtime
 # uses the ORIN-installed version.
