@@ -130,6 +130,12 @@ class _Tier2:
 #: A catalogue holding the waypoint the positive case names. build_orchestrator
 #: takes no state_fn (production has no state/geo/manifest subscription), so
 #: _turn sets it on the orchestrator the way the integration tests do.
+#: Only the positive case passes it: every other case here is about a turn
+#: that must NOT reach cmd/task, and since 2026-10-25 an absent catalogue is
+#: itself a refusal (test_task_geometry.py) -- giving those cases a catalogue
+#: keeps them failing for the reason they are named after.
+#: The id matches 11 S7.2's W2 example ("w-east_gate"), the name the spoken
+#: one ("东门"); the state is "active" because a tombstoned one is refused.
 _GATE = {"geo_id": "w-east_gate", "type": "waypoint", "name": "东门",
          "state": "active", "num": 1}
 
