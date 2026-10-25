@@ -42,6 +42,8 @@ for degraded-ness and uses rest.endpoints.fences_endpoint to pick the code.
 
 from __future__ import annotations
 
+import errno
+import logging
 import socket
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
@@ -51,6 +53,8 @@ from xbrain.common.errors import E_SCHEMA
 from xbrain.p5_gateway.hmi import data_readers, uplink
 from xbrain.p5_gateway.hmi.ui_config import build_ui_config
 from xbrain.p5_gateway.hmi.ws_protocol import RateLimitBucket
+
+_logger = logging.getLogger("xbrain.p5.hmi")
 
 # WebSocket / WebSocketDisconnect are imported at MODULE level, not lazily inside
 # build_app, on purpose: `from __future__ import annotations` (top of this file)
@@ -150,7 +154,9 @@ def make_bound_sockets(bind: List[Optional[str]]) -> List[socket.socket]:
     """Create one bound TCP socket per non-null interface in `hmi.bind`.
 
     Null entries are skipped (17 S6.10.3: LAN2/wifi IPs are null until the
-    deployment fills them). If NOTHING is bindable the HMI refuses to start --
+    deployment fills them), and so is an address the host does not currently
+    own (99 U92: a down wifi must not take the LAN2 face with it). If NOTHING
+    is bindable the HMI refuses to start --
     an HMI reachable from nowhere is a config bug the operator must see, and a
     silent fallback to a wildcard would be the exact NET-C9 violation this
     guards. Each socket is passed to uvicorn's Server.serve(sockets=...), which
@@ -168,10 +174,31 @@ def make_bound_sockets(bind: List[Optional[str]]) -> List[socket.socket]:
         # SO_REUSEADDR so a restart does not wait out TIME_WAIT; NOT
         # SO_REUSEPORT (that would let a second process silently share the port).
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((host, port))       # explicit host -> never wildcard
+        try:
+            sock.bind((host, port))       # explicit host -> never wildcard
+        except OSError as exc:
+            sock.close()
+            # 99 U92 (2026-10-25): an address this host does not own -- the
+            # wifi IP while wifi is down -- is SKIPPED, so the LAN2 face still
+            # serves ("wifi failure must not affect the 188 network"). Before,
+            # one absent address made the whole HMI refuse to start. Skipping
+            # only ever NARROWS the bind set; it never widens it (NET-C9).
+            # Any other error (port in use, permission) is a real conflict and
+            # still raises -- skipping it would hide a second process.
+            if exc.errno != errno.EADDRNOTAVAIL:
+                raise
+            _logger.error("hmi.bind %s skipped: address not on this host "
+                          "(%s); other interfaces still served", entry, exc)
+            continue
         sock.listen(128)
         sock.set_inheritable(False)
         socks.append(sock)
+    if not socks:
+        # Every configured address was absent: same outcome as all-null --
+        # an HMI reachable from nowhere is a config bug the operator must see.
+        raise HmiBindError(
+            "no hmi.bind address exists on this host (%s); the HMI cannot "
+            "serve any interface" % ", ".join(entries))
     return socks
 
 

@@ -52,19 +52,26 @@ def assigned():
 # --------------------------------------------------------------------------
 
 def test_real_file_refuses_naming_the_unassigned_binds():
-    """*** Today's truth: the file is shape-clean, and the WIFI bind hmi.bind[1]
-    is now ASSIGNED (192.168.1.7:18083, the deployment access address the user
-    required 2026-08-12); only the LAN2 bind hmi.bind[0] is still null (U-15
-    pending). So startup must refuse AND name the still-unassigned LAN2 key --
-    but must NOT name bind[1], which is filled. This pins the designed
-    unfilled-config behaviour without regressing the intentional wifi fill."""
+    """*** Today's truth: the file is shape-clean and BOTH HMI binds are now
+    assigned -- the wifi bind hmi.bind[1] since 2026-08-12, and the LAN2 bind
+    hmi.bind[0] since 2026-10-25 (99 U92: 192.168.188.200:18083 on the party-A
+    ad-hoc network). What is still null is the FTP listen address pair
+    (delivery.ftp.listen_address; FTP is not part of U92). So startup must
+    still refuse AND name those keys -- but must NOT name either HMI bind.
+
+    Superseded (2026-08-12 .. 2026-10-25): this case asserted hmi.bind[0] WAS
+    named, because LAN2 was "pending U-15". U92 assigned it, so that assertion
+    now pins a past state; it is inverted below rather than deleted, so the
+    LAN2 fill is itself protected against a regression back to null.
+    """
     with pytest.raises(P5ConfigError) as err:
         check_p5_config(real_mapping())
     msg = str(err.value)
     assert "unassigned" in msg
-    # bind[0] (LAN2) still null -> named; bind[1] (wifi) assigned -> NOT named.
-    assert "hmi.bind[0]" in msg
+    # Both HMI binds are assigned -> neither is named.
+    assert "hmi.bind[0]" not in msg
     assert "hmi.bind[1]" not in msg
+    # FTP still null -> named.
     assert "delivery.ftp.listen_address[0]" in msg
 
 
