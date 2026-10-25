@@ -199,7 +199,11 @@ def test_voice_motion_frame_passes_p2s_real_gates():
     """
     tier2 = lambda *a, **k: Tier2Classification(          # noqa: E731
         name="move_forward", slots={"distance_m": 3.0})
-    payload = _frames("帮我处理一下那个事情", tier2=tier2)["cmd/motion/intent"]
+    # The number must be IN the utterance since 2026-10-26 (8af46dd): an LLM
+    # distance with no source in what was said is dropped as invented. "三号"
+    # carries the 3 without a unit, so only the tier-2 slot can deliver it.
+    payload = _frames("帮我处理一下那个三号的事情",
+                      tier2=tier2)["cmd/motion/intent"]
     # G-1: the envelope is validated and NOT exempted.
     cmd = parse_intent_envelope(payload)
     # *** auth_level must be the contract's "L1", not the registry's L1a/L1b.
@@ -233,8 +237,10 @@ def test_p4_never_clamps_an_over_range_distance():
     """
     tier2 = lambda *a, **k: Tier2Classification(          # noqa: E731
         name="move_forward", slots={"distance_m": 25.0})
+    # "二十五号": 25 said (grounded, see the case above), no unit.
     cmd = parse_intent_envelope(
-        _frames("帮我处理一下那个事情", tier2=tier2)["cmd/motion/intent"])
+        _frames("帮我处理一下那个二十五号的事情",
+                tier2=tier2)["cmd/motion/intent"])
     assert cmd["slots"]["distance_m"] == 25.0        # 原样, 没被 P4 削
     verdict = motion_evaluate(
         cmd, limits=MotionLimits(max_distance_m=20.0, max_angle_deg=720.0),
