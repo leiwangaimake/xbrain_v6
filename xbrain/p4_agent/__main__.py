@@ -170,7 +170,7 @@ def _build_tier2_fn(config_dir, registry, *, base_url, model, timeout_s):
 def _build_asr_post(cfg, registry):
     """16 S3 post-processor from the resolved asr_post.* keys, or None.
 
-    L2 corrects towards D/E keywords only and protects every keyword (see
+    L2 corrects towards A/D/E keywords and protects every keyword (see
     three_layer.L2_TARGET_CLASSES for why). A missing pypinyin disables L2
     loudly and keeps L1: the post-processor improves recognition, it is not a
     gate, so its absence degrades the turn instead of stopping the loop.

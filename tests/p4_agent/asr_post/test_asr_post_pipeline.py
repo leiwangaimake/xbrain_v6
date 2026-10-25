@@ -19,9 +19,12 @@ What these cases pin.
   * L2 never manufactures a command the operator did not say. A first prototype
     with every intent keyword as a target turned "灯开到最大" into "灯开倒退大"
     (A06 backward, a motion command), "关闭" into "关机", "后态" into "后退".
-    Two rules close that, and each has a case: targets are D/E keywords only
-    (payload and PTZ, the classes whose words were being misheard), and a
-    two-character window must be an exact homophone (distance 0).
+    Two rules close that, and each has a case: targets are A/D/E keywords only
+    (motion, payload, PTZ -- A added 2026-10-25 by user ruling; H system and
+    the other classes stay out), and a two-character window must be an exact
+    homophone (distance 0).
+  * Misheard MOTION words are corrected (2026-10-25): 往后腿 -> 往后退,
+    站齐来 -> 站起来, 向左赚 -> 向左转.
   * A word that is already a legal keyword of ANY class is never touched.
   * A tie between two targets is not resolved (16 S3.3: "多个同分候选 不替换").
   * Non-CJK characters in the text do not shift the pinyin alignment.
@@ -45,6 +48,7 @@ show the layer is worth having.
 
 Mutants this file kills (run by hand, see the batch commit message):
   * L2 targets widened to every class        -> never-manufactures case
+  * L2 targets back to D/E only              -> motion-word case
   * protected-keyword skip removed            -> legal-keyword case
   * 2-character exact rule removed            -> two-character case
   * tie rule removed (first candidate wins)   -> tie case
@@ -106,7 +110,7 @@ def _reg():
 
 
 def _l2():
-    """L2 built exactly as p4 __main__ builds it: D/E targets, all protected.
+    """L2 built exactly as p4 __main__ builds it: A/D/E targets, all protected.
 
     If this helper and __main__._build_asr_post ever disagree, the cases below
     stop describing what runs on the robot. They are kept as two separate
@@ -155,6 +159,31 @@ def test_l2_fixes_the_measured_homophone_errors(heard, meant):
     assert corrections, "a correction happened but was not reported"
 
 
+# Motion words, corrected since 2026-10-25 (user ruling). Each sentence was
+# left untouched by the D/E-only layer; each is a near-miss of an A keyword.
+
+@pytest.mark.parametrize("heard, meant", [
+    ("往后腿", "往后退"),        # A06 move_backward, 3 chars at distance 0
+    ("向后腿一点", "向后退一点"),  # the same inside a longer sentence
+    ("站齐来", "站起来"),        # A03 stand (also a stand bypass word)
+    ("向左赚", "向左转"),        # A09 turn_left
+])
+def test_l2_corrects_a_misheard_motion_word(heard, meant):
+    """A misheard motion keyword comes back as the keyword.
+
+    This is the positive half of the A-class ruling: without it, a layer that
+    still targeted D/E only would pass the whole file. The phrases are
+    near-homophones (后腿/后退, 齐/起, 赚/转) of the A keywords; none appeared in
+    the 91 transcripts logged on 2026-10-25, which is why they are
+    constructed -- and why the replay of those 91 showed no change.
+    """
+    out, corrections = _l2().apply(heard)
+    # The motion keyword the operator meant ...
+    assert out == meant, (heard, out, corrections)
+    # ... reported as an L2 correction, for the 16 S3.5 trail.
+    assert corrections, "a correction happened but was not reported"
+
+
 # The negative half: these carry the safety argument (see the module header).
 
 @pytest.mark.parametrize("text", [
@@ -164,12 +193,10 @@ def test_l2_fixes_the_measured_homophone_errors(heard, meant):
     "在打开后态中",    # prototype: 后态 -> 后退
     "今天天气不错",    # ordinary speech must pass through untouched
     "到这里啊",        # the 2026-10-24 misread of 调到最暗; nothing fits it
-    # Near-misses of NON-target keywords at 3+ characters, where distance 1
-    # is allowed. Only the D/E restriction keeps these: with every class as
-    # a target, L2 rewrites them into the command (measured 2026-10-25).
+    # A near-miss of a NON-target keyword at 3+ characters, where distance 1
+    # is allowed. Only the class restriction keeps it: with H as a target,
+    # L2 rewrites it into a shutdown (measured 2026-10-25).
     "关鸡吧",          # -> 关机吧, H08 shutdown
-    "往后腿",          # -> 往后退, A06 move_backward
-    "站齐来",          # -> 站起来, A03 stand
 ])
 def test_l2_never_manufactures_a_command_the_operator_did_not_say(text):
     """None of these may change: a wrong correction is worse than none.
@@ -177,20 +204,20 @@ def test_l2_never_manufactures_a_command_the_operator_did_not_say(text):
     The first four are the prototype's actual rewrites. Each one turned a
     harmless sentence into a motion or power command -- "倒退" and "后退" are
     A-class motion keywords, "关机" is a shutdown. The robot would have
-    executed a command nobody gave. They stay unchanged now for two
-    independent reasons: A/B/C words are not L2 targets at all, and a
-    two-character window like "到最" needs an exact homophone, which "倒退"
-    (dao tui) is not.
+    executed a command nobody gave. Since A became a target (2026-10-25) the
+    motion ones are held by the two-character rule alone: "到最" -> "倒退"
+    and "后态" -> "后退" are one letter off, and a two-character window needs
+    an exact homophone. "关闭" -> "关机" is held by both rules (H is not a
+    target, and it is two characters).
 
     The next two show the layer leaves ordinary speech and an un-fixable
     misread alone. "到这里啊" is deliberately not corrected into anything:
     the right answer for it is the B01 clarify path, not a guess.
 
-    The last three are the ones the 2-character rule cannot protect: three
-    characters, one letter (or zero) away from a motion or shutdown keyword.
-    A misheard motion word therefore reaches the classifier as heard and is
-    handled there (keyword miss -> tier-2 LLM / clarify), never turned into
-    the motion command by a spelling fix.
+    The last one is what the 2-character rule cannot protect: three
+    characters, one letter away from a shutdown keyword. Only the class
+    restriction keeps it; a mutant that widened the targets to every class
+    turns it into "关机吧".
     """
     out, corrections = _l2().apply(text)
     # Unchanged, and no correction reported.

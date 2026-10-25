@@ -132,14 +132,29 @@ def post_process(raw: str, l1: L1Dict, l3: L3ClosedSet) -> str:
 PHRASE_MIN, PHRASE_MAX = 2, 5
 
 #: Intent classes whose keywords L2 may correct TOWARDS (18 class letters).
-#: D = payload (lights / siren / speaker), E = PTZ: the classes whose words were
-#: being misheard on the robot. Every other class is excluded on purpose: a
-#: first prototype that used all keywords turned "灯开到最大" into "灯开倒退大"
-#: (A06 backward, a motion command), "关闭" into "关机" and "后态" into "后退".
-#: A correction must never manufacture a motion or system command -- the same
-#: non-symmetric cost 16 S4.1 states for the safety bypass. All classes are
-#: still PROTECTED (a legal keyword of any class is never rewritten).
-L2_TARGET_CLASSES = ("D", "E")
+#: A = motion, D = payload (lights / siren / speaker), E = PTZ. All classes
+#: are PROTECTED either way (a legal keyword of any class is never rewritten).
+#:
+#: History, kept because the reason for each letter is the point:
+#:   * 2026-10-24 (f8068b9): D and E only. A first prototype with every class
+#:     as a target turned "灯开到最大" into "灯开倒退大" (A06), "关闭" into
+#:     "关机" (H08) and "后态" into "后退" -- a correction manufacturing a
+#:     motion or system command.
+#:   * 2026-10-25: A added (user ruling: misheard motion words are to be
+#:     corrected too). Two of the three prototype failures were two-character
+#:     windows, which the distance-0 rule for two characters now blocks
+#:     ("到最" vs "倒退" is one letter off). Replaying all 91 distinct ASR
+#:     transcripts logged on .1.26 that day through A+D+E vs D+E changed NONE
+#:     of them; the new corrections are near-misses such as "往后腿" ->
+#:     "往后退", "站齐来" -> "站起来", "左赚" -> "左转".
+#:   * Still excluded: H (system -- "关鸡吧" -> "关机吧" would be a shutdown),
+#:     B (task creation, which needs a resolved geo_id anyway), C / F / G / I
+#:     / J. Widening further is a separate ruling.
+#: Known cost, accepted with the ruling: a real word that is an exact
+#: homophone of a motion keyword is rewritten ("后腿" -> "后退", "爬下" ->
+#: "趴下"); 16 S4 also matches the bypass on the corrected text, so "爬下"
+#: reaches the prone bypass.
+L2_TARGET_CLASSES = ("A", "D", "E")
 
 #: One correction: (layer, text before, text after, pinyin distance or 0).
 Correction = Tuple[str, str, str, int]
