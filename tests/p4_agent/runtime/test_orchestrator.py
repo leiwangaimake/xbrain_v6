@@ -247,11 +247,18 @@ def test_tier2_slots_propagate_to_dispatch():
     """The LLM-extracted slots reach the dispatch payload (the free-text/number
     slots the fastpath cannot fill). MUTATION: dropping the llm_slots merge in
     _dispatch_entry loses distance_m here. Also asserts tier-2 is called ONCE
-    (no wasteful second call when the classified intent is route=='llm')."""
+    (no wasteful second call when the classified intent is route=='llm').
+
+    2026-10-26: the utterance now CONTAINS the number (三, with no unit, so
+    the fast leg cannot read it and only the LLM merge can deliver it). It
+    used to be "帮我处理一下那个事情" -- no number at all -- and asserted the
+    LLM's 3 m went out anyway: exactly the invented distance the grounding
+    check (slots/motion_slots.ground_llm_slots, test_motion_numbers) now
+    drops. The merge mutation above is still what turns this red."""
     t2 = _RecordingTier2(ret=Tier2Classification(
         name="move_forward", slots={"distance_m": 3}))
     orch = _orch(t2)
-    d = orch.handle_turn("帮我处理一下那个事情", OrchestratorSession(),
+    d = orch.handle_turn("帮我处理一下那个三号的事情", OrchestratorSession(),
                          now_mono_ms=1)
     assert d.kind == "dispatch" and d.intent_name == "move_forward"
     assert d.dispatch_result.payload.get("distance_m") == 3

@@ -78,6 +78,11 @@ from xbrain.p4_agent.runtime.mode_request import (
     is_mode_intent,
     to_mode_command,
 )
+from xbrain.p4_agent.slots.motion_slots import (
+    ground_llm_slots,
+    missing_motion_slot,
+    motion_slots,
+)
 from xbrain.p4_agent.runtime.motion_intent_request import (
     MOTION_CHANNELS,
     MotionIntentError,
@@ -658,11 +663,22 @@ class TurnOrchestrator:
         # payload level/mode/volume intents, so p2 gets the requested value
         # (D17 level / D18 mode / D10 volume), not just the intent id.
         extra = _payload_slots(entry.id, text)
+        # A05-A10 numeric slot from the text (2026-10-26): "前进三米" ->
+        # distance_m 3, "左转九十度" -> angle_deg 90. Before this the fast leg
+        # had no number reader and every such command ended in "要走多远?".
+        fast_motion = motion_slots(entry.name, text)
+        if fast_motion:
+            extra = {**(extra or {}), **fast_motion}
         # Merge the tier-2 LLM slots OVER the fastpath ones: the LLM fills the
         # slots the fastpath regex cannot (free text, names), and the fastpath
         # fills the closed-set enums. LLM values win a key collision.
+        # A numeric motion slot from the LLM must be GROUNDED in what was said
+        # (motion_slots.ground_llm_slots): the 3B model invents distances for
+        # vague commands, and an invented number here becomes real motion. An
+        # ungrounded one is dropped and the turn asks instead (16 EV-2).
         if llm_slots:
-            extra = {**(extra or {}), **llm_slots}
+            extra = {**(extra or {}),
+                     **ground_llm_slots(entry.name, llm_slots, text)}
         # 16 S6.6.4 fastpath_then_llm: a keyword hit that did not fill the
         # destination is NOT a finished fast leg -- it goes to the tier-2 LLM
         # leg, which may name the waypoint (or classify the utterance as
@@ -675,6 +691,18 @@ class TurnOrchestrator:
         if (entry.route == "fastpath_then_llm" and not llm_used
                 and missing_destination(entry.name, extra)):
             return self._run_tier2(text, session, now_mono_ms)
+        # The same LLM leg for A05-A10 when the fast leg found no number
+        # (2026-10-26; 16 S6.6.4 lists them with the B01 bimodal set). One
+        # difference from B01: when the LLM is unavailable or declines, the
+        # turn does not end as "denied" -- it falls through to the MI-2
+        # clarify below ("要走多远?"), which is what the fast leg alone gave
+        # before and what an operator can act on.
+        if (entry.route == "fastpath_then_llm" and not llm_used
+                and missing_motion_slot(entry.name, extra)):
+            slow = self._run_tier2(text, session, now_mono_ms)
+            if not (slow.kind == "denied" and slow.intent_name is None):
+                return slow  # the LLM leg produced a real outcome
+            llm_used = True  # tried once; never re-enter, ask instead
         # PB4: a task-CREATE intent (goto/patrol/charge/teach/follow) carries a
         # cmd/task REQUEST P3's ingest records into task.db -- {task_type,
         # intent, id, slots, source}. Without it the cmd/task frame is just the
