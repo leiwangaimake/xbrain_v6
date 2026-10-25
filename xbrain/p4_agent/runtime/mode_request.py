@@ -42,6 +42,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional
 
+from xbrain.p4_agent.runtime import turn_labels  # 11 provenance closed sets
+
 #: 18 C 类 -> S7.3 action. 值是 (action, voice_mode), voice_mode 仅
 #: set_voice_mode 用得上, 其余为 None.
 #:
@@ -103,11 +105,16 @@ def to_mode_command(intent_name: str, *, slots: Mapping[str, Any],
     entry = _MODE_INTENTS.get(intent_name)
     if entry is None:
         return None
+    if source not in turn_labels.MODE_SOURCES:
+        # S7.3 闭集外: 2026-10-26 之前 P4 一直发 "voice", 不在闭集里.
+        raise ValueError("mode source %r not in S7.3 set %s"
+                         % (source, sorted(turn_labels.MODE_SOURCES)))
     action, voice_mode = entry
     payload: Dict[str, Any] = {
         "cmd_id": cmd_id,
         "action": action,
-        # S7.3 的 source 是[通道]. 语音就是 voice, NO 不从槽位里取 --
+        # S7.3 的 source 是[通道] (本地麦 voice_local / cloud / wecom / hmi,
+        # 由调用方按本轮入口经 turn_labels.mode_source 给出), NO 不从槽位里取 --
         # 与 cmd/geo 的 origin 同理(CH-2), 发起方不得自称是别人.
         "source": source,
     }

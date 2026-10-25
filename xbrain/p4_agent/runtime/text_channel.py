@@ -82,6 +82,7 @@ def handle_text_command(
     now_mono_ms: int,
     raw_text: Optional[str] = None,
     addressed: bool = True,
+    modality: str = "text",
 ) -> TextTurnResult:
     """Process one cmd/voice_text message. NO ASR is invoked.
 
@@ -102,6 +103,9 @@ def handle_text_command(
         robot is directed by construction, so the 16 S5.2.1 overheard cue
         (wake word / imperative) is waived. Cloud AUDIO passes False: it is
         a microphone at the far end and can carry bystander speech.
+      * modality -- "text" for typed input, "voice" for cloud audio; it goes
+        with the channel into every command's provenance (turn_labels), e.g.
+        cmd/teach issuer.channel cloud_text vs cloud_voice.
     """
     channel = msg.get("channel")
     if channel not in _TEXT_CHANNELS:
@@ -129,7 +133,7 @@ def handle_text_command(
     decision = orchestrator.handle_turn(text, session, now_mono_ms,
                                         raw_text=raw_text,
                                         addressed=addressed,
-                                        channel=channel)
+                                        channel=channel, modality=modality)
     pubs: List[Tuple[str, bytes]] = []
     for key, payload in decision_to_publishes(decision):
         # require_tts_reply=false: text/HMI/WeChat callers can suppress the

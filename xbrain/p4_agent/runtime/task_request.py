@@ -58,6 +58,7 @@ from __future__ import annotations
 from typing import Any, Dict, Mapping, Optional
 
 from xbrain.p4_agent.registry.intents import IntentRegistry
+from xbrain.p4_agent.runtime import turn_labels  # 11 provenance closed sets
 
 # Intent NAME -> task.db task_type (15 S12 TASK_TYPES 7-value closed set).
 # ONLY the intents that CREATE a task are here. Task-CONTROL intents
@@ -191,6 +192,14 @@ def to_task_command(
     17 S6.8.4 field 3). Defaulted to '' so a caller that has no text (or a
     test) still builds a valid request -- P3 stores '' as NULL.
     """
+    if source not in turn_labels.TASK_SOURCES:
+        # P3 maps source through an explicit table (15 S4.2); an off-table
+        # value is a caller bug, refused here rather than by P3 later.
+        # 2026-10-26: the value is the TURN's channel mapped by turn_labels
+        # (voice / cloud / wecom / hmi); it used to be the orchestrator's
+        # constant "voice", which queued every cloud task as on-site.
+        raise ValueError("task source %r not in %s"  # ValueError: a bug
+                         % (source, sorted(turn_labels.TASK_SOURCES)))
     task_type = _TASK_CREATE_INTENTS.get(intent_name)
     if task_type is None:
         return None    # not a task-family create intent

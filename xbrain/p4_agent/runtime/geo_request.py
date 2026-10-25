@@ -37,6 +37,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from xbrain.p4_agent.runtime import turn_labels  # 11 provenance closed sets
+
 #: 18 intent name -> (geo action, geo type, slot carrying the target).
 _GEO_INTENTS: Dict[str, tuple] = {
     "delete_route": ("delete", "route", "route"),          # F11
@@ -111,6 +113,10 @@ def to_geo_command(intent_name: str, *, slots: Mapping[str, Any], cmd_id: str,
     the optimistic-concurrency check meaningful: sending 0 would conflict with
     every object that has ever been edited.
     """
+    if origin not in turn_labels.ORIGINS:
+        # S7.9.5 闭集外是调用方 bug; 写权限按 origin 判 (P3), 不能猜.
+        raise ValueError("origin %r not in S7.9.5 set %s"
+                         % (origin, sorted(turn_labels.ORIGINS)))
     entry = _GEO_INTENTS.get(intent_name)
     if entry is None:
         return None

@@ -183,7 +183,10 @@ def test_voice_mode_frame_is_applied_by_p2s_real_receiver():
     # says accepted while the machine sits in idle is the exact failure SP-C3
     # warns about.
     assert face.state.value == "broadcast"
-    assert payload["source"] == "voice"
+    # 11 S7.3 spells the microphone "voice_local". Until 2026-10-26 P4 sent
+    # "voice" -- not in that closed set -- and this line asserted it; the
+    # builder now refuses anything outside S7.3 (runtime/turn_labels).
+    assert payload["source"] == "voice_local"
 
 
 def test_voice_motion_frame_passes_p2s_real_gates():

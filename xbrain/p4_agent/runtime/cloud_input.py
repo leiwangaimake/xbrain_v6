@@ -515,7 +515,8 @@ class CloudTurnRunner:
         res = handle_text_command(msg, self._orch,
                                   self._session_for(utt.channel),  # shared
                                   self._matcher, self._now_ms(),  # with text
-                                  raw_text=raw_text, addressed=False)
+                                  raw_text=raw_text, addressed=False,
+                                  modality="voice")  # spoken, not typed
         self.voice_turns += 1
         # Both forms logged, as 11 S8.7.6 wants them in the audit record.
         _logger.info("voice_in asr_raw=%r asr_text=%r", raw_text, text)

@@ -39,6 +39,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional
 
+from xbrain.p4_agent.runtime import turn_labels  # 11 provenance closed sets
+
 #: S7.15.2 action 七值闭集. 本表只列 H 类语音能发起的; shutdown 也在闭集里,
 #: 但 18 的 H08 有自己的确认要求, 与 reboot 同属 L2.
 _SYSTEM_INTENTS: Dict[str, str] = {
@@ -61,8 +63,11 @@ _ACTION_PARAMS: Dict[str, tuple] = {
     "shutdown": ("delay_s",),
 }
 
-#: 语音来源恒 voice. origin 是授权边界, 不接受发起方自称.
-_VOICE_ORIGIN = "voice"
+#: *** 2026-10-26 订正: 此处原为 _VOICE_ORIGIN = "voice", 而调用方传入的是
+#: 编排器构造期常量 "voice", 于是云端/微信/HMI 发来的系统指令一律标成 voice --
+#: S7.15.4 通道权限矩阵按 origin 判, 判据就错了. 现由调用方按[本轮]入口传入
+#: turn_labels.origin(channel) 的值, 这里只按 S7.15 闭集校验, 越界即抛.
+#: origin 仍是授权边界: 不从 slots 取, 不接受发起方自称.
 
 
 class SystemRequestError(RuntimeError):
@@ -80,12 +85,16 @@ def to_system_command(intent_name: str, *, slots: Mapping[str, Any],
     action = _SYSTEM_INTENTS.get(intent_name)
     if action is None:
         return None
+    if source not in turn_labels.ORIGINS:
+        # 调用方的 bug (闭集外的 origin), 不是这条指令说不清: ValueError.
+        raise ValueError("origin %r not in S7.15 set %s"
+                         % (source, sorted(turn_labels.ORIGINS)))
     payload: Dict[str, Any] = {
         "v": 1,
         "cmd_id": cmd_id,
         "action": action,
         # NO 不从 slots 取: 见模块头注, origin 是授权边界.
-        "origin": _VOICE_ORIGIN if source in ("voice", "text") else source,
+        "origin": source,
     }
     for name in _ACTION_PARAMS.get(action, ()):
         value = slots.get(name)

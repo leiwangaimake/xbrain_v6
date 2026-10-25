@@ -37,6 +37,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional
 
+from xbrain.p4_agent.runtime import turn_labels  # 11 provenance closed sets
+
 #: 18 B 类 -> 11 S7.2 action. 只含能表达成 S7.2 动作的三条.
 _CONTROL_INTENTS: Dict[str, str] = {
     "pause_task": "pause",
@@ -91,6 +93,10 @@ def to_task_control_command(intent_name: str, *,
     action = _CONTROL_INTENTS.get(intent_name)
     if action is None:
         return None
+    if source not in turn_labels.TASK_SOURCES:
+        # P3 只认显式表里的来源; 闭集外是调用方 bug.
+        raise ValueError("task source %r not in %s"
+                         % (source, sorted(turn_labels.TASK_SOURCES)))
     active = current_task_from_state(state)
     task_id = (active or {}).get("task_id")
     if not isinstance(task_id, str) or not task_id:

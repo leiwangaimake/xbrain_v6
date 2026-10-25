@@ -433,17 +433,22 @@ def test_device_intent_has_no_task_request():
     assert "task_command" not in d.dispatch_result.payload
 
 
-def test_orchestrator_source_flows_into_request():
-    """The orchestrator's source ('text' for a text channel) is what the
-    command records -- P3 maps it onto the five-value tasks.source with an
-    explicit table (15 S4.2). MUTATION: hard-coding 'voice' would fail here."""
+def test_the_turn_s_channel_flows_into_the_task_request():
+    """The TURN's channel is what the task records -- P3 maps it onto the
+    five-value tasks.source with an explicit table (15 S4.2), cloud -> cloud
+    (priority 80). MUTATION: hard-coding 'voice' would fail here.
+
+    2026-10-26: this used to construct the orchestrator with source="text"
+    and assert "text". Provenance is per turn now (one orchestrator serves
+    every entry; runtime/turn_labels); the constructor parameter is gone."""
     orch = TurnOrchestrator(
         _reg(), chitchat=_chitchat(),
         tier2_fn=_RecordingTier2(ret=Tier2Classification(
             name="patrol_route", slots={"route": "东门路线"})),
-        l2_timeout_ms=5000, source="text", state_fn=_manifest([_EAST]))
-    d = orch.handle_turn(_UNMATCHED, OrchestratorSession(), now_mono_ms=1000)
-    assert d.dispatch_result.payload["task_command"]["source"] == "text"
+        l2_timeout_ms=5000, state_fn=_manifest([_EAST]))
+    d = orch.handle_turn(_UNMATCHED, OrchestratorSession(), now_mono_ms=1000,
+                         channel="cloud", modality="text")
+    assert d.dispatch_result.payload["task_command"]["source"] == "cloud"
 
 
 # -- route name -> route_id (batch 15) -----------------------------------

@@ -3595,7 +3595,9 @@ sessions = {
 | 被抢占 | 收到 P2 的 `on_preempt` → 结束当前轮，**保留对话态** |
 | 空闲回收 | 超过 `session_idle_s`（默认 120 s）**清空对话态** |
 
-> ★ **2026-10-25 实现补记 · 文本与云端语音的槽位归属**（`xbrain/p4_agent/runtime/cloud_input.py`）：`cmd/voice_text` 与 `audio/voice_in` 按 `channel` 入槽 —— `cloud` → cloud 槽、`wecom` → wecom 槽；★ **`hmi` 文本 → local 槽**（与本地麦同一会话：HMI 与麦克风都是现场输入，操作员可在 HMI 点一条指令再口头「确认」）。同一渠道的文本与语音共用一槽（云端打字发起的确认可用云端语音回答）。★ 未实现：「同时刻仅一个有效」与 C > E > A 优先级 —— 目前所有轮次在同一工作线程上**按到达顺序串行**；空闲回收（`session_idle_s`）对四个入口都尚未实现。
+> ★ **2026-10-25 实现补记 · 文本与云端语音的槽位归属**（`xbrain/p4_agent/runtime/cloud_input.py`）：`cmd/voice_text` 与 `audio/voice_in` 按 `channel` 入槽 —— `cloud` → cloud 槽、`wecom` → wecom 槽；★ **`hmi` 文本 → local 槽**（与本地麦同一会话：HMI 与麦克风都是现场输入，操作员可在 HMI 点一条指令再口头「确认」）。同一渠道的文本与语音共用一槽（云端打字发起的确认可用云端语音回答）。
+>
+> ★ **2026-10-26 实现补记 · 指令来源按本轮入口标注**（`xbrain/p4_agent/runtime/turn_labels.py`）：此前 p4 生成的每一条指令都取编排器构造期常量 `source="voice"`，而一个编排器同时服务四个入口 ⇒ 云端任务按现场优先级（40 而非 80）入队、`cmd/mode` 带着 §7.3 闭集外的 `voice`、`cmd/system` 的通道权限矩阵恒按本地语音判、`cmd/geo` 的 origin 恒为 `voice`、`cmd/teach` 的 `issuer.channel` 恒为 `local_voice`。★ 现行：每轮带「入口（mic_local / cloud / wecom / hmi）＋ 方式（voice / text）」，按各契约取值 —— `cmd/task` source = voice | cloud | wecom | hmi（P3 显式表映射）；`cmd/mode` source = voice_local | cloud | wecom | hmi（`11` §7.3）；`cmd/system` / `cmd/geo` origin = voice | cloud | wecom | hmi（§7.15 / §7.9.5）；`cmd/teach` issuer.channel = local_voice | cloud_voice | cloud_text | wecom | hmi（§12A.4，唯一区分语音 / 打字的一个）；运动帧 channel 见 604e373。★ 不可能的组合（本地麦＋打字、HMI＋语音）与闭集外值一律抛错；各指令构造函数再按自己的闭集复核。★ 判据：`tests/p4_agent/runtime/test_turn_labels.py`（手工变异 17 条全杀）。★ 未实现：「同时刻仅一个有效」与 C > E > A 优先级 —— 目前所有轮次在同一工作线程上**按到达顺序串行**；空闲回收（`session_idle_s`）对四个入口都尚未实现。
 
 > ★★ **不要把这里的「上下文」实现成对话转录。** §6.3.5 H-1 已定：prompt 的 history 层是
 > **由对话态渲染出的固定 1 行**，不是逐轮累积的原话缓冲。★ 会话槽持有的是**对话态对象**，

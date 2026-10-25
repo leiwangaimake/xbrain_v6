@@ -33,6 +33,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional
 
+from xbrain.p4_agent.runtime import turn_labels  # 11 provenance closed sets
+
 #: 18 intent name -> (teach action, kind). kind is None for the actions that
 #: operate on whatever session is open. Transcribed from the S12A.1 table.
 _TEACH_INTENTS: Dict[str, tuple] = {
@@ -54,9 +56,14 @@ _TEACH_INTENTS: Dict[str, tuple] = {
 _NEEDS_SESSION = frozenset({"finish", "save", "discard", "mark", "undo",
                             "pause", "resume"})
 
-#: The issuer.channel value per P4 source. S12A.4 records it for audit and for
-#: the non_local_issuer warning; it never denies (see command.py).
-_CHANNEL = {"voice": "local_voice", "text": "cloud_text"}
+#: issuer.channel (S12A.4: local_voice | cloud_voice | cloud_text | wecom | hmi)
+#: is recorded for audit and for the non_local_issuer warning; it never denies
+#: (see command.py). *** 2026-10-26: this was a map {"voice": "local_voice",
+#: "text": "cloud_text"} fed with the orchestrator's constant "voice", and any
+#: other value fell back to local_voice -- so every recording command looked
+#: local, and an HMI text would have been called cloud_text. The caller now
+#: passes the S12A.4 value itself (turn_labels.teach_issuer_channel), checked
+#: against the closed set here.
 
 
 class TeachRequestError(RuntimeError):
@@ -68,7 +75,7 @@ def is_teach_intent(intent_name: str) -> bool:
 
 
 def to_teach_command(intent_name: str, *, slots: Mapping[str, Any],
-                     cmd_id: str, source: str = "voice",
+                     cmd_id: str, issuer_channel: str = "local_voice",
                      session_id: Optional[str] = None,
                      op_ip: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Build the cmd/teach payload for an F01-F10 turn, or None.
@@ -78,6 +85,10 @@ def to_teach_command(intent_name: str, *, slots: Mapping[str, Any],
     the two cases are different and must not collapse: the first is "not my
     family", the second is "yours, but I need something you did not say".
     """
+    if issuer_channel not in turn_labels.TEACH_ISSUER_CHANNELS:
+        raise ValueError("issuer channel %r not in S12A.4 set %s"
+                         % (issuer_channel,
+                            sorted(turn_labels.TEACH_ISSUER_CHANNELS)))
     entry = _TEACH_INTENTS.get(intent_name)
     if entry is None:
         return None
@@ -88,7 +99,7 @@ def to_teach_command(intent_name: str, *, slots: Mapping[str, Any],
         "cmd_id": cmd_id,
         "action": action,
         "issuer": {"src": "p4_agent",
-                   "channel": _CHANNEL.get(source, "local_voice")},
+                   "channel": issuer_channel},
     }
     if op_ip:
         payload["issuer"]["op_ip"] = op_ip

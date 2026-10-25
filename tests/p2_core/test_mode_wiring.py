@@ -134,7 +134,7 @@ def test_a13_speed_profile_from_voice_is_accepted_without_changing_mode():
     """
     from xbrain.p4_agent.runtime.mode_request import to_mode_command
     built = to_mode_command("set_speed_profile", slots={"profile": "patrol"},
-                            cmd_id="c-a13", source="voice")
+                            cmd_id="c-a13", source="voice_local")
     pub = _Pub()
     face = _face(pub, initial=ModeState.BROADCAST)
     ack = face.handle_frame(json.dumps(built).encode("utf-8"), now_mono_ms=1)
@@ -154,7 +154,7 @@ def test_a13_retired_profiles_are_refused_by_the_builder(profile):
     )
     with pytest.raises(ModeRequestError):
         to_mode_command("set_speed_profile", slots={"profile": profile},
-                        cmd_id="c-x", source="voice")
+                        cmd_id="c-x", source="voice_local")
 
 
 def test_b12_stop_follow_returns_the_behavior_to_normal():
@@ -169,7 +169,7 @@ def test_b12_stop_follow_returns_the_behavior_to_normal():
     """
     from xbrain.p4_agent.runtime.mode_request import to_mode_command
     built = to_mode_command("stop_follow", slots={}, cmd_id="c-b12",
-                            source="voice")
+                            source="voice_local")
     assert built["action"] == "set_behavior"
     assert built["behavior"] == "normal"
     # 并且 P2 真的吃得下这一帧.

@@ -83,8 +83,14 @@ from xbrain.p4_agent.slots.motion_slots import (
     missing_motion_slot,
     motion_slots,
 )
+from xbrain.p4_agent.runtime.turn_labels import (
+    check_turn,
+    mode_source,
+    origin,
+    task_source,
+    teach_issuer_channel,
+)
 from xbrain.p4_agent.runtime.motion_intent_request import (
-    MOTION_CHANNELS,
     MotionIntentError,
     is_motion_intent,
     to_motion_intent,
@@ -436,7 +442,6 @@ class TurnOrchestrator:
         l2_timeout_ms: int,
         matcher: Optional[KeywordMatcher] = None,
         query_fn: Optional[Callable[[IntentEntry], Optional[str]]] = None,
-        source: str = "voice",
         # A snapshot of the state keys P4 subscribes, keyed by zenoh key.
         # Named state_fn and not geo_state_fn (its 2026-08-20 name): it started
         # out serving only state/geo/manifest, but the B-class task control
@@ -453,17 +458,20 @@ class TurnOrchestrator:
         self._chitchat = chitchat
         self._tier2 = tier2_fn
         self._l2_timeout_ms = l2_timeout_ms
-        # The channel this orchestrator serves ('voice' for the mic loop, or a
-        # text channel). Recorded into a task-create request's `source` so P3
-        # (and telemetry) can tell a spoken task from a typed one.
-        self._source = source
+        # 2026-10-26: the constructor `source` ("voice" by default, the one
+        # value every command was labelled with) is gone. One orchestrator
+        # serves the microphone, cloud text, cloud voice and the HMI, so
+        # provenance is a property of the TURN: handle_turn takes channel +
+        # modality, and each command asks runtime/turn_labels for the value
+        # its own contract spells (task / mode / system / geo / teach).
         # The entry channel of the turn being handled (11 MO-2 closed set),
         # set by handle_turn for exactly one turn. One orchestrator serves the
         # mic, cloud text, cloud voice and HMI alike, so the channel cannot be
-        # a constructor constant the way _source is (2026-10-26: it was, and
-        # every motion frame said mic_local). Turns run on one worker thread,
+        # a constructor constant (2026-10-26: it was -- the removed `source`
+        # -- and every motion frame said mic_local). Turns run on one worker thread,
         # so a per-turn attribute is safe; handle_turn sets it every turn.
         self._turn_channel = "mic_local"
+        self._turn_modality = "voice"  # voice | text, set with the channel
         # GWY-P4-39/41: for a G-class query, query_fn returns the answer
         # rendered from LIVE state (or an 'unknown' reply when stale). When
         # it is None or returns None, the query falls through to a normal
@@ -493,7 +501,8 @@ class TurnOrchestrator:
                     now_mono_ms: int,
                     raw_text: Optional[str] = None,
                     addressed: bool = False,
-                    channel: str = "mic_local") -> TurnDecision:
+                    channel: str = "mic_local",
+                    modality: str = "voice") -> TurnDecision:
         """Process one ASR utterance end-to-end. See module docstring for
         the ordering (16 S5.2).
 
@@ -507,20 +516,22 @@ class TurnOrchestrator:
         including cloud audio, leaves it False. It changes layer 5 only: the
         bypass and the confirm gate run exactly as for voice.
 
-        channel is the entry the turn came in on (11 MO-2: mic_local | cloud |
-        wecom | hmi); it labels the cmd/motion/intent frame, from which P2
-        fills relative_move.source. The default is the microphone path; the
-        text and cloud entries pass theirs explicitly. Out-of-set raises.
+        channel is the entry the turn came in on (mic_local | cloud | wecom |
+        hmi) and modality how (voice | text). Together they label every
+        command the turn builds: the motion frame's channel (MO-2), cmd/task
+        source, cmd/mode source, cmd/system / cmd/geo origin and cmd/teach
+        issuer.channel (turn_labels). The defaults are the microphone path;
+        the text and cloud entries pass theirs explicitly. An out-of-set or
+        impossible pair (mic_local + text, hmi + voice) raises.
         """
-        if channel not in MOTION_CHANNELS:
-            raise ValueError("channel %r not in %s"
-                             % (channel, sorted(MOTION_CHANNELS)))
+        check_turn(channel, modality)
         # Set, not saved and restored: every turn sets it here before anything
         # reads it, and nothing reads it outside a turn, so a previous turn's
         # value (even one that raised) can never be seen. A save/restore was
         # tried and is an EQUIVALENT mutant -- no test can tell it apart --
         # so it is not kept (CLAUDE.md 7.2.1).
         self._turn_channel = channel
+        self._turn_modality = modality
         return self._handle_turn(text, session, now_mono_ms, raw_text,
                                  addressed)
 
@@ -736,7 +747,8 @@ class TurnOrchestrator:
         if is_system_intent(entry.name):
             sys_cmd = to_system_command(
                 entry.name, slots=dict(extra or {}),
-                cmd_id="c-" + uuid.uuid4().hex[:12], source=self._source)
+                cmd_id="c-" + uuid.uuid4().hex[:12],
+                source=origin(self._turn_channel))
             if sys_cmd is not None:
                 extra = {**(extra or {}), "system_command": sys_cmd}
         # 18 B class control (B05/B06/B07) -> 11 S7.2 TaskCommand, with the
@@ -749,7 +761,8 @@ class TurnOrchestrator:
             try:
                 tc = to_task_control_command(
                     entry.name, state=_state,
-                    cmd_id=uuid.uuid4().hex, source=self._source)
+                    cmd_id=uuid.uuid4().hex,
+                    source=task_source(self._turn_channel))
             except TaskControlError as exc:
                 spoken = _TASK_CONTROL_CN.get(
                     str(exc), "现在没有可以操作的任务")
@@ -791,7 +804,8 @@ class TurnOrchestrator:
             try:
                 mode_cmd = to_mode_command(
                     entry.name, slots=dict(extra or {}),
-                    cmd_id=uuid.uuid4().hex, source=self._source)
+                    cmd_id=uuid.uuid4().hex,
+                    source=mode_source(self._turn_channel))
             except ModeRequestError as exc:
                 spoken = _F_REASON_CN.get(str(exc), "这个模式指令没听清, 再说一遍")
                 return TurnDecision(kind="reply", intent_id=entry.id,
@@ -982,7 +996,8 @@ class TurnOrchestrator:
                         str(exc), _NOT_FOUND_CN[gtype])
         try:
             cmd = to_task_command(
-                entry.name, self._registry, slots=merged, source=self._source,
+                entry.name, self._registry, slots=merged,
+                source=task_source(self._turn_channel),
                 cmd_id=uuid.uuid4().hex, text=text, route_id=geo_ids["route"],
                 waypoint_id=geo_ids["waypoint"])
         except TaskRequestError as exc:
@@ -1011,7 +1026,8 @@ class TurnOrchestrator:
             if is_teach_intent(entry.name):
                 cmd = to_teach_command(
                     entry.name, slots=merged, cmd_id=cmd_id,
-                    source=self._source,
+                    issuer_channel=teach_issuer_channel(
+                        self._turn_channel, self._turn_modality),
                     session_id=session_id_from_state(state.get("state/teach")))
                 if cmd is not None:
                     merged["teach_command"] = cmd
@@ -1020,7 +1036,7 @@ class TurnOrchestrator:
                     entry.name, slots=merged, cmd_id=cmd_id,
                     manifest=manifest_from_state(
                         state.get("state/geo/manifest")),
-                    origin="voice" if self._source == "voice" else "voice")
+                    origin=origin(self._turn_channel))
                 if cmd is not None:
                     merged["geo_command"] = cmd
         except TeachRequestError as exc:
