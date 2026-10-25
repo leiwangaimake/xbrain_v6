@@ -66,7 +66,7 @@ class P1EstopLatch:
     """p1 侧软急停锁. ctrl_loop 每拍读 is_active(); 新 intent 触发 rearm.
 
     * 线程: on_estop 在 Zenoh 的 Rust 回调里被调(CLAUDE.md 4.2), 只做纯赋值,
-    不发布不 await. gate_intent 在主线程(_on_intent)调. 两者都只碰这几个
+    不发布不 await. gate_intent 在 nav_wiring._on_relmove(同为 Rust 回调)里调. 两者都只碰这几个
     标量字段, 而标量赋值在 GIL 下原子, 与本进程别处的跨线程缓存同一做法.
     """
 
@@ -101,7 +101,7 @@ class P1EstopLatch:
         return STOP_REASON_SOFT_ESTOP if self._active else STOP_REASON_NONE
 
     def gate_intent(self) -> bool:
-        """一条新 cmd/motion/intent 到达时调. 返回是否放行该 intent.
+        """一条新 cmd/motion/relative_move 到达时调(2026-10-26 前是 cmd/motion/intent). 返回是否放行.
 
         *** latched 时: 清锁(re-arm)并放行(14 S3.7 / U35: 新运动指令即钥匙).
         NO 不拒绝新运动 -- 那会堵死"喊急停 -> 喊前进 -> 走". 与 p2 的

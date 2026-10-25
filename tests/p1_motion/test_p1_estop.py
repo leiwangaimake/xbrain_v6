@@ -225,11 +225,14 @@ def test_cmd_id_fallback_order():
 # --- 启动接线 ---------------------------------------------------------
 
 def test_main_wiring_subscribes_cmd_estop_and_gates_intents():
-    """*** 守启动接线: p1 真的订 cmd/estop, 且 _on_intent 过 gate.
+    """*** 守启动接线: p1 真的订 cmd/estop, 且 relmove 回调过 gate.
 
     P1-21 的白名单登记了 cmd/estop, 而代码此前没订(批59). 这条用 AST 查:
       1. main_wiring 有 declare_subscriber(CMD_ESTOP_TOPIC, ...)
-      2. gate_intent 在 _on_intent 里被调(急停后新 intent 走 re-arm)
+      2. gate_intent 在 nav_wiring._on_relmove 里被调(急停后新运动指令
+         走 re-arm). 2026-10-26 前查的是 main_wiring._on_intent -- 那条
+         cmd/motion/intent 转发器已删(11 S2.2 只有 p2_core 订该 key).
+      3. main_wiring 不再有 _on_intent
     NO 不 grep -- 注释里就写着 cmd/estop.
 
     MUTATION: 注释掉 declare_subscriber(CMD_ESTOP_TOPIC,...) -> 第1条红.
@@ -237,10 +240,9 @@ def test_main_wiring_subscribes_cmd_estop_and_gates_intents():
     import ast
     import pathlib
 
-    src = (pathlib.Path(__file__).resolve().parents[2] / "xbrain"
-           / "p1_motion" / "runtime" / "main_wiring.py").read_text(
-               encoding="utf-8")
-    tree = ast.parse(src)
+    rt_dir = (pathlib.Path(__file__).resolve().parents[2] / "xbrain"
+              / "p1_motion" / "runtime")
+    tree = ast.parse((rt_dir / "main_wiring.py").read_text(encoding="utf-8"))
 
     subs = [n for n in ast.walk(tree)
             if isinstance(n, ast.Call)
@@ -249,10 +251,61 @@ def test_main_wiring_subscribes_cmd_estop_and_gates_intents():
     assert len(subs) == 1, (
         "main_wiring 订阅 CMD_ESTOP_TOPIC 的调用有 %d 处 -- 急停到不了 p1"
         % len(subs))
+    assert not [f for f in ast.walk(tree)
+                if isinstance(f, ast.FunctionDef) and f.name == "_on_intent"], (
+        "main_wiring 又有 _on_intent 了 -- cmd/motion/intent 不归 p1 订")
 
-    on_intent = [f for f in ast.walk(tree)
-                 if isinstance(f, ast.FunctionDef) and f.name == "_on_intent"]
-    assert on_intent, "找不到 _on_intent"
+    nav = ast.parse((rt_dir / "nav_wiring.py").read_text(encoding="utf-8"))
+    on_relmove = [f for f in ast.walk(nav)
+                  if isinstance(f, ast.FunctionDef) and f.name == "_on_relmove"]
+    assert on_relmove, "找不到 nav_wiring._on_relmove"
     gated = any(getattr(n.func, "attr", "") == "gate_intent"
-                for n in ast.walk(on_intent[0]) if isinstance(n, ast.Call))
-    assert gated, "_on_intent 没有过 estop gate -- 急停后 re-arm 语义缺失"
+                for n in ast.walk(on_relmove[0]) if isinstance(n, ast.Call))
+    assert gated, "_on_relmove 没有过 estop gate -- 急停后 re-arm 语义缺失"
+
+
+class _Sample:
+    """zenoh Sample 的最小替身: 只有 payload."""
+
+    def __init__(self, raw: bytes) -> None:
+        self.payload = raw
+
+
+def _relmove_host(latch):
+    """NavRuntime._on_relmove 读写的四个字段, 不起整个 nav 线程."""
+    import collections
+    import threading
+    import types
+    return types.SimpleNamespace(_estop=latch, _lock=threading.Lock(),
+                                 _counts={"relmove_rx": 0},
+                                 _relmove_q=collections.deque())
+
+
+def test_a_relmove_rearms_the_latch_and_garbage_does_not():
+    """急停 -> p2 换发一条 relmove -> 锁解开(14 S3.7 / U35); 坏帧不解锁.
+
+    行为测试, 不靠 AST: 直接把一帧喂给 NavRuntime._on_relmove.
+    * 信封 {v, src, data:{...}} 与裸体两种都算运动指令.
+    * 不是 JSON 对象的帧照旧入队(交给 mission host 拒), 但不得解开急停 --
+      解析失败放行急停是错误方向.
+
+    MUTATION: 去掉 isinstance(body, dict) 判据 -> 坏帧解锁, 这里红;
+              删掉 gate_intent 调用 -> 合法帧不解锁, 这里红.
+    """
+    from xbrain.p1_motion.runtime.nav_wiring import NavRuntime
+
+    for raw in (b"not json", b"[1, 2]"):
+        latch = _latch()
+        latch.on_estop(b'{"cmd_id": "es-1"}')
+        host = _relmove_host(latch)
+        NavRuntime._on_relmove(host, _Sample(raw))
+        assert latch.is_active(), raw  # 坏帧不解锁
+        assert len(host._relmove_q) == 1  # 但照旧入队
+
+    for raw in (b'{"v": 1, "src": "p2_core", "data": {"cmd_id": "rm-1"}}',
+                b'{"cmd_id": "rm-2"}'):
+        latch = _latch()
+        latch.on_estop(b'{"cmd_id": "es-1"}')
+        NavRuntime._on_relmove(_relmove_host(latch), _Sample(raw))
+        assert not latch.is_active(), raw  # 新运动指令即钥匙
+        assert latch.rearms == 1

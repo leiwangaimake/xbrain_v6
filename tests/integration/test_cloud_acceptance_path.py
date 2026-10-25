@@ -258,22 +258,26 @@ def test_goto_stops_at_p3_and_never_reaches_the_chassis_today():
     assert "p3_task" not in pubs.get("cmd/motion/intent", set()), (
         "p3_task 开始发 cmd/motion/intent 了 -- 任务执行链路已补通, "
         "请更新 TERMINUS 表并删除本用例")
-    # 反向: 这条 key 确实有一个通往底盘的消费者, 只是没人给它喂任务.
-    assert "p1_motion" in subs.get("cmd/motion/intent", set()), (
-        "cmd/motion/intent 连 p1_motion 都不订了 -- 那语音的运动指令也断了")
+    # 反向: 这条 key 的消费者是 p2_core(G-1~G-11 闸门, 11 S2.2 唯一订阅者),
+    # 运动经 p2 换发 cmd/motion/relative_move 才到 p1. 2026-10-26 前这里断言
+    # p1_motion 也订 -- 那是语音 MVP 转发器, 把每帧意图当 IntentForward APDU
+    # 发给底盘, 已删. p1 再订它就是回归.
+    assert "p2_core" in subs.get("cmd/motion/intent", set()), (
+        "cmd/motion/intent 连 p2_core 都不订了 -- 那语音的运动指令也断了")
+    assert "p1_motion" not in subs.get("cmd/motion/intent", set()), (
+        "p1_motion 又订了 cmd/motion/intent -- 11 S2.2 只有 p2_core 订它")
 
 
-def test_the_chassis_exit_is_p1_turning_intents_into_apdu():
-    """验收路径的终点(Python 侧).
+def test_p1_no_longer_turns_intents_into_apdu():
+    """*** p1 不再把意图转成 APDU 发给底盘(2026-10-26 删除).
 
-    用户要看的"下发给 quadruped 的消息"就是这一步的产物: p1_motion 把
-    MotionIntent 换成 CHS-A APDU 交给 ChassisClient. 再往下是 socket 与
-    真机, 不在本文件扫描面内.
+    本用例原名 test_the_chassis_exit_is_p1_turning_intents_into_apdu, 断言
+    main_wiring 里还调 intent_to_apdu / send_apdu. 那条"出口"产出的是
+    {PatrolDevice:{Op:IntentForward, Text}} -- 底盘没有这个 Op, 真机上每句
+    运动指令都往底盘链路上塞一帧垃圾. 真正的运动出口是 nav 线程的 20 Hz
+    cmd_vel(RT 面, nav_wiring), 由 p2 换发的 cmd/motion/relative_move 驱动.
 
-    NOTE 但今天的 intent_to_apdu 产出的是 {PatrolDevice:{Op:IntentForward,
-    Text}} -- 一个转发意图文本的 MVP 占位, 不是真正的 cmd_vel 速度帧. 真正
-    的运动 APDU 要等速度生成层(见上面的 goto 用例). 本用例只断言这两个转换
-    函数还在调用图里, 不断言它们已产出真实速度.
+    MUTATION: 把 send_apdu(intent_to_apdu(...)) 加回 main_wiring -> 这里红.
     """
     src = (XBRAIN / "p1_motion" / "runtime" / "main_wiring.py").read_text(
         encoding="utf-8")
@@ -281,8 +285,8 @@ def test_the_chassis_exit_is_p1_turning_intents_into_apdu():
     names = {getattr(n.func, "id", "") or getattr(n.func, "attr", "")
              for n in ast.walk(tree) if isinstance(n, ast.Call)}
 
-    assert "intent_to_apdu" in names, "p1 不再把 intent 转 APDU"
-    assert "send_apdu" in names, "p1 不再把 APDU 交给底盘客户端"
+    assert "intent_to_apdu" not in names, "p1 又把 intent 转 APDU 了"
+    assert "send_apdu" not in names, "p1 又往底盘端口直发 APDU 了"
 
 
 def test_estop_reaches_all_three_software_subscribers():

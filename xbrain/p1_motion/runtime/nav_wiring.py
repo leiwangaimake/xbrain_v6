@@ -460,10 +460,30 @@ class NavRuntime:
                 self._route_q.append(res)
 
     def _on_relmove(self, sample: Any) -> None:
+        """cmd/motion/relative_move from P2 -> the tick's queue, and re-arm.
+
+        *** The soft-estop re-arm (14 S3.7 / U35: "急停 -> 前进两米 -> 走", the
+        new motion command is the key) happens HERE, at arrival, not when the
+        tick drains the queue. Arrival order is what the operator did: an
+        estop that lands after this relmove latches after this re-arm and
+        stops the move; re-arming at drain time would let a relmove queued
+        BEFORE a later estop clear that estop. Until 2026-10-26 the re-arm sat
+        in main_wiring's cmd/motion/intent forwarder, which is gone (11 S2.2:
+        P2 is that key's only subscriber); P2 applies its own G-10 re-arm
+        before it sends a relmove at all.
+
+        Only a JSON object re-arms: an unparsable frame is not a motion
+        command, and letting garbage on this key release an estop is the
+        wrong direction for a failure. It is still queued, as before, for the
+        mission host to reject.
+        """
         doc = _load_json(sample)
+        body = unwrap_body(doc)
+        if isinstance(body, dict):
+            self._estop.gate_intent()  # RUST THREAD: scalar writes only
         with self._lock:
             self._counts["relmove_rx"] += 1
-            self._relmove_q.append(unwrap_body(doc))
+            self._relmove_q.append(body)
 
     def _on_chassis_state(self, sample: Any) -> None:
         """rt/chassis/state -> the estop generation we echo (11 S4.1).

@@ -21,7 +21,6 @@ import pytest
 
 from xbrain.p1_motion.runtime.main_wiring import (
     CMD_MOTION_FACTOR_TOPIC,
-    CMD_MOTION_INTENT_TOPIC,
     ChassisClient,
     ChassisClientConfig,
     intent_to_apdu,
@@ -44,7 +43,8 @@ pytestmark = pytest.mark.no_device
 # ---- topic constants match 11 §2.2 ----
 
 def test_p1_topics_match_spec():
-    assert CMD_MOTION_INTENT_TOPIC == "cmd/motion/intent"
+    # cmd/motion/intent is no longer a P1 topic (11 S2.2: p2_core is its only
+    # subscriber; P1's forwarder was removed 2026-10-26).
     assert CMD_MOTION_FACTOR_TOPIC == "cmd/motion/factor"
 
 

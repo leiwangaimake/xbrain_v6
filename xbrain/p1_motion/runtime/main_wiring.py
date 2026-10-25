@@ -9,12 +9,14 @@ Description:
 Minimum-viable p1 for the voice-loop smoke test:
 
   * open RT + GEN sessions
-  * subscribe cmd/motion/intent from p4
   * subscribe cmd/motion/factor (would come from p2 arbiter; MVP
     just observes)
-  * on each cmd/motion/intent, produce a single-frame cmd_vel and
-    forward it to chassis_stub :30004 as a CHS-A APDU frame
-    (16-byte header + JSON ASDU)
+  * NOT cmd/motion/intent: 11 S2.2 makes p2_core its only subscriber.
+    Until 2026-10-26 this file forwarded every intent frame to the chassis
+    port as an "IntentForward" APDU the chassis does not have; motion now
+    reaches P1 only as P2's cmd/motion/relative_move in the nav thread
+    (nav_wiring), which also re-arms the soft-estop latch. ChassisClient /
+    intent_to_apdu remain only for their unit tests and no longer send.
 
 Real 20 Hz ctrl_loop + rns_avoid + speed_gate + rotation_permit
 live in xbrain/p1_motion/{ctrl_loop.py,rns/,gate/,rotation/} and
@@ -37,7 +39,6 @@ from typing import Optional
 _logger = logging.getLogger("xbrain.p1.wiring")
 
 
-CMD_MOTION_INTENT_TOPIC = "cmd/motion/intent"
 CMD_MOTION_FACTOR_TOPIC = "cmd/motion/factor"
 # 11 S2.2 / S12A.9.7: P1 arbitrates the local teleop inputs and is the sole
 # publisher of state/teleop. cmd/teleop carries the HMI virtual stick (S12A.9.5);
@@ -160,24 +161,17 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         from xbrain.p1_motion.runtime.estop_latch import P1EstopLatch
         estop_latch = P1EstopLatch()
 
-        def _on_intent(sample) -> None:
-            try:
-                d = json.loads(bytes(sample.payload).decode("utf-8"))
-            except Exception:      # noqa: BLE001
-                _logger.warning("p1 malformed cmd/motion/intent")
-                return
-            # A new motion intent is the soft-estop re-arm key (14 S3.7 / U35:
-            # estop, then "go forward 2m", then go). gate_intent clears the
-            # latch and returns True; refusing motion here would block that
-            # documented field behaviour.
-            estop_latch.gate_intent()
-            apdu = intent_to_apdu(d)
-            ok = client.send_apdu(apdu)
-            _logger.info("p1 forwarded intent -> chassis (ok=%s intent=%s)",
-                         ok, d.get("intent_id"))
-
-        intent_sub = gen.declare_subscriber(
-            CMD_MOTION_INTENT_TOPIC, _on_intent)
+        # *** cmd/motion/intent is NOT subscribed here (removed 2026-10-26).
+        # 11 S2.2 gives that key exactly one subscriber, p2_core (G-1..G-11);
+        # P1 receives motion only as P2's cmd/motion/relative_move, in the nav
+        # thread (nav_wiring._on_relmove). The removed callback was the
+        # voice-loop MVP forwarder: it wrapped EVERY intent frame into an
+        # {PatrolDevice:{Op:"IntentForward"}} APDU and sent it to the chassis
+        # port -- an op the chassis does not have, so on the real robot each
+        # spoken motion command put one garbage frame on the chassis link.
+        # It was also where the soft-estop re-arm lived; that moved to the
+        # relmove callback with it (14 S3.7 / U35: the new motion command is
+        # the re-arm key, and on P1 that command IS the relmove).
 
         def _on_estop(sample) -> None:
             # RUST THREAD (CLAUDE.md 4.2): latch only, no publish/await. The
@@ -563,10 +557,6 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                     last_hb = now
                 time.sleep(0.1)
         finally:
-            try:
-                intent_sub.undeclare()
-            except Exception:      # noqa: BLE001
-                pass
             try:
                 estop_sub.undeclare()
             except Exception:      # noqa: BLE001
