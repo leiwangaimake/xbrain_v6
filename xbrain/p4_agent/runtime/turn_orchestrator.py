@@ -171,8 +171,16 @@ _CHITCHAT_NAMES = frozenset({"greeting", "identity", "help", "out_of_scope"})
 # intents need one; anything absent falls back to a generic ack. This is
 # feedback wording, NOT a data source -- the authoritative restate with
 # slot values is GWY-P4-35 (render_restate), wired separately.
+# 2026-10-26: A05 / A06 read "站起来" / "趴下" -- labels from an older id
+# plan, where A05/A06 were stand/prone. In the registry they are
+# move_forward / move_backward (stand and prone are A03 / A02, the bypass),
+# so a robot moving forward said "好的,站起来". It went unnoticed while no
+# motion frame was ever sent for A05-A10; it mattered the day they moved.
+# A07-A10 added at the same time. No distance or angle in the label: 11 CMD-30
+# lets TTS restate only measured values (P2's ack), never the request.
 _CN_LABELS = {
-    "A04": "原地待命", "A05": "站起来", "A06": "趴下", "A11": "转身",
+    "A04": "原地待命", "A05": "前进", "A06": "后退", "A07": "左移",
+    "A08": "右移", "A09": "左转", "A10": "右转", "A11": "转身",
     "B02": "开始巡逻", "B07": "取消任务", "B08": "返航", "B09": "回充电桩",
     "D01": "打开照明灯", "D02": "关闭照明灯", "D04": "打开警笛",
     "D06": "打开爆闪灯", "D07": "关闭爆闪灯",
