@@ -90,6 +90,17 @@ class StateCache:
             return None
         return e.value
 
+    def latest(self, key: str) -> Optional[Any]:
+        """The newest value for `key` whatever its age; None if never seen.
+
+        For state published ON CHANGE (state/mode carries voice_mode and is
+        re-sent only when the mode moves): its last value stays true until
+        the next one, so a freshness window would wrongly read a quiet,
+        unchanged mode as "unknown". Query answers keep using get_fresh.
+        """
+        e = self._d.get(key)
+        return None if e is None else e.value
+
     def age_ms(self, key: str, now_mono_ms: int) -> Optional[int]:
         """Age of `key` in ms, or None if never received. For telemetry /
         debugging; the query path uses get_fresh directly."""

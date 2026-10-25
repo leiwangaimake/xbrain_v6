@@ -127,8 +127,17 @@ class TurnLoopWorker(threading.Thread):
                  publish_fn: Callable[[str, bytes], None],
                  stop_evt: threading.Event,
                  turn_handler: Optional[
-                     Callable[[str], List]] = None) -> None:
+                     Callable[[str], List]] = None,
+                 job_queue: Optional[queue.Queue] = None) -> None:
         super().__init__(name="p4.turn_loop", daemon=True)
+        # 2026-10-25: cloud turns (cmd/voice_text, audio/voice_in -- see
+        # runtime/cloud_input) arrive as zero-argument callables on their own
+        # queue and run HERE, on this thread, between microphone frames. One
+        # thread for both is what keeps the shared orchestrator single-
+        # threaded. A separate queue, not the frame queue: the frame queue
+        # drops its oldest item when full, and a whole turn must never be
+        # the item that is dropped to make room for 20 ms of audio.
+        self._jobs = job_queue
         self._cfg = cfg
         self._q = in_queue
         self._publish = publish_fn
@@ -149,9 +158,20 @@ class TurnLoopWorker(threading.Thread):
         self.errors: List[str] = []
 
     def run(self) -> None:
+        # With a job queue the frame wait is shortened so a queued cloud turn
+        # starts within ~50 ms even when the microphone is silent.
+        frame_wait = 0.05 if self._jobs is not None else 0.1
         while not self._stop_evt.is_set():
+            if self._jobs is not None:
+                try:
+                    job = self._jobs.get_nowait()
+                except queue.Empty:
+                    job = None
+                if job is not None:
+                    self._run_job(job)
+                    continue
             try:
-                item = self._q.get(timeout=0.1)
+                item = self._q.get(timeout=frame_wait)
             except queue.Empty:
                 continue
             if isinstance(item, AudioFrame):
@@ -159,6 +179,14 @@ class TurnLoopWorker(threading.Thread):
                 self._on_frame(item)
             else:
                 _logger.warning("turn_loop: unknown queue item type")
+
+    def _run_job(self, job: Callable[[], object]) -> None:
+        """Run one queued cloud turn; a failure is logged, never fatal."""
+        try:
+            job()
+        except Exception as exc:      # noqa: BLE001 -- one turn must not kill the loop
+            self.errors.append(str(exc))
+            _logger.warning("turn_loop job fail: %s", exc)
 
     def _on_frame(self, frame: AudioFrame) -> None:
         closed = feed_frame(self._vad_state, frame.samples,

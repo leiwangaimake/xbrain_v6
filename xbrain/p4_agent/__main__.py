@@ -241,6 +241,16 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--vad-pre-roll-ms", type=int, default=300,
                     help="audio kept before the VAD onset, 11 S8.7.2 "
                          "(voice-loop only)")
+    # 11 S8.7.3 audio/voice_in assembly bounds (runtime/cloud_input). Resource
+    # limits, not safety values: they decide how much cloud audio p4 buffers,
+    # never how the robot moves. The floor matches --vad-min-utterance-ms.
+    ap.add_argument("--voice-in-max-utterance-ms", type=int, default=30000,
+                    help="longest cloud sentence accepted (voice-loop only)")
+    ap.add_argument("--voice-in-stream-idle-ms", type=int, default=3000,
+                    help="cloud stream with no chunk this long is dropped "
+                         "(voice-loop only)")
+    ap.add_argument("--voice-in-max-streams", type=int, default=4,
+                    help="cloud streams open at once (voice-loop only)")
     # The --config-dir default names the source for the reference-free content
     # tables (intents/chitchat/query_templates); with zero ${common.*} their
     # CONFIG-SOURCE-OK(content): source and resolved are byte-identical, so no
@@ -405,8 +415,14 @@ def main(argv: Optional[list] = None) -> int:
             query_low_soc_pct=args.query_battery_low_pct,
             site_timezone=site_tz,
             tier2_fn=tier2_fn)
+        from xbrain.p4_agent.runtime.cloud_input import VoiceInLimits
+        cloud_limits = VoiceInLimits(
+            max_utterance_ms=args.voice_in_max_utterance_ms,
+            min_utterance_ms=args.vad_min_utterance_ms,
+            stream_idle_ms=args.voice_in_stream_idle_ms,
+            max_streams=args.voice_in_max_streams)
         return run_voice_loop_wiring(cfg=tl_cfg, stop_flag=stop_flag,
-                                     orch=orch)
+                                     orch=orch, cloud_limits=cloud_limits)
 
     # Pre-existing bug fix: attr is heartbeat_s (from --heartbeat-s),
     # not heartbeat_seconds. Silently correcting the old typo here.

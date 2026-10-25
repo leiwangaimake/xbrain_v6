@@ -16,10 +16,13 @@ Startup order:
      declare-per-message overhead + gets errors surfaced early)
   3. Start TurnLoopWorker
   4. Subscribe rt/audio/mic -> worker queue
+  4b. Subscribe the cloud inputs xbrain/{rid}/cmd/voice_text and
+     xbrain/{rid}/audio/voice_in -> worker job queue (runtime/cloud_input;
+     orchestrator path only, and only with XBRAIN_ROBOT_ID set)
   5. Enter main loop; wait for stop_event
 
 Shutdown order (LIFO):
-  1. Unsubscribe rt/audio/mic
+  1. Unsubscribe cloud inputs, then rt/audio/mic
   2. Stop worker (drains remaining frames)
   3. Undeclare publishers
   4. Close sessions
@@ -28,10 +31,19 @@ Shutdown order (LIFO):
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import time
 from typing import Dict, Optional
 
+from xbrain.p4_agent.runtime.cloud_input import (
+    CloudTurnRunner,
+    VoiceInAssembler,
+    VoiceInLimits,
+    cloud_input_keys,
+    make_voice_in_callback,
+    make_voice_text_callback,
+)
 from xbrain.p4_agent.runtime.intent_dispatch import (
     CMD_AUDIO_SPEAK,
     CMD_MOTION_INTENT,
@@ -113,10 +125,64 @@ def _wire_state_subscriptions(gen, state_subs: list):
     return cache
 
 
+def _now_ms() -> int:
+    """Monotonic milliseconds (CLK-C1) -- the one clock cloud input uses."""
+    return int(time.monotonic() * 1000)
+
+
+def _wire_cloud_inputs(gen, cfg: TurnLoopConfig, orchestrator, registry,
+                       asr_post, state_cache, publish, jobs: queue.Queue,
+                       limits: VoiceInLimits, subs: list,
+                       local_session: OrchestratorSession):
+    """Subscribe cmd/voice_text + audio/voice_in; return the assembler.
+
+    local_session is the microphone's session: hmi text shares it (16 S11.1
+    has three slots, and the HMI is an on-site input like the microphone).
+
+    Returns None (and subscribes nothing) when XBRAIN_ROBOT_ID is unset: the
+    keys are robot-prefixed, and subscribing xbrain/unknown/... would be a
+    key nothing ever publishes to -- the same silent dead end p2 refuses for
+    audio/broadcast. Logged as an ERROR so a missing id is visible.
+    """
+    from xbrain.p4_agent.ai_client.asr_client import transcribe
+    from xbrain.p4_agent.classifier.keyword_matcher import KeywordMatcher
+
+    rid = os.environ.get("XBRAIN_ROBOT_ID")
+    if not rid:
+        _logger.error("p4 cloud inputs DISABLED: XBRAIN_ROBOT_ID unset "
+                      "(cmd/voice_text and audio/voice_in not subscribed)")
+        return None
+
+    def _transcribe(pcm: bytes) -> str:
+        # Same ASR service and timeout as microphone turns.
+        return transcribe(base_url=cfg.asr_base_url, pcm_16k_mono=pcm,
+                          timeout_s=cfg.asr_http_timeout_s)
+
+    def _voice_mode() -> Optional[str]:
+        # p2's state/mode is sent on change only: read the last value.
+        value = state_cache.latest("state/mode")
+        return value.get("voice_mode") if isinstance(value, dict) else None
+
+    runner = CloudTurnRunner(
+        orchestrator, KeywordMatcher(registry), publish, _transcribe,
+        _now_ms, _voice_mode, local_session, asr_post=asr_post)
+    assembler = VoiceInAssembler(limits)
+    text_key, voice_key = cloud_input_keys(rid)
+    # Strong references in `subs` (CLAUDE.md 4.3).
+    subs.append(gen.declare_subscriber(
+        text_key, make_voice_text_callback(jobs, runner)))
+    subs.append(gen.declare_subscriber(
+        voice_key, make_voice_in_callback(jobs, assembler, runner, _now_ms)))
+    _logger.info("p4 wiring: subscribed %s and %s (pcm_s16le 16k mono)",
+                 text_key, voice_key)
+    return assembler
+
+
 def run_voice_loop_wiring(cfg: TurnLoopConfig,
                             stop_flag: dict,
                             *,
-                            orch: Optional[VoiceOrchestratorInputs] = None
+                            orch: Optional[VoiceOrchestratorInputs] = None,
+                            cloud_limits: Optional[VoiceInLimits] = None
                             ) -> int:
     """Block until stop_flag['stop'] becomes truthy. Returns 0 on
     clean shutdown.
@@ -126,7 +192,10 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
     is routed through the six-step TurnOrchestrator instead of the V-2B
     naive_classify path. GEN-plane state/* is subscribed into a cache so
     G02 query_battery answers from live data (GWY-P4-39). When `orch` is
-    None, the loop falls back to the V-2B naive path (smoke only)."""
+    None, the loop falls back to the V-2B naive path (smoke only).
+
+    cloud_limits, given together with `orch`, turns on the two cloud inputs
+    (runtime/cloud_input); None leaves them off (the V-2B smoke path)."""
     from xbrain.common.runtime.session_ctx import open_planes
 
     _logger.info("p4 wiring: opening RT + GEN Zenoh sessions")
@@ -143,6 +212,7 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
         # GC'd out from under us. Kept None when the orchestrator is off.
         state_subs = []
         turn_handler = None
+        orchestrator = None
         if orch is not None:
             state_cache = _wire_state_subscriptions(gen, state_subs)
             # Compose the group query_fns: battery (G02) + RTK/heading (G43-G47,
@@ -186,20 +256,37 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                 return
             pub.put(payload_bytes)
 
+        # Cloud turns: bounded, and a full queue refuses the NEW turn.
+        jobs: queue.Queue = queue.Queue(maxsize=16)
         worker = TurnLoopWorker(
             cfg=cfg, in_queue=q, publish_fn=_publish, stop_evt=stop_evt,
-            turn_handler=turn_handler)
+            turn_handler=turn_handler, job_queue=jobs)
         worker.start()
         _logger.info("p4 wiring: TurnLoopWorker started")
 
         mic_sub = rt.declare_subscriber(MIC_TOPIC, on_mic_frame_callback(q))
         _logger.info("p4 wiring: subscribed %s", MIC_TOPIC)
 
+        cloud_subs: list = []
+        assembler = None
+        if orchestrator is not None and cloud_limits is not None:
+            assembler = _wire_cloud_inputs(
+                gen, cfg, orchestrator, orch.registry, orch.asr_post,
+                state_cache, _publish, jobs, cloud_limits, cloud_subs,
+                session)
+
         try:
             last_hb = time.monotonic()
             while not stop_flag.get("stop"):
                 now = time.monotonic()
                 if now - last_hb >= _VOICE_LOOP_HEARTBEAT_PERIOD:
+                    if assembler is not None:
+                        # Reclaim streams of clients that died mid-sentence
+                        # even when no further audio arrives to trigger it.
+                        for sid in assembler.evict_idle(_now_ms()):
+                            _logger.warning(
+                                "voice_in stream %s evicted: idle (no eos)",
+                                sid)
                     _logger.info(
                         "p4 alive; frames_rx=%d turns_dispatched=%d "
                         "last_intent=%s queue_depth=%d",
@@ -211,6 +298,11 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                 time.sleep(0.1)
         finally:
             _logger.info("p4 wiring: shutting down")
+            for sub in cloud_subs:
+                try:
+                    sub.undeclare()
+                except Exception:      # noqa: BLE001
+                    pass
             try:
                 mic_sub.undeclare()
             except Exception:      # noqa: BLE001
