@@ -68,6 +68,7 @@ def test_every_registered_intent_routes_to_a_publishable_key():
     "cmd/geo",      # F11-F15: stored-object CRUD (p3)
     "cmd/system",   # H class: system actions
     "cmd/estop",    # safety bypass, published outside the routing tables
+    "cmd/chassis/ctrl",  # prone / stand bypass (11 MI-5), outside the tables
 ])
 def test_each_previously_dropped_key_has_a_publisher(key):
     """Named by hand on purpose: these are the keys that were lost once.

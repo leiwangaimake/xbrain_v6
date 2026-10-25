@@ -408,6 +408,11 @@ class TurnDecision:
     # assemble a prompt? A fastpath turn must show both false.
     llm_used: bool = False
     prompt_assembled: bool = False
+    # The entry this turn came in on (mic_local | cloud | wecom | hmi), set by
+    # handle_turn. decision_to_publishes needs it for frames it builds itself
+    # (the bypass posture's S9.3.4 origin), which never pass the builders
+    # that read self._turn_channel.
+    channel: str = "mic_local"
 
 
 @dataclass(frozen=True)
@@ -533,8 +538,10 @@ class TurnOrchestrator:
         # so it is not kept (CLAUDE.md 7.2.1).
         self._turn_channel = channel
         self._turn_modality = modality
-        return self._handle_turn(text, session, now_mono_ms, raw_text,
-                                 addressed)
+        decision = self._handle_turn(text, session, now_mono_ms, raw_text,
+                                     addressed)
+        decision.channel = channel  # every branch, one place
+        return decision
 
     def _handle_turn(self, text: str, session: OrchestratorSession,
                      now_mono_ms: int, raw_text: Optional[str],

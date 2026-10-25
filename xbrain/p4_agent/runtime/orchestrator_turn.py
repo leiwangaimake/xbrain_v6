@@ -58,13 +58,14 @@ from xbrain.p4_agent.runtime.voice_turn import (
     build_voice_turn,
     voice_turn_pair,
 )
+from xbrain.p4_agent.runtime.turn_labels import origin  # S9.3.4 origin
 from xbrain.p4_agent.session.chitchat import ChitchatResponder
 
 _logger = logging.getLogger("xbrain.p4.orch_turn")
 
 
-# Bypass posture keys (16 S4). estop is its own safety key; prone/stand are
-# posture motions.
+# Bypass keys (16 S4, 11 MI-5): estop goes to cmd/estop; prone/stand go to
+# cmd/chassis/ctrl (S9.3.4), never cmd/motion/intent.
 #: Keys whose frame IS a contract command, and the slot the orchestrator built
 #: it into. On these three keys the payload must be the command ITSELF (11 S7.2
 #: TaskCommand / S7.9 GeoCommand / S12A TeachCommand) -- P3 parses cmd_id and
@@ -97,6 +98,14 @@ _CONTRACT_FRAME_SLOT = {
 
 CMD_ESTOP = "cmd/estop"
 CMD_MOTION_INTENT = "cmd/motion/intent"
+#: 11 S9.3.4 general-plane posture key. BARE (no xbrain/{rid}/ prefix) like
+#: every key here: the session prefixes it, and chassis_relay CR-11 subscribes
+#: exactly this bare key.
+CMD_CHASSIS_CTRL = "cmd/chassis/ctrl"
+#: The two bypass postures that go to CMD_CHASSIS_CTRL (16 S4 A02 / A03).
+#: enable is also legal on the key but needs an L2 confirm_token (S9.3.4 E-1),
+#: which no bypass can carry.
+_CHASSIS_POSTURES = frozenset({"stand", "prone"})
 
 # Reply for a directed phrase we could not classify (no LLM / LLM denied).
 _DID_NOT_CATCH = "没太听清,请再说一遍"
@@ -257,8 +266,8 @@ def decision_to_publishes(decision: TurnDecision) -> List[Tuple[str, dict]]:
     Returns an empty list for a silent turn (overheard). Every speaking
     branch (reply / confirm prompt / denial / timeout / bypass-suppressed /
     did-not-catch) goes to cmd/audio/speak; a dispatched action goes to its
-    own cmd/* key; a bypass goes to cmd/estop (estop) or cmd/motion/intent
-    (posture)."""
+    own cmd/* key; a bypass goes to cmd/estop (estop) or cmd/chassis/ctrl
+    (posture, 11 MI-5)."""
     kind = decision.kind
 
     if kind == "overheard":
@@ -309,10 +318,29 @@ def decision_to_publishes(decision: TurnDecision) -> List[Tuple[str, dict]]:
                                  "reason": "voice_command",
                                  "src_role": "voice",
                                  "mono_ms": int(time.monotonic() * 1000)})]
-        # prone / stand -> posture motion.
-        return [(CMD_MOTION_INTENT, {"schema": "p4_intent_v1",
-                                     "action": action, "source": "voice",
-                                     "mono_ms": int(time.monotonic() * 1000)})]
+        # prone / stand -> cmd/chassis/ctrl (11 MI-5: A02/A03 do NOT use
+        # cmd/motion/intent; the body is the S9.3.4 bare command, which
+        # chassis_relay CR-11 re-envelopes onto rt/chassis/ctrl).
+        #
+        # *** Until 2026-10-26 these went to cmd/motion/intent as a p4_intent_v1
+        # frame {schema, action, source, mono_ms}. P2's motion intent gate
+        # refuses that (no S3.0 envelope, no data.intent) and the only other
+        # subscriber, p1's legacy forwarder, sent it to the chassis as an
+        # IntentForward APDU the chassis does not know. So "趴下" / "站起来"
+        # were acknowledged by voice and never executed (commx live test
+        # 2026-10-26).
+        #
+        # origin is the turn's entry (S9.3.4: hmi | cloud | voice | wecom,
+        # the same spelling as cmd/system origin). No confirm_token: S9.3.4
+        # requires it for enable only, and the voice bypass never sends
+        # enable.
+        if action not in _CHASSIS_POSTURES:
+            raise ValueError("bypass action %r not in %s"
+                             % (action, sorted(_CHASSIS_POSTURES)))
+        return [(CMD_CHASSIS_CTRL, {"v": 1,
+                                    "cmd_id": "cc-" + uuid.uuid4().hex[:12],
+                                    "action": action,  # stand | prone
+                                    "origin": origin(decision.channel)})]
 
     if kind == "bypass_suppressed":
         # U45: voice estop suppressed during recording -> advise the handle.

@@ -50,6 +50,7 @@ from xbrain.p4_agent.runtime.intent_dispatch import (
     dispatch_keys,
 )
 from xbrain.p4_agent.runtime.orchestrator_turn import (
+    CMD_CHASSIS_CTRL,
     CMD_ESTOP,
     VoiceOrchestratorInputs,
     build_orchestrator,
@@ -82,8 +83,12 @@ _logger = logging.getLogger("xbrain.p4.wiring")
 # cmd/estop once was. The three added by hand below are the keys the
 # orchestrator publishes OUTSIDE the routing tables: the bypass (estop /
 # motion) and the spoken reply. Sorted so the startup log is stable.
+# 2026-10-26: + CMD_CHASSIS_CTRL, where the prone / stand bypass now goes
+# (11 MI-5). Without it the posture frame would be dropped here exactly as
+# cmd/estop once was.
 OUTBOUND_KEYS = tuple(sorted(
-    dispatch_keys() | {CMD_AUDIO_SPEAK, CMD_MOTION_INTENT, CMD_ESTOP}))
+    dispatch_keys() | {CMD_AUDIO_SPEAK, CMD_MOTION_INTENT, CMD_ESTOP,
+                       CMD_CHASSIS_CTRL}))
 
 
 # Voice-loop heartbeat cadence. Kept as a module constant, not a parameter
