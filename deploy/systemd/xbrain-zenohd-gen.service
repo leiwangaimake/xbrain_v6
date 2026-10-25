@@ -56,7 +56,13 @@ EnvironmentFile=/opt/xbrain_v6/deploy/env/network.env
 # a per-boot copy under /run/xbrain/zenoh/zenohd-gen.json5. Prevents
 # the source template from ever containing resolved values.
 ExecStartPre=/usr/bin/mkdir -p /run/xbrain/zenoh
-ExecStartPre=/usr/bin/env bash -c 'envsubst < /opt/xbrain_v6/deploy/zenoh/zenohd-gen.json5 > /run/xbrain/zenoh/zenohd-gen.json5'
+# Render the template with network.env. Until 2026-10-26 this was a bare envsubst,
+# which could not honour 99 U92 ruling 5 (wifi optional, must never take LAN2 down):
+# zenohd exits 255 on a listen list that repeats an address (measured on .1.26), and
+# the wifi placeholder 127.0.0.1 repeats the template's loopback -- so the router
+# never started. render_zenohd_gen.sh drops an unusable wifi endpoint and refuses a
+# missing LAN2. The two guards below still check its output independently.
+ExecStartPre=/opt/xbrain_v6/deploy/zenoh/render_zenohd_gen.sh /opt/xbrain_v6/deploy/zenoh/zenohd-gen.json5 /run/xbrain/zenoh/zenohd-gen.json5
 # Refuse to start if the resolved config still contains an unsubstituted
 # ${...} placeholder. -qF matches the LITERAL two chars ${ (fixed string,
 # no regex). Systemd double-quotes the arg and $$ emits one $, so bash's

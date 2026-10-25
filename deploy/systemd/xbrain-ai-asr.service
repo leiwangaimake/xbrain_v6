@@ -17,6 +17,10 @@ StartLimitBurst=5
 StartLimitIntervalSec=300
 
 [Service]
+# Python deps (zenoh, fastapi, sherpa_onnx) are pip --user installs under
+# /home/nvidia/.local; as root they are not importable and the service dies.
+User=nvidia
+Group=nvidia
 Type=exec
 ExecStart=/opt/xbrain_v6/services/asr/asr_server.sh
 Restart=on-failure
