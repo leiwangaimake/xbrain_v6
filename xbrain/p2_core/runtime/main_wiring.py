@@ -757,6 +757,35 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         _logger.info("p2 wiring: device health bridge ON "
                      "(mic + payload + ptz all real)")
 
+        # -- boot greeting (user ruling 2026-10-25; 14 S11 bit.announce) --
+        # One fixed line once the speaker answers. NOT the quick-BIT announce
+        # (not wired) and it claims nothing about readiness -- see
+        # speech/boot_greeting.py. Parsed HERE so a missing or malformed key
+        # refuses startup naming its path, rather than a silent boot.
+        import threading as _threading
+
+        from xbrain.common.errors import E_BUSY, E_UNHEALTHY
+        from xbrain.p2_core.speech.boot_greeting import (
+            parse_boot_greeting,
+            start_boot_greeting,
+        )
+        greet_stop = _threading.Event()
+
+        def _greet_speak(text, source):
+            # handle_speak answers busy / TTS failure as ack dicts, but the
+            # same conditions can also surface as exceptions (the cases
+            # _speak_and_log catches); fold both into the ack shape the
+            # greeting loop decides on.
+            try:
+                return speaker.handle_speak(text, source)
+            except SpeakerBusy:
+                return {"ok": False, "code": E_BUSY}
+            except SpeakerHwError as exc:
+                return {"ok": False, "code": E_UNHEALTHY, "reason": str(exc)}
+
+        start_boot_greeting(parse_boot_greeting(_p2cfg.get, MISSING),
+                            _greet_speak, greet_stop)
+
         # Main loop: wait for stop.
         try:
             last_hb = time.monotonic()
@@ -1027,6 +1056,9 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 time.sleep(0.1)
         finally:
             _logger.info("p2 wiring: shutting down")
+            # End a greeting still waiting for payload-service; it must not
+            # speak into a shutting-down speaker.
+            greet_stop.set()
             try:
                 mic_stop.set()
                 mic_thread.stop()

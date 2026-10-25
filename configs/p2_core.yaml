@@ -380,3 +380,17 @@ bit:
     volume: 80
     # 11 S8.8.1 mandatory hard ceiling on total announce duration.
     max_duration_ms: 20000
+    # Boot greeting (user ruling 2026-10-25): one line spoken after p2 starts,
+    # NOT the quick-BIT announce above (quick BIT is not wired yet). Read by
+    # xbrain/p2_core/speech/boot_greeting.py.
+    #   * No readiness claim in the text on purpose: nothing verifies the
+    #     system is ready before it is spoken (CLAUDE.md 3.2). "启动完毕"
+    #     belongs in bit_pass / bit_tail_continue once quick BIT runs.
+    #   * Name per party-A identity (18 J02 block): full name 海卫-风息.
+    #   * ASCII punctuation in the data value (CLAUDE.md 2.2, 2026-08-11 ruling).
+    #   * null = off. Speaker source bit_announce (14 S4.1, priority 100):
+    #     a busy speaker skips the greeting, it is never replayed.
+    boot_greeting: "你好,我是海卫风息!"
+    # p2 starts before payload-service; retry the line every 2 s until this
+    # many seconds have passed, then give up with a WARNING.
+    boot_greeting_wait_s: 120
