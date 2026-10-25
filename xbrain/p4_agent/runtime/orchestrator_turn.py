@@ -337,8 +337,12 @@ def decision_to_publishes(decision: TurnDecision) -> List[Tuple[str, dict]]:
         if action not in _CHASSIS_POSTURES:
             raise ValueError("bypass action %r not in %s"
                              % (action, sorted(_CHASSIS_POSTURES)))
-        return [(CMD_CHASSIS_CTRL, {"v": 1,
-                                    "cmd_id": "cc-" + uuid.uuid4().hex[:12],
+        #
+        # This is the envelope's DATA, not the frame: the publish point wraps
+        # it into a full S3.0 envelope (chassis_ctrl_stamp, S9.3.4 E-3) with
+        # this process's rid. A bare body reaches quadruped without rid and is
+        # refused as E_SCHEMA (measured 2026-10-26).
+        return [(CMD_CHASSIS_CTRL, {"cmd_id": "cc-" + uuid.uuid4().hex[:12],
                                     "action": action,  # stand | prone
                                     "origin": origin(decision.channel)})]
 

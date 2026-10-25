@@ -17,7 +17,9 @@ What is checked here, on the frames the turn handler returns (nothing is
 sent to any robot):
 
   * the posture frame is on cmd/chassis/ctrl with the S9.3.4 body
-    {v, cmd_id, action, origin}, and NOTHING goes to cmd/motion/intent;
+    {cmd_id, action, origin} (the S3.0 envelope around it is added at the
+    publish point, see test_chassis_ctrl_stamp.py), and NOTHING goes to
+    cmd/motion/intent;
   * cmd_id is fresh per turn (quadruped's Q-3 idempotency treats a repeated
     cmd_id as a duplicate and would ignore the second "站起来");
   * origin follows the turn's entry: the microphone is voice, a cloud turn
@@ -83,8 +85,9 @@ def test_posture_goes_to_chassis_ctrl_with_the_s934_body(text, action):
     out = _mic(text)  # one microphone turn
     assert "cmd/motion/intent" not in out  # MI-5: never the motion key
     (frame,) = out["cmd/chassis/ctrl"]  # exactly one posture frame
-    assert set(frame) == {"v", "cmd_id", "action", "origin"}  # S9.3.4 fields
-    assert frame["v"] == 1  # S3.0 envelope version
+    # The S9.3.4 body; v/rid/seq are the envelope's, added at the publish
+    # point (chassis_ctrl_stamp, tested in test_chassis_ctrl_stamp.py).
+    assert set(frame) == {"cmd_id", "action", "origin"}  # S9.3.4 fields
     assert frame["action"] == action  # the spoken posture
     assert frame["origin"] == "voice"  # the microphone
     assert frame["cmd_id"].startswith("cc-")  # non-empty, this file's prefix

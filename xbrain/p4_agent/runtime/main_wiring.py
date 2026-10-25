@@ -60,6 +60,8 @@ from xbrain.p4_agent.runtime.orchestrator_turn import (
     make_time_query_fn,
     make_turn_handler,
 )
+from xbrain.common.envelope.age import read_local_boot_id
+from xbrain.p4_agent.runtime.chassis_ctrl_stamp import ChassisCtrlStamper
 from xbrain.p4_agent.runtime.turn_loop import (
     MIC_TOPIC,
     TurnLoopConfig,
@@ -270,11 +272,25 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
         stop_evt = threading.Event()
         q: queue.Queue = queue.Queue(maxsize=64)
 
+        # cmd/chassis/ctrl leaves as a full 11 S3.0 envelope (S9.3.4 E-3):
+        # quadruped refuses a body without rid, and the relay cannot add one
+        # (chassis_ctrl_stamp). Built once; seq is per key for the process.
+        ctrl_stamper = ChassisCtrlStamper(os.environ.get("XBRAIN_ROBOT_ID"),
+                                          read_local_boot_id())
+
         def _publish(key: str, payload_bytes: bytes) -> None:
             pub = pubs.get(key)
             if pub is None:
                 _logger.warning("p4 no cached publisher for %r", key)
                 return
+            if key == CMD_CHASSIS_CTRL:
+                stamped = ctrl_stamper.stamp(payload_bytes)
+                if stamped is None:
+                    # Not sent: a bare frame would only be refused one hop on.
+                    _logger.error("p4 %s NOT published: no envelope "
+                                  "(XBRAIN_ROBOT_ID unset or bad body)", key)
+                    return
+                payload_bytes = stamped
             pub.put(payload_bytes)
 
         # Cloud turns: bounded, and a full queue refuses the NEW turn.
