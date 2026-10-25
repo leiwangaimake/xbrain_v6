@@ -66,6 +66,7 @@ from xbrain.p4_agent.runtime.turn_loop import (
     on_mic_frame_callback,
 )
 from xbrain.p4_agent.runtime.turn_orchestrator import OrchestratorSession
+from xbrain.p4_agent.runtime.voice_turn import VOICE_TURN_KEY_FMT
 
 _logger = logging.getLogger("xbrain.p4.wiring")
 
@@ -133,7 +134,8 @@ def _now_ms() -> int:
 def _wire_cloud_inputs(gen, cfg: TurnLoopConfig, orchestrator, registry,
                        asr_post, state_cache, publish, jobs: queue.Queue,
                        limits: VoiceInLimits, subs: list,
-                       local_session: OrchestratorSession):
+                       local_session: OrchestratorSession,
+                       voice_turn_key: Optional[str] = None):
     """Subscribe cmd/voice_text + audio/voice_in; return the assembler.
 
     local_session is the microphone's session: hmi text shares it (16 S11.1
@@ -165,7 +167,8 @@ def _wire_cloud_inputs(gen, cfg: TurnLoopConfig, orchestrator, registry,
 
     runner = CloudTurnRunner(
         orchestrator, KeywordMatcher(registry), publish, _transcribe,
-        _now_ms, _voice_mode, local_session, asr_post=asr_post)
+        _now_ms, _voice_mode, local_session, asr_post=asr_post,
+        voice_turn_key=voice_turn_key)
     assembler = VoiceInAssembler(limits)
     text_key, voice_key = cloud_input_keys(rid)
     # Strong references in `subs` (CLAUDE.md 4.3).
@@ -234,8 +237,21 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                 tier2_fn=orch.tier2_fn, query_fn=query_fn,
                 bypass_tokens=orch.bypass_tokens)
             session = OrchestratorSession()
+            # 11 S8.7.6 state/voice_turn (2026-10-26): robot-prefixed like the
+            # cloud inputs, so it needs the robot id. Without one there is no
+            # record at all -- never one on xbrain/None/... (see
+            # _wire_cloud_inputs for the same rule).
+            vt_rid = os.environ.get("XBRAIN_ROBOT_ID")
+            voice_turn_key = (VOICE_TURN_KEY_FMT % vt_rid) if vt_rid else None
+            if voice_turn_key:
+                pubs[voice_turn_key] = gen.declare_publisher(voice_turn_key)
+                _logger.info("p4 wiring: publishing %s", voice_turn_key)
+            else:
+                _logger.error("p4 state/voice_turn DISABLED: "
+                              "XBRAIN_ROBOT_ID unset")
             turn_handler = make_turn_handler(orchestrator, session,
-                                             asr_post=orch.asr_post)
+                                             asr_post=orch.asr_post,
+                                             voice_turn_key=voice_turn_key)
             _logger.info(
                 "p4 wiring: TurnOrchestrator handler active; state/* "
                 "subscribed (%d keys), G02 live", len(state_subs))
@@ -273,7 +289,7 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
             assembler = _wire_cloud_inputs(
                 gen, cfg, orchestrator, orch.registry, orch.asr_post,
                 state_cache, _publish, jobs, cloud_limits, cloud_subs,
-                session)
+                session, voice_turn_key)
 
         try:
             last_hb = time.monotonic()

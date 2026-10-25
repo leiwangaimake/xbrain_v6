@@ -53,6 +53,11 @@ from xbrain.p4_agent.runtime.turn_orchestrator import (
     TurnDecision,
     TurnOrchestrator,
 )
+from xbrain.p4_agent.runtime.voice_turn import (
+    VoiceTurnError,
+    build_voice_turn,
+    voice_turn_pair,
+)
 from xbrain.p4_agent.session.chitchat import ChitchatResponder
 
 _logger = logging.getLogger("xbrain.p4.orch_turn")
@@ -357,6 +362,7 @@ def make_turn_handler(
     orchestrator: TurnOrchestrator,
     session: OrchestratorSession,
     asr_post: Any = None,
+    voice_turn_key: Optional[str] = None,
 ) -> Callable[[str], List[Tuple[str, bytes]]]:
     """Return a handler text -> [(key, payload_bytes)] for the turn loop.
 
@@ -366,12 +372,19 @@ def make_turn_handler(
     asr_post (16 S3): when given, the ASR text is corrected (L1 dict, L2
     pinyin) BEFORE classification; the raw text still reaches the safety
     bypass (16 S4 constraint 1). Until 2026-10-24 nothing called the
-    post-processor and "照明灯调到最岸" (暗 misheard as 岸) missed D17."""
+    post-processor and "照明灯调到最岸" (暗 misheard as 岸) missed D17.
+
+    voice_turn_key (11 S8.7.6, 2026-10-26): when given, every turn also
+    returns its state/voice_turn record on that key, after the action
+    frames. None (no robot id known) publishes no record."""
     def _handle(raw: str) -> List[Tuple[str, bytes]]:
-        now_ms = int(time.monotonic() * 1000)
+        t0 = time.monotonic()
+        now_ms = int(t0 * 1000)
         text = raw
+        corrections: list = []
         if asr_post is not None:
-            text, _corrections = asr_post.apply(raw)
+            text, corrections = asr_post.apply(raw)
+        t_post = time.monotonic()
         decision = orchestrator.handle_turn(text, session, now_ms,
                                             raw_text=raw)
         out: List[Tuple[str, bytes]] = []
@@ -381,5 +394,20 @@ def make_turn_handler(
             out.append((key, data))
         _logger.info("orch_turn: text=%r kind=%s intent=%s",
                      text, decision.kind, decision.intent_id)
+        # 11 S8.7.6 audit record (2026-10-26). Appended last, after the
+        # action frames, and built from what was actually published. A
+        # record that cannot be built (a closed-set bug) costs the record,
+        # never the turn: the action frames above still go out.
+        try:
+            record = build_voice_turn(
+                channel="mic_local", asr_raw=raw, asr_text=text,
+                decision=decision, published_keys=[k for k, _ in out],
+                corrections=corrections,
+                latency_ms={"post": int((t_post - t0) * 1000),
+                            "route": int((time.monotonic() - t_post) * 1000)})
+        except VoiceTurnError as exc:
+            _logger.warning("voice_turn not built: %s", exc)
+            return out
+        out.extend(voice_turn_pair(voice_turn_key, record))
         return out
     return _handle

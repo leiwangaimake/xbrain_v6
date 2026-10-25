@@ -54,8 +54,8 @@ Rules that are easy to get wrong and are deliberate here:
 Boundaries: the domain-3 ASR arbitration between channels (11 S8.7.3 says
 the channel decides the domain-3 claimant) and the C > E > A session
 priority are not implemented; turns are simply serialised in arrival order
-on the one worker. The state/voice_turn audit record is not published by p4
-at all (a known gap, not introduced here); outcomes are logged instead.
+on the one worker. Each turn ends with its state/voice_turn audit record
+(runtime/voice_turn, 11 S8.7.6, since 2026-10-26) and one log line.
 """
 from __future__ import annotations
 
@@ -65,6 +65,7 @@ import json  # both keys carry JSON bodies (11 S3.0)
 import logging  # the log is the only record of a cloud turn today
 import queue  # the worker's job queue (Full is the refusal signal)
 import threading  # the assembler lock: callbacks run on many threads
+import time  # monotonic ASR latency for the audit record (CLK-C1)
 from dataclasses import dataclass  # frozen value types crossing threads
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
@@ -82,6 +83,14 @@ from xbrain.p4_agent.runtime.text_channel import (
 from xbrain.p4_agent.runtime.turn_orchestrator import (
     OrchestratorSession,  # per-dialog state: pending confirm, recording
     TurnOrchestrator,  # the six-step chain shared with the microphone
+)
+# The 11 S8.7.6 audit record every cloud turn ends with (2026-10-26): for a
+# remote operator it is the only way to read the answer, which the GZH-2
+# module speaks on the robot where they cannot hear it.
+from xbrain.p4_agent.runtime.voice_turn import (
+    VoiceTurnError,  # a closed-set bug: costs the record, not the turn
+    build_voice_turn,  # one record from the decision + what was published
+    voice_turn_pair,  # () when no robot id, else the (key, bytes) to publish
 )
 
 # One logger for both inputs: an operator debugging "the cloud said nothing
@@ -402,7 +411,8 @@ class CloudTurnRunner:
                  now_ms_fn: Callable[[], int],
                  voice_mode_fn: Callable[[], Optional[str]],
                  local_session: OrchestratorSession,
-                 asr_post: Any = None) -> None:
+                 asr_post: Any = None,
+                 voice_turn_key: Optional[str] = None) -> None:
         # Every dependency is injected so the tests run the real orchestrator
         # with a fake ASR, a fixed clock and a scripted voice mode.
         self._orch = orchestrator
@@ -412,6 +422,7 @@ class CloudTurnRunner:
         self._now_ms = now_ms_fn           # monotonic ms (CLK-C1)
         self._voice_mode = voice_mode_fn   # p2's voice_mode, None if unknown
         self._asr_post = asr_post          # 16 S3: apply(raw)->(text, notes)
+        self._voice_turn_key = voice_turn_key  # None: no record published
         # The session slots, created once: a slot must outlive a turn, or a
         # confirm asked in one turn could never be answered in the next.
         self._sessions = {ch: OrchestratorSession() for ch in _SESSION_CHANNELS}
@@ -452,7 +463,10 @@ class CloudTurnRunner:
         self.text_turns += 1
         # cmd_id is the sender's reference; it goes into the log line so a
         # cloud-side ledger entry can be matched to what the robot did.
-        self._emit("voice_text", channel, msg.get("cmd_id"), text, res)
+        # Typed text never meets ASR or 16 S3: both audit columns are the
+        # text as typed (stripped, which is what was classified).
+        self._emit("voice_text", channel, msg.get("cmd_id"), text, res,
+                   asr_raw=text.strip(), corrections=(), latency={})
         return res
 
     def run_voice(self, utt: CompletedUtterance) -> Optional[TextTurnResult]:
@@ -473,6 +487,7 @@ class CloudTurnRunner:
                 "(reason=voice_in_during_broadcast stream=%s total=%d)",
                 utt.stream_id, self.dropped_in_broadcast)
             return None
+        t_asr = time.monotonic()  # ASR latency is measured here (11 S8.7.6)
         try:
             raw_text = (self._transcribe(utt.pcm) or "").strip()  # None -> ""
         except Exception as exc:      # noqa: BLE001 -- one turn must not kill the loop
@@ -485,11 +500,13 @@ class CloudTurnRunner:
             _logger.info("voice_in empty transcript stream=%s",
                          utt.stream_id)
             return None
+        asr_ms = int((time.monotonic() - t_asr) * 1000)
         text = raw_text  # unchanged when no post-processor is configured
+        corrections: list = []  # 16 S3 rewrites, for the audit record
         if self._asr_post is not None:
             # 16 S3 three-layer correction applies to speech, not to text:
             # it repairs sound-alike errors, which typed text does not have.
-            text, _notes = self._asr_post.apply(raw_text)  # notes: logged there
+            text, corrections = self._asr_post.apply(raw_text)
         # A spoken command expects a spoken answer: require_tts_reply true.
         msg = {"channel": utt.channel, "text": text,  # the corrected text
                "require_tts_reply": True}  # answer through the speaker
@@ -502,7 +519,9 @@ class CloudTurnRunner:
         self.voice_turns += 1
         # Both forms logged, as 11 S8.7.6 wants them in the audit record.
         _logger.info("voice_in asr_raw=%r asr_text=%r", raw_text, text)
-        self._emit("voice_in", utt.channel, utt.stream_id, text, res)
+        self._emit("voice_in", utt.channel, utt.stream_id, text, res,
+                   asr_raw=raw_text, corrections=corrections,
+                   latency={"asr": asr_ms})
         return res
 
     def _session_for(self, channel: Any) -> OrchestratorSession:
@@ -515,7 +534,8 @@ class CloudTurnRunner:
         return self._sessions.get(channel, OrchestratorSession())
 
     def _emit(self, source: str, channel: Any, ref: Any, text: str,
-              res: TextTurnResult) -> None:
+              res: TextTurnResult, *, asr_raw: str, corrections: Any,
+              latency: Any) -> None:
         """Publish the turn's frames and log one line describing it.
 
         The log line is the only record of a cloud turn today (p4 publishes
@@ -525,6 +545,20 @@ class CloudTurnRunner:
         """
         for key, data in res.publishes:  # in the order the turn built them
             self._publish(key, data)  # main_wiring's cached GEN publisher
+        try:
+            # Built from what was actually published, after it went out.
+            record = build_voice_turn(
+                channel=channel, asr_raw=asr_raw, asr_text=text,
+                decision=res.decision,
+                published_keys=[k for k, _ in res.publishes],
+                corrections=corrections, reject_code=res.code or None,
+                latency_ms=latency)
+        except VoiceTurnError as exc:
+            # A closed-set bug costs the record; the turn already happened.
+            _logger.warning("voice_turn not built: %s", exc)
+        else:
+            for key, data in voice_turn_pair(self._voice_turn_key, record):
+                self._publish(key, data)  # the audit record, last
         d = res.decision  # None when the channel gate refused the turn
         _logger.info(
             "%s turn channel=%s ref=%s text=%r denied=%s code=%s kind=%s "
@@ -571,16 +605,16 @@ def make_voice_in_callback(jobs: "queue.Queue", assembler: VoiceInAssembler,
         # Rust thread: decode + in-memory assembly, both bounded and quick;
         # ASR (an HTTP call) happens in the job, on the worker.
         try:
-            msg = json.loads(bytes(sample.payload))
+            msg = json.loads(bytes(sample.payload))  # bytes -> object
         except Exception as exc:  # noqa: BLE001 -- a bad frame must not kill the sub
             _logger.warning("voice_in rejected: undecodable (%s)", exc)
-            return
+            return  # one bad frame, sub stays up
         try:
             utt = assembler.accept(msg, now_ms_fn())  # None until eos
         except VoiceInRejected as exc:
             # Every refusal is one line with its reason token.
             _logger.warning("voice_in rejected: %s", exc)
-            return
+            return  # logged above
         if utt is not None:
             # eos reached: one job per sentence, never one per chunk.
             _enqueue(jobs, lambda: runner.run_voice(utt), "voice_in")
