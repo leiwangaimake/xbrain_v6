@@ -40,7 +40,7 @@ contains-first path per non-symmetric cost.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import FrozenSet, Optional
+from typing import FrozenSet, Iterable, Optional
 
 # --- Action closed set (16 §4 table) -----------------------------
 
@@ -99,13 +99,40 @@ _STAND_TOKENS = tuple(sorted(
     ("站立", "站起来", "起立", "起来"), key=len, reverse=True))
 
 
-def match_bypass(text: str) -> Optional[BypassHit]:
+def strip_yield_phrases(text: str, yield_phrases: Iterable[str]) -> str:
+    """Remove each complete qualified stop phrase from text.
+
+    18 boundary tables (the E08 one and the D12 one in S6.3A): a bare 停 /
+    停止 / 停下 is ALWAYS A01, the bypass; E08 is the stop that carries a
+    qualifier (扫 / 环视 / 云台 / 镜头), and E05 "停止跟踪" sits in the same
+    PTZ stop family. Matching the estop tokens as substrings (16 S4.1,
+    deliberately loose) gave the qualified phrases to A01 as well, so
+    "停止扫描" stopped the chassis and never the PTZ (2026-10-24 / 10-25 on
+    .1.26).
+
+    The phrases are REMOVED, not used to skip the match: whatever is left is
+    still matched, so "停止扫描然后停下" keeps its 停下 and still stops.
+    Replaced by a space so the two sides of a removed phrase cannot join
+    into a token that was never said. Longest first, so a phrase that
+    contains another is removed whole.
+    """
+    for phrase in sorted(set(yield_phrases), key=len, reverse=True):
+        if phrase:
+            text = text.replace(phrase, " ")
+    return text
+
+
+def match_bypass(text: str,
+                 yield_phrases: Iterable[str] = ()) -> Optional[BypassHit]:
     """Pure single-string bypass match.
 
     Args:
         text: cleaned ASR text OR raw ASR text. The caller decides
               which; this function is called TWICE per utterance
               (raw + normalized) per 16 §4 约束表.
+        yield_phrases: complete qualified stop phrases of other intents
+              (see strip_yield_phrases); empty = the pre-2026-10-25
+              behaviour, every estop token anywhere fires.
 
     Returns:
         BypassHit if a bypass action matched, None otherwise. On
@@ -121,6 +148,8 @@ def match_bypass(text: str) -> Optional[BypassHit]:
     """
     if not text:
         return None
+    if yield_phrases:
+        text = strip_yield_phrases(text, yield_phrases)
     # Priority order: estop first, then prone, then stand. Reason:
     # estop is the highest-cost missed match and its non-symmetric
     # cost dominates. Prone/stand miss is recoverable (repeat the
@@ -137,25 +166,37 @@ def match_bypass(text: str) -> Optional[BypassHit]:
     return None
 
 
-def match_raw(text: str) -> Optional[BypassHit]:
+def is_estop_phrase(phrase: str) -> bool:
+    """True iff the phrase alone would fire the estop bypass.
+
+    Used to pick, from an intent's keywords, the ones the bypass would eat
+    (only those need to yield) without a second copy of the token table.
+    """
+    hit = match_bypass(phrase)
+    return hit is not None and hit.action == BYPASS_ESTOP
+
+
+def match_raw(text: str,
+              yield_phrases: Iterable[str] = ()) -> Optional[BypassHit]:
     """Match on RAW ASR text (before post-processing).
 
     16 §4 约束表 point 1: "在三层后处理之前先做一次原文匹配". This
     is the FIRST match point in the pipeline."""
-    hit = match_bypass(text)
+    hit = match_bypass(text, yield_phrases)
     if hit is None:
         return None
     return BypassHit(hit.action, hit.matched_token, "raw")
 
 
-def match_normalized(text: str) -> Optional[BypassHit]:
+def match_normalized(text: str,
+                     yield_phrases: Iterable[str] = ()) -> Optional[BypassHit]:
     """Match on POST-normalized text (after 3-layer post-processing).
 
     16 §4 约束表 point 1: "之后再对纠正后文本匹配一次". This is the
     SECOND match point; it catches cases where L1/L2/L3 mangled the
     raw stop into a non-stop token but a different stop-family token
     survived the normalization."""
-    hit = match_bypass(text)
+    hit = match_bypass(text, yield_phrases)
     if hit is None:
         return None
     return BypassHit(hit.action, hit.matched_token, "normalized")

@@ -174,6 +174,26 @@ _CN_LABELS = {
     "E08": "停止扫描", "E09": "调整云台转速", "H07": "重启系统",
 }
 
+# Intents whose complete stop phrases the safety bypass leaves to them
+# (2026-10-25, decided as option (b): keep the keywords and CF-1 as they are,
+# make the bypass yield). 18's E08 boundary table: a bare 停 / 停止 / 停下 is
+# always A01, E08 is the stop carrying a PTZ qualifier; E05 "停止跟踪" is the
+# same PTZ stop family. Matching estop tokens as substrings (16 S4.1) gave
+# "停止扫描" / "停止环视" / "停止跟踪" to A01: the chassis stopped, the PTZ
+# kept turning. Only the phrases are removed before matching; any other stop
+# word in the utterance still fires.
+#
+# Deliberately NOT here (yet):
+#   * D12 / C04 "停止喊话" "停止播报": p2 drops D12 today (payload_wiring
+#     handles D01/D02/D06/D07/D10/D17/D18 only), so yielding would turn
+#     "misread as estop, speaker keeps playing" into "answered OK, speaker
+#     keeps playing" -- a new false success (CLAUDE.md 3.2). They join once
+#     D12's downstream (18 S6.3A.1 route 2) exists.
+#   * B05 / B07 / B12 / C07 / F02 (先停一下 / 停止任务 / 停止跟随 / 停下面对
+#     / 停止记录): motion-related, where an estop still serves the operator
+#     and errs to the safe side (16 S4.1).
+_BYPASS_YIELD_IDS = ("E05", "E08")
+
 # PTZ intents that are capability-BLOCKED on this head (18-B): E02 home /
 # E03 preset / E04 track sit behind T-PTZ-1 (absolute positioning is a
 # no-op on the PELCO-D head), E10 degree-move behind T-PTZ-3. They are
@@ -432,6 +452,14 @@ class TurnOrchestrator:
         # and every F intent then answers with the reason rather than sending a
         # command built on a guess.
         self._state_fn = state_fn
+        # The qualified stop phrases the safety bypass must leave to their own
+        # intent (see _BYPASS_YIELD_IDS): taken from the registry, so the
+        # keyword table stays the single source, and filtered to the ones
+        # the bypass would actually fire on.
+        self._bypass_yield = tuple(
+            kw for iid in _BYPASS_YIELD_IDS
+            for kw in registry.by_id(iid).keywords
+            if bypass_matcher.is_estop_phrase(kw))
 
     # -- public entry ----------------------------------------------------
 
@@ -451,8 +479,10 @@ class TurnOrchestrator:
         # STEP 1: safety-bypass BEFORE classification (16 S4). Match the raw
         # ASR text, then the corrected text: correction may ADD a stop word
         # (a mangled "停止" restored) but must never hide one the raw had.
-        hit = (bypass_matcher.match_raw(raw)
-               or bypass_matcher.match_normalized(text))
+        # Qualified PTZ stops ("停止扫描") yield to their intent first; any
+        # stop word left after removing them still fires (_BYPASS_YIELD_IDS).
+        hit = (bypass_matcher.match_raw(raw, self._bypass_yield)
+               or bypass_matcher.match_normalized(text, self._bypass_yield))
         if hit is not None:
             supp = recording_gate.evaluate(session.recording, hit.action)
             if supp is not None:
