@@ -65,14 +65,32 @@ def _row(cmd, *, task_id, submit_seq=1, now_mono_ms=1000, created_at=""):
                                  created_at=created_at)
 
 
-def _cmd(intent, reg, *, slots, source="voice", text="", route_id=None):
+#: The geo_ids p4 would have resolved (16 S8.1) for the cases below, which
+#: test OTHER fields (schema, provenance, command_text). Since 2026-10-25 a
+#: patrol without route_id and a goto without waypoint_id are refused by both
+#: halves (11 S7.2 required geometry); that refusal has its own cases in
+#: tests/p4_agent/runtime/test_task_geometry.py and test_task_command.py.
+_RESOLVED_ROUTE = "r-test"
+_RESOLVED_WAYPOINT = "w-test"
+
+
+def _cmd(intent, reg, *, slots, source="voice", text="", route_id=None,
+         waypoint_id=None):
     """Build P4's frame and parse it as P3 does -- both halves, every time.
 
     Calling only the builder is what let the shapes drift apart, so no test in
     this file is allowed to look at the builder's output alone.
+
+    A patrol / goto gets the resolved geo_id the orchestrator would pass in,
+    unless the case supplies one.
     """
+    if route_id is None and intent in ("patrol_route", "patrol_schedule"):
+        route_id = _RESOLVED_ROUTE
+    if waypoint_id is None and intent == "goto_waypoint":
+        waypoint_id = _RESOLVED_WAYPOINT
     frame = to_task_command(intent, reg, slots=slots, source=source,
-                            cmd_id="c-" + intent, text=text, route_id=route_id)
+                            cmd_id="c-" + intent, text=text, route_id=route_id,
+                            waypoint_id=waypoint_id)
     return None if frame is None else parse_task_command(frame)
 
 

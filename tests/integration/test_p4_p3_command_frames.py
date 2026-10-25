@@ -115,13 +115,26 @@ def _frames(text: str, confirm: bool = False, tier2=None):
             if k != "cmd/audio/speak"}
 
 
+#: A patrol the way it reaches cmd/task since 2026-10-25: with a route the
+#: catalogue resolves (11 S7.2 patrol needs route_id; p4 refuses a patrol
+#: without one, and a bare "开始巡逻" names none). A keyword-matched turn
+#: never carries a route slot, so the route comes from the tier-2 leg: an
+#: utterance that matches no keyword, and an LLM stub that names 东门路线.
+_PATROL_TEXT = "帮我处理一下那个事情"
+
+
+def _patrol_t2(*_a, **_k):
+    """Tier-2 stub: classify as patrol_route on the catalogued 东门路线."""
+    return Tier2Classification(name="patrol_route", slots={"route": "东门路线"})
+
+
 def test_voice_task_frame_parses_as_a_task_command():
     """*** cmd/task carries a TaskCommand, not an envelope wrapping one.
 
     MUTATION: publish dr.payload unchanged (the pre-2026-08-20 behaviour) and
     parse_task_command raises 'task command missing cmd_id' here.
     """
-    payload = _frames("开始巡逻")["cmd/task"]
+    payload = _frames(_PATROL_TEXT, tier2=_patrol_t2)["cmd/task"]
     cmd = parse_task_command(payload)
     assert cmd.action == "submit" and cmd.cmd_id
     assert cmd.task and cmd.task["type"] == "patrol"
@@ -131,7 +144,9 @@ def test_voice_task_frame_parses_as_a_task_command():
     # The envelope's provenance survives the unwrap -- this is what makes
     # dropping the envelope safe rather than lossy.
     assert cmd.task["params"]["intent"] == "patrol_route"
-    assert cmd.task["params"]["text"] == "开始巡逻"
+    assert cmd.task["params"]["text"] == _PATROL_TEXT
+    # The catalogue resolved the spoken route: the geometry P3 dispatches on.
+    assert cmd.task["route_id"] == "r-east"
 
 
 def test_voice_teach_frame_parses_as_a_teach_command():
@@ -321,10 +336,11 @@ def test_the_wire_check_is_on_the_published_frame_not_the_builder():
     wire stayed broken -- that is precisely how the bug survived. So: assert
     the two DIFFER for a contract key.
     """
-    decision = _orch().handle_turn("开始巡逻", OrchestratorSession(),
-                                   now_mono_ms=1)
+    decision = _orch(_patrol_t2).handle_turn(_PATROL_TEXT,
+                                             OrchestratorSession(),
+                                             now_mono_ms=1)
     internal = decision.dispatch_result.payload
-    published = _frames("开始巡逻")["cmd/task"]
+    published = _frames(_PATROL_TEXT, tier2=_patrol_t2)["cmd/task"]
     assert internal is not published
     assert "task_command" in internal and "task_command" not in published
 

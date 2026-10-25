@@ -62,6 +62,7 @@ from xbrain.p4_agent.classifier.large_class import (
 from xbrain.p4_agent.envelope.intent_envelope import IntentEnvelope
 from xbrain.p4_agent.registry.intents import IntentEntry, IntentRegistry
 from xbrain.p4_agent.runtime.geo_request import (
+    CATALOGUE_UNAVAILABLE,
     GeoRequestError,
     is_geo_intent,
     manifest_from_state,
@@ -92,7 +93,11 @@ from xbrain.p4_agent.runtime.task_control_request import (
     to_task_control_command,
 )
 from xbrain.p4_agent.runtime.task_request import (
+    DESTINATION_UNRESOLVED,
+    GEO_REF_SLOT,
     GOTO_NEEDS_WAYPOINT,
+    PATROL_NEEDS_ROUTE,
+    PATROL_REPEAT_NEEDS_CURRENT,
     TaskRequestError,
     is_task_create_intent,
     missing_destination,
@@ -118,16 +123,30 @@ _F_REASON_CN = {
     "no recording session is open": "现在没有正在录制的会话",
     "save needs a name": "要保存的话请说个名字",
     "a keypoint needs a name": "这个点要起个名字",
-    "the object catalogue is not available yet": "对象列表还没加载好, 稍后再说一次",
+    CATALOGUE_UNAVAILABLE: "对象列表还没加载好, 稍后再说一次",
     # 16 S6.6.4: B01's miss branch ends in a clarify. Reached when neither the
     # fast leg nor the tier-2 LLM leg could name the destination.
     GOTO_NEEDS_WAYPOINT: "要去哪个点? 请说出点位名称",
+    # 11 S7.2 patrol needs route_id; the operator named none -> ask.
+    PATROL_NEEDS_ROUTE: "巡逻哪条路线? 请说出路线名称",
+    # 16 S6.7.3 [5]: B04's route is the current task's; P3 does not fill it
+    # yet, so say so instead of queueing a patrol with no route.
+    PATROL_REPEAT_NEEDS_CURRENT: "再巡要沿用当前路线, 这一步还没接通",
+    # A named destination the turn did not resolve (should not be reachable:
+    # _build_task_command resolves first). Spoken as "not found" either way.
+    DESTINATION_UNRESOLVED: "没找到你说的地点, 换个说法试试",
 }
 
 # Reply-family intent NAMES routed to the preset responder (never LLM,
 # never echo). J01/J02/I05 plus the out_of_scope sentinel (16 S11.5).
 # Spoken reply when B-class control has nothing to act on. Said plainly rather
 # than sending a task_id-less frame for P3 to guess at (S7.2).
+# Spoken when a named route / waypoint is not in the catalogue (16 S8.1).
+_NOT_FOUND_CN = {
+    "route": "没找到你说的那条路径, 换个说法试试",
+    "waypoint": "没找到你说的那个点位, 换个说法试试",
+}
+
 _TASK_CONTROL_CN = {
     "no_active_task": "现在没有正在执行的任务",
 }
@@ -184,6 +203,24 @@ _DEGREE_RE = re.compile(r"[0-9零一二三四五六七八九十百千两]+\s*度
 # small move. Overriding E01->E07 when a scan cue is present fixes every
 # prefix (云台/平台/镜头) uniformly, without piling more keyword strings.
 _SCAN_CUES = ("环视", "一圈", "一周", "扫")
+
+
+def _resolve_task_geo(items, gtype: str, spoken: str) -> str:
+    """A task-create slot -> one live geo_id of the right type, or raise.
+
+    The slot holds either a spoken NAME (fast leg, or the LLM copying the
+    operator) or a geo_id: 16 S6.7.3 M3_nav tells the tier-2 LLM to answer
+    with the catalogue id ("route":"r-east"). An exact live id of the right
+    type is accepted as is -- it IS the existence check (16 S8.1). Anything
+    else goes through the name / alias / number resolver, which raises when
+    nothing (or more than one object) matches. A fabricated value such as
+    "候选" or "到这边=w" (2026-10-25) is neither, and is refused.
+    """
+    for i in items:
+        if (i.get("geo_id") == spoken and i.get("type") == gtype
+                and i.get("state") != "deleted"):
+            return spoken
+    return resolve_geo_id(items, gtype, spoken)
 
 
 def _has_ptz_degree(text: str) -> bool:
@@ -785,45 +822,58 @@ class TurnOrchestrator:
                             extra: Optional[Dict[str, Any]], text: str):
         """(slots with the TaskCommand attached, None) or (slots, spoken reason).
 
-        The route name is resolved to a geo_id HERE, because this is where the
-        GeoManifest and the operator both are. A name that IS in the catalogue
-        but under a different spelling, or that names two routes, is refused at
+        The route / waypoint name is resolved to a geo_id HERE, because this
+        is where the GeoManifest and the operator both are. A name that is NOT
+        in the catalogue, or that names two objects, is refused at
         the turn -- the old behaviour queued the task with route_geo_id NULL and
         it failed later, further from the person who could have fixed it.
 
-        *** "The catalogue is absent" is NOT treated as "the route does not
-        exist", and the difference is deliberate.
+        *** An absent catalogue REFUSES the turn (changed 2026-10-25).
 
-        state_fn has no production call site yet (state/geo/manifest is
-        broadcast by P3 but nothing in p4_agent subscribes to it). If an absent
-        catalogue refused the turn, this migration would silently switch OFF the
-        one task path that already works on the robot -- every spoken
-        "go patrol the east route" would answer "no such route", and the cause
-        would be an unwired subscription, not anything the operator said.
+        Until then an absent catalogue "degraded": no route_id, the spoken name
+        rode in task.params.slots, on the belief that P3 would match the name.
+        It does not -- geo_refs only computes the delete-impact set (11
+        S7.9.4), and P3's dispatch pushes a route only from route_geo_id
+        (runtime/main_wiring _push_route_on_dispatch). So the degraded task was
+        stored, reported "running", and moved nothing. Measured 2026-10-25 on
+        .1.26: with the B01 tier-2 leg the LLM, which has no catalogue in its
+        prompt, filled route="候选" and waypoint="到这边=w"; six such tasks
+        were queued (one "running") before anyone noticed.
 
-        So an absent catalogue degrades to the pre-migration behaviour: no
-        route_id, the spoken name still rides in task.params.slots, and P3's
-        geo_refs falls back to matching on the name (see task_row.py on why that
-        fallback exists). Capability lost: none. Capability gained: none either,
-        until the subscription is wired -- which is the honest description, and
-        is why this cannot be claimed as "route resolution is done".
+        16 S8.1 check (1) is "the object exists, before any side effect". With
+        no catalogue that cannot be checked, so the turn is refused with the
+        same reply the F11-F15 geo commands already give
+        (CATALOGUE_UNAVAILABLE). Capability lost: none -- a name-only task
+        never executed. Until state/geo/manifest is subscribed in production
+        (state_fn has no production call site) voice goto/patrol answer
+        "catalogue not loaded"; that is the honest description of what works.
+
+        Which slot is resolved, per intent, is task_request.GEO_REF_SLOT.
+        A missing slot is not decided here: to_task_command raises the
+        clarify reason (GOTO_NEEDS_WAYPOINT / PATROL_NEEDS_ROUTE).
         """
         merged = dict(extra or {})
-        route_id = None
-        spoken = merged.get("route")
-        state = self._state_fn() if self._state_fn else {}
-        manifest = manifest_from_state(state.get("state/geo/manifest"))
-        if isinstance(spoken, str) and spoken.strip() and manifest is not None:
-            try:
-                route_id = resolve_geo_id(list(manifest["items"]), "route",
-                                          spoken.strip())
-            except GeoRequestError as exc:
-                return merged, _F_REASON_CN.get(
-                    str(exc), "没找到你说的那条路径, 换个说法试试")
+        geo_ids: Dict[str, Optional[str]] = {"route": None, "waypoint": None}
+        ref = GEO_REF_SLOT.get(entry.name)
+        if ref is not None:
+            slot, gtype = ref
+            spoken = merged.get(slot)
+            if isinstance(spoken, str) and spoken.strip():
+                state = self._state_fn() if self._state_fn else {}
+                manifest = manifest_from_state(state.get("state/geo/manifest"))
+                if manifest is None:
+                    return merged, _F_REASON_CN[CATALOGUE_UNAVAILABLE]
+                try:
+                    geo_ids[gtype] = _resolve_task_geo(
+                        list(manifest["items"]), gtype, spoken.strip())
+                except GeoRequestError as exc:
+                    return merged, _F_REASON_CN.get(
+                        str(exc), _NOT_FOUND_CN[gtype])
         try:
             cmd = to_task_command(
                 entry.name, self._registry, slots=merged, source=self._source,
-                cmd_id=uuid.uuid4().hex, text=text, route_id=route_id)
+                cmd_id=uuid.uuid4().hex, text=text, route_id=geo_ids["route"],
+                waypoint_id=geo_ids["waypoint"])
         except TaskRequestError as exc:
             return merged, _F_REASON_CN.get(str(exc), "这条任务现在没法下发")
         if cmd is not None:

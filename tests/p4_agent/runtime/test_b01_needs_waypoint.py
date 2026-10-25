@@ -127,7 +127,14 @@ class _Tier2:
         return self.answer
 
 
-def _turn(text, tier2):
+#: A catalogue holding the waypoint the positive case names. build_orchestrator
+#: takes no state_fn (production has no state/geo/manifest subscription), so
+#: _turn sets it on the orchestrator the way the integration tests do.
+_GATE = {"geo_id": "w-east_gate", "type": "waypoint", "name": "东门",
+         "state": "active", "num": 1}
+
+
+def _turn(text, tier2, items=None):
     """Run one utterance through a real orchestrator.
 
     Returns (decision, published keys, published (key, body) pairs). The keys
@@ -140,6 +147,9 @@ def _turn(text, tier2):
     cc = ChitchatResponder(yaml.safe_load(open(_CHITCHAT, encoding="utf-8")))
     # Built the way main_wiring builds it, with the stub in the tier-2 slot.
     orch = build_orchestrator(_reg(), cc, l2_timeout_ms=8000, tier2_fn=tier2)
+    if items is not None:
+        # The catalogue the orchestrator resolves destinations against.
+        orch._state_fn = lambda: {"state/geo/manifest": {"items": items}}
     # A fresh session: no pending confirm, nothing recording.
     d = orch.handle_turn(text, OrchestratorSession(), 1_000_000)
     # The list of (key, body) the voice loop would publish for this decision.
@@ -168,14 +178,18 @@ def test_to_task_command_refuses_a_goto_with_no_waypoint():
 
 
 def test_to_task_command_builds_a_goto_that_names_its_waypoint():
-    """With a waypoint the builder is unchanged: the name rides in params.slots.
+    """A resolved waypoint builds the goto: id in params.waypoint_id.
 
     This is the positive half of the case above: a check that refused every
-    goto would pass the negative case and break the one path that works.
+    goto would pass the negative case and break the one path that works. The
+    spoken name still rides in params.slots (provenance); the geo_id is what
+    11 S7.2 requires and what P3 can act on.
     """
     cmd = to_task_command("goto_waypoint", _reg(), slots={"waypoint": "东门"},
-                          source="voice", cmd_id="c-1", text="去东门")
+                          source="voice", cmd_id="c-1", text="去东门",
+                          waypoint_id="w-east_gate")
     assert cmd["task"]["type"] == "goto"
+    assert cmd["task"]["params"]["waypoint_id"] == "w-east_gate"
     assert cmd["task"]["params"]["slots"]["waypoint"] == "东门"
 
 
@@ -236,17 +250,18 @@ def test_an_llm_that_fills_the_waypoint_produces_the_task():
 
     Without this case an implementation that refused every B01 (never sending
     any goto) would pass the whole file -- and voice navigation would be dead
-    with no test noticing. The name is passed through untouched; resolving it
-    to a geo_id is P3's job (geo_refs), not p4's.
+    with no test noticing. Since 2026-10-25 the name is resolved HERE against
+    the catalogue (P3 never resolves names at dispatch); the no-catalogue and
+    invented-name refusals are in test_task_geometry.py.
     """
     # The LLM names the waypoint the fast leg could not extract.
     t2 = _Tier2(Tier2Classification(name="goto_waypoint",
                                     slots={"waypoint": "东门"}))
-    d, keys, pubs = _turn("去东门", t2)
+    d, keys, pubs = _turn("去东门", t2, items=[_GATE])
     # Now the TaskCommand goes out...
     assert "cmd/task" in keys, (d.kind, keys)
     body = dict(pubs)["cmd/task"]
-    # ...as a goto that carries the LLM's waypoint for P3 to resolve.
+    # ...as a goto on the catalogue's geo_id (16 S8.1 resolved it here).
     assert body["task"]["type"] == "goto"
-    assert body["task"]["params"]["slots"]["waypoint"] == "东门"
+    assert body["task"]["params"]["waypoint_id"] == "w-east_gate"
     assert len(t2.calls) == 1

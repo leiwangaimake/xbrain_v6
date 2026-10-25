@@ -397,8 +397,10 @@ def test_task_create_carries_a_contract_task_command():
     seeing voice tasks, which is the two-sources-of-truth split this migration
     closed.
     """
-    orch = _orch()
-    d = orch.handle_turn("开始巡逻", OrchestratorSession(), now_mono_ms=1000)
+    # A patrol on a catalogued route: since 2026-10-25 a patrol is only built
+    # with a resolved route_id (11 S7.2), and bare "开始巡逻" names none.
+    orch = _route_orch(state_fn=_manifest([_EAST]))
+    d = orch.handle_turn(_UNMATCHED, OrchestratorSession(), now_mono_ms=1000)
     assert d.kind == "dispatch"
     tc = d.dispatch_result.payload.get("task_command")
     assert tc is not None
@@ -429,9 +431,11 @@ def test_orchestrator_source_flows_into_request():
     command records -- P3 maps it onto the five-value tasks.source with an
     explicit table (15 S4.2). MUTATION: hard-coding 'voice' would fail here."""
     orch = TurnOrchestrator(
-        _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
-        l2_timeout_ms=5000, source="text")
-    d = orch.handle_turn("开始巡逻", OrchestratorSession(), now_mono_ms=1000)
+        _reg(), chitchat=_chitchat(),
+        tier2_fn=_RecordingTier2(ret=Tier2Classification(
+            name="patrol_route", slots={"route": "东门路线"})),
+        l2_timeout_ms=5000, source="text", state_fn=_manifest([_EAST]))
+    d = orch.handle_turn(_UNMATCHED, OrchestratorSession(), now_mono_ms=1000)
     assert d.dispatch_result.payload["task_command"]["source"] == "text"
 
 
@@ -500,24 +504,23 @@ def test_route_that_matches_nothing_is_refused_at_the_turn():
     assert d.dispatch_result is None
 
 
-def test_absent_catalogue_still_submits_the_task():
-    """*** THE REGRESSION GUARD for this migration.
+def test_absent_catalogue_refuses_the_task():
+    """*** An absent catalogue REFUSES the turn (inverted 2026-10-25).
 
-    state_fn has no production call site: nothing in p4_agent subscribes to
-    state/geo/manifest yet. If 'no catalogue' were treated as 'route not found',
-    this batch would switch OFF the voice task path that already runs on the
-    robot -- every patrol command would answer 'no such route', and the cause
-    would be an unwired subscription rather than anything the operator said.
+    This case used to assert the opposite -- "absent catalogue still submits"
+    -- on the belief that P3 matched the spoken name. It does not: P3's
+    dispatch pushes a route only from route_geo_id, so the submitted task
+    reported "running" and moved nothing. On 2026-10-25 the tier-2 LLM filled
+    the name with invented text and six such tasks were queued on .1.26.
+    16 S8.1 check (1) -- the object exists, before any side effect -- cannot
+    be made without the catalogue, so the turn is refused with the same reply
+    the F11-F15 geo commands give.
 
-    MUTATION: refusing when manifest is None turns this into a reply. That
-    mutation is exactly the code I wrote first, which is why this test exists.
+    MUTATION: restoring the old degrade (no route_id, send anyway) makes this
+    a dispatch.
     """
     orch = _route_orch(state_fn=None)          # production wiring today
     d = orch.handle_turn(_UNMATCHED, OrchestratorSession(), now_mono_ms=1)
-    assert d.kind == "dispatch"
-    tc = d.dispatch_result.payload["task_command"]
-    assert tc["action"] == "submit"
-    # No route_id -- and that is the honest outcome, not a resolved one. P3
-    # falls back to matching the spoken name (see p3 task_row.py).
-    assert "route_id" not in tc["task"]
-    assert tc["task"]["params"]["slots"]["route"] == "东门路线"
+    assert d.kind == "reply"
+    assert d.dispatch_result is None
+    assert "对象列表" in (d.tts_text or ""), d.tts_text

@@ -56,6 +56,12 @@ class GeoRequestError(RuntimeError):
     """The target could not be resolved to exactly one object."""
 
 
+#: GeoRequestError message when there is no GeoManifest to resolve against.
+#: One constant for every caller (F11-F15 here, task-create in the
+#: orchestrator) so the spoken reply is the same whichever command hit it.
+CATALOGUE_UNAVAILABLE = "the object catalogue is not available yet"
+
+
 def is_geo_intent(intent_name: str) -> bool:
     return intent_name in _GEO_INTENTS
 
@@ -114,7 +120,7 @@ def to_geo_command(intent_name: str, *, slots: Mapping[str, Any], cmd_id: str,
         # plainly rather than sending geo_id=<the spoken text>, which would be
         # refused for the wrong reason (bad id prefix) and teach the operator
         # that the name was wrong when the catalogue was simply not loaded.
-        raise GeoRequestError("the object catalogue is not available yet")
+        raise GeoRequestError(CATALOGUE_UNAVAILABLE)
     items: List[Mapping[str, Any]] = list(manifest["items"])
     if action == "rename":
         # F14 carries type / old / new. The type slot narrows the search when

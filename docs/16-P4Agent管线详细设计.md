@@ -1592,6 +1592,12 @@ E08 是**新增的达标条目**，★ **不解除任何既有 `breach`**（尤�
 > ★★ **现行实现**（`xbrain/p4_agent/runtime/turn_orchestrator.py` `_dispatch_entry` ＋ `task_request.missing_destination`）：`route == fastpath_then_llm` 且目的地槽缺失、且本轮尚未用过 LLM ⇒ 走 **tier-2 LLM 支一次**（`_run_tier2`；LLM 可填点位、也可把整句改判为别的意图）；LLM 支仍缺 ⇒ `to_task_command` 拒绝（`GOTO_NEEDS_WAYPOINT`，`11` §7.2）⇒ 本轮以**澄清问句**收尾（「要去哪个点? 请说出点位名称」），🚫 不发 `cmd/task`；无 LLM 可用 ⇒ 按既有 tier-2 失败路径婉拒，同样不发。
 > ★ 目前只登记 B01（`DESTINATION_SLOT = {"goto_waypoint": "waypoint"}`）—— 本表其余「澄清」条目里 A05–A12 已由 **MI-2** 拦截（§8.0 EV-5），B11 为 L3（审批链），E04 为能力封锁。
 > ★ 判据：`tests/p4_agent/runtime/test_b01_needs_waypoint.py`（三个变异体全杀：去掉 LLM 支 / 去掉构造器校验 / 去掉「已用过 LLM」守卫 ⇒ 无限重入）。
+>
+> ⚠️★★★ **2026-10-25 订正 · 上面的 LLM 支打开了一个更糟的口子，已由 §8.1 ① 收口**
+> ★ **实测**（`.1.26`，11:50）：「到那边去」「到这边去」走 B01 LLM 支后，LLM（提示词里**没有地理目录**，GBNF 的 slots 是自由字符串）**编造槽位** —— B03 `patrol_schedule{route:"候选", at_local:"08:00", day_offset:1}`、B01 `{waypoint:"到这边=w"}`；p4 照发，P3 建了 6 条任务、其中 1 条 `running`（底盘停着，p1 全程 idle，已全部撤销）。
+> ★ **根因**：`_build_task_command` 只在**有** `state/geo/manifest` 时才做 §8.1 ① 存在性检查，而生产环境 p4 **从未订阅**它 ⇒ 检查恒被跳过；旧注释称「P3 的 `geo_refs` 按名回退匹配」—— **不成立**（`geo_refs` 只算删除影响集，P3 派发只认 `route_geo_id`）。
+> ★★ **现行**：见 §8.1 下方「2026-10-25 实现现状」块。
+> ⚠️★★ **待裁（设计冲突，未擅改）**：本表 B02 / B04 的「未命中支收尾」写 **执行**，但 `11` §7.2 规定 `patrol` 必填 `route_id`，而：B02 不说路线时**没有任何地方提供默认路线**；B04 的路线按 §6.7.3【5】由 P3 从当前任务取，**P3 未实现**。⇒ 照「执行」实现只能下发**没有路线的巡逻**（即本次实测的空任务）。现行代码按「拒绝 ＋ 说明」处理（B02 问「巡逻哪条路线?」，B04 答「这一步还没接通」），是否改表、是否要默认路线**请裁决**。
 
 ⚠️ **「未命中支收尾＝澄清」的 10 条要单独看** —— 这些条目的 `T4` **不是到执行的时间，是到追问的时间**。
 到执行 = `T4` + 人应答 + 下一轮（`I06`，目前也是 `T4`）≈ **12 s**。★ 这是把 `I06` 改快路的根本理由（§6.6.5 第 3 条）。
@@ -2932,6 +2938,13 @@ detail      ::= "\"reference_unresolved\"" | "\"text_ambiguous\""  # ★ 本 sli
          └─ 任一失败 ──> ★ 填 env.validation.{ok:false, failed[], code}
                           ★ 带具体原因回复用户 + 产生事件（EV-7）
 ```
+
+> ★★ **2026-10-25 实现现状 · ① 存在性（B 类任务创建）**（`xbrain/p4_agent/runtime/turn_orchestrator.py` `_build_task_command` · `task_request.GEO_REF_SLOT` / `to_task_command`）
+> ★ **规则**：B01 的 `waypoint`、B02 / B03 的 `route` 必须在地理目录（`state/geo/manifest`，`11` §7.10）里解析成**活的、类型对的** `geo_id` 才下发；B01 → `params.waypoint_id`，B02 / B03 → `task.route_id`（`11` §7.2 必填字段）。槽位值可以是名字 / 别名 / 编号，**也可以是目录里原样存在的 `geo_id`**（§6.7.3 `M3_nav` 要求 LLM 以 id 作答）。
+> ★★ **拿不到目录 ⇒ 拒绝**（与 F11–F15 相同话术「对象列表还没加载好」）；查不到 ⇒「没找到」；没说路线 ⇒「巡逻哪条路线?」；B04 ⇒「这一步还没接通」。🚫 不再「没有目录就不带 id 照发」。
+> ★ **代价如实写**：生产 p4 目前**没有** `state/geo/manifest` 订阅（`state_fn` 无生产调用点）⇒ 订阅接通之前，**语音创建导航 / 巡逻一律答「对象列表还没加载好」**。★ 损失的能力为零 —— 只带名字的任务此前**从未执行过**（P3 派发只认 `route_geo_id`）。
+> ★ **两道墙**：`to_task_command` 自身也拒绝未解析的 goto / patrol（`DESTINATION_UNRESOLVED`）；P3 入口另有同义兜底（`15` §3.1 下「2026-10-25 补」块）。
+> ★ 判据：`tests/p4_agent/runtime/test_task_geometry.py`（以 2026-10-25 的真实 LLM 输出回放）＋ 手工变异体（见提交信息）。
 
 **★★ 校验通过后的唯一出口表（v0.8 新增 —— 原文只笼统写「TaskCommand / ModeCommand」）**
 

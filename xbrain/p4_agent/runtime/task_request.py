@@ -105,6 +105,31 @@ GOTO_NEEDS_WAYPOINT = "goto needs a waypoint"
 #: tier-2 LLM leg must run first (16 S6.6.4 fastpath_then_llm).
 DESTINATION_SLOT = {"goto_waypoint": "waypoint"}
 
+#: TaskRequestError messages for a patrol with no route (11 S7.2: patrol needs
+#: route_id). Two cases, two spoken replies (turn_orchestrator._F_REASON_CN):
+#: the operator named no route ("巡逻" alone) -> ask which one; B04 "再巡一圈"
+#: -> its route is the CURRENT task's, which 16 S6.7.3 [5] gives P3 to fill
+#: and P3 does not fill yet (nothing in p3_task reads patrol_repeat), so the
+#: honest answer is that the step is not wired.
+PATROL_NEEDS_ROUTE = "patrol needs a route"
+PATROL_REPEAT_NEEDS_CURRENT = "patrol_repeat needs the current route"
+
+#: TaskRequestError message for a named destination the caller did not resolve
+#: to a geo_id. 16 S8.1 check (1): the object must EXIST before any side
+#: effect, and only a geo_id from the catalogue says it does. The orchestrator
+#: resolves before calling, so reaching this means a caller skipped that step.
+DESTINATION_UNRESOLVED = "destination not resolved against the geo catalogue"
+
+#: For the task-create intents whose geometry the OPERATOR names: (slot, geo
+#: type in the GeoManifest). The orchestrator resolves that slot against the
+#: catalogue (16 S8.1) and passes the geo_id in. B04 is absent on purpose (its
+#: route is the current task's, not a spoken name -- 16 S6.7.3 [5]).
+GEO_REF_SLOT = {
+    "goto_waypoint": ("waypoint", "waypoint"),     # B01 -> params.waypoint_id
+    "patrol_route": ("route", "route"),            # B02 -> task.route_id
+    "patrol_schedule": ("route", "route"),         # B03 -> task.route_id
+}
+
 
 def missing_destination(intent_name: str, slots: Optional[Mapping[str, Any]]) -> bool:
     """True iff the intent needs a destination slot and it is absent or blank."""
@@ -129,6 +154,7 @@ def to_task_command(
     cmd_id: str,
     text: str = "",
     route_id: Optional[str] = None,
+    waypoint_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Build the 11 S7.2 TaskCommand for a voice/text action, or None.
 
@@ -141,10 +167,20 @@ def to_task_command(
     that is not one of the 128 raises rather than emitting an id no consumer
     knows.
 
-    route_id is the resolved geo_id when the intent named a route, or None. The
-    CALLER resolves it (it holds the GeoManifest) and refuses the turn when the
-    name matched nothing -- see the module docstring on why that is better than
-    a task with no route.
+    route_id / waypoint_id are the resolved geo_ids for the intent's named
+    route or waypoint (GEO_REF_SLOT), or None. The CALLER resolves them (it
+    holds the GeoManifest) and refuses the turn when the name matched nothing
+    or the catalogue is absent -- see the module docstring on why that is
+    better than a task with no route.
+
+    11 S7.2 makes the geometry REQUIRED: patrol needs route_id, goto needs
+    waypoint_id (or a target position, which no voice intent carries). A
+    task-create that lacks it raises here rather than being sent. Until
+    2026-10-25 it was sent: P3 stored the spoken name, pushed no route (P3's
+    dispatch reads only route_geo_id) and reported the task "running". With a
+    tier-2 LLM on the B01 leg this became worse than an empty task -- the LLM,
+    with no catalogue in its prompt, invented names ("候选", "到这边=w") and
+    six of them were queued on the robot.
 
     source is 'voice' or 'text' -- the channel the command arrived on, so
     the task record and telemetry can tell a spoken task from a typed one.
@@ -179,14 +215,38 @@ def to_task_command(
     # characters 去/到/前往, so "灯开到最大" or an ASR misread holding 到 became
     # a goto task P3 accepted and the speaker answered "收到". This is the last
     # point in p4 where such a frame can still be stopped (16 S8.1 check 1).
-    if task_type == "goto" and missing_destination(intent_name, slots):
-        raise TaskRequestError(GOTO_NEEDS_WAYPOINT)
+    if task_type == "goto":
+        if missing_destination(intent_name, slots):
+            raise TaskRequestError(GOTO_NEEDS_WAYPOINT)
+        # A spoken name is not a destination until it is a geo_id (16 S8.1
+        # check 1; 11 S7.2 "waypoint_id 或 target"). P3 does not resolve names
+        # at dispatch, so a name-only goto would be stored and never run.
+        if not waypoint_id:
+            raise TaskRequestError(DESTINATION_UNRESOLVED)
+    if task_type == "patrol" and not route_id:
+        # 11 S7.2: patrol REQUIRES route_id. Three ways to lack one, three
+        # replies: B04 (route is the current task's, P3 fill not wired), no
+        # route named, a name the caller did not resolve.
+        if intent_name == "patrol_repeat":
+            raise TaskRequestError(PATROL_REPEAT_NEEDS_CURRENT)
+        spoken = (slots or {}).get("route")
+        if not isinstance(spoken, str) or not spoken.strip():
+            raise TaskRequestError(PATROL_NEEDS_ROUTE)
+        raise TaskRequestError(DESTINATION_UNRESOLVED)
     # S7.2 task.params carries what the contract has no field for: the 18
     # intent id, the slots and the raw text. 15 S5.10's mission_json is built
     # from it on the P3 side, so the provenance a party-A incident review needs
     # (which utterance produced this task) survives the move.
     params: Dict[str, Any] = {"intent": entry.name, "id": entry.id,
                               "slots": dict(slots)}
+    if waypoint_id:
+        # 11 S7.2 goto field (the W2 row's name for the same thing). It sits
+        # in task.params, not at task level: S7.2's task structure has
+        # route_id at the top and leaves the goto destination to params, and
+        # P3's _goto_has_destination reads it from there. The spoken name
+        # stays in params.slots next to it, as the audit record of what was
+        # said; only the geo_id is the destination.
+        params["waypoint_id"] = waypoint_id
     if text:
         params["text"] = text
     task: Dict[str, Any] = {"type": task_type, "params": params}
