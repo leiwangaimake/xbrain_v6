@@ -1,0 +1,31 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: perception.slice
+# Brief: cgroup slice that holds perception on cores 1,2,3,7 (10 S3.2, 99 U94)
+#
+# Description:
+# 99 U94 gives cores 1,2,3,7 to perception and 0,4,5,6 to everything else.
+# On .1.26 (cgroup v2, cpuset controller enabled at the root, systemd 249) the
+# split is enforced by cgroups, not by CPU affinity: system.slice, user.slice
+# and init.scope carry AllowedCPUs=0,4-6 (systemctl set-property, persistent),
+# and this slice carries 1-3,7.
+#
+# Why not affinity alone (measured 2026-10-26, see 10 S3.2): system.conf
+# CPUAffinity=0,4-6 left PID 1 on 0,4-6, but every service and every ssh login
+# came up on 0-7 -- when systemd moves a forked child into its unit's cgroup,
+# the kernel's cpuset attach resets the child's affinity to that cgroup's CPUs.
+#
+# Consequence the perception side must know: a process in user.slice (an ssh
+# session) cannot taskset itself onto 1-3,7 -- the cgroup forbids it. It has to
+# START in this slice: xbrain-perception.service names Slice=perception.slice,
+# and a manual run uses
+#   sudo systemd-run --scope --slice=perception.slice --uid=nvidia --gid=nvidia -- <cmd>
+#
+# Install: copy to /etc/systemd/system/perception.slice, then daemon-reload.
+
+[Unit]
+Description=perception cores 1,2,3,7 (xbrain 10 S3.2 / 99 U94)
+
+[Slice]
+AllowedCPUs=1-3,7
