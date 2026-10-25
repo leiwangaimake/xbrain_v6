@@ -1,4 +1,6 @@
-# * 草稿,不安装 -- see README.md. DEC-15 (unit naming / repo layout / install root) is open.
+# * Installed by scripts/install_units.sh. 99 U95 (2026-10-26, user ruling) ended
+# the draft status: DEC-15 itself was closed by 99 U83 (2026-08-17); the values
+# below are adopted as written. See README.md.
 #
 # Reproduces 11 §11A.6.3's snippet, with four deviations documented in README.md. The two
 # that change behaviour rather than paths: StartLimitBurst/StartLimitIntervalSec live in
@@ -17,8 +19,7 @@ Description=XBRAIN AI Runtime - llama-server (Qwen2.5-3B-Instruct Q4_K_M)
 # "xbrain-perception.service" (all 19 non-AI units use the xbrain- prefix). An After=
 # against a name no unit provides is a SILENT no-op -- systemd voids the ordering and
 # the LLM may start before perception, exactly what this line means to prevent. Renamed
-# to the de-facto repo name; DEC-15 may rename every unit together, at which point this
-# follows.
+# to the de-facto repo name, which 99 U83 (DEC-15 item 4) then fixed as final for every unit.
 After=network-online.target xbrain-config-freeze.service xbrain-perception.service
 
 # * AIR-F1: 不得无限重启. Five starts per 300 s, then the unit enters failed and stays

@@ -11,20 +11,22 @@
 # them, and hand-copying a directory of units is where a staged-boot deployment
 # silently drifts from 10 S3.3. This script is the one installer. The unit count is
 # not written here on purpose -- it is a measured quantity (CLAUDE.md 3.7); the list
-# is deploy/systemd/ minus DRAFT_UNITS below, and --dry-run prints it.
+# is every unit file in deploy/systemd/, and --dry-run prints it.
 #
-# What it installs: every deploy/systemd/*.service + run-xbrain.mount EXCEPT the three
-# AI drafts (ai-asr, llm, payload). Those carry a "草稿, 不安装" header because DEC-15
-# (unit naming / install root / Stage placement, owner = 主会话) plus two 11 doc
-# backfills (S11A.2.3 ledger, the payload OOM row) are still open -- installing them
-# here would pre-empt that decision. They are installed separately once DEC-15 lands.
+# What it installs: every deploy/systemd/*.service + run-xbrain.mount, the three AI units
+# (ai-asr, llm, payload) included. Until 2026-10-26 those three were excluded as drafts
+# ("草稿, 不安装") waiting on DEC-15 and two 11 backfills; DEC-15 was closed by 99 U83
+# (2026-08-17), the S11A.2.3 ledger was backfilled under AIR-M1, and 99 U95 (2026-10-26,
+# user ruling) adopted the units as written and added the payload OOM row to 11 S11A.6.3.
+# So there is no exclusion list any more: a unit file in deploy/systemd/ is a unit to install.
 #
 # What it does NOT do: it does NOT `systemctl enable` anything. Enabling wires units into
-# the boot target -- an outward, on-reboot change to the host -- and the final Stage
-# ordering is part of DEC-15. Install (copy + daemon-reload) is reversible and safe;
-# enabling is a deliberate, separate `--enable` the operator runs after DEC-15. Until
-# then the units are dormant: present, verifiable, started only on explicit `systemctl
-# start` or via scripts/start_all.sh.
+# the boot target -- an outward, on-reboot change to the host. Install (copy +
+# daemon-reload) is reversible and safe; enabling is a deliberate, separate `--enable`
+# the operator runs once the freeze line passes (the core units Require it, and it
+# refuses null calibration by design, CLAUDE.md 3.1). Until then the units are dormant:
+# present, verifiable, started only on explicit `systemctl start` or via
+# scripts/start_all.sh.
 #
 # Env files: this script no longer installs any. robot.env / network.env used to be
 # TEMPLATES here that were copied into /etc/xbrain if absent; the 2026-09-30 user ruling
@@ -57,45 +59,25 @@ SYSTEMD_DIR="/etc/systemd/system"
 # the directory without hard-coding it (CLAUDE.md 6: derive, never hard-code).
 ENV_DIR="$REPO_ROOT/deploy/env"
 
-# The three AI-service units are drafts (see file headers + deploy/systemd/README.md).
-# Excluded from install until DEC-15 + the 11 backfills are settled.
-DRAFT_UNITS=(
-  "xbrain-ai-asr.service"
-  "xbrain-llm.service"
-  "xbrain-payload.service"
-)
-
 usage() {
   cat <<'EOF'
 Usage: sudo install_units.sh [--dry-run | --enable | --uninstall | --help]
 
-  (no flag)    Install non-draft units, daemon-reload. Does NOT enable.
+  (no flag)    Install every unit in deploy/systemd, daemon-reload. Does NOT enable.
   --dry-run    Print exactly what would be installed; change nothing.
   --enable     Install, then `systemctl enable` the installed units (opt-in, on-boot).
   --uninstall  Remove installed xbrain units + run-xbrain.mount, daemon-reload.
                Never touches deploy/env/ (that is host identity, not ours to delete).
   --help       This text.
-
-The three AI drafts (ai-asr, llm, payload) are never installed by this script.
 EOF
 }
 
-# True if $1 (a unit filename) is in the DRAFT_UNITS exclusion list.
-is_draft() {
-  local u="$1" d
-  for d in "${DRAFT_UNITS[@]}"; do
-    [[ "$u" == "$d" ]] && return 0
-  done
-  return 1
-}
-
-# Build the install list: every *.service in deploy/systemd minus drafts, plus the mount.
+# Build the install list: every *.service in deploy/systemd, plus the mount.
 # Printed one per line so callers can iterate; sorted for stable output.
 installable_units() {
   local f base
   for f in "$UNIT_SRC_DIR"/xbrain-*.service; do
     base="$( basename "$f" )"
-    is_draft "$base" && continue
     printf '%s\n' "$base"
   done | sort
   printf '%s\n' "run-xbrain.mount"
@@ -177,7 +159,7 @@ do_install() {
     echo "     change it only for a different robot."
     echo "  2. Edit $ENV_DIR/network.env (set LAN2_IP / WIFI_IP for the GEN router)"
     echo "  3. Start the stack for a run:   sudo $REPO_ROOT/scripts/start_all.sh"
-    echo "  4. To enable on boot (after DEC-15): sudo $0 --enable"
+    echo "  4. To enable on boot: sudo $0 --enable"
   fi
 }
 

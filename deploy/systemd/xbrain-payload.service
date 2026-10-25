@@ -1,9 +1,11 @@
-# * 草稿,不安装 -- see README.md.
+# * Installed by scripts/install_units.sh. 99 U95 (2026-10-26, user ruling) ended
+# the draft status: DEC-15 itself was closed by 99 U83 (2026-08-17); the values
+# below are adopted as written. See README.md.
 #
-# *** This unit has NO contract row. 11 §11A.6.3's OOM table does not list payload-service,
-# and 10 §3.1's 15-process table does not either (_plan/KICKOFF-MODULES.md:161 already
-# flags the gap). Every value below that is not traceable to a PAY-* or T-PAY-* constraint
-# is marked 契约未规定-建议 and is a proposal for DEC-15, not a contract value.
+# *** Until 2026-10-26 this unit had NO contract row and every value below not traceable
+# to a PAY-* or T-PAY-* constraint was marked 契约未规定-建议 (a proposal). 99 U95 adopted
+# them as written and 11 S11A.6.3's OOM table now carries the payload row (+300, 512M);
+# the 契约未规定-建议 marks below record where each number came from.
 
 [Unit]
 Description=XBRAIN payload-service - GZH-2 audio/lights bridge (8519/8529)

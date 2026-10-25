@@ -1,4 +1,6 @@
-# * 草稿,不安装 -- see README.md.
+# * Installed by scripts/install_units.sh. 99 U95 (2026-10-26, user ruling) ended
+# the draft status: DEC-15 itself was closed by 99 U83 (2026-08-17); the values
+# below are adopted as written. See README.md.
 #
 # *** Named ai-asr, not ai-audio. 99 U52 §1 struck "`ai_audio` = ASR + TTS 合一进程" down
 # verbatim: TTS lives in the GZH-2 device ("机上零显存,零进程"), reached through
