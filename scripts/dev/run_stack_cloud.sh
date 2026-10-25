@@ -59,7 +59,15 @@
 #   scripts/dev/run_stack_cloud.sh --stop
 #   scripts/dev/run_stack_cloud.sh --status
 # Env: XBRAIN_ROBOT_ID (REQUIRED -- must match the rid the customer's Qt uses)
-#      CLOUD_LAN_IP    (default: auto-detected primary non-loopback IPv4)
+#      LAN2_IP         (default: LAN2_IP in deploy/env/network.env) -- the
+#                      cloud-facing port, 99 U92: 192.168.188.200 on the
+#                      party-A ad-hoc network. REQUIRED: the stack refuses to
+#                      start when this address is not on an interface.
+#      WIFI_IP         (default: the IPv4 on the first wl* interface; the old
+#                      name CLOUD_LAN_IP is still read) -- debug-only port,
+#                      closed at delivery (U92). OPTIONAL: when absent it is
+#                      skipped with a warning, so a dead wifi never takes the
+#                      LAN2 face down with it.
 #      RESOLVED_DIR / LOG_DIR / ZENOHD  (same meaning as run_stack_dev.sh)
 
 set -uo pipefail   # NO -e: one dead dev process must not abort the rest; the
@@ -145,28 +153,57 @@ unset XBRAIN_ROBOT_ID
 # snapshot. It is a dev-only rtk_driver override, passed inline at stage 3.
 unset XBRAIN_RESOLVED_DIR
 
-# LAN ip: must actually exist on an interface. zenohd fails to bind an address
-# the host does not own, and the resulting Errno 99 reads like a zenoh problem.
-if [[ -n "${CLOUD_LAN_IP:-}" ]]; then
-    LAN_IP="$CLOUD_LAN_IP"
-else
-    LAN_IP="$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1)"
+# Cloud-facing addresses (99 U92, 10 S3.1 zenohd-gen row: per-port explicit
+# binding LAN2 + wifi + 127.0.0.1, NET-C9 forbids 0.0.0.0). Each address must
+# actually exist on an interface: zenohd refuses the WHOLE listen set when one
+# endpoint cannot be bound, and the resulting Errno 99 reads like a zenoh
+# problem. That is why wifi is probed and skipped rather than passed blindly --
+# a missing wifi must never take the LAN2 face down with it (U92 ruling 5).
+_have_ip() { ip -4 -o addr show | awk '{print $4}' | cut -d/ -f1 | grep -qx "$1"; }
+
+# LAN2: the delivery network (party-A ad-hoc net). Env first, then the
+# deployment env file that the production zenohd-gen unit also reads.
+if [[ -z "${LAN2_IP:-}" ]]; then
+    LAN2_IP="$(sed -n 's/^LAN2_IP=//p' "$REPO_ROOT/deploy/env/network.env" | tail -1)"
 fi
-if [[ -z "$LAN_IP" ]]; then
-    echo "  FATAL no global IPv4 found and CLOUD_LAN_IP unset" >&2
+if [[ -z "$LAN2_IP" || "$LAN2_IP" == "127.0.0.1" ]]; then
+    echo "  FATAL LAN2_IP unset (deploy/env/network.env still a placeholder?)" >&2
     exit 1
 fi
-if ! ip -4 -o addr show | awk '{print $4}' | cut -d/ -f1 | grep -qx "$LAN_IP"; then
-    echo "  FATAL $LAN_IP is not on any interface of this host" >&2
-    ip -4 -o addr show | awk '{print "        have: "$2"  "$4}' >&2
-    exit 1
-fi
-if [[ "$LAN_IP" == "0.0.0.0" ]]; then
+if [[ "$LAN2_IP" == "0.0.0.0" ]]; then
     echo "  FATAL 0.0.0.0 is forbidden (NET-C9): the estop-carrying bus would" >&2
     echo "        be reachable from the chassis and PTZ segments too." >&2
     exit 1
 fi
-echo "  LAN ip: $LAN_IP  (Qt connects to tcp/$LAN_IP:7447)"
+if ! _have_ip "$LAN2_IP"; then
+    echo "  FATAL LAN2 $LAN2_IP is not on any interface of this host" >&2
+    ip -4 -o addr show | awk '{print "        have: "$2"  "$4}' >&2
+    exit 1
+fi
+
+# wifi: debug only. CLOUD_LAN_IP is the pre-U92 name of the same thing.
+WIFI_IP="${WIFI_IP:-${CLOUD_LAN_IP:-}}"
+if [[ -z "$WIFI_IP" ]]; then
+    _wl="$(ip -o link show | awk -F': ' '$2 ~ /^wl/ {print $2; exit}')"
+    if [[ -n "$_wl" ]]; then
+        WIFI_IP="$(ip -4 -o addr show dev "$_wl" scope global | awk '{print $4}' | cut -d/ -f1 | head -1)"
+    fi
+fi
+if [[ -n "$WIFI_IP" && "$WIFI_IP" == "0.0.0.0" ]]; then
+    echo "  FATAL 0.0.0.0 is forbidden (NET-C9)" >&2
+    exit 1
+fi
+if [[ -n "$WIFI_IP" ]] && ! _have_ip "$WIFI_IP"; then
+    echo "  WARN wifi $WIFI_IP not on any interface -- skipped (U92: wifi is optional)"
+    WIFI_IP=""
+fi
+GEN_LISTEN=(-l "tcp/127.0.0.1:7447" -l "tcp/$LAN2_IP:7447")
+if [[ -n "$WIFI_IP" ]]; then
+    GEN_LISTEN+=(-l "tcp/$WIFI_IP:7447")
+    echo "  LAN2 $LAN2_IP + wifi $WIFI_IP  (Qt connects to tcp/<either>:7447)"
+else
+    echo "  LAN2 $LAN2_IP only (no wifi address; debug face skipped)"
+fi
 
 # Ports free. A stale router still holding 7447 makes the new one exit and the
 # stack then runs with no bus at all.
@@ -223,8 +260,7 @@ sleep 1
 # ---------------------------------------------------------------- stage 2
 echo "==> [stage 2] routers (RT loopback-only; GEN loopback + LAN)"
 _start_bg zenohd-rt  "$ZENOHD" -l tcp/127.0.0.1:7449 --no-multicast-scouting
-_start_bg zenohd-gen "$ZENOHD" \
-    -l "tcp/127.0.0.1:7447" -l "tcp/$LAN_IP:7447" --no-multicast-scouting
+_start_bg zenohd-gen "$ZENOHD" "${GEN_LISTEN[@]}" --no-multicast-scouting
 sleep 2
 
 # ---------------------------------------------------------------- stage 3
@@ -272,11 +308,20 @@ rc=0
 
 # The LAN socket is the whole point of this script. Without it Qt cannot connect
 # and every downstream symptom is misleading.
-if ss -ltn 2>/dev/null | grep -q "$LAN_IP:7447"; then
-    echo "  OK   GEN router listening on $LAN_IP:7447 (Qt reachable)"
+# LAN2 is required (the delivery face); wifi is reported but never fails the
+# run -- the same asymmetry as the bind step above.
+if ss -ltn 2>/dev/null | grep -q "$LAN2_IP:7447"; then
+    echo "  OK   GEN router listening on LAN2 $LAN2_IP:7447 (cloud reachable)"
 else
-    echo "  FAIL GEN router is NOT listening on $LAN_IP:7447" >&2
+    echo "  FAIL GEN router is NOT listening on LAN2 $LAN2_IP:7447" >&2
     rc=1
+fi
+if [[ -n "$WIFI_IP" ]]; then
+    if ss -ltn 2>/dev/null | grep -q "$WIFI_IP:7447"; then
+        echo "  OK   GEN router listening on wifi $WIFI_IP:7447 (debug)"
+    else
+        echo "  WARN GEN router is not listening on wifi $WIFI_IP:7447" >&2
+    fi
 fi
 if ss -ltn 2>/dev/null | grep -q "127.0.0.1:7447"; then
     echo "  OK   GEN router listening on 127.0.0.1:7447 (on-board participants)"
@@ -284,7 +329,7 @@ else
     echo "  FAIL GEN router is NOT on loopback; on-board processes cannot attach" >&2
     rc=1
 fi
-if ss -ltn 2>/dev/null | grep -qE "^.*$LAN_IP:7449|0.0.0.0:7449"; then
+if ss -ltn 2>/dev/null | grep -qE "$LAN2_IP:7449|0.0.0.0:7449${WIFI_IP:+|$WIFI_IP:7449}"; then
     echo "  FAIL RT router is exposed beyond loopback (RT-C4 violation)" >&2
     rc=1
 else
@@ -310,7 +355,7 @@ fi
 echo
 _status
 echo
-echo "cloud face : xbrain/$ROBOT_ID/**  on  tcp/$LAN_IP:7447"
+echo "cloud face : xbrain/$ROBOT_ID/**  on  tcp/$LAN2_IP:7447${WIFI_IP:+  (+ debug tcp/$WIFI_IP:7447)}"
 echo "chassis evidence : $LOG_DIR/chassis_stub.log"
 echo "stop : $0 --stop"
 exit $rc
