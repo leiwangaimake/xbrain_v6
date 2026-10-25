@@ -128,6 +128,12 @@ class GateVerdict:
     gate: str = ""              # 命中的闸门号, 供日志与事件
 
 
+def _basic_motion_test() -> bool:
+    """TEMPORARY basic-motion test switch (user ruling 2026-10-26)."""
+    import os
+    return os.environ.get("XBRAIN_BASIC_MOTION_TEST") == "1"
+
+
 def _fail(gate: str, code: str, detail: Dict[str, Any]) -> GateVerdict:
     return GateVerdict(passed=False, code=code, detail=detail, gate=gate)
 
@@ -212,16 +218,24 @@ def evaluate(cmd: Mapping[str, Any], *, limits: MotionLimits,
     # shape as the chassis_link defect fixed 2026-09-26 -- a field name
     # that never existed reads as "absent", and absent is the fail-safe
     # side, so nothing ever complained (CLAUDE.md S3.2, always-red).
-    if not (clock or {}).get("sync"):
+    # TEMPORARY (user ruling 2026-10-26, basic-motion test): with
+    # XBRAIN_BASIC_MOTION_TEST=1 (set only by scripts/start_basic_motion.sh)
+    # G-4 / G-5 / G-6 are skipped so nothing blocks the basic motions. Remove
+    # after the test to restore the standard flow.
+    if _basic_motion_test():
+        pass
+    elif not (clock or {}).get("sync"):
         return _fail("G-4", E_UNHEALTHY, {"item": "clock"})
     # -- G-5 健康度 ------------------------------------------------------
-    if health is not None and not health.get("allow_motion", False):
+    if _basic_motion_test():
+        pass
+    elif health is not None and not health.get("allow_motion", False):
         # detail.item 要点名[具体失败项](S5.1 闭集), 不说"机器人忙" --
         # 操作员据此才知道去修哪个.
         return _fail("G-5", E_UNHEALTHY,
                      {"item": _first_failing_item(health)})
     # -- G-6 航向 --------------------------------------------------------
-    if intent in _NEEDS_YAW:
+    if intent in _NEEDS_YAW and not _basic_motion_test():
         if pose is not None and not pose.get("yaw_capable", False):
             # ** 整条拒绝, NO 不做"只执行平移部分"的部分降级(G-6 逐字).
             return _fail("G-6", E_NO_HEADING, {})

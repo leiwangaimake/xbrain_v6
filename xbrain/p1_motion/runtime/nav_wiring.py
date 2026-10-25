@@ -121,6 +121,7 @@ from xbrain.p1_motion.path.local_frame import LocalFrameError
 from xbrain.p1_motion.rns.source import RnsSource
 from xbrain.p1_motion.rotation.episodes import RotationEpisodeTracker, RotationEvent
 from xbrain.p1_motion.rotation.rcg import RingSample
+from xbrain.p1_motion.runtime import basic_motion_test
 from xbrain.p1_motion.runtime.fault_forward import now_wall, rebuild_forward
 from xbrain.p1_motion.runtime.nav_cfg import NavConfig
 from xbrain.p1_motion.sources.arbiter_p1 import P1Arbiter
@@ -341,7 +342,16 @@ class NavRuntime:
         # one counter with cmd_vel would make the p5 side see a stream that
         # jumps by hundreds between two 2 Hz frames.
         self._seq = {"cmd_vel": 0, "progress": 0, "status": 0, "event": 0,
-                     "arb": 0, "fault_fwd": 0}
+                     "arb": 0, "fault_fwd": 0, "mode": 0}
+        # Latest rt/chassis/state body (odom, motion_state_raw, usage_mode) for
+        # the auto-navigation switch and the basic-motion test executor.
+        self._chassis_body: Dict[str, Any] = {}
+        self._chassis_rx = -1.0
+        self._nav_req_mono = -1e9
+        # TEMPORARY basic-motion test executor (user ruling 2026-10-26); None
+        # unless XBRAIN_BASIC_MOTION_TEST=1.
+        self._bmt = (basic_motion_test.BasicMotionTest()
+                     if basic_motion_test.enabled() else None)
         self._periods: Deque[float] = collections.deque(maxlen=_STATS_WINDOW)
         # the heartbeat thread reads _periods while this thread appends: a deque
         # iterated during a concurrent append raises, so both sides lock.
@@ -396,6 +406,7 @@ class NavRuntime:
         self._subs.append(self._rt.declare_subscriber(
             "xbrain/%s/rt/chassis/fault" % self._rid, self._on_chassis_fault))
         self._cmd_pub = self._rt.declare_publisher("xbrain/%s/rt/motion/cmd_vel" % self._rid)
+        self._mode_pub = self._rt.declare_publisher("xbrain/%s/rt/chassis/mode" % self._rid)
         # General plane, relative key -- same form every other p5-facing
         # producer uses (p2's device events, p1's own fence/motion events).
         self._fault_pub = self._gen.declare_publisher(EVENT_CHASSIS_FAULT_TOPIC)
@@ -514,6 +525,8 @@ class NavRuntime:
                 _logger.warning("p1 rt/chassis/state rejected (n=%d): %s", n, exc)
             return
         self._estop_epoch = epoch
+        self._chassis_body = body if isinstance(body, dict) else {}
+        self._chassis_rx = time.monotonic()
 
     def _on_chassis_fault(self, sample: Any) -> None:
         """P1-20: rt/chassis/fault -> event/fault/chassis, envelope rebuilt.
@@ -783,6 +796,17 @@ class NavRuntime:
         for r in routes:
             emits += self._host.on_route(r, now_ms, pose.xy)
         health = self._health.view(now_ms)
+        if self._bmt is not None:
+            # TEMPORARY basic-motion test: relmoves go to the odom executor,
+            # never to the mission host / RNS.
+            age = time.monotonic() - self._chassis_rx if self._chassis_rx >= 0 else 1e9
+            for b in relmoves:
+                if self._bmt.active:
+                    self._bmt.abort("preempted")
+                why = self._bmt.start(b, self._chassis_body, age)
+                if why is not None:
+                    _logger.warning("BASIC-MOTION-TEST relmove refused: %s", why)
+            relmoves = []
         for b in relmoves:
             emits += self._host.on_relmove(b, now=now_ms, pose=pose.xy,
                                            yaw_rad=pose.yaw, heading_valid=pose.heading_valid,
@@ -823,10 +847,22 @@ class NavRuntime:
                                inputs_ever_ready=self._inputs_ever_ready)
         if state in (CtrlState.READY, CtrlState.ACTIVE):
             self._inputs_ever_ready = True
+        vx, vy, wz = out.vx, out.vy, out.wz
+        if self._bmt is not None and self._bmt.active:
+            # TEMPORARY basic-motion test: the executor drives, every gate is
+            # bypassed except the soft estop (CtrlLoop still zeroes on estop).
+            if inp.estop:
+                self._bmt.abort("estop")
+                vx = vy = wz = 0.0
+            else:
+                age = time.monotonic() - self._chassis_rx if self._chassis_rx >= 0 else 1e9
+                vx, vy, wz = self._bmt.step(t0, self._chassis_body, age)
+                state = CtrlState.ACTIVE
+        self._auto_navigation(t0)
         self._ctrl.transition(state)
         # single sink (12 S2.2 step 10): the CtrlLoop callback publishes.
-        self._ctrl.run_one_tick(computed_vx=out.vx, computed_wz=out.wz,
-                                computed_vy=out.vy, estop=inp.estop)
+        self._ctrl.run_one_tick(computed_vx=vx, computed_wz=wz,
+                                computed_vy=vy, estop=inp.estop)
         emits += self._host.after_tick(inp, out)
         # inp.ts_wall_s, so every event this tick produces carries ONE reading
         # of ONE clock. Two readings would be harmless here, two CLOCKS would
@@ -838,6 +874,23 @@ class NavRuntime:
         self._publish_arb(inp, now_ms)
 
     # ---- publishing ----------------------------------------------------------
+    def _auto_navigation(self, now_s: float) -> None:
+        """User ruling 2026-10-26: after a stand (motion_state 17) switch the
+        chassis to usage_mode navigation, else Tier1 holds zero (NAV-111).
+        Not while a motion runs; at most one request per 3 s."""
+        b = self._chassis_body
+        if b.get("motion_state_raw") != 17 or b.get("usage_mode") == "navigation":
+            return
+        if self._bmt is not None and self._bmt.active:
+            return
+        if now_s - self._nav_req_mono < 3.0:
+            return
+        self._nav_req_mono = now_s
+        cmd_id = "md-p1-%s" % os.urandom(5).hex()
+        self._mode_pub.put(self._envelope({"cmd_id": cmd_id, "usage_mode": "navigation"}, "mode"))
+        _logger.info("p1 auto-navigation: stood up, usage_mode=%s -> navigation (cmd_id=%s)",
+                     b.get("usage_mode"), cmd_id)
+
     def _envelope(self, data: Dict[str, Any], seq_key: str) -> bytes:
         """11 S3.0 envelope through the common encoder: ts / mono are SECONDS
         (float), boot rides with mono (CLK-C4), seq per key. NOT
