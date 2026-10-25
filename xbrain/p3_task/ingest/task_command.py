@@ -84,13 +84,19 @@ def _goto_has_destination(task: Dict[str, Any]) -> bool:
       * cloud GOTO_KEYPOINT    task.route_id and/or params.waypoints[] (the
                                gateway passes the v2.0 plan through; P3 resolves
                                it -- see p5 inbound/task_router._goto)
-      * voice B01              params.slots.waypoint, the spoken name (P3's
-                               geo_refs resolves names)
+      * voice B01              params.waypoint_id, resolved by p4 against the
+                               geo catalogue (16 S8.1)
     A key that is present but empty (blank name, empty list, half a position)
     is not a destination.
+
+    *** A spoken NAME alone (params.slots.waypoint) is NOT a destination
+    (changed 2026-10-25). It was accepted until then on the belief that P3
+    resolves names; it does not -- geo_refs only computes the delete-impact set
+    (11 S7.9.4) and dispatch pushes a route only from route_geo_id. A
+    name-only goto was therefore stored and never moved, and on 2026-10-25 the
+    tier-2 LLM filled that name with invented text ("到这边=w").
     """
     params = task.get("params") if isinstance(task.get("params"), dict) else {}
-    slots = params.get("slots") if isinstance(params.get("slots"), dict) else {}
 
     def _text(v: Any) -> bool:
         return isinstance(v, str) and bool(v.strip())
@@ -100,8 +106,6 @@ def _goto_has_destination(task: Dict[str, Any]) -> bool:
 
     if _text(task.get("route_id")) or _text(params.get("waypoint_id")):
         return True
-    if _text(slots.get("waypoint")):
-        return True
     if _num(params.get("lat")) and _num(params.get("lon")):
         return True
     target = params.get("target")
@@ -109,6 +113,20 @@ def _goto_has_destination(task: Dict[str, Any]) -> bool:
         return True
     waypoints = params.get("waypoints")
     return isinstance(waypoints, list) and len(waypoints) > 0
+
+
+def _patrol_has_route(task: Dict[str, Any]) -> bool:
+    """True iff a patrol task carries a non-blank route_id (11 S7.2).
+
+    Only the top-level task.route_id counts: it is the one field
+    task_row_from_command maps to tasks.route_geo_id, which is what dispatch
+    reads. A route NAME in params.slots.route is provenance, not a route.
+    B04 patrol_repeat (16 S6.7.3 [5]: route taken from the current task by
+    P3) is refused too: nothing in P3 fills it yet, and an unfilled patrol is
+    exactly the empty task this check exists to stop.
+    """
+    route_id = task.get("route_id")
+    return isinstance(route_id, str) and bool(route_id.strip())
 
 
 def parse_task_command(payload: Dict[str, Any]) -> TaskCommand:
@@ -138,6 +156,14 @@ def parse_task_command(payload: Dict[str, Any]) -> TaskCommand:
             raise TaskCommandError(
                 E_SCHEMA, "goto requires a destination (11 S7.2: waypoint_id "
                 "or target)")
+        if task.get("type") == "patrol" and not _patrol_has_route(task):
+            # 11 S7.2 task table: patrol REQUIRES route_id. P3's dispatch
+            # pushes geometry only from route_geo_id, so a patrol without one
+            # was stored, set "running" and moved nothing. 2026-10-25 .1.26:
+            # four such patrols (route "候选", invented by the tier-2 LLM) were
+            # queued from voice, one of them running.
+            raise TaskCommandError(
+                E_SCHEMA, "patrol requires route_id (11 S7.2)")
         inner = task.get("task_id")
         # S7.2 as corrected 2026-08-20: task.task_id is OPTIONAL. It has to be,
         # because the id form is t-YYYYMMDD-NNN and NNN is a per-day sequence

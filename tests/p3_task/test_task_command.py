@@ -137,8 +137,9 @@ def test_a_goto_with_no_destination_is_refused():
 
 
 @pytest.mark.parametrize("task_over", [
-    # voice: the spoken name rides in params.slots (resolved by geo_refs)
-    {"params": {"slots": {"waypoint": "东门"}}},
+    # voice B01: p4 resolves the name to params.waypoint_id (16 S8.1), and the
+    # spoken name rides along in params.slots as provenance
+    {"params": {"waypoint_id": "w-east_gate", "slots": {"waypoint": "东门"}}},
     # HMI W2: a stored waypoint id, or a raw position
     {"params": {"waypoint_id": "w-east_gate"}},
     {"params": {"lat": 34.69, "lon": 135.50}},
@@ -159,6 +160,10 @@ def test_every_producer_s_destination_form_is_accepted(task_over):
 
 
 @pytest.mark.parametrize("task_over", [
+    # A spoken NAME alone (2026-10-25: P3 never resolves it at dispatch, and
+    # the tier-2 LLM filled it with "到这边=w" on the robot).
+    {"params": {"slots": {"waypoint": "东门"}}},
+    {"params": {"slots": {"waypoint": "到这边=w"}}},
     {"params": {"slots": {"waypoint": "  "}}},        # blank name
     {"params": {"lat": 34.69}},                      # half a position
     {"params": {"waypoints": []}},                    # empty list
@@ -174,6 +179,34 @@ def test_the_destination_rule_is_goto_only():
     """patrol and the other types are untouched by the goto rule."""
     cmd = parse_task_command(_submit())
     assert cmd.task["type"] == "patrol"
+
+
+@pytest.mark.parametrize("task_over", [
+    # The 2026-10-25 .1.26 frame: B03 with an LLM-invented route name and no
+    # route_id. It was accepted and one of four went "running".
+    {"route_id": None, "params": {"intent": "patrol_schedule",
+                                  "slots": {"route": "候选", "loops": 1}}},
+    {"route_id": "   "},                                # blank id
+    # B04: route is the current task's (16 S6.7.3 [5]); nothing fills it yet.
+    {"route_id": None, "params": {"intent": "patrol_repeat",
+                                  "slots": {"loops": 1}}},
+])
+def test_a_patrol_without_route_id_is_refused(task_over):
+    """11 S7.2 task table: patrol requires route_id.
+
+    P3's dispatch pushes a route only from route_geo_id, so a patrol without
+    one is a task that reports "running" and moves nothing. The positive half
+    is test_the_destination_rule_is_goto_only above (route_id "r-east"
+    passes); a check that refused every patrol would fail it.
+    """
+    frame = _submit()
+    frame["task"].update(task_over)
+    if frame["task"].get("route_id") is None:
+        del frame["task"]["route_id"]
+    with pytest.raises(TaskCommandError) as ei:
+        parse_task_command(frame)
+    assert ei.value.code == E_SCHEMA
+    assert "route_id" in str(ei.value)
 
 
 def test_submit_takes_its_id_from_the_task_body():

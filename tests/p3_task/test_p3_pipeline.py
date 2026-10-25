@@ -43,18 +43,25 @@ async def dao_conn():
 
 
 def _frame(task_type="patrol", intent="patrol_route", id_="B02", cmd_id="c-1",
-           slots=None):
+           slots=None, waypoint_id=None):
     """An 11 S7.2 TaskCommand as p4_agent / the HMI / the cloud all send it.
 
     task.task_id is omitted on purpose: S7.2 (corrected 2026-08-20) lets the
     sender leave it out because the t-YYYYMMDD-NNN per-day sequence is P3's
     alone, and the idempotency key is cmd_id.
+
+    A patrol carries route_id and a goto params.waypoint_id: 11 S7.2 makes the
+    geometry required, and P3 refuses either without it since 2026-10-25.
     """
+    task = {"type": task_type,
+            "params": {"intent": intent, "id": id_,
+                       "slots": dict(slots or {}), "text": "开始巡逻"}}
+    if task_type == "patrol":
+        task["route_id"] = "r-east"
+    if waypoint_id is not None:
+        task["params"]["waypoint_id"] = waypoint_id
     return {"cmd_id": cmd_id, "action": "submit", "source": "voice",
-            "task": {"type": task_type,
-                     "params": {"intent": intent, "id": id_,
-                                "slots": dict(slots or {}),
-                                "text": "开始巡逻"}}}
+            "task": task}
 
 
 async def _submit(conn, dao, frame, *, now_mono_ms):
@@ -90,11 +97,12 @@ async def test_two_voice_tasks_serialise(dao_conn):
     robot). Highest priority... here equal priority, so submit order wins."""
     dao, conn = dao_conn
     a = await _submit(conn, dao,
-                      # A goto must name its destination (11 S7.2); P3
-                      # refuses one without since 2026-10-24.
+                      # A goto must name its destination (11 S7.2) as a
+                      # waypoint_id; P3 refuses a name alone since 2026-10-25.
                       _frame(task_type="goto", intent="goto_waypoint",
                              id_="B01", cmd_id="c-a",
-                             slots={"waypoint": "东门"}), now_mono_ms=1)
+                             slots={"waypoint": "东门"},
+                             waypoint_id="w-east_gate"), now_mono_ms=1)
     b = await _submit(conn, dao, _frame(cmd_id="c-b"), now_mono_ms=2)
     await scheduler_tick(conn, dao, now_mono_ms=3, on_transition=_noop)
     sa = (await dao.fetch_by_id(a)).state
