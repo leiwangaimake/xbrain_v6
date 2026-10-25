@@ -385,8 +385,10 @@ def make_turn_handler(
         if asr_post is not None:
             text, corrections = asr_post.apply(raw)
         t_post = time.monotonic()
+        # Named explicitly rather than left to the default: this handler is
+        # the microphone path, and the motion frame says so (11 MO-2).
         decision = orchestrator.handle_turn(text, session, now_ms,
-                                            raw_text=raw)
+                                            raw_text=raw, channel="mic_local")
         out: List[Tuple[str, bytes]] = []
         for key, payload in decision_to_publishes(decision):
             data = json.dumps(payload, ensure_ascii=False,

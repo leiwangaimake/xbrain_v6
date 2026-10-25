@@ -79,6 +79,7 @@ from xbrain.p4_agent.runtime.mode_request import (
     to_mode_command,
 )
 from xbrain.p4_agent.runtime.motion_intent_request import (
+    MOTION_CHANNELS,
     MotionIntentError,
     is_motion_intent,
     to_motion_intent,
@@ -443,6 +444,13 @@ class TurnOrchestrator:
         # text channel). Recorded into a task-create request's `source` so P3
         # (and telemetry) can tell a spoken task from a typed one.
         self._source = source
+        # The entry channel of the turn being handled (11 MO-2 closed set),
+        # set by handle_turn for exactly one turn. One orchestrator serves the
+        # mic, cloud text, cloud voice and HMI alike, so the channel cannot be
+        # a constructor constant the way _source is (2026-10-26: it was, and
+        # every motion frame said mic_local). Turns run on one worker thread,
+        # so a per-turn attribute is safe; handle_turn sets it every turn.
+        self._turn_channel = "mic_local"
         # GWY-P4-39/41: for a G-class query, query_fn returns the answer
         # rendered from LIVE state (or an 'unknown' reply when stale). When
         # it is None or returns None, the query falls through to a normal
@@ -471,7 +479,8 @@ class TurnOrchestrator:
     def handle_turn(self, text: str, session: OrchestratorSession,
                     now_mono_ms: int,
                     raw_text: Optional[str] = None,
-                    addressed: bool = False) -> TurnDecision:
+                    addressed: bool = False,
+                    channel: str = "mic_local") -> TurnDecision:
         """Process one ASR utterance end-to-end. See module docstring for
         the ordering (16 S5.2).
 
@@ -483,7 +492,29 @@ class TurnOrchestrator:
         addressed=True waives the layer-5 directional cue for a channel that
         is directed by construction (cmd/voice_text); every microphone path,
         including cloud audio, leaves it False. It changes layer 5 only: the
-        bypass and the confirm gate run exactly as for voice."""
+        bypass and the confirm gate run exactly as for voice.
+
+        channel is the entry the turn came in on (11 MO-2: mic_local | cloud |
+        wecom | hmi); it labels the cmd/motion/intent frame, from which P2
+        fills relative_move.source. The default is the microphone path; the
+        text and cloud entries pass theirs explicitly. Out-of-set raises.
+        """
+        if channel not in MOTION_CHANNELS:
+            raise ValueError("channel %r not in %s"
+                             % (channel, sorted(MOTION_CHANNELS)))
+        # Set, not saved and restored: every turn sets it here before anything
+        # reads it, and nothing reads it outside a turn, so a previous turn's
+        # value (even one that raised) can never be seen. A save/restore was
+        # tried and is an EQUIVALENT mutant -- no test can tell it apart --
+        # so it is not kept (CLAUDE.md 7.2.1).
+        self._turn_channel = channel
+        return self._handle_turn(text, session, now_mono_ms, raw_text,
+                                 addressed)
+
+    def _handle_turn(self, text: str, session: OrchestratorSession,
+                     now_mono_ms: int, raw_text: Optional[str],
+                     addressed: bool) -> TurnDecision:
+        """handle_turn's body, with the turn's channel already set."""
         text = (text or "").strip()
         raw = (raw_text or "").strip() if raw_text is not None else text
 
@@ -704,7 +735,7 @@ class TurnOrchestrator:
                     entry.name, slots=dict(extra or {}),
                     cmd_id="mi-" + uuid.uuid4().hex[:12],
                     turn_id="vt-" + uuid.uuid4().hex[:12],
-                    source=self._source, asr_text=text)
+                    channel=self._turn_channel, asr_text=text)
             except MotionIntentError as exc:
                 # MI-2: a missing slot NEVER goes on the wire -- ask again.
                 spoken = _MOTION_REASON_CN.get(

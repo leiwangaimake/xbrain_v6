@@ -53,14 +53,14 @@ _MOTION_INTENTS: Dict[str, Optional[str]] = {
     "face_heading": "heading",
 }
 
-#: MO-2 的 channel 闭集. P4 只会是语音/文本两种来源之一, 但闭集写全, 因为
-#: P2 据此填 relative_move.source.
-_SOURCE_TO_CHANNEL = {
-    "voice": "mic_local",
-    "text": "hmi",
-    "cloud": "cloud",
-    "wecom": "wecom",
-}
+#: MO-2 的 channel 闭集 (11 S9.3.2A.3 字段表逐字): P2 据此填
+#: relative_move.source (mic_local -> voice_local, cloud -> voice_cloud ...).
+#: *** 2026-10-26 订正: 此前这里是一张 source -> channel 映射表, 而 source 是
+#: 编排器构造时定死的整机常量 "voice" -- 云端文本/云端语音/HMI 共用同一个
+#: 编排器, 于是每一条运动帧都被标成 mic_local, P2 分不出指令来自云端.
+#: 而且查表用的是 .get(source, "mic_local"), 不认识的值也静默落成本地麦.
+#: 现在由调用方按[本轮]入口传 channel, 这里只做闭集校验, 越界即抛.
+MOTION_CHANNELS = frozenset({"mic_local", "cloud", "wecom", "hmi"})
 
 
 class MotionIntentError(RuntimeError):
@@ -72,7 +72,7 @@ def is_motion_intent(intent_name: str) -> bool:
 
 
 def to_motion_intent(intent_name: str, *, slots: Mapping[str, Any],
-                     cmd_id: str, turn_id: str, source: str,
+                     cmd_id: str, turn_id: str, channel: str,
                      asr_text: str = "") -> Optional[Dict[str, Any]]:
     """A 类意图 -> MotionIntent 信封; 不是运动原语则 None.
 
@@ -82,6 +82,11 @@ def to_motion_intent(intent_name: str, *, slots: Mapping[str, Any],
     """
     if intent_name not in _MOTION_INTENTS:
         return None
+    if channel not in MOTION_CHANNELS:
+        # 调用方的 bug, 不是"槽位不全": 抛 ValueError 而不是 MotionIntentError,
+        # 后者会被当成追问话术播出去, 把一个编程错误包装成"再说一遍".
+        raise ValueError("channel %r not in MO-2 set %s"
+                         % (channel, sorted(MOTION_CHANNELS)))
     slot_name = _MOTION_INTENTS[intent_name]
     out_slots: Dict[str, Any] = {}
     if slot_name is not None:
@@ -97,7 +102,7 @@ def to_motion_intent(intent_name: str, *, slots: Mapping[str, Any],
         # 唯一的审计缝合点: 没有它, "模型说了什么 -> 机器人做了什么"这条链
         # 断在 P4 出口.
         "turn_id": turn_id,
-        "channel": _SOURCE_TO_CHANNEL.get(source, "mic_local"),
+        "channel": channel,  # 本轮入口, 已按闭集校验
         "auth_level": _AUTH_LEVEL,
         "intent": intent_name,
         "slots": out_slots,

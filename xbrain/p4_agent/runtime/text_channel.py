@@ -124,9 +124,12 @@ def handle_text_command(
                                   publishes=pubs)
 
     # Allowed -> run the orchestrator on the TEXT (skips ASR).
+    # channel goes through to the motion frame (11 MO-2): the token here is
+    # cloud / wecom / hmi, already admitted above, never the mic default.
     decision = orchestrator.handle_turn(text, session, now_mono_ms,
                                         raw_text=raw_text,
-                                        addressed=addressed)
+                                        addressed=addressed,
+                                        channel=channel)
     pubs: List[Tuple[str, bytes]] = []
     for key, payload in decision_to_publishes(decision):
         # require_tts_reply=false: text/HMI/WeChat callers can suppress the
