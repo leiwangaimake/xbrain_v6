@@ -41,12 +41,14 @@ RestartSec=2s
 RestartPreventExitStatus=78
 OOMScoreAdjust=-1000
 Environment="PYTHONUNBUFFERED=1"
-# CHK-1-03 / 10 S3.2 CPU affinity baseline.
-# 核 5 独占: C++ 实时线程
+# CHK-1-03 / 10 S3.2 CPU affinity baseline (user ruling 2026-10-25, 99 U93).
+# Cores 0-3 are ours and 4-7 belong to perception. Our processes are scheduled
+# freely across 0-3 -- no per-core pinning; if T7 cycle measurements ever ask
+# for pinning, it is planned inside 0-3 only (10 S3.2 pinning trigger).
 # The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py
 # parses that table live and fails on any divergence, so editing this
 # line without editing the table is caught at CI time.
-CPUAffinity=5
+CPUAffinity=0-3
 
 # ---- the two limits the realtime design cannot work without -------------
 #

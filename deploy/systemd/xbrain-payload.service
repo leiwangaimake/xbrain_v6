@@ -22,15 +22,13 @@ ExecStart=/opt/xbrain_v6/services/payload/payload_server.sh
 Restart=on-failure
 RestartSec=5
 
-# * AIR-P3 names 三个服务 and this is the third. Its work is socket I/O and small frame
-# assembly, so one core is ample.
-# CHK-1-03: 10 S3.2 does NOT list payload-service on any core, even though
-# it is one of the 15 resident processes (CLAUDE.md S0.1). Core 7 here is
-# the pre-existing choice and matches the other AI-runtime services, but it
-# has no entry in the table to check against -- the affinity gate carries it
-# in PENDING_DOC_DECISION and prints it rather than failing. Whether the
-# table should gain a row is a design call: see NEXT SW-20.
-CPUAffinity=7
+# * AIR-P3 names three services and this is the third, core number superseded by
+# 99 U93 (2026-10-25). Its work is socket I/O and small frame assembly; it now
+# shares our pool, cores 0-3 (10 S3.2), freely with the other processes.
+# The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py
+# parses that table live and fails on any divergence, so editing this
+# line without editing the table is caught at CI time.
+CPUAffinity=0-3
 
 # *** 契约未规定-建议 (+300). Between ai_asr (+400) and p4/p5 (+200): losing payload costs
 # the voice output path and the deterrent, which is worse than losing generated replies

@@ -7,9 +7,11 @@ File: check_affinity.py
 Brief: CHK-1-03 -- systemd CPUAffinity must match the 10 S3.2 core table
 
 Description:
-10 S3.2 给了 Orin NX 八个核的逐进程分配, 并且这个分配不是建议: 核 4 由
-P1 独占(isolcpus 隔离)是 20 Hz 周期 P99 的前提, 核 6 集中四个 RT/急停类
-C++ 进程是因为它们无 GIL 无 GC, 核 7 明确标着"已过载"是有意接受的代价.
+10 S3.2 给了 Orin NX 八个核的分配, 并且这个分配不是建议. 2026-10-25 起
+(99 U93, 用户裁决)它是一条边界: 核 0-3 归我方, 我方全部进程在四核内自由
+调度(单元一律 CPUAffinity=0-3); 核 4-7 全部归 perception. 此前的逐核分配
+(核 4 P1 独占 / 核 5 quadruped / 核 6 RT 面 C++ / 核 7 Python+AI)已在表下
+划为被替代的表述 -- 那段故意不加反引号, 否则本门会把旧分配当现行表解析.
 
 表在文档里, 生效在 systemd 单元里. 两处各写一遍, 谁也不通知谁 -- 而分叉的
 表现是[没有表现]: 进程照常启动, 周期照常跑, 只是抖动变大, 要到 T7 时延实测
@@ -23,7 +25,9 @@ C++ 进程是因为它们无 GIL 无 GC, 核 7 明确标着"已过载"是有意�
 *** 判据 (2)(3)(4) 需要真机, 本门只做 (1).
   (2) taskset -pc 读实际掩码  -- 要进程在跑;
   (3) chrt -p 读 FIFO 优先级  -- 要 quadruped 在跑(且它是 C++ 侧未建的);
-  (4) 内核 cmdline 的 isolcpus -- 要目标机的 /proc/cmdline.
+  (4) 目标机的隔离落地 -- 2026-10-25 起不是 isolcpus, 而是 system.conf
+      CPUAffinity=0-3 + irqaffinity=0-3 + irqbalance 禁 4-7 (10 S3.2
+      "隔离的落地方式"), 要读目标机自己的配置.
 三条都归 needs_orin 档, 见 tests/deploy/test_affinity_gate.py 里的说明.
 
 Boundaries: 只比对静态声明. 不改单元文件, 不设置任何亲和.
@@ -124,7 +128,10 @@ def parse_core_table(text):
 #: 清单同一个规矩: 豁免必须逐条列出且说得出为什么, 否则半年后没人分得清
 #: 哪些是有意排除, 哪些是漏了.
 _NOT_A_PROCESS = {
-    "isolcpus": "kernel cmdline parameter, not a process (10 S3.2 core-4 row)",
+    # 2026-10-25 起为空: 唯一一条 "isolcpus" 来自旧表核 4 行, 而 99 U93 重做后
+    # 表体不再出现它(旧表整段划删且去掉了反引号). 留着一条已无对象的豁免,
+    # 会让日后真写进表体的 `isolcpus` 被静默放过而不是报出来.
+    # 保留空字典: parse_core_table 仍按它过滤, 下一条要豁免时有地方写.
 }
 
 #: 进程名 -> 单元名的两条例外, 各附理由. 其余全部按下面的规则推导, NO 不

@@ -6,10 +6,12 @@ File: test_affinity_gate.py
 Brief: CHK-1-03 -- 守 scripts/ci/check_affinity.py 与 10 S3.2 的核分配
 
 Description:
-10 S3.2 的核分配不是建议: 核 4 由 P1 独占是 20 Hz 周期 P99 的前提, 核 6 集中
-四个 RT/急停类 C++ 进程是因为它们无 GIL 无 GC, 核 7 被明确标注"过载是有意
-接受的代价". 这些数字同时活在两个地方 -- 文档表体与 systemd 单元 -- 谁改了
-都不会通知对方.
+10 S3.2 的核分配不是建议. 2026-10-25 起(99 U93, 用户裁决)它是一条边界:
+核 0-3 归我方, 我方全部进程在这四个核内自由调度; 核 4-7 全部归 perception.
+(此前的逐核分配 -- 核 4 P1 独占 / 核 5 quadruped / 核 6 RT 面 C++ / 核 7
+Python+AI -- 已在 10 S3.2 划为被替代的表述.) 这些数字同时活在两个地方 --
+文档表体与 systemd 单元 -- 谁改了都不会通知对方. 越界的后果是双向的: 我方
+进程落进 4-7 抢感知的核, 或 perception 单元漏写 4-7 而继承 0-3 与我方抢核.
 
 分叉的表现是[没有表现]: 进程照常起, 环照常跑, 只是抖动变大, 要到 T7 时延
 实测才暴露, 那时很难倒推回某个单元文件里的一个数字.
@@ -25,8 +27,10 @@ Description:
   (2) taskset -pc 读实际掩码 -- 要进程真在跑;
   (3) chrt -p 比 SCHED_FIFO 优先级 -- 要 quadruped 在跑, 而它是 C++ 侧
       尚未建成的进程(NEXT S2), 没有 Tier1 线程可比;
-  (4) /proc/cmdline 里的 isolcpus -- 要目标机的内核 cmdline, 开发机上读到的
-      是开发机自己的, 断言它等于部署基线毫无意义.
+  (4) 目标机的隔离落地(system.conf CPUAffinity=0-3 / irqaffinity=0-3 /
+      irqbalance 禁 4-7; 2026-10-25 起不再用 isolcpus, 理由见 10 S3.2
+      "隔离的落地方式") -- 要读目标机自己的配置, 开发机上读到的是开发机的,
+      断言它等于部署基线毫无意义.
 三条都归 needs_orin/needs_chassis 档, NO 不在这里写一个恒真的替身 --
 那正是 CLAUDE.md 3.2 形态1.
 
@@ -75,10 +79,18 @@ def test_the_table_parses_to_something():
     """
     table = _gate().parse_core_table(DOC.read_text(encoding="utf-8"))
     assert len(table) >= 14, "只解析到 %d 个进程, 表结构可能变了" % len(table)
-    # 核 4 必须恰好是 P1 一个进程 -- 独占是 20 Hz 的前提, 不是偏好.
-    on_core_4 = [p for p, (cores, _i) in table.items() if 4 in cores]
-    assert on_core_4 == ["xbrain_motion"], (
-        "核 4 上有 %s -- 10 S3.2 要求 P1 独占" % on_core_4)
+    # 99 U93 的边界: 核 4-7 上恰好只有 perception, 且它拿满 4-7.
+    perception_side = frozenset(range(4, 8))
+    on_4_to_7 = sorted(p for p, (cores, _i) in table.items()
+                       if cores & perception_side)
+    assert on_4_to_7 == ["perception"], (
+        "核 4-7 上有 %s -- 10 S3.2 规定只给 perception" % on_4_to_7)
+    assert table["perception"][0] == perception_side
+    # 其余每个进程都只在我方的 0-3 内 -- 需要绑核也只在 0-3 内规划.
+    ours = frozenset(range(0, 4))
+    outside = sorted(p for p, (cores, _i) in table.items()
+                     if p != "perception" and not cores <= ours)
+    assert outside == [], "这些我方进程越出了核 0-3: %s" % outside
 
 
 def test_anchor_must_be_unique():
@@ -115,7 +127,8 @@ def test_a_unit_rebinding_without_a_doc_change_is_caught():
     """
     target = UNIT_DIR / "xbrain-p1-motion.service"
     original = target.read_text(encoding="utf-8")
-    injected = original.replace("CPUAffinity=4", "CPUAffinity=7", 1)
+    # 7 是 perception 的核: 我方进程越界进 4-7 正是 99 U93 要拦的那种漂移.
+    injected = original.replace("CPUAffinity=0-3", "CPUAffinity=7", 1)
     # 注入必须真的改了文件. 本仓踩过一次"变异体没生效, 看起来像断言失效".
     assert injected != original, "注入没改动文件, 这次变异体不成立"
     try:
@@ -161,16 +174,17 @@ def test_the_gate_reads_the_table_not_a_hardcoded_copy():
         gate = _gate()
         idx = text.index(gate._TABLE_ANCHOR)
         head, tail = text[:idx], text[idx:]
-        # 只改表体里 quadruped 那一行的核号 5 -> 0.
-        patched = tail.replace("| **5** | ★ **`quadruped` 独占**",
-                               "| **0** | ★ **`quadruped` 独占**", 1)
+        # 只改表体里 perception 那一行的核号 4-7 -> 2-3 (en dash 用码位写,
+        # 文档里就是这个字符; 源文件里不放字面量, CLAUDE.md 2.2).
+        patched = tail.replace("| **4\u20137** | \u2605\u2605 **`perception` 专用**",
+                               "| **2\u20133** | \u2605\u2605 **`perception` 专用**", 1)
         assert patched != tail, "表体行的写法变了, 本用例的注入不再成立"
         fake.write_text(head + patched, encoding="utf-8")
         proc = _run("--doc", str(fake))
         assert proc.returncode != 0, (
             "改了表体核号, 门却没反应 -- 它读的很可能不是表体:\n%s"
             % proc.stdout)
-        assert "quadruped" in proc.stdout
+        assert "perception" in proc.stdout
 
 
 def test_unit_names_are_derived_not_hand_mapped():

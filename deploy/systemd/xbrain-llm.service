@@ -33,10 +33,14 @@ ExecStart=/opt/xbrain_v6/services/llm/llm_server.sh
 Restart=on-failure
 RestartSec=5
 
-# * AIR-P3: core 7 is what 10 §3.2 leaves to P4+P5+HMI+AI. The script also exports
-# OMP_NUM_THREADS=1; both halves are needed, because BLAS would otherwise start its own
-# pool underneath --threads and multiply into more runnable threads than core 7 can hold.
-CPUAffinity=7
+# * AIR-P3, core number superseded by 99 U93 (2026-10-25): our pool is cores 0-3
+# (10 S3.2), shared freely with P1..P5. The script still exports OMP_NUM_THREADS=1,
+# and that half matters more now: BLAS would otherwise start its own pool under
+# --threads and crowd four shared cores next to P1's 20 Hz loop.
+# The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py
+# parses that table live and fails on any divergence, so editing this
+# line without editing the table is caught at CI time.
+CPUAffinity=0-3
 
 # ** AIR-F3, and the reason this file is a safety item. The kernel picks its OOM victim by
 # oom_score, which knows nothing about what the robot needs to keep running. +500 makes

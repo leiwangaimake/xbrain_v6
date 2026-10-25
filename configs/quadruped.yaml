@@ -180,7 +180,11 @@ quadruped:
   # ── 实时化 (13 S9) ───────────────────────────────────────────────────
   realtime:
     mlockall: true
-    cpu_affinity: { ctrl: 5, chs_b: 5, io: 6, rt_safety: 6 }   # WARN: 与 10 S3.2 一并确认(D-42)
+    # 2026-10-25 removed (99 U93): realtime.cpu_affinity { ctrl: 5, chs_b: 5, io: 6,
+    #   rt_safety: 6 }. Cores 4-7 now belong to perception and ours are 0-3, so those
+    #   numbers would point quadruped threads at perception's cores. The key was
+    #   never read (quadruped_config.cc: blocked on D-42); thread pinning, if T7
+    #   ever asks for it, is planned inside 0-3 (10 S3.2 pinning trigger).
     # 2026-09-21 订正: 原写 { ctrl: 80, chs_b: 70, io: 10 }, 删掉 io.
     #   13 S9.1 线程表没有 io 线程: chs_a_rx 与 chs_a_tx 在那里都是
     #   普通/非实时, 理由就写在表里(JSON 解析放在 chs_a_rx 正是为了
