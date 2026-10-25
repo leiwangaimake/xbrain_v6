@@ -45,6 +45,9 @@ Environment="PYTHONUNBUFFERED=1"
 # line without editing the table is caught at CI time.
 CPUAffinity=0,4-6
 
+# rid override (L5): chassis_relay honours XBRAIN_ROBOT_ID (main.cc), so the relayed
+# RT keys use the robot's real rid.
+EnvironmentFile=-/opt/xbrain_v6/deploy/env/robot.env
 ExecStart=/opt/xbrain_v6/data/install/chassis_relay/lib/chassis_relay/chassis_relay
 
 [Install]

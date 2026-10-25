@@ -29,7 +29,16 @@ Environment="PYTHONUNBUFFERED=1"
 # line without editing the table is caught at CI time.
 CPUAffinity=0,4-6
 
-ExecStart=/usr/bin/env python3 -m xbrain.p3_task
+# rid for the cloud bridge, state/voice_turn and the cmd/chassis/ctrl envelope (p4),
+# p5's cloud face. Without it p5 only logs a WARNING and drops the whole cloud face;
+# p4 refuses to send the posture command (no rid to put in the S3.0 envelope).
+EnvironmentFile=-/opt/xbrain_v6/deploy/env/robot.env
+# *** --voice-loop is the FUNCTIONAL wiring (main_wiring.run_voice_loop_wiring), despite
+# the name. Without it __main__ runs main_loop, a heartbeat-only skeleton: the process
+# stays "active" and does nothing. Until 2026-10-26 every P1..P5 unit started that
+# skeleton, while the stack that actually worked was launched by a dev script with the
+# flag (99 U95 follow-up, found while making the units the delivery path).
+ExecStart=/usr/bin/env python3 -m xbrain.p3_task --voice-loop
 
 [Install]
 WantedBy=multi-user.target

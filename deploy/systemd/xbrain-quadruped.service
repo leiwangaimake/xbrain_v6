@@ -73,7 +73,16 @@ CPUAffinity=0,4-6
 LimitMEMLOCK=infinity
 LimitRTPRIO=80
 
-ExecStart=/opt/xbrain_v6/data/install/quadruped/lib/quadruped/quadruped_m20
+# rid override (L5): the binary honours XBRAIN_ROBOT_ID, so the RT keys carry the same
+# rid as every other process on this robot.
+EnvironmentFile=-/opt/xbrain_v6/deploy/env/robot.env
+# *** The ROS 2 uplink (13 channel 3, domain 42) needs the humble environment: rclcpp
+# finds its rmw implementation through AMENT_PREFIX_PATH, which only setup.bash sets.
+# RUNPATH covers the shared libraries, not that lookup -- without the source the
+# process starts and the uplink context fails. RMW is fixed to CycloneDDS (13 DDS-1).
+# exec keeps quadruped_m20 as the unit's main PID (Type=simple).
+Environment="RMW_IMPLEMENTATION=rmw_cyclonedds_cpp"
+ExecStart=/usr/bin/env bash -c 'source /opt/ros/humble/setup.bash && exec /opt/xbrain_v6/data/install/quadruped/lib/quadruped/quadruped_m20'
 
 [Install]
 WantedBy=multi-user.target
