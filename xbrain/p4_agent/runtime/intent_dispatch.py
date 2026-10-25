@@ -30,7 +30,7 @@ subscribers can pretty-print in the smoke test.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, FrozenSet
 
 
 class UnknownIntentDispatch(Exception):
@@ -169,6 +169,23 @@ class DispatchResult:
     intent_id: str
     key: str
     payload: dict
+
+
+def dispatch_keys() -> FrozenSet[str]:
+    """Every key choose_key can return, read off the two routing tables.
+
+    p4 caches one publisher per outbound key at startup (main_wiring), and a
+    key with no cached publisher is DROPPED with a warning. Until 2026-10-25
+    that publisher list was a hand copy holding five of the nine keys, so
+    every C/F/H intent this table routes to cmd/mode, cmd/teach, cmd/geo or
+    cmd/system was classified, confirmed, answered "收到" -- and thrown away.
+    Deriving the list from the tables makes "routed here" and "can publish
+    here" the same fact: a row added above is publishable the moment it is
+    written, with no second list to forget.
+    """
+    # Union of both tables: the prefix backstops and the per-id overrides.
+    # A frozenset, so the caller cannot grow the shared answer.
+    return frozenset(_PREFIX_MAP.values()) | frozenset(INTENT_TO_KEY.values())
 
 
 def choose_key(intent_id: str) -> str:

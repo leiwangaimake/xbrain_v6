@@ -12,7 +12,7 @@ into the TurnLoopWorker, publishes dispatched intents on GEN.
 
 Startup order:
   1. Open RT + GEN sessions
-  2. Cache publishers for the 5 outbound key families (avoids
+  2. Cache publishers for every outbound key family (avoids
      declare-per-message overhead + gets errors surfaced early)
   3. Start TurnLoopWorker
   4. Subscribe rt/audio/mic -> worker queue
@@ -35,9 +35,7 @@ from typing import Dict, Optional
 from xbrain.p4_agent.runtime.intent_dispatch import (
     CMD_AUDIO_SPEAK,
     CMD_MOTION_INTENT,
-    CMD_PAYLOAD,
-    CMD_PTZ,
-    CMD_TASK,
+    dispatch_keys,
 )
 from xbrain.p4_agent.runtime.orchestrator_turn import (
     CMD_ESTOP,
@@ -65,8 +63,14 @@ _logger = logging.getLogger("xbrain.p4.wiring")
 # out silently DROPS the estop -- the 2026-08-11 ORIN test hit exactly that
 # ('no cached publisher for cmd/estop'). The bypass path must have a
 # publisher like any other key.
-OUTBOUND_KEYS = (CMD_AUDIO_SPEAK, CMD_TASK, CMD_MOTION_INTENT,
-                  CMD_PTZ, CMD_PAYLOAD, CMD_ESTOP)
+# 2026-10-25: the dispatch keys are no longer a hand copy. The copy held five
+# of the nine keys intent_dispatch routes to, so cmd/mode (C class), cmd/teach
+# + cmd/geo (F class) and cmd/system (H class) were dropped exactly the way
+# cmd/estop once was. The three added by hand below are the keys the
+# orchestrator publishes OUTSIDE the routing tables: the bypass (estop /
+# motion) and the spoken reply. Sorted so the startup log is stable.
+OUTBOUND_KEYS = tuple(sorted(
+    dispatch_keys() | {CMD_AUDIO_SPEAK, CMD_MOTION_INTENT, CMD_ESTOP}))
 
 
 # Voice-loop heartbeat cadence. Kept as a module constant, not a parameter
