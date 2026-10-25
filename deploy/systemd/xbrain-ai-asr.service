@@ -20,14 +20,14 @@ ExecStart=/opt/xbrain_v6/services/asr/asr_server.sh
 Restart=on-failure
 RestartSec=5
 
-# * AIR-P3, core number superseded by 99 U93 (2026-10-25). The service stays pinned
-# to the CPU provider (services/asr/core/families.py) so it never takes a CUDA
-# context away from perception; its CPU set is now our whole pool, cores 0-3
-# (10 S3.2: 0-3 ours, 4-7 perception's), shared freely with P1..P5.
+# * AIR-P3, core number superseded by 99 U93/U94. The service stays pinned to the
+# CPU provider (services/asr/core/families.py) so it never takes a CUDA context
+# away from perception; its CPU set is now our whole pool, cores 0,4-6
+# (10 S3.2: 0,4-6 ours, 1-3,7 perception's), shared freely with P1..P5.
 # The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py
 # parses that table live and fails on any divergence, so editing this
 # line without editing the table is caught at CI time.
-CPUAffinity=0-3
+CPUAffinity=0,4-6
 
 # * AIR-F3. +400 -- killed before p4/p5 (+200) is wrong and after llama-server (+500) is
 # right: losing ASR costs voice input (F-AI-5) while losing the LLM costs only generated

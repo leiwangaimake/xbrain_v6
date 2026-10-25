@@ -23,12 +23,12 @@ Restart=on-failure
 RestartSec=5
 
 # * AIR-P3 names three services and this is the third, core number superseded by
-# 99 U93 (2026-10-25). Its work is socket I/O and small frame assembly; it now
-# shares our pool, cores 0-3 (10 S3.2), freely with the other processes.
+# 99 U93/U94. Its work is socket I/O and small frame assembly; it now shares
+# our pool, cores 0,4-6 (10 S3.2), freely with the other processes.
 # The number lives in 10 S3.2, not here; scripts/ci/check_affinity.py
 # parses that table live and fails on any divergence, so editing this
 # line without editing the table is caught at CI time.
-CPUAffinity=0-3
+CPUAffinity=0,4-6
 
 # *** 契约未规定-建议 (+300). Between ai_asr (+400) and p4/p5 (+200): losing payload costs
 # the voice output path and the deterrent, which is worse than losing generated replies

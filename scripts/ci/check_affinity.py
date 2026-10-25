@@ -8,8 +8,9 @@ Brief: CHK-1-03 -- systemd CPUAffinity must match the 10 S3.2 core table
 
 Description:
 10 S3.2 给了 Orin NX 八个核的分配, 并且这个分配不是建议. 2026-10-25 起
-(99 U93, 用户裁决)它是一条边界: 核 0-3 归我方, 我方全部进程在四核内自由
-调度(单元一律 CPUAffinity=0-3); 核 4-7 全部归 perception. 此前的逐核分配
+(99 U93, 2026-10-26 由 U94 改核号, 用户裁决)它是一条边界: 核 0/4/5/6 归
+我方, 我方全部进程在这四核内自由调度(单元一律 CPUAffinity=0,4-6); 核 1/2/3/7
+全部归 perception. 此前的逐核分配
 (核 4 P1 独占 / 核 5 quadruped / 核 6 RT 面 C++ / 核 7 Python+AI)已在表下
 划为被替代的表述 -- 那段故意不加反引号, 否则本门会把旧分配当现行表解析.
 
@@ -26,7 +27,7 @@ Description:
   (2) taskset -pc 读实际掩码  -- 要进程在跑;
   (3) chrt -p 读 FIFO 优先级  -- 要 quadruped 在跑(且它是 C++ 侧未建的);
   (4) 目标机的隔离落地 -- 2026-10-25 起不是 isolcpus, 而是 system.conf
-      CPUAffinity=0-3 + irqaffinity=0-3 + irqbalance 禁 4-7 (10 S3.2
+      CPUAffinity=0,4-6 + irqaffinity=0,4-6 + irqbalance 禁 1-3,7 (10 S3.2
       "隔离的落地方式"), 要读目标机自己的配置.
 三条都归 needs_orin 档, 见 tests/deploy/test_affinity_gate.py 里的说明.
 
@@ -67,8 +68,15 @@ _TABLE_ANCHOR = "**CPU 亲和\uff08Orin NX 8 核\uff09**"
 #: 破折号同样用码位: 文档里 "2-3" 用的是 en dash, 而 ASCII 连字符与 em dash
 #: 都出现过. 三种都认, 只认一种会静默少解析几行 -- 而少解析的表现是差集变小,
 #: 也就是门变松, 不是报错.
+_CORE_ITEM = "\\d+(?:\\s*[-\\u2013\\u2014]\\s*\\d+)?"
 _CORE_CELL = re.compile(
-    "^\\s*\\**\\s*(\\d+)\\s*(?:[-\\u2013\\u2014]\\s*(\\d+))?\\s*\\**\\s*$")
+    "^\\s*\\**\\s*(" + _CORE_ITEM + "(?:\\s*,\\s*" + _CORE_ITEM + ")*)"
+    "\\s*\\**\\s*$")
+#: 2026-10-26 (99 U94) 起核集不再是一个连续区间: 我方 "0, 4-6", 感知 "1-3, 7".
+#: 所以格子是逗号分隔的若干项, 每项是单核或区间. *** 只认第一项就会静默丢掉
+#: 逗号后面的核 -- 感知会被读成 {1,2,3}, 而它在单元里写的是 1-3,7, 门报
+#: MISMATCH 还算好的; 若单元也漏了 7, 两边一起错而门报绿.
+_CORE_RANGE = re.compile("(\\d+)(?:\\s*[-\\u2013\\u2014]\\s*(\\d+))?")
 
 #: 分配列里的进程名: 反引号包起来的那些. 文档在同一格里还有 "(P5)" 这样的
 #: 标注与中文说明, 反引号是唯一稳定的边界.
@@ -111,9 +119,12 @@ def parse_core_table(text):
         m = _CORE_CELL.match(cells[1])
         if not m:
             continue                       # 表头 / 分隔行
-        lo = int(m.group(1))
-        hi = int(m.group(2)) if m.group(2) else lo
-        cores = frozenset(range(lo, hi + 1))
+        cores = set()
+        for item in _CORE_RANGE.finditer(m.group(1)):
+            lo = int(item.group(1))
+            hi = int(item.group(2)) if item.group(2) else lo
+            cores.update(range(lo, hi + 1))
+        cores = frozenset(cores)
         # 连 (Pn) 标注一起抓: 它是推导单元名的唯一依据(见 unit_name_for).
         for proc, p_index in _PROC_WITH_INDEX.findall(cells[2]):
             if proc in _NOT_A_PROCESS:
