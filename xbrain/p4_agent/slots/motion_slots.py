@@ -29,10 +29,15 @@ This module gives the fast leg its reader, and the LLM leg its guard:
     ungrounded number is dropped, so the turn falls to the MI-2 clarify --
     16 EV-2: a missing slot means "ask", never "pick a value".
 
+A12 face_heading (2026-10-26, same day): heading, the 11 S9.3.2A.4 eight-way
+enum, from "朝 / 面向 / 面朝 / 朝向 / 转向 [正] <方位>" -- 东 南 西 北 and the
+four compounds (东北 ...), compounds first. The direction must END the phrase
+or be followed by 方 / 边 / 面 / 侧: "朝东门" is a place (the east gate), not
+a heading. An LLM heading is grounded when its Chinese word is in the text.
+
 What this does NOT do: no limits or conversions beyond the unit rule above
-(11 MI-1: P4 does not transform; 20 m caps etc. are P2's G-3 gate), no heading
-(A12, an enum, untouched here), no "steps" or "a bit" -- those carry no
-distance and must be asked for.
+(11 MI-1: P4 does not transform; 20 m caps etc. are P2's G-3 gate), no
+"steps" or "a bit" -- those carry no distance and must be asked for.
 
 Traps:
   * "米" is also the last character of "厘米": centimetres are matched first,
@@ -159,8 +164,12 @@ def parse_angle_deg(text: str) -> Optional[float]:
 def motion_slots(intent_name: str, text: str) -> Dict[str, Any]:
     """The fast-leg numeric slot for an A05-A10 intent, or {} when absent.
 
-    {} is the signal for the LLM leg (16 S6.6.4), not a value.
+    {} is the signal for the LLM leg (16 S6.6.4), not a value. A12
+    face_heading returns its heading enum the same way.
     """
+    if intent_name == "face_heading":
+        heading = parse_heading(text)  # A12: the eight-way enum
+        return {} if heading is None else {"heading": heading}
     slot = NUMERIC_MOTION_SLOT.get(intent_name)  # distance or angle
     if slot is None:  # not a motion intent
         return {}  # not a numeric motion intent
@@ -171,7 +180,9 @@ def motion_slots(intent_name: str, text: str) -> Dict[str, Any]:
 
 def missing_motion_slot(intent_name: str, slots: Optional[Mapping[str, Any]]
                         ) -> bool:
-    """True iff an A05-A10 intent lacks its numeric slot."""
+    """True iff an A05-A10 / A12 intent lacks its slot (number or heading)."""
+    if intent_name == "face_heading":
+        return (slots or {}).get("heading") is None  # A12's enum slot
     slot = NUMERIC_MOTION_SLOT.get(intent_name)  # the intent's slot
     return slot is not None and (slots or {}).get(slot) is None
 
@@ -217,6 +228,13 @@ def ground_llm_slots(intent_name: str, slots: Mapping[str, Any],
     Everything else the LLM returned is passed through unchanged.
     """
     out = dict(slots)  # a copy: the caller's dict is not touched
+    if intent_name == "face_heading" and "heading" in out:
+        # A12: the enum value's Chinese word must have been said.
+        word = HEADING_CN.get(out["heading"]) if isinstance(
+            out["heading"], str) else None
+        if word is None or word not in text:
+            del out["heading"]  # invented or off-set: ask (EV-2)
+        return out
     slot = NUMERIC_MOTION_SLOT.get(intent_name)  # numeric slot, if any
     if slot is None or slot not in out:  # nothing to check
         return out  # nothing numeric to check
@@ -228,3 +246,36 @@ def ground_llm_slots(intent_name: str, slots: Mapping[str, Any],
     if not ok:  # not grounded
         del out[slot]  # invented or malformed: ask instead (EV-2)
     return out  # everything else unchanged
+
+
+#: 11 S9.3.2A.4 heading enum -> its Chinese word. Compounds are listed first
+#: and parse_heading tries them first, so "东北" is never read as "东".
+HEADING_CN = {"northeast": "东北", "northwest": "西北", "southeast": "东南",
+              "southwest": "西南", "east": "东", "west": "西", "south": "南",
+              "north": "北"}
+#: Words that introduce a heading in A12 phrasing (18 A12 keywords 朝北 /
+#: 面向 / 转向正). Two-character cues first so "面朝" is not read as "朝".
+_HEADING_CUES = ("面朝", "面向", "朝向", "转向", "朝")
+#: What may follow the direction word: end of text, or 方 / 边 / 面 / 侧
+#: ("北方", "北边", "北面", "北侧"). Anything else ("东门") is a place name.
+_HEADING_TAIL = ("", "方", "边", "面", "侧")
+
+
+def parse_heading(text: str) -> Optional[str]:
+    """A12 heading from "<cue>[正]<direction>", or None when not stated.
+
+    "转向正北" -> north, "面向东北方向" -> northeast, "朝东门" -> None.
+    """
+    for cue in _HEADING_CUES:
+        start = text.find(cue)
+        if start < 0:
+            continue  # this cue is not in the sentence
+        rest = text[start + len(cue):]  # what follows the cue
+        if rest.startswith("正"):
+            rest = rest[1:]  # "正北" = due north
+        for name, word in HEADING_CN.items():  # compounds first
+            tail = rest[len(word):len(word) + 1]  # the char after the word
+            if rest.startswith(word) and tail in _HEADING_TAIL:
+                return name  # a heading, not a place name
+        return None  # the cue is there but no valid direction follows
+    return None  # no cue: not a heading phrase

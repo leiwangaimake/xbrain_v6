@@ -45,6 +45,7 @@ from xbrain.p4_agent.runtime.turn_orchestrator import (
 from xbrain.p4_agent.session.chitchat import ChitchatResponder
 from xbrain.p4_agent.slots.motion_slots import (
     ground_llm_slots,  # the guard on LLM numbers
+    parse_heading,  # A12 eight-way heading
     parse_number,  # Chinese / arabic numerals
 )
 
@@ -178,3 +179,47 @@ def test_the_grounding_rule(value, text, kept):
     """Kept only when the value is in the utterance (as said / cm / +half)."""
     out = ground_llm_slots("move_forward", {"distance_m": value}, text)  # one LLM slot
     assert ("distance_m" in out) is kept  # kept or dropped as expected
+
+
+
+# -- A12 face_heading: the heading enum ------------------------------------
+
+@pytest.mark.parametrize("text,heading", [
+    ("朝北", "north"),             # the 18 A12 keyword itself
+    ("转向正北", "north"),         # 正 = due
+    ("面向东北方向", "northeast"),  # compound first, then 方
+    ("面朝西边", "west"),          # 边 after the direction
+    ("朝向南方", "south"),         # 朝向 cue, 方 tail
+    ("朝东门", None),              # a place (the east gate), not a heading
+    ("面向", None),                # cue without a direction
+    ("往北走", None),              # no heading cue: that is movement
+])
+def test_headings_parse_or_refuse(text, heading):
+    """The eight-way enum from the cue phrase; place names are refused."""
+    assert parse_heading(text) == heading
+
+
+def test_a_heading_is_read_on_the_fast_leg():
+    """"面向东北方向" -> heading northeast in the frame, no LLM call."""
+    slots, _spoken, llm = _turn("面向东北方向")
+    assert (slots, llm.calls) == ({"heading": "northeast"}, 0)
+
+
+def test_an_invented_heading_is_dropped():
+    """"面向" with an LLM that answers north: asked, not turned."""
+    invent = _LLM(Tier2Classification("face_heading", {"heading": "north"}))
+    slots, spoken, llm = _turn("面向", invent)
+    assert llm.calls == 1 and slots is None  # LLM ran, nothing turned
+    assert "方向" in spoken  # the MI-2 clarify
+
+
+@pytest.mark.parametrize("value,text,kept", [
+    ("north", "转到北边去", True),   # 北 said
+    ("north", "面向", False),        # nothing said
+    ("east", "转到北边去", False),   # a different direction than said
+    ("up", "朝北", False),           # not in the enum
+])
+def test_the_heading_grounding_rule(value, text, kept):
+    """An LLM heading is kept only when its Chinese word was said."""
+    out = ground_llm_slots("face_heading", {"heading": value}, text)
+    assert ("heading" in out) is kept

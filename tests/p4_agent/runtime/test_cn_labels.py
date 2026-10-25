@@ -70,6 +70,7 @@ def test_no_label_is_another_intent_s_keyword():
     ("前进三米", "好的,前进"),      # A05, was "好的,站起来"
     ("后退半米", "好的,后退"),      # A06, was "好的,趴下"
     ("左转九十度", "好的,左转"),    # A09, was the generic "收到"
+    ("朝北", "好的,调整朝向"),      # A12, heading read since 2026-10-26
 ])
 def test_a_motion_command_is_acknowledged_with_its_own_action(text, ack):
     """The spoken ack names the action, and carries no requested number."""
