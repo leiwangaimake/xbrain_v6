@@ -801,22 +801,9 @@ class NavRuntime:
             # never to the mission host / RNS.
             age = time.monotonic() - self._chassis_rx if self._chassis_rx >= 0 else 1e9
             for b in relmoves:
-                if self._bmt.active:
-                    self._bmt.abort("preempted")
-                self._bmt_pending = (b, t0)  # starts once the chassis is in navigation
+                self._bmt.queue(b, t0)  # starts once the chassis is in navigation
             relmoves = []
-            pend = getattr(self, "_bmt_pending", None)
-            if pend is not None:
-                if self._chassis_body.get("usage_mode") == "navigation":
-                    self._bmt_pending = None
-                    why = self._bmt.start(pend[0], self._chassis_body, age)
-                    if why is not None:
-                        _logger.warning("BASIC-MOTION-TEST relmove refused: %s", why)
-                elif t0 - pend[1] > 30.0:
-                    self._bmt_pending = None
-                    _logger.warning("BASIC-MOTION-TEST relmove dropped: chassis not in "
-                                    "navigation after 30 s (usage_mode=%s)",
-                                    self._chassis_body.get("usage_mode"))
+            self._bmt.admit(t0, self._chassis_body, age)
         for b in relmoves:
             emits += self._host.on_relmove(b, now=now_ms, pose=pose.xy,
                                            yaw_rad=pose.yaw, heading_valid=pose.heading_valid,
