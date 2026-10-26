@@ -34,12 +34,13 @@ here is easy to over-read:
 
   * That p2_core acts on the key. That half is p2's wiring and belongs to its
     own criterion. These cases stop at "the body is on the wire".
-  * That the throttle period is right. They assert the mirror fires, not that
-    it fires at exactly 1 Hz. The probe that preceded them is the evidence
-    for the rate: 200 ticks at 0.1 s is 20 s of loop time, and it produced
-    nineteen bodies -- one per second, which is the throttle working. Pinning
-    that number in an assertion would make the case a clock test, flaky by
-    construction on a loaded machine.
+  * ~~That the throttle period is right ... it produced nineteen bodies -- one
+    per second, which is the throttle working.~~ Superseded 2026-10-26: those
+    nineteen bodies from ONE heartbeat were the defect, not the throttle -- the
+    same cached status re-sent every second kept p2's heartbeat age fresh after
+    perception died (measured on .1.26: cam_rgbd OK 12 s after perception
+    stopped). Each status is now mirrored once (three_keys.StatusMirror), and
+    test_one_heartbeat_is_mirrored_exactly_once below pins it.
   * That a real Zenoh session behaves like _Session. The fake records instead
     of transmitting; QoS, key-expression matching and the strong-reference
     rule of CLAUDE.md 4.3 are all outside it.
@@ -300,3 +301,19 @@ def test_state_perception_stays_silent_without_a_heartbeat(monkeypatch):
     assert pubs["state/perception"] == [], (
         "published a body with no heartbeat behind it -- p2_core would see a "
         "fresh heartbeat forever and 14 S8.1's age criterion would be dead")
+
+
+def test_one_heartbeat_is_mirrored_exactly_once(monkeypatch):
+    """*** 2026-10-26 regression: one rt/perception/status -> ONE state/perception.
+
+    Before the fix the loop re-sent the cached status every second, so a single
+    heartbeat produced a body per second for as long as the process ran, and a
+    dead perception looked alive to p2 (14 S8.1 heartbeat age never grew).
+    25 ticks is 2.5 s of loop time: the old code put 2-3 bodies here.
+
+    mutant: drop the "already sent" check in StatusMirror.take -> red.
+    """
+    pubs = _run_wiring(monkeypatch, feed_status=True, ticks=25)  # one heartbeat fed
+    assert len(pubs["state/perception"]) == 1, (
+        "one heartbeat was mirrored %d times -- a stale status is being re-sent"
+        % len(pubs["state/perception"]))

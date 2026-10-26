@@ -367,3 +367,35 @@ def test_mirror_status_absent_yields_no_publish():
     reachable (a consumer sees a fresh heartbeat forever) and this goes red.
     """
     assert mirror_status_to_gen(None) is None
+
+
+# -- StatusMirror: each status mirrored once (2026-10-26) --------------------
+
+def _status_at(t_publish_ms):
+    """A parsed StatusMsg with a given identity timestamp."""
+    from xbrain.p1_motion.perception_src.three_keys import parse_status
+    body = status_body()  # the fixture heartbeat
+    body["t_publish_mono_ms"] = t_publish_ms  # its identity (11 S3.1B.5)
+    return parse_status(body)
+
+
+def test_a_status_is_mirrored_once():
+    """The same StatusMsg twice -> one body, then None (absence stays absence).
+
+    mutant: return the body even when t_publish_mono_ms repeats -> red.
+    """
+    from xbrain.p1_motion.perception_src.three_keys import StatusMirror
+    m = StatusMirror()  # nothing sent yet
+    st = _status_at(1000)  # one heartbeat
+    assert m.take(st)["t_publish_mono_ms"] == 1000  # first time: mirrored
+    assert m.take(st) is None  # the same one again: not re-sent
+    assert m.take(st) is None  # still not
+
+
+def test_a_new_status_is_mirrored_again():
+    """A later heartbeat (new identity) goes out; None never does."""
+    from xbrain.p1_motion.perception_src.three_keys import StatusMirror
+    m = StatusMirror()  # nothing sent yet
+    assert m.take(None) is None  # never received: nothing
+    assert m.take(_status_at(1000)) is not None  # first heartbeat
+    assert m.take(_status_at(2000))["t_publish_mono_ms"] == 2000  # the next one

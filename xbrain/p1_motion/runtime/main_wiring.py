@@ -409,10 +409,11 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
             # the 20 Hz tick reads perception_in.latest(now) once RnsSource is
             # wired into the arbiter (P7.2). Held for the loop's lifetime.
             from xbrain.p1_motion.perception_src.three_keys import (
+                StatusMirror,
                 ZenohPerceptionInput,
-                mirror_status_to_gen,
             )
             perception_in = ZenohPerceptionInput(rid)
+            perc_mirror = StatusMirror()  # each status mirrored once (P1-25)
             perception_in.declare(rt)
             _logger.info("p1 perception intake on: rid=%s "
                          "(rt/perception/{profile,objects,status})", rid)
@@ -442,7 +443,6 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
         try:
             last_hb = time.monotonic()
             last_clock = 0.0
-            last_perc = 0.0
             last_teleop = 0.0
             while not stop_flag.get("stop"):
                 now = time.monotonic()
@@ -485,9 +485,17 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                     # body would read as "measured, camera delivered no frames"
                     # and would keep the age criterion permanently fresh, so a
                     # dead perception would look alive. Absence stays absence.
-                    if perc_pub is not None and now - last_perc >= 1.0:
+                    #
+                    # *** 2026-10-26: each StatusMsg is mirrored ONCE
+                    # (StatusMirror). The slot keeps the last status forever,
+                    # and re-sending it every second kept p2's heartbeat age
+                    # fresh after perception died (measured: cam_rgbd stayed OK
+                    # 12 s after perception stopped). Checked every loop pass
+                    # (0.1 s), so a new status goes out within ~0.1 s of
+                    # arriving and the mirror runs at the producer's 1 Hz.
+                    if perc_pub is not None:
                         _snap = perception_in.latest(int(now * 1000.0))
-                        _pdata = mirror_status_to_gen(_snap.status)
+                        _pdata = perc_mirror.take(_snap.status)
                         if _pdata is not None:
                             _penv = gnss_pose.stamp_envelope(
                                 _pdata, rid=rid, boot=boot, seq=perc_seq["n"],
@@ -495,7 +503,6 @@ def run_voice_loop_wiring(chassis_cfg: ChassisClientConfig,
                             perc_pub.put(
                                 json.dumps(_penv, ensure_ascii=False).encode("utf-8"))
                             perc_seq["n"] += 1
-                        last_perc = now
                 # 11 S9A.5 state/fence 广播(F3): 1 Hz + rev 变更即发. 不依赖 GNSS
                 # 定位(围栏状态与 pose 无关), 但信封要 rid, 故与 pose 同在 rid 分支.
                 if state_fence_pub is not None:

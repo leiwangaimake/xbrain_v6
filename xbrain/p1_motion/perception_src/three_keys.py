@@ -451,7 +451,8 @@ class ZenohPerceptionInput(PerceptionInput):
 
 __all__ = ["KEYS", "PROFILE_SCHEMA", "OBJECTS_SCHEMA", "STATUS_SCHEMA",
            "PerceptionSchemaError", "ZenohPerceptionInput", "key_expr",
-           "parse_payload", "parse_profile", "parse_objects", "parse_status"]
+           "parse_payload", "parse_profile", "parse_objects", "parse_status",
+           "StatusMirror"]
 
 
 def mirror_status_to_gen(status: Optional[StatusMsg]) -> Optional[Dict[str, Any]]:
@@ -494,3 +495,39 @@ def mirror_status_to_gen(status: Optional[StatusMsg]) -> Optional[Dict[str, Any]
         "traversable_seg_available": status.traversable_seg_available,
         "degraded_reasons": list(status.degraded_reasons),
     }
+
+
+class StatusMirror:
+    """Hands mirror_status_to_gen each StatusMsg ONCE (11 S1.1.6 P1-25).
+
+    *** 2026-10-26 fix (measured on .1.26). ZenohPerceptionInput keeps the last
+    StatusMsg in its slot forever, and the 1 Hz mirror re-published that same
+    message every second under a fresh envelope. So after perception died, p2
+    kept receiving a "fresh" state/perception and judged cam_rgbd OK on the
+    last fps_depth indefinitely -- 12 s after stopping perception p2 still said
+    "ok, fps_depth 30.0", where 14 S8.1's heartbeat-age criterion (T-53, 3 s)
+    should have made it FAIL and blocked motion.
+
+    mirror_status_to_gen's own rule -- absence is signalled by ABSENCE -- only
+    holds if an old message is never sent again. This class enforces it: a
+    status is identified by its t_publish_mono_ms (the StatusMsg identity
+    timestamp, 11 S3.1B.5); take() returns a body only for a status not
+    mirrored before, else None, so a dead perception yields no publish and the
+    age criterion works as designed.
+
+    mutant: return the body even when t_publish_mono_ms repeats -> the stale
+    re-publish is back -> test_a_status_is_mirrored_once goes red.
+    """
+
+    def __init__(self) -> None:
+        """Nothing mirrored yet."""
+        self._last_t_publish: Optional[int] = None  # identity of the last one sent
+
+    def take(self, status: Optional[StatusMsg]) -> Optional[Dict[str, Any]]:
+        """The state/perception body for a NEW status, else None (send nothing)."""
+        if status is None:  # never received: nothing to mirror
+            return None
+        if status.t_publish_mono_ms == self._last_t_publish:  # already sent once
+            return None
+        self._last_t_publish = status.t_publish_mono_ms  # remember what went out
+        return mirror_status_to_gen(status)  # field-for-field body
