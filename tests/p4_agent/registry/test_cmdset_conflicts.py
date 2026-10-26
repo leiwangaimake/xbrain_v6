@@ -17,7 +17,7 @@ check_cs_a4(那会让同一个名字有两种语义), 而是另起了两个函�
 归属问题记 NEXT SW-23, 由册主裁.
 
 *** 判据(4)在真配置上[当场抓到三组冲突], 而源头在 18 自己.
-"停止喊话" 被 C04 exit_broadcast 与 D12 speak_stop 各自列了;
+"停止喊话" 被 C04 exit_broadcast 与 D12 speak_stop 各自列了 (2026-10-26 已随方案 A 从两条里都删除);
 "待命" 被 A04 hold(L0) 与 C06 standby(L1a) 各自列了 -- 级别都不同;
 "开始工作" 被 C05 enter_patrol_mode(L1b) 与 H06 wake(L0) 各自列了.
 intents.yaml 是如实照抄的, 冲突是从 18 带进来的.
@@ -163,8 +163,10 @@ def test_known_conflicts_are_exactly_the_reviewed_set():
     """
     from xbrain.p4_agent.registry import startup_assertions as sa
 
+    # ("停止喊话", exit_broadcast, speak_stop) left the set 2026-10-26: user
+    # ruling option A removed it from both C04 and D12 (it contains "停止", an
+    # estop word, so the safety bypass always took it first, 16 S4.1).
     expected = {
-        ("停止喊话", "exit_broadcast", "speak_stop"),
         ("待命", "hold", "standby"),
         ("开始工作", "enter_patrol_mode", "wake"),
     }

@@ -58,13 +58,23 @@ def test_state_topics_no_wildcard():
 
 # -- criterion 1: query_battery reads LIVE cache, not a stub -------------
 
+#: state/power as chassis_relay forwards it: an S3.0 envelope around the
+#: 11 S4.x PowerState (soc_pct / remain_mile_km). Until 2026-10-26 these tests
+#: used {"soc", "range_km"} at the top level, the same wrong shape the answer
+#: read, so they passed while every real query raised KeyError.
+def _power(soc_pct, remain_mile_km):
+    """A wire-shaped state/power value."""
+    return {"v": 1, "rid": "gj-001", "src": "chassis_relay",
+            "data": {"soc_pct": soc_pct, "remain_mile_km": remain_mile_km}}
+
+
 def test_battery_reads_live_soc_from_cache():
     """The answer must reflect the SOC that is in the cache. MUTATION A: a
     render that returned a hardcoded stub SOC would not track the cache
     value here."""
     t = _templates()
     c = StateCache()
-    c.update("state/power", {"soc": 73, "range_km": 4}, now_mono_ms=1000)
+    c.update("state/power", _power(73, 4), now_mono_ms=1000)
     ans = battery_answer(c, t, now_mono_ms=1200, max_age_ms=1000,
                          low_soc_threshold=20)
     assert ans.known is True
@@ -77,7 +87,7 @@ def test_battery_tracks_a_different_live_value():
     were hardcoded, both tests would print the same number (mutation A)."""
     t = _templates()
     c = StateCache()
-    c.update("state/power", {"soc": 55, "range_km": 3}, now_mono_ms=1000)
+    c.update("state/power", _power(55, 3), now_mono_ms=1000)
     ans = battery_answer(c, t, now_mono_ms=1200, max_age_ms=1000,
                          low_soc_threshold=20)
     assert "55" in ans.text
@@ -87,7 +97,7 @@ def test_battery_tracks_a_different_live_value():
 def test_battery_low_branch_below_threshold():
     t = _templates()
     c = StateCache()
-    c.update("state/power", {"soc": 15, "range_km": 1}, now_mono_ms=1000)
+    c.update("state/power", _power(15, 1), now_mono_ms=1000)
     ans = battery_answer(c, t, now_mono_ms=1200, max_age_ms=1000,
                          low_soc_threshold=20)
     assert ans.known is True
@@ -103,7 +113,7 @@ def test_battery_stale_answers_unknown_not_last_value():
     age, '80' would leak into the answer here."""
     t = _templates()
     c = StateCache()
-    c.update("state/power", {"soc": 80, "range_km": 5}, now_mono_ms=1000)
+    c.update("state/power", _power(80, 5), now_mono_ms=1000)
     # 3 s later, threshold 1 s -> stale.
     ans = battery_answer(c, t, now_mono_ms=4000, max_age_ms=1000,
                          low_soc_threshold=20)

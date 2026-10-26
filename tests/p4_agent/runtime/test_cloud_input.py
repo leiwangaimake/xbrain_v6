@@ -599,3 +599,49 @@ def test_the_keys_are_robot_prefixed():
     """
     assert cloud_input_keys("gj-001") == ("xbrain/gj-001/cmd/voice_text",
                                           "xbrain/gj-001/audio/voice_in")
+
+
+# -- an internal error still ends in a record (2026-10-26) --------------------
+
+def _failing_runner(transcript=""):
+    """A runner whose orchestrator raises on every turn, recording voice_turn."""
+    runner, published, _asr = _runner(transcript=transcript)  # production chain
+    runner._voice_turn_key = "xbrain/gj-001/state/voice_turn"  # records on
+    def _boom(*_a, **_k):
+        """The battery query's KeyError, as measured on .1.26."""
+        raise KeyError("state value missing required field 'soc'")
+    runner._orch.handle_turn = _boom  # every turn now fails inside
+    return runner, published
+
+
+def _records(published):
+    """The decoded state/voice_turn records among the published frames."""
+    return [json.loads(d) for k, d in published if k.endswith("/state/voice_turn")]
+
+
+def test_a_text_turn_that_fails_inside_is_recorded_not_silent():
+    """Before the fix the exception escaped and NOTHING was published.
+
+    MUTATION: drop the except-Exception branch of _guarded -> the KeyError
+    propagates out of run_text -> this test errors.
+    """
+    runner, published = _failing_runner()  # orchestrator raises
+    runner.run_text({"channel": "cloud", "text": "现在电量多少"})  # must not raise
+    (rec,) = _records(published)  # exactly one record
+    assert (rec["verdict"], rec["reject_code"]) == ("rejected", "E_INTERNAL")
+    assert rec["asr_text"] == "现在电量多少"  # the operator sees what failed
+
+
+def test_a_voice_turn_that_fails_inside_is_recorded_not_silent():
+    """Same rule on the audio entry."""
+    runner, published = _failing_runner(transcript="现在电量多少")  # ASR answers
+    runner.run_voice(_utt())  # must not raise
+    (rec,) = _records(published)  # exactly one record
+    assert (rec["verdict"], rec["reject_code"]) == ("rejected", "E_INTERNAL")
+
+
+def test_a_channel_refusal_is_still_not_an_internal_error():
+    """TextChannelError keeps its own path: no record, not E_INTERNAL."""
+    runner, published = _failing_runner()  # orchestrator would raise
+    assert runner.run_text({"channel": "radio", "text": "你好"}) is None  # refused
+    assert _records(published) == []  # nothing recorded for a bad channel

@@ -38,6 +38,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
+from xbrain.common.errors import E_INTERNAL  # an internal turn failure
 from xbrain.p4_agent.registry.intents import IntentRegistry
 from xbrain.p4_agent.runtime.intent_dispatch import (
     CMD_AUDIO_SPEAK,
@@ -223,10 +224,9 @@ def make_rtk_query_fn(cache, *, max_age_ms: int):
 
 def make_time_query_fn(cache, tz_name, *, max_age_ms: int):
     """Return a query_fn that answers G24 query_time in the SITE timezone
-    (common.timezone). Returns None for any other id. time_answer reconstructs the
-    wall time from state/clock's (mono_ref, utc_ref) anchor via a monotonic delta,
-    so NO wall clock is read here (CLK-C1); the unsync hard branch is in
-    time_answer (18 S9.5)."""
+    (common.timezone). Returns None for any other id. Since the 2026-10-26 user
+    ruling time_answer speaks the robot's system time (`date`); the former
+    state/clock unsync hard branch (18 S9.5) is gone, see time_answer."""
     from xbrain.p4_agent.state.query_data import time_answer
 
     def _query(entry) -> Optional[str]:
@@ -419,8 +419,22 @@ def make_turn_handler(
         t_post = time.monotonic()
         # Named explicitly rather than left to the default: this handler is
         # the microphone path, and the motion frame says so (11 MO-2).
-        decision = orchestrator.handle_turn(text, session, now_ms,
-                                            raw_text=raw, channel="mic_local")
+        try:
+            decision = orchestrator.handle_turn(text, session, now_ms,
+                                                raw_text=raw, channel="mic_local")
+        except Exception:  # noqa: BLE001 -- one turn's bug must not go silent
+            # 2026-10-26: same rule as cloud_input._guarded -- an internal error
+            # still ends in a state/voice_turn (rejected, E_INTERNAL) instead of
+            # escaping to the worker's "job fail" log with nothing published.
+            _logger.exception("orch_turn: turn failed internally text=%r", text)
+            try:
+                record = build_voice_turn(
+                    channel="mic_local", asr_raw=raw, asr_text=text,
+                    decision=None, published_keys=[], corrections=corrections,
+                    reject_code=E_INTERNAL, latency_ms={})
+            except VoiceTurnError:
+                return []
+            return list(voice_turn_pair(voice_turn_key, record))
         out: List[Tuple[str, bytes]] = []
         for key, payload in decision_to_publishes(decision):
             data = json.dumps(payload, ensure_ascii=False,

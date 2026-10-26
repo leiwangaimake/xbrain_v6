@@ -3,26 +3,22 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_query_data_time.py
-Brief: G24 query_time answer -- hard unsync branch + site-timezone local time
+Brief: G24 query_time answer -- the robot's system time in the site timezone
 
 Description:
-G24 'what time is it' has a HARD safety-shaped branch (18 S9.5): when the clock
-is NOT synced (or state/clock is stale / never received), the answer is the
-unsync warning, NEVER a possibly-wrong time. The wall clock steps at RTK cold
-start, so answering the time then would be wrong at the worst moment. The
-load-bearing mutants (CLAUDE.md 3.3):
+G24 'what time is it' speaks the robot's SYSTEM time (what `date` prints) in the
+site timezone (common.timezone), and the host zone when unset.
 
-  * unsynced -> warning. A mutant that answers the formatted time regardless of
-    sync fails test_time_unsynced_is_warning and test_time_missing_clock.
-  * the SITE timezone is applied. Shanghai (+8) and Tokyo (+9) differ by an hour
-    for the same utc epoch; a mutant that ignores tz_name collapses them and
-    fails test_time_synced_uses_site_zone.
+*** User ruling 2026-10-26 replaced the former 18 S9.5 hard branch, which
+answered "当前时钟未同步, 时间可能不准" whenever state/clock was unsynced, stale
+or missing -- on the delivered robot (no RTK sky indoors, NTP possibly
+unreachable) that was the answer to every ask. The load-bearing mutants:
+  * the SITE timezone is applied (Shanghai vs Tokyo differ by an hour);
+  * the system clock is really read (40 s later -> the minute advances);
+  * no unsync branch survives (unsynced / anchor-less / stale / missing
+    state/clock all answer the time);
   * make_time_query_fn owns G24 only, so it composes with battery/RTK fns.
-
-The current UTC is reconstructed from state/clock's (mono_ref, utc_ref) anchor as
-utc_ref + (now_mono - mono_ref). Vectors pick mono_ref so the delta is 0 (or a
-known small value), so no wall-clock read makes the expected string deterministic
-across hosts and timezones.
+Tests replace query_data._wall_now so the expected strings are deterministic.
 """
 
 from __future__ import annotations
@@ -55,56 +51,48 @@ def _cache(key, data, at):
     return c
 
 
-def test_time_synced_uses_site_zone():
-    """Synced clock -> spoken local time in the SITE zone, reconstructed from the
-    anchor. Shanghai and Tokyo differ by one hour for the same utc -> the zone is
-    really applied."""
-    c = _cache("state/clock", _clock(True), 1000)
+def test_time_uses_site_zone(monkeypatch):
+    """System time in the SITE zone: Shanghai and Tokyo differ by one hour for
+    the same epoch -> the zone is really applied. MUTATION: ignore tz_name ->
+    the two collapse -> this fails."""
+    monkeypatch.setattr(qd, "_wall_now", lambda: _UTC)  # a fixed system time
+    c = StateCache()
     sh = qd.time_answer(c, "Asia/Shanghai", _NOW_MS, max_age_ms=5000)
     tk = qd.time_answer(c, "Asia/Tokyo", _NOW_MS, max_age_ms=5000)
     assert sh.known is True and sh.text == "11月15日 周三 6点13分"
     assert tk.known is True and tk.text == "11月15日 周三 7点13分"
 
 
-def test_time_monotonic_delta_advances_the_clock():
-    """The reconstruction really adds the monotonic delta: 40 s later (now_mono
-    +40000 ms) the spoken minute advances. MUTATION: ignore the delta and answer
-    utc_ref verbatim -> stays 6点13分 -> this fails."""
-    c = _cache("state/clock", _clock(True), 1000)
-    # 40 s of elapsed monotonic time: 06:13:20 + 40 s = 06:14:00.
-    ans = qd.time_answer(c, "Asia/Shanghai", _NOW_MS + 40000, max_age_ms=10**9)
+def test_time_reads_the_system_clock(monkeypatch):
+    """User ruling 2026-10-26: G24 speaks the robot's own `date`. 40 s later on
+    the system clock -> the minute advances. MUTATION: answer a fixed / cached
+    value -> stays 6点13分 -> this fails."""
+    monkeypatch.setattr(qd, "_wall_now", lambda: _UTC + 40)  # 06:13:20 + 40 s
+    ans = qd.time_answer(StateCache(), "Asia/Shanghai", _NOW_MS, max_age_ms=5000)
     assert ans.known is True and ans.text == "11月15日 周三 6点14分"
 
 
-def test_time_unsynced_is_warning():
-    """HARD BRANCH: sync=False -> warning, never the time. MUTATION: answer the
-    formatted time regardless of sync -> this fails."""
-    c = _cache("state/clock", _clock(False), 1000)
-    ans = qd.time_answer(c, "Asia/Shanghai", _NOW_MS, max_age_ms=5000)
-    assert ans.known is False and "未同步" in ans.text
+def test_time_is_answered_whatever_state_clock_says(monkeypatch):
+    """The former 18 S9.5 unsync warning is gone (user ruling 2026-10-26):
+    unsynced, anchor-less, stale or missing state/clock all still answer the
+    system time. MUTATION: keep any 'clock not synced' branch -> one of these
+    answers the warning -> this fails."""
+    monkeypatch.setattr(qd, "_wall_now", lambda: _UTC)  # a fixed system time
+    caches = [_cache("state/clock", _clock(False), 1000),           # unsynced
+              _cache("state/clock", {"sync": True, "source": "ntp"}, 1000),  # no anchor
+              _cache("state/clock", _clock(True), 1000),            # stale below
+              StateCache()]                                          # missing
+    for c in caches:
+        ans = qd.time_answer(c, "Asia/Shanghai", 10**7, max_age_ms=5000)
+        assert ans.known is True and ans.text == "11月15日 周三 6点13分"
+        assert "未同步" not in ans.text
 
 
-def test_time_synced_without_anchor_is_warning():
-    """Synced but the (mono_ref, utc_ref) anchor is absent (older publisher) ->
-    warning, never a wall-clock-read fabrication. MUTATION: fall back to a local
-    time.time() read here -> this would answer a time -> fails."""
-    c = _cache("state/clock", {"sync": True, "source": "ntp"}, 1000)
-    ans = qd.time_answer(c, "Asia/Shanghai", _NOW_MS, max_age_ms=5000)
-    assert ans.known is False and "未同步" in ans.text
-
-
-def test_time_stale_clock_is_warning():
-    """A 9 s old clock (> 5 s) is treated as unsynced (unknown), not the time."""
-    c = _cache("state/clock", _clock(True), 1000)
-    ans = qd.time_answer(c, "Asia/Shanghai", 10000, max_age_ms=5000)
-    assert ans.known is False and "未同步" in ans.text
-
-
-def test_time_missing_clock():
-    """No state/clock at all -> warning (fail-safe), never a fabricated time."""
-    c = StateCache()
-    ans = qd.time_answer(c, "Asia/Shanghai", _NOW_MS, max_age_ms=5000)
-    assert ans.known is False and "未同步" in ans.text
+def test_time_without_site_zone_uses_the_host_zone(monkeypatch):
+    """common.timezone unset -> the host's local zone, never an exception."""
+    monkeypatch.setattr(qd, "_wall_now", lambda: _UTC)  # a fixed system time
+    ans = qd.time_answer(StateCache(), None, _NOW_MS, max_age_ms=5000)
+    assert ans.known is True and "点" in ans.text
 
 
 class _Entry:

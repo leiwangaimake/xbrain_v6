@@ -265,7 +265,7 @@ def test_voice_pause_now_parses_as_a_contract_task_command():
     MUTATION: drop the resolution and emit the envelope again -> P3's parser
     refuses this frame for having no cmd_id.
     """
-    payload = _frames("暂停任务")["cmd/task"]
+    payload = _frames("暂缓任务")["cmd/task"]
     cmd = parse_task_command(payload)
     assert cmd.action == "pause"
     assert cmd.task_id == "t-20260823-004"

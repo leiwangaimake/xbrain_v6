@@ -25,6 +25,8 @@ staleness bound (max_age_ms) is likewise injected from config.
 """
 from __future__ import annotations
 
+import time  # G24 reads the system wall clock (display only)
+
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -65,19 +67,30 @@ def battery_answer(
     The branch is chosen HERE (render_reply does not infer it): soc at or
     below low_soc_threshold -> 'low' (charge advice), else 'ok'.
     """
-    power = cache.get_fresh("state/power", now_mono_ms, max_age_ms)
+    # *** 2026-10-26 fix: the reading is the S3.0 envelope's DATA, and the
+    # contract field names are soc_pct / remain_mile_km (11 S4.x PowerState).
+    # The previous code read "soc" / "range_km" at the TOP level of the
+    # enveloped value chassis_relay forwards, raised KeyError on every query,
+    # and the whole turn died: no answer, no state/voice_turn (measured on
+    # .1.26: "现在电量多少" never answered). {soc} / {range_km} below are only
+    # the 16 S8.x template placeholders, not wire fields.
+    power = _fresh_data(cache, "state/power", now_mono_ms, max_age_ms)
     if power is None:
         # Stale or missing -> unknown. A last-known soc read aloud would be
         # a silent-wrong answer (the operator acts on a number that may be
         # minutes old), which is exactly what the QT shadow rule forbids.
         return QueryAnswer(known=False, text=_BATTERY_UNKNOWN)
-    soc = _require(power, "soc")
+    soc = _require(power, "soc_pct")
+    if soc is None:
+        # 11 S4.x: no battery present -> null, never 0. Say "unknown", not 0%.
+        return QueryAnswer(known=False, text=_BATTERY_UNKNOWN)
+    soc = int(round(soc))  # spoken as a whole percent
     if soc <= low_soc_threshold:
         text = render_reply(templates, "query_battery", "low", {"soc": soc})
     else:
-        range_km = _require(power, "range_km")
+        range_km = _require(power, "remain_mile_km")
         text = render_reply(templates, "query_battery", "ok",
-                            {"soc": soc, "range_km": range_km})
+                            {"soc": soc, "range_km": round(float(range_km), 1)})
     return QueryAnswer(known=True, text=text)
 
 
@@ -159,38 +172,37 @@ RTK_QUERY_ANSWERS = {
 
 
 # --- G24 query_time: local time in the SITE timezone (18 S9.5 hard branch) ---
-from xbrain.common.time.local_time import format_spoken  # noqa: E402
+from xbrain.common.time.local_time import format_spoken, format_spoken_local  # noqa: E402
 
-_CLOCK_UNSYNCED_TIME = "当前时钟未同步, 时间可能不准"
+
+
+def _wall_now() -> float:
+    """The system wall clock, in one place so tests can replace it."""
+    # The closed tag set (scripts/lint/clock_scan.py EXEMPT_TAGS) has no 'display';
+    # this is the same use p2 marks 'record' for its 11 S6.2 display stamps: a
+    # wall-clock value shown to a person, never compared against another reading.
+    # WALL-CLOCK-OK(record): G24 speaks / uploads it; never an age or timeout.
+    return time.time()
 
 
 def time_answer(cache, tz_name, now_mono_ms, *, max_age_ms) -> QueryAnswer:
-    """G24 query_time. HARD BRANCH (18 S9.5): if the clock is NOT synced
-    (state/clock.sync false or stale), answer the unsync warning, NEVER the
-    possibly-wrong time -- the wall clock steps seconds at RTK cold start, so a
-    read then would be wrong at the worst moment.
+    """G24 query_time: the robot's SYSTEM time (what `date` prints), spoken in
+    the site timezone (common.timezone; the system local zone when unset).
 
-    When synced, reconstruct the current UTC from state/clock's (mono_ref, utc_ref)
-    anchor -- the (monotonic, wall) baseline the rtk_driver publishes for exactly
-    this purpose (11 S3.11: 'any consumer can convert mono to UTC' from the pair).
-    The elapsed time is a MONOTONIC delta (now_mono - mono_ref), so no local
-    wall-clock read happens here (CLK-C1); the wall baseline is the sync judge's,
-    not p4's. Then format in the site timezone (common.timezone)."""
-    clk = _fresh_data(cache, "state/clock", now_mono_ms, max_age_ms)
-    if not clk or not clk.get("sync", False):
-        return QueryAnswer(known=False, text=_CLOCK_UNSYNCED_TIME)
-    utc_ref = clk.get("utc_ref")
-    mono_ref = clk.get("mono_ref")
-    if utc_ref is None or mono_ref is None:
-        # Synced but no anchor (an older publisher that dropped the pair) -> the
-        # wall time cannot be placed without reading a local clock, so answer the
-        # honest unsync line rather than fabricate a time.
-        return QueryAnswer(known=False, text=_CLOCK_UNSYNCED_TIME)
-    # now_mono_ms (p4 time.monotonic) and mono_ref (rtk_driver steady_clock) are
-    # both CLOCK_MONOTONIC on this host, same boot epoch, so their difference is
-    # the real elapsed seconds since the anchor was taken.
-    now_utc_s = utc_ref + (now_mono_ms / 1000.0 - mono_ref)
-    return QueryAnswer(known=True, text=format_spoken(now_utc_s, tz_name))
+    *** User ruling 2026-10-26: "当前实现将机器人 date 当前时间读取到后播报和上传云端".
+    This REPLACES the 18 S9.5 hard branch that answered "当前时钟未同步, 时间可能
+    不准" whenever state/clock was not synced (or stale / never received). On the
+    delivered robot RTK has no sky indoors and NTP may be unreachable, so that
+    branch answered the warning on every ask; the operator wants the time the
+    robot itself holds. cache / now_mono_ms / max_age_ms are kept in the
+    signature so make_time_query_fn and its callers did not change.
+
+    Tests replace _wall_now to make the spoken string deterministic.
+    """
+    now_utc_s = _wall_now()  # the system time, as `date` reads it
+    if tz_name:
+        return QueryAnswer(known=True, text=format_spoken(now_utc_s, tz_name))
+    return QueryAnswer(known=True, text=format_spoken_local(now_utc_s))
 
 
 def _require(state: Mapping[str, Any], field: str) -> Any:

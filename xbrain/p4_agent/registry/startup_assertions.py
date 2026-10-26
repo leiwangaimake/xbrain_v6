@@ -112,10 +112,9 @@ def check_intent_levels_match(yaml_rows, cmdset_rows) -> None:
 #: 一旦被裁决, 必须从这里移走 -- 与 check_affinity 的 PENDING_DOC_DECISION
 #: 同一个规矩.
 KNOWN_TRIGGER_CONFLICTS = {
-    # 18 C04 exit_broadcast "停止喊话 / 退出喊话" 与 D12 speak_stop
-    # "别喊了 / 停止喊话 / 停止播报". 两条都是 L0, 效果不同: 前者退出
-    # 喊话模式, 后者只停当前这一句.
-    ("停止喊话", "exit_broadcast", "speak_stop"),
+    # (2026-10-26) The former C04/D12 "停止喊话" conflict is gone: user ruling
+    # option A removed every keyword containing an estop word from C04 and D12
+    # (the safety bypass matched it first, 16 S4.1), so neither owns it now.
     # 18 A04 hold "原地待命 / 别动 / 停在这儿 / 待命"(L0) 与
     # C06 standby "待命 / 休息 / 别工作了"(L1a). 级别都不同 --
     # 一个是旁路关键词(VD-6 安全类不依赖模型), 一个要 L1a 确认.

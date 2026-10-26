@@ -155,11 +155,23 @@ def test_overheard_path_is_silent():
     assert h("队友说的悄悄话") == []
 
 
+#: state/power exactly as chassis_relay forwards it (11 S4.x PowerState in an
+#: S3.0 envelope). Until 2026-10-26 these tests fed {"soc", "range_km"} at the
+#: top level -- the same wrong shape the code read -- so they stayed green while
+#: every real battery query raised KeyError and went unanswered on .1.26.
+def _power(soc_pct, remain_mile_km=5.91):
+    """A wire-shaped state/power value."""
+    return {"v": 1, "rid": "gj-001", "ts": 1.0, "seq": 1, "src": "chassis_relay",
+            "ts_sync": False, "orig_src": "quadruped",
+            "data": {"soc_pct": soc_pct, "present_count": 1,
+                     "remain_mile_km": remain_mile_km, "list": []}}
+
+
 def test_query_path_answers_from_live_state():
     """A G02 query answers from the live state cache via the wired
     query_fn (GWY-P4-39 + 32.I)."""
     cache = StateCache()
-    cache.update("state/power", {"soc": 66, "range_km": 4}, now_mono_ms=0)
+    cache.update("state/power", _power(66, 4.2), now_mono_ms=0)
     # A large max_age so the reading is fresh regardless of the monotonic
     # 'now' inside the handler.
     qfn = make_battery_query_fn(cache, _templates(),
@@ -168,11 +180,24 @@ def test_query_path_answers_from_live_state():
     pairs = _texts(h("电量还有多少"))
     assert pairs[0][0] == "cmd/audio/speak"
     assert "66" in pairs[0][1]              # live soc, not a stub
+    assert "4.2" in pairs[0][1]             # remain_mile_km, the contract field
+
+
+def test_query_with_no_battery_present_answers_unknown_not_zero():
+    """soc_pct null (no battery present, 11 S4.x) -> 'unknown', never 0%."""
+    cache = StateCache()
+    cache.update("state/power", _power(None), now_mono_ms=0)
+    qfn = make_battery_query_fn(cache, _templates(),
+                                max_age_ms=10**12, low_soc_pct=20)
+    _, h = _handler(query_fn=qfn)
+    pairs = _texts(h("电量还有多少"))
+    assert "读不到" in pairs[0][1]           # unknown
+    assert "0%" not in pairs[0][1]          # not an empty battery
 
 
 def test_query_path_stale_state_answers_unknown():
     cache = StateCache()
-    cache.update("state/power", {"soc": 66, "range_km": 4}, now_mono_ms=0)
+    cache.update("state/power", _power(66, 4.2), now_mono_ms=0)
     # max_age 1 ms: the monotonic 'now' in the handler is far past 0 -> stale.
     qfn = make_battery_query_fn(cache, _templates(),
                                 max_age_ms=1, low_soc_pct=20)

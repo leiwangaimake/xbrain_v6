@@ -176,8 +176,8 @@ def test_a_mode_command_is_labelled_with_its_entry(channel, modality, source):
 
 
 def test_a_task_control_from_the_cloud_says_cloud():
-    """"暂停任务" typed on the cloud -> cmd/task source cloud, not voice."""
-    assert _frame("暂停任务", "cmd/task", "cloud", "text")["source"] == "cloud"
+    """"暂缓任务" typed on the cloud -> cmd/task source cloud, not voice."""
+    assert _frame("暂缓任务", "cmd/task", "cloud", "text")["source"] == "cloud"
 
 
 @pytest.mark.parametrize("channel,modality,issuer", [

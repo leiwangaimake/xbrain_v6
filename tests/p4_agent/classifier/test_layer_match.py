@@ -30,26 +30,26 @@ def _reg():
 # -- longest-first (16 S484 / S5.2 layer 2) ---------------------------
 
 def test_longest_first_beats_short():
-    """'停止喊话' contains BOTH C04's 4-char keyword '停止喊话' AND D08's
+    """'退出喊话' contains BOTH C04's 4-char keyword '退出喊话' AND D08's
     2-char keyword '喊话'. Longest-first (16 S484) must pick the long
     one, not substring-steal via the short one."""
     m = KeywordMatcher(_reg())
     assert "喊话" in m._by_kw          # sanity: the short keyword exists (D08)
-    assert "停止喊话" in m._by_kw       # sanity: the long keyword exists (C04)
-    assert m._by_kw["喊话"] != m._by_kw["停止喊话"]   # different intents
+    assert "退出喊话" in m._by_kw       # sanity: the long keyword exists (C04)
+    assert m._by_kw["喊话"] != m._by_kw["退出喊话"]   # different intents
     # Longest-first picks the 4-char match.
-    assert m.longest_match("停止喊话") == m._by_kw["停止喊话"]
+    assert m.longest_match("退出喊话") == m._by_kw["退出喊话"]
 
 
 def test_shortest_first_is_the_mutation_that_would_break_it():
     """MUTATION (guards longest-first): a shortest-first matcher would
-    resolve '停止喊话' to D08's '喊话' -- the wrong intent. Simulated by
+    resolve '退出喊话' to D08's '喊话' -- the wrong intent. Simulated by
     picking the SHORTEST matching keyword; the assertion that this
     differs from the correct longest-first result must hold, proving
     longest-first is load-bearing."""
     m = KeywordMatcher(_reg())
     # shortest-first over the same index:
-    text = "停止喊话"
+    text = "退出喊话"
     shortest = None
     for kw, intent in m._by_kw.items():
         if kw in text:

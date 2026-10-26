@@ -49,7 +49,7 @@ def test_the_task_id_comes_from_current():
 
 
 def test_a_queued_task_is_never_substituted_for_a_missing_current():
-    """"暂停当前任务" with nothing running must refuse, not pick the head of the
+    """"暂缓任务" with nothing running must refuse, not pick the head of the
     queue: that task has not started, so it is not the one the operator meant.
     MUTATION: fall back to queue[0] when current is null -> red."""
     idle = dict(_TASK_STATE, current=None)

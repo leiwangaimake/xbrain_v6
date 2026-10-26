@@ -71,6 +71,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 # The keyword matcher is only a type here: the runner receives the instance
 # the wiring built, the same one channel admission pre-classifies with.
+from xbrain.common.errors import E_INTERNAL  # an internal turn failure
 from xbrain.p4_agent.classifier.keyword_matcher import KeywordMatcher
 # The text entry is reused for audio on purpose: channel admission and the
 # require_tts_reply rule must be one implementation, not one per input.
@@ -453,9 +454,7 @@ class CloudTurnRunner:
         channel = msg.get("channel")  # validated by handle_text_command
         try:
             # Typed text: addressed by construction, no raw ASR text.
-            res = handle_text_command(msg, self._orch,
-                                      self._session_for(channel),
-                                      self._matcher, self._now_ms())
+            res = self._guarded(msg, self._session_for(channel))  # never raises a bug
         except TextChannelError as exc:
             # Channel outside cloud/wecom/hmi: refused before any turn ran.
             _logger.warning("voice_text rejected: %s", exc)
@@ -512,11 +511,9 @@ class CloudTurnRunner:
                "require_tts_reply": True}  # answer through the speaker
         # Far-end microphone: not addressed (it can carry bystanders), and
         # the raw transcript goes to the bypass (16 S4 constraint 1).
-        res = handle_text_command(msg, self._orch,
-                                  self._session_for(utt.channel),  # shared
-                                  self._matcher, self._now_ms(),  # with text
-                                  raw_text=raw_text, addressed=False,
-                                  modality="voice")  # spoken, not typed
+        res = self._guarded(msg, self._session_for(utt.channel),  # shared
+                            raw_text=raw_text, addressed=False,
+                            modality="voice")  # spoken, not typed
         self.voice_turns += 1
         # Both forms logged, as 11 S8.7.6 wants them in the audit record.
         _logger.info("voice_in asr_raw=%r asr_text=%r", raw_text, text)
@@ -524,6 +521,29 @@ class CloudTurnRunner:
                    asr_raw=raw_text, corrections=corrections,
                    latency={"asr": asr_ms})
         return res
+
+    def _guarded(self, msg: Mapping[str, Any], session: OrchestratorSession,
+                 **kw: Any) -> TextTurnResult:
+        """handle_text_command, but an internal error still ends in a record.
+
+        *** 2026-10-26: an exception inside the turn (measured: the battery
+        query's KeyError) used to escape to the worker's "job fail" log, so
+        the turn published NOTHING -- no answer and no state/voice_turn; a
+        cloud operator saw silence. Now it becomes a refused turn with
+        E_INTERNAL (11 S13 closed set), which _emit records as verdict
+        "rejected". TextChannelError is not an internal error: it propagates
+        to the caller's own refusal path unchanged.
+        """
+        try:  # the ordinary path: one whole turn
+            return handle_text_command(msg, self._orch, session, self._matcher,
+                                       self._now_ms(), **kw)  # voice kwargs pass through
+        except TextChannelError:  # a refused channel is not a crash
+            raise  # the caller logs it and records nothing, as before
+        except Exception:  # noqa: BLE001 -- one turn's bug must not go silent
+            # The traceback goes to the log; the operator gets a record.
+            _logger.exception("turn failed internally text=%r", msg.get("text"))
+            return TextTurnResult(denied=True, code=E_INTERNAL, decision=None,
+                                  publishes=[])  # nothing went out this turn
 
     def _session_for(self, channel: Any) -> OrchestratorSession:
         """The session slot of a channel token.

@@ -247,3 +247,23 @@ def test_every_decision_kind_in_the_orchestrator_has_a_verdict():
     kinds = set(re.findall(r'kind="([a-z_]+)"', src))  # every kind it can return
     assert kinds, "no kinds found -- the scan is broken, not the code"
     assert sorted(kinds - set(VERDICT_OF_KIND)) == []  # none unmapped
+
+
+def test_a_microphone_turn_that_fails_inside_is_recorded_not_silent():
+    """2026-10-26: an exception inside the turn used to escape make_turn_handler
+    (worker "job fail", nothing published). Now one rejected / E_INTERNAL record.
+
+    MUTATION: drop the except branch around handle_turn -> this test errors.
+    """
+    orch, _reg = _parts()  # the production orchestrator
+    def _boom(*_a, **_k):
+        """Any internal failure, e.g. a query reading a missing field."""
+        raise KeyError("boom")
+    orch.handle_turn = _boom  # every turn fails inside
+    # The battery ask is the turn that crashed on the real robot (G02 read a
+    # missing state/power field); any utterance would do once handle_turn raises.
+    pairs = make_turn_handler(orch, OrchestratorSession(), voice_turn_key=_KEY)("现在电量多少")
+    rec = _record(pairs)  # exactly one record, nothing else
+    assert (rec["verdict"], rec["reject_code"], rec["channel"]) == (
+        "rejected", "E_INTERNAL", "mic_local")
+    assert [k for k, _ in pairs] == [_KEY]  # no action frame went out

@@ -44,6 +44,13 @@ def format_local(utc_s: float, tz_name: str) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def format_spoken_local(utc_s: float) -> str:
+    """format_spoken in the host's own local zone (no site timezone set)."""
+    dt = datetime.fromtimestamp(utc_s, tz=timezone.utc).astimezone()
+    return "%d月%d日 %s %d点%02d分" % (
+        dt.month, dt.day, _WEEKDAY_CN[dt.weekday()], dt.hour, dt.minute)
+
+
 def format_spoken(utc_s: float, tz_name: str) -> str:
     """A TTS-friendly local time for G24, e.g. '8月16日 周日 14点05分'."""
     tz = ZoneInfo(tz_name)

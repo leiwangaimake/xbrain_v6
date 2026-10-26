@@ -155,10 +155,10 @@ def test_task_control_with_no_active_task_is_spoken_not_sent():
         _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
         l2_timeout_ms=5000, state_fn=lambda: {})
     s = OrchestratorSession()
-    # 用"暂停任务"而不是 18 里的"先停一下": 后者含"停", 会先被安全旁路
+    # 用"暂缓任务"而不是 18 里的"先停一下": 后者含"停", 会先被安全旁路
     # (16 S4, 旁路先于分类)截走成 estop, 根本到不了 B05. 旁路优先是设计如此,
     # 这里只是绕开它去测 B05 本身.
-    d = orch.handle_turn("暂停任务", s, now_mono_ms=1000)      # B05, L0
+    d = orch.handle_turn("暂缓任务", s, now_mono_ms=1000)      # B05, L0
     assert d.kind == "reply"
     assert d.dispatch_result is None
     assert "没有正在执行的任务" in d.reply_text
@@ -169,7 +169,7 @@ def test_pause_resolves_the_running_task():
     orch = TurnOrchestrator(
         _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
         l2_timeout_ms=5000, state_fn=lambda: _RUNNING_TASK)
-    d = orch.handle_turn("暂停任务", OrchestratorSession(), now_mono_ms=1)
+    d = orch.handle_turn("暂缓任务", OrchestratorSession(), now_mono_ms=1)
     assert d.kind == "dispatch"
     tc = d.dispatch_result.payload["task_command"]
     assert tc["action"] == "pause" and tc["task_id"] == "t-20260823-004"
