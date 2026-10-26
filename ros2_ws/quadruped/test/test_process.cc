@@ -1272,6 +1272,57 @@ int main(int argc, char** argv) {
     CHECK(p.axis_frames_sent() > before);
   }
 
+  // ---- the basic fields survive a report that lands in the SAME pump -----
+  {
+    // The case above feeds one frame per pump with a ctrl tick between, so the
+    // ctrl side always sees the BasicStatus snapshot before anything replaces
+    // it. The real chassis does not oblige: snapshot_slot_ holds ONE entry,
+    // and when a MotionStatus (10 Hz) or a DeviceStatus arrives in the same
+    // rx pass as the BasicStatus (2 Hz), the later publish replaced the basic
+    // one before take_fresh ever saw it. A process that never saw a basic
+    // snapshot keeps usage_mode_raw at its default, Tier 1 reads that as
+    // "not navigation" and stops with mode_mismatch.
+    //
+    // *** What it cost, on the real chassis 2026-10-26: forward / back "no
+    // response" after a restart, rt/chassis/state usage_mode null, while the
+    // chassis itself reported navigation. Fix in handle_frame: the motion and
+    // device branches carry the last BasicStatus fields into their snapshot.
+    //
+    // mutant: drop the carry in the motion branch -> the motion sub-case goes
+    // red (stop_reason kModeMismatch); drop it in the device branch -> the
+    // device sub-case goes red. Each sub-case is a FRESH process, so no basic
+    // snapshot from an earlier pump can mask the loss.
+    const Bytes second[2] = {motion_frame(/*motion_state=*/17, /*gait=*/0x3002),
+                             golden.at("RX_00100002_00f00000")};  // device
+    for (const Bytes& late : second) {
+      FakeChassis chassis;
+      QuadrupedProcess p(cfg(chassis.port()));
+      p.ctrl_tick(0.0);
+      CHECK(chassis.accept());
+      chassis.drain();
+      // Both frames on the wire before the process reads any: one pump takes
+      // the pair, which is exactly the arrival order that lost the field.
+      chassis.send(basic_frame(/*usage_mode=*/1, /*motion_state=*/17,
+                              /*gait=*/0x3002, /*hes=*/false, /*sleep=*/false));
+      chassis.send(late);
+      // Pumped until both are in: one pass normally takes the pair, but a
+      // socket may hand them over in two reads, and the claim is about the
+      // slot, not about how many reads it took.
+      for (int i = 0; i < 20 && p.frames_received() < 2; ++i) p.rx_pump(0.05);
+      CHECK(p.frames_received() >= 2);
+      // enable clears the boot-time timeout_lock (see the case above for why
+      // the assertion would otherwise be true whatever the merge does).
+      p.on_enable();
+      p.on_cmd_vel(0.06, 0.1, 0.0, 0.0, p.estop_epoch());
+      p.ctrl_tick(0.06);
+      p.on_cmd_vel(0.07, 0.1, 0.0, 0.0, p.estop_epoch());
+      p.ctrl_tick(0.07);
+      // kNone, not "not kModeMismatch": the gate is fully open or it is not.
+      CHECK(p.last_tier1().stop_reason == StopReason::kNone);
+      CHECK(p.last_tier1().vx > 0.0);
+    }
+  }
+
   // ---- 13 TR-1 from the 10 Hz stream (user ruling 2026-09-21) ------------
   {
     // The gap this closes: handle_frame's MotionStatus branch updated the
@@ -1291,12 +1342,13 @@ int main(int argc, char** argv) {
     // Baselines on BOTH streams, then prove the robot can move (without this
     // half, everything below is satisfied by a robot that never moves).
     //
-    // *** One frame per pump, a tick between them. The snapshot slot holds
-    // ONE entry, so two frames pumped in the same pass leave only the second
-    // -- and a Motion-built snapshot carries usage_mode_raw's default (0),
-    // which beside a 0x3xxx gait reads as normal-mode-with-navigation-gait
-    // and trips the mode_mismatch gate. The first draft of this case did
-    // exactly that and spent its time debugging the wrong thing.
+    // *** One frame per pump, a tick between them. When this case was
+    // written the snapshot slot (ONE entry) lost the BasicStatus whenever two
+    // frames were pumped in the same pass -- a Motion-built snapshot carried
+    // usage_mode_raw's default (0) and tripped mode_mismatch. handle_frame
+    // now carries the basic fields into the motion snapshot (2026-10-26, see
+    // the "same pump" case above), so the pacing is no longer load-bearing;
+    // it is kept because this case is about TR-1, not about the slot.
     chassis.send(basic_frame(1, 17, 0x3002, false, false));
     p.rx_pump(0.04);
     p.ctrl_tick(0.05);

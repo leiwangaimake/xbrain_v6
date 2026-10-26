@@ -829,6 +829,14 @@ void QuadrupedProcess::handle_frame(double now_mono_s) {
       mode_.on_motion_sample(now_mono_s, m.motion_state.raw, m.gait.raw);
       if (have_basic_snap_) {
         // Carry the basic-only fields so this snapshot cannot erase them.
+        // *** Bug fixed 2026-10-26 (real chassis): snapshot_slot_ holds ONE
+        // entry, so a MotionStatus pumped in the same pass as a BasicStatus
+        // replaced it before the ctrl side's take_fresh saw it. A process
+        // that never saw a basic snapshot kept usage_mode_raw at its default
+        // and Tier 1 stopped every axis with mode_mismatch (NAV-111); the
+        // merge-by-source in ctrl_tick cannot help with a snapshot it never
+        // received. Test: test_process.cc "the basic fields survive a report
+        // that lands in the SAME pump".
         snap.from_basic = true;
         snap.hes = last_basic_snap_.hes;
         snap.sleep = last_basic_snap_.sleep;
@@ -847,6 +855,9 @@ void QuadrupedProcess::handle_frame(double now_mono_s) {
     if (chs_a::parse_device_status(framer_.asdu(), framer_.asdu_len(), &d)) {
       if (have_basic_snap_) {
         const double rx = snap.rx_mono_s;
+        // Same loss as the motion branch above: a DeviceStatus contributes
+        // no snapshot field, so the empty snapshot it used to publish
+        // replaced a not-yet-taken BasicStatus outright.
         snap = last_basic_snap_;  // an empty snapshot would erase it too
         snap.rx_mono_s = rx;
       }
