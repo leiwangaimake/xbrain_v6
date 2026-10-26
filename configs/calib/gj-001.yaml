@@ -1,0 +1,29 @@
+# Copyright (c) 2026 Hachist Robotics
+# Author: wanglei@hachist.com
+# 上海哈船智能船舶技术有限公司
+# File: gj-001.yaml
+# Brief: calibration file for robot_id 'gj-001' (L4b) -- the real .1.26 robot, measured values only
+#
+# Description:
+#   L4b calibration for the real robot gj-001 (10 S5.4.3 L4b row: one file per
+#   vehicle, the file name is the robot_id; layers.py selects it by the resolved
+#   common.robot_id). Started from calib/_skeleton.yaml (CAL-13).
+#
+#   ONLY measured values are written here (CLAUDE.md 3.1 / iron rule 3):
+#     frames.ptz_base.h_camera_m = 0.79
+#       Height of the PTZ camera lens centre above the ground, robot standing
+#       in its navigation posture (motion_state 17). Tape-measured on site by
+#       the operator, 2026-10-26. Ground is the reference because base_link's
+#       origin is the body centre projected onto the ground, z up (19 S7,
+#       PCC-14), and 14 S4.4.1 tilt = atan((h_target - h_camera) / d_target)
+#       uses h_target = 1.6 m above the ground.
+#   Not measured yet, so not written (the freeze names what is still missing):
+#   ptz_base x/y offset and rpy, the accuracy block, gate thresholds (M-24),
+#   lat_err_ref_m, calib_rev.
+#
+common:
+  calib:
+    robot_id: gj-001
+    frames:
+      ptz_base:
+        h_camera_m: 0.79
