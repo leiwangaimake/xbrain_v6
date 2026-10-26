@@ -14,6 +14,10 @@
 #     existing snapshot data/run/resolved instead of a fresh freeze (their units
 #     Require xbrain-config-freeze, which refuses 42 null keys by design):
 #     quadruped, rtk_driver, chassis_relay, p2_core, p3_task, p4_agent, p5_gateway.
+#   * perception (RT plane, 10 S3.3 Stage 1) as a transient systemd unit in
+#     perception.slice (cores 1,2,3,7), as nvidia with --init-groups (the video
+#     group opens GPU/DLA) and a clean env with the ROS humble runtime -- the
+#     perception team's own launch recipe (19 S1.2, deploy/.../10-perception-r6.conf).
 #   * p1_motion after chassis_relay (10 S3.3 GATE-4). Commands come from commx.
 #
 # Usage:
@@ -28,6 +32,22 @@ REPO="$( cd "$SCRIPT_DIR/.." && pwd )"
 RESOLVED="$REPO/data/run/resolved"
 PIDFILE="$REPO/data/run/basic_motion.pids"
 SYSTEMD_UNITS=(xbrain-zenohd-rt xbrain-zenohd-gen xbrain-payload xbrain-ai-asr xbrain-llm)
+PERCEPTION_UNIT=xbrain-perception-dev
+PERCEPTION_BIN="$REPO/data/install/perception/lib/perception/perception_node"
+
+start_perception() {
+    # Clean environment on purpose: perception refuses any inherited PERCEPTION_* /
+    # RNS_* variable (exit 78), and this script exports XBRAIN_BASIC_MOTION_*.
+    sudo systemctl stop "$PERCEPTION_UNIT" 2>/dev/null || true
+    sudo systemctl reset-failed "$PERCEPTION_UNIT" 2>/dev/null || true
+    sudo systemd-run --quiet --unit="$PERCEPTION_UNIT" --slice=perception.slice \
+        -p CPUAffinity="1 2 3 7" -p OOMScoreAdjust=-900 \
+        --setenv=HOME=/home/nvidia --setenv=PATH=/usr/local/bin:/usr/bin:/bin \
+        --setenv=LD_LIBRARY_PATH=/opt/ros/humble/opt/rviz_ogre_vendor/lib:/opt/ros/humble/lib/aarch64-linux-gnu:/opt/ros/humble/lib \
+        --setenv=AMENT_PREFIX_PATH=/opt/ros/humble --setenv=RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+        --setenv=ROS_DOMAIN_ID=42 \
+        /usr/bin/setpriv --reuid=nvidia --regid=nvidia --init-groups "$PERCEPTION_BIN"
+}
 
 stop_ours() {
     if [[ -f "$PIDFILE" ]]; then
@@ -57,6 +77,7 @@ stop_legacy() {
 if [[ "${1:-}" == "--stop" ]]; then
     echo "==> stopping basic-motion stack"
     stop_ours
+    sudo systemctl stop "$PERCEPTION_UNIT" 2>/dev/null || true
     sudo systemctl stop "${SYSTEMD_UNITS[@]}" || true
     exit 0
 fi
@@ -73,6 +94,24 @@ echo "logs: $LOGDIR"
 echo "==> [0] stop previous stack"
 stop_ours
 stop_legacy
+
+echo "==> [0b] config snapshot for this boot (freeze line ignored; sim-variant materialise)"
+# The loaders refuse a snapshot whose MANIFEST.boot_id is from another boot, so it
+# is regenerated on every start. It is built WITH XBRAIN_ROBOT_ID (gj-001 from
+# robot.env): perception takes its rid only from MANIFEST.robot_id, so a "dev"
+# snapshot would put its keys under xbrain/dev/ where p1 never looks. This needs
+# configs/calib/gj-001.yaml (h_camera_m, measured 2026-10-26); without it the
+# freeze aborts with per_proc_ref_unresolved on p2_core.
+# A failed materialise empties the snapshot directory, so the previous one is
+# kept aside and put back on failure.
+rm -rf "$REPO/data/run/resolved.prev" && cp -a "$RESOLVED" "$REPO/data/run/resolved.prev"
+if ( unset XBRAIN_RESOLVED_DIR; python3 "$REPO/scripts/dev/materialize_resolved.py" ) > "$LOGDIR/materialize.log" 2>&1; then
+    echo "  snapshot ok -> $RESOLVED"
+else
+    echo "  snapshot FAILED:"; cat "$LOGDIR/materialize.log"
+    rm -rf "$RESOLVED" && cp -a "$REPO/data/run/resolved.prev" "$RESOLVED" && echo "  previous snapshot restored"
+    exit 1
+fi
 
 echo "==> [1] install systemd units (sudo)"
 sudo "$REPO/scripts/install_units.sh" > "$LOGDIR/install_units.log" 2>&1 || { cat "$LOGDIR/install_units.log"; exit 1; }
@@ -101,13 +140,18 @@ export XBRAIN_BASIC_MOTION_TEST=1
 # Test speeds (change here): forward/back m/s, strafe m/s, turn rad/s.
 export XBRAIN_BASIC_MOTION_LIN=0.2
 export XBRAIN_BASIC_MOTION_LAT=0.15
-export XBRAIN_BASIC_MOTION_ANG=0.2
+export XBRAIN_BASIC_MOTION_ANG=0.3
 export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
 export PYTHONUNBUFFERED=1
 INST="$REPO/data/install"
 
-echo "==> [3] RT plane: quadruped, rtk_driver"
+echo "==> [3] RT plane: quadruped, perception, rtk_driver"
 start_bg quadruped bash -c "set +u; source /opt/ros/humble/setup.bash; export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp; exec $INST/quadruped/lib/quadruped/quadruped_m20"
+if [[ -x "$PERCEPTION_BIN" ]]; then
+    start_perception && echo "  started perception ($PERCEPTION_UNIT, journalctl -u $PERCEPTION_UNIT)"
+else
+    echo "  perception skipped (no binary at $PERCEPTION_BIN)"
+fi
 if [[ -e /dev/ttyACM0 ]]; then
     start_bg rtk_driver env XBRAIN_RESOLVED_DIR="$RESOLVED" "$INST/rtk_driver/lib/rtk_driver/rtk_driver"
 fi
@@ -139,6 +183,6 @@ grep -a "forwarding up" "$LOGDIR/chassis_relay.log" | tail -1 || echo "  chassis
 while read -r pid name; do
     kill -0 "$pid" 2>/dev/null && echo "  alive  $name" || echo "  DEAD   $name (see $LOGDIR/$name.log)"
 done < "$PIDFILE"
-for u in "${SYSTEMD_UNITS[@]}"; do echo "  $(systemctl is-active "$u")  $u"; done
+for u in "${SYSTEMD_UNITS[@]}" "$PERCEPTION_UNIT"; do echo "  $(systemctl is-active "$u")  $u"; done
 
 echo "stack up; logs in $LOGDIR; stop with $0 --stop"

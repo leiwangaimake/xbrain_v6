@@ -138,6 +138,21 @@ do_install() {
   echo "Env files the units reference (read in place, never copied):"
   check_env_files_present
 
+  # Kernel tunables the stack needs (deploy/sysctl/*.conf -> /etc/sysctl.d/),
+  # e.g. the 338Le camera receive buffer. Installed and applied now; systemd-
+  # sysctl re-applies them at every boot.
+  local conf
+  for conf in "$REPO_ROOT"/deploy/sysctl/*.conf; do
+    [[ -f "$conf" ]] || continue
+    if [[ "$MODE" == "dry-run" ]]; then
+      echo "  would install $(basename "$conf") -> /etc/sysctl.d/ and apply it"
+    else
+      install -m 0644 "$conf" "/etc/sysctl.d/$(basename "$conf")"
+      sysctl -q -p "/etc/sysctl.d/$(basename "$conf")"
+      echo "  installed + applied $(basename "$conf")"
+    fi
+  done
+
   if [[ "$MODE" == "dry-run" ]]; then
     echo "(dry-run) would run: systemctl daemon-reload"
     return 0
