@@ -800,6 +800,8 @@ void QuadrupedProcess::handle_frame(double now_mono_s) {
       snap.gait_raw = b.gait.raw;
       snap.charge_raw = b.charge;
       mode_.on_readback(now_mono_s, b);
+      last_basic_snap_ = snap;
+      have_basic_snap_ = true;
       snapshot_slot_.publish(snap);
       // Forwarded from HERE, with the full report including its strings.
       // What went into the slot above is the trimmed POD ctrl acts on; this
@@ -825,6 +827,14 @@ void QuadrupedProcess::handle_frame(double now_mono_s) {
       // moved triple while mode_switching still read false for up to 0.5 s
       // (measured on the chassis with the factory handset).
       mode_.on_motion_sample(now_mono_s, m.motion_state.raw, m.gait.raw);
+      if (have_basic_snap_) {
+        // Carry the basic-only fields so this snapshot cannot erase them.
+        snap.from_basic = true;
+        snap.hes = last_basic_snap_.hes;
+        snap.sleep = last_basic_snap_.sleep;
+        snap.usage_mode_raw = last_basic_snap_.usage_mode_raw;
+        snap.charge_raw = last_basic_snap_.charge_raw;
+      }
       snapshot_slot_.publish(snap);
       if (report_sink_) {
         report_sink_(now_mono_s, nullptr, &m, nullptr, nullptr);
@@ -835,6 +845,11 @@ void QuadrupedProcess::handle_frame(double now_mono_s) {
              route.command == chs_a::kReportCommand) {
     chs_a::DeviceStatus d;
     if (chs_a::parse_device_status(framer_.asdu(), framer_.asdu_len(), &d)) {
+      if (have_basic_snap_) {
+        const double rx = snap.rx_mono_s;
+        snap = last_basic_snap_;  // an empty snapshot would erase it too
+        snap.rx_mono_s = rx;
+      }
       snapshot_slot_.publish(snap);
       if (report_sink_) {
         report_sink_(now_mono_s, nullptr, nullptr, &d, nullptr);

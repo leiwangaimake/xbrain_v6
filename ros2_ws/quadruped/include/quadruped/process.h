@@ -530,6 +530,12 @@ class QuadrupedProcess {
   ModeMachine mode_;
 
   hachist::xbrain::rtcomm::LockfreeSlot<ChassisSnapshot> snapshot_slot_;
+  // Report thread only: the last BasicStatus snapshot, carried on every later
+  // snapshot (2026-10-26). The slot holds ONE value; a MotionStatus arriving
+  // right behind a BasicStatus overwrote it before ctrl read it, so ctrl never
+  // learned usage_mode and Tier 1 held mode_mismatch forever (phase-dependent).
+  ChassisSnapshot last_basic_snap_;
+  bool have_basic_snap_ = false;
   // ctrl -> rt_pub. The same mechanism as chs_a_rx -> ctrl above, for the same
   // reason (RTC-6): it is the only cross-thread hand-off that cannot block the
   // realtime side and cannot accumulate stale samples.
