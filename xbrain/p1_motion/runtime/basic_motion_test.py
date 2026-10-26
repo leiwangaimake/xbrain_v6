@@ -31,7 +31,7 @@ _logger = logging.getLogger("xbrain.p1.basic_motion_test")
 TICK_S = 0.05
 RAMP_S = 0.5
 TAPER_S = 0.6
-TAPER_MIN = 0.3
+TAPER_MIN = 1.0  # no taper: below ~0.3 rad/s the chassis only twists, never steps (measured 2026-10-26)
 DONE_TOL_M = 0.02
 DONE_TOL_RAD = math.radians(1.5)
 STALL_AFTER_S = 2.0
@@ -162,7 +162,13 @@ class BasicMotionTest:
             axis, val, cap = "x", dx, MAX_DIST_M
         else:
             return "zero_move"
-        amount = min(abs(val), cap)
+        amount = abs(val)
+        if amount > cap + 1e-6:
+            # Refused, never truncated (2026-10-26): "右转360度" used to turn
+            # 180 degrees -- a motion that differs from the command is worse
+            # than no motion. p2 allows up to 20 m / 720 deg; this test mode
+            # only executes <= MAX_DIST_M / MAX_ANGLE_RAD.
+            return "exceeds_test_limit(%.3f > %.3f)" % (amount, cap)
         self._g = _Guard(axis, 1 if val > 0 else -1, amount, self.speeds[axis])
         self._start = pose
         self._yaw_raw = self._yaw_total = pose[2]
