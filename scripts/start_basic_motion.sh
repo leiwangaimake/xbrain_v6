@@ -23,6 +23,10 @@
 # Usage:
 #   scripts/start_basic_motion.sh          start the stack
 #   scripts/start_basic_motion.sh --stop   stop what it started
+#   scripts/start_basic_motion.sh --no-perception
+#                                          start everything except perception
+#                                          (2026-10-27: perception is being tested
+#                                          on its own and must not be started)
 # Run on the robot as nvidia; it asks for sudo for the systemd steps.
 #
 set -euo pipefail
@@ -85,6 +89,10 @@ stop_legacy() {
     sleep 3
 }
 
+WITH_PERCEPTION=1
+if [[ "${1:-}" == "--no-perception" ]]; then
+    WITH_PERCEPTION=0
+fi
 if [[ "${1:-}" == "--stop" ]]; then
     echo "==> stopping basic-motion stack"
     stop_ours
@@ -158,7 +166,9 @@ INST="$REPO/data/install"
 
 echo "==> [3] RT plane: quadruped, perception, rtk_driver"
 start_bg quadruped bash -c "set +u; source /opt/ros/humble/setup.bash; export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp; exec $INST/quadruped/lib/quadruped/quadruped_m20"
-if [[ -x "$PERCEPTION_BIN" ]]; then
+if [[ "$WITH_PERCEPTION" == 0 ]]; then
+    echo "  perception NOT started (--no-perception)"
+elif [[ -x "$PERCEPTION_BIN" ]]; then
     start_perception && systemctl is-active --quiet "$PERCEPTION_UNIT" \
         && echo "  started perception ($PERCEPTION_UNIT, journalctl -u $PERCEPTION_UNIT)"
 else
