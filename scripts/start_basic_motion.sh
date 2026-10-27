@@ -40,6 +40,17 @@ start_perception() {
     # RNS_* variable (exit 78), and this script exports XBRAIN_BASIC_MOTION_*.
     sudo systemctl stop "$PERCEPTION_UNIT" 2>/dev/null || true
     sudo systemctl reset-failed "$PERCEPTION_UNIT" 2>/dev/null || true
+    # One camera, one perception: a perception_node still running after OUR unit
+    # stopped belongs to someone else (2026-10-27: the perception team's golive
+    # harness, scope perception-manual). A second instance would fight it for
+    # the 338Le stream, so leave it running and do not start ours.
+    local other
+    other=$(pgrep -ax perception_node | head -1 || true)
+    if [[ -n "$other" ]]; then
+        echo "  perception already running, not started again: $other"
+        echo "    (cgroup $(cut -d: -f3 "/proc/${other%% *}/cgroup" 2>/dev/null))"
+        return 0
+    fi
     sudo systemd-run --quiet --unit="$PERCEPTION_UNIT" --slice=perception.slice \
         -p CPUAffinity="1 2 3 7" -p OOMScoreAdjust=-900 \
         --setenv=HOME=/home/nvidia --setenv=PATH=/usr/local/bin:/usr/bin:/bin \
@@ -148,7 +159,8 @@ INST="$REPO/data/install"
 echo "==> [3] RT plane: quadruped, perception, rtk_driver"
 start_bg quadruped bash -c "set +u; source /opt/ros/humble/setup.bash; export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp; exec $INST/quadruped/lib/quadruped/quadruped_m20"
 if [[ -x "$PERCEPTION_BIN" ]]; then
-    start_perception && echo "  started perception ($PERCEPTION_UNIT, journalctl -u $PERCEPTION_UNIT)"
+    start_perception && systemctl is-active --quiet "$PERCEPTION_UNIT" \
+        && echo "  started perception ($PERCEPTION_UNIT, journalctl -u $PERCEPTION_UNIT)"
 else
     echo "  perception skipped (no binary at $PERCEPTION_BIN)"
 fi
