@@ -90,6 +90,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from xbrain.common.errors import E_BUSY  # 99 U99: relmove refused under mode hold
 from xbrain.common.envelope.envelope import Envelope, encode
 from xbrain.p1_motion.ctrl_loop import CtrlLoop, CtrlState
 from xbrain.p1_motion.fence.clip import (
@@ -132,6 +133,12 @@ _logger = logging.getLogger("xbrain.p1.nav")
 CMD_ROUTE_TOPIC = "cmd/motion/route"                      # P1-11
 CMD_RELMOVE_TOPIC = "cmd/motion/relative_move"            # P1-5
 CMD_FACTOR_TOPIC = "cmd/motion/factor"                    # P1-4
+CMD_BEHAVIOR_TOPIC = "cmd/motion/behavior"                # P1-3 (99 U99)
+#: 11 S3.5 behavior as narrowed by 99 U90 R-8 (a): the only values a P2 mode
+#: change produces. Anything else is refused LOUDLY (CLAUDE.md 3.5: an
+#: out-of-set value is never reinterpreted) -- a mis-spelled "hold" silently
+#: ignored would leave the robot moving during a broadcast.
+MODE_BEHAVIORS = frozenset({"hold", "resume_task"})
 STATE_PROGRESS_TOPIC = "state/motion/path_progress"       # P1-12
 STATE_ARB_TOPIC = "state/arb/motion"                      # P1-22 (11 S7A.8)
 RELMOVE_STATUS_TOPIC = "cmd/motion/relative_move/status"  # P1-6
@@ -256,6 +263,10 @@ class NavRuntime:
         self._lock = threading.Lock()
         self._route_q: Deque[Any] = collections.deque()
         self._relmove_q: Deque[Any] = collections.deque()
+        # P1-3 mode hold (99 U99). Written by the behavior callback (Rust
+        # thread, a bool assignment), read once per tick. False at start: a P1
+        # restart during B / D is re-held within one P2 re-assert period.
+        self._mode_hold = False
         self._subs: List[Any] = []                 # strong refs (CLAUDE.md 4.3)
         # The generation quadruped currently holds, learned from
         # rt/chassis/state and echoed back on every cmd_vel (11:1722 makes the
@@ -376,6 +387,8 @@ class NavRuntime:
         self._subs.append(self._gen.declare_subscriber(CMD_ROUTE_TOPIC, self._on_route))
         self._subs.append(self._gen.declare_subscriber(CMD_RELMOVE_TOPIC, self._on_relmove))
         self._subs.append(self._gen.declare_subscriber(CMD_FACTOR_TOPIC, self._on_factor))
+        self._subs.append(self._gen.declare_subscriber(CMD_BEHAVIOR_TOPIC,
+                                                       self._on_behavior))
         # *** RT plane, not the general plane (11 S1.1.6 P1-24, added 2026-09-17).
         #
         # ! The anchor used to read P1-20. That row is rt/chassis/fault (the
@@ -568,6 +581,30 @@ class NavRuntime:
             if n == 1 or n % 100 == 0:
                 _logger.warning(
                     "p1 rt/chassis/fault forward failed (n=%d): %s", n, exc)
+
+    def _on_behavior(self, sample: Any) -> None:
+        """cmd/motion/behavior from P2 (P1-3, 99 U90 R-8 (a) + U99).
+
+        hold        -> B / D mode is on: suspend the autonomous source, abort
+                       the running relmove, refuse new ones (manual stays).
+        resume_task -> lift that hold; P3 resumes its own tasks (15 S4.1A).
+        RUST THREAD: one bool write, nothing else (CLAUDE.md 4.2). P2 re-sends
+        the current value every few seconds, so a dropped frame or a P1
+        restart converges without any state kept here.
+        """
+        body = unwrap_body(_load_json(sample))
+        beh = body.get("behavior") if isinstance(body, dict) else None
+        src = body.get("src") if isinstance(body, dict) else None
+        if beh not in MODE_BEHAVIORS or src != "p2_core":
+            self._counts["behavior_bad"] = self._counts.get("behavior_bad", 0) + 1
+            _logger.warning("p1 cmd/motion/behavior refused: behavior=%r src=%r "
+                            "(want %s from p2_core)", beh, src, sorted(MODE_BEHAVIORS))
+            return
+        hold = beh == "hold"
+        if hold != self._mode_hold:
+            _logger.info("p1 mode hold %s (cmd/motion/behavior %s)",
+                         "ON" if hold else "OFF", beh)
+        self._mode_hold = hold
 
     def _on_factor(self, sample: Any) -> None:
         doc = _load_json(sample)
@@ -796,6 +833,15 @@ class NavRuntime:
         for r in routes:
             emits += self._host.on_route(r, now_ms, pose.xy)
         health = self._health.view(now_ms)
+        mode_hold = self._mode_hold     # one read per tick
+        if mode_hold and relmoves:
+            # 99 U99: during B / D the autonomous motion is held -- a voice /
+            # cloud "go forward" is refused with a reason P4 can speak, not
+            # queued until the broadcast ends.
+            for b in relmoves:
+                emits += self._host.reject_relmove(
+                    b, E_BUSY, {"reason": "mode_hold"})
+            relmoves = []
         if self._bmt is not None:
             # TEMPORARY basic-motion test: relmoves go to the odom executor,
             # never to the mission host / RNS.
@@ -803,7 +849,12 @@ class NavRuntime:
             for b in relmoves:
                 self._bmt.queue(b, t0)  # starts once the chassis is in navigation
             relmoves = []
-            self._bmt.admit(t0, self._chassis_body, age)
+            if mode_hold:
+                # a relmove queued just before the hold must not start the
+                # moment the chassis reports navigation (99 U99).
+                self._bmt.drop_pending("mode_hold")
+            else:
+                self._bmt.admit(t0, self._chassis_body, age)
         for b in relmoves:
             emits += self._host.on_relmove(b, now=now_ms, pose=pose.xy,
                                            yaw_rad=pose.yaw, heading_valid=pose.heading_valid,
@@ -816,7 +867,8 @@ class NavRuntime:
                         estop=bool(self._estop.is_active()),
                         teleop_active=self._teleop_active(now_ms), ts_wall_s=ts_wall,
                         fix_type=pose.fix_type, fence=self._fence_geometry(),
-                        ring=self._ring_sample(pose, snap, now_ms))
+                        ring=self._ring_sample(pose, snap, now_ms),
+                        mode_hold=mode_hold)
         out = self._tick.run(inp)
         self._cur = out
         if out.fence is not None:
@@ -847,9 +899,11 @@ class NavRuntime:
         vx, vy, wz = out.vx, out.vy, out.wz
         if self._bmt is not None and self._bmt.active:
             # TEMPORARY basic-motion test: the executor drives, every gate is
-            # bypassed except the soft estop (CtrlLoop still zeroes on estop).
-            if inp.estop:
-                self._bmt.abort("estop")
+            # bypassed except the soft estop (CtrlLoop still zeroes on estop)
+            # and, since 2026-10-28, the B / D mode hold (99 U99: the hold
+            # applies in test mode too -- no motion during a broadcast).
+            if inp.estop or mode_hold:
+                self._bmt.abort("estop" if inp.estop else "mode_hold")
                 vx = vy = wz = 0.0
             else:
                 age = time.monotonic() - self._chassis_rx if self._chassis_rx >= 0 else 1e9

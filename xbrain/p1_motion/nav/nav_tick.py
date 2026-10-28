@@ -128,6 +128,12 @@ class NavInputs:
     # input rather than a NavTick field because it changes every tick, exactly
     # like perception: the wiring assembles it, the tick only reads it.
     ring: Optional[RingSample] = None
+    # 11 S3.5 P1-3 hold from P2 (99 U90 R-8 (a) + U99): B / D mode is on, so
+    # the AUTONOMOUS motion stops -- the RNS source is suspended exactly like
+    # estop / local teleop suspend it. Manual intervention (handset, HMI,
+    # cloud teleop) is not a NavTick source and keeps working: the user ruled
+    # "suppress autonomous, keep manual" (12 S4.2: manual outranks autonomy).
+    mode_hold: bool = False
 
 
 @dataclass(frozen=True)
@@ -260,11 +266,12 @@ class NavTick:
         return classify(now - snap.profile.t_capture_mono_ms, CAM_THRESH)
 
     def _suspension_edge(self, inp: NavInputs, ctx: RnsCtx) -> None:
-        """estop or teleop -> preempt once; both clear -> release once.
+        """estop, teleop or a P2 mode hold -> preempt once; all clear ->
+        release once (the mission is kept, as for estop / teleop).
         mutant: call on_release every tick instead of on the edge -> RNS
         re-enters FOLLOW while estop is still latched -> test_estop_suspends
         red (the candidate reappears under estop)."""
-        want = bool(inp.estop or inp.teleop_active)
+        want = bool(inp.estop or inp.teleop_active or inp.mode_hold)
         if want and not self._suspended:
             self._src.on_preempted(ctx)
             self._suspended = True

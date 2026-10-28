@@ -223,6 +223,22 @@ class MissionHost:
         self._last_periodic_ms = now
         return out
 
+    @staticmethod
+    def reject_relmove(body: Any, code: str, detail: Dict[str, Any]) -> List[Emit]:
+        """A relmove refused before translation (99 U99: B / D hold is on).
+
+        Same body shape as a translation refusal in on_relmove: state
+        rejected, zero progress, the code and why. P4 speaks it (11 S9.3.2A
+        table: rejected -> the code's wording), so the operator hears that the
+        robot will not move during a broadcast instead of nothing at all.
+        """
+        cmd_id = body.get("cmd_id") if isinstance(body, dict) else None
+        return [Emit(CH_RELMOVE, {
+            "cmd_id": cmd_id if isinstance(cmd_id, str) else None,
+            "state": "rejected",
+            "progress": {"dx_done_m": 0.0, "dy_done_m": 0.0, "dyaw_done_rad": 0.0},
+            "abort_reason": None, "code": code, "detail": dict(detail)})]
+
     # ---- per tick ------------------------------------------------------------
     def after_tick(self, inp: NavInputs, out: NavOutput) -> List[Emit]:
         """Run after NavTick.run for the same tick. Terminal latches first,
@@ -265,6 +281,14 @@ class MissionHost:
                 self._src.cancel(now)
                 emits.append(self._end_relmove("aborted", pose, abort_reason="preempted",
                                                detail={"item": "teleop"}))
+            elif inp.mode_hold:
+                # 99 U99: B / D took over motion. Aborted, not paused -- a
+                # "go forward 1 m" must not finish by itself minutes later when
+                # the broadcast ends (same rule as soft_estop, RE-2). 11 S9.3
+                # abort_reason closed set: "preempted", the item names why.
+                self._src.cancel(now)
+                emits.append(self._end_relmove("aborted", pose, abort_reason="preempted",
+                                               detail={"item": "mode_hold"}))
             elif now - self._goal_accepted_ms >= int(goal.timeout_s * 1000.0):
                 self._src.cancel(now)
                 # RM-3: abort AND report E_TIMEOUT; no auto-retry.

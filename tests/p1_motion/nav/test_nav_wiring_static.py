@@ -56,7 +56,10 @@ def test_subscriptions_are_held_and_undeclared():
     """CLAUDE.md 4.3: every declare_subscriber lands in self._subs; stop()
     undeclares them. mutant: drop one append -> the count red."""
     subs = re.findall(r"self\._subs\.append\(self\._gen\.declare_subscriber\((\w+)", _NAV)
-    assert sorted(subs) == ["CMD_FACTOR_TOPIC", "CMD_RELMOVE_TOPIC", "CMD_ROUTE_TOPIC"]
+    # CMD_BEHAVIOR_TOPIC since 2026-10-28: P1-3 hold / resume_task from P2
+    # (99 U99) -- the subscription R-8 (a) found missing on this side.
+    assert sorted(subs) == ["CMD_BEHAVIOR_TOPIC", "CMD_FACTOR_TOPIC",
+                            "CMD_RELMOVE_TOPIC", "CMD_ROUTE_TOPIC"]
     assert "s.undeclare()" in _NAV
 
 

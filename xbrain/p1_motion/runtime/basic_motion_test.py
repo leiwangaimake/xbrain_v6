@@ -374,6 +374,17 @@ class BasicMotionTest:
             self.abort("preempted")  # stop it now, not after the wait
         self._pending = (body, now_s)  # newer replaces older
 
+    def drop_pending(self, why: str) -> None:
+        """Forget a relmove still waiting for navigation (99 U99 mode hold).
+
+        Without this a "go forward" sent just before a broadcast started
+        would sit in the slot and start by itself once the chassis reached
+        navigation -- during the broadcast, which the hold exists to prevent.
+        """
+        if self._pending is not None:  # something was waiting
+            _logger.warning("BASIC-MOTION-TEST relmove dropped: %s", why)
+        self._pending = None  # the slot is empty either way
+
     def admit(self, now_s: float, state: Dict[str, Any], state_age_s: float) -> Optional[str]:
         """Start the pending relmove if the chassis is in navigation.
 
