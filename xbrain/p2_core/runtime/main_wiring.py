@@ -1228,6 +1228,10 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 # 只有被 tick 才会发生(core 不读钟). 审计事件发到
                 # event/{sev}/arbitration(11 S7A.7), 10 s 窗口合并在 audit 层.
                 try:
+                    # 11 S7A.4: the mode's holds (broadcast_b / alarm_d have
+                    # the 1 s speaker lease) are renewed every pass BEFORE the
+                    # tick, else the tick reclaims B's speaker 1 s after entry.
+                    arb_hub.renew_all(_mode_holds, _now_ms)
                     _evts = arb_hub.tick(_now_ms)
                     if _evts:
                         for _ev in merge_audit_window(_evts):

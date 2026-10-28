@@ -193,6 +193,71 @@ def test_a_finished_tts_releases_the_speaker():
     assert mic.muted is False and mic.unmutes == 1  # mic reopened
 
 
+def _ticker(hub, stop):  # the P2 main loop's tick, 10 Hz
+    """Tick the hub every 100 ms on the real monotonic clock until stop."""
+    while not stop.is_set():  # until the case ends
+        hub.tick(int(time.monotonic() * 1000))  # lease reclaim happens here
+        time.sleep(0.1)  # main loop period
+
+
+def test_a_tts_longer_than_the_lease_plays_to_the_end_under_ticks():
+    """The 2026-10-28 on-robot defect: every speaker source has a 1 s lease
+    (14 S11 default) and the C1 first cut never renewed, so a 3.4 s TTS was
+    revoked at 1 s and left the mic muted for good. The earlier cases never
+    ticked the hub, so they could not see it. MUTATION: drop the renew in the
+    playback loop -> revoked -> ok False -> this fails."""
+    hub = _hub()  # production arbiter config
+    stop = threading.Event()  # ends the ticker
+    th = threading.Thread(target=_ticker, args=(hub, stop))  # main loop stand-in
+    th.start()  # ticking from now on
+    try:  # always stop the ticker
+        spk, mic = _speaker(hub, 1600)  # 1.6 s, over the 1 s lease
+        ack = spk.handle_speak("a long reply", "tts_cloud")  # plays under ticks
+    finally:
+        stop.set()  # ticker ends
+        th.join(1.0)  # joined
+    assert ack["ok"] is True  # played to the end
+    assert mic.muted is False and mic.unmutes == 1  # mic given back
+    assert hub.holder("speaker") is None  # and the speaker released
+
+
+def test_a_tts_revoked_into_an_idle_domain_gives_the_mic_back():
+    """Revoked with nobody taking over (the holder slot went idle): no one
+    else will ever reopen the gate, so the TTS must. MUTATION: drop the
+    idle-domain reopen -> mic stays muted -> this fails."""
+    hub = _hub()  # production arbiter config
+    spk, mic = _speaker(hub, 2000)  # a 2 s TTS
+    out = {}  # thread result
+    t = threading.Thread(target=lambda: out.update(
+        ack=spk.handle_speak("long reply", "tts_local")))
+    t.start()  # TTS starts
+    for _ in range(100):  # wait until the TTS holds the speaker
+        h = hub.holder("speaker")  # poll
+        if h is not None:  # TTS holds it
+            break  # the TTS is playing
+        time.sleep(0.01)  # 10 ms poll
+    hub.release("speaker", "tts_local", h.req_id, "error", int(time.monotonic() * 1000))  # slot goes idle
+    t.join(2.0)  # TTS thread ends
+    assert out["ack"]["ok"] is False  # it was cut
+    assert mic.muted is False and mic.unmutes == 1  # but the mic came back
+
+
+def test_mode_holds_survive_ticks_only_when_renewed():
+    """B holds the speaker as broadcast_b (1 s lease) for as long as B lasts:
+    the main loop's renew_all before every tick keeps it. MUTATION: make
+    renew_all a no-op -> the holder is reclaimed at 1 s -> this fails."""
+    hub = _hub()  # production arbiter config
+    rid = hub.new_req_id("speaker", "broadcast_b")  # B's attempt id
+    hub.request("speaker", "broadcast_b", 0, req_id=rid)  # B enters at t=0
+    holds = {"speaker": ("broadcast_b", rid)}  # what main_wiring keeps
+    for now in range(100, 5001, 100):  # 5 s of 10 Hz passes, simulated clock
+        hub.renew_all(holds, now)  # renewed first
+        hub.tick(now)  # then the lease check
+    assert hub.holder("speaker").source_id == "broadcast_b"  # still B's
+    hub.tick(6200)  # no renew for 1.2 s
+    assert hub.holder("speaker") is None  # the lease is real: reclaimed
+
+
 # -- PayloadDomain manual lights -------------------------------------------
 
 def _payload(hub):  # lights domain on the hub

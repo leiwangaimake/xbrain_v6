@@ -30,6 +30,9 @@ What it does
 ------------
   * request / release / ack_preempt / cancel -- thin locked wrappers that also
     allocate req_ids (process-unique, "<domain>-<source>-<n>").
+  * renew / renew_all -- the 11 S7A.4 keep-alive: every speaker source has a
+    1 s lease, so the TTS thread renews while it plays and the main loop
+    renews the mode's holds each pass (missed in the C1 first cut, U99).
   * being_preempted(domain, source, req_id) -- "I still hold it and a higher
     source is waiting": the TTS thread polls this while it plays and acks, so a
     broadcast takes the speaker at once instead of after the 3 s forced
@@ -97,6 +100,24 @@ class ArbHub:  # owned by p2 main_wiring
         with self._lock:  # every arbiter call is locked
             return self._arbs[domain].request(source, Request(  # core decides
                 req_id=rid, mono_ms=now_mono_ms, atomic=atomic, est_ms=est_ms))
+
+    def renew(self, domain: str, source: str, req_id: str,  # 11 S7A.4 keep-alive
+              now_mono_ms: int) -> bool:
+        """Push the holder's lease out; False when (source, req_id) no longer
+        holds `domain` (revoked, released, or still queued). Every speaker
+        source has the 1 s default lease (14 S11), so a holder that does not
+        renew at >= 2 Hz is reclaimed by the next tick -- the C1 first cut
+        forgot this and a 3.4 s TTS was revoked at 1 s, leaving the mic muted."""
+        with self._lock:  # every arbiter call is locked
+            return self._arbs[domain].renew(source, req_id, now_mono_ms)  # gen untouched (G-1)
+
+    def renew_all(self, holds: Mapping[str, Tuple[str, str]],  # mode holds
+                  now_mono_ms: int) -> None:
+        """Renew every (domain -> (source, req_id)) a mode holds; the P2 main
+        loop calls it each pass (10 Hz) before tick. A queued entry simply
+        does not renew (it holds nothing yet)."""
+        for domain, (source, req_id) in list(holds.items()):  # copy: callers mutate
+            self.renew(domain, source, req_id, now_mono_ms)  # queued -> False, harmless
 
     def release(self, domain: str, source: str, req_id: str, reason: str,  # voluntary
                 now_mono_ms: int) -> None:

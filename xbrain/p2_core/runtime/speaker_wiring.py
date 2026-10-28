@@ -256,8 +256,17 @@ class SpeakerDomain:
                 return {"ok": False, "code": E_UNHEALTHY, "reason": str(exc)}
             end = time.monotonic() + est_ms / 1000.0
             while time.monotonic() < end:
-                if not hub.holds("speaker", source, req_id):
-                    # revoked (lease / forced): the new holder owns gate + mic
+                # 11 S7A.4: renew at >= 2 Hz (we poll at 20 Hz) or the 1 s
+                # default lease reclaims us mid-sentence -- the C1 first cut
+                # did not, and every TTS over 1 s left the mic muted for good.
+                if not hub.renew("speaker", source, req_id, self._now()):
+                    # revoked (forced / lease). A new holder (B / D / another
+                    # TTS) owns gate + mic from now on; an idle domain means
+                    # nobody does, so give them back rather than strand them.
+                    if hub.holder("speaker") is None:
+                        self._publish_gate(open_=True, reason="idle")
+                        if self._mic_pub is not None:
+                            self._mic_pub.unmute()
                     return {"ok": False, "code": E_BUSY,
                             "reason": "speaker revoked mid-playback"}
                 if hub.being_preempted("speaker", source, req_id):
