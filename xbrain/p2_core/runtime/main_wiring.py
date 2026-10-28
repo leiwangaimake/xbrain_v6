@@ -412,6 +412,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         )
         ptz_domain = None
         ptz_probe = None
+        ptz_admission = None    # domain-5 gate on the live arbiter (99 U99 C1)
         # CONFIG-SOURCE-OK(secrets): a credentials file, not a config value on the
         # L0-L6 axis; configs/secrets/ is never materialised to resolved/.
         onvif_secrets = "/opt/xbrain_v6/configs/secrets/onvif_credentials.json"
@@ -445,8 +446,17 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 else:
                     gen.put(key, data)
 
+            # 99 U99 C1: the controller's domain-5 admission now asks the live
+            # ptz arbiter (state/arb/ptz finally names who steers the head);
+            # manual holds idle out after manual_idle_release_s (14 S4.4.2).
+            from xbrain.p2_core.domains.ptz_admission import PtzArbAdmission
+            _ptz_idle = _ptz_snap.get("arbiter.domains.ptz.manual_idle_release_s")
+            if _ptz_idle is _PTZ_MISSING or _ptz_idle is None:
+                raise ValueError("p2_core config: arbiter.domains.ptz."
+                                 "manual_idle_release_s missing (14 S4.4.2)")
+            ptz_admission = PtzArbAdmission(arb_hub, _now_mono_ms, float(_ptz_idle))
             ptz_domain = PtzDomain(onvif_cfg, _ptz_cfg, _ptz_prio,
-                                   publish=_ptz_publish)
+                                   publish=_ptz_publish, admission=ptz_admission)
             ptz_domain.start()
             # SW-12: non-blocking ONVIF reachability probe on its own thread +
             # session, so the heartbeat reads a cached verdict instead of blocking
@@ -564,20 +574,33 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             return "audio-%s-%04d" % (
                 (_bcast_rid or "unknown").replace("-", ""), bcast_seq["n"])
 
-        # 14 S5.5.1 table A: the domain sources each mode holds. PTZ auto_track
-        # joins with the PTZ batch (99 U99: PTZ last). DIALOG / IDLE hold no
-        # domain as a MODE (their TTS / ASR are session sources).
+        # 14 S5.5.1 table A: the domain sources each mode holds, in switch_order
+        # (payload_light -> ptz -> audio, ML-5). DIALOG / IDLE hold no domain
+        # as a MODE here: their TTS / ASR are session sources, and table A's
+        # DIALOG ptz = preset_patrol has no producer (patrol answers
+        # E_NOT_IMPLEMENTED), so holding it would only shut the head off.
         MODE_SOURCES = {
             ModeState.BROADCAST: {"payload_light": "mode_driver",
+                                  "ptz": "auto_track",
                                   "speaker": "broadcast_b"},
             ModeState.ALARM: {"payload_light": "mode_driver",
+                              "ptz": "auto_track",
                               "speaker": "alarm_d"},
         }
+        # User ruling 2026-10-28 (99 U99 C1 PTZ): domain 5 never blocks entering
+        # B / D. A manual operator inside its 30 s idle window (700) outranks
+        # auto_track (500), so a literal P-1' would refuse an alarm because
+        # someone touched the camera; auto_track instead waits and takes the
+        # head when the manual hold idles out (14 S4.4.2). It is left out of
+        # the preflight and a denial does not abort the switch.
+        NON_BLOCKING_DOMAINS = frozenset({"ptz"})
         _mode_holds: dict = {}          # domain -> (source, req_id) held by the mode
 
         def _arb_snapshot(target, current):
             """14 S5.5.3 P-1' on the live holders, for ModeFace."""
-            return arb_hub.preflight(MODE_SOURCES.get(target, {}),
+            need = {d: src for d, src in MODE_SOURCES.get(target, {}).items()
+                    if d not in NON_BLOCKING_DOMAINS}
+            return arb_hub.preflight(need,
                                      set(MODE_SOURCES.get(current, {}).values()))
 
         def _mode_acquire(state) -> list:
@@ -602,9 +625,16 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     g = arb_hub.handover(domain, held, source, rid, _now_mono_ms())
                 else:
                     g = arb_hub.request(domain, source, _now_mono_ms(), req_id=rid)
+                denied = getattr(g.result, "value", g.result) == "denied"
+                if denied and domain in NON_BLOCKING_DOMAINS:
+                    # nothing taken; the main loop asks again when it frees up
+                    _logger.info("p2 mode %s: %s held by a higher source, "
+                                 "%s will take it when free",
+                                 getattr(state, "value", state), domain, source)
+                    continue
                 undo.append((domain, held))
                 _mode_holds[domain] = (source, rid)   # granted or queued
-                if getattr(g.result, "value", g.result) == "denied":
+                if denied:
                     _mode_undo(undo)
                     raise TransitionAborted(E_BUSY, {
                         "reason": "arbiter_denied", "domain": domain,
@@ -1304,6 +1334,22 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     deter_driver.tick(_now_ms)
                 except Exception as exc:      # noqa: BLE001
                     _logger.error("p2 D DT-5 tick failed: %s", exc)
+                # 14 S4.4.2: a manual PTZ hold idles out after T_idle; then a
+                # B / D mode that could not get domain 5 at entry (or lost it
+                # to the operator) takes it back as auto_track.
+                try:
+                    if ptz_admission is not None and ptz_admission.tick():
+                        _logger.info("p2 ptz manual hold released (idle)")
+                    _want = MODE_SOURCES.get(mode_face.state, {}).get("ptz")
+                    _have = _mode_holds.get("ptz")
+                    if (_want is not None and arb_hub.holder("ptz") is None
+                            and (_have is None or not arb_hub.holds("ptz", *_have))):
+                        _rid = arb_hub.new_req_id("ptz", _want)
+                        arb_hub.request("ptz", _want, _now_ms, req_id=_rid)
+                        if arb_hub.holds("ptz", _want, _rid):
+                            _mode_holds["ptz"] = (_want, _rid)
+                except Exception as exc:      # noqa: BLE001
+                    _logger.error("p2 ptz domain upkeep failed: %s", exc)
                 try:
                     # 11 S7A.4: the mode's holds (broadcast_b / alarm_d have
                     # the 1 s speaker lease) are renewed every pass BEFORE the

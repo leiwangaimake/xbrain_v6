@@ -120,10 +120,13 @@ class PtzDomain:
 
     def __init__(self, cfg: OnvifConfig, ptz_cfg: Mapping[str, Any],
                  priorities: Mapping[str, int], *,
-                 publish: Callable[[str, bytes], None]) -> None:
+                 publish: Callable[[str, bytes], None],
+                 admission: Optional[Any] = None) -> None:
         """ptz_cfg: read_ptz_config() output. priorities: domain-5 source id ->
         priority (resolved arbiter.domains.ptz.sources.*.priority).
-        publish(key, bytes): GEN-plane put for cmd/ptz/ack and event/warn/ptz."""
+        publish(key, bytes): GEN-plane put for cmd/ptz/ack and event/warn/ptz.
+        admission: the live domain-5 gate (domains/ptz_admission, 99 U99 C1),
+        handed to the controller unchanged."""
         self._driver = PtzDriver(PtzDriverConfig(
             host=cfg.host, user=cfg.user, pwd=cfg.pwd))
         self._focus = LapiFocusClient(
@@ -142,7 +145,8 @@ class PtzDomain:
                       max_cmd_hz=int(ptz_cfg["max_cmd_hz"])),
             priorities,
             now_ms=lambda: int(time.monotonic() * 1000),
-            publish_ack=self._publish_ack, publish_event=self._publish_event)
+            publish_ack=self._publish_ack, publish_event=self._publish_event,
+            admission=admission)
         self._q: "queue.Queue[Any]" = queue.Queue(maxsize=QUEUE_DEPTH)
         self._stop = threading.Event()
         self._threads: list = []

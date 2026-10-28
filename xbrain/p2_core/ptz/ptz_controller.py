@@ -41,9 +41,14 @@ would exceed it is merged last-wins into a pending velocity that the tick
 applies as soon as the budget allows -- never queued (queueing = the head
 keeps moving after release).
 
-Domain 5 admission (11 S7A): the full arbiter does not run in this build, so
-the controller does the part that matters for the head itself -- the holder
-of the current motion and its priority. A command from a lower-priority
+Domain 5 admission (11 S7A): SUPERSEDED in part 2026-10-28 (99 U99 C1) --
+the sentence that followed here read "the full arbiter does not run in this
+build"; since C1 it does (domains/hub.py), and production injects
+domains/ptz_admission.PtzArbAdmission, which asks the live ptz holder FIRST
+(it also sees a manual hold idling out its 30 s and B / D mode's auto_track,
+neither of which is a motion). The motion check below still runs after it,
+and alone when no admission is injected (the U98 tests). That check: the
+holder of the current motion and its priority. A command from a lower-priority
 source while a higher one moves the head is refused with E_BUSY and the
 holder named; an equal or higher one takes over, and when the source changes
 the head is stopped first (11 PTZ-D4) and a PTZ_PREEMPTED event is emitted.
@@ -240,10 +245,13 @@ class PtzController:  # one instance per p2 process
                  now_ms: Callable[[], int],  # monotonic clock only (CLAUDE.md 3.4)
                  publish_ack: Callable[[Dict[str, Any]], None],  # ack body -> cmd/ptz/ack
                  publish_event: Callable[[str, Dict[str, Any]], None],  # (code, detail) -> event/warn/ptz
-                 spawn: Optional[Callable[[Callable[[], None]], None]] = None) -> None:  # defaults to a daemon thread per refocus
+                 spawn: Optional[Callable[[Callable[[], None]], None]] = None,  # defaults to a daemon thread per refocus
+                 admission: Optional[Any] = None) -> None:  # domains/ptz_admission.PtzArbAdmission in production
         """priorities: domain-5 source id -> priority (resolved config).
         now_ms: monotonic milliseconds (CLAUDE.md 3.4). spawn: runs a callable
-        on another thread (injected so tests can run refocus synchronously)."""
+        on another thread (injected so tests can run refocus synchronously).
+        admission: the live domain-5 arbiter gate (99 U99 C1). None keeps the
+        motion-only check below -- the U98 behaviour its tests pin."""
         self._ops = ops  # ONVIF primitives
         self._focus = focus  # LAPI refocus, may be None if unavailable
         self._lim = limits  # frozen limits
@@ -251,6 +259,7 @@ class PtzController:  # one instance per p2 process
         self._now = now_ms  # monotonic ms source
         self._publish_ack = publish_ack  # ack sink
         self._publish_event = publish_event  # event sink
+        self._admission = admission  # arbiter-backed gate, or None
         self._spawn = spawn or (lambda fn: threading.Thread(  # production spawn: a daemon thread
             target=fn, name="p2.ptz_refocus", daemon=True).start())  # named for py-spy / journald
         self._lock = threading.Lock()  # guards motion, pending, budget and refocus flag
@@ -353,10 +362,19 @@ class PtzController:  # one instance per p2 process
             return self._refocus(cmd_id, source)  # async: may return None
         return ack(cmd_id, "rejected", E_SCHEMA, {"field": "action"})  # action outside the closed set
 
-    def _admit(self, source: str) -> Optional[Dict[str, Any]]:  # domain 5 admission (11 S7A)
+    def _admit(self, source: str, acquire: bool = True) -> Optional[Dict[str, Any]]:  # domain 5 admission (11 S7A)
         """Domain-5 admission: refuse when a higher-priority source moves the
         head; otherwise None (proceed). Equal priority takes over (last-wins
-        among manual controllers, Qt contract R-7)."""
+        among manual controllers, Qt contract R-7).
+
+        With the arbiter gate (99 U99 C1) the live ptz holder decides first:
+        it also sees holders that are not moving (a manual hold idling out its
+        30 s, 14 S4.4.2; B / D mode's auto_track) -- the motion-only check
+        below sees neither. acquire=False is refocus (admission only)."""
+        if self._admission is not None:  # the live arbiter decides first
+            busy = self._admission.admit(SOURCE_IDS[source], acquire=acquire)  # E_BUSY detail or None
+            if busy is not None:  # a higher holder has the domain
+                return busy  # same detail shape as below
         m = self._motion  # current holder, if any
         prio = self._prio[SOURCE_IDS[source]]  # priority of the requesting source
         if m is not None and m.priority > prio:  # strictly higher holder wins; equal takes over
@@ -545,7 +563,7 @@ class PtzController:  # one instance per p2 process
         if self._focus is None:  # LAPI client could not be built
             return ack(cmd_id, "rejected", E_UNHEALTHY,  # answered, never faked
                        {"item": "ptz", "reason": "lapi_unavailable"})  # item ptz per 11 S13.9
-        busy = self._admit(source)  # admission only, not a holder
+        busy = self._admit(source, acquire=False)  # admission only, not a holder
         if busy is not None:  # a higher priority source moves the head
             return ack(cmd_id, "rejected", E_BUSY, busy)  # holder named in detail
         if self._refocus_busy:  # a refocus is already running
