@@ -384,8 +384,27 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         payload_cfg = PayloadWiringConfig(
             payload_base_url=spk_cfg.payload_base_url,
             http_timeout_s=spk_cfg.tts_http_timeout_s)
+        # 设备音量(99 U100 续, 用户 2026-10-28 裁决): 缺省最大, 语音/文本 D10
+        # 明确设过就用设过的值, 重启后仍是它. 一个 VolumeSetting 两处共用:
+        # 下面的 D10 处理在设成功后落盘, 主循环的开机对账把 effective() 写给设备.
+        # 两个键缺一个即拒绝启动(CLAUDE.md 3.6), 不在代码里兜数.
+        from xbrain.common.config.resolved import MISSING as _VOL_MISSING
+        from xbrain.common.config.resolved import load_resolved as _vol_load
+        from xbrain.p2_core.payload_client.volume_setting import VolumeSetting
+        _vcfg = _vol_load("p2_core")
+        _vkeys = ("payload_svc.boot_volume_pct", "payload_svc.volume_state_path")
+        _vbad = [k for k in _vkeys if _vcfg.get(k) is _VOL_MISSING
+                 or _vcfg.get(k) is None]
+        if _vbad:
+            raise ValueError("p2_core config (99 U100): missing or "
+                             "unassigned: %s (re-run the freeze line)"
+                             % ", ".join(_vbad))
+        volume_setting = VolumeSetting(
+            str(_vcfg.get("payload_svc.volume_state_path")),
+            int(_vcfg.get("payload_svc.boot_volume_pct")))
         payload = PayloadDomain(cfg=payload_cfg, hub=arb_hub,
-                                now_mono_ms_fn=_now_mono_ms)
+                                now_mono_ms_fn=_now_mono_ms,
+                                volume=volume_setting)
 
         def _on_payload(sample) -> None:
             import threading as _t
@@ -524,10 +543,10 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         #   payload_svc.base_url / rest_timeout_ms  T-PAY-1(14 S2.3 P-3)
         #   arbiter.domains.payload_light.deter_redblue_mode  B 模式红蓝灯
         #       的模式号, 14 S4.3 GL 表 B_CAST 行逐字"模式号同上"(= D 模式).
-        #   payload_svc.boot_volume_pct  device volume set once after start
-        #       (99 U100, user ruling 2026-10-28: default to max).
+        #   (payload_svc.boot_volume_pct / volume_state_path 两个键在上面建
+        #    volume_setting 处检查, 与 payload 域放在一起.)
         _bkeys = ("mode.b_cast_idle_timeout_s", "payload_svc.base_url",
-                  "payload_svc.rest_timeout_ms", "payload_svc.boot_volume_pct",
+                  "payload_svc.rest_timeout_ms",
                   "arbiter.domains.payload_light.deter_redblue_mode")
         _bbad = [k for k in _bkeys if _mcfg.get(k) is _MISSING
                  or _mcfg.get(k) is None]
@@ -536,7 +555,6 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                              "unassigned: %s (re-run the freeze line)"
                              % ", ".join(_bbad))
         b_cast_idle_timeout_s = float(_mcfg.get("mode.b_cast_idle_timeout_s"))
-        boot_volume_pct = int(_mcfg.get("payload_svc.boot_volume_pct"))
         _boot_vol = {"done": False}     # set once per P2 start (99 U100)
         b_cast_redblue = int(_mcfg.get(
             "arbiter.domains.payload_light.deter_redblue_mode"))
@@ -1312,16 +1330,19 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 # 重启(又回到 idle) / 退出时那次 POST /mode 失败.
                 if now - last_dev_sync >= DEVICE_RECONCILE_S:
                     last_dev_sync = now
-                    # 99 U100: device volume to boot_volume_pct once per start;
-                    # retried here until payload-service answers (it may start
-                    # after P2). Afterwards D10 voice owns it until next start.
+                    # 99 U100 续: 每次启动把 volume_setting.effective() 写给设备
+                    # 一次 -- 操作员用 D10 明确设过就是设过的值, 否则 boot_volume_pct
+                    # (最大). payload-service 可能晚于 P2 起来, 所以在这里重试到首次
+                    # 成功. 日志每次都写出来源(explicit / default), 记住的低音量 /
+                    # 静音因此看得见(18 S6.4 教训 3).
                     if not _boot_vol["done"]:
                         try:
-                            _vr = device_sync.set_volume(boot_volume_pct)
+                            _bv = volume_setting.effective()
+                            _vr = device_sync.set_volume(_bv)
                             if _vr.ok:
                                 _boot_vol["done"] = True
-                                _logger.info("p2 device volume set to %d (boot default)",
-                                             boot_volume_pct)
+                                _logger.info("p2 device volume set to %d (%s)",
+                                             _bv, volume_setting.origin())
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p2 boot volume failed: %s", exc)
                     try:

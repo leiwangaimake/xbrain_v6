@@ -121,3 +121,53 @@ def test_d10_no_slot_dropped(domain):
     before = domain.calls_made
     domain._dispatch({"intent_id": "D10"})
     assert domain.calls_made == before
+
+
+# -- D10 with the persisted start volume (99 U100 continued) ---------------
+
+def _with_volume(monkeypatch, tmp_path, fail=False):
+    """A PayloadDomain built the production way, with a VolumeSetting."""
+    from xbrain.p2_core.payload_client.volume_setting import VolumeSetting
+    calls = []
+
+    def _set_volume(**kw):
+        if fail:                                          # device refused
+            raise lc.LightsClientError("lights returned 500: x")
+        calls.append(kw)
+        return {"ok": True}
+    monkeypatch.setattr(lc, "set_volume", _set_volume)
+    vs = VolumeSetting(str(tmp_path / "v.json"), 100)     # max by default
+    d = PayloadDomain(PayloadWiringConfig(
+        payload_base_url="http://127.0.0.1:18080", http_timeout_s=1.0),
+        volume=vs)
+    return d, vs, calls
+
+
+def test_d10_relative_starts_from_the_start_volume(monkeypatch, tmp_path):
+    """P2 sets the device to 100 at start, so "quieter" (-20) must give 80,
+    not 30 (50 - 20). MUTATION: keep the hard 50 -> 30 -> fails."""
+    d, _vs, calls = _with_volume(monkeypatch, tmp_path)
+    d._dispatch({"intent_id": "D10", "volume": {"rel": -20}})
+    assert calls[-1]["volume"] == 80
+
+
+def test_d10_success_is_persisted_and_restored(monkeypatch, tmp_path):
+    """An explicit voice / text setting survives a restart. MUTATION: drop
+    the record() call -> the next start sees 100 -> fails."""
+    d, vs, _calls = _with_volume(monkeypatch, tmp_path)
+    d._dispatch({"intent_id": "D10", "volume": {"abs": 35}})
+    from xbrain.p2_core.payload_client.volume_setting import VolumeSetting
+    assert VolumeSetting(str(tmp_path / "v.json"), 100).effective() == 35
+    d2 = PayloadDomain(PayloadWiringConfig(
+        payload_base_url="http://127.0.0.1:18080", http_timeout_s=1.0),
+        volume=VolumeSetting(str(tmp_path / "v.json"), 100))
+    d2._dispatch({"intent_id": "D10", "volume": {"rel": 10}})   # after restart
+    assert VolumeSetting(str(tmp_path / "v.json"), 100).effective() == 45  # 35 + 10
+
+
+def test_d10_refused_by_the_device_is_not_persisted(monkeypatch, tmp_path):
+    """Only a value the device accepted is an explicit setting. MUTATION:
+    record before set_volume -> 20 persisted -> fails."""
+    d, vs, _calls = _with_volume(monkeypatch, tmp_path, fail=True)
+    d._dispatch({"intent_id": "D10", "volume": {"abs": 20}})
+    assert vs.effective() == 100 and not (tmp_path / "v.json").exists()

@@ -72,8 +72,13 @@ class PayloadDomain:
     dispatches. Log + count keeps the loop alive and observable."""
 
     def __init__(self, cfg: PayloadWiringConfig, hub=None,
-                 now_mono_ms_fn=None) -> None:
+                 now_mono_ms_fn=None, volume=None) -> None:
         self._cfg = cfg
+        # payload_client.volume_setting.VolumeSetting (99 U100 continued,
+        # user ruling 2026-10-28): the start volume (max by default, the
+        # operator's explicit D10 value once set, kept across restarts) and
+        # where a successful D10 is persisted. None = unit tests without it.
+        self._volume = volume
         # Domain-4 arbitration (14 S4.3, 99 U99 C1): a light intent is the
         # `manual` source (500, reject policy). While a mode holds the lights
         # (mode_driver 900 during B / D) it is refused -- before 2026-10-28 a
@@ -92,7 +97,12 @@ class PayloadDomain:
         # WE last set. Brightness starts at the D01 on-value.
         self._last_strobe_mode = 0           # 0 -> first cycle yields 1
         self._last_bright = _LIGHT_ON_BRIGHT
-        self._last_volume = 50               # initial; first abs/rel adjusts
+        # D10 "louder" steps from what the device is AT: P2 writes
+        # volume.effective() to it at start, so start from that same value.
+        # Was a hard 50 while U100 set the device to 100 -> the first
+        # "louder" after a start turned the speaker DOWN to 50 + step.
+        self._last_volume = (volume.effective() if volume is not None
+                             else 50)        # 50: legacy tests built without it
 
     def device_status(self, timeout_s: float = 1.0):
         """Poll payload-service GET /status for the GZH-2 device-link state (the
@@ -214,6 +224,18 @@ class PayloadDomain:
                 self._last_volume = vol
                 self.calls_made += 1
                 _logger.info("payload D10 volume -> %d -> %s", vol, r)
+                # Only a volume the device ACCEPTED is an explicit setting
+                # (set_volume raised above otherwise). Persisted so it
+                # survives a restart (99 U100 continued); a failed write is
+                # logged -- the device already has the value, only the
+                # restore after the next start would fall back to default.
+                if self._volume is not None:
+                    try:
+                        self._volume.record(vol)
+                    except OSError as exc:
+                        self.errors.append(str(exc))
+                        _logger.error("payload D10 volume %d not persisted: %s",
+                                      vol, exc)
             else:
                 self.calls_dropped += 1
                 _logger.warning(
