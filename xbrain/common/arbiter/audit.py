@@ -40,10 +40,19 @@ Traps -- things that look right and are not:
      up through SEVERITY.parse / EVENT_CATEGORY.parse, never spelled as literals,
      so an off-contract value is E_SCHEMA at the boundary, not a key the cloud
      alarm subscription silently never matches (11 S2.2.11 V-2).
-  3. eid and delivered are NOT set here. The event bus (p5_gateway, the sole
-     event publisher) stamps eid at publish and tracks delivered; this module
-     owns only the arbitration-specific fields, the same way the envelope layer
-     owns the outer wrapper and not the Event body.
+  3. delivered is NOT set here (p5's record layer tracks it). eid is not set by
+     render_audit_event / merge_audit_window either, but it IS the publishing
+     process's job: stamp_for_publish below, called right before the put.
+     SUPERSEDED 2026-10-28 (99 U99 C1): this trap used to read "the event bus
+     (p5_gateway, the sole event publisher) stamps eid at publish". Why that is
+     wrong: 11 S6.1 makes eid a producer-side required field, and p5 never
+     stamps one -- its pipeline step 1 drops an eid-less event
+     (missing_field:eid) and its cloud projector raises "event missing eid
+     (v2.0 S5.1)". Every other producer (p1 arb-*, p2 estop-/bcast-, p3, ...)
+     carries its own. Basis: the C1 arbitration events from p2 reached neither
+     record.db nor the cloud, one ERROR traceback per event in the p5 log
+     (found by the cloud joint-test session, 2026-10-28), and
+     tests/common/test_arbiter_audit_stamp.py.
 """
 
 from typing import Dict, List, Optional
@@ -155,6 +164,22 @@ def render_audit_event(event: ArbEvent, count: int = 1) -> dict:
         # exempt actions carry window 0 so merge_audit_window leaves them alone.
         "dedup_window_s": 0 if _is_exempt(action) else DEDUP_WINDOW_S,
     }
+
+
+def stamp_for_publish(record: dict, *, eid: str, src: str, ts: float) -> dict:
+    """The producer-side fields an Event needs on the wire (11 S6.1), added to a
+    rendered audit record right before the publisher puts it (trap 3).
+
+    eid must be process-unique and non-empty (p5 drops the event otherwise);
+    src names the publishing process; ts is the event's wall-clock record stamp
+    (11 S6.2 -- display / audit only, never an age). Returns a NEW dict: the
+    rendered record may still be held by a caller (merge windows, tests).
+    """
+    if not isinstance(eid, str) or not eid:             # p5 step 1 drops an eid-less event
+        raise ValueError("audit event eid must be a non-empty string")
+    out = dict(record)                                  # never mutate the caller's record
+    out.update(eid=eid, src=src, ts=ts)                 # the three producer fields
+    return out
 
 
 def merge_audit_window(events: List[ArbEvent]) -> List[dict]:
