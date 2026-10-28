@@ -1172,7 +1172,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             last_mode_pub = float("-inf")   # state/mode 1 Hz 下限的上次时刻
             last_arb_pub = float("-inf")    # state/arb/{domain} 1 Hz 下限
             last_arb_gens: dict = {}        # 上次发出时各域的 gen
-            from xbrain.common.arbiter.audit import merge_audit_window
+            from xbrain.common.arbiter.audit import merge_audit_window, stamp_for_publish
+            _arb_evt_n = [0]                # eid sequence for event/{sev}/arbitration
             arb_state_pub = {d: gen.declare_publisher("state/arb/" + d)
                              for d in arb_hub.domains}
             while not stop_flag.get("stop"):
@@ -1358,6 +1359,15 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     _evts = arb_hub.tick(_now_ms)
                     if _evts:
                         for _ev in merge_audit_window(_evts):
+                            # 11 S6.1: eid is the producer's (p5 drops an
+                            # eid-less event; until 2026-10-28 every one of
+                            # these was dropped). Same shape as p1's arb-*.
+                            _arb_evt_n[0] += 1
+                            _ev = stamp_for_publish(
+                                _ev, eid="arb-p2-%s-%d" % (_bcast_evt["boot"], _arb_evt_n[0]),
+                                src="p2_core",
+                                # WALL-CLOCK-OK(record): event record ts, 11 S6.2.
+                                ts=time.time())
                             gen.put("event/%s/arbitration" % _ev["sev"],
                                     json.dumps(_ev, ensure_ascii=False)
                                     .encode("utf-8"))
