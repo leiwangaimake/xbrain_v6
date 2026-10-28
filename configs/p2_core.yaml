@@ -44,6 +44,12 @@ payload_svc:
   base_url: "http://127.0.0.1:18080"
   # T-PAY-1 hard timeout for POST /mode /deter /lights /tts (14 S2.3 P-3).
   rest_timeout_ms: 300
+  # Device playback volume [14] (0..100, 11 S7.5 volume_pct) that P2 sets once
+  # after every start (99 U100, user ruling 2026-10-28: "default to max").
+  # Persistent on the device; D10 voice ("louder" / "quieter") still changes
+  # it until the next P2 start. Retried in the 5 s device reconcile until the
+  # first success (payload-service may come up after P2).
+  boot_volume_pct: 100
   # T-PAY-2: wait one more 0x25 status frame before assembling ack.detail.applied.
   lights_apply_confirm_ms: 500
   # exponential backoff for connect retries. cap 2 s, never infinite retry.
