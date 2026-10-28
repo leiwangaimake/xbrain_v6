@@ -319,6 +319,23 @@ ptz:
   # C28.4 shield: 1 = suppress refocus while PTZ moving (default 0 causes
   # focus pumping on any pan/tilt).
   shield_move_ptz: 1
+  # PtzCommand limits (11 S7.4.4 clamp table / S7.4.5 budget; Qt contract
+  # v0.2, 99 U98). Required: a missing key refuses p2 startup with its path.
+  # hold_max_ms: upper bound of a jog's dead-man. 2000 per the Qt contract
+  # U-1 proposal (over 2 s without a renewal the head must stop); the lower
+  # bound 200 is fixed by 11 S7.4.4 itself and is not configurable.
+  hold_max_ms: 2000
+  # nudge pulse_ms range. 2800 = the largest voice pulse archive (18-B E01);
+  # 100 = the Qt contract S3.4 zoom_step lower bound.
+  min_pulse_ms: 100
+  max_pulse_ms: 2800
+  # 11 S7.4.5: "ptz.max_cmd_hz = 17 (must not be configured higher)" -- one
+  # ONVIF command costs ~58 ms on the camera side (C28.2-3).
+  max_cmd_hz: 17
+  # Per-call LAPI timeout for refocus / focus session. ~0.5 s per call keeps
+  # the refocus ack inside the Qt contract's 2 s (contract S9); ptzkey2.py's
+  # 10 s curl timeout must not be copied.
+  lapi_timeout_s: 0.5
 
 
 # --- health (14 S11 health block) -------------------------------------------
