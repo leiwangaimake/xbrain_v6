@@ -263,3 +263,34 @@ def test_internal_exit_rejects_a_reason_outside_the_closed_set(rig):
     rig.start()  # enter B (audio-gj001-0001)
     with pytest.raises(ValueError):  # closed set
         rig.face.exit_internal("bored", now_mono_ms=2000)  # not a v2.0 reason
+
+
+# -- C3 (99 U99): state/mode.motion_behavior + the 1 Hz floor ---------------
+
+def test_state_mode_carries_the_motion_behavior_p3_yields_on():
+    """15 S4.1A reads motion_behavior: hold during B / D, normal otherwise.
+    MUTATION: drop the field from the body -> KeyError -> this fails (and P3
+    would never yield a task to a broadcast)."""
+    sent = []  # state/mode bodies
+    face = ModeFace(publish=lambda k, d: sent.append(json.loads(d)),  # recorder
+                    on_transition=lambda f, t: None,  # no side effects needed
+                    motion_behavior_of=lambda s: ("hold" if s in (
+                        ModeState.BROADCAST, ModeState.ALARM) else "normal"))
+    face.handle_frame(json.dumps({"cmd_id": "c-1", "action": "set_voice_mode",
+                                  "voice_mode": "broadcast"}).encode(),
+                      now_mono_ms=1000)  # enter B
+    assert sent[-1]["motion_behavior"] == "hold"  # P3 yields
+    face.handle_frame(json.dumps({"cmd_id": "c-2", "action": "exit_broadcast",
+                                  "source": "hmi"}).encode(), now_mono_ms=2000)
+    assert sent[-1]["motion_behavior"] == "normal"  # P3 resumes
+
+
+def test_republish_is_the_one_hertz_floor():
+    """A P3 / P5 started later must still learn the mode. MUTATION: make
+    republish a no-op (the pre-fix state: published on change only) ->
+    nothing is sent -> this fails."""
+    sent = []  # state/mode bodies
+    face = ModeFace(publish=lambda k, d: sent.append(json.loads(d)))  # IDLE
+    face.republish(now_mono_ms=5000)  # one heartbeat, no transition
+    assert len(sent) == 1 and sent[0]["voice_mode"] == "idle"  # current mode
+    assert "motion_behavior" not in sent[0]  # not injected -> not sent

@@ -200,9 +200,16 @@ class ModeFace:
                                                            FrozenSet[str]]]] = None,
                  on_transition: Optional[
                      Callable[[ModeState, ModeState], None]] = None,
+                 motion_behavior_of: Optional[
+                     Callable[[ModeState], str]] = None,
                  ) -> None:
         self._machine = machine or ModeStateMachine()
         self._publish = publish
+        # 11 S4.3 motion_behavior 的来源: 模式 -> "hold" / "normal"(99 U99,
+        # R-8 (a)). P3 按它让行(15 S4.1A). 由调用方注入是因为映射表在
+        # p2_core.yaml mode_motion 段, 本类不读配置; None = 不发该字段
+        # (单测与只关心模式机的调用方).
+        self._motion_behavior_of = motion_behavior_of
         # 速度档位状态, dispatch 的 SP-C3 三字段从这里取. 未标定值不写默认数
         # (CLAUDE.md 3.1): profile 是"当前档", 由后续 set_speed_profile 落定,
         # 这里只记状态不设安全上限.
@@ -481,6 +488,15 @@ class ModeFace:
         if "max_profile" in applied:
             self._profile_state["max_profile"] = applied["max_profile"]
 
+    def republish(self, *, now_mono_ms: int) -> None:
+        """state/mode 的频率下限(15 S4.1A 逐字"state/mode 到达(事件 + 1 Hz)").
+
+        主循环每秒调一次. *** 2026-10-28 之前只在换态时发: 后起的 P3 / P5
+        永远拿不到当前模式, P3 的让行判据(motion_behavior)也就永远等不到
+        第一帧 -- 而 p5 的注释还写着"P2 publishes state/mode 10 Hz".
+        """
+        self._publish_state(now_mono_ms=now_mono_ms)
+
     def _publish_state(self, *, now_mono_ms: int) -> None:
         """发 state/mode. P2 是这个 key 的唯一发布者(11 S2.2.3).
 
@@ -518,5 +534,12 @@ class ModeFace:
                 "entered_ts": self._entered_wall,
                 "exit_reason": self._exit_reason,
                 "mono_ms": now_mono_ms}
+        if self._motion_behavior_of is not None:
+            # 11 S4.3 motion_behavior: B / D 期间为 mode_motion 配的行为
+            # (R-8 (a) 后恒为 hold), 其余为 normal. P3 据此让行 / 恢复
+            # (15 S4.1A, 99 U99). 2026-10-28 之前本字段从未发出, P3 也就
+            # 从未让行 -- 喊话或报警期间巡逻任务照样标 running.
+            body["motion_behavior"] = self._motion_behavior_of(
+                self._machine.state)
         self._publish(STATE_MODE_TOPIC,
                       json.dumps(body, ensure_ascii=False).encode("utf-8"))

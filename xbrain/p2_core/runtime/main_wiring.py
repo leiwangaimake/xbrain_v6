@@ -79,6 +79,7 @@ _logger = logging.getLogger("xbrain.p2.wiring")
 # convention -- the rid prefix is the session's, not the caller's).
 HEALTH_SUMMARY_TOPIC = "health/summary"
 CMD_MOTION_FACTOR_TOPIC = "cmd/motion/factor"   # 11 S3.6, P2 -> P1, 1 Hz (14 S2.3 P-2)
+CMD_MOTION_BEHAVIOR_TOPIC = "cmd/motion/behavior"  # 11 S3.5 P1-3: hold / resume_task (99 U99)
 STATE_AUDIO_TOPIC = "state/audio"    # 11 S2.2.2, 内部总线裸键(rid 前缀由 p5 转云端时加)
 # 11 S2.2.2 逐字 "1 Hz + 变更即报": 1 Hz 是[下限](静止时也要有心跳),
 # 变更即报是[上限](主循环 10 Hz, 所以变更最迟 100ms 出去).
@@ -570,6 +571,47 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             _logger.error("p2 device mode -> %s failed on exit (%s, HTTP %d);"
                           " reconcile will retry", want, res.reason, res.status)
 
+        # --- 模式 -> P1 运动行为(11 S3.5 P1-3, 99 U90 R-8 (a) + U99) ------
+        # 进 B / D 让 P1 停(hold), 出 B / D 让它恢复(resume_task). 映射表是
+        # p2_core.yaml mode_motion 段(14 S5.2 / S11), command_for_mode 只认
+        # {hold, resume_task}. *** 2026-10-28 之前本函数零调用, P1 也零订阅:
+        # 喊话或报警期间机器人照常执行运动指令与导航任务.
+        from xbrain.p2_core.mode.motion_behavior import command_for_mode
+        _mm_cfg = _mcfg.get("mode_motion")
+        if not isinstance(_mm_cfg, dict):
+            raise ValueError("p2_core config: mode_motion block missing "
+                             "(14 S11, re-run the freeze line)")
+        _MODE_KEY = {ModeState.BROADCAST: "b_cast", ModeState.ALARM: "d_alarm"}
+        behavior_pub = gen.declare_publisher(CMD_MOTION_BEHAVIOR_TOPIC)
+        _bh = {"n": 0, "last": None}
+
+        def _behavior_of(state) -> str:
+            """模式的运动行为: B / D 取配置(R-8 后恒 hold), 其余 normal."""
+            key = _MODE_KEY.get(state)
+            cmd = command_for_mode(key, _mm_cfg) if key else None
+            return cmd.behavior if cmd is not None else "normal"
+
+        def _publish_behavior(state) -> None:
+            """发 cmd/motion/behavior(11 S3.5): B / D -> hold, 其余 resume_task.
+
+            "normal" 不在 R-8 收窄后的闭集里, 离开 B / D 发的是 resume_task
+            (解除本源的 hold, 任务由 P3 自己恢复, 15 S4.1A). 幂等: P1 对同值
+            重复帧无副作用, 所以心跳里也会重发当前值(见主循环的对账段).
+            """
+            beh = _behavior_of(state)
+            wire = beh if beh != "normal" else "resume_task"
+            _bh["n"] += 1
+            body = {"cmd_id": "bh-p2-%s-%d" % (_bcast_evt["boot"], _bh["n"]),
+                    "src": "p2_core", "behavior": wire, "params": {}}
+            behavior_pub.put(stamp_body(
+                body, rid=_env_rid, boot=_env_boot,
+                seq=_next_seq(CMD_MOTION_BEHAVIOR_TOPIC),
+                ts_sync=_clock_sync()))
+            if _bh["last"] != wire:
+                _logger.info("p2 cmd/motion/behavior -> %s (mode %s)",
+                             wire, getattr(state, "value", state))
+            _bh["last"] = wire
+
         def _on_mode_transition(from_state, to_state):
             """换态副作用. 只在真的换了态时被调(见 ModeFace).
 
@@ -586,6 +628,9 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 # 设备层先就位. 抛 TransitionAborted 时音频一样都还没动,
                 # 回滚只需模式机自己退回 -- 所以设备同步必须排在最前.
                 _sync_device_mode(from_state, to_state)
+            # switch_order 的 motion 一格: 两态行为不同才发(14 S5.5.4: 配置
+            # 相同则不下发, 例如 B <-> D 都是 hold).
+            beh_changed = _behavior_of(from_state) != _behavior_of(to_state)
             try:
                 if to_state == ModeState.BROADCAST:
                     # 灯: 一条 POST 同时开红蓝 / 关探照灯爆闪(VOI-22: 进 B 时
@@ -593,6 +638,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     # ML-4: 紧跟在 /mode 的拆流复位之后). 灯失败不拒绝切换.
                     device_sync.set_lights({"redblue": b_cast_redblue,
                                             "strobe": False})
+                    if beh_changed:
+                        _publish_behavior(to_state)   # motion 在 audio 之前
                     sid = _alloc_stream_id()
                     bcast_sess.begin(sid)
                     bcast_since["t"] = time.monotonic()
@@ -634,10 +681,16 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     _sync_device_mode(from_state, to_state)
                     if to_state != ModeState.ALARM:
                         device_sync.set_lights({"redblue": 0})
+                    if beh_changed:
+                        _publish_behavior(to_state)   # 喇叭已静音, 再放开运动
                     # 退出时回显刚结束的那一路: v2.0 S2.5 逐字"后端不得为
                     # 退出请求分配新 ID". 回 None 会让 Qt 无法确认自己退的
                     # 是不是刚才那一路.
                     return {"stream_id": _ended}
+                elif beh_changed:
+                    # 其余跃迁(进出 D 等)的运动行为. D 模式自己的声光时序
+                    # 属二期 C2, 运动这一格先在这里接上(99 U99).
+                    _publish_behavior(to_state)
             except TransitionAborted:
                 raise
             except Exception as exc:      # noqa: BLE001
@@ -693,7 +746,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 bcast_since["t"] = None
                 speaker.set_gate(True, "idle")
 
-        mode_face = ModeFace(publish=_publish_mode_state,
+        mode_face = ModeFace(motion_behavior_of=_behavior_of,
+                             publish=_publish_mode_state,
                              on_transition=_on_mode_transition)
 
         def _on_cloud_broadcast(sample) -> None:
@@ -951,6 +1005,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             # 设备层对账的上次时刻. 取负无穷: 进入循环第一拍就对一次账
             # (MM-1: 启动后设备应挂 func1, 而它开机在 idle).
             last_dev_sync = float("-inf")
+            last_mode_pub = float("-inf")   # state/mode 1 Hz 下限的上次时刻
             while not stop_flag.get("stop"):
                 now = time.monotonic()
                 # Drain cmd/mode on the MAIN thread (see the subscriber above
@@ -1087,6 +1142,21 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         device_sync.reconcile(to_device_mode(mode_face.state))
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p2 device mode reconcile failed: %s", exc)
+                    # 同一节拍重申运动行为(P1-3, 99 U99). 两种漂移靠它收敛:
+                    # P1 重启后不知道还在 B / D(会放开运动); P2 自己重启后
+                    # 回到 IDLE 而 P1 还留着上一辈子的 hold(机器人一直不动).
+                    # 第一拍(last_dev_sync = -inf)即发, 即启动时清掉旧 hold.
+                    try:
+                        _publish_behavior(mode_face.state)
+                    except Exception as exc:      # noqa: BLE001
+                        _logger.error("p2 behavior re-assert failed: %s", exc)
+                # state/mode 1 Hz 下限(15 S4.1A "事件 + 1 Hz").
+                if now - last_mode_pub >= 1.0:
+                    last_mode_pub = now
+                    try:
+                        mode_face.republish(now_mono_ms=int(now * 1000))
+                    except Exception as exc:      # noqa: BLE001
+                        _logger.error("p2 state/mode republish failed: %s", exc)
 
                 # 11 S2.2.2: state/audio = 1 Hz 下限 + 变更即报.
                 # 每拍都求值(10 Hz, 几个 dict 读, 无 I/O), 变了立刻发, 没变
