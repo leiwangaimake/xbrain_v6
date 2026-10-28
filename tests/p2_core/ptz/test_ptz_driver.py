@@ -3,13 +3,17 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_ptz_driver.py
-Brief: PTZ driver maps E-intents to ONVIF move/zoom/stop (device stubbed)
+Brief: PTZ driver -- voice E-intents plan the right legs, primitives send one ONVIF call each
 
 Description:
-Tests that the PTZ driver turns each E-intent into the right ONVIF calls
-with the right direction sign, pulse length, and speed -- with onvif_client
-and time.sleep stubbed so no device or real delay is needed. Each carries a
-mutation guard per CLAUDE.md 3.3.
+Since 2026-10-28 (Qt contract v0.2, 99 U98) the driver no longer sleeps
+through a pulse: plan() turns an E-intent into timed legs (velocity, ms) that
+ptz_controller runs, and move() / stop() are single ONVIF calls. These cases
+pin the sign of each direction, the pulse archive per amount, the speed
+levels, the scan shapes, and that a blocked or slot-less intent plans
+nothing -- plus that plan() itself never touches the camera (the property
+that makes every pulse interruptible). onvif_client is stubbed; no device.
+Each case names the mutant it kills (CLAUDE.md 3.3).
 """
 from __future__ import annotations
 
@@ -23,125 +27,147 @@ pytestmark = pytest.mark.no_device
 
 @pytest.fixture
 def driver(monkeypatch):
+    """A driver whose ONVIF calls are recorded instead of sent."""
     calls = []
     monkeypatch.setattr(oc, "get_profile_token", lambda s, *a, **k: "tok")
     monkeypatch.setattr(oc, "ptz_continuous",
                         lambda s, p, t, **kw: calls.append(("move", kw)))
     monkeypatch.setattr(oc, "ptz_stop",
                         lambda s, p, t, **kw: calls.append(("stop", kw)))
-    # No real pulse delay in tests.
-    monkeypatch.setattr("xbrain.p2_core.ptz.ptz_driver.time.sleep",
-                        lambda s: None)
     d = PtzDriver(PtzDriverConfig(host="h", user="u", pwd="p"))
-    d._calls = calls
+    d._calls = calls  # recorded camera calls
     return d
 
 
-def _moves(d):
-    return [kw for kind, kw in d._calls if kind == "move"]
+def _vel(plan, i=0):
+    """Velocity of leg i."""
+    return plan.legs[i][0]
 
 
-# -- E01 move: direction sign + pulse (function E01) ---------------------
+# -- E01 move: direction sign + pulse archive ----------------------------
 
 def test_move_left_negative_pan(driver):
-    driver.handle("E01", {"direction": "left", "amount": "normal"})
-    m = _moves(driver)[-1]
-    assert m["pan"] < 0 and m["tilt"] == 0.0          # left = pan negative
-    # a Stop follows the move (bounded jog).
-    assert driver._calls[-1][0] == "stop"
+    """MUTATION: flip the left sign -> pan > 0 -> red."""
+    plan = driver.plan("E01", {"direction": "left", "amount": "normal"})
+    assert plan.kind == "legs" and len(plan.legs) == 1
+    pan, tilt, zoom = _vel(plan)
+    assert pan < 0 and tilt == 0.0 and zoom == 0.0     # left = pan negative
 
 
 def test_move_up_positive_tilt(driver):
-    driver.handle("E01", {"direction": "up", "amount": "normal"})
-    m = _moves(driver)[-1]
-    assert m["tilt"] > 0 and m["pan"] == 0.0
+    """MUTATION: swap the up/down vectors -> tilt < 0 -> red."""
+    pan, tilt, _zoom = _vel(driver.plan("E01", {"direction": "up"}))
+    assert tilt > 0 and pan == 0.0
 
 
-def test_move_amount_picks_pulse(driver, monkeypatch):
-    """MUTATION guard: amount -> pulse archive (350/1000/2800). Capture the
-    slept duration to prove small != large."""
-    slept = []
-    monkeypatch.setattr("xbrain.p2_core.ptz.ptz_driver.time.sleep",
-                        lambda s: slept.append(s))
-    driver.handle("E01", {"direction": "left", "amount": "small"})
-    driver.handle("E01", {"direction": "left", "amount": "large"})
-    assert slept[0] == 0.35 and slept[1] == 2.8       # 350ms vs 2800ms
+def test_move_amount_picks_pulse(driver):
+    """MUTATION: ignore the amount slot -> both legs 1000 ms -> red."""
+    small = driver.plan("E01", {"direction": "left", "amount": "small"})
+    large = driver.plan("E01", {"direction": "left", "amount": "large"})
+    assert small.legs[0][1] == 350 and large.legs[0][1] == 2800
 
 
 def test_move_no_direction_dropped(driver):
-    before = driver.calls_made
-    driver.handle("E01", {"amount": "normal"})        # no direction
-    assert driver.calls_made == before
-    assert driver.calls_dropped >= 1
+    """No direction -> nothing planned, counted as dropped.
+    MUTATION: default the direction -> a 'legs' plan -> red."""
+    plan = driver.plan("E01", {"amount": "normal"})
+    assert plan.kind == "drop" and driver.calls_dropped == 1
+
+
+def test_move_bad_amount_dropped(driver):
+    """An amount outside the archive is dropped, never mapped to a guess.
+    MUTATION: fall back to 'normal' -> 'legs' -> red."""
+    assert driver.plan("E01", {"direction": "left", "amount": "huge"}).kind == "drop"
 
 
 # -- E06 zoom ------------------------------------------------------------
 
 def test_zoom_in_positive(driver):
-    driver.handle("E06", {"zoom_dir": "in", "amount": "normal"})
-    m = _moves(driver)[-1]
-    assert m["zoom"] > 0 and m["pan"] == 0.0
+    """MUTATION: flip the zoom sign -> red."""
+    pan, _tilt, zoom = _vel(driver.plan("E06", {"zoom_dir": "in"}))
+    assert zoom > 0 and pan == 0.0
 
 
 def test_zoom_out_negative(driver):
-    driver.handle("E06", {"zoom_dir": "out", "amount": "normal"})
-    assert _moves(driver)[-1]["zoom"] < 0
+    """Zoom out is the negative velocity."""
+    assert _vel(driver.plan("E06", {"zoom_dir": "out"}))[2] < 0
 
 
-# -- E05/E08 stop --------------------------------------------------------
+# -- E05 / E08 stop ------------------------------------------------------
 
 def test_stop_intents(driver):
-    driver.handle("E05", {})
-    assert driver._calls[-1][0] == "stop"
-    driver.handle("E08", {})
-    assert driver._calls[-1][0] == "stop"
+    """MUTATION: drop E08 from the stop set -> 'drop' -> red."""
+    assert driver.plan("E05", {}).kind == "stop"
+    assert driver.plan("E08", {}).kind == "stop"
 
 
-# -- E09 speed changes the move magnitude --------------------------------
+# -- E09 speed changes the leg magnitude ---------------------------------
 
 def test_speed_fast_larger_magnitude(driver):
-    driver.handle("E09", {"level": "slow"})
-    driver.handle("E01", {"direction": "right", "amount": "normal"})
-    slow_pan = abs(_moves(driver)[-1]["pan"])
-    driver.handle("E09", {"level": "fast"})
-    driver.handle("E01", {"direction": "right", "amount": "normal"})
-    fast_pan = abs(_moves(driver)[-1]["pan"])
-    assert fast_pan > slow_pan                        # fast jogs faster
+    """MUTATION: ignore the speed level -> equal magnitudes -> red."""
+    driver.plan("E09", {"level": "slow"})
+    slow = abs(_vel(driver.plan("E01", {"direction": "right"}))[0])
+    driver.plan("E09", {"level": "fast"})
+    fast = abs(_vel(driver.plan("E01", {"direction": "right"}))[0])
+    assert fast > slow
 
 
 def test_speed_up_down_steps(driver):
-    driver.handle("E09", {"level": "slow"})
-    driver.handle("E09", {"level": "up"})
+    """Steps clamp at both ends. MUTATION: no clamp -> IndexError -> red."""
+    driver.plan("E09", {"level": "slow"})
+    driver.plan("E09", {"level": "up"})
     assert driver._speed_level == "normal"
-    driver.handle("E09", {"level": "up"})
+    driver.plan("E09", {"level": "up"})
+    driver.plan("E09", {"level": "up"})               # clamp at fast
     assert driver._speed_level == "fast"
-    driver.handle("E09", {"level": "up"})             # clamp at fast
-    assert driver._speed_level == "fast"
+    for _ in range(4):
+        driver.plan("E09", {"level": "down"})         # clamp at slow
+    assert driver._speed_level == "slow"
 
 
-# -- blocked intents are not driven (E_CAPABILITY handled upstream) ------
+# -- E07 scan shapes -----------------------------------------------------
 
-def test_scan_orbit_is_one_long_pan(driver, monkeypatch):
-    """E07 orbit ('环视一周') is one long single-direction pan, not the
-    3-leg sweep. MUTATION: routing orbit through the sweep path would emit
-    three moves with alternating sign."""
-    slept = []
-    monkeypatch.setattr("xbrain.p2_core.ptz.ptz_driver.time.sleep",
-                        lambda s: slept.append(s))
-    driver.handle("E07", {"scan_mode": "orbit", "direction": "right"})
-    moves = _moves(driver)
-    assert len(moves) == 1 and moves[0]["pan"] > 0     # one pan, rightward
-    assert slept[0] >= 8.0                              # a long (~full) turn
+def test_scan_orbit_is_one_long_pan(driver):
+    """E07 orbit is one long single-direction pan, not the sweep.
+    MUTATION: route orbit through the sweep -> three legs -> red."""
+    plan = driver.plan("E07", {"scan_mode": "orbit", "direction": "right"})
+    assert len(plan.legs) == 1 and _vel(plan)[0] > 0   # one pan, rightward
+    assert plan.legs[0][1] >= 8000                      # a long (~full) turn
 
 
 def test_scan_sweep_is_three_legs(driver):
-    driver.handle("E07", {"scan_mode": "sweep", "direction": "left"})
-    moves = _moves(driver)
-    assert len(moves) == 3                              # right, left, right
+    """Sweep = right, left (double length), right."""
+    plan = driver.plan("E07", {"scan_mode": "sweep"})
+    signs = [v[0] > 0 for v, _ms in plan.legs]
+    assert signs == [True, False, True]
+    assert plan.legs[1][1] == 2 * plan.legs[0][1]
+
+
+# -- planning never touches the camera; primitives send exactly one call --
+
+def test_plan_sends_nothing(driver):
+    """The property that makes every pulse interruptible: planning is pure.
+    MUTATION: send the first move from plan() -> recorded call -> red."""
+    for intent, slots in (("E01", {"direction": "left"}), ("E06", {"zoom_dir": "in"}),
+                          ("E07", {"scan_mode": "orbit"}), ("E05", {})):
+        driver.plan(intent, slots)
+    assert driver._calls == []
+
+
+def test_move_is_one_continuous_move_with_three_axes(driver):
+    """11 PTZ-C5: one ContinuousMove carries pan, tilt and zoom.
+    MUTATION: send pan/tilt and zoom as two calls -> two records -> red."""
+    driver.move(0.5, -0.5, 0.25)
+    assert driver._calls == [("move", {"pan": 0.5, "tilt": -0.5, "zoom": 0.25})]
+
+
+def test_stop_passes_axis_groups(driver):
+    """stop(pantilt, zoom) maps 1:1 onto the ONVIF Stop flags."""
+    driver.stop(False, True)
+    assert driver._calls == [("stop", {"pantilt": False, "zoom": True})]
 
 
 def test_blocked_intent_dropped_not_faked(driver):
-    before_made = driver.calls_made
-    driver.handle("E02", {})                          # home: T-PTZ-1 blocked
-    assert driver.calls_made == before_made           # no ONVIF call
-    assert driver.calls_dropped >= 1
+    """E02 home (T-PTZ-1 blocked): nothing planned, nothing sent."""
+    assert driver.plan("E02", {}).kind == "drop"
+    assert driver._calls == [] and driver.calls_dropped == 1

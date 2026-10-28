@@ -405,7 +405,37 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         onvif_secrets = "/opt/xbrain_v6/configs/secrets/onvif_credentials.json"
         onvif_cfg = load_onvif_config(onvif_secrets)
         if onvif_cfg is not None:
-            ptz_domain = PtzDomain(onvif_cfg)
+            # 2026-10-28 (Qt contract v0.2, 99 U98): the domain now runs the
+            # 11 S7.4 PtzCommand (jog / nudge / stop / refocus) as well as the
+            # voice intents, through one ordered worker. Its limits and the
+            # domain-5 priorities come from the resolved snapshot; a missing
+            # key refuses startup with its path (read_ptz_config).
+            # NO bare load_resolved here: that name is bound by a later import
+            # in this function (UnboundLocalError, see the broadcast block).
+            from xbrain.common.config.resolved import MISSING as _PTZ_MISSING
+            from xbrain.common.config.resolved import load_resolved as _ptz_load
+            from xbrain.p2_core.runtime.ptz_wiring import (
+                CMD_PTZ_ACK_TOPIC,
+                read_ptz_config,
+            )
+            _ptz_snap = _ptz_load("p2_core")
+            _ptz_cfg = read_ptz_config(_ptz_snap.get, _PTZ_MISSING)
+            _ptz_src = _ptz_snap.get("arbiter.domains.ptz.sources")
+            if not isinstance(_ptz_src, dict) or not _ptz_src:
+                raise ValueError("p2_core config: arbiter.domains.ptz.sources "
+                                 "missing (11 S7A domain 5)")
+            _ptz_prio = {sid: int(spec["priority"]) for sid, spec in _ptz_src.items()}
+            _ptz_ack_pub = gen.declare_publisher(CMD_PTZ_ACK_TOPIC)
+
+            def _ptz_publish(key: str, data: bytes) -> None:
+                if key == CMD_PTZ_ACK_TOPIC:
+                    _ptz_ack_pub.put(data)
+                else:
+                    gen.put(key, data)
+
+            ptz_domain = PtzDomain(onvif_cfg, _ptz_cfg, _ptz_prio,
+                                   publish=_ptz_publish)
+            ptz_domain.start()
             # SW-12: non-blocking ONVIF reachability probe on its own thread +
             # session, so the heartbeat reads a cached verdict instead of blocking
             # on the round-trip. Feeds the device bridge for ptz device_offline.
@@ -413,11 +443,9 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             ptz_probe.start()
 
             def _on_ptz(sample) -> None:
-                import threading as _t
-                data = bytes(sample.payload)
-                _t.Thread(
-                    target=lambda: ptz_domain.handle_envelope(data),
-                    name="p2.ptz_handler", daemon=True).start()
+                # Rust thread: enqueue only; the domain's single worker runs
+                # frames in arrival order (a stop must never overtake its jog).
+                ptz_domain.submit(bytes(sample.payload))
 
             _gen_subs.append(gen.declare_subscriber(CMD_PTZ_TOPIC, _on_ptz))
             _logger.info("p2 wiring: subscribed %s (PTZ active)", CMD_PTZ_TOPIC)
@@ -1201,6 +1229,12 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             try:
                 if ptz_probe is not None:
                     ptz_probe.stop()
+            except Exception:      # noqa: BLE001
+                pass
+            try:
+                # Stop the head and put focus back to auto (11 S7.4.7 F2).
+                if ptz_domain is not None:
+                    ptz_domain.close()
             except Exception:      # noqa: BLE001
                 pass
             # 头注 shutdown order 第 2 步: Unsubscribe cmd/audio/speak.

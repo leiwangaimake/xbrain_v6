@@ -129,10 +129,9 @@ _KNOWN_UNWIRED = {
     # Same shape as the r_eff max() test: green, and wrong to follow.
 
     # ---- no-surface ----
-    # Guards the PTZ LAPI WRITE key set. There is no LAPI client in
-    # production -- p2_core/ptz/ speaks ONVIF only. A guard with no write
-    # site to guard cannot fail, so BIZ-P2-10 is not actually met.
-    "xbrain/p2_core/domains/lapi_guard.py": "no-surface: no LAPI client in production, ONVIF only",
+    # (2026-10-28) domains/lapi_guard.py left this list: p2_core/ptz/
+    # lapi_focus.py is the production LAPI client (refocus + F1/F2, 99 U98)
+    # and calls check_write_key before every PUT.
 
     # ---- no-surface (2026-10-08, surfaced by dropping comments from the
     #      mention corpus -- see _mention_text) ----
@@ -383,14 +382,9 @@ _KNOWN_UNWIRED = {
     # and nothing can report it unhealthy.
     "xbrain/p2_core/health/aux/ir_camera.py": "no-surface: cam_ptz_ir is not a row in p2_core/health/items.py",
 
-    # BIZ-P2-12 system mode -> device mode, i.e. what to POST to
-    # payload-service /mode. There is no /mode client: payload_client/
-    # holds only errors_map.py, and no module in the tree POSTs /mode
-    # (the wired payload clients are p4_agent/ai_client/lights_client.py
-    # and tts_client.py, /lights and /tts). mode/state_machine.py says
-    # verbatim that it does NOT own the acquire/release calls and points
-    # here, so the pointer is correct and the target is unreachable.
-    "xbrain/p2_core/mode/device_map.py": "no-surface: no payload-service /mode client exists (payload_client/ is errors_map only)",
+    # (2026-10-28) mode/device_map.py left this list: the broadcast work
+    # (commit c29829a, 99 U97) wired it -- p2 main_wiring maps the system
+    # mode to the payload-service /mode value with to_device_mode().
 
     # CHK-2-08 PAY-29 needs ptz.t_drift_s. configs/p2_core.yaml's ptz
     # block has no such key, and the wired PtzDriver has no timer of any
