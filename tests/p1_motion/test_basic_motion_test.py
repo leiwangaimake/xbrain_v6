@@ -53,6 +53,8 @@ import pytest
 
 from xbrain.p1_motion.runtime import basic_motion_test as bmt
 
+pytestmark = pytest.mark.no_device  # pure logic against a simulated odometry
+
 
 class _Sim:
     """A perfect planar chassis: integrates body-frame velocities per tick.
