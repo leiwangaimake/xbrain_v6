@@ -44,12 +44,21 @@ payload_svc:
   base_url: "http://127.0.0.1:18080"
   # T-PAY-1 hard timeout for POST /mode /deter /lights /tts (14 S2.3 P-3).
   rest_timeout_ms: 300
-  # Device playback volume [14] (0..100, 11 S7.5 volume_pct) that P2 sets once
-  # after every start (99 U100, user ruling 2026-10-28: "default to max").
-  # Persistent on the device; D10 voice ("louder" / "quieter") still changes
-  # it until the next P2 start. Retried in the 5 s device reconcile until the
-  # first success (payload-service may come up after P2).
+  # Device playback volume [14] (0..100, 11 S7.5 volume_pct): the DEFAULT P2
+  # writes once after every start (99 U100, user ruling 2026-10-28: broadcast,
+  # alarm and D mode at max by default). Retried in the 5 s device reconcile
+  # until the first success (payload-service may come up after P2).
+  # Superseded wording (U100 first form, 2026-10-28 19:50 .. same evening):
+  # "D10 voice still changes it until the next P2 start" -- no longer true:
+  # user ruling the same evening (99 U100 continued) keeps an explicit voice /
+  # text D10 value across restarts, see volume_state_path.
   boot_volume_pct: 100
+  # Where P2 persists the operator's explicit D10 volume (99 U100 continued).
+  # Present and valid => P2 restores THAT value at start instead of
+  # boot_volume_pct. Written atomically (new + fsync + rename) because this
+  # robot loses power uncleanly; an unreadable file falls back to the default
+  # (loud side), never to silence. Delete the file to return to the default.
+  volume_state_path: "/opt/xbrain_v6/data/run/p2_volume.json"
   # T-PAY-2: wait one more 0x25 status frame before assembling ack.detail.applied.
   lights_apply_confirm_ms: 500
   # exponential backoff for connect retries. cap 2 s, never infinite retry.
