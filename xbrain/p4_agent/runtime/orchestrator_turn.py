@@ -59,6 +59,7 @@ from xbrain.p4_agent.runtime.voice_turn import (
     build_voice_turn,
     voice_turn_pair,
 )
+from xbrain.p4_agent.runtime import turn_labels  # SpeakRequest.source (99 U99)
 from xbrain.p4_agent.runtime.turn_labels import origin  # S9.3.4 origin
 from xbrain.p4_agent.session.chitchat import ChitchatResponder
 
@@ -261,6 +262,24 @@ def _speak(text: str) -> Tuple[str, dict]:
 
 
 def decision_to_publishes(decision: TurnDecision) -> List[Tuple[str, dict]]:
+    """The (key, payload) pairs for one turn, every speak naming its source.
+
+    SpeakRequest.source (11 S8.8.1, required) is the turn's channel's TTS
+    source (turn_labels.tts_source). Stamped HERE, on the way out, so every
+    speaking branch below -- reply, prompt, denial, did-not-catch, a D/G/J
+    intent routed to cmd/audio/speak -- gets it from one place. 2026-10-28
+    (99 U99 C1): P2 arbitrates domain 2 now and refuses a speak without one.
+    """
+    pairs = _decision_to_publishes_raw(decision)
+    if any(key == CMD_AUDIO_SPEAK for key, _p in pairs):
+        src = turn_labels.tts_source(decision.channel)
+        for key, payload in pairs:
+            if key == CMD_AUDIO_SPEAK and isinstance(payload, dict):
+                payload["source"] = src
+    return pairs
+
+
+def _decision_to_publishes_raw(decision: TurnDecision) -> List[Tuple[str, dict]]:
     """Map one TurnDecision to the (key, payload) pairs to publish.
 
     Returns an empty list for a silent turn (overheard). Every speaking

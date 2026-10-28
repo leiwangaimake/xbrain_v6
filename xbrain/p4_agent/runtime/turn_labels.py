@@ -67,6 +67,12 @@ _PLAIN = {"mic_local": "voice", "cloud": "cloud", "wecom": "wecom",
 #: channel -> ModeCommand.source (S7.3 spells the microphone voice_local).
 _MODE = {"mic_local": "voice_local", "cloud": "cloud", "wecom": "wecom",
          "hmi": "hmi"}  # only the mic differs
+#: channel -> SpeakRequest.source, the domain-2 TTS holder (14 S4.1, 11 S8.8.1).
+#: The HMI is the on-site operator, so its reply ranks with the local mic.
+#: (2026-10-28, 99 U99 C1: P2 now arbitrates domain 2 and refuses a speak
+#: without a source -- every p4 reply must name its channel's source.)
+_TTS = {"mic_local": "tts_local", "cloud": "tts_cloud", "wecom": "tts_wecom",
+        "hmi": "tts_local"}  # cloud 600 > wecom 500 > local 400
 
 
 def check_turn(channel: str, modality: str) -> None:
@@ -105,6 +111,18 @@ def origin(channel: str) -> str:
     """
     check_turn(channel, "text" if channel == "hmi" else "voice")
     return _PLAIN[channel]  # voice / cloud / wecom / hmi
+
+
+def tts_source(channel: str) -> str:
+    """SpeakRequest.source for a reply on this channel (14 S4.1 register).
+
+    Out-of-set channels raise (CLAUDE.md 3.5): a guessed source would rank a
+    reply wrongly against a broadcast or another session's TTS.
+    """
+    if channel not in _TTS:
+        raise ValueError("channel %r has no TTS source (want one of %s)"
+                         % (channel, sorted(_TTS)))
+    return _TTS[channel]  # tts_local / tts_cloud / tts_wecom
 
 
 def teach_issuer_channel(channel: str, modality: str) -> str:

@@ -39,6 +39,7 @@ from xbrain.p4_agent.classifier.keyword_matcher import KeywordMatcher
 from xbrain.p4_agent.registry.channel_permission import (
     channel_admission,
 )
+from xbrain.p4_agent.runtime import turn_labels  # SpeakRequest.source (99 U99)
 from xbrain.p4_agent.runtime.intent_dispatch import CMD_AUDIO_SPEAK
 from xbrain.p4_agent.runtime.orchestrator_turn import decision_to_publishes
 from xbrain.p4_agent.runtime.turn_orchestrator import (
@@ -66,8 +67,10 @@ class TextTurnResult:
     publishes: List[Tuple[str, bytes]] = field(default_factory=list)
 
 
-def _speak_bytes(text: str) -> Tuple[str, bytes]:
+def _speak_bytes(text: str, channel: str) -> Tuple[str, bytes]:
+    # source: the channel's domain-2 TTS source (11 S8.8.1, 99 U99 C1).
     payload = {"schema": "p4_speak_v1", "text": text,
+               "source": turn_labels.tts_source(channel),
                "mono_ms": int(time.monotonic() * 1000)}
     return (CMD_AUDIO_SPEAK,
             json.dumps(payload, ensure_ascii=False,
@@ -123,7 +126,8 @@ def handle_text_command(
     if intent_id is not None:
         allowed, code = channel_admission(intent_id, slots, channel)
         if not allowed:
-            pubs = [_speak_bytes(_CHANNEL_DENIED_REPLY)] if want_tts else []
+            pubs = ([_speak_bytes(_CHANNEL_DENIED_REPLY, channel)]
+                    if want_tts else [])
             return TextTurnResult(denied=True, code=code, decision=None,
                                   publishes=pubs)
 
