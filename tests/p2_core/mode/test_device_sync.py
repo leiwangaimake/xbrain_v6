@@ -129,3 +129,18 @@ def test_deter_409_is_a_failure_unlike_mode():
     assert fake.calls[0][:3] == ("POST", "/deter", body)  # one POST, body as given
     r = s.deter(body)  # device left deter meanwhile
     assert not r.ok and r.reason == "payload_deter" and r.status == 409  # reported, not raised
+
+
+def test_volume_is_one_post_and_range_checked_before_sending():
+    """99 U100: P2 sets the device volume once after start. A refusal is
+    reported, never raised; an out-of-range value is a caller bug and must not
+    reach the device. MUTATION: drop the range check -> 101 is POSTed -> the
+    raises block sends a call -> this fails."""
+    s, fake = _sync((200, {"ok": True}), TimeoutError())  # first ok, then silent
+    assert s.set_volume(100).ok  # boot default
+    assert fake.calls[0][:3] == ("POST", "/volume", {"volume": 100})  # one request, payload field name
+    r = s.set_volume(100)  # payload not answering
+    assert not r.ok and r.reason == "service_timeout"  # reported, not raised
+    with pytest.raises(ValueError):
+        s.set_volume(101)  # out of the device range
+    assert len(fake.calls) == 2  # nothing sent for 101

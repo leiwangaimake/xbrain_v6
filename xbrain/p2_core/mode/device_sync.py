@@ -192,6 +192,24 @@ class DeviceModeSync:
                         body, status, resp)
         return SyncResult(ok=False, status=status, reason="payload_lights")  # reported, not raised
 
+    def set_volume(self, pct: int) -> SyncResult:
+        """POST /volume {volume: pct} -- the persistent device playback volume
+        (11 S7.5 volume_pct, 0..100). P2 sets payload_svc.boot_volume_pct once
+        after start (99 U100). Reported, never raised; out-of-range is a
+        caller bug and raises before any request."""
+        if isinstance(pct, bool) or not isinstance(pct, int) or not 0 <= pct <= 100:  # payload VOLUME_MIN..MAX
+            raise ValueError("volume %r not an int in 0..100" % (pct,))  # loud: caller bug
+        try:
+            status, resp = self._transport(
+                "POST", self._base + "/volume", {"volume": pct}, self._timeout_s)
+        except (OSError, urllib.error.URLError) as exc:  # refused / timed out: no answer
+            _logger.warning("payload POST /volume %d: no response (%s)", pct, exc)
+            return SyncResult(ok=False, status=0, reason="service_timeout")  # 14 S2.3 T-PAY-1 reason
+        if 200 <= status < 300:  # volume taken
+            return SyncResult(ok=True, status=status)  # done
+        _logger.warning("payload POST /volume %d refused: HTTP %d %s", pct, status, resp)
+        return SyncResult(ok=False, status=status, reason="payload_volume")  # reported, not raised
+
     def deter(self, body: Dict[str, Any]) -> SyncResult:
         """POST /deter {on, mode, siren_level, tts_reps} (14 S7.3.2 entry 2).
 

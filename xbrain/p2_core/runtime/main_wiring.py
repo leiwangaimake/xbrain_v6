@@ -524,8 +524,10 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         #   payload_svc.base_url / rest_timeout_ms  T-PAY-1(14 S2.3 P-3)
         #   arbiter.domains.payload_light.deter_redblue_mode  B 模式红蓝灯
         #       的模式号, 14 S4.3 GL 表 B_CAST 行逐字"模式号同上"(= D 模式).
+        #   payload_svc.boot_volume_pct  device volume set once after start
+        #       (99 U100, user ruling 2026-10-28: default to max).
         _bkeys = ("mode.b_cast_idle_timeout_s", "payload_svc.base_url",
-                  "payload_svc.rest_timeout_ms",
+                  "payload_svc.rest_timeout_ms", "payload_svc.boot_volume_pct",
                   "arbiter.domains.payload_light.deter_redblue_mode")
         _bbad = [k for k in _bkeys if _mcfg.get(k) is _MISSING
                  or _mcfg.get(k) is None]
@@ -534,6 +536,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                              "unassigned: %s (re-run the freeze line)"
                              % ", ".join(_bbad))
         b_cast_idle_timeout_s = float(_mcfg.get("mode.b_cast_idle_timeout_s"))
+        boot_volume_pct = int(_mcfg.get("payload_svc.boot_volume_pct"))
+        _boot_vol = {"done": False}     # set once per P2 start (99 U100)
         b_cast_redblue = int(_mcfg.get(
             "arbiter.domains.payload_light.deter_redblue_mode"))
         # 设备层模式同步(14 S5.7, BIZ-P2-12). 2026-10-28 之前 device_map 零调用,
@@ -1308,6 +1312,18 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 # 重启(又回到 idle) / 退出时那次 POST /mode 失败.
                 if now - last_dev_sync >= DEVICE_RECONCILE_S:
                     last_dev_sync = now
+                    # 99 U100: device volume to boot_volume_pct once per start;
+                    # retried here until payload-service answers (it may start
+                    # after P2). Afterwards D10 voice owns it until next start.
+                    if not _boot_vol["done"]:
+                        try:
+                            _vr = device_sync.set_volume(boot_volume_pct)
+                            if _vr.ok:
+                                _boot_vol["done"] = True
+                                _logger.info("p2 device volume set to %d (boot default)",
+                                             boot_volume_pct)
+                        except Exception as exc:      # noqa: BLE001
+                            _logger.error("p2 boot volume failed: %s", exc)
                     try:
                         _rc = device_sync.reconcile(to_device_mode(mode_face.state))
                         # D 模式下设备被修回 deter = 驱离循环已随那次漂移
