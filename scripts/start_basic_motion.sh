@@ -206,5 +206,16 @@ while read -r pid name; do
     kill -0 "$pid" 2>/dev/null && echo "  alive  $name" || echo "  DEAD   $name (see $LOGDIR/$name.log)"
 done < "$PIDFILE"
 for u in "${SYSTEMD_UNITS[@]}" "$PERCEPTION_UNIT"; do echo "  $(systemctl is-active "$u")  $u"; done
+# Broadcast / alarm mode framework (99 U97 + U99 C1-C3), printed unconditionally
+# -- a check that only speaks on failure cannot show it ran:
+#   * payload device mode: p2 moves payload-service out of its boot `idle` into
+#     func1 within one 5 s reconcile; `idle` refuses /play (the 2026-10-27 403s).
+#   * p2's startup cmd/motion/behavior (resume_task in idle) clears any hold a
+#     previous p2 left in p1.
+#   * p2 mic counters: published must grow, not muted only -- a speaker hold that
+#     is never released leaves the mic muted for good (2026-10-28, C1 lease).
+echo "  payload device mode: $(curl -s -m 2 http://127.0.0.1:18080/status | python3 -c 'import json,sys; print(json.load(sys.stdin).get("mode"))' 2>/dev/null || echo unreachable) (expect func1)"
+echo "  p2 behavior: $(grep -a 'cmd/motion/behavior ->' "$LOGDIR/p2_core.log" | tail -1 | sed 's/.*INFO //' || true)"
+echo "  p2 mic: $(grep -a 'p2 alive' "$LOGDIR/p2_core.log" | tail -1 | grep -oE 'published=[0-9]+ muted=[0-9]+' || echo 'no alive line yet')"
 
 echo "stack up; logs in $LOGDIR; stop with $0 --stop"
