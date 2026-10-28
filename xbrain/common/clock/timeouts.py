@@ -83,7 +83,7 @@ TIMEBASE_WALL = "wall"
 _TIMEBASES: FrozenSet[str] = frozenset({TIMEBASE_MONOTONIC, TIMEBASE_WALL})
 
 # An id is T- followed by digits or LETTERS (T-01 .. T-46, T-ESTOP-CLOUD,
-# T-BCAST-MAX). Anchored and fullmatch-checked at load so a stray value in the id
+# T-BCAST-IDLE). Anchored and fullmatch-checked at load so a stray value in the id
 # slot -- a header cell that slipped through, say -- stops the import instead of
 # becoming a registry key that no lookup will ever match.
 _ID_RE = re.compile(r"T-[0-9A-Za-z]+(?:-[0-9A-Za-z]+)*")

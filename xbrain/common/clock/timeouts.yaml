@@ -203,7 +203,7 @@ timeouts:
     group: C          # 11 S1.6.3
     timebase: monotonic
     threshold: "取甲方下发值,缺省 / 越界时用 400 ms(与本地 cmd/teleop 计龄口径同源)"
-  - id: T-BCAST-MAX
-    group: C          # 11 S1.6.3
+  - id: T-BCAST-IDLE
+    group: C          # 11 S1.6.3 (v1.2, 99 U97: replaces T-BCAST-MAX)
     timebase: monotonic
-    threshold: "现行值见 14 §11 mode.b_cast_max_duration_s( 现场可调 ---- 涉扰民与电量; 不是'未标定',不得回填 null,见本行 2026-08-05 对抗验收订正 ②)"
+    threshold: "现行值见 14 §11 mode.b_cast_idle_timeout_s(从最后一帧被放行的有效音频算起;从未收到帧时从进入 B 算起.甲方 v2.0 §8 定 300 s)"
