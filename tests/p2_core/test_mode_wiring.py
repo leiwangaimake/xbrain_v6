@@ -220,8 +220,10 @@ def test_blocked_domain_refuses_with_e_busy_and_names_every_domain():
     # 夹具照 14 S12.1 场景 3: 域5(ptz) 被 manual_cloud 抢走 -> blocked;
     # 域4(payload_light) 是 DIALOG 自己持有的 -> self_held. 两列必须都非空,
     # 否则"两者形状不同"这件事根本测不到.
-    face = _face(arb=lambda: (frozenset({"ptz", "speaker"}),
-                              frozenset({"payload_light"})))
+    # 2026-10-28 (99 U99 C1): the snapshot callable takes (target, current) --
+    # P-1' is computed FOR the target from the current mode.
+    face = _face(arb=lambda target, current: (frozenset({"ptz", "speaker"}),
+                                              frozenset({"payload_light"})))
     ack = face.handle_frame(
         _frame(action="set_voice_mode", voice_mode="alarm"), now_mono_ms=1)
     assert ack["result"] == "rejected"

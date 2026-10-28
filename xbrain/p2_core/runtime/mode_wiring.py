@@ -196,8 +196,9 @@ class ModeFace:
 
     def __init__(self, machine: Optional[ModeStateMachine] = None,
                  *, publish: Optional[Callable[[str, bytes], None]] = None,
-                 arb_snapshot: Optional[Callable[[], Tuple[FrozenSet[str],
-                                                           FrozenSet[str]]]] = None,
+                 arb_snapshot: Optional[Callable[
+                     [ModeState, ModeState],
+                     Tuple[FrozenSet[str], FrozenSet[str]]]] = None,
                  on_transition: Optional[
                      Callable[[ModeState, ModeState], None]] = None,
                  motion_behavior_of: Optional[
@@ -361,7 +362,13 @@ class ModeFace:
                     now_mono_ms: int) -> Dict[str, Any]:
         """真正换态: 模式机 -> 副作用回调(可整体拒绝) -> 记账 -> state/mode."""
         # dispatch 通过不等于切得动 -- 见模块头注.
-        blocked, self_held = (self._arb_snapshot() if self._arb_snapshot
+        # P-1' on the live arbiters (14 S5.5.3, 99 U99 C1): the snapshot is
+        # computed FOR this target from the current mode -- which domains the
+        # target needs and which the current mode itself holds (S_self). Until
+        # 2026-10-28 it was a no-argument callable nobody wired, so every
+        # switch passed the preflight.
+        blocked, self_held = (self._arb_snapshot(target, self._machine.state)
+                              if self._arb_snapshot
                               else (frozenset(), frozenset()))
         result = self._machine.request(
             TransitionRequest(to_state=target, trigger=trigger,

@@ -54,6 +54,12 @@ class PayloadWiringConfig:
     http_timeout_s: float
 
 
+#: The light intents (14 S4.3 domain 4): red/blue on / off / pattern,
+#: searchlight on / off / brightness. D10 volume is a persistent device setting,
+#: not a light, and is not arbitrated.
+LIGHT_INTENTS = frozenset({"D01", "D02", "D06", "D07", "D17", "D18"})
+
+
 class PayloadDomain:
     """Serialises payload HTTP calls behind one lock so a rapid
     intent burst can't overlap two /lights requests to the device
@@ -65,8 +71,16 @@ class PayloadDomain:
     handle; a raise would kill the callback thread and stop future
     dispatches. Log + count keeps the loop alive and observable."""
 
-    def __init__(self, cfg: PayloadWiringConfig) -> None:
+    def __init__(self, cfg: PayloadWiringConfig, hub=None,
+                 now_mono_ms_fn=None) -> None:
         self._cfg = cfg
+        # Domain-4 arbitration (14 S4.3, 99 U99 C1): a light intent is the
+        # `manual` source (500, reject policy). While a mode holds the lights
+        # (mode_driver 900 during B / D) it is refused -- before 2026-10-28 a
+        # voice "turn the red/blue off" during a broadcast just did it. None =
+        # unarbitrated (unit tests built without a hub).
+        self._hub = hub
+        self._now_ms = now_mono_ms_fn
         self._lock = threading.Lock()
         self.calls_made = 0
         self.calls_dropped = 0
@@ -122,6 +136,19 @@ class PayloadDomain:
         intent_id = env.get("intent_id", "")
         base = self._cfg.payload_base_url
         to = self._cfg.http_timeout_s
+        manual_req = None
+        if self._hub is not None and intent_id in LIGHT_INTENTS:
+            # 14 S4.3: manual never fights the mode (reject policy). Granted
+            # only when no higher source holds the lights.
+            now = self._now_ms()
+            g = self._hub.request("payload_light", "manual", now)
+            if getattr(g.result, "value", g.result) != "granted":
+                h = self._hub.holder("payload_light")
+                self.calls_dropped += 1
+                _logger.warning("payload %s refused: lights held by %s (%s)",
+                                intent_id, h.source_id if h else "?", g.code)
+                return
+            manual_req = g.req_id
         try:
             if intent_id == "D06":
                 # strobe_on == red/blue warning lamp on. Resume the last
@@ -196,6 +223,15 @@ class PayloadDomain:
         except LightsClientError as exc:
             self.errors.append(str(exc))
             _logger.error("payload http call failed: %s", exc)
+        finally:
+            if manual_req is not None:
+                # Released at once, not held for manual_idle_release_s: the
+                # 30 s lease exists to keep auto lighting (BIZ-P2-8) off a
+                # manual setting, and auto lighting is not wired yet. Held, a
+                # mode_driver takeover would have to FORCE it (100 ms grace),
+                # and three forced preempts in 60 s disable the source (T-3).
+                self._hub.release("payload_light", "manual", manual_req,
+                                  "done", self._now_ms())
 
     def _resolve_bright(self, level: str) -> int:
         """D17 level enum -> MSG_BRIGHT 0..30 (18-A S1.1). Absolute levels

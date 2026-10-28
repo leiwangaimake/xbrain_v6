@@ -213,11 +213,21 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         _logger.info("p2 wiring: MIC capture started (dev=%s topic=%s)",
                      mic_cfg.arecord_device, mic_cfg.zenoh_topic)
 
+        # P2's four domain arbiters (14 S3 / S4, 11 S7A), live since 99 U99 C1.
+        # Built BEFORE the speaker and payload domains, which request through
+        # it. A missing arbiter block refuses startup (factory raises): running
+        # with a partial set would let a TTS and a broadcast both "hold" the
+        # speaker, which is what this replaces.
+        from xbrain.common.config.resolved import load_resolved as _lr_hub
+        from xbrain.p2_core.domains.hub import ArbHub
+        arb_hub = ArbHub(_lr_hub("p2_core").get("arbiter"))
+
         # Speaker domain -- publishes rt/audio/gate on RT plane AND
         # holds the mic-publisher handle for half-duplex mute.
         speaker = SpeakerDomain(cfg=spk_cfg, rt_session=rt,
                                   now_mono_ms_fn=_now_mono_ms,
-                                  mic_publisher=mic_pub_thread)
+                                  mic_publisher=mic_pub_thread,
+                                  hub=arb_hub)
 
         # GEN plane subscribers. All handles are held in one list so the
         # Rust-side subscriptions are not GC'd out from under us (CLAUDE.md
@@ -374,7 +384,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         payload_cfg = PayloadWiringConfig(
             payload_base_url=spk_cfg.payload_base_url,
             http_timeout_s=spk_cfg.tts_http_timeout_s)
-        payload = PayloadDomain(cfg=payload_cfg)
+        payload = PayloadDomain(cfg=payload_cfg, hub=arb_hub,
+                                now_mono_ms_fn=_now_mono_ms)
 
         def _on_payload(sample) -> None:
             import threading as _t
@@ -491,7 +502,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # 接线函数, 只有真起进程才会暴露(2026-09-03 实测到).
         from xbrain.common.config.resolved import MISSING as _MISSING
         from xbrain.common.config.resolved import load_resolved as _load_resolved
-        from xbrain.common.errors import E_UNHEALTHY
+        from xbrain.common.errors import E_BUSY, E_UNHEALTHY
         from xbrain.p2_core.mode.device_map import to_device_mode
         from xbrain.p2_core.mode.device_sync import DeviceModeSync
         from xbrain.p2_core.runtime.mode_wiring import TransitionAborted
@@ -547,6 +558,51 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             bcast_seq["n"] += 1
             return "audio-%s-%04d" % (
                 (_bcast_rid or "unknown").replace("-", ""), bcast_seq["n"])
+
+        # 14 S5.5.1 table A: the domain sources each mode holds. PTZ auto_track
+        # joins with the PTZ batch (99 U99: PTZ last). DIALOG / IDLE hold no
+        # domain as a MODE (their TTS / ASR are session sources).
+        MODE_SOURCES = {
+            ModeState.BROADCAST: {"payload_light": "mode_driver",
+                                  "speaker": "broadcast_b"},
+            ModeState.ALARM: {"payload_light": "mode_driver",
+                              "speaker": "alarm_d"},
+        }
+        _mode_holds: dict = {}          # domain -> (source, req_id) held by the mode
+
+        def _arb_snapshot(target, current):
+            """14 S5.5.3 P-1' on the live holders, for ModeFace."""
+            return arb_hub.preflight(MODE_SOURCES.get(target, {}),
+                                     set(MODE_SOURCES.get(current, {}).values()))
+
+        def _mode_acquire(state) -> None:
+            """Take the target mode's domains in switch_order (payload_light
+            before speaker, 14 ML-5). A denial here means the preflight was
+            beaten by a concurrent holder -> refuse the switch (ML-3)."""
+            for domain, source in MODE_SOURCES.get(state, {}).items():
+                held = _mode_holds.get(domain)
+                if held is not None and held[0] == source:
+                    continue                    # D <-> B keeps mode_driver
+                rid = arb_hub.new_req_id(domain, source)
+                g = arb_hub.request(domain, source, _now_mono_ms(), req_id=rid)
+                if getattr(g.result, "value", g.result) == "denied":
+                    _mode_release(set(MODE_SOURCES.get(state, {})))
+                    raise TransitionAborted(E_BUSY, {
+                        "reason": "arbiter_denied", "domain": domain,
+                        "source": source, "code": g.code})
+                _mode_holds[domain] = (source, rid)   # granted or queued
+
+        def _mode_release(domains) -> None:
+            """Give back the mode's holds on `domains` (mode_exit)."""
+            for domain in list(domains):
+                held = _mode_holds.pop(domain, None)
+                if held is None:
+                    continue
+                src, rid = held
+                if arb_hub.holds(domain, src, rid):
+                    arb_hub.release(domain, src, rid, "mode_exit", _now_mono_ms())
+                else:
+                    arb_hub.cancel(domain, src, rid, _now_mono_ms())   # still queued
 
         def _sync_device_mode(from_state, to_state) -> None:
             """14 S5.7.2 第 3~4 步: POST /mode 并等 200, 再接管音频(ML-1).
@@ -625,9 +681,17 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             stream_id 带出去(v2.0 S2.5: start 的 ack 必须带它).
             """
             if to_state == ModeState.BROADCAST:
-                # 设备层先就位. 抛 TransitionAborted 时音频一样都还没动,
-                # 回滚只需模式机自己退回 -- 所以设备同步必须排在最前.
-                _sync_device_mode(from_state, to_state)
+                # 仲裁域先拿(14 S5.5.2 第 4~5 步, ML-5 顺序): 灯光域
+                # mode_driver -> 喇叭域 broadcast_b. 正在播的 TTS 会收到抢占
+                # 通知并让出(SpeakerDomain 50 ms 轮询 ack). 被拒即整体拒绝.
+                _mode_acquire(to_state)
+                # 设备层再就位. 抛 TransitionAborted 时音频一样都还没动,
+                # 回滚只需模式机自己退回并交还刚拿的域.
+                try:
+                    _sync_device_mode(from_state, to_state)
+                except TransitionAborted:
+                    _mode_release(set(MODE_SOURCES[to_state]))
+                    raise
             # switch_order 的 motion 一格: 两态行为不同才发(14 S5.5.4: 配置
             # 相同则不下发, 例如 B <-> D 都是 hold).
             beh_changed = _behavior_of(from_state) != _behavior_of(to_state)
@@ -681,6 +745,10 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     _sync_device_mode(from_state, to_state)
                     if to_state != ModeState.ALARM:
                         device_sync.set_lights({"redblue": 0})
+                    # 交还模式持有的域. 去 D 时 mode_driver 保留(D 也要它),
+                    # broadcast_b 交还后由 D 的 alarm_d 接手(C2).
+                    _mode_release(set(MODE_SOURCES[ModeState.BROADCAST])
+                                  - set(MODE_SOURCES.get(to_state, {})))
                     if beh_changed:
                         _publish_behavior(to_state)   # 喇叭已静音, 再放开运动
                     # 退出时回显刚结束的那一路: v2.0 S2.5 逐字"后端不得为
@@ -747,6 +815,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 speaker.set_gate(True, "idle")
 
         mode_face = ModeFace(motion_behavior_of=_behavior_of,
+                             arb_snapshot=_arb_snapshot,
                              publish=_publish_mode_state,
                              on_transition=_on_mode_transition)
 
@@ -1006,6 +1075,11 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             # (MM-1: 启动后设备应挂 func1, 而它开机在 idle).
             last_dev_sync = float("-inf")
             last_mode_pub = float("-inf")   # state/mode 1 Hz 下限的上次时刻
+            last_arb_pub = float("-inf")    # state/arb/{domain} 1 Hz 下限
+            last_arb_gens: dict = {}        # 上次发出时各域的 gen
+            from xbrain.common.arbiter.audit import merge_audit_window
+            arb_state_pub = {d: gen.declare_publisher("state/arb/" + d)
+                             for d in arb_hub.domains}
             while not stop_flag.get("stop"):
                 now = time.monotonic()
                 # Drain cmd/mode on the MAIN thread (see the subscriber above
@@ -1150,6 +1224,30 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         _publish_behavior(mode_face.state)
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p2 behavior re-assert failed: %s", exc)
+                # 仲裁器(99 U99 C1): 每拍 tick -- 租约到期 / 强制抢占的截止
+                # 只有被 tick 才会发生(core 不读钟). 审计事件发到
+                # event/{sev}/arbitration(11 S7A.7), 10 s 窗口合并在 audit 层.
+                try:
+                    _evts = arb_hub.tick(_now_ms)
+                    if _evts:
+                        for _ev in merge_audit_window(_evts):
+                            gen.put("event/%s/arbitration" % _ev["sev"],
+                                    json.dumps(_ev, ensure_ascii=False)
+                                    .encode("utf-8"))
+                    # state/arb/{domain}: 1 Hz 下限 + gen 变化即发(11 S2.2.2
+                    # "七域全部必发", p2 发 speaker / asr / payload_light / ptz).
+                    _states = arb_hub.states(_now_ms)
+                    _gens = {d: st["gen"] for d, st in _states.items()}
+                    if _gens != last_arb_gens or now - last_arb_pub >= 1.0:
+                        last_arb_gens = _gens
+                        last_arb_pub = now
+                        for _d, _st in _states.items():
+                            arb_state_pub[_d].put(stamp_body(
+                                _st, rid=_env_rid, boot=_env_boot,
+                                seq=_next_seq("state/arb/" + _d),
+                                ts_sync=_clock_sync()))
+                except Exception as exc:      # noqa: BLE001
+                    _logger.error("p2 arbiter tick / publish failed: %s", exc)
                 # state/mode 1 Hz 下限(15 S4.1A "事件 + 1 Hz").
                 if now - last_mode_pub >= 1.0:
                     last_mode_pub = now

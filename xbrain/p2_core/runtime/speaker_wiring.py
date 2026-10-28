@@ -40,7 +40,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from xbrain.common.errors import E_BUSY, E_UNHEALTHY
+from xbrain.common.errors import E_BUSY, E_SCHEMA, E_UNHEALTHY
 
 _logger = logging.getLogger("xbrain.p2.speaker")
 
@@ -48,6 +48,18 @@ _logger = logging.getLogger("xbrain.p2.speaker")
 GATE_TOPIC = "rt/audio/gate"
 SPEAK_TOPIC = "cmd/audio/speak"
 SPEAK_ACK_TOPIC = "cmd/audio/speak/ack"
+
+#: The domain-2 sources a cmd/audio/speak may name (14 S4.1 table): the three
+#: TTS channels plus the two system voices. alarm_d / broadcast_b are NOT here:
+#: they are mode-driven holders P2 takes itself, never via this key (11
+#: S8.8.1 "P2 validates source by publisher" -- a speak request claiming the
+#: alarm's 900 would outrank a broadcast).
+SPEAK_SOURCES = frozenset({"tts_cloud", "tts_wecom", "tts_local",
+                           "prompt_tone", "bit_announce"})
+#: How often a playing TTS checks whether a higher source is waiting (11
+#: S7A.3 P-1). 50 ms keeps a broadcast's takeover well inside the 100 ms
+#: grace; it is a poll period, not a safety bound.
+PREEMPT_POLL_S = 0.05
 
 
 @dataclass
@@ -86,8 +98,12 @@ class SpeakerDomain:
     blocks the caller for est_ms."""
 
     def __init__(self, cfg: SpeakerWiringConfig, rt_session,
-                 now_mono_ms_fn, mic_publisher=None) -> None:
+                 now_mono_ms_fn, mic_publisher=None, hub=None) -> None:
         self._cfg = cfg
+        # Domain-2 arbitration (14 S4.1, 99 U99 C1). None = the pre-2026-10-28
+        # behaviour (one non-blocking lock, first come first served) -- kept
+        # only for the unit tests that build a SpeakerDomain without a hub.
+        self._hub = hub
         self._rt = rt_session
         self._now = now_mono_ms_fn
         self._lock = threading.Lock()
@@ -154,6 +170,8 @@ class SpeakerDomain:
           4. publish gate=open + unmute (drains any queued frames
              captured during the mute window -- see unmute()).
         """
+        if self._hub is not None:
+            return self._speak_arbitrated(text, source)
         if not self._lock.acquire(blocking=False):
             return {"ok": False, "code": E_BUSY,
                     "reason": "speaker busy"}
@@ -188,6 +206,82 @@ class SpeakerDomain:
                 self._mic_pub.unmute()
             self._lock.release()
 
+    def _speak_arbitrated(self, text: str, source: Optional[str]) -> dict:
+        """handle_speak through the domain-2 arbiter (14 S4.1, 11 S7A).
+
+        1. source must be one of SPEAK_SOURCES (11 S8.8.1: required; a missing
+           one is refused, never guessed -- guessing tts_local would rank a
+           cloud reply below a local one).
+        2. request with atomic=True: idle -> granted; a lower holder -> the
+           arbiter queues us and that holder yields; equal or higher holder
+           (a broadcast, an alarm, another TTS) -> E_BUSY, as before.
+        3. play exactly as before (mute, gate closed, TTS, sleep est_ms) but
+           sleep in PREEMPT_POLL_S steps: when a higher source is waiting we
+           ack_preempt and stop at once -- and we do NOT reopen the gate or
+           unmute, because the preemptor (B / D) owns them from now on. The
+           old code reopened the gate at the end of every TTS, so a broadcast
+           entered during a TTS got its mic gate opened under it.
+        4. release(done) at the normal end.
+        """
+        if source not in SPEAK_SOURCES:
+            return {"ok": False, "code": E_SCHEMA,
+                    "reason": "speak source %r is not a domain-2 TTS source %s"
+                              % (source, sorted(SPEAK_SOURCES))}
+        hub = self._hub
+        req_id = hub.new_req_id("speaker", source)
+        grant = hub.request("speaker", source, self._now(), req_id=req_id,
+                            atomic=True)
+        res = getattr(grant.result, "value", grant.result)
+        if res == "denied":
+            h = hub.holder("speaker")
+            return {"ok": False, "code": grant.code or E_BUSY,
+                    "reason": "speaker held by %s" % (h.source_id if h else "?")}
+        if res == "queued" and not self._wait_for_grant(source, req_id):
+            hub.cancel("speaker", source, req_id, self._now())
+            return {"ok": False, "code": E_BUSY,
+                    "reason": "speaker not handed over in time"}
+        with self._lock:          # speaking window; audio_view reads it
+            if self._mic_pub is not None:
+                self._mic_pub.mute()
+            self._speaking_since_mono = self._now() / 1000.0
+            self._speaking_source = source
+            self._publish_gate(open_=False, reason="tts_playback")
+            try:
+                est_ms = self._invoke_tts(text)
+            except SpeakerHwError as exc:
+                self._publish_gate(open_=True, reason="idle")
+                if self._mic_pub is not None:
+                    self._mic_pub.unmute()
+                hub.release("speaker", source, req_id, "error", self._now())
+                return {"ok": False, "code": E_UNHEALTHY, "reason": str(exc)}
+            end = time.monotonic() + est_ms / 1000.0
+            while time.monotonic() < end:
+                if not hub.holds("speaker", source, req_id):
+                    # revoked (lease / forced): the new holder owns gate + mic
+                    return {"ok": False, "code": E_BUSY,
+                            "reason": "speaker revoked mid-playback"}
+                if hub.being_preempted("speaker", source, req_id):
+                    hub.ack_preempt("speaker", source, req_id, self._now())
+                    return {"ok": False, "code": E_BUSY,
+                            "reason": "preempted by a higher source"}
+                time.sleep(min(PREEMPT_POLL_S, max(0.0, end - time.monotonic())))
+            self._publish_gate(open_=True, reason="idle")
+            if self._mic_pub is not None:
+                self._mic_pub.unmute()
+            hub.release("speaker", source, req_id, "done", self._now())
+            return {"ok": True, "actual_ms": est_ms, "code": "OK"}
+
+    def _wait_for_grant(self, source: str, req_id: str) -> bool:
+        """A queued request: wait until the holder yields or the arbiter's
+        forced deadline promotes us (the P2 main loop ticks it). Bounded by
+        the TTS HTTP timeout plus the arbiter's wait_atomic ceiling."""
+        limit = time.monotonic() + self._cfg.tts_http_timeout_s + 3.5
+        while time.monotonic() < limit:
+            if self._hub.holds("speaker", source, req_id):
+                return True
+            time.sleep(PREEMPT_POLL_S)
+        return False
+
     def _invoke_tts(self, text: str) -> float:
         """Call the payload-service TTS endpoint. Kept as a separate
         method so tests can monkeypatch it without touching HTTP."""
@@ -219,6 +313,16 @@ class SpeakerDomain:
         与 gate 的关闭区间同起同止(见 handle_speak 的半双工时序).
         """
         speaking = self._lock.locked()
+        if self._hub is not None:
+            # The arbiter is the holder of record (14 S4.1): a broadcast or an
+            # alarm holds domain 2 without ever entering handle_speak.
+            h = self._hub.holder("speaker")
+            if h is not None and h.source_id in SPEAK_SOURCES and speaking:
+                return {"speaking": True,
+                        "since_mono": self._speaking_since_mono,
+                        "holder": h.source_id,
+                        "gate_open": self._gate_open,
+                        "gate_reason": self._gate_reason}
         return {
             "speaking": speaking,
             "since_mono": self._speaking_since_mono if speaking else None,
