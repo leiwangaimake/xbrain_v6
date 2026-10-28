@@ -311,17 +311,22 @@
 
 ---
 
-## 9. 实现现状（2026-10-28 读代码核实，冻结后按此排工）
+## 9. 实现现状（2026-10-28 代码已落地，待真机验证）
 
-| 环节 | 现状 | 缺口 |
+★ 机器人侧按本稿实现完毕，提交 `e60d61d`（配置）· `d87489f`（`p2_core`）· `6552eba`（`p5_gateway`）。**尚未在真机上联调**：运行中的 p2 / p5 需重启后才生效，联调结果出来前，下表「状态」列只代表代码与测试。
+
+| 环节 | 实现位置 | 状态 |
 |---|---|---|
-| Qt → `xbrain/{rid}/cmd/ptz` | p5 **未订阅**，云端 PTZ 指令今天无落点 | p5 新增入口：校验 §3、映射 §7、ack 译码 §5、拒绝事件按 `task_id` 去重 |
-| `p2_core` `cmd/ptz` 处理 | `runtime/ptz_wiring.py` 只认**语音意图**格式（`intent_id` E01/E05/E06/E07/E08/E09）；E01 转动与 E06 变焦都是「开始 → 睡 `pulse_ms` → 停止」的阻塞脉冲 | ① 接 `11` §7.4 `PtzCommand`（`jog` / `nudge` / `stop` / `refocus`）；② `jog` 的 dead-man 与续租（PTZ-D1 ~ D3，`ptz/hold_ms_renewal.py` 已有判据实现可接）；③ 发 `cmd/ptz/ack`；④ 域⑤ 仲裁与 PTZ-D4 交接先停 |
-| ★ 转动（`move`） | 机内只有语音的定时脉冲；无开放式 `jog` | 同上 ①②；★ 斜向须合成**一条** `ContinuousMove`（PTZ-C5），🚫 拆成两条 |
-| `zoom_step` | 可复用现有 E06 脉冲路径 | ⚠️ 现有脉冲是**持锁阻塞**（`PtzDomain` 一把锁 + `time.sleep(pulse_ms)`），执行中的 `stop` 要等它走完才进得去 ⇒ 违反 §3.4「立即打断」，2800 ms 的大档尤其明显。先上线也须改成可打断的等待；ack 须在开始时回（§2） |
-| ★ `refocus` | **未实现**（p2 没有任何 LAPI 对焦调用） | 新增 LAPI `Channels/0/Image/Focus` 读改写：`FocusMode` 2 → 0 → 等 300 ms → 2；任何一步失败都补写 `2` 再回 ack（`11` §7.4.7 F4）。★ 每次 LAPI 调用的超时须收在约 0.5 s 内，才能满足 §2 的 2 s ack 时限（`ptzkey2.py` 用的 10 s 不能照搬） |
-| ★ 对焦会话设置（F1 / F2） | **未实现**：p2 不写 `ShieldTrigger.MovePTZ=1`、不确保 `FocusMode=2` | p2 启动 PTZ 域时按 `11` §7.4.7 F1 / F2 设置、退出恢复；否则云台一动相机就重新对焦，画面在转动中反复变虚（`ptzkey2.py` 注释 3 的实测） |
-| 事件 `code` | p2 的 PTZ 事件未填 `code` | 按 §6 填 `PTZ_DEADMAN_STOP` / `PTZ_PREEMPTED` |
-| 媒体 | `state/media` 已发可见光 `main/sub` 端点（2026-10-24 上线），Qt 可看到转动与变焦效果 | 无 |
+| Qt → `xbrain/{rid}/cmd/ptz` 入口 | `p5_gateway/inbound/ptz_router.py` + `runtime/cloud_wiring.py` | ✅ 校验 §3（含 §3.7 网关直判）、映射 §7、按 `task_id` 续租与改参拒绝、R-6 限频、ack 按 §5 译码、§2 时限（超时回 `2001`）、拒绝事件按 `task_id` 去重 |
+| `p2_core` 执行 `PtzCommand` | `p2_core/ptz/ptz_controller.py` + `runtime/ptz_wiring.py` | ✅ `jog`（续租不发相机命令、dead-man 到期自停 + `PTZ_DEADMAN_STOP`）、`nudge`、`stop`（永不拒绝）、`refocus`；17 Hz 合并；域⑤ 准入与换持有者先停 + `PTZ_PREEMPTED`；发 `cmd/ptz/ack` |
+| ★ 转动（`move`） | 同上 | ✅ 8 方向；斜向为**一条** `ContinuousMove` |
+| `zoom_step` / 语音脉冲 | 同上 | ✅ 改为调度线程执行，`stop` 与新指令**立即打断**（不再持锁阻塞） |
+| ★ `refocus` | `p2_core/ptz/lapi_focus.py` | ✅ LAPI `FocusMode` 2 → 0 → 300 ms → 2，失败先补写自动再回 ack；单次调用超时 0.5 s |
+| ★ 对焦会话设置（F1 / F2） | 同上 | ✅ p2 PTZ 域启动时写 `MovePTZ=1` + `FocusMode=2`，退出恢复 `MovePTZ` 原值并保持自动 |
+| 事件 `code` | `runtime/ptz_wiring.py` | ✅ 填 `PTZ_DEADMAN_STOP` / `PTZ_PREEMPTED` |
+| 媒体 | 既有 | `state/media` 已发可见光 `main/sub` 端点（2026-10-24 上线），Qt 可看到转动与变焦效果 |
 
-★ 在 p2 的 `jog` + dead-man 落地之前，**后端对 `move` / `zoom` 一律回 `1006 E_TASK_UNSUPPORTED`**，🚫 用阻塞脉冲去模拟「按住」——那会在松手后继续转一段 / 推一段，正是 R-2 要防的失控。`refocus` 同理，未实现前回 `1006`。
+★ **R-6 的落地解释**（不改变 Qt 侧行为，写清楚供对账）：超出 8 条/秒时，**续租**直接回 `accepted` + `coalesced=true` 不转发（上一条续租仍撑着 ≥ 600 ms 的 dead-man）；`stop` 永不合并；开始 / 单步 / 对焦仍转发，相机侧由 p2 的 17 Hz 合并兜底 —— 丢掉一条「开始」会让一次按键什么都不做。
+
+~~★ 在 p2 的 `jog` + dead-man 落地之前，**后端对 `move` / `zoom` 一律回 `1006 E_TASK_UNSUPPORTED`**，🚫 用阻塞脉冲去模拟「按住」——那会在松手后继续转一段 / 推一段，正是 R-2 要防的失控。`refocus` 同理，未实现前回 `1006`。~~
+★ **被替代的表述**（生效区间 2026-10-26 ～ 2026-10-28）。**为何不再成立**：上表各项已实现，`jog` + dead-man 已落地，不再需要「先一律回 1006」的过渡规则。**依据**：提交 `d87489f` / `6552eba` 的单测与变异体（p2 15 个、p5 12 个全杀）。
