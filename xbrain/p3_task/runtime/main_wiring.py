@@ -47,6 +47,7 @@ CMD_ESTOP_TOPIC = "cmd/estop"            # 15 S11.1 ES-1: freeze scheduling
 CMD_TASK_ACK_TOPIC = "cmd/task/ack"      # 11 S7.7 Ack; W2/W7 require ack <= 2s
 STATE_TASK_TOPIC = "state/task"
 STATE_LINK_TOPIC = "state/link"          # 11 S4.6 cloud-link level -> F-5 return_home
+STATE_MODE_TOPIC = "state/mode"          # 15 S4.1A: B / D takeover -> yield (99 U99)
 QUERY_TASKS_TOPIC = "query/tasks"        # 11 S12.4 HMI task-panel queryable (P5 pulls)
 QUERY_TASKS_TIMEOUT_S = 2.0              # cap the zenoh-thread block on a db read
 STATE_GEO_OBJECTS_TOPIC = "state/geo/objects"  # 11 S7.10A geo geometry broadcast (P5 -> HMI)
@@ -475,6 +476,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 is_human_resume_command,
             )
             from xbrain.p3_task.lifecycle.estop_suspend import suspend_running_for_estop
+            from xbrain.p3_task.lifecycle.mode_takeover import (
+                resume_after_takeover,
+                suspend_running_for_takeover,
+            )
+            # 15 S4.1A: last state/mode.motion_behavior (None = none seen yet).
+            mode_view: dict = {"motion_behavior": None}
             estop_ctrl = EstopController()
 
             def _on_task(sample) -> None:
@@ -487,6 +494,20 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     _logger.warning("p3 malformed cmd/task payload")
                     return
                 loop.call_soon_threadsafe(queue.put_nowait, payload)
+
+            def _on_state_mode(sample) -> None:
+                # RUST THREAD (CLAUDE.md 4.2): one dict write, nothing else.
+                # 15 S4.1A reads motion_behavior ("hold" during B / D since
+                # 99 U99, "normal" otherwise). Enveloped or bare body; a body
+                # without the field leaves the last value (P2 re-sends 1 Hz).
+                try:
+                    _d = json.loads(bytes(sample.payload).decode("utf-8"))
+                    _b = _d.get("data") if isinstance(_d.get("data"), dict) else _d
+                    _mb = _b.get("motion_behavior")
+                except Exception:                 # noqa: BLE001
+                    return
+                if isinstance(_mb, str):
+                    mode_view["motion_behavior"] = _mb
 
             def _on_estop(sample) -> None:
                 # RUST THREAD (CLAUDE.md 4.2): ES-1 freeze only. freeze() is
@@ -594,6 +615,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             _subs = [gen.declare_subscriber(CMD_TASK_TOPIC, _on_task),
                      gen.declare_subscriber(CMD_ESTOP_TOPIC, _on_estop),
                      gen.declare_subscriber(STATE_LINK_TOPIC, _on_link),
+                     gen.declare_subscriber(STATE_MODE_TOPIC, _on_state_mode),
                      gen.declare_subscriber(CMD_GEO_TOPIC, _on_geo),
                      gen.declare_subscriber(CMD_TEACH_TOPIC, _on_teach),
                      gen.declare_subscriber(STATE_PATH_PROGRESS_TOPIC,
@@ -886,6 +908,37 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     # and filtered, so a frozen scheduler cannot move pending ->
                     # ready -> running. ES-3 keeps it frozen until an explicit
                     # p2 unfreeze; there is no timeout path (15 S11.3).
+                    # 15 S4.1A (99 U99): B / D took over motion. None until the
+                    # first state/mode arrives -- treated as "no takeover", the
+                    # pre-2026-10-28 behaviour, so a P2 that is down does not
+                    # freeze the task layer.
+                    _mb = mode_view.get("motion_behavior")
+                    _takeover = _mb is not None and _mb != "normal"
+                    try:
+                        if _takeover:
+                            _ys = await suspend_running_for_takeover(
+                                dao, conn, _now_mono_ms())
+                            if _ys is not None:
+                                _tid, _to, _reason = _ys
+                                _logger.warning("p3 mode takeover: yielded "
+                                                "task %s (%s)", _tid, _reason)
+                                await _make_publish(
+                                    state_pub, _emit_task_event,
+                                    _publish_task_state,
+                                    fetch_terminal=_fetch_terminal_facts)(
+                                        _tid, "running", _to, _reason)
+                        elif _mb is not None:
+                            for _tid, _to in await resume_after_takeover(
+                                    dao, conn, _now_mono_ms()):
+                                _logger.info("p3 mode takeover over: task %s "
+                                             "-> %s", _tid, _to)
+                                await _make_publish(
+                                    state_pub, _emit_task_event,
+                                    _publish_task_state,
+                                    fetch_terminal=_fetch_terminal_facts)(
+                                        _tid, "suspended", _to, "resume")
+                    except Exception as exc:      # noqa: BLE001
+                        _logger.error("p3 mode takeover step failed: %s", exc)
                     if not estop_ctrl.scheduling_permitted():
                         # ES-2 (15 S11.1): suspend the currently-running task
                         # (kind=passive, reason=estop_soft). Runs at most once
@@ -912,6 +965,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                         _tid, "running", _to, _reason)
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p3 ES-2 suspend failed: %s", exc)
+                    elif _takeover:
+                        # 15 S4.1A: no new task is dispatched during B / D.
+                        pass
                     else:
                         try:
                             _made = await scheduler_tick(
