@@ -931,6 +931,17 @@ def run_voice_loop_wiring(stop_flag: dict,
             # 的 _stream_id), 不存在两个来源打架的问题.
             if "stream_id" in d:
                 hmi_state["stream_id"] = d["stream_id"]
+            # v2.0 S4.3 的 source / entered_ts / exit_reason(11 S4.3 v1.2,
+            # 99 U97). 发布方是 p2(mode_wiring._publish_state). 原样存, 闭集校验
+            # 在 cloud_state._mode 投影时做(Rust 线程上不抛, 见下方 state/audio
+            # 回调的同一条理由). 2026-10-28 之前 mode_exit_reason 只有人读 /
+            # 没有人写, 云端的 exit_reason 恒为 null.
+            if "source" in d:
+                hmi_state["mode_source"] = d["source"]
+            if "entered_ts" in d:
+                hmi_state["mode_entered_ts"] = d["entered_ts"]
+            if "exit_reason" in d:
+                hmi_state["mode_exit_reason"] = d["exit_reason"]
 
         def _on_state_audio(sample) -> None:
             # 11 S8.10 AudioState. p2_core 是契约指定的发布者.

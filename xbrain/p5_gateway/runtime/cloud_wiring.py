@@ -766,15 +766,18 @@ class CloudBridge:
         action = payload.get("action")
         stream_id = payload.get("stream_id")
         cmd_id = payload.get("cmd_id") or ("c-" + (msg_id or ""))
+        # source: 11 S7.3 ModeCommand 的通道字段. 甲方 Qt 来的就是 cloud --
+        # p2 据此填 state/mode.source(v2.0 S4.3), 缺了它会报成 system,
+        # Qt 上看不出这次喊话是云端发起的.
         if action == "start":
             # 11 S7 ModeCommand: 进 B 模式 = set_voice_mode broadcast.
             body = {"cmd_id": cmd_id, "action": "set_voice_mode",
-                    "voice_mode": "broadcast"}
+                    "voice_mode": "broadcast", "source": "cloud"}
         else:
             # exit_broadcast 回显请求里的 stream_id. p2 用它核对退的是不是
-            # 当前那一路 -- 对不上时由 p2 拒, 网关不代判.
+            # 当前那一路 -- 对不上时由 p2 拒(E_NOT_FOUND), 网关不代判.
             body = {"cmd_id": cmd_id, "action": "exit_broadcast",
-                    "stream_id": stream_id}
+                    "stream_id": stream_id, "source": "cloud"}
         group_id = msg_id or cmd_id
         self._pending[cmd_id] = group_id
         self._fanout[group_id] = {

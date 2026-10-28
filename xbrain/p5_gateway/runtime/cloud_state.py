@@ -414,10 +414,14 @@ class CloudProjector:
         # 机内 state/mode 用的词与 v2.0 一致(normal/broadcast/alarm);
         # 缺源时取 normal 而不是抛 -- 一条发不出去的 state/mode 会让 Qt
         # 的喊话按钮永远处于未知态, 而 normal 是它的默认显示.
+        # source: p2 的 state/mode 给出 v2.0 S4.3 闭集里的值(11 S4.3 v1.2).
+        # 缺(老版本 p2 / 还没收到)时报 system, 与原先的常量一致; 闭集外的值
+        # 由 mode_payload 的闭集校验拒掉, 不在这里降级.
+        src = state.get("mode_source") or "system"
         return mode_payload(
             voice_mode=mode if mode in ("normal", "broadcast", "alarm")
             else "normal",
-            source="system",
+            source=src,
             stream_id=state.get("stream_id"),
             entered_ts=state.get("mode_entered_ts"),
             exit_reason=state.get("mode_exit_reason"))
@@ -503,10 +507,13 @@ class CloudProjector:
             # NO 不在这里另算一个: Qt 拿它把 audio/broadcast 的帧对上会话,
             # 对不上就整条流白推.
             stream_id=(state.get("stream_id") if speaking else None),
-            # last_frame_age_ms 仍为 None: 它要的是"最后一帧 PCM 距今多久",
-            # 而判帧在 p2(broadcast_rx), 网关这侧看不到那个计数 --
-            # 11 S8.10 也没有这一项, 补它要先给 AudioState 加字段.
-            last_frame_age_ms=None,
+            # last_frame_age_ms: "最后一帧有效 PCM 距今多久"(v2.0 S4.4).
+            # ~~仍为 None: 判帧在 p2, 网关看不到; 11 S8.10 也没有这一项~~ --
+            # 2026-10-28 起 p2 在 state/audio 的 speaker.last_frame_age_ms
+            # 里给出发布时刻的值(11 S8.10 v1.2, 99 U97). 这里再加上那条报文
+            # 在本进程等了多久(两次读的都是本进程的单调钟, 不跨进程比钟),
+            # 否则 1 Hz 发布之间的值会冻住, Qt 看不出流断了.
+            last_frame_age_ms=self._frame_age_ms(state, spk, speaking),
             speaker_holder=(holder if speaking else None),
             # v2.0 S4.4 只给了一个样例值 "cloud", [没有闭集]. 在网关按
             # holder 前缀自建一张 cloud/local/wecom/alarm 的映射表就是造第
@@ -514,6 +521,20 @@ class CloudProjector:
             # 报 null 更坏: Qt 若按这个字段切界面, 一个自造的值会让它切错.
             # 待甲方给出闭集后再填.
             speaker_holder_type=None)
+
+    def _frame_age_ms(self, state: Dict[str, Any], spk: Dict[str, Any],
+                      speaking: bool) -> Optional[int]:
+        """p2 报的帧龄 + 那条 state/audio 到达本进程后又过了多久.
+
+        没在说话 / 或 p2 没给(还没收到第一帧)时为 None -- 编一个 0 会冒充
+        "刚收到", 编一个大数会冒充"断流".
+        """
+        age = spk.get("last_frame_age_ms")
+        if not speaking or not isinstance(age, (int, float)) \
+                or isinstance(age, bool):
+            return None
+        waited = self._now() * 1000.0 - float(state.get("audio_updated_ms") or 0.0)
+        return int(age + max(0.0, waited))
 
     def _media(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """动态 RTSP 端点.
