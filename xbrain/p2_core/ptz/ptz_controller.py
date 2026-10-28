@@ -378,7 +378,12 @@ class PtzController:  # one instance per p2 process
         m = self._motion  # current holder, if any
         prio = self._prio[SOURCE_IDS[source]]  # priority of the requesting source
         if m is not None and m.priority > prio:  # strictly higher holder wins; equal takes over
-            return {"domain": "ptz", "holder": m.source, "holder_priority": m.priority}  # 11 S7A.0 E_BUSY detail shape
+            # 11 S7A.0: holder is the ARBITER source id (manual_cloud /
+            # auto_track), not the PtzCommand source; gen is the domain gen,
+            # None only without an arbiter (the U98 standalone tests).
+            gen = self._admission.gen() if self._admission is not None else None  # domain gen
+            return {"domain": "ptz", "holder": SOURCE_IDS[m.source],
+                    "holder_priority": m.priority, "gen": gen}  # 11 S7A.0 E_BUSY detail shape
         return None  # admitted
 
     # -- jog -----------------------------------------------------------------

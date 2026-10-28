@@ -161,6 +161,14 @@ class ArbHub:  # owned by p2 main_wiring
         with self._lock:  # every arbiter call is locked
             return self._arbs[domain].holder()  # frozen copy
 
+    def holder_gen(self, domain: str) -> Tuple[Optional[Holder], int]:  # E_BUSY detail read
+        """Holder snapshot AND the domain gen (11 S7A.2) under ONE lock: an
+        E_BUSY detail (11 S7A.0 {domain, holder, holder_priority, gen}) must
+        never pair a holder with the gen of the holder after it."""
+        with self._lock:  # every arbiter call is locked
+            arb = self._arbs[domain]  # that domain
+            return arb.holder(), arb.gen()  # read together
+
     def holds(self, domain: str, source: str, req_id: str) -> bool:  # am I the holder
         """True while (source, req_id) is the current holder of `domain`."""
         h = self.holder(domain)  # one snapshot

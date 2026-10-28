@@ -172,7 +172,8 @@ def test_lower_priority_is_refused_with_holder():  # domain 5 refusal
     jog(c, "c-1", pan=1.0)  # cloud holds the head
     a = jog(c, "t-1", tilt=0.2, source="auto_track")  # tracker asks
     assert a["result"] == "rejected" and a["code"] == E_BUSY  # refused busy
-    assert a["detail"]["holder"] == "cloud" and a["detail"]["holder_priority"] == 700  # holder named with its priority
+    assert a["detail"] == {"domain": "ptz", "holder": "manual_cloud",  # arbiter source id, 11 S7A.0
+                           "holder_priority": 700, "gen": None}  # no arbiter in this rig -> no gen
     assert len(c.ops.calls) == 1  # nothing sent for the tracker
 
 

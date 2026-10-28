@@ -106,8 +106,10 @@ def test_auto_track_is_refused_while_a_manual_hold_idles_out():
     """MUTATION: drop the higher-holder check -> auto_track admitted -> fails."""
     hub, adm, c = _rig()  # fresh
     hub.request("ptz", "manual_cloud", c.t)  # an operator holds it
+    gen = hub.states(c.t)["ptz"]["gen"]  # the domain gen the refusal must carry
     busy = adm.admit("auto_track", acquire=True)  # tracker asks
-    assert busy == {"domain": "ptz", "holder": "manual_cloud", "holder_priority": 700}  # E_BUSY detail
+    assert busy == {"domain": "ptz", "holder": "manual_cloud",
+                    "holder_priority": 700, "gen": gen}  # 11 S7A.0 E_BUSY detail
     assert _holder(hub) == "manual_cloud"  # unchanged
 
 
@@ -202,6 +204,7 @@ def test_the_controller_refuses_when_the_arbiter_says_busy():
                           "vel": {"pan": 0.5, "tilt": 0.0, "zoom": 0.0}, "hold_ms": 800})
     assert a["result"] == "rejected" and a["code"] == E_BUSY  # refused
     assert a["detail"]["holder"] == "manual_cloud"  # named
+    assert a["detail"]["gen"] == hub.states(clock.t)["ptz"]["gen"] == adm.gen()  # 11 S7A.0 gen, live
 
 
 def test_the_controller_refocus_takes_nothing():
@@ -210,3 +213,16 @@ def test_the_controller_refocus_takes_nothing():
     c = _controller(hub, adm, clock)  # production shape
     c.handle_command({"cmd_id": "c-2", "action": "refocus", "source": "cloud"})  # runs inline
     assert c.acks[-1]["result"] == "accepted" and _holder(hub) is None  # done, nothing held
+
+
+def test_an_arbiter_denial_carries_holder_and_gen():
+    """The second refusal path: the arbiter itself denies the request (here a
+    disarmed domain, 11 S7A.6) -- the detail still has the 11 S7A.0 shape,
+    gen included. MUTATION: drop gen from that path -> this fails."""
+    hub, adm, clock = _rig()  # fresh
+    hub._arbs["ptz"].arb_suspend("soft_estop", "e-1", clock.t)  # disarm domain 5 (test-only reach-in)
+    gen = hub.states(clock.t)["ptz"]["gen"]  # gen after the disarm bump
+    busy = adm.admit("manual_cloud", acquire=True)  # an operator asks
+    assert busy == {"domain": "ptz", "holder": None,  # disarmed: nobody holds
+                    "holder_priority": None, "gen": gen}  # but the shape is complete
+    assert hub.states(clock.t)["ptz"]["waiting"] == []  # no ghost waiter left behind
