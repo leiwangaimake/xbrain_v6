@@ -63,6 +63,12 @@ CODE_STORAGE = 3001
 #: 别处引用本名, 不再散落字面量. 它[不]属于 xbrain/common/errors, 也不该属于:
 #: 那是甲方协议的词, 不是我们的. no_literal_ecode 的 v2wire 豁免只此一处.
 V2_DETAIL_TASK_UNSUPPORTED = "E_TASK_UNSUPPORTED"  # ECODE-OK(v2wire): v2.0 detail.code wire value, not our E_* set
+#: The Qt PTZ contract (docs/MISSON/PTZ控制契约_qt端v0.2草案.md S5, 99 U98) names
+#: these v2.0 detail.code values for its rejections; same definition point,
+#: same exemption as above. Used by inbound/ptz_router.py only.
+V2_DETAIL_REQUIRED_FIELD = "E_REQUIRED_FIELD"  # ECODE-OK(v2wire): v2.0 1002 detail.code wire value
+V2_DETAIL_INVALID_FIELD = "E_INVALID_FIELD"  # ECODE-OK(v2wire): v2.0 1003 detail.code wire value
+V2_DETAIL_NOT_READY = "E_NOT_READY"  # ECODE-OK(v2wire): v2.0 2001 detail.code wire value
 
 QT_CODES = (
     CODE_OK, CODE_JSON_PARSE, CODE_REQUIRED_FIELD, CODE_INVALID_FIELD,

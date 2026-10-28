@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -59,6 +60,8 @@ from ..inbound.cloud_inbound import (
     parse_frame,
     rid_from_key,
 )
+from ..inbound.ptz_router import TASK_TYPE as PTZ_TASK_TYPE
+from ..inbound.ptz_router import CloudPtzRouter
 from ..inbound.task_router import CLOUD_ORIGIN, KEY_AUDIO, route
 from ..outbound.ack_translate import aggregate_child_acks, translate_ack
 from ..outbound.cloud_envelope import SeqCounter, build_envelope
@@ -90,6 +93,12 @@ CLOUD_HEARTBEAT = "xbrain/%s/heartbeat/qt"
 CLOUD_AUDIO_BROADCAST = "xbrain/%s/audio/broadcast"
 
 CLOUD_CMD_TASK_ACK = "xbrain/%s/cmd/task/ack"
+#: Qt PTZ contract v0.2 (docs/MISSON/PTZ控制契约_qt端v0.2草案.md S2, 99 U98):
+#: keyboard / button control of the head, and its ack. Only the gateway
+#: subscribes the cloud key; p2 gets the rebuilt in-robot cmd/ptz (contract
+#: S7 "key isolation", same layering as cmd/task, E-1).
+CLOUD_CMD_PTZ = "xbrain/%s/cmd/ptz"
+CLOUD_CMD_PTZ_ACK = "xbrain/%s/cmd/ptz/ack"
 CLOUD_CMD_ESTOP_ACK = "xbrain/%s/cmd/estop/ack"
 CLOUD_CMD_MEDIA_SESSION_ACK = "xbrain/%s/cmd/media/session/ack"
 
@@ -178,7 +187,7 @@ OUTBOUND_PERIODS = {
 #: 入站五条. 顺序即 v2.0 S2 表的顺序.
 INBOUND_TEMPLATES = (CLOUD_CMD_TASK, CLOUD_CMD_ESTOP, CLOUD_CMD_MEDIA_SESSION,
                      CLOUD_CMD_FILE_ACK, CLOUD_AUDIO_BROADCAST,
-                     CLOUD_HEARTBEAT)
+                     CLOUD_HEARTBEAT, CLOUD_CMD_PTZ)
 
 
 def relative_key(template: str) -> str:
@@ -280,6 +289,12 @@ class CloudBridge:
         #: 只为可观测: 各类报文的处理计数. 不参与任何判定.
         self.stats: Dict[str, int] = {"accepted": 0, "rejected": 0,
                                       "duplicate": 0, "ignored": 0}
+        # Qt PTZ contract v0.2: per-robot PTZ state (open presses, pending
+        # p2 acks, the R-6 window). Its callers run on different Zenoh
+        # threads (cloud frame, in-robot ack, tick), hence the lock.
+        self._ptz = CloudPtzRouter(now_mono=self._now_mono,
+                                   cmd_prefix=CLOUD_CMD_PREFIX)
+        self._ptz_lock = threading.Lock()
 
     # --- 接线 ---------------------------------------------------------
 
@@ -326,8 +341,12 @@ class CloudBridge:
         self._subs.append(self._session.declare_subscriber(
             CLOUD_HEARTBEAT % rid, self._rx(self._on_cloud_heartbeat)))
 
+        self._subs.append(self._session.declare_subscriber(
+            CLOUD_CMD_PTZ % rid, self._rx(self._on_cloud_ptz)))
         self._pubs["cmd/task/ack"] = self._session.declare_publisher(
             CLOUD_CMD_TASK_ACK % rid)
+        self._pubs["cmd/ptz/ack"] = self._session.declare_publisher(
+            CLOUD_CMD_PTZ_ACK % rid)
         self._pubs["cmd/estop/ack"] = self._session.declare_publisher(
             CLOUD_CMD_ESTOP_ACK % rid)
         self._pubs["cmd/media/session/ack"] = self._session.declare_publisher(
@@ -378,6 +397,10 @@ class CloudBridge:
         # stream_id 是 p2 在 applied 里回来的, 不订这条就拿不到.
         self._subs.append(self._session.declare_subscriber(
             "cmd/mode/ack", self._on_internal_ack))
+        # Qt PTZ contract S7: p2's in-robot ack (relative key; we publish the
+        # absolute xbrain/{rid}/cmd/ptz/ack, so this cannot loop back).
+        self._subs.append(self._session.declare_subscriber(
+            "cmd/ptz/ack", self._on_internal_ptz_ack))
         # D: 订机内 state/fence(P1 F3 发)追踪 active.rev, 用于确认 SET_ALARM_CONFIG
         # 生效(v2.0 S3.4). 相对 key(p1 在本机发, 不带 rid 前缀).
         self._subs.append(self._session.declare_subscriber(
@@ -388,6 +411,86 @@ class CloudBridge:
     def alive(self) -> int:
         """活着的订阅数. 启动自检用 -- 见 CLAUDE.md 4.3."""
         return len(self._subs)
+
+    # --- 入站: cmd/ptz (Qt PTZ contract v0.2, 99 U98) -----------------
+
+    def _on_cloud_ptz(self, sample: Any) -> None:
+        """RUST thread: decode, judge, put -- no await, no queue (CLAUDE.md
+        4.2). A press must reach p2 within the contract's 500 ms ack budget."""
+        try:
+            self._handle_ptz(sample)
+        except Exception:                       # noqa: BLE001
+            # Same reason as _on_cloud_task: an exception escaping into the
+            # Rust side silently drops the frame.
+            _logger.exception("p5 cloud cmd/ptz handler crashed")
+
+    def _handle_ptz(self, sample: Any) -> None:
+        """Envelope + dedup with the cmd/task helpers, then the PTZ router."""
+        raw, key = _sample_parts(sample)
+        rid = rid_from_key(key)
+        if rid is None or rid != self._rid:
+            _logger.warning("p5 cloud cmd/ptz on unexpected key %r", key)
+            self.stats["ignored"] += 1
+            return
+        try:
+            body = parse_frame(raw, rid)
+        except InboundReject as exc:
+            self._publish_ptz_fields(exc.fields, *_best_effort_ids(raw)[:2],
+                                     event=True, category="system")
+            return
+        if not is_cloud_frame(body):
+            self.stats["ignored"] += 1
+            return
+        msg_id, task_id, _task_type = frame_ids(body)
+        if msg_id and self._dedup.seen(rid, msg_id):
+            self._publish_ack("cmd/ptz/ack", duplicate_ack(
+                msg_id=_new_msg_id(), ref_msg_id=msg_id,
+                task_id=task_id or "", task_type=PTZ_TASK_TYPE))
+            self.stats["duplicate"] += 1
+            return
+        with self._ptz_lock:
+            out = self._ptz.handle(body["data"])
+        for cmd in out.forward:
+            self._internal_put("cmd/ptz", json.dumps(
+                cmd, ensure_ascii=False).encode("utf-8"))
+        if out.ack is not None:
+            self._publish_ptz_fields(out.ack, msg_id, task_id,
+                                     event=out.reject_event)
+
+    def _on_internal_ptz_ack(self, sample: Any) -> None:
+        """p2's cmd/ptz/ack: answer the cloud frame it completes (contract S5).
+        Acks of HMI / voice commands are not ours and are ignored."""
+        try:
+            internal = json.loads(bytes(sample.payload).decode("utf-8"))
+            with self._ptz_lock:
+                if not isinstance(internal, dict) or not self._ptz.is_pending(
+                        internal.get("cmd_id")):
+                    return
+                fields, msg_id, task_id, event = self._ptz.translate(internal)
+            self._publish_ptz_fields(fields, msg_id, task_id, event=event)
+        except Exception:                       # noqa: BLE001
+            _logger.exception("p5 in-robot cmd/ptz/ack handler crashed")
+
+    def _publish_ptz_fields(self, fields: Dict[str, Any], msg_id: Optional[str],
+                            task_id: Optional[str], *, event: bool,
+                            category: str = "task") -> None:
+        """One v2.0 ack on xbrain/{rid}/cmd/ptz/ack (+ the audit event of a
+        rejection when the router says it is the first for this task)."""
+        self._publish_ack("cmd/ptz/ack", build_ack(
+            msg_id=_new_msg_id(), ref_msg_id=msg_id or "", task_id=task_id or "",
+            task_type=PTZ_TASK_TYPE, result=fields.get("result", RESULT_REJECTED),
+            error_code=fields["error_code"], reason=fields["reason"],
+            detail=fields.get("detail")))
+        if fields.get("result", RESULT_REJECTED) == RESULT_REJECTED:
+            self.stats["rejected"] += 1
+            if event:
+                det = fields.get("detail") or {}
+                self._emit_task_reject_event(
+                    ref_msg_id=msg_id, task_id=task_id, task_type=PTZ_TASK_TYPE,
+                    error_code=fields["error_code"], detail_code=det.get("code", ""),
+                    reason=fields["reason"], category=category)
+        else:
+            self.stats["accepted"] += 1
 
     # --- 入站: cmd/task ------------------------------------------------
 
@@ -721,6 +824,13 @@ class CloudBridge:
                 "-- answering with applied=[]", cid, ESTOP_ACK_BUDGET_S * 1000)
             self._publish_estop_ack(p["msg_id"], p["task_id"], p["body"],
                                     p["recv_mono_ms"])
+
+        # Qt PTZ contract S2: no p2 ack in time -> 2001 E_NOT_READY (the PTZ
+        # path is down), never silence.
+        with self._ptz_lock:
+            ptz_expired = self._ptz.expired()
+        for fields, msg_id, task_id in ptz_expired:
+            self._publish_ptz_fields(fields, msg_id, task_id, event=True)
 
         # D(v2.0 S3.4): 6s 内 state/fence.active.rev 没确认生效 -> 发 failed 终态
         # ("生效未确认"). NO 不把 accepted 补解释为成功(S3.4 逐字禁止).

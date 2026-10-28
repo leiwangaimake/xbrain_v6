@@ -167,6 +167,8 @@ def test_six_inbound_and_three_ack_keys_are_declared():
         "xbrain/gj-001/cmd/file/ack",
         "xbrain/gj-001/cmd/media/session",
         "xbrain/gj-001/cmd/task",
+        # Qt PTZ contract v0.2 S2 (99 U98): keyboard / button control of the head.
+        "xbrain/gj-001/cmd/ptz",
         # 11 S2.2.2A: Qt 的 1 Hz 在线心跳. 它不是 cmd/ 也不是 state/, 单列
         # 一族 heartbeat/ -- 没有它, Qt 可以长时间只订阅不发布, 链路恒为
         # never_connected 直到 rtb_s 触发返航.
@@ -175,6 +177,8 @@ def test_six_inbound_and_three_ack_keys_are_declared():
         # (2026-09-27 起网关不再自造 ack). 它是机内相对 key: 我方发的云端
         # ack 用绝对 key xbrain/{rid}/cmd/estop/ack, 两者不是同一条.
         "cmd/task/ack", "cmd/geo/ack", "cmd/mode/ack", "cmd/estop/ack",
+        # p2's in-robot PTZ ack, translated for the cloud (PTZ contract S7).
+        "cmd/ptz/ack",
         "state/fence"])
     # 三条 ack + 八条出站状态面.
     # * state/link 起初以为"main_wiring 里已有发布者", 那是看错了: 那条
@@ -185,6 +189,7 @@ def test_six_inbound_and_three_ack_keys_are_declared():
         "xbrain/gj-001/cmd/estop/ack",
         "xbrain/gj-001/cmd/media/session/ack",
         "xbrain/gj-001/cmd/task/ack",
+        "xbrain/gj-001/cmd/ptz/ack",
         "xbrain/gj-001/data/file/index",
         "xbrain/gj-001/state/audio",
         "xbrain/gj-001/state/geo/manifest",
@@ -205,9 +210,9 @@ def test_subscriber_handles_are_held():
     """
     bridge, _session = _bridge()
 
-    assert bridge.alive() == 10, (
-        "桥只接住了 %d 个订阅句柄, 其余会被 GC 掉(5 云端入站 + 4 机内 ack + "
-        "1 state/fence)" % bridge.alive())
+    assert bridge.alive() == 12, (
+        "桥只接住了 %d 个订阅句柄, 其余会被 GC 掉(6 云端入站 + 5 机内 ack + "
+        "1 state/fence; cmd/ptz 与 cmd/ptz/ack 为 PTZ 契约 v0.2 新增)" % bridge.alive())
 
 
 # --- 一条合法任务走完全程 ---------------------------------------------
@@ -937,8 +942,10 @@ def test_the_cloud_face_does_not_subscribe_a_command_key_p3_owns():
     # cmd/mode/ack 是 B 模式(云端喊话)的答复路: AUDIO_CONTROL 翻成一次
     # cmd/mode 跃迁, p2 在它的 applied 里回 stream_id, 网关取出来放进
     # 云端 ack 的 detail.stream_id(v2.0 S2.5 要求).
+    # cmd/ptz/ack: p2's PTZ answer, translated for the cloud (PTZ contract S7);
+    # the bridge never subscribes the in-robot cmd/ptz COMMAND key.
     assert sorted(relative) == ["cmd/estop/ack", "cmd/geo/ack",
-                                "cmd/mode/ack", "cmd/task/ack",
+                                "cmd/mode/ack", "cmd/ptz/ack", "cmd/task/ack",
                                 "state/fence"], (
         relative)
 

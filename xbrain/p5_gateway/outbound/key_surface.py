@@ -39,6 +39,9 @@ P5_EXPECTED_PUBLISHERS = frozenset({
     "state/audio",
     "cmd/media/session/ack",
     "data/file/index",
+    # Qt PTZ contract v0.2 S2 (99 U98): keyboard control of the head. Ahead
+    # of the v2.0 key list (17 -> 19 at freeze, contract S2).
+    "cmd/ptz/ack",
 })
 
 
@@ -51,6 +54,7 @@ P5_EXPECTED_SUBSCRIBERS = frozenset({
     "cmd/estop",
     "cmd/media/session",
     "cmd/file/ack",
+    "cmd/ptz",            # Qt PTZ contract v0.2 S2 (99 U98)
     # NO audio/broadcast [不在]本集合里.
     # 11 S2.2 逐字规定它的订阅者是"仅 p2_core"(RT-A3: audio/broadcast 只被
     # p2_core 订阅, audio/voice_in 只被 p4_agent 订阅, 两条链路在订阅关系上
