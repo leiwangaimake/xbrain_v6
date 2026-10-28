@@ -119,6 +119,25 @@ class ArbHub:  # owned by p2 main_wiring
         for domain, (source, req_id) in list(holds.items()):  # copy: callers mutate
             self.renew(domain, source, req_id, now_mono_ms)  # queued -> False, harmless
 
+    def handover(self, domain: str, old: Tuple[str, str], new_source: str,  # B <-> D
+                 new_req_id: str, now_mono_ms: int) -> Grant:
+        """Swap the mode's own hold on `domain` from old=(source, req_id) to
+        new_source under ONE lock acquisition (14 S5.5.3 rule 2, self-held).
+
+        B -> D moves the speaker from broadcast_b to alarm_d, D -> B back. Two
+        separate calls would leave the speaker idle for an instant and a TTS
+        thread could take it in between. old is released (if it holds) or
+        cancelled (if still queued) -- both are no-ops on a mismatch -- with
+        reason mode_exit (core.release: mode_switch is not in the closed set
+        until 14 CR-1 lands), then new_source requests the now-idle domain.
+        """
+        with self._lock:  # one atomic swap
+            arb = self._arbs[domain]  # that domain
+            arb.release(old[0], old[1], "mode_exit", now_mono_ms)  # no-op unless it holds
+            arb.cancel(old[0], old[1], now_mono_ms)  # no-op unless it is queued
+            return arb.request(new_source, Request(  # the domain is idle now
+                req_id=new_req_id, mono_ms=now_mono_ms, atomic=False, est_ms=None))
+
     def release(self, domain: str, source: str, req_id: str, reason: str,  # voluntary
                 now_mono_ms: int) -> None:
         """Voluntary release (reason in done | mode_exit | user_cancel | error)."""

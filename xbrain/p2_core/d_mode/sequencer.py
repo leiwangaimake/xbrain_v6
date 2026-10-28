@@ -6,6 +6,16 @@ File: sequencer.py
 Brief: BIZ-P2-16 -- D-mode 3-step orchestration (POST /mode /deter /lights)
 
 Description:
+*** SUPERSEDED 2026-10-28 (99 U99 C2) -- production D mode is
+d_mode/deter_driver.py + runtime/main_wiring.py; nothing imports this module
+outside its own test. Kept, not deleted, because tests/p2_core/d_mode/
+test_sequencer.py still pins it. Why it was not wired: the step list below
+does not match 14 S7.3.2 -- entry 3 there is /lights {strobe: false}
+(GL-8a), not "confirm strobe pattern {mode: 0x07}"; DT-1..DT-7 are the
+seven CONSTRAINT ids of 14 S7.3.2, not step numbers; /deter has no `voice`
+field and no texts[] (payload DeterCommand: on / mode / siren_level /
+tts_reps). The original text follows unchanged.
+
 D-mode entry sequence (14 S7.3.2 DT-1..DT-7):
 
   DT-1: POST /mode  {mode: deter}   -- device switches to deter

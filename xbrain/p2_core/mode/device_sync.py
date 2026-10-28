@@ -192,6 +192,28 @@ class DeviceModeSync:
                         body, status, resp)
         return SyncResult(ok=False, status=status, reason="payload_lights")  # reported, not raised
 
+    def deter(self, body: Dict[str, Any]) -> SyncResult:
+        """POST /deter {on, mode, siren_level, tts_reps} (14 S7.3.2 entry 2).
+
+        payload-service answers 409 when the device is not in `deter` (the
+        /mode deter of entry 1 did not stick) -- unlike /mode, 409 here is a
+        FAILURE: the deterrent is not running. A re-POST with fresh fields
+        restarts the loop (services/payload start_deter), which is how DT-5
+        drops the speech (tts_reps 0) while the siren and red/blue go on.
+        Reported, never raised; the caller decides whether it refuses D.
+        """
+        try:
+            status, resp = self._transport(
+                "POST", self._base + "/deter", dict(body), self._timeout_s)
+        except (OSError, urllib.error.URLError) as exc:  # refused / timed out: no answer
+            _logger.warning("payload POST /deter %s: no response (%s)", body, exc)
+            return SyncResult(ok=False, status=0, reason="service_timeout")  # 14 S2.3 T-PAY-1 reason
+        if 200 <= status < 300:  # deterrent armed / disarmed
+            return SyncResult(ok=True, status=status)  # done
+        _logger.warning("payload POST /deter %s refused: HTTP %d %s",
+                        body, status, resp)
+        return SyncResult(ok=False, status=status, reason="payload_deter")  # 409 = not in deter mode
+
     def current(self) -> Optional[str]:
         """The device mode GET /status reports, or None when unknown."""
         try:

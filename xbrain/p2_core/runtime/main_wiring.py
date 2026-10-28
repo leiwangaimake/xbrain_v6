@@ -532,6 +532,11 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         device_sync = DeviceModeSync(
             str(_mcfg.get("payload_svc.base_url")),
             float(_mcfg.get("payload_svc.rest_timeout_ms")) / 1000.0)
+        # D 模式的设备一半(14 S7.3.2, 99 U99 C2): /deter 起驱离 / 爆闪关 /
+        # DT-5 到点只留警笛 / 设备漂移后补起. d_mode 五个值缺一个就拒绝启动.
+        from xbrain.p2_core.d_mode.deter_driver import DeterDriver, DeterPlan
+        deter_driver = DeterDriver(device_sync, DeterPlan.from_config(
+            lambda k: None if _mcfg.get(k) is _MISSING else _mcfg.get(k)))
 
         # --- B 模式(云端喊话)的收发端 -------------------------------
         # 11 S2.2: audio/broadcast "仅 p2_core" 订阅(RT-A3). 三件东西跟着
@@ -575,22 +580,51 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             return arb_hub.preflight(MODE_SOURCES.get(target, {}),
                                      set(MODE_SOURCES.get(current, {}).values()))
 
-        def _mode_acquire(state) -> None:
+        def _mode_acquire(state) -> list:
             """Take the target mode's domains in switch_order (payload_light
             before speaker, 14 ML-5). A denial here means the preflight was
-            beaten by a concurrent holder -> refuse the switch (ML-3)."""
+            beaten by a concurrent holder -> refuse the switch (ML-3).
+
+            A domain the current mode already holds under ANOTHER source
+            (B -> D: speaker broadcast_b -> alarm_d, 14 S5.5.3 rule 2) is
+            swapped by ArbHub.handover in one lock, never released and
+            re-requested in two steps (a TTS could take the speaker between
+            them). Returns the undo list for _mode_undo: (domain, previous
+            hold or None) for every domain this call changed.
+            """
+            undo = []
             for domain, source in MODE_SOURCES.get(state, {}).items():
                 held = _mode_holds.get(domain)
                 if held is not None and held[0] == source:
                     continue                    # D <-> B keeps mode_driver
                 rid = arb_hub.new_req_id(domain, source)
-                g = arb_hub.request(domain, source, _now_mono_ms(), req_id=rid)
+                if held is not None:            # self-held under the old source
+                    g = arb_hub.handover(domain, held, source, rid, _now_mono_ms())
+                else:
+                    g = arb_hub.request(domain, source, _now_mono_ms(), req_id=rid)
+                undo.append((domain, held))
+                _mode_holds[domain] = (source, rid)   # granted or queued
                 if getattr(g.result, "value", g.result) == "denied":
-                    _mode_release(set(MODE_SOURCES.get(state, {})))
+                    _mode_undo(undo)
                     raise TransitionAborted(E_BUSY, {
                         "reason": "arbiter_denied", "domain": domain,
                         "source": source, "code": g.code})
-                _mode_holds[domain] = (source, rid)   # granted or queued
+            return undo
+
+        def _mode_undo(undo) -> None:
+            """Roll _mode_acquire back (ML-3): a domain that was free is given
+            back, a self-held one is handed back to the old mode's source."""
+            for domain, prev in reversed(undo):
+                cur = _mode_holds.pop(domain, None)
+                if cur is None:
+                    continue
+                if prev is None:
+                    arb_hub.release(domain, cur[0], cur[1], "mode_exit", _now_mono_ms())
+                    arb_hub.cancel(domain, cur[0], cur[1], _now_mono_ms())
+                    continue
+                rid = arb_hub.new_req_id(domain, prev[0])
+                arb_hub.handover(domain, cur, prev[0], rid, _now_mono_ms())
+                _mode_holds[domain] = (prev[0], rid)
 
         def _mode_release(domains) -> None:
             """Give back the mode's holds on `domains` (mode_exit)."""
@@ -673,33 +707,91 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
 
             顺序按 14 S5.7.2 与 ML-5 的 switch_order(device_mode ->
             payload_light -> ptz -> motion -> audio, 音频最后):
-              进 B: POST /mode func2 并等 200(失败整体拒绝) -> 红蓝灯开 +
-                    探照灯爆闪显式关(GL-8a / ML-4) -> 开 /play / 关麦 / 起计时.
-              出 B: 先停收帧与 /play(喇叭先静音, BCT-3) -> POST /mode 回
-                    目标模式 -> 红蓝灯关(目标态就是灭, 14 PAY-DIFF 表).
+              进 B / D: 先拿仲裁域(B <-> D 互切时同域换源 handover), 再 POST
+                    /mode 并等 200; 进 D 还要 POST /deter 起驱离(14 S7.3.2
+                    第 2 步). 这几步任一失败 = 整体拒绝(ML-3): 域交还 / 换回,
+                    设备若已切走就切回原模式, 旧模式一样都还没动.
+              然后收旧: 出 B 停收帧与 /play; 出 D 停 DT-5 计时.
+              去 B / D 以外: /deter off(出 D) -> POST /mode 回目标模式 -> 红蓝灯
+                    关 -> 开麦 -> 交还域. 退出不得被设备挡住, 失败只记日志.
+              最后起新: 进 B 红蓝灯 + 爆闪关 / 开 /play / 关麦 / 起计时;
+                    进 D 关麦(speaker_active, 14 DT-3).
             返回值并进 cmd/mode/ack 的 applied -- 进 B 模式时把新分配的
-            stream_id 带出去(v2.0 S2.5: start 的 ack 必须带它).
+            stream_id 带出去(v2.0 S2.5: start 的 ack 必须带它), 出 B 回显刚
+            结束的那一路.
             """
-            if to_state == ModeState.BROADCAST:
+            bd = (ModeState.BROADCAST, ModeState.ALARM)
+            if to_state in bd:
                 # 仲裁域先拿(14 S5.5.2 第 4~5 步, ML-5 顺序): 灯光域
-                # mode_driver -> 喇叭域 broadcast_b. 正在播的 TTS 会收到抢占
-                # 通知并让出(SpeakerDomain 50 ms 轮询 ack). 被拒即整体拒绝.
-                _mode_acquire(to_state)
-                # 设备层再就位. 抛 TransitionAborted 时音频一样都还没动,
-                # 回滚只需模式机自己退回并交还刚拿的域.
+                # mode_driver -> 喇叭域 broadcast_b / alarm_d. 正在播的 TTS
+                # 会收到抢占通知并让出(SpeakerDomain 50 ms 轮询 ack).
+                undo = _mode_acquire(to_state)
+                device_moved = False
                 try:
-                    _sync_device_mode(from_state, to_state)
+                    if to_device_mode(to_state) != to_device_mode(from_state):
+                        _sync_device_mode(from_state, to_state)
+                        device_moved = True
+                    if to_state == ModeState.ALARM:
+                        _r = deter_driver.enter(_now_mono_ms())
+                        if not _r.ok:
+                            raise TransitionAborted(E_UNHEALTHY, {
+                                "item": "payload", "reason": _r.reason,
+                                "step": "deter", "http_status": _r.status})
                 except TransitionAborted:
-                    _mode_release(set(MODE_SOURCES[to_state]))
+                    _mode_undo(undo)
+                    if device_moved:
+                        # /mode 已切走而 /deter 没起来: 设备切回原模式, 否则
+                        # 它停在一个不发声的 deter 里(对账会把它当成对的).
+                        device_sync.apply(to_device_mode(from_state))
                     raise
             # switch_order 的 motion 一格: 两态行为不同才发(14 S5.5.4: 配置
             # 相同则不下发, 例如 B <-> D 都是 hold).
             beh_changed = _behavior_of(from_state) != _behavior_of(to_state)
+            ended = None
             try:
+                # ---- 收旧 ----
+                if from_state == ModeState.BROADCAST:
+                    # 先停收帧再关连接: 反过来的话, 关连接与最后几帧
+                    # submit 会撞上, 那几帧进了队却永远发不出去.
+                    ended = bcast_sess.stream_id
+                    bcast_sess.end()
+                    bcast_timer.stop()
+                    bcast_sink.end_session()
+                    bcast_since["t"] = None
+                    # accepted 与 sent 必须[分开]报: 判帧收下了 N 帧而
+                    # WS 一帧没发出去(payload 不在线), 与判帧一帧没收下,
+                    # 在只报 sent 的日志上完全一样 -- 而要找的人一个是
+                    # 甲方(流不对), 一个是现场(设备不在).
+                    _logger.info(
+                        "p2 B mode exit, accepted=%d sent=%d ws_err=%s "
+                        "dropped=%s",
+                        bcast_sess.accepted, bcast_sink.sent,
+                        bcast_sink.last_error, bcast_sess.drops)
+                elif from_state == ModeState.ALARM:
+                    # 去 B 时 /mode func2 的拆流已停掉 deter 循环, 再发 off
+                    # 只会收一个 409; 去别处要先 off, 设备切换失败喇叭也得停.
+                    deter_driver.exit(disarm=to_state not in bd)
+                    _logger.info("p2 D mode exit -> %s",
+                                 getattr(to_state, "value", to_state))
+                if from_state in bd and to_state not in bd:
+                    # 喇叭已静音之后再动设备与灯: 设备层回目标模式, 红蓝灯关.
+                    _sync_device_mode(from_state, to_state)
+                    device_sync.set_lights({"redblue": 0})
+                    # 与进入时成对开回来. 不开的话下一次本地对话会以为
+                    # 麦克风坏了 -- 而门是关着的这件事只在 state/audio 的
+                    # gate_reason 里能看出来, 现场很难想到.
+                    speaker.set_gate(True, "idle")
+                if from_state in bd:
+                    # 交还旧模式独有的域. B <-> D 共有的域已在 _mode_acquire
+                    # 里留下(mode_driver)或换源(喇叭), 不在这里放.
+                    _mode_release(set(MODE_SOURCES[from_state])
+                                  - set(MODE_SOURCES.get(to_state, {})))
+                # ---- 起新 ----
                 if to_state == ModeState.BROADCAST:
                     # 灯: 一条 POST 同时开红蓝 / 关探照灯爆闪(VOI-22: 进 B 时
                     # 红蓝双闪 ON; GL-8a: 进 B 后必须发一次 strobe:false;
-                    # ML-4: 紧跟在 /mode 的拆流复位之后). 灯失败不拒绝切换.
+                    # ML-4: 紧跟在 /mode 的拆流复位之后 -- D -> B 时拆流把 D
+                    # 的灯也复位了, 所以这条同样要发). 灯失败不拒绝切换.
                     device_sync.set_lights({"redblue": b_cast_redblue,
                                             "strobe": False})
                     if beh_changed:
@@ -712,58 +804,31 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     # "喇叭在响". 半双工是本项目[唯一]的回声抑制手段 --
                     # AEC 结构上不可能(TTS 在 GZH-2 设备内合成, 上装侧拿不到
                     # 播出波形), 不关麦的话云端喊话会从本机麦克风再上行一遍.
-                    # *** 之前只有 handle_speak(TTS 路径)会关门, 云端广播这条
-                    # 路一次都没碰过麦克风门. 2026-09-04 终测没暴露, 只因为
-                    # 麦克风本来就没出帧(devices.mic=fail).
                     speaker.set_gate(False, "broadcast_active")
                     bcast_timer.start(int(time.monotonic() * 1000))
                     _logger.info("p2 B mode enter, stream_id=%s", sid)
                     return {"stream_id": sid}
-                elif from_state == ModeState.BROADCAST:
-                    # 先停收帧再关连接: 反过来的话, 关连接与最后几帧
-                    # submit 会撞上, 那几帧进了队却永远发不出去.
-                    _ended = bcast_sess.stream_id
-                    bcast_sess.end()
-                    bcast_timer.stop()
-                    bcast_sink.end_session()
-                    bcast_since["t"] = None
-                    # 与进入时成对开回来. 不开的话下一次本地对话会以为
-                    # 麦克风坏了 -- 而门是关着的这件事只在 state/audio 的
-                    # gate_reason 里能看出来, 现场很难想到.
-                    speaker.set_gate(True, "idle")
-                    # accepted 与 sent 必须[分开]报: 判帧收下了 N 帧而
-                    # WS 一帧没发出去(payload 不在线), 与判帧一帧没收下,
-                    # 在只报 sent 的日志上完全一样 -- 而要找的人一个是
-                    # 甲方(流不对), 一个是现场(设备不在).
-                    _logger.info(
-                        "p2 B mode exit, accepted=%d sent=%d ws_err=%s "
-                        "dropped=%s",
-                        bcast_sess.accepted, bcast_sink.sent,
-                        bcast_sink.last_error, bcast_sess.drops)
-                    # 喇叭已静音之后再动设备与灯: 设备层回目标模式, 红蓝灯
-                    # 关(去 D 模式时由 D 的进入动作接管, 这里不碰).
-                    _sync_device_mode(from_state, to_state)
-                    if to_state != ModeState.ALARM:
-                        device_sync.set_lights({"redblue": 0})
-                    # 交还模式持有的域. 去 D 时 mode_driver 保留(D 也要它),
-                    # broadcast_b 交还后由 D 的 alarm_d 接手(C2).
-                    _mode_release(set(MODE_SOURCES[ModeState.BROADCAST])
-                                  - set(MODE_SOURCES.get(to_state, {})))
+                if to_state == ModeState.ALARM:
                     if beh_changed:
-                        _publish_behavior(to_state)   # 喇叭已静音, 再放开运动
-                    # 退出时回显刚结束的那一路: v2.0 S2.5 逐字"后端不得为
-                    # 退出请求分配新 ID". 回 None 会让 Qt 无法确认自己退的
-                    # 是不是刚才那一路.
-                    return {"stream_id": _ended}
+                        _publish_behavior(to_state)   # motion 在 audio 之前
+                    # 14 DT-3: D 期间半双工全程关麦, 域② 由 alarm_d 持有 ->
+                    # gate.reason = speaker_active(11 S8.9.2 闭集). 门控不压
+                    # voice_in, 云端 / 微信语音退出 D 的路径不受影响.
+                    speaker.set_gate(False, "speaker_active")
+                    _logger.info("p2 D mode enter (from %s)",
+                                 getattr(from_state, "value", from_state))
                 elif beh_changed:
-                    # 其余跃迁(进出 D 等)的运动行为. D 模式自己的声光时序
-                    # 属二期 C2, 运动这一格先在这里接上(99 U99).
-                    _publish_behavior(to_state)
+                    _publish_behavior(to_state)   # 喇叭已静音, 再放开运动
             except TransitionAborted:
                 raise
             except Exception as exc:      # noqa: BLE001
-                _logger.error("p2 B mode transition side effect failed: %s",
+                _logger.error("p2 B / D mode transition side effect failed: %s",
                               exc)
+            if ended is not None:
+                # 退出时回显刚结束的那一路: v2.0 S2.5 逐字"后端不得为
+                # 退出请求分配新 ID". 回 None 会让 Qt 无法确认自己退的
+                # 是不是刚才那一路.
+                return {"stream_id": ended}
             return None
 
         # 不设默认值: 事件 id 只要求进程内唯一, 取启动时刻的单调钟作前缀.
@@ -1213,7 +1278,13 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 if now - last_dev_sync >= DEVICE_RECONCILE_S:
                     last_dev_sync = now
                     try:
-                        device_sync.reconcile(to_device_mode(mode_face.state))
+                        _rc = device_sync.reconcile(to_device_mode(mode_face.state))
+                        # D 模式下设备被修回 deter = 驱离循环已随那次漂移
+                        # (payload 重启 / 别人切了模式)的拆流死掉, 只修模式
+                        # 不补 /deter 的话设备停在一个不发声的 deter 里.
+                        if (_rc is not None and _rc.ok
+                                and mode_face.state == ModeState.ALARM):
+                            deter_driver.rearm()
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p2 device mode reconcile failed: %s", exc)
                     # 同一节拍重申运动行为(P1-3, 99 U99). 两种漂移靠它收敛:
@@ -1227,6 +1298,12 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 # 仲裁器(99 U99 C1): 每拍 tick -- 租约到期 / 强制抢占的截止
                 # 只有被 tick 才会发生(core 不读钟). 审计事件发到
                 # event/{sev}/arbitration(11 S7A.7), 10 s 窗口合并在 audit 层.
+                # 14 DT-5: D 进入后 speech_max_repeats x loop_s 到点, 只留
+                # 警笛与红蓝灯, 停喊话(防无人区无限喊话). 被拒则 5 s 后重试.
+                try:
+                    deter_driver.tick(_now_ms)
+                except Exception as exc:      # noqa: BLE001
+                    _logger.error("p2 D DT-5 tick failed: %s", exc)
                 try:
                     # 11 S7A.4: the mode's holds (broadcast_b / alarm_d have
                     # the 1 s speaker lease) are renewed every pass BEFORE the

@@ -117,3 +117,15 @@ def test_lights_is_one_partial_post_and_never_raises():
     assert fake.calls[0][:3] == ("POST", "/lights", {"redblue": 1, "strobe": False})  # one request
     r = s.set_lights({"redblue": 0})  # leaving B
     assert not r.ok and r.reason == "service_timeout"  # reported, not raised
+
+
+def test_deter_409_is_a_failure_unlike_mode():
+    """14 S7.3.2 entry 2: /deter answers 409 when the device is NOT in deter
+    -- the deterrent did not start, so 409 must not read as ok the way it does
+    for /mode (ML-2). MUTATION: accept 409 here -> ok True -> this fails."""
+    s, fake = _sync((200, {"ok": True}), (409, {"detail": "not in deter"}))  # armed, then refused
+    body = {"on": True, "mode": 1, "siren_level": 0.45, "tts_reps": 3}  # the arm body
+    assert s.deter(body).ok  # armed
+    assert fake.calls[0][:3] == ("POST", "/deter", body)  # one POST, body as given
+    r = s.deter(body)  # device left deter meanwhile
+    assert not r.ok and r.reason == "payload_deter" and r.status == 409  # reported, not raised
