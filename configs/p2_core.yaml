@@ -171,9 +171,14 @@ mode:
   # cmd / timeout / safety trigger paths are exempt.
   # Closed set: autonomous | cmd | timeout | safety.
   min_dwell_applies_to: [autonomous]
-  # B-mode auto-exit ceiling (VOI-26). T-BCAST-MAX; pinned 300 s.
-  # 14 S5.6.1 pinned this as a decided value (NOT a null placeholder).
-  b_cast_max_duration_s: 300
+  # B-mode IDLE auto-exit (VOI-26, Party A v2.0 S8): leave B this many seconds
+  # after the LAST ACCEPTED audio frame (or after entry if none ever arrived).
+  # T-BCAST-IDLE (11 S1.6.3, 14 S5.6.1 BCT-*). User ruling 2026-10-28 (99 U97):
+  # there is NO maximum-duration ceiling any more -- the former key
+  # b_cast_max_duration_s (T-BCAST-MAX, counted from entry, never reset by
+  # frames) is retired: it cut two broadcasts that were still being spoken
+  # (.1.26, 2026-10-27). A decided value, NOT a null placeholder.
+  b_cast_idle_timeout_s: 300
   # switch ordering. ASSERTION: this list must be EXACTLY 5 entries in this
   # order. Any reorder or missing entry is E_CONFIG_INVALID.
   switch_order: [device_mode, payload_light, ptz, motion, audio]
