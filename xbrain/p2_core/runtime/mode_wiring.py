@@ -39,9 +39,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, Callable, Dict, FrozenSet, Optional, Tuple
 
-from xbrain.common.errors import E_BUSY, E_INTERNAL, E_SCHEMA
+from xbrain.common.errors import E_BUSY, E_INTERNAL, E_NOT_FOUND, E_SCHEMA
 from xbrain.p2_core.mode.state_machine import (
     ModeState,
     ModeStateMachine,
@@ -56,6 +57,60 @@ _logger = logging.getLogger("xbrain.p2.mode")
 CMD_MODE_TOPIC = "cmd/mode"
 CMD_MODE_ACK_TOPIC = "cmd/mode/ack"
 STATE_MODE_TOPIC = "state/mode"
+
+#: state/mode.exit_reason 的闭集, 逐字取自甲方冻结的 v2.0 S4.3
+#: (11 S4.3 v1.2 同步收录, 99 U97). 闭集外的值必抛(CLAUDE.md 3.5).
+EXIT_REASONS = ("requested", "timeout", "preempted", "fault", "target_lost",
+                "target_left_fence", "manual_cloud", "manual_wecom")
+
+#: ModeCommand.source(11 S7.3 的通道) -> state/mode.source(v2.0 S4.3 的
+#: cloud | local | autonomy | system). 微信算远端人员, 归 cloud; HMI 与本地麦
+#: 是现场, 归 local. 表外(含缺省)一律 system -- 不猜成某个人.
+_SOURCE_TO_V2: Dict[str, str] = {
+    "cloud": "cloud", "wecom": "cloud", "hmi": "local", "voice_local": "local",
+    "auto_track": "autonomy", "bit": "system",
+}
+
+
+class TransitionAborted(Exception):
+    """换态副作用要求[整体拒绝]本次切换(14 S5.7.3 ML-3).
+
+    on_transition 回调在进入新模式的路上失败(例: POST /mode func2 超时)时抛它.
+    ModeFace 接住后把模式机回滚到原态, 回 rejected ack, 不发 state/mode --
+    旧模式毫发无损, 与 14 S5.5.2 第 4 步失败同一处理路径.
+    *** 2026-10-28 之前回调失败只记日志, ack 照样报 accepted, 于是会出现
+    "系统说在喊话 / 喇叭其实不响"的半切状态(ML-3 的违反后果原文).
+    """
+
+    def __init__(self, code: str, detail: Dict[str, Any]) -> None:
+        super().__init__(str(detail.get("reason", code)))
+        self.code = code            # 11 S13 闭集码, 由抛出方选定
+        self.detail = detail        # 并进 ack.detail, 至少含 reason
+
+
+def _wall_now() -> float:
+    """state/mode.entered_ts 用的墙钟, 单独一处便于测试替换."""
+    # WALL-CLOCK-OK(record): v2.0 S4.3 entered_ts 是给人看的进入时刻
+    # (显示与审计), 从不参与年龄或超时判定 -- 那些一律单调钟(CLK-C1).
+    return time.time()
+
+
+def exit_reason_for(cmd: Dict[str, Any]) -> str:
+    """一条[人发的]退出指令对应的 v2.0 exit_reason.
+
+    * 带 stream_id 的 exit_broadcast 只可能来自甲方 AUDIO_CONTROL(v2.0 S2.5
+      的退出协议), 是会话发起方自己收的尾 -> requested.
+    * 不带 stream_id: 云端文本 C04 -> manual_cloud, 微信 -> manual_wecom;
+      HMI W3 强制退出与本地语音都是现场人员 -> requested.
+    """
+    if cmd.get("stream_id"):
+        return "requested"
+    src = cmd.get("source")
+    if src == "cloud":
+        return "manual_cloud"
+    if src == "wecom":
+        return "manual_wecom"
+    return "requested"
 
 #: action -> 目标模式态. 只有会换态的动作在表里.
 #:
@@ -167,10 +222,43 @@ class ModeFace:
         # NO 不留上一路的值: 下一次会话若 ack 丢失, state/mode 会拿着旧 ID
         # 继续发, Qt 就把新会话的帧对到旧会话上了.
         self._stream_id: Optional[str] = None
+        # 刚结束的那一路 B 会话 ID. 只用于退出指令的幂等判定(v2.0 S2.5:
+        # 退出 ack 必须回显原 ID): 会话已因超时退出后, Qt 补发的那条
+        # exit_broadcast 带的正是它, 应答 accepted 而不是"查无此会话".
+        self._last_stream_id: Optional[str] = None
+        # v2.0 S4.3 state/mode 的三个字段(11 S4.3 v1.2, 99 U97). 进程启动即
+        # 处于 IDLE, 进入时刻就是现在, 来源是 system.
+        self._source = "system"
+        self._entered_wall: Optional[float] = _wall_now()
+        self._exit_reason: Optional[str] = None
 
     @property
     def state(self) -> ModeState:
         return self._machine.state
+
+    @property
+    def stream_id(self) -> Optional[str]:
+        """当前 B 会话 ID(非 B 模式为 None), 供 state/audio 与日志使用."""
+        return self._stream_id
+
+    def exit_internal(self, reason: str, *, now_mono_ms: int,
+                      trigger: TriggerKind = TriggerKind.TIMEOUT
+                      ) -> Dict[str, Any]:
+        """P2 自己发起的退出(空闲超时 / 喊话设备故障), 回到 IDLE.
+
+        与人发的 exit_broadcast 走[同一条]换态路径(模式机 + on_transition +
+        state/mode), 只是没有发起方, 也不经 dispatch 的形状校验.
+        *** 不再合成一帧 {"action": "exit_broadcast"} 去喂 handle_frame:
+        那样得到的 exit_reason 只能是"人发的", 云端看不出是超时还是故障
+        (v2.0 S4.3 timeout / fault 两个值就是为这个立的), 而 BCT-4 要求
+        "触发者是超时而非人工"必须可区分.
+        """
+        if reason not in EXIT_REASONS:
+            raise ValueError("exit_reason %r not in v2.0 S4.3 set" % (reason,))
+        return self._transition(
+            target=ModeState.IDLE, trigger=trigger, cmd_id="",
+            cmd={"source": "system"}, verdict_applied=None,
+            exit_reason=reason, now_mono_ms=now_mono_ms)
 
     def handle_frame(self, raw: bytes, *, now_mono_ms: int) -> Dict[str, Any]:
         """跑完一帧 cmd/mode, 返回要发布的 ack 本体.
@@ -203,11 +291,73 @@ class ModeFace:
             # 合法但不换态(速度档位两动作). applied 直接用分派器算出的三字段.
             self._remember_profile(cmd, verdict)
             return mode_ack(cmd_id, "accepted", "OK", {"applied": verdict.applied})
-        # 第二关: 真正换态. dispatch 通过不等于切得动 -- 见模块头注.
+        action = cmd.get("action")
+        if action in ("exit_broadcast", "exit_alarm"):
+            # 退出指令只退[它自己那个]模式. 原实现把两者都映射到 IDLE, 于是
+            # 喊话中收到一条 exit_alarm(例如云端界面上的"解除警戒")也会把
+            # 喊话掐掉 -- 退出 B 的路径在 14 S5.6 里是收窄过的, 不该多一条后门.
+            own = (ModeState.BROADCAST if action == "exit_broadcast"
+                   else ModeState.ALARM)
+            refused = self._check_exit(cmd, cmd_id, own)
+            if refused is not None:
+                return refused
+            if self._machine.state != own:
+                # 已经不在该模式(例: 超时已自动退出, Qt 随后补发 exit).
+                # 幂等应答 accepted, changed=false, 并回显 stream_id
+                # (v2.0 S2.5: accepted/duplicate/rejected 都要回显).
+                cur = self._machine.state.value
+                applied: Dict[str, Any] = {"mode": cur, "from_mode": cur,
+                                           "changed": False}
+                if action == "exit_broadcast" and cmd.get("stream_id"):
+                    applied["stream_id"] = cmd["stream_id"]
+                return mode_ack(cmd_id, "accepted", "OK", {"applied": applied})
+        return self._transition(
+            target=target, trigger=TriggerKind.CMD, cmd_id=cmd_id, cmd=cmd,
+            verdict_applied=verdict.applied,
+            exit_reason=(exit_reason_for(cmd) if action in
+                         ("exit_broadcast", "exit_alarm") else None),
+            now_mono_ms=now_mono_ms)
+
+    def _check_exit(self, cmd: Dict[str, Any], cmd_id: str,
+                    own: ModeState) -> Optional[Dict[str, Any]]:
+        """带 stream_id 的 exit_broadcast 必须指向当前(或刚结束的)那一路.
+
+        v2.0 S2.5 逐字: exit_broadcast 的 stream_id "必须等于要退出的原会话
+        stream_id". *** 2026-10-28 之前谁都不核: p5 的注释写"对不上由 p2 拒",
+        p2 的 _handle_exit_broadcast 不看这个字段 -- 一条晚到的旧会话退出请求
+        会把新开的会话关掉. 对不上 -> E_NOT_FOUND(11 S13.7 "引用的对象不存在"),
+        detail 回显请求的 stream_id.
+        不带 stream_id 的退出(HMI W3 强制退出 / 云端文本 C04 / 微信)不核:
+        它们按定义就是"不管哪一路, 都给我停", 正是 VOI-26 兜底路径的语义.
+        """
+        sid = cmd.get("stream_id")
+        if own != ModeState.BROADCAST or not sid:
+            return None
+        if self._machine.state == ModeState.BROADCAST:
+            if sid == self._stream_id:
+                return None
+            reason = "stream_id_mismatch"
+        elif sid == self._last_stream_id:
+            return None                      # 刚结束的那一路, 幂等放行
+        else:
+            reason = "no_such_session"
+        _logger.warning("p2 exit_broadcast refused: %s (got %s, current %s)",
+                        reason, sid, self._stream_id)
+        return mode_ack(cmd_id, "rejected", E_NOT_FOUND,
+                        {"reason": reason, "stream_id": sid,
+                         "current_stream_id": self._stream_id})
+
+    def _transition(self, *, target: ModeState, trigger: TriggerKind,
+                    cmd_id: str, cmd: Dict[str, Any],
+                    verdict_applied: Optional[Dict[str, Any]],
+                    exit_reason: Optional[str],
+                    now_mono_ms: int) -> Dict[str, Any]:
+        """真正换态: 模式机 -> 副作用回调(可整体拒绝) -> 记账 -> state/mode."""
+        # dispatch 通过不等于切得动 -- 见模块头注.
         blocked, self_held = (self._arb_snapshot() if self._arb_snapshot
                               else (frozenset(), frozenset()))
         result = self._machine.request(
-            TransitionRequest(to_state=target, trigger=TriggerKind.CMD,
+            TransitionRequest(to_state=target, trigger=trigger,
                               cmd_id=cmd_id),
             blocked_domains=blocked, self_held_domains=self_held)
         if not result.accepted:
@@ -236,19 +386,38 @@ class ModeFace:
                  "to_mode": result.to_state.value,
                  "blocked": [{"domain": d} for d in sorted(result.blocked)],
                  "self_held": sorted(result.self_held)})
-        changed = result.from_state != result.to_state
+        # *** 回放(重复 cmd_id)不是换态: 模式机回放的是第一次的结果, 其
+        # from/to 不同, 原实现据此把副作用再跑一遍 -- 甲方重发一次 start,
+        # B 模式的进入动作就再做一次, 分配出第二个 stream_id 而 Qt 手里是第一个.
+        changed = (not result.is_replay
+                   and result.from_state != result.to_state)
         extra: Dict[str, Any] = {}
         if changed and self._on_transition is not None:
-            # NO 不吞异常后继续: 副作用失败时这条 ack 不该报 accepted.
-            # 但也不能让它把 ModeFace 打挂 -- 记下来, 由调用方的回调自己
-            # 决定要不要把状态回滚(本期回调只做起停, 失败即记日志).
             # 回调可以回一个 dict, 并进 applied. B 模式用它把 stream_id
             # 送出去: 分配方是 p2(会话的持有者), 而 v2.0 S2.5 要求 start 的
             # ack 必须带上它 -- 不并进来的话, p5 拿不到, Qt 也就不知道该往
             # 哪个会话推 PCM.
-            _ret = self._on_transition(result.from_state, result.to_state)
+            # *** 回调抛 TransitionAborted = 整体拒绝(14 ML-3): 模式机回滚到
+            # 原态, 回 rejected, 不发 state/mode. 2026-10-28 之前回调失败只记
+            # 日志而 ack 照报 accepted, 即 ML-3 原文说的"半切状态".
+            try:
+                _ret = self._on_transition(result.from_state, result.to_state)
+            except TransitionAborted as ab:
+                self._machine.rollback(result.from_state, cmd_id=cmd_id,
+                                       reason=str(ab.detail.get("reason", "")))
+                _logger.warning("p2 mode %s -> %s aborted: %s %s",
+                                result.from_state.value, result.to_state.value,
+                                ab.code, ab.detail)
+                detail = dict(ab.detail)
+                detail.update({"from_mode": result.from_state.value,
+                               "to_mode": result.to_state.value})
+                return mode_ack(cmd_id, "rejected", ab.code, detail)
             if isinstance(_ret, dict):
                 extra = _ret
+            if result.from_state == ModeState.BROADCAST:
+                self._last_stream_id = self._stream_id
+            self._record_entry(result.from_state, result.to_state, cmd,
+                               exit_reason)
             # *** ack 与 state/mode 要的[不是同一个语义], 不能共用一个值.
             # ack(事件面): 退出时必须[回显]刚结束那一路的 ID --
             #   v2.0 S2.5 逐字"后端不得为退出请求分配新 ID", Qt 靠它确认
@@ -270,14 +439,36 @@ class ModeFace:
                    "changed": changed}
         if extra:
             applied.update(extra)
-        if verdict.applied:
-            applied.update(verdict.applied)
+        if verdict_applied:
+            applied.update(verdict_applied)
+        if (cmd.get("action") == "exit_broadcast" and cmd.get("stream_id")
+                and "stream_id" not in applied):
+            # 退出 ack 回显原 ID(v2.0 S2.5), 回调没给时也补上.
+            applied["stream_id"] = cmd["stream_id"]
         # 重复 cmd_id 回放的是第一次的结果(模式机自己保证), 结果里如实标出来,
         # 免得发起方把一次回放当成第二次生效.
         result_word = "duplicate" if result.is_replay else "accepted"
         if not result.is_replay:
             self._publish_state(now_mono_ms=now_mono_ms)
         return mode_ack(cmd_id, result_word, "OK", {"applied": applied})
+
+    def _record_entry(self, from_state: ModeState, to_state: ModeState,
+                      cmd: Dict[str, Any], exit_reason: Optional[str]) -> None:
+        """换态成功后记 v2.0 S4.3 的 source / entered_ts / exit_reason.
+
+        * 进入 B / D: exit_reason 清为 None(当前模式还没退出).
+        * 从 B / D 退出: exit_reason 记退出原因, 一直保留到下一次进入 B / D --
+          云端在 normal 态下读到的是"上一次喊话 / 报警是怎么结束的".
+        * DIALOG 方言之间的切换不动 exit_reason(v2.0 都是 normal).
+        """
+        self._source = _SOURCE_TO_V2.get(str(cmd.get("source")), "system")
+        self._entered_wall = _wall_now()
+        if to_state in (ModeState.BROADCAST, ModeState.ALARM):
+            self._exit_reason = None
+        elif from_state in (ModeState.BROADCAST, ModeState.ALARM):
+            # 进 B / D 以外的态而 exit_reason 未给 = 被别的模式指令顶掉
+            # (例: B 中收到 set_voice_mode dialog) -> preempted.
+            self._exit_reason = exit_reason or "preempted"
 
     def _remember_profile(self, cmd: Dict[str, Any],
                           verdict: DispatchResult) -> None:
@@ -316,9 +507,16 @@ class ModeFace:
         # v2.0 S4.3 要求 state/mode 在 broadcast 时带它(Qt 靠它把 state/audio
         # 的帧对上会话). 只走 cmd/mode/ack 的话, 消费方错过那一条 ack 就再也
         # 拿不到 -- 而 ack 是[事件], 掉一条就没了; 状态面是可重复读的.
+        # source / entered_ts / exit_reason: v2.0 S4.3 的三个必填字段
+        # (11 S4.3 v1.2 收录, 99 U97). 2026-10-28 之前 p5 读 mode_exit_reason
+        # 而全系统没有人写, 云端的 exit_reason 恒为 null -- 人工退出 / 超时 / 
+        # 被抢占在 Qt 上看起来一模一样.
         body = {"schema": "state_mode_v1",
                 "voice_mode": self._machine.state.value,
                 "stream_id": self._stream_id,
+                "source": self._source,
+                "entered_ts": self._entered_wall,
+                "exit_reason": self._exit_reason,
                 "mono_ms": now_mono_ms}
         self._publish(STATE_MODE_TOPIC,
                       json.dumps(body, ensure_ascii=False).encode("utf-8"))

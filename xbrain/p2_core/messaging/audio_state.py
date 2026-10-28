@@ -151,6 +151,7 @@ def build_audio_state(*, speaker_view: Dict[str, Any],
                       mic_frames_dropped_gate: Optional[int],
                       broadcast_holder: Optional[str],
                       broadcast_since_mono: Optional[float],
+                      broadcast_last_frame_age_ms: Optional[int],
                       payload_audio_ok: Optional[bool],
                       voice_mode: Optional[str],
                       ts_mono: float) -> Dict[str, Any]:
@@ -202,6 +203,12 @@ def build_audio_state(*, speaker_view: Dict[str, Any],
         # 单调钟之差, 单位 ms(CLK-C1: ts_mono 由调用方传入, 本函数不读钟,
         # 无设备单测才能喂一个固定的 now).
         speaker["elapsed_ms"] = int(max(0.0, ts_mono - _since) * 1000.0)
+    if broadcast_holder is not None and broadcast_last_frame_age_ms is not None:
+        # 最近一帧被放行的云端 PCM 距今多久(11 S8.10 v1.2, v2.0 S4.4
+        # last_frame_age_ms). 只在广播中且收到过帧时出现: 还没收到第一帧时
+        # 写 0 会冒充"刚收到", 写一个大数又会冒充"断流" -- 缺键是唯一诚实的.
+        # 2026-10-28 之前此键全系统无人写, p5 恒发 null, 云端看不出流断没断.
+        speaker["last_frame_age_ms"] = int(broadcast_last_frame_age_ms)
 
     mic_present = mic_muted is not None
     mic: Dict[str, Any] = {

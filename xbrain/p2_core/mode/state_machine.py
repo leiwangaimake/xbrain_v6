@@ -177,8 +177,20 @@ class ModeStateMachine:
             self._cmd_history[req.cmd_id] = result
         return result
 
-    def rollback(self, from_state: ModeState) -> None:
+    def rollback(self, from_state: ModeState, *, cmd_id: str = "",
+                 reason: str = "side_effect_failed") -> None:
         """Set state back after a partial commit failure. Called by
         BIZ-P2-12 mapper when an acquire in switch_order failed
-        after previous ones succeeded."""
+        after previous ones succeeded (14 ML-3: the old mode stays intact).
+
+        The idempotency history is rewritten too: the committed result
+        recorded for cmd_id would otherwise be REPLAYED as a success when the
+        initiator resends the same cmd_id -- an "accepted" for a switch that
+        was rolled back is exactly the half-switched state ML-3 forbids.
+        """
+        failed_to = self._state
         self._state = from_state
+        if cmd_id:
+            self._cmd_history[cmd_id] = TransitionResult(
+                accepted=False, from_state=from_state, to_state=failed_to,
+                reason=reason or "side_effect_failed")

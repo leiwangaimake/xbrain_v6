@@ -81,6 +81,10 @@ class BroadcastSession:
     drops: Dict[str, int] = field(
         default_factory=lambda: {r: 0 for r in DROP_REASONS})
     accepted: int = 0
+    # 最近一帧[通过全部判据]的帧的到达时刻(单调毫秒). 由 Zenoh 回调线程在
+    # accept_chunk 放行后写入, 主循环读它算空闲超时(T-BCAST-IDLE, 99 U97).
+    # 只记放行的帧: 一串 wrong_stream / bad_codec 不算"有人在说话".
+    last_frame_mono_ms: Optional[int] = None
 
     def begin(self, stream_id: str) -> None:
         """域2 授予 broadcast_b. 新 stream_id = 新会话.
@@ -93,6 +97,12 @@ class BroadcastSession:
         self.active = True
         self.stream_id = stream_id
         self.last_seq = 0
+        # 计数按[会话]清零. 原实现从进程启动累计, 退出日志里的
+        # accepted / dropped 是几次会话的总和(2026-10-27 实测: 第三次会话
+        # 退出时报 accepted=29368, 其中只有 2110 属于本次), 排障时会看错.
+        self.accepted = 0
+        self.drops = {r: 0 for r in DROP_REASONS}
+        self.last_frame_mono_ms = None
 
     def end(self) -> None:
         """域2 退出 / B 模式退出. 之后在飞的帧一律丢(G-3)."""

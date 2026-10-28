@@ -45,6 +45,7 @@ def _build(**over):
     kw = dict(speaker_view=_view(), mic_muted=False, mic_streaming=True,
               mic_device_name="hw:0,0", mic_frames_dropped_gate=0,
               broadcast_holder=None, broadcast_since_mono=None,
+              broadcast_last_frame_age_ms=None,
               payload_audio_ok=True, voice_mode=None, ts_mono=1000.0)
     kw.update(over)
     return build_audio_state(**kw)
@@ -302,3 +303,25 @@ def test_without_a_broadcast_the_tts_start_still_wins():
                  broadcast_holder=None, broadcast_since_mono=None,
                  ts_mono=1000.0)
     assert out["speaker"]["since_mono"] == 997.0
+
+
+def test_broadcast_reports_the_last_frame_age():
+    """v2.0 S4.4 last_frame_age_ms (11 S8.10 v1.2, 99 U97): during a broadcast
+    with frames, speaker.last_frame_age_ms carries p2's age of the last
+    ACCEPTED frame. Before 2026-10-28 nobody wrote it and the cloud always saw
+    null -- it could not tell a live stream from a dead one.
+    MUTATION: drop the key -> this fails."""
+    out = _build(broadcast_holder="broadcast_b", broadcast_since_mono=990.0,
+                 broadcast_last_frame_age_ms=40)
+    assert out["speaker"]["last_frame_age_ms"] == 40
+
+
+def test_last_frame_age_is_absent_without_a_frame_or_a_broadcast():
+    """No frame yet, or no broadcast at all: the key is ABSENT, never 0 (0
+    would read as "just received") and never a big number (that would read as
+    "stream dead"). MUTATION: default it to 0 -> this fails."""
+    out = _build(broadcast_holder="broadcast_b", broadcast_since_mono=990.0,
+                 broadcast_last_frame_age_ms=None)
+    assert "last_frame_age_ms" not in out["speaker"]
+    out = _build(broadcast_holder=None, broadcast_last_frame_age_ms=40)
+    assert "last_frame_age_ms" not in out["speaker"]

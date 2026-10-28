@@ -73,3 +73,36 @@ def test_end_session_without_start_is_a_noop():
     s = _sink()
     s.end_session()          # 不抛即可
     assert s.sent == 0
+
+
+def test_a_refused_play_session_reads_as_failed_and_resets_on_restart(monkeypatch):
+    """*** /play 被拒(2026-10-27 的 HTTP 403)后 failed 必须为真, 主循环据此以
+    exit_reason=fault 退出 B 模式, 而不是一直报"喊话中". 再开一路时错误与
+    计数清零 -- 原实现跨会话保留 last_error, 成功的会话退出日志仍挂着 403.
+
+    MUTATION: failed 恒 False -> 第一条断言红; start_session 不清 last_error ->
+    最后一条断言红.
+    """
+    import threading
+    from xbrain.p2_core.audio import broadcast_sink as bs
+
+    gate = threading.Event()
+
+    def _refuse(*_a, **_k):
+        gate.wait(2.0)                       # 第二路: 等测试先读完清零后的值
+        raise ConnectionRefusedError("server rejected WebSocket connection: HTTP 403")
+
+    monkeypatch.setattr(bs, "connect", _refuse)
+    sink = bs.BroadcastPlaySink("http://127.0.0.1:1")
+    gate.set()
+    sink.start_session()
+    sink._thread.join(2.0)
+    assert sink.failed is True
+    assert "403" in sink.last_error
+    gate.clear()
+    sink.start_session()                     # 新一路: 线程已结束, 允许重开
+    assert sink.last_error is None and sink.sent == 0
+    assert sink.failed is False              # 新线程还在连
+    gate.set()
+    sink._thread.join(2.0)
+    sink.end_session()

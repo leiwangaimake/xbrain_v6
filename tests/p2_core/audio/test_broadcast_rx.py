@@ -177,3 +177,21 @@ def test_seq_must_be_a_real_int_not_a_bool():
     assert accept_chunk(s, _chunk(chunk_seq=True))[1] == "malformed"
     assert accept_chunk(s, _chunk(chunk_seq=0))[1] == "malformed"
     assert accept_chunk(s, _chunk(chunk_seq="3"))[1] == "malformed"
+
+
+def test_counters_restart_with_each_session():
+    """*** 计数按会话清零(2026-10-28). 原实现从进程启动累计, 2026-10-27 第三次
+    会话退出时报 accepted=29368, 其中只有 2110 属于本次 -- 排障时会看错.
+    last_frame_mono_ms 同理: 上一路的末帧时刻不能缩短这一路的空闲预算.
+
+    MUTATION: begin() 不清 accepted / drops / last_frame_mono_ms -> 这里红.
+    """
+    s = _sess()
+    accept_chunk(s, _chunk(chunk_seq=1))
+    accept_chunk(s, _chunk(stream_id="audio-gj001-0009"))   # wrong_stream
+    s.last_frame_mono_ms = 123
+    s.end()
+    s.begin("audio-gj001-0002")
+    assert s.accepted == 0
+    assert all(v == 0 for v in s.drops.values())
+    assert s.last_frame_mono_ms is None

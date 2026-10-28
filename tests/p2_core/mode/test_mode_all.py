@@ -135,31 +135,60 @@ def test_switch_order_matches_documented_five():
     ]
 
 
-# --- BIZ-P2-13: B-mode timer ---
+# --- BIZ-P2-13: B-mode IDLE timer (T-BCAST-IDLE, 99 U97) ---
+# User ruling 2026-10-28: the auto-exit counts from the LAST ACCEPTED audio
+# frame (Party A v2.0 S8 / 00 VOI-26), not from entry; there is no ceiling.
+# ~~T-BCAST-MAX: counted from entry, never reset by frames~~ -- retired.
 
-def test_b_mode_timer_start_and_expire():
-    t = BModeTimer(max_duration_s=300.0)
+def test_b_mode_timer_idle_from_entry_without_frames():
+    """No frame ever arrived: idle counts from entry (an operator who opens B
+    and never speaks is idle too). MUTATION: count only from a frame -> never
+    expires without frames -> this fails."""
+    t = BModeTimer(idle_timeout_s=300.0)
     t.start(now_mono_ms=0)
-    assert not t.expired(now_mono_ms=100_000)
-    assert not t.expired(now_mono_ms=299_999)
-    assert t.expired(now_mono_ms=300_001)
+    assert not t.expired(now_mono_ms=299_999, last_frame_mono_ms=None)
+    assert t.expired(now_mono_ms=300_000, last_frame_mono_ms=None)
+
+
+def test_b_mode_timer_frames_keep_it_alive():
+    """The core of the ruling: a broadcast still being spoken is NOT cut.
+    Frames at 290 s and 590 s -> still alive at 600 s, 10 min after entry.
+    MUTATION: ignore last_frame_mono_ms (the retired max-duration rule) ->
+    expired at 300 s -> this fails."""
+    t = BModeTimer(idle_timeout_s=300.0)
+    t.start(now_mono_ms=0)
+    assert not t.expired(now_mono_ms=320_000, last_frame_mono_ms=290_000)
+    assert not t.expired(now_mono_ms=600_000, last_frame_mono_ms=590_000)
+    # ... and expires 300 s after the last frame.
+    assert t.expired(now_mono_ms=890_000, last_frame_mono_ms=590_000)
+    assert t.idle_ms(now_mono_ms=890_000, last_frame_mono_ms=590_000) == 300_000
+
+
+def test_b_mode_timer_stale_frame_from_previous_session_ignored():
+    """A frame time older than this entry must not shorten the budget.
+    MUTATION: drop the max(entry, frame) -> expires at entry+1 s -> fails."""
+    t = BModeTimer(idle_timeout_s=300.0)
+    t.start(now_mono_ms=1_000_000)
+    assert not t.expired(now_mono_ms=1_001_000, last_frame_mono_ms=5)
 
 
 def test_b_mode_timer_not_running_never_expires():
-    t = BModeTimer(max_duration_s=300.0)
-    assert not t.expired(now_mono_ms=999_999_999)
+    t = BModeTimer(idle_timeout_s=300.0)
+    assert not t.running
+    assert not t.expired(now_mono_ms=999_999_999, last_frame_mono_ms=None)
 
 
 def test_b_mode_timer_no_reset_method():
-    """BCT-2: no reset() method. To restart, must stop() then start().
-    (Verifies by checking no reset attribute exists.)"""
-    t = BModeTimer(max_duration_s=1.0)
+    """BCT-2: no reset() method -- only an ACCEPTED frame moves the idle
+    reference, never a heartbeat or a repeated start."""
+    t = BModeTimer(idle_timeout_s=1.0)
     assert not hasattr(t, "reset"), \
         "BModeTimer must NOT expose reset() -- BCT-2 forbids"
 
 
 def test_b_mode_timer_stop_clears():
-    t = BModeTimer(max_duration_s=1.0)
+    t = BModeTimer(idle_timeout_s=1.0)
     t.start(now_mono_ms=0)
     t.stop()
-    assert not t.expired(now_mono_ms=999_999)
+    assert not t.running
+    assert not t.expired(now_mono_ms=999_999, last_frame_mono_ms=None)

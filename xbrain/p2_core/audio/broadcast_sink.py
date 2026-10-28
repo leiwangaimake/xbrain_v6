@@ -92,9 +92,27 @@ class BroadcastPlaySink:
                 return
             self._stop.clear()
             self._drain()
+            # 计数与错误按[会话]清零. 原实现跨会话保留 last_error, 一次成功
+            # 的会话退出时日志仍挂着上一次的 "HTTP 403"(2026-10-27 实测),
+            # 看起来像这次也失败了.
+            self.sent = 0
+            self.dropped = 0
+            self.last_error = None
             self._thread = threading.Thread(
                 target=self._run, name="p2.broadcast_play", daemon=True)
             self._thread.start()
+
+    @property
+    def failed(self) -> bool:
+        """会话已开 / 发送线程却已带着错误结束(连不上 /play 或中途断开).
+
+        主循环据此以 exit_reason=fault 退出 B 模式(v2.0 S4.3). 不退的话,
+        状态面一直报"喊话中"而喇叭再也不会响, 云端看不出任何异常 --
+        2026-10-27 两次 403 就是这样各挂了 5 分钟.
+        """
+        t = self._thread
+        return (t is not None and not t.is_alive()
+                and self.last_error is not None)
 
     def end_session(self, timeout_s: float = 2.0) -> None:
         """停止并[干净地]关闭连接, 等发送线程收尾.

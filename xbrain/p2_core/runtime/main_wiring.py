@@ -57,7 +57,7 @@ from xbrain.p2_core.health.factor import (
 )
 from xbrain.p2_core.messaging.audio_state import audio_publish_due, build_audio_state
 from xbrain.p2_core.mode.b_mode_timer import BModeTimer
-from xbrain.p2_core.mode.state_machine import ModeState
+from xbrain.p2_core.mode.state_machine import ModeState, TriggerKind
 from xbrain.p2_core.runtime.mic_capture import (
     MicCaptureConfig,
     spawn_mic_pipeline,
@@ -85,6 +85,10 @@ STATE_AUDIO_TOPIC = "state/audio"    # 11 S2.2.2, 内部总线裸键(rid 前缀�
 # *** 两者不是二选一 -- 只做 1 Hz 会让"喇叭响了"这个瞬态被采样漏掉,
 #     只做变更即报会让消费方分不清"没变"与"p2 死了".
 AUDIO_STATE_PERIOD_S = 1.0
+#: 设备层模式对账周期(14 S5.7.1 MM-1). 一次对账 = 一次 GET /status(上限 T-PAY-1
+#: 300 ms), 只在设备模式不对时再加一次 POST /mode. 5 s 是"payload-service 重启
+#: 后多久能重新收喊话"的上界, 不是安全参数: 取更小只多一些本机回环 HTTP.
+DEVICE_RECONCILE_S = 5.0
 
 HEALTH_PUBLISH_PERIOD_S = 1.0            # 11 S2.2 / 14 S2.3 P-2: 1 Hz stable
 STATE_POSE_TOPIC = "state/pose"          # -> rtk + heading (11 S3.2 / S3.3)
@@ -450,27 +454,54 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # xbrain/unknown/audio/broadcast -- 一条永远收不到帧的 key, 现象与
         # "云端没发"不可区分. 未设时下面整段跳过并记一条明确日志.
         _bcast_rid = os.environ.get("XBRAIN_ROBOT_ID")
-        # T-BCAST-MAX(11 S1.5, 属 p2_core). 14 S11 把它钉在
-        # mode.b_cast_max_duration_s, 是[已定值]不是 null 占位.
         # load_resolved 读的是解析产物 /run/xbrain/resolved/(10 S5.4.1),
         # 不是 configs/ 源 -- 引用轴在冻结线一次性展开.
         # NO 不能直接写 load_resolved: 本函数末尾另有一处
         # `from ... import load_resolved`, 于是这个名字在[整个函数]里都是
         # 局部的, 在那行之前用它是 UnboundLocalError -- 而单测跑不到这个
         # 接线函数, 只有真起进程才会暴露(2026-09-03 实测到).
+        from xbrain.common.config.resolved import MISSING as _MISSING
         from xbrain.common.config.resolved import load_resolved as _load_resolved
-        b_cast_max_duration_s = float(
-            _load_resolved("p2_core").get("mode.b_cast_max_duration_s"))
+        from xbrain.common.errors import E_UNHEALTHY
+        from xbrain.p2_core.mode.device_map import to_device_mode
+        from xbrain.p2_core.mode.device_sync import DeviceModeSync
+        from xbrain.p2_core.runtime.mode_wiring import TransitionAborted
+        _mcfg = _load_resolved("p2_core")
+        # 喊话这一路要的四个值, 缺一个就[拒绝启动]并点名键路径 -- 不在代码里
+        # 兜数(CLAUDE.md 3.6: 产物缺键的正确反应是报错退出, 不是填一个).
+        #   mode.b_cast_idle_timeout_s  T-BCAST-IDLE(11 S1.6.3, 99 U97):
+        #       最后一帧有效音频之后多久自动退出 B. 取代 T-BCAST-MAX.
+        #   payload_svc.base_url / rest_timeout_ms  T-PAY-1(14 S2.3 P-3)
+        #   arbiter.domains.payload_light.deter_redblue_mode  B 模式红蓝灯
+        #       的模式号, 14 S4.3 GL 表 B_CAST 行逐字"模式号同上"(= D 模式).
+        _bkeys = ("mode.b_cast_idle_timeout_s", "payload_svc.base_url",
+                  "payload_svc.rest_timeout_ms",
+                  "arbiter.domains.payload_light.deter_redblue_mode")
+        _bbad = [k for k in _bkeys if _mcfg.get(k) is _MISSING
+                 or _mcfg.get(k) is None]
+        if _bbad:
+            raise ValueError("p2_core config (14 S5.6 / S5.7): missing or "
+                             "unassigned: %s (re-run the freeze line)"
+                             % ", ".join(_bbad))
+        b_cast_idle_timeout_s = float(_mcfg.get("mode.b_cast_idle_timeout_s"))
+        b_cast_redblue = int(_mcfg.get(
+            "arbiter.domains.payload_light.deter_redblue_mode"))
+        # 设备层模式同步(14 S5.7, BIZ-P2-12). 2026-10-28 之前 device_map 零调用,
+        # payload-service 一直停在开机的 idle, 而 idle 不收 /play --
+        # 2026-10-27 两次云端喊话因此 403, 判帧收下 4 万帧 / 喇叭 0 帧.
+        device_sync = DeviceModeSync(
+            str(_mcfg.get("payload_svc.base_url")),
+            float(_mcfg.get("payload_svc.rest_timeout_ms")) / 1000.0)
 
         # --- B 模式(云端喊话)的收发端 -------------------------------
         # 11 S2.2: audio/broadcast "仅 p2_core" 订阅(RT-A3). 三件东西跟着
         # IDLE <-> BROADCAST 的跃迁起停:
         #   bcast_sess  收帧判据(stream_id / seq / 格式)
         #   bcast_sink  PCM -> payload WS /play
-        #   bcast_timer T-BCAST-MAX 强制收声(11 S1.5 T-BCAST-MAX, 属 p2_core)
+        #   bcast_timer T-BCAST-IDLE 空闲超时(11 S1.6.3, 属 p2_core)
         bcast_sess = BroadcastSession()
         bcast_sink = BroadcastPlaySink(payload_cfg.payload_base_url)
-        bcast_timer = BModeTimer(max_duration_s=b_cast_max_duration_s)
+        bcast_timer = BModeTimer(idle_timeout_s=b_cast_idle_timeout_s)
         # stream_id 由[本进程]分配, 不是 p5.
         # v2.0 S2.5 只要求"后端在 start 的 ack 里分配", 没规定是哪个进程.
         # 放这里的理由: 会话的实际持有者是 p2(收帧判据与 WS 连接都在这),
@@ -488,14 +519,52 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             return "audio-%s-%04d" % (
                 (_bcast_rid or "unknown").replace("-", ""), bcast_seq["n"])
 
+        def _sync_device_mode(from_state, to_state) -> None:
+            """14 S5.7.2 第 3~4 步: POST /mode 并等 200, 再接管音频(ML-1).
+
+            只有两态的设备层模式不同才发(14 S5.7.1 推论 1: idle/A/C/E 互切
+            同为 func1, 不碰设备层). 进入方向失败 -> TransitionAborted, 由
+            ModeFace 回滚并回 rejected(ML-3, E_UNHEALTHY, 14 S2.3 T-PAY-1
+            行的 reason). 退出方向失败只记日志 -- 退出不得被设备挡住(喇叭
+            必须停), 设备停在旧模式的那一段由心跳里的 reconcile 修回.
+            """
+            want = to_device_mode(to_state)
+            if want == to_device_mode(from_state):
+                return
+            res = device_sync.apply(want)
+            if res.ok:
+                return
+            entering = to_state in (ModeState.BROADCAST, ModeState.ALARM)
+            if entering:
+                raise TransitionAborted(E_UNHEALTHY, {
+                    "item": "payload", "reason": res.reason,
+                    "device_mode": want, "http_status": res.status})
+            _logger.error("p2 device mode -> %s failed on exit (%s, HTTP %d);"
+                          " reconcile will retry", want, res.reason, res.status)
+
         def _on_mode_transition(from_state, to_state):
             """换态副作用. 只在真的换了态时被调(见 ModeFace).
 
+            顺序按 14 S5.7.2 与 ML-5 的 switch_order(device_mode ->
+            payload_light -> ptz -> motion -> audio, 音频最后):
+              进 B: POST /mode func2 并等 200(失败整体拒绝) -> 红蓝灯开 +
+                    探照灯爆闪显式关(GL-8a / ML-4) -> 开 /play / 关麦 / 起计时.
+              出 B: 先停收帧与 /play(喇叭先静音, BCT-3) -> POST /mode 回
+                    目标模式 -> 红蓝灯关(目标态就是灭, 14 PAY-DIFF 表).
             返回值并进 cmd/mode/ack 的 applied -- 进 B 模式时把新分配的
             stream_id 带出去(v2.0 S2.5: start 的 ack 必须带它).
             """
+            if to_state == ModeState.BROADCAST:
+                # 设备层先就位. 抛 TransitionAborted 时音频一样都还没动,
+                # 回滚只需模式机自己退回 -- 所以设备同步必须排在最前.
+                _sync_device_mode(from_state, to_state)
             try:
                 if to_state == ModeState.BROADCAST:
+                    # 灯: 一条 POST 同时开红蓝 / 关探照灯爆闪(VOI-22: 进 B 时
+                    # 红蓝双闪 ON; GL-8a: 进 B 后必须发一次 strobe:false;
+                    # ML-4: 紧跟在 /mode 的拆流复位之后). 灯失败不拒绝切换.
+                    device_sync.set_lights({"redblue": b_cast_redblue,
+                                            "strobe": False})
                     sid = _alloc_stream_id()
                     bcast_sess.begin(sid)
                     bcast_since["t"] = time.monotonic()
@@ -532,14 +601,69 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         "dropped=%s",
                         bcast_sess.accepted, bcast_sink.sent,
                         bcast_sink.last_error, bcast_sess.drops)
+                    # 喇叭已静音之后再动设备与灯: 设备层回目标模式, 红蓝灯
+                    # 关(去 D 模式时由 D 的进入动作接管, 这里不碰).
+                    _sync_device_mode(from_state, to_state)
+                    if to_state != ModeState.ALARM:
+                        device_sync.set_lights({"redblue": 0})
                     # 退出时回显刚结束的那一路: v2.0 S2.5 逐字"后端不得为
                     # 退出请求分配新 ID". 回 None 会让 Qt 无法确认自己退的
                     # 是不是刚才那一路.
                     return {"stream_id": _ended}
+            except TransitionAborted:
+                raise
             except Exception as exc:      # noqa: BLE001
                 _logger.error("p2 B mode transition side effect failed: %s",
                               exc)
             return None
+
+        # 不设默认值: 事件 id 只要求进程内唯一, 取启动时刻的单调钟作前缀.
+        _bcast_evt = {"boot": "%x" % int(time.monotonic() * 1000), "n": 0}
+
+        def _emit_bcast_event(title: str, detail: dict) -> None:
+            """event/warn/system(14 BCT-4): 超时与故障退出不得静默."""
+            _bcast_evt["n"] += 1
+            gen.put("event/warn/system", json.dumps({
+                "eid": "bcast-%s-%d" % (_bcast_evt["boot"], _bcast_evt["n"]),
+                "title": title, "detail": detail, "src": "p2_core",
+                # WALL-CLOCK-OK(record): 事件墙钟戳(11 S6.2), 只用于显示与审计.
+                "ts": time.time(),
+            }, ensure_ascii=False).encode("utf-8"))
+
+        def _bcast_auto_exit(reason: str, now_s: float) -> None:
+            """P2 自己结束 B 模式: 空闲超时(timeout) 或 /play 断开(fault).
+
+            走模式机(ModeFace.exit_internal), 不直接调收尾: 退出必须让
+            state/mode 跟着变(含 exit_reason), 否则 HMI 上还显示"喊话中"而
+            喇叭已经停了. BCT-4: 同时发一条 event/warn/system, detail 带本次
+            持续秒数 / 空闲秒数与触发者 -- 现场据此分辨"网断了"还是"没人说话了".
+            """
+            now_ms = int(now_s * 1000)
+            detail = {
+                "stream_id": mode_face.stream_id,
+                "trigger": reason,
+                "duration_s": round(bcast_timer.elapsed_ms(now_ms) / 1000.0, 1),
+                "idle_s": round(bcast_timer.idle_ms(
+                    now_ms, bcast_sess.last_frame_mono_ms) / 1000.0, 1),
+                "accepted": bcast_sess.accepted, "sent": bcast_sink.sent,
+                "error": bcast_sink.last_error,
+            }
+            _logger.warning("p2 B mode auto-exit (%s): %s", reason, detail)
+            _emit_bcast_event("broadcast_" + reason, detail)
+            try:
+                mode_face.exit_internal(
+                    reason, now_mono_ms=now_ms,
+                    trigger=(TriggerKind.TIMEOUT if reason == "timeout"
+                             else TriggerKind.SAFETY))
+            except Exception as exc:      # noqa: BLE001
+                _logger.error("p2 B mode auto-exit failed: %s", exc)
+                # 模式机没退成也要把声音停掉 -- 宁可状态与实际短暂不一致,
+                # 也不能让喇叭继续响(BCT-3 的判据是声音, 不是状态字).
+                bcast_sess.end()
+                bcast_timer.stop()
+                bcast_sink.end_session()
+                bcast_since["t"] = None
+                speaker.set_gate(True, "idle")
 
         mode_face = ModeFace(publish=_publish_mode_state,
                              on_transition=_on_mode_transition)
@@ -556,6 +680,9 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             body = env.get("data") if isinstance(env, dict) else None
             pcm, _reason = accept_chunk(bcast_sess, body)
             if pcm is not None:
+                # 空闲超时的参照点(T-BCAST-IDLE, 99 U97): 只记放行的帧.
+                # 一次 int 赋值, 主循环读 -- CPython 下原子, 不需要锁.
+                bcast_sess.last_frame_mono_ms = int(time.monotonic() * 1000)
                 bcast_sink.submit(pcm)
 
         if _bcast_rid:
@@ -793,6 +920,9 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
             last_audio = 0.0         # 上次[实际发出]的时刻, 非上次求值
             last_audio_body = None   # 变更即报: 与上一条比对(去掉 ts_mono)
             last_payload_audio = None   # 心跳块缓存的 GZH-2 音频链路连通性
+            # 设备层对账的上次时刻. 取负无穷: 进入循环第一拍就对一次账
+            # (MM-1: 启动后设备应挂 func1, 而它开机在 idle).
+            last_dev_sync = float("-inf")
             while not stop_flag.get("stop"):
                 now = time.monotonic()
                 # Drain cmd/mode on the MAIN thread (see the subscriber above
@@ -905,33 +1035,30 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p2 health publish failed: %s", exc)
                     last_health = now
-                # T-BCAST-MAX(11 S1.5): 到时强制收声并退出 B 模式.
-                # *** 立本条的理由(契约逐字): 甲方 AUDIO_CONTROL 只有
-                # start/stop, 没有"还在说"的心跳 -- 云端崩了或网断了之后,
-                # 喇叭会一直响下去, 现场没人能从机器人这边关掉.
-                # *** NO 不做 reset/续期(BCT-2): 心跳续期会让一次卡死的
-                # 广播永远跑下去, 正好绕开本条存在的理由.
-                if bcast_timer.expired(int(now * 1000)):
-                    _logger.warning(
-                        "p2 B mode auto-exit: T-BCAST-MAX %.0fs reached",
-                        b_cast_max_duration_s)
-                    # 走模式机而不是直接调收尾: 退出必须让 state/mode 跟着
-                    # 变, 否则 HMI 上还显示"喊话中"而喇叭已经停了.
+                # T-BCAST-IDLE(11 S1.6.3, 99 U97): 最后一帧有效音频之后
+                # b_cast_idle_timeout_s 秒自动退出 B 模式(v2.0 S8 / VOI-26).
+                # ~~T-BCAST-MAX: 从进入起算 / 音频帧不重置的最长时长~~ --
+                # 2026-10-28 用户裁决取消: 它在 2026-10-27 把两次还在说话的
+                # 喊话准点掐断; 而它要防的"甲方崩溃/断网, stop 发不出来"
+                # 同时也会让帧停下, 空闲超时一样能收.
+                # *** 只认放行的帧(BCT-2): 一串被丢弃的帧不算有人在说话.
+                _now_ms = int(now * 1000)
+                if bcast_timer.expired(_now_ms, bcast_sess.last_frame_mono_ms):
+                    _bcast_auto_exit("timeout", now)
+                elif bcast_timer.running and bcast_sink.failed:
+                    # /play 连不上或中途断开: 喇叭不会再响, 不能继续报
+                    # "喊话中". 以 fault 退出(v2.0 S4.3), 云端看得见.
+                    _bcast_auto_exit("fault", now)
+                # 设备层对账(14 S5.7.1 MM-1): 每 DEVICE_RECONCILE_S 秒看一次
+                # payload-service 的实际模式, 不对就拨回系统模式映射的那个.
+                # 覆盖三种漂移: 进程启动(设备开机在 idle) / payload-service
+                # 重启(又回到 idle) / 退出时那次 POST /mode 失败.
+                if now - last_dev_sync >= DEVICE_RECONCILE_S:
+                    last_dev_sync = now
                     try:
-                        mode_face.handle_frame(
-                            json.dumps({"cmd_id": "auto-bcast-max",
-                                        "action": "exit_broadcast"}
-                                       ).encode("utf-8"),
-                            now_mono_ms=int(now * 1000))
+                        device_sync.reconcile(to_device_mode(mode_face.state))
                     except Exception as exc:      # noqa: BLE001
-                        _logger.error("p2 B mode auto-exit failed: %s", exc)
-                        # 模式机没退成也要把声音停掉 -- 宁可状态与实际
-                        # 短暂不一致, 也不能让喇叭继续响.
-                        bcast_sess.end()
-                        bcast_timer.stop()
-                        bcast_sink.end_session()
-                        bcast_since["t"] = None
-                        speaker.set_gate(True, "idle")
+                        _logger.error("p2 device mode reconcile failed: %s", exc)
 
                 # 11 S2.2.2: state/audio = 1 Hz 下限 + 变更即报.
                 # 每拍都求值(10 Hz, 几个 dict 读, 无 I/O), 变了立刻发, 没变
@@ -966,6 +1093,11 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                                           if bcast_sess.active else None),
                         broadcast_since_mono=(bcast_since["t"]
                                               if bcast_sess.active else None),
+                        broadcast_last_frame_age_ms=(
+                            int(now * 1000) - bcast_sess.last_frame_mono_ms
+                            if (bcast_sess.active and
+                                bcast_sess.last_frame_mono_ms is not None)
+                            else None),
                         payload_audio_ok=last_payload_audio,
                         # voice_mode 的持有者[还不存在]: dispatch 的
                         # _handle_set_voice_mode 只把它放进 DispatchResult.applied,
