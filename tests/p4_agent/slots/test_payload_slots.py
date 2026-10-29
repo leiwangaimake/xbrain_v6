@@ -96,3 +96,32 @@ def test_volume_relative_both_word_orders():
 
 def test_volume_none_when_no_keyword():
     assert parse_volume("前进一米") is None
+
+
+# -- 2026-10-29 user ruling (99 U100 continued): field phrasings that were
+# dropped. Each line was None before the fix (p2 logged "no volume slot").
+
+def test_volume_bare_extremes():
+    """MUTATION: drop the _VOL_TOP / _VOL_BOTTOM fallback -> None -> red."""
+    assert parse_volume("声音调到最大") == {"abs": 100}
+    assert parse_volume("声音开到最高") == {"abs": 100}
+    assert parse_volume("声音调到最低") == {"abs": 5}  # quietest audible, not mute
+
+
+def test_volume_complaints_mean_the_opposite_word():
+    """"太小了" is a complaint -> LOUDER, although it contains "小".
+    MUTATION: check the complaints after _VOL_DOWN, or swap the two
+    complaint sets -> wrong sign or None -> red."""
+    assert parse_volume("声音太小了") == {"rel": 25}
+    assert parse_volume("声音太小了听不见") == {"rel": 25}
+    assert parse_volume("喇叭声音不够大") == {"rel": 25}
+    assert parse_volume("声音太大了") == {"rel": -25}
+    assert parse_volume("声音太吵了") == {"rel": -25}
+
+
+def test_volume_existing_commands_unchanged():
+    """The new fallbacks sit AFTER the fixed table and before up/down."""
+    assert parse_volume("音量调到最小") == {"abs": 5}  # table, not the bare fallback
+    assert parse_volume("声音小一点") == {"rel": -25}
+    assert parse_volume("声音大一点") == {"rel": 25}
+

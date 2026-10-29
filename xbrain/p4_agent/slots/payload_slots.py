@@ -125,6 +125,17 @@ _VOL_UP = ("大声", "大点声", "大一点", "大点", "响一点", "响点", 
            "声音大", "音量大")
 _VOL_DOWN = ("小声", "小点声", "小一点", "小点", "轻一点", "轻点", "调小",
              "声音小", "音量小")
+# Complaints about the CURRENT level (2026-10-29 user ruling, 99 U100
+# continued). "声音太小了" means "make it louder" although it contains "小",
+# so complaints are checked BEFORE the up/down command words; before this
+# they matched nothing and p2 dropped the D10 ("no volume slot").
+_VOL_TOO_QUIET = ("太小", "太轻", "听不见", "听不清", "不够大", "不够响")
+_VOL_TOO_LOUD = ("太大", "太响", "太吵", "刺耳", "震耳")
+# Bare extremes after the fixed table: "声音调到最大" / "调到最高" have the
+# audio subject elsewhere in the sentence (the classifier already routed it
+# to D10), so "最大" alone is the level. Before this "声音调到最大" was None.
+_VOL_TOP = ("最大", "最高")
+_VOL_BOTTOM = ("最小", "最低")
 
 
 def parse_volume(text: str) -> Optional[dict]:
@@ -137,6 +148,14 @@ def parse_volume(text: str) -> Optional[dict]:
     for kw in sorted(_VOL_ABS, key=len, reverse=True):
         if kw in text:
             return {"abs": _VOL_ABS[kw]}
+    if any(kw in text for kw in _VOL_TOP):          # "声音调到最大"
+        return {"abs": 100}
+    if any(kw in text for kw in _VOL_BOTTOM):       # "声音调到最低"
+        return {"abs": _VOL_MIN_AUDIBLE}
+    if any(kw in text for kw in _VOL_TOO_QUIET):    # "声音太小了" -> louder
+        return {"rel": _VOL_STEP}
+    if any(kw in text for kw in _VOL_TOO_LOUD):     # "声音太吵了" -> quieter
+        return {"rel": -_VOL_STEP}
     for kw in _VOL_UP:
         if kw in text:
             return {"rel": _VOL_STEP}

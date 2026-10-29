@@ -153,3 +153,14 @@ def test_volume_needs_audio_anchor():
 ])
 def test_non_device_returns_none(text):
     assert resolve_large_class(text) is None
+
+
+def test_volume_complaints_route_to_d10():
+    """2026-10-29 (99 U100 continued): complaints with no size word reach
+    D10. MUTATION: drop "吵" / "听不" from _AUDIO_MAG -> None -> red. The
+    siren line pins that "响" was NOT added (警笛响一声 stays D04)."""
+    from xbrain.p4_agent.classifier.large_class import resolve_payload
+    assert resolve_payload("声音太吵了") == "D10"
+    assert resolve_payload("声音听不见") == "D10"
+    assert resolve_payload("警笛响一声") == "D04"
+    assert resolve_payload("喊一声") is None

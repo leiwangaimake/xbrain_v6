@@ -159,7 +159,10 @@ def resolve_ptz(text: str) -> Optional[str]:
 # is what keeps the ambiguous "大一点/小一点" out of volume unless the operator
 # actually named the audio (声音大一点), mirroring the zoom subject gate.
 _AUDIO_SUBJECT = ("音量", "嗓门", "喇叭", "喊话器")
-_AUDIO_MAG = ("大", "小", "调", "高", "低", "静音")
+# 2026-10-29 (99 U100 continued): "声音太吵了" / "声音听不见" are volume
+# complaints with no size word; without these two they routed nowhere.
+# "响" is deliberately NOT here: "警笛响一声" would leave the siren branch.
+_AUDIO_MAG = ("大", "小", "调", "高", "低", "静音", "吵", "听不")
 
 # Strobe / warning-light subject cues (D06/D07/D18). Checked BEFORE the bare
 # "灯" light branch because "爆闪灯"/"警灯" both contain "灯" -- if the light
