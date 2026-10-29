@@ -205,7 +205,9 @@ def test_to_task_command_builds_a_goto_that_names_its_waypoint():
     "照明灯调到最岸",      # the 2026-10-24 ASR misread of "照明灯调到最暗"
     "到这里啊",            # the misread of "调到最暗" with the leading 调 cut
     "灯开到最大",          # an ordinary light sentence that happens to hold 到
-    "声音调到最大",        # an ordinary volume sentence that holds 到
+    # "声音调到最大" was the fourth case until 2026-10-29: it is no longer a
+    # B01 hit at all -- the longer D10 keyword wins layer 2 (99 U100
+    # continued), pinned by test_large_class::test_volume_to_max_is_not_a_goto.
 ])
 def test_without_an_llm_a_b01_hit_is_declined_not_dispatched(text):
     """No tier-2 available (it returns None): the turn is declined.
@@ -213,9 +215,9 @@ def test_without_an_llm_a_b01_hit_is_declined_not_dispatched(text):
     The cmd/task key must not appear at all -- that frame is what P3 accepted
     on the robot and answered with a goto task that had nowhere to go.
 
-    The four sentences are the ones that actually produced a goto on
-    2026-10-24 (the first two, from the live log) or would have (the last two,
-    from running the orchestrator offline). Each holds the character 到 and
+    The sentences are the ones that actually produced a goto on 2026-10-24
+    (the first two, from the live log) or would have (the last, from running
+    the orchestrator offline). Each holds the character 到 and
     nothing that names a place. "Declined" here is the existing tier-2
     failure behaviour (a spoken "did not catch that"), which is the honest
     answer when nothing understood the sentence.

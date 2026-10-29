@@ -164,3 +164,21 @@ def test_volume_complaints_route_to_d10():
     assert resolve_payload("声音听不见") == "D10"
     assert resolve_payload("警笛响一声") == "D04"
     assert resolve_payload("喊一声") is None
+
+
+@pytest.mark.parametrize("text", ["声音调到最大", "声音调到最低", "音量开到最大"])
+def test_volume_to_max_is_not_a_goto(text):
+    """"声音调到最大" contains B01's one-char keyword "到"; layer 2 took the
+    longest keyword, B01, the tier-2 LLM declined and the turn was refused
+    (live 2026-10-29 14:34). The full D10 phrase in configs/intents.yaml is
+    longer, so it wins. MUTATION: drop "声音调到最大" from the D10 keywords
+    -> B01 -> red."""
+    from pathlib import Path
+    from xbrain.p4_agent.classifier.keyword_matcher import (
+        KeywordMatcher, classify_text)
+    from xbrain.p4_agent.registry.intents import load_intent_registry_from_yaml
+    root = Path(__file__).resolve().parents[3]          # repo root
+    reg = load_intent_registry_from_yaml(str(root / "configs" / "intents.yaml"))
+    r = classify_text(text, reg, KeywordMatcher(reg),
+                      large_class_fn=resolve_large_class, addressed=True)
+    assert r.intent == "D10"

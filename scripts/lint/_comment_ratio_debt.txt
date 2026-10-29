@@ -696,7 +696,6 @@ xbrain/p4_agent/asr_post/correction_log.py
 xbrain/p4_agent/asr_post/three_layer.py
 xbrain/p4_agent/audio_rx/gate_observer.py
 xbrain/p4_agent/classifier/keyword_matcher.py
-xbrain/p4_agent/classifier/large_class.py
 xbrain/p4_agent/classifier/priority_chain.py
 xbrain/p4_agent/classifier/routes.py
 xbrain/p4_agent/dialog/speak_stop.py
