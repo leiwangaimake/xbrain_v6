@@ -25,6 +25,7 @@ from __future__ import annotations  # postponed annotations
 
 from pathlib import Path  # repo-relative config
 
+import json  # estop frame
 import pytest  # marks
 import yaml  # production config
 
@@ -226,3 +227,36 @@ def test_an_arbiter_denial_carries_holder_and_gen():
     assert busy == {"domain": "ptz", "holder": None,  # disarmed: nobody holds
                     "holder_priority": None, "gen": gen}  # but the shape is complete
     assert hub.states(clock.t)["ptz"]["waiting"] == []  # no ghost waiter left behind
+
+
+# -- U-2 / 11 PTZ-D6: an estop does not stop the PTZ --------------------------
+
+def _estop_coordinator(arb):  # the p2 estop path, publishers stubbed
+    """EstopCoordinator on `arb` -- main_wiring builds it on its own
+    Arbiter("motion"), never on an ArbHub domain."""
+    from xbrain.p2_core.runtime.estop_wiring import EstopCoordinator  # p2 estop path
+    from xbrain.p2_core.three_stops import ForceStrobeState  # strobe latch
+    return EstopCoordinator(arb, ForceStrobeState(), lambda ev: None,
+                            lambda now_ms: None)  # events / broadcast not under test
+
+
+def test_an_estop_leaves_the_ptz_usable():
+    """User ruling 2026-10-28 (U-2, 11 PTZ-D6 / U-PTZ-4): an estop stops
+    the chassis, NOT the camera head -- that is when the operator needs the
+    picture most. After a real estop through the p2 coordinator, domain 5
+    is not disarmed and a cloud jog still reaches the camera.
+    MUTATION: build the coordinator on the ptz arbiter (an "estop disarms
+    every domain" wiring) -> domain 5 suspended, jog refused -> fails."""
+    from xbrain.common.arbiter.core import Arbiter  # main_wiring's motion arbiter
+    hub, adm, clock = _rig()  # fresh
+    motion = Arbiter("motion", wait_atomic_timeout_ms=3000)  # as main_wiring builds it
+    coord = _estop_coordinator(motion)  # the estop path
+    coord.on_estop(json.dumps({"type": "estop", "action": "stop",
+                               "cmd_id": "e-1"}).encode("utf-8"), clock.t)  # operator hits estop
+    assert motion.suspended() == "soft_estop"  # the chassis IS stopped
+    assert hub.states(clock.t)["ptz"]["suspended"] is None  # the head is not
+    c = _controller(hub, adm, clock)  # production shape
+    a = c.handle_command({"cmd_id": "c-1", "action": "jog", "source": "cloud",
+                          "vel": {"pan": 0.5, "tilt": 0.0, "zoom": 0.0}, "hold_ms": 800})
+    assert a["result"] == "accepted"  # still steerable
+    assert c._ops.calls[-1][0] == "move"  # and the camera got the move
