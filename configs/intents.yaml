@@ -120,7 +120,11 @@ intents:
   strobe_off: { id: D07, keywords: ["关闭爆闪灯", "把爆闪关了", "关闭双闪", "关爆闪", "关警灯", "关红蓝", "关双闪", "关警示灯"], slots: [], route: fastpath, auth: L0 }
   speak_preset: { id: D08, keywords: ["喊话", "警告他", "播放警告", "喊第二条"], slots: [preset_id], route: fastpath_then_llm, auth: L1b }
   speak_custom: { id: D09, keywords: ["说请立即离开", "喊一句"], slots: [text], route: llm, auth: L3 }
-  set_volume: { id: D10, keywords: ["音量调到最大", "音量调到最小", "音量最大", "音量最小", "大声点", "大点声", "音量大一点", "声音大一点", "小声点", "小点声", "音量小一点", "声音小一点", "调大音量", "调小音量", "静音"], slots: [level], route: fastpath, auth: L0 }
+  # D10 "...调到最大" forms (2026-10-29, 99 U100 continued): they contain B01's
+  # one-char keyword "到", so without a LONGER D10 keyword layer 2 picked B01
+  # goto, the tier-2 LLM declined and "声音调到最大" was refused. Bare "调到最大"
+  # is NOT added: "灯调到最大" must stay a light command.
+  set_volume: { id: D10, keywords: ["音量调到最大", "音量调到最小", "音量最大", "音量最小", "大声点", "大点声", "音量大一点", "声音大一点", "小声点", "小点声", "音量小一点", "声音小一点", "调大音量", "调小音量", "静音", "声音调到最大", "声音调到最小", "声音调到最高", "声音调到最低", "声音开到最大", "音量开到最大", "音量调到最高", "音量调到最低"], slots: [level], route: fastpath, auth: L0 }
   chassis_light: { id: D11, keywords: ["打开底盘灯", "尾灯呼吸"], slots: [pattern, color], route: fastpath, auth: L0 }
   speak_stop: { id: D12, keywords: ["别喊了", "别播了", "闭嘴"], slots: [], route: fastpath, auth: L0 }
   payload_all_off: { id: D13, keywords: ["全部关掉", "都关了", "声光全关", "关掉所有"], slots: [], route: fastpath, auth: L0 }
