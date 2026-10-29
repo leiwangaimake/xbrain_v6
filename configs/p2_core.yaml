@@ -252,10 +252,12 @@ d_mode:
   # payload_light.deter_redblue_mode (loader asserts equality;
   # unequal -> E_CONFIG_INVALID).
   redblue_mode: 1
-  # real-device tuning: 0.45 (peak 0.72 -> 0.36 by user step 3).
-  # Only adjusts siren WAV; does NOT touch device volume [14] (that
-  # would drop TTS too).
-  siren_level: 0.45
+  # Siren WAV amplitude 0..1. 1.0 since 2026-10-29 (99 U100 cont. 2, user
+  # ruling): the siren follows the DEVICE volume like the robot voice does --
+  # default 100, a D10 voice / text setting persists across restarts. The old
+  # value 0.45 (peak 0.72 -> 0.36, user step 3 after an office test) is
+  # superseded; this key no longer scales the siren down on its own.
+  siren_level: 1.0
   # real device: male voice x 3, 1 s interval per round.
   tts_reps: 3
   # a full loop ~ 6.0 + 0.3 + 3 x 4.0 + 2 x 1.0. Used only for DT-5
