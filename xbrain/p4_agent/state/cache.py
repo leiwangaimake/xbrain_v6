@@ -66,6 +66,8 @@ STATE_TOPICS: FrozenSet[str] = frozenset({
     # 2026-10-30 (99 U102): G47 "时钟同步了吗" and H03 "校时" read it, but it
     # was never subscribed -- G47 answered "暂不可用" on every ask in production.
     "state/clock",         # p1 mirror of ClockStatus, 1 Hz (P1-13 / CLK-A1)
+    # 2026-10-30 (99 U103): G10 / G11 / G13 read p5's record.db summary.
+    "state/event/stats",   # p5_gateway, 1 Hz -- event counts per sev (11 S4.7)
 })
 
 

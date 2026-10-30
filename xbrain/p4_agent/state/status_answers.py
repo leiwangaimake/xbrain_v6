@@ -54,6 +54,8 @@ from __future__ import annotations  # postponed annotations
 
 import math  # heading in degrees
 import time  # uptime = CLOCK_MONOTONIC since boot
+from datetime import datetime, timezone  # event times, spoken locally
+from zoneinfo import ZoneInfo  # the site timezone p5 counted in
 from typing import Callable, Dict, Mapping, Optional
 
 from xbrain.p4_agent.state.cache import StateCache  # freshness-aware cache
@@ -385,6 +387,99 @@ def speaking_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one
 
 
 #: intent id -> answer function (live data).
+#: 11 S6.2 event category -> spoken name (closed set of 23; others -> "其他").
+_EVENT_CAT_WORDS = {
+    "intrusion": "入侵", "fence": "电子围栏", "speed_limit": "限速", "mode_change": "模式切换",  # cat -> label
+    "arbitration": "仲裁", "task": "任务", "charging": "充电", "health": "健康度",  # cat -> label
+    "bit": "自检", "chassis": "底盘", "estop": "急停", "comm": "通信", "rtk": "RTK 定位",  # cat -> label
+    "geo": "地理要素", "teach": "示教", "teleop": "遥控", "perception": "感知",  # cat -> label
+    "motion": "运动", "payload": "载荷", "data": "数据交付", "system": "系统",  # cat -> label
+    "ptz": "云台", "voice": "语音",  # cat -> label
+}
+_EVENT_SEVS = ("info", "warn", "alarm", "fault")  # 11 S6.1 sev closed set
+
+
+def _events(cache, now_mono_ms, max_age_ms) -> Optional[Mapping]:  # one query answer: events
+    """Fresh state/event/stats (p5, 11 S4.7) whose today / last_7d carry an int per sev, or None.
+
+    2026-10-30 (99 U103): before this topic existed G10-G14 could only answer
+    query_no_data -- the events live in p5's record.db and nothing summarised it."""
+    d = _data(cache, "state/event/stats", now_mono_ms, max_age_ms)  # 1 Hz from p5
+    if d is None:  # stale / never received / record.db unreadable at p5
+        return None  # honest "暂时读不到"
+    for window in ("today", "last_7d"):  # both count blocks must be whole
+        block = d.get(window)  # per-sev counts
+        if not isinstance(block, Mapping) or any(  # a partial block is not a reading
+                isinstance(block.get(s), bool) or not isinstance(block.get(s), int) for s in _EVENT_SEVS):
+            return None  # malformed: never speak a made-up zero
+    return d  # usable
+
+
+def _last_of(d: Mapping, key: str) -> Optional[Mapping]:  # one query answer: last of
+    """last_alarm / last_fault when it carries a numeric `at`, else None."""
+    last = d.get(key)  # newest row of that sev, or null
+    if not isinstance(last, Mapping):  # null = never happened
+        return None  # nothing to say
+    at = last.get("at")  # epoch seconds (p5's detected_at)
+    return last if isinstance(at, (int, float)) and not isinstance(at, bool) else None  # usable
+
+
+def _when(t: Templates, d: Mapping, last: Mapping) -> str:  # one query answer: when
+    """'今天16时32分' for today, '10月28日20时16分' for an earlier day (p5's timezone)."""
+    try:  # p5 names the zone it counted in; an unknown name falls back to local
+        tz = ZoneInfo(d["tz"]) if d.get("tz") else None  # None = system local zone
+    except (KeyError, ValueError):  # ZoneInfoNotFoundError is a KeyError
+        tz = None  # system local zone
+    dt = datetime.fromtimestamp(float(last["at"]), tz=timezone.utc).astimezone(tz)  # local time
+    if dt.strftime("%Y-%m-%d") == d.get("day"):  # p5's "today"
+        return _say(t, "query_events", "when_today", h=dt.hour, m=dt.minute)  # today
+    return _say(t, "query_events", "when_day", mo=dt.month, d=dt.day, h=dt.hour, m=dt.minute)  # earlier
+
+
+def _cat_word(last: Mapping) -> str:  # one query answer: cat word
+    """Spoken category of an event row."""
+    return _EVENT_CAT_WORDS.get(last.get("cat"), "其他")  # closed-set label
+
+
+def events_recent_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one query answer: events recent answer
+    """G10 最近有什么情况: today's counts per sev, plus the latest alarm."""
+    d = _events(cache, now_mono_ms, max_age_ms)  # p5 statistics
+    if d is None:  # no reading
+        return _unreadable(t, "事件记录")  # honest
+    td = d["today"]  # since local midnight
+    total = sum(td[s] for s in _EVENT_SEVS)  # every row today
+    if td["alarm"] + td["fault"] + td["warn"] == 0:  # info only
+        return QueryAnswer(True, _say(t, "query_events", "quiet", total=total))  # nothing notable
+    la = _last_of(d, "last_alarm")  # newest alarm, any day
+    last = _say(t, "query_events", "last", when=_when(t, d, la), cat=_cat_word(la)) if la else ""  # clause
+    return QueryAnswer(True, _say(t, "query_events", "some", total=total, alarm=td["alarm"],  # the summary
+                                  fault=td["fault"], warn=td["warn"], last=last))
+
+
+def events_period_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one query answer: events period answer
+    """G11 报警了几次: alarm / fault counts today and over the last 7 days.
+
+    The date_range slot is not read: both windows are spoken, so "今天" and
+    "这一周" are each answered without guessing which one was meant."""
+    d = _events(cache, now_mono_ms, max_age_ms)  # p5 statistics
+    if d is None:  # no reading
+        return _unreadable(t, "报警次数")  # honest
+    td, wk = d["today"], d["last_7d"]  # the two windows
+    return QueryAnswer(True, _say(t, "query_events", "period", alarm=td["alarm"], fault=td["fault"],  # counts
+                                  alarm7=wk["alarm"], fault7=wk["fault"]))
+
+
+def last_alarm_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one query answer: last alarm answer
+    """G13 最近一次报警什么时候: the newest sev=alarm row in record.db."""
+    d = _events(cache, now_mono_ms, max_age_ms)  # p5 statistics
+    if d is None:  # no reading
+        return _unreadable(t, "报警记录")  # honest
+    la = _last_of(d, "last_alarm")  # newest alarm
+    if la is None:  # the table holds none
+        return QueryAnswer(True, _say(t, "query_events", "no_alarm"))  # truly none
+    return QueryAnswer(True, _say(t, "query_events", "last_alarm", when=_when(t, d, la), cat=_cat_word(la)))  # when + what
+
+
 STATUS_QUERY_ANSWERS: Dict[str, Callable[..., QueryAnswer]] = {
     "G01": position_answer, "G03": range_answer, "G04": speed_answer,  # intent id -> spoken text
     "G05": mode_answer, "G06": task_answer, "G07": progress_answer,  # intent id -> spoken text
@@ -394,6 +489,7 @@ STATUS_QUERY_ANSWERS: Dict[str, Callable[..., QueryAnswer]] = {
     "G23": _geo_answer("docks", "充电桩"), "G32": ptz_pose_answer, "G37": ptz_owner_answer,  # intent id -> spoken text
     "G25": payload_all_answer, "G26": light_state_answer, "G27": siren_state_answer,  # intent id -> spoken text
     "G28": strobe_state_answer, "G29": volume_answer, "G30": speaking_answer,  # intent id -> spoken text
+    "G10": events_recent_answer, "G11": events_period_answer, "G13": last_alarm_answer,  # 99 U103
 }
 
 
