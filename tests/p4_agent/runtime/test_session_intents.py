@@ -81,7 +81,7 @@ def test_session_intents_answer_their_preset(text, key):  # one query answer: te
 def test_cancel_drops_a_half_open_confirm():  # one query answer: test cancel drops a half open confirm
     """I04 while a confirm is pending: the pending action must not survive."""
     o, s = _orch(), OrchestratorSession()
-    d, _sp, _k = _turn(o, s, "重启系统")  # L2: asks to confirm
+    d, _sp, _k = _turn(o, s, "删除路径")  # L2: asks to confirm (重启 is refused while unwired)
     assert d.kind == "await_confirm" and s.pending_confirm is not None  # the property this case pins
     _turn(o, s, "结束对话")
     assert s.pending_confirm is None  # dropped

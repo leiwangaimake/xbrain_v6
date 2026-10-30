@@ -443,6 +443,11 @@ Tier2Fn = Callable[[str, "OrchestratorSession", int],
                    Optional[Tier2Classification]]
 
 
+#: H-class system intents with NO executor today (no cmd/system subscriber in
+#: the repo; H04's cmd/task fallback is dropped by P3). Remove an id here in the
+#: same change that wires its executor. 2026-10-30, field test R007-R016.
+_UNWIRED_SYSTEM = frozenset({"H01", "H02", "H03", "H04", "H05", "H06", "H07", "H08"})
+
 #: Level intents whose adjustment an elliptical phrase may continue (D10
 #: volume, D17 brightness), and the phrases that name no device. 2026-10-30.
 _LEVEL_INTENTS = frozenset({"D10", "D17"})
@@ -682,6 +687,19 @@ class TurnOrchestrator:
         # all L0 and produce speech, not motion.
         if entry.name in _CHITCHAT_NAMES:
             return self._reply_chitchat(entry, session, layer)
+
+        # *** H01-H08 system intents (2026-10-30, field test R007-R016): nothing in
+        # the repo consumes cmd/system (intent_dispatch: "ROUTED but not yet
+        # CONSUMED"), and H04 falls back to cmd/task, which P3 drops. They used
+        # to answer "收到" -- or ask "确认吗" for reboot and then do nothing --
+        # i.e. pretend success. Until an executor exists, say so and send
+        # nothing (CLAUDE.md 3.2). Before the auth gate: no confirm for a no-op.
+        if entry.id in _UNWIRED_SYSTEM:
+            reply = self._chitchat.unwired_reply(entry.id)
+            return TurnDecision(
+                kind="denied", intent_id=entry.id, intent_name=entry.name,
+                route=entry.route, auth=entry.auth, layer=layer,
+                reply_text=reply, tts_text=reply)
 
         # *** I01-I04 session intents (2026-10-30, field test P101-P106): the I
         # class dispatches to cmd/audio/speak, so these used to SPEAK THE USER'S

@@ -208,13 +208,20 @@ def _confirmed(tier2, channel, modality, key):
 def test_a_system_command_from_the_cloud_carries_origin_cloud():
     """S7.15.4 judges permissions by origin; a cloud reboot must say cloud.
 
-    The scripted slots CLAIM origin "hmi": the frame must ignore any
-    self-declared origin and carry the turn's own (origin is an
-    authorisation boundary, never taken from slots).
+    The slots CLAIM origin "hmi": the frame must ignore any self-declared
+    origin and carry the turn's own (origin is an authorisation boundary,
+    never taken from slots).
+
+    2026-10-30: H-class turns are refused before dispatch while nothing
+    consumes cmd/system (turn_orchestrator._UNWIRED_SYSTEM, field test
+    R007-R016), so the orchestrator no longer reaches the frame. The origin
+    rule lives in the frame builder and must hold the day an executor lands,
+    so it is pinned there directly.
     """
-    tier2 = lambda *a, **k: Tier2Classification(  # noqa: E731
-        name="reboot", slots={"origin": "hmi", "delay_s": 5})  # a hostile claim
-    frame = _confirmed(tier2, "cloud", "text", "cmd/system")  # cloud entry
+    from xbrain.p4_agent.runtime import turn_labels  # the channel -> origin table
+    from xbrain.p4_agent.runtime.system_request import to_system_command
+    frame = to_system_command("reboot", slots={"origin": "hmi", "delay_s": 5},
+                              cmd_id="c-1", source=turn_labels.origin("cloud"))
     assert frame["origin"] == "cloud"  # the turn's, not the slot's
 
 

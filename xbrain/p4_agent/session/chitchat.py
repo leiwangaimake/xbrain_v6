@@ -126,6 +126,15 @@ class ChitchatResponder:
             raise ChitchatPresetError("chitchat.yaml session.%s missing" % key)
         return str(block[key])
 
+    def unwired_reply(self, intent_id: str) -> str:
+        """'<function> has no executor yet' for an H-class id
+        (chitchat.yaml `unwired_system`: template + per-id function names)."""
+        block = self._p.get("unwired_system")
+        names = block.get("names") if isinstance(block, Mapping) else None
+        if not isinstance(names, Mapping) or intent_id not in names or "template" not in block:
+            raise ChitchatPresetError("chitchat.yaml unwired_system missing %s" % intent_id)
+        return str(block["template"]).replace("{what}", str(names[intent_id]))
+
     def limit_reply(self, key: str) -> str:
         """Reason reply for a request the light hardware cannot do
         (chitchat.yaml `payload_limits`, classifier/payload_limits.py keys)."""
