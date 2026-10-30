@@ -46,10 +46,15 @@ query_light_state:
 # -- QT-3 (G28 query_strobe_state) -- shadow only, cannot read back --
 query_strobe_state:
   shadow:   "警灯是{on_off}的(按我方记录;本机暂不能直接回读该位)"
+  # 2026-10-30: 爆闪 = the red/blue lamp (PAY-02c), whose state IS read back
+  # (/status lights.redblue) -> state/mode.payload.strobe is a reading.
+  readback: "警示灯{on_off}"
 
 # -- QT-4 (G30 query_speaking) -- count carries 'about', 4s/sentence est --
 query_speaking:
   idle:     "现在没有在喊话"
+  # 2026-10-30: payload.speaking is published; preset / repeat count are not.
+  plain:    "正在喊话或播报"
   speaking: "正在喊第{preset}条,大约还剩{n}遍"
   queued:   "正在喊第{preset}条,大约还剩{n}遍,后面还排着{q}条"
 
@@ -136,15 +141,17 @@ query_no_data:
   G14:      "报警详情还没有接到事件库,暂时答不了"
   G19:      "感知目标还没有接到语音查询,暂时答不了"
   G20:      "目标人数还没有接到语音查询,暂时答不了"
-  G25:      "声光载荷的开关状态还没有对外发布,暂时查不到"
-  G26:      "灯光的开关状态还没有对外发布,暂时查不到"
-  G27:      "警笛状态还没有对外发布,暂时查不到"
-  G28:      "警示灯状态还没有对外发布,暂时查不到"
-  G29:      "设备音量还没有对外发布,暂时查不到"
-  G30:      "喊话进度还没有对外发布,暂时查不到"
   G31:      "预设语句列表还没有接到语音查询,暂时答不了"
   G33:      "云台倍率还没有对外发布,暂时查不到"
   G34:      "云台跟踪本期没有实现"
   G35:      "云台预置位本期没有实现"
   G36:      "云台预置位本期没有实现"
   generic:  "这项查询还没有接通数据,暂时答不了"
+
+# -- G25 / G27 / G29 from state/mode.payload (11 S4.3, published by p2 since 2026-10-30) --
+query_payload_all:
+  ok:       "警笛{siren},警示灯{strobe},照明{light},音量{volume}%{speaking}"
+query_siren_state:
+  ok:       "警笛{on_off}"
+query_volume:
+  ok:       "当前音量{v}%"
