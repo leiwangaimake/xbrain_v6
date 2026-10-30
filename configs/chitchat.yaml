@@ -75,3 +75,13 @@ session:
   cancel_session:     "好的,有需要再叫我"
   no_pending_confirm: "现在没有需要确认的操作"
 
+# -- light requests the hardware cannot do (2026-10-30, field test P236-P247) --
+# classifier/payload_limits.py picks the key; nothing is dispatched. Facts:
+# red/blue has no dimming bit and its flash rate is firmware-animated (14 GL-3 /
+# GL-4); the searchlight is steady only (GL-2); patterns are 1..16.
+payload_limits:
+  redblue_no_dimming:    "红蓝警示灯没有亮度可调,只能开关或换闪法"
+  strobe_fixed_rate:     "警示灯的闪烁快慢由设备固定,不能调;可以换一种闪法"
+  searchlight_no_strobe: "探照灯只能常亮照明,按规定不能爆闪;要闪烁警示请用红蓝警示灯"
+  pattern_out_of_range:  "警灯闪法只有第1到第16种,请说1到16之间的数字"
+
