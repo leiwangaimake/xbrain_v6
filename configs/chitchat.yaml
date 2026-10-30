@@ -42,6 +42,11 @@ greeting:
   time_variant:
     morning: ["早上好,我是海卫", "早上好,请说"]
     evening: ["晚上好,我在呢", "晚上好,有什么需要"]
+    # 2026-10-30 (99 U101, field test 4.9): the reply mirrors the time of day the
+    # operator SAID ("下午好" -> 下午好), not the robot clock.
+    forenoon: ["上午好,我是海卫", "上午好,请说"]
+    noon: ["中午好,我在呢", "中午好,有什么需要"]
+    afternoon: ["下午好,我是海卫", "下午好,请说"]
 
 # -- J02 identity: party-A robot name 海卫-风息 / model SNARC-HW-001.
 # Multiple variants (rotated) so self-introduction is varied, not rigid.
@@ -104,3 +109,12 @@ unwired_system:
     H07: "重启"
     H08: "关机"
 
+# -- J04 thanks / J05 farewell (2026-10-30, 99 U101 user ruling; field test P231 / P232) --
+thanks:
+  replies:
+    - "不客气,有需要随时叫我"
+    - "不用谢,这是我应该做的"
+farewell:
+  replies:
+    - "再见,我继续值守"
+    - "好的,再见,有需要随时叫我"
