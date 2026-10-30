@@ -3038,6 +3038,7 @@ query_detection:
 > · ★ **现在**：`state/status_answers.py` 按本节 ①取数 → ②选分支 → 模板填充（`configs/query_templates.yaml`，新增 `query_health` / `query_task` / `query_mode` / `query_geo` / `query_no_data` 等；**复用**既有 `query_faults`、QT-5 `query_ptz_pose.unknown`、QT-7 `query_ptz_owner`）。实时作答：G01 G03–G09 G15–G18 G21–G23 G32 G37；P4 缓存增订 `health/summary` / `state/task` / `state/geo/objects` / `state/arb/ptz`。★★ **G 类查询永不派发**：无答复者答 `query_no_data`，**绝不复读原话**。健康项按 `state` 判，`level` 是严重级别分类不是状态。
 > · ⚠️ **仍缺数据通路（如实答「暂时查不到」）**：G10–G14 事件（在 p5 `record.db`，P4 无读口）· G19/G20 感知目标（`state/targets` 未发布）· G25–G31 / G33–G36 —— ★ `11` §7.16 设计的 `state/*` 内 `payload.*` / `ptz.*` 字段**生产方未发布**（机器人 2026-10-30 实抓 `state/mode` 只有 `voice_mode` 等六字段）。★ 补这些发布方属契约落地工作，单列。
 > · ★ **判据**：`tests/p4_agent/state/test_status_answers.py`（6 条变异体全红）。
+> · ★ **同批（分类前的灯光限制拦截）**：`classifier/payload_limits.py` 在急停旁路之后、§5.2 优先链之前，对硬件做不到的灯光请求（红蓝调光 / 调闪烁快慢 / 探照灯爆闪 / 闪法超出 1–16）直接答原因、不派发 —— ★ 原「把警灯调亮」被 D17 截走、实际改了探照灯（现场 P239）。判据 `tests/p4_agent/classifier/test_payload_limits.py`。
 
 #### 8.2.1 ★★★ 【v0.9 新增】`G25`–`G42` 十八条状态回读的答复模板与**八条硬分支**
 
