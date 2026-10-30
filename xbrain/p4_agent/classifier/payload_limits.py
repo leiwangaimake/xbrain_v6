@@ -44,7 +44,8 @@ _FLASH = ("闪",)  # any flashing of it ("闪", "爆闪", "闪起来")
 _PATTERN = re.compile(r"第\s*([零〇一二两三四五六七八九十百\d]+)\s*种")  # "第十七种"
 _CN = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
        "六": 6, "七": 7, "八": 8, "九": 9}
-PATTERN_MIN, PATTERN_MAX = 1, 16  # 14 GL-3 / payload DeterCommand.mode range
+PATTERN_MIN, PATTERN_MAX = 1, 16
+_BRIGHT_NUM = re.compile(r"(?:调到|设为|设置为|调成)\s*[0-9零〇一二两三四五六七八九十百]+")  # "亮度调到23"  # 14 GL-3 / payload DeterCommand.mode range
 
 
 def _has(text: str, words) -> bool:  # one query answer: has
@@ -76,6 +77,8 @@ def limit_hit(text: str) -> Optional[str]:  # one query answer: limit hit
         return "redblue_no_dimming"  # no dimming bit (GL-3)
     if _has(text, _SEARCH) and _has(text, _FLASH):  # branch on the live value
         return "searchlight_no_strobe"  # steady only (GL-2)
+    if "亮度" in text and "音量" not in text and _BRIGHT_NUM.search(text):
+        return "brightness_numeric"  # D17 is an enum of steps (18-A S1.1)
     m = _PATTERN.search(text)  # local read of the state field
     if m:  # branch on the live value
         n = cn_number(m.group(1))  # value used below

@@ -204,7 +204,9 @@ def test_to_task_command_builds_a_goto_that_names_its_waypoint():
 @pytest.mark.parametrize("text", [
     "照明灯调到最岸",      # the 2026-10-24 ASR misread of "照明灯调到最暗"
     "到这里啊",            # the misread of "调到最暗" with the leading 调 cut
-    "灯开到最大",          # an ordinary light sentence that happens to hold 到
+    # "灯开到最大" was the third case until 2026-10-30: it is a D17 keyword now
+    # (field test P143 family) and wins layer 2, pinned by
+    # tests/p4_agent/slots/test_level_phrases.py.
     # "声音调到最大" was the fourth case until 2026-10-29: it is no longer a
     # B01 hit at all -- the longer D10 keyword wins layer 2 (99 U100
     # continued), pinned by test_large_class::test_volume_to_max_is_not_a_goto.

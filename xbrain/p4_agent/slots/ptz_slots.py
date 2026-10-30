@@ -80,8 +80,11 @@ def parse_zoom_direction(text: str) -> Optional[str]:
 # --- amount (shared E01/E06): small/normal/large ------------------------
 # Small if a 'a little' marker is present; large if a 'a lot' marker is;
 # else normal. Drives the pulse archive in p2 (18-B E01 350/1000/2800 ms).
-_AMOUNT_SMALL = ("一点点", "稍微", "一丢丢", "一点", "一些", "一下", "些")
-_AMOUNT_LARGE = ("大幅", "使劲", "很多", "好多", "多转", "多一点", "转很多")
+# 2026-10-30 field test: "云台往上微调" turned a NORMAL step (P185 "不算微调,
+# 转的挺多") -- "微调" was missing here; "快点转" is an E01 amount phrase in
+# the 18-B corpus (P187), read as large.
+_AMOUNT_SMALL = ("一点点", "稍微", "一丢丢", "微调", "一点", "一些", "一下", "些")
+_AMOUNT_LARGE = ("大幅", "使劲", "很多", "好多", "多转", "多一点", "转很多", "快点转", "快点")
 
 
 def parse_ptz_amount(text: str) -> str:

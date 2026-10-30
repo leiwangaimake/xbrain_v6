@@ -37,6 +37,9 @@ from typing import Optional
 _LIGHT_LEVEL: dict = {
     "开到最大": "max", "全功率": "max", "最亮": "max",
     "调到最暗": "min", "最暗": "min", "最低": "min",
+    # 2026-10-30: bare "最高" / "调到最高" (ellipsis resolved to D17 by session
+    # context, field test P151 family) read as max, like "最亮".
+    "调到最高": "max", "最高": "max",
     "亮度一半": "mid", "亮一半": "mid", "一半": "mid", "中等": "mid", "一般亮": "mid",
     "亮一点点": "high", "调亮些": "high", "亮些": "high",
     "别那么亮": "low", "太刺眼": "low", "暗一些": "low", "暗些": "low",
@@ -118,7 +121,24 @@ _VOL_ABS = {
     "音量调到最低": _VOL_MIN_AUDIBLE,
     "静音": 0, "关掉声音": 0,
     "音量一半": 50, "中等音量": 50, "音量中等": 50,
+    # 2026-10-30: bare "中等" / "一半" reach D10 only through the session-context
+    # ellipsis rule (the operator was just adjusting volume), field test P147.
+    "中等": 50, "一半": 50,
 }
+# 2026-10-30 (field test P141 "音量调到七十"): an explicit number after a
+# volume verb sets the volume. Arabic or spoken numerals, clamped to 0..100.
+_VOL_NUM_RE = re.compile(
+    r"(?:音量|声音)\S{0,2}?(?:调到|设为|设置为|调成|开到)\s*([0-9]{1,3}|[零〇一二两三四五六七八九十百]+)")
+
+
+def _spoken_int(s: str) -> Optional[int]:
+    """'70' / '七十' / '一百' / '百' -> int; None when not a number."""
+    if s.isdigit():
+        return int(s)
+    if s in ("百", "一百"):
+        return 100
+    from xbrain.p4_agent.classifier.payload_limits import cn_number
+    return cn_number(s)
 # Relative up/down. Word-order variants matter: ASR gives both '大声点' and
 # '大点声' (2026-08-11 ORIN: '大点声'/'音量大一点' missed and went overheard).
 _VOL_UP = ("大声", "大点声", "大一点", "大点", "响一点", "响点", "调大",
@@ -145,6 +165,11 @@ def parse_volume(text: str) -> Optional[dict]:
     value; '大声点'/'小声点' are relative (p2 applies the delta to the
     tracked volume, since this unit has no [99] volume readback)."""
     text = text or ""
+    m = _VOL_NUM_RE.search(text)
+    if m:
+        n = _spoken_int(m.group(1))
+        if n is not None:
+            return {"abs": max(0, min(100, n))}   # device range 0..100
     for kw in sorted(_VOL_ABS, key=len, reverse=True):
         if kw in text:
             return {"abs": _VOL_ABS[kw]}

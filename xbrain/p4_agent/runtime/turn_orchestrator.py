@@ -391,6 +391,10 @@ class OrchestratorSession:
     # "再说一遍 / 什么 / 没听清". Before, I03 was dispatched to cmd/audio/speak
     # and spoke the user's own words back, then "收到".
     last_reply: Optional[str] = None
+    # 2026-10-30 (field test P143 / P147 / P151): the last payload level intent
+    # actually dispatched (D10 volume / D17 brightness), so an elliptical "中等",
+    # "开到最大", "调到最低" continues THAT adjustment instead of "没太听清".
+    last_level_intent: Optional[str] = None
 
 
 @dataclass
@@ -438,6 +442,13 @@ class Tier2Classification:
 Tier2Fn = Callable[[str, "OrchestratorSession", int],
                    Optional[Tier2Classification]]
 
+
+#: Level intents whose adjustment an elliptical phrase may continue (D10
+#: volume, D17 brightness), and the phrases that name no device. 2026-10-30.
+_LEVEL_INTENTS = frozenset({"D10", "D17"})
+_ELLIPTICAL_LEVELS = frozenset({
+    "中等", "一半", "开到最大", "调到最大", "调到最高", "调到最低", "调到最小",
+    "最大", "最小", "最高", "最低", "开到最小", "大一点", "小一点"})
 
 #: Reply for a G query in a build with no query_fn (smoke / tests). Production
 #: answers every G id from query_templates.yaml (state/status_answers.py).
@@ -529,6 +540,8 @@ class TurnOrchestrator:
                                      modality=modality)
         if decision.tts_text and decision.intent_id != "I03":
             session.last_reply = decision.tts_text
+        if decision.kind == "dispatch" and decision.intent_id in _LEVEL_INTENTS:
+            session.last_level_intent = decision.intent_id
         return decision
 
     def _turn_with_channel(self, text: str, session: OrchestratorSession,
@@ -618,6 +631,18 @@ class TurnOrchestrator:
         if limit is not None:
             reply = self._chitchat.limit_reply(limit)
             return TurnDecision(kind="denied", layer="payload_limits",
+                                reply_text=reply, tts_text=reply)
+
+        # Elliptical level phrases name no device ("中等", "开到最大", "调到最低"):
+        # continue the volume / brightness adjustment made earlier in this
+        # session, or ask which one -- never "没太听清" (field test P143-P151).
+        if text.rstrip("吧啊了呀.!\u3002\uff01") in _ELLIPTICAL_LEVELS:  # trailing particles / CJK stop and bang
+            if session.last_level_intent is not None:
+                entry = self._registry.by_id(session.last_level_intent)
+                return self._route_entry(entry, text, session, now_mono_ms,
+                                         layer="session_context")
+            reply = self._chitchat.session_reply("which_device")
+            return TurnDecision(kind="reply", layer="session_context",
                                 reply_text=reply, tts_text=reply)
 
         # STEPS 2-6: the priority chain. large_class_fn supplies layer 4
