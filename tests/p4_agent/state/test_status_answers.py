@@ -147,7 +147,9 @@ def test_unwired_g_id_gets_the_generic_honest_reply(monkeypatch):  # one query a
         cc = ChitchatResponder(yaml.safe_load(fh))  # value used below
     o = build_orchestrator(reg, cc, l2_timeout_ms=8000,  # value used below
                            query_fn=make_status_query_fn(_with([]), tpl, max_age_ms=10 ** 12))
-    d = o.handle_turn("音量多大", OrchestratorSession(), 1000, channel="cloud", modality="text")  # local read of the state field
+    # "现在什么倍率" (G33): still no producer field; "音量多大" is answered since
+    # 2026-10-30 (state/mode.payload), so it can no longer stand for "unwired".
+    d = o.handle_turn("现在什么倍率", OrchestratorSession(), 1000, channel="cloud", modality="text")  # local read of the state field
     spoken = [p["text"] for k, p in decision_to_publishes(d) if k.endswith("audio/speak")]  # local read of the state field
     assert spoken == ["这项查询暂时答不了(模板)"]  # from the templates, once
 
@@ -163,3 +165,31 @@ def test_new_query_phrases_route(text, gid):  # one query answer: test new query
     """Field phrases that used to fall to overheard."""
     d = _orch(_with([])).handle_turn(text, OrchestratorSession(), 1000, channel="cloud", modality="text")  # local read of the state field
     assert d.intent_id == gid  # the property this case pins
+
+
+# -- G25-G30 from state/mode.payload (11 S4.3, published by p2 since 2026-10-30) --
+PAYLOAD_MODE = {"schema": "state_mode_v1", "voice_mode": "idle",
+                "payload": {"siren": False, "strobe": True, "light": "off", "light_effective": False,
+                            "light_src": "manual", "volume_pct": 75, "speaking": False}}  # as p2 sends it
+
+
+@pytest.mark.parametrize("fn, text", [
+    ("payload_all_answer", "警笛关着,警示灯开着,照明关着,音量75%"),
+    ("light_state_answer", "补光灯关着"), ("siren_state_answer", "警笛没有响"),
+    ("strobe_state_answer", "警示灯开着"), ("volume_answer", "当前音量75%"),
+    ("speaking_answer", "现在没有在喊话")])
+def test_payload_queries_read_state_mode_payload(fn, text):  # one query answer: test payload queries read state mode payload
+    """MUTATION: read strobe_state from light_effective -> "警示灯关着" -> fails."""
+    c = _with([("state/mode", PAYLOAD_MODE)])  # local read of the state field
+    assert getattr(sa, fn)(c, TPL, NOW, max_age_ms=AGE).text == text  # the property this case pins
+
+
+def test_payload_queries_without_payload_are_unreadable():  # one query answer: test payload queries without payload are unreadable
+    """p2 leaves payload out when the device is silent: say so, never guess."""
+    c = _with([("state/mode", {"schema": "state_mode_v1", "voice_mode": "idle"})])  # local read of the state field
+    # MUTATION: _payload returns {} for a missing object -> G25 speaks "全关着"
+    # as if it were read -> this fails (every payload query, not just volume).
+    for fn in ("payload_all_answer", "light_state_answer", "siren_state_answer",
+               "strobe_state_answer", "volume_answer", "speaking_answer"):  # all six
+        a = getattr(sa, fn)(c, TPL, NOW, max_age_ms=AGE)  # no payload object
+        assert not a.known and "读不到" in a.text, fn  # honest, never a guess

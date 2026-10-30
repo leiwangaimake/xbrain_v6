@@ -321,6 +321,69 @@ def ptz_owner_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # on
                                   note=str(h.get("note") or sid)))
 
 
+def _payload(cache) -> Optional[Mapping]:  # one query answer: payload
+    """state/mode.payload (11 S4.3, p2 since 2026-10-30), or None when absent."""
+    m = _latest(cache, "state/mode")  # on change + 1 Hz
+    p = m.get("payload") if m is not None else None  # left out when the device is silent
+    return p if isinstance(p, Mapping) else None  # result to the caller
+
+
+def payload_all_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one query answer: payload all answer
+    """G25 声光现在什么状态 / 载荷都开着吗."""
+    p = _payload(cache)  # local read of the state field
+    if p is None:  # no usable value: take the honest branch
+        return _unreadable(t, "载荷状态")  # result to the caller
+    return QueryAnswer(True, _say(
+        t, "query_payload_all", "ok",
+        siren="在响" if p.get("siren") else "关着", strobe="开着" if p.get("strobe") else "关着",
+        light="开着" if p.get("light_effective") else "关着", volume=p.get("volume_pct"),
+        speaking=",正在喊话" if p.get("speaking") else ""))
+
+
+def light_state_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one query answer: light state answer
+    """G26 灯开着吗: QT-2, light_effective is the b7 readback."""
+    p = _payload(cache)  # local read of the state field
+    if p is None:  # no usable value: take the honest branch
+        return _unreadable(t, "灯光状态")  # result to the caller
+    return QueryAnswer(True, _say(t, "query_light_state", "payload",  # answer built from the live field
+                                  on_off="开着" if p.get("light_effective") else "关着"))
+
+
+def siren_state_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one query answer: siren state answer
+    """G27 警笛响着吗."""
+    p = _payload(cache)  # local read of the state field
+    if p is None:  # no usable value: take the honest branch
+        return _unreadable(t, "警笛状态")  # result to the caller
+    return QueryAnswer(True, _say(t, "query_siren_state", "ok",  # answer built from the live field
+                                  on_off="正在响" if p.get("siren") else "没有响"))
+
+
+def strobe_state_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one query answer: strobe state answer
+    """G28 警灯亮着吗: red/blue is read back, so the readback branch (not QT-3 shadow)."""
+    p = _payload(cache)  # local read of the state field
+    if p is None:  # no usable value: take the honest branch
+        return _unreadable(t, "警示灯状态")  # result to the caller
+    return QueryAnswer(True, _say(t, "query_strobe_state", "readback",  # answer built from the live field
+                                  on_off="开着" if p.get("strobe") else "关着"))
+
+
+def volume_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one query answer: volume answer
+    """G29 音量多大: payload.volume_pct (P2's record; the device has no readback)."""
+    p = _payload(cache)  # local read of the state field
+    v = p.get("volume_pct") if p is not None else None  # local read of the state field
+    if not isinstance(v, int) or isinstance(v, bool):  # guard: nothing usable
+        return _unreadable(t, "音量")  # result to the caller
+    return QueryAnswer(True, _say(t, "query_volume", "ok", v=v))  # answer built from the live field
+
+
+def speaking_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # one query answer: speaking answer
+    """G30 在喊话吗."""
+    p = _payload(cache)  # local read of the state field
+    if p is None:  # no usable value: take the honest branch
+        return _unreadable(t, "喊话状态")  # result to the caller
+    return QueryAnswer(True, _say(t, "query_speaking", "plain" if p.get("speaking") else "idle"))  # answer built from the live field
+
+
 #: intent id -> answer function (live data).
 STATUS_QUERY_ANSWERS: Dict[str, Callable[..., QueryAnswer]] = {
     "G01": position_answer, "G03": range_answer, "G04": speed_answer,  # intent id -> spoken text
@@ -329,6 +392,8 @@ STATUS_QUERY_ANSWERS: Dict[str, Callable[..., QueryAnswer]] = {
     "G16": health_answer, "G17": sensor_answer, "G18": bit_answer,  # intent id -> spoken text
     "G21": _geo_answer("routes", "巡逻路径"), "G22": _geo_answer("waypoints", "位置点"),  # intent id -> spoken text
     "G23": _geo_answer("docks", "充电桩"), "G32": ptz_pose_answer, "G37": ptz_owner_answer,  # intent id -> spoken text
+    "G25": payload_all_answer, "G26": light_state_answer, "G27": siren_state_answer,  # intent id -> spoken text
+    "G28": strobe_state_answer, "G29": volume_answer, "G30": speaking_answer,  # intent id -> spoken text
 }
 
 
