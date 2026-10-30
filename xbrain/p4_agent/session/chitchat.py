@@ -126,6 +126,14 @@ class ChitchatResponder:
             raise ChitchatPresetError("chitchat.yaml session.%s missing" % key)
         return str(block[key])
 
+    def limit_reply(self, key: str) -> str:
+        """Reason reply for a request the light hardware cannot do
+        (chitchat.yaml `payload_limits`, classifier/payload_limits.py keys)."""
+        block = self._p.get("payload_limits")
+        if not isinstance(block, Mapping) or key not in block:
+            raise ChitchatPresetError("chitchat.yaml payload_limits.%s missing" % key)
+        return str(block[key])
+
     def respond(self, intent_name: str, state: ChitchatState,
                 *, time_of_day: Optional[str] = None) -> str:
         """Return the preset reply for a chitchat / out_of_scope intent.

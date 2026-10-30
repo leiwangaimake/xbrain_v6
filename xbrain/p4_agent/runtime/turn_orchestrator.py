@@ -608,6 +608,18 @@ class TurnOrchestrator:
         if not text:
             return TurnDecision(kind="overheard", layer="overheard")
 
+        # 2026-10-30 (field test P236-P247): light requests the hardware cannot
+        # do (red/blue dimming, strobe rate, searchlight strobe, pattern outside
+        # 1..16) are answered with the reason BEFORE classification -- they used
+        # to classify as D17 and change the searchlight, or get "没太听清".
+        # After the safety bypass, so a stop word is never shadowed.
+        from xbrain.p4_agent.classifier.payload_limits import limit_hit
+        limit = limit_hit(text)
+        if limit is not None:
+            reply = self._chitchat.limit_reply(limit)
+            return TurnDecision(kind="denied", layer="payload_limits",
+                                reply_text=reply, tts_text=reply)
+
         # STEPS 2-6: the priority chain. large_class_fn supplies layer 4
         # (16 S5.2): the deterministic device-family router that rescues
         # keyword MISSES for PTZ (E) and payload (D) so a slightly-reworded
