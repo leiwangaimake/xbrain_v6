@@ -3033,6 +3033,12 @@ query_detection:
 
 ★ **③ 润色步骤默认关闭** —— 3B 模型润色时可能改动数字。仅在明确需要更自然表达时启用，且**必须做数值一致性校验**（生成文本中的数字必须与源数据一致，否则回退到模板原文）。
 
+> ⚠️★★★ **2026-10-30 · 现场缺陷与落地（测试日志 R001–R006 / P131 / P235）**
+> · ★ **缺陷**：「有故障吗」「系统状态怎么样」「载荷都开着吗」「音量多大」等只答「收到」，且常先把**用户原话**念半句。★ **根因**：生产 `query_fn` 只组合了 G02 / G24 / G43–G47 三组；其余 G id 返回 `None` 后**落入普通派发**，而 G 类派发目标是 `cmd/audio/speak` ⇒ **把用户的话当成播报文本念出**，随后被「收到」打断。`query/sources_g01_g24.py` 为 24 条声明了数据源，但**生产零调用**。
+> · ★ **现在**：`state/status_answers.py` 按本节 ①取数 → ②选分支 → 模板填充（`configs/query_templates.yaml`，新增 `query_health` / `query_task` / `query_mode` / `query_geo` / `query_no_data` 等；**复用**既有 `query_faults`、QT-5 `query_ptz_pose.unknown`、QT-7 `query_ptz_owner`）。实时作答：G01 G03–G09 G15–G18 G21–G23 G32 G37；P4 缓存增订 `health/summary` / `state/task` / `state/geo/objects` / `state/arb/ptz`。★★ **G 类查询永不派发**：无答复者答 `query_no_data`，**绝不复读原话**。健康项按 `state` 判，`level` 是严重级别分类不是状态。
+> · ⚠️ **仍缺数据通路（如实答「暂时查不到」）**：G10–G14 事件（在 p5 `record.db`，P4 无读口）· G19/G20 感知目标（`state/targets` 未发布）· G25–G31 / G33–G36 —— ★ `11` §7.16 设计的 `state/*` 内 `payload.*` / `ptz.*` 字段**生产方未发布**（机器人 2026-10-30 实抓 `state/mode` 只有 `voice_mode` 等六字段）。★ 补这些发布方属契约落地工作，单列。
+> · ★ **判据**：`tests/p4_agent/state/test_status_answers.py`（6 条变异体全红）。
+
 #### 8.2.1 ★★★ 【v0.9 新增】`G25`–`G42` 十八条状态回读的答复模板与**八条硬分支**
 
 > ★★★ **这是本轮 `18` 给 `16` 带去的最大一块新增**（`18` §9.9 第 4 项逐字）。
