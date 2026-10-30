@@ -239,6 +239,24 @@ def make_time_query_fn(cache, tz_name, *, max_age_ms: int):
     return _query
 
 
+def make_status_query_fn(cache, templates, *, max_age_ms: int):
+    """Return a query_fn for every G id the battery / RTK / time groups do not
+    answer: live health / mode / task / motion / geo / uptime answers, the
+    designed honest replies (QT-5 / QT-7), query_no_data for ids with no
+    producer, and query_no_data.generic for anything else. Composed LAST, so
+    a G id never falls through to a dispatch (which spoke the utterance)."""
+    from xbrain.p4_agent.state.status_answers import generic_no_data, status_answer
+
+    def _query(entry) -> Optional[str]:
+        if entry.id[:1] != "G":
+            return None
+        ans = status_answer(entry.id, cache, templates, int(time.monotonic() * 1000),
+                            max_age_ms=max_age_ms)
+        return generic_no_data(templates) if ans is None else ans.text
+
+    return _query
+
+
 def compose_query_fns(fns):
     """Chain group query_fns; the first to return non-None wins. Lets battery, RTK
     (and future groups) each own their own ids without one giant dispatcher."""

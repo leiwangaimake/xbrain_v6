@@ -56,6 +56,13 @@ STATE_TOPICS: FrozenSet[str] = frozenset({
     # command built on a guessed id.
     "state/teach",         # p3_task, event + 1 Hz (11 S12A.5)
     "state/geo/manifest",  # p3_task, on change + 0.1 Hz (11 S7.10)
+    # 2026-10-30 (field test R001-R006): the G-class status answers
+    # (state/status_answers.py) read these four; before, no G query beyond
+    # battery / time / RTK had a data source and the utterance was echoed.
+    "health/summary",      # p2_core, 1 Hz -- per-item health (G15-G18)
+    "state/task",          # p3_task, on change -- current task (G06 / G07)
+    "state/geo/objects",   # p3_task, on change + 0.1 Hz -- routes / waypoints / docks (G21-G23)
+    "state/arb/ptz",       # p2_core, 1 Hz -- PTZ holder (G37)
 })
 
 

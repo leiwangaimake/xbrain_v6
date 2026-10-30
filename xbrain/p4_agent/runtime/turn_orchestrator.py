@@ -435,6 +435,11 @@ Tier2Fn = Callable[[str, "OrchestratorSession", int],
                    Optional[Tier2Classification]]
 
 
+#: Reply for a G query in a build with no query_fn (smoke / tests). Production
+#: answers every G id from query_templates.yaml (state/status_answers.py).
+_G_NO_QUERY_FN = "这项查询还没有接通数据,暂时答不了"
+
+
 class TurnOrchestrator:
     """Runs 16 S5.2 for one utterance. Stateless across turns except for
     what the caller carries in OrchestratorSession."""
@@ -632,13 +637,22 @@ class TurnOrchestrator:
         # returns the rendered answer (or an 'unknown' reply when the state
         # is stale); None means the data source for this G id is not wired,
         # so fall through to a normal dispatch.
-        if entry.id[:1] == "G" and self._query_fn is not None:
-            answer = self._query_fn(entry)
-            if answer is not None:
-                return TurnDecision(
-                    kind="reply", intent_id=entry.id, intent_name=entry.name,
-                    route=entry.route, auth=entry.auth, layer=layer,
-                    reply_text=answer, tts_text=answer)
+        # *** 2026-10-30 (field test R001-R006): a G query is NEVER dispatched.
+        # The G class dispatches to cmd/audio/speak, so a G id with no answer
+        # used to SPEAK THE USER'S OWN WORDS, cut off by the "收到" ack -- the
+        # "复读半句后改说收到" the testers heard. No answer -> an honest no-data
+        # reply instead (query_templates.yaml query_no_data, via status_answers).
+        # In production make_status_query_fn (composed last) answers EVERY G id
+        # from query_templates.yaml; this constant is only the last resort of a
+        # build with no query_fn at all, and it still never echoes.
+        if entry.id[:1] == "G":
+            answer = self._query_fn(entry) if self._query_fn is not None else None
+            if answer is None:
+                answer = _G_NO_QUERY_FN
+            return TurnDecision(
+                kind="reply", intent_id=entry.id, intent_name=entry.name,
+                route=entry.route, auth=entry.auth, layer=layer,
+                reply_text=answer, tts_text=answer)
 
         # Effective auth with CL-2 upgrade (L1b -> L2 when estop down).
         eff_auth = self._effective_auth(entry.auth, session)

@@ -57,6 +57,7 @@ from xbrain.p4_agent.runtime.orchestrator_turn import (
     compose_query_fns,
     make_battery_query_fn,
     make_rtk_query_fn,
+    make_status_query_fn,
     make_time_query_fn,
     make_turn_handler,
 )
@@ -237,6 +238,11 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                     state_cache, max_age_ms=orch.query_max_age_ms),
                 make_time_query_fn(
                     state_cache, orch.site_timezone,
+                    max_age_ms=orch.query_max_age_ms),
+                # 2026-10-30: every other G id (health / task / motion / geo /
+                # uptime, honest no-data for the rest) -- see status_answers.
+                make_status_query_fn(
+                    state_cache, orch.query_templates,
                     max_age_ms=orch.query_max_age_ms),
             ])
             orchestrator = build_orchestrator(
