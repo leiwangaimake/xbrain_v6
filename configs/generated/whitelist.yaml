@@ -156,6 +156,8 @@ processes:
     - state/approval
     - state/arbitration
     - state/audio
+    - state/clock
+    - state/event/stats
     - state/fence
     - state/geo/manifest
     - state/link
