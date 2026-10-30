@@ -115,6 +115,17 @@ class ChitchatResponder:
                 return self._rotate(variants, state)
         return self._rotate(g["default"], state)
 
+    def session_reply(self, key: str) -> str:
+        """Preset reply for an I-class session intent (chitchat.yaml `session`).
+
+        repeat_none (I03 with nothing said yet), cancel_session (I04),
+        no_pending_confirm (I01 / I02 with nothing to confirm). Raises on a
+        missing key: a silent default would be wording in code (16 S8.2)."""
+        block = self._p.get("session")
+        if not isinstance(block, Mapping) or key not in block:
+            raise ChitchatPresetError("chitchat.yaml session.%s missing" % key)
+        return str(block[key])
+
     def respond(self, intent_name: str, state: ChitchatState,
                 *, time_of_day: Optional[str] = None) -> str:
         """Return the preset reply for a chitchat / out_of_scope intent.

@@ -387,6 +387,10 @@ class OrchestratorSession:
     # CL-2 (16): when both non-voice estop paths are unhealthy the link
     # publisher sets estop_path=down; an L1b then upgrades to L2.
     estop_path: str = "up"
+    # 2026-10-30 (field test P101-P103): what the robot last SAID, for I03
+    # "再说一遍 / 什么 / 没听清". Before, I03 was dispatched to cmd/audio/speak
+    # and spoke the user's own words back, then "收到".
+    last_reply: Optional[str] = None
 
 
 @dataclass
@@ -514,6 +518,25 @@ class TurnOrchestrator:
                     addressed: bool = False,
                     channel: str = "mic_local",
                     modality: str = "voice") -> TurnDecision:
+        """One turn (see _handle_turn), then remember what was SAID for I03.
+
+        Recorded here, on the way out, so every branch below -- reply,
+        dispatch ack, confirm prompt, denial -- feeds "再说一遍" from one
+        place. A repeat does not overwrite it (repeating twice repeats the
+        same answer, not "the repeat")."""
+        decision = self._turn_with_channel(text, session, now_mono_ms, raw_text=raw_text,
+                                     addressed=addressed, channel=channel,
+                                     modality=modality)
+        if decision.tts_text and decision.intent_id != "I03":
+            session.last_reply = decision.tts_text
+        return decision
+
+    def _turn_with_channel(self, text: str, session: OrchestratorSession,
+                     now_mono_ms: int,
+                     raw_text: Optional[str] = None,
+                     addressed: bool = False,
+                     channel: str = "mic_local",
+                     modality: str = "voice") -> TurnDecision:
         """Process one ASR utterance end-to-end. See module docstring for
         the ordering (16 S5.2).
 
@@ -622,6 +645,26 @@ class TurnOrchestrator:
         # all L0 and produce speech, not motion.
         if entry.name in _CHITCHAT_NAMES:
             return self._reply_chitchat(entry, session, layer)
+
+        # *** I01-I04 session intents (2026-10-30, field test P101-P106): the I
+        # class dispatches to cmd/audio/speak, so these used to SPEAK THE USER'S
+        # OWN WORDS and then "收到". A pending confirm consumes I01 / I02 before
+        # this point; reaching here means there is nothing to confirm.
+        if entry.id in ("I01", "I02", "I03", "I04"):
+            if entry.id == "I03":
+                reply = session.last_reply or self._chitchat.session_reply("repeat_none")
+            elif entry.id == "I04":
+                # No pending_confirm to drop here: a pending confirm consumes
+                # the next turn before routing (and clears itself), so this
+                # branch never sees one -- clearing it here was dead code (an
+                # equivalent mutant, 2026-10-30).
+                reply = self._chitchat.session_reply("cancel_session")
+            else:
+                reply = self._chitchat.session_reply("no_pending_confirm")
+            return TurnDecision(
+                kind="reply", intent_id=entry.id, intent_name=entry.name,
+                route=entry.route, auth=entry.auth, layer=layer,
+                reply_text=reply, tts_text=reply)
 
         # Capability-blocked PTZ intents (18-B T-PTZ-1/3): reject with a
         # spoken reason and do NOT dispatch -- they are a no-op on the head,
