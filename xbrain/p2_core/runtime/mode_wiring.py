@@ -42,7 +42,7 @@ import logging
 import time
 from typing import Any, Callable, Dict, FrozenSet, Optional, Tuple
 
-from xbrain.common.errors import E_BUSY, E_INTERNAL, E_NOT_FOUND, E_SCHEMA
+from xbrain.common.errors import E_BUSY, E_INTERNAL, E_NOT_FOUND, E_NOT_IMPLEMENTED, E_SCHEMA
 from xbrain.p2_core.mode.state_machine import (
     ModeState,
     ModeStateMachine,
@@ -205,6 +205,7 @@ class ModeFace:
                      Callable[[ModeState], str]] = None,
                  payload_state_of: Optional[
                      Callable[[], Optional[Dict[str, Any]]]] = None,
+                 turn_speed: Optional[Any] = None,
                  ) -> None:
         self._machine = machine or ModeStateMachine()
         self._publish = publish
@@ -218,6 +219,11 @@ class ModeFace:
         # loop. None from the callable = device silent -> the field is left
         # out (never a last-known value). None callable = not wired (tests).
         self._payload_state_of = payload_state_of
+        # 99 U104 (2026-10-30): the robot's in-place turn speed
+        # (mode/turn_speed.TurnSpeedSetting). set_turn_speed is applied to it
+        # and its snapshot goes out as state/mode.turn_speed. None = not wired
+        # (tests): set_turn_speed is then refused, never acked as done.
+        self._turn_speed = turn_speed
         # 速度档位状态, dispatch 的 SP-C3 三字段从这里取. 未标定值不写默认数
         # (CLAUDE.md 3.1): profile 是"当前档", 由后续 set_speed_profile 落定,
         # 这里只记状态不设安全上限.
@@ -302,6 +308,19 @@ class ModeFace:
             return mode_ack(cmd_id, "rejected", verdict.code,
                             {"reason": verdict.reason})
         target = target_state_for(cmd)
+        if target is None and cmd.get("action") == "set_turn_speed":
+            # 99 U104: apply to the persisted setting; the ack carries the
+            # RESULT (value / changed / at_limit), not the request.
+            if self._turn_speed is None:
+                return mode_ack(cmd_id, "rejected", E_NOT_IMPLEMENTED,
+                                {"reason": "turn speed setting not wired"})
+            try:
+                applied = self._turn_speed.apply(cmd["turn_speed"])
+            except OSError as exc:
+                return mode_ack(cmd_id, "error", E_INTERNAL,
+                                {"reason": "turn speed not saved: %s" % exc})
+            self._publish_state(now_mono_ms=now_mono_ms)
+            return mode_ack(cmd_id, "accepted", "OK", {"applied": applied})
         if target is None:
             # 合法但不换态(速度档位两动作). applied 直接用分派器算出的三字段.
             self._remember_profile(cmd, verdict)
@@ -559,5 +578,8 @@ class ModeFace:
             payload = self._payload_state_of()
             if payload is not None:
                 body["payload"] = payload
+        if self._turn_speed is not None:
+            # 11 S4.3 turn_speed (99 U104): value + bounds + origin.
+            body["turn_speed"] = self._turn_speed.snapshot()
         self._publish(STATE_MODE_TOPIC,
                       json.dumps(body, ensure_ascii=False).encode("utf-8"))

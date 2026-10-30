@@ -940,8 +940,33 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         def _payload_state_of():
             return _payload_now["v"]
 
+        # 99 U104 (2026-10-30): in-place turn speed. Default max, voice
+        # set_turn_speed adjusts it, an explicit value survives restarts
+        # (same discipline as the volume, U100 continued). Missing keys
+        # refuse the start (CLAUDE.md 3.6); no number lives in code.
+        from xbrain.common.config.resolved import MISSING as _TS_MISSING
+        from xbrain.common.config.resolved import load_resolved as _ts_load
+        from xbrain.p2_core.mode.turn_speed import TurnSpeedSetting
+        _tcfg = _ts_load("p2_core")
+        _tkeys = ("turn_speed.min_radps", "turn_speed.max_radps",
+                  "turn_speed.step_radps", "turn_speed.state_path")
+        _tbad = [k for k in _tkeys if _tcfg.get(k) is _TS_MISSING
+                 or _tcfg.get(k) is None]
+        if _tbad:
+            raise ValueError("p2_core config (99 U104): missing or "
+                             "unassigned: %s (re-run the freeze line)"
+                             % ", ".join(_tbad))
+        turn_speed = TurnSpeedSetting(
+            str(_tcfg.get("turn_speed.state_path")),
+            float(_tcfg.get("turn_speed.min_radps")),
+            float(_tcfg.get("turn_speed.max_radps")),
+            float(_tcfg.get("turn_speed.step_radps")))
+        _logger.info("p2 turn speed %.2f rad/s (%s)", turn_speed.effective(),
+                     turn_speed.origin())
+
         mode_face = ModeFace(motion_behavior_of=_behavior_of,
                              payload_state_of=_payload_state_of,
+                             turn_speed=turn_speed,
                              arb_snapshot=_arb_snapshot,
                              publish=_publish_mode_state,
                              on_transition=_on_mode_transition)
@@ -1243,7 +1268,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     estop_coord.maybe_rearm(int(now * 1000))
                     _ack = _handle_motion_intent(
                         _raw, motion_limits, state_cache, health_agg,
-                        factor_cfg, rel_move_pub)
+                        factor_cfg, rel_move_pub, turn_speed)
                     motion_ack_pub.put(json.dumps(
                         _ack, ensure_ascii=False).encode("utf-8"))
                 # 11 S2.2: health/summary at 1 Hz. Derived every pass from the
@@ -1631,7 +1656,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
 
 
 def _handle_motion_intent(raw, limits, state_cache, health_agg, factor_cfg,
-                          rel_move_pub):
+                          rel_move_pub, turn_speed=None):
     """One cmd/motion/intent frame: G-1..G-11, then forward or refuse.
 
     Never raises -- a malformed frame must not take down the loop that also
@@ -1675,6 +1700,11 @@ def _handle_motion_intent(raw, limits, state_cache, health_agg, factor_cfg,
         # "the user said go forward 1 m but someone is in front -- stop and
         # say so, do not drive around them").
         params = {"abort_on_obstacle": True}
+        if turn_speed is not None:
+            # MO-2 max_yaw_rate_radps (99 U104): the operator's turn speed,
+            # default max. P1 turns at it (basic-motion executor) and the
+            # chassis Tier 1 still clamps to its own limit.
+            params["max_yaw_rate_radps"] = turn_speed.effective()
         rel_move_pub.put(json.dumps(
             to_relative_move(cmd, rm_cmd_id=rm_cmd_id, params=params),
             ensure_ascii=False).encode("utf-8"))
