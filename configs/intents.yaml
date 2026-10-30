@@ -179,7 +179,7 @@ intents:
   query_progress: { id: G07, keywords: ["还有多久完成", "巡逻到哪了"], slots: [], route: fastpath, auth: L0 }
   query_heading: { id: G08, keywords: ["朝哪个方向", "面向哪"], slots: [], route: fastpath, auth: L0 }
   query_uptime: { id: G09, keywords: ["开机多久了", "开机多久", "运行多久", "运行多长时间", "开机多长时间", "跑了多久", "上电多久", "启动多久"], slots: [], route: fastpath, auth: L0 }
-  query_events_recent: { id: G10, keywords: ["最近有什么情况", "有报警吗"], slots: [count, time_range], route: fastpath_then_llm, auth: L0 }
+  query_events_recent: { id: G10, keywords: ["最近有什么情况", "有报警吗", "最近都发生了什么", "最近发生了什么", "都发生了什么"], slots: [count, time_range], route: fastpath_then_llm, auth: L0 }
   query_events_period: { id: G11, keywords: ["今天有几次告警", "这一周的报警", "报警了几次", "报警几次", "有几次报警", "告警了几次"], slots: [date_range], route: llm, auth: L0 }
   query_events_by_type: { id: G12, keywords: ["有入侵报警吗", "有故障事件吗"], slots: [category], route: llm, auth: L0 }
   query_last_alarm: { id: G13, keywords: ["最近一次报警什么时候", "上次警报"], slots: [], route: fastpath, auth: L0 }

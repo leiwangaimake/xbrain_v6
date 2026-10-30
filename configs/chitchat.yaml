@@ -65,3 +65,13 @@ help:
 out_of_scope:
   reply: "抱歉,我只能处理巡逻相关的事情.您可以问我当前状态,下达巡逻任务,或者说\"你能做什么\"了解更多"
   consecutive_threshold: 3    # N consecutive out_of_scope -> announce help.reply
+
+# -- I01-I04 session intents (2026-10-30, field test P101-P106) -------------
+# Before, these were dispatched to cmd/audio/speak and spoke the user's own
+# words back, then "收到". I03 repeats the robot's last reply (session state);
+# these are the replies when there is nothing to repeat / confirm.
+session:
+  repeat_none:        "刚才我还没有说过话"
+  cancel_session:     "好的,有需要再叫我"
+  no_pending_confirm: "现在没有需要确认的操作"
+
