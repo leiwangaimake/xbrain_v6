@@ -102,9 +102,9 @@ intents:
 
   # -- C 模式 --
   enter_alarm: { id: C01, keywords: ["报警模式", "警戒"], slots: [], route: fastpath, auth: L1b }
-  exit_alarm: { id: C02, keywords: ["退出报警", "别报警了", "解除警戒"], slots: [], route: fastpath, auth: L1a }
+  exit_alarm: { id: C02, keywords: ["退出报警", "别报警了", "解除警戒", "退出报警模式", "关闭报警模式", "解除报警模式", "取消报警模式", "结束报警模式", "退出警戒模式"], slots: [], route: fastpath, auth: L1a }
   enter_broadcast: { id: C03, keywords: ["开始喊话", "喊话模式"], slots: [], route: fastpath, auth: L1b }
-  exit_broadcast: { id: C04, keywords: ["退出喊话"], slots: [], route: fastpath, auth: L0 }
+  exit_broadcast: { id: C04, keywords: ["退出喊话", "退出喊话模式", "关闭喊话模式", "结束喊话模式", "取消喊话模式"], slots: [], route: fastpath, auth: L0 }
   enter_patrol_mode: { id: C05, keywords: ["进入巡逻模式", "开始工作"], slots: [], route: fastpath, auth: L1b }
   standby: { id: C06, keywords: ["待命", "休息", "别工作了"], slots: [], route: fastpath, auth: L1a }
   set_motion_behavior: { id: C07, keywords: ["跟着目标走"], slots: [behavior], route: llm, auth: L1b }
