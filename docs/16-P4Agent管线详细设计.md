@@ -3039,6 +3039,7 @@ query_detection:
 > · ⚠️ **仍缺数据通路（如实答「暂时查不到」）**：G10–G14 事件（在 p5 `record.db`，P4 无读口）· G19/G20 感知目标（`state/targets` 未发布）· G25–G31 / G33–G36 —— ★ `11` §7.16 设计的 `state/*` 内 `payload.*` / `ptz.*` 字段**生产方未发布**（机器人 2026-10-30 实抓 `state/mode` 只有 `voice_mode` 等六字段）。★ 补这些发布方属契约落地工作，单列。
 > · ★ **判据**：`tests/p4_agent/state/test_status_answers.py`（6 条变异体全红）。
 > · ★ **同批（分类前的灯光限制拦截）**：`classifier/payload_limits.py` 在急停旁路之后、§5.2 优先链之前，对硬件做不到的灯光请求（红蓝调光 / 调闪烁快慢 / 探照灯爆闪 / 闪法超出 1–16）直接答原因、不派发 —— ★ 原「把警灯调亮」被 D17 截走、实际改了探照灯（现场 P239）。判据 `tests/p4_agent/classifier/test_payload_limits.py`。
+> · ★ **同批（省略设备的半句话）**：「中等」「开到最大」「调到最低」等不含设备词的半句，沿用本会话上一次已派发的 D10 / D17（`OrchestratorSession.last_level_intent`），无上文则反问（`chitchat.yaml` `session.which_device`）。判据 `tests/p4_agent/slots/test_level_phrases.py`。
 
 #### 8.2.1 ★★★ 【v0.9 新增】`G25`–`G42` 十八条状态回读的答复模板与**八条硬分支**
 
