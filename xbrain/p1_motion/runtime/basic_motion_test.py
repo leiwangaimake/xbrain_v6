@@ -456,12 +456,23 @@ class BasicMotionTest:
             # than no motion. p2 allows up to 20 m / 720 deg; this test mode
             # only executes <= MAX_DIST_M / MAX_ANGLE_RAD.
             return "exceeds_test_limit(%.3f > %.3f)" % (amount, cap)
-        self._g = _Guard(axis, 1 if val > 0 else -1, amount, self.speeds[axis])
+        speed = self.speeds[axis]  # the start script's speed
+        if axis == "yaw":
+            # 99 U104 (2026-10-30): P2 fills MO-2 max_yaw_rate_radps with the
+            # operator's turn speed (default max, voice-adjustable, bounded in
+            # p2_core.yaml turn_speed). Use it when it is a positive number;
+            # otherwise the start script's XBRAIN_BASIC_MOTION_ANG, as before.
+            # The chassis Tier 1 still clamps to its own max_wz_radps.
+            rate = body.get("max_yaw_rate_radps")
+            if (isinstance(rate, (int, float)) and not isinstance(rate, bool)
+                    and math.isfinite(rate) and rate > 0.0):
+                speed = float(rate)  # the operator's turn speed
+        self._g = _Guard(axis, 1 if val > 0 else -1, amount, speed)
         self._start = pose  # progress is measured from here
         self._yaw_raw = self._yaw_total = pose[2]  # unwrap from the start yaw
         self.cmd_id = body.get("cmd_id")  # for the log lines
         _logger.warning("BASIC-MOTION-TEST start cmd_id=%s axis=%s amount=%.3f speed=%.2f",
-                        self.cmd_id, axis, amount * (1 if val > 0 else -1), self.speeds[axis])
+                        self.cmd_id, axis, amount * (1 if val > 0 else -1), speed)
         return None
 
     def abort(self, why: str) -> None:
