@@ -88,3 +88,19 @@ payload_limits:
   pattern_out_of_range:  "警灯闪法只有第1到第16种,请说1到16之间的数字"
   brightness_numeric:    "照明亮度按档位调,可以说最亮,一半,最暗,亮一点或暗一点"
 
+# -- H-class system intents with no executor yet (2026-10-30, field test R007-R016) --
+# Nothing consumes cmd/system today; these used to answer "收到" (or confirm a
+# reboot) and do nothing. Remove an id from turn_orchestrator._UNWIRED_SYSTEM in
+# the change that wires its executor.
+unwired_system:
+  template: "{what}功能还没有接通执行端,这次不会执行;需要的话请在现场或云端手动操作"
+  names:
+    H01: "自检"
+    H02: "生成报告"
+    H03: "校时"
+    H04: "重新加载配置"
+    H05: "休眠"
+    H06: "唤醒"
+    H07: "重启"
+    H08: "关机"
+
