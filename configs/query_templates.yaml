@@ -82,3 +82,69 @@ query_fence_relation:
 query_fence_detail:
   ok:             "{name}是{shape},{n}个点,当前{state}"
   timeout:        "暂时查不到那个围栏的详情"
+
+# -- 2026-10-30 field test R001-R006 (state/status_answers.py) -------------
+# G ids that had no query_fn used to be DISPATCHED, i.e. the utterance itself
+# was spoken and then cut off by the "收到" ack. These templates are the live
+# answers (G01 G03-G09 G15-G18 G21-G23) and the honest no-data replies for the
+# ids whose producer field is not on the wire (11 S7.16 state/*.payload / .ptz
+# are not published today). query_faults / query_ptz_pose / query_ptz_owner
+# above are reused as designed (QT-5 / QT-7).
+query_unreadable:
+  stale:    "{what}暂时读不到,请稍后再问"
+query_faults_extra:
+  none_unknown: "系统正常,没有发现故障;另有{unknown}项暂时没有健康数据"
+query_health:
+  ok:       "系统正常,{motion},{speed}"
+  some:     "系统{motion},{speed};有问题的项目:{items}"
+query_sensor:
+  ok:       "{items}"
+query_bit_result:
+  not_wired: "开机自检功能还没有接通;当前运行时健康:{health}"
+query_mode:
+  ok:       "当前是{mode}模式{hold}"
+query_task:
+  none:     "当前没有执行中的任务{queue}"
+  ok:       "当前任务是{kind},{state}{queue}"
+query_progress:
+  none:     "当前没有执行中的任务"
+  no_data:  "当前任务还没有进度数据"
+  pct:      "任务已完成{pct}%"
+  dist:     "已行进{dist}米"
+query_position:
+  no_fix:   "现在没有卫星定位,无法给出位置"
+  ok:       "{fix},纬度{lat},经度{lon}"
+query_speed:
+  still:    "现在静止"
+  ok:       "当前速度{v}米每秒"
+query_heading:
+  invalid:  "现在航向无效,无法判断朝向"
+  ok:       "当前航向{deg}度"
+query_range:
+  ok:       "预计还能行驶{km}公里"
+query_uptime:
+  hm:       "已经开机{h}小时{m}分钟"
+  m:        "已经开机{m}分钟"
+query_geo:
+  none:     "现在还没有设置{word}"
+  some:     "共有{count}个{word}:{names}"
+query_no_data:
+  G10:      "报警事件查询还没有接到事件库,暂时答不了;可以在云端或 HMI 的事件列表里看"
+  G11:      "报警次数统计还没有接到事件库,暂时答不了;可以在云端或 HMI 的事件列表里看"
+  G12:      "按类型查事件还没有接到事件库,暂时答不了"
+  G13:      "最近一次报警的时间还没有接到事件库,暂时答不了"
+  G14:      "报警详情还没有接到事件库,暂时答不了"
+  G19:      "感知目标还没有接到语音查询,暂时答不了"
+  G20:      "目标人数还没有接到语音查询,暂时答不了"
+  G25:      "声光载荷的开关状态还没有对外发布,暂时查不到"
+  G26:      "灯光的开关状态还没有对外发布,暂时查不到"
+  G27:      "警笛状态还没有对外发布,暂时查不到"
+  G28:      "警示灯状态还没有对外发布,暂时查不到"
+  G29:      "设备音量还没有对外发布,暂时查不到"
+  G30:      "喊话进度还没有对外发布,暂时查不到"
+  G31:      "预设语句列表还没有接到语音查询,暂时答不了"
+  G33:      "云台倍率还没有对外发布,暂时查不到"
+  G34:      "云台跟踪本期没有实现"
+  G35:      "云台预置位本期没有实现"
+  G36:      "云台预置位本期没有实现"
+  generic:  "这项查询还没有接通数据,暂时答不了"
