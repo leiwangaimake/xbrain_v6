@@ -63,6 +63,9 @@ STATE_TOPICS: FrozenSet[str] = frozenset({
     "state/task",          # p3_task, on change -- current task (G06 / G07)
     "state/geo/objects",   # p3_task, on change + 0.1 Hz -- routes / waypoints / docks (G21-G23)
     "state/arb/ptz",       # p2_core, 1 Hz -- PTZ holder (G37)
+    # 2026-10-30 (99 U102): G47 "时钟同步了吗" and H03 "校时" read it, but it
+    # was never subscribed -- G47 answered "暂不可用" on every ask in production.
+    "state/clock",         # p1 mirror of ClockStatus, 1 Hz (P1-13 / CLK-A1)
 })
 
 

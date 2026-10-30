@@ -14,6 +14,8 @@ executor lands these must not pretend (CLAUDE.md 3.2). Production orchestrator,
 production configs:
   * each H phrase is denied with its chitchat.yaml unwired_system reply;
   * nothing is published (no cmd/system, no cmd/task) and no confirm opens.
+H03 "校时" left this set the same day (99 U102): it is answered from
+state/clock now, see tests/p4_agent/state/test_time_sync_answer.py.
 MUTATION: remove the _UNWIRED_SYSTEM branch -> "重启" opens a confirm ->
 these cases fail.
 """
@@ -41,7 +43,7 @@ def _orch():  # production orchestrator
     return build_orchestrator(reg, ChitchatResponder(CC), l2_timeout_ms=8000)  # real presets
 
 
-@pytest.mark.parametrize("text, hid", [("校时", "H03"), ("重新加载配置", "H04"), ("刷新规则", "H04"),
+@pytest.mark.parametrize("text, hid", [("重新加载配置", "H04"), ("刷新规则", "H04"),
                                        ("重启系统", "H07"), ("重启一下", "H07"), ("重启设备", "H07"),
                                        ("做个自检", "H01"), ("关机", "H08")])
 def test_unwired_system_intent_says_so_and_sends_nothing(text, hid):  # one query answer: test unwired system intent says so and sends nothing

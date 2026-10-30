@@ -59,6 +59,7 @@ from xbrain.p4_agent.runtime.orchestrator_turn import (
     make_rtk_query_fn,
     make_status_query_fn,
     make_time_query_fn,
+    make_time_sync_fn,
     make_turn_handler,
 )
 from xbrain.common.envelope.age import read_local_boot_id
@@ -248,7 +249,11 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
             orchestrator = build_orchestrator(
                 orch.registry, orch.chitchat, l2_timeout_ms=orch.l2_timeout_ms,
                 tier2_fn=orch.tier2_fn, query_fn=query_fn,
-                bypass_tokens=orch.bypass_tokens)
+                bypass_tokens=orch.bypass_tokens,
+                # 2026-10-30 99 U102: H03 "校时" answered from state/clock.
+                system_fn=make_time_sync_fn(
+                    state_cache, orch.query_templates, orch.site_timezone,
+                    max_age_ms=orch.query_max_age_ms))
             session = OrchestratorSession()
             # 11 S8.7.6 state/voice_turn (2026-10-26): robot-prefixed like the
             # cloud inputs, so it needs the robot id. Without one there is no

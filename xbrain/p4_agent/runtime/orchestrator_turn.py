@@ -167,6 +167,7 @@ def build_orchestrator(
                                 Optional[str]]] = None,
     query_fn=None,
     bypass_tokens=None,
+    system_fn=None,
 ) -> TurnOrchestrator:
     """Construct the voice-loop orchestrator (built once, reused per turn).
 
@@ -176,12 +177,16 @@ def build_orchestrator(
     bypass_tokens (16 S4): the configured bypass word groups, built by
     __main__ from the resolved bypass.* keys. None = the matcher's built-in
     tables, which lack the configured bare 停 / 趴着 -- production must pass
-    them (2026-10-25: "停" alone did not stop the robot)."""
+    them (2026-10-25: "停" alone did not stop the robot).
+
+    system_fn (optional, 2026-10-30 99 U102) answers H03 "校时" from live
+    state (make_time_sync_fn); None answers the unwired reply."""
     return TurnOrchestrator(
         registry, chitchat=chitchat,
         tier2_fn=tier2_fn or null_tier2,
         l2_timeout_ms=l2_timeout_ms,
-        query_fn=query_fn, bypass_tokens=bypass_tokens)
+        query_fn=query_fn, bypass_tokens=bypass_tokens,
+        system_fn=system_fn)
 
 
 def make_battery_query_fn(cache, templates, *, max_age_ms: int,
@@ -255,6 +260,21 @@ def make_status_query_fn(cache, templates, *, max_age_ms: int):
         return generic_no_data(templates) if ans is None else ans.text
 
     return _query
+
+
+def make_time_sync_fn(cache, templates, tz_name, *, max_age_ms: int):
+    """Return a system_fn for H03 "校时" (99 U102): the clock sync status from
+    state/clock, the chronyd clause and the time to the second; "强制校时"
+    answers "not wired". Returns None for any other id."""
+    from xbrain.p4_agent.state.time_sync_answer import time_sync_answer
+
+    def _answer(entry, text) -> Optional[str]:
+        if entry.id != "H03":
+            return None
+        return time_sync_answer(cache, templates, text, int(time.monotonic() * 1000),
+                                max_age_ms=max_age_ms, tz_name=tz_name).text
+
+    return _answer
 
 
 def compose_query_fns(fns):

@@ -450,7 +450,8 @@ Tier2Fn = Callable[[str, "OrchestratorSession", int],
 #: H-class system intents with NO executor today (no cmd/system subscriber in
 #: the repo; H04's cmd/task fallback is dropped by P3). Remove an id here in the
 #: same change that wires its executor. 2026-10-30, field test R007-R016.
-_UNWIRED_SYSTEM = frozenset({"H01", "H02", "H03", "H04", "H05", "H06", "H07", "H08"})
+#: H03 left the set the same day (99 U102): "校时" is answered by system_fn.
+_UNWIRED_SYSTEM = frozenset({"H01", "H02", "H04", "H05", "H06", "H07", "H08"})
 
 #: Level intents whose adjustment an elliptical phrase may continue (D10
 #: volume, D17 brightness), and the phrases that name no device. 2026-10-30.
@@ -477,6 +478,10 @@ class TurnOrchestrator:
         l2_timeout_ms: int,
         matcher: Optional[KeywordMatcher] = None,
         query_fn: Optional[Callable[[IntentEntry], Optional[str]]] = None,
+        # H-class intents answered from live state instead of a cmd/system
+        # dispatch (2026-10-30, 99 U102: H03 "校时"). Takes the TEXT too: the
+        # forced variant ("强制校时") is told apart by its words.
+        system_fn: Optional[Callable[[IntentEntry, str], Optional[str]]] = None,
         # A snapshot of the state keys P4 subscribes, keyed by zenoh key.
         # Named state_fn and not geo_state_fn (its 2026-08-20 name): it started
         # out serving only state/geo/manifest, but the B-class task control
@@ -512,6 +517,7 @@ class TurnOrchestrator:
         # it is None or returns None, the query falls through to a normal
         # dispatch (the data source for that G id is not wired yet).
         self._query_fn = query_fn
+        self._system_fn = system_fn  # H03 answer (None: the unwired reply)
         # 11 S12A.1: the F class needs two pieces of LIVE state that only exist
         # outside this class -- the open recording session (state/teach) and the
         # object catalogue (state/geo/manifest). Injected as one getter for the
@@ -698,6 +704,22 @@ class TurnOrchestrator:
         # to answer "收到" -- or ask "确认吗" for reboot and then do nothing --
         # i.e. pretend success. Until an executor exists, say so and send
         # nothing (CLAUDE.md 3.2). Before the auth gate: no confirm for a no-op.
+        # *** H03 "校时" (2026-10-30, 99 U102 user ruling): ANSWERED, not
+        # dispatched -- the sync status from state/clock, whether chronyd keeps
+        # the clock, and the time to the second (state/time_sync_answer.py);
+        # "强制校时" (a wall-clock step) answers "not wired" from the same
+        # function. Nothing goes on cmd/system: its only active step (chronyc
+        # burst) needs root, which the ruling excludes. Before the auth gate:
+        # a reading needs no confirm (L1b / L2 were for the command).
+        if entry.id == "H03":
+            answer = self._system_fn(entry, text) if self._system_fn is not None else None
+            if answer is None:
+                answer = self._chitchat.unwired_reply(entry.id)
+            return TurnDecision(
+                kind="reply", intent_id=entry.id, intent_name=entry.name,
+                route=entry.route, auth=entry.auth, layer=layer,
+                reply_text=answer, tts_text=answer)
+
         if entry.id in _UNWIRED_SYSTEM:
             reply = self._chitchat.unwired_reply(entry.id)
             return TurnDecision(
