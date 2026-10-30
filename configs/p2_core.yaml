@@ -433,3 +433,22 @@ bit:
     # p2 starts before payload-service; retry the line every 2 s until this
     # many seconds have passed, then give up with a WARNING.
     boot_greeting_wait_s: 120
+
+# -- In-place turn speed (99 U104, user ruling 2026-10-30) ---------------------
+# Default = max_radps; "机器人转速快一点 / 慢一点 / 最快 / 最慢" (A15 ->
+# ModeCommand set_turn_speed) moves it by step_radps inside [min, max]; an
+# explicit value is persisted at state_path and restored at the next start
+# (same discipline as the volume, U100 continued). P2 puts the value in every
+# relmove as MO-2 max_yaw_rate_radps.
+turn_speed:
+  # INTERIM, user ruling 2026-10-30: the vendor manuals (docs/QUADRUPED, three
+  # PDFs) give no maximum yaw rate. Replace with the measured chassis limit
+  # after a field run with a person present and the area clear.
+  max_radps: 0.6
+  # Above the chassis "twists but does not step" threshold: 0.2 only twists
+  # (2026-09-15), 0.3 still stalls often (p1 log 10-27..10-29).
+  min_radps: 0.4
+  # One "快一点 / 慢一点".
+  step_radps: 0.1
+  # Delete this file to return to the default (max).
+  state_path: "/opt/xbrain_v6/data/run/p2_turn_speed.json"

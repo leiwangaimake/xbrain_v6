@@ -85,6 +85,11 @@ intents:
   face_heading: { id: A12, keywords: ["朝北", "面向", "转向正"], slots: [heading], route: fastpath_then_llm, auth: L1b }
   set_speed_profile: { id: A13, keywords: ["慢一点", "快一点", "全速"], slots: [profile], route: fastpath, auth: L1b }
   set_gait: { id: A14, keywords: ["步态", "楼梯", "敏捷"], slots: [gait], route: fastpath, auth: L1b }
+  # A15 (2026-10-30, 99 U104): the robot's in-place turn speed. Every keyword
+  # names the BODY (机器人 / 机身 / 转向速度 / 转身速度): bare "转速快一点" stays
+  # E09 PTZ speed (user ruling), and no keyword is "转身..." + level, which a
+  # longer variant could split into A11 turn_around (a 180 degree turn).
+  set_turn_speed: { id: A15, keywords: ["机器人转速快一点", "机器人转速慢一点", "机器人转速最快", "机器人转速最慢", "机器人转速调到最快", "机器人转速调到最慢", "机器人转快一点", "机器人转慢一点", "机器人转快点", "机器人转慢点", "机器人转得快一点", "机器人转得慢一点", "机身转速快一点", "机身转速慢一点", "机身转速最快", "机身转速最慢", "转向速度快一点", "转向速度慢一点", "转向速度最快", "转向速度最慢", "转身速度快一点", "转身速度慢一点", "转身速度最快", "转身速度最慢"], slots: [turn_speed], route: fastpath, auth: L1a }
 
   # -- B 导航与任务 --
   goto_waypoint: { id: B01, keywords: ["去", "到", "前往"], slots: [waypoint], route: fastpath_then_llm, auth: L1a }
