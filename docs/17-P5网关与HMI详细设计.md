@@ -351,6 +351,8 @@ INSERT OR IGNORE INTO event_cursor(channel) VALUES ('normal'), ('alarm');
 | ★ **2** | ★ 成对事件的 `episode_id`（`11` §9A.9 **E-2**）**跨中断必须配对** —— ★ 中断时若已发过「进入」而未发「退出」，续跑后的「退出」必须用**同一个 `episode_id`**，否则云端永久停在告警态（同 §3.5.5 **O-3** 的失效形态） |
 | ★★ **3** | ★★ **P5 侧无论哪种答案都不需要改代码** —— ★ 它只按**产生方给的** `task_id` / `trace_id` / `episode_id` 落列，🚫 自己不推导任务语义。<br>⇒ ★★ **本条不阻塞编码**；★ 一旦甲方选「重来」，只需在 `15` 侧改任务态机，`17` 一个字不用动 |
 
+> ★ **2026-10-30 新增出口（`99` U103 · `11` §4.7）**：P5 每拍心跳（1 Hz）以**只读**连接（`mode=ro`，不与 `EventSubsystem` 写连接共用）统计 `events`：今天 / 近 7 天按 `sev` 的行数、`sev=alarm` / `fault` 最新一行的 `cat` 与 `detected_at`，发 `state/event/stats` 给 p4 语音作答。读失败本拍不发（EVS-4）。实装 `xbrain/p5_gateway/event/stats.py`，接线在 `runtime/main_wiring.py` 心跳块 `state/link` 之后。
+
 ### 3.5 ★ 断网补发
 
 > EVT-13。**Zenoh pub/sub 不保证送达**，断网期间的报警事件丢失在巡防场景不可接受。
