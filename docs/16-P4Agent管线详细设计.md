@@ -3042,7 +3042,7 @@ query_detection:
 > · ★ **判据**：`tests/p4_agent/state/test_status_answers.py`（6 条变异体全红）。
 > · ★ **同批（分类前的灯光限制拦截）**：`classifier/payload_limits.py` 在急停旁路之后、§5.2 优先链之前，对硬件做不到的灯光请求（红蓝调光 / 调闪烁快慢 / 探照灯爆闪 / 闪法超出 1–16）直接答原因、不派发 —— ★ 原「把警灯调亮」被 D17 截走、实际改了探照灯（现场 P239）。判据 `tests/p4_agent/classifier/test_payload_limits.py`。
 > · ★ **同批（省略设备的半句话）**：「中等」「开到最大」「调到最低」等不含设备词的半句，沿用本会话上一次已派发的 D10 / D17（`OrchestratorSession.last_level_intent`），无上文则反问（`chitchat.yaml` `session.which_device`）。判据 `tests/p4_agent/slots/test_level_phrases.py`。
-> · ⚠️★ **同批（系统指令未接通执行端）**：`11` §2.2 登记 `cmd/system` 由 p5 / p2 / p2(BIT) 三方订阅，**生产代码零订阅** ⇒ H01–H08 在执行端落地前于 `_route_entry` 直接答 `chitchat.yaml` `unwired_system`、不开确认、不派发；`to_system_command` 的 origin 规则仍由 `test_turn_labels` 钉住。判据 `tests/p4_agent/runtime/test_unwired_system.py`。
+> · ⚠️★ **同批（系统指令未接通执行端）**：`11` §2.2 登记 `cmd/system` 由 p5 / p2 / p2(BIT) 三方订阅，**生产代码零订阅** ⇒ ~~H01–H08~~ H01 / H02 / H04–H08（★ H03 同日移出：`99` U102 改为读 `state/clock` 作答，见 `11` §7.15.3 落地注；`turn_orchestrator` 注入 `system_fn`）在执行端落地前于 `_route_entry` 直接答 `chitchat.yaml` `unwired_system`、不开确认、不派发；`to_system_command` 的 origin 规则仍由 `test_turn_labels` 钉住。判据 `tests/p4_agent/runtime/test_unwired_system.py`。
 
 #### 8.2.1 ★★★ 【v0.9 新增】`G25`–`G42` 十八条状态回读的答复模板与**八条硬分支**
 
