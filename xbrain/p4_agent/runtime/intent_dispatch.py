@@ -137,6 +137,8 @@ INTENT_TO_KEY.update({
     # (11 S7.3 + the D-04 ruling in S7.3.1), so it goes to cmd/mode, not to
     # cmd/motion/intent -- it is not one of S9.3.2A.4's eight motion values.
     "A13": CMD_MODE,
+    # A15 set_turn_speed (99 U104): a ModeCommand action like A13.
+    "A15": CMD_MODE,
     # B12 stop_follow is a BEHAVIOUR change (18: "exit the target-directed
     # behaviour"), not a task action -- see mode_request.py. B05/B06/B07 stay
     # on cmd/task: they are real S7.2 control actions. B10 skip_waypoint stays

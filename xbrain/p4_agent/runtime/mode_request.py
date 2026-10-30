@@ -65,6 +65,10 @@ _MODE_INTENTS: Dict[str, tuple] = {
     # ceiling" is the worse failure direction, because every such key must
     # then be justified in the S12.1.1 HMI whitelist.
     "set_speed_profile": ("set_speed_profile", None),
+    # A15 (2026-10-30, 99 U104): the robot's in-place turn speed. A ModeCommand
+    # action for the same D-04 reason as A13: no separate motion key that can
+    # raise a speed; P2 owns the value, its bounds and its persistence.
+    "set_turn_speed": ("set_turn_speed", None),
     # B12 stop_follow. 18's effect column reads "exit the target-directed
     # behaviour" -- that is a motion BEHAVIOUR, not a task action, so it is a
     # ModeCommand set_behavior back to NAV-50's `normal` and NOT a cmd/task
@@ -84,6 +88,9 @@ BEHAVIOR_VALUES = frozenset({"normal", "follow", "face_target"})
 #: and schema validation must both REFUSE those two strings, never map them
 #: onto patrol.
 PROFILE_VALUES = frozenset({"obstacle_avoid", "patrol"})
+
+#: A15 turn_speed closed set (11 S7.3 set_turn_speed, 99 U104).
+TURN_SPEED_VALUES = frozenset({"faster", "slower", "max", "min"})
 
 
 class ModeRequestError(RuntimeError):
@@ -127,6 +134,14 @@ def to_mode_command(intent_name: str, *, slots: Mapping[str, Any],
                 "profile %r is not one of %s (U33 removed cruise and transit)"
                 % (profile, sorted(PROFILE_VALUES)))
         payload["profile"] = profile
+    if action == "set_turn_speed":
+        level = slots.get("turn_speed")
+        if level not in TURN_SPEED_VALUES:
+            # No level word ("机器人转速..." alone): ask again rather than
+            # guess a direction -- a guess can make the robot turn faster.
+            raise ModeRequestError("turn_speed %r is not one of %s"
+                                   % (level, sorted(TURN_SPEED_VALUES)))
+        payload["turn_speed"] = level
     if action == "set_behavior":
         behavior = _FIXED_BEHAVIOR.get(intent_name, slots.get("behavior"))
         if not isinstance(behavior, str) or behavior not in BEHAVIOR_VALUES:

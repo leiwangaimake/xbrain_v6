@@ -237,7 +237,7 @@ def test_auth_matches_16_s8_3a_2():
     # landed D17/D18/E09/E10 (2026-08-07); 134->139 when 18-C G43-G47 landed
     # (2026-08-16, F3); CS-A3's declared histogram moved with it; 139->141 when
     # J04 thanks / J05 farewell were restored (2026-10-30, 99 U101).
-    assert len(row_auth) == 141
+    assert len(row_auth) == 142  # 141 -> 142: A15 set_turn_speed (2026-10-30, 99 U104)
     for e in reg.entries:                                # every registry entry
         assert e.auth == base[e.id], (e.name, e.id)      # base auth == folded doc level
 
@@ -282,6 +282,8 @@ def test_bonus_cross_check_against_triage_when_present():
         "query_heading_source", "query_clock_sync",
         # J04 / J05 (2026-10-30, 99 U101): restored straight into the source.
         "thanks", "farewell",
+        # A15 (2026-10-30, 99 U104): the robot's in-place turn speed.
+        "set_turn_speed",
     }
     # A migrated intent whose SLOTS legitimately evolved after the freeze is
     # enumerated here (not open-ended): the frozen _triage.json cannot be

@@ -199,6 +199,12 @@ _CN_LABELS = {
     "E08": "停止扫描", "E09": "调整云台转速", "H07": "重启系统",
 }
 
+#: A15 set_turn_speed ack wording per level (99 U104).
+_TURN_SPEED_LABELS = {
+    "faster": "机器人转速调快一点", "slower": "机器人转速调慢一点",
+    "max": "机器人转速调到最快", "min": "机器人转速调到最慢",
+}
+
 # Intents whose complete stop phrases the safety bypass leaves to them
 # (2026-10-25, decided as option (b): keep the keywords and CF-1 as they are,
 # make the bypass yield). 18's E08 boundary table: a bare 停 / 停止 / 停下 is
@@ -983,7 +989,7 @@ class TurnOrchestrator:
             kind="dispatch", intent_id=entry.id, intent_name=entry.name,
             route=entry.route, auth=eff_auth, level=eff_auth, layer=layer,
             dispatch_result=result, envelope=env,
-            tts_text=self._dispatch_ack(entry),
+            tts_text=self._dispatch_ack(entry, extra),
             llm_used=llm_used, prompt_assembled=llm_used)
 
     def _run_tier2(self, text: str, session: OrchestratorSession,
@@ -1235,10 +1241,18 @@ class TurnOrchestrator:
     def _timeout_prompt(self, entry: IntentEntry) -> str:
         return "没有收到确认,已取消"
 
-    def _dispatch_ack(self, entry: IntentEntry) -> str:
+    def _dispatch_ack(self, entry: IntentEntry,
+                      extra: Optional[Dict[str, Any]] = None) -> str:
         """Brief spoken acknowledgment for a dispatched action, so a motion
         command is not silent. A Chinese label when known, else 'received'.
         (Full L1a/L1b restate with slot values is GWY-P4-35 wiring; this is
-        the minimal feedback the 2026-08-11 ORIN test showed was missing.)"""
+        the minimal feedback the 2026-08-11 ORIN test showed was missing.)
+        A15 names the direction it was asked for (99 U104); the resulting
+        value is P2's (ack.applied), never predicted here."""
+        if entry.id == "A15":
+            level = ((extra or {}).get("mode_command") or {}).get("turn_speed")
+            label = _TURN_SPEED_LABELS.get(level)
+            if label:
+                return "好的," + label
         label = _CN_LABELS.get(entry.id)
         return ("好的," + label) if label else "收到"

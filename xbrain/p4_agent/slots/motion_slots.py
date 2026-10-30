@@ -161,6 +161,25 @@ def parse_angle_deg(text: str) -> Optional[float]:
     return value if value > 0 else None  # positive only (S8.0.4)
 
 
+#: A15 set_turn_speed level words (99 U104), longest first: "调到最快" before
+#: "快". The value set is 11 S7.3 set_turn_speed.turn_speed.
+_TURN_SPEED_WORDS = (
+    ("调到最快", "max"), ("调到最慢", "min"), ("最快", "max"), ("最慢", "min"),  # bounds
+    ("快一点", "faster"), ("快一些", "faster"), ("快点", "faster"), ("调快", "faster"),  # up
+    ("转得快", "faster"), ("转快", "faster"),  # up
+    ("慢一点", "slower"), ("慢一些", "slower"), ("慢点", "slower"), ("调慢", "slower"),  # down
+    ("转得慢", "slower"), ("转慢", "slower"),  # down
+)
+
+
+def parse_turn_speed_level(text: str) -> Optional[str]:
+    """A15: faster / slower / max / min from the text, or None."""
+    for word, level in _TURN_SPEED_WORDS:  # longest / most specific first
+        if word in (text or ""):  # said
+            return level  # the closed-set value
+    return None  # no level word: the mode request refuses and asks again
+
+
 def motion_slots(intent_name: str, text: str) -> Dict[str, Any]:
     """The fast-leg numeric slot for an A05-A10 intent, or {} when absent.
 
@@ -170,6 +189,9 @@ def motion_slots(intent_name: str, text: str) -> Dict[str, Any]:
     if intent_name == "face_heading":
         heading = parse_heading(text)  # A12: the eight-way enum
         return {} if heading is None else {"heading": heading}
+    if intent_name == "set_turn_speed":
+        level = parse_turn_speed_level(text)  # A15 (99 U104)
+        return {} if level is None else {"turn_speed": level}
     slot = NUMERIC_MOTION_SLOT.get(intent_name)  # distance or angle
     if slot is None:  # not a motion intent
         return {}  # not a numeric motion intent
