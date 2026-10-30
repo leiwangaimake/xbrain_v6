@@ -130,6 +130,18 @@ query_range:
 query_uptime:
   hm:       "已经开机{h}小时{m}分钟"
   m:        "已经开机{m}分钟"
+# H03 "校时" (2026-10-30, 99 U102 user ruling): no sudo, so nothing is
+# triggered; the reply reads state/clock (sync judged by rtk_driver, CLK-A1)
+# and /proc (is chronyd running) and speaks the system time to the second
+# (state/time_sync_answer.py). {daemon} is filled with daemon_on / daemon_off.
+time_sync:
+  synced:        "时钟已通过{source}同步,{daemon},当前时间{now}"
+  synced_plain:  "时钟已同步,{daemon},当前时间{now}"
+  unsynced:      "时钟未同步,{daemon},当前时间{now}"
+  no_data:       "时钟同步状态暂时读不到,{daemon},当前时间{now}"
+  daemon_on:     "系统由 chronyd 自动保持同步"
+  daemon_off:    "自动对时服务 chronyd 没有在运行"
+  force_unwired: "强制校时还没有接通执行端,这次不会执行;当前时间{now}"
 query_geo:
   none:     "现在还没有设置{word}"
   some:     "共有{count}个{word}:{names}"
