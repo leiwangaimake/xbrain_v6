@@ -740,7 +740,6 @@ xbrain/p4_agent/session/level_routing.py
 xbrain/p4_agent/session/state_machines.py
 xbrain/p4_agent/slots/payload_slots.py
 xbrain/p4_agent/slots/ptz_slots.py
-xbrain/p4_agent/state/cache.py
 xbrain/p4_agent/state/query_data.py
 xbrain/p4_agent/templates/query_engine.py
 xbrain/p4_agent/templates/restate_engine.py
