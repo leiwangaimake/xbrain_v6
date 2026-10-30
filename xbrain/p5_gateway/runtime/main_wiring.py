@@ -38,6 +38,7 @@ _logger = logging.getLogger("xbrain.p5.wiring")
 
 
 STATE_LINK_TOPIC = "state/link"
+STATE_EVENT_STATS_TOPIC = "state/event/stats"  # 11 S4.7: record.db counts for p4 G10 / G11 / G13
 CMD_AUDIO_SPEAK_ACK_TOPIC = "cmd/audio/speak/ack"
 STATE_TASK_TOPIC = "state/task"
 
@@ -629,6 +630,14 @@ def run_voice_loop_wiring(stop_flag: dict,
     _logger.info("p5 wiring: opening GEN session")
     with open_planes(("gen",)) as gen:
         link_pub = gen.declare_publisher(STATE_LINK_TOPIC)
+        # 2026-10-30 (99 U103): state/event/stats -- per-severity counts of
+        # record.db (read-only) so p4 can answer "报警了几次" / "最近发生了什么"
+        # / "上次警报" (event/stats.py). No record_db_path -> nothing published,
+        # and p4 answers "暂时读不到" rather than a zero.
+        from xbrain.p5_gateway.event.stats import EventStats
+        event_stats = EventStats(record_db_path, site_timezone) if record_db_path else None
+        event_stats_pub = (gen.declare_publisher(STATE_EVENT_STATS_TOPIC)
+                           if event_stats is not None else None)
         # W5: probe ping out, pong in (11 CR-2/CR-3). The ping rides the estop
         # channel path (via chassis_relay) so a dead estop LINK (not merely a
         # dead app) surfaces as estop_path "down", not a false "ok".
@@ -756,6 +765,7 @@ def run_voice_loop_wiring(stop_flag: dict,
         # 带 {sev} 段, 所以按实际 key 分桶.
         _link_env_seq = [0]
         _comm_env_seq: dict = {}
+        _event_stats_env_seq = [0]  # state/event/stats, one key
 
         def _stamp(data: dict, seq_slot) -> bytes:
             """把一段机内载荷包进 11 S3.0 的信封并序列化.
@@ -1474,6 +1484,12 @@ def run_voice_loop_wiring(stop_flag: dict,
                     #   data 嵌套形, 且两者都保留了裸形兜底, 所以本改动不需要
                     #   两侧同时上线.
                     link_pub.put(_stamp(link_payload, _link_env_seq))
+                    # 11 S4.7 event statistics, same 1 Hz beat. read() is None
+                    # when record.db is unreadable: skip, so p4 sees it stale.
+                    if event_stats is not None:
+                        stats = event_stats.read()
+                        if stats is not None:
+                            event_stats_pub.put(_stamp(stats, _event_stats_env_seq))
                     # Reconnect -> backfill (17 S3.5.2): the state machine flags the
                     # once-per-outage down->up edge. No-op while the cloud has never
                     # been heard from (dev has no cloud) -> dormant until real uplink.
