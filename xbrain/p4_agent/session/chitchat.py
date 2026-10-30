@@ -160,6 +160,10 @@ class ChitchatResponder:
             # Rotate through the 海卫 identity variants (party-A ask): a
             # self-introduction should not be the same sentence every time.
             return self._rotate(self._p["identity"]["replies"], state)
+        if intent_name in ("thanks", "farewell"):
+            # J04 / J05 (99 U101): courtesy replies, rotated like identity.
+            state.reset_out_of_scope()
+            return self._rotate(self._p[intent_name]["replies"], state)
         if intent_name == "help":
             state.reset_out_of_scope()
             return self._p["help"]["reply"]

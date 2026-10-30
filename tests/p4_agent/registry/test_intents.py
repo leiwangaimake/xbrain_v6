@@ -235,8 +235,9 @@ def test_auth_matches_16_s8_3a_2():
     assert set(base) == doc_ids                          # fold covers exactly those ids
     # 139 = 137 intents + H01 split + H03 split. Was 130/128 until GWY-P4-23
     # landed D17/D18/E09/E10 (2026-08-07); 134->139 when 18-C G43-G47 landed
-    # (2026-08-16, F3); CS-A3's declared histogram moved with it.
-    assert len(row_auth) == 139
+    # (2026-08-16, F3); CS-A3's declared histogram moved with it; 139->141 when
+    # J04 thanks / J05 farewell were restored (2026-10-30, 99 U101).
+    assert len(row_auth) == 141
     for e in reg.entries:                                # every registry entry
         assert e.auth == base[e.id], (e.name, e.id)      # base auth == folded doc level
 
@@ -279,6 +280,8 @@ def test_bonus_cross_check_against_triage_when_present():
         # source like D17/D18, not back-filled into the frozen _triage.json (0.2).
         "query_rtk_fix", "query_satellites", "query_heading_status",
         "query_heading_source", "query_clock_sync",
+        # J04 / J05 (2026-10-30, 99 U101): restored straight into the source.
+        "thanks", "farewell",
     }
     # A migrated intent whose SLOTS legitimately evolved after the freeze is
     # enumerated here (not open-ended): the frozen _triage.json cannot be

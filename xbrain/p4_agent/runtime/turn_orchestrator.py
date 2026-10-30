@@ -170,7 +170,11 @@ _MOTION_REASON_CN = {
     "missing_slot:heading": "要朝哪个方向? 比如朝北",
 }
 
-_CHITCHAT_NAMES = frozenset({"greeting", "identity", "help", "out_of_scope"})
+_CHITCHAT_NAMES = frozenset({"greeting", "identity", "help", "out_of_scope",
+                             "thanks", "farewell"})  # J04 / J05: 99 U101 (2026-10-30)
+#: The time of day the operator SAID, for the J01 greeting variant (longest first).
+_SAID_TIME = (("早上", "morning"), ("早安", "morning"), ("上午", "forenoon"),
+              ("中午", "noon"), ("下午", "afternoon"), ("晚上", "evening"), ("晚安", "evening"))
 
 # Short Chinese labels for spoken confirm/ack feedback (hot-tunable
 # wording; ASCII punct). Keyed by 18 id. Only the common action/payload
@@ -686,7 +690,7 @@ class TurnOrchestrator:
         # never dispatch an action. Handled before the auth gate: they are
         # all L0 and produce speech, not motion.
         if entry.name in _CHITCHAT_NAMES:
-            return self._reply_chitchat(entry, session, layer)
+            return self._reply_chitchat(entry, session, layer, text)
 
         # *** H01-H08 system intents (2026-10-30, field test R007-R016): nothing in
         # the repo consumes cmd/system (intent_dispatch: "ROUTED but not yet
@@ -1054,8 +1058,11 @@ class TurnOrchestrator:
 
     def _reply_chitchat(self, entry: IntentEntry,
                         session: OrchestratorSession,
-                        layer: str) -> TurnDecision:
-        reply = self._chitchat.respond(entry.name, session.chitchat)
+                        layer: str, text: str = "") -> TurnDecision:
+        # A greeting answers in the time of day the operator named ("下午好"),
+        # never one picked from the clock (field test 4.9, 99 U101).
+        tod = next((t for w, t in _SAID_TIME if w in text), None) if entry.name == "greeting" else None
+        reply = self._chitchat.respond(entry.name, session.chitchat, time_of_day=tod)
         return TurnDecision(
             kind="reply", intent_id=entry.id, intent_name=entry.name,
             route=entry.route, auth=entry.auth, layer=layer,
