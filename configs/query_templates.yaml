@@ -145,11 +145,20 @@ time_sync:
 query_geo:
   none:     "现在还没有设置{word}"
   some:     "共有{count}个{word}:{names}"
+# G10 / G11 / G13 (2026-10-30, 99 U103): p5's state/event/stats -- record.db
+# rows per sev, today = since local midnight, last_7d = today + 6 days before.
+# {last} is the "last" branch or empty; {when} is when_today / when_day.
+query_events:
+  quiet:      "今天没有报警和故障,也没有警告,共记录{total}条一般事件"
+  some:       "今天记录了{total}条事件:报警{alarm}次,故障{fault}次,警告{warn}次{last}"
+  last:       ";最近一次报警在{when},类别是{cat}"
+  period:     "今天报警{alarm}次,故障{fault}次;近7天报警{alarm7}次,故障{fault7}次"
+  last_alarm: "最近一次报警在{when},类别是{cat}"
+  no_alarm:   "事件记录里没有报警"
+  when_today: "今天{h}时{m}分"
+  when_day:   "{mo}月{d}日{h}时{m}分"
 query_no_data:
-  G10:      "报警事件查询还没有接到事件库,暂时答不了;可以在云端或 HMI 的事件列表里看"
-  G11:      "报警次数统计还没有接到事件库,暂时答不了;可以在云端或 HMI 的事件列表里看"
   G12:      "按类型查事件还没有接到事件库,暂时答不了"
-  G13:      "最近一次报警的时间还没有接到事件库,暂时答不了"
   G14:      "报警详情还没有接到事件库,暂时答不了"
   G19:      "感知目标还没有接到语音查询,暂时答不了"
   G20:      "目标人数还没有接到语音查询,暂时答不了"
