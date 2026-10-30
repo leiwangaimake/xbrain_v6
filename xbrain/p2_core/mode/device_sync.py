@@ -232,14 +232,21 @@ class DeviceModeSync:
                         body, status, resp)
         return SyncResult(ok=False, status=status, reason="payload_deter")  # 409 = not in deter mode
 
-    def current(self) -> Optional[str]:
-        """The device mode GET /status reports, or None when unknown."""
+    def read_status(self) -> Optional[Dict[str, Any]]:
+        """The whole GET /status body (mode + lights readback), or None when
+        payload-service does not answer with a 200. Used once a second for
+        state/mode.payload (11 S4.3); a missing answer is None, never {}."""
         try:
             status, body = self._transport(
                 "GET", self._base + "/status", None, self._timeout_s)
         except (OSError, urllib.error.URLError):
             return None  # unknown, never assumed
-        mode = body.get("mode") if status == 200 else None  # only a 200 body is trusted
+        return body if status == 200 and isinstance(body, dict) else None  # only a 200 body is trusted
+
+    def current(self) -> Optional[str]:
+        """The device mode GET /status reports, or None when unknown."""
+        body = self.read_status()
+        mode = body.get("mode") if body is not None else None  # only a 200 body is trusted
         return mode if mode in DEVICE_MODES else None  # out-of-set = unknown (CLAUDE.md 3.5)
 
     def reconcile(self, target: str) -> Optional[SyncResult]:

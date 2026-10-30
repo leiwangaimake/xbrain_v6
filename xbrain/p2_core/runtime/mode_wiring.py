@@ -203,6 +203,8 @@ class ModeFace:
                      Callable[[ModeState, ModeState], None]] = None,
                  motion_behavior_of: Optional[
                      Callable[[ModeState], str]] = None,
+                 payload_state_of: Optional[
+                     Callable[[], Optional[Dict[str, Any]]]] = None,
                  ) -> None:
         self._machine = machine or ModeStateMachine()
         self._publish = publish
@@ -211,6 +213,11 @@ class ModeFace:
         # p2_core.yaml mode_motion 段, 本类不读配置; None = 不发该字段
         # (单测与只关心模式机的调用方).
         self._motion_behavior_of = motion_behavior_of
+        # 11 S4.3 state/mode.payload (2026-10-30, field test R004-R006): the
+        # payload's actual state, built by mode/payload_state.py in the main
+        # loop. None from the callable = device silent -> the field is left
+        # out (never a last-known value). None callable = not wired (tests).
+        self._payload_state_of = payload_state_of
         # 速度档位状态, dispatch 的 SP-C3 三字段从这里取. 未标定值不写默认数
         # (CLAUDE.md 3.1): profile 是"当前档", 由后续 set_speed_profile 落定,
         # 这里只记状态不设安全上限.
@@ -548,5 +555,9 @@ class ModeFace:
             # 从未让行 -- 喊话或报警期间巡逻任务照样标 running.
             body["motion_behavior"] = self._motion_behavior_of(
                 self._machine.state)
+        if self._payload_state_of is not None:
+            payload = self._payload_state_of()
+            if payload is not None:
+                body["payload"] = payload
         self._publish(STATE_MODE_TOPIC,
                       json.dumps(body, ensure_ascii=False).encode("utf-8"))

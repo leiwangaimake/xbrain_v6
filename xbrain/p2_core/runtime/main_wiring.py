@@ -931,7 +931,17 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 bcast_since["t"] = None
                 speaker.set_gate(True, "idle")
 
+        # 11 S4.3 state/mode.payload: refreshed once a second in the main loop
+        # (below, before the 1 Hz republish) from GET /status + what P2 holds.
+        from xbrain.p2_core.mode.payload_state import PayloadStateTracker
+        payload_tracker = PayloadStateTracker()
+        _payload_now = {"v": None}
+
+        def _payload_state_of():
+            return _payload_now["v"]
+
         mode_face = ModeFace(motion_behavior_of=_behavior_of,
+                             payload_state_of=_payload_state_of,
                              arb_snapshot=_arb_snapshot,
                              publish=_publish_mode_state,
                              on_transition=_on_mode_transition)
@@ -1425,6 +1435,19 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 # state/mode 1 Hz 下限(15 S4.1A "事件 + 1 Hz").
                 if now - last_mode_pub >= 1.0:
                     last_mode_pub = now
+                    # 11 S4.3 payload: device readback + P2's own records.
+                    # A silent payload-service yields None -> field left out.
+                    try:
+                        _payload_now["v"] = payload_tracker.build(
+                            device_sync.read_status(),
+                            volume_pct=volume_setting.effective(),
+                            siren_on=deter_driver.running,
+                            speaking=arb_hub.holder("speaker") is not None,
+                            # WALL-CLOCK-OK(record): updated_ts is a display stamp (11 S4.3).
+                            now_wall=time.time())
+                    except Exception as exc:      # noqa: BLE001
+                        _payload_now["v"] = None
+                        _logger.error("p2 state/mode.payload build failed: %s", exc)
                     try:
                         mode_face.republish(now_mono_ms=int(now * 1000))
                     except Exception as exc:      # noqa: BLE001
