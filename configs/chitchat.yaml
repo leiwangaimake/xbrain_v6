@@ -108,6 +108,8 @@ unwired_system:
     H06: "唤醒"
     H07: "重启"
     H08: "关机"
+    # 2026-11-02 (99 U105): A13 is classified but P1 never receives the profile.
+    A13: "速度档位调整"
 
 # -- J04 thanks / J05 farewell (2026-10-30, 99 U101 user ruling; field test P231 / P232) --
 thanks:
