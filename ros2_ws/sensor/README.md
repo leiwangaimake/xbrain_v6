@@ -155,6 +155,7 @@ EAGAIN 但超过 3 s 无数据也重开（有的内核拔掉设备后一直返�
 | 认证 | 无（靠网段绑定，RTB-9） | 账号口令，`LoadCredential`（RTG-9） |
 | 机器人数量 | 一个基站服务 LAN 内所有机器人 | 每台机器人一个账号（千寻通常一号一机在线，待与千寻确认） |
 | 连接时机 | 常连 | ⚠️ **U-RTCM-2**：冷备（建议）或热备 |
+| 与地点的关系 | 每个现场一台基站，`lan.host/port` 随现场配置 | **不依赖任何与地点有关的配置**：GGA 只用机器人实测位置，走远了自动重建 VRS（`11` RTG-7 / RTG-12）。同一份配置在上海、南京等任意地点可用 |
 
 ### 3.2 树莓派 `rtcm_bridge`（契约见 `11` §3.2A.1）
 
@@ -198,6 +199,7 @@ EAGAIN 但超过 3 s 无数据也重开（有的内核拔掉设备后一直返�
 | `SourceSelector` | `rtcm_selector.{h,cc}` | 主备状态机，决定当前输出哪个源 | 纯 |
 | `NtripProtocol` | `ntrip_protocol.{h,cc}` | 构造请求、解析响应头、chunked 解码 | 纯 |
 | `GgaBuilder` | `gga_builder.{h,cc}` | 由位置合成带校验和的 `$GPGGA` 语句 | 纯 |
+| `VrsAnchor` | `vrs_anchor.{h,cc}` | 判定位置是否新鲜可报、记录 VRS 锚点、按大圆距离判定是否需要重建 | 纯 |
 | `RtcmGatewayConfig` | `rtcm_gateway_config.{h,cc}` | 读冻结配置，缺值即抛 | 纯（读文件） |
 | `SrcTcp` / `SrcNtrip` | `rtcm_gateway_main.cc` 内 | 非阻塞 socket 连接、重连退避、读数据 | I/O |
 | 主循环 | `rtcm_gateway_main.cc` | `poll()` 事件循环、定时器、发布 | I/O |
@@ -256,11 +258,18 @@ EAGAIN 但超过 3 s 无数据也重开（有的内核拔掉设备后一直返�
 | `HTTP/1.x 401` | 认证失败 | 记 `auth_failed`，按长退避重试，避免频繁试错导致账号被封；日志不打印用户名以外的任何凭据信息 |
 | 其他 / 头超长 / 超时 | 异常 | 断开，普通退避 |
 
-GGA 上报：
+GGA 上报与「任意地点可用」（`11` RTG-7 / RTG-12）：
 
-- 进入 STREAMING 后立即发一条 GGA，之后每 `gga_period_s` 发一条（VRS 根据 GGA 位置生成虚拟基站，不发就收不到数据）。
-- 位置来源：最近一条 `has_position == true` 的 `rt/gnss/fix`；从未有过定位或位置过旧（超过配置时长）时，用配置的站点近似坐标 `fallback_lat/lon/alt`。
-- 冷备（U-RTCM-2 建议方案）：主源失效时才发起连接；切回主源后再保持 `ntrip_linger_s` 才断开，避免主源抖动时反复建连。
+千寻 VRS 按机器人上报的 GGA 位置就近生成虚拟基站。所以**上报的位置必须是机器人此刻真实所在的位置**，
+否则在上海配好的东西拿到南京（约 270 km）就会生成错误位置的虚拟基站，基线过长，无法固定甚至给出错误解。规则如下：
+
+- **位置只取实测**：最近一条 `has_position == true` 的 `rt/gnss/fix`（单点解即可，VRS 只需要公里级位置），且龄期不超过 `gga_max_pos_age_s`。
+- **没有任何替代坐标**：🚫 配置里的站点坐标，🚫 掉电前缓存的坐标（机器人可能是关机后被运到另一个城市的）。
+- **没有新鲜位置就等**：SrcNtrip 增加 `WAIT_POSITION` 状态——需要备源但还没有新鲜位置时不建连；已连接时位置过旧就暂停上报（不发旧位置），恢复后继续。开机后 UM982 单点解通常很快就有，等待代价很小。
+- **上报节奏**：进入 STREAMING 后立即发一条 GGA，之后每 `gga_period_s` 发一条（不发就收不到数据）。GGA 的 UTC 时间字段取墙钟，属于对外报文时间而非龄期判断，按 `clock_scan` 规则标 `WALL-CLOCK-OK`。
+- **VRS 锚点与重建**：会话建立后，把首条上报 GGA 的位置记为锚点；之后当前位置与锚点的大圆距离超过 `vrs_rebase_km` ⇒ 主动断开重连，用当前位置重建 VRS（阈值与「千寻是否会随 GGA 自动更新 VRS」待 ⚠️ **M-RTCM-4** 实测）。
+- **冷备**（U-RTCM-2 建议方案）：主源失效时才发起连接；切回主源后再保持 `linger_s` 才断开，避免主源抖动时反复建连。
+- **账号覆盖**：千寻账号可能限定服务区域，换城市测试前确认账号覆盖目的地（⚠️ **V-RTCM-2**）。这一点代码无法检测，只能从连不上 / 无数据的状态里看出来。
 
 #### 4.4.3 凭据
 
@@ -440,10 +449,9 @@ ntrip:
   standby:              # cold | hot  (U-RTCM-2)
   linger_s:             # 冷备：切回主源后保持连接的时长
   gga_period_s:
-  gga_max_pos_age_s:    # rt/gnss/fix 位置超过此龄期改用 fallback
-  fallback_lat:
-  fallback_lon:
-  fallback_alt:
+  gga_max_pos_age_s:    # rt/gnss/fix 位置超过此龄期视为无位置: 不建连 / 暂停上报
+  vrs_rebase_km:        # RTG-12 当前位置离 VRS 锚点超过此距离即重连 (M-RTCM-4)
+  # 没有任何站点坐标键: 备源不得依赖与地点有关的配置 (RTG-7)
 health:
   obs_window_s:         # RTG-3
   station_window_s:     # RTG-3
@@ -478,6 +486,10 @@ rtcm:
 | 基站 UART 断，树莓派仍在 | TCP 仍连着但无帧 → 主源失效 → 切源 | 同上 | 同上 |
 | LAN 上有垃圾数据 | CRC 失败，丢弃；`crc_errors` 增长 | 不受影响 | 无 |
 | 千寻 401 | `auth_failed`，长退避 | — | 仅备源不可用，状态如实上报 |
+| 关机运到另一城市后开机 | 没有掉电前缓存坐标可用；等首个单点解后才连千寻，以新位置建 VRS | 先单点，收到改正数后收敛 | 与在原地开机一样，不需要改任何配置 |
+| 开机行驶远离 VRS 锚点 | 超过 `vrs_rebase_km` 断开重连，以当前位置重建 VRS | 短时浮点，重新固定 | `i_fix` 自动限速 |
+| 开机后尚无定位 / 定位丢失 | 需要备源时停在 `WAIT_POSITION`，不建连；已连则暂停 GGA | 单点或无解 | 禁自主，0.5 m/s 遥控 |
+| 千寻账号不覆盖当前地点 | 连不上或连上无数据 ⇒ 备源无效 | 单点 | 同「两源都不可用」；状态里能看到 `ntrip` 的 `link` / `valid` |
 | 两源都不可用 | NONE | 接收机退到单点 | 禁自主，0.5 m/s 遥控 |
 | 切源 | 清空旧源帧 | 接收机基站变化，重新收敛 | 短时 `rtk_float`，`i_fix` 自动限速；若两源基准不一致坐标会跳变（§3.3） |
 | `rtcm_gateway` 崩溃 | systemd 重启 | 无新改正数 | 同「两源都不可用」，`rt/clock/status` 不受影响 |
@@ -496,7 +508,8 @@ rtcm:
 | `test_rtcm_source_health` | 只有观测无 1005/1006 ⇒ 无效；窗口边界（等于 / 超过）；基站 ID 变化计数 |
 | `test_rtcm_selector` | 按时间脚本驱动全部转移；主源抖动时不回切；`hold_up_s` 内主源一拍无效即清零；切源时 flush 信号 |
 | `test_ntrip_protocol` | v1 / v2 请求逐字节比对；`ICY 200` / `HTTP 200` / chunked / 401 / SOURCETABLE / 头超长 / 分包到达的响应头 |
-| `test_gga_builder` | 校验和；南纬西经；度分格式边界（如 59.9999 分进位）；无定位时用 fallback |
+| `test_gga_builder` | 校验和；南纬西经；度分格式边界（如 59.9999 分进位） |
+| `test_vrs_anchor` | 无位置 / 位置过旧 ⇒ 不可报（且不存在任何替代坐标的代码路径）；上海 → 南京这类远距离位置 ⇒ 判重建；锚点附近小范围移动 ⇒ 不重建；阈值边界；跨经度 180° 与高纬度的距离计算 |
 | `test_rtcm_sink` | 假写函数模拟部分写、EAGAIN、错误；半帧续写不被插队；超上限丢最旧整帧；过期帧丢弃；重开清空 |
 | `test_nmea_parser`（扩充） | GGA 第 13 / 14 字段：有值、为空 |
 | `test_rtcm_gateway_config` | 每个键缺失 / null 都抛并带键路径 |
@@ -514,6 +527,8 @@ rtcm:
 - 千寻单源：从单点到浮点再到固定的收敛时间（⚠️ M-RTCM-3，与 `10` M-2 同批）。
 - 自建基站单源：同上，以及树莓派转发延迟（⚠️ M-RTCM-2）。
 - 主备切换：拔树莓派网线，记录切换时延、重新固定时间、切换前后静止位置差（检验 §3.3 基准一致性）。
+- 跨地点：同一份配置、不改任何参数，在两个相距较远的地点（如上海、南京）分别开机，都能用千寻进入固定解；
+  另测一次开机行驶超过 `vrs_rebase_km` 后的重建过程（⚠️ M-RTCM-4）。
 
 ---
 
@@ -525,7 +540,7 @@ rtcm:
 | 1 | `rtk_driver`：GGA 第 13 / 14 字段解析，`age_s` 改差分龄期 | U-RTCM-3 |
 | 2 | `rtk_driver`：串口读写 + `RtcmSink`（此时还没有输入） | — |
 | 3 | 纯模块：`Rtcm3Framer` / `SourceHealth` / `SourceSelector` | — |
-| 4 | 纯模块：`NtripProtocol` / `GgaBuilder` | — |
+| 4 | 纯模块：`NtripProtocol` / `GgaBuilder` / `VrsAnchor` | — |
 | 5 | `rtcm_gateway` 主程序、配置与冻结登记、RTCM 通道、`rtk_driver` 输入侧 | U-RTCM-1 / U-RTCM-2 |
 | 6 | systemd 单元、凭据存放、状态发布；同批改 `10` / `11` 的登记项 | 批 5 |
 | 7 | ORIN 集成测试（§5.2） | 批 6 |
@@ -547,6 +562,8 @@ rtcm:
 - [ ] 龄期和超时全用 `steady_clock`；墙钟出现处带 `WALL-CLOCK-OK` 标注（`clock_scan`）。
 - [ ] 口令只出现在内存里的 Authorization 头；日志、状态、异常信息中都没有。
 - [ ] 401 / SOURCETABLE 走长退避，不高频重试。
+- [ ] GGA 上报位置只来自新鲜的 `rt/gnss/fix`；代码里不存在配置坐标或缓存坐标的替代路径；无位置时不建连 / 不上报。
+- [ ] 离 VRS 锚点超过 `vrs_rebase_km` 会重连重建。
 - [ ] DNS 解析不在主事件循环里执行。
 - [ ] 日志、异常信息全英文；单文件注释语言统一。
 - [ ] `age_s` 是差分龄期，新鲜度仍由 `t_mono` 判。
@@ -564,9 +581,11 @@ rtcm:
 | U-RTCM-3 | 无差分时 `age_s` 取值 | §4.8.4 |
 | U-RTCM-4 | 机器人哪个网口接客户 LAN | 部署 |
 | V-RTCM-1 | FDI 基站型号与输出配置 | §3.2 |
+| V-RTCM-2 | 千寻账号服务区域与坐标框架 | §4.4.2 |
 | M-RTCM-1 | 有效窗口与回切时长 | §4.6、配置 |
 | M-RTCM-2 | 树莓派转发延迟 | §5.3 |
 | M-RTCM-3 | UM982 RTCM 输入、差分超时行为、收敛时间 | 批 0、§5.3 |
+| M-RTCM-4 | VRS 重建距离阈值；千寻是否随 GGA 自动更新 VRS | §4.4.2、§5.3 |
 
 ---
 
