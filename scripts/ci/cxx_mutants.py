@@ -3672,6 +3672,19 @@ RTCM_LINK_SOURCES = _sensor("src", (
 RTCM_LINK_TESTS = _sensor("test", (
     "test_rtcm_sink.cc", "test_rtk_config.cc", "test_correction_link.cc"))
 RTCM_DRIVER_CC = RTCM_AGE_SOURCES[5]
+# serial_reopen.h is header-only: the header is the source and the thing mutated.
+SERIAL_REOPEN_H = os.path.join(SENSOR, "include", "sensor", "serial_reopen.h")
+SERIAL_REOPEN_TESTS = _sensor("test", ("test_serial_reopen.cc",))
+SERIAL_REOPEN_MUTANTS = [
+    # Measured 2026-11-02: 0 = unplug reopened the silent port 43 times in 45 s.
+    ("serial: read() == 0 taken for an unplug again",
+     SERIAL_REOPEN_H, "  if (n < 0 && err != EAGAIN && err != EWOULDBLOCK) {",
+     "  if (n == 0 || (err != EAGAIN && err != EWOULDBLOCK)) {"),
+    ("serial: a vanished device node not noticed",
+     SERIAL_REOPEN_H, "  if (!device_present) return SerialAction::kReopen;   // node gone -- unplugged\n", ""),
+    ("serial: silence past the stale window kept",
+     SERIAL_REOPEN_H, "  if (now_mono_s - last_byte_mono_s >= stale_s) {", "  if (false) {"),
+]
 RTCM_FRAMER_CC = RTCM_SELECT_SOURCES[0]
 RTCM_SOURCE_CC = RTCM_SELECT_SOURCES[1]
 RTCM_NTRIP_CC = RTCM_PROTO_SOURCES[0]
@@ -3868,6 +3881,7 @@ SUITES = {
                     RTCM_INCLUDE),
     "rtcm_proto": (RTCM_PROTO_SOURCES, RTCM_PROTO_TESTS, RTCM_PROTO_MUTANTS, None, RTCM_INCLUDE),
     "rtcm_link": (RTCM_LINK_SOURCES, RTCM_LINK_TESTS, RTCM_LINK_MUTANTS, None, RTCM_INCLUDE),
+    "serial_reopen": ([], SERIAL_REOPEN_TESTS, SERIAL_REOPEN_MUTANTS, None, RTCM_INCLUDE),
     "rt_bridge": (RT_BRIDGE_SOURCES, RT_BRIDGE_TESTS, RT_BRIDGE_MUTANTS, None,
                   ["-I", os.path.join(ROOT, "common", "third_party")]),
     "rt_cfg": (RT_CFG_SOURCES, RT_CFG_TESTS, RT_CFG_MUTANTS,

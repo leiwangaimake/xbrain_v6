@@ -275,8 +275,10 @@ int main() {
     } else {
       const ssize_t n = read(fd, buf, sizeof(buf));
       const int err = errno;
+      // Only when no bytes came: does the device node still exist (unplug test).
+      const bool present = n > 0 || access(cfg.serial_port.c_str(), F_OK) == 0;
       switch (sensor::classify_serial_read(n, err, mono, last_byte_mono,
-                                         kStaleReopenS)) {
+                                         kStaleReopenS, present)) {
         case sensor::SerialAction::kFeed:
           driver.feed(buf, static_cast<std::size_t>(n), mono);
           bytes_total += n;
@@ -285,10 +287,16 @@ int main() {
         case sensor::SerialAction::kKeep:
           break;                 // normal: no data this tick
         case sensor::SerialAction::kReopen:
-          std::fprintf(stderr,
-                       "rtk_driver: serial lost (n=%zd errno=%s); reopening %s\n",
-                       n, (n < 0 ? std::strerror(err) : "eof"),
-                       cfg.serial_port.c_str());
+          if (!present) {
+            std::fprintf(stderr, "rtk_driver: serial lost (device node gone); reopening %s\n",
+                         cfg.serial_port.c_str());
+          } else if (n < 0 && err != EAGAIN && err != EWOULDBLOCK) {
+            std::fprintf(stderr, "rtk_driver: serial lost (%s); reopening %s\n",
+                         std::strerror(err), cfg.serial_port.c_str());
+          } else {
+            std::fprintf(stderr, "rtk_driver: serial lost (no data for %.1f s); reopening %s\n",
+                         kStaleReopenS, cfg.serial_port.c_str());
+          }
           close(fd);
           fd = -1;
           last_reopen_try = mono;
