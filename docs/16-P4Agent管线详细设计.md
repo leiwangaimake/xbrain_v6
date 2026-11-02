@@ -3044,6 +3044,7 @@ query_detection:
 > · ★ **同批（分类前的灯光限制拦截）**：`classifier/payload_limits.py` 在急停旁路之后、§5.2 优先链之前，对硬件做不到的灯光请求（红蓝调光 / 调闪烁快慢 / 探照灯爆闪 / 闪法超出 1–16）直接答原因、不派发 —— ★ 原「把警灯调亮」被 D17 截走、实际改了探照灯（现场 P239）。判据 `tests/p4_agent/classifier/test_payload_limits.py`。
 > · ★ **同批（省略设备的半句话）**：「中等」「开到最大」「调到最低」等不含设备词的半句，沿用本会话上一次已派发的 D10 / D17（`OrchestratorSession.last_level_intent`），无上文则反问（`chitchat.yaml` `session.which_device`）。判据 `tests/p4_agent/slots/test_level_phrases.py`。
 > · ⚠️★ **同批（系统指令未接通执行端）**：`11` §2.2 登记 `cmd/system` 由 p5 / p2 / p2(BIT) 三方订阅，**生产代码零订阅** ⇒ ~~H01–H08~~ H01 / H02 / H04–H08（★ H03 同日移出：`99` U102 改为读 `state/clock` 作答，见 `11` §7.15.3 落地注；`turn_orchestrator` 注入 `system_fn`）在执行端落地前于 `_route_entry` 直接答 `chitchat.yaml` `unwired_system`、不开确认、不派发；`to_system_command` 的 origin 规则仍由 `test_turn_labels` 钉住。判据 `tests/p4_agent/runtime/test_unwired_system.py`。
+> · ★★ **2026-11-02 补（`99` U105）· 状态快照从未注入**：`TurnOrchestrator` 的 `state_fn`（B05–B07 任务控制读 `state/task`、F01–F10 读 `state/teach`、路径 / 位置点名字解析读 `state/geo/manifest`）在生产里**从未传入** ⇒ 有任务在跑也答「现在没有正在执行的任务」、录制中也答没有录制。现由 `orchestrator_turn.make_state_fn(state_cache)` 注入，取各键**最新值**（`latest`，不设新鲜度窗口：这些键是 P3 的变更即发 / 低频保底，且据此生成的指令所带 id 都由 P3 自行校验，过期 id 只会被 P3 拒绝）。★ **同批 A13**：「慢一点 / 快一点 / 全速」原答「这个模式指令没听清」（档位槽从未解析）；且即便解析出档位，P2 只记录、P1 用固定 `PROFILE_REQ`，速度不会变 ⇒ 改为与 H 类同一处如实答「速度档位调整功能还没有接通执行端」（`_UNWIRED_ACTIONS`）。判据 `tests/p4_agent/runtime/test_state_fn_and_profile.py`。
 
 #### 8.2.1 ★★★ 【v0.9 新增】`G25`–`G42` 十八条状态回读的答复模板与**八条硬分支**
 
