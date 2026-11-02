@@ -84,6 +84,9 @@ static void test_reportable() {
   s.has_position = true;
   s.pos = pos(31.2, 121.4, 10.0, 1, 8, 0.9);
   s.t_mono = 96.0;
+  CHECK(!a.reportable(s, 100.0));             // no receiver time to stamp the GGA with
+  s.has_utc = true;
+  s.utc_s_of_day = 3600.0;
   CHECK(a.reportable(s, 100.0));
   CHECK(a.reportable(s, 101.0));              // exactly max_pos_age_s old
   CHECK(!a.reportable(s, 101.01));            // too old: wait, do not report it

@@ -17,6 +17,7 @@
 
 #include "sensor/rtk_driver.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -181,8 +182,29 @@ static void test_fix_age_is_differential() {
   CHECK(f2 != nullptr && has(*f2, "\"age_s\":null"));
 }
 
+// The position handed to the RTCM link: the GGA's own fix, its arrival time and
+// the receiver's UTC; no position once the GGA is stale or is not a fix.
+static void test_current_position() {
+  CaptureSink sink;
+  RtkDriver d(cfg(), &sink);
+  CHECK(!d.currentPosition(0.0).has_position);          // nothing received yet
+  d.feed(kGga, std::char_traits<char>::length(kGga), 5.0);
+  const sensor::PositionSample p = d.currentPosition(5.2);
+  CHECK(p.has_position);
+  CHECK(p.t_mono == 5.0);                               // arrival, not "now"
+  CHECK(p.pos.quality == 4);
+  CHECK(p.pos.sats == 18);
+  CHECK(std::fabs(p.pos.lat_deg - (31.0 + 13.31552 / 60.0)) < 1e-9);
+  CHECK(p.has_utc && std::fabs(p.utc_s_of_day - (1 * 3600 + 55 * 60 + 40.0)) < 1e-9);
+  CHECK(!d.currentPosition(7.0).has_position);          // stale (gga_timeout 1 s)
+  static const char* kNoFix = "$GNGGA,015541.00,3113.31552,N,12121.24700,E,0,00,99.9,12.5,M,8.2,M,,\n";
+  d.feed(kNoFix, std::char_traits<char>::length(kNoFix), 8.0);
+  CHECK(!d.currentPosition(8.0).has_position);          // quality 0 is not a fix
+}
+
 int main() {
   test_publish_l1();
+  test_current_position();
   test_fix_age_is_differential();
   test_publish_l3_startup();
   test_seq_increments();

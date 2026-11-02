@@ -50,3 +50,42 @@ clock:                       # rt/clock/status sync judgement (11 S3.11 / S1.5.2
   offset_threshold_ms: 20.0  # |offset| <= this for rtk/ntp -> sync (S1.5.2)
   ref_max_age_s: 5.0         # PPS rtk staleness (applied to rtk; NTP uses leap, see clock_status.h)
   rtc_trusted: false         # T7: no coin cell confirmed, RTC untrusted (S1.5.2)
+rtcm:                        # RTCM differential input (11 S3.2A); design in ros2_ws/sensor/README.md
+  # Values are ENGINEERING values pending field measurement (M-RTCM-1 / M-RTCM-4),
+  # written here so nothing is defaulted in code (CLAUDE.md 3.1).
+  sink:
+    queue_max_bytes: 16384   # main-thread write queue and network out queue cap (>= 1029)
+    frame_max_age_s: 2.0     # a frame waiting longer than this is dropped
+  lan:                       # primary: customer-LAN base station via the RPi bridge (RTB)
+    enabled: false           # no bridge on site yet
+    host: null               # bridge static IP, numeric only (RTB-1)
+    port: null               # bridge fixed port (RTB-1)
+    connect_timeout_s: 3.0
+    read_timeout_s: 5.0      # streaming and silent this long -> reconnect
+    backoff_min_s: 1.0
+    backoff_max_s: 30.0
+  ntrip:                     # backup: Qianxun CORS (VRS), cold standby (U-RTCM-2)
+    enabled: true            # account in service since 2026-11-02; without a fresh fix to
+                             # report the link waits and never dials (RTG-7)
+    host: "rtk.ntrip.qxwz.com"
+    port: 8002               # Qianxun: 8001 ITRF2008 (epoch 2016.0), 8002 WGS84 (epoch 2005.0),
+                             # 8003 CGCS2000 (epoch 2000.0). WGS84: the geo layer is WGS84.
+    mountpoint: "AUTO"       # Qianxun-recommended mountpoint
+    version: 1
+    user: "qxyuuh001"        # RTG-9: credentials in this file by the 2026-11-02 ruling;
+    password: "1492bcd"      # never logged, never in argv / environ / status / events
+    connect_timeout_s: 5.0   # also bounds the DNS lookup
+    read_timeout_s: 10.0     # reply header wait, then silence while streaming
+    backoff_min_s: 2.0
+    backoff_max_s: 60.0
+    backoff_auth_s: 300.0    # after 401 / SOURCETABLE: slow, so the account is not locked
+    linger_s: 60.0           # cold standby: keep the link this long after returning to LAN
+    gga_period_s: 5.0
+    gga_max_pos_age_s: 2.0   # a fix older than this is not reported (RTG-7)
+    vrs_rebase_km: 10.0      # reconnect when this far from the VRS anchor (RTG-12)
+  health:
+    obs_window_s: 3.0        # an observation message within this window (RTG-3)
+    station_window_s: 30.0   # a 1005/1006 within this window; casters send 1005 every 10 s
+  selector:
+    hold_up_s: 10.0          # primary valid this long, continuously, before switching back (RTG-5)
+    backup_after_s: 15.0     # cold standby: primary invalid this long before dialling backup

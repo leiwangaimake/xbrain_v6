@@ -14,6 +14,9 @@
 
 #include "sensor/rtk_config.h"
 
+#include <stdexcept>
+
+#include "sensor/rtcm3_framer.h"
 #include "xbrain/config/yaml_lite.h"
 
 namespace sensor {
@@ -73,6 +76,55 @@ RtkConfig load_rtk_config(const std::string& path, const std::string& rid,
   ck.offset_threshold_ms = cfg.require_double("clock.offset_threshold_ms");
   ck.ref_max_age_s = cfg.require_double("clock.ref_max_age_s");
   ck.rtc_trusted = cfg.require_bool("clock.rtc_trusted");
+
+  // RTCM differential input (11 S3.2A).
+  out.sink.queue_max_bytes = static_cast<std::size_t>(cfg.require_int("rtcm.sink.queue_max_bytes"));
+  out.sink.frame_max_age_s = cfg.require_double("rtcm.sink.frame_max_age_s");
+  if (out.sink.queue_max_bytes < Rtcm3Framer::kMaxFrame) {
+    throw std::runtime_error("rtcm.sink.queue_max_bytes must hold one maximum RTCM frame (>= " +
+                             std::to_string(Rtcm3Framer::kMaxFrame) + ")");
+  }
+  CorrectionConfig& cc = out.corrections;
+  cc = CorrectionConfig{};
+  cc.queue_max_bytes = out.sink.queue_max_bytes;
+  cc.health.obs_window_s = cfg.require_double("rtcm.health.obs_window_s");
+  cc.health.station_window_s = cfg.require_double("rtcm.health.station_window_s");
+  cc.selector.hold_up_s = cfg.require_double("rtcm.selector.hold_up_s");
+  cc.selector.backup_after_s = cfg.require_double("rtcm.selector.backup_after_s");
+
+  LanSourceConfig& lan = cc.lan;
+  lan.enabled = cfg.require_bool("rtcm.lan.enabled");
+  if (lan.enabled) {
+    lan.host = cfg.require_string("rtcm.lan.host");
+    lan.port = static_cast<int>(cfg.require_int("rtcm.lan.port"));
+    lan.connect_timeout_s = cfg.require_double("rtcm.lan.connect_timeout_s");
+    lan.read_timeout_s = cfg.require_double("rtcm.lan.read_timeout_s");
+    lan.backoff_min_s = cfg.require_double("rtcm.lan.backoff_min_s");
+    lan.backoff_max_s = cfg.require_double("rtcm.lan.backoff_max_s");
+  }
+
+  NtripSourceConfig& nt = cc.ntrip;
+  nt.enabled = cfg.require_bool("rtcm.ntrip.enabled");
+  if (nt.enabled) {
+    nt.host = cfg.require_string("rtcm.ntrip.host");
+    nt.port = static_cast<int>(cfg.require_int("rtcm.ntrip.port"));
+    nt.mountpoint = cfg.require_string("rtcm.ntrip.mountpoint");
+    nt.version = static_cast<int>(cfg.require_int("rtcm.ntrip.version"));
+    if (nt.version != 1 && nt.version != 2) {
+      throw std::runtime_error("rtcm.ntrip.version must be 1 or 2");
+    }
+    nt.user = cfg.require_string("rtcm.ntrip.user");
+    nt.password = cfg.require_string("rtcm.ntrip.password");
+    nt.connect_timeout_s = cfg.require_double("rtcm.ntrip.connect_timeout_s");
+    nt.read_timeout_s = cfg.require_double("rtcm.ntrip.read_timeout_s");
+    nt.backoff_min_s = cfg.require_double("rtcm.ntrip.backoff_min_s");
+    nt.backoff_max_s = cfg.require_double("rtcm.ntrip.backoff_max_s");
+    nt.backoff_auth_s = cfg.require_double("rtcm.ntrip.backoff_auth_s");
+    nt.gga_period_s = cfg.require_double("rtcm.ntrip.gga_period_s");
+    nt.gga_max_pos_age_s = cfg.require_double("rtcm.ntrip.gga_max_pos_age_s");
+    nt.vrs_rebase_km = cfg.require_double("rtcm.ntrip.vrs_rebase_km");
+    cc.selector.linger_s = cfg.require_double("rtcm.ntrip.linger_s");
+  }
 
   return out;
 }

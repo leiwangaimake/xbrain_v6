@@ -47,8 +47,13 @@ add_library(rtk_driver_core STATIC
   src/rtcm_source.cc
   src/ntrip_protocol.cc
   src/gga_vrs.cc
+  src/rtcm_sink.cc
+  src/correction_link.cc
 )
 target_include_directories(rtk_driver_core PUBLIC include ${COMMON_INCLUDE})
+# correction_link.cc runs the RTCM network thread (11 S3.2A RTG-1).
+find_package(Threads REQUIRED)
+target_link_libraries(rtk_driver_core PUBLIC Threads::Threads)
 
 # The process binary: config -> serial -> RtkDriver -> RT-plane ZenohSink @20Hz.
 # It links zenoh-c (installed at /usr/local by the Z1 step). zenoh lives ONLY in
@@ -75,7 +80,7 @@ endif()
 # Offline tests: plain executables, no ROS / no hardware, registered with CTest.
 enable_testing()
 foreach(t nmea_parser gnss_heading gnss_fix clock_status heading_resolver rtk_driver yaml_lite rtk_config serial_reopen
-          rtcm3_framer rtcm_source ntrip_protocol gga_vrs)
+          rtcm3_framer rtcm_source ntrip_protocol gga_vrs rtcm_sink correction_link)
   add_executable(test_${t} test/test_${t}.cc)
   target_link_libraries(test_${t} PRIVATE rtk_driver_core)
   add_test(NAME test_${t} COMMAND test_${t})

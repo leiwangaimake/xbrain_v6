@@ -12,6 +12,12 @@
  * ZenohSink, then run the 20 Hz loop. Any of the first four failing prints an
  * English reason and exits non-zero, so the process never runs half-configured.
  *
+ * RTCM corrections (11 S3.2A): the serial port is opened read-write, the
+ * CorrectionLink network thread is started when a source is enabled, and each
+ * tick the loop hands the link the current position, takes the frames it has
+ * queued (a swap, never a wait -- RTG-1) and lets the RtcmSink write what the
+ * fd accepts. A write error goes down the same reopen path as a read error.
+ *
  * Identity sourcing (not in the per-proc config file): rid comes from the L5
  * whitelist env XBRAIN_ROBOT_ID (layers.py maps it to common.robot_id) and is
  * required -- an empty rid cannot form a valid xbrain/{rid}/... key, so it throws
@@ -38,7 +44,10 @@
 #include <fstream>
 #include <string>
 #include <thread>
+#include <vector>
 
+#include "sensor/correction_link.h"
+#include "sensor/rtcm_sink.h"
 #include "sensor/rtk_config.h"
 #include "sensor/rtk_driver.h"
 #include "sensor/serial_reopen.h"
@@ -88,9 +97,10 @@ speed_t baud_const(int baud) {
   }
 }
 
-// Open the serial port raw 8N1, non-blocking. Returns the fd or -1 on failure.
+// Open the serial port raw 8N1, non-blocking, read-write: NMEA comes in, RTCM
+// goes out on the same fd (11 S3.2A RTG-2). Returns the fd or -1 on failure.
 int open_serial(const std::string& port, int baud) {
-  const int fd = open(port.c_str(), O_RDONLY | O_NOCTTY | O_NONBLOCK);
+  const int fd = open(port.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
   if (fd < 0) {
     std::fprintf(stderr, "rtk_driver: open %s failed: %s\n", port.c_str(), std::strerror(errno));
     return -1;
@@ -216,7 +226,17 @@ int main() {
   std::printf("rtk_driver: rid=%s boot=%s serial=%s@%d -> RT rt/gnss/heading @20Hz\n",
               rid.c_str(), boot.c_str(), cfg.serial_port.c_str(), cfg.serial_baud);
 
-  // 5) 20 Hz loop. steady_clock paces the period; each tick feeds fresh serial
+  // 5) RTCM differential input (11 S3.2A). No source enabled -> no thread; the
+  //    sink then never has anything to write.
+  sensor::RtcmSink rtcm_sink(cfg.sink);
+  sensor::CorrectionLink link(cfg.corrections);
+  link.start();
+  std::vector<sensor::TaggedFrame> rtcm_batch;
+  const sensor::SerialWriteFn serial_write = [&fd](const char* d, std::size_t n) {
+    return write(fd, d, n);
+  };
+
+  // 6) 20 Hz loop. steady_clock paces the period; each tick feeds fresh serial
   //    bytes and publishes the resolved GnssHeading. On a USB unplug the loop drops
   //    the dead fd and re-open()s the port ~1 Hz until it is back (hotplug recovery,
   //    serial_reopen.h). The driver core already fails safe on the data gap (facts
@@ -272,8 +292,25 @@ int main() {
           close(fd);
           fd = -1;
           last_reopen_try = mono;
+          rtcm_sink.clear();     // the receiver lost any half frame; the rest is stale
           break;
       }
+    }
+    // RTCM: position out, frames in (swap only), then write what the fd takes.
+    if (link.enabled()) {
+      link.setPosition(driver.currentPosition(mono));
+      rtcm_batch.clear();
+      link.takeFrames(&rtcm_batch);
+      for (auto& f : rtcm_batch) rtcm_sink.push(std::move(f));
+    }
+    if (fd >= 0 && rtcm_sink.queuedBytes() > 0 &&
+        rtcm_sink.drain(serial_write, mono) == sensor::DrainResult::kError) {
+      std::fprintf(stderr, "rtk_driver: serial write failed (errno=%s); reopening %s\n",
+                   std::strerror(errno), cfg.serial_port.c_str());
+      close(fd);
+      fd = -1;
+      last_reopen_try = mono;
+      rtcm_sink.clear();
     }
     driver.tick(mono, wall_ms());
     // 1 Hz rt/clock/status (11 S3.11). The chrony read is I/O, done here (not in
@@ -288,6 +325,17 @@ int main() {
       std::printf("rtk_driver: alive ticks=%lld serial_bytes=%lld fd=%d\n",
                   static_cast<long long>(ticks),
                   static_cast<long long>(bytes_total), fd);
+      if (link.enabled()) {
+        std::printf("rtk_driver: %s sink_frames=%llu sink_bytes=%llu dropped(overflow=%llu "
+                    "stale=%llu switch=%llu) queued=%zu\n",
+                    link.statusLine().c_str(),
+                    static_cast<unsigned long long>(rtcm_sink.framesWritten()),
+                    static_cast<unsigned long long>(rtcm_sink.bytesWritten()),
+                    static_cast<unsigned long long>(rtcm_sink.droppedOverflow()),
+                    static_cast<unsigned long long>(rtcm_sink.droppedStale()),
+                    static_cast<unsigned long long>(rtcm_sink.droppedSwitch()),
+                    rtcm_sink.queuedBytes());
+      }
       std::fflush(stdout);
       last_hb = mono;
     }

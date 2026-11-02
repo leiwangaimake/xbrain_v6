@@ -133,6 +133,13 @@ bool parse_gga(const std::string& sentence, GgaFix* out) {
   out->quality = field_to_int(f[6]);
   out->num_satellites = field_to_int(f[7]);
   out->hdop = field_to_double(f[8]);
+  // 1 utc hhmmss[.ss]: empty before the receiver has time.
+  if (f[1].size() >= 6) {
+    out->has_utc = true;
+    out->utc_s_of_day = field_to_int(f[1].substr(0, 2)) * 3600.0 +
+                        field_to_int(f[1].substr(2, 2)) * 60.0 +
+                        field_to_double(f[1].substr(4));
+  }
   if (f[2].empty() || f[4].empty()) {
     out->valid = false;
     return true;  // recognised GGA, just no lat/lon

@@ -45,6 +45,7 @@
 #include <string>
 
 #include "sensor/clock_status.h"
+#include "sensor/gga_vrs.h"
 #include "sensor/gnss_fix.h"
 #include "sensor/heading_resolver.h"
 #include "sensor/nmea_parser.h"
@@ -101,6 +102,12 @@ class RtkDriver {
   void tickClock(const ChronyReading& r, double now_mono_s, int64_t wall_ms);
 
   int level() const { return resolver_.level(); }
+
+  // The latest GGA as a position for the RTCM link's GGA uplink (11 S3.2A
+  // RTG-7): has_position only for a fresh GGA that is an actual fix -- the same
+  // rule rt/gnss/fix uses -- and t_mono is when that GGA arrived, so the link's
+  // own freshness check measures the real age of the position.
+  PositionSample currentPosition(double now_mono_s) const;
 
  private:
   DriverConfig cfg_;

@@ -3643,42 +3643,70 @@ RELAY_KEYS_MUTANTS = [
 ]
 
 
-# ---- rtcm: rtk_driver differential input (11 S3.2 / S3.2A) -----------------
-# The sensor package's RTCM work. Every test runs against every source: the
-# driver test exercises the parser and the serialiser too, and crediting a kill
-# to one test only is how a cross-file assertion later goes missing.
+# ---- rtcm: rtk_driver differential input (11 S3.2A) -----------------------
+# Four suites split by link dependency, not by batch: a test can only kill a
+# mutant in a source it links, and compiling every source into every test made
+# one run of this package's mutants take most of an hour. Within a suite every
+# test still runs against every source -- crediting a kill to one "obviously
+# related" test is how a cross-file assertion later goes missing.
 SENSOR = os.path.join(ROOT, "ros2_ws", "sensor")
-RTCM_SOURCES = [os.path.join(SENSOR, "src", f) for f in (
+
+
+def _sensor(kind, names):
+    return [os.path.join(SENSOR, kind, n) for n in names]
+
+
+RTCM_INCLUDE = ["-I", os.path.join(SENSOR, "include"), "-pthread"]
+RTCM_AGE_SOURCES = _sensor("src", (
     "nmea_parser.cc", "gnss_fix.cc", "gnss_heading.cc", "heading_resolver.cc",
-    "clock_status.cc", "rtk_driver.cc", "rtcm3_framer.cc", "rtcm_source.cc",
-    "ntrip_protocol.cc", "gga_vrs.cc")]
-RTCM_TESTS = [os.path.join(SENSOR, "test", f) for f in (
-    "test_nmea_parser.cc", "test_gnss_fix.cc", "test_rtk_driver.cc",
-    "test_rtcm3_framer.cc", "test_rtcm_source.cc", "test_ntrip_protocol.cc",
-    "test_gga_vrs.cc")]
-RTCM_FRAMER_CC = RTCM_SOURCES[6]
-RTCM_SOURCE_CC = RTCM_SOURCES[7]
-RTCM_NTRIP_CC = RTCM_SOURCES[8]
-RTCM_GGA_CC = RTCM_SOURCES[9]
-RTCM_INCLUDE = ["-I", os.path.join(SENSOR, "include")]
-RTCM_MUTANTS = [
+    "clock_status.cc", "rtk_driver.cc"))
+RTCM_AGE_TESTS = _sensor("test", (
+    "test_nmea_parser.cc", "test_gnss_fix.cc", "test_rtk_driver.cc"))
+RTCM_SELECT_SOURCES = _sensor("src", ("rtcm3_framer.cc", "rtcm_source.cc"))
+RTCM_SELECT_TESTS = _sensor("test", ("test_rtcm3_framer.cc", "test_rtcm_source.cc"))
+RTCM_PROTO_SOURCES = _sensor("src", ("ntrip_protocol.cc", "gga_vrs.cc"))
+RTCM_PROTO_TESTS = _sensor("test", ("test_ntrip_protocol.cc", "test_gga_vrs.cc"))
+RTCM_LINK_SOURCES = _sensor("src", (
+    "rtcm_sink.cc", "correction_link.cc", "rtk_config.cc", "rtcm3_framer.cc",
+    "rtcm_source.cc", "ntrip_protocol.cc", "gga_vrs.cc"))
+RTCM_LINK_TESTS = _sensor("test", (
+    "test_rtcm_sink.cc", "test_rtk_config.cc", "test_correction_link.cc"))
+RTCM_DRIVER_CC = RTCM_AGE_SOURCES[5]
+RTCM_FRAMER_CC = RTCM_SELECT_SOURCES[0]
+RTCM_SOURCE_CC = RTCM_SELECT_SOURCES[1]
+RTCM_NTRIP_CC = RTCM_PROTO_SOURCES[0]
+RTCM_GGA_CC = RTCM_PROTO_SOURCES[1]
+RTCM_SINK_CC = RTCM_LINK_SOURCES[0]
+RTCM_LINK_CC = RTCM_LINK_SOURCES[1]
+RTCM_CONFIG_CC = RTCM_LINK_SOURCES[2]
+RTCM_AGE_MUTANTS = [
+    # The GGA uplink's time field comes from the receiver's own UTC.
+    ("gga utc: field 1 never marks a receiver time",
+     RTCM_AGE_SOURCES[0], "    out->has_utc = true;", "    out->has_utc = false;"),
     # 11 S3.2 age_s = differential age. A parser that never raises the flag
     # turns every RTK fix into "no corrections" -- age_s null forever.
     ("age_s: GGA field 13 never marks a differential age",
-     RTCM_SOURCES[0], "    out->has_diff_age = true;", "    out->has_diff_age = false;"),
+     RTCM_AGE_SOURCES[0], "    out->has_diff_age = true;", "    out->has_diff_age = false;"),
     ("age_s: station id read from the age column",
-     RTCM_SOURCES[0], "    out->diff_station_id = field_to_int(f[14]);",
+     RTCM_AGE_SOURCES[0], "    out->diff_station_id = field_to_int(f[14]);",
      "    out->diff_station_id = field_to_int(f[13]);"),
     # U-RTCM-3: no corrections is null. A 0 reads as "corrections this instant".
     ("age_s: serialised as a number when there is no differential",
-     RTCM_SOURCES[1], "opt_num(fix.age_s, fix.has_age)", "std::to_string(fix.age_s)"),
+     RTCM_AGE_SOURCES[1], "opt_num(fix.age_s, fix.has_age)", "std::to_string(fix.age_s)"),
     # The pre-2026-11-02 bug this batch fixes: age_s carried GGA freshness.
     ("age_s: carries how old the GGA is instead of the differential age",
-     RTCM_SOURCES[5], "  fix.age_s = gga_.diff_age_s;",
+     RTCM_DRIVER_CC, "  fix.age_s = gga_.diff_age_s;",
      "  fix.age_s = now_mono_s - gga_mono_;"),
     ("age_s: a stale GGA keeps reporting its old differential age",
-     RTCM_SOURCES[5], "  fix.has_age = fresh && gga_.has_diff_age;",
+     RTCM_DRIVER_CC, "  fix.has_age = fresh && gga_.has_diff_age;",
      "  fix.has_age = gga_.has_diff_age;"),
+    # ---- position handed to the link (RTG-7) ---------------------------------------
+    ("driver: position age measured from now instead of the GGA arrival",
+     RTCM_DRIVER_CC, "  s.t_mono = gga_mono_;", "  s.t_mono = now_mono_s;"),
+    ("driver: a stale GGA still offered as a position",
+     RTCM_DRIVER_CC, "  s.has_position = fresh && gga_.valid", "  s.has_position = gga_.valid"),
+]
+RTCM_SELECT_MUTANTS = [
     # ---- framer (RTG-3 / RTG-6) --------------------------------------------
     # The resync rule: a bad CRC costs one byte. Jumping by the (garbage) length
     # swallows the start of the next real frame.
@@ -3722,6 +3750,10 @@ RTCM_MUTANTS = [
     ("selector: linger boundary inclusive",
      RTCM_SOURCE_CC, "(now_mono_s - back_to_primary_) < cfg_.linger_s;",
      "(now_mono_s - back_to_primary_) <= cfg_.linger_s;"),
+]
+RTCM_PROTO_MUTANTS = [
+    ("vrs: a fix without the receiver's UTC is reportable",
+     RTCM_GGA_CC, "  if (!s.has_utc) return false;\n", ""),
     # ---- NTRIP protocol --------------------------------------------------------
     # A malformed GET comes back as the same 401 as a wrong password.
     ("ntrip: v2 request without the Ntrip-Version header",
@@ -3776,6 +3808,42 @@ RTCM_MUTANTS = [
     ("vrs: earth radius wrong",
      RTCM_GGA_CC, "kEarthRadiusKm = 6371.0;", "kEarthRadiusKm = 6378.0;"),
 ]
+RTCM_LINK_MUTANTS = [
+    # ---- RtcmSink: whole frames onto the serial port (RTG-6 / RTG-4) -------------
+    ("sink: a source switch also cuts the frame already on the wire",
+     RTCM_SINK_CC, "    while (q_.size() > (partial_ > 0 ? 1u : 0u)) {", "    while (!q_.empty()) {"),
+    ("sink: a source switch does not flush",
+     RTCM_SINK_CC, "  if (!q_.empty() && q_.back().source != f.source) {", "  if (false) {"),
+    ("sink: the half-written frame is dropped as stale",
+     RTCM_SINK_CC, "    if (partial_ == 0 && (now_mono_s - q_.front().t_mono) > cfg_.frame_max_age_s) {",
+     "    if ((now_mono_s - q_.front().t_mono) > cfg_.frame_max_age_s) {"),
+    ("sink: queue cap not enforced",
+     RTCM_SINK_CC, "  while (queued_bytes_ > cfg_.queue_max_bytes && q_.size()",
+     "  while (false && queued_bytes_ > cfg_.queue_max_bytes && q_.size()"),
+    ("sink: a partial write counted as the whole frame",
+     RTCM_SINK_CC, "    if (partial_ < b.size()) return DrainResult::kOk;   // fd full: finish next tick\n", ""),
+    ("sink: EAGAIN reported as a serial error (would reopen on every full buffer)",
+     RTCM_SINK_CC, "      if (errno == EAGAIN || errno == EWOULDBLOCK) return DrainResult::kOk;",
+     "      if (errno == EAGAIN || errno == EWOULDBLOCK) return DrainResult::kError;"),
+    # ---- config (CLAUDE.md 3.1) ----------------------------------------------------
+    ("config: a queue smaller than one RTCM frame accepted",
+     RTCM_CONFIG_CC, "  if (out.sink.queue_max_bytes < Rtcm3Framer::kMaxFrame) {", "  if (false) {"),
+    ("config: a disabled NTRIP source still requires its pending keys",
+     RTCM_CONFIG_CC, "  if (nt.enabled) {", "  if (true) {"),
+    ("config: an enabled LAN source loads with keys missing",
+     RTCM_CONFIG_CC, "  if (lan.enabled) {", "  if (false) {"),
+    # ---- network thread (RTG-1 / RTG-7 / RTG-12 / RTG-9) ---------------------------
+    ("link: dials the caster without a fresh position to report",
+     RTCM_LINK_CC, "      if (!anchor_.reportable(pos, now)) break;\n      auto job", "      auto job"),
+    ("link: never rebuilds the virtual station after moving away",
+     RTCM_LINK_CC, "      if (anchor_.needsRebase(pos.pos)) {", "      if (false) {"),
+    ("link: a 401 is retried at the normal back-off",
+     RTCM_LINK_CC, 'fail(s, now, cfg_.ntrip.backoff_auth_s, "unauthorized");',
+     'fail(s, now, -1.0, "unauthorized");'),
+    ("link: backup frames handed out tagged as the primary",
+     RTCM_LINK_CC, "    pushOut(ntrip_frames, static_cast<int>(ActiveSource::kBackup), now);",
+     "    pushOut(ntrip_frames, static_cast<int>(ActiveSource::kPrimary), now);"),
+]
 
 SUITES = {
     "quadruped": (QUAD_SOURCES, QUAD_TESTS, QUAD_MUTANTS, GOLDEN, []),
@@ -3795,7 +3863,11 @@ SUITES = {
     "socket": (SOCKET_SOURCES, SOCKET_TESTS, SOCKET_MUTANTS, None, []),
     "process": (PROCESS_SOURCES, PROCESS_TESTS, PROCESS_MUTANTS, GOLDEN, []),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None, []),
-    "rtcm": (RTCM_SOURCES, RTCM_TESTS, RTCM_MUTANTS, None, RTCM_INCLUDE),
+    "rtcm_age": (RTCM_AGE_SOURCES, RTCM_AGE_TESTS, RTCM_AGE_MUTANTS, None, RTCM_INCLUDE),
+    "rtcm_select": (RTCM_SELECT_SOURCES, RTCM_SELECT_TESTS, RTCM_SELECT_MUTANTS, None,
+                    RTCM_INCLUDE),
+    "rtcm_proto": (RTCM_PROTO_SOURCES, RTCM_PROTO_TESTS, RTCM_PROTO_MUTANTS, None, RTCM_INCLUDE),
+    "rtcm_link": (RTCM_LINK_SOURCES, RTCM_LINK_TESTS, RTCM_LINK_MUTANTS, None, RTCM_INCLUDE),
     "rt_bridge": (RT_BRIDGE_SOURCES, RT_BRIDGE_TESTS, RT_BRIDGE_MUTANTS, None,
                   ["-I", os.path.join(ROOT, "common", "third_party")]),
     "rt_cfg": (RT_CFG_SOURCES, RT_CFG_TESTS, RT_CFG_MUTANTS,

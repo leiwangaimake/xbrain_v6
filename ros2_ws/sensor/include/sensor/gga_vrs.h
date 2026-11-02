@@ -42,7 +42,9 @@ struct GgaPosition {
 struct PositionSample {
   bool has_position = false;
   GgaPosition pos;
-  double t_mono = -1.0;   // when the main loop produced it (CLOCK_MONOTONIC s)
+  double t_mono = -1.0;        // when the GGA behind it arrived (CLOCK_MONOTONIC s)
+  bool has_utc = false;        // the receiver's GGA carried a time field
+  double utc_s_of_day = 0.0;   // that time, seconds since UTC midnight
 };
 
 // 11 S4.5 fix_type -> GGA quality digit (rtk_fixed 4, rtk_float 5, dgps 2,
@@ -60,7 +62,9 @@ class VrsAnchor {
   VrsAnchor(double max_pos_age_s, double rebase_km)
       : max_pos_age_s_(max_pos_age_s), rebase_km_(rebase_km) {}
 
-  // A measured fix, fresh enough to tell the caster where we are.
+  // A measured fix, fresh enough to tell the caster where we are, with the
+  // receiver's own UTC time (the GGA time field is taken from it, not from the
+  // host wall clock).
   bool reportable(const PositionSample& s, double now_mono_s) const;
 
   void setAnchor(const GgaPosition& p) {

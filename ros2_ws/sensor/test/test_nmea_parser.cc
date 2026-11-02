@@ -109,12 +109,15 @@ static void test_gga_diff_age() {
   CHECK(fix.has_diff_age);
   CHECK(std::fabs(fix.diff_age_s - 1.2) < 1e-9);
   CHECK(fix.diff_station_id == 123);
+  CHECK(fix.has_utc);
+  CHECK(std::fabs(fix.utc_s_of_day - (1 * 3600 + 55 * 60 + 40.0)) < 1e-9);   // 015540.00
   // Single point: both fields empty -> no differential, station unknown.
   GgaFix single;
   CHECK(parse_gga(
       "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47", &single));
   CHECK(!single.has_diff_age);
   CHECK(single.diff_station_id == -1);
+  CHECK(single.has_utc && std::fabs(single.utc_s_of_day - (12 * 3600 + 35 * 60 + 19.0)) < 1e-9);
   // Truncated after the geoid columns: still a fix, still no differential.
   GgaFix shortf;
   CHECK(parse_gga("$GNGGA,015540.00,3113.31552,N,12121.24700,E,1,08,0.9,12.5,M",

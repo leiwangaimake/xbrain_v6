@@ -82,7 +82,48 @@ static const char* kValid =
     "clock:\n"
     "  offset_threshold_ms: 20.0\n"
     "  ref_max_age_s: 5.0\n"
-    "  rtc_trusted: false\n";
+    "  rtc_trusted: false\n"
+    "rtcm:\n"
+    "  sink:\n"
+    "    queue_max_bytes: 16384\n"
+    "    frame_max_age_s: 2.0\n"
+    "  lan:\n"
+    "    enabled: true\n"
+    "    host: \"192.168.10.5\"\n"
+    "    port: 9100\n"
+    "    connect_timeout_s: 3.0\n"
+    "    read_timeout_s: 5.0\n"
+    "    backoff_min_s: 1.0\n"
+    "    backoff_max_s: 30.0\n"
+    "  ntrip:\n"
+    "    enabled: false\n"
+    "    host: \"rtk.example.com\"\n"
+    "    port: null\n"
+    "    mountpoint: null\n"
+    "    version: 1\n"
+    "    user: \"qxuser\"\n"
+    "    password: \"secret\"\n"
+    "    connect_timeout_s: 5.0\n"
+    "    read_timeout_s: 10.0\n"
+    "    backoff_min_s: 2.0\n"
+    "    backoff_max_s: 60.0\n"
+    "    backoff_auth_s: 300.0\n"
+    "    linger_s: 60.0\n"
+    "    gga_period_s: 5.0\n"
+    "    gga_max_pos_age_s: 2.0\n"
+    "    vrs_rebase_km: 10.0\n"
+    "  health:\n"
+    "    obs_window_s: 3.0\n"
+    "    station_window_s: 30.0\n"
+    "  selector:\n"
+    "    hold_up_s: 10.0\n"
+    "    backup_after_s: 15.0\n";
+
+static std::string with(const std::string& base, const std::string& from, const std::string& to) {
+  std::string s = base;
+  s.replace(s.find(from), from.size(), to);
+  return s;
+}
 
 int main() {
   const std::string p = "test_rtk_cfg_tmp.yaml";
@@ -121,6 +162,48 @@ int main() {
     no_gga.replace(no_gga.find(from), from.size(), "");
   }
   write_file(p, no_gga);
+  CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
+
+  // rtcm (11 S3.2A): the enabled LAN source is read in full; the disabled NTRIP
+  // source may keep null port / mountpoint (V-RTCM-2 still open).
+  CHECK(c.sink.queue_max_bytes == 16384);
+  CHECK(c.sink.frame_max_age_s == 2.0);
+  CHECK(c.corrections.queue_max_bytes == 16384);
+  CHECK(c.corrections.lan.enabled);
+  CHECK(c.corrections.lan.host == "192.168.10.5");
+  CHECK(c.corrections.lan.port == 9100);
+  CHECK(c.corrections.lan.backoff_max_s == 30.0);
+  CHECK(!c.corrections.ntrip.enabled);
+  CHECK(c.corrections.health.station_window_s == 30.0);
+  CHECK(c.corrections.selector.hold_up_s == 10.0);
+  CHECK(c.corrections.selector.backup_after_s == 15.0);
+
+  // Enabling NTRIP with the port still null must stop the load (3.1).
+  const std::string nt_on = with(kValid, "    enabled: false\n", "    enabled: true\n");
+  write_file(p, nt_on);
+  CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
+  // ... and with every key present it loads, linger_s included.
+  const std::string nt_full = with(with(nt_on, "    port: null\n", "    port: 8002\n"),
+                                   "    mountpoint: null\n", "    mountpoint: \"AUTO\"\n");
+  write_file(p, nt_full);
+  const RtkConfig cn = load_rtk_config(p, "r", "rtk_driver", "b");
+  CHECK(cn.corrections.ntrip.enabled);
+  CHECK(cn.corrections.ntrip.port == 8002);
+  CHECK(cn.corrections.ntrip.mountpoint == "AUTO");
+  CHECK(cn.corrections.ntrip.password == "secret");
+  CHECK(cn.corrections.ntrip.vrs_rebase_km == 10.0);
+  CHECK(cn.corrections.selector.linger_s == 60.0);
+  write_file(p, with(nt_full, "    version: 1\n", "    version: 3\n"));
+  CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
+
+  // An enabled LAN source with a missing key stops the load.
+  write_file(p, with(kValid, "    read_timeout_s: 5.0\n", ""));
+  CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
+  // A queue smaller than one maximum frame is refused.
+  write_file(p, with(kValid, "queue_max_bytes: 16384", "queue_max_bytes: 1000"));
+  CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
+  // The selector keys are required whatever is enabled.
+  write_file(p, with(kValid, "    backup_after_s: 15.0\n", ""));
   CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
 
   std::remove(p.c_str());

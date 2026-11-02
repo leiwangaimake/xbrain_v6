@@ -62,6 +62,9 @@ struct GgaFix {
   bool has_diff_age = false;
   double diff_age_s = 0.0;     // seconds since the last correction was applied
   int diff_station_id = -1;    // -1 when the field is empty
+  // UTC time of the solution (field 1, hhmmss.ss), the receiver's own clock.
+  bool has_utc = false;
+  double utc_s_of_day = 0.0;
 };
 
 // HDT-derived dual-antenna heading. heading_true_deg is degrees from TRUE

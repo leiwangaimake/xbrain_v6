@@ -171,6 +171,23 @@ GnssFix RtkDriver::buildFix(double now_mono_s) const {
   return fix;
 }
 
+PositionSample RtkDriver::currentPosition(double now_mono_s) const {
+  PositionSample s;
+  const bool fresh =
+      gga_mono_ >= 0.0 && (now_mono_s - gga_mono_) <= cfg_.gga_timeout_s;
+  s.has_position = fresh && gga_.valid && fix_type_from_gga_quality(gga_.quality) != "no_fix";
+  s.t_mono = gga_mono_;
+  s.has_utc = gga_.has_utc;
+  s.utc_s_of_day = gga_.utc_s_of_day;
+  s.pos.lat_deg = gga_.latitude_deg;
+  s.pos.lon_deg = gga_.longitude_deg;
+  s.pos.alt_m = gga_.altitude_m;
+  s.pos.quality = gga_.quality;
+  s.pos.sats = gga_.num_satellites;
+  s.pos.hdop = gga_.hdop;
+  return s;
+}
+
 void RtkDriver::tick(double now_mono_s, int64_t wall_ms) {
   // Envelope: mono/ts in ms (11 S3.0). ts is wall (align/log only, CLK-C1).
   // 11 S3.0 stamps both envelope times in SECONDS. The millisecond conversion

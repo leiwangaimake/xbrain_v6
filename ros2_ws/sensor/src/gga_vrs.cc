@@ -75,6 +75,7 @@ double great_circle_km(double lat1, double lon1, double lat2, double lon2) {
 }
 
 bool VrsAnchor::reportable(const PositionSample& s, double now_mono_s) const {
+  if (!s.has_utc) return false;
   return s.has_position && s.t_mono >= 0.0 && (now_mono_s - s.t_mono) <= max_pos_age_s_;
 }
 

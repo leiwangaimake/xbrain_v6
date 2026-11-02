@@ -55,7 +55,7 @@
  │      │ NMEA read                                                             ✅    │ │
  │      v                                                                             │ │
  │  RtkDriver: nmea_parser (+ GGA field 13 diff age 🚧) -> heading_resolver           │ │
- │      ├──> rt/gnss/fix   (age_s := diff age, null when none) ── current fix ───────┘ │
+ │      ├──> rt/gnss/fix   (age_s := diff age, null when none) ── currentPosition() ──┘ │
  │      ├──> rt/gnss/heading                                                           │
  │      └──> rt/clock/status (1 Hz)                                                    │
  └──────────────────────────────────────┬──────────────────────────────────────────────┘
@@ -114,7 +114,7 @@ UM982 只有一个 COM 口经 CH343 接到 ORIN，NMEA 读和 RTCM 写在同一�
 3. 打开串口（raw 8N1，非阻塞）。
 4. 打开 RT 面 `ZenohSink`（RT 路由不可达即抛异常）。
 5. 🚧 启动网络线程 `CorrectionLink`（两路都 `enabled: false` 时不启动线程）。
-6. 进入 20 Hz 主循环，周期用 `steady_clock`；墙钟只用于信封 `ts` 和 GGA 的 UTC 字段。
+6. 进入 20 Hz 主循环，周期用 `steady_clock`；墙钟只用于信封 `ts`。
 
 ### 2.3 航向等级
 
@@ -149,7 +149,7 @@ EAGAIN 但超过 3 s 无数据也重开（有的内核拔掉设备后一直返�
 
 | # | 现状 | 契约 | 处置 |
 |---|---|---|---|
-| 1 | `GnssFix.age_s` 填的是「距最近一条 GGA 的秒数」 | `11` §3.2：`age_s` = **差分龄期**，无差分为 `null` | 🚧 批 1 |
+| 1 | `GnssFix.age_s` 填的是「距最近一条 GGA 的秒数」 | `11` §3.2：`age_s` = **差分龄期**，无差分为 `null` | ✅ 批 1（059aac3） |
 | 2 | 串口 `O_RDONLY`，没有写路径 | `11` RTG-2：主线程负责写 RTCM | 🚧 批 4 |
 
 ---
@@ -185,10 +185,18 @@ EAGAIN 但超过 3 s 无数据也重开（有的内核拔掉设备后一直返�
 
 ### 3.4 千寻账号现状（2026-11-02）
 
-- 账号已发放，App 显示**未激活**、包月、剩余 1 个月。第一次用账号口令连接很可能激活并开始计时，
-  所以开发和单测阶段**不用真账号**，等 UM982 恢复上电、室外第一次实测时才连（用户 2026-11-02 裁定）。
-- 源表实测（无需账号）：`rtk.ntrip.qxwz.com` 的 8001 / 8002 / 8003 都提供挂载点 `AUTO` · `RTCM32_GGB`（1074/1084/1124）· `RTCM30_GG` · `RTCM23_GPS`。
-  三个端口对应不同坐标系，具体对应关系待用户从千寻 App 提供（⚠️ V-RTCM-2），在此之前配置里 `ntrip.enabled: false`。
+- 账号 2026-11-02 起为**服务中**（包年包月，NOSR 网络播发，五星十六频）。开发与单测仍不用真账号。
+- 千寻 App 给出的接入参数：域名 `rtk.ntrip.qxwz.com`，挂载点 `AUTO`（推荐）；端口对应坐标框架：
+
+  | 端口 | 坐标框架 | 参考历元 |
+  |---|---|---|
+  | 8001 | ITRF2008 | 2016.0 |
+  | 8002 | WGS84 | 2005.0 |
+  | 8003 | CGCS2000 | 2000.0 |
+
+- 配置取 **8002（WGS84）**：本系统 geo 层（围栏、路线、关键点）是 WGS84。自建基站的固定坐标也必须是同一框架，否则主备切换会跳变（§3.3）。
+- 源表实测（无需账号）：三个端口都提供 `AUTO` · `RTCM32_GGB`（1074/1084/1124）· `RTCM30_GG` · `RTCM23_GPS`，网络标识 `CHN`。
+- 配置里 `ntrip.enabled: true`。没有新鲜定位时网络线程停在 `WAIT_POSITION`，不会拨号（RTG-7）；UM982 目前不响应，所以实际不会连。
 
 ---
 
@@ -203,7 +211,7 @@ EAGAIN 但超过 3 s 无数据也重开（有的内核拔掉设备后一直返�
 | C3 | RTCM 写不得影响 NMEA 读和 20 Hz 发布节拍 | RTG-6 |
 | C4 | 网络问题不得波及主循环与授时发布 | RTG-1，§1.1 |
 | C5 | 所有阈值、周期、地址来自配置，代码无默认值 | `CLAUDE.md` 3.1 |
-| C6 | 所有龄期 / 超时用单调钟；墙钟只用于信封 `ts` 和 GGA 的 UTC 字段 | CLK-C1 |
+| C6 | 所有龄期 / 超时用单调钟；墙钟只用于信封 `ts`（GGA 的时间字段取接收机自己的 UTC，不读主机墙钟） | CLK-C1 |
 | C7 | 口令只在内存中拼 Authorization 头；不进 argv / environ / 日志 / 状态 / 异常信息 | RTG-9 |
 | C8 | 不新增速度门：改正数中断由接收机自身退化，交给已有 `i_fix` 链路 | RTG-10 |
 | C9 | 备源不依赖任何与地点有关的配置 | RTG-7 / RTG-12 |
@@ -229,7 +237,7 @@ EAGAIN 但超过 3 s 无数据也重开（有的内核拔掉设备后一直返�
  main thread                                  network thread (CorrectionLink::run)
  ───────────                                  ────────────────────────────────────
  each 50 ms tick:                             loop:
-   link.setPosition(driver.currentFix())  ──>   position slot  (mutex, copy one struct)
+   link.setPosition(driver.currentPosition()) ─> position slot (mutex, copy one struct)
    link.takeFrames(&batch)                <──   out queue      (mutex, deque swap)
    sink.push(batch); sink.drain(write_fd)       poll(lan_fd, ntrip_fd, 100 ms)
                                                 framer -> health -> selector -> out queue
@@ -299,11 +307,13 @@ GGA 上报与「任意地点可用」（`11` RTG-7 / RTG-12）：
 千寻 VRS 按机器人上报的 GGA 位置就近生成虚拟基站。所以**上报的位置必须是机器人此刻真实所在的位置**，
 否则在上海配好的东西拿到南京（约 270 km）就会生成错误位置的虚拟基站，基线过长，无法固定甚至给出错误解。规则如下：
 
-- **位置只取实测**：主线程每拍把 `RtkDriver::currentFix()`（与发布到 `rt/gnss/fix` 的是同一份）写进位置槽；
-  网络线程只认 `has_position == true` 且龄期不超过 `gga_max_pos_age_s` 的位置（单点解即可）。
+- **位置只取实测**：主线程每拍把 `RtkDriver::currentPosition()` 写进位置槽。它和 `rt/gnss/fix` 用同一条判定
+  （GGA 新鲜且是真正的解才 `has_position`），`t_mono` 是那条 GGA 的到达时刻；
+  网络线程只认 `has_position == true`、带接收机 UTC、且龄期不超过 `gga_max_pos_age_s` 的位置（单点解即可）。
 - **没有任何替代坐标**：🚫 配置里的站点坐标，🚫 掉电前缓存的坐标（机器人可能是关机后被运到另一个城市的）。代码里不存在这条路径。
 - **没有新鲜位置就等**：需要备源但没有新鲜位置时停在 `WAIT_POSITION` 不建连；已连接时位置过旧就暂停上报（不发旧位置），恢复后继续。
-- **上报节奏**：进入 STREAMING 立即发一条 GGA，之后每 `gga_period_s` 发一条。GGA 的 UTC 时间字段取墙钟，属于对外报文时间而非龄期判断，标 `WALL-CLOCK-OK`。
+- **上报节奏**：进入 STREAMING 立即发一条 GGA，之后每 `gga_period_s` 发一条。GGA 的时间字段 = 接收机 GGA 自带的 UTC
+  ＋ 该 GGA 到达后经过的单调时间，整个网络线程不读主机墙钟。
 - **VRS 锚点与重建**：首条上报 GGA 的位置记为锚点；当前位置与锚点的大圆距离超过 `vrs_rebase_km` ⇒ 断开重连，用当前位置重建 VRS（⚠️ M-RTCM-4）。
 - **账号覆盖**：千寻账号可能限定服务区域，换城市测试前确认（⚠️ V-RTCM-2）。代码检测不了，只能从连不上 / 无数据看出来。
 
@@ -498,9 +508,11 @@ rtcm:
 | `test_ntrip_protocol` | base64 标准向量；v1 / v2 请求逐字节比对；`ICY 200` / `HTTP 200` / chunked / 401 / SOURCETABLE / 头超长 / 分包到达；chunked 跨块拆分 |
 | `test_gga_vrs` | GGA 校验和与度分格式（含 59.99995 分进位、南纬西经）；无位置 / 位置过旧 ⇒ 不可报；上海 → 南京 ⇒ 需重建；锚点附近 ⇒ 不重建；阈值边界 |
 | `test_rtcm_sink` | 假写函数模拟部分写、EAGAIN、错误；半帧续写不被插队；超上限丢最旧整帧；过期整帧丢弃但写了一半的不丢；标签变化清空；`clear()` |
-| `test_rtk_config`（扩充） | `rtcm.*` 每个必需键缺失 / null 都抛并带键路径；`ntrip.enabled: false` 时 ntrip 其余键可为 null |
+| `test_rtk_config`（扩充） | `rtcm.*` 每个必需键缺失 / null 都抛并带键路径；`ntrip.enabled: false` 时 ntrip 其余键可为 null；队列上限小于一帧被拒；`version` 只许 1 / 2 |
+| `test_correction_link` | 本机回环、真 socket：假树莓派推帧 ⇒ 以主源标签取出；LAN 关闭时无位置不拨号、有位置后拨号且 v1 请求与 GGA 正确、取出备源帧；移到 270 km 外重连并上报新位置；401 后在 `backoff_auth_s` 内不重试；`stop()` 在 1 s 内返回 |
 
-变异体：`scripts/ci/cxx_mutants.py` 新增 `rtcm` 套件，覆盖每个关键判定（CRC 失败丢 1 字节、单源输出、快切慢回、半帧续写、无位置不上报、重建距离比较、`age_s` null）。
+变异体：`scripts/ci/cxx_mutants.py` 有四个套件 `rtcm_age` / `rtcm_select` / `rtcm_proto` / `rtcm_link`（按链接依赖拆分，每组测试只编它链接的源文件），
+覆盖每个关键判定（CRC 失败丢 1 字节、单源输出、快切慢回、半帧续写、无位置不拨号、重建距离比较、401 长退避、`age_s` null）。
 
 ### 5.2 ORIN 集成测试（不需要千寻账号）
 
@@ -523,13 +535,12 @@ rtcm:
 
 | 批 | 内容 | 状态 |
 |---|---|---|
-| 1 | GGA 第 13 / 14 字段解析，`age_s` 改差分龄期，无差分为 null | 🚧 |
-| 2 | 纯模块：`Rtcm3Framer` / `SourceHealth` / `SourceSelector` | 🚧 |
-| 3 | 纯模块：`NtripProtocol` / `GgaBuilder` / `VrsAnchor` | 🚧 |
-| 4 | 串口读写打开 + `RtcmSink` | 🚧 |
-| 5 | `CorrectionLink` 网络线程、`rtcm.*` 配置、主循环接线 | 🚧 |
-| 6 | ORIN 集成测试（§5.2） | 🚧 |
-| 7 | 室外实测（§5.3），实测值回填配置与 `11` 待确认项 | 需 UM982 上电、真账号、树莓派 |
+| 1 | GGA 第 13 / 14 字段解析，`age_s` 改差分龄期，无差分为 null | ✅ 059aac3 |
+| 2 | 纯模块：`Rtcm3Framer` / `SourceHealth` / `SourceSelector` | ✅ 2bdb358 |
+| 3 | 纯模块：`NtripProtocol` / `GgaBuilder` / `VrsAnchor` | ✅ 批 3 |
+| 4 | 串口读写打开 + `RtcmSink` + `CorrectionLink` 网络线程 + `rtcm.*` 配置 + 主循环接线（原计划的批 4 / 5 合并：没有输入的写队列无从验证，二者是同一个功能） | 🚧 |
+| 5 | ORIN 集成测试（§5.2） | 🚧 |
+| 6 | 室外实测（§5.3），实测值回填配置与 `11` 待确认项 | 需 UM982 上电、真账号、树莓派 |
 
 ---
 
@@ -563,7 +574,7 @@ rtcm:
 |---|---|---|
 | U-RTCM-4 | 机器人哪个网口接客户 LAN | 部署 |
 | V-RTCM-1 | FDI 基站型号与输出配置 | §3.2 |
-| V-RTCM-2 | 千寻端口与坐标系对应、账号服务区域 | §3.4、配置 `ntrip.port` |
+| V-RTCM-2 | 千寻账号服务区域（端口与坐标系对应已于 2026-11-02 拿到，见 §3.4） | §3.4 |
 | M-RTCM-1 | 有效窗口与回切时长 | §4.6、配置 |
 | M-RTCM-2 | 树莓派转发延迟 | §5.3 |
 | M-RTCM-3 | UM982 RTCM 输入、差分超时行为、收敛时间 | §5.3 |
@@ -582,7 +593,7 @@ ctest --test-dir build --output-on-failure
 # 或用全仓 C++ 测试入口（处理个别测试需要的 cwd / argv / env）
 /opt/xbrain_v6/scripts/run_cxx_tests.sh
 # 变异体
-python3 /opt/xbrain_v6/scripts/ci/cxx_mutants.py rtcm
+python3 /opt/xbrain_v6/scripts/ci/cxx_mutants.py rtcm_age rtcm_select rtcm_proto rtcm_link
 ```
 
 - `rtk_driver` 可执行文件只在找到 `/usr/local/lib/libzenohc` 时构建；离线测试不依赖 zenoh。
