@@ -168,6 +168,7 @@ def build_orchestrator(
     query_fn=None,
     bypass_tokens=None,
     system_fn=None,
+    state_fn=None,
 ) -> TurnOrchestrator:
     """Construct the voice-loop orchestrator (built once, reused per turn).
 
@@ -180,13 +181,17 @@ def build_orchestrator(
     them (2026-10-25: "停" alone did not stop the robot).
 
     system_fn (optional, 2026-10-30 99 U102) answers H03 "校时" from live
-    state (make_time_sync_fn); None answers the unwired reply."""
+    state (make_time_sync_fn); None answers the unwired reply.
+
+    state_fn (optional, 2026-11-02 99 U105) is the state snapshot the B-class
+    task control and the F class read (make_state_fn). None = an empty
+    snapshot: those intents then refuse with the reason (tests / tools)."""
     return TurnOrchestrator(
         registry, chitchat=chitchat,
         tier2_fn=tier2_fn or null_tier2,
         l2_timeout_ms=l2_timeout_ms,
         query_fn=query_fn, bypass_tokens=bypass_tokens,
-        system_fn=system_fn)
+        system_fn=system_fn, state_fn=state_fn)
 
 
 def make_battery_query_fn(cache, templates, *, max_age_ms: int,
@@ -260,6 +265,30 @@ def make_status_query_fn(cache, templates, *, max_age_ms: int):
         return generic_no_data(templates) if ans is None else ans.text
 
     return _query
+
+
+def make_state_fn(cache):
+    """Return the orchestrator's state_fn: {zenoh key: latest value} for every
+    STATE_TOPICS key (None when never received).
+
+    *** 2026-11-02 (99 U105): production never passed a state_fn, so every
+    turn saw an empty snapshot -- "暂停任务 / 继续任务 / 取消任务" answered
+    "no active task", F01-F10 "no recording in progress", and route / waypoint
+    names (B01 / B02, F11-F15) "catalogue unavailable", whatever P3 was doing.
+
+    latest(), not get_fresh(): these keys are P3's (state/task on change,
+    state/teach event + 1 Hz, state/geo/manifest on change + 0.1 Hz floor), and
+    every command built from them names an id that P3 itself validates -- a
+    task_id / session_id / object id that no longer exists is refused by P3
+    (E_NOT_FOUND), it can never land on a different task. A freshness window
+    here would be a new tunable with no basis and would refuse a quiet but
+    correct on-change topic."""
+    from xbrain.p4_agent.state.cache import STATE_TOPICS
+
+    def _snapshot():
+        return {key: cache.latest(key) for key in STATE_TOPICS}
+
+    return _snapshot
 
 
 def make_time_sync_fn(cache, templates, tz_name, *, max_age_ms: int):

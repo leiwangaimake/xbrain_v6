@@ -459,6 +459,13 @@ Tier2Fn = Callable[[str, "OrchestratorSession", int],
 #: H03 left the set the same day (99 U102): "校时" is answered by system_fn.
 _UNWIRED_SYSTEM = frozenset({"H01", "H02", "H04", "H05", "H06", "H07", "H08"})
 
+#: Action intents that are classified and accepted by P2 but change nothing:
+#: A13 set_speed_profile -- P2 only records the requested profile and P1 runs
+#: a fixed PROFILE_REQ, so "慢一点 / 快一点 / 全速" never changed a speed (and
+#: answered "这个模式指令没听清", the profile slot was never parsed). 2026-11-02,
+#: 99 U105: say so instead, until the profile reaches P1.
+_UNWIRED_ACTIONS = frozenset({"A13"})
+
 #: Level intents whose adjustment an elliptical phrase may continue (D10
 #: volume, D17 brightness), and the phrases that name no device. 2026-10-30.
 _LEVEL_INTENTS = frozenset({"D10", "D17"})
@@ -726,7 +733,7 @@ class TurnOrchestrator:
                 route=entry.route, auth=entry.auth, layer=layer,
                 reply_text=answer, tts_text=answer)
 
-        if entry.id in _UNWIRED_SYSTEM:
+        if entry.id in _UNWIRED_SYSTEM or entry.id in _UNWIRED_ACTIONS:
             reply = self._chitchat.unwired_reply(entry.id)
             return TurnDecision(
                 kind="denied", intent_id=entry.id, intent_name=entry.name,
