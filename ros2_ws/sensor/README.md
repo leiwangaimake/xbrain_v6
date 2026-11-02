@@ -327,7 +327,7 @@ RTCM 3.x 帧结构：
 3. 不足 `3 + L + 3` 字节就等待。
 4. 校验 CRC。**失败时只丢弃这一个 `0xD3` 字节**，从下一字节重新找帧头（不能按 L 整段跳过，L 本身可能就是垃圾）。计入 `crc_errors`。
 5. 成功：输出整帧（含头和 CRC，原样写给接收机），附电文号、基站 ID。
-6. 缓冲区超过 `2 × 1029` 字节时丢最旧数据（只可能是持续的垃圾流）。
+6. 缓冲区不需要单独的上限：扫描只会停在「还在等后续字节的帧头」上，一帧最多 1029 字节，所以留存的数据总小于 1029 字节。
 
 观测电文：MSM1–7 的 1071–1077（GPS）· 1081–1087（GLONASS）· 1091–1097（Galileo）· 1101–1107（SBAS）· 1111–1117（QZSS）· 1121–1127（BDS），以及传统的 1001–1004（GPS）· 1009–1012（GLONASS）。
 基站坐标电文：1005 / 1006。
@@ -373,7 +373,9 @@ RTCM 3.x 帧结构：
 
 - 每次状态变化 `update()` 返回 `switched = true`，调用方清空出队列。
 - 「连续有效」计时在主源任一拍无效时清零。从 NONE 直接到 PRIMARY 不需要保持（没有在用的源，越快越好）。
-- **冷备连接判定** `wantBackup(now)`：主源当前无效，或处于 BACKUP，或进入 PRIMARY 不足 `linger_s` ⇒ 需要备源连接。
+- **冷备连接判定** `wantBackup(now)`：主源已**连续无效满 `backup_after_s`**，或处于 BACKUP，或**从 BACKUP 回到** PRIMARY 不足 `linger_s` ⇒ 需要备源连接。
+  `backup_after_s` 的理由：冷启动时主源在收到第一条 1005/1006（几秒一条）之前都是无效的，没有这个宽限，每次开机都会去拨千寻——而未激活账号的第一次拨号就会开始计费。
+  从 NONE 直接进入 PRIMARY 不触发 `linger_s`（备源从来没用过）。
 - NONE 状态不输出任何帧，接收机按自身差分超时退化。
 
 ### 4.7 RtcmSink（主线程写串口）
@@ -449,6 +451,7 @@ rtcm:
     station_window_s:     # RTG-3, 要大于基站 1005/1006 的实际间隔
   selector:
     hold_up_s:            # RTG-5 主源连续有效多久才切回
+    backup_after_s:       # 冷备: 主源连续无效多久才拨备源
 ```
 
 - 两路都 `enabled: false` 时不启动网络线程，行为与改造前完全一致（只是串口变成读写打开）。
@@ -491,7 +494,7 @@ rtcm:
 | `test_gnss_fix`（扩充） | `has_age == false` ⇒ `"age_s":null`；有值 ⇒ 数字 |
 | `test_rtk_driver`（扩充） | GGA 带 / 不带差分龄期时 `rt/gnss/fix` 的 `age_s` |
 | `test_rtcm3_framer` | 用 CRC 自洽的构造帧；任意切块（含 1 字节）喂入；帧前后夹垃圾；CRC 错一位只丢 1 字节；伪 `0xD3`；保留位非 0；电文号与基站 ID 提取 |
-| `test_rtcm_source` | 只有观测无 1005/1006 ⇒ 无效；窗口边界；`reset()` 立即无效；选择器全部转移；主源抖动不回切；`hold_up_s` 内一拍无效清零；冷备 `wantBackup` 与 `linger_s` |
+| `test_rtcm_source` | 只有观测无 1005/1006 ⇒ 无效；窗口边界；`reset()` 立即无效；选择器全部转移；主源抖动不回切；`hold_up_s` 内一拍无效清零；冷备 `wantBackup`：`backup_after_s` 宽限、`linger_s` 只在从备源回来后生效 |
 | `test_ntrip_protocol` | base64 标准向量；v1 / v2 请求逐字节比对；`ICY 200` / `HTTP 200` / chunked / 401 / SOURCETABLE / 头超长 / 分包到达；chunked 跨块拆分 |
 | `test_gga_vrs` | GGA 校验和与度分格式（含 59.99995 分进位、南纬西经）；无位置 / 位置过旧 ⇒ 不可报；上海 → 南京 ⇒ 需重建；锚点附近 ⇒ 不重建；阈值边界 |
 | `test_rtcm_sink` | 假写函数模拟部分写、EAGAIN、错误；半帧续写不被插队；超上限丢最旧整帧；过期整帧丢弃但写了一半的不丢；标签变化清空；`clear()` |

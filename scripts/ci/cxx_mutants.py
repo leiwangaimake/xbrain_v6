@@ -3650,9 +3650,12 @@ RELAY_KEYS_MUTANTS = [
 SENSOR = os.path.join(ROOT, "ros2_ws", "sensor")
 RTCM_SOURCES = [os.path.join(SENSOR, "src", f) for f in (
     "nmea_parser.cc", "gnss_fix.cc", "gnss_heading.cc", "heading_resolver.cc",
-    "clock_status.cc", "rtk_driver.cc")]
+    "clock_status.cc", "rtk_driver.cc", "rtcm3_framer.cc", "rtcm_source.cc")]
 RTCM_TESTS = [os.path.join(SENSOR, "test", f) for f in (
-    "test_nmea_parser.cc", "test_gnss_fix.cc", "test_rtk_driver.cc")]
+    "test_nmea_parser.cc", "test_gnss_fix.cc", "test_rtk_driver.cc",
+    "test_rtcm3_framer.cc", "test_rtcm_source.cc")]
+RTCM_FRAMER_CC = RTCM_SOURCES[6]
+RTCM_SOURCE_CC = RTCM_SOURCES[7]
 RTCM_INCLUDE = ["-I", os.path.join(SENSOR, "include")]
 RTCM_MUTANTS = [
     # 11 S3.2 age_s = differential age. A parser that never raises the flag
@@ -3672,6 +3675,49 @@ RTCM_MUTANTS = [
     ("age_s: a stale GGA keeps reporting its old differential age",
      RTCM_SOURCES[5], "  fix.has_age = fresh && gga_.has_diff_age;",
      "  fix.has_age = gga_.has_diff_age;"),
+    # ---- framer (RTG-3 / RTG-6) --------------------------------------------
+    # The resync rule: a bad CRC costs one byte. Jumping by the (garbage) length
+    # swallows the start of the next real frame.
+    ("framer: CRC failure skips by the claimed length",
+     RTCM_FRAMER_CC, "      ++crc_errors_;\n      ++garbage_bytes_;\n      ++i;",
+     "      ++crc_errors_;\n      ++garbage_bytes_;\n      i += total;"),
+    ("framer: CRC never checked -- corrupted frames reach the receiver",
+     RTCM_FRAMER_CC, "    if (rtcm_crc24q(b + i, 3 + len) != want) {", "    if (false) {"),
+    ("framer: CRC-24Q polynomial off by one bit",
+     RTCM_FRAMER_CC, "0x1864CFBu", "0x1864CFAu"),
+    ("framer: reserved bits not checked",
+     RTCM_FRAMER_CC, "    if ((b[i + 1] & 0xFC) != 0) {", "    if (false) {"),
+    ("framer: station id read one bit short",
+     RTCM_FRAMER_CC, "get_bits(payload, 12, 12)", "get_bits(payload, 12, 11)"),
+    # ---- health (RTG-3) ------------------------------------------------------
+    ("health: a source with observations but no 1005/1006 counts as valid",
+     RTCM_SOURCE_CC, "  if (last_obs_mono_ < 0.0 || last_station_mono_ < 0.0) return false;",
+     "  if (last_obs_mono_ < 0.0) return false;"),
+    ("health: station message age not checked",
+     RTCM_SOURCE_CC, "         (now_mono_s - last_station_mono_) <= cfg_.station_window_s;",
+     "         true;"),
+    ("health: a lost connection stays valid until the window runs out",
+     RTCM_SOURCE_CC, "void SourceHealth::reset() {\n  last_obs_mono_ = -1.0;",
+     "void SourceHealth::reset() {\n  return;\n  last_obs_mono_ = -1.0;"),
+    # ---- selector (RTG-4 / RTG-5 / U-RTCM-2) ---------------------------------
+    ("selector: an invalid primary is kept in use",
+     RTCM_SOURCE_CC, "      if (!primary_valid) {                       // down fast",
+     "      if (false) {"),
+    ("selector: back to primary without the hold",
+     RTCM_SOURCE_CC, "      if (primary_held) {                         // up slow",
+     "      if (primary_valid) {"),
+    ("selector: one bad update does not restart the hold",
+     RTCM_SOURCE_CC, "    primary_valid_since_ = -1.0;\n    if (primary_invalid_since_",
+     "    if (primary_invalid_since_"),
+    # Every boot would dial the caster -- and the first dial activates the account.
+    ("selector: cold standby dials the backup with no start-up grace",
+     RTCM_SOURCE_CC, "(now_mono_s - primary_invalid_since_) >= cfg_.backup_after_s", "true"),
+    ("selector: linger after NONE -> PRIMARY, a backup never used",
+     RTCM_SOURCE_CC, "back_to_primary_ = (active_ == ActiveSource::kBackup) ? now_mono_s : -1.0;",
+     "back_to_primary_ = now_mono_s;"),
+    ("selector: linger boundary inclusive",
+     RTCM_SOURCE_CC, "(now_mono_s - back_to_primary_) < cfg_.linger_s;",
+     "(now_mono_s - back_to_primary_) <= cfg_.linger_s;"),
 ]
 
 SUITES = {
