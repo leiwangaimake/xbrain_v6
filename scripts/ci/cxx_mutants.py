@@ -3650,12 +3650,16 @@ RELAY_KEYS_MUTANTS = [
 SENSOR = os.path.join(ROOT, "ros2_ws", "sensor")
 RTCM_SOURCES = [os.path.join(SENSOR, "src", f) for f in (
     "nmea_parser.cc", "gnss_fix.cc", "gnss_heading.cc", "heading_resolver.cc",
-    "clock_status.cc", "rtk_driver.cc", "rtcm3_framer.cc", "rtcm_source.cc")]
+    "clock_status.cc", "rtk_driver.cc", "rtcm3_framer.cc", "rtcm_source.cc",
+    "ntrip_protocol.cc", "gga_vrs.cc")]
 RTCM_TESTS = [os.path.join(SENSOR, "test", f) for f in (
     "test_nmea_parser.cc", "test_gnss_fix.cc", "test_rtk_driver.cc",
-    "test_rtcm3_framer.cc", "test_rtcm_source.cc")]
+    "test_rtcm3_framer.cc", "test_rtcm_source.cc", "test_ntrip_protocol.cc",
+    "test_gga_vrs.cc")]
 RTCM_FRAMER_CC = RTCM_SOURCES[6]
 RTCM_SOURCE_CC = RTCM_SOURCES[7]
+RTCM_NTRIP_CC = RTCM_SOURCES[8]
+RTCM_GGA_CC = RTCM_SOURCES[9]
 RTCM_INCLUDE = ["-I", os.path.join(SENSOR, "include")]
 RTCM_MUTANTS = [
     # 11 S3.2 age_s = differential age. A parser that never raises the flag
@@ -3718,6 +3722,59 @@ RTCM_MUTANTS = [
     ("selector: linger boundary inclusive",
      RTCM_SOURCE_CC, "(now_mono_s - back_to_primary_) < cfg_.linger_s;",
      "(now_mono_s - back_to_primary_) <= cfg_.linger_s;"),
+    # ---- NTRIP protocol --------------------------------------------------------
+    # A malformed GET comes back as the same 401 as a wrong password.
+    ("ntrip: v2 request without the Ntrip-Version header",
+     RTCM_NTRIP_CC, '    q += "Ntrip-Version: Ntrip/2.0\\r\\n";\n', ""),
+    ("ntrip: v1 request sent as HTTP/1.1",
+     RTCM_NTRIP_CC, '    q = "GET /" + r.mountpoint + " HTTP/1.0\\r\\n";',
+     '    q = "GET /" + r.mountpoint + " HTTP/1.1\\r\\n";'),
+    ("ntrip: base64 single-byte tail padded with one '='",
+     RTCM_NTRIP_CC, '    out += "==";', '    out += "=";'),
+    # v1 data starts right after "ICY 200 OK\r\n"; keeping the CRLF out of the
+    # header feeds it to the framer, but a header that ends early eats RTCM bytes.
+    ("ntrip: ICY header length excludes its CRLF",
+     RTCM_NTRIP_CC, "the header is that one line.\n    r.header_len = eol + 2;",
+     "the header is that one line.\n    r.header_len = eol;"),
+    # 401 and SOURCETABLE get the long back-off; misclassified, the account is
+    # retried at the normal rate and can be locked.
+    ("ntrip: HTTP 401 not recognised as unauthorized",
+     RTCM_NTRIP_CC, "  if (code == 401) {\n    r.kind = NtripReplyKind::kUnauthorized;",
+     "  if (false) {\n    r.kind = NtripReplyKind::kUnauthorized;"),
+    ("ntrip: a source table taken for a stream",
+     RTCM_NTRIP_CC, "    r.kind = NtripReplyKind::kSourceTable;", "    r.kind = NtripReplyKind::kStream;"),
+    ("ntrip: Transfer-Encoding matched case-sensitively",
+     RTCM_NTRIP_CC, "  const std::string head = lower(buf.substr(0, end));",
+     "  const std::string head = buf.substr(0, end);"),
+    ("ntrip: a header that never ends waits forever",
+     RTCM_NTRIP_CC,
+     "    r.kind = buf.size() > max_header ? NtripReplyKind::kError : NtripReplyKind::kIncomplete;\n    r.status_line",
+     "    r.kind = NtripReplyKind::kIncomplete;\n    r.status_line"),
+    ("ntrip: chunk data not followed by CRLF accepted",
+     RTCM_NTRIP_CC, "        if (c != '\\r') return false;\n        state_ = State::kDataLf;",
+     "        state_ = State::kDataLf;"),
+    # ---- GGA / VRS anchor (RTG-7 / RTG-12) ----------------------------------------
+    ("gga: minutes truncated instead of rounded",
+     RTCM_GGA_CC, "  const long long units = std::llround(", "  const long long units = static_cast<long long>("),
+    ("gga: southern latitude reported as north",
+     RTCM_GGA_CC, "p.lat_deg < 0.0 ? 'S' : 'N'", "'N'"),
+    ("gga: checksum summed instead of XORed",
+     RTCM_GGA_CC, "  for (const char* c = body; *c != '\\0'; ++c) sum ^= static_cast<unsigned char>(*c);",
+     "  for (const char* c = body; *c != '\\0'; ++c) sum += static_cast<unsigned char>(*c);"),
+    # RTG-7: only a measured, fresh fix may be reported.
+    ("vrs: a sample without a position is reportable",
+     RTCM_GGA_CC, "  return s.has_position && s.t_mono >= 0.0 &&", "  return s.t_mono >= 0.0 &&"),
+    ("vrs: an old fix is still reported",
+     RTCM_GGA_CC, " && (now_mono_s - s.t_mono) <= max_pos_age_s_;", ";"),
+    ("vrs: freshness boundary exclusive",
+     RTCM_GGA_CC, "(now_mono_s - s.t_mono) <= max_pos_age_s_;", "(now_mono_s - s.t_mono) < max_pos_age_s_;"),
+    # RTG-12: Shanghai -> Nanjing must rebuild the virtual station.
+    ("vrs: rebase threshold a hundred times too large",
+     RTCM_GGA_CC, "p.lat_deg, p.lon_deg) > rebase_km_;", "p.lat_deg, p.lon_deg) > rebase_km_ * 100;"),
+    ("vrs: rebase judged against an unset anchor",
+     RTCM_GGA_CC, "  if (!has_anchor_) return false;\n", ""),
+    ("vrs: earth radius wrong",
+     RTCM_GGA_CC, "kEarthRadiusKm = 6371.0;", "kEarthRadiusKm = 6378.0;"),
 ]
 
 SUITES = {

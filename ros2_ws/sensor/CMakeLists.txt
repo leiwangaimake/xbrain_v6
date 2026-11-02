@@ -45,6 +45,8 @@ add_library(rtk_driver_core STATIC
   src/rtk_config.cc
   src/rtcm3_framer.cc
   src/rtcm_source.cc
+  src/ntrip_protocol.cc
+  src/gga_vrs.cc
 )
 target_include_directories(rtk_driver_core PUBLIC include ${COMMON_INCLUDE})
 
@@ -73,7 +75,7 @@ endif()
 # Offline tests: plain executables, no ROS / no hardware, registered with CTest.
 enable_testing()
 foreach(t nmea_parser gnss_heading gnss_fix clock_status heading_resolver rtk_driver yaml_lite rtk_config serial_reopen
-          rtcm3_framer rtcm_source)
+          rtcm3_framer rtcm_source ntrip_protocol gga_vrs)
   add_executable(test_${t} test/test_${t}.cc)
   target_link_libraries(test_${t} PRIVATE rtk_driver_core)
   add_test(NAME test_${t} COMMAND test_${t})
