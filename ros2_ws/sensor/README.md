@@ -142,8 +142,11 @@ quality 0 / 1 / 6 视作 `fix_is_lost`（不准 L2）。GGA 超过 `gga_timeout_
 
 ### 2.5 串口热插拔
 
-`serial_reopen.h` 的纯函数 `classify_serial_read()` 判定每次 `read()` 的结果：有数据就喂给解析，EOF 或硬错误（ENODEV / EIO）就重开，
-EAGAIN 但超过 3 s 无数据也重开（有的内核拔掉设备后一直返回 EAGAIN）。断开期间约 1 Hz 重试 `open()`，USB 插回后自动恢复。
+`serial_reopen.h` 的纯函数 `classify_serial_read()` 判定每次 `read()` 的结果：有数据就喂给解析；设备节点消失（拔出）或硬错误（ENODEV / EIO）就重开；
+返回 0 或 EAGAIN 都是「本拍没有数据」，超过 3 s 仍无数据才重开（兜底）。断开期间约 1 Hz 重试 `open()`，USB 插回后自动恢复。
+
+> `read() == 0` **不是**拔出：串口是 raw + VMIN=0 / VTIME=0，这种 tty 没有待读字节时就返回 0。
+> 原规则把 0 当拔出，2026-11-02 实测（UM982 不出数据）45 s 重开 43 次，每次都丢掉 RTCM 写队列；已在 487107b 修正。
 
 ### 2.6 已知与契约不符（随 RTCM 一并修）
 
