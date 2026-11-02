@@ -56,6 +56,12 @@ struct GgaFix {
   int quality = 0;             // raw GGA fix-quality field
   int num_satellites = 0;
   double hdop = 0.0;           // horizontal dilution of precision
+  // Differential age (GGA field 13) and reference station id (field 14). Both
+  // are EMPTY when no corrections are applied, so presence is a flag, never a
+  // zero: has_diff_age == false is how "no differential" reaches 11 S3.2 age_s.
+  bool has_diff_age = false;
+  double diff_age_s = 0.0;     // seconds since the last correction was applied
+  int diff_station_id = -1;    // -1 when the field is empty
 };
 
 // HDT-derived dual-antenna heading. heading_true_deg is degrees from TRUE

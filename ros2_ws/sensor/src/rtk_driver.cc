@@ -148,7 +148,11 @@ GnssFix RtkDriver::buildFix(double now_mono_s) const {
   // fix_type follows the raw quality when fresh; a stale GGA is no_fix (T-09).
   fix.fix_type = fresh ? fix_type_from_gga_quality(gga_.quality) : "no_fix";
   fix.t_mono = now_mono_s;
-  fix.age_s = (gga_mono_ >= 0.0) ? (now_mono_s - gga_mono_) : 1.0e9;
+  // age_s is the DIFFERENTIAL age the module reports (11 S3.2), not how old the
+  // GGA is -- that freshness is already applied above and travels as t_mono.
+  // A stale GGA says nothing about corrections now, so it gives null too.
+  fix.has_age = fresh && gga_.has_diff_age;
+  fix.age_s = gga_.diff_age_s;
   fix.sats = gga_.num_satellites;
   fix.hdop = gga_.hdop;
   // has_position only with a fresh, valid GGA that is an actual fix. Otherwise

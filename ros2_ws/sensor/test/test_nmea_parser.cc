@@ -99,6 +99,30 @@ static void test_gga_no_fix() {
   CHECK(fix.quality == 0);
 }
 
+// ---- GGA differential age / station (fields 13 / 14) ---------------------
+static void test_gga_diff_age() {
+  GgaFix fix;
+  // RTK fixed with corrections: age 1.2 s from station 0123.
+  CHECK(parse_gga(
+      "$GNGGA,015540.00,3113.31552,N,12121.24700,E,4,18,0.6,12.5,M,8.2,M,1.2,0123",
+      &fix));
+  CHECK(fix.has_diff_age);
+  CHECK(std::fabs(fix.diff_age_s - 1.2) < 1e-9);
+  CHECK(fix.diff_station_id == 123);
+  // Single point: both fields empty -> no differential, station unknown.
+  GgaFix single;
+  CHECK(parse_gga(
+      "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47", &single));
+  CHECK(!single.has_diff_age);
+  CHECK(single.diff_station_id == -1);
+  // Truncated after the geoid columns: still a fix, still no differential.
+  GgaFix shortf;
+  CHECK(parse_gga("$GNGGA,015540.00,3113.31552,N,12121.24700,E,1,08,0.9,12.5,M",
+                  &shortf));
+  CHECK(shortf.valid);
+  CHECK(!shortf.has_diff_age);
+}
+
 // ---- HDT dual-antenna heading --------------------------------------------
 static void test_hdt() {
   HdtHeading hdg;
@@ -210,6 +234,7 @@ int main() {
   test_gga_single();
   test_gga_rtk_fixed();
   test_gga_no_fix();
+  test_gga_diff_age();
   test_hdt();
   test_tra();
   test_tra_bench();

@@ -3643,6 +3643,37 @@ RELAY_KEYS_MUTANTS = [
 ]
 
 
+# ---- rtcm: rtk_driver differential input (11 S3.2 / S3.2A) -----------------
+# The sensor package's RTCM work. Every test runs against every source: the
+# driver test exercises the parser and the serialiser too, and crediting a kill
+# to one test only is how a cross-file assertion later goes missing.
+SENSOR = os.path.join(ROOT, "ros2_ws", "sensor")
+RTCM_SOURCES = [os.path.join(SENSOR, "src", f) for f in (
+    "nmea_parser.cc", "gnss_fix.cc", "gnss_heading.cc", "heading_resolver.cc",
+    "clock_status.cc", "rtk_driver.cc")]
+RTCM_TESTS = [os.path.join(SENSOR, "test", f) for f in (
+    "test_nmea_parser.cc", "test_gnss_fix.cc", "test_rtk_driver.cc")]
+RTCM_INCLUDE = ["-I", os.path.join(SENSOR, "include")]
+RTCM_MUTANTS = [
+    # 11 S3.2 age_s = differential age. A parser that never raises the flag
+    # turns every RTK fix into "no corrections" -- age_s null forever.
+    ("age_s: GGA field 13 never marks a differential age",
+     RTCM_SOURCES[0], "    out->has_diff_age = true;", "    out->has_diff_age = false;"),
+    ("age_s: station id read from the age column",
+     RTCM_SOURCES[0], "    out->diff_station_id = field_to_int(f[14]);",
+     "    out->diff_station_id = field_to_int(f[13]);"),
+    # U-RTCM-3: no corrections is null. A 0 reads as "corrections this instant".
+    ("age_s: serialised as a number when there is no differential",
+     RTCM_SOURCES[1], "opt_num(fix.age_s, fix.has_age)", "std::to_string(fix.age_s)"),
+    # The pre-2026-11-02 bug this batch fixes: age_s carried GGA freshness.
+    ("age_s: carries how old the GGA is instead of the differential age",
+     RTCM_SOURCES[5], "  fix.age_s = gga_.diff_age_s;",
+     "  fix.age_s = now_mono_s - gga_mono_;"),
+    ("age_s: a stale GGA keeps reporting its old differential age",
+     RTCM_SOURCES[5], "  fix.has_age = fresh && gga_.has_diff_age;",
+     "  fix.has_age = gga_.has_diff_age;"),
+]
+
 SUITES = {
     "quadruped": (QUAD_SOURCES, QUAD_TESTS, QUAD_MUTANTS, GOLDEN, []),
     "quadruped_config": (CONFIG_SOURCES, CONFIG_TESTS, CONFIG_MUTANTS, None, []),
@@ -3661,6 +3692,7 @@ SUITES = {
     "socket": (SOCKET_SOURCES, SOCKET_TESTS, SOCKET_MUTANTS, None, []),
     "process": (PROCESS_SOURCES, PROCESS_TESTS, PROCESS_MUTANTS, GOLDEN, []),
     "yaml_lite": ([], YAML_TESTS, YAML_MUTANTS, None, []),
+    "rtcm": (RTCM_SOURCES, RTCM_TESTS, RTCM_MUTANTS, None, RTCM_INCLUDE),
     "rt_bridge": (RT_BRIDGE_SOURCES, RT_BRIDGE_TESTS, RT_BRIDGE_MUTANTS, None,
                   ["-I", os.path.join(ROOT, "common", "third_party")]),
     "rt_cfg": (RT_CFG_SOURCES, RT_CFG_TESTS, RT_CFG_MUTANTS,

@@ -41,7 +41,11 @@ struct GnssFix {
   int sats = 0;
   double cov_h_m = 0.0;        // horizontal 1sigma (m), from nominal x HDOP
   double cov_v_m = 0.0;        // vertical 1sigma (m), estimate ~1.5 x horizontal
-  double age_s = 0.0;          // fix freshness age (s), monotonic
+  // Differential age (11 S3.2): GGA field 13, NOT the fix freshness (freshness
+  // is judged on t_mono). has_age == false -> age_s serialises as null, which is
+  // the 2026-11-02 ruling for "no corrections applied" (11 S3.2A U-RTCM-3).
+  bool has_age = false;
+  double age_s = 0.0;
   double t_mono = 0.0;         // CLOCK_MONOTONIC seconds (11 S3.2: age uses THIS)
 };
 
@@ -53,7 +57,8 @@ std::string fix_type_from_gga_quality(int quality);
 bool fix_type_valid(const std::string& fix_type);
 
 // Serialise the GnssFix data object (11 S3.2). lat/lon/alt/cov are JSON null when
-// has_position is false; fix_type is always present.
+// has_position is false; age_s is JSON null when has_age is false; fix_type is
+// always present.
 std::string to_json_data(const GnssFix& fix);
 
 }  // namespace sensor

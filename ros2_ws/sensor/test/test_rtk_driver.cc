@@ -158,8 +158,32 @@ static void test_seq_increments() {
   CHECK(has(sink.msgs[3].second, "\"seq\":2"));   // fix seq 2
 }
 
+// age_s is the GGA differential age (11 S3.2): null without corrections, the
+// module's number with them, and null again once that GGA goes stale.
+static void test_fix_age_is_differential() {
+  static const char* kGgaDiff =
+      "$GNGGA,015540.00,3113.31552,N,12121.24700,E,4,18,0.6,12.5,M,8.2,M,1.0,0001\n";
+  CaptureSink sink;
+  RtkDriver d(cfg(), &sink);
+  d.feed(kGga, std::char_traits<char>::length(kGga), 1.0);   // no diff fields
+  d.tick(1.0, 1000LL);
+  const std::string* f0 = find_by_key(sink, "xbrain/r1/rt/gnss/fix");
+  CHECK(f0 != nullptr && has(*f0, "\"age_s\":null"));
+  sink.msgs.clear();
+  d.feed(kGgaDiff, std::char_traits<char>::length(kGgaDiff), 2.0);
+  d.tick(2.5, 2500LL);
+  const std::string* f1 = find_by_key(sink, "xbrain/r1/rt/gnss/fix");
+  // The module's 1.0 s, NOT the 0.5 s since the GGA arrived.
+  CHECK(f1 != nullptr && has(*f1, "\"age_s\":1.000000"));
+  sink.msgs.clear();
+  d.tick(10.0, 10000LL);                                     // GGA stale
+  const std::string* f2 = find_by_key(sink, "xbrain/r1/rt/gnss/fix");
+  CHECK(f2 != nullptr && has(*f2, "\"age_s\":null"));
+}
+
 int main() {
   test_publish_l1();
+  test_fix_age_is_differential();
   test_publish_l3_startup();
   test_seq_increments();
   if (g_failures == 0) {

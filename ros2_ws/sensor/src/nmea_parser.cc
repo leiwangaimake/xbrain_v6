@@ -140,6 +140,15 @@ bool parse_gga(const std::string& sentence, GgaFix* out) {
   out->latitude_deg = nmea_lat_lon_to_degrees(f[2], f[3]);
   out->longitude_deg = nmea_lat_lon_to_degrees(f[4], f[5]);
   out->altitude_m = field_to_double(f[9]);
+  // 13 diffAge, 14 diffStation: optional, empty without corrections. Some
+  // configs truncate the sentence after field 12, so the size is checked too.
+  if (f.size() > 13 && !f[13].empty()) {
+    out->has_diff_age = true;
+    out->diff_age_s = field_to_double(f[13]);
+  }
+  if (f.size() > 14 && !f[14].empty()) {
+    out->diff_station_id = field_to_int(f[14]);
+  }
   out->valid = true;
   return true;
 }

@@ -9,6 +9,8 @@
  * The GGA-quality -> fix_type table and the null-safe serialiser. opt_num emits
  * JSON null (not 0.0) for the position/cov fields when there is no fix, so a
  * consumer cannot plot 0,0 or read a 0 m covariance as a perfect fix (NAV-02).
+ * The same rule covers age_s: without corrections there is no differential age,
+ * and a 0 would read as "corrections fresh this instant".
  */
 
 #include "sensor/gnss_fix.h"
@@ -58,7 +60,7 @@ std::string to_json_data(const GnssFix& fix) {
   o += ",\"sats\":" + std::to_string(fix.sats);
   o += ",\"cov_h_m\":" + opt_num(fix.cov_h_m, p);
   o += ",\"cov_v_m\":" + opt_num(fix.cov_v_m, p);
-  o += ",\"age_s\":" + std::to_string(fix.age_s);
+  o += ",\"age_s\":" + opt_num(fix.age_s, fix.has_age);
   o += ",\"t_mono\":" + std::to_string(fix.t_mono);
   o += "}";
   return o;

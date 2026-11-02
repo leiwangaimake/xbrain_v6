@@ -65,6 +65,16 @@ int main() {
   CHECK(has(jn, "\"cov_h_m\":null"));
   CHECK(has(jn, "\"fix_type\":\"no_fix\""));
 
+  // age_s is the differential age: null without corrections, never 0 (a 0 would
+  // read as "corrections applied this instant"); a number when present.
+  CHECK(has(j, "\"age_s\":null"));          // f has a position but no corrections
+  GnssFix df = f;
+  df.has_age = true;
+  df.age_s = 1.5;
+  const std::string jd = to_json_data(df);
+  CHECK(has(jd, "\"age_s\":1.500000"));
+  CHECK(has(jn, "\"age_s\":null"));
+
   if (g_failures == 0) {
     std::printf("ALL GNSS FIX TESTS PASSED\n");
     return 0;
