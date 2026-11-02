@@ -5,7 +5,7 @@
 > §3.2 `GnssFix` · **§3.2A RTCM 差分改正数输入（RTB / RTG 条款）** · §3.3 `GnssHeading` · §3.11 `ClockStatus` · §1.5 授时。
 > 本文与 `11` 冲突时以 `11` 为准，并按 `CLAUDE.md` 铁律 1 回头修本文。
 
-状态标记：✅ 已实现并实测 · 🚧 已定设计、待实现 · ⚠️ 待裁定 / 待实测（编号指向 `11` §3.2A.3）
+状态标记：✅ 已实现（单测 + 变异体 + ORIN 假源集成通过；真千寻 / 真 UM982 待室外实测，见 §5.3）· 🚧 已定设计、待实现 · ⚠️ 待裁定 / 待实测（编号指向 `11` §3.2A.3）
 
 > **2026-11-02 第二次裁定**（`11` §3.2A 文首 ④~⑦）：差分接入**并入 `rtk_driver` 单进程**，用独立网络线程隔离（RTG-1）；
 > 千寻账号口令写进 `configs/rtk_driver.yaml`（RTG-9）；千寻冷备；无差分时 `age_s = null`。
@@ -29,7 +29,7 @@
                               │ raw bytes 1:1, customer LAN              │ NTRIP v1/v2, 5G/WiFi
                               v                                          v
  ═════════════════════════════ ROBOT (ORIN) · process rtk_driver ═══════════════════════════
- ┌─ network thread (CorrectionLink) ─────────────────────────────────────────────── 🚧 ─┐
+ ┌─ network thread (CorrectionLink) ─────────────────────────────────────────────── ✅ ─┐
  │  ┌────────────────────┐              ┌────────────────────┐                          │
  │  │ LAN source (prim.) │              │ NTRIP source (bak.)│<── GGA <── VrsAnchor <─┐ │
  │  │ TCP client         │              │ cold standby       │                        │ │
@@ -49,12 +49,12 @@
             out queue (mutex, bounded, whole frames + source tag)      position slot (mutex)
                               v                                                       ^
  ┌─ main thread, 20 Hz loop (existing) ───────────────────────────────────────────────┼─┐
- │  take frames (never waits) ──> RtcmSink: bounded, drop oldest WHOLE frame    🚧    │ │
+ │  take frames (never waits) ──> RtcmSink: bounded, drop oldest WHOLE frame    ✅    │ │
  │                                   │                                                │ │
- │  serial fd /dev/ttyACM0  O_RDWR <─┘ non-blocking write, partial-write safe   🚧    │ │
+ │  serial fd /dev/ttyACM0  O_RDWR <─┘ non-blocking write, partial-write safe   ✅    │ │
  │      │ NMEA read                                                             ✅    │ │
  │      v                                                                             │ │
- │  RtkDriver: nmea_parser (+ GGA field 13 diff age 🚧) -> heading_resolver           │ │
+ │  RtkDriver: nmea_parser (+ GGA field 13 diff age ✅) -> heading_resolver           │ │
  │      ├──> rt/gnss/fix   (age_s := diff age, null when none) ── currentPosition() ──┘ │
  │      ├──> rt/gnss/heading                                                           │
  │      └──> rt/clock/status (1 Hz)                                                    │
@@ -113,7 +113,7 @@ UM982 只有一个 COM 口经 CH343 接到 ORIN，NMEA 读和 RTCM 写在同一�
 2. 读配置：冻结产物 `$XBRAIN_RESOLVED_DIR/rtk_driver.yaml`（默认目录 `/run/xbrain/resolved`），不读源文件（`10` §5.4.1）。任何阈值缺失或为 null 都抛异常（`CLAUDE.md` 3.1）。
 3. 打开串口（raw 8N1，非阻塞）。
 4. 打开 RT 面 `ZenohSink`（RT 路由不可达即抛异常）。
-5. 🚧 启动网络线程 `CorrectionLink`（两路都 `enabled: false` 时不启动线程）。
+5. ✅ 启动网络线程 `CorrectionLink`（两路都 `enabled: false` 时不启动线程）。
 6. 进入 20 Hz 主循环，周期用 `steady_clock`；墙钟只用于信封 `ts`。
 
 ### 2.3 航向等级
@@ -153,7 +153,7 @@ quality 0 / 1 / 6 视作 `fix_is_lost`（不准 L2）。GGA 超过 `gga_timeout_
 | # | 现状 | 契约 | 处置 |
 |---|---|---|---|
 | 1 | `GnssFix.age_s` 填的是「距最近一条 GGA 的秒数」 | `11` §3.2：`age_s` = **差分龄期**，无差分为 `null` | ✅ 批 1（059aac3） |
-| 2 | 串口 `O_RDONLY`，没有写路径 | `11` RTG-2：主线程负责写 RTCM | 🚧 批 4 |
+| 2 | 串口 `O_RDONLY`，没有写路径 | `11` RTG-2：主线程负责写 RTCM | ✅ 批 4（e3cf8cf） |
 
 ---
 
@@ -203,7 +203,7 @@ quality 0 / 1 / 6 视作 `fix_is_lost`（不准 L2）。GGA 超过 `gga_timeout_
 
 ---
 
-## 4. RTCM 差分输入设计（🚧）
+## 4. RTCM 差分输入设计（✅ 已实现，待室外实测）
 
 ### 4.1 设计约束
 
@@ -540,9 +540,9 @@ rtcm:
 |---|---|---|
 | 1 | GGA 第 13 / 14 字段解析，`age_s` 改差分龄期，无差分为 null | ✅ 059aac3 |
 | 2 | 纯模块：`Rtcm3Framer` / `SourceHealth` / `SourceSelector` | ✅ 2bdb358 |
-| 3 | 纯模块：`NtripProtocol` / `GgaBuilder` / `VrsAnchor` | ✅ 批 3 |
-| 4 | 串口读写打开 + `RtcmSink` + `CorrectionLink` 网络线程 + `rtcm.*` 配置 + 主循环接线（原计划的批 4 / 5 合并：没有输入的写队列无从验证，二者是同一个功能） | 🚧 |
-| 5 | ORIN 集成测试（§5.2） | 🚧 |
+| 3 | 纯模块：`NtripProtocol` / `GgaBuilder` / `VrsAnchor` | ✅ cd20af6 |
+| 4 | 串口读写打开 + `RtcmSink` + `CorrectionLink` 网络线程 + `rtcm.*` 配置 + 主循环接线（原计划的批 4 / 5 合并：没有输入的写队列无从验证，二者是同一个功能） | ✅ e3cf8cf（串口修复 487107b） |
+| 5 | ORIN 集成测试（§5.2） | ✅ 假树莓派 + 真 rtk_driver + zenohd-rt（见 e3cf8cf 提交说明）；假千寻走 `test_correction_link` 回环 |
 | 6 | 室外实测（§5.3），实测值回填配置与 `11` 待确认项 | 需 UM982 上电、真账号、树莓派 |
 
 ---
