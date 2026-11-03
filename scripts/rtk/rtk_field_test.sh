@@ -28,6 +28,10 @@
 # usage: scripts/rtk/rtk_field_test.sh ntrip [seconds]
 #        scripts/rtk/rtk_field_test.sh lan HOST:PORT [seconds]
 # RTK_FIELD_SKIP_RAW=1 skips phase 1 -- bench check of phase 2 only, never in the field.
+# RTK_FIELD_NTRIP_EP=HOST:PORT points the caster elsewhere in the test copy only, e.g.
+# 127.0.0.1:18002 when the ORIN has no internet of its own and reaches the caster
+# through an SSH reverse tunnel (ssh -N -R 127.0.0.1:18002:rtk.ntrip.qxwz.com:8002
+# from a machine that is online). The committed config is never touched.
 
 set -u
 ROOT=/opt/xbrain_v6
@@ -65,14 +69,22 @@ if [ "$BYTES" -eq 0 ] && [ "${RTK_FIELD_SKIP_RAW:-0}" != "1" ]; then
   echo "ERROR: the UM982 sends nothing -- check its power and wiring before RTK" >&2
   exit 1
 fi
-grep -a 'GGA,' "$OUT/raw.bin" | tail -1 | awk -F, '{print "last GGA: quality=" $7 " sats=" $8 " hdop=" $9 " diff_age=" $14}'
+# tail -2 | head -1: the capture is cut mid-stream, so the very last GGA is often partial.
+grep -a 'GGA,' "$OUT/raw.bin" | tail -2 | head -1 | awk -F, '{print "last GGA: quality=" $7 " sats=" $8 " hdop=" $9 " diff_age=" $14}'
 
 # ---- phase 2: rtk_driver with RTCM ------------------------------------------
 echo "== phase 2: rtk_driver + RTCM ($MODE)"
-python3 - "$ROOT/configs/rtk_driver.yaml" "$OUT/resolved/rtk_driver.yaml" "$MODE" "${LAN_EP:-}" <<'PY'
+python3 - "$ROOT/configs/rtk_driver.yaml" "$OUT/resolved/rtk_driver.yaml" "$MODE" "${LAN_EP:-}" "${RTK_FIELD_NTRIP_EP:-}" <<'PY'
 import re, sys
-src, dst, mode, ep = sys.argv[1:5]
+src, dst, mode, ep, nep = sys.argv[1:6]
 s = open(src, encoding="utf-8").read()
+if nep:
+    host, port = nep.rsplit(":", 1)
+    i = s.index("  ntrip:")
+    part = s[i:]
+    part = re.sub(r'host: "[^"]*"', 'host: "%s"' % host, part, count=1)
+    part = re.sub(r"port: \d+", "port: %s" % port, part, count=1)
+    s = s[:i] + part
 if mode == "lan":
     host, port = ep.rsplit(":", 1)
     i = s.index("  lan:")

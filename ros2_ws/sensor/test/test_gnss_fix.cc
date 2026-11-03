@@ -57,6 +57,16 @@ int main() {
   CHECK(has(j, "\"sats\":24"));
   CHECK(!has(j, "\"lat\":null"));
 
+  // lat/lon keep 9 decimals: 6 (std::to_string) is ~0.11 m and erased the RTK
+  // fixed centimetres on the bus (2026-11-03 field test, 11 S3.2).
+  GnssFix cm = f;
+  cm.lat = 31.158372345;
+  cm.lon = 121.391281678;
+  const std::string jc = to_json_data(cm);
+  CHECK(has(jc, "\"lat\":31.158372345,"));
+  CHECK(has(jc, "\"lon\":121.391281678,"));
+  CHECK(has(jc, "\"cov_h_m\":0.020000,"));
+
   // 3.3 mutant: no position -> lat/lon/cov are JSON null, never 0.
   GnssFix nf;   // defaults: has_position=false, fix_type=no_fix
   const std::string jn = to_json_data(nf);
