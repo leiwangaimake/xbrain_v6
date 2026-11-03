@@ -29,7 +29,9 @@ P1 = {
             "v_obstacle_avoid_mps": 0.5},
     "relative_move": {"max_distance_m": 20.0, "max_yaw_rad": 6.2832,
                       "pure_rotation_eps_m": 0.02, "default_timeout_s": 20.0,
-                      "abort_on_obstacle": True},
+                      "abort_on_obstacle": True,
+                      # control deadzone (common.spec.min_cmd_*, 2026-11-03)
+                      "cmd_deadzone": {"vx_mps": 0.08, "vy_mps": 0.08, "wz_radps": 0.3}},
     "timeouts_ms": {"gnss": 200, "health_degrade": 3000, "health_dead": 10000},
     # 12 S7 clip constants (fence/clip.py): shared truth refs, resolved at freeze.
     "fence": {"brake_k": 1.5, "brake_a_mps2": 2.5, "t_lat_s": 0.4, "soft_margin_min_m": 2.0,
@@ -66,6 +68,7 @@ def test_complete_tree_builds():
     c = build_nav_config(P1, RNS)
     assert c.max_wz_radps == 1.2 and c.holonomic is True and c.v_nom_mps == 1.5
     assert c.relmove.default_timeout_s == 20.0 and c.health_dead_ms == 10000
+    assert c.cmd_deadzone == {"x": 0.08, "y": 0.08, "yaw": 0.3}  # 2026-11-03 control deadzone
     assert c.frame.origin == (31.2304, 121.4737) and c.rns["rns"]["route"]["search_window"] == 30
     # the fence constants: patrol tier as v_profile_max, obstacle_avoid tier as
     # the degraded teleop cap (11 S3.2.1 / U54), the table by fix type.
@@ -123,6 +126,7 @@ def test_missing_rotation_key_names_itself(key):
 @pytest.mark.parametrize("dotted", [
     "geo.enu_origin.lat", "nav.max_vx_mps", "nav.max_wz_radps", "nav.holonomic",
     "nav.v_nom_mps", "relative_move.max_distance_m", "relative_move.abort_on_obstacle",
+    "relative_move.cmd_deadzone.wz_radps",
     "timeouts_ms.gnss", "timeouts_ms.health_dead",
     "fence.brake_k", "fence.t_lat_s", "fence.margin_by_fix.rtk_fixed", "fence.projection_iters",
     "speed_gate.hysteresis.speed_up_hold_s", "speed_gate.hysteresis.d_up_margin_m",

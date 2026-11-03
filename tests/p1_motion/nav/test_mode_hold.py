@@ -124,10 +124,7 @@ def test_on_behavior_sets_and_clears_the_hold_only_from_p2():
 def test_test_executor_drops_a_pending_relmove(monkeypatch):
     """A relmove waiting for navigation must not start during the hold.
     MUTATION: drop_pending leaves the slot -> still pending -> fails."""
-    monkeypatch.setenv("XBRAIN_BASIC_MOTION_LIN", "0.2")  # start-script speeds
-    monkeypatch.setenv("XBRAIN_BASIC_MOTION_LAT", "0.15")
-    monkeypatch.setenv("XBRAIN_BASIC_MOTION_ANG", "0.3")
-    ex = bmt.BasicMotionTest()  # reads the three speeds
-    ex.queue({"dx_m": 1.0}, 0.0)  # waiting for navigation
+    ex = bmt.BasicMotionTest({"x": 0.08, "y": 0.08, "yaw": 0.25})  # config deadzone
+    ex.queue({"dx_m": 1.0, "max_speed_mps": 0.2}, 0.0)  # waiting for navigation
     ex.drop_pending("mode_hold")  # the hold arrives
     assert ex.pending is False  # nothing will start later

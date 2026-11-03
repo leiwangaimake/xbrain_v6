@@ -81,6 +81,11 @@ class NavConfig:
     # twice. So nav_cfg reads the key, nav_wiring owns dt, and the two meet
     # at the CtrlLoop construction.
     accel_a_max_mps2: Optional[float]
+    # Control deadzone per axis ("x" / "y" m/s, "yaw" rad/s): a commanded
+    # speed at or below it does not step the chassis (relative_move.
+    # cmd_deadzone -> common.spec.min_cmd_*, user ruling 2026-11-03 "死区抑制").
+    # Read by the basic-motion executor.
+    cmd_deadzone: Dict[str, float]
 
 
 def _walk(tree: Mapping[str, Any], dotted: str) -> Any:
@@ -330,4 +335,7 @@ def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) ->
         rot_limits=_rotation_limits(p1_tree),
         r_robot_m=_read_r_robot(rns_tree),
         accel_a_max_mps2=_read_accel_a_max(p1_tree),
+        cmd_deadzone={"x": _pos(p1_tree, "relative_move.cmd_deadzone.vx_mps"),
+                      "y": _pos(p1_tree, "relative_move.cmd_deadzone.vy_mps"),
+                      "yaw": _pos(p1_tree, "relative_move.cmd_deadzone.wz_radps")},
     )

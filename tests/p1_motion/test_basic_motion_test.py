@@ -82,13 +82,46 @@ class _Sim:
         self.yaw += wz * bmt.TICK_S  # counter-clockwise positive
 
 
+#: The control deadzone the executor is built with (NavConfig.cmd_deadzone);
+#: test values, below the speeds used here.
+DEADZONE = {"x": 0.08, "y": 0.08, "yaw": 0.25}
+#: The MO-2 speeds P2 puts in every relmove (99 U104 / U106).
+SPEEDS = {"max_speed_mps": 0.2, "max_yaw_rate_radps": 0.3}
+
+
+def _with_speeds(body):
+    """The relmove as P2 sends it: the MO-2 speeds added where the case left them out."""
+    return dict(SPEEDS, **body) if isinstance(body, dict) else body
+
+
+class _P2Fed:
+    """The executor, fed relmoves that carry P2's speeds. The cases below are
+    about the motion, not the speed source; the speed cases use the bare
+    executor (bare_ex)."""
+
+    def __init__(self, inner):
+        self._inner = inner  # the real executor
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)  # everything else unchanged
+
+    def start(self, body, *a):
+        return self._inner.start(_with_speeds(body), *a)  # with MO-2 speeds
+
+    def queue(self, body, *a):
+        return self._inner.queue(_with_speeds(body), *a)  # with MO-2 speeds
+
+
 @pytest.fixture
-def ex(monkeypatch):
-    """An executor with the start script's speeds (0.2 / 0.15 / 0.3)."""
-    monkeypatch.setenv("XBRAIN_BASIC_MOTION_LIN", "0.2")  # m/s, as the start script
-    monkeypatch.setenv("XBRAIN_BASIC_MOTION_LAT", "0.15")  # m/s
-    monkeypatch.setenv("XBRAIN_BASIC_MOTION_ANG", "0.3")  # rad/s, the user-approved turn speed
-    return bmt.BasicMotionTest()  # reads the three variables
+def bare_ex():
+    """An executor built from the config deadzone, no speeds injected."""
+    return bmt.BasicMotionTest(DEADZONE)
+
+
+@pytest.fixture
+def ex(bare_ex):
+    """An executor whose relmoves carry P2's speeds (0.2 m/s, 0.3 rad/s)."""
+    return _P2Fed(bare_ex)
 
 
 def _run(ex, sim, t0=0.0, max_ticks=2000):
@@ -226,3 +259,46 @@ def test_newer_relmove_preempts_the_running_one(ex):
     ex.queue({"dx_m": -0.5}, 0.1)  # a newer command
     assert ex.active is False and ex.last_result == "preempted"
     assert ex.pending is True  # the new one waits
+
+
+def test_speed_comes_from_the_relmove_not_the_environment(bare_ex):
+    """99 U106: forward / strafe at max_speed_mps, turn at max_yaw_rate_radps.
+    MUTATION: read max_yaw_rate_radps for a linear axis -> forward at 0.3 -> fails."""
+    sim = _Sim()  # an obedient chassis at the origin
+    body = {"dx_m": 1.0, "max_speed_mps": 0.25, "max_yaw_rate_radps": 0.6}  # both present
+    assert bare_ex.start(body, sim.state(), 0.0) is None
+    cmds = _run(bare_ex, sim)  # run to the end
+    assert max(vx for vx, _vy, _wz in cmds) == pytest.approx(0.25)  # the move speed, not 0.6
+
+
+@pytest.mark.parametrize("body, why", [
+    ({"dx_m": 1.0}, "speed_missing(max_speed_mps)"),  # no move speed
+    ({"dy_m": 1.0, "max_speed_mps": "fast"}, "speed_missing(max_speed_mps)"),  # not a number
+    ({"dyaw_rad": 1.0, "max_speed_mps": 0.2}, "speed_missing(max_yaw_rate_radps)"),  # wrong field for a turn
+])
+def test_relmove_without_its_speed_is_refused(bare_ex, body, why):
+    """This module never picks a speed of its own (the env fallback is gone).
+    MUTATION: fall back to a constant when the field is missing -> fails."""
+    assert bare_ex.start(body, _Sim().state(), 0.0) == why  # refused, nothing moves
+    assert not bare_ex.active  # no motion started
+
+
+@pytest.mark.parametrize("body", [
+    {"dy_m": 1.0, "max_speed_mps": 0.08},  # AT the linear deadzone
+    {"dyaw_rad": 1.0, "max_yaw_rate_radps": 0.2},  # below the yaw deadzone
+])
+def test_speed_in_the_deadzone_is_refused(bare_ex, body):
+    """2026-11-03 "死区抑制": a speed at or below the control deadzone does
+    not step the chassis -- no motion, not a stall later.
+    MUTATION: compare with < instead of <= -> the 0.08 case starts -> fails."""
+    why = bare_ex.start(body, _Sim().state(), 0.0)
+    assert why is not None and why.startswith("speed_in_deadzone")  # refused
+    assert not bare_ex.active  # nothing moves
+
+
+@pytest.mark.parametrize("dz", [{"x": 0.08, "y": 0.08}, {"x": 0.08, "y": 0.0, "yaw": 0.3},
+                                {"x": 0.08, "y": 0.08, "yaw": None}])
+def test_bad_deadzone_config_refuses_construction(dz):
+    """A missing / non-positive axis is a config error at start, not a guess."""
+    with pytest.raises(ValueError):
+        bmt.BasicMotionTest(dz)

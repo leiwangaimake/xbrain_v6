@@ -360,8 +360,9 @@ class NavRuntime:
         self._chassis_rx = -1.0
         self._nav_req_mono = -1e9
         # TEMPORARY basic-motion test executor (user ruling 2026-10-26); None
-        # unless XBRAIN_BASIC_MOTION_TEST=1.
-        self._bmt = (basic_motion_test.BasicMotionTest()
+        # unless XBRAIN_BASIC_MOTION_TEST=1. It takes the control deadzone
+        # from the config (2026-11-03); its speeds come in every relmove.
+        self._bmt = (basic_motion_test.BasicMotionTest(cfg.cmd_deadzone)
                      if basic_motion_test.enabled() else None)
         self._periods: Deque[float] = collections.deque(maxlen=_STATS_WINDOW)
         # the heartbeat thread reads _periods while this thread appends: a deque

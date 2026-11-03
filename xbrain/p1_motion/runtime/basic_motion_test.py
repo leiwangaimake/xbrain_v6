@@ -30,8 +30,16 @@ mission host / RNS:
   * closed-loop on quadruped's integrated odometry (rt/chassis/state odom
     x / y / yaw_rad). Indoor ruling: no RTK needed, the chassis odometry is
     the only pose source;
-  * speeds come from XBRAIN_BASIC_MOTION_LIN / _LAT / _ANG (the start script;
-    raising them is the operator's decision, never this module's);
+  * speeds come in every relmove (99 U106, 2026-11-03): MO-2 max_speed_mps
+    for forward / back / strafe and max_yaw_rate_radps for turns, both filled
+    by P2 from p2_core.yaml move_speed / turn_speed (default 0.2 m/s / max,
+    voice-adjustable, persisted). A relmove without its speed, or with a speed
+    at or below the control deadzone, is refused -- this module never picks a
+    speed of its own (the start-script environment variables are gone);
+  * control deadzone (user ruling 2026-11-03, "死区抑制"): relative_move.
+    cmd_deadzone (body spec common.spec.min_cmd_*). A commanded speed at or
+    below it does not step the chassis, so such a relmove is refused as no
+    motion (P2 already refuses to start with a speed floor at or below it);
   * it stops on: target reached, soft estop, stale state / invalid odom,
     timeout, stall, wrong direction, over-speed, off-axis drift -- the same
     guard as scripts/diag/chassis_bench.py MotionGuard, which was exercised on
@@ -250,7 +258,11 @@ class _Guard:
         the distance the commands asked for after the anchor:
             cmd_int = sum(c_i for t_i > t_a) * TICK_S
         so "moved" (progress - p_a) and "asked" (cmd_int) are in the same unit
-        (metres or radians) and can be compared directly by the stall check."""
+        (metres or radians) and can be compared directly by the stall check.
+        The ramp's sub-deadzone ticks never reach this window: the ramp ends at
+        RAMP_S and the first stall check looks at [STALL_AFTER_S - STALL_WIN_S,
+        STALL_AFTER_S], which starts at or after it -- so the control deadzone
+        needs no term here (2026-11-03)."""
         old = [h for h in self.hist if h[0] <= t - span]  # samples at least span old
         if not old:  # history shorter than the window
             return None
@@ -337,13 +349,18 @@ class BasicMotionTest:
     the operator's latest command is the one that counts.
     """
 
-    def __init__(self) -> None:
-        """Speeds are read from the environment the start script sets. A missing
-        variable raises KeyError at construction, which is deliberate: a test
-        mode with an invented speed is worse than p1 refusing to start."""
-        self.speeds = {"x": float(os.environ["XBRAIN_BASIC_MOTION_LIN"]),  # m/s forward
-                       "y": float(os.environ["XBRAIN_BASIC_MOTION_LAT"]),  # m/s lateral
-                       "yaw": float(os.environ["XBRAIN_BASIC_MOTION_ANG"])}  # rad/s
+    def __init__(self, deadzone: Dict[str, float]) -> None:
+        """deadzone is NavConfig.cmd_deadzone: {"x", "y" in m/s, "yaw" in rad/s},
+        each positive. A missing or non-positive axis raises at construction,
+        which is deliberate: p1 refusing to start beats a test mode that
+        cannot tell a non-stepping command from a stall."""
+        dz = {}  # validated copy
+        for axis in ("x", "y", "yaw"):  # every axis this mode drives
+            v = deadzone.get(axis) if isinstance(deadzone, dict) else None  # the config value
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0.0:
+                raise ValueError("basic-motion control deadzone %r: %r" % (axis, v))  # names the axis
+            dz[axis] = float(v)  # m/s or rad/s
+        self.deadzone = dz  # per axis
         self._g: Optional[_Guard] = None  # the running motion, if any
         self._start: Optional[Tuple[float, float, float]] = None  # pose at start
         # Unwrapped yaw: raw is the last odometry yaw, total accumulates the
@@ -421,6 +438,9 @@ class BasicMotionTest:
 
         Refusal reasons (nothing moves, the caller logs the reason):
             bad_body                          not a dict, or a non-numeric axis
+            speed_missing(field)              no positive max_speed_mps /
+                                              max_yaw_rate_radps in the relmove
+            speed_in_deadzone(v <= dz)        that speed does not step the chassis
             face_heading_unsupported_in_test  target_yaw_rad present
             no_odom                           odometry absent / invalid / stale
             zero_move                         all three axes zero
@@ -456,17 +476,19 @@ class BasicMotionTest:
             # than no motion. p2 allows up to 20 m / 720 deg; this test mode
             # only executes <= MAX_DIST_M / MAX_ANGLE_RAD.
             return "exceeds_test_limit(%.3f > %.3f)" % (amount, cap)
-        speed = self.speeds[axis]  # the start script's speed
-        if axis == "yaw":
-            # 99 U104 (2026-10-30): P2 fills MO-2 max_yaw_rate_radps with the
-            # operator's turn speed (default max, voice-adjustable, bounded in
-            # p2_core.yaml turn_speed). Use it when it is a positive number;
-            # otherwise the start script's XBRAIN_BASIC_MOTION_ANG, as before.
-            # The chassis Tier 1 still clamps to its own max_wz_radps.
-            rate = body.get("max_yaw_rate_radps")
-            if (isinstance(rate, (int, float)) and not isinstance(rate, bool)
-                    and math.isfinite(rate) and rate > 0.0):
-                speed = float(rate)  # the operator's turn speed
+        # The speed is the operator's, from P2 (MO-2): max_yaw_rate_radps for a
+        # turn (99 U104), max_speed_mps for forward / back / strafe (99 U106).
+        # The chassis Tier 1 still clamps to its own limits.
+        field = "max_yaw_rate_radps" if axis == "yaw" else "max_speed_mps"  # MO-2 key
+        speed = body.get(field)  # m/s or rad/s
+        if (isinstance(speed, bool) or not isinstance(speed, (int, float))
+                or not math.isfinite(speed) or speed <= 0.0):
+            return "speed_missing(%s)" % field  # never a speed of our own
+        if speed <= self.deadzone[axis]:
+            # 2026-11-03 "死区抑制": at or below the control deadzone the chassis
+            # does not step; executing it would only end as a stall.
+            return "speed_in_deadzone(%.3f <= %.3f)" % (speed, self.deadzone[axis])
+        speed = float(speed)  # the operator's speed
         self._g = _Guard(axis, 1 if val > 0 else -1, amount, speed)
         self._start = pose  # progress is measured from here
         self._yaw_raw = self._yaw_total = pose[2]  # unwrap from the start yaw
