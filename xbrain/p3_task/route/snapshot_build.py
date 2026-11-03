@@ -31,6 +31,12 @@ config key that is missing. A robot that will not start a recorded patrol and
 says which key is empty is the correct failure; one that arrives 1 m short or
 2 m long at every point, silently, is not.
 
+A goto is the third shape (build_goto_snapshot, 2026-11-03): ONE point,
+which 11 S3.5A v2.0 allows ("v2.0 起最少 1 点 -- 单点 = goto 退化折线, 起点即
+机器人当前位姿") and 12 S4.2c.3 names as the p3 goto entry. Until then a goto
+task carrying only a waypoint_id was admitted, dispatched, reported running,
+and never moved: dispatch pushed geometry only from routes rows.
+
 What this module does NOT do: it does not read the database (the caller
 passes rows in, which is what makes every rule here testable without one),
 does not write the snapshot (SnapshotDAO), and does not push (route/push.py).
@@ -207,3 +213,48 @@ def build_snapshot(*, task_id: str, route_id: str, rev: int, loop_mode: str,
     return RouteSnapshot(task_id=task_id, route_id=route_id, rev=rev,
                          loop_mode=loop_mode, points=tuple(points),
                          total_len_m=length, arclen=tuple(arclen))
+
+
+def build_goto_snapshot(*, task_id: str, route_id: str, rev: int,
+                        target_lat: float, target_lon: float,
+                        arrive_radius_m: float,
+                        start_lat: float, start_lon: float) -> RouteSnapshot:
+    """A goto as the single-point route 11 S3.5A v2.0 allows (12 S4.2c.3).
+
+    arrive_radius_m is the TARGET's own radius (the waypoint row's
+    arrival_radius, 15 S9.3.1 G-2), never a fallback chosen here.
+
+    total_len_m is the great-circle distance from the robot's position at
+    dispatch to the target. RouteGeometry requires the field and p3's frame
+    builder refuses a non-positive one; for a single point the only length
+    that means anything is the leg P1 is about to drive. It is never a remap
+    T0: a goto is replanned on resume, not remapped (15 S3.1 task table, goto
+    row: resumable, by replanning).
+
+    Refuses (SnapshotBuildError, naming the value) a non-positive or
+    non-finite radius, a target outside WGS84 ranges, and a robot already AT
+    the target (zero distance) -- a zero T0 is the same divide the patrol
+    path guards against.
+    """
+    for name, v in (("target_lat", target_lat), ("target_lon", target_lon),
+                    ("start_lat", start_lat), ("start_lon", start_lon),
+                    ("arrive_radius_m", arrive_radius_m)):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            raise SnapshotBuildError("goto %s %r is not a finite number" % (name, v))
+    if not (-90.0 <= target_lat <= 90.0 and -180.0 <= target_lon <= 180.0):
+        raise SnapshotBuildError("goto target (%r, %r) is outside WGS84 ranges"
+                                 % (target_lat, target_lon))
+    if arrive_radius_m <= 0.0:
+        raise SnapshotBuildError(
+            "goto arrive_radius_m must be positive, got %r -- a zero radius "
+            "is an arrival test that never passes" % (arrive_radius_m,))
+    point = RoutePoint(float(target_lat), float(target_lon), float(arrive_radius_m))
+    length = _haversine_m((float(start_lat), float(start_lon)),
+                          (point.lat, point.lon))
+    if length <= 0.0:
+        raise SnapshotBuildError(
+            "goto %r: the robot is already at the target (distance 0); there "
+            "is no leg to drive" % route_id)
+    return RouteSnapshot(task_id=task_id, route_id=route_id, rev=int(rev),
+                         loop_mode="oneway", points=(point,),
+                         total_len_m=length, arclen=(0.0,))

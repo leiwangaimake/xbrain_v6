@@ -174,7 +174,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
         CMD_ROUTE_TOPIC,
         ack_outcome_is_fatal,
         make_ack_window,
+        push_goto_for_task,
         push_route_for_task,
+        start_from_pose,
     )
     from xbrain.p3_task.schedule.driver import scheduler_tick
     from xbrain.p3_task.state.geo_events import render_geo_event
@@ -654,18 +656,57 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
 
             #: task_id of the push the ack window is currently waiting on, so
             #: a retry knows what to re-push and a failure knows what to fail.
-            pushing = {"task_id": None, "route_geo_id": None}
+            #: goto_params: a goto with no route pushes ONE point from these
+            #: (its mission params), so a retry re-resolves the same target.
+            pushing = {"task_id": None, "route_geo_id": None,
+                       "goto_params": None}
+
+            def _goto_params(full) -> dict:
+                """The admitted goto's params (mission_json is immutable after
+                admission, 15 S5.10); {} when unreadable."""
+                try:
+                    mission = json.loads(full.mission_json or "{}")
+                except ValueError:
+                    return {}
+                params = mission.get("params") if isinstance(mission, dict) else None
+                return params if isinstance(params, dict) else {}
+
+            async def _push_goto(task_id: str, params: dict, trigger) -> None:
+                """A goto with no route: ONE point (11 S3.5A v2.0, 12
+                S4.2c.3), from the robot's position as P3 last saw it."""
+                res = await push_goto_for_task(
+                    task_id=task_id, params=params,
+                    start=start_from_pose(state_cache.get("pose")),
+                    task_conn=conn, geo_conn=geo_conn,
+                    snapshot_dao=snapshot_dao, progress_dao=progress_dao,
+                    route_pub=route_pub, ack_window=ack_window,
+                    trigger=trigger, now_mono_ms=_now_mono_ms(),
+                    now_wall_ms=_now_wall_ms())
+                if not res.pushed:
+                    pushing["task_id"] = None
+                    await _fail_task_for_geometry(task_id, res.reason)
 
             async def _push_route_on_dispatch(task_id: str) -> None:
-                """EX-2 RP-1. A task with no route_geo_id pushes nothing --
-                standby / teach / follow have no geometry, and 15 S2.4.1
-                lists only patrol and goto."""
+                """EX-2 RP-1. patrol pushes its route; goto pushes its route
+                if it names one, else its single target point (2026-11-03:
+                until then a waypoint goto was dispatched and never moved).
+                standby / teach / follow have no geometry and push nothing."""
                 full = await dao.fetch_by_id(task_id)
-                route_geo_id = getattr(full, "route_geo_id", None) if full else None
+                if full is None:
+                    return
+                route_geo_id = getattr(full, "route_geo_id", None)
                 if not route_geo_id:
+                    if full.task_type != "goto":
+                        return
+                    params = _goto_params(full)
+                    pushing.update(task_id=task_id, route_geo_id=None,
+                                   goto_params=params)
+                    await _push_goto(task_id, params,
+                                     RoutePushTrigger.RP1_DISPATCH)
                     return
                 pushing["task_id"] = task_id
                 pushing["route_geo_id"] = route_geo_id
+                pushing["goto_params"] = None
                 res = await push_route_for_task(
                     task_id=task_id, route_geo_id=route_geo_id,
                     task_conn=conn, geo_conn=geo_conn,
@@ -722,13 +763,14 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 """RA-1 / RA-2 / RA-3 (15 S2.4.4)."""
                 task_id = pushing["task_id"]
                 route_geo_id = pushing["route_geo_id"]
+                goto_params = pushing["goto_params"]
                 if outcome.ack.value == "RA-1":
                     _logger.info("p3 route push confirmed (RA-1) for task %s "
                                  "after %d attempt(s)", task_id,
                                  outcome.attempts)
                     pushing["task_id"] = None
                     return
-                if not task_id or not route_geo_id:
+                if not task_id or (not route_geo_id and goto_params is None):
                     return
                 if ack_outcome_is_fatal(outcome):
                     pushing["task_id"] = None
@@ -743,6 +785,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 _logger.warning("p3 route push %s for task %s, re-pushing "
                                 "(attempt %d)", outcome.ack.value, task_id,
                                 outcome.attempts + 1)
+                if goto_params is not None:
+                    await _push_goto(task_id, goto_params,
+                                     RoutePushTrigger.RP2_REMAP)
+                    return
                 res = await push_route_for_task(
                     task_id=task_id, route_geo_id=route_geo_id,
                     task_conn=conn, geo_conn=geo_conn,

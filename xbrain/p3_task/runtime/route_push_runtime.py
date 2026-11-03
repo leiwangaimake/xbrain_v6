@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
@@ -61,7 +62,11 @@ from xbrain.p3_task.route.push import (
     build_route_frames,
     new_cmd_id,
 )
-from xbrain.p3_task.route.snapshot_build import SnapshotBuildError, build_snapshot
+from xbrain.p3_task.route.snapshot_build import (
+    SnapshotBuildError,
+    build_goto_snapshot,
+    build_snapshot,
+)
 
 _logger = logging.getLogger("xbrain.p3.route_push")
 
@@ -183,6 +188,156 @@ async def push_route_for_task(*, task_id: str, route_geo_id: str,
         "p3 %s push task=%s route=%s rev=%d points=%d frames=%d cmd_id=%s",
         trigger.value, task_id, snap.route_id, snap.rev, snap.point_count,
         len(frames), frames[0]["cmd_id"])
+    return PushResult(True, len(frames), frames[0]["cmd_id"], "")
+
+
+#: The route_id a goto's single-point geometry carries (11 S3.5A needs one; a
+#: goto has no routes row). Prefix + the waypoint geo_id, so path_progress and
+#: the snapshot name the target the operator asked for.
+GOTO_ROUTE_PREFIX = "goto-"
+
+
+class GotoTargetError(LookupError):
+    """The goto's destination cannot be resolved to one point to push. The
+    message names what is missing -- 'goto failed' alone sends the reader to
+    the wrong process."""
+
+
+def start_from_pose(pose: Optional[Dict[str, Any]]) -> Optional[Tuple[float, float]]:
+    """(lat, lon) from the cached state/pose body, or None when there is no
+    usable position (absent, null, non-numeric). Never a guessed point."""
+    if not isinstance(pose, dict):
+        return None
+    lat, lon = pose.get("lat"), pose.get("lon")
+    for v in (lat, lon):
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return None
+    return float(lat), float(lon)
+
+
+def _radius_override(params: Dict[str, Any]) -> Optional[float]:
+    """params.arrive_radius_m (15 S9.5A.1 goto row: optional, overrides the
+    point's own value), or None when absent. Present but not a positive
+    finite number raises GotoTargetError -- a bad override is never ignored
+    in favour of the waypoint's value."""
+    v = params.get("arrive_radius_m")
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, (int, float)) \
+            or not math.isfinite(v) or v <= 0.0:
+        raise GotoTargetError("params.arrive_radius_m must be a positive "
+                              "number, got %r" % (v,))
+    return float(v)
+
+
+def _coordinate(params: Dict[str, Any]) -> Optional[Tuple[float, float]]:
+    """(lat, lon) of a coordinate goto: params.lat + params.lon, or
+    params.target{lat, lon} (the forms task_command accepts, 15 S2.4)."""
+    src = params.get("target") if isinstance(params.get("target"), dict) else params
+    lat, lon = src.get("lat"), src.get("lon")
+    if any(isinstance(v, bool) or not isinstance(v, (int, float))
+           for v in (lat, lon)):
+        return None
+    return float(lat), float(lon)
+
+
+async def load_goto_target(geo_conn, params: Dict[str, Any], task_id: str):
+    """Resolve a goto's destination to (route_id, rev, lat, lon, radius, name).
+
+    * params.waypoint_id: the waypoint row (15 S9.3.1 G-2); its own
+      arrival_radius unless params.arrive_radius_m overrides it (15 S9.5A.1).
+    * params.lat/lon or params.target (HMI W2): accepted ONLY with an
+      explicit params.arrive_radius_m. Without one there is no radius source
+      -- no config key exists for it -- so it is REFUSED rather than given an
+      invented radius (CLAUDE.md 3.1). route_id is "goto-" + task_id, rev 0.
+    Raises GotoTargetError.
+    """
+    if not isinstance(params, dict):
+        raise GotoTargetError("goto carries no params")
+    override = _radius_override(params)
+    wid = params.get("waypoint_id")
+    if isinstance(wid, str) and wid.strip():
+        cur = await geo_conn.execute(
+            "SELECT rtk_lat, rtk_lon, arrival_radius, rev, name FROM waypoints"
+            " WHERE geo_id=? AND tombstone=0", (wid.strip(),))
+        row = await cur.fetchone()
+        if row is None:
+            raise GotoTargetError("waypoint %r not found or tombstoned" % wid)
+        lat, lon, radius, rev, name = row
+        if override is not None:
+            radius = override
+        if radius is None:
+            raise GotoTargetError("waypoint %r has no arrival_radius" % wid)
+        return (GOTO_ROUTE_PREFIX + wid.strip(), int(rev or 0), float(lat),
+                float(lon), float(radius), name or wid)
+    point = _coordinate(params)
+    if point is not None:
+        if override is None:
+            raise GotoTargetError(
+                "coordinate goto (params.lat/lon or params.target) carries no "
+                "params.arrive_radius_m and no config key supplies one; an "
+                "invented radius would be indistinguishable from a calibrated value")
+        return (GOTO_ROUTE_PREFIX + task_id, 0, point[0], point[1], override,
+                "%.7f,%.7f" % point)
+    raise GotoTargetError("goto carries no waypoint_id or coordinate to resolve")
+
+
+async def push_goto_for_task(*, task_id: str, params: Dict[str, Any],
+                             start: Optional[Tuple[float, float]],
+                             task_conn, geo_conn, snapshot_dao, progress_dao,
+                             route_pub, ack_window,
+                             trigger: RoutePushTrigger,
+                             now_mono_ms: int, now_wall_ms: int) -> PushResult:
+    """A goto task's push: ONE point (11 S3.5A v2.0, 12 S4.2c.3), through the
+    same SN-1 snapshot, frame builder and RA-1 window as a route.
+
+    Returns PushResult(pushed=False, reason) -- never raises -- for an
+    unresolvable target, no current position, or a robot already at the
+    target; the caller fails the task with that reason (15 S2.4.2).
+    """
+    if trigger is RoutePushTrigger.RP4_TASK_TERMINAL:
+        return PushResult(False, 0, "", "rp4_pushes_nothing")
+    try:
+        route_id, rev, lat, lon, radius, name = await load_goto_target(
+            geo_conn, params, task_id)
+    except GotoTargetError as exc:
+        return PushResult(False, 0, "", "goto_target: %s" % exc)
+    if start is None:
+        # P1 cannot drive to a point without knowing where it is either; the
+        # snapshot needs the leg length. Refused, not pushed with a guess.
+        return PushResult(False, 0, "", "goto_target: no current position "
+                                        "(state/pose has no lat/lon)")
+    try:
+        snap = build_goto_snapshot(
+            task_id=task_id, route_id=route_id, rev=rev, target_lat=lat,
+            target_lon=lon, arrive_radius_m=radius, start_lat=start[0],
+            start_lon=start[1])
+        frames = build_route_frames(
+            route_id=snap.route_id, route_rev=snap.rev,
+            loop_mode=snap.loop_mode, total_len_m=snap.total_len_m,
+            points=snap.points, cmd_id=new_cmd_id())
+    except (SnapshotBuildError, RoutePushError) as exc:
+        _logger.error("p3 goto push refused for task %s (%s): %s",
+                      task_id, route_id, exc)
+        return PushResult(False, 0, "", "refused: %s" % exc)
+    now_iso = iso_from_wall_ms(now_wall_ms)
+    # SN-1, same order as a route: snapshot (and progress run) committed
+    # before the first frame leaves.
+    await snapshot_dao.replace(snap, now_iso=now_iso)
+    if trigger is RoutePushTrigger.RP1_DISPATCH:
+        await progress_dao.start_run(
+            task_id=task_id, route_name=name, route_geo_id=snap.route_id,
+            route_rev=snap.rev, direction="forward",
+            loop_mode=snap.loop_mode, waypoint_total=snap.point_count,
+            route_total_m=snap.total_len_m, loop_total=1, now_iso=now_iso)
+    await task_conn.commit()
+    for frame in frames:
+        route_pub.put(json.dumps(frame, ensure_ascii=False).encode("utf-8"))
+    ack_window.open(snap.route_id, snap.rev, now_mono_ms=now_mono_ms)
+    _logger.info(
+        "p3 %s goto push task=%s target=%s (%s) rev=%d leg=%.1fm radius=%.2fm "
+        "cmd_id=%s", trigger.value, task_id, snap.route_id, name, snap.rev,
+        snap.total_len_m, radius, frames[0]["cmd_id"])
     return PushResult(True, len(frames), frames[0]["cmd_id"], "")
 
 

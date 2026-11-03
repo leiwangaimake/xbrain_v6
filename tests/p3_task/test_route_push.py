@@ -52,10 +52,15 @@ from xbrain.p3_task.route.push import (
 )
 from xbrain.p3_task.route.snapshot_build import (
     SnapshotBuildError,
+    build_goto_snapshot,
     build_snapshot,
     cumulative_arclen,
 )
-from xbrain.p3_task.runtime.route_push_runtime import push_route_for_task
+from xbrain.p3_task.runtime.route_push_runtime import (
+    push_goto_for_task,
+    push_route_for_task,
+    start_from_pose,
+)
 
 pytestmark = pytest.mark.no_device
 
@@ -426,6 +431,170 @@ async def test_a_deleted_route_refuses_without_raising(dbs):
     assert pub.puts == []
 
 
+# --- goto: one point (11 S3.5A v2.0, 12 S4.2c.3; 2026-11-03) ---------------
+
+def test_goto_snapshot_is_one_point_with_the_targets_radius_and_the_leg_length():
+    """MUTATION: take total_len_m from a constant instead of the start->target
+    distance -> the leg assertion fails."""
+    snap = build_goto_snapshot(task_id="t1", route_id="goto-w-1", rev=3,
+                               target_lat=35.001, target_lon=135.0,
+                               arrive_radius_m=1.0, start_lat=35.0,
+                               start_lon=135.0)
+    assert snap.point_count == 1 and snap.loop_mode == "oneway"
+    assert snap.points[0].arrive_radius_m == 1.0
+    assert abs(snap.total_len_m - 111.19) < 0.1      # 0.001 deg of latitude
+    assert snap.arclen == (0.0,)
+
+
+@pytest.mark.parametrize("kw, why", [
+    ({"start_lat": 35.001}, "already at the target"),             # zero leg
+    ({"arrive_radius_m": 0.0}, "must be positive"),                # never arrives
+    ({"target_lat": 95.0}, "outside WGS84"),                       # bad target
+    ({"target_lon": float("nan")}, "finite"),                      # NaN
+])
+def test_goto_snapshot_refusals_name_the_value(kw, why):
+    args = dict(task_id="t1", route_id="goto-w-1", rev=1, target_lat=35.001,
+                target_lon=135.0, arrive_radius_m=1.0, start_lat=35.0,
+                start_lon=135.0)
+    args.update(kw)
+    with pytest.raises(SnapshotBuildError, match=why):
+        build_goto_snapshot(**args)
+
+
+def test_a_goto_frame_round_trips_through_p1s_own_parser():
+    """A single-point frame is one P1 actually accepts (RouteAssembler is the
+    real consumer; v2.0 allows one point = goto)."""
+    from xbrain.p1_motion.nav.route_intake import RouteAssembler, RouteSet
+    from xbrain.p1_motion.path.local_frame import LocalFrame
+
+    snap = build_goto_snapshot(task_id="t1", route_id="goto-w-1", rev=3,
+                               target_lat=35.001, target_lon=135.0,
+                               arrive_radius_m=1.0, start_lat=35.0,
+                               start_lon=135.0)
+    frames = build_route_frames(route_id=snap.route_id, route_rev=snap.rev,
+                                loop_mode=snap.loop_mode,
+                                total_len_m=snap.total_len_m, points=snap.points)
+    out = RouteAssembler(LocalFrame(35.0, 135.0)).accept(frames[0])
+    assert isinstance(out, RouteSet)
+    assert out.route_id == "goto-w-1" and out.waypoint_total == 1
+
+
+@pytest.mark.parametrize("pose, want", [
+    ({"lat": 31.1, "lon": 121.4}, (31.1, 121.4)),
+    ({"lat": None, "lon": 121.4}, None),        # no fix
+    ({"lat": True, "lon": 121.4}, None),        # bool is not a number
+    (None, None),                               # never heard
+])
+def test_start_from_pose_never_guesses(pose, want):
+    assert start_from_pose(pose) == want
+
+
+async def _seed_goto(task_conn, geo_conn, *, task_id="tg", radius=1.0):
+    """A goto task naming one waypoint, and that waypoint in geo.db."""
+    await TasksDAO(task_conn).insert(TaskRow(
+        task_id=task_id, task_type="goto", state="pending", priority=5,
+        submit_seq=1,
+        mission_json=json.dumps({"params": {"waypoint_id": "w-gate"}}),
+        total_steps=1, current_step=0, step_status_json="[]", created_ms=0,
+        updated_ms=0, source="local", trace_id="tr", resume_policy="continue"))
+    await task_conn.commit()
+    await geo_conn.execute(
+        "INSERT INTO waypoints (geo_id, name, type, rtk_lat, rtk_lon,"
+        " arrival_radius, rev, content_hash, updated_ms)"
+        " VALUES ('w-gate', 'east gate', 'poi', 35.001, 135.0, ?, 4, 'h', 0)",
+        (radius,))
+    await geo_conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_goto_push_sends_one_point_from_the_waypoint(dbs):
+    """The waypoint's own radius and rev reach the wire; snapshot and progress
+    run exist before the frame (SN-1, same order as a route)."""
+    task_conn, geo_conn = dbs
+    await _seed_goto(task_conn, geo_conn, radius=1.5)
+    pub = _Pub()
+    res = await push_goto_for_task(
+        task_id="tg", params={"waypoint_id": "w-gate"}, start=(35.0, 135.0),
+        task_conn=task_conn, geo_conn=geo_conn,
+        snapshot_dao=SnapshotDAO(task_conn),
+        progress_dao=PatrolProgressDAO(task_conn), route_pub=pub,
+        ack_window=RouteAckWindow(), trigger=RoutePushTrigger.RP1_DISPATCH,
+        now_mono_ms=1000, now_wall_ms=1_785_000_000_000)
+    assert res.pushed is True and res.frames == 1
+    f = pub.puts[0]
+    assert f["route_id"] == "goto-w-gate" and f["route_rev"] == 4
+    assert f["points"] == [{"lat": 35.001, "lon": 135.0, "seq": 0,
+                            "arrive_radius_m": 1.5}]
+    assert (await SnapshotDAO(task_conn).fetch("tg"))[0] == "goto-w-gate"
+    assert await PatrolProgressDAO(task_conn).fetch_active("tg") is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("params, start, why", [
+    ({"waypoint_id": "w-gate"}, None, "no current position"),
+    ({"waypoint_id": "w-nowhere"}, (35.0, 135.0), "not found"),
+    ({"lat": 35.001, "lon": 135.0}, (35.0, 135.0), "no params.arrive_radius_m"),
+    ({"target": {"lat": 35.001, "lon": 135.0}}, (35.0, 135.0),
+     "no params.arrive_radius_m"),
+    ({"waypoint_id": "w-gate", "arrive_radius_m": 0}, (35.0, 135.0),
+     "must be a positive number"),
+    ({"waypoint_id": "w-gate", "arrive_radius_m": True}, (35.0, 135.0),
+     "must be a positive number"),
+    ({}, (35.0, 135.0), "no waypoint_id"),
+])
+async def test_goto_push_refuses_without_sending(dbs, params, start, why):
+    """MUTATION: push with a guessed start when the pose is missing -> the
+    first case sends a frame and fails."""
+    task_conn, geo_conn = dbs
+    await _seed_goto(task_conn, geo_conn)
+    pub = _Pub()
+    res = await push_goto_for_task(
+        task_id="tg", params=params, start=start, task_conn=task_conn,
+        geo_conn=geo_conn, snapshot_dao=SnapshotDAO(task_conn),
+        progress_dao=PatrolProgressDAO(task_conn), route_pub=pub,
+        ack_window=RouteAckWindow(), trigger=RoutePushTrigger.RP1_DISPATCH,
+        now_mono_ms=1000, now_wall_ms=1_785_000_000_000)
+    assert res.pushed is False and why in res.reason
+    assert pub.puts == []
+
+
+
+async def _push_one(dbs, params):
+    """push_goto_for_task on a seeded w-gate (radius 1.0); the sent frame."""
+    task_conn, geo_conn = dbs
+    await _seed_goto(task_conn, geo_conn)
+    pub = _Pub()
+    res = await push_goto_for_task(
+        task_id="tg", params=params, start=(35.0, 135.0), task_conn=task_conn,
+        geo_conn=geo_conn, snapshot_dao=SnapshotDAO(task_conn),
+        progress_dao=PatrolProgressDAO(task_conn), route_pub=pub,
+        ack_window=RouteAckWindow(), trigger=RoutePushTrigger.RP1_DISPATCH,
+        now_mono_ms=1000, now_wall_ms=1_785_000_000_000)
+    assert res.pushed is True, res.reason
+    return pub.puts[0]
+
+
+@pytest.mark.asyncio
+async def test_a_goto_radius_override_beats_the_waypoints_own(dbs):
+    """15 S9.5A.1 goto row: params.arrive_radius_m overrides the point value.
+    MUTATION: ignore the override -> 1.0 (the row) goes out."""
+    f = await _push_one(dbs, {"waypoint_id": "w-gate", "arrive_radius_m": 2.5})
+    assert f["points"][0]["arrive_radius_m"] == 2.5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("params", [
+    {"lat": 35.002, "lon": 135.001, "arrive_radius_m": 0.8},
+    {"target": {"lat": 35.002, "lon": 135.001}, "arrive_radius_m": 0.8},
+])
+async def test_a_coordinate_goto_with_its_own_radius_is_sent(dbs, params):
+    """Both coordinate forms task_command accepts go out once they carry the
+    radius; the route id is per task (no geo row to name it)."""
+    f = await _push_one(dbs, params)
+    assert f["route_id"] == "goto-tg" and f["route_rev"] == 0
+    assert f["points"] == [{"lat": 35.002, "lon": 135.001, "seq": 0,
+                            "arrive_radius_m": 0.8}]
+
 # --- the wiring itself ----------------------------------------------------
 
 @pytest.mark.asyncio
@@ -539,6 +708,107 @@ async def test_the_live_wiring_pushes_cmd_motion_route_on_dispatch(
         assert frames[0]["route_rev"] == 7
         assert frames[0]["frame"] == "wgs84"
         assert frames[0]["chunk"] == {"index": 0, "total": 1}
+    finally:
+        stop["stop"] = True
+        await asyncio.wait_for(task, timeout=10.0)
+
+
+@pytest.mark.asyncio
+async def test_the_live_wiring_pushes_one_point_for_a_waypoint_goto(
+        tmp_path, monkeypatch):
+    """*** PTP end to end in P3: a dispatched goto naming a waypoint puts ONE
+    point on cmd/motion/route. Before 2026-11-03 dispatch returned early for
+    any task without route_geo_id, so a voice "去东门" was accepted, ran, and
+    never moved.
+
+    MUTATION: restore the early `if not route_geo_id: return` in
+    _push_route_on_dispatch -> zero frames, red.
+    """
+    from xbrain.p3_task.runtime import main_wiring as mw
+
+    subs, pubs = {}, {}
+
+    class _WPub:
+        def __init__(self, key):
+            self.key = key
+            pubs.setdefault(key, [])
+
+        def put(self, payload):
+            pubs[self.key].append(payload)
+
+    class _Session:
+        def declare_subscriber(self, key, cb):
+            subs[key] = cb
+            return object()
+
+        def declare_publisher(self, key):
+            return _WPub(key)
+
+        def declare_queryable(self, key, cb):
+            subs[key] = cb
+            return object()
+
+        def put(self, key, payload):
+            pubs.setdefault(key, []).append(payload)
+
+    class _Planes:
+        def __enter__(self):
+            return _Session()
+
+        def __exit__(self, *_a):
+            return False
+
+    class _Sample:
+        def __init__(self, body):
+            self.payload = json.dumps(body).encode("utf-8")
+
+    import xbrain.common.runtime.session_ctx as sctx
+    monkeypatch.setattr(sctx, "open_planes", lambda _p: _Planes())
+
+    task_db = str(tmp_path / "task.db")
+    geo_db = str(tmp_path / "geo.db")
+    async with aiosqlite.connect(geo_db) as g:
+        for stmt in GEO_DB_STATEMENTS:
+            await g.execute(stmt)
+        await g.execute(
+            "INSERT INTO waypoints (geo_id, name, type, rtk_lat, rtk_lon,"
+            " arrival_radius, rev, content_hash, updated_ms)"
+            " VALUES ('w-gate', 'east gate', 'poi', 35.001, 135.0, 1.0, 2,"
+            " 'h', 0)")
+        await g.commit()
+
+    stop = {"stop": False}
+    task = asyncio.create_task(mw._amain(
+        stop, 99.0, task_db, geo_db_path=geo_db,
+        fence_db_path=str(tmp_path / "fence.db")))
+    try:
+        for _ in range(300):
+            if mw.CMD_TASK_TOPIC in subs and mw.STATE_POSE_TOPIC in subs:
+                break
+            await asyncio.sleep(0.01)
+        # Where the robot is: the leg starts here (state/pose, as p1 sends it).
+        subs[mw.STATE_POSE_TOPIC](_Sample({"data": {"lat": 35.0, "lon": 135.0}}))
+        await asyncio.sleep(0.05)
+        async with aiosqlite.connect(task_db) as t:
+            await TasksDAO(t).insert(TaskRow(
+                task_id="t-goto", task_type="goto", state="ready",
+                priority=5, submit_seq=1,
+                mission_json=json.dumps({"params": {"waypoint_id": "w-gate"}}),
+                total_steps=1, current_step=0, step_status_json="[]",
+                created_ms=0, updated_ms=0, source="local", trace_id="tr",
+                resume_policy="continue"))
+            await t.commit()
+        for _ in range(400):
+            if pubs.get("cmd/motion/route"):
+                break
+            await asyncio.sleep(0.02)
+        frames = [json.loads(p.decode("utf-8"))
+                  for p in pubs.get("cmd/motion/route", [])]
+        assert frames, ("a dispatched waypoint goto published NO "
+                        "cmd/motion/route frame; PTP cannot move the robot")
+        assert frames[0]["route_id"] == "goto-w-gate"
+        assert len(frames[0]["points"]) == 1
+        assert frames[0]["points"][0]["arrive_radius_m"] == 1.0
     finally:
         stop["stop"] = True
         await asyncio.wait_for(task, timeout=10.0)
