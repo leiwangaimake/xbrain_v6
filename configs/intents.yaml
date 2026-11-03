@@ -89,6 +89,10 @@ intents:
   # names the BODY (机器人 / 机身 / 转向速度 / 转身速度): bare "转速快一点" stays
   # E09 PTZ speed (user ruling), and no keyword is "转身..." + level, which a
   # longer variant could split into A11 turn_around (a 180 degree turn).
+  # A16 (2026-11-03, 99 U106): the robot's move speed (forward / back / strafe,
+  # one value). Every keyword carries 移动速度 / 行走速度: bare "快一点" stays
+  # A13 (U105 2 open) and the turn speed stays A15.
+  set_move_speed: { id: A16, keywords: ["移动速度快一点", "移动速度慢一点", "移动速度最快", "移动速度最慢", "移动速度调到最快", "移动速度调到最慢", "移动速度调快一点", "移动速度调慢一点", "行走速度快一点", "行走速度慢一点", "行走速度最快", "行走速度最慢", "行走速度调到最快", "行走速度调到最慢", "行走速度调快一点", "行走速度调慢一点"], slots: [move_speed], route: fastpath, auth: L1a }
   set_turn_speed: { id: A15, keywords: ["机器人转速快一点", "机器人转速慢一点", "机器人转速最快", "机器人转速最慢", "机器人转速调到最快", "机器人转速调到最慢", "机器人转快一点", "机器人转慢一点", "机器人转快点", "机器人转慢点", "机器人转得快一点", "机器人转得慢一点", "机身转速快一点", "机身转速慢一点", "机身转速最快", "机身转速最慢", "转向速度快一点", "转向速度慢一点", "转向速度最快", "转向速度最慢", "转身速度快一点", "转身速度慢一点", "转身速度最快", "转身速度最慢"], slots: [turn_speed], route: fastpath, auth: L1a }
 
   # -- B 导航与任务 --

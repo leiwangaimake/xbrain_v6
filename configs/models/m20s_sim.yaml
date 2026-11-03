@@ -17,7 +17,11 @@ common:
   spec:
     max_accel_mps2: 1.5
     max_decel_mps2: 2.5
-    max_vy_mps: 0.5
+    # 2026-11-03 user ruling (99 U106 continued 2): 0.5 -> 1.0 so the voice
+    # move speed (max 1.0) is not clamped on strafe. Still a stand-in: no
+    # vendor-measured lateral limit exists (V-01); at 0.5 the chassis tracked
+    # 86-97% indoors. The real m20s.yaml value stays null.
+    max_vy_mps: 1.0
     max_wz_radps: 1.2
     odom:
       yaw_drift_dps: 0.1

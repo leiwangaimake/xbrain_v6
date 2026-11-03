@@ -123,7 +123,8 @@ quadruped:
   odom:
     publish_hz: 100.0                   # ODO-1 这是[发布]频率;线速度信息更新率仍是 10 Hz
     vel_source_priority: ["motion_info_20hz", "monitor_10hz"]
-    vel_deadzone_mps: 0.05              # V5 实测
+    vel_deadzone_mps: 0.02              # 测量死区, 只滤静止噪声. 2026-11-03 M20S 站立实测 |vx| |vy| p99 0.008 m/s;
+                                        # 原 0.05(V5 值)吞掉了横移起步 0.035-0.047 m/s 与侧滑, 里程计看不见跑偏
     gyro_deadzone_radps: 0.01           # V5 实测最优;WARN: 放大会更差(7.75 -> 16.4 度/圈)
     sigma_v0_mps: 0.05                  # WARN: M-28 待实测
     gyro_bias_radps: 0.008              # WARN: M-29 待实测(V5 量级)

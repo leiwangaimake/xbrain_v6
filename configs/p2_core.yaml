@@ -317,6 +317,11 @@ rel_move:
   # 720 is carried here rather than left unbounded: enforcing a possibly-loose
   # bound beats enforcing none, and when the review lands only this line moves.
   max_angle_deg: 720.0
+  # 11 S9.3.2A.5 G-7: move_left / move_right need an omnidirectional body. The
+  # body spec decides, not this file (configs/models/m20s.yaml spec.holonomic);
+  # p1_motion and quadruped read the same leaf. Until 2026-11-03 P2 passed a
+  # hard-coded None here, so every strafe was refused with E_CAPABILITY.
+  holonomic: ${common.spec.holonomic}
 
 # --- PTZ (14 S11 ptz block, after boost was removed) ------------------------
 
@@ -435,7 +440,8 @@ bit:
     boot_greeting_wait_s: 120
 
 # -- In-place turn speed (99 U104, user ruling 2026-10-30) ---------------------
-# Default = max_radps; "机器人转速快一点 / 慢一点 / 最快 / 最慢" (A15 ->
+# Default = default_radps (user ruling 2026-11-03; ~~default = max_radps~~,
+# U104 until 2026-11-03); "机器人转速快一点 / 慢一点 / 最快 / 最慢" (A15 ->
 # ModeCommand set_turn_speed) moves it by step_radps inside [min, max]; an
 # explicit value is persisted at state_path and restored at the next start
 # (same discipline as the volume, U100 continued). P2 puts the value in every
@@ -444,11 +450,50 @@ turn_speed:
   # INTERIM, user ruling 2026-10-30: the vendor manuals (docs/QUADRUPED, three
   # PDFs) give no maximum yaw rate. Replace with the measured chassis limit
   # after a field run with a person present and the area clear.
-  max_radps: 0.6
+  # 2026-11-03 field run (99 U104 continued 2): 0.6 -> 0.8 to test turning at
+  # 0.8 (the chassis tracked 0.6 at 90-103%). Tier 1 max_wz_radps is 1.2.
+  # User ruling 2026-11-03 (U104 continued 3): 0.8 is the fastest.
+  max_radps: 0.8
+  # User ruling 2026-11-03 (U104 continued 3): default 0.6, no longer the max.
+  # Measured that evening: 0.6 tracked 90-103% with 1.9-3.6 deg overshoot on a
+  # 180 deg turn; 0.8 tracked 103-104% but overshot up to 7.4 deg.
+  default_radps: 0.6
   # Above the chassis "twists but does not step" threshold: 0.2 only twists
   # (2026-09-15), 0.3 still stalls often (p1 log 10-27..10-29).
   min_radps: 0.4
   # One "快一点 / 慢一点".
   step_radps: 0.1
-  # Delete this file to return to the default (max).
+  # Delete this file to return to the default (default_radps).
   state_path: "/opt/xbrain_v6/data/run/p2_turn_speed.json"
+  # Yaw control deadzone (body spec, user ruling 2026-11-03): a turn rate at
+  # or below it does not step. min_radps must be strictly above it, or P2
+  # refuses to start.
+  deadzone_radps: ${common.spec.min_cmd_wz_radps}
+
+# -- Move speed: forward / back / strafe (99 U106, user ruling 2026-11-03) ------
+# Same discipline as turn_speed and the volume: default_mps until someone sets
+# it; "移动速度快一点 / 慢一点 / 最快 / 最慢" (A16 -> ModeCommand set_move_speed)
+# moves it by step_mps inside [min, max]; an explicit value is persisted at
+# state_path, restored at the next start, and can be set again any time. One
+# value for both forward / back and strafe. P2 puts it in every relmove as
+# MO-2 max_speed_mps.
+move_speed:
+  # User ruling 2026-11-03 (evening, after the field test): 0.5 m/s is the
+  # default AND the slowest. At 0.2 the chassis strafed right at only a third
+  # of the command (0.066 m/s median, 2 runs stalled); at 0.5 it tracked 86%
+  # (0.431 m/s) and arrived. ~~default 0.2 / min 0.1 / max 0.5~~ (first U106
+  # values, 2026-11-03 afternoon).
+  default_mps: 0.5
+  min_mps: 0.5
+  # "最快" = 1.0 m/s (user ruling). The quadruped Tier 1 strafe limit is 0.5
+  # today (tier1.limits.max_vy_mps, sim overlay, no measured basis), so above
+  # 0.5 only forward / back get faster; Tier 1 clamps strafe regardless.
+  max_mps: 1.0
+  # One "快一点 / 慢一点".
+  step_mps: 0.1
+  # Control deadzones of the two linear axes (body spec): min_mps must be
+  # strictly above both, or P2 refuses to start.
+  deadzone_vx_mps: ${common.spec.min_cmd_vx_mps}
+  deadzone_vy_mps: ${common.spec.min_cmd_vy_mps}
+  # Delete this file to return to the default.
+  state_path: "/opt/xbrain_v6/data/run/p2_move_speed.json"

@@ -156,10 +156,10 @@ start_bg() {  # name, then the command
 # block the six basic motions is off (p2 G-4/5/6, p1 RNS + speed gates; relmove
 # runs closed-loop on chassis odom). Soft estop still stops. Remove after the test.
 export XBRAIN_BASIC_MOTION_TEST=1
-# Test speeds (change here): forward/back m/s, strafe m/s, turn rad/s.
-export XBRAIN_BASIC_MOTION_LIN=0.2
-export XBRAIN_BASIC_MOTION_LAT=0.15
-export XBRAIN_BASIC_MOTION_ANG=0.3
+# Speeds are NOT set here any more (99 U106, user ruling 2026-11-03): forward /
+# back / strafe come from p2_core.yaml move_speed and the turn from
+# turn_speed, both voice-adjustable and persisted; P2 puts them in every relmove
+# (MO-2 max_speed_mps / max_yaw_rate_radps).
 export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
 export PYTHONUNBUFFERED=1
 INST="$REPO/data/install"

@@ -42,6 +42,10 @@ relative_move:                        # 12 S12 的五个有消费者的键 (nav/
   pure_rotation_eps_m: 0.02           # 12 S4.5.3 纯旋转判定位移阈值 (m)
   default_timeout_s: 20.0             # RM-3
   abort_on_obstacle: true             # 12 S4.5.6 缺省
+  cmd_deadzone:                       # 控制死区(本体规格, 用户 2026-11-03 "死区抑制"): 速度指令 <= 本值 = 没有动作
+    vx_mps: ${common.spec.min_cmd_vx_mps}
+    vy_mps: ${common.spec.min_cmd_vy_mps}
+    wz_radps: ${common.spec.min_cmd_wz_radps}
 speed_gate:                           # 12 S12: only the keys with a consumer land here. The f table
                                       #   itself is the 11 S9.6.2 U54 constants in gate/speed_gate.py
                                       #   (edges from ${common.motion.profiles[*].require_sense_m} is
