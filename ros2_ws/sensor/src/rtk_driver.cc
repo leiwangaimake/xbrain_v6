@@ -145,14 +145,20 @@ GnssFix RtkDriver::buildFix(double now_mono_s) const {
   GnssFix fix;
   const bool fresh =
       gga_mono_ >= 0.0 && (now_mono_s - gga_mono_) <= cfg_.gga_timeout_s;
-  // fix_type follows the raw quality when fresh; a stale GGA is no_fix (T-09).
-  fix.fix_type = fresh ? fix_type_from_gga_quality(gga_.quality) : "no_fix";
-  fix.t_mono = now_mono_s;
   // age_s is the DIFFERENTIAL age the module reports (11 S3.2), not how old the
-  // GGA is -- that freshness is already applied above and travels as t_mono.
-  // A stale GGA says nothing about corrections now, so it gives null too.
+  // GGA is -- that freshness is applied below and travels as t_mono. A stale GGA
+  // says nothing about corrections now, so it gives null too.
   fix.has_age = fresh && gga_.has_diff_age;
   fix.age_s = gga_.diff_age_s;
+  // fix_type follows the raw quality when fresh; a stale GGA is no_fix (T-09).
+  // The differential age then caps it (RTG-10): the receiver holds RTK classes
+  // on stale corrections, and every consumer (i_fix, hard cap, fence inset) keys
+  // on fix_type alone. cov_h_m below follows the capped class (NAV-02).
+  const std::string raw_type = fresh ? fix_type_from_gga_quality(gga_.quality) : "no_fix";
+  fix.fix_type = fix_type_after_diff_age(raw_type, fix.has_age, fix.age_s,
+                                         cfg_.diff_age.fixed_to_float_s,
+                                         cfg_.diff_age.to_dgps_s);
+  fix.t_mono = now_mono_s;
   fix.sats = gga_.num_satellites;
   fix.hdop = gga_.hdop;
   // has_position only with a fresh, valid GGA that is an actual fix. Otherwise

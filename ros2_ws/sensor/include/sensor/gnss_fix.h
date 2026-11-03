@@ -56,6 +56,17 @@ std::string fix_type_from_gga_quality(int quality);
 // True iff fix_type is a member of the 11 S4.5 closed set.
 bool fix_type_valid(const std::string& fix_type);
 
+// Differential-age cap on the published class (11 S3.2A RTG-10, 2026-11-03 user
+// ruling). The receiver keeps claiming RTK fixed/float on stale corrections for
+// its own RTK TIMEOUT (600 s measured; the fix had drifted 12 cm at 150 s), so
+// rtk_fixed past fixed_to_float_s becomes rtk_float, and rtk_fixed / rtk_float
+// past to_dgps_s become dgps. An RTK class with no age at all counts as past
+// to_dgps_s. Only ever lowers, and never below dgps: dgps still admits the dual-
+// antenna heading, which needs no corrections (single would drop it to L3).
+std::string fix_type_after_diff_age(const std::string& fix_type, bool has_age,
+                                    double age_s, double fixed_to_float_s,
+                                    double to_dgps_s);
+
 // Serialise the GnssFix data object (11 S3.2). lat/lon/alt/cov are JSON null when
 // has_position is false; age_s is JSON null when has_age is false; fix_type is
 // always present.

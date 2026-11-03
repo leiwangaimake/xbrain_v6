@@ -60,6 +60,16 @@ bool fix_type_valid(const std::string& fix_type) {
   return false;
 }
 
+std::string fix_type_after_diff_age(const std::string& fix_type, bool has_age,
+                                    double age_s, double fixed_to_float_s,
+                                    double to_dgps_s) {
+  const bool rtk = fix_type == "rtk_fixed" || fix_type == "rtk_float";
+  if (!rtk) return fix_type;
+  if (!has_age || age_s > to_dgps_s) return "dgps";
+  if (fix_type == "rtk_fixed" && age_s > fixed_to_float_s) return "rtk_float";
+  return fix_type;
+}
+
 std::string to_json_data(const GnssFix& fix) {
   const bool p = fix.has_position;
   std::string o = "{";

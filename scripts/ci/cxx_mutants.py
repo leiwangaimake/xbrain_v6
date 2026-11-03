@@ -3705,7 +3705,31 @@ RTCM_AGE_MUTANTS = [
      "    out->diff_station_id = field_to_int(f[13]);"),
     # U-RTCM-3: no corrections is null. A 0 reads as "corrections this instant".
     ("age_s: serialised as a number when there is no differential",
-     RTCM_AGE_SOURCES[1], "opt_num(fix.age_s, fix.has_age)", "std::to_string(fix.age_s)"),
+     RTCM_AGE_SOURCES[1], "opt_num(fix.age_s, fix.has_age, kDecimals)", "std::to_string(fix.age_s)"),
+    # 11 S3.2: lat/lon keep 9 decimals; 6 erased the RTK fixed centimetres on the bus.
+    ("lat/lon: serialised with 6 decimals",
+     RTCM_AGE_SOURCES[1], "constexpr int kDegDecimals = 9;", "constexpr int kDegDecimals = 6;"),
+    # ---- RTG-10 differential-age cap (2026-11-03 ruling) ----------------------------
+    ("diff age: the published class ignores the age",
+     RTCM_DRIVER_CC, "  fix.fix_type = fix_type_after_diff_age(raw_type, fix.has_age, fix.age_s,",
+     "  fix.fix_type = raw_type; (void)fix_type_after_diff_age(raw_type, fix.has_age, fix.age_s,"),
+    ("diff age: rtk_fixed never steps down to rtk_float",
+     RTCM_AGE_SOURCES[1], "  if (fix_type == \"rtk_fixed\" && age_s > fixed_to_float_s) return \"rtk_float\";",
+     ""),
+    ("diff age: the dgps step compares against the float threshold",
+     RTCM_AGE_SOURCES[1], "  if (!has_age || age_s > to_dgps_s) return \"dgps\";",
+     "  if (!has_age || age_s > fixed_to_float_s) return \"dgps\";"),
+    ("diff age: an RTK class without an age keeps RTK",
+     RTCM_AGE_SOURCES[1], "  if (!has_age || age_s > to_dgps_s) return \"dgps\";",
+     "  if (has_age && age_s > to_dgps_s) return \"dgps\";"),
+    ("diff age: boundary taken as >= (exactly the threshold demotes)",
+     RTCM_AGE_SOURCES[1], "age_s > fixed_to_float_s) return",
+     "age_s >= fixed_to_float_s) return"),
+    ("diff age: dgps / single also demoted",
+     RTCM_AGE_SOURCES[1], "  if (!rtk) return fix_type;", ""),
+    ("diff age: cov_h_m follows the raw class",
+     RTCM_DRIVER_CC, "    fix.cov_h_m = nominal_cov_h(fix.fix_type, cfg_.fix_cov) * hdop_factor;",
+     "    fix.cov_h_m = nominal_cov_h(raw_type, cfg_.fix_cov) * hdop_factor;"),
     # The pre-2026-11-02 bug this batch fixes: age_s carried GGA freshness.
     ("age_s: carries how old the GGA is instead of the differential age",
      RTCM_DRIVER_CC, "  fix.age_s = gga_.diff_age_s;",
@@ -3822,6 +3846,10 @@ RTCM_PROTO_MUTANTS = [
      RTCM_GGA_CC, "kEarthRadiusKm = 6371.0;", "kEarthRadiusKm = 6378.0;"),
 ]
 RTCM_LINK_MUTANTS = [
+    # RTG-10 thresholds: the loader must refuse a dgps step at or before the float step.
+    ("diff age config: thresholds order not checked",
+     RTCM_CONFIG_CC, "  if (!(da.fixed_to_float_s > 0.0 && da.fixed_to_float_s < da.to_dgps_s)) {",
+     "  if (false) {"),
     # ---- RtcmSink: whole frames onto the serial port (RTG-6 / RTG-4) -------------
     ("sink: a source switch also cuts the frame already on the wire",
      RTCM_SINK_CC, "    while (q_.size() > (partial_ > 0 ? 1u : 0u)) {", "    while (!q_.empty()) {"),

@@ -61,6 +61,7 @@ static DriverConfig cfg() {
   c.rmc_timeout_s = 1.0;
   c.resolver = {0.02, 0.2, 0.5, 0.5, 2.0, 1.0, 0.5, 30.0, 0.05, 0.9, 1.0, 0.4, 0.0};
   c.fix_cov = {0.02, 0.30, 1.50, 3.00, 1.5};   // rt/gnss/fix cov nominals
+  c.diff_age = {10.0, 60.0};                   // RTG-10 demotion thresholds
   c.clock = {20.0, 5.0, false};                // offset<=20ms, ref_age<=5s, rtc untrusted
   return c;
 }
@@ -75,9 +76,10 @@ static const std::string* find_by_key(const CaptureSink& s, const std::string& k
 }
 
 // L1-good sentences (checksum-less -> tolerant parse): RTK-fixed GGA, NARROW_INT
-// TRA at 90 deg (east), moving RMC.
+// TRA at 90 deg (east), moving RMC. The GGA carries a differential age as every
+// real RTK GGA does -- one without it is published as dgps (RTG-10 rule 3).
 static const char* kGga =
-    "$GNGGA,015540.00,3113.31552,N,12121.24700,E,4,18,0.6,12.5,M,8.2,M,,\n";
+    "$GNGGA,015540.00,3113.31552,N,12121.24700,E,4,18,0.6,12.5,M,8.2,M,1.0,0001\n";
 static const char* kTra = "$GNTRA,015540.00,90.00,-2.00,0.00,4,18,0.0,0000\n";
 static const char* kRmc =
     "$GNRMC,015540.00,A,3113.31552,N,12121.24700,E,2.0,90.0,140826,,,A,C\n";
@@ -166,7 +168,9 @@ static void test_fix_age_is_differential() {
       "$GNGGA,015540.00,3113.31552,N,12121.24700,E,4,18,0.6,12.5,M,8.2,M,1.0,0001\n";
   CaptureSink sink;
   RtkDriver d(cfg(), &sink);
-  d.feed(kGga, std::char_traits<char>::length(kGga), 1.0);   // no diff fields
+  static const char* kGgaSingle =
+      "$GNGGA,015539.00,3113.31552,N,12121.24700,E,1,18,0.6,12.5,M,8.2,M,,\n";
+  d.feed(kGgaSingle, std::char_traits<char>::length(kGgaSingle), 1.0);   // no diff fields
   d.tick(1.0, 1000LL);
   const std::string* f0 = find_by_key(sink, "xbrain/r1/rt/gnss/fix");
   CHECK(f0 != nullptr && has(*f0, "\"age_s\":null"));
@@ -180,6 +184,37 @@ static void test_fix_age_is_differential() {
   d.tick(10.0, 10000LL);                                     // GGA stale
   const std::string* f2 = find_by_key(sink, "xbrain/r1/rt/gnss/fix");
   CHECK(f2 != nullptr && has(*f2, "\"age_s\":null"));
+}
+
+// RTG-10: an RTK fixed GGA on stale corrections is published one class down,
+// and cov_h_m follows the published class, not the receiver's claim (NAV-02).
+static void test_fix_capped_by_diff_age() {
+  static const char* kFixedAge5 =
+      "$GNGGA,015540.00,3113.31552,N,12121.24700,E,4,18,0.6,12.5,M,8.2,M,5.0,0001\n";
+  static const char* kFixedAge30 =
+      "$GNGGA,015541.00,3113.31552,N,12121.24700,E,4,18,0.6,12.5,M,8.2,M,30.0,0001\n";
+  static const char* kFixedAge90 =
+      "$GNGGA,015542.00,3113.31552,N,12121.24700,E,4,18,0.6,12.5,M,8.2,M,90.0,0001\n";
+  CaptureSink sink;
+  RtkDriver d(cfg(), &sink);
+  d.feed(kFixedAge5, std::char_traits<char>::length(kFixedAge5), 1.0);
+  d.tick(1.0, 1000LL);
+  const std::string* f0 = find_by_key(sink, "xbrain/r1/rt/gnss/fix");
+  CHECK(f0 != nullptr && has(*f0, "\"fix_type\":\"rtk_fixed\""));
+  CHECK(f0 != nullptr && has(*f0, "\"cov_h_m\":0.020000"));
+  sink.msgs.clear();
+  d.feed(kFixedAge30, std::char_traits<char>::length(kFixedAge30), 2.0);
+  d.tick(2.0, 2000LL);
+  const std::string* f1 = find_by_key(sink, "xbrain/r1/rt/gnss/fix");
+  CHECK(f1 != nullptr && has(*f1, "\"fix_type\":\"rtk_float\""));
+  CHECK(f1 != nullptr && has(*f1, "\"cov_h_m\":0.300000"));
+  CHECK(f1 != nullptr && has(*f1, "\"age_s\":30.000000"));   // age itself unchanged
+  sink.msgs.clear();
+  d.feed(kFixedAge90, std::char_traits<char>::length(kFixedAge90), 3.0);
+  d.tick(3.0, 3000LL);
+  const std::string* f2 = find_by_key(sink, "xbrain/r1/rt/gnss/fix");
+  CHECK(f2 != nullptr && has(*f2, "\"fix_type\":\"dgps\""));
+  CHECK(f2 != nullptr && has(*f2, "\"cov_h_m\":1.500000"));
 }
 
 // The position handed to the RTCM link: the GGA's own fix, its arrival time and
@@ -206,6 +241,7 @@ int main() {
   test_publish_l1();
   test_current_position();
   test_fix_age_is_differential();
+  test_fix_capped_by_diff_age();
   test_publish_l3_startup();
   test_seq_increments();
   if (g_failures == 0) {

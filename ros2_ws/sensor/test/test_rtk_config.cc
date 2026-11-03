@@ -79,6 +79,9 @@ static const char* kValid =
     "  dgps_h_m: 1.50\n"
     "  single_h_m: 3.00\n"
     "  vertical_factor: 1.5\n"
+    "diff_age:\n"
+    "  fixed_to_float_s: 10.0\n"
+    "  to_dgps_s: 60.0\n"
     "clock:\n"
     "  offset_threshold_ms: 20.0\n"
     "  ref_max_age_s: 5.0\n"
@@ -145,6 +148,8 @@ int main() {
   CHECK(c.driver.resolver.i_heading_l3 == 0.0);
   CHECK(c.driver.fix_cov.rtk_fixed_h_m == 0.02);
   CHECK(c.driver.fix_cov.vertical_factor == 1.5);
+  CHECK(c.driver.diff_age.fixed_to_float_s == 10.0);
+  CHECK(c.driver.diff_age.to_dgps_s == 60.0);
 
   // 3.3 mutant A: a null safety threshold must stop the load.
   std::string null_cov = kValid;
@@ -201,6 +206,13 @@ int main() {
   CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
   // A queue smaller than one maximum frame is refused.
   write_file(p, with(kValid, "queue_max_bytes: 16384", "queue_max_bytes: 1000"));
+  CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
+  // RTG-10 thresholds: required, and the float step must come first.
+  write_file(p, with(kValid, "  to_dgps_s: 60.0\n", ""));
+  CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
+  write_file(p, with(kValid, "  to_dgps_s: 60.0\n", "  to_dgps_s: 10.0\n"));
+  CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
+  write_file(p, with(kValid, "  fixed_to_float_s: 10.0\n", "  fixed_to_float_s: 0.0\n"));
   CHECK(throws([&] { load_rtk_config(p, "r", "rtk_driver", "b"); }));
   // The selector keys are required whatever is enabled.
   write_file(p, with(kValid, "    backup_after_s: 15.0\n", ""));

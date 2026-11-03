@@ -71,6 +71,15 @@ RtkConfig load_rtk_config(const std::string& path, const std::string& rid,
   fc.single_h_m = cfg.require_double("fix_cov.single_h_m");
   fc.vertical_factor = cfg.require_double("fix_cov.vertical_factor");
 
+  // fix_type cap on stale corrections (11 S3.2A RTG-10). The float step must come
+  // before the dgps step, or rtk_fixed would skip straight to dgps.
+  DiffAgeConfig& da = out.driver.diff_age;
+  da.fixed_to_float_s = cfg.require_double("diff_age.fixed_to_float_s");
+  da.to_dgps_s = cfg.require_double("diff_age.to_dgps_s");
+  if (!(da.fixed_to_float_s > 0.0 && da.fixed_to_float_s < da.to_dgps_s)) {
+    throw std::runtime_error("diff_age: need 0 < fixed_to_float_s < to_dgps_s");
+  }
+
   // rt/clock/status sync-judgement thresholds (11 S3.11).
   ClockConfig& ck = out.driver.clock;
   ck.offset_threshold_ms = cfg.require_double("clock.offset_threshold_ms");

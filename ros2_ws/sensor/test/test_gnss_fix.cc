@@ -85,6 +85,23 @@ int main() {
   CHECK(has(jd, "\"age_s\":1.500000"));
   CHECK(has(jn, "\"age_s\":null"));
 
+  // RTG-10 differential-age cap (thresholds 10 s / 60 s; strictly greater).
+  using sensor::fix_type_after_diff_age;
+  CHECK(fix_type_after_diff_age("rtk_fixed", true, 2.0, 10.0, 60.0) == "rtk_fixed");
+  CHECK(fix_type_after_diff_age("rtk_fixed", true, 10.0, 10.0, 60.0) == "rtk_fixed");
+  CHECK(fix_type_after_diff_age("rtk_fixed", true, 10.5, 10.0, 60.0) == "rtk_float");
+  CHECK(fix_type_after_diff_age("rtk_float", true, 30.0, 10.0, 60.0) == "rtk_float");
+  CHECK(fix_type_after_diff_age("rtk_float", true, 60.0, 10.0, 60.0) == "rtk_float");
+  CHECK(fix_type_after_diff_age("rtk_fixed", true, 61.0, 10.0, 60.0) == "dgps");
+  CHECK(fix_type_after_diff_age("rtk_float", true, 61.0, 10.0, 60.0) == "dgps");
+  // An RTK class with no age at all is not trusted as RTK.
+  CHECK(fix_type_after_diff_age("rtk_fixed", false, 0.0, 10.0, 60.0) == "dgps");
+  CHECK(fix_type_after_diff_age("rtk_float", false, 0.0, 10.0, 60.0) == "dgps");
+  // Never touches the non-RTK classes, and never lowers below dgps.
+  CHECK(fix_type_after_diff_age("dgps", true, 999.0, 10.0, 60.0) == "dgps");
+  CHECK(fix_type_after_diff_age("single", false, 0.0, 10.0, 60.0) == "single");
+  CHECK(fix_type_after_diff_age("no_fix", false, 0.0, 10.0, 60.0) == "no_fix");
+
   if (g_failures == 0) {
     std::printf("ALL GNSS FIX TESTS PASSED\n");
     return 0;

@@ -65,6 +65,14 @@ struct FixCovConfig {
   double vertical_factor; // cov_v_m = cov_h_m x this (~1.5)
 };
 
+// Differential-age demotion thresholds (11 S3.2A RTG-10). Safety parameters:
+// injected, no code default (3.1); the loader refuses fixed_to_float_s >=
+// to_dgps_s.
+struct DiffAgeConfig {
+  double fixed_to_float_s;   // rtk_fixed with age_s > this -> rtk_float
+  double to_dgps_s;          // rtk_fixed / rtk_float with age_s > this -> dgps
+};
+
 // Injected identity + freshness thresholds. NO defaults (CLAUDE.md 3.1): the
 // driver refuses to invent a robot id, a boot id, or a staleness window. Filled
 // from configs/ by main().
@@ -79,6 +87,7 @@ struct DriverConfig {
   double rmc_timeout_s;         // an RMC older than this -> no COG
   ResolverConfig resolver;      // the L1/L2/L3 thresholds
   FixCovConfig fix_cov;         // cov_h_m derivation for rt/gnss/fix (11 S3.2)
+  DiffAgeConfig diff_age;       // fix_type cap on stale corrections (11 S3.2A RTG-10)
   ClockConfig clock;            // sync-judgement thresholds for rt/clock/status (11 S3.11)
 };
 
