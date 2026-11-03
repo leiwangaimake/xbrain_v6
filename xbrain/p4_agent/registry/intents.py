@@ -70,12 +70,14 @@ CONFIRM_LEVELS: Tuple[str, ...] = ("L0", "L1a", "L1b", "L2", "L3")
 #: latency pairing 16 S6.6.1 keys off (bypass->T0, fastpath->T2, ... ).
 ROUTES: Tuple[str, ...] = ("bypass", "fastpath", "fastpath_then_llm", "llm")
 
-#: The eight chassis relative-move intents, 11 S9.3.2A.4. This IS the MI-1
-#: domain: direction is encoded in the name, so none of these may take a
-#: direction slot. A frozenset because ID-3 asks membership, not order.
+#: The nine chassis relative-move intents, 11 S9.3.2A.4 (A17 move_heading
+#: joined 2026-11-04, 99 U108). This IS the MI-1 domain: a body-relative
+#: direction is encoded in the name, so none of these may take a direction
+#: slot (A12 / A17 carry an absolute compass heading enum, not a direction).
+#: A frozenset because ID-3 asks membership, not order.
 MI1_MOTION_INTENTS: FrozenSet[str] = frozenset({
     "move_forward", "move_backward", "move_left", "move_right",
-    "turn_left", "turn_right", "turn_around", "face_heading"})
+    "turn_left", "turn_right", "turn_around", "face_heading", "move_heading"})
 
 #: Slot names ID-3 forbids on an MI-1 intent, 16 S5.3: direction and unit are
 #: carried by the intent name / fixed by it, so they never enter slots. (16 S5.3

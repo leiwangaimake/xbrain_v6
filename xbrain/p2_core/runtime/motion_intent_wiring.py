@@ -55,7 +55,7 @@ CMD_MOTION_INTENT_TOPIC = "cmd/motion/intent"
 CMD_MOTION_INTENT_ACK_TOPIC = "cmd/motion/intent/ack"
 CMD_RELATIVE_MOVE_TOPIC = "cmd/motion/relative_move"
 
-#: S9.3.2A.4 八值闭集 -> (轴, 符号). 轴换算全在 P2(MI-1: P4 一律不换算).
+#: S9.3.2A.4 九值闭集 -> (轴, 符号). 轴换算全在 P2(MI-1: P4 一律不换算).
 _INTENT_AXIS: Dict[str, Tuple[str, float]] = {
     "move_forward": ("dx_m", +1.0),
     "move_backward": ("dx_m", -1.0),
@@ -68,16 +68,20 @@ _INTENT_AXIS: Dict[str, Tuple[str, float]] = {
     "turn_around": ("dyaw_rad", +1.0),
     # A12 face_heading 不走轴换算, 见 MO-3 与 _target_yaw.
     "face_heading": ("target_yaw_rad", +1.0),
+    # A17 move_heading (2026-11-04, 99 U108): target_yaw_rad + dx_m, "沿该绝对
+    # 航向走 dx 米" (11 S9.3.2A.7 TY-6); 折算同样留给 P1, 见 MO-3.
+    "move_heading": ("target_yaw_rad", +1.0),
 }
 
-#: 需要 distance_m 的四个; 需要 angle_deg 的两个. turn_around 无槽位,
-#: face_heading 要 heading.
+#: 需要 distance_m 的五个; 需要 angle_deg 的两个. turn_around 无槽位,
+#: face_heading 要 heading, move_heading 要 heading 与 distance_m.
 _NEEDS_DISTANCE = frozenset({"move_forward", "move_backward",
-                             "move_left", "move_right"})
+                             "move_left", "move_right", "move_heading"})
+_NEEDS_HEADING = frozenset({"face_heading", "move_heading"})
 _NEEDS_ANGLE = frozenset({"turn_left", "turn_right"})
 #: G-6: 会改变航向或横移的意图, 都要求 yaw_capable.
 _NEEDS_YAW = frozenset({"turn_left", "turn_right", "turn_around",
-                        "face_heading", "move_left", "move_right"})
+                        "face_heading", "move_heading", "move_left", "move_right"})
 #: G-7: 只有全向底盘能横着走.
 _NEEDS_HOLONOMIC = frozenset({"move_left", "move_right"})
 
@@ -171,7 +175,7 @@ def evaluate(cmd: Mapping[str, Any], *, limits: MotionLimits,
     if intent not in _INTENT_AXIS:
         return _fail("G-2", E_SCHEMA, {"field": "intent"})
     if cmd.get("auth_level") != "L1":
-        # A05-A12 恒 L1(18 S13.1). 出现别的值即 P4 缺陷 -- 调用方要同时落
+        # A05-A12 与 A17 恒 L1(18 S13.1). 出现别的值即 P4 缺陷 -- 调用方要同时落
         # event/warn/motion, 这里只给出结论.
         return _fail("G-2", E_SCHEMA, {"field": "auth_level"})
     slots = cmd.get("slots")
@@ -186,7 +190,7 @@ def evaluate(cmd: Mapping[str, Any], *, limits: MotionLimits,
     if intent in _NEEDS_ANGLE:
         if not _positive_number(slots.get("angle_deg")):
             return _fail("G-2", E_SCHEMA, {"field": "slots.angle_deg"})
-    if intent == "face_heading":
+    if intent in _NEEDS_HEADING:
         if slots.get("heading") not in _HEADING_RAD:
             return _fail("G-2", E_SCHEMA, {"field": "slots.heading"})
     # -- G-3 量程 --------------------------------------------------------
@@ -331,6 +335,11 @@ def to_relative_move(cmd: Mapping[str, Any], *, rm_cmd_id: str,
         # 只有 10 Hz state/pose 的快照, 语音链路 0.5-2 s, 机器人若在动, 折算
         # 出来的相对量一定是过期的, 转完必然偏. 折算权留在 P1.
         body["target_yaw_rad"] = _HEADING_RAD[slots["heading"]]
+    elif intent == "move_heading":
+        # TY-6: 沿绝对航向走 dx_m. 同 MO-3, 绝不在 P2 折算成机体系 dx/dy 或
+        # dyaw -- 那要用[当前]航向, 而 P2 的 pose 是语音链路之前的快照.
+        body["target_yaw_rad"] = _HEADING_RAD[slots["heading"]]
+        body["dx_m"] = float(slots["distance_m"])
     elif intent == "turn_around":
         body["dyaw_rad"] = math.pi * sign
     elif axis == "dyaw_rad":

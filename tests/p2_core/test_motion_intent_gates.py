@@ -211,6 +211,7 @@ def test_a_failing_item_is_never_fabricated():
     ("turn_left", {"angle_deg": 90.0}),
     ("turn_around", {}),
     ("face_heading", {"heading": "north"}),
+    ("move_heading", {"heading": "south", "distance_m": 1.0}),
     ("move_left", {"distance_m": 1.0}),
 ])
 def test_yaw_incapable_refuses_the_whole_command(intent, slots):
@@ -353,6 +354,35 @@ def test_face_heading_sets_target_yaw_and_leaves_dyaw_zero(heading, rad):
         rm_cmd_id="rm-1", params={})
     assert body["target_yaw_rad"] == pytest.approx(rad)
     assert body["dyaw_rad"] == 0.0
+
+
+def test_move_heading_sets_target_yaw_and_the_distance():
+    """A17 / TY-6 (99 U108): target_yaw_rad + dx_m, dyaw 0, dy 0.
+    MUTATION: convert to a body-frame dx/dy here -> target_yaw_rad is missing
+    (or dy non-zero) -> this fails."""
+    body = to_relative_move(
+        _cmd(intent="move_heading", slots={"heading": "south", "distance_m": 1.0}),
+        rm_cmd_id="rm-1", params={})
+    assert body["target_yaw_rad"] == pytest.approx(-math.pi / 2)
+    assert (body["dx_m"], body["dy_m"], body["dyaw_rad"]) == (1.0, 0.0, 0.0)
+
+
+@pytest.mark.parametrize("slots,field", [
+    ({"distance_m": 1.0}, "slots.heading"),                       # no heading
+    ({"heading": "up", "distance_m": 1.0}, "slots.heading"),      # off the enum
+    ({"heading": "south"}, "slots.distance_m"),                   # no distance
+    ({"heading": "south", "distance_m": 0.0}, "slots.distance_m"),  # not positive
+])
+def test_move_heading_needs_both_slots(slots, field):
+    """G-2 for A17: both slots are required, distance positive."""
+    v = _ev(_cmd(intent="move_heading", slots=slots))
+    assert not v.passed and v.gate == "G-2" and v.detail["field"] == field
+
+
+def test_move_heading_distance_is_capped_by_g3():
+    """G-3: the same 20 m cap as every move."""
+    v = _ev(_cmd(intent="move_heading", slots={"heading": "east", "distance_m": 25.0}))
+    assert not v.passed and v.gate == "G-3"
 
 
 # -- MO-1 / MO-2 ---------------------------------------------------------

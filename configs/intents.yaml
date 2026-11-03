@@ -82,7 +82,11 @@ intents:
   turn_left: { id: A09, keywords: ["左转", "向左转"], slots: [angle_deg], route: fastpath_then_llm, auth: L1b }
   turn_right: { id: A10, keywords: ["右转", "向右转"], slots: [angle_deg], route: fastpath_then_llm, auth: L1b }
   turn_around: { id: A11, keywords: ["转身", "掉头"], slots: [], route: fastpath, auth: L1b }
-  face_heading: { id: A12, keywords: ["朝北", "面向", "转向正"], slots: [heading], route: fastpath_then_llm, auth: L1b }
+  # A12 keywords widened 2026-11-04 (99 U108): "朝北" was the only 朝 form, so
+  # "朝东 / 朝南 / 朝西", "面朝西边", "朝向南方", "转向南" missed the fast leg although
+  # parse_heading reads all of them. 面朝 / 朝向 / 转向 are keyed WITH a direction
+  # character: a bare "转向" would also catch unrelated phrases.
+  face_heading: { id: A12, keywords: ["朝北", "面向", "转向正", "朝东", "朝南", "朝西", "面朝东", "面朝南", "面朝西", "面朝北", "朝向东", "朝向南", "朝向西", "朝向北", "转向东", "转向南", "转向西", "转向北"], slots: [heading], route: fastpath_then_llm, auth: L1b }
   set_speed_profile: { id: A13, keywords: ["慢一点", "快一点", "全速"], slots: [profile], route: fastpath, auth: L1b }
   set_gait: { id: A14, keywords: ["步态", "楼梯", "敏捷"], slots: [gait], route: fastpath, auth: L1b }
   # A15 (2026-10-30, 99 U104): the robot's in-place turn speed. Every keyword
@@ -92,6 +96,12 @@ intents:
   # A16 (2026-11-03, 99 U106): the robot's move speed (forward / back / strafe,
   # one value). Every keyword carries 移动速度 / 行走速度: bare "快一点" stays
   # A13 (U105 2 open) and the turn speed stays A15.
+  # A17 (2026-11-04, 99 U108): walk N metres along an absolute compass heading
+  # ("向南走一米"). Every keyword is <向|往|朝><direction>[面|边]走: the 走 keeps
+  # it apart from A12 face_heading (no walking), and the three-character forms
+  # outrank A12's "朝北" on the longest match ("朝北走" is a walk). fastpath
+  # only: the M1 / M2 LLM missions do not emit it yet.
+  move_heading: { id: A17, keywords: ["向东北走", "向东北面走", "向东北边走", "向西北走", "向西北面走", "向西北边走", "向东南走", "向东南面走", "向东南边走", "向西南走", "向西南面走", "向西南边走", "向东走", "向东面走", "向东边走", "向南走", "向南面走", "向南边走", "向西走", "向西面走", "向西边走", "向北走", "向北面走", "向北边走", "往东北走", "往东北面走", "往东北边走", "往西北走", "往西北面走", "往西北边走", "往东南走", "往东南面走", "往东南边走", "往西南走", "往西南面走", "往西南边走", "往东走", "往东面走", "往东边走", "往南走", "往南面走", "往南边走", "往西走", "往西面走", "往西边走", "往北走", "往北面走", "往北边走", "朝东北走", "朝东北面走", "朝东北边走", "朝西北走", "朝西北面走", "朝西北边走", "朝东南走", "朝东南面走", "朝东南边走", "朝西南走", "朝西南面走", "朝西南边走", "朝东走", "朝东面走", "朝东边走", "朝南走", "朝南面走", "朝南边走", "朝西走", "朝西面走", "朝西边走", "朝北走", "朝北面走", "朝北边走"], slots: [heading, distance_m], route: fastpath, auth: L1b }
   set_move_speed: { id: A16, keywords: ["移动速度快一点", "移动速度慢一点", "移动速度最快", "移动速度最慢", "移动速度调到最快", "移动速度调到最慢", "移动速度调快一点", "移动速度调慢一点", "行走速度快一点", "行走速度慢一点", "行走速度最快", "行走速度最慢", "行走速度调到最快", "行走速度调到最慢", "行走速度调快一点", "行走速度调慢一点"], slots: [move_speed], route: fastpath, auth: L1a }
   set_turn_speed: { id: A15, keywords: ["机器人转速快一点", "机器人转速慢一点", "机器人转速最快", "机器人转速最慢", "机器人转速调到最快", "机器人转速调到最慢", "机器人转快一点", "机器人转慢一点", "机器人转快点", "机器人转慢点", "机器人转得快一点", "机器人转得慢一点", "机身转速快一点", "机身转速慢一点", "机身转速最快", "机身转速最慢", "转向速度快一点", "转向速度慢一点", "转向速度最快", "转向速度最慢", "转身速度快一点", "转身速度慢一点", "转身速度最快", "转身速度最慢"], slots: [turn_speed], route: fastpath, auth: L1a }
 

@@ -34,23 +34,25 @@ G-1~G-11), 不读钟.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 #: S9.3.2A.3 字段表: A05-A12 恒 L1.
 _AUTH_LEVEL = "L1"
 
-#: S9.3.2A.4 八值闭集 -> 必填槽位名(None = 无槽位).
+#: S9.3.2A.4 九值闭集 -> 必填槽位名(按追问顺序; 空元组 = 无槽位).
+#: A17 move_heading (2026-11-04, 99 U108) 是唯一带两个槽位的: 先问方向再问距离.
 #: 键是注册表的 intent NAME, 与契约的 intent 取值逐字相同 -- 这不是巧合,
 #: S9.3.2A.3 要求它与 16 S6.7 M1/M2 的 intent 取值逐字一致.
-_MOTION_INTENTS: Dict[str, Optional[str]] = {
-    "move_forward": "distance_m",
-    "move_backward": "distance_m",
-    "move_left": "distance_m",
-    "move_right": "distance_m",
-    "turn_left": "angle_deg",
-    "turn_right": "angle_deg",
-    "turn_around": None,          # slots = {} 是合法的
-    "face_heading": "heading",
+_MOTION_INTENTS: Dict[str, Tuple[str, ...]] = {
+    "move_forward": ("distance_m",),
+    "move_backward": ("distance_m",),
+    "move_left": ("distance_m",),
+    "move_right": ("distance_m",),
+    "turn_left": ("angle_deg",),
+    "turn_right": ("angle_deg",),
+    "turn_around": (),            # slots = {} 是合法的
+    "face_heading": ("heading",),
+    "move_heading": ("heading", "distance_m"),
 }
 
 #: MO-2 的 channel 闭集 (11 S9.3.2A.3 字段表逐字): P2 据此填
@@ -87,9 +89,8 @@ def to_motion_intent(intent_name: str, *, slots: Mapping[str, Any],
         # 后者会被当成追问话术播出去, 把一个编程错误包装成"再说一遍".
         raise ValueError("channel %r not in MO-2 set %s"
                          % (channel, sorted(MOTION_CHANNELS)))
-    slot_name = _MOTION_INTENTS[intent_name]
     out_slots: Dict[str, Any] = {}
-    if slot_name is not None:
+    for slot_name in _MOTION_INTENTS[intent_name]:
         value = slots.get(slot_name)
         if value is None:
             raise MotionIntentError("missing_slot:%s" % (slot_name,))

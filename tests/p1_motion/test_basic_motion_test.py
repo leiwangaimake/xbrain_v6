@@ -302,3 +302,90 @@ def test_bad_deadzone_config_refuses_construction(dz):
     """A missing / non-positive axis is a config error at start, not a guess."""
     with pytest.raises(ValueError):
         bmt.BasicMotionTest(dz)
+
+
+# --- face-heading (A12 "面向东面", 2026-11-04) ------------------------------
+
+@pytest.mark.parametrize("heading_deg, target_deg, turn_deg", [
+    (90.0, 0.0, -90.0),      # facing north, "面向东面": right 90
+    (100.0, 180.0, 80.0),    # facing just west of north, "面向西面": left 80
+    (-170.0, 170.0, -20.0),  # across the +-180 seam: the short way, not +340
+    (0.0, -90.0, -90.0),     # facing east, "面向南面": right 90
+])
+def test_face_heading_turns_the_short_way_from_the_rtk_heading(ex, heading_deg, target_deg, turn_deg):
+    """The turn is target - RTK heading taken at start, wrapped; the odometry
+    yaw (zero at boot, here 0) is NOT the reference.
+    MUTATION: dyaw = target - odom yaw -> the first case turns 0 -> fails."""
+    sim = _Sim()  # odometry yaw 0, unrelated to north
+    body = {"target_yaw_rad": math.radians(target_deg)}  # what P2 sends for A12
+    assert ex.start(body, sim.state(), 0.0, math.radians(heading_deg)) is None  # accepted
+    cmds = _run(ex, sim)  # run the turn to its end
+    assert ex.last_result == "done"  # no guard fired
+    assert abs(math.degrees(sim.yaw) - turn_deg) < 3.0  # the turn it made
+    assert all(vx == 0.0 and vy == 0.0 for vx, vy, _wz in cmds)  # turn only
+
+
+@pytest.mark.parametrize("body, heading, why", [
+    ({"target_yaw_rad": 0.0}, None, "no_absolute_heading"),  # COG / lost heading
+    ({"target_yaw_rad": 0.0, "dy_m": 1.0}, 0.5, "face_heading_with_motion"),  # TY-1
+    ({"target_yaw_rad": 0.0, "dx_m": -1.0}, 0.5, "face_heading_with_motion"),  # TY-6
+    ({"target_yaw_rad": float("nan")}, 0.5, "bad_body"),  # not a number
+    ({"target_yaw_rad": 0.5}, 0.5, "zero_move"),  # already facing it
+])
+def test_face_heading_refusals_move_nothing(ex, body, heading, why):
+    """MUTATION: fall back to the odometry yaw when no L1 heading -> the first
+    case starts a turn -> fails."""
+    assert ex.start(body, _Sim().state(), 0.0, heading) == why  # the named refusal
+    assert not ex.active  # and nothing runs
+
+
+# --- heading walk (A17 "向南走一米", 2026-11-04, 99 U108, TY-6) ---------------
+
+def test_heading_walk_turns_then_walks_along_the_target(ex):
+    """Facing north (RTK), "向东走一米": a right turn of 90 deg, then 1 m
+    forward -- which is east in the odometry frame the turn left behind.
+    MUTATION: start the walk without the turn (or never start it) -> the
+    end position is not 1 m along the turned heading -> this fails."""
+    sim = _Sim()  # odometry yaw 0; RTK says the body faces north
+    body = {"target_yaw_rad": 0.0, "dx_m": 1.0}  # what P2 sends for A17 east 1 m
+    assert ex.start(body, sim.state(), 0.0, math.pi / 2) is None  # accepted
+    cmds = _run(ex, sim)  # both phases run inside this one motion
+    assert ex.last_result == "done"  # the walk, not just the turn, ended done
+    assert abs(math.degrees(sim.yaw) + 90.0) < 3.0  # turned right 90
+    # 1 m along the turned heading (odom -90 deg = -y)
+    assert abs(sim.x) < 0.08 and abs(sim.y + 1.0) < 0.08  # not along the old heading
+    assert any(wz < 0.0 for _vx, _vy, wz in cmds)  # a right turn happened
+    assert any(vx > 0.0 for vx, _vy, _wz in cmds)  # and a forward walk
+    assert all(not (vx != 0.0 and wz != 0.0) for vx, _vy, wz in cmds)  # one axis per tick
+
+
+def test_heading_walk_already_facing_walks_at_once(ex):
+    """No turn needed: the walk starts straight away."""
+    sim = _Sim()  # odometry at the origin
+    assert ex.start({"target_yaw_rad": 0.3, "dx_m": 0.5}, sim.state(), 0.0, 0.3) is None  # RTK == target
+    _run(ex, sim)  # walk only
+    assert ex.last_result == "done"  # arrived
+    assert abs(sim.x - 0.5) < 0.05 and abs(sim.yaw) < 1e-9  # walked, never turned
+
+
+@pytest.mark.parametrize("body, why", [
+    ({"target_yaw_rad": 0.0, "dx_m": bmt.MAX_DIST_M + 0.5}, "exceeds_test_limit"),  # too far
+    ({"target_yaw_rad": 0.0, "dx_m": 1.0, "max_speed_mps": 0.05}, "speed_in_deadzone"),  # won't step
+])
+def test_heading_walk_refused_before_any_turn(bare_ex, body, why):
+    """A walk that would be refused never turns the robot first.
+    MUTATION: check the walk only when it starts -> start() returns None and
+    the robot turns -> this fails."""
+    body = dict({"max_yaw_rate_radps": 0.3, "max_speed_mps": 0.2}, **body)  # P2's speeds, overridable
+    got = bare_ex.start(body, _Sim().state(), 0.0, math.pi / 2)  # a 90 deg turn would come first
+    assert got is not None and got.startswith(why)  # refused whole
+    assert not bare_ex.active  # so the robot did not start turning
+
+
+def test_a_turn_that_fails_does_not_start_the_walk(ex):
+    """Only a turn that ends "done" starts the walk (blocked chassis -> stall)."""
+    sim = _Sim(gain=0.0)  # a chassis that does not move
+    assert ex.start({"target_yaw_rad": 0.0, "dx_m": 1.0}, sim.state(), 0.0, math.pi / 2) is None  # accepted
+    _run(ex, sim)  # the turn stalls
+    assert ex.last_result == "stall"  # the turn's verdict, reported as such
+    assert not ex.active and sim.x == 0.0  # and no walk was started after it

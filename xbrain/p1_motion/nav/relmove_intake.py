@@ -33,10 +33,15 @@ imported from xbrain.common.errors (never literals, CLAUDE.md 3.5):
     via behavior_proxy, which is not wired this phase. Refused, never faked.
     A zero displacement WITHOUT rotation is accepted: the goto is the current
     pose and RNS arrives at once (an honest 'done', not a reject).
-  * a translation that ALSO asks for a rotation (dyaw != 0 or target_yaw set)
-    -> E_CAPABILITY, detail.item "heading_goal": the RNS Mission this phase
-    takes points only (route.Mission has no goal-heading input); 18's voice
-    table never produces a combined move, so nothing legitimate is lost.
+  * a translation that ALSO asks for a rotation (dyaw != 0, or target_yaw
+    with dy != 0) -> E_CAPABILITY, detail.item "heading_goal": the RNS Mission
+    this phase takes points only (route.Mission has no goal-heading input).
+  * TY-6 (2026-11-04, 99 U108, A17 move_heading "向南走一米"): target_yaw_rad
+    with dx_m > 0 and dy_m == dyaw_rad == 0 means "go dx_m along the absolute
+    heading target_yaw_rad". That is a point, not a heading goal:
+    G = pose + dx * (cos target_yaw, sin target_yaw), resolved here from the
+    current position (MO-3: P2 never converts). dx_m <= 0 with target_yaw is
+    E_SCHEMA field dx_m.
 
 Geometry: G = pose + R(yaw) * (dx, dy), with yaw the ENU heading (11 S3.3, east
 0 CCW), so "左移 1 米" (dy = +1) lands on the robot's left in the site frame.
@@ -93,7 +98,7 @@ class RelMoveGoal:
     dyaw_rad: float
     endpoint_xy: Tuple[float, float]
     start_xy: Tuple[float, float]
-    start_yaw_rad: float
+    start_yaw_rad: float           # RM-2 progress frame: the start yaw, or target_yaw for TY-6
     timeout_s: float
     abort_on_obstacle: bool
     source: Optional[str]
@@ -151,18 +156,31 @@ def translate_relative_move(body: Any, *, pose_xy: Optional[Tuple[float, float]]
         raise RelMoveReject(E_DEGRADED, {"item": "no_fix"})
     if not heading_valid or yaw_rad is None:
         raise RelMoveReject(E_NO_HEADING, {"item": "heading_invalid"})
-    wants_rotation = dyaw != 0.0 or target_yaw is not None
-    if wants_rotation:
-        # below the displacement dead band it IS a pure rotation -> the Nav2
-        # spin path (12 S4.5.3, not wired); above it, a combined move.
-        item = ("nav2_spin" if math.hypot(dx, dy) <= limits.pure_rotation_eps_m
-                else "heading_goal")
-        raise RelMoveReject(E_CAPABILITY, {"item": item})
-    # a zero displacement without rotation is a legal no-op: the goto lands on
-    # the current pose and RNS reports arrival at once (12 S4.5.3 dead band).
-    c, s = math.cos(yaw_rad), math.sin(yaw_rad)
-    gx = pose_xy[0] + dx * c - dy * s
-    gy = pose_xy[1] + dx * s + dy * c
+    if target_yaw is not None and dy == 0.0 and dx != 0.0:
+        # TY-6: a walk along an absolute heading -- the endpoint does not
+        # depend on the current yaw at all, only on the current position.
+        if dx < 0.0:
+            raise RelMoveReject(E_SCHEMA, {"field": "dx_m"})
+        # The progress frame (RM-2) is the walk direction, so dx_done_m
+        # reads as metres walked along it whatever way the body faces.
+        frame_yaw = target_yaw
+        c, s = math.cos(target_yaw), math.sin(target_yaw)
+        gx = pose_xy[0] + dx * c
+        gy = pose_xy[1] + dx * s
+    else:
+        wants_rotation = dyaw != 0.0 or target_yaw is not None
+        if wants_rotation:
+            # below the displacement dead band it IS a pure rotation -> the Nav2
+            # spin path (12 S4.5.3, not wired); above it, a combined move.
+            item = ("nav2_spin" if math.hypot(dx, dy) <= limits.pure_rotation_eps_m
+                    else "heading_goal")
+            raise RelMoveReject(E_CAPABILITY, {"item": item})
+        # a zero displacement without rotation is a legal no-op: the goto lands on
+        # the current pose and RNS reports arrival at once (12 S4.5.3 dead band).
+        frame_yaw = yaw_rad
+        c, s = math.cos(yaw_rad), math.sin(yaw_rad)
+        gx = pose_xy[0] + dx * c - dy * s
+        gy = pose_xy[1] + dx * s + dy * c
     timeout = _opt_num(body, "timeout_s")
     if timeout is None:
         timeout = float(limits.default_timeout_s)
@@ -176,7 +194,7 @@ def translate_relative_move(body: Any, *, pose_xy: Optional[Tuple[float, float]]
     src = body.get("source")
     return RelMoveGoal(cmd_id=cmd_id, dx_m=dx, dy_m=dy, dyaw_rad=dyaw,
                        endpoint_xy=(gx, gy), start_xy=(float(pose_xy[0]), float(pose_xy[1])),
-                       start_yaw_rad=float(yaw_rad), timeout_s=timeout,
+                       start_yaw_rad=float(frame_yaw), timeout_s=timeout,
                        abort_on_obstacle=aoo,
                        source=src if isinstance(src, str) else None,
                        max_speed_mps=_opt_num(body, "max_speed_mps"))

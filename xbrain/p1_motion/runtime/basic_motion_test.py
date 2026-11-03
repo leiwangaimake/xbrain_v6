@@ -40,6 +40,19 @@ mission host / RNS:
     cmd_deadzone (body spec common.spec.min_cmd_*). A commanded speed at or
     below it does not step the chassis, so such a relmove is refused as no
     motion (P2 already refuses to start with a speed floor at or below it);
+  * face-heading (A12 "面向东面", 2026-11-04 user request): a relmove with
+    target_yaw_rad (11 S9.3.2A.4, ENU east 0 CCW) becomes a turn of
+    wrap(target - heading) at START time, heading being the RTK dual-antenna
+    heading (state/pose heading_rad with yaw_capable, i.e. L1). The turn itself
+    then closes the loop on odometry yaw like any other turn (measured
+    2026-11-03: odometry and RTK turn angles agree within 0.5-3 deg over
+    56-180 deg). P1 does the subtraction, not P2 (MO-3: P2's pose is a voice
+    latency old). Without an L1 heading at start it is refused;
+  * heading walk (A17 "向南走一米", 2026-11-04, 99 U108, 11 TY-6): target_yaw_rad
+    with dx_m > 0 runs as two phases -- the face-heading turn above, then
+    dx_m forward from wherever the turn ended. The walk's distance and speed
+    are checked BEFORE the turn starts, so a walk that would be refused never
+    turns the robot first. Only a turn that ends "done" starts the walk;
   * it stops on: target reached, soft estop, stale state / invalid odom,
     timeout, stall, wrong direction, over-speed, off-axis drift -- the same
     guard as scripts/diag/chassis_bench.py MotionGuard, which was exercised on
@@ -50,8 +63,9 @@ What it does NOT do (boundaries)
   * No obstacle avoidance, no fence, no speed gate. The operator is the safety
     function: a person present and the area clear before every motion (the
     10-23 incident, a robot turning unattended, is why).
-  * No face-heading (target_yaw_rad) relmoves: they are refused, because the
-    absolute heading needs the RTK heading this mode exists to do without.
+  * No face-heading without the RTK dual-antenna heading: a COG (L2) or lost
+    (L3) heading is refused, never replaced by the odometry yaw (whose zero is
+    the boot pose, not north).
   * It never truncates a command to fit its limits. A command larger than
     MAX_DIST_M / MAX_ANGLE_RAD is refused whole (see start()).
   * It does not switch the chassis into navigation. nav_wiring's auto-switch
@@ -215,7 +229,7 @@ def enabled() -> bool:
 
 
 def wrap_pi(a: float) -> float:
-    """Angle wrapped into (-pi, pi], used to unwrap the odometry yaw per tick."""
+    """Angle wrapped into (-pi, pi]: the per-tick odometry yaw unwrap and the face-heading turn."""
     return math.atan2(math.sin(a), math.cos(a))
 
 
@@ -371,6 +385,8 @@ class BasicMotionTest:
         self.last_result: Optional[str] = None  # verdict of the last motion
         # (body, time queued) of the relmove waiting for navigation.
         self._pending: Optional[Tuple[Any, float]] = None  # None when nothing waits
+        # (distance m, speed m/s) of a TY-6 walk that follows the running turn.
+        self._then: Optional[Tuple[float, float]] = None  # None when no walk follows
 
     @property
     def active(self) -> bool:
@@ -402,8 +418,12 @@ class BasicMotionTest:
             _logger.warning("BASIC-MOTION-TEST relmove dropped: %s", why)
         self._pending = None  # the slot is empty either way
 
-    def admit(self, now_s: float, state: Dict[str, Any], state_age_s: float) -> Optional[str]:
+    def admit(self, now_s: float, state: Dict[str, Any], state_age_s: float,
+              abs_heading_rad: Optional[float] = None) -> Optional[str]:
         """Start the pending relmove if the chassis is in navigation.
+
+        abs_heading_rad is the RTK dual-antenna heading this tick (ENU), None
+        unless it is L1; only a face-heading relmove reads it.
 
         Returns None when nothing was decided this tick (nothing pending, or
         still waiting), "started" when the motion began, or the refusal /
@@ -420,7 +440,7 @@ class BasicMotionTest:
         body, t_queued = self._pending  # what waits, since when
         if state.get("usage_mode") == "navigation":  # Tier 1 passes motion now
             self._pending = None
-            why = self.start(body, state, state_age_s)  # may still refuse it
+            why = self.start(body, state, state_age_s, abs_heading_rad)  # may still refuse it
             if why is not None:
                 _logger.warning("BASIC-MOTION-TEST relmove refused: %s", why)
                 return why
@@ -433,7 +453,8 @@ class BasicMotionTest:
             return "dropped_not_navigation"
         return None
 
-    def start(self, body: Any, state: Dict[str, Any], state_age_s: float) -> Optional[str]:
+    def start(self, body: Any, state: Dict[str, Any], state_age_s: float,
+              abs_heading_rad: Optional[float] = None) -> Optional[str]:
         """Begin a relmove now; returns None or the reason it was refused.
 
         Refusal reasons (nothing moves, the caller logs the reason):
@@ -441,7 +462,11 @@ class BasicMotionTest:
             speed_missing(field)              no positive max_speed_mps /
                                               max_yaw_rate_radps in the relmove
             speed_in_deadzone(v <= dz)        that speed does not step the chassis
-            face_heading_unsupported_in_test  target_yaw_rad present
+            face_heading_with_motion          target_yaw_rad with a non-zero
+                                              dy_m / dyaw_rad (TY-1), or a
+                                              negative dx_m (TY-6)
+            no_absolute_heading               target_yaw_rad but no L1 RTK
+                                              heading at start
             no_odom                           odometry absent / invalid / stale
             zero_move                         all three axes zero
             exceeds_test_limit(a > cap)       larger than MAX_DIST_M /
@@ -450,13 +475,39 @@ class BasicMotionTest:
         progress from it, in its frame (see "Coordinate conventions")."""
         if not isinstance(body, dict):  # not a relmove body at all
             return "bad_body"
-        if body.get("target_yaw_rad") is not None:
-            # Face-heading needs an absolute heading (RTK); not in this mode.
-            return "face_heading_unsupported_in_test"
         try:
             dx, dy, dyaw = (float(body.get(k) or 0.0) for k in ("dx_m", "dy_m", "dyaw_rad"))
         except (TypeError, ValueError):
             return "bad_body"
+        target_yaw = body.get("target_yaw_rad")
+        walk = None  # (distance, speed) of a TY-6 walk after the turn
+        if target_yaw is not None:
+            if (isinstance(target_yaw, bool) or not isinstance(target_yaw, (int, float))
+                    or not math.isfinite(target_yaw)):
+                return "bad_body"
+            if abs(dy) > 1e-6 or abs(dyaw) > 1e-6 or dx < -1e-6:
+                return "face_heading_with_motion"  # TY-1 / TY-6
+            if abs_heading_rad is None:
+                return "no_absolute_heading"  # COG / lost heading is not north
+            # The shortest turn onto the target, taken NOW (MO-3).
+            dyaw = wrap_pi(float(target_yaw) - abs_heading_rad)
+            _logger.warning("BASIC-MOTION-TEST face_heading target=%.1f deg heading=%.1f deg turn=%+.1f deg",
+                            math.degrees(target_yaw), math.degrees(abs_heading_rad), math.degrees(dyaw))
+            if dx > 1e-6:
+                # TY-6: refuse the whole command now, not after the turn
+                if dx > MAX_DIST_M + 1e-6:
+                    return "exceeds_test_limit(%.3f > %.3f)" % (dx, MAX_DIST_M)
+                walk_speed = body.get("max_speed_mps")
+                if (isinstance(walk_speed, bool) or not isinstance(walk_speed, (int, float))
+                        or not math.isfinite(walk_speed) or walk_speed <= 0.0):
+                    return "speed_missing(max_speed_mps)"
+                if walk_speed <= self.deadzone["x"]:
+                    return "speed_in_deadzone(%.3f <= %.3f)" % (walk_speed, self.deadzone["x"])
+                walk = (dx, float(walk_speed))
+                if abs(dyaw) > 1e-6:
+                    dx = 0.0  # the turn runs first; the walk waits in _then
+            if abs(dyaw) <= 1e-6 and walk is None:
+                return "zero_move"  # already facing it
         pose = _pose(state)
         if pose is None or state_age_s > STATE_STALE_S:
             return "no_odom"
@@ -493,8 +544,11 @@ class BasicMotionTest:
         self._start = pose  # progress is measured from here
         self._yaw_raw = self._yaw_total = pose[2]  # unwrap from the start yaw
         self.cmd_id = body.get("cmd_id")  # for the log lines
-        _logger.warning("BASIC-MOTION-TEST start cmd_id=%s axis=%s amount=%.3f speed=%.2f",
-                        self.cmd_id, axis, amount * (1 if val > 0 else -1), speed)
+        # a TY-6 walk follows only a turn; a walk that needs no turn runs now
+        self._then = walk if axis == "yaw" else None
+        _logger.warning("BASIC-MOTION-TEST start cmd_id=%s axis=%s amount=%.3f speed=%.2f%s",
+                        self.cmd_id, axis, amount * (1 if val > 0 else -1), speed,
+                        "" if self._then is None else " then walk %.3f m" % self._then[0])
         return None
 
     def abort(self, why: str) -> None:
@@ -504,6 +558,7 @@ class BasicMotionTest:
                             self.cmd_id, why, self._g.last_progress)
             self.last_result = why  # for the tests and the operator
         self._g = None  # idle
+        self._then = None  # a walk never outlives the turn it follows
 
     def step(self, now_s: float, state: Dict[str, Any], state_age_s: float) -> Tuple[float, float, float]:
         """(vx, vy, wz) for this tick; zero and ended when the guard stops.
@@ -539,6 +594,16 @@ class BasicMotionTest:
             # translation of the body centre counts as off-axis drift.
             prog, off = g.sign * (self._yaw_total - syaw), math.hypot(dx, dy)
         scalar, ended = g.step(now_s, prog, off)  # the guard decides
+        if ended == "done" and self._then is not None:
+            # TY-6: the turn is done, the walk starts from here
+            dist, speed = self._then
+            self._then = None
+            _logger.warning("BASIC-MOTION-TEST turn done cmd_id=%s progress=%.3f, walk %.3f m speed=%.2f",
+                            self.cmd_id, g.last_progress, dist, speed)
+            self._g = _Guard("x", 1, dist, speed)
+            self._start = pose  # the walk is measured from the turn's end
+            self._yaw_raw = self._yaw_total = pose[2]
+            return 0.0, 0.0, 0.0
         if ended is not None:
             self.abort(ended)
             return 0.0, 0.0, 0.0

@@ -35,6 +35,11 @@ four compounds (东北 ...), compounds first. The direction must END the phrase
 or be followed by 方 / 边 / 面 / 侧: "朝东门" is a place (the east gate), not
 a heading. An LLM heading is grounded when its Chinese word is in the text.
 
+A17 move_heading (2026-11-04, 99 U108): heading + distance_m from
+"<向|往|朝>[正]<方位>[面|边|方|侧]走 ... <number>米" ("向南走一米", "往东北面走三米").
+The direction word must be followed (after the optional tail) by 走: "向南门
+走" is a place. Both slots come from the text; either one missing is asked.
+
 What this does NOT do: no limits or conversions beyond the unit rule above
 (11 MI-1: P4 does not transform; 20 m caps etc. are P2's G-3 gate), no
 "steps" or "a bit" -- those carry no distance and must be asked for.
@@ -189,6 +194,16 @@ def motion_slots(intent_name: str, text: str) -> Dict[str, Any]:
     if intent_name == "face_heading":
         heading = parse_heading(text)  # A12: the eight-way enum
         return {} if heading is None else {"heading": heading}
+    if intent_name == "move_heading":
+        # A17: both slots from the text; whichever is absent stays absent
+        out: Dict[str, Any] = {}
+        heading = parse_walk_heading(text)
+        if heading is not None:
+            out["heading"] = heading
+        distance = parse_distance_m(text)
+        if distance is not None:
+            out["distance_m"] = distance
+        return out
     if intent_name == "set_turn_speed":
         level = parse_turn_speed_level(text)  # A15 (99 U104)
         return {} if level is None else {"turn_speed": level}
@@ -210,6 +225,9 @@ def missing_motion_slot(intent_name: str, slots: Optional[Mapping[str, Any]]
     """True iff an A05-A10 / A12 intent lacks its slot (number or heading)."""
     if intent_name == "face_heading":
         return (slots or {}).get("heading") is None  # A12's enum slot
+    if intent_name == "move_heading":
+        # A17 needs both
+        return any((slots or {}).get(k) is None for k in ("heading", "distance_m"))
     slot = NUMERIC_MOTION_SLOT.get(intent_name)  # the intent's slot
     return slot is not None and (slots or {}).get(slot) is None
 
@@ -255,6 +273,13 @@ def ground_llm_slots(intent_name: str, slots: Mapping[str, Any],
     Everything else the LLM returned is passed through unchanged.
     """
     out = dict(slots)  # a copy: the caller's dict is not touched
+    if intent_name == "move_heading":
+        # A17 is fastpath-only today; should an LLM ever fill it, both slots
+        # are grounded exactly as A12's heading and A05's distance are
+        heading_part = ground_llm_slots("face_heading", {k: v for k, v in out.items() if k == "heading"}, text)
+        distance_part = ground_llm_slots("move_forward", {k: v for k, v in out.items() if k == "distance_m"}, text)
+        rest = {k: v for k, v in out.items() if k not in ("heading", "distance_m")}
+        return {**rest, **heading_part, **distance_part}
     if intent_name == "face_heading" and "heading" in out:
         # A12: the enum value's Chinese word must have been said.
         word = HEADING_CN.get(out["heading"]) if isinstance(
@@ -306,3 +331,32 @@ def parse_heading(text: str) -> Optional[str]:
                 return name  # a heading, not a place name
         return None  # the cue is there but no valid direction follows
     return None  # no cue: not a heading phrase
+
+
+#: A17 cues ("向南走" / "往南走" / "朝南走"), and the tails allowed between the
+#: direction and 走 ("向南面走", "往北边走", "朝东方走"); "方向" before "方".
+_WALK_CUES = ("向", "往", "朝")
+_WALK_TAILS = ("方向", "方", "边", "面", "侧", "")
+
+
+def parse_walk_heading(text: str) -> Optional[str]:
+    """A17 heading from "<cue>[正]<direction>[tail]走", or None.
+
+    "向南走一米" -> south, "往东北面走三米" -> northeast, "向南门走" -> None.
+    Every cue occurrence is tried: "面向南面走" reads the 向 inside 面向.
+    """
+    for cue in _WALK_CUES:
+        start = text.find(cue)
+        while start >= 0:
+            rest = text[start + len(cue):]  # what follows this cue
+            if rest.startswith("正"):
+                rest = rest[1:]  # "正南" = due south
+            for name, word in HEADING_CN.items():  # compounds first
+                if not rest.startswith(word):
+                    continue
+                after = rest[len(word):]
+                if any(after.startswith(tail + "走") for tail in _WALK_TAILS):
+                    return name  # a walking direction, not a place
+                break  # this word matched but no 走: try the next cue
+            start = text.find(cue, start + 1)
+    return None

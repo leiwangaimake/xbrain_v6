@@ -802,7 +802,8 @@ intents:
   #   ★★★ 2026-08-05 删除关键词「转过来」—— 与云台 E01 large 的「转过去」一字之差、两个子系统,
   #       人与模型都会混. 用户拍板两词全删. 见 18 A11 行与 18-B Q-7.
   #       🚫 不要加回去 -- 它在中文里跨子系统同形, 加回来就是把歧义请回来.
-  face_heading:      { id: A12, keywords: ["朝北", "面向", "转向正"], slots: [heading],    route: fastpath_then_llm, auth: L1b }
+  face_heading:      { id: A12, keywords: ["朝北", "面向", "转向正", "朝东", "朝南", "朝西", "面朝东", ..., "转向北"], slots: [heading], route: fastpath_then_llm, auth: L1b }  # ★ 2026-11-04（99 U108）补：朝东/南/西 ＋ 面朝/朝向/转向×东南西北（带方位字，裸「转向」会误抓）
+  move_heading:      { id: A17, keywords: ["向南走", "往南面走", "朝北边走", ...], slots: [heading, distance_m], route: fastpath, auth: L1b }  # ★ 2026-11-04（99 U108）：<向|往|朝>×八方位×〔''|面|边〕＋走 共 72 个，全量见 configs/intents.yaml
   set_speed_profile: { id: A13, keywords: ["慢一点", "快一点", "全速"], slots: [profile],  route: fastpath,          auth: L1b }
   set_gait:          { id: A14, keywords: ["步态", "楼梯", "敏捷"],   slots: [gait],       route: fastpath,          auth: L1b }
 
@@ -1291,6 +1292,7 @@ E01 / E06 判为 `fastpath`，**不属于任何 mission 组**，与 M1 / M2 从�
 | A14 | set_gait | fastpath | gait |
 | A15 | set_turn_speed | fastpath | turn_speed |
 | A16 | set_move_speed | fastpath | move_speed |
+| A17 | move_heading | fastpath | heading, distance_m |
 | B01 | goto_waypoint | fastpath_then_llm | waypoint |
 | B02 | patrol_route | fastpath_then_llm | route, loops |
 | B03 | patrol_schedule | llm | route, loops, delay_s, at_local, day_offset |
@@ -3350,7 +3352,7 @@ l1b_correct:
 |---|:---:|---|
 | ★★★ **L0** | ★★★ **85**（★ 2026-10-30 +2：J04 / J05，`99` U101） | `A01`–`A04` `B05` `B06` `B12` `C04` `C08` `D01` `D02` `D03` `D05` `D07` `D10` `D11` ★★ `D12` ★★ `D13` ★★ `D17` ★★ `D18` `E01` `E02` `E03` `E05` `E06` `E08` `F05` `H06`（★ **28 条**）＋ ★★★ `G01`–`G47`（**47**，2026-08-16 补 `G43`–`G47` 五条 RTK/航向查询）＋ `I01`–`I06`（6）＋ `J01` `J02`（2） ★ `J04` `J05` |
 | ★★ **L1a**（并发播报） | ~~**18**~~ ~~**19**~~ **20**（★ 2026-10-30 +1：`A15`，`99` U104；★ 2026-11-03 +1：`A16`，`99` U106） | `A05` `A06`※ ★ `A15` ★ `A16` `B01` `B02` `B03` `B04` `B08` `B09` `C02` `C06` `F02` `F03`※ `F06` `F08` `F10` `F14` **`H01a`** `H02` |
-| ★★ **L1b**（前置播报） | **24** | `A07` `A08` `A09`◆ `A10`◆ `A11`◆ `A12`◆ `A13` `A14` `B10` `C01` `C03` `C05` `C07`◆ `D04` `D06` `D08` `E04` `E07` ⭐ `E09` ⭐ `E10` `F01` `F07` `H03` `H05` |
+| ★★ **L1b**（前置播报） | ~~**24**~~ **25**（★ 2026-11-04 +1：`A17`，`99` U108） | `A07` `A08` `A09`◆ `A10`◆ `A11`◆ `A12`◆ ★ `A17`◆ `A13` `A14` `B10` `C01` `C03` `C05` `C07`◆ `D04` `D06` `D08` `E04` `E07` ⭐ `E09` ⭐ `E10` `F01` `F07` `H03` `H05` |
 | ★★ **L2**（口头确认） | ★★ **11** | `B07` `F04` `F09` `F11` `F12` `F13` `F15` **`H01b`** ★★★ **`H03f`** `H04` `H07`<br>（★★ **本轮移入 `L3`**）· （★★★ **本轮删除**） |
 | ★★ **L3**（云端批准） | ★★ **3** | `B11` `D09` ★★★ **`H08`** |
 | | ★★★ **134** | ★ 78 ＋ 18 ＋ 24 ＋ 11 ＋ 3 = **134 行** = ★★ **132 意图 ＋ `H01` 拆出的第 2 行 ＋ `H03` 拆出的第 2 行**。★★ **2026-08-07 订正（GWY-P4-23）**：原 130 行 / 128 意图；`D17` `D18`（L0）与 `E09` `E10`（L1b）四条自 `18-A`/`18-B` 落入，级别真源 = `18` §13.1（同批已改） |

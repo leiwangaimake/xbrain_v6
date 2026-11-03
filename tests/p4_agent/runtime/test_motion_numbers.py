@@ -223,3 +223,52 @@ def test_the_heading_grounding_rule(value, text, kept):
     """An LLM heading is kept only when its Chinese word was said."""
     out = ground_llm_slots("face_heading", {"heading": value}, text)
     assert ("heading" in out) is kept
+
+
+
+@pytest.mark.parametrize("text,heading", [
+    ("朝东", "east"),          # 朝 + direction: only 朝北 was keyed before 2026-11-04
+    ("朝南", "south"),         # same
+    ("面朝西边", "west"),      # 面朝 cue, keyed with its direction
+    ("朝向南方", "south"),     # 朝向 cue
+    ("转向南", "south"),       # 转向 without 正
+])
+def test_the_widened_a12_phrasings_reach_the_fast_leg(text, heading):
+    """99 U108 widened A12's keywords to every cue parse_heading reads.
+    MUTATION: drop the new keywords -> no A12 hit, the turn goes to the
+    (here absent) LLM and asks -> slots None -> this fails."""
+    slots, _spoken, llm = _turn(text)  # mic turn, no LLM available
+    assert (slots, llm.calls) == ({"heading": heading}, 0)  # turned on the fast leg
+
+
+def test_a_place_after_zhao_is_asked_not_turned():
+    """"朝东门" hits A12 by keyword but names the east gate: no heading slot,
+    so with no LLM the turn asks for a direction instead of turning."""
+    slots, spoken, _llm = _turn("朝东门")  # keyword hit, parse_heading None
+    assert slots is None and "方向" in spoken  # MI-2 clarify, nothing sent
+
+# -- A17 move_heading: heading + distance (2026-11-04, 99 U108) --------------
+
+@pytest.mark.parametrize("text,slots", [
+    ("向南面走一米", {"heading": "south", "distance_m": 1.0}),
+    ("往东北走三米", {"heading": "northeast", "distance_m": 3.0}),
+    ("朝北走两米", {"heading": "north", "distance_m": 2.0}),  # outranks A12's 朝北
+])
+def test_a_heading_walk_is_read_on_the_fast_leg(text, slots):
+    """Both slots from the text, one frame, no LLM call.
+    MUTATION: drop the 3-character keywords -> "朝北走两米" becomes A12 and
+    the frame carries no distance -> the third case fails."""
+    got, _spoken, llm = _turn(text)
+    assert (got, llm.calls) == (slots, 0)
+
+
+def test_a_heading_walk_without_a_distance_asks():
+    """"向南走": the heading is there, the distance is not -- asked (MI-2)."""
+    slots, spoken, _llm = _turn("向南走")
+    assert slots is None and "多远" in spoken
+
+
+def test_a_place_is_not_a_heading_walk():
+    """"向南门走一米" names the south gate: no heading walk is sent."""
+    slots, _spoken, _llm = _turn("向南门走一米")
+    assert slots is None or "heading" not in slots

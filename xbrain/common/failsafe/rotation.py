@@ -13,7 +13,7 @@ covered=false: the left/right coverage bands carry an empty source list and a
 null clearance, so the rotation sweep ring's left and right arcs are永远未知格.
 12 S6A.3.2 (RC-1) counts an unknown cell as blocking exactly like an occupied
 one, so the rotation permission can never pass, and 18 A09~A12 (turn_left/right/
-around/face_heading) and C07 (set_motion_behavior) must all return E_BUSY with a
+around/face_heading), A17 (move_heading, which turns first) and C07 (set_motion_behavior) must all return E_BUSY with a
 three-field detail. This module is that fail-safe branch, factored into common/
 so the one blocked-rotation verdict has a single home instead of being re-derived
 at each caller.
@@ -95,11 +95,12 @@ REGION_REAR = "rear"
 # hands control to a behaviour that turns in place by bearing-error P control
 # (12 S6A.4.2 lists target_oriented as a pure-wz source). Source rows:
 #   A09 turn_left / A10 turn_right / A11 turn_around / A12 face_heading  18 S3.1
+#   A17 move_heading (turns to the heading before it walks, 99 U108)    18 S3.1
 #   C07 set_motion_behavior                                             18 S6/C
 # Held as data, cited, so the "一律 E_BUSY" assertion iterates a named set rather
 # than a magic list buried in a test. This is the fail-safe's declared coverage,
 # not a second copy of the intent registry (that lives in 16 S6.6 / p4_agent).
-ROTATION_INTENTS = frozenset({"A09", "A10", "A11", "A12", "C07"})
+ROTATION_INTENTS = frozenset({"A09", "A10", "A11", "A12", "A17", "C07"})
 
 # The intents that are lateral translation, NOT rotation: they are not blocked,
 # but under V-33 they move into a blind direction, so 18 S3.1 fixes them at L1b

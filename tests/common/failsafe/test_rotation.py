@@ -249,7 +249,7 @@ def test_rotation_and_lateral_intent_sets_match_contract():
     fabrication guard -- a renamed or deleted intent id fails here rather than
     silently shrinking the fail-safe's coverage.
     """
-    assert ROTATION_INTENTS == {"A09", "A10", "A11", "A12", "C07"}
+    assert ROTATION_INTENTS == {"A09", "A10", "A11", "A12", "A17", "C07"}
     assert LATERAL_INTENTS == {"A07", "A08"}
     for intent in ROTATION_INTENTS | LATERAL_INTENTS:
         assert _intent_is_a_row(intent, VOL18), (

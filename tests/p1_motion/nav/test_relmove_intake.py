@@ -124,3 +124,29 @@ def test_allow_motion_false_is_unhealthy():
         translate_relative_move(_body(), pose_xy=(0.0, 0.0), yaw_rad=0.0, heading_valid=True,
                                 holonomic=True, limits=LIM, allow_motion=False)
     assert ei.value.code == E_UNHEALTHY
+
+
+# --- TY-6 heading walk (A17 "向南走一米", 2026-11-04, 99 U108) ---------------
+
+def test_ty6_heading_walk_lands_along_the_target_whatever_the_body_faces():
+    """target_yaw south + dx 1, body facing east: one metre SOUTH, and the
+    progress frame is the walk direction.
+    MUTATION: rotate dx by the current yaw instead -> lands east -> red."""
+    g = _go(_body(dx=1.0, target_yaw_rad=-math.pi / 2), pose=(2.0, 3.0), yaw=0.0)
+    assert g.endpoint_xy == pytest.approx((2.0, 2.0), abs=1e-9)
+    assert g.start_yaw_rad == pytest.approx(-math.pi / 2)
+    dx_done, dy_done = achieved_body_delta(g, (2.0, 2.4))
+    assert dx_done == pytest.approx(0.6, abs=1e-9) and dy_done == pytest.approx(0.0, abs=1e-9)
+
+
+@pytest.mark.parametrize("body, want", [
+    (_body(dx=-1.0, target_yaw_rad=0.0), (E_SCHEMA, {"field": "dx_m"})),
+    (_body(dx=0.0, dy=1.0, target_yaw_rad=0.0), (E_CAPABILITY, {"item": "heading_goal"})),
+])
+def test_ty6_boundaries(body, want):
+    """A backward or sideways walk along a heading is not TY-6."""
+    assert _code(body) == want
+
+
+def test_ty6_needs_a_valid_heading_like_every_move():
+    assert _code(_body(dx=1.0, target_yaw_rad=0.0), heading_valid=False)[0] == E_NO_HEADING

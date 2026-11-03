@@ -200,6 +200,7 @@ class PoseView:
     i_fix: Optional[float]
     i_heading: Optional[float]
     fix_type: Optional[str]        # 11 S3.2.1, the fence inset key (12 S7.4)
+    yaw_capable: bool = False      # 11 S3.3: L1 dual-antenna heading (face-heading needs it)
 
 
 class NavRuntime:
@@ -698,7 +699,9 @@ class NavRuntime:
                         heading_valid=heading_valid,
                         i_fix=None if xy is None else float(i_fix),
                         i_heading=None if i_heading is None else float(i_heading),
-                        fix_type=fix_type if isinstance(fix_type, str) else None)
+                        fix_type=fix_type if isinstance(fix_type, str) else None,
+                        yaw_capable=heading_valid and yaw is not None
+                        and bool(pose.get("yaw_capable")))
 
     def _fence_geometry(self) -> Optional[CompiledFence]:
         """The active FenceSet compiled about the site frame, cached per
@@ -855,7 +858,9 @@ class NavRuntime:
                 # moment the chassis reports navigation (99 U99).
                 self._bmt.drop_pending("mode_hold")
             else:
-                self._bmt.admit(t0, self._chassis_body, age)
+                # face-heading reads the RTK heading only when it is L1
+                self._bmt.admit(t0, self._chassis_body, age,
+                                pose.yaw if pose.yaw_capable else None)
         for b in relmoves:
             emits += self._host.on_relmove(b, now=now_ms, pose=pose.xy,
                                            yaw_rad=pose.yaw, heading_valid=pose.heading_valid,
