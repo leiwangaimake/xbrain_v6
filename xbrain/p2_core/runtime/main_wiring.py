@@ -949,24 +949,47 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         from xbrain.p2_core.mode.turn_speed import TurnSpeedSetting
         _tcfg = _ts_load("p2_core")
         _tkeys = ("turn_speed.min_radps", "turn_speed.max_radps",
-                  "turn_speed.step_radps", "turn_speed.state_path")
+                  "turn_speed.step_radps", "turn_speed.state_path",
+                  "turn_speed.deadzone_radps", "turn_speed.default_radps",
+                  "move_speed.default_mps", "move_speed.min_mps",
+                  "move_speed.max_mps", "move_speed.step_mps",
+                  "move_speed.deadzone_vx_mps", "move_speed.deadzone_vy_mps",
+                  "move_speed.state_path")
         _tbad = [k for k in _tkeys if _tcfg.get(k) is _TS_MISSING
                  or _tcfg.get(k) is None]
         if _tbad:
-            raise ValueError("p2_core config (99 U104): missing or "
+            raise ValueError("p2_core config (99 U104 / U106): missing or "
                              "unassigned: %s (re-run the freeze line)"
                              % ", ".join(_tbad))
         turn_speed = TurnSpeedSetting(
             str(_tcfg.get("turn_speed.state_path")),
             float(_tcfg.get("turn_speed.min_radps")),
             float(_tcfg.get("turn_speed.max_radps")),
-            float(_tcfg.get("turn_speed.step_radps")))
+            float(_tcfg.get("turn_speed.step_radps")),
+            float(_tcfg.get("turn_speed.default_radps")),
+            float(_tcfg.get("turn_speed.deadzone_radps")))
         _logger.info("p2 turn speed %.2f rad/s (%s)", turn_speed.effective(),
                      turn_speed.origin())
+        # 99 U106 (2026-11-03): the move speed for forward / back / strafe,
+        # default 0.2 m/s, voice set_move_speed adjusts it, an explicit value
+        # survives restarts. One value for both linear axes, so its floor must
+        # clear the LARGER of the two control deadzones.
+        from xbrain.p2_core.mode.move_speed import MoveSpeedSetting
+        move_speed = MoveSpeedSetting(
+            str(_tcfg.get("move_speed.state_path")),
+            float(_tcfg.get("move_speed.min_mps")),
+            float(_tcfg.get("move_speed.max_mps")),
+            float(_tcfg.get("move_speed.step_mps")),
+            float(_tcfg.get("move_speed.default_mps")),
+            max(float(_tcfg.get("move_speed.deadzone_vx_mps")),
+                float(_tcfg.get("move_speed.deadzone_vy_mps"))))
+        _logger.info("p2 move speed %.2f m/s (%s)", move_speed.effective(),
+                     move_speed.origin())
 
         mode_face = ModeFace(motion_behavior_of=_behavior_of,
                              payload_state_of=_payload_state_of,
                              turn_speed=turn_speed,
+                             move_speed=move_speed,
                              arb_snapshot=_arb_snapshot,
                              publish=_publish_mode_state,
                              on_transition=_on_mode_transition)
@@ -1038,7 +1061,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # an uncalibrated safety value. Both refuse startup, but they say
         # different things because the fix is different.
         _bad = []
-        for _path in ("rel_move.max_distance_m", "rel_move.max_angle_deg"):
+        for _path in ("rel_move.max_distance_m", "rel_move.max_angle_deg",
+                      "rel_move.holonomic"):
             _v = _p2cfg.get(_path)
             if _v is MISSING:
                 _bad.append("%s absent from the resolved snapshot "
@@ -1053,6 +1077,14 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         motion_limits = MotionLimits(
             max_distance_m=float(_p2cfg.get("rel_move.max_distance_m")),
             max_angle_deg=float(_p2cfg.get("rel_move.max_angle_deg")))
+        # G-7 body capability (spec.holonomic via ${common.spec.holonomic}).
+        # A bool and nothing else: a string "true" from a hand-edited snapshot
+        # would otherwise read as truthy and let a non-holonomic body strafe.
+        motion_holonomic = _p2cfg.get("rel_move.holonomic")
+        if not isinstance(motion_holonomic, bool):
+            raise ValueError("p2_core config (11 S9.3.2A.5 G-7): "
+                             "rel_move.holonomic must be true or false, got %r"
+                             % (motion_holonomic,))
         motion_queue: "queue.Queue" = queue.Queue(maxsize=64)
         motion_ack_pub = gen.declare_publisher(CMD_MOTION_INTENT_ACK_TOPIC)
         rel_move_pub = gen.declare_publisher(CMD_RELATIVE_MOVE_TOPIC)
@@ -1268,7 +1300,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     estop_coord.maybe_rearm(int(now * 1000))
                     _ack = _handle_motion_intent(
                         _raw, motion_limits, state_cache, health_agg,
-                        factor_cfg, rel_move_pub, turn_speed)
+                        factor_cfg, rel_move_pub, turn_speed,
+                        holonomic=motion_holonomic, move_speed=move_speed)
                     motion_ack_pub.put(json.dumps(
                         _ack, ensure_ascii=False).encode("utf-8"))
                 # 11 S2.2: health/summary at 1 Hz. Derived every pass from the
@@ -1656,8 +1689,13 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
 
 
 def _handle_motion_intent(raw, limits, state_cache, health_agg, factor_cfg,
-                          rel_move_pub, turn_speed=None):
+                          rel_move_pub, turn_speed=None, holonomic=None,
+                          move_speed=None):
     """One cmd/motion/intent frame: G-1..G-11, then forward or refuse.
+
+    holonomic is the body's spec.holonomic, read from the config at startup.
+    None (the default) refuses move_left / move_right at G-7 -- the safe
+    direction for a caller that has not read the spec.
 
     Never raises -- a malformed frame must not take down the loop that also
     runs health and the device domains.
@@ -1682,11 +1720,8 @@ def _handle_motion_intent(raw, limits, state_cache, health_agg, factor_cfg,
             pose=state_cache.get("pose"),
             robot=state_cache.get("robot"),
             teach=state_cache.get("teach"),
-            # holonomic is a body spec with no config key yet, so it stays
-            # None -> G-7 refuses move_left / move_right. That is the correct
-            # direction: a chassis whose spec we cannot read must not be told
-            # to walk sideways. The other six intents are unaffected.
-            holonomic=None)
+            # G-7: spec.holonomic from rel_move.holonomic (startup-checked).
+            holonomic=holonomic)
         if not verdict.passed:
             _logger.info("p2 motion intent refused at %s (%s)",
                          verdict.gate, verdict.code)
@@ -1705,6 +1740,11 @@ def _handle_motion_intent(raw, limits, state_cache, health_agg, factor_cfg,
             # default max. P1 turns at it (basic-motion executor) and the
             # chassis Tier 1 still clamps to its own limit.
             params["max_yaw_rate_radps"] = turn_speed.effective()
+        if move_speed is not None:
+            # MO-2 max_speed_mps (99 U106): the operator's move speed for
+            # forward / back / strafe, default 0.2 m/s. P1 moves at it and the
+            # chassis Tier 1 still clamps to its own limits.
+            params["max_speed_mps"] = move_speed.effective()
         rel_move_pub.put(json.dumps(
             to_relative_move(cmd, rm_cmd_id=rm_cmd_id, params=params),
             ensure_ascii=False).encode("utf-8"))

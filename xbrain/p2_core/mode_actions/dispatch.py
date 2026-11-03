@@ -6,12 +6,15 @@ File: dispatch.py
 Brief: CHK-1-13 ModeCommand action 六值分派 + SP-C1..C3 + ack.detail.applied 三字段
 
 Description:
-11 §7.3 ModeCommand.action closed set (SEVEN values, first-fail rejects):
+11 §7.3 ModeCommand.action closed set (EIGHT values, first-fail rejects):
   set_voice_mode, exit_broadcast, exit_alarm, set_behavior,
-  set_speed_profile, reset_profile_lock, set_turn_speed
+  set_speed_profile, reset_profile_lock, set_turn_speed, set_move_speed
   (set_turn_speed added 2026-10-30, 99 U104: the robot's in-place turn speed,
   turn_speed in {faster, slower, max, min}; ModeFace applies it to the
-  persisted TurnSpeedSetting and acks the resulting value.)
+  persisted TurnSpeedSetting and acks the resulting value.
+  set_move_speed added 2026-11-03, 99 U106: the move speed for forward /
+  back / strafe, move_speed in the same four levels; ModeFace applies it to
+  the persisted MoveSpeedSetting the same way.)
 
 SP-C1  set_speed_profile.profile in {obstacle_avoid, patrol}
        -- unknown value never silently degraded (§13.6 越界必抛)
@@ -52,10 +55,14 @@ ACTION_CLOSED_SET = (
     "set_speed_profile",
     "reset_profile_lock",
     "set_turn_speed",
+    "set_move_speed",
 )
 
 #: set_turn_speed.turn_speed closed set (99 U104); mirrors mode/turn_speed.LEVELS.
 TURN_SPEED_LEVELS = ("faster", "slower", "max", "min")
+
+#: set_move_speed.move_speed closed set (99 U106); mirrors mode/move_speed.LEVELS.
+MOVE_SPEED_LEVELS = ("faster", "slower", "max", "min")
 
 
 SPEED_PROFILE_CLOSED_SET = ("obstacle_avoid", "patrol")
@@ -133,6 +140,16 @@ def _handle_set_turn_speed(cmd: dict, state: dict) -> DispatchResult:
                           applied={"turn_speed": level})
 
 
+def _handle_set_move_speed(cmd: dict, state: dict) -> DispatchResult:
+    """Shape check only, as set_turn_speed (99 U106): ModeFace applies the
+    level to the persisted move speed; an unknown level is refused."""
+    level = cmd.get("move_speed")
+    if level not in MOVE_SPEED_LEVELS:
+        return _reject(E_SCHEMA, f"move_speed {level!r} not in closed set")
+    return DispatchResult(accepted=True, code="OK",
+                          applied={"move_speed": level})
+
+
 def _handle_set_voice_mode(cmd: dict, state: dict) -> DispatchResult:
     """Minimal shape check; full validation lives in BIZ-P2-11 SM."""
     if "voice_mode" not in cmd:
@@ -166,6 +183,7 @@ _HANDLERS: Dict[str, Any] = {
     "set_speed_profile":  _handle_set_speed_profile,
     "reset_profile_lock": _handle_reset_profile_lock,
     "set_turn_speed":     _handle_set_turn_speed,
+    "set_move_speed":     _handle_set_move_speed,
 }
 
 

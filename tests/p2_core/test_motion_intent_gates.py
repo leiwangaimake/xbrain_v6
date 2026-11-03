@@ -424,3 +424,40 @@ def test_every_intent_in_the_closed_set_converts():
         moved = (body["dx_m"] or body["dy_m"] or body["dyaw_rad"]
                  or body.get("target_yaw_rad"))
         assert moved, f"{intent} converted to a no-op"
+
+
+def test_handler_passes_the_configured_holonomic_to_g7(monkeypatch):
+    """G-7 gets spec.holonomic from the wiring, not a hard-coded None.
+
+    MUTATION: pass holonomic=None to evaluate() in _handle_motion_intent (the
+    pre-2026-11-03 code, every strafe refused with E_CAPABILITY) -> fails.
+    """
+    import json as _json
+    from xbrain.p2_core.runtime import main_wiring as mw
+    from xbrain.p2_core.runtime import motion_intent_wiring as miw
+
+    monkeypatch.setattr(miw, "parse_intent_envelope",
+                        lambda body: {"cmd_id": "mi-1", "intent": "move_left",
+                                      "slots": {"distance_m": 1.0},
+                                      "channel": "cloud"})
+    seen = {}
+
+    class _Verdict:
+        passed = False
+        gate, code, detail = "G-7", "E_CAPABILITY", {}
+
+    def _evaluate(cmd, **kw):
+        seen["holonomic"] = kw.get("holonomic")
+        return _Verdict()
+
+    monkeypatch.setattr(miw, "evaluate", _evaluate)
+
+    class _Health:
+        def build_summary(self, cfg):
+            return {}
+
+    mw._handle_motion_intent(b"{}", None, {}, _Health(), None, None,
+                             holonomic=True)
+    assert seen["holonomic"] is True
+    mw._handle_motion_intent(b"{}", None, {}, _Health(), None, None)
+    assert seen["holonomic"] is None

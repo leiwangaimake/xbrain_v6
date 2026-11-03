@@ -74,9 +74,11 @@ pytestmark = pytest.mark.no_device
 
 # --- CHK-1-13 ModeCommand dispatch ---
 
-def test_action_closed_set_has_six_rows():
-    """11 S7.3 action table has EXACTLY six rows -- no fewer, no more."""
-    assert len(ACTION_CLOSED_SET) == 6
+def test_action_closed_set_has_eight_rows():
+    """11 S7.3 action table has EXACTLY eight rows -- no fewer, no more.
+    6 -> 7: set_turn_speed (2026-10-30, 99 U104; this count was not moved
+    then and stayed red); 7 -> 8: set_move_speed (2026-11-03, 99 U106)."""
+    assert len(ACTION_CLOSED_SET) == 8
 
 
 def test_dispatch_unknown_action_rejected():
@@ -103,6 +105,8 @@ def test_dispatch_each_action_has_a_handler(action):
         "reset_profile_lock": {
             "action": action,
             "confirm_token": {"issuer": "p2", "value": "tk-1"}},
+        "set_turn_speed": {"action": action, "turn_speed": "faster"},  # 99 U104
+        "set_move_speed": {"action": action, "move_speed": "faster"},  # 99 U106
     }
     r = dispatch(stub_by_action[action], profile_state={})
     assert r.accepted, (

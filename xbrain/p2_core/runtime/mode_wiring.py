@@ -206,6 +206,7 @@ class ModeFace:
                  payload_state_of: Optional[
                      Callable[[], Optional[Dict[str, Any]]]] = None,
                  turn_speed: Optional[Any] = None,
+                 move_speed: Optional[Any] = None,
                  ) -> None:
         self._machine = machine or ModeStateMachine()
         self._publish = publish
@@ -224,6 +225,11 @@ class ModeFace:
         # and its snapshot goes out as state/mode.turn_speed. None = not wired
         # (tests): set_turn_speed is then refused, never acked as done.
         self._turn_speed = turn_speed
+        # 99 U106 (2026-11-03): the move speed for forward / back / strafe
+        # (mode/move_speed.MoveSpeedSetting), same handling as the turn speed:
+        # set_move_speed is applied to it, its snapshot goes out as
+        # state/mode.move_speed, and None (tests) refuses the action.
+        self._move_speed = move_speed
         # 速度档位状态, dispatch 的 SP-C3 三字段从这里取. 未标定值不写默认数
         # (CLAUDE.md 3.1): profile 是"当前档", 由后续 set_speed_profile 落定,
         # 这里只记状态不设安全上限.
@@ -319,6 +325,19 @@ class ModeFace:
             except OSError as exc:
                 return mode_ack(cmd_id, "error", E_INTERNAL,
                                 {"reason": "turn speed not saved: %s" % exc})
+            self._publish_state(now_mono_ms=now_mono_ms)
+            return mode_ack(cmd_id, "accepted", "OK", {"applied": applied})
+        if target is None and cmd.get("action") == "set_move_speed":
+            # 99 U106: apply to the persisted setting; the ack carries the
+            # RESULT (value / changed / at_limit), not the request.
+            if self._move_speed is None:
+                return mode_ack(cmd_id, "rejected", E_NOT_IMPLEMENTED,
+                                {"reason": "move speed setting not wired"})
+            try:
+                applied = self._move_speed.apply(cmd["move_speed"])
+            except OSError as exc:
+                return mode_ack(cmd_id, "error", E_INTERNAL,
+                                {"reason": "move speed not saved: %s" % exc})
             self._publish_state(now_mono_ms=now_mono_ms)
             return mode_ack(cmd_id, "accepted", "OK", {"applied": applied})
         if target is None:
@@ -581,5 +600,8 @@ class ModeFace:
         if self._turn_speed is not None:
             # 11 S4.3 turn_speed (99 U104): value + bounds + origin.
             body["turn_speed"] = self._turn_speed.snapshot()
+        if self._move_speed is not None:
+            # 11 S4.3 move_speed (99 U106): value + bounds + origin.
+            body["move_speed"] = self._move_speed.snapshot()
         self._publish(STATE_MODE_TOPIC,
                       json.dumps(body, ensure_ascii=False).encode("utf-8"))

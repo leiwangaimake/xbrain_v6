@@ -3,11 +3,12 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_turn_speed.py
-Brief: The in-place turn speed defaults to max, steps by 0.1 inside [0.4, 0.6], keeps an explicit value across restarts, and reaches every relmove as max_yaw_rate_radps
+Brief: The in-place turn speed defaults to 0.6, steps by 0.1 inside [0.4, 0.8], keeps an explicit value across restarts, and reaches every relmove as max_yaw_rate_radps
 Description:
 User ruling 2026-10-30 (99 U104): turn at the maximum by default; "机器人转速
 快一点 / 慢一点 / 最快 / 最慢" adjusts it, never below the twist threshold; an
-explicit value survives restarts like the volume. These cases cover:
+explicit value survives restarts like the volume. 2026-11-03 (U104 continued
+3): the default is its own key, 0.6, no longer the max 0.8. These cases cover:
   * TurnSpeedSetting: default, steps, bounds, at_limit, persistence, a stored
     value clamped after the range moved, an unreadable file, a bad config;
   * the dispatcher refuses an unknown level; ModeFace applies the action,
@@ -33,39 +34,47 @@ pytestmark = pytest.mark.no_device  # pure in-process
 
 with open("/opt/xbrain_v6/configs/p2_core.yaml", encoding="utf-8") as _fh:  # production config
     TS = yaml.safe_load(_fh)["turn_speed"]  # the U104 block
+with open("/opt/xbrain_v6/configs/models/m20s.yaml", encoding="utf-8") as _fh:  # body spec
+    DZ = yaml.safe_load(_fh)["common"]["spec"]["min_cmd_wz_radps"]  # yaw control deadzone (2026-11-03)
 
 
 def _setting(tmp_path, name="ts.json"):  # a setting on the production bounds
-    return TurnSpeedSetting(str(tmp_path / name), TS["min_radps"], TS["max_radps"], TS["step_radps"])  # fresh
+    return TurnSpeedSetting(str(tmp_path / name), TS["min_radps"], TS["max_radps"], TS["step_radps"],
+                            TS["default_radps"], DZ)  # fresh
 
 
 def test_production_bounds_are_the_ruling():  # the ruled numbers
-    """The user's numbers: max 0.6 (interim), min 0.4, step 0.1."""
-    assert (TS["max_radps"], TS["min_radps"], TS["step_radps"]) == (0.6, 0.4, 0.1)  # max 0.6 interim, min 0.4, step 0.1
+    """The user's numbers (2026-11-03): default 0.6, min 0.4, max 0.8, step 0.1."""
+    assert (TS["default_radps"], TS["min_radps"], TS["max_radps"], TS["step_radps"]) == (0.6, 0.4, 0.8, 0.1)  # ruled
+    # The deadzone is the body spec's, by reference -- not a second number here.
+    assert TS["deadzone_radps"] == "${common.spec.min_cmd_wz_radps}" and TS["min_radps"] > DZ  # floor clears it
 
 
-def test_default_is_max(tmp_path):  # no file yet
+def test_default_is_the_configured_default_not_max(tmp_path):  # no file yet
+    """MUTATION: default to max_radps again (the U104 rule) -> 0.8 -> fails."""
     s = _setting(tmp_path)  # nothing stored
-    assert s.effective() == 0.6 and s.origin() == "default"  # default = max
-    assert s.snapshot() == {"radps": 0.6, "min_radps": 0.4, "max_radps": 0.6, "origin": "default"}  # state/mode.turn_speed shape
+    assert s.effective() == 0.6 and s.origin() == "default"  # default 0.6
+    assert s.snapshot() == {"radps": 0.6, "min_radps": 0.4, "max_radps": 0.8, "origin": "default"}  # state/mode.turn_speed shape
 
 
 def test_steps_bounds_and_at_limit(tmp_path):  # faster / slower / max / min
-    """MUTATION: drop the min() clamp on faster -> 0.7 -> fails."""
-    s = _setting(tmp_path)  # starts at max
-    assert s.apply("faster") == {"turn_speed_radps": 0.6, "changed": False, "at_limit": "max"}  # already max
-    assert s.apply("slower") == {"turn_speed_radps": 0.5, "changed": True, "at_limit": None}  # one step
+    """MUTATION: drop the min() clamp on faster -> 0.9 -> fails."""
+    s = _setting(tmp_path)  # starts at the default 0.6
+    assert s.apply("faster") == {"turn_speed_radps": 0.7, "changed": True, "at_limit": None}  # one step
+    assert s.apply("faster") == {"turn_speed_radps": 0.8, "changed": True, "at_limit": "max"}  # ceiling
+    assert s.apply("faster") == {"turn_speed_radps": 0.8, "changed": False, "at_limit": "max"}  # never above
+    s.apply("slower"); s.apply("slower"); s.apply("slower")  # 0.7, 0.6, 0.5
     assert s.apply("slower") == {"turn_speed_radps": 0.4, "changed": True, "at_limit": "min"}  # floor
     assert s.apply("slower") == {"turn_speed_radps": 0.4, "changed": False, "at_limit": "min"}  # never below
-    assert s.apply("max")["turn_speed_radps"] == 0.6 and s.apply("min")["turn_speed_radps"] == 0.4  # jumps
+    assert s.apply("max")["turn_speed_radps"] == 0.8 and s.apply("min")["turn_speed_radps"] == 0.4  # jumps
 
 
 def test_repeated_steps_land_exactly_on_the_bounds(tmp_path):  # no float drift
-    """Integer milli-rad/s: two "快一点" from 0.4 is exactly 0.6, not 0.6000000001."""
+    """Integer milli-rad/s: four "快一点" from 0.4 is exactly 0.8, not 0.8000000001."""
     s = _setting(tmp_path)  # fresh
     s.apply("min")  # 0.4
-    s.apply("faster")  # 0.5
-    assert s.apply("faster") == {"turn_speed_radps": 0.6, "changed": True, "at_limit": "max"}  # exactly max
+    s.apply("faster"); s.apply("faster"); s.apply("faster")  # 0.5, 0.6, 0.7
+    assert s.apply("faster") == {"turn_speed_radps": 0.8, "changed": True, "at_limit": "max"}  # exactly max
 
 
 def test_values_live_on_the_milli_grid(tmp_path):
@@ -76,37 +85,43 @@ def test_values_live_on_the_milli_grid(tmp_path):
     (tmp_path / "ts.json").write_text(json.dumps({"turn_speed_radps": 0.5004}), encoding="utf-8")  # off-grid
     s = _setting(tmp_path)  # loads it
     assert s.effective() == 0.5  # snapped to the milli grid
-    assert s.apply("faster") == {"turn_speed_radps": 0.6, "changed": True, "at_limit": "max"}  # lands on max
+    s.apply("faster"); s.apply("faster")  # 0.6, 0.7
+    assert s.apply("faster") == {"turn_speed_radps": 0.8, "changed": True, "at_limit": "max"}  # lands on max
 
 
 def test_explicit_value_survives_a_restart(tmp_path):  # persistence
-    """MUTATION: skip the file write -> the new instance starts at max -> fails."""
+    """MUTATION: skip the file write -> the new instance starts at 0.6 -> fails."""
     _setting(tmp_path).apply("slower")  # 0.5, persisted
     again = _setting(tmp_path)  # "restart"
-    assert again.effective() == 0.5 and again.origin() == "explicit"  # restored, not reset to max
+    assert again.effective() == 0.5 and again.origin() == "explicit"  # restored, not reset to the default
     assert json.loads((tmp_path / "ts.json").read_text(encoding="utf-8")) == {"turn_speed_radps": 0.5}  # the file on disk
 
 
 def test_stored_value_outside_the_range_is_clamped(tmp_path):  # config range moved
     """The config max dropped below a stored value: never turn faster than max."""
     (tmp_path / "ts.json").write_text(json.dumps({"turn_speed_radps": 0.9}), encoding="utf-8")  # above max
-    assert _setting(tmp_path).effective() == 0.6  # clamped down to max
+    assert _setting(tmp_path).effective() == 0.8  # clamped down to max
     (tmp_path / "ts.json").write_text(json.dumps({"turn_speed_radps": 0.1}), encoding="utf-8")  # below min
     assert _setting(tmp_path).effective() == 0.4  # never into the twist band
 
 
 @pytest.mark.parametrize("content", ["{", "[1]", json.dumps({"turn_speed_radps": "fast"}),  # truncated / list / string
                                      json.dumps({"turn_speed_radps": True})])  # bool is not a number
-def test_unusable_file_falls_back_to_max(tmp_path, content):  # default on bad file
+def test_unusable_file_falls_back_to_the_default(tmp_path, content):  # default on bad file
     (tmp_path / "ts.json").write_text(content, encoding="utf-8")  # truncated / foreign
     s = _setting(tmp_path)  # loads the bad file
-    assert s.effective() == 0.6 and s.origin() == "default"  # max, origin default
+    assert s.effective() == 0.6 and s.origin() == "default"  # the default, origin default
 
 
-@pytest.mark.parametrize("lo, hi, st", [(0.6, 0.4, 0.1), (0.0, 0.6, 0.1), (0.4, 0.6, 0.0)])  # inverted / zero min / zero step
-def test_bad_config_raises(tmp_path, lo, hi, st):  # config errors
+@pytest.mark.parametrize("lo, hi, st, df, dz", [(0.6, 0.4, 0.1, 0.5, 0.3), (0.0, 0.6, 0.1, 0.5, 0.0),  # inverted / zero min
+                                                 (0.4, 0.6, 0.0, 0.5, 0.3),  # zero step
+                                                 (0.4, 0.8, 0.1, 0.9, 0.3), (0.4, 0.8, 0.1, 0.3, 0.3),  # default above / below range
+                                                 (0.3, 0.6, 0.1, 0.5, 0.3), (0.2, 0.6, 0.1, 0.5, 0.3)])  # floor AT / below the deadzone
+def test_bad_config_raises(tmp_path, lo, hi, st, df, dz):  # config errors
+    """MUTATION: compare the floor with <= instead of < against the deadzone
+    (accept min == deadzone, a speed that does not step) -> fails."""
     with pytest.raises(ValueError):  # loud at start
-        TurnSpeedSetting(str(tmp_path / "x.json"), lo, hi, st)  # must raise
+        TurnSpeedSetting(str(tmp_path / "x.json"), lo, hi, st, df, dz)  # must raise
 
 
 def test_dispatcher_refuses_an_unknown_level():  # closed set
@@ -143,7 +158,7 @@ def test_state_mode_carries_turn_speed_every_beat(tmp_path):  # 1 Hz republish
     """MUTATION: drop the turn_speed line in _publish_state -> fails."""
     face, sent = _face(tmp_path)  # wired face
     face.republish(now_mono_ms=1000)  # the 1 Hz floor
-    assert json.loads(sent[-1][1].decode("utf-8"))["turn_speed"]["radps"] == 0.6  # default max
+    assert json.loads(sent[-1][1].decode("utf-8"))["turn_speed"]["radps"] == 0.6  # the default
 
 
 def test_unwired_setting_is_refused_not_acked(tmp_path):  # no setting wired
