@@ -205,6 +205,12 @@ _TURN_SPEED_LABELS = {
     "max": "机器人转速调到最快", "min": "机器人转速调到最慢",
 }
 
+#: A16 set_move_speed ack wording per level (99 U106).
+_MOVE_SPEED_LABELS = {
+    "faster": "移动速度调快一点", "slower": "移动速度调慢一点",
+    "max": "移动速度调到最快", "min": "移动速度调到最慢",
+}
+
 # Intents whose complete stop phrases the safety bypass leaves to them
 # (2026-10-25, decided as option (b): keep the keywords and CF-1 as they are,
 # make the bypass yield). 18's E08 boundary table: a bare 停 / 停止 / 停下 is
@@ -1254,11 +1260,17 @@ class TurnOrchestrator:
         command is not silent. A Chinese label when known, else 'received'.
         (Full L1a/L1b restate with slot values is GWY-P4-35 wiring; this is
         the minimal feedback the 2026-08-11 ORIN test showed was missing.)
-        A15 names the direction it was asked for (99 U104); the resulting
-        value is P2's (ack.applied), never predicted here."""
+        A15 / A16 name the direction they were asked for (99 U104 / U106);
+        the resulting value is P2's (ack.applied), never predicted here."""
         if entry.id == "A15":
             level = ((extra or {}).get("mode_command") or {}).get("turn_speed")
             label = _TURN_SPEED_LABELS.get(level)
+            if label:
+                return "好的," + label
+        if entry.id == "A16":
+            # 99 U106: the direction asked for; the value is P2's ack.applied.
+            level = ((extra or {}).get("mode_command") or {}).get("move_speed")
+            label = _MOVE_SPEED_LABELS.get(level)
             if label:
                 return "好的," + label
         label = _CN_LABELS.get(entry.id)

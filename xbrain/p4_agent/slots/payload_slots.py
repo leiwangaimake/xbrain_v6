@@ -103,9 +103,9 @@ def parse_strobe_mode(text: str) -> Optional[int]:
 
 
 # --- D10 volume 0..100 (18 S6.4) ----------------------------------------
-# Absolute anchors and relative deltas. The relative step (+/-20) is an
-# initial value (18 gives no delta), tuned in the field like 18-A S1.1's
-# brightness +/-7. Not a safety value (audio level).
+# Absolute anchors and relative deltas. The relative step (_VOL_STEP, +/-25)
+# is an initial value (18 gives no delta), tuned in the field like 18-A S1.1's
+# brightness +/-7. Not a safety value (audio level). Summary: 14 S11.1.
 # '音量调到最小' etc. -> a low NONZERO value, not 0. 2026-08-11 ORIN: the
 # device accepts [14]00 with ok but does NOT actually change volume (0 is
 # ignored/no-op); any nonzero value works (25/50/75/100 all effective). So

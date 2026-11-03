@@ -69,6 +69,9 @@ _MODE_INTENTS: Dict[str, tuple] = {
     # action for the same D-04 reason as A13: no separate motion key that can
     # raise a speed; P2 owns the value, its bounds and its persistence.
     "set_turn_speed": ("set_turn_speed", None),
+    # A16 (2026-11-03, 99 U106): the robot's move speed (forward / back /
+    # strafe), same D-04 reason as A15: P2 owns the value, bounds, persistence.
+    "set_move_speed": ("set_move_speed", None),
     # B12 stop_follow. 18's effect column reads "exit the target-directed
     # behaviour" -- that is a motion BEHAVIOUR, not a task action, so it is a
     # ModeCommand set_behavior back to NAV-50's `normal` and NOT a cmd/task
@@ -91,6 +94,9 @@ PROFILE_VALUES = frozenset({"obstacle_avoid", "patrol"})
 
 #: A15 turn_speed closed set (11 S7.3 set_turn_speed, 99 U104).
 TURN_SPEED_VALUES = frozenset({"faster", "slower", "max", "min"})
+
+#: A16 move_speed closed set (11 S7.3 set_move_speed, 99 U106).
+MOVE_SPEED_VALUES = frozenset({"faster", "slower", "max", "min"})
 
 
 class ModeRequestError(RuntimeError):
@@ -142,6 +148,14 @@ def to_mode_command(intent_name: str, *, slots: Mapping[str, Any],
             raise ModeRequestError("turn_speed %r is not one of %s"
                                    % (level, sorted(TURN_SPEED_VALUES)))
         payload["turn_speed"] = level
+    if action == "set_move_speed":
+        level = slots.get("move_speed")
+        if level not in MOVE_SPEED_VALUES:
+            # No level word ("移动速度..." alone): ask again, never guess --
+            # a guess can make the robot move faster.
+            raise ModeRequestError("move_speed %r is not one of %s"
+                                   % (level, sorted(MOVE_SPEED_VALUES)))
+        payload["move_speed"] = level
     if action == "set_behavior":
         behavior = _FIXED_BEHAVIOR.get(intent_name, slots.get("behavior"))
         if not isinstance(behavior, str) or behavior not in BEHAVIOR_VALUES:

@@ -192,6 +192,11 @@ def motion_slots(intent_name: str, text: str) -> Dict[str, Any]:
     if intent_name == "set_turn_speed":
         level = parse_turn_speed_level(text)  # A15 (99 U104)
         return {} if level is None else {"turn_speed": level}
+    if intent_name == "set_move_speed":
+        # A16 (99 U106): the same four level words ("调到最快" before "快");
+        # the 转快 / 转慢 entries never occur in an A16 keyword.
+        level = parse_turn_speed_level(text)
+        return {} if level is None else {"move_speed": level}
     slot = NUMERIC_MOTION_SLOT.get(intent_name)  # distance or angle
     if slot is None:  # not a motion intent
         return {}  # not a numeric motion intent
