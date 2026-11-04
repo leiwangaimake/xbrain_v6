@@ -110,6 +110,8 @@ unwired_system:
     H08: "关机"
     # 2026-11-02 (99 U105): A13 is classified but P1 never receives the profile.
     A13: "速度档位调整"
+    # 99 U111: 11 S7.2 has no skip action and no patrol executor is wired.
+    B10: "跳过航点"
 
 # -- J04 thanks / J05 farewell (2026-10-30, 99 U101 user ruling; field test P231 / P232) --
 thanks:

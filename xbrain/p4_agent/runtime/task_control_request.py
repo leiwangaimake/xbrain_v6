@@ -31,6 +31,18 @@ control 命令就是把猜的动作推给 P3, 那正是 S7.2 要防的.
     任务动作; 它对应 S7.3 ModeCommand 的 set_behavior(NAV-50 三值回 normal),
     走 cmd/mode, 见 mode_request.py.
 
+*** 99 U111 (2026-11-04 整栈实测): "继续"从来没恢复过任何任务.
+暂停让当前任务进 suspended, 调度器同一秒拉起队列里的下一条, 于是"继续"
+解析到的 current 是那条新任务, P3 回 E_TASK_STATE(它在 running); 急停后
+current 为 null, 只能答"没有正在执行的任务". 可恢复的任务从来不在 current,
+在 state/task 的 suspended[](11 S4.4) 里. 现在按动作取目标:
+  pause  -> current(正在跑的那条);
+  resume -> suspended[] 里最近挂起的 passive 条(人工暂停 / 急停 / 低电);
+            yielding 不选 -- 它会自己回来, 人工 resume 被契约拒收(S7.2);
+  cancel -> current; 没有 current 时同 resume 的选法(暂停之后说"取消任务",
+            操作员指的就是刚暂停的那条).
+解析结果仍是一个写死的 task_id, S7.2 的四条理由照旧成立.
+
 Boundaries: 只解析与打包. 不判任务状态(那是 P3 的状态机), 不读钟, 不发帧.
 """
 from __future__ import annotations
@@ -82,6 +94,37 @@ def current_task_from_state(state: Optional[Mapping[str, Any]]
     return dict(current) if isinstance(current, Mapping) else None
 
 
+def latest_passive_suspended(state: Optional[Mapping[str, Any]]
+                             ) -> Optional[Dict[str, Any]]:
+    """state/task.suspended[] 里最近挂起的 passive 条, 或 None (99 U111).
+
+    按 suspended_ts 取最大; 没有时间的条排最后(拿不准就不抢先).
+    """
+    body = (state or {}).get(STATE_TASK_KEY)
+    items = body.get("suspended") if isinstance(body, Mapping) else None
+    if not isinstance(items, list):
+        return None
+    passive = [i for i in items if isinstance(i, Mapping)
+               and i.get("suspend_kind") == "passive"
+               and isinstance(i.get("task_id"), str) and i.get("task_id")]
+    if not passive:
+        return None
+    return dict(max(passive, key=lambda i: (
+        isinstance(i.get("suspended_ts"), (int, float)),
+        i.get("suspended_ts") or 0)))
+
+
+def control_target(action: str, state: Optional[Mapping[str, Any]]
+                   ) -> Optional[Dict[str, Any]]:
+    """The task an action means (module docstring, 99 U111), or None."""
+    if action == "resume":
+        return latest_passive_suspended(state)
+    current = current_task_from_state(state)
+    if current is not None or action == "pause":
+        return current
+    return latest_passive_suspended(state)   # cancel with nothing running
+
+
 def to_task_control_command(intent_name: str, *,
                             state: Optional[Mapping[str, Any]],
                             cmd_id: str, source: str,
@@ -97,12 +140,13 @@ def to_task_control_command(intent_name: str, *,
         # P3 只认显式表里的来源; 闭集外是调用方 bug.
         raise ValueError("task source %r not in %s"
                          % (source, sorted(turn_labels.TASK_SOURCES)))
-    active = current_task_from_state(state)
+    active = control_target(action, state)
     task_id = (active or {}).get("task_id")
     if not isinstance(task_id, str) or not task_id:
         # NO 不发一条 task_id 为空的 control 命令: 那等于把"猜哪条"推给 P3,
         # 正是 S7.2 禁止的那件事.
-        raise TaskControlError("no_active_task")
+        raise TaskControlError(
+            "no_suspended_task" if action == "resume" else "no_active_task")
     payload: Dict[str, Any] = {
         "cmd_id": cmd_id,
         "action": action,

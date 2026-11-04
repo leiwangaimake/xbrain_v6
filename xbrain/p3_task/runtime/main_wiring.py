@@ -480,6 +480,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # unfreeze, only an explicit p2 signal (CLAUDE.md 3.6: no bypass).
             from xbrain.p3_task.lifecycle.estop import (
                 EstopController,
+                human_source,
+                is_human_pause_command,
                 is_human_resume_command,
             )
             from xbrain.p3_task.lifecycle.estop_suspend import suspend_running_for_estop
@@ -863,12 +865,21 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 # arriving mid-estop must not lift the freeze.
                                 if (estop_ctrl.frozen
                                         and is_human_resume_command(payload)):
-                                    estop_ctrl.unfreeze(payload.get("source"))
+                                    estop_ctrl.unfreeze(human_source(payload))
                                     _logger.warning(
                                         "p3 ES-3: unfrozen by human %s %s -> "
                                         "scheduling resumes",
                                         payload.get("source"),
                                         payload.get("action"))
+                                # 15 S11.4 (99 U111): an operator's pause holds
+                                # the queue too -- without it the next queued
+                                # task started the same second and the robot
+                                # never paused. Lifted like an estop freeze.
+                                if is_human_pause_command(payload):
+                                    estop_ctrl.freeze("operator_pause")
+                                    _logger.warning(
+                                        "p3 operator pause: scheduling HELD "
+                                        "until a human submit / resume")
                         else:
                             # What is left on this key with no `action`: p4's
                             # p4_intent_v1 frames for the CONTROL intents
@@ -947,7 +958,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         rtb_id = await maybe_inject_return_home(
                             conn, dao, return_trigger, link_holder,
                             priority=RETURN_HOME_PRIORITY,
-                            now_mono_ms=_now_mono_ms())
+                            now_mono_ms=_now_mono_ms(),
+                            created_at=_now_utc_iso())
                         if rtb_id:
                             _logger.warning(
                                 "p3 F-5: cloud link L3 (epoch %s, %.0fs) -> "

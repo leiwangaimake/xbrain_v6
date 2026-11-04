@@ -20,6 +20,12 @@ Two things this must get right:
     gw_start_mono changes on a P5 restart, so the pair identifies "this outage" --
     fire once per pair. (In-memory: a P3 restart mid-outage re-arms and could inject
     a second one; a persistent check against task.db is a later refinement.)
+  * At most ONE live link-loss return_home (99 U111, 11 S4.6.4 LL-2). The
+    (gw_start_mono, link_epoch) identity changes on every P5 restart, so an
+    office with no cloud link got a new rh-* task on every stack start --
+    13 had piled up, none ever finished (no executor), and at priority 95
+    they ran ahead of every human task. A non-terminal one already queued
+    means "the robot is already told to come home"; another adds nothing.
   * The return_home is a NORMAL task on the one queue: same id_alloc + TaskRow +
     TasksDAO as any task, so it shares the scheduler / suspend-resume / retention.
     source='charge' + priority=95 per 15 S4.2.1 (the 11 S4.6.4 v0.7 correction: 90
@@ -75,7 +81,7 @@ def link_loss_trace_id(gw_start_mono, link_epoch) -> str:
 def build_return_home_row(task_id: str, submit_seq: int, *, priority: int,
                           level: int, disconnected_s, link_epoch,
                           gw_start_mono, now_mono_ms: int,
-                          trace_id: str) -> TaskRow:
+                          trace_id: str, created_at: str = "") -> TaskRow:
     """The F-5 return_home TaskRow. mission_json records WHY (cloud_link_lost + the
     outage identity) so an operator/audit sees it was link loss, not a low battery
     or an operator command. created/updated are MONOTONIC ms (CLK-C1), supplied by
@@ -104,12 +110,30 @@ def build_return_home_row(task_id: str, submit_seq: int, *, priority: int,
         source="charge",                  # 15 S4.2.1: return_home rides the charge lane
         trace_id=trace_id,
         resume_policy="continue",
+        # The wall time of the injection (15 S9.5 created_at). It was never
+        # set, so every rh-* row read "created: unknown" (99 U111).
+        created_at=created_at,
     )
+
+
+#: Live states: a link-loss return_home in one of these is still "on its way".
+_LIVE = ("pending", "scheduled", "blocked", "ready", "running", "suspended")
+
+
+async def live_link_loss_return(conn) -> Optional[str]:
+    """The task_id of a non-terminal link-loss return_home, or None."""
+    cur = await conn.execute(
+        "SELECT task_id FROM tasks WHERE task_type='return_home' "
+        "AND task_id LIKE 'rh-%%' AND state IN (%s) LIMIT 1"
+        % ",".join("'%s'" % s for s in _LIVE))
+    row = await cur.fetchone()
+    return row[0] if row else None
 
 
 async def maybe_inject_return_home(conn, dao, trigger: LinkLossReturnTrigger,
                                    link: dict, *, priority: int,
-                                   now_mono_ms: int) -> Optional[str]:
+                                   now_mono_ms: int,
+                                   created_at: str = "") -> Optional[str]:
     """If `link` is L3 (a new outage), INSERT one return_home through the same DAO as
     any task, keyed by the deterministic 15 S4.2.1 task_id. Returns the task_id
     inserted, or None (below L3, or already injected for this outage). `link` = the
@@ -126,6 +150,8 @@ async def maybe_inject_return_home(conn, dao, trigger: LinkLossReturnTrigger,
     task_id = "rh-%d-%d" % (int(gw), int(epoch))
     if await dao.fetch_by_id(task_id) is not None:
         return None
+    if await live_link_loss_return(conn) is not None:
+        return None   # LL-2: one live link-loss return_home is enough
     from xbrain.p3_task.ingest.id_alloc import next_submit_seq
 
     submit_seq = await next_submit_seq(conn)
@@ -134,6 +160,6 @@ async def maybe_inject_return_home(conn, dao, trigger: LinkLossReturnTrigger,
         task_id, submit_seq, priority=priority,
         level=link.get("level"), disconnected_s=link.get("disconnected_s"),
         link_epoch=epoch, gw_start_mono=gw,
-        now_mono_ms=now_mono_ms, trace_id=trace_id)
+        now_mono_ms=now_mono_ms, trace_id=trace_id, created_at=created_at)
     await dao.insert(row)
     return task_id

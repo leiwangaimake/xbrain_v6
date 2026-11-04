@@ -24,6 +24,16 @@ separate p2 signal. An auto-injected task (return_home / charge, source
 auto|charge) must NOT unfreeze -- that would defeat the "wait for a human"
 intent, resuming patrol the moment the battery tops up mid-estop. So the
 authorized unfreeze sources are the human channels only.
+
+99 U111 (2026-11-04, live test): two changes.
+  * An operator's PAUSE freezes scheduling the same way (reason
+    "operator_pause", 15 S11.4). Measured: "暂缓任务" suspended the running
+    task and the scheduler started the next queued one in the same second,
+    so the robot never paused. The same human submit / resume lifts it.
+  * The human test now reads the TASK source the frame's channel maps to
+    (task_row.task_source_for_channel), not the raw channel. The raw test
+    only knew cloud / wecom / local, so a resume from the microphone
+    (source "voice") or the HMI ("hmi") could never lift a freeze.
 """
 
 from __future__ import annotations
@@ -83,4 +93,24 @@ def is_human_resume_command(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
     return (payload.get("action") in ("submit", "resume")
-            and payload.get("source") in HUMAN_SOURCES)
+            and human_source(payload) is not None)
+
+
+def human_source(payload: Any) -> Any:
+    """The 15 S9.5 task source of a human cmd/task frame, or None.
+
+    The frame carries the CHANNEL (voice / text / hmi / cloud / wecom); the
+    unfreeze set is written in task sources. Mapped through the one table the
+    task rows use, so the two can never disagree about who is a human.
+    """
+    from xbrain.p3_task.ingest.task_row import task_source_for_channel
+    if not isinstance(payload, dict):
+        return None
+    source = task_source_for_channel(payload.get("source"))
+    return source if source in HUMAN_SOURCES else None
+
+
+def is_human_pause_command(payload: Any) -> bool:
+    """99 U111: is this an operator's pause (15 S11.4 operator hold)?"""
+    return (isinstance(payload, dict) and payload.get("action") == "pause"
+            and human_source(payload) is not None)

@@ -74,11 +74,19 @@ def test_snapshot_reads_the_latest_value_not_a_window():
     assert make_state_fn(c)()["state/task"] == TASK  # whatever its age
 
 
-@pytest.mark.parametrize("text, key", [("暂缓任务", "cmd/task"), ("继续任务", "cmd/task")])
-def test_task_control_reaches_the_running_task(text, key):
+#: The same task after the operator paused it (99 U111: resume aims here).
+PAUSED = {**TASK, "current": None,
+          "suspended": [{"task_id": "t-1", "suspend_kind": "passive",
+                         "suspended_ts": 5.0}]}  # paused by the operator
+
+
+@pytest.mark.parametrize("text, key, task", [("暂缓任务", "cmd/task", TASK),
+                                             ("继续任务", "cmd/task", PAUSED)])
+def test_task_control_reaches_the_running_task(text, key, task):
     """MUTATION: drop state_fn from build_orchestrator -> empty snapshot ->
-    "现在没有正在执行的任务" -> fails."""
-    d, pubs, _spoken = _turn(_orch(make_state_fn(_cache(task=TASK))), text)  # a task is running
+    "现在没有正在执行的任务" -> fails. 99 U111: pause aims at the running task,
+    continue at the paused one (it never was the running one)."""
+    d, pubs, _spoken = _turn(_orch(make_state_fn(_cache(task=task))), text)  # the task
     assert d.kind == "dispatch" and pubs[key]["task_id"] == "t-1"  # aimed at it
 
 

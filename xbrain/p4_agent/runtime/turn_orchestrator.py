@@ -70,6 +70,7 @@ from xbrain.p4_agent.runtime.geo_request import (
     to_geo_command,
 )
 from xbrain.p4_agent.runtime.intent_dispatch import (
+    CMD_MOTION_INTENT,
     DispatchResult,
     dispatch,
 )
@@ -208,6 +209,18 @@ def _said_after_keyword(entry: IntentEntry, text: str) -> bool:
     return bool(tail)
 
 
+def _motion_held(state: Dict[str, Any]) -> bool:
+    """True when P2 reports P1 held (state/mode.motion_behavior == "hold").
+
+    99 U111: held by the operator's "原地待命" or by a B / D mode; P2 tells
+    the two apart when the release arrives. Enveloped or bare body.
+    """
+    body = state.get("state/mode") if isinstance(state, dict) else None
+    if isinstance(body, dict) and isinstance(body.get("data"), dict):
+        body = body["data"]
+    return isinstance(body, dict) and body.get("motion_behavior") == "hold"
+
+
 #: Type words that, said alone, name no keypoint ("删除航点").
 _BARE_TYPE_WORDS = frozenset({"航点", "点位", "关键点", "位置点", "这个点"})
 
@@ -241,6 +254,8 @@ _NOT_FOUND_CN = {
 
 _TASK_CONTROL_CN = {
     "no_active_task": "现在没有正在执行的任务",
+    # 99 U111: resume targets the latest paused (passive) task, not current.
+    "no_suspended_task": "现在没有暂停中的任务可以继续",
 }
 
 # Spoken follow-ups when an A-class slot is missing (MI-2: ask, never send).
@@ -278,8 +293,11 @@ _CN_LABELS = {
     "E01": "转动云台", "E05": "停止跟踪", "E06": "变焦", "E07": "云台扫描",
     "E08": "停止扫描", "E09": "调整云台转速", "H07": "重启系统",
     # F06 / F10 (99 U109): the turn only says what was asked; the result
-    # ("已记录 X" or why not) follows from cmd/teach/ack (teach_ack_speech).
+    # ("已记录 X" or why not) follows from cmd/teach/ack (ack_speech).
     "F06": "记录这个点", "F10": "记录充电桩",
+    # B05 / B06 (99 U111): say what is being done; the result follows from
+    # cmd/task/ack (ack_speech) when P3 refuses it.
+    "B05": "暂停任务", "B06": "继续任务",
 }
 
 #: A15 set_turn_speed ack wording per level (99 U104).
@@ -557,7 +575,10 @@ _UNWIRED_SYSTEM = frozenset({"H01", "H02", "H04", "H05", "H06", "H07", "H08"})
 #: a fixed PROFILE_REQ, so "慢一点 / 快一点 / 全速" never changed a speed (and
 #: answered "这个模式指令没听清", the profile slot was never parsed). 2026-11-02,
 #: 99 U105: say so instead, until the profile reaches P1.
-_UNWIRED_ACTIONS = frozenset({"A13"})
+#: B10 skip_waypoint (99 U111): 11 S7.2 has no skip action and no patrol
+#: executor is wired, so it is answered as not connected -- it used to send a
+#: frame nobody consumes and say "收到".
+_UNWIRED_ACTIONS = frozenset({"A13", "B10"})
 
 #: Level intents whose adjustment an elliptical phrase may continue (D10
 #: volume, D17 brightness), and the phrases that name no device. 2026-10-30.
@@ -1144,8 +1165,20 @@ class TurnOrchestrator:
         # task" -- it forbids the RECEIVER guessing, and resolving on the
         # sender side satisfies all four of its stated reasons. See
         # task_control_request.py.
+        release_hold = False
         if is_task_control_intent(entry.name):
             _state = self._state_fn() if self._state_fn else {}
+            if entry.name == "resume_task" and _motion_held(_state):
+                # 99 U111: while P1 is held (the operator's "原地待命", or a
+                # B / D mode), "继续" means "move again": a MotionIntent
+                # resume on cmd/motion/intent. P2 releases only the operator's
+                # own hold and refuses a mode's (E_BUSY mode_hold).
+                release_hold = True
+                extra = {**(extra or {}), "motion_intent": to_motion_intent(
+                    "resume", slots={}, cmd_id="mi-" + uuid.uuid4().hex[:12],
+                    turn_id="vt-" + uuid.uuid4().hex[:12],
+                    channel=self._turn_channel, asr_text=text)}
+        if is_task_control_intent(entry.name) and not release_hold:
             try:
                 tc = to_task_control_command(
                     entry.name, state=_state,
@@ -1221,6 +1254,10 @@ class TurnOrchestrator:
         # Build the envelope (EV-1..7) and dispatch.
         env = self._build_envelope(entry, eff_auth, slots=dict(extra))
         result = dispatch(entry.id, text, extra or None)
+        if release_hold:
+            # B06 is a B-class id (cmd/task); its hold release is a motion frame.
+            result = DispatchResult(intent_id=result.intent_id,
+                                    key=CMD_MOTION_INTENT, payload=result.payload)
         return TurnDecision(
             kind="dispatch", intent_id=entry.id, intent_name=entry.name,
             route=entry.route, auth=eff_auth, level=eff_auth, layer=layer,
@@ -1273,7 +1310,7 @@ class TurnOrchestrator:
                                 tts_text=self._timeout_prompt(pc.entry))
         # Classify the response; I01 confirm / I02 deny are session-state
         # intents supplied here (they are excluded from the layer-2 index).
-        response = self._classify_confirm_response(text)
+        response = self._classify_confirm_response(text, pc.entry)
         if response == "I02":       # deny
             session.pending_confirm = None
             return TurnDecision(kind="confirm_denied", intent_id=pc.entry.id,
@@ -1303,10 +1340,20 @@ class TurnOrchestrator:
                                     "session_state", "L2",
                                     llm_slots=pc.llm_slots)
 
-    def _classify_confirm_response(self, text: str) -> Optional[str]:
+    def _classify_confirm_response(self, text: str,
+                                   pending: Optional[IntentEntry] = None
+                                   ) -> Optional[str]:
         """Map a confirm-window utterance to I01 (confirm) / I02 (deny) /
         None. Uses the registry keywords for I01/I02 (which are excluded
-        from the layer-2 index, so they are matched here, at layer 3)."""
+        from the layer-2 index, so they are matched here, at layer 3).
+
+        The pending command's own keywords are removed first (99 U111): with
+        "取消" a deny word (18 I02), repeating "取消任务" to "确认取消任务吗"
+        would otherwise read as "no". Repeating the command is neither."""
+        for kw in sorted((pending.keywords if pending else ()), key=len,
+                         reverse=True):
+            if kw:
+                text = text.replace(kw, "")
         i01 = self._registry.by_id("I01")
         i02 = self._registry.by_id("I02")
         # Deny checked with the same longest-first spirit; here a simple

@@ -255,7 +255,9 @@ intents:
 
   # -- I 会话 --
   confirm: { id: I01, keywords: ["是", "对", "确认", "好的", "可以", "覆盖"], slots: [], route: fastpath, auth: L0 }
-  deny: { id: I02, keywords: ["不是", "不", "算了", "不用"], slots: [], route: fastpath, auth: L0 }
+  # I02 (99 U111): + "取消", as 18 I02 lists it; the pending command's own
+  # keywords are removed before matching, so "取消任务" repeated is not a deny.
+  deny: { id: I02, keywords: ["不是", "不", "算了", "不用", "取消"], slots: [], route: fastpath, auth: L0 }
   repeat: { id: I03, keywords: ["再说一遍", "什么", "没听清"], slots: [], route: fastpath, auth: L0 }
   cancel_session: { id: I04, keywords: ["没事了", "不用了", "结束对话"], slots: [], route: fastpath, auth: L0 }
   help: { id: I05, keywords: ["你能做什么", "帮助", "怎么用"], slots: [], route: fastpath, auth: L0 }

@@ -295,9 +295,14 @@ async def _write_state(conn, cmd: TaskCommand, to_state: str,
     operation the operator has every reason to expect works.
     """
     if to_state == "suspended":
+        # paused_at (99 U111): the wall time of the suspend, in the DDL's own
+        # strftime form. Never written before, so every state/task suspended[]
+        # entry had suspended_ts null and "继续" could not tell the task just
+        # paused from one paused days ago. Display / ordering only (CLK-C1).
         await conn.execute(
             "UPDATE tasks SET state=?, suspend_kind=?, suspend_reason=?, "
-            " updated_ms=? WHERE task_id=?",
+            " updated_ms=?, paused_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+            "WHERE task_id=?",
             (to_state, _PAUSE_KIND, _PAUSE_REASON, now_mono_ms, cmd.task_id))
     elif to_state in TERMINAL_STATES:
         # *** 终态还要写 finished_at 与 duration_sec (15 S9.5), NO 不能只写 state.

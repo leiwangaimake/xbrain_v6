@@ -72,7 +72,7 @@ from xbrain.p4_agent.runtime.turn_loop import (
     TurnLoopWorker,
     on_mic_frame_callback,
 )
-from xbrain.p4_agent.runtime.teach_ack_speech import CMD_TEACH_ACK, TeachAckSpeaker
+from xbrain.p4_agent.runtime.ack_speech import ACK_KEYS, AckSpeaker
 from xbrain.p4_agent.runtime.turn_orchestrator import OrchestratorSession
 from xbrain.p4_agent.runtime.voice_turn import VOICE_TURN_KEY_FMT
 
@@ -236,9 +236,10 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
         state_subs = []
         turn_handler = None
         orchestrator = None
-        # 99 U109: voices the result of a F06 / F10 capture from cmd/teach/ack
+        # 99 U109 / U111: voices the executors' answers -- a F06 / F10
+        # capture's result, and why a task / geo / motion command was refused
         # (11 CMD-30 / AP-1). Fed by both turn paths below.
-        teach_speaker = TeachAckSpeaker()
+        ack_speaker = AckSpeaker()
         if orch is not None:
             # 18 PS-6: frames within the state age bound of the first word
             # stand for it -- the same bound a G answer uses.
@@ -300,7 +301,7 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
             def turn_handler(raw, **kw):
                 # The microphone turn, with its frames shown to the speaker.
                 pairs = mic_handler(raw, **kw)
-                teach_speaker.note_turn(pairs)
+                ack_speaker.note_turn(pairs)
                 return pairs
             _logger.info(
                 "p4 wiring: TurnOrchestrator handler active; state/* "
@@ -353,27 +354,27 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
             assembler = _wire_cloud_inputs(
                 gen, cfg, orchestrator, orch.registry, orch.asr_post,
                 state_cache, _publish, jobs, cloud_limits, cloud_subs,
-                session, voice_turn_key, on_turn=teach_speaker.note_turn)
+                session, voice_turn_key, on_turn=ack_speaker.note_turn)
 
         if orchestrator is not None:
-            def _on_teach_ack(sample) -> None:
+            def _on_ack(sample) -> None:
                 # Rust thread: copy the bytes and queue the work; decoding,
                 # matching and the publish run on the worker (CLAUDE.md 4.2),
                 # in order with the turns that sent the commands.
                 data = bytes(sample.payload)
 
                 def _job() -> None:
-                    out = teach_speaker.on_ack(data)
+                    out = ack_speaker.on_ack(data)
                     if out is not None:
                         _publish(*out)
                 try:
                     jobs.put_nowait(_job)
                 except queue.Full:
-                    _logger.warning("p4 teach ack dropped: job queue full")
-            cloud_subs.append(gen.declare_subscriber(CMD_TEACH_ACK,
-                                                     _on_teach_ack))
-            _logger.info("p4 wiring: subscribed %s (capture results spoken)",
-                         CMD_TEACH_ACK)
+                    _logger.warning("p4 ack dropped: job queue full")
+            for _ack_key in ACK_KEYS:
+                cloud_subs.append(gen.declare_subscriber(_ack_key, _on_ack))
+            _logger.info("p4 wiring: subscribed %s (answers spoken)",
+                         ", ".join(ACK_KEYS))
 
         try:
             last_hb = time.monotonic()

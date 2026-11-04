@@ -191,9 +191,14 @@ class TasksDAO:
         (15 S3.2: yielding 的恢复条件是"让位对象一进终态就自动回 ready"),
         而急停要求的是等人.
         """
+        # paused_at (99 U111): the wall time of the suspend, in the DDL's own
+        # strftime form. Never written before, so every state/task suspended[]
+        # entry had suspended_ts null and "继续" could not tell the task just
+        # paused from one paused days ago. Display / ordering only (CLK-C1).
         cur = await self._conn.execute(
             "UPDATE tasks SET state='suspended', suspend_kind='yielding', "
-            "suspend_reason=?, updated_ms=? WHERE task_id=?",
+            "suspend_reason=?, updated_ms=?, "
+            "paused_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE task_id=?",
             (reason, updated_ms, task_id))
         return cur.rowcount
 
@@ -292,8 +297,10 @@ class TasksDAO:
         branch (suspend_kind=NULL on any non-suspended target), so an
         estop-suspended task resumes the same as a pause-suspended one.
         """
+        # paused_at: as in preempt_task (99 U111).
         cur = await self._conn.execute(
             "UPDATE tasks SET state='suspended', suspend_kind=?, "
-            "suspend_reason=?, updated_ms=? WHERE task_id=?",
+            "suspend_reason=?, updated_ms=?, "
+            "paused_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE task_id=?",
             (kind, reason, updated_ms, task_id))
         return cur.rowcount

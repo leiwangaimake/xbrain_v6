@@ -55,7 +55,7 @@ CMD_MOTION_INTENT_TOPIC = "cmd/motion/intent"
 CMD_MOTION_INTENT_ACK_TOPIC = "cmd/motion/intent/ack"
 CMD_RELATIVE_MOVE_TOPIC = "cmd/motion/relative_move"
 
-#: S9.3.2A.4 九值闭集 -> (轴, 符号). 轴换算全在 P2(MI-1: P4 一律不换算).
+#: S9.3.2A.4 九个位移值 -> (轴, 符号); hold / resume 见 HOLD_INTENTS. 轴换算全在 P2(MI-1: P4 一律不换算).
 _INTENT_AXIS: Dict[str, Tuple[str, float]] = {
     "move_forward": ("dx_m", +1.0),
     "move_backward": ("dx_m", -1.0),
@@ -72,6 +72,50 @@ _INTENT_AXIS: Dict[str, Tuple[str, float]] = {
     # 航向走 dx 米" (11 S9.3.2A.7 TY-6); 折算同样留给 P1, 见 MO-3.
     "move_heading": ("target_yaw_rad", +1.0),
 }
+
+#: 99 U111: A04 "原地待命" and its release ("继续"), S9.3.2A.4 九值 -> 十一值.
+#: 没有轴: 它们不是位移, 改的是 P1 的行为源(cmd/motion/behavior, 11 S3.5),
+#: 所以不走 G-2..G-11 -- hold 是收紧型(拦它只会让机器人停不下来), resume 只
+#: 解除操作员自己的 hold, 不碰 B / D 模式的 hold.
+HOLD_INTENTS = frozenset({"hold", "resume"})
+
+
+@dataclass
+class VoiceHold:
+    """操作员的"原地待命"(A04). on 期间 P2 对 P1 发 hold, 直到"继续".
+
+    与 B / D 模式的 hold 分开记: 模式结束会自己发 resume_task, 而操作员的
+    hold 只能由操作员解除 -- 两者合成一个开关, 喊话一结束机器人就会自己走.
+    """
+    on: bool = False
+
+
+def hold_intent_ack(cmd_id: str, intent: str, hold: VoiceHold,
+                    mode_holds: bool) -> Dict[str, Any]:
+    """A hold / resume MotionIntent -> its ack, updating hold.on.
+
+    hold   -> on; applied.behavior = hold.
+    resume -> off if it was on (applied.behavior = what P1 now gets: hold
+              while a B / D mode still holds, else resume_task); refused with
+              E_BUSY reason=mode_hold when only a mode holds -- the operator
+              cannot talk a broadcast's hold away; a no-op when nothing holds.
+    """
+    if intent == "hold":
+        hold.on = True
+        return motion_intent_ack(cmd_id, "accepted", "OK",
+                                 {"applied": {"behavior": "hold"}})
+    if hold.on:
+        hold.on = False
+        return motion_intent_ack(
+            cmd_id, "accepted", "OK",
+            {"applied": {"behavior": "hold" if mode_holds else "resume_task"}})
+    if mode_holds:
+        return motion_intent_ack(cmd_id, "rejected", E_BUSY,
+                                 {"reason": "mode_hold"})
+    return motion_intent_ack(cmd_id, "accepted", "OK",
+                             {"applied": {"behavior": "resume_task"},
+                              "changed": False})
+
 
 #: 需要 distance_m 的五个; 需要 angle_deg 的两个. turn_around 无槽位,
 #: face_heading 要 heading, move_heading 要 heading 与 distance_m.

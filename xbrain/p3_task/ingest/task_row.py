@@ -64,6 +64,15 @@ _CHANNEL_TO_SOURCE = {
     "charge": "charge",
 }
 
+def task_source_for_channel(channel: Any) -> Any:
+    """The 15 S9.5 tasks.source a cmd/task channel maps to, or None.
+
+    The one mapping; lifecycle/estop.py uses it to decide who is a human
+    (99 U111), so a new channel cannot be a human here and a stranger there.
+    """
+    return _CHANNEL_TO_SOURCE.get(channel) if isinstance(channel, str) else None
+
+
 #: 15 S4.2 priority per origin. Used when the sender omitted task.priority --
 #: 50 was a made-up middle value that sits between cloud (80) and wecom (60),
 #: so an omitted priority used to outrank a wecom task and lose to a cloud one

@@ -131,3 +131,40 @@ async def test_l2_injects_nothing(conn):
         conn, dao, t, link, priority=RETURN_HOME_PRIORITY, now_mono_ms=123)
     assert tid is None
     assert await _tasks(conn) == []
+
+
+@pytest.mark.asyncio
+async def test_a_p5_restart_does_not_add_a_second_return_home(conn):
+    """99 U111 LL-2: every stack start is a new (gw_start_mono, link_epoch),
+    and an office with no cloud link collected 13 rh-* tasks that never
+    finished. MUTATION: drop the live-task check and this inserts a second."""
+    dao = TasksDAO(conn)  # the one DAO
+    first = {"level": 3, "gw_start_mono": 100.0, "link_epoch": 2,
+             "disconnected_s": 400.0}  # outage under P5 boot 1
+    assert await maybe_inject_return_home(
+        conn, dao, LinkLossReturnTrigger(), first, priority=RETURN_HOME_PRIORITY,
+        now_mono_ms=1, created_at="2026-11-04T06:00:00+00:00") == "rh-100-2"
+    after_restart = dict(first, gw_start_mono=900.0, link_epoch=1)  # P5 restarted
+    assert await maybe_inject_return_home(
+        conn, dao, LinkLossReturnTrigger(), after_restart,
+        priority=RETURN_HOME_PRIORITY, now_mono_ms=2) is None  # one is enough
+    rows = await _tasks(conn)  # what is stored
+    assert len(rows) == 1  # still one
+    cur = await conn.execute("SELECT created_at FROM tasks")  # 15 S9.5
+    assert (await cur.fetchone())[0] == "2026-11-04T06:00:00+00:00"  # now set
+
+
+@pytest.mark.asyncio
+async def test_a_finished_return_home_lets_the_next_outage_inject(conn):
+    """LL-2 counts only LIVE tasks. MUTATION: count terminal ones too and a
+    later outage never brings the robot home."""
+    dao = TasksDAO(conn)  # the one DAO
+    link = {"level": 3, "gw_start_mono": 100.0, "link_epoch": 2}  # outage 1
+    await maybe_inject_return_home(conn, dao, LinkLossReturnTrigger(), link,
+                                   priority=RETURN_HOME_PRIORITY, now_mono_ms=1)
+    await conn.execute("UPDATE tasks SET state='cancelled'")  # it ended
+    await conn.commit()
+    nxt = dict(link, gw_start_mono=900.0)  # a later outage
+    assert await maybe_inject_return_home(
+        conn, dao, LinkLossReturnTrigger(), nxt, priority=RETURN_HOME_PRIORITY,
+        now_mono_ms=2) == "rh-900-2"  # injected again

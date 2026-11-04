@@ -328,13 +328,15 @@ def test_skip_waypoint_still_has_no_contract_action():
     submit / cancel / pause / resume / clear_queue -- there is no skip. Mapping
     it onto cancel would end the whole patrol the operator wants to continue.
 
-    So it stays a p4_intent_v1 envelope that P3 skips, which is a visible gap
-    rather than a wrong action. MUTATION: map it to cancel and this test goes
-    red -- as it should, because that mapping is the dangerous one.
+    It used to stay a p4_intent_v1 envelope that P3 skips -- a gap, but one
+    the robot announced as "收到". Since 99 U111 it is answered as not
+    connected and NOTHING goes on cmd/task. MUTATION: map it to cancel and a
+    cancel frame appears here -- red, as it should be.
     """
-    payload = _frames("跳过这个点")["cmd/task"]
-    assert payload["schema"] == "p4_intent_v1"
-    assert "action" not in payload
+    orch, session = _orch(None), OrchestratorSession()
+    d = orch.handle_turn("跳过这个点", session, now_mono_ms=1)
+    keys = [k for k, _ in decision_to_publishes(d)]
+    assert keys == ["cmd/audio/speak"]   # the honest reply, no task frame
 
 
 def test_the_wire_check_is_on_the_published_frame_not_the_builder():

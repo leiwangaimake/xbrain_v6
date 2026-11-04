@@ -726,12 +726,24 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         _MODE_KEY = {ModeState.BROADCAST: "b_cast", ModeState.ALARM: "d_alarm"}
         behavior_pub = gen.declare_publisher(CMD_MOTION_BEHAVIOR_TOPIC)
         _bh = {"n": 0, "last": None}
+        # 99 U111: 操作员的"原地待命"(A04), 由 cmd/motion/intent hold / resume
+        # 改. 并进 _behavior_of, 所以心跳对账重发的也是它 -- 单独发一次 hold
+        # 会被下一拍心跳的 resume_task 冲掉.
+        from xbrain.p2_core.runtime.motion_intent_wiring import VoiceHold
+        voice_hold = VoiceHold()
 
-        def _behavior_of(state) -> str:
-            """模式的运动行为: B / D 取配置(R-8 后恒 hold), 其余 normal."""
+        def _mode_behavior(state) -> str:
+            """模式本身的运动行为: B / D 取配置(R-8 后恒 hold), 其余 normal."""
             key = _MODE_KEY.get(state)
             cmd = command_for_mode(key, _mm_cfg) if key else None
             return cmd.behavior if cmd is not None else "normal"
+
+        def _behavior_of(state) -> str:
+            """P1 该收到的行为: 模式的 hold 优先, 否则操作员的待命."""
+            beh = _mode_behavior(state)
+            if beh == "normal" and voice_hold.on:
+                return "hold"
+            return beh
 
         def _publish_behavior(state) -> None:
             """发 cmd/motion/behavior(11 S3.5): B / D -> hold, 其余 resume_task.
@@ -1301,7 +1313,13 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     _ack = _handle_motion_intent(
                         _raw, motion_limits, state_cache, health_agg,
                         factor_cfg, rel_move_pub, turn_speed,
-                        holonomic=motion_holonomic, move_speed=move_speed)
+                        holonomic=motion_holonomic, move_speed=move_speed,
+                        voice_hold=voice_hold,
+                        mode_holds=_mode_behavior(mode_face.state) == "hold")
+                    if voice_hold.on != _bh.get("voice"):
+                        # 待命开 / 关: 立刻告诉 P1, 不等心跳.
+                        _bh["voice"] = voice_hold.on
+                        _publish_behavior(mode_face.state)
                     motion_ack_pub.put(json.dumps(
                         _ack, ensure_ascii=False).encode("utf-8"))
                 # 11 S2.2: health/summary at 1 Hz. Derived every pass from the
@@ -1690,19 +1708,28 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
 
 def _handle_motion_intent(raw, limits, state_cache, health_agg, factor_cfg,
                           rel_move_pub, turn_speed=None, holonomic=None,
-                          move_speed=None):
+                          move_speed=None, voice_hold=None, mode_holds=False):
     """One cmd/motion/intent frame: G-1..G-11, then forward or refuse.
 
     holonomic is the body's spec.holonomic, read from the config at startup.
     None (the default) refuses move_left / move_right at G-7 -- the safe
     direction for a caller that has not read the spec.
 
+    voice_hold (99 U111) is the operator's "原地待命": hold / resume intents
+    change it and are answered here, before the gates; a move while it is on
+    is refused (E_BUSY, reason=voice_hold) -- P1 would refuse it anyway under
+    the hold, but only after accepting, and the operator should hear "say
+    continue first" rather than nothing. mode_holds = a B / D mode holds too.
+
     Never raises -- a malformed frame must not take down the loop that also
     runs health and the device domains.
     """
     from xbrain.common.errors import E_INTERNAL, E_SCHEMA
+    from xbrain.common.errors import E_BUSY
     from xbrain.p2_core.runtime.motion_intent_wiring import (
+        HOLD_INTENTS,
         evaluate,
+        hold_intent_ack,
         motion_intent_ack,
         parse_intent_envelope,
         to_relative_move,
@@ -1713,6 +1740,11 @@ def _handle_motion_intent(raw, limits, state_cache, health_agg, factor_cfg,
         cmd = parse_intent_envelope(body)          # G-1
         raw_id = cmd.get("cmd_id")
         cmd_id = raw_id if isinstance(raw_id, str) else ""
+        if voice_hold is not None and cmd.get("intent") in HOLD_INTENTS:
+            return hold_intent_ack(cmd_id, cmd["intent"], voice_hold, mode_holds)
+        if voice_hold is not None and voice_hold.on:
+            return motion_intent_ack(cmd_id, "rejected", E_BUSY,
+                                     {"reason": "voice_hold"})
         verdict = evaluate(
             cmd, limits=limits,
             clock=state_cache.get("clock"),

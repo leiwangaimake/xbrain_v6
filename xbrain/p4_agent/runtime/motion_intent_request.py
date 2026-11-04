@@ -39,7 +39,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 #: S9.3.2A.3 字段表: A05-A12 恒 L1.
 _AUTH_LEVEL = "L1"
 
-#: S9.3.2A.4 九值闭集 -> 必填槽位名(按追问顺序; 空元组 = 无槽位).
+#: S9.3.2A.4 十一值闭集 -> 必填槽位名(按追问顺序; 空元组 = 无槽位).
 #: A17 move_heading (2026-11-04, 99 U108) 是唯一带两个槽位的: 先问方向再问距离.
 #: 键是注册表的 intent NAME, 与契约的 intent 取值逐字相同 -- 这不是巧合,
 #: S9.3.2A.3 要求它与 16 S6.7 M1/M2 的 intent 取值逐字一致.
@@ -53,7 +53,15 @@ _MOTION_INTENTS: Dict[str, Tuple[str, ...]] = {
     "turn_around": (),            # slots = {} 是合法的
     "face_heading": ("heading",),
     "move_heading": ("heading", "distance_m"),
+    # 99 U111: A04 原地待命 and its release, no slots. "resume" is not an 18
+    # intent name -- B06 "继续" sends it while a hold is on (turn_orchestrator).
+    "hold": (),
+    "resume": (),
 }
+
+#: auth_level per intent where it is not L1: A04 is L0 (18 S13.1), and the
+#: release rides on B06, also L0. P2 skips G-2's L1 check for these two.
+_AUTH_BY_INTENT = {"hold": "L0", "resume": "L0"}
 
 #: MO-2 的 channel 闭集 (11 S9.3.2A.3 字段表逐字): P2 据此填
 #: relative_move.source (mic_local -> voice_local, cloud -> voice_cloud ...).
@@ -104,7 +112,7 @@ def to_motion_intent(intent_name: str, *, slots: Mapping[str, Any],
         # 断在 P4 出口.
         "turn_id": turn_id,
         "channel": channel,  # 本轮入口, 已按闭集校验
-        "auth_level": _AUTH_LEVEL,
+        "auth_level": _AUTH_BY_INTENT.get(intent_name, _AUTH_LEVEL),
         "intent": intent_name,
         "slots": out_slots,
     }

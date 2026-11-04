@@ -262,3 +262,27 @@ def test_main_wiring_wires_es2_and_es3():
         "ES-3 没接: main_wiring 不调 estop_ctrl.unfreeze")
     assert "is_human_resume_command" in calls, (
         "ES-3 没判人来源: 任何 cmd/task 都会解冻 -- auto return_home 也能解")
+
+
+@pytest.mark.parametrize("source", ["voice", "text", "hmi", "local", "cloud", "wecom"])
+def test_every_human_channel_can_lift_a_freeze(source):
+    """99 U111: the test used the raw channel, so the microphone ("voice") and
+    the HMI could never lift a freeze. MUTATION: compare the raw source."""
+    from xbrain.p3_task.lifecycle.estop import human_source, is_human_resume_command
+    frame = {"action": "resume", "source": source}  # a human resume
+    assert is_human_resume_command(frame)  # lifts the freeze
+    assert human_source(frame) in ("local", "cloud", "wecom")  # a task source
+
+
+@pytest.mark.parametrize("source", ["charge", "auto", None, "robot"])
+def test_system_and_unknown_sources_cannot(source):
+    from xbrain.p3_task.lifecycle.estop import is_human_resume_command
+    assert not is_human_resume_command({"action": "submit", "source": source})
+
+
+def test_an_operator_pause_is_recognised():
+    """99 U111 (15 S11.4): a human pause holds the queue."""
+    from xbrain.p3_task.lifecycle.estop import is_human_pause_command
+    assert is_human_pause_command({"action": "pause", "source": "voice"})
+    assert not is_human_pause_command({"action": "pause", "source": "charge"})
+    assert not is_human_pause_command({"action": "resume", "source": "voice"})
