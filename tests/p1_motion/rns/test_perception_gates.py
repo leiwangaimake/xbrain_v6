@@ -9,10 +9,12 @@ Description:
 Drives RnsSource.compute with a real PerceptionSnapshot (profile + objects +
 status) so the CONSUMED effect of the 20 S5.1.1 v1.35 rules is what is
 asserted, not the helper in isolation: a T-class "object" must not stop the
-robot (A-CLS-5), an ignore-class bird must not (A-CLS-6), a low-confidence
-bird MUST (A-CLS-7, block is the fail-safe direction) and a low-confidence
-person MUST (A-CLS-7 reverse). The stop is observable as vx == 0 with the
-source in WAIT_DYNAMIC; the drop is observable in the audit ring.
+robot (A-CLS-5), an ignore-class bird must not (A-CLS-6). Since 99 U113 the
+confidence gate is NOT here: world.keep_confident drops low-confidence
+objects before RnsSource sees them (20 S3.0 WP-1, A-WLD-1 in test_world.py),
+so these tests feed RnsSource directly and pin what it does with whatever
+reaches it. The stop is observable as vx == 0 with the source in
+WAIT_DYNAMIC; the drop is observable in the audit ring.
 
 Why source-level: classify.effective_behavior can be right while source.py
 still calls the old behavior_class -- the P7 wiring is the thing under test.
@@ -119,38 +121,35 @@ def test_ignore_class_bird_does_not_stop_the_robot():
     assert s.nav_state() == NavState.FOLLOW
 
 
-def test_low_confidence_bird_is_block_not_ignore():
-    # A-CLS-7: below min_confidence the class is UNKNOWN -> block, so the
-    # ignore mapping must NOT apply. mutant: skip the confidence gate ->
-    # the 0.1-confidence bird is ignored -> robot keeps driving -> reddens.
+def test_low_confidence_bird_closing_in_does_not_stop():
+    # Fed directly (no world builder), a 0.1-confidence bird classifies as
+    # ignore and, being in no pile, never makes the robot wait; under 99
+    # U112 no non-person object waits at all -- the 2026-11-04 field failure
+    # was exactly a 0.1-confidence proxy held in WAIT_DYNAMIC. In production
+    # it would not even arrive (WP-1). mutant: keep "block -> dynamic" ->
+    # WAIT -> reddens.
     s, out = _run(_moving_toward_robot("bird", confidence=0.1))
-    assert out is not None and out.vx.value == 0.0
-    assert s.nav_state() == NavState.WAIT_DYNAMIC
+    assert out is not None and out.vx.value > 0.0
+    assert s.nav_state() != NavState.WAIT_DYNAMIC
 
 
 def test_low_confidence_person_still_stops():
-    # A-CLS-7 reverse: person is immune to the confidence gate -- anything
-    # that might be a person stops the robot. mutant: gate person too ->
-    # a 0.05-confidence person is "block" (still dynamic here) -- so this
-    # reverse is pinned on the helper's contract in test_classify_dispatch
-    # AND here on the consumed effect.
+    # RnsSource has no confidence gate of its own (99 U113: WP-1 lives in
+    # world.py, upstream): any person that reaches it stops the robot. In
+    # production a 0.05 person is dropped before this point (A-WLD-1).
+    # mutant: re-add a confidence branch in source/classify -> the person
+    # passes as block -> no stop -> reddens.
     s, out = _run(_moving_toward_robot("person", confidence=0.05))
     assert out is not None and out.vx.value == 0.0
 
 
-def test_proxy_car_never_enters_static_pile():
-    # 20 S5.1.1 v1.35: a proxy (maybe-)car that has "stopped" for longer than
-    # the dwell must NOT become a static-pile detour candidate; it stays under
-    # the dynamic rule. Observable: a static proxy car 1 m ahead still STOPS
-    # the robot (dynamic rule), whereas a confirmed static car would be left
-    # to geometry. mutant: ignore allow_static -> proxy car goes static ->
-    # no WAIT_DYNAMIC -> reddens.
+def test_proxy_car_is_left_to_geometry():
+    # 99 U112 (was 20 S5.1.1 v1.35 "a proxy car never enters the static
+    # pile"): only a person waits, so a proxy car 1 m ahead, however long it
+    # has stood, is the static pile -- with an open profile the robot drives
+    # on. mutant: keep proxy -> dynamic -> WAIT_DYNAMIC -> reddens.
     s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
-    car = one_object(class_name="car", r_near=1.0, velocity_xy=(0.0, 0.0),
-                     velocity_status="static", semantic_status="proxy",
-                     t_capture_mono_ms=NOW - 20)
-    # dwell: feed the same static car for longer than t_static_dwell_s (2 s)
     out = None
     for k in range(60):
         now = NOW + k * 50
@@ -162,9 +161,8 @@ def test_proxy_car_never_enters_static_pile():
                         objects=car_k,
                         status=healthy_status(t_publish_mono_ms=now - 100))
         out = s.compute(Ctx(perception=snap, now_mono_ms=now))
-    assert car is not None
-    assert out is not None and out.vx.value == 0.0
-    assert s.nav_state() == NavState.WAIT_DYNAMIC
+        assert s.nav_state() != NavState.WAIT_DYNAMIC      # not even once
+    assert out is not None and out.vx.value > 0.0
 
 
 # ── 11 S3.1B.5 v2.1 acceptance + 20 S3.1.8 age tiers + S3.1B.4 gate (B2) ─────
@@ -249,8 +247,8 @@ def _static_car_stream(s, age_ms, ticks=60):
 
 
 def test_fresh_static_car_goes_to_static_pile_baseline():
-    # baseline for A-AGE-1: with FRESH objects (age 20 ms) the dwelled static
-    # car leaves the dynamic pile -> geometry only (open profile) -> drives.
+    # baseline: with FRESH objects (age 20 ms) a static car is the static
+    # pile -> geometry only (open profile) -> drives (99 U112: any car is).
     s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
     out = _static_car_stream(s, age_ms=20)
@@ -258,64 +256,16 @@ def test_fresh_static_car_goes_to_static_pile_baseline():
     assert s.nav_state() == NavState.FOLLOW
 
 
-def test_tier2_age_refuses_velocity_judgement():
-    # A-AGE-1: objects 300 ms old (ok=200 < age <= T-52=500): the velocity
-    # judgement is refused -> the "static" car stays dynamic -> WAIT. mutant:
-    # drop tier 2 -> car enters static pile -> drives -> reddens.
+def test_tier2_age_car_still_never_waits():
+    # 99 U112 retired the tier-2 age refusal (it fed only the
+    # static criterion, which no longer runs): a car whose objects are 300 ms
+    # old (ok=200 < age <= T-52=500) is still the static pile -> drives.
+    # mutant: restore the tier-2 refusal -> WAIT -> reddens.
     s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
     out = _static_car_stream(s, age_ms=300)
-    assert out is not None and out.vx.value == 0.0
-    assert s.nav_state() == NavState.WAIT_DYNAMIC
-
-
-def _car_tick(s, now, fresh):
-    """One tick of the static-car scene: a fresh objects frame (20 ms old)
-    when `fresh`, otherwise no new objects frame -- RNS keeps the last
-    ACCEPTED one and its age simply grows, which is how a real inter-frame
-    gap reaches tier 2 (the sawtooth age of 20 S3.1.8)."""
-    car = None
-    if fresh:
-        car = one_object(class_name="car", r_near=1.0, velocity_xy=(0.0, 0.0),
-                         velocity_status="static", t_capture_mono_ms=now - 20)
-    return _tick(s, now,
-                 profile=uniform_free(t_capture_mono_ms=now - 20, t_seg_mono_ms=now - 30),
-                 objects=car, status=healthy_status(t_publish_mono_ms=now - 100))
-
-
-def test_tier2_tick_resets_static_dwell_not_pauses():
-    # A-AGE-4 (20 S3.1.8 v1.44): ONE tier-2 tick inside the dwell restarts the
-    # static clock -- it is a reset, not a pause. Scene: 30 fresh ticks
-    # (1.45 s, under t_static_dwell_s 2.0), a 5-tick gap with no new frame
-    # (age reaches 220 ms > objects_age_ok_ms 200 on the last gap tick), then
-    # 30 fresh ticks again: 1.45 s since the reset -> still dynamic -> WAIT.
-    # Then 12 more fresh ticks (2.05 s since the reset) -> static pile ->
-    # drives, which proves the reset re-arms the clock instead of locking it.
-    # mutant A: keep _slow_since on tier 2 (pause) -> dwell 3.2 s at the first
-    # check -> drives -> reddens. mutant B: never allow static again after a
-    # tier-2 tick -> the second check still waits -> reddens.
-    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
-    s.load_mission(_mission())
-    now = NOW
-    for _ in range(30):
-        _car_tick(s, now, fresh=True)
-        now += 50
-    last_fresh = now - 50
-    for _ in range(5):
-        _car_tick(s, now, fresh=False)
-        now += 50
-    assert now - 50 - (last_fresh - 20) > 200       # the gap really hit tier 2
-    out = None
-    for _ in range(30):
-        out = _car_tick(s, now, fresh=True)
-        now += 50
-    assert out is not None and out.vx.value == 0.0
-    assert s.nav_state() == NavState.WAIT_DYNAMIC
-    for _ in range(12):
-        out = _car_tick(s, now, fresh=True)
-        now += 50
     assert out is not None and out.vx.value > 0.0
-    assert s.nav_state() != NavState.WAIT_DYNAMIC
+    assert s.nav_state() == NavState.FOLLOW
 
 
 def test_tier3_objects_lost_caps_speed_and_ignores_stale_yield():

@@ -101,9 +101,7 @@ def behavior_class(class_name: str, class_map: dict) -> str:
     return mapped
 
 
-def effective_behavior(class_name: str, semantic_status: str,
-                       confidence: float, class_map: dict,
-                       min_confidence: float):
+def effective_behavior(class_name: str, semantic_status: str, class_map: dict):
     """The behavior class RNS actually acts on for one tracked object, plus
     whether the object may ever join the STATIC pile (20 S5.1.1 v1.35).
     Returns (behavior | None, allow_static):
@@ -111,26 +109,23 @@ def effective_behavior(class_name: str, semantic_status: str,
         an object (11 S3.1B.2 v2.1, A-CLS-5). Folding it through the
         unmapped->block default would turn the whole walkable area into a
         wall.
-      - person: person_stop whatever the confidence or status -- any
-        detection that might be a person stops the robot (A-CLS-7 reverse).
-      - confidence < min_confidence: treated as an UNKNOWN class -> block
-        (A-CLS-7). A low-confidence 'bird' must not be ignored; block is
-        the fail-safe direction. proxy status additionally bars the static
-        pile.
+      - person: person_stop whatever its status.
       - proxy (semantic_status): the MORE conservative of the mapping and
         block -- ignore/traverse collapse to block, hazard stays hazard,
-        vehicle/animal keep the dynamic rule but never enter the static
-        pile (a maybe-car is not a thing to detour around).
+        vehicle/animal keep their mapping but never enter the static pile.
       - confirmed: the mapping as configured; unmapped -> block.
-    mutants: return block for the T class (A-CLS-5 red); skip the
-    confidence gate (A-CLS-7 red); return ignore for a proxy bird."""
+    99 U113 (20 S3.0 WP-1) removed the confidence branch that lived here
+    ("below min_confidence -> block, person immune", A-CLS-7): an object
+    below world.object_min_confidence never reaches this function now --
+    world.keep_confident drops it, person included. Keeping a second
+    threshold here would be two rules for one number.
+    mutants: return block for the T class (A-CLS-5 red); return ignore for
+    a proxy bird."""
     if class_name in T_CLASS_NAMES:
         return None, False
     if class_name == "person":
         return PERSON_BEHAVIOR, False
     proxy = semantic_status == "proxy"
-    if confidence < min_confidence:
-        return UNMAPPED_BEHAVIOR, not proxy
     beh = behavior_class(class_name, class_map)
     if proxy:
         if beh in (IGNORE_BEHAVIOR, "traverse"):
@@ -145,7 +140,9 @@ def is_static(velocity_mps: float, dwell_s: float,
     BOTH conditions: speed alone lets estimator noise read a parked car as
     moving (robot waits forever); threshold alone lets a just-started car (still
     slow) read as static (robot detours, car moves). velocity is the
-    ego-removed speed magnitude; dwell_s is how long it has held under threshold."""
+    ego-removed speed magnitude; dwell_s is how long it has held under threshold.
+    99 U112: no runtime caller since only a person waits (20 S5.5 v1.45);
+    kept, with its tests, for a vehicle dynamic rule to be wired back to."""
     return abs(velocity_mps) < v_static_thresh and dwell_s >= t_static_dwell
 
 
@@ -154,7 +151,9 @@ def dispatch_dynamic(behavior: str, velocity_mps: float, dwell_s: float,
     """Is this obstacle in the DYNAMIC pile (20 S5.1)? person is ALWAYS dynamic
     (person_stop, never threaded/detoured -- A-CLS-1). Every other class is
     dynamic UNTIL it passes the static criterion. mutant: make a static person
-    join the static pile -> person enters candidate generation -> A-CLS-1 red."""
+    join the static pile -> person enters candidate generation -> A-CLS-1 red.
+    99 U112: source.py no longer calls this -- a non-person is the static pile
+    outright (20 S5.1 v1.45); kept for a vehicle dynamic rule."""
     if behavior == PERSON_BEHAVIOR:
         return True   # person is always dynamic; never a detour candidate
     return not is_static(velocity_mps, dwell_s, v_static_thresh, t_static_dwell)
@@ -165,7 +164,9 @@ def usable_velocity(velocity_frame: str, velocity_mps: float,
     """velocity_frame==raw refusal (20 S3.1.5, A-FUS-7). raw velocity has NOT had
     ego motion removed, so a static tree reads as -v_ego and the whole world looks
     moving. This phase's only legal raw_policy is 'reject' -> return None (motion
-    state unknown -> conservative). ego_removed -> the velocity is usable."""
+    state unknown -> conservative). ego_removed -> the velocity is usable.
+    99 U112: no runtime caller (velocity decides nothing once only a person
+    waits); kept for a vehicle dynamic rule."""
     if velocity_frame == "raw":
         if raw_policy != "reject":
             raise ValueError("raw_velocity_policy must be 'reject' this phase "

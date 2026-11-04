@@ -105,9 +105,9 @@ def _snapshot(tick: dict) -> PerceptionSnapshot:
                               status=dtos["status"])
 
 
-def _run(name: str):
+def _run(name: str, cfg=None):
     """Feed every tick of the scenario; return (source, last output)."""
-    s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
+    s = RnsSource(cfg=cfg if cfg is not None else _cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
     out = None
     for tick in _load(name)["ticks"]:
@@ -152,10 +152,22 @@ def test_all_unknown_is_capped_by_unknown_ratio():
     assert s.take_failure() is None
 
 
-def test_no_seg_limits_speed_to_no_seg_cap():
-    s, out = _run("no_seg")
-    cap = _cfg()["rns"]["perception"]["no_seg_speed_cap_mps"]
-    assert out is not None and 0.0 < out.vx.value <= cap + 1e-9
+def test_no_seg_is_no_longer_a_speed_cap():
+    # 99 U113 (20 S3.0, S3.1.11 retired): RNS no longer reads the T channel,
+    # so a profile without T evidence does not cap the speed any more; the
+    # binding ceiling is world.v_max_mps. The scenario's no_seg cap (0.5) is
+    # deliberately set below that ceiling here, so a leftover no_seg cap is
+    # visible. mutant: keep the seg_stale -> no_seg cap in source.py ->
+    # vx == 0.5 -> reddens.
+    cfg = _cfg()
+    cfg["rns"]["world"]["v_max_mps"] = 2.0
+    cfg["rns"]["perception"]["no_seg_speed_cap_mps"] = 0.1
+    s = RnsSource(cfg=cfg, r_eff_m=R_EFF)
+    s.load_mission(_mission())
+    out = None
+    for tick in _load("no_seg")["ticks"]:
+        out = s.compute(Ctx(perception=_snapshot(tick), now_mono_ms=tick["now_mono_ms"]))
+    assert out is not None and out.vx.value > 0.1 + 1e-9
 
 
 def test_extrinsic_uncalibrated_refuses_the_mission():
@@ -166,13 +178,15 @@ def test_extrinsic_uncalibrated_refuses_the_mission():
     assert out is not None and out.vx.value == 0.0
 
 
-def test_tf_stale_raw_velocity_keeps_the_car_dynamic():
-    # a raw-trusting consumer would let the zero-velocity car go static at
-    # 2 s and drive on; the refusal (A-FUS-7) keeps it a stop. mutant: return
-    # the raw value in usable_velocity -> drives -> reddens.
+def test_tf_stale_raw_velocity_car_does_not_stop():
+    # 99 U112: a car's velocity no longer decides anything (only a person
+    # waits), so the raw / refused velocity of the tf_stale car cannot stop
+    # the robot either; the raw refusal itself (A-FUS-7) is still asserted at
+    # classify level (test_raw_velocity_refused_as_motion_cue). mutant: keep
+    # "unknown speed -> dynamic" for cars -> WAIT -> reddens.
     s, out = _run("tf_stale")
-    assert out is not None and out.vx.value == 0.0
-    assert s.nav_state() == NavState.WAIT_DYNAMIC
+    assert out is not None and out.vx.value > 0.0
+    assert s.nav_state() != NavState.WAIT_DYNAMIC and s.take_failure() is None
 
 
 def test_clock_reset_is_an_epoch_reset_not_a_drop():
@@ -214,16 +228,22 @@ def test_dropout_of_objects_caps_speed_and_is_audited():
 
 def test_ground_withdrawn_is_unknown_not_a_stop():
     """19 S3.2A v1.6 / r5: a withdrawal frame is UNKNOWN everywhere but the
-    independent S block. RNS: capped by the UNKNOWN share, no failure, the S
-    edge still BLOCKED. Host (p1 host_gate): fresh + no forward bin known is
-    NOT the dead veto -- the ceiling stays profile/spec. mutant: veto on
-    f_free None in host_gate -> red; mutant: drop the S block from the
-    scenario's fuse -> red."""
+    independent S block. RNS: no failure and no WAIT_DYNAMIC -- the barrier
+    is geometry (99 U112), the S edge BLOCKED leaves no feasible candidate
+    in this frame and, wall-follow being retired (99 U114), RNS holds or
+    follows -- never WALL_FOLLOW. Host (p1 host_gate): fresh +
+    no forward bin known is NOT the dead veto -- the ceiling stays
+    profile/spec. mutant: veto on f_free None in host_gate -> red; mutant:
+    drop the S block from the scenario's fuse -> red.
+    Before U112 the barrier (2 ticks, never dwelled) stopped the robot, so
+    the old 'capped by the UNKNOWN share' assertion passed on vx = 0 without
+    ever reaching a cap."""
     from xbrain.p1_motion.nav.health_factor import HealthView
     from xbrain.p1_motion.nav.host_gate import compute_gate, forward_d_free
     s, out = _run("ground_withdrawn")
-    cap = _cfg()["rns"]["speed"]["unk_g_min"] * V_NOM
-    assert out is not None and out.vx.value <= cap + 1e-9
+    assert out is not None
+    assert out.vx.value <= _cfg()["rns"]["world"]["v_max_mps"] + 1e-9
+    assert s.nav_state() != NavState.WALL_FOLLOW
     assert s.take_failure() is None
     last = _load("ground_withdrawn")["ticks"][-1]
     snap = _snapshot(last)
@@ -247,14 +267,15 @@ def _obj_body(**kw):
     return sim, body
 
 
-def test_velocity_unknown_is_not_the_static_pile():
-    """Row 2: a car with no estimate (velocity_xy null, valid false) must be
-    handled as motion-unknown -> dynamic rule -> STOP inside the corridor; a
-    consumer that reads [0, 0] would park it in the static pile and drive on.
-    mutant: use velocity_xy regardless of velocity_valid -> red."""
+def test_velocity_unknown_car_is_not_a_stop():
+    """Row 2 under 99 U112: a car with no estimate (velocity_xy null, valid
+    false) is the static pile like any non-person -- no WAIT_DYNAMIC, no
+    failure. The wire still refuses a null estimate that claims validity or
+    a "static" verdict with no estimate. mutant: keep "unknown speed ->
+    dynamic" for cars -> WAIT -> red."""
     s, out = _run("velocity_unknown")
-    assert out is not None and out.vx.value == 0.0
-    assert s.nav_state() == NavState.WAIT_DYNAMIC and s.take_failure() is None
+    assert out is not None and out.vx.value > 0.0
+    assert s.nav_state() != NavState.WAIT_DYNAMIC and s.take_failure() is None
     sim = _sim()
     fake = sim.obj(52, "car", 2.5, 0.0, r_near=2.3, velocity_xy=None, velocity_status="warming_up")
     fake["velocity_valid"] = True                      # null estimate claiming validity
@@ -286,13 +307,18 @@ def test_unlocalized_person_is_capped_and_audited_not_empty():
     """Row 4: a detected-but-unlocalizable person keeps the scene non-empty:
     audited, speed capped, no WAIT (no distance to wait on). mutant: skip
     unlocalized objects silently -> vx like 'normal' and no audit -> red."""
-    s, out = _run("unlocalized_person")
-    cap = _cfg()["rns"]["perception"]["unlocalized_speed_cap_mps"]
+    # 99 U114: the shipped unlocalized cap (1.0) equals the shipped world
+    # ceiling (1.0); pin the mechanism with a 0.5 cap under a 2.0 ceiling.
+    cfg = _cfg()
+    cfg["rns"]["perception"]["unlocalized_speed_cap_mps"] = 0.5
+    cfg["rns"]["world"]["v_max_mps"] = 2.0
+    s, out = _run("unlocalized_person", cfg)
+    cap = 0.5
     assert out is not None and 0.0 < out.vx.value <= cap + 1e-9
     assert s.nav_state() == NavState.FOLLOW and s.take_failure() is None
     kinds = [r.kind for r in s.audit.drain()]
     assert "objects_unlocalized" in kinds
-    _s2, normal = _run("normal")
+    _s2, normal = _run("normal", cfg)
     assert normal.vx.value > out.vx.value              # not treated as an empty scene
     sim = _sim()
     partial = sim.obj(54, "person", 2.5, 0.0, r_near=2.3)

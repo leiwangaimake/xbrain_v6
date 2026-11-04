@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path as _Path
 from typing import Optional, Tuple
 
+import pytest
+
 import yaml as _yaml
 
 from xbrain.p1_motion.rns.route import Mission
@@ -218,6 +220,7 @@ def test_wall_stall_counter_immune_to_suspension():
     assert out is not None
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): wall-follow retired -- compute() never dispatches to _wall_tick, so a forced WALL_FOLLOW state follows instead of holding; 20 #20-29")
 def test_wall_tick_survives_perception_dropout():
     # REVIEW R1-20 (3-pass audit): hugging + perception dropout (snap None)
     # dereferenced profile.d_free and CRASHED the tick. It must hold zero.

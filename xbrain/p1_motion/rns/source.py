@@ -51,10 +51,9 @@ from .candidate import (
 )
 from .classify import (
     IGNORE_BEHAVIOR,
-    dispatch_dynamic,
+    PERSON_BEHAVIOR,
     effective_behavior,
     health_speed_capped,
-    usable_velocity,
 )
 from .config import RnsConfigError, run_startup_assertions
 from .dynamic import DynamicAction, WaitBudget, distance_action, in_corridor
@@ -63,7 +62,6 @@ from .grid import (
     profile_age_ms,
     profile_speed_limited,
     profile_zero_speed,
-    seg_stale,
 )
 from .inputs import (
     ARRIVAL_ACCEPT,
@@ -72,7 +70,6 @@ from .inputs import (
     PerceptionSnapshot,
     classify_arrival,
 )
-from .planner import GuidancePlanner
 from .route import Mission, align_omega, lookahead_distance, wrap_angle
 from .speed import SpeedCaps, cap_deviation, cap_gap_tightness, cap_unknown_ratio
 from .types import (
@@ -157,7 +154,6 @@ class RnsSource:
         self._wait_budget: Optional[WaitBudget] = None
         self._dyn_prev = DynamicAction.RUN
         self._pre_wait_state: NavState = NavState.FOLLOW
-        self._slow_since: dict = {}         # track_id -> ms when speed dropped
         # acceptance state (11 S3.1B.5 v2.1): identity timestamp of the last
         # ACCEPTED message per key and the message itself. A snapshot that
         # re-carries an already-accepted frame (dup) keeps this, so the age
@@ -228,12 +224,14 @@ class RnsSource:
             self._watchdog = ProgressWatchdog(int(w["window_s"] * 1000),
                                               w["min_progress_m"],
                                               w["report_after_windows"])
-            # guidance layer (20 S4A): missing config key fails loud here --
-            # a silently-absent planner would demote every direction decision
-            # back to local heuristics with no error anywhere.
-            self._planner = GuidancePlanner(c)
-        else:
-            self._planner = None
+        # 99 U114 (20 S3.0A RNS-N-19): the guidance layer (20 S4A) is RETIRED.
+        # It plans over remembered cells, and RNS no longer remembers anything
+        # (the per-tick grid below holds one frame), so a field built on it
+        # would only re-plan around this frame. _planner stays None for every
+        # instance; each consumer below already falls back to the v1.0 target
+        # (plain lookahead R) when it is None, and no_path_in_domain -- the
+        # verdict the 2026-11-04 phantom ring produced -- can no longer fire.
+        self._planner = None
 
     def load_mission(self, mission: Mission) -> None:
         """P3/route pushes a mission (goto or path). Transitions IDLE -> FOLLOW.
@@ -288,7 +286,6 @@ class RnsSource:
         self._wall_stall_ticks = 0
         self._last_d_side = None
         self._wall_corner = False
-        self._slow_since = {}
         if self._cfg is not None:
             w = self._cfg["rns"]["watchdog"]
             self._watchdog = ProgressWatchdog(int(w["window_s"] * 1000),
@@ -487,7 +484,32 @@ class RnsSource:
         # was not). A suspended tick must be a true no-op.
         if self._suspend.suspended():
             return None
-        return self._run_follow(ctx)
+        return self._world_clamp(self._run_follow(ctx))
+
+    def _world_clamp(self, cand: Optional[VelocityCandidate]) -> Optional[VelocityCandidate]:
+        """20 S3.0 / S8.1 (99 U113 / U114, A-WLD-6): the ONE place the world
+        ceiling world.v_max_mps is enforced, on every candidate RNS emits.
+
+        Unrecognised obstacles are invisible to the object-driven world, so
+        the whole output runs under one configured ceiling (validated at
+        startup, never defaulted). U113 also put it in the caps dict; U114
+        retired wall-follow (the branch that returned before the caps), so
+        every candidate now passes here and a second copy in the caps would
+        only make each one an equivalent mutant of the other -- it lives here
+        alone. The planar speed is scaled, never the components clipped one
+        by one (clipping vx alone bends a vx/vy mix). wz untouched (the
+        rotation permit, 12 S6A, owns it).
+        mutant: return cand unchanged -> open ground runs at v_nom -> A-WLD-6
+        reddens."""
+        if cand is None or self._cfg is None:
+            return cand
+        v_max = self._cfg["rns"]["world"]["v_max_mps"]
+        vx, vy = cand.vx.value, cand.vy.value
+        sp = math.hypot(vx, vy)
+        if sp <= v_max:
+            return cand
+        k = v_max / sp
+        return VelocityCandidate(vx=Mps(vx * k), vy=Mps(vy * k), wz=cand.wz)
 
     def _run_follow(self, ctx) -> Optional[VelocityCandidate]:
         """The assembled tick (S2): perception gating -> follow geometry ->
@@ -534,8 +556,10 @@ class RnsSource:
                 return zero
             if profile_speed_limited(age, 300):      # T-50: aged -> slow
                 caps["profile_age"] = 0.5 * v_nom
-            if seg_stale(profile, cfg["perception"]["seg_stale_ms"]):
-                caps["no_seg"] = cfg["perception"]["no_seg_speed_cap_mps"]
+            # The T-channel degrade (20 S3.1.11, seg_stale -> no_seg cap) was
+            # retired by 99 U113: the profile here is the object world profile
+            # (20 S3.0 WP-3), which never carries T evidence -- keeping the
+            # check would cap every tick for a channel RNS no longer reads.
         if snap is not None and snap.status is not None:
             # T-53 (11 S1.6.1, A-AGE-3): a status older than 3 s is a lost
             # health channel -> assume the worst invalid ratio. The age is
@@ -567,11 +591,18 @@ class RnsSource:
         # only SLOWS (the dev cap in E); boundedness belongs to the watchdog
         # (S7.3A) and the wall criteria (S7.6).
 
-        # ── B2. memory grid + progress bookkeeping (S2b) ─────────────────────
+        # ── B2. per-tick grid + progress bookkeeping (S2b) ───────────────────
+        # 99 U114 (20 S3.0A RNS-N-19): RNS does NOT remember obstacles. The
+        # grid is emptied and refilled from THIS tick's world profile only, so
+        # every reader of it (candidate checks, the body shield, the rotation
+        # permit's ring) sees real-time perception and nothing older. The
+        # 2026-11-04 seal was memory turning camera-fixed phantoms into a ring
+        # around a robot that turned in place; with one frame there is no ring
+        # to paint. The pose-jump clear (A-MEM-3) and the sweep are moot: a
+        # one-frame grid has nothing to misplace and nothing to age out.
         if profile is not None and now is not None and self._grid is not None:
-            self._grid.on_pose(pose)
+            self._grid.clear_all()
             self._grid.ingest_profile(profile, pose, yaw, now)
-            self._grid.maybe_sweep(pose, now)   # SYNC AUDIT S1: bounded memory
             # Stamped HERE, next to the write, not at the top of the tick: the
             # rotation permit's RC-3 asks how old the GRID is, and a tick that
             # ran but did not write (no profile) must not refresh that answer.
@@ -645,16 +676,13 @@ class RnsSource:
         half_w = self._r_eff_m + 0.5    # corridor half-width: r_eff + margin
         blocking = None
         dyn_objs = []                   # world (x, y, r) of DYNAMIC-pile objects
-        # objects age tiers (20 S3.1.8 v1.35, A-AGE-1/2): tier 1 full use;
-        # tier 2 (ok < age <= T-52) the velocity judgement is refused -- the
-        # object is handled as moving and can never enter the static pile;
-        # tier 3 (> T-52) the channel is lost: no yield rule can be trusted,
-        # every BLOCKED is the forbidden class, speed capped (11 S1.6.1).
-        velocity_ok = True
+        # objects age (20 S3.1.8): past T-52 the channel is lost -- no yield
+        # rule can be trusted, every BLOCKED is the forbidden class, speed
+        # capped (11 S1.6.1). The tier-2 velocity refusal fed only the static
+        # criterion, which no longer runs (99 U112: only a person waits).
         objects_lost = False
         if snap is not None and snap.objects is not None and now is not None:
             o_age = now - snap.objects.t_capture_mono_ms
-            velocity_ok = o_age <= cfg["perception"]["objects_age_ok_ms"]
             objects_lost = o_age > T52_OBJECTS_MS
             if objects_lost:
                 caps["objects_lost"] = cfg["perception"]["no_seg_speed_cap_mps"]
@@ -685,9 +713,10 @@ class RnsSource:
             n_unloc = 0
             unloc_cap = False
             for obj in snap.objects.objects:
-                beh, allow_static = effective_behavior(
-                    obj.class_name, obj.semantic_status, obj.confidence,
-                    cfg["class_map"], cfg["perception"]["min_confidence"])
+                # 99 U113 (20 S3.0 WP-1): objects below the confidence
+                # threshold were already dropped by world.keep_confident.
+                beh, _ = effective_behavior(
+                    obj.class_name, obj.semantic_status, cfg["class_map"])
                 if beh is None:
                     # 11 S3.1B.2 v2.1 / 20 S5.1.1 v1.35 (A-CLS-5): the
                     # traversable-segmentation class is the T channel
@@ -700,8 +729,6 @@ class RnsSource:
                     # yield rule, no candidate; geometry (profile) still
                     # owns any physical occupancy it may have.
                     continue
-                # static-criterion dwell bookkeeping (20 S5.5): raw-refused
-                # speed (None) is conservatively treated as moving.
                 if not obj.localized:
                     # 11 v2.3 row 4: detected but not localizable -- no geometry,
                     # so no corridor / static-pile / stop-distance judgement is
@@ -711,35 +738,16 @@ class RnsSource:
                     n_unloc += 1
                     unloc_cap = True
                     continue
-                spd = None
-                if obj.velocity_valid and obj.velocity_xy is not None:
-                    spd = usable_velocity(
-                        obj.velocity_frame,
-                        math.hypot(obj.velocity_xy[0], obj.velocity_xy[1]),
-                        cfg["perception"]["raw_velocity_policy"])
-                # velocity_valid false / velocity_xy null (11 v2.3 row 2): the motion
-                # state is UNKNOWN -> spd None -> handled as moving below, never as
-                # the static pile. mutant: read velocity_xy regardless of
-                # velocity_valid -> a warming-up car parks itself -> red.
-                eff_spd = spd if spd is not None else 999.0
-                if eff_spd < dyn_cfg["v_static_thresh_mps"]:
-                    t0 = self._slow_since.setdefault(obj.track_id, now)
-                    dwell_s = (now - t0) / 1000.0
-                else:
-                    self._slow_since.pop(obj.track_id, None)
-                    dwell_s = 0.0
-                # allow_static False (proxy / low confidence, 20 S5.1.1
-                # v1.35): never the static pile -- a maybe-car is not a
-                # thing to detour around; it stays under the dynamic rule.
-                # velocity_ok False (age tier 2, 20 S3.1.8): the velocity
-                # judgement is refused the same way (A-AGE-1).
-                if not velocity_ok:
-                    self._slow_since.pop(obj.track_id, None)
-                    allow_static = False
-                if allow_static and not dispatch_dynamic(
-                        beh, eff_spd, dwell_s,
-                        dyn_cfg["v_static_thresh_mps"],
-                        dyn_cfg["t_static_dwell_s"]):
+                # 99 U112 (user ruling 2026-11-04, 20 S5.1 RNS-N-7 v1.45): only
+                # a person is the dynamic pile -- stop and wait for it to
+                # leave. Every other class, whatever its speed, confidence or
+                # proxy status, is the static pile: the profile geometry and
+                # the S6 detour candidates go around it, it never stops the
+                # robot. Measured cause: a 0.1-confidence ground-level proxy
+                # 1.3 m ahead (velocity never confirmed, so never "static")
+                # held the robot in WAIT_DYNAMIC until the budget failed the
+                # goto, three times in a row.
+                if beh != PERSON_BEHAVIOR:
                     continue        # static pile: geometry (profile) covers it
                 # body-frame centroid -> world; corridor test against target.
                 fp = obj.footprint_xy
@@ -789,9 +797,11 @@ class RnsSource:
             if slowed:
                 caps["dynamic"] = 0.5 * v_nom
 
-        # ── C2. wall-follow tick (S2b -- 20 S7) ──────────────────────────────
-        if self._state == NavState.WALL_FOLLOW:
-            return self._wall_tick(profile, pose, yaw, fs, now, wz_max, step_m)
+        # ── C2. wall-follow (20 S7) is RETIRED by 99 U114 (RNS-N-19) ─────────
+        # It holds a wall that sits beside the body, OUTSIDE the 90 deg field
+        # of view, from memory (20 S7.4); with no memory there is no wall to
+        # hold. Nothing enters WALL_FOLLOW any more (the three entry points
+        # below are removed); _wall_tick and its helpers are unreachable.
 
         # ── D. static avoidance state machine (20 S6) ────────────────────────
         if profile is not None:
@@ -879,14 +889,12 @@ class RnsSource:
                         self.audit.append(AuditRecord(
                             now or 0, "detour_enter",
                             {"subgoal": target, "via": "memory_appeal"}))
-                    elif self._enter_wall(profile, pose, yaw, fs, now):
-                        return self._wall_tick(profile, pose, yaw, fs, now,
-                                               wz_max, step_m)
-                    elif self._state == NavState.DETOUR:
-                        # enter_wall refused as a small obstacle and set the
-                        # escape subgoal itself; ride it this tick.
-                        target = self._subgoal_world
                     else:
+                        # 99 U114: no feasible thread / detour in THIS frame
+                        # and no wall-follow to fall back on -> hold. "Stop"
+                        # is the result of having no way out (20 S5.4); the
+                        # next tick re-asks fresh perception, and the progress
+                        # watchdog bounds a hold that never clears (S7.3A).
                         return zero
             elif self._state == NavState.DETOUR:
                 self._detour_dwell += 1
@@ -955,20 +963,13 @@ class RnsSource:
                                 memory_appeal=True)
                             sel = self._selector.select(False, best, False)
                         if sel is None:
-                            if self._enter_wall(profile, pose, yaw, fs,
-                                                now):
-                                return self._wall_tick(
-                                    profile, pose, yaw, fs, now,
-                                    wz_max, step_m)
-                            if self._state == NavState.DETOUR \
-                                    and self._subgoal_world is not None:
-                                # refused as small obstacle: escape subgoal
-                                # set inside enter_wall; ride it.
-                                target = self._subgoal_world
-                            else:
-                                self._subgoal_world = None
-                                self._transition(NavState.FOLLOW)
-                                return zero
+                            # 99 U114: the subgoal went infeasible and this
+                            # frame offers no other -- drop back to FOLLOW and
+                            # hold (no wall-follow to escalate to).
+                            self._subgoal_world = None
+                            self._subgoal_clearance_m = None
+                            self._transition(NavState.FOLLOW)
+                            return zero
                         if sel is not None:
                             self._subgoal_clearance_m = sel.clearance_m
                             self._subgoal_world = self._body_to_world(
@@ -976,6 +977,14 @@ class RnsSource:
                             target = self._subgoal_world
 
         # ── E. speed + heading toward target ─────────────────────────────────
+        # 99 U114 (20 S3.0A / S8.1A): the avoidance SHAPING caps -- gap
+        # tightness, lateral deviation, unknown share -- never push below
+        # speed.avoid_floor_mps (0.2 m/s): threading or detouring keeps
+        # moving instead of crawling at 0.15 x v_nom. The floor lifts those
+        # three caps only; every SAFETY zero (person stop, the contact fuse
+        # below, T-51, the host gate's U54 stop band, estop, heading / RTK
+        # vetoes) still reaches 0, and the heading cos-taper is unchanged.
+        avoid_floor = cfg["speed"]["avoid_floor_mps"]
         # REVIEW R2-3 (3-pass audit 2026-09-11): the S8.1A gap-tightness cap
         # (cap_gap_tightness + gap_g_min, on the books since P4) had NO
         # consumer -- threading a tight gap ran at full detour speed. While
@@ -985,9 +994,9 @@ class RnsSource:
             margin_e = max(cfg["clearance"]["margin_by_class"].values())
             rho = self._subgoal_clearance_m / max(1e-6,
                                                   self._r_eff_m + margin_e)
-            caps["gap"] = cap_gap_tightness(
+            caps["gap"] = max(avoid_floor, cap_gap_tightness(
                 rho, v_nom, cfg["clearance"]["gate_saturate_ratio"],
-                cfg["speed"]["gap_g_min"])
+                cfg["speed"]["gap_g_min"]))
         # SYNC AUDIT S2 (2026-09-11): the S8.1A UNKNOWN-share cap existed as
         # three tuned keys with no consumer. Share = fraction of forward-
         # sector bins (+-45 deg) with no FREE evidence; more unknown ahead
@@ -1004,12 +1013,12 @@ class RnsSource:
                     n_unk += 1
             if n_fwd:
                 sp = cfg["speed"]
-                caps["unknown"] = cap_unknown_ratio(
+                caps["unknown"] = max(avoid_floor, cap_unknown_ratio(
                     n_unk / n_fwd, v_nom, sp["unk_r0"], sp["unk_r1"],
-                    sp["unk_g_min"])
-        caps["deviation"] = cap_deviation(
+                    sp["unk_g_min"]))
+        caps["deviation"] = max(avoid_floor, cap_deviation(
             fs.projection.deviation_m, v_nom, cfg["speed"]["dev_e0_m"],
-            route_cfg["max_deviation_m"], cfg["speed"]["dev_g_min"])
+            route_cfg["max_deviation_m"], cfg["speed"]["dev_g_min"]))
         theta_des = math.atan2(target[1] - pose[1], target[0] - pose[0])
         wz = align_omega(theta_des, yaw, route_cfg["k_yaw"], wz_max)
         v = SpeedCaps(caps).limit()
@@ -1053,14 +1062,10 @@ class RnsSource:
                 self._s_star, dt_ms, self._state.value,
                 self._state == NavState.WAIT_DYNAMIC, limiter, boundary)
             if wd == WatchdogResult.ESCALATE_WALL:
-                if self._enter_wall(profile, pose, yaw, fs, now):
-                    return self._wall_tick(profile, pose, yaw, fs, now,
-                                           wz_max, step_m)
-                if self._state == NavState.DETOUR \
-                        and self._subgoal_world is not None:
-                    # refused as a small obstacle inside enter_wall: the
-                    # escape subgoal is set; steer at it this tick.
-                    target = self._subgoal_world
+                # 99 U114: there is no wall-follow to escalate to; the timer
+                # keeps running and branch three (report_after_windows)
+                # terminates the mission with watchdog_no_progress.
+                pass
             elif wd == WatchdogResult.REPORT_NO_PROGRESS:
                 # branch two (no boundary) or three (escalation exhausted,
                 # 20 S7.3A v1.41): bounded termination either way.

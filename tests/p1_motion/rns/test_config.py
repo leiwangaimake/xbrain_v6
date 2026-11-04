@@ -28,7 +28,12 @@ def _cfg(delta_s=0.4, person=None):
     m = {"rns": {"wall_follow": {"leave_progress_m": delta_s},
                  "class_map": {},
                  # 11 v2.3 / 20 S5.1A: run_startup_assertions requires the cap key
-                 "perception": {"unlocalized_speed_cap_mps": 0.5}}}
+                 "perception": {"unlocalized_speed_cap_mps": 0.5},
+                 # 20 S3.0 / 99 U113-U114: run_startup_assertions requires the world
+                 # keys and the avoidance floor
+                 "world": {"object_min_confidence": 0.4, "person_min_confidence": 0.1,
+                           "v_max_mps": 1.0},
+                 "speed": {"avoid_floor_mps": 0.2}}}
     if person is not None:
         m["rns"]["class_map"]["person"] = person
     return m
@@ -90,6 +95,41 @@ def test_run_startup_assertions_wires_both():
 
 # ── 20 S5.1.1 v1.35 (#20-25): class_map value hygiene (A-CLS-8) ───────────────
 from xbrain.p1_motion.rns.config import assert_class_map_values  # noqa: E402
+
+
+# ── 20 S3.0 RNS-N-18 (99 U113): world keys (A-WLD-6, start half) ─────────────
+@pytest.mark.parametrize("key,bad", [
+    ("object_min_confidence", None), ("object_min_confidence", 0.0),
+    ("object_min_confidence", 1.5), ("person_min_confidence", None),
+    ("person_min_confidence", 0.0), ("person_min_confidence", 1.5),
+    ("v_max_mps", None), ("v_max_mps", 0.0), ("v_max_mps", -0.1)])
+def test_world_keys_null_or_out_of_range_refuse_start(key, bad):
+    # A-WLD-6: a null / zero / out-of-range world key refuses to start, naming
+    # the key. mutant: drop assert_world_keys from run_startup_assertions ->
+    # every case starts -> reddens.
+    cfg = _cfg()
+    cfg["rns"]["world"][key] = bad
+    with pytest.raises(RnsConfigError, match="rns.world." + key):
+        run_startup_assertions(cfg, r_eff_m=0.6)
+
+
+@pytest.mark.parametrize("bad", [None, 0.0, -0.1, 1.5])
+def test_avoid_floor_null_nonpositive_or_above_ceiling_refuses_start(bad):
+    # 99 U114 (A-WLD-6): speed.avoid_floor_mps must be in (0, world.v_max_mps];
+    # 1.5 > the 1.0 ceiling is a floor nobody can reach. mutant: drop the
+    # floor check -> every case starts -> reddens.
+    cfg = _cfg()
+    cfg["rns"]["speed"]["avoid_floor_mps"] = bad
+    with pytest.raises(RnsConfigError, match="avoid_floor_mps"):
+        run_startup_assertions(cfg, r_eff_m=0.6)
+
+
+def test_world_keys_missing_refuses_start():
+    # A-WLD-6: the whole world section absent -> refuse, not default.
+    cfg = _cfg()
+    del cfg["rns"]["world"]
+    with pytest.raises(RnsConfigError, match="rns.world"):
+        run_startup_assertions(cfg, r_eff_m=0.6)
 
 
 def _cfg_cm(**rows):

@@ -44,6 +44,12 @@ pytestmark = pytest.mark.no_device
 
 _ROOT = Path(__file__).resolve().parents[3]
 _CFG = yaml.safe_load((_ROOT / "configs" / "rns.yaml").read_text(encoding="utf-8"))
+# 99 U113: the RNS world ceiling (configs: 0.6 m/s) sits below this file's
+# fence soft-band cap (~0.83 m/s at d_eff 0.7), so with the shipped value the
+# fence clip would never bind and these tests would stop testing it. The
+# ceiling is lifted to the stack's v_nom here; it is asserted on its own in
+# tests/p1_motion/rns/test_world.py (A-WLD-6).
+_CFG["rns"]["world"]["v_max_mps"] = 1.0
 
 OK = HealthView(1.0, True, "patrol", "ok", 100)
 LIM = RelMoveLimits(20.0, 6.2832, 0.02, 20.0, True)

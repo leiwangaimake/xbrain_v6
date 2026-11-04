@@ -87,29 +87,29 @@ CM2 = {"car": "vehicle_dynamic", "bird": "ignore", "grass": "traverse",
 def test_t_class_is_dropped_not_block():
     # A-CLS-5: traversable_area is the T channel, not an object -> None (drop).
     # mutant: fall through to behavior_class -> "block" -> reddens.
-    assert effective_behavior("traversable_area", "confirmed", 0.99, CM2, 0.3) == (None, False)
+    assert effective_behavior("traversable_area", "confirmed", CM2) == (None, False)
 
 
 def test_ignore_class_is_ignore_when_confirmed():
     # A-CLS-6: a confirmed bird maps to ignore (explicit row).
-    assert effective_behavior("bird", "confirmed", 0.9, CM2, 0.3) == ("ignore", True)
+    assert effective_behavior("bird", "confirmed", CM2) == ("ignore", True)
 
 
-def test_low_confidence_collapses_to_block_person_immune():
-    # A-CLS-7: below min_confidence the class is unknown -> block; ignore must
-    # NOT apply. mutant: skip the gate -> ("ignore", True) -> reddens.
-    assert effective_behavior("bird", "confirmed", 0.1, CM2, 0.3) == ("block", True)
-    # A-CLS-7 reverse: person is immune -- any confidence stops the robot.
-    assert effective_behavior("person", "confirmed", 0.05, CM2, 0.3)[0] == "person_stop"
-    assert effective_behavior("person", "proxy", 0.05, CM2, 0.3)[0] == "person_stop"
+# The low-confidence branch that lived in effective_behavior was retired by
+# 99 U113: objects below world.object_min_confidence are
+# dropped before classification (20 S3.0 WP-1), asserted as A-WLD-1 in
+# test_world.py.
+def test_person_maps_to_person_stop_whatever_the_status():
+    assert effective_behavior("person", "confirmed", CM2)[0] == "person_stop"
+    assert effective_behavior("person", "proxy", CM2)[0] == "person_stop"
 
 
 def test_proxy_takes_the_more_conservative_side():
     # proxy vehicle: dynamic rule kept, static pile barred (allow_static False)
-    assert effective_behavior("car", "proxy", 0.9, CM2, 0.3) == ("vehicle_dynamic", False)
+    assert effective_behavior("car", "proxy", CM2) == ("vehicle_dynamic", False)
     # proxy ignore/traverse collapse to block; proxy hazard stays hazard
-    assert effective_behavior("bird", "proxy", 0.9, CM2, 0.3) == ("block", False)
-    assert effective_behavior("grass", "proxy", 0.9, CM2, 0.3) == ("block", False)
-    assert effective_behavior("pit", "proxy", 0.9, CM2, 0.3) == ("hazard", False)
+    assert effective_behavior("bird", "proxy", CM2) == ("block", False)
+    assert effective_behavior("grass", "proxy", CM2) == ("block", False)
+    assert effective_behavior("pit", "proxy", CM2) == ("hazard", False)
     # confirmed unmapped -> block, static allowed
-    assert effective_behavior("forklift", "confirmed", 0.9, CM2, 0.3) == ("block", True)
+    assert effective_behavior("forklift", "confirmed", CM2) == ("block", True)

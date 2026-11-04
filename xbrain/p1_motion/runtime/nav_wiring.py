@@ -120,6 +120,7 @@ from xbrain.p1_motion.nav.route_intake import RouteAssembler, RouteIntakeError
 from xbrain.p1_motion.path import gnss_pose
 from xbrain.p1_motion.path.local_frame import LocalFrameError
 from xbrain.p1_motion.rns.source import RnsSource
+from xbrain.p1_motion.rns.world import WorldBuilder  # 20 S3.0 WP-6
 from xbrain.p1_motion.rotation.episodes import RotationEpisodeTracker, RotationEvent
 from xbrain.p1_motion.rotation.rcg import RingSample
 from xbrain.p1_motion.runtime import basic_motion_test
@@ -244,6 +245,10 @@ class NavRuntime:
         # ONE RnsSource for the process lifetime (memory grid / acceptance state
         # / watchdog live in it); its startup assertions (20 S7A.1) run here.
         rns = RnsSource(cfg=cfg.rns, r_eff_m=cfg.r_eff_m)
+        # 20 S3.0 WP-6 (99 U113): the ONE place the object world profile is
+        # built each tick. Built after RnsSource so its startup assertions
+        # (world keys included) have already refused a bad config.
+        self._world = WorldBuilder(cfg.rns["rns"]["world"], cfg.rns["rns"]["class_map"])
         self._src = RnsAvoidSource(rns, cfg.rns["rns"])
         self._arb = P1Arbiter()
         self._arbvis = ArbVisibility()          # P1-22/23 (11 S7A.8)
@@ -748,6 +753,11 @@ class NavRuntime:
 
         None when there is no profile at all; the caller then has no ring to
         build either, and the permit reports no ring source.
+
+        99 U113 (20 S3.0 WP-6): snap.profile is now the object world profile,
+        which has no None bin by construction, so this ratio is 0 whenever a
+        world profile exists (12 S6A.3.2 note). Kept as the same question asked
+        of the profile the permit is actually given.
         """
         profile = None if snap is None else snap.profile
         if profile is None or not profile.d_free:
@@ -865,7 +875,10 @@ class NavRuntime:
             emits += self._host.on_relmove(b, now=now_ms, pose=pose.xy,
                                            yaw_rad=pose.yaw, heading_valid=pose.heading_valid,
                                            allow_motion=health.allow_motion)
-        snap = self._perception.latest(now_ms)
+        # 20 S3.0 RNS-N-18 (99 U113): every motion consumer below -- RNS via
+        # NavInputs, the host gate f(d_free), the rotation ring sample -- reads
+        # the object world snapshot, never the raw profile arrays (WP-6).
+        snap = self._world.build(self._perception.latest(now_ms))
         inp = NavInputs(now_mono_ms=now_ms, pose_xy=pose.xy, yaw_rad=pose.yaw,
                         heading_valid=pose.heading_valid, i_fix=pose.i_fix,
                         i_heading=pose.i_heading,

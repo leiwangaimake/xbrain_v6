@@ -21,6 +21,9 @@ Why this needs a replay and not the publisher's own age statistic:
     (source.py tier-2 branch, A-AGE-4), so what decides whether a parked car
     can ever be detoured is the longest RUN of consecutive tier-1 ticks, not
     the share of tier-1 ticks. The report prints both.
+  * 99 U112 (2026-11-04): only a person waits now, so the tier-2 branch and
+    the static dwell no longer run in source.py; this tool measures a rule
+    that is retired until a vehicle dynamic rule is wired back (20 S5.1).
 
 Input: the per-frame objects ledger perception's harness writes
 (`<run>/ledger/ledger_objects.csv.gz`, columns seq, rx_mono_ns,

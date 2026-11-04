@@ -75,6 +75,7 @@ rns:
     dev_e0_m: 0.5                  # [sim] 偏差压速起点
     dev_g_min: 0.15                # [sim] 偏差压速下限系数
     gap_g_min: 0.3                 # [sim] 穿缝最紧时的速度系数
+    avoid_floor_mps: 0.2           # [doc] 99 U114 用户裁决: 避障压速项(穿缝/偏差/UNKNOWN 占比)最低 0.2 m/s; 安全零速不受它抬升 (20 S3.0A); (0, world.v_max_mps]
     unk_r0: 0.2                    # [sim] UNKNOWN 占比压速起点
     unk_r1: 0.6                    # [sim] UNKNOWN 占比压速饱和点
     unk_g_min: 0.3                 # [sim] UNKNOWN 压速下限
@@ -83,8 +84,8 @@ rns:
   dynamic:
     stop_dist_m: 3.0               # [doc] 用户 2026-09-07 指定默认值  (20 S5.3)
     resume_dist_m: 4.0             # [sim] 必须 > stop_dist (A-DYN-2 迟滞带)
-    v_static_thresh_mps: 0.1       # [sim] 静止判据速度阈 (20 S5.5)
-    t_static_dwell_s: 2.0          # [sim] 静止判据驻留时长
+    v_static_thresh_mps: 0.1       # [sim] 静止判据速度阈 (20 S5.5); 99 U112 起无运行时消费者(只有 person 停等), 保留未接线
+    t_static_dwell_s: 2.0          # [sim] 静止判据驻留时长; 99 U112 起无运行时消费者, 保留未接线
     wait_budget_s: 20.0            # [sim] 停等预算 (20 S5.3A RNS-N-16)
   watchdog:
     window_s: 20.0                 # [sim] T_w; 8s 对起步转向/绕行 s 停滞太短(实测误报), 20s 覆盖正常停滞段 (20 S7.3A)
@@ -108,7 +109,7 @@ rns:
     edge_jump_m: 1.0               # [sim] 剖面跳变阈值 (20 S6.1)
     subgoal_extra_m: 0.3           # [sim] clear 富余项 (20 S6.1 v1.11)
     side_hold_ticks: 5             # [sim] 换候选迟滞 5 拍 = 0.25s (20 S6.6)
-  wall_follow:
+  wall_follow:                     # 99 U114 退役 (20 S3.0A): 不再进入贴墙绕行, 本段无运行时消费者, 保留未接线
     d_wall_m: 1.0                  # [geo] 保距 = r_eff 0.5 + 0.5 余量; 0.8 时体距墙 0.34 会被记忆栅格 0.25 粒度误差蚀穿(2026-09-10 车角擦碰实测), 余量须 > cell_m (20 S7.7)
     kp_wall: 1.2                   # [sim] 保距 PD
     kd_wall: 0.05                  # [sim] 栅格粒度 0.25m 下 rate 噪声大, kd 压低
@@ -125,13 +126,13 @@ rns:
     t_backup_memory_s: 3.0         # [sim] 记忆新鲜度上限 (20 S7.5 RNS-N-13)
     max_backup_m: 1.0              # [sim] 后退距离上限
     v_max_mps: 0.2                 # [sim] 后退限速
-  memory:
-    ttl_static_s: 300.0            # [sim] 静态记忆 TTL; 任务期量级(20 S4A.4): 一次出勤内连发点单共享记忆(G3), 远盖 U 形绕行 ~40s; 幽灵防护靠 A-MEM-3 跳变清空与动态短 TTL
+  memory:                         # 99 U114 (20 S3.0A RNS-N-19): RNS 不再记忆, 栅格每拍清空只装本帧; ttl_* 不再起作用, 保留供 MemoryGrid 构造
+    ttl_static_s: 10.0             # [doc] 99 U113 定 10 (原 300); 99 U114 起栅格每拍清空, 本键不再起作用
     ttl_dynamic_s: 2.0             # [sim] 动态记忆 TTL (幽灵防护)
     cell_m: 0.25                   # [geo] 分辨率 = r_eff/2 (20 S4.2.1)
     radius_m: 8.0                  # [geo] 滑动窗 > range_max 6m
     reset_jump_m: 1.0              # [sim] 位姿跳变清空阈值 (A-MEM-3)
-  guidance:                        # 记忆引导规划层 (20 S4A, v1.24 立项)
+  guidance:                        # 99 U114 退役 (20 S3.0A): 引导规划层不再构造, 本段无运行时消费者, 保留未接线
     coarse_cell_m: 0.5             # [geo] 规划格 = 2x 记忆格 0.25 (S4A.5)
     domain_margin_m: 15.0          # [sim] 任务包围盒外扩裕量
     domain_cap_m: 60.0             # [sim] 规划域边长上限
@@ -145,10 +146,13 @@ rns:
     seg_stale_ms: 300              # [doc] 与 T-50 同量级 (20 S3.1.11)
     no_seg_speed_cap_mps: 0.5      # [sim] 仅几何 FREE 时限速
     seg_recover_frames: 5          # [sim] T 通道恢复确认帧数
-    raw_velocity_policy: reject    # [doc] 本期唯一合法值 (20 S3.1.5)
-    min_confidence: 0.3            # [sim] 低于它按未知类 => block, person 不受影响 (20 S5.1.1 v1.35); 首窗实测后复核
-    unlocalized_speed_cap_mps: 0.5 # [doc] 检出但不可定位的目标 (11 v2.3 四几何字段 null) => 本拍限速 (20 S5.1A v1.43), 与 obstacle_avoid 档同值
-    objects_age_ok_ms: 200         # [doc] objects 年龄一档上限 (20 S3.1.8 v1.35 推导: 3.5 m/s 接近 x 0.2 s = 0.7 m < 1 m 迟滞带); 与 stop_dist_m 共同定值
+    raw_velocity_policy: reject    # [doc] 本期唯一合法值 (20 S3.1.5); 99 U112 起无运行时消费者, 保留未接线
+    unlocalized_speed_cap_mps: 1.0 # [doc] 99 U114 用户裁决(原 0.5): 检出但不可定位的目标 (11 v2.3 四几何字段 null) => 本拍限速 (20 S5.1A)
+    objects_age_ok_ms: 200         # [doc] objects 年龄一档上限 (20 S3.1.8 v1.35 推导: 3.5 m/s 接近 x 0.2 s = 0.7 m < 1 m 迟滞带); 与 stop_dist_m 共同定值; 99 U112 起二档退役(20 S3.1.8), 本键无运行时消费者, 保留未接线
+  world:                           # 目标驱动世界 (20 S3.0 RNS-N-18, 99 U113): RNS 与 P1 速度门只看高置信目标, 不读剖面的可通行/几何数据
+    object_min_confidence: 0.4     # [doc] 99 U114 用户裁决(原 0.3): 低于它的非 person 目标整条丢弃 (WP-1); 范围 (0, 1]
+    person_min_confidence: 0.1     # [doc] 99 U114 用户裁决: person 单独门限, 故意低 -- 无几何兜底时漏一个人代价最高 (WP-1); 范围 (0, 1]
+    v_max_mps: 1.0                 # [doc] 99 U114 用户裁决: 上限可到底盘规格 2.0, 首次实测先用 1.0, 通过后改 2.0 (20 S8.1); > 0
   class_map:                       # class_name -> 行为类; person 锁死在代码 (20 S5.1.1)
     car: vehicle_dynamic
     truck: vehicle_dynamic

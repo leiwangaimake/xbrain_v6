@@ -54,8 +54,15 @@ class Ctx:
     holonomic: bool = False
 
 
-def _source():
+def _source(world_v_max=None, unloc_cap=None):
+    # 99 U114: the shipped world ceiling (1.0) equals the shipped unlocalized
+    # cap (1.0) and v_nom here; the unlocalized tests pin the MECHANISM, so
+    # they lower the cap / lift the ceiling to keep it observable.
     cfg = copy.deepcopy(_REAL_CFG)
+    if world_v_max is not None:
+        cfg["rns"]["world"]["v_max_mps"] = world_v_max
+    if unloc_cap is not None:
+        cfg["rns"]["perception"]["unlocalized_speed_cap_mps"] = unloc_cap
     s = RnsSource(cfg=cfg, r_eff_m=0.5)
     s.load_mission(Mission(MissionKind.PATH, Origin.ROUTE,
                            [(i * 0.5, 0.0) for i in range(41)],
@@ -77,26 +84,29 @@ def _drive(s, objects_fn, ticks=8, status=None):
     return out
 
 
-def test_unknown_velocity_car_stops_where_a_static_car_is_driven_past():
-    """11 v2.3 row 2. mutant: read velocity_xy regardless of velocity_valid
-    -> the warming-up car reads 0 m/s -> static pile after the dwell -> red."""
-    s, cfg = _source()
-    dwell_ticks = int(cfg["rns"]["dynamic"]["t_static_dwell_s"] * 20) + 4
-    out = _drive(s, lambda now: one_object(track_id=7, class_name="car", r_near=2.3,
-                                           velocity_valid=True, velocity_status="static",
-                                           t_capture_mono_ms=now), ticks=dwell_ticks)
+def test_unknown_velocity_car_is_left_to_geometry_person_still_waits():
+    """11 v2.3 row 2 under 99 U112: velocity unknown no longer decides
+    anything for a car -- a warming-up car 2.3 m ahead is the static pile
+    like a measured-static one (geometry, open profile -> drives). A person
+    with the same unknown velocity still waits. mutant: keep the old
+    'unknown speed -> dynamic' rule -> the car WAITs -> red; let the person
+    through the same door -> red."""
+    s, _ = _source()
+    out = _drive(s, lambda now: one_object(track_id=8, class_name="car", r_near=2.3,
+                                           velocity_valid=False, velocity_status="warming_up",
+                                           t_capture_mono_ms=now), ticks=60)
     assert s.nav_state() != NavState.WAIT_DYNAMIC and out.vx.value > 0.0   # geometry covers it
     s2, _ = _source()
-    out2 = _drive(s2, lambda now: one_object(track_id=8, class_name="car", r_near=2.3,
+    out2 = _drive(s2, lambda now: one_object(track_id=9, class_name="person", r_near=2.3,
                                              velocity_valid=False, velocity_status="warming_up",
-                                             t_capture_mono_ms=now), ticks=dwell_ticks)
+                                             t_capture_mono_ms=now), ticks=60)
     assert s2.nav_state() == NavState.WAIT_DYNAMIC and out2.vx.value == 0.0
 
 
 def test_unlocalized_person_caps_and_audits():
     """11 v2.3 row 4. mutant: `continue` past unlocalized objects without the
     cap / audit -> full speed, no record -> red."""
-    s, cfg = _source()
+    s, cfg = _source(world_v_max=2.0, unloc_cap=0.5)
     out = _drive(s, lambda now: one_object(track_id=9, class_name="person", unlocalized=True,
                                            t_capture_mono_ms=now), ticks=4)
     cap = cfg["rns"]["perception"]["unlocalized_speed_cap_mps"]
@@ -107,7 +117,7 @@ def test_unlocalized_person_caps_and_audits():
 
 
 def test_unlocalized_ignore_class_does_not_cap():
-    s, cfg = _source()
+    s, cfg = _source(world_v_max=2.0, unloc_cap=0.5)
     out = _drive(s, lambda now: one_object(track_id=10, class_name="bird", unlocalized=True,
                                            t_capture_mono_ms=now), ticks=4)
     cap = cfg["rns"]["perception"]["unlocalized_speed_cap_mps"]

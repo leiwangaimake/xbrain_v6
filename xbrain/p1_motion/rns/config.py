@@ -20,6 +20,9 @@ second gate (same A/G split as 12 S-1):
      resolved snapshot).
   person lock (20 S5.1.1): class_map mapping person to anything but person_stop
      is the one config typo that hits a human. Refuse to start. A-CLS-4.
+  world keys (20 S3.0 RNS-N-18, 99 U113 / U114): the two confidence floors
+     (person / other), the RNS speed ceiling and the avoidance speed floor,
+     all required and range-checked. A-WLD-6.
 
 Why null is refused, not defaulted (CLAUDE.md 3.1): an uncalibrated safety
 param defaulted to a number runs the robot on a guess; null -> refuse-to-start
@@ -140,3 +143,35 @@ def run_startup_assertions(cfg: Dict[str, Any], r_eff_m: float) -> None:
     # is read on the first such object; refuse to start without it rather
     # than KeyError on the first blind detection.
     require(cfg, "rns.perception.unlocalized_speed_cap_mps")
+    assert_world_keys(cfg)
+
+
+def assert_world_keys(cfg: Dict[str, Any]) -> None:
+    """20 S3.0 RNS-N-18 (99 U113): the two world keys gate EVERY tick --
+    the confidence threshold decides which objects exist at all, the speed
+    ceiling bounds every candidate. Null / missing / out of range refuses
+    to start (A-WLD-6); there is no default (CLAUDE.md 3.1).
+      object_min_confidence in (0, 1]: 0 would let every phantom through
+        (the 2026-11-04 ring), above 1 would drop every object;
+      v_max_mps > 0: 0 would be the fail-silent "robot never moves"."""
+    conf = require(cfg, "rns.world.object_min_confidence")
+    if not (isinstance(conf, (int, float)) and 0.0 < float(conf) <= 1.0):
+        raise RnsConfigError(
+            "rns.world.object_min_confidence=%r must be in (0, 1] "
+            "(20 S3.0 WP-1)" % (conf,))
+    pconf = require(cfg, "rns.world.person_min_confidence")
+    if not (isinstance(pconf, (int, float)) and 0.0 < float(pconf) <= 1.0):
+        raise RnsConfigError(
+            "rns.world.person_min_confidence=%r must be in (0, 1] "
+            "(20 S3.0 WP-1, 99 U114)" % (pconf,))
+    v_max = require(cfg, "rns.world.v_max_mps")
+    if not (isinstance(v_max, (int, float)) and float(v_max) > 0.0):
+        raise RnsConfigError(
+            "rns.world.v_max_mps=%r must be > 0 (20 S3.0 / S8.1)" % (v_max,))
+    # 99 U114: the avoidance floor lifts the shaping caps; above the world
+    # ceiling it would be a floor nobody can reach, i.e. a misconfiguration.
+    floor = require(cfg, "rns.speed.avoid_floor_mps")
+    if not (isinstance(floor, (int, float)) and 0.0 < float(floor) <= float(v_max)):
+        raise RnsConfigError(
+            "rns.speed.avoid_floor_mps=%r must be in (0, world.v_max_mps=%r] "
+            "(20 S3.0A, 99 U114)" % (floor, v_max))

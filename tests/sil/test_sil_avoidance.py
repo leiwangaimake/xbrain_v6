@@ -20,10 +20,12 @@ that "arrives" by driving through the rock reddens on the collision check.
 
 from __future__ import annotations
 
+import copy
 import math
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -164,6 +166,7 @@ def test_person_never_leaves_blows_wait_budget():
     assert rns.nav_state() is NavState.IDLE          # mission cleared (S9.0.3)
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): wall-follow retired; 20 #20-29")
 def test_u_trap_escape_via_wall_follow():
     # THE S2b acceptance (RNS-T-1 in the flesh): robot deep inside a U-shaped
     # dead end, goal beyond the back wall. Candidates are all gated (three
@@ -188,6 +191,7 @@ def test_u_trap_escape_via_wall_follow():
     assert d < 1.0
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): wall-follow retired; 20 #20-29")
 def test_wall_follow_audit_trail():
     # S9.3: the ring audit must hold the wall enter/exit records after a U run.
     world = SilWorld()
@@ -253,6 +257,7 @@ def test_goto_behind_robot_does_not_false_fire_watchdog():
         % fired.reason.value)
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): no memory: the car wall leaves the FOV mid-detour and the robot stalls; 20 #20-29")
 def test_car_wall_detour_does_not_oscillate():
     # FIELD BUG regression #2 (user 2026-09-10, flight-recorder trace): a row of
     # 7 parked cars forms a wall; detouring around its south end, the robot spun
@@ -277,6 +282,7 @@ def test_car_wall_detour_does_not_oscillate():
         "detour oscillation: %d enters (healthy runs use a handful)" % enters
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): wall-follow retired; 20 #20-29")
 def test_long_car_wall_hand_on_wall_and_no_pin_stall():
     # FIELD BUG regressions #3+#4 (user 2026-09-10, second stall): an 11-car
     # 17 m wall, goal south-west behind it.
@@ -309,6 +315,7 @@ def test_long_car_wall_hand_on_wall_and_no_pin_stall():
     assert all(lap < 20.0 for lap in laps), "wall lap too long: %s" % laps
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): wall-follow retired; 20 #20-29")
 def test_wall_entry_side_pick_survives_swung_yaw():
     # field bug #5: entering wall-follow with the yaw already swung (post-DETOUR)
     # toward NORTH while the goal is SOUTH used the unstable body-y sign and
@@ -362,6 +369,7 @@ def test_deviation_never_fails_in_any_state():
     rns.compute(C2())
     assert rns.take_failure() is None, \
         "deviation produced a failure despite the v1.20 removal"
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): no memory / no wall-follow: the run stalls before arriving; 20 #20-29")
 def test_user_full_run_never_touches_a_car():
     # COLLISION regression (user SIL audit 2026-09-10): the exact run that
     # drove THROUGH a 0.13 m car gap (min centre distance 0.267 m = 0.19 m body
@@ -383,6 +391,7 @@ def test_user_full_run_never_touches_a_car():
     assert min_clear > 0.0,         "BODY OVERLAP with a car: min clearance %.3f m" % min_clear
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): wall-follow retired; 20 #20-29")
 def test_user_full_run_side_pick_at_oblique_entry():
     # the user's EXACT run (2026-09-10 trace): start (0,0), goal behind the
     # 17 m car wall. The wall entry happens at ~45 deg to the wall (post-DETOUR
@@ -407,6 +416,7 @@ def test_user_full_run_side_pick_at_oblique_entry():
         "oblique-entry side pick walked the long way: laps %s" % laps
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): no memory / no wall-follow: the scene stalls before arriving; 20 #20-29")
 def test_narrow_gap_rejected_by_corridor_sweep():
     # the mutant-killer for corridor_clearance (the margin fix alone masks the
     # 0.13 m case): a 1.0 m slot between two cars. The POINT probe sees the
@@ -478,6 +488,7 @@ def test_memory_appeal_layer_rehabilitates_walked_ground():
         "memory appeal failed to rehabilitate the walked side corridor"
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): no memory / no wall-follow: a goal behind a wall is not reached; 20 #20-29")
 def test_goal_behind_wall_arrives_after_deviation_removal():
     # the user scenario that forced the v1.20 ruling: goal dead behind the
     # 11-car wall. Before: weave down the wall, spin at the corner, and (twice
@@ -496,6 +507,7 @@ def test_goal_behind_wall_arrives_after_deviation_removal():
     assert min_clear > 0.15
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): wall-follow retired; 20 #20-29")
 def test_reentry_keeps_the_near_end_side():
     # field bug 2026-09-10 (user: "eyes on the south detour, suddenly turned
     # back north -- awkward"): walking a 6-car wall south to 1 m short of its
@@ -649,6 +661,7 @@ def _field_world():
     return world
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): no memory / no wall-follow: does not arrive; 20 #20-29")
 def test_field_map_live_failure_order_now_arrives():
     # THE live failure (user 2026-09-10 night): start sw of the car column,
     # goal inside the corridor between column and wall. Live: entered wall-
@@ -672,6 +685,7 @@ def test_field_map_live_failure_order_now_arrives():
     assert min_clear > 0.10
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): no memory / no wall-follow: does not arrive; 20 #20-29")
 def test_field_map_corridor_to_east_no_collision():
     # the -0.152 m body overlap found by the night batch (corr->east_mid):
     # hugging the wall's never-observed (blind-zone) south segment, the side
@@ -688,6 +702,7 @@ def test_field_map_corridor_to_east_no_collision():
     assert min_clear > 0.10, "graze is back: %.3f" % min_clear
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): guidance layer retired; 20 #20-29")
 def test_guidance_rescues_gap_mid_from_the_long_lap():
     # G1 flagship regression (20 S4A): goal beside the car-gap, 6.7 m away.
     # v1.0 walked 57.8 m (110.9 s) -- the better direction sat outside the
@@ -736,6 +751,7 @@ def test_guidance_rescues_gap_mid_from_the_long_lap():
     assert min_clear > 0.10
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): no memory / no wall-follow / no guidance: no reroute out of a dead end; 20 #20-29")
 def test_dead_end_reroutes_without_wall_failure():
     # G2 acceptance (20 S4A.6): a U-shaped dead end between robot and goal.
     # The optimistic first pass may enter; discovering the closed end must
@@ -769,6 +785,7 @@ def test_dead_end_reroutes_without_wall_failure():
     assert arrived is not None, "never arrived around the dead end"
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): guidance layer retired: no no_path proof, and no verdict within the 240 s bench; 20 #20-29")
 def test_sealed_goal_proves_no_path_in_domain():
     # G2 acceptance (20 S4A.3/S9.0.2): goal sealed inside a box the robot has
     # SEEN on all sides. Both search modes exhaust -> no_path_in_domain within
@@ -781,7 +798,18 @@ def test_sealed_goal_proves_no_path_in_domain():
     world.add_obstacle("wall", 2.0, 2.0, 2.0, -2.0)
     world.add_obstacle("wall", 6.0, 2.0, 6.0, -2.0)
     world.rx, world.ry, world.ryaw = -2.0, 0.0, 0.0
-    rns = RnsSource(cfg=CFG, r_eff_m=0.5)
+    # 99 U113 / 20 #20-28: SIL is the PROFILE world, not the object world of
+    # RNS-N-18, and this scene's proof needs the 4-wall perimeter remembered.
+    # With the shipped ttl_static_s 10 and world.v_max_mps 0.6 the verdict
+    # still comes, bounded, but via the wall criteria at 170-212 s (measured
+    # 2026-11-04 on the robot: ttl 10 / v 0.6 -> wall_closed_loop 170.4 s;
+    # ttl 300 / v 0.6 -> 203.0 s; ttl 10 / v 5 -> 211.7 s; ttl 300 / v 5 ->
+    # watchdog_no_progress 68.2 s). The scene pins the pre-U113 values so it
+    # keeps testing the verdict machinery it was written for.
+    cfg = copy.deepcopy(CFG)
+    cfg["rns"]["memory"]["ttl_static_s"] = 300.0
+    cfg["rns"]["world"]["v_max_mps"] = 5.0
+    rns = RnsSource(cfg=cfg, r_eff_m=0.5)
     rns.load_mission(_mission([(4.0, 0.0)]))             # inside the box
     fail = None
     for t in range(4800):
@@ -815,6 +843,7 @@ def test_sealed_goal_proves_no_path_in_domain():
     assert t * 0.05 < 120.0, "verdict too slow: %.1fs" % (t * 0.05)
 
 
+@pytest.mark.xfail(strict=True, reason="99 U114 (20 S3.0A RNS-N-19): guidance layer retired (the test asserts the planner exists); 20 #20-29")
 def test_path_mission_follows_the_line_not_the_shortcut():
     # field bug 2026-09-11 (user: "path run stopped following the path"):
     # guidance treated a PATH like a goto and R* pulled the robot off the
