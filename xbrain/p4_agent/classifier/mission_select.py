@@ -26,7 +26,7 @@ Missions and their cues (families from missions.EXPECTED_EMISSIONS):
   M4_follow    跟/跟随/盯着            -> follow + track
   M5_speak     说/喊/播报/广播/念       -> speak_preset/custom (needs the text)
   M6_naming    命名/保存为/改名         -> save/rename a route/fence
-  M6b_mark     记为/标记为/把这里记      -> mark a waypoint/dock (needs the name)
+  M6b_mark     记为/标记/把这里/当前位置.. -> mark a waypoint/dock (needs the name)
   M7_objref    删除/删掉/启用/换成       -> delete/activate a geo object
   M8_events    事件/报告/最近..发生      -> event queries + report
 
@@ -52,8 +52,15 @@ _MISSION_CUES: List[Tuple[str, Tuple[str, ...]]] = [
     ("M5_speak", ("喊话", "播报", "广播", "喊一", "说一", "念", "朗读", "通知",
                   "警告", "对他说", "对外说")),
     # mark a point: '记为' / '标记...为' / '把这里' -- BEFORE naming, since '记为'
-    # is more specific than the bare '命名'.
-    ("M6b_mark", ("记为", "标记", "把这里", "把此处", "存为点", "记一个点")),
+    # is more specific than the bare '命名'. 99 U109: '记录 / 保存 当前位置为 X'
+    # and '把这个点存为 X' had no cue here and were declined, or fell to M6 and
+    # came back as a fence save; the position words below catch them. Each cue
+    # pairs a place word with a verb, so '去这里' or '这个点删了' still go on.
+    ("M6b_mark", ("记为", "标记", "把这里", "把此处", "存为点", "记一个点",
+                  "当前位置记", "当前位置标", "当前位置存", "当前位置保存",
+                  "当前位置为", "记录当前位置", "保存当前位置", "这个位置记",
+                  "这个位置存", "这个位置保存", "这个点记", "这个点存",
+                  "这个点保存", "这里存", "这里保存", "此处存", "记住这个位置")),
     # naming/saving a route or fence, or renaming.
     ("M6_naming", ("命名", "保存为", "存为", "改名", "重命名", "叫做")),
     # object ops: delete / activate / switch a geo object.

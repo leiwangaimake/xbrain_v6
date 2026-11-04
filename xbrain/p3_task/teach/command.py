@@ -47,6 +47,14 @@ _NEEDS_SESSION = frozenset(TEACH_ACTION.values) - {"start", "mark_once",
 #: S12A.4: name_hint and save.name are <= 32 characters (18 VD-1).
 _MAX_NAME_LEN = 32
 
+#: S12A.4 issuer.channel values that are a voice path: a mark_once from them
+#: must carry pose_snap (18 PS-6 "语音链路必填"). Typed and cloud-built
+#: commands may omit it and are captured at the current pose.
+_VOICE_CHANNELS = frozenset({"local_voice", "cloud_voice"})
+
+#: PS-6 fields that must be numbers / are required at all.
+_SNAP_NUMBERS = ("lat", "lon", "snap_mono_s", "snap_age_ms")
+
 #: The two kinds a session records, and the two a mark_once captures. They are
 #: disjoint on purpose: a waypoint/dock is one point (S12A.8), a route/fence is
 #: a sequence, and the machinery differs all the way down.
@@ -79,6 +87,9 @@ class TeachCommand:
     undo_count: int = 1
     save: Optional[Dict[str, Any]] = None
     reason: str = ""
+    #: 18 S0.4.1 PS-6 / 11 S12A.4 (99 U109): where the robot was at the
+    #: operator's first word, shape-checked. mark_once only; None when absent.
+    pose_snap: Optional[Dict[str, Any]] = None
 
 
 def _name(value: Any, field: str, required: bool) -> Optional[str]:
@@ -132,6 +143,13 @@ def parse_teach_command(payload: Dict[str, Any]) -> TeachCommand:
         mark = raw if isinstance(raw, dict) else {}
     elif action == "mark_once":
         mark_once = _parse_mark_once(payload.get("mark_once"))
+    pose_snap = None
+    if action == "mark_once":
+        raw_snap = payload.get("pose_snap")
+        if raw_snap is not None or channel in _VOICE_CHANNELS:
+            # Required on a voice path: falling back to the current pose is
+            # exactly the up-to-9.6 m error PS-3 forbids (18 S0.4).
+            pose_snap = _parse_pose_snap(raw_snap)
     elif action == "save":
         save = _parse_save(payload.get("save"))
     undo_count = 1
@@ -148,7 +166,21 @@ def parse_teach_command(payload: Dict[str, Any]) -> TeachCommand:
         issuer_ip=issuer.get("op_ip") if isinstance(issuer.get("op_ip"), str)
         else None,
         start=start, mark=mark, mark_once=mark_once, undo_count=undo_count,
-        save=save, reason=payload.get("reason") or "")
+        save=save, reason=payload.get("reason") or "", pose_snap=pose_snap)
+
+
+def _parse_pose_snap(raw: Any) -> Dict[str, Any]:
+    """Shape-check the 18 PS-6 block. Quality (fix, heading, age) is judged by
+    the runtime against its configured limits, not here."""
+    if not isinstance(raw, dict):
+        raise TeachCommandError(E_SCHEMA, "mark_once requires a pose_snap block")
+    for key in _SNAP_NUMBERS:
+        value = raw.get(key)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise TeachCommandError(E_SCHEMA, f"pose_snap.{key} must be a number")
+    if raw["snap_age_ms"] < 0:
+        raise TeachCommandError(E_SCHEMA, "pose_snap.snap_age_ms must be >= 0")
+    return dict(raw)
 
 
 def _parse_start(raw: Any) -> Dict[str, Any]:

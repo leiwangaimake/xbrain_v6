@@ -83,6 +83,17 @@ from xbrain.p4_agent.slots.motion_slots import (
     missing_motion_slot,
     motion_slots,
 )
+from xbrain.p4_agent.slots.name_slots import (
+    canonical_name,
+    ground_name,
+    name_length_ok,
+)
+from xbrain.p4_agent.slots.ptp_slots import PtpParse, parse_ptp
+from xbrain.p4_agent.registry.time_expr import (
+    TimeExpr,
+    TimeParseError,
+    resolve_epoch,
+)
 from xbrain.p4_agent.runtime.turn_labels import (
     check_turn,
     mode_source,
@@ -118,6 +129,7 @@ from xbrain.p4_agent.runtime.task_request import (
 from xbrain.p4_agent.runtime.teach_request import (
     TeachRequestError,
     is_teach_intent,
+    needs_pose_snap,
     session_id_from_state,
     to_teach_command,
 )
@@ -134,7 +146,13 @@ from xbrain.p4_agent.session.state_machines import L2ConfirmState, L2Slot
 _F_REASON_CN = {
     "no recording session is open": "现在没有正在录制的会话",
     "save needs a name": "要保存的话请说个名字",
-    "a keypoint needs a name": "这个点要起个名字",
+    # 99 U110 (user ruling 2026-11-04): a capture without a name is REFUSED,
+    # not asked about -- the operator repeats the whole command with a name.
+    "a keypoint needs a name": "这个点没有记录, 因为没有说名字. 请说: 把这里记为某某点",
+    # 16 S8.0.4: a name is 2-12 characters, refused rather than cut (99 U109).
+    "name length": "名字要两到十二个字, 请换个名字",
+    # 18 PS-6 / 16 EV-6: no pose near the first word -> nothing is stored.
+    "no pose snapshot": "现在拿不到定位, 这个点没有记录",
     CATALOGUE_UNAVAILABLE: "对象列表还没加载好, 稍后再说一次",
     # 16 S6.6.4: B01's miss branch ends in a clarify. Reached when neither the
     # fast leg nor the tier-2 LLM leg could name the destination.
@@ -148,6 +166,68 @@ _F_REASON_CN = {
     # _build_task_command resolves first). Spoken as "not found" either way.
     DESTINATION_UNRESOLVED: "没找到你说的地点, 换个说法试试",
 }
+
+#: 99 U110 deterministic PTP replies (ptp_slots / time_expr). ASCII
+#: punctuation (charset rule); {name} / {when} are filled at the turn.
+_PTP_CN = {
+    "timed_geo": "删除和改名不能定时, 请去掉时间再说一遍",
+    "no_wall_clock": "现在不能定时, 请直接说去哪个点",
+    "past": "这个时间已经过了, 请换个时间",
+    "too_far": "定时只能在一天以内, 或一周内某天的某个时刻",
+    "no_target": "没有说要删除哪个点, 没有删除",
+    "same_name": "新名字和原来一样, 没有改名",
+    "not_found": "没找到{name}, 可以问我有哪些位置点",
+    "ack_goto": "好的,{when}去{name}",
+    "ack_delete": "好的,删除{name}",
+    "ack_rename": "好的,把{name}改名为{new}",
+}
+
+#: F06 / F10: the captures whose name must follow their keyword.
+_CAPTURE_INTENTS = frozenset({"record_waypoint", "record_dock"})
+
+#: Linking words between a capture keyword and the name ("记录当前位置为 X").
+_NAME_LINKS = ("为", "成", "作", "叫", "是", "做")
+
+
+def _said_after_keyword(entry: IntentEntry, text: str) -> bool:
+    """True when anything but linking words and punctuation follows the
+    EARLIEST-ENDING keyword of entry in text -- i.e. the operator said a name.
+
+    Not the longest: 18's own example "把这里记为东门岗亭" is a keyword, and
+    measured live (2026-11-04) the longest match swallowed the name and the
+    capture was refused as nameless. The verb phrase that ends first ("这里
+    记为") is where the name starts."""
+    ends = [text.index(kw) + len(kw) for kw in entry.keywords
+            if kw and kw in text]  # where each matched keyword ends
+    if not ends:
+        return True  # reached without a keyword (tier-2 classified): unknown
+    tail = text[min(ends):]  # what came after the first verb phrase
+    tail = "".join(ch for ch in tail if ch.isalnum())  # no punctuation / spaces
+    while tail and tail[0] in _NAME_LINKS:
+        tail = tail[1:]  # "为 X" -> "X"
+    return bool(tail)
+
+
+#: Type words that, said alone, name no keypoint ("删除航点").
+_BARE_TYPE_WORDS = frozenset({"航点", "点位", "关键点", "位置点", "这个点"})
+
+
+def _spoken_when(expr: Optional[TimeExpr]) -> str:
+    """A TimeExpr read back as the operator would say it ("" for now)."""
+    if expr is None:
+        return ""
+    if expr.delay_seconds is not None:
+        sec = expr.delay_seconds
+        if sec % 3600 == 0:
+            return "%d小时后" % (sec // 3600)
+        if sec % 60 == 0:
+            return "%d分钟后" % (sec // 60)
+        return "%d秒后" % sec
+    day = {0: "今天", 1: "明天", 2: "后天"}.get(expr.day_offset,
+                                           "%d天后" % expr.day_offset)
+    hh, mm = (int(x) for x in expr.at_local.split(":"))
+    return day + ("%d点" % hh) + ("%d分" % mm if mm else "")
+
 
 # Reply-family intent NAMES routed to the preset responder (never LLM,
 # never echo). J01/J02/I05 plus the out_of_scope sentinel (16 S11.5).
@@ -197,6 +277,9 @@ _CN_LABELS = {
     "D06": "打开爆闪灯", "D07": "关闭爆闪灯",
     "E01": "转动云台", "E05": "停止跟踪", "E06": "变焦", "E07": "云台扫描",
     "E08": "停止扫描", "E09": "调整云台转速", "H07": "重启系统",
+    # F06 / F10 (99 U109): the turn only says what was asked; the result
+    # ("已记录 X" or why not) follows from cmd/teach/ack (teach_ack_speech).
+    "F06": "记录这个点", "F10": "记录充电桩",
 }
 
 #: A15 set_turn_speed ack wording per level (99 U104).
@@ -445,9 +528,13 @@ class Tier2Classification:
     slots the model extracted (e.g. speak_custom's `text`, a route `name`).
     The slots are what the fastpath could not fill -- carrying them is why
     tier-2 returns this instead of a bare name (the free-text slot would be
-    lost otherwise)."""
+    lost otherwise).
+
+    name is "unknown" when the model declined (99 U109: the grammar can say so
+    now); reason is then its 16 S8.0.3 first-level code, else None."""
     name: str
     slots: dict
+    reason: Optional[str] = None
 
 
 # tier2_fn(text, session, now_mono_ms) -> Tier2Classification or None. None
@@ -511,6 +598,20 @@ class TurnOrchestrator:
         # with the built-in tables (matcher.tokens_from_config). None = the
         # built-in tables alone -- tests and tools without a config.
         bypass_tokens: Optional[bypass_matcher.BypassTokens] = None,
+        # 18 S0.4.1 PS-6 (99 U109): (t_first_word, now_mono_ms) -> the
+        # pose_snap block of the robot's position when the operator started
+        # speaking, or None when there is none. A keypoint capture (F06 / F10)
+        # is refused without one (16 EV-6): reading the pose when the command
+        # is built would store where the robot is after the LLM, not "here".
+        pose_snap_fn: Optional[Callable[[int, int],
+                                        Optional[Dict[str, Any]]]] = None,
+        # 99 U110: the wall clock a timed goto ("下午3点去 X") is scheduled
+        # against -- the robot's system time by the 2026-10-26 user ruling,
+        # the same clock G24 speaks -- and the site timezone a clock time is
+        # read in (common.timezone; None = the system zone). No clock = timed
+        # commands are refused, never scheduled against a guess.
+        wall_now_fn: Optional[Callable[[], float]] = None,
+        site_timezone: Optional[str] = None,
     ) -> None:
         self._registry = registry
         self._matcher = matcher or KeywordMatcher(registry)
@@ -531,6 +632,15 @@ class TurnOrchestrator:
         # so a per-turn attribute is safe; handle_turn sets it every turn.
         self._turn_channel = "mic_local"
         self._turn_modality = "voice"  # voice | text, set with the channel
+        # The turn's first-word moment (18 PS-1), set with the channel; the
+        # turn's own clock when the entry did not know it.
+        self._turn_t_first = 0
+        self._pose_snap_fn = pose_snap_fn
+        self._wall_now_fn = wall_now_fn
+        self._site_timezone = site_timezone
+        # 99 U110: the restatement of a rule-parsed PTP command, set by
+        # _route_ptp and read by _dispatch_ack in the same turn.
+        self._turn_ptp_ack: Optional[str] = None
         # GWY-P4-39/41: for a G-class query, query_fn returns the answer
         # rendered from LIVE state (or an 'unknown' reply when stale). When
         # it is None or returns None, the query falls through to a normal
@@ -562,7 +672,8 @@ class TurnOrchestrator:
                     raw_text: Optional[str] = None,
                     addressed: bool = False,
                     channel: str = "mic_local",
-                    modality: str = "voice") -> TurnDecision:
+                    modality: str = "voice",
+                    t_first_word: Optional[int] = None) -> TurnDecision:
         """One turn (see _handle_turn), then remember what was SAID for I03.
 
         Recorded here, on the way out, so every branch below -- reply,
@@ -571,7 +682,8 @@ class TurnOrchestrator:
         same answer, not "the repeat")."""
         decision = self._turn_with_channel(text, session, now_mono_ms, raw_text=raw_text,
                                      addressed=addressed, channel=channel,
-                                     modality=modality)
+                                     modality=modality,
+                                     t_first_word=t_first_word)
         if decision.tts_text and decision.intent_id != "I03":
             session.last_reply = decision.tts_text
         if decision.kind == "dispatch" and decision.intent_id in _LEVEL_INTENTS:
@@ -583,7 +695,8 @@ class TurnOrchestrator:
                      raw_text: Optional[str] = None,
                      addressed: bool = False,
                      channel: str = "mic_local",
-                     modality: str = "voice") -> TurnDecision:
+                     modality: str = "voice",
+                     t_first_word: Optional[int] = None) -> TurnDecision:
         """Process one ASR utterance end-to-end. See module docstring for
         the ordering (16 S5.2).
 
@@ -604,6 +717,12 @@ class TurnOrchestrator:
         issuer.channel (turn_labels). The defaults are the microphone path;
         the text and cloud entries pass theirs explicitly. An out-of-set or
         impossible pair (mic_local + text, hmi + voice) raises.
+
+        t_first_word is when the operator started speaking, in monotonic ms
+        (18 PS-1: the first frame of the utterance; the arrival of a typed
+        command) -- a timestamp, hence no unit suffix for the safety-default
+        scan to read as a limit. A keypoint capture takes its position from
+        it. None = now_mono_ms.
         """
         check_turn(channel, modality)
         # Set, not saved and restored: every turn sets it here before anything
@@ -613,6 +732,9 @@ class TurnOrchestrator:
         # so it is not kept (CLAUDE.md 7.2.1).
         self._turn_channel = channel
         self._turn_modality = modality
+        self._turn_t_first = (now_mono_ms if t_first_word is None
+                              else t_first_word)
+        self._turn_ptp_ack = None
         decision = self._handle_turn(text, session, now_mono_ms, raw_text,
                                      addressed)
         decision.channel = channel  # every branch, one place
@@ -679,6 +801,14 @@ class TurnOrchestrator:
             return TurnDecision(kind="reply", layer="session_context",
                                 reply_text=reply, tts_text=reply)
 
+        # 99 U110: the three PTP commands (go to X / delete X / rename X to Y)
+        # are parsed by rule before any keyword or LLM layer -- the LLM legs
+        # for them invented catalogue ids (ptp_slots module docstring). After
+        # the safety bypass and an open confirm, so neither can be shadowed.
+        ptp = parse_ptp(text)
+        if ptp is not None:
+            return self._route_ptp(ptp, text, session, now_mono_ms)
+
         # STEPS 2-6: the priority chain. large_class_fn supplies layer 4
         # (16 S5.2): the deterministic device-family router that rescues
         # keyword MISSES for PTZ (E) and payload (D) so a slightly-reworded
@@ -707,7 +837,8 @@ class TurnOrchestrator:
     def _route_entry(self, entry: IntentEntry, text: str,
                      session: OrchestratorSession, now_mono_ms: int,
                      layer: str,
-                     llm_slots: Optional[dict] = None) -> TurnDecision:
+                     llm_slots: Optional[dict] = None,
+                     rule_slots: Optional[dict] = None) -> TurnDecision:
         """Apply route (fastpath vs LLM) and auth (confirm gate). llm_slots
         (tier-2 only) are the slots the LLM extracted; they are merged OVER the
         fastpath slots so a free-text slot (speak_custom's text) survives."""
@@ -805,7 +936,8 @@ class TurnOrchestrator:
             slot = L2Slot(timeout_millis=self._l2_timeout_ms)
             slot.request(now_mono_ms=now_mono_ms)
             session.pending_confirm = PendingConfirm(
-                entry=entry, text=text, slot=slot, llm_slots=llm_slots)
+                entry=entry, text=text, slot=slot,
+                llm_slots=llm_slots if llm_slots is not None else rule_slots)
             return TurnDecision(
                 kind="await_confirm", intent_id=entry.id,
                 intent_name=entry.name, route=entry.route, auth=eff_auth,
@@ -820,12 +952,74 @@ class TurnOrchestrator:
 
         # L0 / L1a / L1b -> dispatch now. Pass through any tier-2 LLM slots.
         return self._dispatch_entry(entry, text, session, now_mono_ms,
-                                    layer, eff_auth, llm_slots=llm_slots)
+                                    layer, eff_auth, llm_slots=llm_slots,
+                                    rule_slots=rule_slots)
+
+    def _route_ptp(self, ptp: PtpParse, text: str,
+                   session: OrchestratorSession,
+                   now_mono_ms: int) -> TurnDecision:
+        """Route a rule-parsed PTP command (99 U110) to B01 / F12 / F14.
+
+        Everything the sentence said is already a slot; the catalogue decides
+        whether the name exists (B01 in _build_task_command, F12 / F14 in
+        to_geo_command). Refusals are spoken and nothing is sent: a timed
+        delete or rename, a time that has passed, no clock to schedule on, a
+        delete that names no keypoint, a bad new name.
+        """
+        def _reply(intent_id: str, key: str, **fmt) -> TurnDecision:
+            entry = self._registry.by_id(intent_id)
+            spoken = _PTP_CN[key].format(**fmt)
+            return TurnDecision(kind="reply", intent_id=entry.id,
+                                intent_name=entry.name, route=entry.route,
+                                auth=entry.auth, layer="ptp_rule",
+                                reply_text=spoken, tts_text=spoken)
+
+        if ptp.kind == "goto":
+            slots: Dict[str, Any] = {"waypoint": ptp.name}
+            if ptp.when is not None:
+                if self._wall_now_fn is None:
+                    return _reply("B01", "no_wall_clock")
+                try:
+                    slots["not_before_ts"] = resolve_epoch(
+                        ptp.when, self._wall_now_fn(), self._site_timezone)
+                except TimeParseError as exc:
+                    return _reply("B01", "past" if "passed" in str(exc)
+                                  else "too_far")
+            self._turn_ptp_ack = _PTP_CN["ack_goto"].format(
+                when=_spoken_when(ptp.when), name=ptp.name)
+            return self._route_entry(self._registry.by_id("B01"), text,
+                                     session, now_mono_ms, layer="ptp_rule",
+                                     rule_slots=slots)
+        intent_id = "F12" if ptp.kind == "delete" else "F14"
+        if ptp.when is not None:
+            return _reply(intent_id, "timed_geo")
+        if ptp.kind == "delete":
+            if not ptp.name or ptp.name in _BARE_TYPE_WORDS:
+                return _reply("F12", "no_target")
+            self._turn_ptp_ack = _PTP_CN["ack_delete"].format(name=ptp.name)
+            return self._route_entry(self._registry.by_id("F12"), text,
+                                     session, now_mono_ms, layer="ptp_rule",
+                                     rule_slots={"waypoint": ptp.name})
+        new = canonical_name(ptp.new or "")
+        if not name_length_ok(new):
+            spoken = _F_REASON_CN["name length"]
+            entry = self._registry.by_id("F14")
+            return TurnDecision(kind="reply", intent_id=entry.id,
+                                intent_name=entry.name, route=entry.route,
+                                auth=entry.auth, layer="ptp_rule",
+                                reply_text=spoken, tts_text=spoken)
+        if new == canonical_name(ptp.name):
+            return _reply("F14", "same_name")
+        self._turn_ptp_ack = _PTP_CN["ack_rename"].format(name=ptp.name, new=new)
+        return self._route_entry(self._registry.by_id("F14"), text, session,
+                                 now_mono_ms, layer="ptp_rule",
+                                 rule_slots={"old": ptp.name, "new": new})
 
     def _dispatch_entry(self, entry: IntentEntry, text: str,
                         session: OrchestratorSession, now_mono_ms: int,
                         layer: str, eff_auth: str,
-                        llm_slots: Optional[dict] = None) -> TurnDecision:
+                        llm_slots: Optional[dict] = None,
+                        rule_slots: Optional[dict] = None) -> TurnDecision:
         """Route the FAST leg. fastpath / fastpath_then_llm dispatch
         directly (no LLM, no prompt assemble). A pure-llm matched intent
         still needs slot fill via tier-2. llm_slots (from a layer-6 tier-2
@@ -834,10 +1028,27 @@ class TurnOrchestrator:
         # A route=='llm' matched intent needs the LLM to fill its slots -- BUT
         # only when a layer-6 classification did not already supply them (else
         # this would be a wasteful second LLM call on the same utterance).
-        if entry.route == "llm" and llm_slots is None:
+        # 99 U110 (user ruling): a keypoint capture that names nothing after
+        # its keyword ("记录当前位置", "把这里记为") is refused here, without
+        # the LLM and without a follow-up question.
+        if (entry.name in _CAPTURE_INTENTS and llm_slots is None
+                and not _said_after_keyword(entry, text)):
+            spoken = _F_REASON_CN["a keypoint needs a name"]
+            return TurnDecision(kind="reply", intent_id=entry.id,
+                                intent_name=entry.name, route=entry.route,
+                                auth=eff_auth, level=eff_auth, layer=layer,
+                                reply_text=spoken, tts_text=spoken)
+        # A rule-parsed command (rule_slots, 99 U110) has its slots already.
+        if entry.route == "llm" and llm_slots is None and not rule_slots:
             classified = self._tier2(text, session, now_mono_ms)
             llm_used = True
-            if classified is None:
+            # An "unknown / missing_slot" on a keyword-matched intent is the
+            # operator naming the action without its argument ("记录当前位置"):
+            # carry on with no LLM slots so the builder asks for the slot.
+            # Any other decline ends the turn as before.
+            asks = (classified is not None and classified.name == "unknown"
+                    and classified.reason == "missing_slot")
+            if classified is None or (classified.name == "unknown" and not asks):
                 return TurnDecision(kind="denied", intent_id=entry.id,
                                     intent_name=entry.name, route=entry.route,
                                     auth=eff_auth, layer=layer, llm_used=True,
@@ -853,6 +1064,10 @@ class TurnOrchestrator:
         fast_motion = motion_slots(entry.name, text)
         if fast_motion:
             extra = {**(extra or {}), **fast_motion}
+        # 99 U110: slots a rule already read off the sentence (ptp_slots):
+        # complete, so the fast leg below never enters the LLM for them.
+        if rule_slots:
+            extra = {**(extra or {}), **rule_slots}
         # Merge the tier-2 LLM slots OVER the fastpath ones: the LLM fills the
         # slots the fastpath regex cannot (free text, names), and the fastpath
         # fills the closed-set enums. LLM values win a key collision.
@@ -863,6 +1078,14 @@ class TurnOrchestrator:
         if llm_slots:
             extra = {**(extra or {}),
                      **ground_llm_slots(entry.name, llm_slots, text)}
+            # 99 U109: a made-up `name` (F03 F06 F09 F10) must also have been
+            # said, and travels in its canonical spelling ("一号" -> "1号") so
+            # the later lookup finds it; an invented one is dropped and the
+            # builder asks for it (name_slots).
+            if "name" in entry.slots and "name" in extra:
+                said = ground_name(extra.pop("name"), text)
+                if said is not None:
+                    extra["name"] = said
         # 16 S6.6.4 fastpath_then_llm: a keyword hit that did not fill the
         # destination is NOT a finished fast leg -- it goes to the tier-2 LLM
         # leg, which may name the waypoint (or classify the utterance as
@@ -987,7 +1210,7 @@ class TurnOrchestrator:
         # dispatched -- sending a command that cannot succeed costs the operator
         # a round trip and tells them nothing they can act on.
         if is_teach_intent(entry.name) or is_geo_intent(entry.name):
-            extra, failure = self._build_f_class(entry, extra)
+            extra, failure = self._build_f_class(entry, extra, now_mono_ms)
             if failure is not None:
                 return TurnDecision(kind="reply", intent_id=entry.id,
                                     intent_name=entry.name, route=entry.route,
@@ -1010,8 +1233,9 @@ class TurnOrchestrator:
         """Layer-6 unknown: tier-2 LLM classify. Marks LLM used + prompt
         assembled (both happen inside tier2_fn)."""
         result = self._tier2(text, session, now_mono_ms)
-        if result is None:
-            # No mission / gate denied / LLM failed: decline (caller may TTS).
+        if result is None or result.name == "unknown":
+            # No mission / gate denied / LLM failed / the model declined: no
+            # intent to route, so decline (caller may TTS).
             return TurnDecision(kind="denied", layer="unknown",
                                 llm_used=True, prompt_assembled=True)
         classified = result.name
@@ -1146,6 +1370,10 @@ class TurnOrchestrator:
         clarify reason (GOTO_NEEDS_WAYPOINT / PATROL_NEEDS_ROUTE).
         """
         merged = dict(extra or {})
+        # 11 S7.2 task.not_before_ts (99 U110), set by a timed PTP goto. Taken
+        # out of the slots: it is a task field, not something the operator's
+        # slots should carry into params.
+        not_before_ts = merged.pop("not_before_ts", None)
         geo_ids: Dict[str, Optional[str]] = {"route": None, "waypoint": None}
         ref = GEO_REF_SLOT.get(entry.name)
         if ref is not None:
@@ -1160,6 +1388,10 @@ class TurnOrchestrator:
                     geo_ids[gtype] = _resolve_task_geo(
                         list(manifest["items"]), gtype, spoken.strip())
                 except GeoRequestError as exc:
+                    if gtype == "waypoint" and self._turn_ptp_ack is not None:
+                        # A rule-parsed goto names what it looked for.
+                        return merged, _PTP_CN["not_found"].format(
+                            name=spoken.strip())
                     return merged, _F_REASON_CN.get(
                         str(exc), _NOT_FOUND_CN[gtype])
         try:
@@ -1167,7 +1399,7 @@ class TurnOrchestrator:
                 entry.name, self._registry, slots=merged,
                 source=task_source(self._turn_channel),
                 cmd_id=uuid.uuid4().hex, text=text, route_id=geo_ids["route"],
-                waypoint_id=geo_ids["waypoint"])
+                waypoint_id=geo_ids["waypoint"], not_before_ts=not_before_ts)
         except TaskRequestError as exc:
             return merged, _F_REASON_CN.get(str(exc), "这条任务现在没法下发")
         if cmd is not None:
@@ -1175,7 +1407,7 @@ class TurnOrchestrator:
         return merged, None
 
     def _build_f_class(self, entry: IntentEntry,
-                       extra: Optional[Dict[str, Any]]):
+                       extra: Optional[Dict[str, Any]], now_mono_ms: int):
         """(slots with the command attached, None) or (slots, spoken reason).
 
         Returned as a pair rather than stashed on self: an orchestrator that
@@ -1192,11 +1424,17 @@ class TurnOrchestrator:
         cmd_id = uuid.uuid4().hex
         try:
             if is_teach_intent(entry.name):
+                # 18 PS-6: a keypoint capture carries where the robot was at
+                # the first word; the builder refuses it without one.
+                snap = (self._pose_snap_fn(self._turn_t_first, now_mono_ms)
+                        if self._pose_snap_fn is not None
+                        and needs_pose_snap(entry.name) else None)
                 cmd = to_teach_command(
                     entry.name, slots=merged, cmd_id=cmd_id,
                     issuer_channel=teach_issuer_channel(
                         self._turn_channel, self._turn_modality),
-                    session_id=session_id_from_state(state.get("state/teach")))
+                    session_id=session_id_from_state(state.get("state/teach")),
+                    pose_snap=snap)
                 if cmd is not None:
                     merged["teach_command"] = cmd
             else:
@@ -1211,6 +1449,12 @@ class TurnOrchestrator:
             return dict(extra or {}), _F_REASON_CN.get(
                 str(exc), "这个录制指令现在没法执行")
         except GeoRequestError as exc:
+            target = merged.get("waypoint") or merged.get("old")
+            if (str(exc) not in _F_REASON_CN and self._turn_ptp_ack is not None
+                    and isinstance(target, str)):
+                # A rule-parsed delete / rename names what it looked for.
+                return dict(extra or {}), _PTP_CN["not_found"].format(
+                    name=target)
             return dict(extra or {}), _F_REASON_CN.get(
                 str(exc), "没找到你说的那个对象")
         return merged, None
@@ -1262,6 +1506,9 @@ class TurnOrchestrator:
         the minimal feedback the 2026-08-11 ORIN test showed was missing.)
         A15 / A16 name the direction they were asked for (99 U104 / U106);
         the resulting value is P2's (ack.applied), never predicted here."""
+        if self._turn_ptp_ack is not None:
+            # 99 U110: a rule-parsed PTP command restates what it will do.
+            return self._turn_ptp_ack
         if entry.id == "A15":
             level = ((extra or {}).get("mode_command") or {}).get("turn_speed")
             label = _TURN_SPEED_LABELS.get(level)

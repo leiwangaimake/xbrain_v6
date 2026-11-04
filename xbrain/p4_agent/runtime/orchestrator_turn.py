@@ -169,6 +169,9 @@ def build_orchestrator(
     bypass_tokens=None,
     system_fn=None,
     state_fn=None,
+    pose_snap_fn=None,
+    wall_now_fn=None,
+    site_timezone=None,
 ) -> TurnOrchestrator:
     """Construct the voice-loop orchestrator (built once, reused per turn).
 
@@ -185,13 +188,22 @@ def build_orchestrator(
 
     state_fn (optional, 2026-11-02 99 U105) is the state snapshot the B-class
     task control and the F class read (make_state_fn). None = an empty
-    snapshot: those intents then refuse with the reason (tests / tools)."""
+    snapshot: those intents then refuse with the reason (tests / tools).
+
+    pose_snap_fn (optional, 2026-11-04 99 U109) gives a F06 / F10 capture the
+    18 PS-6 position at the operator's first word (PoseHistory.snapshot).
+    None = no history: those captures refuse rather than store "now".
+
+    wall_now_fn / site_timezone (optional, 99 U110) schedule a timed goto
+    ("下午3点去 X"): the system wall clock and the site zone a clock time is
+    read in. No wall_now_fn = timed commands are refused."""
     return TurnOrchestrator(
         registry, chitchat=chitchat,
         tier2_fn=tier2_fn or null_tier2,
         l2_timeout_ms=l2_timeout_ms,
         query_fn=query_fn, bypass_tokens=bypass_tokens,
-        system_fn=system_fn, state_fn=state_fn)
+        system_fn=system_fn, state_fn=state_fn, pose_snap_fn=pose_snap_fn,
+        wall_now_fn=wall_now_fn, site_timezone=site_timezone)
 
 
 def make_battery_query_fn(cache, templates, *, max_age_ms: int,
@@ -495,7 +507,8 @@ def make_turn_handler(
     voice_turn_key (11 S8.7.6, 2026-10-26): when given, every turn also
     returns its state/voice_turn record on that key, after the action
     frames. None (no robot id known) publishes no record."""
-    def _handle(raw: str) -> List[Tuple[str, bytes]]:
+    def _handle(raw: str, t_first_word: Optional[int] = None
+                ) -> List[Tuple[str, bytes]]:
         t0 = time.monotonic()
         now_ms = int(t0 * 1000)
         text = raw
@@ -507,7 +520,8 @@ def make_turn_handler(
         # the microphone path, and the motion frame says so (11 MO-2).
         try:
             decision = orchestrator.handle_turn(text, session, now_ms,
-                                                raw_text=raw, channel="mic_local")
+                                                raw_text=raw, channel="mic_local",
+                                                t_first_word=t_first_word)
         except Exception:  # noqa: BLE001 -- one turn's bug must not go silent
             # 2026-10-26: same rule as cloud_input._guarded -- an internal error
             # still ends in a state/voice_turn (rejected, E_INTERNAL) instead of

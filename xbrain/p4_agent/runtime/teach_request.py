@@ -34,6 +34,7 @@ from __future__ import annotations
 from typing import Any, Dict, Mapping, Optional
 
 from xbrain.p4_agent.runtime import turn_labels  # 11 provenance closed sets
+from xbrain.p4_agent.slots.name_slots import name_length_ok  # 16 S8.0.4 2-12
 
 #: 18 intent name -> (teach action, kind). kind is None for the actions that
 #: operate on whatever session is open. Transcribed from the S12A.1 table.
@@ -74,16 +75,32 @@ def is_teach_intent(intent_name: str) -> bool:
     return intent_name in _TEACH_INTENTS
 
 
+def needs_pose_snap(intent_name: str) -> bool:
+    """True for the captures that store "here" (18 PS-6, 99 U109: mark_once).
+
+    18 PS-5 also lists start / finish / mark (F01 F02 F05 F07 F08); their
+    snapshot is not carried yet and stays registered under Q-18-11.
+    """
+    entry = _TEACH_INTENTS.get(intent_name)
+    return entry is not None and entry[0] == "mark_once"
+
+
 def to_teach_command(intent_name: str, *, slots: Mapping[str, Any],
                      cmd_id: str, issuer_channel: str = "local_voice",
                      session_id: Optional[str] = None,
-                     op_ip: Optional[str] = None) -> Optional[Dict[str, Any]]:
+                     op_ip: Optional[str] = None,
+                     pose_snap: Optional[Mapping[str, Any]] = None
+                     ) -> Optional[Dict[str, Any]]:
     """Build the cmd/teach payload for an F01-F10 turn, or None.
 
     None means "this intent is not a teach intent". A teach intent that cannot
     be completed raises TeachRequestError with a reason the caller can speak --
     the two cases are different and must not collapse: the first is "not my
     family", the second is "yours, but I need something you did not say".
+
+    pose_snap is the 18 PS-6 block (envelope.pose_snap.PoseHistory) for a
+    mark_once: required there, and sent as the top-level `pose_snap` field
+    11 S12A.4 defines. Ignored for every other action.
     """
     if issuer_channel not in turn_labels.TEACH_ISSUER_CHANNELS:
         raise ValueError("issuer channel %r not in S12A.4 set %s"
@@ -121,6 +138,10 @@ def to_teach_command(intent_name: str, *, slots: Mapping[str, Any],
             # under. Asking again is right -- inventing a name would leave the
             # operator with an object they cannot refer to by voice.
             raise TeachRequestError("save needs a name")
+        if not name_length_ok(name.strip()):
+            # 16 S8.0.4: out-of-range is refused, never truncated -- a cut
+            # name is one the operator did not say and cannot refer to.
+            raise TeachRequestError("name length")
         # activate stays FALSE for a voice save even on a fence: 11 S12A.7
         # constraint 1 makes enabling a separate L2 action (F15). A spoken
         # "save the fence" must not change where the robot may go.
@@ -130,6 +151,13 @@ def to_teach_command(intent_name: str, *, slots: Mapping[str, Any],
         name = slots.get("name")
         if not isinstance(name, str) or not name.strip():
             raise TeachRequestError("a keypoint needs a name")
+        if not name_length_ok(name.strip()):
+            raise TeachRequestError("name length")   # same rule as save
+        if not isinstance(pose_snap, Mapping):
+            # 16 EV-6: no snapshot, no command. P3 would otherwise have to
+            # read its current pose, which is the 9.6 m error PS-1 exists for.
+            raise TeachRequestError("no pose snapshot")
+        payload["pose_snap"] = dict(pose_snap)
         payload["mark_once"] = {
             "kind": kind, "name": name.strip(),
             # S12A.8: a dock's handover orientation IS the captured heading, so

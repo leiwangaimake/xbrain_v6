@@ -18,6 +18,10 @@ scheduler_tick is that driver, one atomic pass over the task table:
      count need an expanded route/soc, which is the execution-wiring batch, so
      they are NOT run here -- running V-6 on an unexpanded patrol would fail a
      valid task for having 0 steps.)
+     A valid task whose mission carries a not_before_ts still in the future
+     goes to 'scheduled' instead (validate_defer_time, 15 S3.2), and every
+     'scheduled' task whose time has come goes to 'ready' (due) -- both by
+     the injected wall clock (99 U110; until then a timed task ran at once).
   2. DISPATCH: if NOTHING is 'running', pick the highest-priority 'ready' task
      (priority DESC, submit_seq ASC -- the 15 S6.1 order) and move it
      'ready' -> 'running'. One running task at a time (single robot).
@@ -37,8 +41,9 @@ completion that a P1 status reports. A dispatched task correctly sits at
 """
 from __future__ import annotations
 
+import json
 import logging
-from typing import Awaitable, Callable, List, Tuple
+from typing import Awaitable, Callable, List, Optional, Tuple
 
 from xbrain.p3_task.state.machine import apply_transition, validate_suspend_fields
 from xbrain.p3_task.state.preconditions import (
@@ -77,6 +82,17 @@ def validate_pending(row, route_exists=None) -> Tuple[str, str]:
     return "validate_ok", ""
 
 
+def _not_before(row) -> Optional[float]:
+    """The task's 11 S7.2 not_before_ts (epoch s) from mission_json, or None."""
+    try:
+        value = json.loads(row.mission_json or "{}").get("not_before_ts")
+    except (ValueError, AttributeError):
+        return None  # V-5 reports an unparsable mission; nothing to defer
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
 async def _dispatch(dao, task_id: str, now_mono_ms: int, started_at: str,
                     boot_id: str, made: List[Tuple[str, str, str]],
                     on_transition: OnTransition) -> None:
@@ -98,9 +114,15 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
                          on_transition: OnTransition,
                          started_at: str = "",
                          boot_id: str = "",
-                         list_route_ids=None) -> List[Tuple[str, str, str]]:
+                         list_route_ids=None,
+                         now_wall_s: Optional[float] = None
+                         ) -> List[Tuple[str, str, str]]:
     """One scheduler pass. Returns the transitions made as
-    (task_id, from_state, to_state). See module docstring."""
+    (task_id, from_state, to_state). See module docstring.
+
+    now_wall_s is the system wall clock (epoch s) a timed task is compared
+    with -- the clock P4 scheduled it on (99 U110). None: no timed task is
+    ever due, and a new one waits in 'scheduled' -- never run early."""
     made: List[Tuple[str, str, str]] = []
 
     # -- phase 1: validate every pending task --
@@ -124,10 +146,28 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
         if full is None:                          # vanished between calls
             continue
         event, reason = validate_pending(full, route_exists)
+        due_at = _not_before(full)
+        if event == "validate_ok" and due_at is not None and (
+                now_wall_s is None or now_wall_s < due_at):
+            event = "validate_defer_time"   # 15 S3.2: valid, not yet due
         result = apply_transition("pending", event)
         await dao.update_state(task_id, result.to_state, now_mono_ms)
         made.append((task_id, "pending", result.to_state))
         await on_transition(task_id, "pending", result.to_state, reason)
+
+    # -- phase 1a: scheduled -> ready when due (15 S3.2, 99 U110) --
+    if now_wall_s is not None:
+        for task_id, _prio, _seq, state in rows:
+            if state != "scheduled":
+                continue
+            full = await dao.fetch_by_id(task_id)
+            due_at = None if full is None else _not_before(full)
+            if due_at is None or now_wall_s < due_at:
+                continue  # not yet (a row without a time never comes due)
+            result = apply_transition("scheduled", "due")
+            await dao.update_state(task_id, result.to_state, now_mono_ms)
+            made.append((task_id, "scheduled", result.to_state))
+            await on_transition(task_id, "scheduled", result.to_state, "")
 
     # -- phase 1b: yielding 自动恢复扫描 (15 S3.2) --
     #

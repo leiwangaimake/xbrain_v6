@@ -38,6 +38,7 @@ import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from xbrain.p4_agent.runtime import turn_labels  # 11 provenance closed sets
+from xbrain.p4_agent.slots.name_slots import canonical_name
 
 #: 18 intent name -> (geo action, geo type, slot carrying the target).
 _GEO_INTENTS: Dict[str, tuple] = {
@@ -49,8 +50,9 @@ _GEO_INTENTS: Dict[str, tuple] = {
 }
 
 #: Spoken numbers the operator uses for `num` ("three hao lu jing"). Only the
-#: digits are handled here; Chinese numerals are the ASR/LLM's to normalise, and
-#: duplicating that table would give the system two answers for "three".
+#: digits are handled here; Chinese numerals before 号 are normalised once, by
+#: name_slots.canonical_name (which reuses motion_slots' reader), so the system
+#: still has one answer for "three".
 _NUM_RE = re.compile(r"^\s*(\d{1,2})\s*$")
 
 
@@ -82,7 +84,12 @@ def resolve_geo_id(items: Sequence[Mapping[str, Any]], gtype: Optional[str],
     live = [i for i in items
             if i.get("state") != "deleted"
             and (gtype is None or i.get("type") == gtype)]
-    exact = [i for i in live if i.get("name") == text]
+    # Compared in canonical spelling (99 U109): "去一号测试点" must find the
+    # point a typed command saved as "1号测试点", and the reverse. An exact
+    # match is a canonical match, so nothing that resolved before stops now.
+    canon = canonical_name(text)
+    exact = [i for i in live
+             if canonical_name(str(i.get("name") or "")) == canon]
     if len(exact) == 1:
         return str(exact[0]["geo_id"])
     if len(exact) > 1:

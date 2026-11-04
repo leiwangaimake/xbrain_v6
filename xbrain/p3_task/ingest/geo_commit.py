@@ -56,6 +56,29 @@ from xbrain.p3_task.state.geo_rev import content_hash
 _MIN_ROUTE_POINTS = 2
 _MAX_PATH_POINTS = 5000
 
+def enu_rad_to_compass_deg(heading_rad: float) -> float:
+    """An 11 S3.3 ENU heading (rad, east 0, counter-clockwise) as the 15 S9.3
+    waypoints.yaw_deg (deg, true north 0, clockwise), in [0, 360)."""
+    return (90.0 - math.degrees(heading_rad)) % 360.0
+
+
+async def _release_tombstoned_name(conn, table: str, name: str) -> None:
+    """Let a TOMBSTONED row give up `name` before a new object takes it.
+
+    `name` is UNIQUE over the whole table (15 S9.3 DDL), tombstones included,
+    and a tombstone must survive until it has synced (11 S7.11.4) -- so
+    without this an operator could not reuse the name of a deleted object
+    for 90 days, and on waypoints (INSERT OR REPLACE) the new row silently
+    DELETED the tombstone instead (99 U109, reproduced). The tombstone is
+    renamed to "<name>#<geo_id>"; its geo_id, rev, state and content_hash are
+    untouched, so the deletion still propagates and its id is never reused.
+    Runs inside the caller's transaction.
+    """
+    await conn.execute(
+        f"UPDATE {table} SET name = name || '#' || geo_id "
+        "WHERE name = ? AND tombstone = 1", (name,))
+
+
 _EARTH_R_M = 6371000.0     # mean earth radius; total_len_m is a display/replay len,
 #                            not a survey figure, so a spherical model is enough.
 
@@ -104,6 +127,7 @@ async def commit_route(conn, *, route_id: str, name: str,
         raise GeoCommitError(f"bad direction {direction!r}")
     await conn.execute("BEGIN IMMEDIATE")
     try:
+        await _release_tombstoned_name(conn, "routes", name)
         if has_pp:
             pts = [(float(la), float(lo)) for (la, lo) in path_points]
             n = len(pts)
@@ -164,15 +188,25 @@ async def commit_waypoint(conn, *, geo_id: str, name: str, wtype: str,
     (ba zhe li ji wei X, 18-C). name is the operator-given display name
     (11 S7.8.2, NOT NULL UNIQUE so voice "go to <name>" resolves to one target);
     rtk_lat/rtk_lon come from the PS-1 pose snapshot at record time (rtk_fixed
-    required by the caller, 18 F06); yaw_deg is the capture heading. Idempotent
-    per geo_id via INSERT OR REPLACE -- a redelivered record command overwrites
-    rather than duplicating. Caveat: OR REPLACE resolves ANY unique conflict, so
-    re-committing a geo_id with a name that already belongs to a DIFFERENT
-    keypoint would delete that other row; callers mint one geo_id per name."""
+    required by the caller, 18 F06); yaw_deg is the capture heading in the
+    column's own convention (true north, clockwise -- enu_rad_to_compass_deg).
+    Idempotent per geo_id via INSERT OR REPLACE -- a redelivered record command
+    overwrites rather than duplicating. OR REPLACE resolves ANY unique
+    conflict, so the name is cleared first: a tombstone holding it gives it up
+    (_release_tombstoned_name), and a LIVE keypoint holding it under another
+    geo_id is refused here rather than deleted (99 U109)."""
     ch = content_hash({"name": name, "lat": rtk_lat, "lon": rtk_lon,
                        "yaw": yaw_deg})
     await conn.execute("BEGIN IMMEDIATE")
     try:
+        await _release_tombstoned_name(conn, "waypoints", name)
+        cur = await conn.execute(
+            "SELECT geo_id FROM waypoints WHERE name = ? AND geo_id != ?",
+            (name, geo_id))
+        held = await cur.fetchone()
+        if held is not None:
+            raise GeoCommitError(
+                f"name {name!r} belongs to live keypoint {held[0]!r}")
         await conn.execute(
             "INSERT OR REPLACE INTO waypoints (geo_id, name, type, rtk_lat, "
             " rtk_lon, rtk_alt, yaw_deg, arrival_radius, description, "

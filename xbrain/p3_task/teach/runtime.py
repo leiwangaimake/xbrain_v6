@@ -53,6 +53,7 @@ from xbrain.p3_task.ingest.geo_commit import (
     commit_fence,
     commit_route,
     commit_waypoint,
+    enu_rad_to_compass_deg,
 )
 from xbrain.p3_task.teach.command import (
     TeachCommand,
@@ -97,8 +98,13 @@ class TeachRuntime:
     """One recording session at a time, plus the caches its gates need."""
 
     def __init__(self, task_conn, geo_conn, fence_conn, *,
-                 boot_id: str) -> None:
+                 boot_id: str,
+                 snap_max_age_ms: Optional[int] = None) -> None:
         self._task_conn = task_conn
+        # 18 PS-6 teach.snap_max_age_ms (p3_task.yaml, 15 S12): the oldest a
+        # mark_once pose_snap may be. None = not configured, and every capture
+        # that carries a snapshot is then refused by name -- never defaulted.
+        self._snap_max_age_ms = snap_max_age_ms
         self._geo_conn = geo_conn
         self._fence_conn = fence_conn
         self._boot_id = boot_id
@@ -552,8 +558,30 @@ class TeachRuntime:
 
     async def _mark_once(self, cmd: TeachCommand, now_mono_s: float,
                          now_ms: int) -> Dict[str, Any]:
-        """S12A.8 F06 / F10: capture one point. No session, no state change."""
-        pose = self._pose_fresh(now_mono_s)
+        """S12A.8 F06 / F10: capture one point. No session, no state change.
+
+        The position is the command's pose_snap when it carries one (18 PS-1:
+        where the robot was at the operator's first word), judged by the
+        quality AT THAT MOMENT (PS-4); only a command without one (typed /
+        cloud-built, S12A.8) is captured at the current pose. A snapshot that
+        is too old is refused, never swapped for the current pose -- that swap
+        is the silent error PS-3 forbids.
+        """
+        snap = cmd.pose_snap
+        if snap is not None:
+            if self._snap_max_age_ms is None:
+                raise TeachStateError(
+                    E_TEACH_STATE,
+                    "teach.snap_max_age_ms is not configured (p3_task.yaml)")
+            if snap["snap_age_ms"] > self._snap_max_age_ms:
+                raise TeachStateError(
+                    E_TEACH_QUALITY,
+                    f"pose_snap is {snap['snap_age_ms']} ms old "
+                    f"(> {self._snap_max_age_ms})",
+                    {"item": "snap_age", "snap_age_ms": snap["snap_age_ms"]})
+            pose = dict(snap, alt=snap.get("alt_m"))  # PS-6 spells alt_m
+        else:
+            pose = self._pose_fresh(now_mono_s)
         if pose is None or pose.get("lat") is None:
             raise TeachStateError(E_TEACH_QUALITY, "no fresh pose")
         if pose.get("fix_type") != "rtk_fixed":
@@ -569,7 +597,13 @@ class TeachRuntime:
                 raise TeachStateError(
                     E_TEACH_QUALITY,
                     "dock capture needs L1 (dual-antenna) heading")
-            still_for = now_mono_s - self._last_moving_mono_s
+            if snap is not None:
+                # PS-6: P4 judged the second BEFORE the first word; by now
+                # that second is gone, so P3 cannot re-judge it.
+                still = bool(snap.get("still_1s_ok"))
+                still_for = DOCK_STILL_REQUIRED_S if still else 0.0
+            else:
+                still_for = now_mono_s - self._last_moving_mono_s
             if still_for < DOCK_STILL_REQUIRED_S:
                 raise TeachStateError(
                     E_TEACH_QUALITY,
@@ -586,8 +620,11 @@ class TeachRuntime:
         if cmd.mark_once["capture_heading"]:
             heading = pose.get("heading_rad")
             if isinstance(heading, (int, float)) and pose.get("heading_valid"):
-                import math
-                yaw = math.degrees(float(heading))
+                # waypoints.yaw_deg is true north, clockwise (15 S9.3 DDL);
+                # heading_rad is ENU, east 0, counter-clockwise (11 S3.3).
+                # Stored raw until 99 U109, so a point captured facing north
+                # read as facing east.
+                yaw = enu_rad_to_compass_deg(float(heading))
             else:
                 # U34: with heading degraded, the point is still worth keeping
                 # -- it just carries no orientation, and the caller is told.
@@ -600,7 +637,8 @@ class TeachRuntime:
                               created_by="teach")
         return teach_ack(cmd.cmd_id, "accepted", "OK",
                          {"applied": {"geo_id": geo_id, "name": name,
-                                      "kind": kind, "yaw_deg": yaw},
+                                      "kind": kind, "yaw_deg": yaw,
+                                      "from_snapshot": snap is not None},
                           "warn": [] if yaw is not None else ["no_heading"]})
 
     # ---------------------------------------------------------- broadcast --

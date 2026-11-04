@@ -39,3 +39,11 @@ geo:
     lat: ${common.geo.enu_origin.lat}
     lon: ${common.geo.enu_origin.lon}
     alt: ${common.geo.enu_origin.alt}
+
+# -- 录制 (teach) -----------------------------------------------------------
+#   * 权威定义处: `15` §12 teach 段; 定值理由见 `18` §0.4.1 PS-6.
+#   snap_max_age_ms: 单点录制(F06/F10)随指令携带的位置快照 pose_snap 的最大龄期
+#   (首字时刻 -> P4 发出). 超龄回 E_TEACH_QUALITY(item=snap_age), 绝不回退读当前位置.
+#   8000 = T4 最坏解析 4.8 s + L1b 播报窗 2.5 s + 裕度, 待现场整定.
+teach:
+  snap_max_age_ms: 8000

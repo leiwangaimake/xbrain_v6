@@ -64,6 +64,7 @@ from xbrain.p4_agent.runtime.orchestrator_turn import (
     make_turn_handler,
 )
 from xbrain.common.envelope.age import read_local_boot_id
+from xbrain.p4_agent.envelope.pose_snap import PoseHistory
 from xbrain.p4_agent.runtime.chassis_ctrl_stamp import ChassisCtrlStamper
 from xbrain.p4_agent.runtime.turn_loop import (
     MIC_TOPIC,
@@ -71,6 +72,7 @@ from xbrain.p4_agent.runtime.turn_loop import (
     TurnLoopWorker,
     on_mic_frame_callback,
 )
+from xbrain.p4_agent.runtime.teach_ack_speech import CMD_TEACH_ACK, TeachAckSpeaker
 from xbrain.p4_agent.runtime.turn_orchestrator import OrchestratorSession
 from xbrain.p4_agent.runtime.voice_turn import VOICE_TURN_KEY_FMT
 
@@ -107,11 +109,15 @@ OUTBOUND_KEYS = tuple(sorted(
 _VOICE_LOOP_HEARTBEAT_PERIOD = 5.0  # seconds
 
 
-def _wire_state_subscriptions(gen, state_subs: list):
+def _wire_state_subscriptions(gen, state_subs: list, pose_history=None):
     """Declare a GEN-plane subscriber per STATE_TOPICS key (GWY-P4-39),
     decoding each JSON payload into a StateCache with the monotonic receive
     time. Returns the cache. Subscriber handles are appended to state_subs
-    (strong ref, CLAUDE.md 4.3) so the subscription is not GC'd."""
+    (strong ref, CLAUDE.md 4.3) so the subscription is not GC'd.
+
+    pose_history (99 U109), when given, also keeps every state/pose frame:
+    the cache holds only the latest, and a keypoint capture needs the pose
+    from when the operator started speaking (18 PS-1)."""
     import json
     import time as _time
 
@@ -128,7 +134,10 @@ def _wire_state_subscriptions(gen, state_subs: list):
                 value = json.loads(bytes(sample.payload))
             except Exception:      # noqa: BLE001 -- a bad frame must not kill the sub
                 return
-            cache.update(key, value, int(_time.monotonic() * 1000))
+            recv_ms = int(_time.monotonic() * 1000)
+            cache.update(key, value, recv_ms)
+            if key == "state/pose" and pose_history is not None:
+                pose_history.feed(recv_ms, value)  # an append, no await
         return _cb
 
     for key in sorted(STATE_TOPICS):
@@ -145,7 +154,8 @@ def _wire_cloud_inputs(gen, cfg: TurnLoopConfig, orchestrator, registry,
                        asr_post, state_cache, publish, jobs: queue.Queue,
                        limits: VoiceInLimits, subs: list,
                        local_session: OrchestratorSession,
-                       voice_turn_key: Optional[str] = None):
+                       voice_turn_key: Optional[str] = None,
+                       on_turn=None):
     """Subscribe cmd/voice_text + audio/voice_in; return the assembler.
 
     local_session is the microphone's session: hmi text shares it (16 S11.1
@@ -178,7 +188,7 @@ def _wire_cloud_inputs(gen, cfg: TurnLoopConfig, orchestrator, registry,
     runner = CloudTurnRunner(
         orchestrator, KeywordMatcher(registry), publish, _transcribe,
         _now_ms, _voice_mode, local_session, asr_post=asr_post,
-        voice_turn_key=voice_turn_key)
+        voice_turn_key=voice_turn_key, on_turn=on_turn)
     assembler = VoiceInAssembler(limits)
     text_key, voice_key = cloud_input_keys(rid)
     # Strong references in `subs` (CLAUDE.md 4.3).
@@ -226,8 +236,15 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
         state_subs = []
         turn_handler = None
         orchestrator = None
+        # 99 U109: voices the result of a F06 / F10 capture from cmd/teach/ack
+        # (11 CMD-30 / AP-1). Fed by both turn paths below.
+        teach_speaker = TeachAckSpeaker()
         if orch is not None:
-            state_cache = _wire_state_subscriptions(gen, state_subs)
+            # 18 PS-6: frames within the state age bound of the first word
+            # stand for it -- the same bound a G answer uses.
+            pose_history = PoseHistory(orch.query_max_age_ms)
+            state_cache = _wire_state_subscriptions(gen, state_subs,
+                                                    pose_history)
             # Compose the group query_fns: battery (G02) + RTK/heading (G43-G47,
             # 18-C/F5) + time (G24, site-tz local clock). Each owns its ids; the
             # first to answer wins.
@@ -257,7 +274,12 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                     max_age_ms=orch.query_max_age_ms),
                 # 2026-11-02 99 U105: the snapshot B05-B07 / F01-F15 / route
                 # names read -- never passed before, so they always refused.
-                state_fn=make_state_fn(state_cache))
+                state_fn=make_state_fn(state_cache),
+                # 2026-11-04 99 U109: F06 / F10 position at the first word.
+                pose_snap_fn=pose_history.snapshot,
+                # 99 U110: a timed goto is scheduled on the system clock (the
+                # 2026-10-26 ruling G24 also follows) in the site timezone.
+                wall_now_fn=time.time, site_timezone=orch.site_timezone)
             session = OrchestratorSession()
             # 11 S8.7.6 state/voice_turn (2026-10-26): robot-prefixed like the
             # cloud inputs, so it needs the robot id. Without one there is no
@@ -271,9 +293,15 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
             else:
                 _logger.error("p4 state/voice_turn DISABLED: "
                               "XBRAIN_ROBOT_ID unset")
-            turn_handler = make_turn_handler(orchestrator, session,
-                                             asr_post=orch.asr_post,
-                                             voice_turn_key=voice_turn_key)
+            mic_handler = make_turn_handler(orchestrator, session,
+                                            asr_post=orch.asr_post,
+                                            voice_turn_key=voice_turn_key)
+
+            def turn_handler(raw, **kw):
+                # The microphone turn, with its frames shown to the speaker.
+                pairs = mic_handler(raw, **kw)
+                teach_speaker.note_turn(pairs)
+                return pairs
             _logger.info(
                 "p4 wiring: TurnOrchestrator handler active; state/* "
                 "subscribed (%d keys), G02 live", len(state_subs))
@@ -325,7 +353,27 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
             assembler = _wire_cloud_inputs(
                 gen, cfg, orchestrator, orch.registry, orch.asr_post,
                 state_cache, _publish, jobs, cloud_limits, cloud_subs,
-                session, voice_turn_key)
+                session, voice_turn_key, on_turn=teach_speaker.note_turn)
+
+        if orchestrator is not None:
+            def _on_teach_ack(sample) -> None:
+                # Rust thread: copy the bytes and queue the work; decoding,
+                # matching and the publish run on the worker (CLAUDE.md 4.2),
+                # in order with the turns that sent the commands.
+                data = bytes(sample.payload)
+
+                def _job() -> None:
+                    out = teach_speaker.on_ack(data)
+                    if out is not None:
+                        _publish(*out)
+                try:
+                    jobs.put_nowait(_job)
+                except queue.Full:
+                    _logger.warning("p4 teach ack dropped: job queue full")
+            cloud_subs.append(gen.declare_subscriber(CMD_TEACH_ACK,
+                                                     _on_teach_ack))
+            _logger.info("p4 wiring: subscribed %s (capture results spoken)",
+                         CMD_TEACH_ACK)
 
         try:
             last_hb = time.monotonic()

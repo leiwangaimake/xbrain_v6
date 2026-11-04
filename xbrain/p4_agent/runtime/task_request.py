@@ -156,6 +156,7 @@ def to_task_command(
     text: str = "",
     route_id: Optional[str] = None,
     waypoint_id: Optional[str] = None,
+    not_before_ts: Optional[float] = None,  # 99 U110 timed goto
 ) -> Optional[Dict[str, Any]]:
     """Build the 11 S7.2 TaskCommand for a voice/text action, or None.
 
@@ -261,6 +262,11 @@ def to_task_command(
     task: Dict[str, Any] = {"type": task_type, "params": params}
     if route_id:
         task["route_id"] = route_id
+    if not_before_ts is not None:  # a timed task
+        # 11 S7.2 task.not_before_ts: a timed task (99 U110, "下午3点去 X").
+        # Absolute epoch seconds on the robot's system clock; P3 holds the
+        # task in `scheduled` until then (15 S3.2).
+        task["not_before_ts"] = float(not_before_ts)  # epoch seconds
     return {
         "cmd_id": cmd_id,
         "action": "submit",

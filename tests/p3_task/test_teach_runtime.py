@@ -25,6 +25,7 @@ The cases that carry the batch:
 from __future__ import annotations
 
 import json
+import math
 
 import aiosqlite
 import pytest
@@ -63,7 +64,8 @@ async def rt():
     task = await _open(ALL_DDL_STATEMENTS)
     geo = await _open(GEO_DB_STATEMENTS)
     fence = await _open(FENCE_DB_STATEMENTS)
-    runtime = TeachRuntime(task, geo, fence, boot_id="b0")
+    runtime = TeachRuntime(task, geo, fence, boot_id="b0",
+                           snap_max_age_ms=8000)  # p3_task.yaml value
     # Healthy caches by default; the missing-source case clears them.
     runtime.update_pose({"lat": _LAT, "lon": _LON, "fix_type": "rtk_fixed",
                          "heading_rad": 0.0, "heading_valid": True,
@@ -81,6 +83,22 @@ async def rt():
 def _cmd(action, **over):
     base = {"cmd_id": f"c-{action}", "action": action,
             "issuer": {"src": "p4_agent", "channel": "local_voice"}}
+    base.update(over)
+    return base
+
+
+#: A typed issuer: a mark_once from it may omit pose_snap and is captured at
+#: the current pose (11 S12A.8). The voice issuer above must carry one.
+_TYPED = {"src": "p4_agent", "channel": "cloud_text"}
+
+
+def _snap(**over):
+    """An 18 PS-6 pose_snap at the first word, rtk_fixed facing north."""
+    base = {"lat": _LAT + 10 * _DEG_PER_M, "lon": _LON, "alt_m": 5.0,
+            "heading_rad": math.pi / 2, "heading_valid": True,
+            "heading_level": 1, "fix_type": "rtk_fixed", "i_fix": 1.0,
+            "i_heading": 1.0, "speed_mps": 0.0, "still_1s_ok": True,
+            "snap_mono_s": 97.0, "snap_age_ms": 3000}
     base.update(over)
     return base
 
@@ -366,17 +384,23 @@ async def test_duplicate_name_is_refused_without_overwrite(rt):
 
 @pytest.mark.asyncio
 async def test_mark_once_waypoint_writes_a_keypoint(rt):
-    """F06, the 'record this spot as the east gate' path."""
+    """F06, the 'record this spot as the east gate' path (typed: current pose).
+
+    The fixture faces ENU 0 = east, stored as 90 deg true-north clockwise
+    (15 S9.3). MUTATION: store degrees(heading_rad) and this reads 0 = north,
+    the 99 U109 defect."""
     ack = await rt.handle(
-        _cmd("mark_once", mark_once={"kind": "waypoint", "name": "east gate",
-                                     "capture_heading": True}),
+        _cmd("mark_once", issuer=_TYPED,
+             mark_once={"kind": "waypoint", "name": "east gate",
+                        "capture_heading": True}),
         now_mono_s=100.0, now_ms=5000)
     assert ack["result"] == "accepted", ack
     cur = await rt._geo_conn.execute(
         "SELECT geo_id, name, rtk_lat, yaw_deg FROM waypoints")
     row = await cur.fetchone()
     assert row[0].startswith("w-") and row[1] == "east gate"
-    assert abs(row[2] - _LAT) < 1e-9 and row[3] == 0.0
+    assert abs(row[2] - _LAT) < 1e-9 and row[3] == 90.0
+    assert ack["detail"]["applied"]["from_snapshot"] is False
 
 
 @pytest.mark.asyncio
@@ -387,7 +411,8 @@ async def test_mark_once_refuses_below_rtk_fixed(rt):
     rt.update_pose({"lat": _LAT, "lon": _LON, "fix_type": "rtk_float",
                     "speed_mps": 0.0}, 100.0)
     ack = await rt.handle(
-        _cmd("mark_once", mark_once={"kind": "waypoint", "name": "gate"}),
+        _cmd("mark_once", issuer=_TYPED,
+             mark_once={"kind": "waypoint", "name": "gate"}),
         now_mono_s=100.0, now_ms=1)
     assert ack["result"] == "rejected" and ack["code"] == E_TEACH_QUALITY
 
@@ -399,8 +424,9 @@ async def test_mark_once_dock_is_refused_as_unwired_not_faked(rt):
     invented. MUTATION: write the dock anyway with a guessed handover and the
     robot drives at a charging contact from the wrong side."""
     ack = await rt.handle(
-        _cmd("mark_once", mark_once={"kind": "dock", "name": "dock 1",
-                                     "capture_heading": True}),
+        _cmd("mark_once", issuer=_TYPED,
+             mark_once={"kind": "dock", "name": "dock 1",
+                        "capture_heading": True}),
         now_mono_s=101.5, now_ms=1)
     assert ack["result"] == "rejected"
     assert "not wired" in ack["detail"]["reason"]
@@ -417,11 +443,131 @@ async def test_dock_capture_requires_stillness_before_anything_else(rt):
                     "heading_rad": 0.0, "heading_valid": True,
                     "heading_level": 1, "speed_mps": 0.9}, 100.0)
     ack = await rt.handle(
-        _cmd("mark_once", mark_once={"kind": "dock", "name": "dock 1",
-                                     "capture_heading": True}),
+        _cmd("mark_once", issuer=_TYPED,
+             mark_once={"kind": "dock", "name": "dock 1",
+                        "capture_heading": True}),
         now_mono_s=100.2, now_ms=1)
     assert ack["result"] == "rejected" and ack["code"] == E_TEACH_QUALITY
     assert "stationary" in ack["detail"]["reason"]
+
+
+# ------------------------------------------------ pose_snap (99 U109) ----
+
+async def _waypoints(rt):
+    cur = await rt._geo_conn.execute(
+        "SELECT geo_id, name, rtk_lat, yaw_deg, tombstone FROM waypoints "
+        "ORDER BY id")
+    return await cur.fetchall()
+
+
+@pytest.mark.asyncio
+async def test_voice_capture_stores_the_snapshot_not_the_current_pose(rt):
+    """18 PS-1: "here" is where the robot was at the first word. The snapshot
+    is 10 m north of the current pose and faces north. MUTATION: read the
+    current pose and the point lands 10 m off (the 9.6 m case of 18 S0.4)."""
+    ack = await rt.handle(
+        _cmd("mark_once", pose_snap=_snap(),
+             mark_once={"kind": "waypoint", "name": "1号测试点",
+                        "capture_heading": True}),
+        now_mono_s=100.0, now_ms=1)
+    assert ack["result"] == "accepted", ack
+    assert ack["detail"]["applied"]["from_snapshot"] is True
+    (row,) = await _waypoints(rt)
+    assert abs(row[2] - (_LAT + 10 * _DEG_PER_M)) < 1e-9  # the snapshot's
+    assert abs(row[3] - 0.0) < 1e-9  # north, true-north clockwise
+
+
+@pytest.mark.asyncio
+async def test_voice_capture_without_a_snapshot_is_refused(rt):
+    """18 PS-6: required on a voice path. MUTATION: fall back to the current
+    pose and a voice capture silently stores the post-LLM position."""
+    ack = await rt.handle(
+        _cmd("mark_once", mark_once={"kind": "waypoint", "name": "gate"}),
+        now_mono_s=100.0, now_ms=1)
+    assert ack["result"] == "rejected" and ack["code"] == "E_SCHEMA"
+    assert await _waypoints(rt) == []
+
+
+@pytest.mark.asyncio
+async def test_stale_snapshot_is_refused_never_replaced(rt):
+    """18 PS-6: over teach.snap_max_age_ms -> E_TEACH_QUALITY item=snap_age,
+    although the current pose is fine. MUTATION: swap in the current pose."""
+    ack = await rt.handle(
+        _cmd("mark_once", pose_snap=_snap(snap_age_ms=8001),
+             mark_once={"kind": "waypoint", "name": "gate"}),
+        now_mono_s=100.0, now_ms=1)
+    assert ack["result"] == "rejected" and ack["code"] == E_TEACH_QUALITY
+    assert ack["detail"]["item"] == "snap_age"
+    assert await _waypoints(rt) == []
+
+
+@pytest.mark.asyncio
+async def test_quality_is_judged_at_the_snapshot(rt):
+    """18 PS-4: a float fix at the first word is refused even though the
+    current pose is rtk_fixed. MUTATION: judge the current pose instead."""
+    ack = await rt.handle(
+        _cmd("mark_once", pose_snap=_snap(fix_type="rtk_float"),
+             mark_once={"kind": "waypoint", "name": "gate"}),
+        now_mono_s=100.0, now_ms=1)
+    assert ack["result"] == "rejected" and ack["code"] == E_TEACH_QUALITY
+
+
+@pytest.mark.asyncio
+async def test_snapshot_capture_refused_when_the_limit_is_not_configured():
+    """No default for teach.snap_max_age_ms (CLAUDE.md 3.1): unset refuses
+    by name. MUTATION: a code default and the stack runs on a number nobody
+    decided."""
+    task = await _open(ALL_DDL_STATEMENTS)
+    geo = await _open(GEO_DB_STATEMENTS)
+    fence = await _open(FENCE_DB_STATEMENTS)
+    runtime = TeachRuntime(task, geo, fence, boot_id="b0")
+    ack = await runtime.handle(
+        _cmd("mark_once", pose_snap=_snap(),
+             mark_once={"kind": "waypoint", "name": "gate"}),
+        now_mono_s=100.0, now_ms=1)
+    assert ack["result"] == "rejected" and ack["code"] == E_TEACH_STATE
+    assert "snap_max_age_ms" in ack["detail"]["reason"]
+    for c in (task, geo, fence):
+        await c.close()
+
+
+@pytest.mark.asyncio
+async def test_dock_stillness_comes_from_the_snapshot(rt):
+    """PS-6: P4 judged the second before the first word; P3 cannot, it is
+    gone. MUTATION: use P3's own tracker (still here) and a dock captured
+    while rolling passes."""
+    ack = await rt.handle(
+        _cmd("mark_once", pose_snap=_snap(still_1s_ok=False),
+             mark_once={"kind": "dock", "name": "dock 1",
+                        "capture_heading": True}),
+        now_mono_s=200.0, now_ms=1)
+    assert ack["result"] == "rejected" and ack["code"] == E_TEACH_QUALITY
+    assert "stationary" in ack["detail"]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_rerecording_a_deleted_name_keeps_the_tombstone(rt):
+    """11 S7.11.4: the tombstone must survive to sync. Before 99 U109 the new
+    row's INSERT OR REPLACE deleted it. The tombstone gives up the name and
+    keeps its geo_id. MUTATION: drop the release and the old row vanishes."""
+    first = await rt.handle(
+        _cmd("mark_once", cmd_id="c-1", pose_snap=_snap(),
+             mark_once={"kind": "waypoint", "name": "gate"}),
+        now_mono_s=100.0, now_ms=1)
+    old_id = first["detail"]["applied"]["geo_id"]
+    await rt._geo_conn.execute(
+        "UPDATE waypoints SET state='deleted', tombstone=1 WHERE geo_id=?",
+        (old_id,))
+    await rt._geo_conn.commit()
+    again = await rt.handle(
+        _cmd("mark_once", cmd_id="c-2", pose_snap=_snap(),
+             mark_once={"kind": "waypoint", "name": "gate"}),
+        now_mono_s=101.0, now_ms=2)
+    assert again["result"] == "accepted", again
+    rows = await _waypoints(rt)
+    assert [(r[0], r[1], r[4]) for r in rows] == [
+        (old_id, "gate#" + old_id, 1),
+        (again["detail"]["applied"]["geo_id"], "gate", 0)]
 
 
 # ------------------------------------------------------------ teachstate ----

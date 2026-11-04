@@ -264,10 +264,13 @@ def test_an_llm_that_fills_the_waypoint_produces_the_task():
     the catalogue (P3 never resolves names at dispatch); the no-catalogue and
     invented-name refusals are in test_task_geometry.py.
     """
-    # The LLM names the waypoint the fast leg could not extract.
+    # The LLM names the waypoint the fast leg could not extract. Since 99
+    # U110 a sentence that STARTS with the verb ("去东门") is parsed by rule
+    # and never reaches the LLM (test_ptp_turn.py); this one has words in
+    # front the rule does not strip, so the B01 keyword sends it here.
     t2 = _Tier2(Tier2Classification(name="goto_waypoint",
                                     slots={"waypoint": "东门"}))
-    d, keys, pubs = _turn("去东门", t2, items=[_GATE])
+    d, keys, pubs = _turn("我想让你去东门", t2, items=[_GATE])
     # Now the TaskCommand goes out...
     assert "cmd/task" in keys, (d.kind, keys)
     body = dict(pubs)["cmd/task"]

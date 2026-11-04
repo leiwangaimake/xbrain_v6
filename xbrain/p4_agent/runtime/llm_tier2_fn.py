@@ -61,7 +61,8 @@ def _assemble_prompt(system_text: str, mission_text: str, text: str) -> str:
 
 def _parse_classification(raw: str, allowed) -> Optional[Tier2Classification]:
     """Parse the model's {"intent":..,"slots":..}. Returns None on unparseable
-    JSON, a missing/foreign intent, or bad slot shape (all -> decline)."""
+    JSON or a missing/foreign intent (both -> decline); an "unknown" comes back
+    as a classification carrying its reason."""
     try:
         obj = json.loads(raw)
     except (ValueError, TypeError):
@@ -69,6 +70,14 @@ def _parse_classification(raw: str, allowed) -> Optional[Tier2Classification]:
     if not isinstance(obj, dict):
         return None
     name = obj.get("intent")
+    if name == "unknown":
+        # The model declined (16 S8.0.2 EV-3). Returned rather than dropped:
+        # a keyword-matched intent asks for its missing slot on missing_slot,
+        # where a None would end the turn as "did not catch that".
+        reason = obj.get("reason")
+        return Tier2Classification(
+            name="unknown", slots={},
+            reason=reason if isinstance(reason, str) else None)
     if not isinstance(name, str) or name not in allowed:
         return None                       # foreign / missing -> drop, never route
     slots = obj.get("slots")

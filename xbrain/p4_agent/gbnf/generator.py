@@ -27,12 +27,31 @@ I3: mission grammar's `intent ::= a | b | c` MUST match what the
     disagree at gen time -- silent failure mode)
 I4: alternation must NOT contain the sentinel 'unknown' -- 'unknown'
     is what the model chooses when NOTHING matches, not one of the
-    matches
+    matches. The grammar still has to let the model SAY it: 16 S7.2
+    counts it in every slice ("each slice <= 5 branches, unknown
+    included") and its M3 sample ends `| "unknown"`. Until 99 U109 the
+    root offered only the alternation, so every mission prompt's
+    unknown rule was unreachable and the model was forced onto an
+    intent -- measured: "保存当前位置, 名字叫去程起点" came back as a
+    patrol_schedule with an invented 08:00. The unknown branch is a
+    separate root alternative so reason/detail are reachable ONLY after
+    "unknown" (16 S8.0.2 EV-3), drawn from the 16 S8.0.3 closed sets.
 """
 
 from __future__ import annotations
 
 from typing import Dict, FrozenSet, List
+
+#: 16 S8.0.3 first-level `reason`, a frozen five-value set (S12.4: changing it
+#: is a major version). Emitted only on the unknown branch.
+REASONS = ("missing_slot", "ambiguous", "not_in_catalog", "unsupported",
+           "unparseable")
+
+#: 16 S8.0.3 second-level `detail`, the eight values summarised there. Optional
+#: on the wire; a value outside this list is not even sampleable.
+DETAILS = ("distance_vague", "unit_mismatch", "heading_unsupported",
+           "abs_angle_unsupported", "not_naming", "not_in_group",
+           "text_ambiguous", "reference_unresolved")
 
 
 class GbnfInvariantError(RuntimeError):
@@ -149,6 +168,11 @@ def _gbnf_intent_rule(alternation: List[str]) -> str:
     return "intent ::= " + alts
 
 
+def _gbnf_literal_rule(rule: str, values) -> str:
+    """Emit `rule ::= "\\"a\\"" | ...` for a closed set of JSON strings."""
+    return rule + " ::= " + " | ".join('"\\"%s\\""' % v for v in values)
+
+
 def generate_grammar(
     alternation: List[str],
     intent_routes: Dict[str, str],
@@ -158,7 +182,8 @@ def generate_grammar(
     Enforces the generator invariants BEFORE emitting anything:
       * R4  empty alternation is not a production
       * I4  'unknown' is not an alternation member (it is the no-match
-            fallback the model picks, not a listed choice)
+            fallback the model picks, not a listed choice); it is reached
+            through the separate `unknown` root branch instead
       * GB-1c  no fastpath intent in a mission grammar (fastpath bypasses
             the LLM; its presence here is dead code that also lets the LLM
             misroute a match)
@@ -182,11 +207,20 @@ def generate_grammar(
     # cap), producing invalid JSON that never parsed. Constraining slots to a
     # flat {"key": string|number, ...} forces the model to CLOSE the object, so
     # the reply is always parseable; V1..V7 still validate the values downstream.
-    root = ('root ::= "{" ws "\\"intent\\":" ws intent '
-            '(ws "," ws "\\"slots\\":" ws slots)? ws "}"')
+    # Two root alternatives: a listed intent with optional slots, or the
+    # unknown sentinel with an optional reason (and a detail only after a
+    # reason). Neither branch can carry the other's fields (EV-3).
+    root = ('root ::= "{" ws "\\"intent\\":" ws ( known | unknown ) ws "}"')
+    known = 'known ::= intent (ws "," ws "\\"slots\\":" ws slots)?'
+    unknown = ('unknown ::= "\\"unknown\\"" (ws "," ws "\\"reason\\":" ws '
+               'reason (ws "," ws "\\"detail\\":" ws detail)?)?')
     lines = [
         root,
+        known,
+        unknown,
         _gbnf_intent_rule(alternation),
+        _gbnf_literal_rule("reason", REASONS),
+        _gbnf_literal_rule("detail", DETAILS),
         'slots ::= "{" ws (kv (ws "," ws kv)*)? ws "}"',
         'kv ::= "\\"" key "\\"" ws ":" ws val',
         'key ::= [a-z_]+',

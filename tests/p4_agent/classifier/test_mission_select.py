@@ -65,3 +65,36 @@ def test_non_command_returns_none(text):
     """No family cue -> None -> the caller declines without a GPU call.
     MUTATION: a catch-all default mission would burn a GPU slot on chit-chat."""
     assert select_mission(text) is None
+
+
+@pytest.mark.parametrize("text", [
+    "记录当前位置为1号测试点", "保存当前位置为1号测试点", "保持当前位置为1号测试点",
+    "把当前位置保存为西门", "把这个点存为西门", "这个位置记为西门",
+])
+def test_position_phrasings_pick_mark(text):
+    """99 U109: these had no cue (declined) or fell to M6 (a fence save).
+    MUTATION: drop the position cues."""
+    assert select_mission(text) == "M6b_mark"
+
+
+@pytest.mark.parametrize("text,mission", [
+    ("去这里", "M3_nav"), ("删掉这个点", "M7_objref"),
+])
+def test_position_cues_do_not_steal_other_families(text, mission):
+    """Each new cue pairs a place word with a verb. MUTATION: a bare '这里'
+    or '这个点' cue files a goto or a delete as a mark."""
+    assert select_mission(text) == mission
+
+
+def test_every_mark_keyword_picks_mark():
+    """A keyword hit on F06 / F10 runs tier-2 with select_mission(text); a
+    keyword that picked another mission would load the wrong grammar.
+    MUTATION: add an F06 keyword with no M6b cue."""
+    import os
+    import yaml
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "..",
+                        "configs", "intents.yaml")
+    rows = yaml.safe_load(open(path, encoding="utf-8"))["intents"]
+    for name in ("record_waypoint", "record_dock"):
+        for kw in rows[name]["keywords"]:
+            assert select_mission(kw) == "M6b_mark", kw

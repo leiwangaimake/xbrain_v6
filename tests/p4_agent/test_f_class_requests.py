@@ -37,6 +37,7 @@ from xbrain.p4_agent.runtime.task_request import is_task_create_intent
 from xbrain.p4_agent.runtime.teach_request import (
     TeachRequestError,
     is_teach_intent,
+    needs_pose_snap,
     session_id_from_state,
     to_teach_command,
 )
@@ -129,18 +130,57 @@ def test_save_needs_a_name_and_never_activates():
                          session_id="ts-1")
 
 
+#: An 18 PS-6 block as PoseHistory builds it (only the shape matters here).
+_SNAP = {"lat": 34.697, "lon": 135.505, "fix_type": "rtk_fixed",
+         "snap_mono_s": 97.0, "snap_age_ms": 3000}
+
+
 def test_mark_once_shapes():
     wp = to_teach_command("record_waypoint", slots={"name": "东门岗亭"},
-                          cmd_id="c-1")
+                          cmd_id="c-1", pose_snap=_SNAP)
     assert wp["mark_once"]["kind"] == "waypoint"
     assert wp["mark_once"]["capture_heading"] is True
+    # 11 S12A.4 (99 U109): the snapshot rides at the top level, not inside.
+    assert wp["pose_snap"] == _SNAP and "pose_snap" not in wp["mark_once"]
     dock = to_teach_command("record_dock", slots={"name": "一号桩"},
-                            cmd_id="c-2")
+                            cmd_id="c-2", pose_snap=_SNAP)
     assert dock["mark_once"]["kind"] == "dock"
     # S12A.8: a dock's handover orientation IS the captured heading.
     assert dock["mark_once"]["capture_heading"] is True
     with pytest.raises(TeachRequestError):
-        to_teach_command("record_waypoint", slots={}, cmd_id="c-3")
+        to_teach_command("record_waypoint", slots={}, cmd_id="c-3",
+                         pose_snap=_SNAP)
+
+
+def test_mark_once_without_a_snapshot_is_not_built():
+    """16 EV-6: no snapshot, no command -- P3 would otherwise read "now".
+    The missing name is still asked first. MUTATION: send without one."""
+    with pytest.raises(TeachRequestError, match="no pose snapshot"):
+        to_teach_command("record_waypoint", slots={"name": "东门岗亭"},
+                         cmd_id="c-1")
+    with pytest.raises(TeachRequestError, match="needs a name"):
+        to_teach_command("record_waypoint", slots={}, cmd_id="c-2")
+    assert needs_pose_snap("record_waypoint") and needs_pose_snap("record_dock")
+    assert not needs_pose_snap("record_route_start")  # Q-18-11 remainder
+
+
+@pytest.mark.parametrize("name", ["东", "一二三四五六七八九十一二三"])
+def test_name_outside_two_to_twelve_is_refused_not_cut(name):
+    """16 S8.0.4: 2-12 characters, refused rather than truncated."""
+    with pytest.raises(TeachRequestError, match="name length"):
+        to_teach_command("record_waypoint", slots={"name": name},
+                         cmd_id="c-1", pose_snap=_SNAP)
+
+
+def test_spoken_numbered_name_resolves_either_spelling():
+    """99 U109: a point saved as "1号测试点" is found by "一号测试点" and the
+    reverse. MUTATION: compare raw strings and the voice lookup misses it."""
+    items = [{"geo_id": "w-1", "type": "waypoint", "name": "1号测试点",
+              "state": "active"},
+             {"geo_id": "w-2", "type": "waypoint", "name": "三号哨位",
+              "state": "active"}]
+    assert resolve_geo_id(items, "waypoint", "一号测试点") == "w-1"
+    assert resolve_geo_id(items, "waypoint", "3号哨位") == "w-2"
 
 
 def test_session_id_only_counts_a_live_session():

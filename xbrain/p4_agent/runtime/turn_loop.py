@@ -36,6 +36,7 @@ import json
 import logging
 import queue
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
@@ -47,6 +48,7 @@ from xbrain.p4_agent.runtime.intent_dispatch import (
 )
 from xbrain.p4_agent.runtime.vad import (
     VadConfig,
+    VadState,
     VadState_,
     feed_frame,
 )
@@ -149,6 +151,10 @@ class TurnLoopWorker(threading.Thread):
         # V-2B smoke test; production wiring always passes the handler).
         self._turn_handler = turn_handler
         self._vad_state = VadState_()
+        # 18 PS-1 (99 U109): monotonic ms of the first speech frame of the
+        # utterance being collected -- "here" for a keypoint capture is where
+        # the robot was then, not after ASR and the LLM.
+        self._onset_ms: Optional[int] = None
         # Public counters for smoke-test assertions
         self.turns_dispatched = 0
         self.frames_received = 0
@@ -189,8 +195,12 @@ class TurnLoopWorker(threading.Thread):
             _logger.warning("turn_loop job fail: %s", exc)
 
     def _on_frame(self, frame: AudioFrame) -> None:
+        was_idle = self._vad_state.state == VadState.IDLE
         closed = feed_frame(self._vad_state, frame.samples,
                               self._cfg.vad_cfg)
+        if was_idle and self._vad_state.state != VadState.IDLE:
+            # The onset frame (the pre-roll before it is quiet, not words).
+            self._onset_ms = int(time.monotonic() * 1000)
         if closed is None:
             return
         # Utterance ended. Run the ASR + classify + dispatch chain.
@@ -207,7 +217,8 @@ class TurnLoopWorker(threading.Thread):
         # orchestrator handler, which returns (key, payload_bytes) pairs.
         if self._turn_handler is not None:
             try:
-                pairs = self._turn_handler(text)
+                pairs = self._turn_handler(text,
+                                           t_first_word=self._onset_ms)
             except Exception as exc:      # noqa: BLE001 -- one turn must not kill the loop
                 self.errors.append(str(exc))
                 _logger.warning("turn_loop handler fail: %s", exc)

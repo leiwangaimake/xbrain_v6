@@ -86,6 +86,7 @@ def handle_text_command(
     raw_text: Optional[str] = None,
     addressed: bool = True,
     modality: str = "text",
+    t_first_word: Optional[int] = None,
 ) -> TextTurnResult:
     """Process one cmd/voice_text message. NO ASR is invoked.
 
@@ -109,6 +110,9 @@ def handle_text_command(
       * modality -- "text" for typed input, "voice" for cloud audio; it goes
         with the channel into every command's provenance (turn_labels), e.g.
         cmd/teach issuer.channel cloud_text vs cloud_voice.
+      * t_first_word -- when the command arrived (text) or its first chunk
+        did (cloud audio): the 18 PS-1 moment a keypoint capture is taken at.
+        None = now_mono_ms.
     """
     channel = msg.get("channel")
     if channel not in _TEXT_CHANNELS:
@@ -137,7 +141,8 @@ def handle_text_command(
     decision = orchestrator.handle_turn(text, session, now_mono_ms,
                                         raw_text=raw_text,
                                         addressed=addressed,
-                                        channel=channel, modality=modality)
+                                        channel=channel, modality=modality,
+                                        t_first_word=t_first_word)
     pubs: List[Tuple[str, bytes]] = []
     for key, payload in decision_to_publishes(decision):
         # require_tts_reply=false: text/HMI/WeChat callers can suppress the

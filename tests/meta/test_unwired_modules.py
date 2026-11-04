@@ -421,10 +421,8 @@ _KNOWN_UNWIRED = {
     # wiring is not up. Needs a bench run, not a desk decision.
     "xbrain/p4_agent/audio_rx/gate_observer.py": "registered: NEXT S8.12 -- p4 never subscribes rt/audio/gate; wiring it can deafen the mic loop, needs a bench run",
 
-    # GWY-P4-25 PS-1..PS-6 pose ring + still_1s_ok. turn_orchestrator
-    # builds the IntentEnvelope inline (envelope/intent_envelope.py) and
-    # never touches a pose ring; nothing in the tree names PoseRing.
-    "xbrain/p4_agent/envelope/pose_snap.py": "no-surface: turn_orchestrator builds the envelope inline and holds no pose history",
+    # (envelope/pose_snap.py left this list on 2026-11-04, 99 U109: its
+    # PoseHistory now feeds the F06 / F10 pose_snap from p4 main_wiring.)
 
     # CHK-1-31 RJ-1 vs RJ-2 spoken refusal scripts. The DECISION half is
     # already wired on the P2 side (runtime/motion_intent_wiring.py G-6
@@ -446,10 +444,8 @@ _KNOWN_UNWIRED = {
     # unwired (see templates/restate_engine.py below).
     "xbrain/p4_agent/registry/rulings_18b.py": "no-surface: its consumer is the restate path, which is itself unwired",
 
-    # GWY-P4-30 deterministic time-expression normalisation. Nothing names
-    # TimeExpr / parse_delay / parse_at_local. The slots that would carry
-    # a time expression (p4_agent/slots/) do not call it.
-    "xbrain/p4_agent/registry/time_expr.py": "no-surface: no slot extractor calls it; nothing names TimeExpr / parse_delay",
+    # (registry/time_expr.py left this list on 2026-11-04, 99 U110: the
+    # PTP goto parser schedules timed gotos through split_time_prefix.)
 
     # GWY-P4-27 projects a tools table from intents.yaml and caps it at 5.
     # No tools table is built anywhere; the AI-36 cap that IS enforced

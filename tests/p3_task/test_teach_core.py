@@ -400,6 +400,39 @@ def test_blocking_and_advisory_sets_do_not_overlap():
 
 # ---------------------------------------------------------------- command ---
 
+#: The 18 PS-6 numbers a pose_snap must carry (99 U109).
+_SNAP = {"lat": 34.697, "lon": 135.505, "fix_type": "rtk_fixed",
+         "snap_mono_s": 97.0, "snap_age_ms": 3000}
+
+
+def _mark_once(channel, **over):
+    payload = _teach(action="mark_once", start=None,
+                     issuer={"src": "p4_agent", "channel": channel},
+                     mark_once={"kind": "waypoint", "name": "gate"})
+    payload.update(over)
+    return payload
+
+
+def test_pose_snap_is_required_on_a_voice_path_only():
+    """18 PS-6: voice issuers must carry it; a typed one may omit it. MUTATION:
+    make it optional everywhere and a voice capture falls back to "now"."""
+    for channel in ("local_voice", "cloud_voice"):
+        with pytest.raises(TeachCommandError):
+            parse_teach_command(_mark_once(channel))
+        assert parse_teach_command(
+            _mark_once(channel, pose_snap=_SNAP)).pose_snap["lat"] == 34.697
+    assert parse_teach_command(_mark_once("cloud_text")).pose_snap is None
+
+
+@pytest.mark.parametrize("bad", [
+    "x", {**_SNAP, "lat": None}, {**_SNAP, "snap_age_ms": -1},
+    {k: v for k, v in _SNAP.items() if k != "snap_mono_s"},
+])
+def test_malformed_pose_snap_is_refused(bad):
+    with pytest.raises(TeachCommandError):
+        parse_teach_command(_mark_once("cloud_text", pose_snap=bad))
+
+
 def _teach(**over):
     base = {"cmd_id": "c-1", "action": "start",
             "issuer": {"src": "p4_agent", "channel": "local_voice"},
@@ -424,7 +457,7 @@ def test_session_id_required_except_for_start_and_mark_once():
     # start and mark_once mint / need none.
     parse_teach_command(_teach())
     parse_teach_command(_teach(
-        action="mark_once", start=None,
+        action="mark_once", start=None, pose_snap=_SNAP,
         mark_once={"kind": "waypoint", "name": "east gate"}))
 
 
@@ -470,6 +503,7 @@ def test_every_action_in_the_closed_set_parses():
             payload["start"] = {"kind": "route"}
         if action == "mark_once":
             payload["mark_once"] = {"kind": "waypoint", "name": "n"}
+            payload["pose_snap"] = _SNAP  # a voice issuer must carry one
         if action == "save":
             payload["save"] = {"name": "n"}
         assert parse_teach_command(payload).action == action

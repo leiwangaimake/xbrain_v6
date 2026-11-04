@@ -96,3 +96,28 @@ def test_grammar_only_exposes_mission_intents():
     grammar = mock.calls[0][1]
     assert "speak_custom" in grammar and "speak_preset" in grammar
     assert "estop" not in grammar and "goto_waypoint" not in grammar
+
+
+def test_unknown_comes_back_with_its_reason():
+    """99 U109: the grammar can say unknown; a keyword-matched intent asks
+    for its slot on missing_slot. MUTATION: drop it as a foreign intent."""
+    mock = _MockLlm(json.dumps({"intent": "unknown", "reason": "missing_slot"}))
+    out = _fn(mock, {"M6b_mark": "M6b"})("记录当前位置", None, 1)
+    assert out is not None and out.name == "unknown"
+    assert out.reason == "missing_slot" and out.slots == {}
+
+
+def test_grammar_offers_unknown_with_closed_reasons():
+    """16 S7.2 GB-1b: every slice offers unknown; reason / detail only after
+    it (EV-3), from the 16 S8.0.3 closed sets. MUTATION: the pre-U109 root
+    that offered only the listed intents."""
+    mock = _MockLlm(json.dumps({"intent": "record_waypoint",
+                                "slots": {"name": "西门"}}))
+    _fn(mock, {"M6b_mark": "M6b"})("把这里记为西门", None, 1)
+    grammar = mock.calls[0][1]
+    rules = dict(line.split(" ::= ", 1) for line in grammar.splitlines() if line)
+    assert "( known | unknown )" in rules["root"]
+    assert rules["unknown"].startswith('"\\"unknown\\""')
+    assert "reason" in rules["unknown"] and "reason" not in rules["known"]
+    assert "missing_slot" in rules["reason"] and "not_naming" in rules["detail"]
+    assert rules["reason"].count("|") == 4  # five values (16 S8.0.3)

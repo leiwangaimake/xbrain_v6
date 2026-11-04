@@ -126,10 +126,15 @@ def main(argv: Optional[list] = None) -> int:
         # 由既有的 FV-ORG 启动断言去拦.
         _geo = (_cfg.get("geo") or {}) if hasattr(_cfg, "get") else {}
         _enu = _geo.get("enu_origin") or None
+        # 18 PS-6 (99 U109): the oldest pose_snap a keypoint capture accepts.
+        # No fallback value here either: unset is passed as None and the
+        # runtime refuses snapshot captures by name.
+        _teach = (_cfg.get("teach") or {}) if hasattr(_cfg, "get") else {}
         return run_voice_loop_wiring(
             stop_flag=stop_flag,
             task_db_path=args.task_db or DEFAULT_TASK_DB,
-            enu_origin=_enu)
+            enu_origin=_enu,
+            teach_snap_max_age_ms=_teach.get("snap_max_age_ms"))
 
     return main_loop(tick_seconds=args.heartbeat_seconds, stop_flag=stop_flag)
 

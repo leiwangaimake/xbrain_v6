@@ -30,6 +30,7 @@ GeoManifest and the operator are both available to disambiguate.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from xbrain.p3_task.dao.tasks_dao import TaskRow
@@ -171,6 +172,20 @@ def task_row_from_command(cmd, *, submit_seq: int,
     # scheduler and any audit read to see what was asked for. The contract's
     # params ride in it verbatim; `source` records the channel detail.
     mission = {"source": source, "params": body.get("params") or {}}
+    # 11 S7.2 task.not_before_ts (15 S9.5A.1: "= tasks.scheduled_at 的来源").
+    # Unread until 99 U110: a timed task was queued as an immediate one.
+    # Kept in mission_json as sent (the scheduler compares it with the wall
+    # clock) and mirrored into scheduled_at as ISO UTC for people.
+    not_before = body.get("not_before_ts")
+    scheduled_at = ""
+    if not_before is not None:
+        if not isinstance(not_before, (int, float)) or isinstance(not_before, bool) \
+                or not_before <= 0:
+            raise VoiceTaskIngestError(
+                "task.not_before_ts %r is not an epoch time" % (not_before,))
+        mission["not_before_ts"] = float(not_before)
+        scheduled_at = datetime.fromtimestamp(
+            float(not_before), timezone.utc).isoformat(timespec="seconds")
     for passthrough in ("intent", "id", "slots", "text"):
         # p4_agent's provenance fields, carried inside task.params by the
         # migrated sender. Lifted to the top of mission_json so the shape the
@@ -203,4 +218,5 @@ def task_row_from_command(cmd, *, submit_seq: int,
         # *** The column that was NULL on every task until now. See the module
         # docstring on what that cost geo_refs.
         route_geo_id=body.get("route_id") or "",
+        scheduled_at=scheduled_at,
     )

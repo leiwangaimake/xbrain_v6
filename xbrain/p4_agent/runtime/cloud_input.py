@@ -66,7 +66,7 @@ import logging  # the log is the only record of a cloud turn today
 import queue  # the worker's job queue (Full is the refusal signal)
 import threading  # the assembler lock: callbacks run on many threads
 import time  # monotonic ASR latency for the audit record (CLK-C1)
-from dataclasses import dataclass  # frozen value types crossing threads
+from dataclasses import dataclass, field  # frozen value types crossing threads
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 # The keyword matcher is only a type here: the runner receives the instance
@@ -178,6 +178,11 @@ class CompletedUtterance:
     stream_id: str   # the client's id, kept for the log line of the turn
     channel: str     # cloud | wecom -- picks the session and the B-mode rule
     pcm: bytes       # pcm_s16le 16 kHz mono, all chunks in order
+    # Monotonic ms chunk 0 arrived (18 PS-1). Timing metadata, not part of
+    # what the sentence IS, so it takes no part in equality. Named without a
+    # unit suffix on purpose: it is a timestamp whose default means "not
+    # known", not a limit the unit-suffix safety scan exists to catch.
+    t_first_word: Optional[int] = field(default=None, compare=False)
 
 
 @dataclass
@@ -188,6 +193,7 @@ class _Stream:
     last_rx_ms: int       # monotonic ms of the newest chunk (idle eviction)
     chunks: List[bytes]   # payloads in order; joined once at eos
     size: int             # running byte total, checked against the ceiling
+    first_rx_ms: int      # monotonic ms of chunk 0: the first-word moment
 
 
 def _unwrap(msg: Any) -> Any:
@@ -354,7 +360,8 @@ class VoiceInAssembler:
             # Joined once, at the end: appending to bytes per chunk would
             # copy the whole sentence on every chunk.
             return CompletedUtterance(stream_id=stream_id, channel=channel,
-                                      pcm=b"".join(st.chunks))  # in order
+                                      pcm=b"".join(st.chunks),  # in order
+                                      t_first_word=st.first_rx_ms)
 
     def _open_locked(self, stream_id: str, seq: int, channel: str,
                      now_mono_ms: int) -> _Stream:
@@ -372,7 +379,7 @@ class VoiceInAssembler:
         # Empty on creation: the caller appends chunk 0 like any other chunk,
         # so the first chunk goes through the same size and eos checks.
         st = _Stream(channel=channel, next_seq=0, last_rx_ms=now_mono_ms,
-                     chunks=[], size=0)
+                     chunks=[], size=0, first_rx_ms=now_mono_ms)
         self._streams[stream_id] = st  # registered before chunk 0 is added
         return st
 
@@ -413,7 +420,9 @@ class CloudTurnRunner:
                  voice_mode_fn: Callable[[], Optional[str]],
                  local_session: OrchestratorSession,
                  asr_post: Any = None,
-                 voice_turn_key: Optional[str] = None) -> None:
+                 voice_turn_key: Optional[str] = None,
+                 on_turn: Optional[Callable[[List[Tuple[str, bytes]]], None]] = None
+                 ) -> None:
         # Every dependency is injected so the tests run the real orchestrator
         # with a fake ASR, a fixed clock and a scripted voice mode.
         self._orch = orchestrator
@@ -424,6 +433,9 @@ class CloudTurnRunner:
         self._voice_mode = voice_mode_fn   # p2's voice_mode, None if unknown
         self._asr_post = asr_post          # 16 S3: apply(raw)->(text, notes)
         self._voice_turn_key = voice_turn_key  # None: no record published
+        # Sees each turn's frames as published (99 U109: the teach ack speaker
+        # remembers a mark_once there). None: nobody watches.
+        self._on_turn = on_turn
         # The session slots, created once: a slot must outlive a turn, or a
         # confirm asked in one turn could never be answered in the next.
         self._sessions = {ch: OrchestratorSession() for ch in _SESSION_CHANNELS}
@@ -435,7 +447,8 @@ class CloudTurnRunner:
         self.voice_turns = 0  # voice_in sentences that reached handle_text
         self.dropped_in_broadcast = 0  # 11 S8.11 telemetry wants this count
 
-    def run_text(self, raw: Any) -> Optional[TextTurnResult]:
+    def run_text(self, raw: Any,
+                 t_first_word: Optional[int] = None) -> Optional[TextTurnResult]:
         """One cmd/voice_text message -> orchestrator -> publish.
 
         Returns the result, or None when the message was refused (logged).
@@ -454,7 +467,8 @@ class CloudTurnRunner:
         channel = msg.get("channel")  # validated by handle_text_command
         try:
             # Typed text: addressed by construction, no raw ASR text.
-            res = self._guarded(msg, self._session_for(channel))  # never raises a bug
+            res = self._guarded(msg, self._session_for(channel),  # never raises a bug
+                                t_first_word=t_first_word)  # arrival (18 PS-1)
         except TextChannelError as exc:
             # Channel outside cloud/wecom/hmi: refused before any turn ran.
             _logger.warning("voice_text rejected: %s", exc)
@@ -513,7 +527,8 @@ class CloudTurnRunner:
         # the raw transcript goes to the bypass (16 S4 constraint 1).
         res = self._guarded(msg, self._session_for(utt.channel),  # shared
                             raw_text=raw_text, addressed=False,
-                            modality="voice")  # spoken, not typed
+                            modality="voice",  # spoken, not typed
+                            t_first_word=utt.t_first_word)  # chunk 0 (18 PS-1)
         self.voice_turns += 1
         # Both forms logged, as 11 S8.7.6 wants them in the audit record.
         _logger.info("voice_in asr_raw=%r asr_text=%r", raw_text, text)
@@ -566,6 +581,8 @@ class CloudTurnRunner:
         """
         for key, data in res.publishes:  # in the order the turn built them
             self._publish(key, data)  # main_wiring's cached GEN publisher
+        if self._on_turn is not None:
+            self._on_turn(res.publishes)  # after they went out
         try:
             # Built from what was actually published, after it went out.
             record = build_voice_turn(
@@ -613,8 +630,12 @@ def make_voice_text_callback(jobs: "queue.Queue", runner: CloudTurnRunner):
         except Exception as exc:  # noqa: BLE001 -- a bad frame must not kill the sub
             _logger.warning("voice_text rejected: undecodable (%s)", exc)
             return
-        # msg is bound per call, so each job runs its own message.
-        _enqueue(jobs, lambda: runner.run_text(msg), "voice_text")
+        # msg is bound per call, so each job runs its own message. The
+        # arrival time is taken HERE (18 PS-1): the job may wait behind a
+        # slow LLM turn, and "here" is where the robot was when it was sent.
+        t0 = runner._now_ms()  # the runner's injected clock (CLK-C1)
+        _enqueue(jobs, lambda: runner.run_text(msg, t_first_word=t0),
+                 "voice_text")
     return _cb  # the caller declares the subscriber and keeps the handle
 
 

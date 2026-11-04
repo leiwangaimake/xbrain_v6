@@ -177,13 +177,18 @@ intents:
   record_route_save: { id: F03, keywords: ["保存为3号路径", "命名为东门路线"], slots: [name], route: llm, auth: L1a }
   record_route_cancel: { id: F04, keywords: ["不要了", "作废"], slots: [], route: fastpath, auth: L2 }
   record_route_mark: { id: F05, keywords: ["这里加个点", "标记一下"], slots: [], route: fastpath, auth: L0 }
-  record_waypoint: { id: F06, keywords: ["把这里记为东门岗亭", "标记当前位置为X"], slots: [name], route: llm, auth: L1a }
+  # F06 / F10 (99 U109): the keywords are the phrasings operators use, not the
+  # two 18 examples -- a voice turn reaches tier-2 only through a keyword hit
+  # (16 S5.2.1), and every one of them must also pick M6b_mark (mission_select).
+  record_waypoint: { id: F06, keywords: ["把这里记为东门岗亭", "这里记为", "此处记为", "这里标记为", "当前位置记为", "当前位置标记为", "标记当前位置", "记录当前位置", "保存当前位置", "保持当前位置为", "当前位置保存为", "当前位置存为", "当前位置记录为", "这个位置记为", "这个位置存为", "这个位置保存为", "这个点记为", "这个点存为", "这个点保存为", "记住这个位置"], slots: [name], route: llm, auth: L1a }
   record_fence_start: { id: F07, keywords: ["开始录制围栏", "画围栏"], slots: [], route: fastpath, auth: L1b }
   record_fence_stop: { id: F08, keywords: ["围栏录完了", "结束围栏"], slots: [], route: fastpath, auth: L1a }
   record_fence_save: { id: F09, keywords: ["保存围栏", "命名为营区外围"], slots: [name], route: llm, auth: L2 }
-  record_dock: { id: F10, keywords: ["把这里记为充电桩", "标记充电桩"], slots: [name], route: llm, auth: L1a }
+  record_dock: { id: F10, keywords: ["把这里记为充电桩", "标记充电桩", "这里记为充电桩", "此处记为充电桩", "当前位置记为充电桩", "当前位置标记为充电桩"], slots: [name], route: llm, auth: L1a }
   delete_route: { id: F11, keywords: ["删除路径", "删掉路径"], slots: [route], route: fastpath_then_llm, auth: L2 }
-  delete_waypoint: { id: F12, keywords: ["删除航点", "删除点位"], slots: [waypoint], route: fastpath_then_llm, auth: L2 }
+  # F12 (99 U110, user ruling 2026-11-04): a keypoint delete runs without a
+  # spoken confirm. The sentence is parsed by rule (slots/ptp_slots.py).
+  delete_waypoint: { id: F12, keywords: ["删除航点", "删除点位"], slots: [waypoint], route: fastpath_then_llm, auth: L1a }
   delete_fence: { id: F13, keywords: ["删除围栏", "删掉围栏", "去掉围栏", "把围栏删了", "移除围栏"], slots: [fence], route: fastpath_then_llm, auth: L2 }
   rename_object: { id: F14, keywords: ["把3号路径改名为东门路线"], slots: [type, old, new], route: llm, auth: L1a }
   set_active_fence: { id: F15, keywords: ["启用营区外围围栏", "换成2号围栏"], slots: [fence], route: fastpath_then_llm, auth: L2 }

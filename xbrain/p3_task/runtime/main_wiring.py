@@ -136,22 +136,27 @@ def run_voice_loop_wiring(stop_flag: dict,
                           task_db_path: str = DEFAULT_TASK_DB,
                           geo_db_path: str = DEFAULT_GEO_DB,
                           fence_db_path: str = DEFAULT_FENCE_DB,
-                          enu_origin: Optional[Dict[str, float]] = None) -> int:
+                          enu_origin: Optional[Dict[str, float]] = None,
+                          teach_snap_max_age_ms: Optional[int] = None) -> int:
     """Block until stop_flag['stop'] is truthy. Returns 0 on clean shutdown.
 
     enu_origin 来自 common.geo.enu_origin(L4 sites/{site_id}.yaml), 由
     __main__ 从解析产物取出后传入. 默认 None 保留是为了既有调用方(测试)不必
     全部改签名 -- 但生产路径必须传, 否则 FenceSet 的必填字段为空(11 S9A.2).
+
+    teach_snap_max_age_ms is p3_task.yaml teach.snap_max_age_ms (18 PS-6,
+    99 U109). None (tests) leaves every snapshot-carrying capture refused.
     """
     return asyncio.run(
         _amain(stop_flag, heartbeat_period_s, task_db_path, geo_db_path,
-               fence_db_path, enu_origin))
+               fence_db_path, enu_origin, teach_snap_max_age_ms))
 
 
 async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  task_db_path: str, geo_db_path: str = DEFAULT_GEO_DB,
                  fence_db_path: str = DEFAULT_FENCE_DB,
-                 enu_origin: Optional[Dict[str, float]] = None) -> int:
+                 enu_origin: Optional[Dict[str, float]] = None,
+                 teach_snap_max_age_ms: Optional[int] = None) -> int:
     from xbrain.common.errors import E_GEO_INCOMPLETE
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p3_task.dao.simple_daos import FencesDAO, PatrolProgressDAO, SnapshotDAO
@@ -635,7 +640,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # would re-mint ts-0001 after a reboot and collide with the id an
             # HMI tab is still holding.
             teach = TeachRuntime(conn, geo_conn, fence_conn,
-                                 boot_id=_BOOT_ID)
+                                 boot_id=_BOOT_ID,
+                                 snap_max_age_ms=teach_snap_max_age_ms)
+            if teach_snap_max_age_ms is None:
+                # Said once at startup, not discovered at the first capture.
+                _logger.warning("p3 teach.snap_max_age_ms unset: voice "
+                                "keypoint captures will be refused")
             _logger.info(
                 "p3 wiring: subscribed %s + %s + %s + %s + %s "
                 "(+ %d state sources), queryable %s (task.db + geo single "
@@ -1028,7 +1038,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 # 处时钟来源(CLK-C1 的同一理由: 时间从外面传).
                                 started_at=_now_utc_iso(),
                                 boot_id=_BOOT_ID,
-                                list_route_ids=_list_route_ids)
+                                list_route_ids=_list_route_ids,
+                                # 99 U110: timed tasks (not_before_ts) come
+                                # due on the system clock P4 scheduled them on.
+                                now_wall_s=_now_wall_ms() / 1000.0)
                             # EX-2 RP-1 (15 S2.4.1): every ready -> running
                             # this tick made gets its geometry pushed. Driven
                             # off the tick's RETURN VALUE rather than from
