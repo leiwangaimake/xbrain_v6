@@ -177,3 +177,27 @@ def test_route_and_fence_deletes_ask_for_confirmation(text, fid):  # F11 / F13 b
     """MUTATION: dispatch at once (L1a) -> a cmd/geo frame -> red."""
     d, frames = _turn(text)  # idle
     assert d.kind == "await_confirm" and d.intent_id == fid and not frames  # L2
+
+
+# -- 99 U137: cancel discards at once ------------------------------------------
+@pytest.mark.parametrize("text", ["取消录制", "放弃录制", "取消路径录制", "取消围栏录制"])
+def test_cancel_discards_without_a_question(text):  # F04 L1a
+    """MUTATION: keep F04 at L2 -> await_confirm, nothing sent -> red."""
+    d, frames = _turn(text, _RECORDING)  # recording
+    cmd = _teach(frames)  # the frame
+    assert d.kind == "dispatch" and d.intent_id == "F04" and cmd["action"] == "discard"  # sent now
+    assert cmd["session_id"] == "ts-1" and d.tts_text == "好的,取消录制2号路径"  # names it
+
+
+def test_cancel_without_a_recording():  # idle
+    d, frames = _turn("取消录制")  # idle
+    assert not frames and d.tts_text == "现在没有在录制"  # nothing to discard
+
+
+@pytest.mark.parametrize("text", ["不要了", "作废"])
+def test_casual_words_no_longer_discard(text):  # narrowed trigger
+    """MUTATION: keep 不要了 / 作废 as F04 keywords -> a chat word throws the
+    recording away -> red."""
+    d, frames = _turn(text, _RECORDING)  # recording
+    assert "cmd/teach" not in frames  # nothing discarded
+

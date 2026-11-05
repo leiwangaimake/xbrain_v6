@@ -219,6 +219,7 @@ _REC_CN = {
     "busy_start": "正在录制{name}, 不能开始新的录制. 要结束请说退出录制",
     "busy": "正在录制{name}, 录制期间只能用键盘控制机器人. 要结束请说退出录制",
     "ack_exit": "好的,退出录制, 正在保存{name}",
+    "ack_cancel": "好的,取消录制{name}",  # 99 U137: no confirmation
     "not_recording": "现在没有在录制",
     "status": "正在录制{name}, 已经录了{count}个点, 长{length}米",
 }
@@ -998,6 +999,13 @@ class TurnOrchestrator:
                 "F02", "status", "record_rule", name=rec["name"],
                 count=int(stats.get("point_count") or 0),
                 length=int(round(float(stats.get("length_m") or 0.0))))
+        if rp.kind == "cancel":
+            # 99 U137: discard at once, no "确认吗" (F04 is L1a now)
+            if rec is None:
+                return self._rec_reply("F04", "not_recording", "record_rule")
+            self._turn_ptp_ack = _REC_CN["ack_cancel"].format(name=rec["name"])
+            return self._route_entry(self._registry.by_id("F04"), text,
+                                     session, now_mono_ms, layer="record_rule")
         if rp.kind == "exit":
             if rec is None:
                 return self._rec_reply("F02", "not_recording", "record_rule")

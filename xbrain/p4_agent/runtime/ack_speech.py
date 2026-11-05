@@ -22,6 +22,8 @@ What is said, per answer key (the ack key = command key + "/ack"):
                          recording: saved -> "已保存 X, 共 N 个点, 长 M 米",
                          not saved -> "录制已退出, X 没有保存: why". The
                          other session actions answer through state/teach.
+                         discard (F04, 99 U137): "已取消录制 X, 录到的 N
+                         个点已丢弃" -- there is no confirmation turn now.
   cmd/task/ack           submit / pause / resume / cancel: refused -> why.
   cmd/geo/ack            delete / rename / set_state: refused -> why.
   cmd/motion/intent/ack  A05-A17, A04 hold, B06 release: refused -> why.
@@ -120,6 +122,7 @@ _REC_ISSUE = {  # S12A.7 blocking issue codes, in words
     "area_too_small": "围栏面积太小",
 }
 _REC_FINISH_OTHER = "录制没有正确结束"  # any other refusal
+_REC_DISCARDED = "已取消录制{name}, 录到的{count}个点已丢弃"  # 99 U137 discard
 
 #: cmd/task/ack: what the refused action was, in words.
 _TASK_VERB = {"pause": "暂停", "resume": "继续", "cancel": "取消",
@@ -206,7 +209,7 @@ class AckSpeaker:  # one per process
             if not isinstance(cmd, dict) or not isinstance(cmd.get("cmd_id"), str):
                 continue  # nothing to match an answer to
             if key == CMD_TEACH and cmd.get("action") not in ("mark_once", "start",
-                                                                  "finish"):
+                                                                  "finish", "discard"):
                 continue  # the other session actions answer through state/teach
             self._pending[cmd["cmd_id"]] = (key, cmd, source)  # newest last
             while len(self._pending) > _PENDING_MAX:  # bounded
@@ -240,6 +243,11 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
         return _start_sentence(cmd, ack, detail, accepted, code)  # 99 U133
     if key == CMD_TEACH and cmd.get("action") == "finish":
         return _finish_sentence(detail, accepted, code)  # 99 U133
+    if key == CMD_TEACH and cmd.get("action") == "discard":
+        if accepted:  # 99 U137: what was thrown away
+            return _REC_DISCARDED.format(name=detail.get("name") or "",
+                                         count=int(detail.get("discarded_points") or 0))
+        return "现在没有在录制"  # no session to discard
     if key == CMD_TEACH:
         name = (cmd.get("mark_once") or {}).get("name") or ""  # what was said
         if accepted:

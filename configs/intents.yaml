@@ -176,7 +176,9 @@ intents:
   record_route_start: { id: F01, keywords: ["开始录制路径", "记录路线"], slots: [], route: fastpath, auth: L1b }
   record_route_stop: { id: F02, keywords: ["结束录制", "录完了"], slots: [], route: fastpath, auth: L1a }
   record_route_save: { id: F03, keywords: ["保存为3号路径", "命名为东门路线"], slots: [name], route: llm, auth: L1a }
-  record_route_cancel: { id: F04, keywords: ["不要了", "作废"], slots: [], route: fastpath, auth: L2 }
+  # 99 U137 (2026-11-05 user ruling "直接丢弃不确认"): L1a, and only the explicit
+  # phrases -- "不要了" / "作废" in casual talk would now destroy a recording.
+  record_route_cancel: { id: F04, keywords: ["取消录制", "放弃录制"], slots: [], route: fastpath, auth: L1a }
   record_route_mark: { id: F05, keywords: ["这里加个点", "标记一下"], slots: [], route: fastpath, auth: L0 }
   # F06 / F10 (99 U109): the keywords are the phrasings operators use, not the
   # two 18 examples -- a voice turn reaches tier-2 only through a keyword hit

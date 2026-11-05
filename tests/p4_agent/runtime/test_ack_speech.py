@@ -215,6 +215,16 @@ def test_a_recording_exit_says_what_was_saved(ack, text):  # finish
     assert _said(out)[1] == text  # the result
 
 
+def test_a_discard_says_what_was_thrown_away():  # 99 U137
+    """No confirmation turn any more, so the result must be said.
+    MUTATION: skip discard in note_turn -> silent -> red."""
+    sp = AckSpeaker()  # fresh
+    sp.note_turn(_sent("cmd/teach", {"cmd_id": "t-3", "action": "discard", "session_id": "ts-1"}))
+    out = sp.on_ack(_b({"cmd_id": "t-3", "result": "accepted", "code": "OK",
+                        "detail": {"name": "2号路径", "discarded_points": 12}}))
+    assert _said(out)[1] == "已取消录制2号路径, 录到的12个点已丢弃"  # the result
+
+
 def test_session_actions_are_not_voiced_here():  # sessions
     sp = AckSpeaker()  # fresh
     sp.note_turn([("cmd/teach", _b({"cmd_id": "c-1", "action": "start"})),

@@ -21,6 +21,8 @@ same way. This module turns those sentences into one of four results:
                  whose object is not a full name -> refused by the caller
   exit           "退出(路径|围栏)录制" / "(路径|围栏)录制完成" / "记录完成"
                  / "结束(路径|围栏)录制" / "录完了" / "围栏录完了" / "结束围栏"
+  cancel         "取消录制" / "放弃录制" / "取消路径(围栏)录制" -- discard at once,
+                 no confirmation (99 U137)
   status         "录制状态" / "录了多少" / "录了几个点" / "正在录制吗"
 
 A FULL name is the whole object and ends with its type word: 路径 / 路线 /
@@ -66,6 +68,8 @@ _EXIT = re.compile(
     r"^(?:(?:退出|结束)(?:路径|路线|围栏)?(?:录制|记录)(?:模式)?"
     r"|(?:路径|路线|围栏)?(?:录制|记录)(?:完成|完毕|结束|好了)"
     r"|(?:围栏)?录完了|结束围栏)(?:了|吧|啦)*$")  # no 停 anywhere (bypass)
+#: 99 U137: cancel = discard at once (no confirmation) -- explicit phrases only.
+_CANCEL = re.compile(r"^(?:取消|放弃)(?:路径|路线|围栏)?(?:录制|记录)(?:吧|了|啦)*$")  # discard
 #: Status questions about the running recording.
 _STATUS = re.compile(r"^(?:录制状态|录制进度|录了多少(?:米|个点)?|录了几个点|录到哪了"
                      r"|正在录制吗|还在录制吗|在录制吗)(?:了|呢|啊)*$")  # questions
@@ -79,7 +83,7 @@ _NAMED_AS = ("命名为", "名字叫", "名为", "叫做", "叫")  # take what f
 
 @dataclass(frozen=True)  # immutable result
 class RecordParse:  # one parsed recording sentence
-    """kind is start / start_noname / exit / status; name and rtype are set
+    """kind is start / start_noname / exit / cancel / status; name and rtype are set
     for start only (rtype route | fence)."""
     kind: str  # start / start_noname / exit / status
     name: str = ""  # the full name as said (start only)
@@ -135,6 +139,8 @@ def parse_record(text: str) -> Optional[RecordParse]:
         return None  # not ours
     if _EXIT.match(t):  # "退出录制" / "录制完成"
         return RecordParse("exit")  # end and save
+    if _CANCEL.match(t):  # "取消录制" (99 U137)
+        return RecordParse("cancel")  # discard, no confirmation
     if _STATUS.match(t):  # "录了几个点"
         return RecordParse("status")  # answered from state/teach
     m = _START.match(t)  # "开始录制X" / "记录X"

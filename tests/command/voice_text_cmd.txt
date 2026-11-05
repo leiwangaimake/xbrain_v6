@@ -383,10 +383,11 @@
 保存为 3 号路径
 命名为东门路线
 
-## F04 record_route_cancel  [L2（本轮提级，原 L1） | A | 18]
+## F04 record_route_cancel  [L1a | A | 18]
+# 99 U137: 直接丢弃, 不再问确认; 只认明确说法
 取消录制
-不要了
-作废
+放弃录制
+取消围栏录制
 
 ## F05 record_route_mark  [L0 | A | 18]
 这里加个点
