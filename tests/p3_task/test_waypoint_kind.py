@@ -106,5 +106,10 @@ async def test_resolve_skips_deleted_and_disabled_points(ctx):
     await ctx.geo_conn.execute("UPDATE waypoints SET state='deleted', tombstone=1 WHERE geo_id='w-h'")
     await ctx.geo_conn.commit()  # close the raw write before the applier opens its own
     await handle_geo_payload(_upsert("c-2", "w-d", "1号充电桩", lat=35.01), ctx, now_ms=2)  # a dock
-    assert await resolve_return_target(ctx.geo_conn, (35.0, 135.0)) == ("w-d", "dock")  # the live dock
-    assert await resolve_return_target(ctx.geo_conn, None) == ("w-d", "dock")  # no pose: oldest dock
+    kw = {"allow_dock": True, "routes": (), "membership_m": None}  # the link-loss return's switch
+    assert await resolve_return_target(ctx.geo_conn, (35.0, 135.0), **kw) == ("w-d", "dock")  # the live dock
+    assert await resolve_return_target(ctx.geo_conn, None, **kw) == ("w-d", "dock")  # no pose: oldest dock
+    # 99 U128: a spoken return never falls back to a dock. MUTATION: ignore
+    # allow_dock -> the dock comes back -> red.
+    assert await resolve_return_target(ctx.geo_conn, (35.0, 135.0), allow_dock=False,
+                                       routes=(), membership_m=None) is None  # home or nothing

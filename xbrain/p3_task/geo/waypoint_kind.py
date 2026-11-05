@@ -32,6 +32,13 @@ Return target (U119, the user's rule 4 falling back to rule 3):
      (15 S9.5.1 "无 home 行时任务前置校验 E_NOT_FOUND"), never leaves it
      running.
 
+2026-11-05 (99 U128): the name rule itself moved to xbrain/common/geo (P4
+applies it too) and is re-exported here; the dock choice is now by
+TRAVEL distance (route-aware, the B01 plan of 99 U127) rather than straight
+line; and the dock fallback is explicit (allow_dock) -- the link-loss
+return keeps it (U119 rule 4), a spoken "返航" does not (U128: with no home
+point it is answered "not defined", never sent to a dock silently).
+
 What it does NOT do. It does not decide WHEN to return (link loss is
 lifecycle/link_loss.py, low battery is the charge trigger), it does not push
 anything (runtime/route_push_runtime.push_goto_for_task does, with the
@@ -50,26 +57,18 @@ Traps:
 
 from __future__ import annotations
 
-import math  # haversine for the nearest dock
-from typing import Optional, Tuple  # plain values
+import math  # haversine when no route plan is configured
+from typing import Optional, Sequence, Tuple  # plain values
 
-#: The exact name of the return-home point (99 U119, the user's words).
-HOME_WAYPOINT_NAME = "返航终点站"
-#: Name fragments that make a waypoint a charging point (99 U119).
-DOCK_NAME_KEYWORDS = ("充电桩", "充电站")
+from xbrain.common.geo import (  # noqa: F401  (re-exported for existing importers)
+    DOCK_NAME_KEYWORDS,
+    HOME_WAYPOINT_NAME,
+    waypoint_type_for_name,
+)
+from xbrain.p3_task.route.route_plan import RouteGeom, plan_goto  # travel distance (U127)
+
 #: Mean Earth radius for the straight-line distance (metres).
 _EARTH_R_M = 6371000.0
-
-
-def waypoint_type_for_name(name: str) -> Optional[str]:
-    """'home' / 'dock' when the name says so (99 U119), else None -- the
-    caller keeps whatever type it would have used. Exact match for home,
-    substring for dock (1号充电桩, 东门充电站)."""
-    if name == HOME_WAYPOINT_NAME:  # the one named point, equality only
-        return "home"  # 15 S9.5.1 home row
-    if any(k in name for k in DOCK_NAME_KEYWORDS):  # 充电桩 / 充电站 anywhere
-        return "dock"  # a charging point
-    return None  # the name says nothing about the type
 
 
 def renamed_waypoint_type(new_name: str, current_type: str) -> Optional[str]:
@@ -93,26 +92,53 @@ def _distance_m(a: Tuple[float, float], b: Tuple[float, float]) -> float:
     return 2.0 * _EARTH_R_M * math.asin(min(1.0, math.sqrt(h)))  # clamp rounding
 
 
-async def resolve_return_target(geo_conn, pose: Optional[Tuple[float, float]]
+async def nearest_dock(geo_conn, pose: Optional[Tuple[float, float]],
+                       routes: Sequence[RouteGeom],
+                       membership_m: Optional[float]) -> Optional[str]:
+    """The active dock point the robot reaches by the SHORTEST TRAVEL
+    distance (99 U128, B09 "去充电站" with no name and the U119 fallback).
+
+    Travel distance = the U127 goto plan's length (route-aware) when
+    membership_m is configured; straight-line distance otherwise (tests that
+    predate U127). No pose -> the oldest dock (a lookup must not invent a
+    position). None when there is no dock point at all."""
+    cur = await geo_conn.execute(
+        "SELECT geo_id, rtk_lat, rtk_lon FROM waypoints WHERE type='dock' "
+        "AND state='active' AND tombstone=0 ORDER BY id")  # every live dock, oldest first
+    docks = list(await cur.fetchall())  # small table
+    if not docks:  # no dock point defined
+        return None  # caller decides what that means
+    if pose is None:  # no position to measure from
+        return str(docks[0][0])  # oldest, deterministic
+
+    def cost(d) -> float:
+        target = (float(d[1]), float(d[2]))  # the dock's position
+        if membership_m is None:  # no route plan configured
+            return _distance_m(pose, target)  # straight line
+        return plan_goto(pose, target, routes, membership_m).cost_m  # what the robot would drive
+
+    return str(min(docks, key=cost)[0])  # shortest travel
+
+
+async def resolve_return_target(geo_conn, pose: Optional[Tuple[float, float]], *,
+                                allow_dock: bool,
+                                routes: Sequence[RouteGeom],
+                                membership_m: Optional[float]
                                 ) -> Optional[Tuple[str, str]]:
     """(geo_id, 'home' | 'dock') for a return_home task, or None.
 
-    home first (15 S9.5.1: smallest num, NULL num last, then oldest); else
-    the nearest active dock to pose; pose None -> the oldest dock (a lookup
-    must not invent a position)."""
+    home first (15 S9.5.1: smallest num, NULL num last, then oldest); then,
+    ONLY when allow_dock, the dock with the shortest travel distance
+    (nearest_dock). allow_dock has no default on purpose: the link-loss
+    return passes True (U119 rule 4), a spoken return passes False (U128) --
+    a default would let a new caller inherit the wrong one silently."""
     cur = await geo_conn.execute(
         "SELECT geo_id FROM waypoints WHERE type='home' AND state='active' "
         "AND tombstone=0 ORDER BY (num IS NULL), num, id LIMIT 1")  # 15 S9.5.1
     row = await cur.fetchone()  # at most one
     if row is not None:  # a home point exists
         return str(row[0]), "home"  # rule 4: go home
-    cur = await geo_conn.execute(
-        "SELECT geo_id, rtk_lat, rtk_lon FROM waypoints WHERE type='dock' "
-        "AND state='active' AND tombstone=0 ORDER BY id")  # every live dock, oldest first
-    docks = list(await cur.fetchall())  # small table
-    if not docks:  # no home and no dock
-        return None  # caller fails the task with E_NOT_FOUND
-    if pose is None:  # no position to measure from
-        return str(docks[0][0]), "dock"  # oldest, deterministic
-    best = min(docks, key=lambda d: _distance_m(pose, (float(d[1]), float(d[2]))))  # nearest
-    return str(best[0]), "dock"  # rule 3 fallback
+    if not allow_dock:  # a spoken return: home or nothing (U128)
+        return None  # caller fails it with E_NOT_FOUND
+    dock = await nearest_dock(geo_conn, pose, routes, membership_m)  # U119 fallback
+    return (dock, "dock") if dock is not None else None  # or nothing at all

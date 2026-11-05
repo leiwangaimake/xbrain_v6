@@ -180,7 +180,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     from xbrain.p3_task.fence.fence_set import build_fence_set
     from xbrain.p3_task.fence.geom import InvalidFenceSet
     from xbrain.p3_task.geo.objects import read_geo_objects
-    from xbrain.p3_task.geo.waypoint_kind import resolve_return_target  # 99 U119
+    from xbrain.p3_task.geo.waypoint_kind import nearest_dock, resolve_return_target  # 99 U119 / U128
     from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
     from xbrain.p3_task.ingest.geo_read import build_manifest
     from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
@@ -196,6 +196,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
         CMD_ROUTE_TOPIC,
         ack_outcome_is_fatal,
         make_ack_window,
+        load_route_geoms,
         push_goto_for_task,
         push_route_for_task,
         start_from_pose,
@@ -728,26 +729,44 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 if full is None:
                     return
                 route_geo_id = getattr(full, "route_geo_id", None)
-                if not route_geo_id and full.task_type == "return_home":
-                    # 99 U119: return_home is a goto to the home point (15
-                    # S9.5.1), or -- with no home point -- to the nearest dock
-                    # point. Until 2026-11-05 this branch did not exist: the
-                    # task fell through to "not a goto -> push nothing" and
-                    # sat in `running` for hours (rh-7899-0, 2026-11-04),
-                    # blocking every task below priority 95.
-                    target = await resolve_return_target(
-                        geo_conn, start_from_pose(state_cache.get("pose")))
-                    if target is None:
-                        # 15 S9.5.1: no home row -> E_NOT_FOUND. Failed, never
-                        # left running with nothing moving.
-                        await _fail_task_for_geometry(
-                            task_id, "return_home: no active home point "
-                            "(返航终点站) and no dock point (充电桩/充电站)",
-                            E_NOT_FOUND)
+                if not route_geo_id and full.task_type in ("return_home", "charge"):
+                    # 99 U119 / U128: return_home and charge are gotos to a
+                    # role waypoint. Until 2026-11-05 neither had a branch: the
+                    # task fell through to "not a goto -> push nothing" and sat
+                    # in `running` (rh-7899-0 held it for hours; a voice
+                    # "回充电桩" was accepted and never moved).
+                    pose = start_from_pose(state_cache.get("pose"))
+                    routes = await load_route_geoms(geo_conn)
+                    params = _goto_params(full)
+                    if full.task_type == "return_home":
+                        # home first; the dock fallback is for the link-loss
+                        # return only (source 'charge', U119 rule 4) -- a
+                        # spoken "返航" with no home point fails (U128).
+                        target = await resolve_return_target(
+                            geo_conn, pose,
+                            allow_dock=(getattr(full, "source", None) == "charge"),
+                            routes=routes, membership_m=route_membership_m)
+                        gid = target[0] if target is not None else None
+                        missing = ("return_home: no active home point "
+                                   "(返航终点站)")
+                    elif isinstance(params.get("waypoint_id"), str) and params["waypoint_id"]:
+                        # B09 with a name ("去1号充电站"): that dock, however
+                        # far (U128) -- P4 resolved the name to the id.
+                        gid, missing = params["waypoint_id"], ""
+                    else:
+                        # B09 with no name: the dock reached by the shortest
+                        # travel distance (U128, route-aware U127 plan).
+                        gid = await nearest_dock(geo_conn, pose, routes,
+                                                 route_membership_m)
+                        missing = "charge: no dock point (充电桩/充电站)"
+                    if gid is None:
+                        # 15 S9.5.1: no target row -> E_NOT_FOUND. Failed,
+                        # never left running with nothing moving.
+                        await _fail_task_for_geometry(task_id, missing, E_NOT_FOUND)
                         return
-                    params = {"waypoint_id": target[0]}
-                    _logger.info("p3 return_home %s -> %s point %s",
-                                 task_id, target[1], target[0])
+                    params = {"waypoint_id": gid}
+                    _logger.info("p3 %s %s -> point %s", full.task_type,
+                                 task_id, gid)
                     pushing.update(task_id=task_id, route_geo_id=None,
                                    goto_params=params)
                     await _push_goto(task_id, params,
@@ -1368,9 +1387,10 @@ def _log_non_contract_frame(payload) -> int:
 
     What still arrives here is the handful of voice intents that route to
     cmd/task but have no S7.2 action to express them:
-      * B10 skip_waypoint -- S7.2's five actions have no `skip`
       * H04 reload_config -- 18 says verbatim it belongs on cmd/config (S7.6)
-    Both are logged by intent id so they are VISIBLE as gaps. They were being
+      (B10 skip_waypoint was the other one until 2026-11-05, when the intent
+      was deleted, 99 U129.)
+    It is logged by intent id so it is VISIBLE as a gap. They were being
     silently dropped before; a log line is the difference between "we know this
     does nothing" and "nobody noticed".
 

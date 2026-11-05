@@ -284,3 +284,86 @@ async def test_the_live_loop_plans_from_the_robot(tmp_path, monkeypatch, task_ty
     finally:  # cleanup
         stop["stop"] = True  # ask it to stop
         await asyncio.wait_for(task, timeout=10.0)  # and wait
+
+
+# -- 99 U128: B09 charge and the spoken B08 in the live loop --------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["named", "nearest_by_travel", "no_dock", "spoken_return_no_home"])
+async def test_the_live_loop_dock_and_return_rules(tmp_path, monkeypatch, case):
+    """Robot at (0,10); route along y=0 (x 0..200); dock1 at (30,0) on the route
+    (straight 31.6 m, by route 10+30 = 40 m); dock2 at (0,45) off any route
+    (35 m straight, the same by travel).
+      named: charge with waypoint_id=w-d1 -> w-d1 (the named one, U128).
+      nearest_by_travel: charge, no name -> w-d2 (35 < 40 by travel; a
+        straight-line choice would take w-d1). MUTATION: straight-line
+        nearest_dock -> w-d1 -> red.
+      no_dock: no dock rows -> failed E_NOT_FOUND. MUTATION: no charge
+        branch -> stays running, no frame -> red.
+      spoken_return_no_home: return_home with source 'local', no home, docks
+        exist -> failed E_NOT_FOUND, NOT sent to a dock. MUTATION: allow_dock
+        always True -> a frame to a dock -> red."""
+    import asyncio  # the loop runs as a task
+    from tests.p3_task.test_recorded_route_radius import _fake_planes  # shared fake session
+    from xbrain.common.errors import E_NOT_FOUND  # expected failure code
+    from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO  # seed a ready task
+    from xbrain.p3_task.runtime import main_wiring as mw  # the live loop
+
+    subs, pubs = {}, {}  # what the fake session saw
+    _fake_planes(monkeypatch, subs, pubs)  # no zenoh
+    task_db, geo_db = str(tmp_path / "task.db"), str(tmp_path / "geo.db")  # on disk
+    async with aiosqlite.connect(geo_db) as g:  # route and dock points
+        for stmt in GEO_DB_STATEMENTS:  # schema
+            await g.execute(stmt)  # one DDL
+        await g.execute(
+            "INSERT INTO routes (geo_id, name, path_points, loop_mode, direction,"
+            " total_len_m, rev, content_hash, updated_ms) VALUES"
+            " ('r-a', '1号路径', ?, 'oneway', 'forward', 200.0, 1, 'h', 0)",
+            (json.dumps([list(p) for p in LINE.points]),))  # the line
+        if case != "no_dock":  # two docks
+            for gid, name, (x, y) in (("w-d1", "1号充电站", (30, 0)), ("w-d2", "2号充电站", (0, 45))):
+                await g.execute(
+                    "INSERT INTO waypoints (geo_id, name, type, rtk_lat, rtk_lon,"
+                    " arrival_radius, rev, content_hash, updated_ms)"
+                    " VALUES (?, ?, 'dock', ?, ?, 1.0, 1, 'h', 0)", (gid, name) + ll(x, y))  # a dock point
+        await g.commit()  # visible
+    stop = {"stop": False}  # loop control
+    task = asyncio.create_task(mw._amain(
+        stop, 99.0, task_db, geo_db_path=geo_db, fence_db_path=str(tmp_path / "fence.db"),
+        recorded_arrive_radius_m=1.0, route_membership_m=5.0))  # configured as in production
+    try:
+        for _ in range(300):  # wait for the subscribers
+            if mw.CMD_TASK_TOPIC in subs and mw.STATE_POSE_TOPIC in subs:  # up
+                break  # ready
+            await asyncio.sleep(0.01)  # poll
+        lat, lon = ll(0, 10)  # robot position
+        subs[mw.STATE_POSE_TOPIC](type("S", (), {"payload": json.dumps(
+            {"data": {"lat": lat, "lon": lon}}).encode("utf-8")})())  # state/pose
+        await asyncio.sleep(0.05)  # let it land
+        ttype = "return_home" if case == "spoken_return_no_home" else "charge"  # task kind
+        params = {"waypoint_id": "w-d1"} if case == "named" else {}  # named or not
+        async with aiosqlite.connect(task_db) as t:  # one ready task
+            await TasksDAO(t).insert(TaskRow(
+                task_id="t-1", task_type=ttype, state="ready", priority=5,
+                submit_seq=1, total_steps=1, current_step=0, step_status_json="[]",
+                mission_json=json.dumps({"params": params}), created_ms=0,
+                updated_ms=0, source="local", trace_id="tr", resume_policy="continue"))  # a voice task
+            await t.commit()  # visible
+        row = None  # the task row after dispatch
+        for _ in range(200):  # a few dispatch passes
+            if pubs.get("cmd/motion/route"):  # a frame went out
+                break  # done
+            async with aiosqlite.connect(task_db) as t:  # or it failed
+                row = await (await t.execute(
+                    "SELECT state, error_context_json FROM tasks WHERE task_id='t-1'")).fetchone()  # state
+            if row and row[0] == "failed":  # terminal
+                break  # done
+            await asyncio.sleep(0.02)  # next pass
+        frames = [json.loads(p.decode("utf-8")) for p in pubs.get("cmd/motion/route", [])]  # what P1 got
+        if case in ("named", "nearest_by_travel"):  # a dock goto
+            assert frames and frames[0]["route_id"] == ("goto-w-d1" if case == "named" else "goto-w-d2")  # which dock
+        else:  # refused
+            assert not frames and row is not None and row[0] == "failed"  # never left running
+            assert json.loads(row[1])["code"] == E_NOT_FOUND  # 15 S9.5.1
+    finally:
+        stop["stop"] = True  # ask it to stop
+        await asyncio.wait_for(task, timeout=10.0)  # and wait
