@@ -73,3 +73,8 @@ uvicorn==0.51.0
 # Uses the SYNC client (websockets.sync.client, available since 12.0) --
 # p2_core has no asyncio loop and must not grow one for this.
 websockets==16.1.1
+# p4_agent ASR post-processing L2 (16 S3.3, xbrain/p4_agent/asr_post/three_layer.py
+# PinyinCorrector): pinyin edit distance against the command lexicon. Imported
+# lazily, but a real runtime dependency of p4 since f8068b9; version as installed
+# on the robot 2026-11-05 (pip show pypinyin).
+pypinyin==0.53.0

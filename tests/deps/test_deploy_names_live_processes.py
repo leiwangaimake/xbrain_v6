@@ -114,11 +114,18 @@ def test_the_four_known_sites_carry_their_tombstone():
 
     MUTATION: remove the behavior_proxy note from zenohd-gen.json5 -> red here.
     """
+    # systemd/xbrain-p2-core.service and systemd/xbrain-ai-asr.service were
+    # sites three and four until 2026-10-25: their tombstones explained why
+    # behavior_proxy / Nav2 left the core-7 co-location list. 99 U93 (commit
+    # 5a6f3e9) rewrote both units' CPU affinity and the core-7 list -- the thing
+    # the notes guarded -- ceased to exist, so the notes went with it. There is
+    # no list left in either unit for the two names to be re-added to;
+    # requiring a note about a deleted line would be a tombstone for a
+    # tombstone (removed 2026-11-05). The two router sites still hold a client
+    # list, so their notes still guard something.
     expected = (
         "systemd/xbrain-zenohd-gen.service",
         "zenoh/zenohd-gen.json5",
-        "systemd/xbrain-p2-core.service",
-        "systemd/xbrain-ai-asr.service",
     )
     for rel in expected:
         path = DEPLOY / rel
