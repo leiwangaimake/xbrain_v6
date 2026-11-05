@@ -33,6 +33,9 @@ before any keyword or LLM layer sees them:
           (99 U136: answered from state/geo/objects + state/pose; G51 is the
           length of the path a goto would take, the 99 U127 plan)
   delete  "删除 1号路径" / "删除 东门围栏"          -> F11 {route: X} / F13 {fence: X}
+  enable  "启用 东门围栏" / "换成 2号围栏"           -> F15 {fence: X}
+          (99 U138: by name; still L2-confirmed -- enabling changes where the
+          robot may go)
           (99 U133: by name, like U110's keypoints; still L2-confirmed)
   dock    "[前缀] 去 / 前往 / 导航到 1号充电站 / 东门充电桩"   -> B09 {dock: X}
           (99 U128: a NAMED charging point -- that point, however far. A bare
@@ -124,7 +127,7 @@ class PtpParse:  # one parsed command
     keypoint as said (goto / delete) or the OLD name (rename); new is the new
     name (rename only); when is a leading time (goto may carry one; for
     delete / rename it is reported so the caller can refuse it)."""
-    kind: str  # goto / delete / delete_route / delete_fence / rename / patrol / repeat / dock / route_points / point_routes / nearest_point / distance_to / route_length
+    kind: str  # goto / delete / delete_route / delete_fence / activate_fence / rename / patrol / repeat / dock / route_points / point_routes / nearest_point / distance_to / route_length
     name: str  # the keypoint (old name for rename)
     new: Optional[str] = None  # rename only
     when: Optional[TimeExpr] = None  # a leading time, if any
@@ -139,6 +142,11 @@ _Q_ROUTE_POINTS = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?P<x>.+?(
 #: G49: "X在哪条路径上" / "X属于哪条路径".
 _Q_POINT_ROUTES = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?P<x>.+?)(?:在|属于)(?:哪条|哪个|什么)"
                              r"(?:路径|路线|线路|线)上?(?:吗|呢|啊)?$")  # point -> routes
+
+#: 99 U138 F15: "启用东门围栏" / "换成2号围栏" -- by name. Until 2026-11-05 only
+#: the literal registry example ("启用营区外围围栏") was understood, while the
+#: U133 fence-saved answer told the operator to say "启用X".
+_ACTIVATE_FENCE = re.compile(r"^(?:启用|激活|换成|切换到|改用|使用)(?P<x>.+?围栏)(?:吧|了)*$")  # F15 by name
 
 #: 99 U136 G50: "离我最近的航点是哪个" -- no name, the robot's position.
 _Q_NEAREST = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?:离我|离你|离机器人|距离我)?最近的"
@@ -350,6 +358,9 @@ def parse_ptp(text: str) -> Optional[PtpParse]:
         rpt = _repeat(t, when)  # B04 (U131): "再巡一圈", before the named forms
         if rpt is not None:  # no route named on purpose
             return rpt  # B04
+        m = _ACTIVATE_FENCE.match(t)  # F15 (U138)
+        if m:  # "启用东门围栏"; a bare "启用围栏" cannot match (.+? needs a name first)
+            return PtpParse("activate_fence", m.group("x"), when=when)  # F15 by name
         if when is None and _Q_NEAREST.match(t):  # G50 (U136)
             return PtpParse("nearest_point", "")  # the robot's nearest keypoint
         m = _Q_DISTANCE.match(t)  # G51 (U136), before goto: "去X多远" is not a goto

@@ -201,3 +201,18 @@ def test_casual_words_no_longer_discard(text):  # narrowed trigger
     d, frames = _turn(text, _RECORDING)  # recording
     assert "cmd/teach" not in frames  # nothing discarded
 
+
+# -- 99 U138: enabling a fence by name ------------------------------------------
+@pytest.mark.parametrize("text", ["启用东门围栏", "换成东门围栏", "切换到东门围栏"])
+def test_enable_fence_by_name_asks_for_confirmation(text):  # F15 L2
+    """The U133 fence-saved answer says "启用X"; until U138 only the registry's
+    literal example parsed. MUTATION: drop the F15 rule -> not F15 -> red."""
+    d, frames = _turn(text)  # idle
+    assert d.kind == "await_confirm" and d.intent_id == "F15" and not frames  # L2, nothing sent yet
+
+
+def test_bare_enable_fence_is_not_ours():  # no name
+    """MUTATION: accept the bare type word -> a fence named 围栏 -> red."""
+    from xbrain.p4_agent.slots.ptp_slots import parse_ptp  # the rule layer
+    assert parse_ptp("启用围栏") is None  # left to the keyword layer
+

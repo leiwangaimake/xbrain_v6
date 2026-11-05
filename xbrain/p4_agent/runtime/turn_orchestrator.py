@@ -1258,6 +1258,13 @@ class TurnOrchestrator:
             return self._route_entry(self._registry.by_id("B04"), text,
                                      session, now_mono_ms, layer="ptp_rule",
                                      rule_slots=rslots)
+        if ptp.kind == "activate_fence":
+            # 99 U138: F15 by name; stays L2 (the confirm turn opens below)
+            if ptp.when is not None:
+                return _reply("F15", "timed_geo")
+            return self._route_entry(self._registry.by_id("F15"), text, session,
+                                     now_mono_ms, layer="ptp_rule",
+                                     rule_slots={"fence": ptp.name})
         if ptp.kind in ("delete_route", "delete_fence"):
             # 99 U133: route / fence deletes by name; F11 / F13 stay L2, so the
             # turn asks for confirmation (safety-relevant, 18 S8.1).
