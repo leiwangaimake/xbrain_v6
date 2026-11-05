@@ -6,6 +6,13 @@ File: planner.py
 Brief: Memory-guided planning layer -- budgeted goal-rooted search, R* guide (20 S4A)
 
 Description:
+*** RETIRED by 99 U114 (20 S3.0A NM-3) and KEPT by 99 U120: RNS no longer
+remembers obstacles, so this layer is never constructed (source.py holds
+_planner = None). The user ruled on 2026-11-05 to keep the code until the
+live route-navigation tests have fully passed, then delete it -- so that a
+fall-back to the memory-based design stays one revert away during those
+tests. Do not wire it back in without a new ruling.
+
 The guidance layer of 20 S4A (v1.24): an incremental pathfinder over a COARSE
 view of the memory grid that answers one question each tick -- "which direction
 does the globally shortest path leave my position?" -- as a guide point R*.

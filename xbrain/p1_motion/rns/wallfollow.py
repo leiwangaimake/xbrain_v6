@@ -6,6 +6,12 @@ File: wallfollow.py
 Brief: Wall-follow state machine (P5 -- 20 S7 / S7A)
 
 Description:
+*** RETIRED by 99 U114 (20 S3.0A NM-2) and KEPT by 99 U120: with no memory
+there is no wall to follow outside the 90 deg view, so source.py never enters
+WALL_FOLLOW. The user ruled on 2026-11-05 to keep the code until the live
+route-navigation tests have fully passed, then delete it. Do not wire it back
+in without a new ruling.
+
 Bug-style wall following (20 S7), the mechanism that gives RNS its convergence
 guarantee (RNS-T-1). Structurally depends on the memory grid (RNS-I-7): the wall
 being hugged is often behind the robot's view, so it lives in memory.

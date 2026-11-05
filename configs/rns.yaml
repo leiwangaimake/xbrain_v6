@@ -109,7 +109,7 @@ rns:
     edge_jump_m: 1.0               # [sim] 剖面跳变阈值 (20 S6.1)
     subgoal_extra_m: 0.3           # [sim] clear 富余项 (20 S6.1 v1.11)
     side_hold_ticks: 5             # [sim] 换候选迟滞 5 拍 = 0.25s (20 S6.6)
-  wall_follow:                     # 99 U114 退役 (20 S3.0A): 不再进入贴墙绕行, 本段无运行时消费者, 保留未接线
+  wall_follow:                     # 99 U114 退役 (20 S3.0A): 不再进入贴墙绕行, 本段无运行时消费者, 保留未接线; 99 U120: 保留到路径导航实机测试彻底通过再删
     d_wall_m: 1.0                  # [geo] 保距 = r_eff 0.5 + 0.5 余量; 0.8 时体距墙 0.34 会被记忆栅格 0.25 粒度误差蚀穿(2026-09-10 车角擦碰实测), 余量须 > cell_m (20 S7.7)
     kp_wall: 1.2                   # [sim] 保距 PD
     kd_wall: 0.05                  # [sim] 栅格粒度 0.25m 下 rate 噪声大, kd 压低
@@ -132,7 +132,7 @@ rns:
     cell_m: 0.25                   # [geo] 分辨率 = r_eff/2 (20 S4.2.1)
     radius_m: 8.0                  # [geo] 滑动窗 > range_max 6m
     reset_jump_m: 1.0              # [sim] 位姿跳变清空阈值 (A-MEM-3)
-  guidance:                        # 99 U114 退役 (20 S3.0A): 引导规划层不再构造, 本段无运行时消费者, 保留未接线
+  guidance:                        # 99 U114 退役 (20 S3.0A): 引导规划层不再构造, 本段无运行时消费者, 保留未接线; 99 U120: 保留到路径导航实机测试彻底通过再删
     coarse_cell_m: 0.5             # [geo] 规划格 = 2x 记忆格 0.25 (S4A.5)
     domain_margin_m: 15.0          # [sim] 任务包围盒外扩裕量
     domain_cap_m: 60.0             # [sim] 规划域边长上限
