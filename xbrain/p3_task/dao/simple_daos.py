@@ -115,6 +115,17 @@ class PatrolProgressDAO:
             (now_iso, task_id))
         return cur.rowcount
 
+    async def advance_pass(self, task_id: str, now_iso: str) -> int:
+        """99 U131: one pass of a multi-pass patrol is done -- loop_index += 1
+        on the active row. P3 owns the pass count (P1 is single-pass and
+        reports 0 / 1 every pass), so this is the only writer of loop_index
+        while a run is open. Returns rows affected (0 = no active row)."""
+        cur = await self._conn.execute(
+            "UPDATE patrol_progress SET loop_index = loop_index + 1,"
+            " updated_at=? WHERE task_id=? AND status='active'",
+            (now_iso, task_id))
+        return cur.rowcount
+
     async def fetch_active(self, task_id: str):
         """The U07a breakpoint plus the S7.3A remap inputs, as a raw tuple in
         the declared order (15 S9 forbids the DAO reshaping rows)."""

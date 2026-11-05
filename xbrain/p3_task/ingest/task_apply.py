@@ -48,6 +48,7 @@ from xbrain.common.errors import (
 )
 from xbrain.p3_task.ingest.id_alloc import next_submit_seq, next_task_id
 from xbrain.p3_task.ingest.task_command import (
+    PATROL_REPEAT_INTENT,
     TaskCommand,
     TaskCommandError,
     parse_task_command,
@@ -176,6 +177,42 @@ async def _write_cmd_log(conn, cmd: TaskCommand, task_id: Optional[str],
          now_mono_ms))
 
 
+async def _fill_repeat_route(cmd: TaskCommand, ctx: TaskContext) -> TaskCommand:
+    """18 B04 "再巡一圈" (99 U131): the route of the patrol that finished
+    last, filled into the command before the row is written.
+
+    The user's ruling is "redo the B02 task that just completed". 16 S6.7.3
+    [5] once said "the CURRENT task's route" -- but the P4 turn refuses a
+    repeat while a patrol is running ("当前巡逻结束后再说"), so by the time
+    one arrives here there is no current patrol to copy; the latest `done`
+    patrol is what the operator just watched finish.
+
+    Only `done` counts: a failed or cancelled patrol did not complete, and
+    repeating it would replay whatever stopped it. No such patrol ->
+    E_NOT_FOUND with detail.reason no_completed_patrol, which the P4 ack
+    speaker turns into one sentence. Anything other than a route-less
+    patrol_repeat passes through unchanged.
+    """
+    task = cmd.task or {}
+    params = task.get("params")
+    if (task.get("type") != "patrol" or task.get("route_id")
+            or not isinstance(params, dict)
+            or params.get("intent") != PATROL_REPEAT_INTENT):
+        return cmd
+    # finished_at is the ISO wall time written at the terminal transition;
+    # its lexical order is its time order (same fixed format everywhere).
+    cur = await ctx.task_conn.execute(
+        "SELECT route_geo_id FROM tasks WHERE task_type='patrol'"
+        " AND state='done' AND route_geo_id IS NOT NULL AND route_geo_id != ''"
+        " ORDER BY finished_at DESC, submit_seq DESC LIMIT 1")
+    row = await cur.fetchone()
+    if row is None:
+        raise TaskCommandError(
+            E_NOT_FOUND, "patrol_repeat: no completed patrol to repeat",
+            {"reason": "no_completed_patrol"})
+    return replace(cmd, task={**task, "route_id": row[0]})
+
+
 async def _submit(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
                   created_at: str = "", date_str: str = "") -> Dict[str, Any]:
     """S7.2 submit: mint the task, idempotent on task.task_id.
@@ -190,6 +227,9 @@ async def _submit(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
     the id match starts working and the name match becomes the fallback it was
     meant to be, rather than the only thing that finds anything.
     """
+    # 99 U131: a route-less B04 repeat gets its route here, before anything
+    # is written; no completed patrol refuses the whole submit.
+    cmd = await _fill_repeat_route(cmd, ctx)
     task_id = cmd.task_id
     if task_id:
         # The sender supplied one (the party-A cloud path does). Business-level

@@ -40,6 +40,7 @@ from xbrain.p3_task.dao.simple_daos import PatrolProgressDAO, SnapshotDAO
 from xbrain.p3_task.dao.tasks_dao import TaskRow, TasksDAO
 from xbrain.p3_task.persistence.schema_geo import GEO_DB_STATEMENTS
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
+from xbrain.p3_task.route.laps import LapSpec
 from xbrain.p3_task.route.push import (
     CHUNK_POINTS,
     MAX_POINTS,
@@ -383,7 +384,8 @@ async def test_push_writes_the_snapshot_before_it_sends(dbs):
         progress_dao=PatrolProgressDAO(task_conn), route_pub=pub,
         ack_window=_W(), trigger=RoutePushTrigger.RP1_DISPATCH,
         now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
-        start=None)  # pre-U127 single-pass / single-point behaviour
+        start=None,  # pre-U127 single-pass / single-point behaviour
+        lap_spec=LapSpec(loops=1, round_trip=False))  # one pass (U131)
     assert res.pushed is True and res.frames == 1
     # The snapshot exists and carries what the frame carried.
     row = await snapshot_dao.fetch("t1")
@@ -410,7 +412,8 @@ async def test_rp4_pushes_nothing(dbs):
         ack_window=RouteAckWindow(),
         trigger=RoutePushTrigger.RP4_TASK_TERMINAL,
         now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
-        start=None)  # pre-U127 single-pass / single-point behaviour
+        start=None,  # pre-U127 single-pass / single-point behaviour
+        lap_spec=LapSpec(loops=1, round_trip=False))  # one pass (U131)
     assert res.pushed is False and pub.puts == []
 
 
@@ -429,7 +432,8 @@ async def test_a_deleted_route_refuses_without_raising(dbs):
         progress_dao=PatrolProgressDAO(task_conn), route_pub=pub,
         ack_window=RouteAckWindow(), trigger=RoutePushTrigger.RP1_DISPATCH,
         now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
-        start=None)  # pre-U127 single-pass / single-point behaviour
+        start=None,  # pre-U127 single-pass / single-point behaviour
+        lap_spec=LapSpec(loops=1, round_trip=False))  # one pass (U131)
     assert res.pushed is False and "route_missing" in res.reason
     assert pub.puts == []
 

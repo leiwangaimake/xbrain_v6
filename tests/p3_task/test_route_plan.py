@@ -35,6 +35,7 @@ import pytest_asyncio  # async fixture
 from xbrain.p3_task.dao.simple_daos import PatrolProgressDAO, SnapshotDAO  # push dependencies
 from xbrain.p3_task.persistence.schema_geo import GEO_DB_STATEMENTS  # geo.db DDL
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS  # task.db DDL
+from xbrain.p3_task.route.laps import LapSpec  # 99 U131 pass count
 from xbrain.p3_task.route.push import RouteAckWindow, RoutePushTrigger  # push dependencies
 from xbrain.p3_task.route.route_plan import RouteGeom, _Plane, plan_goto, plan_patrol  # under test
 from xbrain.p3_task.runtime.route_push_runtime import push_goto_for_task, push_route_for_task  # wiring under test
@@ -216,7 +217,7 @@ async def test_patrol_push_starts_at_the_robot(dbs):  # wiring: patrol
         route_pub=pub, ack_window=RouteAckWindow(),  # publisher
         trigger=RoutePushTrigger.RP1_DISPATCH, now_mono_ms=1000,  # dispatch
         now_wall_ms=1_785_000_000_000, recorded_arrive_radius_m=1.0,  # mode B radius
-        start=ll(60, 30))  # 30 m beside x=60
+        start=ll(60, 30), lap_spec=LapSpec(loops=1, round_trip=False))  # 30 m beside x=60, one pass
     assert res.pushed  # sent
     pts = [xy((p["lat"], p["lon"])) for p in pub.puts[0]["points"]]  # what P1 receives
     assert pts[:2] == [(60.0, 30.0), (60.0, 0.0)] and pts[-1] == (0.0, 0.0)  # robot, entry ... far end and back

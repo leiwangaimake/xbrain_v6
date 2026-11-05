@@ -275,7 +275,8 @@ async def test_a_frame_lands_the_breakpoint_columns(db):
     out = await apply_path_progress(
         _frame(waypoint_index=17), conn=db, dao=dao, progress_dao=pp,
         tracker=t, now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
-        on_transition=_noop_transition, boot_id="b1")
+        on_transition=_noop_transition, boot_id="b1",
+        next_pass=None, pass_latch=set())
     assert (out["accepted"], out["flushed"]) == (True, True)
     row = await pp.fetch_active("t1")
     # (route_geo_id, route_rev, direction, loop_mode, waypoint_index,
@@ -299,12 +300,14 @@ async def test_a_frame_for_another_route_is_refused(db):
     out = await apply_path_progress(
         _frame(route_id="r-west_gate"), conn=db, dao=dao, progress_dao=pp,
         tracker=t, now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
-        on_transition=_noop_transition, boot_id="b1")
+        on_transition=_noop_transition, boot_id="b1",
+        next_pass=None, pass_latch=set())
     assert (out["accepted"], out["reason"]) == (False, "route_mismatch")
     out = await apply_path_progress(
         _frame(route_rev=8), conn=db, dao=dao, progress_dao=pp, tracker=t,
         now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
-        on_transition=_noop_transition, boot_id="b1")
+        on_transition=_noop_transition, boot_id="b1",
+        next_pass=None, pass_latch=set())
     assert out["reason"] == "route_mismatch"
     assert (await pp.fetch_active("t1"))[4] == -1      # untouched
 
@@ -326,7 +329,8 @@ async def test_arrived_closes_the_task_and_the_run(db):
     out = await apply_path_progress(
         _frame(state="arrived", waypoint_index=63), conn=db, dao=dao,
         progress_dao=pp, tracker=ProgressTracker(), now_mono_ms=1000,
-        now_wall_ms=1_785_000_000_000, on_transition=_rec, boot_id="b1")
+        now_wall_ms=1_785_000_000_000, on_transition=_rec, boot_id="b1",
+        next_pass=None, pass_latch=set())
     assert out["closed"] is True
     assert (await dao.fetch_by_id("t1")).state == "done"
     # The same on_transition the scheduler uses, so the outward events are
@@ -353,7 +357,8 @@ async def test_failed_fails_the_task_but_aborted_leaves_it_running(db):
         _frame(state="aborted"), conn=db, dao=dao, progress_dao=pp,
         tracker=ProgressTracker(), now_mono_ms=1000,
         now_wall_ms=1_785_000_000_000, on_transition=_noop_transition,
-        boot_id="b1")
+        boot_id="b1",
+        next_pass=None, pass_latch=set())
     assert out["closed"] is False
     assert (await dao.fetch_by_id("t1")).state == "running"
     assert await pp.fetch_active("t1") is not None
@@ -362,7 +367,8 @@ async def test_failed_fails_the_task_but_aborted_leaves_it_running(db):
         _frame(state="failed", fail_reason="corridor_blocked"), conn=db,
         dao=dao, progress_dao=pp, tracker=ProgressTracker(),
         now_mono_ms=2000, now_wall_ms=1_785_000_001_000,
-        on_transition=_noop_transition, boot_id="b1")
+        on_transition=_noop_transition, boot_id="b1",
+        next_pass=None, pass_latch=set())
     assert out["closed"] is True
     assert (await dao.fetch_by_id("t1")).state == "failed"
     # 99 U124: the frame's fail_reason reaches the task row through the sink.
@@ -380,7 +386,8 @@ async def test_a_malformed_frame_is_counted_not_raised(db):
     out = await apply_path_progress(
         {"state": "running"}, conn=db, dao=dao, progress_dao=pp,
         tracker=ProgressTracker(), now_mono_ms=1000,
-        now_wall_ms=1_785_000_000_000, on_transition=_noop_transition)
+        now_wall_ms=1_785_000_000_000, on_transition=_noop_transition,
+        next_pass=None, pass_latch=set())
     assert (out["accepted"], out["reason"]) == (False, "malformed")
 
 

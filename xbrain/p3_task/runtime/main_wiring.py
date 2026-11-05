@@ -173,7 +173,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  teach_snap_max_age_ms: Optional[int] = None,
                  recorded_arrive_radius_m: Optional[float] = None,
                  route_membership_m: Optional[float] = None) -> int:
-    from xbrain.common.errors import E_GEO_INCOMPLETE, E_NOT_FOUND
+    from xbrain.common.errors import E_GEO_INCOMPLETE, E_NOT_FOUND, E_SCHEMA
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p3_task.dao.simple_daos import FencesDAO, PatrolProgressDAO, SnapshotDAO
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
@@ -190,6 +190,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
         GEO_DB_STATEMENTS,
     )
     from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
+    from xbrain.p3_task.route.laps import lap_spec_from_params
     from xbrain.p3_task.route.push import RoutePushTrigger
     from xbrain.p3_task.runtime.progress_sink import apply_path_progress
     from xbrain.p3_task.runtime.route_push_runtime import (
@@ -252,6 +253,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
         # of the stall (which reads as a stopped robot).
         progress_queue: asyncio.Queue = asyncio.Queue(maxsize=PROGRESS_QUEUE_MAX)
         progress_tracker = ProgressTracker()
+        # 99 U131: tasks whose next pass has been pushed but not yet seen
+        # running (progress_sink's pass latch). In memory on purpose: a P3
+        # restart suspends every running task (15 S10 INIT).
+        pass_latch: set = set()
         progress_dao = PatrolProgressDAO(conn)
         snapshot_dao = SnapshotDAO(conn)
         # EX-2: one ack window for the process -- 15 S6.1 allows one running
@@ -781,6 +786,15 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     await _push_goto(task_id, params,
                                      RoutePushTrigger.RP1_DISPATCH)
                     return
+                try:
+                    # 99 U131: laps as admitted (V-8a checked them already;
+                    # a task stored before that check is refused, not run
+                    # with a guessed count)
+                    lap_spec = lap_spec_from_params(_goto_params(full))
+                except ValueError as exc:
+                    pushing["task_id"] = None
+                    await _fail_task_for_geometry(task_id, str(exc), E_SCHEMA)
+                    return
                 pushing["task_id"] = task_id
                 pushing["route_geo_id"] = route_geo_id
                 pushing["goto_params"] = None
@@ -800,7 +814,36 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     # the key named (CLAUDE.md 3.1: no value invented here).
                     recorded_arrive_radius_m=recorded_arrive_radius_m,
                     # 99 U127: the entry leg and the pass start from here
-                    start=start_from_pose(state_cache.get("pose")))
+                    start=start_from_pose(state_cache.get("pose")),
+                    lap_spec=lap_spec)  # opens the run with the pass count
+                if not res.pushed:
+                    pushing["task_id"] = None
+                    await _fail_task_for_geometry(task_id, res.reason,
+                                                  E_GEO_INCOMPLETE)
+
+            async def _push_next_pass(task_id: str) -> None:
+                """99 U131 RP-5: the next pass of a multi-pass patrol, from
+                where the robot is now (the U127 plan alternates the ends of
+                an open route by itself). Called by the progress sink after it
+                has counted the pass; a refused push fails the task exactly as
+                a refused dispatch does -- never left running with nothing
+                moving."""
+                full = await dao.fetch_by_id(task_id)
+                route_geo_id = getattr(full, "route_geo_id", None) if full else None
+                if not route_geo_id:
+                    return
+                pushing.update(task_id=task_id, route_geo_id=route_geo_id,
+                               goto_params=None)
+                res = await push_route_for_task(
+                    task_id=task_id, route_geo_id=route_geo_id,
+                    task_conn=conn, geo_conn=geo_conn,
+                    snapshot_dao=snapshot_dao, progress_dao=progress_dao,
+                    route_pub=route_pub, ack_window=ack_window,
+                    trigger=RoutePushTrigger.RP5_NEXT_PASS,
+                    now_mono_ms=_now_mono_ms(), now_wall_ms=_now_wall_ms(),
+                    recorded_arrive_radius_m=recorded_arrive_radius_m,
+                    start=start_from_pose(state_cache.get("pose")),
+                    lap_spec=None)  # the run stays open; only loop_index moved
                 if not res.pushed:
                     pushing["task_id"] = None
                     await _fail_task_for_geometry(task_id, res.reason,
@@ -879,7 +922,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     trigger=RoutePushTrigger.RP2_REMAP,
                     now_mono_ms=_now_mono_ms(), now_wall_ms=_now_wall_ms(),
                     recorded_arrive_radius_m=recorded_arrive_radius_m,  # same key as RP-1 (U126)
-                    start=start_from_pose(state_cache.get("pose")))  # re-planned from where the robot is now (U127)
+                    start=start_from_pose(state_cache.get("pose")),  # re-planned from where the robot is now (U127)
+                    lap_spec=None)  # the run is already open
                 if not res.pushed:
                     pushing["task_id"] = None
                     await _fail_task_for_geometry(task_id, res.reason,
@@ -1191,7 +1235,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                     state_pub, _emit_task_event,
                                     _publish_task_state,
                                     fetch_terminal=_fetch_terminal_facts),
-                                boot_id=_BOOT_ID)
+                                boot_id=_BOOT_ID,
+                                next_pass=_push_next_pass,  # U131 multi-pass
+                                pass_latch=pass_latch)
                         except Exception as exc:      # noqa: BLE001
                             # A progress frame must never take down the loop
                             # that also runs task scheduling and the geo

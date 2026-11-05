@@ -62,6 +62,7 @@ from xbrain.p3_task.route.push import (
     build_route_frames,
     new_cmd_id,
 )
+from xbrain.p3_task.route.laps import LapSpec
 from xbrain.p3_task.route.route_plan import RouteGeom, plan_goto, plan_patrol
 from xbrain.p3_task.route.snapshot_build import (
     SnapshotBuildError,
@@ -122,6 +123,7 @@ async def push_route_for_task(*, task_id: str, route_geo_id: str,
                               now_mono_ms: int, now_wall_ms: int,
                               recorded_arrive_radius_m: Optional[float] = None,
                               start: Optional[Tuple[float, float]],
+                              lap_spec: Optional[LapSpec],
                               ) -> PushResult:
     """RP-1 / RP-2 / RP-3: snapshot the route, push it, open the ack window.
 
@@ -132,6 +134,13 @@ async def push_route_for_task(*, task_id: str, route_geo_id: str,
     leg a robot more than rns.route.max_deviation_m from the first point
     fails max_deviation on the first tick (20 S2.7). None (no fix yet)
     pushes the recorded route unchanged, as before 2026-11-05.
+
+    lap_spec (99 U131) is what the task asked for in laps; RP-1 opens the
+    progress run with loop_total = lap_spec.passes(loop_mode) (route/laps.py:
+    a "来回" doubles the count on an open route). The other triggers find the
+    run already open and pass None; RP-1 with None is a caller bug and is
+    raised, not defaulted to one lap -- a wrong loop_total makes the progress
+    sink end the patrol on the wrong pass.
 
     RP-4 never reaches here: a task entering a terminal pushes nothing and
     revokes nothing (15 S2.4.1), and the geometry staying resident in P1 is
@@ -192,16 +201,19 @@ async def push_route_for_task(*, task_id: str, route_geo_id: str,
     # nowhere to land, and EX-3's writer would report "no active row" for the
     # whole patrol.
     if trigger is RoutePushTrigger.RP1_DISPATCH:
+        if lap_spec is None:
+            raise ValueError("RP-1 push for %s needs the task's lap_spec"
+                             % (task_id,))
         await progress_dao.start_run(
             task_id=task_id, route_name=name, route_geo_id=snap.route_id,
             route_rev=snap.rev, direction=direction or "forward",
             loop_mode=snap.loop_mode, waypoint_total=snap.point_count,
             route_total_m=snap.total_len_m,
-            # loop_total comes from the task's mission (loops). Not wired
-            # yet -- mission expansion is EX-1 -- so the DDL default of 1
-            # stands and is NOT overwritten with a guess here. A wrong
-            # loop_total would make LP-3 judge completion on the wrong lap.
-            loop_total=1, now_iso=now_iso)
+            # 99 U131: the pass count, from the RECORDED route's loop_mode
+            # (the composite snapshot above is a one-way polyline whatever
+            # the route is). Until 2026-11-05 this was a fixed 1 and every
+            # patrol ran one pass.
+            loop_total=lap_spec.passes(loop_mode), now_iso=now_iso)
     await task_conn.commit()
 
     for frame in frames:

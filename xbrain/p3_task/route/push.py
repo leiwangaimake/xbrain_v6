@@ -105,6 +105,10 @@ class RoutePushTrigger(str, Enum):
     #: geometry stays resident in P1, which is what 15 S1.3 T-1 depends on
     #: (P1 finishes the lap if P3 dies).
     RP4_TASK_TERMINAL = "RP-4"
+    #: 99 U131: one pass of a multi-pass patrol arrived and passes remain --
+    #: push the route again, re-planned from where the robot is (P1 is
+    #: single-pass; the progress run stays open and only loop_index moves).
+    RP5_NEXT_PASS = "RP-5"
 
 
 class RouteAck(str, Enum):

@@ -33,6 +33,26 @@ the on_transition callback the caller passes in, which is the same callback
 the scheduler tick uses -- so a task closed by a progress frame produces
 exactly the same outward events as one closed any other way.
 
+Multi-pass patrols (99 U131). P1 is single-pass: every push ends in its own
+`arrived`, and its frames say loop_index 0 / loop_total 1 whatever the task
+asked for. So P3 owns the pass count -- the row's loop_index / loop_total are
+written by dispatch (loop_total) and by advance_pass (loop_index) and are
+NEVER overwritten from a frame, and dist_done_m is stored cumulative
+(loop_index x route_total_m + the frame's in-pass distance, the 15 S7.3A
+convention) so pct = dist_done_m / (loop_total x route_total_m) keeps rising
+across passes instead of restarting at 0 on each one. An `arrived` with
+passes left does not close the task: loop_index += 1, the caller's next_pass
+pushes the route again (RP-5), and the task stays running. loop_total = 0 is
+the endless patrol (LM-4): arrival never closes it (PP-3b).
+
+The pass latch. Between that re-push and P1 loading it, P1 keeps sending the
+OLD pass's `arrived` (2 Hz periodic, same route_id / rev -- the route is the
+same route). Counting those would skip passes or end the patrol early. The
+task is latched from the re-push until the first `running` frame; latched
+frames are ignored outright (no flush either: their in-pass distance belongs
+to the pass already counted). The latch is in memory only: a P3 restart
+suspends every running task (15 S10 INIT), so it never needs to survive one.
+
 A frame for which there is no active patrol_progress row is NORMAL, not an
 error: the row is opened by the dispatch path (EX-2) for route-bearing tasks
 only, and P1 keeps publishing for a few frames after a task ends. It is
@@ -43,7 +63,7 @@ successful write, which is why update_progress returns a row count.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional, Set
 
 from xbrain.p3_task.persistence.schema_task import iso_from_wall_ms
 from xbrain.p3_task.schedule.driver import apply_path_progress_terminal
@@ -94,16 +114,25 @@ def route_matches(active_row, progress: PathProgress) -> bool:
 
 async def apply_path_progress(body: Any, *, conn, dao, progress_dao, tracker,
                               now_mono_ms: int, now_wall_ms: int,
-                              on_transition, boot_id: str = "") -> Dict[str, Any]:
+                              on_transition, boot_id: str = "",
+                              next_pass: Optional[Callable[[str], Awaitable[Any]]],
+                              pass_latch: Set[str]) -> Dict[str, Any]:
     """Handle one state/motion/path_progress frame end to end.
 
+    next_pass(task_id) pushes the next pass of a multi-pass patrol (RP-5);
+    None means this caller cannot re-push, and an arrival then closes the
+    task as before. pass_latch is the caller-owned set of tasks with a
+    re-push in flight (see the module docstring). Both are required: a
+    caller that forgets them would silently end every patrol after pass 1.
+
     Returns a small dict for the caller's counters and for tests:
-      {'accepted': bool, 'flushed': bool, 'reason': str, 'closed': bool}
+      {'accepted': bool, 'flushed': bool, 'reason': str, 'closed': bool,
+       'next_pass': bool}
     `reason` names why nothing happened when accepted is False, so a p3 log
     line can say WHICH guard dropped a frame rather than that one was dropped.
     """
     out: Dict[str, Any] = {"accepted": False, "flushed": False,
-                           "reason": "", "closed": False}
+                           "reason": "", "closed": False, "next_pass": False}
     try:
         progress = parse_path_progress(body)
     except PathProgressError as exc:
@@ -122,6 +151,12 @@ async def apply_path_progress(body: Any, *, conn, dao, progress_dao, tracker,
     if not route_matches(active, progress):
         out["reason"] = "route_mismatch" if active is not None else "no_active_row"
         return out
+    if task_id in pass_latch:
+        if progress.state != "running":
+            # the previous pass's arrived, re-sent while the re-push loads
+            out["reason"] = "pass_pending"
+            return out
+        pass_latch.discard(task_id)  # the next pass is loaded and running
     out["accepted"] = True
     decision = tracker.decide(task_id, progress, now_mono_ms=now_mono_ms)
     out["reason"] = decision.reason
@@ -132,14 +167,18 @@ async def apply_path_progress(body: Any, *, conn, dao, progress_dao, tracker,
             waypoint_index=progress.waypoint_index,
             waypoint_total=progress.waypoint_total,
             seg_done_m=progress.seg_done_m,
-            dist_done_m=progress.dist_done_m,
+            # cumulative across passes (U131; 15 S7.3A alpha x T1 + loop_index
+            # x T1): P1 restarts its distance at 0 on every pass
+            dist_done_m=active[10] * active[9] + progress.dist_done_m,
             # odom_dist_m is wear/energy statistics only and never feeds
             # progress (15 S9.5). PathProgress does not carry it, so it stays
             # at whatever the row holds -- NOT set to dist_done_m, which would
             # make a derived-looking column quietly wrong.
             odom_dist_m=active[8],
-            loop_index=progress.loop_index,
-            loop_total=progress.loop_total,
+            # P3's own pass count (U131), never the frame's: P1 is
+            # single-pass and says 0 / 1 on every pass
+            loop_index=active[10],
+            loop_total=active[11],
             # skipped_m accumulates at remap time (S7.3A), not per frame.
             skipped_m=active[12],
             dir_sign=progress.dir_sign,
@@ -157,6 +196,20 @@ async def apply_path_progress(body: Any, *, conn, dao, progress_dao, tracker,
             _logger.warning("p3 path_progress: no active row for %s at flush",
                             task_id)
             out["reason"] = "flush_lost_row"
+    if (progress.state == "arrived" and next_pass is not None
+            and (active[11] == 0 or active[10] + 1 < active[11])):
+        # U131: a pass done, passes left (or endless, LM-4 / PP-3b). Count it
+        # and commit BEFORE pushing: a crash between the two then resumes
+        # with the pass already counted, never with it counted twice.
+        await progress_dao.advance_pass(task_id, iso_from_wall_ms(now_wall_ms))
+        await conn.commit()
+        pass_latch.add(task_id)
+        _logger.info("p3 patrol %s pass %d/%s done, pushing the next",
+                     task_id, active[10] + 1,
+                     active[11] if active[11] else "endless")
+        await next_pass(task_id)
+        out["next_pass"] = True
+        return out
     if progress.is_terminal:
         closed = await apply_path_progress_terminal(
             conn, dao, task_id, progress.state,

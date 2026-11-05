@@ -187,9 +187,10 @@ def test_the_destination_rule_is_goto_only():
     {"route_id": None, "params": {"intent": "patrol_schedule",
                                   "slots": {"route": "候选", "loops": 1}}},
     {"route_id": "   "},                                # blank id
-    # B04: route is the current task's (16 S6.7.3 [5]); nothing fills it yet.
-    {"route_id": None, "params": {"intent": "patrol_repeat",
-                                  "slots": {"loops": 1}}},
+    # B04 patrol_repeat used to be listed here ("nothing fills it yet").
+    # Since 99 U131 task_apply fills it from the latest completed patrol, so
+    # parse lets it through -- tests/p3_task/test_patrol_laps.py pins both
+    # the fill and the refusal when there is nothing to repeat.
 ])
 def test_a_patrol_without_route_id_is_refused(task_over):
     """11 S7.2 task table: patrol requires route_id.

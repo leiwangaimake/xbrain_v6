@@ -44,6 +44,11 @@ from typing import Any, Dict, Optional
 
 from xbrain.common.enums import TASK_ACTION
 from xbrain.common.errors import E_SCHEMA
+from xbrain.p3_task.route.laps import lap_spec_from_params
+
+#: 18 B04 "再巡一圈": the patrol whose route P3 fills at submit from the
+#: latest completed patrol (99 U131), so it arrives with no route_id.
+PATROL_REPEAT_INTENT = "patrol_repeat"
 
 #: Actions that name one existing task, so task_id is required (S7.2 field
 #: table). submit carries it inside `task`; clear_queue is a set operation.
@@ -121,12 +126,16 @@ def _patrol_has_route(task: Dict[str, Any]) -> bool:
     Only the top-level task.route_id counts: it is the one field
     task_row_from_command maps to tasks.route_geo_id, which is what dispatch
     reads. A route NAME in params.slots.route is provenance, not a route.
-    B04 patrol_repeat (16 S6.7.3 [5]: route taken from the current task by
-    P3) is refused too: nothing in P3 fills it yet, and an unfilled patrol is
-    exactly the empty task this check exists to stop.
+    B04 patrol_repeat is the one exception (99 U131): it carries no route on
+    purpose and task_apply._submit fills route_id from the latest completed
+    patrol before the row is written -- or refuses with E_NOT_FOUND. So no
+    patrol row is ever stored without a route either way.
     """
     route_id = task.get("route_id")
-    return isinstance(route_id, str) and bool(route_id.strip())
+    if isinstance(route_id, str) and bool(route_id.strip()):
+        return True
+    params = task.get("params")
+    return isinstance(params, dict) and params.get("intent") == PATROL_REPEAT_INTENT
 
 
 def parse_task_command(payload: Dict[str, Any]) -> TaskCommand:
@@ -164,6 +173,14 @@ def parse_task_command(payload: Dict[str, Any]) -> TaskCommand:
             # queued from voice, one of them running.
             raise TaskCommandError(
                 E_SCHEMA, "patrol requires route_id (11 S7.2)")
+        if task.get("type") == "patrol":
+            # 15 V-8a / 99 U131: the lap count is checked at admission, with
+            # the same function dispatch uses, so a bad loops value is an
+            # E_SCHEMA now instead of a patrol that runs a guessed count.
+            try:
+                lap_spec_from_params(task.get("params"))
+            except ValueError as exc:
+                raise TaskCommandError(E_SCHEMA, str(exc)) from exc
         inner = task.get("task_id")
         # S7.2 as corrected 2026-08-20: task.task_id is OPTIONAL. It has to be,
         # because the id form is t-YYYYMMDD-NNN and NNN is a per-day sequence
