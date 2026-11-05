@@ -217,9 +217,10 @@ def test_battery_without_a_calibrated_threshold_is_not_failed():
     """
     state, detail = state_from_power({"soc_pct": 8.0})
     assert state == HealthState.DEGRADED and "8.0" in detail
-    # With a threshold supplied, it does act.
+    # With a threshold supplied it acts -- since 99 U117 by SLOWING (degraded),
+    # never by stopping (the old FAIL).
     assert state_from_power({"soc_pct": 8.0}, critical_soc_pct=15.0)[0] == \
-        HealthState.FAIL
+        HealthState.DEGRADED
     assert state_from_power({"soc_pct": 80.0}, critical_soc_pct=15.0)[0] == \
         HealthState.OK
     no_power_st, no_power_why = state_from_power(None)
@@ -420,3 +421,37 @@ def test_cam_rgbd_ok_when_fresh_and_fast_enough():
     assert state_from_perception(
         {"fps_depth": 15.0}, rx_age_s=0.5, min_fps_depth=15.0,
         max_age_s=3.0)[0] is HealthState.OK
+
+
+def test_u117_battery_threshold_slows_below_and_frees_above():
+    """99 U117 (11 S5.1A battery row): critical_soc_pct = 20 %. At or below it
+    the battery is DEGRADED -> the fatal x degraded factor, motion still
+    allowed; above it the battery does not limit speed at all. Measured
+    2026-11-04: SoC 51 % with no threshold wired held every run at 0.3.
+    mutants: keep FAIL at/below -> allow_motion False -> red; compare with
+    '<' -> 20.0 reads OK -> red."""
+    from xbrain.p2_core.health.factor import FactorConfig, compute_factor
+    from xbrain.p2_core.health.items import ITEMS
+    assert state_from_power({"soc_pct": 51.0}, critical_soc_pct=20.0)[0] == HealthState.OK
+    assert state_from_power({"soc_pct": 20.1}, critical_soc_pct=20.0)[0] == HealthState.OK
+    assert state_from_power({"soc_pct": 20.0}, critical_soc_pct=20.0)[0] == HealthState.DEGRADED
+    assert state_from_power({"soc_pct": 5.0}, critical_soc_pct=20.0)[0] == HealthState.DEGRADED
+    cfg = FactorConfig(fatal_degraded=0.3, degraded_fail=0.5,
+                       degraded_degraded=0.7, unknown=0.5)
+    ok = {k: HealthState.OK for k in ITEMS}
+    low = compute_factor(dict(ok, battery=HealthState.DEGRADED), cfg)
+    assert low.allow_motion and low.speed_factor == 0.3        # slows, does not stop
+    assert compute_factor(ok, cfg).speed_factor == 1.0         # above the threshold: free
+
+
+def test_u117_p2_wiring_reads_and_passes_the_battery_threshold():
+    """99 U117: until U117 nothing read critical_soc_pct, so state_from_power
+    always saw None. The wiring must read the key WITHOUT a default and pass
+    it to refresh_health. mutant: drop the critical_soc_pct= argument -> red.
+    (Static: main_wiring cannot run here without a resolved product.)"""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[3] / "xbrain" / "p2_core"
+           / "runtime" / "main_wiring.py").read_text(encoding="utf-8")
+    assert 'cfg.get("health.battery.critical_soc_pct")' in src
+    assert "critical_soc_pct=battery_soc" in src
+

@@ -151,7 +151,8 @@ def _stage_a_config() -> "tuple":
     """10 S3.3.3 Stage A: load the resolved snapshot ONCE and take both things
     this process needs from it -- the factor table and the config digest guard.
 
-    (FactorConfig, PerceptionHealthConfig, ConfigDigestGuard).
+    (FactorConfig, PerceptionHealthConfig, battery critical_soc_pct,
+    ConfigDigestGuard).
 
     One load, deliberately. A second load_resolved() for the guard could see a
     DIFFERENT MANIFEST than the one the factor table came from, and since a
@@ -183,9 +184,15 @@ def _stage_a_config() -> "tuple":
     perception = PerceptionHealthConfig(
         min_fps_depth=cfg.get("health.perception.min_fps_depth", None),
         max_age_s=cfg.get("health.perception.max_age_s", None))
+    # 99 U117 (11 S5.1A U-BIT-1): the battery threshold, read like the factor
+    # keys -- WITHOUT a default, so a product missing it refuses to start
+    # (CLAUDE.md 3.1: a guessed threshold on a fatal item is forbidden). Until
+    # U117 nothing read it and state_from_power always saw None ("critical
+    # threshold not set" -> degraded -> factor 0.3 on every run).
+    battery_soc = cfg.get("health.battery.critical_soc_pct")
     # Built from the ResolvedConfig object, not from a fresh MANIFEST read --
     # see ConfigDigestGuard.at_stage_a on why that distinction is the point.
-    return factor, perception, ConfigDigestGuard.at_stage_a(cfg)
+    return factor, perception, battery_soc, ConfigDigestGuard.at_stage_a(cfg)
 
 
 def _now_mono_ms() -> int:
@@ -279,7 +286,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         # change while the process runs (a config change goes through the
         # freeze line and a restart), and re-reading it at 1 Hz would put a
         # file read plus a sha256 verification in the publish path.
-        factor_cfg, perception_cfg, digest_guard = _stage_a_config()
+        factor_cfg, perception_cfg, battery_soc, digest_guard = _stage_a_config()
         _logger.info("p2 stage A: common_digest=%s", digest_guard.cached_digest)
         # Edge-triggered fault sequence for event/fault/bit. Same boot-token
         # rationale as _estop_boot below: record.db persists across restarts
@@ -1330,6 +1337,7 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                         refresh_health(
                             health_agg, state_cache, now_mono_s=now,
                             device_states=device_bridge.states(),
+                            critical_soc_pct=battery_soc,  # 99 U117
                             rx_mono=rx_mono,
                             perception_min_fps_depth=perception_cfg.min_fps_depth,
                             perception_max_age_s=perception_cfg.max_age_s)

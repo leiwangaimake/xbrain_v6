@@ -167,12 +167,17 @@ def test_all_ok_gives_factor_one():
     assert out.max_profile == "patrol"
 
 
-def test_degraded_lidar_multiplies_factor():
-    """lidar is DEGRADED level; state DEGRADED -> 0.7 factor."""
+def test_compute_gpu_lidar_no_longer_slow_the_robot():
+    """99 U117 (11 S5.1A): compute / gpu / lidar left the speed_factor set --
+    on the robot all three are permanently unknown (no thresholds / no
+    source) and held the factor at 0.5. Degraded or unknown, they now leave
+    it at 1.0. mutant: count any of them again -> 0.5 / 0.7 -> red."""
     states = {k: HealthState.OK for k in HEALTH_ITEMS}
     states["lidar"] = HealthState.DEGRADED
+    states["gpu"] = HealthState.UNKNOWN
+    states["compute"] = HealthState.UNKNOWN
     out = compute_factor(states, _cfg())
-    assert out.speed_factor == pytest.approx(0.7)
+    assert out.speed_factor == pytest.approx(1.0) and out.allow_motion
 
 
 def test_speed_factor_is_min_not_product():

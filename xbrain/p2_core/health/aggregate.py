@@ -269,8 +269,14 @@ def state_from_power(power: Optional[Mapping[str, Any]], *,
         return HealthState.UNKNOWN, "no soc_pct in state/power"
     if critical_soc_pct is None:
         return HealthState.DEGRADED, "soc %.1f%%, critical threshold not set" % soc
+    # 99 U117 (2026-11-04, user ruling; 11 S5.1A battery row): at or below
+    # the threshold the battery SLOWS the robot (degraded -> the fatal x
+    # degraded factor), it no longer stops it (the old FAIL -> allow_motion
+    # false -> "stop where you are"). Above the threshold it does not limit
+    # speed at all. mutant: return FAIL here -> allow_motion false -> red.
     if soc <= critical_soc_pct:
-        return HealthState.FAIL, "soc %.1f%% at or below critical" % soc
+        return HealthState.DEGRADED, "soc %.1f%% at or below critical %.1f%%" % (
+            soc, critical_soc_pct)
     return HealthState.OK, "soc %.1f%%" % soc
 
 

@@ -320,12 +320,16 @@ def _inject_battery_low():
 
 
 def _inject_battery_critical():
-    """电量危急: 阈值给定后必须 FAIL."""
+    """电量危急: 阈值给定后必须 DEGRADED (99 U117).
+
+    U117 (用户 2026-11-04 裁决) 把语义从"<= 阈值 FAIL -> 就地停车"改为
+    "<= 阈值 DEGRADED -> 减速, 不停车". 本行原断言 FAIL, 已按 U117 改写;
+    仍断言"不是 OK", 所以把阈值分支整个删掉的变异体照样变红."""
     from xbrain.p2_core.health.aggregate import state_from_power
     from xbrain.p2_core.health.items import HealthState
 
     state, _ = state_from_power({"soc_pct": 5.0}, critical_soc_pct=10.0)
-    assert state == HealthState.FAIL, "低于危急阈值却不是 fail: %s" % state
+    assert state == HealthState.DEGRADED, "低于危急阈值却不是 degraded: %s" % state
     ok, _ = state_from_power({"soc_pct": 50.0}, critical_soc_pct=10.0)
     assert ok == HealthState.OK, "健康电量被判成 %s -- 会导致误停车" % ok
 

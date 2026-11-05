@@ -99,17 +99,23 @@ ITEMS: Dict[str, HealthItem] = {
                                   True, True),
     "clock":           HealthItem(HealthKind.CAP, HealthLevel.FATAL,
                                   True, True),
+    # 99 U117 (2026-11-04, user ruling): compute no longer counts toward
+    # speed_factor -- its thermal / memory thresholds are not calibrated, so
+    # it sat at unknown and held the factor at 0.5 on every run. Its fail
+    # still forbids motion (11 S5.1A column unchanged).
     "compute":         HealthItem(HealthKind.CAP, HealthLevel.FATAL,
-                                  True, True),
+                                  False, True),
     "battery":         HealthItem(HealthKind.CAP, HealthLevel.FATAL,
                                   True, True),
     "cam_rgbd":        HealthItem(HealthKind.DEVICE, HealthLevel.FATAL,
                                   True, True),
-    # Count toward speed_factor without forbidding motion.
+    # Counted toward speed_factor until 99 U117 (2026-11-04, user ruling):
+    # lidar has no publisher on this machine and gpu no health source, so
+    # both were permanently unknown (factor 0.5). Now neither slows the robot.
     "lidar":           HealthItem(HealthKind.DEVICE, HealthLevel.DEGRADED,
-                                  True, False),
+                                  False, False),
     "gpu":             HealthItem(HealthKind.CAP, HealthLevel.DEGRADED,
-                                  True, False),
+                                  False, False),
     # Neither: their failure removes a function, not motion.
     "dla":             HealthItem(HealthKind.CAP, HealthLevel.WARN,
                                   False, False),

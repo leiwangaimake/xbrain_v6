@@ -377,6 +377,11 @@ health:
     # T-53 (11 S1.6.1): rt/perception/status 断流上界 3 s. The mirror republishes
     # at 1 Hz, so 3 s allows three missed heartbeats before 失效.
     max_age_s: 3.0
+  # 99 U117 (2026-11-04) user ruling: U-BIT-1 = 20 %. SOC <= 20 -> battery
+  # degraded -> speed_factor fatal_degraded (slow, not stop); SOC > 20 -> ok,
+  # the battery does not limit speed (11 S5.1A battery row).
+  battery:
+    critical_soc_pct: 20.0
   factors:
     fatal_degraded: 0.3
     degraded_fail: 0.5
