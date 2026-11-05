@@ -70,7 +70,9 @@ def health_speed_capped(invalid_pixel_ratio: Optional[float],
     """RNS-I-2 / S3.1.8: invalid_pixel_ratio over the limit forces a speed cap --
     the only cover for "both semantic and geometry are blind" (glass/water where
     both channels say no obstacle). invalid_ratio_limit null -> conservatively
-    capped (unusable threshold -> worst case, CLAUDE.md 3.1)."""
+    capped (unusable threshold -> worst case, CLAUDE.md 3.1).
+    99 U116: no runtime caller -- RNS no longer caps on the ground-mask
+    invalid ratio (20 S3.0A NM-7); kept with its tests (test_rtk_health)."""
     # 11 v2.3 row 3: a null RATIO (no depth statistic this heartbeat) is the
     # same direction -- quality unknown is capped, never read as healthy.
     # mutant: return False on a null ratio -> a blind heartbeat drives -> red.

@@ -53,7 +53,6 @@ from .classify import (
     IGNORE_BEHAVIOR,
     PERSON_BEHAVIOR,
     effective_behavior,
-    health_speed_capped,
 )
 from .config import RnsConfigError, run_startup_assertions
 from .dynamic import DynamicAction, WaitBudget, distance_action, in_corridor
@@ -566,11 +565,18 @@ class RnsSource:
             # on the last ACCEPTED status, so a silent producer ages out.
             status_lost = (now is not None and
                            now - snap.status.t_publish_mono_ms > T53_STATUS_MS)
-            if status_lost or health_speed_capped(
-                    snap.status.invalid_pixel_ratio,
-                    cfg["health"]["invalid_ratio_limit"]):
-                # RNS-I-2: sensor-blind cover; cap value shares the no-seg key
-                # (a dedicated key is a calibration-time decision).
+            # 99 U116 (20 S3.0A NM-7): the invalid_pixel_ratio cap (RNS-I-2,
+            # including its v1.43 "null ratio -> quality unknown -> cap" arm)
+            # is RETIRED. perception counts that ratio over the prior GROUND
+            # plane mask (geometry_setup.cpp, "the prior-plane mask") -- the
+            # ground-depth evidence U113 ruled RNS no longer relies on -- and on
+            # 2026-11-04 it sat at ~0.55 outdoors and held every run at
+            # no_seg_speed_cap_mps (0.5). What stays: a status channel that has
+            # gone silent for T-53 still caps (a dead health heartbeat is a
+            # perception fault, not a ground reading), and T-52 objects loss
+            # caps above. Cap value shares the no-seg key (a dedicated key is a
+            # calibration-time decision).
+            if status_lost:
                 caps["health"] = cfg["perception"]["no_seg_speed_cap_mps"]
 
         # ── B. follow geometry ────────────────────────────────────────────────

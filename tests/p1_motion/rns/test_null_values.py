@@ -10,9 +10,10 @@ Drives RnsSource.compute with DTOs built by the scene helpers so the CONSUMED
 effect of the three v2.3 null rules is what is asserted: a car with
 velocity_valid=false is never the static pile (STOP in the corridor, where a
 valid static car is handed to geometry and driven past); a detected-but-
-unlocalizable person caps the tick and is audited on edge; a null
-invalid_pixel_ratio caps like an over-limit one. Each test names the mutant
-that reddens it (CLAUDE.md 3.3).
+unlocalizable person caps the tick and is audited on edge. The third v2.3
+rule (a null invalid_pixel_ratio caps like an over-limit one) went with the
+whole RNS-I-2 cap in 99 U116: neither a null nor a high ratio caps any more.
+Each test names the mutant that reddens it (CLAUDE.md 3.3).
 """
 from __future__ import annotations
 
@@ -124,12 +125,18 @@ def test_unlocalized_ignore_class_does_not_cap():
     assert out.vx.value > cap
 
 
-def test_null_invalid_ratio_caps_like_over_limit():
-    """11 v2.3 row 3 / RNS-I-2. mutant: health_speed_capped(None) False -> red."""
+@pytest.mark.parametrize("ratio", [None, 0.55, 0.95])
+def test_invalid_ratio_no_longer_caps(ratio):
+    """99 U116 (20 S3.0A NM-7, A-WLD-10): RNS-I-2 is retired -- a fresh status
+    whose ground-mask invalid ratio is null, the 2026-11-04 field value 0.55,
+    or 0.95 no longer pins the speed at no_seg_speed_cap_mps. (A status that
+    has gone SILENT past T-53 still caps: A-AGE-3 in test_perception_gates.)
+    mutant: put the health_speed_capped arm back in source.py -> vx == cap
+    -> red."""
     s, cfg = _source()
     st = StatusMsg(t_publish_mono_ms=NOW, fps_depth=29.0, fps_infer=20.0,
-                   invalid_pixel_ratio=None, extrinsic_calibrated=True,
+                   invalid_pixel_ratio=ratio, extrinsic_calibrated=True,
                    traversable_seg_available=True)
     out = _drive(s, lambda now: None, ticks=3, status=st)
     cap = cfg["rns"]["perception"]["no_seg_speed_cap_mps"]
-    assert 0.0 < out.vx.value <= cap + 1e-9
+    assert out.vx.value > cap + 1e-6

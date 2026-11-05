@@ -145,7 +145,8 @@ def test_normal_drives_without_failure():
 
 def test_all_unknown_is_capped_by_unknown_ratio():
     # 20 S8.1A: forward sector all UNKNOWN -> g_down saturates at unk_g_min;
-    # RNS-I-2 (invalid ratio 0.85) caps as well. Never full speed.
+    # (the RNS-I-2 ratio cap that used to bind here too was retired by 99
+    # U116; the UNKNOWN-share cap alone keeps it off full speed).
     s, out = _run("all_unknown")
     cap = _cfg()["rns"]["speed"]["unk_g_min"] * V_NOM
     assert out is not None and out.vx.value <= cap + 1e-9
@@ -288,12 +289,15 @@ def test_velocity_unknown_car_is_not_a_stop():
             sim.T0, [fake2]))).encode())
 
 
-def test_status_unknown_caps_speed_like_a_bad_ratio():
-    """Row 3: invalid_pixel_ratio null == depth quality unknown -> RNS-I-2 cap
-    (never read as healthy). mutant: health_speed_capped(None) -> False -> red."""
+def test_status_unknown_no_longer_caps_but_bad_values_still_refused():
+    """Row 3 under 99 U116: invalid_pixel_ratio null used to mean "depth
+    quality unknown -> RNS-I-2 cap". RNS-I-2 is retired (the ratio is counted
+    over the ground mask, 20 S3.0A NM-7), so the scenario now runs above the
+    old cap; the WIRE still refuses a non-null value outside [0, 1].
+    mutant: restore the ratio cap -> vx <= cap -> red."""
     s, out = _run("status_unknown")
     cap = _cfg()["rns"]["perception"]["no_seg_speed_cap_mps"]
-    assert out is not None and 0.0 < out.vx.value <= cap + 1e-9
+    assert out is not None and out.vx.value > cap + 1e-6
     assert s.take_failure() is None
     sim = _sim()
     for bad in ("unknown", 1.5, -0.1):

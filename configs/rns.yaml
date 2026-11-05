@@ -141,7 +141,7 @@ rns:
     replan_period_s: 2.0           # [sim] 周期重规划兜底 (G2 改截断精确触发)
     guide_lookahead_m: 4.0         # [sim] R* 前瞻距离 (S4A.5)
   health:
-    invalid_ratio_limit: 0.35      # [sim] RNS-I-2 强制限速阈 (20 S3.1.8)
+    invalid_ratio_limit: 0.35      # [sim] 99 U116 退役: RNS-I-2 地面无效像素限速不再执行 (20 S3.0A NM-7), 本键无运行时消费者, 保留未接线
   perception:
     seg_stale_ms: 300              # [doc] 与 T-50 同量级 (20 S3.1.11)
     no_seg_speed_cap_mps: 0.5      # [sim] 仅几何 FREE 时限速
