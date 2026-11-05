@@ -169,6 +169,18 @@ async def test_a_named_session_auto_finished_at_its_deadline_is_saved(rt):  # ma
 
 
 @pytest.mark.asyncio  # async case
+async def test_a_discard_names_what_it_threw_away(rt):  # 99 U137
+    """The spoken answer needs the name and count. MUTATION: drop name from
+    the discard detail -> red."""
+    ack = await _start(rt, "6号路径")  # named
+    await _drive(rt, 2.0, 3)  # three points
+    d = await rt.handle(_cmd("c-d", "discard", session_id=ack["detail"]["session_id"],
+                             reason="operator_cancel"), now_mono_s=110.0, now_ms=2000)  # F04
+    assert d["detail"]["name"] == "6号路径" and d["detail"]["discarded_points"] == 3  # said back
+    assert d["detail"]["kind"] == "route" and not rt.active  # mode left
+
+
+@pytest.mark.asyncio  # async case
 async def test_task_submit_is_refused_while_recording(rt):  # CMD-16
     """MUTATION: no teach_busy check in _submit -> the task is stored -> red."""
     await _start(rt, "4号路径")  # recording

@@ -372,7 +372,10 @@ class TeachRuntime:
             await self._clear_buffer(session.session_id)
             detail = {"session_id": session.session_id, "state": "closed",
                       "close_reason": session.close_reason,
-                      "discarded_points": self._recorder.point_count}
+                      "discarded_points": self._recorder.point_count,
+                      # 99 U137: what was thrown away, for the spoken answer
+                      "name": session.name or session.name_hint,
+                      "kind": session.kind}
             self._session = None
             self._recorder = None
             return teach_ack(cmd.cmd_id, "accepted", "OK", detail)
