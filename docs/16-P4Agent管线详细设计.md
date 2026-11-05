@@ -3684,6 +3684,11 @@ BC-1/BC-2 是纵深防御，防的是实现方漏了 BC-3。
 
 ### 11.3 ★★ 录制的对话层状态（★ v0.3 收敛 —— 会话与缓冲**不在 P4**）
 
+> ★★★ **2026-11-05 订正（`99` U133）**：语音录制改为「开始带全名、退出即保存」，下方 `pending_name` / `pending_overwrite` 两个追问态对语音路径**不再进入**（用户裁决「不允许有二次提问」）。现行实现：
+> - `slots/record_slots.py` 规则解析「(现在)开始录制X」（X 以 路径/路线/线路/环线/围栏 结尾才算完整名称）/ 退出类 / 录制状态问句，先于关键词与 LLM 层；
+> - `turn_orchestrator` 的录制态 = `state/teach` 会话处于 `arming / recording / paused`：此时 `_route_entry` 与 PTP 规则层对 A/B/C/D/E/H 类及除退出 / 取消 / 打点外的 F 类一律答复不下发；`session.recording.in_recording` 每轮由它置位（此前从无代码置位，U45 抑制从未生效）；
+> - 开始前按 `state/geo/manifest` 查同类重名；`cmd/teach start` 带 `start.name`；退出发 `finish`（P3 直接保存）；结果与拒绝原因由 `ack_speech` 按 `cmd/teach/ack` 播报。
+
 > `18` §8.2、CMD-15：**录制是多轮有状态流程，不是单轮槽位填充。**
 >
 > ★★ **v0.3 收敛裁定 D-B4**：v0.2 的 `RecordingSession` 带 `kind` / `buffer: list[GeoPoint]` / `started_ts` 与完整五态机，即把**采点缓冲放在 P4** —— 与 `11` §12A.2 明令裁定的「★ 会话在 P3，不在 P4」直接冲突。
