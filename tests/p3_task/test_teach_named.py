@@ -181,6 +181,26 @@ async def test_a_discard_names_what_it_threw_away(rt):  # 99 U137
 
 
 @pytest.mark.asyncio  # async case
+async def test_criterion_7_reads_estop_path_from_state_link(rt):  # 2026-11-05 runtime test
+    """Arming criterion 7 (2): state/robot reachable AND state/link estop_path
+    not down (11 S4.6 -- RobotState has no estop_path). The gate read
+    state/robot.estop_path, which never exists, so with no local gamepad
+    recording could never arm on the robot. MUTATION: read robot.get(
+    "estop_path") again -> the first start is refused -> red."""
+    rt.update_teleop({"sources": [{"device": "keyboard_cloud", "stale": False, "alive": True}]})  # network only
+    rt.update_robot({"hes": False})  # the real RobotState: no estop_path field
+    rt.update_estop_path("ok")  # P5's probe verdict on state/link
+    ok = await _start(rt, "7号路径")  # arms
+    assert ok["result"] == "accepted"  # criterion 7 (2) passed
+    await rt.handle(_cmd("c-x", "discard", session_id=ok["detail"]["session_id"]),
+                    now_mono_s=101.0, now_ms=1)  # close it
+    rt.update_estop_path("down")  # probe lost
+    rt.update_robot({"hes": False, "estop_path": "ok"})  # a robot field must not count
+    bad = await _start(rt, "8号路径", t=102.0)  # refused
+    assert bad["result"] == "rejected" and bad["detail"]["reason"] == "no_nonvoice_estop"  # fail-safe
+
+
+@pytest.mark.asyncio  # async case
 async def test_task_submit_is_refused_while_recording(rt):  # CMD-16
     """MUTATION: no teach_busy check in _submit -> the task is stored -> red."""
     await _start(rt, "4号路径")  # recording

@@ -505,6 +505,11 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     "gw_start_mono": p.get("gw_start_mono"),
                     "link_epoch": p.get("link_epoch"),
                     "disconnected_s": p.get("disconnected_s"),
+                    # 11 S4.6 LinkState.estop_path (P5's S8.5 probe verdict):
+                    # the recording arming gate's criterion 7 (2) reads it
+                    # (2026-11-05 runtime test: it used to look in state/robot,
+                    # which has no such field, and could never pass)
+                    "estop_path": p.get("estop_path"),
                 })
 
             # 15 S11.1 ES-1..3 estop handling. freeze() is idempotent and a
@@ -1059,6 +1064,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             teach.update_health(_body)
                         elif _key == "robot":
                             teach.update_robot(_body)
+                            # the S8.5 probe verdict rides state/link (11 S4.6)
+                            teach.update_estop_path(link_holder.get("estop_path"))
                         elif _key == "power":
                             teach.update_power(_body)
                         else:

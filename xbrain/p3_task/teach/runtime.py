@@ -129,6 +129,7 @@ class TeachRuntime:
         self._pose_mono_s: float = -1e9
         self._health: Optional[Dict[str, Any]] = None
         self._robot: Optional[Dict[str, Any]] = None
+        self._estop_path: Optional[str] = None  # state/link.estop_path (11 S4.6)
         self._power: Optional[Dict[str, Any]] = None
         self._teleop: Optional[Dict[str, Any]] = None
         self._last_moving_mono_s: float = -1e9
@@ -164,6 +165,15 @@ class TeachRuntime:
 
     def update_robot(self, data: Dict[str, Any]) -> None:
         self._robot = data
+
+    def update_estop_path(self, value: Optional[str]) -> None:
+        """state/link.estop_path (11 S4.6, P5's S8.5 probe verdict: ok /
+        degraded / down). Arming criterion 7 (2) is "state/robot reachable AND
+        estop_path != down" -- and estop_path is a LinkState field, not a
+        RobotState one. Until the 2026-11-05 runtime test this gate read
+        state/robot.estop_path, which never exists, so the criterion could
+        never pass and recording never armed without a local gamepad."""
+        self._estop_path = value
 
     def update_power(self, data: Dict[str, Any]) -> None:
         self._power = data
@@ -220,7 +230,9 @@ class TeachRuntime:
             and s.get("device") in _local_estop_devices
             for s in sources)
         # Criterion 2: state/robot reachable and its e-stop path not down.
-        estop_ok = bool(robot) and robot.get("estop_path") not in (None, "down")
+        # criterion 7 (2): state/robot reachable AND the S8.5 probe (state/link
+        # estop_path) not down -- unknown counts as not ok (fail-safe)
+        estop_ok = bool(robot) and self._estop_path not in (None, "down")
         return ArmingInputs(
             has_active_session=self._session is not None
             and self._session.state not in ("idle", "closed"),
