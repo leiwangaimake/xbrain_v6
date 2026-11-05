@@ -82,6 +82,7 @@ NEXT EX-1 gap 3, not fixed here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional  # PC-3: the chassis may not report RemainMile
 
 VALID_TYPES = frozenset({
     "patrol", "goto", "charge", "return_home", "standby", "teach", "follow",
@@ -108,17 +109,32 @@ def check_pc2_priority(priority: int):
     return None
 
 
-def check_pc3_energy_reach(soc_pct: float,
-                            distance_m: float,
-                            energy_per_meter_pct: float,
-                            return_reserve_pct: float):
-    """PC-3: soc_pct must cover forward distance PLUS return reserve.
-    Refuse when equal (=), not just when less; the reserve is meant
-    to be untouched."""
-    need = distance_m * energy_per_meter_pct + return_reserve_pct
-    if soc_pct <= need:
+def check_pc3_energy_reach(remain_mile_km: Optional[float],
+                           task_km: float,
+                           to_dock_km: float,
+                           reserve_ratio: float):
+    """PC-3 = 15 S5.3 V-3, on the CHASSIS range (99 U125):
+
+        usable = remain_mile_km * (1 - reserve_ratio)
+        reachable <=> usable >= task_km + to_dock_km     (15 S5.3, ">=")
+
+    remain_mile_km is PowerState.remain_mile_km (11 S4.2: "the chassis
+    supplies it; the charge criterion uses it directly, no self-computed
+    energy rate"). Until 2026-11-05 this function took soc_pct and an
+    energy_per_meter_pct the system would have had to calibrate itself --
+    the opposite of 15 S5.3 and of the user's U125 ruling ("all battery
+    functions run on chassis data"); it had no production caller then and
+    has none now (see the module note above).
+    remain_mile_km None (the chassis did not report it, CHG-12): no verdict,
+    returns None -- the same choice charge/trigger.py makes for criterion B,
+    and the user's 2026-11-05 ruling "cannot judge -> go, and report"."""
+    if remain_mile_km is None:  # chassis gave no range: cannot judge, not a refusal
+        return None
+    usable = remain_mile_km * (1.0 - reserve_ratio)  # 15 S5.3 reserve
+    need = task_km + to_dock_km  # the task plus the way to the nearest dock
+    if usable < need:  # ">=" is reachable, 15 S5.3
         return PreconditionFailure(
-            "PC-3", f"soc={soc_pct}%, need>{need}%")
+            "PC-3", f"usable {usable:.2f} km < need {need:.2f} km")
     return None
 
 

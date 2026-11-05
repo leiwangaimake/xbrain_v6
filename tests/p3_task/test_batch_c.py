@@ -179,19 +179,22 @@ def test_pc2_priority_in_range_passes():
     assert check_pc2_priority(100) is None
 
 
-def test_pc3_refuses_when_equal_to_need():
-    """PC-3: soc == need is REFUSED (reserve is untouched)."""
-    r = check_pc3_energy_reach(
-        soc_pct=20.0, distance_m=100.0,
-        energy_per_meter_pct=0.1, return_reserve_pct=10.0)
-    assert r is not None and r.code == "PC-3"
+def test_pc3_uses_the_chassis_range():
+    """PC-3 = 15 S5.3 V-3 on PowerState.remain_mile_km (99 U125).
+    usable = 5.0 * 0.8 = 4.0 km. MUTATION: drop the reserve -> 4.5 passes;
+    '>' instead of '>=' -> the exact 4.0 is refused."""
+    r = check_pc3_energy_reach(remain_mile_km=5.0, task_km=3.0,
+                               to_dock_km=1.5, reserve_ratio=0.2)
+    assert r is not None and r.code == "PC-3"   # need 4.5 > usable 4.0
+    assert check_pc3_energy_reach(remain_mile_km=5.0, task_km=3.0,
+                                  to_dock_km=1.0, reserve_ratio=0.2) is None  # exactly 4.0: reachable
 
 
-def test_pc3_passes_when_over_need():
-    r = check_pc3_energy_reach(
-        soc_pct=25.0, distance_m=100.0,
-        energy_per_meter_pct=0.1, return_reserve_pct=10.0)
-    assert r is None
+def test_pc3_without_a_chassis_range_gives_no_verdict():
+    """The chassis did not report RemainMile: no refusal (same as the charge
+    trigger's criterion B). MUTATION: treat None as 0 -> every task refused."""
+    assert check_pc3_energy_reach(remain_mile_km=None, task_km=3.0,
+                                  to_dock_km=1.0, reserve_ratio=0.2) is None
 
 
 def test_pc5_empty_json_fails():
