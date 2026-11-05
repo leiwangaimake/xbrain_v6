@@ -31,6 +31,17 @@ An accepted command other than a capture says nothing more: the turn already
 said what it does, and saying it twice is noise on a speaker that also does
 broadcasts. (99 U109 for the capture, U111 for the other three keys.)
 
+What happens AFTER an accepted submit (16 S8.3C, 99 U140): the task can still
+fail when P3 runs it (no position, target or route gone, P1 never confirmed
+the route, navigation failed on the way). The operator had heard "好的,去X"
+and then nothing. An accepted submit's task_id is remembered with the task's
+spoken name; on_task_event() reads the 11 S6.2 task events (event/*/task) and
+says "X没有完成: why" for a failed / rejected one, forgets it on completed /
+cancelled, and says nothing about tasks it did not submit. The why comes from
+detail.error.cause (closed set) or detail.error.fail_reason -- never from the
+free-text reason. A timed task is covered the same way; a P4 restart empties
+the table and a task submitted before it fails silently (said, not hidden).
+
 How it is matched to the turn: the wiring hands every turn's published
 frames to note_turn(). A command frame is remembered under its cmd_id with
 the TTS source of that turn's own reply -- only when the turn spoke at all,
@@ -78,6 +89,9 @@ from xbrain.p4_agent.runtime.intent_dispatch import (  # the command keys
 #: The answer keys this speaker subscribes, one per command key (11 S2.2.4).
 ACK_KEYS = tuple(k + "/ack" for k in (CMD_TEACH, CMD_TASK, CMD_GEO,
                                       CMD_MOTION_INTENT))  # wiring subscribes these
+
+#: 11 S6.2 task events, every severity (info carries completed, warn failed).
+TASK_EVENT_KEY = "event/*/task"  # wiring subscribes this (16 S8.3C)
 
 #: Outstanding commands remembered at once (one per turn).
 _PENDING_MAX = 32  # slots, not a time
@@ -163,6 +177,20 @@ _MOTION_REFUSED = {
 }
 _MOTION_OTHER = "这个动作没有执行"  # any other code
 
+#: 16 S8.3C task failure speech (99 U140). FS-3 sentence and names.
+_TASK_FAILED = "{label}没有完成: {why}"  # with a known cause
+_TASK_FAILED_BARE = "{label}没有完成"  # cause unknown
+_TASK_LABEL = {"return_home": "返航", "follow": "跟随"}  # no slot needed
+#: FS-4: 11 S6.2 error.cause in words.
+_FAIL_CAUSE = {
+    "no_position": "现在拿不到定位",
+    "target_missing": "找不到目标点或路径",
+    "plan_refused": "路线生成失败",
+    "route_unconfirmed": "运动模块没有确认路线",
+}
+_FAIL_EN_ROUTE = "途中导航失败"  # error.fail_reason (11 S3.5B)
+_FAIL_REJECTED = "任务检查没有通过"  # kind rejected (admission checks)
+
 
 def _json(data: bytes) -> Any:  # safe decode
     """Decode one frame; None for anything that is not JSON."""
@@ -185,6 +213,8 @@ class AckSpeaker:  # one per process
     def __init__(self) -> None:  # empty
         # cmd_id -> (command key, what to say it about, speak source).
         self._pending: "OrderedDict[str, Tuple[str, Dict[str, Any], str]]" = OrderedDict()
+        # task_id -> (spoken task name, speak source) of accepted submits (FS-1).
+        self._tasks: "OrderedDict[str, Tuple[str, str]]" = OrderedDict()
 
     def note_turn(self, pairs: Iterable[Tuple[str, bytes]]) -> None:  # a turn's frames
         """Remember the command frames among one turn's published frames.
@@ -224,14 +254,76 @@ class AckSpeaker:  # one per process
         if hit is None:
             return None  # another initiator's, or already answered
         key, cmd, source = hit  # what was sent, where to say it
+        if key == CMD_TASK and cmd.get("action") == "submit" and ack.get("result") == "accepted":
+            self._remember_task(cmd, ack, source)  # FS-1: its outcome may follow
         text = _sentence(key, cmd, ack)  # one sentence, or None
         if text is None:
             return None  # accepted: the turn already said it
-        payload = {"schema": "p4_speak_v1", "text": text, "source": source,
-                   "mono_ms": int(time.monotonic() * 1000)}  # same shape as a turn reply
-        return (CMD_AUDIO_SPEAK,
-                json.dumps(payload, ensure_ascii=False,
-                           separators=(",", ":")).encode("utf-8"))  # wire bytes
+        return _speak(text, source)  # on the turn's source
+
+    def _remember_task(self, cmd: Dict[str, Any], ack: Dict[str, Any], source: str) -> None:
+        """FS-1: remember an accepted submit under the task_id P3 gave it."""
+        detail = ack.get("detail") if isinstance(ack.get("detail"), dict) else {}
+        task_id = detail.get("task_id")  # P3 allocates (11 S7.2)
+        if not isinstance(task_id, str) or not task_id:
+            return  # nothing to match an event to
+        self._tasks[task_id] = (_task_label(cmd.get("task")), source)  # newest last
+        while len(self._tasks) > _PENDING_MAX:  # bounded, like the commands
+            self._tasks.popitem(last=False)  # drop the oldest
+
+    def on_task_event(self, data: bytes) -> Optional[Tuple[str, bytes]]:
+        """FS-2: the (key, frame) to publish for one 11 S6.2 task event, or None."""
+        ev = _json(data)  # Event shape (S6.1)
+        detail = ev.get("detail") if isinstance(ev, dict) else None
+        if not isinstance(detail, dict):
+            return None  # not an event
+        kind = detail.get("kind")  # accepted / started / completed / failed / ...
+        if kind not in ("failed", "rejected", "completed", "cancelled"):
+            return None  # not an outcome
+        hit = self._tasks.pop(detail.get("task_id"), None)  # ours? (forgotten either way)
+        if hit is None or kind in ("completed", "cancelled"):
+            return None  # another initiator's, or nothing to say (FS-2)
+        label, source = hit  # the name and where to say it
+        why = _fail_why(kind, detail.get("error"))  # FS-4
+        text = (_TASK_FAILED.format(label=label, why=why) if why
+                else _TASK_FAILED_BARE.format(label=label))  # FS-3
+        return _speak(text, source)  # on the submitting turn's source
+
+
+def _speak(text: str, source: str) -> Tuple[str, bytes]:
+    """One p4_speak_v1 frame, the same shape as a turn reply."""
+    payload = {"schema": "p4_speak_v1", "text": text, "source": source,
+               "mono_ms": int(time.monotonic() * 1000)}  # same shape as a turn reply
+    return (CMD_AUDIO_SPEAK,
+            json.dumps(payload, ensure_ascii=False,
+                       separators=(",", ":")).encode("utf-8"))  # wire bytes
+
+
+def _task_label(task: Any) -> str:
+    """FS-3: the spoken name of a submitted task, from its type and slots."""
+    task = task if isinstance(task, dict) else {}
+    params = task.get("params") if isinstance(task.get("params"), dict) else {}
+    slots = params.get("slots") if isinstance(params.get("slots"), dict) else {}
+    ttype = task.get("type")  # 15 S12 task_type
+    if ttype == "goto" and slots.get("waypoint"):
+        return "去%s" % slots["waypoint"]  # B01
+    if ttype == "patrol":
+        return "沿%s巡逻" % slots["route"] if slots.get("route") else "再巡逻"  # B02 / B04
+    if ttype == "charge":
+        return "去%s" % slots["dock"] if slots.get("dock") else "去充电站"  # B09
+    return _TASK_LABEL.get(ttype, "任务")  # B08 / B11 / other
+
+
+def _fail_why(kind: Any, error: Any) -> str:
+    """FS-4: the reason in words; '' when it is not known."""
+    error = error if isinstance(error, dict) else {}
+    if error.get("cause") in _FAIL_CAUSE:
+        return _FAIL_CAUSE[error["cause"]]  # geometry delivery (11 S6.2)
+    if error.get("fail_reason"):
+        return _FAIL_EN_ROUTE  # P1 failed on the way (11 S3.5B)
+    if kind == "rejected":
+        return _FAIL_REJECTED  # admission checks
+    return ""  # said without a reason, never guessed
 
 
 def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[str]:

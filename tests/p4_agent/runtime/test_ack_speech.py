@@ -19,6 +19,7 @@ import pytest  # marker
 
 from xbrain.p4_agent.runtime.ack_speech import (  # unit under test
     ACK_KEYS,  # the answer keys
+    TASK_EVENT_KEY,  # 16 S8.3C
     AckSpeaker,  # unit under test
 )
 
@@ -240,3 +241,81 @@ def test_outstanding_captures_are_bounded():  # bound
     assert sp.on_ack(_b({"cmd_id": "c-0", "result": "accepted"})) is None  # evicted
     assert sp.on_ack(_b({"cmd_id": "c-39", "result": "accepted"})) is not None  # kept
     assert "cmd/teach/ack" in ACK_KEYS  # 11 S2.2.4 key
+
+
+# -- 16 S8.3C task failure speech (99 U140) -----------------------------------------
+def _submitted(sp, task, task_id="t-1", source="tts_local", spoke=True):  # one accepted submit
+    """A voice submit of task, accepted by P3 under task_id."""
+    pairs = _sent("cmd/task", {"cmd_id": "c-1", "action": "submit", "task": task}, source)
+    sp.note_turn(pairs if spoke else pairs[:1])  # the turn
+    assert sp.on_ack(_b({"cmd_id": "c-1", "result": "accepted", "code": "OK",
+                         "detail": {"task_id": task_id}})) is None  # accepted: silent
+
+
+def _event(kind, task_id="t-1", error=None):  # one 11 S6.2 task event
+    """event/{sev}/task as P3 publishes it."""
+    detail = {"kind": kind, "task_id": task_id, "state": "failed"}
+    if error is not None:
+        detail["error"] = error  # 99 U140 terminal facts
+    return _b({"eid": "task-x-1", "title": "task", "detail": detail, "src": "p3_task"})
+
+
+_GOTO = {"type": "goto", "params": {"slots": {"waypoint": "1号测试点"}, "waypoint_id": "w-a"}}
+
+
+@pytest.mark.parametrize("task,kind,error,text", [
+    (_GOTO, "failed", {"code": "E_GEO_INCOMPLETE", "cause": "no_position"},
+     "去1号测试点没有完成: 现在拿不到定位"),  # the 11-05 runtime test case
+    ({"type": "patrol", "route_id": "r-1", "params": {"slots": {"route": "1号路径"}}},
+     "failed", {"code": "E_GEO_INCOMPLETE", "cause": "route_unconfirmed"},
+     "沿1号路径巡逻没有完成: 运动模块没有确认路线"),  # RA-3
+    ({"type": "patrol", "params": {"slots": {}}}, "failed",
+     {"code": "E_NOT_FOUND", "cause": "target_missing"}, "再巡逻没有完成: 找不到目标点或路径"),  # B04
+    ({"type": "charge", "params": {"slots": {}}}, "failed",
+     {"code": "E_SCHEMA", "cause": "plan_refused"}, "去充电站没有完成: 路线生成失败"),  # B09
+    ({"type": "return_home", "params": {"slots": {}}}, "failed",
+     {"fail_reason": "max_deviation"}, "返航没有完成: 途中导航失败"),  # P1 on the way
+    (_GOTO, "rejected", None, "去1号测试点没有完成: 任务检查没有通过"),  # admission
+    (_GOTO, "failed", {"code": "E_INTERNAL", "detail": "x"}, "去1号测试点没有完成"),  # unknown
+])
+def test_a_failed_task_is_said_with_why(task, kind, error, text):  # FS-2..FS-4
+    """The 2026-11-05 runtime test: a goto failed with E_GEO_INCOMPLETE and the
+    robot had only said "好的,去1号测试点". MUTATION: ignore task events ->
+    None -> red; MUTATION: drop error.cause -> no reason -> red."""
+    sp = AckSpeaker()  # fresh
+    _submitted(sp, task)  # accepted
+    key, said, source = _said(sp.on_task_event(_event(kind, error=error)))  # the outcome
+    assert (key, said, source) == ("cmd/audio/speak", text, "tts_local")  # on the turn's source
+
+
+def test_completed_and_cancelled_are_silent_and_forgotten():  # FS-2
+    """MUTATION: voice every terminal kind -> a sentence for completed -> red;
+    MUTATION: keep the entry after completed -> a later failed is voiced -> red."""
+    sp = AckSpeaker()  # fresh
+    _submitted(sp, _GOTO)  # accepted
+    assert sp.on_task_event(_event("completed")) is None  # nothing to say
+    assert sp.on_task_event(_event("failed", error={"cause": "no_position"})) is None  # forgotten
+
+
+def test_only_our_own_voiced_submits_are_said():  # FS-1
+    """MUTATION: voice any task's failure -> the HMI's task speaks -> red;
+    MUTATION: remember a submit the turn did not speak for -> red."""
+    sp = AckSpeaker()  # fresh
+    assert sp.on_task_event(_event("failed", "t-hmi", {"cause": "no_position"})) is None  # not ours
+    _submitted(sp, _GOTO, task_id="t-2", spoke=False)  # silent turn
+    assert sp.on_task_event(_event("failed", "t-2", {"cause": "no_position"})) is None  # stays silent
+    sp.note_turn(_sent("cmd/task", {"cmd_id": "c-9", "action": "submit", "task": _GOTO}))
+    sp.on_ack(_b({"cmd_id": "c-9", "result": "rejected", "code": "E_DEGRADED",
+                  "detail": {"task_id": "t-3"}}))  # refused: said by on_ack, not remembered
+    assert sp.on_task_event(_event("failed", "t-3", {"cause": "no_position"})) is None
+
+
+def test_started_is_not_an_outcome_and_the_key_covers_every_severity():  # FS-2
+    """MUTATION: pop on started -> the later failure is lost -> red;
+    MUTATION: subscribe event/warn/task only -> completed (info) never forgets."""
+    sp = AckSpeaker()  # fresh
+    _submitted(sp, _GOTO)  # accepted
+    assert sp.on_task_event(_event("started")) is None  # not an outcome
+    assert _said(sp.on_task_event(_event("failed", error={"cause": "no_position"})))[1].startswith("去1号测试点")
+    assert TASK_EVENT_KEY == "event/*/task"  # info and warn
+
