@@ -79,6 +79,12 @@ def test_arrival_gives_zero_velocity_and_closes_mission():
     # then is_active False (no longer holds the 900 slot), arrival latched once.
     s = RnsSource(cfg=_cfg(), r_eff_m=R_EFF)
     s.load_mission(_mission())
+    # 99 U127 A-RT-2a: arrival needs the path to have been travelled (remaining
+    # arc <= 2 * radius). This case used to teleport to (9.5, 0) on the first
+    # tick and expect arrival -- the distance-only rule that "arrived" a ring
+    # at its own start. Drive along the path first, as a robot does.
+    for i in range(1, 19):  # 0.5 .. 9.0 m, inside the search window each tick
+        s.compute(Ctx(pose_xy=(i * 0.5, 0.0), v_nom_mps=2.0))
     out = s.compute(Ctx(pose_xy=(9.5, 0.0), v_nom_mps=2.0))
     assert out.vx.value == 0.0
     assert out.wz == 0.0

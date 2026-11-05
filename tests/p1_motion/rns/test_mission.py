@@ -106,3 +106,19 @@ def test_single_point_goto_anchors_start_at_first_pose():
     # off the line sideways: deviation is the perpendicular offset
     fs2 = m.advance((2.0, 1.5), lookahead_m=2.0)
     assert abs(fs2.projection.deviation_m - 1.5) < 1e-9
+
+
+def test_a_ring_that_ends_where_it_starts_does_not_arrive_at_the_start():
+    """A-RT-2a (99 U127): a closed patrol (and any recorded ring) ends on its
+    own start point. Distance-only arrival declared it arrived on the first
+    tick; the remaining-arc condition keeps it running until the ring is
+    travelled. MUTATION: drop `remaining_arc <= 2 * radius` -> arrived on
+    tick one -> red; require remaining arc 0 -> never arrives -> red."""
+    ring = [(0.0, 0.0)]  # a 10 m square, 0.5 m spacing, back to the start
+    for a, b in (((0, 0), (10, 0)), ((10, 0), (10, 10)), ((10, 10), (0, 10)), ((0, 10), (0, 0))):
+        ring += [(a[0] + (b[0] - a[0]) * k / 20.0, a[1] + (b[1] - a[1]) * k / 20.0) for k in range(1, 21)]
+    m = _mk(ring)  # recorded path, origin route
+    assert not m.advance((0.1, 0.0), lookahead_m=2.0).arrived  # at the start: not arrived
+    for p in ring[1:-3]:  # drive round the ring
+        assert not m.advance(p, lookahead_m=2.0).arrived  # still travelling
+    assert m.advance((0.0, 0.3), lookahead_m=2.0).arrived  # back at the start after the lap

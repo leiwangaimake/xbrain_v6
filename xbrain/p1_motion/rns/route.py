@@ -257,7 +257,16 @@ class Mission:
         # A-RT-2: arrival is judged against the ENDPOINT only, never against the
         # current segment's far vertex. On a 0.5 m path, an intermediate arrival
         # radius (~1 m) would skip several points and break the shape.
-        arrived = dist_end < self._arrival_radius_m
+        # A-RT-2a (99 U127, 2026-11-05): AND the projection must have travelled
+        # the polyline -- remaining arc <= 2 * arrival radius. A closed patrol
+        # ends where it starts (the entry point, U127 plan) and a recorded ring
+        # ends on its first vertex, so the distance test alone "arrived" on the
+        # first tick. On the final straight approach remaining arc ~ distance
+        # < radius < 2 * radius, so an ordinary arrival is unchanged; a goto
+        # (two-point polyline after anchoring) likewise. No new parameter.
+        remaining_arc = self._tracker.total_length_m - proj.s_arc_m
+        arrived = (dist_end < self._arrival_radius_m
+                   and remaining_arc <= 2.0 * self._arrival_radius_m)
         return FollowState(
             projection=proj,
             lookahead_point=r,
