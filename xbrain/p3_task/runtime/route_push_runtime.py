@@ -84,6 +84,17 @@ class PushResult:
     frames: int
     cmd_id: str
     reason: str          # '' on success, else why nothing was sent
+    # 11 S6.2 (99 U140): the closed cause a failed task carries in
+    # error_context_json and so in its terminal event -- '' on success, else
+    # one of PUSH_FAIL_CAUSES. reason above is free text for the log; P4
+    # voices the failure from THIS field, never by parsing reason.
+    cause: str
+
+
+#: 11 S6.2 error.cause for a geometry-delivery failure (99 U140). P3 also
+#: writes 'route_unconfirmed' (RA-2 / RA-3 fatal, main_wiring), which is not a
+#: push outcome and so never appears in a PushResult.
+PUSH_FAIL_CAUSES = ("no_position", "target_missing", "plan_refused")
 
 
 async def load_route_for_task(geo_conn, route_geo_id: str):
@@ -154,11 +165,12 @@ async def push_route_for_task(*, task_id: str, route_geo_id: str,
     if trigger is RoutePushTrigger.RP4_TASK_TERMINAL:
         # Stated as a guard rather than left to the caller: "do nothing" is a
         # rule that disappears the moment somebody adds an else branch.
-        return PushResult(False, 0, "", "rp4_pushes_nothing")
+        return PushResult(False, 0, "", "rp4_pushes_nothing", "plan_refused")
     try:
         row, anchors = await load_route_for_task(geo_conn, route_geo_id)
     except LookupError as exc:
-        return PushResult(False, 0, "", "route_missing: %s" % exc)
+        return PushResult(False, 0, "", "route_missing: %s" % exc,
+                          "target_missing")
     _gid, name, waypoint_ids, path_points, loop_mode, direction, \
         total_len_m, rev = row
     try:
@@ -191,7 +203,7 @@ async def push_route_for_task(*, task_id: str, route_geo_id: str,
         # the report this whole batch exists to stop producing.
         _logger.error("p3 route push refused for task %s (%s): %s",
                       task_id, route_geo_id, exc)
-        return PushResult(False, 0, "", "refused: %s" % exc)
+        return PushResult(False, 0, "", "refused: %s" % exc, "plan_refused")
 
     now_iso = iso_from_wall_ms(now_wall_ms)
     # SN-1: snapshot first, and COMMITTED before the first frame leaves.
@@ -225,7 +237,7 @@ async def push_route_for_task(*, task_id: str, route_geo_id: str,
         "p3 %s push task=%s route=%s rev=%d points=%d frames=%d cmd_id=%s",
         trigger.value, task_id, snap.route_id, snap.rev, snap.point_count,
         len(frames), frames[0]["cmd_id"])
-    return PushResult(True, len(frames), frames[0]["cmd_id"], "")
+    return PushResult(True, len(frames), frames[0]["cmd_id"], "", "")
 
 
 #: The route_id a goto's single-point geometry carries (11 S3.5A needs one; a
@@ -340,17 +352,17 @@ async def push_goto_for_task(*, task_id: str, params: Dict[str, Any],
     target; the caller fails the task with that reason (15 S2.4.2).
     """
     if trigger is RoutePushTrigger.RP4_TASK_TERMINAL:
-        return PushResult(False, 0, "", "rp4_pushes_nothing")
+        return PushResult(False, 0, "", "rp4_pushes_nothing", "plan_refused")
     try:
         route_id, rev, lat, lon, radius, name = await load_goto_target(
             geo_conn, params, task_id)
     except GotoTargetError as exc:
-        return PushResult(False, 0, "", "goto_target: %s" % exc)
+        return PushResult(False, 0, "", "goto_target: %s" % exc, "target_missing")
     if start is None:
         # P1 cannot drive to a point without knowing where it is either; the
         # snapshot needs the leg length. Refused, not pushed with a guess.
         return PushResult(False, 0, "", "goto_target: no current position "
-                                        "(state/pose has no lat/lon)")
+                                        "(state/pose has no lat/lon)", "no_position")
     plan = None  # U127 route-following plan, when one applies
     if route_membership_m is not None:  # route-aware goto configured
         plan = plan_goto(start, (lat, lon), await load_route_geoms(geo_conn),
@@ -376,7 +388,7 @@ async def push_goto_for_task(*, task_id: str, params: Dict[str, Any],
     except (SnapshotBuildError, RoutePushError) as exc:
         _logger.error("p3 goto push refused for task %s (%s): %s",
                       task_id, route_id, exc)
-        return PushResult(False, 0, "", "refused: %s" % exc)
+        return PushResult(False, 0, "", "refused: %s" % exc, "plan_refused")
     now_iso = iso_from_wall_ms(now_wall_ms)
     # SN-1, same order as a route: snapshot (and progress run) committed
     # before the first frame leaves.
@@ -395,7 +407,7 @@ async def push_goto_for_task(*, task_id: str, params: Dict[str, Any],
         "p3 %s goto push task=%s target=%s (%s) rev=%d leg=%.1fm radius=%.2fm "
         "cmd_id=%s", trigger.value, task_id, snap.route_id, name, snap.rev,
         snap.total_len_m, radius, frames[0]["cmd_id"])
-    return PushResult(True, len(frames), frames[0]["cmd_id"], "")
+    return PushResult(True, len(frames), frames[0]["cmd_id"], "", "")
 
 
 async def load_route_geoms(geo_conn) -> list:

@@ -416,7 +416,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 """
                 cur = await conn.execute(
                     "SELECT task_type, route_geo_id, started_at, finished_at, "
-                    "       duration_sec, mission_json FROM tasks "
+                    "       duration_sec, mission_json, error_context_json "
+                    "FROM tasks "
                     "WHERE task_id=?", (task_id,))
                 row = await cur.fetchone()
                 if row is None:
@@ -433,6 +434,17 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 _total = _waypoint_total({"mission_json": row[5]})
                 if _total is not None:
                     out["total_count"] = _total
+                # 11 S6.2 (99 U140): a failed task's error_context_json rides
+                # out as detail.error -- {code, detail, cause} for a geometry
+                # failure, {fail_reason} for a navigation failure. P4 voices
+                # the failure from it; until then the event said "failed" and
+                # nobody could tell the operator why.
+                try:
+                    _err = json.loads(row[6]) if row[6] else None
+                except ValueError:
+                    _err = None  # unreadable context: the event still goes out
+                if isinstance(_err, dict):
+                    out["error"] = _err
                 return out
 
             # 11 S6.2 geo events: 地理要素 CRUD 审计. applier 已经把
@@ -744,7 +756,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 if not res.pushed:
                     pushing["task_id"] = None
                     await _fail_task_for_geometry(task_id, res.reason,
-                                                  E_GEO_INCOMPLETE)
+                                                  E_GEO_INCOMPLETE, res.cause)
 
             async def _push_route_on_dispatch(task_id: str) -> None:
                 """EX-2 RP-1. patrol pushes its route; goto pushes its route
@@ -788,7 +800,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     if gid is None:
                         # 15 S9.5.1: no target row -> E_NOT_FOUND. Failed,
                         # never left running with nothing moving.
-                        await _fail_task_for_geometry(task_id, missing, E_NOT_FOUND)
+                        await _fail_task_for_geometry(task_id, missing, E_NOT_FOUND,
+                                                      "target_missing")
                         return
                     params = {"waypoint_id": gid}
                     _logger.info("p3 %s %s -> point %s", full.task_type,
@@ -814,7 +827,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     lap_spec = lap_spec_from_params(_goto_params(full))
                 except ValueError as exc:
                     pushing["task_id"] = None
-                    await _fail_task_for_geometry(task_id, str(exc), E_SCHEMA)
+                    await _fail_task_for_geometry(task_id, str(exc), E_SCHEMA,
+                                                  "plan_refused")
                     return
                 pushing["task_id"] = task_id
                 pushing["route_geo_id"] = route_geo_id
@@ -840,7 +854,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 if not res.pushed:
                     pushing["task_id"] = None
                     await _fail_task_for_geometry(task_id, res.reason,
-                                                  E_GEO_INCOMPLETE)
+                                                  E_GEO_INCOMPLETE, res.cause)
 
             async def _push_next_pass(task_id: str) -> None:
                 """99 U131 RP-5: the next pass of a multi-pass patrol, from
@@ -868,10 +882,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 if not res.pushed:
                     pushing["task_id"] = None
                     await _fail_task_for_geometry(task_id, res.reason,
-                                                  E_GEO_INCOMPLETE)
+                                                  E_GEO_INCOMPLETE, res.cause)
 
             async def _fail_task_for_geometry(task_id: str, why: str,
-                                              code: str) -> None:
+                                              code: str, cause: str) -> None:
                 """15 S2.4.2 / S11.2: a task whose geometry could not be
                 delivered goes to `failed` with E_GEO_INCOMPLETE -- NOT
                 suspended (11 S4.4's suspend_reason closed set has no entry
@@ -892,8 +906,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     await conn.execute(
                         "UPDATE tasks SET error_context_json=? "
                         "WHERE task_id=?",
-                        (json.dumps({"code": code,
-                                     "detail": why}, ensure_ascii=False),
+                        # cause: the 11 S6.2 closed value P4 voices the
+                        # failure by (99 U140); detail stays the log text.
+                        (json.dumps({"code": code, "detail": why,
+                                     "cause": cause}, ensure_ascii=False),
                          task_id))
                     await conn.commit()
                     await _make_publish(
@@ -923,7 +939,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     await _fail_task_for_geometry(
                         task_id, "%s after %d attempt(s)"
                         % (outcome.ack.value, outcome.attempts),
-                        E_GEO_INCOMPLETE)
+                        E_GEO_INCOMPLETE, "route_unconfirmed")
                     return
                 # Retry: the WHOLE route again, not the missing chunks --
                 # 11 S3.5A discards the whole set on a gap, so P1 holds no
@@ -948,7 +964,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 if not res.pushed:
                     pushing["task_id"] = None
                     await _fail_task_for_geometry(task_id, res.reason,
-                                                  E_GEO_INCOMPLETE)
+                                                  E_GEO_INCOMPLETE, res.cause)
 
             last_hb = time.monotonic()
             last_geo = 0.0            # 0 -> publish geo on the very first pass

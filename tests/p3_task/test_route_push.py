@@ -435,6 +435,7 @@ async def test_a_deleted_route_refuses_without_raising(dbs):
         start=None,  # pre-U127 single-pass / single-point behaviour
         lap_spec=LapSpec(loops=1, round_trip=False))  # one pass (U131)
     assert res.pushed is False and "route_missing" in res.reason
+    assert res.cause == "target_missing"  # 11 S6.2 closed cause (99 U140)
     assert pub.puts == []
 
 
@@ -538,21 +539,23 @@ async def test_goto_push_sends_one_point_from_the_waypoint(dbs):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("params, start, why", [
-    ({"waypoint_id": "w-gate"}, None, "no current position"),
-    ({"waypoint_id": "w-nowhere"}, (35.0, 135.0), "not found"),
-    ({"lat": 35.001, "lon": 135.0}, (35.0, 135.0), "no params.arrive_radius_m"),
+@pytest.mark.parametrize("params, start, why, cause", [
+    ({"waypoint_id": "w-gate"}, None, "no current position", "no_position"),
+    ({"waypoint_id": "w-nowhere"}, (35.0, 135.0), "not found", "target_missing"),
+    ({"lat": 35.001, "lon": 135.0}, (35.0, 135.0), "no params.arrive_radius_m",
+     "target_missing"),
     ({"target": {"lat": 35.001, "lon": 135.0}}, (35.0, 135.0),
-     "no params.arrive_radius_m"),
+     "no params.arrive_radius_m", "target_missing"),
     ({"waypoint_id": "w-gate", "arrive_radius_m": 0}, (35.0, 135.0),
-     "must be a positive number"),
+     "must be a positive number", "target_missing"),
     ({"waypoint_id": "w-gate", "arrive_radius_m": True}, (35.0, 135.0),
-     "must be a positive number"),
-    ({}, (35.0, 135.0), "no waypoint_id"),
+     "must be a positive number", "target_missing"),
+    ({}, (35.0, 135.0), "no waypoint_id", "target_missing"),
 ])
-async def test_goto_push_refuses_without_sending(dbs, params, start, why):
+async def test_goto_push_refuses_without_sending(dbs, params, start, why, cause):
     """MUTATION: push with a guessed start when the pose is missing -> the
-    first case sends a frame and fails."""
+    first case sends a frame and fails. MUTATION (99 U140): report the
+    missing pose as target_missing -> P4 says the wrong reason -> red."""
     task_conn, geo_conn = dbs
     await _seed_goto(task_conn, geo_conn)
     pub = _Pub()
@@ -564,6 +567,7 @@ async def test_goto_push_refuses_without_sending(dbs, params, start, why):
         now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
         route_membership_m=None)  # pre-U127 single-pass / single-point behaviour
     assert res.pushed is False and why in res.reason
+    assert res.cause == cause  # 11 S6.2 closed cause (99 U140)
     assert pub.puts == []
 
 
