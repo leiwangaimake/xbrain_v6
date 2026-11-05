@@ -162,6 +162,7 @@ async def apply_path_progress(body: Any, *, conn, dao, progress_dao, tracker,
             conn, dao, task_id, progress.state,
             now_mono_ms=now_mono_ms,
             on_transition=on_transition,
+            fail_reason=progress.fail_reason,  # 99 U124: keep the RNS attribution
             finished_at=iso_from_wall_ms(now_wall_ms),
             boot_id=boot_id)
         out["closed"] = closed

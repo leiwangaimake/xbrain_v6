@@ -125,7 +125,8 @@ async def test_motion_succeeded_completes(dao_conn):
     dao, conn = dao_conn
     await _run_one(dao, conn)
     made = await apply_motion_result(conn, dao, "t1", "succeeded",
-                                     now_mono_ms=2, on_transition=_noop)
+                                     now_mono_ms=2, on_transition=_noop,
+                                     fail_reason=None)
     assert made is True
     assert (await dao.fetch_by_id("t1")).state == "done"
 
@@ -136,8 +137,31 @@ async def test_motion_aborted_fails(dao_conn):
     dao, conn = dao_conn
     await _run_one(dao, conn)
     await apply_motion_result(conn, dao, "t1", "aborted", now_mono_ms=2,
-                              on_transition=_noop)
+                              on_transition=_noop, fail_reason=None)
     assert (await dao.fetch_by_id("t1")).state == "failed"
+
+
+@pytest.mark.asyncio
+async def test_nav_failure_keeps_its_fail_reason(dao_conn):
+    """99 U124: path_progress 'failed' carries the RNS attribution (20 S9.0.2,
+    e.g. no_path_in_domain). It is stored in error_context_json.fail_reason and
+    named in the transition reason. MUTATION: drop it (the pre-U124 shape) ->
+    error_context_json stays empty and the reason is a bare motion:aborted."""
+    import json as _json
+    from xbrain.p3_task.schedule.driver import apply_path_progress_terminal
+    dao, conn = dao_conn
+    await _run_one(dao, conn)
+    seen = []
+    async def _record(task_id, frm, to, reason):  # the on_transition hook
+        seen.append(reason)
+    made = await apply_path_progress_terminal(
+        conn, dao, "t1", "failed", now_mono_ms=2, on_transition=_record,
+        fail_reason="no_path_in_domain")
+    assert made is True and (await dao.fetch_by_id("t1")).state == "failed"
+    row = await (await conn.execute(
+        "SELECT error_context_json FROM tasks WHERE task_id='t1'")).fetchone()
+    assert _json.loads(row[0]) == {"fail_reason": "no_path_in_domain"}
+    assert seen == ["motion:aborted:no_path_in_domain"]
 
 
 @pytest.mark.asyncio
@@ -147,7 +171,7 @@ async def test_motion_in_flight_is_noop(dao_conn):
     dao, conn = dao_conn
     await _run_one(dao, conn)
     made = await apply_motion_result(conn, dao, "t1", "running", now_mono_ms=2,
-                                     on_transition=_noop)
+                                     on_transition=_noop, fail_reason=None)
     assert made is False
     assert (await dao.fetch_by_id("t1")).state == "running"
 
@@ -160,6 +184,7 @@ async def test_motion_result_for_non_running_is_noop(dao_conn):
     await dao.insert(_pending("t1"))
     await conn.commit()                            # stays pending, never ran
     made = await apply_motion_result(conn, dao, "t1", "succeeded",
-                                     now_mono_ms=2, on_transition=_noop)
+                                     now_mono_ms=2, on_transition=_noop,
+                                     fail_reason=None)
     assert made is False
     assert (await dao.fetch_by_id("t1")).state == "pending"

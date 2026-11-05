@@ -365,6 +365,11 @@ async def test_failed_fails_the_task_but_aborted_leaves_it_running(db):
         on_transition=_noop_transition, boot_id="b1")
     assert out["closed"] is True
     assert (await dao.fetch_by_id("t1")).state == "failed"
+    # 99 U124: the frame's fail_reason reaches the task row through the sink.
+    # MUTATION: pass fail_reason=None in progress_sink -> the column is empty.
+    row = await (await db.execute(
+        "SELECT error_context_json FROM tasks WHERE task_id='t1'")).fetchone()
+    assert json.loads(row[0]) == {"fail_reason": "corridor_blocked"}
 
 
 @pytest.mark.asyncio

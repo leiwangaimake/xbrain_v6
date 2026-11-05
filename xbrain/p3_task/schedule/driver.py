@@ -301,6 +301,7 @@ async def apply_path_progress_terminal(conn, dao, task_id: str,
                                        path_state: str, *,
                                        now_mono_ms: int,
                                        on_transition: OnTransition,
+                                       fail_reason: Optional[str],
                                        finished_at: str = "",
                                        boot_id: str = "") -> bool:
     """Close a running task on a TERMINAL state/motion/path_progress frame
@@ -327,13 +328,14 @@ async def apply_path_progress_terminal(conn, dao, task_id: str,
         return False
     return await apply_motion_result(
         conn, dao, task_id, result, now_mono_ms=now_mono_ms,
-        on_transition=on_transition, finished_at=finished_at,
-        boot_id=boot_id)
+        on_transition=on_transition, fail_reason=fail_reason,
+        finished_at=finished_at, boot_id=boot_id)
 
 
 async def apply_motion_result(conn, dao, task_id: str, result: str, *,
                               now_mono_ms: int,
                               on_transition: OnTransition,
+                              fail_reason: Optional[str],
                               finished_at: str = "",
                               boot_id: str = "") -> bool:
     """Close a running task on the P1 motion result (11 S3.5). 'succeeded' ->
@@ -373,7 +375,20 @@ async def apply_motion_result(conn, dao, task_id: str, result: str, *,
             getattr(full, "started_mono", None),
             getattr(full, "started_boot", None),
             now_mono_ms, boot_id))
+    reason = f"motion:{result}"
+    if fail_reason:
+        # 99 U124: the RNS failure attribution (20 S9.0.2 closed set, carried
+        # on path_progress.fail_reason, 11 S3.5B) is kept on the task. Until
+        # 2026-11-05 it was parsed and dropped: every nav failure was stored
+        # as a bare "motion:aborted" and nobody could tell no_path_in_domain
+        # from watchdog_no_progress afterwards. Same field geo_delete GC-3
+        # already uses (error_context_json.fail_reason); no E_* is invented
+        # here -- the reason -> E_* mapping belongs to 12 S4.2c.6.
+        await conn.execute(
+            "UPDATE tasks SET error_context_json=? WHERE task_id=?",
+            (json.dumps({"fail_reason": fail_reason}, ensure_ascii=False),
+             task_id))
+        reason = f"motion:{result}:{fail_reason}"
     await conn.commit()
-    await on_transition(task_id, "running", transition.to_state,
-                        f"motion:{result}")
+    await on_transition(task_id, "running", transition.to_state, reason)
     return True
