@@ -84,15 +84,30 @@ _CXX_ROOTS = [os.path.join(ROOT, "common"), os.path.join(ROOT, "ros2_ws")]
 _SEQ_INC = re.compile(r"(\+\+\s*seq\w*)|(\bseq\w*\s*\+\+)")
 
 
+def _vendored(dirpath):
+    """True inside a tree this repo did not write (charset_lint's shared
+    THIRD_PARTY_SNAPSHOTS: ros2_ws/perception, common/third_party, ...).
+    2026-11-05: the perception deliverable has its own seq counters for its
+    own packets; they are not RT envelopes and this rule is not theirs. The
+    scan named 20 of them and stayed red."""
+    import sys
+    sys.path.insert(0, os.path.join(ROOT, "scripts", "lint"))
+    import charset_lint
+    rel = os.path.relpath(dirpath, ROOT)
+    return any(rel == t or rel.startswith(t + os.sep)
+               for t in charset_lint.THIRD_PARTY_SNAPSHOTS)
+
+
 def _cxx_files():
-    """Every .h / .cc under the C++ roots that exist (ros2_ws/ may be empty)."""
+    """Every .h / .cc under the C++ roots that exist (ros2_ws/ may be empty),
+    minus vendored trees."""
     out = []
     for root in _CXX_ROOTS:
         if not os.path.isdir(root):
             continue
         for dirpath, _dirs, files in os.walk(root):
-            if "build" in dirpath:
-                continue                                # skip build products
+            if "build" in dirpath or _vendored(dirpath):
+                continue                                # skip build products and vendored trees
             for f in files:
                 if f.endswith((".h", ".cc", ".cpp", ".hpp")):
                     out.append(os.path.join(dirpath, f))

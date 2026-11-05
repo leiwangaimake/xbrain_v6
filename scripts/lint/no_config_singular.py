@@ -88,9 +88,20 @@ def _scan_file(path: str) -> List[Tuple[int, str]]:
             continue
         # Then absolute "/opt/.../config/..." (deploy paths).
         m = _PATTERN_ABSOLUTE.search(stripped)
-        if m:
+        if m and not _into_vendored(m.group(0)):
             hits.append((i, line.rstrip()))
     return hits
+
+
+def _into_vendored(literal: str) -> bool:
+    """True when the absolute path points INTO a vendored tree's own config/
+    directory (e.g. /opt/xbrain_v6/ros2_ws/perception/config/x.json, the
+    perception deliverable's layout, named by configs/perception.yaml). That
+    config/ is the vendor's directory name, not a misspelt configs/ root --
+    the failure this lint exists for. Only <vendored tree>/config/ is let
+    through; our own trees still fail (2026-11-05, red since 2026-10-26)."""
+    return any("/" + t + "/config/" in literal
+               for t in charset_lint.THIRD_PARTY_SNAPSHOTS)
 
 
 # Third-party frozen snapshots and vendored trees share ONE exclusion list with
