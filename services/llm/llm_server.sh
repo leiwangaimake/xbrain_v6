@@ -10,7 +10,7 @@
 # Starts services/llm/bin/llama-server as an OpenAI-style HTTP endpoint
 # (POST /v1/chat/completions) that the AI_runtime orchestrator calls during
 # 功能1 near-field dialogue. Only the prebuilt binary, its shared libs and the
-# gguf model live under services/llm/ (bin/ lib/ model/); the llama.cpp source
+# gguf model live under services/llm/ (bin/ model/; shared libs in repo common/lib/llama); the llama.cpp source
 # is intentionally NOT deployed. Every path is derived from this script's own
 # location so the whole services/llm/ tree stays relocatable. All tunables are
 # environment-overridable so the same script works on the Orin and elsewhere.
@@ -50,7 +50,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # Fixed layout under SCRIPT_DIR; BIN is overridable in case a differently named
 # binary is dropped in bin/ (e.g. a CUDA vs CPU build).
 BIN="${LLM_BIN:-${SCRIPT_DIR}/bin/llama-server}"
-LIB_DIR="${SCRIPT_DIR}/lib"       # bundled .so dependencies for the binary
+LIB_DIR="${LLM_LIB_DIR:-$( cd "${SCRIPT_DIR}/../.." && pwd )/common/lib/llama}"  # llama .so in repo common/lib/llama (built on-device 2026-10-19)
 MODEL_DIR="${SCRIPT_DIR}/model"   # gguf model(s) live here
 
 # Runtime knobs, all env-overridable.
