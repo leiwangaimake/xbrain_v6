@@ -415,6 +415,12 @@ common:
     sample_hz: null
     max_fences: null
     fence_close_tol_m: null
+    # 99 U126 (user ruling 2026-11-05 "定 1.0 m"): arrival radius of a
+    # teach-recorded route (mode B dense polyline, 15 S2.4.3 / NAV-12). Same
+    # value as a waypoint's default arrival_radius; 11-04 goto runs arrived
+    # 0.58-0.80 m off. Read by P3 route push via p3_task.yaml
+    # route.recorded_arrive_radius_m. > 0.
+    arrive_radius_m: 1.0
 
   # -- 指令集 (10 S5.4.5 cmdset 行; 权威 16 S12.4 / 18 S16) -----------------
   # 唯一定义处就是本文件. 读者: P4 意图与 Prompt 与 GBNF / P5 HMI 展示 / 18 指令集.

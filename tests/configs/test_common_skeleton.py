@@ -678,6 +678,11 @@ _LANDED = {
     # re-deriving the other makes the freeze line refuse the whole stack.
     "common.motion.profiles.obstacle_avoid.max_mps": 0.5,
     "common.motion.profiles.patrol.max_mps": 2.0,
+    # 99 U126 (user ruling 2026-11-05 "定 1.0 m"): the arrive radius of a
+    # teach-recorded route (mode B, 15 S2.4.3 / NAV-12), authorised by the
+    # 10 S5.4.5 recording row. Before it the key did not exist and P3 passed
+    # None, so every recorded patrol was refused at push time.
+    "common.recording.arrive_radius_m": 1.0,
 }
 
 

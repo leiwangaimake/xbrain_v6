@@ -47,3 +47,10 @@ geo:
 #   8000 = T4 最坏解析 4.8 s + L1b 播报窗 2.5 s + 裕度, 待现场整定.
 teach:
   snap_max_age_ms: 8000
+
+# -- 路径推送 (取值, 非定义) ------------------------------------------------
+#   示教录制的路径是模式 B 密集折线, 没有逐点到点半径; 15 S2.4.3 规定取
+#   common.recording 侧的全局值 (99 U126, 用户 2026-11-05 定 1.0 m).
+#   缺失 / null / <= 0 时 p3 拒绝启动 (EX_CONFIG 78) 并报本键路径.
+route:
+  recorded_arrive_radius_m: ${common.recording.arrive_radius_m}

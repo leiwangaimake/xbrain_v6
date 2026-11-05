@@ -130,11 +130,26 @@ def main(argv: Optional[list] = None) -> int:
         # No fallback value here either: unset is passed as None and the
         # runtime refuses snapshot captures by name.
         _teach = (_cfg.get("teach") or {}) if hasattr(_cfg, "get") else {}
+        # 99 U126: the arrive radius of a teach-recorded route (15 S2.4.3,
+        # common.recording.arrive_radius_m). Missing / null / <= 0 refuses to
+        # start with the key path (EX_CONFIG 78, CLAUDE.md 3.6 iron rule 2):
+        # without it every recorded patrol would be refused at push time, a
+        # failure that only shows when someone says "patrol".
+        _route = (_cfg.get("route") or {}) if hasattr(_cfg, "get") else {}
+        _radius = _route.get("recorded_arrive_radius_m")
+        if (isinstance(_radius, bool) or not isinstance(_radius, (int, float))
+                or _radius <= 0.0):
+            _logger.error(
+                "p3_task config: route.recorded_arrive_radius_m=%r must be a "
+                "positive number (common.recording.arrive_radius_m, 15 S2.4.3)",
+                _radius)
+            return 78
         return run_voice_loop_wiring(
             stop_flag=stop_flag,
             task_db_path=args.task_db or DEFAULT_TASK_DB,
             enu_origin=_enu,
-            teach_snap_max_age_ms=_teach.get("snap_max_age_ms"))
+            teach_snap_max_age_ms=_teach.get("snap_max_age_ms"),
+            recorded_arrive_radius_m=float(_radius))
 
     return main_loop(tick_seconds=args.heartbeat_seconds, stop_flag=stop_flag)
 
