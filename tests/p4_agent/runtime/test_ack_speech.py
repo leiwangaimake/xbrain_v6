@@ -172,6 +172,49 @@ def test_a_refused_geo_command_says_why():  # geo
     assert _said(out)[1] == "这个对象刚被别处修改过, 请再说一遍"  # the reason
 
 
+@pytest.mark.parametrize("code,detail,text", [  # 99 U133 start refusals
+    ("E_NAME_CONFLICT", {}, "1号路径这个名字已经有了, 请换个名字再录制"),  # taken meanwhile
+    ("E_TEACH_QUALITY", {"reason": "fix_quality"}, "现在不能开始录制: 定位不是RTK固定解"),  # check 3
+    ("E_UNHEALTHY", {"reason": "no_nonvoice_estop"}, "现在不能开始录制: 没有可用的非语音急停通道"),
+    ("E_BUSY", {"reason": "task_running"}, "有任务正在执行, 现在不能开始录制"),  # check 2
+])
+def test_a_refused_recording_start_says_why(code, detail, text):  # start
+    """Until U133 a refused start was silent after "好的,开始录制X".
+    MUTATION: skip start in note_turn -> nothing said -> red."""
+    sp = AckSpeaker()  # fresh
+    sp.note_turn(_sent("cmd/teach", {"cmd_id": "t-1", "action": "start",
+                                     "start": {"kind": "route", "name": "1号路径"}}))
+    out = sp.on_ack(_b({"cmd_id": "t-1", "result": "rejected", "code": code, "detail": detail}))
+    assert _said(out)[1] == text  # the reason
+
+
+def test_an_accepted_recording_start_adds_nothing():  # start accepted
+    sp = AckSpeaker()  # fresh
+    sp.note_turn(_sent("cmd/teach", {"cmd_id": "t-1", "action": "start",
+                                     "start": {"kind": "route", "name": "1号路径"}}))
+    assert sp.on_ack(_b({"cmd_id": "t-1", "result": "accepted", "code": "OK"})) is None  # turn said it
+
+
+@pytest.mark.parametrize("ack,text", [  # 99 U133 finish = save
+    ({"result": "accepted", "code": "OK", "detail": {"saved": True, "kind": "route",
+      "applied": {"name": "1号路径", "point_count": 47, "total_len_m": 320.4}}},
+     "已保存1号路径, 共47个点, 长320米"),
+    ({"result": "accepted", "code": "OK", "detail": {"saved": True, "kind": "fence",
+      "applied": {"name": "东门围栏", "point_count": 6, "total_len_m": 80.0}}},
+     "已保存东门围栏, 共6个顶点. 围栏已保存但未启用, 需要时请说启用东门围栏"),
+    ({"result": "rejected", "code": "E_TEACH_GEOMETRY", "detail": {
+      "saved": False, "close_reason": "invalid_geometry", "name": "2号路径",
+      "issues": [{"code": "too_few_points"}]}},
+     "录制已退出, 2号路径没有保存: 录到的点不足两个"),
+])
+def test_a_recording_exit_says_what_was_saved(ack, text):  # finish
+    """MUTATION: say nothing for finish -> the operator never hears the result -> red."""
+    sp = AckSpeaker()  # fresh
+    sp.note_turn(_sent("cmd/teach", {"cmd_id": "t-2", "action": "finish", "session_id": "ts-1"}))
+    out = sp.on_ack(_b({"cmd_id": "t-2", **ack}))
+    assert _said(out)[1] == text  # the result
+
+
 def test_session_actions_are_not_voiced_here():  # sessions
     sp = AckSpeaker()  # fresh
     sp.note_turn([("cmd/teach", _b({"cmd_id": "c-1", "action": "start"})),

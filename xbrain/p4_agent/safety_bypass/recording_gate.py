@@ -19,6 +19,13 @@ Three MANDATORY actions when suppressing:
      route='suppressed', accepted=0, reject_reason='recording_suppressed')
   2. Emit TTS "录制中, 请用手柄急停" so operator knows the button path
   3. Increment counter for telemetry (repeated triggers -> retrain)
+
+99 U133 (2026-11-05): the recording flag is now the live state/teach session
+(turn_orchestrator sets in_recording every turn) -- before that NOTHING set it
+and none of this ever fired. The same ruling stops every other control
+command while recording ("只能通过云端键盘控制"), so the bypass prone / stand
+are suppressed too, with their own advice; the keyboard's space bar is the
+stop.
 """
 
 from __future__ import annotations
@@ -39,21 +46,27 @@ class SuppressionRecord:
     route: str = "suppressed"
     accepted: int = 0            # DB uses int 0/1 for legacy
     reject_reason: str = "recording_suppressed"
-    tts_advice: str = "录制中, 请用手柄急停"
+    tts_advice: str = "录制中语音急停不生效, 请用键盘空格键停车"
 
 
 def evaluate(state: RecordingState, bypass_action: str) -> SuppressionRecord | None:
     """Given the safety-bypass matcher fired with `bypass_action`
     ('estop' / 'prone' / 'stand'), decide whether to suppress.
 
-    U45 SUPPRESSES only VOICE ESTOP during recording. prone / stand
-    remain executable (they are movement commands, not stops).
+    U45 suppresses VOICE ESTOP during recording. Since 99 U133 prone /
+    stand are suppressed too: they are control commands, and the ruling
+    leaves the robot to the cloud keyboard while recording (their advice
+    says so instead of pointing at the stop key).
 
-    * Keyboard / handle estop bypass this path entirely -- they
-    are hardware buttons wired below the voice layer."""
+    * Keyboard / handle stops bypass this path entirely -- they never
+    reach the voice layer."""
     if not state.in_recording:
         return None
     if bypass_action == "estop":
         state.voice_estop_suppress_count += 1
         return SuppressionRecord()
-    return None
+    return SuppressionRecord(tts_advice=_BUSY_ADVICE)  # prone / stand (U133)
+
+
+#: 99 U133: what a suppressed prone / stand says (ASCII punctuation).
+_BUSY_ADVICE = "正在录制, 录制期间只能用键盘控制机器人. 要结束请说退出录制"

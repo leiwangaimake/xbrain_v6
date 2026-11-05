@@ -82,9 +82,21 @@ def test_delete(text, name):
     assert got is not None and got.kind == "delete" and got.name == name
 
 
-@pytest.mark.parametrize("text", ["删除东门路线", "删除3号路径", "把2号围栏删掉"])
-def test_delete_of_a_route_or_fence_is_not_ours(text):
-    """F11 / F13 keep those. MUTATION: take them as a keypoint delete."""
+@pytest.mark.parametrize("text,kind,name", [  # 99 U133: route / fence deletes by name
+    ("删除东门路线", "delete_route", "东门路线"), ("删除3号路径", "delete_route", "3号路径"),
+    ("把2号围栏删掉", "delete_fence", "2号围栏"),
+])
+def test_delete_of_a_route_or_fence_is_parsed_by_name(text, kind, name):
+    """F11 / F13 by name (still L2 at the orchestrator). MUTATION: take them
+    as a keypoint delete -> kind delete -> red."""
+    got = parse_ptp(text)  # one parse
+    assert got is not None and got.kind == kind and got.name == name  # by name
+
+
+@pytest.mark.parametrize("text", ["删除路径", "删除围栏"])
+def test_a_bare_type_word_delete_is_not_ours(text):
+    """No name -> F11 / F13's own keyword leg asks. MUTATION: drop the
+    bare-word check -> a delete of "路径" -> red."""
     assert parse_ptp(text) is None  # left to the keyword layer
 
 

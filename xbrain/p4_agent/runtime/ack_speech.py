@@ -17,7 +17,11 @@ an operator-facing command is restated from what the executor did.
 What is said, per answer key (the ack key = command key + "/ack"):
   cmd/teach/ack          mark_once (F06 / F10): stored -> "已记录 X" (with
                          "没有记下朝向" on warn no_heading), refused -> why.
-                         Session actions answer through state/teach.
+                         start (F01 / F07, 99 U133): refused -> why (the
+                         turn already said "开始录制 X"). finish of a named
+                         recording: saved -> "已保存 X, 共 N 个点, 长 M 米",
+                         not saved -> "录制已退出, X 没有保存: why". The
+                         other session actions answer through state/teach.
   cmd/task/ack           submit / pause / resume / cancel: refused -> why.
   cmd/geo/ack            delete / rename / set_state: refused -> why.
   cmd/motion/intent/ack  A05-A17, A04 hold, B06 release: refused -> why.
@@ -44,6 +48,10 @@ from typing import Any, Dict, Iterable, Optional, Tuple  # plain values
 
 from xbrain.common.errors import (  # the 11 S13 closed set, never literals
     E_BUSY,  # G-8 / hold refusals
+    E_LOW_BATTERY,  # S12A.3 arming check 5
+    E_TEACH_BUSY,  # S12A.3 arming check 1
+    E_TEACH_GEOMETRY,  # S12A.7 blocking issue
+    E_TEACH_STATE,  # session state / config
     E_CAPABILITY,  # G-7
     E_CHANNEL_DENIED,  # S7.9.5 matrix
     E_DEGRADED,  # S3.2.1
@@ -83,6 +91,35 @@ _SNAP_AGE = "{name}没有记录, 位置快照已过期, 请再说一遍"  # 18 P
 _TEACH_OTHER = "{name}没有记录成功"  # any other code
 _STORED = "已记录{name}"  # accepted
 _STORED_NO_HEADING = "已记录{name}, 没有记下朝向"  # accepted, warn no_heading
+
+#: 99 U133 recording start refusals (cmd/teach/ack of action start), by code;
+#: E_TEACH_QUALITY and E_UNHEALTHY are told apart by detail.reason below.
+_REC_START_REFUSED = {
+    E_NAME_CONFLICT: "{name}这个名字已经有了, 请换个名字再录制",  # taken meanwhile
+    E_TEACH_BUSY: "已经在录制了, 不能开始新的录制",  # check 1
+    E_BUSY: "有任务正在执行, 现在不能开始录制",  # check 2
+    E_LOCKED: "现在不能开始录制: 硬件急停按下了",  # check 4 (hes)
+    E_LOW_BATTERY: "现在不能开始录制: 电量不足",  # check 5
+}
+_REC_START_BY_REASON = {
+    "state_unavailable": "现在不能开始录制: 拿不到健康, 电量或遥控状态",  # caches missing
+    "no_nonvoice_estop": "现在不能开始录制: 没有可用的非语音急停通道",  # check 7
+    "recording_config_missing": "现在不能开始录制: 录制参数没有配置",  # U132 keys
+}
+_REC_START_QUALITY = "现在不能开始录制: 定位不是RTK固定解"  # check 3
+_REC_START_UNHEALTHY = "现在不能开始录制: 设备状态不允许移动"  # check 4
+_REC_START_OTHER = "{name}没有开始录制"  # any other code
+#: finish of a named recording (99 U133).
+_REC_SAVED_ROUTE = "已保存{name}, 共{count}个点, 长{length}米"
+_REC_SAVED_FENCE = "已保存{name}, 共{count}个顶点. 围栏已保存但未启用, 需要时请说启用{name}"
+_REC_NOT_SAVED = "录制已退出, {name}没有保存: {why}"
+_REC_ISSUE = {  # S12A.7 blocking issue codes, in words
+    "too_few_points": "录到的点不足两个",
+    "too_few_vertices": "围栏顶点不足三个",
+    "self_intersect": "围栏边线自相交",
+    "area_too_small": "围栏面积太小",
+}
+_REC_FINISH_OTHER = "录制没有正确结束"  # any other refusal
 
 #: cmd/task/ack: what the refused action was, in words.
 _TASK_VERB = {"pause": "暂停", "resume": "继续", "cancel": "取消",
@@ -168,8 +205,9 @@ class AckSpeaker:  # one per process
             cmd = _body(_json(data))  # the command body
             if not isinstance(cmd, dict) or not isinstance(cmd.get("cmd_id"), str):
                 continue  # nothing to match an answer to
-            if key == CMD_TEACH and cmd.get("action") != "mark_once":
-                continue  # sessions answer through state/teach
+            if key == CMD_TEACH and cmd.get("action") not in ("mark_once", "start",
+                                                                  "finish"):
+                continue  # the other session actions answer through state/teach
             self._pending[cmd["cmd_id"]] = (key, cmd, source)  # newest last
             while len(self._pending) > _PENDING_MAX:  # bounded
                 self._pending.popitem(last=False)  # drop the oldest
@@ -198,6 +236,10 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
     detail = ack.get("detail") if isinstance(ack.get("detail"), dict) else {}
     accepted = ack.get("result") == "accepted"  # the executor did it
     code = ack.get("code")  # the refusal code, if any
+    if key == CMD_TEACH and cmd.get("action") == "start":
+        return _start_sentence(cmd, ack, detail, accepted, code)  # 99 U133
+    if key == CMD_TEACH and cmd.get("action") == "finish":
+        return _finish_sentence(detail, accepted, code)  # 99 U133
     if key == CMD_TEACH:
         name = (cmd.get("mark_once") or {}).get("name") or ""  # what was said
         if accepted:
@@ -220,3 +262,43 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
     if code == E_BUSY:
         return _MOTION_BUSY.get(detail.get("reason"), _MOTION_OTHER)  # by reason
     return _MOTION_REFUSED.get(code, _MOTION_OTHER)  # motion, by code
+
+
+def _start_sentence(cmd: Dict[str, Any], ack: Dict[str, Any], detail: Dict[str, Any],
+                    accepted: bool, code: Any) -> Optional[str]:
+    """A recording start's answer (99 U133): nothing when accepted (the turn
+    said "开始录制 X"), the reason when P3 refused it."""
+    if accepted:
+        return None  # the turn already said it
+    name = (cmd.get("start") or {}).get("name") or ""  # the name said
+    reason = detail.get("reason")  # told apart below
+    if reason in _REC_START_BY_REASON:  # a reason with its own sentence
+        return _REC_START_BY_REASON[reason]  # by reason
+    if code == E_TEACH_QUALITY:  # check 3: not rtk_fixed
+        return _REC_START_QUALITY  # the fix
+    if code == E_UNHEALTHY:  # check 4: health forbids motion
+        return _REC_START_UNHEALTHY  # health
+    return _REC_START_REFUSED.get(code, _REC_START_OTHER).format(name=name)  # by code
+
+
+def _finish_sentence(detail: Dict[str, Any], accepted: bool, code: Any) -> Optional[str]:
+    """A named recording's finish (99 U133): saved -> what was saved; not
+    saved -> why. An unnamed finish (no `saved` key) says nothing here."""
+    if accepted and detail.get("saved") is True:  # saved under the start name
+        applied = detail.get("applied") or {}  # AP-1 values
+        tpl = _REC_SAVED_FENCE if detail.get("kind") == "fence" else _REC_SAVED_ROUTE  # by kind
+        return tpl.format(name=applied.get("name") or "",
+                          count=int(applied.get("point_count") or 0),
+                          length=int(round(float(applied.get("total_len_m") or 0.0))))
+    if accepted:  # an unnamed session waiting for save (HMI path)
+        return None  # nothing to say here
+    if code == E_TEACH_GEOMETRY and detail.get("close_reason") == "invalid_geometry":
+        issues = detail.get("issues") or []  # blocking issues
+        why = next((_REC_ISSUE[i.get("code")] for i in issues
+                    if isinstance(i, dict) and i.get("code") in _REC_ISSUE),
+                   "几何检查没有通过")  # first known issue
+        return _REC_NOT_SAVED.format(name=detail.get("name") or "", why=why)
+    if code == E_TEACH_STATE:  # no session / wrong id
+        return "现在没有在录制"  # nothing to end
+    return _REC_FINISH_OTHER  # any other refusal
+

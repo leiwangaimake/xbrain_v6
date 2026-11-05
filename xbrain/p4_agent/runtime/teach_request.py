@@ -123,14 +123,17 @@ def to_teach_command(intent_name: str, *, slots: Mapping[str, Any],
     if session_id and action in _NEEDS_SESSION:
         payload["session_id"] = session_id
     if action == "start":
-        start: Dict[str, Any] = {"kind": kind}
-        # name_hint is optional and only used for the spoken restatement and the
-        # draft name; the real name arrives with F03/F09. Taken from the slot
-        # when the operator said one ("start recording the east gate route").
-        hint = slots.get("name")
-        if isinstance(hint, str) and hint.strip():
-            start["name_hint"] = hint.strip()
-        payload["start"] = start
+        # 99 U133: a voice / text start carries the full name, and P3 saves
+        # the recording under it at finish ("退出即保存"). Until 2026-11-05 the
+        # name was an optional name_hint and the real one came in a third turn
+        # (F03 / F09); without a name the command is not built at all.
+        name = slots.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise TeachRequestError("a recording needs a full name")
+        if not name_length_ok(name.strip()):
+            raise TeachRequestError("name length")  # 16 S8.0.4, as for save
+        payload["start"] = {"kind": kind, "name": name.strip(),
+                            "name_hint": name.strip()}
     elif action == "save":
         name = slots.get("name")
         if not isinstance(name, str) or not name.strip():

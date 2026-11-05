@@ -81,12 +81,16 @@ def test_estop_bypass_is_not_a_classified_intent():
 
 
 def test_recording_suppresses_voice_estop():
+    """U45, wired since 99 U133: the flag is the live state/teach session (it
+    used to be a field nothing ever set). MUTATION: stop deriving it from
+    state/teach -> the estop is dispatched as a bypass -> red."""
     orch = _orch()
+    orch._state_fn = lambda: {"state/teach": {"session": {
+        "state": "recording", "kind": "route", "name": "1号路径"}}}
     s = OrchestratorSession()
-    s.recording.in_recording = True
     d = orch.handle_turn("急停", s, now_mono_ms=1000)
     assert d.kind == "bypass_suppressed"
-    assert d.tts_text                       # advises the handle estop
+    assert "空格" in d.tts_text             # advises the keyboard stop
 
 
 # -- criterion 2: auth=L2 waits for confirm ------------------------------

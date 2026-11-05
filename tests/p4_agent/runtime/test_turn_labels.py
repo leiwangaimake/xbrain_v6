@@ -126,7 +126,7 @@ def test_impossible_turns_raise(channel, modality):
                               source="text"),  # not an S7.15 origin
     lambda: to_task_control_command("pause_task", state=_STATE, cmd_id="c",
                                     source="text"),  # not a task source
-    lambda: to_teach_command("record_route_start", slots={}, cmd_id="c",
+    lambda: to_teach_command("record_route_start", slots={"name": "1号路径"}, cmd_id="c",
                              issuer_channel="text"),  # not S12A.4
     lambda: to_geo_command("delete_route", slots={}, cmd_id="c",
                            manifest=[], origin="radio"),  # not S7.9.5
@@ -186,8 +186,9 @@ def test_a_task_control_from_the_cloud_says_cloud():
     ("cloud", "text", "cloud_text"),  # typed cloud
 ])
 def test_a_recording_command_names_its_issuer(channel, modality, issuer):
-    """"开始录制路径" -> cmd/teach issuer.channel per S12A.4."""
-    frame = _frame("开始录制路径", "cmd/teach", channel, modality)  # F01 on each entry
+    """"开始录制1号路径" -> cmd/teach issuer.channel per S12A.4 (99 U133: a
+    start carries its full name)."""
+    frame = _frame("开始录制1号路径", "cmd/teach", channel, modality)  # F01 on each entry
     assert frame["issuer"]["channel"] == issuer  # S12A.4 value
 
 
@@ -245,7 +246,7 @@ def test_typed_cloud_text_reaches_the_frame_as_cloud_text():
     """
     orch = _orch()  # no tier-2 needed
     res = handle_text_command(  # the real text entry
-        {"channel": "cloud", "text": "开始录制路径",
+        {"channel": "cloud", "text": "开始录制1号路径",
          "require_tts_reply": False},  # muted reply
         orch, OrchestratorSession(), KeywordMatcher(orch._registry), 1000)
     frame = dict(decision_to_publishes(res.decision))["cmd/teach"]
@@ -261,7 +262,7 @@ def test_spoken_cloud_audio_reaches_the_frame_as_cloud_voice():
     orch, published = _orch(), []  # frames collected
     runner = CloudTurnRunner(orch, KeywordMatcher(orch._registry),  # the real runner
                              lambda k, d: published.append((k, d)),  # collects frames
-                             lambda pcm: "开始录制路径",  # the fake ASR
+                             lambda pcm: "开始录制1号路径",  # the fake ASR
                              lambda: 1000, lambda: None,  # clock, no B mode
                              OrchestratorSession())  # local slot
     res = runner.run_voice(CompletedUtterance("s-1", "cloud",

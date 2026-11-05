@@ -118,6 +118,7 @@ from xbrain.p4_agent.runtime.task_control_request import (
     is_task_control_intent,
     to_task_control_command,
 )
+from xbrain.p4_agent.slots.record_slots import RecordParse, parse_record  # 99 U133
 from xbrain.p4_agent.runtime.task_request import (
     DESTINATION_UNRESOLVED,
     GEO_REF_SLOT,
@@ -146,7 +147,10 @@ from xbrain.p4_agent.session.state_machines import L2ConfirmState, L2Slot
 # the English text at the operator (the 2026-08-11 ORIN test heard an intent
 # name read aloud, which is the same defect).
 _F_REASON_CN = {
-    "no recording session is open": "现在没有正在录制的会话",
+    "no recording session is open": "现在没有在录制",  # 99 U133 wording
+    # 99 U133: a recording start without a full route / fence name is
+    # refused, never followed by a question.
+    "a recording needs a full name": "录制指令要带上完整名称, 比如: 现在开始录制1号路径, 或: 现在开始录制东门围栏",
     "save needs a name": "要保存的话请说个名字",
     # 99 U110 (user ruling 2026-11-04): a capture without a name is REFUSED,
     # not asked about -- the operator repeats the whole command with a name.
@@ -197,6 +201,25 @@ _PTP_CN = {
     "point_no_routes": "{name}不在任何路径上",
     "route_not_found": "没找到{name}, 可以问我有哪些路径",
 }
+
+#: 99 U133 recording replies (ASCII punctuation, Chinese words). {name} is the
+#: recording's name, {what} 路径 / 围栏.
+_REC_CN = {
+    "noname": "录制指令要带上完整名称, 比如: 现在开始录制1号路径, 或: 现在开始录制东门围栏",
+    "name_length": "名字要两到十二个字, 请换个名字再录制",
+    "taken": "已经有叫{name}的{what}了, 请换个名字再录制",
+    "ack_start": "好的,开始录制{name}. 请用键盘控制机器人移动, 说退出录制结束并保存",
+    "busy_start": "正在录制{name}, 不能开始新的录制. 要结束请说退出录制",
+    "busy": "正在录制{name}, 录制期间只能用键盘控制机器人. 要结束请说退出录制",
+    "ack_exit": "好的,退出录制, 正在保存{name}",
+    "not_recording": "现在没有在录制",
+    "status": "正在录制{name}, 已经录了{count}个点, 长{length}米",
+}
+#: The F intents still accepted while recording (99 U133): exit, cancel, mark.
+_REC_ALLOWED = frozenset({"record_route_stop", "record_fence_stop",
+                          "record_route_cancel", "record_route_mark"})
+#: The recording starts; said while recording they get busy_start.
+_REC_STARTS = frozenset({"record_route_start", "record_fence_start"})
 
 #: F06 / F10: the captures whose name must follow their keyword.
 _CAPTURE_INTENTS = frozenset({"record_waypoint", "record_dock"})
@@ -808,6 +831,10 @@ class TurnOrchestrator:
         """handle_turn's body, with the turn's channel already set."""
         text = (text or "").strip()
         raw = (raw_text or "").strip() if raw_text is not None else text
+        # 99 U133: the U45 recording flag is the live state/teach session.
+        # Until 2026-11-05 nothing ever set it, so the U45 suppression below
+        # never fired.
+        session.recording.in_recording = self._recording() is not None
 
         # STEP 1: safety-bypass BEFORE classification (16 S4). Match the raw
         # ASR text, then the corrected text: correction may ADD a stop word
@@ -838,6 +865,13 @@ class TurnOrchestrator:
 
         if not text:
             return TurnDecision(kind="overheard", layer="overheard")
+
+        # 99 U133: recording sentences (start with a full name / exit / status)
+        # by rule, before every other layer -- a bare F01 keyword would start
+        # a nameless recording, which the ruling forbids.
+        rp = parse_record(text)
+        if rp is not None:
+            return self._route_record(rp, text, session, now_mono_ms)
 
         # 2026-10-30 (field test P236-P247): light requests the hardware cannot
         # do (red/blue dimming, strobe rate, searchlight strobe, pattern outside
@@ -894,6 +928,79 @@ class TurnOrchestrator:
         return self._route_entry(entry, text, session, now_mono_ms,
                                  layer=result.layer)
 
+    # -- recording mode (99 U133) ---------------------------------------
+
+    def _recording(self) -> Optional[Dict[str, Any]]:
+        """The open recording session from state/teach when it is in
+        recording mode (arming / recording / paused), else None. Read from
+        the same state P4 already uses to name the session (S12A.4)."""
+        state = self._state_fn() if self._state_fn else {}
+        body = state.get("state/teach")
+        sess = body.get("session") if isinstance(body, dict) else None
+        if not isinstance(sess, dict) or sess.get("state") not in (
+                "arming", "recording", "paused"):
+            return None
+        stats = body.get("stats") if isinstance(body.get("stats"), dict) else {}
+        return {"name": sess.get("name") or sess.get("name_hint") or "",
+                "kind": sess.get("kind"), "stats": stats}
+
+    def _rec_reply(self, intent_id: str, key: str, layer: str,
+                   **fmt: Any) -> TurnDecision:
+        """A spoken recording reply; nothing is sent."""
+        entry = self._registry.by_id(intent_id)
+        spoken = _REC_CN[key].format(**fmt)
+        return TurnDecision(kind="reply", intent_id=entry.id,
+                            intent_name=entry.name, route=entry.route,
+                            auth=entry.auth, layer=layer,
+                            reply_text=spoken, tts_text=spoken)
+
+    def _recording_block(self, entry: IntentEntry,
+                         layer: str) -> Optional[TurnDecision]:
+        """99 U133: while recording, everything but queries (G), session
+        answers (I), chit-chat (J) and the recording's own exit / cancel /
+        mark is answered and not sent -- the robot is the keyboard's."""
+        rec = self._recording()
+        if rec is None:
+            return None
+        if (entry.id[:1] in ("G", "I", "J") or entry.name in _CHITCHAT_NAMES
+                or entry.name in _REC_ALLOWED):
+            return None
+        key = "busy_start" if entry.name in _REC_STARTS else "busy"
+        return self._rec_reply(entry.id, key, layer, name=rec["name"])
+
+    def _route_record(self, rp: RecordParse, text: str,
+                      session: OrchestratorSession,
+                      now_mono_ms: int) -> TurnDecision:
+        """A rule-parsed recording sentence (record_slots): start with a full
+        name, exit-and-save, or a status question. Refusals are spoken and
+        nothing is sent; no follow-up question is ever asked (99 U133)."""
+        rec = self._recording()
+        if rp.kind == "status":
+            if rec is None:
+                return self._rec_reply("F02", "not_recording", "record_rule")
+            stats = rec["stats"]
+            return self._rec_reply(
+                "F02", "status", "record_rule", name=rec["name"],
+                count=int(stats.get("point_count") or 0),
+                length=int(round(float(stats.get("length_m") or 0.0))))
+        if rp.kind == "exit":
+            if rec is None:
+                return self._rec_reply("F02", "not_recording", "record_rule")
+            intent_id = "F08" if rec["kind"] == "fence" else "F02"
+            self._turn_ptp_ack = _REC_CN["ack_exit"].format(name=rec["name"])
+            return self._route_entry(self._registry.by_id(intent_id), text,
+                                     session, now_mono_ms, layer="record_rule")
+        if rec is not None:
+            return self._rec_reply("F01", "busy_start", "record_rule",
+                                   name=rec["name"])
+        if rp.kind == "start_noname":
+            return self._rec_reply("F01", "noname", "record_rule")
+        intent_id = "F07" if rp.rtype == "fence" else "F01"
+        self._turn_ptp_ack = _REC_CN["ack_start"].format(name=rp.name)
+        return self._route_entry(self._registry.by_id(intent_id), text,
+                                 session, now_mono_ms, layer="record_rule",
+                                 rule_slots={"name": rp.name})
+
     # -- routing ---------------------------------------------------------
 
     def _route_entry(self, entry: IntentEntry, text: str,
@@ -904,6 +1011,10 @@ class TurnOrchestrator:
         """Apply route (fastpath vs LLM) and auth (confirm gate). llm_slots
         (tier-2 only) are the slots the LLM extracted; they are merged OVER the
         fastpath slots so a free-text slot (speak_custom's text) survives."""
+        # 99 U133: recording mode answers every control command first.
+        blocked_rec = self._recording_block(entry, layer)
+        if blocked_rec is not None:
+            return blocked_rec
         # Reply-family intents (chitchat / help) answer from a preset and
         # never dispatch an action. Handled before the auth gate: they are
         # all L0 and produce speech, not motion.
@@ -1037,6 +1148,10 @@ class TurnOrchestrator:
                                 auth=entry.auth, layer="ptp_rule",
                                 reply_text=spoken, tts_text=spoken)
 
+        rec = self._recording()
+        if rec is not None and ptp.kind not in ("route_points", "point_routes"):
+            # 99 U133: go / patrol / delete / rename are control commands
+            return self._rec_reply("B01", "busy", "ptp_rule", name=rec["name"])
         if ptp.kind == "goto":
             slots: Dict[str, Any] = {"waypoint": ptp.name}
             if ptp.when is not None:
@@ -1116,6 +1231,17 @@ class TurnOrchestrator:
             return self._route_entry(self._registry.by_id("B04"), text,
                                      session, now_mono_ms, layer="ptp_rule",
                                      rule_slots=rslots)
+        if ptp.kind in ("delete_route", "delete_fence"):
+            # 99 U133: route / fence deletes by name; F11 / F13 stay L2, so the
+            # turn asks for confirmation (safety-relevant, 18 S8.1).
+            fid = "F11" if ptp.kind == "delete_route" else "F13"
+            if ptp.when is not None:
+                return _reply(fid, "timed_geo")
+            self._turn_ptp_ack = _PTP_CN["ack_delete"].format(name=ptp.name)
+            return self._route_entry(
+                self._registry.by_id(fid), text, session, now_mono_ms,
+                layer="ptp_rule",
+                rule_slots={"route" if fid == "F11" else "fence": ptp.name})
         intent_id = "F12" if ptp.kind == "delete" else "F14"
         if ptp.when is not None:
             return _reply(intent_id, "timed_geo")
@@ -1609,6 +1735,24 @@ class TurnOrchestrator:
         state = self._state_fn() if self._state_fn else {}
         merged = dict(extra or {})
         cmd_id = uuid.uuid4().hex
+        if entry.name in _REC_STARTS:
+            # 99 U133: a start must carry a full name, of the right type, not
+            # yet used by a live object of that type. Answered here so the
+            # keyword leg ("开始录制路径", no slot) is refused the same way.
+            name = merged.get("name")
+            want = "fence" if entry.name == "record_fence_start" else "route"
+            if not isinstance(name, str) or not name.strip():
+                return merged, _REC_CN["noname"]
+            name = name.strip()
+            if not name_length_ok(name):
+                return merged, _REC_CN["name_length"]
+            manifest = manifest_from_state(state.get("state/geo/manifest"))
+            if manifest is not None and any(
+                    it.get("type") == want and it.get("state", "active") != "deleted"
+                    and canonical_name(str(it.get("name") or "")) == canonical_name(name)
+                    for it in manifest["items"]):
+                return merged, _REC_CN["taken"].format(
+                    name=name, what="围栏" if want == "fence" else "路径")
         try:
             if is_teach_intent(entry.name):
                 # 18 PS-6: a keypoint capture carries where the robot was at

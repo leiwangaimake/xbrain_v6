@@ -118,16 +118,20 @@ def test_in_recording_estop_suppressed():
     assert r is not None
     assert r.route == "suppressed"
     assert r.accepted == 0
-    assert "手柄急停" in r.tts_advice
+    assert "空格" in r.tts_advice     # 99 U133: the keyboard space bar stops
     assert st.voice_estop_suppress_count == 1
 
 
-def test_in_recording_prone_and_stand_not_suppressed():
-    """U45 suppresses ONLY estop. prone/stand remain executable
-    (they are movement, not safety-stops)."""
+def test_in_recording_prone_and_stand_are_suppressed_too():
+    """99 U133: no control command while recording -- prone / stand are
+    suppressed as well, with the "keyboard only" advice (U45 suppressed only
+    estop). MUTATION: return None for them -> they reach Tier1 -> red."""
     st = RecordingState(in_recording=True)
-    assert evaluate(st, "prone") is None
-    assert evaluate(st, "stand") is None
+    for action in ("prone", "stand"):
+        r = evaluate(st, action)
+        assert r is not None and "键盘" in r.tts_advice
+    assert st.voice_estop_suppress_count == 0   # only estop counts there
+    assert evaluate(RecordingState(in_recording=False), "prone") is None
 
 
 # --- P4-06 priority chain ---

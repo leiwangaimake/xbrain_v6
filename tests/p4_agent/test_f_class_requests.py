@@ -87,13 +87,23 @@ def test_recording_is_no_longer_a_task_create():
 
 # ------------------------------------------------------------ cmd/teach -----
 
-def test_start_carries_kind_and_no_session():
-    cmd = to_teach_command("record_route_start", slots={}, cmd_id="c-1")
+def test_start_carries_kind_name_and_no_session():
+    """99 U133: the start names the recording (P3 saves under it at finish).
+    MUTATION: send only name_hint -> P3 has no bound name -> red."""
+    cmd = to_teach_command("record_route_start", slots={"name": "1号路径"}, cmd_id="c-1")
     assert cmd["action"] == "start" and cmd["start"]["kind"] == "route"
+    assert cmd["start"]["name"] == "1号路径"
     assert "session_id" not in cmd
     assert cmd["issuer"] == {"src": "p4_agent", "channel": "local_voice"}
-    fence = to_teach_command("record_fence_start", slots={}, cmd_id="c-2")
+    fence = to_teach_command("record_fence_start", slots={"name": "东门围栏"}, cmd_id="c-2")
     assert fence["start"]["kind"] == "fence"
+
+
+def test_start_without_a_name_is_not_built():
+    """99 U133: no full name, no command (the turn says why, no question).
+    MUTATION: build a nameless start -> red."""
+    with pytest.raises(TeachRequestError):
+        to_teach_command("record_route_start", slots={}, cmd_id="c-1")
 
 
 def test_session_actions_carry_the_open_session_id():

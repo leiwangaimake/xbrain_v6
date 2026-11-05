@@ -29,6 +29,8 @@ before any keyword or LLM layer sees them:
           (99 U130: answered from state/geo/objects with the route-membership
           rule P3 navigates by; a named object, so the keyword layer -- which
           carries no slot -- cannot answer them.)
+  delete  "删除 1号路径" / "删除 东门围栏"          -> F11 {route: X} / F13 {fence: X}
+          (99 U133: by name, like U110's keypoints; still L2-confirmed)
   dock    "[前缀] 去 / 前往 / 导航到 1号充电站 / 东门充电桩"   -> B09 {dock: X}
           (99 U128: a NAMED charging point -- that point, however far. A bare
           "去充电站 / 回充电桩" names nothing and is left to B09's keyword leg,
@@ -119,7 +121,7 @@ class PtpParse:  # one parsed command
     keypoint as said (goto / delete) or the OLD name (rename); new is the new
     name (rename only); when is a leading time (goto may carry one; for
     delete / rename it is reported so the caller can refuse it)."""
-    kind: str  # goto / delete / rename / patrol / repeat / dock / route_points / point_routes
+    kind: str  # goto / delete / delete_route / delete_fence / rename / patrol / repeat / dock / route_points / point_routes
     name: str  # the keypoint (old name for rename)
     new: Optional[str] = None  # rename only
     when: Optional[TimeExpr] = None  # a leading time, if any
@@ -180,6 +182,10 @@ _PATROL_GO = re.compile(r"^(?:去|到)(?P<x>.+?)" + _PATROL_WORD
 #: 走路巡逻 / 巡检一下设备 and answered "没找到模式" instead of letting the
 #: keyword layer (B02 asks which route, A-class speed, G-class status) run.
 _ROUTE_TAIL = ("路径", "路线", "线路", "环线", "线")  # how route names end
+#: 99 U133 delete by name: the full-name tails (a bare 线 is too loose for a
+#: delete) and the fence tail. "删除1号路径" -> F11, "删除东门围栏" -> F13.
+_ROUTE_TAIL_FULL = ("路径", "路线", "线路", "环线")  # full route names
+_FENCE_TAIL = "围栏"  # a fence name
 #: A route object that is really just a lap count or a place word.
 _LAPS_ONLY = re.compile("^" + _LOOPS + "$")  # "巡逻一圈": no route named
 _CN_DIGIT = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6,
@@ -315,7 +321,12 @@ def parse_ptp(text: str) -> Optional[PtpParse]:
             name = _head(m.group("x"))  # the target
             if _keypoint(name):  # a keypoint, not a route / fence
                 return PtpParse("delete", name, when=when)
-            return None  # a route / fence delete: not ours
+            if name.endswith(_FENCE_TAIL) and len(name) > len(_FENCE_TAIL):  # "东门围栏"
+                return PtpParse("delete_fence", name, when=when)  # 99 U133: F13 by name
+            if (name.endswith(_ROUTE_TAIL_FULL)
+                    and name not in _ROUTE_TAIL_FULL):  # "1号路径", not bare "路径"
+                return PtpParse("delete_route", name, when=when)  # 99 U133: F11 by name
+            return None  # anything else: not ours
         m = _Q_ROUTE_POINTS.match(t)  # G48 (U130)
         if m and when is None:  # a question carries no time
             return PtpParse("route_points", m.group("x"))  # which points are on route X

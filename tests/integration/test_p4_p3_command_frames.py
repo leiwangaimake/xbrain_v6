@@ -152,7 +152,7 @@ def test_voice_task_frame_parses_as_a_task_command():
 def test_voice_teach_frame_parses_as_a_teach_command():
     """*** The F-class path that was broken end to end. Same mutation, same
     failure: nested, this frame has no top-level cmd_id."""
-    payload = _frames("开始录制路径")["cmd/teach"]
+    payload = _frames("开始录制1号路径")["cmd/teach"]  # 99 U133: a start names the route
     cmd = parse_teach_command(payload)
     assert cmd.action == "start" and cmd.cmd_id
 
