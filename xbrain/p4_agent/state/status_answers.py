@@ -58,6 +58,7 @@ from datetime import datetime, timezone  # event times, spoken locally
 from zoneinfo import ZoneInfo  # the site timezone p5 counted in
 from typing import Callable, Dict, Mapping, Optional
 
+from xbrain.common.geo import is_dock_name  # 99 U119 dock-by-name rule (G23)
 from xbrain.p4_agent.state.cache import StateCache  # freshness-aware cache
 from xbrain.p4_agent.state.query_data import QueryAnswer  # the shared answer type
 from xbrain.p4_agent.templates.query_engine import render_reply  # 16 S8.2 step 3
@@ -480,6 +481,24 @@ def last_alarm_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # o
     return QueryAnswer(True, _say(t, "query_events", "last_alarm", when=_when(t, d, la), cat=_cat_word(la)))  # when + what
 
 
+def docks_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # G23
+    """G23 充电桩在哪 / 有几个充电桩: the docks layer PLUS the keypoints named as
+    a dock. 99 U119 / U128 store a charging point as a WAYPOINT whose name
+    holds 充电站 / 充电桩 (xbrain.common.geo.is_dock_name, the rule P3 types it
+    by), and B09 drives to those; until the 2026-11-05 runtime test G23 read
+    the docks layer alone and answered "no charging point" with one defined."""
+    g = _latest(cache, "state/geo/objects")  # on-change key: last value is current
+    if g is None or not isinstance(g.get("docks"), list) or not isinstance(g.get("waypoints"), list):
+        return _unreadable(t, "充电桩")  # honest
+    names = [str(o.get("name") or o.get("geo_id")) for o in g["docks"] if isinstance(o, Mapping)]  # docks table
+    names += [str(o.get("name")) for o in g["waypoints"]
+              if isinstance(o, Mapping) and is_dock_name(str(o.get("name") or ""))]  # named docks (U119)
+    if not names:  # none anywhere
+        return QueryAnswer(True, _say(t, "query_geo", "none", word="充电桩"))  # say so
+    return QueryAnswer(True, _say(t, "query_geo", "some", word="充电桩", count=len(names),
+                                  names=",".join(names)))  # the list
+
+
 def _fence_items(cache: StateCache) -> Optional[list]:  # the live fences in the catalogue
     """The non-deleted fence items of state/geo/manifest (11 S7.10), or None
     when the manifest was never received. The objects broadcast carries no
@@ -537,7 +556,7 @@ STATUS_QUERY_ANSWERS: Dict[str, Callable[..., QueryAnswer]] = {
     "G08": heading_answer, "G09": uptime_answer, "G15": faults_answer,  # intent id -> spoken text
     "G16": health_answer, "G17": sensor_answer, "G18": bit_answer,  # intent id -> spoken text
     "G21": _geo_answer("routes", "巡逻路径"), "G22": _geo_answer("waypoints", "位置点"),  # intent id -> spoken text
-    "G23": _geo_answer("docks", "充电桩"), "G32": ptz_pose_answer, "G37": ptz_owner_answer,  # intent id -> spoken text
+    "G23": docks_answer, "G32": ptz_pose_answer, "G37": ptz_owner_answer,  # intent id -> spoken text
     "G25": payload_all_answer, "G26": light_state_answer, "G27": siren_state_answer,  # intent id -> spoken text
     "G28": strobe_state_answer, "G29": volume_answer, "G30": speaking_answer,  # intent id -> spoken text
     "G10": events_recent_answer, "G11": events_period_answer, "G13": last_alarm_answer,  # 99 U103

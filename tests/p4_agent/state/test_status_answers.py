@@ -238,3 +238,13 @@ def test_g38_g39_are_registered_answers():  # the dispatch table
     c = _with([("state/geo/manifest", _MANIFEST), ("state/fence", {"active": {"name": "东门围栏"}})])  # live state
     assert sa.status_answer("G38", c, TPL, NOW, max_age_ms=AGE).text.startswith("共有2个围栏")  # G38 answered
     assert sa.status_answer("G39", c, TPL, NOW, max_age_ms=AGE).text == "现在生效的是东门围栏"  # G39 answered
+
+
+def test_g23_counts_waypoints_named_as_docks():  # 2026-11-05 runtime test
+    """99 U119 stores a charging point as a waypoint named 1号充电站; G23 read
+    only the docks layer and said "没有设置充电桩" with one defined.
+    MUTATION: read the docks layer alone -> "还没有设置充电桩" -> red."""
+    objs = {"docks": [], "routes": [],
+            "waypoints": [{"geo_id": "w-d", "name": "1号充电站"}, {"geo_id": "w-1", "name": "1号测试点"}]}
+    a = sa.status_answer("G23", _with([("state/geo/objects", objs)]), TPL, NOW, max_age_ms=AGE)  # answer
+    assert a.known and a.text == "共有1个充电桩:1号充电站"  # the named dock, not the keypoint

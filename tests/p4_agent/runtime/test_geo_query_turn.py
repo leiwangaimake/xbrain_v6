@@ -137,3 +137,13 @@ def test_the_answers_are_spoken_and_nothing_is_sent(text, iid, said):  # end to 
     """MUTATION: route G51 as a goto -> a cmd/task frame -> red."""
     d, frames = _turn(text)  # one turn
     assert d.intent_id == iid and d.tts_text == said and not frames  # answered only
+
+
+def test_an_enveloped_pose_is_read():  # 2026-11-05 runtime test
+    """P1 publishes state/pose in the 11 S3.0 envelope; G50 / G51 read the
+    fields from the envelope and answered "no position". MUTATION: drop the
+    unwrap -> no_pose -> red."""
+    env = {"v": 1, "rid": "gj-001", "src": "p1_motion", "data": dict(_POSE, fix_type="rtk_fixed")}  # as on the bus
+    assert _Q("nearest_point", "", _objects(), env, None)[0] == "nearest_point"  # measured
+    assert _Q("distance_to", "1号测试点", _objects(), env, {"v": 1, "data": _MODE})[1]["dist"] == 141  # measured
+

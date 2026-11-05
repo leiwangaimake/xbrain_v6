@@ -83,8 +83,19 @@ def _find(items: List[Mapping], name: str) -> Optional[Mapping]:
     return next((o for o in items if canonical_name(str(o.get("name", ""))) == want), None)  # first match
 
 
+def _body(v: Any) -> Any:
+    """The body of a state value that may arrive in the 11 S3.0 envelope.
+    P1 publishes state/pose ENVELOPED ({v, rid, ts, ..., data: {...}}); the
+    2026-11-05 runtime test found G50 / G51 answering "no position" with a
+    fixed pose on the bus because the fields were read from the envelope."""
+    if isinstance(v, Mapping) and isinstance(v.get("data"), Mapping):
+        return v["data"]  # enveloped
+    return v  # bare
+
+
 def _robot(pose: Any) -> Optional[Tuple[float, float]]:
     """(lat, lon) from a state/pose body, or None (no usable position)."""
+    pose = _body(pose)  # P1 envelopes it
     if not isinstance(pose, Mapping) or not _point_ok(pose):  # absent / malformed
         return None  # never a guessed point
     return float(pose["lat"]), float(pose["lon"])  # now
@@ -92,6 +103,7 @@ def _robot(pose: Any) -> Optional[Tuple[float, float]]:
 
 def _speed(mode: Any) -> Optional[float]:
     """move_speed.mps from a state/mode body, or None (11 S4.3)."""
+    mode = _body(mode)  # bare today (P2), enveloped tolerated
     ms = mode.get("move_speed") if isinstance(mode, Mapping) else None  # the setting
     v = ms.get("mps") if isinstance(ms, Mapping) else None  # current value
     if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0.0:
@@ -122,6 +134,7 @@ def make_geo_query_fn(membership_m: float) -> Callable[..., Answer]:
     limit = float(membership_m)  # common.geo.route_membership_m (U127 / U130)
 
     def answer(kind: str, name: str, objects: Any, pose: Any, mode: Any) -> Answer:
+        objects = _body(objects)  # bare today (P3), enveloped tolerated
         if not isinstance(objects, Mapping):  # broadcast never received
             return "geo_unloaded", {}  # honest, not a guess
         points = _live(objects.get("waypoints"), _point_ok)  # keypoints with a position
