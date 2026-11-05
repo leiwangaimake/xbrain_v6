@@ -138,7 +138,8 @@ def run_voice_loop_wiring(stop_flag: dict,
                           fence_db_path: str = DEFAULT_FENCE_DB,
                           enu_origin: Optional[Dict[str, float]] = None,
                           teach_snap_max_age_ms: Optional[int] = None,
-                          recorded_arrive_radius_m: Optional[float] = None) -> int:
+                          recorded_arrive_radius_m: Optional[float] = None,
+                          route_membership_m: Optional[float] = None) -> int:
     """Block until stop_flag['stop'] is truthy. Returns 0 on clean shutdown.
 
     enu_origin 来自 common.geo.enu_origin(L4 sites/{site_id}.yaml), 由
@@ -153,11 +154,16 @@ def run_voice_loop_wiring(stop_flag: dict,
     teach-recorded route (mode B, 15 S2.4.3). None (tests) keeps every mode B
     push refused by build_snapshot, which names the key; the production
     __main__ refuses to start without it (EX_CONFIG).
+
+    route_membership_m is p3_task.yaml route.membership_m (99 U127): a
+    waypoint within this distance of a route polyline belongs to it, and a
+    goto to it follows that route. None (tests) keeps the single-point goto;
+    the production __main__ refuses to start without it.
     """
     return asyncio.run(
         _amain(stop_flag, heartbeat_period_s, task_db_path, geo_db_path,
                fence_db_path, enu_origin, teach_snap_max_age_ms,
-               recorded_arrive_radius_m))
+               recorded_arrive_radius_m, route_membership_m))
 
 
 async def _amain(stop_flag: dict, heartbeat_period_s: float,
@@ -165,7 +171,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  fence_db_path: str = DEFAULT_FENCE_DB,
                  enu_origin: Optional[Dict[str, float]] = None,
                  teach_snap_max_age_ms: Optional[int] = None,
-                 recorded_arrive_radius_m: Optional[float] = None) -> int:
+                 recorded_arrive_radius_m: Optional[float] = None,
+                 route_membership_m: Optional[float] = None) -> int:
     from xbrain.common.errors import E_GEO_INCOMPLETE, E_NOT_FOUND
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p3_task.dao.simple_daos import FencesDAO, PatrolProgressDAO, SnapshotDAO
@@ -703,7 +710,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     snapshot_dao=snapshot_dao, progress_dao=progress_dao,
                     route_pub=route_pub, ack_window=ack_window,
                     trigger=trigger, now_mono_ms=_now_mono_ms(),
-                    now_wall_ms=_now_wall_ms())
+                    now_wall_ms=_now_wall_ms(),
+                    # 99 U127: follow a route the target belongs to (B01 /
+                    # B08 / B09 all come through here)
+                    route_membership_m=route_membership_m)
                 if not res.pushed:
                     pushing["task_id"] = None
                     await _fail_task_for_geometry(task_id, res.reason,
@@ -769,7 +779,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     # teach-recorded patrol was refused by build_snapshot.
                     # Still None in tests that do not pass it -> refused, with
                     # the key named (CLAUDE.md 3.1: no value invented here).
-                    recorded_arrive_radius_m=recorded_arrive_radius_m)
+                    recorded_arrive_radius_m=recorded_arrive_radius_m,
+                    # 99 U127: the entry leg and the pass start from here
+                    start=start_from_pose(state_cache.get("pose")))
                 if not res.pushed:
                     pushing["task_id"] = None
                     await _fail_task_for_geometry(task_id, res.reason,
@@ -847,7 +859,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     route_pub=route_pub, ack_window=ack_window,
                     trigger=RoutePushTrigger.RP2_REMAP,
                     now_mono_ms=_now_mono_ms(), now_wall_ms=_now_wall_ms(),
-                    recorded_arrive_radius_m=recorded_arrive_radius_m)  # same key as RP-1 (U126)
+                    recorded_arrive_radius_m=recorded_arrive_radius_m,  # same key as RP-1 (U126)
+                    start=start_from_pose(state_cache.get("pose")))  # re-planned from where the robot is now (U127)
                 if not res.pushed:
                     pushing["task_id"] = None
                     await _fail_task_for_geometry(task_id, res.reason,

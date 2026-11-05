@@ -62,8 +62,10 @@ from xbrain.p3_task.route.push import (
     build_route_frames,
     new_cmd_id,
 )
+from xbrain.p3_task.route.route_plan import RouteGeom, plan_goto, plan_patrol
 from xbrain.p3_task.route.snapshot_build import (
     SnapshotBuildError,
+    build_composite_snapshot,
     build_goto_snapshot,
     build_snapshot,
 )
@@ -119,8 +121,17 @@ async def push_route_for_task(*, task_id: str, route_geo_id: str,
                               trigger: RoutePushTrigger,
                               now_mono_ms: int, now_wall_ms: int,
                               recorded_arrive_radius_m: Optional[float] = None,
+                              start: Optional[Tuple[float, float]],
                               ) -> PushResult:
     """RP-1 / RP-2 / RP-3: snapshot the route, push it, open the ack window.
+
+    start is the robot's (lat, lon) from state/pose (start_from_pose). With
+    it the pushed polyline is the U127 patrol plan (route/route_plan.py
+    plan_patrol: entry leg to the nearest route point, then the far end and
+    back on an open route, once round on a closed one) -- without the entry
+    leg a robot more than rns.route.max_deviation_m from the first point
+    fails max_deviation on the first tick (20 S2.7). None (no fix yet)
+    pushes the recorded route unchanged, as before 2026-11-05.
 
     RP-4 never reaches here: a task entering a terminal pushes nothing and
     revokes nothing (15 S2.4.1), and the geometry staying resident in P1 is
@@ -148,6 +159,20 @@ async def push_route_for_task(*, task_id: str, route_geo_id: str,
             waypoint_ids=waypoint_ids, anchor_lookup=anchors,
             recorded_arrive_radius_m=recorded_arrive_radius_m,
             total_len_m=total_len_m)
+        if start is not None:  # U127: plan the entry leg and the pass
+            snap = build_composite_snapshot(
+                task_id=task_id, route_id=snap.route_id, rev=snap.rev,
+                points=plan_patrol(
+                    start, [(p.lat, p.lon) for p in snap.points],
+                    closed=(snap.loop_mode == "closed"),
+                    # the return leg is dropped when the near side is within
+                    # the route's arrival radius (re-covering the whole route
+                    # for less than one arrival radius is pointless)
+                    near_skip_m=snap.points[-1].arrive_radius_m),
+                # the strictest per-point radius: P1 judges arrival at the
+                # last point only, and which recorded point ends the plan
+                # depends on where the robot entered
+                arrive_radius_m=min(p.arrive_radius_m for p in snap.points))
         frames = build_route_frames(
             route_id=snap.route_id, route_rev=snap.rev,
             loop_mode=snap.loop_mode, total_len_m=snap.total_len_m,
@@ -287,9 +312,16 @@ async def push_goto_for_task(*, task_id: str, params: Dict[str, Any],
                              task_conn, geo_conn, snapshot_dao, progress_dao,
                              route_pub, ack_window,
                              trigger: RoutePushTrigger,
-                             now_mono_ms: int, now_wall_ms: int) -> PushResult:
-    """A goto task's push: ONE point (11 S3.5A v2.0, 12 S4.2c.3), through the
-    same SN-1 snapshot, frame builder and RA-1 window as a route.
+                             now_mono_ms: int, now_wall_ms: int,
+                             route_membership_m: Optional[float]) -> PushResult:
+    """A goto task's push, through the same SN-1 snapshot, frame builder and
+    RA-1 window as a route.
+
+    99 U127: with route_membership_m set, the live routes are loaded and the
+    goto follows the cheapest route the target belongs to (route_plan.
+    plan_goto); with no member route, or when the robot is closer to the
+    target than to that route, it is ONE point (11 S3.5A v2.0, 12 S4.2c.3)
+    as before. None (tests that predate U127) keeps the single point.
 
     Returns PushResult(pushed=False, reason) -- never raises -- for an
     unresolvable target, no current position, or a robot already at the
@@ -307,11 +339,24 @@ async def push_goto_for_task(*, task_id: str, params: Dict[str, Any],
         # snapshot needs the leg length. Refused, not pushed with a guess.
         return PushResult(False, 0, "", "goto_target: no current position "
                                         "(state/pose has no lat/lon)")
+    plan = None  # U127 route-following plan, when one applies
+    if route_membership_m is not None:  # route-aware goto configured
+        plan = plan_goto(start, (lat, lon), await load_route_geoms(geo_conn),
+                         route_membership_m)
+        if plan.route_id is None:  # straight is the plan: the single point below
+            plan = None
     try:
-        snap = build_goto_snapshot(
-            task_id=task_id, route_id=route_id, rev=rev, target_lat=lat,
-            target_lon=lon, arrive_radius_m=radius, start_lat=start[0],
-            start_lon=start[1])
+        if plan is not None:  # follow the route: robot, entry, route leg, exit, target
+            snap = build_composite_snapshot(
+                task_id=task_id, route_id=route_id, rev=rev,
+                points=plan.points, arrive_radius_m=radius)
+            _logger.info("p3 goto %s follows route %s (%.1f m planned)",
+                         task_id, plan.route_id, plan.cost_m)
+        else:
+            snap = build_goto_snapshot(
+                task_id=task_id, route_id=route_id, rev=rev, target_lat=lat,
+                target_lon=lon, arrive_radius_m=radius, start_lat=start[0],
+                start_lon=start[1])
         frames = build_route_frames(
             route_id=snap.route_id, route_rev=snap.rev,
             loop_mode=snap.loop_mode, total_len_m=snap.total_len_m,
@@ -339,6 +384,35 @@ async def push_goto_for_task(*, task_id: str, params: Dict[str, Any],
         "cmd_id=%s", trigger.value, task_id, snap.route_id, name, snap.rev,
         snap.total_len_m, radius, frames[0]["cmd_id"])
     return PushResult(True, len(frames), frames[0]["cmd_id"], "")
+
+
+async def load_route_geoms(geo_conn) -> list:
+    """Every live route as a RouteGeom (99 U127 membership is computed
+    against these, never stored). Mode B: routes.path_points; mode A: the
+    anchors' coordinates in waypoint_ids order. A row that cannot be read
+    is skipped with a warning -- one malformed route must not stop every
+    goto."""
+    cur = await geo_conn.execute(
+        "SELECT geo_id, name, waypoint_ids, path_points, loop_mode FROM routes"
+        " WHERE tombstone=0 AND state='active'")
+    rows = list(await cur.fetchall())
+    cur = await geo_conn.execute(
+        "SELECT geo_id, rtk_lat, rtk_lon FROM waypoints WHERE tombstone=0")
+    coords = {str(r[0]): (float(r[1]), float(r[2])) for r in await cur.fetchall()}
+    out = []
+    for gid, name, wids, pp, loop_mode in rows:
+        try:
+            if pp:  # mode B dense polyline
+                pts = [(float(p[0]), float(p[1])) for p in json.loads(pp)]
+            else:  # mode A named anchors
+                pts = [coords[str(w)] for w in json.loads(wids or "[]")]
+        except (ValueError, TypeError, KeyError, IndexError) as exc:
+            _logger.warning("p3 route %s skipped for goto planning: %s", gid, exc)
+            continue
+        if pts:
+            out.append(RouteGeom(geo_id=str(gid), name=str(name), points=tuple(pts),
+                                 closed=(loop_mode == "closed")))
+    return out
 
 
 def ack_outcome_is_fatal(outcome) -> bool:

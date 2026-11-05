@@ -54,3 +54,8 @@ teach:
 #   缺失 / null / <= 0 时 p3 拒绝启动 (EX_CONFIG 78) 并报本键路径.
 route:
   recorded_arrive_radius_m: ${common.recording.arrive_radius_m}
+  #   航点到某条路径折线(线段, 不只是录制点)的距离 <= 本值, 即属于该路径;
+  #   去该航点时先就近入路径, 沿路径走到离航点最近处再直走过去 (99 U127,
+  #   用户 2026-11-05 定 5 米). 归属关系实时计算, 不存表. 只有 P3 用.
+  #   缺失 / null / <= 0 时 p3 拒绝启动 (EX_CONFIG 78).
+  membership_m: 5.0

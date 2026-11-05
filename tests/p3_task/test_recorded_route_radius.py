@@ -121,9 +121,12 @@ async def test_a_recorded_route_is_pushed_with_the_configured_radius(
         await asyncio.wait_for(task, timeout=10.0)  # and wait for it
 
 
-@pytest.mark.parametrize("route,rc", [({}, 78), ({"recorded_arrive_radius_m": None}, 78),  # missing key
-                                      ({"recorded_arrive_radius_m": 0.0}, 78),  # zero is not a radius
-                                      ({"recorded_arrive_radius_m": 1.0}, 0)])  # the shipped value
+@pytest.mark.parametrize("route,rc", [({"membership_m": 5.0}, 78),  # missing radius
+                                      ({"recorded_arrive_radius_m": None, "membership_m": 5.0}, 78),  # null radius
+                                      ({"recorded_arrive_radius_m": 0.0, "membership_m": 5.0}, 78),  # zero is not a radius
+                                      ({"recorded_arrive_radius_m": 1.0}, 78),  # 99 U127: missing membership
+                                      ({"recorded_arrive_radius_m": 1.0, "membership_m": 0.0}, 78),  # zero membership
+                                      ({"recorded_arrive_radius_m": 1.0, "membership_m": 5.0}, 0)])  # the shipped values
 def test_main_refuses_to_start_without_the_radius(monkeypatch, route, rc):
     """EX_CONFIG 78 with the key path when the resolved value is missing / null
     / not positive; 1.0 reaches run_voice_loop_wiring. MUTATION: drop the check
@@ -141,3 +144,4 @@ def test_main_refuses_to_start_without_the_radius(monkeypatch, route, rc):
     assert p3main.main(["--voice-loop"]) == rc  # the exit code
     if rc == 0:  # the started case
         assert seen["recorded_arrive_radius_m"] == 1.0  # passed through
+        assert seen["route_membership_m"] == 5.0  # 99 U127, passed through

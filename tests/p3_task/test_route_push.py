@@ -382,7 +382,8 @@ async def test_push_writes_the_snapshot_before_it_sends(dbs):
         geo_conn=geo_conn, snapshot_dao=snapshot_dao,
         progress_dao=PatrolProgressDAO(task_conn), route_pub=pub,
         ack_window=_W(), trigger=RoutePushTrigger.RP1_DISPATCH,
-        now_mono_ms=1000, now_wall_ms=1_785_000_000_000)
+        now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
+        start=None)  # pre-U127 single-pass / single-point behaviour
     assert res.pushed is True and res.frames == 1
     # The snapshot exists and carries what the frame carried.
     row = await snapshot_dao.fetch("t1")
@@ -408,7 +409,8 @@ async def test_rp4_pushes_nothing(dbs):
         progress_dao=PatrolProgressDAO(task_conn), route_pub=pub,
         ack_window=RouteAckWindow(),
         trigger=RoutePushTrigger.RP4_TASK_TERMINAL,
-        now_mono_ms=1000, now_wall_ms=1_785_000_000_000)
+        now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
+        start=None)  # pre-U127 single-pass / single-point behaviour
     assert res.pushed is False and pub.puts == []
 
 
@@ -426,7 +428,8 @@ async def test_a_deleted_route_refuses_without_raising(dbs):
         geo_conn=geo_conn, snapshot_dao=SnapshotDAO(task_conn),
         progress_dao=PatrolProgressDAO(task_conn), route_pub=pub,
         ack_window=RouteAckWindow(), trigger=RoutePushTrigger.RP1_DISPATCH,
-        now_mono_ms=1000, now_wall_ms=1_785_000_000_000)
+        now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
+        start=None)  # pre-U127 single-pass / single-point behaviour
     assert res.pushed is False and "route_missing" in res.reason
     assert pub.puts == []
 
@@ -519,7 +522,8 @@ async def test_goto_push_sends_one_point_from_the_waypoint(dbs):
         snapshot_dao=SnapshotDAO(task_conn),
         progress_dao=PatrolProgressDAO(task_conn), route_pub=pub,
         ack_window=RouteAckWindow(), trigger=RoutePushTrigger.RP1_DISPATCH,
-        now_mono_ms=1000, now_wall_ms=1_785_000_000_000)
+        now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
+        route_membership_m=None)  # pre-U127 single-pass / single-point behaviour
     assert res.pushed is True and res.frames == 1
     f = pub.puts[0]
     assert f["route_id"] == "goto-w-gate" and f["route_rev"] == 4
@@ -553,7 +557,8 @@ async def test_goto_push_refuses_without_sending(dbs, params, start, why):
         geo_conn=geo_conn, snapshot_dao=SnapshotDAO(task_conn),
         progress_dao=PatrolProgressDAO(task_conn), route_pub=pub,
         ack_window=RouteAckWindow(), trigger=RoutePushTrigger.RP1_DISPATCH,
-        now_mono_ms=1000, now_wall_ms=1_785_000_000_000)
+        now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
+        route_membership_m=None)  # pre-U127 single-pass / single-point behaviour
     assert res.pushed is False and why in res.reason
     assert pub.puts == []
 
@@ -569,7 +574,8 @@ async def _push_one(dbs, params):
         geo_conn=geo_conn, snapshot_dao=SnapshotDAO(task_conn),
         progress_dao=PatrolProgressDAO(task_conn), route_pub=pub,
         ack_window=RouteAckWindow(), trigger=RoutePushTrigger.RP1_DISPATCH,
-        now_mono_ms=1000, now_wall_ms=1_785_000_000_000)
+        now_mono_ms=1000, now_wall_ms=1_785_000_000_000,
+        route_membership_m=None)  # pre-U127 single-pass / single-point behaviour
     assert res.pushed is True, res.reason
     return pub.puts[0]
 

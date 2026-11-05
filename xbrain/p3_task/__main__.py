@@ -144,12 +144,24 @@ def main(argv: Optional[list] = None) -> int:
                 "positive number (common.recording.arrive_radius_m, 15 S2.4.3)",
                 _radius)
             return 78
+        # 99 U127: a waypoint within route.membership_m of a route polyline
+        # belongs to it and a goto follows that route. Same refusal shape as
+        # the radius above: without it every goto would silently be a
+        # straight line again.
+        _member = _route.get("membership_m")
+        if (isinstance(_member, bool) or not isinstance(_member, (int, float))
+                or _member <= 0.0):
+            _logger.error(
+                "p3_task config: route.membership_m=%r must be a positive "
+                "number (99 U127 route-aware goto)", _member)
+            return 78
         return run_voice_loop_wiring(
             stop_flag=stop_flag,
             task_db_path=args.task_db or DEFAULT_TASK_DB,
             enu_origin=_enu,
             teach_snap_max_age_ms=_teach.get("snap_max_age_ms"),
-            recorded_arrive_radius_m=float(_radius))
+            recorded_arrive_radius_m=float(_radius),
+            route_membership_m=float(_member))
 
     return main_loop(tick_seconds=args.heartbeat_seconds, stop_flag=stop_flag)
 

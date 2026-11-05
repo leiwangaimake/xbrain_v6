@@ -258,3 +258,37 @@ def build_goto_snapshot(*, task_id: str, route_id: str, rev: int,
     return RouteSnapshot(task_id=task_id, route_id=route_id, rev=int(rev),
                          loop_mode="oneway", points=(point,),
                          total_len_m=length, arclen=(0.0,))
+
+def build_composite_snapshot(*, task_id: str, route_id: str, rev: int,
+                             points: Sequence[Tuple[float, float]],
+                             arrive_radius_m: float) -> RouteSnapshot:
+    """A planned polyline (99 U127, route/route_plan.py) as one snapshot:
+    a goto that follows a route, or a patrol with its entry leg. points are
+    (lat, lon) with the robot's position first.
+
+    loop_mode is "oneway": the polyline itself is single-pass -- the closed
+    ring and the far-end turn are already unrolled into it, and P1 follows
+    one pass (route_intake.py carries loop_mode but does no loop handling).
+    Every point carries arrive_radius_m; P1 judges arrival at the LAST point
+    only (route_intake exposes the last radius), so the intermediate values
+    only keep the wire field legal. Refuses fewer than two points, a
+    non-positive radius, an over-cap point count and a zero length."""
+    if isinstance(arrive_radius_m, bool) or not isinstance(arrive_radius_m, (int, float)) \
+            or not math.isfinite(arrive_radius_m) or arrive_radius_m <= 0.0:
+        raise SnapshotBuildError(
+            "composite %r arrive_radius_m must be a positive number, got %r"
+            % (route_id, arrive_radius_m))
+    pts = tuple(RoutePoint(float(la), float(lo), float(arrive_radius_m))
+                for la, lo in points)  # robot position first
+    if len(pts) < 2:
+        raise SnapshotBuildError("composite %r needs at least two points" % route_id)
+    if len(pts) > MAX_POINTS:
+        raise SnapshotBuildError(
+            "composite %r has %d points, over the 11 S3.5A RG-2 cap of %d"
+            % (route_id, len(pts), MAX_POINTS))
+    arclen = cumulative_arclen(pts)
+    if arclen[-1] <= 0.0:
+        raise SnapshotBuildError("composite %r has zero length" % route_id)
+    return RouteSnapshot(task_id=task_id, route_id=route_id, rev=int(rev),
+                         loop_mode="oneway", points=pts,
+                         total_len_m=arclen[-1], arclen=tuple(arclen))
