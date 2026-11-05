@@ -100,8 +100,15 @@ class TeachRuntime:
 
     def __init__(self, task_conn, geo_conn, fence_conn, *,
                  boot_id: str,
+                 sample_hz: Optional[float],
+                 min_dist_m: Optional[float],
                  snap_max_age_ms: Optional[int] = None) -> None:
         self._task_conn = task_conn
+        # 99 U132: the S12A.6 sampling pair from common.recording, validated
+        # by __main__ (missing / <= 0 -> 78). No default here on purpose; None
+        # (a wiring that was not given them) refuses every start by key name.
+        self._sample_hz = sample_hz
+        self._min_dist_m = min_dist_m
         # 18 PS-6 teach.snap_max_age_ms (p3_task.yaml, 15 S12): the oldest a
         # mark_once pose_snap may be. None = not configured, and every capture
         # that carries a snapshot is then refused by name -- never defaulted.
@@ -383,6 +390,16 @@ class TeachRuntime:
 
     async def _start(self, cmd: TeachCommand, now_mono_s: float,
                      running_task_types: Tuple[str, ...]) -> Dict[str, Any]:
+        # checked first: a process that cannot record must say so whatever
+        # the live state is
+        if self._sample_hz is None or self._min_dist_m is None:
+            # 99 U132: never fall back to a number written here.
+            return teach_ack(
+                cmd.cmd_id, "rejected", E_TEACH_STATE,
+                {"reason": "recording_config_missing",
+                 "missing": [k for k, v in (("teach.sample_hz", self._sample_hz),
+                                            ("teach.min_dist_m", self._min_dist_m))
+                             if v is None]})
         missing = self.missing_sources()
         if missing:
             # Design point 2: an undeterminable gate is a refusal that names
@@ -398,7 +415,9 @@ class TeachRuntime:
             return teach_ack(cmd.cmd_id, "rejected", result.code,
                              result.detail or {"reason": result.reason})
         limits, applied = clamp_limits(cmd.start["sample"],
-                                       cmd.start["max_duration_s"])
+                                       cmd.start["max_duration_s"],
+                                       sample_hz=self._sample_hz,
+                                       min_dist_m=self._min_dist_m)
         limits.require_fix = cmd.start["require_fix"]
         session_id = "ts-%s-%04d" % (self._boot_id, len(self._acks) + 1)
         self._session = TeachSession(

@@ -139,7 +139,9 @@ def run_voice_loop_wiring(stop_flag: dict,
                           enu_origin: Optional[Dict[str, float]] = None,
                           teach_snap_max_age_ms: Optional[int] = None,
                           recorded_arrive_radius_m: Optional[float] = None,
-                          route_membership_m: Optional[float] = None) -> int:
+                          route_membership_m: Optional[float] = None,
+                          teach_sample_hz: Optional[float] = None,
+                          teach_min_dist_m: Optional[float] = None) -> int:
     """Block until stop_flag['stop'] is truthy. Returns 0 on clean shutdown.
 
     enu_origin 来自 common.geo.enu_origin(L4 sites/{site_id}.yaml), 由
@@ -159,11 +161,18 @@ def run_voice_loop_wiring(stop_flag: dict,
     waypoint within this distance of a route polyline belongs to it, and a
     goto to it follows that route. None (tests) keeps the single-point goto;
     the production __main__ refuses to start without it.
+
+    teach_sample_hz / teach_min_dist_m are p3_task.yaml teach.sample_hz /
+    teach.min_dist_m (= common.recording.*, 99 U132): the S12A.6 sampling
+    pair. None (tests) refuses every recording start by key name; the
+    production __main__ refuses to start without them.
     """
     return asyncio.run(
         _amain(stop_flag, heartbeat_period_s, task_db_path, geo_db_path,
                fence_db_path, enu_origin, teach_snap_max_age_ms,
-               recorded_arrive_radius_m, route_membership_m))
+               recorded_arrive_radius_m, route_membership_m,
+               teach_sample_hz=teach_sample_hz,
+               teach_min_dist_m=teach_min_dist_m))
 
 
 async def _amain(stop_flag: dict, heartbeat_period_s: float,
@@ -172,7 +181,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  enu_origin: Optional[Dict[str, float]] = None,
                  teach_snap_max_age_ms: Optional[int] = None,
                  recorded_arrive_radius_m: Optional[float] = None,
-                 route_membership_m: Optional[float] = None) -> int:
+                 route_membership_m: Optional[float] = None,
+                 teach_sample_hz: Optional[float] = None,
+                 teach_min_dist_m: Optional[float] = None) -> int:
     from xbrain.common.errors import E_GEO_INCOMPLETE, E_NOT_FOUND, E_SCHEMA
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p3_task.dao.simple_daos import FencesDAO, PatrolProgressDAO, SnapshotDAO
@@ -666,6 +677,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # HMI tab is still holding.
             teach = TeachRuntime(conn, geo_conn, fence_conn,
                                  boot_id=_BOOT_ID,
+                                 # 99 U132: the configured sampling pair
+                                 sample_hz=teach_sample_hz,
+                                 min_dist_m=teach_min_dist_m,
                                  snap_max_age_ms=teach_snap_max_age_ms)
             if teach_snap_max_age_ms is None:
                 # Said once at startup, not discovered at the first capture.

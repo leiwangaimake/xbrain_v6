@@ -155,13 +155,26 @@ def main(argv: Optional[list] = None) -> int:
                 "p3_task config: route.membership_m=%r must be a positive "
                 "number (99 U127 route-aware goto)", _member)
             return 78
+        # 99 U132: the recording sampling pair (common.recording.min_dist_m /
+        # sample_hz via teach.*). Refused by key path rather than recorded at
+        # a rate or spacing nobody configured.
+        for _tk in ("min_dist_m", "sample_hz"):
+            _tv = _teach.get(_tk)
+            if (isinstance(_tv, bool) or not isinstance(_tv, (int, float))
+                    or _tv <= 0.0):
+                _logger.error(
+                    "p3_task config: teach.%s=%r must be a positive number "
+                    "(99 U132 recording sampling)", _tk, _tv)
+                return 78
         return run_voice_loop_wiring(
             stop_flag=stop_flag,
             task_db_path=args.task_db or DEFAULT_TASK_DB,
             enu_origin=_enu,
             teach_snap_max_age_ms=_teach.get("snap_max_age_ms"),
             recorded_arrive_radius_m=float(_radius),
-            route_membership_m=float(_member))
+            route_membership_m=float(_member),
+            teach_sample_hz=float(_teach["sample_hz"]),
+            teach_min_dist_m=float(_teach["min_dist_m"]))
 
     return main_loop(tick_seconds=args.heartbeat_seconds, stop_flag=stop_flag)
 

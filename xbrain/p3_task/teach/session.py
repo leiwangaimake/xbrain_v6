@@ -72,12 +72,10 @@ TRANSITIONS: Dict[Tuple[str, str], str] = {
 #: reads the session, takeover re-attaches an orphaned session to a new issuer.
 _STATELESS_ACTIONS = frozenset({"query", "takeover"})
 
-#: 11 S12A.6 defaults. sample_hz and dedup_min_dist_m are the U42 decision
-#: (1 Hz timer + 0.5 m dedup, matching V5) -- NOT the retired v0.2 triple of
-#: distance + heading + interval. Kept here beside the machine because the
-#: session carries them per-session (start.sample may override).
-DEFAULT_SAMPLE_HZ = 1.0
-DEFAULT_DEDUP_MIN_DIST_M = 0.5
+#: 11 S12A.6 defaults. sample_hz and dedup_min_dist_m (the U42 "1 Hz timer +
+#: 0.5 m dedup") used to be constants here too; since 99 U132 they come from
+#: common.recording (p3_task.yaml teach.sample_hz / teach.min_dist_m) and are
+#: injected -- a value written in code is the "代码写死" the user ruled out.
 DEFAULT_MAX_POINTS = 2000
 DEFAULT_MAX_DURATION_S = 1800          # CMD-17
 MAX_DURATION_CAP_S = 7200
@@ -104,12 +102,14 @@ class TeachStateError(Exception):
 @dataclass
 class SessionLimits:
     """Per-session limits, clamped at start (S12A.4: an out-of-range value is
-    clamped and REPORTED in the ack detail, never silently taken)."""
+    clamped and REPORTED in the ack detail, never silently taken).
+    sample_hz / dedup_min_dist_m have no default (99 U132): the caller passes
+    the configured values."""
+    sample_hz: float
+    dedup_min_dist_m: float
     max_duration_s: float = DEFAULT_MAX_DURATION_S
     max_points: int = DEFAULT_MAX_POINTS
     finalize_timeout_s: float = DEFAULT_FINALIZE_TIMEOUT_S
-    sample_hz: float = DEFAULT_SAMPLE_HZ
-    dedup_min_dist_m: float = DEFAULT_DEDUP_MIN_DIST_M
     require_fix: str = DEFAULT_REQUIRE_FIX
 
 
@@ -125,7 +125,9 @@ class TeachSession:
     boot_id: str = ""
     started_mono_s: float = 0.0
     deadline_mono_s: float = 0.0
-    limits: SessionLimits = field(default_factory=SessionLimits)
+    # set by the runtime at start from the configured values (99 U132); None
+    # only for a session object built outside a start (tests of the machine)
+    limits: Optional[SessionLimits] = None
     point_count: int = 0
     manual_count: int = 0
     dropped_by_quality: int = 0
@@ -241,8 +243,9 @@ def check_arming(inp: ArmingInputs) -> ArmingResult:
 
 
 def clamp_limits(raw: Optional[Dict[str, Any]],
-                 max_duration_s: Optional[float]) -> Tuple[SessionLimits,
-                                                           Dict[str, Any]]:
+                 max_duration_s: Optional[float], *,
+                 sample_hz: float,
+                 min_dist_m: float) -> Tuple[SessionLimits, Dict[str, Any]]:
     """Build the per-session limits from start.sample, clamping out-of-range
     values and reporting what was applied (S12A.4: "越界值被钳到合法区间并在 ack
     的 detail 中回报").
@@ -252,7 +255,9 @@ def clamp_limits(raw: Optional[Dict[str, Any]],
     believe they are recording at 5 Hz while the buffer fills at 1 Hz.
     """
     raw = raw or {}
-    limits = SessionLimits()
+    # the configured U42 pair (99 U132) is the base; start.sample may still
+    # override per session, clamped and reported below
+    limits = SessionLimits(sample_hz=sample_hz, dedup_min_dist_m=min_dist_m)
     hz = raw.get("min_interval_ms")
     if isinstance(raw.get("sample_hz"), (int, float)):
         # 0.2 .. 5 Hz. Below 0.2 the route is a set of disconnected guesses;

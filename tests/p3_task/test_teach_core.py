@@ -185,7 +185,8 @@ def test_clamped_limits_are_reported():
     """S12A.4: an out-of-range sample setting is clamped AND reported. MUTATION:
     clamp silently and the operator believes they are recording at 50 Hz."""
     limits, applied = clamp_limits({"sample_hz": 50.0, "min_dist_m": 0.0},
-                                   max_duration_s=99999)
+                                   max_duration_s=99999,
+                                   sample_hz=1.0, min_dist_m=0.5)  # 99 U132 configured pair
     assert limits.sample_hz == 5.0 and applied["sample_hz"] == 5.0
     assert limits.dedup_min_dist_m == 0.05
     assert limits.max_duration_s == 7200        # capped at the S12A.4 ceiling
@@ -194,7 +195,8 @@ def test_clamped_limits_are_reported():
 def test_min_interval_ms_is_honoured_not_ignored():
     """S12A.4 still documents the sample block with min_interval_ms. A sender
     using the documented name must not be silently overridden by the default."""
-    limits, _applied = clamp_limits({"min_interval_ms": 500}, None)
+    limits, _applied = clamp_limits({"min_interval_ms": 500}, None,
+                                    sample_hz=1.0, min_dist_m=0.5)
     assert limits.sample_hz == 2.0
 
 

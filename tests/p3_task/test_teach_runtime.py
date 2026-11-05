@@ -65,6 +65,7 @@ async def rt():
     geo = await _open(GEO_DB_STATEMENTS)
     fence = await _open(FENCE_DB_STATEMENTS)
     runtime = TeachRuntime(task, geo, fence, boot_id="b0",
+                           sample_hz=1.0, min_dist_m=0.5,  # common.recording (99 U132)
                            snap_max_age_ms=8000)  # p3_task.yaml value
     # Healthy caches by default; the missing-source case clears them.
     runtime.update_pose({"lat": _LAT, "lon": _LON, "fix_type": "rtk_fixed",
@@ -177,6 +178,39 @@ async def test_start_refuses_without_a_nonvoice_estop(rt):
 
 
 # ------------------------------------------------------------ recording -----
+
+@pytest.mark.asyncio
+async def test_the_configured_spacing_decides_which_points_are_kept():
+    """99 U132: the dedup distance is common.recording.min_dist_m, injected --
+    with 2.0 m configured, samples 1.5 m apart are dropped and 2.5 m apart
+    kept. MUTATION: keep a 0.5 m constant in code -> 1.5 m samples kept -> red."""
+    task, geo, fence = (await _open(ALL_DDL_STATEMENTS), await _open(GEO_DB_STATEMENTS),
+                        await _open(FENCE_DB_STATEMENTS))
+    rt2 = TeachRuntime(task, geo, fence, boot_id="b0", sample_hz=1.0, min_dist_m=2.0)
+    rt2.update_health({"allow_motion": True})
+    rt2.update_robot({"hes": False, "estop_path": "up"})
+    rt2.update_power({"soc_pct": 80.0})
+    rt2.update_teleop({"sources": [{"device": "gamepad", "stale": False, "alive": True}]})
+    sid = await _start(rt2)
+    await _drive(rt2, sid, metres=1.5, t0=101.0, count=4)
+    assert rt2.teach_state_payload(110.0)["stats"]["point_count"] == 2  # 0 m kept, 1.5 dropped, 3.0 kept, 4.5 dropped
+    for c in (task, geo, fence):
+        await c.close()
+
+
+@pytest.mark.asyncio
+async def test_start_refuses_when_the_sampling_pair_is_not_configured():
+    """99 U132: no number in code to fall back on -- a wiring without the
+    teach.* pair refuses by key name. MUTATION: default to 1 Hz / 0.5 m -> red."""
+    task, geo, fence = (await _open(ALL_DDL_STATEMENTS), await _open(GEO_DB_STATEMENTS),
+                        await _open(FENCE_DB_STATEMENTS))
+    rt2 = TeachRuntime(task, geo, fence, boot_id="b0", sample_hz=None, min_dist_m=None)
+    ack = await rt2.handle(_cmd("start", start={"kind": "route"}), now_mono_s=100.0, now_ms=1)
+    assert ack["result"] == "rejected" and ack["detail"]["reason"] == "recording_config_missing"
+    assert ack["detail"]["missing"] == ["teach.sample_hz", "teach.min_dist_m"]
+    for c in (task, geo, fence):
+        await c.close()
+
 
 @pytest.mark.asyncio
 async def test_record_drive_finish_save_writes_a_route(rt):
@@ -535,7 +569,8 @@ async def test_snapshot_capture_refused_when_the_limit_is_not_configured():
     task = await _open(ALL_DDL_STATEMENTS)
     geo = await _open(GEO_DB_STATEMENTS)
     fence = await _open(FENCE_DB_STATEMENTS)
-    runtime = TeachRuntime(task, geo, fence, boot_id="b0")
+    runtime = TeachRuntime(task, geo, fence, boot_id="b0",
+                           sample_hz=1.0, min_dist_m=0.5)
     ack = await runtime.handle(
         _cmd("mark_once", pose_snap=_snap(),
              mark_once={"kind": "waypoint", "name": "gate"}),
