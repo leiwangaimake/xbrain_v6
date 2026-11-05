@@ -678,7 +678,6 @@ xbrain/p3_task/state/geo_rev.py
 xbrain/p3_task/state/machine.py
 xbrain/p3_task/state/mission_json.py
 xbrain/p3_task/state/path_progress.py
-xbrain/p3_task/state/preconditions.py
 xbrain/p3_task/state/progress.py
 xbrain/p3_task/state/task_state.py
 xbrain/p3_task/teach/command.py
