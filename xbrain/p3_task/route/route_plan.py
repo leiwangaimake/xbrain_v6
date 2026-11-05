@@ -64,15 +64,16 @@ Traps:
 
 from __future__ import annotations
 
-import math  # trig for the local plane, hypot for lengths
+import math  # hypot for lengths
 from dataclasses import dataclass  # frozen result types
 from typing import List, Optional, Sequence, Tuple  # plain value types
 
-LatLon = Tuple[float, float]  # (lat, lon) in degrees, WGS84
-XY = Tuple[float, float]  # (east, north) in metres, local plane
-
-_EARTH_R_M = 6371000.0  # mean Earth radius, same as the snapshot builder
-_DEDUP_M = 0.05  # consecutive points closer than this are one point (no zero-length segment)
+# The plane / polyline geometry moved to the shared layer on 2026-11-05 (99
+# U130) so P4's membership queries use exactly the same math as navigation.
+from xbrain.common.geo.polyline import DEDUP_M as _DEDUP_M  # zero-length guard
+from xbrain.common.geo.polyline import XY, LatLon  # value types
+from xbrain.common.geo.polyline import Plane as _Plane  # local metric plane
+from xbrain.common.geo.polyline import Polyline as _Poly  # projection / walk
 
 
 @dataclass(frozen=True)
@@ -91,108 +92,6 @@ class GotoPlan:
     points: Tuple[LatLon, ...]  # robot position first, target last
     route_id: Optional[str]  # the route followed, or None
     cost_m: float  # the planned length
-
-
-class _Plane:
-    """Local east-north plane around a reference point (equirectangular)."""
-
-    def __init__(self, ref: LatLon) -> None:
-        self._lat0 = math.radians(ref[0])  # reference latitude, radians
-        self._lon0 = math.radians(ref[1])  # reference longitude, radians
-        self._kx = _EARTH_R_M * math.cos(self._lat0)  # metres per radian east here
-        self._ky = _EARTH_R_M  # metres per radian north
-
-    def xy(self, p: LatLon) -> XY:
-        """WGS84 -> local metres."""
-        return ((math.radians(p[1]) - self._lon0) * self._kx,  # east
-                (math.radians(p[0]) - self._lat0) * self._ky)  # north
-
-    def ll(self, q: XY) -> LatLon:
-        """local metres -> WGS84."""
-        return (math.degrees(self._lat0 + q[1] / self._ky),  # lat
-                math.degrees(self._lon0 + q[0] / self._kx))  # lon
-
-
-class _Poly:
-    """A polyline in the local plane with cumulative arc length. A closed
-    polyline gets its closing segment as an explicit last vertex (a copy of
-    vertex 0 at arc length L), unless the recording already ends on it."""
-
-    def __init__(self, pts: Sequence[XY], closed: bool) -> None:
-        v = [pts[0]]  # deduplicated vertices
-        for p in pts[1:]:  # drop zero-length steps
-            if math.hypot(p[0] - v[-1][0], p[1] - v[-1][1]) > _DEDUP_M:
-                v.append(p)  # a real step
-        if closed and len(v) > 2 and math.hypot(v[-1][0] - v[0][0], v[-1][1] - v[0][1]) > _DEDUP_M:
-            v.append(v[0])  # close the ring explicitly
-        self.v = v  # vertices
-        self.closed = closed  # ring or not
-        cum = [0.0]  # arc length at each vertex
-        for a, b in zip(v, v[1:]):  # every segment
-            cum.append(cum[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))  # accumulate
-        self.cum = cum  # cumulative arc length
-        self.length = cum[-1]  # total length L
-
-    def project(self, p: XY) -> Tuple[float, float]:
-        """(distance to the polyline, arc length of the foot). A one-vertex
-        polyline projects onto that vertex at arc length 0."""
-        if len(self.v) == 1:  # degenerate route
-            q = self.v[0]  # the only vertex
-            return math.hypot(p[0] - q[0], p[1] - q[1]), 0.0  # distance, s = 0
-        best = (math.inf, 0.0)  # (distance, s)
-        for i in range(len(self.v) - 1):  # every segment, closing one included
-            a, b = self.v[i], self.v[i + 1]  # segment ends
-            dx, dy = b[0] - a[0], b[1] - a[1]  # segment vector
-            seg2 = dx * dx + dy * dy  # squared length, > 0 after dedup
-            t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / seg2))  # clamped foot parameter
-            fx, fy = a[0] + t * dx, a[1] + t * dy  # foot point
-            d = math.hypot(p[0] - fx, p[1] - fy)  # distance to this segment
-            if d < best[0]:  # nearer than any segment so far
-                best = (d, self.cum[i] + t * math.sqrt(seg2))  # its arc length
-        return best  # nearest foot
-
-    def at(self, s: float) -> XY:
-        """The point at arc length s (clamped to [0, L])."""
-        s = max(0.0, min(self.length, s))  # clamp
-        for i in range(len(self.v) - 1):  # find the segment holding s
-            if s <= self.cum[i + 1] or i == len(self.v) - 2:  # inside, or the last one
-                seg = self.cum[i + 1] - self.cum[i]  # its length
-                t = 0.0 if seg <= 0.0 else (s - self.cum[i]) / seg  # fraction along it
-                a, b = self.v[i], self.v[i + 1]  # its ends
-                return (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))  # interpolate
-        return self.v[0]  # one-vertex polyline
-
-    def along(self, s_from: float, s_to: float) -> Tuple[float, int]:
-        """(length, direction) of the shorter way from s_from to s_to.
-        direction +1 = recorded direction, -1 = against it. On a closed
-        route the way through the seam is considered too (trap 2)."""
-        fwd = s_to - s_from  # signed difference along the recording
-        if not self.closed:  # open: only one way between two points
-            return abs(fwd), (1 if fwd >= 0.0 else -1)  # length, direction
-        f = fwd % self.length  # forward, wrapping through the seam
-        b = (-fwd) % self.length  # backward, wrapping
-        return (f, 1) if f <= b else (b, -1)  # the shorter way
-
-    def walk(self, s_from: float, s_to: float, direction: int) -> List[XY]:
-        """Points from the foot at s_from to the foot at s_to travelling in
-        `direction`, with every vertex strictly between them, wrapping
-        through the seam on a closed route when needed."""
-        out = [self.at(s_from)]  # start at the entry foot
-        n = len(self.v)  # vertex count (closing copy included)
-        if direction > 0:  # recorded direction
-            if s_to >= s_from:  # no wrap
-                out += [self.v[k] for k in range(n) if s_from < self.cum[k] < s_to]  # vertices between
-            else:  # through the seam (closed only)
-                out += [self.v[k] for k in range(n) if self.cum[k] > s_from]  # to the end (= vertex 0)
-                out += [self.v[k] for k in range(1, n) if self.cum[k] < s_to]  # from vertex 0 on
-        else:  # against the recording
-            if s_to <= s_from:  # no wrap
-                out += [self.v[k] for k in reversed(range(n)) if s_to < self.cum[k] < s_from]  # vertices between, reversed
-            else:  # through the seam (closed only)
-                out += [self.v[k] for k in reversed(range(n)) if self.cum[k] < s_from]  # back to vertex 0
-                out += [self.v[k] for k in reversed(range(n - 1)) if self.cum[k] > s_to]  # from the end back
-        out.append(self.at(s_to))  # end at the exit foot
-        return out  # in travel order
 
 
 def _dedup(pts: Sequence[XY]) -> List[XY]:
