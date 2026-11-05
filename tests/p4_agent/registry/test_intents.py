@@ -237,7 +237,7 @@ def test_auth_matches_16_s8_3a_2():
     # landed D17/D18/E09/E10 (2026-08-07); 134->139 when 18-C G43-G47 landed
     # (2026-08-16, F3); CS-A3's declared histogram moved with it; 139->141 when
     # J04 thanks / J05 farewell were restored (2026-10-30, 99 U101).
-    assert len(row_auth) == 144  # 141 -> 142: A15 set_turn_speed (2026-10-30, 99 U104); 142 -> 143: A16 set_move_speed (2026-11-03, 99 U106); 143 -> 144: A17 move_heading (2026-11-04, 99 U108)
+    assert len(row_auth) == 145  # 143 -> 145: G48 / G49 route membership (2026-11-05, 99 U130); 141 -> 142: A15 set_turn_speed (2026-10-30, 99 U104); 142 -> 143: A16 set_move_speed (2026-11-03, 99 U106); 143 -> 144: A17 move_heading (2026-11-04, 99 U108); 144 -> 143: B10 skip_waypoint deleted (2026-11-05, 99 U129)
     for e in reg.entries:                                # every registry entry
         assert e.auth == base[e.id], (e.name, e.id)      # base auth == folded doc level
 
@@ -271,7 +271,12 @@ def test_bonus_cross_check_against_triage_when_present():
     tr = json.load(open(TRIAGE))["triage"]               # the frozen migration source
     doc = parse_doc16_registry_table(doc16_text())       # the (growing) doc table
     migrated = {e["intent"] for e in tr}                 # the 128 migrated names
-    assert migrated <= set(doc)                          # none of them vanished
+    # Deletions are enumerated too, each with its ruling, so an accidental
+    # loss of any other migrated row still fails here.
+    deleted = {"skip_waypoint"}                          # B10, 2026-11-05, 99 U129 ("不支持, 删除")
+    assert deleted <= migrated                           # a deletion names a real migrated row
+    assert migrated - deleted <= set(doc)                # nothing else vanished
+    assert not (deleted & set(doc))                      # and the deleted ones are really gone
     # Growth is enumerated, not open-ended: exactly the post-migration intents.
     assert set(doc) - migrated == {
         "set_light_bright", "set_strobe_mode",           # 18-A D17/D18
@@ -288,6 +293,8 @@ def test_bonus_cross_check_against_triage_when_present():
         "set_move_speed",
         # A17 (2026-11-04, 99 U108): walk N metres along a compass heading.
         "move_heading",
+        # G48 / G49 (2026-11-05, 99 U130): route membership queries.
+        "query_route_waypoints", "query_waypoint_routes",
     }
     # A migrated intent whose SLOTS legitimately evolved after the freeze is
     # enumerated here (not open-ended): the frozen _triage.json cannot be
@@ -298,6 +305,8 @@ def test_bonus_cross_check_against_triage_when_present():
     #   still reproduced faithfully; only the slot list grew.
     _SLOT_EVOLVED = {"ptz_scan": ["scan_mode", "direction"]}
     for e in tr:                                         # and per migrated record
+        if e["intent"] in deleted:                        # removed by a ruling (above)
+            continue                                      # no row to compare
         row = doc[e["intent"]]                            # the doc row
         assert row["id"] == e["id"]                       # id reproduced
         assert row["route"] == e["route"]                 # route reproduced

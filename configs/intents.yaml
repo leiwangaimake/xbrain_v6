@@ -115,7 +115,8 @@ intents:
   cancel_task: { id: B07, keywords: ["取消任务", "结束任务", "别巡了", "不巡了"], slots: [], route: fastpath, auth: L2 }
   return_home: { id: B08, keywords: ["回来", "返航", "回到起点"], slots: [], route: fastpath, auth: L1a }
   goto_dock: { id: B09, keywords: ["充电", "回桩", "回充电桩"], slots: [dock], route: fastpath, auth: L1a }
-  skip_waypoint: { id: B10, keywords: ["跳过这个点", "下一个点"], slots: [], route: fastpath, auth: L1b }
+  # B10 skip_waypoint removed 2026-11-05 (99 U129, user ruling "不支持, 不需要实现, 删除"):
+  #   "跳过这个点 / 下一个点" are no longer an intent; 16 S6.6 / 18 rows struck.
   follow_target: { id: B11, keywords: ["跟着他", "跟上那个人"], slots: [target_id], route: fastpath_then_llm, auth: L3 }
   stop_follow: { id: B12, keywords: ["别跟了"], slots: [], route: fastpath_then_llm, auth: L0 }
 
@@ -242,6 +243,11 @@ intents:
   query_heading_status: { id: G45, keywords: ["航向准", "航向有效", "航向状态", "航向能用"], slots: [], route: fastpath, auth: L0 }
   query_heading_source: { id: G46, keywords: ["航向来源", "航向哪来", "双天线还是航迹"], slots: [], route: fastpath, auth: L0 }
   query_clock_sync: { id: G47, keywords: ["授时同步", "时钟同步", "RTK授时"], slots: [], route: fastpath, auth: L0 }
+  # G48 / G49 (2026-11-05, 99 U130): route membership, answered by the PTP
+  # rule layer (slots/ptp_slots.py) from state/geo/objects with
+  # common.geo.route_membership_m; the keywords only catch the bare forms.
+  query_route_waypoints: { id: G48, keywords: ["路径上有哪些航点", "路线上有哪些点"], slots: [route], route: fastpath, auth: L0 }
+  query_waypoint_routes: { id: G49, keywords: ["在哪条路径上", "属于哪条路径"], slots: [waypoint], route: fastpath, auth: L0 }
 
   # -- H 系统 (H01/H03 carry auth_by_slot; see header) --
   run_bit: { id: H01, keywords: ["做个自检", "自检一下", "检查系统", "做个深度自检", "全面检查一遍"], slots: [scope], route: fastpath, auth: L1a, auth_by_slot: { scope: { quick: L1a, deep: L2 } } }

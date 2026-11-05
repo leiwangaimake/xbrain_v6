@@ -26,7 +26,8 @@ control 命令就是把猜的动作推给 P3, 那正是 S7.2 要防的.
 *** 五条 B 类里只做得了三条, 另两条如实不接:
   * B10 skip_waypoint -- 18 效果列"P3 路径推进", 而 S7.2 的动作闭集是
     submit / cancel / pause / resume / clear_queue, [没有 skip]. 用 cancel
-    代替是错的(那会结束整条任务), 硬凑一个动作更错.
+    代替是错的(那会结束整条任务), 硬凑一个动作更错. 2026-11-05 起该意图
+    已从注册表删除 (99 U129, 用户裁决"不支持, 不需要实现, 删除").
   * B12 stop_follow -- 18 效果列"退出目标导向行为", 这是运动[行为]不是
     任务动作; 它对应 S7.3 ModeCommand 的 set_behavior(NAV-50 三值回 normal),
     走 cmd/mode, 见 mode_request.py.

@@ -111,10 +111,13 @@ def test_continue_when_not_held_resumes_the_paused_task():  # task resume
 
 
 @pytest.mark.parametrize("text", ["跳过这个点", "下一个点"])
-def test_skip_is_answered_honestly(text):  # case body
-    """MUTATION: dispatch the old frame nobody reads and say "收到"."""
+def test_skip_is_no_longer_an_intent(text):  # case body
+    """99 U129: B10 skip_waypoint was deleted ("不支持, 不需要实现, 删除").
+    The phrases classify as nothing and send nothing. MUTATION: restore the
+    intents.yaml row -> the turn classifies as skip_waypoint -> red."""
     d, frames = _turn(text, {})  # one turn
-    assert not frames and "跳过航点" in d.tts_text  # said it is not connected
+    assert d.intent_name != "skip_waypoint" and d.intent_id != "B10"  # gone from the registry
+    assert "cmd/task" not in (frames or {})  # nothing sent
 
 
 def test_cancel_confirm_accepts_quxiao_as_no():  # confirm

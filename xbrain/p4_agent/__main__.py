@@ -406,6 +406,17 @@ def main(argv: Optional[list] = None) -> int:
                      len(bypass_tokens.estop), len(bypass_tokens.prone),
                      len(bypass_tokens.stand))
         asr_post = _build_asr_post(_cfg, registry)
+        # 99 U130: the route-membership distance for G48 / G49 (geo.route_
+        # membership_m -> common.geo.route_membership_m). Refused when missing
+        # or not positive: those answers would otherwise be guesses.
+        _member = _cfg.get("geo.route_membership_m")
+        if (isinstance(_member, bool) or not isinstance(_member, (int, float))
+                or _member <= 0.0):
+            _logger.error(
+                "voice-loop: geo.route_membership_m=%r must be a positive number "
+                "(common.geo.route_membership_m, 99 U130); startup refused",
+                _member)
+            return 78
         orch = VoiceOrchestratorInputs(
             asr_post=asr_post, bypass_tokens=bypass_tokens,
             registry=registry, chitchat=chitchat,
@@ -414,7 +425,8 @@ def main(argv: Optional[list] = None) -> int:
             query_max_age_ms=args.query_state_max_age_ms,
             query_low_soc_pct=args.query_battery_low_pct,
             site_timezone=site_tz,
-            tier2_fn=tier2_fn)
+            tier2_fn=tier2_fn,
+            route_membership_m=float(_member))
         from xbrain.p4_agent.runtime.cloud_input import VoiceInLimits
         cloud_limits = VoiceInLimits(
             max_utterance_ms=args.voice_in_max_utterance_ms,

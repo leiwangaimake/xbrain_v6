@@ -129,6 +129,9 @@ GEO_REF_SLOT = {
     "goto_waypoint": ("waypoint", "waypoint"),     # B01 -> params.waypoint_id
     "patrol_route": ("route", "route"),            # B02 -> task.route_id
     "patrol_schedule": ("route", "route"),         # B03 -> task.route_id
+    # 99 U128: a named charging point is a waypoint (name contains 充电桩 /
+    # 充电站); B09 carries its id in params.waypoint_id, P3 drives there.
+    "goto_dock": ("dock", "waypoint"),             # B09 -> params.waypoint_id
 }
 
 

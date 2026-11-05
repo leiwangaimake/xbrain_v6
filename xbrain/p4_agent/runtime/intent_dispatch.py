@@ -143,9 +143,9 @@ INTENT_TO_KEY.update({
     "A16": CMD_MODE,
     # B12 stop_follow is a BEHAVIOUR change (18: "exit the target-directed
     # behaviour"), not a task action -- see mode_request.py. B05/B06/B07 stay
-    # on cmd/task: they are real S7.2 control actions. B10 skip_waypoint stays
-    # too, but S7.2 has NO skip action, so it is refused there rather than
-    # mapped onto cancel (which would end the whole task).
+    # on cmd/task: they are real S7.2 control actions. (B10 skip_waypoint used
+    # to sit here, refused because S7.2 has no skip action; the intent itself
+    # was deleted on 2026-11-05, 99 U129.)
     "B12": CMD_MODE,
 })
 

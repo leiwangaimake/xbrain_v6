@@ -17,6 +17,15 @@ before any keyword or LLM layer sees them:
           (99 U121, 2026-11-05: the keyword layer only matched 巡逻 and left
           the route empty, and the tier-2 LLM has no route catalogue, so a
           named patrol always ended in "which route?". Same cure as U110.)
+  query   "X路径上有哪些航点 / 关键点 / 位置"               -> G48 {route: X}
+          "X在哪条路径上 / X属于哪条路径"                    -> G49 {waypoint: X}
+          (99 U130: answered from state/geo/objects with the route-membership
+          rule P3 navigates by; a named object, so the keyword layer -- which
+          carries no slot -- cannot answer them.)
+  dock    "[前缀] 去 / 前往 / 导航到 1号充电站 / 东门充电桩"   -> B09 {dock: X}
+          (99 U128: a NAMED charging point -- that point, however far. A bare
+          "去充电站 / 回充电桩" names nothing and is left to B09's keyword leg,
+          where P3 picks the nearest dock.)
 
 Why by rule (2026-11-04, measured on the real 3B model): the M3 / M7 / M6
 prompts tell the model to copy an id from a 候选 (candidate) list that the
@@ -47,6 +56,7 @@ import re  # sentence patterns
 from dataclasses import dataclass  # a frozen result
 from typing import Optional  # plain values
 
+from xbrain.common.geo import DOCK_NAME_KEYWORDS, is_dock_name  # 99 U119 / U128 role names
 from xbrain.p4_agent.registry.time_expr import TimeExpr, split_time_prefix  # time prefixes
 
 #: Spaces and sentence punctuation (ASCII and full-width) removed before
@@ -102,12 +112,20 @@ class PtpParse:  # one parsed command
     keypoint as said (goto / delete) or the OLD name (rename); new is the new
     name (rename only); when is a leading time (goto may carry one; for
     delete / rename it is reported so the caller can refuse it)."""
-    kind: str  # goto / delete / rename
+    kind: str  # goto / delete / rename / patrol / dock / route_points / point_routes
     name: str  # the keypoint (old name for rename)
     new: Optional[str] = None  # rename only
     when: Optional[TimeExpr] = None  # a leading time, if any
     loops: Optional[int] = None  # patrol only: the spoken lap count, None = not said
 
+
+#: G48: "X(路径)上有哪些航点" -- X must end like a route name (it is what the
+#: question is about); 上 is optional ("1号路径有哪些航点").
+_Q_ROUTE_POINTS = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?P<x>.+?(?:路径|路线|线路|环线|线))"
+                             r"上?都?有(?:哪些|什么|几个)(?:航点|关键点|位置点|位置|点)(?:吗|呢|啊)?$")  # route -> points
+#: G49: "X在哪条路径上" / "X属于哪条路径".
+_Q_POINT_ROUTES = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?P<x>.+?)(?:在|属于)(?:哪条|哪个|什么)"
+                             r"(?:路径|路线|线路|线)上?(?:吗|呢|啊)?$")  # point -> routes
 
 #: A lap count at the end of a patrol: "3圈", "两遍", "一趟".
 _LOOPS = r"(?P<n>[0-9]+|[一二两三四五六七八九十]+)(?:圈|遍|趟)"  # digits or CJK numerals
@@ -234,7 +252,7 @@ def _keypoint(name: str) -> bool:
 
 
 def parse_ptp(text: str) -> Optional[PtpParse]:
-    """The PTP command text is, or None when it is not one of the four.
+    """The PTP command text is, or None when it is not one of the seven.
 
     Rename is tried first (its sentence also contains an object), then
     delete, then a named patrol (U121), then goto. A time is kept for any kind; the caller decides that
@@ -253,12 +271,20 @@ def parse_ptp(text: str) -> Optional[PtpParse]:
             if _keypoint(name):  # a keypoint, not a route / fence
                 return PtpParse("delete", name, when=when)
             return None  # a route / fence delete: not ours
+        m = _Q_ROUTE_POINTS.match(t)  # G48 (U130)
+        if m and when is None:  # a question carries no time
+            return PtpParse("route_points", m.group("x"))  # which points are on route X
+        m = _Q_POINT_ROUTES.match(t)  # G49 (U130)
+        if m and when is None and m.group("x") not in _DEICTIC:  # "这里在哪条路径上" is a different question
+            return PtpParse("point_routes", _head(m.group("x")))  # which routes is point X on
         pat = _patrol(t, when)  # a named patrol (U121), before goto: "去X巡逻"
         if pat is not None:  # the route is named
             return pat  # B02
         m = _GOTO.match(t)  # a goto sentence?
         if m:  # verb at the start
             name = _head(_trim(m.group("x"), _GOTO_TAIL))  # destination without filler or type word
+            if is_dock_name(name) and name not in DOCK_NAME_KEYWORDS:  # "1号充电站", not bare "充电站"
+                return PtpParse("dock", name, when=when)  # U128: B09 with a name
             if (_keypoint(name) and name not in _DEICTIC  # named, not 这里 / 那边
                     and not any(q in name for q in _QUESTION)):
                 return PtpParse("goto", name, when=when)  # a named place

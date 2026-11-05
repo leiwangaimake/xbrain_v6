@@ -138,6 +138,10 @@ class VoiceOrchestratorInputs:
     # answering UTC (the module ships nowhere but a site, and a site always has
     # a timezone -- no code default is defensible here).
     site_timezone: str
+    # 99 U130: geo.route_membership_m (= common.geo.route_membership_m) for
+    # the G48 / G49 answers. REQUIRED, like site_timezone: a deployment that
+    # forgets it must fail at construction, not answer with a guessed distance.
+    route_membership_m: float
     tier2_fn: Optional[Callable[[str, "OrchestratorSession", int],
                                 Optional[str]]] = None
     # 16 S3 ASR post-processing (three_layer.AsrPostProcessor), or None when it
@@ -172,6 +176,7 @@ def build_orchestrator(
     pose_snap_fn=None,
     wall_now_fn=None,
     site_timezone=None,
+    membership_fn=None,
 ) -> TurnOrchestrator:
     """Construct the voice-loop orchestrator (built once, reused per turn).
 
@@ -203,7 +208,8 @@ def build_orchestrator(
         l2_timeout_ms=l2_timeout_ms,
         query_fn=query_fn, bypass_tokens=bypass_tokens,
         system_fn=system_fn, state_fn=state_fn, pose_snap_fn=pose_snap_fn,
-        wall_now_fn=wall_now_fn, site_timezone=site_timezone)
+        wall_now_fn=wall_now_fn, site_timezone=site_timezone,
+        membership_fn=membership_fn)
 
 
 def make_battery_query_fn(cache, templates, *, max_age_ms: int,

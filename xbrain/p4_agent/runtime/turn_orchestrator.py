@@ -89,6 +89,7 @@ from xbrain.p4_agent.slots.name_slots import (
     ground_name,
     name_length_ok,
 )
+from xbrain.common.geo import HOME_WAYPOINT_NAME  # 99 U128 B08 pre-check
 from xbrain.p4_agent.slots.ptp_slots import PtpParse, parse_ptp
 from xbrain.p4_agent.registry.time_expr import (
     TimeExpr,
@@ -186,6 +187,16 @@ _PTP_CN = {
     # (route_push_runtime), so a spoken lap count above one cannot be honoured
     # yet; it is refused out loud instead of silently running one lap.
     "ack_patrol": "好的,{when}沿{name}巡逻",
+    # 99 U128: B09 with a named charging point, and B08 with no home point.
+    "ack_dock": "好的,{when}去{name}",
+    "no_home": "还没有定义返航终点站, 请先把一个位置保存为返航终点站",
+    # 99 U130: G48 / G49 route-membership answers.
+    "geo_unloaded": "路径数据还没有加载好, 请稍后再问",
+    "route_points": "{route}上有{count}个航点: {names}",
+    "route_no_points": "{route}上还没有航点",
+    "point_routes": "{name}在{routes}上",
+    "point_no_routes": "{name}不在任何路径上",
+    "route_not_found": "没找到{name}, 可以问我有哪些路径",
     "laps_unsupported": "目前只能巡逻一圈, 请去掉圈数再说一遍",
 }
 
@@ -581,10 +592,10 @@ _UNWIRED_SYSTEM = frozenset({"H01", "H02", "H04", "H05", "H06", "H07", "H08"})
 #: a fixed PROFILE_REQ, so "慢一点 / 快一点 / 全速" never changed a speed (and
 #: answered "这个模式指令没听清", the profile slot was never parsed). 2026-11-02,
 #: 99 U105: say so instead, until the profile reaches P1.
-#: B10 skip_waypoint (99 U111): 11 S7.2 has no skip action and no patrol
-#: executor is wired, so it is answered as not connected -- it used to send a
-#: frame nobody consumes and say "收到".
-_UNWIRED_ACTIONS = frozenset({"A13", "B10"})
+#: B10 skip_waypoint was here until 2026-11-05: the user ruled it out of
+#: scope ("不支持, 不需要实现, 删除", 99 U129) and the intent itself was removed
+#: from the registry, so there is nothing left to answer as "not connected".
+_UNWIRED_ACTIONS = frozenset({"A13"})
 
 #: Level intents whose adjustment an elliptical phrase may continue (D10
 #: volume, D17 brightness), and the phrases that name no device. 2026-10-30.
@@ -639,6 +650,7 @@ class TurnOrchestrator:
         # commands are refused, never scheduled against a guess.
         wall_now_fn: Optional[Callable[[], float]] = None,
         site_timezone: Optional[str] = None,
+        membership_fn: Optional[Callable[[str, str, Any], Any]] = None,
     ) -> None:
         self._registry = registry
         self._matcher = matcher or KeywordMatcher(registry)
@@ -665,6 +677,9 @@ class TurnOrchestrator:
         self._pose_snap_fn = pose_snap_fn
         self._wall_now_fn = wall_now_fn
         self._site_timezone = site_timezone
+        # 99 U130: G48 / G49 answers (state/route_membership.make_membership_fn,
+        # built with common.geo.route_membership_m); None answers "not loaded".
+        self._membership_fn = membership_fn
         # 99 U110: the restatement of a rule-parsed PTP command, set by
         # _route_ptp and read by _dispatch_ack in the same turn.
         self._turn_ptp_ack: Optional[str] = None
@@ -1018,6 +1033,27 @@ class TurnOrchestrator:
             return self._route_entry(self._registry.by_id("B01"), text,
                                      session, now_mono_ms, layer="ptp_rule",
                                      rule_slots=slots)
+        if ptp.kind in ("route_points", "point_routes"):
+            return self._answer_membership(ptp, _reply)  # 99 U130: G48 / G49
+        if ptp.kind == "dock":
+            # 99 U128: a NAMED charging point -- that dock, however far. The
+            # name is resolved like a goto waypoint (GEO_REF_SLOT goto_dock),
+            # and P3 drives the route-aware goto to it.
+            dslots: Dict[str, Any] = {"dock": ptp.name}
+            if ptp.when is not None:
+                if self._wall_now_fn is None:
+                    return _reply("B09", "no_wall_clock")
+                try:
+                    dslots["not_before_ts"] = resolve_epoch(
+                        ptp.when, self._wall_now_fn(), self._site_timezone)
+                except TimeParseError as exc:
+                    return _reply("B09", "past" if "passed" in str(exc)
+                                  else "too_far")
+            self._turn_ptp_ack = _PTP_CN["ack_dock"].format(
+                when=_spoken_when(ptp.when), name=ptp.name)
+            return self._route_entry(self._registry.by_id("B09"), text,
+                                     session, now_mono_ms, layer="ptp_rule",
+                                     rule_slots=dslots)
         if ptp.kind == "patrol":
             # 99 U121: the route name is resolved against the catalogue in
             # _build_task_command (GEO_REF_SLOT patrol_route), exactly as a
@@ -1064,6 +1100,18 @@ class TurnOrchestrator:
         return self._route_entry(self._registry.by_id("F14"), text, session,
                                  now_mono_ms, layer="ptp_rule",
                                  rule_slots={"old": ptp.name, "new": new})
+
+    def _answer_membership(self, ptp: PtpParse, reply) -> TurnDecision:
+        """G48 "X路径上有哪些航点" / G49 "X在哪条路径上" (99 U130): answered
+        at once by the injected membership_fn (state/route_membership.py,
+        built with common.geo.route_membership_m) from state/geo/objects.
+        No membership_fn (tests / tools) answers "not loaded", never a guess."""
+        intent = "G48" if ptp.kind == "route_points" else "G49"
+        if self._membership_fn is None:  # not configured
+            return reply(intent, "geo_unloaded")
+        state = self._state_fn() if self._state_fn else {}
+        key, fields = self._membership_fn(ptp.kind, ptp.name, state.get("state/geo/objects"))
+        return reply(intent, key, **fields)
 
     def _dispatch_entry(self, entry: IntentEntry, text: str,
                         session: OrchestratorSession, now_mono_ms: int,
@@ -1446,6 +1494,20 @@ class TurnOrchestrator:
         clarify reason (GOTO_NEEDS_WAYPOINT / PATROL_NEEDS_ROUTE).
         """
         merged = dict(extra or {})
+        if entry.name == "return_home":
+            # 99 U128: a spoken "返航" goes to 返航终点站 or nowhere -- never
+            # silently to a dock (that fallback is the link-loss return's
+            # alone). Checked here, before anything is sent, so the operator
+            # hears why at once instead of a task that fails later.
+            state = self._state_fn() if self._state_fn else {}
+            manifest = manifest_from_state(state.get("state/geo/manifest"))
+            if manifest is None:
+                return merged, _F_REASON_CN[CATALOGUE_UNAVAILABLE]
+            if not any(it.get("type") == "waypoint"
+                       and it.get("name") == HOME_WAYPOINT_NAME
+                       and it.get("state", "active") == "active"
+                       for it in manifest["items"]):
+                return merged, _PTP_CN["no_home"]
         # 11 S7.2 task.not_before_ts (99 U110), set by a timed PTP goto. Taken
         # out of the slots: it is a task field, not something the operator's
         # slots should carry into params.

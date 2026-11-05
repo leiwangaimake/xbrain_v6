@@ -63,6 +63,7 @@ from xbrain.p4_agent.runtime.orchestrator_turn import (
     make_state_fn,
     make_turn_handler,
 )
+from xbrain.p4_agent.state.route_membership import make_membership_fn  # 99 U130 G48 / G49
 from xbrain.common.envelope.age import read_local_boot_id
 from xbrain.p4_agent.envelope.pose_snap import PoseHistory
 from xbrain.p4_agent.runtime.chassis_ctrl_stamp import ChassisCtrlStamper
@@ -280,7 +281,10 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                 pose_snap_fn=pose_history.snapshot,
                 # 99 U110: a timed goto is scheduled on the system clock (the
                 # 2026-10-26 ruling G24 also follows) in the site timezone.
-                wall_now_fn=time.time, site_timezone=orch.site_timezone)
+                wall_now_fn=time.time, site_timezone=orch.site_timezone,
+                # 99 U130: G48 / G49 route membership, the same distance P3
+                # navigates by (common.geo.route_membership_m)
+                membership_fn=make_membership_fn(orch.route_membership_m))
             session = OrchestratorSession()
             # 11 S8.7.6 state/voice_turn (2026-10-26): robot-prefixed like the
             # cloud inputs, so it needs the robot id. Without one there is no

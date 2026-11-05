@@ -325,22 +325,21 @@ def test_h04_reload_config_is_not_on_cmd_system():
     assert choose_key("H04") != "cmd/system"
 
 
-def test_skip_waypoint_still_has_no_contract_action():
-    """*** B10 skip_waypoint is deliberately NOT mapped.
+def test_skip_waypoint_is_deleted_and_sends_no_task_frame():
+    """*** B10 skip_waypoint was deleted on 2026-11-05 (99 U129, user ruling
+    "这个功能不支持, 不需要实现, 删除").
 
-    18's effect column says "P3 path advance", and S7.2's action closed set is
-    submit / cancel / pause / resume / clear_queue -- there is no skip. Mapping
-    it onto cancel would end the whole patrol the operator wants to continue.
-
-    It used to stay a p4_intent_v1 envelope that P3 skips -- a gap, but one
-    the robot announced as "收到". Since 99 U111 it is answered as not
-    connected and NOTHING goes on cmd/task. MUTATION: map it to cancel and a
-    cancel frame appears here -- red, as it should be.
+    It never had a contract action (S7.2's closed set is submit / cancel /
+    pause / resume / clear_queue -- mapping it onto cancel would end the patrol
+    the operator wants to continue), was answered "not connected" from 99 U111,
+    and is now gone from the registry. The phrase must still put NOTHING on
+    cmd/task. MUTATION: map the phrase to cancel_task -> a task frame -> red.
     """
     orch, session = _orch(None), OrchestratorSession()
     d = orch.handle_turn("跳过这个点", session, now_mono_ms=1)
+    assert d.intent_name != "skip_waypoint"   # not an intent any more
     keys = [k for k, _ in decision_to_publishes(d)]
-    assert keys == ["cmd/audio/speak"]   # the honest reply, no task frame
+    assert "cmd/task" not in keys   # no task frame
 
 
 def test_the_wire_check_is_on_the_published_frame_not_the_builder():

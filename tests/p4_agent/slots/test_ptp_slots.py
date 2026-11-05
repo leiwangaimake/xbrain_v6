@@ -157,3 +157,45 @@ def test_patrol_without_a_route_name_is_not_ours(text):
     the route name; drop the _ROUTE_TAIL check on the weak forms -> 巡逻模式
     and the rest of the audit-1 list are stolen."""
     assert parse_ptp(text) is None  # left to the keyword layer
+
+
+
+# -- 99 U128: a named charging point (B09) ------------------------------------
+@pytest.mark.parametrize("text,name", [
+    ("去1号充电站", "1号充电站"),  # named station
+    ("现在导航到东门充电桩", "东门充电桩"),  # prefix + named pile
+])
+def test_named_dock_goto(text, name):
+    """MUTATION: no dock branch -> the goto rule rejects it (充电 is not a
+    keypoint) and the name is lost -> red."""
+    got = parse_ptp(text)  # one parse
+    assert got is not None and got.kind == "dock" and got.name == name  # B09 with a name
+
+
+@pytest.mark.parametrize("text", ["去充电站", "去充电桩", "回充电桩", "去充电"])
+def test_bare_dock_is_left_to_the_keyword_layer(text):
+    """No name -> None: B09's keyword leg sends a charge task with no dock and
+    P3 picks the nearest. MUTATION: treat the bare word as a name -> red."""
+    assert parse_ptp(text) is None  # not ours
+
+
+
+# -- 99 U130: route membership questions (G48 / G49) ---------------------------
+@pytest.mark.parametrize("text,kind,name", [
+    ("1号路径上有哪些航点", "route_points", "1号路径"),  # the user's wording
+    ("请问东门路线有哪些关键点", "route_points", "东门路线"),  # prefix, no 上
+    ("1号测试点在哪条路径上", "point_routes", "1号测试点"),  # the user's wording
+    ("返航终点站属于哪条路线", "point_routes", "返航终点站"),  # 属于
+])
+def test_membership_questions(text, kind, name):
+    """MUTATION: no query branch -> None / a goto -> red; a lazy route name
+    that stops before 路径 -> "1号" -> red."""
+    got = parse_ptp(text)  # one parse
+    assert got is not None and got.kind == kind and got.name == name  # the question and its object
+
+
+@pytest.mark.parametrize("text", ["有哪些航点", "这里在哪条路径上", "一共有哪些路径"])
+def test_membership_questions_need_a_name(text):
+    """Unnamed forms stay with the keyword layer (G21 / G22) or are a different
+    question. MUTATION: take 这里 or nothing as the object -> red."""
+    assert parse_ptp(text) is None  # not ours
