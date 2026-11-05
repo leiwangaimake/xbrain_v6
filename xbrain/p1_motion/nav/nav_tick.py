@@ -134,6 +134,13 @@ class NavInputs:
     # cloud teleop) is not a NavTick source and keeps working: the user ruled
     # "suppress autonomous, keep manual" (12 S4.2: manual outranks autonomy).
     mode_hold: bool = False
+    # 99 U134: the teleop candidate this tick -- (vx, vy, wz) in body units,
+    # already scaled by the voice-set speeds (teleop/velocity.py) -- and the
+    # P1 source it drives as. None = no teleop input drives (or no speed is
+    # known yet). Until 2026-11-05 teleop only suspended RNS and NOTHING drove
+    # the robot under any teleop input.
+    teleop_cmd: Optional[Tuple[float, float, float]] = None
+    teleop_source: Optional[BehaviorSource] = None
 
 
 @dataclass(frozen=True)
@@ -317,6 +324,10 @@ class NavTick:
         # always; deactivation hysteresis is the arbiter's dwell.
         if self._src.is_active(ctx):
             self._arb.note(BehaviorSource.RNS_AVOID, now)
+        if inp.teleop_cmd is not None and inp.teleop_source is not None:
+            # 99 U134: the teleop source wants the slot (RNS is suspended by
+            # the same input, TR-RNS-1, so it is not competing this tick)
+            self._arb.note(inp.teleop_source, now)
         self._arb.note(BehaviorSource.HOLD, now)
         self._arb.tick(now)
         holder = self._arb.holder()
@@ -329,6 +340,13 @@ class NavTick:
                 # read .value; float(Mps) is a TypeError by design.
                 raw = (float(cand.vx.value), float(cand.vy.value), float(cand.wz))
                 source = BehaviorSource.RNS_AVOID.value
+        elif holder in _TELEOP_SOURCES:
+            # 99 U134: the operator's keys, through the SAME gate / rotation
+            # permit / fence below (11 S12A.9.2). A holder kept only by the
+            # arbiter's dwell after the input stopped drives zero.
+            if inp.teleop_cmd is not None and inp.teleop_source is holder:
+                raw = tuple(float(v) for v in inp.teleop_cmd)  # type: ignore[assignment]
+            source = holder.value
         profile = inp.perception.profile if inp.perception is not None else None
         f_free = forward_d_free(profile.d_free) if profile is not None else None
         # the f term with its rise hysteresis (12 S6.2 table): the clearance
@@ -398,6 +416,11 @@ class NavTick:
             fence=fev, rotation=rot)
 
 
+#: 99 U134: the teleop sources a NavTick can hand the slot to.
+_TELEOP_SOURCES = frozenset({BehaviorSource.TELEOP_KEYBOARD,
+                             BehaviorSource.TELEOP_JOYSTICK})
+
+
 def ctrl_state_for(inp: NavInputs, out: NavOutput, *, health_ever_ok: bool,
                    inputs_ever_ready: bool) -> CtrlState:
     """The 12 S11 P1 state word for this tick, derived from the same facts the
@@ -408,7 +431,7 @@ def ctrl_state_for(inp: NavInputs, out: NavOutput, *, health_ever_ok: bool,
       SAFE_STOP   was ready once, now allow_motion false or an input dead
                   (12 S11: '任何状态 -> SAFE_STOP', back to READY on recovery)
       READY       granted + inputs ok, no behaviour source active (hold)
-      ACTIVE      rns_avoid holds the slot and drives
+      ACTIVE      rns_avoid or a teleop source (99 U134) holds the slot
     mutant: report ACTIVE while the health veto is on -> the state word says
     driving for a zero-velocity health stop -> test_ctrl_state_words red."""
     inputs_ok = (inp.pose_xy is not None and inp.heading_valid
@@ -419,5 +442,9 @@ def ctrl_state_for(inp: NavInputs, out: NavOutput, *, health_ever_ok: bool,
     if not inputs_ok:
         return CtrlState.SAFE_STOP if inputs_ever_ready else CtrlState.WAIT_INPUT
     if out.source == BehaviorSource.RNS_AVOID.value:
+        return CtrlState.ACTIVE
+    if out.source in {s.value for s in _TELEOP_SOURCES}:
+        # 99 U134: a teleop holder drives too -- READY would have the CtrlLoop
+        # zero every teleop velocity (12 S11: only ACTIVE passes through)
         return CtrlState.ACTIVE
     return CtrlState.READY

@@ -39,16 +39,19 @@ its absence of evidence as evidence.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 #: S12A.9.7 device closed set (minus the `none` sentinel, which is an
-#: active_source value rather than a source entry).
-TELEOP_DEVICES = ("gamepad", "keyboard_local", "keyboard_hmi", "virtual_stick")
+#: active_source value rather than a source entry). keyboard_cloud is the
+#: cloud keyboard client of 99 U134 (cmd/teleop on the general plane).
+TELEOP_DEVICES = ("gamepad", "keyboard_local", "keyboard_hmi", "virtual_stick",
+                  "keyboard_cloud")
 
-#: S12A.9.7 internal priority. Higher wins. The HMI paths sit lowest because
-#: they cross the network and their jitter is not controllable.
+#: S12A.9.7 internal priority. Higher wins. The network paths sit lowest
+#: because they cross the network and their jitter is not controllable;
+#: keyboard_cloud is one of them (99 U134).
 _PRIORITY = {"gamepad": 30, "keyboard_local": 20,
-             "keyboard_hmi": 10, "virtual_stick": 10}
+             "keyboard_hmi": 10, "virtual_stick": 10, "keyboard_cloud": 10}
 
 #: S12A.9.6 per-source freshness, split by LINK: the two local devices arrive
 #: on rt/teleop/input and are held to 200 ms; the two network devices arrive on
@@ -64,7 +67,8 @@ _PRIORITY = {"gamepad": 30, "keyboard_local": 20,
 #: deadline that is too long keeps a source in the arbitration after its link is
 #: gone, so the robot drives on for another 100 ms of nothing.
 _TIMEOUT_MS = {"gamepad": 200, "keyboard_local": 200,
-               "keyboard_hmi": 400, "virtual_stick": 400}
+               "keyboard_hmi": 400, "virtual_stick": 400,
+               "keyboard_cloud": 400}  # 99 U134: cmd/teleop, same 400 ms
 
 #: T-2: a source change must persist this long before it takes over. Without it
 #: a marginal link flaps the active source and, with T-4, restarts the ramp on
@@ -168,6 +172,18 @@ class TeleopTracker:
             self._active = best
             self._candidate = None
         return self._active
+
+    def drive_axes(self, now_mono_ms: int) -> Optional[Tuple[str, Dict[str, float]]]:
+        """(device, axes) of the source that drives this tick, or None.
+
+        The arbitration winner already holds its deadman (T-1), so its axes
+        are what the operator asks for now. 99 U134: until 2026-11-05 nothing
+        read them -- the winner only suspended RNS, and the robot did not move
+        under any teleop input at all."""
+        active = self.arbitrate(now_mono_ms)
+        if active is None:
+            return None
+        return active, dict(self.sources[active].axes)
 
     def build_state(self, now_mono_ms: int, *,
                     profile_req: Optional[str] = None) -> Dict[str, Any]:
