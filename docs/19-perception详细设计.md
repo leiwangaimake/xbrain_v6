@@ -1,5 +1,7 @@
 # XBRAIN_V6 · perception 详细设计
 
+> ⚠️★★★ **2026-11-05 · 消费侧变更注（我方 RNS，`99` U113 / U114 / U116）**：RNS 与 P1 宿主速度门**只消费 `rt/perception/objects`** —— 置信度 ≥ `world.object_min_confidence`（非人 0.4）/ `world.person_min_confidence`（人 0.1）且「人」高度 ≤ 2 m（U118）的目标凸包，即 RNS 的全部世界；`rt/perception/profile` 只借视场头，**`d_free` / `d_block` / `src` / `t_seg` / 负障碍 / 可通行分割均不再被 RNS 读取**；`status.invalid_pixel_ratio` 不再触发限速（U116），`status` 断供（T-53）与 `objects` 断供（T-52）仍限速。★ 本册的生产方规则与 `11` §3.1B 契约**不因此改变**（仍是对外承诺）；★ 对感知方的影响：目标的 `confidence`、`footprint_xy`、`z_min` / `z_max` 的质量直接决定导航（贴地误检、树干叠出的「人」、机身遮挡都会进入或漏出世界）—— 这些问题按用户安排另行统计交感知工程师。
+
 > ★★★ **2026-11-05 · `99` U122 · 纯视觉，不接入任何雷达**（用户裁决原话：「本项XBRAIN_V6系统项目完全是基于视觉感知的室外巡逻机器人控制系统，不考虑接入任何雷达数据，所以系统里面关于雷达部分的描述和处理和契约都可以过期处理」）。★ **本册所有 LiDAR / 激光雷达 / 雷达 相关的描述、处理与契约，一律视为「被替代的表述」**（生效区间：各条原写入日 ~ 2026-11-05）；★ 原文**不逐处删除**，保留供对账（`grep -n "LiDAR\|雷达"` 可逐条找到）。★ **为何不再成立**：整机无雷达（代码侧早已如此：`xbrain/common/clock/timeouts.yaml` 写明 T-50..T-53 取代 T-02..T-06，`configs/p1_motion.yaml` 写明「整机无 LiDAR」）；U117 已把 `lidar` 健康项移出速度系数与 `allow_motion`。★ 依据：用户裁决 ＋ 代码现状（详见 `99` U122）。
 
 | 项 | 内容 |

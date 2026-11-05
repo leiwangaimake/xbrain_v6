@@ -366,7 +366,7 @@ plan(x_now -> W_b):
 
 | 编号 | 规则 |
 |---|---|
-| ★★★ **`WP-1`** 置信度门 | `confidence < world.object_min_confidence`（键见 §12.2，现值 0.3）的目标**整条丢弃**：既不进 RNS 的 `objects`（§5 分流），也不进世界剖面。★ **所有类别一视同仁，含 `person`**（取代 §5.1.1「置信度下限」行与 A-CLS-7 的「低置信 ⇒ block / person 免疫」）。★ **v1.47（U114）改为两个门限**：非人 `world.object_min_confidence` = 0.4，人 `world.person_min_confidence` = 0.1（§3.0A `NM-6`）。★★ **v1.49（`99` U118）`WP-1a` 人的高度门**：`class_name == "person"` 且 `z_min` / `z_max` 均非 `null` 时，`z_max − z_min > world.person_max_height_m`（现值 2.0 m）⇒ 同样整条丢弃（2026-11-04 树干上叠出 0.92 的「人」即此形态）。★ 高度按 `11` §3.1B 的 z **区间**算，🚫 不用质心；★ 不可定位的人（四几何字段 `null`）无法量高 ⇒ **保留**（漏掉真人代价最高）；★ 恰等于上限保留（裁决原话「大于 2 米就丢弃」）；★ 只作用于 `person`，其他类别不受高度门影响（A-WLD-11） |
+| ★★★ **`WP-1`** 置信度门 | `confidence < world.object_min_confidence`（键见 §12.2，~~现值 0.3~~ **被替代的表述**（v1.46，U113）：v1.47 起非人 0.4 / 人 0.1，见本行末与 §12.2）的目标**整条丢弃**：既不进 RNS 的 `objects`（§5 分流），也不进世界剖面。★ **所有类别一视同仁，含 `person`**（取代 §5.1.1「置信度下限」行与 A-CLS-7 的「低置信 ⇒ block / person 免疫」）。★ **v1.47（U114）改为两个门限**：非人 `world.object_min_confidence` = 0.4，人 `world.person_min_confidence` = 0.1（§3.0A `NM-6`）。★★ **v1.49（`99` U118）`WP-1a` 人的高度门**：`class_name == "person"` 且 `z_min` / `z_max` 均非 `null` 时，`z_max − z_min > world.person_max_height_m`（现值 2.0 m）⇒ 同样整条丢弃（2026-11-04 树干上叠出 0.92 的「人」即此形态）。★ 高度按 `11` §3.1B 的 z **区间**算，🚫 不用质心；★ 不可定位的人（四几何字段 `null`）无法量高 ⇒ **保留**（漏掉真人代价最高）；★ 恰等于上限保留（裁决原话「大于 2 米就丢弃」）；★ 只作用于 `person`，其他类别不受高度门影响（A-WLD-11） |
 | ★★ **`WP-2`** 几何来源 | 通过 `WP-1` 的、**已定位**（`footprint_xy` 非 `null`）且 `effective_behavior` 既非 T 类丢弃（`None`）也非 `ignore` 的目标，以其 `footprint_xy` 地面凸包为障碍几何。★ 不可定位的目标不贡献几何，照 §5.1A 限速 |
 | ★★ **`WP-3`** 每 bin | `d_block[i]` = 自 `base_link` 原点沿 bin `i` 射线与任一凸包的最近交点距离（原点落在凸包内 ⇒ `0`），超过 `range_max_m` 视为无交点 ⇒ `null`；`d_free[i]` = 有交点时取 `d_block[i]`，否则 `range_max_m`；`h_block[i]` = 被击中目标的 `z_max`；`src[i]` = 有交点时 `SEMANTIC` 位，否则 `0`；`t_seg_mono_ms = null`，`conf` 为空 |
 | ★★ **`WP-4`** 时间与外参 | `t_capture_mono_ms` / `t_publish_mono_ms` / `extrinsic_calibrated` 取自 **objects** 报文 ⇒ T-50 / T-51 计龄、§3.1B.5 接受规则、`12` §3.3 新鲜度一律按 objects 走 |
@@ -384,7 +384,7 @@ plan(x_now -> W_b):
 | §5.1.1「置信度下限」行 · A-CLS-7 | 被 `WP-1` 取代；键 `perception.min_confidence` 删除，`classify.effective_behavior` 不再收置信度参数 |
 | §8.1A UNKNOWN 占比限速 | 世界剖面没有 `null` bin ⇒ 该项恒为 1（不限）。代码保留 |
 | §4.2 记忆 TTL | `memory.ttl_static_s` 300 s → **10 s**：记忆只剩目标凸包与视野内 FREE，10 s 够贴墙时记住视野外的车，又不会把误检刷成长期的墙 |
-| 新增 §8.1 限速项 | `world.v_max_mps`（现值 0.6 m/s）：看不见未识别障碍，整体限速 |
+| 新增 §8.1 限速项 | `world.v_max_mps`（~~现值 0.6 m/s~~ **被替代的表述**（v1.46，U113）：v1.47 起 1.0，上限可到 2.0，见 §3.0A `NM-6` 与 §12.2）：看不见未识别障碍，整体限速 |
 
 | 项 | 内容 |
 |---|---|
