@@ -329,19 +329,17 @@ def test_a_bare_patrol_asks_which_route():
     assert "哪条路线" in (d.tts_text or ""), d.tts_text
 
 
-def test_patrol_repeat_says_the_step_is_not_wired():
-    """B04 "再巡一圈": its route is the current task's (16 S6.7.3 [5]).
+def test_patrol_repeat_is_sent_without_a_route():
+    """B04 "再巡一圈" (99 U131): sent route-less; P3 fills the route of the
+    latest completed patrol at submit, or refuses with a reason the ack
+    speaker voices. Until U131 this turn answered "这一步还没接通".
 
-    P3 is to fill it and does not yet (nothing in p3_task reads
-    patrol_repeat), so the operator is told so rather than hearing "收到"
-    for a patrol P3 now refuses.
+    MUTATION: keep the PATROL_REPEAT_NEEDS_CURRENT raise -> no cmd/task -> red.
     """
-    # Keyword hit on B04 ("再巡"). There is no route slot to resolve.
+    # Keyword hit on B04 ("再巡") or the rule layer; no route slot either way.
     d, keys = _turn("再巡一圈", None, items=_ITEMS)
-    # Nothing queued for P3 to refuse behind the operator's back.
-    assert "cmd/task" not in keys
-    # PATROL_REPEAT_NEEDS_CURRENT's reply: the gap, said plainly.
-    assert "还没接通" in (d.tts_text or ""), d.tts_text
+    # Queued for P3 to fill.
+    assert "cmd/task" in keys, d.tts_text
 
 
 # --- the builder alone -----------------------------------------------------

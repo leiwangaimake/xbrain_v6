@@ -130,6 +130,16 @@ def test_a_refused_task_command_says_why(action, code, text):  # case body
     assert _said(out)[1] == text  # the reason
 
 
+def test_no_completed_patrol_has_its_own_sentence():  # 99 U131 B04
+    """P3 refuses "再巡一圈" with E_NOT_FOUND + reason no_completed_patrol.
+    MUTATION: key on the code only -> "没找到这个任务, 没有执行" -> red."""
+    sp = AckSpeaker()  # fresh
+    sp.note_turn(_sent("cmd/task", {"cmd_id": "c-1", "action": "submit"}))  # a B04 submit
+    out = sp.on_ack(_b({"cmd_id": "c-1", "result": "rejected", "code": "E_NOT_FOUND",  # refused
+                        "detail": {"reason": "no_completed_patrol"}}))  # by P3
+    assert _said(out)[1] == "还没有巡逻完成过的路径, 请说沿哪条路径巡逻"  # the reason
+
+
 def test_an_accepted_task_command_adds_nothing():  # accepted task
     """The turn already said what it does. MUTATION: speak every ack."""
     sp = AckSpeaker()  # fresh

@@ -114,6 +114,7 @@ from xbrain.p4_agent.runtime.system_request import (
 )
 from xbrain.p4_agent.runtime.task_control_request import (
     TaskControlError,
+    current_task_from_state,
     is_task_control_intent,
     to_task_control_command,
 )
@@ -122,7 +123,6 @@ from xbrain.p4_agent.runtime.task_request import (
     GEO_REF_SLOT,
     GOTO_NEEDS_WAYPOINT,
     PATROL_NEEDS_ROUTE,
-    PATROL_REPEAT_NEEDS_CURRENT,
     TaskRequestError,
     is_task_create_intent,
     missing_destination,
@@ -161,9 +161,6 @@ _F_REASON_CN = {
     GOTO_NEEDS_WAYPOINT: "要去哪个点? 请说出点位名称",
     # 11 S7.2 patrol needs route_id; the operator named none -> ask.
     PATROL_NEEDS_ROUTE: "巡逻哪条路线? 请说出路线名称",
-    # 16 S6.7.3 [5]: B04's route is the current task's; P3 does not fill it
-    # yet, so say so instead of queueing a patrol with no route.
-    PATROL_REPEAT_NEEDS_CURRENT: "再巡要沿用当前路线, 这一步还没接通",
     # A named destination the turn did not resolve (should not be reachable:
     # _build_task_command resolves first). Spoken as "not found" either way.
     DESTINATION_UNRESOLVED: "没找到你说的地点, 换个说法试试",
@@ -183,10 +180,12 @@ _PTP_CN = {
     "ack_goto": "好的,{when}去{name}",
     "ack_delete": "好的,删除{name}",
     "ack_rename": "好的,把{name}改名为{new}",
-    # 99 U121 named patrol. P3 pushes every patrol with loop_total = 1
-    # (route_push_runtime), so a spoken lap count above one cannot be honoured
-    # yet; it is refused out loud instead of silently running one lap.
-    "ack_patrol": "好的,{when}沿{name}巡逻",
+    # 99 U121 named patrol; {how} is the lap phrase of _laps_cn (U131: P3
+    # counts passes and re-pushes, so a spoken count is honoured).
+    "ack_patrol": "好的,{when}沿{name}{how}",
+    # 99 U131 B04: the latest completed patrol again; refused while one runs.
+    "ack_repeat": "好的,{when}再{how}",
+    "patrol_running": "当前巡逻结束后再说",
     # 99 U128: B09 with a named charging point, and B08 with no home point.
     "ack_dock": "好的,{when}去{name}",
     "no_home": "还没有定义返航终点站, 请先把一个位置保存为返航终点站",
@@ -197,7 +196,6 @@ _PTP_CN = {
     "point_routes": "{name}在{routes}上",
     "point_no_routes": "{name}不在任何路径上",
     "route_not_found": "没找到{name}, 可以问我有哪些路径",
-    "laps_unsupported": "目前只能巡逻一圈, 请去掉圈数再说一遍",
 }
 
 #: F06 / F10: the captures whose name must follow their keyword.
@@ -257,6 +255,28 @@ def _spoken_when(expr: Optional[TimeExpr]) -> str:
                                            "%d天后" % expr.day_offset)
     hh, mm = (int(x) for x in expr.at_local.split(":"))
     return day + ("%d点" % hh) + ("%d分" % mm if mm else "")
+
+
+def _lap_slots(loops: Optional[int], round_trip: bool) -> Dict[str, Any]:
+    """The B02 / B04 lap slots P3 reads (99 U131, route/laps.py): loops only
+    when said (P3 takes 1 otherwise, 16 S6.7.3 [3]), round_trip only when
+    true -- an absent key and a default are the same answer to P3."""
+    out: Dict[str, Any] = {}
+    if loops is not None:
+        out["loops"] = loops
+    if round_trip:
+        out["round_trip"] = True
+    return out
+
+
+def _laps_cn(loops: Optional[int], round_trip: bool) -> str:
+    """The lap phrase of the ack, restating what was understood (11 AP-1):
+    "巡逻" / "巡逻3圈" / "来回巡逻3次". A round trip with no count is one."""
+    if round_trip:
+        return "来回巡逻%d次" % (loops or 1)
+    if loops is None or loops == 1:
+        return "巡逻" if loops is None else "巡逻1圈"
+    return "巡逻%d圈" % loops
 
 
 # Reply-family intent NAMES routed to the preset responder (never LLM,
@@ -1057,11 +1077,10 @@ class TurnOrchestrator:
         if ptp.kind == "patrol":
             # 99 U121: the route name is resolved against the catalogue in
             # _build_task_command (GEO_REF_SLOT patrol_route), exactly as a
-            # goto's waypoint is. Lap counts above one are refused: P3 pushes
-            # loop_total = 1 for every patrol today.
-            if ptp.loops is not None and ptp.loops != 1:
-                return _reply("B02", "laps_unsupported")
-            pslots: Dict[str, Any] = {"route": ptp.name}
+            # goto's waypoint is. 99 U131: the lap count and the "来回" flag
+            # ride in the slots; P3 turns them into passes (route/laps.py).
+            pslots: Dict[str, Any] = {"route": ptp.name,
+                                      **_lap_slots(ptp.loops, ptp.round_trip)}
             if ptp.when is not None:
                 if self._wall_now_fn is None:
                     return _reply("B02", "no_wall_clock")
@@ -1072,10 +1091,31 @@ class TurnOrchestrator:
                     return _reply("B02", "past" if "passed" in str(exc)
                                   else "too_far")
             self._turn_ptp_ack = _PTP_CN["ack_patrol"].format(
-                when=_spoken_when(ptp.when), name=ptp.name)
+                when=_spoken_when(ptp.when), name=ptp.name,
+                how=_laps_cn(ptp.loops, ptp.round_trip))
             return self._route_entry(self._registry.by_id("B02"), text,
                                      session, now_mono_ms, layer="ptp_rule",
                                      rule_slots=pslots)
+        if ptp.kind == "repeat":
+            # 99 U131 B04: no route on purpose -- P3 fills the latest
+            # completed patrol's. The "patrol running" refusal is in
+            # _build_task_command, so the keyword leg ("接着巡") gets it too.
+            rslots: Dict[str, Any] = _lap_slots(ptp.loops, ptp.round_trip)
+            if ptp.when is not None:
+                if self._wall_now_fn is None:
+                    return _reply("B04", "no_wall_clock")
+                try:
+                    rslots["not_before_ts"] = resolve_epoch(
+                        ptp.when, self._wall_now_fn(), self._site_timezone)
+                except TimeParseError as exc:
+                    return _reply("B04", "past" if "passed" in str(exc)
+                                  else "too_far")
+            self._turn_ptp_ack = _PTP_CN["ack_repeat"].format(
+                when=_spoken_when(ptp.when),
+                how=_laps_cn(ptp.loops, ptp.round_trip))
+            return self._route_entry(self._registry.by_id("B04"), text,
+                                     session, now_mono_ms, layer="ptp_rule",
+                                     rule_slots=rslots)
         intent_id = "F12" if ptp.kind == "delete" else "F14"
         if ptp.when is not None:
             return _reply(intent_id, "timed_geo")
@@ -1494,6 +1534,14 @@ class TurnOrchestrator:
         clarify reason (GOTO_NEEDS_WAYPOINT / PATROL_NEEDS_ROUTE).
         """
         merged = dict(extra or {})
+        if entry.name == "patrol_repeat" and "not_before_ts" not in merged:
+            # 99 U131: "再巡一圈" while a patrol runs is answered, not queued
+            # behind it -- the user's ruling is to say so and stop. A timed
+            # repeat is not refused: by its time the patrol is long over.
+            state = self._state_fn() if self._state_fn else {}
+            current = current_task_from_state(state)
+            if current is not None and current.get("type") == "patrol":
+                return merged, _PTP_CN["patrol_running"]
         if entry.name == "return_home":
             # 99 U128: a spoken "返航" goes to 返航终点站 or nowhere -- never
             # silently to a dock (that fallback is the link-loss return's

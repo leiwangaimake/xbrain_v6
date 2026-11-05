@@ -161,13 +161,63 @@ def test_timed_named_patrol_carries_not_before_ts():  # case body
     assert d.tts_text == "好的,今天15点沿东门路线巡逻"  # restated with the time
 
 
+@pytest.mark.parametrize("text,slots,said", [  # 99 U131 laps reach P3
+    ("沿东门路线巡逻3圈", {"route": "东门路线", "loops": 3}, "好的,沿东门路线巡逻3圈"),
+    ("沿东门路线来回巡逻2次", {"route": "东门路线", "loops": 2, "round_trip": True},
+     "好的,沿东门路线来回巡逻2次"),
+    ("沿东门路线巡逻", {"route": "东门路线"}, "好的,沿东门路线巡逻"),  # nothing added
+])
+def test_patrol_laps_ride_in_the_slots(text, slots, said):  # case body
+    """Until U131 a count above one was refused. MUTATION: drop _lap_slots
+    -> P3 runs one pass -> red; ack without {how} -> red."""
+    d, frames = _turn(text)  # one turn
+    task = frames["cmd/task"]["task"]  # 11 S7.2
+    assert task["route_id"] == "r-east" and task["params"]["slots"] == slots  # what P3 reads
+    assert d.tts_text == said  # restated
+
+
+def _running_patrol_state(items=None):  # state with a running patrol
+    return {"state/geo/manifest": {"items": items or _ITEMS},  # catalogue
+            "state/task": {"current": {"task_id": "t-1", "type": "patrol", "state": "running"}}}  # 11 S4.4
+
+
+@pytest.mark.parametrize("text,slots,said", [  # 99 U131 B04
+    ("再巡一圈", {"loops": 1}, "好的,再巡逻1圈"),
+    ("来回巡三次", {"loops": 3, "round_trip": True}, "好的,再来回巡逻3次"),
+])
+def test_repeat_sends_a_routeless_patrol_repeat(text, slots, said):  # case body
+    """P3 fills the route. MUTATION: send it as B02 -> no route -> refused
+    "巡逻哪条路线" -> red."""
+    d, frames = _turn(text)  # nothing running
+    task = frames["cmd/task"]["task"]  # 11 S7.2
+    assert d.intent_id == "B04" and task["type"] == "patrol" and "route_id" not in task  # P3 fills
+    assert task["params"]["intent"] == "patrol_repeat" and task["params"]["slots"] == slots  # as said
+    assert d.tts_text == said  # restated
+
+
+@pytest.mark.parametrize("text", ["再巡一圈", "接着巡"])  # rule leg and keyword leg
+def test_repeat_while_patrolling_is_answered_not_queued(text):  # case body
+    """The user's ruling: "当前巡逻结束后再说". MUTATION: check only in the
+    rule branch -> "接着巡" (keyword leg) queues one -> red."""
+    from xbrain.p4_agent.runtime import turn_orchestrator as to_mod  # the orchestrator module
+    with open(os.path.join(_CONFIGS, "intents.yaml"), encoding="utf-8") as fh:  # registry file
+        reg = load_intent_registry(yaml.safe_load(fh))  # this tree's registry
+    with open(os.path.join(_CONFIGS, "chitchat.yaml"), encoding="utf-8") as fh:  # presets file
+        cc = ChitchatResponder(yaml.safe_load(fh))  # presets
+    orch = build_orchestrator(reg, cc, l2_timeout_ms=8000, tier2_fn=_no_llm,  # as p4 wires it
+                              state_fn=_running_patrol_state,  # a patrol is running
+                              wall_now_fn=lambda: _NOW, site_timezone=_TZ)  # clock
+    d = orch.handle_turn(text, OrchestratorSession(), 1000, channel="mic_local")  # a mic turn
+    keys = [k for k, _ in decision_to_publishes(d)]  # what went out
+    assert "cmd/task" not in keys  # nothing queued
+    assert d.tts_text == to_mod._PTP_CN["patrol_running"]  # said why
+
+
 @pytest.mark.parametrize("text,said", [  # patrol refusals
     ("沿5号路线巡逻", "没找到5号路线, 可以问我有哪些路径"),
-    ("沿东门路线巡逻3圈", "目前只能巡逻一圈, 请去掉圈数再说一遍"),
 ])
 def test_patrol_refusals_send_nothing(text, said):  # case body
-    """MUTATION: ignore the lap count (P3 pushes loop_total = 1, so 3 laps
-    would silently run one) / say "位置点" for a route."""
+    """MUTATION: say "位置点" for a route."""
     d, frames = _turn(text)  # one turn
     assert not frames and d.tts_text == said  # said why, sent nothing
 

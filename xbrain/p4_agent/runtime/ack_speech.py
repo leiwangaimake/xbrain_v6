@@ -93,6 +93,11 @@ _TASK_REFUSED = {
     E_DEGRADED: "定位降级, 现在不接受新任务",  # 11 S3.2.1
 }
 _TASK_OTHER = "任务没有{verb}成功"  # any other code
+#: cmd/task/ack refusals told apart by detail.reason before the code.
+_TASK_BY_REASON = {
+    # 99 U131 B04: P3 found no completed patrol to repeat
+    "no_completed_patrol": "还没有巡逻完成过的路径, 请说沿哪条路径巡逻",
+}
 
 #: cmd/geo/ack.
 _GEO_REFUSED = {
@@ -206,6 +211,8 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
     if accepted:
         return None  # the turn already said what it does
     if key == CMD_TASK:
+        if detail.get("reason") in _TASK_BY_REASON:  # a refusal with its own sentence
+            return _TASK_BY_REASON[detail["reason"]]  # U131
         verb = _TASK_VERB.get(cmd.get("action"), "执行")  # the refused action
         return _TASK_REFUSED.get(code, _TASK_OTHER).format(verb=verb)  # by code
     if key == CMD_GEO:

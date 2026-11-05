@@ -17,6 +17,13 @@ before any keyword or LLM layer sees them:
           (99 U121, 2026-11-05: the keyword layer only matched 巡逻 and left
           the route empty, and the tier-2 LLM has no route catalogue, so a
           named patrol always ended in "which route?". Same cure as U110.)
+          "沿 X 来回巡逻 N次", "在 X 上来回巡 N趟", "X 来回巡逻 N次"
+                                     -> B02 {route: X, loops: N, round_trip}
+  repeat  "再巡一圈 / 再巡逻两圈 / 再来一圈 / 再来回巡一次", "来回巡三次"
+                                     -> B04 {loops: N, round_trip}
+          (99 U131: laps are counted by P3, one push per pass; on an open
+          route a "来回" is two passes, A -> B -> A. B04 names no route:
+          P3 repeats the latest completed patrol.)
   query   "X路径上有哪些航点 / 关键点 / 位置"               -> G48 {route: X}
           "X在哪条路径上 / X属于哪条路径"                    -> G49 {waypoint: X}
           (99 U130: answered from state/geo/objects with the route-membership
@@ -112,11 +119,12 @@ class PtpParse:  # one parsed command
     keypoint as said (goto / delete) or the OLD name (rename); new is the new
     name (rename only); when is a leading time (goto may carry one; for
     delete / rename it is reported so the caller can refuse it)."""
-    kind: str  # goto / delete / rename / patrol / dock / route_points / point_routes
+    kind: str  # goto / delete / rename / patrol / repeat / dock / route_points / point_routes
     name: str  # the keypoint (old name for rename)
     new: Optional[str] = None  # rename only
     when: Optional[TimeExpr] = None  # a leading time, if any
-    loops: Optional[int] = None  # patrol only: the spoken lap count, None = not said
+    loops: Optional[int] = None  # patrol / repeat: the spoken lap count, None = not said
+    round_trip: bool = False  # patrol / repeat: a "来回" sentence (U131)
 
 
 #: G48: "X(路径)上有哪些航点" -- X must end like a route name (it is what the
@@ -128,23 +136,43 @@ _Q_POINT_ROUTES = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?P<x>.+?)
                              r"(?:路径|路线|线路|线)上?(?:吗|呢|啊)?$")  # point -> routes
 
 #: A lap count at the end of a patrol: "3圈", "两遍", "一趟".
-_LOOPS = r"(?P<n>[0-9]+|[一二两三四五六七八九十]+)(?:圈|遍|趟)"  # digits or CJK numerals
+_LOOPS = r"(?P<n>[0-9]+|[一二两三四五六七八九十]+)(?:圈|遍|趟|次)"  # digits or CJK numerals
+#: The patrol verb, plain or as a round trip (U131): "巡逻" / "来回巡逻" /
+#: "来回巡" / "来回走". The bare 巡 and 走 only count after 来回 -- alone they
+#: are other words (巡航, 走路).
+_PATROL_WORD = r"(?:(?P<rt>来回)(?:巡逻|巡查|巡检|巡|走)|巡逻|巡查|巡检)"  # rt set on 来回
+#: Optional lap count after the verb, and trailing particles.
+_LAPS_OPT = _LOOPS.replace("(?P<n>", "(?:(?P<n>", 1) + r")?(?:吧|了)*$"  # laps optional
+#: Patrol, route first with no verb in front: "X(上)来回巡逻3次". WEAK (X must
+#: end like a route name) and round trip only -- "X巡逻" alone is too open.
+_PATROL_RT_BARE = re.compile(r"^(?P<x>.+?)上?(?P<rt>来回)(?:巡逻|巡查|巡检|巡|走)"
+                             + _LAPS_OPT)  # laps optional
+#: B04 repeat (U131), no route named: "再巡(逻)(一圈)", "再来回巡一次". The
+#: 再 / 又 is required -- it is what says "the same again".
+_REPEAT_XUN = re.compile(r"^(?:再|又)(?P<rt>来回)?(?:巡逻|巡查|巡检|巡)" + _LAPS_OPT)  # laps optional
+#: "再来一圈" / "再走两圈": 来 and 走 are too common to stand alone, so only
+#: with a lap count in 圈 (再来一次 repeats anything, 再走一趟 goes somewhere).
+_REPEAT_LAI = re.compile(r"^(?:再|又)(?P<rt>来回)?(?:来|走)"
+                         r"(?P<n>[0-9]+|[一二两三四五六七八九十]+)圈(?:吧|了)*$")  # count required
+#: "来回巡三次" with no route and no 再: a round trip on the route just
+#: patrolled. The count is required (bare "来回巡逻" asks which route).
+_REPEAT_RT = re.compile(r"^(?P<rt>来回)(?:巡逻|巡查|巡检|巡)" + _LOOPS + r"(?:吧|了)*$")  # count required
 #: Patrol, route first: "沿(着)X(这条路径)巡逻(3圈)". The optional "这条..."
 #: group must NOT be a bare 路径: a route is usually NAMED "1号路径", and a
 #: lazy name followed by an optional 路径 would cut it to "1号".
 _PATROL_FRONT = re.compile(r"^(?:沿着|沿|顺着)(?P<x>.+?)"
-                           r"(?:这条路径|这条路线|这条线)?(?:去)?(?:巡逻|巡查|巡检)"
+                           r"(?:这条路径|这条路线|这条线)?上?(?:去)?" + _PATROL_WORD
                            + _LOOPS.replace("(?P<n>", "(?:(?P<n>", 1) + r")?(?:吧|了)*$")  # laps optional
 #: Patrol, "按 / 按照 / 走 X 巡逻": WEAK -- 按时巡逻 / 按照计划巡逻 / 走路巡逻
 #: are not routes, so these forms only count when X names a route (_ROUTE_TAIL).
-_PATROL_FRONT_WEAK = re.compile(r"^(?:按照|按|走)(?P<x>.+?)"
-                                r"(?:这条路径|这条路线|这条线)?(?:去)?(?:巡逻|巡查|巡检)"
+_PATROL_FRONT_WEAK = re.compile(r"^(?:按照|按|走|在)(?P<x>.+?)"
+                                r"(?:这条路径|这条路线|这条线)?上?(?:去)?" + _PATROL_WORD
                                 + _LOOPS.replace("(?P<n>", "(?:(?P<n>", 1) + r")?(?:吧|了)*$")  # laps optional
 #: Patrol, verb first: "(开始)巡逻X(3圈)" -- WEAK, see _ROUTE_TAIL -- and the
 #: strong "去X巡逻(3圈)".
-_PATROL_VERB = re.compile(r"^(?:开始)?(?:巡逻|巡查|巡检)(?P<x>.+?)"
+_PATROL_VERB = re.compile(r"^(?:开始)?(?P<rt>来回)?(?:巡逻|巡查|巡检)(?P<x>.+?)"
                           + _LOOPS.replace("(?P<n>", "(?:(?P<n>", 1) + r")?(?:吧|了)*$")  # laps optional
-_PATROL_GO = re.compile(r"^(?:去|到)(?P<x>.+?)(?:巡逻|巡查|巡检)"
+_PATROL_GO = re.compile(r"^(?:去|到)(?P<x>.+?)" + _PATROL_WORD
                         + _LOOPS.replace("(?P<n>", "(?:(?P<n>", 1) + r")?(?:吧|了)*$")  # laps optional
 #: The weak forms ("巡逻X", "按X巡逻", "走X巡逻") claim a sentence only when X
 #: ends like a route name. Measured 2026-11-05 (audit 1): without it the rule
@@ -184,8 +212,9 @@ def _patrol(t: str, when: Optional[TimeExpr]) -> Optional[PtpParse]:
     the verb and 巡逻 / the lap count; the catalogue decides if it exists."""
     m = _PATROL_FRONT.match(t) or _PATROL_GO.match(t)  # the strong forms
     weak = m is None  # only a weak form left to try
-    if weak:  # 巡逻X / 按X巡逻 / 走X巡逻
-        m = _PATROL_FRONT_WEAK.match(t) or _PATROL_VERB.match(t)  # weak forms
+    if weak:  # 巡逻X / 按X巡逻 / 走X巡逻 / X来回巡逻
+        m = (_PATROL_FRONT_WEAK.match(t) or _PATROL_VERB.match(t)
+             or _PATROL_RT_BARE.match(t))  # weak forms
     if not m:  # not a patrol sentence
         return None  # let the other rules look
     name = _trim(m.group("x"), ("吧", "了"))  # route without particles
@@ -195,7 +224,23 @@ def _patrol(t: str, when: Optional[TimeExpr]) -> Optional[PtpParse]:
             or name.startswith(("这条", "那条"))  # "按这条路径巡逻": points, does not name
             or any(q in name for q in _QUESTION)):  # "巡逻什么"
         return None  # no route named: B02 asks which one
-    return PtpParse("patrol", name, when=when, loops=_laps(m.group("n")))  # a named patrol
+    return PtpParse("patrol", name, when=when, loops=_laps(m.group("n")),  # a named patrol
+                    round_trip=bool(m.group("rt")))  # "来回": two passes per lap on a line (U131)
+
+
+def _repeat(t: str, when: Optional[TimeExpr]) -> Optional[PtpParse]:
+    """B04 "再巡一圈" / "来回巡三次" (U131): no route named, the latest
+    completed patrol again. None when t is not one of those sentences or
+    its count is not a count (out of 1..99)."""
+    m = _REPEAT_XUN.match(t) or _REPEAT_LAI.match(t) or _REPEAT_RT.match(t)  # 再巡 / 再来N圈 / 来回巡N次
+    if not m:  # not a repeat
+        return None  # the other rules look
+    n = m.group("n")  # the spoken count, if any
+    loops = _laps(n)  # as an int
+    if n and loops is None:  # "再巡一百圈": said but not a count
+        return None  # not ours; the keyword layer answers
+    return PtpParse("repeat", "", when=when, loops=loops,  # B04
+                    round_trip=bool(m.group("rt")))  # "来回"
 
 
 def _stages(text: str):
@@ -277,6 +322,9 @@ def parse_ptp(text: str) -> Optional[PtpParse]:
         m = _Q_POINT_ROUTES.match(t)  # G49 (U130)
         if m and when is None and m.group("x") not in _DEICTIC:  # "这里在哪条路径上" is a different question
             return PtpParse("point_routes", _head(m.group("x")))  # which routes is point X on
+        rpt = _repeat(t, when)  # B04 (U131): "再巡一圈", before the named forms
+        if rpt is not None:  # no route named on purpose
+            return rpt  # B04
         pat = _patrol(t, when)  # a named patrol (U121), before goto: "去X巡逻"
         if pat is not None:  # the route is named
             return pat  # B02

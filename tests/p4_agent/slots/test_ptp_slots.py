@@ -135,6 +135,51 @@ def test_named_patrol(text, name, loops):
     assert got.name == name and got.loops == loops  # route as said, laps
 
 
+@pytest.mark.parametrize("text,name,loops", [  # 99 U131 round trips
+    ("沿1号路径来回巡逻三次", "1号路径", 3),  # strong form + 次
+    ("沿着东环线来回巡两趟", "东环线", 2),  # 来回巡
+    ("在1号路径上来回巡逻3次", "1号路径", 3),  # 在 X 上 (weak, route tail)
+    ("1号路径来回巡逻一次", "1号路径", 1),  # no verb in front (weak, round trip only)
+    ("沿1号路径来回走两次", "1号路径", 2),  # 来回走
+    ("沿1号路径来回巡逻", "1号路径", None),  # count not said
+])
+def test_round_trip_patrol(text, name, loops):  # U131
+    """MUTATION: drop the rt group -> round_trip False -> red; drop 次 from
+    _LOOPS -> the count is not read -> red."""
+    got = parse_ptp(text)  # one parse
+    assert got is not None and got.kind == "patrol" and got.round_trip  # a round trip
+    assert got.name == name and got.loops == loops  # route, count
+
+
+def test_plain_laps_are_not_a_round_trip():  # U131
+    """MUTATION: set round_trip on every patrol -> red."""
+    got = parse_ptp("沿1号路径巡逻3圈")  # plain laps
+    assert got.kind == "patrol" and got.loops == 3 and not got.round_trip  # not doubled
+
+
+@pytest.mark.parametrize("text,loops,rt", [  # 99 U131 B04
+    ("再巡一圈", 1, False), ("再巡逻两圈", 2, False), ("再巡", None, False),  # 再巡
+    ("再来一圈", 1, False), ("再走两圈", 2, False),  # 来 / 走 with 圈
+    ("再来回巡一次", 1, True), ("来回巡三次", 3, True), ("来回巡逻两次", 2, True),  # round trips
+    ("又巡一圈吧", 1, False),  # 又 + particle
+])
+def test_repeat(text, loops, rt):  # B04
+    """MUTATION: drop _repeat -> "再巡一圈" falls to the keyword layer with
+    no count -> red; ignore rt -> red."""
+    got = parse_ptp(text)  # one parse
+    assert got is not None and got.kind == "repeat" and got.name == ""  # no route named
+    assert got.loops == loops and got.round_trip is rt  # as said
+
+
+@pytest.mark.parametrize("text", ["再来一次", "再走一趟", "来回巡逻", "来回走三次", "再巡一百圈"])
+def test_not_a_repeat(text):  # U131 boundaries
+    """再来一次 repeats anything; 再走一趟 goes somewhere; 来回巡逻 with no
+    count asks which route; 来回走 alone is not patrol; 一百 is not a count.
+    MUTATION: let 来 / 走 take any unit, or 来回走 stand alone -> red."""
+    got = parse_ptp(text)  # one parse
+    assert got is None or got.kind != "repeat"  # not B04 by rule
+
+
 def test_timed_named_patrol_keeps_its_time():
     """B03 shape through the same rule: the time prefix is split off and
     reported. MUTATION: no time stage for patrol and the route name holds

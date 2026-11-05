@@ -106,14 +106,12 @@ GOTO_NEEDS_WAYPOINT = "goto needs a waypoint"
 #: tier-2 LLM leg must run first (16 S6.6.4 fastpath_then_llm).
 DESTINATION_SLOT = {"goto_waypoint": "waypoint"}
 
-#: TaskRequestError messages for a patrol with no route (11 S7.2: patrol needs
-#: route_id). Two cases, two spoken replies (turn_orchestrator._F_REASON_CN):
-#: the operator named no route ("巡逻" alone) -> ask which one; B04 "再巡一圈"
-#: -> its route is the CURRENT task's, which 16 S6.7.3 [5] gives P3 to fill
-#: and P3 does not fill yet (nothing in p3_task reads patrol_repeat), so the
-#: honest answer is that the step is not wired.
+#: TaskRequestError message for a patrol with no route (11 S7.2: patrol needs
+#: route_id): the operator named none ("巡逻" alone) -> ask which one
+#: (turn_orchestrator._F_REASON_CN). B04 "再巡一圈" used to have a second
+#: message here ("the step is not wired"); since 99 U131 P3 fills its route
+#: from the latest completed patrol, so a route-less B04 is sent as is.
 PATROL_NEEDS_ROUTE = "patrol needs a route"
-PATROL_REPEAT_NEEDS_CURRENT = "patrol_repeat needs the current route"
 
 #: TaskRequestError message for a named destination the caller did not resolve
 #: to a geo_id. 16 S8.1 check (1): the object must EXIST before any side
@@ -236,12 +234,12 @@ def to_task_command(
         # at dispatch, so a name-only goto would be stored and never run.
         if not waypoint_id:
             raise TaskRequestError(DESTINATION_UNRESOLVED)
-    if task_type == "patrol" and not route_id:
-        # 11 S7.2: patrol REQUIRES route_id. Three ways to lack one, three
-        # replies: B04 (route is the current task's, P3 fill not wired), no
-        # route named, a name the caller did not resolve.
-        if intent_name == "patrol_repeat":
-            raise TaskRequestError(PATROL_REPEAT_NEEDS_CURRENT)
+    if task_type == "patrol" and not route_id and intent_name != "patrol_repeat":
+        # 11 S7.2: patrol REQUIRES route_id. B04 is the exception (99 U131):
+        # it names no route on purpose and P3 fills the latest completed
+        # patrol's at submit (task_apply._fill_repeat_route), refusing with
+        # E_NOT_FOUND when there is none. Otherwise two ways to lack one:
+        # no route named, a name the caller did not resolve.
         spoken = (slots or {}).get("route")
         if not isinstance(spoken, str) or not spoken.strip():
             raise TaskRequestError(PATROL_NEEDS_ROUTE)
