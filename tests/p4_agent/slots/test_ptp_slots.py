@@ -122,11 +122,14 @@ def test_a_time_on_delete_is_reported_for_refusal():
     ("开始巡逻东门路线", "东门路线", None),  # 开始
     ("去1号路径巡逻两遍", "1号路径", 2),  # 去 X 巡逻 + CJK laps
     ("沿1号路径巡逻十二圈吧", "1号路径", 12),  # 十二 + particle
+    ("按东门路线巡逻", "东门路线", None),  # weak form with a route-shaped name
+    ("沿着围墙巡逻", "围墙", None),  # strong form: any name, the catalogue decides
 ])
 def test_named_patrol(text, name, loops):
     """MUTATION: a lazy name with an optional bare 路径 cuts "1号路径" to
     "1号"; no _patrol before _GOTO and "去X巡逻" is lost; a lap parser that
-    ignores CJK numerals reads 两 / 十二 as None."""
+    ignores CJK numerals reads 两 / 十二 as None; requiring the route tail on
+    the strong forms too drops 沿着围墙巡逻."""
     got = parse_ptp(text)  # one parse
     assert got is not None and got.kind == "patrol"  # a patrol
     assert got.name == name and got.loops == loops  # route as said, laps
@@ -143,8 +146,14 @@ def test_timed_named_patrol_keeps_its_time():
 
 @pytest.mark.parametrize("text", [
     "巡逻", "开始巡逻", "开始巡逻一圈", "按这条路径巡逻", "去那边巡逻", "巡逻什么",
+    # audit 1 (2026-11-05): weak forms whose object is not a route name
+    "巡逻模式", "巡逻状态", "巡逻了多久", "巡逻一下", "巡逻一会儿", "巡逻吧",
+    "巡逻任务", "巡逻速度快一点", "巡逻慢一点", "巡逻时注意安全", "按时巡逻",
+    "按照计划巡逻", "走路巡逻", "巡检一下设备",
 ])
 def test_patrol_without_a_route_name_is_not_ours(text):
-    """No route named -> None, so B02's own leg asks which route.
-    MUTATION: take a lap count / 这条路径 / a question as the route name."""
+    """No route named -> None, so B02's own leg (or the speed / status
+    intent) handles it. MUTATION: take a lap count / 这条路径 / a question as
+    the route name; drop the _ROUTE_TAIL check on the weak forms -> 巡逻模式
+    and the rest of the audit-1 list are stolen."""
     assert parse_ptp(text) is None  # left to the keyword layer

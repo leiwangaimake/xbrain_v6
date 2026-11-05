@@ -114,14 +114,26 @@ _LOOPS = r"(?P<n>[0-9]+|[一二两三四五六七八九十]+)(?:圈|遍|趟)"  #
 #: Patrol, route first: "沿(着)X(这条路径)巡逻(3圈)". The optional "这条..."
 #: group must NOT be a bare 路径: a route is usually NAMED "1号路径", and a
 #: lazy name followed by an optional 路径 would cut it to "1号".
-_PATROL_FRONT = re.compile(r"^(?:沿着|沿|按照|按|顺着|走)(?P<x>.+?)"
+_PATROL_FRONT = re.compile(r"^(?:沿着|沿|顺着)(?P<x>.+?)"
                            r"(?:这条路径|这条路线|这条线)?(?:去)?(?:巡逻|巡查|巡检)"
                            + _LOOPS.replace("(?P<n>", "(?:(?P<n>", 1) + r")?(?:吧|了)*$")  # laps optional
-#: Patrol, verb first: "(开始)巡逻X(3圈)" and "去X巡逻(3圈)".
+#: Patrol, "按 / 按照 / 走 X 巡逻": WEAK -- 按时巡逻 / 按照计划巡逻 / 走路巡逻
+#: are not routes, so these forms only count when X names a route (_ROUTE_TAIL).
+_PATROL_FRONT_WEAK = re.compile(r"^(?:按照|按|走)(?P<x>.+?)"
+                                r"(?:这条路径|这条路线|这条线)?(?:去)?(?:巡逻|巡查|巡检)"
+                                + _LOOPS.replace("(?P<n>", "(?:(?P<n>", 1) + r")?(?:吧|了)*$")  # laps optional
+#: Patrol, verb first: "(开始)巡逻X(3圈)" -- WEAK, see _ROUTE_TAIL -- and the
+#: strong "去X巡逻(3圈)".
 _PATROL_VERB = re.compile(r"^(?:开始)?(?:巡逻|巡查|巡检)(?P<x>.+?)"
                           + _LOOPS.replace("(?P<n>", "(?:(?P<n>", 1) + r")?(?:吧|了)*$")  # laps optional
 _PATROL_GO = re.compile(r"^(?:去|到)(?P<x>.+?)(?:巡逻|巡查|巡检)"
                         + _LOOPS.replace("(?P<n>", "(?:(?P<n>", 1) + r")?(?:吧|了)*$")  # laps optional
+#: The weak forms ("巡逻X", "按X巡逻", "走X巡逻") claim a sentence only when X
+#: ends like a route name. Measured 2026-11-05 (audit 1): without it the rule
+#: took 巡逻模式 / 巡逻状态 / 巡逻一下 / 巡逻吧 / 巡逻慢一点 / 按时巡逻 /
+#: 走路巡逻 / 巡检一下设备 and answered "没找到模式" instead of letting the
+#: keyword layer (B02 asks which route, A-class speed, G-class status) run.
+_ROUTE_TAIL = ("路径", "路线", "线路", "环线", "线")  # how route names end
 #: A route object that is really just a lap count or a place word.
 _LAPS_ONLY = re.compile("^" + _LOOPS + "$")  # "巡逻一圈": no route named
 _CN_DIGIT = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6,
@@ -152,11 +164,15 @@ def _laps(n: Optional[str]) -> Optional[int]:
 def _patrol(t: str, when: Optional[TimeExpr]) -> Optional[PtpParse]:
     """A named patrol in t, or None. The route name is whatever sits between
     the verb and 巡逻 / the lap count; the catalogue decides if it exists."""
-    m = (_PATROL_FRONT.match(t) or _PATROL_GO.match(t)
-         or _PATROL_VERB.match(t))  # any of the three word orders
+    m = _PATROL_FRONT.match(t) or _PATROL_GO.match(t)  # the strong forms
+    weak = m is None  # only a weak form left to try
+    if weak:  # 巡逻X / 按X巡逻 / 走X巡逻
+        m = _PATROL_FRONT_WEAK.match(t) or _PATROL_VERB.match(t)  # weak forms
     if not m:  # not a patrol sentence
         return None  # let the other rules look
     name = _trim(m.group("x"), ("吧", "了"))  # route without particles
+    if weak and not name.endswith(_ROUTE_TAIL):  # "巡逻模式", "按时巡逻": not a route
+        return None  # leave it to the keyword layer
     if (not name or _LAPS_ONLY.match(name) or name in _DEICTIC  # "巡逻一圈" / "去那边巡逻"
             or name.startswith(("这条", "那条"))  # "按这条路径巡逻": points, does not name
             or any(q in name for q in _QUESTION)):  # "巡逻什么"
