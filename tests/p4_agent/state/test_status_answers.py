@@ -193,3 +193,48 @@ def test_payload_queries_without_payload_are_unreadable():  # one query answer: 
                "strobe_state_answer", "volume_answer", "speaking_answer"):  # all six
         a = getattr(sa, fn)(c, TPL, NOW, max_age_ms=AGE)  # no payload object
         assert not a.known and "读不到" in a.text, fn  # honest, never a guess
+
+
+# -- G38 / G39 (2026-11-05 audit, 99 U133): the intents existed with no answer --
+_MANIFEST = {"items": [{"geo_id": "f-1", "type": "fence", "name": "东门围栏", "state": "active"},
+                       {"geo_id": "f-2", "type": "fence", "name": "北区围栏", "state": "draft"},
+                       {"geo_id": "f-3", "type": "fence", "name": "旧围栏", "state": "deleted"},
+                       {"geo_id": "r-1", "type": "route", "name": "1号路径", "state": "active"}]}
+
+
+def test_g38_lists_live_fences_with_their_state():  # G38
+    """MUTATION: list deleted fences / drop the state label -> red."""
+    a = sa.fences_answer(_with([("state/geo/manifest", _MANIFEST)]), TPL, NOW, max_age_ms=AGE)  # answer
+    assert a.known and a.text == "共有2个围栏:东门围栏(已启用),北区围栏(未启用)"  # live ones, labelled
+    none = sa.fences_answer(_with([("state/geo/manifest", {"items": []})]), TPL, NOW, max_age_ms=AGE)  # empty
+    assert none.text == "现在还没有任何围栏"  # said
+    assert not sa.fences_answer(_with([]), TPL, NOW, max_age_ms=AGE).known  # no catalogue: honest
+
+
+@pytest.mark.parametrize("fence_state,said", [
+    ({"active": {"name": "东门围栏"}}, "现在生效的是东门围栏"),  # P1 holds what should be in force
+    ({"active": None}, "本来要用东门围栏,但实际生效的还是没有围栏--下发了没生效"),  # not applied
+    ({"active": {"name": "北区围栏"}}, "本来要用东门围栏,但实际生效的还是北区围栏--下发了没生效"),  # wrong one
+])
+def test_g39_compares_intent_with_what_p1_holds(fence_state, said):  # QT-8
+    """MUTATION: answer from the catalogue alone -> a mismatch reads as agree -> red."""
+    a = sa.active_fence_answer(_with([("state/geo/manifest", _MANIFEST), ("state/fence", fence_state)]),
+                               TPL, NOW, max_age_ms=AGE)  # answer
+    assert a.known and a.text == said  # compared
+
+
+def test_g39_unreadable_p1_side_is_said():  # no state/fence
+    """MUTATION: assume agreement when P1 is silent -> red."""
+    a = sa.active_fence_answer(_with([("state/geo/manifest", _MANIFEST)]), TPL, NOW, max_age_ms=AGE)  # answer
+    assert not a.known  # honest
+    nothing = sa.active_fence_answer(_with([("state/geo/manifest", {"items": []}),
+                                            ("state/fence", {"active": None})]), TPL, NOW, max_age_ms=AGE)
+    assert nothing.text == "现在没有生效的围栏"  # neither side has one
+
+
+def test_g38_g39_are_registered_answers():  # the dispatch table
+    """MUTATION: leave G38 / G39 out of STATUS_QUERY_ANSWERS -> the turn says
+    "no data" as before the audit -> red."""
+    c = _with([("state/geo/manifest", _MANIFEST), ("state/fence", {"active": {"name": "东门围栏"}})])  # live state
+    assert sa.status_answer("G38", c, TPL, NOW, max_age_ms=AGE).text.startswith("共有2个围栏")  # G38 answered
+    assert sa.status_answer("G39", c, TPL, NOW, max_age_ms=AGE).text == "现在生效的是东门围栏"  # G39 answered

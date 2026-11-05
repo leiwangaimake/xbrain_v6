@@ -480,6 +480,57 @@ def last_alarm_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # o
     return QueryAnswer(True, _say(t, "query_events", "last_alarm", when=_when(t, d, la), cat=_cat_word(la)))  # when + what
 
 
+def _fence_items(cache: StateCache) -> Optional[list]:  # the live fences in the catalogue
+    """The non-deleted fence items of state/geo/manifest (11 S7.10), or None
+    when the manifest was never received. The objects broadcast carries no
+    fence layer, so the manifest is where a fence's name and state are."""
+    m = _latest(cache, "state/geo/manifest")  # on-change key: last value is current
+    if m is None or not isinstance(m.get("items"), list):  # never received
+        return None  # the caller says so
+    return [i for i in m["items"] if isinstance(i, Mapping)
+            and i.get("type") == "fence" and i.get("state") != "deleted"]  # live fences
+
+
+def fences_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # G38
+    """G38 有哪些围栏 (99 U133 audit, 2026-11-05: the intent existed and had no
+    answer -- it said "no data"): every live fence with whether it is in force."""
+    items = _fence_items(cache)  # live fences
+    if items is None:  # no catalogue yet
+        return _unreadable(t, "围栏列表")  # honest
+    if not items:  # none recorded
+        return QueryAnswer(True, _say(t, "query_fences", "none"))  # say so
+    names = ["%s(%s)" % (i.get("name") or i.get("geo_id"),
+                         "已启用" if i.get("state") == "active" else "未启用")
+             for i in items]  # name + in force or not
+    return QueryAnswer(True, _say(t, "query_fences", "some", count=len(items),
+                                  names=",".join(names)))  # the list
+
+
+def active_fence_answer(cache, t, now_mono_ms, *, max_age_ms) -> QueryAnswer:  # G39
+    """G39 现在用的哪个围栏 (QT-8: compare what should be in force -- the
+    catalogue's active fences -- with what P1 actually holds, state/fence
+    active.name; 99 U133 audit). An unreadable P1 side is said, not assumed."""
+    items = _fence_items(cache)  # live fences
+    if items is None:  # no catalogue yet
+        return _unreadable(t, "围栏列表")  # honest
+    want = [str(i.get("name") or i.get("geo_id")) for i in items if i.get("state") == "active"]  # intended
+    fs = _latest(cache, "state/fence")  # P1's runtime view
+    if fs is None:  # P1 never heard
+        return _unreadable(t, "围栏运行状态")  # honest
+    act = fs.get("active") if isinstance(fs.get("active"), Mapping) else None  # what P1 holds
+    actual = str(act.get("name")) if act is not None and act.get("name") else ""  # its name
+    if not want and not actual:  # nothing anywhere
+        return QueryAnswer(True, _say(t, "query_active_fence", "none"))  # say so
+    if actual and actual in want:  # P1 holds what should be in force
+        # formatted here, not through _say: _say's own parameter is called
+        # `name`, and QT-8's template placeholder is {name} too
+        return QueryAnswer(True, str(t["query_active_fence"]["agree"]).format(
+            name="和".join(want)))  # agree
+    return QueryAnswer(True, _say(t, "query_active_fence", "disagree",
+                                  want="和".join(want) or "没有围栏",
+                                  actual=actual or "没有围栏"))  # mismatch, said
+
+
 STATUS_QUERY_ANSWERS: Dict[str, Callable[..., QueryAnswer]] = {
     "G01": position_answer, "G03": range_answer, "G04": speed_answer,  # intent id -> spoken text
     "G05": mode_answer, "G06": task_answer, "G07": progress_answer,  # intent id -> spoken text
@@ -490,6 +541,7 @@ STATUS_QUERY_ANSWERS: Dict[str, Callable[..., QueryAnswer]] = {
     "G25": payload_all_answer, "G26": light_state_answer, "G27": siren_state_answer,  # intent id -> spoken text
     "G28": strobe_state_answer, "G29": volume_answer, "G30": speaking_answer,  # intent id -> spoken text
     "G10": events_recent_answer, "G11": events_period_answer, "G13": last_alarm_answer,  # 99 U103
+    "G38": fences_answer, "G39": active_fence_answer,  # 2026-11-05 audit (99 U133)
 }
 
 

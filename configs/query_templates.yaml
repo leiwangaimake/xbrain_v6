@@ -76,6 +76,12 @@ query_ptz_owner:
 query_active_fence:
   agree:          "现在生效的是{name}"
   disagree:       "本来要用{want},但实际生效的还是{actual}--下发了没生效"
+  none:           "现在没有生效的围栏"
+
+# -- G38 query_fences (2026-11-05, 99 U133 audit) -- from state/geo/manifest --
+query_fences:
+  none:           "现在还没有任何围栏"
+  some:           "共有{count}个围栏:{names}"
 
 # -- QT-9 (G41 query_fence_relation) -- fence_state + fence_eval paired --
 query_fence_relation:
