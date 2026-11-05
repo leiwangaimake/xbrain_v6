@@ -95,7 +95,7 @@
 | `zenohd-rt` | Rust | ② router | RT 面 router，`lo:7449`，组播与 gossip 全关；★★★ **在 20 Hz 关键路径上**（星型拓扑每跳穿两次 router） |
 | `p2_core` | Python | ① | 七域仲裁 · 模式状态机 · 健康度 · PTZ boost；★ **BIT 是它的一个线程，不是进程**（U48） |
 | `p3_task` | Python | ① | 任务与充电；★ `task.db` / `fence.db` / `geo.db` **三库**的唯一写者 |
-| `p4_agent` | Python | ① | 意图管线 128 意图 · AI 网关 |
+| `p4_agent` | Python | ① | 意图管线（意图闭集真源 `16` §6.6；~~128 意图~~ 是迁移冻结时的旧数，`99` U129 订正）· AI 网关 |
 | `p5_gateway` | Python | ① | 网关 · 事件管线 · `state/link` **唯一发布者**；★★ **HMI 后端在它进程内，系统无独立 HMI 进程** |
 | `p1_motion` | Python | ★ **跨面 ①+②** | 20 Hz · **唯一速度出口**；RNS 是它的**进程内模块**，对外只呈现为行为源 `rns_avoid`(900) |
 | `perception` | C++ | ★ **跨面 ①+②** | 33 ms / 30 fps；★ 详细设计 = `19` **v1.0 落地版**（2026-09-08，RGBD 快慢线；接口真源 `11` §3.1B） |
