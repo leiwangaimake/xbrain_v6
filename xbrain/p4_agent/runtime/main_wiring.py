@@ -64,6 +64,7 @@ from xbrain.p4_agent.runtime.orchestrator_turn import (
     make_turn_handler,
 )
 from xbrain.p4_agent.state.route_membership import make_membership_fn  # 99 U130 G48 / G49
+from xbrain.p4_agent.state.geo_queries import make_geo_query_fn  # 99 U136 G50 / G51 / G52
 from xbrain.common.envelope.age import read_local_boot_id
 from xbrain.p4_agent.envelope.pose_snap import PoseHistory
 from xbrain.p4_agent.runtime.chassis_ctrl_stamp import ChassisCtrlStamper
@@ -284,7 +285,9 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                 wall_now_fn=time.time, site_timezone=orch.site_timezone,
                 # 99 U130: G48 / G49 route membership, the same distance P3
                 # navigates by (common.geo.route_membership_m)
-                membership_fn=make_membership_fn(orch.route_membership_m))
+                membership_fn=make_membership_fn(orch.route_membership_m),
+                # 99 U136: G50 / G51 / G52, the same plan and distance key
+                geo_query_fn=make_geo_query_fn(orch.route_membership_m))
             session = OrchestratorSession()
             # 11 S8.7.6 state/voice_turn (2026-10-26): robot-prefixed like the
             # cloud inputs, so it needs the robot id. Without one there is no

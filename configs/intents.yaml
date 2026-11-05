@@ -248,6 +248,12 @@ intents:
   # common.geo.route_membership_m; the keywords only catch the bare forms.
   query_route_waypoints: { id: G48, keywords: ["路径上有哪些航点", "路线上有哪些点"], slots: [route], route: fastpath, auth: L0 }
   query_waypoint_routes: { id: G49, keywords: ["在哪条路径上", "属于哪条路径"], slots: [waypoint], route: fastpath, auth: L0 }
+  # 99 U136 (2026-11-05): nearest waypoint / how far to X / how long is route X.
+  # Rule-parsed in slots/ptp_slots.py (they carry a name); the keywords are
+  # the plain spoken forms for the keyword layer.
+  query_nearest_waypoint: { id: G50, keywords: ["最近的航点是哪个", "离我最近的航点"], slots: [], route: fastpath, auth: L0 }
+  query_distance_to: { id: G51, keywords: ["去那里有多远", "到那里要多久"], slots: [waypoint], route: fastpath, auth: L0 }
+  query_route_length: { id: G52, keywords: ["路径有多长", "路线有多长"], slots: [route], route: fastpath, auth: L0 }
 
   # -- H 系统 (H01/H03 carry auth_by_slot; see header) --
   run_bit: { id: H01, keywords: ["做个自检", "自检一下", "检查系统", "做个深度自检", "全面检查一遍"], slots: [scope], route: fastpath, auth: L1a, auth_by_slot: { scope: { quick: L1a, deep: L2 } } }

@@ -29,6 +29,9 @@ before any keyword or LLM layer sees them:
           (99 U130: answered from state/geo/objects with the route-membership
           rule P3 navigates by; a named object, so the keyword layer -- which
           carries no slot -- cannot answer them.)
+  query   "离我最近的航点" / "去X多远" / "X路径多长"     -> G50 / G51 {waypoint} / G52 {route}
+          (99 U136: answered from state/geo/objects + state/pose; G51 is the
+          length of the path a goto would take, the 99 U127 plan)
   delete  "删除 1号路径" / "删除 东门围栏"          -> F11 {route: X} / F13 {fence: X}
           (99 U133: by name, like U110's keypoints; still L2-confirmed)
   dock    "[前缀] 去 / 前往 / 导航到 1号充电站 / 东门充电桩"   -> B09 {dock: X}
@@ -121,7 +124,7 @@ class PtpParse:  # one parsed command
     keypoint as said (goto / delete) or the OLD name (rename); new is the new
     name (rename only); when is a leading time (goto may carry one; for
     delete / rename it is reported so the caller can refuse it)."""
-    kind: str  # goto / delete / delete_route / delete_fence / rename / patrol / repeat / dock / route_points / point_routes
+    kind: str  # goto / delete / delete_route / delete_fence / rename / patrol / repeat / dock / route_points / point_routes / nearest_point / distance_to / route_length
     name: str  # the keypoint (old name for rename)
     new: Optional[str] = None  # rename only
     when: Optional[TimeExpr] = None  # a leading time, if any
@@ -136,6 +139,17 @@ _Q_ROUTE_POINTS = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?P<x>.+?(
 #: G49: "X在哪条路径上" / "X属于哪条路径".
 _Q_POINT_ROUTES = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?P<x>.+?)(?:在|属于)(?:哪条|哪个|什么)"
                              r"(?:路径|路线|线路|线)上?(?:吗|呢|啊)?$")  # point -> routes
+
+#: 99 U136 G50: "离我最近的航点是哪个" -- no name, the robot's position.
+_Q_NEAREST = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?:离我|离你|离机器人|距离我)?最近的"
+                        r"(?:航点|点位|关键点|位置点|位置|点)(?:是哪个|是哪里|是什么|在哪里|在哪)?"
+                        r"(?:呢|啊)?$")  # nearest keypoint
+#: 99 U136 G51: "去X多远" / "到X有多远" / "离X还有多远" / "去X要多久".
+_Q_DISTANCE = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?:去|到|离|距离)(?P<x>.+?)(?:还)?(?:有)?"
+                         r"(?:多远|多少米|要多久|需要多久|要多长时间|多长时间)(?:呢|啊)?$")  # how far to X
+#: 99 U136 G52: "X路径多长" -- X must end like a route name.
+_Q_LENGTH = re.compile(r"^(?:查询|查一下|请问|告诉我)?(?P<x>.+?(?:路径|路线|线路|环线|线))"
+                       r"(?:有)?(?:多长|多少米|长度是多少|全长多少)(?:呢|啊)?$")  # route length
 
 #: A lap count at the end of a patrol: "3圈", "两遍", "一趟".
 _LOOPS = r"(?P<n>[0-9]+|[一二两三四五六七八九十]+)(?:圈|遍|趟|次)"  # digits or CJK numerals
@@ -336,6 +350,14 @@ def parse_ptp(text: str) -> Optional[PtpParse]:
         rpt = _repeat(t, when)  # B04 (U131): "再巡一圈", before the named forms
         if rpt is not None:  # no route named on purpose
             return rpt  # B04
+        if when is None and _Q_NEAREST.match(t):  # G50 (U136)
+            return PtpParse("nearest_point", "")  # the robot's nearest keypoint
+        m = _Q_DISTANCE.match(t)  # G51 (U136), before goto: "去X多远" is not a goto
+        if m and when is None and m.group("x") not in _DEICTIC:  # a named place
+            return PtpParse("distance_to", _head(m.group("x")))  # how far to X
+        m = _Q_LENGTH.match(t)  # G52 (U136)
+        if m and when is None:  # a question carries no time
+            return PtpParse("route_length", m.group("x"))  # how long is route X
         pat = _patrol(t, when)  # a named patrol (U121), before goto: "去X巡逻"
         if pat is not None:  # the route is named
             return pat  # B02

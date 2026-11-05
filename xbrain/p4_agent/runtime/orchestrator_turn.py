@@ -177,6 +177,7 @@ def build_orchestrator(
     wall_now_fn=None,
     site_timezone=None,
     membership_fn=None,
+    geo_query_fn=None,
 ) -> TurnOrchestrator:
     """Construct the voice-loop orchestrator (built once, reused per turn).
 
@@ -209,7 +210,7 @@ def build_orchestrator(
         query_fn=query_fn, bypass_tokens=bypass_tokens,
         system_fn=system_fn, state_fn=state_fn, pose_snap_fn=pose_snap_fn,
         wall_now_fn=wall_now_fn, site_timezone=site_timezone,
-        membership_fn=membership_fn)
+        membership_fn=membership_fn, geo_query_fn=geo_query_fn)
 
 
 def make_battery_query_fn(cache, templates, *, max_age_ms: int,

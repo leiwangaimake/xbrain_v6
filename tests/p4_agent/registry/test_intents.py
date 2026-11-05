@@ -237,7 +237,7 @@ def test_auth_matches_16_s8_3a_2():
     # landed D17/D18/E09/E10 (2026-08-07); 134->139 when 18-C G43-G47 landed
     # (2026-08-16, F3); CS-A3's declared histogram moved with it; 139->141 when
     # J04 thanks / J05 farewell were restored (2026-10-30, 99 U101).
-    assert len(row_auth) == 145  # 143 -> 145: G48 / G49 route membership (2026-11-05, 99 U130); 141 -> 142: A15 set_turn_speed (2026-10-30, 99 U104); 142 -> 143: A16 set_move_speed (2026-11-03, 99 U106); 143 -> 144: A17 move_heading (2026-11-04, 99 U108); 144 -> 143: B10 skip_waypoint deleted (2026-11-05, 99 U129)
+    assert len(row_auth) == 148  # 145 -> 148: G50 / G51 / G52 geo queries (2026-11-05, 99 U136); 143 -> 145: G48 / G49 route membership (2026-11-05, 99 U130); 141 -> 142: A15 set_turn_speed (2026-10-30, 99 U104); 142 -> 143: A16 set_move_speed (2026-11-03, 99 U106); 143 -> 144: A17 move_heading (2026-11-04, 99 U108); 144 -> 143: B10 skip_waypoint deleted (2026-11-05, 99 U129)
     for e in reg.entries:                                # every registry entry
         assert e.auth == base[e.id], (e.name, e.id)      # base auth == folded doc level
 
@@ -295,6 +295,8 @@ def test_bonus_cross_check_against_triage_when_present():
         "move_heading",
         # G48 / G49 (2026-11-05, 99 U130): route membership queries.
         "query_route_waypoints", "query_waypoint_routes",
+        # G50 / G51 / G52 (2026-11-05, 99 U136): nearest / distance / length.
+        "query_nearest_waypoint", "query_distance_to", "query_route_length",
     }
     # A migrated intent whose SLOTS legitimately evolved after the freeze is
     # enumerated here (not open-ended): the frozen _triage.json cannot be

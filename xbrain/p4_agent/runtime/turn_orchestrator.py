@@ -200,6 +200,13 @@ _PTP_CN = {
     "point_routes": "{name}在{routes}上",
     "point_no_routes": "{name}不在任何路径上",
     "route_not_found": "没找到{name}, 可以问我有哪些路径",
+    # 99 U136: G50 / G51 / G52 answers.
+    "nearest_point": "离你最近的航点是{name}, 直线约{dist}米",
+    "no_points": "还没有记录任何航点",
+    "distance_route": "去{name}约{dist}米, 沿{route}走{time}",
+    "distance_straight": "去{name}直线约{dist}米{time}",
+    "route_length": "{route}全长约{length}米",
+    "no_pose": "现在拿不到定位, 算不出距离",
 }
 
 #: 99 U133 recording replies (ASCII punctuation, Chinese words). {name} is the
@@ -220,6 +227,10 @@ _REC_ALLOWED = frozenset({"record_route_stop", "record_fence_stop",
                           "record_route_cancel", "record_route_mark"})
 #: The recording starts; said while recording they get busy_start.
 _REC_STARTS = frozenset({"record_route_start", "record_fence_start"})
+
+#: 99 U136: rule-parsed geometry questions -> their G ids.
+_GEO_QUERY_IDS = {"nearest_point": "G50", "distance_to": "G51",
+                  "route_length": "G52"}
 
 #: F06 / F10: the captures whose name must follow their keyword.
 _CAPTURE_INTENTS = frozenset({"record_waypoint", "record_dock"})
@@ -694,6 +705,7 @@ class TurnOrchestrator:
         wall_now_fn: Optional[Callable[[], float]] = None,
         site_timezone: Optional[str] = None,
         membership_fn: Optional[Callable[[str, str, Any], Any]] = None,
+        geo_query_fn: Optional[Callable[..., Any]] = None,
     ) -> None:
         self._registry = registry
         self._matcher = matcher or KeywordMatcher(registry)
@@ -723,6 +735,9 @@ class TurnOrchestrator:
         # 99 U130: G48 / G49 answers (state/route_membership.make_membership_fn,
         # built with common.geo.route_membership_m); None answers "not loaded".
         self._membership_fn = membership_fn
+        # 99 U136: G50 / G51 / G52 answers (state/geo_queries.make_geo_query_fn,
+        # built with common.geo.route_membership_m); None answers "not loaded".
+        self._geo_query_fn = geo_query_fn
         # 99 U110: the restatement of a rule-parsed PTP command, set by
         # _route_ptp and read by _dispatch_ack in the same turn.
         self._turn_ptp_ack: Optional[str] = None
@@ -1149,7 +1164,9 @@ class TurnOrchestrator:
                                 reply_text=spoken, tts_text=spoken)
 
         rec = self._recording()
-        if rec is not None and ptp.kind not in ("route_points", "point_routes"):
+        if rec is not None and ptp.kind not in ("route_points", "point_routes",
+                                                "nearest_point", "distance_to",
+                                                "route_length"):
             # 99 U133: go / patrol / delete / rename are control commands
             return self._rec_reply("B01", "busy", "ptp_rule", name=rec["name"])
         if ptp.kind == "goto":
@@ -1170,6 +1187,8 @@ class TurnOrchestrator:
                                      rule_slots=slots)
         if ptp.kind in ("route_points", "point_routes"):
             return self._answer_membership(ptp, _reply)  # 99 U130: G48 / G49
+        if ptp.kind in _GEO_QUERY_IDS:
+            return self._answer_geo_query(ptp, _reply)  # 99 U136: G50 / G51 / G52
         if ptp.kind == "dock":
             # 99 U128: a NAMED charging point -- that dock, however far. The
             # name is resolved like a goto waypoint (GEO_REF_SLOT goto_dock),
@@ -1277,6 +1296,20 @@ class TurnOrchestrator:
             return reply(intent, "geo_unloaded")
         state = self._state_fn() if self._state_fn else {}
         key, fields = self._membership_fn(ptp.kind, ptp.name, state.get("state/geo/objects"))
+        return reply(intent, key, **fields)
+
+    def _answer_geo_query(self, ptp: PtpParse, reply) -> TurnDecision:
+        """G50 nearest waypoint / G51 how far to X / G52 how long is route X
+        (99 U136): answered at once by the injected geo_query_fn from
+        state/geo/objects, state/pose and state/mode. No geo_query_fn (tests /
+        tools) answers "not loaded", never a guess."""
+        intent = _GEO_QUERY_IDS[ptp.kind]
+        if self._geo_query_fn is None:  # not configured
+            return reply(intent, "geo_unloaded")
+        state = self._state_fn() if self._state_fn else {}
+        key, fields = self._geo_query_fn(
+            ptp.kind, ptp.name, state.get("state/geo/objects"),
+            state.get("state/pose"), state.get("state/mode"))
         return reply(intent, key, **fields)
 
     def _dispatch_entry(self, entry: IntentEntry, text: str,
