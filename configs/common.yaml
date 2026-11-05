@@ -417,9 +417,15 @@ common:
   # 同一批物理量在 15 / 16 / 11 三处各写过一份别名, 别名已进黑名单; 真源键名是下面五个.
   # TODO(99 U42 / U44): 落值时逐键去决策记录抄, 不要从三份别名里挑一份.
   recording:
-    min_dist_m: null
+    # 99 U132 (user ruling 2026-11-05 "按0.5落 ... 代码要从配置文件中取值"):
+    # a recorded point closer than this to the previous one is not written
+    # (keeps RTK points from piling up while the robot stands or creeps).
+    # The U42 value. Read by P3 via p3_task.yaml teach.min_dist_m. > 0.
+    min_dist_m: 0.5
     session_timeout_s: null
-    sample_hz: null
+    # 99 U132: the sample timer of the same U42 rule (one try per second).
+    # Read by P3 via p3_task.yaml teach.sample_hz. > 0.
+    sample_hz: 1.0
     max_fences: null
     fence_close_tol_m: null
     # 99 U126 (user ruling 2026-11-05 "定 1.0 m"): arrival radius of a

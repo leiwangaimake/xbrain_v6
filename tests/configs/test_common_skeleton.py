@@ -687,6 +687,12 @@ _LANDED = {
     # distance of a route polyline belongs to it; P3 navigation and P4 queries
     # share the one key. Authorised by its own 10 S5.4.5 row.
     "common.geo.route_membership_m": 5.0,
+    # 99 U132 (user ruling 2026-11-05 "按0.5落 ... 代码要从配置文件中取值"):
+    # the U42 sampling pair of a recording session, authorised by the 10
+    # S5.4.5 recording row. Until then both lived as constants in
+    # p3_task/teach/session.py.
+    "common.recording.min_dist_m": 0.5,
+    "common.recording.sample_hz": 1.0,
 }
 
 

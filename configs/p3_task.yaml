@@ -47,6 +47,12 @@ geo:
 #   8000 = T4 最坏解析 4.8 s + L1b 播报窗 2.5 s + 裕度, 待现场整定.
 teach:
   snap_max_age_ms: 8000
+  #   99 U132: 采点规则 (11 S12A.6, U42) 的两个值, 真源在 common.recording.
+  #   每 1/sample_hz 秒试采一次; 与上一采样点距离 < min_dist_m 不写库.
+  #   缺失 / null / <= 0 时 p3 拒绝启动 (EX_CONFIG 78) 并报本键路径;
+  #   代码里没有缺省值 (CLAUDE.md 3.1 同一纪律).
+  min_dist_m: ${common.recording.min_dist_m}
+  sample_hz: ${common.recording.sample_hz}
 
 # -- 路径推送 (取值, 非定义) ------------------------------------------------
 #   示教录制的路径是模式 B 密集折线, 没有逐点到点半径; 15 S2.4.3 规定取

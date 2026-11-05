@@ -159,8 +159,10 @@ common:
   recording:
     fence_close_tol_m: 1.0
     max_fences: 5
-    min_dist_m: 0.5
-    sample_hz: 1.0
+    # min_dist_m / sample_hz: [2026-11-05 本变体不再供这两个键]
+    #   原写什么: min_dist_m: 0.5 / sample_hz: 1.0.
+    #   为何移除: 99 U132 把两值落进真机 common.yaml (同为 0.5 / 1.0);
+    #     10 S5.4.7 变体只许填真机文件里为 null 的键.
     session_timeout_s: 300.0
   # retention: [2026-10-08 本变体不再供这三个键]
   #   原写什么: 本段曾有 command_log_days: 180 / event_days: 90 / task_days: 30.
