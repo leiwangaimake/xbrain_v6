@@ -652,7 +652,11 @@ _LANDED = {
     # and rns/source.py's contact fuse deliberately keeps turning at zero linear
     # speed inside 0.7 m -- so a null here stops the robot in front of an
     # obstacle unable to turn away, which is the opposite of conservative.
-    "common.motion.free_space.blind.wz_blind_radps": 0.3,
+    # 99 U115 (user ruling 2026-11-04, "below 0.5 the turn is not responsive"):
+    # 0.3 -> 0.5. Since U114 the rotation ring is per-frame only, so EVERY
+    # in-place turn takes the blind clamp; chassis basic-motion tests found
+    # 0.5-0.8 rad/s usable (99 U106). 10 S5.4.5's row carries the new value.
+    "common.motion.free_space.blind.wz_blind_radps": 0.5,
 
     # 2026-09-10 ruling, the OLDEST of the three omissions and the one that was
     # masked deepest -- it only became visible once the two above were entered,

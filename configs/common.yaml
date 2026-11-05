@@ -221,9 +221,13 @@ common:
     # rns/source.py 的接触保险丝在 0.7m 内正是[刻意]压零 v 保留转向
     # (源码逐字 "turn continues; upper layers re-plan"), 那一拍恰是 spin_like
     # => 机器人会停在障碍前转不开. 这是落值的直接动因.
+    #
+    # [2026-11-04 改值 0.3 -> 0.5] 99 U115 用户裁决 "这个最低 0.5, 低于转向不灵".
+    # U114 起 RNS 不再记忆, 转身环只来自本帧, 后方恒未观测 => 每次原地转都走
+    # 本值的盲向钳制; 0.3 rad/s 实测转向不灵 (底盘基本动作实测转速 0.4-0.8).
     free_space:
       blind:
-        wz_blind_radps: 0.3
+        wz_blind_radps: 0.5
 
   # -- 安全常数 (10 S5.4.5 safety 两行) -------------------------------------
   # 唯一定义处是 safety/brake.yaml 与 safety/clock.yaml (L3, 整层自动 locked,
