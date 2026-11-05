@@ -173,9 +173,26 @@ def main(argv: Optional[list] = None) -> int:
             except Exception:      # noqa: BLE001
                 record_db_path = None
         record_db_path = record_db_path or _os.environ.get("XBRAIN_RECORD_DB")
+        # disk.data_root -> 云端 state/robot.storage 的度量点. 缺省 None ->
+        # storage 保持 null(不猜一个路径去量).
+        storage_root = None
+        if _cfg is not None:
+            try:
+                storage_root = (_cfg.get("disk") or {}).get("data_root")
+            except Exception:      # noqa: BLE001
+                storage_root = None
+        # media -> 云端 state/media 端点(v2.0 S4.6). 缺省 None -> endpoints [].
+        media_cfg = None
+        if _cfg is not None:
+            try:
+                media_cfg = _cfg.get("media")
+            except Exception:      # noqa: BLE001
+                media_cfg = None
         return run_voice_loop_wiring(stop_flag=stop_flag, hmi_cfg=hmi_cfg,
                                      site_timezone=site_timezone,
-                                     record_db_path=record_db_path)
+                                     record_db_path=record_db_path,
+                                     storage_root=storage_root,
+                                     media_cfg=media_cfg)
 
     return main_loop(
         minimal_mode=minimal_mode,

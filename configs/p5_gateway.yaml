@@ -131,11 +131,12 @@ hmi:
     #   交付后唯一的对外口; wifi 不在时 p5 跳过 wifi 那项, 本项照常服务.
     - "192.168.188.200:18083"         # LAN2 上云通道口 (U92)
     # *** 本行跟着 ORIN 的 wifi IP 走: 设备换网络/换地点就要改.
-    #   2026-09-01 办公室 192.168.1.19 -> 2026-09-04 居家 192.168.1.8.
+    #   2026-09-01 办公室 192.168.1.19 -> 2026-09-04 居家 192.168.1.8
+    #   -> 2026-10-24 机器狗主控 .1.26 (192.168.1.26).
     #   NET-C9 禁 0.0.0.0(见上), 所以只能写死具体地址, 没法自适应;
     #   写错的表现是[本机 HMI 的 LAN 访问失效], 云端面不受影响
     #   (Zenoh router 那侧由 run_stack_cloud.sh 自动探测 LAN_IP).
-    - "192.168.1.8:18083"             # wifi IP (ORIN 现场机), LAN 内浏览器可访问; 逐口非 0.0.0.0
+    - "192.168.1.26:18083"            # wifi IP (调试口, U92: 交付关闭; 不在时被跳过); 逐口非 0.0.0.0
     - "127.0.0.1:18083"               # 本机调试
   state_push_hz: 5                    # RTK 20Hz 降频
   link_probe_hz: 1
@@ -203,3 +204,28 @@ uplink:                               # 17 §7.3 上行带宽账本 (U50/C28.3)
     chassis_front: { normal_mbps: 6.5 }
     chassis_rear:  { normal_mbps: 6.5 }   # 估算; 归属未定 (Q-P5-12)
     delivery_ftp:  { normal_mbps: 15.0 }  # "事件+遥测+交付"合计口径 (U50)
+
+media:                                # v2.0 S4.6 state/media 端点 (2026-10-24 .1.26 联调落值)
+  # PTZ 经 NAT 对外 (10 NAT-1): Qt 连 <本机对外 IP>:554 -> 可见光 192.168.66.13:554,
+  #   :8554 -> 热成像 192.168.66.108:554 (DNAT + SNAT, 只放行 Qt 源地址, MED-C2).
+  #   NAT 规则本身在系统层 (deploy/net/), 本段只登记[对外]端点与探测目标.
+  # * url 的主机 = 本机 LAN2 地址 (99 U92, 2026-10-25 由 wifi 192.168.1.26 迁到
+  #   甲方自组网 192.168.188.200); 必须与 deploy/net/med-nat.env 的 EXT_IP 一致.
+  # * url 禁带 user:password@ (S4.6); 口令只在 Qt 侧, 按 credential_ref 取.
+  # * probe = 相机内部 host:port, 仅 TCP 握手判可达 (不认证, 见 media_probe.py);
+  #   它不出现在报文里.
+  # * max_bitrate_mbps = 相机编码器配置的码率上限 (LAPI Channels/0/Media/VideoEncode).
+  #   2026-10-24 用户定: 可见光 main 由 16384 恢复 6144 kbps / I 间隔 50 (ptzkey2
+  #   调高后未恢复); 可见光 sub (StreamID 1) 由 720x576 改 1920x1080 / 2000 kbps.
+  #   可见光 sub 契约上限 2.0 (S4.6), 投影处强制. 热成像两路为经 NAT 实测上取整.
+  probe_period_s: 5.0
+  down_after_s: 15.0
+  endpoints:
+    - { id: cam_ptz_vis, stream: main, url: "rtsp://192.168.188.200:554/media/video1",
+        credential_ref: robot_gj001_ptz_vis, max_bitrate_mbps: 6.2,  probe: "192.168.66.13:554" }
+    - { id: cam_ptz_vis, stream: sub,  url: "rtsp://192.168.188.200:554/media/video2",
+        credential_ref: robot_gj001_ptz_vis, max_bitrate_mbps: 2.0,  probe: "192.168.66.13:554" }
+    - { id: cam_ptz_ir,  stream: main, url: "rtsp://192.168.188.200:8554/cam/realmonitor?channel=1&subtype=0",
+        credential_ref: robot_gj001_ptz_ir,  max_bitrate_mbps: 2.5,  probe: "192.168.66.108:554" }
+    - { id: cam_ptz_ir,  stream: sub,  url: "rtsp://192.168.188.200:8554/cam/realmonitor?channel=1&subtype=1",
+        credential_ref: robot_gj001_ptz_ir,  max_bitrate_mbps: 0.5,  probe: "192.168.66.108:554" }

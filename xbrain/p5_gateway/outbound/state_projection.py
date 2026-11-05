@@ -25,8 +25,8 @@ pose". 云端面沿用它, 两个面才会同时诚实.
 
 *** 已知无源清单(写在代码里而不是文档里, 因为它会变):
   battery   state/power 无发布者
-  storage   无采集点
-  motion    有 speed_mps, 无 gait / angular
+  storage   disk.data_root 所在文件系统 (2026-10-24 起)
+  motion    speed_mps 走 pose; gait / angular 走 state/robot (2026-10-24 起)
   devices   health/summary 的 kind==device 项, 不含 cap
 接线补上以后, 对应的 UNSOURCED_* 常量要跟着删, 而 tests 里有一条断言盯着
 这份清单与真实产出一致 -- 免得源接上了而投影还在发 null.
@@ -37,6 +37,7 @@ Boundaries: 只做形状换算与闭集校验. 不发布(那是 runtime/cloud_wi
 
 from __future__ import annotations
 
+import re as _re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from .cloud_envelope import normalise_progress
@@ -268,7 +269,8 @@ EVENT_STATES = ("active", "cleared", "acknowledged", "occurred")
 #: 两者在"什么都不供"的调用下长得一模一样. battery 正是 (b): state/power
 #: 的发布者 chassis_relay 已于 2026-09-26 上机(CR-5), 源是有的.
 #: 现清单只留 (a), 判据改为拿[全供]的调用比对 -- 见 tests 里那条.
-UNSOURCED_ROBOT_SECTIONS = ("storage",)
+#: 2026-10-24: storage 也接上了(disk.data_root 的 disk_usage), 清单清空.
+UNSOURCED_ROBOT_SECTIONS: tuple = ()
 
 
 class ProjectionError(ValueError):
@@ -290,8 +292,117 @@ def _closed_or_none(value: Any, closed: Sequence[str], field: str):
     return _closed(value, closed, field)
 
 
+#: v2.0 的事件类别闭集(任务枚举 S2: {category} 九值). key 段与 data.category 都用它.
+V2_EVENT_CATEGORIES = ("task", "alarm", "fault", "fence", "geo", "teach",
+                       "arbitration", "payload", "system")
+
+#: 机内 11 S6.2 的 23 类 -> v2.0 九类. 2026-10-24 用户裁决(.1.26 联调).
+#: *** 此前网关把机内类别原样上云: comm / chassis / rtk / health ... 都不在 v2.0
+#: 闭集里, Qt 按 S1.3 有权整条拒收(联调抓包实见 event/info/comm). 表必须覆盖
+#: EVENT_CATEGORY 的每一个值 -- test_every_internal_category_maps... 双向钉住,
+#: 闭集扩容而本表没跟会红, NO 不设兜底值.
+INTERNAL_TO_V2_EVENT_CATEGORY = {
+    # 同名直通
+    "task": "task", "fence": "fence", "geo": "geo", "teach": "teach",
+    "arbitration": "arbitration", "payload": "payload", "system": "system",
+    # 设备/自检类故障
+    "chassis": "fault", "health": "fault", "bit": "fault", "perception": "fault",
+    # 报警(v2.0 S5.2 alarm_type 闭集含 rtk_lost / heading_*)
+    "intrusion": "alarm", "rtk": "alarm",
+    # 系统运行面
+    "comm": "system", "estop": "system", "data": "system",
+    "mode_change": "system", "teleop": "system", "voice": "system",
+    "motion": "system",
+    # 其余三个按语义归入同名大类
+    "speed_limit": "arbitration", "charging": "task", "ptz": "payload",
+}
+
+#: v2.0 S5.2: alarm 事件 detail 的八项必填, 与 alarm_type 闭集.
+ALARM_DETAIL_REQUIRED = ("alarm_type", "fence_set_id", "rev", "matched_rule",
+                         "zone_hits", "dwell_s", "track_id", "wpos")
+ALARM_TYPES = ("person_in_region", "vehicle_in_region", "rtk_lost",
+               "heading_degraded", "heading_recovered", "system_alarm")
+
+
+def to_v2_event_category(value: str) -> str:
+    """机内事件类别 -> v2.0 类别. 表外的值抛 ProjectionError, NO 不原样透传."""
+    mapped = INTERNAL_TO_V2_EVENT_CATEGORY.get(value)
+    if mapped is None:
+        raise ProjectionError(
+            "event category %r has no v2.0 mapping (closed set %s)"
+            % (value, sorted(INTERNAL_TO_V2_EVENT_CATEGORY)))
+    return mapped
+
+
+def _alarm_detail(detail: Dict[str, Any], code: str) -> Dict[str, Any]:
+    """v2.0 S5.2 八项补齐. 缺的补 null, NO 不编造围栏号/轨迹号/坐标.
+
+    * wpos 缺省是 valid=false 的对象(S5.2 逐字: valid=false 时仍保留对象,
+      坐标可为 null).
+    * alarm_type: detail 自带且在闭集内则用它; 否则看 code 是否就是闭集值
+      (rtk 事件的 code 如 rtk_lost); 都不是 -> system_alarm(闭集里的通用值).
+    """
+    out = dict(detail)
+    for f in ALARM_DETAIL_REQUIRED:
+        out.setdefault(f, None)
+    if not isinstance(out.get("wpos"), dict):
+        out["wpos"] = {"latitude": None, "longitude": None, "altitude_m": None,
+                       "valid": False, "sigma_m": None}
+    if out.get("alarm_type") not in ALARM_TYPES:
+        c = (code or "").lower()
+        out["alarm_type"] = c if c in ALARM_TYPES else "system_alarm"
+    return out
+
+
+#: v2.0 S5.3 逐字: fault 事件 source 的闭集.
+FAULT_SOURCES = ("battery", "motor", "navigation", "gps", "camera", "network",
+                 "storage", "alarm", "payload", "system")
+
+#: 机内设备 id(health 事件 detail.device) -> fault source. 2026-10-24 用户裁决
+#: "按语义归类": 定位类 -> gps, 相机类 -> camera, 载荷类 -> payload. 表外 -> system.
+_DEVICE_TO_FAULT_SOURCE = {
+    "rtk": "gps", "gnss": "gps", "heading": "gps",
+    "cam_rgbd": "camera", "cam_ptz_vis": "camera", "cam_ptz_ir": "camera",
+    "ptz": "camera", "lidar": "camera",
+    "mic": "payload", "payload_light": "payload", "payload_siren": "payload",
+    "payload_speaker": "payload", "payload_strobe": "payload",
+    "chassis": "motor", "battery": "battery", "storage": "storage",
+    "network": "network",
+}
+
+
+def _fault_source(internal_category: Optional[str],
+                  internal: Dict[str, Any]) -> str:
+    """fault 事件的 v2.0 source(闭集). 机内 src 是进程名, 不是故障部位.
+
+    * chassis -> motor(底盘域故障); 证据里点名 battery 的 -> battery.
+    * perception -> camera.
+    * health / bit -> 按 detail.device 查表, 查不到 -> system.
+    """
+    detail = internal.get("detail") or {}
+    if internal_category == "chassis":
+        evidence = [str(x).lower() for k in ("resources", "source")
+                    for x in (detail.get(k) or ())]
+        return "battery" if any("battery" in x for x in evidence) else "motor"
+    if internal_category == "perception":
+        return "camera"
+    return _DEVICE_TO_FAULT_SOURCE.get(str(detail.get("device") or ""), "system")
+
+
+def _event_code(internal: Dict[str, Any]) -> str:
+    """v2.0 S5.1 code 必填且机器可读. 生产者没填时由 title 派生(大写下划线),
+    title 也没有 -> UNSPECIFIED. NO 不发空串(2026-10-24: p1 / p2 实发空串)."""
+    code = internal.get("code")
+    if isinstance(code, str) and code:
+        return code
+    derived = _re.sub(r"[^A-Za-z0-9]+", "_",
+                      str(internal.get("title") or "")).strip("_").upper()
+    return derived or "UNSPECIFIED"
+
+
 def event_payload(internal: Dict[str, Any], *, sev: str,
-                  category: str) -> Dict[str, Any]:
+                  category: str,
+                  internal_category: Optional[str] = None) -> Dict[str, Any]:
     """机内事件 -> v2.0 S5.1 event data(审计 D-2).
 
     *** 为什么要重整, 不能直接透传机内事件.
@@ -318,15 +429,21 @@ def event_payload(internal: Dict[str, Any], *, sev: str,
         "category": category,
         "state": state,
         # source 归一: 机内可能用 src. 缺则网关.
-        "source": internal.get("source") or internal.get("src") or "p5_gateway",
-        "code": internal.get("code") or "",
+        "source": (_fault_source(internal_category, internal)
+                   if category == "fault"
+                   else internal.get("source") or internal.get("src")
+                   or "p5_gateway"),
+        "code": _event_code(internal),
         "title": internal.get("title") or "",
         "message": internal.get("message") or "",
         # 以下 nullable, 不适用为 null(S5.1).
         "task_id": internal.get("task_id"),
         "operator": internal.get("operator"),
         "result": internal.get("result"),
-        "detail": dict(internal.get("detail") or {}),
+        "detail": (_alarm_detail(dict(internal.get("detail") or {}),
+                                 internal.get("code") or "")
+                   if category == "alarm"
+                   else dict(internal.get("detail") or {})),
         # 无引用为空数组(S5.1), NO 不是 null.
         "media": list(internal.get("media") or ()),
         "file_refs": list(internal.get("file_refs") or ()),
@@ -341,12 +458,14 @@ def robot_payload(*, robot_state: str, task_state: str,
                   devices: Optional[Sequence[Dict[str, Any]]],
                   alarm_window_active: bool,
                   motion_speed_mps: Optional[float] = None,
-                  power: Optional[Dict[str, Any]] = None
+                  power: Optional[Dict[str, Any]] = None,
+                  chassis: Optional[Dict[str, Any]] = None,
+                  storage: Optional[Dict[str, Any]] = None
                   ) -> Dict[str, Any]:
     """v2.0 S4.2 的八段.
 
-    *** storage 恒为 null: 机内没有采集点. 见模块头对三种做法的比较 --
-    编一个数会让操作员据此做出错误决定, 而 null 只是难看.
+    *** storage 2026-10-24 起有源: disk.data_root 所在文件系统的可用/总量
+    (调用方量好传入, 本函数不做 I/O). 读不到时仍是 null, NO 不填 0.
 
     *** battery 从 2026-09-27 起有源了(state/power, CR-5), 但[底盘离线时
     仍然整段 null]. 这不是退步, 是同一条规矩: 源在而此刻没有内容, 与源
@@ -362,9 +481,9 @@ def robot_payload(*, robot_state: str, task_state: str,
         "task_state": _closed(task_state, TASK_STATES, "task_state"),
         "gps": _gps(pose),
         "battery": _battery(power),
-        "motion": _motion(pose, motion_speed_mps),
+        "motion": _motion(pose, motion_speed_mps, chassis),
         "devices": _devices(devices),
-        "storage": None,        # UNSOURCED: 无采集点
+        "storage": _storage(storage),
         "clock": _clock(clock),
         "alarm_window_active": bool(alarm_window_active),
     }
@@ -534,9 +653,20 @@ def _gps(pose: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         "longitude": pose.get("lon"),
         "altitude_m": pose.get("alt"),
         "heading_deg": _heading_deg(pose),
-        "speed_mps": pose.get("speed_mps"),
+        # 无定位时驱动填的是 0.0(rtk_driver: rmc 不新鲜即 0), 不是实测 -> null.
+        "speed_mps": pose.get("speed_mps") if _has_fix(pose) else None,
         "accuracy_m": pose.get("cov_h_m"),
     }
+
+
+def _has_fix(pose: Optional[Dict[str, Any]]) -> bool:
+    """pose 带的是一个真定位吗(v2.0 fix 不为 none)."""
+    if not pose or not pose.get("fix_type"):
+        return False
+    try:
+        return to_v2_gps_fix(pose.get("fix_type")) != "none"
+    except ProjectionError:
+        return False
 
 
 def _heading_deg(pose: Dict[str, Any]) -> Optional[float]:
@@ -557,16 +687,107 @@ def _heading_deg(pose: Dict[str, Any]) -> Optional[float]:
     return math.degrees(float(rad)) % 360.0
 
 
+def _storage(raw: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """字节 -> 十进制 GB 一位小数(v2.0 S4.2 示例 free_gb 83.5 / total_gb 128.0)."""
+    if not isinstance(raw, dict):
+        return None
+    free, total = raw.get("free_bytes"), raw.get("total_bytes")
+    if not isinstance(free, (int, float)) or not isinstance(total, (int, float)):
+        return None
+    return {"free_gb": round(float(free) / 1e9, 1),
+            "total_gb": round(float(total) / 1e9, 1)}
+
+
+#: v2.0 S4.6 state/media 的闭集与上限.
+MEDIA_IDS = ("cam_ptz_vis", "cam_ptz_ir", "cam_rgbd")
+MEDIA_STREAMS = ("main", "sub")
+#: S4.6 逐字: 连续录像用 cam_ptz_vis/sub, 码率不超过 2 Mbps.
+VIS_SUB_MAX_MBPS = 2.0
+
+
+def media_payload(endpoints: Sequence[Mapping[str, Any]], *,
+                  up: Mapping[str, bool]) -> Dict[str, Any]:
+    """配置的媒体端点 + 我方可达性 -> v2.0 S4.6 endpoints[](六项).
+
+    * state 来自机内探测(runtime/media_probe): 只说"我方到相机这一段通不通",
+      NO 不代表 Qt 一定拉得通(11 state/media 行逐字: 中间还隔着 MED-C2 白名单).
+    * probe 是机内字段(相机的内部 host:port), NO 不出现在报文里.
+    * URL 带 user:password@ 或可见光 sub 超 2 Mbps -> 抛, 整条 key 拒发:
+      这两条是 S4.6 的硬约束, 一个违规端点不能夹带在合规的里面发出去.
+    """
+    out = []
+    for e in endpoints:
+        eid = _closed(e.get("id"), MEDIA_IDS, "media.id")
+        stream = _closed(e.get("stream"), MEDIA_STREAMS, "media.stream")
+        url = e.get("url")
+        if not isinstance(url, str) or not url.startswith("rtsp://"):
+            raise ProjectionError("media.url %r is not a full rtsp:// URL" % url)
+        if "@" in url[len("rtsp://"):].split("/", 1)[0]:
+            raise ProjectionError(
+                "media.url for %s/%s carries credentials (v2.0 S4.6)"
+                % (eid, stream))
+        mbps = float(e.get("max_bitrate_mbps"))
+        if eid == "cam_ptz_vis" and stream == "sub" and mbps > VIS_SUB_MAX_MBPS:
+            raise ProjectionError(
+                "cam_ptz_vis/sub max_bitrate_mbps %.1f > %.1f (v2.0 S4.6)"
+                % (mbps, VIS_SUB_MAX_MBPS))
+        ref = e.get("credential_ref")
+        if not isinstance(ref, str) or not ref:
+            raise ProjectionError("media.credential_ref missing for %s/%s"
+                                  % (eid, stream))
+        out.append({"id": eid, "stream": stream, "url": url,
+                    "state": "up" if up.get(e.get("probe")) else "down",
+                    "credential_ref": ref, "max_bitrate_mbps": mbps})
+    return {"endpoints": out}
+
+
+def _is_num(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+#: 11 S9.8.1 BasicStatus.gait 的闭集. quadruped 对未识别码报 unknown_0x....,
+#: 那不是步态 -- 进 Qt 只会被当成一个新枚举(v2.0 S1.3 禁止降级解释), 故不放行.
+CHASSIS_GAITS = ("basic", "platform", "stair_standard", "flat", "stair_agile")
+
+
 def _motion(pose: Optional[Dict[str, Any]],
-            speed_mps: Optional[float]) -> Dict[str, Any]:
-    """gait 与 angular 无源 -> null; linear 走 pose 的 speed_mps."""
+            speed_mps: Optional[float],
+            chassis: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """linear 走 pose 的 speed_mps; gait 与 angular 走机内 state/robot(CR-4).
+
+    *** 2026-10-24 起有源: chassis_relay 上机后 state/robot 带 gait 与
+    odom.wz. 此前这里写死 null, 注释"底盘步态未上报" -- 源接上了而投影没跟.
+    * angular 只在 odom.valid 为真时给. 无效里程计的 wz 仍是个像样的数,
+      Qt 会照着显示 -- 而它不可信(CLAUDE.md 3.2).
+    * 底盘离线(chassis 为 None)时两者都是 null, NO 不填 0.
+    """
+    import math
+
+    gait = None
+    angular = None
+    odom_linear = None
+    if isinstance(chassis, dict):
+        if chassis.get("gait") in CHASSIS_GAITS:
+            gait = chassis["gait"]
+        odom = chassis.get("odom")
+        if isinstance(odom, dict) and odom.get("valid") is True:
+            wz, vx, vy = odom.get("wz"), odom.get("vx"), odom.get("vy")
+            if _is_num(wz):
+                angular = float(wz)
+            if _is_num(vx) and _is_num(vy):
+                odom_linear = math.hypot(float(vx), float(vy))
+    # 线速度: 调用方显式给的 > 有定位时的 GNSS 速度 > 里程计 > null.
+    # *** 2026-10-24: 无定位时 GNSS 速度是驱动填的 0.0, 此前一路进了 Qt, 机器狗
+    # 走着时云端显示 0 m/s. NO 不再把它当实测.
     linear = speed_mps
-    if linear is None and pose:
+    if linear is None and _has_fix(pose):
         linear = pose.get("speed_mps")
+    if linear is None:
+        linear = odom_linear
     return {
-        "gait": None,                  # UNSOURCED: 底盘步态未上报
+        "gait": gait,
         "linear_speed_mps": linear,
-        "angular_speed_radps": None,   # UNSOURCED
+        "angular_speed_radps": angular,
     }
 
 

@@ -82,6 +82,18 @@ from ..outbound.task_result import TaskResultTracker, build_result
 #: 最后一定被人放宽成永远不报(CLAUDE.md 3.2 形态二).
 AUDIO_STALE_MS = 5000.0
 
+#: 机内状态缓存的新鲜度上限(单调 ms). 超过即视同"源不在" -> 对应段 null / false.
+#: *** 2026-10-24 审查: 此前这四个缓存只存"最后一条", 从不判年龄 -- 底盘或 p1
+#: 掉线后 Qt 一直看到断开前的电量 / 步态 / 位置与 ts_sync=true.
+#: * clock 5 s 是 11 CLK-A3 逐字("≥ 5 s 未收到 ClockStatus, ts_sync 一律 false").
+#: * robot(CR-4, 10 Hz)2 s = 20 拍; power(CR-5, 1 Hz)5 s = 5 拍.
+#: * pose 1.5 s 与 HMI 的 main_wiring.POSE_STALE_AFTER_MS 同值(该模块 import
+#:   本模块, 反向 import 会成环, 故在此各写一份, 改一处要同步另一处).
+CLOCK_STALE_MS = 5000.0
+ROBOT_STALE_MS = 2000.0
+POWER_STALE_MS = 5000.0
+POSE_STALE_MS = 1500.0
+
 _logger = logging.getLogger(__name__)
 
 #: robot_state 今天能诚实给出的值. 见模块头的无源清单.
@@ -92,7 +104,7 @@ _logger = logging.getLogger(__name__)
 SOURCED_ROBOT_STATES = ("idle", "running", "fault", "emergency_stop")
 
 #: 每条消息都不同的字段. 变化比对时必须摘掉, 见 _due 的说明.
-VOLATILE_FIELDS = ("msg_id",)
+VOLATILE_FIELDS = ("msg_id", "generated_ts")
 
 #: session 建立后多久必须发一份全量 manifest(v2.0 S2 逐字 2 秒).
 #: 取 1.5 是为了留出发布与传输的余量 -- 卡在 2.0 上发, 到 Qt 那里就超了.
@@ -108,9 +120,18 @@ class CloudProjector:
     """
 
     def __init__(self, bridge, *,
-                 now_mono: Optional[Callable[[], float]] = None) -> None:
+                 now_mono: Optional[Callable[[], float]] = None,
+                 storage_fn: Optional[Callable[[], Optional[Dict[str, Any]]]]
+                 = None,
+                 media_endpoints: Optional[List[Dict[str, Any]]] = None,
+                 media_up: Optional[Callable[[str], bool]] = None) -> None:
         self._bridge = bridge
         self._now = now_mono or time.monotonic
+        # state/robot.storage 的源(make_storage_fn). None -> storage 为 null.
+        self._storage_fn = storage_fn
+        # state/media: 配置的端点(p5 media 段)与探测结果(MediaProbe.is_up).
+        self._media_endpoints = list(media_endpoints or ())
+        self._media_up = media_up or (lambda _target: False)
         self._last_sent: Dict[str, float] = {}
         self._last_body: Dict[str, str] = {}
         self._start = self._now()
@@ -246,13 +267,36 @@ class CloudProjector:
 
     # --- 各条 key 的投影 ------------------------------------------------
 
+    def _fresh(self, state: Dict[str, Any], key: str,
+               stale_ms: float) -> Optional[Dict[str, Any]]:
+        """state[key], 仅当它在 stale_ms 内到达过(state[key + "_updated_ms"]).
+
+        * 没有到达时刻 = 从没到过 -> None(fail-safe, NO 不当作新鲜).
+        * 用注入的 self._now(CLK-C1), 与 _audio 的过期判据同一写法.
+        """
+        value = state.get(key)
+        if not value:
+            return None
+        updated = state.get(key + "_updated_ms")
+        if not isinstance(updated, (int, float)):
+            return None
+        return value if self._now() * 1000.0 - float(updated) <= stale_ms else None
+
     def _robot(self, state: Dict[str, Any]) -> Dict[str, Any]:
         tasks = self._all_tasks(state)
         running = any(t.get("state") == "running" for t in tasks
                       if isinstance(t, dict))
-        clock = state.get("clock")
-        ts_sync = bool(clock and clock.get("ts_sync") is True)
-        robot = state.get("robot")
+        # state/clock 的 data 字段是 sync (11 S3.11 ClockStatus, P1-13 镜像不改写),
+        # v2.0 S4.2 对外叫 ts_sync -- 名字在这里换一次. NO 不读 ts_sync: 机内没有
+        # 任何发布者写这个字段, 读它等于恒 false (2026-10-24 .1.26 联调实测).
+        raw_clock = self._fresh(state, "clock", CLOCK_STALE_MS)
+        clock = None if not raw_clock else {
+            "ts_sync": raw_clock.get("sync") is True,
+            "source": raw_clock.get("source"),
+            "age_ms": raw_clock.get("age_ms"),
+        }
+        ts_sync = bool(clock and clock["ts_sync"])
+        robot = self._fresh(state, "robot", ROBOT_STALE_MS)
         return robot_payload(
             # 2026-09-27: fault / emergency_stop 从 state/robot 取(CR-4).
             # 在 chassis_relay 上机之前这两个值没有任何机内来源, 报出来就是
@@ -264,10 +308,13 @@ class CloudProjector:
             # 从哪个字段认充电任务 -- 属未裁, 故不填, 见模块头的无源清单.
             robot_state=robot_state_from(robot, running=running),
             task_state="running" if running else "idle",
-            pose=state.get("pose"),
+            pose=self._fresh(state, "pose", POSE_STALE_MS),
             clock=clock,
             # CR-5: 底盘离线时仍为 None -> battery 整段 null, NO 不伪造 0.
-            power=state.get("power"),
+            power=self._fresh(state, "power", POWER_STALE_MS),
+            # CR-4 state/robot: motion.gait 与 angular 的源(底盘离线为 None).
+            chassis=robot,
+            storage=self._storage_fn() if self._storage_fn else None,
             # CLK-C1: 单调钟从这里传进去, 投影函数自己不取时间
             # (无设备单测才能喂一个固定的 now).
             devices=_devices_from_health(state.get("health"),
@@ -544,6 +591,14 @@ class CloudProjector:
         endpoints: [] 明确说"这台机器上现在没有可用画面". v2.0 要求每 5 s
         全量保活, 保活的前提是有东西可发.
         """
+        if self._media_endpoints:
+            # 2026-10-24: PTZ 经 NAT(10 NAT-1)对外, 端点来自 p5 media 配置,
+            # state 来自 MediaProbe. 投影与闭集/凭据/码率校验在 media_payload.
+            from ..outbound.state_projection import media_payload
+
+            up = {e.get("probe"): self._media_up(e.get("probe"))
+                  for e in self._media_endpoints}
+            return media_payload(self._media_endpoints, up=up)
         return {"endpoints": list(state.get("media_endpoints") or ())}
 
     def _manifest(self, state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -626,8 +681,28 @@ class CloudProjector:
 
         今天无内容(文件面未建). 与 media 同一取舍: 发空数组说"没有可下载
         的文件", 不发则与后端挂了不可区分.
+
+        *** v2.0 S6.1 五项必填(2026-10-24 补齐前四项, 此前只发 files):
+        * msg_id      每条消息一个新值(VOLATILE, 不参与变化比对).
+        * index_id    索引[版本]: 由 files 内容派生, 内容不变它就不变 --
+                      Qt 的 cmd/file/ack 回引它, 每条都换的话回执对不上版本.
+        * generated_ts 本条生成的墙钟(VOLATILE).
+        * complete    本快照是否列全了后端当前提供的文件. 文件面未建 =>
+                      后端提供的集合就是空集, 列全了 -> True. NO 不发 False:
+                      那是说"还有没列出来的", 而实际上一个都没有.
         """
-        return {"files": list(state.get("file_index") or ())}
+        import hashlib
+
+        files = list(state.get("file_index") or ())
+        digest = hashlib.sha1(json.dumps(
+            files, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+        return {
+            "msg_id": uuid.uuid4().hex,
+            "index_id": "file-index-" + digest.hexdigest()[:16],
+            "generated_ts": time.time(),  # WALL-CLOCK-OK(record): v2.0 S6.1 generated_ts, 显示/审计用
+            "complete": True,
+            "files": files,
+        }
 
 
 # --- 小工具 -----------------------------------------------------------
@@ -646,6 +721,43 @@ def _closed_task_state(value: Any) -> str:
             % (value, TASK_STATES))
     return value
 
+
+
+#: 不进云端 devices[] 的 health 设备项.
+#: * lidar: 跑在底盘侧(rslidar_node, 10 S3.1 表后注), 机内没有任何进程报它的
+#:   健康, p2 的这一项恒 unknown(11 S5.1A 规范表要求它存在, 故 p2 侧不删).
+#:   列进 devices 就是 v2.0 S4.2 禁止的"固定设备名伪造一行". 2026-10-24 用户裁决.
+CLOUD_DEVICE_EXCLUDED = ("lidar",)
+
+
+def make_storage_fn(data_root: str
+                    ) -> Callable[[], Optional[Dict[str, Any]]]:
+    """返回一个量 disk.data_root 所在文件系统容量的函数(给 state/robot.storage).
+
+    * data_root 尚未创建时(.1.26 上 /data/xbrain 不存在), 量它最近的已存在
+      祖先 -- 那正是 data_root 建出来以后所在的文件系统.
+    * 读不到(路径为空 / OSError)返回 None -> storage 为 null, NO 不填 0.
+    * statvfs 是微秒级的系统调用, 10 Hz 直接调不必缓存.
+    """
+    import os
+    import shutil
+
+    def _probe() -> Optional[Dict[str, Any]]:
+        if not data_root:
+            return None
+        path = os.path.abspath(data_root)
+        while not os.path.exists(path):
+            parent = os.path.dirname(path)
+            if parent == path:
+                return None
+            path = parent
+        try:
+            u = shutil.disk_usage(path)
+        except OSError:
+            return None
+        return {"free_bytes": u.free, "total_bytes": u.total}
+
+    return _probe
 
 
 def _devices_from_health(health: Optional[Dict[str, Any]],
@@ -683,6 +795,8 @@ def _devices_from_health(health: Optional[Dict[str, Any]],
         if not isinstance(item, dict):
             continue
         if item.get("kind") != "device":
+            continue
+        if name in CLOUD_DEVICE_EXCLUDED:
             continue
         age_ms = None
         since = item.get("since_mono")

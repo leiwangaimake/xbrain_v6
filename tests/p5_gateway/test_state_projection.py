@@ -45,6 +45,94 @@ def _robot(**over):
     return robot_payload(**kw)
 
 
+def test_motion_gait_and_angular_come_from_the_chassis_state():
+    """motion.gait / angular_speed_radps 的源是机内 state/robot(CR-4).
+
+    *** 2026-10-24 .1.26 联调: 底盘已在报 gait=basic 与 odom.wz, 而投影仍
+    写死 null(注释还停在"底盘步态未上报"), Qt 侧 gait 与角速度恒为空.
+    * gait 只放行 11 S9.8.1 的闭集值; quadruped 对未识别码报 unknown_0x....,
+      那不是步态, 进 Qt 只会被当成一个新枚举 -> null.
+    * angular 只在 odom.valid 为真时给; 无效里程计的 wz 是个像样的数, 而它
+      不可信 (CLAUDE.md 3.2).
+    """
+    ch = {"gait": "basic", "odom": {"wz": 0.12, "valid": True}}
+    m = _robot(chassis=ch)["motion"]
+    assert m["gait"] == "basic"
+    assert m["angular_speed_radps"] == 0.12
+
+    m = _robot(chassis={"gait": "unknown_0x0000",
+                        "odom": {"wz": 0.12, "valid": False}})["motion"]
+    assert m["gait"] is None
+    assert m["angular_speed_radps"] is None
+
+    m = _robot(chassis=None)["motion"]          # 底盘离线
+    assert m["gait"] is None and m["angular_speed_radps"] is None
+
+
+def test_storage_is_reported_in_gb_and_null_when_unreadable():
+    """2026-10-24 起 storage 有源(disk.data_root 所在文件系统). 读不到 -> null."""
+    d = _robot(storage={"free_bytes": 83_549_999_999, "total_bytes": 128e9})
+    assert d["storage"] == {"free_gb": 83.5, "total_gb": 128.0}
+    assert _robot(storage=None)["storage"] is None
+
+
+_VIS_MAIN = {"id": "cam_ptz_vis", "stream": "main",
+             "url": "rtsp://192.168.1.26:554/media/video1",
+             "credential_ref": "robot_gj001_ptz_vis", "max_bitrate_mbps": 16.0,
+             "probe": "192.168.66.13:554"}
+
+
+def test_media_endpoints_follow_the_v2_shape_and_reachability():
+    """v2.0 S4.6: id/stream/url/state/credential_ref/max_bitrate_mbps 六项.
+
+    state 由我方可达性探测给(up/down); down 时 url 保留(S4.6 逐字: 可保留用于
+    诊断但不得拉流). probe 是机内字段, NO 不出现在报文里.
+    """
+    from xbrain.p5_gateway.outbound.state_projection import media_payload
+
+    d = media_payload([_VIS_MAIN], up={"192.168.66.13:554": True})
+    assert d == {"endpoints": [{
+        "id": "cam_ptz_vis", "stream": "main",
+        "url": "rtsp://192.168.1.26:554/media/video1", "state": "up",
+        "credential_ref": "robot_gj001_ptz_vis", "max_bitrate_mbps": 16.0}]}
+    d = media_payload([_VIS_MAIN], up={})
+    assert d["endpoints"][0]["state"] == "down"
+    assert d["endpoints"][0]["url"] == _VIS_MAIN["url"]
+
+
+def test_media_refuses_credentials_in_the_url_and_an_oversized_vis_sub():
+    """S4.6 逐字: URL 不得含 user:password@; 可见光 sub 不大于 2.0 Mbps."""
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError, media_payload)
+
+    bad = dict(_VIS_MAIN, url="rtsp://admin:x@192.168.1.26:554/media/video1")
+    with pytest.raises(ProjectionError):
+        media_payload([bad], up={})
+    sub = dict(_VIS_MAIN, stream="sub", max_bitrate_mbps=2.5)
+    with pytest.raises(ProjectionError):
+        media_payload([sub], up={})
+    with pytest.raises(ProjectionError):
+        media_payload([dict(_VIS_MAIN, id="cam_front")], up={})
+
+
+def test_linear_speed_is_gnss_only_with_a_fix_else_odom_else_null():
+    """无定位时 GNSS 速度是驱动填的 0.0(rtk_driver: rmc 不新鲜即 0), 不是实测.
+
+    *** 2026-10-24 审查: 那个 0.0 一路进了 Qt 的 linear_speed_mps 与
+    gps.speed_mps, 机器狗走着时云端显示 0 m/s. 改为: 有定位才用 GNSS 速度,
+    否则用底盘里程计(odom.valid)的 |(vx, vy)|, 都没有 -> null.
+    """
+    nofix = dict(POSE, fix_type="no_fix", lat=None, lon=None, speed_mps=0.0)
+    odom = {"odom": {"vx": 0.3, "vy": 0.4, "wz": 0.0, "valid": True}}
+    d = _robot(pose=nofix, chassis=odom)
+    assert d["motion"]["linear_speed_mps"] == pytest.approx(0.5)
+    assert d["gps"]["speed_mps"] is None
+    assert _robot(pose=nofix, chassis=None)["motion"]["linear_speed_mps"] is None
+    d = _robot(pose=POSE, chassis=odom)           # rtk_fixed -> GNSS 速度
+    assert d["motion"]["linear_speed_mps"] == 0.6
+    assert d["gps"]["speed_mps"] == 0.6
+
+
 # --- 无源即 null ------------------------------------------------------
 
 def test_battery_and_storage_are_null_not_invented():
@@ -226,7 +314,8 @@ def test_the_unsourced_list_matches_what_is_actually_null():
         robot_payload,
     )
 
-    d = _robot(power={"soc_pct": 46.8}, devices=[], motion_speed_mps=0.6)
+    d = _robot(power={"soc_pct": 46.8}, devices=[], motion_speed_mps=0.6,
+               storage={"free_bytes": 1, "total_bytes": 2})
     actually_null = {k for k, v in d.items() if v is None}
 
     assert set(UNSOURCED_ROBOT_SECTIONS) == actually_null, (

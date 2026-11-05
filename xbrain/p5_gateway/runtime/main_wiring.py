@@ -120,6 +120,10 @@ FENCE_STALE_AFTER_MS = 10000             # P5F-2: cache silent this long -> degr
 # keep showing the last fix as if it were live (3.1/3.2 fail-silent). Tight vs the
 # geo window because pose is a real-time safety readout, not semi-static geometry.
 POSE_STALE_AFTER_MS = 1500
+# 11 CLK-A3 verbatim: >= 5 s without ClockStatus -> ts_sync is false. Used by the
+# HMI clock readout and the estop-probe envelope ts_sync (2026-10-24 review: both
+# read the last state/clock forever). cloud_state.CLOCK_STALE_MS is the same 5 s.
+CLOCK_STALE_AFTER_MS = 5000
 EVENT_RING = 50                          # HMI keeps the most recent N events
 DEFAULT_RTT_DEGRADE_MS = 200             # hmi.link_rtt_degrade_ms fallback (probe, not safety)
 DEFAULT_DOWN_MISSES = 3                   # hmi.link_down_misses fallback (17 S6.3)
@@ -201,6 +205,21 @@ def _pose_if_fresh(pose, updated_ms: int, now_ms: int,
     if pose is None:
         return None
     return pose if (now_ms - updated_ms) <= stale_after_ms else None
+
+
+def _clock_if_fresh(hmi_state: dict, now_ms: int):
+    """state/clock data only while it is younger than CLOCK_STALE_AFTER_MS.
+
+    None when it never arrived or has been silent longer (CLK-A3 fail-safe):
+    every reader below treats None as "not synced", never as the last value.
+    """
+    clock = hmi_state.get("clock")
+    if not clock:
+        return None
+    updated = hmi_state.get("clock_updated_ms")
+    if not isinstance(updated, (int, float)):
+        return None
+    return clock if (now_ms - updated) <= CLOCK_STALE_AFTER_MS else None
 
 
 def hmi_estop_cmd_id(boot: str, seq: int) -> str:
@@ -357,7 +376,7 @@ def _start_hmi(gen, hmi_cfg: dict, hmi_state: dict,
                 "pose": _pose_if_fresh(hmi_state.get("pose"),
                                        hmi_state.get("pose_updated_ms", 0),
                                        _now_mono_ms()),
-                "clock": hmi_state.get("clock"),   # RTK time-sync (18-C G47)
+                "clock": _clock_if_fresh(hmi_state, _now_mono_ms()),   # RTK time-sync (18-C G47); CLK-A3 5 s gate
                 "health": hmi_state.get("health"),  # health/factor (W8)
                 "teach": hmi_state.get("teach"),   # state/teach (S12A.5, read only)
             }
@@ -555,11 +574,51 @@ def _normalise_event(key: str, d: dict) -> Optional[dict]:
     }
 
 
+def _media_from_cfg(media_cfg: Optional[dict]):
+    """p5 media 段 -> (端点列表, is_up). 启动时校验一次, 坏配置整段停用.
+
+    * 每拍都在投影处校验的话, 一个坏端点会让 state/media 以 10 Hz 报 ERROR;
+      这里先跑一遍 media_payload, 不合规就记一次 ERROR 并退回空端点 -- Qt
+      看到 endpoints [] 与"没配"一致, 不会拿到违规的 URL.
+    * 合规才起 MediaProbe 线程(后台 TCP 握手, 见 media_probe.py).
+    """
+    if not isinstance(media_cfg, dict) or not media_cfg.get("endpoints"):
+        return [], None
+    from xbrain.p5_gateway.outbound.state_projection import (
+        ProjectionError, media_payload)
+    from xbrain.p5_gateway.runtime.media_probe import MediaProbe
+
+    eps = [dict(e) for e in media_cfg["endpoints"] if isinstance(e, dict)]
+    try:
+        media_payload(eps, up={})
+        # 两个周期必须在配置里写明, NO 不在代码里兜底(CLAUDE.md 3.1 同一精神).
+        period_s = float(media_cfg["probe_period_s"])
+        down_after_s = float(media_cfg["down_after_s"])
+        # period <= 0 would hammer the camera's 554 in a tight loop; a window
+        # shorter than one period flips every endpoint to down between probes.
+        if not (period_s > 0.0 and down_after_s >= period_s):
+            raise ValueError("probe_period_s=%r down_after_s=%r out of range"
+                             % (period_s, down_after_s))
+    except (ProjectionError, KeyError, TypeError, ValueError) as exc:
+        _logger.error("p5 media config refused, state/media stays empty: %r", exc)
+        return [], None
+    # An endpoint without probe is legal (stays down); it must not reach sorted()
+    # next to strings -- that TypeError once sat outside any try and would have
+    # crash-looped the whole p5 (2026-10-24 review).
+    targets = sorted({e["probe"] for e in eps if isinstance(e.get("probe"), str)})
+    probe = MediaProbe(targets, period_s=period_s, down_after_s=down_after_s)
+    probe.start()
+    _logger.info("p5 media: %d endpoint(s), probing %s", len(eps), targets)
+    return eps, probe.is_up
+
+
 def run_voice_loop_wiring(stop_flag: dict,
                             heartbeat_period_s: float = 1.0,
                             hmi_cfg: Optional[dict] = None,
                             site_timezone: Optional[str] = None,
-                            record_db_path: Optional[str] = None) -> int:
+                            record_db_path: Optional[str] = None,
+                            storage_root: Optional[str] = None,
+                            media_cfg: Optional[dict] = None) -> int:
     """Block until stop_flag['stop'] truthy. Returns 0 on clean shutdown.
 
     hmi_cfg is the resolved `hmi` config subtree (bind + web) or None. When
@@ -608,6 +667,9 @@ def run_voice_loop_wiring(stop_flag: dict,
         "stream_id": None,           # B 模式会话 ID (p2 分配, 经 cmd/mode/ack)
         "audio": None,               # 11 S8.10 AudioState (p2 发)
         "audio_updated_ms": 0,       # last state/audio arrival (mono)
+        # last arrival (mono ms) of the chassis / power / clock caches; the cloud
+        # projector and _clock_if_fresh null them once silent (2026-10-24 review).
+        "robot_updated_ms": 0, "power_updated_ms": 0, "clock_updated_ms": 0,
         "pose_updated_ms": 0,        # last state/pose arrival (mono) -> staleness gate
         "clock": None,               # state/clock -> RTK time-sync indicator
         "robot": None,               # state/robot -> hes / faults[] / conn (CR-4)
@@ -703,7 +765,7 @@ def run_voice_loop_wiring(stop_flag: dict,
         # event/{sev}/comm per level transition. Track the previous level +
         # disconnected_s to diff each heartbeat. eid is boot-unique (same F8
         # rationale: link_epoch resets on restart, so a raw seq would collide).
-        from xbrain.p5_gateway.event.comm_events import comm_event_for_level
+        from xbrain.p5_gateway.event.comm_events import comm_event_code, comm_event_for_level
         _prev_link_level: Optional[int] = None
         _prev_disc_s = 0.0
         _comm_seq = [0]
@@ -778,7 +840,8 @@ def run_voice_loop_wiring(stop_flag: dict,
             return stamp_internal(
                 data, rid=probe_rid, boot=probe_boot, seq=seq_slot[0],
                 ts_sync=bool(
-                    (hmi_state.get("clock") or {}).get("sync") is True))
+                    (_clock_if_fresh(hmi_state, _now_mono_ms()) or {})
+                    .get("sync") is True))
 
 
         def _on_estop_pong(sample) -> None:
@@ -1018,6 +1081,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             except Exception:      # noqa: BLE001
                 return
             hmi_state["clock"] = d.get("data")
+            hmi_state["clock_updated_ms"] = _now_mono_ms()   # CLK-A3 staleness gate
 
         def _on_state_robot(sample) -> None:
             # CR-4: chassis_relay 把 rt/chassis/state 转上来. 取 data 那一层
@@ -1034,6 +1098,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             body = d.get("data")
             if isinstance(body, dict):
                 hmi_state["robot"] = body
+                hmi_state["robot_updated_ms"] = _now_mono_ms()   # staleness gate
 
         def _on_state_power(sample) -> None:
             # CR-5. 同上: 坏报文不清缓存.
@@ -1044,6 +1109,7 @@ def run_voice_loop_wiring(stop_flag: dict,
             body = d.get("data")
             if isinstance(body, dict):
                 hmi_state["power"] = body
+                hmi_state["power_updated_ms"] = _now_mono_ms()   # staleness gate
 
         def _relay_to_cloud(sev, cat, body: dict) -> None:
             """The ONE cloud_bridge.publish_event call site in this module.
@@ -1372,7 +1438,13 @@ def run_voice_loop_wiring(stop_flag: dict,
             # publisher nobody puts to looks exactly like a healthy key that
             # happens to be quiet. The projector rides the 10 Hz loop below,
             # which is also state/robot's required rate (v2.0 S4.2).
-            cloud_projector = CloudProjector(cloud_bridge)
+            from xbrain.p5_gateway.runtime.cloud_state import make_storage_fn
+            # storage_root = disk.data_root (17 S5): state/robot.storage 的源.
+            media_eps, media_up = _media_from_cfg(media_cfg)
+            cloud_projector = CloudProjector(
+                cloud_bridge,
+                storage_fn=make_storage_fn(storage_root) if storage_root else None,
+                media_endpoints=media_eps, media_up=media_up)
             _logger.info("p5 wiring: cloud Qt face on, %d inbound keys",
                          cloud_bridge.alive())
         _logger.info("p5 wiring: subscribed speak/ack + state/task + "
@@ -1421,7 +1493,8 @@ def run_voice_loop_wiring(stop_flag: dict,
                     # RT-C3.e 要求转发者重建信封并换上自己的 seq, relay 就在这
                     # 两条腿中间 => 信封 seq 到不了对端. data 是唯一被逐字节
                     # 搬运的部分, 端到端关联字段只能放那里(见 _on_estop_pong).
-                    ts_sync = bool((hmi_state.get("clock") or {}).get("sync") is True)
+                    ts_sync = bool((_clock_if_fresh(hmi_state, _now_mono_ms())
+                                    or {}).get("sync") is True)
                     estop_ping_pub.put(json.dumps(encode(Envelope(
                         v=1, rid=probe_rid,
                         # WALL-CLOCK-OK(align): 11 S3.0 envelope ts, cross-host
@@ -1520,6 +1593,7 @@ def run_voice_loop_wiring(stop_flag: dict,
                         _cwall = time.time()  # WALL-CLOCK-OK(record): 11 S6.2 的事件墙钟戳, 只用于显示与审计
                         gen.put(_ckey, _stamp({
                             "eid": "comm-%s-%d" % (_comm_boot, _comm_seq[0]),
+                            "code": comm_event_code(_ckind),
                             "title": "cloud link %s" % _ckind,
                             "detail": _cdetail,
                             "src": "p5_gateway", "ts": _cwall,

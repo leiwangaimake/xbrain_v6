@@ -1368,8 +1368,14 @@ class CloudBridge:
         # v2.0 的 sev 闭集是 info|warn|error|fatal, 机内是 info|warn|alarm|fault
         # (11 S6.2). 映射必须[同时]作用在 key 与正文上 -- v2.0 逐字要求 sev
         # "与 key severity 一致", 只改一处会让 Qt 收到自相矛盾的一帧.
-        from ..outbound.state_projection import to_v2_event_sev
+        from ..outbound.state_projection import (to_v2_event_category,
+                                                 to_v2_event_sev)
         v2_sev = to_v2_event_sev(severity)
+        # 类别同理映射到 v2.0 九类(2026-10-24): 原样透传时 comm / chassis 等
+        # 机内类别会出现在云端 key 上, 而它们不在 v2.0 闭集里. 表外的值抛,
+        # 由调用方 _relay_to_cloud 记录 -- NO 不透传.
+        internal_category = category
+        category = to_v2_event_category(category)
         # 这一行只是 publisher 的[缓存键], 不是发布出去的 key(那个在下面用
         # CLOUD_EVENT 拼). 用 v2_sev 还是 severity 做缓存键是等价的 -- 映射是
         # 单射, 两种分区一模一样, 所以没有测试能区分, 也不该有. 记在这里,
@@ -1384,7 +1390,8 @@ class CloudBridge:
         # 取, 补齐缺失). 直接透传机内 data 的话 Qt 找 data.sev 会找不到
         # (机内 sev/category 在 key 上不在 data 里).
         from ..outbound.state_projection import event_payload
-        v2_data = event_payload(data, sev=v2_sev, category=category)
+        v2_data = event_payload(data, sev=v2_sev, category=category,
+                                internal_category=internal_category)
         body = build_envelope(self._rid, key, v2_data,
                               # WALL-CLOCK-OK(align): v2.0 S1.1 ts, for Qt
                               # cross-host alignment; durations use DedupWindow.

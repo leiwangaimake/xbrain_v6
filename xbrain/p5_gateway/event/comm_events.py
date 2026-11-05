@@ -70,3 +70,12 @@ def comm_event_for_level(prev_level: Optional[int], new_level: int,
                  "disconnected_s": prev_disconnected_s,
                  "link_epoch": link_epoch})
     return None
+
+
+def comm_event_code(kind: str) -> str:
+    """comm 事件的机器可读 code(v2.0 S5.1 必填): cloud_up -> CLOUD_LINK_UP.
+
+    kind 是 comm_event_for_level 的四值之一(cloud_up / cloud_degraded /
+    cloud_down / cloud_lost). 此前 code 发空串, Qt 无从按码分流.
+    """
+    return "CLOUD_LINK_" + kind.split("_", 1)[1].upper()

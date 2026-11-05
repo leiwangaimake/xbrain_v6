@@ -70,13 +70,17 @@ def _state(**over):
     # (见 cloud_state._audio). 不给的话下面那些"首拍要发全"的断言会红,
     # 而红的原因是夹具缺数据, 不是投影坏了.
     # audio_updated_ms 用 0.0: FakeClock 的起点也是 0, 所以 age=0 不陈旧.
-    st = {"tasks": None, "pose": POSE, "clock": {"ts_sync": True},
+    st = {"tasks": None, "pose": POSE, "clock": {"sync": True, "source": "ntp"},
           "health": None, "mode": "normal", "geo_cache": None,
           "audio": {"speaker": {"holder": "none"},
                     "mic": {"open": False, "gate_reason": "idle"},
                     "devices": {"mic": "ok"},
                     "voice_mode": None, "ts_mono": 0.0},
-          "audio_updated_ms": 0.0}
+          "audio_updated_ms": 0.0,
+          # 机内状态的到达时刻(单调 ms). 夹具默认"刚到": _Clock 起点 1000 s.
+          # 过期判据见 test_chassis_clock_and_pose_go_null_once_...
+          "robot_updated_ms": 1_000_000.0, "power_updated_ms": 1_000_000.0,
+          "clock_updated_ms": 1_000_000.0, "pose_updated_ms": 1_000_000.0}
     st.update(over)
     return st
 
@@ -275,13 +279,39 @@ def test_alarm_window_is_false_while_the_clock_is_unsynced():
     """
     proj, bridge, clock = _proj()
 
-    proj.tick(_state(clock={"ts_sync": False}, alarm_window=True))
+    proj.tick(_state(clock={"sync": False}, alarm_window=True))
     data = dict(bridge.published)["state/robot"]
     assert data["alarm_window_active"] is False
 
     clock.advance(1.0)
-    proj.tick(_state(clock={"ts_sync": True}, alarm_window=True))
+    proj.tick(_state(clock={"sync": True}, alarm_window=True))
     assert dict(bridge.published)["state/robot"]["alarm_window_active"] is True
+
+
+def test_clock_reads_the_contract_field_sync_not_ts_sync():
+    """state/clock 的 data 字段是 sync (11 S3.11 ClockStatus; P1-13 镜像不得改写 sync).
+
+    *** 2026-10-24 .1.26 云端联调查出: 投影读 ts_sync, 而 p1 镜像过来的是 sync,
+    于是 Qt 上 clock.ts_sync 恒 false, alarm_window_active 跟着恒 false. 旧夹具
+    写的也是 {"ts_sync": True} -- 判据与被测代码抄同一份想象, 两边一起错.
+    本例喂的是 p1 线上实际发出的 data 形状(抓包原样).
+    """
+    proj, bridge, clock = _proj()
+    real = {"sync": True, "source": "ntp",
+            "mono_ref": 13284.852606, "utc_ref": 1792839559.575599}
+    proj.tick(_state(clock=real, alarm_window=True))
+    data = dict(bridge.published)["state/robot"]
+    assert data["clock"]["ts_sync"] is True, data["clock"]
+    assert data["clock"]["source"] == "ntp"
+    assert data["alarm_window_active"] is True
+
+    # 反向: 只带 ts_sync 的形状不是契约字段, 不得被当成已同步(fail-safe).
+    clock.advance(1.0)
+    proj.tick(_state(clock={"ts_sync": True, "source": "ntp"},
+                     alarm_window=True))
+    data = dict(bridge.published)["state/robot"]
+    assert data["clock"]["ts_sync"] is False, data["clock"]
+    assert data["alarm_window_active"] is False
 
 
 def test_media_and_file_index_send_empty_arrays_not_nothing():
@@ -297,6 +327,81 @@ def test_media_and_file_index_send_empty_arrays_not_nothing():
 
     assert body["state/media"]["endpoints"] == []
     assert body["data/file/index"]["files"] == []
+
+
+def test_file_index_carries_the_v2_required_fields():
+    """v2.0 S6.1: msg_id / index_id / generated_ts / complete / files 五项必填.
+
+    *** 2026-10-24 .1.26 联调抓包: 只发了 {"files": []}, 缺前四项 -- Qt 按
+    S1.3"必填字段缺失"有权整条拒收.
+    * msg_id 每条一个新值; index_id 是[索引版本], 内容不变就不变 -- 两者
+      语义不同, 断言分开钉.
+    """
+    proj, bridge, clock = _proj()
+    proj.tick(_state())
+    a = dict(bridge.published)["data/file/index"]
+    assert set(a) >= {"msg_id", "index_id", "generated_ts", "complete",
+                      "files"}, a
+    assert isinstance(a["msg_id"], str) and a["msg_id"]
+    assert isinstance(a["index_id"], str) and a["index_id"]
+    assert isinstance(a["generated_ts"], float)
+    assert a["complete"] is True and a["files"] == []
+
+    from xbrain.p5_gateway.runtime.cloud_wiring import OUTBOUND_PERIODS
+    clock.advance(OUTBOUND_PERIODS["data/file/index"] + 0.1)
+    bridge.published.clear()
+    proj.tick(_state())
+    b = dict(bridge.published)["data/file/index"]
+    assert b["msg_id"] != a["msg_id"]
+    assert b["index_id"] == a["index_id"]       # 内容没变, 版本不变
+
+
+def test_state_media_carries_the_configured_endpoints():
+    """配了 media 端点时 state/media 发它们(带可达性); 没配时仍发空数组."""
+    from xbrain.p5_gateway.runtime.cloud_state import CloudProjector
+
+    ep = {"id": "cam_ptz_ir", "stream": "main",
+          "url": "rtsp://192.168.1.26:8554/cam/realmonitor?channel=1&subtype=0",
+          "credential_ref": "robot_gj001_ptz_ir", "max_bitrate_mbps": 4.0,
+          "probe": "192.168.66.108:554"}
+    bridge = _FakeBridge()
+    proj = CloudProjector(bridge, now_mono=_Clock(), media_endpoints=[ep],
+                          media_up=lambda target: target == "192.168.66.108:554")
+    proj.tick(_state())
+    eps = dict(bridge.published)["state/media"]["endpoints"]
+    assert [(e["id"], e["stream"], e["state"]) for e in eps] == [
+        ("cam_ptz_ir", "main", "up")]
+    assert "probe" not in eps[0]
+
+
+def test_chassis_clock_and_pose_go_null_once_their_source_falls_silent():
+    """机内缓存必须会过期 -- 源断了, 云端那几段要回到 null / false.
+
+    *** 2026-10-24 审查: p5 存下 state/robot / state/power / state/clock /
+    state/pose 后从不判年龄. quadruped 或 p1 挂掉, Qt 会一直看到断开前那一刻
+    的电量 / 步态 / 角速度 / 位置, 以及 ts_sync=true -- 后者违反 11 CLK-A3
+    逐字"≥5 s 未收到 ClockStatus, ts_sync 一律填 false". 无声的错数据.
+    """
+    proj, bridge, clock = _proj()
+    st = _state(robot={"gait": "basic",
+                       "odom": {"wz": 0.1, "vx": 0.0, "vy": 0.0, "valid": True}},
+                power={"soc_pct": 50.0}, clock={"sync": True, "source": "ntp"},
+                alarm_window=True)
+    proj.tick(st)
+    r = dict(bridge.published)["state/robot"]
+    assert r["motion"]["gait"] == "basic" and r["battery"] is not None
+    assert r["clock"]["ts_sync"] is True and r["gps"] is not None
+
+    clock.advance(6.0)                     # 四个源都 6 s 没新消息
+    bridge.published.clear()
+    proj.tick(st)
+    r = dict(bridge.published)["state/robot"]
+    assert r["motion"]["gait"] is None
+    assert r["motion"]["angular_speed_radps"] is None
+    assert r["battery"] is None
+    assert r["clock"]["ts_sync"] is False  # CLK-A3
+    assert r["alarm_window_active"] is False
+    assert r["gps"] is None
 
 
 def test_manifest_has_a_keepalive_period_not_change_only():
@@ -485,16 +590,56 @@ def test_devices_come_only_from_what_health_actually_reports():
     proj.tick(_state(health={"items": {
         "cam_ptz_vis": {"kind": "device", "level": "degraded",
                         "state": "ok", "since_mono": 100.0},
-        "lidar": {"kind": "device", "level": "degraded",
-                  "state": "degraded"}}}))
+        "rtk": {"kind": "device", "level": "degraded",
+                "state": "degraded"}}}))
 
     devs = dict(bridge.published)["state/robot"]["devices"]
-    assert {d["id"] for d in devs} == {"cam_ptz_vis", "lidar"}
+    assert {d["id"] for d in devs} == {"cam_ptz_vis", "rtk"}
     assert all(set(d) == {"id", "name", "status", "last_update_ms"}
                for d in devs)
     by_id = {d["id"]: d for d in devs}
     assert by_id["cam_ptz_vis"]["status"] == "online"
-    assert by_id["lidar"]["status"] == "degraded"
+    assert by_id["rtk"]["status"] == "degraded"
+
+
+def test_lidar_is_not_in_the_cloud_device_list():
+    """lidar 在底盘侧(rslidar_node, 10 S3.1 表后注), 机内没有任何进程报它.
+
+    p2 的 health 项仍在(11 S5.1A 规范表), 但它恒 unknown -- 列进 devices 就是
+    v2.0 S4.2 禁止的"用固定设备名伪造一行". 2026-10-24 用户裁决: 云端去掉.
+    """
+    proj, bridge, _c = _proj()
+    proj.tick(_state(health={"items": {
+        "lidar": {"kind": "device", "level": "fatal", "state": "unknown"},
+        "mic": {"kind": "device", "level": "fatal", "state": "ok"}}}))
+    ids = {d["id"] for d in dict(bridge.published)["state/robot"]["devices"]}
+    assert ids == {"mic"}, ids
+
+
+def test_storage_comes_from_the_injected_disk_probe():
+    """storage = disk.data_root 所在文件系统的可用/总量(十进制 GB, 一位小数)."""
+    from xbrain.p5_gateway.runtime.cloud_state import CloudProjector
+
+    bridge = _FakeBridge()
+    clock = _Clock()
+    proj = CloudProjector(bridge, now_mono=clock, storage_fn=lambda: {
+        "free_bytes": 83_500_000_000, "total_bytes": 128_000_000_000})
+    proj.tick(_state())
+    assert dict(bridge.published)["state/robot"]["storage"] == {
+        "free_gb": 83.5, "total_gb": 128.0}
+
+
+def test_the_disk_probe_measures_the_nearest_existing_ancestor(tmp_path):
+    """data_root 尚未创建(.1.26 上 /data/xbrain 不存在)时, 量它将来落在的那个
+    文件系统 -- 最近的已存在祖先. 读不到时返回 None(-> storage null)."""
+    import shutil
+
+    from xbrain.p5_gateway.runtime.cloud_state import make_storage_fn
+
+    got = make_storage_fn(str(tmp_path / "not" / "yet" / "there"))()
+    total = shutil.disk_usage(str(tmp_path)).total
+    assert got["total_bytes"] == total and got["free_bytes"] >= 0
+    assert make_storage_fn("")() is None
 
 
 def test_an_off_set_health_state_refuses_the_whole_key():

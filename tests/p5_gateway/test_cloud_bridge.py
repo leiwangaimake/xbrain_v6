@@ -1036,8 +1036,9 @@ def test_an_event_goes_out_on_the_prefixed_cloud_key():
     # v2.0 值(alarm -> error), 见 to_v2_event_sev.
     bridge.publish_event("alarm", "intrusion", {"eid": "e-1", "title": "x"})
 
+    # 类别也映射(机内 intrusion -> v2.0 alarm, 见 to_v2_event_category).
     keys = [k for k, _ in session.puts]
-    assert keys == ["xbrain/gj-001/event/error/intrusion"], keys
+    assert keys == ["xbrain/gj-001/event/error/alarm"], keys
     env = json.loads(session.puts[0][1].decode("utf-8"))
     assert set(env) == {"v", "rid", "ts", "seq", "src", "data"}
     assert env["data"]["eid"] == "e-1"
@@ -1056,8 +1057,8 @@ def test_event_publishers_are_cached_per_severity_and_category():
     bridge.publish_event("warn", "comm", {"eid": "e2"})
 
     event_pubs = [k for k in session.pubs if "/event/" in k]
-    assert sorted(event_pubs) == ["xbrain/gj-001/event/error/intrusion",
-                                  "xbrain/gj-001/event/warn/comm"], event_pubs
+    assert sorted(event_pubs) == ["xbrain/gj-001/event/error/alarm",
+                                  "xbrain/gj-001/event/warn/system"], event_pubs
 
 
 def test_event_seq_is_per_category_not_shared():
@@ -1072,8 +1073,114 @@ def test_event_seq_is_per_category_not_shared():
     seqs = {}
     for k, p in session.puts:
         seqs.setdefault(k, []).append(json.loads(p.decode("utf-8"))["seq"])
-    assert seqs["xbrain/gj-001/event/error/intrusion"] == [1, 2]
-    assert seqs["xbrain/gj-001/event/warn/comm"] == [1]
+    assert seqs["xbrain/gj-001/event/error/alarm"] == [1, 2]
+    assert seqs["xbrain/gj-001/event/warn/system"] == [1]
+
+
+def test_every_internal_category_maps_into_the_v2_closed_set():
+    """机内 23 类(11 S6.2) -> v2.0 九类(任务枚举 S2). 双向钉:
+
+    * 每一个机内类别都有落点 -- 闭集扩容而映射没跟, 本条红, NO 不落到兜底值;
+    * 每一个落点都在 v2.0 闭集内.
+    *** 2026-10-24 .1.26 联调抓包: event/info/comm 直接上了云 -- comm 不在
+    v2.0 闭集里. 底盘真出故障时会是 event/fatal/chassis, 同一个病.
+    """
+    from xbrain.common.enums import EVENT_CATEGORY
+    from xbrain.p5_gateway.outbound.state_projection import (
+        INTERNAL_TO_V2_EVENT_CATEGORY, V2_EVENT_CATEGORIES)
+
+    assert set(INTERNAL_TO_V2_EVENT_CATEGORY) == set(EVENT_CATEGORY)
+    assert set(INTERNAL_TO_V2_EVENT_CATEGORY.values()) <= set(V2_EVENT_CATEGORIES)
+    assert set(V2_EVENT_CATEGORIES) == {"task", "alarm", "fault", "fence", "geo",
+                                        "teach", "arbitration", "payload",
+                                        "system"}
+
+
+def test_the_v2_category_is_on_both_the_key_and_the_body():
+    """key 段与 data.category 必须逐字一致(v2.0 S5.1); 只改一处 Qt 收到矛盾帧."""
+    bridge, session = _bridge()
+    bridge.publish_event("fault", "chassis", {"eid": "c-1", "code": "CHS_X"})
+    k, raw = session.puts[0]
+    assert k == "xbrain/gj-001/event/fatal/fault", k
+    assert json.loads(raw.decode("utf-8"))["data"]["category"] == "fault"
+
+
+def test_an_unmapped_category_is_refused_not_passed_through():
+    """闭集外的机内类别: 拒发(抛), NO 不原样透传 -- 透传正是被修掉的那个病."""
+    from xbrain.p5_gateway.outbound.state_projection import ProjectionError
+
+    bridge, session = _bridge()
+    with pytest.raises(ProjectionError):
+        bridge.publish_event("warn", "no_such_category", {"eid": "u-1"})
+    assert session.puts == []
+
+
+def test_an_alarm_event_carries_every_required_detail_field():
+    """v2.0 S5.2: alarm detail 的八项全部必填.
+
+    映射到 alarm 的机内事件(intrusion / rtk)今天的 detail 不一定带齐 --
+    缺的补 null, wpos 补 valid=false 的对象(S5.2 逐字允许坐标为 null),
+    alarm_type 不在闭集时落 system_alarm. NO 不编造围栏号/轨迹号.
+    """
+    bridge, session = _bridge()
+    bridge.publish_event("alarm", "rtk", {"eid": "r-1", "code": "rtk_lost",
+                                          "detail": {"note": "kept"}})
+    d = json.loads(session.puts[0][1].decode("utf-8"))["data"]["detail"]
+    for f in ("alarm_type", "fence_set_id", "rev", "matched_rule",
+              "zone_hits", "dwell_s", "track_id", "wpos"):
+        assert f in d, f
+    assert d["alarm_type"] == "rtk_lost"
+    assert d["fence_set_id"] is None and d["track_id"] is None
+    assert d["wpos"]["valid"] is False and d["wpos"]["latitude"] is None
+    assert d["note"] == "kept"                  # 原 detail 不丢
+
+    bridge.publish_event("alarm", "intrusion", {"eid": "i-1", "code": "X"})
+    d = json.loads(session.puts[1][1].decode("utf-8"))["data"]["detail"]
+    assert d["alarm_type"] == "system_alarm"
+
+
+def test_comm_events_get_a_machine_readable_code():
+    """v2.0 S5.1 code 必填且机器可读; comm 事件此前发空串."""
+    from xbrain.p5_gateway.event.comm_events import comm_event_code
+
+    assert comm_event_code("cloud_up") == "CLOUD_LINK_UP"
+    assert comm_event_code("cloud_down") == "CLOUD_LINK_DOWN"
+    assert comm_event_code("cloud_degraded") == "CLOUD_LINK_DEGRADED"
+    assert comm_event_code("cloud_lost") == "CLOUD_LINK_LOST"
+
+
+def test_fault_events_carry_a_source_from_the_v2_closed_set():
+    """v2.0 S5.3 逐字: fault 事件 source 闭集 battery|motor|navigation|gps|
+    camera|network|storage|alarm|payload|system. 机内 src(quadruped / p2_core
+    ...)不在其中 -- 原样透传 Qt 可按 S1.3 整条拒收, 故障就到不了云端.
+    """
+    bridge, session = _bridge()
+    bridge.publish_event("fault", "chassis", {"eid": "c-1", "src": "quadruped"})
+    bridge.publish_event("warn", "health", {"eid": "h-1", "src": "p2_core",
+                                            "detail": {"device": "rtk"}})
+    bridge.publish_event("warn", "health", {"eid": "h-2", "src": "p2_core",
+                                            "detail": {"device": "ptz"}})
+    bridge.publish_event("fault", "bit", {"eid": "b-1", "src": "p2_core"})
+    bridge.publish_event("warn", "comm", {"eid": "s-1", "src": "p5_gateway"})
+    src = [json.loads(p.decode("utf-8"))["data"]["source"]
+           for _, p in session.puts]
+    assert src == ["motor", "gps", "camera", "system", "p5_gateway"], src
+
+
+def test_an_empty_code_is_derived_from_the_title_not_sent_blank():
+    """v2.0 S5.1 code 必填且机器可读. p1 / p2 的生产者今天发空串."""
+    bridge, session = _bridge()
+    bridge.publish_event("warn", "motion", {"eid": "m-1",
+                                            "title": "health_factor_degraded"})
+    bridge.publish_event("fault", "bit", {"eid": "b-1",
+                                          "title": "config digest mismatch"})
+    bridge.publish_event("warn", "comm", {"eid": "c-1", "code": "CLOUD_LINK_UP",
+                                          "title": "x"})
+    bridge.publish_event("warn", "comm", {"eid": "c-2"})
+    codes = [json.loads(p.decode("utf-8"))["data"]["code"]
+             for _, p in session.puts]
+    assert codes == ["HEALTH_FACTOR_DEGRADED", "CONFIG_DIGEST_MISMATCH",
+                     "CLOUD_LINK_UP", "UNSPECIFIED"], codes
 
 
 def test_main_wiring_relays_events_to_the_cloud():
@@ -1538,8 +1645,10 @@ def test_the_alarm_and_fault_severities_reach_the_cloud_at_all():
     bridge.publish_event("fault", "chassis", {"eid": "f-1"})
 
     keys = [k for k, _ in session.puts]
-    assert keys == ["xbrain/gj-001/event/error/intrusion",
-                    "xbrain/gj-001/event/fatal/chassis"], keys
+    # 2026-10-24 起类别也映射到 v2.0 九类: intrusion -> alarm, chassis -> fault.
+    # 原期望值 .../intrusion 与 .../chassis 本身就是 v2.0 闭集外的 key.
+    assert keys == ["xbrain/gj-001/event/error/alarm",
+                    "xbrain/gj-001/event/fatal/fault"], keys
 
 
 def test_the_key_severity_and_the_body_severity_agree():
