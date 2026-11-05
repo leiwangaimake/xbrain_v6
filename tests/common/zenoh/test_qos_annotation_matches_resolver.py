@@ -56,7 +56,11 @@ MUTANTS (run 2026-10-15, both red):
 import json
 import os
 
+import pytest  # marker
+
 from xbrain.common.zenoh.qos import load_qos_table
+
+pytestmark = pytest.mark.no_device  # reads the qos table and the shipped config only
 
 # The project root, four levels up from tests/common/zenoh/<this file>.
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(

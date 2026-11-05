@@ -273,39 +273,43 @@ def test_voice_pause_now_parses_as_a_contract_task_command():
 
 
 def test_h_class_lands_on_cmd_system_in_contract_shape():
-    """*** 18 H class -> cmd/system (11 S7.15), not cmd/task.
+    """*** 18 H class -> cmd/system (11 S7.15), not cmd/task -- in two halves.
 
-    The prefix table had "H": CMD_TASK -- the same mistake as the C class --
-    so eight system commands went to P3, which skipped them for having no
-    top-level action.
+    2026-11-05 rewrite. Until then this case expected a reboot turn to DISPATCH
+    a cmd/system frame. Since the 2026-10-30 field test (R007-R016) every H
+    intent but H03 is refused out loud ("...功能还没有接通执行端") because no
+    cmd/system subscriber exists: turn_orchestrator._UNWIRED_SYSTEM. So:
 
-    Routed correctly they are still NOT consumed: no cmd/system subscriber
-    exists yet (S2.2.3 splits it across three by action, SYS-1). Asserted here
-    anyway, because "right key, right shape, waiting for a subscriber" and
-    "wrong key, actively dropped" look identical to the operator and totally
-    different during bring-up.
+    (1) the whole turn: a reboot sends NOTHING and says why. MUTATION: drop
+        H07 from _UNWIRED_SYSTEM -> a frame is sent to a key nobody consumes
+        and the operator hears "收到" for a reboot that never happens.
+    (2) the frame shape that will be sent once an executor is wired, asserted
+        on the builder itself so it does not rot meanwhile: origin is the
+        CHANNEL (voice must never claim cloud, U23), and only the action's own
+        params are copied (S7.15.1: a reboot must not ship force_step, a
+        WALL-CLOCK STEP flag). The hostile slots below keep both mutations
+        ("pass origin through", "copy every slot") red.
     """
-    # *** The stub slots CLAIM cloud and carry params reboot does not use.
-    # Without them this test is vacuous: with no origin field in the frame,
-    # "pass the frame's origin through" and "hard-code voice" give the same
-    # answer, and the mutation stays green. Same for the param filter -- with
-    # no extra slots, "copy only this action's params" and "copy everything"
-    # are indistinguishable. Both mutations were green until this fixture
-    # carried the hostile values.
+    from xbrain.p4_agent.runtime.system_request import to_system_command
+
     tier2 = lambda *a, **k: Tier2Classification(          # noqa: E731
         name="reboot", slots={"origin": "cloud", "delay_s": 5,
                               "scope": "deep", "force_step": True})
-    payload = _frames("帮我处理一下那个事情", confirm=True,
-                      tier2=tier2)["cmd/system"]
+    orch, session = _orch(tier2), OrchestratorSession()   # half (1)
+    orch._state_fn = lambda: {**{"state/geo/manifest": {"items": _ITEMS}},
+                              **_RUNNING_TASK}
+    decision = orch.handle_turn("帮我处理一下那个事情", session, now_mono_ms=1)
+    assert decision.intent_id == "H07" and decision.kind != "dispatch"
+    assert "没有接通执行端" in (decision.reply_text or "")
+    assert not [k for k, _ in decision_to_publishes(decision)
+                if k == "cmd/system"]
+    payload = to_system_command(                          # half (2)
+        "reboot", slots={"origin": "cloud", "delay_s": 5, "scope": "deep",
+                         "force_step": True},
+        cmd_id="c-1", source="voice")
     assert payload["action"] == "reboot"
-    assert payload["v"] == 1 and payload["cmd_id"]
-    # origin is one of only two authorisation boundaries in the whole system
-    # (U23: the HMI is unauthenticated, so the channel IS the permission).
-    # Voice must never be able to claim cloud.
+    assert payload["v"] == 1 and payload["cmd_id"] == "c-1"
     assert payload["origin"] == "voice"
-    # reboot uses delay_s and nothing else. S7.15.1: params an action does not
-    # use are simply not filled -- copying the whole slot bag would ship a
-    # force_step (a WALL-CLOCK STEP flag, L2) on a reboot command.
     assert payload["delay_s"] == 5
     assert "scope" not in payload and "force_step" not in payload
 
