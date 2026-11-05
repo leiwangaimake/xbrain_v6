@@ -164,6 +164,13 @@ def assert_world_keys(cfg: Dict[str, Any]) -> None:
         raise RnsConfigError(
             "rns.world.person_min_confidence=%r must be in (0, 1] "
             "(20 S3.0 WP-1, 99 U114)" % (pconf,))
+    # 99 U118 WP-1a: a person taller than this is dropped. A null / missing
+    # key refuses startup like the floors do -- no default height in code.
+    pmax = require(cfg, "rns.world.person_max_height_m")
+    if not (isinstance(pmax, (int, float)) and float(pmax) > 0.0):
+        raise RnsConfigError(
+            "rns.world.person_max_height_m=%r must be > 0 "
+            "(20 S3.0 WP-1a, 99 U118)" % (pmax,))
     v_max = require(cfg, "rns.world.v_max_mps")
     if not (isinstance(v_max, (int, float)) and float(v_max) > 0.0):
         raise RnsConfigError(

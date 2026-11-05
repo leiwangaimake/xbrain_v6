@@ -32,7 +32,7 @@ def _cfg(delta_s=0.4, person=None):
                  # 20 S3.0 / 99 U113-U114: run_startup_assertions requires the world
                  # keys and the avoidance floor
                  "world": {"object_min_confidence": 0.4, "person_min_confidence": 0.1,
-                           "v_max_mps": 1.0},
+                           "person_max_height_m": 2.0, "v_max_mps": 1.0},
                  "speed": {"avoid_floor_mps": 0.2}}}
     if person is not None:
         m["rns"]["class_map"]["person"] = person
@@ -102,6 +102,7 @@ from xbrain.p1_motion.rns.config import assert_class_map_values  # noqa: E402
     ("object_min_confidence", None), ("object_min_confidence", 0.0),
     ("object_min_confidence", 1.5), ("person_min_confidence", None),
     ("person_min_confidence", 0.0), ("person_min_confidence", 1.5),
+    ("person_max_height_m", None), ("person_max_height_m", 0.0),  # 99 U118 WP-1a
     ("v_max_mps", None), ("v_max_mps", 0.0), ("v_max_mps", -0.1)])
 def test_world_keys_null_or_out_of_range_refuse_start(key, bad):
     # A-WLD-6: a null / zero / out-of-range world key refuses to start, naming

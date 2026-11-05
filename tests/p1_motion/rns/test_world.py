@@ -105,7 +105,7 @@ def test_below_threshold_vanishes_from_objects_and_geometry():
         objects=_objs(("car", 0.1, _box(2.0, 2.5, -0.2, 0.2)),  # below: straight ahead
                       ("car", 0.4, _box(4.0, 4.5, 1.0, 1.4))),  # exactly at the floor, off-axis
         status=healthy_status())  # health passes through
-    snap = WorldBuilder({"object_min_confidence": 0.4, "person_min_confidence": 0.1, "v_max_mps": 1.0}, CM).build(raw)  # the production path
+    snap = WorldBuilder({"object_min_confidence": 0.4, "person_min_confidence": 0.1, "person_max_height_m": 2.0, "v_max_mps": 1.0}, CM).build(raw)  # the production path
     assert [o.confidence for o in snap.objects.objects] == [0.4]  # only the boundary car reaches RNS
     p = snap.profile  # the world profile
     assert p.d_block[_bin_of(p, 0.0)] is None  # the 0.1 car casts no geometry
@@ -122,8 +122,38 @@ def test_person_has_its_own_lower_floor():
     raw = _objs(("person", 0.15, _box(1.5, 1.8, -0.2, 0.2)),  # above the person floor
                 ("car", 0.15, _box(2.5, 3.0, -0.2, 0.2)),  # same score, other class
                 ("person", 0.09, _box(3.5, 3.8, -0.2, 0.2)))  # under the person floor
-    kept = keep_confident(raw, 0.4, 0.1).objects  # shipped floors
+    kept = keep_confident(raw, 0.4, 0.1, 2.0).objects  # shipped floors
     assert [(o.class_name, o.confidence) for o in kept] == [("person", 0.15)]
+
+
+def test_person_taller_than_the_limit_is_dropped():
+    # A-WLD-11 (99 U118, WP-1a): a "person" whose z interval spans more than
+    # person_max_height_m is not a person (the 2026-11-04 0.92 "person" stacked
+    # on a tree trunk). 2.5 m tall -> gone from objects AND geometry; exactly
+    # 2.0 m -> kept (the ruling reads "greater than"); an unlocalized person
+    # (z null) cannot be measured -> kept; a 2.5 m car is not touched (the rule
+    # is person-only). mutants: drop the rule -> the 2.5 m person stays ->
+    # reddens; '>=' -> the 2.0 m person goes -> reddens; apply to every class
+    # -> the tall car goes -> reddens; drop unmeasurable -> the unlocalized
+    # person goes -> reddens.
+    tall = replace(one_object(track_id=1, class_name="person", confidence=0.9,
+                              footprint=_box(1.5, 1.8, -0.2, 0.2)).objects[0],
+                   z_min=0.0, z_max=2.5)  # a 2.5 m "person" straight ahead
+    edge = replace(one_object(track_id=2, class_name="person", confidence=0.9,
+                              footprint=_box(3.0, 3.3, 1.0, 1.4)).objects[0],
+                   z_min=0.0, z_max=2.0)  # exactly at the limit, off-axis
+    unloc = one_object(track_id=3, class_name="person", confidence=0.9,
+                       unlocalized=True).objects[0]  # z null: unmeasurable
+    car = replace(one_object(track_id=4, class_name="car", confidence=0.9,
+                             footprint=_box(4.0, 4.5, -1.5, -1.0)).objects[0],
+                  z_min=0.0, z_max=2.5)  # a tall non-person
+    objs = ObjectsMsg(t_capture_mono_ms=1000, t_publish_mono_ms=1010,
+                      extrinsic_calibrated=True, objects=(tall, edge, unloc, car))  # one frame
+    snap = WorldBuilder({"object_min_confidence": 0.4, "person_min_confidence": 0.1,
+                         "person_max_height_m": 2.0, "v_max_mps": 1.0}, CM).build(
+        PerceptionSnapshot(profile=uniform_free(), objects=objs, status=healthy_status()))  # production path
+    assert sorted(o.track_id for o in snap.objects.objects) == [2, 3, 4]  # only the tall person is gone
+    assert snap.profile.d_block[_bin_of(snap.profile, 0.0)] is None  # and it casts no geometry
 
 
 # ── A-WLD-2: ray casting (WP-3) ──────────────────────────────────────────────
@@ -188,7 +218,7 @@ def test_world_profile_ignores_every_raw_array():
 def test_no_header_or_no_objects_means_no_world_profile():
     # A-WLD-3 / WP-5: never a default view. mutant: hand the raw profile on
     # (or synthesize a header) -> profile not None -> reddens.
-    wb = WorldBuilder({"object_min_confidence": 0.4, "person_min_confidence": 0.1, "v_max_mps": 1.0}, CM)  # production builder
+    wb = WorldBuilder({"object_min_confidence": 0.4, "person_min_confidence": 0.1, "person_max_height_m": 2.0, "v_max_mps": 1.0}, CM)  # production builder
     objs = _objs(("car", 0.9, _box(3.0, 3.5, -0.3, 0.3)))  # objects present
     assert wb.build(PerceptionSnapshot(profile=None, objects=objs)).profile is None  # no header
     assert wb.build(PerceptionSnapshot(profile=uniform_free(), objects=None)).profile is None  # no objects

@@ -23,6 +23,8 @@ around them.
 What this file does (rules WP-1..WP-6 of 20 S3.0):
   WP-1 drop every object below the confidence threshold -- ALL classes,
        person included -- from the objects RNS sees AND from the geometry;
+       WP-1a (99 U118) also drop a "person" taller than
+       world.person_max_height_m (z_max - z_min; unmeasurable is kept);
   WP-2 take the footprint hull of every kept, localized object whose
        behavior is neither the T class (dropped) nor ignore (airborne);
   WP-3 cast each profile bin's ray from the base_link origin against those
@@ -69,9 +71,23 @@ from .types import SrcBit  # the src bitmask, SEMANTIC marks an object hit
 _EPS = 1e-12  # below this the ray and the edge are treated as parallel
 
 
+def _person_too_tall(o: TrackedObject, person_max_height_m: float) -> bool:
+    """WP-1a (99 U118): a "person" taller than person_max_height_m is not a
+    person -- the 0.92 "person" stacked on a tree trunk on 2026-11-04 is the
+    shape this removes. Height = z_max - z_min (11 S3.1B: the z interval,
+    never a centroid). An unlocalized person (z null, 11 v2.3 row 4) cannot
+    be measured and is KEPT: dropping a real person is the costliest miss.
+    Exactly at the limit is kept -- the ruling reads "greater than"."""
+    if o.class_name != "person" or o.z_min is None or o.z_max is None:  # only a measured person
+        return False  # unmeasurable or another class: the height rule says nothing
+    return (o.z_max - o.z_min) > person_max_height_m  # strict: 2.0 m itself stays
+
+
 def keep_confident(objects: ObjectsMsg, min_confidence: float,
-                   person_min_confidence: float) -> ObjectsMsg:
-    """WP-1: the objects message without every object below its floor.
+                   person_min_confidence: float,
+                   person_max_height_m: float) -> ObjectsMsg:
+    """WP-1: the objects message without every object below its floor, and
+    without every person taller than person_max_height_m (WP-1a, U118).
 
     Two floors (99 U114): person_min_confidence for class "person", which is
     deliberately LOW (0.1) -- with no geometric backstop a missed person is
@@ -79,10 +95,12 @@ def keep_confident(objects: ObjectsMsg, min_confidence: float,
     min_confidence (0.4) for every other class. An object exactly at its
     floor is kept: the keys read "at least". mutants: strict '>' drops the
     boundary object; one floor for all classes drops a 0.2 person (A-WLD-1
-    reddens either way)."""
+    reddens either way); dropping the height rule keeps a 2.5 m person
+    (A-WLD-11 reddens)."""
     kept = tuple(o for o in objects.objects  # ">=": the keys are floors
                  if o.confidence >= (person_min_confidence if o.class_name == "person"
-                                     else min_confidence))
+                                     else min_confidence)
+                 and not _person_too_tall(o, person_max_height_m))  # WP-1a
     if len(kept) == len(objects.objects):  # nothing below the floor this frame
         return objects  # same message object: keeps the builder cache identity stable
     return replace(objects, objects=kept)  # timestamps / extrinsic flag carried unchanged
@@ -223,6 +241,7 @@ class WorldBuilder:
         # already refused a null / missing world.* before this is built.
         self._min_conf = float(world_cfg["object_min_confidence"])  # WP-1 floor, non-person
         self._person_min_conf = float(world_cfg["person_min_confidence"])  # WP-1 floor, person (U114)
+        self._person_max_h = float(world_cfg["person_max_height_m"])  # WP-1a ceiling, person (U118)
         self._class_map = class_map  # WP-2 classification, the rns.yaml map
         # cache identity: the raw objects message itself (held, so its id can
         # never be reused by a later message) plus the header's view geometry
@@ -246,13 +265,15 @@ class WorldBuilder:
             # geometry -> the host gate sees "never received" (free_space veto)
             return PerceptionSnapshot(profile=None,
                                       objects=keep_confident(raw.objects, self._min_conf,
-                                                             self._person_min_conf),  # WP-1 still applies
+                                                             self._person_min_conf,
+                                                             self._person_max_h),  # WP-1 still applies
                                       status=raw.status)  # health passes through
         view = (raw.profile.angle_min_rad, raw.profile.angle_step_rad,
                 raw.profile.n_bins, raw.profile.range_max_m)  # the only raw-profile fields read
         if raw.objects is not self._last_raw or view != self._last_view \
                 or self._last_out is None:  # a new objects frame (or a new view)
-            kept = keep_confident(raw.objects, self._min_conf, self._person_min_conf)  # WP-1
+            kept = keep_confident(raw.objects, self._min_conf, self._person_min_conf,
+                                  self._person_max_h)  # WP-1 / WP-1a
             self._last_out = (kept, world_profile(raw.profile, kept, self._class_map))  # WP-2..WP-5
             self._last_raw = raw.objects  # hold it: identity is the cache key
             self._last_view = view  # and the view it was cast in

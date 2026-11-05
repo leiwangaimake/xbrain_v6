@@ -152,6 +152,7 @@ rns:
   world:                           # 目标驱动世界 (20 S3.0 RNS-N-18, 99 U113): RNS 与 P1 速度门只看高置信目标, 不读剖面的可通行/几何数据
     object_min_confidence: 0.4     # [doc] 99 U114 用户裁决(原 0.3): 低于它的非 person 目标整条丢弃 (WP-1); 范围 (0, 1]
     person_min_confidence: 0.1     # [doc] 99 U114 用户裁决: person 单独门限, 故意低 -- 无几何兜底时漏一个人代价最高 (WP-1); 范围 (0, 1]
+    person_max_height_m: 2.0       # [doc] 99 U118 用户裁决: person 高度 (z_max - z_min) 大于它即丢弃 (WP-1a, 树干上叠出的假人); 不可定位的人保留; > 0
     v_max_mps: 1.0                 # [doc] 99 U114 用户裁决: 上限可到底盘规格 2.0, 首次实测先用 1.0, 通过后改 2.0 (20 S8.1); > 0
   class_map:                       # class_name -> 行为类; person 锁死在代码 (20 S5.1.1)
     car: vehicle_dynamic
