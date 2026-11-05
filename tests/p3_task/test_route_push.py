@@ -812,3 +812,123 @@ async def test_the_live_wiring_pushes_one_point_for_a_waypoint_goto(
     finally:
         stop["stop"] = True
         await asyncio.wait_for(task, timeout=10.0)
+
+
+# --- 99 U119: return_home goes to the home point --------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seed,want", [
+    # home and a dock both exist -> home wins (15 S9.5.1)
+    ((("w-home", "返航终点站", "home", 35.004), ("w-dock", "1号充电桩", "dock", 35.0005)),
+     "goto-w-home"),
+    # no home -> the NEAREST dock (rule 3 fallback); w-near is 55 m away, w-far 440 m
+    ((("w-far", "2号充电桩", "dock", 35.004), ("w-near", "1号充电桩", "dock", 35.0005)),
+     "goto-w-near"),
+    # neither -> failed with E_NOT_FOUND, nothing pushed
+    ((("w-1", "1号测试点", "poi", 35.001),), None),
+])
+async def test_the_live_wiring_sends_return_home_to_the_home_point(
+        tmp_path, monkeypatch, seed, want):
+    """*** The link-loss return_home of 11 S4.6.4. Before 2026-11-05 dispatch
+    had no return_home branch: the task fell into "not a goto -> push
+    nothing" and held `running` for hours (rh-7899-0, 2026-11-04).
+
+    MUTATION: drop the return_home branch -> zero frames and the task stays
+    running (cases 1-2 red, case 3 red on state); ignore type home -> case 1
+    picks the dock; take the first dock not the nearest -> case 2 red."""
+    from xbrain.common.errors import E_NOT_FOUND
+    from xbrain.p3_task.runtime import main_wiring as mw
+
+    subs, pubs = {}, {}
+
+    class _WPub:  # one declared publisher
+        def __init__(self, key):
+            self.key = key
+            pubs.setdefault(key, [])
+
+        def put(self, payload):
+            pubs[self.key].append(payload)
+
+    class _Session:  # the fake zenoh session
+        def declare_subscriber(self, key, cb):
+            subs[key] = cb
+            return object()
+
+        def declare_publisher(self, key):
+            return _WPub(key)
+
+        def declare_queryable(self, key, cb):
+            subs[key] = cb
+            return object()
+
+        def put(self, key, payload):
+            pubs.setdefault(key, []).append(payload)
+
+    class _Planes:  # open_planes() context manager
+        def __enter__(self):
+            return _Session()
+
+        def __exit__(self, *_a):
+            return False
+
+    class _Sample:  # a zenoh sample
+        def __init__(self, body):
+            self.payload = json.dumps(body).encode("utf-8")
+
+    import xbrain.common.runtime.session_ctx as sctx
+    monkeypatch.setattr(sctx, "open_planes", lambda _p: _Planes())
+    task_db, geo_db = str(tmp_path / "task.db"), str(tmp_path / "geo.db")
+    async with aiosqlite.connect(geo_db) as g:  # the catalogue before p3 opens it
+        for stmt in GEO_DB_STATEMENTS:
+            await g.execute(stmt)
+        for gid, name, wtype, lat in seed:
+            await g.execute(
+                "INSERT INTO waypoints (geo_id, name, type, rtk_lat, rtk_lon,"
+                " arrival_radius, rev, content_hash, updated_ms)"
+                " VALUES (?, ?, ?, ?, 135.0, 1.0, 1, 'h', 0)",
+                (gid, name, wtype, lat))
+        await g.commit()
+    stop = {"stop": False}
+    task = asyncio.create_task(mw._amain(
+        stop, 99.0, task_db, geo_db_path=geo_db,
+        fence_db_path=str(tmp_path / "fence.db")))
+    try:
+        for _ in range(300):
+            if mw.CMD_TASK_TOPIC in subs and mw.STATE_POSE_TOPIC in subs:
+                break
+            await asyncio.sleep(0.01)
+        subs[mw.STATE_POSE_TOPIC](_Sample({"data": {"lat": 35.0, "lon": 135.0}}))
+        await asyncio.sleep(0.05)
+        async with aiosqlite.connect(task_db) as t:  # as link_loss injects it
+            await TasksDAO(t).insert(TaskRow(
+                task_id="rh-1", task_type="return_home", state="ready",
+                priority=95, submit_seq=1,
+                mission_json=json.dumps({"type": "return_home", "params": {}}),
+                total_steps=1, current_step=0, step_status_json="[]",
+                created_ms=0, updated_ms=0, source="charge", trace_id="tr",
+                resume_policy="continue"))
+            await t.commit()
+        for _ in range(300):
+            if pubs.get("cmd/motion/route"):
+                break
+            async with aiosqlite.connect(task_db) as t:
+                row = await (await t.execute(
+                    "SELECT state FROM tasks WHERE task_id='rh-1'")).fetchone()
+            if want is None and row and row[0] == "failed":
+                break
+            await asyncio.sleep(0.02)
+        frames = [json.loads(p.decode("utf-8"))
+                  for p in pubs.get("cmd/motion/route", [])]
+        if want is not None:
+            assert frames and frames[0]["route_id"] == want  # the right point
+            assert len(frames[0]["points"]) == 1  # one-point goto
+        else:
+            assert not frames  # nothing pushed
+            async with aiosqlite.connect(task_db) as t:
+                row = await (await t.execute(
+                    "SELECT state, error_context_json FROM tasks "
+                    "WHERE task_id='rh-1'")).fetchone()
+            assert row[0] == "failed"  # never left running
+            assert json.loads(row[1])["code"] == E_NOT_FOUND  # 15 S9.5.1
+    finally:
+        stop["stop"] = True
+        await asyncio.wait_for(task, timeout=10.0)

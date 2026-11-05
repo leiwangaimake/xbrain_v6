@@ -157,13 +157,14 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  fence_db_path: str = DEFAULT_FENCE_DB,
                  enu_origin: Optional[Dict[str, float]] = None,
                  teach_snap_max_age_ms: Optional[int] = None) -> int:
-    from xbrain.common.errors import E_GEO_INCOMPLETE
+    from xbrain.common.errors import E_GEO_INCOMPLETE, E_NOT_FOUND
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p3_task.dao.simple_daos import FencesDAO, PatrolProgressDAO, SnapshotDAO
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
     from xbrain.p3_task.fence.fence_set import build_fence_set
     from xbrain.p3_task.fence.geom import InvalidFenceSet
     from xbrain.p3_task.geo.objects import read_geo_objects
+    from xbrain.p3_task.geo.waypoint_kind import resolve_return_target  # 99 U119
     from xbrain.p3_task.ingest.geo_apply import GeoContext, handle_geo_payload
     from xbrain.p3_task.ingest.geo_read import build_manifest
     from xbrain.p3_task.ingest.task_apply import TaskContext, handle_task_payload
@@ -696,7 +697,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     now_wall_ms=_now_wall_ms())
                 if not res.pushed:
                     pushing["task_id"] = None
-                    await _fail_task_for_geometry(task_id, res.reason)
+                    await _fail_task_for_geometry(task_id, res.reason,
+                                                  E_GEO_INCOMPLETE)
 
             async def _push_route_on_dispatch(task_id: str) -> None:
                 """EX-2 RP-1. patrol pushes its route; goto pushes its route
@@ -707,6 +709,31 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 if full is None:
                     return
                 route_geo_id = getattr(full, "route_geo_id", None)
+                if not route_geo_id and full.task_type == "return_home":
+                    # 99 U119: return_home is a goto to the home point (15
+                    # S9.5.1), or -- with no home point -- to the nearest dock
+                    # point. Until 2026-11-05 this branch did not exist: the
+                    # task fell through to "not a goto -> push nothing" and
+                    # sat in `running` for hours (rh-7899-0, 2026-11-04),
+                    # blocking every task below priority 95.
+                    target = await resolve_return_target(
+                        geo_conn, start_from_pose(state_cache.get("pose")))
+                    if target is None:
+                        # 15 S9.5.1: no home row -> E_NOT_FOUND. Failed, never
+                        # left running with nothing moving.
+                        await _fail_task_for_geometry(
+                            task_id, "return_home: no active home point "
+                            "(返航终点站) and no dock point (充电桩/充电站)",
+                            E_NOT_FOUND)
+                        return
+                    params = {"waypoint_id": target[0]}
+                    _logger.info("p3 return_home %s -> %s point %s",
+                                 task_id, target[1], target[0])
+                    pushing.update(task_id=task_id, route_geo_id=None,
+                                   goto_params=params)
+                    await _push_goto(task_id, params,
+                                     RoutePushTrigger.RP1_DISPATCH)
+                    return
                 if not route_geo_id:
                     if full.task_type != "goto":
                         return
@@ -736,9 +763,11 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     recorded_arrive_radius_m=None)
                 if not res.pushed:
                     pushing["task_id"] = None
-                    await _fail_task_for_geometry(task_id, res.reason)
+                    await _fail_task_for_geometry(task_id, res.reason,
+                                                  E_GEO_INCOMPLETE)
 
-            async def _fail_task_for_geometry(task_id: str, why: str) -> None:
+            async def _fail_task_for_geometry(task_id: str, why: str,
+                                              code: str) -> None:
                 """15 S2.4.2 / S11.2: a task whose geometry could not be
                 delivered goes to `failed` with E_GEO_INCOMPLETE -- NOT
                 suspended (11 S4.4's suspend_reason closed set has no entry
@@ -759,7 +788,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     await conn.execute(
                         "UPDATE tasks SET error_context_json=? "
                         "WHERE task_id=?",
-                        (json.dumps({"code": E_GEO_INCOMPLETE,
+                        (json.dumps({"code": code,
                                      "detail": why}, ensure_ascii=False),
                          task_id))
                     await conn.commit()
@@ -789,7 +818,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     ack_window.reset()
                     await _fail_task_for_geometry(
                         task_id, "%s after %d attempt(s)"
-                        % (outcome.ack.value, outcome.attempts))
+                        % (outcome.ack.value, outcome.attempts),
+                        E_GEO_INCOMPLETE)
                     return
                 # Retry: the WHOLE route again, not the missing chunks --
                 # 11 S3.5A discards the whole set on a gap, so P1 holds no
@@ -811,7 +841,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     recorded_arrive_radius_m=None)
                 if not res.pushed:
                     pushing["task_id"] = None
-                    await _fail_task_for_geometry(task_id, res.reason)
+                    await _fail_task_for_geometry(task_id, res.reason,
+                                                  E_GEO_INCOMPLETE)
 
             last_hb = time.monotonic()
             last_geo = 0.0            # 0 -> publish geo on the very first pass

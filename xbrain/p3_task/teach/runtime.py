@@ -61,6 +61,7 @@ from xbrain.p3_task.teach.command import (
     parse_teach_command,
     teach_ack,
 )
+from xbrain.p3_task.geo.waypoint_kind import waypoint_type_for_name  # 99 U119 home / dock by name
 from xbrain.p3_task.teach.sampling import PoseSample, Recorder
 from xbrain.p3_task.teach.session import (
     ArmingInputs,
@@ -629,8 +630,13 @@ class TeachRuntime:
                 # U34: with heading degraded, the point is still worth keeping
                 # -- it just carries no orientation, and the caller is told.
                 yaw = None
+        # 99 U119: 返航终点站 is the home point, a name with 充电桩 / 充电站 a
+        # dock point; every other F06 capture stays poi. Until 2026-11-05 this
+        # was a literal "poi", so no home point could ever exist and the
+        # link-loss return_home had nowhere to go.
         await commit_waypoint(self._geo_conn, geo_id=geo_id, name=name,
-                              wtype="poi", rtk_lat=float(pose["lat"]),
+                              wtype=waypoint_type_for_name(name) or "poi",
+                              rtk_lat=float(pose["lat"]),
                               rtk_lon=float(pose["lon"]),
                               rtk_alt=pose.get("alt"), yaw_deg=yaw,
                               now_ms=now_ms, state="active",

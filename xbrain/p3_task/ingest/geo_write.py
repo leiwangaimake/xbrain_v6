@@ -49,6 +49,7 @@ from xbrain.common.errors import (
     E_SCHEMA,
 )
 from xbrain.p3_task.ingest.geo_apply import ApplyResult, GeoContext, register_applier
+from xbrain.p3_task.geo.waypoint_kind import renamed_waypoint_type  # 99 U119
 from xbrain.p3_task.ingest.geo_command import GeoCommand, GeoCommandError
 from xbrain.p3_task.ingest.geo_object import (
     TABLE_FOR_TYPE,
@@ -343,6 +344,16 @@ async def apply_rename(cmd: GeoCommand, ctx: GeoContext,
         if cmd.base_rev != row[0] and not cmd.force:
             raise conflict_error(cmd, row)
         rev = row[0] + 1
+        if cmd.type == "waypoint" and "name" in cols:
+            # 99 U119: the home / dock role follows the NAME, so a rename into
+            # 返航终点站 or a 充电桩 name sets the type, and a rename out of
+            # one drops it back to poi. Without this a renamed point keeps a
+            # role its name no longer states (or never gets one).
+            tcur = await conn.execute(
+                f"SELECT type FROM {table} WHERE {pk_col}=?", (cmd.geo_id,))
+            new_type = renamed_waypoint_type(cols["name"], (await tcur.fetchone())[0])
+            if new_type is not None:
+                cols["type"] = new_type
         # content_hash covers name as well as geometry (S7.8.2), so a rename is
         # a content change and must re-hash -- otherwise a cloud sync comparing
         # hashes would conclude the renamed object is identical and skip it.

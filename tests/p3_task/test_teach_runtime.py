@@ -404,6 +404,21 @@ async def test_mark_once_waypoint_writes_a_keypoint(rt):
 
 
 @pytest.mark.asyncio
+async def test_mark_once_named_home_or_dock_takes_that_type(rt):
+    """99 U119: voice F06 "保存当前位置为返航终点站" stores type home and a
+    充电桩 name type dock. MUTATION: restore the literal wtype="poi" -> no
+    home point can ever exist and the link-loss return_home has nowhere to go."""
+    for name in ("返航终点站", "1号充电桩"):  # one of each role
+        ack = await rt.handle(
+            _cmd("mark_once", issuer=_TYPED, cmd_id="c-mark-" + name,  # distinct cmd_id per capture
+                 mark_once={"kind": "waypoint", "name": name, "capture_heading": True}),
+            now_mono_s=100.0, now_ms=5000)
+        assert ack["result"] == "accepted", ack
+    cur = await rt._geo_conn.execute("SELECT name, type FROM waypoints ORDER BY id")
+    assert await cur.fetchall() == [("返航终点站", "home"), ("1号充电桩", "dock")]
+
+
+@pytest.mark.asyncio
 async def test_mark_once_refuses_below_rtk_fixed(rt):
     """S12A.8: a keypoint recorded at float quality is a keypoint the robot
     will drive to and miss. MUTATION: accept any fix and F06 stores a

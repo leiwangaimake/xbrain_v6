@@ -42,6 +42,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from xbrain.common.enums import FENCE_ROLE
 from xbrain.common.errors import E_GEO_INVALID, E_GEO_TOO_LARGE
 from xbrain.common.fence.roles import carries_speed_limit, hard_enforce_for_role
+from xbrain.p3_task.geo.waypoint_kind import waypoint_type_for_name  # 99 U119
 from xbrain.p3_task.ingest.geo_command import GeoCommandError
 
 # 11 S7.8.3: a route carries at most 5000 vertices; beyond that the answer is
@@ -244,8 +245,11 @@ def _waypoint(obj: Dict[str, Any]) -> ParsedObject:
         # S7.8.1 has no closed set for the waypoint TYPE column (poi/dock/home/
         # gate/...); it is descriptive, so an unrecognised value is stored as
         # given rather than refused. poi is the neutral default for a spot the
-        # operator just named.
-        "type": obj.get("wtype") or geom.get("type") or "poi",
+        # operator just named. 99 U119: the NAME wins over a sent type for the
+        # two role names (返航终点站 -> home, 充电桩 / 充电站 -> dock), so an
+        # HMI or cloud create follows the same rule as voice F06.
+        "type": (waypoint_type_for_name(name) or obj.get("wtype")
+                 or geom.get("type") or "poi"),
         "rtk_lat": lat, "rtk_lon": lon, "rtk_alt": geom.get("alt"),
         "yaw_deg": geom.get("yaw_deg"),
         "arrival_radius": float(radius),
