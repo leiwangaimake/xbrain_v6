@@ -133,6 +133,18 @@ class TeachRuntime:
         self._teleop: Optional[Dict[str, Any]] = None
         self._last_moving_mono_s: float = -1e9
 
+    # ------------------------------------------------------------ status --
+
+    @property
+    def active(self) -> bool:
+        """True while a session is arming, recording or paused -- the
+        "recording mode" of 99 U133, during which P3 takes no new task and
+        dispatches none (11 S12A.3 CMD-16). finalizing is not included: a
+        named session leaves it at once, and an unnamed one (HMI) is only
+        waiting for a name, with sampling stopped."""
+        return (self._session is not None
+                and self._session.state in ("arming", "recording", "paused"))
+
     # ------------------------------------------------------------ caches --
 
     def update_pose(self, data: Dict[str, Any], now_mono_s: float) -> None:
@@ -348,6 +360,9 @@ class TeachRuntime:
                              {"session_id": session.session_id,
                               "state": session.state})
         if cmd.action == "finish":
+            if session.name:
+                # 99 U133: a named session is saved by finish itself
+                return await self._finish_named(cmd, session, now_ms)
             return self._finish(cmd, session)
         if cmd.action == "save":
             return await self._save(cmd, session, now_ms)
@@ -400,6 +415,15 @@ class TeachRuntime:
                  "missing": [k for k, v in (("teach.sample_hz", self._sample_hz),
                                             ("teach.min_dist_m", self._min_dist_m))
                              if v is None]})
+        name = cmd.start.get("name") or ""
+        if name:
+            # 99 U133: a named start binds the name now, so a taken one is
+            # refused before the operator records anything under it. Only
+            # live rows count (a tombstone gives its name up, S7.11.4).
+            await self._ensure_name_free(
+                self._geo_conn if cmd.start["kind"] == "route" else self._fence_conn,
+                "routes" if cmd.start["kind"] == "route" else "fences",
+                name, False)
         missing = self.missing_sources()
         if missing:
             # Design point 2: an undeterminable gate is a refusal that names
@@ -422,7 +446,8 @@ class TeachRuntime:
         session_id = "ts-%s-%04d" % (self._boot_id, len(self._acks) + 1)
         self._session = TeachSession(
             session_id=session_id, kind=cmd.start["kind"], state="arming",
-            name_hint=cmd.start["name_hint"] or "",
+            name_hint=cmd.start["name_hint"] or name,
+            name=name,
             issuer_src=cmd.issuer_src, issuer_channel=cmd.issuer_channel,
             boot_id=self._boot_id, started_mono_s=now_mono_s,
             deadline_mono_s=now_mono_s + limits.max_duration_s,
@@ -476,6 +501,46 @@ class TeachRuntime:
                           "validation": {"ok": validation.ok,
                                          "issues": validation.issues}})
 
+    async def _finish_named(self, cmd: TeachCommand, session: TeachSession,
+                            now_ms: int) -> Dict[str, Any]:
+        """99 U133 "退出即保存": stop sampling and save under the start name in
+        one step. Geometry that cannot be saved (S12A.7 blocking issue) closes
+        the session as invalid_geometry and says why -- leaving it in
+        finalizing would keep the operator in recording mode with nothing to
+        answer, which the "no second question" ruling rules out."""
+        session.apply("finish")
+        detail = await self.save_named(now_ms)
+        if detail.get("saved"):
+            return teach_ack(cmd.cmd_id, "accepted", "OK", detail)
+        return teach_ack(cmd.cmd_id, "rejected", E_TEACH_GEOMETRY, detail)
+
+    async def save_named(self, now_ms: int) -> Dict[str, Any]:
+        """Save the named session sitting in finalizing (finish, or the
+        max_duration auto-finish of expire()). Returns the ack detail with
+        saved True / False; never raises for bad geometry."""
+        session = self._session
+        if session is None or not session.name or session.state != "finalizing":
+            return {"saved": False, "reason": "no_named_session"}
+        validation = self._validate(session, activate=False)
+        if not validation.ok:
+            session.apply("discard")
+            session.close_reason = "invalid_geometry"
+            await self._clear_buffer(session.session_id)
+            detail = {"saved": False, "session_id": session.session_id,
+                      "state": "closed", "close_reason": "invalid_geometry",
+                      "name": session.name, "kind": session.kind,
+                      "point_count": self._recorder.point_count,
+                      "issues": validation.issues}
+            self._session = None
+            self._recorder = None
+            return detail
+        detail = await self._commit(session, session.name, overwrite=False,
+                                    activate=False, validation=validation,
+                                    now_ms=now_ms)
+        detail["saved"] = True
+        detail["kind"] = session.kind
+        return detail
+
     def _validate(self, session: TeachSession, *, activate: bool):
         points = self._recorder.latlon_points()
         if session.kind == "fence":
@@ -500,12 +565,21 @@ class TeachRuntime:
                 E_TEACH_GEOMETRY, "geometry validation failed",
                 {"session_id": session.session_id,
                  "issues": validation.issues})
-        name = cmd.save["name"]
+        return teach_ack(cmd.cmd_id, "accepted", "OK", await self._commit(
+            session, cmd.save["name"], overwrite=cmd.save["overwrite"],
+            activate=activate, validation=validation, now_ms=now_ms))
+
+    async def _commit(self, session: TeachSession, name: str, *,
+                      overwrite: bool, activate: bool, validation,
+                      now_ms: int) -> Dict[str, Any]:
+        """Write the session's geometry as a route or a draft fence and close
+        the session; returns the ack detail. Shared by save (F03 / F09) and
+        the named finish of 99 U133, so both write exactly the same rows."""
         points = merge_degenerate(self._recorder.latlon_points())
         if session.kind == "route":
             geo_id = await self._mint_id(self._geo_conn, "routes", "r-", name)
             await self._ensure_name_free(self._geo_conn, "routes", name,
-                                         cmd.save["overwrite"])
+                                         overwrite)
             await commit_route(self._geo_conn, route_id=geo_id, name=name,
                                path_points=points, now_ms=now_ms,
                                state="active", created_by="teach")
@@ -513,7 +587,7 @@ class TeachRuntime:
         else:
             geo_id = await self._mint_id(self._fence_conn, "fences", "f-", name)
             await self._ensure_name_free(self._fence_conn, "fences", name,
-                                         cmd.save["overwrite"])
+                                         overwrite)
             # A recorded fence is a forbid zone by default: the operator drove
             # around something to exclude it. An allow (keep-in) fence is the
             # camp boundary and is set deliberately through cmd/geo, where the
@@ -537,7 +611,7 @@ class TeachRuntime:
                   "activated": False}
         self._session = None
         self._recorder = None
-        return teach_ack(cmd.cmd_id, "accepted", "OK", detail)
+        return detail
 
     async def _ensure_name_free(self, conn, table: str, name: str,
                                 overwrite: bool) -> None:
@@ -680,6 +754,7 @@ class TeachRuntime:
             "schema": "teach_state_v1",
             "session": {"session_id": s.session_id, "state": s.state,
                         "kind": s.kind, "name_hint": s.name_hint,
+                        "name": s.name,     # 99 U133 bound name ("" = none)
                         "issuer": {"src": s.issuer_src,
                                    "channel": s.issuer_channel},
                         "orphan": False, "recovered": s.recovered,

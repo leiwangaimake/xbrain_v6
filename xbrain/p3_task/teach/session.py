@@ -120,6 +120,9 @@ class TeachSession:
     kind: str                       # route | fence
     state: str = "idle"
     name_hint: str = ""
+    # 99 U133: the name bound at start ("" = none). A named session is saved
+    # under it by finish itself; an unnamed one still waits for save.
+    name: str = ""
     issuer_src: str = ""
     issuer_channel: str = ""
     boot_id: str = ""

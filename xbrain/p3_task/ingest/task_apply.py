@@ -42,6 +42,7 @@ from dataclasses import replace
 from typing import Any, Dict, List, Optional
 
 from xbrain.common.errors import (
+    E_BUSY,
     E_INTERNAL,
     E_NOT_FOUND,
     E_TASK_STATE,
@@ -80,9 +81,13 @@ _PAUSE_REASON = "operator_pause"
 class TaskContext:
     """The live handles an applier may touch."""
 
-    def __init__(self, task_conn, dao=None) -> None:
+    def __init__(self, task_conn, dao=None, teach_busy=None) -> None:
         self.task_conn = task_conn
         self.dao = dao
+        # 99 U133 / 11 S12A.3 CMD-16: a callable answering "is a recording
+        # session in recording mode?". None = no recording in this process
+        # (tests of the task path alone); production wires TeachRuntime.active.
+        self.teach_busy = teach_busy
 
 
 async def handle_task_payload(payload: Dict[str, Any], ctx: TaskContext, *,
@@ -227,6 +232,11 @@ async def _submit(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
     the id match starts working and the name match becomes the fallback it was
     meant to be, rather than the only thing that finds anything.
     """
+    if ctx.teach_busy is not None and ctx.teach_busy():
+        # 11 S12A.3 CMD-16 (never implemented until 99 U133): no new task
+        # while a recording runs -- the robot is the operator's keyboard's.
+        raise TaskCommandError(E_BUSY, "a recording session is active",
+                               {"reason": "teach_session_active"})
     # 99 U131: a route-less B04 repeat gets its route here, before anything
     # is written; no completed patrol refuses the whole submit.
     cmd = await _fill_repeat_route(cmd, ctx)

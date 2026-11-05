@@ -199,6 +199,9 @@ def _parse_start(raw: Any) -> Dict[str, Any]:
             E_SCHEMA, f"start.require_fix {require_fix!r} is not allowed")
     return {"kind": kind,
             "name_hint": _name(raw.get("name_hint"), "start.name_hint", False),
+            # 99 U133: the session's NAME. Given -> it is bound at start (a
+            # taken name is refused then) and finish saves under it directly.
+            "name": _name(raw.get("name"), "start.name", False),
             "sample": raw.get("sample") if isinstance(raw.get("sample"), dict)
             else None,
             "require_fix": require_fix,

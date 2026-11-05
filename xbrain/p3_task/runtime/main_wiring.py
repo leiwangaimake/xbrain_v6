@@ -701,7 +701,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # 11 S7.2: the contract-shaped cmd/task path. Same connection and
             # same DAO the scheduler uses -- P3 has one db thread (15 S2.1), so
             # an HMI cancel serialises with the tick rather than racing it.
-            task_ctx = TaskContext(task_conn=conn, dao=dao)
+            # 99 U133: submits are refused while a recording runs (CMD-16)
+            task_ctx = TaskContext(task_conn=conn, dao=dao,
+                                   teach_busy=lambda: teach.active)
 
             #: task_id of the push the ack window is currently waiting on, so
             #: a retry knows what to re-push and a failure knows what to fail.
@@ -1067,12 +1069,24 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         if expired:
                             _logger.warning("p3 teach session auto-finished: %s",
                                             expired)
+                            # 99 U133: a named session is saved at once, as
+                            # an operator's finish would be
+                            _auto = await teach.save_named(_now_wall_ms())
+                            if _auto.get("reason") != "no_named_session":
+                                last_teach = 0.0
+                                last_geo = last_fence = 0.0
                     except Exception as exc:      # noqa: BLE001
                         _logger.error("p3 teach sampling failed: %s", exc)
                     while not teach_queue.empty():
+                        # S12A.3 arming check 2 needs the running task types;
+                        # until 99 U133 none were passed, so the check never
+                        # fired in production.
+                        _rcur = await conn.execute(
+                            "SELECT task_type FROM tasks WHERE state='running'")
+                        _running = tuple(r[0] for r in await _rcur.fetchall())
                         t_ack = await teach.handle(
                             teach_queue.get_nowait(), now_mono_s=now_mono_s,
-                            now_ms=_now_wall_ms())
+                            now_ms=_now_wall_ms(), running_task_types=_running)
                         teach_ack_pub.put(json.dumps(
                             t_ack, ensure_ascii=False).encode("utf-8"))
                         # A save writes geometry, so refresh the map broadcasts.
@@ -1165,6 +1179,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             _logger.error("p3 ES-2 suspend failed: %s", exc)
                     elif _takeover:
                         # 15 S4.1A: no new task is dispatched during B / D.
+                        pass
+                    elif teach.active:
+                        # 11 S12A.3 CMD-16 / 99 U133: nothing is dispatched
+                        # while a recording runs; queued and timed tasks wait
+                        # until it ends (a timed patrol firing mid-recording
+                        # would drive off under the operator's keyboard).
                         pass
                     else:
                         try:
