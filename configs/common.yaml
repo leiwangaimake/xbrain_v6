@@ -301,6 +301,13 @@ common:
       lat: null
       lon: null
       alt: null
+    # 99 U127 / U130 (user ruling 2026-11-05 "5 米"): a waypoint within this
+    # distance of a route polyline (segments, not only vertices) belongs to the
+    # route. P3 follows that route on a goto (route.membership_m), P4 answers
+    # "which waypoints are on route X / which route is X on" (geo.route_
+    # membership_m) -- ONE value so navigation and the answer never disagree.
+    # Computed live, never stored. > 0.
+    route_membership_m: 5.0
 
   # -- 标定 (10 S5.4.5 calib 行; 权威 11 S10.1.1 / S10.4) -------------------
   # 唯一定义处是 calib/{robot_id}.yaml (L4b), 每台车实测后填. 本文件只声明键位.

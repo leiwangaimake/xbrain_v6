@@ -514,9 +514,11 @@ def test_the_source_covers_every_section_the_design_names():
     # number standing in for the thing it measured.
     # `timezone` is the 13th top-level key (16 S14 v1.2, 2026-08-16): the L6
     # reference to common.timezone that G24 query_time formats local time with.
+    # `geo` is the 14th (2026-11-05, 99 U130): the reference to
+    # common.geo.route_membership_m the G48 / G49 membership answers use.
     expected = {"asr_post", "bypass", "intent", "prompt", "grammar", "gateway",
                 "auth", "session", "recording", "confirm", "chitchat", "cmdset",
-                "timezone"}
+                "timezone", "geo"}
     # Top level only. Going deeper would duplicate the design document key by
     # key here, and the copy would then be the thing that has to be kept in step
     # -- exactly the second-source-of-truth problem the whole configuration

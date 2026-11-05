@@ -683,6 +683,10 @@ _LANDED = {
     # 10 S5.4.5 recording row. Before it the key did not exist and P3 passed
     # None, so every recorded patrol was refused at push time.
     "common.recording.arrive_radius_m": 1.0,
+    # 99 U127 / U130 (user ruling 2026-11-05 "5 米"): a waypoint within this
+    # distance of a route polyline belongs to it; P3 navigation and P4 queries
+    # share the one key. Authorised by its own 10 S5.4.5 row.
+    "common.geo.route_membership_m": 5.0,
 }
 
 

@@ -369,3 +369,10 @@ cmdset:
 #     不读本源(10 S5.4.1). 读取侧 xbrain/p4_agent/__main__.py 启动时
 #     is_valid_tz 校验, 不可解析即拒绝启动, 不静默回落 UTC.
 timezone: ${common.timezone}
+
+# -- 路径归属 (取值, 非定义) ------------------------------------------------
+#   "XX路径上有哪些航点 / XX航点在哪条路径上" (G48 / G49, 99 U130) 的判定
+#   距离: 航点到路径折线 <= 本值即属于该路径. 与 P3 导航用同一个 common 键,
+#   两边结论永远一致. 缺失 / null / <= 0 时 p4 拒绝启动.
+geo:
+  route_membership_m: ${common.geo.route_membership_m}

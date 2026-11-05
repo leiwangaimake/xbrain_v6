@@ -256,6 +256,8 @@ _P4: Dict[str, Any] = {
     "bypass.estop": anything(),                      # ref -> estop word list
     "bypass.prone": anything(),                      # ref -> prone word list
     "bypass.stand": anything(),                      # ref -> stand word list
+    # route membership distance (99 U130): reference to common.geo.route_membership_m
+    "geo.route_membership_m": anything(),            # ref; shape checked at p4 startup
     # intent routing (16 S5)
     # 2026-08-10 CFG-FZ-18-b: intent.keyword_rules removed. The path is
     # provided by common.cmdset.intents_file (canonical name from 10
