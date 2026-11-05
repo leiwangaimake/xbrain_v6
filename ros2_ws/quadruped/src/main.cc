@@ -44,6 +44,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -126,8 +127,18 @@ std::string read_boot_id() {
   return id.substr(0, 8);
 }
 
+// L5 rid override, applied right after load so describe_config and every key
+// below see the effective rid (see apply_robot_id_override).
+void apply_env_rid(quadruped::QuadrupedConfig& cfg) {
+  if (quadruped::apply_robot_id_override(cfg, std::getenv("XBRAIN_ROBOT_ID"))) {
+    std::printf("quadruped_m20: XBRAIN_ROBOT_ID overrides rid: %s\n",
+                cfg.robot_id.c_str());
+  }
+}
+
 int run(const std::string& path) {
-  const quadruped::QuadrupedConfig cfg = quadruped::load_quadruped_config(path);
+  quadruped::QuadrupedConfig cfg = quadruped::load_quadruped_config(path);
+  apply_env_rid(cfg);
   // The effective values, once, at startup (13 DDS-9 / CB-4). This is the only
   // cheap way to tell a misconfigured domain from a dead network later.
   std::printf("config: %s\n", path.c_str());
@@ -806,7 +817,8 @@ int main(int argc, char** argv) {
       (argc >= 3) ? std::string(argv[2])
                   : std::string(quadruped::default_resolved_path());
   try {
-    const quadruped::QuadrupedConfig cfg = quadruped::load_quadruped_config(path);
+    quadruped::QuadrupedConfig cfg = quadruped::load_quadruped_config(path);
+    apply_env_rid(cfg);
     std::printf("config: %s\n", path.c_str());
     std::fputs(quadruped::describe_config(cfg).c_str(), stdout);
     return kExitOk;

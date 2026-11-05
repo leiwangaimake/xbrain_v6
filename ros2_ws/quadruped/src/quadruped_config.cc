@@ -94,6 +94,21 @@ const char* default_resolved_path() {
   return "/opt/xbrain_v6/data/run/resolved/quadruped.yaml";
 }
 
+bool apply_robot_id_override(QuadrupedConfig& cfg, const char* env_rid) {
+  if (env_rid == nullptr || env_rid[0] == '\0') return false;
+  const std::string rid(env_rid);
+  // Same gate as the file value: the env var is a second source of one key,
+  // and a malformed rid fails the same silent way whichever source it came from.
+  if (!is_valid_robot_id(rid)) {
+    throw ConfigError(
+        "quadruped config: XBRAIN_ROBOT_ID \"" + rid + "\" does not match "
+        "[a-z0-9_-]{1,32} (11 S2.2.11 FLT-02). It overrides robot_id, the "
+        "{rid} segment of every key this process uses");
+  }
+  cfg.robot_id = rid;
+  return true;
+}
+
 QuadrupedConfig load_quadruped_config(const std::string& path) {
   QuadrupedConfig cfg;
   // yaml_lite throws std::runtime_error; translate at this one boundary so

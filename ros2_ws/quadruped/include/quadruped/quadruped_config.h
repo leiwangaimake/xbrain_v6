@@ -296,6 +296,20 @@ struct QuadrupedConfig {
 // * path is the RESOLVED snapshot, not the source config.
 QuadrupedConfig load_quadruped_config(const std::string& path);
 
+// L5 rid override: configs/common.yaml robot_id is "可被 XBRAIN_ROBOT_ID 覆盖"
+// (10 S5.4.3, one of the three L5 whitelist keys). chassis_relay and the
+// Python stack already honour it; without it here, one env var renames every
+// process but this one, and its keys then match nothing (2026-10-24, .1.26:
+// rid=dev against a gj-001 stack -- estop probe unanswered, no chassis state
+// uplink, no cmd_vel reaching the chassis, and every process reporting ok).
+// * env_rid null or empty -> cfg untouched, returns false.
+// * otherwise the value passes the same [a-z0-9_-]{1,32} gate the loader
+//   applies (it is a second source of the same key) and replaces robot_id;
+//   a malformed value throws ConfigError and leaves cfg untouched.
+// * main() passes std::getenv("XBRAIN_ROBOT_ID"); taking the value as an
+//   argument keeps this testable without touching the process environment.
+bool apply_robot_id_override(QuadrupedConfig& cfg, const char* env_rid);
+
 // Default resolved-snapshot location (10 S5.4.1). Exposed as a function rather
 // than a macro so a test can print it without the preprocessor.
 const char* default_resolved_path();

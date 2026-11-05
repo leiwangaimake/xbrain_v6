@@ -37,6 +37,7 @@
 #include <fstream>
 #include <string>
 
+using quadruped::apply_robot_id_override;
 using quadruped::ConfigError;
 using quadruped::load_quadruped_config;
 using quadruped::QuadrupedConfig;
@@ -699,6 +700,31 @@ int main(int argc, char** argv) {
         mutate("      max_vx_mps: 2.0\n",
                "      max_vx_mps: ${common.spec.max_vx_mps}\n"));
     CHECK(throws([&] { load_quadruped_config(p); }));
+  }
+
+  // ---- XBRAIN_ROBOT_ID overrides the snapshot rid (L5, 10 S5.4.3) --------
+  //
+  // The dev snapshot carries rid=dev; the stack is started with
+  // XBRAIN_ROBOT_ID=gj-001. Without the override this process alone keeps
+  // dev and every key it uses matches nothing -- measured 2026-10-24 on .1.26.
+  {
+    const std::string p = write_temp("q_rid_env.yaml", kGood);
+    QuadrupedConfig c = load_quadruped_config(p);
+    // Unset and empty both mean "no override" -- an exported-but-empty
+    // variable must not blank the rid.
+    CHECK(!apply_robot_id_override(c, nullptr));
+    CHECK(c.robot_id == "gj-001");
+    CHECK(!apply_robot_id_override(c, ""));
+    CHECK(c.robot_id == "gj-001");
+    // A valid value wins over the snapshot.
+    CHECK(apply_robot_id_override(c, "gj-002"));
+    CHECK(c.robot_id == "gj-002");
+    // A malformed value is refused with the same gate as the file, and the
+    // loaded rid survives the refusal.
+    QuadrupedConfig d = load_quadruped_config(p);
+    CHECK(throws([&] { apply_robot_id_override(d, "GJ-002"); }));
+    CHECK(throws([&] { apply_robot_id_override(d, "gj/002"); }));
+    CHECK(d.robot_id == "gj-001");
   }
 
   // ---- a missing file is an error, never an empty config ------------------
