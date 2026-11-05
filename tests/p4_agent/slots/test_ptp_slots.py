@@ -112,3 +112,39 @@ def test_a_change_without_name_is_not_a_rename():
 def test_a_time_on_delete_is_reported_for_refusal():
     got = parse_ptp("下午3点删除1号测试点")  # timed delete
     assert got.kind == "delete" and got.when is not None  # the caller refuses
+
+
+# -- 99 U121: a named patrol ------------------------------------------------
+@pytest.mark.parametrize("text,name,loops", [
+    ("沿1号路径巡逻", "1号路径", None),  # route first; the 路径 in the name is kept
+    ("现在沿着东环线巡逻3圈", "东环线", 3),  # prefix + digit laps
+    ("巡逻1号路径", "1号路径", None),  # verb first
+    ("开始巡逻东门路线", "东门路线", None),  # 开始
+    ("去1号路径巡逻两遍", "1号路径", 2),  # 去 X 巡逻 + CJK laps
+    ("沿1号路径巡逻十二圈吧", "1号路径", 12),  # 十二 + particle
+])
+def test_named_patrol(text, name, loops):
+    """MUTATION: a lazy name with an optional bare 路径 cuts "1号路径" to
+    "1号"; no _patrol before _GOTO and "去X巡逻" is lost; a lap parser that
+    ignores CJK numerals reads 两 / 十二 as None."""
+    got = parse_ptp(text)  # one parse
+    assert got is not None and got.kind == "patrol"  # a patrol
+    assert got.name == name and got.loops == loops  # route as said, laps
+
+
+def test_timed_named_patrol_keeps_its_time():
+    """B03 shape through the same rule: the time prefix is split off and
+    reported. MUTATION: no time stage for patrol and the route name holds
+    "下午3点沿..."."""
+    got = parse_ptp("下午3点沿1号路径巡逻")  # timed
+    assert got is not None and got.kind == "patrol" and got.name == "1号路径"
+    assert got.when is not None and got.when.at_local == "15:00"  # the time
+
+
+@pytest.mark.parametrize("text", [
+    "巡逻", "开始巡逻", "开始巡逻一圈", "按这条路径巡逻", "去那边巡逻", "巡逻什么",
+])
+def test_patrol_without_a_route_name_is_not_ours(text):
+    """No route named -> None, so B02's own leg asks which route.
+    MUTATION: take a lap count / 这条路径 / a question as the route name."""
+    assert parse_ptp(text) is None  # left to the keyword layer

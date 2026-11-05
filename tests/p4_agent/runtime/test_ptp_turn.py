@@ -133,3 +133,35 @@ def test_rename(text, gid, new):  # case body
     geo = frames["cmd/geo"]  # 11 S7.9
     assert d.intent_id == "F14" and geo["action"] == "rename"  # F14
     assert geo["geo_id"] == gid and geo["obj"] == {"name": new}  # canonical new name
+
+
+# -- 99 U121: a named patrol --------------------------------------------------
+@pytest.mark.parametrize("text", ["沿东门路线巡逻", "巡逻东门路线", "现在去东门路线巡逻"])
+def test_named_patrol_dispatches_the_route_id(text):  # case body
+    """MUTATION: leave patrol to the keyword layer -> no route slot -> the
+    turn ends in "which route?" and no cmd/task is sent (the 11-05 finding)."""
+    d, frames = _turn(text)  # one turn
+    assert d.kind == "dispatch" and d.intent_id == "B02"  # B02 dispatched
+    task = frames["cmd/task"]["task"]  # 11 S7.2
+    assert task["type"] == "patrol" and task["route_id"] == "r-east"  # the catalogue id
+    assert "not_before_ts" not in task  # untimed
+
+
+def test_timed_named_patrol_carries_not_before_ts():  # case body
+    """B03 through the rule layer. MUTATION: drop the patrol time branch and
+    the patrol starts now."""
+    d, frames = _turn("下午3点沿东门路线巡逻")  # timed patrol
+    epoch = datetime(2026, 11, 4, 15, 0, tzinfo=ZoneInfo(_TZ)).timestamp()  # 15:00 today
+    assert frames["cmd/task"]["task"]["not_before_ts"] == epoch  # scheduled
+    assert d.tts_text == "好的,今天15点沿东门路线巡逻"  # restated with the time
+
+
+@pytest.mark.parametrize("text,said", [  # patrol refusals
+    ("沿5号路线巡逻", "没找到5号路线, 可以问我有哪些路径"),
+    ("沿东门路线巡逻3圈", "目前只能巡逻一圈, 请去掉圈数再说一遍"),
+])
+def test_patrol_refusals_send_nothing(text, said):  # case body
+    """MUTATION: ignore the lap count (P3 pushes loop_total = 1, so 3 laps
+    would silently run one) / say "位置点" for a route."""
+    d, frames = _turn(text)  # one turn
+    assert not frames and d.tts_text == said  # said why, sent nothing

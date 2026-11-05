@@ -178,9 +178,15 @@ _PTP_CN = {
     "no_target": "没有说要删除哪个点, 没有删除",
     "same_name": "新名字和原来一样, 没有改名",
     "not_found": "没找到{name}, 可以问我有哪些位置点",
+    "not_found_route": "没找到{name}, 可以问我有哪些路径",  # U121 patrol
     "ack_goto": "好的,{when}去{name}",
     "ack_delete": "好的,删除{name}",
     "ack_rename": "好的,把{name}改名为{new}",
+    # 99 U121 named patrol. P3 pushes every patrol with loop_total = 1
+    # (route_push_runtime), so a spoken lap count above one cannot be honoured
+    # yet; it is refused out loud instead of silently running one lap.
+    "ack_patrol": "好的,{when}沿{name}巡逻",
+    "laps_unsupported": "目前只能巡逻一圈, 请去掉圈数再说一遍",
 }
 
 #: F06 / F10: the captures whose name must follow their keyword.
@@ -979,7 +985,8 @@ class TurnOrchestrator:
     def _route_ptp(self, ptp: PtpParse, text: str,
                    session: OrchestratorSession,
                    now_mono_ms: int) -> TurnDecision:
-        """Route a rule-parsed PTP command (99 U110) to B01 / F12 / F14.
+        """Route a rule-parsed PTP command (99 U110 / U121) to B01 / B02 /
+        F12 / F14.
 
         Everything the sentence said is already a slot; the catalogue decides
         whether the name exists (B01 in _build_task_command, F12 / F14 in
@@ -1011,6 +1018,28 @@ class TurnOrchestrator:
             return self._route_entry(self._registry.by_id("B01"), text,
                                      session, now_mono_ms, layer="ptp_rule",
                                      rule_slots=slots)
+        if ptp.kind == "patrol":
+            # 99 U121: the route name is resolved against the catalogue in
+            # _build_task_command (GEO_REF_SLOT patrol_route), exactly as a
+            # goto's waypoint is. Lap counts above one are refused: P3 pushes
+            # loop_total = 1 for every patrol today.
+            if ptp.loops is not None and ptp.loops != 1:
+                return _reply("B02", "laps_unsupported")
+            pslots: Dict[str, Any] = {"route": ptp.name}
+            if ptp.when is not None:
+                if self._wall_now_fn is None:
+                    return _reply("B02", "no_wall_clock")
+                try:
+                    pslots["not_before_ts"] = resolve_epoch(
+                        ptp.when, self._wall_now_fn(), self._site_timezone)
+                except TimeParseError as exc:
+                    return _reply("B02", "past" if "passed" in str(exc)
+                                  else "too_far")
+            self._turn_ptp_ack = _PTP_CN["ack_patrol"].format(
+                when=_spoken_when(ptp.when), name=ptp.name)
+            return self._route_entry(self._registry.by_id("B02"), text,
+                                     session, now_mono_ms, layer="ptp_rule",
+                                     rule_slots=pslots)
         intent_id = "F12" if ptp.kind == "delete" else "F14"
         if ptp.when is not None:
             return _reply(intent_id, "timed_geo")
@@ -1435,10 +1464,11 @@ class TurnOrchestrator:
                     geo_ids[gtype] = _resolve_task_geo(
                         list(manifest["items"]), gtype, spoken.strip())
                 except GeoRequestError as exc:
-                    if gtype == "waypoint" and self._turn_ptp_ack is not None:
-                        # A rule-parsed goto names what it looked for.
-                        return merged, _PTP_CN["not_found"].format(
-                            name=spoken.strip())
+                    if self._turn_ptp_ack is not None:
+                        # A rule-parsed goto / patrol names what it looked for.
+                        return merged, _PTP_CN[
+                            "not_found" if gtype == "waypoint"
+                            else "not_found_route"].format(name=spoken.strip())
                     return merged, _F_REASON_CN.get(
                         str(exc), _NOT_FOUND_CN[gtype])
         try:
