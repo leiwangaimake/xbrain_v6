@@ -227,6 +227,10 @@ def test_runtime_rows_match_the_units_on_disk():
         "xbrain-ai-asr.service",
         "xbrain-llm.service",
         "xbrain-payload.service",
+        # Network-plane oneshot (10 NAT-1 / MED-1): installs the camera DNAT /
+        # SNAT rules and gates no XBRAIN unit (MED-C4), so it is not a stack
+        # stage. Validated by tests/deploy/test_media_plane.py (check_med.sh).
+        "xbrain-med-nat.service",
     }
     runtime_rows = {n for n, s, _, _ in UNITS if s in ("1", "2", "3")}
     on_disk = {p.name for p in UNIT_DIR.glob("xbrain-*.service")}

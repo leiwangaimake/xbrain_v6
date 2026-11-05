@@ -1,0 +1,30 @@
+# MED-1 -- xbrain-med-nat.service (PTZ cameras -> operator, 10 NAT-1)
+#
+# oneshot: installs the media-plane DNAT + SNAT + FORWARD rules at boot and
+# keeps them while the unit is active; stopping the unit removes them (own
+# chains only, see deploy/net/xbrain-med-nat.sh). It does not gate any XBRAIN
+# unit: a camera path that is down only removes the picture, it must never
+# hold the stack (MED-C4: media failures cannot slow, stop or preempt motion).
+#
+# Inputs: /etc/xbrain/med-nat.env (template deploy/net/med-nat.env). A missing
+# or wildcard input, or a FORWARD policy that is not DROP (docker absent), makes
+# ExecStart exit non-zero and the unit fail loudly in the journal. A failure
+# after rules started going in is rolled back by the script itself (an ERR
+# trap), because a failed oneshot start never runs ExecStop.
+[Unit]
+Description=XBRAIN v6 media-plane NAT for PTZ cameras (MED-1)
+Documentation=file:///opt/xbrain_v6/docs/
+# After docker: docker sets the FORWARD policy and inserts its own jumps at the
+# head of FORWARD; ours is inserted after it so the order is deterministic.
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=30
+ExecStart=/opt/xbrain_v6/deploy/net/xbrain-med-nat.sh apply
+ExecStop=/opt/xbrain_v6/deploy/net/xbrain-med-nat.sh remove
+
+[Install]
+WantedBy=multi-user.target
