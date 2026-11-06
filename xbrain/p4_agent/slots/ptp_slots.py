@@ -121,13 +121,23 @@ _DEICTIC = frozenset({"这", "那", "这里", "那里", "这边", "那边", "这
 _QUESTION = ("吗", "呢", "什么", "哪", "怎么", "多少", "几", "为啥")  # question words
 
 
+#: 99 U143 (user ruling 2026-11-06 "支持定时"): what is left of a TIMED
+#: sentence after its time phrase that means "return home" (B08) or "go and
+#: charge at the nearest dock" (B09 with no name). Whole-rest matches only:
+#: a named dock ("去1号充电站") is the dock rule's, and an untimed "返航" stays
+#: on the B08 / B09 keyword path exactly as before.
+TIMED_RETURN = ("返航", "回来", "回到起点", "返回起点", "回去")
+TIMED_CHARGE = ("充电", "去充电", "回去充电", "回充电", "回桩", "回充电桩",
+                "去充电桩", "去充电站", "回充电站")
+
+
 @dataclass(frozen=True)  # immutable result
 class PtpParse:  # one parsed command
     """One parsed PTP command. kind is goto / delete / rename; name is the
     keypoint as said (goto / delete) or the OLD name (rename); new is the new
     name (rename only); when is a leading time (goto may carry one; for
     delete / rename it is reported so the caller can refuse it)."""
-    kind: str  # goto / delete / delete_route / delete_fence / activate_fence / rename / patrol / repeat / dock / route_points / point_routes / nearest_point / distance_to / route_length
+    kind: str  # goto / delete / delete_route / delete_fence / activate_fence / rename / patrol / repeat / dock / route_points / point_routes / nearest_point / distance_to / route_length / return_home / charge
     name: str  # the keypoint (old name for rename)
     new: Optional[str] = None  # rename only
     when: Optional[TimeExpr] = None  # a leading time, if any
@@ -332,6 +342,10 @@ def parse_ptp(text: str) -> Optional[PtpParse]:
     only a goto may carry one.
     """
     for when, t in _stages(text):  # least stripped first
+        if when is not None and t in TIMED_RETURN:  # 99 U143: "下午3点返航"
+            return PtpParse("return_home", "", when=when)  # B08, scheduled
+        if when is not None and t in TIMED_CHARGE:  # 99 U143: "10分钟后去充电"
+            return PtpParse("charge", "", when=when)  # B09 nearest dock, scheduled
         m = _RENAME.match(t)  # rename first: it also holds an object
         if m and not _swallowed_lead(m.group("old")):  # the lead was stripped
             old = _head(m.group("old"))  # old name without a type word

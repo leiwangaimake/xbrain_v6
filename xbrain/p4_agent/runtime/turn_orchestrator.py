@@ -192,6 +192,8 @@ _PTP_CN = {
     "patrol_running": "当前巡逻结束后再说",
     # 99 U128: B09 with a named charging point, and B08 with no home point.
     "ack_dock": "好的,{when}去{name}",
+    "ack_return": "好的,{when}返航",  # 99 U143 timed B08
+    "ack_charge": "好的,{when}回充电桩",  # 99 U143 timed B09 (nearest dock)
     "no_home": "还没有定义返航终点站, 请先把一个位置保存为返航终点站",
     # 99 U130: G48 / G49 route-membership answers.
     "geo_unloaded": "路径数据还没有加载好, 请稍后再问",
@@ -1216,6 +1218,27 @@ class TurnOrchestrator:
             return self._route_entry(self._registry.by_id("B09"), text,
                                      session, now_mono_ms, layer="ptp_rule",
                                      rule_slots=dslots)
+        if ptp.kind in ("return_home", "charge"):
+            # 99 U143 (user ruling 2026-11-06 "支持定时"): "下午3点返航" /
+            # "10分钟后去充电". The parser yields these kinds ONLY with a time,
+            # so this branch always schedules. Until then the time was dropped
+            # and the robot left at once while saying "好的,返航". B08 keeps its
+            # home-point check (_build_task_command); B09 with no name goes to
+            # the nearest dock, which P3 picks when the time comes.
+            iid = "B08" if ptp.kind == "return_home" else "B09"
+            if self._wall_now_fn is None:
+                return _reply(iid, "no_wall_clock")
+            try:
+                hslots: Dict[str, Any] = {"not_before_ts": resolve_epoch(
+                    ptp.when, self._wall_now_fn(), self._site_timezone)}
+            except TimeParseError as exc:
+                return _reply(iid, "past" if "passed" in str(exc) else "too_far")
+            self._turn_ptp_ack = _PTP_CN[
+                "ack_return" if ptp.kind == "return_home" else "ack_charge"].format(
+                    when=_spoken_when(ptp.when))
+            return self._route_entry(self._registry.by_id(iid), text, session,
+                                     now_mono_ms, layer="ptp_rule",
+                                     rule_slots=hslots)
         if ptp.kind == "patrol":
             # 99 U121: the route name is resolved against the catalogue in
             # _build_task_command (GEO_REF_SLOT patrol_route), exactly as a

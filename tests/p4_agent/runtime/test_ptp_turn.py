@@ -253,6 +253,54 @@ def test_return_with_a_home_point_is_sent():  # case body
     assert frames["cmd/task"]["task"]["type"] == "return_home"  # sent
 
 
+# -- 99 U143: timed return / charge ("支持定时", user 2026-11-06) ----------------
+_T15 = datetime(2026, 11, 4, 15, 0, tzinfo=ZoneInfo(_TZ)).timestamp()  # 15:00 today
+
+
+@pytest.mark.parametrize("text,ttype,epoch,said", [
+    ("下午3点返航", "return_home", _T15, "好的,今天15点返航"),  # clock time
+    ("下午3点回来", "return_home", _T15, "好的,今天15点返航"),  # the other B08 word
+    ("10分钟后返航", "return_home", _NOW + 600, "好的,10分钟后返航"),  # delay
+    ("下午3点去充电", "charge", _T15, "好的,今天15点回充电桩"),  # nearest dock
+    ("10分钟后回充电桩", "charge", _NOW + 600, "好的,10分钟后回充电桩"),
+])
+def test_timed_return_and_charge_are_scheduled(text, ttype, epoch, said):  # case body
+    """Until 99 U143 the time was dropped and the robot left AT ONCE while
+    saying "好的,返航". MUTATION: drop the new parse kinds -> not_before_ts
+    absent -> red; untimed ack -> red."""
+    d, frames = _turn(text, items=_ITEMS + [_HOME])  # home defined
+    task = frames["cmd/task"]["task"]  # 11 S7.2
+    assert task["type"] == ttype and task["not_before_ts"] == epoch  # scheduled
+    assert "waypoint_id" not in task["params"]  # charge: the nearest dock, P3's call at the time
+    assert d.tts_text == said  # restated with the time
+
+
+@pytest.mark.parametrize("text", ["返航", "回充电桩"])
+def test_untimed_return_and_charge_still_go_now(text):  # case body
+    """MUTATION: route every return / charge through the timed kinds ->
+    resolve_epoch on no time -> red."""
+    d, frames = _turn(text, items=_ITEMS + [_HOME])  # home defined
+    assert "not_before_ts" not in frames["cmd/task"]["task"]  # at once, as before
+
+
+@pytest.mark.parametrize("text,said", [
+    ("凌晨1点返航", "这个时间已经过了, 请换个时间"),  # 01:00 already passed at 10:00
+    ("25小时后去充电", "定时只能在一天以内, 或一周内某天的某个时刻"),  # over a day
+])
+def test_timed_return_refusals(text, said):  # case body
+    """The same bounds as a timed goto (16 S8.0.4). MUTATION: skip the
+    resolve refusal -> a frame is sent -> red."""
+    d, frames = _turn(text, items=_ITEMS + [_HOME])  # one turn
+    assert not frames and d.tts_text == said  # said why, sent nothing
+
+
+def test_timed_return_without_a_home_point_is_refused():  # case body
+    """The B08 home check holds for a timed return too. MUTATION: bypass
+    _build_task_command -> a return_home is scheduled with nowhere to go."""
+    d, frames = _turn("下午3点返航")  # no 返航终点站
+    assert not frames and "返航终点站" in d.tts_text  # refused at once, not at 15:00
+
+
 
 # -- 99 U130: G48 / G49 answered at once from the geometry ---------------------
 _LAT0, _LON0 = 31.0, 121.0  # a local origin
