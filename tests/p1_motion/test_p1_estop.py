@@ -309,3 +309,35 @@ def test_a_relmove_rearms_the_latch_and_garbage_does_not():
         NavRuntime._on_relmove(_relmove_host(latch), _Sample(raw))
         assert not latch.is_active(), raw  # 新运动指令即钥匙
         assert latch.rearms == 1
+
+
+def _route_host(latch):
+    """The fields NavRuntime._on_route touches; the assembler takes any frame."""
+    import collections
+    import threading
+    import types
+    return types.SimpleNamespace(
+        _estop=latch, _lock=threading.Lock(), _counts={"route_rx": 0, "route_bad": 0},
+        _assembler=types.SimpleNamespace(accept=lambda body: None),
+        _route_q=collections.deque())
+
+
+@pytest.mark.parametrize("raw,lifts", [
+    (b'{"v": 1, "src": "p3_task", "data": {"op": "set", "rearm": true}}', True),  # the tagged push
+    (b'{"op": "set", "rearm": true}', True),  # bare body too
+    (b'{"op": "set"}', False),  # an ordinary push (automatic dispatch)
+    (b'{"op": "set", "rearm": "true"}', False),  # only a real boolean
+    (b'{"op": "clear", "rearm": true}', False),  # a clear is not motion
+])
+def test_a_tagged_route_push_rearms_the_latch(raw, lifts):
+    """99 U149: P3 tags the first push after an operator resumed (11 S3.5A
+    rearm). It is a new motion command like a relmove (14 S3.7 / U35).
+    MUTATION: drop the rearm check -> the tagged push leaves the latch on
+    (every route after an estop aborts) -> red; re-arm on any set -> an
+    automatic push lifts it -> red."""
+    from xbrain.p1_motion.runtime.nav_wiring import NavRuntime
+    latch = _latch()
+    latch.on_estop(b'{"cmd_id": "es-1"}')
+    NavRuntime._on_route(_route_host(latch), _Sample(raw))
+    assert latch.is_active() is (not lifts)
+

@@ -501,6 +501,12 @@ class NavRuntime:
     def _on_route(self, sample: Any) -> None:
         doc = _load_json(sample)
         body = unwrap_body(doc)
+        # 99 U149 (11 S3.5A rearm): P3 tags the first push after an operator
+        # resumed a soft estop. It is a new motion command like a relative
+        # move (14 S3.7 / U35), so it lifts the latch the same way; without it
+        # every route after an estop was aborted on load and the task hung.
+        if isinstance(body, dict) and body.get("op") == "set" and body.get("rearm") is True:
+            self._estop.gate_intent()  # RUST THREAD: scalar writes only
         with self._lock:
             self._counts["route_rx"] += 1
             try:
