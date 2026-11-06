@@ -202,7 +202,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     )
     from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
     from xbrain.p3_task.route.laps import lap_spec_from_params
-    from xbrain.p3_task.route.push import RoutePushTrigger
+    from xbrain.p3_task.route.push import RoutePushTrigger, build_route_clear
     from xbrain.p3_task.runtime.progress_sink import apply_path_progress
     from xbrain.p3_task.runtime.route_push_runtime import (
         CMD_ROUTE_TOPIC,
@@ -755,8 +755,11 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     route_membership_m=route_membership_m)
                 if not res.pushed:
                     pushing["task_id"] = None
-                    await _fail_task_for_geometry(task_id, res.reason,
-                                                  E_GEO_INCOMPLETE, res.cause)
+                    # A retry / remap follows an earlier push of this task, so
+                    # P1 may hold it; a first dispatch never sent anything.
+                    await _fail_task_for_geometry(
+                        task_id, res.reason, E_GEO_INCOMPLETE, res.cause,
+                        withdraw=trigger is not RoutePushTrigger.RP1_DISPATCH)
 
             async def _push_route_on_dispatch(task_id: str) -> None:
                 """EX-2 RP-1. patrol pushes its route; goto pushes its route
@@ -766,6 +769,17 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 full = await dao.fetch_by_id(task_id)
                 if full is None:
                     return
+                # 15 S7.3 step 5: a task RESUMED from suspended already has its
+                # progress run open (RP-1 opened it at the first dispatch), so
+                # it is re-pushed as RP-2, which keeps that run. Until
+                # 2026-11-06 every dispatch was RP-1 and re-opened the run:
+                # UNIQUE patrol_progress.task_id, the tick raised, nothing was
+                # pushed and the resumed task sat `running` with P1 idle. It
+                # never showed while a pause left P1 driving the old route;
+                # the route clear on suspend (route_clear_needed) exposed it.
+                trigger = (RoutePushTrigger.RP2_REMAP
+                           if await progress_dao.fetch_active(task_id) is not None
+                           else RoutePushTrigger.RP1_DISPATCH)
                 route_geo_id = getattr(full, "route_geo_id", None)
                 if not route_geo_id and full.task_type in ("return_home", "charge"):
                     # 99 U119 / U128: return_home and charge are gotos to a
@@ -801,15 +815,14 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         # 15 S9.5.1: no target row -> E_NOT_FOUND. Failed,
                         # never left running with nothing moving.
                         await _fail_task_for_geometry(task_id, missing, E_NOT_FOUND,
-                                                      "target_missing")
+                                                      "target_missing", withdraw=False)
                         return
                     params = {"waypoint_id": gid}
                     _logger.info("p3 %s %s -> point %s", full.task_type,
                                  task_id, gid)
                     pushing.update(task_id=task_id, route_geo_id=None,
                                    goto_params=params)
-                    await _push_goto(task_id, params,
-                                     RoutePushTrigger.RP1_DISPATCH)
+                    await _push_goto(task_id, params, trigger)
                     return
                 if not route_geo_id:
                     if full.task_type != "goto":
@@ -817,8 +830,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     params = _goto_params(full)
                     pushing.update(task_id=task_id, route_geo_id=None,
                                    goto_params=params)
-                    await _push_goto(task_id, params,
-                                     RoutePushTrigger.RP1_DISPATCH)
+                    await _push_goto(task_id, params, trigger)
                     return
                 try:
                     # 99 U131: laps as admitted (V-8a checked them already;
@@ -828,7 +840,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 except ValueError as exc:
                     pushing["task_id"] = None
                     await _fail_task_for_geometry(task_id, str(exc), E_SCHEMA,
-                                                  "plan_refused")
+                                                  "plan_refused", withdraw=False)
                     return
                 pushing["task_id"] = task_id
                 pushing["route_geo_id"] = route_geo_id
@@ -838,7 +850,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     task_conn=conn, geo_conn=geo_conn,
                     snapshot_dao=snapshot_dao, progress_dao=progress_dao,
                     route_pub=route_pub, ack_window=ack_window,
-                    trigger=RoutePushTrigger.RP1_DISPATCH,
+                    trigger=trigger,  # RP-1, or RP-2 on a resume (above)
                     now_mono_ms=_now_mono_ms(), now_wall_ms=_now_wall_ms(),
                     # 15 S2.4.3: a recorded route (mode B) takes its arrive
                     # radius from common.recording.arrive_radius_m (99 U126,
@@ -854,7 +866,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 if not res.pushed:
                     pushing["task_id"] = None
                     await _fail_task_for_geometry(task_id, res.reason,
-                                                  E_GEO_INCOMPLETE, res.cause)
+                                                  E_GEO_INCOMPLETE, res.cause,
+                                                  withdraw=False)  # nothing in P1: first push, or a resume after the suspend clear
 
             async def _push_next_pass(task_id: str) -> None:
                 """99 U131 RP-5: the next pass of a multi-pass patrol, from
@@ -881,11 +894,34 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     lap_spec=None)  # the run stays open; only loop_index moved
                 if not res.pushed:
                     pushing["task_id"] = None
+                    # The previous pass ARRIVED, so P1 is idle: nothing to withdraw.
                     await _fail_task_for_geometry(task_id, res.reason,
-                                                  E_GEO_INCOMPLETE, res.cause)
+                                                  E_GEO_INCOMPLETE, res.cause,
+                                                  withdraw=False)
+
+            def _stop_motion(task_id: str) -> None:
+                """Withdraw P1's navigation mission for a task that just left
+                `running` (15 S7.2 step 1, 12 S4.2c.4): one cmd/motion/route
+                op=clear on the SAME publisher the pushes use, so it cannot
+                overtake a push sent before it nor be overtaken by the next
+                task's push sent after it (one publisher, reliable, ordered).
+
+                The ack window goes too when it belongs to this task. Without
+                that, a cancel inside the 3 s confirmation window reaches the
+                RA-3 retry branch of _on_ack_outcome, which re-pushes the whole
+                route -- the cancelled task's geometry sent again after the
+                clear (found reading the code on 2026-11-06)."""
+                if pushing["task_id"] == task_id:
+                    # Nothing is in flight for this task any more.
+                    pushing["task_id"] = None
+                    ack_window.reset()
+                route_pub.put(json.dumps(build_route_clear(),
+                                         ensure_ascii=False).encode("utf-8"))
+                _logger.info("p3 route clear sent for task %s", task_id)
 
             async def _fail_task_for_geometry(task_id: str, why: str,
-                                              code: str, cause: str) -> None:
+                                              code: str, cause: str, *,
+                                              withdraw: bool) -> None:
                 """15 S2.4.2 / S11.2: a task whose geometry could not be
                 delivered goes to `failed` with E_GEO_INCOMPLETE -- NOT
                 suspended (11 S4.4's suspend_reason closed set has no entry
@@ -914,7 +950,13 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     await conn.commit()
                     await _make_publish(
                         state_pub, _emit_task_event, _publish_task_state,
-                        fetch_terminal=_fetch_terminal_facts)(
+                        fetch_terminal=_fetch_terminal_facts,
+                        # withdraw: an earlier push of THIS task may be in P1
+                        # (RA-3 is a timeout, not a refusal). Required, no
+                        # default: a refusal at first dispatch sent nothing,
+                        # and a stray clear there would preempt a running
+                        # relative_move (CLAUDE.md 9.1A: no silent default).
+                        stop_motion=_stop_motion if withdraw else None)(
                             task_id, "running", "failed", "geo_push_failed")
                 except Exception as exc:      # noqa: BLE001
                     _logger.error("p3 geo-push failure handling failed: %s",
@@ -939,7 +981,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     await _fail_task_for_geometry(
                         task_id, "%s after %d attempt(s)"
                         % (outcome.ack.value, outcome.attempts),
-                        E_GEO_INCOMPLETE, "route_unconfirmed")
+                        E_GEO_INCOMPLETE, "route_unconfirmed",
+                        withdraw=True)  # RA-3 is a timeout: P1 may still load it
                     return
                 # Retry: the WHOLE route again, not the missing chunks --
                 # 11 S3.5A discards the whole set on a gap, so P1 holds no
@@ -964,7 +1007,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 if not res.pushed:
                     pushing["task_id"] = None
                     await _fail_task_for_geometry(task_id, res.reason,
-                                                  E_GEO_INCOMPLETE, res.cause)
+                                                  E_GEO_INCOMPLETE, res.cause,
+                                                  withdraw=True)  # an earlier push is out
 
             last_hb = time.monotonic()
             last_geo = 0.0            # 0 -> publish geo on the very first pass
@@ -1006,7 +1050,10 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 boot_id=_BOOT_ID,
                                 on_transition=_make_publish(
                                     state_pub, _emit_task_event,
-                                    fetch_terminal=_fetch_terminal_facts))
+                                    fetch_terminal=_fetch_terminal_facts,
+                                    # operator cancel / pause of the running
+                                    # task: the robot stops (2026-11-06).
+                                    stop_motion=_stop_motion))
                             task_ack_pub.put(json.dumps(
                                 ack, ensure_ascii=False).encode("utf-8"))
                             if ack.get("result") == "accepted":
@@ -1196,7 +1243,11 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 # 传错会查不到表而抛.
                                 await _make_publish(
                                     state_pub, _emit_task_event,
-                                    fetch_terminal=_fetch_terminal_facts)(
+                                    fetch_terminal=_fetch_terminal_facts,
+                                    # 15 S7.2 trigger 3: the estop holds P1
+                                    # now, but its release would let RNS
+                                    # resume a suspended task's mission.
+                                    stop_motion=_stop_motion)(
                                         _tid, "running", _to, _reason)
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p3 ES-2 suspend failed: %s", exc)
@@ -1216,7 +1267,11 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 on_transition=_make_publish(
                                     state_pub, _emit_task_event,
                                     _publish_task_state,
-                                    fetch_terminal=_fetch_terminal_facts),
+                                    fetch_terminal=_fetch_terminal_facts,
+                                    # preempt (15 S7.2 trigger 2): the clear
+                                    # goes out in-tick, ahead of the winner's
+                                    # push that follows the tick below.
+                                    stop_motion=_stop_motion),
                                 # 与 created_at 同一口径的墙钟(15 S9.5):
                                 # started_at 是给人看的下发时间, 由调用方生成
                                 # 而不是 driver 自己取 -- driver 里不应有第二
@@ -1422,7 +1477,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
 
 
 def _make_publish(state_pub, emit_task_event=None, publish_state=None,
-                  fetch_terminal=None):
+                  fetch_terminal=None, stop_motion=None):
     """Build the scheduler on_transition callback: publish each task state change on
     state/task (event + 1 Hz, 11 S2.2.2) so p5/HMI/cloud can rebuild the machine, log
     it, AND emit the 11 S6.2 task event (accept/reject/start/complete/fail) via
@@ -1437,7 +1492,22 @@ def _make_publish(state_pub, emit_task_event=None, publish_state=None,
 
     Publishing the whole state on every transition, rather than just the task that
     moved, is what makes `queue` and `suspended` correct: one task starting changes
-    the queue for all the others, and a delta of one task cannot express that."""
+    the queue for all the others, and a delta of one task cannot express that.
+
+    stop_motion(task_id) withdraws P1's navigation mission (cmd/motion/route
+    op=clear) when route_clear_needed says the task left `running` for a state in
+    which the robot must not keep driving -- 15 S7.2 step 1, and the 2026-11-06
+    finding that a cancelled / paused task kept moving. It is passed ONLY by the
+    callers whose transitions P3 or an operator causes (task commands, scheduler
+    preempt, ES-2, P3's own geometry failures). The P1-terminal relay
+    (apply_path_progress) must not pass it: P1 is already idle there and a clear
+    would preempt the relative_move or next push that follows. The B / D
+    takeover caller must not pass it either: 15 S7.2 trigger 5 skips step 1
+    because P2 is driving P1 already."""
+    # Local import, same convention as TERMINAL_STATES below: this module keeps
+    # only stdlib at the top.
+    from xbrain.p3_task.route.push import route_clear_needed
+
     async def _publish(task_id: str, from_state: str, to_state: str,
                        reason: str) -> None:
         if reason:
@@ -1445,6 +1515,17 @@ def _make_publish(state_pub, emit_task_event=None, publish_state=None,
                          task_id, from_state, to_state, reason)
         else:
             _logger.info("p3 task %s %s -> %s", task_id, from_state, to_state)
+        if stop_motion is not None and route_clear_needed(from_state, to_state):
+            # FIRST, before any broadcast: 15 S7.2 orders "stop motion" ahead of
+            # everything else, and a broadcast failure below must not be able to
+            # leave the robot driving.
+            try:
+                stop_motion(task_id)
+            except Exception as exc:      # noqa: BLE001
+                # Logged loudly, never swallowed silently: a lost clear is a
+                # robot still driving a task that is no longer running.
+                _logger.error("p3 route clear for task %s failed: %s",
+                              task_id, exc)
         if publish_state is not None:
             try:
                 await publish_state()

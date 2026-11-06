@@ -32,8 +32,10 @@ because the RP-/RA- code names looked right:
     "suspend-cancel required to restart"). 15 S2.4.1: RP-2 is the re-push
     after a route revision and remap, RP-3 is the P1 RESTART re-push
     (path_progress.state back to "idle" while a task is running), and RP-4 is
-    a task reaching a terminal -- where the rule is DO NOTHING, neither push
-    nor revoke, because the geometry is meant to stay resident in P1.
+    a task reaching a terminal P1 reported -- where the rule is DO NOTHING,
+    neither push nor revoke, because the geometry is meant to stay resident
+    in P1. (An operator cancel / pause is not RP-4: it sends op=clear,
+    route_clear_needed below.)
   * classify_ack() parsed an "ack code" off the wire. THERE IS NO ACK KEY.
     15 S2.4.4 opens with that sentence precisely so an implementer does not
     go looking for one: 11 S2.2.4 registers neither cmd/motion/route/ack nor
@@ -101,9 +103,12 @@ class RoutePushTrigger(str, Enum):
     #: P1 restarted (path_progress.state == "idle" while a task is running):
     #: re-push the current snapshot. Idempotent by (route_id, route_rev).
     RP3_P1_RESTART = "RP-3"
-    #: task reached a terminal. PUSH NOTHING AND REVOKE NOTHING -- the
-    #: geometry stays resident in P1, which is what 15 S1.3 T-1 depends on
-    #: (P1 finishes the lap if P3 dies).
+    #: task reached a terminal that P1 itself reported (arrived / failed).
+    #: PUSH NOTHING AND REVOKE NOTHING -- the geometry stays resident in P1,
+    #: which is what 15 S1.3 T-1 depends on (P1 finishes the lap if P3 dies).
+    #: A terminal P3 or the operator causes (cancel, an unconfirmed push) is
+    #: NOT this row: it withdraws the mission, see route_clear_needed (15
+    #: S2.4.1 RP-4 narrowed 2026-11-06).
     RP4_TASK_TERMINAL = "RP-4"
     #: 99 U131: one pass of a multi-pass patrol arrived and passes remain --
     #: push the route again, re-planned from where the robot is (P1 is
@@ -219,6 +224,51 @@ def build_route_frames(*, route_id: str, route_rev: int, loop_mode: str,
          "chunk": {"index": i, "total": total}}
         for i, chunk in enumerate(chunks)
     ]
+
+
+#: The states a RUNNING task can leave to on which P1 must be told to stop
+#: (15 S7.2 step 1, 12 S4.2c.4). `done` is not here: P1 itself reported
+#: the arrival (12 S4.3.1 LP-3), so it is already idle and a clear would only
+#: preempt whatever comes next (a relative_move, the next task's push).
+#: `failed` IS here even though P1 may have reported it, because P3 also
+#: fails tasks on its own -- an unconfirmed push (RA fatal), a refused plan --
+#: and in those cases P1 may hold, or later finish loading, the geometry of a
+#: task that no longer exists; the callers that relay a P1 terminal report
+#: simply do not pass the stop callback (runtime/main_wiring.py).
+ROUTE_CLEAR_ON = frozenset({"suspended", "cancelled", "failed"})
+
+
+def route_clear_needed(from_state: str, to_state: str) -> bool:
+    """True when this task transition must withdraw P1's navigation mission.
+
+    Why this exists (2026-11-06 audit, measured on the robot): a voice or HMI
+    cancel / pause only rewrote tasks.state. Nothing told P1, so RNS kept
+    following the route -- 20 s after "取消任务" P1 still reported nav_state
+    follow / route_state running, and outdoors (perception up) the robot
+    drives on to the old target. 15 S7.2 step 1 named
+    cmd/motion/behavior=hold for this, but 11 S2.2 struck p3_task from that
+    key's publishers on 2026-10-08 (99 U90) and P1 refuses a behavior frame
+    whose src is not p2_core; the stop P3 owns is cmd/motion/route op=clear
+    (11 S3.5A v2.0, 12 S4.2c.4).
+    """
+    # Only a task that WAS running has a mission in P1; a queued task being
+    # cancelled must never touch the robot (it may be running another task).
+    return from_state == "running" and to_state in ROUTE_CLEAR_ON
+
+
+def build_route_clear(cmd_id: Optional[str] = None) -> Dict[str, Any]:
+    """One cmd/motion/route op=clear frame (11 S3.5A v2.0).
+
+    P1 answers it by cancelling the RNS mission: back to IDLE, audited as
+    cancelled, NO failure report (20 S9.0.3, nav/mission_host.py on_route).
+    route_id / route_rev / chunk are omitted on purpose: the contract makes
+    them optional for clear and P1 cancels whatever mission it holds, so
+    naming one would only invite a mismatch check nobody implements. points
+    is the empty array the contract allows for clear.
+    """
+    # Same id family as a push, so P1's log lines read as one protocol.
+    return {"v": 1, "op": "clear", "cmd_id": cmd_id or new_cmd_id(),
+            "points": []}
 
 
 @dataclass(frozen=True)

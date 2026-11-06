@@ -231,11 +231,12 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
         top_id, top_prio, _top_seq = ready[0]
         if top_prio > cur_prio:
             # 15 S7.2 挂起动作的四步, 顺序不可换:
-            #   1. 停止运动 cmd/motion/behavior=hold
-            #      -- NO 本期做不到: P3 到 P1 那一跳未建(NEXT.md CLD-2),
-            #         P3 全仓不发 cmd/motion/behavior. 与 ES-2(急停挂起)同一
-            #         处境, 那里也是只做 DB 写. 不假装做到了(CLAUDE.md 3.2):
-            #         链路建好后这里要补上, 且必须在状态写之前.
+            #   1. 停止运动 -- 2026-11-06 订正: 原写 cmd/motion/behavior=hold
+            #      且"本期做不到". 11 S2.2 已于 2026-10-08 (99 U90) 把 p3_task
+            #      从该 key 发布者划去, P3 能发的停车是 cmd/motion/route
+            #      op=clear (12 S4.2c.4). 它由 on_transition 的 stop_motion
+            #      在本拍内发出 (runtime/main_wiring.py _stop_motion), 早于
+            #      本拍 commit, 也早于下面赢家那次 push.
             #   2. 采样进度并同步落盘
             #      -- 2026-09-28 订正: 原写"NO 本期无进度可采: 进度来自
             #         state/motion/path_progress (NEXT.md EX-3, 未建)".
