@@ -319,3 +319,34 @@ def test_started_is_not_an_outcome_and_the_key_covers_every_severity():  # FS-2
     assert _said(sp.on_task_event(_event("failed", error={"cause": "no_position"})))[1].startswith("去1号测试点")
     assert TASK_EVENT_KEY == "event/*/task"  # info and warn
 
+
+
+# -- 99 U142: the RL-3 voice of a positioning loss ------------------------------------
+def _rtk(kind, **detail):  # one 11 S3.3.4 rtk event as P3 publishes it
+    """event/{alarm|info}/rtk bytes with this detail.type."""
+    return _b({"sev": "alarm" if kind == "rtk_lost" else "info", "cat": "rtk",
+               "detail": dict(detail, type=kind)})  # wire form
+
+
+@pytest.mark.parametrize("kind,detail,text", [
+    ("rtk_lost", {"action_taken": "stop_and_suspend"}, "定位失效, 已停车, 任务已暂停"),  # a task waits
+    ("rtk_lost", {"action_taken": "stop_and_hold"}, "定位失效, 已停车"),  # 11 S3.3.4 RL-3 wording
+    ("heading_recovered", {"task_id": "t-1"}, "定位已恢复, 要接着执行任务请说继续"),  # RL-7 hint
+    ("heading_recovered", {"task_id": None}, "定位已恢复"),  # nothing to resume
+])
+def test_positioning_loss_and_recovery_are_spoken_locally(kind, detail, text):
+    """RL-3, whoever started the task. MUTATION: say "请说继续" with no task
+    waiting -> red; speak on a turn's source -> red (local alarm voice)."""
+    key, said, source = _said(AckSpeaker().on_rtk_event(_rtk(kind, **detail)))  # one event
+    assert (key, said, source) == ("cmd/audio/speak", text, "tts_local")  # the line, locally
+
+
+def test_heading_degraded_and_junk_are_silent_and_the_key_covers_both_severities():
+    """heading_degraded is rtk_driver's L1 -> L2 note, not an alarm to voice.
+    MUTATION: subscribe event/alarm/rtk only -> the recovery (info) is never
+    heard -> red."""
+    from xbrain.p4_agent.runtime.ack_speech import RTK_EVENT_KEY  # the subscription
+    sp = AckSpeaker()  # fresh
+    assert sp.on_rtk_event(_rtk("heading_degraded")) is None  # not voiced
+    assert sp.on_rtk_event(b"not json") is None  # malformed ignored
+    assert RTK_EVENT_KEY == "event/*/rtk"  # alarm and info

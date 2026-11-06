@@ -74,7 +74,7 @@ from xbrain.p4_agent.runtime.turn_loop import (
     TurnLoopWorker,
     on_mic_frame_callback,
 )
-from xbrain.p4_agent.runtime.ack_speech import ACK_KEYS, TASK_EVENT_KEY, AckSpeaker
+from xbrain.p4_agent.runtime.ack_speech import ACK_KEYS, RTK_EVENT_KEY, TASK_EVENT_KEY, AckSpeaker
 from xbrain.p4_agent.runtime.turn_orchestrator import OrchestratorSession
 from xbrain.p4_agent.runtime.voice_turn import VOICE_TURN_KEY_FMT
 
@@ -400,6 +400,23 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                                                      _on_task_event))
             _logger.info("p4 wiring: subscribed %s (task failures spoken)",
                          TASK_EVENT_KEY)
+
+            def _on_rtk_event(sample) -> None:
+                # 11 S3.3.4 RL-3 voice (99 U142): positioning lost / recovered,
+                # published by P3. Same thread rule: copy, queue, return.
+                data = bytes(sample.payload)
+
+                def _job() -> None:
+                    out = ack_speaker.on_rtk_event(data)
+                    if out is not None:
+                        _publish(*out)
+                try:
+                    jobs.put_nowait(_job)
+                except queue.Full:
+                    _logger.warning("p4 rtk event dropped: job queue full")
+            cloud_subs.append(gen.declare_subscriber(RTK_EVENT_KEY, _on_rtk_event))
+            _logger.info("p4 wiring: subscribed %s (positioning loss spoken)",
+                         RTK_EVENT_KEY)
 
         try:
             last_hb = time.monotonic()

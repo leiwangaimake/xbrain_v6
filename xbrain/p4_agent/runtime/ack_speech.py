@@ -93,6 +93,21 @@ ACK_KEYS = tuple(k + "/ack" for k in (CMD_TEACH, CMD_TASK, CMD_GEO,
 #: 11 S6.2 task events, every severity (info carries completed, warn failed).
 TASK_EVENT_KEY = "event/*/task"  # wiring subscribes this (16 S8.3C)
 
+#: 11 S3.3.4 rtk events: event/alarm/rtk (loss) and event/info/rtk (recovery),
+#: published by P3 (99 U142). Spoken on the robot whoever started the task:
+#: RL-3's voice is a local alarm, not an answer to a turn.
+RTK_EVENT_KEY = "event/*/rtk"  # wiring subscribes this
+
+#: The RL-3 wording ("定位失效, 已停车", 11 S3.3.4; ASCII comma, charset rule)
+#: and the recovery line. "请说继续" only when a task waits: RL-7, nothing
+#: restarts by itself, and telling the operator to resume nothing misleads.
+_RTK_LOST = "定位失效, 已停车"
+_RTK_LOST_TASK = "定位失效, 已停车, 任务已暂停"
+_RTK_BACK = "定位已恢复"
+_RTK_BACK_TASK = "定位已恢复, 要接着执行任务请说继续"
+#: The speaker source of a local alarm voice (14 S4.1 registry, P2 SPEAK_SOURCES).
+_RTK_SOURCE = "tts_local"
+
 #: Outstanding commands remembered at once (one per turn).
 _PENDING_MAX = 32  # slots, not a time
 
@@ -144,7 +159,7 @@ _TASK_VERB = {"pause": "暂停", "resume": "继续", "cancel": "取消",
 _TASK_REFUSED = {
     E_TASK_STATE: "这个任务现在的状态不能{verb}",  # S7.2: pause needs running etc.
     E_NOT_FOUND: "没找到这个任务, 没有{verb}",  # gone meanwhile
-    E_DEGRADED: "定位降级, 现在不接受新任务",  # 11 S3.2.1
+    E_DEGRADED: "定位失效, 现在不接受新任务",  # 11 S3.2.1: single / no_fix only since 99 U142
 }
 _TASK_OTHER = "任务没有{verb}成功"  # any other code
 #: cmd/task/ack refusals told apart by detail.reason before the code.
@@ -288,6 +303,24 @@ class AckSpeaker:  # one per process
         text = (_TASK_FAILED.format(label=label, why=why) if why
                 else _TASK_FAILED_BARE.format(label=label))  # FS-3
         return _speak(text, source)  # on the submitting turn's source
+
+    def on_rtk_event(self, data: bytes) -> Optional[Tuple[str, bytes]]:
+        """RL-3 voice (99 U142): the (key, frame) for one 11 S3.3.4 rtk
+        event, or None. Stateless: P3 says in the event whether a task was
+        suspended (action_taken on the loss, task_id on the recovery)."""
+        ev = _json(data)  # Event shape (S6.1)
+        detail = ev.get("detail") if isinstance(ev, dict) else None
+        if not isinstance(detail, dict):
+            return None  # not an event
+        kind = detail.get("type")  # rtk_lost | heading_degraded | heading_recovered
+        if kind == "rtk_lost":
+            text = (_RTK_LOST_TASK if detail.get("action_taken") == "stop_and_suspend"
+                    else _RTK_LOST)  # with or without a suspended task
+        elif kind == "heading_recovered":
+            text = _RTK_BACK_TASK if detail.get("task_id") else _RTK_BACK  # RL-7 hint
+        else:
+            return None  # heading_degraded is rtk_driver's, not spoken here
+        return _speak(text, _RTK_SOURCE)  # a local alarm voice
 
 
 def _speak(text: str, source: str) -> Tuple[str, bytes]:
