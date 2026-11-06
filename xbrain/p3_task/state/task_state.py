@@ -187,18 +187,47 @@ def _partial_progress(row: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
     return {"waypoint_total": total}
 
 
+def _schedule_fields(row: Mapping[str, Any]) -> Dict[str, Any]:
+    """not_before_ts / target_waypoint_id / target_route_id of a queued task,
+    each ONLY when
+    known (99 U144): P4 needs them to name a timed task ("今天15点去1号测试点")
+    for a voice cancel and to refuse a second task at the same minute before it
+    says "好的". Absent, never null, for the same reason as the S4.4 note below:
+    an always-null key reads as missing data."""
+    try:
+        mission = json.loads(row.get("mission_json") or "{}")
+    except ValueError:
+        return {}  # V-5 reports an unparsable mission; nothing to add
+    if not isinstance(mission, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    nb = mission.get("not_before_ts")  # 11 S7.2, written by the ingest
+    if isinstance(nb, (int, float)) and not isinstance(nb, bool):
+        out["not_before_ts"] = float(nb)
+    params = mission.get("params") if isinstance(mission.get("params"), dict) else {}
+    if isinstance(params.get("waypoint_id"), str) and params["waypoint_id"]:
+        out["target_waypoint_id"] = params["waypoint_id"]  # goto / named dock target
+    if row.get("route_geo_id"):
+        # target_, NOT route_id: v2.0 route_id means the route ACTUALLY LOADED,
+        # and a queued task has loaded nothing (test_task_state pins that).
+        out["target_route_id"] = row["route_geo_id"]  # patrol route to run
+    return out
+
+
 def queue_item(row: Mapping[str, Any]) -> Dict[str, Any]:
-    """One 11 S4.4 `queue` entry: four fields, no progress (it has not run)."""
-    return {
+    """One 11 S4.4 `queue` entry: four fields, no progress (it has not run),
+    plus the schedule fields of 99 U144 when the task has them."""
+    item = {
         "task_id": row.get("task_id"),
         "type": row.get("task_type"),
         "state": row.get("state"),
-        # Four fields only, per S4.4. Deliberately NOT route_id/started_ts: a
-        # queued task has not loaded a route and has not started, so those would
-        # be null for every entry -- keys that are always null read as "the data
-        # is missing" rather than "the question does not apply yet".
+        # Deliberately NOT started_ts: a queued task has not started, so it
+        # would be null for every entry -- keys that are always null read as
+        # "the data is missing" rather than "the question does not apply yet".
         "priority": row.get("priority"),
     }
+    item.update(_schedule_fields(row))  # 99 U144: only what is known
+    return item
 
 
 def suspended_item(row: Mapping[str, Any]) -> Dict[str, Any]:

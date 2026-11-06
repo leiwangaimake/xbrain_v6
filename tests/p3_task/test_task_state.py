@@ -155,11 +155,12 @@ def test_a_queued_task_reports_no_route_because_it_has_not_loaded_one():
     """v2.0 defines route_id as the route ACTUALLY LOADED. A queued task has not
     started, so it has loaded nothing -- naming its intended route here would
     tell the operator it is under way. S4.4's queue entry has four fields for
-    this reason.
+    this reason; 99 U144 adds the route a queued task WILL run under a
+    different name (target_route_id), never route_id.
     MUTATION: add route_id to queue_item -> red."""
     item = queue_item(_row(state="ready", route_geo_id="r-charge"))
     assert "route_id" not in item
-    assert sorted(item) == ["priority", "state", "task_id", "type"]
+    assert sorted(item) == ["priority", "state", "target_route_id", "task_id", "type"]
 
 
 def test_every_other_non_terminal_state_lands_in_the_queue():

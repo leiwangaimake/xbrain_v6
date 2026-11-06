@@ -212,8 +212,16 @@ async def scheduler_tick(conn, dao, *, now_mono_ms: int,
     rows2 = await dao.list_by_priority()
     ready = [(tid, p, s) for tid, p, s, state in rows2 if state == "ready"]
     running = [(tid, p, s) for tid, p, s, state in rows2 if state == "running"]
-    # priority DESC, submit_seq ASC (15 S6.1). 排一次给下面两个分支共用.
-    ready.sort(key=lambda r: (-r[1], r[2]))
+    # priority DESC, then 99 U144 (用户 2026-11-06): 同优先级里到点的定时任务
+    # 先于其他就绪任务 ("当前作业完成后必须优先执行定时任务, 然后再调度后面的
+    # 任务"), 多条到点按 not_before_ts 先后; 最后 submit_seq ASC (15 S6.1).
+    # 排一次给下面两个分支共用. 不跨优先级: 断链返航(95)等系统任务仍在前.
+    due_at: dict = {}
+    for tid, _p, _s in ready:
+        full = await dao.fetch_by_id(tid)
+        due_at[tid] = None if full is None else _not_before(full)
+    ready.sort(key=lambda r: (-r[1], due_at[r[0]] is None,
+                              due_at[r[0]] or 0.0, r[2]))
 
     if not running:
         # 决策树第 1 步: 没有 running -> 取 ready 队列最高优先级启动.

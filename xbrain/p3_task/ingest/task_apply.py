@@ -39,7 +39,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import replace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from xbrain.common.errors import (
     E_BUSY,
@@ -218,6 +218,37 @@ async def _fill_repeat_route(cmd: TaskCommand, ctx: TaskContext) -> TaskCommand:
     return replace(cmd, task={**task, "route_id": row[0]})
 
 
+#: 99 U144: the states a timed task is "scheduled" in -- recorded but not yet
+#: due (pending is the instant between ingest and the next scheduler pass).
+_SCHEDULE_STATES = ("pending", "scheduled")
+
+
+async def _schedule_clash(conn, task: Optional[Dict[str, Any]]):
+    """(task_id, task_type, not_before_ts) of a scheduled task in the same
+    minute as this submit's not_before_ts, or None (99 U144).
+
+    Same MINUTE, not the same second: a spoken time names a minute, so
+    "下午3点" twice is the same slot even if a delay-form one lands a few
+    seconds off; epoch minutes and local minutes coincide (zone offsets are
+    whole minutes)."""
+    nb = (task or {}).get("not_before_ts")
+    if isinstance(nb, bool) or not isinstance(nb, (int, float)):
+        return None  # not a timed task: nothing to compare
+    marks = ", ".join("?" for _ in _SCHEDULE_STATES)
+    cur = await conn.execute(
+        "SELECT task_id, task_type, mission_json FROM tasks WHERE state IN (%s)"
+        % marks, _SCHEDULE_STATES)
+    for task_id, task_type, mission_json in await cur.fetchall():
+        try:
+            other = json.loads(mission_json or "{}").get("not_before_ts")
+        except (ValueError, AttributeError):
+            continue  # an unparsable mission cannot clash
+        if (isinstance(other, (int, float)) and not isinstance(other, bool)
+                and int(float(other) // 60) == int(float(nb) // 60)):
+            return task_id, task_type, float(other)
+    return None
+
+
 async def _submit(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
                   created_at: str = "", date_str: str = "") -> Dict[str, Any]:
     """S7.2 submit: mint the task, idempotent on task.task_id.
@@ -237,6 +268,14 @@ async def _submit(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
         # while a recording runs -- the robot is the operator's keyboard's.
         raise TaskCommandError(E_BUSY, "a recording session is active",
                                {"reason": "teach_session_active"})
+    clash = await _schedule_clash(ctx.task_conn, cmd.task)
+    if clash is not None:
+        # 99 U144 (user ruling 2026-11-06): one timed task per minute. Refused
+        # with the task already there, so the sender can say which.
+        raise TaskCommandError(
+            E_BUSY, "a timed task is already scheduled in that minute",
+            {"reason": "schedule_conflict", "task_id": clash[0],
+             "task_type": clash[1], "not_before_ts": clash[2]})
     # 99 U131: a route-less B04 repeat gets its route here, before anything
     # is written; no completed patrol refuses the whole submit.
     cmd = await _fill_repeat_route(cmd, ctx)
@@ -395,9 +434,14 @@ async def _clear_queue(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
     if cmd.filter and isinstance(cmd.filter.get("source"), str):
         sql += " AND source = ?"
         params.append(cmd.filter["source"])
+    if cmd.filter and cmd.filter.get("state") in _QUEUE_STATES:
+        # 99 U144: "取消所有定时任务" clears the scheduled tasks only -- not
+        # what is ready to run, which the operator did not mention.
+        sql += " AND state = ?"
+        params.append(cmd.filter["state"])
     cur = await ctx.task_conn.execute(sql, params)
     rows = await cur.fetchall()
-    cleared: List[str] = []
+    cleared: List[Tuple[str, str]] = []  # (task_id, from_state)
     for task_id, state, _source in rows:
         try:
             result = apply_transition(state, "cancel")
@@ -409,13 +453,16 @@ async def _clear_queue(cmd: TaskCommand, ctx: TaskContext, now_mono_ms: int,
         await ctx.task_conn.execute(
             "UPDATE tasks SET state=?, updated_ms=? WHERE task_id=?",
             (result.to_state, now_mono_ms, task_id))
-        cleared.append(task_id)
+        cleared.append((task_id, state))
     await ctx.task_conn.commit()
     if on_transition is not None:
-        for task_id in cleared:
-            await on_transition(task_id, state, "cancelled",
+        for task_id, from_state in cleared:
+            # each task's OWN from-state: this used the loop variable left over
+            # from the SELECT loop, i.e. the last row's state for every task
+            # (found in the 2026-11-06 audit; the event table keys on it).
+            await on_transition(task_id, from_state, "cancelled",
                                 cmd.reason or "clear_queue")
     # S7.2: cleared_ids MUST be reported, and an empty sweep is still accepted.
     return task_ack(cmd.cmd_id, "accepted", "OK",
-                    {"cleared_ids": cleared,
+                    {"cleared_ids": [tid for tid, _st in cleared],
                      "applied": {"cleared": len(cleared)}})
