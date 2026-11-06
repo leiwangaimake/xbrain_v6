@@ -26,6 +26,8 @@ ES-3(人显式 cmd/task 解冻)在 test_p3_estop_resume.py.
 """
 from __future__ import annotations
 
+import json
+
 import aiosqlite
 import pytest
 import pytest_asyncio
@@ -196,3 +198,50 @@ def test_main_wiring_subscribes_cmd_estop_and_gates_the_tick():
     froze = any(getattr(n.func, "attr", "") == "freeze"
                 for n in ast.walk(on_estop[0]) if isinstance(n, ast.Call))
     assert froze, "_on_estop 回调没有 freeze -- cmd/estop 到了却不冻结调度"
+    # 99 U149: the same callback arms the route publisher, so the first push
+    # after an operator resumes tells P1 to lift its latch.
+    armed = any(getattr(n.func, "attr", "") == "arm"
+                for n in ast.walk(on_estop[0]) if isinstance(n, ast.Call))
+    assert armed, "_on_estop does not arm the route publisher (99 U149)"
+
+
+# -- 99 U149: the first push after an operator resumed tells P1 to re-arm ------
+class _RecPub:
+    """Records what the wrapped publisher sends."""
+
+    def __init__(self):
+        self.sent = []  # decoded frames
+
+    def put(self, data):
+        self.sent.append(json.loads(data.decode("utf-8")))
+
+
+def _set_chunks(n):
+    """n chunks of one route push, as P3's build_route_frames shapes them."""
+    return [json.dumps({"op": "set", "route_id": "r-a", "chunk": {"index": i, "total": n}}).encode("utf-8")
+            for i in range(n)]
+
+
+def test_the_first_push_after_an_operator_resume_carries_rearm():
+    """MUTATION: tag while frozen -> a retry in flight at the estop lifts the
+    latch and the robot drives off by itself -> red; never clear pending ->
+    every later push re-arms -> red; tag a clear -> red."""
+    from xbrain.p3_task.lifecycle.estop import RearmingRoutePublisher
+    ctl = EstopController()  # the freeze state
+    inner = _RecPub()  # what P1 would receive
+    pub = RearmingRoutePublisher(inner, ctl.scheduling_permitted)
+    ctl.freeze("estop_soft")
+    pub.arm()  # cmd/estop seen
+    for raw in _set_chunks(1):  # an ack-window retry while still frozen
+        pub.put(raw)
+    pub.put(json.dumps({"op": "clear"}).encode("utf-8"))  # the ES-2 clear
+    assert "rearm" not in inner.sent[0] and "rearm" not in inner.sent[1]  # frozen: never tagged
+    ctl.unfreeze("local")  # an operator spoke (ES-3)
+    for raw in _set_chunks(2):  # the resumed push, two chunks
+        pub.put(raw)
+    assert inner.sent[2]["rearm"] is True and inner.sent[3]["rearm"] is True  # both chunks
+    assert pub.pending is False  # dropped after the last chunk
+    for raw in _set_chunks(1):  # the next push, no estop since
+        pub.put(raw)
+    assert "rearm" not in inner.sent[4]  # only the one push lifts it
+

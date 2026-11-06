@@ -38,8 +38,9 @@ authorized unfreeze sources are the human channels only.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 #: 15 S9.5 human task sources -- the operator channels. auto|charge are the
 #: system's own (return_home / charge) and deliberately CANNOT unfreeze.
@@ -114,3 +115,49 @@ def is_human_pause_command(payload: Any) -> bool:
     """99 U111: is this an operator's pause (15 S11.4 operator hold)?"""
     return (isinstance(payload, dict) and payload.get("action") == "pause"
             and human_source(payload) is not None)
+
+
+class RearmingRoutePublisher:
+    """cmd/motion/route publisher that tells P1 to lift its soft-estop latch
+    on the first push after an operator has resumed (99 U149).
+
+    *** Why: P1 lifts its soft-estop latch only on a new relative move
+    (14 S3.7 / U35, 11 S7A.6.5 "新运动指令即可"). A route task resumed by
+    "继续任务", or a new voice / text task, pushes a route -- which P1 then
+    aborted at once, while P3 (which moves no task on `aborted`) left it
+    `running` with the robot standing (bench 2026-11-06, 99 U148 audit).
+    The user ruled (2026-11-06): an operator's command lifts it, an
+    automatic dispatch does not.
+
+    Why the push itself can carry that: after cmd/estop P3 freezes dispatch
+    (ES-1) and only a human submit / resume unfreezes it (ES-3), so the first
+    push made while unfrozen exists because an operator spoke. Frames sent
+    while still frozen (an ack-window retry of a push in flight at the estop)
+    are NOT tagged -- tagging them would let the robot drive off by itself
+    seconds after an emergency stop.
+
+    arm() at each cmd/estop; the tag goes on every `set` chunk of the next
+    push made while permitted() is true, and is dropped after its last chunk.
+    """
+
+    def __init__(self, inner: Any, permitted: Callable[[], bool]) -> None:
+        self._inner = inner  # the zenoh publisher
+        self._permitted = permitted  # True once a human has unfrozen dispatch
+        self.pending = False  # an estop latch P1 still holds
+
+    def arm(self) -> None:
+        """cmd/estop seen: P1 latches; the next permitted push lifts it."""
+        self.pending = True  # scalar write: safe from the Rust callback
+
+    def put(self, data: bytes) -> None:
+        """Publish one route frame, tagging it when it is the lifting push."""
+        if self.pending and self._permitted():
+            frame = json.loads(data.decode("utf-8"))  # P3's own frame, always JSON
+            if isinstance(frame, dict) and frame.get("op") == "set":
+                frame["rearm"] = True  # 11 S3.5A (99 U149)
+                chunk = frame.get("chunk") or {}
+                if chunk.get("index", 0) >= chunk.get("total", 1) - 1:
+                    self.pending = False  # the whole push carried it
+                data = json.dumps(frame, ensure_ascii=False).encode("utf-8")
+        self._inner.put(data)
+

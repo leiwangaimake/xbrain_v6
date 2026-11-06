@@ -364,7 +364,13 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # geometry: P1 never opens geo.db, so without this key patrol has
             # no geometry at all and path_follow has nothing to follow
             # (15 S2.4 opening paragraph).
-            route_pub = gen.declare_publisher(CMD_ROUTE_TOPIC)
+            # 99 U149: wrapped so the first push after an operator lifts a
+            # soft estop tells P1 to re-arm (estop_ctrl is bound below; the
+            # lambda reads it only when a frame is sent).
+            from xbrain.p3_task.lifecycle.estop import RearmingRoutePublisher
+            route_pub = RearmingRoutePublisher(
+                gen.declare_publisher(CMD_ROUTE_TOPIC),
+                lambda: estop_ctrl.scheduling_permitted())
 
             # F-5 (11 S4.6.4): watch P5's cloud-link level and inject one
             # return_home at L3 (cloud down past rtb_s). The subscriber only STORES
@@ -600,6 +606,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                 # a malformed estop must still freeze -- an unfrozen scheduler
                 # would keep dispatching patrol tasks through an emergency stop.
                 estop_ctrl.freeze("estop_soft")
+                route_pub.arm()  # 99 U149: P1 latched; an operator's next push lifts it
                 _logger.warning("p3 ES-1: scheduling FROZEN by cmd/estop "
                                 "(no new dispatch; awaits p2 unfreeze, 15 S11.3)")
 
