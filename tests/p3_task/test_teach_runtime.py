@@ -33,6 +33,7 @@ import pytest_asyncio
 
 from xbrain.common.errors import (
     E_BUSY,
+    E_GEO_INVALID,
     E_NAME_CONFLICT,
     E_TEACH_GEOMETRY,
     E_TEACH_QUALITY,
@@ -653,3 +654,27 @@ async def test_session_expires_at_its_deadline(rt):
     assert rt.expire(500.0) is None            # well inside 1800 s
     assert rt.expire(100.0 + 1800.0) == "max_duration"
     assert rt.teach_state_payload(2000.0)["session"]["state"] == "finalizing"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("on_route", [True, False])
+async def test_mark_once_dock_must_be_on_a_route(rt, on_route):
+    """99 U146: a 充电桩 / 充电站 point is refused unless it lies within
+    common.geo.route_membership_m of a route (voice F06 path). MUTATION: skip
+    the check -> the stranded dock is stored -> red (off-route case)."""
+    import json as _json  # route geometry
+    off = 0.0 if on_route else 0.01  # 0.01 deg of longitude ~ 950 m off
+    await rt._geo_conn.execute(
+        "INSERT INTO routes (geo_id, name, path_points, loop_mode, direction, total_len_m,"
+        " rev, content_hash, updated_ms) VALUES ('r-a', '1号路径', ?, 'oneway', 'forward',"
+        " 222.0, 1, 'h', 0)",
+        (_json.dumps([[_LAT - 0.001, _LON + off], [_LAT + 0.001, _LON + off]]),))  # through / beside
+    await rt._geo_conn.commit()  # visible
+    rt._route_membership_m = 5.0  # as main_wiring passes common.geo.route_membership_m
+    ack = await rt.handle(
+        _cmd("mark_once", issuer=_TYPED, cmd_id="c-dock",
+             mark_once={"kind": "waypoint", "name": "1号充电站", "capture_heading": True}),
+        now_mono_s=100.0, now_ms=5000)
+    assert (ack["result"] == "accepted") is on_route, ack  # refused off-route
+    if not on_route:
+        assert ack["code"] == E_GEO_INVALID and ack["detail"]["reason"] == "dock_off_route"

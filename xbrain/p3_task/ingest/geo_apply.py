@@ -80,10 +80,14 @@ class GeoContext:
     15 S9 splits them into two physical files.
     """
 
-    def __init__(self, geo_conn, fence_conn, task_conn=None) -> None:
+    def __init__(self, geo_conn, fence_conn, task_conn=None,
+                 route_membership_m=None) -> None:
         self.geo_conn = geo_conn
         self.fence_conn = fence_conn
         self.task_conn = task_conn
+        # 99 U146: a 充电桩 / 充电站 waypoint must lie within this of a route
+        # (common.geo.route_membership_m); None = tests of the geo path alone.
+        self.route_membership_m = route_membership_m
 
 
 # action -> applier. Populated by the per-action batches; an absent action is a

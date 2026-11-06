@@ -221,6 +221,22 @@ async def _fill_anchor_length(conn, parsed: ParsedObject) -> None:
     parsed.columns["total_len_m"] = total
 
 
+async def _refuse_dock_off_route(ctx: GeoContext, conn, lat, lon) -> None:
+    """99 U146: a 充电桩 / 充电站 waypoint off every route is refused with
+    E_GEO_INVALID (detail.reason dock_off_route). Runs inside the caller's
+    transaction, before any write; the caller's handler rolls back on raise."""
+    member = getattr(ctx, "route_membership_m", None)
+    if member is None:
+        return  # not configured (tests of the geo path alone)
+    from xbrain.p3_task.geo.waypoint_kind import dock_route_gap_m
+    gap = await dock_route_gap_m(conn, (float(lat), float(lon)), float(member))
+    if gap is not None:
+        raise GeoCommandError(
+            E_GEO_INVALID, "a dock waypoint must be within %.1f m of a route" % member,
+            {"reason": "dock_off_route",
+             "distance_m": None if gap == float("inf") else round(gap, 1)})
+
+
 async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
                        now_ms: int) -> ApplyResult:
     """11 S7.9.1 upsert: create or WHOLE-object replace (never a field merge --
@@ -237,6 +253,9 @@ async def apply_upsert(cmd: GeoCommand, ctx: GeoContext,
             return replay_duplicate(logged)
         row = await _current_row(conn, parsed.table, parsed.pk_col, cmd.geo_id)
         await _fill_anchor_length(conn, parsed)
+        if parsed.table == "waypoints" and parsed.columns.get("type") == "dock":
+            await _refuse_dock_off_route(ctx, conn, parsed.columns["rtk_lat"],
+                                         parsed.columns["rtk_lon"])  # 99 U146
         events: List[Tuple[str, str, Dict[str, Any]]] = []
         if row is None:
             rev = 1
@@ -354,6 +373,11 @@ async def apply_rename(cmd: GeoCommand, ctx: GeoContext,
             new_type = renamed_waypoint_type(cols["name"], (await tcur.fetchone())[0])
             if new_type is not None:
                 cols["type"] = new_type
+            if new_type == "dock":  # 99 U146: renamed into a dock -> must be on a route
+                pcur = await conn.execute(
+                    f"SELECT rtk_lat, rtk_lon FROM {table} WHERE {pk_col}=?", (cmd.geo_id,))
+                lat, lon = await pcur.fetchone()
+                await _refuse_dock_off_route(ctx, conn, lat, lon)
         # content_hash covers name as well as geometry (S7.8.2), so a rename is
         # a content change and must re-hash -- otherwise a cloud sync comparing
         # hashes would conclude the renamed object is identical and skip it.

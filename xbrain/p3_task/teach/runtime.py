@@ -43,6 +43,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from xbrain.common.errors import (
+    E_GEO_INVALID,  # 99 U146 dock off every route
     E_NAME_CONFLICT,
     E_TEACH_GEOMETRY,
     E_TEACH_QUALITY,
@@ -61,7 +62,8 @@ from xbrain.p3_task.teach.command import (
     parse_teach_command,
     teach_ack,
 )
-from xbrain.p3_task.geo.waypoint_kind import waypoint_type_for_name  # 99 U119 home / dock by name
+from xbrain.p3_task.geo.waypoint_kind import (  # 99 U119 home / dock by name
+    dock_route_gap_m, waypoint_type_for_name)  # 99 U146 dock must be on a route
 from xbrain.p3_task.teach.sampling import PoseSample, Recorder
 from xbrain.p3_task.teach.session import (
     ArmingInputs,
@@ -102,8 +104,12 @@ class TeachRuntime:
                  boot_id: str,
                  sample_hz: Optional[float],
                  min_dist_m: Optional[float],
-                 snap_max_age_ms: Optional[int] = None) -> None:
+                 snap_max_age_ms: Optional[int] = None,
+                 route_membership_m: Optional[float] = None) -> None:
         self._task_conn = task_conn
+        # 99 U146: a 充电桩 / 充电站 point must lie within this of a route
+        # (common.geo.route_membership_m); None = tests of the teach path alone.
+        self._route_membership_m = route_membership_m
         # 99 U132: the S12A.6 sampling pair from common.recording, validated
         # by __main__ (missing / <= 0 -> 78). No default here on purpose; None
         # (a wiring that was not given them) refuses every start by key name.
@@ -742,8 +748,22 @@ class TeachRuntime:
         # dock point; every other F06 capture stays poi. Until 2026-11-05 this
         # was a literal "poi", so no home point could ever exist and the
         # link-loss return_home had nowhere to go.
+        wtype = waypoint_type_for_name(name) or "poi"
+        if wtype == "dock" and self._route_membership_m is not None:
+            # 99 U146: a dock must be on a route, or a low-battery return could
+            # not follow one there. Refused, not stored as a stranded dock.
+            gap = await dock_route_gap_m(self._geo_conn, (float(pose["lat"]),
+                                                          float(pose["lon"])),
+                                         self._route_membership_m)
+            if gap is not None:
+                raise TeachStateError(
+                    E_GEO_INVALID, "a dock point must be within %.1f m of a route, "
+                    "nearest route is %s m away" % (self._route_membership_m,
+                                                    "none" if gap == float("inf") else "%.1f" % gap),
+                    {"reason": "dock_off_route",
+                     "distance_m": None if gap == float("inf") else round(gap, 1)})
         await commit_waypoint(self._geo_conn, geo_id=geo_id, name=name,
-                              wtype=waypoint_type_for_name(name) or "poi",
+                              wtype=wtype,
                               rtk_lat=float(pose["lat"]),
                               rtk_lon=float(pose["lon"]),
                               rtk_alt=pose.get("alt"), yaw_deg=yaw,

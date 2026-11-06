@@ -134,7 +134,9 @@ def test_main_refuses_without_the_pair(monkeypatch, rtk, rc):
     from xbrain.p3_task import __main__ as p3main  # unit under test
     cfg = {"geo": {"enu_origin": {"lat": 31.0, "lon": 121.0, "alt": 0.0}},  # minimal resolved config
            "teach": {"snap_max_age_ms": 8000, "min_dist_m": 0.5, "sample_hz": 1.0},
-           "route": {"recorded_arrive_radius_m": 1.0, "membership_m": 5.0}}
+           "route": {"recorded_arrive_radius_m": 1.0, "membership_m": 5.0},
+           "low_battery": {"trigger_soc_pct": 20.0, "stop_soc_pct": 5.0,
+                           "cloud_alarm_period_s": 2.0}}  # 99 U146 rule
     if rtk is not None:
         cfg["rtk_loss"] = rtk  # the case under test
     monkeypatch.setattr(resolved, "load_resolved", lambda *_a, **_k: cfg)  # no file

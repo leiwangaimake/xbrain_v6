@@ -123,11 +123,12 @@ def goto_row(task_id: str, state: str, seq: int, priority: int = 5, **extra) -> 
                    resume_policy="continue", **extra)  # 15 S7.5 default for goto
 
 
-async def start_p3(tmp_path, monkeypatch, rows=(), **amain_kw):
+async def start_p3(tmp_path, monkeypatch, rows=(), geo_sql=(), **amain_kw):
     """Start the real loop over the fake planes; return (harness, stop, task,
     task_db). rows are written to task.db BEFORE the loop starts (what a power
     cut leaves behind); the robot pose is delivered once subscribers exist.
-    amain_kw reach _amain unchanged (e.g. the rtk_loss sustain pair)."""
+    amain_kw reach _amain unchanged (e.g. the rtk_loss sustain pair);
+    geo_sql are extra (sql, params) rows for geo.db (routes, docks, home)."""
     from xbrain.p3_task.runtime import main_wiring as mw  # the code under test
     import xbrain.common.runtime.session_ctx as sctx  # where _amain gets its planes
     h = Harness()  # fresh planes per scenario
@@ -137,6 +138,8 @@ async def start_p3(tmp_path, monkeypatch, rows=(), **amain_kw):
         for stmt in GEO_DB_STATEMENTS:  # same DDL _amain would apply
             await g.execute(stmt)  # create
         await g.execute(WAYPOINT_SQL)  # w-gate
+        for sql, params in geo_sql:  # extra catalogue rows for the scenario
+            await g.execute(sql, params)  # as the test gives them
         await g.commit()  # visible to _amain's own connection
     if rows:  # pre-existing tasks: create the schema first so the DAO can insert
         async with aiosqlite.connect(task_db) as t:  # same file _amain opens

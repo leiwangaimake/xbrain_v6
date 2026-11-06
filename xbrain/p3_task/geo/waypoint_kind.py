@@ -92,6 +92,26 @@ def _distance_m(a: Tuple[float, float], b: Tuple[float, float]) -> float:
     return 2.0 * _EARTH_R_M * math.asin(min(1.0, math.sqrt(h)))  # clamp rounding
 
 
+async def dock_route_gap_m(geo_conn, point: Tuple[float, float],
+                           membership_m: float) -> Optional[float]:
+    """None when point lies within membership_m of a live route; otherwise the
+    distance to the nearest route in metres (inf with no route at all).
+
+    99 U146 (user ruling): a 充电桩 / 充电站 waypoint MUST be on some route --
+    within common.geo.route_membership_m of its polyline, the U127 rule, so
+    a low-battery return can always follow a route there. The three write
+    paths (voice F06, cmd/geo upsert, rename into a dock name) refuse a dock
+    for which this is not None."""
+    # Local import: route_push_runtime sits above this module (runtime ->
+    # geo), so a module-level import would be circular.
+    from xbrain.common.geo.polyline import distance_to_route_m
+    from xbrain.p3_task.runtime.route_push_runtime import load_route_geoms
+    gaps = [distance_to_route_m(point, r.points, r.closed)
+            for r in await load_route_geoms(geo_conn) if r.points]  # every live route
+    nearest = min(gaps) if gaps else math.inf  # inf: no route to be on
+    return None if nearest <= membership_m else nearest  # inclusive, as U127
+
+
 async def nearest_dock(geo_conn, pose: Optional[Tuple[float, float]],
                        routes: Sequence[RouteGeom],
                        membership_m: Optional[float]) -> Optional[str]:

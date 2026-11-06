@@ -143,7 +143,8 @@ def run_voice_loop_wiring(stop_flag: dict,
                           teach_sample_hz: Optional[float] = None,
                           teach_min_dist_m: Optional[float] = None,
                           rtk_lost_sustain_s: Optional[float] = None,
-                          rtk_recover_sustain_s: Optional[float] = None) -> int:
+                          rtk_recover_sustain_s: Optional[float] = None,
+                          low_battery: Optional[Dict[str, float]] = None) -> int:
     """Block until stop_flag['stop'] is truthy. Returns 0 on clean shutdown.
 
     enu_origin 来自 common.geo.enu_origin(L4 sites/{site_id}.yaml), 由
@@ -174,6 +175,10 @@ def run_voice_loop_wiring(stop_flag: dict,
     is suspended and the alarm raised, and how long a usable fix must last
     before recovery is reported. None (tests) leaves the judgement off; the
     production __main__ refuses to start without them.
+
+    low_battery is p3_task.yaml low_battery.{trigger_soc_pct, stop_soc_pct,
+    cloud_alarm_period_s} (99 U146). None (tests) leaves the low-battery
+    return off; the production __main__ refuses to start without it.
     """
     return asyncio.run(
         _amain(stop_flag, heartbeat_period_s, task_db_path, geo_db_path,
@@ -182,7 +187,8 @@ def run_voice_loop_wiring(stop_flag: dict,
                teach_sample_hz=teach_sample_hz,
                teach_min_dist_m=teach_min_dist_m,
                rtk_lost_sustain_s=rtk_lost_sustain_s,
-               rtk_recover_sustain_s=rtk_recover_sustain_s))
+               rtk_recover_sustain_s=rtk_recover_sustain_s,
+               low_battery=low_battery))
 
 
 async def _amain(stop_flag: dict, heartbeat_period_s: float,
@@ -195,10 +201,13 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                  teach_sample_hz: Optional[float] = None,
                  teach_min_dist_m: Optional[float] = None,
                  rtk_lost_sustain_s: Optional[float] = None,
-                 rtk_recover_sustain_s: Optional[float] = None) -> int:
-    from xbrain.common.errors import E_DEGRADED, E_GEO_INCOMPLETE, E_NOT_FOUND, E_SCHEMA
+                 rtk_recover_sustain_s: Optional[float] = None,
+                 low_battery: Optional[Dict[str, float]] = None) -> int:
+    from xbrain.common.errors import (E_DEGRADED, E_GEO_INCOMPLETE, E_LOW_BATTERY,
+                                      E_NOT_FOUND, E_SCHEMA)
     from xbrain.p3_task.ingest.task_command import task_ack
     from xbrain.p3_task.lifecycle.rtk_loss import RtkLossMonitor, suspend_running_for_rtk
+    from xbrain.p3_task.lifecycle import low_battery as lb
     from xbrain.common.runtime.session_ctx import open_planes
     from xbrain.p3_task.dao.simple_daos import FencesDAO, PatrolProgressDAO, SnapshotDAO
     from xbrain.p3_task.dao.tasks_dao import TasksDAO
@@ -711,7 +720,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                  # 99 U132: the configured sampling pair
                                  sample_hz=teach_sample_hz,
                                  min_dist_m=teach_min_dist_m,
-                                 snap_max_age_ms=teach_snap_max_age_ms)
+                                 snap_max_age_ms=teach_snap_max_age_ms,
+                                 route_membership_m=route_membership_m)  # 99 U146
             if teach_snap_max_age_ms is None:
                 # Said once at startup, not discovered at the first capture.
                 _logger.warning("p3 teach.snap_max_age_ms unset: voice "
@@ -728,7 +738,8 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
             # applier reaching into task.db (GC-1..7 linkage, refs) serialises
             # with the scheduler instead of racing it.
             geo_ctx = GeoContext(geo_conn=geo_conn, fence_conn=fence_conn,
-                                 task_conn=conn)
+                                 task_conn=conn,
+                                 route_membership_m=route_membership_m)  # 99 U146
             # 11 S7.2: the contract-shaped cmd/task path. Same connection and
             # same DAO the scheduler uses -- P3 has one db thread (15 S2.1), so
             # an HMI cancel serialises with the tick rather than racing it.
@@ -1090,6 +1101,120 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                            "lost_s": lost_s, "task_id": _rtk_task["id"]}, dedup=False)
                 _rtk_task["id"] = None
 
+            # 99 U146 low-battery return (the user's rule; replaces 15 S8.2's
+            # CHG-10/11 and S8.2A). None in tests that pass no thresholds.
+            lb_monitor = (lb.LowBatteryMonitor(low_battery["trigger_soc_pct"],
+                                               low_battery["stop_soc_pct"],
+                                               low_battery["cloud_alarm_period_s"])
+                          if low_battery is not None else None)
+            # The episode's facts: the target picked at "low", the task
+            # injected, whether the next alarm is the first (P4 speaks once).
+            lb_ctx: dict = {"target": None, "task_id": None, "first": False, "n": 0}
+            chassis_ctrl_pub = gen.declare_publisher("cmd/chassis/ctrl")
+            _ctrl_seq = [0]  # S3.0 seq per key for this process
+
+            def _emit_charging(sev: str, title: str, detail: dict) -> None:
+                """event/{sev}/charging (11 S6.2 category charging; channel
+                alarm so the cloud cursor replays it). No dedup: the 2 s
+                cadence IS the "continuous" report the ruling asks for."""
+                lb_ctx["n"] += 1
+                gen.put("event/%s/charging" % sev, json.dumps({
+                    "eid": "lowbatt-%s-%d" % (_BOOT_ID, lb_ctx["n"]), "sev": sev,
+                    "cat": "charging", "channel": "alarm", "title": title,
+                    "detail": detail,
+                    # WALL-CLOCK-OK(record): 11 S6.1 Event.ts of this report.
+                    "src": "p3_task", "ts": time.time(),
+                }, ensure_ascii=False).encode("utf-8"))
+
+            def _publish_prone() -> None:
+                """cmd/chassis/ctrl {action: prone} (11 S9.3.4) in a full S3.0
+                envelope -- quadruped refuses a bare body (S9.3.4 E-3, the P4
+                stamper's lesson). origin "system": P3's own safety action
+                (99 U146 adds it to the S9.3.4 origin set)."""
+                from xbrain.common.envelope.envelope import Envelope, encode
+                from xbrain.common.envelope import read_local_boot_id
+                rid = os.environ.get("XBRAIN_ROBOT_ID", "")
+                if not rid:
+                    _logger.error("p3 low-battery prone NOT sent: XBRAIN_ROBOT_ID unset")
+                    return
+                body = {"cmd_id": "cc-lb-%s-%d" % (_BOOT_ID, _ctrl_seq[0]),
+                        "action": "prone", "origin": "system"}
+                env = Envelope(v=1, rid=rid,
+                               # WALL-CLOCK-OK(align): the S3.0 ts field only.
+                               ts=time.time(), mono=time.monotonic(),
+                               boot=read_local_boot_id(), seq=_ctrl_seq[0],
+                               src="p3_task", ts_sync=False, data=body)
+                _ctrl_seq[0] += 1
+                chassis_ctrl_pub.put(json.dumps(encode(env), ensure_ascii=False,
+                                                separators=(",", ":")).encode("utf-8"))
+
+            def _lb_detail(kind: str, power: dict) -> dict:
+                """The facts every low-battery report carries."""
+                tgt = lb_ctx["target"]
+                return {"type": kind, "soc_pct": power.get("soc_pct"),
+                        "remain_mile_km": power.get("remain_mile_km"),
+                        "target_kind": tgt.kind if tgt else None,
+                        "target_name": tgt.name if tgt else None,
+                        "task_id": lb_ctx["task_id"], "first": lb_ctx["first"]}
+
+            async def _on_low_battery(ev: str) -> None:
+                """One LowBatteryMonitor event (99 U146)."""
+                power = state_cache.get("power") or {}
+                pose = start_from_pose(state_cache.get("pose"))
+                routes = await load_route_geoms(geo_conn)
+                member = route_membership_m if route_membership_m is not None else 0.0
+                if ev == "low":
+                    tgt = await lb.pick_target(geo_conn, pose, routes, member)
+                    lb_ctx.update(target=tgt, task_id=None, first=True)
+                    if tgt is not None:
+                        from xbrain.p3_task.ingest.id_alloc import next_submit_seq
+                        tid = "lb-%s-%d" % (_BOOT_ID, lb_ctx["n"] + 1)
+                        await dao.insert(lb.build_low_battery_row(
+                            tid, await next_submit_seq(conn), tgt,
+                            soc_pct=power.get("soc_pct"), now_mono_ms=_now_mono_ms(),
+                            created_at=_now_utc_iso()))
+                        await conn.commit()
+                        lb_ctx["task_id"] = tid
+                    _logger.warning("p3 low battery (soc %s): target %s -> task %s",
+                                    power.get("soc_pct"),
+                                    tgt.name if tgt else None, lb_ctx["task_id"])
+                elif ev == "alarm":
+                    unr = lb.unreachable(power, pose, lb_ctx["target"], routes, member)
+                    kind = ("low_battery_no_target" if lb_ctx["target"] is None
+                            else "low_battery_unreachable" if unr else "low_battery")
+                    d = _lb_detail(kind, power)
+                    d["unreachable"] = unr
+                    _emit_charging("alarm", "low battery, returning to charge", d)
+                    lb_ctx["first"] = False  # P4 speaks the first one only
+                elif ev == "stop":
+                    susp = await lb.suspend_running_for_low_battery(dao, conn, _now_mono_ms())
+                    if susp is not None:
+                        await _make_publish(
+                            state_pub, _emit_task_event, _publish_task_state,
+                            fetch_terminal=_fetch_terminal_facts,
+                            stop_motion=_stop_motion)(susp[0], "running", susp[1], susp[2])
+                    _publish_prone()
+                    _logger.warning("p3 low battery stop (soc %s): stopped and prone",
+                                    power.get("soc_pct"))
+                    d = _lb_detail("low_battery_stop", power)
+                    d["first"] = True  # its own one-time voice
+                    _emit_charging("alarm", "battery critical, stopped and lying down", d)
+                elif ev == "charging":
+                    _logger.info("p3 low battery: chassis charging, alarm closed")
+                    # 99 U146: the low-battery task has done its job; left
+                    # suspended, a later "继续" would drive back to the dock.
+                    closed = await lb.close_low_battery_task(
+                        dao, conn, lb_ctx["task_id"], _now_mono_ms())
+                    if closed is not None:
+                        await _make_publish(
+                            state_pub, _emit_task_event, _publish_task_state,
+                            fetch_terminal=_fetch_terminal_facts,
+                            stop_motion=_stop_motion)(closed[0], closed[1], closed[2],
+                                                      "low_battery_charging")
+                    _emit_charging("info", "charging, low battery alarm closed",
+                                   _lb_detail("low_battery_cleared", power))
+                    lb_ctx.update(target=None, task_id=None, first=False)
+
             # 15 S10 INIT / 11 S9.14: a `running` row at start-up is left over
             # from an unclean shutdown -- suspend it (passive, unclean_shutdown)
             # before the first scheduler tick, or it blocks every dispatch for
@@ -1122,6 +1247,27 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                     "src": "p3_task", "ts": time.time(),
                 }, ensure_ascii=False).encode("utf-8"))
 
+            # 99 U146: at boot, no 返航终点站 (it must exist) or a 充电桩 / 充电站
+            # point off every route -> one cloud report naming what is wrong.
+            try:
+                _homes = await lb.list_role_points(geo_conn, "home")
+                _docks = await lb.list_role_points(geo_conn, "dock")
+                _routes0 = await load_route_geoms(geo_conn)
+                _member0 = route_membership_m if route_membership_m is not None else 0.0
+                _off = [d[1] for d in _docks
+                        if not lb.on_route((d[2], d[3]), _routes0, _member0)]
+                _on = [d for d in _docks if d[1] not in _off]
+                if not _homes or _off:
+                    _missing = (["返航终点站"] if not _homes else []) + (
+                        ["充电桩/充电站"] if not _on else [])
+                    _logger.warning("p3 boot: return targets missing %s, docks off "
+                                    "route %s", _missing, _off)
+                    _emit_charging("alarm", "return targets not defined", {
+                        "type": "return_target_missing", "missing": _missing,
+                        "docks_off_route": _off, "first": True})
+            except Exception as exc:      # noqa: BLE001
+                _logger.error("p3 boot return-target check failed: %s", exc)
+
             last_hb = time.monotonic()
             last_geo = 0.0            # 0 -> publish geo on the very first pass
             last_fence = 0.0          # 0 -> publish fence on the very first pass
@@ -1151,7 +1297,16 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         # 2026-08-20 every task-CREATE arrives that way --
                         # p4_agent, the HMI and the cloud all send S7.2, and
                         # p4's private task_request shape is gone.
-                        if (isinstance(payload, dict) and rtk_monitor is not None
+                        if (isinstance(payload, dict) and payload.get("action") == "submit"
+                                and lb_monitor is not None and lb_monitor.stopped):
+                            # 99 U146: stopped and lying down at the last 5 %:
+                            # no task is accepted (it could not run).
+                            task_ack_pub.put(json.dumps(task_ack(
+                                str(payload.get("cmd_id") or ""), "rejected", E_LOW_BATTERY,
+                                {"reason": "battery_critical",
+                                 "soc_pct": (state_cache.get("power") or {}).get("soc_pct")}),
+                                ensure_ascii=False).encode("utf-8"))
+                        elif (isinstance(payload, dict) and rtk_monitor is not None
                                 and rtk_monitor.lost and payload.get("action") == "submit"):
                             # 11 S3.2.1 single / no_fix: no task is accepted
                             # (99 U142). Refused, not queued: a queued task would
@@ -1280,6 +1435,15 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                 _on_rtk_recovered(now_mono_s)
                         except Exception as exc:      # noqa: BLE001
                             _logger.error("p3 positioning-loss step failed: %s", exc)
+                    if lb_monitor is not None:
+                        # 99 U146 low battery, every pass (the 2 s alarm cadence
+                        # needs the 0.5 s loop, not the 1 Hz power frame).
+                        try:
+                            for _lev in lb_monitor.update(state_cache.get("power"),
+                                                          now_mono_s):
+                                await _on_low_battery(_lev)
+                        except Exception as exc:      # noqa: BLE001
+                            _logger.error("p3 low-battery step failed: %s", exc)
                     while not teach_queue.empty():
                         # S12A.3 arming check 2 needs the running task types;
                         # until 99 U133 none were passed, so the check never
@@ -1386,6 +1550,9 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                             _logger.error("p3 ES-2 suspend failed: %s", exc)
                     elif _takeover:
                         # 15 S4.1A: no new task is dispatched during B / D.
+                        pass
+                    elif lb_monitor is not None and lb_monitor.stopped:
+                        # 99 U146: lying down at the last 5 %: nothing dispatches.
                         pass
                     elif rtk_monitor is not None and rtk_monitor.lost:
                         # 11 S3.2.1 single / no_fix (99 U142): nothing is
