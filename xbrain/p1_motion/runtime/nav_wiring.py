@@ -211,6 +211,9 @@ class PoseView:
     i_heading: Optional[float]
     fix_type: Optional[str]        # 11 S3.2.1, the fence inset key (12 S7.4)
     yaw_capable: bool = False      # 11 S3.3: L1 dual-antenna heading (face-heading needs it)
+    # 11 S3.3 GnssHeading.source (dual_antenna | cog | none): "cog" selects the
+    # fixed L2 drive speed in the gate (99 U142), so it travels with the pose.
+    heading_source: Optional[str] = None
 
 
 class NavRuntime:
@@ -270,7 +273,11 @@ class NavRuntime:
                              rot_limits=cfg.rot_limits,
                              r_robot_m=cfg.r_robot_m,
                              v_obstacle_avoid_mps=cfg.v_obstacle_avoid_mps,
-                             fence_consts=cfg.fence)
+                             fence_consts=cfg.fence,
+                             # 99 U142: float / dgps cap and the L2 (COG) speed
+                             degraded_fix_cap_mps=cfg.degraded_fix_cap_mps,
+                             cog_drive_fixed_mps=cfg.cog_drive_fixed_mps,
+                             cog_drive_degraded_mps=cfg.cog_drive_degraded_mps)
         self._host = MissionHost(self._src, relmove_limits=cfg.relmove,
                                  holonomic=cfg.holonomic, now_mono_ms=now_ms)
         self._health = HealthFactorSlot(cfg.health_degrade_ms, cfg.health_dead_ms)
@@ -742,13 +749,18 @@ class NavRuntime:
             yaw, heading_valid = None, False
         i_heading = pose.get("i_heading") if heading_valid else None
         fix_type = pose.get("fix_type")
+        source = pose.get("heading_source")
         return PoseView(xy=xy, yaw=None if yaw is None else float(yaw),
                         heading_valid=heading_valid,
                         i_fix=None if xy is None else float(i_fix),
                         i_heading=None if i_heading is None else float(i_heading),
                         fix_type=fix_type if isinstance(fix_type, str) else None,
                         yaw_capable=heading_valid and yaw is not None
-                        and bool(pose.get("yaw_capable")))
+                        and bool(pose.get("yaw_capable")),
+                        # only a VALID heading names its source to the gate: an
+                        # L2-blind COG is vetoed as heading anyway (11 S3.3.1)
+                        heading_source=(source if heading_valid and isinstance(source, str)
+                                        else None))
 
     def _fence_geometry(self) -> Optional[CompiledFence]:
         """The active FenceSet compiled about the site frame, cached per
@@ -933,7 +945,8 @@ class NavRuntime:
                         perception=snap, health=health,
                         estop=bool(self._estop.is_active()),
                         teleop_active=self._teleop_active(now_ms), ts_wall_s=ts_wall,
-                        fix_type=pose.fix_type, fence=self._fence_geometry(),
+                        fix_type=pose.fix_type, heading_source=pose.heading_source,
+                        fence=self._fence_geometry(),
                         ring=self._ring_sample(pose, snap, now_ms),
                         mode_hold=mode_hold,
                         teleop_cmd=teleop_cmd, teleop_source=teleop_source)

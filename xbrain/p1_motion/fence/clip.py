@@ -105,9 +105,11 @@ class FenceClipError(ValueError):
 
 
 #: 11 S3.2.1: fix types whose position admits a fence evaluation (inset from
-#: margin_by_fix). dgps / single / no_fix -> fence_eval unavailable (B6: no
-#: inset, no clipping; the gate's rtk veto already forbids autonomous motion).
-FIX_WITH_FENCE: Tuple[str, ...] = ("rtk_fixed", "rtk_float")
+#: margin_by_fix). single / no_fix -> fence_eval unavailable (B6: no inset, no
+#: clipping; the gate's rtk veto already forbids autonomous motion). dgps was
+#: in that list until 99 U142 (2026-11-06) let it drive: a fix that moves the
+#: robot must be judged against the fence, with its own (larger) inset.
+FIX_WITH_FENCE: Tuple[str, ...] = ("rtk_fixed", "rtk_float", "dgps")  # dgps: 99 U142
 #: 11 S9A.8: residual outward speed after projection_iters rounds above which
 #: the constraint cone is degenerate (concave corner) -> zero velocity.
 DEGENERATE_EPS_MPS = 0.01

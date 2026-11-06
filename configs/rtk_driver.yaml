@@ -38,7 +38,7 @@ resolver:                    # 11 S3.3.1/S3.3.3 thresholds -- engineering defaul
   cov_h_m: 0.05              # horizontal position 1sigma, for the L2 cov estimate
   cog_diff_dt_s: 0.9         # COG differencing window, for the L2 cov estimate (T7)
   i_heading_l1: 1.0          # heading -> speed-gate factor per level (11 S3.3.1)
-  i_heading_l2: 0.4
+  i_heading_l2: 1.0          # 99 U142 (2026-11-06, was 0.4): L2 speed is P1's fixed nav.cog_drive_*_mps, not a factor
   i_heading_l3: 0.0
 fix_cov:                     # rt/gnss/fix cov_h_m = nominal x max(hdop,1) (11 S3.2, T7)
   rtk_fixed_h_m: 0.02        # cm-level (11 S3.2.1)

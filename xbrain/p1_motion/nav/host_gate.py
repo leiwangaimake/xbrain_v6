@@ -121,7 +121,9 @@ def compute_gate(*, v_nom_mps: float, spec_max_vx_mps: float,
                  heading_valid: bool, estop: bool,
                  perception_dead: bool,
                  profile_downgraded: bool = False,
-                 fence_zone_mps: Optional[float] = None) -> GateResult:
+                 fence_zone_mps: Optional[float] = None,
+                 fix_cap_mps: Optional[float] = None,
+                 cog_drive_mps: Optional[float] = None) -> GateResult:
     """The ceiling. Vetoes are checked in 11 S9.6.5 priority order and the
     first hit names the limiter; otherwise the four-in-min / two-multiplied
     formula with per-term deltas for attribution.
@@ -164,6 +166,20 @@ def compute_gate(*, v_nom_mps: float, spec_max_vx_mps: float,
     # computes exactly what it did before the zones existed (NEXT I-1).
     if fence_zone_mps is not None:
         terms["fence"] = float(fence_zone_mps)
+    # 99 U142 (user ruling 2026-11-06), named terms for the same reason as the
+    # fence zone: the limiter must say what cut the speed. NavTick decides which
+    # applies (quality_caps); None for both on an rtk_fixed / L1 tick.
+    #   * cog_drive_mps: an L2 (COG) heading drives at this fixed speed (1.0
+    #     on rtk_fixed, 0.6 on float / dgps -- quality_caps picks). It is
+    #     ABOVE the COG validity threshold (rtk_driver cog_speed_thresh_mps 0.5)
+    #     on purpose and REPLACES the float / dgps cap: a 0.5 cap would hold
+    #     the robot at the threshold and drop the heading into L2-blind (11
+    #     S3.3.1), which is a heading veto -- a stop it cannot drive out of.
+    #   * fix_cap_mps: rtk_float / dgps run like rtk_fixed but at most this.
+    if cog_drive_mps is not None:
+        terms["heading"] = float(cog_drive_mps)
+    elif fix_cap_mps is not None:
+        terms["rtk"] = float(fix_cap_mps)
     v_lin = min(terms.values())
     # The ceiling for reverse vx and lateral vy drops ONLY the f term: f is a
     # FORWARD clearance, so gating a backup with it would pin the robot

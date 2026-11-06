@@ -26,7 +26,9 @@ pytestmark = pytest.mark.no_device
 P1 = {
     "geo": {"enu_origin": {"lat": 31.2304, "lon": 121.4737, "alt": 4.0}},
     "nav": {"max_vx_mps": 2.0, "max_wz_radps": 1.2, "holonomic": True, "v_nom_mps": 1.5,
-            "v_obstacle_avoid_mps": 0.5},
+            "v_obstacle_avoid_mps": 0.5,
+            # 99 U142: float / dgps cap and the fixed L2 (COG) speed
+            "degraded_fix_cap_mps": 0.5, "cog_drive_fixed_mps": 1.0, "cog_drive_degraded_mps": 0.6},
     "relative_move": {"max_distance_m": 20.0, "max_yaw_rad": 6.2832,
                       "pure_rotation_eps_m": 0.02, "default_timeout_s": 20.0,
                       "abort_on_obstacle": True,
@@ -35,7 +37,7 @@ P1 = {
     "timeouts_ms": {"gnss": 200, "health_degrade": 3000, "health_dead": 10000},
     # 12 S7 clip constants (fence/clip.py): shared truth refs, resolved at freeze.
     "fence": {"brake_k": 1.5, "brake_a_mps2": 2.5, "t_lat_s": 0.4, "soft_margin_min_m": 2.0,
-              "predict_dt_s": 0.45, "margin_by_fix": {"rtk_fixed": 0.3, "rtk_float": 1.0},
+              "predict_dt_s": 0.45, "margin_by_fix": {"rtk_fixed": 0.3, "rtk_float": 1.0, "dgps": 1.5},
               "projection_iters": 3},
     "speed_gate": {"hysteresis": {"speed_up_hold_s": 3.0, "d_up_margin_m": 0.5}},
     # 12 S12 rotation_clearance (step 6b). The three zeros are the STRICTEST
@@ -129,6 +131,8 @@ def test_missing_rotation_key_names_itself(key):
     "relative_move.cmd_deadzone.wz_radps",
     "timeouts_ms.gnss", "timeouts_ms.health_dead",
     "fence.brake_k", "fence.t_lat_s", "fence.margin_by_fix.rtk_fixed", "fence.projection_iters",
+    "fence.margin_by_fix.dgps", "nav.degraded_fix_cap_mps", "nav.cog_drive_fixed_mps",  # 99 U142
+    "nav.cog_drive_degraded_mps",
     "speed_gate.hysteresis.speed_up_hold_s", "speed_gate.hysteresis.d_up_margin_m",
 ])
 def test_null_leaf_refused_by_name(dotted):

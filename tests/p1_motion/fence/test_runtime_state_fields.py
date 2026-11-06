@@ -32,7 +32,7 @@ from xbrain.p1_motion.fence.fence_set import (
 pytestmark = pytest.mark.no_device
 
 CFG = FenceConstants(brake_k=1.5, brake_a_mps2=2.5, t_lat_s=0.4, soft_margin_min_m=2.0,
-                     predict_dt_s=0.45, margin_by_fix={"rtk_fixed": 0.3, "rtk_float": 1.0},
+                     predict_dt_s=0.45, margin_by_fix={"rtk_fixed": 0.3, "rtk_float": 1.0, "dgps": 1.5},
                      projection_iters=3, v_profile_max_mps=2.0, teleop_cap_degraded_mps=0.5)
 SQ = CompiledPolygon("p-outer", "allow", "outer", True, True,
                      ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)), None)
@@ -58,7 +58,7 @@ def test_full_tick_fills_geo_and_allow():
 
 def test_degraded_tick_prints_unknown_and_refuses():
     ev = evaluate(CompiledFence("fs", 7, (SQ,)), CFG, xy=(8.5, 5.0), yaw_rad=0.0, vx=2.0, vy=0.0,
-                  fix_type="dgps", heading_valid=True)
+                  fix_type="single", heading_valid=True)  # 99 U142: dgps is judged now
     st = build_fence_runtime_state(HELD, now_mono_s=10.0, applied_mono_s=9.0,
                                    clip=runtime_state_fields(ev))
     assert st["enforcement"] == "warn_only" and st["degrade_reason"] == "rtk_degraded"

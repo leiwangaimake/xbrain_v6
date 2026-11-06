@@ -64,7 +64,9 @@ def test_assemble_pose_merges_fix_half():
 
 def test_assemble_pose_i_fix_by_type():
     # 3.3: i_fix follows fix_type exactly, single/no_fix -> 0 (no autonomous motion).
-    assert gnss_pose.assemble_pose(None, {"fix_type": "rtk_float"})["i_fix"] == 0.4
+    # 99 U142 (2026-11-06): float / dgps run like fixed (1.0); the gate caps them.
+    assert gnss_pose.assemble_pose(None, {"fix_type": "rtk_float"})["i_fix"] == 1.0
+    assert gnss_pose.assemble_pose(None, {"fix_type": "dgps"})["i_fix"] == 1.0
     assert gnss_pose.assemble_pose(None, {"fix_type": "single"})["i_fix"] == 0.0
     assert gnss_pose.assemble_pose(None, {"fix_type": "no_fix"})["i_fix"] == 0.0
 

@@ -57,6 +57,14 @@ class NavConfig:
     holonomic: bool
     v_nom_mps: float
     v_obstacle_avoid_mps: float
+    # 99 U142 (user ruling 2026-11-06): rtk_float / dgps run like rtk_fixed but
+    # never faster than this (nav.degraded_fix_cap_mps), and an L2 (COG) heading
+    # drives at a fixed speed -- nav.cog_drive_fixed_mps on rtk_fixed,
+    # nav.cog_drive_degraded_mps on float / dgps -- both above the COG validity
+    # threshold so the heading does not fall into its blind substate.
+    degraded_fix_cap_mps: float
+    cog_drive_fixed_mps: float
+    cog_drive_degraded_mps: float
     relmove: RelMoveLimits
     gnss_dead_ms: int
     health_degrade_ms: int
@@ -321,6 +329,10 @@ def build_nav_config(p1_tree: Mapping[str, Any], rns_tree: Mapping[str, Any]) ->
         holonomic=_bool(p1_tree, "nav.holonomic"),
         v_nom_mps=v_nom,
         v_obstacle_avoid_mps=v_oa,
+        # required, null / missing refuses the loop (CLAUDE.md 3.1)
+        degraded_fix_cap_mps=_pos(p1_tree, "nav.degraded_fix_cap_mps"),
+        cog_drive_fixed_mps=_pos(p1_tree, "nav.cog_drive_fixed_mps"),
+        cog_drive_degraded_mps=_pos(p1_tree, "nav.cog_drive_degraded_mps"),
         relmove=RelMoveLimits(
             max_distance_m=_pos(p1_tree, "relative_move.max_distance_m"),
             max_yaw_rad=_pos(p1_tree, "relative_move.max_yaw_rad"),

@@ -34,13 +34,17 @@ from typing import Any, Dict, Optional
 
 from xbrain.common.envelope.envelope import Envelope, encode
 
-# i_fix by fix_type (11 S3.2.1 / S4.5): the speed-gate quality factor. rtk_fixed
-# full trust, rtk_float 0.4, everything else 0 (no autonomous motion). Derived
-# HERE from fix_type, not carried in GnssFix.
+# i_fix by fix_type (11 S3.2.1 / S4.5): the speed-gate quality factor. 1.0 for
+# rtk_fixed / rtk_float / dgps (the last two are capped in the gate instead,
+# 99 U142); 0 for single / no_fix (no autonomous motion -- the gate vetoes on
+# rtk). Derived HERE from fix_type, not carried in GnssFix.
 _I_FIX_BY_TYPE = {
     "rtk_fixed": 1.0,
-    "rtk_float": 0.4,
-    "dgps": 0.0,
+    # 99 U142 (2026-11-06): float and dgps run like rtk_fixed; their limit is
+    # the 0.5 m/s cap the gate adds (nav.degraded_fix_cap_mps), not a factor.
+    # Was 0.4 / 0.0 -- dgps stopped all autonomous motion (11 S3.2.1 old row).
+    "rtk_float": 1.0,
+    "dgps": 1.0,
     "single": 0.0,
     "no_fix": 0.0,
 }

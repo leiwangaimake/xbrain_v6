@@ -96,7 +96,7 @@ def test_predicted_crossing_is_the_belt_for_a_small_k():
     the soft cap alone keeps v * dt < d_eff, so the belt stays idle."""
     weak = FenceConstants(brake_k=1.0, brake_a_mps2=2.5, t_lat_s=0.4, soft_margin_min_m=2.0,
                           predict_dt_s=0.45,
-                          margin_by_fix={"rtk_fixed": 0.3, "rtk_float": 1.0},
+                          margin_by_fix={"rtk_fixed": 0.3, "rtk_float": 1.0, "dgps": 1.5},
                           projection_iters=3, v_profile_max_mps=2.0, teleop_cap_degraded_mps=0.5)
     ev = _ev((9.65, 5.0), 2.0, 0.0, cfg=weak)   # d_eff 0.05; v_fence 0.118 * 0.45 > 0.05
     assert ev.hard_ids == ("p-outer",) and ev.vx == pytest.approx(0.0, abs=1e-9)
@@ -122,9 +122,13 @@ def test_degradations_do_not_judge_geometry():
     none = _ev((5.0, 5.0), 1.0, 0.0, fence=None)
     assert (none.enforcement, none.degrade_reason) == ("disabled", "no_fence")
     assert not none.allow_autonomous and none.teleop_max_mps == 0.0 and none.vx == 1.0
-    dgps = _ev((5.0, 5.0), 1.0, 0.0, fix="dgps")
-    assert (dgps.enforcement, dgps.degrade_reason, dgps.state) == ("warn_only", "rtk_degraded", "unknown")
-    assert dgps.teleop_max_mps == 0.5 and not dgps.allow_accept_task and dgps.d_nom_m is None
+    # single, not dgps: 99 U142 (2026-11-06) let dgps drive, so it is judged
+    # with its own inset now; single is the fix without fence judgement.
+    single = _ev((5.0, 5.0), 1.0, 0.0, fix="single")
+    assert (single.enforcement, single.degrade_reason, single.state) == ("warn_only", "rtk_degraded", "unknown")
+    assert single.teleop_max_mps == 0.5 and not single.allow_accept_task and single.d_nom_m is None
+    dgps = _ev((5.0, 5.0), 1.0, 0.0, fix="dgps")  # 99 U142: judged, full enforcement
+    assert dgps.enforcement == "full"
     nopos = _ev(None, 1.0, 0.0)
     assert nopos.degrade_reason == "rtk_degraded"
     blind = _ev((9.8, 5.0), 1.0, 0.0, heading=False)

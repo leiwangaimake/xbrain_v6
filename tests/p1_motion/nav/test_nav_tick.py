@@ -49,7 +49,8 @@ def _stack():
     src = RnsAvoidSource(rns, cfg["rns"])
     tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=1.2,
                    spec_max_vx_mps=2.0, holonomic=True,
-                   rot_limits=rot_limits(), r_robot_m=None)
+                   rot_limits=rot_limits(), r_robot_m=None,
+                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6)
     return src, tick
 
 
@@ -164,7 +165,8 @@ def test_ctor_refuses_unset_limits():
     with pytest.raises(NavTickConfigError):
         NavTick(src, P1Arbiter(), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=None,
                 spec_max_vx_mps=2.0, holonomic=True,
-                rot_limits=rot_limits(), r_robot_m=None)
+                rot_limits=rot_limits(), r_robot_m=None,
+                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6)
 
 
 # ---- adapter entries ---------------------------------------------------------
@@ -213,7 +215,8 @@ def test_max_profile_obstacle_avoid_caps_the_nominal():
     src, _ = _stack()
     tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=1.2,
                    spec_max_vx_mps=2.0, holonomic=True, v_obstacle_avoid_mps=0.5,
-                   rot_limits=rot_limits(), r_robot_m=None)
+                   rot_limits=rot_limits(), r_robot_m=None,
+                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6)
     _goto(src, 5000)
     oa = HealthView(1.0, True, "obstacle_avoid", "ok", 100)
     outs = [tick.run(_inp(5000 + 50 * k, health=oa)) for k in range(10)]

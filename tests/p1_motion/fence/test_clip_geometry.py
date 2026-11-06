@@ -116,7 +116,7 @@ def test_v_fence_is_the_brake_inverse():
 def test_constants_refuse_nulls_and_missing_fix_rows():
     with pytest.raises(FenceClipError):
         FenceConstants(brake_k=1.5, brake_a_mps2=None, t_lat_s=0.4, soft_margin_min_m=2.0,
-                       predict_dt_s=0.45, margin_by_fix={"rtk_fixed": 0.3, "rtk_float": 1.0},
+                       predict_dt_s=0.45, margin_by_fix={"rtk_fixed": 0.3, "rtk_float": 1.0, "dgps": 1.5},
                        projection_iters=3, v_profile_max_mps=2.0, teleop_cap_degraded_mps=0.5)
     with pytest.raises(FenceClipError):
         FenceConstants(brake_k=1.5, brake_a_mps2=2.5, t_lat_s=0.4, soft_margin_min_m=2.0,
@@ -124,7 +124,7 @@ def test_constants_refuse_nulls_and_missing_fix_rows():
                        projection_iters=3, v_profile_max_mps=2.0, teleop_cap_degraded_mps=0.5)
     with pytest.raises(FenceClipError):
         FenceConstants(brake_k=1.5, brake_a_mps2=2.5, t_lat_s=0.4, soft_margin_min_m=2.0,
-                       predict_dt_s=0.45, margin_by_fix={"rtk_fixed": 0.3, "rtk_float": 1.0},
+                       predict_dt_s=0.45, margin_by_fix={"rtk_fixed": 0.3, "rtk_float": 1.0, "dgps": 1.5},
                        projection_iters=0, v_profile_max_mps=2.0, teleop_cap_degraded_mps=0.5)
 
 

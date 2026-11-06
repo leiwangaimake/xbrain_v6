@@ -120,6 +120,7 @@ class NavInputs:
     # a judgement input -- CLK-C1); the wiring reads it once per tick.
     ts_wall_s: float = 0.0    # WALL-CLOCK-OK(align/log)
     fix_type: Optional[str] = None            # 11 S3.2.1 GnssFix.fix_type (fence inset)
+    heading_source: Optional[str] = None      # 11 S3.3 source of a VALID heading (cog -> L2 speed)
     fence: Optional[CompiledFence] = None     # the active FenceSet, compiled (12 S7)
     # 12 S2.2 step 6b input: this tick's read of the sweep annulus. None means
     # the RC-D2 primary source produced nothing, which is a REFUSE and never a
@@ -208,6 +209,36 @@ def _positive(name: str, v: Any) -> float:
     return float(v)
 
 
+#: 99 U142: the fixes that run like rtk_fixed but under the degraded-fix cap.
+DEGRADED_FIXES = ("rtk_float", "dgps")
+
+
+def quality_caps(fix_type: Optional[str], heading_source: Optional[str],
+                 fix_cap_mps: float, cog_fixed_mps: float, cog_degraded_mps: float
+                 ) -> Tuple[Optional[float], Optional[float]]:
+    """(fix_cap_mps, cog_drive_mps) for compute_gate this tick (99 U142).
+
+    The user's rulings of 2026-11-06, as one decision table:
+      * heading_source "cog" (an L2 heading that is VALID -- L2-blind never
+        reaches here, the pose drops its source) -> drive at a fixed speed:
+        cog_fixed_mps (1.0) on rtk_fixed, cog_degraded_mps (0.6) on rtk_float
+        / dgps. Both are above the COG validity threshold (0.5): the faster
+        one gives COG a wide margin and a better heading (error ~ atan(dv /
+        v)) where the position is good; on a float / dgps position the
+        slowest speed that still keeps COG alive. The 0.5 fix cap does not
+        apply on top of either -- it would hold the robot at the threshold;
+      * rtk_float / dgps -> capped at fix_cap_mps, otherwise like rtk_fixed;
+      * rtk_fixed with an L1 heading -> neither term.
+    single / no_fix never get here as a moving case: their i_fix is absent and
+    the gate vetoes on rtk (11 S3.2.1, unchanged).
+    """
+    if heading_source == "cog":  # L2: a fixed COG speed, by fix quality
+        return None, (cog_degraded_mps if fix_type in DEGRADED_FIXES else cog_fixed_mps)
+    if fix_type in DEGRADED_FIXES:
+        return fix_cap_mps, None  # float / dgps: capped
+    return None, None  # rtk_fixed + L1: nothing added
+
+
 class NavTick:
     """Per-tick orchestrator. One instance per process, ticked at 20 Hz."""
 
@@ -216,7 +247,9 @@ class NavTick:
                  holonomic: bool, speed_up_hold_ms: Any, d_up_margin_m: Any,
                  rot_limits: RotationLimits, r_robot_m: Optional[float],
                  v_obstacle_avoid_mps: Any = None,
-                 fence_consts: Optional[FenceConstants] = None) -> None:
+                 fence_consts: Optional[FenceConstants] = None,
+                 degraded_fix_cap_mps: Any, cog_drive_fixed_mps: Any,
+                 cog_drive_degraded_mps: Any) -> None:
         self._src = source
         self._arb = arbiter
         # 12 S2.2 step 6b constants. REQUIRED, with no None-means-skip shape --
@@ -258,6 +291,11 @@ class NavTick:
                       else _positive("v_obstacle_avoid_mps", v_obstacle_avoid_mps))
         self._wz_max = _positive("spec.max_wz_radps", wz_max_rps)
         self._spec_vx = _positive("spec.max_vx_mps", spec_max_vx_mps)
+        # 99 U142: REQUIRED, no default -- a missing cap would let a float /
+        # dgps fix run at full speed (CLAUDE.md 3.1); nav_cfg reads both keys.
+        self._fix_cap = _positive("nav.degraded_fix_cap_mps", degraded_fix_cap_mps)
+        self._cog_fixed = _positive("nav.cog_drive_fixed_mps", cog_drive_fixed_mps)
+        self._cog_degraded = _positive("nav.cog_drive_degraded_mps", cog_drive_degraded_mps)
         self._holo = bool(holonomic)
         self._suspended = False
 
@@ -365,12 +403,15 @@ class NavTick:
         #     exactly the pre-zone gate (NEXT I-1: no fence constrains
         #     nothing). speed_cap_mps is where each of those is decided.
         zone_cap = speed_cap_mps(inp.fence, inp.pose_xy, fence_inset)
+        fix_cap, cog_drive = quality_caps(inp.fix_type, inp.heading_source, self._fix_cap,
+                                          self._cog_fixed, self._cog_degraded)  # 99 U142
         gate = compute_gate(
             v_nom_mps=v_nom, spec_max_vx_mps=self._spec_vx,
             free_space_mps=f_mps, health=inp.health, i_fix=inp.i_fix,
             i_heading=inp.i_heading, heading_valid=inp.heading_valid,
             estop=inp.estop, perception_dead=(fresh is Freshness.FAILED),
-            profile_downgraded=downgraded, fence_zone_mps=zone_cap)
+            profile_downgraded=downgraded, fence_zone_mps=zone_cap,
+            fix_cap_mps=fix_cap, cog_drive_mps=cog_drive)
         vx, vy, wz = apply_gate(gate, raw[0], raw[1], raw[2], self._holo,
                                 wz_max_radps=self._wz_max)
         limiter, limiter_all = attribute(gate, raw[0])

@@ -30,7 +30,7 @@ pytestmark = pytest.mark.no_device
 
 CFG = FenceConstants(brake_k=1.5, brake_a_mps2=2.5, t_lat_s=0.4, soft_margin_min_m=2.0,
                      predict_dt_s=0.45,
-                     margin_by_fix={"rtk_fixed": 0.3, "rtk_float": 1.0},
+                     margin_by_fix={"rtk_fixed": 0.3, "rtk_float": 1.0, "dgps": 1.5},
                      projection_iters=3, v_profile_max_mps=2.0, teleop_cap_degraded_mps=0.5)
 SQ = CompiledPolygon("p-outer", "allow", "outer", True, True,
                      ((0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)), None)
@@ -72,10 +72,10 @@ def test_rev_change_forgets_the_memory():
 def test_enforcement_transitions_are_set_level_events():
     t = FenceEpisodeTracker()
     t.observe(_ev(8.5), rev=1)                                       # soft_enter, in band
-    deg = t.observe(_ev(8.5, fix="dgps"), rev=1)
+    deg = t.observe(_ev(8.5, fix="single"), rev=1)
     assert _kinds(deg) == [("fence_degraded", 0)]
     assert deg[0].severity == "alarm" and deg[0].dedup_key == "fence:degraded:rtk_degraded"
-    assert t.observe(_ev(8.5, fix="dgps"), rev=1) == []              # no repeat while degraded
+    assert t.observe(_ev(8.5, fix="single"), rev=1) == []              # no repeat while degraded
     back = t.observe(_ev(8.5), rev=1)
     assert _kinds(back) == [("fence_restored", 0)]                   # and no second soft_enter: memory kept
 
@@ -116,7 +116,7 @@ def test_每一类事件都带S9A9给的去重窗口():
     # 所以窗口是 300 而不是 60.
     t2 = FenceEpisodeTracker()
     t2.observe(_ev(8.5), rev=1)
-    deg = t2.observe(_ev(8.5, fix="dgps"), rev=1)
+    deg = t2.observe(_ev(8.5, fix="single"), rev=1)
     assert deg[0].kind == "fence_degraded" and deg[0].dedup_window_s == 300
     back = t2.observe(_ev(8.5), rev=1)
     assert back[0].kind == "fence_restored" and back[0].dedup_window_s == 300

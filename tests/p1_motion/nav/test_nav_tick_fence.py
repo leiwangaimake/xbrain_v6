@@ -54,7 +54,7 @@ _CFG["rns"]["world"]["v_max_mps"] = 1.0
 OK = HealthView(1.0, True, "patrol", "ok", 100)
 LIM = RelMoveLimits(20.0, 6.2832, 0.02, 20.0, True)
 FC = FenceConstants(brake_k=1.5, brake_a_mps2=2.5, t_lat_s=0.4, soft_margin_min_m=2.0,
-                    predict_dt_s=0.45, margin_by_fix={"rtk_fixed": 0.3, "rtk_float": 1.0},
+                    predict_dt_s=0.45, margin_by_fix={"rtk_fixed": 0.3, "rtk_float": 1.0, "dgps": 1.5},
                     projection_iters=3, v_profile_max_mps=1.0, teleop_cap_degraded_mps=0.5)
 SQ = CompiledPolygon("p-outer", "allow", "outer", True, True,
                      ((-5.0, -5.0), (8.0, -5.0), (8.0, 8.0), (-5.0, 8.0)), None)
@@ -68,7 +68,8 @@ def _stack(with_fence=True):
     tick = NavTick(src, P1Arbiter(dwell_ms=200), v_nom_mps=1.0, speed_up_hold_ms=3000, d_up_margin_m=0.5, wz_max_rps=1.2,
                    spec_max_vx_mps=2.0, holonomic=True,
                    fence_consts=FC if with_fence else None,
-                   rot_limits=rot_limits(), r_robot_m=None)
+                   rot_limits=rot_limits(), r_robot_m=None,
+                   degraded_fix_cap_mps=0.5, cog_drive_fixed_mps=1.0, cog_drive_degraded_mps=0.6)
     goal = translate_relative_move(
         {"cmd_id": "rm-1", "dx_m": 12.0, "dy_m": 0.0, "dyaw_rad": 0.0},
         pose_xy=(0.0, 0.0), yaw_rad=0.0, heading_valid=True, holonomic=True, limits=LIM)
