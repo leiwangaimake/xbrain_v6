@@ -152,5 +152,63 @@ def test_one_tick_hands_teleop_to_navinputs():  # static wiring check
     src = (Path(__file__).resolve().parents[2] / "xbrain" / "p1_motion" / "runtime"
            / "nav_wiring.py").read_text(encoding="utf-8")  # the module source
     assert "teleop_cmd, teleop_source = self._teleop_drive(now_ms)" in src  # computed per tick
-    assert "teleop_cmd=teleop_cmd, teleop_source=teleop_source)" in src  # handed to the tick
+    assert "teleop_cmd=teleop_cmd, teleop_source=teleop_source," in src  # handed to the tick
+    assert "teleop_unconditional=self._teleop_unconditional)" in src  # 99 U150 flag handed too
     assert "declare_subscriber(STATE_MODE_TOPIC" in src  # speeds subscribed
+
+
+# -- 99 U150: the cloud keyboard drives unconditionally ----------------------------
+def _cloud_inp(now, cmd, **kw):  # the cloud keyboard driving
+    from dataclasses import replace  # frozen dataclass
+    return replace(_teleop_inp(now, cmd, **kw), teleop_unconditional=True)
+
+
+NO_HEALTH = __import__("tests.p1_motion.nav.test_nav_tick", fromlist=["NEVER"]).NEVER  # never granted
+
+
+@pytest.mark.parametrize("kw", [
+    {"heading_valid": False},  # the dual-antenna dropout of the 2026-11-06 bench
+    {"i_fix": None, "pose": None},  # no position at all
+    {"perception": PerceptionSnapshot()},  # no camera
+    {"health": NO_HEALTH},  # health never granted
+])
+def test_the_cloud_keyboard_turns_whatever_the_inputs_say(kw):  # user ruling
+    """An in-place turn (pure wz, a rotation-permit case) at the voice-set
+    0.6 rad/s comes out at 0.6 whatever the positioning / heading /
+    perception / health say, and the state word lets it through. MUTATION:
+    keep the shared gate for keyboard_cloud -> wz 0 on a heading dropout ->
+    red; keep the rotation permit -> 0.5 -> red; keep ctrl_state's input
+    checks -> SAFE_STOP / WAIT_* -> red."""
+    _src, tick = _stack()  # real stack
+    inp = _cloud_inp(5000, (0.0, 0.0, 0.6), **kw)  # a held, in-place
+    out = tick.run(inp)
+    assert out.source == "teleop_keyboard" and out.wz == pytest.approx(0.6)  # unchanged
+    assert ctrl_state_for(inp, out, health_ever_ok=True, inputs_ever_ready=True) is CtrlState.ACTIVE
+
+
+def test_the_cloud_keyboard_keeps_the_estop_and_the_chassis_limits():  # what stays
+    """MUTATION: drop the estop check -> 0.6 under an estop -> red; drop the
+    chassis clamp -> wz 2.0 / vx 3.0 reach the chassis -> red."""
+    _src, tick = _stack()  # real stack (spec max vx 2.0, max wz 1.2)
+    stop = tick.run(_cloud_inp(5000, (0.0, 0.0, 0.6), estop=True))  # soft estop
+    assert (stop.vx, stop.vy, stop.wz, stop.limiter) == (0.0, 0.0, 0.0, "estop")  # estop wins
+    big = tick.run(_cloud_inp(5100, (3.0, 0.0, 2.0)))  # over the chassis limits
+    assert big.vx == pytest.approx(2.0) and big.wz == pytest.approx(1.2)  # clamped to the spec
+
+
+def test_only_the_cloud_keyboard_is_unconditional():  # the user's scope
+    """MUTATION: mark keyboard_hmi unconditional too -> red; never set the
+    flag -> red."""
+    me = SimpleNamespace(_teleop_lock=threading.Lock(), _teleop=TeleopTracker(),
+                         _teleop_speeds=TeleopSpeeds(move_mps=0.5, turn_radps=0.6),
+                         _cfg=SimpleNamespace(holonomic=True), _teleop_unconditional=False)
+    me._teleop.observe("keyboard_cloud", now_mono_ms=1000, deadman=True, axes={"wz": 1.0})
+    NavRuntime._teleop_drive(me, 1100)
+    assert me._teleop_unconditional is True  # the recording-time keyboard
+    hmi = SimpleNamespace(_teleop_lock=threading.Lock(), _teleop=TeleopTracker(),
+                          _teleop_speeds=TeleopSpeeds(move_mps=0.5, turn_radps=0.6),
+                          _cfg=SimpleNamespace(holonomic=True), _teleop_unconditional=True)
+    hmi._teleop.observe("keyboard_hmi", now_mono_ms=1000, deadman=True, axes={"wz": 1.0})
+    NavRuntime._teleop_drive(hmi, 1100)
+    assert hmi._teleop_unconditional is False  # HMI keeps the shared gate
+

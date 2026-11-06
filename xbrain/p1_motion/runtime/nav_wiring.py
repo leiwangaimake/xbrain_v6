@@ -284,6 +284,7 @@ class NavRuntime:
         self._assembler = RouteAssembler(cfg.frame)
         self._lock = threading.Lock()
         self._route_q: Deque[Any] = collections.deque()
+        self._teleop_unconditional = False  # 99 U150: the cloud keyboard drives this tick
         self._relmove_q: Deque[Any] = collections.deque()
         # P1-3 mode hold (99 U99). Written by the behavior callback (Rust
         # thread, a bool assignment), read once per tick. False at start: a P1
@@ -659,6 +660,7 @@ class NavRuntime:
         while no source holds its deadman or no speed has been heard."""
         with self._teleop_lock:
             drive = self._teleop.drive_axes(now_ms)
+        self._teleop_unconditional = False  # set below only for the cloud keyboard
         if drive is None:
             return None, None
         device, axes = drive
@@ -666,6 +668,9 @@ class NavRuntime:
                               holonomic=self._cfg.holonomic)
         if cmd is None:
             return None, None
+        # 99 U150: the cloud keyboard drives unconditionally (estop and chassis
+        # limits only); the other teleop devices keep the shared gate.
+        self._teleop_unconditional = device == "keyboard_cloud"
         return cmd, source_for(device)
 
     def _on_factor(self, sample: Any) -> None:
@@ -955,7 +960,8 @@ class NavRuntime:
                         fence=self._fence_geometry(),
                         ring=self._ring_sample(pose, snap, now_ms),
                         mode_hold=mode_hold,
-                        teleop_cmd=teleop_cmd, teleop_source=teleop_source)
+                        teleop_cmd=teleop_cmd, teleop_source=teleop_source,
+                        teleop_unconditional=self._teleop_unconditional)  # 99 U150
         out = self._tick.run(inp)
         self._cur = out
         if out.fence is not None:

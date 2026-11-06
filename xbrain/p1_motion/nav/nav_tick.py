@@ -142,6 +142,12 @@ class NavInputs:
     # the robot under any teleop input.
     teleop_cmd: Optional[Tuple[float, float, float]] = None
     teleop_source: Optional[BehaviorSource] = None
+    # 99 U150 (user ruling 2026-11-06): the cloud keyboard (keyboard_cloud,
+    # the recording-time driving tool) drives UNCONDITIONALLY -- only the
+    # estop and the chassis limits apply; positioning, heading, perception,
+    # health, the fence and the rotation permit do not touch it. True only
+    # while that device is the one driving (nav_wiring._teleop_drive).
+    teleop_unconditional: bool = False
 
 
 @dataclass(frozen=True)
@@ -324,6 +330,11 @@ class NavTick:
             self._src.on_release(ctx)
             self._suspended = False
 
+    def _unconditional_teleop(self, inp: NavInputs, raw: Tuple[float, float, float],
+                              source: str, fresh: Any) -> NavOutput:
+        """99 U150: see _unconditional_teleop_impl."""
+        return _unconditional_teleop_impl(self, inp, raw, source, fresh)
+
     def run(self, inp: NavInputs) -> NavOutput:
         """One tick (12 S2.2). Always returns an output; zero when nothing may
         drive. The RNS candidate is computed only when rns_avoid holds the
@@ -385,6 +396,8 @@ class NavTick:
             if inp.teleop_cmd is not None and inp.teleop_source is holder:
                 raw = tuple(float(v) for v in inp.teleop_cmd)  # type: ignore[assignment]
             source = holder.value
+            if inp.teleop_unconditional and inp.teleop_source is holder:
+                return self._unconditional_teleop(inp, raw, source, fresh)
         profile = inp.perception.profile if inp.perception is not None else None
         f_free = forward_d_free(profile.d_free) if profile is not None else None
         # the f term with its rise hysteresis (12 S6.2 table): the clearance
@@ -457,6 +470,48 @@ class NavTick:
             fence=fev, rotation=rot)
 
 
+def _clamp(v: float, lim: float) -> float:
+    """v limited to +/- lim."""
+    return max(-lim, min(v, lim))
+
+
+def _unconditional_teleop_impl(tick: "NavTick", inp: "NavInputs", raw: Tuple[float, float, float],
+                               source: str, fresh: Any) -> "NavOutput":
+    """99 U150: the cloud keyboard's velocity -- estop zeroes it, the chassis
+    limits (spec max vx / max wz, vy only on a holonomic body) bound it, and
+    nothing else is applied.
+
+    *** Why: the user ruled (2026-11-06) that manual keyboard control, used
+    while recording routes and fences, is the operator's alone. Through the
+    shared gate a dual-antenna heading dropout during an in-place turn (COG
+    is undefined at zero speed) vetoed the whole command and the 2 s recover
+    hold kept it at zero: turns stuttered and "lagged" while forward, back
+    and strafe (which keep COG) were fine (bench 2026-11-06: wz zeroed on
+    23 % / 65 % of the ticks of a left / right turn, limiter heading).
+    The fence is still EVALUATED (state/fence shows inside / outside) but its
+    clip is not applied; no rotation verdict is made.
+    """
+    if inp.estop:
+        vx = vy = wz = 0.0  # the estop always wins
+        limiter = "estop"
+    else:
+        vx = _clamp(raw[0], tick._spec_vx)  # chassis forward / back limit
+        vy = _clamp(raw[1], tick._spec_vx) if tick._holo else 0.0  # strafe only if holonomic
+        wz = _clamp(raw[2], tick._wz_max)  # chassis turn limit
+        limiter = "none"
+    fev = None
+    if tick._fence is not None:  # geometry for state/fence; the clip is NOT applied
+        fev = evaluate(inp.fence, tick._fence, xy=inp.pose_xy, yaw_rad=inp.yaw_rad,
+                       vx=vx, vy=vy, fix_type=inp.fix_type,
+                       heading_valid=inp.heading_valid, hi_factor=1.0)
+    return NavOutput(
+        vx=vx, vy=vy, wz=wz, raw_vx=raw[0], raw_vy=raw[1], raw_wz=raw[2],
+        v_max=tick._spec_vx, limiter=limiter, limiter_all=[limiter] if limiter != "none" else [],
+        source=source, h_factor=1.0, i_factor=1.0, freshness=fresh.value,
+        suspended=tick._suspended, nav_state=tick._src.nav_state().value,
+        profile="patrol", fence=fev, rotation=None)
+
+
 #: 99 U134: the teleop sources a NavTick can hand the slot to.
 _TELEOP_SOURCES = frozenset({BehaviorSource.TELEOP_KEYBOARD,
                              BehaviorSource.TELEOP_JOYSTICK})
@@ -475,6 +530,10 @@ def ctrl_state_for(inp: NavInputs, out: NavOutput, *, health_ever_ok: bool,
       ACTIVE      rns_avoid or a teleop source (99 U134) holds the slot
     mutant: report ACTIVE while the health veto is on -> the state word says
     driving for a zero-velocity health stop -> test_ctrl_state_words red."""
+    if inp.teleop_unconditional and out.source in {s.value for s in _TELEOP_SOURCES}:
+        # 99 U150: the cloud keyboard drives whatever the inputs say; the
+        # estop still zeroes it (NavTick) and the CtrlLoop zeroes on estop.
+        return CtrlState.ACTIVE
     inputs_ok = (inp.pose_xy is not None and inp.heading_valid
                  and out.freshness != Freshness.FAILED.value
                  and inp.i_fix is not None and inp.i_fix > 0.0)
