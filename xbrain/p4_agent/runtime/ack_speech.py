@@ -69,6 +69,7 @@ from xbrain.common.errors import (  # the 11 S13 closed set, never literals
     E_CHANNEL_DENIED,  # S7.9.5 matrix
     E_DEGRADED,  # S3.2.1
     E_GEO_CONFLICT,  # base_rev
+    E_GEO_INVALID,  # 99 U146 dock off every route
     E_LOCKED,  # G-9
     E_NAME_CONFLICT,  # name taken
     E_NO_HEADING,  # G-6
@@ -108,6 +109,17 @@ _RTK_BACK_TASK = "定位已恢复, 要接着执行任务请说继续"
 #: The speaker source of a local alarm voice (14 S4.1 registry, P2 SPEAK_SOURCES).
 _RTK_SOURCE = "tts_local"
 
+#: 99 U146 low-battery reports: event/alarm/charging from P3 every 2 s while a
+#: low-battery episode lasts. Only the one marked first is spoken (the ruling:
+#: a SINGLE voice alarm; the cloud gets them all).
+CHARGING_EVENT_KEY = "event/*/charging"  # wiring subscribes this
+_LB_SPEECH = {  # by detail.type
+    "low_battery": "电量剩余{soc}%, 正在返回{target}",  # going to a dock / home
+    "low_battery_unreachable": "电量剩余{soc}%, 正在返回{target}, 剩余电量可能不够走到",  # range may not cover it
+    "low_battery_no_target": "电量剩余{soc}%, 没有定义充电桩和返航终点站, 无法自动返回",  # nothing defined
+    "low_battery_stop": "电量剩余{soc}%, 已停车趴下",  # the last 5 %
+}
+
 #: Outstanding commands remembered at once (one per turn).
 _PENDING_MAX = 32  # slots, not a time
 
@@ -117,6 +129,8 @@ _TEACH_REFUSED = {
     E_NAME_CONFLICT: "{name}这个名字已经有了, 请换个名字",  # 11 S12A.8 conflict row
     E_TEACH_QUALITY: "{name}没有记录, 定位精度不够, 需要RTK固定解",  # rtk_fixed rule
     E_SCHEMA: "{name}没有记录, 指令格式不对",  # a builder bug, said plainly
+    # 99 U146: a 充电桩 / 充电站 point must be on a route (within 5 m)
+    E_GEO_INVALID: "{name}没有记录, 充电桩和充电站必须在某条路径5米以内",
 }
 _SNAP_AGE = "{name}没有记录, 位置快照已过期, 请再说一遍"  # 18 PS-6 snap_age
 _TEACH_OTHER = "{name}没有记录成功"  # any other code
@@ -160,6 +174,7 @@ _TASK_REFUSED = {
     E_TASK_STATE: "这个任务现在的状态不能{verb}",  # S7.2: pause needs running etc.
     E_NOT_FOUND: "没找到这个任务, 没有{verb}",  # gone meanwhile
     E_DEGRADED: "定位失效, 现在不接受新任务",  # 11 S3.2.1: single / no_fix only since 99 U142
+    E_LOW_BATTERY: "电量过低, 现在不接受新任务",  # 99 U146: stopped at the last 5 %
 }
 _TASK_OTHER = "任务没有{verb}成功"  # any other code
 #: cmd/task/ack refusals told apart by detail.reason before the code.
@@ -324,6 +339,24 @@ class AckSpeaker:  # one per process
         else:
             return None  # heading_degraded is rtk_driver's, not spoken here
         return _speak(text, _RTK_SOURCE)  # a local alarm voice
+
+
+def low_battery_speech(data: bytes) -> Optional[Tuple[str, bytes]]:  # P3 marks the first report
+    """99 U146: the one-time voice of a low-battery episode, or None.
+
+    Spoken only for a report marked first (the start of the episode, and the
+    5 % stop, each once); the repeats every 2 s are for the cloud."""
+    ev = _json(data)  # Event shape (S6.1)
+    detail = ev.get("detail") if isinstance(ev, dict) else None
+    if not isinstance(detail, dict) or detail.get("first") is not True:
+        return None  # a repeat, or not an event
+    template = _LB_SPEECH.get(detail.get("type"))  # which sentence
+    if template is None:  # not a voiced type
+        return None  # cleared / boot report / other: not voiced
+    soc = detail.get("soc_pct")
+    soc_txt = "%d" % int(round(soc)) if isinstance(soc, (int, float)) and not isinstance(soc, bool) else "不足"  # whole percent
+    text = template.format(soc=soc_txt, target=detail.get("target_name") or "充电点")  # the sentence
+    return _speak(text, _RTK_SOURCE)  # a local alarm voice
 
 
 def _speak(text: str, source: str) -> Tuple[str, bytes]:

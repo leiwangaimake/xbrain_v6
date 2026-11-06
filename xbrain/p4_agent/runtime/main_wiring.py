@@ -74,7 +74,8 @@ from xbrain.p4_agent.runtime.turn_loop import (
     TurnLoopWorker,
     on_mic_frame_callback,
 )
-from xbrain.p4_agent.runtime.ack_speech import ACK_KEYS, RTK_EVENT_KEY, TASK_EVENT_KEY, AckSpeaker
+from xbrain.p4_agent.runtime.ack_speech import (ACK_KEYS, CHARGING_EVENT_KEY, RTK_EVENT_KEY,
+                                                TASK_EVENT_KEY, AckSpeaker, low_battery_speech)
 from xbrain.p4_agent.runtime.turn_orchestrator import OrchestratorSession
 from xbrain.p4_agent.runtime.voice_turn import VOICE_TURN_KEY_FMT
 
@@ -415,6 +416,21 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                 except queue.Full:
                     _logger.warning("p4 rtk event dropped: job queue full")
             cloud_subs.append(gen.declare_subscriber(RTK_EVENT_KEY, _on_rtk_event))
+
+            def _on_charging_event(sample) -> None:
+                # 99 U146: the single low-battery voice (P3 marks the first
+                # report of an episode). Same thread rule: copy, queue, return.
+                data = bytes(sample.payload)
+
+                def _job() -> None:
+                    out = low_battery_speech(data)
+                    if out is not None:
+                        _publish(*out)
+                try:
+                    jobs.put_nowait(_job)
+                except queue.Full:
+                    _logger.warning("p4 charging event dropped: job queue full")
+            cloud_subs.append(gen.declare_subscriber(CHARGING_EVENT_KEY, _on_charging_event))
             _logger.info("p4 wiring: subscribed %s (positioning loss spoken)",
                          RTK_EVENT_KEY)
 

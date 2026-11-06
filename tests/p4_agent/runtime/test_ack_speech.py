@@ -350,3 +350,33 @@ def test_heading_degraded_and_junk_are_silent_and_the_key_covers_both_severities
     assert sp.on_rtk_event(_rtk("heading_degraded")) is None  # not voiced
     assert sp.on_rtk_event(b"not json") is None  # malformed ignored
     assert RTK_EVENT_KEY == "event/*/rtk"  # alarm and info
+
+
+# -- 99 U146: the single low-battery voice ---------------------------------------------
+def _lb(kind, first=True, **detail):  # one P3 low-battery report
+    """event/alarm/charging bytes with this detail.type."""
+    return _b({"sev": "alarm", "cat": "charging",
+               "detail": dict(detail, type=kind, first=first)})  # wire form
+
+
+@pytest.mark.parametrize("kind,detail,text", [
+    ("low_battery", {"soc_pct": 18.4, "target_name": "1号充电站"}, "电量剩余18%, 正在返回1号充电站"),
+    ("low_battery_unreachable", {"soc_pct": 12, "target_name": "返航终点站"},
+     "电量剩余12%, 正在返回返航终点站, 剩余电量可能不够走到"),
+    ("low_battery_no_target", {"soc_pct": 19}, "电量剩余19%, 没有定义充电桩和返航终点站, 无法自动返回"),
+    ("low_battery_stop", {"soc_pct": 5}, "电量剩余5%, 已停车趴下"),
+])
+def test_low_battery_is_spoken_once_locally(kind, detail, text):
+    """MUTATION: wrong sentence / turn source -> red."""
+    from xbrain.p4_agent.runtime.ack_speech import low_battery_speech  # under test
+    assert _said(low_battery_speech(_lb(kind, **detail))) == ("cmd/audio/speak", text, "tts_local")
+
+
+def test_low_battery_repeats_and_other_reports_are_silent():
+    """The cloud gets a report every 2 s; the voice is single. MUTATION:
+    ignore `first` -> every repeat spoken -> red; voice the boot report -> red."""
+    from xbrain.p4_agent.runtime.ack_speech import CHARGING_EVENT_KEY, low_battery_speech
+    assert low_battery_speech(_lb("low_battery", first=False, soc_pct=18)) is None  # a repeat
+    assert low_battery_speech(_lb("low_battery_cleared", soc_pct=30)) is None  # closed
+    assert low_battery_speech(_lb("return_target_missing")) is None  # boot report: cloud only
+    assert CHARGING_EVENT_KEY == "event/*/charging"  # alarm and info
