@@ -166,6 +166,10 @@ _REC_ISSUE = {  # S12A.7 blocking issue codes, in words
 }
 _REC_FINISH_OTHER = "录制没有正确结束"  # any other refusal
 _REC_DISCARDED = "已取消录制{name}, 录到的{count}个点已丢弃"  # 99 U137 discard
+#: 99 U147 race fix: "取消所有定时任务" -- the count P3 actually cleared, never
+#: the one P4's (possibly stale) state/task snapshot showed at the turn.
+_SCHED_CLEARED = "已取消{n}个定时任务"
+_SCHED_NONE_LEFT = "现在没有定时任务"
 
 #: cmd/task/ack: what the refused action was, in words.
 _TASK_VERB = {"pause": "暂停", "resume": "继续", "cancel": "取消",
@@ -419,6 +423,10 @@ def _sentence(key: str, cmd: Dict[str, Any], ack: Dict[str, Any]) -> Optional[st
         if detail.get("item") == "snap_age":
             return _SNAP_AGE.format(name=name)  # the snapshot, not the fix
         return _TEACH_REFUSED.get(code, _TEACH_OTHER).format(name=name)  # by code
+    if (key == CMD_TASK and accepted and cmd.get("action") == "clear_queue"
+            and cmd.get("filter") == {"state": "scheduled"}):
+        n = len(detail.get("cleared_ids") or [])  # S7.2: cleared_ids is mandatory
+        return _SCHED_CLEARED.format(n=n) if n else _SCHED_NONE_LEFT
     if accepted:
         return None  # the turn already said what it does
     if key == CMD_TASK:

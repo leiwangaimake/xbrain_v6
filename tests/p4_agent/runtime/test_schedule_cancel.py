@@ -153,10 +153,22 @@ def test_nothing_matching_says_not_found(text, said):  # answered, nothing sent
 
 
 def test_all_clears_the_scheduled_state_at_once():  # every scheduled task
-    """MUTATION: clear_queue without the state filter -> ready tasks too -> red."""
+    """The turn says no count (U147 race fix: the count is P3's ack).
+    MUTATION: clear_queue without the state filter -> ready tasks too -> red;
+    count from the snapshot -> "全部2个" -> red."""
     said, frame = _say(_orch([_A, _B]), OrchestratorSession(), "取消所有定时任务")
-    assert said == "好的,已取消全部2个定时任务"  # done
+    assert said == "好的,取消全部定时任务"  # no number predicted
     assert frame["action"] == "clear_queue" and frame["filter"] == {"state": "scheduled"}
+
+
+@pytest.mark.parametrize("queue", [[], [_A]])  # snapshot shows none / only one
+def test_all_is_sent_even_on_a_stale_snapshot(queue):  # the race itself
+    """A timed task submitted a moment ago may not be in state/task yet; "所有"
+    still goes to P3, which clears what is really there. MUTATION: answer
+    "现在没有定时任务" from the snapshot / cancel the one by id -> red."""
+    said, frame = _say(_orch(queue), OrchestratorSession(), "取消所有定时任务")
+    assert frame["action"] == "clear_queue" and frame["filter"] == {"state": "scheduled"}
+    assert said == "好的,取消全部定时任务"  # the count follows from P3
 
 
 def test_plain_cancel_task_is_not_a_scheduled_cancel():  # B07 itself

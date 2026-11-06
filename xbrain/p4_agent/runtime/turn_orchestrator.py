@@ -185,7 +185,10 @@ _SCHED_CN = {
     "not_found": "没有找到{when}的定时任务",
     # 99 U145: one question, one answer -- the cancel is done, never asked
     "done_one": "好的,已取消{when}{label}的定时任务",
-    "done_all": "好的,已取消全部{n}个定时任务",
+    # 99 U147 race fix: no count here. state/task can lag P4's own commands by
+    # a broadcast (measured ~0.3 s: "全部2个" said while P3 cleared 1); the
+    # count is P3's, spoken from cmd/task/ack (ack_speech _SCHED_CLEARED).
+    "done_all": "好的,取消全部定时任务",
     "ambiguous": "现在有{n}个定时任务: {items}. 没有取消. 要取消其中一个, 请带上时间说, 例如: 取消{example}的定时任务",
 }
 
@@ -1351,6 +1354,14 @@ class TurnOrchestrator:
         B07 is L2 in the registry; like every L2 it runs at once (99 U147)."""
         state = self._state_fn() if self._state_fn else {}
         items = self._scheduled(state)
+        if ptp.every and ptp.when is None and not ptp.name:
+            # "取消所有定时任务": always sent, even when the snapshot shows none --
+            # it may lag a submit made a moment ago. P3 clears what is really
+            # scheduled and its ack says how many, or that there were none.
+            self._turn_ptp_ack = _SCHED_CN["done_all"]
+            return self._route_entry(self._registry.by_id("B07"), text, session,
+                                     now_mono_ms, layer="ptp_rule",
+                                     rule_slots={"cancel_scheduled_all": True})
         if not items:
             return reply("B07", "sched_none")
         picked = list(items)  # narrowed below
@@ -1368,7 +1379,7 @@ class TurnOrchestrator:
             return reply("B07", "sched_not_found",
                          when=_spoken_when(ptp.when) + (ptp.name or ""))
         if ptp.every and len(picked) == len(items) and len(items) > 1:
-            self._turn_ptp_ack = _SCHED_CN["done_all"].format(n=len(items))
+            self._turn_ptp_ack = _SCHED_CN["done_all"]  # the count is P3's (ack)
             return self._route_entry(self._registry.by_id("B07"), text, session,
                                      now_mono_ms, layer="ptp_rule",
                                      rule_slots={"cancel_scheduled_all": True})

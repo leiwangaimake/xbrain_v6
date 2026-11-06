@@ -380,3 +380,26 @@ def test_low_battery_repeats_and_other_reports_are_silent():
     assert low_battery_speech(_lb("low_battery_cleared", soc_pct=30)) is None  # closed
     assert low_battery_speech(_lb("return_target_missing")) is None  # boot report: cloud only
     assert CHARGING_EVENT_KEY == "event/*/charging"  # alarm and info
+
+
+@pytest.mark.parametrize("cleared,text", [(["t-1"], "已取消1个定时任务"),
+                                          (["t-1", "t-2"], "已取消2个定时任务"),
+                                          ([], "现在没有定时任务")])
+def test_clear_scheduled_speaks_p3s_count(cleared, text):  # 99 U147 race fix
+    """The count comes from P3's cleared_ids, not P4's snapshot. MUTATION:
+    stay silent on an accepted clear_queue -> no sentence -> red; count the
+    wrong field -> red."""
+    sp = AckSpeaker()  # fresh
+    sp.note_turn(_sent("cmd/task", {"cmd_id": "c-1", "action": "clear_queue",
+                                    "filter": {"state": "scheduled"}}))  # the "所有" frame
+    out = sp.on_ack(_b({"cmd_id": "c-1", "result": "accepted", "code": "OK",
+                        "detail": {"cleared_ids": cleared, "applied": {"cleared": len(cleared)}}}))
+    assert _said(out)[1] == text  # P3's number
+
+
+def test_an_unfiltered_clear_stays_silent():  # only the scheduled sweep is counted
+    """MUTATION: drop the filter check -> a plain clear_queue speaks too -> red."""
+    sp = AckSpeaker()  # fresh
+    sp.note_turn(_sent("cmd/task", {"cmd_id": "c-2", "action": "clear_queue"}))  # no filter
+    assert sp.on_ack(_b({"cmd_id": "c-2", "result": "accepted", "code": "OK",
+                         "detail": {"cleared_ids": ["t-1"]}})) is None  # the turn said it
