@@ -304,12 +304,11 @@ def test_cam_rgbd_degraded_still_allows_patrol():
 
 # --- restrict matrix ---
 
-def test_rtk_degraded_refuses_new_tasks_fm1():
-    """FM-1: rtk=degraded -> new tasks refused with E_DEGRADED."""
+def test_rtk_degraded_admits_new_tasks_fm1():
+    """FM-1 has no exception since 99 U142 (2026-11-06): float / dgps take
+    tasks like rtk_fixed. MUTATION: restore the old rtk refusal -> red."""
     d = check_new_task_admission({"rtk": HealthState.DEGRADED})
-    assert not d.allowed
-    assert d.code == "E_DEGRADED"
-    assert d.detail_item == "rtk"
+    assert d.allowed and d.code == "OK"
 
 
 def test_rtk_ok_admits_new_tasks():

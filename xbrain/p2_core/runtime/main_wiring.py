@@ -565,6 +565,11 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
         _boot_vol = {"done": False}     # set once per P2 start (99 U100)
         b_cast_redblue = int(_mcfg.get(
             "arbiter.domains.payload_light.deter_redblue_mode"))
+        # 11 S3.3.4 RL-3 light (99 U142): red/blue on a positioning loss, at the
+        # same pattern number as D / B. Fed from P3's rtk events below.
+        from xbrain.p2_core.runtime.rtk_light import RtkLight
+        rtk_light = RtkLight(b_cast_redblue)
+        rtk_queue: "queue.Queue" = queue.Queue(maxsize=16)
         # 设备层模式同步(14 S5.7, BIZ-P2-12). 2026-10-28 之前 device_map 零调用,
         # payload-service 一直停在开机的 idle, 而 idle 不收 /play --
         # 2026-10-27 两次云端喊话因此 403, 判帧收下 4 万帧 / 喇叭 0 帧.
@@ -847,7 +852,8 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 if from_state in bd and to_state not in bd:
                     # 喇叭已静音之后再动设备与灯: 设备层回目标模式, 红蓝灯关.
                     _sync_device_mode(from_state, to_state)
-                    device_sync.set_lights({"redblue": 0})
+                    # 99 U142: still flashing if positioning is lost (RL-3)
+                    device_sync.set_lights(rtk_light.after_mode_exit())
                     # 与进入时成对开回来. 不开的话下一次本地对话会以为
                     # 麦克风坏了 -- 而门是关着的这件事只在 state/audio 的
                     # gate_reason 里能看出来, 现场很难想到.
@@ -1180,6 +1186,16 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                 _logger.error("p2 cmd/estop queue full -- estop frame dropped")
 
         _gen_subs.append(gen.declare_subscriber(CMD_ESTOP_TOPIC, _on_estop))
+
+        def _on_rtk(sample) -> None:
+            # RUST THREAD: enqueue only (CLAUDE.md 4.2); the lamp POST is HTTP
+            # and runs on the main loop.
+            try:
+                rtk_queue.put_nowait(bytes(sample.payload))
+            except queue.Full:
+                _logger.error("p2 rtk event queue full -- light change dropped")
+
+        _gen_subs.append(gen.declare_subscriber("event/*/rtk", _on_rtk))
         _logger.info("p2 wiring: subscribed %s (domain-1 disarm + strobe)",
                      CMD_ESTOP_TOPIC)
 
@@ -1306,6 +1322,22 @@ def run_voice_loop_wiring(mic_cfg: MicCaptureConfig,
                     except queue.Empty:
                         break
                     estop_coord.on_estop(_eraw, int(now * 1000))
+                # 11 S3.3.4 RL-3 light (99 U142): P3's positioning loss /
+                # recovery -> red/blue on / off, unless B / D owns the lamp.
+                while True:
+                    try:
+                        _rraw = rtk_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    try:
+                        _rdet = json.loads(_rraw.decode("utf-8")).get("detail")
+                    except (ValueError, UnicodeDecodeError, AttributeError):
+                        continue  # malformed event: no light change
+                    _rbody = rtk_light.on_event(
+                        _rdet, mode_face.state in (ModeState.BROADCAST, ModeState.ALARM))
+                    if _rbody is not None:
+                        _logger.info("p2 RL-3 light %s", _rbody)
+                        device_sync.set_lights(_rbody)
                 # Drain cmd/motion/intent on the MAIN thread: the gates read
                 # the state caches this loop owns.
                 while True:

@@ -9,10 +9,12 @@ Description:
 11 S5.1D / 14 S8 restrict matrix. For each combination of (item, state)
 what functions become UNAVAILABLE.
 
-FM-1 exceptions:
-  rtk=degraded (rtk_float) -> refuse NEW tasks with E_DEGRADED;
-  other degraded items only lower speed_factor / frame rate,
-  NEVER disable functions.
+FM-1: degraded items only lower speed_factor / frame rate, NEVER disable
+functions -- with no exception since 99 U142 (2026-11-06). The old one,
+rtk=degraded (rtk_float) -> refuse NEW tasks with E_DEGRADED, was ruled out
+(float / dgps take tasks like rtk_fixed, capped at 0.5 m/s by P1) and had
+never been wired. single / no_fix refusal is P3's positioning-loss judgement
+(lifecycle/rtk_loss.py), not a health item state.
 
 FM-2: 'today broken' (fail) is DIFFERENT from 'never had it'
 (capability). Rejection codes distinguish:
@@ -29,7 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
-from xbrain.common.errors import E_DEGRADED, E_UNHEALTHY
+from xbrain.common.errors import E_UNHEALTHY
 from xbrain.p2_core.health.items import HealthState
 
 
@@ -42,13 +44,8 @@ class RestrictDecision:
 
 
 def check_new_task_admission(item_states: Mapping[str, HealthState]) -> RestrictDecision:
-    """FM-1: rtk=degraded refuses NEW tasks."""
-    rtk = item_states.get("rtk", HealthState.UNKNOWN)
-    if rtk == HealthState.DEGRADED:
-        return RestrictDecision(
-            allowed=False, code=E_DEGRADED,
-            detail_item="rtk",
-        )
+    """FM-1: no degraded item refuses NEW tasks (99 U142 removed the rtk
+    exception -- see the module docstring)."""
     # Fatal-fail items handled elsewhere (factor.py returns
     # allow_motion=False; task admission checks factor too).
     return RestrictDecision(allowed=True)
