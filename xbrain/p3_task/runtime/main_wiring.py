@@ -1010,6 +1010,38 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                                                   E_GEO_INCOMPLETE, res.cause,
                                                   withdraw=True)  # an earlier push is out
 
+            # 15 S10 INIT / 11 S9.14: a `running` row at start-up is left over
+            # from an unclean shutdown -- suspend it (passive, unclean_shutdown)
+            # before the first scheduler tick, or it blocks every dispatch for
+            # good (measured on the robot 2026-11-06). Published here, after
+            # the publishers exist: the task transition (state/task + 11 S6.2
+            # event) and the 11 S9.14 system event "补发给云端".
+            from xbrain.p3_task.lifecycle.boot_recover import (
+                BOOT_SUSPEND_REASON, suspend_unclosed_running)
+            try:
+                _dead = await suspend_unclosed_running(dao, conn, _now_mono_ms())
+            except Exception as exc:      # noqa: BLE001
+                # Loud, not fatal: P3 still serves geo / teach / queries, and the
+                # operator can cancel the dead row by voice; the log says why
+                # nothing dispatches.
+                _dead = []
+                _logger.error("p3 INIT unclean-shutdown recovery failed, a "
+                              "leftover running task will block dispatch: %s", exc)
+            for _tid in _dead:
+                _logger.warning("p3 INIT: task %s was running at start-up "
+                                "(unclean shutdown) -> suspended", _tid)
+                await _make_publish(
+                    state_pub, _emit_task_event, _publish_task_state,
+                    fetch_terminal=_fetch_terminal_facts)(
+                        _tid, "running", "suspended", BOOT_SUSPEND_REASON)
+                gen.put("event/warn/system", json.dumps({
+                    "eid": "boot-%s-%s" % (_BOOT_ID, _tid),
+                    "title": "task %s suspended after unclean shutdown" % _tid,
+                    "detail": {"type": BOOT_SUSPEND_REASON, "task_id": _tid},
+                    # WALL-CLOCK-OK(record): 11 S6.1 Event.ts of this recovery.
+                    "src": "p3_task", "ts": time.time(),
+                }, ensure_ascii=False).encode("utf-8"))
+
             last_hb = time.monotonic()
             last_geo = 0.0            # 0 -> publish geo on the very first pass
             last_fence = 0.0          # 0 -> publish fence on the very first pass
