@@ -3503,6 +3503,7 @@ set_time_sync:                             # H03 / H03f —— 18 §10.2 / §10.
 | FS-3 | ★ 句式「**{任务名}没有完成: {原因}**」，原因未知时只说「{任务名}没有完成」。任务名：`goto` → 去{航点}；`patrol` → 沿{路径}巡逻（`B04` 无路径名 → 再巡逻）；`return_home` → 返航；`charge` → 去{充电站}（未说名字 → 去充电站）；`follow` → 跟随；其他 → 任务 |
 | FS-4 | ★ 原因按 `detail.error.cause`（`11` §6.2）：`no_position` → 现在拿不到定位；`target_missing` → 找不到目标点或路径；`plan_refused` → 路线生成失败；`route_unconfirmed` → 运动模块没有确认路线。★ `error.fail_reason` 存在（P1 途中失败，`11` §3.5B）→ 途中导航失败；★ `kind = rejected`（准入检查失败）→ 任务检查没有通过。★ 🚫 不解析 `reason` 自由文本 |
 | FS-5 | ★ 定时任务同样适用（受理时记下、到点执行失败时播）；P4 重启后表清空，之前提交的任务失败不再播（如实，不补） |
+| FS-6 | ★ **定位失效（`99` U142，`11` §3.3.4 RL-3 语音）**：订阅 `event/*/rtk`（P3 发），**不论任务由谁发起**都以 `tts_local` 播。`rtk_lost` 播「定位失效, 已停车」，`action_taken = stop_and_suspend` 时加「, 任务已暂停」；`heading_recovered` 播「定位已恢复」，带 `task_id` 时加「, 要接着执行任务请说继续」（RL-7：不自动续跑）。`heading_degraded` 不播。★ 失效期间被拒的 submit（`E_DEGRADED`）播「定位失效, 现在不接受新任务」 |
 
 ---
 
