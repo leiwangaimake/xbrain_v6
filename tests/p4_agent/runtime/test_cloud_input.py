@@ -346,7 +346,7 @@ def _runner(transcript="", mode=None, post=None, local=None):
         reg = load_intent_registry(yaml.safe_load(fh))
     with open(_CHITCHAT, encoding="utf-8") as fh:  # chitchat presets
         cc = ChitchatResponder(yaml.safe_load(fh))
-    orch = build_orchestrator(reg, cc, l2_timeout_ms=8000)  # as p4 builds it
+    orch = build_orchestrator(reg, cc)  # as p4 builds it
     published, asr_calls = [], []  # what the fakes record
 
     def _asr(pcm):
@@ -461,11 +461,12 @@ def test_broadcast_still_hears_wecom_audio():
 
 
 def test_each_channel_has_its_own_session():
-    """A confirm opened on cloud is not answered by a wecom "确认".
+    """What the robot said on cloud is not repeated to a wecom "再说一遍".
 
-    B07 "取消任务" opens an L2 confirm. With one shared session the wecom
-    turn would consume it and the cloud "确认" afterwards would find nothing
-    to confirm -- one operator confirming another's command.
+    99 U147 removed the confirm round this test used to ride on; the
+    per-channel session still holds what was last SAID (I03). With one shared
+    session the wecom operator would hear the cloud operator's answer.
+    MUTATION: one session for all channels -> wecom repeats "好的,取消任务" -> red.
     """
     runner, _, _ = _runner()  # one runner: the sessions live in it
 
@@ -474,30 +475,30 @@ def test_each_channel_has_its_own_session():
         return runner.run_text({"channel": channel, "text": text,
                                 "require_tts_reply": False}).decision
 
-    assert say("cloud", "取消任务").kind == "await_confirm"
-    # wecom has no open confirm: its "确认" is not a confirmation of B07.
-    assert say("wecom", "确认").intent_id != "B07"
-    # The cloud confirm is still open and resolves to B07 now.
-    assert say("cloud", "确认").intent_id == "B07"
+    first = say("cloud", "取消任务")  # B07 answered at once (U147; no task -> said so)
+    assert first.intent_id == "B07" and first.tts_text  # one answer, no confirm
+    assert say("wecom", "再说一遍").tts_text == "刚才我还没有说过话"  # wecom said nothing yet
+    assert say("cloud", "再说一遍").tts_text == first.tts_text  # cloud repeats its own
 
 
 def test_hmi_text_shares_the_local_microphone_session():
     """The HMI is an on-site input: its turns live in the local slot.
 
-    16 S11.1 has three slots (local / cloud / wecom). A confirm the HMI
-    opens is therefore held by the microphone's session -- so an operator
-    can tap a command and say "确认" -- and NOT by the cloud slot.
+    16 S11.1 has three slots (local / cloud / wecom). What the HMI turn said
+    is held by the microphone's session -- so "再说一遍" at the robot repeats
+    it -- and NOT by the cloud slot. MUTATION: give the HMI the cloud slot ->
+    local.last_reply stays None -> red.
     """
     local = OrchestratorSession()  # stands in for the microphone's session
     runner, _, _ = _runner(local=local)
     res = runner.run_text({"channel": "hmi", "text": "取消任务",
                            "require_tts_reply": False})
-    assert res.decision.kind == "await_confirm"  # B07 asks for a confirm
-    assert local.pending_confirm is not None  # held by the local slot
-    # The cloud slot saw nothing: its own "确认" confirms no B07.
-    assert runner.run_text({"channel": "cloud", "text": "确认",
+    assert res.decision.intent_id == "B07" and res.decision.tts_text  # answered at once (U147)
+    assert local.last_reply == res.decision.tts_text  # held by the local slot
+    # The cloud slot saw nothing: it has nothing to repeat.
+    assert runner.run_text({"channel": "cloud", "text": "再说一遍",
                             "require_tts_reply": False}
-                           ).decision.intent_id != "B07"
+                           ).decision.tts_text == "刚才我还没有说过话"
 
 
 # -- worker and callbacks ------------------------------------------------

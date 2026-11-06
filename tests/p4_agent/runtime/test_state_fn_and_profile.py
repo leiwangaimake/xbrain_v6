@@ -43,7 +43,7 @@ TEACH = {"schema": "teach_state_v1", "session": {"session_id": "s-9", "state": "
 def _orch(state_fn):  # production orchestrator with the given snapshot getter
     with open("/opt/xbrain_v6/configs/intents.yaml", encoding="utf-8") as fh:  # production registry
         reg = load_intent_registry(yaml.safe_load(fh))  # 18 registry
-    return build_orchestrator(reg, ChitchatResponder(CC), l2_timeout_ms=8000, state_fn=state_fn)  # wired
+    return build_orchestrator(reg, ChitchatResponder(CC), state_fn=state_fn)  # wired
 
 
 def _cache(**bodies):  # a StateCache holding P3's bare bodies

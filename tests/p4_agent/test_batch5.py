@@ -9,7 +9,9 @@ Description:
 *** Brief 由占位串改写(2026-08-23). 原值是按路径自动生成的 "p4_agent tests -- batch5" --
 既没说清本文件测什么, 也无法据以索引任务号(CLAUDE.md 2.5). 同一处理已对
 P2 做过; 补 Brief 而不是绕过去, 是因为绕过去只会让下一个人再读一遍.
-GWY-P4-15/16/17/18 batch 5 tests.
+GWY-P4-15/16/17 batch 5 tests. (The P4-18 session state machine module and
+its cases were removed with the L2 confirm round, 99 U147: nothing in
+production used them any more.)
 """
 
 
@@ -24,15 +26,6 @@ from xbrain.p4_agent.session.level_routing import (
     resolve_level,
     try_downgrade_to_l1a,
     upgrade_to_l1b,
-)
-from xbrain.p4_agent.session.state_machines import (
-    L2ConfirmState,
-    L2Slot,
-    L3ApprovalState,
-    L3Slot,
-    RecordingSlot,
-    RecordingState,
-    is_chitchat_interrupt,
 )
 from xbrain.p4_agent.templates.query_engine import (
     TemplateSchemaError,
@@ -207,48 +200,3 @@ def test_downgrade_after_upgrade_raises_cl2():
     with pytest.raises(LevelRoutingError) as ei:
         try_downgrade_to_l1a(s)
     assert "CL-2" in str(ei.value)
-
-
-# --- P4-18 session state machines ---
-
-def test_l2_confirm_happy_path():
-    slot = L2Slot(timeout_millis=1000)
-    slot.request(now_mono_ms=0)
-    slot.confirm()
-    assert slot.state == L2ConfirmState.CONFIRMED
-
-
-def test_l2_confirm_times_out():
-    slot = L2Slot(timeout_millis=1000)
-    slot.request(now_mono_ms=0)
-    slot.tick(now_mono_ms=2000)
-    assert slot.state == L2ConfirmState.TIMED_OUT
-
-
-def test_l3_approve_happy_path():
-    slot = L3Slot(timeout_millis=60_000)
-    slot.request(now_mono_ms=0)
-    slot.approve()
-    assert slot.state == L3ApprovalState.APPROVED
-
-
-def test_l3_stale_after_timeout():
-    slot = L3Slot(timeout_millis=1000)
-    slot.request(now_mono_ms=0)
-    slot.tick(now_mono_ms=2000)
-    assert slot.state == L3ApprovalState.STALE
-
-
-def test_recording_captures_waypoints():
-    r = RecordingSlot()
-    r.start()
-    r.add_waypoint("wp1")
-    r.add_waypoint("wp2")
-    r.finish()
-    assert r.state == RecordingState.FINISHED
-    assert r.waypoints == ["wp1", "wp2"]
-
-
-def test_chitchat_whitelist_recognized():
-    assert is_chitchat_interrupt("how_long_left")
-    assert not is_chitchat_interrupt("shutdown")

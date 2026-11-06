@@ -121,7 +121,7 @@ def _turn(text):  # one mic turn with the three state bodies
         cc = ChitchatResponder(yaml.safe_load(fh))  # presets
     state = {"state/geo/objects": _objects(), "state/pose": _POSE, "state/mode": _MODE,
              "state/geo/manifest": {"items": []}}  # what P4 caches
-    orch = build_orchestrator(reg, cc, l2_timeout_ms=8000, tier2_fn=None,
+    orch = build_orchestrator(reg, cc, tier2_fn=None,
                               state_fn=lambda: state, geo_query_fn=_Q)  # as wired
     d = orch.handle_turn(text, OrchestratorSession(), 1000, channel="mic_local")  # a mic turn
     return d, [k for k, _ in decision_to_publishes(d) if k != "cmd/audio/speak"]  # minus speech

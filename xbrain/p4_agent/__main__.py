@@ -258,8 +258,6 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--config-dir", default="/opt/xbrain_v6/configs",
                     help="dir holding intents.yaml/chitchat.yaml/"
                          "query_templates.yaml (voice-loop orchestrator)")
-    ap.add_argument("--l2-confirm-timeout-ms", type=int, default=8000,
-                    help="L2 confirm wait window (voice-loop only)")
     ap.add_argument("--query-state-max-age-ms", type=int, default=2000,
                     help="max age before a state reading is 'unknown' "
                          "(voice-loop G queries)")
@@ -420,7 +418,6 @@ def main(argv: Optional[list] = None) -> int:
         orch = VoiceOrchestratorInputs(
             asr_post=asr_post, bypass_tokens=bypass_tokens,
             registry=registry, chitchat=chitchat,
-            l2_timeout_ms=args.l2_confirm_timeout_ms,
             query_templates=query_templates,
             query_max_age_ms=args.query_state_max_age_ms,
             query_low_soc_pct=args.query_battery_low_pct,

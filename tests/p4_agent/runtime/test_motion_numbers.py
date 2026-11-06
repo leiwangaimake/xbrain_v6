@@ -79,7 +79,7 @@ def _turn(text, llm=None):
     with open(_CHITCHAT, encoding="utf-8") as fh:  # production content
         cc = ChitchatResponder(yaml.safe_load(fh))  # chitchat presets
     llm = llm or _LLM(None)  # default: no LLM available
-    orch = build_orchestrator(reg, cc, l2_timeout_ms=8000, tier2_fn=llm)
+    orch = build_orchestrator(reg, cc, tier2_fn=llm)
     pairs = make_turn_handler(orch, OrchestratorSession())(text)  # frames, nothing sent
     frames = [json.loads(d) for k, d in pairs if k == "cmd/motion/intent"]
     spoken = [json.loads(d)["text"] for k, d in pairs

@@ -35,7 +35,7 @@ def _orch():  # production orchestrator
         reg = load_intent_registry(yaml.safe_load(fh))  # 18 registry
     with open("/opt/xbrain_v6/configs/chitchat.yaml", encoding="utf-8") as fh:
         cc = ChitchatResponder(yaml.safe_load(fh))  # chitchat presets
-    return build_orchestrator(reg, cc, l2_timeout_ms=8000)  # no LLM needed
+    return build_orchestrator(reg, cc)  # no LLM needed
 
 
 @pytest.mark.parametrize("channel, modality", [("cloud", "text"), ("mic_local", "voice")])

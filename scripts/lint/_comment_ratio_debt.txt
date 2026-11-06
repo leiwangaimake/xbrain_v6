@@ -735,7 +735,6 @@ xbrain/p4_agent/runtime/vad.py
 xbrain/p4_agent/safety_bypass/matcher.py
 xbrain/p4_agent/session/chitchat.py
 xbrain/p4_agent/session/level_routing.py
-xbrain/p4_agent/session/state_machines.py
 xbrain/p4_agent/slots/payload_slots.py
 xbrain/p4_agent/slots/ptz_slots.py
 xbrain/p4_agent/state/query_data.py

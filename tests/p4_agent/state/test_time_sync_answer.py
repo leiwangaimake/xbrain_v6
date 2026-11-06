@@ -132,7 +132,7 @@ def test_state_clock_is_subscribed():
 def _orch(cache):  # production orchestrator with the production H03 wiring
     with open("/opt/xbrain_v6/configs/intents.yaml", encoding="utf-8") as fh:  # production registry
         reg = load_intent_registry(yaml.safe_load(fh))  # 18 registry
-    return build_orchestrator(reg, ChitchatResponder(CC), l2_timeout_ms=8000,  # real presets
+    return build_orchestrator(reg, ChitchatResponder(CC),  # real presets
                               system_fn=make_time_sync_fn(cache, QT, TZ, max_age_ms=5000))  # H03
 
 
@@ -152,7 +152,7 @@ def test_time_sync_turn_answers_and_sends_nothing(text):
     import time as _t  # make_time_sync_fn reads the real monotonic clock
     c.update("state/clock", {"data": {"sync": True, "source": "ntp"}}, int(_t.monotonic() * 1000))  # fresh
     d, spoken, keys, s = _turn(_orch(c), text)  # the turn
-    assert d.intent_id == "H03" and keys == [] and s.pending_confirm is None  # nothing sent, no confirm
+    assert d.intent_id == "H03" and keys == []  # nothing sent
     assert len(spoken) == 1 and spoken[0].startswith("时钟已通过NTP同步,")  # the status first
     assert "当前时间" in spoken[0] and spoken[0].endswith("秒")  # and the time to the second
 
@@ -168,7 +168,7 @@ def test_without_system_fn_h03_says_unwired():
     """A build with no system_fn never pretends: the unwired_system reply."""
     with open("/opt/xbrain_v6/configs/intents.yaml", encoding="utf-8") as fh:  # production registry
         reg = load_intent_registry(yaml.safe_load(fh))  # 18 registry
-    o = build_orchestrator(reg, ChitchatResponder(CC), l2_timeout_ms=8000)  # no system_fn
+    o = build_orchestrator(reg, ChitchatResponder(CC))  # no system_fn
     d, spoken, keys, _s = _turn(o, "校时")
     uw = CC["unwired_system"]  # template + names
     assert spoken == [uw["template"].replace("{what}", uw["names"]["H03"])] and keys == []

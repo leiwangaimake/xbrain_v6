@@ -64,7 +64,7 @@ def _orch():
         reg = load_intent_registry(yaml.safe_load(fh))  # 18 registry
     with open(_CHITCHAT, encoding="utf-8") as fh:  # production content
         cc = ChitchatResponder(yaml.safe_load(fh))  # chitchat presets
-    return build_orchestrator(reg, cc, l2_timeout_ms=8000)  # no LLM needed
+    return build_orchestrator(reg, cc)  # no LLM needed
 
 
 def _mic(text):

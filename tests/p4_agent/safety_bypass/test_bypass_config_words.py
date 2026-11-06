@@ -172,7 +172,7 @@ def _orch(tokens):
     """
     reg = load_intent_registry(yaml.safe_load(open(_INTENTS, encoding="utf-8")))
     cc = ChitchatResponder(yaml.safe_load(open(_CHITCHAT, encoding="utf-8")))
-    return build_orchestrator(reg, cc, l2_timeout_ms=8000,
+    return build_orchestrator(reg, cc,
                               tier2_fn=lambda *_a: None, bypass_tokens=tokens)
 
 

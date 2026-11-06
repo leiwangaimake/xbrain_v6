@@ -16,7 +16,9 @@ orchestrator built as p4 wires it (no LLM: a call to it fails the case):
     sent; a query still answers; exit sends finish with the session id
     (F02 for a route, F08 for a fence); status answers from state/teach;
   * exit / status with no recording answer "现在没有在录制";
-  * "删除1号路径" / "删除东门围栏" open the L2 confirm of F11 / F13.
+  * "删除1号路径" / "删除东门围栏" (F11 / F13, L2) and "启用东门围栏" (F15,
+    L2) run on their own turn and say what they do -- 99 U147: one question,
+    one answer, no confirm round.
 The parser cases pin record_slots itself (F06's "记录当前位置为X" must stay
 F06's).
 """
@@ -58,7 +60,7 @@ def _turn(text, teach=None):  # one mic turn
         cc = ChitchatResponder(yaml.safe_load(fh))  # presets
     state = {"state/geo/manifest": {"items": _ITEMS},  # the catalogue
              "state/teach": teach or {"session": {"state": "idle"}}}  # the session
-    orch = build_orchestrator(reg, cc, l2_timeout_ms=8000, tier2_fn=_no_llm,
+    orch = build_orchestrator(reg, cc, tier2_fn=_no_llm,
                               state_fn=lambda: state)  # as p4 wires it
     d = orch.handle_turn(text, OrchestratorSession(), 1000, channel="mic_local")  # a mic turn
     frames = {k: p for k, p in decision_to_publishes(d) if k != "cmd/audio/speak"}  # minus speech
@@ -172,11 +174,17 @@ def test_exit_and_status_without_a_recording(text):  # idle
     assert not frames and d.tts_text == "现在没有在录制"  # nothing to end
 
 
-@pytest.mark.parametrize("text,fid", [("删除1号路径", "F11"), ("删除东门围栏", "F13")])
-def test_route_and_fence_deletes_ask_for_confirmation(text, fid):  # F11 / F13 by name
-    """MUTATION: dispatch at once (L1a) -> a cmd/geo frame -> red."""
+@pytest.mark.parametrize("text,fid,gid,said", [
+    ("删除1号路径", "F11", "r-1", "好的,删除1号路径"),
+    ("删除东门围栏", "F13", "f-1", "好的,删除东门围栏")])
+def test_route_and_fence_deletes_run_at_once(text, fid, gid, said):  # F11 / F13 by name
+    """99 U147. MUTATION: keep the L2 confirm -> await_confirm, no frame ->
+    red; lose the name -> no geo_id / generic ack -> red."""
     d, frames = _turn(text)  # idle
-    assert d.kind == "await_confirm" and d.intent_id == fid and not frames  # L2
+    geo = frames["cmd/geo"]  # sent on this turn
+    geo = geo.get("data", geo)  # bare body
+    assert d.kind == "dispatch" and d.intent_id == fid and d.tts_text == said  # names it
+    assert geo["action"] == "delete" and geo["geo_id"] == gid  # the named object
 
 
 # -- 99 U137: cancel discards at once ------------------------------------------
@@ -204,11 +212,13 @@ def test_casual_words_no_longer_discard(text):  # narrowed trigger
 
 # -- 99 U138: enabling a fence by name ------------------------------------------
 @pytest.mark.parametrize("text", ["启用东门围栏", "换成东门围栏", "切换到东门围栏"])
-def test_enable_fence_by_name_asks_for_confirmation(text):  # F15 L2
+def test_enable_fence_by_name_runs_at_once(text):  # F15 L2, runs now (U147)
     """The U133 fence-saved answer says "启用X"; until U138 only the registry's
-    literal example parsed. MUTATION: drop the F15 rule -> not F15 -> red."""
+    literal example parsed. MUTATION: drop the F15 rule -> not F15 -> red;
+    keep the L2 confirm -> no frame -> red."""
     d, frames = _turn(text)  # idle
-    assert d.kind == "await_confirm" and d.intent_id == "F15" and not frames  # L2, nothing sent yet
+    assert d.kind == "dispatch" and d.intent_id == "F15" and "cmd/geo" in frames  # sent now
+    assert d.tts_text == "好的,启用东门围栏"  # names the fence
 
 
 def test_bare_enable_fence_is_not_ours():  # no name

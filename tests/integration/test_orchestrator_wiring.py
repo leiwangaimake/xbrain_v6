@@ -76,7 +76,7 @@ def test_main_wiring_uses_orchestrator_not_naive_classify():
 # -- each path maps to the right publish (fresh session per turn) ---------
 
 def _handler(query_fn=None):
-    orch = build_orchestrator(_reg(), _chitchat(), l2_timeout_ms=8000,
+    orch = build_orchestrator(_reg(), _chitchat(),
                               query_fn=query_fn)
     return orch, make_turn_handler(orch, OrchestratorSession())
 

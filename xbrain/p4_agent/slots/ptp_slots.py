@@ -335,15 +335,18 @@ def _keypoint(name: str) -> bool:
     return bool(name) and not any(w in name for w in _NOT_KEYPOINT)
 
 
-#: 99 U144: "取消 / 删除 [所有|全部] [<时间>的] 定时任务", either word order
-#: ("把下午3点的定时任务取消"), and "取消下午3点的任务" (a time makes it a
-#: scheduled task, not the current one). Tried before every other rule: a
-#: plain delete rule would read "删除定时任务" as a keypoint named "定时任务".
+#: 99 U144 / U145: "取消 / 删除 [所有|全部] [<时间>][的][<任务内容>][的](定时)任务",
+#: either word order ("把今天下午1点的沿1号路径巡逻任务删掉"). It is a SCHEDULED
+#: task when the sentence says 定时 or carries a time; otherwise ("取消任务",
+#: "取消巡逻的任务") it stays B07's plain cancel. Tried before every other
+#: rule: a plain delete rule would read "删除定时任务" as a keypoint named
+#: "定时任务". <任务内容> ("沿1号路径巡逻", "去1号测试点", "返航") narrows the
+#: choice, so one sentence picks one task without a follow-up question (U145).
 _CANCEL_VERB = "(?:取消|删除|删掉|撤销)"
 _CANCEL_ALL = "(?P<all>所有的|全部的|所有|全部)?"
-_CANCEL_FRONT = re.compile("^" + _CANCEL_VERB + _CANCEL_ALL + "(?P<rest>.*?)定时任务$")
-_CANCEL_BACK = re.compile("^把" + _CANCEL_ALL + "(?P<rest>.*?)定时任务" + _CANCEL_VERB + "(?:掉|了)?$")
-_CANCEL_TIMED = re.compile("^" + _CANCEL_VERB + "(?P<rest>.+?)的任务$")
+_CANCEL_FRONT = re.compile("^" + _CANCEL_VERB + _CANCEL_ALL + "(?P<rest>.*?)(?P<kind>定时任务|任务)$")
+_CANCEL_BACK = re.compile("^把" + _CANCEL_ALL + "(?P<rest>.*?)(?P<kind>定时任务|任务)"
+                          + _CANCEL_VERB + "(?:掉|了)?$")
 
 
 def _cancel_scheduled(text: str) -> Optional[PtpParse]:
@@ -353,21 +356,20 @@ def _cancel_scheduled(text: str) -> Optional[PtpParse]:
         if t.startswith(lead) and len(t) > len(lead):
             t = t[len(lead):]
             break
-    m = (_CANCEL_FRONT.match(t) or _CANCEL_BACK.match(t)  # with 定时任务
-         or _CANCEL_TIMED.match(t))  # "取消下午3点的任务": needs a time (below)
+    m = _CANCEL_FRONT.match(t) or _CANCEL_BACK.match(t)  # either word order
     if m is None:
         return None  # not a cancel sentence
-    rest = m.group("rest")  # what sits between the verb and 定时任务
-    when, left = split_time_prefix(rest) if rest else (None, "")
-    if left not in ("", "的"):
-        # Something else is named: not ours. This is also what keeps the
-        # "...的任务" form time-only -- its rest is never empty (.+?), so with
-        # no time phrase the whole rest is left over ("取消巡逻的任务" stays
-        # B07's). A separate "needs a time" check was an equivalent mutant
-        # (2026-11-06) and was removed.
-        return None
+    rest = m.group("rest")  # between the verb and (定时)任务
+    if rest.endswith("定时"):  # "...的定时任务" read as rest="...的定时" + 任务
+        rest, timed_word = rest[:-2], True
+    else:
+        timed_word = m.group("kind") == "定时任务"
+    when, desc = split_time_prefix(rest) if rest else (None, "")
+    desc = _trim(desc.strip("的"), ("的",)) if desc else ""  # "的沿1号路径巡逻的" -> content
+    if not timed_word and when is None:
+        return None  # "取消任务" / "取消巡逻的任务": B07's plain cancel
     every = bool(m.groupdict().get("all"))  # 所有 / 全部
-    return PtpParse("cancel_scheduled", "", when=when, every=every)
+    return PtpParse("cancel_scheduled", desc, when=when, every=every)
 
 
 def parse_ptp(text: str) -> Optional[PtpParse]:

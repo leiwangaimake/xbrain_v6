@@ -97,7 +97,7 @@ def _orch():
     with open(_CHITCHAT, encoding="utf-8") as fh:
         cc = ChitchatResponder(yaml.safe_load(fh))
     # Same constructor main_wiring uses; tier-2 left at its null default.
-    return build_orchestrator(reg, cc, l2_timeout_ms=8000), KeywordMatcher(reg)
+    return build_orchestrator(reg, cc), KeywordMatcher(reg)
 
 
 def _msg(text):

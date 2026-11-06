@@ -80,7 +80,7 @@ def _turn(text, state, session=None):  # turn helper
         reg = load_intent_registry(yaml.safe_load(fh))  # this tree's registry
     with open(os.path.join(_CONFIGS, "chitchat.yaml"), encoding="utf-8") as fh:
         cc = ChitchatResponder(yaml.safe_load(fh))  # presets
-    orch = build_orchestrator(reg, cc, l2_timeout_ms=8000,
+    orch = build_orchestrator(reg, cc,
                               state_fn=lambda: state)  # scripted snapshot
     d = orch.handle_turn(text, session or OrchestratorSession(), 1000,
                          channel="mic_local")  # one turn
@@ -120,11 +120,11 @@ def test_skip_is_no_longer_an_intent(text):  # case body
     assert "cmd/task" not in (frames or {})  # nothing sent
 
 
-def test_cancel_confirm_accepts_quxiao_as_no():  # confirm
-    """18 I02: "取消" answers no. Repeating "取消任务" is neither.
-    MUTATION: drop the pending keyword strip -> the repeat reads as no."""
+def test_cancel_task_runs_on_its_own_turn():  # one question, one answer
+    """99 U147: "取消任务" cancels the running task on THIS turn and says so;
+    no "确认取消任务吗" round. MUTATION: keep the L2 confirm -> await_confirm
+    -> red."""
     st = _task_state({"task_id": "t-run", "state": "running"})  # one running
-    s = OrchestratorSession()  # one dialog
-    assert _turn("取消任务", st, s)[0].kind == "await_confirm"  # L2
-    assert _turn("取消任务", st, s)[0].kind == "await_confirm"  # repeat: still asking
-    assert _turn("取消", st, s)[0].kind == "confirm_denied"  # no
+    d = _turn("取消任务", st, OrchestratorSession())[0]  # one turn
+    assert d.kind == "dispatch" and d.tts_text == "好的,取消任务"  # done, said
+    assert d.dispatch_result.payload["task_command"]["task_id"] == "t-run"  # by id

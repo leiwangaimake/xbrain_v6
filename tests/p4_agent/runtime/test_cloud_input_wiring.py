@@ -114,7 +114,7 @@ def _wire(monkeypatch, rid, cache=None):
                            stream_idle_ms=3000, max_streams=4)
     # What the wiring writes into: session calls, kept handles, jobs, frames.
     gen, subs, jobs, published = _FakeGen(), [], queue.Queue(), []
-    orch = build_orchestrator(reg, cc, l2_timeout_ms=8000)  # as p4 builds it
+    orch = build_orchestrator(reg, cc)  # as p4 builds it
     # asr_post None: the fake transcript is already the command text.
     ret = _wire_cloud_inputs(gen, cfg, orch, reg, None, cache or StateCache(),
                              lambda k, d: published.append((k, d)), jobs,

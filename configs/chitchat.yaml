@@ -80,7 +80,8 @@ session:
   cancel_session:     "好的,有需要再叫我"
   no_pending_confirm: "现在没有需要确认的操作"
   # an elliptical "中等" / "开到最大" with no volume / light adjusted earlier
-  which_device:       "要调音量还是灯光?可以说音量调到最大,或者灯调到最亮"
+  # 99 U147: one question, one answer -- a statement, never "要调音量还是灯光?"
+  which_device:       "没有说调音量还是灯光,没有执行.可以说:音量调到最大,或者:灯调到最亮"
 
 # -- light requests the hardware cannot do (2026-10-30, field test P236-P247) --
 # classifier/payload_limits.py picks the key; nothing is dispatched. Facts:

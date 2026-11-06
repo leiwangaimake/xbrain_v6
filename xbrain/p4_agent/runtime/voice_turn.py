@@ -75,12 +75,9 @@ VERDICT_OF_KIND = {
     "dispatch": "accepted",          # an action went out
     "bypass": "accepted",            # Tier1 stop / prone / stand went out
     "reply": "accepted",             # answered (query, chitchat, a re-ask)
-    "await_confirm": "pending_confirm",   # L2: waiting for the operator
-    "await_approval": "pending_confirm",  # H08-type: waiting for approval
+    "await_approval": "pending_confirm",  # L3 (H08-type): the cloud decides
     "denied": "rejected",            # refused with a spoken reason
     "bypass_suppressed": "rejected",  # U45: estop held while recording
-    "confirm_denied": "rejected",    # the operator said no
-    "confirm_timeout": "rejected",   # nobody answered the confirm
     "overheard": "unknown",          # user ruling 2026-10-26, see header
 }
 

@@ -41,7 +41,7 @@ SESSION = CC["session"]  # the I-class replies
 def _orch():  # production orchestrator, no query_fn needed here
     with open("/opt/xbrain_v6/configs/intents.yaml", encoding="utf-8") as fh:  # production content file
         reg = load_intent_registry(yaml.safe_load(fh))  # 18 registry
-    return build_orchestrator(reg, ChitchatResponder(CC), l2_timeout_ms=8000)  # real presets
+    return build_orchestrator(reg, ChitchatResponder(CC))  # real presets
 
 
 def _turn(o, s, text):  # one cloud text turn -> (decision, spoken, other keys)
@@ -76,15 +76,6 @@ def test_session_intents_answer_their_preset(text, key):  # one query answer: te
     d, spoken, keys = _turn(_orch(), OrchestratorSession(), text)
     assert spoken == [SESSION[key]] and keys == []  # a reply, no command
     assert text not in spoken  # never the user's words
-
-
-def test_cancel_drops_a_half_open_confirm():  # one query answer: test cancel drops a half open confirm
-    """I04 while a confirm is pending: the pending action must not survive."""
-    o, s = _orch(), OrchestratorSession()
-    d, _sp, _k = _turn(o, s, "删除路径")  # L2: asks to confirm (重启 is refused while unwired)
-    assert d.kind == "await_confirm" and s.pending_confirm is not None  # the property this case pins
-    _turn(o, s, "结束对话")
-    assert s.pending_confirm is None  # dropped
 
 
 def test_recent_events_phrase_is_not_stolen_by_repeat():  # one query answer: test recent events phrase is not stolen by repeat

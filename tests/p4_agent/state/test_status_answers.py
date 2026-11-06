@@ -115,7 +115,7 @@ def _orch(cache):  # production orchestrator with the status query_fn
         reg = load_intent_registry(yaml.safe_load(fh))  # value used below
     with open("/opt/xbrain_v6/configs/chitchat.yaml", encoding="utf-8") as fh:  # production content file
         cc = ChitchatResponder(yaml.safe_load(fh))  # value used below
-    return build_orchestrator(reg, cc, l2_timeout_ms=8000,  # result to the caller
+    return build_orchestrator(reg, cc,  # result to the caller
                               query_fn=make_status_query_fn(cache, TPL, max_age_ms=10 ** 12))
 
 
@@ -145,7 +145,7 @@ def test_unwired_g_id_gets_the_generic_honest_reply(monkeypatch):  # one query a
         reg = load_intent_registry(yaml.safe_load(fh))  # value used below
     with open("/opt/xbrain_v6/configs/chitchat.yaml", encoding="utf-8") as fh:  # production content file
         cc = ChitchatResponder(yaml.safe_load(fh))  # value used below
-    o = build_orchestrator(reg, cc, l2_timeout_ms=8000,  # value used below
+    o = build_orchestrator(reg, cc,  # value used below
                            query_fn=make_status_query_fn(_with([]), tpl, max_age_ms=10 ** 12))
     # "现在什么倍率" (G33): still no producer field; "音量多大" is answered since
     # 2026-10-30 (state/mode.payload), so it can no longer stand for "unwired".

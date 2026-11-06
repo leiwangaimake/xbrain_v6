@@ -153,7 +153,7 @@ def _turn(text, answer, items=None):
     """
     # Preset replies are needed because a refused turn still speaks.
     cc = ChitchatResponder(yaml.safe_load(open(_CHITCHAT, encoding="utf-8")))
-    orch = build_orchestrator(_reg(), cc, l2_timeout_ms=8000,
+    orch = build_orchestrator(_reg(), cc,
                               tier2_fn=lambda *_a: answer)
     if items is not None:
         # build_orchestrator takes no state_fn (production has no manifest
@@ -174,7 +174,7 @@ def _task(text, answer, items):
     """
     # Same construction as _turn; the stub is the tier-2 slot.
     cc = ChitchatResponder(yaml.safe_load(open(_CHITCHAT, encoding="utf-8")))
-    orch = build_orchestrator(_reg(), cc, l2_timeout_ms=8000,
+    orch = build_orchestrator(_reg(), cc,
                               tier2_fn=lambda *_a: answer)
     # The catalogue, keyed by zenoh key as state_fn returns it (11 S7.10).
     orch._state_fn = lambda: {"state/geo/manifest": {"items": items}}
@@ -325,7 +325,8 @@ def test_a_bare_patrol_asks_which_route():
     d, keys = _turn("开始巡逻", None, items=_ITEMS)
     # No empty patrol queued.
     assert "cmd/task" not in keys
-    # The clarify question (PATROL_NEEDS_ROUTE), not a generic failure line.
+    # The refusal naming the route (PATROL_NEEDS_ROUTE, a statement since
+    # 99 U147), not a generic failure line.
     assert "哪条路线" in (d.tts_text or ""), d.tts_text
 
 

@@ -35,7 +35,7 @@ def _orch():  # production orchestrator
         reg = load_intent_registry(yaml.safe_load(fh))  # 18 registry
     with open("/opt/xbrain_v6/configs/chitchat.yaml", encoding="utf-8") as fh:  # production presets
         cc = yaml.safe_load(fh)  # chitchat
-    return build_orchestrator(reg, ChitchatResponder(cc), l2_timeout_ms=8000)  # real presets
+    return build_orchestrator(reg, ChitchatResponder(cc))  # real presets
 
 
 def _turn(text):  # one cloud text turn -> (decision, {key: payload}, spoken)

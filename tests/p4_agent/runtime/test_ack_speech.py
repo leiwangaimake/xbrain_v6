@@ -138,7 +138,7 @@ def test_no_completed_patrol_has_its_own_sentence():  # 99 U131 B04
     sp.note_turn(_sent("cmd/task", {"cmd_id": "c-1", "action": "submit"}))  # a B04 submit
     out = sp.on_ack(_b({"cmd_id": "c-1", "result": "rejected", "code": "E_NOT_FOUND",  # refused
                         "detail": {"reason": "no_completed_patrol"}}))  # by P3
-    assert _said(out)[1] == "还没有巡逻完成过的路径, 请说沿哪条路径巡逻"  # the reason
+    assert _said(out)[1] == "还没有巡逻完成过的路径, 没有执行. 请带上路径名说, 例如: 沿1号路径巡逻"  # the reason (U147: a statement)
 
 
 def test_an_accepted_task_command_adds_nothing():  # accepted task

@@ -55,7 +55,7 @@ def _turn(text, clock=True, items=None, objects=None, member=None):  # one turn 
     with open(os.path.join(_CONFIGS, "chitchat.yaml"), encoding="utf-8") as fh:  # presets file
         cc = ChitchatResponder(yaml.safe_load(fh))  # presets
     orch = build_orchestrator(  # as p4 wires it
-        reg, cc, l2_timeout_ms=8000, tier2_fn=_no_llm,  # no LLM allowed
+        reg, cc, tier2_fn=_no_llm,  # no LLM allowed
         state_fn=lambda: {"state/geo/manifest": {"items": items if items is not None else _ITEMS},
                           "state/geo/objects": objects},  # the catalogue + the geometry (U130)
         membership_fn=make_membership_fn(member) if member else None,  # common.geo.route_membership_m (U130)
@@ -111,7 +111,7 @@ def test_refusals_send_nothing(text, said):  # case body
 def test_timed_goto_without_a_clock_is_refused():  # no clock
     """MUTATION: schedule against a guessed clock."""
     d, frames = _turn("下午3点去1号测试点", clock=False)  # no wall clock
-    assert not frames and d.tts_text == "现在不能定时, 请直接说去哪个点"  # said why
+    assert not frames and d.tts_text == "现在拿不到系统时间, 不能定时, 没有执行"  # said why (U147: no follow-up)
 
 
 @pytest.mark.parametrize("text,wp", [  # deletes
@@ -187,7 +187,7 @@ def _running_patrol_state(items=None):  # state with a running patrol
 ])
 def test_repeat_sends_a_routeless_patrol_repeat(text, slots, said):  # case body
     """P3 fills the route. MUTATION: send it as B02 -> no route -> refused
-    "巡逻哪条路线" -> red."""
+    "没有说沿哪条路线巡逻" -> red."""
     d, frames = _turn(text)  # nothing running
     task = frames["cmd/task"]["task"]  # 11 S7.2
     assert d.intent_id == "B04" and task["type"] == "patrol" and "route_id" not in task  # P3 fills
@@ -204,7 +204,7 @@ def test_repeat_while_patrolling_is_answered_not_queued(text):  # case body
         reg = load_intent_registry(yaml.safe_load(fh))  # this tree's registry
     with open(os.path.join(_CONFIGS, "chitchat.yaml"), encoding="utf-8") as fh:  # presets file
         cc = ChitchatResponder(yaml.safe_load(fh))  # presets
-    orch = build_orchestrator(reg, cc, l2_timeout_ms=8000, tier2_fn=_no_llm,  # as p4 wires it
+    orch = build_orchestrator(reg, cc, tier2_fn=_no_llm,  # as p4 wires it
                               state_fn=_running_patrol_state,  # a patrol is running
                               wall_now_fn=lambda: _NOW, site_timezone=_TZ)  # clock
     d = orch.handle_turn(text, OrchestratorSession(), 1000, channel="mic_local")  # a mic turn

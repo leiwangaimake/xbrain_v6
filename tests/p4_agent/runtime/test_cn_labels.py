@@ -76,7 +76,7 @@ def test_a_motion_command_is_acknowledged_with_its_own_action(text, ack):
     """The spoken ack names the action, and carries no requested number."""
     with open(_CHITCHAT, encoding="utf-8") as fh:  # production content
         cc = ChitchatResponder(yaml.safe_load(fh))  # chitchat presets
-    orch = build_orchestrator(_registry(), cc, l2_timeout_ms=8000)  # no tier-2 needed
+    orch = build_orchestrator(_registry(), cc)  # no tier-2 needed
     pairs = make_turn_handler(orch, OrchestratorSession())(text)  # frames, nothing sent
     spoken = [json.loads(d)["text"] for k, d in pairs
               if k == "cmd/audio/speak"]  # the spoken ack

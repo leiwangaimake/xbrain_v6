@@ -41,7 +41,7 @@ def _reg():
 def _setup():
     reg = _reg()
     cc = ChitchatResponder(yaml.safe_load(open(_CHITCHAT, encoding="utf-8")))
-    orch = build_orchestrator(reg, cc, l2_timeout_ms=8000)
+    orch = build_orchestrator(reg, cc)
     return reg, orch, KeywordMatcher(reg), OrchestratorSession()
 
 

@@ -132,7 +132,7 @@ def test_field_phrases_answer_and_dispatch_nothing(text, gid):
                                                   last_alarm={"cat": "comm", "at": TODAY_1632})}, 1000)  # fresh
     with open("/opt/xbrain_v6/configs/intents.yaml", encoding="utf-8") as fh:  # production registry
         reg = load_intent_registry(yaml.safe_load(fh))  # 18 registry
-    o = build_orchestrator(reg, ChitchatResponder(CC), l2_timeout_ms=8000,  # real presets
+    o = build_orchestrator(reg, ChitchatResponder(CC),  # real presets
                            query_fn=make_status_query_fn(c, TPL, max_age_ms=10 ** 12))  # never stale here
     d = o.handle_turn(text, OrchestratorSession(), 1000, channel="cloud", modality="text")  # the turn
     pubs = decision_to_publishes(d)  # what would go out

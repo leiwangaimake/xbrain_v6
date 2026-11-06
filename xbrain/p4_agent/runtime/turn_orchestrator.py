@@ -20,11 +20,14 @@ order, REPLACING the V-2B naive_classify MVP (turn_loop.py). The steps:
   route (registry): fastpath -> dispatch DIRECTLY (no LLM, no prompt
     assemble); llm / unknown -> tier-2 (GPU-gated grammar-constrained
     classify, GWY-P4-37).
-  auth gate: L0/L1a/L1b dispatch now; L2 opens a confirm and WAITS for
-    I01/I02 (the confirm response arrives as the NEXT turn's session-state
-    match) -- it is NOT dispatched until confirmed; L3 opens a cloud
-    approval. CL-2: estop_path==down upgrades an L1b to L2 (one more gate
-    when both non-voice estops are unhealthy).
+  auth gate: L0/L1a/L1b dispatch now; L2 ALSO dispatches now, as L1a
+    (99 U147, user ruling 2026-11-06: every voice / text command is one
+    question, one answer -- no confirm round, no follow-up question). L2
+    keeps its meaning only on the HMI, where it is a button confirm (17 /
+    p5 hmi/uplink). L3 hands off to a cloud approval (a statement to the
+    speaker, never a question back). The CL-2 upgrade (L1b -> L2 when the
+    estop paths are down) is gone with it: it was a confirm round too, and
+    nothing ever set its input.
   envelope + validation: a dispatched intent is wrapped in an
     IntentEnvelope (EV-1..7) before it leaves P4.
   reply: chitchat/out_of_scope go through the preset responder (never the
@@ -38,8 +41,8 @@ orchestrator decides WHAT happens; those provide the moving parts.
 Traps this guards (each has a mutation test):
   * a bypass that went through the classify chain -- estop would then be
     subject to overheard/LLM latency, which is the one thing it must not be
-  * an L2 intent dispatched on the same turn it was heard -- the confirm
-    would be cosmetic
+  * an L2 intent that opens a "请说是或否" round on a voice / text turn --
+    99 U147 made every such command one question, one answer
   * a fastpath intent that touched the LLM -- burns the GPU slot and adds
     latency to a path defined as not needing it
 """
@@ -141,7 +144,6 @@ from xbrain.p4_agent.runtime.teach_request import (
 from xbrain.p4_agent.safety_bypass import matcher as bypass_matcher
 from xbrain.p4_agent.safety_bypass import recording_gate
 from xbrain.p4_agent.session.chitchat import ChitchatResponder, ChitchatState
-from xbrain.p4_agent.session.state_machines import L2ConfirmState, L2Slot
 
 # Spoken wording for the F-class build failures. Hot-tunable phrasing, ASCII
 # punctuation per CLAUDE.md 2.2; the keys are the English reasons the builders
@@ -153,7 +155,8 @@ _F_REASON_CN = {
     # 99 U133: a recording start without a full route / fence name is
     # refused, never followed by a question.
     "a recording needs a full name": "录制指令要带上完整名称, 比如: 现在开始录制1号路径, 或: 现在开始录制东门围栏",
-    "save needs a name": "要保存的话请说个名字",
+    # 99 U147: one question, one answer -- refused with how to say it.
+    "save needs a name": "没有保存, 因为没有说名字. 请带上名字再说一次, 例如: 保存围栏, 命名为东门围栏",
     # 99 U110 (user ruling 2026-11-04): a capture without a name is REFUSED,
     # not asked about -- the operator repeats the whole command with a name.
     "a keypoint needs a name": "这个点没有记录, 因为没有说名字. 请说: 把这里记为某某点",
@@ -162,11 +165,12 @@ _F_REASON_CN = {
     # 18 PS-6 / 16 EV-6: no pose near the first word -> nothing is stored.
     "no pose snapshot": "现在拿不到定位, 这个点没有记录",
     CATALOGUE_UNAVAILABLE: "对象列表还没加载好, 稍后再说一次",
-    # 16 S6.6.4: B01's miss branch ends in a clarify. Reached when neither the
-    # fast leg nor the tier-2 LLM leg could name the destination.
-    GOTO_NEEDS_WAYPOINT: "要去哪个点? 请说出点位名称",
-    # 11 S7.2 patrol needs route_id; the operator named none -> ask.
-    PATROL_NEEDS_ROUTE: "巡逻哪条路线? 请说出路线名称",
+    # 16 S6.6.4: B01's miss branch. Reached when neither the fast leg nor the
+    # tier-2 LLM leg could name the destination. 99 U147: a statement with an
+    # example, never "要去哪个点?" -- the next utterance is a new command.
+    GOTO_NEEDS_WAYPOINT: "没有说去哪个点, 没有执行. 请带上点位名称说, 例如: 去1号测试点",
+    # 11 S7.2 patrol needs route_id; the operator named none -> refused (U147).
+    PATROL_NEEDS_ROUTE: "没有说沿哪条路线巡逻, 没有执行. 请带上路线名称说, 例如: 沿1号路径巡逻",
     # A named destination the turn did not resolve (should not be reachable:
     # _build_task_command resolves first). Spoken as "not found" either way.
     DESTINATION_UNRESOLVED: "没找到你说的地点, 换个说法试试",
@@ -179,14 +183,15 @@ _SCHED_CN = {
     "none": "现在没有定时任务",
     "clash": "{when}已经有一个定时任务: {label}. 同一时间只能排一个任务, 请换个时间",
     "not_found": "没有找到{when}的定时任务",
-    "which": "现在有{n}个定时任务: {items}. 请说取消几点的定时任务",
-    "confirm_one": "确认取消{when}{label}的定时任务吗,请说是或否",
-    "confirm_all": "确认取消全部{n}个定时任务吗,请说是或否",
+    # 99 U145: one question, one answer -- the cancel is done, never asked
+    "done_one": "好的,已取消{when}{label}的定时任务",
+    "done_all": "好的,已取消全部{n}个定时任务",
+    "ambiguous": "现在有{n}个定时任务: {items}. 没有取消. 要取消其中一个, 请带上时间说, 例如: 取消{example}的定时任务",
 }
 
 _PTP_CN = {
     "timed_geo": "删除和改名不能定时, 请去掉时间再说一遍",
-    "no_wall_clock": "现在不能定时, 请直接说去哪个点",
+    "no_wall_clock": "现在拿不到系统时间, 不能定时, 没有执行",  # U147: no "请说去哪个点"
     "past": "这个时间已经过了, 请换个时间",
     "too_far": "定时只能在一天以内, 或一周内某天的某个时刻",
     "no_target": "没有说要删除哪个点, 没有删除",
@@ -195,6 +200,7 @@ _PTP_CN = {
     "not_found_route": "没找到{name}, 可以问我有哪些路径",  # U121 patrol
     "ack_goto": "好的,{when}去{name}",
     "ack_delete": "好的,删除{name}",
+    "ack_activate": "好的,启用{name}",  # 99 U147: F15 runs at once, names the fence
     "ack_rename": "好的,把{name}改名为{new}",
     # 99 U121 named patrol; {how} is the lap phrase of _laps_cn (U131: P3
     # counts passes and re-pushes, so a spoken count is honoured).
@@ -208,7 +214,7 @@ _PTP_CN = {
     # 99 U144 scheduled-task replies (the _reply helper reads this table)
     "sched_none": _SCHED_CN["none"],
     "sched_not_found": _SCHED_CN["not_found"],
-    "sched_which": _SCHED_CN["which"],
+    "sched_ambiguous": _SCHED_CN["ambiguous"],
     "ack_charge": "好的,{when}回充电桩",  # 99 U143 timed B09 (nearest dock)
     "no_home": "还没有定义返航终点站, 请先把一个位置保存为返航终点站",
     # 99 U130: G48 / G49 route-membership answers.
@@ -348,11 +354,13 @@ _TASK_CONTROL_CN = {
     "no_suspended_task": "现在没有暂停中的任务可以继续",
 }
 
-# Spoken follow-ups when an A-class slot is missing (MI-2: ask, never send).
+# Spoken refusals when an A-class slot is missing (MI-2: never send, never
+# guess). 99 U147: one question, one answer -- a statement naming what was
+# missing and an example; never "要走多远?" (nothing waits for a reply).
 _MOTION_REASON_CN = {
-    "missing_slot:distance_m": "要走多远? 请说一个米数",
-    "missing_slot:angle_deg": "要转多少度?",
-    "missing_slot:heading": "要朝哪个方向? 比如朝北",
+    "missing_slot:distance_m": "没有说走多远, 没有执行. 请带上米数说, 例如: 前进3米",
+    "missing_slot:angle_deg": "没有说转多少度, 没有执行. 请带上度数说, 例如: 左转90度",
+    "missing_slot:heading": "没有说朝哪个方向, 没有执行. 请带上方向说, 例如: 朝北",
 }
 
 _CHITCHAT_NAMES = frozenset({"greeting", "identity", "help", "out_of_scope",
@@ -382,6 +390,10 @@ _CN_LABELS = {
     "D06": "打开爆闪灯", "D07": "关闭爆闪灯",
     "E01": "转动云台", "E05": "停止跟踪", "E06": "变焦", "E07": "云台扫描",
     "E08": "停止扫描", "E09": "调整云台转速", "H07": "重启系统",
+    # 99 U147: the former confirm intents now run at once; the ack names
+    # what is done, the result follows from the owner's ack (ack_speech).
+    "F09": "保存围栏", "F11": "删除路径", "F13": "删除围栏",
+    "F15": "启用围栏", "H04": "重新加载配置",
     # F06 / F10 (99 U109): the turn only says what was asked; the result
     # ("已记录 X" or why not) follows from cmd/teach/ack (ack_speech).
     "F06": "记录这个点", "F10": "记录充电桩",
@@ -566,34 +578,11 @@ def _payload_slots(intent_id: str, text: str) -> Dict[str, Any]:
 
 
 @dataclass
-class PendingConfirm:
-    """An L2 intent awaiting I01/I02. Holds enough to dispatch on confirm.
-
-    *** llm_slots is held for a reason. The turn that OPENED the confirm may
-    have run tier-2 and extracted the slots (F14 rename's target, a route name);
-    the confirm turn itself says only 'yes'. Dropping them here meant the
-    confirmed dispatch had no slots at all -- and since the F-class and task
-    builders run off the slots, a confirmed 'delete the east route' dispatched
-    an EMPTY envelope: the operator was asked to confirm a deletion that was
-    then never commanded. Holding them also avoids a second LLM call on an
-    utterance already classified.
-    """
-    entry: IntentEntry
-    text: str
-    slot: L2Slot
-    llm_slots: Optional[dict] = None
-
-
-@dataclass
 class OrchestratorSession:
     """Per-operator turn state. One instance lives across a dialog."""
     recording: recording_gate.RecordingState = field(
         default_factory=recording_gate.RecordingState)
     chitchat: ChitchatState = field(default_factory=ChitchatState)
-    pending_confirm: Optional[PendingConfirm] = None
-    # CL-2 (16): when both non-voice estop paths are unhealthy the link
-    # publisher sets estop_path=down; an L1b then upgrades to L2.
-    estop_path: str = "up"
     # 2026-10-30 (field test P101-P103): what the robot last SAID, for I03
     # "再说一遍 / 什么 / 没听清". Before, I03 was dispatched to cmd/audio/speak
     # and spoke the user's own words back, then "收到".
@@ -692,7 +681,6 @@ class TurnOrchestrator:
         *,
         chitchat: ChitchatResponder,
         tier2_fn: Tier2Fn,
-        l2_timeout_ms: int,
         matcher: Optional[KeywordMatcher] = None,
         query_fn: Optional[Callable[[IntentEntry], Optional[str]]] = None,
         # H-class intents answered from live state instead of a cmd/system
@@ -730,7 +718,6 @@ class TurnOrchestrator:
         self._matcher = matcher or KeywordMatcher(registry)
         self._chitchat = chitchat
         self._tier2 = tier2_fn
-        self._l2_timeout_ms = l2_timeout_ms
         # 2026-10-26: the constructor `source` ("voice" by default, the one
         # value every command was labelled with) is gone. One orchestrator
         # serves the microphone, cloud text, cloud voice and the HMI, so
@@ -760,9 +747,6 @@ class TurnOrchestrator:
         # 99 U110: the restatement of a rule-parsed PTP command, set by
         # _route_ptp and read by _dispatch_ack in the same turn.
         self._turn_ptp_ack: Optional[str] = None
-        # 99 U144: a confirm prompt naming WHICH task (a scheduled cancel);
-        # reset per turn like _turn_ptp_ack.
-        self._turn_confirm_prompt: Optional[str] = None
         # GWY-P4-39/41: for a G-class query, query_fn returns the answer
         # rendered from LIVE state (or an 'unknown' reply when stale). When
         # it is None or returns None, the query falls through to a normal
@@ -857,7 +841,6 @@ class TurnOrchestrator:
         self._turn_t_first = (now_mono_ms if t_first_word is None
                               else t_first_word)
         self._turn_ptp_ack = None
-        self._turn_confirm_prompt = None
         decision = self._handle_turn(text, session, now_mono_ms, raw_text,
                                      addressed)
         decision.channel = channel  # every branch, one place
@@ -896,10 +879,6 @@ class TurnOrchestrator:
             # gating -- that is the safety guarantee.
             return TurnDecision(
                 kind="bypass", bypass_action=hit.action, route="bypass")
-
-        # STEP 3 (early): if a confirm is open, THIS turn is its response.
-        if session.pending_confirm is not None:
-            return self._resolve_pending_confirm(text, session, now_mono_ms)
 
         if not text:
             return TurnDecision(kind="overheard", layer="overheard")
@@ -1053,9 +1032,9 @@ class TurnOrchestrator:
                      layer: str,
                      llm_slots: Optional[dict] = None,
                      rule_slots: Optional[dict] = None) -> TurnDecision:
-        """Apply route (fastpath vs LLM) and auth (confirm gate). llm_slots
-        (tier-2 only) are the slots the LLM extracted; they are merged OVER the
-        fastpath slots so a free-text slot (speak_custom's text) survives."""
+        """Apply route (fastpath vs LLM) and auth. llm_slots (tier-2 only)
+        are the slots the LLM extracted; they are merged OVER the fastpath
+        slots so a free-text slot (speak_custom's text) survives."""
         # 99 U133: recording mode answers every control command first.
         blocked_rec = self._recording_block(entry, layer)
         if blocked_rec is not None:
@@ -1097,16 +1076,13 @@ class TurnOrchestrator:
 
         # *** I01-I04 session intents (2026-10-30, field test P101-P106): the I
         # class dispatches to cmd/audio/speak, so these used to SPEAK THE USER'S
-        # OWN WORDS and then "收到". A pending confirm consumes I01 / I02 before
-        # this point; reaching here means there is nothing to confirm.
+        # OWN WORDS and then "收到". Since 99 U147 no turn ever opens a confirm,
+        # so a "是" / "不" always lands here: there is nothing to confirm.
         if entry.id in ("I01", "I02", "I03", "I04"):
             if entry.id == "I03":
                 reply = session.last_reply or self._chitchat.session_reply("repeat_none")
             elif entry.id == "I04":
-                # No pending_confirm to drop here: a pending confirm consumes
-                # the next turn before routing (and clears itself), so this
-                # branch never sees one -- clearing it here was dead code (an
-                # equivalent mutant, 2026-10-30).
+                # Nothing to drop: no turn opens a confirm (99 U147).
                 reply = self._chitchat.session_reply("cancel_session")
             else:
                 reply = self._chitchat.session_reply("no_pending_confirm")
@@ -1146,21 +1122,12 @@ class TurnOrchestrator:
                 route=entry.route, auth=entry.auth, layer=layer,
                 reply_text=answer, tts_text=answer)
 
-        # Effective auth with CL-2 upgrade (L1b -> L2 when estop down).
-        eff_auth = self._effective_auth(entry.auth, session)
-
-        if eff_auth == "L2":
-            # Open a confirm and WAIT. Do NOT dispatch this turn.
-            slot = L2Slot(timeout_millis=self._l2_timeout_ms)
-            slot.request(now_mono_ms=now_mono_ms)
-            session.pending_confirm = PendingConfirm(
-                entry=entry, text=text, slot=slot,
-                llm_slots=llm_slots if llm_slots is not None else rule_slots)
-            return TurnDecision(
-                kind="await_confirm", intent_id=entry.id,
-                intent_name=entry.name, route=entry.route, auth=eff_auth,
-                layer=layer, tts_text=(self._turn_confirm_prompt
-                                       or self._confirm_prompt(entry)))
+        # 99 U147 (user ruling 2026-11-06): a voice / text command is one
+        # question, one answer. An L2 entry is NOT turned into a "确认...吗,请
+        # 说是或否" round any more: it runs now, as L1a (restated while it is
+        # dispatched), and the envelope says L1a because no confirm happened.
+        # L2 stays in the registry for the HMI, where it is a button confirm.
+        eff_auth = "L1a" if entry.auth == "L2" else entry.auth
         if eff_auth == "L3":
             # Cloud approval flow (GWY-P4-38 hand-off to P5). Not dispatched
             # until the cloud confirm_token arrives.
@@ -1305,15 +1272,16 @@ class TurnOrchestrator:
                                      session, now_mono_ms, layer="ptp_rule",
                                      rule_slots=rslots)
         if ptp.kind == "activate_fence":
-            # 99 U138: F15 by name; stays L2 (the confirm turn opens below)
+            # 99 U138: F15 by name; L2, so it runs at once (99 U147)
             if ptp.when is not None:
                 return _reply("F15", "timed_geo")
+            self._turn_ptp_ack = _PTP_CN["ack_activate"].format(name=ptp.name)
             return self._route_entry(self._registry.by_id("F15"), text, session,
                                      now_mono_ms, layer="ptp_rule",
                                      rule_slots={"fence": ptp.name})
         if ptp.kind in ("delete_route", "delete_fence"):
-            # 99 U133: route / fence deletes by name; F11 / F13 stay L2, so the
-            # turn asks for confirmation (safety-relevant, 18 S8.1).
+            # 99 U133: route / fence deletes by name. F11 / F13 are L2 and run
+            # at once with the ack naming what is deleted (99 U147).
             fid = "F11" if ptp.kind == "delete_route" else "F13"
             if ptp.when is not None:
                 return _reply(fid, "timed_geo")
@@ -1371,38 +1339,45 @@ class TurnOrchestrator:
 
     def _cancel_scheduled(self, ptp: PtpParse, text: str, session,
                           now_mono_ms: int, reply) -> TurnDecision:
-        """99 U144: "取消 / 删除 [所有] [<时间>的] 定时任务".
+        """99 U144 / U145: "取消 / 删除 [所有] [<时间>][的][<任务内容>](定时)任务".
 
-        One scheduled task, or the one at the time said -> confirm naming it,
-        then cancel THAT task (by id). Several and no time -> list them and ask
-        which. "所有" with several -> confirm, then clear_queue filtered to the
-        scheduled state. Stays B07 (L2): a mis-heard cancel throws a task away,
-        and the confirm says exactly which one."""
+        ONE QUESTION, ONE ANSWER (user ruling 2026-11-06): no confirm, no
+        follow-up question. The time and the task content narrow the scheduled
+        tasks; exactly one left -> cancelled at once by id; "所有" -> every
+        scheduled task (clear_queue filtered to the scheduled state); none ->
+        said so; still several -> NOTHING is cancelled and the answer lists
+        them with an example sentence that names one (a statement, not a
+        question -- cancelling a guess would throw away a task nobody named).
+        B07 is L2 in the registry; like every L2 it runs at once (99 U147)."""
         state = self._state_fn() if self._state_fn else {}
         items = self._scheduled(state)
         if not items:
             return reply("B07", "sched_none")
-        target: Optional[Dict[str, Any]] = None
-        if ptp.when is not None:  # the time names it
+        picked = list(items)  # narrowed below
+        if ptp.when is not None:  # the time names a minute
             try:
                 epoch = resolve_epoch(ptp.when, self._wall_now_fn(), self._site_timezone)
             except TimeParseError:
                 epoch = None  # a past / out-of-range time names nothing scheduled
-            hits = sv_at_minute(items, epoch) if epoch is not None else []
-            if not hits:
-                return reply("B07", "sched_not_found", when=_spoken_when(ptp.when))
-            target = hits[0]
-        elif ptp.every and len(items) > 1:  # all of them
-            self._turn_confirm_prompt = _SCHED_CN["confirm_all"].format(n=len(items))
+            picked = sv_at_minute(picked, epoch) if epoch is not None else []
+        if ptp.name:  # the task content ("沿1号路径巡逻")
+            want = canonical_name(ptp.name)  # 一号 == 1号
+            picked = [i for i in picked if want in canonical_name(i["label"])
+                      or canonical_name(i["label"]) in want]
+        if not picked:
+            return reply("B07", "sched_not_found",
+                         when=_spoken_when(ptp.when) + (ptp.name or ""))
+        if ptp.every and len(picked) == len(items) and len(items) > 1:
+            self._turn_ptp_ack = _SCHED_CN["done_all"].format(n=len(items))
             return self._route_entry(self._registry.by_id("B07"), text, session,
                                      now_mono_ms, layer="ptp_rule",
                                      rule_slots={"cancel_scheduled_all": True})
-        elif len(items) == 1:
-            target = items[0]  # the only one
-        else:  # several, no time: say them, ask which
-            listed = ", ".join(i["when"] + i["label"] for i in items)
-            return reply("B07", "sched_which", n=len(items), items=listed)
-        self._turn_confirm_prompt = _SCHED_CN["confirm_one"].format(
+        if len(picked) > 1:  # still more than one: name them, cancel none
+            listed = ", ".join(i["when"] + i["label"] for i in picked)
+            return reply("B07", "sched_ambiguous", n=len(picked), items=listed,
+                         example=picked[0]["when"])
+        target = picked[0]  # exactly one
+        self._turn_ptp_ack = _SCHED_CN["done_one"].format(
             when=target["when"], label=target["label"])
         return self._route_entry(self._registry.by_id("B07"), text, session,
                                  now_mono_ms, layer="ptp_rule",
@@ -1451,7 +1426,7 @@ class TurnOrchestrator:
             llm_used = True
             # An "unknown / missing_slot" on a keyword-matched intent is the
             # operator naming the action without its argument ("记录当前位置"):
-            # carry on with no LLM slots so the builder asks for the slot.
+            # carry on with no LLM slots so the builder refuses naming the slot.
             # Any other decline ends the turn as before.
             asks = (classified is not None and classified.name == "unknown"
                     and classified.reason == "missing_slot")
@@ -1488,7 +1463,7 @@ class TurnOrchestrator:
             # 99 U109: a made-up `name` (F03 F06 F09 F10) must also have been
             # said, and travels in its canonical spelling ("一号" -> "1号") so
             # the later lookup finds it; an invented one is dropped and the
-            # builder asks for it (name_slots).
+            # builder refuses for the missing name (name_slots).
             if "name" in entry.slots and "name" in extra:
                 said = ground_name(extra.pop("name"), text)
                 if said is not None:
@@ -1691,79 +1666,6 @@ class TurnOrchestrator:
         decision.llm_used = True
         decision.prompt_assembled = True
         return decision
-
-    # -- confirm resolution ---------------------------------------------
-
-    def _resolve_pending_confirm(self, text: str,
-                                 session: OrchestratorSession,
-                                 now_mono_ms: int) -> TurnDecision:
-        """A confirm is open; interpret this turn as the I01/I02 response
-        (16 S5.2 layer 3 session-state)."""
-        pc = session.pending_confirm
-        # Timeout first: a stale confirm must not accept a late 'yes'.
-        pc.slot.tick(now_mono_ms=now_mono_ms)
-        if pc.slot.state == L2ConfirmState.TIMED_OUT:
-            session.pending_confirm = None
-            return TurnDecision(kind="confirm_timeout", intent_id=pc.entry.id,
-                                intent_name=pc.entry.name,
-                                tts_text=self._timeout_prompt(pc.entry))
-        # Classify the response; I01 confirm / I02 deny are session-state
-        # intents supplied here (they are excluded from the layer-2 index).
-        response = self._classify_confirm_response(text, pc.entry)
-        if response == "I02":       # deny
-            session.pending_confirm = None
-            return TurnDecision(kind="confirm_denied", intent_id=pc.entry.id,
-                                intent_name=pc.entry.name,
-                                tts_text=self._denied_prompt(pc.entry))
-        if response != "I01":       # neither yes nor no -> keep waiting
-            return TurnDecision(kind="await_confirm", intent_id=pc.entry.id,
-                                intent_name=pc.entry.name,
-                                tts_text=self._confirm_prompt(pc.entry))
-        # Confirmed: dispatch the held intent NOW, through the SAME path an
-        # unconfirmed dispatch takes.
-        #
-        # *** It used to call dispatch(entry.id, held_text) directly, which
-        # skipped slot fill, the F-class GeoCommand/TeachCommand builder and the
-        # TaskCommand builder in one step. Every L2 intent is destructive by
-        # definition -- F11 delete_route, F13 delete_fence, F15 set_active_fence
-        # are all L2 -- so the intents that were BUILT most carefully were
-        # exactly the ones dispatched as a bare p4_intent_v1 envelope carrying
-        # no target and no action. P3 could not have acted on any of them.
-        #
-        # Reusing _dispatch_entry cannot re-open a confirm: the auth gate lives
-        # in the CALLER (_dispatch_or_confirm), not in _dispatch_entry.
-        pc.slot.confirm()
-        entry, held_text = pc.entry, pc.text
-        session.pending_confirm = None
-        return self._dispatch_entry(entry, held_text, session, now_mono_ms,
-                                    "session_state", "L2",
-                                    llm_slots=pc.llm_slots)
-
-    def _classify_confirm_response(self, text: str,
-                                   pending: Optional[IntentEntry] = None
-                                   ) -> Optional[str]:
-        """Map a confirm-window utterance to I01 (confirm) / I02 (deny) /
-        None. Uses the registry keywords for I01/I02 (which are excluded
-        from the layer-2 index, so they are matched here, at layer 3).
-
-        The pending command's own keywords are removed first (99 U111): with
-        "取消" a deny word (18 I02), repeating "取消任务" to "确认取消任务吗"
-        would otherwise read as "no". Repeating the command is neither."""
-        for kw in sorted((pending.keywords if pending else ()), key=len,
-                         reverse=True):
-            if kw:
-                text = text.replace(kw, "")
-        i01 = self._registry.by_id("I01")
-        i02 = self._registry.by_id("I02")
-        # Deny checked with the same longest-first spirit; here a simple
-        # substring is enough because the window is a yes/no context.
-        for kw in i02.keywords:
-            if kw and kw in text:
-                return "I02"
-        for kw in i01.keywords:
-            if kw and kw in text:
-                return "I01"
-        return None
 
     # -- replies ---------------------------------------------------------
 
@@ -1970,30 +1872,8 @@ class TurnOrchestrator:
             latency_class=_LATENCY_BY_ROUTE[entry.route],
         )
 
-    def _effective_auth(self, auth: str, session: OrchestratorSession) -> str:
-        """CL-2: estop_path==down upgrades L1b -> L2 (one extra gate)."""
-        if auth == "L1b" and session.estop_path == "down":
-            return "L2"
-        return auth
-
-    # Prompt wording (hot phrasing; ASCII punct, Chinese words). A Chinese
-    # label per intent gives the operator something meaningful to confirm;
-    # falls back to a generic prompt. NEVER speaks the English intent name
-    # (the 2026-08-11 ORIN test heard '确认要执行cancel_task吗').
-    def _confirm_prompt(self, entry: IntentEntry) -> str:
-        label = _CN_LABELS.get(entry.id)
-        if label:
-            return "确认" + label + "吗,请说是或否"
-        return "确认执行这个操作吗,请说是或否"
-
     def _approval_prompt(self, entry: IntentEntry) -> str:
         return "该操作需要云端审批,已上报等待批准"
-
-    def _denied_prompt(self, entry: IntentEntry) -> str:
-        return "好的,已取消"
-
-    def _timeout_prompt(self, entry: IntentEntry) -> str:
-        return "没有收到确认,已取消"
 
     def _dispatch_ack(self, entry: IntentEntry,
                       extra: Optional[Dict[str, Any]] = None) -> str:

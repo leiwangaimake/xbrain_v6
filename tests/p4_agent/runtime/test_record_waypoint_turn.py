@@ -74,7 +74,7 @@ def _turn(text, llm, snaps=None, t_first_word=None):
         reg = load_intent_registry(yaml.safe_load(fh))  # this tree's registry
     with open(os.path.join(_CONFIGS, "chitchat.yaml"), encoding="utf-8") as fh:
         cc = ChitchatResponder(yaml.safe_load(fh))  # chitchat presets
-    orch = build_orchestrator(reg, cc, l2_timeout_ms=8000, tier2_fn=llm,
+    orch = build_orchestrator(reg, cc, tier2_fn=llm,
                               pose_snap_fn=snaps if snaps is not None else _Snaps())
     pairs = make_turn_handler(orch, OrchestratorSession())(
         text, t_first_word=t_first_word)  # frames, nothing sent

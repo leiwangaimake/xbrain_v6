@@ -84,7 +84,7 @@ def _turn(text, raw_text=None):
     # Fresh tables per call; the yield set is computed from reg at build time.
     reg = load_intent_registry(yaml.safe_load(open(_INTENTS, encoding="utf-8")))
     cc = ChitchatResponder(yaml.safe_load(open(_CHITCHAT, encoding="utf-8")))
-    orch = build_orchestrator(reg, cc, l2_timeout_ms=8000,
+    orch = build_orchestrator(reg, cc,
                               tier2_fn=lambda *_a: None)
     # A fresh session: not recording (U45 suppression would hide the bypass).
     d = orch.handle_turn(text, OrchestratorSession(), 1_000_000,

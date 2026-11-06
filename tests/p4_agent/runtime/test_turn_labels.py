@@ -151,7 +151,7 @@ def _orch(tier2=None):
         cc = ChitchatResponder(yaml.safe_load(fh))  # chitchat presets
     return TurnOrchestrator(reg, chitchat=cc,  # the real orchestrator
                             tier2_fn=tier2 or (lambda *a, **k: None),
-                            l2_timeout_ms=5000,  # confirm window
+                             # confirm window
                             state_fn=lambda: {**_STATE, **_MANIFEST})
 
 
@@ -192,18 +192,17 @@ def test_a_recording_command_names_its_issuer(channel, modality, issuer):
     assert frame["issuer"]["channel"] == issuer  # S12A.4 value
 
 
-def _confirmed(tier2, channel, modality, key):
-    """Two turns on one entry -- the request, then "是" -- and the frame.
+def _sent(tier2, channel, modality, key):
+    """One turn on one entry and the frame it sent.
 
-    System and destructive geo commands are L2: they only go out after the
-    operator confirms, and the confirming turn comes in on the same entry.
+    Destructive geo commands are L2 and, since 99 U147, go out on the turn
+    that asked for them (one question, one answer -- no confirm round).
     """
     orch, session = _orch(tier2), OrchestratorSession()  # one dialog
-    first = orch.handle_turn(_UNMATCHED, session, 1, channel=channel,
-                             modality=modality)  # same entry both turns
-    assert first.kind == "await_confirm", first.kind  # L2 asked first
-    d = orch.handle_turn("是", session, 2, channel=channel, modality=modality)
-    return dict(decision_to_publishes(d))[key]  # the confirmed frame
+    d = orch.handle_turn(_UNMATCHED, session, 1, channel=channel,
+                         modality=modality)  # the request itself
+    assert d.kind == "dispatch", d.kind  # sent now, not asked back
+    return dict(decision_to_publishes(d))[key]  # the frame
 
 
 def test_a_system_command_from_the_cloud_carries_origin_cloud():
@@ -233,7 +232,7 @@ def test_a_geo_command_from_wecom_carries_origin_wecom():
     """
     tier2 = lambda *a, **k: Tier2Classification(  # noqa: E731
         name="delete_route", slots={"route": "东门路线"})  # the stored route
-    frame = _confirmed(tier2, "wecom", "voice", "cmd/geo")  # WeChat voice
+    frame = _sent(tier2, "wecom", "voice", "cmd/geo")  # WeChat voice
     assert frame["origin"] == "wecom"  # not voice
 
 

@@ -418,7 +418,7 @@ def _orch():
     the keyword layer, and a stray LLM call would be a bug, not a fallback.
     """
     cc = ChitchatResponder(yaml.safe_load(open(_CHITCHAT, encoding="utf-8")))
-    return build_orchestrator(_reg(), cc, l2_timeout_ms=8000)
+    return build_orchestrator(_reg(), cc)
 
 
 def test_the_bypass_also_matches_the_raw_text():

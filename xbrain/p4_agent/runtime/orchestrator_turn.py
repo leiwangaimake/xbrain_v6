@@ -128,7 +128,6 @@ class VoiceOrchestratorInputs:
     """
     registry: IntentRegistry
     chitchat: ChitchatResponder
-    l2_timeout_ms: int
     query_templates: Any
     query_max_age_ms: int
     query_low_soc_pct: int
@@ -166,7 +165,6 @@ def build_orchestrator(
     registry: IntentRegistry,
     chitchat: ChitchatResponder,
     *,
-    l2_timeout_ms: int,
     tier2_fn: Optional[Callable[[str, OrchestratorSession, int],
                                 Optional[str]]] = None,
     query_fn=None,
@@ -206,7 +204,6 @@ def build_orchestrator(
     return TurnOrchestrator(
         registry, chitchat=chitchat,
         tier2_fn=tier2_fn or null_tier2,
-        l2_timeout_ms=l2_timeout_ms,
         query_fn=query_fn, bypass_tokens=bypass_tokens,
         system_fn=system_fn, state_fn=state_fn, pose_snap_fn=pose_snap_fn,
         wall_now_fn=wall_now_fn, site_timezone=site_timezone,
@@ -468,8 +465,7 @@ def _decision_to_publishes_raw(decision: TurnDecision) -> List[Tuple[str, dict]]
     if kind == "reply":
         return [_speak(decision.reply_text or decision.tts_text or "")]
 
-    if kind in ("await_confirm", "await_approval",
-                "confirm_denied", "confirm_timeout"):
+    if kind == "await_approval":  # L3: a statement, the cloud decides
         return [_speak(decision.tts_text or "")]
 
     if kind == "denied":

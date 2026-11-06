@@ -152,7 +152,7 @@ def _turn(text, tier2, items=None):
     # Preset replies are needed because a declined turn still speaks.
     cc = ChitchatResponder(yaml.safe_load(open(_CHITCHAT, encoding="utf-8")))
     # Built the way main_wiring builds it, with the stub in the tier-2 slot.
-    orch = build_orchestrator(_reg(), cc, l2_timeout_ms=8000, tier2_fn=tier2)
+    orch = build_orchestrator(_reg(), cc, tier2_fn=tier2)
     if items is not None:
         # The catalogue the orchestrator resolves destinations against.
         orch._state_fn = lambda: {"state/geo/manifest": {"items": items}}

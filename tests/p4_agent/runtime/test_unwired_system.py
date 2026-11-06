@@ -40,7 +40,7 @@ _UW = CC["unwired_system"]  # template + names
 def _orch():  # production orchestrator
     with open("/opt/xbrain_v6/configs/intents.yaml", encoding="utf-8") as fh:  # production content file
         reg = load_intent_registry(yaml.safe_load(fh))  # 18 registry
-    return build_orchestrator(reg, ChitchatResponder(CC), l2_timeout_ms=8000)  # real presets
+    return build_orchestrator(reg, ChitchatResponder(CC))  # real presets
 
 
 @pytest.mark.parametrize("text, hid", [("重新加载配置", "H04"), ("刷新规则", "H04"),
@@ -55,4 +55,3 @@ def test_unwired_system_intent_says_so_and_sends_nothing(text, hid):  # one quer
     assert d.intent_id == hid and d.kind == "denied"  # refused, honestly
     assert spoken == [_UW["template"].replace("{what}", _UW["names"][hid])]  # names the function
     assert [k for k, _p in pubs if not k.endswith("audio/speak")] == []  # nothing sent
-    assert s.pending_confirm is None  # no confirm for a no-op

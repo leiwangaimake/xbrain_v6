@@ -269,7 +269,7 @@ def run_voice_loop_wiring(cfg: TurnLoopConfig,
                     max_age_ms=orch.query_max_age_ms),
             ])
             orchestrator = build_orchestrator(
-                orch.registry, orch.chitchat, l2_timeout_ms=orch.l2_timeout_ms,
+                orch.registry, orch.chitchat,
                 tier2_fn=orch.tier2_fn, query_fn=query_fn,
                 bypass_tokens=orch.bypass_tokens,
                 # 2026-10-30 99 U102: H03 "校时" answered from state/clock.

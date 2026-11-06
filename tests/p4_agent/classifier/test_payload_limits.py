@@ -37,7 +37,7 @@ with open("/opt/xbrain_v6/configs/chitchat.yaml", encoding="utf-8") as _fh:  # p
 def _orch():  # production orchestrator
     with open("/opt/xbrain_v6/configs/intents.yaml", encoding="utf-8") as fh:  # production content file
         reg = load_intent_registry(yaml.safe_load(fh))  # 18 registry
-    return build_orchestrator(reg, ChitchatResponder(CC), l2_timeout_ms=8000)  # real presets
+    return build_orchestrator(reg, ChitchatResponder(CC))  # real presets
 
 
 FIELD = [("把警灯调亮", "redblue_no_dimming"), ("红蓝暗一点", "redblue_no_dimming"),

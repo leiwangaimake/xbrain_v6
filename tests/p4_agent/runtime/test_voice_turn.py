@@ -80,7 +80,7 @@ def _parts():
         reg = load_intent_registry(yaml.safe_load(fh))
     with open(_CHITCHAT, encoding="utf-8") as fh:
         cc = ChitchatResponder(yaml.safe_load(fh))
-    return build_orchestrator(reg, cc, l2_timeout_ms=8000), reg
+    return build_orchestrator(reg, cc), reg
 
 
 def _mic(raw, post=None, key=_KEY):

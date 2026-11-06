@@ -79,7 +79,7 @@ def _orch(tier2=None):
             yaml.safe_load(open(_INTENTS, encoding="utf-8"))),
         chitchat=ChitchatResponder(
             yaml.safe_load(open(_CHITCHAT, encoding="utf-8"))),
-        tier2_fn=tier2 or (lambda *a, **k: None), l2_timeout_ms=5000,
+        tier2_fn=tier2 or (lambda *a, **k: None),
         state_fn=lambda: {"state/geo/manifest": {"items": _ITEMS}})
 
 
@@ -91,11 +91,12 @@ _RUNNING_TASK = {"state/task": {"schema": "task_state_v1",
                                 "queue": [], "suspended": []}}
 
 
-def _frames(text: str, confirm: bool = False, tier2=None):
+def _frames(text: str, tier2=None):
     """{key: payload} for one utterance, minus the spoken acknowledgment.
 
-    confirm=True runs the L2 two-turn flow (utterance, then a spoken yes),
-    which is the ONLY way an operator reaches a destructive geo command.
+    One turn, also for an L2 command: since 99 U147 a voice / text command is
+    one question, one answer, so a destructive geo command goes out on the
+    turn that asked for it.
     """
     orch, session = _orch(tier2), OrchestratorSession()
     # state/task is part of the same snapshot state_fn returns, so B-class
@@ -103,11 +104,6 @@ def _frames(text: str, confirm: bool = False, tier2=None):
     orch._state_fn = lambda: {**{"state/geo/manifest": {"items": _ITEMS}},
                               **_RUNNING_TASK}
     decision = orch.handle_turn(text, session, now_mono_ms=1)
-    if confirm:
-        assert decision.kind == "await_confirm", (
-            "%r was expected to open an L2 confirm, got %s"
-            % (text, decision.kind))
-        decision = orch.handle_turn("是", session, now_mono_ms=2)
     assert decision.kind == "dispatch", (
         "%r did not dispatch (kind=%s) -- the fixture, not the frame, is wrong"
         % (text, decision.kind))
@@ -359,20 +355,17 @@ def test_the_wire_check_is_on_the_published_frame_not_the_builder():
     assert "task_command" in internal and "task_command" not in published
 
 
-def test_confirmed_geo_delete_carries_the_command():
-    """*** The third contract key, AND the second half of the same bug.
+def test_l2_geo_delete_carries_the_command():
+    """*** The third contract key: an L2 delete crosses with its object.
 
-    F11 delete_route is L2, so it goes through the confirm flow -- and the
-    confirm path used to call dispatch() directly, skipping slot fill and the
-    GeoCommand builder entirely. The operator was asked 'confirm this deletion',
-    said yes, and P4 published an envelope naming no object and no action.
+    F11 delete_route is L2. Its confirm path once called dispatch() directly,
+    skipping slot fill and the GeoCommand builder, and published an envelope
+    naming no object and no action. Since 99 U147 the L2 command runs on its
+    own turn through the same _dispatch_entry as any other; this pins that the
+    frame still names what is deleted.
 
-    That is the worst possible place for it: every L2 intent is destructive by
-    definition, so the commands built most carefully were the ones dispatched
-    empty.
-
-    MUTATION: restore the direct dispatch(entry.id, held_text) in
-    _resolve_pending_confirm and parse_geo_command raises here.
+    MUTATION: dispatch the bare envelope (skip the GeoCommand builder) and
+    parse_geo_command raises here.
     """
     # The target slot comes from tier-2: the fastpath keyword matcher fills no
     # geo slots, so a keyword-matched delete names no object at all. Stubbed
@@ -383,12 +376,11 @@ def test_confirmed_geo_delete_carries_the_command():
     # A DIRECTED phrase that matches no keyword, so it reaches layer-6 and the
     # stub above decides the intent. Wording it like a real delete would let the
     # keyword matcher pick the intent and the stub would never run.
-    payload = _frames("帮我处理一下那个事情", confirm=True,
-                      tier2=tier2)["cmd/geo"]
+    payload = _frames("帮我处理一下那个事情", tier2=tier2)["cmd/geo"]
     cmd = parse_geo_command(payload)
     assert cmd.action == "delete" and cmd.cmd_id
-    # The confirmed command names the object the operator was asked about --
-    # not just 'a delete'.
+    # The command names the object the operator asked about -- not just
+    # 'a delete'.
     assert cmd.geo_id == "r-east"
     # origin is the CHANNEL (S7.9.1); voice must not be able to claim cloud.
     assert cmd.origin == "voice"

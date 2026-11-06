@@ -52,7 +52,7 @@ def _orch(queue):  # an orchestrator over one queue
         cc = ChitchatResponder(yaml.safe_load(fh))  # presets
     state = {"state/geo/manifest": {"items": _ITEMS},
              "state/task": {"current": None, "queue": queue, "suspended": []}}  # 11 S4.4
-    return build_orchestrator(reg, cc, l2_timeout_ms=8000, state_fn=lambda: state,
+    return build_orchestrator(reg, cc, state_fn=lambda: state,
                               wall_now_fn=lambda: _NOW, site_timezone=_TZ)  # as wired
 
 
@@ -87,6 +87,7 @@ def test_spoken_epoch_days():  # day words
     ("取消定时任务", False, False), ("删除定时任务", False, False),  # bare
     ("取消下午3点的定时任务", True, False), ("把下午3点的定时任务删掉", True, False),  # by time
     ("取消下午3点的任务", True, False),  # time without 定时
+    ("删除今天下午1点的沿1号路径巡逻任务", True, False),  # 99 U145: time + content
     ("取消所有定时任务", False, True), ("删除全部定时任务", False, True),  # all
 ])
 def test_parse_cancel_scheduled(text, when, every):  # one parse per sentence
@@ -97,59 +98,73 @@ def test_parse_cancel_scheduled(text, when, every):  # one parse per sentence
     assert (got.when is not None, got.every) == (when, every)  # the selector
 
 
-@pytest.mark.parametrize("text", ["取消任务", "删除1号测试点"])
+@pytest.mark.parametrize("text", ["取消任务", "删除1号测试点", "取消巡逻的任务"])
 def test_other_cancels_are_not_ours(text):  # B07 / F12 keep theirs
     """MUTATION: match any 取消 -> plain cancel / waypoint delete hijacked -> red."""
     got = parse_ptp(text)  # one parse
     assert got is None or got.kind != "cancel_scheduled"  # left to B07 / F12
 
 
-# -- the flows ------------------------------------------------------------------------
+# -- the flows (99 U145: one question, one answer -- never a confirm or a follow-up) --
 def test_none_scheduled_says_so():  # nothing scheduled
     """MUTATION: fall through to plain 取消任务 -> red."""
     said, frame = _say(_orch([]), OrchestratorSession(), "取消定时任务")
     assert said == "现在没有定时任务" and frame is None  # nothing sent
 
 
-def test_the_only_one_is_confirmed_by_name_then_cancelled_by_id():  # one scheduled task
-    """MUTATION: generic confirm prompt -> red; cancel the "current" task
-    instead of the picked id -> no task_id t-a -> red."""
-    orch, s = _orch([_A]), OrchestratorSession()  # one scheduled task
-    said, frame = _say(orch, s, "删除定时任务")  # ask
-    assert said == "确认取消今天15点去1号测试点的定时任务吗,请说是或否" and frame is None
-    _said, frame = _say(orch, s, "是")  # confirm
-    assert frame["action"] == "cancel" and frame["task_id"] == "t-a"  # by id
+def test_the_only_one_is_cancelled_at_once_by_id():  # one scheduled task
+    """MUTATION: open a confirm -> await_confirm, no frame -> red; cancel
+    the "current" task instead of the picked id -> no task_id t-a -> red."""
+    said, frame = _say(_orch([_A]), OrchestratorSession(), "删除定时任务")  # one turn
+    assert said == "好的,已取消今天15点去1号测试点的定时任务"  # done, said what
+    assert frame["action"] == "cancel" and frame["task_id"] == "t-a"  # by id, this turn
 
 
-def test_several_without_a_time_are_listed():  # two, no time said
-    """MUTATION: cancel the first silently -> a frame -> red."""
+@pytest.mark.parametrize("text,tid,said", [
+    ("删除今天下午3点半的沿1号路径巡逻任务", "t-b", "好的,已取消今天15点30分沿1号路径巡逻的定时任务"),  # the user's example form
+    ("取消下午3点的定时任务", "t-a", "好的,已取消今天15点去1号测试点的定时任务"),  # time only
+    ("取消沿一号路径巡逻的定时任务", "t-b", "好的,已取消今天15点30分沿1号路径巡逻的定时任务"),  # content only, 一号 == 1号
+    ("把下午3点的定时任务删掉", "t-a", "好的,已取消今天15点去1号测试点的定时任务"),  # back word order
+])
+def test_time_or_content_picks_one_and_cancels_it(text, tid, said):  # two scheduled
+    """MUTATION: ignore the content -> the patrol sentence without a time is
+    ambiguous -> red; ignore the time -> red."""
+    got, frame = _say(_orch([_A, _B]), OrchestratorSession(), text)  # one turn
+    assert got == said and frame["task_id"] == tid  # that one, at once
+
+
+def test_several_and_nothing_names_one_cancels_none_and_says_how():  # ambiguous
+    """No follow-up question (U145) and no guess: nothing is cancelled and the
+    answer states the tasks with an example. MUTATION: cancel the first -> a
+    frame -> red; ask "取消几点的" -> red."""
     said, frame = _say(_orch([_A, _B]), OrchestratorSession(), "取消定时任务")
-    assert said == ("现在有2个定时任务: 今天15点去1号测试点, 今天15点30分沿1号路径巡逻. "
-                    "请说取消几点的定时任务") and frame is None
+    assert said == ("现在有2个定时任务: 今天15点去1号测试点, 今天15点30分沿1号路径巡逻. 没有取消. "
+                    "要取消其中一个, 请带上时间说, 例如: 取消今天15点的定时任务") and frame is None
 
 
-def test_by_time_picks_that_one():  # the 15:30 one
-    """MUTATION: ignore the time -> t-a -> red."""
-    orch, s = _orch([_A, _B]), OrchestratorSession()  # two
-    said, _f = _say(orch, s, "取消下午3点半的定时任务")  # the 15:30 one
-    assert said == "确认取消今天15点30分沿1号路径巡逻的定时任务吗,请说是或否"
-    _said, frame = _say(orch, s, "是")  # confirm
-    assert frame["task_id"] == "t-b"  # that one
+@pytest.mark.parametrize("text,said", [
+    ("取消下午4点的定时任务", "没有找到今天16点的定时任务"),  # nothing at that time
+    ("取消下午3点的沿1号路径巡逻任务", "没有找到今天15点沿1号路径巡逻的定时任务"),  # time and content disagree
+])
+def test_nothing_matching_says_not_found(text, said):  # answered, nothing sent
+    """MUTATION: fall back to the first item -> red."""
+    got, frame = _say(_orch([_A, _B]), OrchestratorSession(), text)
+    assert got == said and frame is None
 
 
-def test_a_time_with_nothing_scheduled_says_not_found():  # a time with nothing there
-    """MUTATION: fall back to the only / first item -> red."""
-    said, frame = _say(_orch([_A]), OrchestratorSession(), "取消下午4点的定时任务")
-    assert said == "没有找到今天16点的定时任务" and frame is None
-
-
-def test_all_clears_the_scheduled_state_only():  # every scheduled task
+def test_all_clears_the_scheduled_state_at_once():  # every scheduled task
     """MUTATION: clear_queue without the state filter -> ready tasks too -> red."""
-    orch, s = _orch([_A, _B]), OrchestratorSession()  # two
-    said, _f = _say(orch, s, "取消所有定时任务")  # all
-    assert said == "确认取消全部2个定时任务吗,请说是或否"
-    _said, frame = _say(orch, s, "是")  # confirm
+    said, frame = _say(_orch([_A, _B]), OrchestratorSession(), "取消所有定时任务")
+    assert said == "好的,已取消全部2个定时任务"  # done
     assert frame["action"] == "clear_queue" and frame["filter"] == {"state": "scheduled"}
+
+
+def test_plain_cancel_task_is_not_a_scheduled_cancel():  # B07 itself
+    """Plain 取消任务 never reaches a scheduled task: with nothing running it
+    says so, in one answer (99 U147: no confirm round either). MUTATION: read
+    取消任务 as a scheduled cancel -> t-a cancelled -> red."""
+    said, frame = _say(_orch([_A]), OrchestratorSession(), "取消任务")  # nothing running
+    assert frame is None and said and "确认" not in said  # answered, nothing sent
 
 
 @pytest.mark.parametrize("text,said", [

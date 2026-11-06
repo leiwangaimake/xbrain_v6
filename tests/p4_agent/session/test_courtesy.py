@@ -35,7 +35,7 @@ with open("/opt/xbrain_v6/configs/chitchat.yaml", encoding="utf-8") as _fh:  # p
 def _say(text, channel="cloud", modality="text"):  # one turn -> (decision, spoken, commands)
     with open("/opt/xbrain_v6/configs/intents.yaml", encoding="utf-8") as fh:  # production content file
         reg = load_intent_registry(yaml.safe_load(fh))  # 18 registry
-    o = build_orchestrator(reg, ChitchatResponder(CC), l2_timeout_ms=8000)  # real presets
+    o = build_orchestrator(reg, ChitchatResponder(CC))  # real presets
     d = o.handle_turn(text, OrchestratorSession(), 1000, channel=channel, modality=modality)  # local read of the state field
     pubs = decision_to_publishes(d)  # what would go out
     return d, [p["text"] for k, p in pubs if k.endswith("audio/speak")], [k for k, _ in pubs if not k.endswith("audio/speak")]  # result to the caller

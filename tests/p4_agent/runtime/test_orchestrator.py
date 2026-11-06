@@ -3,13 +3,14 @@ Copyright (c) 2026 Hachist Robotics
 Author: wanglei@hachist.com
 上海哈船智能船舶技术有限公司
 File: test_orchestrator.py
-Brief: GWY-P4-38 (32.F) -- turn orchestrator: bypass / L2 confirm / fastpath
+Brief: GWY-P4-38 (32.F) -- turn orchestrator: bypass / L2 runs at once / fastpath
 
 Description:
 Tests the six-step turn orchestrator against the real registry. Each
 criterion carries a mutation that must turn red per CLAUDE.md 3.3:
-estop bypasses classify, L2 waits for confirm, fastpath never touches the
-LLM.
+estop bypasses classify, an L2 command runs at once as L1a on a voice /
+text turn (99 U147: one question, one answer -- the confirm round is gone),
+fastpath never touches the LLM.
 """
 from __future__ import annotations
 
@@ -54,7 +55,7 @@ class _RecordingTier2:
 def _orch(tier2=None):
     return TurnOrchestrator(
         _reg(), chitchat=_chitchat(),
-        tier2_fn=tier2 or _RecordingTier2(), l2_timeout_ms=5000)
+        tier2_fn=tier2 or _RecordingTier2())
 
 
 # -- criterion 1: estop bypasses classify entirely -----------------------
@@ -93,20 +94,23 @@ def test_recording_suppresses_voice_estop():
     assert "空格" in d.tts_text             # advises the keyboard stop
 
 
-# -- criterion 2: auth=L2 waits for confirm ------------------------------
+# -- criterion 2: auth=L2 runs at once (99 U147) -------------------------
 
-def test_l2_intent_awaits_confirm_not_dispatched():
-    """B07 cancel_task is auth=L2. Heard once, it must open a confirm and
-    NOT dispatch. MUTATION B: dispatch immediately => kind would be
-    'dispatch' here."""
-    orch = _orch()
-    s = OrchestratorSession()
-    d = orch.handle_turn("不巡了", s, now_mono_ms=1000)
-    assert d.kind == "await_confirm"
-    assert d.intent_id == "B07"
-    assert d.auth == "L2"
-    assert d.dispatch_result is None        # nothing dispatched
-    assert s.pending_confirm is not None    # confirm is open
+def test_l2_intent_runs_at_once_as_l1a():
+    """B07 cancel_task is auth=L2 in the registry. Heard once on a voice
+    turn, it is dispatched on THAT turn with the envelope saying L1a (no
+    confirm happened) and an ack naming the action. MUTATION: keep the
+    confirm round -> kind await_confirm -> red; route at L2 -> envelope
+    level L2 -> red."""
+    orch = TurnOrchestrator(
+        _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
+        state_fn=lambda: _RUNNING_TASK)
+    d = orch.handle_turn("不巡了", OrchestratorSession(), now_mono_ms=1000)
+    assert d.kind == "dispatch" and d.intent_id == "B07"  # this turn
+    assert d.auth == "L1a"  # what actually happened
+    assert d.envelope.level == "L1a"  # EV-4 routing level: what happened
+    assert d.envelope.auth == "L2"  # EV-3 base level stays the registry's
+    assert d.tts_text == "好的,取消任务"  # the ack, not a question
 
 
 #: A live state snapshot with one running task, as P3 broadcasts it: the 11 S4.4
@@ -120,8 +124,8 @@ _RUNNING_TASK = {"state/task": {"schema": "task_state_v1",
                                 "queue": [], "suspended": []}}
 
 
-def test_l2_confirm_then_dispatch():
-    """*** B07 cancel: L2 confirm, then a TaskCommand naming a REAL task_id.
+def test_l2_cancel_names_the_real_task_id():
+    """*** B07 cancel: a TaskCommand naming a REAL task_id, on the first turn.
 
     The task_id is resolved on the SENDER side from state/task. S7.2 forbids
     "omit = the current task" because it forbids the RECEIVER guessing; naming
@@ -133,14 +137,8 @@ def test_l2_confirm_then_dispatch():
     """
     orch = TurnOrchestrator(
         _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
-        l2_timeout_ms=5000, state_fn=lambda: _RUNNING_TASK)
-    s = OrchestratorSession()
-    orch.handle_turn("不巡了", s, now_mono_ms=1000)          # opens confirm
-    d = orch.handle_turn("确认", s, now_mono_ms=1500)        # I01 -> dispatch
-    assert d.kind == "dispatch"
-    assert d.intent_id == "B07"
-    assert d.dispatch_result is not None
-    assert s.pending_confirm is None
+        state_fn=lambda: _RUNNING_TASK)
+    d = orch.handle_turn("不巡了", OrchestratorSession(), now_mono_ms=1000)
     tc = d.dispatch_result.payload["task_command"]
     assert tc["action"] == "cancel"
     assert tc["task_id"] == "t-20260823-004"
@@ -157,7 +155,7 @@ def test_task_control_with_no_active_task_is_spoken_not_sent():
     """
     orch = TurnOrchestrator(
         _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
-        l2_timeout_ms=5000, state_fn=lambda: {})
+        state_fn=lambda: {})
     s = OrchestratorSession()
     # 用"暂缓任务"而不是 18 里的"先停一下": 后者含"停", 会先被安全旁路
     # (16 S4, 旁路先于分类)截走成 estop, 根本到不了 B05. 旁路优先是设计如此,
@@ -172,29 +170,26 @@ def test_pause_resolves_the_running_task():
     """B05 pause is L0 -- no confirm, straight to a TaskCommand."""
     orch = TurnOrchestrator(
         _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
-        l2_timeout_ms=5000, state_fn=lambda: _RUNNING_TASK)
+        state_fn=lambda: _RUNNING_TASK)
     d = orch.handle_turn("暂缓任务", OrchestratorSession(), now_mono_ms=1)
     assert d.kind == "dispatch"
     tc = d.dispatch_result.payload["task_command"]
     assert tc["action"] == "pause" and tc["task_id"] == "t-20260823-004"
 
 
-def test_l2_deny_cancels():
-    orch = _orch()
+@pytest.mark.parametrize("answer", ["确认", "算了"])
+def test_a_yes_or_no_after_a_command_confirms_nothing(answer):
+    """Nothing is left open after an L2 command (99 U147), so a stray
+    "确认" / "算了" sends nothing (I01 / I02 are session-state words, not in
+    the layer-2 index, so a bare one is overheard). MUTATION: hold the
+    command and dispatch it on "确认" -> a second dispatch -> red."""
+    orch = TurnOrchestrator(
+        _reg(), chitchat=_chitchat(), tier2_fn=_RecordingTier2(),
+        state_fn=lambda: _RUNNING_TASK)
     s = OrchestratorSession()
-    orch.handle_turn("不巡了", s, now_mono_ms=1000)
-    d = orch.handle_turn("算了", s, now_mono_ms=1500)        # I02 deny
-    assert d.kind == "confirm_denied"
-    assert s.pending_confirm is None
-
-
-def test_l2_confirm_times_out():
-    orch = _orch()
-    s = OrchestratorSession()
-    orch.handle_turn("不巡了", s, now_mono_ms=1000)
-    d = orch.handle_turn("确认", s, now_mono_ms=1000 + 6000)  # past 5000 ms
-    assert d.kind == "confirm_timeout"
-    assert s.pending_confirm is None
+    orch.handle_turn("不巡了", s, now_mono_ms=1000)  # runs at once
+    d = orch.handle_turn(answer, s, now_mono_ms=1500)  # a stray yes / no
+    assert d.kind != "dispatch" and d.dispatch_result is None  # nothing sent
 
 
 # -- criterion 3: fastpath never touches the LLM -------------------------
@@ -281,23 +276,13 @@ def test_tier2_classifies_out_of_scope_to_preset():
     assert d.reply_text                     # preset out_of_scope reply
 
 
-# -- CL-2: estop_path=down upgrades L1b -> L2 ----------------------------
+# -- CL-2 upgrade removed (99 U147) -------------------------------------
 
-def test_cl2_l1b_upgrades_to_l2_when_estop_down():
-    """A11 turn_around is L1b. With estop_path=down it upgrades to L2 and
-    must await confirm. MUTATION: no CL-2 upgrade => dispatches directly."""
+def test_l1b_dispatches_normally():
+    """A11 turn_around is L1b and dispatches on its turn; there is no
+    estop-down upgrade into a confirm any more (99 U147)."""
     orch = _orch()
-    s = OrchestratorSession()
-    s.estop_path = "down"
-    d = orch.handle_turn("转身", s, now_mono_ms=1000)
-    assert d.kind == "await_confirm"
-    assert d.auth == "L2"
-
-
-def test_l1b_dispatches_normally_when_estop_up():
-    orch = _orch()
-    s = OrchestratorSession()               # estop_path defaults 'up'
-    d = orch.handle_turn("转身", s, now_mono_ms=1000)
+    d = orch.handle_turn("转身", OrchestratorSession(), now_mono_ms=1000)
     assert d.kind == "dispatch"
     assert d.intent_id == "A11"
 
@@ -449,7 +434,7 @@ def test_the_turn_s_channel_flows_into_the_task_request():
         _reg(), chitchat=_chitchat(),
         tier2_fn=_RecordingTier2(ret=Tier2Classification(
             name="patrol_route", slots={"route": "东门路线"})),
-        l2_timeout_ms=5000, state_fn=_manifest([_EAST]))
+        state_fn=_manifest([_EAST]))
     d = orch.handle_turn(_UNMATCHED, OrchestratorSession(), now_mono_ms=1000,
                          channel="cloud", modality="text")
     assert d.dispatch_result.payload["task_command"]["source"] == "cloud"
@@ -481,7 +466,7 @@ def _route_orch(spoken="东门路线", state_fn=None):
         _reg(), chitchat=_chitchat(),
         tier2_fn=_RecordingTier2(ret=Tier2Classification(
             name="patrol_route", slots={"route": spoken})),
-        l2_timeout_ms=5000, state_fn=state_fn)
+        state_fn=state_fn)
 
 
 def test_spoken_route_name_becomes_route_id():
