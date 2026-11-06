@@ -48,7 +48,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from xbrain.p4_agent.classifier.keyword_matcher import (
     KeywordMatcher,
@@ -61,6 +61,8 @@ from xbrain.p4_agent.classifier.large_class import (
 )
 from xbrain.p4_agent.envelope.intent_envelope import IntentEnvelope
 from xbrain.p4_agent.registry.intents import IntentEntry, IntentRegistry
+from xbrain.p4_agent.state.schedule_view import (  # 99 U144
+    at_minute as sv_at_minute, clash as sv_clash, scheduled_items)
 from xbrain.p4_agent.runtime.geo_request import (
     CATALOGUE_UNAVAILABLE,
     GeoRequestError,
@@ -172,6 +174,16 @@ _F_REASON_CN = {
 
 #: 99 U110 deterministic PTP replies (ptp_slots / time_expr). ASCII
 #: punctuation (charset rule); {name} / {when} are filled at the turn.
+#: 99 U144 scheduled-task wording (ASCII punctuation, Chinese words).
+_SCHED_CN = {
+    "none": "现在没有定时任务",
+    "clash": "{when}已经有一个定时任务: {label}. 同一时间只能排一个任务, 请换个时间",
+    "not_found": "没有找到{when}的定时任务",
+    "which": "现在有{n}个定时任务: {items}. 请说取消几点的定时任务",
+    "confirm_one": "确认取消{when}{label}的定时任务吗,请说是或否",
+    "confirm_all": "确认取消全部{n}个定时任务吗,请说是或否",
+}
+
 _PTP_CN = {
     "timed_geo": "删除和改名不能定时, 请去掉时间再说一遍",
     "no_wall_clock": "现在不能定时, 请直接说去哪个点",
@@ -193,6 +205,10 @@ _PTP_CN = {
     # 99 U128: B09 with a named charging point, and B08 with no home point.
     "ack_dock": "好的,{when}去{name}",
     "ack_return": "好的,{when}返航",  # 99 U143 timed B08
+    # 99 U144 scheduled-task replies (the _reply helper reads this table)
+    "sched_none": _SCHED_CN["none"],
+    "sched_not_found": _SCHED_CN["not_found"],
+    "sched_which": _SCHED_CN["which"],
     "ack_charge": "好的,{when}回充电桩",  # 99 U143 timed B09 (nearest dock)
     "no_home": "还没有定义返航终点站, 请先把一个位置保存为返航终点站",
     # 99 U130: G48 / G49 route-membership answers.
@@ -744,6 +760,9 @@ class TurnOrchestrator:
         # 99 U110: the restatement of a rule-parsed PTP command, set by
         # _route_ptp and read by _dispatch_ack in the same turn.
         self._turn_ptp_ack: Optional[str] = None
+        # 99 U144: a confirm prompt naming WHICH task (a scheduled cancel);
+        # reset per turn like _turn_ptp_ack.
+        self._turn_confirm_prompt: Optional[str] = None
         # GWY-P4-39/41: for a G-class query, query_fn returns the answer
         # rendered from LIVE state (or an 'unknown' reply when stale). When
         # it is None or returns None, the query falls through to a normal
@@ -838,6 +857,7 @@ class TurnOrchestrator:
         self._turn_t_first = (now_mono_ms if t_first_word is None
                               else t_first_word)
         self._turn_ptp_ack = None
+        self._turn_confirm_prompt = None
         decision = self._handle_turn(text, session, now_mono_ms, raw_text,
                                      addressed)
         decision.channel = channel  # every branch, one place
@@ -1139,7 +1159,8 @@ class TurnOrchestrator:
             return TurnDecision(
                 kind="await_confirm", intent_id=entry.id,
                 intent_name=entry.name, route=entry.route, auth=eff_auth,
-                layer=layer, tts_text=self._confirm_prompt(entry))
+                layer=layer, tts_text=(self._turn_confirm_prompt
+                                       or self._confirm_prompt(entry)))
         if eff_auth == "L3":
             # Cloud approval flow (GWY-P4-38 hand-off to P5). Not dispatched
             # until the cloud confirm_token arrives.
@@ -1218,6 +1239,8 @@ class TurnOrchestrator:
             return self._route_entry(self._registry.by_id("B09"), text,
                                      session, now_mono_ms, layer="ptp_rule",
                                      rule_slots=dslots)
+        if ptp.kind == "cancel_scheduled":
+            return self._cancel_scheduled(ptp, text, session, now_mono_ms, _reply)
         if ptp.kind in ("return_home", "charge"):
             # 99 U143 (user ruling 2026-11-06 "支持定时"): "下午3点返航" /
             # "10分钟后去充电". The parser yields these kinds ONLY with a time,
@@ -1335,6 +1358,55 @@ class TurnOrchestrator:
         state = self._state_fn() if self._state_fn else {}
         key, fields = self._membership_fn(ptp.kind, ptp.name, state.get("state/geo/objects"))
         return reply(intent, key, **fields)
+
+    def _scheduled(self, state: Mapping[str, Any]) -> List[Dict[str, Any]]:
+        """The scheduled tasks as schedule_view names them (99 U144); [] with
+        no wall clock (nothing can be read back as a time then)."""
+        if self._wall_now_fn is None:
+            return []
+        manifest = manifest_from_state(state.get("state/geo/manifest"))
+        return scheduled_items(state.get("state/task"),
+                               manifest["items"] if manifest else [],
+                               self._wall_now_fn(), self._site_timezone)
+
+    def _cancel_scheduled(self, ptp: PtpParse, text: str, session,
+                          now_mono_ms: int, reply) -> TurnDecision:
+        """99 U144: "取消 / 删除 [所有] [<时间>的] 定时任务".
+
+        One scheduled task, or the one at the time said -> confirm naming it,
+        then cancel THAT task (by id). Several and no time -> list them and ask
+        which. "所有" with several -> confirm, then clear_queue filtered to the
+        scheduled state. Stays B07 (L2): a mis-heard cancel throws a task away,
+        and the confirm says exactly which one."""
+        state = self._state_fn() if self._state_fn else {}
+        items = self._scheduled(state)
+        if not items:
+            return reply("B07", "sched_none")
+        target: Optional[Dict[str, Any]] = None
+        if ptp.when is not None:  # the time names it
+            try:
+                epoch = resolve_epoch(ptp.when, self._wall_now_fn(), self._site_timezone)
+            except TimeParseError:
+                epoch = None  # a past / out-of-range time names nothing scheduled
+            hits = sv_at_minute(items, epoch) if epoch is not None else []
+            if not hits:
+                return reply("B07", "sched_not_found", when=_spoken_when(ptp.when))
+            target = hits[0]
+        elif ptp.every and len(items) > 1:  # all of them
+            self._turn_confirm_prompt = _SCHED_CN["confirm_all"].format(n=len(items))
+            return self._route_entry(self._registry.by_id("B07"), text, session,
+                                     now_mono_ms, layer="ptp_rule",
+                                     rule_slots={"cancel_scheduled_all": True})
+        elif len(items) == 1:
+            target = items[0]  # the only one
+        else:  # several, no time: say them, ask which
+            listed = ", ".join(i["when"] + i["label"] for i in items)
+            return reply("B07", "sched_which", n=len(items), items=listed)
+        self._turn_confirm_prompt = _SCHED_CN["confirm_one"].format(
+            when=target["when"], label=target["label"])
+        return self._route_entry(self._registry.by_id("B07"), text, session,
+                                 now_mono_ms, layer="ptp_rule",
+                                 rule_slots={"cancel_task_id": target["task_id"]})
 
     def _answer_geo_query(self, ptp: PtpParse, reply) -> TurnDecision:
         """G50 nearest waypoint / G51 how far to X / G52 how long is route X
@@ -1492,7 +1564,20 @@ class TurnOrchestrator:
                     "resume", slots={}, cmd_id="mi-" + uuid.uuid4().hex[:12],
                     turn_id="vt-" + uuid.uuid4().hex[:12],
                     channel=self._turn_channel, asr_text=text)}
-        if is_task_control_intent(entry.name) and not release_hold:
+        _sched = extra or {}
+        if (entry.name == "cancel_task" and not release_hold
+                and (_sched.get("cancel_task_id") or _sched.get("cancel_scheduled_all"))):
+            # 99 U144: a scheduled task picked by _cancel_scheduled -- by id,
+            # or every scheduled task through clear_queue's state filter.
+            # Not the "current / latest suspended" choice of plain 取消任务.
+            src = task_source(self._turn_channel)
+            tc = ({"cmd_id": uuid.uuid4().hex, "action": "cancel",
+                   "task_id": _sched["cancel_task_id"], "source": src}
+                  if _sched.get("cancel_task_id") else
+                  {"cmd_id": uuid.uuid4().hex, "action": "clear_queue",
+                   "filter": {"state": "scheduled"}, "source": src})
+            extra = {**_sched, "task_command": tc}
+        elif is_task_control_intent(entry.name) and not release_hold:
             try:
                 tc = to_task_control_command(
                     entry.name, state=_state,
@@ -1757,6 +1842,16 @@ class TurnOrchestrator:
         # out of the slots: it is a task field, not something the operator's
         # slots should carry into params.
         not_before_ts = merged.pop("not_before_ts", None)
+        if not_before_ts is not None:
+            # 99 U144 (user ruling 2026-11-06): one timed task per minute. A
+            # pre-check, so the operator hears why instead of "好的" and then
+            # P3's refusal (P3 refuses any channel's duplicate as well).
+            state = self._state_fn() if self._state_fn else {}
+            items = self._scheduled(state)
+            hit = sv_clash(items, float(not_before_ts))
+            if hit is not None:
+                return merged, _SCHED_CN["clash"].format(when=hit["when"],
+                                                         label=hit["label"])
         geo_ids: Dict[str, Optional[str]] = {"route": None, "waypoint": None}
         ref = GEO_REF_SLOT.get(entry.name)
         if ref is not None:

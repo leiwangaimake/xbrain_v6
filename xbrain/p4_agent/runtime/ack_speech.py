@@ -166,6 +166,9 @@ _TASK_OTHER = "任务没有{verb}成功"  # any other code
 _TASK_BY_REASON = {
     # 99 U131 B04: P3 found no completed patrol to repeat
     "no_completed_patrol": "还没有巡逻完成过的路径, 请说沿哪条路径巡逻",
+    # 99 U144: P3 refused a second timed task in the same minute (P4's own
+    # pre-check normally answers first; this covers a broadcast not yet seen)
+    "schedule_conflict": "这个时间已经有一个定时任务了, 同一时间只能排一个任务, 请换个时间",
 }
 
 #: cmd/geo/ack.

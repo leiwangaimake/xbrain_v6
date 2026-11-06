@@ -143,6 +143,7 @@ class PtpParse:  # one parsed command
     when: Optional[TimeExpr] = None  # a leading time, if any
     loops: Optional[int] = None  # patrol / repeat: the spoken lap count, None = not said
     round_trip: bool = False  # patrol / repeat: a "来回" sentence (U131)
+    every: bool = False  # cancel_scheduled: "所有 / 全部" (99 U144)
 
 
 #: G48: "X(路径)上有哪些航点" -- X must end like a route name (it is what the
@@ -334,6 +335,41 @@ def _keypoint(name: str) -> bool:
     return bool(name) and not any(w in name for w in _NOT_KEYPOINT)
 
 
+#: 99 U144: "取消 / 删除 [所有|全部] [<时间>的] 定时任务", either word order
+#: ("把下午3点的定时任务取消"), and "取消下午3点的任务" (a time makes it a
+#: scheduled task, not the current one). Tried before every other rule: a
+#: plain delete rule would read "删除定时任务" as a keypoint named "定时任务".
+_CANCEL_VERB = "(?:取消|删除|删掉|撤销)"
+_CANCEL_ALL = "(?P<all>所有的|全部的|所有|全部)?"
+_CANCEL_FRONT = re.compile("^" + _CANCEL_VERB + _CANCEL_ALL + "(?P<rest>.*?)定时任务$")
+_CANCEL_BACK = re.compile("^把" + _CANCEL_ALL + "(?P<rest>.*?)定时任务" + _CANCEL_VERB + "(?:掉|了)?$")
+_CANCEL_TIMED = re.compile("^" + _CANCEL_VERB + "(?P<rest>.+?)的任务$")
+
+
+def _cancel_scheduled(text: str) -> Optional[PtpParse]:
+    """The 99 U144 cancel sentence, or None."""
+    t = _PUNCT.sub("", text or "")  # same normalisation as _stages
+    for lead in _LEAD:  # "请取消..." / "帮我删除..."
+        if t.startswith(lead) and len(t) > len(lead):
+            t = t[len(lead):]
+            break
+    m = (_CANCEL_FRONT.match(t) or _CANCEL_BACK.match(t)  # with 定时任务
+         or _CANCEL_TIMED.match(t))  # "取消下午3点的任务": needs a time (below)
+    if m is None:
+        return None  # not a cancel sentence
+    rest = m.group("rest")  # what sits between the verb and 定时任务
+    when, left = split_time_prefix(rest) if rest else (None, "")
+    if left not in ("", "的"):
+        # Something else is named: not ours. This is also what keeps the
+        # "...的任务" form time-only -- its rest is never empty (.+?), so with
+        # no time phrase the whole rest is left over ("取消巡逻的任务" stays
+        # B07's). A separate "needs a time" check was an equivalent mutant
+        # (2026-11-06) and was removed.
+        return None
+    every = bool(m.groupdict().get("all"))  # 所有 / 全部
+    return PtpParse("cancel_scheduled", "", when=when, every=every)
+
+
 def parse_ptp(text: str) -> Optional[PtpParse]:
     """The PTP command text is, or None when it is not one of the seven.
 
@@ -341,6 +377,9 @@ def parse_ptp(text: str) -> Optional[PtpParse]:
     delete, then a named patrol (U121), then goto. A time is kept for any kind; the caller decides that
     only a goto may carry one.
     """
+    cancel = _cancel_scheduled(text)  # 99 U144, before the delete rule
+    if cancel is not None:
+        return cancel
     for when, t in _stages(text):  # least stripped first
         if when is not None and t in TIMED_RETURN:  # 99 U143: "下午3点返航"
             return PtpParse("return_home", "", when=when)  # B08, scheduled
