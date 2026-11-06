@@ -223,6 +223,28 @@ async def test_patrol_push_starts_at_the_robot(dbs):  # wiring: patrol
     assert pts[:2] == [(60.0, 30.0), (60.0, 0.0)] and pts[-1] == (0.0, 0.0)  # robot, entry ... far end and back
 
 
+@pytest.mark.asyncio  # async case
+async def test_the_next_pass_from_near_an_end_is_one_traverse(dbs):  # 99 U147 nav audit
+    """Pass 2 of "来回巡逻N次" is planned from the pose P3 holds when P1
+    reports arrived: ~1-1.5 m before the end (P1 arrives within r, the pose
+    is a tick stale). Within 2 r (P1's own end tolerance, A-RT-2a) that is
+    the end: one traverse back, not a far-end-first out-and-back. MUTATION:
+    near_skip_m = 1 x radius -> the plan returns to x=200 -> red."""
+    task, geo = dbs  # the dbs
+    pub = _Pub()  # frames out
+    res = await push_route_for_task(  # an RP-5 next pass
+        task_id="tp", route_geo_id="r-a", task_conn=task, geo_conn=geo,
+        snapshot_dao=SnapshotDAO(task), progress_dao=PatrolProgressDAO(task),
+        route_pub=pub, ack_window=RouteAckWindow(),
+        trigger=RoutePushTrigger.RP1_DISPATCH, now_mono_ms=1000,
+        now_wall_ms=1_785_000_000_000, recorded_arrive_radius_m=1.0,  # r = 1.0
+        start=ll(198.5, 1), lap_spec=LapSpec(loops=1, round_trip=False))  # 1.5 m before the end
+    assert res.pushed  # sent
+    pts = [xy((p["lat"], p["lon"])) for p in pub.puts[0]["points"]]  # what P1 receives
+    assert pts[-1] == (0.0, 0.0)  # straight back to the other end
+    assert max(x for x, _y in pts) <= 198.5 + 0.01  # never turns towards x=200 first
+
+
 # -- the live P3 loop: both new parameters reach the push (CLAUDE.md 9.1A) ----
 @pytest.mark.asyncio  # async case
 @pytest.mark.parametrize("task_type", ["patrol", "goto"])  # both kinds

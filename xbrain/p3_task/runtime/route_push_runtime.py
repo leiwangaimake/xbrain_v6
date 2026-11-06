@@ -187,9 +187,13 @@ async def push_route_for_task(*, task_id: str, route_geo_id: str,
                     start, [(p.lat, p.lon) for p in snap.points],
                     closed=(snap.loop_mode == "closed"),
                     # the return leg is dropped when the near side is within
-                    # the route's arrival radius (re-covering the whole route
-                    # for less than one arrival radius is pointless)
-                    near_skip_m=snap.points[-1].arrive_radius_m),
+                    # TWO arrival radii -- P1's own "at the end" tolerance
+                    # (A-RT-2a: remaining arc <= 2r). One radius was too
+                    # tight: the next pass is planned from the pose P3 holds
+                    # when P1 reports arrived, already ~r from the end and a
+                    # tick stale, so a pass of "来回巡逻N次" became a full
+                    # out-and-back (bench 2026-11-06, 99 U147 nav audit).
+                    near_skip_m=2.0 * snap.points[-1].arrive_radius_m),
                 # the strictest per-point radius: P1 judges arrival at the
                 # last point only, and which recorded point ends the plan
                 # depends on where the robot entered

@@ -314,6 +314,9 @@ class RouteAckWindow:
         self._route: Optional[Tuple[str, int]] = None
         self._opened_ms = 0
         self._attempts = 0
+        # Monotonic ms of the latest push; kept after confirm / reset so the
+        # progress intake can drop frames P1 produced before it (pushed_ms).
+        self._pushed_ms = 0
 
     @property
     def is_open(self) -> bool:
@@ -323,6 +326,23 @@ class RouteAckWindow:
     def attempts(self) -> int:
         return self._attempts
 
+    @property
+    def pushed_ms(self) -> int:
+        """Monotonic ms of the latest open() (0 before the first push).
+
+        *** A path_progress frame carries route_id / route_rev but nothing
+        that names the PUSH, and P3 re-pushes the same route at the same rev
+        (patrol repeat, the next pass, resume, a second goto to one point).
+        P1 keeps re-sending `arrived` for the finished run at 2 Hz until it
+        loads the new one, so those frames matched the new run on id and rev
+        and closed it at once -- "再巡一圈" ended before the robot moved, and
+        the stale frame also satisfied RA-1 (found on the bench 2026-11-06,
+        99 U147 nav audit). P1 stamps `mono` at the start of the tick that
+        builds the frame and loads a new route inside the tick, so a frame of
+        the old run always has mono < the push. Same CLOCK_MONOTONIC on one
+        machine (state/path_progress.py header)."""
+        return self._pushed_ms
+
     def open(self, route_id: str, route_rev: int, *, now_mono_ms: int) -> None:
         """Start the window after the LAST chunk went out (15 S2.4.4: the
         window opens at chunk.index == total-1, not at the first chunk -- a
@@ -330,6 +350,7 @@ class RouteAckWindow:
         sent)."""
         self._route = (route_id, route_rev)
         self._opened_ms = now_mono_ms
+        self._pushed_ms = now_mono_ms  # frames stamped before this are the old run's
         self._attempts += 1
 
     def observe(self, *, loading: bool, route_id: str, route_rev: int,

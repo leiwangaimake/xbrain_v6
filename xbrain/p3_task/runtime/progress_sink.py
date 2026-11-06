@@ -76,6 +76,22 @@ from xbrain.p3_task.state.path_progress import (
 _logger = logging.getLogger("xbrain.p3.progress")
 
 
+def predates_push(body: Any, pushed_ms: int) -> bool:
+    """True when this frame was built before the latest route push.
+
+    Such a frame describes the previous run even when its route_id and
+    route_rev equal the new push's (see RouteAckWindow.pushed_ms for the
+    defect it closes). A frame without a usable mono is NOT judged here: the
+    parser downstream rejects it with its reason.
+    """
+    if pushed_ms <= 0 or not isinstance(body, dict):
+        return False  # no push yet / not a frame: nothing to compare
+    mono = body.get("mono")  # P1's tick time, seconds (11 S3.5B)
+    if isinstance(mono, bool) or not isinstance(mono, (int, float)):
+        return False  # malformed: left to parse_path_progress
+    return mono * 1000.0 < pushed_ms
+
+
 async def find_running_task(dao) -> Optional[str]:
     """The task a progress frame belongs to.
 

@@ -23,6 +23,8 @@ left unwired in main_wiring.
 """
 from __future__ import annotations  # postponed annotations
 
+import time  # P1-like mono stamps
+
 import asyncio  # the live loop runs as a task
 import json  # wire frames
 
@@ -39,7 +41,7 @@ from xbrain.p3_task.persistence.schema_geo import GEO_DB_STATEMENTS  # geo.db DD
 from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS  # task.db DDL
 from xbrain.p3_task.route.laps import LapSpec, lap_spec_from_params  # under test
 from xbrain.p3_task.route.push import RouteAckWindow, RoutePushTrigger  # push dependencies
-from xbrain.p3_task.runtime.progress_sink import apply_path_progress  # under test
+from xbrain.p3_task.runtime.progress_sink import apply_path_progress, predates_push  # under test
 from xbrain.p3_task.runtime.route_push_runtime import push_route_for_task  # under test
 from xbrain.p3_task.state.path_progress import ProgressTracker  # PP-1 tracker
 from tests.p3_task.test_route_plan import LINE, ll, xy  # the 200 m line and its metric plane
@@ -164,7 +166,9 @@ def _pframe(state, dist=0.0):  # a P1 frame: single pass, says 0 / 1 always
             "waypoint_index": 4 if state == "arrived" else 1, "waypoint_total": 5,  # where
             "seg_done_m": 0.0, "dist_done_m": dist, "fail_reason": None,  # metres
             "loop_index": 0, "loop_total": 1, "dir_sign": 1,  # what single-pass P1 says
-            "state": state, "ts": 1.0, "mono": 1.0}  # times
+            # mono is P1's tick time on the shared CLOCK_MONOTONIC: a frame
+            # stamped before P3's push is dropped as the previous run's
+            "state": state, "ts": 1.0, "mono": time.monotonic()}
 
 
 async def _noop(*_a, **_k):  # on_transition stub
@@ -368,3 +372,103 @@ async def test_the_live_loop_runs_a_round_trip(tmp_path, monkeypatch):  # wiring
     finally:  # cleanup
         stop["stop"] = True  # ask it to stop
         await asyncio.wait_for(task, timeout=10.0)  # and wait
+
+
+# -- 99 U147 nav audit: a frame from before the push is the previous run's ------
+def test_predates_push_compares_p1_mono_with_the_push():  # the gate itself
+    """MUTATION: <= instead of < / ignore the push time -> red."""
+    assert predates_push({"mono": 9.999}, 10_000) is True  # stamped before the push
+    assert predates_push({"mono": 10.0}, 10_000) is False  # at the push: P1 may have loaded it
+    assert predates_push({"mono": 5.0}, 0) is False  # no push yet: nothing to compare
+    assert predates_push({"mono": "x"}, 10_000) is False  # malformed: the parser's to reject
+
+
+@pytest.mark.asyncio  # async case
+async def test_a_stale_arrived_does_not_close_the_next_run_on_the_same_route(tmp_path, monkeypatch):
+    """Patrol t-1 on r-a finishes; P1 keeps re-sending its arrived at 2 Hz.
+    t-2 ("再巡一圈") is dispatched on the SAME route at the SAME rev: the
+    re-sent arrived, built before the push, must neither confirm nor close
+    it. Found on the bench 2026-11-06 ("再巡一圈" ended before the robot
+    moved). MUTATION: drop the predates_push gate in main_wiring -> t-2 done
+    on the stale frame -> red."""
+    from tests.p3_task.test_recorded_route_radius import _fake_planes  # shared fake session
+    from xbrain.p3_task.runtime import main_wiring as mw  # the live loop
+
+    subs, pubs = {}, {}  # what the fake session saw
+    _fake_planes(monkeypatch, subs, pubs)  # no zenoh
+    task_db, geo_db = str(tmp_path / "task.db"), str(tmp_path / "geo.db")  # on disk
+    async with aiosqlite.connect(geo_db) as g:  # the line
+        for stmt in GEO_DB_STATEMENTS:  # schema
+            await g.execute(stmt)  # one DDL
+        await g.execute(  # the line, open, 200 m
+            "INSERT INTO routes (geo_id, name, path_points, loop_mode, direction,"
+            " total_len_m, rev, content_hash, updated_ms) VALUES"
+            " ('r-a', '1号路径', ?, 'oneway', 'forward', 200.0, 1, 'h', 0)",
+            (json.dumps([list(p) for p in LINE.points]),))
+        await g.commit()  # visible
+
+    def _sample(body):  # a zenoh sample stand-in
+        return type("S", (), {"payload": json.dumps(body).encode("utf-8")})()
+
+    async def _state(tid):  # a task's state
+        async with aiosqlite.connect(task_db) as t:  # read back
+            return (await (await t.execute("SELECT state FROM tasks WHERE task_id=?", (tid,))).fetchone())[0]
+
+    async def _until(cond):  # poll a condition
+        for _ in range(250):  # bounded
+            if await cond():
+                return True  # met
+            await asyncio.sleep(0.02)  # next look
+        return False  # timed out
+
+    async def _patrol(tid, seq):  # one ready single-pass patrol on r-a
+        async with aiosqlite.connect(task_db) as t:
+            await TasksDAO(t).insert(TaskRow(
+                task_id=tid, task_type="patrol", state="ready", priority=5,
+                submit_seq=seq, total_steps=1, current_step=0, step_status_json="[]",
+                mission_json=json.dumps({"params": {"slots": {}}}),
+                created_ms=0, updated_ms=0, source="local", trace_id="tr",
+                resume_policy="continue", route_geo_id="r-a"))
+            await t.commit()  # visible
+
+    stop = {"stop": False}  # loop control
+    task = asyncio.create_task(mw._amain(  # start P3
+        stop, 99.0, task_db, geo_db_path=geo_db, fence_db_path=str(tmp_path / "fence.db"),
+        recorded_arrive_radius_m=1.0, route_membership_m=5.0))
+    try:  # always stop
+        for _ in range(300):  # wait for the subscribers
+            if mw.STATE_PATH_PROGRESS_TOPIC in subs and mw.STATE_POSE_TOPIC in subs:
+                break  # ready
+            await asyncio.sleep(0.01)  # poll
+        lat, lon = ll(0, 1)  # beside the start
+        subs[mw.STATE_POSE_TOPIC](_sample({"data": {"lat": lat, "lon": lon}}))
+        progress = subs[mw.STATE_PATH_PROGRESS_TOPIC]  # P1's frames in
+        await _patrol("t-1", 1)  # the first run
+        assert await _until(lambda: _frames_n(pubs, 1))  # pushed
+        progress(_sample({"data": _pframe("running", 5.0)}))  # loaded
+        await asyncio.sleep(0.1)  # applied
+        progress(_sample({"data": _pframe("arrived", 200.0)}))  # t-1 done
+        assert await _until(lambda: _is(_state("t-1"), "done"))  # closed
+        stale = _pframe("arrived", 200.0)  # P1 re-sends it, stamped NOW (before t-2's push)
+        await asyncio.sleep(0.01)  # the push comes strictly later
+        await _patrol("t-2", 2)  # "再巡一圈": same route, same rev
+        assert await _until(lambda: _frames_n(pubs, 2))  # t-2 pushed
+        progress(_sample({"data": stale}))  # the stale arrived lands after the push
+        await asyncio.sleep(1.2)  # > two passes of the 0.5 s loop: it would have closed t-2
+        assert await _state("t-2") == "running"  # ignored
+        progress(_sample({"data": _pframe("running", 5.0)}))  # t-2 loaded
+        await asyncio.sleep(0.1)  # applied
+        progress(_sample({"data": _pframe("arrived", 200.0)}))  # t-2 really done
+        assert await _until(lambda: _is(_state("t-2"), "done"))  # closed by the fresh frame
+    finally:
+        stop["stop"] = True  # stop the loop
+        await asyncio.wait_for(task, 10.0)  # joined
+
+
+async def _frames_n(pubs, n):  # at least n route frames out
+    return len(pubs.get("cmd/motion/route", [])) >= n
+
+
+async def _is(coro, want):  # an awaited value equals want
+    return (await coro) == want
+

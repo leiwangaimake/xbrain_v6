@@ -226,7 +226,7 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
     from xbrain.p3_task.persistence.schema_task import ALL_DDL_STATEMENTS
     from xbrain.p3_task.route.laps import lap_spec_from_params
     from xbrain.p3_task.route.push import RoutePushTrigger, build_route_clear
-    from xbrain.p3_task.runtime.progress_sink import apply_path_progress
+    from xbrain.p3_task.runtime.progress_sink import apply_path_progress, predates_push
     from xbrain.p3_task.runtime.route_push_runtime import (
         CMD_ROUTE_TOPIC,
         ack_outcome_is_fatal,
@@ -1628,6 +1628,12 @@ async def _amain(stop_flag: dict, heartbeat_period_s: float,
                         # pass on every dispatch. Parse failures are the
                         # persistence half's to report -- this one stays
                         # silent so a bad frame is not logged twice.
+                        # 99 U147 nav audit: a frame P1 built before the
+                        # latest push is the previous run's (same route id
+                        # and rev on a repeat / next pass / resume), so it
+                        # may neither confirm the push nor close the task.
+                        if predates_push(_pbody, ack_window.pushed_ms):
+                            continue
                         if ack_window.is_open:
                             try:
                                 _pp = parse_path_progress(_pbody)
